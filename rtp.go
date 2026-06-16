@@ -57,7 +57,42 @@ type RTPFrameOBU = internalrtp.FrameOBU
 // WebRTC's dependency descriptor RTP header extension.
 type RTPDependencyDescriptorMandatory = internalrtp.DependencyDescriptorMandatory
 
+// RTPDependencyDescriptorDecodeTargetIndication describes whether a frame is
+// not present, discardable, a switch point, or required for a decode target.
+type RTPDependencyDescriptorDecodeTargetIndication = internalrtp.DependencyDescriptorDecodeTargetIndication
+
+// RTPDependencyDescriptorResolution is one render-resolution entry from an
+// attached dependency descriptor structure.
+type RTPDependencyDescriptorResolution = internalrtp.DependencyDescriptorResolution
+
+// RTPDependencyDescriptorFrameDependencies is the template-derived or custom
+// dependency definition for a parsed frame.
+type RTPDependencyDescriptorFrameDependencies = internalrtp.DependencyDescriptorFrameDependencies
+
+// RTPDependencyDescriptorStructure is the parsed template dependency
+// structure carried by a WebRTC dependency descriptor RTP header extension.
+type RTPDependencyDescriptorStructure = internalrtp.DependencyDescriptorStructure
+
+// RTPDependencyDescriptor is the full parsed WebRTC dependency descriptor RTP
+// header extension value.
+type RTPDependencyDescriptor = internalrtp.DependencyDescriptor
+
 const RTPDependencyDescriptorMandatorySize = internalrtp.DependencyDescriptorMandatorySize
+
+const (
+	RTPDependencyDescriptorMaxSpatialLayers  = internalrtp.DependencyDescriptorMaxSpatialLayers
+	RTPDependencyDescriptorMaxTemporalLayers = internalrtp.DependencyDescriptorMaxTemporalLayers
+	RTPDependencyDescriptorMaxDecodeTargets  = internalrtp.DependencyDescriptorMaxDecodeTargets
+	RTPDependencyDescriptorMaxTemplates      = internalrtp.DependencyDescriptorMaxTemplates
+	RTPDependencyDescriptorMaxFrameDiffs     = internalrtp.DependencyDescriptorMaxFrameDiffs
+)
+
+const (
+	RTPDependencyDescriptorDecodeTargetNotPresent  = internalrtp.DependencyDescriptorDecodeTargetNotPresent
+	RTPDependencyDescriptorDecodeTargetDiscardable = internalrtp.DependencyDescriptorDecodeTargetDiscardable
+	RTPDependencyDescriptorDecodeTargetSwitch      = internalrtp.DependencyDescriptorDecodeTargetSwitch
+	RTPDependencyDescriptorDecodeTargetRequired    = internalrtp.DependencyDescriptorDecodeTargetRequired
+)
 
 // RTP packetization/depacketization errors. Each Err* value is returned by
 // the RTP helpers when their input violates the AV1 RTP payload framing rules
@@ -109,6 +144,13 @@ func PutRTPDependencyDescriptorMandatory(dst []byte, descriptor RTPDependencyDes
 
 func ParseRTPDependencyDescriptorMandatory(src []byte) (RTPDependencyDescriptorMandatory, int, error) {
 	return internalrtp.ParseDependencyDescriptorMandatory(src)
+}
+
+// ParseRTPDependencyDescriptor parses a full WebRTC dependency descriptor RTP
+// header extension. structure may be nil only when src carries an attached
+// structure; pass the last attached structure for compact later descriptors.
+func ParseRTPDependencyDescriptor(src []byte, structure *RTPDependencyDescriptorStructure) (RTPDependencyDescriptor, int, error) {
+	return internalrtp.ParseDependencyDescriptor(src, structure)
 }
 
 // PutRTPFragment writes one MTU-sized RTP fragment of an OBU into dst. offset

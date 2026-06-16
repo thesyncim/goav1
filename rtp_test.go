@@ -397,6 +397,206 @@ func TestPublicRTPScheduledPictureDependencyDescriptor(t *testing.T) {
 	}
 }
 
+func TestPublicRTPDependencyDescriptorParseEncoderRoundTrip(t *testing.T) {
+	structure, err := EncoderWebRTCFrameDependencyStructureForConfig(EncoderConfig{
+		Resolution:  EncoderResolution{Width: 640, Height: 360},
+		Scalability: EncoderScalabilityModeL2T2_KEY_SHIFT,
+	})
+	if err != nil {
+		t.Fatalf("EncoderWebRTCFrameDependencyStructureForConfig: %v", err)
+	}
+	info := EncoderWebRTCGenericFrameInfo{
+		FrameID:    100,
+		SpatialID:  0,
+		TemporalID: 0,
+		DTINum:     structure.NumDecodeTargets,
+	}
+	info.DTIs = structure.Templates[0].DTIs
+
+	var buf [128]byte
+	descriptorBytes, err := AppendEncoderWebRTCDependencyDescriptor(buf[:0], structure, info, true, false, true)
+	if err != nil {
+		t.Fatalf("AppendEncoderWebRTCDependencyDescriptor key: %v", err)
+	}
+	parsed, consumed, err := ParseRTPDependencyDescriptor(descriptorBytes, nil)
+	if err != nil {
+		t.Fatalf("ParseRTPDependencyDescriptor key: %v", err)
+	}
+	if consumed != len(descriptorBytes) ||
+		parsed.Mandatory != (RTPDependencyDescriptorMandatory{FirstPacketInFrame: true, TemplateID: 0, FrameNumber: 100}) ||
+		!parsed.HasAttachedStructure || !parsed.HasActiveDecodeTargets ||
+		parsed.ActiveDecodeTargetsMask != 0x0f {
+		t.Fatalf("parsed key consumed=%d/%d descriptor=%+v", consumed, len(descriptorBytes), parsed)
+	}
+	assertPublicRTPStructureMatchesEncoder(t, parsed.AttachedStructure, structure)
+	if parsed.FrameDependencies.SpatialID != 0 || parsed.FrameDependencies.TemporalID != 0 ||
+		!parsed.HasResolution || parsed.Resolution != (RTPDependencyDescriptorResolution{Width: 320, Height: 180}) {
+		t.Fatalf("parsed key frame=%+v resolution=%+v has=%v", parsed.FrameDependencies, parsed.Resolution, parsed.HasResolution)
+	}
+
+	info = EncoderWebRTCGenericFrameInfo{
+		FrameID:       106,
+		SpatialID:     1,
+		TemporalID:    0,
+		DependencyNum: 1,
+		DTINum:        structure.NumDecodeTargets,
+	}
+	info.Dependencies[0] = 102
+	info.DTIs = structure.Templates[5].DTIs
+	descriptorBytes, err = AppendEncoderWebRTCDependencyDescriptor(buf[:0], structure, info, true, true, false)
+	if err != nil {
+		t.Fatalf("AppendEncoderWebRTCDependencyDescriptor delta: %v", err)
+	}
+	parsedStructure := convertPublicEncoderRTPDependencyStructure(structure)
+	parsed, consumed, err = ParseRTPDependencyDescriptor(descriptorBytes, &parsedStructure)
+	if err != nil {
+		t.Fatalf("ParseRTPDependencyDescriptor delta: %v", err)
+	}
+	if consumed != len(descriptorBytes) ||
+		parsed.Mandatory.TemplateID != 5 ||
+		parsed.FrameDependencies.SpatialID != 1 ||
+		parsed.FrameDependencies.TemporalID != 0 ||
+		parsed.FrameDependencies.FrameDiffNum != 1 ||
+		parsed.FrameDependencies.FrameDiffs[0] != 4 ||
+		!parsed.HasResolution ||
+		parsed.Resolution != (RTPDependencyDescriptorResolution{Width: 640, Height: 360}) {
+		t.Fatalf("parsed delta consumed=%d/%d descriptor=%+v", consumed, len(descriptorBytes), parsed)
+	}
+}
+
+func TestPublicRTPDependencyDescriptorParseAllocs(t *testing.T) {
+	structure, err := EncoderWebRTCFrameDependencyStructureForConfig(EncoderConfig{
+		Resolution:  EncoderResolution{Width: 640, Height: 360},
+		Scalability: EncoderScalabilityModeL2T2,
+	})
+	if err != nil {
+		t.Fatalf("EncoderWebRTCFrameDependencyStructureForConfig: %v", err)
+	}
+	info := EncoderWebRTCGenericFrameInfo{
+		FrameID:    100,
+		SpatialID:  0,
+		TemporalID: 0,
+		DTINum:     structure.NumDecodeTargets,
+	}
+	info.DTIs = structure.Templates[0].DTIs
+	var buf [128]byte
+	descriptorBytes, err := AppendEncoderWebRTCDependencyDescriptor(buf[:0], structure, info, true, true, true)
+	if err != nil {
+		t.Fatalf("AppendEncoderWebRTCDependencyDescriptor: %v", err)
+	}
+	parsedStructure := convertPublicEncoderRTPDependencyStructure(structure)
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, _ = ParseRTPDependencyDescriptor(descriptorBytes, nil)
+		_, _, _ = ParseRTPDependencyDescriptor(descriptorBytes[:RTPDependencyDescriptorMandatorySize], &parsedStructure)
+	})
+	if allocs != 0 {
+		t.Fatalf("dependency descriptor parse allocs=%f want 0", allocs)
+	}
+}
+
+func assertPublicRTPStructureMatchesEncoder(t *testing.T, got RTPDependencyDescriptorStructure, want EncoderWebRTCFrameDependencyStructure) {
+	t.Helper()
+	if got.StructureID != want.StructureID ||
+		got.NumDecodeTargets != want.NumDecodeTargets ||
+		got.NumChains != want.NumChains ||
+		got.TemplateNum != want.TemplateNum ||
+		got.ResolutionNum != want.ResolutionNum {
+		t.Fatalf("structure header=%+v want id=%d targets=%d chains=%d templates=%d resolutions=%d", got, want.StructureID, want.NumDecodeTargets, want.NumChains, want.TemplateNum, want.ResolutionNum)
+	}
+	for i := uint8(0); i < want.NumDecodeTargets; i++ {
+		if got.DecodeTargetProtectedByChain[i] != want.DecodeTargetProtectedByChain[i] {
+			t.Fatalf("protected chain[%d]=%d want %d", i, got.DecodeTargetProtectedByChain[i], want.DecodeTargetProtectedByChain[i])
+		}
+	}
+	for i := uint8(0); i < want.TemplateNum; i++ {
+		gotTemplate := got.Templates[i]
+		wantTemplate := want.Templates[i]
+		if gotTemplate.SpatialID != wantTemplate.SpatialID ||
+			gotTemplate.TemporalID != wantTemplate.TemporalID ||
+			gotTemplate.DTINum != wantTemplate.DTINum ||
+			gotTemplate.FrameDiffNum != wantTemplate.FrameDiffNum ||
+			gotTemplate.ChainDiffNum != wantTemplate.ChainDiffNum {
+			t.Fatalf("template[%d]=%+v want %+v", i, gotTemplate, wantTemplate)
+		}
+		for j := uint8(0); j < wantTemplate.DTINum; j++ {
+			if uint8(gotTemplate.DTIs[j]) != uint8(wantTemplate.DTIs[j]) {
+				t.Fatalf("template[%d].dti[%d]=%d want %d", i, j, gotTemplate.DTIs[j], wantTemplate.DTIs[j])
+			}
+		}
+		for j := uint8(0); j < wantTemplate.FrameDiffNum; j++ {
+			if gotTemplate.FrameDiffs[j] != wantTemplate.FrameDiffs[j] {
+				t.Fatalf("template[%d].fdiff[%d]=%d want %d", i, j, gotTemplate.FrameDiffs[j], wantTemplate.FrameDiffs[j])
+			}
+		}
+		for j := uint8(0); j < wantTemplate.ChainDiffNum; j++ {
+			if gotTemplate.ChainDiffs[j] != wantTemplate.ChainDiffs[j] {
+				t.Fatalf("template[%d].chain[%d]=%d want %d", i, j, gotTemplate.ChainDiffs[j], wantTemplate.ChainDiffs[j])
+			}
+		}
+	}
+	for i := uint8(0); i < want.ResolutionNum; i++ {
+		if got.Resolutions[i].Width != uint16(want.Resolutions[i].Width) ||
+			got.Resolutions[i].Height != uint16(want.Resolutions[i].Height) {
+			t.Fatalf("resolution[%d]=%+v want %+v", i, got.Resolutions[i], want.Resolutions[i])
+		}
+	}
+}
+
+func convertPublicEncoderRTPDependencyStructure(src EncoderWebRTCFrameDependencyStructure) RTPDependencyDescriptorStructure {
+	var out RTPDependencyDescriptorStructure
+	out.StructureID = src.StructureID
+	out.NumDecodeTargets = src.NumDecodeTargets
+	out.NumChains = src.NumChains
+	out.TemplateNum = src.TemplateNum
+	out.ResolutionNum = src.ResolutionNum
+	for i := uint8(0); i < src.NumDecodeTargets; i++ {
+		out.DecodeTargetProtectedByChain[i] = src.DecodeTargetProtectedByChain[i]
+	}
+	for i := uint8(0); i < src.TemplateNum; i++ {
+		inTemplate := src.Templates[i]
+		outTemplate := &out.Templates[i]
+		outTemplate.SpatialID = inTemplate.SpatialID
+		outTemplate.TemporalID = inTemplate.TemporalID
+		outTemplate.DTINum = inTemplate.DTINum
+		outTemplate.FrameDiffNum = inTemplate.FrameDiffNum
+		outTemplate.ChainDiffNum = inTemplate.ChainDiffNum
+		for j := uint8(0); j < inTemplate.DTINum; j++ {
+			outTemplate.DTIs[j] = RTPDependencyDescriptorDecodeTargetIndication(inTemplate.DTIs[j])
+		}
+		for j := uint8(0); j < inTemplate.FrameDiffNum; j++ {
+			outTemplate.FrameDiffs[j] = inTemplate.FrameDiffs[j]
+		}
+		for j := uint8(0); j < inTemplate.ChainDiffNum; j++ {
+			outTemplate.ChainDiffs[j] = inTemplate.ChainDiffs[j]
+		}
+	}
+	for i := uint8(0); i < src.ResolutionNum; i++ {
+		out.Resolutions[i] = RTPDependencyDescriptorResolution{
+			Width:  uint16(src.Resolutions[i].Width),
+			Height: uint16(src.Resolutions[i].Height),
+		}
+	}
+	for target := uint8(0); target < out.NumDecodeTargets; target++ {
+		var spatialID uint8
+		var temporalID uint8
+		for templateIndex := uint8(0); templateIndex < out.TemplateNum; templateIndex++ {
+			template := out.Templates[templateIndex]
+			if template.DTIs[target] == RTPDependencyDescriptorDecodeTargetNotPresent {
+				continue
+			}
+			if template.SpatialID > spatialID {
+				spatialID = template.SpatialID
+			}
+			if template.TemporalID > temporalID {
+				temporalID = template.TemporalID
+			}
+		}
+		out.DecodeTargetSpatialID[target] = spatialID
+		out.DecodeTargetTemporalID[target] = temporalID
+	}
+	return out
+}
+
 func TestPublicRTPScheduledPictureDependencyDescriptorAllocs(t *testing.T) {
 	frame := appendPublicLowOverheadOBU(nil, OBUFrame, []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 	limits := RTPPayloadSizeLimits{MaxPayloadLen: 64}
