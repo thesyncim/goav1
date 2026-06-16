@@ -1877,6 +1877,73 @@ func TestPublicWebRTCEncoderPictureHeaderTemporalUnits(t *testing.T) {
 	}
 }
 
+func TestPublicWebRTCEncoderSetConfigReconfigure(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 1280, Height: 720},
+		Scalability:       av1.EncoderScalabilityModeL1T2,
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    1200,
+		TargetBitrateKbps: 700,
+	}
+	enc, err := av1.NewWebRTCEncoder(cfg, av1.EncoderWebRTCState{NextFrameID: 30})
+	if err != nil {
+		t.Fatalf("NewWebRTCEncoder: %v", err)
+	}
+	if unit, err := enc.NextTemporalUnit(false); err != nil || !unit.Key {
+		t.Fatalf("initial key unit=%+v err=%v", unit, err)
+	}
+	if unit, err := enc.NextTemporalUnit(false); err != nil || !unit.Delta || unit.DeltaUnit.FrameNum != 1 {
+		t.Fatalf("warm delta unit=%+v err=%v", unit, err)
+	}
+
+	controlChange := cfg
+	controlChange.MaxFramerate = av1.EncoderRational{Num: 60, Den: 1}
+	controlChange.MinBitrateKbps = 200
+	controlChange.MaxBitrateKbps = 1800
+	controlChange.TargetBitrateKbps = 1100
+	if err := enc.SetConfig(controlChange); err != nil {
+		t.Fatalf("SetConfig control change: %v", err)
+	}
+	before := enc.State()
+	unit, err := enc.NextTemporalUnit(false)
+	if err != nil {
+		t.Fatalf("NextTemporalUnit after control change: %v", err)
+	}
+	if !unit.Delta || unit.Key || unit.DeltaUnit.FrameNum != 1 ||
+		enc.State().NextFrameID != before.NextFrameID+1 || enc.Config().TargetBitrateKbps != 1100 {
+		t.Fatalf("control change unit=%+v before=%+v state=%+v config=%+v", unit, before, enc.State(), enc.Config())
+	}
+
+	structureChange := controlChange
+	structureChange.Scalability = av1.EncoderScalabilityModeS2T2
+	if err := enc.SetConfig(structureChange); err != nil {
+		t.Fatalf("SetConfig structure change: %v", err)
+	}
+	before = enc.State()
+	unit, err = enc.NextTemporalUnit(false)
+	if err != nil {
+		t.Fatalf("NextTemporalUnit after structure change: %v", err)
+	}
+	if !unit.Key || unit.Delta || unit.KeyUnit.FrameNum != 2 ||
+		!unit.KeyUnit.Control.HasDependencyStructure ||
+		enc.State().NextFrameID != before.NextFrameID+2 ||
+		enc.State().DeltaPictureIndex != 1 {
+		t.Fatalf("structure change unit=%+v before=%+v state=%+v", unit, before, enc.State())
+	}
+
+	keepConfig := enc.Config()
+	keepState := enc.State()
+	bad := structureChange
+	bad.TargetBitrateKbps = bad.MaxBitrateKbps + 1
+	if err := enc.SetConfig(bad); !errors.Is(err, av1.ErrEncoderInvalidConfig) {
+		t.Fatalf("SetConfig invalid err=%v want %v", err, av1.ErrEncoderInvalidConfig)
+	}
+	if enc.Config() != keepConfig || enc.State() != keepState {
+		t.Fatalf("invalid SetConfig mutated config/state config=%+v want=%+v state=%+v want=%+v", enc.Config(), keepConfig, enc.State(), keepState)
+	}
+}
+
 func TestPublicWebRTCEncoderPictureHeaderTemporalUnitsForFrames(t *testing.T) {
 	cfg := av1.EncoderConfig{
 		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},

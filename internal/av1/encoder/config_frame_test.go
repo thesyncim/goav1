@@ -615,6 +615,52 @@ func TestWebRTCControllerSettingsMatrixKeyInterval(t *testing.T) {
 	}
 }
 
+func TestWebRTCEncoderStateReconfigureControls(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 1280, Height: 720},
+		Scalability:       ScalabilityModeL1T2,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    1200,
+		TargetBitrateKbps: 700,
+	}
+	_, state, err := WebRTCKeyFrameTemporalUnitForState(cfg, WebRTCEncoderState{NextFrameID: 20})
+	if err != nil {
+		t.Fatalf("key: %v", err)
+	}
+	delta, state, err := WebRTCDeltaFrameTemporalUnitForState(cfg, state)
+	if err != nil {
+		t.Fatalf("delta: %v", err)
+	}
+	if delta.FrameNum != 1 || state.DeltaPictureIndex != 2 {
+		t.Fatalf("warm state delta=%+v state=%+v", delta, state)
+	}
+
+	controlChange := cfg
+	controlChange.MaxFramerate = Rational{Num: 60, Den: 1}
+	controlChange.MinBitrateKbps = 200
+	controlChange.MaxBitrateKbps = 1800
+	controlChange.TargetBitrateKbps = 1100
+	unit, next, err := WebRTCNextTemporalUnitForState(controlChange, state, false)
+	if err != nil {
+		t.Fatalf("control reconfigure: %v", err)
+	}
+	if !unit.Delta || unit.Key || unit.DeltaUnit.FrameNum != 1 || next.DeltaPictureIndex != 3 {
+		t.Fatalf("control reconfigure unit=%+v next=%+v", unit, next)
+	}
+
+	structureChange := controlChange
+	structureChange.Scalability = ScalabilityModeS2T2
+	unit, next, err = WebRTCNextTemporalUnitForState(structureChange, next, false)
+	if err != nil {
+		t.Fatalf("structure reconfigure: %v", err)
+	}
+	if !unit.Key || unit.Delta || unit.KeyUnit.FrameNum != 2 ||
+		!unit.KeyUnit.Control.HasDependencyStructure || next.DeltaPictureIndex != 1 {
+		t.Fatalf("structure reconfigure unit=%+v next=%+v", unit, next)
+	}
+}
+
 func assertWebRTCControllerReferenceModel(t *testing.T, cfg Config) {
 	t.Helper()
 	normalized, err := SetWebRTCSVCConfig(cfg, 0, 0)

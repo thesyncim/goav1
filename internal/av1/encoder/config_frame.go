@@ -418,7 +418,11 @@ func WebRTCNextTemporalUnitForState(config Config, state WebRTCEncoderState, for
 	if err != nil {
 		return WebRTCPictureTemporalUnit{}, WebRTCEncoderState{}, err
 	}
-	if forceKeyFrame || webRTCEncoderStateNeedsKey(config, state) {
+	needsKey, err := webRTCEncoderStateNeedsKey(config, state)
+	if err != nil {
+		return WebRTCPictureTemporalUnit{}, WebRTCEncoderState{}, err
+	}
+	if forceKeyFrame || needsKey {
 		key, next, err := WebRTCKeyFrameTemporalUnitForState(config, state)
 		if err != nil {
 			return WebRTCPictureTemporalUnit{}, WebRTCEncoderState{}, err
@@ -432,11 +436,18 @@ func WebRTCNextTemporalUnitForState(config Config, state WebRTCEncoderState, for
 	return WebRTCPictureTemporalUnit{Delta: true, DeltaUnit: delta}, next, nil
 }
 
-func webRTCEncoderStateNeedsKey(config Config, state WebRTCEncoderState) bool {
+func webRTCEncoderStateNeedsKey(config Config, state WebRTCEncoderState) (bool, error) {
 	if !state.DependencyStructureState.Valid || state.DeltaPictureIndex == 0 {
-		return true
+		return true, nil
 	}
-	return config.KeyFrameInterval > 0 && state.DeltaPictureIndex >= uint64(config.KeyFrameInterval)
+	if config.KeyFrameInterval > 0 && state.DeltaPictureIndex >= uint64(config.KeyFrameInterval) {
+		return true, nil
+	}
+	structure, err := WebRTCFrameDependencyStructureForConfig(config)
+	if err != nil {
+		return false, err
+	}
+	return state.DependencyStructureState.Structure != structure, nil
 }
 
 func WebRTCDeltaFrameTemporalUnitForState(config Config, state WebRTCEncoderState) (WebRTCDeltaFrameTemporalUnit, WebRTCEncoderState, error) {
