@@ -423,8 +423,11 @@ payloads. The friendly `RTCEncoder` pixel path exposes `EncodePicture` for
 multi-spatial WebRTC output in simulcast and key-only/key-shift SVC modes: it
 downscales the 8-bit I420 source into active spatial layers, emits one
 RTP-frame-ready AV1 output per layer, and stamps the dependency descriptors.
-Full delta-inter-layer SVC modes are rejected by the pixel surface until the
-AV1 payloads encode matching inter-layer references.
+`RTCEncoder.SetConfig` applies bitrate, framerate, and supported scalability
+changes atomically; changes that alter layer geometry or dependency structure
+make the next picture a key picture. Full delta-inter-layer SVC modes are
+rejected by the pixel surface until the AV1 payloads encode matching inter-layer
+references.
 
 The framework dry-run tests
 (`internal/av1/testvector/libaom_oracle_test.go`) exercise the

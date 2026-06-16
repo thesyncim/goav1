@@ -128,7 +128,7 @@ pool, and result storage. The executable examples in `example_test.go` and
 | Post filters | Loop filter, CDEF, super-resolution, loop restoration, and film grain are wired into the high-level decode/output path |
 | SVC | L1T2/L2T1/L2T2 oracle vectors pass through the framework path; public integration guidance lives in [docs/svc.md](docs/svc.md) |
 | Tile groups | Single and multi-tile groups pass current strict-MD5 gates; tile-list OBUs parse but playback/reconstruction is not wired yet |
-| Encoder | Functional realtime 8-bit I420 WebRTC encoder with fixed-quality/CBR, forced keyframes, L1T1/L1T2/L1T3 temporal layering, multi-spatial `RTCEncoder.EncodePicture` for simulcast/key-only SVC modes, tile columns, golden references, RTP payload packetization, and dependency descriptors; lower-level WebRTC controls cover the W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, and pinned-libwebrtc L2T2_KEY_SHIFT templates |
+| Encoder | Functional realtime 8-bit I420 WebRTC encoder with fixed-quality/CBR, forced keyframes, L1T1/L1T2/L1T3 temporal layering, runtime bitrate/framerate/scalability reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for simulcast/key-only SVC modes, tile columns, golden references, RTP payload packetization, and dependency descriptors; lower-level WebRTC controls cover the W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, and pinned-libwebrtc L2T2_KEY_SHIFT templates |
 | SIMD/assembly | CPU-dispatch skeleton plus initial amd64/arm64 motion kernels; broader transform/CDEF/restoration kernels are still roadmap work |
 
 The full feature matrix, status legend, vector coverage, and forward-looking
@@ -148,11 +148,13 @@ There are two public encoder surfaces:
   accepts 8-bit I420 input. `RTCEncoder.Encode` emits one single-spatial-layer
   AV1 temporal unit per call; `RTCEncoder.EncodePicture` emits one
   RTP-frame-ready output per active spatial layer for WebRTC simulcast and
-  key-only/key-shift SVC modes. Full delta-inter-layer SVC modes are rejected
-  by this pixel surface until the AV1 payloads encode matching inter-layer
-  references. `RTCFrame.AppendRTPPackets` packetizes each frame into AV1 RTP
-  payload bodies and matching per-packet dependency descriptors using
-  caller-owned buffers.
+  key-only/key-shift SVC modes. `RTCEncoder.SetConfig` applies bitrate,
+  framerate, and supported scalability changes atomically; changes that alter
+  layer geometry or dependency structure make the next picture a key picture.
+  Full delta-inter-layer SVC modes are rejected by this pixel surface until the
+  AV1 payloads encode matching inter-layer references. `RTCFrame.AppendRTPPackets`
+  packetizes each frame into AV1 RTP payload bodies and matching per-packet
+  dependency descriptors using caller-owned buffers.
 - `WebRTCEncoder` is the lower-level control/metadata surface for WebRTC
   picture scheduling. It validates the W3C AV1 SVC mode vocabulary
   (`L*T*`, `L*T*h`, `L*T*_KEY`, `L*T*_KEY_SHIFT`, and `S*T*`/`S*T*h`
@@ -173,11 +175,11 @@ overflow, shifts, or ABI-shaped state.
 
 The realtime encoder is now functional. `goav1.VideoEncoder` turns 4:2:0
 frames into AV1 temporal units under fixed quality or CBR rate control, with
-forced keyframes, L1T2 temporal layering, parallel tile columns, golden
+forced keyframes, L1T2/L1T3 temporal layering, parallel tile columns, golden
 reference anchors, and access to the exact reconstruction a conformant
 decoder produces; `goav1.RTCEncoder` wraps the same engine with per-frame RTP
-dependency descriptors and caller-owned RTP payload packetization. Every emitted
-stream decodes bit-exactly to the
+dependency descriptors, caller-owned RTP payload packetization, and runtime
+WebRTC control reconfiguration. Every emitted stream decodes bit-exactly to the
 encoder's own reconstruction in this package's decoder and in aomdec/dav1d
 (enforced by the test gates), and steady-state encoding allocates a handful
 of objects per frame. See `ExampleVideoEncoder` and `ExampleRTCEncoder` for

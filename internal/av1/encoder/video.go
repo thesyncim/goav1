@@ -301,21 +301,57 @@ func (e *VideoEncoder) SetTileColumns(cols int) {
 // encoder starts in the middle of the configured qindex range and adjusts the
 // working qindex after every frame from the bit-budget buffer.
 func NewVideoEncoderCBR(width, height int, rc RateControlConfig) (*VideoEncoder, error) {
-	if rc.TargetBitsPerSecond <= 0 || rc.FramesPerSecond <= 0 {
-		return nil, fmt.Errorf("encoder: invalid rate control target %d bps @ %d fps", rc.TargetBitsPerSecond, rc.FramesPerSecond)
-	}
-	if rc.MinQIndex == 0 || rc.MaxQIndex <= rc.MinQIndex {
-		return nil, fmt.Errorf("encoder: invalid qindex range [%d, %d]", rc.MinQIndex, rc.MaxQIndex)
+	perFrameBits, err := rateControlPerFrameBits(rc)
+	if err != nil {
+		return nil, err
 	}
 	e, err := NewVideoEncoder(width, height, rc.MinQIndex/2+rc.MaxQIndex/2)
 	if err != nil {
 		return nil, err
 	}
 	e.rcEnabled = true
-	e.rcPerFrameBits = rc.TargetBitsPerSecond / rc.FramesPerSecond
+	e.rcPerFrameBits = perFrameBits
 	e.rcMinQ = rc.MinQIndex
 	e.rcMaxQ = rc.MaxQIndex
 	return e, nil
+}
+
+func rateControlPerFrameBits(rc RateControlConfig) (int, error) {
+	if rc.TargetBitsPerSecond <= 0 || rc.FramesPerSecond <= 0 {
+		return 0, fmt.Errorf("encoder: invalid rate control target %d bps @ %d fps", rc.TargetBitsPerSecond, rc.FramesPerSecond)
+	}
+	if rc.MinQIndex == 0 || rc.MaxQIndex <= rc.MinQIndex {
+		return 0, fmt.Errorf("encoder: invalid qindex range [%d, %d]", rc.MinQIndex, rc.MaxQIndex)
+	}
+	perFrameBits := rc.TargetBitsPerSecond / rc.FramesPerSecond
+	if perFrameBits <= 0 {
+		perFrameBits = 1
+	}
+	return perFrameBits, nil
+}
+
+// SetRateControlConfig atomically updates the CBR target used for future
+// frames without disturbing reference state.
+func (e *VideoEncoder) SetRateControlConfig(rc RateControlConfig) error {
+	if e == nil {
+		return fmt.Errorf("encoder: nil video encoder")
+	}
+	perFrameBits, err := rateControlPerFrameBits(rc)
+	if err != nil {
+		return err
+	}
+	e.rcEnabled = true
+	e.rcPerFrameBits = perFrameBits
+	e.rcMinQ = rc.MinQIndex
+	e.rcMaxQ = rc.MaxQIndex
+	if e.qIndex < e.rcMinQ {
+		e.qIndex = e.rcMinQ
+	} else if e.qIndex > e.rcMaxQ {
+		e.qIndex = e.rcMaxQ
+	}
+	e.rcBuffer = 0
+	e.rcRecentBits = [2]int{}
+	return nil
 }
 
 // rcUpdate feeds one frame's actual size into the leaky-bucket controller and
@@ -411,6 +447,27 @@ func (e *VideoEncoder) keyframeQIndex() uint8 {
 // QIndex reports the working qindex the next frame will use.
 func (e *VideoEncoder) QIndex() uint8 {
 	return e.qIndex
+}
+
+// Close waits for background work to finish and releases persistent workers.
+func (e *VideoEncoder) Close() error {
+	if e == nil {
+		return nil
+	}
+	if err := e.joinFilter(); err != nil {
+		return err
+	}
+	if e.tileWork != nil {
+		close(e.tileWork)
+		e.tileWork = nil
+		e.tileWorkers = 0
+	}
+	if e.filterWork != nil {
+		close(e.filterWork)
+		e.filterWork = nil
+		e.filterStarted = false
+	}
+	return nil
 }
 
 // SetTemporalLayers selects the temporal-layer count: 1 (default) or 2 for

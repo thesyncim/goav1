@@ -295,9 +295,10 @@ ship under `internal/av1/testdata/libaom/`.
 
 - **Encoder.** The friendly realtime encoder emits AV1 bitstreams for 8-bit I420
   WebRTC use, with fixed-quality/CBR, forced keyframes, L1T1/L1T2/L1T3 temporal
-  layering, multi-spatial `RTCEncoder.EncodePicture` for simulcast/key-only SVC
-  modes, tile columns, golden references, RTP payload packetization, and
-  dependency descriptors. The lower-level WebRTC encoder surface validates the
+  layering, runtime bitrate/framerate/scalability reconfiguration, multi-spatial
+  `RTCEncoder.EncodePicture` for simulcast/key-only SVC modes, tile columns,
+  golden references, RTP payload packetization, and dependency descriptors. The
+  lower-level WebRTC encoder surface validates the
   W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures,
   dependency-descriptor decode-target grids, W3C key-shift temporal schedules,
   and the pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates for

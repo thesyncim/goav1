@@ -391,6 +391,96 @@ func TestPublicRTCEncoderRejectsDeltaInterLayerPixelMode(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderSetConfigReconfigure(t *testing.T) {
+	const w, h = 640, 360
+	cw, ch := w/2, h/2
+	makeFrame := func(n int) goav1.I420Frame {
+		f := goav1.I420Frame{
+			Y: make([]byte, w*h), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
+			YStride: w, ChromaStride: cw, Width: w, Height: h,
+		}
+		for i := range f.Y {
+			f.Y[i] = uint8(45 + (i+n*11)%160)
+		}
+		for i := range f.U {
+			f.U[i] = 119
+			f.V[i] = 132
+		}
+		return f
+	}
+	cfg := goav1.EncoderConfig{
+		Resolution:        goav1.EncoderResolution{Width: w, Height: h},
+		MaxFramerate:      goav1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+		Scalability:       goav1.EncoderScalabilityModeL1T2,
+	}
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	key, err := enc.Encode(makeFrame(0), false)
+	if err != nil {
+		t.Fatalf("key Encode: %v", err)
+	}
+	delta, err := enc.Encode(makeFrame(1), false)
+	if err != nil {
+		t.Fatalf("delta Encode: %v", err)
+	}
+	if !key.Keyframe || delta.Keyframe || key.FrameID != 0 || delta.FrameID != 1 {
+		t.Fatalf("warm key=%+v delta=%+v", key, delta)
+	}
+
+	controlChange := cfg
+	controlChange.MaxFramerate = goav1.EncoderRational{Num: 60, Den: 1}
+	controlChange.MinBitrateKbps = 200
+	controlChange.MaxBitrateKbps = 1200
+	controlChange.TargetBitrateKbps = 900
+	if err := enc.SetConfig(controlChange); err != nil {
+		t.Fatalf("SetConfig control change: %v", err)
+	}
+	delta, err = enc.Encode(makeFrame(2), false)
+	if err != nil {
+		t.Fatalf("delta after control change: %v", err)
+	}
+	if delta.Keyframe || delta.FrameID != 2 || enc.Config().TargetBitrateKbps != 900 {
+		t.Fatalf("control change delta=%+v config=%+v", delta, enc.Config())
+	}
+
+	structureChange := controlChange
+	structureChange.Scalability = goav1.EncoderScalabilityModeS2T2
+	if err := enc.SetConfig(structureChange); err != nil {
+		t.Fatalf("SetConfig structure change: %v", err)
+	}
+	picture, err := enc.EncodePicture(makeFrame(3), false)
+	if err != nil {
+		t.Fatalf("key after structure change: %v", err)
+	}
+	if !picture.Keyframe || picture.FrameNum != 2 ||
+		picture.Frames[0].FrameID != 3 || picture.Frames[1].FrameID != 4 {
+		t.Fatalf("structure change picture=%+v", picture)
+	}
+
+	keepConfig := enc.Config()
+	bad := structureChange
+	bad.Scalability = goav1.EncoderScalabilityModeL2T2
+	if err := enc.SetConfig(bad); !errors.Is(err, goav1.ErrEncoderUnsupported) {
+		t.Fatalf("SetConfig unsupported err=%v want %v", err, goav1.ErrEncoderUnsupported)
+	}
+	if enc.Config() != keepConfig {
+		t.Fatalf("unsupported SetConfig mutated config=%+v want=%+v", enc.Config(), keepConfig)
+	}
+	picture, err = enc.EncodePicture(makeFrame(4), false)
+	if err != nil {
+		t.Fatalf("delta after unsupported config: %v", err)
+	}
+	if picture.Keyframe || picture.FrameNum != 2 ||
+		picture.Frames[0].FrameID != 5 || picture.Frames[1].FrameID != 6 {
+		t.Fatalf("post-unsupported picture=%+v", picture)
+	}
+}
+
 func cloneRTCPictureData(p *goav1.RTCPicture) {
 	for i := 0; i < p.FrameNum; i++ {
 		p.Frames[i].Data = append([]byte(nil), p.Frames[i].Data...)

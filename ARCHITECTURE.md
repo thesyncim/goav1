@@ -1134,7 +1134,7 @@ roll-up.
 | `show_frame=0` / non-displayable      | Supported via reference slot tracking.           |
 | Annex B / IVF / RTP intake            | Complete.                                        |
 | SVC streams                           | Parsed and decoded through the framework path; L1T2/L2T1/L2T2 strict-MD5 gates pass with multi-pool surface routing and scaled inter prediction. See [docs/svc.md](docs/svc.md). |
-| Realtime pixel encoder                | Functional for 8-bit I420 WebRTC streams, including L1T1/L1T2/L1T3, multi-spatial `RTCEncoder.EncodePicture` for simulcast/key-only SVC modes, RTP payload packetization, and dependency descriptors. |
+| Realtime pixel encoder                | Functional for 8-bit I420 WebRTC streams, including L1T1/L1T2/L1T3, runtime bitrate/framerate/scalability reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for simulcast/key-only SVC modes, RTP payload packetization, and dependency descriptors. |
 | WebRTC encoder control/metadata       | W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, full decode-target grids, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT dependency templates, and RTP packet spans for caller-supplied frame payloads. |
 
 ### Not yet implemented

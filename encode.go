@@ -391,6 +391,24 @@ func NewRTCEncoderWithConfig(cfg EncoderConfig) (*RTCEncoder, error) {
 	return &RTCEncoder{stream: stream}, nil
 }
 
+// Config returns the normalized lower-level WebRTC encoder config.
+func (e *RTCEncoder) Config() EncoderConfig {
+	if e == nil || e.stream == nil {
+		return EncoderConfig{}
+	}
+	return e.stream.Config()
+}
+
+// SetConfig atomically updates bitrate, framerate, and supported scalability
+// settings. Changes that alter layer geometry or dependency structure make the
+// next encoded picture a key picture while preserving frame IDs.
+func (e *RTCEncoder) SetConfig(cfg EncoderConfig) error {
+	if e == nil || e.stream == nil {
+		return fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	return e.stream.SetConfig(cfg)
+}
+
 // Encode encodes one frame with its dependency descriptor. The returned Data
 // has the same lifetime as VideoEncoder.Encode; copy it before retaining or
 // sending asynchronously.
