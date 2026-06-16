@@ -251,7 +251,8 @@ type RTCFrame struct {
 }
 
 // RTCPicture is one encoded WebRTC picture. Single-spatial streams have one
-// frame; spatial SVC/simulcast streams have one frame per active spatial layer.
+// frame; supported key-only SVC and simulcast streams have one frame per active
+// spatial layer.
 type RTCPicture struct {
 	Frames   [EncoderWebRTCMaxSpatialLayers]RTCFrame
 	FrameNum int
@@ -377,7 +378,8 @@ func NewRTCEncoder(cfg VideoEncoderConfig) (*RTCEncoder, error) {
 
 // NewRTCEncoderWithConfig creates a WebRTC encoder from the lower-level WebRTC
 // encoder config. Use EncodePicture when the selected scalability mode has more
-// than one spatial layer.
+// than one spatial layer. Full delta-inter-layer SVC modes are rejected until
+// the pixel encoder emits matching AV1 inter-layer references.
 func NewRTCEncoderWithConfig(cfg EncoderConfig) (*RTCEncoder, error) {
 	stream, err := encoder.NewWebRTCStreamConfig(cfg)
 	if err != nil {

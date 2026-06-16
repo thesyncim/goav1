@@ -1,6 +1,7 @@
 package goav1_test
 
 import (
+	"errors"
 	"math/rand"
 	"testing"
 
@@ -373,6 +374,20 @@ func TestPublicRTCEncoderEncodePictureKeyShiftSpatial(t *testing.T) {
 		if n != len(tus) {
 			t.Fatalf("spatial %d decoded %d frames, want %d", spatial, n, len(tus))
 		}
+	}
+}
+
+func TestPublicRTCEncoderRejectsDeltaInterLayerPixelMode(t *testing.T) {
+	_, err := goav1.NewRTCEncoderWithConfig(goav1.EncoderConfig{
+		Resolution:        goav1.EncoderResolution{Width: 640, Height: 360},
+		MaxFramerate:      goav1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+		Scalability:       goav1.EncoderScalabilityModeL2T2,
+	})
+	if !errors.Is(err, goav1.ErrEncoderUnsupported) {
+		t.Fatalf("NewRTCEncoderWithConfig L2T2 err=%v want %v", err, goav1.ErrEncoderUnsupported)
 	}
 }
 

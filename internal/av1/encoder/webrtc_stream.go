@@ -104,12 +104,16 @@ func NewWebRTCStreamLayers(width, height int, rc RateControlConfig, temporalLaye
 
 // NewWebRTCStreamConfig creates a WebRTC stream from the lower-level WebRTC
 // encoder config. The pixel encoder currently accepts 8-bit profile-0 I420
-// under CBR; all WebRTC scalability modes whose spatial resolutions fit that
-// input format are packetized with the matching dependency metadata.
+// under CBR. Multi-spatial pixel output is supported for modes whose delta
+// frames do not require AV1 inter-layer prediction: simulcast and key-only SVC
+// modes, including key-shift schedules.
 func NewWebRTCStreamConfig(config Config) (*WebRTCStream, error) {
 	normalized, err := SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
 	if err != nil {
 		return nil, err
+	}
+	if !webRTCPixelScalabilitySupported(normalized) {
+		return nil, ErrUnsupported
 	}
 	if normalized.Profile != Profile0 || normalized.BitDepth != 8 || normalized.RateControl != RateControlCBR {
 		return nil, ErrUnsupported
@@ -145,6 +149,13 @@ func NewWebRTCStreamConfig(config Config) (*WebRTCStream, error) {
 		stream.encoders[i] = enc
 	}
 	return &stream, nil
+}
+
+func webRTCPixelScalabilitySupported(config Config) bool {
+	if config.SpatialLayerCount <= 1 {
+		return true
+	}
+	return config.Scalability.IsSimulcast() || config.Scalability.UsesKeyFrameInterLayerDependency()
 }
 
 // SetGoldenInterval forwards the golden-reference refresh policy to every

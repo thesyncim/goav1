@@ -128,7 +128,7 @@ pool, and result storage. The executable examples in `example_test.go` and
 | Post filters | Loop filter, CDEF, super-resolution, loop restoration, and film grain are wired into the high-level decode/output path |
 | SVC | L1T2/L2T1/L2T2 oracle vectors pass through the framework path; public integration guidance lives in [docs/svc.md](docs/svc.md) |
 | Tile groups | Single and multi-tile groups pass current strict-MD5 gates; tile-list OBUs parse but playback/reconstruction is not wired yet |
-| Encoder | Functional realtime 8-bit I420 WebRTC encoder with fixed-quality/CBR, forced keyframes, L1T1/L1T2/L1T3 temporal layering, multi-spatial `RTCEncoder.EncodePicture`, tile columns, golden references, RTP payload packetization, and dependency descriptors; lower-level WebRTC controls cover the W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, and pinned-libwebrtc L2T2_KEY_SHIFT templates |
+| Encoder | Functional realtime 8-bit I420 WebRTC encoder with fixed-quality/CBR, forced keyframes, L1T1/L1T2/L1T3 temporal layering, multi-spatial `RTCEncoder.EncodePicture` for simulcast/key-only SVC modes, tile columns, golden references, RTP payload packetization, and dependency descriptors; lower-level WebRTC controls cover the W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, and pinned-libwebrtc L2T2_KEY_SHIFT templates |
 | SIMD/assembly | CPU-dispatch skeleton plus initial amd64/arm64 motion kernels; broader transform/CDEF/restoration kernels are still roadmap work |
 
 The full feature matrix, status legend, vector coverage, and forward-looking
@@ -147,10 +147,12 @@ There are two public encoder surfaces:
 - `VideoEncoder` / `RTCEncoder` is the friendly realtime pixel encoder. It
   accepts 8-bit I420 input. `RTCEncoder.Encode` emits one single-spatial-layer
   AV1 temporal unit per call; `RTCEncoder.EncodePicture` emits one
-  RTP-frame-ready output per active spatial layer for WebRTC SVC/simulcast
-  modes. `RTCFrame.AppendRTPPackets` packetizes each frame into AV1 RTP payload
-  bodies and matching per-packet dependency descriptors using caller-owned
-  buffers.
+  RTP-frame-ready output per active spatial layer for WebRTC simulcast and
+  key-only/key-shift SVC modes. Full delta-inter-layer SVC modes are rejected
+  by this pixel surface until the AV1 payloads encode matching inter-layer
+  references. `RTCFrame.AppendRTPPackets` packetizes each frame into AV1 RTP
+  payload bodies and matching per-packet dependency descriptors using
+  caller-owned buffers.
 - `WebRTCEncoder` is the lower-level control/metadata surface for WebRTC
   picture scheduling. It validates the W3C AV1 SVC mode vocabulary
   (`L*T*`, `L*T*h`, `L*T*_KEY`, `L*T*_KEY_SHIFT`, and `S*T*`/`S*T*h`
@@ -159,14 +161,14 @@ There are two public encoder surfaces:
   `L2T2_KEY_SHIFT` dependency templates, and RTP packet spans for
   already-produced frame payloads.
 
-Multi-spatial pixel output currently uses independent per-spatial encoders with
-WebRTC dependency metadata; AV1 inter-layer predictive coding for compression
-efficiency, high-bit-depth input encoding, and non-4:2:0 input encoding remain
-open. Encoder correctness and control behavior should continue to be ported
-from pinned libaom/libwebrtc source; speed-sensitive architecture should be
-checked against pinned SVT-AV1 before local invention. New encoder code, and
-decoder code touched while optimizing it, should preserve upstream C integer
-width/signedness where it affects layout,
+Multi-spatial pixel output currently uses independent per-spatial encoders for
+simulcast and key-only/key-shift SVC metadata. AV1 inter-layer predictive coding
+for full SVC compression efficiency, high-bit-depth input encoding, and
+non-4:2:0 input encoding remain open. Encoder correctness and control behavior
+should continue to be ported from pinned libaom/libwebrtc source;
+speed-sensitive architecture should be checked against pinned SVT-AV1 before
+local invention. New encoder code, and decoder code touched while optimizing
+it, should preserve upstream C integer width/signedness where it affects layout,
 overflow, shifts, or ABI-shaped state.
 
 The realtime encoder is now functional. `goav1.VideoEncoder` turns 4:2:0

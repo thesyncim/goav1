@@ -420,11 +420,11 @@ writing:
 
 The WebRTC control row is metadata/control support for already-produced frame
 payloads. The friendly `RTCEncoder` pixel path exposes `EncodePicture` for
-multi-spatial WebRTC output: it downscales the 8-bit I420 source into active
-spatial layers, emits one RTP-frame-ready AV1 output per layer, and stamps the
-matching dependency descriptors. Those spatial outputs are currently encoded
-independently; AV1 inter-layer predictive coding for compression efficiency is
-separate encoder work.
+multi-spatial WebRTC output in simulcast and key-only/key-shift SVC modes: it
+downscales the 8-bit I420 source into active spatial layers, emits one
+RTP-frame-ready AV1 output per layer, and stamps the dependency descriptors.
+Full delta-inter-layer SVC modes are rejected by the pixel surface until the
+AV1 payloads encode matching inter-layer references.
 
 The framework dry-run tests
 (`internal/av1/testvector/libaom_oracle_test.go`) exercise the
