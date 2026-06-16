@@ -969,8 +969,9 @@ func (e *WebRTCEncoder) Config() EncoderConfig {
 }
 
 // SetConfig atomically updates the WebRTC control config. Changes that alter
-// the AV1 sequence header reset reference/dependency state so the next temporal
-// unit is a key unit while preserving frame number and order-hint continuity.
+// the AV1 sequence header or dependency structure reset reference/dependency
+// state so the next temporal unit is a key unit while preserving frame number
+// and order-hint continuity.
 func (e *WebRTCEncoder) SetConfig(config EncoderConfig) error {
 	if e == nil {
 		return ErrEncoderInvalidConfig
@@ -984,7 +985,13 @@ func (e *WebRTCEncoder) SetConfig(config EncoderConfig) error {
 		return err
 	}
 	prevSeq, prevSeqErr := internalencoder.SequenceHeaderForConfig(e.config)
-	if prevSeqErr != nil || prevSeq != seq {
+	newStructure, err := internalencoder.WebRTCFrameDependencyStructureForConfig(normalized)
+	if err != nil {
+		return err
+	}
+	prevStructure, prevStructureErr := internalencoder.WebRTCFrameDependencyStructureForConfig(e.config)
+	if prevSeqErr != nil || prevSeq != seq ||
+		prevStructureErr != nil || prevStructure != newStructure {
 		e.state = encoderWebRTCStateForNextKey(e.state)
 	}
 	e.config = normalized

@@ -3,6 +3,8 @@ package encoder
 import (
 	"errors"
 	"testing"
+
+	internalrtp "github.com/thesyncim/goav1/internal/av1/rtp"
 )
 
 func TestWebRTCStreamEncoderOptions(t *testing.T) {
@@ -94,6 +96,50 @@ func TestWebRTCStreamConfigPixelScalabilityModeMatrix(t *testing.T) {
 	}
 }
 
+func TestWebRTCStreamDescriptorStateMatrix(t *testing.T) {
+	for mode := ScalabilityMode(0); mode < scalabilityModeCount; mode++ {
+		t.Run(mode.String(), func(t *testing.T) {
+			cfg, supported := webRTCStreamDescriptorMatrixConfig(mode)
+			if !supported {
+				t.Skip("pixel stream intentionally rejects delta inter-layer SVC")
+			}
+			stream, err := NewWebRTCStreamConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewWebRTCStreamConfig(%s): %v", mode, err)
+			}
+			src := testWebRTCStreamFrame(int(cfg.Resolution.Width), int(cfg.Resolution.Height))
+			var receiver internalrtp.DependencyDescriptorState
+
+			key, err := stream.EncodePicture(src, false)
+			if err != nil {
+				t.Fatalf("key EncodePicture: %v", err)
+			}
+			if !key.Keyframe {
+				t.Fatalf("first picture is not key: %+v", key)
+			}
+			assertWebRTCStreamPictureDependencyDescriptors(t, &receiver, key)
+
+			controlChange := stream.Config()
+			controlChange.MaxFramerate = Rational{Num: 60, Den: 1}
+			controlChange.MinBitrateKbps += 10
+			controlChange.MaxBitrateKbps += 200
+			controlChange.TargetBitrateKbps = (controlChange.MinBitrateKbps + controlChange.MaxBitrateKbps) / 2
+			beforeFrameID := stream.state.NextFrameID
+			if err := stream.SetConfig(controlChange); err != nil {
+				t.Fatalf("SetConfig control change: %v", err)
+			}
+			delta, err := stream.EncodePicture(src, false)
+			if err != nil {
+				t.Fatalf("delta EncodePicture after control change: %v", err)
+			}
+			if delta.Keyframe || delta.Frames[0].Info.FrameID != beforeFrameID {
+				t.Fatalf("control change forced key or skipped id: picture=%+v before=%d", delta, beforeFrameID)
+			}
+			assertWebRTCStreamPictureDependencyDescriptors(t, &receiver, delta)
+		})
+	}
+}
+
 func TestWebRTCStreamSetConfigReconfigure(t *testing.T) {
 	const w, h = 640, 360
 	cfg := Config{
@@ -165,6 +211,91 @@ func TestWebRTCStreamSetConfigReconfigure(t *testing.T) {
 	}
 	if stream.config != keepConfig || stream.state != keepState {
 		t.Fatalf("unsupported SetConfig mutated config/state config=%+v want=%+v state=%+v want=%+v", stream.config, keepConfig, stream.state, keepState)
+	}
+}
+
+func webRTCStreamDescriptorMatrixConfig(mode ScalabilityMode) (Config, bool) {
+	spatial, _, _, ok := mode.Layers()
+	if !ok {
+		return Config{}, false
+	}
+	if spatial > 1 && !mode.IsSimulcast() && !mode.UsesKeyFrameInterLayerDependency() {
+		return Config{}, false
+	}
+	cfg := Config{
+		Resolution:        Resolution{Width: 192, Height: 128},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    80,
+		MaxBitrateKbps:    500,
+		TargetBitrateKbps: 300,
+		Scalability:       mode,
+	}
+	switch spatial {
+	case 2:
+		cfg.Resolution = Resolution{Width: 640, Height: 360}
+		cfg.MinBitrateKbps = 100
+		cfg.MaxBitrateKbps = 1000
+		cfg.TargetBitrateKbps = 650
+	case 3:
+		cfg.Resolution = Resolution{Width: 1008, Height: 576}
+		cfg.MinBitrateKbps = 150
+		cfg.MaxBitrateKbps = 1800
+		cfg.TargetBitrateKbps = 1100
+	}
+	return cfg, true
+}
+
+func assertWebRTCStreamPictureDependencyDescriptors(t *testing.T, receiver *internalrtp.DependencyDescriptorState, picture WebRTCEncodedPicture) {
+	t.Helper()
+	if picture.FrameNum == 0 || picture.FrameNum > WebRTCMaxSpatialLayers {
+		t.Fatalf("invalid picture frame num=%d", picture.FrameNum)
+	}
+	for i := uint8(0); i < picture.FrameNum; i++ {
+		frame := picture.Frames[i]
+		parsed, consumed, err := receiver.Parse(frame.Descriptor)
+		if err != nil {
+			t.Fatalf("frame %d dependency descriptor parse: %v", i, err)
+		}
+		if consumed != len(frame.Descriptor) ||
+			parsed.Mandatory.FrameNumber != uint16(frame.Info.FrameID) ||
+			!parsed.Mandatory.FirstPacketInFrame ||
+			!parsed.Mandatory.LastPacketInFrame {
+			t.Fatalf("frame %d parsed mandatory=%+v consumed=%d len=%d info=%+v", i, parsed.Mandatory, consumed, len(frame.Descriptor), frame.Info)
+		}
+		if parsed.HasAttachedStructure != frame.AttachDependencyStructure {
+			t.Fatalf("frame %d attached=%v want %v", i, parsed.HasAttachedStructure, frame.AttachDependencyStructure)
+		}
+		if frame.AttachDependencyStructure &&
+			(!receiver.Valid ||
+				parsed.AttachedStructure.NumDecodeTargets != frame.Structure.NumDecodeTargets ||
+				parsed.AttachedStructure.NumChains != frame.Structure.NumChains ||
+				parsed.AttachedStructure.TemplateNum != frame.Structure.TemplateNum ||
+				parsed.AttachedStructure.ResolutionNum != frame.Structure.ResolutionNum) {
+			t.Fatalf("frame %d attached structure parsed=%+v encoder=%+v receiver=%+v", i, parsed.AttachedStructure, frame.Structure, receiver)
+		}
+		deps := parsed.FrameDependencies
+		if deps.SpatialID != frame.Info.SpatialID || deps.TemporalID != frame.Info.TemporalID ||
+			deps.DTINum != frame.Info.DTINum || deps.FrameDiffNum != frame.Info.DependencyNum {
+			t.Fatalf("frame %d deps=%+v info=%+v", i, deps, frame.Info)
+		}
+		for target := uint8(0); target < frame.Info.DTINum; target++ {
+			if deps.DTIs[target] != internalrtp.DependencyDescriptorDecodeTargetIndication(frame.Info.DTIs[target]) {
+				t.Fatalf("frame %d target %d dti=%v want %v", i, target, deps.DTIs[target], frame.Info.DTIs[target])
+			}
+		}
+		for dep := uint8(0); dep < frame.Info.DependencyNum; dep++ {
+			wantDiff := uint16(frame.Info.FrameID - frame.Info.Dependencies[dep])
+			if deps.FrameDiffs[dep] != wantDiff {
+				t.Fatalf("frame %d dep %d diff=%d want %d info=%+v", i, dep, deps.FrameDiffs[dep], wantDiff, frame.Info)
+			}
+		}
+		if parsed.HasResolution {
+			resolution := frame.Structure.Resolutions[frame.Info.SpatialID]
+			if parsed.Resolution.Width != uint16(resolution.Width) ||
+				parsed.Resolution.Height != uint16(resolution.Height) {
+				t.Fatalf("frame %d resolution=%+v want %+v", i, parsed.Resolution, resolution)
+			}
+		}
 	}
 }
 

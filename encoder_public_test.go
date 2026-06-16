@@ -1932,9 +1932,43 @@ func TestPublicWebRTCEncoderSetConfigReconfigure(t *testing.T) {
 		t.Fatalf("structure change unit=%+v before=%+v state=%+v", unit, before, enc.State())
 	}
 
+	unit, err = enc.NextTemporalUnit(false)
+	if err != nil {
+		t.Fatalf("warm same-shape delta: %v", err)
+	}
+	if !unit.Delta || unit.Key || unit.DeltaUnit.FrameNum != 2 {
+		t.Fatalf("warm same-shape unit=%+v", unit)
+	}
+	sameShapeChange := enc.Config()
+	sameShapeChange.Scalability = av1.EncoderScalabilityModeL2T2
+	before = enc.State()
+	if before.DeltaPictureIndex == 0 || !before.DependencyStructureState.Valid {
+		t.Fatalf("warm same-shape state=%+v", before)
+	}
+	if err := enc.SetConfig(sameShapeChange); err != nil {
+		t.Fatalf("SetConfig same-shape structure change: %v", err)
+	}
+	afterSet := enc.State()
+	if afterSet.NextFrameID != before.NextFrameID ||
+		afterSet.NextOrderHint != before.NextOrderHint ||
+		afterSet.DeltaPictureIndex != 0 ||
+		afterSet.DependencyStructureState.Valid {
+		t.Fatalf("same-shape SetConfig state=%+v before=%+v", afterSet, before)
+	}
+	unit, err = enc.NextTemporalUnit(false)
+	if err != nil {
+		t.Fatalf("NextTemporalUnit after same-shape structure change: %v", err)
+	}
+	if !unit.Key || unit.Delta || unit.KeyUnit.FrameNum != 2 ||
+		!unit.KeyUnit.Control.HasDependencyStructure ||
+		enc.State().NextFrameID != before.NextFrameID+2 ||
+		enc.State().DeltaPictureIndex != 1 {
+		t.Fatalf("same-shape structure change unit=%+v before=%+v state=%+v", unit, before, enc.State())
+	}
+
 	keepConfig := enc.Config()
 	keepState := enc.State()
-	bad := structureChange
+	bad := enc.Config()
 	bad.TargetBitrateKbps = bad.MaxBitrateKbps + 1
 	if err := enc.SetConfig(bad); !errors.Is(err, av1.ErrEncoderInvalidConfig) {
 		t.Fatalf("SetConfig invalid err=%v want %v", err, av1.ErrEncoderInvalidConfig)
