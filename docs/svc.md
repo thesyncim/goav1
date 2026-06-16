@@ -419,8 +419,11 @@ writing:
 | Strict every-frame parity                           | Passing for the committed SVC vectors; broader SVC corpus expansion remains open. |
 
 The WebRTC control row is metadata/control support for already-produced frame
-payloads. The friendly `RTCEncoder` pixel path remains single-spatial-layer
-L1T1/L1T2/L1T3 today; spatial-SVC and simulcast pixel generation are still
+payloads. The friendly `RTCEncoder` pixel path exposes `EncodePicture` for
+multi-spatial WebRTC output: it downscales the 8-bit I420 source into active
+spatial layers, emits one RTP-frame-ready AV1 output per layer, and stamps the
+matching dependency descriptors. Those spatial outputs are currently encoded
+independently; AV1 inter-layer predictive coding for compression efficiency is
 separate encoder work.
 
 The framework dry-run tests

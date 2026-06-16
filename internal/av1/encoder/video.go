@@ -53,6 +53,7 @@ type VideoEncoder struct {
 	frameCtxT1     frameCDFs
 	haveCtxT1      bool
 	frameIndex     int
+	lastTemporalID uint8
 	t1Recon        SourceFrame420
 	lastRecon      SourceFrame420
 
@@ -108,9 +109,10 @@ type VideoEncoder struct {
 	// Golden anchor: slot 1 holds an older high-quality reference refreshed
 	// every goldenEvery base-layer frames (0 disables block-level use). The
 	// encoder keeps its own copy for motion search.
-	golden           SourceFrame420
-	goldenEvery      int
-	sinceGoldenFresh int
+	golden            SourceFrame420
+	goldenEvery       int
+	sinceGoldenFresh  int
+	sceneCutKeyframes bool
 
 	decisionStatsEnabled bool
 	decisionStats        EncoderDecisionStats
@@ -151,7 +153,7 @@ func NewVideoEncoder(width, height int, qIndex uint8) (*VideoEncoder, error) {
 	e := &VideoEncoder{
 		width: codedW, height: codedH,
 		renderWidth: width, renderHeight: height,
-		qIndex: qIndex, goldenEvery: 16,
+		qIndex: qIndex, goldenEvery: 16, sceneCutKeyframes: true,
 	}
 	e.tileColsLog2 = defaultTileColsLog2(codedW)
 	return e, nil
@@ -192,6 +194,12 @@ func (e *VideoEncoder) padSource(src SourceFrame420) SourceFrame420 {
 // golden-anchor refreshes; zero disables golden references entirely.
 func (e *VideoEncoder) SetGoldenInterval(n int) {
 	e.goldenEvery = n
+}
+
+// SetSceneCutKeyframes controls whether the encoder may promote a delta frame
+// to a keyframe when the motion search sees a hard cut.
+func (e *VideoEncoder) SetSceneCutKeyframes(enabled bool) {
+	e.sceneCutKeyframes = enabled
 }
 
 // SetDecisionStatsEnabled toggles encoder decision diagnostics. The default
@@ -445,6 +453,13 @@ func (e *VideoEncoder) TemporalID() uint8 {
 // aliases an encoder-owned buffer reused by the next call; callers that
 // retain it must copy.
 func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, error) {
+	return e.EncodeWithTemporalID(src, forceKey, e.TemporalID())
+}
+
+// EncodeWithTemporalID encodes one frame while forcing the temporal layer used
+// for an inter frame. It is used by WebRTC SVC controllers whose per-spatial
+// temporal schedules differ from the encoder's default low-delay cadence.
+func (e *VideoEncoder) EncodeWithTemporalID(src SourceFrame420, forceKey bool, temporalID uint8) ([]byte, bool, error) {
 	if src.Width != e.renderWidth || src.Height != e.renderHeight {
 		return nil, false, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", src.Width, src.Height, e.renderWidth, e.renderHeight)
 	}
@@ -496,6 +511,7 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		// contexts (primary_ref NONE); chaining arms from its own state.
 		e.haveCtx = false
 		e.haveCtxT1 = false
+		e.lastTemporalID = 0
 		// A shown keyframe refreshes every reference slot, so slot 1 (the
 		// GOLDEN name) now holds the keyframe; seed the search copy.
 		if e.goldenEvery > 0 {
@@ -505,21 +521,24 @@ func (e *VideoEncoder) Encode(src SourceFrame420, forceKey bool) ([]byte, bool, 
 		e.rcUpdate(len(tu) * 8)
 		return tu, true, nil
 	}
+	if temporalID >= uint8(max(e.temporalLayers, 1)) {
+		return nil, false, ErrInvalidFrame
+	}
 	// The hierarchical coarse search doubles as the scene-cut detector:
 	// when most regions find no quarter-res match within reach, predictive
 	// coding would cost near-keyframe bits at worse quality, so restart the
 	// chain with a real keyframe instead. The spacing guard keeps noisy
 	// content from forcing key storms.
 	e.hme.run(src)
-	if e.frameIndex >= 4 && e.hme.cutDetected() {
+	if e.sceneCutKeyframes && e.frameIndex >= 4 && e.hme.cutDetected() {
 		return e.Encode(src, true)
 	}
-	tid := e.TemporalID()
-	tu, err := e.encodePReusing(src, tid)
+	tu, err := e.encodePReusing(src, temporalID)
 	if err != nil {
 		return nil, false, err
 	}
 	e.frameIndex++
+	e.lastTemporalID = temporalID
 	e.rcUpdate(len(tu) * 8)
 	return tu, false, nil
 }
@@ -570,6 +589,7 @@ func (e *VideoEncoder) Prewarm() error {
 	e.haveCtx = false
 	e.haveCtxT1 = false
 	e.frameIndex = 0
+	e.lastTemporalID = 0
 	e.qIndex = savedQ
 	e.rcBuffer = 0
 	e.rcRecentBits = [2]int{}
@@ -753,7 +773,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	// to chain from; T2 leaves update nothing. L1T2 keeps its single
 	// droppable layer in t1Recon.
 	isT1 := e.temporalLayers == 3 && temporalID == 1
-	afterT1 := e.temporalLayers == 3 && temporalID == 2 && e.frameIndex%4 == 3
+	afterT1 := e.temporalLayers == 3 && temporalID == 2 && e.lastTemporalID == 1
 	var out *SourceFrame420
 	switch {
 	case !droppable:

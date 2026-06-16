@@ -1134,14 +1134,15 @@ roll-up.
 | `show_frame=0` / non-displayable      | Supported via reference slot tracking.           |
 | Annex B / IVF / RTP intake            | Complete.                                        |
 | SVC streams                           | Parsed and decoded through the framework path; L1T2/L2T1/L2T2 strict-MD5 gates pass with multi-pool surface routing and scaled inter prediction. See [docs/svc.md](docs/svc.md). |
-| Realtime pixel encoder                | Functional for 8-bit I420 single-spatial-layer L1T1/L1T2/L1T3 WebRTC streams, including RTP payload packetization and dependency descriptors. |
+| Realtime pixel encoder                | Functional for 8-bit I420 WebRTC streams, including L1T1/L1T2/L1T3, multi-spatial `RTCEncoder.EncodePicture`, RTP payload packetization, and dependency descriptors. |
 | WebRTC encoder control/metadata       | W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, full decode-target grids, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT dependency templates, and RTP packet spans for caller-supplied frame payloads. |
 
 ### Not yet implemented
 
-- **Spatial-SVC/simulcast pixel encoding.** The lower-level WebRTC scheduling
-  surface handles SVC mode metadata and dependency descriptors, but the friendly
-  realtime pixel encoder still emits one single-spatial-layer frame per call.
+- **Inter-layer predictive SVC coding.** The friendly realtime pixel encoder can
+  emit multi-spatial WebRTC pictures, but spatial layers are encoded
+  independently today; AV1 inter-layer prediction for compression efficiency is
+  still open.
 - **High-bit-depth and non-4:2:0 pixel encoding.** The decoder covers broader
   formats; the realtime pixel encoder currently accepts 8-bit I420 only.
 - **Full WebRTC media transport.** The package emits AV1 RTP payload bodies and
@@ -1154,9 +1155,9 @@ roll-up.
 
 ### Open Work
 
-1. **Broaden the WebRTC realtime encoder.** Add spatial-SVC/simulcast pixel
-   encoding, high-bit-depth/non-4:2:0 inputs, richer tuning controls, and
-   broader libaom/libwebrtc/SVT oracle coverage.
+1. **Broaden the WebRTC realtime encoder.** Add inter-layer predictive SVC
+   coding, high-bit-depth/non-4:2:0 inputs, richer tuning controls, and broader
+   libaom/libwebrtc/SVT oracle coverage.
 2. **Broaden decoder coverage.** Keep expanding profile-2, 12-bit,
    malformed/adversarial, fuzz, and real-world corpus coverage beyond the
    committed vector gates.

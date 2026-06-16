@@ -294,15 +294,15 @@ ship under `internal/av1/testdata/libaom/`.
 ### Cross-cutting items not enumerated above
 
 - **Encoder.** The friendly realtime encoder emits AV1 bitstreams for 8-bit I420
-  single-spatial-layer WebRTC use, with fixed-quality/CBR, forced keyframes,
-  L1T1/L1T2/L1T3 temporal layering, tile columns, golden references, RTP payload
-  packetization, and dependency descriptors. The lower-level WebRTC encoder
-  surface validates the W3C AV1 SVC mode vocabulary, temporal/spatial
-  dependency structures, dependency-descriptor decode-target grids, W3C
-  key-shift temporal schedules, and the pinned-libwebrtc `L2T2_KEY_SHIFT`
-  dependency templates for caller-supplied frame payloads.
-  Spatial-SVC/simulcast pixel encoding, high-bit-depth input
-  encoding, and non-4:2:0 input encoding remain open.
+  WebRTC use, with fixed-quality/CBR, forced keyframes, L1T1/L1T2/L1T3 temporal
+  layering, multi-spatial `RTCEncoder.EncodePicture`, tile columns, golden
+  references, RTP payload packetization, and dependency descriptors. The
+  lower-level WebRTC encoder surface validates the W3C AV1 SVC mode vocabulary,
+  temporal/spatial dependency structures, dependency-descriptor decode-target
+  grids, W3C key-shift temporal schedules, and the pinned-libwebrtc
+  `L2T2_KEY_SHIFT` dependency templates for caller-supplied frame payloads.
+  Inter-layer predictive SVC coding, high-bit-depth input encoding, and
+  non-4:2:0 input encoding remain open.
 - **SIMD / assembly backends.** Selected hot DSP paths have amd64/arm64 SIMD or
   assembly dispatch; coverage is still expanding behind pure-Go fallbacks.
 - **Work-stealing scheduler.** `threading.Pool` does deterministic

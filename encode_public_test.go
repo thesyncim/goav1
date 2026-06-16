@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	goav1 "github.com/thesyncim/goav1"
+	"github.com/thesyncim/goav1/internal/av1/obu"
 )
 
 // TestPublicVideoEncoderRoundTrip drives the public encoding surface end to
@@ -271,6 +272,135 @@ func TestPublicRTCFrameAppendRTPPackets(t *testing.T) {
 	}
 	if wrote != len(expected) || gotOBUs != obuCount || string(assembled[:wrote]) != string(expected) {
 		t.Fatalf("assembled len=%d obus=%d match=%v want len=%d obus=%d", wrote, gotOBUs, string(assembled[:wrote]) == string(expected), len(expected), obuCount)
+	}
+}
+
+func TestPublicRTCEncoderEncodePictureKeyShiftSpatial(t *testing.T) {
+	const w, h = 640, 360
+	cw, ch := w/2, h/2
+	enc, err := goav1.NewRTCEncoderWithConfig(goav1.EncoderConfig{
+		Resolution:        goav1.EncoderResolution{Width: w, Height: h},
+		MaxFramerate:      goav1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    200,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 600,
+		Scalability:       goav1.EncoderScalabilityModeL2T2_KEY_SHIFT,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	makeFrame := func(n int) goav1.I420Frame {
+		f := goav1.I420Frame{
+			Y: make([]byte, w*h), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
+			YStride: w, ChromaStride: cw, Width: w, Height: h,
+		}
+		for i := range f.Y {
+			f.Y[i] = uint8(55 + (i/7+n*9)%160)
+		}
+		for i := range f.U {
+			f.U[i] = 118
+			f.V[i] = 134
+		}
+		return f
+	}
+
+	key, err := enc.EncodePicture(makeFrame(0), false)
+	if err != nil {
+		t.Fatalf("key EncodePicture: %v", err)
+	}
+	if key.FrameNum != 2 || !key.Keyframe {
+		t.Fatalf("key FrameNum=%d Keyframe=%v, want 2 true", key.FrameNum, key.Keyframe)
+	}
+	cloneRTCPictureData(&key)
+	for i := 0; i < key.FrameNum; i++ {
+		frame := key.Frames[i]
+		if frame.SpatialID != uint8(i) || frame.TemporalID != 0 || frame.FrameID != uint64(i) || !frame.Keyframe {
+			t.Fatalf("key frame %d metadata S%d T%d id=%d key=%v", i, frame.SpatialID, frame.TemporalID, frame.FrameID, frame.Keyframe)
+		}
+		if len(frame.DependencyDescriptor) == 0 || !rtpPayloadHasLayerOBU(t, frame.Data, 0, uint8(i)) {
+			t.Fatalf("key frame %d missing descriptor or layer OBUs", i)
+		}
+	}
+
+	delta0, err := enc.EncodePicture(makeFrame(1), false)
+	if err != nil {
+		t.Fatalf("delta0 EncodePicture: %v", err)
+	}
+	cloneRTCPictureData(&delta0)
+	delta1, err := enc.EncodePicture(makeFrame(2), false)
+	if err != nil {
+		t.Fatalf("delta1 EncodePicture: %v", err)
+	}
+	cloneRTCPictureData(&delta1)
+	want0 := [2]uint8{0, 1}
+	want1 := [2]uint8{1, 0}
+	for i := 0; i < 2; i++ {
+		if delta0.Frames[i].TemporalID != want0[i] || delta0.Frames[i].SpatialID != uint8(i) {
+			t.Fatalf("delta0 frame %d S%d T%d, want S%d T%d", i, delta0.Frames[i].SpatialID, delta0.Frames[i].TemporalID, i, want0[i])
+		}
+		if delta1.Frames[i].TemporalID != want1[i] || delta1.Frames[i].SpatialID != uint8(i) {
+			t.Fatalf("delta1 frame %d S%d T%d, want S%d T%d", i, delta1.Frames[i].SpatialID, delta1.Frames[i].TemporalID, i, want1[i])
+		}
+		if !rtpPayloadHasLayerOBU(t, delta0.Frames[i].Data, want0[i], uint8(i)) ||
+			!rtpPayloadHasLayerOBU(t, delta1.Frames[i].Data, want1[i], uint8(i)) {
+			t.Fatalf("delta frame %d missing expected OBU layer IDs", i)
+		}
+	}
+
+	for spatial := 0; spatial < 2; spatial++ {
+		tus := [][]byte{
+			append([]byte(nil), key.Frames[spatial].Data...),
+			append([]byte(nil), delta0.Frames[spatial].Data...),
+			append([]byte(nil), delta1.Frames[spatial].Data...),
+		}
+		dec, err := goav1.NewDecoder(tus)
+		if err != nil {
+			t.Fatalf("spatial %d decoder: %v", spatial, err)
+		}
+		n := 0
+		for {
+			batch, ok, err := dec.DecodeNext()
+			if err != nil {
+				dec.Close()
+				t.Fatalf("spatial %d decode: %v", spatial, err)
+			}
+			if !ok {
+				break
+			}
+			n += len(batch)
+		}
+		dec.Close()
+		if n != len(tus) {
+			t.Fatalf("spatial %d decoded %d frames, want %d", spatial, n, len(tus))
+		}
+	}
+}
+
+func cloneRTCPictureData(p *goav1.RTCPicture) {
+	for i := 0; i < p.FrameNum; i++ {
+		p.Frames[i].Data = append([]byte(nil), p.Frames[i].Data...)
+		p.Frames[i].DependencyDescriptor = append([]byte(nil), p.Frames[i].DependencyDescriptor...)
+	}
+}
+
+func rtpPayloadHasLayerOBU(t *testing.T, data []byte, temporalID uint8, spatialID uint8) bool {
+	t.Helper()
+	it := obu.NewLowOverheadIterator(data)
+	for {
+		unit, ok, err := it.Next()
+		if err != nil {
+			t.Fatalf("parse low-overhead OBU: %v", err)
+		}
+		if !ok {
+			return false
+		}
+		switch unit.Header.Type {
+		case obu.TypeFrameHeader, obu.TypeFrame, obu.TypeTileGroup, obu.TypeRedundantFrameHeader:
+			if unit.Header.TemporalID != temporalID || unit.Header.SpatialID != spatialID {
+				t.Fatalf("OBU %v layer T%d S%d, want T%d S%d", unit.Header.Type, unit.Header.TemporalID, unit.Header.SpatialID, temporalID, spatialID)
+			}
+			return true
+		}
 	}
 }
 

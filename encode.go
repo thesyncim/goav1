@@ -235,6 +235,10 @@ type RTCFrame struct {
 	Keyframe bool
 	// TemporalID is the frame's temporal layer.
 	TemporalID uint8
+	// SpatialID is the frame's spatial layer.
+	SpatialID uint8
+	// FrameID is the dependency-descriptor frame number.
+	FrameID uint64
 	// DependencyDescriptor is the serialized RTP dependency descriptor for a
 	// single-packet frame; keyframes attach the dependency structure. It is
 	// freshly allocated and owned by the caller. Use AppendRTPPackets when the
@@ -244,6 +248,14 @@ type RTCFrame struct {
 	frameInfo                 encoder.WebRTCGenericFrameInfo
 	dependencyStructure       encoder.WebRTCFrameDependencyStructure
 	attachDependencyStructure bool
+}
+
+// RTCPicture is one encoded WebRTC picture. Single-spatial streams have one
+// frame; spatial SVC/simulcast streams have one frame per active spatial layer.
+type RTCPicture struct {
+	Frames   [EncoderWebRTCMaxSpatialLayers]RTCFrame
+	FrameNum int
+	Keyframe bool
 }
 
 // RTCFrameRTPScratchSize reports caller-owned scratch needed to packetize one
@@ -363,6 +375,20 @@ func NewRTCEncoder(cfg VideoEncoderConfig) (*RTCEncoder, error) {
 	return &RTCEncoder{stream: stream}, nil
 }
 
+// NewRTCEncoderWithConfig creates a WebRTC encoder from the lower-level WebRTC
+// encoder config. Use EncodePicture when the selected scalability mode has more
+// than one spatial layer.
+func NewRTCEncoderWithConfig(cfg EncoderConfig) (*RTCEncoder, error) {
+	stream, err := encoder.NewWebRTCStreamConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := stream.Prewarm(); err != nil {
+		return nil, err
+	}
+	return &RTCEncoder{stream: stream}, nil
+}
+
 // Encode encodes one frame with its dependency descriptor. The returned Data
 // has the same lifetime as VideoEncoder.Encode; copy it before retaining or
 // sending asynchronously.
@@ -377,15 +403,44 @@ func (e *RTCEncoder) Encode(frame I420Frame, forceKey bool) (RTCFrame, error) {
 	if err != nil {
 		return RTCFrame{}, err
 	}
+	return rtcFrameFromInternal(out), nil
+}
+
+// EncodePicture encodes one WebRTC picture. The returned frames have the same
+// lifetime as VideoEncoder.Encode; copy frame Data before retaining or sending
+// asynchronously.
+func (e *RTCEncoder) EncodePicture(frame I420Frame, forceKey bool) (RTCPicture, error) {
+	if e == nil || e.stream == nil {
+		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	if err := validateI420Frame(frame); err != nil {
+		return RTCPicture{}, err
+	}
+	out, err := e.stream.EncodePicture(frame, forceKey)
+	if err != nil {
+		return RTCPicture{}, err
+	}
+	var picture RTCPicture
+	picture.FrameNum = int(out.FrameNum)
+	picture.Keyframe = out.Keyframe
+	for i := 0; i < picture.FrameNum; i++ {
+		picture.Frames[i] = rtcFrameFromInternal(out.Frames[i])
+	}
+	return picture, nil
+}
+
+func rtcFrameFromInternal(out encoder.WebRTCEncodedFrame) RTCFrame {
 	return RTCFrame{
 		Data:                      out.TU,
 		Keyframe:                  out.Keyframe,
 		TemporalID:                out.Info.TemporalID,
+		SpatialID:                 out.Info.SpatialID,
+		FrameID:                   out.Info.FrameID,
 		DependencyDescriptor:      out.Descriptor,
 		frameInfo:                 out.Info,
 		dependencyStructure:       out.Structure,
 		attachDependencyStructure: out.AttachDependencyStructure,
-	}, nil
+	}
 }
 
 func validateI420Frame(frame I420Frame) error {
