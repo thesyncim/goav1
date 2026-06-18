@@ -377,17 +377,86 @@ func TestPublicRTCEncoderEncodePictureKeyShiftSpatial(t *testing.T) {
 	}
 }
 
-func TestPublicRTCEncoderRejectsDeltaInterLayerPixelMode(t *testing.T) {
-	_, err := goav1.NewRTCEncoderWithConfig(goav1.EncoderConfig{
-		Resolution:        goav1.EncoderResolution{Width: 640, Height: 360},
-		MaxFramerate:      goav1.EncoderRational{Num: 30, Den: 1},
-		MinBitrateKbps:    100,
-		MaxBitrateKbps:    800,
-		TargetBitrateKbps: 500,
-		Scalability:       goav1.EncoderScalabilityModeL2T2,
-	})
-	if !errors.Is(err, goav1.ErrEncoderUnsupported) {
-		t.Fatalf("NewRTCEncoderWithConfig L2T2 err=%v want %v", err, goav1.ErrEncoderUnsupported)
+func TestPublicRTCEncoderRejectsDeltaInterLayerPixelModeMatrix(t *testing.T) {
+	groups := []struct {
+		name      string
+		width     int
+		height    int
+		supported goav1.EncoderScalabilityMode
+		rejected  []goav1.EncoderScalabilityMode
+	}{
+		{
+			name:      "two-spatial",
+			width:     640,
+			height:    360,
+			supported: goav1.EncoderScalabilityModeS2T2,
+			rejected: []goav1.EncoderScalabilityMode{
+				goav1.EncoderScalabilityModeL2T1,
+				goav1.EncoderScalabilityModeL2T1h,
+				goav1.EncoderScalabilityModeL2T2,
+				goav1.EncoderScalabilityModeL2T2h,
+				goav1.EncoderScalabilityModeL2T3,
+				goav1.EncoderScalabilityModeL2T3h,
+			},
+		},
+		{
+			name:      "three-spatial",
+			width:     960,
+			height:    540,
+			supported: goav1.EncoderScalabilityModeS3T2h,
+			rejected: []goav1.EncoderScalabilityMode{
+				goav1.EncoderScalabilityModeL3T1,
+				goav1.EncoderScalabilityModeL3T1h,
+				goav1.EncoderScalabilityModeL3T2,
+				goav1.EncoderScalabilityModeL3T2h,
+				goav1.EncoderScalabilityModeL3T3,
+				goav1.EncoderScalabilityModeL3T3h,
+			},
+		},
+	}
+	for _, group := range groups {
+		t.Run(group.name, func(t *testing.T) {
+			for _, mode := range group.rejected {
+				cfg := publicRTCMatrixConfig(group.width, group.height, mode)
+				if _, err := goav1.NewRTCEncoderWithConfig(cfg); !errors.Is(err, goav1.ErrEncoderUnsupported) {
+					t.Fatalf("NewRTCEncoderWithConfig(%s) err=%v want %v", mode, err, goav1.ErrEncoderUnsupported)
+				}
+			}
+
+			cfg := publicRTCMatrixConfig(group.width, group.height, group.supported)
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", group.supported, err)
+			}
+			var receiver goav1.RTPDependencyDescriptorState
+			nextFrameID := uint64(0)
+			key, err := enc.EncodePicture(publicRTCMatrixFrame(group.width, group.height, 0), false)
+			if err != nil {
+				t.Fatalf("key EncodePicture: %v", err)
+			}
+			assertPublicRTCPictureDescriptors(t, &receiver, cfg, key, true, &nextFrameID)
+			delta, err := enc.EncodePicture(publicRTCMatrixFrame(group.width, group.height, 1), false)
+			if err != nil {
+				t.Fatalf("delta EncodePicture: %v", err)
+			}
+			assertPublicRTCPictureDescriptors(t, &receiver, cfg, delta, false, &nextFrameID)
+
+			for i, mode := range group.rejected {
+				bad := publicRTCMatrixConfig(group.width, group.height, mode)
+				keepConfig := enc.Config()
+				if err := enc.SetConfig(bad); !errors.Is(err, goav1.ErrEncoderUnsupported) {
+					t.Fatalf("SetConfig(%s) err=%v want %v", mode, err, goav1.ErrEncoderUnsupported)
+				}
+				if enc.Config() != keepConfig {
+					t.Fatalf("SetConfig(%s) mutated config=%+v want=%+v", mode, enc.Config(), keepConfig)
+				}
+				post, err := enc.EncodePicture(publicRTCMatrixFrame(group.width, group.height, i+2), false)
+				if err != nil {
+					t.Fatalf("delta after rejected %s: %v", mode, err)
+				}
+				assertPublicRTCPictureDescriptors(t, &receiver, cfg, post, false, &nextFrameID)
+			}
+		})
 	}
 }
 
