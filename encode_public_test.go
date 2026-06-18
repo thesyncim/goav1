@@ -314,7 +314,7 @@ func TestPublicRTCEncoderEncodePictureKeyShiftSpatial(t *testing.T) {
 	assertPublicRTCSharedReferenceStreamDecodes(t, publicRTCPictureFramesInOrder(key, delta0, delta1))
 }
 
-func TestPublicRTCEncoderSupportsFullSVCModeMatrix(t *testing.T) {
+func TestPublicRTCEncoderSupportsWebRTCPixelModeMatrix(t *testing.T) {
 	groups := []struct {
 		name   string
 		width  int
@@ -322,29 +322,61 @@ func TestPublicRTCEncoderSupportsFullSVCModeMatrix(t *testing.T) {
 		modes  []goav1.EncoderScalabilityMode
 	}{
 		{
+			name:   "single-spatial",
+			width:  192,
+			height: 128,
+			modes: []goav1.EncoderScalabilityMode{
+				goav1.EncoderScalabilityModeL1T1,
+				goav1.EncoderScalabilityModeL1T2,
+				goav1.EncoderScalabilityModeL1T3,
+			},
+		},
+		{
 			name:   "two-spatial",
 			width:  640,
 			height: 360,
 			modes: []goav1.EncoderScalabilityMode{
 				goav1.EncoderScalabilityModeL2T1,
 				goav1.EncoderScalabilityModeL2T1h,
+				goav1.EncoderScalabilityModeL2T1_KEY,
 				goav1.EncoderScalabilityModeL2T2,
 				goav1.EncoderScalabilityModeL2T2h,
+				goav1.EncoderScalabilityModeL2T2_KEY,
+				goav1.EncoderScalabilityModeL2T2_KEY_SHIFT,
 				goav1.EncoderScalabilityModeL2T3,
 				goav1.EncoderScalabilityModeL2T3h,
+				goav1.EncoderScalabilityModeL2T3_KEY,
+				goav1.EncoderScalabilityModeL2T3_KEY_SHIFT,
+				goav1.EncoderScalabilityModeS2T1,
+				goav1.EncoderScalabilityModeS2T1h,
+				goav1.EncoderScalabilityModeS2T2,
+				goav1.EncoderScalabilityModeS2T2h,
+				goav1.EncoderScalabilityModeS2T3,
+				goav1.EncoderScalabilityModeS2T3h,
 			},
 		},
 		{
 			name:   "three-spatial",
-			width:  1152,
-			height: 648,
+			width:  1008,
+			height: 576,
 			modes: []goav1.EncoderScalabilityMode{
 				goav1.EncoderScalabilityModeL3T1,
 				goav1.EncoderScalabilityModeL3T1h,
+				goav1.EncoderScalabilityModeL3T1_KEY,
 				goav1.EncoderScalabilityModeL3T2,
 				goav1.EncoderScalabilityModeL3T2h,
+				goav1.EncoderScalabilityModeL3T2_KEY,
+				goav1.EncoderScalabilityModeL3T2_KEY_SHIFT,
 				goav1.EncoderScalabilityModeL3T3,
 				goav1.EncoderScalabilityModeL3T3h,
+				goav1.EncoderScalabilityModeL3T3_KEY,
+				goav1.EncoderScalabilityModeL3T3_KEY_SHIFT,
+				goav1.EncoderScalabilityModeS3T1,
+				goav1.EncoderScalabilityModeS3T1h,
+				goav1.EncoderScalabilityModeS3T2,
+				goav1.EncoderScalabilityModeS3T2h,
+				goav1.EncoderScalabilityModeS3T3,
+				goav1.EncoderScalabilityModeS3T3h,
 			},
 		},
 	}
@@ -592,6 +624,11 @@ func assertPublicRTCPictureDescriptors(t *testing.T, receiver *goav1.RTPDependen
 		wantFrameID := *nextFrameID + uint64(i)
 		if frame.FrameID != wantFrameID || frame.SpatialID != uint8(i) || frame.TemporalID >= temporalLayers || frame.Keyframe != wantKey {
 			t.Fatalf("frame %d metadata=%+v want id=%d spatial=%d key=%v temporal<%d", i, frame, wantFrameID, i, wantKey, temporalLayers)
+		}
+		wantCodedKeyframe := wantKey && (normalized.Scalability.IsSimulcast() || frame.SpatialID == 0)
+		wantLastFrame := i+1 == picture.FrameNum
+		if frame.CodedKeyframe != wantCodedKeyframe || frame.LastFrameInPicture != wantLastFrame {
+			t.Fatalf("frame %d coding metadata=%+v want codedKey=%v last=%v mode=%s", i, frame, wantCodedKeyframe, wantLastFrame, normalized.Scalability)
 		}
 		if len(frame.DependencyDescriptor) == 0 {
 			t.Fatalf("frame %d missing dependency descriptor", i)
