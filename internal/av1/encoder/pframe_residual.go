@@ -63,6 +63,49 @@ func EncodePFrame(src SourceFrame420, ref SourceFrame420, qIndex uint8) ([]byte,
 	return out, recon, nil
 }
 
+// EncodeScaledReferencePFrame encodes src as an inter frame whose LAST
+// reference has different coded dimensions. The returned temporal unit assumes
+// the decoder already holds that smaller or larger reference frame in slot 0.
+func EncodeScaledReferencePFrame(src SourceFrame420, ref SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, error) {
+	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: scaled-reference P-frame requires multiple-of-8 source dimensions, got %dx%d", src.Width, src.Height)
+	}
+	if ref.Width <= 0 || ref.Height <= 0 || ref.Width%8 != 0 || ref.Height%8 != 0 {
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: scaled-reference P-frame requires multiple-of-8 reference dimensions, got %dx%d", ref.Width, ref.Height)
+	}
+	if qIndex == 0 {
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: qindex 0 lossless inter coding is not supported")
+	}
+	if _, err := motion.NewScaleFactors(ref.Width, ref.Height, src.Width, src.Height); err != nil {
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: invalid scaled reference: %w", err)
+	}
+	recon := SourceFrame420{
+		Y:            make([]byte, len(src.Y)),
+		U:            make([]byte, len(src.U)),
+		V:            make([]byte, len(src.V)),
+		YStride:      src.YStride,
+		ChromaStride: src.ChromaStride,
+		Width:        src.Width,
+		Height:       src.Height,
+	}
+	tilePayload, err := encodePFrameTile(src, ref, &recon, qIndex)
+	if err != nil {
+		return nil, SourceFrame420{}, fmt.Errorf("encode tile: %w", err)
+	}
+
+	seq := losslessKeyframeSequence(src.Width, src.Height)
+	header, refState := repeatPFrameHeader(src.Width, src.Height, qIndex, 0x01)
+	refState = referenceStateForFrame(ref.Width, ref.Height)
+	header.References = &refState
+
+	var groupScratch, outScratch []byte
+	out, err := assembleInterTU(seq, header, []TilePayload{{Data: tilePayload}}, 0, &groupScratch, &outScratch)
+	if err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	return out, recon, nil
+}
+
 // assembleInterTU wraps one coded tile into a TD + inter frame header + tile
 // group temporal unit.
 func assembleInterTU(seq SequenceHeader, header InterFrameHeaderParams, tilePayloads []TilePayload, temporalID uint8, groupScratch, outScratch *[]byte) ([]byte, error) {
@@ -358,6 +401,7 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	// av1's sad-per-bit lut formula: full-pel motion search prices one bit
 	// of side information at this many SAD units (q is the dc step over 4).
 	st.sadPerBit = int(0.0418*(dcq/4) + 2.4107)
+	scaledReference := ref.Width != src.Width || ref.Height != src.Height
 
 	scratch := &pc.scratch
 	carrier := &pc.carrier
@@ -467,6 +511,9 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 	decideCore := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {
 			return tile.PartitionNone, nil
+		}
+		if scaledReference {
+			return tile.PartitionSplit, nil
 		}
 		if !haveRight || !haveBottom {
 			return tile.PartitionSplit, nil
@@ -713,83 +760,91 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// imperfect.
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
+	scaledReference := ref.Width != src.Width || ref.Height != src.Height
 	var mv motion.Vector
 	fullSAD := -1
 	sadEpoch := st.sadCacheEpoch
-	switch {
-	case bw != bh:
-		// Rect halves exist only where the partition decider proved the two
-		// child vectors equal; the shared vector and the summed child SADs
-		// describe the half exactly.
-		if bw >= 32 || bh >= 32 {
-			i0 := (lumaPY/16)*st.grid16Cols + lumaPX/16
+	if scaledReference {
+		if err := predictIntoScaled(st.sadScratch[:bw*bh], ref.Y, ref.YStride, ref.Width, ref.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.scaledScratch); err != nil {
+			return fmt.Errorf("scaled reference luma probe: %w", err)
+		}
+		fullSAD = sadRectDualBlock(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, st.sadScratch[:bw*bh], bw, bw, bh)
+	} else {
+		switch {
+		case bw != bh:
+			// Rect halves exist only where the partition decider proved the two
+			// child vectors equal; the shared vector and the summed child SADs
+			// describe the half exactly.
+			if bw >= 32 || bh >= 32 {
+				i0 := (lumaPY/16)*st.grid16Cols + lumaPX/16
+				i1 := i0 + 1
+				if bh > bw {
+					i1 = i0 + st.grid16Cols
+				}
+				if sadCacheValid(st.sad16Grid[i0], sadEpoch) && sadCacheValid(st.sad16Grid[i1], sadEpoch) {
+					mv = st.mv16Grid[i0]
+					fullSAD = sadCacheValue(st.sad16Grid[i0]) + sadCacheValue(st.sad16Grid[i1])
+				}
+				break
+			}
+			i0 := (lumaPY/8)*st.grid8Cols + lumaPX/8
 			i1 := i0 + 1
 			if bh > bw {
-				i1 = i0 + st.grid16Cols
+				i1 = i0 + st.grid8Cols
 			}
-			if sadCacheValid(st.sad16Grid[i0], sadEpoch) && sadCacheValid(st.sad16Grid[i1], sadEpoch) {
-				mv = st.mv16Grid[i0]
-				fullSAD = sadCacheValue(st.sad16Grid[i0]) + sadCacheValue(st.sad16Grid[i1])
+			if sadCacheValid(st.sad8Grid[i0], sadEpoch) && sadCacheValid(st.sad8Grid[i1], sadEpoch) {
+				mv = st.mv8Grid[i0]
+				fullSAD = sadCacheValue(st.sad8Grid[i0]) + sadCacheValue(st.sad8Grid[i1])
 			}
-			break
-		}
-		i0 := (lumaPY/8)*st.grid8Cols + lumaPX/8
-		i1 := i0 + 1
-		if bh > bw {
-			i1 = i0 + st.grid8Cols
-		}
-		if sadCacheValid(st.sad8Grid[i0], sadEpoch) && sadCacheValid(st.sad8Grid[i1], sadEpoch) {
-			mv = st.mv8Grid[i0]
-			fullSAD = sadCacheValue(st.sad8Grid[i0]) + sadCacheValue(st.sad8Grid[i1])
-		}
-	case n == 64:
-		idx := (lumaPY/64)*st.grid64Cols + lumaPX/64
-		if sadCacheValid(st.sad64Grid[idx], sadEpoch) {
-			mv, fullSAD = st.mv64Grid[idx], sadCacheValue(st.sad64Grid[idx])
-		}
-	case n == 32:
-		idx := (lumaPY/32)*st.grid32Cols + lumaPX/32
-		if sadCacheValid(st.sad32Grid[idx], sadEpoch) {
-			mv, fullSAD = st.mv32Grid[idx], sadCacheValue(st.sad32Grid[idx])
-		}
-	case n == 16:
-		idx := (lumaPY/16)*st.grid16Cols + lumaPX/16
-		if sadCacheValid(st.sad16Grid[idx], sadEpoch) {
-			mv, fullSAD = st.mv16Grid[idx], sadCacheValue(st.sad16Grid[idx])
-		}
-	default:
-		if idx := (lumaPY/8)*st.grid8Cols + lumaPX/8; sadCacheValid(st.sad8Grid[idx], sadEpoch) {
-			mv, fullSAD = st.mv8Grid[idx], sadCacheValue(st.sad8Grid[idx])
-		}
-	}
-	if fullSAD < 0 {
-		if bw != bh {
-			return fmt.Errorf("encoder: rect block %+v without scored children", block)
-		}
-		seedDX, seedDY, reach := 0, 0, fullPelReach
-		if st.hme != nil {
-			var trusted bool
-			seedDX, seedDY, trusted = st.hme.seedAt(lumaPX, lumaPY)
-			if trusted {
-				reach = fullPelReachTrusted
+		case n == 64:
+			idx := (lumaPY/64)*st.grid64Cols + lumaPX/64
+			if sadCacheValid(st.sad64Grid[idx], sadEpoch) {
+				mv, fullSAD = st.mv64Grid[idx], sadCacheValue(st.sad64Grid[idx])
+			}
+		case n == 32:
+			idx := (lumaPY/32)*st.grid32Cols + lumaPX/32
+			if sadCacheValid(st.sad32Grid[idx], sadEpoch) {
+				mv, fullSAD = st.mv32Grid[idx], sadCacheValue(st.sad32Grid[idx])
+			}
+		case n == 16:
+			idx := (lumaPY/16)*st.grid16Cols + lumaPX/16
+			if sadCacheValid(st.sad16Grid[idx], sadEpoch) {
+				mv, fullSAD = st.mv16Grid[idx], sadCacheValue(st.sad16Grid[idx])
+			}
+		default:
+			if idx := (lumaPY/8)*st.grid8Cols + lumaPX/8; sadCacheValid(st.sad8Grid[idx], sadEpoch) {
+				mv, fullSAD = st.mv8Grid[idx], sadCacheValue(st.sad8Grid[idx])
 			}
 		}
-		dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, seedDX, seedDY, reach)
-		mv, fullSAD = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}, sad
-	}
-	if bw == bh && fullSAD > n*n*2 {
-		fullMV := mv
-		mv, fullSAD = st.subpelRefine(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, mv, fullSAD)
-		// Periodic textures can alias the full-pel raster into a distant
-		// basin; a second refinement seeded at zero motion recovers the
-		// near-origin subpel optimum when it is better.
-		// The zero probe is cheap; the second subpel refinement only pays
-		// when zero is already competitive with the searched vector.
-		if fullSAD > n*n*2 && (fullMV.Row != 0 || fullMV.Col != 0) {
-			zeroSAD := sadBlock(src.Y, ref.Y, lumaPY*src.YStride+lumaPX, lumaPY*src.YStride+lumaPX, src.YStride, n, 1<<30)
-			if zeroSAD < fullSAD*2 {
-				if zmv, zsad := st.subpelRefine(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, motion.Vector{}, zeroSAD); zsad < fullSAD {
-					mv, fullSAD = zmv, zsad
+		if fullSAD < 0 {
+			if bw != bh {
+				return fmt.Errorf("encoder: rect block %+v without scored children", block)
+			}
+			seedDX, seedDY, reach := 0, 0, fullPelReach
+			if st.hme != nil {
+				var trusted bool
+				seedDX, seedDY, trusted = st.hme.seedAt(lumaPX, lumaPY)
+				if trusted {
+					reach = fullPelReachTrusted
+				}
+			}
+			dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, seedDX, seedDY, reach)
+			mv, fullSAD = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}, sad
+		}
+		if bw == bh && fullSAD > n*n*2 {
+			fullMV := mv
+			mv, fullSAD = st.subpelRefine(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, mv, fullSAD)
+			// Periodic textures can alias the full-pel raster into a distant
+			// basin; a second refinement seeded at zero motion recovers the
+			// near-origin subpel optimum when it is better.
+			// The zero probe is cheap; the second subpel refinement only pays
+			// when zero is already competitive with the searched vector.
+			if fullSAD > n*n*2 && (fullMV.Row != 0 || fullMV.Col != 0) {
+				zeroSAD := sadBlock(src.Y, ref.Y, lumaPY*src.YStride+lumaPX, lumaPY*src.YStride+lumaPX, src.YStride, n, 1<<30)
+				if zeroSAD < fullSAD*2 {
+					if zmv, zsad := st.subpelRefine(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, motion.Vector{}, zeroSAD); zsad < fullSAD {
+						mv, fullSAD = zmv, zsad
+					}
 				}
 			}
 		}
@@ -806,7 +861,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		(bw == 16 && bh == 16) || (bw == 32 && bh == 32) ||
 		(bw == 16 && bh == 8) || (bw == 8 && bh == 16) ||
 		(bw == 32 && bh == 16) || (bw == 16 && bh == 32)
-	if golden != nil && golden.Y != nil && goldenEligible && fullSAD > bw*bh*4 {
+	if !scaledReference && golden != nil && golden.Y != nil && goldenEligible && fullSAD > bw*bh*4 {
 		lastMV, lastSAD := mv, fullSAD
 		var gmv motion.Vector
 		gsad := 1 << 30
@@ -992,14 +1047,27 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			return fmt.Errorf("predict compound v: %w", err)
 		}
 	} else {
-		if err := predictInto(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false); err != nil {
-			return fmt.Errorf("predict luma: %w", err)
-		}
-		if err := predictInto(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true); err != nil {
-			return fmt.Errorf("predict u: %w", err)
-		}
-		if err := predictInto(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true); err != nil {
-			return fmt.Errorf("predict v: %w", err)
+		if refPlanes.Width != src.Width || refPlanes.Height != src.Height {
+			refHalfW, refHalfH := (refPlanes.Width+1)/2, (refPlanes.Height+1)/2
+			if err := predictIntoScaled(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, refPlanes.Width, refPlanes.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.scaledScratch); err != nil {
+				return fmt.Errorf("predict scaled luma: %w", err)
+			}
+			if err := predictIntoScaled(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, refHalfW, refHalfH, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true, &st.scaledScratch); err != nil {
+				return fmt.Errorf("predict scaled u: %w", err)
+			}
+			if err := predictIntoScaled(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, refHalfW, refHalfH, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true, &st.scaledScratch); err != nil {
+				return fmt.Errorf("predict scaled v: %w", err)
+			}
+		} else {
+			if err := predictInto(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false); err != nil {
+				return fmt.Errorf("predict luma: %w", err)
+			}
+			if err := predictInto(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true); err != nil {
+				return fmt.Errorf("predict u: %w", err)
+			}
+			if err := predictInto(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true); err != nil {
+				return fmt.Errorf("predict v: %w", err)
+			}
 		}
 	}
 

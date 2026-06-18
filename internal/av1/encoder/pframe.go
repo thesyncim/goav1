@@ -119,22 +119,7 @@ func interTileInfo(width, height int, log2Cols uint8) (TileInfo, error) {
 }
 
 func repeatPFrameHeader(width, height int, qIndex uint8, refreshFlags uint8) (InterFrameHeaderParams, parser.ReferenceState) {
-	var refs parser.ReferenceState
-	defaultGlobal := parser.DefaultGlobalMotionParams()
-	for i := range parser.RefFrames {
-		refs.Frames[i] = parser.ReferenceFrame{
-			Valid:        true,
-			GlobalMotion: defaultGlobal,
-			Size: parser.FrameSize{
-				CodedWidth:          uint32(width),
-				UpscaledWidth:       uint32(width),
-				Height:              uint32(height),
-				RenderWidth:         uint32(width),
-				RenderHeight:        uint32(height),
-				SuperResDenominator: 8,
-			},
-		}
-	}
+	refs := referenceStateForFrame(width, height)
 	base := losslessKeyframeHeader(width, height)
 	tiles := base.Tile
 	tiles.InterpolationFilter = InterpolationEightTap
@@ -171,6 +156,26 @@ func repeatPFrameHeader(width, height int, qIndex uint8, refreshFlags uint8) (In
 		CDEF:         CDEFParams{Damping: 3},
 	}
 	return header, refs
+}
+
+func referenceStateForFrame(width, height int) parser.ReferenceState {
+	var refs parser.ReferenceState
+	defaultGlobal := parser.DefaultGlobalMotionParams()
+	for i := range parser.RefFrames {
+		refs.Frames[i] = parser.ReferenceFrame{
+			Valid:        true,
+			GlobalMotion: defaultGlobal,
+			Size: parser.FrameSize{
+				CodedWidth:          uint32(width),
+				UpscaledWidth:       uint32(width),
+				Height:              uint32(height),
+				RenderWidth:         uint32(width),
+				RenderHeight:        uint32(height),
+				SuperResDenominator: 8,
+			},
+		}
+	}
+	return refs
 }
 
 // encodeRepeatPFrameTile codes one skipped GLOBALMV LAST block per superblock.
