@@ -101,6 +101,10 @@ func losslessKeyframeSequence(width, height int) SequenceHeader {
 }
 
 func losslessKeyframeHeader(width, height int) IntraFrameHeaderParams {
+	return losslessKeyframeHeaderForSequence(losslessKeyframeSequence(width, height), width, height)
+}
+
+func losslessKeyframeHeaderForSequence(seq SequenceHeader, width, height int) IntraFrameHeaderParams {
 	sbCols := uint16((width + 63) / 64)
 	sbRows := uint16((height + 63) / 64)
 	tiles := TileInfo{
@@ -114,7 +118,7 @@ func losslessKeyframeHeader(width, height int) IntraFrameHeaderParams {
 	}
 	// validateTileInfo requires the caller to restate the derived min/max
 	// tile-log2 bounds; compute them with the package's own derivation.
-	if derived, err := deriveEncoderTileInfo(losslessKeyframeSequence(width, height), uint32(width), uint32(height), tiles); err == nil {
+	if derived, err := deriveEncoderTileInfo(seq, uint32(width), uint32(height), tiles); err == nil {
 		tiles.MinLog2Cols = derived.MinLog2Cols
 		tiles.MaxLog2Cols = derived.MaxLog2Cols
 		tiles.MaxLog2Rows = derived.MaxLog2Rows
@@ -126,6 +130,7 @@ func losslessKeyframeHeader(width, height int) IntraFrameHeaderParams {
 			ShowFrame:          true,
 			ErrorResilientMode: true,
 			ForceIntegerMV:     true, // inferred 1 for key/intra frames
+			FrameSizeOverride:  uint32(width) != seq.MaxFrameWidth || uint32(height) != seq.MaxFrameHeight,
 			PrimaryRefFrame:    EncoderPrimaryRefNone,
 		},
 		Size: IntraFrameSize{

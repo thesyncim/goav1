@@ -8,6 +8,8 @@ import (
 
 	goav1 "github.com/thesyncim/goav1"
 	"github.com/thesyncim/goav1/internal/av1/encoder"
+	"github.com/thesyncim/goav1/internal/av1/obu"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
 // TestEncodeKeyframeDecodeMatchesRecon is the non-lossless end-to-end gate:
@@ -82,6 +84,100 @@ func TestEncodeKeyframeDecodeMatchesRecon(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEncodeKeyframeWithSequenceMaxDecodeMatchesRecon(t *testing.T) {
+	const (
+		w, h       = 64, 48
+		maxW, maxH = 128, 96
+		qIndex     = 72
+	)
+	cw, ch := w/2, h/2
+	src := encoder.SourceFrame420{
+		Y:            make([]byte, w*h),
+		U:            make([]byte, cw*ch),
+		V:            make([]byte, cw*ch),
+		YStride:      w,
+		ChromaStride: cw,
+		Width:        w,
+		Height:       h,
+	}
+	for y := range h {
+		for x := range w {
+			src.Y[y*w+x] = uint8(36 + 3*x + 5*y + x*y)
+		}
+	}
+	for i := range src.U {
+		src.U[i] = uint8(112 + i%17)
+		src.V[i] = uint8(140 - i%19)
+	}
+
+	tu, recon, err := encoder.EncodeKeyframeWithSequenceMax(src, qIndex, maxW, maxH)
+	if err != nil {
+		t.Fatalf("EncodeKeyframeWithSequenceMax: %v", err)
+	}
+	seq, prefix, size := parseKeyframeSequenceAndSize(t, tu)
+	if seq.MaxFrameWidth != maxW || seq.MaxFrameHeight != maxH {
+		t.Fatalf("sequence max=%dx%d want %dx%d", seq.MaxFrameWidth, seq.MaxFrameHeight, maxW, maxH)
+	}
+	if !prefix.FrameSizeOverride || size.UpscaledWidth != w || size.Height != h {
+		t.Fatalf("prefix=%+v size=%+v", prefix, size)
+	}
+
+	dec, err := goav1.NewDecoder([][]byte{tu})
+	if err != nil {
+		t.Fatalf("new decoder: %v", err)
+	}
+	defer dec.Close()
+	frames, err := dec.DecodeAll()
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(frames) != 1 {
+		t.Fatalf("decoded %d frames, want 1", len(frames))
+	}
+	comparePlane(t, "Y", frames[0].Y, recon.Y, w, h, w)
+	comparePlane(t, "U", frames[0].U, recon.U, cw, ch, cw)
+	comparePlane(t, "V", frames[0].V, recon.V, cw, ch, cw)
+}
+
+func parseKeyframeSequenceAndSize(t *testing.T, tu []byte) (parser.SequenceHeader, parser.FrameHeaderPrefix, parser.FrameSize) {
+	t.Helper()
+	var seq parser.SequenceHeader
+	var haveSeq bool
+	it := obu.NewLowOverheadIterator(tu)
+	for {
+		unit, ok, err := it.Next()
+		if err != nil {
+			t.Fatalf("parse OBU: %v", err)
+		}
+		if !ok {
+			break
+		}
+		switch unit.Header.Type {
+		case obu.TypeSequenceHeader:
+			seq, err = parser.ParseSequenceHeader(unit.Payload)
+			if err != nil {
+				t.Fatalf("ParseSequenceHeader: %v", err)
+			}
+			haveSeq = true
+		case obu.TypeFrameHeader:
+			if !haveSeq {
+				t.Fatal("frame header before sequence header")
+			}
+			prefix, err := parser.ParseFrameHeaderPrefix(unit.Payload, seq)
+			if err != nil {
+				t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+			}
+			size, err := parser.ParseIntraFrameSize(unit.Payload, seq, prefix, unit.Header.TemporalID, unit.Header.SpatialID)
+			if err != nil {
+				t.Fatalf("ParseIntraFrameSize: %v", err)
+			}
+			return seq, prefix, size
+		}
+	}
+	t.Fatal("missing frame header")
+	return parser.SequenceHeader{}, parser.FrameHeaderPrefix{}, parser.FrameSize{}
 }
 
 func planePSNR(a, b []byte) float64 {

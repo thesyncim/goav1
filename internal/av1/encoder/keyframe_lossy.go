@@ -36,6 +36,17 @@ func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, e
 	return encodeKeyframeFiltered(src, qIndex, nil, 0, 0, nil, nil, nil)
 }
 
+// EncodeKeyframeWithSequenceMax encodes src as a shown keyframe while keeping
+// the sequence header max dimensions at maxWidth x maxHeight. This is useful
+// for scalable streams whose lower spatial layers are smaller than the shared
+// sequence maximum.
+func EncodeKeyframeWithSequenceMax(src SourceFrame420, qIndex uint8, maxWidth, maxHeight int) ([]byte, SourceFrame420, error) {
+	return encodeKeyframeFilteredTiles(src, qIndex, nil, 0, 0, nil, nil, nil, defaultTileColsLog2(src.Width), keyframeTileOptions{
+		sequenceMaxWidth:  maxWidth,
+		sequenceMaxHeight: maxHeight,
+	})
+}
+
 // encodeKeyframeFiltered encodes the keyframe and, when in-loop filtering is
 // active for this size, runs the deblocking pass over the reconstruction
 // through lf (allocating a frame-local applier when the caller has none).
@@ -54,6 +65,14 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 	}
 	if qIndex == 0 {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: qindex 0 is the lossless path; use EncodeLosslessKeyframe")
+	}
+	seqWidth, seqHeight := src.Width, src.Height
+	if tileOpts.sequenceMaxWidth != 0 || tileOpts.sequenceMaxHeight != 0 {
+		if tileOpts.sequenceMaxWidth <= 0 || tileOpts.sequenceMaxHeight <= 0 ||
+			tileOpts.sequenceMaxWidth < src.Width || tileOpts.sequenceMaxHeight < src.Height {
+			return nil, SourceFrame420{}, fmt.Errorf("encoder: invalid sequence max %dx%d for coded frame %dx%d", tileOpts.sequenceMaxWidth, tileOpts.sequenceMaxHeight, src.Width, src.Height)
+		}
+		seqWidth, seqHeight = tileOpts.sequenceMaxWidth, tileOpts.sequenceMaxHeight
 	}
 	var recon SourceFrame420
 	if reconBuf != nil && reconBuf.Y != nil {
@@ -91,8 +110,8 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 		}
 		lfMap = &lf.filtMap
 	}
-	seq := losslessKeyframeSequence(src.Width, src.Height)
-	header := lossyKeyframeHeader(src.Width, src.Height, qIndex)
+	seq := losslessKeyframeSequence(seqWidth, seqHeight)
+	header := lossyKeyframeHeaderForSequence(seq, src.Width, src.Height, qIndex)
 	if renderW > 0 && (renderW != src.Width || renderH != src.Height) {
 		header.Size.RenderWidth = uint32(renderW)
 		header.Size.RenderHeight = uint32(renderH)
@@ -113,7 +132,7 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 		}
 	}
 	if log2 := tileColsLog2; log2 > 0 {
-		tiles, err := interTileInfo(src.Width, src.Height, log2)
+		tiles, err := interTileInfoForSequence(seq, src.Width, src.Height, log2)
 		if err != nil {
 			return nil, SourceFrame420{}, fmt.Errorf("tile info: %w", err)
 		}
@@ -204,9 +223,11 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 }
 
 type keyframeTileOptions struct {
-	payloads []TilePayload
-	errs     []error
-	stream   *VideoEncoder
+	payloads          []TilePayload
+	errs              []error
+	stream            *VideoEncoder
+	sequenceMaxWidth  int
+	sequenceMaxHeight int
 }
 
 type keyframeTileRun struct {
@@ -260,7 +281,11 @@ func runKeyframeTilesDefault(req keyframeTileRun, tilePC func(t int) *pframeCode
 }
 
 func lossyKeyframeHeader(width, height int, qIndex uint8) IntraFrameHeaderParams {
-	header := losslessKeyframeHeader(width, height)
+	return lossyKeyframeHeaderForSequence(losslessKeyframeSequence(width, height), width, height, qIndex)
+}
+
+func lossyKeyframeHeaderForSequence(seq SequenceHeader, width, height int, qIndex uint8) IntraFrameHeaderParams {
+	header := losslessKeyframeHeaderForSequence(seq, width, height)
 	header.Quantization = QuantizationParams{BaseQIdx: qIndex}
 	header.AllLossless = false
 	header.LoopFilter = LoopFilterParams{

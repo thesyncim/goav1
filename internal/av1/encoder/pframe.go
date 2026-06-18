@@ -82,7 +82,10 @@ func EncodeRepeatPFrame(width, height int, qIndex uint8) ([]byte, error) {
 // parallel; each tile starts from the frame-initial CDFs exactly as the
 // decoder does.
 func interTileInfo(width, height int, log2Cols uint8) (TileInfo, error) {
-	seq := losslessKeyframeSequence(width, height)
+	return interTileInfoForSequence(losslessKeyframeSequence(width, height), width, height, log2Cols)
+}
+
+func interTileInfoForSequence(seq SequenceHeader, width, height int, log2Cols uint8) (TileInfo, error) {
 	derived, err := deriveEncoderTileInfo(seq, uint32(width), uint32(height), TileInfo{})
 	if err != nil {
 		return TileInfo{}, err
