@@ -158,7 +158,7 @@ func predictInterCompoundRefHighBDToConvBuf(out []uint16, ref frame.Plane, bitDe
 		}
 	default:
 		if planeRegionFits(ref, 2, refX, refY, width, height) {
-			predictInterCompoundRefHighBDToConvBufCopyResident(out, ref, refX, refY, width, height, round0, roundOffset)
+			predictInterCompoundRefHighBDToConvBufCopyResidentImpl(out, ref, refX, refY, width, height, round0, roundOffset)
 		} else {
 			predictInterCompoundRefHighBDToConvBufCopyClamped(out, ref, refX, refY, width, height, round0, roundOffset)
 		}
@@ -405,7 +405,9 @@ func predictInterCompoundRefHighBDToConvBufYClamped(out []uint16, ref frame.Plan
 	}
 }
 
-func predictInterCompoundRefHighBDToConvBufCopyResident(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, round0 int, roundOffset int) {
+var predictInterCompoundRefHighBDToConvBufCopyResidentImpl = predictInterCompoundRefHighBDToConvBufCopyResidentPureGo
+
+func predictInterCompoundRefHighBDToConvBufCopyResidentPureGo(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, round0 int, roundOffset int) {
 	bits := 2*filterBits - compoundRound1Bits - round0
 	scale := 1 << bits
 	stride := ref.Stride

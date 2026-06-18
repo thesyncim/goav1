@@ -49,6 +49,12 @@ func compoundCopy8NEONAsm(ctx *compoundCopy8NEONCtx)
 func compoundCopy8NEONAsmW4(ctx *compoundCopy8NEONCtx)
 
 //go:noescape
+func compoundCopyHighBDNEONAsmS4(ctx *compoundCopy8NEONCtx)
+
+//go:noescape
+func compoundCopyHighBDNEONAsmS2(ctx *compoundCopy8NEONCtx)
+
+//go:noescape
 func compoundX8NEONAsm(ctx *compoundFilter8NEONCtx)
 
 //go:noescape
@@ -89,6 +95,28 @@ func predictInterCompoundRef8ToConvBufCopyNEON(out []uint16, ref frame.Plane, re
 		return
 	}
 	compoundCopy8NEONAsm(&ctx)
+}
+
+func predictInterCompoundRefHighBDToConvBufCopyResidentNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, round0 int, roundOffset int) {
+	if (round0 != compoundRound0Bits && round0 != compoundRound0Bits+2) ||
+		width < 8 || width%8 != 0 ||
+		!planeRegionFits(ref, 2, refX, refY, width, height) {
+		predictInterCompoundRefHighBDToConvBufCopyResidentPureGo(out, ref, refX, refY, width, height, round0, roundOffset)
+		return
+	}
+	ctx := compoundCopy8NEONCtx{
+		dst:         &out[0],
+		ref:         &ref.Pix[refY*ref.Stride+refX*2],
+		refStr:      uintptr(ref.Stride),
+		width:       uintptr(width),
+		height:      uintptr(height),
+		roundOffset: uintptr(roundOffset),
+	}
+	if round0 == compoundRound0Bits {
+		compoundCopyHighBDNEONAsmS4(&ctx)
+		return
+	}
+	compoundCopyHighBDNEONAsmS2(&ctx)
 }
 
 func predictInterCompoundRef8ToConvBufXNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, roundOffset int) {
@@ -202,6 +230,7 @@ func init() {
 	if cpu.Detected.NEON {
 		predictInterCompoundRef8ToConvBuf2DImpl = predictInterCompoundRef8ToConvBuf2DNEON
 		predictInterCompoundRef8ToConvBufCopyImpl = predictInterCompoundRef8ToConvBufCopyNEON
+		predictInterCompoundRefHighBDToConvBufCopyResidentImpl = predictInterCompoundRefHighBDToConvBufCopyResidentNEON
 		predictInterCompoundRef8ToConvBufXImpl = predictInterCompoundRef8ToConvBufXNEON
 		predictInterCompoundRef8ToConvBufYImpl = predictInterCompoundRef8ToConvBufYNEON
 	}

@@ -67,6 +67,85 @@ nextRow:
 done:
 	RET
 
+// func compoundCopyHighBDNEONAsmS4(ctx *compoundCopy8NEONCtx)
+//
+// Resident high-bit-depth copy to CONV_BUF. For 10-bit compound prediction
+// ROUND0_BITS is 3, so the copy scale is << 4. The wrapper only routes
+// resident width-multiple-of-eight blocks here.
+TEXT ·compoundCopyHighBDNEONAsmS4(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD C_DST(R0), R1
+	MOVD C_REF(R0), R2
+	MOVD C_REFSTR(R0), R3
+	MOVD C_WIDTH(R0), R5
+	MOVD C_HEIGHT(R0), R6
+	MOVD C_ROUNDOFFSET(R0), R7
+
+	WORD $0x4e020ce4 // dup v4.8h, w7
+
+hccS4RowLoop:
+	CBZ  R6, hccS4Done
+	MOVD R2, R8
+	MOVD R1, R9
+	MOVD R5, R10
+
+hccS4ColLoop:
+	WORD $0x4c407501 // ld1 {v1.8h}, [x8]
+	WORD $0x4f145421 // shl v1.8h, v1.8h, #4
+	WORD $0x4e648421 // add v1.8h, v1.8h, v4.8h
+	WORD $0x4c007521 // st1 {v1.8h}, [x9]
+	ADD  $16, R8, R8
+	ADD  $16, R9, R9
+	SUB  $8, R10, R10
+	CBNZ R10, hccS4ColLoop
+
+	ADD  R3, R2, R2
+	ADD  R5<<1, R1
+	SUB  $1, R6, R6
+	CBNZ R6, hccS4RowLoop
+
+hccS4Done:
+	RET
+
+// func compoundCopyHighBDNEONAsmS2(ctx *compoundCopy8NEONCtx)
+//
+// The 12-bit path uses ROUND0_BITS == 5, leaving a << 2 copy scale before the
+// compound CONV_BUF round offset.
+TEXT ·compoundCopyHighBDNEONAsmS2(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD C_DST(R0), R1
+	MOVD C_REF(R0), R2
+	MOVD C_REFSTR(R0), R3
+	MOVD C_WIDTH(R0), R5
+	MOVD C_HEIGHT(R0), R6
+	MOVD C_ROUNDOFFSET(R0), R7
+
+	WORD $0x4e020ce4 // dup v4.8h, w7
+
+hccS2RowLoop:
+	CBZ  R6, hccS2Done
+	MOVD R2, R8
+	MOVD R1, R9
+	MOVD R5, R10
+
+hccS2ColLoop:
+	WORD $0x4c407501 // ld1 {v1.8h}, [x8]
+	WORD $0x4f125421 // shl v1.8h, v1.8h, #2
+	WORD $0x4e648421 // add v1.8h, v1.8h, v4.8h
+	WORD $0x4c007521 // st1 {v1.8h}, [x9]
+	ADD  $16, R8, R8
+	ADD  $16, R9, R9
+	SUB  $8, R10, R10
+	CBNZ R10, hccS2ColLoop
+
+	ADD  R3, R2, R2
+	ADD  R5<<1, R1
+	SUB  $1, R6, R6
+	CBNZ R6, hccS2RowLoop
+
+hccS2Done:
+	RET
+
 #define X_DST         0
 #define X_REF         8
 #define X_KERNEL      16
