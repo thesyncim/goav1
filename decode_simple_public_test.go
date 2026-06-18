@@ -1094,6 +1094,7 @@ func TestPublicDecoderRTPPayloadRunnerMatchesLowOverhead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
+	defer enc.Close()
 
 	var lowOverheads [][]byte
 	var rtpPayloads [][]byte
@@ -1119,9 +1120,104 @@ func TestPublicDecoderRTPPayloadRunnerMatchesLowOverhead(t *testing.T) {
 	}
 }
 
+func TestPublicDecoderRTPPayloadRunnerRecoversAfterEncoderPacketLoss(t *testing.T) {
+	const width, height = 192, 128
+	enc, err := av1.NewRTCEncoderWithConfig(av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: width, Height: height},
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    120,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 420,
+		Scalability:       av1.EncoderScalabilityModeL1T2,
+	})
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	limits := av1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
+	key0, err := enc.Encode(publicRTCMatrixFrame(width, height, 0), false)
+	if err != nil {
+		t.Fatalf("Encode initial key: %v", err)
+	}
+	key0LowOverhead := append([]byte(nil), key0.Data...)
+	key0Payloads := publicDecoderRTPPayloadsForFrameWithLimits(t, key0, limits)
+
+	delta, err := enc.Encode(publicRTCMatrixFrame(width, height, 1), false)
+	if err != nil {
+		t.Fatalf("Encode dropped delta: %v", err)
+	}
+	deltaPayloads := publicDecoderRTPPayloadsForFrameWithLimits(t, delta, limits)
+	if len(deltaPayloads) < 2 {
+		t.Fatalf("delta frame packetized into %d RTP payloads, want fragmentation", len(deltaPayloads))
+	}
+
+	key2, err := enc.Encode(publicRTCMatrixFrame(width, height, 2), true)
+	if err != nil {
+		t.Fatalf("Encode recovery key: %v", err)
+	}
+	key2LowOverhead := append([]byte(nil), key2.Data...)
+	key2Payloads := publicDecoderRTPPayloadsForFrameWithLimits(t, key2, limits)
+	if len(key2Payloads) == 0 {
+		t.Fatal("recovery key produced no RTP payloads")
+	}
+
+	recoveryPayloads := append(append([][]byte(nil), key0Payloads...), key2Payloads...)
+	lossPrefixPayloads := append(append([][]byte(nil), key0Payloads...), deltaPayloads[:1]...)
+	recoveryPlan := publicRTPDecodePlan(t, recoveryPayloads)
+	lossPrefixPlan := publicRTPDecodePlan(t, lossPrefixPayloads)
+	h := newPublicRTPDecodeHarnessWithPlan(t, lossPrefixPlan.Max(recoveryPlan))
+
+	var result av1.DecoderFrameWorkResidualStreamResult
+	if err := h.runner.RunRTPPayloadsIntoWithPostFilterRunner(&result, key0Payloads, &h.postFilter); err != nil {
+		t.Fatalf("RunRTPPayloadsInto initial key: %v", err)
+	}
+	got := publicRTPResultDigests(t, result, 0)
+	if len(got) != 1 || result.Run.OutputCount != 1 {
+		t.Fatalf("initial key outputs=%d digests=%d result=%+v", result.Run.OutputCount, len(got), result)
+	}
+
+	fragment, err := h.runner.RunRTPPayloadWithPostFilterRunner(deltaPayloads[0], &h.postFilter)
+	if err != nil {
+		t.Fatalf("RunRTPPayload dropped delta prefix: %v", err)
+	}
+	if fragment.Run.OutputCount != 0 || h.runner.RTPUsed == 0 || !h.runner.State().InRTPFragment {
+		t.Fatalf("dropped delta did not leave only retained RTP state: fragment=%+v state=%+v", fragment, h.runner.State())
+	}
+
+	beforeRecoveryOutputs := result.Run.OutputCount
+	if err := h.runner.RunRTPPayloadAfterLossIntoWithPostFilterRunner(&result, key2Payloads[0], &h.postFilter); err != nil {
+		t.Fatalf("RunRTPPayloadAfterLossInto recovery key first packet: %v", err)
+	}
+	if len(key2Payloads) > 1 {
+		if err := h.runner.RunRTPPayloadsIntoWithPostFilterRunner(&result, key2Payloads[1:], &h.postFilter); err != nil {
+			t.Fatalf("RunRTPPayloadsInto recovery key tail: %v", err)
+		}
+	}
+	if h.runner.RTPUsed != 0 || h.runner.State().InRTPFragment {
+		t.Fatalf("recovery left retained RTP state=%+v", h.runner.State())
+	}
+	got = publicRTPAppendResultDigests(t, got, result, beforeRecoveryOutputs)
+
+	want := decodeLowOverheadPayloads(t, [][]byte{key0LowOverhead, key2LowOverhead})
+	if len(got) != len(want) {
+		t.Fatalf("RTP recovered %d frames, low-overhead decoded %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("frame %d digest differs after loss: rtp=%s low=%s",
+				i, hex.EncodeToString(got[i][:]), hex.EncodeToString(want[i][:]))
+		}
+	}
+}
+
 func publicDecoderRTPPayloadsForFrame(t *testing.T, frame av1.RTCFrame) [][]byte {
 	t.Helper()
-	limits := av1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
+	return publicDecoderRTPPayloadsForFrameWithLimits(t, frame, av1.RTPPayloadSizeLimits{MaxPayloadLen: 96})
+}
+
+func publicDecoderRTPPayloadsForFrameWithLimits(t *testing.T, frame av1.RTCFrame, limits av1.RTPPayloadSizeLimits) [][]byte {
+	t.Helper()
 	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
 	if err != nil {
 		t.Fatalf("RTPPacketScratchLen first: %v", err)
@@ -1275,13 +1371,39 @@ func decodeLowOverheadPayloads(t *testing.T, payloads [][]byte) [][16]byte {
 
 func decodeRTPPayloadsLowLevel(t *testing.T, payloads [][]byte) [][16]byte {
 	t.Helper()
-	const workers = 1
-	workerPool, err := av1.NewTileWorkerPool(workers)
-	if err != nil {
-		t.Fatalf("worker pool: %v", err)
+	h := newPublicRTPDecodeHarness(t, payloads)
+	var result av1.DecoderFrameWorkResidualStreamResult
+	if err := h.runner.RunRTPPayloadsIntoWithPostFilterRunner(&result, payloads, &h.postFilter); err != nil {
+		t.Fatalf("RunRTPPayloadsIntoWithPostFilterRunner: %v", err)
 	}
-	defer workerPool.Close()
+	return publicRTPResultDigests(t, result, 0)
+}
 
+type publicRTPDecodeHarness struct {
+	workerPool        *av1.TileWorkerPool
+	stream            av1.DecoderStream
+	refs              av1.DecoderSurfaceReferences
+	state             av1.DecoderFrameWorkState
+	pool              av1.FramePool
+	stats             av1.DecoderFrameWorkTileResidualStats
+	sideData          av1.DecoderFrameWorkSideData
+	batch             av1.DecoderFrameWorkBatchResidualRunner
+	referenceSurfaces [av1.InterRefsPerFrame]int
+	referenceFrames   [av1.InterRefsPerFrame]*av1.Frame
+	releases          [av1.RefFrames]int
+	scratch           av1.DecoderFrameWorkResidualStreamScratch
+	postFilter        av1.DecoderFrameWorkReusableSupportedPostFilterRunner
+	runner            av1.DecoderFrameWorkResidualStreamRunner
+}
+
+func newPublicRTPDecodeHarness(t *testing.T, payloads [][]byte) *publicRTPDecodeHarness {
+	t.Helper()
+	return newPublicRTPDecodeHarnessWithPlan(t, publicRTPDecodePlan(t, payloads))
+}
+
+func publicRTPDecodePlan(t *testing.T, payloads [][]byte) av1.DecoderFrameWorkResidualStreamPlan {
+	t.Helper()
+	const workers = 1
 	rtpBufferBytes := 0
 	for _, payload := range payloads {
 		rtpBufferBytes += len(payload)
@@ -1302,6 +1424,16 @@ func decodeRTPPayloadsLowLevel(t *testing.T, payloads [][]byte) [][16]byte {
 	if !plan.HasEvent() {
 		t.Fatal("RTP stream plan did not identify a bind event")
 	}
+	return plan
+}
+
+func newPublicRTPDecodeHarnessWithPlan(t *testing.T, plan av1.DecoderFrameWorkResidualStreamPlan) *publicRTPDecodeHarness {
+	t.Helper()
+	const workers = 1
+	workerPool, err := av1.NewTileWorkerPool(workers)
+	if err != nil {
+		t.Fatalf("worker pool: %v", err)
+	}
 
 	format, err := av1.FrameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
 	if err != nil {
@@ -1318,44 +1450,50 @@ func decodeRTPPayloadsLowLevel(t *testing.T, payloads [][]byte) [][16]byte {
 		t.Fatalf("BindFramePool: %v", err)
 	}
 
-	var (
-		stream     av1.DecoderStream
-		refs       av1.DecoderSurfaceReferences
-		state      av1.DecoderFrameWorkState
-		stats      av1.DecoderFrameWorkTileResidualStats
-		sideData   av1.DecoderFrameWorkSideData
-		batch      av1.DecoderFrameWorkBatchResidualRunner
-		postFilter av1.DecoderFrameWorkReusableSupportedPostFilterRunner
-	)
-	scratch := lowLevelStreamScratch(plan.Size)
-	runner, _, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(plan, &stream,
+	h := &publicRTPDecodeHarness{
+		workerPool: workerPool,
+		pool:       pool,
+		scratch:    lowLevelStreamScratch(plan.Size),
+	}
+	t.Cleanup(func() {
+		h.workerPool.Close()
+	})
+	runner, _, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(plan, &h.stream,
 		av1.DecoderFrameWorkResidualEventRuntime{
-			State:             &state,
-			Refs:              &refs,
-			FramePool:         &pool,
+			State:             &h.state,
+			Refs:              &h.refs,
+			FramePool:         &h.pool,
 			Align:             64,
-			ReferenceSurfaces: make([]int, av1.InterRefsPerFrame),
-			ReferenceFrames:   make([]*av1.Frame, av1.InterRefsPerFrame),
-			Releases:          make([]int, av1.RefFrames),
-			WorkerPool:        workerPool,
-			SideData:          &sideData,
-			Stats:             &stats,
-		}, scratch, &batch)
+			ReferenceSurfaces: h.referenceSurfaces[:],
+			ReferenceFrames:   h.referenceFrames[:],
+			Releases:          h.releases[:],
+			WorkerPool:        h.workerPool,
+			SideData:          &h.sideData,
+			Stats:             &h.stats,
+		}, h.scratch, &h.batch)
 	if err != nil {
 		t.Fatalf("bind RTP runner: %v", err)
 	}
+	h.runner = runner
+	return h
+}
 
-	var result av1.DecoderFrameWorkResidualStreamResult
-	if err := runner.RunRTPPayloadsIntoWithPostFilterRunner(&result, payloads, &postFilter); err != nil {
-		t.Fatalf("RunRTPPayloadsIntoWithPostFilterRunner: %v", err)
+func publicRTPResultDigests(t *testing.T, result av1.DecoderFrameWorkResidualStreamResult, from int) [][16]byte {
+	t.Helper()
+	return publicRTPAppendResultDigests(t, nil, result, from)
+}
+
+func publicRTPAppendResultDigests(t *testing.T, dst [][16]byte, result av1.DecoderFrameWorkResidualStreamResult, from int) [][16]byte {
+	t.Helper()
+	if from < 0 || from > result.Run.OutputCount || result.Run.OutputCount > len(result.Run.Outputs) {
+		t.Fatalf("invalid result output range from=%d count=%d len=%d", from, result.Run.OutputCount, len(result.Run.Outputs))
 	}
-	var digests [][16]byte
-	for _, f := range result.Run.Outputs {
+	for _, f := range result.Run.Outputs[from:result.Run.OutputCount] {
 		if f != nil {
-			digests = append(digests, frameMD5Visible(f))
+			dst = append(dst, frameMD5Visible(f))
 		}
 	}
-	return digests
+	return dst
 }
 
 func lowLevelStreamScratch(size av1.DecoderFrameWorkResidualStreamScratchSize) av1.DecoderFrameWorkResidualStreamScratch {
