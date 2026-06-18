@@ -57,6 +57,8 @@ type WebRTCStream struct {
 	encoders     [WebRTCMaxSpatialLayers]*VideoEncoder
 	scaledFrames [WebRTCMaxSpatialLayers]SourceFrame420
 	layerScratch [WebRTCMaxSpatialLayers][]byte
+
+	referenceFrames [WebRTCReferenceBuffers]SourceFrame420
 }
 
 // NewWebRTCStream creates an L1T1 WebRTC stream under CBR rate control.
@@ -255,6 +257,7 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 		s.config = normalized
 		if !sameStructure {
 			s.state = webRTCEncoderStateForNextKey(s.state)
+			s.referenceFrames = [WebRTCReferenceBuffers]SourceFrame420{}
 		}
 		return nil
 	}
@@ -271,6 +274,7 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 	s.config = normalized
 	s.scaledFrames = [WebRTCMaxSpatialLayers]SourceFrame420{}
 	s.layerScratch = [WebRTCMaxSpatialLayers][]byte{}
+	s.referenceFrames = [WebRTCReferenceBuffers]SourceFrame420{}
 	s.state = webRTCEncoderStateForNextKey(s.state)
 	return nil
 }
@@ -459,9 +463,44 @@ func (s *WebRTCStream) EncodePicture(src SourceFrame420, forceKey bool) (WebRTCE
 			Structure:                 structure,
 			AttachDependencyStructure: control.AttachDependencyStructure,
 		}
+		if err := s.updateReferenceFrame(settings, enc); err != nil {
+			return WebRTCEncodedPicture{}, err
+		}
 	}
 	s.state = next
 	return picture, nil
+}
+
+func (s *WebRTCStream) updateReferenceFrame(settings FrameEncodeSettings, enc *VideoEncoder) error {
+	if !settings.UpdateBufferSet {
+		return nil
+	}
+	if settings.UpdateBuffer >= WebRTCReferenceBuffers || enc == nil {
+		return ErrInvalidFrame
+	}
+	recon, err := webRTCStreamLayerReconstruction(enc)
+	if err != nil {
+		return err
+	}
+	copyFrameInto(&s.referenceFrames[settings.UpdateBuffer], recon)
+	return nil
+}
+
+func webRTCStreamLayerReconstruction(enc *VideoEncoder) (SourceFrame420, error) {
+	if enc == nil {
+		return SourceFrame420{}, ErrInvalidConfig
+	}
+	if err := enc.joinFilter(); err != nil {
+		return SourceFrame420{}, err
+	}
+	recon := enc.lastRecon
+	if recon.Y == nil {
+		recon = enc.recon
+	}
+	if recon.Y == nil {
+		return SourceFrame420{}, ErrInvalidFrame
+	}
+	return recon, nil
 }
 
 func (s *WebRTCStream) sourceForLayer(src SourceFrame420, spatialID uint8, resolution Resolution) (SourceFrame420, error) {

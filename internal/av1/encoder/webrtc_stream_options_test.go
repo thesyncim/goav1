@@ -96,6 +96,56 @@ func TestWebRTCStreamConfigPixelScalabilityModeMatrix(t *testing.T) {
 	}
 }
 
+func TestWebRTCStreamTracksReferenceSurfaces(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 500,
+		Scalability:       ScalabilityModeS2T2,
+	}
+	stream, err := NewWebRTCStreamConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewWebRTCStreamConfig: %v", err)
+	}
+	if _, err := stream.EncodePicture(testWebRTCStreamFrame(640, 360), false); err != nil {
+		t.Fatalf("EncodePicture key: %v", err)
+	}
+	for i := uint8(0); i < stream.config.SpatialLayerCount; i++ {
+		ref := stream.referenceFrames[i]
+		enc := stream.encoders[i]
+		if enc == nil {
+			t.Fatalf("missing layer encoder %d", i)
+		}
+		if ref.Y == nil || ref.Width != enc.width || ref.Height != enc.height {
+			t.Fatalf("reference buffer %d geometry=%dx%d valid=%v want %dx%d",
+				i, ref.Width, ref.Height, ref.Y != nil, enc.width, enc.height)
+		}
+	}
+
+	controlChange := stream.config
+	controlChange.MaxFramerate = Rational{Num: 60, Den: 1}
+	controlChange.TargetBitrateKbps += 50
+	if err := stream.SetConfig(controlChange); err != nil {
+		t.Fatalf("SetConfig control change: %v", err)
+	}
+	if stream.referenceFrames[0].Y == nil || stream.referenceFrames[1].Y == nil {
+		t.Fatal("control-only change cleared reference surfaces")
+	}
+
+	structureChange := controlChange
+	structureChange.Scalability = ScalabilityModeS2T3
+	if err := stream.SetConfig(structureChange); err != nil {
+		t.Fatalf("SetConfig structure change: %v", err)
+	}
+	for i, ref := range stream.referenceFrames {
+		if ref.Y != nil {
+			t.Fatalf("reference buffer %d survived structure reset", i)
+		}
+	}
+}
+
 func TestWebRTCStreamDescriptorStateMatrix(t *testing.T) {
 	for mode := ScalabilityMode(0); mode < scalabilityModeCount; mode++ {
 		t.Run(mode.String(), func(t *testing.T) {
