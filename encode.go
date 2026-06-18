@@ -231,7 +231,7 @@ type RTCFrame struct {
 	// Data is the temporal unit (the RTP payload content). It aliases an
 	// encoder-owned buffer reused by the next Encode call.
 	Data []byte
-	// Keyframe reports whether this frame restarts the decode chain.
+	// Keyframe reports whether this frame belongs to a key picture.
 	Keyframe bool
 	// TemporalID is the frame's temporal layer.
 	TemporalID uint8

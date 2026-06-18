@@ -49,7 +49,7 @@ func decodeLayerPoolLowOverheads(t *testing.T, payloads ...[]byte) []*goav1.Fram
 	}
 	defer workerPool.Close()
 
-	layerPool := newScaledReferenceDecodeLayerPool(t, 2, goav1.RefFrames+1)
+	layerPool := newScaledReferenceDecodeLayerPool(t, 4, goav1.RefFrames+1)
 	adapter := goav1.NewDecoderFrameLayerPool(&layerPool)
 
 	var (

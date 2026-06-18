@@ -306,33 +306,7 @@ func TestPublicRTCEncoderEncodePictureKeyShiftSpatial(t *testing.T) {
 		}
 	}
 
-	for spatial := 0; spatial < 2; spatial++ {
-		tus := [][]byte{
-			append([]byte(nil), key.Frames[spatial].Data...),
-			append([]byte(nil), delta0.Frames[spatial].Data...),
-			append([]byte(nil), delta1.Frames[spatial].Data...),
-		}
-		dec, err := goav1.NewDecoder(tus)
-		if err != nil {
-			t.Fatalf("spatial %d decoder: %v", spatial, err)
-		}
-		n := 0
-		for {
-			batch, ok, err := dec.DecodeNext()
-			if err != nil {
-				dec.Close()
-				t.Fatalf("spatial %d decode: %v", spatial, err)
-			}
-			if !ok {
-				break
-			}
-			n += len(batch)
-		}
-		dec.Close()
-		if n != len(tus) {
-			t.Fatalf("spatial %d decoded %d frames, want %d", spatial, n, len(tus))
-		}
-	}
+	assertPublicRTCSharedReferenceStreamDecodes(t, publicRTCPictureFramesInOrder(key, delta0, delta1))
 }
 
 func TestPublicRTCEncoderRejectsDeltaInterLayerPixelModeMatrix(t *testing.T) {
@@ -533,12 +507,13 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			var receiver goav1.RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
 			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var orderedTUs [][]byte
 
 			key, err := enc.EncodePicture(publicRTCMatrixFrame(tc.width, tc.height, 0), false)
 			if err != nil {
 				t.Fatalf("initial key EncodePicture: %v", err)
 			}
-			appendPublicRTCPictureLayerData(t, &layerTUs, key)
+			appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, key)
 			assertPublicRTCPictureDescriptors(t, &receiver, cfg, key, true, &nextFrameID)
 
 			controlChange := cfg
@@ -553,7 +528,7 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("control delta EncodePicture: %v", err)
 			}
-			appendPublicRTCPictureLayerData(t, &layerTUs, controlDelta)
+			appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, controlDelta)
 			assertPublicRTCPictureDescriptors(t, &receiver, controlChange, controlDelta, false, &nextFrameID)
 
 			structureChange := controlChange
@@ -565,20 +540,20 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("structure key EncodePicture: %v", err)
 			}
-			appendPublicRTCPictureLayerData(t, &layerTUs, structureKey)
+			appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, structureKey)
 			assertPublicRTCPictureDescriptors(t, &receiver, structureChange, structureKey, true, &nextFrameID)
 
 			postReconfigDelta, err := enc.EncodePicture(publicRTCMatrixFrame(tc.width, tc.height, 3), false)
 			if err != nil {
 				t.Fatalf("post-reconfigure delta EncodePicture: %v", err)
 			}
-			appendPublicRTCPictureLayerData(t, &layerTUs, postReconfigDelta)
+			appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, postReconfigDelta)
 			assertPublicRTCPictureDescriptors(t, &receiver, structureChange, postReconfigDelta, false, &nextFrameID)
 			normalized, err := goav1.SetWebRTCEncoderSVCConfig(structureChange, structureChange.TemporalLayerCount, structureChange.SpatialLayerCount)
 			if err != nil {
 				t.Fatalf("SetWebRTCEncoderSVCConfig(%s): %v", structureChange.Scalability, err)
 			}
-			assertPublicRTCLayerStreamsDecode(t, layerTUs, int(normalized.SpatialLayerCount))
+			assertPublicRTCLayerStreamsDecode(t, normalized, layerTUs, orderedTUs)
 		})
 	}
 }
@@ -778,19 +753,26 @@ func assertPublicRTCAttachedStructure(t *testing.T, structure goav1.RTPDependenc
 	}
 }
 
-func appendPublicRTCPictureLayerData(t *testing.T, layerTUs *[goav1.EncoderWebRTCMaxSpatialLayers][][]byte, picture goav1.RTCPicture) {
+func appendPublicRTCPictureLayerData(t *testing.T, layerTUs *[goav1.EncoderWebRTCMaxSpatialLayers][][]byte, orderedTUs *[][]byte, picture goav1.RTCPicture) {
 	t.Helper()
 	for i := 0; i < picture.FrameNum; i++ {
 		spatialID := picture.Frames[i].SpatialID
 		if spatialID >= goav1.EncoderWebRTCMaxSpatialLayers {
 			t.Fatalf("frame %d spatial id=%d", i, spatialID)
 		}
-		layerTUs[spatialID] = append(layerTUs[spatialID], append([]byte(nil), picture.Frames[i].Data...))
+		tu := append([]byte(nil), picture.Frames[i].Data...)
+		layerTUs[spatialID] = append(layerTUs[spatialID], tu)
+		*orderedTUs = append(*orderedTUs, tu)
 	}
 }
 
-func assertPublicRTCLayerStreamsDecode(t *testing.T, layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte, spatialLayers int) {
+func assertPublicRTCLayerStreamsDecode(t *testing.T, cfg goav1.EncoderConfig, layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte, orderedTUs [][]byte) {
 	t.Helper()
+	if publicRTCSharedReferenceSlotMode(cfg.Scalability) {
+		assertPublicRTCSharedReferenceStreamDecodes(t, orderedTUs)
+		return
+	}
+	spatialLayers := int(cfg.SpatialLayerCount)
 	for spatialID := 0; spatialID < spatialLayers; spatialID++ {
 		assertPublicRTCSpatialLayerDecodes(t, spatialID, layerTUs[spatialID])
 	}
@@ -816,6 +798,199 @@ func assertPublicRTCSpatialLayerDecodes(t *testing.T, spatialID int, tus [][]byt
 	}
 	if n != len(tus) {
 		t.Fatalf("spatial layer %d decoded %d frames, want %d", spatialID, n, len(tus))
+	}
+}
+
+func publicRTCSharedReferenceSlotMode(mode goav1.EncoderScalabilityMode) bool {
+	spatial, _, _, ok := mode.Layers()
+	return ok && spatial > 1 && mode.UsesKeyFrameInterLayerDependency() && !mode.IsSimulcast()
+}
+
+func publicRTCPictureFramesInOrder(pictures ...goav1.RTCPicture) [][]byte {
+	var out [][]byte
+	for _, picture := range pictures {
+		for i := 0; i < picture.FrameNum; i++ {
+			out = append(out, append([]byte(nil), picture.Frames[i].Data...))
+		}
+	}
+	return out
+}
+
+func assertPublicRTCSharedReferenceStreamDecodes(t *testing.T, tus [][]byte) {
+	t.Helper()
+	frames := decodePublicRTCLayerPoolLowOverheads(t, tus...)
+	if len(frames) != len(tus) {
+		t.Fatalf("shared-reference stream decoded %d frames, want %d", len(frames), len(tus))
+	}
+}
+
+func decodePublicRTCLayerPoolLowOverheads(t *testing.T, payloads ...[]byte) []*goav1.Frame {
+	t.Helper()
+
+	const workers = 1
+	workerPool, err := goav1.NewTileWorkerPool(workers)
+	if err != nil {
+		t.Fatalf("NewTileWorkerPool: %v", err)
+	}
+	defer workerPool.Close()
+
+	layerPool := newPublicDecoderLayerPool(t, goav1.EncoderWebRTCMaxSpatialLayers+1, goav1.RefFrames+1)
+	adapter := goav1.NewDecoderFrameLayerPool(&layerPool)
+
+	var (
+		stream        goav1.DecoderStream
+		refs          goav1.DecoderSurfaceReferences
+		state         goav1.DecoderFrameWorkState
+		frameContexts goav1.DecoderSharedFrameContextStore
+		stats         goav1.DecoderFrameWorkTileResidualStats
+		postFilter    goav1.DecoderFrameWorkReusableSupportedPostFilterRunner
+		sequence      goav1.SequenceHeader
+		haveSequence  bool
+	)
+	referenceSurfaces := make([]int, goav1.InterRefsPerFrame)
+	referenceFrames := make([]*goav1.Frame, goav1.InterRefsPerFrame)
+	releases := make([]int, goav1.RefFrames)
+	events := make([]goav1.DecoderEvent, 16)
+	planSpans := make([]goav1.TileSpan, goav1.MaxTiles)
+	planJobs := make([]goav1.TileJob, goav1.MaxTiles)
+	planBatches := make([]goav1.TileBatch, goav1.MaxTiles)
+	outputs := make([]*goav1.Frame, 0, len(payloads))
+
+	for payloadIndex, payload := range payloads {
+		count, err := stream.PushLowOverhead(payload, events)
+		if err != nil {
+			t.Fatalf("payload %d PushLowOverhead: %v", payloadIndex, err)
+		}
+		for eventIndex := 0; eventIndex < count; eventIndex++ {
+			event := events[eventIndex]
+			if event.Kind == goav1.DecoderEventSequenceHeader {
+				sequence = event.SequenceHeader
+				haveSequence = true
+			} else if !haveSequence {
+				if seq, ok := stream.SequenceHeader(); ok {
+					sequence = seq
+					haveSequence = true
+				}
+			}
+
+			framePool := publicRTCLayerDecodeFramePool(t, &layerPool, sequence, event)
+			size, err := goav1.DecoderFrameWorkResidualEventScratchLen(sequence, event, workers, planSpans, planJobs, planBatches)
+			if err != nil {
+				t.Fatalf("payload %d event %d scratch len: %v", payloadIndex, eventIndex, err)
+			}
+			scratch := publicRTCLayerDecodeEventScratch(size)
+
+			var batchRunner goav1.DecoderFrameWorkBatchResidualRunner
+			var batchRunnerPtr *goav1.DecoderFrameWorkBatchResidualRunner
+			if size.Runner.Workers != 0 {
+				batchRunner, err = goav1.BindDecoderFrameWorkBatchResidualRunner(size.Runner, scratch.Runner)
+				if err != nil {
+					t.Fatalf("payload %d event %d bind residual runner: %v", payloadIndex, eventIndex, err)
+				}
+				batchRunnerPtr = &batchRunner
+			}
+
+			var sideData goav1.DecoderFrameWorkSideData
+			var sideDataPtr *goav1.DecoderFrameWorkSideData
+			if publicRTCLayerDecodeEventNeedsSideData(event) {
+				sideData, err = goav1.BindDecoderFrameWorkSideData(sequence, event.FrameSize, event.CDEF, event.Restoration, scratch.SideData)
+				if err != nil {
+					t.Fatalf("payload %d event %d bind side data: %v", payloadIndex, eventIndex, err)
+				}
+				sideDataPtr = &sideData
+			}
+
+			globalSurface := func(local int) int {
+				if framePool == nil {
+					return -1
+				}
+				return goav1.DecoderLayerPoolGlobalSurfaceID(&layerPool, framePool, local)
+			}
+			result, err := goav1.RunDecoderFrameWorkEventWithResidualRunner(goav1.DecoderFrameWorkResidualEventRequest{
+				State:             &state,
+				Refs:              &refs,
+				FramePool:         framePool,
+				Sequence:          sequence,
+				Event:             event,
+				Align:             64,
+				ReferenceSurfaces: referenceSurfaces,
+				ReferenceFrames:   referenceFrames,
+				Workers:           workers,
+				Spans:             scratch.Spans,
+				Jobs:              scratch.Jobs,
+				Batches:           scratch.Batches,
+				Releases:          releases,
+				WorkerPool:        workerPool,
+				Runner:            batchRunnerPtr,
+				SideData:          sideDataPtr,
+				PostRunner:        &postFilter,
+				Stats:             &stats,
+				External: goav1.DecoderFrameWorkExternalReferenceRuntime{
+					Provider:      adapter,
+					GlobalSurface: globalSurface,
+					Releaser:      adapter,
+					FrameContexts: &frameContexts,
+				},
+			})
+			if err != nil {
+				t.Fatalf("payload %d event %d run: %v", payloadIndex, eventIndex, err)
+			}
+			if goav1.DecoderEventOutputsFrame(event) {
+				if result.Output == nil {
+					t.Fatalf("payload %d event %d output frame is nil", payloadIndex, eventIndex)
+				}
+				outputs = append(outputs, result.Output)
+			}
+		}
+	}
+	return outputs
+}
+
+func publicRTCLayerDecodeFramePool(t *testing.T, pool *goav1.FrameLayerPool, sequence goav1.SequenceHeader, event goav1.DecoderEvent) *goav1.FramePool {
+	t.Helper()
+	switch event.Kind {
+	case goav1.DecoderEventFrameHeader, goav1.DecoderEventFrame, goav1.DecoderEventTileGroup:
+		format, err := goav1.FrameCodedFormatFromHeaders(sequence, event.FrameSize, 64)
+		if err != nil {
+			t.Fatalf("FrameCodedFormatFromHeaders: %v", err)
+		}
+		framePool, err := pool.SubPool(format)
+		if err != nil {
+			t.Fatalf("layer SubPool: %v", err)
+		}
+		return framePool
+	default:
+		return nil
+	}
+}
+
+func publicRTCLayerDecodeEventNeedsSideData(event goav1.DecoderEvent) bool {
+	switch event.Kind {
+	case goav1.DecoderEventFrameHeader, goav1.DecoderEventFrame, goav1.DecoderEventTileGroup:
+		return true
+	default:
+		return false
+	}
+}
+
+func publicRTCLayerDecodeEventScratch(size goav1.DecoderFrameWorkResidualEventScratchSize) goav1.DecoderFrameWorkResidualEventScratch {
+	return goav1.DecoderFrameWorkResidualEventScratch{
+		Runner: goav1.DecoderFrameWorkBatchResidualRunnerScratch{
+			States:                  make([]goav1.TileDecodeState, size.Runner.Workers),
+			Storages:                make([]goav1.DecoderFrameWorkTileResidualCDFStorage, size.Runner.Workers),
+			TileScratch:             make([]goav1.DecoderFrameWorkTileResidualScratch, size.Runner.Workers),
+			RestorationRequests:     make([]goav1.DecoderFrameWorkTileRestorationRequest, size.Runner.RestorationRequests),
+			PredictionScratch:       make([]goav1.DecoderFrameWorkPredictionScratch, size.Runner.Workers),
+			InterPredictionScratch:  make([]goav1.DecoderFrameWorkInterPredictionScratch, size.Runner.Workers),
+			Stats:                   make([]goav1.DecoderFrameWorkTileResidualStats, size.Runner.Workers),
+			Int32Scratch:            make([]int32, size.Runner.Int32Scratch),
+			ResidualScratch:         make([]int16, size.Runner.ResidualScratch),
+			LoopContextAboveScratch: make([]goav1.TileBlockLoopRootAboveContext, size.Runner.LoopContextAbove),
+		},
+		SideData: publicDecoderFrameWorkSideDataScratch(size.SideData),
+		Spans:    make([]goav1.TileSpan, size.Plan.SpanCount),
+		Jobs:     make([]goav1.TileJob, size.Plan.JobCount),
+		Batches:  make([]goav1.TileBatch, size.Plan.BatchCount),
 	}
 }
 

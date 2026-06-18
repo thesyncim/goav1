@@ -122,6 +122,7 @@ func TestWebRTCStreamAcceptedScalabilityModesDecode(t *testing.T) {
 
 			var tusBySpatial [encoder.WebRTCMaxSpatialLayers][][]byte
 			var wantBySpatial [encoder.WebRTCMaxSpatialLayers]int
+			var tusInOrder [][]byte
 			for i := 0; i < 2; i++ {
 				picture, err := stream.EncodePicture(webRTCDecodeMatrixFrame(int(cfg.Resolution.Width), int(cfg.Resolution.Height), i), false)
 				if err != nil {
@@ -130,40 +131,10 @@ func TestWebRTCStreamAcceptedScalabilityModesDecode(t *testing.T) {
 				if picture.FrameNum == 0 {
 					t.Fatalf("EncodePicture(%d) emitted no frames", i)
 				}
-				for frame := uint8(0); frame < picture.FrameNum; frame++ {
-					spatialID := picture.Frames[frame].Info.SpatialID
-					if spatialID >= encoder.WebRTCMaxSpatialLayers {
-						t.Fatalf("frame %d spatial id=%d", frame, spatialID)
-					}
-					tusBySpatial[spatialID] = append(tusBySpatial[spatialID], append([]byte(nil), picture.Frames[frame].TU...))
-					wantBySpatial[spatialID]++
-				}
+				collectWebRTCPictureTUs(t, picture, &tusBySpatial, &wantBySpatial, &tusInOrder)
 			}
 
-			for spatialID, tus := range tusBySpatial {
-				if len(tus) == 0 {
-					continue
-				}
-				dec, err := goav1.NewDecoder(tus)
-				if err != nil {
-					t.Fatalf("spatial %d NewDecoder: %v", spatialID, err)
-				}
-				defer dec.Close()
-				gotFrames := 0
-				for {
-					batch, ok, err := dec.DecodeNext()
-					if err != nil {
-						t.Fatalf("spatial %d decode: %v", spatialID, err)
-					}
-					if !ok {
-						break
-					}
-					gotFrames += len(batch)
-				}
-				if gotFrames != wantBySpatial[spatialID] {
-					t.Fatalf("spatial %d decoded %d frames, want %d", spatialID, gotFrames, wantBySpatial[spatialID])
-				}
-			}
+			decodeCollectedWebRTCPictureTUs(t, stream.Config(), tusInOrder, tusBySpatial, wantBySpatial)
 		})
 	}
 }
@@ -182,15 +153,17 @@ func TestWebRTCStreamControlCombinationMatrixDecode(t *testing.T) {
 
 			var tusBySpatial [encoder.WebRTCMaxSpatialLayers][][]byte
 			var wantBySpatial [encoder.WebRTCMaxSpatialLayers]int
+			var tusInOrder [][]byte
 			var parsedBySpatial [encoder.WebRTCMaxSpatialLayers]webRTCParsedTUState
+			var parsedShared webRTCParsedTUState
 			encode := func(frameIndex int, forceKey bool) encoder.WebRTCEncodedPicture {
 				t.Helper()
 				picture, err := stream.EncodePicture(webRTCDecodeMatrixFrame(int(cfg.Resolution.Width), int(cfg.Resolution.Height), frameIndex), forceKey)
 				if err != nil {
 					t.Fatalf("EncodePicture(%d, force=%v): %v", frameIndex, forceKey, err)
 				}
-				verifyWebRTCPicturePayloadHeaders(t, picture, stream.Config(), &parsedBySpatial)
-				collectWebRTCPictureTUs(t, picture, &tusBySpatial, &wantBySpatial)
+				verifyWebRTCPicturePayloadHeaders(t, picture, stream.Config(), &parsedBySpatial, &parsedShared)
+				collectWebRTCPictureTUs(t, picture, &tusBySpatial, &wantBySpatial, &tusInOrder)
 				return picture
 			}
 
@@ -238,7 +211,7 @@ func TestWebRTCStreamControlCombinationMatrixDecode(t *testing.T) {
 				t.Fatalf("force key did not produce key picture: %+v", forced)
 			}
 
-			decodeCollectedWebRTCPictureTUs(t, tusBySpatial, wantBySpatial)
+			decodeCollectedWebRTCPictureTUs(t, stream.Config(), tusInOrder, tusBySpatial, wantBySpatial)
 		})
 	}
 }
@@ -292,7 +265,7 @@ func webRTCDecodeMatrixConfig(mode encoder.ScalabilityMode) encoder.Config {
 	}
 }
 
-func collectWebRTCPictureTUs(t *testing.T, picture encoder.WebRTCEncodedPicture, tusBySpatial *[encoder.WebRTCMaxSpatialLayers][][]byte, wantBySpatial *[encoder.WebRTCMaxSpatialLayers]int) {
+func collectWebRTCPictureTUs(t *testing.T, picture encoder.WebRTCEncodedPicture, tusBySpatial *[encoder.WebRTCMaxSpatialLayers][][]byte, wantBySpatial *[encoder.WebRTCMaxSpatialLayers]int, tusInOrder *[][]byte) {
 	t.Helper()
 	if picture.FrameNum == 0 {
 		t.Fatal("picture emitted no frames")
@@ -302,13 +275,26 @@ func collectWebRTCPictureTUs(t *testing.T, picture encoder.WebRTCEncodedPicture,
 		if spatialID >= encoder.WebRTCMaxSpatialLayers {
 			t.Fatalf("frame %d spatial id=%d", frame, spatialID)
 		}
-		tusBySpatial[spatialID] = append(tusBySpatial[spatialID], append([]byte(nil), picture.Frames[frame].TU...))
+		tu := append([]byte(nil), picture.Frames[frame].TU...)
+		tusBySpatial[spatialID] = append(tusBySpatial[spatialID], tu)
 		wantBySpatial[spatialID]++
+		*tusInOrder = append(*tusInOrder, tu)
 	}
 }
 
-func decodeCollectedWebRTCPictureTUs(t *testing.T, tusBySpatial [encoder.WebRTCMaxSpatialLayers][][]byte, wantBySpatial [encoder.WebRTCMaxSpatialLayers]int) {
+func decodeCollectedWebRTCPictureTUs(t *testing.T, config encoder.Config, tusInOrder [][]byte, tusBySpatial [encoder.WebRTCMaxSpatialLayers][][]byte, wantBySpatial [encoder.WebRTCMaxSpatialLayers]int) {
 	t.Helper()
+	if webRTCSharedReferenceSlotMode(config) {
+		frames := decodeLayerPoolLowOverheads(t, tusInOrder...)
+		want := 0
+		for _, count := range wantBySpatial {
+			want += count
+		}
+		if len(frames) != want {
+			t.Fatalf("shared SVC decoded %d frames, want %d", len(frames), want)
+		}
+		return
+	}
 	for spatialID, tus := range tusBySpatial {
 		if len(tus) == 0 {
 			continue
@@ -336,13 +322,19 @@ func decodeCollectedWebRTCPictureTUs(t *testing.T, tusBySpatial [encoder.WebRTCM
 	}
 }
 
+func webRTCSharedReferenceSlotMode(config encoder.Config) bool {
+	return config.SpatialLayerCount > 1 &&
+		config.Scalability.UsesKeyFrameInterLayerDependency() &&
+		!config.Scalability.IsSimulcast()
+}
+
 type webRTCParsedTUState struct {
 	seq     parser.SequenceHeader
 	haveSeq bool
 	refs    parser.ReferenceState
 }
 
-func verifyWebRTCPicturePayloadHeaders(t *testing.T, picture encoder.WebRTCEncodedPicture, config encoder.Config, states *[encoder.WebRTCMaxSpatialLayers]webRTCParsedTUState) {
+func verifyWebRTCPicturePayloadHeaders(t *testing.T, picture encoder.WebRTCEncodedPicture, config encoder.Config, states *[encoder.WebRTCMaxSpatialLayers]webRTCParsedTUState, shared *webRTCParsedTUState) {
 	t.Helper()
 	for frame := uint8(0); frame < picture.FrameNum; frame++ {
 		encoded := picture.Frames[frame]
@@ -351,7 +343,11 @@ func verifyWebRTCPicturePayloadHeaders(t *testing.T, picture encoder.WebRTCEncod
 			t.Fatalf("frame %d spatial id=%d", frame, spatialID)
 		}
 		want := config.SpatialLayers[spatialID].Resolution
-		states[spatialID].verify(t, encoded, want)
+		state := &states[spatialID]
+		if webRTCSharedReferenceSlotMode(config) {
+			state = shared
+		}
+		state.verify(t, encoded, want)
 	}
 }
 

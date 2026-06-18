@@ -15,7 +15,7 @@ import (
 type WebRTCEncodedFrame struct {
 	// TU is the low-overhead temporal unit (the RTP payload content).
 	TU []byte
-	// Keyframe reports whether the frame resets the decode chain.
+	// Keyframe reports whether this frame belongs to a key picture.
 	Keyframe bool
 	// Info is the generic frame info behind the dependency descriptor.
 	Info WebRTCGenericFrameInfo
@@ -424,11 +424,11 @@ func (s *WebRTCStream) EncodePicture(src SourceFrame420, forceKey bool) (WebRTCE
 		if enc == nil {
 			return WebRTCEncodedPicture{}, ErrInvalidConfig
 		}
-		tu, key, err := enc.EncodeWithTemporalID(layerSrc, unit.Key, settings.TemporalID)
+		tu, key, err := s.encodePictureLayer(enc, layerSrc, settings, unit.Key)
 		if err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
-		if key != unit.Key {
+		if key != webRTCStreamExpectedCodedKey(unit.Key, settings, s.config.Scalability) {
 			return WebRTCEncodedPicture{}, ErrInvalidFrame
 		}
 		layerSize, err := webRTCLayerTemporalUnitSize(tu, settings.TemporalID, settings.SpatialID)
@@ -457,7 +457,7 @@ func (s *WebRTCStream) EncodePicture(src SourceFrame420, forceKey bool) (WebRTCE
 		}
 		picture.Frames[i] = WebRTCEncodedFrame{
 			TU:                        layerTU,
-			Keyframe:                  key,
+			Keyframe:                  unit.Key,
 			Info:                      control.GenericFrameInfo,
 			Descriptor:                descriptor,
 			Structure:                 structure,
@@ -469,6 +469,68 @@ func (s *WebRTCStream) EncodePicture(src SourceFrame420, forceKey bool) (WebRTCE
 	}
 	s.state = next
 	return picture, nil
+}
+
+func (s *WebRTCStream) encodePictureLayer(enc *VideoEncoder, layerSrc SourceFrame420, settings FrameEncodeSettings, keyPicture bool) ([]byte, bool, error) {
+	if !webRTCStreamUsesSharedReferenceSlotCoding(s.config) {
+		tu, key, err := enc.EncodeWithTemporalID(layerSrc, keyPicture, settings.TemporalID)
+		return tu, key, err
+	}
+	maxWidth, maxHeight, err := s.sequenceMaxCodedSize()
+	if err != nil {
+		return nil, false, err
+	}
+	switch settings.Type {
+	case FrameTypeKey:
+		if !keyPicture {
+			return nil, false, ErrInvalidFrame
+		}
+		if layerSrc.Width != enc.renderWidth || layerSrc.Height != enc.renderHeight {
+			return nil, false, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", layerSrc.Width, layerSrc.Height, enc.renderWidth, enc.renderHeight)
+		}
+		if enc.renderWidth != enc.width || enc.renderHeight != enc.height {
+			layerSrc = enc.padSource(layerSrc)
+		}
+		tu, err := enc.encodeKeyWithSequenceMax(layerSrc, maxWidth, maxHeight)
+		return tu, true, err
+	case FrameTypeDelta:
+		if settings.ReferenceCount == 0 {
+			return nil, false, ErrInvalidFrame
+		}
+		refSlot := settings.ReferenceBuffers[0]
+		if refSlot >= WebRTCReferenceBuffers || s.referenceFrames[refSlot].Y == nil {
+			return nil, false, ErrInvalidFrame
+		}
+		tu, err := enc.encodeReferencePFrameWithSequenceMax(layerSrc, s.referenceFrames[refSlot], settings, maxWidth, maxHeight)
+		return tu, false, err
+	default:
+		return nil, false, ErrInvalidFrame
+	}
+}
+
+func webRTCStreamUsesSharedReferenceSlotCoding(config Config) bool {
+	return config.SpatialLayerCount > 1 &&
+		!config.Scalability.IsSimulcast() &&
+		config.Scalability.UsesKeyFrameInterLayerDependency()
+}
+
+func webRTCStreamExpectedCodedKey(keyPicture bool, settings FrameEncodeSettings, mode ScalabilityMode) bool {
+	if keyPicture && mode.UsesKeyFrameInterLayerDependency() && !mode.IsSimulcast() && settings.Type == FrameTypeDelta {
+		return false
+	}
+	return keyPicture
+}
+
+func (s *WebRTCStream) sequenceMaxCodedSize() (int, int, error) {
+	if s == nil || s.config.SpatialLayerCount == 0 {
+		return 0, 0, ErrInvalidConfig
+	}
+	top := s.config.SpatialLayerCount - 1
+	enc := s.encoders[top]
+	if enc == nil {
+		return 0, 0, ErrInvalidConfig
+	}
+	return enc.width, enc.height, nil
 }
 
 func (s *WebRTCStream) updateReferenceFrame(settings FrameEncodeSettings, enc *VideoEncoder) error {

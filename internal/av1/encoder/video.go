@@ -524,58 +524,10 @@ func (e *VideoEncoder) EncodeWithTemporalID(src SourceFrame420, forceKey bool, t
 		src = e.padSource(src)
 	}
 	if !e.haveKey || forceKey {
-		// Periodic keyframes reuse the stream's recon buffer and tile-coder
-		// pool, so a scene cut allocates only its temporal unit.
-		nTiles := 1
-		if e.tileColsLog2 > 0 {
-			nTiles = 1 << e.tileColsLog2
-		}
-		if len(e.tilePCs) < nTiles {
-			e.tilePCs = make([]pframeCoder, nTiles)
-		}
-		if cap(e.payloads) < nTiles {
-			e.payloads = make([]TilePayload, nTiles)
-		}
-		if cap(e.tileErrs) < nTiles {
-			e.tileErrs = make([]error, nTiles)
-		}
-		e.configureDecisionStats(nTiles)
-		// The keyframe path reuses the filter appliers a backgrounded pass
-		// may still hold.
-		if err := e.joinFilter(); err != nil {
-			return nil, false, err
-		}
-		// Keyframe quality boost: every later frame predicts (directly or
-		// transitively) from the key, so it earns a finer quantizer than
-		// the working point; rate control pays the debt back over the next
-		// frames through the buffer.
-		keyQ := e.keyframeQIndex()
-		tu, recon, err := encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, nil, &e.cdefApp, e.tileColsLog2, keyframeTileOptions{
-			payloads: e.payloads[:nTiles],
-			errs:     e.tileErrs[:nTiles],
-			stream:   e,
-		})
+		tu, err := e.encodeKeyWithSequenceMax(src, e.width, e.height)
 		if err != nil {
 			return nil, false, err
 		}
-		e.collectDecisionStats(true, nTiles, true)
-		e.hme.prime(src)
-		e.recon = recon
-		e.lastRecon = recon
-		e.haveKey = true
-		e.frameIndex = 1
-		// The first inter frame after a keyframe starts from default
-		// contexts (primary_ref NONE); chaining arms from its own state.
-		e.haveCtx = false
-		e.haveCtxT1 = false
-		e.lastTemporalID = 0
-		// A shown keyframe refreshes every reference slot, so slot 1 (the
-		// GOLDEN name) now holds the keyframe; seed the search copy.
-		if e.goldenEvery > 0 {
-			copyFrameInto(&e.golden, recon)
-			e.sinceGoldenFresh = 0
-		}
-		e.rcUpdate(len(tu) * 8)
 		return tu, true, nil
 	}
 	if temporalID >= uint8(max(e.temporalLayers, 1)) {
@@ -598,6 +550,214 @@ func (e *VideoEncoder) EncodeWithTemporalID(src SourceFrame420, forceKey bool, t
 	e.lastTemporalID = temporalID
 	e.rcUpdate(len(tu) * 8)
 	return tu, false, nil
+}
+
+func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, maxHeight int) ([]byte, error) {
+	// Periodic keyframes reuse the stream's recon buffer and tile-coder pool,
+	// so a scene cut allocates only its temporal unit.
+	nTiles := 1
+	if e.tileColsLog2 > 0 {
+		nTiles = 1 << e.tileColsLog2
+	}
+	if len(e.tilePCs) < nTiles {
+		e.tilePCs = make([]pframeCoder, nTiles)
+	}
+	if cap(e.payloads) < nTiles {
+		e.payloads = make([]TilePayload, nTiles)
+	}
+	if cap(e.tileErrs) < nTiles {
+		e.tileErrs = make([]error, nTiles)
+	}
+	e.configureDecisionStats(nTiles)
+	// The keyframe path reuses the filter appliers a backgrounded pass may
+	// still hold.
+	if err := e.joinFilter(); err != nil {
+		return nil, err
+	}
+	// Keyframe quality boost: every later frame predicts (directly or
+	// transitively) from the key, so it earns a finer quantizer than the
+	// working point; rate control pays the debt back over the next frames
+	// through the buffer.
+	keyQ := e.keyframeQIndex()
+	tu, recon, err := encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, nil, &e.cdefApp, e.tileColsLog2, keyframeTileOptions{
+		payloads:          e.payloads[:nTiles],
+		errs:              e.tileErrs[:nTiles],
+		stream:            e,
+		sequenceMaxWidth:  maxWidth,
+		sequenceMaxHeight: maxHeight,
+	})
+	if err != nil {
+		return nil, err
+	}
+	e.collectDecisionStats(true, nTiles, true)
+	e.hme.prime(src)
+	e.recon = recon
+	e.lastRecon = recon
+	e.haveKey = true
+	e.frameIndex = 1
+	// The first inter frame after a keyframe starts from default contexts
+	// (primary_ref NONE); chaining arms from its own state.
+	e.haveCtx = false
+	e.haveCtxT1 = false
+	e.lastTemporalID = 0
+	// A shown keyframe refreshes every reference slot, so slot 1 (the GOLDEN
+	// name) now holds the keyframe; seed the search copy.
+	if e.goldenEvery > 0 {
+		copyFrameInto(&e.golden, recon)
+		e.sinceGoldenFresh = 0
+	}
+	e.rcUpdate(len(tu) * 8)
+	return tu, nil
+}
+
+func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, ref SourceFrame420, settings FrameEncodeSettings, maxWidth, maxHeight int) ([]byte, error) {
+	if src.Width != e.renderWidth || src.Height != e.renderHeight {
+		return nil, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", src.Width, src.Height, e.renderWidth, e.renderHeight)
+	}
+	if settings.ReferenceCount == 0 || settings.ReferenceBuffers[0] >= encoderRefFrames ||
+		(settings.UpdateBufferSet && settings.UpdateBuffer >= encoderRefFrames) {
+		return nil, ErrInvalidFrame
+	}
+	if settings.TemporalID >= uint8(max(e.temporalLayers, 1)) {
+		return nil, ErrInvalidFrame
+	}
+	if e.renderWidth != e.width || e.renderHeight != e.height {
+		src = e.padSource(src)
+	}
+	if err := e.joinFilter(); err != nil {
+		return nil, err
+	}
+
+	hmeArmed := e.hme.armed
+	e.hme.run(src)
+	e.pc.st.hme = &e.hme
+	for t := range e.tilePCs {
+		e.tilePCs[t].st.hme = &e.hme
+	}
+
+	out := &e.t2Recon
+	if settings.UpdateBufferSet {
+		out = &e.reconBufs[e.reconIdx]
+	}
+	if out.Y == nil || len(out.Y) != len(src.Y) || len(out.U) != len(src.U) || len(out.V) != len(src.V) {
+		*out = SourceFrame420{
+			Y:            make([]byte, len(src.Y)),
+			U:            make([]byte, len(src.U)),
+			V:            make([]byte, len(src.V)),
+			YStride:      src.YStride,
+			ChromaStride: src.ChromaStride,
+			Width:        src.Width,
+			Height:       src.Height,
+		}
+	}
+
+	refresh := uint8(0)
+	if settings.UpdateBufferSet {
+		refresh = 1 << settings.UpdateBuffer
+	}
+	seq := losslessKeyframeSequence(maxWidth, maxHeight)
+	effQ := e.layerQIndex(settings.TemporalID)
+	header, refState := repeatPFrameHeader(src.Width, src.Height, effQ, refresh)
+	header.Prefix.FrameSizeOverride = src.Width != maxWidth || src.Height != maxHeight
+	header.Size.RefFrameIdx = [7]uint8{}
+	for i := range header.Size.RefFrameIdx {
+		header.Size.RefFrameIdx[i] = settings.ReferenceBuffers[0]
+	}
+	refState = referenceStateForFrame(ref.Width, ref.Height)
+	header.References = &refState
+	if e.renderWidth != e.width || e.renderHeight != e.height {
+		header.Size.RenderWidth = uint32(e.renderWidth)
+		header.Size.RenderHeight = uint32(e.renderHeight)
+		header.Size.HaveRenderSize = true
+	}
+	if e.tileColsLog2 > 0 || header.Prefix.FrameSizeOverride {
+		tiles, err := interTileInfoForSequence(seq, src.Width, src.Height, e.tileColsLog2)
+		if err != nil {
+			return nil, fmt.Errorf("tile info: %w", err)
+		}
+		header.Tile = tiles
+	}
+
+	nTiles := int(header.Tile.Cols)
+	if len(e.tilePCs) < nTiles {
+		e.tilePCs = make([]pframeCoder, nTiles)
+	}
+	e.configureDecisionStats(nTiles)
+	if cap(e.payloads) < nTiles {
+		e.payloads = make([]TilePayload, nTiles)
+	}
+	if cap(e.tileErrs) < nTiles {
+		e.tileErrs = make([]error, nTiles)
+	}
+	payloads := e.payloads[:nTiles]
+	for i := range payloads {
+		payloads[i] = TilePayload{}
+	}
+	if nTiles == 1 {
+		data, err := e.pc.encodeTile(src, ref, nil, out, effQ, nil, parser.ReferenceModeSingle, 0, uint16(src.Width/4))
+		if err != nil {
+			return nil, fmt.Errorf("encode tile: %w", err)
+		}
+		payloads[0].Data = data
+	} else {
+		miCols := uint16(src.Width / 4)
+		errs := e.tileErrs[:nTiles]
+		for i := range errs {
+			errs[i] = nil
+		}
+		tj := &e.tileJobParams
+		tj.src, tj.refRecon, tj.golden, tj.out = src, ref, nil, out
+		tj.effQ, tj.prevCtx = effQ, nil
+		tj.referenceMode = parser.ReferenceModeSingle
+		tj.tile, tj.miCols = header.Tile, miCols
+		tj.lfMap = nil
+		tj.payloads, tj.errs = payloads, errs
+		jobs := nTiles - 1
+		if jobs > 15 {
+			jobs = 15
+		}
+		e.startTileWorkers(jobs)
+		e.tileWait.Add(jobs)
+		for j := 0; j < jobs; j++ {
+			e.tileWork <- tileWorkRange{first: j + 1, stride: jobs, limit: nTiles}
+		}
+		c0, c1 := tileColBounds(header.Tile, 0, miCols)
+		data, err := e.tilePCs[0].encodeTile(src, ref, nil, out, effQ, nil, parser.ReferenceModeSingle, c0, c1)
+		e.tileWait.Wait()
+		if err != nil {
+			return nil, fmt.Errorf("encode tile 0: %w", err)
+		}
+		payloads[0].Data = data
+		for t := 1; t < nTiles; t++ {
+			if errs[t] != nil {
+				return nil, fmt.Errorf("encode tile %d: %w", t, errs[t])
+			}
+		}
+	}
+	tu, err := assembleInterTU(seq, header, payloads, settings.TemporalID, &e.tuGroup, &e.tuScratch)
+	if err != nil {
+		return nil, err
+	}
+	e.collectDecisionStats(false, nTiles, false)
+	e.lastRecon = *out
+	if settings.UpdateBufferSet {
+		e.recon = *out
+		e.reconIdx ^= 1
+	}
+	e.haveKey = true
+	e.frameIndex++
+	e.haveCtx = false
+	e.haveCtxT1 = false
+	e.lastTemporalID = settings.TemporalID
+	if !hmeArmed {
+		e.hme.prime(src)
+	}
+	if e.goldenEvery > 0 {
+		copyFrameInto(&e.golden, *out)
+		e.sinceGoldenFresh = 0
+	}
+	e.rcUpdate(len(tu) * 8)
+	return tu, nil
 }
 
 // encodePReusing is the steady-state P-frame path: it reuses the encoder-owned
