@@ -331,8 +331,11 @@ func (f RTCFrame) AppendRTPPackets(payloadDst []byte, descriptorDst []byte, span
 	}
 }
 
-// RTCEncoder encodes an L1T1, L1T2, or L1T3 WebRTC stream with per-frame dependency
-// descriptors. It requires CBR configuration (TargetBitrate and Framerate).
+// RTCEncoder encodes an 8-bit I420 WebRTC AV1 stream with per-frame dependency
+// descriptors. NewRTCEncoder covers single-spatial L1T* temporal ladders;
+// NewRTCEncoderWithConfig additionally covers supported multi-spatial
+// simulcast and key-only/key-shift SVC modes. It requires CBR configuration
+// (TargetBitrate and Framerate).
 type RTCEncoder struct {
 	stream *encoder.WebRTCStream
 }
