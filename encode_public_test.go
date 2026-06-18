@@ -201,79 +201,8 @@ func TestPublicRTCFrameAppendRTPPackets(t *testing.T) {
 		t.Fatalf("Encode: %v", err)
 	}
 	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
-	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
-	if err != nil {
-		t.Fatalf("RTPPacketScratchLen first: %v", err)
-	}
-	obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
-	size, err := frame.RTPPacketScratchLen(limits, obuScratch)
-	if err != nil {
-		t.Fatalf("RTPPacketScratchLen full: %v", err)
-	}
-	if size.Packetizer.Packets <= 1 {
-		t.Fatalf("packetizer packets=%d want fragmented frame", size.Packetizer.Packets)
-	}
-	packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
-	workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
-	payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
-	descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
-	spans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
-	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPackets(payloadBuf, descriptorBuf, spans, limits, obuScratch, packetScratch, workScratch)
-	if err != nil {
-		t.Fatalf("AppendRTPPackets: %v", err)
-	}
-	if packetCount != size.Packetizer.Packets {
-		t.Fatalf("packet count=%d want %d", packetCount, size.Packetizer.Packets)
-	}
-	payloadSlices := make([][]byte, packetCount)
-	for i := range packetCount {
-		span := spans[i]
-		payloadSlices[i] = rtpPayloads[span.PayloadOffset : span.PayloadOffset+span.PayloadLength]
-		desc := descriptors[span.DescriptorOffset : span.DescriptorOffset+span.DescriptorLength]
-		mandatory, _, err := goav1.ParseRTPDependencyDescriptorMandatory(desc)
-		if err != nil {
-			t.Fatalf("packet %d descriptor: %v", i, err)
-		}
-		if mandatory.FirstPacketInFrame != (i == 0) || mandatory.LastPacketInFrame != (i == packetCount-1) {
-			t.Fatalf("packet %d descriptor flags=%+v packets=%d", i, mandatory, packetCount)
-		}
-		if span.Marker != (i == packetCount-1) {
-			t.Fatalf("packet %d marker=%v", i, span.Marker)
-		}
-	}
-	if spans[0].DescriptorLength <= goav1.RTPDependencyDescriptorMandatorySize {
-		t.Fatal("first descriptor did not attach dependency structure")
-	}
-	assembledLen, obuCount, err := goav1.AssembleRTPFrameSize(payloadSlices)
-	if err != nil {
-		t.Fatalf("AssembleRTPFrameSize: %v", err)
-	}
-	assembled := make([]byte, assembledLen)
-	assembledOBUs := make([]goav1.RTPFrameOBU, obuCount)
-	wrote, gotOBUs, err := goav1.AssembleRTPFrame(assembled, payloadSlices, assembledOBUs)
-	if err != nil {
-		t.Fatalf("AssembleRTPFrame: %v", err)
-	}
-	var expected []byte
-	it := goav1.NewLowOverheadIterator(frame.Data)
-	for {
-		unit, ok, err := it.Next()
-		if err != nil {
-			t.Fatalf("source OBU iteration: %v", err)
-		}
-		if !ok {
-			break
-		}
-		switch unit.Header.Type {
-		case goav1.OBUTemporalDelimiter, goav1.OBUTileList, goav1.OBUPadding:
-			continue
-		default:
-			expected = append(expected, unit.Raw...)
-		}
-	}
-	if wrote != len(expected) || gotOBUs != obuCount || string(assembled[:wrote]) != string(expected) {
-		t.Fatalf("assembled len=%d obus=%d match=%v want len=%d obus=%d", wrote, gotOBUs, string(assembled[:wrote]) == string(expected), len(expected), obuCount)
-	}
+	var receiver goav1.RTPDependencyDescriptorState
+	assertPublicRTCFrameRTPPackets(t, &receiver, frame, limits, true)
 }
 
 func TestPublicRTCFrameAppendRTPPacketsSpatialPicture(t *testing.T) {
