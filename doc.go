@@ -23,8 +23,9 @@
 // multi-spatial EncodePicture output for WebRTC SVC and simulcast modes, and
 // runtime bitrate/framerate/scalability reconfiguration. Lower-level WebRTC
 // encoder helpers expose W3C SVC mode metadata, temporal/spatial dependency
-// structures, decode-target grids, and key-shift scheduling. The decoder and
-// encoder APIs will grow at this top level as the internal pipeline stabilizes.
+// structures, decode-target grids, key-shift scheduling, and the supported
+// scalabilityMode capability list. The decoder and encoder APIs will grow at
+// this top level as the internal pipeline stabilizes.
 //
 // Hot paths use caller-owned buffers and fixed storage. Returned byte slices
 // alias caller-provided input or output buffers unless a future API explicitly

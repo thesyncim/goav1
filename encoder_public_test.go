@@ -123,6 +123,63 @@ func TestPublicEncoderControlSurface(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderWebRTCScalabilityModes(t *testing.T) {
+	wantNames := []string{
+		"L1T1", "L1T2", "L1T3",
+		"L2T1", "L2T1h", "L2T1_KEY",
+		"L2T2", "L2T2h", "L2T2_KEY", "L2T2_KEY_SHIFT",
+		"L2T3", "L2T3h", "L2T3_KEY", "L2T3_KEY_SHIFT",
+		"L3T1", "L3T1h", "L3T1_KEY",
+		"L3T2", "L3T2h", "L3T2_KEY", "L3T2_KEY_SHIFT",
+		"L3T3", "L3T3h", "L3T3_KEY", "L3T3_KEY_SHIFT",
+		"S2T1", "S2T1h", "S2T2", "S2T2h", "S2T3", "S2T3h",
+		"S3T1", "S3T1h", "S3T2", "S3T2h", "S3T3", "S3T3h",
+	}
+	modes := av1.EncoderWebRTCScalabilityModes()
+	if len(modes) != len(wantNames) {
+		t.Fatalf("mode count=%d want %d", len(modes), len(wantNames))
+	}
+	seen := make(map[av1.EncoderScalabilityMode]bool, len(modes))
+	for i, mode := range modes {
+		if mode.String() != wantNames[i] {
+			t.Fatalf("mode[%d]=%s want %s", i, mode, wantNames[i])
+		}
+		if seen[mode] {
+			t.Fatalf("duplicate mode %s", mode)
+		}
+		seen[mode] = true
+		parsed, ok := av1.ParseEncoderScalabilityMode(wantNames[i])
+		if !ok || parsed != mode {
+			t.Fatalf("ParseEncoderScalabilityMode(%q)=%s,%v want %s,true", wantNames[i], parsed, ok, mode)
+		}
+		normalized, err := av1.SetWebRTCEncoderSVCConfig(av1.EncoderConfig{
+			Resolution:        av1.EncoderResolution{Width: 1280, Height: 720},
+			MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+			MinBitrateKbps:    120,
+			MaxBitrateKbps:    1600,
+			TargetBitrateKbps: 900,
+			Scalability:       mode,
+		}, 0, 0)
+		if err != nil {
+			t.Fatalf("SetWebRTCEncoderSVCConfig(%s): %v", mode, err)
+		}
+		if normalized.Scalability != mode {
+			t.Fatalf("normalized mode=%s want %s", normalized.Scalability, mode)
+		}
+	}
+
+	modes[0] = av1.EncoderScalabilityModeS3T3h
+	if got := av1.EncoderWebRTCScalabilityModes()[0]; got != av1.EncoderScalabilityModeL1T1 {
+		t.Fatalf("EncoderWebRTCScalabilityModes aliased caller mutation: %s", got)
+	}
+	prefix := []av1.EncoderScalabilityMode{av1.EncoderScalabilityModeL3T3}
+	appended := av1.AppendEncoderWebRTCScalabilityModes(prefix)
+	if len(appended) != len(wantNames)+1 || appended[0] != av1.EncoderScalabilityModeL3T3 ||
+		appended[1] != av1.EncoderScalabilityModeL1T1 || appended[len(appended)-1] != av1.EncoderScalabilityModeS3T3h {
+		t.Fatalf("appended modes=%v", appended)
+	}
+}
+
 func TestPublicEncoderLowOverheadOBU(t *testing.T) {
 	unit := av1.EncoderOBU{
 		Type:       av1.OBUFrame,
@@ -2082,17 +2139,12 @@ type publicWebRTCControllerLayer struct {
 }
 
 func publicWebRTCControllerModeNames() []string {
-	return []string{
-		"L1T1", "L1T2", "L1T3",
-		"L2T1", "L2T1h", "L2T1_KEY",
-		"L2T2", "L2T2h", "L2T2_KEY", "L2T2_KEY_SHIFT",
-		"L2T3", "L2T3h", "L2T3_KEY", "L2T3_KEY_SHIFT",
-		"L3T1", "L3T1h", "L3T1_KEY",
-		"L3T2", "L3T2h", "L3T2_KEY", "L3T2_KEY_SHIFT",
-		"L3T3", "L3T3h", "L3T3_KEY", "L3T3_KEY_SHIFT",
-		"S2T1", "S2T1h", "S2T2", "S2T2h", "S2T3", "S2T3h",
-		"S3T1", "S3T1h", "S3T2", "S3T2h", "S3T3", "S3T3h",
+	modes := av1.EncoderWebRTCScalabilityModes()
+	names := make([]string, len(modes))
+	for i, mode := range modes {
+		names[i] = mode.String()
 	}
+	return names
 }
 
 func publicWebRTCControllerMatrixSteps(temporalLayers uint8) uint64 {
