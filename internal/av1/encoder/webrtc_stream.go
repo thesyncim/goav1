@@ -236,6 +236,15 @@ func (s *WebRTCStream) Config() Config {
 	return s.config
 }
 
+// Close waits for background work in every active spatial encoder to finish
+// and releases their persistent workers. It is safe to call more than once.
+func (s *WebRTCStream) Close() error {
+	if s == nil {
+		return nil
+	}
+	return s.closeEncoders()
+}
+
 // SetConfig atomically updates bitrate, framerate, and supported scalability
 // settings. Changes that alter layer geometry or dependency structure make the
 // next encoded picture a key picture while preserving frame IDs.

@@ -114,6 +114,30 @@ func TestPublicVideoEncoderRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPublicVideoEncoderClose(t *testing.T) {
+	const w, h = 192, 128
+	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+		Width: w, Height: h,
+		TargetBitrate: 300_000, Framerate: 30,
+		TileColumns: 2,
+	})
+	if err != nil {
+		t.Fatalf("NewVideoEncoder: %v", err)
+	}
+	if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); err != nil {
+		t.Fatalf("Encode before close: %v", err)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 1), false); err == nil {
+		t.Fatal("Encode after Close succeeded")
+	}
+}
+
 // TestPublicRTCEncoder checks the WebRTC surface: every frame carries a
 // dependency descriptor and the temporal units decode.
 func TestPublicRTCEncoder(t *testing.T) {
@@ -170,6 +194,30 @@ func TestPublicRTCEncoder(t *testing.T) {
 	}
 	if n != 6 {
 		t.Fatalf("decoded %d frames, want 6", n)
+	}
+}
+
+func TestPublicRTCEncoderClose(t *testing.T) {
+	const w, h = 640, 360
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL2T2)
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	if _, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, 0), false); err != nil {
+		t.Fatalf("EncodePicture before close: %v", err)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	if _, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, 1), false); err == nil {
+		t.Fatal("EncodePicture after Close succeeded")
+	}
+	if err := enc.SetConfig(cfg); err == nil {
+		t.Fatal("SetConfig after Close succeeded")
 	}
 }
 

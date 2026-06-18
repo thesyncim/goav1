@@ -182,6 +182,17 @@ func (e *VideoEncoder) Encode(frame I420Frame, forceKey bool) (EncodedFrame, err
 	return EncodedFrame{Data: tu, Keyframe: key, TemporalID: tid}, nil
 }
 
+// Close waits for any background encoder work to finish and releases
+// persistent workers. It is safe to call more than once.
+func (e *VideoEncoder) Close() error {
+	if e == nil || e.enc == nil {
+		return nil
+	}
+	err := e.enc.Close()
+	e.enc = nil
+	return err
+}
+
 // Reconstruction returns the most recent frame's reconstruction — exactly
 // what a conformant decoder outputs for it. The planes alias encoder-owned
 // buffers that are recycled two frames later; copy for longer-lived use.
@@ -416,6 +427,18 @@ func (e *RTCEncoder) SetConfig(cfg EncoderConfig) error {
 		return fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
 	return e.stream.SetConfig(cfg)
+}
+
+// Close waits for any background encoder work to finish and releases
+// persistent workers across all spatial encoders. It is safe to call more than
+// once.
+func (e *RTCEncoder) Close() error {
+	if e == nil || e.stream == nil {
+		return nil
+	}
+	err := e.stream.Close()
+	e.stream = nil
+	return err
 }
 
 // Encode encodes one frame with its dependency descriptor. The returned Data
