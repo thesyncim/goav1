@@ -394,11 +394,13 @@ implement layer drop policy — discard packets above the operating
 point you chose, then feed only the surviving payloads to the
 decoder. For a single decode chain, or for one independent simulcast
 spatial layer at a time, `NewDecoderFromRTPPayloads` is the friendly
-ordered-payload entry point. Full SVC modes with shared reference slots
-still need the framework path with `FrameLayerPool`,
-`NewDecoderFrameLayerPool`, and
-`DecoderFrameWorkExternalReferenceRuntime` so references resolve across
-spatial-layer pools.
+ordered-payload entry point. The returned decoder can also drive live
+payloads with `DecodeRTPPayload`; call `DecodeRTPPayloadAfterLoss` after
+the jitter buffer detects a packet gap to clear retained RTP fragments while
+preserving parser sequence/reference state. Full SVC modes with shared
+reference slots still need the framework path with `FrameLayerPool`,
+`NewDecoderFrameLayerPool`, and `DecoderFrameWorkExternalReferenceRuntime`
+so references resolve across spatial-layer pools.
 
 ---
 
@@ -422,7 +424,7 @@ writing:
 | L1T2 single-pool decode                             | Strict every-frame MD5 pass in `make dryrun-relevant-supported`. |
 | L2T1 / L2T2 multi-pool decode                       | Strict every-frame MD5 pass in `make dryrun-extended`. |
 | WebRTC AV1 SVC control metadata                     | Complete for the W3C mode vocabulary (`L*T*`, `L*T*h`, `L*T*_KEY`, `L*T*_KEY_SHIFT`, `S*T*`, `S*T*h`) with dependency-descriptor decode targets over the full `(spatial, temporal)` grid, W3C key-shift temporal schedules, and pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates. |
-| High-level RTP payload decode                       | `NewDecoderFromRTPPayloads` covers ordered AV1 RTP payload bodies for single decode chains and independent simulcast layers; `RunRTPPayloadAfterLoss*` remains the explicit retained-fragment reset surface for live jitter-buffer loss handling. |
+| High-level RTP payload decode                       | `NewDecoderFromRTPPayloads` covers ordered/live AV1 RTP payload bodies for single decode chains and independent simulcast layers, including `DecodeRTPPayloadAfterLoss` retained-fragment reset after packet gaps. |
 | Strict every-frame parity                           | Passing for the committed SVC vectors; broader SVC corpus expansion remains open. |
 
 The WebRTC control row is metadata/control support for already-produced frame

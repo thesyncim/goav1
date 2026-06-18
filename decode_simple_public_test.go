@@ -1387,6 +1387,113 @@ func TestPublicDecoderRTPPayloadRunnerRecoversAfterEncoderPacketLoss(t *testing.
 	}
 }
 
+func TestNewDecoderFromRTPPayloadsDecodePayloadAfterLoss(t *testing.T) {
+	const width, height = 192, 128
+	enc, err := av1.NewRTCEncoderWithConfig(av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: width, Height: height},
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    120,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 420,
+		Scalability:       av1.EncoderScalabilityModeL1T2,
+	})
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	limits := av1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
+	key0, err := enc.Encode(publicRTCMatrixFrame(width, height, 0), false)
+	if err != nil {
+		t.Fatalf("Encode initial key: %v", err)
+	}
+	key0LowOverhead := append([]byte(nil), key0.Data...)
+	key0Payloads := publicDecoderRTPPayloadsForFrameWithLimits(t, key0, limits)
+
+	delta, err := enc.Encode(publicRTCMatrixFrame(width, height, 1), false)
+	if err != nil {
+		t.Fatalf("Encode dropped delta: %v", err)
+	}
+	deltaPayloads := publicDecoderRTPPayloadsForFrameWithLimits(t, delta, limits)
+	if len(deltaPayloads) < 2 {
+		t.Fatalf("delta frame packetized into %d RTP payloads, want fragmentation", len(deltaPayloads))
+	}
+
+	key2, err := enc.Encode(publicRTCMatrixFrame(width, height, 2), true)
+	if err != nil {
+		t.Fatalf("Encode recovery key: %v", err)
+	}
+	key2LowOverhead := append([]byte(nil), key2.Data...)
+	key2Payloads := publicDecoderRTPPayloadsForFrameWithLimits(t, key2, limits)
+
+	probePayloads := append(append([][]byte(nil), key0Payloads...), deltaPayloads...)
+	probePayloads = append(probePayloads, key2Payloads...)
+	dec, err := av1.NewDecoderFromRTPPayloads(probePayloads)
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPayloads: %v", err)
+	}
+	defer dec.Close()
+
+	var got [][16]byte
+	appendFrames := func(frames []*av1.Frame) {
+		t.Helper()
+		for _, f := range frames {
+			got = append(got, frameMD5Visible(f))
+		}
+	}
+	for i, payload := range key0Payloads {
+		frames, err := dec.DecodeRTPPayload(payload)
+		if err != nil {
+			t.Fatalf("DecodeRTPPayload key0 packet %d: %v", i, err)
+		}
+		appendFrames(frames)
+	}
+	if len(got) != 1 {
+		t.Fatalf("initial key decoded %d frames, want 1", len(got))
+	}
+
+	frames, err := dec.DecodeRTPPayload(deltaPayloads[0])
+	if err != nil {
+		t.Fatalf("DecodeRTPPayload dropped delta prefix: %v", err)
+	}
+	if len(frames) != 0 {
+		t.Fatalf("dropped delta prefix decoded %d frames, want 0", len(frames))
+	}
+
+	frames, err = dec.DecodeRTPPayloadAfterLoss(key2Payloads[0])
+	if err != nil {
+		t.Fatalf("DecodeRTPPayloadAfterLoss recovery key first packet: %v", err)
+	}
+	appendFrames(frames)
+	for i, payload := range key2Payloads[1:] {
+		frames, err := dec.DecodeRTPPayload(payload)
+		if err != nil {
+			t.Fatalf("DecodeRTPPayload recovery key tail %d: %v", i, err)
+		}
+		appendFrames(frames)
+	}
+
+	want := decodeLowOverheadPayloads(t, [][]byte{key0LowOverhead, key2LowOverhead})
+	if len(got) != len(want) {
+		t.Fatalf("RTP decoder recovered %d frames, low-overhead decoded %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("frame %d digest differs after loss: rtp=%s low=%s",
+				i, hex.EncodeToString(got[i][:]), hex.EncodeToString(want[i][:]))
+		}
+	}
+
+	lowDec, err := av1.NewDecoder([][]byte{key0LowOverhead})
+	if err != nil {
+		t.Fatalf("NewDecoder low-overhead: %v", err)
+	}
+	defer lowDec.Close()
+	if _, err := lowDec.DecodeRTPPayload(key0Payloads[0]); err == nil {
+		t.Fatal("DecodeRTPPayload on low-overhead decoder succeeded")
+	}
+}
+
 func publicDecoderRTPPayloadsForFrame(t *testing.T, frame av1.RTCFrame) [][]byte {
 	t.Helper()
 	return publicDecoderRTPPayloadsForFrameWithLimits(t, frame, av1.RTPPayloadSizeLimits{MaxPayloadLen: 96})

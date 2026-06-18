@@ -130,10 +130,10 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 // with ok=true until the payload that completes the frame arrives.
 //
 // payloads is retained by reference (not copied); the caller must keep the
-// backing bytes alive and unmodified for the Decoder's lifetime. For live
-// packet-loss handling where the caller needs to reset retained RTP fragments
-// after a gap, use DecoderFrameWorkResidualStreamRunner.RunRTPPayloadAfterLoss
-// or RunRTPPayloadAfterLossInto directly.
+// backing bytes alive and unmodified for the Decoder's lifetime. The same
+// decoder can also drive caller-supplied live payloads with DecodeRTPPayload and
+// DecodeRTPPayloadAfterLoss; the construction payloads size the reusable arenas,
+// so later live payloads must fit those planned RTP/event capacities.
 func NewDecoderFromRTPPayloads(payloads [][]byte, opts ...Option) (*Decoder, error) {
 	return newDecoderFromPayloadSourceKind(newSliceDecoderPayloadSource(payloads), decoderPayloadRTP, opts...)
 }
@@ -390,10 +390,7 @@ func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 	}
 
 	var result DecoderFrameWorkResidualStreamResult
-	postFilter := DecoderFrameWorkPostFilterRunner(&d.postFilter)
-	if d.useExternal {
-		postFilter = &d.external
-	}
+	postFilter := d.postFilterRunner()
 	switch d.payloadKind {
 	case decoderPayloadLowOverhead:
 		err = d.runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, postFilter)
@@ -415,6 +412,64 @@ func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 	d.visible = out
 	d.trackShownSurfaces(out)
 	return out, true, nil
+}
+
+// DecodeRTPPayload decodes one caller-supplied AV1 RTP payload body using an
+// RTP decoder constructed by NewDecoderFromRTPPayloads. It is intended for live
+// receive loops that use the constructor payloads only to size the reusable
+// decode arenas. Fragmented RTP payloads can return an empty frame slice until
+// the payload that completes the frame arrives.
+//
+// Returned frames have the same lifetime as DecodeNext. Do not call this on a
+// Decoder constructed from low-overhead or IVF payloads.
+func (d *Decoder) DecodeRTPPayload(payload []byte) ([]*Frame, error) {
+	return d.decodeExternalRTPPayload(payload, false)
+}
+
+// DecodeRTPPayloadAfterLoss clears retained RTP fragment bytes, then decodes
+// one caller-supplied AV1 RTP payload body. Parser sequence and reference state
+// are preserved, matching the lower-level RunRTPPayloadAfterLoss* methods. Use
+// this after the jitter buffer detects a packet gap before feeding the next
+// payload that should restart depacketization.
+func (d *Decoder) DecodeRTPPayloadAfterLoss(payload []byte) ([]*Frame, error) {
+	return d.decodeExternalRTPPayload(payload, true)
+}
+
+func (d *Decoder) decodeExternalRTPPayload(payload []byte, afterLoss bool) ([]*Frame, error) {
+	if d == nil || d.payloadKind != decoderPayloadRTP {
+		return nil, errors.New("goav1: decoder is not initialized for RTP payloads")
+	}
+	if d.closed {
+		return nil, errors.New("goav1: decoder closed")
+	}
+	d.releaseShownSurfaces()
+	var result DecoderFrameWorkResidualStreamResult
+	postFilter := d.postFilterRunner()
+	var err error
+	if afterLoss {
+		err = d.runner.RunRTPPayloadAfterLossIntoWithPostFilterRunner(&result, payload, postFilter)
+	} else {
+		err = d.runner.RunRTPPayloadIntoWithPostFilterRunner(&result, payload, postFilter)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("goav1: rtp payload: %w", err)
+	}
+	out := d.visible[:0]
+	for _, f := range result.Run.Outputs {
+		if f != nil {
+			out = append(out, f)
+		}
+	}
+	d.visible = out
+	d.trackShownSurfaces(out)
+	return out, nil
+}
+
+func (d *Decoder) postFilterRunner() DecoderFrameWorkPostFilterRunner {
+	if d.useExternal {
+		return &d.external
+	}
+	return &d.postFilter
 }
 
 // trackShownSurfaces records the pool slots behind one returned batch so the
