@@ -2076,6 +2076,113 @@ func TestPublicWebRTCEncoderSetConfigReconfigure(t *testing.T) {
 	}
 }
 
+func TestPublicWebRTCEncoderSetConfigScalabilityTransitionMatrix(t *testing.T) {
+	modes := av1.EncoderWebRTCScalabilityModes()
+	for fromIndex, fromMode := range modes {
+		fromMode := fromMode
+		for toIndex, toMode := range modes {
+			toMode := toMode
+			t.Run(fromMode.String()+"->"+toMode.String(), func(t *testing.T) {
+				const firstFrameID = 7000
+				fromCfg := publicWebRTCControllerTransitionConfig(fromMode, fromIndex)
+				toCfg := publicWebRTCControllerTransitionConfig(toMode, len(modes)+toIndex)
+				enc, err := av1.NewWebRTCEncoder(fromCfg, av1.EncoderWebRTCState{NextFrameID: firstFrameID})
+				if err != nil {
+					t.Fatalf("NewWebRTCEncoder(%s): %v", fromMode, err)
+				}
+				if got := enc.Config().Scalability; got != fromMode {
+					t.Fatalf("initial config mode=%s want %s", got, fromMode)
+				}
+
+				var receiver av1.RTPDependencyDescriptorState
+				history := make(map[uint64]publicWebRTCControllerLayer, 16)
+				nextFrameID := uint64(firstFrameID)
+
+				key, err := enc.NextTemporalUnit(false)
+				if err != nil {
+					t.Fatalf("initial key NextTemporalUnit: %v", err)
+				}
+				assertPublicWebRTCControllerUnit(t, &receiver, enc.Config(), enc.State(), key, true, 0, &nextFrameID, history)
+
+				beforeWarm := enc.State()
+				warm, err := enc.NextTemporalUnit(false)
+				if err != nil {
+					t.Fatalf("warm delta NextTemporalUnit: %v", err)
+				}
+				assertPublicWebRTCControllerUnit(t, &receiver, enc.Config(), enc.State(), warm, false, beforeWarm.DeltaPictureIndex, &nextFrameID, history)
+
+				beforeSet := enc.State()
+				if beforeSet.DeltaPictureIndex == 0 || !beforeSet.DependencyStructureState.Valid {
+					t.Fatalf("warm state not ready for transition: %+v", beforeSet)
+				}
+				wantKey := publicWebRTCControllerSetConfigNeedsKey(t, enc.Config(), toCfg)
+				if err := enc.SetConfig(toCfg); err != nil {
+					t.Fatalf("SetConfig(%s->%s): %v", fromMode, toMode, err)
+				}
+				afterSet := enc.State()
+				if afterSet.NextFrameID != beforeSet.NextFrameID || afterSet.NextOrderHint != beforeSet.NextOrderHint {
+					t.Fatalf("SetConfig changed continuity state: before id=%d hint=%d after id=%d hint=%d",
+						beforeSet.NextFrameID, beforeSet.NextOrderHint, afterSet.NextFrameID, afterSet.NextOrderHint)
+				}
+				if wantKey {
+					if afterSet.DeltaPictureIndex != 0 || afterSet.DependencyStructureState.Valid {
+						t.Fatalf("wire-structure transition did not reset dependency state: before delta=%d dep=%v after delta=%d dep=%v",
+							beforeSet.DeltaPictureIndex, beforeSet.DependencyStructureState.Valid,
+							afterSet.DeltaPictureIndex, afterSet.DependencyStructureState.Valid)
+					}
+				} else if afterSet != beforeSet {
+					t.Fatalf("wire-compatible control change reset state: before delta=%d dep=%v after delta=%d dep=%v",
+						beforeSet.DeltaPictureIndex, beforeSet.DependencyStructureState.Valid,
+						afterSet.DeltaPictureIndex, afterSet.DependencyStructureState.Valid)
+				}
+				normalized := enc.Config()
+				if normalized.Scalability != toMode ||
+					normalized.MaxFramerate != toCfg.MaxFramerate ||
+					normalized.TargetBitrateKbps != toCfg.TargetBitrateKbps ||
+					normalized.Content != toCfg.Content {
+					t.Fatalf("normalized config=%+v want mode=%s fps=%+v target=%d content=%d",
+						normalized, toMode, toCfg.MaxFramerate, toCfg.TargetBitrateKbps, toCfg.Content)
+				}
+
+				beforeUnit := enc.State()
+				unit, err := enc.NextTemporalUnit(false)
+				if err != nil {
+					t.Fatalf("post-transition NextTemporalUnit: %v", err)
+				}
+				assertPublicWebRTCControllerUnit(t, &receiver, normalized, enc.State(), unit, wantKey, beforeUnit.DeltaPictureIndex, &nextFrameID, history)
+
+				beforeDelta := enc.State()
+				delta, err := enc.NextTemporalUnit(false)
+				if err != nil {
+					t.Fatalf("post-transition delta NextTemporalUnit: %v", err)
+				}
+				assertPublicWebRTCControllerUnit(t, &receiver, normalized, enc.State(), delta, false, beforeDelta.DeltaPictureIndex, &nextFrameID, history)
+			})
+		}
+	}
+}
+
+func publicWebRTCControllerSetConfigNeedsKey(t *testing.T, from av1.EncoderConfig, to av1.EncoderConfig) bool {
+	t.Helper()
+	fromSeq, err := av1.EncoderSequenceHeaderForConfig(from)
+	if err != nil {
+		t.Fatalf("from SequenceHeaderForConfig(%s): %v", from.Scalability, err)
+	}
+	toSeq, err := av1.EncoderSequenceHeaderForConfig(to)
+	if err != nil {
+		t.Fatalf("to SequenceHeaderForConfig(%s): %v", to.Scalability, err)
+	}
+	fromStructure, err := av1.EncoderWebRTCFrameDependencyStructureForConfig(from)
+	if err != nil {
+		t.Fatalf("from EncoderWebRTCFrameDependencyStructureForConfig(%s): %v", from.Scalability, err)
+	}
+	toStructure, err := av1.EncoderWebRTCFrameDependencyStructureForConfig(to)
+	if err != nil {
+		t.Fatalf("to EncoderWebRTCFrameDependencyStructureForConfig(%s): %v", to.Scalability, err)
+	}
+	return fromSeq != toSeq || fromStructure != toStructure
+}
+
 func TestPublicWebRTCEncoderControllerSettingsMatrix(t *testing.T) {
 	profiles := []struct {
 		name        string
@@ -2171,6 +2278,32 @@ func TestPublicWebRTCEncoderControllerSettingsMatrix(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func publicWebRTCControllerTransitionConfig(mode av1.EncoderScalabilityMode, step int) av1.EncoderConfig {
+	fps := []av1.EncoderRational{
+		{Num: 30, Den: 1},
+		{Num: 60, Den: 1},
+		{Num: 30000, Den: 1001},
+		{Num: 24, Den: 1},
+		{Num: 15, Den: 1},
+	}
+	minKbps := int32(120 + (step%5)*20)
+	maxKbps := int32(1400 + (step%7)*120)
+	targetKbps := minKbps + (maxKbps-minKbps)/2
+	content := av1.EncoderContentCamera
+	if step%2 == 1 {
+		content = av1.EncoderContentScreen
+	}
+	return av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 1280, Height: 720},
+		Scalability:       mode,
+		MaxFramerate:      fps[step%len(fps)],
+		MinBitrateKbps:    minKbps,
+		MaxBitrateKbps:    maxKbps,
+		TargetBitrateKbps: targetKbps,
+		Content:           content,
 	}
 }
 
