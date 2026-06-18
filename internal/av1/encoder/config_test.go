@@ -244,6 +244,44 @@ func TestSetWebRTCSVCConfig(t *testing.T) {
 	}
 }
 
+func TestSetWebRTCSVCConfigPreservesSpatialLayerBitrates(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    1000,
+		TargetBitrateKbps: 650,
+		Scalability:       ScalabilityModeS2T3,
+	}
+	cfg.SpatialLayers[0].MinBitrateKbps = 120
+	cfg.SpatialLayers[0].MaxBitrateKbps = 520
+	cfg.SpatialLayers[0].TargetBitrateKbps = 260
+	cfg.SpatialLayers[1].MinBitrateKbps = 340
+	cfg.SpatialLayers[1].MaxBitrateKbps = 1500
+	cfg.SpatialLayers[1].TargetBitrateKbps = 900
+
+	got, err := SetWebRTCSVCConfig(cfg, 0, 0)
+	if err != nil {
+		t.Fatalf("SetWebRTCSVCConfig explicit layers: %v", err)
+	}
+	if got.SpatialLayers[0].Resolution != (Resolution{Width: 320, Height: 180}) ||
+		got.SpatialLayers[0].MinBitrateKbps != 120 ||
+		got.SpatialLayers[0].MaxBitrateKbps != 520 ||
+		got.SpatialLayers[0].TargetBitrateKbps != 260 {
+		t.Fatalf("base layer = %+v", got.SpatialLayers[0])
+	}
+	if got.SpatialLayers[1].Resolution != (Resolution{Width: 640, Height: 360}) ||
+		got.SpatialLayers[1].MinBitrateKbps != 340 ||
+		got.SpatialLayers[1].MaxBitrateKbps != 1500 ||
+		got.SpatialLayers[1].TargetBitrateKbps != 900 {
+		t.Fatalf("top layer = %+v", got.SpatialLayers[1])
+	}
+
+	if _, err := SetWebRTCSVCConfig(got, 0, 0); err != nil {
+		t.Fatalf("SetWebRTCSVCConfig normalized explicit layers: %v", err)
+	}
+}
+
 func TestSetWebRTCSVCConfigSmallStepAndReduction(t *testing.T) {
 	cfg := Config{
 		Resolution:  Resolution{Width: 1500, Height: 900},
@@ -299,6 +337,7 @@ func TestSetWebRTCSVCConfigRejectsInvalidConfig(t *testing.T) {
 		{name: "subfps", cfg: withFramerate(valid, Rational{Num: 1, Den: 2})},
 		{name: "bitrate", cfg: withBitrate(valid, 0, WebRTCMaxBitrateKbps+1, 0)},
 		{name: "target-outside", cfg: withBitrate(valid, 100, 500, 600)},
+		{name: "layer-target-outside", cfg: withSpatialLayerBitrate(withScalability(valid, ScalabilityModeS2T2), 1, 400, 800, 900)},
 		{name: "cbr-quantizer", cfg: withQuantizer(valid, RateControlCBR, 12)},
 		{name: "cqp-quantizer", cfg: withQuantizer(valid, RateControlCQP, WebRTCMaxQuantizer+1)},
 	} {
@@ -322,6 +361,18 @@ func withBitrate(cfg Config, minBitrateKbps int32, maxBitrateKbps int32, targetB
 	cfg.MinBitrateKbps = minBitrateKbps
 	cfg.MaxBitrateKbps = maxBitrateKbps
 	cfg.TargetBitrateKbps = targetBitrateKbps
+	return cfg
+}
+
+func withScalability(cfg Config, mode ScalabilityMode) Config {
+	cfg.Scalability = mode
+	return cfg
+}
+
+func withSpatialLayerBitrate(cfg Config, layer int, minBitrateKbps int32, maxBitrateKbps int32, targetBitrateKbps int32) Config {
+	cfg.SpatialLayers[layer].MinBitrateKbps = minBitrateKbps
+	cfg.SpatialLayers[layer].MaxBitrateKbps = maxBitrateKbps
+	cfg.SpatialLayers[layer].TargetBitrateKbps = targetBitrateKbps
 	return cfg
 }
 

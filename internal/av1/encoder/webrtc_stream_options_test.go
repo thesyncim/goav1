@@ -235,8 +235,23 @@ func TestWebRTCStreamSetConfigReconfigure(t *testing.T) {
 
 	structureChange := controlChange
 	structureChange.Scalability = ScalabilityModeS2T2
+	structureChange.SpatialLayers[0].MinBitrateKbps = 120
+	structureChange.SpatialLayers[0].MaxBitrateKbps = 480
+	structureChange.SpatialLayers[0].TargetBitrateKbps = 240
+	structureChange.SpatialLayers[1].MinBitrateKbps = 300
+	structureChange.SpatialLayers[1].MaxBitrateKbps = 1400
+	structureChange.SpatialLayers[1].TargetBitrateKbps = 840
 	if err := stream.SetConfig(structureChange); err != nil {
 		t.Fatalf("SetConfig structure change: %v", err)
+	}
+	for i, wantTarget := range [...]int32{240, 840} {
+		if got := stream.config.SpatialLayers[i].TargetBitrateKbps; got != wantTarget {
+			t.Fatalf("layer %d target bitrate=%d want %d", i, got, wantTarget)
+		}
+		wantBits := int(wantTarget) * 1000 / webRTCStreamFramesPerSecond(structureChange.MaxFramerate)
+		if got := stream.encoders[i].rcPerFrameBits; got != wantBits {
+			t.Fatalf("layer %d rcPerFrameBits=%d want %d", i, got, wantBits)
+		}
 	}
 	beforeFrameID = stream.state.NextFrameID
 	picture, err := stream.EncodePicture(src, false)

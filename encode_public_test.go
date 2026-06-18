@@ -494,79 +494,174 @@ func TestPublicRTCEncoderSetConfigReconfigure(t *testing.T) {
 }
 
 func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
-	tests := []struct {
-		name      string
-		width     int
-		height    int
-		initial   goav1.EncoderScalabilityMode
-		reconfig  goav1.EncoderScalabilityMode
-		controlTB int32
-	}{
-		{name: "temporal", width: 192, height: 128, initial: goav1.EncoderScalabilityModeL1T3, reconfig: goav1.EncoderScalabilityModeL1T2, controlTB: 420},
-		{name: "full-svc", width: 640, height: 360, initial: goav1.EncoderScalabilityModeL2T2, reconfig: goav1.EncoderScalabilityModeL2T3, controlTB: 760},
-		{name: "key-shift", width: 640, height: 360, initial: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, reconfig: goav1.EncoderScalabilityModeL2T3_KEY_SHIFT, controlTB: 760},
-		{name: "simulcast", width: 640, height: 360, initial: goav1.EncoderScalabilityModeS2T3, reconfig: goav1.EncoderScalabilityModeS2T2, controlTB: 820},
-		{name: "three-layer-small-step", width: 960, height: 540, initial: goav1.EncoderScalabilityModeS3T2h, reconfig: goav1.EncoderScalabilityModeS3T3h, controlTB: 1300},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := publicRTCMatrixConfig(tc.width, tc.height, tc.initial)
+	for _, initial := range goav1.EncoderWebRTCScalabilityModes() {
+		initial := initial
+		reconfig := publicRTCMatrixReconfigMode(t, initial)
+		width, height := publicRTCMatrixGeometry(t, initial)
+		t.Run(initial.String()+"-to-"+reconfig.String(), func(t *testing.T) {
+			cfg := publicRTCMatrixConfig(width, height, initial)
 			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
 			if err != nil {
-				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", tc.initial, err)
+				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", initial, err)
 			}
 			var receiver goav1.RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
 			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 
-			key, err := enc.EncodePicture(publicRTCMatrixFrame(tc.width, tc.height, 0), false)
+			key, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 0), false)
 			if err != nil {
 				t.Fatalf("initial key EncodePicture: %v", err)
 			}
 			appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, key)
-			assertPublicRTCPictureDescriptors(t, &receiver, cfg, key, true, &nextFrameID)
+			assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), key, true, &nextFrameID)
 
-			controlChange := cfg
+			controlChange := enc.Config()
 			controlChange.MaxFramerate = goav1.EncoderRational{Num: 60, Den: 1}
-			controlChange.MinBitrateKbps = tc.controlTB / 4
-			controlChange.MaxBitrateKbps = tc.controlTB * 2
-			controlChange.TargetBitrateKbps = tc.controlTB
+			publicRTCApplyControlBitrates(&controlChange, publicRTCMatrixControlBitrateKbps(t, initial))
 			if err := enc.SetConfig(controlChange); err != nil {
 				t.Fatalf("SetConfig control change: %v", err)
 			}
-			controlDelta, err := enc.EncodePicture(publicRTCMatrixFrame(tc.width, tc.height, 1), false)
+			assertPublicRTCConfigBitrates(t, enc.Config(), controlChange)
+			controlDelta, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 1), false)
 			if err != nil {
 				t.Fatalf("control delta EncodePicture: %v", err)
 			}
 			appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, controlDelta)
-			assertPublicRTCPictureDescriptors(t, &receiver, controlChange, controlDelta, false, &nextFrameID)
+			assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), controlDelta, false, &nextFrameID)
+			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
 
-			structureChange := controlChange
-			structureChange.Scalability = tc.reconfig
+			structureChange := enc.Config()
+			structureChange.Scalability = reconfig
+			publicRTCApplyControlBitrates(&structureChange, publicRTCMatrixControlBitrateKbps(t, reconfig)+90)
 			if err := enc.SetConfig(structureChange); err != nil {
 				t.Fatalf("SetConfig structure change: %v", err)
 			}
-			structureKey, err := enc.EncodePicture(publicRTCMatrixFrame(tc.width, tc.height, 2), false)
+			assertPublicRTCConfigBitrates(t, enc.Config(), structureChange)
+			var reconfigLayerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var reconfigOrderedTUs [][]byte
+			structureKey, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 2), false)
 			if err != nil {
 				t.Fatalf("structure key EncodePicture: %v", err)
 			}
-			appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, structureKey)
-			assertPublicRTCPictureDescriptors(t, &receiver, structureChange, structureKey, true, &nextFrameID)
+			appendPublicRTCPictureLayerData(t, &reconfigLayerTUs, &reconfigOrderedTUs, structureKey)
+			assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), structureKey, true, &nextFrameID)
 
-			postReconfigDelta, err := enc.EncodePicture(publicRTCMatrixFrame(tc.width, tc.height, 3), false)
+			postReconfigDelta, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 3), false)
 			if err != nil {
 				t.Fatalf("post-reconfigure delta EncodePicture: %v", err)
 			}
-			appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, postReconfigDelta)
-			assertPublicRTCPictureDescriptors(t, &receiver, structureChange, postReconfigDelta, false, &nextFrameID)
-			normalized, err := goav1.SetWebRTCEncoderSVCConfig(structureChange, structureChange.TemporalLayerCount, structureChange.SpatialLayerCount)
-			if err != nil {
-				t.Fatalf("SetWebRTCEncoderSVCConfig(%s): %v", structureChange.Scalability, err)
-			}
-			assertPublicRTCLayerStreamsDecode(t, normalized, layerTUs, orderedTUs)
+			appendPublicRTCPictureLayerData(t, &reconfigLayerTUs, &reconfigOrderedTUs, postReconfigDelta)
+			assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), postReconfigDelta, false, &nextFrameID)
+			assertPublicRTCLayerStreamsDecode(t, enc.Config(), reconfigLayerTUs, reconfigOrderedTUs)
 		})
+	}
+}
+
+func publicRTCMatrixGeometry(t *testing.T, mode goav1.EncoderScalabilityMode) (int, int) {
+	t.Helper()
+	spatial, _, _, ok := mode.Layers()
+	if !ok {
+		t.Fatalf("invalid scalability mode %s", mode)
+	}
+	switch spatial {
+	case 1:
+		return 192, 128
+	case 2:
+		return 640, 360
+	case 3:
+		return 1008, 576
+	default:
+		t.Fatalf("unsupported spatial layer count %d for %s", spatial, mode)
+		return 0, 0
+	}
+}
+
+func publicRTCMatrixReconfigMode(t *testing.T, mode goav1.EncoderScalabilityMode) goav1.EncoderScalabilityMode {
+	t.Helper()
+	spatial, temporal, _, ok := mode.Layers()
+	if !ok {
+		t.Fatalf("invalid scalability mode %s", mode)
+	}
+	wantTemporal := temporal + 1
+	if temporal >= 3 {
+		wantTemporal = temporal - 1
+	}
+	for _, candidate := range goav1.EncoderWebRTCScalabilityModes() {
+		cSpatial, cTemporal, _, ok := candidate.Layers()
+		if ok && candidate != mode && cSpatial == spatial && cTemporal == wantTemporal {
+			return candidate
+		}
+	}
+	for _, candidate := range goav1.EncoderWebRTCScalabilityModes() {
+		cSpatial, _, _, ok := candidate.Layers()
+		if ok && candidate != mode && cSpatial == spatial {
+			return candidate
+		}
+	}
+	t.Fatalf("no reconfigure mode for %s", mode)
+	return goav1.EncoderScalabilityModeL1T1
+}
+
+func publicRTCMatrixControlBitrateKbps(t *testing.T, mode goav1.EncoderScalabilityMode) int32 {
+	t.Helper()
+	spatial, _, _, ok := mode.Layers()
+	if !ok {
+		t.Fatalf("invalid scalability mode %s", mode)
+	}
+	switch spatial {
+	case 1:
+		return 420
+	case 2:
+		return 900
+	case 3:
+		return 1500
+	default:
+		t.Fatalf("unsupported spatial layer count %d for %s", spatial, mode)
+		return 0
+	}
+}
+
+func publicRTCApplyControlBitrates(cfg *goav1.EncoderConfig, targetKbps int32) {
+	cfg.MinBitrateKbps = targetKbps / 4
+	cfg.MaxBitrateKbps = targetKbps * 2
+	cfg.TargetBitrateKbps = targetKbps
+	spatialLayers, _, _, ok := cfg.Scalability.Layers()
+	if !ok {
+		return
+	}
+	for i := uint8(0); i < spatialLayers; i++ {
+		layer := &cfg.SpatialLayers[i]
+		if spatialLayers == 1 {
+			layer.MinBitrateKbps = cfg.MinBitrateKbps
+			layer.MaxBitrateKbps = cfg.MaxBitrateKbps
+			layer.TargetBitrateKbps = cfg.TargetBitrateKbps
+			continue
+		}
+		layerTarget := targetKbps * int32(i+1) / int32(spatialLayers)
+		layer.MinBitrateKbps = layerTarget / 2
+		layer.MaxBitrateKbps = layerTarget * 2
+		layer.TargetBitrateKbps = layerTarget
+	}
+}
+
+func assertPublicRTCConfigBitrates(t *testing.T, got goav1.EncoderConfig, want goav1.EncoderConfig) {
+	t.Helper()
+	spatialLayers, _, _, ok := got.Scalability.Layers()
+	if !ok {
+		t.Fatalf("invalid normalized mode %s", got.Scalability)
+	}
+	if got.SpatialLayerCount != spatialLayers {
+		t.Fatalf("config spatial layers=%d want %d", got.SpatialLayerCount, spatialLayers)
+	}
+	for i := uint8(0); i < spatialLayers; i++ {
+		gotLayer := got.SpatialLayers[i]
+		wantLayer := want.SpatialLayers[i]
+		if gotLayer.MinBitrateKbps != wantLayer.MinBitrateKbps ||
+			gotLayer.MaxBitrateKbps != wantLayer.MaxBitrateKbps ||
+			gotLayer.TargetBitrateKbps != wantLayer.TargetBitrateKbps {
+			t.Fatalf("layer %d bitrate got %+v want min=%d max=%d target=%d", i, gotLayer, wantLayer.MinBitrateKbps, wantLayer.MaxBitrateKbps, wantLayer.TargetBitrateKbps)
+		}
 	}
 }
 

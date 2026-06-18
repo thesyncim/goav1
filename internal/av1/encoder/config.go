@@ -551,6 +551,7 @@ func SetWebRTCSVCConfig(config Config, requestedTemporalLayers uint8, requestedS
 	if err != nil {
 		return Config{}, err
 	}
+	requestedLayers := config.SpatialLayers
 
 	mode := config.Scalability
 	if mode == ScalabilityModeL1T1 && (requestedTemporalLayers != 0 || requestedSpatialLayers != 0) {
@@ -600,17 +601,56 @@ func SetWebRTCSVCConfig(config Config, requestedTemporalLayers uint8, requestedS
 
 	for i := uint8(0); i < spatialLayers; i++ {
 		layer := &config.SpatialLayers[i]
-		numPixels := int64(layer.Resolution.Width) * int64(layer.Resolution.Height)
-		minBitrate := int32((480.0*math.Sqrt(float64(numPixels)) - 95000.0) / 1000.0)
-		if minBitrate < 20 {
-			minBitrate = 20
+		minBitrate, maxBitrate := defaultWebRTCSpatialLayerBitrates(layer.Resolution)
+		targetBitrate := (minBitrate + maxBitrate) / 2
+		minBitrate, maxBitrate, targetBitrate, err = normalizeWebRTCSpatialLayerBitrates(
+			requestedLayers[i],
+			minBitrate,
+			maxBitrate,
+			targetBitrate,
+		)
+		if err != nil {
+			return Config{}, err
 		}
-		maxBitrate := int32(50.0 + 1.6*float64(numPixels)/1000.0)
 		layer.MinBitrateKbps = minBitrate
 		layer.MaxBitrateKbps = maxBitrate
-		layer.TargetBitrateKbps = (minBitrate + maxBitrate) / 2
+		layer.TargetBitrateKbps = targetBitrate
 	}
 	return config, nil
+}
+
+func defaultWebRTCSpatialLayerBitrates(resolution Resolution) (minBitrateKbps int32, maxBitrateKbps int32) {
+	numPixels := int64(resolution.Width) * int64(resolution.Height)
+	minBitrateKbps = int32((480.0*math.Sqrt(float64(numPixels)) - 95000.0) / 1000.0)
+	if minBitrateKbps < 20 {
+		minBitrateKbps = 20
+	}
+	maxBitrateKbps = int32(50.0 + 1.6*float64(numPixels)/1000.0)
+	return minBitrateKbps, maxBitrateKbps
+}
+
+func normalizeWebRTCSpatialLayerBitrates(requested SpatialLayer, defaultMin int32, defaultMax int32, defaultTarget int32) (minBitrateKbps int32, maxBitrateKbps int32, targetBitrateKbps int32, err error) {
+	minBitrateKbps = defaultMin
+	maxBitrateKbps = defaultMax
+	targetBitrateKbps = defaultTarget
+	if requested.MinBitrateKbps != 0 {
+		minBitrateKbps = requested.MinBitrateKbps
+	}
+	if requested.MaxBitrateKbps != 0 {
+		maxBitrateKbps = requested.MaxBitrateKbps
+	}
+	if requested.TargetBitrateKbps != 0 {
+		targetBitrateKbps = requested.TargetBitrateKbps
+	}
+	if minBitrateKbps < 0 || maxBitrateKbps < 0 || targetBitrateKbps < 0 ||
+		minBitrateKbps > maxBitrateKbps ||
+		maxBitrateKbps > WebRTCMaxBitrateKbps ||
+		targetBitrateKbps > WebRTCMaxBitrateKbps ||
+		targetBitrateKbps < minBitrateKbps ||
+		targetBitrateKbps > maxBitrateKbps {
+		return 0, 0, 0, ErrInvalidConfig
+	}
+	return minBitrateKbps, maxBitrateKbps, targetBitrateKbps, nil
 }
 
 func normalizeConfig(config Config) (Config, error) {
