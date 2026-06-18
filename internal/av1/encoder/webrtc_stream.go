@@ -146,10 +146,7 @@ func normalizeWebRTCStreamConfig(config Config) (Config, int, error) {
 }
 
 func webRTCPixelScalabilitySupported(config Config) bool {
-	if config.SpatialLayerCount <= 1 {
-		return true
-	}
-	return config.Scalability.IsSimulcast() || config.Scalability.UsesKeyFrameInterLayerDependency()
+	return config.SpatialLayerCount > 0 && config.SpatialLayerCount <= WebRTCMaxSpatialLayers
 }
 
 func newWebRTCStreamLayerEncoder(config Config, layerIndex uint8, fps int, minQ uint8, maxQ uint8) (*VideoEncoder, error) {
@@ -497,11 +494,14 @@ func (s *WebRTCStream) encodePictureLayer(enc *VideoEncoder, layerSrc SourceFram
 		if settings.ReferenceCount == 0 {
 			return nil, false, ErrInvalidFrame
 		}
-		refSlot := settings.ReferenceBuffers[0]
+		refSlot, err := webRTCStreamCodedReferenceBuffer(settings, s.config.Scalability)
+		if err != nil {
+			return nil, false, err
+		}
 		if refSlot >= WebRTCReferenceBuffers || s.referenceFrames[refSlot].Y == nil {
 			return nil, false, ErrInvalidFrame
 		}
-		tu, err := enc.encodeReferencePFrameWithSequenceMax(layerSrc, s.referenceFrames[refSlot], settings, maxWidth, maxHeight)
+		tu, err := enc.encodeReferencePFrameWithSequenceMax(layerSrc, s.referenceFrames[refSlot], refSlot, settings, maxWidth, maxHeight)
 		return tu, false, err
 	default:
 		return nil, false, ErrInvalidFrame
@@ -510,12 +510,26 @@ func (s *WebRTCStream) encodePictureLayer(enc *VideoEncoder, layerSrc SourceFram
 
 func webRTCStreamUsesSharedReferenceSlotCoding(config Config) bool {
 	return config.SpatialLayerCount > 1 &&
-		!config.Scalability.IsSimulcast() &&
-		config.Scalability.UsesKeyFrameInterLayerDependency()
+		!config.Scalability.IsSimulcast()
+}
+
+func webRTCStreamCodedReferenceBuffer(settings FrameEncodeSettings, mode ScalabilityMode) (uint8, error) {
+	if settings.ReferenceCount == 0 || settings.ReferenceCount > WebRTCMaxFrameReferences {
+		return 0, ErrInvalidFrame
+	}
+	index := uint8(0)
+	if !mode.IsSimulcast() && !mode.UsesKeyFrameInterLayerDependency() && settings.SpatialID > 0 && settings.ReferenceCount > 1 {
+		index = settings.ReferenceCount - 1
+	}
+	ref := settings.ReferenceBuffers[index]
+	if ref >= WebRTCReferenceBuffers {
+		return 0, ErrInvalidFrame
+	}
+	return ref, nil
 }
 
 func webRTCStreamExpectedCodedKey(keyPicture bool, settings FrameEncodeSettings, mode ScalabilityMode) bool {
-	if keyPicture && mode.UsesKeyFrameInterLayerDependency() && !mode.IsSimulcast() && settings.Type == FrameTypeDelta {
+	if keyPicture && !mode.IsSimulcast() && settings.Type == FrameTypeDelta {
 		return false
 	}
 	return keyPicture

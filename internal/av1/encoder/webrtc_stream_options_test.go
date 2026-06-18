@@ -1,7 +1,6 @@
 package encoder
 
 import (
-	"errors"
 	"testing"
 
 	internalrtp "github.com/thesyncim/goav1/internal/av1/rtp"
@@ -33,8 +32,8 @@ func TestWebRTCStreamEncoderOptions(t *testing.T) {
 	}
 }
 
-func TestWebRTCStreamConfigRejectsDeltaInterLayerPixelModes(t *testing.T) {
-	_, err := NewWebRTCStreamConfig(Config{
+func TestWebRTCStreamConfigAcceptsFullSVCPixelModes(t *testing.T) {
+	stream, err := NewWebRTCStreamConfig(Config{
 		Resolution:        Resolution{Width: 640, Height: 360},
 		MaxFramerate:      Rational{Num: 30, Den: 1},
 		MinBitrateKbps:    100,
@@ -42,8 +41,11 @@ func TestWebRTCStreamConfigRejectsDeltaInterLayerPixelModes(t *testing.T) {
 		TargetBitrateKbps: 500,
 		Scalability:       ScalabilityModeL2T2,
 	})
-	if !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("NewWebRTCStreamConfig L2T2 err=%v want %v", err, ErrUnsupported)
+	if err != nil {
+		t.Fatalf("NewWebRTCStreamConfig L2T2: %v", err)
+	}
+	if stream.config.Scalability != ScalabilityModeL2T2 || stream.config.SpatialLayerCount != 2 {
+		t.Fatalf("config mode=%s spatial=%d", stream.config.Scalability, stream.config.SpatialLayerCount)
 	}
 }
 
@@ -75,16 +77,8 @@ func TestWebRTCStreamConfigPixelScalabilityModeMatrix(t *testing.T) {
 				TargetBitrateKbps: 800,
 				Scalability:       mode,
 			})
-			spatial, _, _, ok := mode.Layers()
-			if !ok {
+			if _, _, _, ok := mode.Layers(); !ok {
 				t.Fatalf("mode %d invalid in matrix", mode)
-			}
-			wantUnsupported := spatial > 1 && !mode.IsSimulcast() && !mode.UsesKeyFrameInterLayerDependency()
-			if wantUnsupported {
-				if !errors.Is(err, ErrUnsupported) {
-					t.Fatalf("NewWebRTCStreamConfig(%s) err=%v want %v", mode, err, ErrUnsupported)
-				}
-				return
 			}
 			if err != nil {
 				t.Fatalf("NewWebRTCStreamConfig(%s): %v", mode, err)
@@ -252,24 +246,27 @@ func TestWebRTCStreamSetConfigReconfigure(t *testing.T) {
 		t.Fatalf("structure change picture=%+v state=%+v", picture, stream.state)
 	}
 
-	keepConfig := stream.config
-	keepState := stream.state
-	bad := structureChange
-	bad.Scalability = ScalabilityModeL2T2
-	if err := stream.SetConfig(bad); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("SetConfig unsupported err=%v want %v", err, ErrUnsupported)
+	fullSVC := structureChange
+	fullSVC.Scalability = ScalabilityModeL2T2
+	if err := stream.SetConfig(fullSVC); err != nil {
+		t.Fatalf("SetConfig full SVC: %v", err)
 	}
-	if stream.config != keepConfig || stream.state != keepState {
-		t.Fatalf("unsupported SetConfig mutated config/state config=%+v want=%+v state=%+v want=%+v", stream.config, keepConfig, stream.state, keepState)
+	beforeFrameID = stream.state.NextFrameID
+	picture, err = stream.EncodePicture(src, false)
+	if err != nil {
+		t.Fatalf("key after full SVC change: %v", err)
+	}
+	if !picture.Keyframe || picture.FrameNum != 2 ||
+		picture.Frames[0].Info.FrameID != beforeFrameID ||
+		picture.Frames[1].Info.FrameID != beforeFrameID+1 ||
+		stream.state.NextFrameID != beforeFrameID+2 {
+		t.Fatalf("full SVC change picture=%+v state=%+v", picture, stream.state)
 	}
 }
 
 func webRTCStreamDescriptorMatrixConfig(mode ScalabilityMode) (Config, bool) {
 	spatial, _, _, ok := mode.Layers()
 	if !ok {
-		return Config{}, false
-	}
-	if spatial > 1 && !mode.IsSimulcast() && !mode.UsesKeyFrameInterLayerDependency() {
 		return Config{}, false
 	}
 	cfg := Config{

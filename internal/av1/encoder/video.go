@@ -610,11 +610,11 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 	return tu, nil
 }
 
-func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, ref SourceFrame420, settings FrameEncodeSettings, maxWidth, maxHeight int) ([]byte, error) {
+func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, ref SourceFrame420, codedRefBuffer uint8, settings FrameEncodeSettings, maxWidth, maxHeight int) ([]byte, error) {
 	if src.Width != e.renderWidth || src.Height != e.renderHeight {
 		return nil, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", src.Width, src.Height, e.renderWidth, e.renderHeight)
 	}
-	if settings.ReferenceCount == 0 || settings.ReferenceBuffers[0] >= encoderRefFrames ||
+	if settings.ReferenceCount == 0 || codedRefBuffer >= encoderRefFrames ||
 		(settings.UpdateBufferSet && settings.UpdateBuffer >= encoderRefFrames) {
 		return nil, ErrInvalidFrame
 	}
@@ -661,7 +661,7 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 	header.Prefix.FrameSizeOverride = src.Width != maxWidth || src.Height != maxHeight
 	header.Size.RefFrameIdx = [7]uint8{}
 	for i := range header.Size.RefFrameIdx {
-		header.Size.RefFrameIdx[i] = settings.ReferenceBuffers[0]
+		header.Size.RefFrameIdx[i] = codedRefBuffer
 	}
 	refState = referenceStateForFrame(ref.Width, ref.Height)
 	header.References = &refState

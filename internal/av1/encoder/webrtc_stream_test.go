@@ -221,14 +221,26 @@ func acceptedWebRTCStreamPixelModes() []encoder.ScalabilityMode {
 		encoder.ScalabilityModeL1T1,
 		encoder.ScalabilityModeL1T2,
 		encoder.ScalabilityModeL1T3,
+		encoder.ScalabilityModeL2T1,
+		encoder.ScalabilityModeL2T1h,
 		encoder.ScalabilityModeL2T1_KEY,
+		encoder.ScalabilityModeL2T2,
+		encoder.ScalabilityModeL2T2h,
 		encoder.ScalabilityModeL2T2_KEY,
 		encoder.ScalabilityModeL2T2_KEY_SHIFT,
+		encoder.ScalabilityModeL2T3,
+		encoder.ScalabilityModeL2T3h,
 		encoder.ScalabilityModeL2T3_KEY,
 		encoder.ScalabilityModeL2T3_KEY_SHIFT,
+		encoder.ScalabilityModeL3T1,
+		encoder.ScalabilityModeL3T1h,
 		encoder.ScalabilityModeL3T1_KEY,
+		encoder.ScalabilityModeL3T2,
+		encoder.ScalabilityModeL3T2h,
 		encoder.ScalabilityModeL3T2_KEY,
 		encoder.ScalabilityModeL3T2_KEY_SHIFT,
+		encoder.ScalabilityModeL3T3,
+		encoder.ScalabilityModeL3T3h,
 		encoder.ScalabilityModeL3T3_KEY,
 		encoder.ScalabilityModeL3T3_KEY_SHIFT,
 		encoder.ScalabilityModeS2T1,
@@ -324,7 +336,6 @@ func decodeCollectedWebRTCPictureTUs(t *testing.T, config encoder.Config, tusInO
 
 func webRTCSharedReferenceSlotMode(config encoder.Config) bool {
 	return config.SpatialLayerCount > 1 &&
-		config.Scalability.UsesKeyFrameInterLayerDependency() &&
 		!config.Scalability.IsSimulcast()
 }
 
