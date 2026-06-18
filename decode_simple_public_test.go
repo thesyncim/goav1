@@ -1239,6 +1239,38 @@ func TestNewDecoderFromRTPPayloadsDecodeNextAllocs(t *testing.T) {
 	}
 }
 
+func TestNewDecoderFromRTPPayloadsDecodeRTPPayloadAllocs(t *testing.T) {
+	rtpPayloads, wantVisible := publicDecoderAllocRTPPayloads(t)
+	dec, err := av1.NewDecoderFromRTPPayloads(rtpPayloads)
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPayloads: %v", err)
+	}
+	defer dec.Close()
+
+	decodeAll := func() {
+		if err := dec.Reset(); err != nil {
+			t.Fatalf("Reset: %v", err)
+		}
+		visible := 0
+		for i, payload := range rtpPayloads {
+			frames, err := dec.DecodeRTPPayload(payload)
+			if err != nil {
+				t.Fatalf("DecodeRTPPayload packet %d: %v", i, err)
+			}
+			visible += len(frames)
+		}
+		if visible != wantVisible {
+			t.Fatalf("decoded %d visible RTP frames, want %d", visible, wantVisible)
+		}
+	}
+
+	decodeAll()
+	allocs := testing.AllocsPerRun(20, decodeAll)
+	if allocs != 0 {
+		t.Fatalf("DecodeRTPPayload allocs/run=%f want 0", allocs)
+	}
+}
+
 func publicDecoderAllocRTPPayloads(t *testing.T) ([][]byte, int) {
 	t.Helper()
 	const width, height = 192, 128
