@@ -1120,6 +1120,84 @@ func TestPublicDecoderRTPPayloadRunnerMatchesLowOverhead(t *testing.T) {
 	}
 }
 
+func TestNewDecoderFromRTPPayloadsMatchesLowOverhead(t *testing.T) {
+	const width, height = 192, 128
+	enc, err := av1.NewRTCEncoderWithConfig(av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: width, Height: height},
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    120,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 420,
+		Scalability:       av1.EncoderScalabilityModeL1T2,
+	})
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	limits := av1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
+	var lowOverheads [][]byte
+	var rtpPayloads [][]byte
+	for i := 0; i < 4; i++ {
+		frame, err := enc.Encode(publicRTCMatrixFrame(width, height, i), false)
+		if err != nil {
+			t.Fatalf("Encode frame %d: %v", i, err)
+		}
+		lowOverheads = append(lowOverheads, append([]byte(nil), frame.Data...))
+		rtpPayloads = append(rtpPayloads, publicDecoderRTPPayloadsForFrameWithLimits(t, frame, limits)...)
+	}
+
+	dec, err := av1.NewDecoderFromRTPPayloads(rtpPayloads)
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPayloads: %v", err)
+	}
+	defer dec.Close()
+
+	var got [][16]byte
+	emptyPayloads := 0
+	for {
+		frames, ok, err := dec.DecodeNext()
+		if err != nil {
+			t.Fatalf("DecodeNext RTP: %v", err)
+		}
+		if !ok {
+			break
+		}
+		if len(frames) == 0 {
+			emptyPayloads++
+			continue
+		}
+		for _, f := range frames {
+			got = append(got, frameMD5Visible(f))
+		}
+	}
+	if emptyPayloads == 0 {
+		t.Fatal("DecodeNext produced no empty RTP-fragment steps")
+	}
+
+	want := decodeLowOverheadPayloads(t, lowOverheads)
+	if len(got) != len(want) {
+		t.Fatalf("RTP decoder produced %d frames, low-overhead decoded %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("frame %d digest differs: rtp=%s low=%s",
+				i, hex.EncodeToString(got[i][:]), hex.EncodeToString(want[i][:]))
+		}
+	}
+
+	if err := dec.Reset(); err != nil {
+		t.Fatalf("Reset RTP decoder: %v", err)
+	}
+	frames, ok, err := dec.DecodeNext()
+	if err != nil {
+		t.Fatalf("DecodeNext after Reset: %v", err)
+	}
+	if !ok || len(frames) != 0 {
+		t.Fatalf("DecodeNext after Reset frames=%d ok=%v, want first RTP fragment", len(frames), ok)
+	}
+}
+
 func TestPublicDecoderRTPPayloadRunnerRecoversAfterEncoderPacketLoss(t *testing.T) {
 	const width, height = 192, 128
 	enc, err := av1.NewRTCEncoderWithConfig(av1.EncoderConfig{

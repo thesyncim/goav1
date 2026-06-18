@@ -136,6 +136,28 @@ func (s decoderPayloadSource) payloadBufferLen() int {
 	return s.maxPayload
 }
 
+func (s decoderPayloadSource) totalPayloadLen() (int, error) {
+	total := 0
+	if s.readerAt == nil {
+		for _, payload := range s.payloads {
+			next, ok := decoderArenaAdd2(total, len(payload))
+			if !ok {
+				return 0, ErrFrameShortBuffer
+			}
+			total = next
+		}
+		return total, nil
+	}
+	for _, record := range s.records {
+		next, ok := decoderArenaAdd2(total, int(record.size))
+		if !ok {
+			return 0, ErrFrameShortBuffer
+		}
+		total = next
+	}
+	return total, nil
+}
+
 func (s decoderPayloadSource) makeProbeBuffer() []byte {
 	if s.readerAt == nil || s.maxPayload == 0 {
 		return nil
@@ -230,6 +252,69 @@ func decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(stream DecoderStre
 	return plan, err
 }
 
+func decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(stream DecoderStream, source decoderPayloadSource, workers int, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamPlan, error) {
+	rtpBufferBytes, err := source.totalPayloadLen()
+	if err != nil {
+		return DecoderFrameWorkResidualStreamPlan{}, err
+	}
+	rtpBuffer := make([]byte, rtpBufferBytes)
+	rtpSpans := make([]RTPObuSpan, source.len()*16+64)
+
+	var plan DecoderFrameWorkResidualStreamPlan
+	outputs := 0
+	used := 0
+	err = source.forEachPayload(nil, func(payload []byte) error {
+		plannedUsed, eventCount, err := stream.PushRTPPayloadSize(used, payload)
+		nextSize := DecoderFrameWorkResidualStreamScratchSize{
+			Events:    eventCount,
+			RTPBuffer: plannedUsed,
+			RTPSpans:  eventCount,
+		}
+		plan.Size = plan.Size.Max(nextSize)
+		if err != nil {
+			return err
+		}
+		if len(rtpBuffer) < plannedUsed {
+			return ErrRTPShortBuffer
+		}
+		if len(rtpSpans) < eventCount {
+			rtpSpans = make([]RTPObuSpan, eventCount)
+		}
+		if len(events) < eventCount {
+			events = make([]DecoderEvent, eventCount)
+		}
+
+		sequence, _ := stream.SequenceHeader()
+		actualUsed, count, err := stream.PushRTPPayload(rtpBuffer[:plannedUsed], used, rtpSpans[:eventCount], events[:eventCount], payload)
+		if err != nil {
+			return err
+		}
+		if actualUsed != plannedUsed || count != eventCount {
+			return ErrDecoderInvalidFrameWorkState
+		}
+		eventSize, err := DecoderFrameWorkResidualEventsScratchLen(sequence, events[:count], workers, spans, jobs, batches)
+		if err != nil {
+			return err
+		}
+		nextBind := DecoderFrameWorkResidualEventsBindPlan(sequence, events[:count])
+		if nextBind.HasEvent() {
+			plan.Bind = nextBind
+		} else if !plan.Bind.HasEvent() {
+			plan.Bind.Sequence = nextBind.Sequence
+		}
+		nextSize.Event = eventSize
+		outputs += eventSize.Outputs
+		plan.Size = plan.Size.Max(nextSize)
+		plan.Size.Event.Outputs = outputs
+		used = actualUsed
+		if !stream.InRTPFragment() {
+			used = 0
+		}
+		return nil
+	})
+	return plan, err
+}
+
 func decoderExternalOutputFormatFromSource(source decoderPayloadSource, align int, payloadBuf []byte) (bool, FrameFormat, error) {
 	var stream DecoderStream
 	var format FrameFormat
@@ -271,6 +356,29 @@ func decoderExternalOutputFormatFromSource(source decoderPayloadSource, align in
 	return have, format, err
 }
 
+func decoderExternalOutputFormatFromRTPSource(source decoderPayloadSource, align int) (bool, FrameFormat, error) {
+	var format FrameFormat
+	have := false
+	err := decoderForEachRTPEventFromSource(source, func(sequence SequenceHeader, event DecoderEvent) error {
+		if !decoderFrameWorkResidualEventBindCandidate(event) ||
+			!event.FrameSize.SuperResEnabled ||
+			event.FrameSize.UpscaledWidth <= event.FrameSize.CodedWidth {
+			return nil
+		}
+		next, err := FrameOutputFormatFromHeaders(sequence, event.FrameSize, align)
+		if err != nil {
+			return err
+		}
+		if have && next != format {
+			return ErrFrameInvalidFormat
+		}
+		format = next
+		have = true
+		return nil
+	})
+	return have, format, err
+}
+
 func decoderPostFilterScratchArenaUpperBoundFromSource(source decoderPayloadSource, align int, events []DecoderEvent, payloadBuf []byte) (DecoderFrameWorkPostFilterRequestScratchSize, error) {
 	var stream DecoderStream
 	var arena DecoderFrameWorkPostFilterRequestScratchSize
@@ -299,6 +407,22 @@ func decoderPostFilterScratchArenaUpperBoundFromSource(source decoderPayloadSour
 			}
 			arena = arena.Max(decoderExternalPostFilterScratchLen(size))
 		}
+		return nil
+	})
+	return arena, err
+}
+
+func decoderPostFilterScratchArenaUpperBoundFromRTPSource(source decoderPayloadSource, align int) (DecoderFrameWorkPostFilterRequestScratchSize, error) {
+	var arena DecoderFrameWorkPostFilterRequestScratchSize
+	err := decoderForEachRTPEventFromSource(source, func(sequence SequenceHeader, event DecoderEvent) error {
+		if !decoderFrameWorkResidualEventBindCandidate(event) {
+			return nil
+		}
+		size, err := decoderPostFilterScratchSizeUpperBound(sequence, event, align)
+		if err != nil {
+			return err
+		}
+		arena = arena.Max(decoderExternalPostFilterScratchLen(size))
 		return nil
 	})
 	return arena, err
@@ -335,6 +459,71 @@ func decoderTemporalMotionScratchFrameSizeUpperBoundFromSource(source decoderPay
 		return nil
 	})
 	return maxSize, err
+}
+
+func decoderTemporalMotionScratchFrameSizeUpperBoundFromRTPSource(source decoderPayloadSource) (FrameSize, error) {
+	var maxSize FrameSize
+	err := decoderForEachRTPEventFromSource(source, func(_ SequenceHeader, event DecoderEvent) error {
+		if !decoderFrameWorkResidualEventBindCandidate(event) ||
+			event.FrameHeader.ShowExistingFrame {
+			return nil
+		}
+		if event.FrameSize.CodedWidth > maxSize.CodedWidth {
+			maxSize.CodedWidth = event.FrameSize.CodedWidth
+		}
+		if event.FrameSize.Height > maxSize.Height {
+			maxSize.Height = event.FrameSize.Height
+		}
+		return nil
+	})
+	return maxSize, err
+}
+
+func decoderForEachRTPEventFromSource(source decoderPayloadSource, fn func(SequenceHeader, DecoderEvent) error) error {
+	rtpBufferBytes, err := source.totalPayloadLen()
+	if err != nil {
+		return err
+	}
+	rtpBuffer := make([]byte, rtpBufferBytes)
+	rtpSpans := make([]RTPObuSpan, source.len()*16+64)
+	events := make([]DecoderEvent, source.len()*16+64)
+	var stream DecoderStream
+	used := 0
+	return source.forEachPayload(nil, func(payload []byte) error {
+		plannedUsed, eventCount, err := stream.PushRTPPayloadSize(used, payload)
+		if err != nil {
+			return err
+		}
+		if len(rtpBuffer) < plannedUsed {
+			return ErrRTPShortBuffer
+		}
+		if len(rtpSpans) < eventCount {
+			rtpSpans = make([]RTPObuSpan, eventCount)
+		}
+		if len(events) < eventCount {
+			events = make([]DecoderEvent, eventCount)
+		}
+		sequence, _ := stream.SequenceHeader()
+		actualUsed, count, err := stream.PushRTPPayload(rtpBuffer[:plannedUsed], used, rtpSpans[:eventCount], events[:eventCount], payload)
+		if err != nil {
+			return err
+		}
+		if actualUsed != plannedUsed || count != eventCount {
+			return ErrDecoderInvalidFrameWorkState
+		}
+		for i := range count {
+			event := events[i]
+			sequence = decoderFrameWorkResidualEventSequence(sequence, event)
+			if err := fn(sequence, event); err != nil {
+				return err
+			}
+		}
+		used = actualUsed
+		if !stream.InRTPFragment() {
+			used = 0
+		}
+		return nil
+	})
 }
 
 func decoderReadFullAt(r io.ReaderAt, dst []byte, off int64) error {

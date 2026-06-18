@@ -51,6 +51,7 @@ type Decoder struct {
 	postFilter DecoderFrameWorkReusableSupportedPostFilterRunner
 	external   decoderExternalPostFilterRunner
 
+	payloadKind   decoderPayloadKind
 	payloadSource decoderPayloadSource
 	payloadBuf    []byte
 	format        FrameFormat
@@ -74,6 +75,13 @@ type shownSurface struct {
 	pool  *FramePool
 	index int
 }
+
+type decoderPayloadKind uint8
+
+const (
+	decoderPayloadLowOverhead decoderPayloadKind = iota
+	decoderPayloadRTP
+)
 
 // decoderConfig holds resolved construction options.
 type decoderConfig struct {
@@ -116,7 +124,25 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 	return newDecoderFromPayloadSource(newSliceDecoderPayloadSource(payloads), opts...)
 }
 
+// NewDecoderFromRTPPayloads builds a Decoder from ordered AV1 RTP payload
+// bodies, with RTP headers and extensions already removed. DecodeNext consumes
+// one RTP payload per call; fragmented frames can return an empty frame slice
+// with ok=true until the payload that completes the frame arrives.
+//
+// payloads is retained by reference (not copied); the caller must keep the
+// backing bytes alive and unmodified for the Decoder's lifetime. For live
+// packet-loss handling where the caller needs to reset retained RTP fragments
+// after a gap, use DecoderFrameWorkResidualStreamRunner.RunRTPPayloadAfterLoss
+// or RunRTPPayloadAfterLossInto directly.
+func NewDecoderFromRTPPayloads(payloads [][]byte, opts ...Option) (*Decoder, error) {
+	return newDecoderFromPayloadSourceKind(newSliceDecoderPayloadSource(payloads), decoderPayloadRTP, opts...)
+}
+
 func newDecoderFromPayloadSource(source decoderPayloadSource, opts ...Option) (*Decoder, error) {
+	return newDecoderFromPayloadSourceKind(source, decoderPayloadLowOverhead, opts...)
+}
+
+func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPayloadKind, opts ...Option) (*Decoder, error) {
 	cfg := resolveConfig(opts)
 	if cfg.workers < 1 {
 		return nil, fmt.Errorf("goav1: workers must be >= 1, got %d", cfg.workers)
@@ -141,10 +167,20 @@ func newDecoderFromPayloadSource(source decoderPayloadSource, opts ...Option) (*
 	probeBatches := make([]TileBatch, MaxTiles)
 	probePayload := source.makeProbeBuffer()
 
-	plan, err := decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(
-		probeStream, source, cfg.workers, probePayload,
-		probeEvents, probeSpans, probeJobs, probeBatches,
-	)
+	var plan DecoderFrameWorkResidualStreamPlan
+	switch kind {
+	case decoderPayloadLowOverhead:
+		plan, err = decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(
+			probeStream, source, cfg.workers, probePayload,
+			probeEvents, probeSpans, probeJobs, probeBatches,
+		)
+	case decoderPayloadRTP:
+		plan, err = decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(
+			probeStream, source, cfg.workers, probeEvents, probeSpans, probeJobs, probeBatches,
+		)
+	default:
+		err = ErrDecoderInvalidFrameWorkState
+	}
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: stream plan: %w", err)
@@ -163,17 +199,36 @@ func newDecoderFromPayloadSource(source decoderPayloadSource, opts ...Option) (*
 	}
 
 	const surfaceCount = RefFrames + 1
-	useExternal, outputFormat, err := decoderExternalOutputFormatFromSource(source, 64, probePayload)
+	var useExternal bool
+	var outputFormat FrameFormat
+	switch kind {
+	case decoderPayloadLowOverhead:
+		useExternal, outputFormat, err = decoderExternalOutputFormatFromSource(source, 64, probePayload)
+	case decoderPayloadRTP:
+		useExternal, outputFormat, err = decoderExternalOutputFormatFromRTPSource(source, 64)
+	}
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: super-res output format: %w", err)
 	}
-	motionSize, err := decoderTemporalMotionScratchFrameSizeUpperBoundFromSource(source, probeEvents, probePayload)
+	var motionSize FrameSize
+	switch kind {
+	case decoderPayloadLowOverhead:
+		motionSize, err = decoderTemporalMotionScratchFrameSizeUpperBoundFromSource(source, probeEvents, probePayload)
+	case decoderPayloadRTP:
+		motionSize, err = decoderTemporalMotionScratchFrameSizeUpperBoundFromRTPSource(source)
+	}
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: temporal motion scratch plan: %w", err)
 	}
-	postArena, err := decoderPostFilterScratchArenaUpperBoundFromSource(source, 64, probeEvents, probePayload)
+	var postArena DecoderFrameWorkPostFilterRequestScratchSize
+	switch kind {
+	case decoderPayloadLowOverhead:
+		postArena, err = decoderPostFilterScratchArenaUpperBoundFromSource(source, 64, probeEvents, probePayload)
+	case decoderPayloadRTP:
+		postArena, err = decoderPostFilterScratchArenaUpperBoundFromRTPSource(source, 64)
+	}
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: postfilter scratch plan: %w", err)
@@ -207,6 +262,7 @@ func newDecoderFromPayloadSource(source decoderPayloadSource, opts ...Option) (*
 		pool:          pool,
 		outputPool:    outputPool,
 		workerPool:    workerPool,
+		payloadKind:   kind,
 		payloadSource: source,
 		payloadBuf:    arena.takeBytes(source.payloadBufferLen()),
 		format:        format,
@@ -303,12 +359,14 @@ func ivfPayloads(ivf []byte) ([][]byte, error) {
 	return payloads, nil
 }
 
-// DecodeNext decodes the next temporal-unit payload and returns the visible
-// frames it produced, in display order. Most payloads yield exactly one frame,
-// but a payload may yield zero (e.g. a hidden/no-show frame) or more than one
-// (e.g. a show-existing-frame following a coded frame). When all payloads have
-// been consumed it returns (nil, false, nil); subsequent calls keep returning
-// that until Reset.
+// DecodeNext decodes the next payload and returns the visible frames it
+// produced, in display order. For NewDecoder/NewDecoderFromIVF this payload is
+// one low-overhead temporal unit; for NewDecoderFromRTPPayloads it is one AV1
+// RTP payload body. Most low-overhead payloads yield exactly one frame, but a
+// payload may yield zero (e.g. a hidden/no-show frame or an RTP fragment before
+// the frame completes) or more than one (e.g. a show-existing-frame following a
+// coded frame). When all payloads have been consumed it returns
+// (nil, false, nil); subsequent calls keep returning that until Reset.
 //
 // The returned *Frame values alias the Decoder's reused output arena and remain
 // valid only until the next DecodeNext / DecodeAll call or Close. See the
@@ -336,8 +394,16 @@ func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 	if d.useExternal {
 		postFilter = &d.external
 	}
-	if err := d.runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, postFilter); err != nil {
-		return nil, false, fmt.Errorf("goav1: frame %d: %w", i, err)
+	switch d.payloadKind {
+	case decoderPayloadLowOverhead:
+		err = d.runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, postFilter)
+	case decoderPayloadRTP:
+		err = d.runner.RunRTPPayloadIntoWithPostFilterRunner(&result, payload, postFilter)
+	default:
+		err = ErrDecoderInvalidFrameWorkState
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("goav1: payload %d: %w", i, err)
 	}
 
 	out := d.visible[:0]
