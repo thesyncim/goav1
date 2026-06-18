@@ -1132,10 +1132,10 @@ roll-up.
 | Film grain                            | Complete synthesis + per-row apply.              |
 | Show-existing-frame                   | Complete (lifecycle, reference reset, release).  |
 | `show_frame=0` / non-displayable      | Supported via reference slot tracking.           |
-| Annex B / IVF / RTP intake            | Complete.                                        |
+| Annex B / IVF / RTP intake            | Complete, including high-level `NewDecoderFromRTPPayloads` for ordered AV1 RTP payload bodies. |
 | SVC streams                           | Parsed and decoded through the framework path; L1T2/L2T1/L2T2 strict-MD5 gates pass with multi-pool surface routing and scaled inter prediction. See [docs/svc.md](docs/svc.md). |
 | Realtime pixel encoder                | Functional for 8-bit I420 WebRTC streams, including temporal layering, runtime bitrate/framerate/scalability reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, RTP payload packetization, and dependency descriptors. |
-| WebRTC encoder control/metadata       | W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, full decode-target grids, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT dependency templates, and RTP packet spans for caller-supplied frame payloads. |
+| WebRTC encoder control/metadata       | W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, full decode-target grids, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT dependency templates, exact RTP frame-duration helper, and RTP packet spans for caller-supplied frame payloads. |
 
 ### Not yet implemented
 
@@ -1267,7 +1267,9 @@ For a new contributor wiring something into goav1:
 For an integrator:
 
 1. Wire `Stream.PushLowOverhead` (or `PushRTPPayload`) into your bytes
-   source.
+   source. If you already have an ordered batch of AV1 RTP payload bodies for a
+   single decode chain or independent simulcast layer, `NewDecoderFromRTPPayloads`
+   wraps this runner setup for you.
 2. Allocate the long-lived storage: `DecoderFrameWorkState`,
    `DecoderSurfaceReferences`, `FramePool`, `TileWorkerPool`, and the
    per-event scratch slices (`events`, `referenceSurfaces`,

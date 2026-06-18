@@ -49,6 +49,7 @@ needs:
 | Repeated in-memory IVF decode | `NewDecoderFromIVF` + `DecodeNext` | Copies IVF payloads once, then reuses decoder-owned frame and post-filter arenas |
 | Large/file-backed IVF decode | `NewDecoderFromIVFReaderAt` + `DecodeNext` | Indexes IVF frame offsets and reads each payload into one reusable buffer |
 | Already-demuxed temporal units | `NewDecoder(payloads)` + `DecodeNext` | Retains payload slices by reference and reuses all decode/output arenas |
+| Ordered AV1 RTP payload bodies | `NewDecoderFromRTPPayloads(payloads)` + `DecodeNext` | Retains payload slices by reference; each `DecodeNext` consumes one RTP payload and may return zero frames for fragments |
 | Manual OBU or RTP run loop | `DecoderFrameWorkResidualStreamRunner` `Run*Into` methods | Caller-owned event, tile, frame, post-filter, and output-result scratch |
 | IVF demux only | `NewIVFIterator` | Zero-allocation payload views into the source bytes |
 
@@ -111,11 +112,14 @@ for {
 Lower-level package APIs expose the same pipeline pieces directly: IVF and OBU
 iterators, RTP packetization/depacketization, parser structs, tile work
 scheduling, residual decode/reconstruct helpers, post-filter scratch binding,
-and DSP primitives. The `RunLowOverheadInto`, `RunLowOverheadsInto`,
-`RunRTPPayloadInto`, and `RunRTPPayloadsInto` families are the allocation-aware
-entry points for callers that already own their demux, jitter buffer, frame
-pool, and result storage. The executable examples in `example_test.go` and
-`example_decode_simple_test.go` are kept in sync by `go test`.
+and DSP primitives. For ordered RTP payload bodies, `NewDecoderFromRTPPayloads`
+is the reusable high-level path for single decode chains and independent
+simulcast layers. The `RunLowOverheadInto`, `RunLowOverheadsInto`,
+`RunRTPPayloadInto`, `RunRTPPayloadsInto`, and `RunRTPPayloadAfterLossInto`
+families are the allocation-aware entry points for callers that already own
+their demux, jitter buffer, frame pool, packet-loss policy, and result storage.
+The executable examples in `example_test.go` and `example_decode_simple_test.go`
+are kept in sync by `go test`.
 
 ## Features
 
@@ -126,6 +130,7 @@ pool, and result storage. The executable examples in `example_test.go` and
 | Bit depths and formats | 8-bit and 10-bit covered broadly; 12-bit covered by targeted profile-2 clips; 4:2:0, 4:2:2, 4:4:4, and monochrome surfaces |
 | Prediction and residuals | Intra, directional intra, filter intra, CfL, palette, IntraBC, inter/compound, OBMC, warped motion, scaled motion, transforms, dequantization, and CDF adaptation |
 | Post filters | Loop filter, CDEF, super-resolution, loop restoration, and film grain are wired into the high-level decode/output path |
+| WebRTC RTP decode | `NewDecoderFromRTPPayloads` covers ordered RTP payload bodies for single decode chains and simulcast layers; low-level runners expose retained-fragment loss reset |
 | SVC | L1T2/L2T1/L2T2 oracle vectors pass through the framework path; public integration guidance lives in [docs/svc.md](docs/svc.md) |
 | Tile groups | Single and multi-tile groups pass current strict-MD5 gates; tile-list OBUs parse but playback/reconstruction is not wired yet |
 | Encoder | Functional realtime 8-bit I420 WebRTC encoder with fixed-quality/CBR, forced keyframes, temporal layering, runtime bitrate/framerate/scalability reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, tile columns, golden references, RTP payload packetization, and dependency descriptors; lower-level WebRTC controls cover the W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, and pinned-libwebrtc L2T2_KEY_SHIFT templates |

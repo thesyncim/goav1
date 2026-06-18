@@ -392,7 +392,13 @@ For RTP receivers, the AV1 aggregation header gives you the
 (T, S) pair *before* you decode the OBU. That is the right place to
 implement layer drop policy — discard packets above the operating
 point you chose, then feed only the surviving payloads to the
-decoder.
+decoder. For a single decode chain, or for one independent simulcast
+spatial layer at a time, `NewDecoderFromRTPPayloads` is the friendly
+ordered-payload entry point. Full SVC modes with shared reference slots
+still need the framework path with `FrameLayerPool`,
+`NewDecoderFrameLayerPool`, and
+`DecoderFrameWorkExternalReferenceRuntime` so references resolve across
+spatial-layer pools.
 
 ---
 
@@ -416,6 +422,7 @@ writing:
 | L1T2 single-pool decode                             | Strict every-frame MD5 pass in `make dryrun-relevant-supported`. |
 | L2T1 / L2T2 multi-pool decode                       | Strict every-frame MD5 pass in `make dryrun-extended`. |
 | WebRTC AV1 SVC control metadata                     | Complete for the W3C mode vocabulary (`L*T*`, `L*T*h`, `L*T*_KEY`, `L*T*_KEY_SHIFT`, `S*T*`, `S*T*h`) with dependency-descriptor decode targets over the full `(spatial, temporal)` grid, W3C key-shift temporal schedules, and pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates. |
+| High-level RTP payload decode                       | `NewDecoderFromRTPPayloads` covers ordered AV1 RTP payload bodies for single decode chains and independent simulcast layers; `RunRTPPayloadAfterLoss*` remains the explicit retained-fragment reset surface for live jitter-buffer loss handling. |
 | Strict every-frame parity                           | Passing for the committed SVC vectors; broader SVC corpus expansion remains open. |
 
 The WebRTC control row is metadata/control support for already-produced frame
@@ -427,6 +434,9 @@ shared reference slots for inter-layer prediction; simulcast modes keep
 independent per-spatial encoders. `RTCEncoder.SetConfig` applies bitrate,
 framerate, and supported scalability changes atomically; changes that alter
 layer geometry or dependency structure make the next picture a key picture.
+`EncoderWebRTCRTPFrameDuration` returns the exact RTP timestamp duration for
+the normalized encoder configuration, so callers can pace RTP timestamps from
+the same framerate/timebase the encoder accepted.
 
 The framework dry-run tests
 (`internal/av1/testvector/libaom_oracle_test.go`) exercise the
