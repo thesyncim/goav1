@@ -1027,10 +1027,22 @@ func TestAppendLowOverheadWebRTCCompleteDeltaHeaderTemporalUnitForState(t *testi
 			frameUnit.Header.SpatialID != header.SpatialID {
 			t.Fatalf("frame %d obu=%+v header=%+v", i, frameUnit.Header, header)
 		}
-		var refs parser.ReferenceState
+		refs := completeHeaderReferenceStateForBuffers(header, gotUnit.Control.ReferenceState)
 		fullHeader, err := completeInterFrameHeaderParams(header, gotUnit.Frames[i], &refs)
 		if err != nil {
 			t.Fatalf("completeInterFrameHeaderParams %d: %v", i, err)
+		}
+		if gotUnit.Frames[i].ReferenceCount > 1 {
+			layerRef := gotUnit.Frames[i].ReferenceBuffers[0]
+			layerSize := refs.Frames[layerRef].Size
+			if !refs.Frames[layerRef].Valid || layerSize.UpscaledWidth != 640 || layerSize.Height != 360 {
+				t.Fatalf("frame %d layer ref %d size=%+v valid=%v", i, layerRef, layerSize, refs.Frames[layerRef].Valid)
+			}
+			lowerRef := gotUnit.Frames[i].ReferenceBuffers[1]
+			refSize := refs.Frames[lowerRef].Size
+			if !refs.Frames[lowerRef].Valid || refSize.UpscaledWidth != 320 || refSize.Height != 180 {
+				t.Fatalf("frame %d lower ref %d size=%+v valid=%v header=%+v", i, lowerRef, refSize, refs.Frames[lowerRef].Valid, header)
+			}
 		}
 		wantPayload, parsed := appendAndParseInterFrameHeader(t, header.Sequence, fullHeader, &refs)
 		if string(frameUnit.Payload) != string(wantPayload) {

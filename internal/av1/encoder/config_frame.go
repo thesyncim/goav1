@@ -346,7 +346,7 @@ func LowOverheadWebRTCCompleteDeltaHeaderTemporalUnitSize(unit WebRTCDeltaFrameT
 	}
 	size := lowOverheadOBUSizeUnchecked(OBU{Type: obu.TypeTemporalDelimiter})
 	for i := uint8(0); i < unit.FrameNum; i++ {
-		var refs parser.ReferenceState
+		refs := completeHeaderReferenceStateForBuffers(unit.Headers[i], unit.Control.ReferenceState)
 		header, err := completeInterFrameHeaderParams(unit.Headers[i], unit.Frames[i], &refs)
 		if err != nil {
 			return 0, err
@@ -376,7 +376,7 @@ func AppendLowOverheadWebRTCCompleteDeltaHeaderTemporalUnit(dst []byte, unit Web
 		return dst, err
 	}
 	for i := uint8(0); i < unit.FrameNum; i++ {
-		var refs parser.ReferenceState
+		refs := completeHeaderReferenceStateForBuffers(unit.Headers[i], unit.Control.ReferenceState)
 		header, err := completeInterFrameHeaderParams(unit.Headers[i], unit.Frames[i], &refs)
 		if err != nil {
 			return dst, err
@@ -997,6 +997,15 @@ func completeInterFrameHeaderParams(frame InterHeaderFrame, settings FrameEncode
 	if refs == nil {
 		return InterFrameHeaderParams{}, ErrInvalidFrame
 	}
+	if !referenceStateHasValidFrame(refs) {
+		*refs = completeHeaderReferenceState(frame)
+	}
+	for i := uint8(0); i < settings.ReferenceCount; i++ {
+		ref := settings.ReferenceBuffers[i]
+		if ref >= parser.RefFrames || !refs.Frames[ref].Valid {
+			return InterFrameHeaderParams{}, ErrInvalidFrame
+		}
+	}
 	quant, allLossless, err := defaultCompleteHeaderQuantization(settings.RateControl, settings.Quantizer)
 	if err != nil {
 		return InterFrameHeaderParams{}, err
@@ -1005,7 +1014,6 @@ func completeInterFrameHeaderParams(frame InterHeaderFrame, settings FrameEncode
 	if err != nil {
 		return InterFrameHeaderParams{}, err
 	}
-	*refs = completeHeaderReferenceState(frame)
 	header := InterFrameHeaderParams{
 		Prefix:       frame.Prefix,
 		Size:         frame.Size,
@@ -1141,4 +1149,41 @@ func completeHeaderReferenceState(frame InterHeaderFrame) parser.ReferenceState 
 		}
 	}
 	return refs
+}
+
+func completeHeaderReferenceStateForBuffers(frame InterHeaderFrame, state ReferenceBufferState) parser.ReferenceState {
+	var refs parser.ReferenceState
+	defaultGlobal := parser.DefaultGlobalMotionParams()
+	for i := uint8(0); i < parser.RefFrames; i++ {
+		if !state.Valid[i] || !state.Resolutions[i].Valid() {
+			continue
+		}
+		resolution := state.Resolutions[i]
+		refs.Frames[i] = parser.ReferenceFrame{
+			Valid:        true,
+			OrderHint:    frame.Prefix.OrderHint,
+			GlobalMotion: defaultGlobal,
+			Size: parser.FrameSize{
+				CodedWidth:          uint32(resolution.Width),
+				UpscaledWidth:       uint32(resolution.Width),
+				Height:              uint32(resolution.Height),
+				RenderWidth:         uint32(resolution.Width),
+				RenderHeight:        uint32(resolution.Height),
+				SuperResDenominator: 8,
+			},
+		}
+	}
+	return refs
+}
+
+func referenceStateHasValidFrame(refs *parser.ReferenceState) bool {
+	if refs == nil {
+		return false
+	}
+	for i := uint8(0); i < parser.RefFrames; i++ {
+		if refs.Frames[i].Valid {
+			return true
+		}
+	}
+	return false
 }
