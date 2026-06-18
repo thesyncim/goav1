@@ -481,10 +481,204 @@ func TestPublicRTCEncoderSetConfigReconfigure(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
+	tests := []struct {
+		name      string
+		width     int
+		height    int
+		initial   goav1.EncoderScalabilityMode
+		reconfig  goav1.EncoderScalabilityMode
+		controlTB int32
+	}{
+		{name: "temporal", width: 192, height: 128, initial: goav1.EncoderScalabilityModeL1T3, reconfig: goav1.EncoderScalabilityModeL1T2, controlTB: 420},
+		{name: "key-shift", width: 640, height: 360, initial: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, reconfig: goav1.EncoderScalabilityModeL2T3_KEY_SHIFT, controlTB: 760},
+		{name: "simulcast", width: 640, height: 360, initial: goav1.EncoderScalabilityModeS2T3, reconfig: goav1.EncoderScalabilityModeS2T2, controlTB: 820},
+		{name: "three-layer-small-step", width: 960, height: 540, initial: goav1.EncoderScalabilityModeS3T2h, reconfig: goav1.EncoderScalabilityModeS3T3h, controlTB: 1300},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := publicRTCMatrixConfig(tc.width, tc.height, tc.initial)
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", tc.initial, err)
+			}
+			var receiver goav1.RTPDependencyDescriptorState
+			nextFrameID := uint64(0)
+			var baseLayerTUs [][]byte
+
+			key, err := enc.EncodePicture(publicRTCMatrixFrame(tc.width, tc.height, 0), false)
+			if err != nil {
+				t.Fatalf("initial key EncodePicture: %v", err)
+			}
+			baseLayerTUs = append(baseLayerTUs, append([]byte(nil), key.Frames[0].Data...))
+			assertPublicRTCPictureDescriptors(t, &receiver, cfg, key, true, &nextFrameID)
+
+			controlChange := cfg
+			controlChange.MaxFramerate = goav1.EncoderRational{Num: 60, Den: 1}
+			controlChange.MinBitrateKbps = tc.controlTB / 4
+			controlChange.MaxBitrateKbps = tc.controlTB * 2
+			controlChange.TargetBitrateKbps = tc.controlTB
+			if err := enc.SetConfig(controlChange); err != nil {
+				t.Fatalf("SetConfig control change: %v", err)
+			}
+			controlDelta, err := enc.EncodePicture(publicRTCMatrixFrame(tc.width, tc.height, 1), false)
+			if err != nil {
+				t.Fatalf("control delta EncodePicture: %v", err)
+			}
+			baseLayerTUs = append(baseLayerTUs, append([]byte(nil), controlDelta.Frames[0].Data...))
+			assertPublicRTCPictureDescriptors(t, &receiver, controlChange, controlDelta, false, &nextFrameID)
+
+			structureChange := controlChange
+			structureChange.Scalability = tc.reconfig
+			if err := enc.SetConfig(structureChange); err != nil {
+				t.Fatalf("SetConfig structure change: %v", err)
+			}
+			structureKey, err := enc.EncodePicture(publicRTCMatrixFrame(tc.width, tc.height, 2), false)
+			if err != nil {
+				t.Fatalf("structure key EncodePicture: %v", err)
+			}
+			baseLayerTUs = append(baseLayerTUs, append([]byte(nil), structureKey.Frames[0].Data...))
+			assertPublicRTCPictureDescriptors(t, &receiver, structureChange, structureKey, true, &nextFrameID)
+
+			postReconfigDelta, err := enc.EncodePicture(publicRTCMatrixFrame(tc.width, tc.height, 3), false)
+			if err != nil {
+				t.Fatalf("post-reconfigure delta EncodePicture: %v", err)
+			}
+			baseLayerTUs = append(baseLayerTUs, append([]byte(nil), postReconfigDelta.Frames[0].Data...))
+			assertPublicRTCPictureDescriptors(t, &receiver, structureChange, postReconfigDelta, false, &nextFrameID)
+			assertPublicRTCBaseLayerDecodes(t, baseLayerTUs)
+		})
+	}
+}
+
 func cloneRTCPictureData(p *goav1.RTCPicture) {
 	for i := 0; i < p.FrameNum; i++ {
 		p.Frames[i].Data = append([]byte(nil), p.Frames[i].Data...)
 		p.Frames[i].DependencyDescriptor = append([]byte(nil), p.Frames[i].DependencyDescriptor...)
+	}
+}
+
+func publicRTCMatrixConfig(width, height int, mode goav1.EncoderScalabilityMode) goav1.EncoderConfig {
+	return goav1.EncoderConfig{
+		Resolution:        goav1.EncoderResolution{Width: int32(width), Height: int32(height)},
+		MaxFramerate:      goav1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    120,
+		MaxBitrateKbps:    1600,
+		TargetBitrateKbps: 900,
+		Scalability:       mode,
+	}
+}
+
+func publicRTCMatrixFrame(width, height int, n int) goav1.I420Frame {
+	cw, ch := width/2, height/2
+	f := goav1.I420Frame{
+		Y: make([]byte, width*height), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
+		YStride: width, ChromaStride: cw, Width: width, Height: height,
+	}
+	for y := 0; y < height; y++ {
+		row := f.Y[y*width : y*width+width]
+		for x := range row {
+			row[x] = uint8(45 + (x*3+y*5+n*17)%175)
+		}
+	}
+	for i := range f.U {
+		f.U[i] = uint8(116 + (i+n)%9)
+		f.V[i] = uint8(132 - (i+n)%7)
+	}
+	return f
+}
+
+func assertPublicRTCPictureDescriptors(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, cfg goav1.EncoderConfig, picture goav1.RTCPicture, wantKey bool, nextFrameID *uint64) {
+	t.Helper()
+	normalized, err := goav1.SetWebRTCEncoderSVCConfig(cfg, cfg.TemporalLayerCount, cfg.SpatialLayerCount)
+	if err != nil {
+		t.Fatalf("SetWebRTCEncoderSVCConfig(%s): %v", cfg.Scalability, err)
+	}
+	spatialLayers, temporalLayers, _, ok := normalized.Scalability.Layers()
+	if !ok {
+		t.Fatalf("invalid scalability mode %s", normalized.Scalability)
+	}
+	if picture.Keyframe != wantKey || picture.FrameNum != int(spatialLayers) {
+		t.Fatalf("picture key=%v frames=%d want key=%v frames=%d", picture.Keyframe, picture.FrameNum, wantKey, spatialLayers)
+	}
+	for i := 0; i < picture.FrameNum; i++ {
+		frame := picture.Frames[i]
+		wantFrameID := *nextFrameID + uint64(i)
+		if frame.FrameID != wantFrameID || frame.SpatialID != uint8(i) || frame.TemporalID >= temporalLayers || frame.Keyframe != wantKey {
+			t.Fatalf("frame %d metadata=%+v want id=%d spatial=%d key=%v temporal<%d", i, frame, wantFrameID, i, wantKey, temporalLayers)
+		}
+		if len(frame.DependencyDescriptor) == 0 {
+			t.Fatalf("frame %d missing dependency descriptor", i)
+		}
+		parsed, consumed, err := receiver.Parse(frame.DependencyDescriptor)
+		if err != nil {
+			t.Fatalf("frame %d dependency descriptor parse: %v", i, err)
+		}
+		if consumed != len(frame.DependencyDescriptor) ||
+			parsed.Mandatory.FrameNumber != uint16(frame.FrameID) ||
+			!parsed.Mandatory.FirstPacketInFrame ||
+			!parsed.Mandatory.LastPacketInFrame {
+			t.Fatalf("frame %d parsed mandatory=%+v consumed=%d len=%d frame=%+v", i, parsed.Mandatory, consumed, len(frame.DependencyDescriptor), frame)
+		}
+		wantAttached := wantKey && i == 0
+		if parsed.HasAttachedStructure != wantAttached {
+			t.Fatalf("frame %d attached=%v want %v descriptor=%+v", i, parsed.HasAttachedStructure, wantAttached, parsed)
+		}
+		if wantAttached {
+			assertPublicRTCAttachedStructure(t, parsed.AttachedStructure, normalized)
+		}
+		deps := parsed.FrameDependencies
+		if deps.SpatialID != frame.SpatialID || deps.TemporalID != frame.TemporalID {
+			t.Fatalf("frame %d dependencies=%+v frame=%+v", i, deps, frame)
+		}
+		if !rtpPayloadHasLayerOBU(t, frame.Data, frame.TemporalID, frame.SpatialID) {
+			t.Fatalf("frame %d missing layer-tagged OBU", i)
+		}
+	}
+	*nextFrameID += uint64(picture.FrameNum)
+}
+
+func assertPublicRTCAttachedStructure(t *testing.T, structure goav1.RTPDependencyDescriptorStructure, cfg goav1.EncoderConfig) {
+	t.Helper()
+	spatialLayers, temporalLayers, _, ok := cfg.Scalability.Layers()
+	if !ok {
+		t.Fatalf("invalid attached-structure mode %s", cfg.Scalability)
+	}
+	if structure.NumDecodeTargets != spatialLayers*temporalLayers ||
+		structure.NumChains != spatialLayers ||
+		structure.ResolutionNum != spatialLayers {
+		t.Fatalf("attached structure shape=%+v want spatial=%d temporal=%d", structure, spatialLayers, temporalLayers)
+	}
+	for i := uint8(0); i < spatialLayers; i++ {
+		want := cfg.SpatialLayers[i].Resolution
+		got := structure.Resolutions[i]
+		if int32(got.Width) != want.Width || int32(got.Height) != want.Height {
+			t.Fatalf("attached resolution[%d]=%+v want %+v", i, got, want)
+		}
+	}
+}
+
+func assertPublicRTCBaseLayerDecodes(t *testing.T, tus [][]byte) {
+	t.Helper()
+	dec, err := goav1.NewDecoder(tus)
+	if err != nil {
+		t.Fatalf("base-layer decoder: %v", err)
+	}
+	defer dec.Close()
+	n := 0
+	for {
+		batch, ok, err := dec.DecodeNext()
+		if err != nil {
+			t.Fatalf("base-layer decode: %v", err)
+		}
+		if !ok {
+			break
+		}
+		n += len(batch)
+	}
+	if n != len(tus) {
+		t.Fatalf("decoded %d base-layer frames, want %d", n, len(tus))
 	}
 }
 
