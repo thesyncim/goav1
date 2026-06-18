@@ -201,7 +201,7 @@ func TestPublicRTCFrameAppendRTPPackets(t *testing.T) {
 	}
 	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
 	var receiver goav1.RTPDependencyDescriptorState
-	assertPublicRTCFrameRTPPackets(t, &receiver, frame, limits, true)
+	assertPublicRTCFrameRTPPackets(t, &receiver, frame, limits, true, true)
 }
 
 func TestPublicRTCFrameAppendRTPPacketsSpatialPicture(t *testing.T) {
@@ -229,7 +229,8 @@ func TestPublicRTCFrameAppendRTPPacketsSpatialPicture(t *testing.T) {
 	var receiver goav1.RTPDependencyDescriptorState
 	for i := 0; i < picture.FrameNum; i++ {
 		wantAttached := i == 0
-		assertPublicRTCFrameRTPPackets(t, &receiver, picture.Frames[i], limits, wantAttached)
+		wantNewCodedVideoSequence := i == 0
+		assertPublicRTCFrameRTPPackets(t, &receiver, picture.Frames[i], limits, wantAttached, wantNewCodedVideoSequence)
 	}
 }
 
@@ -618,7 +619,7 @@ func assertPublicRTCPictureDescriptors(t *testing.T, receiver *goav1.RTPDependen
 	*nextFrameID += uint64(picture.FrameNum)
 }
 
-func assertPublicRTCFrameRTPPackets(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, frame goav1.RTCFrame, limits goav1.RTPPayloadSizeLimits, wantAttachedStructure bool) {
+func assertPublicRTCFrameRTPPackets(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, frame goav1.RTCFrame, limits goav1.RTPPayloadSizeLimits, wantAttachedStructure bool, wantNewCodedVideoSequence bool) {
 	t.Helper()
 	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
 	if err != nil {
@@ -648,6 +649,13 @@ func assertPublicRTCFrameRTPPackets(t *testing.T, receiver *goav1.RTPDependencyD
 	for i := range packetCount {
 		span := spans[i]
 		payloadSlices[i] = rtpPayloads[span.PayloadOffset : span.PayloadOffset+span.PayloadLength]
+		header, _, err := goav1.ParseRTPAggregationHeader(payloadSlices[i])
+		if err != nil {
+			t.Fatalf("packet %d aggregation header S%d: %v", i, frame.SpatialID, err)
+		}
+		if header.StartsNewCodedVideoSequence != (wantNewCodedVideoSequence && i == 0) {
+			t.Fatalf("packet %d N=%v want %v frame=%+v", i, header.StartsNewCodedVideoSequence, wantNewCodedVideoSequence && i == 0, frame)
+		}
 		desc := descriptors[span.DescriptorOffset : span.DescriptorOffset+span.DescriptorLength]
 		parsed, consumed, err := receiver.Parse(desc)
 		if err != nil {
