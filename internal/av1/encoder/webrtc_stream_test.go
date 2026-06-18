@@ -107,3 +107,131 @@ func TestWebRTCStreamPackagesDecodableFrames(t *testing.T) {
 	}
 	fmt.Println("webrtc stream ok")
 }
+
+func TestWebRTCStreamAcceptedScalabilityModesDecode(t *testing.T) {
+	modes := []encoder.ScalabilityMode{
+		encoder.ScalabilityModeL1T1,
+		encoder.ScalabilityModeL1T2,
+		encoder.ScalabilityModeL1T3,
+		encoder.ScalabilityModeL2T1_KEY,
+		encoder.ScalabilityModeL2T2_KEY,
+		encoder.ScalabilityModeL2T2_KEY_SHIFT,
+		encoder.ScalabilityModeL2T3_KEY,
+		encoder.ScalabilityModeL2T3_KEY_SHIFT,
+		encoder.ScalabilityModeL3T1_KEY,
+		encoder.ScalabilityModeL3T2_KEY,
+		encoder.ScalabilityModeL3T2_KEY_SHIFT,
+		encoder.ScalabilityModeL3T3_KEY,
+		encoder.ScalabilityModeL3T3_KEY_SHIFT,
+		encoder.ScalabilityModeS2T1,
+		encoder.ScalabilityModeS2T1h,
+		encoder.ScalabilityModeS2T2,
+		encoder.ScalabilityModeS2T2h,
+		encoder.ScalabilityModeS2T3,
+		encoder.ScalabilityModeS2T3h,
+		encoder.ScalabilityModeS3T1,
+		encoder.ScalabilityModeS3T1h,
+		encoder.ScalabilityModeS3T2,
+		encoder.ScalabilityModeS3T2h,
+		encoder.ScalabilityModeS3T3,
+		encoder.ScalabilityModeS3T3h,
+	}
+	for _, mode := range modes {
+		t.Run(mode.String(), func(t *testing.T) {
+			cfg := webRTCDecodeMatrixConfig(mode)
+			stream, err := encoder.NewWebRTCStreamConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewWebRTCStreamConfig(%s): %v", mode, err)
+			}
+			stream.SetGoldenInterval(0)
+
+			var tusBySpatial [encoder.WebRTCMaxSpatialLayers][][]byte
+			var wantBySpatial [encoder.WebRTCMaxSpatialLayers]int
+			for i := 0; i < 2; i++ {
+				picture, err := stream.EncodePicture(webRTCDecodeMatrixFrame(int(cfg.Resolution.Width), int(cfg.Resolution.Height), i), false)
+				if err != nil {
+					t.Fatalf("EncodePicture(%d): %v", i, err)
+				}
+				if picture.FrameNum == 0 {
+					t.Fatalf("EncodePicture(%d) emitted no frames", i)
+				}
+				for frame := uint8(0); frame < picture.FrameNum; frame++ {
+					spatialID := picture.Frames[frame].Info.SpatialID
+					if spatialID >= encoder.WebRTCMaxSpatialLayers {
+						t.Fatalf("frame %d spatial id=%d", frame, spatialID)
+					}
+					tusBySpatial[spatialID] = append(tusBySpatial[spatialID], append([]byte(nil), picture.Frames[frame].TU...))
+					wantBySpatial[spatialID]++
+				}
+			}
+
+			for spatialID, tus := range tusBySpatial {
+				if len(tus) == 0 {
+					continue
+				}
+				dec, err := goav1.NewDecoder(tus)
+				if err != nil {
+					t.Fatalf("spatial %d NewDecoder: %v", spatialID, err)
+				}
+				defer dec.Close()
+				gotFrames := 0
+				for {
+					batch, ok, err := dec.DecodeNext()
+					if err != nil {
+						t.Fatalf("spatial %d decode: %v", spatialID, err)
+					}
+					if !ok {
+						break
+					}
+					gotFrames += len(batch)
+				}
+				if gotFrames != wantBySpatial[spatialID] {
+					t.Fatalf("spatial %d decoded %d frames, want %d", spatialID, gotFrames, wantBySpatial[spatialID])
+				}
+			}
+		})
+	}
+}
+
+func webRTCDecodeMatrixConfig(mode encoder.ScalabilityMode) encoder.Config {
+	spatial, _, _, _ := mode.Layers()
+	resolution := encoder.Resolution{Width: 192, Height: 128}
+	switch spatial {
+	case 2:
+		resolution = encoder.Resolution{Width: 640, Height: 360}
+	case 3:
+		resolution = encoder.Resolution{Width: 1008, Height: 576}
+	}
+	return encoder.Config{
+		Resolution:        resolution,
+		MaxFramerate:      encoder.Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 500,
+		Scalability:       mode,
+	}
+}
+
+func webRTCDecodeMatrixFrame(width int, height int, n int) encoder.SourceFrame420 {
+	cw, ch := width/2, height/2
+	f := encoder.SourceFrame420{
+		Y:            make([]byte, width*height),
+		U:            make([]byte, cw*ch),
+		V:            make([]byte, cw*ch),
+		YStride:      width,
+		ChromaStride: cw,
+		Width:        width,
+		Height:       height,
+	}
+	for y := 0; y < height; y++ {
+		row := y * width
+		for x := 0; x < width; x++ {
+			f.Y[row+x] = uint8(48 + (x+n*7)%80 + (y+n*3)%40)
+		}
+	}
+	for i := range f.U {
+		f.U[i] = uint8(116 + n)
+		f.V[i] = uint8(132 - n)
+	}
+	return f
+}
