@@ -122,6 +122,7 @@ func NewWebRTCStreamConfig(config Config) (*WebRTCStream, error) {
 	for i := uint8(0); i < normalized.SpatialLayerCount; i++ {
 		enc, err := newWebRTCStreamLayerEncoder(normalized, i, fps, stream.rcMinQ, stream.rcMaxQ)
 		if err != nil {
+			_ = stream.closeEncoders()
 			return nil, err
 		}
 		stream.encoders[i] = enc

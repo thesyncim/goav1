@@ -454,9 +454,7 @@ func (e *VideoEncoder) Close() error {
 	if e == nil {
 		return nil
 	}
-	if err := e.joinFilter(); err != nil {
-		return err
-	}
+	err := e.joinFilter()
 	if e.tileWork != nil {
 		close(e.tileWork)
 		e.tileWork = nil
@@ -467,7 +465,7 @@ func (e *VideoEncoder) Close() error {
 		e.filterWork = nil
 		e.filterStarted = false
 	}
-	return nil
+	return err
 }
 
 // SetTemporalLayers selects the temporal-layer count: 1 (default) or 2 for

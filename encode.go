@@ -140,6 +140,7 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 	case 0, 1:
 	default:
 		if err := enc.SetTemporalLayers(cfg.TemporalLayers); err != nil {
+			_ = enc.Close()
 			return nil, err
 		}
 	}
@@ -155,6 +156,7 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 	// real frame pays no initialization latency and steady-state encoding
 	// allocates nothing.
 	if err := enc.Prewarm(); err != nil {
+		_ = enc.Close()
 		return nil, err
 	}
 	return enc, nil
@@ -392,6 +394,7 @@ func NewRTCEncoder(cfg VideoEncoderConfig) (*RTCEncoder, error) {
 		stream.SetGoldenInterval(cfg.GoldenInterval)
 	}
 	if err := stream.Prewarm(); err != nil {
+		_ = stream.Close()
 		return nil, err
 	}
 	return &RTCEncoder{stream: stream}, nil
@@ -406,6 +409,7 @@ func NewRTCEncoderWithConfig(cfg EncoderConfig) (*RTCEncoder, error) {
 		return nil, err
 	}
 	if err := stream.Prewarm(); err != nil {
+		_ = stream.Close()
 		return nil, err
 	}
 	return &RTCEncoder{stream: stream}, nil
