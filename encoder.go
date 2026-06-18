@@ -360,6 +360,37 @@ func SetWebRTCEncoderSVCConfig(config EncoderConfig, requestedTemporalLayers uin
 	return internalencoder.SetWebRTCSVCConfig(config, requestedTemporalLayers, requestedSpatialLayers)
 }
 
+// EncoderWebRTCRTPFrameDuration returns the exact RTP timestamp duration of
+// one encoded WebRTC picture after applying the same config normalization used
+// by the WebRTC encoder. The returned rational is expressed in RTP timestamp
+// ticks, not seconds. For the default 90 kHz RTP timebase, 30 fps returns
+// 3000/1 and 30000/1001 fps returns 3003/1.
+func EncoderWebRTCRTPFrameDuration(config EncoderConfig) (EncoderRational, error) {
+	normalized, err := internalencoder.SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
+	if err != nil {
+		return EncoderRational{}, err
+	}
+	num := int64(normalized.MaxFramerate.Den) * int64(normalized.RTPTimebase.Den)
+	den := int64(normalized.MaxFramerate.Num) * int64(normalized.RTPTimebase.Num)
+	div := encoderWebRTCRTPDurationGCD(num, den)
+	num /= div
+	den /= div
+	if num > 1<<31-1 || den > 1<<31-1 {
+		return EncoderRational{}, internalencoder.ErrInvalidConfig
+	}
+	return EncoderRational{Num: int32(num), Den: int32(den)}, nil
+}
+
+func encoderWebRTCRTPDurationGCD(a int64, b int64) int64 {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	if a < 0 {
+		return -a
+	}
+	return a
+}
+
 func ValidateEncoderTemporalUnitFrames(frames []EncoderFrameEncodeSettings, state EncoderReferenceBufferState, rcMode EncoderRateControlMode) (EncoderReferenceBufferState, error) {
 	return internalencoder.ValidateTemporalUnitFrames(frames, state, rcMode)
 }

@@ -123,6 +123,47 @@ func TestPublicEncoderControlSurface(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderWebRTCRTPFrameDuration(t *testing.T) {
+	base := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+		Scalability:       av1.EncoderScalabilityModeL1T2,
+	}
+	tests := []struct {
+		name     string
+		fps      av1.EncoderRational
+		timebase av1.EncoderRational
+		want     av1.EncoderRational
+	}{
+		{name: "defaults", want: av1.EncoderRational{Num: 3000, Den: 1}},
+		{name: "thirty", fps: av1.EncoderRational{Num: 30, Den: 1}, want: av1.EncoderRational{Num: 3000, Den: 1}},
+		{name: "ntsc", fps: av1.EncoderRational{Num: 30000, Den: 1001}, want: av1.EncoderRational{Num: 3003, Den: 1}},
+		{name: "custom timebase", fps: av1.EncoderRational{Num: 24, Den: 1}, timebase: av1.EncoderRational{Num: 1, Den: 1000}, want: av1.EncoderRational{Num: 125, Den: 3}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := base
+			cfg.MaxFramerate = tc.fps
+			cfg.RTPTimebase = tc.timebase
+			got, err := av1.EncoderWebRTCRTPFrameDuration(cfg)
+			if err != nil {
+				t.Fatalf("EncoderWebRTCRTPFrameDuration: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("duration=%+v want %+v", got, tc.want)
+			}
+		})
+	}
+
+	invalid := base
+	invalid.MaxFramerate = av1.EncoderRational{Num: 1, Den: 2}
+	if _, err := av1.EncoderWebRTCRTPFrameDuration(invalid); !errors.Is(err, av1.ErrEncoderInvalidConfig) {
+		t.Fatalf("invalid framerate err=%v want %v", err, av1.ErrEncoderInvalidConfig)
+	}
+}
+
 func TestPublicEncoderWebRTCScalabilityModes(t *testing.T) {
 	wantNames := []string{
 		"L1T1", "L1T2", "L1T3",
