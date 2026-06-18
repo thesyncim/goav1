@@ -15,6 +15,10 @@ func WebRTCDependencyDescriptorSize(structure WebRTCFrameDependencyStructure, in
 	if err != nil {
 		return 0, err
 	}
+	return webRTCDependencyDescriptorSizeForMatch(structure, match, attachStructure)
+}
+
+func webRTCDependencyDescriptorSizeForMatch(structure WebRTCFrameDependencyStructure, match webRTCDependencyDescriptorMatch, attachStructure bool) (int, error) {
 	bits := 24
 	if attachStructure || match.needCustomDTIs || match.needCustomDiffs {
 		bits += 5
@@ -36,7 +40,11 @@ func WebRTCDependencyDescriptorSize(structure WebRTCFrameDependencyStructure, in
 }
 
 func AppendWebRTCDependencyDescriptor(dst []byte, structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo, firstPacketInFrame bool, lastPacketInFrame bool, attachStructure bool) ([]byte, error) {
-	size, err := WebRTCDependencyDescriptorSize(structure, info, attachStructure)
+	match, err := webRTCDependencyDescriptorMatchFrame(structure, info)
+	if err != nil {
+		return dst, err
+	}
+	size, err := webRTCDependencyDescriptorSizeForMatch(structure, match, attachStructure)
 	if err != nil {
 		return dst, err
 	}
@@ -47,7 +55,7 @@ func AppendWebRTCDependencyDescriptor(dst []byte, structure WebRTCFrameDependenc
 	off := len(dst)
 	out := dst[:off+size]
 	w := newBitWriter(out[off:])
-	if err := writeWebRTCDependencyDescriptor(&w, structure, info, firstPacketInFrame, lastPacketInFrame, attachStructure); err != nil {
+	if err := writeWebRTCDependencyDescriptor(&w, structure, info, match, firstPacketInFrame, lastPacketInFrame, attachStructure); err != nil {
 		return dst, err
 	}
 	for !w.byteAligned() {
@@ -58,11 +66,7 @@ func AppendWebRTCDependencyDescriptor(dst []byte, structure WebRTCFrameDependenc
 	return out, nil
 }
 
-func writeWebRTCDependencyDescriptor(w *bitWriter, structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo, firstPacketInFrame bool, lastPacketInFrame bool, attachStructure bool) error {
-	match, err := webRTCDependencyDescriptorMatchFrame(structure, info)
-	if err != nil {
-		return err
-	}
+func writeWebRTCDependencyDescriptor(w *bitWriter, structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo, match webRTCDependencyDescriptorMatch, firstPacketInFrame bool, lastPacketInFrame bool, attachStructure bool) error {
 	templateID := (structure.StructureID + match.templateIndex) % WebRTCRtpDependencyMaxTemplates
 	if err := w.writeBool(firstPacketInFrame); err != nil {
 		return err
