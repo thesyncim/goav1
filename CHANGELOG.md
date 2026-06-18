@@ -30,11 +30,14 @@ The project has not published a release tag yet.
   configuration; camera and screen-content tuning; realtime speed/quality
   controls; low-overhead OBU/RTP output; and dependency/scalability metadata
   needed by WebRTC integrations.
-- Encoder implementation is in scope. The public API has not landed yet.
-  Behavior must be ported from pinned libaom/libwebrtc source, with pinned
+- Encoder implementation is in scope. The public realtime WebRTC API is usable
+  for 8-bit I420 streams, including temporal layering, multi-spatial SVC and
+  simulcast pictures, RTP payload packetization, dependency descriptors, and
+  runtime bitrate/framerate/scalability reconfiguration. New behavior must
+  continue to be ported from pinned libaom/libwebrtc source, with pinned
   SVT-AV1 used as the speed-architecture reference. New/touched code must keep
-  relevant upstream C type widths and signedness. Oracle tests and
-  zero-allocation hot paths are required before it is advertised as usable.
+  relevant upstream C type widths and signedness, and should land with oracle
+  tests and allocation evidence appropriate to the path.
 
 ### Verification
 

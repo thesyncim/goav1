@@ -20,7 +20,7 @@
 // decode/reconstruct helpers, decoder postfilter scratch binding, superres
 // upscaling, film-grain output helpers, a realtime 8-bit I420 AV1 encoder for
 // WebRTC streams, RTP payload packetization with dependency descriptors,
-// multi-spatial EncodePicture output for simulcast/key-only SVC modes, and
+// multi-spatial EncodePicture output for WebRTC SVC and simulcast modes, and
 // runtime bitrate/framerate/scalability reconfiguration. Lower-level WebRTC
 // encoder helpers expose W3C SVC mode metadata, temporal/spatial dependency
 // structures, decode-target grids, and key-shift scheduling. The decoder and

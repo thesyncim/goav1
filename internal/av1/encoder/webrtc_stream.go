@@ -101,9 +101,8 @@ func NewWebRTCStreamLayers(width, height int, rc RateControlConfig, temporalLaye
 
 // NewWebRTCStreamConfig creates a WebRTC stream from the lower-level WebRTC
 // encoder config. The pixel encoder currently accepts 8-bit profile-0 I420
-// under CBR. Multi-spatial pixel output is supported for modes whose delta
-// frames do not require AV1 inter-layer prediction: simulcast and key-only SVC
-// modes, including key-shift schedules.
+// under CBR. Multi-spatial pixel output is supported for WebRTC SVC and
+// simulcast modes, including key and key-shift schedules.
 func NewWebRTCStreamConfig(config Config) (*WebRTCStream, error) {
 	normalized, fps, err := normalizeWebRTCStreamConfig(config)
 	if err != nil {
