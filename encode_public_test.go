@@ -698,6 +698,90 @@ func TestPublicRTCEncoderSetConfigSpatialCycleDecodes(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderSetConfigFullModeCatalogueDecodes(t *testing.T) {
+	modes := goav1.EncoderWebRTCScalabilityModes()
+	if len(modes) == 0 {
+		t.Fatal("no WebRTC scalability modes")
+	}
+	fps := []goav1.EncoderRational{
+		{Num: 30, Den: 1},
+		{Num: 60, Den: 1},
+		{Num: 30000, Den: 1001},
+		{Num: 24, Den: 1},
+		{Num: 15, Den: 1},
+		{Num: 120, Den: 1},
+	}
+
+	var enc *goav1.RTCEncoder
+	var descriptorReceiver goav1.RTPDependencyDescriptorState
+	var rtpReceiver goav1.RTPDependencyDescriptorState
+	var activeLayerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+	var activeOrderedTUs [][]byte
+	nextFrameID := uint64(0)
+	frameIndex := 0
+
+	for step, mode := range modes {
+		width, height := publicRTCMatrixGeometry(t, mode)
+		cfg := publicRTCMatrixConfig(width, height, mode)
+		cfg.MaxFramerate = fps[step%len(fps)]
+		targetKbps := publicRTCMatrixControlBitrateKbps(t, mode) + int32((step%5)*37)
+		publicRTCApplyControlBitrates(&cfg, targetKbps)
+
+		wantKey := true
+		if enc == nil {
+			var err error
+			enc, err = goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
+			}
+			defer enc.Close()
+		} else {
+			wantKey = publicRTCSetConfigRequiresKey(t, enc.Config(), cfg)
+			if err := enc.SetConfig(cfg); err != nil {
+				t.Fatalf("SetConfig(%s): %v", mode, err)
+			}
+		}
+		assertPublicRTCConfigControls(t, enc.Config(), cfg)
+		if wantKey {
+			activeLayerTUs = [goav1.EncoderWebRTCMaxSpatialLayers][][]byte{}
+			activeOrderedTUs = nil
+		}
+
+		picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, frameIndex), false)
+		if err != nil {
+			t.Fatalf("catalogue key/delta EncodePicture(%s): %v", mode, err)
+		}
+		frameIndex++
+		appendPublicRTCPictureRTPData(t, &rtpReceiver, &activeLayerTUs, &activeOrderedTUs, picture)
+		assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), picture, wantKey, &nextFrameID)
+
+		delta, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, frameIndex), false)
+		if err != nil {
+			t.Fatalf("catalogue delta EncodePicture(%s): %v", mode, err)
+		}
+		frameIndex++
+		appendPublicRTCPictureRTPData(t, &rtpReceiver, &activeLayerTUs, &activeOrderedTUs, delta)
+		assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), delta, false, &nextFrameID)
+
+		controlChange := enc.Config()
+		controlChange.MaxFramerate = fps[(step+1)%len(fps)]
+		publicRTCApplyControlBitrates(&controlChange, targetKbps+53)
+		if err := enc.SetConfig(controlChange); err != nil {
+			t.Fatalf("SetConfig(%s control): %v", mode, err)
+		}
+		assertPublicRTCConfigControls(t, enc.Config(), controlChange)
+		controlDelta, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, frameIndex), false)
+		if err != nil {
+			t.Fatalf("catalogue control delta EncodePicture(%s): %v", mode, err)
+		}
+		frameIndex++
+		appendPublicRTCPictureRTPData(t, &rtpReceiver, &activeLayerTUs, &activeOrderedTUs, controlDelta)
+		assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), controlDelta, false, &nextFrameID)
+
+		assertPublicRTCLayerStreamsDecode(t, enc.Config(), activeLayerTUs, activeOrderedTUs)
+	}
+}
+
 func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 	for _, initial := range goav1.EncoderWebRTCScalabilityModes() {
 		initial := initial
@@ -868,6 +952,50 @@ func assertPublicRTCConfigBitrates(t *testing.T, got goav1.EncoderConfig, want g
 			t.Fatalf("layer %d bitrate got %+v want min=%d max=%d target=%d", i, gotLayer, wantLayer.MinBitrateKbps, wantLayer.MaxBitrateKbps, wantLayer.TargetBitrateKbps)
 		}
 	}
+}
+
+func assertPublicRTCConfigControls(t *testing.T, got goav1.EncoderConfig, want goav1.EncoderConfig) {
+	t.Helper()
+	if got.MaxFramerate != want.MaxFramerate {
+		t.Fatalf("config fps=%+v want %+v", got.MaxFramerate, want.MaxFramerate)
+	}
+	assertPublicRTCConfigBitrates(t, got, want)
+}
+
+func publicRTCSetConfigRequiresKey(t *testing.T, before goav1.EncoderConfig, after goav1.EncoderConfig) bool {
+	t.Helper()
+	normalizedBefore, err := goav1.SetWebRTCEncoderSVCConfig(before, before.TemporalLayerCount, before.SpatialLayerCount)
+	if err != nil {
+		t.Fatalf("normalize previous config %s: %v", before.Scalability, err)
+	}
+	normalizedAfter, err := goav1.SetWebRTCEncoderSVCConfig(after, after.TemporalLayerCount, after.SpatialLayerCount)
+	if err != nil {
+		t.Fatalf("normalize next config %s: %v", after.Scalability, err)
+	}
+	if !publicRTCConfigLayerGeometryEqual(normalizedBefore, normalizedAfter) {
+		return true
+	}
+	beforeStructure, err := goav1.EncoderWebRTCFrameDependencyStructureForConfig(normalizedBefore)
+	if err != nil {
+		t.Fatalf("previous dependency structure %s: %v", normalizedBefore.Scalability, err)
+	}
+	afterStructure, err := goav1.EncoderWebRTCFrameDependencyStructureForConfig(normalizedAfter)
+	if err != nil {
+		t.Fatalf("next dependency structure %s: %v", normalizedAfter.Scalability, err)
+	}
+	return beforeStructure != afterStructure
+}
+
+func publicRTCConfigLayerGeometryEqual(a goav1.EncoderConfig, b goav1.EncoderConfig) bool {
+	if a.SpatialLayerCount != b.SpatialLayerCount {
+		return false
+	}
+	for i := uint8(0); i < a.SpatialLayerCount; i++ {
+		if a.SpatialLayers[i].Resolution != b.SpatialLayers[i].Resolution {
+			return false
+		}
+	}
+	return true
 }
 
 func cloneRTCPictureData(p *goav1.RTCPicture) {
