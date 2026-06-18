@@ -591,7 +591,10 @@ func SetWebRTCSVCConfig(config Config, requestedTemporalLayers uint8, requestedS
 		layer := &config.SpatialLayers[0]
 		layer.MinBitrateKbps = config.MinBitrateKbps
 		layer.MaxBitrateKbps = config.MaxBitrateKbps
-		layer.TargetBitrateKbps = (config.MinBitrateKbps + config.MaxBitrateKbps) / 2
+		layer.TargetBitrateKbps = config.TargetBitrateKbps
+		if layer.TargetBitrateKbps == 0 {
+			layer.TargetBitrateKbps = (config.MinBitrateKbps + config.MaxBitrateKbps) / 2
+		}
 		return config, nil
 	}
 

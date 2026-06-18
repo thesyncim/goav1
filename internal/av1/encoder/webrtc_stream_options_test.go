@@ -219,6 +219,10 @@ func TestWebRTCStreamSetConfigReconfigure(t *testing.T) {
 	if err := stream.SetConfig(controlChange); err != nil {
 		t.Fatalf("SetConfig control change: %v", err)
 	}
+	wantPerFrameBits := int(controlChange.TargetBitrateKbps) * 1000 / webRTCStreamFramesPerSecond(controlChange.MaxFramerate)
+	if got, want := stream.encoders[0].rcPerFrameBits, wantPerFrameBits; got != want {
+		t.Fatalf("control change rcPerFrameBits=%d want %d", got, want)
+	}
 	beforeFrameID := stream.state.NextFrameID
 	delta, err = stream.EncodePicture(src, false)
 	if err != nil {

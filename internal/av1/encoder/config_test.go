@@ -201,7 +201,7 @@ func TestSetWebRTCSVCConfig(t *testing.T) {
 		MaxFramerate:      Rational{Num: 30, Den: 1},
 		MinBitrateKbps:    100,
 		MaxBitrateKbps:    500,
-		TargetBitrateKbps: 300,
+		TargetBitrateKbps: 350,
 	}
 
 	got, err := SetWebRTCSVCConfig(base, 0, 0)
@@ -214,8 +214,18 @@ func TestSetWebRTCSVCConfig(t *testing.T) {
 	if !got.SpatialLayers[0].Active || got.SpatialLayers[1].Active {
 		t.Fatalf("unexpected active layers: %+v", got.SpatialLayers)
 	}
-	if got.SpatialLayers[0].MinBitrateKbps != 100 || got.SpatialLayers[0].MaxBitrateKbps != 500 || got.SpatialLayers[0].TargetBitrateKbps != 300 {
+	if got.SpatialLayers[0].MinBitrateKbps != 100 || got.SpatialLayers[0].MaxBitrateKbps != 500 || got.SpatialLayers[0].TargetBitrateKbps != 350 {
 		t.Fatalf("single-layer bitrate not copied: %+v", got.SpatialLayers[0])
+	}
+
+	midpoint := base
+	midpoint.TargetBitrateKbps = 0
+	got, err = SetWebRTCSVCConfig(midpoint, 0, 0)
+	if err != nil {
+		t.Fatalf("SetWebRTCSVCConfig L1T1 midpoint: %v", err)
+	}
+	if got.SpatialLayers[0].TargetBitrateKbps != 300 {
+		t.Fatalf("single-layer default target=%d want 300", got.SpatialLayers[0].TargetBitrateKbps)
 	}
 
 	base.Scalability = ScalabilityModeL2T2
