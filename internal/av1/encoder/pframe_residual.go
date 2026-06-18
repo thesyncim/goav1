@@ -1460,13 +1460,42 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 // with motion vector mv, writing into dst (stride bw). Full-pel vectors reduce
 // to copies inside the kernel, so one path serves both cases bit-exactly.
 func predictInto(dst []byte, refPlane []byte, stride, width, height, px, py, bw, bh int, mv motion.Vector, ssX, ssY bool) error {
-	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(px, py, mv, ssX, ssY)
+	return predictIntoScaled(dst, refPlane, stride, width, height, width, height, px, py, bw, bh, mv, ssX, ssY, nil)
+}
+
+// predictIntoScaled runs the same inter predictor as predictInto, but allows
+// the reference plane and current plane to have different dimensions. AV1's
+// scaled inter prediction derives the reference taps from the reference-vs-
+// current size ratio, so callers must pass the full current plane dimensions
+// rather than the destination scratch block dimensions.
+func predictIntoScaled(dst []byte, refPlane []byte, stride, refWidth, refHeight, curWidth, curHeight, px, py, bw, bh int, mv motion.Vector, ssX, ssY bool, scratch *motion.ScaledConvolveScratch) error {
+	dstPlane := frame.Plane{Pix: dst, Stride: bw, Width: bw, Height: bh}
+	ref := frame.Plane{Pix: refPlane, Stride: stride, Width: refWidth, Height: refHeight}
+	filters := motion.RegularFilters
+	if refWidth == curWidth && refHeight == curHeight {
+		refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(px, py, mv, ssX, ssY)
+		if err != nil {
+			return err
+		}
+		return motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dstPlane, ref, 1, 8, 0, 0, refX, refY, bw, bh, subX, subY, filters)
+	}
+	sf, err := motion.NewScaleFactors(refWidth, refHeight, curWidth, curHeight)
 	if err != nil {
 		return err
 	}
-	dstPlane := frame.Plane{Pix: dst, Stride: bw, Width: bw, Height: bh}
-	ref := frame.Plane{Pix: refPlane, Stride: stride, Width: width, Height: height}
-	return motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dstPlane, ref, 1, 8, 0, 0, refX, refY, bw, bh, subX, subY, motion.InterpFilters{})
+	startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(px, py, mv, ssX, ssY)
+	if err != nil {
+		return err
+	}
+	xTable, err := motion.SubpelKernelTableFor(filters.X, bw)
+	if err != nil {
+		return err
+	}
+	yTable, err := motion.SubpelKernelTableFor(filters.Y, bh)
+	if err != nil {
+		return err
+	}
+	return motion.ConvolveScale2D8ClampedWithScratch(dstPlane, ref, 0, 0, bw, bh, startX, xStep, startY, yStep, xTable, yTable, scratch)
 }
 
 func predictCompoundInto(dst []byte, ref0Plane []byte, stride0 int, ref1Plane []byte, stride1 int, width, height, px, py, bw, bh int,
