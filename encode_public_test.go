@@ -221,6 +221,27 @@ func TestPublicRTCEncoderClose(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderEncodeRejectsMultiSpatialWithoutMutating(t *testing.T) {
+	const w, h = 640, 360
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL2T2)
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); err != goav1.ErrEncoderUnsupported {
+		t.Fatalf("Encode multi-spatial err=%v want %v", err, goav1.ErrEncoderUnsupported)
+	}
+	picture, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, 1), false)
+	if err != nil {
+		t.Fatalf("EncodePicture after rejected Encode: %v", err)
+	}
+	if !picture.Keyframe || picture.FrameNum != 2 ||
+		picture.Frames[0].FrameID != 0 ||
+		picture.Frames[1].FrameID != 1 {
+		t.Fatalf("picture after rejected Encode=%+v", picture)
+	}
+}
+
 func TestPublicRTCFrameAppendRTPPackets(t *testing.T) {
 	const w, h = 192, 128
 	cw, ch := w/2, h/2

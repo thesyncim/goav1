@@ -393,12 +393,12 @@ func (s *WebRTCStream) Prewarm() error {
 // Encode encodes one single-spatial frame and returns it with WebRTC packaging
 // metadata.
 func (s *WebRTCStream) Encode(src SourceFrame420, forceKey bool) (WebRTCEncodedFrame, error) {
+	if s == nil || s.config.SpatialLayerCount != 1 {
+		return WebRTCEncodedFrame{}, ErrUnsupported
+	}
 	picture, err := s.EncodePicture(src, forceKey)
 	if err != nil {
 		return WebRTCEncodedFrame{}, err
-	}
-	if picture.FrameNum != 1 {
-		return WebRTCEncodedFrame{}, ErrUnsupported
 	}
 	return picture.Frames[0], nil
 }

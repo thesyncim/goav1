@@ -66,6 +66,35 @@ func TestWebRTCStreamConfigAcceptsSimulcastPixelModes(t *testing.T) {
 	}
 }
 
+func TestWebRTCStreamEncodeRejectsMultiSpatialWithoutMutating(t *testing.T) {
+	stream, err := NewWebRTCStreamConfig(Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 500,
+		Scalability:       ScalabilityModeL2T2,
+	})
+	if err != nil {
+		t.Fatalf("NewWebRTCStreamConfig L2T2: %v", err)
+	}
+	if _, err := stream.Encode(testWebRTCStreamFrame(640, 360), false); err != ErrUnsupported {
+		t.Fatalf("Encode multi-spatial err=%v want %v", err, ErrUnsupported)
+	}
+	if stream.state.NextFrameID != 0 || stream.state.DependencyStructureState.Valid {
+		t.Fatalf("unsupported Encode mutated state: %+v", stream.state)
+	}
+	picture, err := stream.EncodePicture(testWebRTCStreamFrame(640, 360), false)
+	if err != nil {
+		t.Fatalf("EncodePicture after rejected Encode: %v", err)
+	}
+	if !picture.Keyframe || picture.FrameNum != 2 ||
+		picture.Frames[0].Info.FrameID != 0 ||
+		picture.Frames[1].Info.FrameID != 1 {
+		t.Fatalf("picture after rejected Encode=%+v", picture)
+	}
+}
+
 func TestWebRTCStreamConfigPixelScalabilityModeMatrix(t *testing.T) {
 	for mode := ScalabilityMode(0); mode < scalabilityModeCount; mode++ {
 		t.Run(mode.String(), func(t *testing.T) {
