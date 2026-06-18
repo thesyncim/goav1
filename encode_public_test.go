@@ -389,6 +389,7 @@ func TestPublicRTCEncoderSupportsWebRTCPixelModeMatrix(t *testing.T) {
 					t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 				}
 				var receiver goav1.RTPDependencyDescriptorState
+				var rtpReceiver goav1.RTPDependencyDescriptorState
 				nextFrameID := uint64(0)
 				var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
 				var orderedTUs [][]byte
@@ -397,7 +398,7 @@ func TestPublicRTCEncoderSupportsWebRTCPixelModeMatrix(t *testing.T) {
 					if err != nil {
 						t.Fatalf("EncodePicture(%s, %d): %v", mode, frame, err)
 					}
-					appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, picture)
+					appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
 					assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), picture, frame == 0, &nextFrameID)
 				}
 				assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
@@ -787,6 +788,86 @@ func appendPublicRTCPictureLayerData(t *testing.T, layerTUs *[goav1.EncoderWebRT
 		layerTUs[spatialID] = append(layerTUs[spatialID], tu)
 		*orderedTUs = append(*orderedTUs, tu)
 	}
+}
+
+func appendPublicRTCPictureRTPData(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, layerTUs *[goav1.EncoderWebRTCMaxSpatialLayers][][]byte, orderedTUs *[][]byte, picture goav1.RTCPicture) {
+	t.Helper()
+	for i := 0; i < picture.FrameNum; i++ {
+		frame := picture.Frames[i]
+		spatialID := frame.SpatialID
+		if spatialID >= goav1.EncoderWebRTCMaxSpatialLayers {
+			t.Fatalf("frame %d spatial id=%d", i, spatialID)
+		}
+		tu := publicRTCPacketizeAndAssembleFrame(t, receiver, frame)
+		layerTUs[spatialID] = append(layerTUs[spatialID], tu)
+		*orderedTUs = append(*orderedTUs, tu)
+	}
+}
+
+func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, frame goav1.RTCFrame) []byte {
+	t.Helper()
+	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
+	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
+	if err != nil {
+		t.Fatalf("RTPPacketScratchLen first S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
+	}
+	obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
+	size, err := frame.RTPPacketScratchLen(limits, obuScratch)
+	if err != nil {
+		t.Fatalf("RTPPacketScratchLen full S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
+	}
+	packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
+	workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
+	payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
+	descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
+	spans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
+	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPackets(payloadBuf, descriptorBuf, spans, limits, obuScratch, packetScratch, workScratch)
+	if err != nil {
+		t.Fatalf("AppendRTPPackets S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
+	}
+	if packetCount != size.Packetizer.Packets {
+		t.Fatalf("packet count=%d want %d", packetCount, size.Packetizer.Packets)
+	}
+	payloadSlices := make([][]byte, packetCount)
+	for i := range packetCount {
+		span := spans[i]
+		payloadSlices[i] = rtpPayloads[span.PayloadOffset : span.PayloadOffset+span.PayloadLength]
+		header, _, err := goav1.ParseRTPAggregationHeader(payloadSlices[i])
+		if err != nil {
+			t.Fatalf("packet %d aggregation header S%d: %v", i, frame.SpatialID, err)
+		}
+		if header.StartsNewCodedVideoSequence != (frame.CodedKeyframe && i == 0) {
+			t.Fatalf("packet %d N=%v want %v frame=%+v", i, header.StartsNewCodedVideoSequence, frame.CodedKeyframe && i == 0, frame)
+		}
+		desc := descriptors[span.DescriptorOffset : span.DescriptorOffset+span.DescriptorLength]
+		parsed, consumed, err := receiver.Parse(desc)
+		if err != nil {
+			t.Fatalf("packet %d descriptor S%d: %v", i, frame.SpatialID, err)
+		}
+		if consumed != len(desc) ||
+			parsed.Mandatory.FrameNumber != uint16(frame.FrameID) ||
+			parsed.Mandatory.FirstPacketInFrame != (i == 0) ||
+			parsed.Mandatory.LastPacketInFrame != (i == packetCount-1) {
+			t.Fatalf("packet %d mandatory=%+v consumed=%d len=%d frame=%+v", i, parsed.Mandatory, consumed, len(desc), frame)
+		}
+		if span.Marker != (frame.LastFrameInPicture && i == packetCount-1) {
+			t.Fatalf("packet %d marker=%v frame=%+v", i, span.Marker, frame)
+		}
+	}
+	assembledLen, obuCount, err := goav1.AssembleRTPFrameSize(payloadSlices)
+	if err != nil {
+		t.Fatalf("AssembleRTPFrameSize: %v", err)
+	}
+	assembled := make([]byte, assembledLen)
+	assembledOBUs := make([]goav1.RTPFrameOBU, obuCount)
+	wrote, gotOBUs, err := goav1.AssembleRTPFrame(assembled, payloadSlices, assembledOBUs)
+	if err != nil {
+		t.Fatalf("AssembleRTPFrame: %v", err)
+	}
+	if wrote != assembledLen || gotOBUs != obuCount {
+		t.Fatalf("assembled wrote=%d/%d obus=%d/%d", wrote, assembledLen, gotOBUs, obuCount)
+	}
+	return assembled[:wrote]
 }
 
 func assertPublicRTCLayerStreamsDecode(t *testing.T, cfg goav1.EncoderConfig, layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte, orderedTUs [][]byte) {
