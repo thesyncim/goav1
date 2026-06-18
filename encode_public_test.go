@@ -574,13 +574,13 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			}
 			var receiver goav1.RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var baseLayerTUs [][]byte
+			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
 
 			key, err := enc.EncodePicture(publicRTCMatrixFrame(tc.width, tc.height, 0), false)
 			if err != nil {
 				t.Fatalf("initial key EncodePicture: %v", err)
 			}
-			baseLayerTUs = append(baseLayerTUs, append([]byte(nil), key.Frames[0].Data...))
+			appendPublicRTCPictureLayerData(t, &layerTUs, key)
 			assertPublicRTCPictureDescriptors(t, &receiver, cfg, key, true, &nextFrameID)
 
 			controlChange := cfg
@@ -595,7 +595,7 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("control delta EncodePicture: %v", err)
 			}
-			baseLayerTUs = append(baseLayerTUs, append([]byte(nil), controlDelta.Frames[0].Data...))
+			appendPublicRTCPictureLayerData(t, &layerTUs, controlDelta)
 			assertPublicRTCPictureDescriptors(t, &receiver, controlChange, controlDelta, false, &nextFrameID)
 
 			structureChange := controlChange
@@ -607,16 +607,20 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("structure key EncodePicture: %v", err)
 			}
-			baseLayerTUs = append(baseLayerTUs, append([]byte(nil), structureKey.Frames[0].Data...))
+			appendPublicRTCPictureLayerData(t, &layerTUs, structureKey)
 			assertPublicRTCPictureDescriptors(t, &receiver, structureChange, structureKey, true, &nextFrameID)
 
 			postReconfigDelta, err := enc.EncodePicture(publicRTCMatrixFrame(tc.width, tc.height, 3), false)
 			if err != nil {
 				t.Fatalf("post-reconfigure delta EncodePicture: %v", err)
 			}
-			baseLayerTUs = append(baseLayerTUs, append([]byte(nil), postReconfigDelta.Frames[0].Data...))
+			appendPublicRTCPictureLayerData(t, &layerTUs, postReconfigDelta)
 			assertPublicRTCPictureDescriptors(t, &receiver, structureChange, postReconfigDelta, false, &nextFrameID)
-			assertPublicRTCBaseLayerDecodes(t, baseLayerTUs)
+			normalized, err := goav1.SetWebRTCEncoderSVCConfig(structureChange, structureChange.TemporalLayerCount, structureChange.SpatialLayerCount)
+			if err != nil {
+				t.Fatalf("SetWebRTCEncoderSVCConfig(%s): %v", structureChange.Scalability, err)
+			}
+			assertPublicRTCLayerStreamsDecode(t, layerTUs, int(normalized.SpatialLayerCount))
 		})
 	}
 }
@@ -728,18 +732,36 @@ func assertPublicRTCAttachedStructure(t *testing.T, structure goav1.RTPDependenc
 	}
 }
 
-func assertPublicRTCBaseLayerDecodes(t *testing.T, tus [][]byte) {
+func appendPublicRTCPictureLayerData(t *testing.T, layerTUs *[goav1.EncoderWebRTCMaxSpatialLayers][][]byte, picture goav1.RTCPicture) {
+	t.Helper()
+	for i := 0; i < picture.FrameNum; i++ {
+		spatialID := picture.Frames[i].SpatialID
+		if spatialID >= goav1.EncoderWebRTCMaxSpatialLayers {
+			t.Fatalf("frame %d spatial id=%d", i, spatialID)
+		}
+		layerTUs[spatialID] = append(layerTUs[spatialID], append([]byte(nil), picture.Frames[i].Data...))
+	}
+}
+
+func assertPublicRTCLayerStreamsDecode(t *testing.T, layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte, spatialLayers int) {
+	t.Helper()
+	for spatialID := 0; spatialID < spatialLayers; spatialID++ {
+		assertPublicRTCSpatialLayerDecodes(t, spatialID, layerTUs[spatialID])
+	}
+}
+
+func assertPublicRTCSpatialLayerDecodes(t *testing.T, spatialID int, tus [][]byte) {
 	t.Helper()
 	dec, err := goav1.NewDecoder(tus)
 	if err != nil {
-		t.Fatalf("base-layer decoder: %v", err)
+		t.Fatalf("spatial layer %d decoder: %v", spatialID, err)
 	}
 	defer dec.Close()
 	n := 0
 	for {
 		batch, ok, err := dec.DecodeNext()
 		if err != nil {
-			t.Fatalf("base-layer decode: %v", err)
+			t.Fatalf("spatial layer %d decode: %v", spatialID, err)
 		}
 		if !ok {
 			break
@@ -747,7 +769,7 @@ func assertPublicRTCBaseLayerDecodes(t *testing.T, tus [][]byte) {
 		n += len(batch)
 	}
 	if n != len(tus) {
-		t.Fatalf("decoded %d base-layer frames, want %d", n, len(tus))
+		t.Fatalf("spatial layer %d decoded %d frames, want %d", spatialID, n, len(tus))
 	}
 }
 
