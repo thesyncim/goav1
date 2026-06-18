@@ -1978,6 +1978,261 @@ func TestPublicWebRTCEncoderSetConfigReconfigure(t *testing.T) {
 	}
 }
 
+func TestPublicWebRTCEncoderControllerSettingsMatrix(t *testing.T) {
+	profiles := []struct {
+		name        string
+		fps         av1.EncoderRational
+		rateControl av1.EncoderRateControlMode
+		quantizer   uint8
+		minKbps     int32
+		maxKbps     int32
+		targetKbps  int32
+		content     av1.EncoderContentHint
+	}{
+		{
+			name:        "camera-cbr-30fps",
+			fps:         av1.EncoderRational{Num: 30, Den: 1},
+			rateControl: av1.EncoderRateControlCBR,
+			minKbps:     120,
+			maxKbps:     1800,
+			targetKbps:  900,
+			content:     av1.EncoderContentCamera,
+		},
+		{
+			name:        "screen-cqp-ntsc",
+			fps:         av1.EncoderRational{Num: 30000, Den: 1001},
+			rateControl: av1.EncoderRateControlCQP,
+			quantizer:   37,
+			minKbps:     80,
+			maxKbps:     1200,
+			targetKbps:  640,
+			content:     av1.EncoderContentScreen,
+		},
+	}
+
+	for _, modeName := range publicWebRTCControllerModeNames() {
+		mode, ok := av1.ParseEncoderScalabilityMode(modeName)
+		if !ok {
+			t.Fatalf("ParseEncoderScalabilityMode(%q) failed", modeName)
+		}
+		for _, profile := range profiles {
+			t.Run(modeName+"/"+profile.name, func(t *testing.T) {
+				cfg := av1.EncoderConfig{
+					Resolution:        av1.EncoderResolution{Width: 1280, Height: 720},
+					Scalability:       mode,
+					MaxFramerate:      profile.fps,
+					RateControl:       profile.rateControl,
+					Quantizer:         profile.quantizer,
+					MinBitrateKbps:    profile.minKbps,
+					MaxBitrateKbps:    profile.maxKbps,
+					TargetBitrateKbps: profile.targetKbps,
+					Content:           profile.content,
+				}
+				enc, err := av1.NewWebRTCEncoder(cfg, av1.EncoderWebRTCState{NextFrameID: 1000})
+				if err != nil {
+					t.Fatalf("NewWebRTCEncoder(%s): %v", modeName, err)
+				}
+				normalized := enc.Config()
+				spatialLayers, temporalLayers, _, ok := normalized.Scalability.Layers()
+				if !ok {
+					t.Fatalf("normalized invalid mode=%s", normalized.Scalability)
+				}
+				if normalized.SpatialLayerCount != spatialLayers || normalized.TemporalLayerCount != temporalLayers {
+					t.Fatalf("normalized layers=%d,%d want %d,%d", normalized.SpatialLayerCount, normalized.TemporalLayerCount, spatialLayers, temporalLayers)
+				}
+
+				var receiver av1.RTPDependencyDescriptorState
+				history := make(map[uint64]publicWebRTCControllerLayer, 32)
+				nextFrameID := uint64(1000)
+				key, err := enc.NextTemporalUnit(false)
+				if err != nil {
+					t.Fatalf("initial key NextTemporalUnit: %v", err)
+				}
+				assertPublicWebRTCControllerUnit(t, &receiver, normalized, enc.State(), key, true, 0, &nextFrameID, history)
+
+				controlChange := normalized
+				controlChange.MaxFramerate = av1.EncoderRational{Num: 60, Den: 1}
+				if controlChange.RateControl == av1.EncoderRateControlCQP {
+					controlChange.Quantizer = 29
+				} else {
+					controlChange.MinBitrateKbps += 25
+					controlChange.MaxBitrateKbps += 250
+					controlChange.TargetBitrateKbps = (controlChange.MinBitrateKbps + controlChange.MaxBitrateKbps) / 2
+				}
+				if err := enc.SetConfig(controlChange); err != nil {
+					t.Fatalf("SetConfig control change: %v", err)
+				}
+				normalized = enc.Config()
+				for step := uint64(0); step < publicWebRTCControllerMatrixSteps(temporalLayers); step++ {
+					before := enc.State()
+					unit, err := enc.NextTemporalUnit(false)
+					if err != nil {
+						t.Fatalf("delta %d NextTemporalUnit: %v", step, err)
+					}
+					assertPublicWebRTCControllerUnit(t, &receiver, normalized, enc.State(), unit, false, before.DeltaPictureIndex, &nextFrameID, history)
+				}
+			})
+		}
+	}
+}
+
+type publicWebRTCControllerLayer struct {
+	spatial  uint8
+	temporal uint8
+}
+
+func publicWebRTCControllerModeNames() []string {
+	return []string{
+		"L1T1", "L1T2", "L1T3",
+		"L2T1", "L2T1h", "L2T1_KEY",
+		"L2T2", "L2T2h", "L2T2_KEY", "L2T2_KEY_SHIFT",
+		"L2T3", "L2T3h", "L2T3_KEY", "L2T3_KEY_SHIFT",
+		"L3T1", "L3T1h", "L3T1_KEY",
+		"L3T2", "L3T2h", "L3T2_KEY", "L3T2_KEY_SHIFT",
+		"L3T3", "L3T3h", "L3T3_KEY", "L3T3_KEY_SHIFT",
+		"S2T1", "S2T1h", "S2T2", "S2T2h", "S2T3", "S2T3h",
+		"S3T1", "S3T1h", "S3T2", "S3T2h", "S3T3", "S3T3h",
+	}
+}
+
+func publicWebRTCControllerMatrixSteps(temporalLayers uint8) uint64 {
+	switch temporalLayers {
+	case 1:
+		return 3
+	case 2:
+		return 4
+	default:
+		return 8
+	}
+}
+
+func assertPublicWebRTCControllerUnit(t *testing.T, receiver *av1.RTPDependencyDescriptorState, cfg av1.EncoderConfig, descriptorState av1.EncoderWebRTCState, unit av1.EncoderWebRTCPictureTemporalUnit, wantKey bool, deltaPictureIndex uint64, nextFrameID *uint64, history map[uint64]publicWebRTCControllerLayer) {
+	t.Helper()
+	spatialLayers, temporalLayers, _, ok := cfg.Scalability.Layers()
+	if !ok {
+		t.Fatalf("invalid mode=%s", cfg.Scalability)
+	}
+	frameNum := av1.EncoderWebRTCPictureTemporalUnitFrameNum(unit)
+	if frameNum != spatialLayers || unit.Key != wantKey || unit.Delta == wantKey {
+		t.Fatalf("unit key=%v delta=%v frames=%d want key=%v frames=%d", unit.Key, unit.Delta, frameNum, wantKey, spatialLayers)
+	}
+	for i := uint8(0); i < frameNum; i++ {
+		control, _, err := av1.EncoderWebRTCPictureTemporalUnitFrameControl(unit, descriptorState, i)
+		if err != nil {
+			t.Fatalf("frame %d control: %v", i, err)
+		}
+		settings := control.Settings
+		info := control.GenericFrameInfo
+		wantFrameID := *nextFrameID + uint64(i)
+		if settings.SpatialID != i || info.SpatialID != i ||
+			settings.TemporalID != info.TemporalID ||
+			info.FrameID != wantFrameID ||
+			info.TemporalID >= temporalLayers ||
+			info.DTINum != spatialLayers*temporalLayers {
+			t.Fatalf("frame %d settings=%+v info=%+v want id=%d temporal<%d", i, settings, info, wantFrameID, temporalLayers)
+		}
+		if !wantKey {
+			wantTemporal := publicWebRTCExpectedTemporalID(cfg.Scalability, i, deltaPictureIndex)
+			if info.TemporalID != wantTemporal {
+				t.Fatalf("frame %d delta index=%d temporal=%d want %d mode=%s", i, deltaPictureIndex, info.TemporalID, wantTemporal, cfg.Scalability)
+			}
+		}
+		if settings.RateControl != cfg.RateControl ||
+			(cfg.RateControl == av1.EncoderRateControlCQP && settings.Quantizer != cfg.Quantizer) {
+			t.Fatalf("frame %d rate settings=%+v config=%+v", i, settings, cfg)
+		}
+		if cfg.Content == av1.EncoderContentScreen {
+			if wantKey {
+				if !unit.KeyUnit.Header.Prefix.AllowScreenContentTools || !unit.KeyUnit.Header.Prefix.ForceIntegerMV {
+					t.Fatalf("screen key prefix=%+v", unit.KeyUnit.Header.Prefix)
+				}
+			} else if !unit.DeltaUnit.Headers[i].Prefix.AllowScreenContentTools || !unit.DeltaUnit.Headers[i].Prefix.ForceIntegerMV {
+				t.Fatalf("screen delta header[%d]=%+v", i, unit.DeltaUnit.Headers[i])
+			}
+		}
+		wantAttach := wantKey && i == 0
+		if control.AttachDependencyStructure != wantAttach {
+			t.Fatalf("frame %d attach=%v want %v", i, control.AttachDependencyStructure, wantAttach)
+		}
+		var descriptorBuf [2048]byte
+		descriptor, err := av1.AppendEncoderWebRTCPictureTemporalUnitDependencyDescriptor(
+			descriptorBuf[:0],
+			unit,
+			descriptorState,
+			i,
+			true,
+			true,
+			control.AttachDependencyStructure,
+		)
+		if err != nil {
+			t.Fatalf("frame %d descriptor append: %v", i, err)
+		}
+		parsed, consumed, err := receiver.Parse(descriptor)
+		if err != nil {
+			t.Fatalf("frame %d descriptor parse: %v", i, err)
+		}
+		if consumed != len(descriptor) ||
+			parsed.Mandatory.FrameNumber != uint16(info.FrameID) ||
+			parsed.HasAttachedStructure != control.AttachDependencyStructure {
+			t.Fatalf("frame %d parsed=%+v consumed=%d len=%d info=%+v attach=%v", i, parsed, consumed, len(descriptor), info, control.AttachDependencyStructure)
+		}
+		if parsed.HasAttachedStructure {
+			assertPublicRTCAttachedStructure(t, parsed.AttachedStructure, cfg)
+		}
+		deps := parsed.FrameDependencies
+		if deps.SpatialID != info.SpatialID || deps.TemporalID != info.TemporalID ||
+			deps.DTINum != info.DTINum || deps.FrameDiffNum != info.DependencyNum {
+			t.Fatalf("frame %d deps=%+v info=%+v", i, deps, info)
+		}
+		for j := uint8(0); j < info.DependencyNum; j++ {
+			dependencyFrameID := info.Dependencies[j]
+			if deps.FrameDiffs[j] != uint16(info.FrameID-dependencyFrameID) {
+				t.Fatalf("frame %d dep %d diff=%d want %d info=%+v", i, j, deps.FrameDiffs[j], info.FrameID-dependencyFrameID, info)
+			}
+			dependency, ok := history[dependencyFrameID]
+			if !ok {
+				t.Fatalf("frame %d dependency %d missing history", i, dependencyFrameID)
+			}
+			if dependency.temporal > info.TemporalID {
+				t.Fatalf("frame %d dependency %d temporal=%d > %d", i, dependencyFrameID, dependency.temporal, info.TemporalID)
+			}
+			if cfg.Scalability.IsSimulcast() && dependency.spatial != info.SpatialID {
+				t.Fatalf("frame %d simulcast dependency spatial=%d want %d", i, dependency.spatial, info.SpatialID)
+			}
+		}
+		history[info.FrameID] = publicWebRTCControllerLayer{spatial: info.SpatialID, temporal: info.TemporalID}
+	}
+	*nextFrameID += uint64(frameNum)
+}
+
+func publicWebRTCExpectedTemporalID(mode av1.EncoderScalabilityMode, spatialID uint8, deltaPictureIndex uint64) uint8 {
+	if mode.UsesKeyFrameInterLayerDependencyShift() {
+		switch mode {
+		case av1.EncoderScalabilityModeL2T2_KEY_SHIFT:
+			table := [2][2]uint8{{0, 1}, {1, 0}}
+			return table[(deltaPictureIndex-1)%2][spatialID]
+		case av1.EncoderScalabilityModeL2T3_KEY_SHIFT:
+			table := [4][2]uint8{{2, 2}, {0, 1}, {2, 2}, {1, 0}}
+			return table[(deltaPictureIndex-1)%4][spatialID]
+		case av1.EncoderScalabilityModeL3T2_KEY_SHIFT:
+			table := [2][3]uint8{{0, 0, 1}, {1, 1, 0}}
+			return table[(deltaPictureIndex-1)%2][spatialID]
+		case av1.EncoderScalabilityModeL3T3_KEY_SHIFT:
+			table := [4][3]uint8{{0, 2, 2}, {2, 0, 1}, {1, 2, 2}, {2, 1, 0}}
+			return table[(deltaPictureIndex-1)%4][spatialID]
+		}
+	}
+	_, temporalLayers, _, ok := mode.Layers()
+	if !ok || deltaPictureIndex == 0 {
+		return 0
+	}
+	trailingZeroCount := uint8(0)
+	for value := deltaPictureIndex; value&1 == 0 && trailingZeroCount < temporalLayers-1; value >>= 1 {
+		trailingZeroCount++
+	}
+	return temporalLayers - 1 - trailingZeroCount
+}
+
 func TestPublicWebRTCEncoderPictureHeaderTemporalUnitsForFrames(t *testing.T) {
 	cfg := av1.EncoderConfig{
 		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},
