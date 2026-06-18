@@ -7,6 +7,8 @@ import (
 
 	goav1 "github.com/thesyncim/goav1"
 	"github.com/thesyncim/goav1/internal/av1/encoder"
+	"github.com/thesyncim/goav1/internal/av1/obu"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
 // TestWebRTCStreamPackagesDecodableFrames is the WebRTC integration gate: an
@@ -180,12 +182,14 @@ func TestWebRTCStreamControlCombinationMatrixDecode(t *testing.T) {
 
 			var tusBySpatial [encoder.WebRTCMaxSpatialLayers][][]byte
 			var wantBySpatial [encoder.WebRTCMaxSpatialLayers]int
+			var parsedBySpatial [encoder.WebRTCMaxSpatialLayers]webRTCParsedTUState
 			encode := func(frameIndex int, forceKey bool) encoder.WebRTCEncodedPicture {
 				t.Helper()
 				picture, err := stream.EncodePicture(webRTCDecodeMatrixFrame(int(cfg.Resolution.Width), int(cfg.Resolution.Height), frameIndex), forceKey)
 				if err != nil {
 					t.Fatalf("EncodePicture(%d, force=%v): %v", frameIndex, forceKey, err)
 				}
+				verifyWebRTCPicturePayloadHeaders(t, picture, stream.Config(), &parsedBySpatial)
 				collectWebRTCPictureTUs(t, picture, &tusBySpatial, &wantBySpatial)
 				return picture
 			}
@@ -328,6 +332,111 @@ func decodeCollectedWebRTCPictureTUs(t *testing.T, tusBySpatial [encoder.WebRTCM
 		dec.Close()
 		if gotFrames != wantBySpatial[spatialID] {
 			t.Fatalf("spatial %d decoded %d frames, want %d", spatialID, gotFrames, wantBySpatial[spatialID])
+		}
+	}
+}
+
+type webRTCParsedTUState struct {
+	seq     parser.SequenceHeader
+	haveSeq bool
+	refs    parser.ReferenceState
+}
+
+func verifyWebRTCPicturePayloadHeaders(t *testing.T, picture encoder.WebRTCEncodedPicture, config encoder.Config, states *[encoder.WebRTCMaxSpatialLayers]webRTCParsedTUState) {
+	t.Helper()
+	for frame := uint8(0); frame < picture.FrameNum; frame++ {
+		encoded := picture.Frames[frame]
+		spatialID := encoded.Info.SpatialID
+		if spatialID >= encoder.WebRTCMaxSpatialLayers {
+			t.Fatalf("frame %d spatial id=%d", frame, spatialID)
+		}
+		want := config.SpatialLayers[spatialID].Resolution
+		states[spatialID].verify(t, encoded, want)
+	}
+}
+
+func (s *webRTCParsedTUState) verify(t *testing.T, frame encoder.WebRTCEncodedFrame, want encoder.Resolution) {
+	t.Helper()
+	it := obu.NewLowOverheadIterator(frame.TU)
+	seenFrameHeader := false
+	seenTileGroup := false
+	for {
+		unit, ok, err := it.Next()
+		if err != nil {
+			t.Fatalf("parse OBU: %v", err)
+		}
+		if !ok {
+			break
+		}
+		switch unit.Header.Type {
+		case obu.TypeSequenceHeader:
+			seq, err := parser.ParseSequenceHeader(unit.Payload)
+			if err != nil {
+				t.Fatalf("ParseSequenceHeader: %v", err)
+			}
+			s.seq = seq
+			s.haveSeq = true
+		case obu.TypeFrameHeader, obu.TypeFrame:
+			if unit.Header.TemporalID != frame.Info.TemporalID || unit.Header.SpatialID != frame.Info.SpatialID {
+				t.Fatalf("frame header extension T%d/S%d want T%d/S%d", unit.Header.TemporalID, unit.Header.SpatialID, frame.Info.TemporalID, frame.Info.SpatialID)
+			}
+			size := s.parseAndRefreshFrameHeader(t, unit.Payload, unit.Header.TemporalID, unit.Header.SpatialID)
+			wantCodedWidth := (uint32(want.Width) + 7) &^ 7
+			wantCodedHeight := (uint32(want.Height) + 7) &^ 7
+			if size.UpscaledWidth != wantCodedWidth || size.Height != wantCodedHeight ||
+				size.RenderWidth != uint32(want.Width) || size.RenderHeight != uint32(want.Height) {
+				t.Fatalf("payload coded=%dx%d render=%dx%d want coded=%dx%d render=%dx%d",
+					size.UpscaledWidth, size.Height, size.RenderWidth, size.RenderHeight,
+					wantCodedWidth, wantCodedHeight, want.Width, want.Height)
+			}
+			seenFrameHeader = true
+		case obu.TypeTileGroup:
+			if unit.Header.TemporalID != frame.Info.TemporalID || unit.Header.SpatialID != frame.Info.SpatialID {
+				t.Fatalf("tile group extension T%d/S%d want T%d/S%d", unit.Header.TemporalID, unit.Header.SpatialID, frame.Info.TemporalID, frame.Info.SpatialID)
+			}
+			seenTileGroup = true
+		}
+	}
+	if !seenFrameHeader || !seenTileGroup {
+		t.Fatalf("missing frame header=%v tile group=%v", seenFrameHeader, seenTileGroup)
+	}
+}
+
+func (s *webRTCParsedTUState) parseAndRefreshFrameHeader(t *testing.T, payload []byte, temporalID uint8, spatialID uint8) parser.FrameSize {
+	t.Helper()
+	if !s.haveSeq {
+		t.Fatal("frame header before sequence header")
+	}
+	prefix, err := parser.ParseFrameHeaderPrefix(payload, s.seq)
+	if err != nil {
+		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+	}
+	var size parser.FrameSize
+	if prefix.UsesIntraFrameSizePath() {
+		size, err = parser.ParseIntraFrameSize(payload, s.seq, prefix, temporalID, spatialID)
+	} else {
+		size, err = parser.ParseFrameSize(payload, s.seq, prefix, &s.refs, temporalID, spatialID)
+	}
+	if err != nil {
+		t.Fatalf("ParseFrameSize: %v", err)
+	}
+	s.refreshReferences(prefix, size)
+	return size
+}
+
+func (s *webRTCParsedTUState) refreshReferences(prefix parser.FrameHeaderPrefix, size parser.FrameSize) {
+	if size.RefreshFrameFlags == 0 {
+		return
+	}
+	ref := parser.ReferenceFrame{
+		Valid:        true,
+		OrderHint:    prefix.OrderHint,
+		GlobalMotion: parser.DefaultGlobalMotionParams(),
+		Size:         size,
+	}
+	for i := uint8(0); i < parser.RefFrames; i++ {
+		if size.RefreshFrameFlags&(1<<i) != 0 {
+			s.refs.Frames[i] = ref
 		}
 	}
 }
