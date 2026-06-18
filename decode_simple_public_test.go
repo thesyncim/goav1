@@ -1204,6 +1204,69 @@ func TestNewDecoderFromRTPPayloadsMatchesLowOverhead(t *testing.T) {
 	}
 }
 
+func TestNewDecoderFromRTPPayloadsDecodeNextAllocs(t *testing.T) {
+	rtpPayloads, wantVisible := publicDecoderAllocRTPPayloads(t)
+	dec, err := av1.NewDecoderFromRTPPayloads(rtpPayloads)
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPayloads: %v", err)
+	}
+	defer dec.Close()
+
+	decodeAll := func() {
+		if err := dec.Reset(); err != nil {
+			t.Fatalf("Reset: %v", err)
+		}
+		visible := 0
+		for {
+			frames, ok, err := dec.DecodeNext()
+			if err != nil {
+				t.Fatalf("DecodeNext RTP: %v", err)
+			}
+			if !ok {
+				break
+			}
+			visible += len(frames)
+		}
+		if visible != wantVisible {
+			t.Fatalf("decoded %d visible RTP frames, want %d", visible, wantVisible)
+		}
+	}
+
+	decodeAll()
+	allocs := testing.AllocsPerRun(20, decodeAll)
+	if allocs != 0 {
+		t.Fatalf("RTP DecodeNext allocs/run=%f want 0", allocs)
+	}
+}
+
+func publicDecoderAllocRTPPayloads(t *testing.T) ([][]byte, int) {
+	t.Helper()
+	const width, height = 192, 128
+	enc, err := av1.NewRTCEncoderWithConfig(av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: width, Height: height},
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    120,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 420,
+		Scalability:       av1.EncoderScalabilityModeL1T2,
+	})
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	limits := av1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
+	var rtpPayloads [][]byte
+	for i := 0; i < 4; i++ {
+		frame, err := enc.Encode(publicRTCMatrixFrame(width, height, i), false)
+		if err != nil {
+			t.Fatalf("Encode frame %d: %v", i, err)
+		}
+		rtpPayloads = append(rtpPayloads, publicDecoderRTPPayloadsForFrameWithLimits(t, frame, limits)...)
+	}
+	return rtpPayloads, 4
+}
+
 func decodeRTPPayloadsWithHighLevelDecoder(t *testing.T, rtpPayloads [][]byte) ([][16]byte, int) {
 	t.Helper()
 	dec, err := av1.NewDecoderFromRTPPayloads(rtpPayloads)
