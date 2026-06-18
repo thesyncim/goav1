@@ -562,6 +562,66 @@ func TestPublicRTCEncoderSetConfigReconfigure(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderSetConfigSpatialCycleDecodes(t *testing.T) {
+	const w, h = 1008, 576
+	modes := []goav1.EncoderScalabilityMode{
+		goav1.EncoderScalabilityModeL1T2,
+		goav1.EncoderScalabilityModeS2T2,
+		goav1.EncoderScalabilityModeL3T2_KEY_SHIFT,
+		goav1.EncoderScalabilityModeL1T3,
+	}
+	fps := []goav1.EncoderRational{
+		{Num: 30, Den: 1},
+		{Num: 60, Den: 1},
+		{Num: 30000, Den: 1001},
+		{Num: 24, Den: 1},
+	}
+	targets := []int32{520, 940, 1500, 640}
+
+	cfg := publicRTCMatrixConfig(w, h, modes[0])
+	cfg.MaxFramerate = fps[0]
+	publicRTCApplyControlBitrates(&cfg, targets[0])
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig(%s): %v", modes[0], err)
+	}
+	defer enc.Close()
+
+	var receiver goav1.RTPDependencyDescriptorState
+	nextFrameID := uint64(0)
+	frameIndex := 0
+	for step, mode := range modes {
+		if step > 0 {
+			cfg = publicRTCMatrixConfig(w, h, mode)
+			cfg.MaxFramerate = fps[step]
+			publicRTCApplyControlBitrates(&cfg, targets[step])
+			if err := enc.SetConfig(cfg); err != nil {
+				t.Fatalf("SetConfig(%s): %v", mode, err)
+			}
+			assertPublicRTCConfigBitrates(t, enc.Config(), cfg)
+		}
+
+		var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+		var orderedTUs [][]byte
+		key, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, frameIndex), false)
+		if err != nil {
+			t.Fatalf("key EncodePicture(%s): %v", mode, err)
+		}
+		frameIndex++
+		appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, key)
+		assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), key, true, &nextFrameID)
+
+		delta, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, frameIndex), false)
+		if err != nil {
+			t.Fatalf("delta EncodePicture(%s): %v", mode, err)
+		}
+		frameIndex++
+		appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, delta)
+		assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), delta, false, &nextFrameID)
+		assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+	}
+}
+
 func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 	for _, initial := range goav1.EncoderWebRTCScalabilityModes() {
 		initial := initial
