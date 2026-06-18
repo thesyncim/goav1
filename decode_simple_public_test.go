@@ -1204,6 +1204,77 @@ func TestNewDecoderFromRTPPayloadsMatchesLowOverhead(t *testing.T) {
 	}
 }
 
+func TestNewDecoderFromRTPPayloadsWebRTCIndependentModeCatalogue(t *testing.T) {
+	limits := av1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
+	covered := 0
+	for step, mode := range av1.EncoderWebRTCScalabilityModes() {
+		if publicRTCSharedReferenceSlotMode(mode) {
+			continue
+		}
+		covered++
+		t.Run(mode.String(), func(t *testing.T) {
+			width, height := publicRTCMatrixGeometry(t, mode)
+			cfg := publicRTCMatrixConfig(width, height, mode)
+			cfg.MaxFramerate = []av1.EncoderRational{
+				{Num: 30, Den: 1},
+				{Num: 60, Den: 1},
+				{Num: 30000, Den: 1001},
+				{Num: 24, Den: 1},
+			}[step%4]
+			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*11))
+			enc, err := av1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
+			}
+			defer enc.Close()
+
+			var lowOverheads [av1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var rtpPayloads [av1.EncoderWebRTCMaxSpatialLayers][][]byte
+			for frameIndex := 0; frameIndex < 3; frameIndex++ {
+				if frameIndex == 2 {
+					controlChange := enc.Config()
+					controlChange.MaxFramerate = av1.EncoderRational{Num: 120, Den: 1}
+					publicRTCApplyControlBitrates(&controlChange, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*17)+53)
+					if err := enc.SetConfig(controlChange); err != nil {
+						t.Fatalf("SetConfig(%s control): %v", mode, err)
+					}
+					assertPublicRTCConfigControls(t, enc.Config(), controlChange)
+				}
+				picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, frameIndex), false)
+				if err != nil {
+					t.Fatalf("EncodePicture(%s, %d): %v", mode, frameIndex, err)
+				}
+				for outputIndex := 0; outputIndex < picture.FrameNum; outputIndex++ {
+					frame := picture.Frames[outputIndex]
+					spatialID := frame.SpatialID
+					if spatialID >= av1.EncoderWebRTCMaxSpatialLayers {
+						t.Fatalf("frame %d spatial id=%d", outputIndex, spatialID)
+					}
+					lowOverheads[spatialID] = append(lowOverheads[spatialID], append([]byte(nil), frame.Data...))
+					rtpPayloads[spatialID] = append(rtpPayloads[spatialID], publicDecoderRTPPayloadsForFrameWithLimits(t, frame, limits)...)
+				}
+			}
+
+			for spatialID := 0; spatialID < av1.EncoderWebRTCMaxSpatialLayers; spatialID++ {
+				if len(lowOverheads[spatialID]) == 0 {
+					continue
+				}
+				want := decodeLowOverheadPayloads(t, lowOverheads[spatialID])
+				queued, queuedEmpty := decodeRTPPayloadsWithHighLevelDecoder(t, rtpPayloads[spatialID])
+				live, liveEmpty := decodeLiveRTPPayloadsWithHighLevelDecoder(t, rtpPayloads[spatialID], rtpPayloads[spatialID])
+				if queuedEmpty == 0 || liveEmpty == 0 {
+					t.Fatalf("spatial %d empty RTP fragment steps queued=%d live=%d", spatialID, queuedEmpty, liveEmpty)
+				}
+				assertPublicDecoderFrameDigests(t, "queued RTP", spatialID, queued, want)
+				assertPublicDecoderFrameDigests(t, "live RTP", spatialID, live, want)
+			}
+		})
+	}
+	if covered == 0 {
+		t.Fatal("no high-level RTP-compatible WebRTC modes covered")
+	}
+}
+
 func TestNewDecoderFromRTPPayloadsDecodeNextAllocs(t *testing.T) {
 	rtpPayloads, wantVisible := publicDecoderAllocRTPPayloads(t)
 	dec, err := av1.NewDecoderFromRTPPayloads(rtpPayloads)
@@ -1439,6 +1510,48 @@ func decodeRTPPayloadsWithHighLevelDecoder(t *testing.T, rtpPayloads [][]byte) (
 		}
 	}
 	return got, emptyPayloads
+}
+
+func decodeLiveRTPPayloadsWithHighLevelDecoder(t *testing.T, probePayloads [][]byte, rtpPayloads [][]byte) ([][16]byte, int) {
+	t.Helper()
+	dec, err := av1.NewDecoderFromRTPPayloads(probePayloads)
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPayloads: %v", err)
+	}
+	defer dec.Close()
+	if err := dec.Reset(); err != nil {
+		t.Fatalf("Reset RTP decoder: %v", err)
+	}
+
+	var got [][16]byte
+	emptyPayloads := 0
+	for i, payload := range rtpPayloads {
+		frames, err := dec.DecodeRTPPayload(payload)
+		if err != nil {
+			t.Fatalf("DecodeRTPPayload packet %d: %v", i, err)
+		}
+		if len(frames) == 0 {
+			emptyPayloads++
+			continue
+		}
+		for _, f := range frames {
+			got = append(got, frameMD5Visible(f))
+		}
+	}
+	return got, emptyPayloads
+}
+
+func assertPublicDecoderFrameDigests(t *testing.T, path string, spatialID int, got [][16]byte, want [][16]byte) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s spatial %d produced %d frames, low-overhead decoded %d", path, spatialID, len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s spatial %d frame %d digest differs: got=%s want=%s",
+				path, spatialID, i, hex.EncodeToString(got[i][:]), hex.EncodeToString(want[i][:]))
+		}
+	}
 }
 
 func TestPublicDecoderRTPPayloadRunnerRecoversAfterEncoderPacketLoss(t *testing.T) {
