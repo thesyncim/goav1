@@ -1,6 +1,7 @@
 package goav1_test
 
 import (
+	"bytes"
 	"math/rand"
 	"testing"
 
@@ -195,6 +196,81 @@ func TestPublicRTCEncoder(t *testing.T) {
 	if n != 6 {
 		t.Fatalf("decoded %d frames, want 6", n)
 	}
+}
+
+func TestPublicRTCEncoderDependencyDescriptorOwnership(t *testing.T) {
+	t.Run("Encode", func(t *testing.T) {
+		const w, h = 192, 128
+		enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+			Width: w, Height: h,
+			TargetBitrate: 250_000, Framerate: 30,
+			TemporalLayers: 2,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer enc.Close()
+
+		first, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false)
+		if err != nil {
+			t.Fatalf("first Encode: %v", err)
+		}
+		snapshot := append([]byte(nil), first.DependencyDescriptor...)
+		if len(snapshot) == 0 {
+			t.Fatal("first Encode returned empty dependency descriptor")
+		}
+
+		second, err := enc.Encode(publicRTCMatrixFrame(w, h, 1), false)
+		if err != nil {
+			t.Fatalf("second Encode: %v", err)
+		}
+		if bytes.Equal(second.DependencyDescriptor, snapshot) {
+			t.Fatal("second descriptor matched first; test did not exercise descriptor replacement")
+		}
+		if !bytes.Equal(first.DependencyDescriptor, snapshot) {
+			t.Fatal("retained Encode dependency descriptor changed after a later encode")
+		}
+	})
+
+	t.Run("EncodePicture", func(t *testing.T) {
+		const w, h = 640, 360
+		enc, err := goav1.NewRTCEncoderWithConfig(publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL2T2))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer enc.Close()
+
+		first, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, 0), false)
+		if err != nil {
+			t.Fatalf("first EncodePicture: %v", err)
+		}
+		if first.FrameNum != 2 {
+			t.Fatalf("first FrameNum=%d want 2", first.FrameNum)
+		}
+		var snapshots [goav1.EncoderWebRTCMaxSpatialLayers][]byte
+		for i := 0; i < first.FrameNum; i++ {
+			snapshots[i] = append([]byte(nil), first.Frames[i].DependencyDescriptor...)
+			if len(snapshots[i]) == 0 {
+				t.Fatalf("first frame %d returned empty dependency descriptor", i)
+			}
+		}
+
+		second, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, 1), false)
+		if err != nil {
+			t.Fatalf("second EncodePicture: %v", err)
+		}
+		if second.FrameNum != first.FrameNum {
+			t.Fatalf("second FrameNum=%d want %d", second.FrameNum, first.FrameNum)
+		}
+		for i := 0; i < first.FrameNum; i++ {
+			if bytes.Equal(second.Frames[i].DependencyDescriptor, snapshots[i]) {
+				t.Fatalf("second frame %d descriptor matched first; test did not exercise descriptor replacement", i)
+			}
+			if !bytes.Equal(first.Frames[i].DependencyDescriptor, snapshots[i]) {
+				t.Fatalf("retained EncodePicture frame %d dependency descriptor changed after a later encode", i)
+			}
+		}
+	})
 }
 
 func TestPublicRTCEncoderClose(t *testing.T) {
