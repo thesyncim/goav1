@@ -233,6 +233,13 @@ type RTCFrame struct {
 	Data []byte
 	// Keyframe reports whether this frame belongs to a key picture.
 	Keyframe bool
+	// CodedKeyframe reports whether this frame is coded as an AV1 keyframe.
+	// For multi-spatial SVC key pictures, enhancement layers can belong to the
+	// key picture while still being coded as inter frames.
+	CodedKeyframe bool
+	// LastFrameInPicture reports whether this frame is the last frame in the
+	// WebRTC picture. AppendRTPPackets uses it to set the RTP marker bit.
+	LastFrameInPicture bool
 	// TemporalID is the frame's temporal layer.
 	TemporalID uint8
 	// SpatialID is the frame's spatial layer.
@@ -292,7 +299,7 @@ func (f RTCFrame) RTPPacketScratchLen(limits RTPPayloadSizeLimits, obuScratch []
 // written into spans; the caller owns RTP headers, header-extension IDs, SRTP,
 // pacing, retransmission, and network transport.
 func (f RTCFrame) AppendRTPPackets(payloadDst []byte, descriptorDst []byte, spans []EncoderWebRTCRTPPacketSpan, limits RTPPayloadSizeLimits, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (rtpPayloads []byte, descriptors []byte, packetCount int, err error) {
-	packetizer, err := NewRTPPacketizer(f.Data, limits, f.Keyframe, true, obuScratch, packetScratch, workScratch)
+	packetizer, err := NewRTPPacketizer(f.Data, limits, f.CodedKeyframe, f.LastFrameInPicture, obuScratch, packetScratch, workScratch)
 	if err != nil {
 		return payloadDst, descriptorDst, 0, err
 	}
@@ -455,6 +462,8 @@ func rtcFrameFromInternal(out encoder.WebRTCEncodedFrame) RTCFrame {
 	return RTCFrame{
 		Data:                      out.TU,
 		Keyframe:                  out.Keyframe,
+		CodedKeyframe:             out.CodedKeyframe,
+		LastFrameInPicture:        out.LastFrameInPicture,
 		TemporalID:                out.Info.TemporalID,
 		SpatialID:                 out.Info.SpatialID,
 		FrameID:                   out.Info.FrameID,

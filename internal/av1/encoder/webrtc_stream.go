@@ -17,6 +17,14 @@ type WebRTCEncodedFrame struct {
 	TU []byte
 	// Keyframe reports whether this frame belongs to a key picture.
 	Keyframe bool
+	// CodedKeyframe reports whether this frame is an AV1 keyframe. In
+	// multi-spatial SVC key pictures, upper spatial layers may belong to the
+	// key picture while still being coded as inter frames.
+	CodedKeyframe bool
+	// LastFrameInPicture reports whether this is the final frame in the WebRTC
+	// picture. RTP packetization uses this to place the marker bit only once
+	// per picture.
+	LastFrameInPicture bool
 	// Info is the generic frame info behind the dependency descriptor.
 	Info WebRTCGenericFrameInfo
 	// Descriptor is the serialized RTP dependency descriptor for a
@@ -454,6 +462,8 @@ func (s *WebRTCStream) EncodePicture(src SourceFrame420, forceKey bool) (WebRTCE
 		picture.Frames[i] = WebRTCEncodedFrame{
 			TU:                        layerTU,
 			Keyframe:                  unit.Key,
+			CodedKeyframe:             key,
+			LastFrameInPicture:        i+1 == frameNum,
 			Info:                      control.GenericFrameInfo,
 			Descriptor:                descriptor,
 			Structure:                 structure,

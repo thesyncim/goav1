@@ -201,7 +201,7 @@ func TestPublicRTCFrameAppendRTPPackets(t *testing.T) {
 	}
 	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
 	var receiver goav1.RTPDependencyDescriptorState
-	assertPublicRTCFrameRTPPackets(t, &receiver, frame, limits, true, true)
+	assertPublicRTCFrameRTPPackets(t, &receiver, frame, limits, true, true, true)
 }
 
 func TestPublicRTCFrameAppendRTPPacketsSpatialPicture(t *testing.T) {
@@ -224,13 +224,18 @@ func TestPublicRTCFrameAppendRTPPacketsSpatialPicture(t *testing.T) {
 	if !picture.Keyframe || picture.FrameNum != 2 {
 		t.Fatalf("picture key=%v frames=%d, want true 2", picture.Keyframe, picture.FrameNum)
 	}
+	if !picture.Frames[0].CodedKeyframe || picture.Frames[0].LastFrameInPicture ||
+		picture.Frames[1].CodedKeyframe || !picture.Frames[1].LastFrameInPicture {
+		t.Fatalf("picture frame coding/position metadata = %+v %+v", picture.Frames[0], picture.Frames[1])
+	}
 
 	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
 	var receiver goav1.RTPDependencyDescriptorState
 	for i := 0; i < picture.FrameNum; i++ {
 		wantAttached := i == 0
 		wantNewCodedVideoSequence := i == 0
-		assertPublicRTCFrameRTPPackets(t, &receiver, picture.Frames[i], limits, wantAttached, wantNewCodedVideoSequence)
+		wantMarker := i+1 == picture.FrameNum
+		assertPublicRTCFrameRTPPackets(t, &receiver, picture.Frames[i], limits, wantAttached, wantNewCodedVideoSequence, wantMarker)
 	}
 }
 
@@ -619,7 +624,7 @@ func assertPublicRTCPictureDescriptors(t *testing.T, receiver *goav1.RTPDependen
 	*nextFrameID += uint64(picture.FrameNum)
 }
 
-func assertPublicRTCFrameRTPPackets(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, frame goav1.RTCFrame, limits goav1.RTPPayloadSizeLimits, wantAttachedStructure bool, wantNewCodedVideoSequence bool) {
+func assertPublicRTCFrameRTPPackets(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, frame goav1.RTCFrame, limits goav1.RTPPayloadSizeLimits, wantAttachedStructure bool, wantNewCodedVideoSequence bool, wantMarker bool) {
 	t.Helper()
 	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
 	if err != nil {
@@ -673,7 +678,7 @@ func assertPublicRTCFrameRTPPackets(t *testing.T, receiver *goav1.RTPDependencyD
 		if parsed.FrameDependencies.SpatialID != frame.SpatialID || parsed.FrameDependencies.TemporalID != frame.TemporalID {
 			t.Fatalf("packet %d deps=%+v frame=%+v", i, parsed.FrameDependencies, frame)
 		}
-		if span.Marker != (i == packetCount-1) {
+		if span.Marker != (wantMarker && i == packetCount-1) {
 			t.Fatalf("packet %d marker=%v", i, span.Marker)
 		}
 	}
