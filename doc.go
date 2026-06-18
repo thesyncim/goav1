@@ -24,8 +24,11 @@
 // runtime bitrate/framerate/scalability reconfiguration. Lower-level WebRTC
 // encoder helpers expose W3C SVC mode metadata, temporal/spatial dependency
 // structures, decode-target grids, key-shift scheduling, and the supported
-// scalabilityMode capability list. The decoder and encoder APIs will grow at
-// this top level as the internal pipeline stabilizes.
+// scalabilityMode capability list. High-level decoder helpers cover
+// low-overhead streams and ordered/live AV1 RTP payload bodies, including
+// retained-fragment reset after RTP loss; shared-reference SVC decode remains
+// available through frame-work/layer-pool APIs when callers need explicit
+// surface routing.
 //
 // Hot paths use caller-owned buffers and fixed storage. Returned byte slices
 // alias caller-provided input or output buffers unless a future API explicitly
