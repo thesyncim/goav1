@@ -173,6 +173,47 @@ func BenchmarkPublicRTPPacketizeAndAssemble(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
+func BenchmarkPublicDecodeRTPPayload(b *testing.B) {
+	rtpPayloads, wantVisible := publicDecoderAllocRTPPayloads(b)
+	dec, err := av1.NewDecoderFromRTPPayloads(rtpPayloads)
+	if err != nil {
+		b.Fatalf("NewDecoderFromRTPPayloads: %v", err)
+	}
+	defer dec.Close()
+
+	bytesPerRun := 0
+	for _, payload := range rtpPayloads {
+		bytesPerRun += len(payload)
+	}
+	decodeAll := func() int {
+		if err := dec.Reset(); err != nil {
+			b.Fatalf("Reset: %v", err)
+		}
+		visible := 0
+		for i, payload := range rtpPayloads {
+			frames, err := dec.DecodeRTPPayload(payload)
+			if err != nil {
+				b.Fatalf("DecodeRTPPayload packet %d: %v", i, err)
+			}
+			visible += len(frames)
+		}
+		if visible != wantVisible {
+			b.Fatalf("decoded %d visible RTP frames, want %d", visible, wantVisible)
+		}
+		return visible
+	}
+
+	publicBenchmarkSink = decodeAll()
+	b.SetBytes(int64(bytesPerRun))
+	b.ReportAllocs()
+	b.ResetTimer()
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		sum += decodeAll()
+	}
+	publicBenchmarkSink = sum
+}
+
 func BenchmarkPublicFrameBindAndSampleRoundTrip(b *testing.B) {
 	format := av1.FrameFormat{
 		Width:        128,

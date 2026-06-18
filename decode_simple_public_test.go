@@ -1322,7 +1322,7 @@ func TestNewDecoderFromRTPPayloadsDecodeRTPPayloadAfterLossAllocs(t *testing.T) 
 	}
 }
 
-func publicDecoderAllocRTPPayloads(t *testing.T) ([][]byte, int) {
+func publicDecoderAllocRTPPayloads(t testing.TB) ([][]byte, int) {
 	t.Helper()
 	const width, height = 192, 128
 	enc, err := av1.NewRTCEncoderWithConfig(av1.EncoderConfig{
@@ -1600,12 +1600,12 @@ func TestNewDecoderFromRTPPayloadsDecodePayloadAfterLoss(t *testing.T) {
 	}
 }
 
-func publicDecoderRTPPayloadsForFrame(t *testing.T, frame av1.RTCFrame) [][]byte {
+func publicDecoderRTPPayloadsForFrame(t testing.TB, frame av1.RTCFrame) [][]byte {
 	t.Helper()
 	return publicDecoderRTPPayloadsForFrameWithLimits(t, frame, av1.RTPPayloadSizeLimits{MaxPayloadLen: 96})
 }
 
-func publicDecoderRTPPayloadsForFrameWithLimits(t *testing.T, frame av1.RTCFrame, limits av1.RTPPayloadSizeLimits) [][]byte {
+func publicDecoderRTPPayloadsForFrameWithLimits(t testing.TB, frame av1.RTCFrame, limits av1.RTPPayloadSizeLimits) [][]byte {
 	t.Helper()
 	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
 	if err != nil {
