@@ -1121,32 +1121,91 @@ func TestPublicDecoderRTPPayloadRunnerMatchesLowOverhead(t *testing.T) {
 }
 
 func TestNewDecoderFromRTPPayloadsMatchesLowOverhead(t *testing.T) {
-	const width, height = 192, 128
-	enc, err := av1.NewRTCEncoderWithConfig(av1.EncoderConfig{
-		Resolution:        av1.EncoderResolution{Width: width, Height: height},
-		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
-		MinBitrateKbps:    120,
-		MaxBitrateKbps:    800,
-		TargetBitrateKbps: 420,
-		Scalability:       av1.EncoderScalabilityModeL1T2,
-	})
-	if err != nil {
-		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	tests := []struct {
+		name   string
+		mode   av1.EncoderScalabilityMode
+		width  int
+		height int
+	}{
+		{name: "single-spatial", mode: av1.EncoderScalabilityModeL1T2, width: 192, height: 128},
+		{name: "simulcast", mode: av1.EncoderScalabilityModeS2T2, width: 640, height: 360},
 	}
-	defer enc.Close()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			enc, err := av1.NewRTCEncoderWithConfig(av1.EncoderConfig{
+				Resolution:        av1.EncoderResolution{Width: int32(tc.width), Height: int32(tc.height)},
+				MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+				MinBitrateKbps:    120,
+				MaxBitrateKbps:    800,
+				TargetBitrateKbps: 420,
+				Scalability:       tc.mode,
+			})
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+			}
+			defer enc.Close()
 
-	limits := av1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
-	var lowOverheads [][]byte
-	var rtpPayloads [][]byte
-	for i := 0; i < 4; i++ {
-		frame, err := enc.Encode(publicRTCMatrixFrame(width, height, i), false)
-		if err != nil {
-			t.Fatalf("Encode frame %d: %v", i, err)
-		}
-		lowOverheads = append(lowOverheads, append([]byte(nil), frame.Data...))
-		rtpPayloads = append(rtpPayloads, publicDecoderRTPPayloadsForFrameWithLimits(t, frame, limits)...)
+			limits := av1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
+			var lowOverheads [av1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var rtpPayloads [av1.EncoderWebRTCMaxSpatialLayers][][]byte
+			for i := 0; i < 4; i++ {
+				picture, err := enc.EncodePicture(publicRTCMatrixFrame(tc.width, tc.height, i), false)
+				if err != nil {
+					t.Fatalf("EncodePicture frame %d: %v", i, err)
+				}
+				for frameIndex := 0; frameIndex < picture.FrameNum; frameIndex++ {
+					frame := picture.Frames[frameIndex]
+					spatialID := frame.SpatialID
+					if spatialID >= av1.EncoderWebRTCMaxSpatialLayers {
+						t.Fatalf("frame %d spatial id=%d", frameIndex, spatialID)
+					}
+					lowOverheads[spatialID] = append(lowOverheads[spatialID], append([]byte(nil), frame.Data...))
+					rtpPayloads[spatialID] = append(rtpPayloads[spatialID], publicDecoderRTPPayloadsForFrameWithLimits(t, frame, limits)...)
+				}
+			}
+
+			for spatialID := 0; spatialID < av1.EncoderWebRTCMaxSpatialLayers; spatialID++ {
+				if len(lowOverheads[spatialID]) == 0 {
+					continue
+				}
+				got, emptyPayloads := decodeRTPPayloadsWithHighLevelDecoder(t, rtpPayloads[spatialID])
+				if emptyPayloads == 0 {
+					t.Fatalf("spatial %d DecodeNext produced no empty RTP-fragment steps", spatialID)
+				}
+
+				want := decodeLowOverheadPayloads(t, lowOverheads[spatialID])
+				if len(got) != len(want) {
+					t.Fatalf("spatial %d RTP decoder produced %d frames, low-overhead decoded %d", spatialID, len(got), len(want))
+				}
+				for i := range want {
+					if got[i] != want[i] {
+						t.Fatalf("spatial %d frame %d digest differs: rtp=%s low=%s",
+							spatialID, i, hex.EncodeToString(got[i][:]), hex.EncodeToString(want[i][:]))
+					}
+				}
+			}
+
+			dec, err := av1.NewDecoderFromRTPPayloads(rtpPayloads[0])
+			if err != nil {
+				t.Fatalf("NewDecoderFromRTPPayloads reset decoder: %v", err)
+			}
+			defer dec.Close()
+			if err := dec.Reset(); err != nil {
+				t.Fatalf("Reset RTP decoder: %v", err)
+			}
+			frames, ok, err := dec.DecodeNext()
+			if err != nil {
+				t.Fatalf("DecodeNext after Reset: %v", err)
+			}
+			if !ok || len(frames) != 0 {
+				t.Fatalf("DecodeNext after Reset frames=%d ok=%v, want first RTP fragment", len(frames), ok)
+			}
+		})
 	}
+}
 
+func decodeRTPPayloadsWithHighLevelDecoder(t *testing.T, rtpPayloads [][]byte) ([][16]byte, int) {
+	t.Helper()
 	dec, err := av1.NewDecoderFromRTPPayloads(rtpPayloads)
 	if err != nil {
 		t.Fatalf("NewDecoderFromRTPPayloads: %v", err)
@@ -1171,31 +1230,7 @@ func TestNewDecoderFromRTPPayloadsMatchesLowOverhead(t *testing.T) {
 			got = append(got, frameMD5Visible(f))
 		}
 	}
-	if emptyPayloads == 0 {
-		t.Fatal("DecodeNext produced no empty RTP-fragment steps")
-	}
-
-	want := decodeLowOverheadPayloads(t, lowOverheads)
-	if len(got) != len(want) {
-		t.Fatalf("RTP decoder produced %d frames, low-overhead decoded %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("frame %d digest differs: rtp=%s low=%s",
-				i, hex.EncodeToString(got[i][:]), hex.EncodeToString(want[i][:]))
-		}
-	}
-
-	if err := dec.Reset(); err != nil {
-		t.Fatalf("Reset RTP decoder: %v", err)
-	}
-	frames, ok, err := dec.DecodeNext()
-	if err != nil {
-		t.Fatalf("DecodeNext after Reset: %v", err)
-	}
-	if !ok || len(frames) != 0 {
-		t.Fatalf("DecodeNext after Reset frames=%d ok=%v, want first RTP fragment", len(frames), ok)
-	}
+	return got, emptyPayloads
 }
 
 func TestPublicDecoderRTPPayloadRunnerRecoversAfterEncoderPacketLoss(t *testing.T) {
