@@ -1731,6 +1731,10 @@ func TestPublicRTCEncoderSetConfigFullModeCatalogueDecodes(t *testing.T) {
 		cfg.MaxFramerate = fps[step%len(fps)]
 		targetKbps := publicRTCMatrixControlBitrateKbps(t, mode) + int32((step%5)*37)
 		publicRTCApplyControlBitrates(&cfg, targetKbps)
+		if step%2 == 1 {
+			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.Quantizer = uint8(24 + step%31)
+		}
 
 		wantKey := true
 		if enc == nil {
@@ -1770,7 +1774,11 @@ func TestPublicRTCEncoderSetConfigFullModeCatalogueDecodes(t *testing.T) {
 
 		controlChange := enc.Config()
 		controlChange.MaxFramerate = fps[(step+1)%len(fps)]
-		publicRTCApplyControlBitrates(&controlChange, targetKbps+53)
+		if controlChange.RateControl == goav1.EncoderRateControlCQP {
+			controlChange.Quantizer = uint8(20 + (step*7)%37)
+		} else {
+			publicRTCApplyControlBitrates(&controlChange, targetKbps+53)
+		}
 		if err := enc.SetConfig(controlChange); err != nil {
 			t.Fatalf("SetConfig(%s control): %v", mode, err)
 		}
@@ -2132,8 +2140,15 @@ func assertPublicRTCConfigBitrates(t *testing.T, got goav1.EncoderConfig, want g
 	if !ok {
 		t.Fatalf("invalid normalized mode %s", got.Scalability)
 	}
+	want, err := goav1.SetWebRTCEncoderSVCConfig(want, want.TemporalLayerCount, want.SpatialLayerCount)
+	if err != nil {
+		t.Fatalf("normalize expected config %s: %v", want.Scalability, err)
+	}
 	if got.SpatialLayerCount != spatialLayers {
 		t.Fatalf("config spatial layers=%d want %d", got.SpatialLayerCount, spatialLayers)
+	}
+	if want.SpatialLayerCount != spatialLayers {
+		t.Fatalf("expected config spatial layers=%d want %d", want.SpatialLayerCount, spatialLayers)
 	}
 	for i := uint8(0); i < spatialLayers; i++ {
 		gotLayer := got.SpatialLayers[i]
@@ -2148,11 +2163,46 @@ func assertPublicRTCConfigBitrates(t *testing.T, got goav1.EncoderConfig, want g
 
 func assertPublicRTCConfigControls(t *testing.T, got goav1.EncoderConfig, want goav1.EncoderConfig) {
 	t.Helper()
-	if got.MaxFramerate != want.MaxFramerate {
-		t.Fatalf("config fps=%+v want %+v", got.MaxFramerate, want.MaxFramerate)
+	want, err := goav1.SetWebRTCEncoderSVCConfig(want, want.TemporalLayerCount, want.SpatialLayerCount)
+	if err != nil {
+		t.Fatalf("normalize expected config %s: %v", want.Scalability, err)
 	}
-	if got.RateControl != want.RateControl || got.Quantizer != want.Quantizer {
-		t.Fatalf("config rate control=%d q=%d want %d q=%d", got.RateControl, got.Quantizer, want.RateControl, want.Quantizer)
+	if got.Scalability != want.Scalability ||
+		got.SpatialLayerCount != want.SpatialLayerCount ||
+		got.TemporalLayerCount != want.TemporalLayerCount {
+		t.Fatalf("config layers got mode=%s S%d/T%d want mode=%s S%d/T%d",
+			got.Scalability, got.SpatialLayerCount, got.TemporalLayerCount,
+			want.Scalability, want.SpatialLayerCount, want.TemporalLayerCount)
+	}
+	if got.MaxFramerate != want.MaxFramerate || got.RTPTimebase != want.RTPTimebase {
+		t.Fatalf("config timing fps=%+v timebase=%+v want fps=%+v timebase=%+v",
+			got.MaxFramerate, got.RTPTimebase, want.MaxFramerate, want.RTPTimebase)
+	}
+	gotDuration, err := goav1.EncoderWebRTCRTPFrameDuration(got)
+	if err != nil {
+		t.Fatalf("got RTP frame duration: %v", err)
+	}
+	wantDuration, err := goav1.EncoderWebRTCRTPFrameDuration(want)
+	if err != nil {
+		t.Fatalf("want RTP frame duration: %v", err)
+	}
+	if gotDuration != wantDuration {
+		t.Fatalf("RTP frame duration=%+v want %+v", gotDuration, wantDuration)
+	}
+	if got.RateControl != want.RateControl || got.Quantizer != want.Quantizer || got.Content != want.Content {
+		t.Fatalf("config rate control=%d q=%d content=%d want %d q=%d content=%d",
+			got.RateControl, got.Quantizer, got.Content, want.RateControl, want.Quantizer, want.Content)
+	}
+	for i := uint8(0); i < want.SpatialLayerCount; i++ {
+		gotLayer := got.SpatialLayers[i]
+		wantLayer := want.SpatialLayers[i]
+		if gotLayer.Active != wantLayer.Active ||
+			gotLayer.Resolution != wantLayer.Resolution ||
+			gotLayer.ScalingFactor != wantLayer.ScalingFactor ||
+			gotLayer.MaxFramerate != wantLayer.MaxFramerate ||
+			gotLayer.TemporalLayers != wantLayer.TemporalLayers {
+			t.Fatalf("layer %d controls got %+v want %+v", i, gotLayer, wantLayer)
+		}
 	}
 	assertPublicRTCConfigBitrates(t, got, want)
 }
