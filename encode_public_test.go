@@ -1138,6 +1138,31 @@ func TestPublicRTCEncoderCQPScalabilityModeMatrixDecodes(t *testing.T) {
 				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
 				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), picture, frame == 0, &nextFrameID)
 			}
+			controlChange := enc.Config()
+			controlChange.MaxFramerate = []goav1.EncoderRational{
+				{Num: 60, Den: 1},
+				{Num: 30000, Den: 1001},
+				{Num: 24, Den: 1},
+			}[step%3]
+			controlChange.Quantizer = uint8(31 + step%29)
+			if err := enc.SetConfig(controlChange); err != nil {
+				t.Fatalf("SetConfig(%s forced-key controls): %v", mode, err)
+			}
+			assertPublicRTCConfigControls(t, enc.Config(), controlChange)
+
+			forcedKey, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 2), true)
+			if err != nil {
+				t.Fatalf("forced key EncodePicture(%s): %v", mode, err)
+			}
+			appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, forcedKey)
+			assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), forcedKey, true, &nextFrameID)
+
+			postForceDelta, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 3), false)
+			if err != nil {
+				t.Fatalf("post-forced-key EncodePicture(%s): %v", mode, err)
+			}
+			appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, postForceDelta)
+			assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), postForceDelta, false, &nextFrameID)
 			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
 		})
 	}
