@@ -162,6 +162,22 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 	return enc, nil
 }
 
+// SetGoldenInterval sets how many base-layer inter frames pass between golden
+// reference refreshes. Zero disables golden references.
+func (e *VideoEncoder) SetGoldenInterval(n int) {
+	if e != nil && e.enc != nil {
+		e.enc.SetGoldenInterval(n)
+	}
+}
+
+// SetTileColumns sets the desired tile-column count for subsequent encoded
+// frames. The encoder rounds down to a legal power-of-two tile layout.
+func (e *VideoEncoder) SetTileColumns(cols int) {
+	if e != nil && e.enc != nil {
+		e.enc.SetTileColumns(cols)
+	}
+}
+
 // Encode encodes one frame. forceKey restarts the stream with a keyframe.
 // The returned Data aliases an encoder-owned buffer that is reused by the
 // next Encode call - send or copy it before encoding the next frame, the
@@ -474,6 +490,24 @@ func (e *RTCEncoder) SetConfig(cfg EncoderConfig) error {
 		return fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
 	return e.stream.SetConfig(cfg)
+}
+
+// SetGoldenInterval sets how many base-layer inter frames pass between golden
+// reference refreshes in every active spatial encoder. Zero disables golden
+// references.
+func (e *RTCEncoder) SetGoldenInterval(n int) {
+	if e != nil && e.stream != nil {
+		e.stream.SetGoldenInterval(n)
+	}
+}
+
+// SetTileColumns sets the desired tile-column count in every active spatial
+// encoder for subsequent encoded frames. The encoder rounds down to a legal
+// power-of-two tile layout.
+func (e *RTCEncoder) SetTileColumns(cols int) {
+	if e != nil && e.stream != nil {
+		e.stream.SetTileColumns(cols)
+	}
 }
 
 // Close waits for any background encoder work to finish and releases

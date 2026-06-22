@@ -188,7 +188,8 @@ There are two public encoder surfaces:
   changes through the dependency descriptor extension.
   `EncoderWebRTCValidateLayerRefreshRequest` validates AV1 RTCP LRR feedback
   against the configured temporal/spatial grid before callers decide whether to
-  force a full key picture.
+  force a full key picture. `SetTileColumns` and `SetGoldenInterval` let callers
+  retune tile parallelism and golden-reference refresh policy between frames.
 - `WebRTCEncoder` is the lower-level control/metadata surface for WebRTC
   picture scheduling. It validates the W3C AV1 SVC mode vocabulary
   (`L*T*`, `L*T*h`, `L*T*_KEY`, `L*T*_KEY_SHIFT`, and `S*T*`/`S*T*h`

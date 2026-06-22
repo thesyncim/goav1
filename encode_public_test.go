@@ -199,6 +199,93 @@ func TestPublicRTCEncoder(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderRuntimeOptions(t *testing.T) {
+	const w, h = 192, 128
+	t.Run("VideoEncoder", func(t *testing.T) {
+		enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+			Width: w, Height: h,
+			TargetBitrate: 400_000, Framerate: 30,
+		})
+		if err != nil {
+			t.Fatalf("NewVideoEncoder: %v", err)
+		}
+		defer enc.Close()
+		key, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false)
+		if err != nil {
+			t.Fatalf("key Encode: %v", err)
+		}
+		enc.SetTileColumns(4)
+		enc.SetGoldenInterval(0)
+		delta, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false)
+		if err != nil {
+			t.Fatalf("delta Encode after runtime option change: %v", err)
+		}
+		if !key.Keyframe || delta.Keyframe {
+			t.Fatalf("runtime options key=%v delta=%v", key.Keyframe, delta.Keyframe)
+		}
+		dec, err := goav1.NewDecoder([][]byte{
+			append([]byte(nil), key.Data...),
+			append([]byte(nil), delta.Data...),
+		})
+		if err != nil {
+			t.Fatalf("NewDecoder: %v", err)
+		}
+		defer dec.Close()
+		decoded := 0
+		for {
+			batch, ok, err := dec.DecodeNext()
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if !ok {
+				break
+			}
+			decoded += len(batch)
+		}
+		if decoded != 2 {
+			t.Fatalf("decoded %d frames, want 2", decoded)
+		}
+	})
+
+	t.Run("RTCEncoder", func(t *testing.T) {
+		cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeS2T2)
+		enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+		if err != nil {
+			t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+		}
+		defer enc.Close()
+		key, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, 0), false)
+		if err != nil {
+			t.Fatalf("key EncodePicture: %v", err)
+		}
+		keyLastFrameID := key.Frames[key.FrameNum-1].FrameID
+		var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+		var orderedTUs [][]byte
+		appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, key)
+		enc.SetTileColumns(4)
+		enc.SetGoldenInterval(0)
+		delta, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, 0), false)
+		if err != nil {
+			t.Fatalf("delta EncodePicture after runtime option change: %v", err)
+		}
+		if !key.Keyframe || delta.Keyframe {
+			t.Fatalf("runtime options key=%v delta=%v", key.Keyframe, delta.Keyframe)
+		}
+		if delta.Frames[0].FrameID != keyLastFrameID+1 {
+			t.Fatalf("delta frame id=%d after key last id=%d", delta.Frames[0].FrameID, keyLastFrameID)
+		}
+		appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, delta)
+		assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+	})
+
+	var zeroVideo goav1.VideoEncoder
+	zeroVideo.SetTileColumns(4)
+	zeroVideo.SetGoldenInterval(0)
+	var zeroRTC goav1.RTCEncoder
+	zeroRTC.SetTileColumns(4)
+	zeroRTC.SetGoldenInterval(0)
+}
+
 func TestPublicRTCEncoderDependencyDescriptorOwnership(t *testing.T) {
 	t.Run("Encode", func(t *testing.T) {
 		const w, h = 192, 128
