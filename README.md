@@ -46,7 +46,7 @@ needs:
 | Use case | API | Ownership model |
 | --- | --- | --- |
 | One-shot decoded pixels | `DecodeIVF` | Copies visible planes into independent `DecodedFrame` values |
-| AV1 WebRTC SDP/RTP control checks | `AV1SDPRTPMap.SDP` / `ParseAV1SDPRTPMap` / `ParseAV1SDPFmtp` / `ParseAV1SDPExtmap` / `AV1SDPRTCPFeedback.SDP` / `ParseAV1SDPRID` / `ParseAV1SDPSimulcast` / `PutRTPMIDHeaderExtension` / `PutRTPStreamIDHeaderExtension` / `AV1SDPOffersReceive*` | Parses and emits `AV1/90000` payload bindings, profile/level/tier fmtp values, RTP header-extension mappings, payload-specific or wildcard rtcp-fb lines, AV1 RID receiver restrictions, AV1 simulcast RID groups, and raw MID/RID/RRID SDES header-extension payloads; complete SDP assembly and RTP header ownership stay caller-owned |
+| AV1 WebRTC SDP/RTP control checks | `AV1SDPRTPMap.SDP` / `ParseAV1SDPRTPMap` / `AV1SDPFmtpAttribute.SDP` / `ParseAV1SDPFmtpAttribute` / `ParseAV1SDPExtmap` / `AV1SDPRTCPFeedback.SDP` / `ParseAV1SDPRID` / `ParseAV1SDPSimulcast` / `PutRTPMIDHeaderExtension` / `PutRTPStreamIDHeaderExtension` / `AV1SDPOffersReceive*` | Parses and emits `AV1/90000` payload bindings, profile/level/tier fmtp lines and values, RTP header-extension mappings, payload-specific or wildcard rtcp-fb lines, AV1 RID receiver restrictions, AV1 simulcast RID groups, and raw MID/RID/RRID SDES header-extension payloads; complete SDP assembly and RTP header ownership stay caller-owned |
 | AV1 WebRTC RTCP feedback checks | `ParseRTCPGenericNACKPairs` / `ParseRTCPPictureLossIndicationFCI` / `ParseRTCPFullIntraRequestEntries` / `ParseAV1RTCPLayerRefreshRequestEntries` / `EncoderWebRTCValidateLayerRefreshRequests` | Parses and serializes generic NACK PID/BLP pairs, empty PLI FCI payloads, FIR FCI entries, and AV1 LRR FCI entry lists; LRR entries can be validated against the active temporal/spatial layer grid; RTCP transport stays caller-owned |
 | Repeated in-memory IVF decode | `NewDecoderFromIVF` + `DecodeNext` | Copies IVF payloads once, then reuses decoder-owned frame and post-filter arenas |
 | Large/file-backed IVF decode | `NewDecoderFromIVFReaderAt` + `DecodeNext` | Indexes IVF frame offsets and reads each payload into one reusable buffer |
@@ -116,7 +116,7 @@ Lower-level package APIs expose the same pipeline pieces directly: IVF and OBU
 iterators, RTP packetization/depacketization, parser structs, tile work
 scheduling, residual decode/reconstruct helpers, post-filter scratch binding,
 and DSP primitives. SDP helpers cover the registered `AV1/90000` rtpmap payload
-binding parsing and emission, profile/level/tier parsing and emission,
+binding parsing and emission, profile/level/tier fmtp line parsing and emission,
 RTP header-extension
 mappings for dependency descriptors and RID/MID SDES values, AV1 RID receiver
 restrictions, AV1 simulcast RID groups, sequence-header compatibility checks,

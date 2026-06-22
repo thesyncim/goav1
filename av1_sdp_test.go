@@ -115,6 +115,81 @@ func TestAV1SDPRTPMapRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestAV1SDPFmtpAttributeSDP(t *testing.T) {
+	attr := av1.AV1SDPFmtpAttribute{
+		PayloadType: "98",
+		Parameters:  av1.AV1SDPFmtpParameters{Profile: 1, LevelIdx: 31, Tier: 1},
+	}
+	line, err := attr.SDP()
+	if err != nil {
+		t.Fatalf("FmtpAttribute SDP: %v", err)
+	}
+	if line != "a=fmtp:98 profile=1; level-idx=31; tier=1" {
+		t.Fatalf("FmtpAttribute SDP line=%q", line)
+	}
+	prefix := []byte("x")
+	appended, err := (av1.AV1SDPFmtpAttribute{
+		PayloadType: "99",
+		Parameters:  av1.DefaultAV1SDPFmtpParameters(),
+	}).AppendSDP(prefix)
+	if err != nil {
+		t.Fatalf("FmtpAttribute AppendSDP: %v", err)
+	}
+	if string(appended) != "xa=fmtp:99 profile=0; level-idx=5; tier=0" {
+		t.Fatalf("appended FmtpAttribute line=%q", appended)
+	}
+
+	parsed, err := av1.ParseAV1SDPFmtpAttribute(" a=fmtp:98 LEVEL-IDX=31; PROFILE=1; TIER=1; x-google-start-bitrate=500 ")
+	if err != nil {
+		t.Fatalf("ParseAV1SDPFmtpAttribute: %v", err)
+	}
+	if parsed != attr {
+		t.Fatalf("ParseAV1SDPFmtpAttribute=%+v want %+v", parsed, attr)
+	}
+	if !av1.AV1SDPNegotiatesParams(joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98",
+		"a=rtpmap:98 AV1/90000",
+		line,
+	), attr.Parameters) {
+		t.Fatal("generated AV1 fmtp line did not negotiate params")
+	}
+}
+
+func TestAV1SDPFmtpAttributeRejectsInvalid(t *testing.T) {
+	validParams := av1.DefaultAV1SDPFmtpParameters()
+	invalidAttributes := []av1.AV1SDPFmtpAttribute{
+		{PayloadType: "", Parameters: validParams},
+		{PayloadType: "av1", Parameters: validParams},
+		{PayloadType: "128", Parameters: validParams},
+		{PayloadType: "98\n99", Parameters: validParams},
+		{PayloadType: "98", Parameters: av1.AV1SDPFmtpParameters{Profile: 3, LevelIdx: 5, Tier: 0}},
+	}
+	for _, tc := range invalidAttributes {
+		if err := tc.Validate(); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+			t.Fatalf("Validate(%+v) err=%v want %v", tc, err, av1.ErrSDPInvalidConfig)
+		}
+		if out, err := tc.AppendSDP([]byte("prefix")); !errors.Is(err, av1.ErrSDPInvalidConfig) || string(out) != "prefix" {
+			t.Fatalf("AppendSDP(%+v) out=%q err=%v", tc, out, err)
+		}
+		if line, err := tc.SDP(); !errors.Is(err, av1.ErrSDPInvalidConfig) || line != "" {
+			t.Fatalf("SDP(%+v) line=%q err=%v", tc, line, err)
+		}
+	}
+
+	for _, line := range []string{
+		"",
+		"a=fmtp:128 profile=0; level-idx=5; tier=0",
+		"a=fmtp:98",
+		"a=fmtp:98 profile=3",
+		"a=fmtp:98 level-idx=10",
+		"a=fmtp:98 tier=two",
+	} {
+		if _, err := av1.ParseAV1SDPFmtpAttribute(line); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+			t.Fatalf("ParseAV1SDPFmtpAttribute(%q) err=%v want %v", line, err, av1.ErrSDPInvalidConfig)
+		}
+	}
+}
+
 func TestParseAV1SDPFmtp(t *testing.T) {
 	tests := []struct {
 		name string

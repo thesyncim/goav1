@@ -106,6 +106,12 @@ type AV1SDPRTPMap struct {
 	PayloadType string
 }
 
+// AV1SDPFmtpAttribute holds one AV1 SDP a=fmtp attribute.
+type AV1SDPFmtpAttribute struct {
+	PayloadType string
+	Parameters  AV1SDPFmtpParameters
+}
+
 // AV1SDPExtmap holds one RFC 8285 a=extmap RTP header-extension mapping.
 type AV1SDPExtmap struct {
 	// ID is the local extension identifier.
@@ -319,6 +325,34 @@ func (m AV1SDPRTPMap) AppendSDP(dst []byte) ([]byte, error) {
 // SDP returns a complete AV1 a=rtpmap SDP attribute.
 func (m AV1SDPRTPMap) SDP() (string, error) {
 	buf, err := m.AppendSDP(nil)
+	if err != nil {
+		return "", err
+	}
+	return string(buf), nil
+}
+
+// Validate rejects malformed AV1 fmtp attributes.
+func (a AV1SDPFmtpAttribute) Validate() error {
+	if !av1SDPValidPayloadType(strings.TrimSpace(a.PayloadType)) {
+		return ErrSDPInvalidConfig
+	}
+	return a.Parameters.Validate()
+}
+
+// AppendSDP appends a complete AV1 a=fmtp SDP attribute.
+func (a AV1SDPFmtpAttribute) AppendSDP(dst []byte) ([]byte, error) {
+	if err := a.Validate(); err != nil {
+		return dst, err
+	}
+	dst = append(dst, "a=fmtp:"...)
+	dst = append(dst, strings.TrimSpace(a.PayloadType)...)
+	dst = append(dst, ' ')
+	return a.Parameters.AppendFmtp(dst)
+}
+
+// SDP returns a complete AV1 a=fmtp SDP attribute.
+func (a AV1SDPFmtpAttribute) SDP() (string, error) {
+	buf, err := a.AppendSDP(nil)
 	if err != nil {
 		return "", err
 	}
@@ -723,6 +757,27 @@ func ParseAV1SDPFmtp(fmtp string) (AV1SDPFmtpParameters, error) {
 	return out, nil
 }
 
+// ParseAV1SDPFmtpAttribute parses a complete AV1 a=fmtp attribute. Unknown
+// AV1 fmtp parameters are ignored the same way ParseAV1SDPFmtp ignores them.
+func ParseAV1SDPFmtpAttribute(line string) (AV1SDPFmtpAttribute, error) {
+	line = strings.TrimSpace(line)
+	if strings.HasPrefix(strings.ToLower(line), "a=fmtp:") {
+		line = strings.TrimSpace(line[len("a=fmtp:"):])
+	}
+	fields := strings.Fields(line)
+	if len(fields) < 2 || !av1SDPValidPayloadType(fields[0]) {
+		return AV1SDPFmtpAttribute{}, ErrSDPInvalidConfig
+	}
+	params, err := ParseAV1SDPFmtp(strings.Join(fields[1:], " "))
+	if err != nil {
+		return AV1SDPFmtpAttribute{}, err
+	}
+	return AV1SDPFmtpAttribute{
+		PayloadType: fields[0],
+		Parameters:  params,
+	}, nil
+}
+
 // ParseAV1SDPRTPMap parses a complete AV1 a=rtpmap attribute. The input must
 // bind a numeric RTP payload type to AV1/90000.
 func ParseAV1SDPRTPMap(line string) (AV1SDPRTPMap, error) {
@@ -1082,6 +1137,7 @@ func av1SDPHas(
 				direction:       sessionDirection,
 				av1PayloadTypes: make(map[string]bool),
 				fmtpParams:      make(map[string]string),
+				fmtpInvalid:     make(map[string]bool),
 				rtcpFeedback:    make(map[string][]string),
 				ridSeen:         make(map[string]bool),
 				ridDuplicate:    make(map[string]bool),
@@ -1107,9 +1163,17 @@ func av1SDPHas(
 				section.av1PayloadTypes[rtpmap.PayloadType] = true
 			}
 		case strings.HasPrefix(line, "a=fmtp:"):
-			fields := strings.Fields(strings.TrimPrefix(line, "a=fmtp:"))
-			if len(fields) >= 2 && section.payloadTypes[fields[0]] {
-				section.fmtpParams[fields[0]] = strings.Join(fields[1:], " ")
+			fmtp, err := ParseAV1SDPFmtpAttribute(line)
+			fields := strings.Fields(strings.TrimSpace(line[len("a=fmtp:"):]))
+			if len(fields) > 0 && section.payloadTypes[fields[0]] && err != nil {
+				section.fmtpInvalid[fields[0]] = true
+				continue
+			}
+			if err == nil && section.payloadTypes[fmtp.PayloadType] {
+				params, err := fmtp.Parameters.Fmtp()
+				if err == nil {
+					section.fmtpParams[fmtp.PayloadType] = params
+				}
 			}
 		case strings.HasPrefix(line, "a=rtcp-fb:"):
 			fields := strings.Fields(strings.TrimPrefix(line, "a=rtcp-fb:"))
@@ -1152,6 +1216,7 @@ type av1SDPMediaSection struct {
 	direction          string
 	av1PayloadTypes    map[string]bool
 	fmtpParams         map[string]string
+	fmtpInvalid        map[string]bool
 	rtcpFeedback       map[string][]string
 	extmaps            []AV1SDPExtmap
 	rids               []AV1SDPRID
@@ -1174,6 +1239,9 @@ func (s av1SDPMediaSection) hasAV1(
 		return false
 	}
 	for payloadType := range s.av1PayloadTypes {
+		if s.fmtpInvalid[payloadType] {
+			continue
+		}
 		if params, ok := s.fmtpParams[payloadType]; ok {
 			if _, err := ParseAV1SDPFmtp(params); err != nil {
 				continue
