@@ -16,6 +16,14 @@ const (
 	// RTCP length field, in bytes.
 	RTCPMaxPacketSize = (0xffff + 1) * 4
 
+	// RTCPPacketCountMax is the largest value that fits the RTCP header count,
+	// source-count, reception-report-count, or feedback-message-type field.
+	RTCPPacketCountMax = 31
+
+	// RTCPPacketPayloadMaxSize is the largest payload after the common RTCP
+	// header that can fit in one packet.
+	RTCPPacketPayloadMaxSize = RTCPMaxPacketSize - RTCPHeaderSize
+
 	// RTCPSenderReportPacketType is the RTCP packet type for sender reports.
 	RTCPSenderReportPacketType = 200
 
@@ -226,6 +234,17 @@ var (
 	ErrRTCPInvalidLayerRefreshRequest = errors.New("goav1: invalid RTCP layer refresh request")
 )
 
+// RTCPPacket is one generic RTCP packet. Count is the low five-bit header field:
+// reception report count, source count, or feedback message type depending on
+// PacketType. Payload aliases the caller-owned payload passed to Put or the
+// source packet passed to Parse. Padding is ignored by Put and filled by Parse.
+type RTCPPacket struct {
+	PacketType uint8
+	Count      uint8
+	Payload    []byte
+	Padding    int
+}
+
 // RTCPReportBlock is one sender/receiver report block.
 type RTCPReportBlock struct {
 	SSRC                          uint32
@@ -282,6 +301,118 @@ type RTCPSDESPacket struct {
 type RTCPByePacket struct {
 	Sources []uint32
 	Reason  []byte
+}
+
+// RTCPPacketSize returns the complete packet size for a generic RTCP payload,
+// including any padding needed to align the packet to a 32-bit boundary.
+func RTCPPacketSize(payloadLen int) (int, error) {
+	if payloadLen < 0 || payloadLen > RTCPPacketPayloadMaxSize {
+		return 0, ErrRTCPInvalidPacket
+	}
+	size := RTCPHeaderSize + payloadLen
+	size += rtcpPaddingLength(size)
+	if size > RTCPMaxPacketSize {
+		return 0, ErrRTCPInvalidPacket
+	}
+	return size, nil
+}
+
+// PutRTCPPacket serializes one generic RTCP packet into dst.
+func PutRTCPPacket(dst []byte, packet RTCPPacket) (int, error) {
+	if packet.Count > RTCPPacketCountMax {
+		return 0, ErrRTCPInvalidPacket
+	}
+	size, err := RTCPPacketSize(len(packet.Payload))
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < size {
+		return 0, ErrRTCPShortBuffer
+	}
+	padding := rtcpPaddingLength(RTCPHeaderSize + len(packet.Payload))
+	first := byte(RTCPVersion<<6) | (packet.Count & 0x1f)
+	if padding != 0 {
+		first |= 0x20
+	}
+	dst[0] = first
+	dst[1] = packet.PacketType
+	binary.BigEndian.PutUint16(dst[2:4], uint16(size/4-1))
+	copy(dst[RTCPHeaderSize:RTCPHeaderSize+len(packet.Payload)], packet.Payload)
+	if padding != 0 {
+		paddingStart := RTCPHeaderSize + len(packet.Payload)
+		for i := 0; i < padding-1; i++ {
+			dst[paddingStart+i] = 0
+		}
+		dst[size-1] = byte(padding)
+	}
+	return size, nil
+}
+
+// AppendRTCPPacket appends one generic RTCP packet to dst without growing
+// beyond dst's existing capacity.
+func AppendRTCPPacket(dst []byte, packet RTCPPacket) ([]byte, error) {
+	if packet.Count > RTCPPacketCountMax {
+		return dst, ErrRTCPInvalidPacket
+	}
+	size, err := RTCPPacketSize(len(packet.Payload))
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+size]
+	if _, err := PutRTCPPacket(out[off:], packet); err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
+// ParseRTCPPacket parses one generic RTCP packet from src. Payload aliases src
+// and excludes the common header plus any packet padding. n is the number of
+// bytes consumed for the first RTCP packet.
+func ParseRTCPPacket(src []byte) (packet RTCPPacket, n int, err error) {
+	count, packetLen, err := parseRTCPFixedPacketHeader(src, 0, RTCPHeaderSize)
+	if err != nil {
+		return RTCPPacket{}, 0, err
+	}
+	padding := 0
+	if src[0]&0x20 != 0 {
+		padding = int(src[packetLen-1])
+		if padding == 0 || padding > packetLen-RTCPHeaderSize {
+			return RTCPPacket{}, 0, ErrRTCPInvalidPacket
+		}
+	}
+	payloadEnd := packetLen - padding
+	return RTCPPacket{
+		PacketType: src[1],
+		Count:      count,
+		Payload:    src[RTCPHeaderSize:payloadEnd],
+		Padding:    padding,
+	}, packetLen, nil
+}
+
+// ParseRTCPCompoundPackets parses every RTCP packet in src. Packets are
+// appended to dst without allocation and each returned Payload aliases src.
+func ParseRTCPCompoundPackets(src []byte, dst []RTCPPacket) ([]RTCPPacket, error) {
+	if len(src) == 0 {
+		return nil, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	for len(src) > 0 {
+		if cap(dst)-len(dst) < 1 {
+			return nil, ErrRTCPShortBuffer
+		}
+		packet, n, err := ParseRTCPPacket(src)
+		if err != nil {
+			return nil, err
+		}
+		dst = dst[:len(dst)+1]
+		dst[len(dst)-1] = packet
+		src = src[n:]
+	}
+	return dst[off:], nil
 }
 
 // RTCPSenderReportPacketSize returns the complete sender report packet size.
@@ -814,7 +945,7 @@ func parseRTCPFixedPacketHeader(src []byte, packetType uint8, minSize int) (coun
 	if len(src) < minSize {
 		return 0, 0, ErrRTCPShortBuffer
 	}
-	if src[0]>>6 != RTCPVersion || src[1] != packetType {
+	if src[0]>>6 != RTCPVersion || (packetType != 0 && src[1] != packetType) {
 		return 0, 0, ErrRTCPInvalidPacket
 	}
 	packetLen = (int(binary.BigEndian.Uint16(src[2:4])) + 1) * 4

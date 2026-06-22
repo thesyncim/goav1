@@ -420,6 +420,8 @@ simulcast RID groups before RTP starts flowing. RTP SDES helpers
 header-extension payload bytes after the caller has selected RTP extension
 IDs; the `AV1SDP*RTCPFeedback` helpers verify payload-specific or wildcard
 `rtcp-fb` support for NACK, PLI, FIR, LRR, Transport-CC, and REMB. Generic RTCP
+packet helpers (`ParseRTCPPacket`, `ParseRTCPCompoundPackets`) cover common
+packet parsing and compound-packet demux, including unknown packet types;
 sender/receiver report helpers (`ParseRTCPSenderReportPacket`,
 `ParseRTCPReceiverReportPacket`) cover SR/RR packet wrapping, report blocks,
 and signed 24-bit cumulative-loss fields; SDES helpers (`ParseRTCPSDESPacket`)
@@ -462,7 +464,7 @@ writing:
 | L2T1 / L2T2 multi-pool decode                       | Strict every-frame MD5 pass in `make dryrun-extended`. |
 | WebRTC AV1 SVC control metadata                     | Complete for the W3C mode vocabulary (`L*T*`, `L*T*h`, `L*T*_KEY`, `L*T*_KEY_SHIFT`, `S*T*`, `S*T*h`) with dependency-descriptor decode targets over the full `(spatial, temporal)` grid, W3C key-shift temporal schedules, and pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates. |
 | WebRTC AV1 SDP helpers                              | Complete for the registered `AV1/90000` payload binding, optional `profile` / `level-idx` / `tier` fmtp defaults and validation, RTP header-extension mapping checks, AV1 RID receiver restrictions, AV1 simulcast RID groups, offer receive frame checks, sequence-header compatibility checks, and AV1 rtcp-fb checks. |
-| WebRTC AV1 RTCP SR/RR/SDES/BYE/Transport-CC/REMB/LRR helpers | Complete for sender/receiver report packet parse/build, source-description/CNAME packet parse/build, BYE packet parse/build, RTPFB/PSFB packet wrapping/parsing, transport-wide status chunks, delta ticks, no-timestamp feedback, legacy WebRTC REMB bitrate/SSRC FCI parse/build, AV1 layer-index and LRR FCI entry/list parse/build/validation, plus encoder-config temporal/spatial layer-grid checks. |
+| WebRTC AV1 RTCP generic/SR/RR/SDES/BYE/Transport-CC/REMB/LRR helpers | Complete for generic packet parse/build, compound-packet demux, sender/receiver report packet parse/build, source-description/CNAME packet parse/build, BYE packet parse/build, RTPFB/PSFB packet wrapping/parsing, transport-wide status chunks, delta ticks, no-timestamp feedback, legacy WebRTC REMB bitrate/SSRC FCI parse/build, AV1 layer-index and LRR FCI entry/list parse/build/validation, plus encoder-config temporal/spatial layer-grid checks. |
 | High-level RTP payload decode                       | `NewDecoderFromRTPPayloads` covers ordered/live AV1 RTP payload bodies for single decode chains and independent simulcast layers; `NewLayeredDecoderFromRTPPayloads` covers shared-reference SVC RTP streams with frame-only and `WithMetadata` AV1 layer outputs; both include `DecodeRTPPayloadAfterLoss` retained-fragment reset after packet gaps. |
 | Strict every-frame parity                           | Passing for the committed SVC vectors; broader SVC corpus expansion remains open. |
 
