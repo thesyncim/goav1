@@ -1136,12 +1136,13 @@ roll-up.
 | WebRTC signaling helpers              | Complete for AV1/90000 SDP/fmtp profile/level/tier checks, RTP header-extension mapping checks, RTP MID/RID/RRID SDES payload helpers, AV1 RID receiver restrictions, AV1 simulcast RID groups, AV1 rtcp-fb checks, and AV1 RTCP Layer Refresh Request FCI parse/build/validation. |
 | SVC streams                           | Parsed and decoded through the framework path; L1T2/L2T1/L2T2 strict-MD5 gates pass with multi-pool surface routing and scaled inter prediction. See [docs/svc.md](docs/svc.md). |
 | Realtime pixel encoder                | Functional for 8-bit I420 WebRTC streams, including temporal layering, runtime bitrate/framerate/scalability reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, RTP payload packetization, and dependency descriptors. |
-| WebRTC encoder control/metadata       | W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, full decode-target grids, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT dependency templates, exact RTP frame-duration helper, and RTP packet spans for caller-supplied frame payloads. |
+| WebRTC encoder control/metadata       | W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, full decode-target grids, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT dependency templates, exact RTP frame-duration helper, RTP packet spans for caller-supplied frame payloads, and sequence-matched `Frame` validation/loading for profile-0/1/2 sample formats. |
 
 ### Not yet implemented
 
-- **High-bit-depth and non-4:2:0 pixel encoding.** The decoder covers broader
-  formats; the realtime pixel encoder currently accepts 8-bit I420 only.
+- **High-bit-depth and non-4:2:0 pixel encoding.** The decoder and lower-level
+  WebRTC control/sample-loading surfaces cover broader formats; the friendly
+  realtime pixel encoder currently accepts 8-bit I420 only.
 - **Full WebRTC media transport.** The package emits AV1 RTP payload bodies,
   dependency descriptors, and raw MID/RID/RRID SDES payload helpers, and
   exposes focused AV1 SDP/fmtp/extmap/RID/simulcast plus RTCP LRR helper

@@ -158,7 +158,7 @@ result buffer directly. The executable examples in `example_test.go` and
 | WebRTC RTP decode | `NewDecoderFromRTPPayloads` covers ordered/live RTP payload bodies for single decode chains and simulcast layers; `NewLayeredDecoderFromRTPPayloads` covers shared-reference SVC RTP streams; `DecodeRTPPayloadAfterLoss` resets retained fragments after packet gaps |
 | SVC | L1T2/L2T1/L2T2 oracle vectors pass through the framework path; public integration guidance lives in [docs/svc.md](docs/svc.md) |
 | Tile groups | Single and multi-tile groups pass current strict-MD5 gates; tile-list OBUs parse but playback/reconstruction is not wired yet |
-| Encoder | Functional realtime 8-bit I420 WebRTC encoder with fixed-quality/CBR, forced keyframes, temporal layering, runtime bitrate/framerate/scalability reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, tile columns, golden references, RTP payload packetization, dependency descriptors, active decode target signaling, and LRR layer-grid validation; lower-level WebRTC controls cover the W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, and pinned-libwebrtc L2T2_KEY_SHIFT templates |
+| Encoder | Functional realtime 8-bit I420 WebRTC encoder with fixed-quality/CBR, forced keyframes, temporal layering, runtime bitrate/framerate/scalability reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, tile columns, golden references, RTP payload packetization, dependency descriptors, active decode target signaling, and LRR layer-grid validation; lower-level WebRTC controls cover the W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT templates, and `Frame` validation/loading for profile-0/1/2 sample formats |
 | SIMD/assembly | CPU-dispatch skeleton plus initial amd64/arm64 motion kernels; broader transform/CDEF/restoration kernels are still roadmap work |
 
 The full feature matrix, status legend, vector coverage, and forward-looking
@@ -194,13 +194,15 @@ There are two public encoder surfaces:
   (`L*T*`, `L*T*h`, `L*T*_KEY`, `L*T*_KEY_SHIFT`, and `S*T*`/`S*T*h`
   simulcast names), temporal/spatial layer structures, decode-target grids,
   dependency descriptors, active decode target masks, W3C key-shift temporal
-  schedules, pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates, and RTP
-  packet spans for already-produced frame payloads.
+  schedules, pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates, RTP
+  packet spans for already-produced frame payloads, and `Frame` validation /
+  sample-plane loading for sequence-matched 8/10/12-bit 4:2:0, 4:2:2, and
+  4:4:4 caller-owned buffers.
 
 Multi-spatial pixel output uses independent per-spatial encoders for simulcast
-and shared-reference inter-layer prediction for full SVC. High-bit-depth input
-encoding, non-4:2:0 input encoding, broader oracle coverage, and compression
-efficiency tuning remain open. Encoder correctness and control behavior should
+and shared-reference inter-layer prediction for full SVC. High-bit-depth and
+non-4:2:0 input in the friendly pixel encoder, broader oracle coverage, and
+compression efficiency tuning remain open. Encoder correctness and control behavior should
 continue to be ported from pinned libaom/libwebrtc source;
 speed-sensitive architecture should be checked against pinned SVT-AV1 before
 local invention. New encoder code, and decoder code touched while optimizing

@@ -2679,6 +2679,165 @@ func TestPublicWebRTCEncoderPictureSamplePlanes(t *testing.T) {
 	}
 }
 
+func TestPublicWebRTCEncoderPictureSamplePlanesNonI420Formats(t *testing.T) {
+	tests := []struct {
+		name         string
+		cfg          av1.EncoderConfig
+		wantBitDepth uint8
+		wantSubX     bool
+		wantSubY     bool
+	}{
+		{
+			name: "profile1-444-8bit",
+			cfg: av1.EncoderConfig{
+				Resolution:   av1.EncoderResolution{Width: 64, Height: 64},
+				Profile:      av1.EncoderProfile1,
+				BitDepth:     8,
+				MaxFramerate: av1.EncoderRational{Num: 30, Den: 1},
+			},
+			wantBitDepth: 8,
+		},
+		{
+			name: "profile0-420-10bit",
+			cfg: av1.EncoderConfig{
+				Resolution:   av1.EncoderResolution{Width: 64, Height: 64},
+				Profile:      av1.EncoderProfile0,
+				BitDepth:     10,
+				MaxFramerate: av1.EncoderRational{Num: 30, Den: 1},
+			},
+			wantBitDepth: 10,
+			wantSubX:     true,
+			wantSubY:     true,
+		},
+		{
+			name: "profile2-422-12bit",
+			cfg: av1.EncoderConfig{
+				Resolution:   av1.EncoderResolution{Width: 64, Height: 64},
+				Profile:      av1.EncoderProfile2,
+				BitDepth:     12,
+				MaxFramerate: av1.EncoderRational{Num: 30, Den: 1},
+			},
+			wantBitDepth: 12,
+			wantSubX:     true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			enc, err := av1.NewWebRTCEncoder(tc.cfg, av1.EncoderWebRTCState{})
+			if err != nil {
+				t.Fatalf("NewWebRTCEncoder: %v", err)
+			}
+			normalized := enc.Config()
+			seq, err := av1.EncoderSequenceHeaderForConfig(normalized)
+			if err != nil {
+				t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+			}
+			if seq.ColorConfig.BitDepth != tc.wantBitDepth ||
+				seq.ColorConfig.SubsamplingX != tc.wantSubX ||
+				seq.ColorConfig.SubsamplingY != tc.wantSubY {
+				t.Fatalf("color config=%+v", seq.ColorConfig)
+			}
+
+			frame, _ := publicWebRTCEncoderFrameForConfig(t, normalized)
+			bytesPerSample := 1
+			if frame.Format.BitDepth > 8 {
+				bytesPerSample = 2
+			}
+			ySample, uSample, vSample := uint16(0x23), uint16(0x34), uint16(0x45)
+			if bytesPerSample == 2 {
+				ySample, uSample, vSample = 0x0123, 0x0234, 0x0345
+			}
+			publicSetFramePlaneSample(frame.Y, bytesPerSample, 3, 2, ySample)
+			publicSetFramePlaneSample(frame.U, bytesPerSample, 2, 1, uSample)
+			publicSetFramePlaneSample(frame.V, bytesPerSample, 1, 1, vSample)
+
+			if _, _, err := enc.LowOverheadPictureHeaderTemporalUnitForFramesSize([]av1.Frame{frame}, false); err != nil {
+				t.Fatalf("LowOverheadPictureHeaderTemporalUnitForFramesSize: %v", err)
+			}
+			size, unit, err := enc.PictureSampleScratchSize([]av1.Frame{frame}, false)
+			if err != nil {
+				t.Fatalf("PictureSampleScratchSize: %v", err)
+			}
+			if size.Samples == 0 || size.FrameNum != 1 || !unit.Key {
+				t.Fatalf("scratch size=%+v unit=%+v", size, unit)
+			}
+			samples := make([]uint16, size.Samples)
+			planes, gotUnit, err := enc.LoadPictureSamplePlanes(
+				av1.EncoderWebRTCPictureSampleScratch{Samples: samples},
+				[]av1.Frame{frame},
+				false,
+			)
+			if err != nil {
+				t.Fatalf("LoadPictureSamplePlanes: %v", err)
+			}
+			if gotUnit != unit || planes.FrameNum != 1 ||
+				planes.Frames[0].Y.Pix[2*planes.Frames[0].Y.Stride+3] != ySample ||
+				planes.Frames[0].U.Pix[1*planes.Frames[0].U.Stride+2] != uSample ||
+				planes.Frames[0].V.Pix[1*planes.Frames[0].V.Stride+1] != vSample {
+				t.Fatalf("loaded planes=%+v unit=%+v want=%+v", planes, gotUnit, unit)
+			}
+
+			bad := frame
+			bad.Format.BitDepth = 8
+			if bad.Format.BitDepth == frame.Format.BitDepth {
+				bad.Format.BitDepth = 10
+			}
+			if _, _, err := enc.LowOverheadPictureHeaderTemporalUnitForFramesSize([]av1.Frame{bad}, false); !errors.Is(err, av1.ErrEncoderInvalidFrame) {
+				t.Fatalf("mismatched bitdepth err=%v want %v", err, av1.ErrEncoderInvalidFrame)
+			}
+			bad = frame
+			bad.Format.SubsamplingX = !bad.Format.SubsamplingX
+			if _, _, err := enc.LowOverheadPictureHeaderTemporalUnitForFramesSize([]av1.Frame{bad}, false); !errors.Is(err, av1.ErrEncoderInvalidFrame) {
+				t.Fatalf("mismatched subsampling err=%v want %v", err, av1.ErrEncoderInvalidFrame)
+			}
+		})
+	}
+}
+
+func publicWebRTCEncoderFrameForConfig(t *testing.T, cfg av1.EncoderConfig) (av1.Frame, []byte) {
+	t.Helper()
+	seq, err := av1.EncoderSequenceHeaderForConfig(cfg)
+	if err != nil {
+		t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+	}
+	format := av1.FrameFormat{
+		Width:        int(cfg.Resolution.Width),
+		Height:       int(cfg.Resolution.Height),
+		BitDepth:     seq.ColorConfig.BitDepth,
+		MonoChrome:   seq.ColorConfig.MonoChrome,
+		SubsamplingX: seq.ColorConfig.SubsamplingX,
+		SubsamplingY: seq.ColorConfig.SubsamplingY,
+		Align:        64,
+	}
+	layout, err := av1.FrameRequiredSize(format)
+	if err != nil {
+		t.Fatalf("FrameRequiredSize: %v", err)
+	}
+	backing := make([]byte, layout.Size)
+	frame, err := av1.BindFrame(backing, format)
+	if err != nil {
+		t.Fatalf("BindFrame: %v", err)
+	}
+	return frame, backing
+}
+
+func publicSetFramePlaneSample(
+	plane av1.FramePlane,
+	bytesPerSample int,
+	x int,
+	y int,
+	value uint16,
+) {
+	off := y*plane.Stride + x*bytesPerSample
+	if bytesPerSample == 1 {
+		plane.Pix[off] = byte(value)
+		return
+	}
+	plane.Pix[off] = byte(value)
+	plane.Pix[off+1] = byte(value >> 8)
+}
+
 func TestPublicWebRTCEncoderPictureFramesRTPPackets(t *testing.T) {
 	cfg := av1.EncoderConfig{
 		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},
