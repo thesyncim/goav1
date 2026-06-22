@@ -143,7 +143,7 @@ func normalizeWebRTCStreamConfig(config Config) (Config, int, error) {
 	if !webRTCPixelScalabilitySupported(normalized) {
 		return Config{}, 0, ErrUnsupported
 	}
-	if normalized.Profile != Profile0 || normalized.BitDepth != 8 {
+	if normalized.Profile != Profile0 || normalized.BitDepth != 8 || !webRTCStreamPixelColorConfigSupported(normalized.ColorConfig) {
 		return Config{}, 0, ErrUnsupported
 	}
 	fps := webRTCStreamFramesPerSecond(normalized.MaxFramerate)
@@ -169,6 +169,13 @@ func normalizeWebRTCStreamConfig(config Config) (Config, int, error) {
 
 func webRTCPixelScalabilitySupported(config Config) bool {
 	return config.SpatialLayerCount > 0 && config.SpatialLayerCount <= WebRTCMaxSpatialLayers
+}
+
+func webRTCStreamPixelColorConfigSupported(color SequenceColorConfig) bool {
+	return color.BitDepth == 8 &&
+		!color.MonoChrome &&
+		color.SubsamplingX &&
+		color.SubsamplingY
 }
 
 func newWebRTCStreamLayerEncoder(config Config, layerIndex uint8, fps int, minQ uint8, maxQ uint8) (*VideoEncoder, error) {

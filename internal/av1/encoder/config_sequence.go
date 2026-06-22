@@ -24,12 +24,7 @@ func SequenceHeaderForConfig(config Config) (SequenceHeader, error) {
 		SeqForceIntegerMV:          SequenceSelectIntegerMV,
 		OrderHintBits:              webRTCDefaultOrderHintBits,
 		EnableCDEF:                 true,
-		ColorConfig: SequenceColorConfig{
-			BitDepth:     config.BitDepth,
-			ColorRange:   false,
-			SubsamplingX: config.Profile != Profile1,
-			SubsamplingY: config.Profile == Profile0,
-		},
+		ColorConfig:                config.ColorConfig,
 	}
 
 	for i := uint8(0); i < seq.OperatingPointsCount; i++ {

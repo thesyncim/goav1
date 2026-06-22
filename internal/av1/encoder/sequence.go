@@ -605,7 +605,7 @@ func validateSequenceColorConfig(profile Profile, cfg SequenceColorConfig) error
 		return ErrInvalidConfig
 	}
 	if cfg.MonoChrome {
-		if cfg.SubsamplingX || cfg.SubsamplingY || cfg.ChromaSamplePosition != 0 || cfg.SeparateUVDeltaQ {
+		if cfg.ChromaSamplePosition != 0 || cfg.SeparateUVDeltaQ {
 			return ErrInvalidConfig
 		}
 		return nil

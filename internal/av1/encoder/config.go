@@ -537,6 +537,8 @@ type Config struct {
 	Resolution         Resolution
 	Profile            Profile
 	BitDepth           uint8
+	ColorConfig        SequenceColorConfig
+	ColorConfigSet     bool
 	MaxFramerate       Rational
 	MinBitrateKbps     int32
 	MaxBitrateKbps     int32
@@ -674,11 +676,9 @@ func normalizeConfig(config Config) (Config, error) {
 	if int64(config.Resolution.Width)*int64(config.Resolution.Height) > WebRTCMaxFramePixels {
 		return Config{}, ErrInvalidConfig
 	}
-	switch config.BitDepth {
-	case 0:
-		config.BitDepth = 8
-	case 8, 10, 12:
-	default:
+	var err error
+	config, err = normalizeConfigColor(config)
+	if err != nil {
 		return Config{}, ErrInvalidConfig
 	}
 	if config.MaxFramerate == (Rational{}) {
@@ -716,6 +716,55 @@ func normalizeConfig(config Config) (Config, error) {
 		return Config{}, ErrInvalidConfig
 	}
 	return config, nil
+}
+
+func normalizeConfigColor(config Config) (Config, error) {
+	bitDepth := config.BitDepth
+	if bitDepth == 0 && config.ColorConfigSet && config.ColorConfig.BitDepth != 0 {
+		bitDepth = config.ColorConfig.BitDepth
+	}
+	if bitDepth == 0 {
+		bitDepth = 8
+	}
+	switch bitDepth {
+	case 8, 10, 12:
+	default:
+		return Config{}, ErrInvalidConfig
+	}
+
+	if config.ColorConfig != (SequenceColorConfig{}) && !config.ColorConfigSet {
+		return Config{}, ErrInvalidConfig
+	}
+	color := config.ColorConfig
+	if !config.ColorConfigSet {
+		color = defaultSequenceColorConfig(config.Profile, bitDepth)
+	} else {
+		if color.BitDepth == 0 {
+			color.BitDepth = bitDepth
+		} else if color.BitDepth != bitDepth {
+			return Config{}, ErrInvalidConfig
+		}
+	}
+	if color.MonoChrome {
+		color.SubsamplingX = true
+		color.SubsamplingY = true
+	}
+	if err := validateSequenceColorConfig(config.Profile, color); err != nil {
+		return Config{}, err
+	}
+	config.BitDepth = color.BitDepth
+	config.ColorConfig = color
+	config.ColorConfigSet = true
+	return config, nil
+}
+
+func defaultSequenceColorConfig(profile Profile, bitDepth uint8) SequenceColorConfig {
+	return SequenceColorConfig{
+		BitDepth:     bitDepth,
+		ColorRange:   false,
+		SubsamplingX: profile != Profile1,
+		SubsamplingY: profile == Profile0,
+	}
 }
 
 func LimitedSpatialLayers(resolution Resolution) uint8 {

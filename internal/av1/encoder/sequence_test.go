@@ -344,6 +344,94 @@ func TestSequenceHeaderForConfigRequestedLayers(t *testing.T) {
 	}
 }
 
+func TestSequenceHeaderForConfigExplicitColorConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want SequenceColorConfig
+	}{
+		{
+			name: "profile2-420-12bit",
+			cfg: Config{
+				Resolution:     Resolution{Width: 640, Height: 360},
+				Profile:        Profile2,
+				BitDepth:       12,
+				ColorConfigSet: true,
+				ColorConfig: SequenceColorConfig{
+					BitDepth:             12,
+					SubsamplingX:         true,
+					SubsamplingY:         true,
+					ChromaSamplePosition: 1,
+				},
+			},
+			want: SequenceColorConfig{
+				BitDepth:             12,
+				SubsamplingX:         true,
+				SubsamplingY:         true,
+				ChromaSamplePosition: 1,
+			},
+		},
+		{
+			name: "profile2-444-12bit-color-bitdepth-only",
+			cfg: Config{
+				Resolution:     Resolution{Width: 640, Height: 360},
+				Profile:        Profile2,
+				ColorConfigSet: true,
+				ColorConfig:    SequenceColorConfig{BitDepth: 12},
+			},
+			want: SequenceColorConfig{BitDepth: 12},
+		},
+		{
+			name: "profile0-mono-10bit",
+			cfg: Config{
+				Resolution:     Resolution{Width: 64, Height: 64},
+				Profile:        Profile0,
+				BitDepth:       10,
+				ColorConfigSet: true,
+				ColorConfig: SequenceColorConfig{
+					BitDepth:   10,
+					MonoChrome: true,
+				},
+			},
+			want: SequenceColorConfig{
+				BitDepth:     10,
+				MonoChrome:   true,
+				SubsamplingX: true,
+				SubsamplingY: true,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			seq, err := SequenceHeaderForConfig(tc.cfg)
+			if err != nil {
+				t.Fatalf("SequenceHeaderForConfig: %v", err)
+			}
+			if seq.ColorConfig != tc.want {
+				t.Fatalf("sequence color=%+v want %+v", seq.ColorConfig, tc.want)
+			}
+			var buf [160]byte
+			out, err := AppendSequenceHeaderPayload(buf[:0], seq)
+			if err != nil {
+				t.Fatalf("AppendSequenceHeaderPayload: %v", err)
+			}
+			parsed, err := parser.ParseSequenceHeader(out)
+			if err != nil {
+				t.Fatalf("ParseSequenceHeader: %v", err)
+			}
+			got := parsed.ColorConfig
+			if got.BitDepth != tc.want.BitDepth ||
+				got.MonoChrome != tc.want.MonoChrome ||
+				got.SubsamplingX != tc.want.SubsamplingX ||
+				got.SubsamplingY != tc.want.SubsamplingY ||
+				got.ChromaSamplePosition != tc.want.ChromaSamplePosition {
+				t.Fatalf("parsed color=%+v want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSequenceHeaderForConfigRejectsInvalidSequenceCombination(t *testing.T) {
 	_, err := SequenceHeaderForConfig(Config{
 		Resolution: Resolution{Width: 640, Height: 360},

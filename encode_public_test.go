@@ -730,6 +730,28 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 			want: goav1.ErrEncoderUnsupported,
 		},
 		{
+			name: "explicit-monochrome-color-config",
+			edit: func(cfg *goav1.EncoderConfig) {
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+					BitDepth:   8,
+					MonoChrome: true,
+				}
+			},
+			want: goav1.ErrEncoderUnsupported,
+		},
+		{
+			name: "ambiguous-color-config-without-enable",
+			edit: func(cfg *goav1.EncoderConfig) {
+				cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+					BitDepth:     8,
+					SubsamplingX: true,
+					SubsamplingY: true,
+				}
+			},
+			want: goav1.ErrEncoderInvalidConfig,
+		},
+		{
 			name: "cqp-quantizer-zero",
 			edit: func(cfg *goav1.EncoderConfig) {
 				cfg.RateControl = goav1.EncoderRateControlCQP

@@ -303,7 +303,8 @@ ship under `internal/av1/testdata/libaom/`.
   descriptors. The lower-level WebRTC encoder surface validates the
   W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures,
   dependency-descriptor decode-target grids, W3C key-shift temporal schedules,
-  pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates, AV1/90000 SDP
+  pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates, explicit sequence
+  color config through `ColorConfigSet`/`ColorConfig`, AV1/90000 SDP
   rtpmap/fmtp negotiation parameters, SDP rtcp-fb emission/checks, RTP
   header-extension mapping checks, raw RTP
   MID/RID/RRID SDES payload helpers, AV1 RID receiver restrictions, AV1
@@ -313,7 +314,8 @@ ship under `internal/av1/testdata/libaom/`.
   parsing, serialization, and layer-grid
   validation for caller-supplied frame payloads, and
   sequence-matched `Frame` validation/loading for
-  profile-0/1/2 8/10/12-bit 4:2:0, 4:2:2, and 4:4:4 buffers. High-bit-depth
+  profile-0/1/2 8/10/12-bit 4:0:0, 4:2:0, 4:2:2, and 4:4:4 buffers,
+  including profile-2 12-bit 4:2:0 and 4:4:4 control paths. High-bit-depth
   input, true non-4:2:0 bitstream encoding in the friendly pixel encoder, and
   broader oracle coverage remain open.
 - **SIMD / assembly backends.** Selected hot DSP paths have amd64/arm64 SIMD or

@@ -11,7 +11,8 @@
 // surface validates W3C SVC mode metadata, temporal/spatial dependency
 // structures, key-shift scheduling, and RTP dependency descriptors for
 // caller-supplied frame payloads, plus sequence-matched Frame loading for
-// profile-0/1/2 sample formats. High-bit-depth input, true non-4:2:0 bitstream
+// profile-0/1/2 sample formats, including explicit sequence color config.
+// High-bit-depth input, true non-4:2:0 bitstream
 // encoding in the friendly pixel encoder, and broader oracle coverage remain
 // open and should be ported from pinned libaom/libwebrtc behavior with
 // speed-sensitive architecture checked against pinned SVT-AV1.

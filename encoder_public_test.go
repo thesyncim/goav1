@@ -2795,6 +2795,228 @@ func TestPublicWebRTCEncoderPictureSamplePlanesNonI420Formats(t *testing.T) {
 	}
 }
 
+func TestPublicWebRTCEncoderExplicitColorConfigSamplePlanes(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  av1.EncoderConfig
+		want av1.EncoderSequenceColorConfig
+	}{
+		{
+			name: "profile2-420-12bit-svc",
+			cfg: av1.EncoderConfig{
+				Resolution:     av1.EncoderResolution{Width: 640, Height: 360},
+				Profile:        av1.EncoderProfile2,
+				BitDepth:       12,
+				Scalability:    av1.EncoderScalabilityModeL2T1,
+				MaxFramerate:   av1.EncoderRational{Num: 30, Den: 1},
+				ColorConfigSet: true,
+				ColorConfig: av1.EncoderSequenceColorConfig{
+					BitDepth:             12,
+					SubsamplingX:         true,
+					SubsamplingY:         true,
+					ChromaSamplePosition: 1,
+				},
+			},
+			want: av1.EncoderSequenceColorConfig{
+				BitDepth:             12,
+				SubsamplingX:         true,
+				SubsamplingY:         true,
+				ChromaSamplePosition: 1,
+			},
+		},
+		{
+			name: "profile2-444-12bit-color-bitdepth-only-svc",
+			cfg: av1.EncoderConfig{
+				Resolution:     av1.EncoderResolution{Width: 640, Height: 360},
+				Profile:        av1.EncoderProfile2,
+				Scalability:    av1.EncoderScalabilityModeL2T1,
+				MaxFramerate:   av1.EncoderRational{Num: 30, Den: 1},
+				ColorConfigSet: true,
+				ColorConfig: av1.EncoderSequenceColorConfig{
+					BitDepth: 12,
+				},
+			},
+			want: av1.EncoderSequenceColorConfig{
+				BitDepth: 12,
+			},
+		},
+		{
+			name: "profile0-mono-10bit",
+			cfg: av1.EncoderConfig{
+				Resolution:     av1.EncoderResolution{Width: 64, Height: 64},
+				Profile:        av1.EncoderProfile0,
+				BitDepth:       10,
+				MaxFramerate:   av1.EncoderRational{Num: 30, Den: 1},
+				ColorConfigSet: true,
+				ColorConfig: av1.EncoderSequenceColorConfig{
+					BitDepth:   10,
+					MonoChrome: true,
+				},
+			},
+			want: av1.EncoderSequenceColorConfig{
+				BitDepth:     10,
+				MonoChrome:   true,
+				SubsamplingX: true,
+				SubsamplingY: true,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			enc, err := av1.NewWebRTCEncoder(tc.cfg, av1.EncoderWebRTCState{NextFrameID: 400})
+			if err != nil {
+				t.Fatalf("NewWebRTCEncoder: %v", err)
+			}
+			normalized := enc.Config()
+			if !normalized.ColorConfigSet || normalized.ColorConfig != tc.want || normalized.BitDepth != tc.want.BitDepth {
+				t.Fatalf("normalized color config=%+v set=%v bitdepth=%d want %+v", normalized.ColorConfig, normalized.ColorConfigSet, normalized.BitDepth, tc.want)
+			}
+			seq, err := av1.EncoderSequenceHeaderForConfig(normalized)
+			if err != nil {
+				t.Fatalf("EncoderSequenceHeaderForConfig: %v", err)
+			}
+			if seq.ColorConfig != tc.want {
+				t.Fatalf("sequence color config=%+v want %+v", seq.ColorConfig, tc.want)
+			}
+
+			frameNum := int(normalized.SpatialLayerCount)
+			frames := make([]av1.Frame, frameNum)
+			backing := make([][]byte, frameNum)
+			for i := 0; i < frameNum; i++ {
+				layer := normalized.SpatialLayers[i]
+				format := av1.FrameFormat{
+					Width:        int(layer.Resolution.Width),
+					Height:       int(layer.Resolution.Height),
+					BitDepth:     seq.ColorConfig.BitDepth,
+					MonoChrome:   seq.ColorConfig.MonoChrome,
+					SubsamplingX: seq.ColorConfig.SubsamplingX,
+					SubsamplingY: seq.ColorConfig.SubsamplingY,
+					Align:        64,
+				}
+				layout, err := av1.FrameRequiredSize(format)
+				if err != nil {
+					t.Fatalf("FrameRequiredSize layer %d: %v", i, err)
+				}
+				backing[i] = make([]byte, layout.Size)
+				frames[i], err = av1.BindFrame(backing[i], format)
+				if err != nil {
+					t.Fatalf("BindFrame layer %d: %v", i, err)
+				}
+				publicSetFramePlaneSample(frames[i].Y, layout.BytesPerSample, 3, 2, uint16(0x120+uint16(i)))
+				if !format.MonoChrome {
+					publicSetFramePlaneSample(frames[i].U, layout.BytesPerSample, 1, 1, uint16(0x230+uint16(i)))
+					publicSetFramePlaneSample(frames[i].V, layout.BytesPerSample, 1, 1, uint16(0x340+uint16(i)))
+				}
+			}
+
+			size, unit, err := enc.PictureSampleScratchSize(frames, false)
+			if err != nil {
+				t.Fatalf("PictureSampleScratchSize: %v", err)
+			}
+			if !unit.Key || size.FrameNum != frameNum || int(unit.KeyUnit.FrameNum) != frameNum {
+				t.Fatalf("scratch size=%+v unit=%+v frameNum=%d", size, unit, frameNum)
+			}
+			planes, gotUnit, err := enc.LoadPictureSamplePlanes(
+				av1.EncoderWebRTCPictureSampleScratch{Samples: make([]uint16, size.Samples)},
+				frames,
+				false,
+			)
+			if err != nil {
+				t.Fatalf("LoadPictureSamplePlanes: %v", err)
+			}
+			if gotUnit != unit || int(planes.FrameNum) != frameNum {
+				t.Fatalf("planes frameNum=%d unit=%+v want=%+v", planes.FrameNum, gotUnit, unit)
+			}
+			for i := 0; i < frameNum; i++ {
+				yWant := uint16(0x120 + uint16(i))
+				if got := planes.Frames[i].Y.Pix[2*planes.Frames[i].Y.Stride+3]; got != yWant {
+					t.Fatalf("layer %d Y sample=%#x want %#x", i, got, yWant)
+				}
+				if tc.want.MonoChrome {
+					if len(planes.Frames[i].U.Pix) != 0 || len(planes.Frames[i].V.Pix) != 0 {
+						t.Fatalf("layer %d monochrome chroma planes not empty: U=%+v V=%+v", i, planes.Frames[i].U, planes.Frames[i].V)
+					}
+					continue
+				}
+				uWant := uint16(0x230 + uint16(i))
+				vWant := uint16(0x340 + uint16(i))
+				if got := planes.Frames[i].U.Pix[planes.Frames[i].U.Stride+1]; got != uWant {
+					t.Fatalf("layer %d U sample=%#x want %#x", i, got, uWant)
+				}
+				if got := planes.Frames[i].V.Pix[planes.Frames[i].V.Stride+1]; got != vWant {
+					t.Fatalf("layer %d V sample=%#x want %#x", i, got, vWant)
+				}
+			}
+		})
+	}
+}
+
+func TestPublicWebRTCEncoderSetConfigColorConfigTransition(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:     av1.EncoderResolution{Width: 640, Height: 360},
+		Profile:        av1.EncoderProfile2,
+		BitDepth:       12,
+		Scalability:    av1.EncoderScalabilityModeL2T1,
+		MaxFramerate:   av1.EncoderRational{Num: 30, Den: 1},
+		ColorConfigSet: true,
+		ColorConfig: av1.EncoderSequenceColorConfig{
+			BitDepth:             12,
+			SubsamplingX:         true,
+			SubsamplingY:         true,
+			ChromaSamplePosition: 1,
+		},
+	}
+	enc, err := av1.NewWebRTCEncoder(cfg, av1.EncoderWebRTCState{NextFrameID: 500})
+	if err != nil {
+		t.Fatalf("NewWebRTCEncoder: %v", err)
+	}
+	if unit, err := enc.NextTemporalUnit(false); err != nil || !unit.Key {
+		t.Fatalf("initial key unit=%+v err=%v", unit, err)
+	}
+	if unit, err := enc.NextTemporalUnit(false); err != nil || !unit.Delta {
+		t.Fatalf("warm delta unit=%+v err=%v", unit, err)
+	}
+	before := enc.State()
+	if before.DeltaPictureIndex == 0 || !before.DependencyStructureState.Valid {
+		t.Fatalf("warm state=%+v", before)
+	}
+
+	changed := enc.Config()
+	changed.ColorConfig = av1.EncoderSequenceColorConfig{BitDepth: 12}
+	if err := enc.SetConfig(changed); err != nil {
+		t.Fatalf("SetConfig color change: %v", err)
+	}
+	afterSet := enc.State()
+	if afterSet.NextFrameID != before.NextFrameID ||
+		afterSet.NextOrderHint != before.NextOrderHint ||
+		afterSet.DeltaPictureIndex != 0 ||
+		afterSet.DependencyStructureState.Valid {
+		t.Fatalf("color change state=%+v before=%+v", afterSet, before)
+	}
+	if enc.Config().ColorConfig != changed.ColorConfig {
+		t.Fatalf("config color=%+v want %+v", enc.Config().ColorConfig, changed.ColorConfig)
+	}
+	unit, err := enc.NextTemporalUnit(false)
+	if err != nil {
+		t.Fatalf("NextTemporalUnit after color change: %v", err)
+	}
+	if !unit.Key || unit.KeyUnit.FrameNum != 2 || enc.State().NextFrameID != before.NextFrameID+2 {
+		t.Fatalf("post-color-change unit=%+v state=%+v before=%+v", unit, enc.State(), before)
+	}
+
+	keepConfig := enc.Config()
+	keepState := enc.State()
+	bad := keepConfig
+	bad.ColorConfig.BitDepth = 10
+	if err := enc.SetConfig(bad); !errors.Is(err, av1.ErrEncoderInvalidConfig) {
+		t.Fatalf("SetConfig mismatched color bitdepth err=%v want %v", err, av1.ErrEncoderInvalidConfig)
+	}
+	if enc.Config() != keepConfig || enc.State() != keepState {
+		t.Fatalf("bad color config mutated config/state config=%+v want=%+v state=%+v want=%+v", enc.Config(), keepConfig, enc.State(), keepState)
+	}
+}
+
 func publicWebRTCEncoderFrameForConfig(t *testing.T, cfg av1.EncoderConfig) (av1.Frame, []byte) {
 	t.Helper()
 	seq, err := av1.EncoderSequenceHeaderForConfig(cfg)
