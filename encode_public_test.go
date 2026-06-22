@@ -1652,6 +1652,8 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", initial, err)
 			}
 			var receiver goav1.RTPDependencyDescriptorState
+			var activeReceiver goav1.RTPDependencyDescriptorState
+			activeLimits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}
 			nextFrameID := uint64(0)
 			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
@@ -1662,6 +1664,7 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			}
 			appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, key)
 			assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), key, true, &nextFrameID)
+			assertPublicRTCPictureActiveDecodeTargetOptions(t, &activeReceiver, enc.Config(), key, activeLimits)
 
 			controlChange := enc.Config()
 			controlChange.MaxFramerate = goav1.EncoderRational{Num: 60, Den: 1}
@@ -1669,13 +1672,14 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			if err := enc.SetConfig(controlChange); err != nil {
 				t.Fatalf("SetConfig control change: %v", err)
 			}
-			assertPublicRTCConfigBitrates(t, enc.Config(), controlChange)
+			assertPublicRTCConfigControls(t, enc.Config(), controlChange)
 			controlDelta, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 1), false)
 			if err != nil {
 				t.Fatalf("control delta EncodePicture: %v", err)
 			}
 			appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, controlDelta)
 			assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), controlDelta, false, &nextFrameID)
+			assertPublicRTCPictureActiveDecodeTargetOptions(t, &activeReceiver, enc.Config(), controlDelta, activeLimits)
 			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
 
 			structureChange := enc.Config()
@@ -1684,7 +1688,7 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			if err := enc.SetConfig(structureChange); err != nil {
 				t.Fatalf("SetConfig structure change: %v", err)
 			}
-			assertPublicRTCConfigBitrates(t, enc.Config(), structureChange)
+			assertPublicRTCConfigControls(t, enc.Config(), structureChange)
 			var reconfigLayerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
 			var reconfigOrderedTUs [][]byte
 			structureKey, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 2), false)
@@ -1693,6 +1697,7 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			}
 			appendPublicRTCPictureLayerData(t, &reconfigLayerTUs, &reconfigOrderedTUs, structureKey)
 			assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), structureKey, true, &nextFrameID)
+			assertPublicRTCPictureActiveDecodeTargetOptions(t, &activeReceiver, enc.Config(), structureKey, activeLimits)
 
 			postReconfigDelta, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 3), false)
 			if err != nil {
@@ -1700,6 +1705,7 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			}
 			appendPublicRTCPictureLayerData(t, &reconfigLayerTUs, &reconfigOrderedTUs, postReconfigDelta)
 			assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), postReconfigDelta, false, &nextFrameID)
+			assertPublicRTCPictureActiveDecodeTargetOptions(t, &activeReceiver, enc.Config(), postReconfigDelta, activeLimits)
 			assertPublicRTCLayerStreamsDecode(t, enc.Config(), reconfigLayerTUs, reconfigOrderedTUs)
 		})
 	}
