@@ -139,10 +139,10 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         | internal/av1/motion/warp_filter.go | alpha/beta/gamma/delta derivation.            |
 |    |                                  |         | internal/av1/tile/warped_motion.go | Frame-level warp params parsed.               |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
-| 14 | Motion field MV projection       | Partial | internal/av1/tile/motion_field.go | Projection storage and Setup() implemented   |
-|    |                                  |         | internal/av1/threading/ref_mv_frame.go | end-to-end output diverges at first      |
-|    |                                  |         | internal/av1/decoder/motion_field.go | non-key frame on av1-1-b8-06-mfmv.ivf;    |
-|    |                                  |         |                                  | see vector table row 6.                        |
+| 14 | Motion field MV projection       | Yes     | internal/av1/tile/motion_field.go | Projection storage, setup ordering, reference |
+|    |                                  |         | internal/av1/threading/ref_mv_frame.go | binding, and decoder integration pass    |
+|    |                                  |         | internal/av1/decoder/motion_field.go | av1-1-b8-06-mfmv.ivf strict per-frame MD5 |
+|    |                                  |         |                                  | with MFMV refs/projection exercised.           |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 15 | OBMC                             | Yes     | internal/av1/tile/motion_mode.go | OBMC neighbor scan + overlap blending;         |
 |    |                                  |         | internal/av1/threading/predict.go | per-block mask tables 1/2/4/8/16 wired.       |
