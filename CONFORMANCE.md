@@ -301,9 +301,10 @@ ship under `internal/av1/testdata/libaom/`.
   lower-level WebRTC encoder surface validates the
   W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures,
   dependency-descriptor decode-target grids, W3C key-shift temporal schedules,
-  and the pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates for
-  caller-supplied frame payloads. High-bit-depth input encoding, non-4:2:0 input
-  encoding, and broader oracle coverage remain open.
+  pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates, AV1/90000 SDP/fmtp
+  negotiation parameters, and AV1 RTCP LRR layer-grid validation for
+  caller-supplied frame payloads. High-bit-depth input encoding, non-4:2:0
+  input encoding, and broader oracle coverage remain open.
 - **SIMD / assembly backends.** Selected hot DSP paths have amd64/arm64 SIMD or
   assembly dispatch; coverage is still expanding behind pure-Go fallbacks.
 - **Work-stealing scheduler.** `threading.Pool` does deterministic

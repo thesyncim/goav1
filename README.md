@@ -309,9 +309,8 @@ Current goal order:
   corpora, broader profile-2 and 12-bit edge combinations, switch-frame and
   tile-list end-to-end coverage, malformed stream hardening, and fuzzing.
 - Expand the realtime encoder beyond the current 8-bit I420 path:
-  inter-layer predictive SVC coding, high-bit-depth and non-4:2:0 inputs,
-  richer WebRTC tuning controls, and broader libaom/libwebrtc/SVT oracle
-  coverage before wider production claims.
+  high-bit-depth and non-4:2:0 inputs, richer WebRTC tuning controls, and
+  broader libaom/libwebrtc/SVT oracle coverage before wider production claims.
 - Preserve upstream C integer widths, signedness, overflow, shift behavior, and
   layout in all new code and touched parity paths. Do not churn untouched legacy
   code solely for type-width cleanup.
