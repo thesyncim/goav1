@@ -5,11 +5,74 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strings"
 	"testing"
 
 	goav1 "github.com/thesyncim/goav1"
 	"github.com/thesyncim/goav1/internal/av1/obu"
 )
+
+func TestPublicEncoderWebRTCScalabilityModeCatalogue(t *testing.T) {
+	want := []string{
+		"L1T1", "L1T2", "L1T3",
+		"L2T1", "L2T1h", "L2T1_KEY",
+		"L2T2", "L2T2h", "L2T2_KEY", "L2T2_KEY_SHIFT",
+		"L2T3", "L2T3h", "L2T3_KEY", "L2T3_KEY_SHIFT",
+		"L3T1", "L3T1h", "L3T1_KEY",
+		"L3T2", "L3T2h", "L3T2_KEY", "L3T2_KEY_SHIFT",
+		"L3T3", "L3T3h", "L3T3_KEY", "L3T3_KEY_SHIFT",
+		"S2T1", "S2T1h", "S2T2", "S2T2h", "S2T3", "S2T3h",
+		"S3T1", "S3T1h", "S3T2", "S3T2h", "S3T3", "S3T3h",
+	}
+	modes := goav1.EncoderWebRTCScalabilityModes()
+	if len(modes) != len(want) {
+		t.Fatalf("EncoderWebRTCScalabilityModes len=%d want %d", len(modes), len(want))
+	}
+	prefixed := goav1.AppendEncoderWebRTCScalabilityModes([]goav1.EncoderScalabilityMode{goav1.EncoderScalabilityModeL3T3})
+	if len(prefixed) != len(want)+1 || prefixed[0] != goav1.EncoderScalabilityModeL3T3 {
+		t.Fatalf("AppendEncoderWebRTCScalabilityModes prefix len=%d first=%s", len(prefixed), prefixed[0])
+	}
+	for i, name := range want {
+		mode := modes[i]
+		if prefixed[i+1] != mode {
+			t.Fatalf("prefixed mode %d=%s want %s", i+1, prefixed[i+1], mode)
+		}
+		parsed, ok := goav1.ParseEncoderScalabilityMode(name)
+		if !ok || parsed != mode {
+			t.Fatalf("ParseEncoderScalabilityMode(%q)=%s,%v want %s,true", name, parsed, ok, mode)
+		}
+		if got := mode.String(); got != name {
+			t.Fatalf("mode %d String()=%q want %q", i, got, name)
+		}
+		tIndex := strings.IndexByte(name, 'T')
+		if len(name) < 4 || tIndex < 2 || tIndex+1 >= len(name) {
+			t.Fatalf("bad expected scalability name %q", name)
+		}
+		wantSpatial := uint8(name[1] - '0')
+		wantTemporal := uint8(name[tIndex+1] - '0')
+		spatial, temporal, key, ok := mode.Layers()
+		if !ok || spatial != wantSpatial || temporal != wantTemporal ||
+			key != strings.Contains(name, "_KEY") {
+			t.Fatalf("%q Layers()=%d,%d,%v,%v want %d,%d,%v,true",
+				name, spatial, temporal, key, ok,
+				wantSpatial, wantTemporal, strings.Contains(name, "_KEY"))
+		}
+		if mode.IsSimulcast() != strings.HasPrefix(name, "S") ||
+			mode.UsesSmallResolutionStep() != strings.Contains(name, "h") ||
+			mode.UsesKeyFrameInterLayerDependency() != strings.Contains(name, "_KEY") ||
+			mode.UsesKeyFrameInterLayerDependencyShift() != strings.Contains(name, "_KEY_SHIFT") {
+			t.Fatalf("%q flags simulcast=%v small=%v key=%v shift=%v",
+				name,
+				mode.IsSimulcast(),
+				mode.UsesSmallResolutionStep(),
+				mode.UsesKeyFrameInterLayerDependency(),
+				mode.UsesKeyFrameInterLayerDependencyShift())
+		}
+	}
+	if _, ok := goav1.ParseEncoderScalabilityMode("L4T4"); ok {
+		t.Fatal("ParseEncoderScalabilityMode accepted invalid L4T4")
+	}
+}
 
 // TestPublicVideoEncoderRoundTrip drives the public encoding surface end to
 // end: CBR with two temporal layers, a mid-stream forced keyframe, and decode
