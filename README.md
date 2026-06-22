@@ -158,7 +158,7 @@ result buffer directly. The executable examples in `example_test.go` and
 | WebRTC RTP decode | `NewDecoderFromRTPPayloads` covers ordered/live RTP payload bodies for single decode chains and simulcast layers; `NewLayeredDecoderFromRTPPayloads` covers shared-reference SVC RTP streams; `DecodeRTPPayloadAfterLoss` resets retained fragments after packet gaps |
 | SVC | L1T2/L2T1/L2T2 oracle vectors pass through the framework path; public integration guidance lives in [docs/svc.md](docs/svc.md) |
 | Tile groups | Single and multi-tile groups pass current strict-MD5 gates; tile-list OBUs parse but playback/reconstruction is not wired yet |
-| Encoder | Functional realtime 8-bit I420 WebRTC encoder with fixed-quality/CBR, forced keyframes, temporal layering, runtime bitrate/framerate/rate-control/scalability reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, tile columns, golden references, RTP payload packetization, dependency descriptors, active decode target signaling, and LRR layer-grid validation; lower-level WebRTC controls cover the W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT templates, and `Frame` validation/loading for profile-0/1/2 sample formats |
+| Encoder | Functional realtime 8-bit 4:2:0 WebRTC encoder with I420/NV12 input, fixed-quality/CBR, forced keyframes, temporal layering, runtime bitrate/framerate/rate-control/scalability reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, tile columns, golden references, RTP payload packetization, dependency descriptors, active decode target signaling, and LRR layer-grid validation; lower-level WebRTC controls cover the W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT templates, and `Frame` validation/loading for profile-0/1/2 sample formats |
 | SIMD/assembly | CPU-dispatch skeleton plus initial amd64/arm64 motion kernels; broader transform/CDEF/restoration kernels are still roadmap work |
 
 The full feature matrix, status legend, vector coverage, and forward-looking
@@ -175,10 +175,11 @@ be an offline encoder, a full authoring tool, or a general replacement for
 There are two public encoder surfaces:
 
 - `VideoEncoder` / `RTCEncoder` is the friendly realtime pixel encoder. It
-  accepts 8-bit I420 input. `RTCEncoder.Encode` emits one single-spatial-layer
-  AV1 temporal unit per call; `RTCEncoder.EncodePicture` emits one
-  RTP-frame-ready output per active spatial layer for WebRTC SVC and simulcast
-  modes, including key and key-shift schedules. `RTCEncoder.SetConfig` applies
+  accepts 8-bit I420 and NV12 input. `RTCEncoder.Encode` emits one
+  single-spatial-layer AV1 temporal unit per call; `RTCEncoder.EncodePicture`
+  emits one RTP-frame-ready output per active spatial layer for WebRTC SVC and
+  simulcast modes, including key and key-shift schedules.
+  `RTCEncoder.SetConfig` applies
   bitrate, framerate, CBR/CQP rate-control, fixed quantizer, and supported
   scalability changes atomically; changes that alter layer geometry or
   dependency structure make the next picture a key picture.
@@ -321,7 +322,7 @@ Current goal order:
 - Keep quality expanding beyond the committed green vectors: real-world
   corpora, broader profile-2 and 12-bit edge combinations, switch-frame and
   tile-list end-to-end coverage, malformed stream hardening, and fuzzing.
-- Expand the realtime encoder beyond the current 8-bit I420 path:
+- Expand the realtime encoder beyond the current 8-bit 4:2:0 path:
   high-bit-depth and non-4:2:0 inputs, richer WebRTC tuning controls, and
   broader libaom/libwebrtc/SVT oracle coverage before wider production claims.
 - Preserve upstream C integer widths, signedness, overflow, shift behavior, and

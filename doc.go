@@ -20,10 +20,10 @@
 // jobs and worker batches, decoder block coefficient reconstruction,
 // coefficient replay reconstruction adapters, one-block coefficient
 // decode/reconstruct helpers, decoder postfilter scratch binding, superres
-// upscaling, film-grain output helpers, a realtime 8-bit I420 AV1 encoder for
-// WebRTC streams, RTCEncoder config preflight normalization, RTP payload
-// packetization with dependency descriptors, multi-spatial EncodePicture output
-// for WebRTC SVC and simulcast modes, and runtime
+// upscaling, film-grain output helpers, a realtime 8-bit 4:2:0 AV1 encoder for
+// WebRTC streams with I420/NV12 input, RTCEncoder config preflight
+// normalization, RTP payload packetization with dependency descriptors,
+// multi-spatial EncodePicture output for WebRTC SVC and simulcast modes, and runtime
 // bitrate/framerate/scalability reconfiguration. Lower-level WebRTC encoder
 // helpers expose W3C SVC mode metadata, temporal/spatial dependency
 // structures, decode-target grids, active decode-target masks, key-shift

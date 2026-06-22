@@ -200,6 +200,112 @@ func TestPublicRTCEncoder(t *testing.T) {
 	}
 }
 
+func TestPublicVideoEncoderNV12MatchesI420(t *testing.T) {
+	const w, h = 192, 128
+	cfg := goav1.VideoEncoderConfig{
+		Width: w, Height: h,
+		QIndex:         80,
+		TemporalLayers: 2,
+	}
+	i420Enc, err := goav1.NewVideoEncoder(cfg)
+	if err != nil {
+		t.Fatalf("NewVideoEncoder I420: %v", err)
+	}
+	defer i420Enc.Close()
+	nv12Enc, err := goav1.NewVideoEncoder(cfg)
+	if err != nil {
+		t.Fatalf("NewVideoEncoder NV12: %v", err)
+	}
+	defer nv12Enc.Close()
+
+	for frame := 0; frame < 3; frame++ {
+		i420 := publicRTCMatrixFrame(w, h, frame)
+		want, err := i420Enc.Encode(i420, false)
+		if err != nil {
+			t.Fatalf("I420 Encode(%d): %v", frame, err)
+		}
+		got, err := nv12Enc.EncodeNV12(publicNV12FromI420(i420), false)
+		if err != nil {
+			t.Fatalf("NV12 Encode(%d): %v", frame, err)
+		}
+		if got.Keyframe != want.Keyframe || got.TemporalID != want.TemporalID || !bytes.Equal(got.Data, want.Data) {
+			t.Fatalf("NV12 frame %d differs: got key=%v T%d %dB want key=%v T%d %dB", frame, got.Keyframe, got.TemporalID, len(got.Data), want.Keyframe, want.TemporalID, len(want.Data))
+		}
+	}
+}
+
+func TestPublicRTCEncoderNV12EncodeAndPictureDecode(t *testing.T) {
+	t.Run("single-spatial", func(t *testing.T) {
+		const w, h = 192, 128
+		enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+			Width: w, Height: h,
+			TargetBitrate: 250_000, Framerate: 30,
+			TemporalLayers: 2,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer enc.Close()
+		var tus [][]byte
+		for frame := 0; frame < 3; frame++ {
+			out, err := enc.EncodeNV12(publicNV12FromI420(publicRTCMatrixFrame(w, h, frame)), false)
+			if err != nil {
+				t.Fatalf("EncodeNV12(%d): %v", frame, err)
+			}
+			if frame == 0 && (!out.Keyframe || len(out.DependencyDescriptor) == 0) {
+				t.Fatalf("first NV12 RTC frame=%+v", out)
+			}
+			tus = append(tus, append([]byte(nil), out.Data...))
+		}
+		dec, err := goav1.NewDecoder(tus)
+		if err != nil {
+			t.Fatalf("NewDecoder: %v", err)
+		}
+		defer dec.Close()
+		decoded := 0
+		for {
+			batch, ok, err := dec.DecodeNext()
+			if err != nil {
+				t.Fatalf("DecodeNext: %v", err)
+			}
+			if !ok {
+				break
+			}
+			decoded += len(batch)
+		}
+		if decoded != len(tus) {
+			t.Fatalf("decoded %d frames want %d", decoded, len(tus))
+		}
+	})
+
+	t.Run("multi-spatial-rtp", func(t *testing.T) {
+		const w, h = 640, 360
+		cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeS2T2)
+		cfg.RateControl = goav1.EncoderRateControlCQP
+		cfg.Quantizer = 34
+		enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+		if err != nil {
+			t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+		}
+		defer enc.Close()
+
+		var descriptorReceiver goav1.RTPDependencyDescriptorState
+		var rtpReceiver goav1.RTPDependencyDescriptorState
+		nextFrameID := uint64(0)
+		var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+		var orderedTUs [][]byte
+		for frame := 0; frame < 2; frame++ {
+			picture, err := enc.EncodeNV12Picture(publicNV12FromI420(publicRTCMatrixFrame(w, h, frame)), false)
+			if err != nil {
+				t.Fatalf("EncodeNV12Picture(%d): %v", frame, err)
+			}
+			appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
+			assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), picture, frame == 0, &nextFrameID)
+		}
+		assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+	})
+}
+
 func TestPublicEncoderRuntimeOptions(t *testing.T) {
 	const w, h = 192, 128
 	t.Run("VideoEncoder", func(t *testing.T) {
@@ -1641,6 +1747,28 @@ func publicRTCMatrixFrame(width, height int, n int) goav1.I420Frame {
 	return f
 }
 
+func publicNV12FromI420(src goav1.I420Frame) goav1.NV12Frame {
+	uv := make([]byte, src.Width*src.Height/2)
+	cw, ch := src.Width/2, src.Height/2
+	for y := 0; y < ch; y++ {
+		dstRow := uv[y*src.Width : y*src.Width+src.Width]
+		uRow := src.U[y*src.ChromaStride : y*src.ChromaStride+cw]
+		vRow := src.V[y*src.ChromaStride : y*src.ChromaStride+cw]
+		for x := 0; x < cw; x++ {
+			dstRow[x*2] = uRow[x]
+			dstRow[x*2+1] = vRow[x]
+		}
+	}
+	return goav1.NV12Frame{
+		Y:        src.Y,
+		UV:       uv,
+		YStride:  src.YStride,
+		UVStride: src.Width,
+		Width:    src.Width,
+		Height:   src.Height,
+	}
+}
+
 func assertPublicRTCPictureDescriptors(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, cfg goav1.EncoderConfig, picture goav1.RTCPicture, wantKey bool, nextFrameID *uint64) {
 	t.Helper()
 	normalized, err := goav1.SetWebRTCEncoderSVCConfig(cfg, cfg.TemporalLayerCount, cfg.SpatialLayerCount)
@@ -2860,6 +2988,9 @@ func TestPublicEncoderZeroValueGuards(t *testing.T) {
 	if _, err := video.Encode(goav1.I420Frame{}, false); err == nil {
 		t.Fatal("zero VideoEncoder Encode returned nil error")
 	}
+	if _, err := video.EncodeNV12(goav1.NV12Frame{}, false); err == nil {
+		t.Fatal("zero VideoEncoder EncodeNV12 returned nil error")
+	}
 	video.SetDecisionStatsEnabled(true)
 	video.ResetDecisionStats()
 	if got := video.DecisionStats(); got != (goav1.EncoderDecisionStats{}) {
@@ -2875,6 +3006,12 @@ func TestPublicEncoderZeroValueGuards(t *testing.T) {
 	var rtc goav1.RTCEncoder
 	if _, err := rtc.Encode(goav1.I420Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder Encode returned nil error")
+	}
+	if _, err := rtc.EncodeNV12(goav1.NV12Frame{}, false); err == nil {
+		t.Fatal("zero RTCEncoder EncodeNV12 returned nil error")
+	}
+	if _, err := rtc.EncodeNV12Picture(goav1.NV12Frame{}, false); err == nil {
+		t.Fatal("zero RTCEncoder EncodeNV12Picture returned nil error")
 	}
 }
 
@@ -2914,5 +3051,43 @@ func TestPublicEncoderRejectsInvalidI420Frames(t *testing.T) {
 	invalid.U = invalid.U[:len(invalid.U)-1]
 	if _, err := rtc.Encode(invalid, false); err == nil {
 		t.Fatal("RTCEncoder accepted a short U plane")
+	}
+}
+
+func TestPublicEncoderRejectsInvalidNV12Frames(t *testing.T) {
+	const w, h = 64, 64
+	valid := publicNV12FromI420(publicRTCMatrixFrame(w, h, 0))
+	invalid := valid
+	invalid.Y = invalid.Y[:len(invalid.Y)-1]
+	video, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+		Width: w, Height: h, QIndex: 80,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer video.Close()
+	if _, err := video.EncodeNV12(invalid, false); err == nil {
+		t.Fatal("VideoEncoder accepted a short NV12 Y plane")
+	}
+	invalid = valid
+	invalid.UVStride = w - 1
+	if _, err := video.EncodeNV12(invalid, false); err == nil {
+		t.Fatal("VideoEncoder accepted an invalid NV12 UV stride")
+	}
+
+	rtc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+		Width: w, Height: h, TargetBitrate: 100_000, Framerate: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rtc.Close()
+	invalid = valid
+	invalid.UV = invalid.UV[:len(invalid.UV)-1]
+	if _, err := rtc.EncodeNV12(invalid, false); err == nil {
+		t.Fatal("RTCEncoder accepted a short NV12 UV plane")
+	}
+	if _, err := rtc.EncodeNV12Picture(invalid, false); err == nil {
+		t.Fatal("RTCEncoder accepted a short NV12 UV plane for picture encode")
 	}
 }
