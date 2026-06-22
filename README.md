@@ -50,6 +50,7 @@ needs:
 | Large/file-backed IVF decode | `NewDecoderFromIVFReaderAt` + `DecodeNext` | Indexes IVF frame offsets and reads each payload into one reusable buffer |
 | Already-demuxed temporal units | `NewDecoder(payloads)` + `DecodeNext` | Retains payload slices by reference and reuses all decode/output arenas |
 | Ordered or live AV1 RTP payload bodies | `NewDecoderFromRTPPayloads(payloads)` + `DecodeNext` / `DecodeRTPPayload` | Retains constructor payload slices by reference; each RTP payload may return zero frames for fragments |
+| Shared-reference SVC RTP payload bodies | `NewLayeredDecoderFromRTPPayloads(payloads)` + `DecodeNext` / `DecodeRTPPayload` | Owns a layer-aware frame pool and shared reference state for multi-spatial WebRTC receive loops |
 | Manual OBU or RTP run loop | `DecoderFrameWorkResidualStreamRunner` `Run*Into` methods | Caller-owned event, tile, frame, post-filter, and output-result scratch |
 | IVF demux only | `NewIVFIterator` | Zero-allocation payload views into the source bytes |
 
@@ -114,7 +115,9 @@ iterators, RTP packetization/depacketization, parser structs, tile work
 scheduling, residual decode/reconstruct helpers, post-filter scratch binding,
 and DSP primitives. For ordered RTP payload bodies, `NewDecoderFromRTPPayloads`
 is the reusable high-level path for single decode chains and independent
-simulcast layers. The same decoder can drive live payloads with
+simulcast layers. `NewLayeredDecoderFromRTPPayloads` is the high-level receive
+path for shared-reference WebRTC SVC streams whose reference slots span spatial
+layers or coded frame sizes. Both decoders can drive live payloads with
 `DecodeRTPPayload` and `DecodeRTPPayloadAfterLoss` when the constructor payloads
 represent the stream shape and maximum retained-fragment/event scratch needed.
 The `RunLowOverheadInto`, `RunLowOverheadsInto`, `RunRTPPayloadInto`,
@@ -132,7 +135,7 @@ result buffer directly. The executable examples in `example_test.go` and
 | Bit depths and formats | 8-bit and 10-bit covered broadly; 12-bit covered by targeted profile-2 clips; 4:2:0, 4:2:2, 4:4:4, and monochrome surfaces |
 | Prediction and residuals | Intra, directional intra, filter intra, CfL, palette, IntraBC, inter/compound, OBMC, warped motion, scaled motion, transforms, dequantization, and CDF adaptation |
 | Post filters | Loop filter, CDEF, super-resolution, loop restoration, and film grain are wired into the high-level decode/output path |
-| WebRTC RTP decode | `NewDecoderFromRTPPayloads` covers ordered/live RTP payload bodies for single decode chains and simulcast layers; `DecodeRTPPayloadAfterLoss` resets retained fragments after packet gaps |
+| WebRTC RTP decode | `NewDecoderFromRTPPayloads` covers ordered/live RTP payload bodies for single decode chains and simulcast layers; `NewLayeredDecoderFromRTPPayloads` covers shared-reference SVC RTP streams; `DecodeRTPPayloadAfterLoss` resets retained fragments after packet gaps |
 | SVC | L1T2/L2T1/L2T2 oracle vectors pass through the framework path; public integration guidance lives in [docs/svc.md](docs/svc.md) |
 | Tile groups | Single and multi-tile groups pass current strict-MD5 gates; tile-list OBUs parse but playback/reconstruction is not wired yet |
 | Encoder | Functional realtime 8-bit I420 WebRTC encoder with fixed-quality/CBR, forced keyframes, temporal layering, runtime bitrate/framerate/scalability reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, tile columns, golden references, RTP payload packetization, dependency descriptors, and active decode target signaling; lower-level WebRTC controls cover the W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, and pinned-libwebrtc L2T2_KEY_SHIFT templates |

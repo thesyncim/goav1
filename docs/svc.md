@@ -397,10 +397,14 @@ spatial layer at a time, `NewDecoderFromRTPPayloads` is the friendly
 ordered-payload entry point. The returned decoder can also drive live
 payloads with `DecodeRTPPayload`; call `DecodeRTPPayloadAfterLoss` after
 the jitter buffer detects a packet gap to clear retained RTP fragments while
-preserving parser sequence/reference state. Full SVC modes with shared
-reference slots still need the framework path with `FrameLayerPool`,
+preserving parser sequence/reference state. For full SVC modes with shared
+reference slots, use `NewLayeredDecoderFromRTPPayloads`; it owns the
+layer-aware frame pool, per-spatial frame-work states, shared reference slots,
+and shared frame contexts needed for references to resolve across
+spatial-layer pools. The lower-level framework path with `FrameLayerPool`,
 `NewDecoderFrameLayerPool`, and `DecoderFrameWorkExternalReferenceRuntime`
-so references resolve across spatial-layer pools.
+remains available when callers need custom arena ownership or event-level
+control.
 
 ---
 
@@ -424,7 +428,7 @@ writing:
 | L1T2 single-pool decode                             | Strict every-frame MD5 pass in `make dryrun-relevant-supported`. |
 | L2T1 / L2T2 multi-pool decode                       | Strict every-frame MD5 pass in `make dryrun-extended`. |
 | WebRTC AV1 SVC control metadata                     | Complete for the W3C mode vocabulary (`L*T*`, `L*T*h`, `L*T*_KEY`, `L*T*_KEY_SHIFT`, `S*T*`, `S*T*h`) with dependency-descriptor decode targets over the full `(spatial, temporal)` grid, W3C key-shift temporal schedules, and pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates. |
-| High-level RTP payload decode                       | `NewDecoderFromRTPPayloads` covers ordered/live AV1 RTP payload bodies for single decode chains and independent simulcast layers, including `DecodeRTPPayloadAfterLoss` retained-fragment reset after packet gaps. |
+| High-level RTP payload decode                       | `NewDecoderFromRTPPayloads` covers ordered/live AV1 RTP payload bodies for single decode chains and independent simulcast layers; `NewLayeredDecoderFromRTPPayloads` covers shared-reference SVC RTP streams; both include `DecodeRTPPayloadAfterLoss` retained-fragment reset after packet gaps. |
 | Strict every-frame parity                           | Passing for the committed SVC vectors; broader SVC corpus expansion remains open. |
 
 The WebRTC control row is metadata/control support for already-produced frame
@@ -512,16 +516,19 @@ or helper that owns that slice of state.
      `RefFrames + N_in_flight` surfaces and drive the public
      stream runner. This is the `cmd/dump_svc` and
      `cmd/aom-go-dec` shape.
-   - **Multi-pool:** if spatial layers have distinct sizes, bind a
-     `FrameLayerPool`, wrap it with `NewDecoderFrameLayerPool`, and
-     drive residual events with `DecoderFrameWorkExternalReferenceRuntime`.
-     The current event's `FramePool` must be the sub-pool matching that
-     event's coded `FrameFormat`; root helpers such as
-     `FrameCodedFormatFromHeaders`, `FrameLayerPool.SubPool`, and
-     `DecoderLayerPoolGlobalSurfaceID` provide the pieces. The dry-run
-     harness (`libaomSpatialLayers` in
-     `internal/av1/testvector/libaom_oracle_test.go`) remains the
-     reference implementation for full mixed-resolution orchestration.
+   - **Multi-pool RTP:** for WebRTC-style shared-reference SVC RTP
+     payloads, use `NewLayeredDecoderFromRTPPayloads` and feed ordered
+     payload bodies with `DecodeNext` or live payload bodies with
+     `DecodeRTPPayload`.
+   - **Custom multi-pool:** if you need event-level control, bind a
+     `FrameLayerPool`, wrap it with `NewDecoderFrameLayerPool`, and drive
+     residual events with `DecoderFrameWorkExternalReferenceRuntime`. The
+     current event's `FramePool` must be the sub-pool matching that event's
+     coded `FrameFormat`; root helpers such as `FrameCodedFormatFromHeaders`,
+     `FrameLayerPool.SubPool`, and `DecoderLayerPoolGlobalSurfaceID` provide
+     the pieces. The dry-run harness (`libaomSpatialLayers` in
+     `internal/av1/testvector/libaom_oracle_test.go`) remains the reference
+     implementation for full mixed-resolution orchestration.
 
 4. **Probe scratch sizes once.** Call
    `DecoderFrameWorkResidualLowOverheadStreamsPlan` (or the
