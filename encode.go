@@ -295,6 +295,54 @@ type RTCPicture struct {
 	Keyframe bool
 }
 
+// AllDecodeTargetsMask returns a dependency-descriptor active decode target
+// mask with every target in p enabled.
+func (p RTCPicture) AllDecodeTargetsMask() (uint32, error) {
+	structure, err := p.dependencyStructure()
+	if err != nil {
+		return 0, err
+	}
+	return encoder.WebRTCAllDecodeTargetsMask(structure)
+}
+
+// ActiveDecodeTargetsMask returns a dependency-descriptor active decode target
+// mask that enables every target at or below the supplied spatial and temporal
+// layer IDs.
+func (p RTCPicture) ActiveDecodeTargetsMask(maxSpatialID uint8, maxTemporalID uint8) (uint32, error) {
+	structure, err := p.dependencyStructure()
+	if err != nil {
+		return 0, err
+	}
+	return encoder.WebRTCActiveDecodeTargetsMask(structure, maxSpatialID, maxTemporalID)
+}
+
+// ActiveDecodeTargetsRTPOptions returns packetization options that write the
+// active decode-target mask for maxSpatialID/maxTemporalID on the first RTP
+// packet of each frame in the picture.
+func (p RTCPicture) ActiveDecodeTargetsRTPOptions(maxSpatialID uint8, maxTemporalID uint8) (EncoderWebRTCRTPPacketDependencyDescriptorOptions, error) {
+	mask, err := p.ActiveDecodeTargetsMask(maxSpatialID, maxTemporalID)
+	if err != nil {
+		return EncoderWebRTCRTPPacketDependencyDescriptorOptions{}, err
+	}
+	return EncoderWebRTCRTPPacketDependencyDescriptorOptions{
+		ActiveDecodeTargetsPresentOnFirstPacket: true,
+		ActiveDecodeTargetsMask:                 mask,
+	}, nil
+}
+
+func (p RTCPicture) dependencyStructure() (encoder.WebRTCFrameDependencyStructure, error) {
+	if p.FrameNum <= 0 || p.FrameNum > EncoderWebRTCMaxSpatialLayers {
+		return encoder.WebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
+	}
+	structure := p.Frames[0].dependencyStructure
+	for i := 1; i < p.FrameNum; i++ {
+		if p.Frames[i].dependencyStructure != structure {
+			return encoder.WebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
+		}
+	}
+	return structure, nil
+}
+
 // RTCFrameRTPScratchSize reports caller-owned scratch needed to packetize one
 // RTCFrame into AV1 RTP payload bodies and dependency descriptors.
 type RTCFrameRTPScratchSize struct {

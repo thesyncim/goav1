@@ -2,6 +2,7 @@ package goav1_test
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -522,6 +523,59 @@ func TestPublicRTCFrameAppendRTPPacketsActiveDecodeTargets(t *testing.T) {
 		}
 	}
 	assertPublicRTPPayloadsAssembleToFrame(t, frame.Data, payloadSlices)
+}
+
+func TestPublicRTCPictureActiveDecodeTargetsControlMatrix(t *testing.T) {
+	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}
+	fps := []goav1.EncoderRational{
+		{Num: 30, Den: 1},
+		{Num: 60, Den: 1},
+		{Num: 30000, Den: 1001},
+		{Num: 24, Den: 1},
+		{Num: 120, Den: 1},
+	}
+
+	if _, err := (goav1.RTCPicture{}).AllDecodeTargetsMask(); !errors.Is(err, goav1.ErrEncoderInvalidFrame) {
+		t.Fatalf("empty picture AllDecodeTargetsMask err=%v want %v", err, goav1.ErrEncoderInvalidFrame)
+	}
+	if _, err := (goav1.RTCPicture{}).ActiveDecodeTargetsRTPOptions(0, 0); !errors.Is(err, goav1.ErrEncoderInvalidFrame) {
+		t.Fatalf("empty picture ActiveDecodeTargetsRTPOptions err=%v want %v", err, goav1.ErrEncoderInvalidFrame)
+	}
+
+	for step, mode := range goav1.EncoderWebRTCScalabilityModes() {
+		mode := mode
+		t.Run(mode.String(), func(t *testing.T) {
+			width, height := publicRTCMatrixGeometry(t, mode)
+			cfg := publicRTCMatrixConfig(width, height, mode)
+			cfg.MaxFramerate = fps[step%len(fps)]
+			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*19))
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
+			}
+			defer enc.Close()
+
+			var receiver goav1.RTPDependencyDescriptorState
+			key, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 0), false)
+			if err != nil {
+				t.Fatalf("key EncodePicture(%s): %v", mode, err)
+			}
+			assertPublicRTCPictureActiveDecodeTargetOptions(t, &receiver, enc.Config(), key, limits)
+
+			controlChange := enc.Config()
+			controlChange.MaxFramerate = fps[(step+1)%len(fps)]
+			publicRTCApplyControlBitrates(&controlChange, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*23)+77)
+			if err := enc.SetConfig(controlChange); err != nil {
+				t.Fatalf("SetConfig(%s control): %v", mode, err)
+			}
+			assertPublicRTCConfigControls(t, enc.Config(), controlChange)
+			delta, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 1), false)
+			if err != nil {
+				t.Fatalf("delta EncodePicture(%s): %v", mode, err)
+			}
+			assertPublicRTCPictureActiveDecodeTargetOptions(t, &receiver, enc.Config(), delta, limits)
+		})
+	}
 }
 
 func TestPublicRTCFrameAppendRTPPacketsSpatialPicture(t *testing.T) {
@@ -1505,6 +1559,118 @@ func assertPublicRTCFrameRTPPackets(t *testing.T, receiver *goav1.RTPDependencyD
 		}
 	}
 	assertPublicRTPPayloadsAssembleToFrame(t, frame.Data, payloadSlices)
+}
+
+func assertPublicRTCPictureActiveDecodeTargetOptions(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, cfg goav1.EncoderConfig, picture goav1.RTCPicture, limits goav1.RTPPayloadSizeLimits) {
+	t.Helper()
+	spatialLayers, temporalLayers, _, ok := cfg.Scalability.Layers()
+	if !ok {
+		t.Fatalf("invalid mode %s", cfg.Scalability)
+	}
+	wantAll := publicExpectedActiveDecodeTargetsMask(spatialLayers, temporalLayers, spatialLayers-1, temporalLayers-1)
+	all, err := picture.AllDecodeTargetsMask()
+	if err != nil {
+		t.Fatalf("%s picture AllDecodeTargetsMask: %v", cfg.Scalability, err)
+	}
+	if all != wantAll {
+		t.Fatalf("%s all decode-target mask=%#x want %#x", cfg.Scalability, all, wantAll)
+	}
+	for maxSpatialID := uint8(0); maxSpatialID < spatialLayers; maxSpatialID++ {
+		for maxTemporalID := uint8(0); maxTemporalID < temporalLayers; maxTemporalID++ {
+			wantMask := publicExpectedActiveDecodeTargetsMask(spatialLayers, temporalLayers, maxSpatialID, maxTemporalID)
+			mask, err := picture.ActiveDecodeTargetsMask(maxSpatialID, maxTemporalID)
+			if err != nil {
+				t.Fatalf("%s ActiveDecodeTargetsMask(S%d,T%d): %v", cfg.Scalability, maxSpatialID, maxTemporalID, err)
+			}
+			if mask != wantMask {
+				t.Fatalf("%s active mask S%d/T%d=%#x want %#x", cfg.Scalability, maxSpatialID, maxTemporalID, mask, wantMask)
+			}
+			options, err := picture.ActiveDecodeTargetsRTPOptions(maxSpatialID, maxTemporalID)
+			if err != nil {
+				t.Fatalf("%s ActiveDecodeTargetsRTPOptions(S%d,T%d): %v", cfg.Scalability, maxSpatialID, maxTemporalID, err)
+			}
+			if !options.ActiveDecodeTargetsPresentOnFirstPacket || options.ActiveDecodeTargetsMask != wantMask {
+				t.Fatalf("%s options S%d/T%d=%+v want mask %#x", cfg.Scalability, maxSpatialID, maxTemporalID, options, wantMask)
+			}
+			for i := 0; i < picture.FrameNum; i++ {
+				assertPublicRTCFrameRTPPacketsWithActiveDecodeTargets(t, receiver, picture.Frames[i], limits, options)
+			}
+		}
+	}
+	if _, err := picture.ActiveDecodeTargetsMask(spatialLayers, 0); !errors.Is(err, goav1.ErrEncoderInvalidFrame) {
+		t.Fatalf("%s invalid spatial active mask err=%v want %v", cfg.Scalability, err, goav1.ErrEncoderInvalidFrame)
+	}
+	if _, err := picture.ActiveDecodeTargetsMask(0, temporalLayers); !errors.Is(err, goav1.ErrEncoderInvalidFrame) {
+		t.Fatalf("%s invalid temporal active mask err=%v want %v", cfg.Scalability, err, goav1.ErrEncoderInvalidFrame)
+	}
+}
+
+func assertPublicRTCFrameRTPPacketsWithActiveDecodeTargets(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, frame goav1.RTCFrame, limits goav1.RTPPayloadSizeLimits, options goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions) {
+	t.Helper()
+	firstSize, err := frame.RTPPacketScratchLenWithOptions(limits, nil, options)
+	if err != nil {
+		t.Fatalf("RTPPacketScratchLenWithOptions first S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
+	}
+	obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
+	size, err := frame.RTPPacketScratchLenWithOptions(limits, obuScratch, options)
+	if err != nil {
+		t.Fatalf("RTPPacketScratchLenWithOptions full S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
+	}
+	packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
+	workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
+	payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
+	descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
+	spans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
+	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPacketsWithOptions(payloadBuf, descriptorBuf, spans, limits, obuScratch, packetScratch, workScratch, options)
+	if err != nil {
+		t.Fatalf("AppendRTPPacketsWithOptions S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
+	}
+	if packetCount != size.Packetizer.Packets {
+		t.Fatalf("packet count=%d want %d", packetCount, size.Packetizer.Packets)
+	}
+	payloadSlices := make([][]byte, packetCount)
+	for i := range packetCount {
+		span := spans[i]
+		payloadSlices[i] = rtpPayloads[span.PayloadOffset : span.PayloadOffset+span.PayloadLength]
+		desc := descriptors[span.DescriptorOffset : span.DescriptorOffset+span.DescriptorLength]
+		parsed, consumed, err := receiver.Parse(desc)
+		if err != nil {
+			t.Fatalf("packet %d active descriptor S%d T%d: %v", i, frame.SpatialID, frame.TemporalID, err)
+		}
+		if consumed != len(desc) ||
+			parsed.Mandatory.FrameNumber != uint16(frame.FrameID) ||
+			parsed.Mandatory.FirstPacketInFrame != (i == 0) ||
+			parsed.Mandatory.LastPacketInFrame != (i == packetCount-1) {
+			t.Fatalf("packet %d mandatory=%+v consumed=%d len=%d frame=%+v", i, parsed.Mandatory, consumed, len(desc), frame)
+		}
+		if parsed.FrameDependencies.SpatialID != frame.SpatialID || parsed.FrameDependencies.TemporalID != frame.TemporalID {
+			t.Fatalf("packet %d dependencies=%+v frame=%+v", i, parsed.FrameDependencies, frame)
+		}
+		if i == 0 {
+			if !parsed.HasActiveDecodeTargets || parsed.ActiveDecodeTargetsMask != options.ActiveDecodeTargetsMask {
+				t.Fatalf("packet %d active descriptor=%+v options=%+v", i, parsed, options)
+			}
+			continue
+		}
+		if parsed.HasActiveDecodeTargets {
+			t.Fatalf("packet %d repeated active decode targets: %+v", i, parsed)
+		}
+	}
+	assertPublicRTPPayloadsAssembleToFrame(t, frame.Data, payloadSlices)
+}
+
+func publicExpectedActiveDecodeTargetsMask(spatialLayers uint8, temporalLayers uint8, maxSpatialID uint8, maxTemporalID uint8) uint32 {
+	var mask uint32
+	for spatialID := uint8(0); spatialID < spatialLayers; spatialID++ {
+		for temporalID := uint8(0); temporalID < temporalLayers; temporalID++ {
+			if spatialID > maxSpatialID || temporalID > maxTemporalID {
+				continue
+			}
+			target := spatialID*temporalLayers + temporalID
+			mask |= uint32(1) << target
+		}
+	}
+	return mask
 }
 
 func assertPublicRTPPayloadsAssembleToFrame(t *testing.T, frameData []byte, payloadSlices [][]byte) {

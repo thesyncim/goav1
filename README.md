@@ -183,9 +183,10 @@ There are two public encoder surfaces:
   that alter layer geometry or dependency structure make the next picture a key
   picture. `RTCFrame.AppendRTPPackets` packetizes each frame into AV1 RTP
   payload bodies and matching per-packet dependency descriptors using
-  caller-owned buffers; `RTCFrame.AppendRTPPacketsWithOptions` and the
-  active decode target mask helpers let integrations signal layer activation
-  changes through the dependency descriptor extension.
+  caller-owned buffers; `RTCFrame.AppendRTPPacketsWithOptions`,
+  `RTCPicture.ActiveDecodeTargetsMask`, and
+  `RTCPicture.ActiveDecodeTargetsRTPOptions` let integrations signal layer
+  activation changes through the dependency descriptor extension.
   `EncoderWebRTCValidateLayerRefreshRequest` validates AV1 RTCP LRR feedback
   against the configured temporal/spatial grid before callers decide whether to
   force a full key picture. `SetTileColumns` and `SetGoldenInterval` let callers

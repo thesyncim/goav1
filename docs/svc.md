@@ -466,7 +466,10 @@ framerate, and supported scalability changes atomically; changes that alter
 layer geometry or dependency structure make the next picture a key picture.
 `EncoderWebRTCRTPFrameDuration` returns the exact RTP timestamp duration for
 the normalized encoder configuration, so callers can pace RTP timestamps from
-the same framerate/timebase the encoder accepted.
+the same framerate/timebase the encoder accepted. `RTCPicture` exposes
+`AllDecodeTargetsMask`, `ActiveDecodeTargetsMask`, and
+`ActiveDecodeTargetsRTPOptions` so layer-activation changes can be applied
+consistently to every RTP frame in a multi-spatial picture.
 
 The framework dry-run tests
 (`internal/av1/testvector/libaom_oracle_test.go`) exercise the

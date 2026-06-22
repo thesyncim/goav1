@@ -182,14 +182,25 @@ func WebRTCActiveDecodeTargetsMask(structure WebRTCFrameDependencyStructure, max
 		return 0, ErrInvalidFrame
 	}
 	var mask uint32
+	var structureMaxSpatialID uint8
+	var structureMaxTemporalID uint8
 	for target := uint8(0); target < structure.NumDecodeTargets; target++ {
 		spatialID, temporalID, ok := webRTCDecodeTargetLayerFromStructure(structure, target)
 		if !ok {
 			return 0, ErrInvalidFrame
 		}
+		if spatialID > structureMaxSpatialID {
+			structureMaxSpatialID = spatialID
+		}
+		if temporalID > structureMaxTemporalID {
+			structureMaxTemporalID = temporalID
+		}
 		if spatialID <= maxSpatialID && temporalID <= maxTemporalID {
 			mask |= 1 << target
 		}
+	}
+	if maxSpatialID > structureMaxSpatialID || maxTemporalID > structureMaxTemporalID {
+		return 0, ErrInvalidFrame
 	}
 	return mask, nil
 }
