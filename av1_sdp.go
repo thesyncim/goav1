@@ -33,6 +33,18 @@ const (
 	AV1SDPDefaultLevelIdx = 5
 	// AV1SDPDefaultTier is the tier inferred when fmtp omits tier.
 	AV1SDPDefaultTier = 0
+
+	// AV1SDPRTCPFeedbackNACK is the SDP rtcp-fb value for generic NACK.
+	AV1SDPRTCPFeedbackNACK = "nack"
+	// AV1SDPRTCPFeedbackPLI is the SDP rtcp-fb value for Picture Loss
+	// Indication feedback.
+	AV1SDPRTCPFeedbackPLI = "nack pli"
+	// AV1SDPRTCPFeedbackFIR is the SDP rtcp-fb value for Full Intra Request
+	// feedback.
+	AV1SDPRTCPFeedbackFIR = "ccm fir"
+	// AV1SDPRTCPFeedbackLRR is the SDP rtcp-fb value for Layer Refresh
+	// Request feedback.
+	AV1SDPRTCPFeedbackLRR = "ccm lrr"
 )
 
 // ErrSDPInvalidConfig is returned when AV1 SDP/fmtp parameters are malformed

@@ -8,11 +8,12 @@
 // The implementation is built from byte-exact transport and parser primitives
 // inward. Public helpers expose IVF containers, low-overhead, temporal-unit,
 // and Annex B OBU parsing, AV1 RTP payload iteration, construction,
-// caller-owned RTP sizing, sequence-header parsing, caller-owned frame pools
-// and sample-plane scratch helpers, DSP block/blend helpers, intra/inter
-// prediction, decoder frame-work prediction bridges, residual reconstruction
-// primitives, post-reconstruction filtering helpers, AV1 SDP/fmtp capability
-// parsing and emission, tile block/transform
+// caller-owned RTP sizing, AV1 RTCP Layer Refresh Request feedback helpers,
+// sequence-header parsing, caller-owned frame pools and sample-plane scratch
+// helpers, DSP block/blend helpers, intra/inter prediction, decoder
+// frame-work prediction bridges, residual reconstruction primitives,
+// post-reconstruction filtering helpers, AV1 SDP/fmtp capability parsing and
+// emission, tile block/transform
 // geometry, transform/coefficient context replay helpers, tile coefficient
 // replay, tile block coefficient decode, tile-level restoration orchestration,
 // decoder residual-state setup and residual execution/retention bridges for
