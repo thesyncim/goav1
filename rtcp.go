@@ -22,6 +22,10 @@ const (
 	// FMT value registered for Layer Refresh Request feedback.
 	RTCPPSFBLayerRefreshRequestFMT = 10
 
+	// RTCPPSFBApplicationLayerFeedbackFMT is the RTCP payload-specific
+	// feedback FMT value for application-layer feedback such as REMB.
+	RTCPPSFBApplicationLayerFeedbackFMT = 15
+
 	// RTCPGenericNACKPairSize is the size of one generic NACK FCI PID/BLP
 	// pair.
 	RTCPGenericNACKPairSize = 4
@@ -33,6 +37,22 @@ const (
 
 	// RTCPFullIntraRequestEntrySize is the size of one FIR FCI entry.
 	RTCPFullIntraRequestEntrySize = 8
+
+	// RTCPReceiverEstimatedMaximumBitrateUniqueIdentifier is the REMB FCI
+	// unique identifier "REMB".
+	RTCPReceiverEstimatedMaximumBitrateUniqueIdentifier = 0x52454D42
+
+	// RTCPReceiverEstimatedMaximumBitrateFCIMinSize is the size of a REMB FCI
+	// payload with no SSRC feedback entries.
+	RTCPReceiverEstimatedMaximumBitrateFCIMinSize = 8
+
+	// RTCPReceiverEstimatedMaximumBitrateSSRCSize is the size of one REMB SSRC
+	// feedback entry.
+	RTCPReceiverEstimatedMaximumBitrateSSRCSize = 4
+
+	// RTCPReceiverEstimatedMaximumBitrateMaxSSRCs is the maximum SSRC count
+	// that fits the REMB FCI count field.
+	RTCPReceiverEstimatedMaximumBitrateMaxSSRCs = 0xff
 
 	// AV1RTCPLayerRefreshLayerIndexSize is the size of one AV1 LRR layer
 	// index field: temporal_id plus spatial_id with reserved bits.
@@ -52,7 +72,7 @@ const (
 
 var (
 	// ErrRTCPShortBuffer is returned when an RTCP helper's caller-owned buffer
-	// is too small for the requested AV1 feedback field.
+	// is too small for the requested feedback field.
 	ErrRTCPShortBuffer = errors.New("goav1: short RTCP buffer")
 	// ErrRTCPInvalidFeedback is returned when a generic RTCP feedback helper
 	// receives malformed FCI data.
@@ -181,6 +201,127 @@ func ParseRTCPPictureLossIndicationFCI(src []byte) error {
 		return ErrRTCPInvalidFeedback
 	}
 	return nil
+}
+
+const (
+	rtcpReceiverEstimatedMaximumBitrateMaxMantissa   uint64 = 0x3ffff
+	rtcpReceiverEstimatedMaximumBitrateMaxBitrateBps uint64 = 1<<63 - 1
+)
+
+// RTCPReceiverEstimatedMaximumBitrate is one legacy WebRTC REMB feedback FCI.
+// SSRCs aliases the caller-owned destination slice passed to Parse.
+type RTCPReceiverEstimatedMaximumBitrate struct {
+	BitrateBps uint64
+	SSRCs      []uint32
+}
+
+// RTCPReceiverEstimatedMaximumBitrateFCISize returns the REMB FCI byte count
+// needed to serialize ssrcs. The caller owns the surrounding RTCP PSFB packet,
+// including sender SSRC and the unused media SSRC.
+func RTCPReceiverEstimatedMaximumBitrateFCISize(ssrcs []uint32) (int, error) {
+	if len(ssrcs) > RTCPReceiverEstimatedMaximumBitrateMaxSSRCs {
+		return 0, ErrRTCPInvalidFeedback
+	}
+	return RTCPReceiverEstimatedMaximumBitrateFCIMinSize +
+		len(ssrcs)*RTCPReceiverEstimatedMaximumBitrateSSRCSize, nil
+}
+
+// PutRTCPReceiverEstimatedMaximumBitrateFCI serializes one REMB FCI into dst.
+// The bitrate is encoded with WebRTC's 6-bit exponent and 18-bit mantissa
+// representation.
+func PutRTCPReceiverEstimatedMaximumBitrateFCI(dst []byte, bitrateBps uint64, ssrcs []uint32) (int, error) {
+	size, err := RTCPReceiverEstimatedMaximumBitrateFCISize(ssrcs)
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < size {
+		return 0, ErrRTCPShortBuffer
+	}
+	exponent, mantissa, err := rtcpReceiverEstimatedMaximumBitrateExponentMantissa(bitrateBps)
+	if err != nil {
+		return 0, err
+	}
+
+	binary.BigEndian.PutUint32(dst[0:4], RTCPReceiverEstimatedMaximumBitrateUniqueIdentifier)
+	dst[4] = uint8(len(ssrcs))
+	dst[5] = (exponent << 2) | uint8(mantissa>>16)
+	binary.BigEndian.PutUint16(dst[6:8], uint16(mantissa&0xffff))
+	for i, ssrc := range ssrcs {
+		off := RTCPReceiverEstimatedMaximumBitrateFCIMinSize +
+			i*RTCPReceiverEstimatedMaximumBitrateSSRCSize
+		binary.BigEndian.PutUint32(dst[off:off+RTCPReceiverEstimatedMaximumBitrateSSRCSize], ssrc)
+	}
+	return size, nil
+}
+
+// AppendRTCPReceiverEstimatedMaximumBitrateFCI appends one REMB FCI to dst
+// without growing beyond dst's existing capacity.
+func AppendRTCPReceiverEstimatedMaximumBitrateFCI(dst []byte, bitrateBps uint64, ssrcs []uint32) ([]byte, error) {
+	size, err := RTCPReceiverEstimatedMaximumBitrateFCISize(ssrcs)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+size]
+	if _, err := PutRTCPReceiverEstimatedMaximumBitrateFCI(out[off:], bitrateBps, ssrcs); err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
+// ParseRTCPReceiverEstimatedMaximumBitrateFCI parses one complete REMB FCI
+// into dst without growing beyond dst's existing capacity.
+func ParseRTCPReceiverEstimatedMaximumBitrateFCI(
+	src []byte, dst []uint32,
+) (RTCPReceiverEstimatedMaximumBitrate, error) {
+	if len(src) < RTCPReceiverEstimatedMaximumBitrateFCIMinSize {
+		return RTCPReceiverEstimatedMaximumBitrate{}, ErrRTCPShortBuffer
+	}
+	if binary.BigEndian.Uint32(src[0:4]) != RTCPReceiverEstimatedMaximumBitrateUniqueIdentifier {
+		return RTCPReceiverEstimatedMaximumBitrate{}, ErrRTCPInvalidFeedback
+	}
+	ssrcCount := int(src[4])
+	size := RTCPReceiverEstimatedMaximumBitrateFCIMinSize +
+		ssrcCount*RTCPReceiverEstimatedMaximumBitrateSSRCSize
+	if len(src) != size {
+		return RTCPReceiverEstimatedMaximumBitrate{}, ErrRTCPInvalidFeedback
+	}
+
+	exponent := src[5] >> 2
+	mantissa := (uint64(src[5]&0x03) << 16) | uint64(binary.BigEndian.Uint16(src[6:8]))
+	if mantissa > (rtcpReceiverEstimatedMaximumBitrateMaxBitrateBps >> exponent) {
+		return RTCPReceiverEstimatedMaximumBitrate{}, ErrRTCPInvalidFeedback
+	}
+	if cap(dst)-len(dst) < ssrcCount {
+		return RTCPReceiverEstimatedMaximumBitrate{}, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+ssrcCount]
+	for i := 0; i < ssrcCount; i++ {
+		start := RTCPReceiverEstimatedMaximumBitrateFCIMinSize +
+			i*RTCPReceiverEstimatedMaximumBitrateSSRCSize
+		out[off+i] = binary.BigEndian.Uint32(src[start : start+RTCPReceiverEstimatedMaximumBitrateSSRCSize])
+	}
+	return RTCPReceiverEstimatedMaximumBitrate{
+		BitrateBps: mantissa << exponent,
+		SSRCs:      out[off:],
+	}, nil
+}
+
+func rtcpReceiverEstimatedMaximumBitrateExponentMantissa(bitrateBps uint64) (uint8, uint32, error) {
+	if bitrateBps > rtcpReceiverEstimatedMaximumBitrateMaxBitrateBps {
+		return 0, 0, ErrRTCPInvalidFeedback
+	}
+	mantissa := bitrateBps
+	var exponent uint8
+	for mantissa > rtcpReceiverEstimatedMaximumBitrateMaxMantissa {
+		mantissa >>= 1
+		exponent++
+	}
+	return exponent, uint32(mantissa), nil
 }
 
 // RTCPFullIntraRequestEntry is one Full Intra Request Feedback Control

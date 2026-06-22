@@ -20,6 +20,9 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 	if av1.RTCPPSFBLayerRefreshRequestFMT != 10 {
 		t.Fatalf("RTCPPSFBLayerRefreshRequestFMT = %d, want 10", av1.RTCPPSFBLayerRefreshRequestFMT)
 	}
+	if av1.RTCPPSFBApplicationLayerFeedbackFMT != 15 {
+		t.Fatalf("RTCPPSFBApplicationLayerFeedbackFMT = %d, want 15", av1.RTCPPSFBApplicationLayerFeedbackFMT)
+	}
 	if av1.RTCPGenericNACKPairSize != 4 {
 		t.Fatalf("RTCPGenericNACKPairSize = %d, want 4", av1.RTCPGenericNACKPairSize)
 	}
@@ -28,6 +31,12 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 	}
 	if av1.RTCPFullIntraRequestEntrySize != 8 {
 		t.Fatalf("RTCPFullIntraRequestEntrySize = %d, want 8", av1.RTCPFullIntraRequestEntrySize)
+	}
+	if av1.RTCPReceiverEstimatedMaximumBitrateUniqueIdentifier != 0x52454D42 ||
+		av1.RTCPReceiverEstimatedMaximumBitrateFCIMinSize != 8 ||
+		av1.RTCPReceiverEstimatedMaximumBitrateSSRCSize != 4 ||
+		av1.RTCPReceiverEstimatedMaximumBitrateMaxSSRCs != 0xff {
+		t.Fatalf("unexpected RTCP REMB constants")
 	}
 	if av1.AV1RTCPLayerRefreshLayerIndexSize != 2 {
 		t.Fatalf("AV1RTCPLayerRefreshLayerIndexSize = %d, want 2", av1.AV1RTCPLayerRefreshLayerIndexSize)
@@ -74,6 +83,133 @@ func TestRTCPPictureLossIndicationFCIRoundTrip(t *testing.T) {
 func TestRTCPPictureLossIndicationFCIRejectsInvalid(t *testing.T) {
 	if err := av1.ParseRTCPPictureLossIndicationFCI([]byte{0x00}); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
 		t.Fatalf("ParseRTCPPictureLossIndicationFCI non-empty err=%v want %v", err, av1.ErrRTCPInvalidFeedback)
+	}
+}
+
+func TestRTCPReceiverEstimatedMaximumBitrateFCIRoundTrip(t *testing.T) {
+	const bitrateBps = 0x3fb93 * 2
+	ssrcs := []uint32{0x23456789, 0x2345678a, 0x2345678b}
+	size, err := av1.RTCPReceiverEstimatedMaximumBitrateFCISize(ssrcs)
+	if err != nil {
+		t.Fatalf("RTCPReceiverEstimatedMaximumBitrateFCISize: %v", err)
+	}
+	if size != av1.RTCPReceiverEstimatedMaximumBitrateFCIMinSize+
+		len(ssrcs)*av1.RTCPReceiverEstimatedMaximumBitrateSSRCSize {
+		t.Fatalf("REMB FCI size=%d", size)
+	}
+
+	buf := make([]byte, size)
+	n, err := av1.PutRTCPReceiverEstimatedMaximumBitrateFCI(buf, bitrateBps, ssrcs)
+	if err != nil {
+		t.Fatalf("PutRTCPReceiverEstimatedMaximumBitrateFCI: %v", err)
+	}
+	if n != size {
+		t.Fatalf("PutRTCPReceiverEstimatedMaximumBitrateFCI n=%d want %d", n, size)
+	}
+	want := []byte{
+		'R', 'E', 'M', 'B',
+		0x03, 0x07, 0xfb, 0x93,
+		0x23, 0x45, 0x67, 0x89,
+		0x23, 0x45, 0x67, 0x8a,
+		0x23, 0x45, 0x67, 0x8b,
+	}
+	if string(buf) != string(want) {
+		t.Fatalf("encoded REMB FCI bytes=%#v want %#v", buf, want)
+	}
+
+	base := make([]uint32, 1, 1+len(ssrcs))
+	base[0] = 0xdeadbeef
+	parsed, err := av1.ParseRTCPReceiverEstimatedMaximumBitrateFCI(buf, base[:1:cap(base)])
+	if err != nil {
+		t.Fatalf("ParseRTCPReceiverEstimatedMaximumBitrateFCI: %v", err)
+	}
+	if parsed.BitrateBps != bitrateBps {
+		t.Fatalf("parsed REMB bitrate=%d want %d", parsed.BitrateBps, bitrateBps)
+	}
+	if base[0] != 0xdeadbeef {
+		t.Fatalf("ParseRTCPReceiverEstimatedMaximumBitrateFCI clobbered dst prefix")
+	}
+	if len(parsed.SSRCs) != len(ssrcs) {
+		t.Fatalf("parsed REMB SSRC len=%d want %d", len(parsed.SSRCs), len(ssrcs))
+	}
+	for i := range ssrcs {
+		if parsed.SSRCs[i] != ssrcs[i] {
+			t.Fatalf("parsed REMB SSRC[%d]=%#x want %#x", i, parsed.SSRCs[i], ssrcs[i])
+		}
+	}
+
+	prefix := make([]byte, 1, 1+size)
+	prefix[0] = 0xaa
+	appended, err := av1.AppendRTCPReceiverEstimatedMaximumBitrateFCI(prefix, bitrateBps, ssrcs)
+	if err != nil {
+		t.Fatalf("AppendRTCPReceiverEstimatedMaximumBitrateFCI: %v", err)
+	}
+	if len(appended) != 1+size || appended[0] != 0xaa || string(appended[1:]) != string(buf) {
+		t.Fatalf("appended REMB FCI bytes=%#v", appended)
+	}
+
+	emptyBuf := make([]byte, av1.RTCPReceiverEstimatedMaximumBitrateFCIMinSize)
+	if _, err := av1.PutRTCPReceiverEstimatedMaximumBitrateFCI(emptyBuf, 123, nil); err != nil {
+		t.Fatalf("PutRTCPReceiverEstimatedMaximumBitrateFCI no SSRCs: %v", err)
+	}
+	empty, err := av1.ParseRTCPReceiverEstimatedMaximumBitrateFCI(emptyBuf, nil)
+	if err != nil {
+		t.Fatalf("ParseRTCPReceiverEstimatedMaximumBitrateFCI no SSRCs: %v", err)
+	}
+	if empty.BitrateBps != 123 || len(empty.SSRCs) != 0 {
+		t.Fatalf("parsed empty REMB=%+v", empty)
+	}
+}
+
+func TestRTCPReceiverEstimatedMaximumBitrateFCIRejectsInvalid(t *testing.T) {
+	valid := []byte{
+		'R', 'E', 'M', 'B',
+		0x03, 0x07, 0xfb, 0x93,
+		0x23, 0x45, 0x67, 0x89,
+		0x23, 0x45, 0x67, 0x8a,
+		0x23, 0x45, 0x67, 0x8b,
+	}
+	if _, err := av1.PutRTCPReceiverEstimatedMaximumBitrateFCI(make([]byte, 7), 1, nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short PutRTCPReceiverEstimatedMaximumBitrateFCI err=%v", err)
+	}
+	if _, err := av1.ParseRTCPReceiverEstimatedMaximumBitrateFCI(valid[:7], nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short ParseRTCPReceiverEstimatedMaximumBitrateFCI err=%v", err)
+	}
+	if _, err := av1.ParseRTCPReceiverEstimatedMaximumBitrateFCI(valid, make([]uint32, 0, 2)); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short ParseRTCPReceiverEstimatedMaximumBitrateFCI dst err=%v", err)
+	}
+	if out, err := av1.AppendRTCPReceiverEstimatedMaximumBitrateFCI(make([]byte, 0, 7), 1, nil); !errors.Is(err, av1.ErrRTCPShortBuffer) || len(out) != 0 {
+		t.Fatalf("short AppendRTCPReceiverEstimatedMaximumBitrateFCI out=%d err=%v", len(out), err)
+	}
+
+	tooMany := make([]uint32, av1.RTCPReceiverEstimatedMaximumBitrateMaxSSRCs+1)
+	if _, err := av1.RTCPReceiverEstimatedMaximumBitrateFCISize(tooMany); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("too many REMB SSRCs size err=%v", err)
+	}
+	if _, err := av1.PutRTCPReceiverEstimatedMaximumBitrateFCI(make([]byte, 4096), 1, tooMany); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("too many REMB SSRCs put err=%v", err)
+	}
+	if _, err := av1.PutRTCPReceiverEstimatedMaximumBitrateFCI(make([]byte, av1.RTCPReceiverEstimatedMaximumBitrateFCIMinSize), uint64(1)<<63, nil); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("too high REMB bitrate err=%v", err)
+	}
+
+	invalidID := append([]byte(nil), valid...)
+	invalidID[0] = 'N'
+	if _, err := av1.ParseRTCPReceiverEstimatedMaximumBitrateFCI(invalidID, nil); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("invalid REMB unique ID err=%v", err)
+	}
+	countMismatch := append([]byte(nil), valid...)
+	countMismatch[4]++
+	if _, err := av1.ParseRTCPReceiverEstimatedMaximumBitrateFCI(countMismatch, make([]uint32, 0, 4)); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("invalid REMB SSRC count err=%v", err)
+	}
+	shiftOverflow := []byte{'R', 'E', 'M', 'B', 0, 63 << 2, 0, 2}
+	if _, err := av1.ParseRTCPReceiverEstimatedMaximumBitrateFCI(shiftOverflow, nil); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("overflow REMB bitrate err=%v", err)
+	}
+	int64Overflow := []byte{'R', 'E', 'M', 'B', 0, 56 << 2, 0, 200}
+	if _, err := av1.ParseRTCPReceiverEstimatedMaximumBitrateFCI(int64Overflow, nil); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("int64 overflow REMB bitrate err=%v", err)
 	}
 }
 
