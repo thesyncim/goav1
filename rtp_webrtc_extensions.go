@@ -26,12 +26,31 @@ const (
 	// RTPAbsoluteSendTimeHeaderExtensionSize is the payload size, in bytes, of
 	// WebRTC's absolute-send-time RTP header extension.
 	RTPAbsoluteSendTimeHeaderExtensionSize = 3
+	// RTPAbsoluteCaptureTimeHeaderExtensionSizeWithoutClockOffset is the
+	// payload size, in bytes, of WebRTC's absolute-capture-time RTP header
+	// extension without the optional estimated capture clock offset.
+	RTPAbsoluteCaptureTimeHeaderExtensionSizeWithoutClockOffset = 8
+	// RTPAbsoluteCaptureTimeHeaderExtensionSize is the payload size, in bytes,
+	// of WebRTC's absolute-capture-time RTP header extension with the optional
+	// estimated capture clock offset.
+	RTPAbsoluteCaptureTimeHeaderExtensionSize = 16
 	// RTPVideoContentTypeHeaderExtensionSize is the payload size, in bytes, of
 	// the WebRTC video-content-type RTP header extension.
 	RTPVideoContentTypeHeaderExtensionSize = 1
 	// RTPVideoTimingHeaderExtensionSize is the payload size, in bytes, of the
 	// WebRTC video-timing RTP header extension.
 	RTPVideoTimingHeaderExtensionSize = 13
+	// RTPVideoTimingHeaderExtensionSizeWithoutFlags is the legacy payload size,
+	// in bytes, of WebRTC's video-timing RTP header extension without the flags
+	// byte. Writes always use RTPVideoTimingHeaderExtensionSize.
+	RTPVideoTimingHeaderExtensionSizeWithoutFlags = 12
+	// RTPColorSpaceHeaderExtensionSizeWithoutHDRMetadata is the payload size,
+	// in bytes, of WebRTC's color-space RTP header extension without HDR
+	// metadata.
+	RTPColorSpaceHeaderExtensionSizeWithoutHDRMetadata = 4
+	// RTPColorSpaceHeaderExtensionSize is the payload size, in bytes, of
+	// WebRTC's color-space RTP header extension with HDR metadata.
+	RTPColorSpaceHeaderExtensionSize = 28
 	// RTPPlayoutDelayMaxMilliseconds is the largest playout delay that fits the
 	// WebRTC playout-delay RTP header extension.
 	RTPPlayoutDelayMaxMilliseconds = 40950
@@ -47,6 +66,63 @@ const (
 
 	RTPVideoTimingFlagTriggeredByTimer     uint8 = 1 << 0
 	RTPVideoTimingFlagFrameLargerThanKnown uint8 = 1 << 1
+)
+
+const (
+	RTPColorSpacePrimaryBT709       RTPColorSpacePrimary = 1
+	RTPColorSpacePrimaryUnspecified RTPColorSpacePrimary = 2
+	RTPColorSpacePrimaryBT470M      RTPColorSpacePrimary = 4
+	RTPColorSpacePrimaryBT470BG     RTPColorSpacePrimary = 5
+	RTPColorSpacePrimarySMPTE170M   RTPColorSpacePrimary = 6
+	RTPColorSpacePrimarySMPTE240M   RTPColorSpacePrimary = 7
+	RTPColorSpacePrimaryFilm        RTPColorSpacePrimary = 8
+	RTPColorSpacePrimaryBT2020      RTPColorSpacePrimary = 9
+	RTPColorSpacePrimarySMPTEST428  RTPColorSpacePrimary = 10
+	RTPColorSpacePrimarySMPTEST431  RTPColorSpacePrimary = 11
+	RTPColorSpacePrimarySMPTEST432  RTPColorSpacePrimary = 12
+	RTPColorSpacePrimaryJEDECP22    RTPColorSpacePrimary = 22
+
+	RTPColorSpaceTransferBT709       RTPColorSpaceTransfer = 1
+	RTPColorSpaceTransferUnspecified RTPColorSpaceTransfer = 2
+	RTPColorSpaceTransferGamma22     RTPColorSpaceTransfer = 4
+	RTPColorSpaceTransferGamma28     RTPColorSpaceTransfer = 5
+	RTPColorSpaceTransferSMPTE170M   RTPColorSpaceTransfer = 6
+	RTPColorSpaceTransferSMPTE240M   RTPColorSpaceTransfer = 7
+	RTPColorSpaceTransferLinear      RTPColorSpaceTransfer = 8
+	RTPColorSpaceTransferLog         RTPColorSpaceTransfer = 9
+	RTPColorSpaceTransferLogSqrt     RTPColorSpaceTransfer = 10
+	RTPColorSpaceTransferIEC6196624  RTPColorSpaceTransfer = 11
+	RTPColorSpaceTransferBT1361ECG   RTPColorSpaceTransfer = 12
+	RTPColorSpaceTransferIEC6196621  RTPColorSpaceTransfer = 13
+	RTPColorSpaceTransferBT202010    RTPColorSpaceTransfer = 14
+	RTPColorSpaceTransferBT202012    RTPColorSpaceTransfer = 15
+	RTPColorSpaceTransferSMPTEST2084 RTPColorSpaceTransfer = 16
+	RTPColorSpaceTransferSMPTEST428  RTPColorSpaceTransfer = 17
+	RTPColorSpaceTransferARIBSTDB67  RTPColorSpaceTransfer = 18
+
+	RTPColorSpaceMatrixRGB         RTPColorSpaceMatrix = 0
+	RTPColorSpaceMatrixBT709       RTPColorSpaceMatrix = 1
+	RTPColorSpaceMatrixUnspecified RTPColorSpaceMatrix = 2
+	RTPColorSpaceMatrixFCC         RTPColorSpaceMatrix = 4
+	RTPColorSpaceMatrixBT470BG     RTPColorSpaceMatrix = 5
+	RTPColorSpaceMatrixSMPTE170M   RTPColorSpaceMatrix = 6
+	RTPColorSpaceMatrixSMPTE240M   RTPColorSpaceMatrix = 7
+	RTPColorSpaceMatrixYCgCo       RTPColorSpaceMatrix = 8
+	RTPColorSpaceMatrixBT2020NCL   RTPColorSpaceMatrix = 9
+	RTPColorSpaceMatrixBT2020CL    RTPColorSpaceMatrix = 10
+	RTPColorSpaceMatrixSMPTE2085   RTPColorSpaceMatrix = 11
+	RTPColorSpaceMatrixCDNCLS      RTPColorSpaceMatrix = 12
+	RTPColorSpaceMatrixCDCLS       RTPColorSpaceMatrix = 13
+	RTPColorSpaceMatrixBT2100ICTCP RTPColorSpaceMatrix = 14
+
+	RTPColorSpaceRangeInvalid RTPColorSpaceRange = 0
+	RTPColorSpaceRangeLimited RTPColorSpaceRange = 1
+	RTPColorSpaceRangeFull    RTPColorSpaceRange = 2
+	RTPColorSpaceRangeDerived RTPColorSpaceRange = 3
+
+	RTPColorSpaceChromaSitingUnspecified RTPColorSpaceChromaSiting = 0
+	RTPColorSpaceChromaSitingCollocated  RTPColorSpaceChromaSiting = 1
+	RTPColorSpaceChromaSitingHalf        RTPColorSpaceChromaSiting = 2
 )
 
 // ErrRTPInvalidHeaderExtension is returned when a fixed-size RTP header
@@ -80,6 +156,16 @@ type RTPTransportWideCC02 struct {
 	FeedbackSequenceCount uint16
 }
 
+// RTPAbsoluteCaptureTime is WebRTC's absolute-capture-time RTP header-
+// extension payload. AbsoluteCaptureTimestamp uses the NTP timestamp format.
+// The optional EstimatedCaptureClockOffset is encoded when
+// EstimatedCaptureClockOffsetPresent is true.
+type RTPAbsoluteCaptureTime struct {
+	AbsoluteCaptureTimestamp           uint64
+	EstimatedCaptureClockOffsetPresent bool
+	EstimatedCaptureClockOffset        int64
+}
+
 // RTPVideoContentType is the WebRTC video-content-type RTP header-extension
 // payload value.
 type RTPVideoContentType uint8
@@ -95,6 +181,49 @@ type RTPVideoTiming struct {
 	PacerExitDeltaMs             uint16
 	NetworkTimestampDeltaMs      uint16
 	NetworkTimestamp2DeltaMs     uint16
+}
+
+// RTPColorSpace enum values follow WebRTC's T-REC H.273 color-space RTP
+// header-extension representation.
+type RTPColorSpacePrimary uint8
+type RTPColorSpaceTransfer uint8
+type RTPColorSpaceMatrix uint8
+type RTPColorSpaceRange uint8
+type RTPColorSpaceChromaSiting uint8
+
+// RTPColorSpaceChromaticity stores x/y chromaticity coordinates in WebRTC's
+// raw RTP color-space scale, where one unit is 1/50000.
+type RTPColorSpaceChromaticity struct {
+	X uint16
+	Y uint16
+}
+
+// RTPColorSpaceHDRMetadata stores WebRTC color-space HDR metadata in raw RTP
+// extension units. LuminanceMax is cd/m2, LuminanceMin is cd/m2 times 10000,
+// chromaticities are times 50000, and light levels are nits.
+type RTPColorSpaceHDRMetadata struct {
+	LuminanceMax              uint16
+	LuminanceMin              uint16
+	PrimaryR                  RTPColorSpaceChromaticity
+	PrimaryG                  RTPColorSpaceChromaticity
+	PrimaryB                  RTPColorSpaceChromaticity
+	WhitePoint                RTPColorSpaceChromaticity
+	MaxContentLightLevel      uint16
+	MaxFrameAverageLightLevel uint16
+}
+
+// RTPColorSpace is WebRTC's color-space RTP header-extension payload. Set
+// HDRMetadataPresent to write or require the 28-byte form with HDR metadata;
+// otherwise the 4-byte color-space-only form is used.
+type RTPColorSpace struct {
+	Primaries              RTPColorSpacePrimary
+	Transfer               RTPColorSpaceTransfer
+	Matrix                 RTPColorSpaceMatrix
+	Range                  RTPColorSpaceRange
+	ChromaSitingHorizontal RTPColorSpaceChromaSiting
+	ChromaSitingVertical   RTPColorSpaceChromaSiting
+	HDRMetadataPresent     bool
+	HDRMetadata            RTPColorSpaceHDRMetadata
 }
 
 // ParseRTPCoordinationOfVideoOrientationHeaderExtension parses a WebRTC CVO
@@ -320,6 +449,64 @@ func PutRTPAbsoluteSendTimeHeaderExtension(dst []byte, timestamp uint32) (int, e
 	return RTPAbsoluteSendTimeHeaderExtensionSize, nil
 }
 
+// RTPAbsoluteCaptureTimeSize returns the payload size needed to write capture.
+// The RTP extension element header is not counted.
+func RTPAbsoluteCaptureTimeSize(capture RTPAbsoluteCaptureTime) (int, error) {
+	if err := ValidateRTPAbsoluteCaptureTime(capture); err != nil {
+		return 0, err
+	}
+	if capture.EstimatedCaptureClockOffsetPresent {
+		return RTPAbsoluteCaptureTimeHeaderExtensionSize, nil
+	}
+	return RTPAbsoluteCaptureTimeHeaderExtensionSizeWithoutClockOffset, nil
+}
+
+// ParseRTPAbsoluteCaptureTimeHeaderExtension parses WebRTC's absolute-capture-
+// time RTP header-extension element payload. The RTP extension element header
+// is not part of src.
+func ParseRTPAbsoluteCaptureTimeHeaderExtension(src []byte) (RTPAbsoluteCaptureTime, error) {
+	if len(src) < RTPAbsoluteCaptureTimeHeaderExtensionSizeWithoutClockOffset {
+		return RTPAbsoluteCaptureTime{}, ErrRTPShortBuffer
+	}
+	if len(src) != RTPAbsoluteCaptureTimeHeaderExtensionSizeWithoutClockOffset &&
+		len(src) != RTPAbsoluteCaptureTimeHeaderExtensionSize {
+		return RTPAbsoluteCaptureTime{}, ErrRTPInvalidHeaderExtension
+	}
+	capture := RTPAbsoluteCaptureTime{
+		AbsoluteCaptureTimestamp: binary.BigEndian.Uint64(src[:8]),
+	}
+	if len(src) == RTPAbsoluteCaptureTimeHeaderExtensionSize {
+		capture.EstimatedCaptureClockOffsetPresent = true
+		capture.EstimatedCaptureClockOffset = int64(binary.BigEndian.Uint64(src[8:16]))
+	}
+	return capture, nil
+}
+
+// PutRTPAbsoluteCaptureTimeHeaderExtension writes WebRTC's absolute-capture-
+// time RTP header-extension element payload. The RTP extension element header
+// is not written.
+func PutRTPAbsoluteCaptureTimeHeaderExtension(dst []byte, capture RTPAbsoluteCaptureTime) (int, error) {
+	size, err := RTPAbsoluteCaptureTimeSize(capture)
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < size {
+		return 0, ErrRTPShortBuffer
+	}
+	binary.BigEndian.PutUint64(dst[:8], capture.AbsoluteCaptureTimestamp)
+	if capture.EstimatedCaptureClockOffsetPresent {
+		binary.BigEndian.PutUint64(dst[8:16], uint64(capture.EstimatedCaptureClockOffset))
+	}
+	return size, nil
+}
+
+func ValidateRTPAbsoluteCaptureTime(capture RTPAbsoluteCaptureTime) error {
+	if !capture.EstimatedCaptureClockOffsetPresent && capture.EstimatedCaptureClockOffset != 0 {
+		return ErrRTPInvalidHeaderExtension
+	}
+	return nil
+}
+
 // ParseRTPVideoContentTypeHeaderExtension parses a WebRTC video-content-type
 // RTP header-extension element payload. The RTP extension element header is not
 // part of src.
@@ -364,20 +551,27 @@ func ValidateRTPVideoContentType(content RTPVideoContentType) error {
 // extension element payload. The RTP extension element header is not part of
 // src.
 func ParseRTPVideoTimingHeaderExtension(src []byte) (RTPVideoTiming, error) {
-	if len(src) < RTPVideoTimingHeaderExtensionSize {
+	if len(src) < RTPVideoTimingHeaderExtensionSizeWithoutFlags {
 		return RTPVideoTiming{}, ErrRTPShortBuffer
 	}
-	if len(src) != RTPVideoTimingHeaderExtensionSize {
+	flags := uint8(0)
+	offset := 0
+	switch len(src) {
+	case RTPVideoTimingHeaderExtensionSizeWithoutFlags:
+	case RTPVideoTimingHeaderExtensionSize:
+		flags = src[0] & (RTPVideoTimingFlagTriggeredByTimer | RTPVideoTimingFlagFrameLargerThanKnown)
+		offset = 1
+	default:
 		return RTPVideoTiming{}, ErrRTPInvalidHeaderExtension
 	}
 	return RTPVideoTiming{
-		Flags:                        src[0] & (RTPVideoTimingFlagTriggeredByTimer | RTPVideoTimingFlagFrameLargerThanKnown),
-		EncodeStartDeltaMs:           binary.BigEndian.Uint16(src[1:3]),
-		EncodeFinishDeltaMs:          binary.BigEndian.Uint16(src[3:5]),
-		PacketizationCompleteDeltaMs: binary.BigEndian.Uint16(src[5:7]),
-		PacerExitDeltaMs:             binary.BigEndian.Uint16(src[7:9]),
-		NetworkTimestampDeltaMs:      binary.BigEndian.Uint16(src[9:11]),
-		NetworkTimestamp2DeltaMs:     binary.BigEndian.Uint16(src[11:13]),
+		Flags:                        flags,
+		EncodeStartDeltaMs:           binary.BigEndian.Uint16(src[offset : offset+2]),
+		EncodeFinishDeltaMs:          binary.BigEndian.Uint16(src[offset+2 : offset+4]),
+		PacketizationCompleteDeltaMs: binary.BigEndian.Uint16(src[offset+4 : offset+6]),
+		PacerExitDeltaMs:             binary.BigEndian.Uint16(src[offset+6 : offset+8]),
+		NetworkTimestampDeltaMs:      binary.BigEndian.Uint16(src[offset+8 : offset+10]),
+		NetworkTimestamp2DeltaMs:     binary.BigEndian.Uint16(src[offset+10 : offset+12]),
 	}, nil
 }
 
@@ -405,4 +599,227 @@ func ValidateRTPVideoTiming(timing RTPVideoTiming) error {
 		return ErrRTPInvalidHeaderExtension
 	}
 	return nil
+}
+
+// RTPColorSpaceSize returns the payload size needed to write colorSpace. The
+// RTP extension element header is not counted.
+func RTPColorSpaceSize(colorSpace RTPColorSpace) (int, error) {
+	if err := ValidateRTPColorSpace(colorSpace); err != nil {
+		return 0, err
+	}
+	if colorSpace.HDRMetadataPresent {
+		return RTPColorSpaceHeaderExtensionSize, nil
+	}
+	return RTPColorSpaceHeaderExtensionSizeWithoutHDRMetadata, nil
+}
+
+// ParseRTPColorSpaceHeaderExtension parses WebRTC's color-space RTP header-
+// extension element payload. The RTP extension element header is not part of
+// src.
+func ParseRTPColorSpaceHeaderExtension(src []byte) (RTPColorSpace, error) {
+	if len(src) < RTPColorSpaceHeaderExtensionSizeWithoutHDRMetadata {
+		return RTPColorSpace{}, ErrRTPShortBuffer
+	}
+	if len(src) != RTPColorSpaceHeaderExtensionSizeWithoutHDRMetadata &&
+		len(src) != RTPColorSpaceHeaderExtensionSize {
+		return RTPColorSpace{}, ErrRTPInvalidHeaderExtension
+	}
+	rangeAndChromaSiting := src[3]
+	colorSpace := RTPColorSpace{
+		Primaries:              RTPColorSpacePrimary(src[0]),
+		Transfer:               RTPColorSpaceTransfer(src[1]),
+		Matrix:                 RTPColorSpaceMatrix(src[2]),
+		Range:                  RTPColorSpaceRange(rangeAndChromaSiting >> 4),
+		ChromaSitingHorizontal: RTPColorSpaceChromaSiting((rangeAndChromaSiting >> 2) & 0x03),
+		ChromaSitingVertical:   RTPColorSpaceChromaSiting(rangeAndChromaSiting & 0x03),
+	}
+	if len(src) == RTPColorSpaceHeaderExtensionSize {
+		colorSpace.HDRMetadataPresent = true
+		colorSpace.HDRMetadata = RTPColorSpaceHDRMetadata{
+			LuminanceMax: binary.BigEndian.Uint16(src[4:6]),
+			LuminanceMin: binary.BigEndian.Uint16(src[6:8]),
+			PrimaryR: RTPColorSpaceChromaticity{
+				X: binary.BigEndian.Uint16(src[8:10]),
+				Y: binary.BigEndian.Uint16(src[10:12]),
+			},
+			PrimaryG: RTPColorSpaceChromaticity{
+				X: binary.BigEndian.Uint16(src[12:14]),
+				Y: binary.BigEndian.Uint16(src[14:16]),
+			},
+			PrimaryB: RTPColorSpaceChromaticity{
+				X: binary.BigEndian.Uint16(src[16:18]),
+				Y: binary.BigEndian.Uint16(src[18:20]),
+			},
+			WhitePoint: RTPColorSpaceChromaticity{
+				X: binary.BigEndian.Uint16(src[20:22]),
+				Y: binary.BigEndian.Uint16(src[22:24]),
+			},
+			MaxContentLightLevel:      binary.BigEndian.Uint16(src[24:26]),
+			MaxFrameAverageLightLevel: binary.BigEndian.Uint16(src[26:28]),
+		}
+	}
+	if err := ValidateRTPColorSpace(colorSpace); err != nil {
+		return RTPColorSpace{}, err
+	}
+	return colorSpace, nil
+}
+
+// PutRTPColorSpaceHeaderExtension writes WebRTC's color-space RTP header-
+// extension element payload. The RTP extension element header is not written.
+func PutRTPColorSpaceHeaderExtension(dst []byte, colorSpace RTPColorSpace) (int, error) {
+	size, err := RTPColorSpaceSize(colorSpace)
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < size {
+		return 0, ErrRTPShortBuffer
+	}
+	dst[0] = byte(colorSpace.Primaries)
+	dst[1] = byte(colorSpace.Transfer)
+	dst[2] = byte(colorSpace.Matrix)
+	dst[3] = byte(colorSpace.Range<<4) |
+		byte(colorSpace.ChromaSitingHorizontal<<2) |
+		byte(colorSpace.ChromaSitingVertical)
+	if colorSpace.HDRMetadataPresent {
+		hdr := colorSpace.HDRMetadata
+		binary.BigEndian.PutUint16(dst[4:6], hdr.LuminanceMax)
+		binary.BigEndian.PutUint16(dst[6:8], hdr.LuminanceMin)
+		binary.BigEndian.PutUint16(dst[8:10], hdr.PrimaryR.X)
+		binary.BigEndian.PutUint16(dst[10:12], hdr.PrimaryR.Y)
+		binary.BigEndian.PutUint16(dst[12:14], hdr.PrimaryG.X)
+		binary.BigEndian.PutUint16(dst[14:16], hdr.PrimaryG.Y)
+		binary.BigEndian.PutUint16(dst[16:18], hdr.PrimaryB.X)
+		binary.BigEndian.PutUint16(dst[18:20], hdr.PrimaryB.Y)
+		binary.BigEndian.PutUint16(dst[20:22], hdr.WhitePoint.X)
+		binary.BigEndian.PutUint16(dst[22:24], hdr.WhitePoint.Y)
+		binary.BigEndian.PutUint16(dst[24:26], hdr.MaxContentLightLevel)
+		binary.BigEndian.PutUint16(dst[26:28], hdr.MaxFrameAverageLightLevel)
+	}
+	return size, nil
+}
+
+func ValidateRTPColorSpace(colorSpace RTPColorSpace) error {
+	if !validRTPColorSpacePrimary(colorSpace.Primaries) ||
+		!validRTPColorSpaceTransfer(colorSpace.Transfer) ||
+		!validRTPColorSpaceMatrix(colorSpace.Matrix) ||
+		!validRTPColorSpaceRange(colorSpace.Range) ||
+		!validRTPColorSpaceChromaSiting(colorSpace.ChromaSitingHorizontal) ||
+		!validRTPColorSpaceChromaSiting(colorSpace.ChromaSitingVertical) {
+		return ErrRTPInvalidHeaderExtension
+	}
+	if colorSpace.HDRMetadataPresent {
+		return ValidateRTPColorSpaceHDRMetadata(colorSpace.HDRMetadata)
+	}
+	if colorSpace.HDRMetadata != (RTPColorSpaceHDRMetadata{}) {
+		return ErrRTPInvalidHeaderExtension
+	}
+	return nil
+}
+
+func ValidateRTPColorSpaceHDRMetadata(hdr RTPColorSpaceHDRMetadata) error {
+	if hdr.LuminanceMax > 20000 ||
+		hdr.LuminanceMin > 50000 ||
+		hdr.MaxContentLightLevel > 20000 ||
+		hdr.MaxFrameAverageLightLevel > 20000 ||
+		!validRTPColorSpaceChromaticity(hdr.PrimaryR) ||
+		!validRTPColorSpaceChromaticity(hdr.PrimaryG) ||
+		!validRTPColorSpaceChromaticity(hdr.PrimaryB) ||
+		!validRTPColorSpaceChromaticity(hdr.WhitePoint) {
+		return ErrRTPInvalidHeaderExtension
+	}
+	return nil
+}
+
+func validRTPColorSpaceChromaticity(chromaticity RTPColorSpaceChromaticity) bool {
+	return chromaticity.X <= 50000 && chromaticity.Y <= 50000
+}
+
+func validRTPColorSpacePrimary(primary RTPColorSpacePrimary) bool {
+	switch primary {
+	case RTPColorSpacePrimaryBT709,
+		RTPColorSpacePrimaryUnspecified,
+		RTPColorSpacePrimaryBT470M,
+		RTPColorSpacePrimaryBT470BG,
+		RTPColorSpacePrimarySMPTE170M,
+		RTPColorSpacePrimarySMPTE240M,
+		RTPColorSpacePrimaryFilm,
+		RTPColorSpacePrimaryBT2020,
+		RTPColorSpacePrimarySMPTEST428,
+		RTPColorSpacePrimarySMPTEST431,
+		RTPColorSpacePrimarySMPTEST432,
+		RTPColorSpacePrimaryJEDECP22:
+		return true
+	default:
+		return false
+	}
+}
+
+func validRTPColorSpaceTransfer(transfer RTPColorSpaceTransfer) bool {
+	switch transfer {
+	case RTPColorSpaceTransferBT709,
+		RTPColorSpaceTransferUnspecified,
+		RTPColorSpaceTransferGamma22,
+		RTPColorSpaceTransferGamma28,
+		RTPColorSpaceTransferSMPTE170M,
+		RTPColorSpaceTransferSMPTE240M,
+		RTPColorSpaceTransferLinear,
+		RTPColorSpaceTransferLog,
+		RTPColorSpaceTransferLogSqrt,
+		RTPColorSpaceTransferIEC6196624,
+		RTPColorSpaceTransferBT1361ECG,
+		RTPColorSpaceTransferIEC6196621,
+		RTPColorSpaceTransferBT202010,
+		RTPColorSpaceTransferBT202012,
+		RTPColorSpaceTransferSMPTEST2084,
+		RTPColorSpaceTransferSMPTEST428,
+		RTPColorSpaceTransferARIBSTDB67:
+		return true
+	default:
+		return false
+	}
+}
+
+func validRTPColorSpaceMatrix(matrix RTPColorSpaceMatrix) bool {
+	switch matrix {
+	case RTPColorSpaceMatrixRGB,
+		RTPColorSpaceMatrixBT709,
+		RTPColorSpaceMatrixUnspecified,
+		RTPColorSpaceMatrixFCC,
+		RTPColorSpaceMatrixBT470BG,
+		RTPColorSpaceMatrixSMPTE170M,
+		RTPColorSpaceMatrixSMPTE240M,
+		RTPColorSpaceMatrixYCgCo,
+		RTPColorSpaceMatrixBT2020NCL,
+		RTPColorSpaceMatrixBT2020CL,
+		RTPColorSpaceMatrixSMPTE2085,
+		RTPColorSpaceMatrixCDNCLS,
+		RTPColorSpaceMatrixCDCLS,
+		RTPColorSpaceMatrixBT2100ICTCP:
+		return true
+	default:
+		return false
+	}
+}
+
+func validRTPColorSpaceRange(rng RTPColorSpaceRange) bool {
+	switch rng {
+	case RTPColorSpaceRangeInvalid,
+		RTPColorSpaceRangeLimited,
+		RTPColorSpaceRangeFull,
+		RTPColorSpaceRangeDerived:
+		return true
+	default:
+		return false
+	}
+}
+
+func validRTPColorSpaceChromaSiting(siting RTPColorSpaceChromaSiting) bool {
+	switch siting {
+	case RTPColorSpaceChromaSitingUnspecified,
+		RTPColorSpaceChromaSitingCollocated,
+		RTPColorSpaceChromaSitingHalf:
+		return true
+	default:
+		return false
+	}
 }

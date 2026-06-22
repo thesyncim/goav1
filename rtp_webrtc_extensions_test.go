@@ -26,11 +26,26 @@ func TestPublicRTPWebRTCHeaderExtensionConstants(t *testing.T) {
 	if av1.RTPAbsoluteSendTimeHeaderExtensionSize != 3 {
 		t.Fatalf("RTPAbsoluteSendTimeHeaderExtensionSize = %d, want 3", av1.RTPAbsoluteSendTimeHeaderExtensionSize)
 	}
+	if av1.RTPAbsoluteCaptureTimeHeaderExtensionSizeWithoutClockOffset != 8 {
+		t.Fatalf("RTPAbsoluteCaptureTimeHeaderExtensionSizeWithoutClockOffset = %d, want 8", av1.RTPAbsoluteCaptureTimeHeaderExtensionSizeWithoutClockOffset)
+	}
+	if av1.RTPAbsoluteCaptureTimeHeaderExtensionSize != 16 {
+		t.Fatalf("RTPAbsoluteCaptureTimeHeaderExtensionSize = %d, want 16", av1.RTPAbsoluteCaptureTimeHeaderExtensionSize)
+	}
 	if av1.RTPVideoContentTypeHeaderExtensionSize != 1 {
 		t.Fatalf("RTPVideoContentTypeHeaderExtensionSize = %d, want 1", av1.RTPVideoContentTypeHeaderExtensionSize)
 	}
 	if av1.RTPVideoTimingHeaderExtensionSize != 13 {
 		t.Fatalf("RTPVideoTimingHeaderExtensionSize = %d, want 13", av1.RTPVideoTimingHeaderExtensionSize)
+	}
+	if av1.RTPVideoTimingHeaderExtensionSizeWithoutFlags != 12 {
+		t.Fatalf("RTPVideoTimingHeaderExtensionSizeWithoutFlags = %d, want 12", av1.RTPVideoTimingHeaderExtensionSizeWithoutFlags)
+	}
+	if av1.RTPColorSpaceHeaderExtensionSizeWithoutHDRMetadata != 4 {
+		t.Fatalf("RTPColorSpaceHeaderExtensionSizeWithoutHDRMetadata = %d, want 4", av1.RTPColorSpaceHeaderExtensionSizeWithoutHDRMetadata)
+	}
+	if av1.RTPColorSpaceHeaderExtensionSize != 28 {
+		t.Fatalf("RTPColorSpaceHeaderExtensionSize = %d, want 28", av1.RTPColorSpaceHeaderExtensionSize)
 	}
 	if av1.RTPPlayoutDelayMaxMilliseconds != 40950 {
 		t.Fatalf("RTPPlayoutDelayMaxMilliseconds = %d, want 40950", av1.RTPPlayoutDelayMaxMilliseconds)
@@ -48,6 +63,13 @@ func TestPublicRTPWebRTCHeaderExtensionConstants(t *testing.T) {
 	if av1.RTPVideoTimingFlagTriggeredByTimer != 0x01 ||
 		av1.RTPVideoTimingFlagFrameLargerThanKnown != 0x02 {
 		t.Fatalf("unexpected RTP video timing flags")
+	}
+	if av1.RTPColorSpacePrimaryBT2020 != 9 ||
+		av1.RTPColorSpaceTransferBT202010 != 14 ||
+		av1.RTPColorSpaceMatrixBT2020NCL != 9 ||
+		av1.RTPColorSpaceRangeFull != 2 ||
+		av1.RTPColorSpaceChromaSitingHalf != 2 {
+		t.Fatalf("unexpected RTP color-space constants")
 	}
 }
 
@@ -274,6 +296,77 @@ func TestPublicRTPAbsoluteSendTimeHeaderExtension(t *testing.T) {
 	}
 }
 
+func TestPublicRTPAbsoluteCaptureTimeHeaderExtension(t *testing.T) {
+	var buf [16]byte
+	plain := av1.RTPAbsoluteCaptureTime{AbsoluteCaptureTimestamp: 0x0102030405060708}
+	size, err := av1.RTPAbsoluteCaptureTimeSize(plain)
+	if err != nil {
+		t.Fatalf("RTPAbsoluteCaptureTimeSize plain returned error: %v", err)
+	}
+	if size != av1.RTPAbsoluteCaptureTimeHeaderExtensionSizeWithoutClockOffset {
+		t.Fatalf("plain abs-capture-time size=%d want %d", size, av1.RTPAbsoluteCaptureTimeHeaderExtensionSizeWithoutClockOffset)
+	}
+	n, err := av1.PutRTPAbsoluteCaptureTimeHeaderExtension(buf[:], plain)
+	if err != nil {
+		t.Fatalf("PutRTPAbsoluteCaptureTimeHeaderExtension plain returned error: %v", err)
+	}
+	wantPlain := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	if n != size || string(buf[:n]) != string(wantPlain) {
+		t.Fatalf("encoded plain abs-capture-time n=%d buf=%#v want %#v", n, buf[:n], wantPlain)
+	}
+	got, err := av1.ParseRTPAbsoluteCaptureTimeHeaderExtension(buf[:n])
+	if err != nil {
+		t.Fatalf("ParseRTPAbsoluteCaptureTimeHeaderExtension plain returned error: %v", err)
+	}
+	if got != plain {
+		t.Fatalf("ParseRTPAbsoluteCaptureTimeHeaderExtension plain = %+v, want %+v", got, plain)
+	}
+
+	withOffset := av1.RTPAbsoluteCaptureTime{
+		AbsoluteCaptureTimestamp:           0x1112131415161718,
+		EstimatedCaptureClockOffsetPresent: true,
+		EstimatedCaptureClockOffset:        -2,
+	}
+	size, err = av1.RTPAbsoluteCaptureTimeSize(withOffset)
+	if err != nil {
+		t.Fatalf("RTPAbsoluteCaptureTimeSize offset returned error: %v", err)
+	}
+	if size != av1.RTPAbsoluteCaptureTimeHeaderExtensionSize {
+		t.Fatalf("offset abs-capture-time size=%d want %d", size, av1.RTPAbsoluteCaptureTimeHeaderExtensionSize)
+	}
+	n, err = av1.PutRTPAbsoluteCaptureTimeHeaderExtension(buf[:], withOffset)
+	if err != nil {
+		t.Fatalf("PutRTPAbsoluteCaptureTimeHeaderExtension offset returned error: %v", err)
+	}
+	wantOffset := []byte{0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe}
+	if n != size || string(buf[:n]) != string(wantOffset) {
+		t.Fatalf("encoded offset abs-capture-time n=%d buf=%#v want %#v", n, buf[:n], wantOffset)
+	}
+	got, err = av1.ParseRTPAbsoluteCaptureTimeHeaderExtension(buf[:n])
+	if err != nil {
+		t.Fatalf("ParseRTPAbsoluteCaptureTimeHeaderExtension offset returned error: %v", err)
+	}
+	if got != withOffset {
+		t.Fatalf("ParseRTPAbsoluteCaptureTimeHeaderExtension offset = %+v, want %+v", got, withOffset)
+	}
+	invalid := av1.RTPAbsoluteCaptureTime{AbsoluteCaptureTimestamp: 1, EstimatedCaptureClockOffset: 1}
+	if err := av1.ValidateRTPAbsoluteCaptureTime(invalid); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("ValidateRTPAbsoluteCaptureTime invalid error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+	if _, err := av1.ParseRTPAbsoluteCaptureTimeHeaderExtension(buf[:7]); !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short ParseRTPAbsoluteCaptureTimeHeaderExtension error = %v, want ErrRTPShortBuffer", err)
+	}
+	if _, err := av1.ParseRTPAbsoluteCaptureTimeHeaderExtension(buf[:9]); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("bad-size ParseRTPAbsoluteCaptureTimeHeaderExtension error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+	if _, err := av1.PutRTPAbsoluteCaptureTimeHeaderExtension(buf[:7], plain); !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short PutRTPAbsoluteCaptureTimeHeaderExtension plain error = %v, want ErrRTPShortBuffer", err)
+	}
+	if _, err := av1.PutRTPAbsoluteCaptureTimeHeaderExtension(buf[:15], withOffset); !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short PutRTPAbsoluteCaptureTimeHeaderExtension offset error = %v, want ErrRTPShortBuffer", err)
+	}
+}
+
 func TestPublicRTPVideoContentTypeHeaderExtension(t *testing.T) {
 	var buf [2]byte
 	n, err := av1.PutRTPVideoContentTypeHeaderExtension(buf[:], av1.RTPVideoContentTypeScreenshare)
@@ -337,12 +430,21 @@ func TestPublicRTPVideoTimingHeaderExtension(t *testing.T) {
 	if reserved != timing {
 		t.Fatalf("reserved-flag video timing parse = %+v, want %+v", reserved, timing)
 	}
+	legacy, err := av1.ParseRTPVideoTimingHeaderExtension(want[1:])
+	if err != nil {
+		t.Fatalf("ParseRTPVideoTimingHeaderExtension legacy returned error: %v", err)
+	}
+	legacyWant := timing
+	legacyWant.Flags = 0
+	if legacy != legacyWant {
+		t.Fatalf("legacy video timing parse = %+v, want %+v", legacy, legacyWant)
+	}
 	bad := timing
 	bad.Flags = 0x80
 	if err := av1.ValidateRTPVideoTiming(bad); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
 		t.Fatalf("invalid ValidateRTPVideoTiming error = %v, want ErrRTPInvalidHeaderExtension", err)
 	}
-	if _, err := av1.ParseRTPVideoTimingHeaderExtension(buf[:12]); !errors.Is(err, av1.ErrRTPShortBuffer) {
+	if _, err := av1.ParseRTPVideoTimingHeaderExtension(buf[:11]); !errors.Is(err, av1.ErrRTPShortBuffer) {
 		t.Fatalf("short ParseRTPVideoTimingHeaderExtension error = %v, want ErrRTPShortBuffer", err)
 	}
 	if _, err := av1.ParseRTPVideoTimingHeaderExtension(buf[:14]); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
@@ -350,5 +452,113 @@ func TestPublicRTPVideoTimingHeaderExtension(t *testing.T) {
 	}
 	if _, err := av1.PutRTPVideoTimingHeaderExtension(buf[:12], timing); !errors.Is(err, av1.ErrRTPShortBuffer) {
 		t.Fatalf("short PutRTPVideoTimingHeaderExtension error = %v, want ErrRTPShortBuffer", err)
+	}
+}
+
+func TestPublicRTPColorSpaceHeaderExtension(t *testing.T) {
+	colorSpace := av1.RTPColorSpace{
+		Primaries:              av1.RTPColorSpacePrimaryBT709,
+		Transfer:               av1.RTPColorSpaceTransferBT202010,
+		Matrix:                 av1.RTPColorSpaceMatrixBT2020NCL,
+		Range:                  av1.RTPColorSpaceRangeFull,
+		ChromaSitingHorizontal: av1.RTPColorSpaceChromaSitingHalf,
+		ChromaSitingVertical:   av1.RTPColorSpaceChromaSitingCollocated,
+	}
+	var buf [28]byte
+	size, err := av1.RTPColorSpaceSize(colorSpace)
+	if err != nil {
+		t.Fatalf("RTPColorSpaceSize plain returned error: %v", err)
+	}
+	if size != av1.RTPColorSpaceHeaderExtensionSizeWithoutHDRMetadata {
+		t.Fatalf("plain color-space size=%d want %d", size, av1.RTPColorSpaceHeaderExtensionSizeWithoutHDRMetadata)
+	}
+	n, err := av1.PutRTPColorSpaceHeaderExtension(buf[:], colorSpace)
+	if err != nil {
+		t.Fatalf("PutRTPColorSpaceHeaderExtension plain returned error: %v", err)
+	}
+	wantPlain := []byte{0x01, 0x0e, 0x09, 0x29}
+	if n != size || string(buf[:n]) != string(wantPlain) {
+		t.Fatalf("encoded plain color-space n=%d buf=%#v want %#v", n, buf[:n], wantPlain)
+	}
+	got, err := av1.ParseRTPColorSpaceHeaderExtension(buf[:n])
+	if err != nil {
+		t.Fatalf("ParseRTPColorSpaceHeaderExtension plain returned error: %v", err)
+	}
+	if got != colorSpace {
+		t.Fatalf("ParseRTPColorSpaceHeaderExtension plain = %+v, want %+v", got, colorSpace)
+	}
+
+	withHDR := colorSpace
+	withHDR.HDRMetadataPresent = true
+	withHDR.HDRMetadata = av1.RTPColorSpaceHDRMetadata{
+		LuminanceMax:              1000,
+		LuminanceMin:              50,
+		PrimaryR:                  av1.RTPColorSpaceChromaticity{X: 34000, Y: 16000},
+		PrimaryG:                  av1.RTPColorSpaceChromaticity{X: 13250, Y: 34500},
+		PrimaryB:                  av1.RTPColorSpaceChromaticity{X: 7500, Y: 3000},
+		WhitePoint:                av1.RTPColorSpaceChromaticity{X: 15635, Y: 16450},
+		MaxContentLightLevel:      1000,
+		MaxFrameAverageLightLevel: 400,
+	}
+	size, err = av1.RTPColorSpaceSize(withHDR)
+	if err != nil {
+		t.Fatalf("RTPColorSpaceSize HDR returned error: %v", err)
+	}
+	if size != av1.RTPColorSpaceHeaderExtensionSize {
+		t.Fatalf("HDR color-space size=%d want %d", size, av1.RTPColorSpaceHeaderExtensionSize)
+	}
+	n, err = av1.PutRTPColorSpaceHeaderExtension(buf[:], withHDR)
+	if err != nil {
+		t.Fatalf("PutRTPColorSpaceHeaderExtension HDR returned error: %v", err)
+	}
+	wantHDR := []byte{
+		0x01, 0x0e, 0x09, 0x29,
+		0x03, 0xe8, 0x00, 0x32,
+		0x84, 0xd0, 0x3e, 0x80,
+		0x33, 0xc2, 0x86, 0xc4,
+		0x1d, 0x4c, 0x0b, 0xb8,
+		0x3d, 0x13, 0x40, 0x42,
+		0x03, 0xe8, 0x01, 0x90,
+	}
+	if n != size || string(buf[:n]) != string(wantHDR) {
+		t.Fatalf("encoded HDR color-space n=%d buf=%#v want %#v", n, buf[:n], wantHDR)
+	}
+	got, err = av1.ParseRTPColorSpaceHeaderExtension(buf[:n])
+	if err != nil {
+		t.Fatalf("ParseRTPColorSpaceHeaderExtension HDR returned error: %v", err)
+	}
+	if got != withHDR {
+		t.Fatalf("ParseRTPColorSpaceHeaderExtension HDR = %+v, want %+v", got, withHDR)
+	}
+
+	invalid := colorSpace
+	invalid.Primaries = av1.RTPColorSpacePrimary(3)
+	if err := av1.ValidateRTPColorSpace(invalid); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("ValidateRTPColorSpace invalid primary error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+	invalid = colorSpace
+	invalid.HDRMetadata.LuminanceMax = 1
+	if err := av1.ValidateRTPColorSpace(invalid); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("ValidateRTPColorSpace dropped HDR error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+	badHDR := withHDR.HDRMetadata
+	badHDR.LuminanceMax = 20001
+	if err := av1.ValidateRTPColorSpaceHDRMetadata(badHDR); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("ValidateRTPColorSpaceHDRMetadata invalid error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+	if _, err := av1.ParseRTPColorSpaceHeaderExtension(buf[:3]); !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short ParseRTPColorSpaceHeaderExtension error = %v, want ErrRTPShortBuffer", err)
+	}
+	if _, err := av1.ParseRTPColorSpaceHeaderExtension(buf[:5]); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("bad-size ParseRTPColorSpaceHeaderExtension error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+	if _, err := av1.ParseRTPColorSpaceHeaderExtension([]byte{0x03, 0x0e, 0x09, 0x29}); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("invalid-value ParseRTPColorSpaceHeaderExtension error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+	if _, err := av1.PutRTPColorSpaceHeaderExtension(buf[:3], colorSpace); !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short PutRTPColorSpaceHeaderExtension plain error = %v, want ErrRTPShortBuffer", err)
+	}
+	if _, err := av1.PutRTPColorSpaceHeaderExtension(buf[:27], withHDR); !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short PutRTPColorSpaceHeaderExtension HDR error = %v, want ErrRTPShortBuffer", err)
 	}
 }

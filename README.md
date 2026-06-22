@@ -46,7 +46,7 @@ needs:
 | Use case | API | Ownership model |
 | --- | --- | --- |
 | One-shot decoded pixels | `DecodeIVF` | Copies visible planes into independent `DecodedFrame` values |
-| AV1 WebRTC SDP/RTP control checks | `AV1SDPRTPMap.SDP` / `ParseAV1SDPRTPMap` / `AV1SDPFmtpAttribute.SDP` / `ParseAV1SDPFmtpAttribute` / `ParseAV1SDPExtmap` / `AV1SDPRTCPFeedback.SDP` / `ParseAV1SDPRID` / `ParseAV1SDPSimulcast` / `PutRTPMIDHeaderExtension` / `PutRTPTransportWideCCHeaderExtension` / `PutRTPTransportWideCC02HeaderExtension` / `PutRTPCoordinationOfVideoOrientationHeaderExtension` / `PutRTPVideoTimingHeaderExtension` / `AV1SDPOffersReceive*` | Parses and emits `AV1/90000` payload bindings, profile/level/tier fmtp lines and values, RTP header-extension mappings, payload-specific or wildcard rtcp-fb lines, AV1 RID receiver restrictions, AV1 simulcast RID groups, raw MID/RID/RRID SDES payloads, and raw CVO/playout-delay/TWCC/TWCC-02/absolute-send-time/video-content-type/video-timing payloads; complete SDP assembly and RTP header ownership stay caller-owned |
+| AV1 WebRTC SDP/RTP control checks | `AV1SDPRTPMap.SDP` / `ParseAV1SDPRTPMap` / `AV1SDPFmtpAttribute.SDP` / `ParseAV1SDPFmtpAttribute` / `ParseAV1SDPExtmap` / `AV1SDPRTCPFeedback.SDP` / `ParseAV1SDPRID` / `ParseAV1SDPSimulcast` / `PutRTPMIDHeaderExtension` / `PutRTPTransportWideCCHeaderExtension` / `PutRTPTransportWideCC02HeaderExtension` / `PutRTPAbsoluteCaptureTimeHeaderExtension` / `PutRTPColorSpaceHeaderExtension` / `PutRTPCoordinationOfVideoOrientationHeaderExtension` / `PutRTPVideoTimingHeaderExtension` / `AV1SDPOffersReceive*` | Parses and emits `AV1/90000` payload bindings, profile/level/tier fmtp lines and values, RTP header-extension mappings, payload-specific or wildcard rtcp-fb lines, AV1 RID receiver restrictions, AV1 simulcast RID groups, raw MID/RID/RRID SDES payloads, and raw CVO/playout-delay/TWCC/TWCC-02/absolute-send-time/absolute-capture-time/color-space/video-content-type/video-timing payloads; complete SDP assembly and RTP header ownership stay caller-owned |
 | AV1 WebRTC RTCP feedback checks | `ParseRTCPGenericNACKPairs` / `ParseRTCPPictureLossIndicationFCI` / `ParseRTCPFullIntraRequestEntries` / `ParseAV1RTCPLayerRefreshRequestEntries` / `EncoderWebRTCValidateLayerRefreshRequests` | Parses and serializes generic NACK PID/BLP pairs, empty PLI FCI payloads, FIR FCI entries, and AV1 LRR FCI entry lists; LRR entries can be validated against the active temporal/spatial layer grid; RTCP transport stays caller-owned |
 | Repeated in-memory IVF decode | `NewDecoderFromIVF` + `DecodeNext` | Copies IVF payloads once, then reuses decoder-owned frame and post-filter arenas |
 | Large/file-backed IVF decode | `NewDecoderFromIVFReaderAt` + `DecodeNext` | Indexes IVF frame offsets and reads each payload into one reusable buffer |
@@ -124,7 +124,8 @@ offer receive checks, payload-specific or wildcard rtcp-fb line emission and che
 dependency descriptor extmap URI. RTP SDES helpers validate and write raw
 MID/RID/RRID header-extension payload bytes after the caller has selected RTP
 extension IDs; WebRTC RTP helpers also parse and write raw CVO, playout-delay,
-transport-wide-cc, transport-wide-cc-02, absolute-send-time, video-content-type, and video-timing
+transport-wide-cc, transport-wide-cc-02, absolute-send-time,
+absolute-capture-time, color-space, video-content-type, and video-timing
 payload bytes. Complete SDP generation, transceiver setup, and RTP header
 ownership remain with the caller. RTCP helpers cover generic NACK PID/BLP
 pairs, empty PLI FCI payloads, FIR FCI entries, and AV1 Layer Refresh Request
@@ -153,7 +154,7 @@ result buffer directly. The executable examples in `example_test.go` and
 
 | Area | Status |
 | --- | --- |
-| Containers and transport | IVF, AV1 low-overhead OBU, Annex B, Section 5 temporal units, AV1 RTP payload parse/build/fragment/reassemble, AV1 SDP/fmtp/profile/level/tier/extmap/RID/simulcast/rtcp-fb helpers, RTP MID/RID/CVO/playout-delay/TWCC/TWCC-02/absolute-send-time/video-content-type/video-timing payload helpers, RTCP NACK/PLI/FIR and AV1 LRR feedback helpers |
+| Containers and transport | IVF, AV1 low-overhead OBU, Annex B, Section 5 temporal units, AV1 RTP payload parse/build/fragment/reassemble, AV1 SDP/fmtp/profile/level/tier/extmap/RID/simulcast/rtcp-fb helpers, RTP MID/RID/CVO/playout-delay/TWCC/TWCC-02/absolute-send-time/absolute-capture-time/color-space/video-content-type/video-timing payload helpers, RTCP NACK/PLI/FIR and AV1 LRR feedback helpers |
 | Decoder profiles | Profile 0 and Profile 1 pass committed/vendored strict-MD5 gates; Profile 2 has passing 4:2:2 8/10-bit and 4:2:0 12-bit profile clips, with wider 12-bit breadth still expanding |
 | Bit depths and formats | 8-bit and 10-bit covered broadly; 12-bit covered by targeted profile-2 clips; 4:2:0, 4:2:2, 4:4:4, and monochrome surfaces |
 | Prediction and residuals | Intra, directional intra, filter intra, CfL, palette, IntraBC, inter/compound, OBMC, warped motion, scaled motion, transforms, dequantization, and CDF adaptation |
