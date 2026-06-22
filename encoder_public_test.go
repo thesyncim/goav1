@@ -2144,6 +2144,85 @@ func TestPublicWebRTCEncoderSetConfigReconfigure(t *testing.T) {
 	}
 }
 
+func TestPublicWebRTCEncoderSetConfigRejectsInvalidControlsWithoutMutation(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: 1280, Height: 720},
+		Scalability:       av1.EncoderScalabilityModeS2T2,
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    1200,
+		TargetBitrateKbps: 700,
+	}
+	enc, err := av1.NewWebRTCEncoder(cfg, av1.EncoderWebRTCState{NextFrameID: 900})
+	if err != nil {
+		t.Fatalf("NewWebRTCEncoder: %v", err)
+	}
+	if _, err := enc.NextTemporalUnit(false); err != nil {
+		t.Fatalf("warm key: %v", err)
+	}
+	if _, err := enc.NextTemporalUnit(false); err != nil {
+		t.Fatalf("warm delta: %v", err)
+	}
+	keepConfig := enc.Config()
+	keepState := enc.State()
+	if keepState.NextFrameID == 0 || !keepState.DependencyStructureState.Valid {
+		t.Fatalf("warm state=%+v", keepState)
+	}
+
+	tests := []struct {
+		name string
+		edit func(*av1.EncoderConfig)
+	}{
+		{name: "zero-fps", edit: func(cfg *av1.EncoderConfig) {
+			cfg.MaxFramerate = av1.EncoderRational{Num: 0, Den: 1}
+		}},
+		{name: "sub-one-fps", edit: func(cfg *av1.EncoderConfig) {
+			cfg.MaxFramerate = av1.EncoderRational{Num: 1, Den: 2}
+		}},
+		{name: "min-above-max-bitrate", edit: func(cfg *av1.EncoderConfig) {
+			cfg.MinBitrateKbps = cfg.MaxBitrateKbps + 1
+		}},
+		{name: "target-below-min-bitrate", edit: func(cfg *av1.EncoderConfig) {
+			cfg.TargetBitrateKbps = cfg.MinBitrateKbps - 1
+		}},
+		{name: "target-above-max-bitrate", edit: func(cfg *av1.EncoderConfig) {
+			cfg.TargetBitrateKbps = cfg.MaxBitrateKbps + 1
+		}},
+		{name: "max-bitrate-limit", edit: func(cfg *av1.EncoderConfig) {
+			cfg.MaxBitrateKbps = av1.EncoderWebRTCMaxBitrateKbps + 1
+			cfg.TargetBitrateKbps = cfg.MinBitrateKbps
+		}},
+		{name: "cbr-quantizer", edit: func(cfg *av1.EncoderConfig) {
+			cfg.RateControl = av1.EncoderRateControlCBR
+			cfg.Quantizer = 1
+		}},
+		{name: "cqp-quantizer-limit", edit: func(cfg *av1.EncoderConfig) {
+			cfg.RateControl = av1.EncoderRateControlCQP
+			cfg.Quantizer = uint8(av1.EncoderWebRTCMaxQuantizer + 1)
+		}},
+		{name: "spatial-layer-min-above-max", edit: func(cfg *av1.EncoderConfig) {
+			cfg.SpatialLayers[0].MinBitrateKbps = cfg.SpatialLayers[0].MaxBitrateKbps + 1
+		}},
+		{name: "spatial-layer-target-above-max", edit: func(cfg *av1.EncoderConfig) {
+			cfg.SpatialLayers[1].TargetBitrateKbps = cfg.SpatialLayers[1].MaxBitrateKbps + 1
+		}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := keepConfig
+			tc.edit(&bad)
+			if err := enc.SetConfig(bad); !errors.Is(err, av1.ErrEncoderInvalidConfig) {
+				t.Fatalf("SetConfig err=%v want %v", err, av1.ErrEncoderInvalidConfig)
+			}
+			if enc.Config() != keepConfig || enc.State() != keepState {
+				t.Fatalf("SetConfig mutated state/config for %s config=%+v want=%+v state=%+v want=%+v",
+					tc.name, enc.Config(), keepConfig, enc.State(), keepState)
+			}
+		})
+	}
+}
+
 func TestPublicWebRTCEncoderSetConfigScalabilityTransitionMatrix(t *testing.T) {
 	modes := av1.EncoderWebRTCScalabilityModes()
 	for fromIndex, fromMode := range modes {
