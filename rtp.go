@@ -78,7 +78,8 @@ type RTPDependencyDescriptorStructure = internalrtp.DependencyDescriptorStructur
 type RTPDependencyDescriptor = internalrtp.DependencyDescriptor
 
 // RTPDependencyDescriptorState remembers the last attached dependency
-// structure and parses compact later descriptors against it.
+// structure and current active decode-target mask, then parses compact later
+// descriptors against that state.
 type RTPDependencyDescriptorState = internalrtp.DependencyDescriptorState
 
 const RTPDependencyDescriptorMandatorySize = internalrtp.DependencyDescriptorMandatorySize

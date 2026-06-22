@@ -728,6 +728,10 @@ func TestPublicRTPPacketDependencyDescriptorActiveDecodeTargets(t *testing.T) {
 		parsed.ActiveDecodeTargetsMask != options.ActiveDecodeTargetsMask {
 		t.Fatalf("first descriptor consumed=%d/%d parsed=%+v", consumed, len(descriptor), parsed)
 	}
+	if !receiver.ActiveDecodeTargetsValid ||
+		receiver.ActiveDecodeTargetsMask != options.ActiveDecodeTargetsMask {
+		t.Fatalf("first descriptor active target state=%+v", receiver)
+	}
 	var payloadBuf [16]byte
 	if _, _, ok, err := packetizer.NextPacket(payloadBuf[:]); err != nil || !ok {
 		t.Fatalf("NextPacket first ok=%v err=%v", ok, err)
@@ -749,8 +753,10 @@ func TestPublicRTPPacketDependencyDescriptorActiveDecodeTargets(t *testing.T) {
 		parsed.Mandatory.FirstPacketInFrame ||
 		parsed.HasAttachedStructure ||
 		parsed.HasActiveDecodeTargets ||
-		secondSize != RTPDependencyDescriptorMandatorySize {
-		t.Fatalf("second descriptor size=%d consumed=%d/%d parsed=%+v", secondSize, consumed, len(secondDescriptor), parsed)
+		secondSize != RTPDependencyDescriptorMandatorySize ||
+		!receiver.ActiveDecodeTargetsValid ||
+		receiver.ActiveDecodeTargetsMask != options.ActiveDecodeTargetsMask {
+		t.Fatalf("second descriptor size=%d consumed=%d/%d parsed=%+v state=%+v", secondSize, consumed, len(secondDescriptor), parsed, receiver)
 	}
 
 	packetizer, err = NewRTPPacketizer(frame, limits, false, true, obuScratch[:], packetScratch[:], workScratch[:])

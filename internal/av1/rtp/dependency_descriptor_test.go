@@ -164,7 +164,10 @@ func TestDependencyDescriptorStateParseRemembersAttachedStructure(t *testing.T) 
 		t.Fatalf("state Parse key: %v", err)
 	}
 	if !state.Valid || consumed != len(w.bytes()) ||
-		!key.HasAttachedStructure || key.FrameDependencies.DTIs[0] != DependencyDescriptorDecodeTargetSwitch {
+		!state.ActiveDecodeTargetsValid || state.ActiveDecodeTargetsMask != 0x01 ||
+		!key.HasAttachedStructure || !key.HasActiveDecodeTargets ||
+		key.ActiveDecodeTargetsMask != 0x01 ||
+		key.FrameDependencies.DTIs[0] != DependencyDescriptorDecodeTargetSwitch {
 		t.Fatalf("key=%+v consumed=%d len=%d state=%+v", key, consumed, len(w.bytes()), state)
 	}
 
@@ -183,11 +186,35 @@ func TestDependencyDescriptorStateParseRemembersAttachedStructure(t *testing.T) 
 	}
 	if consumed != DependencyDescriptorMandatorySize ||
 		delta.Mandatory.FrameNumber != 2 ||
-		delta.FrameDependencies.DTIs[0] != DependencyDescriptorDecodeTargetSwitch {
+		delta.HasActiveDecodeTargets ||
+		delta.FrameDependencies.DTIs[0] != DependencyDescriptorDecodeTargetSwitch ||
+		!state.ActiveDecodeTargetsValid || state.ActiveDecodeTargetsMask != 0x01 {
 		t.Fatalf("delta=%+v consumed=%d", delta, consumed)
 	}
+
+	w = dependencyDescriptorTestBitWriter{}
+	w.writeBool(true)
+	w.writeBool(true)
+	w.writeBits(3, 6)
+	w.writeBits(3, 16)
+	w.writeBool(false) // attached structure
+	w.writeBool(true)  // active decode targets
+	w.writeBool(false) // custom dtis
+	w.writeBool(false) // custom frame diffs
+	w.writeBool(false) // custom chains
+	w.writeBits(0, 1)
+	update, consumed, err := state.Parse(w.bytes())
+	if err != nil {
+		t.Fatalf("state Parse active update: %v", err)
+	}
+	if consumed != len(w.bytes()) ||
+		!update.HasActiveDecodeTargets || update.ActiveDecodeTargetsMask != 0 ||
+		!state.ActiveDecodeTargetsValid || state.ActiveDecodeTargetsMask != 0 {
+		t.Fatalf("active update=%+v consumed=%d len=%d state=%+v", update, consumed, len(w.bytes()), state)
+	}
+
 	state.Reset()
-	if state.Valid {
+	if state.Valid || state.ActiveDecodeTargetsValid || state.ActiveDecodeTargetsMask != 0 {
 		t.Fatalf("Reset left state valid: %+v", state)
 	}
 	if _, _, err := state.Parse(compact[:]); !errors.Is(err, ErrInvalidDependencyDescriptor) {

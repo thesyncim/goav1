@@ -105,10 +105,13 @@ type DependencyDescriptor struct {
 }
 
 // DependencyDescriptorState keeps the last attached dependency structure for
-// compact descriptors that only carry a template ID.
+// compact descriptors that only carry a template ID, plus the current active
+// decode-target set that remains valid until the next active-target update.
 type DependencyDescriptorState struct {
-	Valid     bool
-	Structure DependencyDescriptorStructure
+	Valid                    bool
+	Structure                DependencyDescriptorStructure
+	ActiveDecodeTargetsValid bool
+	ActiveDecodeTargetsMask  uint32
 }
 
 // Reset clears the remembered dependency structure.
@@ -132,6 +135,10 @@ func (s *DependencyDescriptorState) Parse(src []byte) (DependencyDescriptor, int
 	if descriptor.HasAttachedStructure && s != nil {
 		s.Valid = true
 		s.Structure = descriptor.AttachedStructure
+	}
+	if descriptor.HasActiveDecodeTargets && s != nil {
+		s.ActiveDecodeTargetsValid = true
+		s.ActiveDecodeTargetsMask = descriptor.ActiveDecodeTargetsMask
 	}
 	return descriptor, consumed, nil
 }
