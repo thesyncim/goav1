@@ -15,6 +15,14 @@ const (
 	// RTPTransportWideCCHeaderExtensionSize is the payload size, in bytes, of
 	// WebRTC's transport-wide congestion-control RTP header extension.
 	RTPTransportWideCCHeaderExtensionSize = 2
+	// RTPTransportWideCC02HeaderExtensionSizeWithoutFeedbackRequest is the
+	// payload size, in bytes, of WebRTC's transport-wide-cc-02 RTP header
+	// extension when immediate feedback is not requested.
+	RTPTransportWideCC02HeaderExtensionSizeWithoutFeedbackRequest = 2
+	// RTPTransportWideCC02HeaderExtensionSize is the payload size, in bytes, of
+	// WebRTC's transport-wide-cc-02 RTP header extension when immediate
+	// feedback is requested.
+	RTPTransportWideCC02HeaderExtensionSize = 4
 	// RTPAbsoluteSendTimeHeaderExtensionSize is the payload size, in bytes, of
 	// WebRTC's absolute-send-time RTP header extension.
 	RTPAbsoluteSendTimeHeaderExtensionSize = 3
@@ -27,6 +35,9 @@ const (
 	// RTPPlayoutDelayMaxMilliseconds is the largest playout delay that fits the
 	// WebRTC playout-delay RTP header extension.
 	RTPPlayoutDelayMaxMilliseconds = 40950
+	// RTPTransportWideCC02MaxFeedbackSequenceCount is the largest feedback
+	// packet-count request that fits transport-wide-cc-02.
+	RTPTransportWideCC02MaxFeedbackSequenceCount = 1<<15 - 1
 	// RTPAbsoluteSendTimeMaxValue is the largest raw 24-bit absolute-send-time
 	// value accepted by PutRTPAbsoluteSendTimeHeaderExtension.
 	RTPAbsoluteSendTimeMaxValue = 1<<24 - 1
@@ -56,6 +67,17 @@ type RTPCoordinationOfVideoOrientation struct {
 type RTPPlayoutDelay struct {
 	MinDelayMs int
 	MaxDelayMs int
+}
+
+// RTPTransportWideCC02 is WebRTC's transport-wide-cc-02 RTP header-extension
+// payload. FeedbackRequest selects the optional 4-byte form that asks the
+// receiver to send immediate transport feedback covering FeedbackSequenceCount
+// packets including the current packet.
+type RTPTransportWideCC02 struct {
+	SequenceNumber        uint16
+	FeedbackRequest       bool
+	IncludeTimestamps     bool
+	FeedbackSequenceCount uint16
 }
 
 // RTPVideoContentType is the WebRTC video-content-type RTP header-extension
@@ -193,6 +215,80 @@ func PutRTPTransportWideCCHeaderExtension(dst []byte, sequenceNumber uint16) (in
 	}
 	binary.BigEndian.PutUint16(dst[:RTPTransportWideCCHeaderExtensionSize], sequenceNumber)
 	return RTPTransportWideCCHeaderExtensionSize, nil
+}
+
+// RTPTransportWideCC02Size returns the payload size needed to write cc. The
+// RTP extension element header is not counted.
+func RTPTransportWideCC02Size(cc RTPTransportWideCC02) (int, error) {
+	if err := ValidateRTPTransportWideCC02(cc); err != nil {
+		return 0, err
+	}
+	if cc.FeedbackRequest {
+		return RTPTransportWideCC02HeaderExtensionSize, nil
+	}
+	return RTPTransportWideCC02HeaderExtensionSizeWithoutFeedbackRequest, nil
+}
+
+// ParseRTPTransportWideCC02HeaderExtension parses WebRTC's transport-wide-cc-02
+// RTP header-extension element payload. The RTP extension element header is not
+// part of src.
+func ParseRTPTransportWideCC02HeaderExtension(src []byte) (RTPTransportWideCC02, error) {
+	if len(src) < RTPTransportWideCC02HeaderExtensionSizeWithoutFeedbackRequest {
+		return RTPTransportWideCC02{}, ErrRTPShortBuffer
+	}
+	if len(src) != RTPTransportWideCC02HeaderExtensionSizeWithoutFeedbackRequest &&
+		len(src) != RTPTransportWideCC02HeaderExtensionSize {
+		return RTPTransportWideCC02{}, ErrRTPInvalidHeaderExtension
+	}
+	cc := RTPTransportWideCC02{
+		SequenceNumber: binary.BigEndian.Uint16(src[:2]),
+	}
+	if len(src) == RTPTransportWideCC02HeaderExtensionSize {
+		raw := binary.BigEndian.Uint16(src[2:4])
+		sequenceCount := raw & RTPTransportWideCC02MaxFeedbackSequenceCount
+		if sequenceCount != 0 {
+			cc.FeedbackRequest = true
+			cc.IncludeTimestamps = raw&(1<<15) != 0
+			cc.FeedbackSequenceCount = sequenceCount
+		}
+	}
+	return cc, nil
+}
+
+// PutRTPTransportWideCC02HeaderExtension writes WebRTC's transport-wide-cc-02
+// RTP header-extension element payload. The RTP extension element header is
+// not written.
+func PutRTPTransportWideCC02HeaderExtension(dst []byte, cc RTPTransportWideCC02) (int, error) {
+	size, err := RTPTransportWideCC02Size(cc)
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < size {
+		return 0, ErrRTPShortBuffer
+	}
+	binary.BigEndian.PutUint16(dst[:2], cc.SequenceNumber)
+	if cc.FeedbackRequest {
+		raw := cc.FeedbackSequenceCount
+		if cc.IncludeTimestamps {
+			raw |= 1 << 15
+		}
+		binary.BigEndian.PutUint16(dst[2:4], raw)
+	}
+	return size, nil
+}
+
+func ValidateRTPTransportWideCC02(cc RTPTransportWideCC02) error {
+	if cc.FeedbackRequest {
+		if cc.FeedbackSequenceCount == 0 ||
+			cc.FeedbackSequenceCount > RTPTransportWideCC02MaxFeedbackSequenceCount {
+			return ErrRTPInvalidHeaderExtension
+		}
+		return nil
+	}
+	if cc.IncludeTimestamps || cc.FeedbackSequenceCount != 0 {
+		return ErrRTPInvalidHeaderExtension
+	}
+	return nil
 }
 
 // ParseRTPAbsoluteSendTimeHeaderExtension parses a raw 24-bit absolute-send-

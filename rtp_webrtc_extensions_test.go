@@ -17,6 +17,12 @@ func TestPublicRTPWebRTCHeaderExtensionConstants(t *testing.T) {
 	if av1.RTPTransportWideCCHeaderExtensionSize != 2 {
 		t.Fatalf("RTPTransportWideCCHeaderExtensionSize = %d, want 2", av1.RTPTransportWideCCHeaderExtensionSize)
 	}
+	if av1.RTPTransportWideCC02HeaderExtensionSizeWithoutFeedbackRequest != 2 {
+		t.Fatalf("RTPTransportWideCC02HeaderExtensionSizeWithoutFeedbackRequest = %d, want 2", av1.RTPTransportWideCC02HeaderExtensionSizeWithoutFeedbackRequest)
+	}
+	if av1.RTPTransportWideCC02HeaderExtensionSize != 4 {
+		t.Fatalf("RTPTransportWideCC02HeaderExtensionSize = %d, want 4", av1.RTPTransportWideCC02HeaderExtensionSize)
+	}
 	if av1.RTPAbsoluteSendTimeHeaderExtensionSize != 3 {
 		t.Fatalf("RTPAbsoluteSendTimeHeaderExtensionSize = %d, want 3", av1.RTPAbsoluteSendTimeHeaderExtensionSize)
 	}
@@ -28,6 +34,9 @@ func TestPublicRTPWebRTCHeaderExtensionConstants(t *testing.T) {
 	}
 	if av1.RTPPlayoutDelayMaxMilliseconds != 40950 {
 		t.Fatalf("RTPPlayoutDelayMaxMilliseconds = %d, want 40950", av1.RTPPlayoutDelayMaxMilliseconds)
+	}
+	if av1.RTPTransportWideCC02MaxFeedbackSequenceCount != 0x7fff {
+		t.Fatalf("RTPTransportWideCC02MaxFeedbackSequenceCount = %#x, want 0x7fff", av1.RTPTransportWideCC02MaxFeedbackSequenceCount)
 	}
 	if av1.RTPAbsoluteSendTimeMaxValue != 0x00ffffff {
 		t.Fatalf("RTPAbsoluteSendTimeMaxValue = %#x, want 0x00ffffff", av1.RTPAbsoluteSendTimeMaxValue)
@@ -147,6 +156,90 @@ func TestPublicRTPTransportWideCCHeaderExtension(t *testing.T) {
 	}
 	if _, err := av1.PutRTPTransportWideCCHeaderExtension(buf[:1], 1); !errors.Is(err, av1.ErrRTPShortBuffer) {
 		t.Fatalf("short PutRTPTransportWideCCHeaderExtension error = %v, want ErrRTPShortBuffer", err)
+	}
+}
+
+func TestPublicRTPTransportWideCC02HeaderExtension(t *testing.T) {
+	var buf [4]byte
+	plain := av1.RTPTransportWideCC02{SequenceNumber: 0x1234}
+	size, err := av1.RTPTransportWideCC02Size(plain)
+	if err != nil {
+		t.Fatalf("RTPTransportWideCC02Size plain returned error: %v", err)
+	}
+	if size != av1.RTPTransportWideCC02HeaderExtensionSizeWithoutFeedbackRequest {
+		t.Fatalf("plain TransportWideCC02 size=%d want %d", size, av1.RTPTransportWideCC02HeaderExtensionSizeWithoutFeedbackRequest)
+	}
+	n, err := av1.PutRTPTransportWideCC02HeaderExtension(buf[:], plain)
+	if err != nil {
+		t.Fatalf("PutRTPTransportWideCC02HeaderExtension plain returned error: %v", err)
+	}
+	if n != size || buf[0] != 0x12 || buf[1] != 0x34 {
+		t.Fatalf("encoded plain transport-wide-cc-02 n=%d buf=%#v", n, buf)
+	}
+	got, err := av1.ParseRTPTransportWideCC02HeaderExtension(buf[:n])
+	if err != nil {
+		t.Fatalf("ParseRTPTransportWideCC02HeaderExtension plain returned error: %v", err)
+	}
+	if got != plain {
+		t.Fatalf("ParseRTPTransportWideCC02HeaderExtension plain = %+v, want %+v", got, plain)
+	}
+
+	request := av1.RTPTransportWideCC02{
+		SequenceNumber:        0xabcd,
+		FeedbackRequest:       true,
+		IncludeTimestamps:     true,
+		FeedbackSequenceCount: 0x1234,
+	}
+	size, err = av1.RTPTransportWideCC02Size(request)
+	if err != nil {
+		t.Fatalf("RTPTransportWideCC02Size request returned error: %v", err)
+	}
+	if size != av1.RTPTransportWideCC02HeaderExtensionSize {
+		t.Fatalf("request TransportWideCC02 size=%d want %d", size, av1.RTPTransportWideCC02HeaderExtensionSize)
+	}
+	n, err = av1.PutRTPTransportWideCC02HeaderExtension(buf[:], request)
+	if err != nil {
+		t.Fatalf("PutRTPTransportWideCC02HeaderExtension request returned error: %v", err)
+	}
+	want := []byte{0xab, 0xcd, 0x92, 0x34}
+	if n != size || string(buf[:n]) != string(want) {
+		t.Fatalf("encoded feedback transport-wide-cc-02 n=%d buf=%#v want %#v", n, buf[:n], want)
+	}
+	got, err = av1.ParseRTPTransportWideCC02HeaderExtension(buf[:n])
+	if err != nil {
+		t.Fatalf("ParseRTPTransportWideCC02HeaderExtension request returned error: %v", err)
+	}
+	if got != request {
+		t.Fatalf("ParseRTPTransportWideCC02HeaderExtension request = %+v, want %+v", got, request)
+	}
+	got, err = av1.ParseRTPTransportWideCC02HeaderExtension([]byte{0xab, 0xcd, 0x80, 0x00})
+	if err != nil {
+		t.Fatalf("ParseRTPTransportWideCC02HeaderExtension zero count returned error: %v", err)
+	}
+	if got != (av1.RTPTransportWideCC02{SequenceNumber: 0xabcd}) {
+		t.Fatalf("zero-count transport-wide-cc-02 parse = %+v", got)
+	}
+
+	for _, invalid := range []av1.RTPTransportWideCC02{
+		{SequenceNumber: 1, FeedbackRequest: true},
+		{SequenceNumber: 1, IncludeTimestamps: true},
+		{SequenceNumber: 1, FeedbackSequenceCount: 1},
+	} {
+		if err := av1.ValidateRTPTransportWideCC02(invalid); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+			t.Fatalf("ValidateRTPTransportWideCC02(%+v) error = %v, want ErrRTPInvalidHeaderExtension", invalid, err)
+		}
+	}
+	if _, err := av1.ParseRTPTransportWideCC02HeaderExtension(buf[:1]); !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short ParseRTPTransportWideCC02HeaderExtension error = %v, want ErrRTPShortBuffer", err)
+	}
+	if _, err := av1.ParseRTPTransportWideCC02HeaderExtension(buf[:3]); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("bad-size ParseRTPTransportWideCC02HeaderExtension error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+	if _, err := av1.PutRTPTransportWideCC02HeaderExtension(buf[:1], plain); !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short PutRTPTransportWideCC02HeaderExtension plain error = %v, want ErrRTPShortBuffer", err)
+	}
+	if _, err := av1.PutRTPTransportWideCC02HeaderExtension(buf[:3], request); !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short PutRTPTransportWideCC02HeaderExtension request error = %v, want ErrRTPShortBuffer", err)
 	}
 }
 
