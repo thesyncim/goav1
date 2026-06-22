@@ -31,6 +31,18 @@ type NV12Frame struct {
 	Height   int
 }
 
+// NV21Frame is one 8-bit 4:2:0 picture in semi-planar NV21 layout. Y holds
+// Width x Height luma samples at YStride; VU holds interleaved V,U pairs for
+// the half-resolution chroma plane at VUStride bytes per chroma row.
+type NV21Frame struct {
+	Y        []byte
+	VU       []byte
+	YStride  int
+	VUStride int
+	Width    int
+	Height   int
+}
+
 const (
 	EncoderDecisionBlockLevelCount        = encoder.EncoderDecisionBlockLevelCount
 	EncoderDecisionPartitionCount         = encoder.EncoderDecisionPartitionCount
@@ -110,8 +122,8 @@ type EncodedFrame struct {
 
 // VideoEncoder encodes a stream of same-sized 4:2:0 frames.
 type VideoEncoder struct {
-	enc         *encoder.VideoEncoder
-	nv12Scratch I420Frame
+	enc           *encoder.VideoEncoder
+	yuv420Scratch I420Frame
 }
 
 // NewVideoEncoder creates an encoder from cfg.
@@ -220,7 +232,21 @@ func (e *VideoEncoder) EncodeNV12(frame NV12Frame, forceKey bool) (EncodedFrame,
 	if e == nil || e.enc == nil {
 		return EncodedFrame{}, fmt.Errorf("goav1: VideoEncoder is not initialized")
 	}
-	i420, err := nv12ToI420Scratch(&e.nv12Scratch, frame)
+	i420, err := nv12ToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return EncodedFrame{}, err
+	}
+	return e.Encode(i420, forceKey)
+}
+
+// EncodeNV21 encodes one NV21 frame. The input is converted into the
+// encoder's reusable I420 scratch before entering the same encode path as
+// Encode.
+func (e *VideoEncoder) EncodeNV21(frame NV21Frame, forceKey bool) (EncodedFrame, error) {
+	if e == nil || e.enc == nil {
+		return EncodedFrame{}, fmt.Errorf("goav1: VideoEncoder is not initialized")
+	}
+	i420, err := nv21ToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
 		return EncodedFrame{}, err
 	}
@@ -485,16 +511,16 @@ func (f RTCFrame) AppendRTPPacketsWithOptions(payloadDst []byte, descriptorDst [
 	}
 }
 
-// RTCEncoder encodes an 8-bit 4:2:0 WebRTC AV1 stream from I420 or NV12 input
-// with per-frame dependency descriptors. NewRTCEncoder covers single-spatial
-// L1T* temporal ladders;
+// RTCEncoder encodes an 8-bit 4:2:0 WebRTC AV1 stream from I420, NV12, or
+// NV21 input with per-frame dependency descriptors. NewRTCEncoder covers
+// single-spatial L1T* temporal ladders;
 // NewRTCEncoderWithConfig additionally covers supported multi-spatial
 // WebRTC SVC and simulcast modes under CBR or CQP rate control. NewRTCEncoder
 // is the CBR convenience constructor and still requires TargetBitrate and
 // Framerate.
 type RTCEncoder struct {
-	stream      *encoder.WebRTCStream
-	nv12Scratch I420Frame
+	stream        *encoder.WebRTCStream
+	yuv420Scratch I420Frame
 }
 
 // NewRTCEncoder creates a WebRTC encoder from cfg.
@@ -632,7 +658,20 @@ func (e *RTCEncoder) EncodeNV12(frame NV12Frame, forceKey bool) (RTCFrame, error
 	if e == nil || e.stream == nil {
 		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
-	i420, err := nv12ToI420Scratch(&e.nv12Scratch, frame)
+	i420, err := nv12ToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return RTCFrame{}, err
+	}
+	return e.Encode(i420, forceKey)
+}
+
+// EncodeNV21 encodes one single-spatial NV21 frame with its dependency
+// descriptor. It uses the same output lifetime as Encode.
+func (e *RTCEncoder) EncodeNV21(frame NV21Frame, forceKey bool) (RTCFrame, error) {
+	if e == nil || e.stream == nil {
+		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	i420, err := nv21ToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
 		return RTCFrame{}, err
 	}
@@ -669,7 +708,21 @@ func (e *RTCEncoder) EncodeNV12Picture(frame NV12Frame, forceKey bool) (RTCPictu
 	if e == nil || e.stream == nil {
 		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
-	i420, err := nv12ToI420Scratch(&e.nv12Scratch, frame)
+	i420, err := nv12ToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return RTCPicture{}, err
+	}
+	return e.EncodePicture(i420, forceKey)
+}
+
+// EncodeNV21Picture encodes one NV21 WebRTC picture. The returned frames have
+// the same lifetime as EncodePicture; copy frame Data before retaining or
+// sending asynchronously.
+func (e *RTCEncoder) EncodeNV21Picture(frame NV21Frame, forceKey bool) (RTCPicture, error) {
+	if e == nil || e.stream == nil {
+		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	i420, err := nv21ToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
 		return RTCPicture{}, err
 	}
@@ -725,28 +778,36 @@ func validateI420Frame(frame I420Frame) error {
 }
 
 func validateNV12Frame(frame NV12Frame) error {
-	if frame.Width <= 0 || frame.Height <= 0 || frame.Width%2 != 0 || frame.Height%2 != 0 {
-		return fmt.Errorf("goav1: NV12Frame dimensions must be positive even values, got %dx%d", frame.Width, frame.Height)
+	return validateSemiPlanar420Frame("NV12Frame", "UV", frame.Y, frame.UV, frame.YStride, frame.UVStride, frame.Width, frame.Height)
+}
+
+func validateNV21Frame(frame NV21Frame) error {
+	return validateSemiPlanar420Frame("NV21Frame", "VU", frame.Y, frame.VU, frame.YStride, frame.VUStride, frame.Width, frame.Height)
+}
+
+func validateSemiPlanar420Frame(name string, chromaName string, y []byte, chroma []byte, yStride int, chromaStride int, width int, height int) error {
+	if width <= 0 || height <= 0 || width%2 != 0 || height%2 != 0 {
+		return fmt.Errorf("goav1: %s dimensions must be positive even values, got %dx%d", name, width, height)
 	}
-	if frame.YStride < frame.Width {
-		return fmt.Errorf("goav1: NV12Frame YStride %d is smaller than width %d", frame.YStride, frame.Width)
+	if yStride < width {
+		return fmt.Errorf("goav1: %s YStride %d is smaller than width %d", name, yStride, width)
 	}
-	if frame.UVStride < frame.Width {
-		return fmt.Errorf("goav1: NV12Frame UVStride %d is smaller than width %d", frame.UVStride, frame.Width)
+	if chromaStride < width {
+		return fmt.Errorf("goav1: %s %sStride %d is smaller than width %d", name, chromaName, chromaStride, width)
 	}
-	yLen, ok := i420PlaneLen(frame.YStride, frame.Width, frame.Height)
+	yLen, ok := i420PlaneLen(yStride, width, height)
 	if !ok {
-		return fmt.Errorf("goav1: NV12Frame Y plane dimensions overflow int")
+		return fmt.Errorf("goav1: %s Y plane dimensions overflow int", name)
 	}
-	uvLen, ok := i420PlaneLen(frame.UVStride, frame.Width, frame.Height/2)
+	chromaLen, ok := i420PlaneLen(chromaStride, width, height/2)
 	if !ok {
-		return fmt.Errorf("goav1: NV12Frame UV plane dimensions overflow int")
+		return fmt.Errorf("goav1: %s %s plane dimensions overflow int", name, chromaName)
 	}
-	if len(frame.Y) < yLen {
-		return fmt.Errorf("goav1: NV12Frame Y plane is too short: got %d bytes, need %d", len(frame.Y), yLen)
+	if len(y) < yLen {
+		return fmt.Errorf("goav1: %s Y plane is too short: got %d bytes, need %d", name, len(y), yLen)
 	}
-	if len(frame.UV) < uvLen {
-		return fmt.Errorf("goav1: NV12Frame UV plane is too short: got %d bytes, need %d", len(frame.UV), uvLen)
+	if len(chroma) < chromaLen {
+		return fmt.Errorf("goav1: %s %s plane is too short: got %d bytes, need %d", name, chromaName, len(chroma), chromaLen)
 	}
 	return nil
 }
@@ -755,8 +816,19 @@ func nv12ToI420Scratch(dst *I420Frame, frame NV12Frame) (I420Frame, error) {
 	if err := validateNV12Frame(frame); err != nil {
 		return I420Frame{}, err
 	}
-	chromaWidth := frame.Width / 2
-	chromaHeight := frame.Height / 2
+	return semiPlanar420ToI420Scratch(dst, frame.Y, frame.UV, frame.YStride, frame.UVStride, frame.Width, frame.Height, 0, 1), nil
+}
+
+func nv21ToI420Scratch(dst *I420Frame, frame NV21Frame) (I420Frame, error) {
+	if err := validateNV21Frame(frame); err != nil {
+		return I420Frame{}, err
+	}
+	return semiPlanar420ToI420Scratch(dst, frame.Y, frame.VU, frame.YStride, frame.VUStride, frame.Width, frame.Height, 1, 0), nil
+}
+
+func semiPlanar420ToI420Scratch(dst *I420Frame, yPlane []byte, chromaPlane []byte, yStride int, chromaStride int, width int, height int, uOffset int, vOffset int) I420Frame {
+	chromaWidth := width / 2
+	chromaHeight := height / 2
 	chromaLen := chromaWidth * chromaHeight
 	if cap(dst.U) < chromaLen {
 		dst.U = make([]byte, chromaLen)
@@ -769,20 +841,20 @@ func nv12ToI420Scratch(dst *I420Frame, frame NV12Frame) (I420Frame, error) {
 		dst.V = dst.V[:chromaLen]
 	}
 	for y := 0; y < chromaHeight; y++ {
-		uv := frame.UV[y*frame.UVStride : y*frame.UVStride+frame.Width]
+		chroma := chromaPlane[y*chromaStride : y*chromaStride+width]
 		u := dst.U[y*chromaWidth : y*chromaWidth+chromaWidth]
 		v := dst.V[y*chromaWidth : y*chromaWidth+chromaWidth]
 		for x := 0; x < chromaWidth; x++ {
-			u[x] = uv[x*2]
-			v[x] = uv[x*2+1]
+			u[x] = chroma[x*2+uOffset]
+			v[x] = chroma[x*2+vOffset]
 		}
 	}
-	dst.Y = frame.Y
-	dst.YStride = frame.YStride
+	dst.Y = yPlane
+	dst.YStride = yStride
 	dst.ChromaStride = chromaWidth
-	dst.Width = frame.Width
-	dst.Height = frame.Height
-	return *dst, nil
+	dst.Width = width
+	dst.Height = height
+	return *dst
 }
 
 func i420PlaneLen(stride int, width int, height int) (int, bool) {
