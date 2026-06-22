@@ -130,6 +130,11 @@ func NewWebRTCStreamConfig(config Config) (*WebRTCStream, error) {
 	return &stream, nil
 }
 
+func NormalizeWebRTCStreamConfig(config Config) (Config, error) {
+	normalized, _, err := normalizeWebRTCStreamConfig(config)
+	return normalized, err
+}
+
 func normalizeWebRTCStreamConfig(config Config) (Config, int, error) {
 	normalized, err := SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
 	if err != nil {

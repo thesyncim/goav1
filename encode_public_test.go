@@ -386,6 +386,70 @@ func TestPublicRTCEncoderClose(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
+	cfg := publicRTCMatrixConfig(640, 360, goav1.EncoderScalabilityModeL2T2_KEY_SHIFT)
+	cfg.BitDepth = 0
+	normalized, err := goav1.NormalizeRTCEncoderConfig(cfg)
+	if err != nil {
+		t.Fatalf("NormalizeRTCEncoderConfig valid: %v", err)
+	}
+	if normalized.BitDepth != 8 ||
+		normalized.Profile != goav1.EncoderProfile0 ||
+		normalized.SpatialLayerCount != 2 ||
+		normalized.TemporalLayerCount != 2 ||
+		normalized.RateControl != goav1.EncoderRateControlCBR {
+		t.Fatalf("normalized config=%+v", normalized)
+	}
+
+	tests := []struct {
+		name string
+		edit func(*goav1.EncoderConfig)
+		want error
+	}{
+		{
+			name: "profile1-444",
+			edit: func(cfg *goav1.EncoderConfig) {
+				cfg.Profile = goav1.EncoderProfile1
+			},
+			want: goav1.ErrEncoderUnsupported,
+		},
+		{
+			name: "high-bit-depth",
+			edit: func(cfg *goav1.EncoderConfig) {
+				cfg.BitDepth = 10
+			},
+			want: goav1.ErrEncoderUnsupported,
+		},
+		{
+			name: "cqp",
+			edit: func(cfg *goav1.EncoderConfig) {
+				cfg.RateControl = goav1.EncoderRateControlCQP
+				cfg.Quantizer = 32
+			},
+			want: goav1.ErrEncoderUnsupported,
+		},
+		{
+			name: "invalid-framerate",
+			edit: func(cfg *goav1.EncoderConfig) {
+				cfg.MaxFramerate = goav1.EncoderRational{Num: 1, Den: 2}
+			},
+			want: goav1.ErrEncoderInvalidConfig,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := cfg
+			tc.edit(&bad)
+			if _, err := goav1.NormalizeRTCEncoderConfig(bad); !errors.Is(err, tc.want) {
+				t.Fatalf("NormalizeRTCEncoderConfig err=%v want %v", err, tc.want)
+			}
+			if _, err := goav1.NewRTCEncoderWithConfig(bad); !errors.Is(err, tc.want) {
+				t.Fatalf("NewRTCEncoderWithConfig err=%v want %v", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestPublicRTCEncoderEncodeRejectsMultiSpatialWithoutMutating(t *testing.T) {
 	const w, h = 640, 360
 	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL2T2)

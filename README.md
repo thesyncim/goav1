@@ -181,7 +181,10 @@ There are two public encoder surfaces:
   modes, including key and key-shift schedules. `RTCEncoder.SetConfig` applies
   bitrate, framerate, and supported scalability changes atomically; changes
   that alter layer geometry or dependency structure make the next picture a key
-  picture. `RTCFrame.AppendRTPPackets` packetizes each frame into AV1 RTP
+  picture. `NormalizeRTCEncoderConfig` lets callers preflight whether a
+  lower-level WebRTC config is supported by this friendly pixel pipeline before
+  constructing or reconfiguring an encoder. `RTCFrame.AppendRTPPackets`
+  packetizes each frame into AV1 RTP
   payload bodies and matching per-packet dependency descriptors using
   caller-owned buffers; `RTCFrame.AppendRTPPacketsWithOptions`,
   `RTCPicture.ActiveDecodeTargetsMask`, and

@@ -507,6 +507,14 @@ func NewRTCEncoder(cfg VideoEncoderConfig) (*RTCEncoder, error) {
 	return &RTCEncoder{stream: stream}, nil
 }
 
+// NormalizeRTCEncoderConfig validates and normalizes cfg for the friendly
+// realtime RTCEncoder pixel pipeline. It returns ErrEncoderUnsupported for
+// lower-level WebRTC encoder configurations that are valid for control-plane
+// helpers but not yet encodable by RTCEncoder's 8-bit profile-0 I420 pipeline.
+func NormalizeRTCEncoderConfig(cfg EncoderConfig) (EncoderConfig, error) {
+	return encoder.NormalizeWebRTCStreamConfig(cfg)
+}
+
 // NewRTCEncoderWithConfig creates a WebRTC encoder from the lower-level WebRTC
 // encoder config. Use EncodePicture when the selected scalability mode has more
 // than one spatial layer.
