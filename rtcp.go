@@ -27,9 +27,19 @@ const (
 	// packets.
 	RTCPSDESPacketType = 202
 
+	// RTCPByePacketType is the RTCP packet type for BYE packets.
+	RTCPByePacketType = 203
+
 	// RTCPReportMaxBlocks is the largest report-block count that fits the RTCP
 	// reception report count field.
 	RTCPReportMaxBlocks = 31
+
+	// RTCPByeMaxSources is the largest source count that fits the RTCP BYE
+	// source-count field.
+	RTCPByeMaxSources = 31
+
+	// RTCPByeReasonMaxTextLen is the largest BYE reason text field.
+	RTCPByeReasonMaxTextLen = 0xff
 
 	// RTCPSDESMaxChunks is the largest source-description chunk count that
 	// fits the RTCP source-count field.
@@ -266,6 +276,14 @@ type RTCPSDESPacket struct {
 	Chunks []RTCPSDESChunk
 }
 
+// RTCPByePacket is one complete RTCP BYE packet. Sources is copied by Put and
+// aliases the caller-owned destination slice passed to Parse. Reason is copied
+// by Put and aliases src when returned by Parse.
+type RTCPByePacket struct {
+	Sources []uint32
+	Reason  []byte
+}
+
 // RTCPSenderReportPacketSize returns the complete sender report packet size.
 func RTCPSenderReportPacketSize(reportCount int) (int, error) {
 	if reportCount < 0 || reportCount > RTCPReportMaxBlocks {
@@ -290,6 +308,116 @@ func RTCPSDESPacketSize(chunks []RTCPSDESChunk) (int, error) {
 		return 0, err
 	}
 	return RTCPHeaderSize + size, nil
+}
+
+// RTCPByePacketSize returns the complete BYE packet size.
+func RTCPByePacketSize(sources []uint32, reason []byte) (int, error) {
+	if len(sources) > RTCPByeMaxSources || len(reason) > RTCPByeReasonMaxTextLen {
+		return 0, ErrRTCPInvalidPacket
+	}
+	size := RTCPHeaderSize + len(sources)*4
+	if len(reason) > 0 {
+		size += 1 + len(reason)
+		size += rtcpPaddingLength(size)
+	}
+	return size, nil
+}
+
+// PutRTCPByePacket serializes one complete BYE packet into dst.
+func PutRTCPByePacket(dst []byte, packet RTCPByePacket) (int, error) {
+	size, err := RTCPByePacketSize(packet.Sources, packet.Reason)
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < size {
+		return 0, ErrRTCPShortBuffer
+	}
+	if err := putRTCPPacketHeader(dst, RTCPByePacketType, len(packet.Sources), size); err != nil {
+		return 0, err
+	}
+	off := RTCPHeaderSize
+	for _, source := range packet.Sources {
+		binary.BigEndian.PutUint32(dst[off:off+4], source)
+		off += 4
+	}
+	if len(packet.Reason) > 0 {
+		dst[off] = byte(len(packet.Reason))
+		off++
+		copy(dst[off:off+len(packet.Reason)], packet.Reason)
+		off += len(packet.Reason)
+		padding := rtcpPaddingLength(off)
+		for i := 0; i < padding; i++ {
+			dst[off+i] = 0
+		}
+		off += padding
+	}
+	return size, nil
+}
+
+// AppendRTCPByePacket appends one complete BYE packet to dst without growing
+// beyond dst's existing capacity.
+func AppendRTCPByePacket(dst []byte, packet RTCPByePacket) ([]byte, error) {
+	size, err := RTCPByePacketSize(packet.Sources, packet.Reason)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+size]
+	if _, err := PutRTCPByePacket(out[off:], packet); err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
+// ParseRTCPByePacket parses one complete BYE packet from src. Sources are
+// appended to dst without allocation and alias dst. Reason aliases src. n is
+// the number of bytes consumed for the first RTCP packet.
+func ParseRTCPByePacket(src []byte, dst []uint32) (packet RTCPByePacket, n int, err error) {
+	count, packetLen, err := parseRTCPFixedPacketHeader(src, RTCPByePacketType, RTCPHeaderSize)
+	if err != nil {
+		return RTCPByePacket{}, 0, err
+	}
+	minNoPadding := RTCPHeaderSize + int(count)*4
+	payloadEnd, err := rtcpPacketPayloadEnd(src, packetLen, minNoPadding)
+	if err != nil {
+		return RTCPByePacket{}, 0, err
+	}
+	if payloadEnd < minNoPadding {
+		return RTCPByePacket{}, 0, ErrRTCPInvalidPacket
+	}
+	off := len(dst)
+	if cap(dst)-off < int(count) {
+		return RTCPByePacket{}, 0, ErrRTCPShortBuffer
+	}
+	sources := dst[:off+int(count)]
+	pos := RTCPHeaderSize
+	for i := 0; i < int(count); i++ {
+		sources[off+i] = binary.BigEndian.Uint32(src[pos : pos+4])
+		pos += 4
+	}
+	var reason []byte
+	if pos < payloadEnd {
+		reasonLen := int(src[pos])
+		pos++
+		if payloadEnd-pos < reasonLen {
+			return RTCPByePacket{}, 0, ErrRTCPInvalidPacket
+		}
+		reason = src[pos : pos+reasonLen]
+		pos += reasonLen
+		for pos < payloadEnd {
+			if src[pos] != 0 {
+				return RTCPByePacket{}, 0, ErrRTCPInvalidPacket
+			}
+			pos++
+		}
+	}
+	if pos != payloadEnd {
+		return RTCPByePacket{}, 0, ErrRTCPInvalidPacket
+	}
+	return RTCPByePacket{Sources: sources[off:], Reason: reason}, packetLen, nil
 }
 
 // PutRTCPSDESPacket serializes one complete source-description packet into dst.

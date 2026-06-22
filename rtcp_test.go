@@ -14,7 +14,10 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 		av1.RTCPSenderReportPacketType != 200 ||
 		av1.RTCPReceiverReportPacketType != 201 ||
 		av1.RTCPSDESPacketType != 202 ||
+		av1.RTCPByePacketType != 203 ||
 		av1.RTCPReportMaxBlocks != 31 ||
+		av1.RTCPByeMaxSources != 31 ||
+		av1.RTCPByeReasonMaxTextLen != 0xff ||
 		av1.RTCPReportBlockSize != 24 ||
 		av1.RTCPReportCumulativeLostMin != -0x800000 ||
 		av1.RTCPReportCumulativeLostMax != 0x7fffff ||
@@ -98,6 +101,145 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 		av1.AV1SDPRTCPFeedbackTransportCC != "transport-cc" ||
 		av1.AV1SDPRTCPFeedbackREMB != "goog-remb" {
 		t.Fatalf("unexpected AV1 rtcp-fb constants")
+	}
+}
+
+func TestRTCPByePacketRoundTrip(t *testing.T) {
+	packet := av1.RTCPByePacket{
+		Sources: []uint32{0x11111111, 0x22222222},
+		Reason:  []byte("done"),
+	}
+	size, err := av1.RTCPByePacketSize(packet.Sources, packet.Reason)
+	if err != nil {
+		t.Fatalf("RTCPByePacketSize: %v", err)
+	}
+	if size != 20 {
+		t.Fatalf("BYE packet size=%d want 20", size)
+	}
+	buf := make([]byte, size)
+	n, err := av1.PutRTCPByePacket(buf, packet)
+	if err != nil {
+		t.Fatalf("PutRTCPByePacket: %v", err)
+	}
+	want := []byte{
+		0x82, 203, 0x00, 0x04,
+		0x11, 0x11, 0x11, 0x11,
+		0x22, 0x22, 0x22, 0x22,
+		0x04, 'd', 'o', 'n', 'e', 0x00, 0x00, 0x00,
+	}
+	if n != len(want) || string(buf) != string(want) {
+		t.Fatalf("BYE packet n=%d bytes=%#v want %#v", n, buf, want)
+	}
+	dst := make([]uint32, 1, 3)
+	dst[0] = 0x99999999
+	parsed, consumed, err := av1.ParseRTCPByePacket(buf, dst[:1:3])
+	if err != nil {
+		t.Fatalf("ParseRTCPByePacket: %v", err)
+	}
+	if consumed != len(buf) || dst[0] != 0x99999999 ||
+		len(parsed.Sources) != 2 || parsed.Sources[0] != packet.Sources[0] ||
+		parsed.Sources[1] != packet.Sources[1] || string(parsed.Reason) != string(packet.Reason) {
+		t.Fatalf("parsed BYE consumed=%d packet=%+v dst0=%#x", consumed, parsed, dst[0])
+	}
+	storage := dst[:cap(dst)]
+	if len(parsed.Sources) == 0 || &parsed.Sources[0] != &storage[1] {
+		t.Fatalf("parsed BYE sources did not alias caller buffer")
+	}
+
+	prefix := make([]byte, 1, 1+size)
+	prefix[0] = 0xbe
+	appended, err := av1.AppendRTCPByePacket(prefix, packet)
+	if err != nil {
+		t.Fatalf("AppendRTCPByePacket: %v", err)
+	}
+	if len(appended) != 1+size || appended[0] != 0xbe || string(appended[1:]) != string(buf) {
+		t.Fatalf("appended BYE packet=%#v", appended)
+	}
+}
+
+func TestRTCPByePacketWithoutReason(t *testing.T) {
+	packet := av1.RTCPByePacket{Sources: []uint32{0x01020304}}
+	size, err := av1.RTCPByePacketSize(packet.Sources, nil)
+	if err != nil {
+		t.Fatalf("RTCPByePacketSize no reason: %v", err)
+	}
+	if size != 8 {
+		t.Fatalf("BYE no reason size=%d want 8", size)
+	}
+	buf := make([]byte, size)
+	n, err := av1.PutRTCPByePacket(buf, packet)
+	if err != nil {
+		t.Fatalf("PutRTCPByePacket no reason: %v", err)
+	}
+	want := []byte{0x81, 203, 0x00, 0x01, 0x01, 0x02, 0x03, 0x04}
+	if n != len(want) || string(buf) != string(want) {
+		t.Fatalf("BYE no reason n=%d bytes=%#v want %#v", n, buf, want)
+	}
+	parsed, consumed, err := av1.ParseRTCPByePacket(buf, make([]uint32, 0, 1))
+	if err != nil {
+		t.Fatalf("ParseRTCPByePacket no reason: %v", err)
+	}
+	if consumed != len(buf) || len(parsed.Sources) != 1 || parsed.Sources[0] != 0x01020304 || len(parsed.Reason) != 0 {
+		t.Fatalf("parsed BYE no reason consumed=%d packet=%+v", consumed, parsed)
+	}
+}
+
+func TestRTCPByePacketRejectsInvalid(t *testing.T) {
+	tooMany := make([]uint32, av1.RTCPByeMaxSources+1)
+	if _, err := av1.RTCPByePacketSize(tooMany, nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("too many BYE sources size err=%v", err)
+	}
+	if _, err := av1.PutRTCPByePacket(make([]byte, 4096), av1.RTCPByePacket{Reason: make([]byte, av1.RTCPByeReasonMaxTextLen+1)}); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("too long BYE reason put err=%v", err)
+	}
+	if _, err := av1.PutRTCPByePacket(make([]byte, av1.RTCPHeaderSize-1), av1.RTCPByePacket{}); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short BYE put err=%v", err)
+	}
+	if out, err := av1.AppendRTCPByePacket(make([]byte, 0, av1.RTCPHeaderSize-1), av1.RTCPByePacket{}); !errors.Is(err, av1.ErrRTCPShortBuffer) || len(out) != 0 {
+		t.Fatalf("short BYE append out=%d err=%v", len(out), err)
+	}
+	if _, _, err := av1.ParseRTCPByePacket(nil, nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short BYE parse err=%v", err)
+	}
+	badVersion := []byte{0x40, 203, 0, 0}
+	if _, _, err := av1.ParseRTCPByePacket(badVersion, nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("bad version BYE parse err=%v", err)
+	}
+	badType := []byte{0x80, 202, 0, 0}
+	if _, _, err := av1.ParseRTCPByePacket(badType, nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("bad type BYE parse err=%v", err)
+	}
+	truncated := []byte{0x80, 203, 0, 1}
+	if _, _, err := av1.ParseRTCPByePacket(truncated, nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("truncated BYE parse err=%v", err)
+	}
+	missingSource := []byte{0x81, 203, 0, 0}
+	if _, _, err := av1.ParseRTCPByePacket(missingSource, make([]uint32, 0, 1)); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("missing BYE source parse err=%v", err)
+	}
+	validOneSource := []byte{0x81, 203, 0, 1, 0, 0, 0, 1}
+	if _, _, err := av1.ParseRTCPByePacket(validOneSource, nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short BYE source dst parse err=%v", err)
+	}
+	badReasonLength := []byte{0x80, 203, 0, 1, 4, 'x', 0, 0}
+	if _, _, err := av1.ParseRTCPByePacket(badReasonLength, nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("bad BYE reason length parse err=%v", err)
+	}
+	badReasonPadding := []byte{0x80, 203, 0, 1, 1, 'x', 1, 0}
+	if _, _, err := av1.ParseRTCPByePacket(badReasonPadding, nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("bad BYE reason padding parse err=%v", err)
+	}
+	validPacketPadding := []byte{0xa0, 203, 0, 1, 0, 0, 0, 4}
+	parsed, consumed, err := av1.ParseRTCPByePacket(validPacketPadding, nil)
+	if err != nil {
+		t.Fatalf("valid padded BYE parse: %v", err)
+	}
+	if consumed != len(validPacketPadding) || len(parsed.Sources) != 0 || len(parsed.Reason) != 0 {
+		t.Fatalf("valid padded BYE consumed=%d packet=%+v", consumed, parsed)
+	}
+	zeroPacketPadding := []byte{0xa0, 203, 0, 1, 0, 0, 0, 0}
+	if _, _, err := av1.ParseRTCPByePacket(zeroPacketPadding, nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("zero BYE packet padding err=%v", err)
 	}
 }
 
