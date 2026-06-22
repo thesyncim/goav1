@@ -2161,6 +2161,7 @@ func TestPublicWebRTCEncoderSetConfigScalabilityTransitionMatrix(t *testing.T) {
 				if got := enc.Config().Scalability; got != fromMode {
 					t.Fatalf("initial config mode=%s want %s", got, fromMode)
 				}
+				assertPublicRTCConfigControls(t, enc.Config(), fromCfg)
 				assertPublicWebRTCEncoderDuration(t, &enc)
 
 				var receiver av1.RTPDependencyDescriptorState
@@ -2205,6 +2206,7 @@ func TestPublicWebRTCEncoderSetConfigScalabilityTransitionMatrix(t *testing.T) {
 						afterSet.DeltaPictureIndex, afterSet.DependencyStructureState.Valid)
 				}
 				normalized := enc.Config()
+				assertPublicRTCConfigControls(t, normalized, toCfg)
 				if normalized.Scalability != toMode ||
 					normalized.MaxFramerate != toCfg.MaxFramerate ||
 					normalized.TargetBitrateKbps != toCfg.TargetBitrateKbps ||
@@ -2308,6 +2310,7 @@ func TestPublicWebRTCEncoderControllerSettingsMatrix(t *testing.T) {
 					t.Fatalf("NewWebRTCEncoder(%s): %v", modeName, err)
 				}
 				normalized := enc.Config()
+				assertPublicRTCConfigControls(t, normalized, cfg)
 				spatialLayers, temporalLayers, _, ok := normalized.Scalability.Layers()
 				if !ok {
 					t.Fatalf("normalized invalid mode=%s", normalized.Scalability)
@@ -2339,6 +2342,7 @@ func TestPublicWebRTCEncoderControllerSettingsMatrix(t *testing.T) {
 					t.Fatalf("SetConfig control change: %v", err)
 				}
 				normalized = enc.Config()
+				assertPublicRTCConfigControls(t, normalized, controlChange)
 				assertPublicWebRTCEncoderDuration(t, &enc)
 				for step := uint64(0); step < publicWebRTCControllerMatrixSteps(temporalLayers); step++ {
 					before := enc.State()
