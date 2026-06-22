@@ -444,6 +444,46 @@ func TestPublicCopyTileListEntryToOutputFrameRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestPublicCopyTileListEntryToOutputFrameRejectsShortPlanesBeforeCopy(t *testing.T) {
+	list, geom := publicSingleTileListCopyFixture(t)
+	format := av1.FrameFormat{
+		Width:        64,
+		Height:       64,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        1,
+	}
+
+	t.Run("source chroma", func(t *testing.T) {
+		dst := bindPublicTileListFrame(t, format)
+		src := bindPublicTileListFrame(t, format)
+		fillTileListCopySource(src)
+		src.U.Pix = src.U.Pix[:len(src.U.Pix)-1]
+
+		if err := av1.CopyTileListEntryToOutputFrame(&dst, &src, list, geom, 0); !errors.Is(err, av1.ErrFrameInvalidFormat) {
+			t.Fatalf("source chroma err=%v want %v", err, av1.ErrFrameInvalidFormat)
+		}
+		if got := getPublicFrameSample(dst.Y, dst.Layout.BytesPerSample, 0, 0); got != 0 {
+			t.Fatalf("destination Y mutated before source chroma failure: %d", got)
+		}
+	})
+
+	t.Run("destination chroma", func(t *testing.T) {
+		dst := bindPublicTileListFrame(t, format)
+		src := bindPublicTileListFrame(t, format)
+		fillTileListCopySource(src)
+		dst.U.Pix = dst.U.Pix[:len(dst.U.Pix)-1]
+
+		if err := av1.CopyTileListEntryToOutputFrame(&dst, &src, list, geom, 0); !errors.Is(err, av1.ErrFrameInvalidFormat) {
+			t.Fatalf("destination chroma err=%v want %v", err, av1.ErrFrameInvalidFormat)
+		}
+		if got := getPublicFrameSample(dst.Y, dst.Layout.BytesPerSample, 0, 0); got != 0 {
+			t.Fatalf("destination Y mutated before destination chroma failure: %d", got)
+		}
+	})
+}
+
 func TestPublicCopyTileListEntryToOutputFrameAllocs(t *testing.T) {
 	list, geom := publicTileListCopyFixture(t)
 	format := av1.FrameFormat{
