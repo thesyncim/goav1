@@ -6,20 +6,170 @@ import (
 )
 
 const (
+	// RTPCoordinationOfVideoOrientationHeaderExtensionSize is the payload size,
+	// in bytes, of the WebRTC CVO RTP header extension.
+	RTPCoordinationOfVideoOrientationHeaderExtensionSize = 1
+	// RTPPlayoutDelayHeaderExtensionSize is the payload size, in bytes, of the
+	// WebRTC playout-delay RTP header extension.
+	RTPPlayoutDelayHeaderExtensionSize = 3
 	// RTPTransportWideCCHeaderExtensionSize is the payload size, in bytes, of
 	// WebRTC's transport-wide congestion-control RTP header extension.
 	RTPTransportWideCCHeaderExtensionSize = 2
 	// RTPAbsoluteSendTimeHeaderExtensionSize is the payload size, in bytes, of
 	// WebRTC's absolute-send-time RTP header extension.
 	RTPAbsoluteSendTimeHeaderExtensionSize = 3
+	// RTPVideoContentTypeHeaderExtensionSize is the payload size, in bytes, of
+	// the WebRTC video-content-type RTP header extension.
+	RTPVideoContentTypeHeaderExtensionSize = 1
+	// RTPVideoTimingHeaderExtensionSize is the payload size, in bytes, of the
+	// WebRTC video-timing RTP header extension.
+	RTPVideoTimingHeaderExtensionSize = 13
+	// RTPPlayoutDelayMaxMilliseconds is the largest playout delay that fits the
+	// WebRTC playout-delay RTP header extension.
+	RTPPlayoutDelayMaxMilliseconds = 40950
 	// RTPAbsoluteSendTimeMaxValue is the largest raw 24-bit absolute-send-time
 	// value accepted by PutRTPAbsoluteSendTimeHeaderExtension.
 	RTPAbsoluteSendTimeMaxValue = 1<<24 - 1
+
+	RTPVideoContentTypeUnspecified RTPVideoContentType = 0
+	RTPVideoContentTypeScreenshare RTPVideoContentType = 1
+
+	RTPVideoTimingFlagTriggeredByTimer     uint8 = 1 << 0
+	RTPVideoTimingFlagFrameLargerThanKnown uint8 = 1 << 1
 )
 
 // ErrRTPInvalidHeaderExtension is returned when a fixed-size RTP header
 // extension payload has an invalid length or raw value.
 var ErrRTPInvalidHeaderExtension = errors.New("goav1: invalid RTP header extension")
+
+// RTPCoordinationOfVideoOrientation is the WebRTC CVO RTP header-extension
+// payload interpreted as camera/front-facing state, horizontal flip state, and
+// clockwise rotation.
+type RTPCoordinationOfVideoOrientation struct {
+	Camera   bool
+	Flip     bool
+	Rotation uint16
+}
+
+// RTPPlayoutDelay is the WebRTC playout-delay RTP header-extension payload in
+// milliseconds. Values must be multiples of 10 ms on write.
+type RTPPlayoutDelay struct {
+	MinDelayMs int
+	MaxDelayMs int
+}
+
+// RTPVideoContentType is the WebRTC video-content-type RTP header-extension
+// payload value.
+type RTPVideoContentType uint8
+
+// RTPVideoTiming is the WebRTC video-timing RTP header-extension payload. All
+// deltas are milliseconds relative to the RTP timestamp of the packet carrying
+// the extension.
+type RTPVideoTiming struct {
+	Flags                        uint8
+	EncodeStartDeltaMs           uint16
+	EncodeFinishDeltaMs          uint16
+	PacketizationCompleteDeltaMs uint16
+	PacerExitDeltaMs             uint16
+	NetworkTimestampDeltaMs      uint16
+	NetworkTimestamp2DeltaMs     uint16
+}
+
+// ParseRTPCoordinationOfVideoOrientationHeaderExtension parses a WebRTC CVO
+// RTP header-extension element payload. The RTP extension element header is
+// not part of src.
+func ParseRTPCoordinationOfVideoOrientationHeaderExtension(src []byte) (RTPCoordinationOfVideoOrientation, error) {
+	if len(src) < RTPCoordinationOfVideoOrientationHeaderExtensionSize {
+		return RTPCoordinationOfVideoOrientation{}, ErrRTPShortBuffer
+	}
+	if len(src) != RTPCoordinationOfVideoOrientationHeaderExtensionSize {
+		return RTPCoordinationOfVideoOrientation{}, ErrRTPInvalidHeaderExtension
+	}
+	return RTPCoordinationOfVideoOrientation{
+		Camera:   src[0]&0x08 != 0,
+		Flip:     src[0]&0x04 != 0,
+		Rotation: uint16(src[0]&0x03) * 90,
+	}, nil
+}
+
+// PutRTPCoordinationOfVideoOrientationHeaderExtension writes a WebRTC CVO RTP
+// header-extension element payload. The RTP extension element header is not
+// written.
+func PutRTPCoordinationOfVideoOrientationHeaderExtension(dst []byte, orientation RTPCoordinationOfVideoOrientation) (int, error) {
+	if err := ValidateRTPCoordinationOfVideoOrientation(orientation); err != nil {
+		return 0, err
+	}
+	if len(dst) < RTPCoordinationOfVideoOrientationHeaderExtensionSize {
+		return 0, ErrRTPShortBuffer
+	}
+	value := byte(orientation.Rotation / 90)
+	if orientation.Camera {
+		value |= 0x08
+	}
+	if orientation.Flip {
+		value |= 0x04
+	}
+	dst[0] = value
+	return RTPCoordinationOfVideoOrientationHeaderExtensionSize, nil
+}
+
+func ValidateRTPCoordinationOfVideoOrientation(orientation RTPCoordinationOfVideoOrientation) error {
+	switch orientation.Rotation {
+	case 0, 90, 180, 270:
+		return nil
+	default:
+		return ErrRTPInvalidHeaderExtension
+	}
+}
+
+// ParseRTPPlayoutDelayHeaderExtension parses a WebRTC playout-delay RTP
+// header-extension element payload. The RTP extension element header is not
+// part of src.
+func ParseRTPPlayoutDelayHeaderExtension(src []byte) (RTPPlayoutDelay, error) {
+	if len(src) < RTPPlayoutDelayHeaderExtensionSize {
+		return RTPPlayoutDelay{}, ErrRTPShortBuffer
+	}
+	if len(src) != RTPPlayoutDelayHeaderExtensionSize {
+		return RTPPlayoutDelay{}, ErrRTPInvalidHeaderExtension
+	}
+	minUnits := uint16(src[0])<<4 | uint16(src[1]>>4)
+	maxUnits := uint16(src[1]&0x0f)<<8 | uint16(src[2])
+	delay := RTPPlayoutDelay{
+		MinDelayMs: int(minUnits) * 10,
+		MaxDelayMs: int(maxUnits) * 10,
+	}
+	if err := ValidateRTPPlayoutDelay(delay); err != nil {
+		return RTPPlayoutDelay{}, err
+	}
+	return delay, nil
+}
+
+// PutRTPPlayoutDelayHeaderExtension writes a WebRTC playout-delay RTP header-
+// extension element payload. The RTP extension element header is not written.
+func PutRTPPlayoutDelayHeaderExtension(dst []byte, delay RTPPlayoutDelay) (int, error) {
+	if err := ValidateRTPPlayoutDelay(delay); err != nil {
+		return 0, err
+	}
+	if len(dst) < RTPPlayoutDelayHeaderExtensionSize {
+		return 0, ErrRTPShortBuffer
+	}
+	minUnits := uint16(delay.MinDelayMs / 10)
+	maxUnits := uint16(delay.MaxDelayMs / 10)
+	dst[0] = byte(minUnits >> 4)
+	dst[1] = byte(minUnits<<4) | byte(maxUnits>>8)
+	dst[2] = byte(maxUnits)
+	return RTPPlayoutDelayHeaderExtensionSize, nil
+}
+
+func ValidateRTPPlayoutDelay(delay RTPPlayoutDelay) error {
+	if delay.MinDelayMs < 0 || delay.MaxDelayMs < 0 ||
+		delay.MinDelayMs > delay.MaxDelayMs ||
+		delay.MaxDelayMs > RTPPlayoutDelayMaxMilliseconds ||
+		delay.MinDelayMs%10 != 0 || delay.MaxDelayMs%10 != 0 {
+		return ErrRTPInvalidHeaderExtension
+	}
+	return nil
+}
 
 // ParseRTPTransportWideCCHeaderExtension parses a transport-wide congestion-
 // control RTP header-extension element payload. The RTP extension element
@@ -72,4 +222,91 @@ func PutRTPAbsoluteSendTimeHeaderExtension(dst []byte, timestamp uint32) (int, e
 	dst[1] = byte(timestamp >> 8)
 	dst[2] = byte(timestamp)
 	return RTPAbsoluteSendTimeHeaderExtensionSize, nil
+}
+
+// ParseRTPVideoContentTypeHeaderExtension parses a WebRTC video-content-type
+// RTP header-extension element payload. The RTP extension element header is not
+// part of src.
+func ParseRTPVideoContentTypeHeaderExtension(src []byte) (RTPVideoContentType, error) {
+	if len(src) < RTPVideoContentTypeHeaderExtensionSize {
+		return 0, ErrRTPShortBuffer
+	}
+	if len(src) != RTPVideoContentTypeHeaderExtensionSize {
+		return 0, ErrRTPInvalidHeaderExtension
+	}
+	content := RTPVideoContentType(src[0])
+	if err := ValidateRTPVideoContentType(content); err != nil {
+		return 0, err
+	}
+	return content, nil
+}
+
+// PutRTPVideoContentTypeHeaderExtension writes a WebRTC video-content-type RTP
+// header-extension element payload. The RTP extension element header is not
+// written.
+func PutRTPVideoContentTypeHeaderExtension(dst []byte, content RTPVideoContentType) (int, error) {
+	if err := ValidateRTPVideoContentType(content); err != nil {
+		return 0, err
+	}
+	if len(dst) < RTPVideoContentTypeHeaderExtensionSize {
+		return 0, ErrRTPShortBuffer
+	}
+	dst[0] = byte(content)
+	return RTPVideoContentTypeHeaderExtensionSize, nil
+}
+
+func ValidateRTPVideoContentType(content RTPVideoContentType) error {
+	switch content {
+	case RTPVideoContentTypeUnspecified, RTPVideoContentTypeScreenshare:
+		return nil
+	default:
+		return ErrRTPInvalidHeaderExtension
+	}
+}
+
+// ParseRTPVideoTimingHeaderExtension parses a WebRTC video-timing RTP header-
+// extension element payload. The RTP extension element header is not part of
+// src.
+func ParseRTPVideoTimingHeaderExtension(src []byte) (RTPVideoTiming, error) {
+	if len(src) < RTPVideoTimingHeaderExtensionSize {
+		return RTPVideoTiming{}, ErrRTPShortBuffer
+	}
+	if len(src) != RTPVideoTimingHeaderExtensionSize {
+		return RTPVideoTiming{}, ErrRTPInvalidHeaderExtension
+	}
+	return RTPVideoTiming{
+		Flags:                        src[0] & (RTPVideoTimingFlagTriggeredByTimer | RTPVideoTimingFlagFrameLargerThanKnown),
+		EncodeStartDeltaMs:           binary.BigEndian.Uint16(src[1:3]),
+		EncodeFinishDeltaMs:          binary.BigEndian.Uint16(src[3:5]),
+		PacketizationCompleteDeltaMs: binary.BigEndian.Uint16(src[5:7]),
+		PacerExitDeltaMs:             binary.BigEndian.Uint16(src[7:9]),
+		NetworkTimestampDeltaMs:      binary.BigEndian.Uint16(src[9:11]),
+		NetworkTimestamp2DeltaMs:     binary.BigEndian.Uint16(src[11:13]),
+	}, nil
+}
+
+// PutRTPVideoTimingHeaderExtension writes a WebRTC video-timing RTP header-
+// extension element payload. The RTP extension element header is not written.
+func PutRTPVideoTimingHeaderExtension(dst []byte, timing RTPVideoTiming) (int, error) {
+	if err := ValidateRTPVideoTiming(timing); err != nil {
+		return 0, err
+	}
+	if len(dst) < RTPVideoTimingHeaderExtensionSize {
+		return 0, ErrRTPShortBuffer
+	}
+	dst[0] = timing.Flags
+	binary.BigEndian.PutUint16(dst[1:3], timing.EncodeStartDeltaMs)
+	binary.BigEndian.PutUint16(dst[3:5], timing.EncodeFinishDeltaMs)
+	binary.BigEndian.PutUint16(dst[5:7], timing.PacketizationCompleteDeltaMs)
+	binary.BigEndian.PutUint16(dst[7:9], timing.PacerExitDeltaMs)
+	binary.BigEndian.PutUint16(dst[9:11], timing.NetworkTimestampDeltaMs)
+	binary.BigEndian.PutUint16(dst[11:13], timing.NetworkTimestamp2DeltaMs)
+	return RTPVideoTimingHeaderExtensionSize, nil
+}
+
+func ValidateRTPVideoTiming(timing RTPVideoTiming) error {
+	if timing.Flags&^(RTPVideoTimingFlagTriggeredByTimer|RTPVideoTimingFlagFrameLargerThanKnown) != 0 {
+		return ErrRTPInvalidHeaderExtension
+	}
+	return nil
 }

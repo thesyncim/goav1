@@ -27,6 +27,9 @@ const (
 	// AV1RTPRepairedStreamIDURI is the SDP extmap URI for repaired RTP stream
 	// ID header extension used by RTX/FEC repair streams.
 	AV1RTPRepairedStreamIDURI = "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id"
+	// AV1RTPVideoOrientationURI is the SDP extmap URI for the WebRTC
+	// Coordination of Video Orientation RTP header extension.
+	AV1RTPVideoOrientationURI = "urn:3gpp:video-orientation"
 	// AV1RTPTransportWideCCURI is the SDP extmap URI commonly used by WebRTC
 	// endpoints for transport-wide congestion-control sequence numbers.
 	AV1RTPTransportWideCCURI = "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01"

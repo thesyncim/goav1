@@ -26,7 +26,8 @@ func TestAV1SDPConstants(t *testing.T) {
 		av1.AV1RTPRepairedStreamIDURI != "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id" {
 		t.Fatalf("unexpected RTP SDES extmap URI constants")
 	}
-	if av1.AV1RTPTransportWideCCURI != "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01" ||
+	if av1.AV1RTPVideoOrientationURI != "urn:3gpp:video-orientation" ||
+		av1.AV1RTPTransportWideCCURI != "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01" ||
 		av1.AV1RTPTransportWideCC02URI != "http://www.webrtc.org/experiments/rtp-hdrext/transport-wide-cc-02" ||
 		av1.AV1RTPAbsoluteSendTimeURI != "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" ||
 		av1.AV1RTPAbsoluteCaptureTimeURI != "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time" ||
