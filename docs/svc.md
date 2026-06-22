@@ -414,9 +414,12 @@ SDP helpers (`ParseAV1SDPFmtp`, `ParseAV1SDPExtmap`, `ParseAV1SDPRID`,
 header-extension mapping checks for dependency descriptors and RID/MID SDES
 values, AV1 RID receiver restrictions such as `max-width`, `max-height`,
 `max-fps`, `max-fs`, `max-br`, `max-pps`, `max-bpp`, and `depend`, and AV1
-simulcast RID groups before RTP starts flowing; the `AV1SDP*RTCPFeedback`
-helpers verify payload-specific or wildcard `rtcp-fb` support for NACK, PLI,
-FIR, and LRR. RTCP LRR helpers
+simulcast RID groups before RTP starts flowing. RTP SDES helpers
+(`PutRTPMIDHeaderExtension`, `PutRTPStreamIDHeaderExtension`, and
+`PutRTPRepairedStreamIDHeaderExtension`) validate and write raw MID/RID/RRID
+header-extension payload bytes after the caller has selected RTP extension
+IDs; the `AV1SDP*RTCPFeedback` helpers verify payload-specific or wildcard
+`rtcp-fb` support for NACK, PLI, FIR, and LRR. RTCP LRR helpers
 (`ParseAV1RTCPLayerRefreshRequestEntry`,
 `EncoderWebRTCValidateLayerRefreshRequest`) cover the AV1 layer-index FCI
 format and validate requested upgrades against the active scalability grid. The

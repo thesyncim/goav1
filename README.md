@@ -46,7 +46,7 @@ needs:
 | Use case | API | Ownership model |
 | --- | --- | --- |
 | One-shot decoded pixels | `DecodeIVF` | Copies visible planes into independent `DecodedFrame` values |
-| AV1 WebRTC SDP capability checks | `ParseAV1SDPFmtp` / `ParseAV1SDPExtmap` / `ParseAV1SDPRID` / `ParseAV1SDPSimulcast` / `AV1SDPOffersReceive*` | Parses `AV1/90000` payload bindings, profile/level/tier fmtp values, RTP header-extension mappings, AV1 RID receiver restrictions, AV1 simulcast RID groups, and AV1 rtcp-fb support; complete SDP assembly stays caller-owned |
+| AV1 WebRTC SDP/RTP control checks | `ParseAV1SDPFmtp` / `ParseAV1SDPExtmap` / `ParseAV1SDPRID` / `ParseAV1SDPSimulcast` / `PutRTPMIDHeaderExtension` / `PutRTPStreamIDHeaderExtension` / `AV1SDPOffersReceive*` | Parses `AV1/90000` payload bindings, profile/level/tier fmtp values, RTP header-extension mappings, AV1 RID receiver restrictions, AV1 simulcast RID groups, AV1 rtcp-fb support, and raw MID/RID/RRID SDES header-extension payloads; complete SDP assembly and RTP header ownership stay caller-owned |
 | AV1 WebRTC RTCP feedback checks | `ParseAV1RTCPLayerRefreshRequestEntry` / `EncoderWebRTCValidateLayerRefreshRequest` | Parses and validates LRR FCI entries against the active temporal/spatial layer grid; RTCP transport stays caller-owned |
 | Repeated in-memory IVF decode | `NewDecoderFromIVF` + `DecodeNext` | Copies IVF payloads once, then reuses decoder-owned frame and post-filter arenas |
 | Large/file-backed IVF decode | `NewDecoderFromIVFReaderAt` + `DecodeNext` | Indexes IVF frame offsets and reads each payload into one reusable buffer |
@@ -120,8 +120,10 @@ binding, profile/level/tier parsing and emission, RTP header-extension
 mappings for dependency descriptors and RID/MID SDES values, AV1 RID receiver
 restrictions, AV1 simulcast RID groups, sequence-header compatibility checks,
 offer receive checks, payload-specific or wildcard rtcp-fb checks, and the
-dependency descriptor extmap URI; complete SDP generation, transceiver setup,
-and RTP header ownership remain with the caller. RTCP helpers cover AV1
+dependency descriptor extmap URI. RTP SDES helpers validate and write raw
+MID/RID/RRID header-extension payload bytes after the caller has selected RTP
+extension IDs; complete SDP generation, transceiver setup, and RTP header
+ownership remain with the caller. RTCP helpers cover AV1
 Layer Refresh Request FCI entry parsing,
 serialization, and validation against an encoder config; callers can satisfy a
 valid FIR, PLI, or LRR with the existing `forceKey` argument when a full refresh

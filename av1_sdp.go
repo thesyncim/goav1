@@ -1491,13 +1491,27 @@ func av1SDPAllDigits(value string) bool {
 	return value != ""
 }
 
+func av1SDPAlphaNumeric(ch byte) bool {
+	return (ch >= '0' && ch <= '9') ||
+		(ch >= 'A' && ch <= 'Z') ||
+		(ch >= 'a' && ch <= 'z')
+}
+
+func av1SDPTokenChar(ch byte) bool {
+	return ch == 0x21 || (ch >= 0x23 && ch <= 0x27) ||
+		(ch >= 0x2a && ch <= 0x2b) ||
+		(ch >= 0x2d && ch <= 0x2e) ||
+		(ch >= 0x30 && ch <= 0x39) ||
+		(ch >= 0x41 && ch <= 0x5a) ||
+		(ch >= 0x5e && ch <= 0x7e)
+}
+
 func av1SDPValidRIDID(value string) bool {
 	if value == "" {
 		return false
 	}
 	for _, ch := range value {
-		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
-			(ch >= '0' && ch <= '9') || ch == '-' || ch == '_' {
+		if ch <= 0x7f && (av1SDPAlphaNumeric(byte(ch)) || ch == '-' || ch == '_') {
 			continue
 		}
 		return false
