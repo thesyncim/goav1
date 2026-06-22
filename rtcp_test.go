@@ -8,8 +8,23 @@ import (
 )
 
 func TestAV1RTCPFeedbackConstants(t *testing.T) {
+	if av1.RTCPRTPFBGenericNACKFMT != 1 {
+		t.Fatalf("RTCPRTPFBGenericNACKFMT = %d, want 1", av1.RTCPRTPFBGenericNACKFMT)
+	}
+	if av1.RTCPPSFBPictureLossIndicationFMT != 1 {
+		t.Fatalf("RTCPPSFBPictureLossIndicationFMT = %d, want 1", av1.RTCPPSFBPictureLossIndicationFMT)
+	}
+	if av1.RTCPPSFBFullIntraRequestFMT != 4 {
+		t.Fatalf("RTCPPSFBFullIntraRequestFMT = %d, want 4", av1.RTCPPSFBFullIntraRequestFMT)
+	}
 	if av1.RTCPPSFBLayerRefreshRequestFMT != 10 {
 		t.Fatalf("RTCPPSFBLayerRefreshRequestFMT = %d, want 10", av1.RTCPPSFBLayerRefreshRequestFMT)
+	}
+	if av1.RTCPGenericNACKPairSize != 4 {
+		t.Fatalf("RTCPGenericNACKPairSize = %d, want 4", av1.RTCPGenericNACKPairSize)
+	}
+	if av1.RTCPFullIntraRequestEntrySize != 8 {
+		t.Fatalf("RTCPFullIntraRequestEntrySize = %d, want 8", av1.RTCPFullIntraRequestEntrySize)
 	}
 	if av1.AV1RTCPLayerRefreshLayerIndexSize != 2 {
 		t.Fatalf("AV1RTCPLayerRefreshLayerIndexSize = %d, want 2", av1.AV1RTCPLayerRefreshLayerIndexSize)
@@ -26,6 +41,158 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 		av1.AV1SDPRTCPFeedbackFIR != "ccm fir" ||
 		av1.AV1SDPRTCPFeedbackLRR != "ccm lrr" {
 		t.Fatalf("unexpected AV1 rtcp-fb constants")
+	}
+}
+
+func TestRTCPGenericNACKPairsRoundTrip(t *testing.T) {
+	pairs := []av1.RTCPGenericNACKPair{
+		{PacketID: 0x1234, LostPacketBitmask: 0x8001},
+		{PacketID: 0xfffe, LostPacketBitmask: 0x0003},
+	}
+	size, err := av1.RTCPGenericNACKPairsSize(pairs)
+	if err != nil {
+		t.Fatalf("RTCPGenericNACKPairsSize: %v", err)
+	}
+	if size != len(pairs)*av1.RTCPGenericNACKPairSize {
+		t.Fatalf("NACK size=%d", size)
+	}
+	buf := make([]byte, size)
+	n, err := av1.PutRTCPGenericNACKPairs(buf, pairs)
+	if err != nil {
+		t.Fatalf("PutRTCPGenericNACKPairs: %v", err)
+	}
+	if n != size {
+		t.Fatalf("PutRTCPGenericNACKPairs n=%d want %d", n, size)
+	}
+	want := []byte{0x12, 0x34, 0x80, 0x01, 0xff, 0xfe, 0x00, 0x03}
+	if string(buf) != string(want) {
+		t.Fatalf("encoded NACK bytes=%#v want %#v", buf, want)
+	}
+	parsed, err := av1.ParseRTCPGenericNACKPairs(buf, make([]av1.RTCPGenericNACKPair, 0, len(pairs)))
+	if err != nil {
+		t.Fatalf("ParseRTCPGenericNACKPairs: %v", err)
+	}
+	if len(parsed) != len(pairs) {
+		t.Fatalf("parsed NACK pairs len=%d want %d", len(parsed), len(pairs))
+	}
+	for i := range pairs {
+		if parsed[i] != pairs[i] {
+			t.Fatalf("parsed[%d]=%+v want %+v", i, parsed[i], pairs[i])
+		}
+	}
+	prefix := make([]byte, 1, 1+size)
+	prefix[0] = 0xaa
+	appended, err := av1.AppendRTCPGenericNACKPairs(prefix, pairs)
+	if err != nil {
+		t.Fatalf("AppendRTCPGenericNACKPairs: %v", err)
+	}
+	if len(appended) != 1+size || appended[0] != 0xaa || string(appended[1:]) != string(buf) {
+		t.Fatalf("appended NACK bytes=%#v", appended)
+	}
+}
+
+func TestRTCPGenericNACKPairsRejectsInvalid(t *testing.T) {
+	pair := av1.RTCPGenericNACKPair{PacketID: 1, LostPacketBitmask: 2}
+	var buf [av1.RTCPGenericNACKPairSize]byte
+	if _, err := av1.PutRTCPGenericNACKPair(buf[:1], pair); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short PutRTCPGenericNACKPair err=%v", err)
+	}
+	if _, _, err := av1.ParseRTCPGenericNACKPair(buf[:1]); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short ParseRTCPGenericNACKPair err=%v", err)
+	}
+	pairs := []av1.RTCPGenericNACKPair{pair, pair}
+	size, err := av1.RTCPGenericNACKPairsSize(pairs)
+	if err != nil {
+		t.Fatalf("RTCPGenericNACKPairsSize valid: %v", err)
+	}
+	if _, err := av1.PutRTCPGenericNACKPairs(make([]byte, size-1), pairs); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short PutRTCPGenericNACKPairs err=%v", err)
+	}
+	if out, err := av1.AppendRTCPGenericNACKPairs(make([]byte, 0, size-1), pairs); !errors.Is(err, av1.ErrRTCPShortBuffer) || len(out) != 0 {
+		t.Fatalf("short AppendRTCPGenericNACKPairs out=%d err=%v", len(out), err)
+	}
+	if _, err := av1.ParseRTCPGenericNACKPairs(make([]byte, size), make([]av1.RTCPGenericNACKPair, 0, 1)); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short ParseRTCPGenericNACKPairs dst err=%v", err)
+	}
+	if _, err := av1.ParseRTCPGenericNACKPairs(make([]byte, size-1), nil); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("ragged ParseRTCPGenericNACKPairs err=%v", err)
+	}
+}
+
+func TestRTCPFullIntraRequestEntriesRoundTrip(t *testing.T) {
+	entries := []av1.RTCPFullIntraRequestEntry{
+		{SSRC: 0x11223344, SequenceNumber: 7},
+		{SSRC: 0xaabbccdd, SequenceNumber: 250},
+	}
+	size, err := av1.RTCPFullIntraRequestEntriesSize(entries)
+	if err != nil {
+		t.Fatalf("RTCPFullIntraRequestEntriesSize: %v", err)
+	}
+	if size != len(entries)*av1.RTCPFullIntraRequestEntrySize {
+		t.Fatalf("FIR size=%d", size)
+	}
+	buf := make([]byte, size)
+	n, err := av1.PutRTCPFullIntraRequestEntries(buf, entries)
+	if err != nil {
+		t.Fatalf("PutRTCPFullIntraRequestEntries: %v", err)
+	}
+	if n != size {
+		t.Fatalf("PutRTCPFullIntraRequestEntries n=%d want %d", n, size)
+	}
+	want := []byte{0x11, 0x22, 0x33, 0x44, 0x07, 0, 0, 0, 0xaa, 0xbb, 0xcc, 0xdd, 0xfa, 0, 0, 0}
+	if string(buf) != string(want) {
+		t.Fatalf("encoded FIR bytes=%#v want %#v", buf, want)
+	}
+	buf[5], buf[6], buf[7] = 0xde, 0xad, 0xbe
+	parsed, err := av1.ParseRTCPFullIntraRequestEntries(buf, make([]av1.RTCPFullIntraRequestEntry, 0, len(entries)))
+	if err != nil {
+		t.Fatalf("ParseRTCPFullIntraRequestEntries: %v", err)
+	}
+	for i := range entries {
+		if parsed[i] != entries[i] {
+			t.Fatalf("parsed[%d]=%+v want %+v", i, parsed[i], entries[i])
+		}
+	}
+	prefix := make([]byte, 1, 1+size)
+	prefix[0] = 0xaa
+	appended, err := av1.AppendRTCPFullIntraRequestEntries(prefix, entries)
+	if err != nil {
+		t.Fatalf("AppendRTCPFullIntraRequestEntries: %v", err)
+	}
+	clean := make([]byte, size)
+	if _, err := av1.PutRTCPFullIntraRequestEntries(clean, entries); err != nil {
+		t.Fatalf("Put clean FIR: %v", err)
+	}
+	if len(appended) != 1+size || appended[0] != 0xaa || string(appended[1:]) != string(clean) {
+		t.Fatalf("appended FIR bytes=%#v", appended)
+	}
+}
+
+func TestRTCPFullIntraRequestEntriesRejectsInvalid(t *testing.T) {
+	entry := av1.RTCPFullIntraRequestEntry{SSRC: 1, SequenceNumber: 2}
+	var buf [av1.RTCPFullIntraRequestEntrySize]byte
+	if _, err := av1.PutRTCPFullIntraRequestEntry(buf[:1], entry); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short PutRTCPFullIntraRequestEntry err=%v", err)
+	}
+	if _, _, err := av1.ParseRTCPFullIntraRequestEntry(buf[:1]); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short ParseRTCPFullIntraRequestEntry err=%v", err)
+	}
+	entries := []av1.RTCPFullIntraRequestEntry{entry, entry}
+	size, err := av1.RTCPFullIntraRequestEntriesSize(entries)
+	if err != nil {
+		t.Fatalf("RTCPFullIntraRequestEntriesSize valid: %v", err)
+	}
+	if _, err := av1.PutRTCPFullIntraRequestEntries(make([]byte, size-1), entries); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short PutRTCPFullIntraRequestEntries err=%v", err)
+	}
+	if out, err := av1.AppendRTCPFullIntraRequestEntries(make([]byte, 0, size-1), entries); !errors.Is(err, av1.ErrRTCPShortBuffer) || len(out) != 0 {
+		t.Fatalf("short AppendRTCPFullIntraRequestEntries out=%d err=%v", len(out), err)
+	}
+	if _, err := av1.ParseRTCPFullIntraRequestEntries(make([]byte, size), make([]av1.RTCPFullIntraRequestEntry, 0, 1)); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short ParseRTCPFullIntraRequestEntries dst err=%v", err)
+	}
+	if _, err := av1.ParseRTCPFullIntraRequestEntries(make([]byte, size-1), nil); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("ragged ParseRTCPFullIntraRequestEntries err=%v", err)
 	}
 }
 

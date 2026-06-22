@@ -6,9 +6,28 @@ import (
 )
 
 const (
+	// RTCPRTPFBGenericNACKFMT is the RTCP transport-layer feedback FMT value
+	// for generic negative acknowledgements.
+	RTCPRTPFBGenericNACKFMT = 1
+
+	// RTCPPSFBPictureLossIndicationFMT is the RTCP payload-specific feedback
+	// FMT value for Picture Loss Indication feedback.
+	RTCPPSFBPictureLossIndicationFMT = 1
+
+	// RTCPPSFBFullIntraRequestFMT is the RTCP payload-specific feedback FMT
+	// value for Full Intra Request feedback.
+	RTCPPSFBFullIntraRequestFMT = 4
+
 	// RTCPPSFBLayerRefreshRequestFMT is the RTCP payload-specific feedback
 	// FMT value registered for Layer Refresh Request feedback.
 	RTCPPSFBLayerRefreshRequestFMT = 10
+
+	// RTCPGenericNACKPairSize is the size of one generic NACK FCI PID/BLP
+	// pair.
+	RTCPGenericNACKPairSize = 4
+
+	// RTCPFullIntraRequestEntrySize is the size of one FIR FCI entry.
+	RTCPFullIntraRequestEntrySize = 8
 
 	// AV1RTCPLayerRefreshLayerIndexSize is the size of one AV1 LRR layer
 	// index field: temporal_id plus spatial_id with reserved bits.
@@ -30,10 +49,216 @@ var (
 	// ErrRTCPShortBuffer is returned when an RTCP helper's caller-owned buffer
 	// is too small for the requested AV1 feedback field.
 	ErrRTCPShortBuffer = errors.New("goav1: short RTCP buffer")
+	// ErrRTCPInvalidFeedback is returned when a generic RTCP feedback helper
+	// receives malformed FCI data.
+	ErrRTCPInvalidFeedback = errors.New("goav1: invalid RTCP feedback")
 	// ErrRTCPInvalidLayerRefreshRequest is returned when an AV1 LRR entry
 	// carries out-of-range layer IDs, payload type, or upgrade semantics.
 	ErrRTCPInvalidLayerRefreshRequest = errors.New("goav1: invalid RTCP layer refresh request")
 )
+
+// RTCPGenericNACKPair is one generic NACK Feedback Control Information pair.
+// PacketID is the first lost RTP sequence number; LostPacketBitmask marks the
+// following 16 sequence numbers.
+type RTCPGenericNACKPair struct {
+	PacketID          uint16
+	LostPacketBitmask uint16
+}
+
+// RTCPGenericNACKPairsSize returns the FCI byte count needed to serialize
+// pairs.
+func RTCPGenericNACKPairsSize(pairs []RTCPGenericNACKPair) (int, error) {
+	maxInt := int(^uint(0) >> 1)
+	if len(pairs) > maxInt/RTCPGenericNACKPairSize {
+		return 0, ErrRTCPInvalidFeedback
+	}
+	return len(pairs) * RTCPGenericNACKPairSize, nil
+}
+
+// PutRTCPGenericNACKPair serializes one generic NACK FCI pair into dst.
+func PutRTCPGenericNACKPair(dst []byte, pair RTCPGenericNACKPair) (int, error) {
+	if len(dst) < RTCPGenericNACKPairSize {
+		return 0, ErrRTCPShortBuffer
+	}
+	binary.BigEndian.PutUint16(dst[0:2], pair.PacketID)
+	binary.BigEndian.PutUint16(dst[2:4], pair.LostPacketBitmask)
+	return RTCPGenericNACKPairSize, nil
+}
+
+// PutRTCPGenericNACKPairs serializes a complete generic NACK FCI pair list.
+// The caller owns the surrounding RTCP RTPFB packet.
+func PutRTCPGenericNACKPairs(dst []byte, pairs []RTCPGenericNACKPair) (int, error) {
+	size, err := RTCPGenericNACKPairsSize(pairs)
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < size {
+		return 0, ErrRTCPShortBuffer
+	}
+	for i := range pairs {
+		off := i * RTCPGenericNACKPairSize
+		if _, err := PutRTCPGenericNACKPair(dst[off:off+RTCPGenericNACKPairSize], pairs[i]); err != nil {
+			return 0, err
+		}
+	}
+	return size, nil
+}
+
+// AppendRTCPGenericNACKPairs appends a complete generic NACK FCI pair list to
+// dst without growing beyond dst's existing capacity.
+func AppendRTCPGenericNACKPairs(dst []byte, pairs []RTCPGenericNACKPair) ([]byte, error) {
+	size, err := RTCPGenericNACKPairsSize(pairs)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+size]
+	if _, err := PutRTCPGenericNACKPairs(out[off:], pairs); err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
+// ParseRTCPGenericNACKPair parses one generic NACK FCI pair.
+func ParseRTCPGenericNACKPair(src []byte) (RTCPGenericNACKPair, int, error) {
+	if len(src) < RTCPGenericNACKPairSize {
+		return RTCPGenericNACKPair{}, 0, ErrRTCPShortBuffer
+	}
+	return RTCPGenericNACKPair{
+		PacketID:          binary.BigEndian.Uint16(src[0:2]),
+		LostPacketBitmask: binary.BigEndian.Uint16(src[2:4]),
+	}, RTCPGenericNACKPairSize, nil
+}
+
+// ParseRTCPGenericNACKPairs parses a complete generic NACK FCI pair list into
+// dst without growing beyond dst's existing capacity.
+func ParseRTCPGenericNACKPairs(src []byte, dst []RTCPGenericNACKPair) ([]RTCPGenericNACKPair, error) {
+	if len(src)%RTCPGenericNACKPairSize != 0 {
+		return dst, ErrRTCPInvalidFeedback
+	}
+	count := len(src) / RTCPGenericNACKPairSize
+	if cap(dst)-len(dst) < count {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+count]
+	for i := 0; i < count; i++ {
+		start := i * RTCPGenericNACKPairSize
+		pair, _, err := ParseRTCPGenericNACKPair(src[start : start+RTCPGenericNACKPairSize])
+		if err != nil {
+			return dst, err
+		}
+		out[off+i] = pair
+	}
+	return out, nil
+}
+
+// RTCPFullIntraRequestEntry is one Full Intra Request Feedback Control
+// Information entry. SSRC is the media sender requested to send an intra
+// picture; SequenceNumber is the command sequence number for that sender.
+type RTCPFullIntraRequestEntry struct {
+	SSRC           uint32
+	SequenceNumber uint8
+}
+
+// RTCPFullIntraRequestEntriesSize returns the FCI byte count needed to
+// serialize entries.
+func RTCPFullIntraRequestEntriesSize(entries []RTCPFullIntraRequestEntry) (int, error) {
+	maxInt := int(^uint(0) >> 1)
+	if len(entries) > maxInt/RTCPFullIntraRequestEntrySize {
+		return 0, ErrRTCPInvalidFeedback
+	}
+	return len(entries) * RTCPFullIntraRequestEntrySize, nil
+}
+
+// PutRTCPFullIntraRequestEntry serializes one FIR FCI entry into dst.
+// Reserved bytes are written as zero.
+func PutRTCPFullIntraRequestEntry(dst []byte, entry RTCPFullIntraRequestEntry) (int, error) {
+	if len(dst) < RTCPFullIntraRequestEntrySize {
+		return 0, ErrRTCPShortBuffer
+	}
+	binary.BigEndian.PutUint32(dst[0:4], entry.SSRC)
+	dst[4] = entry.SequenceNumber
+	dst[5] = 0
+	dst[6] = 0
+	dst[7] = 0
+	return RTCPFullIntraRequestEntrySize, nil
+}
+
+// PutRTCPFullIntraRequestEntries serializes a complete FIR FCI entry list.
+// The caller owns the surrounding RTCP PSFB packet.
+func PutRTCPFullIntraRequestEntries(dst []byte, entries []RTCPFullIntraRequestEntry) (int, error) {
+	size, err := RTCPFullIntraRequestEntriesSize(entries)
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < size {
+		return 0, ErrRTCPShortBuffer
+	}
+	for i := range entries {
+		off := i * RTCPFullIntraRequestEntrySize
+		if _, err := PutRTCPFullIntraRequestEntry(dst[off:off+RTCPFullIntraRequestEntrySize], entries[i]); err != nil {
+			return 0, err
+		}
+	}
+	return size, nil
+}
+
+// AppendRTCPFullIntraRequestEntries appends a complete FIR FCI entry list to
+// dst without growing beyond dst's existing capacity.
+func AppendRTCPFullIntraRequestEntries(dst []byte, entries []RTCPFullIntraRequestEntry) ([]byte, error) {
+	size, err := RTCPFullIntraRequestEntriesSize(entries)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+size]
+	if _, err := PutRTCPFullIntraRequestEntries(out[off:], entries); err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
+// ParseRTCPFullIntraRequestEntry parses one FIR FCI entry. Reserved bytes are
+// ignored on reception.
+func ParseRTCPFullIntraRequestEntry(src []byte) (RTCPFullIntraRequestEntry, int, error) {
+	if len(src) < RTCPFullIntraRequestEntrySize {
+		return RTCPFullIntraRequestEntry{}, 0, ErrRTCPShortBuffer
+	}
+	return RTCPFullIntraRequestEntry{
+		SSRC:           binary.BigEndian.Uint32(src[0:4]),
+		SequenceNumber: src[4],
+	}, RTCPFullIntraRequestEntrySize, nil
+}
+
+// ParseRTCPFullIntraRequestEntries parses a complete FIR FCI entry list into
+// dst without growing beyond dst's existing capacity.
+func ParseRTCPFullIntraRequestEntries(src []byte, dst []RTCPFullIntraRequestEntry) ([]RTCPFullIntraRequestEntry, error) {
+	if len(src)%RTCPFullIntraRequestEntrySize != 0 {
+		return dst, ErrRTCPInvalidFeedback
+	}
+	count := len(src) / RTCPFullIntraRequestEntrySize
+	if cap(dst)-len(dst) < count {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+count]
+	for i := 0; i < count; i++ {
+		start := i * RTCPFullIntraRequestEntrySize
+		entry, _, err := ParseRTCPFullIntraRequestEntry(src[start : start+RTCPFullIntraRequestEntrySize])
+		if err != nil {
+			return dst, err
+		}
+		out[off+i] = entry
+	}
+	return out, nil
+}
 
 // AV1RTCPLayerRefreshLayerIndex is one AV1 layer index in an LRR feedback
 // entry. TemporalID maps to AV1 temporal_id; SpatialID maps to AV1 spatial_id.
