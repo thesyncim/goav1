@@ -197,8 +197,9 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         |                                  | tile_data_size, tile data slice); anchor       |
 |    |                                  |         |                                  | validation uses the reference tile grid, and   |
 |    |                                  |         |                                  | DecodeLayout checks libaom-compatible uniform  |
-|    |                                  |         |                                  | tile size prerequisites. OutputGeometry and    |
-|    |                                  |         |                                  | OutputTileRegion expose libaom-shaped output   |
+|    |                                  |         |                                  | tile size prerequisites. OutputGeometry,       |
+|    |                                  |         |                                  | OutputTileRegion, and                          |
+|    |                                  |         |                                  | CopyTileListEntryToOutputFrame cover output    |
 |    |                                  |         |                                  | sizing/copy rectangles. EventTileList carries  |
 |    |                                  |         |                                  | the parsed structure plus TileListErr for      |
 |    |                                  |         |                                  | partial payloads. The residual decode runner   |
@@ -491,8 +492,8 @@ manifest. The next production-readiness items are:
    film grain, edge-motion, and super-res coverage.
 2. **Tile list OBU playback.** `EventTileList` parsing is present with
    reference-grid anchor validation, libaom-compatible uniform tile-size
-   prerequisite checks, and libaom-shaped output geometry/copy-region helpers.
-   The residual decode runner still returns
+   prerequisite checks, libaom-shaped output geometry/copy-region helpers, and
+   the decoded-tile-to-output-frame blit helper. The residual decode runner still returns
    `ErrDecoderUnsupportedTileList` for valid layouts instead of silently
    ignoring playback; end-to-end tile payload decode and reconstruction blitting
    remain future work.

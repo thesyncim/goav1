@@ -368,6 +368,181 @@ func TestPublicTileListOutputGeometryAndRegions(t *testing.T) {
 	}
 }
 
+func TestPublicCopyTileListEntryToOutputFrame(t *testing.T) {
+	list, geom := publicTileListCopyFixture(t)
+	for _, tc := range []struct {
+		name         string
+		bitDepth     uint8
+		mono         bool
+		subsamplingX bool
+		subsamplingY bool
+	}{
+		{name: "i420-10", bitDepth: 10, subsamplingX: true, subsamplingY: true},
+		{name: "i422-10", bitDepth: 10, subsamplingX: true},
+		{name: "i444-8", bitDepth: 8},
+		{name: "mono-12", bitDepth: 12, mono: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			format := av1.FrameFormat{
+				Width:        geom.OutputFrameWidth,
+				Height:       geom.OutputFrameHeight,
+				BitDepth:     tc.bitDepth,
+				MonoChrome:   tc.mono,
+				SubsamplingX: tc.subsamplingX,
+				SubsamplingY: tc.subsamplingY,
+				Align:        1,
+			}
+			src := bindPublicTileListFrame(t, format)
+			dst := bindPublicTileListFrame(t, format)
+			fillTileListCopySource(src)
+
+			if err := av1.CopyTileListEntryToOutputFrame(&dst, &src, list, geom, 2); err != nil {
+				t.Fatalf("CopyTileListEntryToOutputFrame: %v", err)
+			}
+			if got, want := getPublicFrameSample(dst.Y, dst.Layout.BytesPerSample, 0, 64), getPublicFrameSample(src.Y, src.Layout.BytesPerSample, 128, 64); got != want {
+				t.Fatalf("Y top-left got=%d want %d", got, want)
+			}
+			if got, want := getPublicFrameSample(dst.Y, dst.Layout.BytesPerSample, 127, 127), getPublicFrameSample(src.Y, src.Layout.BytesPerSample, 255, 127); got != want {
+				t.Fatalf("Y bottom-right got=%d want %d", got, want)
+			}
+			if got := getPublicFrameSample(dst.Y, dst.Layout.BytesPerSample, 128, 64); got != 0 {
+				t.Fatalf("unexpected copy outside destination Y tile: %d", got)
+			}
+			if tc.mono {
+				return
+			}
+			shiftX, shiftY := 0, 0
+			if tc.subsamplingX {
+				shiftX = 1
+			}
+			if tc.subsamplingY {
+				shiftY = 1
+			}
+			if got, want := getPublicFrameSample(dst.U, dst.Layout.BytesPerSample, 0, 64>>shiftY), getPublicFrameSample(src.U, src.Layout.BytesPerSample, 128>>shiftX, 64>>shiftY); got != want {
+				t.Fatalf("U top-left got=%d want %d", got, want)
+			}
+			if got, want := getPublicFrameSample(dst.V, dst.Layout.BytesPerSample, 127>>shiftX, 127>>shiftY), getPublicFrameSample(src.V, src.Layout.BytesPerSample, 255>>shiftX, 127>>shiftY); got != want {
+				t.Fatalf("V bottom-right got=%d want %d", got, want)
+			}
+			if got := getPublicFrameSample(dst.U, dst.Layout.BytesPerSample, 128>>shiftX, 64>>shiftY); got != 0 {
+				t.Fatalf("unexpected copy outside destination U tile: %d", got)
+			}
+		})
+	}
+}
+
+func TestPublicCopyTileListEntryToOutputFrameRejectsInvalid(t *testing.T) {
+	list, geom := publicSingleTileListCopyFixture(t)
+	dst := bindPublicTileListFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 1})
+	src := bindPublicTileListFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 10, SubsamplingX: true, SubsamplingY: true, Align: 1})
+	if err := av1.CopyTileListEntryToOutputFrame(&dst, &src, list, geom, 0); !errors.Is(err, av1.ErrFrameInvalidFormat) {
+		t.Fatalf("mismatch err=%v want %v", err, av1.ErrFrameInvalidFormat)
+	}
+	src = bindPublicTileListFrame(t, dst.Format)
+	if err := av1.CopyTileListEntryToOutputFrame(&dst, &src, list, geom, 1); !errors.Is(err, av1.ErrTileListInvalidTileCount) {
+		t.Fatalf("index err=%v want %v", err, av1.ErrTileListInvalidTileCount)
+	}
+}
+
+func TestPublicCopyTileListEntryToOutputFrameAllocs(t *testing.T) {
+	list, geom := publicTileListCopyFixture(t)
+	format := av1.FrameFormat{
+		Width:        geom.OutputFrameWidth,
+		Height:       geom.OutputFrameHeight,
+		BitDepth:     10,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        1,
+	}
+	src := bindPublicTileListFrame(t, format)
+	dst := bindPublicTileListFrame(t, format)
+	fillTileListCopySource(src)
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := av1.CopyTileListEntryToOutputFrame(&dst, &src, list, geom, 2); err != nil {
+			t.Fatalf("CopyTileListEntryToOutputFrame: %v", err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("CopyTileListEntryToOutputFrame allocated: %f", allocs)
+	}
+}
+
+func publicTileListCopyFixture(t *testing.T) (av1.TileList, av1.TileListOutputGeometry) {
+	t.Helper()
+	payload := []byte{0x01, 0x01, 0x00, 0x02}
+	payload = append(payload, 0, 0, 0, 0, 0, 0xa0)
+	payload = append(payload, 0, 0, 1, 0, 0, 0xa1)
+	payload = append(payload, 0, 1, 1, 0, 0, 0xa2)
+	list, err := av1.ParseTileListOBU(payload, nil)
+	if err != nil {
+		t.Fatalf("ParseTileListOBU: %v", err)
+	}
+	tiles := av1.TileInfo{
+		Cols:       2,
+		Rows:       2,
+		ColStartSB: [av1.MaxTileCols + 1]uint16{0, 2, 4},
+		RowStartSB: [av1.MaxTileRows + 1]uint16{0, 1, 2},
+	}
+	geom, err := av1.TileListOutputGeometryForGrid(list, tiles, false)
+	if err != nil {
+		t.Fatalf("TileListOutputGeometryForGrid: %v", err)
+	}
+	return list, geom
+}
+
+func publicSingleTileListCopyFixture(t *testing.T) (av1.TileList, av1.TileListOutputGeometry) {
+	t.Helper()
+	list := av1.TileList{
+		OutputFrameWidthInTilesMinus1:  0,
+		OutputFrameHeightInTilesMinus1: 0,
+		TileCountMinus1:                0,
+		Entries: []av1.TileListEntry{{
+			AnchorTileRow: 0,
+			AnchorTileCol: 0,
+			TileData:      []byte{0xaa},
+		}},
+	}
+	tiles := av1.TileInfo{
+		Cols:       1,
+		Rows:       1,
+		ColStartSB: [av1.MaxTileCols + 1]uint16{0, 1},
+		RowStartSB: [av1.MaxTileRows + 1]uint16{0, 1},
+	}
+	geom, err := av1.TileListOutputGeometryForGrid(list, tiles, false)
+	if err != nil {
+		t.Fatalf("TileListOutputGeometryForGrid: %v", err)
+	}
+	return list, geom
+}
+
+func bindPublicTileListFrame(t *testing.T, format av1.FrameFormat) av1.Frame {
+	t.Helper()
+	layout, err := av1.FrameRequiredSize(format)
+	if err != nil {
+		t.Fatalf("FrameRequiredSize: %v", err)
+	}
+	frame, err := av1.BindFrame(make([]byte, layout.Size), format)
+	if err != nil {
+		t.Fatalf("BindFrame: %v", err)
+	}
+	return frame
+}
+
+func fillTileListCopySource(frame av1.Frame) {
+	for y := 0; y < frame.Y.Height; y++ {
+		for x := 0; x < frame.Y.Width; x++ {
+			setPublicFrameSample(frame.Y, frame.Layout.BytesPerSample, x, y, uint16(0x100+((x*3+y*5)&0x2ff)))
+		}
+	}
+	for y := 0; y < frame.U.Height; y++ {
+		for x := 0; x < frame.U.Width; x++ {
+			setPublicFrameSample(frame.U, frame.Layout.BytesPerSample, x, y, uint16(0x200+((x*7+y*11)&0x1ff)))
+			setPublicFrameSample(frame.V, frame.Layout.BytesPerSample, x, y, uint16(0x300+((x*13+y*17)&0xff)))
+		}
+	}
+}
+
 func TestPublicParseTileListOBUAllocs(t *testing.T) {
 	payload := []byte{
 		0x00, 0x00, 0x00, 0x00,
