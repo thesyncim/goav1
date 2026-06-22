@@ -42,7 +42,9 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 	if av1.AV1SDPRTCPFeedbackNACK != "nack" ||
 		av1.AV1SDPRTCPFeedbackPLI != "nack pli" ||
 		av1.AV1SDPRTCPFeedbackFIR != "ccm fir" ||
-		av1.AV1SDPRTCPFeedbackLRR != "ccm lrr" {
+		av1.AV1SDPRTCPFeedbackLRR != "ccm lrr" ||
+		av1.AV1SDPRTCPFeedbackTransportCC != "transport-cc" ||
+		av1.AV1SDPRTCPFeedbackREMB != "goog-remb" {
 		t.Fatalf("unexpected AV1 rtcp-fb constants")
 	}
 }

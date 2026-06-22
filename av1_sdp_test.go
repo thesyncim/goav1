@@ -26,6 +26,16 @@ func TestAV1SDPConstants(t *testing.T) {
 		av1.AV1RTPRepairedStreamIDURI != "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id" {
 		t.Fatalf("unexpected RTP SDES extmap URI constants")
 	}
+	if av1.AV1RTPTransportWideCCURI != "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01" ||
+		av1.AV1RTPTransportWideCC02URI != "http://www.webrtc.org/experiments/rtp-hdrext/transport-wide-cc-02" ||
+		av1.AV1RTPAbsoluteSendTimeURI != "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" ||
+		av1.AV1RTPAbsoluteCaptureTimeURI != "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time" ||
+		av1.AV1RTPPlayoutDelayURI != "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay" ||
+		av1.AV1RTPVideoContentTypeURI != "http://www.webrtc.org/experiments/rtp-hdrext/video-content-type" ||
+		av1.AV1RTPVideoTimingURI != "http://www.webrtc.org/experiments/rtp-hdrext/video-timing" ||
+		av1.AV1RTPColorSpaceURI != "http://www.webrtc.org/experiments/rtp-hdrext/color-space" {
+		t.Fatalf("unexpected WebRTC video extmap URI constants")
+	}
 	if av1.AV1SDPFmtpProfile != "profile" ||
 		av1.AV1SDPFmtpLevelIdx != "level-idx" ||
 		av1.AV1SDPFmtpTier != "tier" {
@@ -723,7 +733,9 @@ func TestAV1SDPRTCPFeedbackScanning(t *testing.T) {
 		"a=rtcp-fb:96 ccm lrr",
 		"a=rtcp-fb:98 nack",
 		"a=rtcp-fb:98 nack pli",
+		"a=rtcp-fb:98 transport-cc",
 		"a=rtcp-fb:* ccm fir",
+		"a=rtcp-fb:* goog-remb",
 		"a=rtcp-fb:99 ccm lrr",
 	)
 	if !av1.AV1SDPNegotiatesRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackNACK) {
@@ -738,7 +750,13 @@ func TestAV1SDPRTCPFeedbackScanning(t *testing.T) {
 	if !av1.AV1SDPOffersReceiveRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackLRR) {
 		t.Fatal("AV1SDPOffersReceiveRTCPFeedback rejected AV1 payload-specific lrr")
 	}
-	if av1.AV1SDPOffersReceiveRTCPFeedback(sdp, "goog-remb") {
+	if !av1.AV1SDPOffersReceiveRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackTransportCC) {
+		t.Fatal("AV1SDPOffersReceiveRTCPFeedback rejected payload-specific transport-cc")
+	}
+	if !av1.AV1SDPOffersReceiveRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackREMB) {
+		t.Fatal("AV1SDPOffersReceiveRTCPFeedback rejected wildcard goog-remb")
+	}
+	if av1.AV1SDPOffersReceiveRTCPFeedback(sdp, "ack rpsi") {
 		t.Fatal("AV1SDPOffersReceiveRTCPFeedback accepted missing feedback")
 	}
 	if av1.AV1SDPOffersReceiveRTCPFeedback(sdp, "") {
@@ -823,6 +841,27 @@ func TestAV1SDPRTCPFeedbackSDP(t *testing.T) {
 	}
 	if !av1.AV1SDPNegotiatesRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackLRR) {
 		t.Fatal("generated wildcard LRR rtcp-fb line did not negotiate")
+	}
+
+	transportCC, err := (av1.AV1SDPRTCPFeedback{
+		PayloadType: "98",
+		Feedback:    av1.AV1SDPRTCPFeedbackTransportCC,
+	}).SDP()
+	if err != nil {
+		t.Fatalf("transport-cc SDP: %v", err)
+	}
+	if transportCC != "a=rtcp-fb:98 transport-cc" {
+		t.Fatalf("transport-cc line=%q", transportCC)
+	}
+	remb, err := (av1.AV1SDPRTCPFeedback{
+		PayloadType: "*",
+		Feedback:    av1.AV1SDPRTCPFeedbackREMB,
+	}).SDP()
+	if err != nil {
+		t.Fatalf("goog-remb SDP: %v", err)
+	}
+	if remb != "a=rtcp-fb:* goog-remb" {
+		t.Fatalf("goog-remb line=%q", remb)
 	}
 }
 

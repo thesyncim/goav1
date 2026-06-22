@@ -27,6 +27,30 @@ const (
 	// AV1RTPRepairedStreamIDURI is the SDP extmap URI for repaired RTP stream
 	// ID header extension used by RTX/FEC repair streams.
 	AV1RTPRepairedStreamIDURI = "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id"
+	// AV1RTPTransportWideCCURI is the SDP extmap URI commonly used by WebRTC
+	// endpoints for transport-wide congestion-control sequence numbers.
+	AV1RTPTransportWideCCURI = "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01"
+	// AV1RTPTransportWideCC02URI is the newer WebRTC experiment URI for the
+	// same transport-wide congestion-control RTP header-extension payload.
+	AV1RTPTransportWideCC02URI = "http://www.webrtc.org/experiments/rtp-hdrext/transport-wide-cc-02"
+	// AV1RTPAbsoluteSendTimeURI is the SDP extmap URI for WebRTC's 24-bit
+	// absolute-send-time RTP header extension.
+	AV1RTPAbsoluteSendTimeURI = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time"
+	// AV1RTPAbsoluteCaptureTimeURI is the SDP extmap URI for WebRTC's
+	// absolute-capture-time RTP header extension.
+	AV1RTPAbsoluteCaptureTimeURI = "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time"
+	// AV1RTPPlayoutDelayURI is the SDP extmap URI for WebRTC's playout-delay
+	// RTP header extension.
+	AV1RTPPlayoutDelayURI = "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay"
+	// AV1RTPVideoContentTypeURI is the SDP extmap URI for WebRTC's video
+	// content-type RTP header extension.
+	AV1RTPVideoContentTypeURI = "http://www.webrtc.org/experiments/rtp-hdrext/video-content-type"
+	// AV1RTPVideoTimingURI is the SDP extmap URI for WebRTC's video-timing RTP
+	// header extension.
+	AV1RTPVideoTimingURI = "http://www.webrtc.org/experiments/rtp-hdrext/video-timing"
+	// AV1RTPColorSpaceURI is the SDP extmap URI for WebRTC's color-space RTP
+	// header extension.
+	AV1RTPColorSpaceURI = "http://www.webrtc.org/experiments/rtp-hdrext/color-space"
 
 	// AV1SDPFmtpProfile is the AV1 SDP fmtp key for seq_profile.
 	AV1SDPFmtpProfile = "profile"
@@ -53,6 +77,12 @@ const (
 	// AV1SDPRTCPFeedbackLRR is the SDP rtcp-fb value for Layer Refresh
 	// Request feedback.
 	AV1SDPRTCPFeedbackLRR = "ccm lrr"
+	// AV1SDPRTCPFeedbackTransportCC is the SDP rtcp-fb value for
+	// transport-wide congestion-control feedback.
+	AV1SDPRTCPFeedbackTransportCC = "transport-cc"
+	// AV1SDPRTCPFeedbackREMB is the SDP rtcp-fb value for the legacy WebRTC
+	// Receiver Estimated Maximum Bitrate feedback extension.
+	AV1SDPRTCPFeedbackREMB = "goog-remb"
 
 	// AV1SDPRIDDirectionSend is the RID direction for streams sent by the
 	// endpoint declaring the RID.
