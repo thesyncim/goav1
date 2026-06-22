@@ -351,10 +351,11 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 	for obuIndex := range obus {
 		isLastOBU := obuIndex == len(obus)-1
 		current := &obus[obuIndex]
+		currentHasLayer, currentTemporalID, currentSpatialID := packetizerOBULayer(current)
 
-		// AV1 RTP packets cannot aggregate layer-tagged OBUs with different layer IDs.
-		if current.hasExtension && packetHasLayer &&
-			(current.Header.TemporalID != packetTemporalID || current.Header.SpatialID != packetSpatialID) {
+		// Keep unassociated OBUs at the front of a packet and do not mix layer IDs.
+		if packet.NumOBUElements > 0 && packetHasLayer &&
+			(!currentHasLayer || currentTemporalID != packetTemporalID || currentSpatialID != packetSpatialID) {
 			if err := storePacketPlan(packets, packetCount-1, packet); err != nil {
 				return packetCount, err
 			}
@@ -388,11 +389,14 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 
 		packet.PacketSize += previousExtra
 		remaining -= previousExtra
+		previousPacketHasLayer := packetHasLayer
+		previousPacketTemporalID := packetTemporalID
+		previousPacketSpatialID := packetSpatialID
 		packet.NumOBUElements++
-		if current.hasExtension {
+		if currentHasLayer {
 			packetHasLayer = true
-			packetTemporalID = current.Header.TemporalID
-			packetSpatialID = current.Header.SpatialID
+			packetTemporalID = currentTemporalID
+			packetSpatialID = currentSpatialID
 		}
 
 		mustWriteSize := packet.NumOBUElements > maxObusWithOmittedLastSize
@@ -427,9 +431,9 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 		if firstFragmentSize == 0 {
 			packet.NumOBUElements--
 			packet.PacketSize -= previousExtra
-			if current.hasExtension && packet.NumOBUElements == 0 {
-				packetHasLayer = false
-			}
+			packetHasLayer = previousPacketHasLayer
+			packetTemporalID = previousPacketTemporalID
+			packetSpatialID = previousPacketSpatialID
 		} else {
 			packet.PacketSize += firstFragmentSize
 			if mustWriteSize {
@@ -454,10 +458,10 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 				PacketSize:     maxPayload,
 			}
 			packetCount++
-			if current.hasExtension {
+			if currentHasLayer {
 				packetHasLayer = true
-				packetTemporalID = current.Header.TemporalID
-				packetSpatialID = current.Header.SpatialID
+				packetTemporalID = currentTemporalID
+				packetSpatialID = currentSpatialID
 			} else {
 				packetHasLayer = false
 			}
@@ -486,10 +490,10 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 				PacketSize:     secondLastFragmentSize,
 			}
 			packetCount++
-			if current.hasExtension {
+			if currentHasLayer {
 				packetHasLayer = true
-				packetTemporalID = current.Header.TemporalID
-				packetSpatialID = current.Header.SpatialID
+				packetTemporalID = currentTemporalID
+				packetSpatialID = currentSpatialID
 			} else {
 				packetHasLayer = false
 			}
@@ -511,10 +515,10 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 		}
 		packetCount++
 		remaining = maxPayload - lastFragmentSize
-		if current.hasExtension {
+		if currentHasLayer {
 			packetHasLayer = true
-			packetTemporalID = current.Header.TemporalID
-			packetSpatialID = current.Header.SpatialID
+			packetTemporalID = currentTemporalID
+			packetSpatialID = currentSpatialID
 		} else {
 			packetHasLayer = false
 		}
@@ -524,6 +528,18 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 		return packetCount, err
 	}
 	return packetCount, nil
+}
+
+func packetizerOBULayer(current *PacketizerOBU) (hasLayer bool, temporalID uint8, spatialID uint8) {
+	if current.hasExtension {
+		return true, current.Header.TemporalID, current.Header.SpatialID
+	}
+	switch current.Type {
+	case obu.TypeFrameHeader, obu.TypeFrame, obu.TypeTileGroup, obu.TypeRedundantFrameHeader:
+		return true, 0, 0
+	default:
+		return false, 0, 0
+	}
 }
 
 func storePacketPlan(packets []PacketPlan, index int, packet PacketPlan) error {

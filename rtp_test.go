@@ -189,6 +189,7 @@ func TestPublicRTPPacketizerSplitsLayerTaggedOBUs(t *testing.T) {
 	var frame []byte
 	frame = appendPublicLowOverheadOBU(frame, OBUSequenceHeader, []byte{0xaa})
 	frame = appendPublicLowOverheadOBUExt(frame, OBUFrameHeader, 0, 0, []byte{0x10})
+	frame = appendPublicLowOverheadOBU(frame, OBUSequenceHeader, []byte{0xbb})
 	frame = appendPublicLowOverheadOBUExt(frame, OBUTileGroup, 0, 1, []byte{0x11})
 	limits := RTPPayloadSizeLimits{MaxPayloadLen: 1200}
 
@@ -196,16 +197,16 @@ func TestPublicRTPPacketizerSplitsLayerTaggedOBUs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if size.OBUs != 3 || size.Packets != 0 || size.Work != 0 {
+	if size.OBUs != 4 || size.Packets != 0 || size.Work != 0 {
 		t.Fatalf("first pass size=%+v", size)
 	}
-	var packetizerOBUs [3]RTPPacketizerOBU
+	var packetizerOBUs [4]RTPPacketizerOBU
 	size, err = RTPPacketizerScratchLen(frame, limits, packetizerOBUs[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if size.OBUs != 3 || size.Packets != 2 || size.Work != 2 {
-		t.Fatalf("second pass size=%+v want OBUs=3 Packets=2 Work=2", size)
+	if size.OBUs != 4 || size.Packets != 2 || size.Work != 2 {
+		t.Fatalf("second pass size=%+v want OBUs=4 Packets=2 Work=2", size)
 	}
 
 	var packets [2]RTPPacketPlan
@@ -245,9 +246,10 @@ func TestPublicRTPPacketizerSplitsLayerTaggedOBUs(t *testing.T) {
 		t.Fatalf("first aggregation header=%+v", header)
 	}
 	secondHeaders := publicRTPPacketOBUHeaders(t, payloads[1])
-	if len(secondHeaders) != 1 ||
-		secondHeaders[0].Type != OBUTileGroup || !secondHeaders[0].Extension ||
-		secondHeaders[0].TemporalID != 0 || secondHeaders[0].SpatialID != 1 {
+	if len(secondHeaders) != 2 ||
+		secondHeaders[0].Type != OBUSequenceHeader || secondHeaders[0].Extension ||
+		secondHeaders[1].Type != OBUTileGroup || !secondHeaders[1].Extension ||
+		secondHeaders[1].TemporalID != 0 || secondHeaders[1].SpatialID != 1 {
 		t.Fatalf("second packet headers=%+v", secondHeaders)
 	}
 
@@ -256,12 +258,12 @@ func TestPublicRTPPacketizerSplitsLayerTaggedOBUs(t *testing.T) {
 		t.Fatal(err)
 	}
 	var assembled [32]byte
-	var assembledOBUs [3]RTPFrameOBU
+	var assembledOBUs [4]RTPFrameOBU
 	wrote, count, err := AssembleRTPFrame(assembled[:assembledLen], payloads[:], assembledOBUs[:obuCount])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wrote != len(frame) || count != 3 || string(assembled[:wrote]) != string(frame) {
+	if wrote != len(frame) || count != 4 || string(assembled[:wrote]) != string(frame) {
 		t.Fatalf("assembled wrote=%d count=%d bytes=%x want=%x", wrote, count, assembled[:wrote], frame)
 	}
 }

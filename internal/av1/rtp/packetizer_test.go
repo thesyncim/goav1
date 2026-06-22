@@ -528,11 +528,12 @@ func TestPacketizerKeepsSequenceHeaderWithFirstLayer(t *testing.T) {
 	var frame []byte
 	frame = appendPacketizerOBU(frame, obu.TypeSequenceHeader, []byte{0xaa})
 	frame = appendPacketizerOBUExt(frame, obu.TypeFrameHeader, 0, 0, []byte{0x10})
+	frame = appendPacketizerOBU(frame, obu.TypeSequenceHeader, []byte{0xbb})
 	frame = appendPacketizerOBUExt(frame, obu.TypeTileGroup, 0, 1, []byte{0x11})
 
-	var obus [3]PacketizerOBU
-	var packets [3]PacketPlan
-	var work [3]PacketPlan
+	var obus [4]PacketizerOBU
+	var packets [4]PacketPlan
+	var work [4]PacketPlan
 	packetizer, err := NewPacketizer(frame, PayloadSizeLimits{MaxPayloadLen: 1200}, true, true, obus[:], packets[:], work[:])
 	if err != nil {
 		t.Fatal(err)
@@ -572,9 +573,10 @@ func TestPacketizerKeepsSequenceHeaderWithFirstLayer(t *testing.T) {
 		t.Fatalf("second packet ok=%v marker=%v", ok, marker)
 	}
 	secondHeaders := packetOBUHeaders(t, payload[:n])
-	if len(secondHeaders) != 1 ||
-		secondHeaders[0].Type != obu.TypeTileGroup || !secondHeaders[0].Extension ||
-		secondHeaders[0].TemporalID != 0 || secondHeaders[0].SpatialID != 1 {
+	if len(secondHeaders) != 2 ||
+		secondHeaders[0].Type != obu.TypeSequenceHeader || secondHeaders[0].Extension ||
+		secondHeaders[1].Type != obu.TypeTileGroup || !secondHeaders[1].Extension ||
+		secondHeaders[1].TemporalID != 0 || secondHeaders[1].SpatialID != 1 {
 		t.Fatalf("second packet headers=%+v", secondHeaders)
 	}
 }
