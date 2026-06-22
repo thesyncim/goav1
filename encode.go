@@ -461,8 +461,9 @@ func (f RTCFrame) AppendRTPPacketsWithOptions(payloadDst []byte, descriptorDst [
 // RTCEncoder encodes an 8-bit I420 WebRTC AV1 stream with per-frame dependency
 // descriptors. NewRTCEncoder covers single-spatial L1T* temporal ladders;
 // NewRTCEncoderWithConfig additionally covers supported multi-spatial
-// WebRTC SVC and simulcast modes. It requires CBR configuration (TargetBitrate
-// and Framerate).
+// WebRTC SVC and simulcast modes under CBR or CQP rate control. NewRTCEncoder
+// is the CBR convenience constructor and still requires TargetBitrate and
+// Framerate.
 type RTCEncoder struct {
 	stream *encoder.WebRTCStream
 }
@@ -538,9 +539,10 @@ func (e *RTCEncoder) Config() EncoderConfig {
 	return e.stream.Config()
 }
 
-// SetConfig atomically updates bitrate, framerate, and supported scalability
-// settings. Changes that alter layer geometry or dependency structure make the
-// next encoded picture a key picture while preserving frame IDs.
+// SetConfig atomically updates bitrate, framerate, rate-control mode, fixed
+// quantizer, and supported scalability settings. Changes that alter layer
+// geometry or dependency structure make the next encoded picture a key picture
+// while preserving frame IDs.
 func (e *RTCEncoder) SetConfig(cfg EncoderConfig) error {
 	if e == nil || e.stream == nil {
 		return fmt.Errorf("goav1: RTCEncoder is not initialized")

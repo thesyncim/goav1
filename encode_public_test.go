@@ -400,6 +400,16 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 		normalized.RateControl != goav1.EncoderRateControlCBR {
 		t.Fatalf("normalized config=%+v", normalized)
 	}
+	cqp := cfg
+	cqp.RateControl = goav1.EncoderRateControlCQP
+	cqp.Quantizer = 32
+	normalizedCQP, err := goav1.NormalizeRTCEncoderConfig(cqp)
+	if err != nil {
+		t.Fatalf("NormalizeRTCEncoderConfig CQP: %v", err)
+	}
+	if normalizedCQP.RateControl != goav1.EncoderRateControlCQP || normalizedCQP.Quantizer != 32 {
+		t.Fatalf("normalized CQP config=%+v", normalizedCQP)
+	}
 	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig valid: %v", err)
@@ -427,12 +437,19 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 			want: goav1.ErrEncoderUnsupported,
 		},
 		{
-			name: "cqp",
+			name: "cqp-quantizer-zero",
 			edit: func(cfg *goav1.EncoderConfig) {
 				cfg.RateControl = goav1.EncoderRateControlCQP
-				cfg.Quantizer = 32
 			},
 			want: goav1.ErrEncoderUnsupported,
+		},
+		{
+			name: "cqp-quantizer-too-high",
+			edit: func(cfg *goav1.EncoderConfig) {
+				cfg.RateControl = goav1.EncoderRateControlCQP
+				cfg.Quantizer = goav1.EncoderWebRTCMaxQuantizer + 1
+			},
+			want: goav1.ErrEncoderInvalidConfig,
 		},
 		{
 			name: "invalid-framerate",
@@ -857,6 +874,45 @@ func TestPublicRTCEncoderSupportsWebRTCPixelModeMatrix(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderCQPScalabilityModeMatrixDecodes(t *testing.T) {
+	modes := goav1.EncoderWebRTCScalabilityModes()
+	if len(modes) == 0 {
+		t.Fatal("no WebRTC scalability modes")
+	}
+	for step, mode := range modes {
+		t.Run(string(mode), func(t *testing.T) {
+			width, height := publicRTCMatrixGeometry(t, mode)
+			cfg := publicRTCMatrixConfig(width, height, mode)
+			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.Quantizer = uint8(24 + step%32)
+
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
+			}
+			defer enc.Close()
+			if got := enc.Config(); got.RateControl != goav1.EncoderRateControlCQP || got.Quantizer != cfg.Quantizer {
+				t.Fatalf("config rate control=%d q=%d want CQP q=%d", got.RateControl, got.Quantizer, cfg.Quantizer)
+			}
+
+			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var rtpReceiver goav1.RTPDependencyDescriptorState
+			nextFrameID := uint64(0)
+			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var orderedTUs [][]byte
+			for frame := 0; frame < 2; frame++ {
+				picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, frame), false)
+				if err != nil {
+					t.Fatalf("EncodePicture(%s, %d): %v", mode, frame, err)
+				}
+				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
+				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), picture, frame == 0, &nextFrameID)
+			}
+			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+		})
+	}
+}
+
 func TestPublicRTCEncoderSetConfigReconfigure(t *testing.T) {
 	const w, h = 640, 360
 	cw, ch := w/2, h/2
@@ -941,6 +997,67 @@ func TestPublicRTCEncoderSetConfigReconfigure(t *testing.T) {
 		picture.Frames[0].FrameID != 5 || picture.Frames[1].FrameID != 6 {
 		t.Fatalf("full SVC key picture=%+v", picture)
 	}
+}
+
+func TestPublicRTCEncoderSetConfigCQPTransitionsDecode(t *testing.T) {
+	const w, h = 640, 360
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL2T2)
+	cfg.RateControl = goav1.EncoderRateControlCQP
+	cfg.Quantizer = 37
+
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	var descriptorReceiver goav1.RTPDependencyDescriptorState
+	var rtpReceiver goav1.RTPDependencyDescriptorState
+	nextFrameID := uint64(0)
+	var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+	var orderedTUs [][]byte
+	encode := func(label string, frame int, wantKey bool) goav1.RTCPicture {
+		t.Helper()
+		picture, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, frame), false)
+		if err != nil {
+			t.Fatalf("%s EncodePicture: %v", label, err)
+		}
+		appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
+		assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), picture, wantKey, &nextFrameID)
+		return picture
+	}
+
+	encode("initial CQP key", 0, true)
+
+	cqpChange := enc.Config()
+	cqpChange.Quantizer = 29
+	if err := enc.SetConfig(cqpChange); err != nil {
+		t.Fatalf("SetConfig CQP q change: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), cqpChange)
+	encode("CQP q change delta", 1, false)
+
+	cbrChange := enc.Config()
+	cbrChange.RateControl = goav1.EncoderRateControlCBR
+	cbrChange.Quantizer = 0
+	cbrChange.MaxFramerate = goav1.EncoderRational{Num: 60, Den: 1}
+	publicRTCApplyControlBitrates(&cbrChange, 1100)
+	if err := enc.SetConfig(cbrChange); err != nil {
+		t.Fatalf("SetConfig CBR transition: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), cbrChange)
+	encode("CBR transition delta", 2, false)
+
+	backToCQP := enc.Config()
+	backToCQP.RateControl = goav1.EncoderRateControlCQP
+	backToCQP.Quantizer = 41
+	if err := enc.SetConfig(backToCQP); err != nil {
+		t.Fatalf("SetConfig CQP transition: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), backToCQP)
+	encode("CQP transition delta", 3, false)
+
+	assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
 }
 
 func TestPublicRTCEncoderSetConfigSpatialCycleDecodes(t *testing.T) {
@@ -1444,6 +1561,9 @@ func assertPublicRTCConfigControls(t *testing.T, got goav1.EncoderConfig, want g
 	t.Helper()
 	if got.MaxFramerate != want.MaxFramerate {
 		t.Fatalf("config fps=%+v want %+v", got.MaxFramerate, want.MaxFramerate)
+	}
+	if got.RateControl != want.RateControl || got.Quantizer != want.Quantizer {
+		t.Fatalf("config rate control=%d q=%d want %d q=%d", got.RateControl, got.Quantizer, want.RateControl, want.Quantizer)
 	}
 	assertPublicRTCConfigBitrates(t, got, want)
 }

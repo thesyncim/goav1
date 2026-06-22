@@ -109,8 +109,8 @@ func NewWebRTCStreamLayers(width, height int, rc RateControlConfig, temporalLaye
 
 // NewWebRTCStreamConfig creates a WebRTC stream from the lower-level WebRTC
 // encoder config. The pixel encoder currently accepts 8-bit profile-0 I420
-// under CBR. Multi-spatial pixel output is supported for WebRTC SVC and
-// simulcast modes, including key and key-shift schedules.
+// under CBR or CQP. Multi-spatial pixel output is supported for WebRTC SVC
+// and simulcast modes, including key and key-shift schedules.
 func NewWebRTCStreamConfig(config Config) (*WebRTCStream, error) {
 	normalized, fps, err := normalizeWebRTCStreamConfig(config)
 	if err != nil {
@@ -143,17 +143,26 @@ func normalizeWebRTCStreamConfig(config Config) (Config, int, error) {
 	if !webRTCPixelScalabilitySupported(normalized) {
 		return Config{}, 0, ErrUnsupported
 	}
-	if normalized.Profile != Profile0 || normalized.BitDepth != 8 || normalized.RateControl != RateControlCBR {
+	if normalized.Profile != Profile0 || normalized.BitDepth != 8 {
 		return Config{}, 0, ErrUnsupported
 	}
 	fps := webRTCStreamFramesPerSecond(normalized.MaxFramerate)
 	if fps <= 0 {
 		return Config{}, 0, ErrInvalidConfig
 	}
-	for i := uint8(0); i < normalized.SpatialLayerCount; i++ {
-		if webRTCStreamLayerTargetKbps(normalized, i) <= 0 {
-			return Config{}, 0, ErrInvalidConfig
+	switch normalized.RateControl {
+	case RateControlCBR:
+		for i := uint8(0); i < normalized.SpatialLayerCount; i++ {
+			if webRTCStreamLayerTargetKbps(normalized, i) <= 0 {
+				return Config{}, 0, ErrInvalidConfig
+			}
 		}
+	case RateControlCQP:
+		if normalized.Quantizer == 0 {
+			return Config{}, 0, ErrUnsupported
+		}
+	default:
+		return Config{}, 0, ErrUnsupported
 	}
 	return normalized, fps, nil
 }
@@ -164,13 +173,22 @@ func webRTCPixelScalabilitySupported(config Config) bool {
 
 func newWebRTCStreamLayerEncoder(config Config, layerIndex uint8, fps int, minQ uint8, maxQ uint8) (*VideoEncoder, error) {
 	layer := config.SpatialLayers[layerIndex]
-	targetKbps := webRTCStreamLayerTargetKbps(config, layerIndex)
-	enc, err := NewVideoEncoderCBR(int(layer.Resolution.Width), int(layer.Resolution.Height), RateControlConfig{
-		TargetBitsPerSecond: int(targetKbps) * 1000,
-		FramesPerSecond:     fps,
-		MinQIndex:           minQ,
-		MaxQIndex:           maxQ,
-	})
+	var enc *VideoEncoder
+	var err error
+	switch config.RateControl {
+	case RateControlCBR:
+		targetKbps := webRTCStreamLayerTargetKbps(config, layerIndex)
+		enc, err = NewVideoEncoderCBR(int(layer.Resolution.Width), int(layer.Resolution.Height), RateControlConfig{
+			TargetBitsPerSecond: int(targetKbps) * 1000,
+			FramesPerSecond:     fps,
+			MinQIndex:           minQ,
+			MaxQIndex:           maxQ,
+		})
+	case RateControlCQP:
+		enc, err = NewVideoEncoder(int(layer.Resolution.Width), int(layer.Resolution.Height), config.Quantizer)
+	default:
+		return nil, ErrUnsupported
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -251,9 +269,10 @@ func (s *WebRTCStream) Close() error {
 	return s.closeEncoders()
 }
 
-// SetConfig atomically updates bitrate, framerate, and supported scalability
-// settings. Changes that alter layer geometry or dependency structure make the
-// next encoded picture a key picture while preserving frame IDs.
+// SetConfig atomically updates bitrate, framerate, rate-control mode, fixed
+// quantizer, and supported scalability settings. Changes that alter layer
+// geometry or dependency structure make the next encoded picture a key picture
+// while preserving frame IDs.
 func (s *WebRTCStream) SetConfig(config Config) error {
 	if s == nil {
 		return ErrInvalidConfig
@@ -307,14 +326,23 @@ func (s *WebRTCStream) updateLayerControls(config Config, fps int) error {
 		if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
 			return err
 		}
-		targetKbps := webRTCStreamLayerTargetKbps(config, i)
-		if err := enc.SetRateControlConfig(RateControlConfig{
-			TargetBitsPerSecond: int(targetKbps) * 1000,
-			FramesPerSecond:     fps,
-			MinQIndex:           s.rcMinQ,
-			MaxQIndex:           s.rcMaxQ,
-		}); err != nil {
-			return err
+		switch config.RateControl {
+		case RateControlCBR:
+			targetKbps := webRTCStreamLayerTargetKbps(config, i)
+			if err := enc.SetRateControlConfig(RateControlConfig{
+				TargetBitsPerSecond: int(targetKbps) * 1000,
+				FramesPerSecond:     fps,
+				MinQIndex:           s.rcMinQ,
+				MaxQIndex:           s.rcMaxQ,
+			}); err != nil {
+				return err
+			}
+		case RateControlCQP:
+			if err := enc.SetQIndex(config.Quantizer); err != nil {
+				return err
+			}
+		default:
+			return ErrUnsupported
 		}
 	}
 	return nil

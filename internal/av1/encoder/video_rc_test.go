@@ -42,3 +42,27 @@ func TestRateControlSurplusFrameLimit(t *testing.T) {
 		t.Fatalf("L1T2 surplus limit=%d want %d", got, want)
 	}
 }
+
+func TestSetQIndexDisablesRateControlState(t *testing.T) {
+	enc := &VideoEncoder{
+		qIndex:         120,
+		rcEnabled:      true,
+		rcPerFrameBits: 1000,
+		rcBuffer:       -500,
+		rcRecentBits:   [2]int{300, 400},
+		rcMinQ:         20,
+		rcMaxQ:         200,
+	}
+	if err := enc.SetQIndex(37); err != nil {
+		t.Fatalf("SetQIndex: %v", err)
+	}
+	if enc.rcEnabled || enc.qIndex != 37 || enc.rcPerFrameBits != 0 || enc.rcBuffer != 0 || enc.rcRecentBits != ([2]int{}) {
+		t.Fatalf("encoder state after SetQIndex: %+v", enc)
+	}
+	if err := enc.SetQIndex(0); err == nil {
+		t.Fatal("SetQIndex(0) succeeded")
+	}
+	if enc.qIndex != 37 || enc.rcEnabled {
+		t.Fatalf("invalid SetQIndex mutated state: %+v", enc)
+	}
+}

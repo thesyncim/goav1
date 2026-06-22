@@ -316,6 +316,23 @@ func NewVideoEncoderCBR(width, height int, rc RateControlConfig) (*VideoEncoder,
 	return e, nil
 }
 
+// SetQIndex switches future frames to fixed-quality encoding without
+// disturbing reference state.
+func (e *VideoEncoder) SetQIndex(qIndex uint8) error {
+	if e == nil {
+		return fmt.Errorf("encoder: nil video encoder")
+	}
+	if qIndex == 0 {
+		return fmt.Errorf("encoder: qindex must be non-zero")
+	}
+	e.rcEnabled = false
+	e.qIndex = qIndex
+	e.rcPerFrameBits = 0
+	e.rcBuffer = 0
+	e.rcRecentBits = [2]int{}
+	return nil
+}
+
 func rateControlPerFrameBits(rc RateControlConfig) (int, error) {
 	if rc.TargetBitsPerSecond <= 0 || rc.FramesPerSecond <= 0 {
 		return 0, fmt.Errorf("encoder: invalid rate control target %d bps @ %d fps", rc.TargetBitsPerSecond, rc.FramesPerSecond)
