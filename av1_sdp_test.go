@@ -49,6 +49,72 @@ func TestAV1SDPConstants(t *testing.T) {
 	}
 }
 
+func TestAV1SDPRTPMapSDP(t *testing.T) {
+	rtpmap := av1.AV1SDPRTPMap{PayloadType: "98"}
+	line, err := rtpmap.SDP()
+	if err != nil {
+		t.Fatalf("RTPMap SDP: %v", err)
+	}
+	if line != "a=rtpmap:98 AV1/90000" {
+		t.Fatalf("RTPMap SDP line=%q", line)
+	}
+	prefix := []byte("x")
+	appended, err := (av1.AV1SDPRTPMap{PayloadType: "99"}).AppendSDP(prefix)
+	if err != nil {
+		t.Fatalf("RTPMap AppendSDP: %v", err)
+	}
+	if string(appended) != "xa=rtpmap:99 AV1/90000" {
+		t.Fatalf("appended RTPMap line=%q", appended)
+	}
+
+	parsed, err := av1.ParseAV1SDPRTPMap(" a=rtpmap:98 Av1/90000 ")
+	if err != nil {
+		t.Fatalf("ParseAV1SDPRTPMap: %v", err)
+	}
+	if parsed != rtpmap {
+		t.Fatalf("ParseAV1SDPRTPMap=%+v want %+v", parsed, rtpmap)
+	}
+	if !av1.AV1SDPNegotiates(joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98",
+		line,
+	)) {
+		t.Fatal("generated AV1 rtpmap did not negotiate")
+	}
+}
+
+func TestAV1SDPRTPMapRejectsInvalid(t *testing.T) {
+	invalidMaps := []av1.AV1SDPRTPMap{
+		{PayloadType: ""},
+		{PayloadType: "av1"},
+		{PayloadType: "128"},
+		{PayloadType: "98\n99"},
+	}
+	for _, tc := range invalidMaps {
+		if err := tc.Validate(); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+			t.Fatalf("Validate(%+v) err=%v want %v", tc, err, av1.ErrSDPInvalidConfig)
+		}
+		if out, err := tc.AppendSDP([]byte("prefix")); !errors.Is(err, av1.ErrSDPInvalidConfig) || string(out) != "prefix" {
+			t.Fatalf("AppendSDP(%+v) out=%q err=%v", tc, out, err)
+		}
+		if line, err := tc.SDP(); !errors.Is(err, av1.ErrSDPInvalidConfig) || line != "" {
+			t.Fatalf("SDP(%+v) line=%q err=%v", tc, line, err)
+		}
+	}
+
+	for _, line := range []string{
+		"",
+		"a=rtpmap:128 AV1/90000",
+		"a=rtpmap:98 VP9/90000",
+		"a=rtpmap:98 AV1/48000",
+		"a=rtpmap:98 AV1/90000/2",
+		"a=rtpmap:98 AV1/90000 extra",
+	} {
+		if _, err := av1.ParseAV1SDPRTPMap(line); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+			t.Fatalf("ParseAV1SDPRTPMap(%q) err=%v want %v", line, err, av1.ErrSDPInvalidConfig)
+		}
+	}
+}
+
 func TestParseAV1SDPFmtp(t *testing.T) {
 	tests := []struct {
 		name string

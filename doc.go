@@ -14,8 +14,8 @@
 // and sample-plane scratch helpers, DSP block/blend helpers, intra/inter
 // prediction, decoder
 // frame-work prediction bridges, residual reconstruction primitives,
-// post-reconstruction filtering helpers, AV1 SDP/fmtp/rtcp-fb capability
-// parsing and emission, tile block/transform
+// post-reconstruction filtering helpers, AV1 SDP/rtpmap/fmtp/rtcp-fb
+// capability parsing and emission, tile block/transform
 // geometry, transform/coefficient context replay helpers, tile coefficient
 // replay, tile block coefficient decode, tile-level restoration orchestration,
 // decoder residual-state setup and residual execution/retention bridges for

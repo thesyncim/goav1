@@ -100,6 +100,12 @@ type AV1SDPFmtpParameters struct {
 	Tier int
 }
 
+// AV1SDPRTPMap holds one AV1 SDP a=rtpmap attribute. AV1 RTP uses the fixed
+// AV1/90000 encoding binding, so only the payload type is caller-selected.
+type AV1SDPRTPMap struct {
+	PayloadType string
+}
+
 // AV1SDPExtmap holds one RFC 8285 a=extmap RTP header-extension mapping.
 type AV1SDPExtmap struct {
 	// ID is the local extension identifier.
@@ -282,6 +288,37 @@ func (p AV1SDPFmtpParameters) AppendFmtp(dst []byte) ([]byte, error) {
 // Fmtp returns a semicolon-separated AV1 fmtp parameter string.
 func (p AV1SDPFmtpParameters) Fmtp() (string, error) {
 	buf, err := p.AppendFmtp(nil)
+	if err != nil {
+		return "", err
+	}
+	return string(buf), nil
+}
+
+// Validate rejects malformed AV1 rtpmap attributes.
+func (m AV1SDPRTPMap) Validate() error {
+	if !av1SDPValidPayloadType(strings.TrimSpace(m.PayloadType)) {
+		return ErrSDPInvalidConfig
+	}
+	return nil
+}
+
+// AppendSDP appends a complete AV1 a=rtpmap SDP attribute.
+func (m AV1SDPRTPMap) AppendSDP(dst []byte) ([]byte, error) {
+	if err := m.Validate(); err != nil {
+		return dst, err
+	}
+	dst = append(dst, "a=rtpmap:"...)
+	dst = append(dst, strings.TrimSpace(m.PayloadType)...)
+	dst = append(dst, ' ')
+	dst = append(dst, AV1RTPEncodingName...)
+	dst = append(dst, '/')
+	dst = strconv.AppendInt(dst, AV1RTPClockRate, 10)
+	return dst, nil
+}
+
+// SDP returns a complete AV1 a=rtpmap SDP attribute.
+func (m AV1SDPRTPMap) SDP() (string, error) {
+	buf, err := m.AppendSDP(nil)
 	if err != nil {
 		return "", err
 	}
@@ -686,6 +723,29 @@ func ParseAV1SDPFmtp(fmtp string) (AV1SDPFmtpParameters, error) {
 	return out, nil
 }
 
+// ParseAV1SDPRTPMap parses a complete AV1 a=rtpmap attribute. The input must
+// bind a numeric RTP payload type to AV1/90000.
+func ParseAV1SDPRTPMap(line string) (AV1SDPRTPMap, error) {
+	line = strings.TrimSpace(line)
+	if strings.HasPrefix(strings.ToLower(line), "a=rtpmap:") {
+		line = strings.TrimSpace(line[len("a=rtpmap:"):])
+	}
+	fields := strings.Fields(line)
+	if len(fields) != 2 || !av1SDPValidPayloadType(fields[0]) {
+		return AV1SDPRTPMap{}, ErrSDPInvalidConfig
+	}
+	encoding := strings.Split(fields[1], "/")
+	if len(encoding) != 2 ||
+		!strings.EqualFold(encoding[0], AV1RTPEncodingName) {
+		return AV1SDPRTPMap{}, ErrSDPInvalidConfig
+	}
+	clockRate, err := strconv.Atoi(encoding[1])
+	if err != nil || clockRate != AV1RTPClockRate {
+		return AV1SDPRTPMap{}, ErrSDPInvalidConfig
+	}
+	return AV1SDPRTPMap{PayloadType: fields[0]}, nil
+}
+
 // ParseAV1SDPExtmap parses a complete RFC 8285 a=extmap attribute. The input
 // may include or omit the leading "a=extmap:" prefix.
 func ParseAV1SDPExtmap(line string) (AV1SDPExtmap, error) {
@@ -1042,10 +1102,9 @@ func av1SDPHas(
 		}
 		switch {
 		case strings.HasPrefix(line, "a=rtpmap:"):
-			fields := strings.Fields(strings.TrimPrefix(line, "a=rtpmap:"))
-			if len(fields) >= 2 && fields[1] == "av1/90000" &&
-				section.payloadTypes[fields[0]] {
-				section.av1PayloadTypes[fields[0]] = true
+			rtpmap, err := ParseAV1SDPRTPMap(line)
+			if err == nil && section.payloadTypes[rtpmap.PayloadType] {
+				section.av1PayloadTypes[rtpmap.PayloadType] = true
 			}
 		case strings.HasPrefix(line, "a=fmtp:"):
 			fields := strings.Fields(strings.TrimPrefix(line, "a=fmtp:"))
