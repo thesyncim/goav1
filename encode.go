@@ -1,12 +1,13 @@
 package goav1
 
-// encode.go is the public realtime encoding surface. An Encoder turns 4:2:0
-// frames into AV1 low-overhead temporal units (a keyframe first, then
-// motion-compensated inter frames) under fixed quality or CBR rate control,
-// with optional temporal layering and WebRTC dependency-descriptor packaging
-// through RTCEncoder. Every emitted stream decodes bit-exactly to the
-// encoder's own reconstruction in this package's Decoder and in the reference
-// decoders.
+// encode.go is the public realtime encoding surface. An Encoder turns 8-bit
+// caller-owned pictures into AV1 low-overhead temporal units (a keyframe first,
+// then motion-compensated inter frames) under fixed quality or CBR rate
+// control, with optional temporal layering and WebRTC dependency-descriptor
+// packaging through RTCEncoder. I420/NV12/NV21 preserve 4:2:0 chroma samples;
+// I422/I444 are resampled and I400 fills neutral chroma before entering the
+// current 4:2:0 path. Every emitted stream decodes bit-exactly to the encoder's
+// own reconstruction in this package's Decoder and in the reference decoders.
 
 import (
 	"fmt"
@@ -18,6 +19,44 @@ import (
 // at YStride; U and V hold the half-resolution chroma planes at ChromaStride.
 type I420Frame = encoder.SourceFrame420
 type EncoderDecisionStats = encoder.EncoderDecisionStats
+
+// I422Frame is one 8-bit 4:2:2 picture. Y holds Width x Height luma samples
+// at YStride; U and V hold half-width, full-height chroma planes at
+// ChromaStride. The friendly realtime encoder resamples this input to its
+// current 4:2:0 profile-0 encode path.
+type I422Frame struct {
+	Y            []byte
+	U            []byte
+	V            []byte
+	YStride      int
+	ChromaStride int
+	Width        int
+	Height       int
+}
+
+// I444Frame is one 8-bit 4:4:4 picture. Y, U, and V all hold Width x Height
+// samples at their respective strides. The friendly realtime encoder resamples
+// this input to its current 4:2:0 profile-0 encode path.
+type I444Frame struct {
+	Y       []byte
+	U       []byte
+	V       []byte
+	YStride int
+	UStride int
+	VStride int
+	Width   int
+	Height  int
+}
+
+// I400Frame is one 8-bit monochrome picture. Y holds Width x Height luma
+// samples at YStride. The friendly realtime encoder fills neutral chroma and
+// emits through its current 4:2:0 profile-0 encode path.
+type I400Frame struct {
+	Y       []byte
+	YStride int
+	Width   int
+	Height  int
+}
 
 // NV12Frame is one 8-bit 4:2:0 picture in semi-planar NV12 layout. Y holds
 // Width x Height luma samples at YStride; UV holds interleaved U,V pairs for
@@ -223,6 +262,45 @@ func (e *VideoEncoder) Encode(frame I420Frame, forceKey bool) (EncodedFrame, err
 		tid = 0
 	}
 	return EncodedFrame{Data: tu, Keyframe: key, TemporalID: tid}, nil
+}
+
+// EncodeI422 encodes one I422 frame after resampling chroma into the encoder's
+// reusable I420 scratch.
+func (e *VideoEncoder) EncodeI422(frame I422Frame, forceKey bool) (EncodedFrame, error) {
+	if e == nil || e.enc == nil {
+		return EncodedFrame{}, fmt.Errorf("goav1: VideoEncoder is not initialized")
+	}
+	i420, err := i422ToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return EncodedFrame{}, err
+	}
+	return e.Encode(i420, forceKey)
+}
+
+// EncodeI444 encodes one I444 frame after resampling chroma into the encoder's
+// reusable I420 scratch.
+func (e *VideoEncoder) EncodeI444(frame I444Frame, forceKey bool) (EncodedFrame, error) {
+	if e == nil || e.enc == nil {
+		return EncodedFrame{}, fmt.Errorf("goav1: VideoEncoder is not initialized")
+	}
+	i420, err := i444ToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return EncodedFrame{}, err
+	}
+	return e.Encode(i420, forceKey)
+}
+
+// EncodeI400 encodes one monochrome frame after filling neutral chroma into
+// the encoder's reusable I420 scratch.
+func (e *VideoEncoder) EncodeI400(frame I400Frame, forceKey bool) (EncodedFrame, error) {
+	if e == nil || e.enc == nil {
+		return EncodedFrame{}, fmt.Errorf("goav1: VideoEncoder is not initialized")
+	}
+	i420, err := i400ToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return EncodedFrame{}, err
+	}
+	return e.Encode(i420, forceKey)
 }
 
 // EncodeNV12 encodes one NV12 frame. The input is converted into the
@@ -511,9 +589,10 @@ func (f RTCFrame) AppendRTPPacketsWithOptions(payloadDst []byte, descriptorDst [
 	}
 }
 
-// RTCEncoder encodes an 8-bit 4:2:0 WebRTC AV1 stream from I420, NV12, or
-// NV21 input with per-frame dependency descriptors. NewRTCEncoder covers
-// single-spatial L1T* temporal ladders;
+// RTCEncoder encodes an 8-bit profile-0 WebRTC AV1 stream from I420, I422,
+// I444, I400, NV12, or NV21 input with per-frame dependency descriptors. I422,
+// I444, and I400 inputs are adapted into the current 4:2:0 encode path.
+// NewRTCEncoder covers single-spatial L1T* temporal ladders;
 // NewRTCEncoderWithConfig additionally covers supported multi-spatial
 // WebRTC SVC and simulcast modes under CBR or CQP rate control. NewRTCEncoder
 // is the CBR convenience constructor and still requires TargetBitrate and
@@ -652,6 +731,45 @@ func (e *RTCEncoder) Encode(frame I420Frame, forceKey bool) (RTCFrame, error) {
 	return rtcFrameFromInternal(out), nil
 }
 
+// EncodeI422 encodes one single-spatial I422 frame with its dependency
+// descriptor after resampling to the current I420 encode path.
+func (e *RTCEncoder) EncodeI422(frame I422Frame, forceKey bool) (RTCFrame, error) {
+	if e == nil || e.stream == nil {
+		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	i420, err := i422ToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return RTCFrame{}, err
+	}
+	return e.Encode(i420, forceKey)
+}
+
+// EncodeI444 encodes one single-spatial I444 frame with its dependency
+// descriptor after resampling to the current I420 encode path.
+func (e *RTCEncoder) EncodeI444(frame I444Frame, forceKey bool) (RTCFrame, error) {
+	if e == nil || e.stream == nil {
+		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	i420, err := i444ToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return RTCFrame{}, err
+	}
+	return e.Encode(i420, forceKey)
+}
+
+// EncodeI400 encodes one single-spatial monochrome frame with its dependency
+// descriptor after filling neutral chroma into the current I420 encode path.
+func (e *RTCEncoder) EncodeI400(frame I400Frame, forceKey bool) (RTCFrame, error) {
+	if e == nil || e.stream == nil {
+		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	i420, err := i400ToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return RTCFrame{}, err
+	}
+	return e.Encode(i420, forceKey)
+}
+
 // EncodeNV12 encodes one single-spatial NV12 frame with its dependency
 // descriptor. It uses the same output lifetime as Encode.
 func (e *RTCEncoder) EncodeNV12(frame NV12Frame, forceKey bool) (RTCFrame, error) {
@@ -699,6 +817,48 @@ func (e *RTCEncoder) EncodePicture(frame I420Frame, forceKey bool) (RTCPicture, 
 		picture.Frames[i] = rtcFrameFromInternal(out.Frames[i])
 	}
 	return picture, nil
+}
+
+// EncodeI422Picture encodes one I422 WebRTC picture after resampling to the
+// current I420 encode path. The returned frames have the same lifetime as
+// EncodePicture.
+func (e *RTCEncoder) EncodeI422Picture(frame I422Frame, forceKey bool) (RTCPicture, error) {
+	if e == nil || e.stream == nil {
+		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	i420, err := i422ToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return RTCPicture{}, err
+	}
+	return e.EncodePicture(i420, forceKey)
+}
+
+// EncodeI444Picture encodes one I444 WebRTC picture after resampling to the
+// current I420 encode path. The returned frames have the same lifetime as
+// EncodePicture.
+func (e *RTCEncoder) EncodeI444Picture(frame I444Frame, forceKey bool) (RTCPicture, error) {
+	if e == nil || e.stream == nil {
+		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	i420, err := i444ToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return RTCPicture{}, err
+	}
+	return e.EncodePicture(i420, forceKey)
+}
+
+// EncodeI400Picture encodes one monochrome WebRTC picture after filling
+// neutral chroma into the current I420 encode path. The returned frames have
+// the same lifetime as EncodePicture.
+func (e *RTCEncoder) EncodeI400Picture(frame I400Frame, forceKey bool) (RTCPicture, error) {
+	if e == nil || e.stream == nil {
+		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	i420, err := i400ToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return RTCPicture{}, err
+	}
+	return e.EncodePicture(i420, forceKey)
 }
 
 // EncodeNV12Picture encodes one NV12 WebRTC picture. The returned frames have
@@ -777,6 +937,86 @@ func validateI420Frame(frame I420Frame) error {
 	return nil
 }
 
+func validateI422Frame(frame I422Frame) error {
+	return validatePlanarFrame(
+		"I422Frame",
+		frame.Y, frame.U, frame.V,
+		frame.YStride, frame.ChromaStride, frame.ChromaStride,
+		frame.Width, frame.Height,
+		frame.Width/2, frame.Height,
+		true,
+	)
+}
+
+func validateI444Frame(frame I444Frame) error {
+	return validatePlanarFrame(
+		"I444Frame",
+		frame.Y, frame.U, frame.V,
+		frame.YStride, frame.UStride, frame.VStride,
+		frame.Width, frame.Height,
+		frame.Width, frame.Height,
+		true,
+	)
+}
+
+func validateI400Frame(frame I400Frame) error {
+	return validatePlanarFrame(
+		"I400Frame",
+		frame.Y, nil, nil,
+		frame.YStride, 0, 0,
+		frame.Width, frame.Height,
+		0, 0,
+		false,
+	)
+}
+
+func validatePlanarFrame(
+	name string,
+	y []byte, u []byte, v []byte,
+	yStride int, uStride int, vStride int,
+	width int, height int,
+	chromaWidth int, chromaHeight int,
+	hasChroma bool,
+) error {
+	if width <= 0 || height <= 0 || width%2 != 0 || height%2 != 0 {
+		return fmt.Errorf("goav1: %s dimensions must be positive even values, got %dx%d", name, width, height)
+	}
+	if yStride < width {
+		return fmt.Errorf("goav1: %s YStride %d is smaller than width %d", name, yStride, width)
+	}
+	yLen, ok := i420PlaneLen(yStride, width, height)
+	if !ok {
+		return fmt.Errorf("goav1: %s Y plane dimensions overflow int", name)
+	}
+	if len(y) < yLen {
+		return fmt.Errorf("goav1: %s Y plane is too short: got %d bytes, need %d", name, len(y), yLen)
+	}
+	if !hasChroma {
+		return nil
+	}
+	if uStride < chromaWidth {
+		return fmt.Errorf("goav1: %s UStride %d is smaller than chroma width %d", name, uStride, chromaWidth)
+	}
+	if vStride < chromaWidth {
+		return fmt.Errorf("goav1: %s VStride %d is smaller than chroma width %d", name, vStride, chromaWidth)
+	}
+	uLen, ok := i420PlaneLen(uStride, chromaWidth, chromaHeight)
+	if !ok {
+		return fmt.Errorf("goav1: %s U plane dimensions overflow int", name)
+	}
+	vLen, ok := i420PlaneLen(vStride, chromaWidth, chromaHeight)
+	if !ok {
+		return fmt.Errorf("goav1: %s V plane dimensions overflow int", name)
+	}
+	if len(u) < uLen {
+		return fmt.Errorf("goav1: %s U plane is too short: got %d bytes, need %d", name, len(u), uLen)
+	}
+	if len(v) < vLen {
+		return fmt.Errorf("goav1: %s V plane is too short: got %d bytes, need %d", name, len(v), vLen)
+	}
+	return nil
+}
+
 func validateNV12Frame(frame NV12Frame) error {
 	return validateSemiPlanar420Frame("NV12Frame", "UV", frame.Y, frame.UV, frame.YStride, frame.UVStride, frame.Width, frame.Height)
 }
@@ -812,6 +1052,70 @@ func validateSemiPlanar420Frame(name string, chromaName string, y []byte, chroma
 	return nil
 }
 
+func i422ToI420Scratch(dst *I420Frame, frame I422Frame) (I420Frame, error) {
+	if err := validateI422Frame(frame); err != nil {
+		return I420Frame{}, err
+	}
+	chromaWidth := frame.Width / 2
+	chromaHeight := frame.Height / 2
+	planar420Scratch(dst, frame.Y, frame.YStride, frame.Width, frame.Height, chromaWidth, chromaHeight)
+	for y := 0; y < chromaHeight; y++ {
+		srcY0 := (y * 2) * frame.ChromaStride
+		srcY1 := srcY0 + frame.ChromaStride
+		u0 := frame.U[srcY0 : srcY0+chromaWidth]
+		u1 := frame.U[srcY1 : srcY1+chromaWidth]
+		v0 := frame.V[srcY0 : srcY0+chromaWidth]
+		v1 := frame.V[srcY1 : srcY1+chromaWidth]
+		du := dst.U[y*chromaWidth : y*chromaWidth+chromaWidth]
+		dv := dst.V[y*chromaWidth : y*chromaWidth+chromaWidth]
+		for x := 0; x < chromaWidth; x++ {
+			du[x] = uint8((uint16(u0[x]) + uint16(u1[x]) + 1) >> 1)
+			dv[x] = uint8((uint16(v0[x]) + uint16(v1[x]) + 1) >> 1)
+		}
+	}
+	return *dst, nil
+}
+
+func i444ToI420Scratch(dst *I420Frame, frame I444Frame) (I420Frame, error) {
+	if err := validateI444Frame(frame); err != nil {
+		return I420Frame{}, err
+	}
+	chromaWidth := frame.Width / 2
+	chromaHeight := frame.Height / 2
+	planar420Scratch(dst, frame.Y, frame.YStride, frame.Width, frame.Height, chromaWidth, chromaHeight)
+	for y := 0; y < chromaHeight; y++ {
+		uY0 := (y * 2) * frame.UStride
+		uY1 := uY0 + frame.UStride
+		vY0 := (y * 2) * frame.VStride
+		vY1 := vY0 + frame.VStride
+		for x := 0; x < chromaWidth; x++ {
+			ux := x * 2
+			vx := x * 2
+			uSum := uint16(frame.U[uY0+ux]) + uint16(frame.U[uY0+ux+1]) +
+				uint16(frame.U[uY1+ux]) + uint16(frame.U[uY1+ux+1])
+			vSum := uint16(frame.V[vY0+vx]) + uint16(frame.V[vY0+vx+1]) +
+				uint16(frame.V[vY1+vx]) + uint16(frame.V[vY1+vx+1])
+			dst.U[y*chromaWidth+x] = uint8((uSum + 2) >> 2)
+			dst.V[y*chromaWidth+x] = uint8((vSum + 2) >> 2)
+		}
+	}
+	return *dst, nil
+}
+
+func i400ToI420Scratch(dst *I420Frame, frame I400Frame) (I420Frame, error) {
+	if err := validateI400Frame(frame); err != nil {
+		return I420Frame{}, err
+	}
+	chromaWidth := frame.Width / 2
+	chromaHeight := frame.Height / 2
+	planar420Scratch(dst, frame.Y, frame.YStride, frame.Width, frame.Height, chromaWidth, chromaHeight)
+	for i := range dst.U {
+		dst.U[i] = 128
+		dst.V[i] = 128
+	}
+	return *dst, nil
+}
+
 func nv12ToI420Scratch(dst *I420Frame, frame NV12Frame) (I420Frame, error) {
 	if err := validateNV12Frame(frame); err != nil {
 		return I420Frame{}, err
@@ -826,9 +1130,7 @@ func nv21ToI420Scratch(dst *I420Frame, frame NV21Frame) (I420Frame, error) {
 	return semiPlanar420ToI420Scratch(dst, frame.Y, frame.VU, frame.YStride, frame.VUStride, frame.Width, frame.Height, 1, 0), nil
 }
 
-func semiPlanar420ToI420Scratch(dst *I420Frame, yPlane []byte, chromaPlane []byte, yStride int, chromaStride int, width int, height int, uOffset int, vOffset int) I420Frame {
-	chromaWidth := width / 2
-	chromaHeight := height / 2
+func planar420Scratch(dst *I420Frame, y []byte, yStride int, width int, height int, chromaWidth int, chromaHeight int) {
 	chromaLen := chromaWidth * chromaHeight
 	if cap(dst.U) < chromaLen {
 		dst.U = make([]byte, chromaLen)
@@ -840,6 +1142,17 @@ func semiPlanar420ToI420Scratch(dst *I420Frame, yPlane []byte, chromaPlane []byt
 	} else {
 		dst.V = dst.V[:chromaLen]
 	}
+	dst.Y = y
+	dst.YStride = yStride
+	dst.ChromaStride = chromaWidth
+	dst.Width = width
+	dst.Height = height
+}
+
+func semiPlanar420ToI420Scratch(dst *I420Frame, yPlane []byte, chromaPlane []byte, yStride int, chromaStride int, width int, height int, uOffset int, vOffset int) I420Frame {
+	chromaWidth := width / 2
+	chromaHeight := height / 2
+	planar420Scratch(dst, yPlane, yStride, width, height, chromaWidth, chromaHeight)
 	for y := 0; y < chromaHeight; y++ {
 		chroma := chromaPlane[y*chromaStride : y*chromaStride+width]
 		u := dst.U[y*chromaWidth : y*chromaWidth+chromaWidth]
@@ -849,11 +1162,6 @@ func semiPlanar420ToI420Scratch(dst *I420Frame, yPlane []byte, chromaPlane []byt
 			v[x] = chroma[x*2+vOffset]
 		}
 	}
-	dst.Y = yPlane
-	dst.YStride = yStride
-	dst.ChromaStride = chromaWidth
-	dst.Width = width
-	dst.Height = height
 	return *dst
 }
 

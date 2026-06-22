@@ -293,12 +293,14 @@ ship under `internal/av1/testdata/libaom/`.
 
 ### Cross-cutting items not enumerated above
 
-- **Encoder.** The friendly realtime encoder emits AV1 bitstreams for 8-bit I420
-  WebRTC use, with fixed-quality/CBR, forced keyframes, temporal layering,
-  runtime bitrate/framerate/scalability reconfiguration, multi-spatial
-  `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, tile columns,
-  golden references, RTP payload packetization, and dependency descriptors. The
-  lower-level WebRTC encoder surface validates the
+- **Encoder.** The friendly realtime encoder emits AV1 bitstreams for 8-bit
+  profile-0 WebRTC use from I420/I422/I444/I400/NV12/NV21 inputs. I422/I444
+  chroma samples are resampled, and I400 fills neutral chroma, before entering the
+  current 4:2:0 encode path. It supports fixed-quality/CBR, forced keyframes,
+  temporal layering, runtime bitrate/framerate/scalability reconfiguration,
+  multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes,
+  tile columns, golden references, RTP payload packetization, and dependency
+  descriptors. The lower-level WebRTC encoder surface validates the
   W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures,
   dependency-descriptor decode-target grids, W3C key-shift temporal schedules,
   pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates, AV1/90000 SDP/fmtp
@@ -308,8 +310,8 @@ ship under `internal/av1/testdata/libaom/`.
   and layer-grid validation for caller-supplied frame payloads, and
   sequence-matched `Frame` validation/loading for
   profile-0/1/2 8/10/12-bit 4:2:0, 4:2:2, and 4:4:4 buffers. High-bit-depth
-  and non-4:2:0 input in the friendly pixel encoder plus broader oracle
-  coverage remain open.
+  input, true non-4:2:0 bitstream encoding in the friendly pixel encoder, and
+  broader oracle coverage remain open.
 - **SIMD / assembly backends.** Selected hot DSP paths have amd64/arm64 SIMD or
   assembly dispatch; coverage is still expanding behind pure-Go fallbacks.
 - **Work-stealing scheduler.** `threading.Pool` does deterministic

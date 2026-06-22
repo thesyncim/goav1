@@ -200,7 +200,7 @@ func TestPublicRTCEncoder(t *testing.T) {
 	}
 }
 
-func TestPublicVideoEncoderSemiPlanar420MatchesI420(t *testing.T) {
+func TestPublicVideoEncoderInputFormatsMatchI420(t *testing.T) {
 	const w, h = 192, 128
 	cfg := goav1.VideoEncoderConfig{
 		Width: w, Height: h,
@@ -209,16 +209,50 @@ func TestPublicVideoEncoderSemiPlanar420MatchesI420(t *testing.T) {
 	}
 	formats := []struct {
 		name   string
+		source func(int) goav1.I420Frame
 		encode func(*goav1.VideoEncoder, goav1.I420Frame, bool) (goav1.EncodedFrame, error)
 	}{
 		{
+			name: "I422",
+			source: func(frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(w, h, frame)
+			},
+			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
+				return enc.EncodeI422(publicI422FromI420(src), forceKey)
+			},
+		},
+		{
+			name: "I444",
+			source: func(frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(w, h, frame)
+			},
+			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
+				return enc.EncodeI444(publicI444FromI420(src), forceKey)
+			},
+		},
+		{
+			name: "I400",
+			source: func(frame int) goav1.I420Frame {
+				return publicI420NeutralChroma(publicRTCMatrixFrame(w, h, frame))
+			},
+			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
+				return enc.EncodeI400(publicI400FromI420(src), forceKey)
+			},
+		},
+		{
 			name: "NV12",
+			source: func(frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(w, h, frame)
+			},
 			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
 				return enc.EncodeNV12(publicNV12FromI420(src), forceKey)
 			},
 		},
 		{
 			name: "NV21",
+			source: func(frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(w, h, frame)
+			},
 			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
 				return enc.EncodeNV21(publicNV21FromI420(src), forceKey)
 			},
@@ -238,7 +272,7 @@ func TestPublicVideoEncoderSemiPlanar420MatchesI420(t *testing.T) {
 			defer testEnc.Close()
 
 			for frame := 0; frame < 3; frame++ {
-				i420 := publicRTCMatrixFrame(w, h, frame)
+				i420 := format.source(frame)
 				want, err := i420Enc.Encode(i420, false)
 				if err != nil {
 					t.Fatalf("I420 Encode(%d): %v", frame, err)
@@ -255,14 +289,54 @@ func TestPublicVideoEncoderSemiPlanar420MatchesI420(t *testing.T) {
 	}
 }
 
-func TestPublicRTCEncoderSemiPlanar420EncodeAndPictureDecode(t *testing.T) {
+func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 	formats := []struct {
 		name          string
+		source        func(int, int, int) goav1.I420Frame
 		encode        func(*goav1.RTCEncoder, goav1.I420Frame, bool) (goav1.RTCFrame, error)
 		encodePicture func(*goav1.RTCEncoder, goav1.I420Frame, bool) (goav1.RTCPicture, error)
 	}{
 		{
+			name: "I422",
+			source: func(width int, height int, frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(width, height, frame)
+			},
+			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
+				return enc.EncodeI422(publicI422FromI420(src), forceKey)
+			},
+			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
+				return enc.EncodeI422Picture(publicI422FromI420(src), forceKey)
+			},
+		},
+		{
+			name: "I444",
+			source: func(width int, height int, frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(width, height, frame)
+			},
+			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
+				return enc.EncodeI444(publicI444FromI420(src), forceKey)
+			},
+			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
+				return enc.EncodeI444Picture(publicI444FromI420(src), forceKey)
+			},
+		},
+		{
+			name: "I400",
+			source: func(width int, height int, frame int) goav1.I420Frame {
+				return publicI420NeutralChroma(publicRTCMatrixFrame(width, height, frame))
+			},
+			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
+				return enc.EncodeI400(publicI400FromI420(src), forceKey)
+			},
+			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
+				return enc.EncodeI400Picture(publicI400FromI420(src), forceKey)
+			},
+		},
+		{
 			name: "NV12",
+			source: func(width int, height int, frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(width, height, frame)
+			},
 			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
 				return enc.EncodeNV12(publicNV12FromI420(src), forceKey)
 			},
@@ -272,6 +346,9 @@ func TestPublicRTCEncoderSemiPlanar420EncodeAndPictureDecode(t *testing.T) {
 		},
 		{
 			name: "NV21",
+			source: func(width int, height int, frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(width, height, frame)
+			},
 			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
 				return enc.EncodeNV21(publicNV21FromI420(src), forceKey)
 			},
@@ -294,7 +371,7 @@ func TestPublicRTCEncoderSemiPlanar420EncodeAndPictureDecode(t *testing.T) {
 			defer enc.Close()
 			var tus [][]byte
 			for frame := 0; frame < 3; frame++ {
-				out, err := format.encode(enc, publicRTCMatrixFrame(w, h, frame), false)
+				out, err := format.encode(enc, format.source(w, h, frame), false)
 				if err != nil {
 					t.Fatalf("%s Encode(%d): %v", format.name, frame, err)
 				}
@@ -341,7 +418,7 @@ func TestPublicRTCEncoderSemiPlanar420EncodeAndPictureDecode(t *testing.T) {
 			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			for frame := 0; frame < 2; frame++ {
-				picture, err := format.encodePicture(enc, publicRTCMatrixFrame(w, h, frame), false)
+				picture, err := format.encodePicture(enc, format.source(w, h, frame), false)
 				if err != nil {
 					t.Fatalf("%s EncodePicture(%d): %v", format.name, frame, err)
 				}
@@ -1794,6 +1871,77 @@ func publicRTCMatrixFrame(width, height int, n int) goav1.I420Frame {
 	return f
 }
 
+func publicI420NeutralChroma(src goav1.I420Frame) goav1.I420Frame {
+	out := src
+	out.Y = append([]byte(nil), src.Y...)
+	cw, ch := src.Width/2, src.Height/2
+	out.U = make([]byte, cw*ch)
+	out.V = make([]byte, cw*ch)
+	for i := range out.U {
+		out.U[i] = 128
+		out.V[i] = 128
+	}
+	out.YStride = src.YStride
+	out.ChromaStride = cw
+	return out
+}
+
+func publicI422FromI420(src goav1.I420Frame) goav1.I422Frame {
+	cw := src.Width / 2
+	u := make([]byte, cw*src.Height)
+	v := make([]byte, cw*src.Height)
+	for y := 0; y < src.Height; y++ {
+		srcY := (y / 2) * src.ChromaStride
+		copy(u[y*cw:y*cw+cw], src.U[srcY:srcY+cw])
+		copy(v[y*cw:y*cw+cw], src.V[srcY:srcY+cw])
+	}
+	return goav1.I422Frame{
+		Y:            src.Y,
+		U:            u,
+		V:            v,
+		YStride:      src.YStride,
+		ChromaStride: cw,
+		Width:        src.Width,
+		Height:       src.Height,
+	}
+}
+
+func publicI444FromI420(src goav1.I420Frame) goav1.I444Frame {
+	u := make([]byte, src.Width*src.Height)
+	v := make([]byte, src.Width*src.Height)
+	cw := src.Width / 2
+	for y := 0; y < src.Height; y++ {
+		srcY := (y / 2) * src.ChromaStride
+		dstU := u[y*src.Width : y*src.Width+src.Width]
+		dstV := v[y*src.Width : y*src.Width+src.Width]
+		for x := 0; x < cw; x++ {
+			dstU[x*2] = src.U[srcY+x]
+			dstU[x*2+1] = src.U[srcY+x]
+			dstV[x*2] = src.V[srcY+x]
+			dstV[x*2+1] = src.V[srcY+x]
+		}
+	}
+	return goav1.I444Frame{
+		Y:       src.Y,
+		U:       u,
+		V:       v,
+		YStride: src.YStride,
+		UStride: src.Width,
+		VStride: src.Width,
+		Width:   src.Width,
+		Height:  src.Height,
+	}
+}
+
+func publicI400FromI420(src goav1.I420Frame) goav1.I400Frame {
+	return goav1.I400Frame{
+		Y:       src.Y,
+		YStride: src.YStride,
+		Width:   src.Width,
+		Height:  src.Height,
+	}
+}
+
 func publicNV12FromI420(src goav1.I420Frame) goav1.NV12Frame {
 	uv := make([]byte, src.Width*src.Height/2)
 	cw, ch := src.Width/2, src.Height/2
@@ -3057,6 +3205,15 @@ func TestPublicEncoderZeroValueGuards(t *testing.T) {
 	if _, err := video.Encode(goav1.I420Frame{}, false); err == nil {
 		t.Fatal("zero VideoEncoder Encode returned nil error")
 	}
+	if _, err := video.EncodeI422(goav1.I422Frame{}, false); err == nil {
+		t.Fatal("zero VideoEncoder EncodeI422 returned nil error")
+	}
+	if _, err := video.EncodeI444(goav1.I444Frame{}, false); err == nil {
+		t.Fatal("zero VideoEncoder EncodeI444 returned nil error")
+	}
+	if _, err := video.EncodeI400(goav1.I400Frame{}, false); err == nil {
+		t.Fatal("zero VideoEncoder EncodeI400 returned nil error")
+	}
 	if _, err := video.EncodeNV12(goav1.NV12Frame{}, false); err == nil {
 		t.Fatal("zero VideoEncoder EncodeNV12 returned nil error")
 	}
@@ -3079,6 +3236,15 @@ func TestPublicEncoderZeroValueGuards(t *testing.T) {
 	if _, err := rtc.Encode(goav1.I420Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder Encode returned nil error")
 	}
+	if _, err := rtc.EncodeI422(goav1.I422Frame{}, false); err == nil {
+		t.Fatal("zero RTCEncoder EncodeI422 returned nil error")
+	}
+	if _, err := rtc.EncodeI444(goav1.I444Frame{}, false); err == nil {
+		t.Fatal("zero RTCEncoder EncodeI444 returned nil error")
+	}
+	if _, err := rtc.EncodeI400(goav1.I400Frame{}, false); err == nil {
+		t.Fatal("zero RTCEncoder EncodeI400 returned nil error")
+	}
 	if _, err := rtc.EncodeNV12(goav1.NV12Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder EncodeNV12 returned nil error")
 	}
@@ -3090,6 +3256,15 @@ func TestPublicEncoderZeroValueGuards(t *testing.T) {
 	}
 	if _, err := rtc.EncodeNV21Picture(goav1.NV21Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder EncodeNV21Picture returned nil error")
+	}
+	if _, err := rtc.EncodeI422Picture(goav1.I422Frame{}, false); err == nil {
+		t.Fatal("zero RTCEncoder EncodeI422Picture returned nil error")
+	}
+	if _, err := rtc.EncodeI444Picture(goav1.I444Frame{}, false); err == nil {
+		t.Fatal("zero RTCEncoder EncodeI444Picture returned nil error")
+	}
+	if _, err := rtc.EncodeI400Picture(goav1.I400Frame{}, false); err == nil {
+		t.Fatal("zero RTCEncoder EncodeI400Picture returned nil error")
 	}
 }
 
@@ -3129,6 +3304,120 @@ func TestPublicEncoderRejectsInvalidI420Frames(t *testing.T) {
 	invalid.U = invalid.U[:len(invalid.U)-1]
 	if _, err := rtc.Encode(invalid, false); err == nil {
 		t.Fatal("RTCEncoder accepted a short U plane")
+	}
+}
+
+func TestPublicEncoderRejectsInvalidI422Frames(t *testing.T) {
+	const w, h = 64, 64
+	valid := publicI422FromI420(publicRTCMatrixFrame(w, h, 0))
+	invalid := valid
+	invalid.U = invalid.U[:len(invalid.U)-1]
+	video, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+		Width: w, Height: h, QIndex: 80,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer video.Close()
+	if _, err := video.EncodeI422(invalid, false); err == nil {
+		t.Fatal("VideoEncoder accepted a short I422 U plane")
+	}
+	invalid = valid
+	invalid.ChromaStride = w/2 - 1
+	if _, err := video.EncodeI422(invalid, false); err == nil {
+		t.Fatal("VideoEncoder accepted an invalid I422 chroma stride")
+	}
+
+	rtc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+		Width: w, Height: h, TargetBitrate: 100_000, Framerate: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rtc.Close()
+	invalid = valid
+	invalid.V = invalid.V[:len(invalid.V)-1]
+	if _, err := rtc.EncodeI422(invalid, false); err == nil {
+		t.Fatal("RTCEncoder accepted a short I422 V plane")
+	}
+	if _, err := rtc.EncodeI422Picture(invalid, false); err == nil {
+		t.Fatal("RTCEncoder accepted a short I422 V plane for picture encode")
+	}
+}
+
+func TestPublicEncoderRejectsInvalidI444Frames(t *testing.T) {
+	const w, h = 64, 64
+	valid := publicI444FromI420(publicRTCMatrixFrame(w, h, 0))
+	invalid := valid
+	invalid.U = invalid.U[:len(invalid.U)-1]
+	video, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+		Width: w, Height: h, QIndex: 80,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer video.Close()
+	if _, err := video.EncodeI444(invalid, false); err == nil {
+		t.Fatal("VideoEncoder accepted a short I444 U plane")
+	}
+	invalid = valid
+	invalid.UStride = w - 1
+	if _, err := video.EncodeI444(invalid, false); err == nil {
+		t.Fatal("VideoEncoder accepted an invalid I444 U stride")
+	}
+
+	rtc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+		Width: w, Height: h, TargetBitrate: 100_000, Framerate: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rtc.Close()
+	invalid = valid
+	invalid.VStride = w - 1
+	if _, err := rtc.EncodeI444(invalid, false); err == nil {
+		t.Fatal("RTCEncoder accepted an invalid I444 V stride")
+	}
+	if _, err := rtc.EncodeI444Picture(invalid, false); err == nil {
+		t.Fatal("RTCEncoder accepted an invalid I444 V stride for picture encode")
+	}
+}
+
+func TestPublicEncoderRejectsInvalidI400Frames(t *testing.T) {
+	const w, h = 64, 64
+	valid := publicI400FromI420(publicRTCMatrixFrame(w, h, 0))
+	invalid := valid
+	invalid.Y = invalid.Y[:len(invalid.Y)-1]
+	video, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+		Width: w, Height: h, QIndex: 80,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer video.Close()
+	if _, err := video.EncodeI400(invalid, false); err == nil {
+		t.Fatal("VideoEncoder accepted a short I400 Y plane")
+	}
+	invalid = valid
+	invalid.YStride = w - 1
+	if _, err := video.EncodeI400(invalid, false); err == nil {
+		t.Fatal("VideoEncoder accepted an invalid I400 Y stride")
+	}
+
+	rtc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+		Width: w, Height: h, TargetBitrate: 100_000, Framerate: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rtc.Close()
+	invalid = valid
+	invalid.Y = invalid.Y[:len(invalid.Y)-1]
+	if _, err := rtc.EncodeI400(invalid, false); err == nil {
+		t.Fatal("RTCEncoder accepted a short I400 Y plane")
+	}
+	if _, err := rtc.EncodeI400Picture(invalid, false); err == nil {
+		t.Fatal("RTCEncoder accepted a short I400 Y plane for picture encode")
 	}
 }
 
