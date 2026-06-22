@@ -1088,6 +1088,15 @@ func (e *WebRTCEncoder) Config() EncoderConfig {
 	return e.config
 }
 
+// RTPFrameDuration returns the exact RTP timestamp duration of one encoded
+// picture under the encoder's current normalized config.
+func (e *WebRTCEncoder) RTPFrameDuration() (EncoderRational, error) {
+	if e == nil {
+		return EncoderRational{}, ErrEncoderInvalidConfig
+	}
+	return EncoderWebRTCRTPFrameDuration(e.config)
+}
+
 // SetConfig atomically updates the WebRTC control config. Changes that alter
 // the AV1 sequence header or dependency structure reset reference/dependency
 // state so the next temporal unit is a key unit while preserving frame number

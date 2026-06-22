@@ -690,6 +690,15 @@ func (e *RTCEncoder) Config() EncoderConfig {
 	return e.stream.Config()
 }
 
+// RTPFrameDuration returns the exact RTP timestamp duration of one encoded
+// picture under the encoder's current normalized config.
+func (e *RTCEncoder) RTPFrameDuration() (EncoderRational, error) {
+	if e == nil || e.stream == nil {
+		return EncoderRational{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	return EncoderWebRTCRTPFrameDuration(e.stream.Config())
+}
+
 // SetConfig atomically updates bitrate, framerate, rate-control mode, fixed
 // quantizer, and supported scalability settings. Changes that alter layer
 // geometry or dependency structure make the next encoded picture a key picture

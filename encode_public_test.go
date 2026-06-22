@@ -1528,6 +1528,9 @@ func TestPublicRTCEncoderSetConfigReconfigure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
+	if got, err := enc.RTPFrameDuration(); err != nil || got != (goav1.EncoderRational{Num: 3000, Den: 1}) {
+		t.Fatalf("initial RTPFrameDuration=%+v err=%v", got, err)
+	}
 	key, err := enc.Encode(makeFrame(0), false)
 	if err != nil {
 		t.Fatalf("key Encode: %v", err)
@@ -1547,6 +1550,9 @@ func TestPublicRTCEncoderSetConfigReconfigure(t *testing.T) {
 	controlChange.TargetBitrateKbps = 900
 	if err := enc.SetConfig(controlChange); err != nil {
 		t.Fatalf("SetConfig control change: %v", err)
+	}
+	if got, err := enc.RTPFrameDuration(); err != nil || got != (goav1.EncoderRational{Num: 1500, Den: 1}) {
+		t.Fatalf("control RTPFrameDuration=%+v err=%v", got, err)
 	}
 	delta, err = enc.Encode(makeFrame(2), false)
 	if err != nil {
@@ -1686,6 +1692,9 @@ func TestPublicRTCEncoderSingleSpatialSettingsAomdec(t *testing.T) {
 		t.Fatalf("SetConfig fps/bitrate: %v", err)
 	}
 	assertPublicRTCConfigControls(t, enc.Config(), fpsBitrateChange)
+	if got, err := enc.RTPFrameDuration(); err != nil || got != (goav1.EncoderRational{Num: 3003, Den: 2}) {
+		t.Fatalf("fps/bitrate RTPFrameDuration=%+v err=%v", got, err)
+	}
 	appendFrame("fps bitrate delta", 2, false)
 
 	cqpChange := enc.Config()
@@ -1705,6 +1714,9 @@ func TestPublicRTCEncoderSingleSpatialSettingsAomdec(t *testing.T) {
 		t.Fatalf("SetConfig scalability: %v", err)
 	}
 	assertPublicRTCConfigControls(t, enc.Config(), scalabilityChange)
+	if got, err := enc.RTPFrameDuration(); err != nil || got != (goav1.EncoderRational{Num: 3750, Den: 1}) {
+		t.Fatalf("scalability RTPFrameDuration=%+v err=%v", got, err)
+	}
 	appendFrame("L1T3 key", 4, true)
 	appendFrame("L1T3 delta", 5, false)
 

@@ -169,7 +169,7 @@ result buffer directly. The executable examples in `example_test.go` and
 | WebRTC RTP decode | `NewDecoderFromRTPPayloads` covers ordered/live RTP payload bodies for single decode chains and simulcast layers; `NewLayeredDecoderFromRTPPayloads` covers shared-reference SVC RTP streams; `DecodeRTPPayloadAfterLoss` resets retained fragments after packet gaps |
 | SVC | L1T2/L2T1/L2T2 oracle vectors pass through the framework path; public integration guidance lives in [docs/svc.md](docs/svc.md) |
 | Tile groups | Single and multi-tile groups pass current strict-MD5 gates; tile-list OBUs parse and validate source reference anchors/uniform decode layout, but playback/reconstruction is not wired yet |
-| Encoder | Functional realtime 8-bit profile-0 WebRTC encoder with I420/I422/I444/I400/NV12/NV21 plus generic 8/10/12-bit `Frame` input adapters, fixed-quality/CBR, forced keyframes, temporal layering, runtime bitrate/framerate/rate-control/scalability reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, tile columns, golden references, RTP payload packetization, dependency descriptors, active decode target signaling, and LRR layer-grid validation; non-4:2:0, monochrome, and high-bit-depth inputs adapt into the current 8-bit 4:2:0 encode path; lower-level WebRTC controls cover the W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT templates, explicit sequence color config, and `Frame` validation/loading for profile-0/1/2 sample formats |
+| Encoder | Functional realtime 8-bit profile-0 WebRTC encoder with I420/I422/I444/I400/NV12/NV21 plus generic 8/10/12-bit `Frame` input adapters, fixed-quality/CBR, forced keyframes, temporal layering, runtime bitrate/framerate/rate-control/scalability reconfiguration, current RTP timestamp-duration helpers, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, tile columns, golden references, RTP payload packetization, dependency descriptors, active decode target signaling, and LRR layer-grid validation; non-4:2:0, monochrome, and high-bit-depth inputs adapt into the current 8-bit 4:2:0 encode path; lower-level WebRTC controls cover the W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT templates, explicit sequence color config, and `Frame` validation/loading for profile-0/1/2 sample formats |
 | SIMD/assembly | CPU-dispatch skeleton plus initial amd64/arm64 motion kernels; broader transform/CDEF/restoration kernels are still roadmap work |
 
 The full feature matrix, status legend, vector coverage, and forward-looking
@@ -199,6 +199,8 @@ There are two public encoder surfaces:
   bitrate, framerate, CBR/CQP rate-control, fixed quantizer, and supported
   scalability changes atomically; changes that alter layer geometry or
   dependency structure make the next picture a key picture.
+  `RTCEncoder.RTPFrameDuration` reports the current RTP timestamp increment
+  after those changes.
   `NormalizeRTCEncoderConfig` lets callers preflight whether a
   lower-level WebRTC config is supported by this friendly pixel pipeline before
   constructing or reconfiguring an encoder. `RTCFrame.AppendRTPPackets`
@@ -222,7 +224,8 @@ There are two public encoder surfaces:
   spans for already-produced frame payloads, and `Frame` validation /
   sample-plane loading for sequence-matched 8/10/12-bit 4:0:0, 4:2:0, 4:2:2,
   and 4:4:4 caller-owned buffers, including profile-2 12-bit 4:2:0 and
-  4:4:4 control paths.
+  4:4:4 control paths. `WebRTCEncoder.RTPFrameDuration` mirrors the same
+  timestamp-duration query for control-plane-only callers.
 
 Multi-spatial pixel output uses independent per-spatial encoders for simulcast
 and shared-reference inter-layer prediction for full SVC. Native high-bit-depth

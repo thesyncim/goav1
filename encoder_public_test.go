@@ -2050,6 +2050,9 @@ func TestPublicWebRTCEncoderSetConfigReconfigure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWebRTCEncoder: %v", err)
 	}
+	if got, err := enc.RTPFrameDuration(); err != nil || got != (av1.EncoderRational{Num: 3000, Den: 1}) {
+		t.Fatalf("initial RTPFrameDuration=%+v err=%v", got, err)
+	}
 	if unit, err := enc.NextTemporalUnit(false); err != nil || !unit.Key {
 		t.Fatalf("initial key unit=%+v err=%v", unit, err)
 	}
@@ -2064,6 +2067,9 @@ func TestPublicWebRTCEncoderSetConfigReconfigure(t *testing.T) {
 	controlChange.TargetBitrateKbps = 1100
 	if err := enc.SetConfig(controlChange); err != nil {
 		t.Fatalf("SetConfig control change: %v", err)
+	}
+	if got, err := enc.RTPFrameDuration(); err != nil || got != (av1.EncoderRational{Num: 1500, Den: 1}) {
+		t.Fatalf("control RTPFrameDuration=%+v err=%v", got, err)
 	}
 	before := enc.State()
 	unit, err := enc.NextTemporalUnit(false)
