@@ -246,8 +246,10 @@ decoder produces; `goav1.RTCEncoder` wraps the same engine with per-frame RTP
 dependency descriptors, caller-owned RTP payload packetization, and runtime
 WebRTC control reconfiguration. Every emitted stream decodes bit-exactly to the
 encoder's own reconstruction in this package's decoder and in aomdec/dav1d
-(enforced by the test gates), and steady-state encoding allocates a handful
-of objects per frame. See `ExampleVideoEncoder` and `ExampleRTCEncoder` for
+(enforced by the test gates), including single-spatial and simulcast WebRTC
+settings cycles that change bitrate, framerate, rate control, and scalability;
+steady-state encoding allocates a handful of objects per frame. See
+`ExampleVideoEncoder` and `ExampleRTCEncoder` for
 the round trip, and `cmd/encbench` for the standing 1080p60 performance
 measurement against SVT-AV1 (throughput currently exceeds SVT preset 12 on
 identical input; rate-distortion quality remains behind and is the active

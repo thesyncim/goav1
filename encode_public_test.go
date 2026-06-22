@@ -1760,6 +1760,142 @@ func TestPublicRTCEncoderSingleSpatialSettingsAomdec(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderSimulcastSettingsAomdec(t *testing.T) {
+	aomdec, err := exec.LookPath("aomdec")
+	if err != nil {
+		t.Skip("aomdec not on PATH")
+	}
+	const w, h = 1008, 576
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeS3T3h)
+	cfg.MaxFramerate = goav1.EncoderRational{Num: 30, Den: 1}
+	publicRTCApplyControlBitrates(&cfg, 1500)
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	normalized := enc.Config()
+	spatialLayers, _, _, ok := normalized.Scalability.Layers()
+	if !ok || spatialLayers != 3 {
+		t.Fatalf("normalized scalability=%s spatial=%d ok=%v", normalized.Scalability, spatialLayers, ok)
+	}
+	var layerRes [goav1.EncoderWebRTCMaxSpatialLayers]goav1.EncoderResolution
+	for i := uint8(0); i < spatialLayers; i++ {
+		layerRes[i] = normalized.SpatialLayers[i].Resolution
+	}
+
+	var receiver goav1.RTPDependencyDescriptorState
+	nextFrameID := uint64(0)
+	var layerFrames [goav1.EncoderWebRTCMaxSpatialLayers][]publicIVFFrame
+	appendPicture := func(label string, frameIndex int, wantKey bool) {
+		t.Helper()
+		picture, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, frameIndex), false)
+		if err != nil {
+			t.Fatalf("%s EncodePicture: %v", label, err)
+		}
+		if picture.Keyframe != wantKey {
+			t.Fatalf("%s key=%v want %v picture=%+v", label, picture.Keyframe, wantKey, picture)
+		}
+		current := enc.Config()
+		assertPublicRTCPictureDescriptors(t, &receiver, current, picture, wantKey, &nextFrameID)
+		for i := 0; i < picture.FrameNum; i++ {
+			frame := picture.Frames[i]
+			if frame.SpatialID >= spatialLayers {
+				t.Fatalf("%s frame %d spatial=%d want <%d", label, i, frame.SpatialID, spatialLayers)
+			}
+			if current.SpatialLayers[frame.SpatialID].Resolution != layerRes[frame.SpatialID] {
+				t.Fatalf("%s spatial %d resolution=%+v want stable %+v",
+					label, frame.SpatialID, current.SpatialLayers[frame.SpatialID].Resolution, layerRes[frame.SpatialID])
+			}
+			layerFrames[frame.SpatialID] = append(layerFrames[frame.SpatialID], publicIVFFrame{
+				timestamp: uint64(len(layerFrames[frame.SpatialID])),
+				payload:   append([]byte(nil), frame.Data...),
+			})
+		}
+	}
+
+	appendPicture("initial S3T3h CBR key", 0, true)
+	appendPicture("warm S3T3h CBR delta", 1, false)
+
+	fpsBitrateChange := enc.Config()
+	fpsBitrateChange.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
+	publicRTCApplyControlBitrates(&fpsBitrateChange, 1800)
+	if err := enc.SetConfig(fpsBitrateChange); err != nil {
+		t.Fatalf("SetConfig fps/bitrate: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), fpsBitrateChange)
+	appendPicture("S3T3h fps bitrate delta", 2, false)
+
+	cqpChange := enc.Config()
+	cqpChange.RateControl = goav1.EncoderRateControlCQP
+	cqpChange.Quantizer = 33
+	if err := enc.SetConfig(cqpChange); err != nil {
+		t.Fatalf("SetConfig CQP: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), cqpChange)
+	appendPicture("S3T3h CQP delta", 3, false)
+
+	scalabilityChange := enc.Config()
+	scalabilityChange.Scalability = goav1.EncoderScalabilityModeS3T2h
+	scalabilityChange.MaxFramerate = goav1.EncoderRational{Num: 24, Den: 1}
+	scalabilityChange.RateControl = goav1.EncoderRateControlCQP
+	scalabilityChange.Quantizer = 29
+	if err := enc.SetConfig(scalabilityChange); err != nil {
+		t.Fatalf("SetConfig scalability: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), scalabilityChange)
+	appendPicture("S3T2h structure key", 4, true)
+	appendPicture("S3T2h CQP delta", 5, false)
+
+	cbrChange := enc.Config()
+	cbrChange.RateControl = goav1.EncoderRateControlCBR
+	cbrChange.Quantizer = 0
+	cbrChange.MaxFramerate = goav1.EncoderRational{Num: 120, Den: 1}
+	publicRTCApplyControlBitrates(&cbrChange, 1350)
+	if err := enc.SetConfig(cbrChange); err != nil {
+		t.Fatalf("SetConfig CBR: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), cbrChange)
+	appendPicture("S3T2h CBR delta", 6, false)
+
+	for spatialID := uint8(0); spatialID < spatialLayers; spatialID++ {
+		res := layerRes[spatialID]
+		if len(layerFrames[spatialID]) == 0 {
+			t.Fatalf("spatial %d has no frames", spatialID)
+		}
+		ivf := appendPublicIVF(nil, uint16(res.Width), uint16(res.Height), 30, 1, layerFrames[spatialID])
+		assertPublicIVFMatchesAomdecRawYUV(t, aomdec, fmt.Sprintf("simulcast-spatial-%d", spatialID), ivf)
+	}
+}
+
+func assertPublicIVFMatchesAomdecRawYUV(t *testing.T, aomdec string, name string, ivf []byte) {
+	t.Helper()
+	decoded, err := goav1.DecodeIVF(ivf)
+	if err != nil {
+		t.Fatalf("%s DecodeIVF: %v", name, err)
+	}
+	want := publicDecodedFramesRawYUV(decoded)
+
+	dir := t.TempDir()
+	ivfPath := filepath.Join(dir, name+".ivf")
+	outPath := filepath.Join(dir, name+".yuv")
+	if err := os.WriteFile(ivfPath, ivf, 0o644); err != nil {
+		t.Fatalf("%s write IVF: %v", name, err)
+	}
+	out, err := exec.Command(aomdec, "--rawvideo", "-o", outPath, ivfPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s aomdec: %v\n%s", name, err, out)
+	}
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("%s read aomdec output: %v", name, err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("%s aomdec output len=%d matches=%v want len=%d", name, len(got), bytes.Equal(got, want), len(want))
+	}
+}
+
 func TestPublicRTCEncoderSetConfigSpatialCycleDecodes(t *testing.T) {
 	const w, h = 1008, 576
 	modes := []goav1.EncoderScalabilityMode{
