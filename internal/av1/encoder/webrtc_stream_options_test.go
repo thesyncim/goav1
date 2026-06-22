@@ -1,6 +1,7 @@
 package encoder
 
 import (
+	"errors"
 	"testing"
 
 	internalrtp "github.com/thesyncim/goav1/internal/av1/rtp"
@@ -310,6 +311,187 @@ func TestWebRTCStreamSetConfigReconfigure(t *testing.T) {
 		stream.state.NextFrameID != beforeFrameID+2 {
 		t.Fatalf("full SVC change picture=%+v state=%+v", picture, stream.state)
 	}
+}
+
+func TestWebRTCStreamSetConfigRateControlTransitions(t *testing.T) {
+	const w, h = 640, 360
+	cfg := Config{
+		Resolution:        Resolution{Width: w, Height: h},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 500,
+		Scalability:       ScalabilityModeL2T2,
+	}
+	stream, err := NewWebRTCStreamConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewWebRTCStreamConfig: %v", err)
+	}
+	defer stream.Close()
+
+	src := testWebRTCStreamFrame(w, h)
+	if _, err := stream.EncodePicture(src, false); err != nil {
+		t.Fatalf("key EncodePicture: %v", err)
+	}
+	if _, err := stream.EncodePicture(src, false); err != nil {
+		t.Fatalf("delta EncodePicture: %v", err)
+	}
+
+	toCQP := stream.Config()
+	toCQP.RateControl = RateControlCQP
+	toCQP.Quantizer = 37
+	beforeState := stream.state
+	if err := stream.SetConfig(toCQP); err != nil {
+		t.Fatalf("SetConfig CQP: %v", err)
+	}
+	if stream.state != beforeState {
+		t.Fatalf("CQP control transition reset state: before=%+v after=%+v", beforeState, stream.state)
+	}
+	for i := uint8(0); i < stream.config.SpatialLayerCount; i++ {
+		enc := stream.encoders[i]
+		if enc == nil || enc.rcEnabled || enc.rcPerFrameBits != 0 || enc.qIndex != 37 {
+			t.Fatalf("layer %d after CQP transition encoder=%+v", i, enc)
+		}
+	}
+	picture, err := stream.EncodePicture(src, false)
+	if err != nil {
+		t.Fatalf("delta after CQP transition: %v", err)
+	}
+	if picture.Keyframe || picture.FrameNum != 2 ||
+		picture.Frames[0].Info.FrameID != beforeState.NextFrameID ||
+		picture.Frames[1].Info.FrameID != beforeState.NextFrameID+1 {
+		t.Fatalf("CQP transition picture=%+v before=%+v state=%+v", picture, beforeState, stream.state)
+	}
+
+	toCBR := stream.Config()
+	toCBR.RateControl = RateControlCBR
+	toCBR.Quantizer = 0
+	toCBR.MaxFramerate = Rational{Num: 60, Den: 1}
+	for i := uint8(0); i < toCBR.SpatialLayerCount; i++ {
+		layer := &toCBR.SpatialLayers[i]
+		layer.MinBitrateKbps = 120 + int32(i)*180
+		layer.MaxBitrateKbps = 620 + int32(i)*420
+		layer.TargetBitrateKbps = layer.MinBitrateKbps + (layer.MaxBitrateKbps-layer.MinBitrateKbps)/2
+	}
+	beforeState = stream.state
+	if err := stream.SetConfig(toCBR); err != nil {
+		t.Fatalf("SetConfig CBR: %v", err)
+	}
+	if stream.state != beforeState {
+		t.Fatalf("CBR control transition reset state: before=%+v after=%+v", beforeState, stream.state)
+	}
+	for i := uint8(0); i < stream.config.SpatialLayerCount; i++ {
+		enc := stream.encoders[i]
+		wantBits := int(stream.config.SpatialLayers[i].TargetBitrateKbps) * 1000 / webRTCStreamFramesPerSecond(stream.config.MaxFramerate)
+		if enc == nil || !enc.rcEnabled || enc.rcPerFrameBits != wantBits {
+			t.Fatalf("layer %d after CBR transition rc=%v bits=%d want %d", i, enc != nil && enc.rcEnabled, encoderPerFrameBits(enc), wantBits)
+		}
+	}
+	picture, err = stream.EncodePicture(src, false)
+	if err != nil {
+		t.Fatalf("delta after CBR transition: %v", err)
+	}
+	if picture.Keyframe || picture.FrameNum != 2 ||
+		picture.Frames[0].Info.FrameID != beforeState.NextFrameID ||
+		picture.Frames[1].Info.FrameID != beforeState.NextFrameID+1 {
+		t.Fatalf("CBR transition picture=%+v before=%+v state=%+v", picture, beforeState, stream.state)
+	}
+}
+
+func TestWebRTCStreamSetConfigRejectsInvalidWithoutMutation(t *testing.T) {
+	const w, h = 640, 360
+	stream, err := NewWebRTCStreamConfig(Config{
+		Resolution:        Resolution{Width: w, Height: h},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 500,
+		Scalability:       ScalabilityModeS2T2,
+	})
+	if err != nil {
+		t.Fatalf("NewWebRTCStreamConfig: %v", err)
+	}
+	defer stream.Close()
+	if _, err := stream.EncodePicture(testWebRTCStreamFrame(w, h), false); err != nil {
+		t.Fatalf("key EncodePicture: %v", err)
+	}
+
+	type layerSnapshot struct {
+		rcEnabled      bool
+		rcPerFrameBits int
+		qIndex         uint8
+		temporalLayers int
+		haveKey        bool
+	}
+	snapshotLayers := func() [WebRTCMaxSpatialLayers]layerSnapshot {
+		var out [WebRTCMaxSpatialLayers]layerSnapshot
+		for i := uint8(0); i < WebRTCMaxSpatialLayers; i++ {
+			enc := stream.encoders[i]
+			if enc == nil {
+				continue
+			}
+			out[i] = layerSnapshot{
+				rcEnabled:      enc.rcEnabled,
+				rcPerFrameBits: enc.rcPerFrameBits,
+				qIndex:         enc.qIndex,
+				temporalLayers: enc.temporalLayers,
+				haveKey:        enc.haveKey,
+			}
+		}
+		return out
+	}
+
+	keepConfig := stream.config
+	keepState := stream.state
+	keepLayers := snapshotLayers()
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+		want error
+	}{
+		{
+			name: "invalid-target",
+			cfg: func() Config {
+				cfg := stream.Config()
+				cfg.TargetBitrateKbps = cfg.MaxBitrateKbps + 1
+				return cfg
+			}(),
+			want: ErrInvalidConfig,
+		},
+		{
+			name: "invalid-fps",
+			cfg: func() Config {
+				cfg := stream.Config()
+				cfg.MaxFramerate = Rational{Num: 0, Den: 1}
+				return cfg
+			}(),
+			want: ErrInvalidConfig,
+		},
+		{
+			name: "unsupported-cqp-zero",
+			cfg: func() Config {
+				cfg := stream.Config()
+				cfg.RateControl = RateControlCQP
+				cfg.Quantizer = 0
+				return cfg
+			}(),
+			want: ErrUnsupported,
+		},
+	} {
+		if err := stream.SetConfig(tc.cfg); !errors.Is(err, tc.want) {
+			t.Fatalf("%s SetConfig err=%v want %v", tc.name, err, tc.want)
+		}
+		if stream.config != keepConfig || stream.state != keepState || snapshotLayers() != keepLayers {
+			t.Fatalf("%s mutated stream config=%+v state=%+v layers=%+v", tc.name, stream.config, stream.state, snapshotLayers())
+		}
+	}
+}
+
+func encoderPerFrameBits(enc *VideoEncoder) int {
+	if enc == nil {
+		return 0
+	}
+	return enc.rcPerFrameBits
 }
 
 func webRTCStreamDescriptorMatrixConfig(mode ScalabilityMode) (Config, bool) {
