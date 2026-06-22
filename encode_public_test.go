@@ -365,9 +365,23 @@ func TestPublicRTCFrameAppendRTPPacketsActiveDecodeTargets(t *testing.T) {
 		t.Fatalf("Encode: %v", err)
 	}
 	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
+	allMask, err := frame.AllDecodeTargetsMask()
+	if err != nil {
+		t.Fatalf("AllDecodeTargetsMask: %v", err)
+	}
+	if allMask != 0x03 {
+		t.Fatalf("all decode targets mask=%#x want 0x03", allMask)
+	}
+	activeMask, err := frame.ActiveDecodeTargetsMask(0, 0)
+	if err != nil {
+		t.Fatalf("ActiveDecodeTargetsMask: %v", err)
+	}
+	if activeMask != 0x01 {
+		t.Fatalf("active decode targets mask=%#x want 0x01", activeMask)
+	}
 	options := goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions{
 		ActiveDecodeTargetsPresentOnFirstPacket: true,
-		ActiveDecodeTargetsMask:                 0x01,
+		ActiveDecodeTargetsMask:                 activeMask,
 	}
 	firstSize, err := frame.RTPPacketScratchLenWithOptions(limits, nil, options)
 	if err != nil {

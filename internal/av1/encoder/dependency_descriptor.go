@@ -167,6 +167,53 @@ func webRTCAllDecodeTargetsMask(count uint8) uint32 {
 	return (uint32(1) << count) - 1
 }
 
+func WebRTCAllDecodeTargetsMask(structure WebRTCFrameDependencyStructure) (uint32, error) {
+	if err := validateWebRTCDependencyStructure(structure); err != nil {
+		return 0, err
+	}
+	return webRTCAllDecodeTargetsMask(structure.NumDecodeTargets), nil
+}
+
+func WebRTCActiveDecodeTargetsMask(structure WebRTCFrameDependencyStructure, maxSpatialID uint8, maxTemporalID uint8) (uint32, error) {
+	if err := validateWebRTCDependencyStructure(structure); err != nil {
+		return 0, err
+	}
+	if maxSpatialID >= WebRTCMaxSpatialLayers || maxTemporalID >= WebRTCMaxTemporalLayers {
+		return 0, ErrInvalidFrame
+	}
+	var mask uint32
+	for target := uint8(0); target < structure.NumDecodeTargets; target++ {
+		spatialID, temporalID, ok := webRTCDecodeTargetLayerFromStructure(structure, target)
+		if !ok {
+			return 0, ErrInvalidFrame
+		}
+		if spatialID <= maxSpatialID && temporalID <= maxTemporalID {
+			mask |= 1 << target
+		}
+	}
+	return mask, nil
+}
+
+func webRTCDecodeTargetLayerFromStructure(structure WebRTCFrameDependencyStructure, target uint8) (spatialID uint8, temporalID uint8, ok bool) {
+	if target >= structure.NumDecodeTargets {
+		return 0, 0, false
+	}
+	for templateIndex := uint8(0); templateIndex < structure.TemplateNum; templateIndex++ {
+		template := structure.Templates[templateIndex]
+		if template.DTIs[target] == DecodeTargetNotPresent {
+			continue
+		}
+		if template.SpatialID > spatialID {
+			spatialID = template.SpatialID
+		}
+		if template.TemporalID > temporalID {
+			temporalID = template.TemporalID
+		}
+		ok = true
+	}
+	return spatialID, temporalID, ok
+}
+
 func webRTCDependencyDescriptorMatchFrame(structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo) (webRTCDependencyDescriptorMatch, error) {
 	if err := validateWebRTCDependencyStructure(structure); err != nil {
 		return webRTCDependencyDescriptorMatch{}, err

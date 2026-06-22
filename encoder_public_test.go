@@ -3,6 +3,7 @@ package goav1_test
 import (
 	"bytes"
 	"errors"
+	"math/bits"
 	"testing"
 
 	av1 "github.com/thesyncim/goav1"
@@ -218,6 +219,67 @@ func TestPublicEncoderWebRTCScalabilityModes(t *testing.T) {
 	if len(appended) != len(wantNames)+1 || appended[0] != av1.EncoderScalabilityModeL3T3 ||
 		appended[1] != av1.EncoderScalabilityModeL1T1 || appended[len(appended)-1] != av1.EncoderScalabilityModeS3T3h {
 		t.Fatalf("appended modes=%v", appended)
+	}
+}
+
+func TestPublicEncoderWebRTCActiveDecodeTargetsMask(t *testing.T) {
+	for _, mode := range av1.EncoderWebRTCScalabilityModes() {
+		t.Run(mode.String(), func(t *testing.T) {
+			spatialLayers, temporalLayers, _, ok := mode.Layers()
+			if !ok {
+				t.Fatalf("invalid mode %s", mode)
+			}
+			normalized, err := av1.SetWebRTCEncoderSVCConfig(av1.EncoderConfig{
+				Resolution:        av1.EncoderResolution{Width: 1280, Height: 720},
+				MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+				MinBitrateKbps:    120,
+				MaxBitrateKbps:    1600,
+				TargetBitrateKbps: 900,
+				Scalability:       mode,
+			}, 0, 0)
+			if err != nil {
+				t.Fatalf("SetWebRTCEncoderSVCConfig(%s): %v", mode, err)
+			}
+			structure, err := av1.EncoderWebRTCFrameDependencyStructureForConfig(normalized)
+			if err != nil {
+				t.Fatalf("EncoderWebRTCFrameDependencyStructureForConfig(%s): %v", mode, err)
+			}
+			all, err := av1.EncoderWebRTCAllDecodeTargetsMask(structure)
+			if err != nil {
+				t.Fatalf("EncoderWebRTCAllDecodeTargetsMask(%s): %v", mode, err)
+			}
+			wantTargets := int(spatialLayers * temporalLayers)
+			if bits.OnesCount32(all) != wantTargets {
+				t.Fatalf("all mask=%#x targets=%d want %d", all, bits.OnesCount32(all), wantTargets)
+			}
+			top, err := av1.EncoderWebRTCActiveDecodeTargetsMask(structure, spatialLayers-1, temporalLayers-1)
+			if err != nil {
+				t.Fatalf("EncoderWebRTCActiveDecodeTargetsMask top(%s): %v", mode, err)
+			}
+			if top != all {
+				t.Fatalf("top mask=%#x want all %#x", top, all)
+			}
+			baseSpatial, err := av1.EncoderWebRTCActiveDecodeTargetsMask(structure, 0, temporalLayers-1)
+			if err != nil {
+				t.Fatalf("EncoderWebRTCActiveDecodeTargetsMask base spatial(%s): %v", mode, err)
+			}
+			if bits.OnesCount32(baseSpatial) != int(temporalLayers) {
+				t.Fatalf("base spatial mask=%#x targets=%d want %d", baseSpatial, bits.OnesCount32(baseSpatial), temporalLayers)
+			}
+			baseTemporal, err := av1.EncoderWebRTCActiveDecodeTargetsMask(structure, spatialLayers-1, 0)
+			if err != nil {
+				t.Fatalf("EncoderWebRTCActiveDecodeTargetsMask base temporal(%s): %v", mode, err)
+			}
+			if bits.OnesCount32(baseTemporal) != int(spatialLayers) {
+				t.Fatalf("base temporal mask=%#x targets=%d want %d", baseTemporal, bits.OnesCount32(baseTemporal), spatialLayers)
+			}
+			if _, err := av1.EncoderWebRTCActiveDecodeTargetsMask(structure, av1.EncoderWebRTCMaxSpatialLayers, 0); !errors.Is(err, av1.ErrEncoderInvalidFrame) {
+				t.Fatalf("invalid spatial mask err=%v want %v", err, av1.ErrEncoderInvalidFrame)
+			}
+			if _, err := av1.EncoderWebRTCActiveDecodeTargetsMask(structure, 0, av1.EncoderWebRTCMaxTemporalLayers); !errors.Is(err, av1.ErrEncoderInvalidFrame) {
+				t.Fatalf("invalid temporal mask err=%v want %v", err, av1.ErrEncoderInvalidFrame)
+			}
+		})
 	}
 }
 

@@ -435,6 +435,14 @@ func EncoderWebRTCDependencyDescriptorSize(structure EncoderWebRTCFrameDependenc
 	return internalencoder.WebRTCDependencyDescriptorSize(structure, info, attachStructure)
 }
 
+func EncoderWebRTCAllDecodeTargetsMask(structure EncoderWebRTCFrameDependencyStructure) (uint32, error) {
+	return internalencoder.WebRTCAllDecodeTargetsMask(structure)
+}
+
+func EncoderWebRTCActiveDecodeTargetsMask(structure EncoderWebRTCFrameDependencyStructure, maxSpatialID uint8, maxTemporalID uint8) (uint32, error) {
+	return internalencoder.WebRTCActiveDecodeTargetsMask(structure, maxSpatialID, maxTemporalID)
+}
+
 func EncoderWebRTCDependencyDescriptorSizeWithOptions(structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo, options EncoderWebRTCDependencyDescriptorOptions) (int, error) {
 	return internalencoder.WebRTCDependencyDescriptorSizeWithOptions(structure, info, options)
 }

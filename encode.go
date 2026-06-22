@@ -287,6 +287,19 @@ type RTCFrameRTPScratchSize struct {
 	MaxDescriptorBytes int
 }
 
+// AllDecodeTargetsMask returns a dependency-descriptor active decode target
+// mask with every target in f enabled.
+func (f RTCFrame) AllDecodeTargetsMask() (uint32, error) {
+	return encoder.WebRTCAllDecodeTargetsMask(f.dependencyStructure)
+}
+
+// ActiveDecodeTargetsMask returns a dependency-descriptor active decode target
+// mask that enables every target at or below the supplied spatial and temporal
+// layer IDs.
+func (f RTCFrame) ActiveDecodeTargetsMask(maxSpatialID uint8, maxTemporalID uint8) (uint32, error) {
+	return encoder.WebRTCActiveDecodeTargetsMask(f.dependencyStructure, maxSpatialID, maxTemporalID)
+}
+
 // RTPPacketScratchLen reports scratch sizes for AppendRTPPackets. Callers may
 // first pass nil or short obuScratch to learn the OBU count, allocate that many
 // RTPPacketizerOBU slots, then call again to learn packet/work-plan sizes.
