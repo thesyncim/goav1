@@ -1,6 +1,7 @@
 package goav1_test
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
@@ -1905,6 +1906,176 @@ func TestPublicPlanDecoderTileListEntryWorkRejectsInvalid(t *testing.T) {
 				t.Fatalf("PlanDecoderTileListEntryWork err=%v want %v", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestPublicPlanDecoderTileListEntryDecode(t *testing.T) {
+	event := publicTileListEntryDecodeEvent()
+	anchors := make([]*av1.Frame, av1.TileListMaxExternalReferences)
+	anchor := &av1.Frame{Format: av1.FrameFormat{Width: 256, Height: 256, BitDepth: 8, SubsamplingX: true, SubsamplingY: true}}
+	anchors[7] = anchor
+	references := []*av1.Frame{nil, &av1.Frame{Format: av1.FrameFormat{Width: 1, Height: 1, BitDepth: 8}}}
+	var spans [1]av1.TileSpan
+	var jobs [1]av1.TileJob
+	var batches [1]av1.TileBatch
+
+	plan, err := av1.PlanDecoderTileListEntryDecode(event, 1, 3, anchors, references, 1, spans[:], jobs[:], batches[:])
+	if err != nil {
+		t.Fatalf("PlanDecoderTileListEntryDecode: %v", err)
+	}
+	if plan.Event.Kind != av1.DecoderEventTileGroup ||
+		plan.Step.Kind != av1.DecoderFrameWorkStepTile ||
+		plan.Step.Tile.Surface != 3 ||
+		plan.ReferenceCount != 1 ||
+		plan.Step.Tile.ReferenceCount != 1 ||
+		plan.AnchorFrameIdx != 7 ||
+		!bytes.Equal(plan.Payload, []byte{0xdd, 0xee}) ||
+		!bytes.Equal(plan.Event.Unit.Payload, []byte{0xdd, 0xee}) {
+		t.Fatalf("decode plan=%+v payload=% x", plan, plan.Event.Unit.Payload)
+	}
+	if references[0] != anchor {
+		t.Fatalf("LAST reference was not bound to anchor frame: %p want %p", references[0], anchor)
+	}
+	if plan.Geometry.OutputFrameWidth != 256 || plan.Geometry.OutputFrameHeight != 128 {
+		t.Fatalf("geometry=%+v", plan.Geometry)
+	}
+	if plan.Region != (av1.TileListTileRegion{SourceX: 0, SourceY: 128, DestX: 128, DestY: 0, Width: 128, Height: 128}) {
+		t.Fatalf("region=%+v", plan.Region)
+	}
+	if spans[0] != (av1.TileSpan{Tile: 2, Row: 1, Col: 0, Offset: 0, Size: 2}) {
+		t.Fatalf("span=%+v", spans[0])
+	}
+	if jobs[0] != (av1.TileJob{
+		Tile:                2,
+		Row:                 1,
+		Col:                 0,
+		SBX:                 0,
+		SBY:                 2,
+		SBCols:              2,
+		SBRows:              2,
+		Offset:              0,
+		Size:                2,
+		LastRow:             true,
+		UpdatesFrameContext: true,
+	}) {
+		t.Fatalf("job=%+v", jobs[0])
+	}
+
+	size, scratchPlan, err := av1.DecoderTileListEntryDecodeRunnerScratchLen(event, 1, 1, spans[:], jobs[:], batches[:])
+	if err != nil {
+		t.Fatalf("DecoderTileListEntryDecodeRunnerScratchLen: %v", err)
+	}
+	if scratchPlan != plan.Step.Tile.Tile {
+		t.Fatalf("scratch plan=%+v want %+v", scratchPlan, plan.Step.Tile.Tile)
+	}
+	if size.Batch.Int32Scratch == 0 || size.Batch.ResidualScratch == 0 || size.Workers != 1 {
+		t.Fatalf("scratch size=%+v", size)
+	}
+}
+
+func TestPublicPlanDecoderTileListEntryDecodeRejectsInvalid(t *testing.T) {
+	event := publicTileListEntryDecodeEvent()
+	anchors := make([]*av1.Frame, av1.TileListMaxExternalReferences)
+	anchor := &av1.Frame{Format: av1.FrameFormat{Width: 256, Height: 256, BitDepth: 8, SubsamplingX: true, SubsamplingY: true}}
+	anchors[7] = anchor
+	stale := &av1.Frame{}
+	references := []*av1.Frame{stale}
+	var spans [1]av1.TileSpan
+	var jobs [1]av1.TileJob
+	var batches [1]av1.TileBatch
+
+	tests := []struct {
+		name    string
+		event   av1.DecoderEvent
+		index   int
+		surface int
+		anchors []*av1.Frame
+		refs    []*av1.Frame
+		want    error
+	}{
+		{name: "not-tile-list", event: av1.DecoderEvent{Kind: av1.DecoderEventFrame}, index: 0, surface: 0, anchors: anchors, refs: references, want: av1.ErrDecoderInvalidSurfaceEvent},
+		{name: "parse-error", event: func() av1.DecoderEvent {
+			bad := event
+			bad.TileListErr = av1.ErrTileListShortEntry
+			return bad
+		}(), index: 0, surface: 0, anchors: anchors, refs: references, want: av1.ErrTileListShortEntry},
+		{name: "negative-surface", event: event, index: 0, surface: -1, anchors: anchors, refs: references, want: av1.ErrDecoderInvalidSurfaceReference},
+		{name: "short-reference-table", event: event, index: 0, surface: 0, anchors: anchors, refs: nil, want: av1.ErrDecoderSurfaceReferenceBufferTooSmall},
+		{name: "missing-anchor", event: event, index: 1, surface: 0, anchors: anchors[:7], refs: references, want: av1.ErrTileListInvalidAnchorIndex},
+		{name: "nil-anchor", event: event, index: 1, surface: 0, anchors: append([]*av1.Frame(nil), anchors...), refs: references, want: av1.ErrTileListInvalidAnchorIndex},
+		{name: "bad-index", event: event, index: 2, surface: 0, anchors: anchors, refs: references, want: av1.ErrTileListInvalidTileCount},
+	}
+	tests[5].anchors[7] = nil
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			references[0] = stale
+			_, err := av1.PlanDecoderTileListEntryDecode(tc.event, tc.index, tc.surface, tc.anchors, tc.refs, 1, spans[:], jobs[:], batches[:])
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("PlanDecoderTileListEntryDecode err=%v want %v", err, tc.want)
+			}
+			if references[0] != stale {
+				t.Fatalf("references mutated on error: %p want %p", references[0], stale)
+			}
+		})
+	}
+
+	if _, _, err := av1.DecoderTileListEntryDecodeRunnerScratchLen(av1.DecoderEvent{Kind: av1.DecoderEventFrame}, 0, 1, spans[:], jobs[:], batches[:]); !errors.Is(err, av1.ErrDecoderInvalidSurfaceEvent) {
+		t.Fatalf("scratch non-tile-list err=%v want %v", err, av1.ErrDecoderInvalidSurfaceEvent)
+	}
+	parseErrEvent := event
+	parseErrEvent.TileListErr = av1.ErrTileListShortEntry
+	if _, _, err := av1.DecoderTileListEntryDecodeRunnerScratchLen(parseErrEvent, 0, 1, spans[:], jobs[:], batches[:]); !errors.Is(err, av1.ErrTileListShortEntry) {
+		t.Fatalf("scratch parse err=%v want %v", err, av1.ErrTileListShortEntry)
+	}
+}
+
+func publicTileListEntryDecodeEvent() av1.DecoderEvent {
+	return av1.DecoderEvent{
+		Kind: av1.DecoderEventTileList,
+		SequenceHeader: av1.SequenceHeader{
+			ColorConfig: av1.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
+		},
+		FrameHeader: av1.FrameHeaderPrefix{FrameType: av1.FrameTypeInter},
+		FrameSize: av1.FrameSize{
+			CodedWidth:        256,
+			UpscaledWidth:     256,
+			Height:            256,
+			RenderWidth:       256,
+			RenderHeight:      256,
+			RefreshFrameFlags: 0,
+		},
+		TileInfo: av1.TileInfo{
+			Cols:                2,
+			Rows:                2,
+			SBCols:              4,
+			SBRows:              4,
+			RefreshContext:      true,
+			ContextUpdateTileID: 2,
+			ColStartSB:          [av1.MaxTileCols + 1]uint16{0, 2, 4},
+			RowStartSB:          [av1.MaxTileRows + 1]uint16{0, 2, 4},
+		},
+		TileList: av1.TileList{
+			OutputFrameWidthInTilesMinus1:  1,
+			OutputFrameHeightInTilesMinus1: 0,
+			TileCountMinus1:                1,
+			Entries: []av1.TileListEntry{
+				{
+					AnchorFrameIdx:     0,
+					AnchorTileRow:      0,
+					AnchorTileCol:      1,
+					TileDataSizeMinus1: 2,
+					TileData:           []byte{0xaa, 0xbb, 0xcc},
+				},
+				{
+					AnchorFrameIdx:     7,
+					AnchorTileRow:      1,
+					AnchorTileCol:      0,
+					TileDataSizeMinus1: 1,
+					TileData:           []byte{0xdd, 0xee},
+				},
+			},
+		},
 	}
 }
 

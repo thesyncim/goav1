@@ -202,12 +202,16 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         |                                  | maps anchor_frame_idx to external frames.      |
 |    |                                  |         | internal/av1/decoder/work.go     | PlanDecoderTileListEntryWork maps raw entry    |
 |    |                                  |         |                                  | TileData to the single-tile residual job.      |
+|    |                                  |         | internal/av1/decoder/tile_list_decode.go | PlanDecoderTileListEntryDecode produces |
+|    |                                  |         |                                  | the synthetic tile-group event, work step,     |
+|    |                                  |         |                                  | output copy region, and LAST_FRAME reference   |
+|    |                                  |         |                                  | binding for one tile-list entry.               |
 |    |                                  |         |                                  | OutputGeometry, OutputFrameFormat,             |
 |    |                                  |         |                                  | OutputTileRegion, copy-entry, and whole-list   |
 |    |                                  |         |                                  | blit helpers cover output                      |
 |    |                                  |         |                                  | sizing/copy rectangles. EventTileList carries  |
 |    |                                  |         |                                  | the parsed structure plus TileListErr for      |
-|    |                                  |         |                                  | partial payloads. The residual decode runner   |
+|    |                                  |         |                                  | partial payloads. The stream residual runner   |
 |    |                                  |         |                                  | fails loudly with                              |
 |    |                                  |         |                                  | ErrDecoderUnsupportedTileList until            |
 |    |                                  |         |                                  | end-to-end tile-list decode (anchor-frame      |
@@ -501,12 +505,12 @@ manifest. The next production-readiness items are:
 2. **Tile list OBU playback.** `EventTileList` parsing is present with
    reference-grid anchor validation, libaom-compatible uniform tile-size
    prerequisite checks, raw tile-list entry job planning, libaom-shaped
-   external anchor-frame resolution, output geometry/format/copy-region
-   helpers, and entry-level plus whole-list decoded-tile-to-output-frame blit
-   helpers. The residual decode runner still returns
-   `ErrDecoderUnsupportedTileList` for valid layouts instead of silently
-   ignoring playback; end-to-end tile payload decode and reconstruction blitting
-   remain future work.
+   external anchor-frame resolution, per-entry LAST_FRAME binding for residual
+   decode, output geometry/format/copy-region helpers, and entry-level plus
+   whole-list decoded-tile-to-output-frame blit helpers. The stream residual
+   runner still returns `ErrDecoderUnsupportedTileList` for valid layouts
+   instead of silently ignoring playback; automatic end-to-end tile-list decode,
+   reconstruction blitting, and output publication remain future work.
 
 ---
 

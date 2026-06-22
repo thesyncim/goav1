@@ -28,7 +28,7 @@ package goav1
 //     state objects the run loop drives.
 //
 // Operations on these types live in this file, in decoder_residual_state.go,
-// decoder_residual_event.go, decoder_residual_stream.go,
+// decoder_residual_event.go, decoder_residual_stream.go, decoder_tile_list.go,
 // decoder_postfilter_bind.go, decoder_prediction.go, decoder_motion_bind.go,
 // and decoder_coeff_reconstruct.go.
 
