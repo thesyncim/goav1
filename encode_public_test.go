@@ -400,6 +400,12 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 		normalized.RateControl != goav1.EncoderRateControlCBR {
 		t.Fatalf("normalized config=%+v", normalized)
 	}
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig valid: %v", err)
+	}
+	defer enc.Close()
+	wantLive := enc.Config()
 
 	tests := []struct {
 		name string
@@ -445,6 +451,12 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 			}
 			if _, err := goav1.NewRTCEncoderWithConfig(bad); !errors.Is(err, tc.want) {
 				t.Fatalf("NewRTCEncoderWithConfig err=%v want %v", err, tc.want)
+			}
+			if err := enc.SetConfig(bad); !errors.Is(err, tc.want) {
+				t.Fatalf("SetConfig err=%v want %v", err, tc.want)
+			}
+			if got := enc.Config(); got != wantLive {
+				t.Fatalf("SetConfig mutated config to %+v want %+v", got, wantLive)
 			}
 		})
 	}
