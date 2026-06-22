@@ -1082,8 +1082,9 @@ Two pieces of bitstream syntax carry layer information:
   spatial-layer selection should follow `docs/svc.md` and the
   `cmd/dump_svc` / testvector harness patterns.
 - Tile-list playback is not wired. Tile-list OBUs parse and are
-  surfaced as events, but anchor-frame tile reuse and output-frame
-  blitting remain open.
+  surfaced as events, raw entry payloads can be planned as single-tile
+  residual jobs, and output-frame blit helpers exist, but anchor-frame
+  tile reuse plus compressed tile reconstruction remain open.
 
 ---
 

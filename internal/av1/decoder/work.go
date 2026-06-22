@@ -1908,6 +1908,52 @@ func PlanTileWork(event Event, workers int, spans []parser.TileSpan, jobs []tile
 	return PlanTileWorkPtr(&event, workers, spans, jobs, batches)
 }
 
+// PlanTileListEntryWork turns one tile_list_obu() entry into the raw single-tile
+// work item consumed by the residual runner. Tile-list payloads do not carry a
+// tile_group_obu() header; entry.TileData is already the coded tile payload for
+// entry.AnchorTileRow/Col, matching libaom's read_and_decode_one_tile_list()
+// path before it calls av1_decode_tg_tiles_and_wrapup().
+func PlanTileListEntryWork(list parser.TileList, tiles parser.TileInfo, entryIndex int, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch) (TileWorkPlan, error) {
+	if list.TileCount() != len(list.Entries) || entryIndex < 0 || entryIndex >= list.TileCount() {
+		return TileWorkPlan{}, parser.ErrTileListInvalidTileCount
+	}
+	if len(spans) < 1 {
+		return TileWorkPlan{}, ErrInvalidTileWork
+	}
+	if _, _, err := parser.ValidateTileListDecodeLayout(list, tiles); err != nil {
+		return TileWorkPlan{}, err
+	}
+	entry := list.Entries[entryIndex]
+	size := entry.TileDataSize()
+	if len(entry.TileData) < size {
+		return TileWorkPlan{}, parser.ErrTileListShortTileData
+	}
+	if len(entry.TileData) > size {
+		return TileWorkPlan{}, parser.ErrTileListTrailingBytes
+	}
+	tileIndex := uint16(entry.AnchorTileRow)*uint16(tiles.Cols) + uint16(entry.AnchorTileCol)
+	spans[0] = parser.TileSpan{
+		Tile:   tileIndex,
+		Row:    entry.AnchorTileRow,
+		Col:    entry.AnchorTileCol,
+		Offset: 0,
+		Size:   uint32(size),
+	}
+	jobCount, err := tile.BuildJobs(jobs, tiles, spans[:1])
+	if err != nil {
+		return TileWorkPlan{}, err
+	}
+	batchCount, err := threading.BuildBatches(batches, jobs[:jobCount], workers)
+	if err != nil {
+		return TileWorkPlan{}, err
+	}
+	return TileWorkPlan{
+		SpanCount:  1,
+		JobCount:   jobCount,
+		BatchCount: batchCount,
+	}, nil
+}
+
 // PlanTileWorkPtr is the pointer-shaped twin of PlanTileWork for internal
 // callers that scan parsed event slices and should not copy Event values just
 // to plan tile payload spans.

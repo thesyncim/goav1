@@ -1767,6 +1767,147 @@ func TestPublicDecoderFrameWorkResidualEventRunnerValidatesTileListLayout(t *tes
 	}
 }
 
+func TestPublicPlanDecoderTileListEntryWork(t *testing.T) {
+	list := av1.TileList{
+		OutputFrameWidthInTilesMinus1:  1,
+		OutputFrameHeightInTilesMinus1: 0,
+		TileCountMinus1:                1,
+		Entries: []av1.TileListEntry{
+			{
+				AnchorFrameIdx:     0,
+				AnchorTileRow:      0,
+				AnchorTileCol:      1,
+				TileDataSizeMinus1: 2,
+				TileData:           []byte{0xaa, 0xbb, 0xcc},
+			},
+			{
+				AnchorFrameIdx:     0,
+				AnchorTileRow:      1,
+				AnchorTileCol:      0,
+				TileDataSizeMinus1: 1,
+				TileData:           []byte{0xdd, 0xee},
+			},
+		},
+	}
+	tiles := av1.TileInfo{
+		Cols:                2,
+		Rows:                2,
+		SBCols:              4,
+		SBRows:              4,
+		RefreshContext:      true,
+		ContextUpdateTileID: 2,
+		ColStartSB:          [av1.MaxTileCols + 1]uint16{0, 2, 4},
+		RowStartSB:          [av1.MaxTileRows + 1]uint16{0, 2, 4},
+	}
+	var spans [1]av1.TileSpan
+	var jobs [1]av1.TileJob
+	var batches [1]av1.TileBatch
+
+	plan, err := av1.PlanDecoderTileListEntryWork(list, tiles, 1, 1, spans[:], jobs[:], batches[:])
+	if err != nil {
+		t.Fatalf("PlanDecoderTileListEntryWork: %v", err)
+	}
+	if plan.SpanCount != 1 || plan.JobCount != 1 || plan.BatchCount != 1 {
+		t.Fatalf("plan=%+v want 1/1/1", plan)
+	}
+	if spans[0] != (av1.TileSpan{Tile: 2, Row: 1, Col: 0, Offset: 0, Size: 2}) {
+		t.Fatalf("span=%+v", spans[0])
+	}
+	if jobs[0] != (av1.TileJob{
+		Tile:                2,
+		Row:                 1,
+		Col:                 0,
+		SBX:                 0,
+		SBY:                 2,
+		SBCols:              2,
+		SBRows:              2,
+		Offset:              0,
+		Size:                2,
+		LastRow:             true,
+		UpdatesFrameContext: true,
+	}) {
+		t.Fatalf("job=%+v", jobs[0])
+	}
+	if batches[0] != (av1.TileBatch{FirstJob: 0, Count: 1, Units: 4, Worker: 0, FirstTile: 2, LastTile: 2}) {
+		t.Fatalf("batch=%+v", batches[0])
+	}
+	payload, err := jobs[0].Payload(list.Entries[1].TileData)
+	if err != nil {
+		t.Fatalf("job payload: %v", err)
+	}
+	if len(payload) != 2 || payload[0] != 0xdd || payload[1] != 0xee {
+		t.Fatalf("payload=% x", payload)
+	}
+}
+
+func TestPublicPlanDecoderTileListEntryWorkRejectsInvalid(t *testing.T) {
+	list := av1.TileList{
+		OutputFrameWidthInTilesMinus1:  0,
+		OutputFrameHeightInTilesMinus1: 0,
+		TileCountMinus1:                0,
+		Entries: []av1.TileListEntry{{
+			AnchorFrameIdx:     0,
+			AnchorTileRow:      0,
+			AnchorTileCol:      0,
+			TileDataSizeMinus1: 0,
+			TileData:           []byte{0xaa},
+		}},
+	}
+	tiles := av1.TileInfo{
+		Cols:       1,
+		Rows:       1,
+		SBCols:     2,
+		SBRows:     2,
+		ColStartSB: [av1.MaxTileCols + 1]uint16{0, 2},
+		RowStartSB: [av1.MaxTileRows + 1]uint16{0, 2},
+	}
+	var spans [1]av1.TileSpan
+	var jobs [1]av1.TileJob
+	var batches [1]av1.TileBatch
+
+	tests := []struct {
+		name  string
+		list  av1.TileList
+		tiles av1.TileInfo
+		index int
+		spans []av1.TileSpan
+		want  error
+	}{
+		{name: "entry-index", list: list, tiles: tiles, index: 1, spans: spans[:], want: av1.ErrTileListInvalidTileCount},
+		{name: "short-spans", list: list, tiles: tiles, index: 0, spans: spans[:0], want: av1.ErrDecoderInvalidTileWork},
+		{name: "short-tile-data", list: func() av1.TileList {
+			short := list
+			short.Entries = append([]av1.TileListEntry(nil), list.Entries...)
+			short.Entries[0].TileDataSizeMinus1 = 2
+			short.Entries[0].TileData = []byte{0xaa, 0xbb}
+			return short
+		}(), tiles: tiles, index: 0, spans: spans[:], want: av1.ErrTileListShortTileData},
+		{name: "long-tile-data", list: func() av1.TileList {
+			long := list
+			long.Entries = append([]av1.TileListEntry(nil), list.Entries...)
+			long.Entries[0].TileDataSizeMinus1 = 0
+			long.Entries[0].TileData = []byte{0xaa, 0xbb}
+			return long
+		}(), tiles: tiles, index: 0, spans: spans[:], want: av1.ErrTileListTrailingBytes},
+		{name: "non-uniform-layout", list: list, tiles: func() av1.TileInfo {
+			nonUniform := tiles
+			nonUniform.Cols = 2
+			nonUniform.SBCols = 5
+			nonUniform.ColStartSB = [av1.MaxTileCols + 1]uint16{0, 2, 5}
+			return nonUniform
+		}(), index: 0, spans: spans[:], want: av1.ErrTileListNonUniformTileSize},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := av1.PlanDecoderTileListEntryWork(tc.list, tc.tiles, tc.index, 1, tc.spans, jobs[:], batches[:])
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("PlanDecoderTileListEntryWork err=%v want %v", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestPublicDecoderFrameWorkResidualEventRunnerShowExistingOutput(t *testing.T) {
 	sequence := av1.SequenceHeader{ColorConfig: av1.ColorConfig{
 		BitDepth:   8,

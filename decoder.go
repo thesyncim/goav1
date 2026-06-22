@@ -536,6 +536,13 @@ func PlanDecoderTileWork(event DecoderEvent, workers int, spans []TileSpan, jobs
 	return internaldecoder.PlanTileWork(event, workers, spans, jobs, batches)
 }
 
+// PlanDecoderTileListEntryWork builds the single-tile decode plan for one
+// tile-list entry. Unlike PlanDecoderTileWork, entry.TileData is raw coded tile
+// bytes and is not parsed as a tile_group_obu() payload.
+func PlanDecoderTileListEntryWork(list TileList, tiles TileInfo, entryIndex int, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderTileWorkPlan, error) {
+	return internaldecoder.PlanTileListEntryWork(list, tiles, entryIndex, workers, spans, jobs, batches)
+}
+
 func planDecoderTileWorkPtr(event *DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderTileWorkPlan, error) {
 	return internaldecoder.PlanTileWorkPtr(event, workers, spans, jobs, batches)
 }
