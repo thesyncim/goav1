@@ -75,46 +75,6 @@ const (
 	EncoderScalabilityModeS3T3h          = internalencoder.ScalabilityModeS3T3h
 )
 
-var encoderWebRTCScalabilityModes = [...]EncoderScalabilityMode{
-	EncoderScalabilityModeL1T1,
-	EncoderScalabilityModeL1T2,
-	EncoderScalabilityModeL1T3,
-	EncoderScalabilityModeL2T1,
-	EncoderScalabilityModeL2T1h,
-	EncoderScalabilityModeL2T1_KEY,
-	EncoderScalabilityModeL2T2,
-	EncoderScalabilityModeL2T2h,
-	EncoderScalabilityModeL2T2_KEY,
-	EncoderScalabilityModeL2T2_KEY_SHIFT,
-	EncoderScalabilityModeL2T3,
-	EncoderScalabilityModeL2T3h,
-	EncoderScalabilityModeL2T3_KEY,
-	EncoderScalabilityModeL2T3_KEY_SHIFT,
-	EncoderScalabilityModeL3T1,
-	EncoderScalabilityModeL3T1h,
-	EncoderScalabilityModeL3T1_KEY,
-	EncoderScalabilityModeL3T2,
-	EncoderScalabilityModeL3T2h,
-	EncoderScalabilityModeL3T2_KEY,
-	EncoderScalabilityModeL3T2_KEY_SHIFT,
-	EncoderScalabilityModeL3T3,
-	EncoderScalabilityModeL3T3h,
-	EncoderScalabilityModeL3T3_KEY,
-	EncoderScalabilityModeL3T3_KEY_SHIFT,
-	EncoderScalabilityModeS2T1,
-	EncoderScalabilityModeS2T1h,
-	EncoderScalabilityModeS2T2,
-	EncoderScalabilityModeS2T2h,
-	EncoderScalabilityModeS2T3,
-	EncoderScalabilityModeS2T3h,
-	EncoderScalabilityModeS3T1,
-	EncoderScalabilityModeS3T1h,
-	EncoderScalabilityModeS3T2,
-	EncoderScalabilityModeS3T2h,
-	EncoderScalabilityModeS3T3,
-	EncoderScalabilityModeS3T3h,
-}
-
 type EncoderRational = internalencoder.Rational
 type EncoderResolution = internalencoder.Resolution
 type EncoderRateControlMode = internalencoder.RateControlMode
@@ -339,16 +299,15 @@ func ParseEncoderScalabilityMode(mode string) (EncoderScalabilityMode, bool) {
 // EncoderWebRTCScalabilityModes returns the W3C WebRTC SVC scalabilityMode
 // values supported by the WebRTC encoder/control surfaces.
 func EncoderWebRTCScalabilityModes() []EncoderScalabilityMode {
-	out := make([]EncoderScalabilityMode, len(encoderWebRTCScalabilityModes))
-	copy(out, encoderWebRTCScalabilityModes[:])
-	return out
+	out := make([]EncoderScalabilityMode, 0, internalencoder.WebRTCScalabilityModeCount())
+	return internalencoder.AppendWebRTCScalabilityModes(out)
 }
 
 // AppendEncoderWebRTCScalabilityModes appends the W3C WebRTC SVC
 // scalabilityMode values supported by the WebRTC encoder/control surfaces to
 // dst and returns the extended slice.
 func AppendEncoderWebRTCScalabilityModes(dst []EncoderScalabilityMode) []EncoderScalabilityMode {
-	return append(dst, encoderWebRTCScalabilityModes[:]...)
+	return internalencoder.AppendWebRTCScalabilityModes(dst)
 }
 
 func DefaultEncoderScalabilityMode(temporalLayers uint8, spatialLayers uint8) (EncoderScalabilityMode, bool) {

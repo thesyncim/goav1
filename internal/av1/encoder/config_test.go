@@ -165,6 +165,23 @@ func TestScalabilityModeAllWebRTCSVCModes(t *testing.T) {
 	}
 }
 
+func TestAppendWebRTCScalabilityModesCoversEnum(t *testing.T) {
+	prefix := []ScalabilityMode{ScalabilityModeL3T3}
+	modes := AppendWebRTCScalabilityModes(prefix)
+	if len(modes) != WebRTCScalabilityModeCount()+1 {
+		t.Fatalf("len=%d want %d", len(modes), WebRTCScalabilityModeCount()+1)
+	}
+	if modes[0] != ScalabilityModeL3T3 {
+		t.Fatalf("prefix mutated to %s", modes[0])
+	}
+	for i, mode := range modes[1:] {
+		want := ScalabilityMode(i)
+		if mode != want || !mode.Valid() {
+			t.Fatalf("mode[%d]=%s valid=%v want %s", i+1, mode, mode.Valid(), want)
+		}
+	}
+}
+
 func TestDefaultScalabilityMode(t *testing.T) {
 	mode, ok := DefaultScalabilityMode(3, 2)
 	if !ok || mode != ScalabilityModeL2T3_KEY {

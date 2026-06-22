@@ -245,6 +245,17 @@ func ParseScalabilityMode(mode string) (ScalabilityMode, bool) {
 	}
 }
 
+func WebRTCScalabilityModeCount() int {
+	return int(scalabilityModeCount)
+}
+
+func AppendWebRTCScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
+	for mode := ScalabilityMode(0); mode < scalabilityModeCount; mode++ {
+		dst = append(dst, mode)
+	}
+	return dst
+}
+
 func (m ScalabilityMode) Layers() (spatial uint8, temporal uint8, key bool, ok bool) {
 	if !m.Valid() {
 		return 0, 0, false, false
