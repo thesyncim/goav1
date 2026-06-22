@@ -647,6 +647,66 @@ func TestAV1SDPRTCPFeedbackScanning(t *testing.T) {
 	}
 }
 
+func TestAV1SDPRTCPFeedbackSDP(t *testing.T) {
+	pli := av1.AV1SDPRTCPFeedback{
+		PayloadType: "98",
+		Feedback:    " NACK   PLI ",
+	}
+	line, err := pli.SDP()
+	if err != nil {
+		t.Fatalf("PLI SDP: %v", err)
+	}
+	if line != "a=rtcp-fb:98 nack pli" {
+		t.Fatalf("PLI SDP line=%q", line)
+	}
+	prefix := []byte("x")
+	appended, err := (av1.AV1SDPRTCPFeedback{
+		PayloadType: "*",
+		Feedback:    av1.AV1SDPRTCPFeedbackLRR,
+	}).AppendSDP(prefix)
+	if err != nil {
+		t.Fatalf("wildcard LRR AppendSDP: %v", err)
+	}
+	if string(appended) != "xa=rtcp-fb:* ccm lrr" {
+		t.Fatalf("wildcard LRR line=%q", appended)
+	}
+
+	sdp := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98",
+		"a=rtpmap:98 AV1/90000",
+		line,
+		string(appended[1:]),
+	)
+	if !av1.AV1SDPNegotiatesRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackPLI) {
+		t.Fatal("generated PLI rtcp-fb line did not negotiate")
+	}
+	if !av1.AV1SDPNegotiatesRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackLRR) {
+		t.Fatal("generated wildcard LRR rtcp-fb line did not negotiate")
+	}
+}
+
+func TestAV1SDPRTCPFeedbackRejectsInvalid(t *testing.T) {
+	tests := []av1.AV1SDPRTCPFeedback{
+		{PayloadType: "", Feedback: av1.AV1SDPRTCPFeedbackPLI},
+		{PayloadType: "av1", Feedback: av1.AV1SDPRTCPFeedbackPLI},
+		{PayloadType: "128", Feedback: av1.AV1SDPRTCPFeedbackPLI},
+		{PayloadType: "98\n99", Feedback: av1.AV1SDPRTCPFeedbackPLI},
+		{PayloadType: "98", Feedback: ""},
+		{PayloadType: "98", Feedback: "nack\npli"},
+	}
+	for _, tc := range tests {
+		if err := tc.Validate(); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+			t.Fatalf("Validate(%+v) err=%v want %v", tc, err, av1.ErrSDPInvalidConfig)
+		}
+		if out, err := tc.AppendSDP([]byte("prefix")); !errors.Is(err, av1.ErrSDPInvalidConfig) || string(out) != "prefix" {
+			t.Fatalf("AppendSDP(%+v) out=%q err=%v", tc, out, err)
+		}
+		if line, err := tc.SDP(); !errors.Is(err, av1.ErrSDPInvalidConfig) || line != "" {
+			t.Fatalf("SDP(%+v) line=%q err=%v", tc, line, err)
+		}
+	}
+}
+
 func TestAV1SDPHeaderExtensionScanning(t *testing.T) {
 	sdp := joinAV1SDPLines(
 		"m=video 9 UDP/TLS/RTP/SAVPF 96 98",

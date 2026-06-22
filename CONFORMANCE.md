@@ -304,7 +304,8 @@ ship under `internal/av1/testdata/libaom/`.
   W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures,
   dependency-descriptor decode-target grids, W3C key-shift temporal schedules,
   pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates, AV1/90000 SDP/fmtp
-  negotiation parameters, RTP header-extension mapping checks, raw RTP
+  negotiation parameters, SDP rtcp-fb emission/checks, RTP header-extension
+  mapping checks, raw RTP
   MID/RID/RRID SDES payload helpers, AV1 RID receiver restrictions, AV1
   simulcast RID groups, RTCP NACK/PLI/FIR feedback helpers, AV1 RTCP LRR FCI
   entry/list parsing, serialization, and layer-grid validation for

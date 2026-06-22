@@ -113,6 +113,13 @@ type AV1SDPExtmap struct {
 	Attributes string
 }
 
+// AV1SDPRTCPFeedback holds one SDP a=rtcp-fb attribute. PayloadType is a media
+// payload type such as "98", or "*" for a wildcard feedback declaration.
+type AV1SDPRTCPFeedback struct {
+	PayloadType string
+	Feedback    string
+}
+
 // AV1SDPRIDRestrictions holds the AV1 interpretation of RFC 8851 RID video
 // restrictions. Zero numeric fields mean the corresponding optional
 // restriction was not declared, or was declared without a concrete value.
@@ -323,6 +330,56 @@ func (e AV1SDPExtmap) SDP() (string, error) {
 		return "", err
 	}
 	return string(buf), nil
+}
+
+// Validate rejects malformed rtcp-fb attributes.
+func (f AV1SDPRTCPFeedback) Validate() error {
+	_, _, err := f.normalized()
+	return err
+}
+
+// AppendSDP appends a complete a=rtcp-fb SDP attribute.
+func (f AV1SDPRTCPFeedback) AppendSDP(dst []byte) ([]byte, error) {
+	payloadType, feedback, err := f.normalized()
+	if err != nil {
+		return dst, err
+	}
+	dst = append(dst, "a=rtcp-fb:"...)
+	dst = append(dst, payloadType...)
+	dst = append(dst, ' ')
+	dst = append(dst, feedback...)
+	return dst, nil
+}
+
+// SDP returns a complete a=rtcp-fb SDP attribute.
+func (f AV1SDPRTCPFeedback) SDP() (string, error) {
+	buf, err := f.AppendSDP(nil)
+	if err != nil {
+		return "", err
+	}
+	return string(buf), nil
+}
+
+func (f AV1SDPRTCPFeedback) normalized() (payloadType string, feedback string, err error) {
+	payloadType = strings.TrimSpace(f.PayloadType)
+	if payloadType == "" ||
+		(payloadType != "*" && !av1SDPValidPayloadType(payloadType)) {
+		return "", "", ErrSDPInvalidConfig
+	}
+	rawFeedback := strings.TrimSpace(f.Feedback)
+	if strings.ContainsAny(rawFeedback, "\r\n") {
+		return "", "", ErrSDPInvalidConfig
+	}
+	parts := strings.Fields(strings.ToLower(rawFeedback))
+	if len(parts) == 0 {
+		return "", "", ErrSDPInvalidConfig
+	}
+	for _, part := range parts {
+		if !av1SDPValidToken(part) {
+			return "", "", ErrSDPInvalidConfig
+		}
+	}
+	return payloadType, strings.Join(parts, " "), nil
 }
 
 // Validate rejects nonsensical RID restriction values. Zero numeric values are
@@ -1504,6 +1561,36 @@ func av1SDPTokenChar(ch byte) bool {
 		(ch >= 0x30 && ch <= 0x39) ||
 		(ch >= 0x41 && ch <= 0x5a) ||
 		(ch >= 0x5e && ch <= 0x7e)
+}
+
+func av1SDPValidToken(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if !av1SDPTokenChar(value[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func av1SDPValidPayloadType(value string) bool {
+	if value == "" {
+		return false
+	}
+	pt := 0
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if ch < '0' || ch > '9' {
+			return false
+		}
+		pt = pt*10 + int(ch-'0')
+		if pt > 127 {
+			return false
+		}
+	}
+	return true
 }
 
 func av1SDPValidRIDID(value string) bool {
