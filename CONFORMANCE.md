@@ -40,9 +40,9 @@ ship under `internal/av1/testdata/libaom/`.
 |    | Profile 1 (High)                 | Yes     | internal/av1/parser/sequence.go  | 4:4:4 8/10-bit all-intra, inter, palette,      |
 |    |                                  |         | internal/av1/testvector/profiles | CDEF/restoration, odd edge-size filters,       |
 |    |                                  |         |                                  | edge-motion, film grain, super-res clips pass. |
-|    | Profile 2 (Professional)         | Partial | internal/av1/parser/sequence.go  | 4:2:2 8/10/12-bit and 4:2:0 12-bit edge,       |
-|    |                                  |         | internal/av1/testvector/profiles | film-grain, and super-res clips pass; broader  |
-|    |                                  |         |                                  | high-bit-depth vector sweep                     |
+|    | Profile 2 (Professional)         | Partial | internal/av1/parser/sequence.go  | 4:2:2 8/10/12-bit plus 4:2:0 and 4:4:4        |
+|    |                                  |         | internal/av1/testvector/profiles | 12-bit edge, film-grain, and super-res clips   |
+|    |                                  |         |                                  | pass; broader high-bit-depth vector sweep      |
 |    |                                  |         |                                  | covered by opt-in extended gates.              |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 |  2 | Bit depth 8                      | Yes     | internal/av1/frame/              | Full pipeline; primary conformance target.     |
@@ -50,16 +50,16 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         | internal/av1/loopfilter/         | vectors pass strict per-frame MD5.             |
 |    |                                  |         | internal/av1/transform/          |                                                |
 |    |                                  |         | internal/av1/quantize/           |                                                |
-|    | Bit depth 12                     | Partial | internal/av1/frame/              | Vendored 12-bit profile-2 4:2:0 and 4:2:2     |
-|    |                                  |         | internal/av1/loopfilter/         | clips pass byte-exactly; wider 12-bit coverage |
+|    | Bit depth 12                     | Partial | internal/av1/frame/              | Vendored 12-bit profile-2 4:2:0, 4:2:2, and   |
+|    |                                  |         | internal/av1/loopfilter/         | 4:4:4 clips pass byte-exactly; wider coverage  |
 |    |                                  |         |                                  | still limited.                                 |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 |  3 | Subsampling 4:2:0                | Yes     | internal/av1/parser/sequence.go  | Default decode layout; covered by every fast   |
 |    |                                  |         | internal/av1/frame/              | conformance vector.                            |
 |    | Subsampling 4:2:2                | Yes     | internal/av1/parser/sequence.go  | 4:2:2 8-bit all-intra/inter plus 10/12-bit    |
 |    |                                  |         | internal/av1/testvector/profiles | edge clips pass byte-exactly.                  |
-|    | Subsampling 4:4:4                | Yes     | internal/av1/parser/sequence.go  | 4:4:4 8/10-bit all-intra and inter profile    |
-|    |                                  |         | internal/av1/testvector/profiles | clips pass byte-exactly.                       |
+|    | Subsampling 4:4:4                | Yes     | internal/av1/parser/sequence.go  | 4:4:4 8/10-bit all-intra/inter and 12-bit     |
+|    |                                  |         | internal/av1/testvector/profiles | edge clips pass byte-exactly.                  |
 |    | Monochrome (4:0:0)               | Yes     | internal/av1/frame/              | Surfaces drop the UV planes; 8-bit and 10-bit  |
 |    |                                  |         | internal/av1/parser/sequence.go  | libaom monochrome vectors pass strict MD5.     |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
@@ -353,14 +353,15 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 37/37 vendored profile clips pass, covering
+- `make dryrun-profiles`: 38/38 vendored profile clips pass, covering
   profile 0 4:2:0 8-bit S_FRAME altref,
   profile 1 4:4:4 8/10-bit all-intra, inter, screen-content palette,
   CDEF/restoration, 8/10-bit odd edge-size CDEF/restoration, 8/10-bit film grain,
   8/10-bit edge-motion, 8-bit multi-tile, 10-bit inter multi-tile, all-key
   superres, inter superres, and 10-bit superres plus loop restoration,
   profile 2 4:2:2 8-bit all-intra/inter, profile 2 4:2:2 10/12-bit edge-size,
-  profile 2 4:2:0 12-bit including odd edge sizes, 12-bit film grain,
+  profile 2 4:4:4 12-bit edge-size, profile 2 4:2:0 12-bit including
+  odd edge sizes, 12-bit film grain,
   12-bit superres, 8-bit superres,
   superres plus loop restoration, a forced-root 128x128 superblock clip,
   edge-MV, and a non-SVC multi-tile clip.
@@ -490,10 +491,10 @@ manifest. The next production-readiness items are:
 
 1. **Broader real-world/profile corpus.** Keep expanding the local generated
    real-content corpus and add small committed representative clips when the
-   licensing/size tradeoff is acceptable. Keep adding profile-2 12-bit 4:4:4
-   streams and broader 10/12-bit 4:2:2 inter/filter combinations as upstream
-   or locally generated goldens become available; the current vendored corpus
-   includes profile-1 4:4:4 8/10-bit odd-size CDEF/restoration,
+   licensing/size tradeoff is acceptable. Keep adding broader profile-2 12-bit
+   4:4:4 inter/filter combinations and 10/12-bit 4:2:2 inter/filter streams
+   as upstream or locally generated goldens become available; the current
+   vendored corpus includes profile-1 4:4:4 8/10-bit odd-size CDEF/restoration,
    8/10-bit edge-motion, 10-bit inter multi-tile,
    and 10-bit superres plus loop restoration, plus 4:2:0 12-bit odd-size CDEF,
    film grain, edge-motion, and super-res coverage.

@@ -251,6 +251,11 @@
 //	  input_bit_depth=12, chroma_subsampling_x=1, chroma_subsampling_y=0,
 //	  cpu-used=4, q=34, kf-min/max-dist=1, lag-in-frames=0,
 //	  enable-cdef=0, enable-restoration=0.
+//	# 4:4:4 12-bit odd edge-size:
+//	libaom encoder API, AOM_IMG_FMT_I44416, profile=2, bit_depth=12,
+//	  input_bit_depth=12, cpu-used=8, q=34, kf-min/max-dist=1,
+//	  lag-in-frames=0, enable-cdef=0, enable-restoration=0,
+//	  enable-palette=0.
 //	# 4:2:0 12-bit:
 //	aomenc --i420 ... --profile=2 --bit-depth=12 --input-bit-depth=12 \
 //	  --cq-level=40 ... -o profile2-420-12bit-64x64.ivf src420_12.yuv
@@ -533,6 +538,21 @@ var profileClips = []profileClip{
 		wantSeqProfile:   2,
 		wantBitDepth:     12,
 		wantSubsamplingX: true,
+		wantSubsamplingY: false,
+	},
+	{
+		// Profile 2: 4:4:4 12-bit odd 66x66 size, guarding maximum bit depth
+		// with no chroma subsampling.
+		name: "profile2-444-12bit-66x66",
+		file: "profile2-444-12bit-66x66.ivf",
+		frameMD5Hex: []string{
+			"949936ee55d10f23afd156c8aa5f9564",
+			"e70adc26dabc35bd3cc294e2eeca4c5c",
+			"b4951e75489506c04dfc110213b53031",
+		},
+		wantSeqProfile:   2,
+		wantBitDepth:     12,
+		wantSubsamplingX: false,
 		wantSubsamplingY: false,
 	},
 	{

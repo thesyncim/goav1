@@ -162,8 +162,8 @@ result buffer directly. The executable examples in `example_test.go` and
 | Area | Status |
 | --- | --- |
 | Containers and transport | IVF, AV1 low-overhead OBU, Annex B, Section 5 temporal units, AV1 RTP payload parse/build/fragment/reassemble, AV1 SDP/fmtp/profile/level/tier/extmap/RID/simulcast/rtcp-fb helpers, RTP MID/RID/CVO/playout-delay/TWCC/TWCC-02/absolute-send-time/absolute-capture-time/color-space/video-content-type/video-timing payload helpers, RTCP generic/compound/SR/RR/SDES/BYE/NACK/Transport-CC/PLI/FIR/REMB and AV1 LRR helpers |
-| Decoder profiles | Profile 0 and Profile 1 pass committed/vendored strict-MD5 gates; Profile 2 has passing 4:2:2 8/10/12-bit and 4:2:0 12-bit profile clips, with wider 12-bit breadth still expanding |
-| Bit depths and formats | 8-bit and 10-bit covered broadly; 12-bit covered by targeted profile-2 4:2:0 and 4:2:2 clips; 4:2:0, 4:2:2, 4:4:4, and monochrome surfaces |
+| Decoder profiles | Profile 0 and Profile 1 pass committed/vendored strict-MD5 gates; Profile 2 has passing 4:2:2 8/10/12-bit plus 4:2:0 and 4:4:4 12-bit profile clips, with wider 12-bit breadth still expanding |
+| Bit depths and formats | 8-bit and 10-bit covered broadly; 12-bit covered by targeted profile-2 4:2:0, 4:2:2, and 4:4:4 clips; 4:2:0, 4:2:2, 4:4:4, and monochrome surfaces |
 | Prediction and residuals | Intra, directional intra, filter intra, CfL, palette, IntraBC, inter/compound, OBMC, warped motion, scaled motion, transforms, dequantization, and CDF adaptation |
 | Post filters | Loop filter, CDEF, super-resolution, loop restoration, and film grain are wired into the high-level decode/output path |
 | WebRTC RTP decode | `NewDecoderFromRTPPayloads` covers ordered/live RTP payload bodies for single decode chains and simulcast layers; `NewLayeredDecoderFromRTPPayloads` covers shared-reference SVC RTP streams; `DecodeRTPPayloadAfterLoss` resets retained fragments after packet gaps |
@@ -302,7 +302,7 @@ this repository's strict framework gates:
 | `make dryrun-relevant-supported` | 14/14 relevant vectors pass, including 8/10-bit film grain and monochrome |
 | `make dryrun-full` | 240/240 committed remote libaom vectors pass |
 | `make dryrun-extended` | 226/226 opt-in diagnostic vectors pass, including quantizer sweeps, odd/larger sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage |
-| `make dryrun-profiles` | 37/37 vendored profile clips pass, including profile-0 S_FRAME, profile-1 4:4:4, profile-2 4:2:2 8/10/12-bit, targeted 12-bit profile-2, CDEF/restoration, super-res, film grain, edge-motion, and non-SVC multi-tile clips |
+| `make dryrun-profiles` | 38/38 vendored profile clips pass, including profile-0 S_FRAME, profile-1 4:4:4, profile-2 4:2:2 8/10/12-bit, profile-2 4:4:4 12-bit, targeted 12-bit profile-2, CDEF/restoration, super-res, film grain, edge-motion, and non-SVC multi-tile clips |
 
 Optional local corpus lanes are available for broader real-world coverage:
 

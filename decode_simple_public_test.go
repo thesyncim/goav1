@@ -198,6 +198,14 @@ var profileClips = []struct {
 		},
 	},
 	{
+		file: "profile2-444-12bit-66x66.ivf",
+		frameMD5Hex: []string{
+			"949936ee55d10f23afd156c8aa5f9564",
+			"e70adc26dabc35bd3cc294e2eeca4c5c",
+			"b4951e75489506c04dfc110213b53031",
+		},
+	},
+	{
 		file: "profile2-422-8bit-inter-64x64.ivf",
 		frameMD5Hex: []string{
 			"e10a47c64fa7318c45ce0762bea3f0ce",
