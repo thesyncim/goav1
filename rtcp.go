@@ -2168,6 +2168,37 @@ func EncoderWebRTCRTCPFeedbackRequiresKeyFrame(
 	}
 }
 
+// EncoderWebRTCRTCPPacketsRequireKeyFrame scans parsed generic RTCP packets and
+// reports whether any RTPFB/PSFB feedback packet should force the next WebRTC
+// encoder picture to be a key picture. Non-feedback RTCP packets are ignored.
+func EncoderWebRTCRTCPPacketsRequireKeyFrame(
+	config EncoderConfig,
+	packets []RTCPPacket,
+	firScratch []RTCPFullIntraRequestEntry,
+	lrrScratch []AV1RTCPLayerRefreshRequestEntry,
+) (bool, error) {
+	for i := range packets {
+		packet := packets[i]
+		if packet.PacketType != RTCPRTPFBPacketType && packet.PacketType != RTCPPSFBPacketType {
+			continue
+		}
+		if len(packet.Payload) < RTCPFeedbackCommonSize {
+			return false, ErrRTCPInvalidFeedback
+		}
+		force, err := EncoderWebRTCRTCPFeedbackRequiresKeyFrame(config, RTCPFeedbackPacket{
+			PacketType: packet.PacketType,
+			FMT:        packet.Count,
+			SenderSSRC: binary.BigEndian.Uint32(packet.Payload[0:4]),
+			MediaSSRC:  binary.BigEndian.Uint32(packet.Payload[4:8]),
+			FCI:        packet.Payload[RTCPFeedbackCommonSize:],
+		}, firScratch, lrrScratch)
+		if err != nil || force {
+			return force, err
+		}
+	}
+	return false, nil
+}
+
 func encoderWebRTCValidateLayerRefreshRequestForConfig(
 	normalized EncoderConfig, entry AV1RTCPLayerRefreshRequestEntry,
 ) error {

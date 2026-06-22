@@ -11,9 +11,10 @@
 // caller-owned RTP sizing, generic and compound RTCP packet helpers, RTCP
 // SR/RR/SDES/BYE and RTPFB/PSFB packet helpers, RTCP
 // NACK/Transport-CC/PLI/FIR/REMB FCI helpers, AV1 RTCP Layer Refresh Request
-// FCI list helpers, RTCP feedback force-key classification, sequence-header
-// parsing, caller-owned frame pools and sample-plane scratch helpers, DSP
-// block/blend helpers, intra/inter prediction, decoder
+// FCI list helpers, RTCP feedback force-key classification for single and
+// compound packets, sequence-header parsing, caller-owned frame pools and
+// sample-plane scratch helpers, DSP block/blend helpers, intra/inter
+// prediction, decoder
 // frame-work prediction bridges, residual reconstruction primitives,
 // post-reconstruction filtering helpers, AV1 SDP/rtpmap/fmtp/rtcp-fb
 // capability parsing and emission, tile block/transform

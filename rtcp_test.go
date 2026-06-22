@@ -1136,6 +1136,87 @@ func TestEncoderWebRTCRTCPFeedbackRequiresKeyFrameRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestEncoderWebRTCRTCPPacketsRequireKeyFrame(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:   av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability:  av1.EncoderScalabilityModeL2T2,
+		MaxFramerate: av1.EncoderRational{Num: 30, Den: 1},
+	}
+
+	var compound []byte
+	var err error
+	compound, err = av1.AppendRTCPSenderReportPacket(make([]byte, 0, 128), av1.RTCPSenderReport{
+		SenderSSRC: 0x01020304,
+	})
+	if err != nil {
+		t.Fatalf("AppendRTCPSenderReportPacket: %v", err)
+	}
+	compound, err = av1.AppendRTCPFeedbackPacket(compound, av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPRTPFBPacketType,
+		FMT:        av1.RTCPRTPFBGenericNACKFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0x05060708,
+	})
+	if err != nil {
+		t.Fatalf("AppendRTCPFeedbackPacket NACK: %v", err)
+	}
+	compound, err = av1.AppendRTCPFeedbackPacket(compound, av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBPictureLossIndicationFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0x05060708,
+	})
+	if err != nil {
+		t.Fatalf("AppendRTCPFeedbackPacket PLI: %v", err)
+	}
+
+	packets, err := av1.ParseRTCPCompoundPackets(compound, make([]av1.RTCPPacket, 0, 3))
+	if err != nil {
+		t.Fatalf("ParseRTCPCompoundPackets: %v", err)
+	}
+	force, err := av1.EncoderWebRTCRTCPPacketsRequireKeyFrame(
+		cfg,
+		packets,
+		make([]av1.RTCPFullIntraRequestEntry, 0, 1),
+		make([]av1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+	)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTCPPacketsRequireKeyFrame: %v", err)
+	}
+	if !force {
+		t.Fatal("compound feedback did not require key frame")
+	}
+
+	transportOnly := packets[:2]
+	force, err = av1.EncoderWebRTCRTCPPacketsRequireKeyFrame(cfg, transportOnly, nil, nil)
+	if err != nil {
+		t.Fatalf("transport-only compound decision: %v", err)
+	}
+	if force {
+		t.Fatal("transport-only compound required key frame")
+	}
+}
+
+func TestEncoderWebRTCRTCPPacketsRequireKeyFrameRejectsInvalid(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:   av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability:  av1.EncoderScalabilityModeL2T2,
+		MaxFramerate: av1.EncoderRational{Num: 30, Den: 1},
+	}
+	if _, err := av1.EncoderWebRTCRTCPPacketsRequireKeyFrame(
+		cfg,
+		[]av1.RTCPPacket{{
+			PacketType: av1.RTCPPSFBPacketType,
+			Count:      av1.RTCPPSFBPictureLossIndicationFMT,
+			Payload:    []byte{0, 1, 2, 3},
+		}},
+		nil,
+		nil,
+	); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("short feedback payload err=%v want %v", err, av1.ErrRTCPInvalidFeedback)
+	}
+}
+
 func TestRTCPPictureLossIndicationFCIRoundTrip(t *testing.T) {
 	var buf [4]byte
 	n, err := av1.PutRTCPPictureLossIndicationFCI(buf[:])

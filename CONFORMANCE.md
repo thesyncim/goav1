@@ -313,8 +313,9 @@ ship under `internal/av1/testdata/libaom/`.
   simulcast RID groups, generic and compound RTCP packet parsing, RTCP
   SR/RR/SDES/BYE and RTPFB/PSFB packet wrapping/parsing,
   NACK/Transport-CC/PLI/FIR/REMB feedback helpers, AV1 RTCP LRR FCI entry/list
-  parsing, serialization, layer-grid validation, and PLI/FIR/LRR force-key
-  classification, and sequence-matched `Frame` validation/loading for
+  parsing, serialization, layer-grid validation, and single/compound
+  PLI/FIR/LRR force-key classification, and sequence-matched `Frame`
+  validation/loading for
   profile-0/1/2 8/10/12-bit 4:0:0, 4:2:0, 4:2:2, and 4:4:4 buffers,
   including profile-2 12-bit 4:2:0 and 4:4:4 control paths. Native
   high-bit-depth and true non-4:2:0 bitstream encoding in the friendly pixel
