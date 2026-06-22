@@ -26,6 +26,11 @@ const (
 	// pair.
 	RTCPGenericNACKPairSize = 4
 
+	// RTCPPictureLossIndicationFCISize is the size of a PLI FCI payload. PLI
+	// carries no FCI bytes; the RTCP PSFB packet header identifies the media
+	// sender being reported.
+	RTCPPictureLossIndicationFCISize = 0
+
 	// RTCPFullIntraRequestEntrySize is the size of one FIR FCI entry.
 	RTCPFullIntraRequestEntrySize = 8
 
@@ -154,6 +159,28 @@ func ParseRTCPGenericNACKPairs(src []byte, dst []RTCPGenericNACKPair) ([]RTCPGen
 		out[off+i] = pair
 	}
 	return out, nil
+}
+
+// PutRTCPPictureLossIndicationFCI serializes a Picture Loss Indication FCI
+// payload. PLI FCI is empty, so dst is left unchanged and zero bytes are
+// reported.
+func PutRTCPPictureLossIndicationFCI(dst []byte) (int, error) {
+	return RTCPPictureLossIndicationFCISize, nil
+}
+
+// AppendRTCPPictureLossIndicationFCI appends a Picture Loss Indication FCI
+// payload. PLI FCI is empty, so the returned slice aliases dst unchanged.
+func AppendRTCPPictureLossIndicationFCI(dst []byte) ([]byte, error) {
+	return dst, nil
+}
+
+// ParseRTCPPictureLossIndicationFCI validates a Picture Loss Indication FCI
+// payload. PLI FCI must be empty.
+func ParseRTCPPictureLossIndicationFCI(src []byte) error {
+	if len(src) != RTCPPictureLossIndicationFCISize {
+		return ErrRTCPInvalidFeedback
+	}
+	return nil
 }
 
 // RTCPFullIntraRequestEntry is one Full Intra Request Feedback Control

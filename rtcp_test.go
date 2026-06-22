@@ -23,6 +23,9 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 	if av1.RTCPGenericNACKPairSize != 4 {
 		t.Fatalf("RTCPGenericNACKPairSize = %d, want 4", av1.RTCPGenericNACKPairSize)
 	}
+	if av1.RTCPPictureLossIndicationFCISize != 0 {
+		t.Fatalf("RTCPPictureLossIndicationFCISize = %d, want 0", av1.RTCPPictureLossIndicationFCISize)
+	}
 	if av1.RTCPFullIntraRequestEntrySize != 8 {
 		t.Fatalf("RTCPFullIntraRequestEntrySize = %d, want 8", av1.RTCPFullIntraRequestEntrySize)
 	}
@@ -41,6 +44,34 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 		av1.AV1SDPRTCPFeedbackFIR != "ccm fir" ||
 		av1.AV1SDPRTCPFeedbackLRR != "ccm lrr" {
 		t.Fatalf("unexpected AV1 rtcp-fb constants")
+	}
+}
+
+func TestRTCPPictureLossIndicationFCIRoundTrip(t *testing.T) {
+	var buf [4]byte
+	n, err := av1.PutRTCPPictureLossIndicationFCI(buf[:])
+	if err != nil {
+		t.Fatalf("PutRTCPPictureLossIndicationFCI: %v", err)
+	}
+	if n != 0 || buf != [4]byte{} {
+		t.Fatalf("encoded PLI FCI n=%d buf=%#v, want empty no-op", n, buf)
+	}
+	prefix := []byte{0xaa}
+	appended, err := av1.AppendRTCPPictureLossIndicationFCI(prefix)
+	if err != nil {
+		t.Fatalf("AppendRTCPPictureLossIndicationFCI: %v", err)
+	}
+	if len(appended) != len(prefix) || appended[0] != prefix[0] {
+		t.Fatalf("appended PLI FCI=%#v want unchanged prefix %#v", appended, prefix)
+	}
+	if err := av1.ParseRTCPPictureLossIndicationFCI(nil); err != nil {
+		t.Fatalf("ParseRTCPPictureLossIndicationFCI empty: %v", err)
+	}
+}
+
+func TestRTCPPictureLossIndicationFCIRejectsInvalid(t *testing.T) {
+	if err := av1.ParseRTCPPictureLossIndicationFCI([]byte{0x00}); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("ParseRTCPPictureLossIndicationFCI non-empty err=%v want %v", err, av1.ErrRTCPInvalidFeedback)
 	}
 }
 

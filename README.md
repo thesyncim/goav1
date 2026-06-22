@@ -47,7 +47,7 @@ needs:
 | --- | --- | --- |
 | One-shot decoded pixels | `DecodeIVF` | Copies visible planes into independent `DecodedFrame` values |
 | AV1 WebRTC SDP/RTP control checks | `ParseAV1SDPFmtp` / `ParseAV1SDPExtmap` / `ParseAV1SDPRID` / `ParseAV1SDPSimulcast` / `PutRTPMIDHeaderExtension` / `PutRTPStreamIDHeaderExtension` / `AV1SDPOffersReceive*` | Parses `AV1/90000` payload bindings, profile/level/tier fmtp values, RTP header-extension mappings, AV1 RID receiver restrictions, AV1 simulcast RID groups, AV1 rtcp-fb support, and raw MID/RID/RRID SDES header-extension payloads; complete SDP assembly and RTP header ownership stay caller-owned |
-| AV1 WebRTC RTCP feedback checks | `ParseRTCPGenericNACKPairs` / `ParseRTCPFullIntraRequestEntries` / `ParseAV1RTCPLayerRefreshRequestEntries` / `EncoderWebRTCValidateLayerRefreshRequests` | Parses and serializes generic NACK PID/BLP pairs, FIR FCI entries, and AV1 LRR FCI entry lists; LRR entries can be validated against the active temporal/spatial layer grid; RTCP transport stays caller-owned |
+| AV1 WebRTC RTCP feedback checks | `ParseRTCPGenericNACKPairs` / `ParseRTCPPictureLossIndicationFCI` / `ParseRTCPFullIntraRequestEntries` / `ParseAV1RTCPLayerRefreshRequestEntries` / `EncoderWebRTCValidateLayerRefreshRequests` | Parses and serializes generic NACK PID/BLP pairs, empty PLI FCI payloads, FIR FCI entries, and AV1 LRR FCI entry lists; LRR entries can be validated against the active temporal/spatial layer grid; RTCP transport stays caller-owned |
 | Repeated in-memory IVF decode | `NewDecoderFromIVF` + `DecodeNext` | Copies IVF payloads once, then reuses decoder-owned frame and post-filter arenas |
 | Large/file-backed IVF decode | `NewDecoderFromIVFReaderAt` + `DecodeNext` | Indexes IVF frame offsets and reads each payload into one reusable buffer |
 | Already-demuxed temporal units | `NewDecoder(payloads)` + `DecodeNext` | Retains payload slices by reference and reuses all decode/output arenas |
@@ -124,10 +124,10 @@ dependency descriptor extmap URI. RTP SDES helpers validate and write raw
 MID/RID/RRID header-extension payload bytes after the caller has selected RTP
 extension IDs; complete SDP generation, transceiver setup, and RTP header
 ownership remain with the caller. RTCP helpers cover generic NACK PID/BLP
-pairs, FIR FCI entries, and AV1 Layer Refresh Request FCI entry-list parsing,
-serialization, and validation against an encoder config; callers can satisfy a
-valid FIR, PLI, or LRR with the existing `forceKey` argument when a full refresh
-is the desired safe response. For ordered RTP payload bodies,
+pairs, empty PLI FCI payloads, FIR FCI entries, and AV1 Layer Refresh Request
+FCI entry-list parsing, serialization, and validation against an encoder config;
+callers can satisfy a valid FIR, PLI, or LRR with the existing `forceKey`
+argument when a full refresh is the desired safe response. For ordered RTP payload bodies,
 `NewDecoderFromRTPPayloads` is the reusable high-level path for single decode
 chains and independent simulcast layers. `NewLayeredDecoderFromRTPPayloads` is
 the high-level receive path for shared-reference WebRTC SVC streams whose
@@ -150,7 +150,7 @@ result buffer directly. The executable examples in `example_test.go` and
 
 | Area | Status |
 | --- | --- |
-| Containers and transport | IVF, AV1 low-overhead OBU, Annex B, Section 5 temporal units, AV1 RTP payload parse/build/fragment/reassemble, AV1 SDP/fmtp/profile/level/tier/extmap/RID/simulcast/rtcp-fb helpers, RTCP NACK/FIR and AV1 LRR feedback helpers |
+| Containers and transport | IVF, AV1 low-overhead OBU, Annex B, Section 5 temporal units, AV1 RTP payload parse/build/fragment/reassemble, AV1 SDP/fmtp/profile/level/tier/extmap/RID/simulcast/rtcp-fb helpers, RTCP NACK/PLI/FIR and AV1 LRR feedback helpers |
 | Decoder profiles | Profile 0 and Profile 1 pass committed/vendored strict-MD5 gates; Profile 2 has passing 4:2:2 8/10-bit and 4:2:0 12-bit profile clips, with wider 12-bit breadth still expanding |
 | Bit depths and formats | 8-bit and 10-bit covered broadly; 12-bit covered by targeted profile-2 clips; 4:2:0, 4:2:2, 4:4:4, and monochrome surfaces |
 | Prediction and residuals | Intra, directional intra, filter intra, CfL, palette, IntraBC, inter/compound, OBMC, warped motion, scaled motion, transforms, dequantization, and CDF adaptation |
