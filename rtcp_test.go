@@ -8,6 +8,16 @@ import (
 )
 
 func TestAV1RTCPFeedbackConstants(t *testing.T) {
+	if av1.RTCPVersion != 2 ||
+		av1.RTCPHeaderSize != 4 ||
+		av1.RTCPMaxPacketSize != 262144 ||
+		av1.RTCPFeedbackCommonSize != 8 ||
+		av1.RTCPFeedbackPacketHeaderSize != 12 ||
+		av1.RTCPFeedbackMaxFCISize != 262132 ||
+		av1.RTCPRTPFBPacketType != 205 ||
+		av1.RTCPPSFBPacketType != 206 {
+		t.Fatalf("unexpected RTCP common constants")
+	}
 	if av1.RTCPRTPFBGenericNACKFMT != 1 {
 		t.Fatalf("RTCPRTPFBGenericNACKFMT = %d, want 1", av1.RTCPRTPFBGenericNACKFMT)
 	}
@@ -72,6 +82,190 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 		av1.AV1SDPRTCPFeedbackTransportCC != "transport-cc" ||
 		av1.AV1SDPRTCPFeedbackREMB != "goog-remb" {
 		t.Fatalf("unexpected AV1 rtcp-fb constants")
+	}
+}
+
+func TestRTCPFeedbackPacketRoundTrip(t *testing.T) {
+	pli := av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBPictureLossIndicationFMT,
+		SenderSSRC: 0x11223344,
+		MediaSSRC:  0x55667788,
+	}
+	size, err := av1.RTCPFeedbackPacketSize(len(pli.FCI))
+	if err != nil {
+		t.Fatalf("RTCPFeedbackPacketSize PLI: %v", err)
+	}
+	if size != av1.RTCPFeedbackPacketHeaderSize {
+		t.Fatalf("PLI packet size=%d want %d", size, av1.RTCPFeedbackPacketHeaderSize)
+	}
+	buf := make([]byte, size)
+	n, err := av1.PutRTCPFeedbackPacket(buf, pli)
+	if err != nil {
+		t.Fatalf("PutRTCPFeedbackPacket PLI: %v", err)
+	}
+	wantPLI := []byte{0x81, 206, 0x00, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88}
+	if n != len(wantPLI) || string(buf) != string(wantPLI) {
+		t.Fatalf("PLI packet n=%d bytes=%#v want %#v", n, buf, wantPLI)
+	}
+	parsed, consumed, err := av1.ParseRTCPFeedbackPacket(buf)
+	if err != nil {
+		t.Fatalf("ParseRTCPFeedbackPacket PLI: %v", err)
+	}
+	if consumed != len(buf) || parsed.PacketType != pli.PacketType || parsed.FMT != pli.FMT ||
+		parsed.SenderSSRC != pli.SenderSSRC || parsed.MediaSSRC != pli.MediaSSRC || len(parsed.FCI) != 0 {
+		t.Fatalf("parsed PLI consumed=%d packet=%+v", consumed, parsed)
+	}
+
+	prefix := make([]byte, 1, 1+len(buf))
+	prefix[0] = 0xaa
+	appended, err := av1.AppendRTCPFeedbackPacket(prefix, pli)
+	if err != nil {
+		t.Fatalf("AppendRTCPFeedbackPacket PLI: %v", err)
+	}
+	if len(appended) != 1+len(buf) || appended[0] != 0xaa || string(appended[1:]) != string(buf) {
+		t.Fatalf("appended PLI packet=%#v", appended)
+	}
+}
+
+func TestRTCPFeedbackPacketWrapsREMBVector(t *testing.T) {
+	rembFCI := []byte{
+		'R', 'E', 'M', 'B',
+		0x03, 0x07, 0xfb, 0x93,
+		0x23, 0x45, 0x67, 0x89,
+		0x23, 0x45, 0x67, 0x8a,
+		0x23, 0x45, 0x67, 0x8b,
+	}
+	packet := av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBApplicationLayerFeedbackFMT,
+		SenderSSRC: 0x12345678,
+		MediaSSRC:  0,
+		FCI:        rembFCI,
+	}
+	buf := make([]byte, 32)
+	n, err := av1.PutRTCPFeedbackPacket(buf, packet)
+	if err != nil {
+		t.Fatalf("PutRTCPFeedbackPacket REMB: %v", err)
+	}
+	want := []byte{0x8f, 206, 0x00, 0x07, 0x12, 0x34, 0x56, 0x78,
+		0x00, 0x00, 0x00, 0x00, 'R', 'E', 'M', 'B',
+		0x03, 0x07, 0xfb, 0x93, 0x23, 0x45, 0x67, 0x89,
+		0x23, 0x45, 0x67, 0x8a, 0x23, 0x45, 0x67, 0x8b}
+	if n != len(want) || string(buf) != string(want) {
+		t.Fatalf("REMB packet n=%d bytes=%#v want %#v", n, buf, want)
+	}
+	parsed, consumed, err := av1.ParseRTCPFeedbackPacket(buf)
+	if err != nil {
+		t.Fatalf("ParseRTCPFeedbackPacket REMB: %v", err)
+	}
+	if consumed != len(buf) || parsed.PacketType != packet.PacketType || parsed.FMT != packet.FMT ||
+		parsed.SenderSSRC != packet.SenderSSRC || parsed.MediaSSRC != packet.MediaSSRC ||
+		string(parsed.FCI) != string(rembFCI) {
+		t.Fatalf("parsed REMB consumed=%d packet=%+v", consumed, parsed)
+	}
+	if _, err := av1.ParseRTCPReceiverEstimatedMaximumBitrateFCI(parsed.FCI, make([]uint32, 0, 3)); err != nil {
+		t.Fatalf("ParseRTCPReceiverEstimatedMaximumBitrateFCI from packet: %v", err)
+	}
+}
+
+func TestRTCPFeedbackPacketWrapsPaddedTransportFeedback(t *testing.T) {
+	transportFCI := []byte{0x00, 0x01, 0x00, 0x05, 0x01, 0x02, 0x03, 0x7a, 0xb2, 0x00, 0x04, 0x04, 0x04}
+	packet := av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPRTPFBPacketType,
+		FMT:        av1.RTCPRTPFBTransportFeedbackFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0x05060708,
+		FCI:        transportFCI,
+	}
+	size, err := av1.RTCPFeedbackPacketSize(len(transportFCI))
+	if err != nil {
+		t.Fatalf("RTCPFeedbackPacketSize transport feedback: %v", err)
+	}
+	if size != 28 {
+		t.Fatalf("transport feedback packet size=%d want 28", size)
+	}
+	buf := make([]byte, size)
+	n, err := av1.PutRTCPFeedbackPacket(buf, packet)
+	if err != nil {
+		t.Fatalf("PutRTCPFeedbackPacket transport feedback: %v", err)
+	}
+	wantPrefix := []byte{0xaf, 205, 0x00, 0x06, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+	if n != size || string(buf[:len(wantPrefix)]) != string(wantPrefix) ||
+		string(buf[12:25]) != string(transportFCI) ||
+		buf[25] != 0 || buf[26] != 0 || buf[27] != 3 {
+		t.Fatalf("transport feedback packet n=%d bytes=%#v", n, buf)
+	}
+	parsed, consumed, err := av1.ParseRTCPFeedbackPacket(buf)
+	if err != nil {
+		t.Fatalf("ParseRTCPFeedbackPacket transport feedback: %v", err)
+	}
+	if consumed != len(buf) || parsed.PacketType != packet.PacketType || parsed.FMT != packet.FMT ||
+		parsed.SenderSSRC != packet.SenderSSRC || parsed.MediaSSRC != packet.MediaSSRC ||
+		string(parsed.FCI) != string(transportFCI) {
+		t.Fatalf("parsed transport feedback consumed=%d packet=%+v", consumed, parsed)
+	}
+	if _, err := av1.ParseRTCPTransportFeedbackFCI(parsed.FCI, make([]av1.RTCPTransportFeedbackPacket, 0, 5)); err != nil {
+		t.Fatalf("ParseRTCPTransportFeedbackFCI from packet: %v", err)
+	}
+}
+
+func TestRTCPFeedbackPacketRejectsInvalid(t *testing.T) {
+	pli := av1.RTCPFeedbackPacket{PacketType: av1.RTCPPSFBPacketType, FMT: av1.RTCPPSFBPictureLossIndicationFMT}
+	if _, err := av1.PutRTCPFeedbackPacket(make([]byte, av1.RTCPFeedbackPacketHeaderSize-1), pli); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short PutRTCPFeedbackPacket err=%v", err)
+	}
+	if _, err := av1.RTCPFeedbackPacketSize(-1); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("negative RTCPFeedbackPacketSize err=%v", err)
+	}
+	maxSize, err := av1.RTCPFeedbackPacketSize(av1.RTCPFeedbackMaxFCISize)
+	if err != nil || maxSize != av1.RTCPMaxPacketSize {
+		t.Fatalf("max RTCPFeedbackPacketSize size=%d err=%v", maxSize, err)
+	}
+	if _, err := av1.RTCPFeedbackPacketSize(av1.RTCPFeedbackMaxFCISize + 1); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("oversized RTCPFeedbackPacketSize err=%v", err)
+	}
+	maxInt := int(^uint(0) >> 1)
+	if _, err := av1.RTCPFeedbackPacketSize(maxInt); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("overflow RTCPFeedbackPacketSize err=%v", err)
+	}
+	badFMT := pli
+	badFMT.FMT = 32
+	if _, err := av1.PutRTCPFeedbackPacket(make([]byte, av1.RTCPFeedbackPacketHeaderSize), badFMT); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("bad FMT PutRTCPFeedbackPacket err=%v", err)
+	}
+	badType := pli
+	badType.PacketType = 200
+	if _, err := av1.PutRTCPFeedbackPacket(make([]byte, av1.RTCPFeedbackPacketHeaderSize), badType); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("bad type PutRTCPFeedbackPacket err=%v", err)
+	}
+
+	if _, _, err := av1.ParseRTCPFeedbackPacket(make([]byte, av1.RTCPFeedbackPacketHeaderSize-1)); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short ParseRTCPFeedbackPacket err=%v", err)
+	}
+	badVersion := []byte{0x41, 206, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0}
+	if _, _, err := av1.ParseRTCPFeedbackPacket(badVersion); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("bad version ParseRTCPFeedbackPacket err=%v", err)
+	}
+	badPacketType := []byte{0x81, 200, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0}
+	if _, _, err := av1.ParseRTCPFeedbackPacket(badPacketType); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("bad packet type ParseRTCPFeedbackPacket err=%v", err)
+	}
+	shortLength := []byte{0x81, 206, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0}
+	if _, _, err := av1.ParseRTCPFeedbackPacket(shortLength); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("short length ParseRTCPFeedbackPacket err=%v", err)
+	}
+	truncated := []byte{0x81, 206, 0, 2, 0, 0, 0, 0}
+	if _, _, err := av1.ParseRTCPFeedbackPacket(truncated); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("truncated ParseRTCPFeedbackPacket err=%v", err)
+	}
+	zeroPadding := []byte{0xa1, 206, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0}
+	if _, _, err := av1.ParseRTCPFeedbackPacket(zeroPadding); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("zero padding ParseRTCPFeedbackPacket err=%v", err)
+	}
+	tooMuchPadding := []byte{0xa1, 206, 0, 2, 0, 0, 0, 0, 0, 0, 0, 9}
+	if _, _, err := av1.ParseRTCPFeedbackPacket(tooMuchPadding); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("too much padding ParseRTCPFeedbackPacket err=%v", err)
 	}
 }
 

@@ -6,6 +6,34 @@ import (
 )
 
 const (
+	// RTCPVersion is the RTCP version written and accepted by these helpers.
+	RTCPVersion = 2
+
+	// RTCPHeaderSize is the size of the common RTCP packet header.
+	RTCPHeaderSize = 4
+
+	// RTCPMaxPacketSize is the largest packet size addressable by the 16-bit
+	// RTCP length field, in bytes.
+	RTCPMaxPacketSize = (0xffff + 1) * 4
+
+	// RTCPFeedbackCommonSize is the sender/media SSRC block shared by RTPFB
+	// and PSFB packets.
+	RTCPFeedbackCommonSize = 8
+
+	// RTCPFeedbackPacketHeaderSize is the common RTCP header plus the RTPFB or
+	// PSFB sender/media SSRC block.
+	RTCPFeedbackPacketHeaderSize = RTCPHeaderSize + RTCPFeedbackCommonSize
+
+	// RTCPFeedbackMaxFCISize is the largest feedback-control-information
+	// payload that can fit in one RTPFB or PSFB packet.
+	RTCPFeedbackMaxFCISize = RTCPMaxPacketSize - RTCPFeedbackPacketHeaderSize
+
+	// RTCPRTPFBPacketType is the RTCP packet type for transport-layer feedback.
+	RTCPRTPFBPacketType = 205
+
+	// RTCPPSFBPacketType is the RTCP packet type for payload-specific feedback.
+	RTCPPSFBPacketType = 206
+
 	// RTCPRTPFBGenericNACKFMT is the RTCP transport-layer feedback FMT value
 	// for generic negative acknowledgements.
 	RTCPRTPFBGenericNACKFMT = 1
@@ -112,6 +140,126 @@ var (
 	// carries out-of-range layer IDs, payload type, or upgrade semantics.
 	ErrRTCPInvalidLayerRefreshRequest = errors.New("goav1: invalid RTCP layer refresh request")
 )
+
+// RTCPFeedbackPacket is one complete RTCP RTPFB or PSFB packet. FCI aliases
+// the caller-owned payload passed to Put or the source slice passed to Parse.
+type RTCPFeedbackPacket struct {
+	PacketType uint8
+	FMT        uint8
+	SenderSSRC uint32
+	MediaSSRC  uint32
+	FCI        []byte
+}
+
+// RTCPFeedbackPacketSize returns the complete RTCP feedback packet byte count,
+// including any padding needed to align the packet to a 32-bit boundary.
+func RTCPFeedbackPacketSize(fciLen int) (int, error) {
+	if fciLen < 0 || fciLen > RTCPFeedbackMaxFCISize {
+		return 0, ErrRTCPInvalidFeedback
+	}
+	size := RTCPFeedbackPacketHeaderSize + fciLen
+	padding := rtcpPaddingLength(size)
+	size += padding
+	if size > RTCPMaxPacketSize {
+		return 0, ErrRTCPInvalidFeedback
+	}
+	return size, nil
+}
+
+// PutRTCPFeedbackPacket serializes one complete RTPFB or PSFB packet into dst.
+func PutRTCPFeedbackPacket(dst []byte, packet RTCPFeedbackPacket) (int, error) {
+	size, err := RTCPFeedbackPacketSize(len(packet.FCI))
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < size {
+		return 0, ErrRTCPShortBuffer
+	}
+	if packet.FMT > 0x1f ||
+		(packet.PacketType != RTCPRTPFBPacketType && packet.PacketType != RTCPPSFBPacketType) {
+		return 0, ErrRTCPInvalidFeedback
+	}
+
+	padding := rtcpPaddingLength(RTCPFeedbackPacketHeaderSize + len(packet.FCI))
+	first := byte(RTCPVersion<<6) | (packet.FMT & 0x1f)
+	if padding != 0 {
+		first |= 0x20
+	}
+	dst[0] = first
+	dst[1] = packet.PacketType
+	binary.BigEndian.PutUint16(dst[2:4], uint16(size/4-1))
+	binary.BigEndian.PutUint32(dst[4:8], packet.SenderSSRC)
+	binary.BigEndian.PutUint32(dst[8:12], packet.MediaSSRC)
+	copy(dst[12:12+len(packet.FCI)], packet.FCI)
+	if padding != 0 {
+		paddingStart := RTCPFeedbackPacketHeaderSize + len(packet.FCI)
+		for i := 0; i < padding-1; i++ {
+			dst[paddingStart+i] = 0
+		}
+		dst[size-1] = byte(padding)
+	}
+	return size, nil
+}
+
+// AppendRTCPFeedbackPacket appends one complete RTPFB or PSFB packet to dst
+// without growing beyond dst's existing capacity.
+func AppendRTCPFeedbackPacket(dst []byte, packet RTCPFeedbackPacket) ([]byte, error) {
+	size, err := RTCPFeedbackPacketSize(len(packet.FCI))
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+size]
+	if _, err := PutRTCPFeedbackPacket(out[off:], packet); err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
+// ParseRTCPFeedbackPacket parses one complete RTPFB or PSFB packet from src.
+// The returned FCI aliases src. n is the number of bytes consumed for the first
+// RTCP packet.
+func ParseRTCPFeedbackPacket(src []byte) (packet RTCPFeedbackPacket, n int, err error) {
+	if len(src) < RTCPFeedbackPacketHeaderSize {
+		return RTCPFeedbackPacket{}, 0, ErrRTCPShortBuffer
+	}
+	if src[0]>>6 != RTCPVersion {
+		return RTCPFeedbackPacket{}, 0, ErrRTCPInvalidFeedback
+	}
+	packetType := src[1]
+	if packetType != RTCPRTPFBPacketType && packetType != RTCPPSFBPacketType {
+		return RTCPFeedbackPacket{}, 0, ErrRTCPInvalidFeedback
+	}
+	packetLen := (int(binary.BigEndian.Uint16(src[2:4])) + 1) * 4
+	if packetLen < RTCPFeedbackPacketHeaderSize {
+		return RTCPFeedbackPacket{}, 0, ErrRTCPInvalidFeedback
+	}
+	if len(src) < packetLen {
+		return RTCPFeedbackPacket{}, 0, ErrRTCPShortBuffer
+	}
+	padding := 0
+	if src[0]&0x20 != 0 {
+		padding = int(src[packetLen-1])
+		if padding == 0 || padding > packetLen-RTCPFeedbackPacketHeaderSize {
+			return RTCPFeedbackPacket{}, 0, ErrRTCPInvalidFeedback
+		}
+	}
+	fciEnd := packetLen - padding
+	return RTCPFeedbackPacket{
+		PacketType: packetType,
+		FMT:        src[0] & 0x1f,
+		SenderSSRC: binary.BigEndian.Uint32(src[4:8]),
+		MediaSSRC:  binary.BigEndian.Uint32(src[8:12]),
+		FCI:        src[RTCPFeedbackPacketHeaderSize:fciEnd],
+	}, packetLen, nil
+}
+
+func rtcpPaddingLength(size int) int {
+	return (4 - (size & 3)) & 3
+}
 
 // RTCPGenericNACKPair is one generic NACK Feedback Control Information pair.
 // PacketID is the first lost RTP sequence number; LostPacketBitmask marks the
