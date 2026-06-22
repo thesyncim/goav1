@@ -43,7 +43,7 @@ func WriteIntraFlag(w *entropy.Writer, cdfs *IntraModeCDFs, ctx *BlockModeContex
 		return nil
 	}
 	if req.AllowIntrabc {
-		return ErrInvalidDecodeState // intrabc coding is not supported yet
+		return ErrInvalidDecodeState // encoder-side intrabc flag writing is not implemented here
 	}
 	if !intra {
 		return ErrInvalidDecodeState

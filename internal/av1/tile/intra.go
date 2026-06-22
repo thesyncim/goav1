@@ -158,8 +158,9 @@ type BlockPredictionModeResult struct {
 	Valid bool
 	Intra bool
 	// Intrabc marks an intra-block-copy prediction selected by the intrabc flag.
-	// The full intrabc predictor is not wired yet, so decode paths reject it
-	// explicitly instead of treating it as regular inter prediction.
+	// The block loop routes it through DV decoding and the frame-work predictor
+	// copies from the already reconstructed current frame instead of regular
+	// inter references.
 	Intrabc      bool
 	IntrabcValid bool
 
