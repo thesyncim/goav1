@@ -71,6 +71,66 @@ func ResolveFrameReferencesWithProvider(provider FrameSurfaceProvider, surfaces 
 	return count, nil
 }
 
+// ResolveTileListExternalReferencesWithProvider resolves the external reference
+// frames named by a tile_list_obu(). surfaces and dst are indexed by
+// TileListEntry.AnchorFrameIdx, matching libaom's ext_refs.refs table and the
+// source slice expected by CopyTileListToOutputFrame. The returned count is
+// max(anchor_frame_idx)+1, and dst[:count] is rewritten atomically so unused
+// holes are cleared to nil.
+func ResolveTileListExternalReferencesWithProvider(provider FrameSurfaceProvider, list parser.TileList, surfaces []int, dst []*frame.Frame) (int, error) {
+	tileCount := list.TileCount()
+	if tileCount <= 0 || tileCount > parser.TileListMaxTiles || tileCount != len(list.Entries) {
+		return 0, parser.ErrTileListInvalidTileCount
+	}
+	if provider == nil {
+		return 0, ErrInvalidSurfaceReference
+	}
+
+	var used [parser.TileListMaxExternalReferences]bool
+	maxAnchor := -1
+	for _, entry := range list.Entries {
+		anchor := int(entry.AnchorFrameIdx)
+		if anchor < 0 || anchor >= parser.TileListMaxExternalReferences {
+			return 0, parser.ErrTileListInvalidAnchorIndex
+		}
+		used[anchor] = true
+		if anchor > maxAnchor {
+			maxAnchor = anchor
+		}
+	}
+	if maxAnchor < 0 {
+		return 0, parser.ErrTileListInvalidTileCount
+	}
+
+	count := maxAnchor + 1
+	if len(surfaces) < count || len(dst) < count {
+		return 0, ErrSurfaceReferenceBufferTooSmall
+	}
+
+	var resolved [parser.TileListMaxExternalReferences]*frame.Frame
+	for anchor := 0; anchor < count; anchor++ {
+		if !used[anchor] {
+			continue
+		}
+		surface := surfaces[anchor]
+		if surface < 0 {
+			return 0, ErrInvalidSurfaceReference
+		}
+		ref, err := provider.FrameSurface(surface)
+		if err != nil {
+			return 0, err
+		}
+		if ref == nil {
+			return 0, ErrInvalidSurfaceReference
+		}
+		resolved[anchor] = ref
+	}
+	for i := 0; i < count; i++ {
+		dst[i] = resolved[i]
+	}
+	return count, nil
+}
+
 // FrameSurfaceReleaser is the caller-owned hook RunEventWithContextAndExternalReferences
 // uses to release overwritten reference surfaces at frame completion. The
 // release IDs use the caller's own surface namespace, matching what is stored

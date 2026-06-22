@@ -57,6 +57,105 @@ func TestResolveFrameReferencesWithProviderRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestResolveTileListExternalReferencesWithProviderFanOut(t *testing.T) {
+	poolA := testFramePool(t, 1)
+	indexA, wantA, err := poolA.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolB := testFramePool(t, 1)
+	indexB, wantB, err := poolB.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provider := FrameSurfaceProviderFunc(func(id int) (*frame.Frame, error) {
+		switch id {
+		case indexA:
+			return poolA.Frame(indexA)
+		case 512 + indexB:
+			return poolB.Frame(indexB)
+		}
+		return nil, ErrInvalidSurfaceReference
+	})
+	list := parser.TileList{
+		TileCountMinus1: 1,
+		Entries: []parser.TileListEntry{
+			{AnchorFrameIdx: 5},
+			{AnchorFrameIdx: 0},
+		},
+	}
+	surfaces := []int{indexA, -1, -1, -1, -1, 512 + indexB}
+	sentinel := &frame.Frame{}
+	dst := []*frame.Frame{sentinel, sentinel, sentinel, sentinel, sentinel, sentinel}
+
+	count, err := ResolveTileListExternalReferencesWithProvider(provider, list, surfaces, dst)
+	if err != nil {
+		t.Fatalf("ResolveTileListExternalReferencesWithProvider: %v", err)
+	}
+	if count != 6 {
+		t.Fatalf("count=%d want 6", count)
+	}
+	if dst[0] != wantA || dst[5] != wantB {
+		t.Fatalf("resolved anchors=%p,%p want %p,%p", dst[0], dst[5], wantA, wantB)
+	}
+	for i := 1; i < 5; i++ {
+		if dst[i] != nil {
+			t.Fatalf("hole dst[%d]=%p want nil", i, dst[i])
+		}
+	}
+}
+
+func TestResolveTileListExternalReferencesWithProviderRejectsInvalid(t *testing.T) {
+	pool := testFramePool(t, 1)
+	index, _, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := FrameSurfaceProviderFunc(func(id int) (*frame.Frame, error) {
+		if id != index {
+			return nil, ErrInvalidSurfaceReference
+		}
+		return pool.Frame(index)
+	})
+	list := parser.TileList{
+		TileCountMinus1: 0,
+		Entries:         []parser.TileListEntry{{AnchorFrameIdx: 0}},
+	}
+	var dst [1]*frame.Frame
+	if _, err := ResolveTileListExternalReferencesWithProvider(nil, list, []int{index}, dst[:]); !errors.Is(err, ErrInvalidSurfaceReference) {
+		t.Fatalf("nil-provider err=%v want %v", err, ErrInvalidSurfaceReference)
+	}
+	if _, err := ResolveTileListExternalReferencesWithProvider(provider, list, nil, dst[:]); !errors.Is(err, ErrSurfaceReferenceBufferTooSmall) {
+		t.Fatalf("short surfaces err=%v want %v", err, ErrSurfaceReferenceBufferTooSmall)
+	}
+	if _, err := ResolveTileListExternalReferencesWithProvider(provider, list, []int{index}, nil); !errors.Is(err, ErrSurfaceReferenceBufferTooSmall) {
+		t.Fatalf("short dst err=%v want %v", err, ErrSurfaceReferenceBufferTooSmall)
+	}
+
+	badCount := list
+	badCount.TileCountMinus1 = 1
+	if _, err := ResolveTileListExternalReferencesWithProvider(provider, badCount, []int{index}, dst[:]); !errors.Is(err, parser.ErrTileListInvalidTileCount) {
+		t.Fatalf("bad tile count err=%v want %v", err, parser.ErrTileListInvalidTileCount)
+	}
+
+	sentinel := &frame.Frame{}
+	dst[0] = sentinel
+	if _, err := ResolveTileListExternalReferencesWithProvider(provider, list, []int{-1}, dst[:]); !errors.Is(err, ErrInvalidSurfaceReference) {
+		t.Fatalf("negative surface err=%v want %v", err, ErrInvalidSurfaceReference)
+	}
+	if dst[0] != sentinel {
+		t.Fatalf("error path published dst=%p want sentinel %p", dst[0], sentinel)
+	}
+
+	nilProvider := FrameSurfaceProviderFunc(func(id int) (*frame.Frame, error) {
+		return nil, nil
+	})
+	if _, err := ResolveTileListExternalReferencesWithProvider(nilProvider, list, []int{index}, dst[:]); !errors.Is(err, ErrInvalidSurfaceReference) {
+		t.Fatalf("nil frame err=%v want %v", err, ErrInvalidSurfaceReference)
+	}
+}
+
 func TestResolveTemporalMotionReferencesWithProviderFanOut(t *testing.T) {
 	poolA := testFramePool(t, 1)
 	indexA, _, err := poolA.Acquire()

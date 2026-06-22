@@ -51,6 +51,46 @@ func TestPublicDecoderFrameLayerPoolProviderAndReleaser(t *testing.T) {
 	}
 }
 
+func TestPublicResolveDecoderTileListExternalReferencesWithProvider(t *testing.T) {
+	layerPool := newPublicDecoderLayerPool(t, 1, 2)
+	format := av1.FrameFormat{Width: 128, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
+	id0, want0, err := layerPool.Acquire(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id5, want5, err := layerPool.Acquire(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := av1.NewDecoderFrameLayerPool(&layerPool)
+	list := av1.TileList{
+		TileCountMinus1: 1,
+		Entries: []av1.TileListEntry{
+			{AnchorFrameIdx: 5},
+			{AnchorFrameIdx: 0},
+		},
+	}
+	surfaces := []int{id0, -1, -1, -1, -1, id5}
+	sentinel := &av1.Frame{}
+	refs := []*av1.Frame{sentinel, sentinel, sentinel, sentinel, sentinel, sentinel}
+
+	count, err := av1.ResolveDecoderTileListExternalReferencesWithProvider(provider, list, surfaces, refs)
+	if err != nil {
+		t.Fatalf("ResolveDecoderTileListExternalReferencesWithProvider: %v", err)
+	}
+	if count != 6 || refs[0] != want0 || refs[5] != want5 {
+		t.Fatalf("count=%d refs[0]=%p refs[5]=%p want %p,%p", count, refs[0], refs[5], want0, want5)
+	}
+	for i := 1; i < 5; i++ {
+		if refs[i] != nil {
+			t.Fatalf("hole refs[%d]=%p want nil", i, refs[i])
+		}
+	}
+	if _, err := av1.ResolveDecoderTileListExternalReferencesWithProvider(provider, list, surfaces[:5], refs); !errors.Is(err, av1.ErrDecoderSurfaceReferenceBufferTooSmall) {
+		t.Fatalf("short surfaces err=%v want %v", err, av1.ErrDecoderSurfaceReferenceBufferTooSmall)
+	}
+}
+
 func TestPublicDecoderAcquireLayerFrameSurface(t *testing.T) {
 	layerPool := newPublicDecoderLayerPool(t, 2, 2)
 	sequence := av1.SequenceHeader{

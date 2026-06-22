@@ -41,6 +41,16 @@ func ResolveDecoderFrameReferencesWithProvider(provider DecoderFrameSurfaceProvi
 	return internaldecoder.ResolveFrameReferencesWithProvider(provider, surfaces, frames)
 }
 
+// ResolveDecoderTileListExternalReferencesWithProvider resolves the external
+// reference frames named by a TileList. externalSurfaces and frames are indexed
+// by TileListEntry.AnchorFrameIdx, matching libaom's ext_refs table and the
+// source slice expected by CopyTileListToOutputFrame. The returned count is
+// max(anchor_frame_idx)+1, and frames[:count] is rewritten atomically so unused
+// holes are cleared to nil.
+func ResolveDecoderTileListExternalReferencesWithProvider(provider DecoderFrameSurfaceProvider, list TileList, externalSurfaces []int, frames []*Frame) (int, error) {
+	return internaldecoder.ResolveTileListExternalReferencesWithProvider(provider, list, externalSurfaces, frames)
+}
+
 // PublishDecoderTemporalMotionReference stores the decoded frame's temporal
 // motion-vector reference metadata under surface in store.
 func PublishDecoderTemporalMotionReference(event DecoderEvent, surface int, current *TileReferenceMVFrame, store []TileTemporalMotionReferenceFrame) error {

@@ -198,6 +198,8 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         |                                  | validation uses the reference tile grid, and   |
 |    |                                  |         |                                  | DecodeLayout checks libaom-compatible uniform  |
 |    |                                  |         |                                  | tile size prerequisites.                       |
+|    |                                  |         | internal/av1/decoder/svc.go      | ResolveTileListExternalReferencesWithProvider  |
+|    |                                  |         |                                  | maps anchor_frame_idx to external frames.      |
 |    |                                  |         | internal/av1/decoder/work.go     | PlanDecoderTileListEntryWork maps raw entry    |
 |    |                                  |         |                                  | TileData to the single-tile residual job.      |
 |    |                                  |         |                                  | OutputGeometry, OutputFrameFormat,             |
@@ -498,8 +500,9 @@ manifest. The next production-readiness items are:
 2. **Tile list OBU playback.** `EventTileList` parsing is present with
    reference-grid anchor validation, libaom-compatible uniform tile-size
    prerequisite checks, raw tile-list entry job planning, libaom-shaped
-   output geometry/format/copy-region helpers, and entry-level plus whole-list
-   decoded-tile-to-output-frame blit helpers. The residual decode runner still returns
+   external anchor-frame resolution, output geometry/format/copy-region
+   helpers, and entry-level plus whole-list decoded-tile-to-output-frame blit
+   helpers. The residual decode runner still returns
    `ErrDecoderUnsupportedTileList` for valid layouts instead of silently
    ignoring playback; end-to-end tile payload decode and reconstruction blitting
    remain future work.

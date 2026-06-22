@@ -1047,10 +1047,11 @@ Two pieces of bitstream syntax carry layer information:
 
 - `internal/av1/decoder/svc.go` — `FrameSurfaceProvider`,
   `FrameSurfaceReleaser`, `TemporalMotionReferenceProvider`,
-  `RunEventWithContextAndExternalReferences`. The root package exposes
-  these through `DecoderFrameWorkExternalReferenceRuntime`,
-  `DecoderFrameSurfaceProvider`, `DecoderFrameSurfaceReleaser`,
-  `DecoderTemporalMotionReferenceProvider`, and the resolver helpers.
+  `RunEventWithContextAndExternalReferences`, and tile-list external
+  anchor-frame resolution. The root package exposes these through
+  `DecoderFrameWorkExternalReferenceRuntime`, `DecoderFrameSurfaceProvider`,
+  `DecoderFrameSurfaceReleaser`, `DecoderTemporalMotionReferenceProvider`,
+  and the resolver helpers.
 - `internal/av1/decoder/svc_layer_pool.go` — `FrameLayerPool`
   adapter that satisfies the provider/releaser pair against a
   `*frame.LayerPool`; root callers use `NewDecoderFrameLayerPool`,
@@ -1082,9 +1083,10 @@ Two pieces of bitstream syntax carry layer information:
   spatial-layer selection should follow `docs/svc.md` and the
   `cmd/dump_svc` / testvector harness patterns.
 - Tile-list playback is not wired. Tile-list OBUs parse and are
-  surfaced as events, raw entry payloads can be planned as single-tile
-  residual jobs, and output-frame blit helpers exist, but anchor-frame
-  tile reuse plus compressed tile reconstruction remain open.
+  surfaced as events, external anchor frames can be resolved through the
+  provider-backed surface namespace, raw entry payloads can be planned as
+  single-tile residual jobs, and output-frame blit helpers exist, but
+  anchor-tile reuse plus compressed tile reconstruction remain open.
 
 ---
 
@@ -1166,8 +1168,9 @@ roll-up.
    malformed/adversarial, fuzz, and real-world corpus coverage beyond the
    committed vector gates.
 3. **Complete tile-list playback.** Tile-list OBUs parse today and validate
-   source anchors plus uniform decode-layout prerequisites; anchor-frame reuse,
-   per-tile reconstruction, and output-frame blitting still need the end-to-end
+   source anchors plus uniform decode-layout prerequisites; external anchor
+   frames can be resolved into the libaom-shaped source table. Per-tile
+   reconstruction and output-frame publication still need the end-to-end
    implementation.
 4. **Add SIMD backends.** Wire amd64 and arm64 kernels for the hot DSP entries:
    inverse transforms, deblocking edges, CDEF, restoration, and convolve
