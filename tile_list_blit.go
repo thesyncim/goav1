@@ -1,5 +1,43 @@
 package goav1
 
+// CopyTileListToOutputFrame copies every already-decoded tile-list entry from
+// sources into dst. sources is indexed by TileListEntry.AnchorFrameIdx, matching
+// libaom's external-reference frame table. The function validates every source
+// and destination plane before copying any pixel so malformed frame storage
+// cannot leave dst partially updated.
+//
+// This helper does not decode entry.TileData. Callers use it after decoding the
+// tile payloads against their anchor frames, then copy the decoded tile
+// rectangles into the tile-list output mosaic.
+func CopyTileListToOutputFrame(dst *Frame, sources []*Frame, list TileList, geometry TileListOutputGeometry) error {
+	if list.TileCount() != len(list.Entries) {
+		return ErrTileListInvalidTileCount
+	}
+	for i := range list.Entries {
+		src, err := tileListEntrySource(sources, list.Entries[i])
+		if err != nil {
+			return err
+		}
+		if _, err := tileListEntryCopyPreflight(dst, src, list, geometry, i); err != nil {
+			return err
+		}
+	}
+	for i := range list.Entries {
+		src, err := tileListEntrySource(sources, list.Entries[i])
+		if err != nil {
+			return err
+		}
+		regions, err := tileListEntryCopyPreflight(dst, src, list, geometry, i)
+		if err != nil {
+			return err
+		}
+		if err := copyTileListEntryRegions(dst, src, regions); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // CopyTileListEntryToOutputFrame copies one already-decoded tile-list entry
 // from src into dst using the source/destination rectangles derived from list
 // and geometry. It is the pixel-copy stage of libaom's
@@ -10,31 +48,54 @@ package goav1
 // tile payload against the entry's anchor frame, then copy the decoded tile
 // rectangle into the tile-list output mosaic.
 func CopyTileListEntryToOutputFrame(dst *Frame, src *Frame, list TileList, geometry TileListOutputGeometry, entryIndex int) error {
+	regions, err := tileListEntryCopyPreflight(dst, src, list, geometry, entryIndex)
+	if err != nil {
+		return err
+	}
+	return copyTileListEntryRegions(dst, src, regions)
+}
+
+type tileListEntryCopyRegions struct {
+	luma      TileListTileRegion
+	chroma    TileListTileRegion
+	hasChroma bool
+}
+
+func tileListEntrySource(sources []*Frame, entry TileListEntry) (*Frame, error) {
+	index := int(entry.AnchorFrameIdx)
+	if index < 0 || index >= len(sources) || sources[index] == nil {
+		return nil, ErrTileListInvalidAnchorIndex
+	}
+	return sources[index], nil
+}
+
+func tileListEntryCopyPreflight(dst *Frame, src *Frame, list TileList, geometry TileListOutputGeometry, entryIndex int) (tileListEntryCopyRegions, error) {
 	if dst == nil || src == nil {
-		return ErrFrameInvalidFormat
+		return tileListEntryCopyRegions{}, ErrFrameInvalidFormat
 	}
 	if dst.Layout.BytesPerSample != src.Layout.BytesPerSample ||
 		dst.Format.BitDepth != src.Format.BitDepth ||
 		dst.Format.MonoChrome != src.Format.MonoChrome ||
 		dst.Format.SubsamplingX != src.Format.SubsamplingX ||
 		dst.Format.SubsamplingY != src.Format.SubsamplingY {
-		return ErrFrameInvalidFormat
+		return tileListEntryCopyRegions{}, ErrFrameInvalidFormat
 	}
 	if dst.Format.Width < geometry.OutputFrameWidth || dst.Format.Height < geometry.OutputFrameHeight {
-		return ErrFrameInvalidFormat
+		return tileListEntryCopyRegions{}, ErrFrameInvalidFormat
 	}
 	region, err := TileListOutputTileRegion(list, geometry, entryIndex)
 	if err != nil {
-		return err
+		return tileListEntryCopyRegions{}, err
 	}
 	bps := dst.Layout.BytesPerSample
 	if bps != 1 && bps != 2 {
-		return ErrFrameInvalidFormat
+		return tileListEntryCopyRegions{}, ErrFrameInvalidFormat
 	}
 	if !tileListPlaneRegionFits(dst.Y, bps, region.DestX, region.DestY, region.Width, region.Height) ||
 		!tileListPlaneRegionFits(src.Y, bps, region.SourceX, region.SourceY, region.Width, region.Height) {
-		return ErrFrameInvalidFormat
+		return tileListEntryCopyRegions{}, ErrFrameInvalidFormat
 	}
+	regions := tileListEntryCopyRegions{luma: region}
 	if !dst.Format.MonoChrome {
 		shiftX, shiftY := 0, 0
 		if dst.Format.SubsamplingX {
@@ -55,31 +116,24 @@ func CopyTileListEntryToOutputFrame(dst *Frame, src *Frame, list TileList, geome
 			!tileListPlaneRegionFits(src.U, bps, chroma.SourceX, chroma.SourceY, chroma.Width, chroma.Height) ||
 			!tileListPlaneRegionFits(dst.V, bps, chroma.DestX, chroma.DestY, chroma.Width, chroma.Height) ||
 			!tileListPlaneRegionFits(src.V, bps, chroma.SourceX, chroma.SourceY, chroma.Width, chroma.Height) {
-			return ErrFrameInvalidFormat
+			return tileListEntryCopyRegions{}, ErrFrameInvalidFormat
 		}
+		regions.chroma = chroma
+		regions.hasChroma = true
 	}
-	if err := CopyPlaneBlock(dst.Y, src.Y, bps, region.DestX, region.DestY, region.SourceX, region.SourceY, region.Width, region.Height); err != nil {
+	return regions, nil
+}
+
+func copyTileListEntryRegions(dst *Frame, src *Frame, regions tileListEntryCopyRegions) error {
+	bps := dst.Layout.BytesPerSample
+	if err := CopyPlaneBlock(dst.Y, src.Y, bps, regions.luma.DestX, regions.luma.DestY, regions.luma.SourceX, regions.luma.SourceY, regions.luma.Width, regions.luma.Height); err != nil {
 		return err
 	}
-	if dst.Format.MonoChrome {
+	if !regions.hasChroma {
 		return nil
 	}
 
-	shiftX, shiftY := 0, 0
-	if dst.Format.SubsamplingX {
-		shiftX = 1
-	}
-	if dst.Format.SubsamplingY {
-		shiftY = 1
-	}
-	chroma := TileListTileRegion{
-		SourceX: region.SourceX >> shiftX,
-		SourceY: region.SourceY >> shiftY,
-		DestX:   region.DestX >> shiftX,
-		DestY:   region.DestY >> shiftY,
-		Width:   region.Width >> shiftX,
-		Height:  region.Height >> shiftY,
-	}
+	chroma := regions.chroma
 	if err := CopyPlaneBlock(dst.U, src.U, bps, chroma.DestX, chroma.DestY, chroma.SourceX, chroma.SourceY, chroma.Width, chroma.Height); err != nil {
 		return err
 	}

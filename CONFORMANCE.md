@@ -199,7 +199,8 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         |                                  | DecodeLayout checks libaom-compatible uniform  |
 |    |                                  |         |                                  | tile size prerequisites. OutputGeometry,       |
 |    |                                  |         |                                  | OutputTileRegion, and                          |
-|    |                                  |         |                                  | CopyTileListEntryToOutputFrame cover output    |
+|    |                                  |         |                                  | CopyTileListEntryToOutputFrame and             |
+|    |                                  |         |                                  | CopyTileListToOutputFrame cover output         |
 |    |                                  |         |                                  | sizing/copy rectangles. EventTileList carries  |
 |    |                                  |         |                                  | the parsed structure plus TileListErr for      |
 |    |                                  |         |                                  | partial payloads. The residual decode runner   |
@@ -494,7 +495,7 @@ manifest. The next production-readiness items are:
 2. **Tile list OBU playback.** `EventTileList` parsing is present with
    reference-grid anchor validation, libaom-compatible uniform tile-size
    prerequisite checks, libaom-shaped output geometry/copy-region helpers, and
-   the decoded-tile-to-output-frame blit helper. The residual decode runner still returns
+   entry-level plus whole-list decoded-tile-to-output-frame blit helpers. The residual decode runner still returns
    `ErrDecoderUnsupportedTileList` for valid layouts instead of silently
    ignoring playback; end-to-end tile payload decode and reconstruction blitting
    remain future work.

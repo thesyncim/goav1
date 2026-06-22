@@ -431,6 +431,66 @@ func TestPublicCopyTileListEntryToOutputFrame(t *testing.T) {
 	}
 }
 
+func TestPublicCopyTileListToOutputFrame(t *testing.T) {
+	list, geom := publicTileListCopyFixture(t)
+	list.Entries[1].AnchorFrameIdx = 1
+	format := av1.FrameFormat{
+		Width:        geom.OutputFrameWidth,
+		Height:       geom.OutputFrameHeight,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        1,
+	}
+	src0 := bindPublicTileListFrame(t, format)
+	src1 := bindPublicTileListFrame(t, format)
+	dst := bindPublicTileListFrame(t, format)
+	fillTileListCopySource(src0)
+	fillTileListCopySource(src1)
+	setPublicFrameSample(src1.Y, src1.Layout.BytesPerSample, 128, 0, 77)
+	setPublicFrameSample(src1.U, src1.Layout.BytesPerSample, 64, 0, 88)
+	sources := []*av1.Frame{&src0, &src1}
+
+	if err := av1.CopyTileListToOutputFrame(&dst, sources, list, geom); err != nil {
+		t.Fatalf("CopyTileListToOutputFrame: %v", err)
+	}
+	if got, want := getPublicFrameSample(dst.Y, dst.Layout.BytesPerSample, 0, 0), getPublicFrameSample(src0.Y, src0.Layout.BytesPerSample, 0, 0); got != want {
+		t.Fatalf("entry 0 Y got=%d want %d", got, want)
+	}
+	if got := getPublicFrameSample(dst.Y, dst.Layout.BytesPerSample, 128, 0); got != 77 {
+		t.Fatalf("entry 1 Y got=%d want source 1 sample", got)
+	}
+	if got := getPublicFrameSample(dst.U, dst.Layout.BytesPerSample, 64, 0); got != 88 {
+		t.Fatalf("entry 1 U got=%d want source 1 sample", got)
+	}
+	if got, want := getPublicFrameSample(dst.Y, dst.Layout.BytesPerSample, 0, 64), getPublicFrameSample(src0.Y, src0.Layout.BytesPerSample, 128, 64); got != want {
+		t.Fatalf("entry 2 Y got=%d want %d", got, want)
+	}
+}
+
+func TestPublicCopyTileListToOutputFrameRejectsMissingAnchorBeforeCopy(t *testing.T) {
+	list, geom := publicTileListCopyFixture(t)
+	list.Entries[1].AnchorFrameIdx = 1
+	format := av1.FrameFormat{
+		Width:        geom.OutputFrameWidth,
+		Height:       geom.OutputFrameHeight,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        1,
+	}
+	src0 := bindPublicTileListFrame(t, format)
+	dst := bindPublicTileListFrame(t, format)
+	fillTileListCopySource(src0)
+
+	if err := av1.CopyTileListToOutputFrame(&dst, []*av1.Frame{&src0}, list, geom); !errors.Is(err, av1.ErrTileListInvalidAnchorIndex) {
+		t.Fatalf("CopyTileListToOutputFrame err=%v want %v", err, av1.ErrTileListInvalidAnchorIndex)
+	}
+	if got := getPublicFrameSample(dst.Y, dst.Layout.BytesPerSample, 0, 0); got != 0 {
+		t.Fatalf("destination Y mutated before missing-anchor failure: %d", got)
+	}
+}
+
 func TestPublicCopyTileListEntryToOutputFrameRejectsInvalid(t *testing.T) {
 	list, geom := publicSingleTileListCopyFixture(t)
 	dst := bindPublicTileListFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 1})
