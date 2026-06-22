@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1643,6 +1646,108 @@ func TestPublicRTCEncoderSetConfigCQPTransitionsDecode(t *testing.T) {
 	assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
 }
 
+func TestPublicRTCEncoderSingleSpatialSettingsAomdec(t *testing.T) {
+	aomdec, err := exec.LookPath("aomdec")
+	if err != nil {
+		t.Skip("aomdec not on PATH")
+	}
+	const w, h = 192, 128
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
+	publicRTCApplyControlBitrates(&cfg, 420)
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	var frames []publicIVFFrame
+	appendFrame := func(label string, frameIndex int, wantKey bool) {
+		t.Helper()
+		frame, err := enc.Encode(publicRTCMatrixFrame(w, h, frameIndex), false)
+		if err != nil {
+			t.Fatalf("%s Encode: %v", label, err)
+		}
+		if frame.Keyframe != wantKey {
+			t.Fatalf("%s key=%v want %v frame=%+v", label, frame.Keyframe, wantKey, frame)
+		}
+		frames = append(frames, publicIVFFrame{
+			timestamp: uint64(len(frames)),
+			payload:   append([]byte(nil), frame.Data...),
+		})
+	}
+
+	appendFrame("initial CBR key", 0, true)
+	appendFrame("warm CBR delta", 1, false)
+
+	fpsBitrateChange := enc.Config()
+	fpsBitrateChange.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
+	publicRTCApplyControlBitrates(&fpsBitrateChange, 700)
+	if err := enc.SetConfig(fpsBitrateChange); err != nil {
+		t.Fatalf("SetConfig fps/bitrate: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), fpsBitrateChange)
+	appendFrame("fps bitrate delta", 2, false)
+
+	cqpChange := enc.Config()
+	cqpChange.RateControl = goav1.EncoderRateControlCQP
+	cqpChange.Quantizer = 35
+	if err := enc.SetConfig(cqpChange); err != nil {
+		t.Fatalf("SetConfig CQP: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), cqpChange)
+	appendFrame("CQP delta", 3, false)
+
+	scalabilityChange := enc.Config()
+	scalabilityChange.Scalability = goav1.EncoderScalabilityModeL1T3
+	scalabilityChange.MaxFramerate = goav1.EncoderRational{Num: 24, Den: 1}
+	scalabilityChange.Quantizer = 31
+	if err := enc.SetConfig(scalabilityChange); err != nil {
+		t.Fatalf("SetConfig scalability: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), scalabilityChange)
+	appendFrame("L1T3 key", 4, true)
+	appendFrame("L1T3 delta", 5, false)
+
+	cbrChange := enc.Config()
+	cbrChange.RateControl = goav1.EncoderRateControlCBR
+	cbrChange.Quantizer = 0
+	cbrChange.MaxFramerate = goav1.EncoderRational{Num: 120, Den: 1}
+	publicRTCApplyControlBitrates(&cbrChange, 520)
+	if err := enc.SetConfig(cbrChange); err != nil {
+		t.Fatalf("SetConfig CBR: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), cbrChange)
+	appendFrame("CBR delta", 6, false)
+
+	ivf := appendPublicIVF(nil, w, h, 30, 1, frames)
+	decoded, err := goav1.DecodeIVF(ivf)
+	if err != nil {
+		t.Fatalf("DecodeIVF: %v", err)
+	}
+	if len(decoded) != len(frames) {
+		t.Fatalf("DecodeIVF frames=%d want %d", len(decoded), len(frames))
+	}
+	want := publicDecodedFramesRawYUV(decoded)
+
+	dir := t.TempDir()
+	ivfPath := filepath.Join(dir, "rtc-settings.ivf")
+	outPath := filepath.Join(dir, "rtc-settings.yuv")
+	if err := os.WriteFile(ivfPath, ivf, 0o644); err != nil {
+		t.Fatalf("write IVF: %v", err)
+	}
+	out, err := exec.Command(aomdec, "--rawvideo", "-o", outPath, ivfPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("aomdec: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read aomdec output: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("aomdec output len=%d matches=%v want len=%d", len(got), bytes.Equal(got, want), len(want))
+	}
+}
+
 func TestPublicRTCEncoderSetConfigSpatialCycleDecodes(t *testing.T) {
 	const w, h = 1008, 576
 	modes := []goav1.EncoderScalabilityMode{
@@ -2718,6 +2823,16 @@ func assertPublicRTPPayloadsAssembleToFrame(t *testing.T, frameData []byte, payl
 	if wrote != len(expected) || gotOBUs != obuCount || string(assembled[:wrote]) != string(expected) {
 		t.Fatalf("assembled len=%d obus=%d match=%v want len=%d obus=%d", wrote, gotOBUs, string(assembled[:wrote]) == string(expected), len(expected), obuCount)
 	}
+}
+
+func publicDecodedFramesRawYUV(frames []goav1.DecodedFrame) []byte {
+	var out []byte
+	for _, frame := range frames {
+		out = append(out, frame.Y...)
+		out = append(out, frame.U...)
+		out = append(out, frame.V...)
+	}
+	return out
 }
 
 func assertPublicRTCAttachedStructure(t *testing.T, structure goav1.RTPDependencyDescriptorStructure, cfg goav1.EncoderConfig) {
