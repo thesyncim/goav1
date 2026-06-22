@@ -71,6 +71,9 @@ const (
 	AV1SDPRIDMaxBitsPerPixel = "max-bpp"
 	// AV1SDPRIDDepend is the RID restriction for dependent RID identifiers.
 	AV1SDPRIDDepend = "depend"
+
+	// AV1SDPSimulcastPausedPrefix marks an initially paused simulcast RID.
+	AV1SDPSimulcastPausedPrefix = "~"
 )
 
 // ErrSDPInvalidConfig is returned when AV1 SDP/fmtp parameters are malformed
@@ -123,6 +126,24 @@ type AV1SDPRID struct {
 	PayloadTypes []string
 	// Restrictions are the RID restrictions attached to this stream.
 	Restrictions AV1SDPRIDRestrictions
+}
+
+// AV1SDPSimulcastAlternative is one RID alternative inside one simulcast
+// stream. A paused alternative is negotiated but starts in the paused state.
+type AV1SDPSimulcastAlternative struct {
+	RID    string
+	Paused bool
+}
+
+// AV1SDPSimulcastStream is one simulcast stream with one or more alternative
+// RID encodings ordered from most to least preferred.
+type AV1SDPSimulcastStream []AV1SDPSimulcastAlternative
+
+// AV1SDPSimulcast holds the send and receive directions of an a=simulcast
+// media-level SDP attribute.
+type AV1SDPSimulcast struct {
+	Send    []AV1SDPSimulcastStream
+	Receive []AV1SDPSimulcastStream
 }
 
 // DefaultAV1SDPFmtpParameters returns the profile/level/tier inferred by the
@@ -442,6 +463,48 @@ func (r AV1SDPRID) SDP() (string, error) {
 	return string(buf), nil
 }
 
+// Validate rejects malformed simulcast attributes.
+func (s AV1SDPSimulcast) Validate() error {
+	if len(s.Send) == 0 && len(s.Receive) == 0 {
+		return ErrSDPInvalidConfig
+	}
+	if err := av1SDPValidateSimulcastStreams(s.Send); err != nil {
+		return err
+	}
+	if err := av1SDPValidateSimulcastStreams(s.Receive); err != nil {
+		return err
+	}
+	return nil
+}
+
+// AppendSDP appends a complete a=simulcast SDP attribute in canonical send
+// then recv order.
+func (s AV1SDPSimulcast) AppendSDP(dst []byte) ([]byte, error) {
+	if err := s.Validate(); err != nil {
+		return dst, err
+	}
+	dst = append(dst, "a=simulcast:"...)
+	first := true
+	if len(s.Send) > 0 {
+		dst, first = av1SDPAppendSimulcastDirection(dst, first,
+			AV1SDPRIDDirectionSend, s.Send)
+	}
+	if len(s.Receive) > 0 {
+		dst, first = av1SDPAppendSimulcastDirection(dst, first,
+			AV1SDPRIDDirectionReceive, s.Receive)
+	}
+	return dst, nil
+}
+
+// SDP returns a complete a=simulcast SDP attribute.
+func (s AV1SDPSimulcast) SDP() (string, error) {
+	buf, err := s.AppendSDP(nil)
+	if err != nil {
+		return "", err
+	}
+	return string(buf), nil
+}
+
 // ParseAV1SDPFmtp parses AV1 RTP fmtp parameters. Missing profile,
 // level-idx, or tier values are filled with the AV1 RTP payload format
 // defaults. Unknown fmtp parameters are ignored so callers can pass complete
@@ -537,6 +600,47 @@ func ParseAV1SDPRID(line string) (AV1SDPRID, error) {
 	return out, nil
 }
 
+// ParseAV1SDPSimulcast parses a complete RFC 8853 a=simulcast attribute. The
+// input may include or omit the leading "a=simulcast:" prefix.
+func ParseAV1SDPSimulcast(line string) (AV1SDPSimulcast, error) {
+	line = strings.TrimSpace(line)
+	line = strings.TrimPrefix(line, "a=simulcast:")
+	fields := strings.Fields(line)
+	if len(fields) == 0 || len(fields)%2 != 0 || len(fields) > 4 {
+		return AV1SDPSimulcast{}, ErrSDPInvalidConfig
+	}
+	var out AV1SDPSimulcast
+	var sawSend bool
+	var sawReceive bool
+	for i := 0; i < len(fields); i += 2 {
+		direction := strings.ToLower(strings.TrimSpace(fields[i]))
+		streams, err := av1SDPParseSimulcastStreams(fields[i+1])
+		if err != nil {
+			return AV1SDPSimulcast{}, err
+		}
+		switch direction {
+		case AV1SDPRIDDirectionSend:
+			if sawSend {
+				return AV1SDPSimulcast{}, ErrSDPInvalidConfig
+			}
+			out.Send = streams
+			sawSend = true
+		case AV1SDPRIDDirectionReceive:
+			if sawReceive {
+				return AV1SDPSimulcast{}, ErrSDPInvalidConfig
+			}
+			out.Receive = streams
+			sawReceive = true
+		default:
+			return AV1SDPSimulcast{}, ErrSDPInvalidConfig
+		}
+	}
+	if err := out.Validate(); err != nil {
+		return AV1SDPSimulcast{}, err
+	}
+	return out, nil
+}
+
 // AV1SDPNegotiates reports whether an SDP blob contains an active video
 // section that binds an AV1/90000 payload type to valid AV1 fmtp parameters.
 func AV1SDPNegotiates(sdp string) bool {
@@ -554,6 +658,13 @@ func AV1SDPNegotiatesParams(sdp string, stream AV1SDPFmtpParameters) bool {
 // for that payload type, either directly or with the wildcard payload type.
 func AV1SDPNegotiatesRTCPFeedback(sdp string, feedback string) bool {
 	return av1SDPHasRTCPFeedback(sdp, av1SDPDirectionIsActive, feedback)
+}
+
+// AV1SDPNegotiatesSimulcast reports whether an SDP blob contains an active
+// video section that binds AV1/90000 and declares at least one valid AV1
+// simulcast RID for either direction.
+func AV1SDPNegotiatesSimulcast(sdp string) bool {
+	return av1SDPHasSimulcast(sdp, av1SDPDirectionIsActive, "")
 }
 
 // AV1SDPOffersReceive reports whether an SDP offer contains a video section
@@ -575,6 +686,13 @@ func AV1SDPOffersReceiveParams(sdp string, stream AV1SDPFmtpParameters) bool {
 // type.
 func AV1SDPOffersReceiveRTCPFeedback(sdp string, feedback string) bool {
 	return av1SDPHasRTCPFeedback(sdp, av1SDPDirectionAllowsReceive, feedback)
+}
+
+// AV1SDPOffersReceiveSimulcast reports whether an SDP offer contains a video
+// section that can receive AV1/90000 simulcast streams identified by RID.
+func AV1SDPOffersReceiveSimulcast(sdp string) bool {
+	return av1SDPHasSimulcast(sdp, av1SDPDirectionAllowsReceive,
+		AV1SDPRIDDirectionReceive)
 }
 
 // AV1SDPOffersReceiveFrame reports whether an SDP offer contains a video
@@ -606,6 +724,13 @@ func AV1SDPAnswersSend(sdp string) bool {
 // that payload type, either directly or with the wildcard payload type.
 func AV1SDPAnswersSendRTCPFeedback(sdp string, feedback string) bool {
 	return av1SDPHasRTCPFeedback(sdp, av1SDPDirectionAllowsSend, feedback)
+}
+
+// AV1SDPAnswersSendSimulcast reports whether an SDP answer contains a video
+// section that can send AV1/90000 simulcast streams identified by RID.
+func AV1SDPAnswersSendSimulcast(sdp string) bool {
+	return av1SDPHasSimulcast(sdp, av1SDPDirectionAllowsSend,
+		AV1SDPRIDDirectionSend)
 }
 
 // AV1SDPAnswersSendFrame reports whether an SDP answer contains a video
@@ -651,6 +776,17 @@ func av1SDPHasFrame(
 		func(section av1SDPMediaSection, payloadType string) bool {
 			return section.allowsAV1Frame(payloadType, ridDirection,
 				width, height, fps)
+		})
+}
+
+func av1SDPHasSimulcast(
+	sdp string,
+	directionOK func(string) bool,
+	simulcastDirection string,
+) bool {
+	return av1SDPHas(sdp, directionOK,
+		func(section av1SDPMediaSection, payloadType string) bool {
+			return section.hasAV1Simulcast(payloadType, simulcastDirection)
 		})
 }
 
@@ -736,22 +872,34 @@ func av1SDPHas(
 				section.ridSeen[rid.ID] = true
 				section.rids = append(section.rids, rid)
 			}
+		case strings.HasPrefix(line, "a=simulcast:"):
+			simulcast, err := ParseAV1SDPSimulcast(line)
+			if err == nil {
+				if section.simulcastSeen {
+					section.simulcastDuplicate = true
+				}
+				section.simulcast = simulcast
+				section.simulcastSeen = true
+			}
 		}
 	}
 	return haveSection && section.hasAV1(directionOK, payloadOK)
 }
 
 type av1SDPMediaSection struct {
-	media           string
-	portActive      bool
-	payloadTypes    map[string]bool
-	direction       string
-	av1PayloadTypes map[string]bool
-	fmtpParams      map[string]string
-	rtcpFeedback    map[string][]string
-	rids            []AV1SDPRID
-	ridSeen         map[string]bool
-	ridDuplicate    map[string]bool
+	media              string
+	portActive         bool
+	payloadTypes       map[string]bool
+	direction          string
+	av1PayloadTypes    map[string]bool
+	fmtpParams         map[string]string
+	rtcpFeedback       map[string][]string
+	rids               []AV1SDPRID
+	ridSeen            map[string]bool
+	ridDuplicate       map[string]bool
+	simulcast          AV1SDPSimulcast
+	simulcastSeen      bool
+	simulcastDuplicate bool
 }
 
 func (s av1SDPMediaSection) parsesVideoPayloadAttributes() bool {
@@ -790,6 +938,19 @@ func (s av1SDPMediaSection) allowsAV1Frame(
 	height int,
 	fps int,
 ) bool {
+	if simulcastRIDs, ok := s.simulcastRIDs(ridDirection); ok {
+		for _, ridID := range simulcastRIDs {
+			rid, ok := s.ridByID(ridID, ridDirection)
+			if !ok || !av1SDPRIDPayloadTypesAllow(rid.PayloadTypes, payloadType) {
+				continue
+			}
+			allowed, err := rid.Restrictions.AllowsFrame(width, height, fps)
+			if err == nil && allowed {
+				return true
+			}
+		}
+		return false
+	}
 	matchedRID := false
 	for _, rid := range s.rids {
 		if s.ridDuplicate[rid.ID] ||
@@ -804,6 +965,64 @@ func (s av1SDPMediaSection) allowsAV1Frame(
 		}
 	}
 	return !matchedRID
+}
+
+func (s av1SDPMediaSection) hasAV1Simulcast(payloadType string, direction string) bool {
+	if !s.simulcastSeen || s.simulcastDuplicate {
+		return false
+	}
+	if direction == "" {
+		return s.hasAV1Simulcast(payloadType, AV1SDPRIDDirectionSend) ||
+			s.hasAV1Simulcast(payloadType, AV1SDPRIDDirectionReceive)
+	}
+	simulcastRIDs, ok := s.simulcastRIDs(direction)
+	if !ok {
+		return false
+	}
+	for _, ridID := range simulcastRIDs {
+		rid, ok := s.ridByID(ridID, direction)
+		if ok && av1SDPRIDPayloadTypesAllow(rid.PayloadTypes, payloadType) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s av1SDPMediaSection) simulcastRIDs(direction string) ([]string, bool) {
+	if !s.simulcastSeen || s.simulcastDuplicate {
+		return nil, false
+	}
+	var streams []AV1SDPSimulcastStream
+	switch direction {
+	case AV1SDPRIDDirectionSend:
+		streams = s.simulcast.Send
+	case AV1SDPRIDDirectionReceive:
+		streams = s.simulcast.Receive
+	default:
+		return nil, false
+	}
+	if len(streams) == 0 {
+		return nil, false
+	}
+	rids := make([]string, 0, len(streams))
+	for _, stream := range streams {
+		for _, alternative := range stream {
+			rids = append(rids, alternative.RID)
+		}
+	}
+	return rids, true
+}
+
+func (s av1SDPMediaSection) ridByID(id string, direction string) (AV1SDPRID, bool) {
+	if s.ridDuplicate[id] {
+		return AV1SDPRID{}, false
+	}
+	for _, rid := range s.rids {
+		if rid.ID == id && rid.Direction == direction {
+			return rid, true
+		}
+	}
+	return AV1SDPRID{}, false
 }
 
 func (s av1SDPMediaSection) filterRIDPayloadTypes(rid *AV1SDPRID) bool {
@@ -830,6 +1049,94 @@ func av1SDPRIDPayloadTypesAllow(payloadTypes []string, payloadType string) bool 
 		}
 	}
 	return false
+}
+
+func av1SDPValidateSimulcastStreams(streams []AV1SDPSimulcastStream) error {
+	seen := make(map[string]bool)
+	for _, stream := range streams {
+		if len(stream) == 0 {
+			return ErrSDPInvalidConfig
+		}
+		for _, alternative := range stream {
+			if !av1SDPValidRIDID(alternative.RID) || seen[alternative.RID] {
+				return ErrSDPInvalidConfig
+			}
+			seen[alternative.RID] = true
+		}
+	}
+	return nil
+}
+
+func av1SDPAppendSimulcastDirection(
+	dst []byte,
+	first bool,
+	direction string,
+	streams []AV1SDPSimulcastStream,
+) ([]byte, bool) {
+	if !first {
+		dst = append(dst, ' ')
+	}
+	dst = append(dst, direction...)
+	dst = append(dst, ' ')
+	for i, stream := range streams {
+		if i > 0 {
+			dst = append(dst, ';')
+		}
+		for j, alternative := range stream {
+			if j > 0 {
+				dst = append(dst, ',')
+			}
+			if alternative.Paused {
+				dst = append(dst, AV1SDPSimulcastPausedPrefix...)
+			}
+			dst = append(dst, alternative.RID...)
+		}
+	}
+	return dst, false
+}
+
+func av1SDPParseSimulcastStreams(value string) ([]AV1SDPSimulcastStream, error) {
+	if value == "" {
+		return nil, ErrSDPInvalidConfig
+	}
+	rawStreams := strings.Split(value, ";")
+	streams := make([]AV1SDPSimulcastStream, 0, len(rawStreams))
+	for _, rawStream := range rawStreams {
+		if rawStream == "" {
+			return nil, ErrSDPInvalidConfig
+		}
+		rawAlternatives := strings.Split(rawStream, ",")
+		stream := make(AV1SDPSimulcastStream, 0, len(rawAlternatives))
+		for _, rawAlternative := range rawAlternatives {
+			alternative, err := av1SDPParseSimulcastAlternative(rawAlternative)
+			if err != nil {
+				return nil, err
+			}
+			stream = append(stream, alternative)
+		}
+		streams = append(streams, stream)
+	}
+	if err := av1SDPValidateSimulcastStreams(streams); err != nil {
+		return nil, err
+	}
+	return streams, nil
+}
+
+func av1SDPParseSimulcastAlternative(value string) (AV1SDPSimulcastAlternative, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return AV1SDPSimulcastAlternative{}, ErrSDPInvalidConfig
+	}
+	alternative := AV1SDPSimulcastAlternative{}
+	if strings.HasPrefix(value, AV1SDPSimulcastPausedPrefix) {
+		alternative.Paused = true
+		value = strings.TrimPrefix(value, AV1SDPSimulcastPausedPrefix)
+	}
+	if !av1SDPValidRIDID(value) {
+		return AV1SDPSimulcastAlternative{}, ErrSDPInvalidConfig
+	}
+	alternative.RID = value
+	return alternative, nil
 }
 
 func av1SDPParseRIDParams(params string) (AV1SDPRIDRestrictions, []string, error) {

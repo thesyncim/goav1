@@ -39,6 +39,9 @@ func TestAV1SDPConstants(t *testing.T) {
 	if got := av1.DefaultAV1SDPFmtpParameters(); got != (av1.AV1SDPFmtpParameters{Profile: 0, LevelIdx: 5, Tier: 0}) {
 		t.Fatalf("DefaultAV1SDPFmtpParameters = %+v", got)
 	}
+	if av1.AV1SDPSimulcastPausedPrefix != "~" {
+		t.Fatalf("AV1SDPSimulcastPausedPrefix = %q, want ~", av1.AV1SDPSimulcastPausedPrefix)
+	}
 }
 
 func TestParseAV1SDPFmtp(t *testing.T) {
@@ -294,6 +297,77 @@ func TestAV1SDPRIDRestrictionsAllowsFrame(t *testing.T) {
 	}
 	if _, err := restrictions.AllowsEncodedFrame(640, 360, 30, 1, 0); !errors.Is(err, av1.ErrSDPInvalidConfig) {
 		t.Fatalf("AllowsEncodedFrame invalid frame bits error = %v, want ErrSDPInvalidConfig", err)
+	}
+}
+
+func TestParseAV1SDPSimulcast(t *testing.T) {
+	simulcast, err := av1.ParseAV1SDPSimulcast("a=simulcast:send q;h,f recv ~low,mid;high")
+	if err != nil {
+		t.Fatalf("ParseAV1SDPSimulcast returned error: %v", err)
+	}
+	if len(simulcast.Send) != 2 ||
+		len(simulcast.Send[0]) != 1 ||
+		simulcast.Send[0][0].RID != "q" ||
+		len(simulcast.Send[1]) != 2 ||
+		simulcast.Send[1][0].RID != "h" ||
+		simulcast.Send[1][1].RID != "f" {
+		t.Fatalf("unexpected send simulcast streams: %#v", simulcast.Send)
+	}
+	if len(simulcast.Receive) != 2 ||
+		len(simulcast.Receive[0]) != 2 ||
+		!simulcast.Receive[0][0].Paused ||
+		simulcast.Receive[0][0].RID != "low" ||
+		simulcast.Receive[0][1].RID != "mid" ||
+		simulcast.Receive[1][0].RID != "high" {
+		t.Fatalf("unexpected recv simulcast streams: %#v", simulcast.Receive)
+	}
+	line, err := simulcast.SDP()
+	if err != nil {
+		t.Fatalf("Simulcast SDP returned error: %v", err)
+	}
+	if line != "a=simulcast:send q;h,f recv ~low,mid;high" {
+		t.Fatalf("Simulcast SDP = %q", line)
+	}
+
+	reordered, err := av1.ParseAV1SDPSimulcast("recv r send s")
+	if err != nil {
+		t.Fatalf("ParseAV1SDPSimulcast reordered returned error: %v", err)
+	}
+	line, err = reordered.SDP()
+	if err != nil {
+		t.Fatalf("reordered SDP returned error: %v", err)
+	}
+	if line != "a=simulcast:send s recv r" {
+		t.Fatalf("reordered SDP = %q", line)
+	}
+}
+
+func TestAV1SDPSimulcastRejectsInvalidConfig(t *testing.T) {
+	for _, simulcast := range []av1.AV1SDPSimulcast{
+		{},
+		{Send: []av1.AV1SDPSimulcastStream{{}}},
+		{Send: []av1.AV1SDPSimulcastStream{{{RID: ""}}}},
+		{Send: []av1.AV1SDPSimulcastStream{{{RID: "q"}, {RID: "q"}}}},
+	} {
+		if err := simulcast.Validate(); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+			t.Fatalf("Validate(%+v) error = %v, want ErrSDPInvalidConfig", simulcast, err)
+		}
+	}
+	for _, line := range []string{
+		"a=simulcast:",
+		"a=simulcast:send",
+		"a=simulcast:send q recv",
+		"a=simulcast:both q",
+		"a=simulcast:send q send h",
+		"a=simulcast:send q;",
+		"a=simulcast:send q,,h",
+		"a=simulcast:send ~",
+		"a=simulcast:send q/h",
+		"a=simulcast:send q recv h send f",
+	} {
+		if _, err := av1.ParseAV1SDPSimulcast(line); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+			t.Fatalf("ParseAV1SDPSimulcast(%q) error = %v, want ErrSDPInvalidConfig", line, err)
+		}
 	}
 }
 
@@ -584,6 +658,93 @@ func TestAV1SDPRIDFrameScanning(t *testing.T) {
 	)
 	if av1.AV1SDPOffersReceiveFrame(sendOnly, 640, 360, 30) {
 		t.Fatal("sendonly section reported receive frame support")
+	}
+}
+
+func TestAV1SDPSimulcastScanning(t *testing.T) {
+	sdp := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 96 98 99 100",
+		"a=rtpmap:96 VP8/90000",
+		"a=rtpmap:98 AV1/90000",
+		"a=rtpmap:99 AV1/90000",
+		"a=rtpmap:100 AV1/90000",
+		"a=rid:v recv pt=96;max-width=320;max-height=180;max-fps=15",
+		"a=rid:q recv pt=98;max-width=640;max-height=360;max-fps=30",
+		"a=rid:h recv pt=99;max-width=1280;max-height=720;max-fps=30",
+		"a=rid:f recv pt=100;max-width=1920;max-height=1080;max-fps=30",
+		"a=rid:sendh send pt=99;max-width=1280;max-height=720;max-fps=30",
+		"a=simulcast:recv q;h send sendh",
+	)
+	if !av1.AV1SDPNegotiatesSimulcast(sdp) {
+		t.Fatal("AV1SDPNegotiatesSimulcast rejected active AV1 simulcast")
+	}
+	if !av1.AV1SDPOffersReceiveSimulcast(sdp) {
+		t.Fatal("AV1SDPOffersReceiveSimulcast rejected AV1 recv simulcast")
+	}
+	if !av1.AV1SDPAnswersSendSimulcast(sdp) {
+		t.Fatal("AV1SDPAnswersSendSimulcast rejected AV1 send simulcast")
+	}
+	if !av1.AV1SDPOffersReceiveFrame(sdp, 1280, 720, 30) {
+		t.Fatal("AV1SDPOffersReceiveFrame rejected matching simulcast RID")
+	}
+	if av1.AV1SDPOffersReceiveFrame(sdp, 1920, 1080, 30) {
+		t.Fatal("AV1SDPOffersReceiveFrame used RID outside simulcast recv list")
+	}
+	if !av1.AV1SDPAnswersSendFrame(sdp, 1280, 720, 30) {
+		t.Fatal("AV1SDPAnswersSendFrame rejected matching simulcast send RID")
+	}
+
+	pausedAlternative := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98",
+		"a=rtpmap:98 AV1/90000",
+		"a=rid:q recv pt=98;max-width=640;max-height=360;max-fps=30",
+		"a=simulcast:recv ~q",
+	)
+	if !av1.AV1SDPOffersReceiveSimulcast(pausedAlternative) {
+		t.Fatal("paused simulcast RID was not treated as negotiated")
+	}
+	if !av1.AV1SDPOffersReceiveFrame(pausedAlternative, 640, 360, 30) {
+		t.Fatal("paused simulcast RID restrictions did not allow matching frame")
+	}
+
+	wrongPayload := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 96 98",
+		"a=rtpmap:96 VP8/90000",
+		"a=rtpmap:98 AV1/90000",
+		"a=rid:v recv pt=96;max-width=320;max-height=180;max-fps=15",
+		"a=simulcast:recv v",
+	)
+	if av1.AV1SDPOffersReceiveSimulcast(wrongPayload) {
+		t.Fatal("AV1SDPOffersReceiveSimulcast accepted non-AV1 RID")
+	}
+
+	duplicateSimulcast := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98",
+		"a=rtpmap:98 AV1/90000",
+		"a=rid:q recv pt=98;max-width=640;max-height=360;max-fps=30",
+		"a=simulcast:recv q",
+		"a=simulcast:recv q",
+	)
+	if av1.AV1SDPOffersReceiveSimulcast(duplicateSimulcast) {
+		t.Fatal("duplicate simulcast attribute was not disabled")
+	}
+	if av1.AV1SDPOffersReceiveFrame(duplicateSimulcast, 1280, 720, 30) {
+		t.Fatal("duplicate simulcast attribute ignored RID receiver restriction")
+	}
+	if !av1.AV1SDPOffersReceiveFrame(duplicateSimulcast, 640, 360, 30) {
+		t.Fatal("duplicate simulcast attribute should still allow matching RID restriction")
+	}
+
+	missingRID := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98",
+		"a=rtpmap:98 AV1/90000",
+		"a=simulcast:recv q",
+	)
+	if av1.AV1SDPOffersReceiveSimulcast(missingRID) {
+		t.Fatal("AV1SDPOffersReceiveSimulcast accepted missing RID")
+	}
+	if av1.AV1SDPOffersReceiveFrame(missingRID, 640, 360, 30) {
+		t.Fatal("AV1SDPOffersReceiveFrame accepted simulcast RID without restrictions")
 	}
 }
 
