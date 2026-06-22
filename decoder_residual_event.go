@@ -588,7 +588,7 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 			return DecoderFrameWorkEventResult{}, event.TileListErr
 		}
 		if event.TileInfo.Cols != 0 || event.TileInfo.Rows != 0 {
-			if _, _, err := ValidateTileListDecodeLayout(event.TileList, event.TileInfo); err != nil {
+			if _, err := TileListOutputGeometryForGrid(event.TileList, event.TileInfo, event.SequenceHeader.Use128x128Superblock); err != nil {
 				return DecoderFrameWorkEventResult{}, err
 			}
 		}
