@@ -30,10 +30,11 @@
 // streams at both 8-bit and 10-bit. Profile 1 is covered at both 8-bit and
 // 10-bit 4:4:4, plus 8/10-bit 4:4:4 screen-content clips that require luma and
 // chroma palette prediction, 8/10-bit 4:4:4 CDEF/restoration clips, 8/10-bit
-// 4:4:4 film-grain clips, a 10-bit 4:4:4 inter multi-tile clip, and 8/10-bit
-// 4:4:4 super-res clips that run the caller-owned full postfilter output path,
-// including inter streams that reference super-res output and a high-bit-depth
-// super-res + loop-restoration clip. All are committed under
+// 4:4:4 film-grain clips, a 10-bit 4:4:4 inter multi-tile clip, a profile-0
+// hidden S_FRAME altref stream, and 8/10-bit 4:4:4 super-res clips that run
+// the caller-owned full postfilter output path, including inter streams that
+// reference super-res output and a high-bit-depth super-res + loop-restoration
+// clip. All are committed under
 // internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
 // ships no 4:4:4 (profile 1), 4:2:2 (profile 2) or 12-bit (profile 2) vectors,
 // so these clips guard those decode paths.
@@ -50,6 +51,13 @@
 //	  --bit-depth=10 --input-bit-depth=10 --cpu-used=1 --end-usage=q \
 //	  --cq-level=32 --kf-max-dist=1 --lag-in-frames=0 \
 //	  -o profile1-444-10bit-64x64.ivf src444_10.yuv
+//	# 4:2:0 8-bit S_FRAME altref:
+//	aomenc --passes=2 --i420 --width=64 --height=64 --limit=8 --ivf \
+//	  --profile=0 --cpu-used=4 --end-usage=q --cq-level=32 \
+//	  --kf-max-dist=999 --auto-alt-ref=1 --lag-in-frames=25 \
+//	  --sframe-dist=4 --sframe-mode=2 --enable-cdef=0 \
+//	  --enable-restoration=0 -o profile0-420-8bit-sframe-64x64.ivf \
+//	  sframe420.yuv
 //	# 4:4:4 8-bit palette:
 //	ffmpeg -f lavfi -i nullsrc=size=64x64:rate=1:duration=3 -frames:v 3 \
 //	  -vf "geq=lum='if(lt(mod(X+N*4,16),8),64,192)':cb='if(lt(mod(Y+N*4,16),8),64,192)':cr='if(lt(mod(X+Y+N*4,32),16),64,192)',format=yuv444p" \
@@ -370,9 +378,16 @@ type profileClip struct {
 	wantRestorationFrames int
 	wantFilmGrainFrames   int
 	wantInterFrames       int
+	wantSwitchFrames      int
 	wantTileCols          int
 	wantTileRows          int
 	wantTileGroupTiles    int
+
+	// includeHiddenFrameMD5 makes frameMD5Hex cover every completed decoded
+	// frame, including non-shown altref/S_FRAME outputs. Libaom's rawvideo
+	// oracle emits those frames for this stream, while the older profile clips
+	// keep comparing shown outputs only.
+	includeHiddenFrameMD5 bool
 
 	// superRes marks clips that signal frame super-resolution. Super-res
 	// reallocates the displayed surface to a larger (upscaled) width than the
@@ -385,6 +400,31 @@ type profileClip struct {
 const profileSuperResOutputGlobalBase = 256
 
 var profileClips = []profileClip{
+	{
+		// Profile 0: 4:2:0 8-bit two-pass altref stream with a hidden S_FRAME.
+		// The MD5 list uses libaom aomdec --rawvideo frame bytes mapped into
+		// low-overhead decode-event order, including the hidden switch frame
+		// and hidden altref frame.
+		name: "profile0-420-8bit-sframe-64x64",
+		file: "profile0-420-8bit-sframe-64x64.ivf",
+		frameMD5Hex: []string{
+			"a09b7a904d7faed040036f0dbbc52aa2",
+			"63e25c36bd77d0908cb9eb2361fb39d1",
+			"17c94cf420710324e592ffc3cd9ce556",
+			"c5de5e0baeec848e384830398f528c61",
+			"df4820bf2ae49c081156d90e9994c0c5",
+			"c1896b50d88a6483656cb8ae38354ba1",
+			"e8a806ae6385776252b7c74c8c7b6dd5",
+			"dce197270249c6bb8bda4d7c86b9b6b8",
+		},
+		wantSeqProfile:        0,
+		wantBitDepth:          8,
+		wantSubsamplingX:      true,
+		wantSubsamplingY:      true,
+		wantInterFrames:       6,
+		wantSwitchFrames:      1,
+		includeHiddenFrameMD5: true,
+	},
 	{
 		// Profile 1: 4:4:4 8-bit. SubsamplingX=false SubsamplingY=false.
 		name: "profile1-444-8bit-64x64",
@@ -1090,6 +1130,7 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	restorationFrames := 0
 	filmGrainFrames := 0
 	interFrames := 0
+	switchFrames := 0
 	maxTileCols := 0
 	maxTileRows := 0
 	maxTileGroupTiles := 0
@@ -1337,7 +1378,10 @@ func runProfileClip(t *testing.T, clip profileClip) {
 			if !result.Run.CompletedFrame {
 				continue
 			}
-			if !event.FrameHeader.ShowFrame {
+			if event.FrameHeader.FrameType == parser.FrameTypeSwitch {
+				switchFrames++
+			}
+			if !event.FrameHeader.ShowFrame && !clip.includeHiddenFrameMD5 {
 				continue
 			}
 			if event.FrameHeader.FrameType == parser.FrameTypeInter {
@@ -1375,6 +1419,9 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	}
 	if interFrames < clip.wantInterFrames {
 		t.Fatalf("inter frames=%d want at least %d", interFrames, clip.wantInterFrames)
+	}
+	if switchFrames < clip.wantSwitchFrames {
+		t.Fatalf("switch frames=%d want at least %d", switchFrames, clip.wantSwitchFrames)
 	}
 	if clip.wantTileCols != 0 && maxTileCols != clip.wantTileCols {
 		t.Fatalf("tile cols=%d want %d", maxTileCols, clip.wantTileCols)

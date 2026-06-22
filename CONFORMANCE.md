@@ -348,7 +348,8 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 35/35 vendored profile clips pass, covering
+- `make dryrun-profiles`: 36/36 vendored profile clips pass, covering
+  profile 0 4:2:0 8-bit S_FRAME altref,
   profile 1 4:4:4 8/10-bit all-intra, inter, screen-content palette,
   CDEF/restoration, 8/10-bit odd edge-size CDEF/restoration, 8/10-bit film grain,
   8/10-bit edge-motion, 8-bit multi-tile, 10-bit inter multi-tile, all-key
@@ -497,9 +498,6 @@ manifest. The next production-readiness items are:
    `ErrDecoderUnsupportedTileList` for valid layouts instead of silently
    ignoring playback; end-to-end tile payload decode and reconstruction blitting
    remain future work.
-3. **Switch-frame oracle coverage.** Parser and stream-level switch-frame
-   regressions exist, but the upstream libaom v3.14.0 test-data set does not
-   ship a dedicated `S_FRAME` IVF with MD5 goldens.
 
 ---
 

@@ -253,8 +253,8 @@ dryrun-relevant-supported:
 dryrun-full:
 	GOAV1_FULL_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFullFrameWorkDryRun' -count=1 -timeout 2400s -v
 
-# dryrun-profiles decodes the vendored profile-conformance clips (profile-1
-# 4:4:4 8/10-bit, profile-1 4:4:4 palette/CDEF/restoration/edge/tile/super-res,
+# dryrun-profiles decodes the vendored profile-conformance clips (profile-0
+# 4:2:0 S_FRAME, profile-1 4:4:4 8/10-bit, profile-1 4:4:4 palette/CDEF/restoration/edge/tile/super-res,
 # profile-1 10-bit inter tile and super-res+restoration, profile-2 4:2:2
 # 8/10-bit and 4:2:0 12-bit edge/super-res clips) and
 # asserts byte-exact per-frame MD5 against their libaom goldens.
@@ -328,7 +328,7 @@ help:
 	@echo "  dryrun-relevant-supported  strict-MD5 relevant dry-run"
 	@echo "  dryrun-full                strict-MD5 all committed libaom framework vectors"
 	@echo "  dryrun-extended            strict-MD5 opt-in extended dry-run (10-bit q-sweep, larger sizes, extra SVC)"
-	@echo "  dryrun-profiles            byte-exact profile clips (profile-1 4:4:4 incl. palette/filters/super-res, profile-2 4:2:2/12-bit)"
+	@echo "  dryrun-profiles            byte-exact profile clips (profile-0 S_FRAME, profile-1 4:4:4 incl. palette/filters/super-res, profile-2 4:2:2/12-bit)"
 	@echo "  dryrun-corpus              byte-exact generated real-content corpus (requires local generated corpus)"
 	@echo "  dryrun-external-corpus     byte-exact local external IVF corpus (requires GOAV1_EXTERNAL_CORPUS_DIR(S))"
 	@echo "  test-motion-conformance    libaom convolve conformance"

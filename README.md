@@ -302,7 +302,7 @@ this repository's strict framework gates:
 | `make dryrun-relevant-supported` | 14/14 relevant vectors pass, including 8/10-bit film grain and monochrome |
 | `make dryrun-full` | 240/240 committed remote libaom vectors pass |
 | `make dryrun-extended` | 226/226 opt-in diagnostic vectors pass, including quantizer sweeps, odd/larger sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage |
-| `make dryrun-profiles` | 35/35 vendored profile clips pass, including profile-1 4:4:4, profile-2 4:2:2, targeted 12-bit profile-2, CDEF/restoration, super-res, film grain, edge-motion, and non-SVC multi-tile clips |
+| `make dryrun-profiles` | 36/36 vendored profile clips pass, including profile-0 S_FRAME, profile-1 4:4:4, profile-2 4:2:2, targeted 12-bit profile-2, CDEF/restoration, super-res, film grain, edge-motion, and non-SVC multi-tile clips |
 
 Optional local corpus lanes are available for broader real-world coverage:
 
@@ -320,8 +320,6 @@ vendoring large binary clips into this repository.
 Known conformance gaps are explicit:
 
 - Tile-list OBU playback is parsed but not reconstructed/published end to end.
-- Switch-frame parser/stream regressions exist, but the pinned libaom v3.14.0
-  vector set has no dedicated `S_FRAME` IVF with MD5 goldens.
 - Broader profile-2 and real-world corpus breadth should keep expanding even
   though the current committed gates are green.
 
