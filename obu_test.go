@@ -366,6 +366,34 @@ func TestPublicTileListOutputGeometryAndRegions(t *testing.T) {
 		geom128.TileWidthPixels != 256 || geom128.TileHeightPixels != 128 {
 		t.Fatalf("128 geometry=%+v", geom128)
 	}
+
+	sequence := av1.SequenceHeader{
+		Use128x128Superblock: true,
+		ColorConfig: av1.ColorConfig{
+			BitDepth:     10,
+			SubsamplingX: true,
+		},
+	}
+	format, err := av1.TileListOutputFrameFormat(sequence, geom128, 32)
+	if err != nil {
+		t.Fatalf("TileListOutputFrameFormat: %v", err)
+	}
+	if format != (av1.FrameFormat{
+		Width:        geom128.OutputFrameWidth,
+		Height:       geom128.OutputFrameHeight,
+		BitDepth:     10,
+		SubsamplingX: true,
+		SBSizeLog2:   7,
+		Align:        32,
+	}) {
+		t.Fatalf("TileListOutputFrameFormat=%+v", format)
+	}
+	if _, err := av1.FrameRequiredSize(format); err != nil {
+		t.Fatalf("FrameRequiredSize(tile-list output): %v", err)
+	}
+	if _, err := av1.TileListOutputFrameFormat(sequence, av1.TileListOutputGeometry{}, 32); !errors.Is(err, av1.ErrFrameInvalidFormat) {
+		t.Fatalf("empty TileListOutputFrameFormat err=%v want %v", err, av1.ErrFrameInvalidFormat)
+	}
 }
 
 func TestPublicCopyTileListEntryToOutputFrame(t *testing.T) {

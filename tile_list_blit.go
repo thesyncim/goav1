@@ -1,5 +1,20 @@
 package goav1
 
+// TileListOutputFrameFormat returns the frame format needed to store a
+// tile-list output mosaic described by geometry. The color layout is inherited
+// from sequence, and align has the same meaning as FrameCodedFormatFromHeaders
+// and FrameOutputFormatFromHeaders.
+func TileListOutputFrameFormat(sequence SequenceHeader, geometry TileListOutputGeometry, align int) (FrameFormat, error) {
+	if geometry.OutputFrameWidth <= 0 || geometry.OutputFrameHeight <= 0 {
+		return FrameFormat{}, ErrFrameInvalidFormat
+	}
+	if uint64(geometry.OutputFrameWidth) > uint64(^uint32(0)) ||
+		uint64(geometry.OutputFrameHeight) > uint64(^uint32(0)) {
+		return FrameFormat{}, ErrFrameInvalidFormat
+	}
+	return frameFormatFromHeaderWidth(sequence, uint32(geometry.OutputFrameWidth), uint32(geometry.OutputFrameHeight), align)
+}
+
 // CopyTileListToOutputFrame copies every already-decoded tile-list entry from
 // sources into dst. sources is indexed by TileListEntry.AnchorFrameIdx, matching
 // libaom's external-reference frame table. The function validates every source
