@@ -47,7 +47,7 @@ needs:
 | --- | --- | --- |
 | One-shot decoded pixels | `DecodeIVF` | Copies visible planes into independent `DecodedFrame` values |
 | AV1 WebRTC SDP/RTP control checks | `ParseAV1SDPFmtp` / `ParseAV1SDPExtmap` / `ParseAV1SDPRID` / `ParseAV1SDPSimulcast` / `PutRTPMIDHeaderExtension` / `PutRTPStreamIDHeaderExtension` / `AV1SDPOffersReceive*` | Parses `AV1/90000` payload bindings, profile/level/tier fmtp values, RTP header-extension mappings, AV1 RID receiver restrictions, AV1 simulcast RID groups, AV1 rtcp-fb support, and raw MID/RID/RRID SDES header-extension payloads; complete SDP assembly and RTP header ownership stay caller-owned |
-| AV1 WebRTC RTCP feedback checks | `ParseAV1RTCPLayerRefreshRequestEntry` / `EncoderWebRTCValidateLayerRefreshRequest` | Parses and validates LRR FCI entries against the active temporal/spatial layer grid; RTCP transport stays caller-owned |
+| AV1 WebRTC RTCP feedback checks | `ParseAV1RTCPLayerRefreshRequestEntries` / `EncoderWebRTCValidateLayerRefreshRequests` | Parses, serializes, and validates LRR FCI entry lists against the active temporal/spatial layer grid; RTCP transport stays caller-owned |
 | Repeated in-memory IVF decode | `NewDecoderFromIVF` + `DecodeNext` | Copies IVF payloads once, then reuses decoder-owned frame and post-filter arenas |
 | Large/file-backed IVF decode | `NewDecoderFromIVFReaderAt` + `DecodeNext` | Indexes IVF frame offsets and reads each payload into one reusable buffer |
 | Already-demuxed temporal units | `NewDecoder(payloads)` + `DecodeNext` | Retains payload slices by reference and reuses all decode/output arenas |
@@ -124,7 +124,7 @@ dependency descriptor extmap URI. RTP SDES helpers validate and write raw
 MID/RID/RRID header-extension payload bytes after the caller has selected RTP
 extension IDs; complete SDP generation, transceiver setup, and RTP header
 ownership remain with the caller. RTCP helpers cover AV1
-Layer Refresh Request FCI entry parsing,
+Layer Refresh Request FCI entry and entry-list parsing,
 serialization, and validation against an encoder config; callers can satisfy a
 valid FIR, PLI, or LRR with the existing `forceKey` argument when a full refresh
 is the desired safe response. For ordered RTP payload bodies,
@@ -187,7 +187,7 @@ There are two public encoder surfaces:
   `RTCPicture.ActiveDecodeTargetsMask`, and
   `RTCPicture.ActiveDecodeTargetsRTPOptions` let integrations signal layer
   activation changes through the dependency descriptor extension.
-  `EncoderWebRTCValidateLayerRefreshRequest` validates AV1 RTCP LRR feedback
+  `EncoderWebRTCValidateLayerRefreshRequests` validates AV1 RTCP LRR feedback
   against the configured temporal/spatial grid before callers decide whether to
   force a full key picture. `SetTileColumns` and `SetGoldenInterval` let callers
   retune tile parallelism and golden-reference refresh policy between frames.

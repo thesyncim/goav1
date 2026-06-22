@@ -111,6 +111,77 @@ func TestAV1RTCPLayerRefreshRequestEntryRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAV1RTCPLayerRefreshRequestEntriesRoundTrip(t *testing.T) {
+	entries := []av1.AV1RTCPLayerRefreshRequestEntry{
+		{
+			SSRC:           0x11223344,
+			SequenceNumber: 250,
+			PayloadType:    98,
+			Target:         av1.AV1RTCPLayerRefreshLayerIndex{TemporalID: 2, SpatialID: 1},
+			CurrentPresent: true,
+			Current:        av1.AV1RTCPLayerRefreshLayerIndex{TemporalID: 0, SpatialID: 0},
+		},
+		{
+			SSRC:           0x55667788,
+			SequenceNumber: 251,
+			PayloadType:    98,
+			Target:         av1.AV1RTCPLayerRefreshLayerIndex{TemporalID: 1, SpatialID: 0},
+		},
+	}
+	size, err := av1.AV1RTCPLayerRefreshRequestEntriesSize(entries)
+	if err != nil {
+		t.Fatalf("AV1RTCPLayerRefreshRequestEntriesSize: %v", err)
+	}
+	if size != 2*av1.AV1RTCPLayerRefreshRequestEntrySize {
+		t.Fatalf("LRR entries size = %d", size)
+	}
+
+	buf := make([]byte, size)
+	n, err := av1.PutAV1RTCPLayerRefreshRequestEntries(buf, entries)
+	if err != nil {
+		t.Fatalf("PutAV1RTCPLayerRefreshRequestEntries: %v", err)
+	}
+	if n != size {
+		t.Fatalf("PutAV1RTCPLayerRefreshRequestEntries n=%d want %d", n, size)
+	}
+
+	parsed, err := av1.ParseAV1RTCPLayerRefreshRequestEntries(buf, make([]av1.AV1RTCPLayerRefreshRequestEntry, 0, 2))
+	if err != nil {
+		t.Fatalf("ParseAV1RTCPLayerRefreshRequestEntries: %v", err)
+	}
+	if len(parsed) != len(entries) {
+		t.Fatalf("parsed entries len=%d want %d", len(parsed), len(entries))
+	}
+	for i := range entries {
+		if parsed[i] != entries[i] {
+			t.Fatalf("parsed[%d]=%+v want %+v", i, parsed[i], entries[i])
+		}
+	}
+
+	prefix := make([]byte, 1, 1+size)
+	prefix[0] = 0xaa
+	appended, err := av1.AppendAV1RTCPLayerRefreshRequestEntries(prefix, entries)
+	if err != nil {
+		t.Fatalf("AppendAV1RTCPLayerRefreshRequestEntries: %v", err)
+	}
+	if len(appended) != 1+size || appended[0] != 0xaa {
+		t.Fatalf("appended len/first=%d/%#x", len(appended), appended[0])
+	}
+	for i := range buf {
+		if appended[1+i] != buf[i] {
+			t.Fatalf("appended byte %d=%#x want %#x", 1+i, appended[1+i], buf[i])
+		}
+	}
+
+	empty, err := av1.ParseAV1RTCPLayerRefreshRequestEntries(nil, parsed[:0])
+	if err != nil {
+		t.Fatalf("Parse empty entries: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("empty parse len=%d", len(empty))
+	}
+}
+
 func TestAV1RTCPLayerRefreshRequestRejectsInvalid(t *testing.T) {
 	valid := av1.AV1RTCPLayerRefreshRequestEntry{
 		PayloadType:    98,
@@ -142,6 +213,45 @@ func TestAV1RTCPLayerRefreshRequestRejectsInvalid(t *testing.T) {
 	if _, _, err := av1.ParseAV1RTCPLayerRefreshRequestEntry(buf[:]); !errors.Is(err, av1.ErrRTCPInvalidLayerRefreshRequest) {
 		t.Fatalf("Parse no-upgrade entry error = %v, want ErrRTCPInvalidLayerRefreshRequest", err)
 	}
+
+	validList := []av1.AV1RTCPLayerRefreshRequestEntry{valid, valid}
+	validList[1].SSRC = 2
+	size, err := av1.AV1RTCPLayerRefreshRequestEntriesSize(validList)
+	if err != nil {
+		t.Fatalf("AV1RTCPLayerRefreshRequestEntriesSize valid list: %v", err)
+	}
+	if _, err := av1.PutAV1RTCPLayerRefreshRequestEntries(make([]byte, size-1), validList); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short Put entries error = %v, want ErrRTCPShortBuffer", err)
+	}
+	if out, err := av1.AppendAV1RTCPLayerRefreshRequestEntries(make([]byte, 0, size-1), validList); !errors.Is(err, av1.ErrRTCPShortBuffer) || len(out) != 0 {
+		t.Fatalf("short Append entries out=%d err=%v want ErrRTCPShortBuffer", len(out), err)
+	}
+	if _, err := av1.ParseAV1RTCPLayerRefreshRequestEntries(make([]byte, size), make([]av1.AV1RTCPLayerRefreshRequestEntry, 0, 1)); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short Parse entries dst error = %v, want ErrRTCPShortBuffer", err)
+	}
+	if _, err := av1.ParseAV1RTCPLayerRefreshRequestEntries(make([]byte, size-1), nil); !errors.Is(err, av1.ErrRTCPInvalidLayerRefreshRequest) {
+		t.Fatalf("ragged Parse entries error = %v, want ErrRTCPInvalidLayerRefreshRequest", err)
+	}
+	invalidList := []av1.AV1RTCPLayerRefreshRequestEntry{valid}
+	invalidList[0].PayloadType = 128
+	if _, err := av1.AV1RTCPLayerRefreshRequestEntriesSize(invalidList); !errors.Is(err, av1.ErrRTCPInvalidLayerRefreshRequest) {
+		t.Fatalf("invalid EntriesSize error = %v, want ErrRTCPInvalidLayerRefreshRequest", err)
+	}
+
+	encoded := make([]byte, size)
+	if _, err := av1.PutAV1RTCPLayerRefreshRequestEntries(encoded, validList); err != nil {
+		t.Fatalf("Put valid list for invalid parse: %v", err)
+	}
+	copy(encoded[av1.AV1RTCPLayerRefreshRequestEntrySize:], buf[:])
+	base := make([]av1.AV1RTCPLayerRefreshRequestEntry, 1, 3)
+	base[0].SSRC = 0xdeadbeef
+	out, err := av1.ParseAV1RTCPLayerRefreshRequestEntries(encoded, base[:1:cap(base)])
+	if !errors.Is(err, av1.ErrRTCPInvalidLayerRefreshRequest) {
+		t.Fatalf("invalid Parse entries error = %v, want ErrRTCPInvalidLayerRefreshRequest", err)
+	}
+	if len(out) != 1 || out[0].SSRC != 0xdeadbeef {
+		t.Fatalf("invalid Parse entries returned partial output: %+v", out)
+	}
 }
 
 func TestEncoderWebRTCValidateLayerRefreshRequest(t *testing.T) {
@@ -168,6 +278,19 @@ func TestEncoderWebRTCValidateLayerRefreshRequest(t *testing.T) {
 	}
 	if err := av1.EncoderWebRTCValidateLayerRefreshRequest(av1.EncoderConfig{}, valid); !errors.Is(err, av1.ErrEncoderInvalidConfig) {
 		t.Fatalf("invalid config error = %v, want ErrEncoderInvalidConfig", err)
+	}
+
+	validList := []av1.AV1RTCPLayerRefreshRequestEntry{valid}
+	validList = append(validList, valid)
+	validList[1].SSRC = 2
+	validList[1].Target = av1.AV1RTCPLayerRefreshLayerIndex{TemporalID: 0, SpatialID: 1}
+	if err := av1.EncoderWebRTCValidateLayerRefreshRequests(cfg, validList); err != nil {
+		t.Fatalf("EncoderWebRTCValidateLayerRefreshRequests valid: %v", err)
+	}
+	badCurrent := validList
+	badCurrent[0].Current.SpatialID = 2
+	if err := av1.EncoderWebRTCValidateLayerRefreshRequests(cfg, badCurrent); !errors.Is(err, av1.ErrRTCPInvalidLayerRefreshRequest) {
+		t.Fatalf("bad current list error = %v, want ErrRTCPInvalidLayerRefreshRequest", err)
 	}
 }
 

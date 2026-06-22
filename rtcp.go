@@ -160,6 +160,58 @@ func PutAV1RTCPLayerRefreshRequestEntry(dst []byte, entry AV1RTCPLayerRefreshReq
 	return AV1RTCPLayerRefreshRequestEntrySize, nil
 }
 
+// AV1RTCPLayerRefreshRequestEntriesSize returns the FCI byte count needed to
+// serialize entries and validates every entry before reporting success.
+func AV1RTCPLayerRefreshRequestEntriesSize(entries []AV1RTCPLayerRefreshRequestEntry) (int, error) {
+	maxInt := int(^uint(0) >> 1)
+	if len(entries) > maxInt/AV1RTCPLayerRefreshRequestEntrySize {
+		return 0, ErrRTCPInvalidLayerRefreshRequest
+	}
+	for i := range entries {
+		if err := entries[i].Validate(); err != nil {
+			return 0, err
+		}
+	}
+	return len(entries) * AV1RTCPLayerRefreshRequestEntrySize, nil
+}
+
+// PutAV1RTCPLayerRefreshRequestEntries serializes a complete AV1 LRR FCI
+// entry list into dst. The caller owns the surrounding RTCP PSFB packet.
+func PutAV1RTCPLayerRefreshRequestEntries(dst []byte, entries []AV1RTCPLayerRefreshRequestEntry) (int, error) {
+	size, err := AV1RTCPLayerRefreshRequestEntriesSize(entries)
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < size {
+		return 0, ErrRTCPShortBuffer
+	}
+	for i := range entries {
+		off := i * AV1RTCPLayerRefreshRequestEntrySize
+		if _, err := PutAV1RTCPLayerRefreshRequestEntry(dst[off:off+AV1RTCPLayerRefreshRequestEntrySize], entries[i]); err != nil {
+			return 0, err
+		}
+	}
+	return size, nil
+}
+
+// AppendAV1RTCPLayerRefreshRequestEntries appends a complete AV1 LRR FCI entry
+// list to dst without growing beyond dst's existing capacity.
+func AppendAV1RTCPLayerRefreshRequestEntries(dst []byte, entries []AV1RTCPLayerRefreshRequestEntry) ([]byte, error) {
+	size, err := AV1RTCPLayerRefreshRequestEntriesSize(entries)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+size]
+	if _, err := PutAV1RTCPLayerRefreshRequestEntries(out[off:], entries); err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
 // ParseAV1RTCPLayerRefreshRequestEntry parses one AV1 LRR FCI entry. Reserved
 // fields are ignored on reception.
 func ParseAV1RTCPLayerRefreshRequestEntry(src []byte) (AV1RTCPLayerRefreshRequestEntry, int, error) {
@@ -190,14 +242,60 @@ func ParseAV1RTCPLayerRefreshRequestEntry(src []byte) (AV1RTCPLayerRefreshReques
 	return entry, AV1RTCPLayerRefreshRequestEntrySize, nil
 }
 
+// ParseAV1RTCPLayerRefreshRequestEntries parses a complete AV1 LRR FCI entry
+// list into dst without growing beyond dst's existing capacity.
+func ParseAV1RTCPLayerRefreshRequestEntries(
+	src []byte, dst []AV1RTCPLayerRefreshRequestEntry,
+) ([]AV1RTCPLayerRefreshRequestEntry, error) {
+	if len(src)%AV1RTCPLayerRefreshRequestEntrySize != 0 {
+		return dst, ErrRTCPInvalidLayerRefreshRequest
+	}
+	count := len(src) / AV1RTCPLayerRefreshRequestEntrySize
+	if cap(dst)-len(dst) < count {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+count]
+	for i := 0; i < count; i++ {
+		start := i * AV1RTCPLayerRefreshRequestEntrySize
+		entry, _, err := ParseAV1RTCPLayerRefreshRequestEntry(src[start : start+AV1RTCPLayerRefreshRequestEntrySize])
+		if err != nil {
+			return dst, err
+		}
+		out[off+i] = entry
+	}
+	return out, nil
+}
+
 // EncoderWebRTCValidateLayerRefreshRequest validates that entry's target and
 // current AV1 LRR layer indices fit config's WebRTC scalability grid.
 func EncoderWebRTCValidateLayerRefreshRequest(config EncoderConfig, entry AV1RTCPLayerRefreshRequestEntry) error {
-	if err := entry.Validate(); err != nil {
-		return err
-	}
 	normalized, err := SetWebRTCEncoderSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
 	if err != nil {
+		return err
+	}
+	return encoderWebRTCValidateLayerRefreshRequestForConfig(normalized, entry)
+}
+
+// EncoderWebRTCValidateLayerRefreshRequests validates that every entry's
+// target and current AV1 LRR layer indices fit config's WebRTC scalability grid.
+func EncoderWebRTCValidateLayerRefreshRequests(config EncoderConfig, entries []AV1RTCPLayerRefreshRequestEntry) error {
+	normalized, err := SetWebRTCEncoderSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
+	if err != nil {
+		return err
+	}
+	for i := range entries {
+		if err := encoderWebRTCValidateLayerRefreshRequestForConfig(normalized, entries[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func encoderWebRTCValidateLayerRefreshRequestForConfig(
+	normalized EncoderConfig, entry AV1RTCPLayerRefreshRequestEntry,
+) error {
+	if err := entry.Validate(); err != nil {
 		return err
 	}
 	if entry.Target.TemporalID >= normalized.TemporalLayerCount ||

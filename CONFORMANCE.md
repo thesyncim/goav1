@@ -304,8 +304,9 @@ ship under `internal/av1/testdata/libaom/`.
   pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates, AV1/90000 SDP/fmtp
   negotiation parameters, RTP header-extension mapping checks, raw RTP
   MID/RID/RRID SDES payload helpers, AV1 RID receiver restrictions, AV1
-  simulcast RID groups, AV1 RTCP LRR layer-grid validation for caller-supplied
-  frame payloads, and sequence-matched `Frame` validation/loading for
+  simulcast RID groups, AV1 RTCP LRR FCI entry/list parsing, serialization,
+  and layer-grid validation for caller-supplied frame payloads, and
+  sequence-matched `Frame` validation/loading for
   profile-0/1/2 8/10/12-bit 4:2:0, 4:2:2, and 4:4:4 buffers. High-bit-depth
   and non-4:2:0 input in the friendly pixel encoder plus broader oracle
   coverage remain open.
