@@ -52,10 +52,40 @@ type LayeredDecoder struct {
 
 	visible       []*Frame
 	visibleOne    [1]*Frame
+	visibleMeta   []LayeredFrame
 	shownHeld     []layeredShownSurface
 	shownHeldBuf  [2 * (RefFrames + 1)]layeredShownSurface
 	outputSurface []layeredShownSurface
 	outputSurfBuf [2 * (RefFrames + 1)]layeredShownSurface
+}
+
+// LayeredFrame is one visible output from LayeredDecoder with the AV1 layer
+// metadata parsed from the OBU stream. RTP dependency-descriptor state, active
+// decode-target masks, RTP timestamps, and marker bits are carried outside the
+// AV1 RTP payload body and should be read through ParseRTPDependencyDescriptor
+// or the caller's RTP stack.
+type LayeredFrame struct {
+	// Frame is the decoded output. It has the same lifetime as frames returned by
+	// DecodeNext: it aliases decoder-owned layer-pool storage.
+	Frame *Frame
+	// TemporalID and SpatialID are the AV1 OBU extension layer IDs.
+	TemporalID uint8
+	SpatialID  uint8
+	// FrameType is the AV1 frame_type for coded frames or the referenced frame's
+	// frame_type for show_existing_frame outputs.
+	FrameType FrameType
+	// CodedKeyframe reports whether this output was coded as an AV1 key frame.
+	// In WebRTC SVC key pictures, enhancement layers may be inter-coded even when
+	// the picture is a key picture at the RTP/dependency-descriptor level.
+	CodedKeyframe bool
+	// ShowExistingFrame reports whether the output came from show_existing_frame.
+	ShowExistingFrame bool
+	// ShowFrame and ShowableFrame mirror the parsed AV1 frame-header visibility
+	// flags for coded frames. ShowFrame is true for show_existing_frame outputs.
+	ShowFrame     bool
+	ShowableFrame bool
+	// FrameSize is the parsed AV1 frame_size metadata for the output.
+	FrameSize FrameSize
 }
 
 type layeredShownSurface struct {
@@ -169,8 +199,10 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 	d.scratch = newDecoderStreamScratch(plan.Size, &arena)
 	if cap(d.scratch.Outputs) > 0 {
 		d.visible = d.scratch.Outputs[:0]
+		d.visibleMeta = make([]LayeredFrame, 0, cap(d.scratch.Outputs))
 	} else {
 		d.visible = d.visibleOne[:0]
+		d.visibleMeta = make([]LayeredFrame, 0, cap(d.visibleOne))
 	}
 	d.shownHeld = d.shownHeldBuf[:0]
 	d.outputSurface = d.outputSurfBuf[:0]
@@ -278,6 +310,19 @@ func decoderLayeredAppendCodedFormat(formats []FrameFormat, sequence SequenceHea
 // NewLayeredDecoderFromRTPPayloads this is one RTP payload body; fragmented RTP
 // payloads may return an empty frame slice with ok=true.
 func (d *LayeredDecoder) DecodeNext() (frames []*Frame, ok bool, err error) {
+	outputs, ok, err := d.DecodeNextWithMetadata()
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	return d.framesFromLayered(outputs), true, nil
+}
+
+// DecodeNextWithMetadata decodes the next construction payload and returns every
+// visible frame together with its parsed AV1 layer metadata. For
+// NewLayeredDecoderFromRTPPayloads this consumes one RTP payload body per call;
+// fragmented RTP frames can return an empty slice with ok=true until the packet
+// that completes the frame arrives.
+func (d *LayeredDecoder) DecodeNextWithMetadata() (frames []LayeredFrame, ok bool, err error) {
 	if d == nil || d.payloadSource.len() == 0 {
 		return nil, false, errors.New("goav1: layered decoder is not initialized")
 	}
@@ -293,7 +338,7 @@ func (d *LayeredDecoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("goav1: payload %d: %w", i, err)
 	}
-	frames, err = d.decodePayload(payload, false)
+	frames, err = d.decodePayloadWithMetadata(payload, false)
 	if err != nil {
 		return nil, false, fmt.Errorf("goav1: payload %d: %w", i, err)
 	}
@@ -303,23 +348,54 @@ func (d *LayeredDecoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 // DecodeRTPPayload decodes one caller-supplied AV1 RTP payload body using an
 // RTP decoder constructed by NewLayeredDecoderFromRTPPayloads.
 func (d *LayeredDecoder) DecodeRTPPayload(payload []byte) ([]*Frame, error) {
+	outputs, err := d.DecodeRTPPayloadWithMetadata(payload)
+	if err != nil {
+		return nil, err
+	}
+	return d.framesFromLayered(outputs), nil
+}
+
+// DecodeRTPPayloadWithMetadata decodes one caller-supplied AV1 RTP payload body
+// using an RTP decoder constructed by NewLayeredDecoderFromRTPPayloads and
+// returns visible frames with parsed AV1 layer metadata.
+func (d *LayeredDecoder) DecodeRTPPayloadWithMetadata(payload []byte) ([]LayeredFrame, error) {
 	if d == nil || d.payloadKind != decoderPayloadRTP {
 		return nil, errors.New("goav1: layered decoder is not initialized for RTP payloads")
 	}
-	return d.decodePayload(payload, false)
+	return d.decodePayloadWithMetadata(payload, false)
 }
 
 // DecodeRTPPayloadAfterLoss clears retained RTP fragment bytes, then decodes
 // one caller-supplied AV1 RTP payload body while preserving parser sequence and
 // reference state.
 func (d *LayeredDecoder) DecodeRTPPayloadAfterLoss(payload []byte) ([]*Frame, error) {
+	outputs, err := d.DecodeRTPPayloadAfterLossWithMetadata(payload)
+	if err != nil {
+		return nil, err
+	}
+	return d.framesFromLayered(outputs), nil
+}
+
+// DecodeRTPPayloadAfterLossWithMetadata clears retained RTP fragment bytes,
+// decodes one caller-supplied AV1 RTP payload body, and returns visible frames
+// with parsed AV1 layer metadata while preserving parser sequence and reference
+// state.
+func (d *LayeredDecoder) DecodeRTPPayloadAfterLossWithMetadata(payload []byte) ([]LayeredFrame, error) {
 	if d == nil || d.payloadKind != decoderPayloadRTP {
 		return nil, errors.New("goav1: layered decoder is not initialized for RTP payloads")
 	}
-	return d.decodePayload(payload, true)
+	return d.decodePayloadWithMetadata(payload, true)
 }
 
 func (d *LayeredDecoder) decodePayload(payload []byte, afterLoss bool) ([]*Frame, error) {
+	outputs, err := d.decodePayloadWithMetadata(payload, afterLoss)
+	if err != nil {
+		return nil, err
+	}
+	return d.framesFromLayered(outputs), nil
+}
+
+func (d *LayeredDecoder) decodePayloadWithMetadata(payload []byte, afterLoss bool) ([]LayeredFrame, error) {
 	if d == nil {
 		return nil, errors.New("goav1: layered decoder is not initialized")
 	}
@@ -338,7 +414,6 @@ func (d *LayeredDecoder) decodePayload(payload []byte, afterLoss bool) ([]*Frame
 	if err != nil {
 		return nil, err
 	}
-	d.visible = out
 	return out, nil
 }
 
@@ -421,8 +496,8 @@ func (d *LayeredDecoder) pushPayload(payload []byte, afterLoss bool) (int, error
 	}
 }
 
-func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]*Frame, error) {
-	out := d.visible[:0]
+func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]LayeredFrame, error) {
+	out := d.visibleMeta[:0]
 	d.outputSurface = d.outputSurfBuf[:0]
 	for i := range events {
 		event := events[i]
@@ -485,11 +560,41 @@ func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]*Frame, error) {
 		if err != nil {
 			return out, err
 		}
-		out = append(out, result.Output)
+		out = append(out, layeredFrameFromEvent(result.Output, event))
 		d.outputSurface = append(d.outputSurface, layeredShownSurface{id: surface})
 	}
 	d.trackShownSurfaces(d.outputSurface)
+	d.visibleMeta = out
 	return out, nil
+}
+
+func layeredFrameFromEvent(frame *Frame, event DecoderEvent) LayeredFrame {
+	frameType := event.FrameHeader.FrameType
+	showable := event.FrameHeader.ShowableFrame
+	if event.FrameHeader.ShowExistingFrame {
+		frameType = event.ExistingFrame.FrameType
+		showable = event.ExistingFrame.ShowableFrame
+	}
+	return LayeredFrame{
+		Frame:             frame,
+		TemporalID:        event.TemporalID,
+		SpatialID:         event.SpatialID,
+		FrameType:         frameType,
+		CodedKeyframe:     !event.FrameHeader.ShowExistingFrame && event.FrameHeader.FrameType == FrameTypeKey,
+		ShowExistingFrame: event.FrameHeader.ShowExistingFrame,
+		ShowFrame:         event.FrameHeader.ShowFrame || event.FrameHeader.ShowExistingFrame,
+		ShowableFrame:     showable,
+		FrameSize:         event.FrameSize,
+	}
+}
+
+func (d *LayeredDecoder) framesFromLayered(outputs []LayeredFrame) []*Frame {
+	out := d.visible[:0]
+	for i := range outputs {
+		out = append(out, outputs[i].Frame)
+	}
+	d.visible = out
+	return out
 }
 
 func (d *LayeredDecoder) stateForEvent(event DecoderEvent) (*DecoderFrameWorkState, error) {
@@ -608,15 +713,28 @@ func (d *LayeredDecoder) releaseShownSurfaces() {
 // alias reused decoder-owned surfaces; callers that need to retain pixels
 // across payloads should copy them out per DecodeNext call.
 func (d *LayeredDecoder) DecodeAll() ([]*Frame, error) {
+	outputs, err := d.DecodeAllWithMetadata()
+	if err != nil {
+		return nil, err
+	}
+	return d.framesFromLayered(outputs), nil
+}
+
+// DecodeAllWithMetadata decodes every remaining construction payload and
+// returns all visible frames in display order with parsed AV1 layer metadata. As
+// with DecodeAll, returned frames alias reused decoder-owned surfaces; callers
+// that need to retain pixels across payloads should copy them out per DecodeNext
+// call.
+func (d *LayeredDecoder) DecodeAllWithMetadata() ([]LayeredFrame, error) {
 	if d == nil || d.payloadSource.len() == 0 {
 		return nil, errors.New("goav1: layered decoder is not initialized")
 	}
 	if d.closed {
 		return nil, errors.New("goav1: layered decoder closed")
 	}
-	var frames []*Frame
+	var frames []LayeredFrame
 	for {
-		got, ok, err := d.DecodeNext()
+		got, ok, err := d.DecodeNextWithMetadata()
 		if err != nil {
 			return frames, err
 		}
@@ -648,6 +766,8 @@ func (d *LayeredDecoder) Reset() error {
 	d.rtpUsed = 0
 	d.sequence = SequenceHeader{}
 	d.next = 0
+	d.visible = d.visible[:0]
+	d.visibleMeta = d.visibleMeta[:0]
 	d.shownHeld = d.shownHeld[:0]
 	d.outputSurface = d.outputSurface[:0]
 	return nil

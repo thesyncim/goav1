@@ -897,6 +897,7 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 			var lowOverheads [][]byte
 			var rtpPayloads [][]byte
 			var rtpPayloadLabels []string
+			var wantMetadata []publicLayeredFrameMetadata
 			for frameIndex := 0; frameIndex < 3; frameIndex++ {
 				if frameIndex == 2 {
 					controlChange := enc.Config()
@@ -914,6 +915,7 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 				for outputIndex := 0; outputIndex < picture.FrameNum; outputIndex++ {
 					frame := picture.Frames[outputIndex]
 					lowOverheads = append(lowOverheads, append([]byte(nil), frame.Data...))
+					wantMetadata = append(wantMetadata, publicLayeredFrameMetadataFromRTCFrame(frame))
 					framePayloads := publicDecoderRTPPayloadsForFrameWithLimits(t, frame, limits)
 					for packetIndex, payload := range framePayloads {
 						rtpPayloads = append(rtpPayloads, payload)
@@ -928,12 +930,18 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 			gotLayeredLow := decodePublicLayeredDecoderLowOverheadDigests(t, lowOverheads...)
 			gotLayeredQueued := decodePublicLayeredDecoderRTPPayloadDigests(t, rtpPayloads...)
 			gotLayeredLive := decodePublicLayeredLiveDecoderRTPPayloadDigests(t, rtpPayloads, rtpPayloads...)
+			gotLayeredLowMetadata := decodePublicLayeredDecoderLowOverheadMetadata(t, lowOverheads...)
+			gotLayeredQueuedMetadata := decodePublicLayeredDecoderRTPPayloadMetadata(t, rtpPayloads...)
+			gotLayeredLiveMetadata := decodePublicLayeredLiveDecoderRTPPayloadMetadata(t, rtpPayloads, rtpPayloads...)
 			if len(got) != len(want) || len(got) != len(lowOverheads) {
 				t.Fatalf("decoded frames got=%d want=%d low-overheads=%d", len(got), len(want), len(lowOverheads))
 			}
 			if len(gotLayeredLow) != len(want) || len(gotLayeredQueued) != len(want) || len(gotLayeredLive) != len(want) {
 				t.Fatalf("layered decoded frames low=%d queued=%d live=%d want=%d", len(gotLayeredLow), len(gotLayeredQueued), len(gotLayeredLive), len(want))
 			}
+			assertPublicLayeredFrameMetadata(t, gotLayeredLowMetadata, wantMetadata)
+			assertPublicLayeredFrameMetadata(t, gotLayeredQueuedMetadata, wantMetadata)
+			assertPublicLayeredFrameMetadata(t, gotLayeredLiveMetadata, wantMetadata)
 			for i := range want {
 				if got[i] != want[i] {
 					t.Fatalf("frame %d digest differs: rtp=%x low=%x", i, got[i], want[i])
@@ -1599,6 +1607,79 @@ func publicRTCSharedReferenceSlotMode(mode goav1.EncoderScalabilityMode) bool {
 	return ok && spatial > 1 && !mode.IsSimulcast()
 }
 
+type publicLayeredFrameMetadata struct {
+	TemporalID    uint8
+	SpatialID     uint8
+	FrameType     goav1.FrameType
+	CodedKeyframe bool
+	ShowExisting  bool
+	ShowFrame     bool
+	CodedWidth    int
+	Height        int
+}
+
+func publicLayeredFrameMetadataFromRTCFrame(frame goav1.RTCFrame) publicLayeredFrameMetadata {
+	frameType := goav1.FrameTypeInter
+	if frame.CodedKeyframe {
+		frameType = goav1.FrameTypeKey
+	}
+	return publicLayeredFrameMetadata{
+		TemporalID:    frame.TemporalID,
+		SpatialID:     frame.SpatialID,
+		FrameType:     frameType,
+		CodedKeyframe: frame.CodedKeyframe,
+		ShowFrame:     true,
+	}
+}
+
+func publicLayeredFrameMetadataFromDecoded(t *testing.T, frame goav1.LayeredFrame) publicLayeredFrameMetadata {
+	t.Helper()
+	if frame.Frame == nil {
+		t.Fatal("layered metadata has nil frame")
+	}
+	if frame.FrameSize.CodedWidth == 0 || frame.FrameSize.Height == 0 {
+		t.Fatalf("layered metadata has empty size: %+v", frame.FrameSize)
+	}
+	if int(frame.FrameSize.CodedWidth) != frame.Frame.Format.Width ||
+		int(frame.FrameSize.Height) != frame.Frame.Format.Height {
+		t.Fatalf("layered metadata size=%dx%d frame format=%dx%d",
+			frame.FrameSize.CodedWidth, frame.FrameSize.Height, frame.Frame.Format.Width, frame.Frame.Format.Height)
+	}
+	return publicLayeredFrameMetadata{
+		TemporalID:    frame.TemporalID,
+		SpatialID:     frame.SpatialID,
+		FrameType:     frame.FrameType,
+		CodedKeyframe: frame.CodedKeyframe,
+		ShowExisting:  frame.ShowExistingFrame,
+		ShowFrame:     frame.ShowFrame,
+		CodedWidth:    int(frame.FrameSize.CodedWidth),
+		Height:        int(frame.FrameSize.Height),
+	}
+}
+
+func assertPublicLayeredFrameMetadata(t *testing.T, got []publicLayeredFrameMetadata, want []publicLayeredFrameMetadata) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("layered metadata len got=%d want=%d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i].TemporalID != want[i].TemporalID ||
+			got[i].SpatialID != want[i].SpatialID ||
+			got[i].FrameType != want[i].FrameType ||
+			got[i].CodedKeyframe != want[i].CodedKeyframe ||
+			got[i].ShowExisting != want[i].ShowExisting ||
+			got[i].ShowFrame != want[i].ShowFrame {
+			t.Fatalf("layered metadata[%d]=T%d/S%d type=%v codedKey=%v showExisting=%v showFrame=%v; want T%d/S%d type=%v codedKey=%v showExisting=%v showFrame=%v",
+				i,
+				got[i].TemporalID, got[i].SpatialID, got[i].FrameType, got[i].CodedKeyframe, got[i].ShowExisting, got[i].ShowFrame,
+				want[i].TemporalID, want[i].SpatialID, want[i].FrameType, want[i].CodedKeyframe, want[i].ShowExisting, want[i].ShowFrame)
+		}
+		if got[i].CodedWidth == 0 || got[i].Height == 0 {
+			t.Fatalf("layered metadata[%d] empty geometry: %+v", i, got[i])
+		}
+	}
+}
+
 func publicRTCPictureFramesInOrder(pictures ...goav1.RTCPicture) [][]byte {
 	var out [][]byte
 	for _, picture := range pictures {
@@ -1805,6 +1886,30 @@ func decodePublicLayeredDecoderLowOverheadDigests(t *testing.T, payloads ...[]by
 	return out
 }
 
+func decodePublicLayeredDecoderLowOverheadMetadata(t *testing.T, payloads ...[]byte) []publicLayeredFrameMetadata {
+	t.Helper()
+	dec, err := goav1.NewLayeredDecoder(payloads)
+	if err != nil {
+		t.Fatalf("NewLayeredDecoder metadata: %v", err)
+	}
+	defer dec.Close()
+
+	var out []publicLayeredFrameMetadata
+	for {
+		frames, ok, err := dec.DecodeNextWithMetadata()
+		if err != nil {
+			t.Fatalf("LayeredDecoder low-overhead DecodeNextWithMetadata: %v", err)
+		}
+		if !ok {
+			break
+		}
+		for _, frame := range frames {
+			out = append(out, publicLayeredFrameMetadataFromDecoded(t, frame))
+		}
+	}
+	return out
+}
+
 func decodePublicLayeredDecoderRTPPayloadDigests(t *testing.T, payloads ...[]byte) [][16]byte {
 	t.Helper()
 	dec, err := goav1.NewLayeredDecoderFromRTPPayloads(payloads)
@@ -1835,6 +1940,40 @@ func decodePublicLayeredDecoderRTPPayloadDigests(t *testing.T, payloads ...[]byt
 	return out
 }
 
+func decodePublicLayeredDecoderRTPPayloadMetadata(t *testing.T, payloads ...[]byte) []publicLayeredFrameMetadata {
+	t.Helper()
+	dec, err := goav1.NewLayeredDecoderFromRTPPayloads(payloads)
+	if err != nil {
+		t.Fatalf("NewLayeredDecoderFromRTPPayloads metadata: %v", err)
+	}
+	defer dec.Close()
+
+	var out []publicLayeredFrameMetadata
+	for {
+		frames, ok, err := dec.DecodeNextWithMetadata()
+		if err != nil {
+			t.Fatalf("LayeredDecoder DecodeNextWithMetadata: %v", err)
+		}
+		if !ok {
+			break
+		}
+		for _, frame := range frames {
+			out = append(out, publicLayeredFrameMetadataFromDecoded(t, frame))
+		}
+	}
+	if err := dec.Reset(); err != nil {
+		t.Fatalf("LayeredDecoder metadata Reset: %v", err)
+	}
+	if frames, ok, err := dec.DecodeNextWithMetadata(); err != nil || !ok {
+		t.Fatalf("LayeredDecoder DecodeNextWithMetadata after Reset ok=%v err=%v", ok, err)
+	} else {
+		for _, frame := range frames {
+			_ = publicLayeredFrameMetadataFromDecoded(t, frame)
+		}
+	}
+	return out
+}
+
 func decodePublicLayeredLiveDecoderRTPPayloadDigests(t *testing.T, probePayloads [][]byte, payloads ...[]byte) [][16]byte {
 	t.Helper()
 	dec, err := goav1.NewLayeredDecoderFromRTPPayloads(probePayloads)
@@ -1854,6 +1993,30 @@ func decodePublicLayeredLiveDecoderRTPPayloadDigests(t *testing.T, probePayloads
 		}
 		for _, frame := range frames {
 			out = append(out, frameMD5Visible(frame))
+		}
+	}
+	return out
+}
+
+func decodePublicLayeredLiveDecoderRTPPayloadMetadata(t *testing.T, probePayloads [][]byte, payloads ...[]byte) []publicLayeredFrameMetadata {
+	t.Helper()
+	dec, err := goav1.NewLayeredDecoderFromRTPPayloads(probePayloads)
+	if err != nil {
+		t.Fatalf("NewLayeredDecoderFromRTPPayloads live metadata: %v", err)
+	}
+	defer dec.Close()
+	if err := dec.Reset(); err != nil {
+		t.Fatalf("LayeredDecoder live metadata Reset: %v", err)
+	}
+
+	var out []publicLayeredFrameMetadata
+	for i, payload := range payloads {
+		frames, err := dec.DecodeRTPPayloadWithMetadata(payload)
+		if err != nil {
+			t.Fatalf("LayeredDecoder DecodeRTPPayloadWithMetadata packet %d: %v", i, err)
+		}
+		for _, frame := range frames {
+			out = append(out, publicLayeredFrameMetadataFromDecoded(t, frame))
 		}
 	}
 	return out

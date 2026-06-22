@@ -401,7 +401,13 @@ preserving parser sequence/reference state. For full SVC modes with shared
 reference slots, use `NewLayeredDecoderFromRTPPayloads`; it owns the
 layer-aware frame pool, per-spatial frame-work states, shared reference slots,
 and shared frame contexts needed for references to resolve across
-spatial-layer pools. The lower-level framework path with `FrameLayerPool`,
+spatial-layer pools. Use `DecodeNextWithMetadata`,
+`DecodeRTPPayloadWithMetadata`, or `DecodeRTPPayloadAfterLossWithMetadata` when
+the receive loop needs each output paired with parsed AV1 spatial ID, temporal
+ID, frame type, coded-keyframe flag, and frame-size metadata. Dependency
+descriptor values such as active decode-target masks are RTP header-extension
+metadata and are parsed separately with `ParseRTPDependencyDescriptor`. The
+lower-level framework path with `FrameLayerPool`,
 `NewDecoderFrameLayerPool`, and `DecoderFrameWorkExternalReferenceRuntime`
 remains available when callers need custom arena ownership or event-level
 control.
@@ -428,7 +434,7 @@ writing:
 | L1T2 single-pool decode                             | Strict every-frame MD5 pass in `make dryrun-relevant-supported`. |
 | L2T1 / L2T2 multi-pool decode                       | Strict every-frame MD5 pass in `make dryrun-extended`. |
 | WebRTC AV1 SVC control metadata                     | Complete for the W3C mode vocabulary (`L*T*`, `L*T*h`, `L*T*_KEY`, `L*T*_KEY_SHIFT`, `S*T*`, `S*T*h`) with dependency-descriptor decode targets over the full `(spatial, temporal)` grid, W3C key-shift temporal schedules, and pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates. |
-| High-level RTP payload decode                       | `NewDecoderFromRTPPayloads` covers ordered/live AV1 RTP payload bodies for single decode chains and independent simulcast layers; `NewLayeredDecoderFromRTPPayloads` covers shared-reference SVC RTP streams; both include `DecodeRTPPayloadAfterLoss` retained-fragment reset after packet gaps. |
+| High-level RTP payload decode                       | `NewDecoderFromRTPPayloads` covers ordered/live AV1 RTP payload bodies for single decode chains and independent simulcast layers; `NewLayeredDecoderFromRTPPayloads` covers shared-reference SVC RTP streams with frame-only and `WithMetadata` AV1 layer outputs; both include `DecodeRTPPayloadAfterLoss` retained-fragment reset after packet gaps. |
 | Strict every-frame parity                           | Passing for the committed SVC vectors; broader SVC corpus expansion remains open. |
 
 The WebRTC control row is metadata/control support for already-produced frame
@@ -519,7 +525,8 @@ or helper that owns that slice of state.
    - **Multi-pool RTP:** for WebRTC-style shared-reference SVC RTP
      payloads, use `NewLayeredDecoderFromRTPPayloads` and feed ordered
      payload bodies with `DecodeNext` or live payload bodies with
-     `DecodeRTPPayload`.
+     `DecodeRTPPayload`. Use the `WithMetadata` variants when routing or
+     rendering needs the decoded frame's AV1 spatial/temporal IDs.
    - **Custom multi-pool:** if you need event-level control, bind a
      `FrameLayerPool`, wrap it with `NewDecoderFrameLayerPool`, and drive
      residual events with `DecoderFrameWorkExternalReferenceRuntime`. The

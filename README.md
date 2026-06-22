@@ -50,7 +50,7 @@ needs:
 | Large/file-backed IVF decode | `NewDecoderFromIVFReaderAt` + `DecodeNext` | Indexes IVF frame offsets and reads each payload into one reusable buffer |
 | Already-demuxed temporal units | `NewDecoder(payloads)` + `DecodeNext` | Retains payload slices by reference and reuses all decode/output arenas |
 | Ordered or live AV1 RTP payload bodies | `NewDecoderFromRTPPayloads(payloads)` + `DecodeNext` / `DecodeRTPPayload` | Retains constructor payload slices by reference; each RTP payload may return zero frames for fragments |
-| Shared-reference SVC RTP payload bodies | `NewLayeredDecoderFromRTPPayloads(payloads)` + `DecodeNext` / `DecodeRTPPayload` | Owns a layer-aware frame pool and shared reference state for multi-spatial WebRTC receive loops |
+| Shared-reference SVC RTP payload bodies | `NewLayeredDecoderFromRTPPayloads(payloads)` + `DecodeNext` / `DecodeRTPPayload` / `DecodeNextWithMetadata` | Owns a layer-aware frame pool and shared reference state for multi-spatial WebRTC receive loops |
 | Manual OBU or RTP run loop | `DecoderFrameWorkResidualStreamRunner` `Run*Into` methods | Caller-owned event, tile, frame, post-filter, and output-result scratch |
 | IVF demux only | `NewIVFIterator` | Zero-allocation payload views into the source bytes |
 
@@ -117,9 +117,14 @@ and DSP primitives. For ordered RTP payload bodies, `NewDecoderFromRTPPayloads`
 is the reusable high-level path for single decode chains and independent
 simulcast layers. `NewLayeredDecoderFromRTPPayloads` is the high-level receive
 path for shared-reference WebRTC SVC streams whose reference slots span spatial
-layers or coded frame sizes. Both decoders can drive live payloads with
-`DecodeRTPPayload` and `DecodeRTPPayloadAfterLoss` when the constructor payloads
-represent the stream shape and maximum retained-fragment/event scratch needed.
+layers or coded frame sizes. Use the `WithMetadata` variants on `LayeredDecoder`
+when a receive loop needs the decoded output paired with parsed AV1 spatial ID,
+temporal ID, frame type, keyframe flag, and frame-size metadata. RTP dependency
+descriptor fields such as active decode-target masks are RTP header-extension
+metadata and are parsed separately with `ParseRTPDependencyDescriptor`. Both
+decoders can drive live payloads with `DecodeRTPPayload` and
+`DecodeRTPPayloadAfterLoss` when the constructor payloads represent the stream
+shape and maximum retained-fragment/event scratch needed.
 The `RunLowOverheadInto`, `RunLowOverheadsInto`, `RunRTPPayloadInto`,
 `RunRTPPayloadsInto`, and `RunRTPPayloadAfterLossInto` families remain the
 allocation-aware entry points for callers that already own every arena and

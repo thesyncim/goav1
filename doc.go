@@ -25,10 +25,10 @@
 // encoder helpers expose W3C SVC mode metadata, temporal/spatial dependency
 // structures, decode-target grids, key-shift scheduling, and the supported
 // scalabilityMode capability list. High-level decoder helpers cover
-// low-overhead streams and ordered/live AV1 RTP payload bodies, including
-// retained-fragment reset after RTP loss; shared-reference SVC decode remains
-// available through frame-work/layer-pool APIs when callers need explicit
-// surface routing.
+// low-overhead streams, ordered/live AV1 RTP payload bodies, retained-fragment
+// reset after RTP loss, and shared-reference SVC RTP receive loops with decoded
+// AV1 layer metadata; frame-work/layer-pool APIs remain available when callers
+// need explicit surface routing.
 //
 // Hot paths use caller-owned buffers and fixed storage. Returned byte slices
 // alias caller-provided input or output buffers unless a future API explicitly
