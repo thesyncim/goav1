@@ -21,6 +21,11 @@ func TestAV1SDPConstants(t *testing.T) {
 	if av1.AV1RTPDependencyDescriptorURI != "https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension" {
 		t.Fatalf("AV1RTPDependencyDescriptorURI = %q", av1.AV1RTPDependencyDescriptorURI)
 	}
+	if av1.AV1RTPMIDURI != "urn:ietf:params:rtp-hdrext:sdes:mid" ||
+		av1.AV1RTPStreamIDURI != "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id" ||
+		av1.AV1RTPRepairedStreamIDURI != "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id" {
+		t.Fatalf("unexpected RTP SDES extmap URI constants")
+	}
 	if av1.AV1SDPFmtpProfile != "profile" ||
 		av1.AV1SDPFmtpLevelIdx != "level-idx" ||
 		av1.AV1SDPFmtpTier != "tier" {
@@ -157,6 +162,60 @@ func TestAV1SDPFmtpAppendAndAllows(t *testing.T) {
 	}
 	if _, err := caps.Allows(av1.AV1SDPFmtpParameters{Profile: 0, LevelIdx: 10}); !errors.Is(err, av1.ErrSDPInvalidConfig) {
 		t.Fatalf("Allows invalid stream error = %v, want ErrSDPInvalidConfig", err)
+	}
+}
+
+func TestParseAV1SDPExtmap(t *testing.T) {
+	extmap, err := av1.ParseAV1SDPExtmap("a=extmap:4/recvonly https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension attrs")
+	if err != nil {
+		t.Fatalf("ParseAV1SDPExtmap returned error: %v", err)
+	}
+	if extmap.ID != 4 ||
+		extmap.Direction != "recvonly" ||
+		extmap.URI != av1.AV1RTPDependencyDescriptorURI ||
+		extmap.Attributes != "attrs" {
+		t.Fatalf("ParseAV1SDPExtmap = %+v", extmap)
+	}
+	line, err := extmap.SDP()
+	if err != nil {
+		t.Fatalf("Extmap SDP returned error: %v", err)
+	}
+	if line != "a=extmap:4/recvonly https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension attrs" {
+		t.Fatalf("Extmap SDP = %q", line)
+	}
+
+	noDirection, err := av1.ParseAV1SDPExtmap("1 urn:ietf:params:rtp-hdrext:sdes:mid")
+	if err != nil {
+		t.Fatalf("ParseAV1SDPExtmap without prefix returned error: %v", err)
+	}
+	if noDirection.ID != 1 || noDirection.Direction != "" || noDirection.URI != av1.AV1RTPMIDURI {
+		t.Fatalf("ParseAV1SDPExtmap no direction = %+v", noDirection)
+	}
+}
+
+func TestAV1SDPExtmapRejectsInvalidConfig(t *testing.T) {
+	for _, extmap := range []av1.AV1SDPExtmap{
+		{},
+		{ID: -1, URI: av1.AV1RTPMIDURI},
+		{ID: 256, URI: av1.AV1RTPMIDURI},
+		{ID: 1, Direction: "both", URI: av1.AV1RTPMIDURI},
+		{ID: 1},
+	} {
+		if err := extmap.Validate(); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+			t.Fatalf("Validate(%+v) error = %v, want ErrSDPInvalidConfig", extmap, err)
+		}
+	}
+	for _, line := range []string{
+		"a=extmap:",
+		"a=extmap:0 urn:ietf:params:rtp-hdrext:sdes:mid",
+		"a=extmap:256 urn:ietf:params:rtp-hdrext:sdes:mid",
+		"a=extmap:1/both urn:ietf:params:rtp-hdrext:sdes:mid",
+		"a=extmap:one urn:ietf:params:rtp-hdrext:sdes:mid",
+		"a=extmap:1",
+	} {
+		if _, err := av1.ParseAV1SDPExtmap(line); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+			t.Fatalf("ParseAV1SDPExtmap(%q) error = %v, want ErrSDPInvalidConfig", line, err)
+		}
 	}
 }
 
@@ -585,6 +644,58 @@ func TestAV1SDPRTCPFeedbackScanning(t *testing.T) {
 	)
 	if !av1.AV1SDPNegotiatesRTCPFeedback(wildcardBeforeRTPMap, " CCM LRR ") {
 		t.Fatal("AV1SDPNegotiatesRTCPFeedback rejected normalized wildcard feedback")
+	}
+}
+
+func TestAV1SDPHeaderExtensionScanning(t *testing.T) {
+	sdp := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 96 98",
+		"a=rtpmap:96 VP8/90000",
+		"a=rtpmap:98 AV1/90000",
+		"a=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid",
+		"a=extmap:2/recvonly urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id",
+		"a=extmap:3/sendonly urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id",
+		"a=extmap:4/sendrecv https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension",
+	)
+	if !av1.AV1SDPNegotiatesHeaderExtension(sdp, av1.AV1RTPDependencyDescriptorURI) {
+		t.Fatal("AV1SDPNegotiatesHeaderExtension rejected dependency descriptor")
+	}
+	if !av1.AV1SDPOffersReceiveHeaderExtension(sdp, av1.AV1RTPStreamIDURI) {
+		t.Fatal("AV1SDPOffersReceiveHeaderExtension rejected recvonly RID")
+	}
+	if av1.AV1SDPAnswersSendHeaderExtension(sdp, av1.AV1RTPStreamIDURI) {
+		t.Fatal("AV1SDPAnswersSendHeaderExtension accepted recvonly RID")
+	}
+	if !av1.AV1SDPAnswersSendHeaderExtension(sdp, av1.AV1RTPRepairedStreamIDURI) {
+		t.Fatal("AV1SDPAnswersSendHeaderExtension rejected sendonly repaired RID")
+	}
+	if !av1.AV1SDPOffersReceiveHeaderExtension(sdp, av1.AV1RTPMIDURI) {
+		t.Fatal("AV1SDPOffersReceiveHeaderExtension rejected inherited MID")
+	}
+	if av1.AV1SDPOffersReceiveHeaderExtension(sdp, "") {
+		t.Fatal("AV1SDPOffersReceiveHeaderExtension accepted empty URI")
+	}
+
+	sendOnlySection := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98",
+		"a=sendonly",
+		"a=rtpmap:98 AV1/90000",
+		"a=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid",
+	)
+	if av1.AV1SDPOffersReceiveHeaderExtension(sendOnlySection, av1.AV1RTPMIDURI) {
+		t.Fatal("sendonly inherited extmap reported receive support")
+	}
+	if !av1.AV1SDPAnswersSendHeaderExtension(sendOnlySection, av1.AV1RTPMIDURI) {
+		t.Fatal("sendonly inherited extmap did not report send support")
+	}
+
+	wrongMedia := joinAV1SDPLines(
+		"m=audio 9 UDP/TLS/RTP/SAVPF 111",
+		"a=rtpmap:111 opus/48000/2",
+		"a=extmap:1 https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension",
+	)
+	if av1.AV1SDPNegotiatesHeaderExtension(wrongMedia, av1.AV1RTPDependencyDescriptorURI) {
+		t.Fatal("audio extmap reported AV1 header-extension support")
 	}
 }
 

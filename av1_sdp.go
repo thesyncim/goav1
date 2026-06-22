@@ -19,6 +19,14 @@ const (
 	// AV1RTPDependencyDescriptorURI is the SDP extmap URI for WebRTC's AV1
 	// dependency descriptor RTP header extension.
 	AV1RTPDependencyDescriptorURI = "https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension"
+	// AV1RTPMIDURI is the SDP extmap URI for the RTP MID header extension.
+	AV1RTPMIDURI = "urn:ietf:params:rtp-hdrext:sdes:mid"
+	// AV1RTPStreamIDURI is the SDP extmap URI for the RTP stream ID header
+	// extension used by RID-based simulcast.
+	AV1RTPStreamIDURI = "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id"
+	// AV1RTPRepairedStreamIDURI is the SDP extmap URI for repaired RTP stream
+	// ID header extension used by RTX/FEC repair streams.
+	AV1RTPRepairedStreamIDURI = "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id"
 
 	// AV1SDPFmtpProfile is the AV1 SDP fmtp key for seq_profile.
 	AV1SDPFmtpProfile = "profile"
@@ -90,6 +98,19 @@ type AV1SDPFmtpParameters struct {
 	LevelIdx int
 	// Tier is the highest AV1 seq_tier used or supported.
 	Tier int
+}
+
+// AV1SDPExtmap holds one RFC 8285 a=extmap RTP header-extension mapping.
+type AV1SDPExtmap struct {
+	// ID is the local extension identifier.
+	ID int
+	// Direction is optional and, when present, is one of sendonly, recvonly,
+	// sendrecv, or inactive.
+	Direction string
+	// URI is the RTP header-extension URI.
+	URI string
+	// Attributes contains optional extension attributes after URI.
+	Attributes string
 }
 
 // AV1SDPRIDRestrictions holds the AV1 interpretation of RFC 8851 RID video
@@ -254,6 +275,50 @@ func (p AV1SDPFmtpParameters) AppendFmtp(dst []byte) ([]byte, error) {
 // Fmtp returns a semicolon-separated AV1 fmtp parameter string.
 func (p AV1SDPFmtpParameters) Fmtp() (string, error) {
 	buf, err := p.AppendFmtp(nil)
+	if err != nil {
+		return "", err
+	}
+	return string(buf), nil
+}
+
+// Validate rejects malformed RTP header-extension mappings.
+func (e AV1SDPExtmap) Validate() error {
+	if e.ID <= 0 || e.ID > 255 || strings.TrimSpace(e.URI) == "" {
+		return ErrSDPInvalidConfig
+	}
+	if e.Direction != "" {
+		switch strings.ToLower(strings.TrimSpace(e.Direction)) {
+		case "sendonly", "recvonly", "sendrecv", "inactive":
+		default:
+			return ErrSDPInvalidConfig
+		}
+	}
+	return nil
+}
+
+// AppendSDP appends a complete a=extmap SDP attribute.
+func (e AV1SDPExtmap) AppendSDP(dst []byte) ([]byte, error) {
+	if err := e.Validate(); err != nil {
+		return dst, err
+	}
+	dst = append(dst, "a=extmap:"...)
+	dst = strconv.AppendInt(dst, int64(e.ID), 10)
+	if e.Direction != "" {
+		dst = append(dst, '/')
+		dst = append(dst, strings.ToLower(strings.TrimSpace(e.Direction))...)
+	}
+	dst = append(dst, ' ')
+	dst = append(dst, strings.TrimSpace(e.URI)...)
+	if strings.TrimSpace(e.Attributes) != "" {
+		dst = append(dst, ' ')
+		dst = append(dst, strings.TrimSpace(e.Attributes)...)
+	}
+	return dst, nil
+}
+
+// SDP returns a complete a=extmap SDP attribute.
+func (e AV1SDPExtmap) SDP() (string, error) {
+	buf, err := e.AppendSDP(nil)
 	if err != nil {
 		return "", err
 	}
@@ -564,6 +629,39 @@ func ParseAV1SDPFmtp(fmtp string) (AV1SDPFmtpParameters, error) {
 	return out, nil
 }
 
+// ParseAV1SDPExtmap parses a complete RFC 8285 a=extmap attribute. The input
+// may include or omit the leading "a=extmap:" prefix.
+func ParseAV1SDPExtmap(line string) (AV1SDPExtmap, error) {
+	line = strings.TrimSpace(line)
+	line = strings.TrimPrefix(line, "a=extmap:")
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return AV1SDPExtmap{}, ErrSDPInvalidConfig
+	}
+	idToken := fields[0]
+	var direction string
+	if id, dir, ok := strings.Cut(idToken, "/"); ok {
+		idToken = id
+		direction = strings.ToLower(strings.TrimSpace(dir))
+	}
+	id, err := strconv.Atoi(idToken)
+	if err != nil {
+		return AV1SDPExtmap{}, ErrSDPInvalidConfig
+	}
+	out := AV1SDPExtmap{
+		ID:        id,
+		Direction: direction,
+		URI:       strings.TrimSpace(fields[1]),
+	}
+	if len(fields) > 2 {
+		out.Attributes = strings.Join(fields[2:], " ")
+	}
+	if err := out.Validate(); err != nil {
+		return AV1SDPExtmap{}, err
+	}
+	return out, nil
+}
+
 // ParseAV1SDPRIDRestrictions parses a semicolon-separated RFC 8851 RID
 // restriction list using the AV1 RTP restriction semantics. Unknown RID
 // restrictions are rejected so receive-capability checks do not silently accept
@@ -660,6 +758,14 @@ func AV1SDPNegotiatesRTCPFeedback(sdp string, feedback string) bool {
 	return av1SDPHasRTCPFeedback(sdp, av1SDPDirectionIsActive, feedback)
 }
 
+// AV1SDPNegotiatesHeaderExtension reports whether an SDP blob contains an
+// active video section that binds AV1/90000 and declares the supplied RTP
+// header-extension URI.
+func AV1SDPNegotiatesHeaderExtension(sdp string, uri string) bool {
+	return av1SDPHasHeaderExtension(sdp, av1SDPDirectionIsActive,
+		av1SDPDirectionIsActive, uri)
+}
+
 // AV1SDPNegotiatesSimulcast reports whether an SDP blob contains an active
 // video section that binds AV1/90000 and declares at least one valid AV1
 // simulcast RID for either direction.
@@ -686,6 +792,14 @@ func AV1SDPOffersReceiveParams(sdp string, stream AV1SDPFmtpParameters) bool {
 // type.
 func AV1SDPOffersReceiveRTCPFeedback(sdp string, feedback string) bool {
 	return av1SDPHasRTCPFeedback(sdp, av1SDPDirectionAllowsReceive, feedback)
+}
+
+// AV1SDPOffersReceiveHeaderExtension reports whether an SDP offer contains a
+// video section that can receive AV1/90000 and declares the supplied RTP
+// header-extension URI in a receive-compatible extmap direction.
+func AV1SDPOffersReceiveHeaderExtension(sdp string, uri string) bool {
+	return av1SDPHasHeaderExtension(sdp, av1SDPDirectionAllowsReceive,
+		av1SDPDirectionAllowsReceive, uri)
 }
 
 // AV1SDPOffersReceiveSimulcast reports whether an SDP offer contains a video
@@ -724,6 +838,14 @@ func AV1SDPAnswersSend(sdp string) bool {
 // that payload type, either directly or with the wildcard payload type.
 func AV1SDPAnswersSendRTCPFeedback(sdp string, feedback string) bool {
 	return av1SDPHasRTCPFeedback(sdp, av1SDPDirectionAllowsSend, feedback)
+}
+
+// AV1SDPAnswersSendHeaderExtension reports whether an SDP answer contains a
+// video section that can send AV1/90000 and declares the supplied RTP
+// header-extension URI in a send-compatible extmap direction.
+func AV1SDPAnswersSendHeaderExtension(sdp string, uri string) bool {
+	return av1SDPHasHeaderExtension(sdp, av1SDPDirectionAllowsSend,
+		av1SDPDirectionAllowsSend, uri)
 }
 
 // AV1SDPAnswersSendSimulcast reports whether an SDP answer contains a video
@@ -787,6 +909,22 @@ func av1SDPHasSimulcast(
 	return av1SDPHas(sdp, directionOK,
 		func(section av1SDPMediaSection, payloadType string) bool {
 			return section.hasAV1Simulcast(payloadType, simulcastDirection)
+		})
+}
+
+func av1SDPHasHeaderExtension(
+	sdp string,
+	mediaDirectionOK func(string) bool,
+	extmapDirectionOK func(string) bool,
+	uri string,
+) bool {
+	uri = strings.ToLower(strings.TrimSpace(uri))
+	if uri == "" {
+		return false
+	}
+	return av1SDPHas(sdp, mediaDirectionOK,
+		func(section av1SDPMediaSection, payloadType string) bool {
+			return section.hasHeaderExtension(uri, extmapDirectionOK)
 		})
 }
 
@@ -863,6 +1001,11 @@ func av1SDPHas(
 				section.rtcpFeedback[fields[0]] = append(section.rtcpFeedback[fields[0]],
 					strings.Join(fields[1:], " "))
 			}
+		case strings.HasPrefix(line, "a=extmap:"):
+			extmap, err := ParseAV1SDPExtmap(line)
+			if err == nil {
+				section.extmaps = append(section.extmaps, extmap)
+			}
 		case strings.HasPrefix(line, "a=rid:"):
 			rid, err := ParseAV1SDPRID(line)
 			if err == nil && section.filterRIDPayloadTypes(&rid) {
@@ -894,6 +1037,7 @@ type av1SDPMediaSection struct {
 	av1PayloadTypes    map[string]bool
 	fmtpParams         map[string]string
 	rtcpFeedback       map[string][]string
+	extmaps            []AV1SDPExtmap
 	rids               []AV1SDPRID
 	ridSeen            map[string]bool
 	ridDuplicate       map[string]bool
@@ -929,6 +1073,25 @@ func (s av1SDPMediaSection) hasAV1(
 func (s av1SDPMediaSection) hasRTCPFeedback(payloadType string, feedback string) bool {
 	return av1SDPRTCPFeedbackListContains(s.rtcpFeedback[payloadType], feedback) ||
 		av1SDPRTCPFeedbackListContains(s.rtcpFeedback["*"], feedback)
+}
+
+func (s av1SDPMediaSection) hasHeaderExtension(
+	uri string,
+	extmapDirectionOK func(string) bool,
+) bool {
+	for _, extmap := range s.extmaps {
+		if strings.ToLower(strings.TrimSpace(extmap.URI)) != uri {
+			continue
+		}
+		direction := extmap.Direction
+		if direction == "" {
+			direction = s.direction
+		}
+		if extmapDirectionOK(direction) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s av1SDPMediaSection) allowsAV1Frame(

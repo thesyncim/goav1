@@ -407,15 +407,16 @@ the receive loop needs each output paired with parsed AV1 spatial ID, temporal
 ID, frame type, coded-keyframe flag, and frame-size metadata. Dependency
 descriptor values such as active decode-target masks are RTP header-extension
 metadata and are parsed separately with `ParseRTPDependencyDescriptor`. The
-SDP helpers (`ParseAV1SDPFmtp`, `ParseAV1SDPRID`,
+SDP helpers (`ParseAV1SDPFmtp`, `ParseAV1SDPExtmap`, `ParseAV1SDPRID`,
 `ParseAV1SDPSimulcast`, `AV1SDPOffersReceiveParams`,
 `AV1SDPOffersReceiveSequence`, and `AV1SDPOffersReceiveFrame`) cover the
-`AV1/90000` payload binding, the profile/level/tier compatibility check, AV1
-RID receiver restrictions such as `max-width`, `max-height`, `max-fps`,
-`max-fs`, `max-br`, `max-pps`, `max-bpp`, and `depend`, and AV1 simulcast RID
-groups before RTP starts flowing; the `AV1SDP*RTCPFeedback` helpers verify
-payload-specific or wildcard `rtcp-fb` support for NACK, PLI, FIR, and LRR.
-RTCP LRR helpers
+`AV1/90000` payload binding, the profile/level/tier compatibility check, RTP
+header-extension mapping checks for dependency descriptors and RID/MID SDES
+values, AV1 RID receiver restrictions such as `max-width`, `max-height`,
+`max-fps`, `max-fs`, `max-br`, `max-pps`, `max-bpp`, and `depend`, and AV1
+simulcast RID groups before RTP starts flowing; the `AV1SDP*RTCPFeedback`
+helpers verify payload-specific or wildcard `rtcp-fb` support for NACK, PLI,
+FIR, and LRR. RTCP LRR helpers
 (`ParseAV1RTCPLayerRefreshRequestEntry`,
 `EncoderWebRTCValidateLayerRefreshRequest`) cover the AV1 layer-index FCI
 format and validate requested upgrades against the active scalability grid. The
@@ -446,7 +447,7 @@ writing:
 | L1T2 single-pool decode                             | Strict every-frame MD5 pass in `make dryrun-relevant-supported`. |
 | L2T1 / L2T2 multi-pool decode                       | Strict every-frame MD5 pass in `make dryrun-extended`. |
 | WebRTC AV1 SVC control metadata                     | Complete for the W3C mode vocabulary (`L*T*`, `L*T*h`, `L*T*_KEY`, `L*T*_KEY_SHIFT`, `S*T*`, `S*T*h`) with dependency-descriptor decode targets over the full `(spatial, temporal)` grid, W3C key-shift temporal schedules, and pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates. |
-| WebRTC AV1 SDP helpers                              | Complete for the registered `AV1/90000` payload binding, optional `profile` / `level-idx` / `tier` fmtp defaults and validation, AV1 RID receiver restrictions, AV1 simulcast RID groups, offer receive frame checks, sequence-header compatibility checks, and AV1 rtcp-fb checks. |
+| WebRTC AV1 SDP helpers                              | Complete for the registered `AV1/90000` payload binding, optional `profile` / `level-idx` / `tier` fmtp defaults and validation, RTP header-extension mapping checks, AV1 RID receiver restrictions, AV1 simulcast RID groups, offer receive frame checks, sequence-header compatibility checks, and AV1 rtcp-fb checks. |
 | WebRTC AV1 RTCP LRR helpers                         | Complete for AV1 layer-index and FCI-entry parse/build/validation plus encoder-config temporal/spatial layer-grid checks. |
 | High-level RTP payload decode                       | `NewDecoderFromRTPPayloads` covers ordered/live AV1 RTP payload bodies for single decode chains and independent simulcast layers; `NewLayeredDecoderFromRTPPayloads` covers shared-reference SVC RTP streams with frame-only and `WithMetadata` AV1 layer outputs; both include `DecodeRTPPayloadAfterLoss` retained-fragment reset after packet gaps. |
 | Strict every-frame parity                           | Passing for the committed SVC vectors; broader SVC corpus expansion remains open. |
