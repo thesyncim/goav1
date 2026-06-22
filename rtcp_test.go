@@ -11,6 +11,15 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 	if av1.RTCPVersion != 2 ||
 		av1.RTCPHeaderSize != 4 ||
 		av1.RTCPMaxPacketSize != 262144 ||
+		av1.RTCPSenderReportPacketType != 200 ||
+		av1.RTCPReceiverReportPacketType != 201 ||
+		av1.RTCPReportMaxBlocks != 31 ||
+		av1.RTCPReportBlockSize != 24 ||
+		av1.RTCPReportCumulativeLostMin != -0x800000 ||
+		av1.RTCPReportCumulativeLostMax != 0x7fffff ||
+		av1.RTCPSenderReportSenderInfoSize != 24 ||
+		av1.RTCPSenderReportPacketMinSize != 28 ||
+		av1.RTCPReceiverReportPacketMinSize != 8 ||
 		av1.RTCPFeedbackCommonSize != 8 ||
 		av1.RTCPFeedbackPacketHeaderSize != 12 ||
 		av1.RTCPFeedbackMaxFCISize != 262132 ||
@@ -82,6 +91,245 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 		av1.AV1SDPRTCPFeedbackTransportCC != "transport-cc" ||
 		av1.AV1SDPRTCPFeedbackREMB != "goog-remb" {
 		t.Fatalf("unexpected AV1 rtcp-fb constants")
+	}
+}
+
+func TestRTCPSenderReportPacketRoundTrip(t *testing.T) {
+	report := av1.RTCPSenderReport{
+		SenderSSRC:        0x11223344,
+		NTPSeconds:        0x01020304,
+		NTPFraction:       0x05060708,
+		RTPTimestamp:      0x090a0b0c,
+		SenderPacketCount: 0x0d0e0f10,
+		SenderOctetCount:  0x11121314,
+		Reports: []av1.RTCPReportBlock{
+			{
+				SSRC:                          0x22334455,
+				FractionLost:                  7,
+				CumulativePacketsLost:         -3,
+				ExtendedHighestSequenceNumber: 0x01020304,
+				InterarrivalJitter:            0x05060708,
+				LastSenderReport:              0x090a0b0c,
+				DelaySinceLastSenderReport:    0x0d0e0f10,
+			},
+			{
+				SSRC:                          0xaabbccdd,
+				FractionLost:                  0xee,
+				CumulativePacketsLost:         0x123456,
+				ExtendedHighestSequenceNumber: 0x01000002,
+				InterarrivalJitter:            0x03000004,
+				LastSenderReport:              0x05000006,
+				DelaySinceLastSenderReport:    0x07000008,
+			},
+		},
+	}
+	size, err := av1.RTCPSenderReportPacketSize(len(report.Reports))
+	if err != nil {
+		t.Fatalf("RTCPSenderReportPacketSize: %v", err)
+	}
+	if size != 76 {
+		t.Fatalf("sender report size=%d want 76", size)
+	}
+	buf := make([]byte, size)
+	n, err := av1.PutRTCPSenderReportPacket(buf, report)
+	if err != nil {
+		t.Fatalf("PutRTCPSenderReportPacket: %v", err)
+	}
+	want := []byte{
+		0x82, 200, 0x00, 0x12,
+		0x11, 0x22, 0x33, 0x44,
+		0x01, 0x02, 0x03, 0x04,
+		0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c,
+		0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14,
+		0x22, 0x33, 0x44, 0x55,
+		0x07, 0xff, 0xff, 0xfd,
+		0x01, 0x02, 0x03, 0x04,
+		0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c,
+		0x0d, 0x0e, 0x0f, 0x10,
+		0xaa, 0xbb, 0xcc, 0xdd,
+		0xee, 0x12, 0x34, 0x56,
+		0x01, 0x00, 0x00, 0x02,
+		0x03, 0x00, 0x00, 0x04,
+		0x05, 0x00, 0x00, 0x06,
+		0x07, 0x00, 0x00, 0x08,
+	}
+	if n != len(want) || string(buf) != string(want) {
+		t.Fatalf("sender report n=%d bytes=%#v want %#v", n, buf, want)
+	}
+
+	dst := make([]av1.RTCPReportBlock, 1, 3)
+	dst[0].SSRC = 0x99999999
+	parsed, consumed, err := av1.ParseRTCPSenderReportPacket(buf, dst[:1:3])
+	if err != nil {
+		t.Fatalf("ParseRTCPSenderReportPacket: %v", err)
+	}
+	if consumed != len(buf) ||
+		parsed.SenderSSRC != report.SenderSSRC ||
+		parsed.NTPSeconds != report.NTPSeconds ||
+		parsed.NTPFraction != report.NTPFraction ||
+		parsed.RTPTimestamp != report.RTPTimestamp ||
+		parsed.SenderPacketCount != report.SenderPacketCount ||
+		parsed.SenderOctetCount != report.SenderOctetCount {
+		t.Fatalf("parsed sender report consumed=%d report=%+v", consumed, parsed)
+	}
+	if dst[0].SSRC != 0x99999999 {
+		t.Fatalf("ParseRTCPSenderReportPacket clobbered dst prefix")
+	}
+	assertRTCPReportBlocksEqual(t, parsed.Reports, report.Reports)
+
+	prefix := make([]byte, 1, 1+size)
+	prefix[0] = 0xab
+	appended, err := av1.AppendRTCPSenderReportPacket(prefix, report)
+	if err != nil {
+		t.Fatalf("AppendRTCPSenderReportPacket: %v", err)
+	}
+	if len(appended) != 1+size || appended[0] != 0xab || string(appended[1:]) != string(buf) {
+		t.Fatalf("appended sender report=%#v", appended)
+	}
+}
+
+func TestRTCPReceiverReportPacketRoundTrip(t *testing.T) {
+	report := av1.RTCPReceiverReport{
+		SenderSSRC: 0x10203040,
+		Reports: []av1.RTCPReportBlock{{
+			SSRC:                          0x01020304,
+			FractionLost:                  0x20,
+			CumulativePacketsLost:         av1.RTCPReportCumulativeLostMax,
+			ExtendedHighestSequenceNumber: 0x11121314,
+			InterarrivalJitter:            0x21222324,
+			LastSenderReport:              0x31323334,
+			DelaySinceLastSenderReport:    0x41424344,
+		}},
+	}
+	size, err := av1.RTCPReceiverReportPacketSize(len(report.Reports))
+	if err != nil {
+		t.Fatalf("RTCPReceiverReportPacketSize: %v", err)
+	}
+	if size != 32 {
+		t.Fatalf("receiver report size=%d want 32", size)
+	}
+	buf := make([]byte, size)
+	n, err := av1.PutRTCPReceiverReportPacket(buf, report)
+	if err != nil {
+		t.Fatalf("PutRTCPReceiverReportPacket: %v", err)
+	}
+	want := []byte{
+		0x81, 201, 0x00, 0x07,
+		0x10, 0x20, 0x30, 0x40,
+		0x01, 0x02, 0x03, 0x04,
+		0x20, 0x7f, 0xff, 0xff,
+		0x11, 0x12, 0x13, 0x14,
+		0x21, 0x22, 0x23, 0x24,
+		0x31, 0x32, 0x33, 0x34,
+		0x41, 0x42, 0x43, 0x44,
+	}
+	if n != len(want) || string(buf) != string(want) {
+		t.Fatalf("receiver report n=%d bytes=%#v want %#v", n, buf, want)
+	}
+	parsed, consumed, err := av1.ParseRTCPReceiverReportPacket(buf, make([]av1.RTCPReportBlock, 0, 1))
+	if err != nil {
+		t.Fatalf("ParseRTCPReceiverReportPacket: %v", err)
+	}
+	if consumed != len(buf) || parsed.SenderSSRC != report.SenderSSRC {
+		t.Fatalf("parsed receiver report consumed=%d report=%+v", consumed, parsed)
+	}
+	assertRTCPReportBlocksEqual(t, parsed.Reports, report.Reports)
+
+	prefix := make([]byte, 1, 1+size)
+	prefix[0] = 0xcd
+	appended, err := av1.AppendRTCPReceiverReportPacket(prefix, report)
+	if err != nil {
+		t.Fatalf("AppendRTCPReceiverReportPacket: %v", err)
+	}
+	if len(appended) != 1+size || appended[0] != 0xcd || string(appended[1:]) != string(buf) {
+		t.Fatalf("appended receiver report=%#v", appended)
+	}
+}
+
+func TestRTCPReportPacketRejectsInvalid(t *testing.T) {
+	if _, err := av1.RTCPSenderReportPacketSize(-1); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("negative sender report size err=%v", err)
+	}
+	if _, err := av1.RTCPReceiverReportPacketSize(av1.RTCPReportMaxBlocks + 1); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("too many receiver report blocks size err=%v", err)
+	}
+	report := av1.RTCPReceiverReport{Reports: []av1.RTCPReportBlock{{CumulativePacketsLost: av1.RTCPReportCumulativeLostMax + 1}}}
+	if _, err := av1.PutRTCPReceiverReportPacket(make([]byte, av1.RTCPReceiverReportPacketMinSize+av1.RTCPReportBlockSize), report); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("invalid cumulative lost receiver report err=%v", err)
+	}
+	report.Reports[0].CumulativePacketsLost = av1.RTCPReportCumulativeLostMin - 1
+	if _, err := av1.PutRTCPReceiverReportPacket(make([]byte, av1.RTCPReceiverReportPacketMinSize+av1.RTCPReportBlockSize), report); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("invalid negative cumulative lost receiver report err=%v", err)
+	}
+	if _, err := av1.PutRTCPReceiverReportPacket(make([]byte, av1.RTCPReceiverReportPacketMinSize-1), av1.RTCPReceiverReport{}); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short receiver report put err=%v", err)
+	}
+	if out, err := av1.AppendRTCPReceiverReportPacket(make([]byte, 0, av1.RTCPReceiverReportPacketMinSize-1), av1.RTCPReceiverReport{}); !errors.Is(err, av1.ErrRTCPShortBuffer) || len(out) != 0 {
+		t.Fatalf("short receiver report append out=%d err=%v", len(out), err)
+	}
+	if _, _, err := av1.ParseRTCPReceiverReportPacket(nil, nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short receiver report parse err=%v", err)
+	}
+	if _, _, err := av1.ParseRTCPSenderReportPacket(make([]byte, av1.RTCPSenderReportPacketMinSize-1), nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short sender report parse err=%v", err)
+	}
+	badVersion := []byte{0x40, 201, 0, 1, 0, 0, 0, 0}
+	if _, _, err := av1.ParseRTCPReceiverReportPacket(badVersion, nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("bad version receiver report parse err=%v", err)
+	}
+	badType := []byte{0x80, 200, 0, 1, 0, 0, 0, 0}
+	if _, _, err := av1.ParseRTCPReceiverReportPacket(badType, nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("bad type receiver report parse err=%v", err)
+	}
+	lengthTooShort := []byte{0x80, 201, 0, 0, 0, 0, 0, 0}
+	if _, _, err := av1.ParseRTCPReceiverReportPacket(lengthTooShort, nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("short length receiver report parse err=%v", err)
+	}
+	truncated := []byte{0x80, 201, 0, 7, 0, 0, 0, 0}
+	if _, _, err := av1.ParseRTCPReceiverReportPacket(truncated, nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("truncated receiver report parse err=%v", err)
+	}
+	extraWithoutPadding := []byte{0x80, 201, 0, 2, 0, 0, 0, 0, 1, 2, 3, 4}
+	if _, _, err := av1.ParseRTCPReceiverReportPacket(extraWithoutPadding, nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("extra receiver report parse err=%v", err)
+	}
+	validPadded := []byte{0xa0, 201, 0, 2, 0, 0, 0, 1, 0, 0, 0, 4}
+	parsed, consumed, err := av1.ParseRTCPReceiverReportPacket(validPadded, nil)
+	if err != nil {
+		t.Fatalf("valid padded receiver report parse: %v", err)
+	}
+	if consumed != len(validPadded) || parsed.SenderSSRC != 1 || len(parsed.Reports) != 0 {
+		t.Fatalf("valid padded receiver report consumed=%d report=%+v", consumed, parsed)
+	}
+	zeroPadding := []byte{0xa0, 201, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0}
+	if _, _, err := av1.ParseRTCPReceiverReportPacket(zeroPadding, nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("zero padding receiver report parse err=%v", err)
+	}
+	if _, _, err := av1.ParseRTCPReceiverReportPacket(bufWithOneReport(), nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short report dst parse err=%v", err)
+	}
+}
+
+func bufWithOneReport() []byte {
+	buf := make([]byte, av1.RTCPReceiverReportPacketMinSize+av1.RTCPReportBlockSize)
+	buf[0] = 0x81
+	buf[1] = av1.RTCPReceiverReportPacketType
+	buf[3] = 0x07
+	return buf
+}
+
+func assertRTCPReportBlocksEqual(t *testing.T, got []av1.RTCPReportBlock, want []av1.RTCPReportBlock) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("report block len=%d want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("report block %d=%+v want %+v", i, got[i], want[i])
+		}
 	}
 }
 

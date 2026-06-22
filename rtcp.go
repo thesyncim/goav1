@@ -16,6 +16,40 @@ const (
 	// RTCP length field, in bytes.
 	RTCPMaxPacketSize = (0xffff + 1) * 4
 
+	// RTCPSenderReportPacketType is the RTCP packet type for sender reports.
+	RTCPSenderReportPacketType = 200
+
+	// RTCPReceiverReportPacketType is the RTCP packet type for receiver
+	// reports.
+	RTCPReceiverReportPacketType = 201
+
+	// RTCPReportMaxBlocks is the largest report-block count that fits the RTCP
+	// reception report count field.
+	RTCPReportMaxBlocks = 31
+
+	// RTCPReportBlockSize is the size of one RTCP reception report block.
+	RTCPReportBlockSize = 24
+
+	// RTCPReportCumulativeLostMin is the minimum signed 24-bit cumulative-lost
+	// value that can fit in a report block.
+	RTCPReportCumulativeLostMin = -0x800000
+
+	// RTCPReportCumulativeLostMax is the maximum signed 24-bit cumulative-lost
+	// value that can fit in a report block.
+	RTCPReportCumulativeLostMax = 0x7fffff
+
+	// RTCPSenderReportSenderInfoSize is the SSRC plus sender-info block size
+	// before any report blocks.
+	RTCPSenderReportSenderInfoSize = 24
+
+	// RTCPSenderReportPacketMinSize is the smallest complete sender report
+	// packet: common header plus sender info and no report blocks.
+	RTCPSenderReportPacketMinSize = RTCPHeaderSize + RTCPSenderReportSenderInfoSize
+
+	// RTCPReceiverReportPacketMinSize is the smallest complete receiver report
+	// packet: common header plus reporter SSRC and no report blocks.
+	RTCPReceiverReportPacketMinSize = RTCPHeaderSize + 4
+
 	// RTCPFeedbackCommonSize is the sender/media SSRC block shared by RTPFB
 	// and PSFB packets.
 	RTCPFeedbackCommonSize = 8
@@ -133,6 +167,9 @@ var (
 	// ErrRTCPShortBuffer is returned when an RTCP helper's caller-owned buffer
 	// is too small for the requested feedback field.
 	ErrRTCPShortBuffer = errors.New("goav1: short RTCP buffer")
+	// ErrRTCPInvalidPacket is returned when a generic RTCP packet helper
+	// receives malformed packet data.
+	ErrRTCPInvalidPacket = errors.New("goav1: invalid RTCP packet")
 	// ErrRTCPInvalidFeedback is returned when a generic RTCP feedback helper
 	// receives malformed FCI data.
 	ErrRTCPInvalidFeedback = errors.New("goav1: invalid RTCP feedback")
@@ -140,6 +177,183 @@ var (
 	// carries out-of-range layer IDs, payload type, or upgrade semantics.
 	ErrRTCPInvalidLayerRefreshRequest = errors.New("goav1: invalid RTCP layer refresh request")
 )
+
+// RTCPReportBlock is one sender/receiver report block.
+type RTCPReportBlock struct {
+	SSRC                          uint32
+	FractionLost                  uint8
+	CumulativePacketsLost         int32
+	ExtendedHighestSequenceNumber uint32
+	InterarrivalJitter            uint32
+	LastSenderReport              uint32
+	DelaySinceLastSenderReport    uint32
+}
+
+// RTCPSenderReport is one complete RTCP sender report packet. Reports aliases
+// the caller-owned destination slice passed to Parse.
+type RTCPSenderReport struct {
+	SenderSSRC        uint32
+	NTPSeconds        uint32
+	NTPFraction       uint32
+	RTPTimestamp      uint32
+	SenderPacketCount uint32
+	SenderOctetCount  uint32
+	Reports           []RTCPReportBlock
+}
+
+// RTCPReceiverReport is one complete RTCP receiver report packet. Reports
+// aliases the caller-owned destination slice passed to Parse.
+type RTCPReceiverReport struct {
+	SenderSSRC uint32
+	Reports    []RTCPReportBlock
+}
+
+// RTCPSenderReportPacketSize returns the complete sender report packet size.
+func RTCPSenderReportPacketSize(reportCount int) (int, error) {
+	if reportCount < 0 || reportCount > RTCPReportMaxBlocks {
+		return 0, ErrRTCPInvalidPacket
+	}
+	return RTCPSenderReportPacketMinSize + reportCount*RTCPReportBlockSize, nil
+}
+
+// RTCPReceiverReportPacketSize returns the complete receiver report packet
+// size.
+func RTCPReceiverReportPacketSize(reportCount int) (int, error) {
+	if reportCount < 0 || reportCount > RTCPReportMaxBlocks {
+		return 0, ErrRTCPInvalidPacket
+	}
+	return RTCPReceiverReportPacketMinSize + reportCount*RTCPReportBlockSize, nil
+}
+
+// PutRTCPSenderReportPacket serializes one complete sender report packet into
+// dst.
+func PutRTCPSenderReportPacket(dst []byte, report RTCPSenderReport) (int, error) {
+	size, err := RTCPSenderReportPacketSize(len(report.Reports))
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < size {
+		return 0, ErrRTCPShortBuffer
+	}
+	if err := putRTCPPacketHeader(dst, RTCPSenderReportPacketType, len(report.Reports), size); err != nil {
+		return 0, err
+	}
+	binary.BigEndian.PutUint32(dst[4:8], report.SenderSSRC)
+	binary.BigEndian.PutUint32(dst[8:12], report.NTPSeconds)
+	binary.BigEndian.PutUint32(dst[12:16], report.NTPFraction)
+	binary.BigEndian.PutUint32(dst[16:20], report.RTPTimestamp)
+	binary.BigEndian.PutUint32(dst[20:24], report.SenderPacketCount)
+	binary.BigEndian.PutUint32(dst[24:28], report.SenderOctetCount)
+	if err := putRTCPReportBlocks(dst[RTCPSenderReportPacketMinSize:size], report.Reports); err != nil {
+		return 0, err
+	}
+	return size, nil
+}
+
+// AppendRTCPSenderReportPacket appends one complete sender report packet to dst
+// without growing beyond dst's existing capacity.
+func AppendRTCPSenderReportPacket(dst []byte, report RTCPSenderReport) ([]byte, error) {
+	size, err := RTCPSenderReportPacketSize(len(report.Reports))
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+size]
+	if _, err := PutRTCPSenderReportPacket(out[off:], report); err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
+// ParseRTCPSenderReportPacket parses one complete sender report packet from
+// src. Reports are appended to dst without allocation and alias dst. n is the
+// number of bytes consumed for the first RTCP packet.
+func ParseRTCPSenderReportPacket(src []byte, dst []RTCPReportBlock) (report RTCPSenderReport, n int, err error) {
+	count, packetLen, err := parseRTCPFixedPacketHeader(src, RTCPSenderReportPacketType, RTCPSenderReportPacketMinSize)
+	if err != nil {
+		return RTCPSenderReport{}, 0, err
+	}
+	expected := RTCPSenderReportPacketMinSize + int(count)*RTCPReportBlockSize
+	if err := validateRTCPFixedPacketPadding(src, packetLen, expected); err != nil {
+		return RTCPSenderReport{}, 0, err
+	}
+	reports, err := parseRTCPReportBlocks(src[RTCPSenderReportPacketMinSize:expected], int(count), dst)
+	if err != nil {
+		return RTCPSenderReport{}, 0, err
+	}
+	return RTCPSenderReport{
+		SenderSSRC:        binary.BigEndian.Uint32(src[4:8]),
+		NTPSeconds:        binary.BigEndian.Uint32(src[8:12]),
+		NTPFraction:       binary.BigEndian.Uint32(src[12:16]),
+		RTPTimestamp:      binary.BigEndian.Uint32(src[16:20]),
+		SenderPacketCount: binary.BigEndian.Uint32(src[20:24]),
+		SenderOctetCount:  binary.BigEndian.Uint32(src[24:28]),
+		Reports:           reports,
+	}, packetLen, nil
+}
+
+// PutRTCPReceiverReportPacket serializes one complete receiver report packet
+// into dst.
+func PutRTCPReceiverReportPacket(dst []byte, report RTCPReceiverReport) (int, error) {
+	size, err := RTCPReceiverReportPacketSize(len(report.Reports))
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < size {
+		return 0, ErrRTCPShortBuffer
+	}
+	if err := putRTCPPacketHeader(dst, RTCPReceiverReportPacketType, len(report.Reports), size); err != nil {
+		return 0, err
+	}
+	binary.BigEndian.PutUint32(dst[4:8], report.SenderSSRC)
+	if err := putRTCPReportBlocks(dst[RTCPReceiverReportPacketMinSize:size], report.Reports); err != nil {
+		return 0, err
+	}
+	return size, nil
+}
+
+// AppendRTCPReceiverReportPacket appends one complete receiver report packet to
+// dst without growing beyond dst's existing capacity.
+func AppendRTCPReceiverReportPacket(dst []byte, report RTCPReceiverReport) ([]byte, error) {
+	size, err := RTCPReceiverReportPacketSize(len(report.Reports))
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+size]
+	if _, err := PutRTCPReceiverReportPacket(out[off:], report); err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
+// ParseRTCPReceiverReportPacket parses one complete receiver report packet from
+// src. Reports are appended to dst without allocation and alias dst. n is the
+// number of bytes consumed for the first RTCP packet.
+func ParseRTCPReceiverReportPacket(src []byte, dst []RTCPReportBlock) (report RTCPReceiverReport, n int, err error) {
+	count, packetLen, err := parseRTCPFixedPacketHeader(src, RTCPReceiverReportPacketType, RTCPReceiverReportPacketMinSize)
+	if err != nil {
+		return RTCPReceiverReport{}, 0, err
+	}
+	expected := RTCPReceiverReportPacketMinSize + int(count)*RTCPReportBlockSize
+	if err := validateRTCPFixedPacketPadding(src, packetLen, expected); err != nil {
+		return RTCPReceiverReport{}, 0, err
+	}
+	reports, err := parseRTCPReportBlocks(src[RTCPReceiverReportPacketMinSize:expected], int(count), dst)
+	if err != nil {
+		return RTCPReceiverReport{}, 0, err
+	}
+	return RTCPReceiverReport{
+		SenderSSRC: binary.BigEndian.Uint32(src[4:8]),
+		Reports:    reports,
+	}, packetLen, nil
+}
 
 // RTCPFeedbackPacket is one complete RTCP RTPFB or PSFB packet. FCI aliases
 // the caller-owned payload passed to Put or the source slice passed to Parse.
@@ -259,6 +473,104 @@ func ParseRTCPFeedbackPacket(src []byte) (packet RTCPFeedbackPacket, n int, err 
 
 func rtcpPaddingLength(size int) int {
 	return (4 - (size & 3)) & 3
+}
+
+func putRTCPPacketHeader(dst []byte, packetType uint8, count int, size int) error {
+	if count < 0 || count > RTCPReportMaxBlocks || size < RTCPHeaderSize || size&3 != 0 || size > RTCPMaxPacketSize {
+		return ErrRTCPInvalidPacket
+	}
+	dst[0] = byte(RTCPVersion<<6) | byte(count)
+	dst[1] = packetType
+	binary.BigEndian.PutUint16(dst[2:4], uint16(size/4-1))
+	return nil
+}
+
+func parseRTCPFixedPacketHeader(src []byte, packetType uint8, minSize int) (count uint8, packetLen int, err error) {
+	if len(src) < minSize {
+		return 0, 0, ErrRTCPShortBuffer
+	}
+	if src[0]>>6 != RTCPVersion || src[1] != packetType {
+		return 0, 0, ErrRTCPInvalidPacket
+	}
+	packetLen = (int(binary.BigEndian.Uint16(src[2:4])) + 1) * 4
+	if packetLen < minSize {
+		return 0, 0, ErrRTCPInvalidPacket
+	}
+	if len(src) < packetLen {
+		return 0, 0, ErrRTCPShortBuffer
+	}
+	return src[0] & 0x1f, packetLen, nil
+}
+
+func validateRTCPFixedPacketPadding(src []byte, packetLen int, expectedNoPadding int) error {
+	if expectedNoPadding > packetLen {
+		return ErrRTCPInvalidPacket
+	}
+	if src[0]&0x20 == 0 {
+		if packetLen != expectedNoPadding {
+			return ErrRTCPInvalidPacket
+		}
+		return nil
+	}
+	padding := int(src[packetLen-1])
+	if padding == 0 || padding > packetLen-expectedNoPadding || packetLen-padding != expectedNoPadding {
+		return ErrRTCPInvalidPacket
+	}
+	return nil
+}
+
+func putRTCPReportBlocks(dst []byte, reports []RTCPReportBlock) error {
+	if len(dst) < len(reports)*RTCPReportBlockSize {
+		return ErrRTCPShortBuffer
+	}
+	for i := range reports {
+		report := reports[i]
+		if report.CumulativePacketsLost < RTCPReportCumulativeLostMin ||
+			report.CumulativePacketsLost > RTCPReportCumulativeLostMax {
+			return ErrRTCPInvalidPacket
+		}
+		off := i * RTCPReportBlockSize
+		binary.BigEndian.PutUint32(dst[off:off+4], report.SSRC)
+		lost := uint32(report.CumulativePacketsLost) & 0x00ffffff
+		dst[off+4] = report.FractionLost
+		dst[off+5] = byte(lost >> 16)
+		dst[off+6] = byte(lost >> 8)
+		dst[off+7] = byte(lost)
+		binary.BigEndian.PutUint32(dst[off+8:off+12], report.ExtendedHighestSequenceNumber)
+		binary.BigEndian.PutUint32(dst[off+12:off+16], report.InterarrivalJitter)
+		binary.BigEndian.PutUint32(dst[off+16:off+20], report.LastSenderReport)
+		binary.BigEndian.PutUint32(dst[off+20:off+24], report.DelaySinceLastSenderReport)
+	}
+	return nil
+}
+
+func parseRTCPReportBlocks(src []byte, count int, dst []RTCPReportBlock) ([]RTCPReportBlock, error) {
+	size := count * RTCPReportBlockSize
+	if len(src) < size {
+		return nil, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	if cap(dst)-off < count {
+		return nil, ErrRTCPShortBuffer
+	}
+	out := dst[:off+count]
+	for i := 0; i < count; i++ {
+		srcOff := i * RTCPReportBlockSize
+		lost := int32(uint32(src[srcOff+5])<<16 | uint32(src[srcOff+6])<<8 | uint32(src[srcOff+7]))
+		if lost&0x00800000 != 0 {
+			lost |= ^int32(0x00ffffff)
+		}
+		out[off+i] = RTCPReportBlock{
+			SSRC:                          binary.BigEndian.Uint32(src[srcOff : srcOff+4]),
+			FractionLost:                  src[srcOff+4],
+			CumulativePacketsLost:         lost,
+			ExtendedHighestSequenceNumber: binary.BigEndian.Uint32(src[srcOff+8 : srcOff+12]),
+			InterarrivalJitter:            binary.BigEndian.Uint32(src[srcOff+12 : srcOff+16]),
+			LastSenderReport:              binary.BigEndian.Uint32(src[srcOff+16 : srcOff+20]),
+			DelaySinceLastSenderReport:    binary.BigEndian.Uint32(src[srcOff+20 : srcOff+24]),
+		}
+	}
+	return out[off:], nil
 }
 
 // RTCPGenericNACKPair is one generic NACK Feedback Control Information pair.
