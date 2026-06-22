@@ -294,9 +294,11 @@ ship under `internal/av1/testdata/libaom/`.
 ### Cross-cutting items not enumerated above
 
 - **Encoder.** The friendly realtime encoder emits AV1 bitstreams for 8-bit
-  profile-0 WebRTC use from I420/I422/I444/I400/NV12/NV21 inputs. I422/I444
-  chroma samples are resampled, and I400 fills neutral chroma, before entering the
-  current 4:2:0 encode path. It supports fixed-quality/CBR, forced keyframes,
+  profile-0 WebRTC use from I420/I422/I444/I400/NV12/NV21 inputs plus generic
+  8/10/12-bit `Frame` inputs for 4:2:0, 4:2:2, 4:4:4, and monochrome layouts.
+  Non-4:2:0 chroma samples are resampled, monochrome fills neutral chroma, and
+  10/12-bit `Frame` samples are downshifted before entering the current 8-bit
+  4:2:0 encode path. It supports fixed-quality/CBR, forced keyframes,
   temporal layering, runtime bitrate/framerate/scalability reconfiguration,
   multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes,
   tile columns, golden references, RTP payload packetization, and dependency
@@ -315,9 +317,9 @@ ship under `internal/av1/testdata/libaom/`.
   validation for caller-supplied frame payloads, and
   sequence-matched `Frame` validation/loading for
   profile-0/1/2 8/10/12-bit 4:0:0, 4:2:0, 4:2:2, and 4:4:4 buffers,
-  including profile-2 12-bit 4:2:0 and 4:4:4 control paths. High-bit-depth
-  input, true non-4:2:0 bitstream encoding in the friendly pixel encoder, and
-  broader oracle coverage remain open.
+  including profile-2 12-bit 4:2:0 and 4:4:4 control paths. Native
+  high-bit-depth and true non-4:2:0 bitstream encoding in the friendly pixel
+  encoder, and broader oracle coverage remain open.
 - **SIMD / assembly backends.** Selected hot DSP paths have amd64/arm64 SIMD or
   assembly dispatch; coverage is still expanding behind pure-Go fallbacks.
 - **Work-stealing scheduler.** `threading.Pool` does deterministic

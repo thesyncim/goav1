@@ -303,6 +303,87 @@ func TestPublicVideoEncoderInputFormatsMatchI420(t *testing.T) {
 			},
 		},
 		{
+			name: "Frame420-8bit",
+			source: func(frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(w, h, frame)
+			},
+			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:        src.Width,
+					Height:       src.Height,
+					BitDepth:     8,
+					SubsamplingX: true,
+					SubsamplingY: true,
+					Align:        32,
+				})
+				return enc.EncodeFrame(frame, forceKey)
+			},
+		},
+		{
+			name: "Frame420-10bit",
+			source: func(frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(w, h, frame)
+			},
+			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:        src.Width,
+					Height:       src.Height,
+					BitDepth:     10,
+					SubsamplingX: true,
+					SubsamplingY: true,
+					Align:        32,
+				})
+				return enc.EncodeFrame(frame, forceKey)
+			},
+		},
+		{
+			name: "Frame422-10bit",
+			source: func(frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(w, h, frame)
+			},
+			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:        src.Width,
+					Height:       src.Height,
+					BitDepth:     10,
+					SubsamplingX: true,
+					Align:        32,
+				})
+				return enc.EncodeFrame(frame, forceKey)
+			},
+		},
+		{
+			name: "Frame444-12bit",
+			source: func(frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(w, h, frame)
+			},
+			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:    src.Width,
+					Height:   src.Height,
+					BitDepth: 12,
+					Align:    32,
+				})
+				return enc.EncodeFrame(frame, forceKey)
+			},
+		},
+		{
+			name: "Frame400-10bit",
+			source: func(frame int) goav1.I420Frame {
+				return publicI420NeutralChroma(publicRTCMatrixFrame(w, h, frame))
+			},
+			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:      src.Width,
+					Height:     src.Height,
+					BitDepth:   10,
+					MonoChrome: true,
+					Align:      32,
+				})
+				return enc.EncodeFrame(frame, forceKey)
+			},
+		},
+		{
 			name: "NV12",
 			source: func(frame int) goav1.I420Frame {
 				return publicRTCMatrixFrame(w, h, frame)
@@ -352,6 +433,36 @@ func TestPublicVideoEncoderInputFormatsMatchI420(t *testing.T) {
 	}
 }
 
+func TestPublicVideoEncoderRejectsUnsupportedFrameFormat(t *testing.T) {
+	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+		Width: 16, Height: 16,
+		QIndex: 80,
+	})
+	if err != nil {
+		t.Fatalf("NewVideoEncoder: %v", err)
+	}
+	defer enc.Close()
+
+	format := goav1.FrameFormat{
+		Width:        16,
+		Height:       16,
+		BitDepth:     8,
+		SubsamplingY: true,
+		Align:        32,
+	}
+	layout, err := goav1.FrameRequiredSize(format)
+	if err != nil {
+		t.Fatalf("FrameRequiredSize: %v", err)
+	}
+	frame, err := goav1.BindFrame(make([]byte, layout.Size), format)
+	if err != nil {
+		t.Fatalf("BindFrame: %v", err)
+	}
+	if _, err := enc.EncodeFrame(frame, false); !errors.Is(err, goav1.ErrFrameInvalidFormat) {
+		t.Fatalf("EncodeFrame err=%v want %v", err, goav1.ErrFrameInvalidFormat)
+	}
+}
+
 func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 	formats := []struct {
 		name          string
@@ -393,6 +504,138 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 			},
 			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
 				return enc.EncodeI400Picture(publicI400FromI420(src), forceKey)
+			},
+		},
+		{
+			name: "Frame420-8bit",
+			source: func(width int, height int, frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(width, height, frame)
+			},
+			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:        src.Width,
+					Height:       src.Height,
+					BitDepth:     8,
+					SubsamplingX: true,
+					SubsamplingY: true,
+					Align:        32,
+				})
+				return enc.EncodeFrame(frame, forceKey)
+			},
+			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:        src.Width,
+					Height:       src.Height,
+					BitDepth:     8,
+					SubsamplingX: true,
+					SubsamplingY: true,
+					Align:        32,
+				})
+				return enc.EncodeFramePicture(frame, forceKey)
+			},
+		},
+		{
+			name: "Frame420-10bit",
+			source: func(width int, height int, frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(width, height, frame)
+			},
+			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:        src.Width,
+					Height:       src.Height,
+					BitDepth:     10,
+					SubsamplingX: true,
+					SubsamplingY: true,
+					Align:        32,
+				})
+				return enc.EncodeFrame(frame, forceKey)
+			},
+			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:        src.Width,
+					Height:       src.Height,
+					BitDepth:     10,
+					SubsamplingX: true,
+					SubsamplingY: true,
+					Align:        32,
+				})
+				return enc.EncodeFramePicture(frame, forceKey)
+			},
+		},
+		{
+			name: "Frame422-10bit",
+			source: func(width int, height int, frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(width, height, frame)
+			},
+			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:        src.Width,
+					Height:       src.Height,
+					BitDepth:     10,
+					SubsamplingX: true,
+					Align:        32,
+				})
+				return enc.EncodeFrame(frame, forceKey)
+			},
+			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:        src.Width,
+					Height:       src.Height,
+					BitDepth:     10,
+					SubsamplingX: true,
+					Align:        32,
+				})
+				return enc.EncodeFramePicture(frame, forceKey)
+			},
+		},
+		{
+			name: "Frame444-12bit",
+			source: func(width int, height int, frame int) goav1.I420Frame {
+				return publicRTCMatrixFrame(width, height, frame)
+			},
+			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:    src.Width,
+					Height:   src.Height,
+					BitDepth: 12,
+					Align:    32,
+				})
+				return enc.EncodeFrame(frame, forceKey)
+			},
+			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:    src.Width,
+					Height:   src.Height,
+					BitDepth: 12,
+					Align:    32,
+				})
+				return enc.EncodeFramePicture(frame, forceKey)
+			},
+		},
+		{
+			name: "Frame400-10bit",
+			source: func(width int, height int, frame int) goav1.I420Frame {
+				return publicI420NeutralChroma(publicRTCMatrixFrame(width, height, frame))
+			},
+			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:      src.Width,
+					Height:     src.Height,
+					BitDepth:   10,
+					MonoChrome: true,
+					Align:      32,
+				})
+				return enc.EncodeFrame(frame, forceKey)
+			},
+			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
+				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+					Width:      src.Width,
+					Height:     src.Height,
+					BitDepth:   10,
+					MonoChrome: true,
+					Align:      32,
+				})
+				return enc.EncodeFramePicture(frame, forceKey)
 			},
 		},
 		{
@@ -2056,6 +2299,69 @@ func publicI400FromI420(src goav1.I420Frame) goav1.I400Frame {
 		Width:   src.Width,
 		Height:  src.Height,
 	}
+}
+
+func publicFrameFromI420(tb testing.TB, src goav1.I420Frame, format goav1.FrameFormat) goav1.Frame {
+	tb.Helper()
+	layout, err := goav1.FrameRequiredSize(format)
+	if err != nil {
+		tb.Fatalf("FrameRequiredSize: %v", err)
+	}
+	frame, err := goav1.BindFrame(make([]byte, layout.Size), format)
+	if err != nil {
+		tb.Fatalf("BindFrame: %v", err)
+	}
+	bytesPerSample := layout.BytesPerSample
+	for y := 0; y < src.Height; y++ {
+		srcRow := src.Y[y*src.YStride : y*src.YStride+src.Width]
+		for x, sample := range srcRow {
+			setPublicFrameSample(frame.Y, bytesPerSample, x, y, publicFrameHighBitSample(sample, frame.Format.BitDepth))
+		}
+	}
+	if frame.Format.MonoChrome {
+		return frame
+	}
+	switch {
+	case frame.Format.SubsamplingX && frame.Format.SubsamplingY:
+		for y := 0; y < src.Height/2; y++ {
+			for x := 0; x < src.Width/2; x++ {
+				u := src.U[y*src.ChromaStride+x]
+				v := src.V[y*src.ChromaStride+x]
+				setPublicFrameSample(frame.U, bytesPerSample, x, y, publicFrameHighBitSample(u, frame.Format.BitDepth))
+				setPublicFrameSample(frame.V, bytesPerSample, x, y, publicFrameHighBitSample(v, frame.Format.BitDepth))
+			}
+		}
+	case frame.Format.SubsamplingX:
+		for y := 0; y < src.Height; y++ {
+			srcY := (y / 2) * src.ChromaStride
+			for x := 0; x < src.Width/2; x++ {
+				u := src.U[srcY+x]
+				v := src.V[srcY+x]
+				setPublicFrameSample(frame.U, bytesPerSample, x, y, publicFrameHighBitSample(u, frame.Format.BitDepth))
+				setPublicFrameSample(frame.V, bytesPerSample, x, y, publicFrameHighBitSample(v, frame.Format.BitDepth))
+			}
+		}
+	case !frame.Format.SubsamplingY:
+		for y := 0; y < src.Height; y++ {
+			srcY := (y / 2) * src.ChromaStride
+			for x := 0; x < src.Width; x++ {
+				u := src.U[srcY+x/2]
+				v := src.V[srcY+x/2]
+				setPublicFrameSample(frame.U, bytesPerSample, x, y, publicFrameHighBitSample(u, frame.Format.BitDepth))
+				setPublicFrameSample(frame.V, bytesPerSample, x, y, publicFrameHighBitSample(v, frame.Format.BitDepth))
+			}
+		}
+	default:
+		tb.Fatalf("unsupported test frame format: %+v", frame.Format)
+	}
+	return frame
+}
+
+func publicFrameHighBitSample(sample byte, bitDepth uint8) uint16 {
+	if bitDepth <= 8 {
+		return uint16(sample)
+	}
+	return uint16(sample) << (bitDepth - 8)
 }
 
 func publicNV12FromI420(src goav1.I420Frame) goav1.NV12Frame {

@@ -1,13 +1,15 @@
 package goav1
 
-// encode.go is the public realtime encoding surface. An Encoder turns 8-bit
+// encode.go is the public realtime encoding surface. An Encoder turns
 // caller-owned pictures into AV1 low-overhead temporal units (a keyframe first,
 // then motion-compensated inter frames) under fixed quality or CBR rate
 // control, with optional temporal layering and WebRTC dependency-descriptor
 // packaging through RTCEncoder. I420/NV12/NV21 preserve 4:2:0 chroma samples;
-// I422/I444 are resampled and I400 fills neutral chroma before entering the
-// current 4:2:0 path. Every emitted stream decodes bit-exactly to the encoder's
-// own reconstruction in this package's Decoder and in the reference decoders.
+// I422/I444 and generic Frame inputs are resampled, I400 and monochrome Frame
+// inputs fill neutral chroma, and 10/12-bit Frame inputs are downshifted before
+// entering the current 8-bit 4:2:0 path. Every emitted stream decodes
+// bit-exactly to the encoder's own reconstruction in this package's Decoder
+// and in the reference decoders.
 
 import (
 	"fmt"
@@ -297,6 +299,21 @@ func (e *VideoEncoder) EncodeI400(frame I400Frame, forceKey bool) (EncodedFrame,
 		return EncodedFrame{}, fmt.Errorf("goav1: VideoEncoder is not initialized")
 	}
 	i420, err := i400ToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return EncodedFrame{}, err
+	}
+	return e.Encode(i420, forceKey)
+}
+
+// EncodeFrame encodes one generic Frame after adapting 8/10/12-bit 4:2:0,
+// 4:2:2, 4:4:4, or monochrome samples into the current 8-bit 4:2:0 encode
+// path. 10/12-bit input is downshifted to the most significant 8 bits; the
+// emitted bitstream is still an 8-bit profile-0 WebRTC stream.
+func (e *VideoEncoder) EncodeFrame(frame Frame, forceKey bool) (EncodedFrame, error) {
+	if e == nil || e.enc == nil {
+		return EncodedFrame{}, fmt.Errorf("goav1: VideoEncoder is not initialized")
+	}
+	i420, err := frameToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
 		return EncodedFrame{}, err
 	}
@@ -770,6 +787,21 @@ func (e *RTCEncoder) EncodeI400(frame I400Frame, forceKey bool) (RTCFrame, error
 	return e.Encode(i420, forceKey)
 }
 
+// EncodeFrame encodes one generic Frame with its dependency descriptor after
+// adapting 8/10/12-bit 4:2:0, 4:2:2, 4:4:4, or monochrome samples into the
+// current 8-bit 4:2:0 encode path. The emitted bitstream is still an 8-bit
+// profile-0 WebRTC stream.
+func (e *RTCEncoder) EncodeFrame(frame Frame, forceKey bool) (RTCFrame, error) {
+	if e == nil || e.stream == nil {
+		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	i420, err := frameToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return RTCFrame{}, err
+	}
+	return e.Encode(i420, forceKey)
+}
+
 // EncodeNV12 encodes one single-spatial NV12 frame with its dependency
 // descriptor. It uses the same output lifetime as Encode.
 func (e *RTCEncoder) EncodeNV12(frame NV12Frame, forceKey bool) (RTCFrame, error) {
@@ -855,6 +887,20 @@ func (e *RTCEncoder) EncodeI400Picture(frame I400Frame, forceKey bool) (RTCPictu
 		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
 	i420, err := i400ToI420Scratch(&e.yuv420Scratch, frame)
+	if err != nil {
+		return RTCPicture{}, err
+	}
+	return e.EncodePicture(i420, forceKey)
+}
+
+// EncodeFramePicture encodes one generic Frame as a WebRTC picture after
+// adapting it into the current 8-bit 4:2:0 encode path. Multi-spatial output
+// keeps the same dependency-descriptor behavior as EncodePicture.
+func (e *RTCEncoder) EncodeFramePicture(frame Frame, forceKey bool) (RTCPicture, error) {
+	if e == nil || e.stream == nil {
+		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	i420, err := frameToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
 		return RTCPicture{}, err
 	}
@@ -1050,6 +1096,159 @@ func validateSemiPlanar420Frame(name string, chromaName string, y []byte, chroma
 		return fmt.Errorf("goav1: %s %s plane is too short: got %d bytes, need %d", name, chromaName, len(chroma), chromaLen)
 	}
 	return nil
+}
+
+func frameToI420Scratch(dst *I420Frame, frame Frame) (I420Frame, error) {
+	format := frame.Format
+	if format.BitDepth == 0 {
+		format.BitDepth = 8
+	}
+	layout, err := FrameRequiredSize(frame.Format)
+	if err != nil {
+		return I420Frame{}, err
+	}
+	if format.Width <= 0 || format.Height <= 0 || format.Width%2 != 0 || format.Height%2 != 0 {
+		return I420Frame{}, fmt.Errorf("goav1: Frame dimensions must be positive even values, got %dx%d", format.Width, format.Height)
+	}
+	if format.BitDepth != 8 && format.BitDepth != 10 && format.BitDepth != 12 {
+		return I420Frame{}, ErrFrameInvalidFormat
+	}
+	if !format.MonoChrome && !format.SubsamplingX && format.SubsamplingY {
+		return I420Frame{}, ErrFrameInvalidFormat
+	}
+	if frame.Y.Width != format.Width || frame.Y.Height != format.Height || !encoderPlaneFits(frame.Y, layout.BytesPerSample) {
+		return I420Frame{}, ErrFrameInvalidPlane
+	}
+	if !format.MonoChrome {
+		if frame.U.Width != layout.ChromaWidth || frame.U.Height != layout.ChromaHeight ||
+			frame.V.Width != layout.ChromaWidth || frame.V.Height != layout.ChromaHeight ||
+			!encoderPlaneFits(frame.U, layout.BytesPerSample) ||
+			!encoderPlaneFits(frame.V, layout.BytesPerSample) {
+			return I420Frame{}, ErrFrameInvalidPlane
+		}
+		if format.BitDepth == 8 && format.SubsamplingX && format.SubsamplingY && frame.U.Stride == frame.V.Stride {
+			return I420Frame{
+				Y:            frame.Y.Pix,
+				U:            frame.U.Pix,
+				V:            frame.V.Pix,
+				YStride:      frame.Y.Stride,
+				ChromaStride: frame.U.Stride,
+				Width:        format.Width,
+				Height:       format.Height,
+			}, nil
+		}
+	}
+
+	frameI420ByteScratch(dst, format.Width, format.Height)
+	copyFramePlaneTo8(dst.Y, dst.YStride, frame.Y, layout.BytesPerSample, format.BitDepth, format.Width, format.Height)
+	switch {
+	case format.MonoChrome:
+		for i := range dst.U {
+			dst.U[i] = 128
+			dst.V[i] = 128
+		}
+	case format.SubsamplingX && format.SubsamplingY:
+		copyFramePlaneTo8(dst.U, dst.ChromaStride, frame.U, layout.BytesPerSample, format.BitDepth, format.Width/2, format.Height/2)
+		copyFramePlaneTo8(dst.V, dst.ChromaStride, frame.V, layout.BytesPerSample, format.BitDepth, format.Width/2, format.Height/2)
+	case format.SubsamplingX:
+		downsampleFramePlane422To420(dst.U, dst.ChromaStride, frame.U, layout.BytesPerSample, format.BitDepth, format.Width/2, format.Height/2)
+		downsampleFramePlane422To420(dst.V, dst.ChromaStride, frame.V, layout.BytesPerSample, format.BitDepth, format.Width/2, format.Height/2)
+	default:
+		downsampleFramePlane444To420(dst.U, dst.ChromaStride, frame.U, layout.BytesPerSample, format.BitDepth, format.Width/2, format.Height/2)
+		downsampleFramePlane444To420(dst.V, dst.ChromaStride, frame.V, layout.BytesPerSample, format.BitDepth, format.Width/2, format.Height/2)
+	}
+	return *dst, nil
+}
+
+func frameI420ByteScratch(dst *I420Frame, width int, height int) {
+	chromaWidth := width / 2
+	chromaHeight := height / 2
+	yLen := width * height
+	chromaLen := chromaWidth * chromaHeight
+	if cap(dst.Y) < yLen {
+		dst.Y = make([]byte, yLen)
+	} else {
+		dst.Y = dst.Y[:yLen]
+	}
+	if cap(dst.U) < chromaLen {
+		dst.U = make([]byte, chromaLen)
+	} else {
+		dst.U = dst.U[:chromaLen]
+	}
+	if cap(dst.V) < chromaLen {
+		dst.V = make([]byte, chromaLen)
+	} else {
+		dst.V = dst.V[:chromaLen]
+	}
+	dst.YStride = width
+	dst.ChromaStride = chromaWidth
+	dst.Width = width
+	dst.Height = height
+}
+
+func copyFramePlaneTo8(dst []byte, dstStride int, src FramePlane, bytesPerSample int, bitDepth uint8, width int, height int) {
+	for y := 0; y < height; y++ {
+		row := dst[y*dstStride : y*dstStride+width]
+		for x := 0; x < width; x++ {
+			row[x] = frameSampleTo8(framePlaneSample(src, bytesPerSample, x, y), bitDepth)
+		}
+	}
+}
+
+func downsampleFramePlane422To420(dst []byte, dstStride int, src FramePlane, bytesPerSample int, bitDepth uint8, width int, height int) {
+	for y := 0; y < height; y++ {
+		row := dst[y*dstStride : y*dstStride+width]
+		sy := y * 2
+		for x := 0; x < width; x++ {
+			sum := uint32(framePlaneSample(src, bytesPerSample, x, sy)) +
+				uint32(framePlaneSample(src, bytesPerSample, x, sy+1))
+			row[x] = frameSampleAverageTo8(sum, 2, bitDepth)
+		}
+	}
+}
+
+func downsampleFramePlane444To420(dst []byte, dstStride int, src FramePlane, bytesPerSample int, bitDepth uint8, width int, height int) {
+	for y := 0; y < height; y++ {
+		row := dst[y*dstStride : y*dstStride+width]
+		sy := y * 2
+		for x := 0; x < width; x++ {
+			sx := x * 2
+			sum := uint32(framePlaneSample(src, bytesPerSample, sx, sy)) +
+				uint32(framePlaneSample(src, bytesPerSample, sx+1, sy)) +
+				uint32(framePlaneSample(src, bytesPerSample, sx, sy+1)) +
+				uint32(framePlaneSample(src, bytesPerSample, sx+1, sy+1))
+			row[x] = frameSampleAverageTo8(sum, 4, bitDepth)
+		}
+	}
+}
+
+func framePlaneSample(plane FramePlane, bytesPerSample int, x int, y int) uint16 {
+	off := y*plane.Stride + x*bytesPerSample
+	if bytesPerSample == 1 {
+		return uint16(plane.Pix[off])
+	}
+	return uint16(plane.Pix[off]) | uint16(plane.Pix[off+1])<<8
+}
+
+func frameSampleAverageTo8(sum uint32, count uint32, bitDepth uint8) byte {
+	if count == 0 {
+		return 0
+	}
+	return frameSampleTo8(uint16((sum+count/2)/count), bitDepth)
+}
+
+func frameSampleTo8(sample uint16, bitDepth uint8) byte {
+	if bitDepth <= 8 {
+		if sample > 255 {
+			return 255
+		}
+		return byte(sample)
+	}
+	v := uint32(sample) >> (bitDepth - 8)
+	if v > 255 {
+		v = 255
+	}
+	return byte(v)
 }
 
 func i422ToI420Scratch(dst *I420Frame, frame I422Frame) (I420Frame, error) {
