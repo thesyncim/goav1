@@ -23,9 +23,47 @@ const (
 	// reports.
 	RTCPReceiverReportPacketType = 201
 
+	// RTCPSDESPacketType is the RTCP packet type for source-description
+	// packets.
+	RTCPSDESPacketType = 202
+
 	// RTCPReportMaxBlocks is the largest report-block count that fits the RTCP
 	// reception report count field.
 	RTCPReportMaxBlocks = 31
+
+	// RTCPSDESMaxChunks is the largest source-description chunk count that
+	// fits the RTCP source-count field.
+	RTCPSDESMaxChunks = 31
+
+	// RTCPSDESItemEnd terminates one source-description chunk.
+	RTCPSDESItemEnd = 0
+
+	// RTCPSDESItemCNAME is the canonical-name source-description item.
+	RTCPSDESItemCNAME = 1
+
+	// RTCPSDESItemName is the user-name source-description item.
+	RTCPSDESItemName = 2
+
+	// RTCPSDESItemEmail is the e-mail source-description item.
+	RTCPSDESItemEmail = 3
+
+	// RTCPSDESItemPhone is the phone-number source-description item.
+	RTCPSDESItemPhone = 4
+
+	// RTCPSDESItemLocation is the geographic-location source-description item.
+	RTCPSDESItemLocation = 5
+
+	// RTCPSDESItemTool is the application/tool-name source-description item.
+	RTCPSDESItemTool = 6
+
+	// RTCPSDESItemNote is the notice/status source-description item.
+	RTCPSDESItemNote = 7
+
+	// RTCPSDESItemPrivate is the private-extension source-description item.
+	RTCPSDESItemPrivate = 8
+
+	// RTCPSDESItemMaxTextLen is the largest source-description item text field.
+	RTCPSDESItemMaxTextLen = 0xff
 
 	// RTCPReportBlockSize is the size of one RTCP reception report block.
 	RTCPReportBlockSize = 24
@@ -208,6 +246,26 @@ type RTCPReceiverReport struct {
 	Reports    []RTCPReportBlock
 }
 
+// RTCPSDESItem is one RTCP source-description item. Text is copied by Put and
+// aliases the source packet when returned by Parse.
+type RTCPSDESItem struct {
+	Type uint8
+	Text []byte
+}
+
+// RTCPSDESChunk is one source-description chunk for one SSRC/CSRC. Items is
+// copied by Put and aliases the caller-owned item destination passed to Parse.
+type RTCPSDESChunk struct {
+	Source uint32
+	Items  []RTCPSDESItem
+}
+
+// RTCPSDESPacket is one complete RTCP source-description packet. Chunks aliases
+// the caller-owned chunk destination passed to Parse.
+type RTCPSDESPacket struct {
+	Chunks []RTCPSDESChunk
+}
+
 // RTCPSenderReportPacketSize returns the complete sender report packet size.
 func RTCPSenderReportPacketSize(reportCount int) (int, error) {
 	if reportCount < 0 || reportCount > RTCPReportMaxBlocks {
@@ -223,6 +281,145 @@ func RTCPReceiverReportPacketSize(reportCount int) (int, error) {
 		return 0, ErrRTCPInvalidPacket
 	}
 	return RTCPReceiverReportPacketMinSize + reportCount*RTCPReportBlockSize, nil
+}
+
+// RTCPSDESPacketSize returns the complete source-description packet size.
+func RTCPSDESPacketSize(chunks []RTCPSDESChunk) (int, error) {
+	size, err := rtcpSDESPacketPayloadSize(chunks)
+	if err != nil {
+		return 0, err
+	}
+	return RTCPHeaderSize + size, nil
+}
+
+// PutRTCPSDESPacket serializes one complete source-description packet into dst.
+func PutRTCPSDESPacket(dst []byte, packet RTCPSDESPacket) (int, error) {
+	size, err := RTCPSDESPacketSize(packet.Chunks)
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < size {
+		return 0, ErrRTCPShortBuffer
+	}
+	if err := putRTCPPacketHeader(dst, RTCPSDESPacketType, len(packet.Chunks), size); err != nil {
+		return 0, err
+	}
+	off := RTCPHeaderSize
+	for _, chunk := range packet.Chunks {
+		binary.BigEndian.PutUint32(dst[off:off+4], chunk.Source)
+		off += 4
+		for _, item := range chunk.Items {
+			itemSize, err := validateRTCPSDESItem(item)
+			if err != nil {
+				return 0, err
+			}
+			dst[off] = item.Type
+			dst[off+1] = byte(itemSize - 2)
+			copy(dst[off+2:off+itemSize], item.Text)
+			off += itemSize
+		}
+		dst[off] = RTCPSDESItemEnd
+		off++
+		padding := rtcpPaddingLength(off)
+		for i := 0; i < padding; i++ {
+			dst[off+i] = 0
+		}
+		off += padding
+	}
+	return size, nil
+}
+
+// AppendRTCPSDESPacket appends one complete source-description packet to dst
+// without growing beyond dst's existing capacity.
+func AppendRTCPSDESPacket(dst []byte, packet RTCPSDESPacket) ([]byte, error) {
+	size, err := RTCPSDESPacketSize(packet.Chunks)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+size]
+	if _, err := PutRTCPSDESPacket(out[off:], packet); err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
+// ParseRTCPSDESPacket parses one complete source-description packet from src.
+// Chunks are appended to chunkDst, items are appended to itemDst, and item text
+// aliases src. n is the number of bytes consumed for the first RTCP packet.
+func ParseRTCPSDESPacket(
+	src []byte,
+	chunkDst []RTCPSDESChunk,
+	itemDst []RTCPSDESItem,
+) (packet RTCPSDESPacket, n int, err error) {
+	count, packetLen, err := parseRTCPFixedPacketHeader(src, RTCPSDESPacketType, RTCPHeaderSize)
+	if err != nil {
+		return RTCPSDESPacket{}, 0, err
+	}
+	payloadEnd, err := rtcpPacketPayloadEnd(src, packetLen, RTCPHeaderSize)
+	if err != nil {
+		return RTCPSDESPacket{}, 0, err
+	}
+	if payloadEnd&3 != 0 {
+		return RTCPSDESPacket{}, 0, ErrRTCPInvalidPacket
+	}
+	chunkOff := len(chunkDst)
+	if cap(chunkDst)-chunkOff < int(count) {
+		return RTCPSDESPacket{}, 0, ErrRTCPShortBuffer
+	}
+	chunks := chunkDst[:chunkOff+int(count)]
+	items := itemDst
+	pos := RTCPHeaderSize
+	for i := 0; i < int(count); i++ {
+		if payloadEnd-pos < 4 {
+			return RTCPSDESPacket{}, 0, ErrRTCPInvalidPacket
+		}
+		source := binary.BigEndian.Uint32(src[pos : pos+4])
+		pos += 4
+		itemStart := len(items)
+		for {
+			if pos >= payloadEnd {
+				return RTCPSDESPacket{}, 0, ErrRTCPInvalidPacket
+			}
+			itemType := src[pos]
+			pos++
+			if itemType == RTCPSDESItemEnd {
+				break
+			}
+			if pos >= payloadEnd {
+				return RTCPSDESPacket{}, 0, ErrRTCPInvalidPacket
+			}
+			itemLen := int(src[pos])
+			pos++
+			if payloadEnd-pos < itemLen {
+				return RTCPSDESPacket{}, 0, ErrRTCPInvalidPacket
+			}
+			if cap(items)-len(items) < 1 {
+				return RTCPSDESPacket{}, 0, ErrRTCPShortBuffer
+			}
+			itemText := src[pos : pos+itemLen]
+			items = items[:len(items)+1]
+			items[len(items)-1] = RTCPSDESItem{Type: itemType, Text: itemText}
+			pos += itemLen
+		}
+		for pos&3 != 0 {
+			if pos >= payloadEnd || src[pos] != 0 {
+				return RTCPSDESPacket{}, 0, ErrRTCPInvalidPacket
+			}
+			pos++
+		}
+		chunks[chunkOff+i] = RTCPSDESChunk{
+			Source: source,
+			Items:  items[itemStart:len(items)],
+		}
+	}
+	if pos != payloadEnd {
+		return RTCPSDESPacket{}, 0, ErrRTCPInvalidPacket
+	}
+	return RTCPSDESPacket{Chunks: chunks[chunkOff:]}, packetLen, nil
 }
 
 // PutRTCPSenderReportPacket serializes one complete sender report packet into
@@ -517,6 +714,51 @@ func validateRTCPFixedPacketPadding(src []byte, packetLen int, expectedNoPadding
 		return ErrRTCPInvalidPacket
 	}
 	return nil
+}
+
+func rtcpPacketPayloadEnd(src []byte, packetLen int, minNoPadding int) (int, error) {
+	if packetLen < minNoPadding {
+		return 0, ErrRTCPInvalidPacket
+	}
+	if src[0]&0x20 == 0 {
+		return packetLen, nil
+	}
+	padding := int(src[packetLen-1])
+	if padding == 0 || padding > packetLen-minNoPadding {
+		return 0, ErrRTCPInvalidPacket
+	}
+	return packetLen - padding, nil
+}
+
+func rtcpSDESPacketPayloadSize(chunks []RTCPSDESChunk) (int, error) {
+	if len(chunks) > RTCPSDESMaxChunks {
+		return 0, ErrRTCPInvalidPacket
+	}
+	total := 0
+	for _, chunk := range chunks {
+		size := 4
+		for _, item := range chunk.Items {
+			itemSize, err := validateRTCPSDESItem(item)
+			if err != nil {
+				return 0, err
+			}
+			size += itemSize
+		}
+		size++ // END item.
+		size += rtcpPaddingLength(size)
+		total += size
+		if RTCPHeaderSize+total > RTCPMaxPacketSize {
+			return 0, ErrRTCPInvalidPacket
+		}
+	}
+	return total, nil
+}
+
+func validateRTCPSDESItem(item RTCPSDESItem) (int, error) {
+	if item.Type == RTCPSDESItemEnd || len(item.Text) > RTCPSDESItemMaxTextLen {
+		return 0, ErrRTCPInvalidPacket
+	}
+	return 2 + len(item.Text), nil
 }
 
 func putRTCPReportBlocks(dst []byte, reports []RTCPReportBlock) error {

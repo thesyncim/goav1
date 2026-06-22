@@ -13,6 +13,7 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 		av1.RTCPMaxPacketSize != 262144 ||
 		av1.RTCPSenderReportPacketType != 200 ||
 		av1.RTCPReceiverReportPacketType != 201 ||
+		av1.RTCPSDESPacketType != 202 ||
 		av1.RTCPReportMaxBlocks != 31 ||
 		av1.RTCPReportBlockSize != 24 ||
 		av1.RTCPReportCumulativeLostMin != -0x800000 ||
@@ -20,6 +21,12 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 		av1.RTCPSenderReportSenderInfoSize != 24 ||
 		av1.RTCPSenderReportPacketMinSize != 28 ||
 		av1.RTCPReceiverReportPacketMinSize != 8 ||
+		av1.RTCPSDESMaxChunks != 31 ||
+		av1.RTCPSDESItemEnd != 0 ||
+		av1.RTCPSDESItemCNAME != 1 ||
+		av1.RTCPSDESItemTool != 6 ||
+		av1.RTCPSDESItemPrivate != 8 ||
+		av1.RTCPSDESItemMaxTextLen != 0xff ||
 		av1.RTCPFeedbackCommonSize != 8 ||
 		av1.RTCPFeedbackPacketHeaderSize != 12 ||
 		av1.RTCPFeedbackMaxFCISize != 262132 ||
@@ -91,6 +98,171 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 		av1.AV1SDPRTCPFeedbackTransportCC != "transport-cc" ||
 		av1.AV1SDPRTCPFeedbackREMB != "goog-remb" {
 		t.Fatalf("unexpected AV1 rtcp-fb constants")
+	}
+}
+
+func TestRTCPSDESPacketRoundTrip(t *testing.T) {
+	packet := av1.RTCPSDESPacket{Chunks: []av1.RTCPSDESChunk{
+		{
+			Source: 0x11111111,
+			Items: []av1.RTCPSDESItem{
+				{Type: av1.RTCPSDESItemCNAME, Text: []byte("alice")},
+				{Type: av1.RTCPSDESItemTool, Text: []byte("goav1")},
+			},
+		},
+		{
+			Source: 0x22222222,
+			Items: []av1.RTCPSDESItem{
+				{Type: av1.RTCPSDESItemCNAME, Text: []byte("b")},
+			},
+		},
+	}}
+	size, err := av1.RTCPSDESPacketSize(packet.Chunks)
+	if err != nil {
+		t.Fatalf("RTCPSDESPacketSize: %v", err)
+	}
+	if size != 32 {
+		t.Fatalf("SDES packet size=%d want 32", size)
+	}
+	buf := make([]byte, size)
+	n, err := av1.PutRTCPSDESPacket(buf, packet)
+	if err != nil {
+		t.Fatalf("PutRTCPSDESPacket: %v", err)
+	}
+	want := []byte{
+		0x82, 202, 0x00, 0x07,
+		0x11, 0x11, 0x11, 0x11,
+		0x01, 0x05, 'a', 'l', 'i', 'c', 'e',
+		0x06, 0x05, 'g', 'o', 'a', 'v', '1',
+		0x00, 0x00,
+		0x22, 0x22, 0x22, 0x22,
+		0x01, 0x01, 'b',
+		0x00,
+	}
+	if n != len(want) || string(buf) != string(want) {
+		t.Fatalf("SDES packet n=%d bytes=%#v want %#v", n, buf, want)
+	}
+	chunkDst := make([]av1.RTCPSDESChunk, 1, 3)
+	chunkDst[0].Source = 0x99999999
+	itemDst := make([]av1.RTCPSDESItem, 1, 4)
+	itemDst[0] = av1.RTCPSDESItem{Type: av1.RTCPSDESItemName, Text: []byte("prefix")}
+	parsed, consumed, err := av1.ParseRTCPSDESPacket(buf, chunkDst[:1:3], itemDst[:1:4])
+	if err != nil {
+		t.Fatalf("ParseRTCPSDESPacket: %v", err)
+	}
+	if consumed != len(buf) || len(parsed.Chunks) != len(packet.Chunks) {
+		t.Fatalf("parsed SDES consumed=%d packet=%+v", consumed, parsed)
+	}
+	if chunkDst[0].Source != 0x99999999 || itemDst[0].Type != av1.RTCPSDESItemName {
+		t.Fatalf("ParseRTCPSDESPacket clobbered prefixes chunks=%+v items=%+v", chunkDst[0], itemDst[0])
+	}
+	assertRTCPSDESPacketEqual(t, parsed, packet)
+	itemStorage := itemDst[:cap(itemDst)]
+	if len(parsed.Chunks[0].Items) == 0 || &parsed.Chunks[0].Items[0] != &itemStorage[1] {
+		t.Fatalf("parsed SDES items did not alias caller item buffer")
+	}
+
+	prefix := make([]byte, 1, 1+size)
+	prefix[0] = 0xef
+	appended, err := av1.AppendRTCPSDESPacket(prefix, packet)
+	if err != nil {
+		t.Fatalf("AppendRTCPSDESPacket: %v", err)
+	}
+	if len(appended) != 1+size || appended[0] != 0xef || string(appended[1:]) != string(buf) {
+		t.Fatalf("appended SDES packet=%#v", appended)
+	}
+}
+
+func TestRTCPSDESPacketRejectsInvalid(t *testing.T) {
+	tooMany := av1.RTCPSDESPacket{Chunks: make([]av1.RTCPSDESChunk, av1.RTCPSDESMaxChunks+1)}
+	if _, err := av1.RTCPSDESPacketSize(tooMany.Chunks); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("too many SDES chunks size err=%v", err)
+	}
+	badEndItem := av1.RTCPSDESPacket{Chunks: []av1.RTCPSDESChunk{{Items: []av1.RTCPSDESItem{{Type: av1.RTCPSDESItemEnd}}}}}
+	if _, err := av1.RTCPSDESPacketSize(badEndItem.Chunks); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("SDES end item size err=%v", err)
+	}
+	tooLong := av1.RTCPSDESPacket{Chunks: []av1.RTCPSDESChunk{{Items: []av1.RTCPSDESItem{{Type: av1.RTCPSDESItemCNAME, Text: make([]byte, av1.RTCPSDESItemMaxTextLen+1)}}}}}
+	if _, err := av1.PutRTCPSDESPacket(make([]byte, 4096), tooLong); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("too long SDES item put err=%v", err)
+	}
+	if _, err := av1.PutRTCPSDESPacket(make([]byte, av1.RTCPHeaderSize-1), av1.RTCPSDESPacket{}); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short SDES put err=%v", err)
+	}
+	if out, err := av1.AppendRTCPSDESPacket(make([]byte, 0, av1.RTCPHeaderSize-1), av1.RTCPSDESPacket{}); !errors.Is(err, av1.ErrRTCPShortBuffer) || len(out) != 0 {
+		t.Fatalf("short SDES append out=%d err=%v", len(out), err)
+	}
+	if _, _, err := av1.ParseRTCPSDESPacket(nil, nil, nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short SDES parse err=%v", err)
+	}
+	badVersion := []byte{0x41, 202, 0, 0}
+	if _, _, err := av1.ParseRTCPSDESPacket(badVersion, nil, nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("bad version SDES parse err=%v", err)
+	}
+	badType := []byte{0x80, 201, 0, 0}
+	if _, _, err := av1.ParseRTCPSDESPacket(badType, nil, nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("bad type SDES parse err=%v", err)
+	}
+	truncated := []byte{0x80, 202, 0, 1}
+	if _, _, err := av1.ParseRTCPSDESPacket(truncated, nil, nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("truncated SDES parse err=%v", err)
+	}
+	missingChunk := []byte{0x81, 202, 0, 0}
+	if _, _, err := av1.ParseRTCPSDESPacket(missingChunk, make([]av1.RTCPSDESChunk, 0, 1), nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("missing SDES chunk parse err=%v", err)
+	}
+	validOneChunk := []byte{0x81, 202, 0, 1, 0, 0, 0, 1}
+	if _, _, err := av1.ParseRTCPSDESPacket(validOneChunk, nil, nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short SDES chunk dst parse err=%v", err)
+	}
+	validOneItem := []byte{0x81, 202, 0, 2, 0, 0, 0, 1, av1.RTCPSDESItemCNAME, 1, 'x', 0}
+	if _, _, err := av1.ParseRTCPSDESPacket(validOneItem, make([]av1.RTCPSDESChunk, 0, 1), nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short SDES item dst parse err=%v", err)
+	}
+	noEnd := []byte{0x81, 202, 0, 1, 0, 0, 0, 1}
+	if _, _, err := av1.ParseRTCPSDESPacket(noEnd, make([]av1.RTCPSDESChunk, 0, 1), nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("missing SDES end parse err=%v", err)
+	}
+	badItemLength := []byte{0x81, 202, 0, 2, 0, 0, 0, 1, av1.RTCPSDESItemCNAME, 4, 'x', 0}
+	if _, _, err := av1.ParseRTCPSDESPacket(badItemLength, make([]av1.RTCPSDESChunk, 0, 1), make([]av1.RTCPSDESItem, 0, 1)); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("bad SDES item length parse err=%v", err)
+	}
+	badChunkPadding := []byte{0x81, 202, 0, 2, 0, 0, 0, 1, 0, 1, 0, 0}
+	if _, _, err := av1.ParseRTCPSDESPacket(badChunkPadding, make([]av1.RTCPSDESChunk, 0, 1), nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("bad SDES chunk padding parse err=%v", err)
+	}
+	validPadded := []byte{0xa0, 202, 0, 1, 0, 0, 0, 4}
+	parsed, consumed, err := av1.ParseRTCPSDESPacket(validPadded, nil, nil)
+	if err != nil {
+		t.Fatalf("valid padded SDES parse: %v", err)
+	}
+	if consumed != len(validPadded) || len(parsed.Chunks) != 0 {
+		t.Fatalf("valid padded SDES consumed=%d packet=%+v", consumed, parsed)
+	}
+	zeroPadding := []byte{0xa0, 202, 0, 1, 0, 0, 0, 0}
+	if _, _, err := av1.ParseRTCPSDESPacket(zeroPadding, nil, nil); !errors.Is(err, av1.ErrRTCPInvalidPacket) {
+		t.Fatalf("zero SDES packet padding err=%v", err)
+	}
+}
+
+func assertRTCPSDESPacketEqual(t *testing.T, got av1.RTCPSDESPacket, want av1.RTCPSDESPacket) {
+	t.Helper()
+	if len(got.Chunks) != len(want.Chunks) {
+		t.Fatalf("SDES chunks=%d want %d", len(got.Chunks), len(want.Chunks))
+	}
+	for i := range want.Chunks {
+		gotChunk := got.Chunks[i]
+		wantChunk := want.Chunks[i]
+		if gotChunk.Source != wantChunk.Source || len(gotChunk.Items) != len(wantChunk.Items) {
+			t.Fatalf("SDES chunk %d=%+v want %+v", i, gotChunk, wantChunk)
+		}
+		for j := range wantChunk.Items {
+			gotItem := gotChunk.Items[j]
+			wantItem := wantChunk.Items[j]
+			if gotItem.Type != wantItem.Type || string(gotItem.Text) != string(wantItem.Text) {
+				t.Fatalf("SDES chunk %d item %d=%+v want %+v", i, j, gotItem, wantItem)
+			}
+		}
 	}
 }
 
