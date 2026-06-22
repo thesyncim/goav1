@@ -1133,7 +1133,7 @@ roll-up.
 | Show-existing-frame                   | Complete (lifecycle, reference reset, release).  |
 | `show_frame=0` / non-displayable      | Supported via reference slot tracking.           |
 | Annex B / IVF / RTP intake            | Complete, including high-level `NewDecoderFromRTPPayloads` plus live `DecodeRTPPayloadAfterLoss` retained-fragment reset for AV1 RTP payload bodies. |
-| WebRTC signaling helpers              | Complete for AV1/90000 SDP/fmtp profile/level/tier checks, AV1 rtcp-fb checks, and AV1 RTCP Layer Refresh Request FCI parse/build/validation. |
+| WebRTC signaling helpers              | Complete for AV1/90000 SDP/fmtp profile/level/tier checks, AV1 RID receiver restrictions, AV1 rtcp-fb checks, and AV1 RTCP Layer Refresh Request FCI parse/build/validation. |
 | SVC streams                           | Parsed and decoded through the framework path; L1T2/L2T1/L2T2 strict-MD5 gates pass with multi-pool surface routing and scaled inter prediction. See [docs/svc.md](docs/svc.md). |
 | Realtime pixel encoder                | Functional for 8-bit I420 WebRTC streams, including temporal layering, runtime bitrate/framerate/scalability reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, RTP payload packetization, and dependency descriptors. |
 | WebRTC encoder control/metadata       | W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, full decode-target grids, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT dependency templates, exact RTP frame-duration helper, and RTP packet spans for caller-supplied frame payloads. |
@@ -1143,8 +1143,8 @@ roll-up.
 - **High-bit-depth and non-4:2:0 pixel encoding.** The decoder covers broader
   formats; the realtime pixel encoder currently accepts 8-bit I420 only.
 - **Full WebRTC media transport.** The package emits AV1 RTP payload bodies and
-  dependency descriptors, and exposes focused AV1 SDP/fmtp plus RTCP LRR helper
-  surfaces. RTP headers, SRTP, full SDP assembly, jitter buffering, loss
+  dependency descriptors, and exposes focused AV1 SDP/fmtp/RID plus RTCP LRR
+  helper surfaces. RTP headers, SRTP, full SDP assembly, jitter buffering, loss
   policy, pacing, and retransmission remain integration-layer responsibilities.
 - **Work-stealing scheduling.** The current `threading.Pool` does a
   deterministic fan-out per batch; there is no dynamic stealing across

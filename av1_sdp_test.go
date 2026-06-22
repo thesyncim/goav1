@@ -26,6 +26,16 @@ func TestAV1SDPConstants(t *testing.T) {
 		av1.AV1SDPFmtpTier != "tier" {
 		t.Fatalf("unexpected AV1 SDP fmtp keys")
 	}
+	if av1.AV1SDPRIDMaxWidth != "max-width" ||
+		av1.AV1SDPRIDMaxHeight != "max-height" ||
+		av1.AV1SDPRIDMaxFrameRate != "max-fps" ||
+		av1.AV1SDPRIDMaxFrameSize != "max-fs" ||
+		av1.AV1SDPRIDMaxBitrate != "max-br" ||
+		av1.AV1SDPRIDMaxPixelsPerSecond != "max-pps" ||
+		av1.AV1SDPRIDMaxBitsPerPixel != "max-bpp" ||
+		av1.AV1SDPRIDDepend != "depend" {
+		t.Fatalf("unexpected AV1 SDP RID keys")
+	}
 	if got := av1.DefaultAV1SDPFmtpParameters(); got != (av1.AV1SDPFmtpParameters{Profile: 0, LevelIdx: 5, Tier: 0}) {
 		t.Fatalf("DefaultAV1SDPFmtpParameters = %+v", got)
 	}
@@ -144,6 +154,146 @@ func TestAV1SDPFmtpAppendAndAllows(t *testing.T) {
 	}
 	if _, err := caps.Allows(av1.AV1SDPFmtpParameters{Profile: 0, LevelIdx: 10}); !errors.Is(err, av1.ErrSDPInvalidConfig) {
 		t.Fatalf("Allows invalid stream error = %v, want ErrSDPInvalidConfig", err)
+	}
+}
+
+func TestParseAV1SDPRID(t *testing.T) {
+	rid, err := av1.ParseAV1SDPRID("a=rid:q recv pt=98,99;max-width=640;max-height=360;max-fps=30;max-fs=230400;max-br=700000;max-pps=6912000;max-bpp=1.25;depend=base")
+	if err != nil {
+		t.Fatalf("ParseAV1SDPRID returned error: %v", err)
+	}
+	if rid.ID != "q" || rid.Direction != av1.AV1SDPRIDDirectionReceive {
+		t.Fatalf("ParseAV1SDPRID id/direction = %q/%q", rid.ID, rid.Direction)
+	}
+	if len(rid.PayloadTypes) != 2 || rid.PayloadTypes[0] != "98" || rid.PayloadTypes[1] != "99" {
+		t.Fatalf("ParseAV1SDPRID payloads = %#v", rid.PayloadTypes)
+	}
+	want := av1.AV1SDPRIDRestrictions{
+		MaxWidth:              640,
+		MaxHeight:             360,
+		MaxFrameRate:          30,
+		MaxFrameSize:          230400,
+		MaxBitrate:            700000,
+		MaxPixelsPerSecond:    6912000,
+		MaxBitsPerPixelX10000: 12500,
+		DependsOn:             []string{"base"},
+	}
+	if rid.Restrictions.MaxWidth != want.MaxWidth ||
+		rid.Restrictions.MaxHeight != want.MaxHeight ||
+		rid.Restrictions.MaxFrameRate != want.MaxFrameRate ||
+		rid.Restrictions.MaxFrameSize != want.MaxFrameSize ||
+		rid.Restrictions.MaxBitrate != want.MaxBitrate ||
+		rid.Restrictions.MaxPixelsPerSecond != want.MaxPixelsPerSecond ||
+		rid.Restrictions.MaxBitsPerPixelX10000 != want.MaxBitsPerPixelX10000 ||
+		len(rid.Restrictions.DependsOn) != 1 ||
+		rid.Restrictions.DependsOn[0] != "base" {
+		t.Fatalf("ParseAV1SDPRID restrictions = %+v, want %+v", rid.Restrictions, want)
+	}
+	line, err := rid.SDP()
+	if err != nil {
+		t.Fatalf("RID SDP returned error: %v", err)
+	}
+	if line != "a=rid:q recv pt=98,99;max-width=640;max-height=360;max-fps=30;max-fs=230400;max-br=700000;max-pps=6912000;max-bpp=1.25;depend=base" {
+		t.Fatalf("RID SDP = %q", line)
+	}
+
+	restrictions, err := av1.ParseAV1SDPRIDRestrictions("max-width;max-height=720;max-bpp=0.0001")
+	if err != nil {
+		t.Fatalf("ParseAV1SDPRIDRestrictions returned error: %v", err)
+	}
+	if restrictions.MaxWidth != 0 ||
+		restrictions.MaxHeight != 720 ||
+		restrictions.MaxBitsPerPixelX10000 != 1 {
+		t.Fatalf("ParseAV1SDPRIDRestrictions = %+v", restrictions)
+	}
+}
+
+func TestAV1SDPRIDRejectsInvalidConfig(t *testing.T) {
+	for _, restrictions := range []av1.AV1SDPRIDRestrictions{
+		{MaxWidth: -1},
+		{MaxBitsPerPixelX10000: -1},
+		{MaxBitsPerPixelX10000: 480001},
+		{DependsOn: []string{""}},
+		{DependsOn: []string{"bad/id"}},
+	} {
+		if err := restrictions.Validate(); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+			t.Fatalf("Validate(%+v) error = %v, want ErrSDPInvalidConfig", restrictions, err)
+		}
+	}
+	for _, line := range []string{
+		"a=rid:q",
+		"a=rid:q both max-width=640",
+		"a=rid:q recv pt=",
+		"a=rid:q recv pt=98,,99",
+		"a=rid:q recv max-width=0",
+		"a=rid:q recv max-width=-1",
+		"a=rid:q recv max-width=640;max-width=641",
+		"a=rid:q recv max-bpp=1",
+		"a=rid:q recv max-bpp=0.0000",
+		"a=rid:q recv max-bpp=48.0001",
+		"a=rid:q recv max-bpp=1.12345",
+		"a=rid:q recv unknown=1",
+		"a=rid:q recv depend=",
+		"a=rid:q recv depend=base,bad/id",
+	} {
+		if _, err := av1.ParseAV1SDPRID(line); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+			t.Fatalf("ParseAV1SDPRID(%q) error = %v, want ErrSDPInvalidConfig", line, err)
+		}
+	}
+}
+
+func TestAV1SDPRIDRestrictionsAllowsFrame(t *testing.T) {
+	restrictions := av1.AV1SDPRIDRestrictions{
+		MaxWidth:              1280,
+		MaxHeight:             720,
+		MaxFrameRate:          30,
+		MaxFrameSize:          921600,
+		MaxBitrate:            1500000,
+		MaxPixelsPerSecond:    27648000,
+		MaxBitsPerPixelX10000: 20000,
+	}
+	for _, tc := range []struct {
+		name        string
+		width       int
+		height      int
+		fps         int
+		bitrate     int
+		frameBits   int
+		wantShape   bool
+		wantEncoded bool
+	}{
+		{name: "within caps", width: 1280, height: 720, fps: 30, bitrate: 1500000, frameBits: 1843200, wantShape: true, wantEncoded: true},
+		{name: "width too high", width: 1281, height: 720, fps: 30, bitrate: 1000, frameBits: 1000, wantShape: false, wantEncoded: false},
+		{name: "fps too high", width: 1280, height: 720, fps: 31, bitrate: 1000, frameBits: 1000, wantShape: false, wantEncoded: false},
+		{name: "pixel rate too high", width: 1280, height: 720, fps: 31, bitrate: 1000, frameBits: 1000, wantShape: false, wantEncoded: false},
+		{name: "bitrate too high", width: 640, height: 360, fps: 30, bitrate: 1500001, frameBits: 1000, wantShape: true, wantEncoded: false},
+		{name: "bpp too high", width: 640, height: 360, fps: 30, bitrate: 1000, frameBits: 460801, wantShape: true, wantEncoded: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotShape, err := restrictions.AllowsFrame(tc.width, tc.height, tc.fps)
+			if err != nil {
+				t.Fatalf("AllowsFrame returned error: %v", err)
+			}
+			if gotShape != tc.wantShape {
+				t.Fatalf("AllowsFrame = %t, want %t", gotShape, tc.wantShape)
+			}
+			gotEncoded, err := restrictions.AllowsEncodedFrame(tc.width, tc.height, tc.fps, tc.bitrate, tc.frameBits)
+			if err != nil {
+				t.Fatalf("AllowsEncodedFrame returned error: %v", err)
+			}
+			if gotEncoded != tc.wantEncoded {
+				t.Fatalf("AllowsEncodedFrame = %t, want %t", gotEncoded, tc.wantEncoded)
+			}
+		})
+	}
+	if _, err := restrictions.AllowsFrame(640, 360, 0); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+		t.Fatalf("AllowsFrame invalid fps error = %v, want ErrSDPInvalidConfig", err)
+	}
+	if _, err := restrictions.AllowsEncodedFrame(640, 360, 30, 0, 1); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+		t.Fatalf("AllowsEncodedFrame invalid bitrate error = %v, want ErrSDPInvalidConfig", err)
+	}
+	if _, err := restrictions.AllowsEncodedFrame(640, 360, 30, 1, 0); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+		t.Fatalf("AllowsEncodedFrame invalid frame bits error = %v, want ErrSDPInvalidConfig", err)
 	}
 }
 
@@ -361,6 +511,79 @@ func TestAV1SDPRTCPFeedbackScanning(t *testing.T) {
 	)
 	if !av1.AV1SDPNegotiatesRTCPFeedback(wildcardBeforeRTPMap, " CCM LRR ") {
 		t.Fatal("AV1SDPNegotiatesRTCPFeedback rejected normalized wildcard feedback")
+	}
+}
+
+func TestAV1SDPRIDFrameScanning(t *testing.T) {
+	sdp := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 96 98 99",
+		"a=rtpmap:96 VP8/90000",
+		"a=rtpmap:98 AV1/90000",
+		"a=rtpmap:99 AV1/90000",
+		"a=rid:v recv pt=96;max-width=320;max-height=180;max-fps=15",
+		"a=rid:q recv pt=98;max-width=640;max-height=360;max-fps=30;max-fs=230400;max-pps=6912000",
+		"a=rid:h recv pt=99;max-width=1280;max-height=720;max-fps=30",
+		"a=rid:out send pt=99;max-width=1920;max-height=1080;max-fps=60",
+	)
+	if !av1.AV1SDPOffersReceiveFrame(sdp, 640, 360, 30) {
+		t.Fatal("AV1SDPOffersReceiveFrame rejected matching AV1 recv RID")
+	}
+	if av1.AV1SDPOffersReceiveFrame(sdp, 1280, 720, 31) {
+		t.Fatal("AV1SDPOffersReceiveFrame accepted frame above recv RID fps")
+	}
+	if !av1.AV1SDPAnswersSendFrame(sdp, 1920, 1080, 60) {
+		t.Fatal("AV1SDPAnswersSendFrame rejected matching AV1 send RID")
+	}
+
+	wrongPayloadRIDOnly := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 96 98",
+		"a=rtpmap:96 VP8/90000",
+		"a=rtpmap:98 AV1/90000",
+		"a=rid:v recv pt=96;max-width=320;max-height=180;max-fps=15",
+	)
+	if !av1.AV1SDPOffersReceiveFrame(wrongPayloadRIDOnly, 1920, 1080, 60) {
+		t.Fatal("non-AV1 RID restrictions constrained AV1 payload")
+	}
+
+	unscopedRID := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98",
+		"a=rtpmap:98 AV1/90000",
+		"a=rid:q recv max-width=640;max-height=360;max-fps=30",
+	)
+	if !av1.AV1SDPOffersReceiveFrame(unscopedRID, 640, 360, 30) {
+		t.Fatal("AV1SDPOffersReceiveFrame rejected unscoped matching RID")
+	}
+	if av1.AV1SDPOffersReceiveFrame(unscopedRID, 1280, 720, 30) {
+		t.Fatal("AV1SDPOffersReceiveFrame accepted frame above unscoped RID")
+	}
+
+	duplicateRID := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98",
+		"a=rtpmap:98 AV1/90000",
+		"a=rid:q recv max-width=640;max-height=360;max-fps=30",
+		"a=rid:q recv max-width=1280;max-height=720;max-fps=30",
+	)
+	if !av1.AV1SDPOffersReceiveFrame(duplicateRID, 1280, 720, 30) {
+		t.Fatal("duplicate RID was not discarded before frame matching")
+	}
+
+	invalidRID := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98",
+		"a=rtpmap:98 AV1/90000",
+		"a=rid:q recv max-width=wide",
+	)
+	if !av1.AV1SDPOffersReceiveFrame(invalidRID, 1280, 720, 30) {
+		t.Fatal("invalid RID line was not discarded before frame matching")
+	}
+
+	sendOnly := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98",
+		"a=sendonly",
+		"a=rtpmap:98 AV1/90000",
+		"a=rid:q recv max-width=640;max-height=360;max-fps=30",
+	)
+	if av1.AV1SDPOffersReceiveFrame(sendOnly, 640, 360, 30) {
+		t.Fatal("sendonly section reported receive frame support")
 	}
 }
 
