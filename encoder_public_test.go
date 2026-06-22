@@ -2161,6 +2161,7 @@ func TestPublicWebRTCEncoderSetConfigScalabilityTransitionMatrix(t *testing.T) {
 				if got := enc.Config().Scalability; got != fromMode {
 					t.Fatalf("initial config mode=%s want %s", got, fromMode)
 				}
+				assertPublicWebRTCEncoderDuration(t, &enc)
 
 				var receiver av1.RTPDependencyDescriptorState
 				history := make(map[uint64]publicWebRTCControllerLayer, 16)
@@ -2211,6 +2212,7 @@ func TestPublicWebRTCEncoderSetConfigScalabilityTransitionMatrix(t *testing.T) {
 					t.Fatalf("normalized config=%+v want mode=%s fps=%+v target=%d content=%d",
 						normalized, toMode, toCfg.MaxFramerate, toCfg.TargetBitrateKbps, toCfg.Content)
 				}
+				assertPublicWebRTCEncoderDuration(t, &enc)
 
 				beforeUnit := enc.State()
 				unit, err := enc.NextTemporalUnit(false)
@@ -2313,6 +2315,7 @@ func TestPublicWebRTCEncoderControllerSettingsMatrix(t *testing.T) {
 				if normalized.SpatialLayerCount != spatialLayers || normalized.TemporalLayerCount != temporalLayers {
 					t.Fatalf("normalized layers=%d,%d want %d,%d", normalized.SpatialLayerCount, normalized.TemporalLayerCount, spatialLayers, temporalLayers)
 				}
+				assertPublicWebRTCEncoderDuration(t, &enc)
 
 				var receiver av1.RTPDependencyDescriptorState
 				history := make(map[uint64]publicWebRTCControllerLayer, 32)
@@ -2336,6 +2339,7 @@ func TestPublicWebRTCEncoderControllerSettingsMatrix(t *testing.T) {
 					t.Fatalf("SetConfig control change: %v", err)
 				}
 				normalized = enc.Config()
+				assertPublicWebRTCEncoderDuration(t, &enc)
 				for step := uint64(0); step < publicWebRTCControllerMatrixSteps(temporalLayers); step++ {
 					before := enc.State()
 					unit, err := enc.NextTemporalUnit(false)
@@ -2346,6 +2350,19 @@ func TestPublicWebRTCEncoderControllerSettingsMatrix(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func assertPublicWebRTCEncoderDuration(t *testing.T, enc *av1.WebRTCEncoder) {
+	t.Helper()
+	cfg := enc.Config()
+	want, err := av1.EncoderWebRTCRTPFrameDuration(cfg)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTPFrameDuration(%+v): %v", cfg.MaxFramerate, err)
+	}
+	got, err := enc.RTPFrameDuration()
+	if err != nil || got != want {
+		t.Fatalf("RTPFrameDuration=%+v err=%v want %+v for fps=%+v", got, err, want, cfg.MaxFramerate)
 	}
 }
 
@@ -2411,7 +2428,7 @@ func assertPublicWebRTCControllerUnit(t *testing.T, receiver *av1.RTPDependencyD
 		t.Fatalf("unit key=%v delta=%v frames=%d want key=%v frames=%d", unit.Key, unit.Delta, frameNum, wantKey, spatialLayers)
 	}
 	for i := uint8(0); i < frameNum; i++ {
-		control, _, err := av1.EncoderWebRTCPictureTemporalUnitFrameControl(unit, descriptorState, i)
+		control, structure, err := av1.EncoderWebRTCPictureTemporalUnitFrameControl(unit, descriptorState, i)
 		if err != nil {
 			t.Fatalf("frame %d control: %v", i, err)
 		}
@@ -2472,6 +2489,20 @@ func assertPublicWebRTCControllerUnit(t *testing.T, receiver *av1.RTPDependencyD
 		}
 		if parsed.HasAttachedStructure {
 			assertPublicRTCAttachedStructure(t, parsed.AttachedStructure, cfg)
+		}
+		wantActiveMask, err := av1.EncoderWebRTCAllDecodeTargetsMask(structure)
+		if err != nil {
+			t.Fatalf("frame %d all decode target mask: %v", i, err)
+		}
+		if control.AttachDependencyStructure {
+			if !parsed.HasActiveDecodeTargets || parsed.ActiveDecodeTargetsMask != wantActiveMask {
+				t.Fatalf("frame %d active targets=%v/%#x want true/%#x", i, parsed.HasActiveDecodeTargets, parsed.ActiveDecodeTargetsMask, wantActiveMask)
+			}
+		} else if parsed.HasActiveDecodeTargets {
+			t.Fatalf("frame %d repeated active decode targets: %+v", i, parsed)
+		}
+		if !receiver.ActiveDecodeTargetsValid || receiver.ActiveDecodeTargetsMask != wantActiveMask {
+			t.Fatalf("frame %d receiver active targets valid=%v mask=%#x want %#x", i, receiver.ActiveDecodeTargetsValid, receiver.ActiveDecodeTargetsMask, wantActiveMask)
 		}
 		deps := parsed.FrameDependencies
 		if deps.SpatialID != info.SpatialID || deps.TemporalID != info.TemporalID ||
