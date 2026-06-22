@@ -10,6 +10,10 @@ const (
 	// for generic negative acknowledgements.
 	RTCPRTPFBGenericNACKFMT = 1
 
+	// RTCPRTPFBTransportFeedbackFMT is the RTCP transport-layer feedback FMT
+	// value for transport-wide congestion-control feedback.
+	RTCPRTPFBTransportFeedbackFMT = 15
+
 	// RTCPPSFBPictureLossIndicationFMT is the RTCP payload-specific feedback
 	// FMT value for Picture Loss Indication feedback.
 	RTCPPSFBPictureLossIndicationFMT = 1
@@ -29,6 +33,33 @@ const (
 	// RTCPGenericNACKPairSize is the size of one generic NACK FCI PID/BLP
 	// pair.
 	RTCPGenericNACKPairSize = 4
+
+	// RTCPTransportFeedbackFCIHeaderSize is the size of the transport-wide
+	// congestion-control feedback FCI header before packet status chunks.
+	RTCPTransportFeedbackFCIHeaderSize = 8
+
+	// RTCPTransportFeedbackChunkSize is the size of one packet status chunk.
+	RTCPTransportFeedbackChunkSize = 2
+
+	// RTCPTransportFeedbackFCIMinSize is the smallest non-empty transport-wide
+	// congestion-control feedback FCI: header plus one status chunk.
+	RTCPTransportFeedbackFCIMinSize = RTCPTransportFeedbackFCIHeaderSize + RTCPTransportFeedbackChunkSize
+
+	// RTCPTransportFeedbackDeltaTickMicros is the receive-delta tick duration
+	// used by transport-wide congestion-control feedback.
+	RTCPTransportFeedbackDeltaTickMicros = 250
+
+	// RTCPTransportFeedbackBaseTimeTickMicros is the reference-time tick
+	// duration used by transport-wide congestion-control feedback.
+	RTCPTransportFeedbackBaseTimeTickMicros = RTCPTransportFeedbackDeltaTickMicros * (1 << 8)
+
+	// RTCPTransportFeedbackMaxPackets is the maximum packet status count that
+	// fits the transport-wide congestion-control feedback FCI field.
+	RTCPTransportFeedbackMaxPackets = 0xffff
+
+	// RTCPTransportFeedbackMaxReferenceTimeTicks is the maximum 24-bit
+	// reference-time value that fits in transport-wide feedback.
+	RTCPTransportFeedbackMaxReferenceTimeTicks = 0xffffff
 
 	// RTCPPictureLossIndicationFCISize is the size of a PLI FCI payload. PLI
 	// carries no FCI bytes; the RTCP PSFB packet header identifies the media
@@ -179,6 +210,450 @@ func ParseRTCPGenericNACKPairs(src []byte, dst []RTCPGenericNACKPair) ([]RTCPGen
 		out[off+i] = pair
 	}
 	return out, nil
+}
+
+// RTCPTransportFeedbackPacketStatus is one transport-wide congestion-control
+// packet status symbol.
+type RTCPTransportFeedbackPacketStatus uint8
+
+const (
+	// RTCPTransportFeedbackStatusNotReceived marks a packet that was not
+	// received.
+	RTCPTransportFeedbackStatusNotReceived RTCPTransportFeedbackPacketStatus = 0
+	// RTCPTransportFeedbackStatusSmallDelta marks a received packet whose delta
+	// fits in one unsigned byte.
+	RTCPTransportFeedbackStatusSmallDelta RTCPTransportFeedbackPacketStatus = 1
+	// RTCPTransportFeedbackStatusLargeOrNegativeDelta marks a received packet
+	// whose delta is negative or needs a two-byte signed value.
+	RTCPTransportFeedbackStatusLargeOrNegativeDelta RTCPTransportFeedbackPacketStatus = 2
+)
+
+const rtcpTransportFeedbackMaxRunLength = 0x1fff
+
+// RTCPTransportFeedbackPacket is one packet status in a transport-wide
+// congestion-control FCI. SequenceNumber must be contiguous from the feedback's
+// BaseSequenceNumber when serializing.
+type RTCPTransportFeedbackPacket struct {
+	SequenceNumber uint16
+	Received       bool
+	DeltaTicks     int16
+}
+
+// RTCPTransportFeedback is one transport-wide congestion-control feedback FCI.
+// Packets aliases the caller-owned destination slice passed to Parse.
+type RTCPTransportFeedback struct {
+	BaseSequenceNumber  uint16
+	ReferenceTimeTicks  uint32
+	FeedbackPacketCount uint8
+	DeltasPresent       bool
+	Packets             []RTCPTransportFeedbackPacket
+}
+
+// Validate rejects feedback that cannot be represented in a transport-wide
+// congestion-control FCI.
+func (f RTCPTransportFeedback) Validate() error {
+	if len(f.Packets) == 0 || len(f.Packets) > RTCPTransportFeedbackMaxPackets {
+		return ErrRTCPInvalidFeedback
+	}
+	if f.ReferenceTimeTicks > RTCPTransportFeedbackMaxReferenceTimeTicks {
+		return ErrRTCPInvalidFeedback
+	}
+	for i := range f.Packets {
+		expected := f.BaseSequenceNumber + uint16(i)
+		packet := f.Packets[i]
+		if packet.SequenceNumber != expected {
+			return ErrRTCPInvalidFeedback
+		}
+		if !packet.Received {
+			if packet.DeltaTicks != 0 {
+				return ErrRTCPInvalidFeedback
+			}
+			continue
+		}
+		if !f.DeltasPresent && packet.DeltaTicks != 0 {
+			return ErrRTCPInvalidFeedback
+		}
+	}
+	return nil
+}
+
+// RTCPTransportFeedbackFCISize returns the byte count needed to serialize f as
+// a transport-wide congestion-control FCI. The caller owns the surrounding RTCP
+// RTPFB packet.
+func RTCPTransportFeedbackFCISize(f RTCPTransportFeedback) (int, error) {
+	chunks, deltaBytes, err := rtcpTransportFeedbackEncodedChunkStats(f, nil)
+	if err != nil {
+		return 0, err
+	}
+	return RTCPTransportFeedbackFCIHeaderSize + chunks*RTCPTransportFeedbackChunkSize + deltaBytes, nil
+}
+
+// PutRTCPTransportFeedbackFCI serializes one transport-wide
+// congestion-control FCI into dst.
+func PutRTCPTransportFeedbackFCI(dst []byte, f RTCPTransportFeedback) (int, error) {
+	size, err := RTCPTransportFeedbackFCISize(f)
+	if err != nil {
+		return 0, err
+	}
+	if len(dst) < size {
+		return 0, ErrRTCPShortBuffer
+	}
+
+	binary.BigEndian.PutUint16(dst[0:2], f.BaseSequenceNumber)
+	binary.BigEndian.PutUint16(dst[2:4], uint16(len(f.Packets)))
+	rtcpPutUint24(dst[4:7], f.ReferenceTimeTicks)
+	dst[7] = f.FeedbackPacketCount
+
+	off := RTCPTransportFeedbackFCIHeaderSize
+	_, _, err = rtcpTransportFeedbackEncodedChunkStats(f, func(chunk uint16) error {
+		binary.BigEndian.PutUint16(dst[off:off+RTCPTransportFeedbackChunkSize], chunk)
+		off += RTCPTransportFeedbackChunkSize
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if f.DeltasPresent {
+		for i := range f.Packets {
+			packet := f.Packets[i]
+			if !packet.Received {
+				continue
+			}
+			if packet.DeltaTicks >= 0 && packet.DeltaTicks <= 0xff {
+				dst[off] = byte(packet.DeltaTicks)
+				off++
+				continue
+			}
+			binary.BigEndian.PutUint16(dst[off:off+2], uint16(packet.DeltaTicks))
+			off += 2
+		}
+	}
+	return size, nil
+}
+
+// AppendRTCPTransportFeedbackFCI appends one transport-wide
+// congestion-control FCI to dst without growing beyond dst's existing capacity.
+func AppendRTCPTransportFeedbackFCI(dst []byte, f RTCPTransportFeedback) ([]byte, error) {
+	size, err := RTCPTransportFeedbackFCISize(f)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+size]
+	if _, err := PutRTCPTransportFeedbackFCI(out[off:], f); err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
+// ParseRTCPTransportFeedbackFCI parses one transport-wide congestion-control
+// FCI into dst without growing beyond dst's existing capacity.
+func ParseRTCPTransportFeedbackFCI(src []byte, dst []RTCPTransportFeedbackPacket) (RTCPTransportFeedback, error) {
+	if len(src) < RTCPTransportFeedbackFCIHeaderSize {
+		return RTCPTransportFeedback{}, ErrRTCPShortBuffer
+	}
+	statusCount := int(binary.BigEndian.Uint16(src[2:4]))
+	if statusCount == 0 {
+		return RTCPTransportFeedback{}, ErrRTCPInvalidFeedback
+	}
+	if cap(dst)-len(dst) < statusCount {
+		return RTCPTransportFeedback{}, ErrRTCPShortBuffer
+	}
+
+	baseSequence := binary.BigEndian.Uint16(src[0:2])
+	off := len(dst)
+	out := dst[:off+statusCount]
+	feedback := RTCPTransportFeedback{
+		BaseSequenceNumber:  baseSequence,
+		ReferenceTimeTicks:  rtcpUint24(src[4:7]),
+		FeedbackPacketCount: src[7],
+		Packets:             out[off:],
+	}
+
+	index := RTCPTransportFeedbackFCIHeaderSize
+	statusIndex := 0
+	deltaBytes := 0
+	for statusIndex < statusCount {
+		if index+RTCPTransportFeedbackChunkSize > len(src) {
+			return RTCPTransportFeedback{}, ErrRTCPShortBuffer
+		}
+		chunk := binary.BigEndian.Uint16(src[index : index+RTCPTransportFeedbackChunkSize])
+		index += RTCPTransportFeedbackChunkSize
+		var err error
+		statusIndex, deltaBytes, err = rtcpTransportFeedbackDecodeChunk(
+			chunk, baseSequence, statusCount, statusIndex, deltaBytes, out[off:],
+		)
+		if err != nil {
+			return RTCPTransportFeedback{}, err
+		}
+	}
+
+	remaining := len(src) - index
+	if remaining >= deltaBytes {
+		feedback.DeltasPresent = true
+		if err := rtcpTransportFeedbackParseDeltas(src[index:index+deltaBytes], feedback.Packets); err != nil {
+			return RTCPTransportFeedback{}, err
+		}
+		if !rtcpTransportFeedbackIsPadding(src[index+deltaBytes:]) {
+			return RTCPTransportFeedback{}, ErrRTCPInvalidFeedback
+		}
+		return feedback, nil
+	}
+	if !rtcpTransportFeedbackIsPadding(src[index:]) {
+		return RTCPTransportFeedback{}, ErrRTCPInvalidFeedback
+	}
+	for i := range feedback.Packets {
+		if feedback.Packets[i].Received {
+			feedback.Packets[i].DeltaTicks = 0
+		}
+	}
+	return feedback, nil
+}
+
+func rtcpTransportFeedbackEncodedChunkStats(
+	f RTCPTransportFeedback, emit func(uint16) error,
+) (int, int, error) {
+	if err := f.Validate(); err != nil {
+		return 0, 0, err
+	}
+	deltaBytes := 0
+	for i := range f.Packets {
+		_, deltaSize, err := rtcpTransportFeedbackPacketStatus(f.Packets[i], f.DeltasPresent)
+		if err != nil {
+			return 0, 0, err
+		}
+		deltaBytes += deltaSize
+	}
+
+	chunks := 0
+	for i := 0; i < len(f.Packets); {
+		status := rtcpTransportFeedbackPacketStatusMust(f.Packets[i], f.DeltasPresent)
+		run := 1
+		for i+run < len(f.Packets) &&
+			run < rtcpTransportFeedbackMaxRunLength &&
+			rtcpTransportFeedbackPacketStatusMust(f.Packets[i+run], f.DeltasPresent) == status {
+			run++
+		}
+		if run >= 7 || run == len(f.Packets)-i {
+			chunk := uint16(status)<<13 | uint16(run)
+			if emit != nil {
+				if err := emit(chunk); err != nil {
+					return 0, 0, err
+				}
+			}
+			chunks++
+			i += run
+			continue
+		}
+
+		oneBitLength := rtcpTransportFeedbackOneBitChunkLength(f, i)
+		if oneBitLength > 0 {
+			chunk := uint16(0x8000)
+			for j := 0; j < oneBitLength; j++ {
+				if rtcpTransportFeedbackPacketStatusMust(f.Packets[i+j], f.DeltasPresent) ==
+					RTCPTransportFeedbackStatusSmallDelta {
+					chunk |= 1 << (13 - j)
+				}
+			}
+			if emit != nil {
+				if err := emit(chunk); err != nil {
+					return 0, 0, err
+				}
+			}
+			chunks++
+			i += oneBitLength
+			continue
+		}
+
+		twoBitLength := len(f.Packets) - i
+		if twoBitLength > 7 {
+			twoBitLength = 7
+		}
+		chunk := uint16(0xc000)
+		for j := 0; j < twoBitLength; j++ {
+			status := rtcpTransportFeedbackPacketStatusMust(f.Packets[i+j], f.DeltasPresent)
+			chunk |= uint16(status) << (2 * (6 - j))
+		}
+		if emit != nil {
+			if err := emit(chunk); err != nil {
+				return 0, 0, err
+			}
+		}
+		chunks++
+		i += twoBitLength
+	}
+	return chunks, deltaBytes, nil
+}
+
+func rtcpTransportFeedbackOneBitChunkLength(f RTCPTransportFeedback, start int) int {
+	remaining := len(f.Packets) - start
+	limit := remaining
+	if limit > 14 {
+		limit = 14
+	}
+	for i := 0; i < limit; i++ {
+		if rtcpTransportFeedbackPacketStatusMust(f.Packets[start+i], f.DeltasPresent) ==
+			RTCPTransportFeedbackStatusLargeOrNegativeDelta {
+			return 0
+		}
+	}
+	return limit
+}
+
+func rtcpTransportFeedbackPacketStatus(
+	packet RTCPTransportFeedbackPacket, deltasPresent bool,
+) (RTCPTransportFeedbackPacketStatus, int, error) {
+	if !packet.Received {
+		if packet.DeltaTicks != 0 {
+			return 0, 0, ErrRTCPInvalidFeedback
+		}
+		return RTCPTransportFeedbackStatusNotReceived, 0, nil
+	}
+	if !deltasPresent {
+		if packet.DeltaTicks != 0 {
+			return 0, 0, ErrRTCPInvalidFeedback
+		}
+		return RTCPTransportFeedbackStatusSmallDelta, 0, nil
+	}
+	if packet.DeltaTicks >= 0 && packet.DeltaTicks <= 0xff {
+		return RTCPTransportFeedbackStatusSmallDelta, 1, nil
+	}
+	return RTCPTransportFeedbackStatusLargeOrNegativeDelta, 2, nil
+}
+
+func rtcpTransportFeedbackPacketStatusMust(
+	packet RTCPTransportFeedbackPacket, deltasPresent bool,
+) RTCPTransportFeedbackPacketStatus {
+	status, _, _ := rtcpTransportFeedbackPacketStatus(packet, deltasPresent)
+	return status
+}
+
+func rtcpTransportFeedbackDecodeChunk(
+	chunk uint16,
+	baseSequence uint16,
+	statusCount int,
+	statusIndex int,
+	deltaBytes int,
+	packets []RTCPTransportFeedbackPacket,
+) (int, int, error) {
+	appendStatus := func(status RTCPTransportFeedbackPacketStatus) error {
+		if status == 3 {
+			return ErrRTCPInvalidFeedback
+		}
+		packet := &packets[statusIndex]
+		packet.SequenceNumber = baseSequence + uint16(statusIndex)
+		packet.Received = status != RTCPTransportFeedbackStatusNotReceived
+		packet.DeltaTicks = int16(status)
+		switch status {
+		case RTCPTransportFeedbackStatusNotReceived:
+		case RTCPTransportFeedbackStatusSmallDelta:
+			deltaBytes++
+		case RTCPTransportFeedbackStatusLargeOrNegativeDelta:
+			deltaBytes += 2
+		default:
+			return ErrRTCPInvalidFeedback
+		}
+		statusIndex++
+		return nil
+	}
+
+	remaining := statusCount - statusIndex
+	if chunk&0x8000 == 0 {
+		run := int(chunk & 0x1fff)
+		status := RTCPTransportFeedbackPacketStatus((chunk >> 13) & 0x03)
+		if run == 0 || status == 3 {
+			return statusIndex, deltaBytes, ErrRTCPInvalidFeedback
+		}
+		if run > remaining {
+			run = remaining
+		}
+		for i := 0; i < run; i++ {
+			if err := appendStatus(status); err != nil {
+				return statusIndex, deltaBytes, err
+			}
+		}
+		return statusIndex, deltaBytes, nil
+	}
+
+	if chunk&0x4000 == 0 {
+		count := remaining
+		if count > 14 {
+			count = 14
+		}
+		for i := 0; i < count; i++ {
+			status := RTCPTransportFeedbackPacketStatus((chunk >> (13 - i)) & 0x01)
+			if err := appendStatus(status); err != nil {
+				return statusIndex, deltaBytes, err
+			}
+		}
+		return statusIndex, deltaBytes, nil
+	}
+
+	count := remaining
+	if count > 7 {
+		count = 7
+	}
+	for i := 0; i < count; i++ {
+		status := RTCPTransportFeedbackPacketStatus((chunk >> (2 * (6 - i))) & 0x03)
+		if err := appendStatus(status); err != nil {
+			return statusIndex, deltaBytes, err
+		}
+	}
+	return statusIndex, deltaBytes, nil
+}
+
+func rtcpTransportFeedbackParseDeltas(src []byte, packets []RTCPTransportFeedbackPacket) error {
+	index := 0
+	for i := range packets {
+		status := RTCPTransportFeedbackPacketStatus(packets[i].DeltaTicks)
+		switch status {
+		case RTCPTransportFeedbackStatusNotReceived:
+			packets[i].DeltaTicks = 0
+		case RTCPTransportFeedbackStatusSmallDelta:
+			if index >= len(src) {
+				return ErrRTCPShortBuffer
+			}
+			packets[i].DeltaTicks = int16(src[index])
+			index++
+		case RTCPTransportFeedbackStatusLargeOrNegativeDelta:
+			if index+2 > len(src) {
+				return ErrRTCPShortBuffer
+			}
+			packets[i].DeltaTicks = int16(binary.BigEndian.Uint16(src[index : index+2]))
+			index += 2
+		default:
+			return ErrRTCPInvalidFeedback
+		}
+	}
+	if index != len(src) {
+		return ErrRTCPInvalidFeedback
+	}
+	return nil
+}
+
+func rtcpTransportFeedbackIsPadding(src []byte) bool {
+	if len(src) > 3 {
+		return false
+	}
+	for i := range src {
+		if src[i] != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func rtcpUint24(src []byte) uint32 {
+	return uint32(src[0])<<16 | uint32(src[1])<<8 | uint32(src[2])
+}
+
+func rtcpPutUint24(dst []byte, value uint32) {
+	dst[0] = byte(value >> 16)
+	dst[1] = byte(value >> 8)
+	dst[2] = byte(value)
 }
 
 // PutRTCPPictureLossIndicationFCI serializes a Picture Loss Indication FCI

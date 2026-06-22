@@ -11,6 +11,9 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 	if av1.RTCPRTPFBGenericNACKFMT != 1 {
 		t.Fatalf("RTCPRTPFBGenericNACKFMT = %d, want 1", av1.RTCPRTPFBGenericNACKFMT)
 	}
+	if av1.RTCPRTPFBTransportFeedbackFMT != 15 {
+		t.Fatalf("RTCPRTPFBTransportFeedbackFMT = %d, want 15", av1.RTCPRTPFBTransportFeedbackFMT)
+	}
 	if av1.RTCPPSFBPictureLossIndicationFMT != 1 {
 		t.Fatalf("RTCPPSFBPictureLossIndicationFMT = %d, want 1", av1.RTCPPSFBPictureLossIndicationFMT)
 	}
@@ -26,6 +29,15 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 	if av1.RTCPGenericNACKPairSize != 4 {
 		t.Fatalf("RTCPGenericNACKPairSize = %d, want 4", av1.RTCPGenericNACKPairSize)
 	}
+	if av1.RTCPTransportFeedbackFCIHeaderSize != 8 ||
+		av1.RTCPTransportFeedbackChunkSize != 2 ||
+		av1.RTCPTransportFeedbackFCIMinSize != 10 ||
+		av1.RTCPTransportFeedbackDeltaTickMicros != 250 ||
+		av1.RTCPTransportFeedbackBaseTimeTickMicros != 64000 ||
+		av1.RTCPTransportFeedbackMaxPackets != 0xffff ||
+		av1.RTCPTransportFeedbackMaxReferenceTimeTicks != 0xffffff {
+		t.Fatalf("unexpected RTCP transport feedback constants")
+	}
 	if av1.RTCPPictureLossIndicationFCISize != 0 {
 		t.Fatalf("RTCPPictureLossIndicationFCISize = %d, want 0", av1.RTCPPictureLossIndicationFCISize)
 	}
@@ -37,6 +49,11 @@ func TestAV1RTCPFeedbackConstants(t *testing.T) {
 		av1.RTCPReceiverEstimatedMaximumBitrateSSRCSize != 4 ||
 		av1.RTCPReceiverEstimatedMaximumBitrateMaxSSRCs != 0xff {
 		t.Fatalf("unexpected RTCP REMB constants")
+	}
+	if av1.RTCPTransportFeedbackStatusNotReceived != 0 ||
+		av1.RTCPTransportFeedbackStatusSmallDelta != 1 ||
+		av1.RTCPTransportFeedbackStatusLargeOrNegativeDelta != 2 {
+		t.Fatalf("unexpected RTCP transport feedback status constants")
 	}
 	if av1.AV1RTCPLayerRefreshLayerIndexSize != 2 {
 		t.Fatalf("AV1RTCPLayerRefreshLayerIndexSize = %d, want 2", av1.AV1RTCPLayerRefreshLayerIndexSize)
@@ -285,6 +302,215 @@ func TestRTCPGenericNACKPairsRejectsInvalid(t *testing.T) {
 	}
 	if _, err := av1.ParseRTCPGenericNACKPairs(make([]byte, size-1), nil); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
 		t.Fatalf("ragged ParseRTCPGenericNACKPairs err=%v", err)
+	}
+}
+
+func TestRTCPTransportFeedbackFCIOneBitRoundTrip(t *testing.T) {
+	feedback := av1.RTCPTransportFeedback{
+		BaseSequenceNumber:  0x0001,
+		ReferenceTimeTicks:  0x010203,
+		FeedbackPacketCount: 0x7a,
+		DeltasPresent:       true,
+		Packets: []av1.RTCPTransportFeedbackPacket{
+			{SequenceNumber: 0x0001, Received: true, DeltaTicks: 4},
+			{SequenceNumber: 0x0002, Received: true, DeltaTicks: 4},
+			{SequenceNumber: 0x0003},
+			{SequenceNumber: 0x0004},
+			{SequenceNumber: 0x0005, Received: true, DeltaTicks: 4},
+		},
+	}
+	size, err := av1.RTCPTransportFeedbackFCISize(feedback)
+	if err != nil {
+		t.Fatalf("RTCPTransportFeedbackFCISize: %v", err)
+	}
+	if size != 13 {
+		t.Fatalf("transport feedback size=%d want 13", size)
+	}
+	buf := make([]byte, size)
+	n, err := av1.PutRTCPTransportFeedbackFCI(buf, feedback)
+	if err != nil {
+		t.Fatalf("PutRTCPTransportFeedbackFCI: %v", err)
+	}
+	if n != size {
+		t.Fatalf("PutRTCPTransportFeedbackFCI n=%d want %d", n, size)
+	}
+	want := []byte{0x00, 0x01, 0x00, 0x05, 0x01, 0x02, 0x03, 0x7a, 0xb2, 0x00, 0x04, 0x04, 0x04}
+	if string(buf) != string(want) {
+		t.Fatalf("transport feedback bytes=%#v want %#v", buf, want)
+	}
+
+	base := make([]av1.RTCPTransportFeedbackPacket, 1, 1+len(feedback.Packets))
+	base[0].SequenceNumber = 0xdead
+	parsed, err := av1.ParseRTCPTransportFeedbackFCI(buf, base[:1:cap(base)])
+	if err != nil {
+		t.Fatalf("ParseRTCPTransportFeedbackFCI: %v", err)
+	}
+	if parsed.BaseSequenceNumber != feedback.BaseSequenceNumber ||
+		parsed.ReferenceTimeTicks != feedback.ReferenceTimeTicks ||
+		parsed.FeedbackPacketCount != feedback.FeedbackPacketCount ||
+		!parsed.DeltasPresent {
+		t.Fatalf("parsed transport feedback header=%+v", parsed)
+	}
+	if base[0].SequenceNumber != 0xdead {
+		t.Fatalf("ParseRTCPTransportFeedbackFCI clobbered dst prefix")
+	}
+	assertRTCPTransportFeedbackPackets(t, parsed.Packets, feedback.Packets)
+
+	prefix := make([]byte, 1, 1+size)
+	prefix[0] = 0xaa
+	appended, err := av1.AppendRTCPTransportFeedbackFCI(prefix, feedback)
+	if err != nil {
+		t.Fatalf("AppendRTCPTransportFeedbackFCI: %v", err)
+	}
+	if len(appended) != 1+size || appended[0] != 0xaa || string(appended[1:]) != string(buf) {
+		t.Fatalf("appended transport feedback bytes=%#v", appended)
+	}
+}
+
+func TestRTCPTransportFeedbackFCITwoBitRoundTrip(t *testing.T) {
+	feedback := av1.RTCPTransportFeedback{
+		BaseSequenceNumber:  0xfffe,
+		ReferenceTimeTicks:  0x00ffff,
+		FeedbackPacketCount: 0x02,
+		DeltasPresent:       true,
+		Packets: []av1.RTCPTransportFeedbackPacket{
+			{SequenceNumber: 0xfffe, Received: true, DeltaTicks: -4},
+			{SequenceNumber: 0xffff},
+			{SequenceNumber: 0x0000, Received: true, DeltaTicks: 300},
+			{SequenceNumber: 0x0001, Received: true, DeltaTicks: 0},
+		},
+	}
+	buf := make([]byte, 15)
+	n, err := av1.PutRTCPTransportFeedbackFCI(buf, feedback)
+	if err != nil {
+		t.Fatalf("PutRTCPTransportFeedbackFCI: %v", err)
+	}
+	want := []byte{
+		0xff, 0xfe, 0x00, 0x04, 0x00, 0xff, 0xff, 0x02,
+		0xe2, 0x40,
+		0xff, 0xfc,
+		0x01, 0x2c,
+		0x00,
+	}
+	if n != len(want) || string(buf) != string(want) {
+		t.Fatalf("transport feedback two-bit n=%d bytes=%#v want %#v", n, buf, want)
+	}
+	parsed, err := av1.ParseRTCPTransportFeedbackFCI(buf, make([]av1.RTCPTransportFeedbackPacket, 0, len(feedback.Packets)))
+	if err != nil {
+		t.Fatalf("ParseRTCPTransportFeedbackFCI: %v", err)
+	}
+	assertRTCPTransportFeedbackPackets(t, parsed.Packets, feedback.Packets)
+}
+
+func TestRTCPTransportFeedbackFCIRunLengthAndNoTimestamp(t *testing.T) {
+	missing := av1.RTCPTransportFeedback{
+		BaseSequenceNumber:  100,
+		ReferenceTimeTicks:  0,
+		FeedbackPacketCount: 1,
+		DeltasPresent:       true,
+		Packets:             make([]av1.RTCPTransportFeedbackPacket, 20),
+	}
+	for i := range missing.Packets {
+		missing.Packets[i].SequenceNumber = missing.BaseSequenceNumber + uint16(i)
+	}
+	buf := make([]byte, 10)
+	if _, err := av1.PutRTCPTransportFeedbackFCI(buf, missing); err != nil {
+		t.Fatalf("Put run-length transport feedback: %v", err)
+	}
+	want := []byte{0x00, 0x64, 0x00, 0x14, 0x00, 0x00, 0x00, 0x01, 0x00, 0x14}
+	if string(buf) != string(want) {
+		t.Fatalf("run-length transport feedback=%#v want %#v", buf, want)
+	}
+
+	noTimestamp := av1.RTCPTransportFeedback{
+		BaseSequenceNumber:  10,
+		ReferenceTimeTicks:  7,
+		FeedbackPacketCount: 3,
+		DeltasPresent:       false,
+		Packets: []av1.RTCPTransportFeedbackPacket{
+			{SequenceNumber: 10, Received: true},
+			{SequenceNumber: 11},
+			{SequenceNumber: 12, Received: true},
+		},
+	}
+	noTimestampBuf := make([]byte, 10)
+	if _, err := av1.PutRTCPTransportFeedbackFCI(noTimestampBuf, noTimestamp); err != nil {
+		t.Fatalf("Put no-timestamp transport feedback: %v", err)
+	}
+	wantNoTimestamp := []byte{0x00, 0x0a, 0x00, 0x03, 0x00, 0x00, 0x07, 0x03, 0xa8, 0x00}
+	if string(noTimestampBuf) != string(wantNoTimestamp) {
+		t.Fatalf("no-timestamp transport feedback=%#v want %#v", noTimestampBuf, wantNoTimestamp)
+	}
+	parsed, err := av1.ParseRTCPTransportFeedbackFCI(noTimestampBuf, make([]av1.RTCPTransportFeedbackPacket, 0, 3))
+	if err != nil {
+		t.Fatalf("Parse no-timestamp transport feedback: %v", err)
+	}
+	if parsed.DeltasPresent {
+		t.Fatalf("parsed no-timestamp feedback reported deltas present")
+	}
+	assertRTCPTransportFeedbackPackets(t, parsed.Packets, noTimestamp.Packets)
+}
+
+func TestRTCPTransportFeedbackFCIRejectsInvalid(t *testing.T) {
+	valid := av1.RTCPTransportFeedback{
+		BaseSequenceNumber:  1,
+		ReferenceTimeTicks:  2,
+		FeedbackPacketCount: 3,
+		DeltasPresent:       true,
+		Packets: []av1.RTCPTransportFeedbackPacket{
+			{SequenceNumber: 1, Received: true, DeltaTicks: 4},
+		},
+	}
+	if _, err := av1.PutRTCPTransportFeedbackFCI(make([]byte, 9), valid); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short PutRTCPTransportFeedbackFCI err=%v", err)
+	}
+	if _, err := av1.ParseRTCPTransportFeedbackFCI([]byte{0, 1, 0, 1, 0, 0, 0}, nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short ParseRTCPTransportFeedbackFCI header err=%v", err)
+	}
+	if _, err := av1.ParseRTCPTransportFeedbackFCI([]byte{0, 1, 0, 1, 0, 0, 0, 0}, make([]av1.RTCPTransportFeedbackPacket, 0, 1)); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short ParseRTCPTransportFeedbackFCI chunk err=%v", err)
+	}
+	if _, err := av1.ParseRTCPTransportFeedbackFCI([]byte{0, 1, 0, 0, 0, 0, 0, 0}, nil); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("zero status-count ParseRTCPTransportFeedbackFCI err=%v", err)
+	}
+	if _, err := av1.ParseRTCPTransportFeedbackFCI([]byte{0, 1, 0, 1, 0, 0, 0, 0, 0x60, 0x01}, make([]av1.RTCPTransportFeedbackPacket, 0, 1)); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("reserved run status ParseRTCPTransportFeedbackFCI err=%v", err)
+	}
+	if _, err := av1.ParseRTCPTransportFeedbackFCI([]byte{0, 1, 0, 1, 0, 0, 0, 0, 0xf0, 0x00}, make([]av1.RTCPTransportFeedbackPacket, 0, 1)); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("reserved vector status ParseRTCPTransportFeedbackFCI err=%v", err)
+	}
+	if _, err := av1.ParseRTCPTransportFeedbackFCI([]byte{0, 1, 0, 1, 0, 0, 0, 0, 0xc0, 0x00, 0xff}, make([]av1.RTCPTransportFeedbackPacket, 0, 1)); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("truncated nonzero delta ParseRTCPTransportFeedbackFCI err=%v", err)
+	}
+	if _, err := av1.ParseRTCPTransportFeedbackFCI([]byte{0, 1, 0, 1, 0, 0, 0, 0, 0x20, 0x01}, nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short dst ParseRTCPTransportFeedbackFCI err=%v", err)
+	}
+
+	badSequence := valid
+	badSequence.Packets = append([]av1.RTCPTransportFeedbackPacket(nil), valid.Packets...)
+	badSequence.Packets[0].SequenceNumber = 2
+	if _, err := av1.RTCPTransportFeedbackFCISize(badSequence); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("bad sequence transport feedback err=%v", err)
+	}
+	badReference := valid
+	badReference.ReferenceTimeTicks = av1.RTCPTransportFeedbackMaxReferenceTimeTicks + 1
+	if _, err := av1.RTCPTransportFeedbackFCISize(badReference); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("bad reference time transport feedback err=%v", err)
+	}
+	badNoTimestamp := valid
+	badNoTimestamp.DeltasPresent = false
+	if _, err := av1.RTCPTransportFeedbackFCISize(badNoTimestamp); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("bad no-timestamp transport feedback err=%v", err)
+	}
+	badMissingDelta := valid
+	badMissingDelta.Packets = []av1.RTCPTransportFeedbackPacket{{SequenceNumber: 1, DeltaTicks: 1}}
+	if _, err := av1.RTCPTransportFeedbackFCISize(badMissingDelta); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("bad missing packet delta transport feedback err=%v", err)
+	}
+	empty := valid
+	empty.Packets = nil
+	if _, err := av1.RTCPTransportFeedbackFCISize(empty); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("empty transport feedback err=%v", err)
 	}
 }
 
@@ -627,6 +853,20 @@ func TestEncoderWebRTCValidateLayerRefreshRequest(t *testing.T) {
 	badCurrent[0].Current.SpatialID = 2
 	if err := av1.EncoderWebRTCValidateLayerRefreshRequests(cfg, badCurrent); !errors.Is(err, av1.ErrRTCPInvalidLayerRefreshRequest) {
 		t.Fatalf("bad current list error = %v, want ErrRTCPInvalidLayerRefreshRequest", err)
+	}
+}
+
+func assertRTCPTransportFeedbackPackets(
+	t *testing.T, got []av1.RTCPTransportFeedbackPacket, want []av1.RTCPTransportFeedbackPacket,
+) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("transport feedback packet len=%d want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("transport feedback packet[%d]=%+v want %+v", i, got[i], want[i])
+		}
 	}
 }
 
