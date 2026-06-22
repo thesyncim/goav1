@@ -121,8 +121,6 @@ func TestParseTileListOBUErrors(t *testing.T) {
 		{name: "short tile data", payload: []byte{0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0x00, 0x04, 0xaa}, want: ErrTileListShortTileData},
 		{name: "trailing bytes", payload: append(append([]byte{}, good...), 0xff), want: ErrTileListTrailingBytes},
 		{name: "invalid anchor idx", payload: []byte{0x00, 0x00, 0x00, 0x00, 0x80, 0, 0, 0, 0, 0xaa}, want: ErrTileListInvalidAnchorIndex},
-		{name: "invalid anchor row", payload: []byte{0x01, 0x00, 0x00, 0x00, 0, 1, 0, 0, 0, 0xaa}, want: ErrTileListInvalidAnchorTile},
-		{name: "invalid anchor col", payload: []byte{0x00, 0x01, 0x00, 0x00, 0, 0, 1, 0, 0, 0xaa}, want: ErrTileListInvalidAnchorTile},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ParseTileListOBU(tc.payload, nil)
@@ -130,6 +128,38 @@ func TestParseTileListOBUErrors(t *testing.T) {
 				t.Fatalf("err=%v want %v", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidateTileListAnchors(t *testing.T) {
+	payload := []byte{0x00, 0x00, 0x00, 0x00}
+	payload = appendTileListEntryRaw(payload, 0, 2, 1, 0, []byte{0xaa})
+
+	list, err := ParseTileListOBU(payload, nil)
+	if err != nil {
+		t.Fatalf("ParseTileListOBU err=%v", err)
+	}
+	if entry := list.Entries[0]; entry.AnchorTileRow != 2 || entry.AnchorTileCol != 1 {
+		t.Fatalf("anchor tile=(%d,%d) want (1,2)", entry.AnchorTileCol, entry.AnchorTileRow)
+	}
+
+	if err := ValidateTileListAnchors(list, TileInfo{Cols: 2, Rows: 3}); err != nil {
+		t.Fatalf("ValidateTileListAnchors err=%v", err)
+	}
+	if err := ValidateTileListAnchors(list, TileInfo{Cols: 1, Rows: 3}); !errors.Is(err, ErrTileListInvalidAnchorTile) {
+		t.Fatalf("small column grid err=%v want %v", err, ErrTileListInvalidAnchorTile)
+	}
+	if err := ValidateTileListAnchors(list, TileInfo{Cols: 2, Rows: 2}); !errors.Is(err, ErrTileListInvalidAnchorTile) {
+		t.Fatalf("small row grid err=%v want %v", err, ErrTileListInvalidAnchorTile)
+	}
+	if err := ValidateTileListAnchors(list, TileInfo{}); !errors.Is(err, ErrTileListInvalidAnchorTile) {
+		t.Fatalf("empty grid err=%v want %v", err, ErrTileListInvalidAnchorTile)
+	}
+
+	mismatched := list
+	mismatched.TileCountMinus1 = 1
+	if err := ValidateTileListAnchors(mismatched, TileInfo{Cols: 2, Rows: 3}); !errors.Is(err, ErrTileListInvalidTileCount) {
+		t.Fatalf("mismatched count err=%v want %v", err, ErrTileListInvalidTileCount)
 	}
 }
 
@@ -163,6 +193,7 @@ func FuzzParseTileListOBU(f *testing.F) {
 		{0x00, 0x00, 0x00},
 		{0x00, 0x00, 0x00, 0x00},
 		{0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0xaa},
+		{0x00, 0x00, 0x00, 0x00, 0, 2, 1, 0, 0, 0xaa},
 		{0x00, 0x00, 0x00, 0x00, 0x80, 0, 0, 0, 0, 0xaa},
 		good,
 	} {
@@ -187,12 +218,6 @@ func FuzzParseTileListOBU(f *testing.F) {
 		for i, entry := range list.Entries {
 			if entry.AnchorFrameIdx >= TileListMaxExternalReferences {
 				t.Fatalf("entry %d anchor_frame_idx=%d", i, entry.AnchorFrameIdx)
-			}
-			if int(entry.AnchorTileRow) >= list.OutputFrameHeightInTiles() ||
-				int(entry.AnchorTileCol) >= list.OutputFrameWidthInTiles() {
-				t.Fatalf("entry %d anchor tile=(%d,%d) exceeds output %dx%d",
-					i, entry.AnchorTileCol, entry.AnchorTileRow,
-					list.OutputFrameWidthInTiles(), list.OutputFrameHeightInTiles())
 			}
 			if len(entry.TileData) != entry.TileDataSize() {
 				t.Fatalf("entry %d data len=%d want %d", i, len(entry.TileData), entry.TileDataSize())

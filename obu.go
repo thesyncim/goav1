@@ -294,6 +294,14 @@ func ParseTileListOBU(payload []byte, entries []TileListEntry) (TileList, error)
 	return internalparser.ParseTileListOBU(payload, entries)
 }
 
+// ValidateTileListAnchors checks tile_list_obu() anchor_tile_row/col fields
+// against the tile grid of the active external reference frame. The tile-list
+// output dimensions describe the destination mosaic; they are not the bound
+// for anchor tile coordinates.
+func ValidateTileListAnchors(list TileList, tiles TileInfo) error {
+	return internalparser.ValidateTileListAnchors(list, tiles)
+}
+
 // AppendTileListOBU serialises list into dst as the bytes that would appear
 // in the OBU_TILE_LIST payload (the obu_size prefix is not emitted). It is
 // the inverse of ParseTileListOBU and the standard helper callers use when

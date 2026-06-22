@@ -520,11 +520,11 @@ func TestStreamMetadataOBUParsesHDRCLL(t *testing.T) {
 }
 
 func TestStreamTileListOBUParses(t *testing.T) {
-	// One tile with anchor_frame_idx=0, anchor_tile_row=1, anchor_tile_col=1,
-	// tile_data_size_minus_1=2 followed by 3 bytes of tile data.
+	// One output tile referencing anchor row/col 1 from a larger external
+	// reference tile grid. The output mosaic size is not the anchor bound.
 	payload := []byte{
-		0x01,       // output_frame_width_in_tiles_minus_1 = 1
-		0x01,       // output_frame_height_in_tiles_minus_1 = 1
+		0x00,       // output_frame_width_in_tiles_minus_1 = 0
+		0x00,       // output_frame_height_in_tiles_minus_1 = 0
 		0x00, 0x00, // tile_count_minus_1 = 0 (1 tile)
 		0x00, 0x01, 0x01, 0x00, 0x02, // entry header
 		0xaa, 0xbb, 0xcc, // tile data
@@ -541,8 +541,8 @@ func TestStreamTileListOBUParses(t *testing.T) {
 	if event.TileListErr != nil {
 		t.Fatalf("TileListErr=%v", event.TileListErr)
 	}
-	if event.TileList.TileCount() != 1 || event.TileList.OutputFrameWidthInTiles() != 2 ||
-		event.TileList.OutputFrameHeightInTiles() != 2 {
+	if event.TileList.TileCount() != 1 || event.TileList.OutputFrameWidthInTiles() != 1 ||
+		event.TileList.OutputFrameHeightInTiles() != 1 {
 		t.Fatalf("tile list header=%+v", event.TileList)
 	}
 	if len(event.TileList.Entries) != 1 {

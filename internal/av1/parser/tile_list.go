@@ -40,7 +40,7 @@ var (
 	ErrTileListTooManyTiles       = errors.New("parser: tile list tile_count exceeds output frame")
 	ErrTileListInvalidTileCount   = errors.New("parser: tile list tile_count out of range")
 	ErrTileListInvalidAnchorIndex = errors.New("parser: tile list anchor_frame_idx out of range")
-	ErrTileListInvalidAnchorTile  = errors.New("parser: tile list anchor tile out of output frame")
+	ErrTileListInvalidAnchorTile  = errors.New("parser: tile list anchor tile out of reference frame")
 )
 
 // TileListEntry describes one entry of a tile_list_obu(). TileData aliases the
@@ -137,10 +137,6 @@ func ParseTileListOBU(payload []byte, entries []TileListEntry) (TileList, error)
 			AnchorTileCol:      payload[off+2],
 			TileDataSizeMinus1: uint16(payload[off+3])<<8 | uint16(payload[off+4]),
 		}
-		if int(entry.AnchorTileRow) > int(list.OutputFrameHeightInTilesMinus1) ||
-			int(entry.AnchorTileCol) > int(list.OutputFrameWidthInTilesMinus1) {
-			return list, ErrTileListInvalidAnchorTile
-		}
 		off += TileListEntryHeaderBytes
 		dataSize := int(entry.TileDataSizeMinus1) + 1
 		end := off + dataSize
@@ -158,6 +154,28 @@ func ParseTileListOBU(payload []byte, entries []TileListEntry) (TileList, error)
 
 	list.Entries = entries
 	return list, nil
+}
+
+// ValidateTileListAnchors checks tile_list_obu() anchor_tile_row/col fields
+// against the tile grid of the active external reference frame.
+//
+// The tile-list output grid is only the destination mosaic. Libaom's
+// read_and_decode_one_tile_list validates anchors against cm->tiles.rows/cols
+// from the selected external reference frame, so callers should use this after
+// the reference frame header has provided its TileInfo.
+func ValidateTileListAnchors(list TileList, tiles TileInfo) error {
+	if tiles.Cols == 0 || tiles.Rows == 0 {
+		return ErrTileListInvalidAnchorTile
+	}
+	if list.TileCount() != len(list.Entries) {
+		return ErrTileListInvalidTileCount
+	}
+	for _, entry := range list.Entries {
+		if entry.AnchorTileRow >= tiles.Rows || entry.AnchorTileCol >= tiles.Cols {
+			return ErrTileListInvalidAnchorTile
+		}
+	}
+	return nil
 }
 
 // AppendTileListOBU serialises list into dst as the bytes that would appear in
