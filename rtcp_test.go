@@ -995,6 +995,147 @@ func TestRTCPFeedbackPacketRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestEncoderWebRTCRTCPFeedbackRequiresKeyFrame(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:   av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability:  av1.EncoderScalabilityModeL2T2,
+		MaxFramerate: av1.EncoderRational{Num: 30, Den: 1},
+	}
+
+	firFCI, err := av1.AppendRTCPFullIntraRequestEntries(make([]byte, 0, av1.RTCPFullIntraRequestEntrySize), []av1.RTCPFullIntraRequestEntry{{
+		SSRC:           0x11112222,
+		SequenceNumber: 7,
+	}})
+	if err != nil {
+		t.Fatalf("AppendRTCPFullIntraRequestEntries: %v", err)
+	}
+	lrrFCI, err := av1.AppendAV1RTCPLayerRefreshRequestEntries(make([]byte, 0, av1.AV1RTCPLayerRefreshRequestEntrySize), []av1.AV1RTCPLayerRefreshRequestEntry{{
+		SSRC:           0x11112222,
+		SequenceNumber: 8,
+		PayloadType:    96,
+		Target:         av1.AV1RTCPLayerRefreshLayerIndex{SpatialID: 1, TemporalID: 1},
+		CurrentPresent: true,
+		Current:        av1.AV1RTCPLayerRefreshLayerIndex{},
+	}})
+	if err != nil {
+		t.Fatalf("AppendAV1RTCPLayerRefreshRequestEntries: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		packet av1.RTCPFeedbackPacket
+		want   bool
+	}{
+		{
+			name: "pli",
+			packet: av1.RTCPFeedbackPacket{
+				PacketType: av1.RTCPPSFBPacketType,
+				FMT:        av1.RTCPPSFBPictureLossIndicationFMT,
+			},
+			want: true,
+		},
+		{
+			name: "fir",
+			packet: av1.RTCPFeedbackPacket{
+				PacketType: av1.RTCPPSFBPacketType,
+				FMT:        av1.RTCPPSFBFullIntraRequestFMT,
+				FCI:        firFCI,
+			},
+			want: true,
+		},
+		{
+			name: "lrr",
+			packet: av1.RTCPFeedbackPacket{
+				PacketType: av1.RTCPPSFBPacketType,
+				FMT:        av1.RTCPPSFBLayerRefreshRequestFMT,
+				FCI:        lrrFCI,
+			},
+			want: true,
+		},
+		{
+			name: "transport-feedback",
+			packet: av1.RTCPFeedbackPacket{
+				PacketType: av1.RTCPRTPFBPacketType,
+				FMT:        av1.RTCPRTPFBTransportFeedbackFMT,
+				FCI:        []byte{0, 1, 0, 0},
+			},
+		},
+		{
+			name: "remb",
+			packet: av1.RTCPFeedbackPacket{
+				PacketType: av1.RTCPPSFBPacketType,
+				FMT:        av1.RTCPPSFBApplicationLayerFeedbackFMT,
+				FCI:        []byte{'R', 'E', 'M', 'B', 0, 0, 0, 0},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := av1.EncoderWebRTCRTCPFeedbackRequiresKeyFrame(
+				cfg,
+				tc.packet,
+				make([]av1.RTCPFullIntraRequestEntry, 0, 1),
+				make([]av1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+			)
+			if err != nil {
+				t.Fatalf("EncoderWebRTCRTCPFeedbackRequiresKeyFrame: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("requires key=%v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEncoderWebRTCRTCPFeedbackRequiresKeyFrameRejectsInvalid(t *testing.T) {
+	cfg := av1.EncoderConfig{
+		Resolution:   av1.EncoderResolution{Width: 640, Height: 360},
+		Scalability:  av1.EncoderScalabilityModeL2T2,
+		MaxFramerate: av1.EncoderRational{Num: 30, Den: 1},
+	}
+	invalidLRR, err := av1.AppendAV1RTCPLayerRefreshRequestEntries(make([]byte, 0, av1.AV1RTCPLayerRefreshRequestEntrySize), []av1.AV1RTCPLayerRefreshRequestEntry{{
+		SSRC:        0x11112222,
+		PayloadType: 96,
+		Target:      av1.AV1RTCPLayerRefreshLayerIndex{SpatialID: 2, TemporalID: 1},
+	}})
+	if err != nil {
+		t.Fatalf("AppendAV1RTCPLayerRefreshRequestEntries invalid grid fixture: %v", err)
+	}
+
+	if _, err := av1.EncoderWebRTCRTCPFeedbackRequiresKeyFrame(
+		cfg,
+		av1.RTCPFeedbackPacket{PacketType: av1.RTCPPSFBPacketType, FMT: av1.RTCPPSFBPictureLossIndicationFMT, FCI: []byte{0}},
+		nil,
+		nil,
+	); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("PLI invalid FCI err=%v want %v", err, av1.ErrRTCPInvalidFeedback)
+	}
+	if _, err := av1.EncoderWebRTCRTCPFeedbackRequiresKeyFrame(
+		cfg,
+		av1.RTCPFeedbackPacket{PacketType: av1.RTCPPSFBPacketType, FMT: av1.RTCPPSFBFullIntraRequestFMT, FCI: make([]byte, av1.RTCPFullIntraRequestEntrySize)},
+		nil,
+		nil,
+	); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("FIR short scratch err=%v want %v", err, av1.ErrRTCPShortBuffer)
+	}
+	if _, err := av1.EncoderWebRTCRTCPFeedbackRequiresKeyFrame(
+		cfg,
+		av1.RTCPFeedbackPacket{PacketType: av1.RTCPPSFBPacketType, FMT: av1.RTCPPSFBLayerRefreshRequestFMT, FCI: invalidLRR},
+		nil,
+		make([]av1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+	); !errors.Is(err, av1.ErrRTCPInvalidLayerRefreshRequest) {
+		t.Fatalf("LRR invalid grid err=%v want %v", err, av1.ErrRTCPInvalidLayerRefreshRequest)
+	}
+	if _, err := av1.EncoderWebRTCRTCPFeedbackRequiresKeyFrame(
+		cfg,
+		av1.RTCPFeedbackPacket{PacketType: av1.RTCPSenderReportPacketType},
+		nil,
+		nil,
+	); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("invalid packet type err=%v want %v", err, av1.ErrRTCPInvalidFeedback)
+	}
+}
+
 func TestRTCPPictureLossIndicationFCIRoundTrip(t *testing.T) {
 	var buf [4]byte
 	n, err := av1.PutRTCPPictureLossIndicationFCI(buf[:])

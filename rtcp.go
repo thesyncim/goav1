@@ -2121,6 +2121,53 @@ func EncoderWebRTCValidateLayerRefreshRequests(config EncoderConfig, entries []A
 	return nil
 }
 
+// EncoderWebRTCRTCPFeedbackRequiresKeyFrame reports whether a parsed RTCP
+// feedback packet should be satisfied by forcing the next WebRTC encoder
+// picture to be a key picture. PLI and non-empty FIR feedback require a key
+// picture. Valid AV1 LRR feedback also returns true because the current encoder
+// satisfies layer-refresh requests by refreshing the full configured picture.
+// Transport feedback, NACK, REMB, and unknown PSFB feedback return false after
+// any packet-type-specific FCI validation performed here.
+func EncoderWebRTCRTCPFeedbackRequiresKeyFrame(
+	config EncoderConfig,
+	packet RTCPFeedbackPacket,
+	firScratch []RTCPFullIntraRequestEntry,
+	lrrScratch []AV1RTCPLayerRefreshRequestEntry,
+) (bool, error) {
+	switch packet.PacketType {
+	case RTCPRTPFBPacketType:
+		return false, nil
+	case RTCPPSFBPacketType:
+	default:
+		return false, ErrRTCPInvalidFeedback
+	}
+
+	switch packet.FMT {
+	case RTCPPSFBPictureLossIndicationFMT:
+		if err := ParseRTCPPictureLossIndicationFCI(packet.FCI); err != nil {
+			return false, err
+		}
+		return true, nil
+	case RTCPPSFBFullIntraRequestFMT:
+		entries, err := ParseRTCPFullIntraRequestEntries(packet.FCI, firScratch)
+		if err != nil {
+			return false, err
+		}
+		return len(entries) > len(firScratch), nil
+	case RTCPPSFBLayerRefreshRequestFMT:
+		entries, err := ParseAV1RTCPLayerRefreshRequestEntries(packet.FCI, lrrScratch)
+		if err != nil {
+			return false, err
+		}
+		if err := EncoderWebRTCValidateLayerRefreshRequests(config, entries[len(lrrScratch):]); err != nil {
+			return false, err
+		}
+		return len(entries) > len(lrrScratch), nil
+	default:
+		return false, nil
+	}
+}
+
 func encoderWebRTCValidateLayerRefreshRequestForConfig(
 	normalized EncoderConfig, entry AV1RTCPLayerRefreshRequestEntry,
 ) error {
