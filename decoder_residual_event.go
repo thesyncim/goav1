@@ -587,6 +587,11 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		if event.TileListErr != nil {
 			return DecoderFrameWorkEventResult{}, event.TileListErr
 		}
+		if event.TileInfo.Cols != 0 || event.TileInfo.Rows != 0 {
+			if _, _, err := ValidateTileListDecodeLayout(event.TileList, event.TileInfo); err != nil {
+				return DecoderFrameWorkEventResult{}, err
+			}
+		}
 		return DecoderFrameWorkEventResult{}, ErrDecoderUnsupportedTileList
 	}
 

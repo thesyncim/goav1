@@ -163,6 +163,53 @@ func TestValidateTileListAnchors(t *testing.T) {
 	}
 }
 
+func TestValidateTileListDecodeLayout(t *testing.T) {
+	payload := []byte{0x00, 0x00, 0x00, 0x00}
+	payload = appendTileListEntryRaw(payload, 0, 1, 1, 0, []byte{0xaa})
+	list, err := ParseTileListOBU(payload, nil)
+	if err != nil {
+		t.Fatalf("ParseTileListOBU err=%v", err)
+	}
+
+	uniformSpacing := TileInfo{
+		Cols:           2,
+		Rows:           2,
+		UniformSpacing: true,
+		ColStartSB:     [MaxTileCols + 1]uint16{0, 3, 5},
+		RowStartSB:     [MaxTileRows + 1]uint16{0, 2, 3},
+	}
+	width, height, ok := TileListUniformTileSize(uniformSpacing)
+	if !ok || width != 3 || height != 2 {
+		t.Fatalf("uniform-spacing tile size=%d,%d ok=%v want 3,2,true", width, height, ok)
+	}
+	width, height, err = ValidateTileListDecodeLayout(list, uniformSpacing)
+	if err != nil || width != 3 || height != 2 {
+		t.Fatalf("uniform-spacing decode layout size=%d,%d err=%v", width, height, err)
+	}
+
+	explicitUniform := TileInfo{
+		Cols:       2,
+		Rows:       2,
+		ColStartSB: [MaxTileCols + 1]uint16{0, 2, 4},
+		RowStartSB: [MaxTileRows + 1]uint16{0, 1, 2},
+	}
+	width, height, err = ValidateTileListDecodeLayout(list, explicitUniform)
+	if err != nil || width != 2 || height != 1 {
+		t.Fatalf("explicit decode layout size=%d,%d err=%v", width, height, err)
+	}
+
+	explicitNonUniform := explicitUniform
+	explicitNonUniform.ColStartSB[2] = 5
+	if _, _, err := ValidateTileListDecodeLayout(list, explicitNonUniform); !errors.Is(err, ErrTileListNonUniformTileSize) {
+		t.Fatalf("non-uniform decode layout err=%v want %v", err, ErrTileListNonUniformTileSize)
+	}
+	invalidAnchorGrid := explicitUniform
+	invalidAnchorGrid.Cols = 1
+	if _, _, err := ValidateTileListDecodeLayout(list, invalidAnchorGrid); !errors.Is(err, ErrTileListInvalidAnchorTile) {
+		t.Fatalf("invalid anchor decode layout err=%v want %v", err, ErrTileListInvalidAnchorTile)
+	}
+}
+
 func TestParseTileListOBUAllocs(t *testing.T) {
 	tile := []byte{0xaa, 0xbb}
 	payload := []byte{0x00, 0x00, 0x00, 0x00}

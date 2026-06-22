@@ -41,6 +41,7 @@ var (
 	ErrTileListInvalidTileCount   = errors.New("parser: tile list tile_count out of range")
 	ErrTileListInvalidAnchorIndex = errors.New("parser: tile list anchor_frame_idx out of range")
 	ErrTileListInvalidAnchorTile  = errors.New("parser: tile list anchor tile out of reference frame")
+	ErrTileListNonUniformTileSize = errors.New("parser: tile list requires uniform tile size")
 )
 
 // TileListEntry describes one entry of a tile_list_obu(). TileData aliases the
@@ -176,6 +177,59 @@ func ValidateTileListAnchors(list TileList, tiles TileInfo) error {
 		}
 	}
 	return nil
+}
+
+// TileListUniformTileSize returns the reference frame tile width and height in
+// superblocks when the tile grid can be used for tile-list output. It mirrors
+// libaom's av1_get_uniform_tile_size(): uniform-spacing grids are accepted as
+// encoded, while explicit grids must have equal widths and equal heights.
+func TileListUniformTileSize(tiles TileInfo) (widthSB uint16, heightSB uint16, ok bool) {
+	cols := int(tiles.Cols)
+	rows := int(tiles.Rows)
+	if cols <= 0 || rows <= 0 || cols > MaxTileCols || rows > MaxTileRows {
+		return 0, 0, false
+	}
+	if tiles.ColStartSB[0] != 0 || tiles.RowStartSB[0] != 0 {
+		return 0, 0, false
+	}
+
+	widthSB = tiles.ColStartSB[1] - tiles.ColStartSB[0]
+	heightSB = tiles.RowStartSB[1] - tiles.RowStartSB[0]
+	if widthSB == 0 || heightSB == 0 {
+		return 0, 0, false
+	}
+	if tiles.UniformSpacing {
+		return widthSB, heightSB, true
+	}
+
+	for i := 0; i < cols; i++ {
+		start, end := tiles.ColStartSB[i], tiles.ColStartSB[i+1]
+		if end <= start || end-start != widthSB {
+			return 0, 0, false
+		}
+	}
+	for i := 0; i < rows; i++ {
+		start, end := tiles.RowStartSB[i], tiles.RowStartSB[i+1]
+		if end <= start || end-start != heightSB {
+			return 0, 0, false
+		}
+	}
+	return widthSB, heightSB, true
+}
+
+// ValidateTileListDecodeLayout validates the source-shaped tile-list
+// prerequisites known before reconstruction and returns the uniform reference
+// tile size in superblocks. The caller still needs to decode each listed tile
+// and blit it into a tile-list output frame.
+func ValidateTileListDecodeLayout(list TileList, tiles TileInfo) (widthSB uint16, heightSB uint16, err error) {
+	if err := ValidateTileListAnchors(list, tiles); err != nil {
+		return 0, 0, err
+	}
+	widthSB, heightSB, ok := TileListUniformTileSize(tiles)
+	if !ok {
+		return 0, 0, ErrTileListNonUniformTileSize
+	}
+	return widthSB, heightSB, nil
 }
 
 // AppendTileListOBU serialises list into dst as the bytes that would appear in

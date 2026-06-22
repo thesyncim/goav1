@@ -279,6 +279,7 @@ var (
 	ErrTileListInvalidTileCount   = internalparser.ErrTileListInvalidTileCount
 	ErrTileListInvalidAnchorIndex = internalparser.ErrTileListInvalidAnchorIndex
 	ErrTileListInvalidAnchorTile  = internalparser.ErrTileListInvalidAnchorTile
+	ErrTileListNonUniformTileSize = internalparser.ErrTileListNonUniformTileSize
 )
 
 // ParseTileListOBU parses an OBU_TILE_LIST payload per AV1 spec section
@@ -300,6 +301,20 @@ func ParseTileListOBU(payload []byte, entries []TileListEntry) (TileList, error)
 // for anchor tile coordinates.
 func ValidateTileListAnchors(list TileList, tiles TileInfo) error {
 	return internalparser.ValidateTileListAnchors(list, tiles)
+}
+
+// TileListUniformTileSize returns the reference frame tile width and height in
+// superblocks when the tile grid can be used for tile-list output.
+func TileListUniformTileSize(tiles TileInfo) (widthSB uint16, heightSB uint16, ok bool) {
+	return internalparser.TileListUniformTileSize(tiles)
+}
+
+// ValidateTileListDecodeLayout validates the source-shaped tile-list
+// prerequisites known before reconstruction and returns the uniform reference
+// tile size in superblocks. Valid tile-list playback still requires decoding
+// and blitting each listed tile into the output mosaic.
+func ValidateTileListDecodeLayout(list TileList, tiles TileInfo) (widthSB uint16, heightSB uint16, err error) {
+	return internalparser.ValidateTileListDecodeLayout(list, tiles)
 }
 
 // AppendTileListOBU serialises list into dst as the bytes that would appear

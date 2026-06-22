@@ -194,10 +194,13 @@ ship under `internal/av1/testdata/libaom/`.
 |    | Tile lists (OBU_TILE_LIST)       | Partial | internal/av1/parser/tile_list.go | ParseTileListOBU parses the                    |
 |    |                                  |         | internal/av1/decoder/stream.go   | tile_list_obu() header and per-tile entries    |
 |    |                                  |         |                                  | (anchor_frame_idx, anchor_tile_row/col,        |
-|    |                                  |         |                                  | tile_data_size, tile data slice); EventTileList|
-|    |                                  |         |                                  | carries the parsed structure plus TileListErr  |
-|    |                                  |         |                                  | for partial payloads. The residual decode      |
-|    |                                  |         |                                  | runner fails loudly with                       |
+|    |                                  |         |                                  | tile_data_size, tile data slice); anchor       |
+|    |                                  |         |                                  | validation uses the reference tile grid, and   |
+|    |                                  |         |                                  | DecodeLayout checks libaom-compatible uniform  |
+|    |                                  |         |                                  | tile size prerequisites. EventTileList carries |
+|    |                                  |         |                                  | the parsed structure plus TileListErr for      |
+|    |                                  |         |                                  | partial payloads. The residual decode runner   |
+|    |                                  |         |                                  | fails loudly with                              |
 |    |                                  |         |                                  | ErrDecoderUnsupportedTileList until            |
 |    |                                  |         |                                  | end-to-end tile-list decode (anchor-frame      |
 |    |                                  |         |                                  | reuse + per-tile reconstruction blit) is wired.|
@@ -484,10 +487,12 @@ manifest. The next production-readiness items are:
    odd-size CDEF/restoration, 8/10-bit edge-motion, 10-bit inter multi-tile,
    and 10-bit superres plus loop restoration, plus 4:2:0 12-bit odd-size CDEF,
    film grain, edge-motion, and super-res coverage.
-2. **Tile list OBU playback.** `EventTileList` parsing is present and the
-   residual decode runner now returns `ErrDecoderUnsupportedTileList` instead
-   of silently ignoring playback, but end-to-end tile-list reconstruction and
-   output-frame blitting remain future work.
+2. **Tile list OBU playback.** `EventTileList` parsing is present with
+   reference-grid anchor validation and libaom-compatible uniform tile-size
+   prerequisite checks. The residual decode runner still returns
+   `ErrDecoderUnsupportedTileList` for valid layouts instead of silently
+   ignoring playback; end-to-end tile-list reconstruction and output-frame
+   blitting remain future work.
 3. **Switch-frame oracle coverage.** Parser and stream-level switch-frame
    regressions exist, but the upstream libaom v3.14.0 test-data set does not
    ship a dedicated `S_FRAME` IVF with MD5 goldens.

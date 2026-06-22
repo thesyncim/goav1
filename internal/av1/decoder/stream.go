@@ -380,6 +380,12 @@ func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence
 		// subsequent EventTileList reuses it without re-allocating.
 		s.tileListScratch = list.Entries[:len(list.Entries):cap(list.Entries)]
 		event.TileList = list
+		if s.haveFrameHeader {
+			s.applyFrameState(event)
+			if _, _, err := parser.ValidateTileListDecodeLayout(list, event.TileInfo); err != nil {
+				event.TileListErr = err
+			}
+		}
 		return nil
 
 	case obu.TypePadding:

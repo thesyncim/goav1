@@ -1720,6 +1720,53 @@ func TestPublicDecoderFrameWorkResidualEventRunnerPropagatesTileListParseError(t
 	}
 }
 
+func TestPublicDecoderFrameWorkResidualEventRunnerValidatesTileListLayout(t *testing.T) {
+	var eventRunner av1.DecoderFrameWorkResidualEventRunner
+	tileList := av1.TileList{
+		OutputFrameWidthInTilesMinus1:  0,
+		OutputFrameHeightInTilesMinus1: 0,
+		TileCountMinus1:                0,
+		Entries: []av1.TileListEntry{{
+			AnchorFrameIdx:     0,
+			AnchorTileRow:      1,
+			AnchorTileCol:      1,
+			TileDataSizeMinus1: 0,
+			TileData:           []byte{0xaa},
+		}},
+	}
+	validTiles := av1.TileInfo{
+		Cols:       2,
+		Rows:       2,
+		ColStartSB: [av1.MaxTileCols + 1]uint16{0, 2, 4},
+		RowStartSB: [av1.MaxTileRows + 1]uint16{0, 1, 2},
+	}
+
+	_, err := eventRunner.RunEvents(av1.SequenceHeader{}, []av1.DecoderEvent{
+		{Kind: av1.DecoderEventTileList, TileList: tileList, TileInfo: validTiles},
+	}, av1.DecoderFrameWorkSideDataScratch{}, nil)
+	if !errors.Is(err, av1.ErrDecoderUnsupportedTileList) {
+		t.Fatalf("valid tile-list layout err=%v want %v", err, av1.ErrDecoderUnsupportedTileList)
+	}
+
+	badAnchor := validTiles
+	badAnchor.Cols = 1
+	_, err = eventRunner.RunEvents(av1.SequenceHeader{}, []av1.DecoderEvent{
+		{Kind: av1.DecoderEventTileList, TileList: tileList, TileInfo: badAnchor},
+	}, av1.DecoderFrameWorkSideDataScratch{}, nil)
+	if !errors.Is(err, av1.ErrTileListInvalidAnchorTile) {
+		t.Fatalf("bad anchor layout err=%v want %v", err, av1.ErrTileListInvalidAnchorTile)
+	}
+
+	nonUniform := validTiles
+	nonUniform.ColStartSB[2] = 5
+	_, err = eventRunner.RunEvents(av1.SequenceHeader{}, []av1.DecoderEvent{
+		{Kind: av1.DecoderEventTileList, TileList: tileList, TileInfo: nonUniform},
+	}, av1.DecoderFrameWorkSideDataScratch{}, nil)
+	if !errors.Is(err, av1.ErrTileListNonUniformTileSize) {
+		t.Fatalf("non-uniform layout err=%v want %v", err, av1.ErrTileListNonUniformTileSize)
+	}
+}
+
 func TestPublicDecoderFrameWorkResidualEventRunnerShowExistingOutput(t *testing.T) {
 	sequence := av1.SequenceHeader{ColorConfig: av1.ColorConfig{
 		BitDepth:   8,

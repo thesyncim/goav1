@@ -300,6 +300,33 @@ func TestPublicParseTileListOBU(t *testing.T) {
 	}
 }
 
+func TestPublicTileListDecodeLayout(t *testing.T) {
+	payload := []byte{0x00, 0x00, 0x00, 0x00, 0, 1, 1, 0, 0, 0xaa}
+	list, err := av1.ParseTileListOBU(payload, nil)
+	if err != nil {
+		t.Fatalf("ParseTileListOBU: %v", err)
+	}
+	tiles := av1.TileInfo{
+		Cols:       2,
+		Rows:       2,
+		ColStartSB: [av1.MaxTileCols + 1]uint16{0, 2, 4},
+		RowStartSB: [av1.MaxTileRows + 1]uint16{0, 1, 2},
+	}
+	width, height, ok := av1.TileListUniformTileSize(tiles)
+	if !ok || width != 2 || height != 1 {
+		t.Fatalf("TileListUniformTileSize=%d,%d,%v want 2,1,true", width, height, ok)
+	}
+	width, height, err = av1.ValidateTileListDecodeLayout(list, tiles)
+	if err != nil || width != 2 || height != 1 {
+		t.Fatalf("ValidateTileListDecodeLayout=%d,%d,%v want 2,1,nil", width, height, err)
+	}
+
+	tiles.ColStartSB[2] = 5
+	if _, _, err := av1.ValidateTileListDecodeLayout(list, tiles); !errors.Is(err, av1.ErrTileListNonUniformTileSize) {
+		t.Fatalf("non-uniform err=%v want %v", err, av1.ErrTileListNonUniformTileSize)
+	}
+}
+
 func TestPublicParseTileListOBUAllocs(t *testing.T) {
 	payload := []byte{
 		0x00, 0x00, 0x00, 0x00,
