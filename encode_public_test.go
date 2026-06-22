@@ -955,6 +955,94 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 	}
 }
 
+func TestPublicLayeredDecoderRTPPayloadAfterLossSharedSVC(t *testing.T) {
+	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
+	mode := goav1.EncoderScalabilityModeL2T1
+	width, height := publicRTCMatrixGeometry(t, mode)
+	cfg := publicRTCMatrixConfig(width, height, mode)
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	key0, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 0), false)
+	if err != nil {
+		t.Fatalf("key0 EncodePicture: %v", err)
+	}
+	key0LowOverheads := publicRTCPictureFramesInOrder(key0)
+	key0Payloads := publicRTCPictureRTPPayloads(t, key0, limits)
+	delta, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 1), false)
+	if err != nil {
+		t.Fatalf("delta EncodePicture: %v", err)
+	}
+	deltaPayloads := publicRTCPictureRTPPayloads(t, delta, limits)
+	key2, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 2), true)
+	if err != nil {
+		t.Fatalf("key2 EncodePicture: %v", err)
+	}
+	key2LowOverheads := publicRTCPictureFramesInOrder(key2)
+	key2Payloads := publicRTCPictureRTPPayloads(t, key2, limits)
+	if len(deltaPayloads) == 0 || len(key2Payloads) == 0 {
+		t.Fatalf("payloads delta=%d key2=%d", len(deltaPayloads), len(key2Payloads))
+	}
+	probePayloads := append(append([][]byte(nil), key0Payloads...), key2Payloads...)
+
+	dec, err := goav1.NewLayeredDecoderFromRTPPayloads(probePayloads)
+	if err != nil {
+		t.Fatalf("NewLayeredDecoderFromRTPPayloads: %v", err)
+	}
+	defer dec.Close()
+	if err := dec.Reset(); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	var got [][16]byte
+	for i, payload := range key0Payloads {
+		frames, err := dec.DecodeRTPPayload(payload)
+		if err != nil {
+			t.Fatalf("DecodeRTPPayload key0 packet %d: %v", i, err)
+		}
+		for _, frame := range frames {
+			got = append(got, frameMD5Visible(frame))
+		}
+	}
+	frames, err := dec.DecodeRTPPayload(deltaPayloads[0])
+	if err != nil {
+		t.Fatalf("DecodeRTPPayload dropped delta prefix: %v", err)
+	}
+	if len(frames) != 0 {
+		t.Fatalf("dropped delta prefix produced %d frames", len(frames))
+	}
+	frames, err = dec.DecodeRTPPayloadAfterLoss(key2Payloads[0])
+	if err != nil {
+		t.Fatalf("DecodeRTPPayloadAfterLoss key2 first packet: %v", err)
+	}
+	for _, frame := range frames {
+		got = append(got, frameMD5Visible(frame))
+	}
+	for i, payload := range key2Payloads[1:] {
+		frames, err := dec.DecodeRTPPayload(payload)
+		if err != nil {
+			t.Fatalf("DecodeRTPPayload key2 tail packet %d: %v", i, err)
+		}
+		for _, frame := range frames {
+			got = append(got, frameMD5Visible(frame))
+		}
+	}
+
+	wantPayloads := append(append([][]byte(nil), key0LowOverheads...), key2LowOverheads...)
+	want := decodePublicRTCLayerPoolLowOverheadDigests(t, wantPayloads...)
+	if len(got) != len(want) {
+		t.Fatalf("decoded frames got=%d want=%d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("frame %d digest differs after loss: got=%x want=%x", i, got[i], want[i])
+		}
+	}
+}
+
 func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 	for _, initial := range goav1.EncoderWebRTCScalabilityModes() {
 		initial := initial
@@ -1517,6 +1605,15 @@ func publicRTCPictureFramesInOrder(pictures ...goav1.RTCPicture) [][]byte {
 		for i := 0; i < picture.FrameNum; i++ {
 			out = append(out, append([]byte(nil), picture.Frames[i].Data...))
 		}
+	}
+	return out
+}
+
+func publicRTCPictureRTPPayloads(t *testing.T, picture goav1.RTCPicture, limits goav1.RTPPayloadSizeLimits) [][]byte {
+	t.Helper()
+	var out [][]byte
+	for i := 0; i < picture.FrameNum; i++ {
+		out = append(out, publicDecoderRTPPayloadsForFrameWithLimits(t, picture.Frames[i], limits)...)
 	}
 	return out
 }
