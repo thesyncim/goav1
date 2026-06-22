@@ -478,6 +478,130 @@ func TestPacketizerPreservesExtensionAndClearsSize(t *testing.T) {
 	}
 }
 
+func TestPacketizerSplitsLayerTaggedOBUsByLayer(t *testing.T) {
+	var frame []byte
+	frame = appendPacketizerOBUExt(frame, obu.TypeFrameHeader, 0, 0, []byte{0x10})
+	frame = appendPacketizerOBUExt(frame, obu.TypeTileGroup, 0, 0, []byte{0x11})
+	frame = appendPacketizerOBUExt(frame, obu.TypeTileGroup, 1, 0, []byte{0x12})
+
+	var obus [3]PacketizerOBU
+	var packets [3]PacketPlan
+	var work [3]PacketPlan
+	packetizer, err := NewPacketizer(frame, PayloadSizeLimits{MaxPayloadLen: 1200}, false, true, obus[:], packets[:], work[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if packetizer.NumPackets() != 2 {
+		t.Fatalf("NumPackets=%d want 2", packetizer.NumPackets())
+	}
+
+	var payload [64]byte
+	n, marker, ok, err := packetizer.NextPacket(payload[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || marker {
+		t.Fatalf("first packet ok=%v marker=%v", ok, marker)
+	}
+	firstHeaders := packetOBUHeaders(t, payload[:n])
+	if len(firstHeaders) != 2 ||
+		!firstHeaders[0].Extension || firstHeaders[0].TemporalID != 0 || firstHeaders[0].SpatialID != 0 ||
+		!firstHeaders[1].Extension || firstHeaders[1].TemporalID != 0 || firstHeaders[1].SpatialID != 0 {
+		t.Fatalf("first packet headers=%+v", firstHeaders)
+	}
+
+	n, marker, ok, err = packetizer.NextPacket(payload[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || !marker {
+		t.Fatalf("second packet ok=%v marker=%v", ok, marker)
+	}
+	secondHeaders := packetOBUHeaders(t, payload[:n])
+	if len(secondHeaders) != 1 ||
+		!secondHeaders[0].Extension || secondHeaders[0].TemporalID != 1 || secondHeaders[0].SpatialID != 0 {
+		t.Fatalf("second packet headers=%+v", secondHeaders)
+	}
+}
+
+func TestPacketizerKeepsSequenceHeaderWithFirstLayer(t *testing.T) {
+	var frame []byte
+	frame = appendPacketizerOBU(frame, obu.TypeSequenceHeader, []byte{0xaa})
+	frame = appendPacketizerOBUExt(frame, obu.TypeFrameHeader, 0, 0, []byte{0x10})
+	frame = appendPacketizerOBUExt(frame, obu.TypeTileGroup, 0, 1, []byte{0x11})
+
+	var obus [3]PacketizerOBU
+	var packets [3]PacketPlan
+	var work [3]PacketPlan
+	packetizer, err := NewPacketizer(frame, PayloadSizeLimits{MaxPayloadLen: 1200}, true, true, obus[:], packets[:], work[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if packetizer.NumPackets() != 2 {
+		t.Fatalf("NumPackets=%d want 2", packetizer.NumPackets())
+	}
+
+	var payload [64]byte
+	n, marker, ok, err := packetizer.NextPacket(payload[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || marker {
+		t.Fatalf("first packet ok=%v marker=%v", ok, marker)
+	}
+	it, err := NewIterator(payload[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header := it.Header(); !header.StartsNewCodedVideoSequence || header.ElementCount != 2 {
+		t.Fatalf("first packet aggregation header=%+v", header)
+	}
+	firstHeaders := packetOBUHeaders(t, payload[:n])
+	if len(firstHeaders) != 2 ||
+		firstHeaders[0].Type != obu.TypeSequenceHeader || firstHeaders[0].Extension ||
+		firstHeaders[1].Type != obu.TypeFrameHeader || !firstHeaders[1].Extension ||
+		firstHeaders[1].TemporalID != 0 || firstHeaders[1].SpatialID != 0 {
+		t.Fatalf("first packet headers=%+v", firstHeaders)
+	}
+
+	n, marker, ok, err = packetizer.NextPacket(payload[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || !marker {
+		t.Fatalf("second packet ok=%v marker=%v", ok, marker)
+	}
+	secondHeaders := packetOBUHeaders(t, payload[:n])
+	if len(secondHeaders) != 1 ||
+		secondHeaders[0].Type != obu.TypeTileGroup || !secondHeaders[0].Extension ||
+		secondHeaders[0].TemporalID != 0 || secondHeaders[0].SpatialID != 1 {
+		t.Fatalf("second packet headers=%+v", secondHeaders)
+	}
+}
+
+func packetOBUHeaders(t *testing.T, payload []byte) []obu.Header {
+	t.Helper()
+	it, err := NewIterator(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var headers []obu.Header
+	for {
+		element, ok, err := it.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			return headers
+		}
+		header, _, err := obu.ParseHeader(element.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		headers = append(headers, header)
+	}
+}
+
 func TestPacketizerScratchTooSmall(t *testing.T) {
 	frame := appendPacketizerOBU(nil, obu.TypeFrameHeader, []byte{0xaa})
 	_, err := NewPacketizer(frame, PayloadSizeLimits{MaxPayloadLen: 1200}, false, true, nil, nil, nil)

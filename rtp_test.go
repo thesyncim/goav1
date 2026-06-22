@@ -20,6 +20,27 @@ func appendPublicLowOverheadOBU(dst []byte, typ OBUType, payload []byte) []byte 
 	return dst
 }
 
+func appendPublicLowOverheadOBUExt(dst []byte, typ OBUType, temporalID uint8, spatialID uint8, payload []byte) []byte {
+	if len(payload) > 0x7f {
+		panic("test payload too large for one-byte LEB128")
+	}
+	var header [2]byte
+	n, err := PutOBUHeader(header[:], OBUHeader{
+		Type:         typ,
+		Extension:    true,
+		HasSizeField: true,
+		TemporalID:   temporalID,
+		SpatialID:    spatialID,
+	})
+	if err != nil {
+		panic(err)
+	}
+	dst = append(dst, header[:n]...)
+	dst = append(dst, byte(len(payload)))
+	dst = append(dst, payload...)
+	return dst
+}
+
 func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 	var frame []byte
 	frame = appendPublicLowOverheadOBU(frame, OBUSequenceHeader, []byte{0xaa})
@@ -161,6 +182,110 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 		assembledOBUs[1].PayloadOffset() != 5 ||
 		assembledOBUs[1].PayloadEnd() != wrote {
 		t.Fatalf("assembled OBU1=%+v wrote=%d", assembledOBUs[1], wrote)
+	}
+}
+
+func TestPublicRTPPacketizerSplitsLayerTaggedOBUs(t *testing.T) {
+	var frame []byte
+	frame = appendPublicLowOverheadOBU(frame, OBUSequenceHeader, []byte{0xaa})
+	frame = appendPublicLowOverheadOBUExt(frame, OBUFrameHeader, 0, 0, []byte{0x10})
+	frame = appendPublicLowOverheadOBUExt(frame, OBUTileGroup, 0, 1, []byte{0x11})
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 1200}
+
+	size, err := RTPPacketizerScratchLen(frame, limits, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.OBUs != 3 || size.Packets != 0 || size.Work != 0 {
+		t.Fatalf("first pass size=%+v", size)
+	}
+	var packetizerOBUs [3]RTPPacketizerOBU
+	size, err = RTPPacketizerScratchLen(frame, limits, packetizerOBUs[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.OBUs != 3 || size.Packets != 2 || size.Work != 2 {
+		t.Fatalf("second pass size=%+v want OBUs=3 Packets=2 Work=2", size)
+	}
+
+	var packets [2]RTPPacketPlan
+	var work [2]RTPPacketPlan
+	packetizer, err := NewRTPPacketizer(frame, limits, true, true, packetizerOBUs[:size.OBUs], packets[:size.Packets], work[:size.Work])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var packetBytes [2][64]byte
+	var payloads [2][]byte
+	for i := range payloads {
+		n, marker, ok, err := packetizer.NextPacket(packetBytes[i][:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok || marker != (i == len(payloads)-1) {
+			t.Fatalf("packet %d ok=%v marker=%v", i, ok, marker)
+		}
+		payloads[i] = packetBytes[i][:n]
+	}
+	if packetizer.NumPackets() != 0 {
+		t.Fatalf("remaining packets=%d", packetizer.NumPackets())
+	}
+
+	firstHeaders := publicRTPPacketOBUHeaders(t, payloads[0])
+	if len(firstHeaders) != 2 ||
+		firstHeaders[0].Type != OBUSequenceHeader || firstHeaders[0].Extension ||
+		firstHeaders[1].Type != OBUFrameHeader || !firstHeaders[1].Extension ||
+		firstHeaders[1].TemporalID != 0 || firstHeaders[1].SpatialID != 0 {
+		t.Fatalf("first packet headers=%+v", firstHeaders)
+	}
+	firstIterator, err := NewRTPPayloadIterator(payloads[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header := firstIterator.Header(); !header.StartsNewCodedVideoSequence || header.ElementCount != 2 {
+		t.Fatalf("first aggregation header=%+v", header)
+	}
+	secondHeaders := publicRTPPacketOBUHeaders(t, payloads[1])
+	if len(secondHeaders) != 1 ||
+		secondHeaders[0].Type != OBUTileGroup || !secondHeaders[0].Extension ||
+		secondHeaders[0].TemporalID != 0 || secondHeaders[0].SpatialID != 1 {
+		t.Fatalf("second packet headers=%+v", secondHeaders)
+	}
+
+	assembledLen, obuCount, err := AssembleRTPFrameSize(payloads[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var assembled [32]byte
+	var assembledOBUs [3]RTPFrameOBU
+	wrote, count, err := AssembleRTPFrame(assembled[:assembledLen], payloads[:], assembledOBUs[:obuCount])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wrote != len(frame) || count != 3 || string(assembled[:wrote]) != string(frame) {
+		t.Fatalf("assembled wrote=%d count=%d bytes=%x want=%x", wrote, count, assembled[:wrote], frame)
+	}
+}
+
+func publicRTPPacketOBUHeaders(t *testing.T, payload []byte) []OBUHeader {
+	t.Helper()
+	it, err := NewRTPPayloadIterator(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var headers []OBUHeader
+	for {
+		element, ok, err := it.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			return headers
+		}
+		header, _, err := ParseOBUHeader(element.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		headers = append(headers, header)
 	}
 }
 

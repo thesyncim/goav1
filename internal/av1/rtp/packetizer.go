@@ -344,10 +344,28 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 	packetCount := 1
 	packet := PacketPlan{FirstOBU: 0}
 	remaining := maxPayload - limits.FirstPacketReductionLen
+	packetHasLayer := false
+	packetTemporalID := uint8(0)
+	packetSpatialID := uint8(0)
 
 	for obuIndex := range obus {
 		isLastOBU := obuIndex == len(obus)-1
 		current := &obus[obuIndex]
+
+		// AV1 RTP packets cannot aggregate layer-tagged OBUs with different layer IDs.
+		if current.hasExtension && packetHasLayer &&
+			(current.Header.TemporalID != packetTemporalID || current.Header.SpatialID != packetSpatialID) {
+			if err := storePacketPlan(packets, packetCount-1, packet); err != nil {
+				return packetCount, err
+			}
+			if writePlans && packetCount >= len(packets) {
+				return packetCount, ErrPacketPlanTooSmall
+			}
+			packet = PacketPlan{FirstOBU: obuIndex}
+			packetCount++
+			remaining = maxPayload
+			packetHasLayer = false
+		}
 
 		previousExtra := additionalBytesForPreviousOBUElement(packet)
 		minRequired := 1
@@ -365,11 +383,17 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 			packetCount++
 			remaining = maxPayload
 			previousExtra = 0
+			packetHasLayer = false
 		}
 
 		packet.PacketSize += previousExtra
 		remaining -= previousExtra
 		packet.NumOBUElements++
+		if current.hasExtension {
+			packetHasLayer = true
+			packetTemporalID = current.Header.TemporalID
+			packetSpatialID = current.Header.SpatialID
+		}
 
 		mustWriteSize := packet.NumOBUElements > maxObusWithOmittedLastSize
 		required := current.Size
@@ -403,6 +427,9 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 		if firstFragmentSize == 0 {
 			packet.NumOBUElements--
 			packet.PacketSize -= previousExtra
+			if current.hasExtension && packet.NumOBUElements == 0 {
+				packetHasLayer = false
+			}
 		} else {
 			packet.PacketSize += firstFragmentSize
 			if mustWriteSize {
@@ -427,6 +454,13 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 				PacketSize:     maxPayload,
 			}
 			packetCount++
+			if current.hasExtension {
+				packetHasLayer = true
+				packetTemporalID = current.Header.TemporalID
+				packetSpatialID = current.Header.SpatialID
+			} else {
+				packetHasLayer = false
+			}
 			obuOffset += maxPayload
 		}
 
@@ -452,6 +486,13 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 				PacketSize:     secondLastFragmentSize,
 			}
 			packetCount++
+			if current.hasExtension {
+				packetHasLayer = true
+				packetTemporalID = current.Header.TemporalID
+				packetSpatialID = current.Header.SpatialID
+			} else {
+				packetHasLayer = false
+			}
 			obuOffset += secondLastFragmentSize
 		}
 
@@ -470,6 +511,13 @@ func packetizeInternal(obus []PacketizerOBU, limits PayloadSizeLimits, packets [
 		}
 		packetCount++
 		remaining = maxPayload - lastFragmentSize
+		if current.hasExtension {
+			packetHasLayer = true
+			packetTemporalID = current.Header.TemporalID
+			packetSpatialID = current.Header.SpatialID
+		} else {
+			packetHasLayer = false
+		}
 	}
 
 	if err := storePacketPlan(packets, packetCount-1, packet); err != nil {
