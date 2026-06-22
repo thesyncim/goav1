@@ -327,6 +327,47 @@ func TestPublicTileListDecodeLayout(t *testing.T) {
 	}
 }
 
+func TestPublicTileListOutputGeometryAndRegions(t *testing.T) {
+	payload := []byte{0x01, 0x01, 0x00, 0x02}
+	payload = append(payload, 0, 0, 0, 0, 0, 0xa0)
+	payload = append(payload, 0, 0, 1, 0, 0, 0xa1)
+	payload = append(payload, 0, 1, 1, 0, 0, 0xa2)
+	list, err := av1.ParseTileListOBU(payload, nil)
+	if err != nil {
+		t.Fatalf("ParseTileListOBU: %v", err)
+	}
+	tiles := av1.TileInfo{
+		Cols:       2,
+		Rows:       2,
+		ColStartSB: [av1.MaxTileCols + 1]uint16{0, 2, 4},
+		RowStartSB: [av1.MaxTileRows + 1]uint16{0, 1, 2},
+	}
+	geom, err := av1.TileListOutputGeometryForGrid(list, tiles, false)
+	if err != nil {
+		t.Fatalf("TileListOutputGeometryForGrid: %v", err)
+	}
+	if geom.OutputFrameWidth != 256 || geom.OutputFrameHeight != 128 ||
+		geom.TileWidthPixels != 128 || geom.TileHeightPixels != 64 ||
+		geom.TileCount != 3 {
+		t.Fatalf("geometry=%+v", geom)
+	}
+	region, err := av1.TileListOutputTileRegion(list, geom, 2)
+	if err != nil {
+		t.Fatalf("TileListOutputTileRegion: %v", err)
+	}
+	if region != (av1.TileListTileRegion{SourceX: 128, SourceY: 64, DestX: 0, DestY: 64, Width: 128, Height: 64}) {
+		t.Fatalf("region=%+v", region)
+	}
+	geom128, err := av1.TileListOutputGeometryForGrid(list, tiles, true)
+	if err != nil {
+		t.Fatalf("TileListOutputGeometryForGrid 128: %v", err)
+	}
+	if geom128.OutputFrameWidth != 512 || geom128.OutputFrameHeight != 256 ||
+		geom128.TileWidthPixels != 256 || geom128.TileHeightPixels != 128 {
+		t.Fatalf("128 geometry=%+v", geom128)
+	}
+}
+
 func TestPublicParseTileListOBUAllocs(t *testing.T) {
 	payload := []byte{
 		0x00, 0x00, 0x00, 0x00,

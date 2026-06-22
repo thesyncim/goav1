@@ -210,6 +210,61 @@ func TestValidateTileListDecodeLayout(t *testing.T) {
 	}
 }
 
+func TestTileListOutputGeometryAndRegions(t *testing.T) {
+	payload := []byte{0x01, 0x01, 0x00, 0x02}
+	payload = appendTileListEntryRaw(payload, 0, 0, 0, 0, []byte{0xa0})
+	payload = appendTileListEntryRaw(payload, 0, 0, 1, 0, []byte{0xa1})
+	payload = appendTileListEntryRaw(payload, 0, 1, 1, 0, []byte{0xa2})
+	list, err := ParseTileListOBU(payload, nil)
+	if err != nil {
+		t.Fatalf("ParseTileListOBU err=%v", err)
+	}
+	tiles := TileInfo{
+		Cols:       2,
+		Rows:       2,
+		ColStartSB: [MaxTileCols + 1]uint16{0, 2, 4},
+		RowStartSB: [MaxTileRows + 1]uint16{0, 1, 2},
+	}
+
+	geom, err := TileListOutputGeometryForGrid(list, tiles, false)
+	if err != nil {
+		t.Fatalf("TileListOutputGeometryForGrid 64: %v", err)
+	}
+	if geom != (TileListOutputGeometry{
+		OutputFrameWidthInTiles:  2,
+		OutputFrameHeightInTiles: 2,
+		TileCount:                3,
+		TileWidthPixels:          128,
+		TileHeightPixels:         64,
+		OutputFrameWidth:         256,
+		OutputFrameHeight:        128,
+	}) {
+		t.Fatalf("64 geometry=%+v", geom)
+	}
+	region, err := TileListOutputTileRegion(list, geom, 2)
+	if err != nil {
+		t.Fatalf("TileListOutputTileRegion: %v", err)
+	}
+	if region != (TileListTileRegion{SourceX: 128, SourceY: 64, DestX: 0, DestY: 64, Width: 128, Height: 64}) {
+		t.Fatalf("region=%+v", region)
+	}
+
+	geom128, err := TileListOutputGeometryForGrid(list, tiles, true)
+	if err != nil {
+		t.Fatalf("TileListOutputGeometryForGrid 128: %v", err)
+	}
+	if geom128.TileWidthPixels != 256 || geom128.TileHeightPixels != 128 ||
+		geom128.OutputFrameWidth != 512 || geom128.OutputFrameHeight != 256 {
+		t.Fatalf("128 geometry=%+v", geom128)
+	}
+	if _, err := TileListOutputTileRegion(list, geom, 3); !errors.Is(err, ErrTileListInvalidTileCount) {
+		t.Fatalf("bad region index err=%v want %v", err, ErrTileListInvalidTileCount)
+	}
+	if _, err := TileListOutputTileRegion(list, TileListOutputGeometry{}, 0); !errors.Is(err, ErrTileListNonUniformTileSize) {
+		t.Fatalf("bad geometry err=%v want %v", err, ErrTileListNonUniformTileSize)
+	}
+}
+
 func TestParseTileListOBUAllocs(t *testing.T) {
 	tile := []byte{0xaa, 0xbb}
 	payload := []byte{0x00, 0x00, 0x00, 0x00}

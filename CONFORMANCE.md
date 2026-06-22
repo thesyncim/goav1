@@ -197,7 +197,9 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         |                                  | tile_data_size, tile data slice); anchor       |
 |    |                                  |         |                                  | validation uses the reference tile grid, and   |
 |    |                                  |         |                                  | DecodeLayout checks libaom-compatible uniform  |
-|    |                                  |         |                                  | tile size prerequisites. EventTileList carries |
+|    |                                  |         |                                  | tile size prerequisites. OutputGeometry and    |
+|    |                                  |         |                                  | OutputTileRegion expose libaom-shaped output   |
+|    |                                  |         |                                  | sizing/copy rectangles. EventTileList carries  |
 |    |                                  |         |                                  | the parsed structure plus TileListErr for      |
 |    |                                  |         |                                  | partial payloads. The residual decode runner   |
 |    |                                  |         |                                  | fails loudly with                              |
@@ -488,11 +490,12 @@ manifest. The next production-readiness items are:
    and 10-bit superres plus loop restoration, plus 4:2:0 12-bit odd-size CDEF,
    film grain, edge-motion, and super-res coverage.
 2. **Tile list OBU playback.** `EventTileList` parsing is present with
-   reference-grid anchor validation and libaom-compatible uniform tile-size
-   prerequisite checks. The residual decode runner still returns
+   reference-grid anchor validation, libaom-compatible uniform tile-size
+   prerequisite checks, and libaom-shaped output geometry/copy-region helpers.
+   The residual decode runner still returns
    `ErrDecoderUnsupportedTileList` for valid layouts instead of silently
-   ignoring playback; end-to-end tile-list reconstruction and output-frame
-   blitting remain future work.
+   ignoring playback; end-to-end tile payload decode and reconstruction blitting
+   remain future work.
 3. **Switch-frame oracle coverage.** Parser and stream-level switch-frame
    regressions exist, but the upstream libaom v3.14.0 test-data set does not
    ship a dedicated `S_FRAME` IVF with MD5 goldens.

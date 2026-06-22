@@ -248,6 +248,15 @@ type (
 	// TileListEntry describes one entry of a tile_list_obu(). TileData
 	// aliases the payload bytes supplied to ParseTileListOBU.
 	TileListEntry = internalparser.TileListEntry
+
+	// TileListOutputGeometry is the source-shaped output geometry libaom
+	// derives before copying decoded tile-list entries into the output mosaic.
+	TileListOutputGeometry = internalparser.TileListOutputGeometry
+
+	// TileListTileRegion describes the luma-plane source/destination
+	// rectangles for one tile-list entry. Chroma callers apply the sequence
+	// subsampling shifts to these luma coordinates.
+	TileListTileRegion = internalparser.TileListTileRegion
 )
 
 // Tile list OBU constants per AV1 spec section 5.11.1.
@@ -315,6 +324,18 @@ func TileListUniformTileSize(tiles TileInfo) (widthSB uint16, heightSB uint16, o
 // and blitting each listed tile into the output mosaic.
 func ValidateTileListDecodeLayout(list TileList, tiles TileInfo) (widthSB uint16, heightSB uint16, err error) {
 	return internalparser.ValidateTileListDecodeLayout(list, tiles)
+}
+
+// TileListOutputGeometryForGrid validates the tile-list decode layout and
+// returns the output mosaic dimensions libaom derives before tile copy.
+func TileListOutputGeometryForGrid(list TileList, tiles TileInfo, use128x128Superblock bool) (TileListOutputGeometry, error) {
+	return internalparser.TileListOutputGeometryForGrid(list, tiles, use128x128Superblock)
+}
+
+// TileListOutputTileRegion returns the source and destination luma rectangles
+// used when copying one decoded tile-list entry into the output mosaic.
+func TileListOutputTileRegion(list TileList, geometry TileListOutputGeometry, entryIndex int) (TileListTileRegion, error) {
+	return internalparser.TileListOutputTileRegion(list, geometry, entryIndex)
 }
 
 // AppendTileListOBU serialises list into dst as the bytes that would appear

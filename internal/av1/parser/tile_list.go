@@ -71,6 +71,32 @@ type TileList struct {
 	Entries                        []TileListEntry
 }
 
+// TileListOutputGeometry is the source-shaped output geometry libaom derives
+// before copying decoded tile-list entries into the output mosaic.
+type TileListOutputGeometry struct {
+	OutputFrameWidthInTiles  int
+	OutputFrameHeightInTiles int
+	TileCount                int
+	TileWidthPixels          int
+	TileHeightPixels         int
+	OutputFrameWidth         int
+	OutputFrameHeight        int
+}
+
+// TileListTileRegion describes the luma-plane source rectangle in the decoded
+// anchor frame tile and the destination rectangle in the tile-list output
+// mosaic for one tile-list entry. Chroma callers apply the sequence subsampling
+// shifts to these luma coordinates, as libaom does in
+// copy_decoded_tile_to_tile_list_buffer().
+type TileListTileRegion struct {
+	SourceX int
+	SourceY int
+	DestX   int
+	DestY   int
+	Width   int
+	Height  int
+}
+
 // OutputFrameWidthInTiles returns the decoded output_frame_width_in_tiles
 // value (output_frame_width_in_tiles_minus_1 + 1).
 func (l TileList) OutputFrameWidthInTiles() int {
@@ -230,6 +256,71 @@ func ValidateTileListDecodeLayout(list TileList, tiles TileInfo) (widthSB uint16
 		return 0, 0, ErrTileListNonUniformTileSize
 	}
 	return widthSB, heightSB, nil
+}
+
+// TileListOutputGeometryForGrid validates the tile-list decode layout and
+// returns the output mosaic dimensions libaom derives before tile copy.
+//
+// use128x128Superblock must match the active sequence header. TileInfo stores
+// tile starts in superblock units; libaom converts those to MI units with
+// seq_params->mib_size and then to pixels with MI_SIZE.
+func TileListOutputGeometryForGrid(list TileList, tiles TileInfo, use128x128Superblock bool) (TileListOutputGeometry, error) {
+	widthSB, heightSB, err := ValidateTileListDecodeLayout(list, tiles)
+	if err != nil {
+		return TileListOutputGeometry{}, err
+	}
+	pixelsPerSB := 64
+	if use128x128Superblock {
+		pixelsPerSB = 128
+	}
+	tileWidth := int(widthSB) * pixelsPerSB
+	tileHeight := int(heightSB) * pixelsPerSB
+	if tileWidth <= 0 || tileHeight <= 0 {
+		return TileListOutputGeometry{}, ErrTileListNonUniformTileSize
+	}
+	widthTiles := list.OutputFrameWidthInTiles()
+	heightTiles := list.OutputFrameHeightInTiles()
+	tileCount := list.TileCount()
+	if tileCount != len(list.Entries) {
+		return TileListOutputGeometry{}, ErrTileListInvalidTileCount
+	}
+	if tileCount > widthTiles*heightTiles {
+		return TileListOutputGeometry{}, ErrTileListTooManyTiles
+	}
+	return TileListOutputGeometry{
+		OutputFrameWidthInTiles:  widthTiles,
+		OutputFrameHeightInTiles: heightTiles,
+		TileCount:                tileCount,
+		TileWidthPixels:          tileWidth,
+		TileHeightPixels:         tileHeight,
+		OutputFrameWidth:         widthTiles * tileWidth,
+		OutputFrameHeight:        heightTiles * tileHeight,
+	}, nil
+}
+
+// TileListOutputTileRegion returns the source and destination luma rectangles
+// used when copying one decoded tile-list entry into the output mosaic.
+func TileListOutputTileRegion(list TileList, geometry TileListOutputGeometry, entryIndex int) (TileListTileRegion, error) {
+	if entryIndex < 0 || entryIndex >= list.TileCount() || entryIndex >= len(list.Entries) {
+		return TileListTileRegion{}, ErrTileListInvalidTileCount
+	}
+	if geometry.OutputFrameWidthInTiles <= 0 || geometry.TileWidthPixels <= 0 || geometry.TileHeightPixels <= 0 {
+		return TileListTileRegion{}, ErrTileListNonUniformTileSize
+	}
+	entry := list.Entries[entryIndex]
+	destTileRow := entryIndex / geometry.OutputFrameWidthInTiles
+	destTileCol := entryIndex % geometry.OutputFrameWidthInTiles
+	if destTileRow >= geometry.OutputFrameHeightInTiles {
+		return TileListTileRegion{}, ErrTileListTooManyTiles
+	}
+	return TileListTileRegion{
+		SourceX: int(entry.AnchorTileCol) * geometry.TileWidthPixels,
+		SourceY: int(entry.AnchorTileRow) * geometry.TileHeightPixels,
+		DestX:   destTileCol * geometry.TileWidthPixels,
+		DestY:   destTileRow * geometry.TileHeightPixels,
+		Width:   geometry.TileWidthPixels,
+		Height:  geometry.TileHeightPixels,
+	}, nil
 }
 
 // AppendTileListOBU serialises list into dst as the bytes that would appear in
