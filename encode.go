@@ -291,16 +291,37 @@ type RTCFrameRTPScratchSize struct {
 // first pass nil or short obuScratch to learn the OBU count, allocate that many
 // RTPPacketizerOBU slots, then call again to learn packet/work-plan sizes.
 func (f RTCFrame) RTPPacketScratchLen(limits RTPPayloadSizeLimits, obuScratch []RTPPacketizerOBU) (RTCFrameRTPScratchSize, error) {
+	return f.RTPPacketScratchLenWithOptions(limits, obuScratch, EncoderWebRTCRTPPacketDependencyDescriptorOptions{})
+}
+
+// RTPPacketScratchLenWithOptions reports scratch sizes for AppendRTPPacketsWithOptions.
+func (f RTCFrame) RTPPacketScratchLenWithOptions(limits RTPPayloadSizeLimits, obuScratch []RTPPacketizerOBU, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) (RTCFrameRTPScratchSize, error) {
 	packetizer, err := RTPPacketizerScratchLen(f.Data, limits, obuScratch)
 	size := RTCFrameRTPScratchSize{Packetizer: packetizer}
 	if err != nil {
 		return size, err
 	}
-	descriptor, err := encoder.WebRTCDependencyDescriptorSize(f.dependencyStructure, f.frameInfo, f.attachDependencyStructure)
+	if f.attachDependencyStructure {
+		options.AttachStructureOnFirstPacket = true
+	}
+	firstFlags := RTPPacketDependencyDescriptorFlags{
+		FirstPacketInFrame: true,
+		LastPacketInFrame:  packetizer.Packets <= 1,
+	}
+	descriptor, err := encoder.WebRTCDependencyDescriptorSizeWithOptions(f.dependencyStructure, f.frameInfo, encoderWebRTCRTPPacketDependencyDescriptorOptions(firstFlags, options))
 	if err != nil {
 		return size, err
 	}
 	size.MaxDescriptorBytes = descriptor
+	if packetizer.Packets > 1 {
+		nextDescriptor, err := encoder.WebRTCDependencyDescriptorSizeWithOptions(f.dependencyStructure, f.frameInfo, encoderWebRTCRTPPacketDependencyDescriptorOptions(RTPPacketDependencyDescriptorFlags{}, options))
+		if err != nil {
+			return size, err
+		}
+		if nextDescriptor > size.MaxDescriptorBytes {
+			size.MaxDescriptorBytes = nextDescriptor
+		}
+	}
 	if packetizer.OBUs != 0 {
 		size.MaxPayloadBytes = limits.MaxPayloadLen
 	}
@@ -312,6 +333,12 @@ func (f RTCFrame) RTPPacketScratchLen(limits RTPPayloadSizeLimits, obuScratch []
 // written into spans; the caller owns RTP headers, header-extension IDs, SRTP,
 // pacing, retransmission, and network transport.
 func (f RTCFrame) AppendRTPPackets(payloadDst []byte, descriptorDst []byte, spans []EncoderWebRTCRTPPacketSpan, limits RTPPayloadSizeLimits, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (rtpPayloads []byte, descriptors []byte, packetCount int, err error) {
+	return f.AppendRTPPacketsWithOptions(payloadDst, descriptorDst, spans, limits, obuScratch, packetScratch, workScratch, EncoderWebRTCRTPPacketDependencyDescriptorOptions{})
+}
+
+// AppendRTPPacketsWithOptions is AppendRTPPackets with dependency descriptor
+// options for WebRTC control-plane events such as active decode target changes.
+func (f RTCFrame) AppendRTPPacketsWithOptions(payloadDst []byte, descriptorDst []byte, spans []EncoderWebRTCRTPPacketSpan, limits RTPPayloadSizeLimits, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) (rtpPayloads []byte, descriptors []byte, packetCount int, err error) {
 	packetizer, err := NewRTPPacketizer(f.Data, limits, f.CodedKeyframe, f.LastFrameInPicture, obuScratch, packetScratch, workScratch)
 	if err != nil {
 		return payloadDst, descriptorDst, 0, err
@@ -319,6 +346,9 @@ func (f RTCFrame) AppendRTPPackets(payloadDst []byte, descriptorDst []byte, span
 	control := EncoderWebRTCFrameControl{
 		GenericFrameInfo:          f.frameInfo,
 		AttachDependencyStructure: f.attachDependencyStructure,
+	}
+	if f.attachDependencyStructure {
+		options.AttachStructureOnFirstPacket = true
 	}
 	rtpPayloads = payloadDst
 	descriptors = descriptorDst
@@ -331,7 +361,7 @@ func (f RTCFrame) AppendRTPPackets(payloadDst []byte, descriptorDst []byte, span
 		}
 		payloadStart := len(rtpPayloads)
 		descriptorStart := len(descriptors)
-		nextPayloads, nextDescriptors, marker, ok, err := AppendEncoderWebRTCFrameControlRTPPacket(rtpPayloads, descriptors, &packetizer, control, f.dependencyStructure)
+		nextPayloads, nextDescriptors, marker, ok, err := AppendEncoderWebRTCFrameControlRTPPacketWithOptions(rtpPayloads, descriptors, &packetizer, control, f.dependencyStructure, options)
 		if err != nil {
 			return payloadDst, descriptorDst, 0, err
 		}

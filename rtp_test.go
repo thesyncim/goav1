@@ -465,6 +465,180 @@ func TestPublicRTPDependencyDescriptorParseEncoderRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPublicRTPDependencyDescriptorActiveDecodeTargetsRoundTrip(t *testing.T) {
+	structure, err := EncoderWebRTCFrameDependencyStructureForConfig(EncoderConfig{
+		Resolution:  EncoderResolution{Width: 960, Height: 540},
+		Scalability: EncoderScalabilityModeL3T2,
+	})
+	if err != nil {
+		t.Fatalf("EncoderWebRTCFrameDependencyStructureForConfig: %v", err)
+	}
+	info := EncoderWebRTCGenericFrameInfo{
+		FrameID:    77,
+		SpatialID:  0,
+		TemporalID: 0,
+		DTINum:     structure.NumDecodeTargets,
+	}
+	info.DTIs = structure.Templates[0].DTIs
+
+	options := EncoderWebRTCDependencyDescriptorOptions{
+		FirstPacketInFrame:         true,
+		ActiveDecodeTargetsPresent: true,
+		ActiveDecodeTargetsMask:    0x15,
+	}
+	size, err := EncoderWebRTCDependencyDescriptorSizeWithOptions(structure, info, options)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCDependencyDescriptorSizeWithOptions: %v", err)
+	}
+	var buf [256]byte
+	descriptorBytes, err := AppendEncoderWebRTCDependencyDescriptorWithOptions(buf[:0], structure, info, options)
+	if err != nil {
+		t.Fatalf("AppendEncoderWebRTCDependencyDescriptorWithOptions: %v", err)
+	}
+	if len(descriptorBytes) != size {
+		t.Fatalf("descriptor len=%d want size %d", len(descriptorBytes), size)
+	}
+
+	parsedStructure := convertPublicEncoderRTPDependencyStructure(structure)
+	parsed, consumed, err := ParseRTPDependencyDescriptor(descriptorBytes, &parsedStructure)
+	if err != nil {
+		t.Fatalf("ParseRTPDependencyDescriptor active mask: %v", err)
+	}
+	if consumed != len(descriptorBytes) ||
+		!parsed.HasExtendedFields ||
+		parsed.HasAttachedStructure ||
+		!parsed.HasActiveDecodeTargets ||
+		parsed.ActiveDecodeTargetsMask != options.ActiveDecodeTargetsMask ||
+		parsed.Mandatory != (RTPDependencyDescriptorMandatory{FirstPacketInFrame: true, TemplateID: 0, FrameNumber: uint16(info.FrameID)}) {
+		t.Fatalf("parsed active mask consumed=%d/%d descriptor=%+v", consumed, len(descriptorBytes), parsed)
+	}
+
+	options.AttachStructure = true
+	options.LastPacketInFrame = true
+	options.ActiveDecodeTargetsMask = 0x03
+	descriptorBytes, err = AppendEncoderWebRTCDependencyDescriptorWithOptions(buf[:0], structure, info, options)
+	if err != nil {
+		t.Fatalf("AppendEncoderWebRTCDependencyDescriptorWithOptions attached: %v", err)
+	}
+	parsed, consumed, err = ParseRTPDependencyDescriptor(descriptorBytes, nil)
+	if err != nil {
+		t.Fatalf("ParseRTPDependencyDescriptor attached active mask: %v", err)
+	}
+	if consumed != len(descriptorBytes) ||
+		!parsed.HasAttachedStructure ||
+		!parsed.HasActiveDecodeTargets ||
+		parsed.ActiveDecodeTargetsMask != options.ActiveDecodeTargetsMask ||
+		parsed.Mandatory != (RTPDependencyDescriptorMandatory{FirstPacketInFrame: true, LastPacketInFrame: true, TemplateID: 0, FrameNumber: uint16(info.FrameID)}) {
+		t.Fatalf("parsed attached active mask consumed=%d/%d descriptor=%+v", consumed, len(descriptorBytes), parsed)
+	}
+
+	options.ActiveDecodeTargetsMask = 1 << structure.NumDecodeTargets
+	if _, err := EncoderWebRTCDependencyDescriptorSizeWithOptions(structure, info, options); !errors.Is(err, ErrEncoderInvalidFrame) {
+		t.Fatalf("invalid active mask size err=%v want %v", err, ErrEncoderInvalidFrame)
+	}
+	if _, err := AppendEncoderWebRTCDependencyDescriptorWithOptions(buf[:0], structure, info, options); !errors.Is(err, ErrEncoderInvalidFrame) {
+		t.Fatalf("invalid active mask append err=%v want %v", err, ErrEncoderInvalidFrame)
+	}
+}
+
+func TestPublicRTPPacketDependencyDescriptorActiveDecodeTargets(t *testing.T) {
+	frame := appendPublicLowOverheadOBU(nil, OBUFrame, []byte{
+		0, 1, 2, 3, 4, 5, 6, 7,
+		8, 9, 10, 11, 12, 13, 14, 15,
+		16, 17, 18, 19, 20, 21, 22, 23,
+	})
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 6}
+	var obuScratch [2]RTPPacketizerOBU
+	var packetScratch [8]RTPPacketPlan
+	var workScratch [8]RTPPacketPlan
+	packetizer, err := NewRTPPacketizer(frame, limits, false, true, obuScratch[:], packetScratch[:], workScratch[:])
+	if err != nil {
+		t.Fatalf("NewRTPPacketizer: %v", err)
+	}
+	if packetizer.NumPackets() < 2 {
+		t.Fatalf("packetizer packets=%d want fragmented frame", packetizer.NumPackets())
+	}
+
+	structure, err := EncoderWebRTCFrameDependencyStructureForConfig(EncoderConfig{
+		Resolution:  EncoderResolution{Width: 960, Height: 540},
+		Scalability: EncoderScalabilityModeL2T2,
+	})
+	if err != nil {
+		t.Fatalf("EncoderWebRTCFrameDependencyStructureForConfig: %v", err)
+	}
+	info := EncoderWebRTCGenericFrameInfo{
+		FrameID:    200,
+		SpatialID:  0,
+		TemporalID: 0,
+		DTINum:     structure.NumDecodeTargets,
+	}
+	info.DTIs = structure.Templates[0].DTIs
+	options := EncoderWebRTCRTPPacketDependencyDescriptorOptions{
+		AttachStructureOnFirstPacket:            true,
+		ActiveDecodeTargetsPresentOnFirstPacket: true,
+		ActiveDecodeTargetsMask:                 0x03,
+	}
+
+	size, ok, err := EncoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions(&packetizer, structure, info, options)
+	if err != nil || !ok {
+		t.Fatalf("EncoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions first size=%d ok=%v err=%v", size, ok, err)
+	}
+	var descriptorBuf [256]byte
+	descriptor, ok, err := AppendEncoderWebRTCRTPPacketDependencyDescriptorWithOptions(descriptorBuf[:0], &packetizer, structure, info, options)
+	if err != nil || !ok || len(descriptor) != size {
+		t.Fatalf("AppendEncoderWebRTCRTPPacketDependencyDescriptorWithOptions first len=%d size=%d ok=%v err=%v", len(descriptor), size, ok, err)
+	}
+	var receiver RTPDependencyDescriptorState
+	parsed, consumed, err := receiver.Parse(descriptor)
+	if err != nil {
+		t.Fatalf("receiver Parse first: %v", err)
+	}
+	if consumed != len(descriptor) ||
+		!parsed.Mandatory.FirstPacketInFrame ||
+		parsed.Mandatory.LastPacketInFrame ||
+		!parsed.HasAttachedStructure ||
+		!parsed.HasActiveDecodeTargets ||
+		parsed.ActiveDecodeTargetsMask != options.ActiveDecodeTargetsMask {
+		t.Fatalf("first descriptor consumed=%d/%d parsed=%+v", consumed, len(descriptor), parsed)
+	}
+	var payloadBuf [16]byte
+	if _, _, ok, err := packetizer.NextPacket(payloadBuf[:]); err != nil || !ok {
+		t.Fatalf("NextPacket first ok=%v err=%v", ok, err)
+	}
+
+	secondSize, ok, err := EncoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions(&packetizer, structure, info, options)
+	if err != nil || !ok {
+		t.Fatalf("EncoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions second size=%d ok=%v err=%v", secondSize, ok, err)
+	}
+	secondDescriptor, ok, err := AppendEncoderWebRTCRTPPacketDependencyDescriptorWithOptions(descriptorBuf[:0], &packetizer, structure, info, options)
+	if err != nil || !ok || len(secondDescriptor) != secondSize {
+		t.Fatalf("AppendEncoderWebRTCRTPPacketDependencyDescriptorWithOptions second len=%d size=%d ok=%v err=%v", len(secondDescriptor), secondSize, ok, err)
+	}
+	parsed, consumed, err = receiver.Parse(secondDescriptor)
+	if err != nil {
+		t.Fatalf("receiver Parse second: %v", err)
+	}
+	if consumed != len(secondDescriptor) ||
+		parsed.Mandatory.FirstPacketInFrame ||
+		parsed.HasAttachedStructure ||
+		parsed.HasActiveDecodeTargets ||
+		secondSize != RTPDependencyDescriptorMandatorySize {
+		t.Fatalf("second descriptor size=%d consumed=%d/%d parsed=%+v", secondSize, consumed, len(secondDescriptor), parsed)
+	}
+
+	packetizer, err = NewRTPPacketizer(frame, limits, false, true, obuScratch[:], packetScratch[:], workScratch[:])
+	if err != nil {
+		t.Fatalf("NewRTPPacketizer invalid: %v", err)
+	}
+	options.ActiveDecodeTargetsMask = 1 << structure.NumDecodeTargets
+	if _, ok, err := EncoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions(&packetizer, structure, info, options); !ok || !errors.Is(err, ErrEncoderInvalidFrame) {
+		t.Fatalf("invalid active mask packet size ok=%v err=%v want %v", ok, err, ErrEncoderInvalidFrame)
+	}
+	if _, ok, err := AppendEncoderWebRTCRTPPacketDependencyDescriptorWithOptions(descriptorBuf[:0], &packetizer, structure, info, options); !ok || !errors.Is(err, ErrEncoderInvalidFrame) {
+		t.Fatalf("invalid active mask packet append ok=%v err=%v want %v", ok, err, ErrEncoderInvalidFrame)
+	}
+}
+
 func TestPublicRTPDependencyDescriptorParseAllocs(t *testing.T) {
 	structure, err := EncoderWebRTCFrameDependencyStructureForConfig(EncoderConfig{
 		Resolution:  EncoderResolution{Width: 640, Height: 360},

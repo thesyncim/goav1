@@ -10,24 +10,42 @@ type webRTCDependencyDescriptorMatch struct {
 	frameDiffNum    uint8
 }
 
+type WebRTCDependencyDescriptorOptions struct {
+	FirstPacketInFrame         bool
+	LastPacketInFrame          bool
+	AttachStructure            bool
+	ActiveDecodeTargetsPresent bool
+	ActiveDecodeTargetsMask    uint32
+}
+
 func WebRTCDependencyDescriptorSize(structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo, attachStructure bool) (int, error) {
+	return WebRTCDependencyDescriptorSizeWithOptions(structure, info, WebRTCDependencyDescriptorOptions{AttachStructure: attachStructure})
+}
+
+func WebRTCDependencyDescriptorSizeWithOptions(structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo, options WebRTCDependencyDescriptorOptions) (int, error) {
 	match, err := webRTCDependencyDescriptorMatchFrame(structure, info)
 	if err != nil {
 		return 0, err
 	}
-	return webRTCDependencyDescriptorSizeForMatch(structure, match, attachStructure)
+	return webRTCDependencyDescriptorSizeForMatch(structure, match, options)
 }
 
-func webRTCDependencyDescriptorSizeForMatch(structure WebRTCFrameDependencyStructure, match webRTCDependencyDescriptorMatch, attachStructure bool) (int, error) {
+func webRTCDependencyDescriptorSizeForMatch(structure WebRTCFrameDependencyStructure, match webRTCDependencyDescriptorMatch, options WebRTCDependencyDescriptorOptions) (int, error) {
+	if err := validateWebRTCDependencyDescriptorOptions(structure, options); err != nil {
+		return 0, err
+	}
 	bits := 24
-	if attachStructure || match.needCustomDTIs || match.needCustomDiffs {
+	if options.AttachStructure || options.ActiveDecodeTargetsPresent || match.needCustomDTIs || match.needCustomDiffs {
 		bits += 5
-		if attachStructure {
+		if options.AttachStructure {
 			structureBits, err := webRTCDependencyStructureBits(structure)
 			if err != nil {
 				return 0, err
 			}
 			bits += structureBits
+		}
+		if options.ActiveDecodeTargetsPresent {
+			bits += int(structure.NumDecodeTargets)
 		}
 		if match.needCustomDTIs {
 			bits += 2 * int(structure.NumDecodeTargets)
@@ -40,11 +58,19 @@ func webRTCDependencyDescriptorSizeForMatch(structure WebRTCFrameDependencyStruc
 }
 
 func AppendWebRTCDependencyDescriptor(dst []byte, structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo, firstPacketInFrame bool, lastPacketInFrame bool, attachStructure bool) ([]byte, error) {
+	return AppendWebRTCDependencyDescriptorWithOptions(dst, structure, info, WebRTCDependencyDescriptorOptions{
+		FirstPacketInFrame: firstPacketInFrame,
+		LastPacketInFrame:  lastPacketInFrame,
+		AttachStructure:    attachStructure,
+	})
+}
+
+func AppendWebRTCDependencyDescriptorWithOptions(dst []byte, structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo, options WebRTCDependencyDescriptorOptions) ([]byte, error) {
 	match, err := webRTCDependencyDescriptorMatchFrame(structure, info)
 	if err != nil {
 		return dst, err
 	}
-	size, err := webRTCDependencyDescriptorSizeForMatch(structure, match, attachStructure)
+	size, err := webRTCDependencyDescriptorSizeForMatch(structure, match, options)
 	if err != nil {
 		return dst, err
 	}
@@ -55,7 +81,7 @@ func AppendWebRTCDependencyDescriptor(dst []byte, structure WebRTCFrameDependenc
 	off := len(dst)
 	out := dst[:off+size]
 	w := newBitWriter(out[off:])
-	if err := writeWebRTCDependencyDescriptor(&w, structure, info, match, firstPacketInFrame, lastPacketInFrame, attachStructure); err != nil {
+	if err := writeWebRTCDependencyDescriptor(&w, structure, info, match, options); err != nil {
 		return dst, err
 	}
 	for !w.byteAligned() {
@@ -66,12 +92,12 @@ func AppendWebRTCDependencyDescriptor(dst []byte, structure WebRTCFrameDependenc
 	return out, nil
 }
 
-func writeWebRTCDependencyDescriptor(w *bitWriter, structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo, match webRTCDependencyDescriptorMatch, firstPacketInFrame bool, lastPacketInFrame bool, attachStructure bool) error {
+func writeWebRTCDependencyDescriptor(w *bitWriter, structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo, match webRTCDependencyDescriptorMatch, options WebRTCDependencyDescriptorOptions) error {
 	templateID := (structure.StructureID + match.templateIndex) % WebRTCRtpDependencyMaxTemplates
-	if err := w.writeBool(firstPacketInFrame); err != nil {
+	if err := w.writeBool(options.FirstPacketInFrame); err != nil {
 		return err
 	}
-	if err := w.writeBool(lastPacketInFrame); err != nil {
+	if err := w.writeBool(options.LastPacketInFrame); err != nil {
 		return err
 	}
 	if err := w.writeBits(uint64(templateID), 6); err != nil {
@@ -80,13 +106,13 @@ func writeWebRTCDependencyDescriptor(w *bitWriter, structure WebRTCFrameDependen
 	if err := w.writeBits(uint64(uint16(info.FrameID)), 16); err != nil {
 		return err
 	}
-	if !attachStructure && !match.needCustomDTIs && !match.needCustomDiffs {
+	if !options.AttachStructure && !options.ActiveDecodeTargetsPresent && !match.needCustomDTIs && !match.needCustomDiffs {
 		return nil
 	}
-	if err := w.writeBool(attachStructure); err != nil {
+	if err := w.writeBool(options.AttachStructure); err != nil {
 		return err
 	}
-	if err := w.writeBool(false); err != nil {
+	if err := w.writeBool(options.ActiveDecodeTargetsPresent); err != nil {
 		return err
 	}
 	if err := w.writeBool(match.needCustomDTIs); err != nil {
@@ -98,8 +124,13 @@ func writeWebRTCDependencyDescriptor(w *bitWriter, structure WebRTCFrameDependen
 	if err := w.writeBool(false); err != nil {
 		return err
 	}
-	if attachStructure {
+	if options.AttachStructure {
 		if err := writeWebRTCDependencyStructure(w, structure); err != nil {
+			return err
+		}
+	}
+	if options.ActiveDecodeTargetsPresent {
+		if err := w.writeBits(uint64(options.ActiveDecodeTargetsMask), structure.NumDecodeTargets); err != nil {
 			return err
 		}
 	}
@@ -116,6 +147,24 @@ func writeWebRTCDependencyDescriptor(w *bitWriter, structure WebRTCFrameDependen
 		}
 	}
 	return nil
+}
+
+func validateWebRTCDependencyDescriptorOptions(structure WebRTCFrameDependencyStructure, options WebRTCDependencyDescriptorOptions) error {
+	if !options.ActiveDecodeTargetsPresent {
+		return nil
+	}
+	mask := webRTCAllDecodeTargetsMask(structure.NumDecodeTargets)
+	if options.ActiveDecodeTargetsMask&^mask != 0 {
+		return ErrInvalidFrame
+	}
+	return nil
+}
+
+func webRTCAllDecodeTargetsMask(count uint8) uint32 {
+	if count >= 32 {
+		return ^uint32(0)
+	}
+	return (uint32(1) << count) - 1
 }
 
 func webRTCDependencyDescriptorMatchFrame(structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo) (webRTCDependencyDescriptorMatch, error) {

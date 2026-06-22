@@ -350,6 +350,79 @@ func TestPublicRTCFrameAppendRTPPackets(t *testing.T) {
 	assertPublicRTCFrameRTPPackets(t, &receiver, frame, limits, true, true, true)
 }
 
+func TestPublicRTCFrameAppendRTPPacketsActiveDecodeTargets(t *testing.T) {
+	const w, h = 192, 128
+	enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+		Width: w, Height: h,
+		TargetBitrate: 250_000, Framerate: 30,
+		TemporalLayers: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
+	options := goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions{
+		ActiveDecodeTargetsPresentOnFirstPacket: true,
+		ActiveDecodeTargetsMask:                 0x01,
+	}
+	firstSize, err := frame.RTPPacketScratchLenWithOptions(limits, nil, options)
+	if err != nil {
+		t.Fatalf("RTPPacketScratchLenWithOptions first: %v", err)
+	}
+	obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
+	size, err := frame.RTPPacketScratchLenWithOptions(limits, obuScratch, options)
+	if err != nil {
+		t.Fatalf("RTPPacketScratchLenWithOptions full: %v", err)
+	}
+	if size.Packetizer.Packets <= 1 || size.MaxDescriptorBytes <= goav1.RTPDependencyDescriptorMandatorySize {
+		t.Fatalf("scratch=%+v want fragmented frame and extended first descriptor", size)
+	}
+	packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
+	workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
+	payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
+	descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
+	spans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
+	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPacketsWithOptions(payloadBuf, descriptorBuf, spans, limits, obuScratch, packetScratch, workScratch, options)
+	if err != nil {
+		t.Fatalf("AppendRTPPacketsWithOptions: %v", err)
+	}
+	if packetCount != size.Packetizer.Packets {
+		t.Fatalf("packet count=%d want %d", packetCount, size.Packetizer.Packets)
+	}
+	payloadSlices := make([][]byte, packetCount)
+	var receiver goav1.RTPDependencyDescriptorState
+	for i := 0; i < packetCount; i++ {
+		span := spans[i]
+		payloadSlices[i] = rtpPayloads[span.PayloadOffset : span.PayloadOffset+span.PayloadLength]
+		desc := descriptors[span.DescriptorOffset : span.DescriptorOffset+span.DescriptorLength]
+		parsed, consumed, err := receiver.Parse(desc)
+		if err != nil {
+			t.Fatalf("packet %d descriptor: %v", i, err)
+		}
+		if consumed != len(desc) ||
+			parsed.Mandatory.FirstPacketInFrame != (i == 0) ||
+			parsed.Mandatory.LastPacketInFrame != (i == packetCount-1) {
+			t.Fatalf("packet %d mandatory=%+v consumed=%d len=%d", i, parsed.Mandatory, consumed, len(desc))
+		}
+		if i == 0 {
+			if !parsed.HasAttachedStructure ||
+				!parsed.HasActiveDecodeTargets ||
+				parsed.ActiveDecodeTargetsMask != options.ActiveDecodeTargetsMask {
+				t.Fatalf("first descriptor=%+v", parsed)
+			}
+			continue
+		}
+		if parsed.HasAttachedStructure || parsed.HasActiveDecodeTargets {
+			t.Fatalf("packet %d repeated optional fields: %+v", i, parsed)
+		}
+	}
+	assertPublicRTPPayloadsAssembleToFrame(t, frame.Data, payloadSlices)
+}
+
 func TestPublicRTCFrameAppendRTPPacketsSpatialPicture(t *testing.T) {
 	const w, h = 640, 360
 	enc, err := goav1.NewRTCEncoderWithConfig(goav1.EncoderConfig{
