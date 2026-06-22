@@ -46,7 +46,7 @@ needs:
 | Use case | API | Ownership model |
 | --- | --- | --- |
 | One-shot decoded pixels | `DecodeIVF` | Copies visible planes into independent `DecodedFrame` values |
-| AV1 WebRTC SDP/fmtp capability checks | `ParseAV1SDPFmtp` / `AV1SDPOffersReceive*` | Parses `AV1/90000` payload bindings and profile/level/tier fmtp values; complete SDP assembly stays caller-owned |
+| AV1 WebRTC SDP/fmtp capability checks | `ParseAV1SDPFmtp` / `AV1SDPOffersReceive*` | Parses `AV1/90000` payload bindings, profile/level/tier fmtp values, and AV1 rtcp-fb support; complete SDP assembly stays caller-owned |
 | AV1 WebRTC RTCP feedback checks | `ParseAV1RTCPLayerRefreshRequestEntry` / `EncoderWebRTCValidateLayerRefreshRequest` | Parses and validates LRR FCI entries against the active temporal/spatial layer grid; RTCP transport stays caller-owned |
 | Repeated in-memory IVF decode | `NewDecoderFromIVF` + `DecodeNext` | Copies IVF payloads once, then reuses decoder-owned frame and post-filter arenas |
 | Large/file-backed IVF decode | `NewDecoderFromIVFReaderAt` + `DecodeNext` | Indexes IVF frame offsets and reads each payload into one reusable buffer |
@@ -117,9 +117,10 @@ iterators, RTP packetization/depacketization, parser structs, tile work
 scheduling, residual decode/reconstruct helpers, post-filter scratch binding,
 and DSP primitives. SDP/fmtp helpers cover the registered `AV1/90000` payload
 binding, profile/level/tier parsing and emission, sequence-header compatibility
-checks, offer receive checks, and the dependency descriptor extmap URI; complete
-SDP generation, transceiver setup, and RTP header ownership remain with the
-caller. RTCP helpers cover AV1 Layer Refresh Request FCI entry parsing,
+checks, offer receive checks, payload-specific or wildcard rtcp-fb checks, and
+the dependency descriptor extmap URI; complete SDP generation, transceiver
+setup, and RTP header ownership remain with the caller. RTCP helpers cover AV1
+Layer Refresh Request FCI entry parsing,
 serialization, and validation against an encoder config; callers can satisfy a
 valid FIR, PLI, or LRR with the existing `forceKey` argument when a full refresh
 is the desired safe response. For ordered RTP payload bodies,
@@ -145,7 +146,7 @@ result buffer directly. The executable examples in `example_test.go` and
 
 | Area | Status |
 | --- | --- |
-| Containers and transport | IVF, AV1 low-overhead OBU, Annex B, Section 5 temporal units, AV1 RTP payload parse/build/fragment/reassemble, AV1 SDP/fmtp profile/level/tier helpers, AV1 RTCP LRR feedback helpers |
+| Containers and transport | IVF, AV1 low-overhead OBU, Annex B, Section 5 temporal units, AV1 RTP payload parse/build/fragment/reassemble, AV1 SDP/fmtp/profile/level/tier/rtcp-fb helpers, AV1 RTCP LRR feedback helpers |
 | Decoder profiles | Profile 0 and Profile 1 pass committed/vendored strict-MD5 gates; Profile 2 has passing 4:2:2 8/10-bit and 4:2:0 12-bit profile clips, with wider 12-bit breadth still expanding |
 | Bit depths and formats | 8-bit and 10-bit covered broadly; 12-bit covered by targeted profile-2 clips; 4:2:0, 4:2:2, 4:4:4, and monochrome surfaces |
 | Prediction and residuals | Intra, directional intra, filter intra, CfL, palette, IntraBC, inter/compound, OBMC, warped motion, scaled motion, transforms, dequantization, and CDF adaptation |

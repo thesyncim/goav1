@@ -248,6 +248,13 @@ func AV1SDPNegotiatesParams(sdp string, stream AV1SDPFmtpParameters) bool {
 	return av1SDPHasParams(sdp, av1SDPDirectionIsActive, stream)
 }
 
+// AV1SDPNegotiatesRTCPFeedback reports whether an SDP blob contains an active
+// video section that binds AV1/90000 and declares the supplied rtcp-fb value
+// for that payload type, either directly or with the wildcard payload type.
+func AV1SDPNegotiatesRTCPFeedback(sdp string, feedback string) bool {
+	return av1SDPHasRTCPFeedback(sdp, av1SDPDirectionIsActive, feedback)
+}
+
 // AV1SDPOffersReceive reports whether an SDP offer contains a video section
 // that can receive AV1/90000.
 func AV1SDPOffersReceive(sdp string) bool {
@@ -259,6 +266,14 @@ func AV1SDPOffersReceive(sdp string) bool {
 // stream.
 func AV1SDPOffersReceiveParams(sdp string, stream AV1SDPFmtpParameters) bool {
 	return av1SDPHasParams(sdp, av1SDPDirectionAllowsReceive, stream)
+}
+
+// AV1SDPOffersReceiveRTCPFeedback reports whether an SDP offer contains a
+// video section that can receive AV1/90000 and declares the supplied rtcp-fb
+// value for that payload type, either directly or with the wildcard payload
+// type.
+func AV1SDPOffersReceiveRTCPFeedback(sdp string, feedback string) bool {
+	return av1SDPHasRTCPFeedback(sdp, av1SDPDirectionAllowsReceive, feedback)
 }
 
 // AV1SDPOffersReceiveSequence reports whether an SDP offer contains a video
@@ -275,6 +290,13 @@ func AV1SDPOffersReceiveSequence(sdp string, seq SequenceHeader) bool {
 // that can send AV1/90000.
 func AV1SDPAnswersSend(sdp string) bool {
 	return av1SDPHas(sdp, av1SDPDirectionAllowsSend, nil)
+}
+
+// AV1SDPAnswersSendRTCPFeedback reports whether an SDP answer contains a video
+// section that can send AV1/90000 and declares the supplied rtcp-fb value for
+// that payload type, either directly or with the wildcard payload type.
+func AV1SDPAnswersSendRTCPFeedback(sdp string, feedback string) bool {
+	return av1SDPHasRTCPFeedback(sdp, av1SDPDirectionAllowsSend, feedback)
 }
 
 func av1SDPHasParams(
@@ -300,6 +322,21 @@ func av1SDPHasParams(
 		})
 }
 
+func av1SDPHasRTCPFeedback(
+	sdp string,
+	directionOK func(string) bool,
+	feedback string,
+) bool {
+	feedback = strings.ToLower(strings.TrimSpace(feedback))
+	if feedback == "" {
+		return false
+	}
+	return av1SDPHas(sdp, directionOK,
+		func(section av1SDPMediaSection, payloadType string) bool {
+			return section.hasRTCPFeedback(payloadType, feedback)
+		})
+}
+
 func av1SDPHas(
 	sdp string,
 	directionOK func(string) bool,
@@ -322,6 +359,7 @@ func av1SDPHas(
 				direction:       sessionDirection,
 				av1PayloadTypes: make(map[string]bool),
 				fmtpParams:      make(map[string]string),
+				rtcpFeedback:    make(map[string][]string),
 			}
 			haveSection = true
 			continue
@@ -349,6 +387,12 @@ func av1SDPHas(
 			if len(fields) >= 2 && section.payloadTypes[fields[0]] {
 				section.fmtpParams[fields[0]] = strings.Join(fields[1:], " ")
 			}
+		case strings.HasPrefix(line, "a=rtcp-fb:"):
+			fields := strings.Fields(strings.TrimPrefix(line, "a=rtcp-fb:"))
+			if len(fields) >= 2 && (fields[0] == "*" || section.payloadTypes[fields[0]]) {
+				section.rtcpFeedback[fields[0]] = append(section.rtcpFeedback[fields[0]],
+					strings.Join(fields[1:], " "))
+			}
 		}
 	}
 	return haveSection && section.hasAV1(directionOK, payloadOK)
@@ -361,6 +405,7 @@ type av1SDPMediaSection struct {
 	direction       string
 	av1PayloadTypes map[string]bool
 	fmtpParams      map[string]string
+	rtcpFeedback    map[string][]string
 }
 
 func (s av1SDPMediaSection) parsesVideoPayloadAttributes() bool {
@@ -381,6 +426,20 @@ func (s av1SDPMediaSection) hasAV1(
 			}
 		}
 		if payloadOK == nil || payloadOK(s, payloadType) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s av1SDPMediaSection) hasRTCPFeedback(payloadType string, feedback string) bool {
+	return av1SDPRTCPFeedbackListContains(s.rtcpFeedback[payloadType], feedback) ||
+		av1SDPRTCPFeedbackListContains(s.rtcpFeedback["*"], feedback)
+}
+
+func av1SDPRTCPFeedbackListContains(values []string, feedback string) bool {
+	for _, value := range values {
+		if strings.ToLower(strings.TrimSpace(value)) == feedback {
 			return true
 		}
 	}

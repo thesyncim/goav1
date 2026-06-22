@@ -290,6 +290,80 @@ func TestAV1SDPSectionScanning(t *testing.T) {
 	}
 }
 
+func TestAV1SDPRTCPFeedbackScanning(t *testing.T) {
+	sdp := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 96 98 99",
+		"a=rtpmap:96 VP8/90000",
+		"a=rtpmap:98 AV1/90000",
+		"a=rtpmap:99 AV1/90000",
+		"a=rtcp-fb:96 ccm lrr",
+		"a=rtcp-fb:98 nack",
+		"a=rtcp-fb:98 nack pli",
+		"a=rtcp-fb:* ccm fir",
+		"a=rtcp-fb:99 ccm lrr",
+	)
+	if !av1.AV1SDPNegotiatesRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackNACK) {
+		t.Fatal("AV1SDPNegotiatesRTCPFeedback rejected payload-specific nack")
+	}
+	if !av1.AV1SDPNegotiatesRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackPLI) {
+		t.Fatal("AV1SDPNegotiatesRTCPFeedback rejected payload-specific pli")
+	}
+	if !av1.AV1SDPNegotiatesRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackFIR) {
+		t.Fatal("AV1SDPNegotiatesRTCPFeedback rejected wildcard fir")
+	}
+	if !av1.AV1SDPOffersReceiveRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackLRR) {
+		t.Fatal("AV1SDPOffersReceiveRTCPFeedback rejected AV1 payload-specific lrr")
+	}
+	if av1.AV1SDPOffersReceiveRTCPFeedback(sdp, "goog-remb") {
+		t.Fatal("AV1SDPOffersReceiveRTCPFeedback accepted missing feedback")
+	}
+	if av1.AV1SDPOffersReceiveRTCPFeedback(sdp, "") {
+		t.Fatal("AV1SDPOffersReceiveRTCPFeedback accepted empty feedback")
+	}
+
+	wrongPayload := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 96 98",
+		"a=rtpmap:96 VP8/90000",
+		"a=rtpmap:98 AV1/90000",
+		"a=rtcp-fb:96 ccm lrr",
+	)
+	if av1.AV1SDPNegotiatesRTCPFeedback(wrongPayload, av1.AV1SDPRTCPFeedbackLRR) {
+		t.Fatal("AV1SDPNegotiatesRTCPFeedback accepted feedback on non-AV1 payload")
+	}
+
+	inactive := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98",
+		"a=inactive",
+		"a=rtpmap:98 AV1/90000",
+		"a=rtcp-fb:98 ccm lrr",
+	)
+	if av1.AV1SDPNegotiatesRTCPFeedback(inactive, av1.AV1SDPRTCPFeedbackLRR) {
+		t.Fatal("AV1SDPNegotiatesRTCPFeedback accepted inactive section")
+	}
+
+	sendOnly := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98",
+		"a=sendonly",
+		"a=rtpmap:98 AV1/90000",
+		"a=rtcp-fb:98 ccm lrr",
+	)
+	if av1.AV1SDPOffersReceiveRTCPFeedback(sendOnly, av1.AV1SDPRTCPFeedbackLRR) {
+		t.Fatal("AV1SDPOffersReceiveRTCPFeedback accepted sendonly section")
+	}
+	if !av1.AV1SDPAnswersSendRTCPFeedback(sendOnly, av1.AV1SDPRTCPFeedbackLRR) {
+		t.Fatal("AV1SDPAnswersSendRTCPFeedback rejected sendonly section")
+	}
+
+	wildcardBeforeRTPMap := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98",
+		"a=rtcp-fb:* ccm lrr",
+		"a=rtpmap:98 AV1/90000",
+	)
+	if !av1.AV1SDPNegotiatesRTCPFeedback(wildcardBeforeRTPMap, " CCM LRR ") {
+		t.Fatal("AV1SDPNegotiatesRTCPFeedback rejected normalized wildcard feedback")
+	}
+}
+
 func TestAV1SDPOffersReceiveSequence(t *testing.T) {
 	seq := av1.SequenceHeader{
 		SeqProfile:           2,
