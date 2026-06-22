@@ -46,6 +46,7 @@ needs:
 | Use case | API | Ownership model |
 | --- | --- | --- |
 | One-shot decoded pixels | `DecodeIVF` | Copies visible planes into independent `DecodedFrame` values |
+| AV1 WebRTC SDP/fmtp capability checks | `ParseAV1SDPFmtp` / `AV1SDPOffersReceive*` | Parses `AV1/90000` payload bindings and profile/level/tier fmtp values; complete SDP assembly stays caller-owned |
 | Repeated in-memory IVF decode | `NewDecoderFromIVF` + `DecodeNext` | Copies IVF payloads once, then reuses decoder-owned frame and post-filter arenas |
 | Large/file-backed IVF decode | `NewDecoderFromIVFReaderAt` + `DecodeNext` | Indexes IVF frame offsets and reads each payload into one reusable buffer |
 | Already-demuxed temporal units | `NewDecoder(payloads)` + `DecodeNext` | Retains payload slices by reference and reuses all decode/output arenas |
@@ -113,12 +114,16 @@ for {
 Lower-level package APIs expose the same pipeline pieces directly: IVF and OBU
 iterators, RTP packetization/depacketization, parser structs, tile work
 scheduling, residual decode/reconstruct helpers, post-filter scratch binding,
-and DSP primitives. For ordered RTP payload bodies, `NewDecoderFromRTPPayloads`
-is the reusable high-level path for single decode chains and independent
-simulcast layers. `NewLayeredDecoderFromRTPPayloads` is the high-level receive
-path for shared-reference WebRTC SVC streams whose reference slots span spatial
-layers or coded frame sizes. Use the `WithMetadata` variants on `LayeredDecoder`
-when a receive loop needs the decoded output paired with parsed AV1 spatial ID,
+and DSP primitives. SDP/fmtp helpers cover the registered `AV1/90000` payload
+binding, profile/level/tier parsing and emission, sequence-header compatibility
+checks, offer receive checks, and the dependency descriptor extmap URI; complete
+SDP generation, transceiver setup, and RTP header ownership remain with the
+caller. For ordered RTP payload bodies, `NewDecoderFromRTPPayloads` is the
+reusable high-level path for single decode chains and independent simulcast
+layers. `NewLayeredDecoderFromRTPPayloads` is the high-level receive path for
+shared-reference WebRTC SVC streams whose reference slots span spatial layers
+or coded frame sizes. Use the `WithMetadata` variants on `LayeredDecoder` when
+a receive loop needs the decoded output paired with parsed AV1 spatial ID,
 temporal ID, frame type, keyframe flag, and frame-size metadata. RTP dependency
 descriptor fields such as active decode-target masks are RTP header-extension
 metadata and are parsed separately with `ParseRTPDependencyDescriptor`. Both
@@ -135,7 +140,7 @@ result buffer directly. The executable examples in `example_test.go` and
 
 | Area | Status |
 | --- | --- |
-| Containers and transport | IVF, AV1 low-overhead OBU, Annex B, Section 5 temporal units, AV1 RTP payload parse/build/fragment/reassemble |
+| Containers and transport | IVF, AV1 low-overhead OBU, Annex B, Section 5 temporal units, AV1 RTP payload parse/build/fragment/reassemble, AV1 SDP/fmtp profile/level/tier helpers |
 | Decoder profiles | Profile 0 and Profile 1 pass committed/vendored strict-MD5 gates; Profile 2 has passing 4:2:2 8/10-bit and 4:2:0 12-bit profile clips, with wider 12-bit breadth still expanding |
 | Bit depths and formats | 8-bit and 10-bit covered broadly; 12-bit covered by targeted profile-2 clips; 4:2:0, 4:2:2, 4:4:4, and monochrome surfaces |
 | Prediction and residuals | Intra, directional intra, filter intra, CfL, palette, IntraBC, inter/compound, OBMC, warped motion, scaled motion, transforms, dequantization, and CDF adaptation |

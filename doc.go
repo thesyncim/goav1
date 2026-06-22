@@ -2,8 +2,8 @@
 // WebRTC use.
 //
 // The package consumes and produces AV1 Open Bitstream Units and AV1 RTP
-// payload bodies. RTP headers, SRTP, SDP, jitter buffering, packet-loss policy,
-// and network scheduling stay caller-owned.
+// payload bodies. RTP headers, SRTP, full SDP assembly, jitter buffering,
+// packet-loss policy, and network scheduling stay caller-owned.
 //
 // The implementation is built from byte-exact transport and parser primitives
 // inward. Public helpers expose IVF containers, low-overhead, temporal-unit,
@@ -11,7 +11,8 @@
 // caller-owned RTP sizing, sequence-header parsing, caller-owned frame pools
 // and sample-plane scratch helpers, DSP block/blend helpers, intra/inter
 // prediction, decoder frame-work prediction bridges, residual reconstruction
-// primitives, post-reconstruction filtering helpers, tile block/transform
+// primitives, post-reconstruction filtering helpers, AV1 SDP/fmtp capability
+// parsing and emission, tile block/transform
 // geometry, transform/coefficient context replay helpers, tile coefficient
 // replay, tile block coefficient decode, tile-level restoration orchestration,
 // decoder residual-state setup and residual execution/retention bridges for
