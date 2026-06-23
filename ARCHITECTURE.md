@@ -1082,11 +1082,13 @@ Two pieces of bitstream syntax carry layer information:
   single-stream decoder path. Integrations that need explicit
   spatial-layer selection should follow `docs/svc.md` and the
   `cmd/dump_svc` / testvector harness patterns.
-- Tile-list playback is not wired. Tile-list OBUs parse and are
-  surfaced as events, external anchor frames can be resolved through the
-  provider-backed surface namespace, raw entry payloads can be planned as
-  single-tile residual jobs, and output-frame blit helpers exist, but
-  anchor-tile reuse plus compressed tile reconstruction remain open.
+- Tile-list playback is wired for frame-context-carrying events. Tile-list
+  OBUs parse and surface as events, anchors resolve through reference slots or
+  a provider-backed surface namespace, raw entry payloads plan as single-tile
+  residual jobs, entries reconstruct through the residual runner, and decoded
+  rectangles blit into a published mosaic output. Context-less tile-list OBUs
+  still fail early because no tile grid is available to validate or decode
+  against.
 
 ---
 

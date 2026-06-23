@@ -1696,17 +1696,42 @@ func TestPublicDecoderFrameWorkResidualEventRunnerRunEvents(t *testing.T) {
 	}
 }
 
-func TestPublicDecoderFrameWorkResidualEventRunnerRejectsTileList(t *testing.T) {
+func TestPublicDecoderFrameWorkResidualEventRunnerRequiresRunnerForTileList(t *testing.T) {
 	var eventRunner av1.DecoderFrameWorkResidualEventRunner
+	sequence := av1.SequenceHeader{ColorConfig: av1.ColorConfig{BitDepth: 8, MonoChrome: true}}
+	event := av1.DecoderEvent{
+		Kind: av1.DecoderEventTileList,
+		FrameSize: av1.FrameSize{
+			CodedWidth:    64,
+			UpscaledWidth: 64,
+			Height:        64,
+		},
+		TileInfo: av1.TileInfo{
+			Cols:       1,
+			Rows:       1,
+			ColStartSB: [av1.MaxTileCols + 1]uint16{0, 1},
+			RowStartSB: [av1.MaxTileRows + 1]uint16{0, 1},
+		},
+		TileList: av1.TileList{
+			OutputFrameWidthInTilesMinus1:  0,
+			OutputFrameHeightInTilesMinus1: 0,
+			TileCountMinus1:                0,
+			Entries: []av1.TileListEntry{{
+				AnchorFrameIdx:     0,
+				AnchorTileRow:      0,
+				AnchorTileCol:      0,
+				TileDataSizeMinus1: 0,
+				TileData:           []byte{0x80},
+			}},
+		},
+	}
 
-	result, err := eventRunner.RunEvents(av1.SequenceHeader{}, []av1.DecoderEvent{
-		{Kind: av1.DecoderEventTileList},
-	}, av1.DecoderFrameWorkSideDataScratch{}, nil)
-	if !errors.Is(err, av1.ErrDecoderUnsupportedTileList) {
-		t.Fatalf("RunEvents err=%v want %v", err, av1.ErrDecoderUnsupportedTileList)
+	result, err := eventRunner.RunEvents(sequence, []av1.DecoderEvent{event}, av1.DecoderFrameWorkSideDataScratch{}, nil)
+	if !errors.Is(err, av1.ErrThreadingInvalidBatch) {
+		t.Fatalf("RunEvents err=%v want %v", err, av1.ErrThreadingInvalidBatch)
 	}
 	if result.Count != 0 || result.OutputCount != 0 || result.CompletedFrames != 0 {
-		t.Fatalf("result after unsupported tile list=%+v", result)
+		t.Fatalf("result after rejected tile list=%+v", result)
 	}
 }
 
@@ -1745,8 +1770,8 @@ func TestPublicDecoderFrameWorkResidualEventRunnerValidatesTileListLayout(t *tes
 	_, err := eventRunner.RunEvents(av1.SequenceHeader{}, []av1.DecoderEvent{
 		{Kind: av1.DecoderEventTileList, TileList: tileList, TileInfo: validTiles},
 	}, av1.DecoderFrameWorkSideDataScratch{}, nil)
-	if !errors.Is(err, av1.ErrDecoderUnsupportedTileList) {
-		t.Fatalf("valid tile-list layout err=%v want %v", err, av1.ErrDecoderUnsupportedTileList)
+	if !errors.Is(err, av1.ErrThreadingInvalidBatch) {
+		t.Fatalf("valid tile-list layout err=%v want %v", err, av1.ErrThreadingInvalidBatch)
 	}
 
 	badAnchor := validTiles
@@ -1765,6 +1790,124 @@ func TestPublicDecoderFrameWorkResidualEventRunnerValidatesTileListLayout(t *tes
 	}, av1.DecoderFrameWorkSideDataScratch{}, nil)
 	if !errors.Is(err, av1.ErrTileListNonUniformTileSize) {
 		t.Fatalf("non-uniform layout err=%v want %v", err, av1.ErrTileListNonUniformTileSize)
+	}
+}
+
+func TestPublicDecoderFrameWorkResidualEventRunnerPlaysTileList(t *testing.T) {
+	workerPool, err := av1.NewTileWorkerPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerPool.Close()
+
+	streamPayload := publicDecoderResidualLowOverheadStream()
+	var stream av1.DecoderStream
+	var parsed [4]av1.DecoderEvent
+	count, err := stream.PushLowOverhead(streamPayload, parsed[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 || parsed[2].Kind != av1.DecoderEventTileGroup {
+		t.Fatalf("parsed=%+v", parsed[:count])
+	}
+	sequence, ok := stream.SequenceHeader()
+	if !ok {
+		t.Fatal("missing sequence")
+	}
+	event := parsed[2]
+	event.Kind = av1.DecoderEventTileList
+	event.Type = av1.OBUTileList
+	event.Unit = av1.OBUUnit{}
+	event.TileGroup = av1.TileGroup{}
+	event.TileList = av1.TileList{
+		OutputFrameWidthInTilesMinus1:  0,
+		OutputFrameHeightInTilesMinus1: 0,
+		TileCountMinus1:                0,
+		Entries: []av1.TileListEntry{{
+			AnchorFrameIdx:     0,
+			AnchorTileRow:      0,
+			AnchorTileCol:      0,
+			TileDataSizeMinus1: 0,
+			TileData:           []byte{0x80},
+		}},
+	}
+
+	var scratchSpans [1]av1.TileSpan
+	var scratchJobs [1]av1.TileJob
+	var scratchBatches [1]av1.TileBatch
+	size, err := av1.DecoderFrameWorkResidualEventScratchLen(sequence, event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size.Outputs != 1 ||
+		size.Plan != (av1.DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}) ||
+		size.Runner.Workers != 1 ||
+		size.SideData != (av1.DecoderFrameWorkSideDataScratchSize{}) {
+		t.Fatalf("tile-list scratch size=%+v", size)
+	}
+	runnerSize, runnerPlan, err := av1.DecoderFrameWorkResidualEventRunnerScratchLen(sequence, event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runnerSize != size.Runner || runnerPlan != size.Plan {
+		t.Fatalf("tile-list runner scratch=%+v/%+v want %+v/%+v", runnerSize, runnerPlan, size.Runner, size.Plan)
+	}
+	geom, err := av1.TileListOutputGeometryForGrid(event.TileList, event.TileInfo, event.SequenceHeader.Use128x128Superblock)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	format, err := av1.TileListOutputFrameFormat(sequence, geom, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := publicDecoderPostFilterFramePool(t, format, 3)
+	anchorSurface, anchorFrame, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicFillDecoderBlockCoeffFrame(anchorFrame, 0x21)
+	var refs av1.DecoderSurfaceReferences
+	var releases [av1.RefFrames]int
+	if _, err := refs.Refresh(1<<0, anchorSurface, releases[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	var state av1.DecoderFrameWorkState
+	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
+	var outputs [1]*av1.Frame
+	eventRunner, _, err := av1.BindDecoderFrameWorkResidualEventRunner(size, sequence, event, av1.DecoderFrameWorkResidualEventRuntime{
+		State:      &state,
+		Refs:       &refs,
+		FramePool:  &pool,
+		Align:      64,
+		Releases:   releases[:],
+		WorkerPool: workerPool,
+		Outputs:    outputs[:],
+	}, publicDecoderResidualEventScratch(size), &batchRunner)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := eventRunner.RunEvents(sequence, []av1.DecoderEvent{event}, av1.DecoderFrameWorkSideDataScratch{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 1 ||
+		result.ExecutedTileWork != 1 ||
+		result.CompletedFrames != 0 ||
+		result.OutputCount != 1 ||
+		len(result.Outputs) != 1 ||
+		result.Last.Output == nil ||
+		result.Last.Step.Kind != av1.DecoderFrameWorkStepTile ||
+		result.Last.Run != (av1.DecoderFrameWorkStepResult{ExecutedTileWork: true}) ||
+		result.Outputs[0] != result.Last.Output ||
+		outputs[0] != result.Last.Output ||
+		state.Active() {
+		t.Fatalf("tile-list result=%+v active=%v", result, state.Active())
+	}
+	if surface, ok := refs.ReferenceSlot(0); !ok || surface != anchorSurface {
+		t.Fatalf("tile-list mutated reference slot: surface=%d ok=%v want %d", surface, ok, anchorSurface)
 	}
 }
 

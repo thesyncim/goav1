@@ -272,6 +272,9 @@ func EventOutputsFrame(event Event) bool {
 	if event.Kind == EventExistingFrame {
 		return true
 	}
+	if event.Kind == EventTileList && event.TileListErr == nil {
+		return true
+	}
 	return EventCompletesFrameWork(event) && event.FrameHeader.ShowFrame
 }
 

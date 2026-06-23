@@ -72,8 +72,9 @@ type Decoder struct {
 
 // shownSurface names one tracked output surface and the pool that owns it.
 type shownSurface struct {
-	pool  *FramePool
-	index int
+	pool    *FramePool
+	index   int
+	surface int
 }
 
 type decoderPayloadKind uint8
@@ -304,6 +305,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		Stats:             &d.stats,
 	}
 	if d.useExternal {
+		runtime.TileListOutputPool = &d.outputPool
 		provider := decoderExternalSurfaceProvider{coded: &d.pool, output: &d.outputPool}
 		runtime.External = DecoderFrameWorkExternalReferenceRuntime{
 			Provider:      provider,
@@ -476,9 +478,16 @@ func (d *Decoder) postFilterRunner() DecoderFrameWorkPostFilterRunner {
 // next call can release the ones no reference slot holds.
 func (d *Decoder) trackShownSurfaces(out []*Frame) {
 	d.shownHeld = d.shownHeldBuf[:0]
-	// Only the coded pool needs this: the external/upscaled output pool has
-	// its own release path through the surface provider.
-	pool := &d.pool
+	d.trackShownSurfacesInPool(out, &d.pool, 0)
+	if d.useExternal {
+		d.trackShownSurfacesInPool(out, &d.outputPool, decoderExternalOutputSurfaceBase)
+	}
+}
+
+func (d *Decoder) trackShownSurfacesInPool(out []*Frame, pool *FramePool, surfaceBase int) {
+	if pool == nil {
+		return
+	}
 	for _, f := range out {
 		for i := 0; i < pool.Cap(); i++ {
 			pf, err := pool.Frame(i)
@@ -487,13 +496,13 @@ func (d *Decoder) trackShownSurfaces(out []*Frame) {
 			}
 			dup := false
 			for _, h := range d.shownHeld {
-				if h.index == i {
+				if h.pool == pool && h.index == i {
 					dup = true
 					break
 				}
 			}
 			if !dup && len(d.shownHeld) < cap(d.shownHeldBuf) {
-				d.shownHeld = append(d.shownHeld, shownSurface{pool: pool, index: i})
+				d.shownHeld = append(d.shownHeld, shownSurface{pool: pool, index: i, surface: surfaceBase + i})
 			}
 		}
 	}
@@ -505,12 +514,10 @@ func (d *Decoder) trackShownSurfaces(out []*Frame) {
 func (d *Decoder) releaseShownSurfaces() {
 	for _, h := range d.shownHeld {
 		held := false
-		if h.pool == &d.pool {
-			for r := 0; r < RefFrames; r++ {
-				if surface, ok := d.refs.ReferenceSlot(r); ok && surface == h.index {
-					held = true
-					break
-				}
+		for r := 0; r < RefFrames; r++ {
+			if surface, ok := d.refs.ReferenceSlot(r); ok && surface == h.surface {
+				held = true
+				break
 			}
 		}
 		if !held {

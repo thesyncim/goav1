@@ -211,11 +211,12 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         |                                  | blit helpers cover output                      |
 |    |                                  |         |                                  | sizing/copy rectangles. EventTileList carries  |
 |    |                                  |         |                                  | the parsed structure plus TileListErr for      |
-|    |                                  |         |                                  | partial payloads. The stream residual runner   |
-|    |                                  |         |                                  | fails loudly with                              |
-|    |                                  |         |                                  | ErrDecoderUnsupportedTileList until            |
-|    |                                  |         |                                  | end-to-end tile-list decode (anchor-frame      |
-|    |                                  |         |                                  | reuse + per-tile reconstruction blit) is wired.|
+|    |                                  |         |                                  | partial payloads. The residual event/stream    |
+|    |                                  |         |                                  | runners now resolve anchor frames, decode each |
+|    |                                  |         |                                  | entry through the residual runner, blit decoded |
+|    |                                  |         |                                  | tile rectangles into the mosaic output, and    |
+|    |                                  |         |                                  | publish tile-list outputs when frame context   |
+|    |                                  |         |                                  | is present.                                    |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 25 | Frame type: key                  | Yes     | internal/av1/parser/frame.go     | FrameTypeKey; full reference reset path.       |
 |    | Frame type: intra-only           | Yes     | internal/av1/parser/frame.go     | FrameTypeIntraOnly; intra-only refresh.        |
@@ -507,10 +508,12 @@ manifest. The next production-readiness items are:
    prerequisite checks, raw tile-list entry job planning, libaom-shaped
    external anchor-frame resolution, per-entry LAST_FRAME binding for residual
    decode, output geometry/format/copy-region helpers, and entry-level plus
-   whole-list decoded-tile-to-output-frame blit helpers. The stream residual
-   runner still returns `ErrDecoderUnsupportedTileList` for valid layouts
-   instead of silently ignoring playback; automatic end-to-end tile-list decode,
-   reconstruction blitting, and output publication remain future work.
+   whole-list decoded-tile-to-output-frame blit helpers. The residual
+   event/stream runners now perform end-to-end tile-list entry reconstruction,
+   blit decoded tiles into a mosaic, publish one tile-list output frame, and
+   the high-level IVF decoder sizes an external tile-list output pool when a
+   tile-list event carries frame context. Context-less tile-list OBUs still
+   fail early because no tile grid is available to validate or decode against.
 
 ---
 

@@ -336,14 +336,15 @@ func decoderExternalOutputFormatFromSource(source decoderPayloadSource, align in
 		for i := range count {
 			event := events[i]
 			sequence = decoderFrameWorkResidualEventSequence(sequence, event)
-			if !decoderFrameWorkResidualEventBindCandidate(event) ||
-				!event.FrameSize.SuperResEnabled ||
-				event.FrameSize.UpscaledWidth <= event.FrameSize.CodedWidth {
+			if !decoderFrameWorkResidualEventBindCandidate(event) {
 				continue
 			}
-			next, err := FrameOutputFormatFromHeaders(sequence, event.FrameSize, align)
+			next, ok, err := decoderExternalOutputFormatForEvent(sequence, event, align)
 			if err != nil {
 				return err
+			}
+			if !ok {
+				continue
 			}
 			if have && next != format {
 				return ErrFrameInvalidFormat
@@ -360,14 +361,15 @@ func decoderExternalOutputFormatFromRTPSource(source decoderPayloadSource, align
 	var format FrameFormat
 	have := false
 	err := decoderForEachRTPEventFromSource(source, func(sequence SequenceHeader, event DecoderEvent) error {
-		if !decoderFrameWorkResidualEventBindCandidate(event) ||
-			!event.FrameSize.SuperResEnabled ||
-			event.FrameSize.UpscaledWidth <= event.FrameSize.CodedWidth {
+		if !decoderFrameWorkResidualEventBindCandidate(event) {
 			return nil
 		}
-		next, err := FrameOutputFormatFromHeaders(sequence, event.FrameSize, align)
+		next, ok, err := decoderExternalOutputFormatForEvent(sequence, event, align)
 		if err != nil {
 			return err
+		}
+		if !ok {
+			return nil
 		}
 		if have && next != format {
 			return ErrFrameInvalidFormat
@@ -377,6 +379,31 @@ func decoderExternalOutputFormatFromRTPSource(source decoderPayloadSource, align
 		return nil
 	})
 	return have, format, err
+}
+
+func decoderExternalOutputFormatForEvent(sequence SequenceHeader, event DecoderEvent, align int) (FrameFormat, bool, error) {
+	if event.Kind == DecoderEventTileList {
+		if event.TileListErr != nil {
+			return FrameFormat{}, false, event.TileListErr
+		}
+		geometry, err := TileListOutputGeometryForGrid(event.TileList, event.TileInfo, sequence.Use128x128Superblock)
+		if err != nil {
+			return FrameFormat{}, false, err
+		}
+		format, err := TileListOutputFrameFormat(sequence, geometry, align)
+		if err != nil {
+			return FrameFormat{}, false, err
+		}
+		return format, true, nil
+	}
+	if !event.FrameSize.SuperResEnabled || event.FrameSize.UpscaledWidth <= event.FrameSize.CodedWidth {
+		return FrameFormat{}, false, nil
+	}
+	format, err := FrameOutputFormatFromHeaders(sequence, event.FrameSize, align)
+	if err != nil {
+		return FrameFormat{}, false, err
+	}
+	return format, true, nil
 }
 
 func decoderPostFilterScratchArenaUpperBoundFromSource(source decoderPayloadSource, align int, events []DecoderEvent, payloadBuf []byte) (DecoderFrameWorkPostFilterRequestScratchSize, error) {

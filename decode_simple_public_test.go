@@ -729,7 +729,52 @@ func TestSimpleDecoderRejectsSwitchFrameWithoutReferences(t *testing.T) {
 	})
 }
 
-func TestSimpleDecoderTileListIVFErrors(t *testing.T) {
+func TestSimpleDecoderTileListIVFPlayback(t *testing.T) {
+	tilePayload := av1.AppendTileListOBU(nil, av1.TileList{
+		OutputFrameWidthInTilesMinus1:  0,
+		OutputFrameHeightInTilesMinus1: 0,
+		TileCountMinus1:                0,
+		Entries: []av1.TileListEntry{{
+			AnchorFrameIdx:     0,
+			AnchorTileRow:      0,
+			AnchorTileCol:      0,
+			TileDataSizeMinus1: 0,
+			TileData:           []byte{0x80},
+		}},
+	})
+	payload := appendPublicLowOverheadOBU(nil, av1.OBUFrameHeader, publicDecoderResidualFrameHeaderPayload())
+	payload = appendPublicLowOverheadOBU(payload, av1.OBUTileList, tilePayload)
+	ivf := appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
+		{payload: publicDecoderResidualLowOverheadStream()},
+		{timestamp: 1, payload: payload},
+	})
+
+	dec, err := av1.NewDecoderFromIVF(ivf)
+	if err != nil {
+		t.Fatalf("NewDecoderFromIVF: %v", err)
+	}
+	defer dec.Close()
+
+	frames, ok, err := dec.DecodeNext()
+	if err != nil {
+		t.Fatalf("DecodeNext prime: %v", err)
+	}
+	if !ok || len(frames) != 1 || frames[0] == nil {
+		t.Fatalf("DecodeNext prime frames=%d ok=%v", len(frames), ok)
+	}
+
+	frames, ok, err = dec.DecodeNext()
+	if err != nil {
+		t.Fatalf("DecodeNext tile-list: %v", err)
+	}
+	if !ok || len(frames) != 1 || frames[0] == nil ||
+		frames[0].Format.Width != 64 ||
+		frames[0].Format.Height != 64 {
+		t.Fatalf("DecodeNext tile-list frames=%d ok=%v frame=%+v", len(frames), ok, frames)
+	}
+}
+
+func TestSimpleDecoderTileListIVFPlanErrors(t *testing.T) {
 	validPayload := av1.AppendTileListOBU(nil, av1.TileList{
 		OutputFrameWidthInTilesMinus1:  0,
 		OutputFrameHeightInTilesMinus1: 0,
@@ -749,9 +794,9 @@ func TestSimpleDecoderTileListIVFErrors(t *testing.T) {
 		wantErr     error
 	}{
 		{
-			name:        "valid tile list is unsupported playback",
+			name:        "contextless tile list requires frame state",
 			tilePayload: validPayload,
-			wantErr:     av1.ErrDecoderUnsupportedTileList,
+			wantErr:     av1.ErrTileListInvalidAnchorTile,
 		},
 		{
 			name:        "malformed tile list propagates parse error",
@@ -785,25 +830,11 @@ func TestSimpleDecoderTileListIVFErrors(t *testing.T) {
 			})
 
 			dec, err := av1.NewDecoderFromIVF(ivf)
-			if err != nil {
-				t.Fatalf("NewDecoderFromIVF: %v", err)
-			}
-			defer dec.Close()
-
-			frames, ok, err := dec.DecodeNext()
-			if err != nil {
-				t.Fatalf("DecodeNext prime: %v", err)
-			}
-			if !ok || len(frames) == 0 {
-				t.Fatalf("DecodeNext prime frames=%d ok=%v", len(frames), ok)
-			}
-
-			frames, ok, err = dec.DecodeNext()
 			if !errors.Is(err, tc.wantErr) {
-				t.Fatalf("DecodeNext err=%v want %v", err, tc.wantErr)
+				t.Fatalf("NewDecoderFromIVF err=%v want %v", err, tc.wantErr)
 			}
-			if ok || len(frames) != 0 {
-				t.Fatalf("DecodeNext frames=%d ok=%v after tile-list error", len(frames), ok)
+			if dec != nil {
+				dec.Close()
 			}
 		})
 	}
