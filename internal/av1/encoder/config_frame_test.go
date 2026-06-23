@@ -253,6 +253,46 @@ func TestAppendLowOverheadWebRTCKeyFrameTemporalUnitForConfig(t *testing.T) {
 	}
 }
 
+func TestAppendLowOverheadWebRTCKeyFrameTemporalUnitForConfigExplicitSSMetadata(t *testing.T) {
+	cfg := Config{
+		Resolution:        Resolution{Width: 960, Height: 540},
+		Scalability:       ScalabilityModeL3T1h,
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    120,
+		MaxBitrateKbps:    1200,
+		TargetBitrateKbps: 800,
+	}
+	size, unit, err := LowOverheadWebRTCKeyFrameTemporalUnitForConfigSize(cfg, 0, 1)
+	if err != nil {
+		t.Fatalf("LowOverheadWebRTCKeyFrameTemporalUnitForConfigSize: %v", err)
+	}
+	var buf [256]byte
+	out, gotUnit, err := AppendLowOverheadWebRTCKeyFrameTemporalUnitForConfig(buf[:0], cfg, 0, 1)
+	if err != nil {
+		t.Fatalf("AppendLowOverheadWebRTCKeyFrameTemporalUnitForConfig: %v", err)
+	}
+	if len(out) != size || gotUnit != unit {
+		t.Fatalf("len=%d want=%d got=%+v want=%+v", len(out), size, gotUnit, unit)
+	}
+	low := obu.NewLowOverheadIterator(out)
+	if td, ok, err := low.Next(); err != nil || !ok || td.Header.Type != obu.TypeTemporalDelimiter {
+		t.Fatalf("TD ok=%v err=%v header=%+v", ok, err, td.Header)
+	}
+	if seq, ok, err := low.Next(); err != nil || !ok || seq.Header.Type != obu.TypeSequenceHeader {
+		t.Fatalf("seq ok=%v err=%v header=%+v", ok, err, seq.Header)
+	}
+	assertWebRTCScalabilitySSMetadataOBU(t, &low, ScalabilityModeL3T1h,
+		[]uint16{426, 640, 960},
+		[]uint16{240, 360, 540},
+		[]uint8{0xff, 0, 1},
+		[]uint8{0},
+		[]uint8{1},
+	)
+	if frame, ok, err := low.Next(); err != nil || !ok || frame.Header.Type != obu.TypeFrameHeader {
+		t.Fatalf("frame ok=%v err=%v header=%+v", ok, err, frame.Header)
+	}
+}
+
 func TestAppendLowOverheadWebRTCKeyFrameTemporalUnitForConfigAllocs(t *testing.T) {
 	cfg := Config{Resolution: Resolution{Width: 640, Height: 360}, Scalability: ScalabilityModeL1T1}
 	var buf [192]byte
@@ -1577,5 +1617,33 @@ func assertWebRTCScalabilityMetadataOBU(t *testing.T, it *obu.LowOverheadIterato
 	idc, ok := WebRTCScalabilityModeIDC(mode)
 	if !ok || meta.Type != obu.MetadataTypeScalability || meta.Scalability.ModeIDC != idc || meta.Scalability.HasStructure {
 		t.Fatalf("metadata=%+v mode=%s idc=%d ok=%v", meta, mode, idc, ok)
+	}
+}
+
+func assertWebRTCScalabilitySSMetadataOBU(t *testing.T, it *obu.LowOverheadIterator, mode ScalabilityMode, widths []uint16, heights []uint16, refIDs []uint8, groupTIDs []uint8, groupDiffs []uint8) {
+	t.Helper()
+	unit, ok, err := it.Next()
+	if err != nil || !ok || unit.Header.Type != obu.TypeMetadata {
+		t.Fatalf("metadata ok=%v err=%v header=%+v", ok, err, unit.Header)
+	}
+	meta, err := obu.ParseMetadata(unit.Payload)
+	if err != nil {
+		t.Fatalf("ParseMetadata: %v", err)
+	}
+	spatial, temporal, _, ok := mode.Layers()
+	if !ok {
+		t.Fatalf("invalid mode %s", mode)
+	}
+	assertWebRTCScalabilityStructure(t, meta, mode, spatial, temporal, true, refIDs, groupTIDs, groupDiffs)
+	structure := meta.Scalability.Structure
+	if len(widths) != int(spatial) || len(heights) != int(spatial) {
+		t.Fatalf("dimension test data widths=%d heights=%d spatial=%d", len(widths), len(heights), spatial)
+	}
+	for i := range widths {
+		if structure.SpatialLayerMaxWidth[i] != widths[i] || structure.SpatialLayerMaxHeight[i] != heights[i] {
+			t.Fatalf("dimensions[%d]=%dx%d want %dx%d structure=%+v", i,
+				structure.SpatialLayerMaxWidth[i], structure.SpatialLayerMaxHeight[i],
+				widths[i], heights[i], structure)
+		}
 	}
 }

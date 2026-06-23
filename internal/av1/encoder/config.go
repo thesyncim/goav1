@@ -262,9 +262,9 @@ func AppendWebRTCScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
 
 // WebRTCScalabilityModeIDC maps a W3C WebRTC scalabilityMode value to its
 // predefined AV1 metadata_scalability() scalability_mode_idc value. ok is
-// false when AV1 has no predefined IDC for the WebRTC mode; callers that must
-// signal those shapes need MetadataScalabilityModeSS plus an explicit
-// scalability_structure().
+// false when AV1 has no predefined IDC for the WebRTC mode. The metadata OBU
+// writers still signal those shapes with MetadataScalabilityModeSS plus an
+// explicit scalability_structure().
 func WebRTCScalabilityModeIDC(mode ScalabilityMode) (idc uint8, ok bool) {
 	switch mode {
 	case ScalabilityModeL1T2:

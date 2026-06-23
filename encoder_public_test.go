@@ -354,6 +354,56 @@ func TestPublicEncoderWebRTCScalabilityMetadataOBU(t *testing.T) {
 		t.Fatalf("metadata=%+v", meta)
 	}
 
+	ssSize, ok, err := av1.EncoderLowOverheadWebRTCScalabilityMetadataOBUSize(av1.EncoderScalabilityModeS3T3h)
+	if err != nil || !ok {
+		t.Fatalf("EncoderLowOverheadWebRTCScalabilityMetadataOBUSize S3T3h: size=%d ok=%v err=%v", ssSize, ok, err)
+	}
+	var ssBuf [64]byte
+	ssOut, ok, err := av1.AppendEncoderLowOverheadWebRTCScalabilityMetadataOBU(ssBuf[:0], av1.EncoderScalabilityModeS3T3h)
+	if err != nil || !ok {
+		t.Fatalf("AppendEncoderLowOverheadWebRTCScalabilityMetadataOBU S3T3h: ok=%v err=%v", ok, err)
+	}
+	if len(ssOut) != ssSize {
+		t.Fatalf("S3T3h len=%d want %d", len(ssOut), ssSize)
+	}
+	ssUnit, _, err := av1.ParseLowOverheadOBU(ssOut)
+	if err != nil {
+		t.Fatalf("ParseLowOverheadOBU S3T3h: %v", err)
+	}
+	ssMeta, err := av1.ParseMetadataOBU(ssUnit.Payload)
+	if err != nil {
+		t.Fatalf("ParseMetadataOBU S3T3h: %v", err)
+	}
+	if ssMeta.Type != av1.MetadataTypeScalability ||
+		ssMeta.Scalability.ModeIDC != av1.MetadataScalabilityModeSS ||
+		!ssMeta.Scalability.HasStructure {
+		t.Fatalf("S3T3h metadata=%+v", ssMeta)
+	}
+	ss := ssMeta.Scalability.Structure
+	if ss.SpatialLayersCountMinus1 != 2 ||
+		ss.SpatialLayerDimensionsPresent ||
+		!ss.SpatialLayerDescriptionPresent ||
+		!ss.TemporalGroupDescriptionPresent ||
+		ss.SpatialLayerRefID[0] != 0xff ||
+		ss.SpatialLayerRefID[1] != 0xff ||
+		ss.SpatialLayerRefID[2] != 0xff ||
+		ss.TemporalGroupSize != 4 ||
+		ss.TemporalGroup[0].TemporalID != 0 ||
+		ss.TemporalGroup[0].RefCount != 1 ||
+		ss.TemporalGroup[0].RefPicDiff[0] != 4 ||
+		ss.TemporalGroup[1].TemporalID != 2 ||
+		ss.TemporalGroup[1].RefCount != 1 ||
+		ss.TemporalGroup[1].RefPicDiff[0] != 1 ||
+		ss.TemporalGroup[2].TemporalID != 1 ||
+		ss.TemporalGroup[2].RefCount != 1 ||
+		ss.TemporalGroup[2].RefPicDiff[0] != 2 ||
+		ss.TemporalGroup[2].TemporalSwitchingUp ||
+		ss.TemporalGroup[3].TemporalID != 2 ||
+		ss.TemporalGroup[3].RefCount != 1 ||
+		ss.TemporalGroup[3].RefPicDiff[0] != 1 {
+		t.Fatalf("S3T3h structure=%+v", ss)
+	}
+
 	prefix := []byte{0xee}
 	noMetadata, ok, err := av1.AppendEncoderLowOverheadWebRTCScalabilityMetadataOBU(prefix, av1.EncoderScalabilityModeL1T1)
 	if err != nil || ok || !bytes.Equal(noMetadata, prefix) {

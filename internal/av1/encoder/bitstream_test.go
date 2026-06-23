@@ -198,6 +198,128 @@ func TestAppendLowOverheadWebRTCScalabilityMetadataOBU(t *testing.T) {
 	}
 }
 
+func TestAppendLowOverheadWebRTCScalabilityMetadataOBUExplicitSS(t *testing.T) {
+	for _, tc := range []struct {
+		mode      ScalabilityMode
+		spatial   uint8
+		temporal  uint8
+		refIDs    []uint8
+		groupTIDs []uint8
+		groupDiff []uint8
+	}{
+		{
+			mode:      ScalabilityModeL2T1_KEY,
+			spatial:   2,
+			temporal:  1,
+			refIDs:    []uint8{0xff, 0},
+			groupTIDs: []uint8{0},
+			groupDiff: []uint8{1},
+		},
+		{
+			mode:      ScalabilityModeL3T1h,
+			spatial:   3,
+			temporal:  1,
+			refIDs:    []uint8{0xff, 0, 1},
+			groupTIDs: []uint8{0},
+			groupDiff: []uint8{1},
+		},
+		{
+			mode:      ScalabilityModeS3T3h,
+			spatial:   3,
+			temporal:  3,
+			refIDs:    []uint8{0xff, 0xff, 0xff},
+			groupTIDs: []uint8{0, 2, 1, 2},
+			groupDiff: []uint8{4, 1, 2, 1},
+		},
+	} {
+		t.Run(tc.mode.String(), func(t *testing.T) {
+			size, ok, err := LowOverheadWebRTCScalabilityMetadataOBUSize(tc.mode)
+			if err != nil || !ok {
+				t.Fatalf("LowOverheadWebRTCScalabilityMetadataOBUSize: size=%d ok=%v err=%v", size, ok, err)
+			}
+			var buf [64]byte
+			out, ok, err := AppendLowOverheadWebRTCScalabilityMetadataOBU(buf[:0], tc.mode)
+			if err != nil || !ok {
+				t.Fatalf("AppendLowOverheadWebRTCScalabilityMetadataOBU: ok=%v err=%v", ok, err)
+			}
+			if len(out) != size {
+				t.Fatalf("len=%d want %d", len(out), size)
+			}
+			unit, consumed, err := obu.ParseLowOverhead(out)
+			if err != nil {
+				t.Fatalf("ParseLowOverhead: %v", err)
+			}
+			if consumed != len(out) || unit.Header.Type != obu.TypeMetadata {
+				t.Fatalf("metadata consumed=%d header=%+v", consumed, unit.Header)
+			}
+			meta, err := obu.ParseMetadata(unit.Payload)
+			if err != nil {
+				t.Fatalf("ParseMetadata: %v", err)
+			}
+			assertWebRTCScalabilityStructure(t, meta, tc.mode, tc.spatial, tc.temporal, false, tc.refIDs, tc.groupTIDs, tc.groupDiff)
+		})
+	}
+}
+
+func TestAppendLowOverheadWebRTCScalabilityMetadataOBUAllWebRTCModes(t *testing.T) {
+	for mode := ScalabilityMode(0); mode < scalabilityModeCount; mode++ {
+		t.Run(mode.String(), func(t *testing.T) {
+			size, ok, err := LowOverheadWebRTCScalabilityMetadataOBUSize(mode)
+			if err != nil {
+				t.Fatalf("LowOverheadWebRTCScalabilityMetadataOBUSize: %v", err)
+			}
+			if mode == ScalabilityModeL1T1 {
+				if ok || size != 0 {
+					t.Fatalf("L1T1 metadata size=%d ok=%v", size, ok)
+				}
+				return
+			}
+			if !ok || size == 0 {
+				t.Fatalf("%s metadata size=%d ok=%v", mode, size, ok)
+			}
+			var buf [96]byte
+			out, ok, err := AppendLowOverheadWebRTCScalabilityMetadataOBU(buf[:0], mode)
+			if err != nil || !ok {
+				t.Fatalf("AppendLowOverheadWebRTCScalabilityMetadataOBU: ok=%v err=%v", ok, err)
+			}
+			unit, consumed, err := obu.ParseLowOverhead(out)
+			if err != nil || consumed != len(out) || unit.Header.Type != obu.TypeMetadata {
+				t.Fatalf("ParseLowOverhead consumed=%d len=%d header=%+v err=%v", consumed, len(out), unit.Header, err)
+			}
+			meta, err := obu.ParseMetadata(unit.Payload)
+			if err != nil {
+				t.Fatalf("ParseMetadata: %v", err)
+			}
+			if idc, hasIDC := WebRTCScalabilityModeIDC(mode); hasIDC {
+				if meta.Type != obu.MetadataTypeScalability || meta.Scalability.ModeIDC != idc || meta.Scalability.HasStructure {
+					t.Fatalf("predefined metadata=%+v idc=%d", meta, idc)
+				}
+				return
+			}
+			spatial, temporal, _, ok := mode.Layers()
+			if !ok {
+				t.Fatalf("invalid mode %s", mode)
+			}
+			refIDs := make([]uint8, spatial)
+			for i := range refIDs {
+				refIDs[i] = webRTCScalabilitySpatialLayerRefID(mode, uint8(i))
+			}
+			groupSize, ok := webRTCScalabilityTemporalGroupSize(temporal)
+			if !ok {
+				t.Fatalf("temporal group for %s", mode)
+			}
+			groupTIDs := make([]uint8, groupSize)
+			groupDiffs := make([]uint8, groupSize)
+			for i := uint8(0); i < groupSize; i++ {
+				entry := webRTCScalabilityTemporalGroupEntry(temporal, i)
+				groupTIDs[i] = entry.temporalID
+				groupDiffs[i] = entry.refPicDiff
+			}
+			assertWebRTCScalabilityStructure(t, meta, mode, spatial, temporal, false, refIDs, groupTIDs, groupDiffs)
+		})
+	}
+}
+
 func TestAppendWebRTCScalabilityMetadataPayloadAllocs(t *testing.T) {
 	var payload [4]byte
 	if _, ok, err := AppendWebRTCScalabilityMetadataPayload(payload[:0], ScalabilityModeL2T2); err != nil || !ok {
@@ -207,9 +329,19 @@ func TestAppendWebRTCScalabilityMetadataPayloadAllocs(t *testing.T) {
 	if _, ok, err := AppendLowOverheadWebRTCScalabilityMetadataOBU(obuBuf[:0], ScalabilityModeL2T2); err != nil || !ok {
 		t.Fatalf("preflight obu ok=%v err=%v", ok, err)
 	}
+	var ssPayload [32]byte
+	if _, ok, err := AppendWebRTCScalabilityMetadataPayload(ssPayload[:0], ScalabilityModeS3T3h); err != nil || !ok {
+		t.Fatalf("preflight ss payload ok=%v err=%v", ok, err)
+	}
+	var ssOBU [40]byte
+	if _, ok, err := AppendLowOverheadWebRTCScalabilityMetadataOBU(ssOBU[:0], ScalabilityModeS3T3h); err != nil || !ok {
+		t.Fatalf("preflight ss obu ok=%v err=%v", ok, err)
+	}
 	allocs := testing.AllocsPerRun(1000, func() {
 		_, _, _ = AppendWebRTCScalabilityMetadataPayload(payload[:0], ScalabilityModeL2T2)
 		_, _, _ = AppendLowOverheadWebRTCScalabilityMetadataOBU(obuBuf[:0], ScalabilityModeL2T2)
+		_, _, _ = AppendWebRTCScalabilityMetadataPayload(ssPayload[:0], ScalabilityModeS3T3h)
+		_, _, _ = AppendLowOverheadWebRTCScalabilityMetadataOBU(ssOBU[:0], ScalabilityModeS3T3h)
 	})
 	if allocs != 0 {
 		t.Fatalf("metadata writers allocated: %f", allocs)
@@ -299,6 +431,47 @@ func TestAppendLowOverheadTemporalUnitAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("AppendLowOverheadTemporalUnit allocated: %f", allocs)
+	}
+}
+
+func assertWebRTCScalabilityStructure(t *testing.T, meta obu.Metadata, mode ScalabilityMode, spatial uint8, temporal uint8, wantDimensions bool, refIDs []uint8, groupTIDs []uint8, groupDiffs []uint8) {
+	t.Helper()
+	if meta.Type != obu.MetadataTypeScalability || meta.Scalability.ModeIDC != obu.ScalabilityModeSS || !meta.Scalability.HasStructure {
+		t.Fatalf("metadata=%+v want SS structure for %s", meta, mode)
+	}
+	structure := meta.Scalability.Structure
+	if structure.SpatialLayersCountMinus1 != spatial-1 ||
+		structure.SpatialLayerDimensionsPresent != wantDimensions ||
+		!structure.SpatialLayerDescriptionPresent ||
+		!structure.TemporalGroupDescriptionPresent {
+		t.Fatalf("structure flags=%+v mode=%s spatial=%d dimensions=%v", structure, mode, spatial, wantDimensions)
+	}
+	for i, want := range refIDs {
+		if structure.SpatialLayerRefID[i] != want {
+			t.Fatalf("refID[%d]=%d want %d structure=%+v", i, structure.SpatialLayerRefID[i], want, structure)
+		}
+	}
+	if structure.TemporalGroupSize != uint8(len(groupTIDs)) || len(groupTIDs) != len(groupDiffs) {
+		t.Fatalf("temporal group size=%d tids=%d diffs=%d", structure.TemporalGroupSize, len(groupTIDs), len(groupDiffs))
+	}
+	for i, wantTID := range groupTIDs {
+		entry := structure.TemporalGroup[i]
+		if entry.TemporalID != wantTID || entry.RefCount != 1 || entry.RefPicDiff[0] != groupDiffs[i] {
+			t.Fatalf("temporal group[%d]=%+v want tid=%d diff=%d", i, entry, wantTID, groupDiffs[i])
+		}
+		wantTemporalSwitchingUp := true
+		if len(groupTIDs) == 4 && i == 2 {
+			wantTemporalSwitchingUp = false
+		}
+		if entry.TemporalSwitchingUp != wantTemporalSwitchingUp || entry.SpatialSwitchingUp {
+			t.Fatalf("temporal group[%d] switching=%+v want temporal=%v spatial=false", i, entry, wantTemporalSwitchingUp)
+		}
+		if i == 0 && entry.TemporalID != 0 {
+			t.Fatalf("first temporal group id=%d want 0", entry.TemporalID)
+		}
+		if temporal == 1 && entry.TemporalID != 0 {
+			t.Fatalf("single temporal layer entry=%+v", entry)
+		}
 	}
 }
 

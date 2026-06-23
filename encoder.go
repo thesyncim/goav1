@@ -312,9 +312,9 @@ func AppendEncoderWebRTCScalabilityModes(dst []EncoderScalabilityMode) []Encoder
 
 // EncoderWebRTCScalabilityModeIDC maps a W3C WebRTC scalabilityMode value to
 // its predefined AV1 metadata_scalability() scalability_mode_idc value. ok is
-// false when AV1 has no predefined IDC for the WebRTC mode; callers that must
-// signal those shapes need MetadataScalabilityModeSS plus an explicit
-// scalability_structure().
+// false when AV1 has no predefined IDC for the WebRTC mode. The metadata OBU
+// helpers still support those modes by writing MetadataScalabilityModeSS with
+// an explicit scalability_structure().
 func EncoderWebRTCScalabilityModeIDC(mode EncoderScalabilityMode) (idc uint8, ok bool) {
 	return internalencoder.WebRTCScalabilityModeIDC(mode)
 }

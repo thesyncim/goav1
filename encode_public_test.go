@@ -2116,6 +2116,26 @@ func TestPublicRTCEncoderKeyFrameScalabilityMetadata(t *testing.T) {
 	}
 	assertPublicRTCFrameScalabilityMetadata(t, picture.Frames[0].Data, goav1.MetadataScalabilityModeL2T2, true)
 
+	ssCfg := publicRTCMatrixConfig(960, 540, goav1.EncoderScalabilityModeL3T1h)
+	ssEnc, err := goav1.NewRTCEncoderWithConfig(ssCfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig L3T1h: %v", err)
+	}
+	ssPicture, err := ssEnc.EncodePicture(publicRTCMatrixFrame(960, 540, 0), false)
+	if err != nil {
+		t.Fatalf("EncodePicture L3T1h: %v", err)
+	}
+	if ssPicture.FrameNum < 1 || !ssPicture.Keyframe {
+		t.Fatalf("ss picture=%+v", ssPicture)
+	}
+	assertPublicRTCFrameScalabilitySSMetadata(t, ssPicture.Frames[0].Data,
+		[]uint16{426, 640, 960},
+		[]uint16{240, 360, 540},
+		[]uint8{0xff, 0, 1},
+		[]uint8{0},
+		[]uint8{1},
+	)
+
 	plain, err := goav1.NewRTCEncoderWithConfig(publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T1))
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig L1T1: %v", err)
@@ -3249,6 +3269,67 @@ func assertPublicRTCFrameScalabilityMetadata(t *testing.T, frameData []byte, wan
 	}
 	if meta.Type != goav1.MetadataTypeScalability || meta.Scalability.ModeIDC != wantIDC || meta.Scalability.HasStructure {
 		t.Fatalf("metadata=%+v want idc=%d", meta, wantIDC)
+	}
+	frame, ok, err := it.Next()
+	if err != nil || !ok || (frame.Header.Type != goav1.OBUFrameHeader && frame.Header.Type != goav1.OBUFrame) {
+		t.Fatalf("frame after metadata ok=%v err=%v header=%+v", ok, err, frame.Header)
+	}
+}
+
+func assertPublicRTCFrameScalabilitySSMetadata(t *testing.T, frameData []byte, widths []uint16, heights []uint16, refIDs []uint8, groupTIDs []uint8, groupDiffs []uint8) {
+	t.Helper()
+	it := goav1.NewLowOverheadIterator(frameData)
+	if td, ok, err := it.Next(); err != nil || !ok || td.Header.Type != goav1.OBUTemporalDelimiter {
+		t.Fatalf("TD ok=%v err=%v header=%+v", ok, err, td.Header)
+	}
+	if seq, ok, err := it.Next(); err != nil || !ok || seq.Header.Type != goav1.OBUSequenceHeader {
+		t.Fatalf("sequence ok=%v err=%v header=%+v", ok, err, seq.Header)
+	}
+	next, ok, err := it.Next()
+	if err != nil || !ok || next.Header.Type != goav1.OBUMetadata {
+		t.Fatalf("metadata ok=%v err=%v header=%+v", ok, err, next.Header)
+	}
+	meta, err := goav1.ParseMetadataOBU(next.Payload)
+	if err != nil {
+		t.Fatalf("ParseMetadataOBU: %v", err)
+	}
+	if meta.Type != goav1.MetadataTypeScalability ||
+		meta.Scalability.ModeIDC != goav1.MetadataScalabilityModeSS ||
+		!meta.Scalability.HasStructure {
+		t.Fatalf("metadata=%+v", meta)
+	}
+	structure := meta.Scalability.Structure
+	if !structure.SpatialLayerDimensionsPresent ||
+		!structure.SpatialLayerDescriptionPresent ||
+		!structure.TemporalGroupDescriptionPresent ||
+		structure.SpatialLayersCountMinus1 != uint8(len(widths)-1) {
+		t.Fatalf("structure flags=%+v", structure)
+	}
+	for i := range widths {
+		if structure.SpatialLayerMaxWidth[i] != widths[i] || structure.SpatialLayerMaxHeight[i] != heights[i] {
+			t.Fatalf("dimensions[%d]=%dx%d want %dx%d structure=%+v", i,
+				structure.SpatialLayerMaxWidth[i], structure.SpatialLayerMaxHeight[i],
+				widths[i], heights[i], structure)
+		}
+		if structure.SpatialLayerRefID[i] != refIDs[i] {
+			t.Fatalf("refID[%d]=%d want %d structure=%+v", i, structure.SpatialLayerRefID[i], refIDs[i], structure)
+		}
+	}
+	if structure.TemporalGroupSize != uint8(len(groupTIDs)) || len(groupTIDs) != len(groupDiffs) {
+		t.Fatalf("temporal group size=%d tids=%d diffs=%d", structure.TemporalGroupSize, len(groupTIDs), len(groupDiffs))
+	}
+	for i, tid := range groupTIDs {
+		entry := structure.TemporalGroup[i]
+		if entry.TemporalID != tid || entry.RefCount != 1 || entry.RefPicDiff[0] != groupDiffs[i] {
+			t.Fatalf("group[%d]=%+v want tid=%d diff=%d", i, entry, tid, groupDiffs[i])
+		}
+		wantTemporalSwitchingUp := true
+		if len(groupTIDs) == 4 && i == 2 {
+			wantTemporalSwitchingUp = false
+		}
+		if entry.TemporalSwitchingUp != wantTemporalSwitchingUp || entry.SpatialSwitchingUp {
+			t.Fatalf("group[%d] switching=%+v want temporal=%v spatial=false", i, entry, wantTemporalSwitchingUp)
+		}
 	}
 	frame, ok, err := it.Next()
 	if err != nil || !ok || (frame.Header.Type != goav1.OBUFrameHeader && frame.Header.Type != goav1.OBUFrame) {

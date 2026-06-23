@@ -142,15 +142,17 @@ For send-side WebRTC capability checks, `EncoderWebRTCScalabilityModeIDC`
 maps a W3C `scalabilityMode` value such as `L2T2_KEY` to the predefined
 AV1 `scalability_mode_idc` used by scalability metadata. The boolean return
 is false for modes without a predefined AV1 IDC, such as `L1T1`, `L2T1_KEY`,
-three-spatial `h` modes, and `T1` key modes; callers that need to signal
-those shapes must use `MetadataScalabilityModeSS` with an explicit
-`scalability_structure()`.
+three-spatial `h` modes, and `T1` key modes.
 
 `RTCEncoder`, `WebRTCEncoder`, and the lower-level
 `AppendEncoderLowOverheadWebRTCScalabilityMetadataOBU` helper emit the
-predefined-IDC metadata as a non-layer-specific metadata OBU immediately after
-the sequence header on key temporal units. Modes without a predefined IDC keep
-the metadata OBU absent until the caller supplies an explicit SS structure.
+scalability metadata as a non-layer-specific metadata OBU immediately after
+the sequence header on key temporal units. Modes with a predefined AV1 IDC use
+that compact identifier. Supported modes without a predefined IDC use
+`MetadataScalabilityModeSS` plus an explicit `scalability_structure()` carrying
+spatial references and the T1/T2/T3 temporal group. Config-derived key temporal
+units also include per-spatial-layer dimensions in the SS structure. `L1T1`
+remains metadata-free because AV1 assigns it no scalability metadata IDC.
 
 ---
 
