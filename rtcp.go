@@ -2199,6 +2199,28 @@ func EncoderWebRTCRTCPPacketsRequireKeyFrame(
 	return false, nil
 }
 
+// EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame parses a raw compound RTCP
+// packet stream and reports whether any feedback packet should force the next
+// WebRTC encoder picture to be a key picture. Parsed packets are appended into
+// packetScratch without allocation and returned as the newly parsed suffix.
+// Non-feedback RTCP packets are ignored. PLI, non-empty FIR, and valid AV1 LRR
+// feedback can force a key picture; transport feedback, NACK, REMB, and
+// unknown PSFB feedback do not.
+func EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
+	config EncoderConfig,
+	compound []byte,
+	packetScratch []RTCPPacket,
+	firScratch []RTCPFullIntraRequestEntry,
+	lrrScratch []AV1RTCPLayerRefreshRequestEntry,
+) (bool, []RTCPPacket, error) {
+	packets, err := ParseRTCPCompoundPackets(compound, packetScratch)
+	if err != nil {
+		return false, packets, err
+	}
+	force, err := EncoderWebRTCRTCPPacketsRequireKeyFrame(config, packets, firScratch, lrrScratch)
+	return force, packets, err
+}
+
 func encoderWebRTCValidateLayerRefreshRequestForConfig(
 	normalized EncoderConfig, entry AV1RTCPLayerRefreshRequestEntry,
 ) error {

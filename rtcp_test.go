@@ -1197,6 +1197,119 @@ func TestEncoderWebRTCRTCPPacketsRequireKeyFrame(t *testing.T) {
 	}
 }
 
+func TestEncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(t *testing.T) {
+	cfg := testAV1RTCPEncoderConfig(av1.EncoderScalabilityModeL2T2)
+
+	compound, err := av1.AppendRTCPSenderReportPacket(make([]byte, 0, 128), av1.RTCPSenderReport{
+		SenderSSRC: 0x01020304,
+	})
+	if err != nil {
+		t.Fatalf("AppendRTCPSenderReportPacket: %v", err)
+	}
+	compound, err = av1.AppendRTCPFeedbackPacket(compound, av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPRTPFBPacketType,
+		FMT:        av1.RTCPRTPFBGenericNACKFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0x05060708,
+	})
+	if err != nil {
+		t.Fatalf("AppendRTCPFeedbackPacket NACK: %v", err)
+	}
+	transportOnlyLen := len(compound)
+	compound, err = av1.AppendRTCPFeedbackPacket(compound, av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBPictureLossIndicationFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0x05060708,
+	})
+	if err != nil {
+		t.Fatalf("AppendRTCPFeedbackPacket PLI: %v", err)
+	}
+
+	packetScratch := make([]av1.RTCPPacket, 1, 4)
+	packetScratch[0] = av1.RTCPPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		Count:      av1.RTCPPSFBPictureLossIndicationFMT,
+		Payload:    []byte{0},
+	}
+	force, packets, err := av1.EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
+		cfg,
+		compound,
+		packetScratch[:1:4],
+		make([]av1.RTCPFullIntraRequestEntry, 0, 1),
+		make([]av1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+	)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame: %v", err)
+	}
+	if !force {
+		t.Fatal("compound feedback did not require key frame")
+	}
+	if len(packets) != 3 {
+		t.Fatalf("parsed packet len=%d want 3", len(packets))
+	}
+	if packetScratch[0].PacketType != av1.RTCPPSFBPacketType || len(packetScratch[0].Payload) != 1 {
+		t.Fatalf("scratch prefix clobbered: %+v", packetScratch[0])
+	}
+
+	force, packets, err = av1.EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
+		cfg,
+		compound[:transportOnlyLen],
+		make([]av1.RTCPPacket, 0, 2),
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("transport-only compound decision: %v", err)
+	}
+	if force {
+		t.Fatal("transport-only compound required key frame")
+	}
+	if len(packets) != 2 {
+		t.Fatalf("transport-only parsed packet len=%d want 2", len(packets))
+	}
+
+	_, _, err = av1.EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
+		cfg,
+		compound[:len(compound)-1],
+		make([]av1.RTCPPacket, 0, 3),
+		nil,
+		nil,
+	)
+	if !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("truncated compound err=%v want %v", err, av1.ErrRTCPShortBuffer)
+	}
+}
+
+func TestEncoderWebRTCRTCPCompoundPacketsRequireKeyFrameAllocs(t *testing.T) {
+	cfg := testAV1RTCPEncoderConfig(av1.EncoderScalabilityModeL1T1)
+	compound := testAV1RTCPFeedbackCompound(t, av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBPictureLossIndicationFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0x05060708,
+	})
+	packetScratch := make([]av1.RTCPPacket, 0, 1)
+	allocs := testing.AllocsPerRun(1000, func() {
+		force, packets, err := av1.EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
+			cfg,
+			compound,
+			packetScratch[:0],
+			nil,
+			nil,
+		)
+		if err != nil {
+			t.Fatalf("EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame: %v", err)
+		}
+		if !force || len(packets) != 1 {
+			t.Fatalf("force=%v packet len=%d want true,1", force, len(packets))
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame allocations=%v want 0", allocs)
+	}
+}
+
 func TestEncoderWebRTCRTCPPacketsRequireKeyFrameRejectsInvalid(t *testing.T) {
 	cfg := av1.EncoderConfig{
 		Resolution:   av1.EncoderResolution{Width: 640, Height: 360},
@@ -1998,6 +2111,65 @@ func TestEncoderWebRTCValidateLayerRefreshRequest(t *testing.T) {
 	}
 }
 
+func TestEncoderWebRTCValidateLayerRefreshRequestModeMatrix(t *testing.T) {
+	for _, mode := range av1.EncoderWebRTCScalabilityModes() {
+		t.Run(mode.String(), func(t *testing.T) {
+			spatialLayers, temporalLayers, _, ok := mode.Layers()
+			if !ok {
+				t.Fatalf("invalid scalability mode %s", mode)
+			}
+			width, height := publicRTCMatrixGeometry(t, mode)
+			cfg := publicRTCMatrixConfig(width, height, mode)
+			valid := testAV1RTCPValidLayerRefreshEntry(t, mode)
+			compound := testAV1RTCPFeedbackCompound(t, av1.RTCPFeedbackPacket{
+				PacketType: av1.RTCPPSFBPacketType,
+				FMT:        av1.RTCPPSFBLayerRefreshRequestFMT,
+				SenderSSRC: 0x01020304,
+				MediaSSRC:  0x05060708,
+				FCI:        testAV1RTCPLayerRefreshFCI(t, []av1.AV1RTCPLayerRefreshRequestEntry{valid}),
+			})
+			force, packets, err := av1.EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
+				cfg,
+				compound,
+				make([]av1.RTCPPacket, 0, 1),
+				nil,
+				make([]av1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+			)
+			if err != nil {
+				t.Fatalf("valid LRR compound decision: %v", err)
+			}
+			if !force || len(packets) != 1 {
+				t.Fatalf("valid LRR force=%v packet len=%d want true,1", force, len(packets))
+			}
+
+			badTemporal := valid
+			badTemporal.Target.TemporalID = temporalLayers
+			if err := av1.EncoderWebRTCValidateLayerRefreshRequest(cfg, badTemporal); !errors.Is(err, av1.ErrRTCPInvalidLayerRefreshRequest) {
+				t.Fatalf("bad temporal target error = %v, want ErrRTCPInvalidLayerRefreshRequest", err)
+			}
+
+			badSpatial := valid
+			badSpatial.Target.SpatialID = spatialLayers
+			badCompound := testAV1RTCPFeedbackCompound(t, av1.RTCPFeedbackPacket{
+				PacketType: av1.RTCPPSFBPacketType,
+				FMT:        av1.RTCPPSFBLayerRefreshRequestFMT,
+				SenderSSRC: 0x01020304,
+				MediaSSRC:  0x05060708,
+				FCI:        testAV1RTCPLayerRefreshFCI(t, []av1.AV1RTCPLayerRefreshRequestEntry{badSpatial}),
+			})
+			if _, _, err := av1.EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
+				cfg,
+				badCompound,
+				make([]av1.RTCPPacket, 0, 1),
+				nil,
+				make([]av1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+			); !errors.Is(err, av1.ErrRTCPInvalidLayerRefreshRequest) {
+				t.Fatalf("bad spatial target compound error = %v, want ErrRTCPInvalidLayerRefreshRequest", err)
+			}
+		})
+	}
+}
+
 func assertRTCPTransportFeedbackPackets(
 	t *testing.T, got []av1.RTCPTransportFeedbackPacket, want []av1.RTCPTransportFeedbackPacket,
 ) {
@@ -2022,4 +2194,51 @@ func testAV1RTCPEncoderConfig(mode av1.EncoderScalabilityMode) av1.EncoderConfig
 		TargetBitrateKbps: 300,
 		RateControl:       av1.EncoderRateControlCBR,
 	}
+}
+
+func testAV1RTCPFeedbackCompound(t *testing.T, packet av1.RTCPFeedbackPacket) []byte {
+	t.Helper()
+	compound, err := av1.AppendRTCPFeedbackPacket(
+		make([]byte, 0, av1.RTCPFeedbackPacketHeaderSize+len(packet.FCI)),
+		packet,
+	)
+	if err != nil {
+		t.Fatalf("AppendRTCPFeedbackPacket: %v", err)
+	}
+	return compound
+}
+
+func testAV1RTCPLayerRefreshFCI(t *testing.T, entries []av1.AV1RTCPLayerRefreshRequestEntry) []byte {
+	t.Helper()
+	size, err := av1.AV1RTCPLayerRefreshRequestEntriesSize(entries)
+	if err != nil {
+		t.Fatalf("AV1RTCPLayerRefreshRequestEntriesSize: %v", err)
+	}
+	fci, err := av1.AppendAV1RTCPLayerRefreshRequestEntries(make([]byte, 0, size), entries)
+	if err != nil {
+		t.Fatalf("AppendAV1RTCPLayerRefreshRequestEntries: %v", err)
+	}
+	return fci
+}
+
+func testAV1RTCPValidLayerRefreshEntry(t *testing.T, mode av1.EncoderScalabilityMode) av1.AV1RTCPLayerRefreshRequestEntry {
+	t.Helper()
+	spatialLayers, temporalLayers, _, ok := mode.Layers()
+	if !ok {
+		t.Fatalf("invalid scalability mode %s", mode)
+	}
+	target := av1.AV1RTCPLayerRefreshLayerIndex{
+		TemporalID: temporalLayers - 1,
+		SpatialID:  spatialLayers - 1,
+	}
+	entry := av1.AV1RTCPLayerRefreshRequestEntry{
+		SSRC:           0x05060708,
+		SequenceNumber: 17,
+		PayloadType:    96,
+		Target:         target,
+	}
+	if target != (av1.AV1RTCPLayerRefreshLayerIndex{}) {
+		entry.CurrentPresent = true
+	}
+	return entry
 }

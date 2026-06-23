@@ -2494,6 +2494,75 @@ func TestPublicLayeredDecoderRTPPayloadAfterLossSharedSVC(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderRTCPCompoundFeedbackForcesKeyPicture(t *testing.T) {
+	mode := goav1.EncoderScalabilityModeL3T2h
+	width, height := publicRTCMatrixGeometry(t, mode)
+	enc, err := goav1.NewRTCEncoderWithConfig(publicRTCMatrixConfig(width, height, mode))
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	var receiver goav1.RTPDependencyDescriptorState
+	nextFrameID := uint64(0)
+	var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+	var orderedTUs [][]byte
+
+	key, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 0), false)
+	if err != nil {
+		t.Fatalf("initial key EncodePicture: %v", err)
+	}
+	appendPublicRTCPictureRTPData(t, &receiver, &layerTUs, &orderedTUs, key)
+	assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), key, true, &nextFrameID)
+
+	delta, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 1), false)
+	if err != nil {
+		t.Fatalf("delta EncodePicture: %v", err)
+	}
+	appendPublicRTCPictureRTPData(t, &receiver, &layerTUs, &orderedTUs, delta)
+	assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), delta, false, &nextFrameID)
+
+	compound, err := goav1.AppendRTCPSenderReportPacket(make([]byte, 0, 128), goav1.RTCPSenderReport{
+		SenderSSRC: 0x01020304,
+	})
+	if err != nil {
+		t.Fatalf("AppendRTCPSenderReportPacket: %v", err)
+	}
+	entry := testAV1RTCPValidLayerRefreshEntry(t, mode)
+	compound, err = goav1.AppendRTCPFeedbackPacket(compound, goav1.RTCPFeedbackPacket{
+		PacketType: goav1.RTCPPSFBPacketType,
+		FMT:        goav1.RTCPPSFBLayerRefreshRequestFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  entry.SSRC,
+		FCI:        testAV1RTCPLayerRefreshFCI(t, []goav1.AV1RTCPLayerRefreshRequestEntry{entry}),
+	})
+	if err != nil {
+		t.Fatalf("AppendRTCPFeedbackPacket LRR: %v", err)
+	}
+
+	forceKey, packets, err := goav1.EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
+		enc.Config(),
+		compound,
+		make([]goav1.RTCPPacket, 0, 2),
+		nil,
+		make([]goav1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+	)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame: %v", err)
+	}
+	if !forceKey || len(packets) != 2 {
+		t.Fatalf("forceKey=%v packet len=%d want true,2", forceKey, len(packets))
+	}
+
+	recovery, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 2), forceKey)
+	if err != nil {
+		t.Fatalf("recovery EncodePicture: %v", err)
+	}
+	appendPublicRTCPictureRTPData(t, &receiver, &layerTUs, &orderedTUs, recovery)
+	assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), recovery, true, &nextFrameID)
+	assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+}
+
 func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 	for _, initial := range goav1.EncoderWebRTCScalabilityModes() {
 		initial := initial
