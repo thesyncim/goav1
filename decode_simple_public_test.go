@@ -1489,6 +1489,43 @@ func TestNewDecoderFromRTPPayloadsDecodeRTPPayloadAllocs(t *testing.T) {
 	}
 }
 
+func TestParseRTPPacketDependencyDescriptorAllocs(t *testing.T) {
+	const dependencyDescriptorExtensionID = 42
+	inputs := publicDecoderRTPLossRecoveryPayloads(t)
+
+	parseAll := func() {
+		var state av1.RTPDependencyDescriptorState
+		firstPackets := 0
+		for i, packet := range inputs.probePackets {
+			parsed, err := av1.ParseRTPPacketDependencyDescriptor(packet, dependencyDescriptorExtensionID, &state)
+			if err != nil {
+				t.Fatalf("ParseRTPPacketDependencyDescriptor packet %d: %v", i, err)
+			}
+			if parsed.Packet.Header.PayloadType != 96 || parsed.Packet.Payload == nil || len(parsed.DescriptorPayload) == 0 {
+				t.Fatalf("packet %d parsed packet=%+v descriptorLen=%d", i, parsed.Packet.Header, len(parsed.DescriptorPayload))
+			}
+			if parsed.Descriptor.Mandatory.FirstPacketInFrame {
+				firstPackets++
+			}
+			if parsed.Descriptor.Mandatory.LastPacketInFrame != parsed.Packet.Header.Marker {
+				t.Fatalf("packet %d marker=%v last=%v", i, parsed.Packet.Header.Marker, parsed.Descriptor.Mandatory.LastPacketInFrame)
+			}
+		}
+		if firstPackets != 3 {
+			t.Fatalf("first packets=%d want 3", firstPackets)
+		}
+		if !state.Valid {
+			t.Fatal("dependency descriptor state was not populated")
+		}
+	}
+
+	parseAll()
+	allocs := testing.AllocsPerRun(20, parseAll)
+	if allocs != 0 {
+		t.Fatalf("ParseRTPPacketDependencyDescriptor allocs/run=%f want 0", allocs)
+	}
+}
+
 func TestNewDecoderFromRTPPayloadsDecodeRTPPayloadAfterLossAllocs(t *testing.T) {
 	inputs := publicDecoderRTPLossRecoveryPayloads(t)
 	dec, err := av1.NewDecoderFromRTPPayloads(inputs.probePayloads)

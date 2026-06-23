@@ -147,11 +147,13 @@ reference slots span spatial layers or coded frame sizes. Use the `WithMetadata`
 variants on `LayeredDecoder` when a receive loop needs the decoded output paired
 with parsed AV1 spatial ID, temporal ID, frame type, keyframe flag, and
 frame-size metadata. RTP dependency descriptor fields such as active
-decode-target masks are RTP header-extension metadata and are parsed separately
-with `ParseRTPDependencyDescriptor`. Both decoders can drive live payloads with
-`DecodeRTPPayload` and
-`DecodeRTPPayloadAfterLoss` when the constructor payloads represent the stream
-shape and maximum retained-fragment/event scratch needed.
+decode-target masks are RTP header-extension metadata; receive loops that keep
+complete packets can extract them with `ParseRTPPacketDependencyDescriptor`,
+while payload-only integrations can parse the extension value with
+`ParseRTPDependencyDescriptor`. Both decoders can drive live payloads or packets
+with `DecodeRTPPayload`, `DecodeRTPPacket`, and the matching `AfterLoss`
+variants when the constructor payloads represent the stream shape and maximum
+retained-fragment/event scratch needed.
 The `RunLowOverheadInto`, `RunLowOverheadsInto`, `RunRTPPayloadInto`,
 `RunRTPPayloadsInto`, and `RunRTPPayloadAfterLossInto` families remain the
 allocation-aware entry points for callers that already own every arena and
