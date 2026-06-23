@@ -98,9 +98,39 @@ type MetadataScalability struct {
 	HasStructure bool
 }
 
-// ScalabilityModeSS is the scalability_mode_idc value that triggers an
-// explicit scalability_structure() to follow.
-const ScalabilityModeSS uint8 = 14
+// ScalabilityMode* are the predefined scalability_mode_idc values from AV1
+// metadata_scalability().
+const (
+	ScalabilityModeL1T2 uint8 = iota
+	ScalabilityModeL1T3
+	ScalabilityModeL2T1
+	ScalabilityModeL2T2
+	ScalabilityModeL2T3
+	ScalabilityModeS2T1
+	ScalabilityModeS2T2
+	ScalabilityModeS2T3
+	ScalabilityModeL2T1h
+	ScalabilityModeL2T2h
+	ScalabilityModeL2T3h
+	ScalabilityModeS2T1h
+	ScalabilityModeS2T2h
+	ScalabilityModeS2T3h
+	ScalabilityModeSS
+	ScalabilityModeL3T1
+	ScalabilityModeL3T2
+	ScalabilityModeL3T3
+	ScalabilityModeS3T1
+	ScalabilityModeS3T2
+	ScalabilityModeS3T3
+	ScalabilityModeL3T2_KEY
+	ScalabilityModeL3T3_KEY
+	ScalabilityModeL4T5_KEY
+	ScalabilityModeL4T7_KEY
+	ScalabilityModeL3T2_KEY_SHIFT
+	ScalabilityModeL3T3_KEY_SHIFT
+	ScalabilityModeL4T5_KEY_SHIFT
+	ScalabilityModeL4T7_KEY_SHIFT
+)
 
 // ScalabilityStructure is the parsed scalability_structure() payload.
 type ScalabilityStructure struct {

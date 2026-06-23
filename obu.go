@@ -171,10 +171,39 @@ const (
 	MetadataTypeHDRMDCV     MetadataType = internalobu.MetadataTypeHDRMDCV
 	MetadataTypeScalability MetadataType = internalobu.MetadataTypeScalability
 	MetadataTypeTimecode    MetadataType = internalobu.MetadataTypeTimecode
+)
 
-	// MetadataScalabilityModeSS is the scalability_mode_idc value that
-	// signals an explicit scalability_structure() in the payload.
-	MetadataScalabilityModeSS = internalobu.ScalabilityModeSS
+// AV1 scalability_mode_idc values per metadata_scalability().
+const (
+	MetadataScalabilityModeL1T2           = internalobu.ScalabilityModeL1T2
+	MetadataScalabilityModeL1T3           = internalobu.ScalabilityModeL1T3
+	MetadataScalabilityModeL2T1           = internalobu.ScalabilityModeL2T1
+	MetadataScalabilityModeL2T2           = internalobu.ScalabilityModeL2T2
+	MetadataScalabilityModeL2T3           = internalobu.ScalabilityModeL2T3
+	MetadataScalabilityModeS2T1           = internalobu.ScalabilityModeS2T1
+	MetadataScalabilityModeS2T2           = internalobu.ScalabilityModeS2T2
+	MetadataScalabilityModeS2T3           = internalobu.ScalabilityModeS2T3
+	MetadataScalabilityModeL2T1h          = internalobu.ScalabilityModeL2T1h
+	MetadataScalabilityModeL2T2h          = internalobu.ScalabilityModeL2T2h
+	MetadataScalabilityModeL2T3h          = internalobu.ScalabilityModeL2T3h
+	MetadataScalabilityModeS2T1h          = internalobu.ScalabilityModeS2T1h
+	MetadataScalabilityModeS2T2h          = internalobu.ScalabilityModeS2T2h
+	MetadataScalabilityModeS2T3h          = internalobu.ScalabilityModeS2T3h
+	MetadataScalabilityModeSS             = internalobu.ScalabilityModeSS
+	MetadataScalabilityModeL3T1           = internalobu.ScalabilityModeL3T1
+	MetadataScalabilityModeL3T2           = internalobu.ScalabilityModeL3T2
+	MetadataScalabilityModeL3T3           = internalobu.ScalabilityModeL3T3
+	MetadataScalabilityModeS3T1           = internalobu.ScalabilityModeS3T1
+	MetadataScalabilityModeS3T2           = internalobu.ScalabilityModeS3T2
+	MetadataScalabilityModeS3T3           = internalobu.ScalabilityModeS3T3
+	MetadataScalabilityModeL3T2_KEY       = internalobu.ScalabilityModeL3T2_KEY
+	MetadataScalabilityModeL3T3_KEY       = internalobu.ScalabilityModeL3T3_KEY
+	MetadataScalabilityModeL4T5_KEY       = internalobu.ScalabilityModeL4T5_KEY
+	MetadataScalabilityModeL4T7_KEY       = internalobu.ScalabilityModeL4T7_KEY
+	MetadataScalabilityModeL3T2_KEY_SHIFT = internalobu.ScalabilityModeL3T2_KEY_SHIFT
+	MetadataScalabilityModeL3T3_KEY_SHIFT = internalobu.ScalabilityModeL3T3_KEY_SHIFT
+	MetadataScalabilityModeL4T5_KEY_SHIFT = internalobu.ScalabilityModeL4T5_KEY_SHIFT
+	MetadataScalabilityModeL4T7_KEY_SHIFT = internalobu.ScalabilityModeL4T7_KEY_SHIFT
 )
 
 // Metadata OBU parse errors. ParseMetadataOBU returns these for syntactically

@@ -222,6 +222,110 @@ func TestPublicEncoderWebRTCScalabilityModes(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderWebRTCScalabilityModeIDC(t *testing.T) {
+	want := map[string]struct {
+		idc uint8
+		ok  bool
+	}{
+		"L1T1":           {},
+		"L1T2":           {idc: av1.MetadataScalabilityModeL1T2, ok: true},
+		"L1T3":           {idc: av1.MetadataScalabilityModeL1T3, ok: true},
+		"L2T1":           {idc: av1.MetadataScalabilityModeL2T1, ok: true},
+		"L2T1h":          {idc: av1.MetadataScalabilityModeL2T1h, ok: true},
+		"L2T1_KEY":       {},
+		"L2T2":           {idc: av1.MetadataScalabilityModeL2T2, ok: true},
+		"L2T2h":          {idc: av1.MetadataScalabilityModeL2T2h, ok: true},
+		"L2T2_KEY":       {idc: av1.MetadataScalabilityModeL3T2_KEY, ok: true},
+		"L2T2_KEY_SHIFT": {idc: av1.MetadataScalabilityModeL3T2_KEY_SHIFT, ok: true},
+		"L2T3":           {idc: av1.MetadataScalabilityModeL2T3, ok: true},
+		"L2T3h":          {idc: av1.MetadataScalabilityModeL2T3h, ok: true},
+		"L2T3_KEY":       {idc: av1.MetadataScalabilityModeL3T3_KEY, ok: true},
+		"L2T3_KEY_SHIFT": {idc: av1.MetadataScalabilityModeL3T3_KEY_SHIFT, ok: true},
+		"L3T1":           {idc: av1.MetadataScalabilityModeL3T1, ok: true},
+		"L3T1h":          {},
+		"L3T1_KEY":       {},
+		"L3T2":           {idc: av1.MetadataScalabilityModeL3T2, ok: true},
+		"L3T2h":          {},
+		"L3T2_KEY":       {idc: av1.MetadataScalabilityModeL4T5_KEY, ok: true},
+		"L3T2_KEY_SHIFT": {idc: av1.MetadataScalabilityModeL4T5_KEY_SHIFT, ok: true},
+		"L3T3":           {idc: av1.MetadataScalabilityModeL3T3, ok: true},
+		"L3T3h":          {},
+		"L3T3_KEY":       {idc: av1.MetadataScalabilityModeL4T7_KEY, ok: true},
+		"L3T3_KEY_SHIFT": {idc: av1.MetadataScalabilityModeL4T7_KEY_SHIFT, ok: true},
+		"S2T1":           {idc: av1.MetadataScalabilityModeS2T1, ok: true},
+		"S2T1h":          {idc: av1.MetadataScalabilityModeS2T1h, ok: true},
+		"S2T2":           {idc: av1.MetadataScalabilityModeS2T2, ok: true},
+		"S2T2h":          {idc: av1.MetadataScalabilityModeS2T2h, ok: true},
+		"S2T3":           {idc: av1.MetadataScalabilityModeS2T3, ok: true},
+		"S2T3h":          {idc: av1.MetadataScalabilityModeS2T3h, ok: true},
+		"S3T1":           {idc: av1.MetadataScalabilityModeS3T1, ok: true},
+		"S3T1h":          {},
+		"S3T2":           {idc: av1.MetadataScalabilityModeS3T2, ok: true},
+		"S3T2h":          {},
+		"S3T3":           {idc: av1.MetadataScalabilityModeS3T3, ok: true},
+		"S3T3h":          {},
+	}
+	for _, mode := range av1.EncoderWebRTCScalabilityModes() {
+		tc, ok := want[mode.String()]
+		if !ok {
+			t.Fatalf("missing expected IDC entry for %s", mode)
+		}
+		got, gotOK := av1.EncoderWebRTCScalabilityModeIDC(mode)
+		if got != tc.idc || gotOK != tc.ok {
+			t.Fatalf("EncoderWebRTCScalabilityModeIDC(%s)=%d,%v want %d,%v", mode, got, gotOK, tc.idc, tc.ok)
+		}
+		got, gotOK = mode.AV1ScalabilityModeIDC()
+		if got != tc.idc || gotOK != tc.ok {
+			t.Fatalf("%s.AV1ScalabilityModeIDC()=%d,%v want %d,%v", mode, got, gotOK, tc.idc, tc.ok)
+		}
+	}
+	if got, ok := av1.EncoderWebRTCScalabilityModeIDC(av1.EncoderScalabilityMode(255)); got != 0 || ok {
+		t.Fatalf("invalid mode IDC=%d,%v want 0,false", got, ok)
+	}
+}
+
+func TestPublicMetadataScalabilityModeIDCConstants(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		got  uint8
+		want uint8
+	}{
+		{name: "L1T2", got: av1.MetadataScalabilityModeL1T2, want: 0},
+		{name: "L1T3", got: av1.MetadataScalabilityModeL1T3, want: 1},
+		{name: "L2T1", got: av1.MetadataScalabilityModeL2T1, want: 2},
+		{name: "L2T2", got: av1.MetadataScalabilityModeL2T2, want: 3},
+		{name: "L2T3", got: av1.MetadataScalabilityModeL2T3, want: 4},
+		{name: "S2T1", got: av1.MetadataScalabilityModeS2T1, want: 5},
+		{name: "S2T2", got: av1.MetadataScalabilityModeS2T2, want: 6},
+		{name: "S2T3", got: av1.MetadataScalabilityModeS2T3, want: 7},
+		{name: "L2T1h", got: av1.MetadataScalabilityModeL2T1h, want: 8},
+		{name: "L2T2h", got: av1.MetadataScalabilityModeL2T2h, want: 9},
+		{name: "L2T3h", got: av1.MetadataScalabilityModeL2T3h, want: 10},
+		{name: "S2T1h", got: av1.MetadataScalabilityModeS2T1h, want: 11},
+		{name: "S2T2h", got: av1.MetadataScalabilityModeS2T2h, want: 12},
+		{name: "S2T3h", got: av1.MetadataScalabilityModeS2T3h, want: 13},
+		{name: "SS", got: av1.MetadataScalabilityModeSS, want: 14},
+		{name: "L3T1", got: av1.MetadataScalabilityModeL3T1, want: 15},
+		{name: "L3T2", got: av1.MetadataScalabilityModeL3T2, want: 16},
+		{name: "L3T3", got: av1.MetadataScalabilityModeL3T3, want: 17},
+		{name: "S3T1", got: av1.MetadataScalabilityModeS3T1, want: 18},
+		{name: "S3T2", got: av1.MetadataScalabilityModeS3T2, want: 19},
+		{name: "S3T3", got: av1.MetadataScalabilityModeS3T3, want: 20},
+		{name: "L3T2_KEY", got: av1.MetadataScalabilityModeL3T2_KEY, want: 21},
+		{name: "L3T3_KEY", got: av1.MetadataScalabilityModeL3T3_KEY, want: 22},
+		{name: "L4T5_KEY", got: av1.MetadataScalabilityModeL4T5_KEY, want: 23},
+		{name: "L4T7_KEY", got: av1.MetadataScalabilityModeL4T7_KEY, want: 24},
+		{name: "L3T2_KEY_SHIFT", got: av1.MetadataScalabilityModeL3T2_KEY_SHIFT, want: 25},
+		{name: "L3T3_KEY_SHIFT", got: av1.MetadataScalabilityModeL3T3_KEY_SHIFT, want: 26},
+		{name: "L4T5_KEY_SHIFT", got: av1.MetadataScalabilityModeL4T5_KEY_SHIFT, want: 27},
+		{name: "L4T7_KEY_SHIFT", got: av1.MetadataScalabilityModeL4T7_KEY_SHIFT, want: 28},
+	} {
+		if tc.got != tc.want {
+			t.Fatalf("%s IDC=%d want %d", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
 func TestPublicEncoderWebRTCActiveDecodeTargetsMask(t *testing.T) {
 	for _, mode := range av1.EncoderWebRTCScalabilityModes() {
 		t.Run(mode.String(), func(t *testing.T) {

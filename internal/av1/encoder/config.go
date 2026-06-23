@@ -1,6 +1,10 @@
 package encoder
 
-import "math"
+import (
+	"math"
+
+	"github.com/thesyncim/goav1/internal/av1/obu"
+)
 
 const (
 	MaxLayers         = 32
@@ -254,6 +258,78 @@ func AppendWebRTCScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
 		dst = append(dst, mode)
 	}
 	return dst
+}
+
+// WebRTCScalabilityModeIDC maps a W3C WebRTC scalabilityMode value to its
+// predefined AV1 metadata_scalability() scalability_mode_idc value. ok is
+// false when AV1 has no predefined IDC for the WebRTC mode; callers that must
+// signal those shapes need MetadataScalabilityModeSS plus an explicit
+// scalability_structure().
+func WebRTCScalabilityModeIDC(mode ScalabilityMode) (idc uint8, ok bool) {
+	switch mode {
+	case ScalabilityModeL1T2:
+		return obu.ScalabilityModeL1T2, true
+	case ScalabilityModeL1T3:
+		return obu.ScalabilityModeL1T3, true
+	case ScalabilityModeL2T1:
+		return obu.ScalabilityModeL2T1, true
+	case ScalabilityModeL2T2:
+		return obu.ScalabilityModeL2T2, true
+	case ScalabilityModeL2T3:
+		return obu.ScalabilityModeL2T3, true
+	case ScalabilityModeS2T1:
+		return obu.ScalabilityModeS2T1, true
+	case ScalabilityModeS2T2:
+		return obu.ScalabilityModeS2T2, true
+	case ScalabilityModeS2T3:
+		return obu.ScalabilityModeS2T3, true
+	case ScalabilityModeL2T1h:
+		return obu.ScalabilityModeL2T1h, true
+	case ScalabilityModeL2T2h:
+		return obu.ScalabilityModeL2T2h, true
+	case ScalabilityModeL2T3h:
+		return obu.ScalabilityModeL2T3h, true
+	case ScalabilityModeS2T1h:
+		return obu.ScalabilityModeS2T1h, true
+	case ScalabilityModeS2T2h:
+		return obu.ScalabilityModeS2T2h, true
+	case ScalabilityModeS2T3h:
+		return obu.ScalabilityModeS2T3h, true
+	case ScalabilityModeL3T1:
+		return obu.ScalabilityModeL3T1, true
+	case ScalabilityModeL3T2:
+		return obu.ScalabilityModeL3T2, true
+	case ScalabilityModeL3T3:
+		return obu.ScalabilityModeL3T3, true
+	case ScalabilityModeS3T1:
+		return obu.ScalabilityModeS3T1, true
+	case ScalabilityModeS3T2:
+		return obu.ScalabilityModeS3T2, true
+	case ScalabilityModeS3T3:
+		return obu.ScalabilityModeS3T3, true
+	case ScalabilityModeL2T2_KEY:
+		return obu.ScalabilityModeL3T2_KEY, true
+	case ScalabilityModeL2T3_KEY:
+		return obu.ScalabilityModeL3T3_KEY, true
+	case ScalabilityModeL3T2_KEY:
+		return obu.ScalabilityModeL4T5_KEY, true
+	case ScalabilityModeL3T3_KEY:
+		return obu.ScalabilityModeL4T7_KEY, true
+	case ScalabilityModeL2T2_KEY_SHIFT:
+		return obu.ScalabilityModeL3T2_KEY_SHIFT, true
+	case ScalabilityModeL2T3_KEY_SHIFT:
+		return obu.ScalabilityModeL3T3_KEY_SHIFT, true
+	case ScalabilityModeL3T2_KEY_SHIFT:
+		return obu.ScalabilityModeL4T5_KEY_SHIFT, true
+	case ScalabilityModeL3T3_KEY_SHIFT:
+		return obu.ScalabilityModeL4T7_KEY_SHIFT, true
+	default:
+		return 0, false
+	}
+}
+
+func (m ScalabilityMode) AV1ScalabilityModeIDC() (idc uint8, ok bool) {
+	return WebRTCScalabilityModeIDC(m)
 }
 
 func (m ScalabilityMode) Layers() (spatial uint8, temporal uint8, key bool, ok bool) {

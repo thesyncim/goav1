@@ -138,6 +138,14 @@ group). goav1 parses this through `ParseMetadata` and exposes it as
 type alias). It is informational only; the decoder does not consume
 it.
 
+For send-side WebRTC capability checks, `EncoderWebRTCScalabilityModeIDC`
+maps a W3C `scalabilityMode` value such as `L2T2_KEY` to the predefined
+AV1 `scalability_mode_idc` used by scalability metadata. The boolean return
+is false for modes without a predefined AV1 IDC, such as `L1T1`, `L2T1_KEY`,
+three-spatial `h` modes, and `T1` key modes; callers that need to signal
+those shapes must use `MetadataScalabilityModeSS` with an explicit
+`scalability_structure()`.
+
 ---
 
 ## The simple path: same-size spatial layers

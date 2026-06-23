@@ -36,8 +36,9 @@
 // reconfiguration. Lower-level WebRTC encoder
 // helpers expose W3C SVC mode metadata, temporal/spatial dependency
 // structures, decode-target grids, active decode-target masks, key-shift
-// scheduling, explicit sequence color config, sequence-matched sample-plane
-// loading, and the supported scalabilityMode capability list. High-level
+// scheduling, AV1 scalability_mode_idc mapping, explicit sequence color
+// config, sequence-matched sample-plane loading, and the supported
+// scalabilityMode capability list. High-level
 // decoder helpers cover low-overhead streams, ordered/live AV1 RTP payload
 // bodies or complete packets, retained-fragment reset after RTP loss, and
 // shared-reference SVC RTP receive loops with decoded AV1 layer metadata;

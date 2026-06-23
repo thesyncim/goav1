@@ -3,6 +3,8 @@ package encoder
 import (
 	"errors"
 	"testing"
+
+	"github.com/thesyncim/goav1/internal/av1/obu"
 )
 
 func TestProfileParseAndString(t *testing.T) {
@@ -179,6 +181,71 @@ func TestAppendWebRTCScalabilityModesCoversEnum(t *testing.T) {
 		if mode != want || !mode.Valid() {
 			t.Fatalf("mode[%d]=%s valid=%v want %s", i+1, mode, mode.Valid(), want)
 		}
+	}
+}
+
+func TestWebRTCScalabilityModeIDC(t *testing.T) {
+	seen := make(map[ScalabilityMode]bool, scalabilityModeCount)
+	for _, tc := range []struct {
+		mode ScalabilityMode
+		idc  uint8
+		ok   bool
+	}{
+		{mode: ScalabilityModeL1T1},
+		{mode: ScalabilityModeL1T2, idc: obu.ScalabilityModeL1T2, ok: true},
+		{mode: ScalabilityModeL1T3, idc: obu.ScalabilityModeL1T3, ok: true},
+		{mode: ScalabilityModeL2T1, idc: obu.ScalabilityModeL2T1, ok: true},
+		{mode: ScalabilityModeL2T1h, idc: obu.ScalabilityModeL2T1h, ok: true},
+		{mode: ScalabilityModeL2T1_KEY},
+		{mode: ScalabilityModeL2T2, idc: obu.ScalabilityModeL2T2, ok: true},
+		{mode: ScalabilityModeL2T2h, idc: obu.ScalabilityModeL2T2h, ok: true},
+		{mode: ScalabilityModeL2T2_KEY, idc: obu.ScalabilityModeL3T2_KEY, ok: true},
+		{mode: ScalabilityModeL2T2_KEY_SHIFT, idc: obu.ScalabilityModeL3T2_KEY_SHIFT, ok: true},
+		{mode: ScalabilityModeL2T3, idc: obu.ScalabilityModeL2T3, ok: true},
+		{mode: ScalabilityModeL2T3h, idc: obu.ScalabilityModeL2T3h, ok: true},
+		{mode: ScalabilityModeL2T3_KEY, idc: obu.ScalabilityModeL3T3_KEY, ok: true},
+		{mode: ScalabilityModeL2T3_KEY_SHIFT, idc: obu.ScalabilityModeL3T3_KEY_SHIFT, ok: true},
+		{mode: ScalabilityModeL3T1, idc: obu.ScalabilityModeL3T1, ok: true},
+		{mode: ScalabilityModeL3T1h},
+		{mode: ScalabilityModeL3T1_KEY},
+		{mode: ScalabilityModeL3T2, idc: obu.ScalabilityModeL3T2, ok: true},
+		{mode: ScalabilityModeL3T2h},
+		{mode: ScalabilityModeL3T2_KEY, idc: obu.ScalabilityModeL4T5_KEY, ok: true},
+		{mode: ScalabilityModeL3T2_KEY_SHIFT, idc: obu.ScalabilityModeL4T5_KEY_SHIFT, ok: true},
+		{mode: ScalabilityModeL3T3, idc: obu.ScalabilityModeL3T3, ok: true},
+		{mode: ScalabilityModeL3T3h},
+		{mode: ScalabilityModeL3T3_KEY, idc: obu.ScalabilityModeL4T7_KEY, ok: true},
+		{mode: ScalabilityModeL3T3_KEY_SHIFT, idc: obu.ScalabilityModeL4T7_KEY_SHIFT, ok: true},
+		{mode: ScalabilityModeS2T1, idc: obu.ScalabilityModeS2T1, ok: true},
+		{mode: ScalabilityModeS2T1h, idc: obu.ScalabilityModeS2T1h, ok: true},
+		{mode: ScalabilityModeS2T2, idc: obu.ScalabilityModeS2T2, ok: true},
+		{mode: ScalabilityModeS2T2h, idc: obu.ScalabilityModeS2T2h, ok: true},
+		{mode: ScalabilityModeS2T3, idc: obu.ScalabilityModeS2T3, ok: true},
+		{mode: ScalabilityModeS2T3h, idc: obu.ScalabilityModeS2T3h, ok: true},
+		{mode: ScalabilityModeS3T1, idc: obu.ScalabilityModeS3T1, ok: true},
+		{mode: ScalabilityModeS3T1h},
+		{mode: ScalabilityModeS3T2, idc: obu.ScalabilityModeS3T2, ok: true},
+		{mode: ScalabilityModeS3T2h},
+		{mode: ScalabilityModeS3T3, idc: obu.ScalabilityModeS3T3, ok: true},
+		{mode: ScalabilityModeS3T3h},
+	} {
+		got, ok := WebRTCScalabilityModeIDC(tc.mode)
+		if got != tc.idc || ok != tc.ok {
+			t.Fatalf("WebRTCScalabilityModeIDC(%s)=%d,%v want %d,%v", tc.mode, got, ok, tc.idc, tc.ok)
+		}
+		got, ok = tc.mode.AV1ScalabilityModeIDC()
+		if got != tc.idc || ok != tc.ok {
+			t.Fatalf("%s.AV1ScalabilityModeIDC()=%d,%v want %d,%v", tc.mode, got, ok, tc.idc, tc.ok)
+		}
+		seen[tc.mode] = true
+	}
+	for mode := ScalabilityMode(0); mode < scalabilityModeCount; mode++ {
+		if !seen[mode] {
+			t.Fatalf("missing IDC test coverage for %s", mode)
+		}
+	}
+	if got, ok := WebRTCScalabilityModeIDC(ScalabilityMode(scalabilityModeCount)); got != 0 || ok {
+		t.Fatalf("invalid mode IDC=%d,%v want 0,false", got, ok)
 	}
 }
 
