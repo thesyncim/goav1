@@ -3176,6 +3176,7 @@ func appendPublicRTCPictureRTPData(t *testing.T, receiver *goav1.RTPDependencyDe
 func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, frame goav1.RTCFrame) []byte {
 	t.Helper()
 	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
+	const dependencyDescriptorExtensionID = 42
 	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
 	if err != nil {
 		t.Fatalf("RTPPacketScratchLen first S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
@@ -3197,10 +3198,58 @@ func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDepende
 	if packetCount != size.Packetizer.Packets {
 		t.Fatalf("packet count=%d want %d", packetCount, size.Packetizer.Packets)
 	}
+	headerConfig := goav1.EncoderWebRTCRTPPacketHeaderConfig{
+		PayloadType:                     96,
+		SequenceNumber:                  uint16(frame.FrameID * 29),
+		Timestamp:                       uint32(frame.FrameID * 3000),
+		SSRC:                            0x01020304 + uint32(frame.SpatialID),
+		DependencyDescriptorExtensionID: dependencyDescriptorExtensionID,
+	}
+	packetSize, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(headerConfig, rtpPayloads, descriptors, spans[:packetCount])
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTPPacketsWithHeadersSize S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
+	}
+	if packetSize.Packets != packetCount || packetSize.Bytes <= len(rtpPayloads) ||
+		packetSize.MaxHeaderBytes <= goav1.RTPHeaderMinSize {
+		t.Fatalf("full RTP size=%+v packetCount=%d payloadBytes=%d", packetSize, packetCount, len(rtpPayloads))
+	}
+	headerSpans := make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, packetCount)
+	fullPackets, fullCount, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(make([]byte, 0, packetSize.Bytes), headerSpans, headerConfig, rtpPayloads, descriptors, spans[:packetCount])
+	if err != nil {
+		t.Fatalf("AppendEncoderWebRTCRTPPacketsWithHeaders S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
+	}
+	if fullCount != packetCount || len(fullPackets) != packetSize.Bytes {
+		t.Fatalf("full packet count=%d/%d bytes=%d/%d", fullCount, packetCount, len(fullPackets), packetSize.Bytes)
+	}
 	payloadSlices := make([][]byte, packetCount)
 	for i := range packetCount {
 		span := spans[i]
-		payloadSlices[i] = rtpPayloads[span.PayloadOffset : span.PayloadOffset+span.PayloadLength]
+		headerSpan := headerSpans[i]
+		raw := fullPackets[headerSpan.Offset : headerSpan.Offset+headerSpan.Length]
+		packet, err := goav1.ParseRTPPacket(raw)
+		if err != nil {
+			t.Fatalf("packet %d ParseRTPPacket S%d: %v", i, frame.SpatialID, err)
+		}
+		if packet.Header.PayloadType != headerConfig.PayloadType ||
+			packet.Header.SequenceNumber != headerConfig.SequenceNumber+uint16(i) ||
+			packet.Header.Timestamp != headerConfig.Timestamp ||
+			packet.Header.SSRC != headerConfig.SSRC ||
+			packet.Header.Marker != span.Marker ||
+			packet.Header.ExtensionProfile != goav1.RTPExtensionProfileTwoByte {
+			t.Fatalf("packet %d RTP header=%+v span=%+v config=%+v", i, packet.Header, span, headerConfig)
+		}
+		if headerSpan.HeaderSize != len(raw)-len(packet.Payload) ||
+			headerSpan.PayloadOffset != headerSpan.Offset+headerSpan.HeaderSize ||
+			headerSpan.PayloadLength != len(packet.Payload) ||
+			headerSpan.SequenceNumber != packet.Header.SequenceNumber ||
+			headerSpan.Marker != packet.Header.Marker {
+			t.Fatalf("packet %d header span=%+v payload=%d", i, headerSpan, len(packet.Payload))
+		}
+		payloadSlices[i] = packet.Payload
+		wantPayload := rtpPayloads[span.PayloadOffset : span.PayloadOffset+span.PayloadLength]
+		if !bytes.Equal(payloadSlices[i], wantPayload) {
+			t.Fatalf("packet %d payload mismatch len=%d want=%d", i, len(payloadSlices[i]), len(wantPayload))
+		}
 		header, _, err := goav1.ParseRTPAggregationHeader(payloadSlices[i])
 		if err != nil {
 			t.Fatalf("packet %d aggregation header S%d: %v", i, frame.SpatialID, err)
@@ -3208,7 +3257,20 @@ func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDepende
 		if header.StartsNewCodedVideoSequence != (frame.CodedKeyframe && i == 0) {
 			t.Fatalf("packet %d N=%v want %v frame=%+v", i, header.StartsNewCodedVideoSequence, frame.CodedKeyframe && i == 0, frame)
 		}
-		desc := descriptors[span.DescriptorOffset : span.DescriptorOffset+span.DescriptorLength]
+		var elements [1]goav1.RTPHeaderExtensionElement
+		elementCount, err := goav1.ParseRTPHeaderExtensionElements(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, elements[:])
+		if err != nil {
+			t.Fatalf("packet %d ParseRTPHeaderExtensionElements S%d: %v", i, frame.SpatialID, err)
+		}
+		if elementCount != 1 || elements[0].ID != dependencyDescriptorExtensionID {
+			t.Fatalf("packet %d extension count=%d element=%+v", i, elementCount, elements[0])
+		}
+		desc := elements[0].Payload
+		wantDesc := descriptors[span.DescriptorOffset : span.DescriptorOffset+span.DescriptorLength]
+		if !bytes.Equal(desc, wantDesc) ||
+			!bytes.Equal(desc, fullPackets[headerSpan.DependencyDescriptorOffset:headerSpan.DependencyDescriptorOffset+headerSpan.DependencyDescriptorLength]) {
+			t.Fatalf("packet %d dependency descriptor span mismatch", i)
+		}
 		parsed, consumed, err := receiver.Parse(desc)
 		if err != nil {
 			t.Fatalf("packet %d descriptor S%d: %v", i, frame.SpatialID, err)
