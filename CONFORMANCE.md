@@ -275,9 +275,11 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         |                                  | harness and CLI both consume it.               |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 34 | AV1 RTP payload (AOM v1.0.0)     | Yes     | internal/av1/rtp/                | Aggregation header parse, payload iteration,   |
-|    |                                  |         |                                  | single-OBU + fragmented OBU packetization,     |
-|    |                                  |         |                                  | depacketizer state machine, frame assembler;   |
-|    |                                  |         |                                  | round-trip alloc-tested and fuzzed.            |
+|    | + RTP packet syntax              |         | rtp_header.go                    | single-OBU + fragmented OBU packetization,     |
+|    |                                  |         |                                  | depacketizer state machine, frame assembler,   |
+|    |                                  |         |                                  | fixed RTP header and RFC 8285 one-/two-byte    |
+|    |                                  |         |                                  | extension element parse/build; round-trip      |
+|    |                                  |         |                                  | alloc-tested and fuzzed.                       |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 35 | OBU extension header (temporal_id| Yes     | internal/av1/obu/header.go       | obu_extension_header() parsed per spec section |
 |    |  + spatial_id + reserved bits)   |         | internal/av1/obu/header_test.go  | 5.3.3: 3-bit temporal_id, 2-bit spatial_id,    |

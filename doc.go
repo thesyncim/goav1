@@ -1,14 +1,15 @@
 // Package goav1 is a pure-Go AV1 codec package focused on realtime and
 // WebRTC use.
 //
-// The package consumes and produces AV1 Open Bitstream Units and AV1 RTP
-// payload bodies. RTP headers, SRTP, full SDP assembly, jitter buffering,
-// packet-loss policy, and network scheduling stay caller-owned.
+// The package consumes and produces AV1 Open Bitstream Units, AV1 RTP payload
+// bodies, and RTP packet/header syntax. SRTP, full SDP assembly, jitter
+// buffering, packet-loss policy, and network scheduling stay caller-owned.
 //
 // The implementation is built from byte-exact transport and parser primitives
 // inward. Public helpers expose IVF containers, low-overhead, temporal-unit,
-// and Annex B OBU parsing, AV1 RTP payload iteration, construction,
-// caller-owned RTP sizing, generic and compound RTCP packet helpers, RTCP
+// and Annex B OBU parsing, AV1 RTP fixed-header and RFC 8285 extension element
+// framing, AV1 RTP payload iteration, construction, caller-owned RTP sizing,
+// generic and compound RTCP packet helpers, RTCP
 // SR/RR/SDES/BYE and RTPFB/PSFB packet helpers, RTCP
 // NACK/Transport-CC/PLI/FIR/REMB FCI helpers, AV1 RTCP Layer Refresh Request
 // FCI list helpers, RTCP feedback force-key classification for single and
