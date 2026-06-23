@@ -56,6 +56,87 @@ func AppendLowOverheadOBU(dst []byte, unit OBU) ([]byte, error) {
 	return out, nil
 }
 
+// WebRTCScalabilityMetadataPayloadSize returns the metadata_obu() payload size
+// for mode's predefined AV1 scalability_mode_idc. ok is false when the WebRTC
+// mode has no predefined AV1 IDC and requires an explicit SS structure instead.
+func WebRTCScalabilityMetadataPayloadSize(mode ScalabilityMode) (size int, ok bool) {
+	if _, ok := WebRTCScalabilityModeIDC(mode); !ok {
+		return 0, false
+	}
+	return bitstream.LEB128Len(uint32(obu.MetadataTypeScalability)) + 1 + 1, true
+}
+
+// AppendWebRTCScalabilityMetadataPayload appends metadata_obu() payload bytes
+// for mode's predefined AV1 scalability_mode_idc without growing dst.
+func AppendWebRTCScalabilityMetadataPayload(dst []byte, mode ScalabilityMode) ([]byte, bool, error) {
+	idc, ok := WebRTCScalabilityModeIDC(mode)
+	if !ok {
+		return dst, false, nil
+	}
+	size, _ := WebRTCScalabilityMetadataPayloadSize(mode)
+	if cap(dst)-len(dst) < size {
+		return dst, true, bitstream.ErrShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+size]
+	n, err := bitstream.PutLEB128(out[off:], uint32(obu.MetadataTypeScalability))
+	if err != nil {
+		return dst, true, err
+	}
+	off += n
+	out[off] = idc
+	off++
+	out[off] = 0x80
+	return out, true, nil
+}
+
+// LowOverheadWebRTCScalabilityMetadataOBUSize returns the OBU size for mode's
+// predefined AV1 scalability metadata. ok is false when no predefined IDC
+// exists for mode.
+func LowOverheadWebRTCScalabilityMetadataOBUSize(mode ScalabilityMode) (size int, ok bool, err error) {
+	payloadSize, ok := WebRTCScalabilityMetadataPayloadSize(mode)
+	if !ok {
+		return 0, false, nil
+	}
+	return 1 + bitstream.LEB128Len(uint32(payloadSize)) + payloadSize, true, nil
+}
+
+// AppendLowOverheadWebRTCScalabilityMetadataOBU appends one low-overhead
+// METADATA_TYPE_SCALABILITY OBU for mode's predefined AV1 IDC.
+func AppendLowOverheadWebRTCScalabilityMetadataOBU(dst []byte, mode ScalabilityMode) ([]byte, bool, error) {
+	payloadSize, ok := WebRTCScalabilityMetadataPayloadSize(mode)
+	if !ok {
+		return dst, false, nil
+	}
+	obuSize := 1 + bitstream.LEB128Len(uint32(payloadSize)) + payloadSize
+	if cap(dst)-len(dst) < obuSize {
+		return dst, true, bitstream.ErrShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+obuSize]
+	n, err := obu.PutHeader(out[off:], obu.Header{
+		Type:         obu.TypeMetadata,
+		HasSizeField: true,
+	})
+	if err != nil {
+		return dst, true, err
+	}
+	off += n
+	n, err = bitstream.PutLEB128(out[off:], uint32(payloadSize))
+	if err != nil {
+		return dst, true, err
+	}
+	off += n
+	payload, _, err := AppendWebRTCScalabilityMetadataPayload(out[:off], mode)
+	if err != nil {
+		return dst, true, err
+	}
+	if len(payload) != len(out) {
+		return dst, true, ErrInvalidFrame
+	}
+	return out, true, nil
+}
+
 // LowOverheadTemporalUnitSize returns the exact number of bytes required to emit
 // a low-overhead temporal unit: one temporal-delimiter OBU followed by obus.
 func LowOverheadTemporalUnitSize(obus []OBU) (int, error) {

@@ -485,14 +485,15 @@ func (s *WebRTCStream) EncodePicture(src SourceFrame420, forceKey bool) (WebRTCE
 		if key != webRTCStreamExpectedCodedKey(unit.Key, settings, s.config.Scalability) {
 			return WebRTCEncodedPicture{}, ErrInvalidFrame
 		}
-		layerSize, err := webRTCLayerTemporalUnitSize(tu, settings.TemporalID, settings.SpatialID)
+		includeScalabilityMetadata := unit.Key && settings.SpatialID == 0
+		layerSize, err := webRTCLayerTemporalUnitSize(tu, settings.TemporalID, settings.SpatialID, s.config.Scalability, includeScalabilityMetadata)
 		if err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
 		if cap(s.layerScratch[i]) < layerSize {
 			s.layerScratch[i] = make([]byte, 0, layerSize)
 		}
-		layerTU, err := appendWebRTCLayerTemporalUnit(s.layerScratch[i][:0], tu, settings.TemporalID, settings.SpatialID)
+		layerTU, err := appendWebRTCLayerTemporalUnit(s.layerScratch[i][:0], tu, settings.TemporalID, settings.SpatialID, s.config.Scalability, includeScalabilityMetadata)
 		if err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
@@ -683,9 +684,10 @@ func scalePlaneNearest(dst []byte, dstStride, dstWidth, dstHeight int, src []byt
 	}
 }
 
-func appendWebRTCLayerTemporalUnit(dst []byte, src []byte, temporalID uint8, spatialID uint8) ([]byte, error) {
+func appendWebRTCLayerTemporalUnit(dst []byte, src []byte, temporalID uint8, spatialID uint8, scalability ScalabilityMode, includeScalabilityMetadata bool) ([]byte, error) {
 	it := obu.NewLowOverheadIterator(src)
 	out := dst
+	metadataInserted := false
 	for {
 		unit, ok, err := it.Next()
 		if err != nil {
@@ -716,12 +718,21 @@ func appendWebRTCLayerTemporalUnit(dst []byte, src []byte, temporalID uint8, spa
 			}
 			out = next
 		}
+		if includeScalabilityMetadata && !metadataInserted && unit.Header.Type == obu.TypeSequenceHeader {
+			next, _, err := AppendLowOverheadWebRTCScalabilityMetadataOBU(out, scalability)
+			if err != nil {
+				return dst, err
+			}
+			out = next
+			metadataInserted = true
+		}
 	}
 }
 
-func webRTCLayerTemporalUnitSize(src []byte, temporalID uint8, spatialID uint8) (int, error) {
+func webRTCLayerTemporalUnitSize(src []byte, temporalID uint8, spatialID uint8, scalability ScalabilityMode, includeScalabilityMetadata bool) (int, error) {
 	it := obu.NewLowOverheadIterator(src)
 	total := 0
+	metadataInserted := false
 	for {
 		unit, ok, err := it.Next()
 		if err != nil {
@@ -741,6 +752,16 @@ func webRTCLayerTemporalUnitSize(src []byte, temporalID uint8, spatialID uint8) 
 			return 0, err
 		}
 		total += size
+		if includeScalabilityMetadata && !metadataInserted && unit.Header.Type == obu.TypeSequenceHeader {
+			metadataSize, ok, err := LowOverheadWebRTCScalabilityMetadataOBUSize(scalability)
+			if err != nil {
+				return 0, err
+			}
+			if ok {
+				total += metadataSize
+			}
+			metadataInserted = true
+		}
 	}
 }
 

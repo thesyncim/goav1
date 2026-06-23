@@ -326,6 +326,41 @@ func TestPublicMetadataScalabilityModeIDCConstants(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderWebRTCScalabilityMetadataOBU(t *testing.T) {
+	size, ok, err := av1.EncoderLowOverheadWebRTCScalabilityMetadataOBUSize(av1.EncoderScalabilityModeL2T2)
+	if err != nil || !ok {
+		t.Fatalf("EncoderLowOverheadWebRTCScalabilityMetadataOBUSize: size=%d ok=%v err=%v", size, ok, err)
+	}
+	var buf [8]byte
+	out, ok, err := av1.AppendEncoderLowOverheadWebRTCScalabilityMetadataOBU(buf[:0], av1.EncoderScalabilityModeL2T2)
+	if err != nil || !ok {
+		t.Fatalf("AppendEncoderLowOverheadWebRTCScalabilityMetadataOBU: ok=%v err=%v", ok, err)
+	}
+	if len(out) != size {
+		t.Fatalf("len=%d want %d", len(out), size)
+	}
+	unit, consumed, err := av1.ParseLowOverheadOBU(out)
+	if err != nil {
+		t.Fatalf("ParseLowOverheadOBU: %v", err)
+	}
+	if consumed != len(out) || unit.Header.Type != av1.OBUMetadata {
+		t.Fatalf("metadata consumed=%d header=%+v", consumed, unit.Header)
+	}
+	meta, err := av1.ParseMetadataOBU(unit.Payload)
+	if err != nil {
+		t.Fatalf("ParseMetadataOBU: %v", err)
+	}
+	if meta.Type != av1.MetadataTypeScalability || meta.Scalability.ModeIDC != av1.MetadataScalabilityModeL2T2 || meta.Scalability.HasStructure {
+		t.Fatalf("metadata=%+v", meta)
+	}
+
+	prefix := []byte{0xee}
+	noMetadata, ok, err := av1.AppendEncoderLowOverheadWebRTCScalabilityMetadataOBU(prefix, av1.EncoderScalabilityModeL1T1)
+	if err != nil || ok || !bytes.Equal(noMetadata, prefix) {
+		t.Fatalf("L1T1 metadata out=% x ok=%v err=%v", noMetadata, ok, err)
+	}
+}
+
 func TestPublicEncoderWebRTCActiveDecodeTargetsMask(t *testing.T) {
 	for _, mode := range av1.EncoderWebRTCScalabilityModes() {
 		t.Run(mode.String(), func(t *testing.T) {
@@ -2102,6 +2137,7 @@ func TestPublicWebRTCEncoderPictureHeaderTemporalUnits(t *testing.T) {
 	if err != nil || !ok || !bytes.Equal(tu.Raw, keyOut) {
 		t.Fatalf("key temporal unit ok=%v err=%v raw=% x", ok, err, tu.Raw)
 	}
+	assertPublicWebRTCHeaderScalabilityMetadata(t, keyOut, av1.MetadataScalabilityModeL2T2, true)
 
 	deltaSize, sizedDelta, err := enc.LowOverheadPictureHeaderTemporalUnitSize(false)
 	if err != nil {
@@ -2553,6 +2589,37 @@ func assertPublicWebRTCEncoderDuration(t *testing.T, enc *av1.WebRTCEncoder) {
 	}
 }
 
+func assertPublicWebRTCHeaderScalabilityMetadata(t *testing.T, tu []byte, wantIDC uint8, wantPresent bool) {
+	t.Helper()
+	it := av1.NewLowOverheadIterator(tu)
+	if td, ok, err := it.Next(); err != nil || !ok || td.Header.Type != av1.OBUTemporalDelimiter {
+		t.Fatalf("TD ok=%v err=%v header=%+v", ok, err, td.Header)
+	}
+	if seq, ok, err := it.Next(); err != nil || !ok || seq.Header.Type != av1.OBUSequenceHeader {
+		t.Fatalf("sequence ok=%v err=%v header=%+v", ok, err, seq.Header)
+	}
+	next, ok, err := it.Next()
+	if err != nil || !ok {
+		t.Fatalf("next OBU ok=%v err=%v header=%+v", ok, err, next.Header)
+	}
+	if !wantPresent {
+		if next.Header.Type == av1.OBUMetadata {
+			t.Fatalf("unexpected metadata payload=% x", next.Payload)
+		}
+		return
+	}
+	if next.Header.Type != av1.OBUMetadata {
+		t.Fatalf("metadata header=%+v", next.Header)
+	}
+	meta, err := av1.ParseMetadataOBU(next.Payload)
+	if err != nil {
+		t.Fatalf("ParseMetadataOBU: %v", err)
+	}
+	if meta.Type != av1.MetadataTypeScalability || meta.Scalability.ModeIDC != wantIDC || meta.Scalability.HasStructure {
+		t.Fatalf("metadata=%+v want idc=%d", meta, wantIDC)
+	}
+}
+
 func publicWebRTCControllerTransitionConfig(mode av1.EncoderScalabilityMode, step int) av1.EncoderConfig {
 	fps := []av1.EncoderRational{
 		{Num: 30, Den: 1},
@@ -2803,6 +2870,7 @@ func TestPublicWebRTCEncoderPictureHeaderTemporalUnitsForFrames(t *testing.T) {
 	if len(out) != size || unit != sizedUnit || enc.State().NextFrameID != 122 {
 		t.Fatalf("out len=%d want=%d unit=%+v sized=%+v state=%+v", len(out), size, unit, sizedUnit, enc.State())
 	}
+	assertPublicWebRTCHeaderScalabilityMetadata(t, out, av1.MetadataScalabilityModeL2T2, true)
 
 	bad := frames
 	bad[1].Format.Width--

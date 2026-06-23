@@ -319,6 +319,22 @@ func EncoderWebRTCScalabilityModeIDC(mode EncoderScalabilityMode) (idc uint8, ok
 	return internalencoder.WebRTCScalabilityModeIDC(mode)
 }
 
+func EncoderWebRTCScalabilityMetadataPayloadSize(mode EncoderScalabilityMode) (size int, ok bool) {
+	return internalencoder.WebRTCScalabilityMetadataPayloadSize(mode)
+}
+
+func AppendEncoderWebRTCScalabilityMetadataPayload(dst []byte, mode EncoderScalabilityMode) ([]byte, bool, error) {
+	return internalencoder.AppendWebRTCScalabilityMetadataPayload(dst, mode)
+}
+
+func EncoderLowOverheadWebRTCScalabilityMetadataOBUSize(mode EncoderScalabilityMode) (size int, ok bool, err error) {
+	return internalencoder.LowOverheadWebRTCScalabilityMetadataOBUSize(mode)
+}
+
+func AppendEncoderLowOverheadWebRTCScalabilityMetadataOBU(dst []byte, mode EncoderScalabilityMode) ([]byte, bool, error) {
+	return internalencoder.AppendLowOverheadWebRTCScalabilityMetadataOBU(dst, mode)
+}
+
 func DefaultEncoderScalabilityMode(temporalLayers uint8, spatialLayers uint8) (EncoderScalabilityMode, bool) {
 	return internalencoder.DefaultScalabilityMode(temporalLayers, spatialLayers)
 }

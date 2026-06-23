@@ -155,6 +155,67 @@ func TestAppendLowOverheadOBUAllocs(t *testing.T) {
 	}
 }
 
+func TestAppendLowOverheadWebRTCScalabilityMetadataOBU(t *testing.T) {
+	size, ok, err := LowOverheadWebRTCScalabilityMetadataOBUSize(ScalabilityModeL2T2)
+	if err != nil || !ok {
+		t.Fatalf("LowOverheadWebRTCScalabilityMetadataOBUSize: size=%d ok=%v err=%v", size, ok, err)
+	}
+	var buf [8]byte
+	out, ok, err := AppendLowOverheadWebRTCScalabilityMetadataOBU(buf[:0], ScalabilityModeL2T2)
+	if err != nil || !ok {
+		t.Fatalf("AppendLowOverheadWebRTCScalabilityMetadataOBU: ok=%v err=%v", ok, err)
+	}
+	if len(out) != size {
+		t.Fatalf("len=%d want %d", len(out), size)
+	}
+	unit, consumed, err := obu.ParseLowOverhead(out)
+	if err != nil {
+		t.Fatalf("ParseLowOverhead: %v", err)
+	}
+	if consumed != len(out) || unit.Header.Type != obu.TypeMetadata {
+		t.Fatalf("metadata consumed=%d header=%+v", consumed, unit.Header)
+	}
+	meta, err := obu.ParseMetadata(unit.Payload)
+	if err != nil {
+		t.Fatalf("ParseMetadata: %v", err)
+	}
+	if meta.Type != obu.MetadataTypeScalability || meta.Scalability.ModeIDC != obu.ScalabilityModeL2T2 || meta.Scalability.HasStructure {
+		t.Fatalf("metadata=%+v", meta)
+	}
+
+	prefix := []byte{0xee}
+	noMetadata, ok, err := AppendLowOverheadWebRTCScalabilityMetadataOBU(prefix, ScalabilityModeL1T1)
+	if err != nil || ok || !bytes.Equal(noMetadata, prefix) {
+		t.Fatalf("L1T1 metadata out=% x ok=%v err=%v", noMetadata, ok, err)
+	}
+	if size, ok, err := LowOverheadWebRTCScalabilityMetadataOBUSize(ScalabilityModeL1T1); err != nil || ok || size != 0 {
+		t.Fatalf("L1T1 size=%d ok=%v err=%v", size, ok, err)
+	}
+
+	var tiny [2]byte
+	if out, ok, err := AppendLowOverheadWebRTCScalabilityMetadataOBU(tiny[:0], ScalabilityModeL2T2); !ok || !errors.Is(err, bitstream.ErrShortBuffer) || len(out) != 0 {
+		t.Fatalf("short metadata out=% x ok=%v err=%v", out, ok, err)
+	}
+}
+
+func TestAppendWebRTCScalabilityMetadataPayloadAllocs(t *testing.T) {
+	var payload [4]byte
+	if _, ok, err := AppendWebRTCScalabilityMetadataPayload(payload[:0], ScalabilityModeL2T2); err != nil || !ok {
+		t.Fatalf("preflight payload ok=%v err=%v", ok, err)
+	}
+	var obuBuf [8]byte
+	if _, ok, err := AppendLowOverheadWebRTCScalabilityMetadataOBU(obuBuf[:0], ScalabilityModeL2T2); err != nil || !ok {
+		t.Fatalf("preflight obu ok=%v err=%v", ok, err)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		_, _, _ = AppendWebRTCScalabilityMetadataPayload(payload[:0], ScalabilityModeL2T2)
+		_, _, _ = AppendLowOverheadWebRTCScalabilityMetadataOBU(obuBuf[:0], ScalabilityModeL2T2)
+	})
+	if allocs != 0 {
+		t.Fatalf("metadata writers allocated: %f", allocs)
+	}
+}
+
 func TestAppendLowOverheadTemporalUnit(t *testing.T) {
 	units := [...]OBU{
 		{Type: obu.TypeSequenceHeader, Payload: []byte{0x01, 0x02}},

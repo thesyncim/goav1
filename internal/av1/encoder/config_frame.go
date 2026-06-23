@@ -28,10 +28,11 @@ type InterHeaderFrame struct {
 // WebRTCKeyFrameTemporalUnit describes the config-derived initial key temporal
 // unit: emitted AV1 headers plus WebRTC frame-control/dependency metadata.
 type WebRTCKeyFrameTemporalUnit struct {
-	Header   IntraHeaderTemporalUnit
-	Frames   [WebRTCMaxSpatialLayers]FrameEncodeSettings
-	FrameNum uint8
-	Control  WebRTCTemporalUnitControl
+	Header      IntraHeaderTemporalUnit
+	Scalability ScalabilityMode
+	Frames      [WebRTCMaxSpatialLayers]FrameEncodeSettings
+	FrameNum    uint8
+	Control     WebRTCTemporalUnitControl
 }
 
 // WebRTCDeltaFrameTemporalUnit describes a config-derived steady-state delta
@@ -146,6 +147,7 @@ func WebRTCKeyFrameTemporalUnitForConfig(config Config, orderHint uint8, firstFr
 
 	var unit WebRTCKeyFrameTemporalUnit
 	unit.Header = header
+	unit.Scalability = config.Scalability
 	unit.FrameNum = config.SpatialLayerCount
 	for i := uint8(0); i < unit.FrameNum; i++ {
 		layer := config.SpatialLayers[i]
@@ -197,7 +199,7 @@ func LowOverheadWebRTCKeyFrameTemporalUnitForStateSize(config Config, state WebR
 	if err != nil {
 		return 0, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, err
 	}
-	size, err := LowOverheadIntraHeaderTemporalUnitSize(unit.Header.Sequence, unit.Header.Prefix, unit.Header.Size)
+	size, err := LowOverheadWebRTCKeyFrameHeaderTemporalUnitSize(unit)
 	if err != nil {
 		return 0, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, err
 	}
@@ -209,11 +211,63 @@ func AppendLowOverheadWebRTCKeyFrameTemporalUnitForState(dst []byte, config Conf
 	if err != nil {
 		return dst, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, err
 	}
-	out, err := AppendLowOverheadIntraHeaderTemporalUnit(dst, unit.Header.Sequence, unit.Header.Prefix, unit.Header.Size)
+	out, err := AppendLowOverheadWebRTCKeyFrameHeaderTemporalUnit(dst, unit)
 	if err != nil {
 		return dst, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, err
 	}
 	return out, unit, next, nil
+}
+
+// LowOverheadWebRTCKeyFrameHeaderTemporalUnitSize returns the byte size for a
+// WebRTC key temporal unit carrying sequence header, optional scalability
+// metadata, and key/intra-only frame header.
+func LowOverheadWebRTCKeyFrameHeaderTemporalUnitSize(unit WebRTCKeyFrameTemporalUnit) (int, error) {
+	seqSize, err := LowOverheadSequenceHeaderOBUSize(unit.Header.Sequence)
+	if err != nil {
+		return 0, err
+	}
+	frameSize, err := LowOverheadFrameHeaderIntraOBUSize(unit.Header.Sequence, unit.Header.Prefix, unit.Header.Size)
+	if err != nil {
+		return 0, err
+	}
+	size := lowOverheadOBUSizeUnchecked(OBU{Type: obu.TypeTemporalDelimiter}) + seqSize + frameSize
+	if metadataSize, ok, err := LowOverheadWebRTCScalabilityMetadataOBUSize(unit.Scalability); err != nil {
+		return 0, err
+	} else if ok {
+		size += metadataSize
+	}
+	return size, nil
+}
+
+// AppendLowOverheadWebRTCKeyFrameHeaderTemporalUnit appends one WebRTC key
+// temporal unit with optional scalability metadata immediately after the
+// sequence header.
+func AppendLowOverheadWebRTCKeyFrameHeaderTemporalUnit(dst []byte, unit WebRTCKeyFrameTemporalUnit) ([]byte, error) {
+	size, err := LowOverheadWebRTCKeyFrameHeaderTemporalUnitSize(unit)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, bitstream.ErrShortBuffer
+	}
+	out, err := AppendLowOverheadOBU(dst, OBU{Type: obu.TypeTemporalDelimiter})
+	if err != nil {
+		return dst, err
+	}
+	out, err = AppendLowOverheadSequenceHeaderOBU(out, unit.Header.Sequence)
+	if err != nil {
+		return dst, err
+	}
+	if next, _, err := AppendLowOverheadWebRTCScalabilityMetadataOBU(out, unit.Scalability); err != nil {
+		return dst, err
+	} else {
+		out = next
+	}
+	out, err = AppendLowOverheadFrameHeaderIntraOBU(out, unit.Header.Sequence, unit.Header.Prefix, unit.Header.Size)
+	if err != nil {
+		return dst, err
+	}
+	return out, nil
 }
 
 func LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(config Config, state WebRTCEncoderState, forceKeyFrame bool) (int, WebRTCPictureTemporalUnit, WebRTCEncoderState, error) {
@@ -222,7 +276,7 @@ func LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(config Config, state
 		return 0, WebRTCPictureTemporalUnit{}, WebRTCEncoderState{}, err
 	}
 	if unit.Key {
-		size, err := LowOverheadIntraHeaderTemporalUnitSize(unit.KeyUnit.Header.Sequence, unit.KeyUnit.Header.Prefix, unit.KeyUnit.Header.Size)
+		size, err := LowOverheadWebRTCKeyFrameHeaderTemporalUnitSize(unit.KeyUnit)
 		if err != nil {
 			return 0, WebRTCPictureTemporalUnit{}, WebRTCEncoderState{}, err
 		}
@@ -244,7 +298,7 @@ func AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(dst []byte, config
 		return dst, WebRTCPictureTemporalUnit{}, WebRTCEncoderState{}, err
 	}
 	if unit.Key {
-		out, err := AppendLowOverheadIntraHeaderTemporalUnit(dst, unit.KeyUnit.Header.Sequence, unit.KeyUnit.Header.Prefix, unit.KeyUnit.Header.Size)
+		out, err := AppendLowOverheadWebRTCKeyFrameHeaderTemporalUnit(dst, unit.KeyUnit)
 		if err != nil {
 			return dst, WebRTCPictureTemporalUnit{}, WebRTCEncoderState{}, err
 		}
@@ -303,6 +357,52 @@ func AppendLowOverheadCompleteIntraHeaderTemporalUnit(dst []byte, seq SequenceHe
 	return out, nil
 }
 
+func LowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitSize(unit WebRTCKeyFrameTemporalUnit, header IntraFrameHeaderParams) (int, error) {
+	seqSize, err := LowOverheadSequenceHeaderOBUSize(unit.Header.Sequence)
+	if err != nil {
+		return 0, err
+	}
+	frameSize, err := LowOverheadIntraFrameHeaderOBUSize(unit.Header.Sequence, header, 0, 0)
+	if err != nil {
+		return 0, err
+	}
+	size := lowOverheadOBUSizeUnchecked(OBU{Type: obu.TypeTemporalDelimiter}) + seqSize + frameSize
+	if metadataSize, ok, err := LowOverheadWebRTCScalabilityMetadataOBUSize(unit.Scalability); err != nil {
+		return 0, err
+	} else if ok {
+		size += metadataSize
+	}
+	return size, nil
+}
+
+func AppendLowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnit(dst []byte, unit WebRTCKeyFrameTemporalUnit, header IntraFrameHeaderParams) ([]byte, error) {
+	size, err := LowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitSize(unit, header)
+	if err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < size {
+		return dst, bitstream.ErrShortBuffer
+	}
+	out, err := AppendLowOverheadOBU(dst, OBU{Type: obu.TypeTemporalDelimiter})
+	if err != nil {
+		return dst, err
+	}
+	out, err = AppendLowOverheadSequenceHeaderOBU(out, unit.Header.Sequence)
+	if err != nil {
+		return dst, err
+	}
+	if next, _, err := AppendLowOverheadWebRTCScalabilityMetadataOBU(out, unit.Scalability); err != nil {
+		return dst, err
+	} else {
+		out = next
+	}
+	out, err = AppendLowOverheadIntraFrameHeaderOBU(out, unit.Header.Sequence, header, 0, 0)
+	if err != nil {
+		return dst, err
+	}
+	return out, nil
+}
+
 // LowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForStateSize returns the
 // exact emitted byte size for the next config/state-derived WebRTC key temporal
 // unit with a complete frame-header OBU.
@@ -315,7 +415,7 @@ func LowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForStateSize(config Conf
 	if err != nil {
 		return 0, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, IntraFrameHeaderParams{}, err
 	}
-	size, err := LowOverheadCompleteIntraHeaderTemporalUnitSize(unit.Header.Sequence, header)
+	size, err := LowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitSize(unit, header)
 	if err != nil {
 		return 0, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, IntraFrameHeaderParams{}, err
 	}
@@ -330,7 +430,7 @@ func AppendLowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForState(dst []byt
 	if err != nil {
 		return dst, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, IntraFrameHeaderParams{}, err
 	}
-	out, err := AppendLowOverheadCompleteIntraHeaderTemporalUnit(dst, unit.Header.Sequence, header)
+	out, err := AppendLowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnit(dst, unit, header)
 	if err != nil {
 		return dst, WebRTCKeyFrameTemporalUnit{}, WebRTCEncoderState{}, IntraFrameHeaderParams{}, err
 	}
@@ -523,7 +623,7 @@ func LowOverheadWebRTCKeyFrameTemporalUnitForConfigSize(config Config, orderHint
 	if err != nil {
 		return 0, WebRTCKeyFrameTemporalUnit{}, err
 	}
-	size, err := LowOverheadIntraHeaderTemporalUnitSize(unit.Header.Sequence, unit.Header.Prefix, unit.Header.Size)
+	size, err := LowOverheadWebRTCKeyFrameHeaderTemporalUnitSize(unit)
 	if err != nil {
 		return 0, WebRTCKeyFrameTemporalUnit{}, err
 	}
@@ -538,7 +638,7 @@ func AppendLowOverheadWebRTCKeyFrameTemporalUnitForConfig(dst []byte, config Con
 	if err != nil {
 		return dst, WebRTCKeyFrameTemporalUnit{}, err
 	}
-	out, err := AppendLowOverheadIntraHeaderTemporalUnit(dst, unit.Header.Sequence, unit.Header.Prefix, unit.Header.Size)
+	out, err := AppendLowOverheadWebRTCKeyFrameHeaderTemporalUnit(dst, unit)
 	if err != nil {
 		return dst, WebRTCKeyFrameTemporalUnit{}, err
 	}

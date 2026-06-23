@@ -2100,6 +2100,33 @@ func TestPublicRTCEncoderSetConfigSpatialCycleDecodes(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderKeyFrameScalabilityMetadata(t *testing.T) {
+	const w, h = 640, 360
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL2T2)
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig L2T2: %v", err)
+	}
+	picture, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, 0), false)
+	if err != nil {
+		t.Fatalf("EncodePicture L2T2: %v", err)
+	}
+	if picture.FrameNum < 1 || !picture.Keyframe {
+		t.Fatalf("picture=%+v", picture)
+	}
+	assertPublicRTCFrameScalabilityMetadata(t, picture.Frames[0].Data, goav1.MetadataScalabilityModeL2T2, true)
+
+	plain, err := goav1.NewRTCEncoderWithConfig(publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T1))
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig L1T1: %v", err)
+	}
+	plainPicture, err := plain.EncodePicture(publicRTCMatrixFrame(w, h, 0), false)
+	if err != nil {
+		t.Fatalf("EncodePicture L1T1: %v", err)
+	}
+	assertPublicRTCFrameScalabilityMetadata(t, plainPicture.Frames[0].Data, 0, false)
+}
+
 func TestPublicRTCEncoderSetConfigFullModeCatalogueDecodes(t *testing.T) {
 	modes := goav1.EncoderWebRTCScalabilityModes()
 	if len(modes) == 0 {
@@ -3188,6 +3215,44 @@ func assertPublicRTPPayloadsAssembleToFrame(t *testing.T, frameData []byte, payl
 	}
 	if wrote != len(expected) || gotOBUs != obuCount || string(assembled[:wrote]) != string(expected) {
 		t.Fatalf("assembled len=%d obus=%d match=%v want len=%d obus=%d", wrote, gotOBUs, string(assembled[:wrote]) == string(expected), len(expected), obuCount)
+	}
+}
+
+func assertPublicRTCFrameScalabilityMetadata(t *testing.T, frameData []byte, wantIDC uint8, wantPresent bool) {
+	t.Helper()
+	it := goav1.NewLowOverheadIterator(frameData)
+	if td, ok, err := it.Next(); err != nil || !ok || td.Header.Type != goav1.OBUTemporalDelimiter {
+		t.Fatalf("TD ok=%v err=%v header=%+v", ok, err, td.Header)
+	}
+	if seq, ok, err := it.Next(); err != nil || !ok || seq.Header.Type != goav1.OBUSequenceHeader {
+		t.Fatalf("sequence ok=%v err=%v header=%+v", ok, err, seq.Header)
+	}
+	next, ok, err := it.Next()
+	if err != nil || !ok {
+		t.Fatalf("next OBU ok=%v err=%v header=%+v", ok, err, next.Header)
+	}
+	if !wantPresent {
+		if next.Header.Type == goav1.OBUMetadata {
+			t.Fatalf("unexpected metadata payload=% x", next.Payload)
+		}
+		if next.Header.Type != goav1.OBUFrameHeader && next.Header.Type != goav1.OBUFrame {
+			t.Fatalf("next OBU after sequence=%+v", next.Header)
+		}
+		return
+	}
+	if next.Header.Type != goav1.OBUMetadata {
+		t.Fatalf("metadata header=%+v", next.Header)
+	}
+	meta, err := goav1.ParseMetadataOBU(next.Payload)
+	if err != nil {
+		t.Fatalf("ParseMetadataOBU: %v", err)
+	}
+	if meta.Type != goav1.MetadataTypeScalability || meta.Scalability.ModeIDC != wantIDC || meta.Scalability.HasStructure {
+		t.Fatalf("metadata=%+v want idc=%d", meta, wantIDC)
+	}
+	frame, ok, err := it.Next()
+	if err != nil || !ok || (frame.Header.Type != goav1.OBUFrameHeader && frame.Header.Type != goav1.OBUFrame) {
+		t.Fatalf("frame after metadata ok=%v err=%v header=%+v", ok, err, frame.Header)
 	}
 }
 

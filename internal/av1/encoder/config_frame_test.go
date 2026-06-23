@@ -240,6 +240,17 @@ func TestAppendLowOverheadWebRTCKeyFrameTemporalUnitForConfig(t *testing.T) {
 	if err != nil || !ok || len(tu.Raw) != len(out) {
 		t.Fatalf("temporal unit ok=%v err=%v len=%d want=%d", ok, err, len(tu.Raw), len(out))
 	}
+	low := obu.NewLowOverheadIterator(out)
+	if td, ok, err := low.Next(); err != nil || !ok || td.Header.Type != obu.TypeTemporalDelimiter {
+		t.Fatalf("TD ok=%v err=%v header=%+v", ok, err, td.Header)
+	}
+	if seq, ok, err := low.Next(); err != nil || !ok || seq.Header.Type != obu.TypeSequenceHeader {
+		t.Fatalf("seq ok=%v err=%v header=%+v", ok, err, seq.Header)
+	}
+	assertWebRTCScalabilityMetadataOBU(t, &low, ScalabilityModeL2T2)
+	if frame, ok, err := low.Next(); err != nil || !ok || frame.Header.Type != obu.TypeFrameHeader {
+		t.Fatalf("frame ok=%v err=%v header=%+v", ok, err, frame.Header)
+	}
 }
 
 func TestAppendLowOverheadWebRTCKeyFrameTemporalUnitForConfigAllocs(t *testing.T) {
@@ -284,6 +295,17 @@ func TestAppendLowOverheadWebRTCKeyFrameTemporalUnitForState(t *testing.T) {
 	tu, ok, err := it.Next()
 	if err != nil || !ok || len(tu.Raw) != len(out) {
 		t.Fatalf("temporal unit ok=%v err=%v len=%d want=%d", ok, err, len(tu.Raw), len(out))
+	}
+	low := obu.NewLowOverheadIterator(out)
+	if td, ok, err := low.Next(); err != nil || !ok || td.Header.Type != obu.TypeTemporalDelimiter {
+		t.Fatalf("TD ok=%v err=%v header=%+v", ok, err, td.Header)
+	}
+	if seq, ok, err := low.Next(); err != nil || !ok || seq.Header.Type != obu.TypeSequenceHeader {
+		t.Fatalf("seq ok=%v err=%v header=%+v", ok, err, seq.Header)
+	}
+	assertWebRTCScalabilityMetadataOBU(t, &low, ScalabilityModeL2T2)
+	if frame, ok, err := low.Next(); err != nil || !ok || frame.Header.Type != obu.TypeFrameHeader {
+		t.Fatalf("frame ok=%v err=%v header=%+v", ok, err, frame.Header)
 	}
 	var tiny [1]byte
 	if _, _, _, err := AppendLowOverheadWebRTCKeyFrameTemporalUnitForState(tiny[:0], cfg, state); !errors.Is(err, bitstream.ErrShortBuffer) {
@@ -962,6 +984,7 @@ func TestAppendLowOverheadWebRTCCompleteKeyFrameHeaderTemporalUnitForState(t *te
 	if err != nil {
 		t.Fatalf("ParseSequenceHeader: %v", err)
 	}
+	assertWebRTCScalabilityMetadataOBU(t, &it, ScalabilityModeL2T2)
 	frameUnit, ok, err := it.Next()
 	if err != nil || !ok || frameUnit.Header.Type != obu.TypeFrameHeader {
 		t.Fatalf("frame ok=%v err=%v header=%+v", ok, err, frameUnit.Header)
@@ -1118,6 +1141,7 @@ func TestAppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(t *testing.T) 
 	if seq, ok, err := keyIt.Next(); err != nil || !ok || seq.Header.Type != obu.TypeSequenceHeader {
 		t.Fatalf("key seq ok=%v err=%v header=%+v", ok, err, seq.Header)
 	}
+	assertWebRTCScalabilityMetadataOBU(t, &keyIt, ScalabilityModeL2T2)
 	if fh, ok, err := keyIt.Next(); err != nil || !ok || fh.Header.Type != obu.TypeFrameHeader {
 		t.Fatalf("key frame header ok=%v err=%v header=%+v", ok, err, fh.Header)
 	}
@@ -1537,5 +1561,21 @@ func TestWebRTCNextTemporalUnitForStateAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("WebRTCNextTemporalUnitForState allocated: %f", allocs)
+	}
+}
+
+func assertWebRTCScalabilityMetadataOBU(t *testing.T, it *obu.LowOverheadIterator, mode ScalabilityMode) {
+	t.Helper()
+	unit, ok, err := it.Next()
+	if err != nil || !ok || unit.Header.Type != obu.TypeMetadata {
+		t.Fatalf("metadata ok=%v err=%v header=%+v", ok, err, unit.Header)
+	}
+	meta, err := obu.ParseMetadata(unit.Payload)
+	if err != nil {
+		t.Fatalf("ParseMetadata: %v", err)
+	}
+	idc, ok := WebRTCScalabilityModeIDC(mode)
+	if !ok || meta.Type != obu.MetadataTypeScalability || meta.Scalability.ModeIDC != idc || meta.Scalability.HasStructure {
+		t.Fatalf("metadata=%+v mode=%s idc=%d ok=%v", meta, mode, idc, ok)
 	}
 }

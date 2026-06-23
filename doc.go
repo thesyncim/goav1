@@ -32,13 +32,14 @@
 // input adapters, RTCEncoder config preflight
 // normalization, RTP payload packetization with dependency descriptors, sized
 // complete RTP packet wrapping, multi-spatial EncodePicture output for WebRTC
-// SVC and simulcast modes, and runtime bitrate/framerate/scalability
+// SVC and simulcast modes, key-frame scalability metadata OBUs, and runtime
+// bitrate/framerate/scalability
 // reconfiguration. Lower-level WebRTC encoder
 // helpers expose W3C SVC mode metadata, temporal/spatial dependency
 // structures, decode-target grids, active decode-target masks, key-shift
-// scheduling, AV1 scalability_mode_idc mapping, explicit sequence color
-// config, sequence-matched sample-plane loading, and the supported
-// scalabilityMode capability list. High-level
+// scheduling, AV1 scalability_mode_idc mapping and metadata OBU writing,
+// explicit sequence color config, sequence-matched sample-plane loading, and
+// the supported scalabilityMode capability list. High-level
 // decoder helpers cover low-overhead streams, ordered/live AV1 RTP payload
 // bodies or complete packets, retained-fragment reset after RTP loss, and
 // shared-reference SVC RTP receive loops with decoded AV1 layer metadata;

@@ -146,6 +146,12 @@ three-spatial `h` modes, and `T1` key modes; callers that need to signal
 those shapes must use `MetadataScalabilityModeSS` with an explicit
 `scalability_structure()`.
 
+`RTCEncoder`, `WebRTCEncoder`, and the lower-level
+`AppendEncoderLowOverheadWebRTCScalabilityMetadataOBU` helper emit the
+predefined-IDC metadata as a non-layer-specific metadata OBU immediately after
+the sequence header on key temporal units. Modes without a predefined IDC keep
+the metadata OBU absent until the caller supplies an explicit SS structure.
+
 ---
 
 ## The simple path: same-size spatial layers
