@@ -9,7 +9,8 @@
 // inward. Public helpers expose IVF containers, low-overhead, temporal-unit,
 // and Annex B OBU parsing, AV1 RTP fixed-header and RFC 8285 extension element
 // framing, AV1 RTP payload iteration, construction, caller-owned RTP sizing,
-// generic and compound RTCP packet helpers, RTCP
+// complete RTP packet decode wrappers, generic and compound RTCP packet
+// helpers, RTCP
 // SR/RR/SDES/BYE and RTPFB/PSFB packet helpers, RTCP
 // NACK/Transport-CC/PLI/FIR/REMB FCI helpers, AV1 RTCP Layer Refresh Request
 // FCI list helpers, RTCP feedback force-key classification for single and
@@ -36,11 +37,11 @@
 // structures, decode-target grids, active decode-target masks, key-shift
 // scheduling, explicit sequence color config, sequence-matched sample-plane
 // loading, and the supported scalabilityMode capability list. High-level
-// decoder helpers cover
-// low-overhead streams, ordered/live AV1 RTP payload bodies, retained-fragment
-// reset after RTP loss, and shared-reference SVC RTP receive loops with decoded
-// AV1 layer metadata; frame-work/layer-pool APIs remain available when callers
-// need explicit surface routing.
+// decoder helpers cover low-overhead streams, ordered/live AV1 RTP payload
+// bodies or complete packets, retained-fragment reset after RTP loss, and
+// shared-reference SVC RTP receive loops with decoded AV1 layer metadata;
+// frame-work/layer-pool APIs remain available when callers need explicit
+// surface routing.
 //
 // Hot paths use caller-owned buffers and fixed storage. Returned byte slices
 // alias caller-provided input or output buffers unless a future API explicitly

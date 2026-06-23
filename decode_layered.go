@@ -355,6 +355,17 @@ func (d *LayeredDecoder) DecodeRTPPayload(payload []byte) ([]*Frame, error) {
 	return d.framesFromLayered(outputs), nil
 }
 
+// DecodeRTPPacket parses one complete RTP packet and decodes its AV1 RTP
+// payload body using a decoder constructed by NewLayeredDecoderFromRTPPayloads
+// or NewLayeredDecoderFromRTPPackets.
+func (d *LayeredDecoder) DecodeRTPPacket(packet []byte) ([]*Frame, error) {
+	outputs, err := d.DecodeRTPPacketWithMetadata(packet)
+	if err != nil {
+		return nil, err
+	}
+	return d.framesFromLayered(outputs), nil
+}
+
 // DecodeRTPPayloadWithMetadata decodes one caller-supplied AV1 RTP payload body
 // using an RTP decoder constructed by NewLayeredDecoderFromRTPPayloads and
 // returns visible frames with parsed AV1 layer metadata.
@@ -365,11 +376,32 @@ func (d *LayeredDecoder) DecodeRTPPayloadWithMetadata(payload []byte) ([]Layered
 	return d.decodePayloadWithMetadata(payload, false)
 }
 
+// DecodeRTPPacketWithMetadata parses one complete RTP packet, decodes its AV1
+// RTP payload body, and returns visible frames with parsed AV1 layer metadata.
+func (d *LayeredDecoder) DecodeRTPPacketWithMetadata(packet []byte) ([]LayeredFrame, error) {
+	rtp, err := ParseRTPPacket(packet)
+	if err != nil {
+		return nil, fmt.Errorf("goav1: rtp packet: %w", err)
+	}
+	return d.DecodeRTPPayloadWithMetadata(rtp.Payload)
+}
+
 // DecodeRTPPayloadAfterLoss clears retained RTP fragment bytes, then decodes
 // one caller-supplied AV1 RTP payload body while preserving parser sequence and
 // reference state.
 func (d *LayeredDecoder) DecodeRTPPayloadAfterLoss(payload []byte) ([]*Frame, error) {
 	outputs, err := d.DecodeRTPPayloadAfterLossWithMetadata(payload)
+	if err != nil {
+		return nil, err
+	}
+	return d.framesFromLayered(outputs), nil
+}
+
+// DecodeRTPPacketAfterLoss clears retained RTP fragment bytes, then parses one
+// complete RTP packet and decodes its AV1 RTP payload body while preserving
+// parser sequence and reference state.
+func (d *LayeredDecoder) DecodeRTPPacketAfterLoss(packet []byte) ([]*Frame, error) {
+	outputs, err := d.DecodeRTPPacketAfterLossWithMetadata(packet)
 	if err != nil {
 		return nil, err
 	}
@@ -385,6 +417,17 @@ func (d *LayeredDecoder) DecodeRTPPayloadAfterLossWithMetadata(payload []byte) (
 		return nil, errors.New("goav1: layered decoder is not initialized for RTP payloads")
 	}
 	return d.decodePayloadWithMetadata(payload, true)
+}
+
+// DecodeRTPPacketAfterLossWithMetadata clears retained RTP fragment bytes, then
+// parses one complete RTP packet, decodes its AV1 RTP payload body, and returns
+// visible frames with parsed AV1 layer metadata.
+func (d *LayeredDecoder) DecodeRTPPacketAfterLossWithMetadata(packet []byte) ([]LayeredFrame, error) {
+	rtp, err := ParseRTPPacket(packet)
+	if err != nil {
+		return nil, fmt.Errorf("goav1: rtp packet: %w", err)
+	}
+	return d.DecodeRTPPayloadAfterLossWithMetadata(rtp.Payload)
 }
 
 func (d *LayeredDecoder) decodePayload(payload []byte, afterLoss bool) ([]*Frame, error) {

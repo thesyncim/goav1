@@ -428,6 +428,17 @@ func (d *Decoder) DecodeRTPPayload(payload []byte) ([]*Frame, error) {
 	return d.decodeExternalRTPPayload(payload, false)
 }
 
+// DecodeRTPPacket parses one complete RTP packet and decodes its AV1 RTP
+// payload body using a decoder constructed by NewDecoderFromRTPPayloads or
+// NewDecoderFromRTPPackets.
+func (d *Decoder) DecodeRTPPacket(packet []byte) ([]*Frame, error) {
+	rtp, err := ParseRTPPacket(packet)
+	if err != nil {
+		return nil, fmt.Errorf("goav1: rtp packet: %w", err)
+	}
+	return d.decodeExternalRTPPayload(rtp.Payload, false)
+}
+
 // DecodeRTPPayloadAfterLoss clears retained RTP fragment bytes, then decodes
 // one caller-supplied AV1 RTP payload body. Parser sequence and reference state
 // are preserved, matching the lower-level RunRTPPayloadAfterLoss* methods. Use
@@ -435,6 +446,17 @@ func (d *Decoder) DecodeRTPPayload(payload []byte) ([]*Frame, error) {
 // payload that should restart depacketization.
 func (d *Decoder) DecodeRTPPayloadAfterLoss(payload []byte) ([]*Frame, error) {
 	return d.decodeExternalRTPPayload(payload, true)
+}
+
+// DecodeRTPPacketAfterLoss clears retained RTP fragment bytes, then parses one
+// complete RTP packet and decodes its AV1 RTP payload body. Parser sequence and
+// reference state are preserved.
+func (d *Decoder) DecodeRTPPacketAfterLoss(packet []byte) ([]*Frame, error) {
+	rtp, err := ParseRTPPacket(packet)
+	if err != nil {
+		return nil, fmt.Errorf("goav1: rtp packet: %w", err)
+	}
+	return d.decodeExternalRTPPayload(rtp.Payload, true)
 }
 
 func (d *Decoder) decodeExternalRTPPayload(payload []byte, afterLoss bool) ([]*Frame, error) {

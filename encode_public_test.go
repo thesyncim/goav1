@@ -2217,6 +2217,7 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 
 			var lowOverheads [][]byte
 			var rtpPayloads [][]byte
+			var rtpPackets [][]byte
 			var rtpPayloadLabels []string
 			var wantMetadata []publicLayeredFrameMetadata
 			for frameIndex := 0; frameIndex < 3; frameIndex++ {
@@ -2238,8 +2239,13 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 					lowOverheads = append(lowOverheads, append([]byte(nil), frame.Data...))
 					wantMetadata = append(wantMetadata, publicLayeredFrameMetadataFromRTCFrame(frame))
 					framePayloads := publicDecoderRTPPayloadsForFrameWithLimits(t, frame, limits)
+					framePackets := publicDecoderRTPPacketsForFrameWithLimits(t, frame, limits)
+					if len(framePayloads) != len(framePackets) {
+						t.Fatalf("frame payload/packet count=%d/%d", len(framePayloads), len(framePackets))
+					}
 					for packetIndex, payload := range framePayloads {
 						rtpPayloads = append(rtpPayloads, payload)
+						rtpPackets = append(rtpPackets, framePackets[packetIndex])
 						rtpPayloadLabels = append(rtpPayloadLabels, fmt.Sprintf("picture=%d output=%d packet=%d/%d S%d T%d key=%v frameID=%d",
 							frameIndex, outputIndex, packetIndex, len(framePayloads), frame.SpatialID, frame.TemporalID, frame.Keyframe, frame.FrameID))
 					}
@@ -2251,18 +2257,26 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 			gotLayeredLow := decodePublicLayeredDecoderLowOverheadDigests(t, lowOverheads...)
 			gotLayeredQueued := decodePublicLayeredDecoderRTPPayloadDigests(t, rtpPayloads...)
 			gotLayeredLive := decodePublicLayeredLiveDecoderRTPPayloadDigests(t, rtpPayloads, rtpPayloads...)
+			gotLayeredQueuedPackets := decodePublicLayeredDecoderRTPPacketDigests(t, rtpPackets...)
+			gotLayeredLivePackets := decodePublicLayeredLiveDecoderRTPPacketDigests(t, rtpPackets, rtpPackets...)
 			gotLayeredLowMetadata := decodePublicLayeredDecoderLowOverheadMetadata(t, lowOverheads...)
 			gotLayeredQueuedMetadata := decodePublicLayeredDecoderRTPPayloadMetadata(t, rtpPayloads...)
 			gotLayeredLiveMetadata := decodePublicLayeredLiveDecoderRTPPayloadMetadata(t, rtpPayloads, rtpPayloads...)
+			gotLayeredQueuedPacketMetadata := decodePublicLayeredDecoderRTPPacketMetadata(t, rtpPackets...)
+			gotLayeredLivePacketMetadata := decodePublicLayeredLiveDecoderRTPPacketMetadata(t, rtpPackets, rtpPackets...)
 			if len(got) != len(want) || len(got) != len(lowOverheads) {
 				t.Fatalf("decoded frames got=%d want=%d low-overheads=%d", len(got), len(want), len(lowOverheads))
 			}
-			if len(gotLayeredLow) != len(want) || len(gotLayeredQueued) != len(want) || len(gotLayeredLive) != len(want) {
-				t.Fatalf("layered decoded frames low=%d queued=%d live=%d want=%d", len(gotLayeredLow), len(gotLayeredQueued), len(gotLayeredLive), len(want))
+			if len(gotLayeredLow) != len(want) || len(gotLayeredQueued) != len(want) || len(gotLayeredLive) != len(want) ||
+				len(gotLayeredQueuedPackets) != len(want) || len(gotLayeredLivePackets) != len(want) {
+				t.Fatalf("layered decoded frames low=%d payload queued/live=%d/%d packet queued/live=%d/%d want=%d",
+					len(gotLayeredLow), len(gotLayeredQueued), len(gotLayeredLive), len(gotLayeredQueuedPackets), len(gotLayeredLivePackets), len(want))
 			}
 			assertPublicLayeredFrameMetadata(t, gotLayeredLowMetadata, wantMetadata)
 			assertPublicLayeredFrameMetadata(t, gotLayeredQueuedMetadata, wantMetadata)
 			assertPublicLayeredFrameMetadata(t, gotLayeredLiveMetadata, wantMetadata)
+			assertPublicLayeredFrameMetadata(t, gotLayeredQueuedPacketMetadata, wantMetadata)
+			assertPublicLayeredFrameMetadata(t, gotLayeredLivePacketMetadata, wantMetadata)
 			for i := range want {
 				if got[i] != want[i] {
 					t.Fatalf("frame %d digest differs: rtp=%x low=%x", i, got[i], want[i])
@@ -2275,6 +2289,12 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 				}
 				if gotLayeredLive[i] != want[i] {
 					t.Fatalf("frame %d layered live digest differs: rtp=%x low=%x", i, gotLayeredLive[i], want[i])
+				}
+				if gotLayeredQueuedPackets[i] != want[i] {
+					t.Fatalf("frame %d layered queued packet digest differs: got=%x want=%x", i, gotLayeredQueuedPackets[i], want[i])
+				}
+				if gotLayeredLivePackets[i] != want[i] {
+					t.Fatalf("frame %d layered live packet digest differs: got=%x want=%x", i, gotLayeredLivePackets[i], want[i])
 				}
 			}
 		})
@@ -2301,21 +2321,25 @@ func TestPublicLayeredDecoderRTPPayloadAfterLossSharedSVC(t *testing.T) {
 	}
 	key0LowOverheads := publicRTCPictureFramesInOrder(key0)
 	key0Payloads := publicRTCPictureRTPPayloads(t, key0, limits)
+	key0Packets := publicRTCPictureRTPPackets(t, key0, limits)
 	delta, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 1), false)
 	if err != nil {
 		t.Fatalf("delta EncodePicture: %v", err)
 	}
 	deltaPayloads := publicRTCPictureRTPPayloads(t, delta, limits)
+	deltaPackets := publicRTCPictureRTPPackets(t, delta, limits)
 	key2, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 2), true)
 	if err != nil {
 		t.Fatalf("key2 EncodePicture: %v", err)
 	}
 	key2LowOverheads := publicRTCPictureFramesInOrder(key2)
 	key2Payloads := publicRTCPictureRTPPayloads(t, key2, limits)
+	key2Packets := publicRTCPictureRTPPackets(t, key2, limits)
 	if len(deltaPayloads) == 0 || len(key2Payloads) == 0 {
 		t.Fatalf("payloads delta=%d key2=%d", len(deltaPayloads), len(key2Payloads))
 	}
 	probePayloads := append(append([][]byte(nil), key0Payloads...), key2Payloads...)
+	probePackets := append(append([][]byte(nil), key0Packets...), key2Packets...)
 
 	dec, err := goav1.NewLayeredDecoderFromRTPPayloads(probePayloads)
 	if err != nil {
@@ -2368,6 +2392,56 @@ func TestPublicLayeredDecoderRTPPayloadAfterLossSharedSVC(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("frame %d digest differs after loss: got=%x want=%x", i, got[i], want[i])
+		}
+	}
+
+	packetDec, err := goav1.NewLayeredDecoderFromRTPPackets(probePackets)
+	if err != nil {
+		t.Fatalf("NewLayeredDecoderFromRTPPackets: %v", err)
+	}
+	defer packetDec.Close()
+	if err := packetDec.Reset(); err != nil {
+		t.Fatalf("packet Reset: %v", err)
+	}
+	got = got[:0]
+	for i, packet := range key0Packets {
+		frames, err := packetDec.DecodeRTPPacket(packet)
+		if err != nil {
+			t.Fatalf("DecodeRTPPacket key0 packet %d: %v", i, err)
+		}
+		for _, frame := range frames {
+			got = append(got, frameMD5Visible(frame))
+		}
+	}
+	frames, err = packetDec.DecodeRTPPacket(deltaPackets[0])
+	if err != nil {
+		t.Fatalf("DecodeRTPPacket dropped delta prefix: %v", err)
+	}
+	if len(frames) != 0 {
+		t.Fatalf("dropped delta packet prefix produced %d frames", len(frames))
+	}
+	frames, err = packetDec.DecodeRTPPacketAfterLoss(key2Packets[0])
+	if err != nil {
+		t.Fatalf("DecodeRTPPacketAfterLoss key2 first packet: %v", err)
+	}
+	for _, frame := range frames {
+		got = append(got, frameMD5Visible(frame))
+	}
+	for i, packet := range key2Packets[1:] {
+		frames, err := packetDec.DecodeRTPPacket(packet)
+		if err != nil {
+			t.Fatalf("DecodeRTPPacket key2 tail packet %d: %v", i, err)
+		}
+		for _, frame := range frames {
+			got = append(got, frameMD5Visible(frame))
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("decoded packet frames got=%d want=%d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("packet frame %d digest differs after loss: got=%x want=%x", i, got[i], want[i])
 		}
 	}
 }
@@ -3433,6 +3507,15 @@ func publicRTCPictureRTPPayloads(t *testing.T, picture goav1.RTCPicture, limits 
 	return out
 }
 
+func publicRTCPictureRTPPackets(t *testing.T, picture goav1.RTCPicture, limits goav1.RTPPayloadSizeLimits) [][]byte {
+	t.Helper()
+	var out [][]byte
+	for i := 0; i < picture.FrameNum; i++ {
+		out = append(out, publicDecoderRTPPacketsForFrameWithLimits(t, picture.Frames[i], limits)...)
+	}
+	return out
+}
+
 func frameDigestsVisible(frames []*goav1.Frame) [][16]byte {
 	out := make([][16]byte, 0, len(frames))
 	for _, frame := range frames {
@@ -3708,6 +3791,70 @@ func decodePublicLayeredDecoderRTPPayloadMetadata(t *testing.T, payloads ...[]by
 	return out
 }
 
+func decodePublicLayeredDecoderRTPPacketDigests(t *testing.T, packets ...[]byte) [][16]byte {
+	t.Helper()
+	dec, err := goav1.NewLayeredDecoderFromRTPPackets(packets)
+	if err != nil {
+		t.Fatalf("NewLayeredDecoderFromRTPPackets: %v", err)
+	}
+	defer dec.Close()
+
+	var out [][16]byte
+	for {
+		frames, ok, err := dec.DecodeNext()
+		if err != nil {
+			t.Fatalf("LayeredDecoder packet DecodeNext: %v", err)
+		}
+		if !ok {
+			break
+		}
+		for _, frame := range frames {
+			out = append(out, frameMD5Visible(frame))
+		}
+	}
+	if err := dec.Reset(); err != nil {
+		t.Fatalf("LayeredDecoder packet Reset: %v", err)
+	}
+	if _, ok, err := dec.DecodeNext(); err != nil || !ok {
+		t.Fatalf("LayeredDecoder packet DecodeNext after Reset ok=%v err=%v", ok, err)
+	}
+	return out
+}
+
+func decodePublicLayeredDecoderRTPPacketMetadata(t *testing.T, packets ...[]byte) []publicLayeredFrameMetadata {
+	t.Helper()
+	dec, err := goav1.NewLayeredDecoderFromRTPPackets(packets)
+	if err != nil {
+		t.Fatalf("NewLayeredDecoderFromRTPPackets metadata: %v", err)
+	}
+	defer dec.Close()
+
+	var out []publicLayeredFrameMetadata
+	for {
+		frames, ok, err := dec.DecodeNextWithMetadata()
+		if err != nil {
+			t.Fatalf("LayeredDecoder packet DecodeNextWithMetadata: %v", err)
+		}
+		if !ok {
+			break
+		}
+		for _, frame := range frames {
+			out = append(out, publicLayeredFrameMetadataFromDecoded(t, frame))
+		}
+	}
+	if err := dec.Reset(); err != nil {
+		t.Fatalf("LayeredDecoder packet metadata Reset: %v", err)
+	}
+	if frames, ok, err := dec.DecodeNextWithMetadata(); err != nil || !ok {
+		t.Fatalf("LayeredDecoder packet DecodeNextWithMetadata after Reset ok=%v err=%v", ok, err)
+	} else {
+		for _, frame := range frames {
+			_ = publicLayeredFrameMetadataFromDecoded(t, frame)
+		}
+	}
+	return out
+}
+
 func decodePublicLayeredLiveDecoderRTPPayloadDigests(t *testing.T, probePayloads [][]byte, payloads ...[]byte) [][16]byte {
 	t.Helper()
 	dec, err := goav1.NewLayeredDecoderFromRTPPayloads(probePayloads)
@@ -3732,6 +3879,30 @@ func decodePublicLayeredLiveDecoderRTPPayloadDigests(t *testing.T, probePayloads
 	return out
 }
 
+func decodePublicLayeredLiveDecoderRTPPacketDigests(t *testing.T, probePackets [][]byte, packets ...[]byte) [][16]byte {
+	t.Helper()
+	dec, err := goav1.NewLayeredDecoderFromRTPPackets(probePackets)
+	if err != nil {
+		t.Fatalf("NewLayeredDecoderFromRTPPackets live: %v", err)
+	}
+	defer dec.Close()
+	if err := dec.Reset(); err != nil {
+		t.Fatalf("LayeredDecoder live packet Reset: %v", err)
+	}
+
+	var out [][16]byte
+	for i, packet := range packets {
+		frames, err := dec.DecodeRTPPacket(packet)
+		if err != nil {
+			t.Fatalf("LayeredDecoder DecodeRTPPacket packet %d: %v", i, err)
+		}
+		for _, frame := range frames {
+			out = append(out, frameMD5Visible(frame))
+		}
+	}
+	return out
+}
+
 func decodePublicLayeredLiveDecoderRTPPayloadMetadata(t *testing.T, probePayloads [][]byte, payloads ...[]byte) []publicLayeredFrameMetadata {
 	t.Helper()
 	dec, err := goav1.NewLayeredDecoderFromRTPPayloads(probePayloads)
@@ -3748,6 +3919,30 @@ func decodePublicLayeredLiveDecoderRTPPayloadMetadata(t *testing.T, probePayload
 		frames, err := dec.DecodeRTPPayloadWithMetadata(payload)
 		if err != nil {
 			t.Fatalf("LayeredDecoder DecodeRTPPayloadWithMetadata packet %d: %v", i, err)
+		}
+		for _, frame := range frames {
+			out = append(out, publicLayeredFrameMetadataFromDecoded(t, frame))
+		}
+	}
+	return out
+}
+
+func decodePublicLayeredLiveDecoderRTPPacketMetadata(t *testing.T, probePackets [][]byte, packets ...[]byte) []publicLayeredFrameMetadata {
+	t.Helper()
+	dec, err := goav1.NewLayeredDecoderFromRTPPackets(probePackets)
+	if err != nil {
+		t.Fatalf("NewLayeredDecoderFromRTPPackets live metadata: %v", err)
+	}
+	defer dec.Close()
+	if err := dec.Reset(); err != nil {
+		t.Fatalf("LayeredDecoder live packet metadata Reset: %v", err)
+	}
+
+	var out []publicLayeredFrameMetadata
+	for i, packet := range packets {
+		frames, err := dec.DecodeRTPPacketWithMetadata(packet)
+		if err != nil {
+			t.Fatalf("LayeredDecoder DecodeRTPPacketWithMetadata packet %d: %v", i, err)
 		}
 		for _, frame := range frames {
 			out = append(out, publicLayeredFrameMetadataFromDecoded(t, frame))

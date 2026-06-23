@@ -1370,6 +1370,7 @@ func TestNewDecoderFromRTPPayloadsWebRTCIndependentModeCatalogue(t *testing.T) {
 
 			var lowOverheads [av1.EncoderWebRTCMaxSpatialLayers][][]byte
 			var rtpPayloads [av1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var rtpPackets [av1.EncoderWebRTCMaxSpatialLayers][][]byte
 			for frameIndex := 0; frameIndex < 3; frameIndex++ {
 				if frameIndex == 2 {
 					controlChange := enc.Config()
@@ -1392,6 +1393,7 @@ func TestNewDecoderFromRTPPayloadsWebRTCIndependentModeCatalogue(t *testing.T) {
 					}
 					lowOverheads[spatialID] = append(lowOverheads[spatialID], append([]byte(nil), frame.Data...))
 					rtpPayloads[spatialID] = append(rtpPayloads[spatialID], publicDecoderRTPPayloadsForFrameWithLimits(t, frame, limits)...)
+					rtpPackets[spatialID] = append(rtpPackets[spatialID], publicDecoderRTPPacketsForFrameWithLimits(t, frame, limits)...)
 				}
 			}
 
@@ -1402,11 +1404,16 @@ func TestNewDecoderFromRTPPayloadsWebRTCIndependentModeCatalogue(t *testing.T) {
 				want := decodeLowOverheadPayloads(t, lowOverheads[spatialID])
 				queued, queuedEmpty := decodeRTPPayloadsWithHighLevelDecoder(t, rtpPayloads[spatialID])
 				live, liveEmpty := decodeLiveRTPPayloadsWithHighLevelDecoder(t, rtpPayloads[spatialID], rtpPayloads[spatialID])
-				if queuedEmpty == 0 || liveEmpty == 0 {
-					t.Fatalf("spatial %d empty RTP fragment steps queued=%d live=%d", spatialID, queuedEmpty, liveEmpty)
+				queuedPackets, queuedPacketEmpty := decodeRTPPacketsWithHighLevelDecoder(t, rtpPackets[spatialID])
+				livePackets, livePacketEmpty := decodeLiveRTPPacketsWithHighLevelDecoder(t, rtpPackets[spatialID], rtpPackets[spatialID])
+				if queuedEmpty == 0 || liveEmpty == 0 || queuedPacketEmpty == 0 || livePacketEmpty == 0 {
+					t.Fatalf("spatial %d empty RTP fragment steps payload queued/live=%d/%d packet queued/live=%d/%d",
+						spatialID, queuedEmpty, liveEmpty, queuedPacketEmpty, livePacketEmpty)
 				}
 				assertPublicDecoderFrameDigests(t, "queued RTP", spatialID, queued, want)
 				assertPublicDecoderFrameDigests(t, "live RTP", spatialID, live, want)
+				assertPublicDecoderFrameDigests(t, "queued RTP packet", spatialID, queuedPackets, want)
+				assertPublicDecoderFrameDigests(t, "live RTP packet", spatialID, livePackets, want)
 			}
 		})
 	}
@@ -1566,6 +1573,10 @@ type publicRTPLossRecoveryPayloads struct {
 	deltaPayloads   [][]byte
 	key2Payloads    [][]byte
 	probePayloads   [][]byte
+	key0Packets     [][]byte
+	deltaPackets    [][]byte
+	key2Packets     [][]byte
+	probePackets    [][]byte
 	lowOverheadData [][]byte
 }
 
@@ -1592,12 +1603,14 @@ func publicDecoderRTPLossRecoveryPayloads(t *testing.T) publicRTPLossRecoveryPay
 	}
 	key0LowOverhead := append([]byte(nil), key0.Data...)
 	key0Payloads := publicDecoderRTPPayloadsForFrameWithLimits(t, key0, limits)
+	key0Packets := publicDecoderRTPPacketsForFrameWithLimits(t, key0, limits)
 
 	delta, err := enc.Encode(publicRTCMatrixFrame(width, height, 1), false)
 	if err != nil {
 		t.Fatalf("Encode dropped delta: %v", err)
 	}
 	deltaPayloads := publicDecoderRTPPayloadsForFrameWithLimits(t, delta, limits)
+	deltaPackets := publicDecoderRTPPacketsForFrameWithLimits(t, delta, limits)
 	if len(deltaPayloads) < 2 {
 		t.Fatalf("delta frame packetized into %d RTP payloads, want fragmentation", len(deltaPayloads))
 	}
@@ -1608,17 +1621,24 @@ func publicDecoderRTPLossRecoveryPayloads(t *testing.T) publicRTPLossRecoveryPay
 	}
 	key2LowOverhead := append([]byte(nil), key2.Data...)
 	key2Payloads := publicDecoderRTPPayloadsForFrameWithLimits(t, key2, limits)
+	key2Packets := publicDecoderRTPPacketsForFrameWithLimits(t, key2, limits)
 	if len(key2Payloads) == 0 {
 		t.Fatal("recovery key produced no RTP payloads")
 	}
 
 	probePayloads := append(append([][]byte(nil), key0Payloads...), deltaPayloads...)
 	probePayloads = append(probePayloads, key2Payloads...)
+	probePackets := append(append([][]byte(nil), key0Packets...), deltaPackets...)
+	probePackets = append(probePackets, key2Packets...)
 	return publicRTPLossRecoveryPayloads{
 		key0Payloads:    key0Payloads,
 		deltaPayloads:   deltaPayloads,
 		key2Payloads:    key2Payloads,
 		probePayloads:   probePayloads,
+		key0Packets:     key0Packets,
+		deltaPackets:    deltaPackets,
+		key2Packets:     key2Packets,
+		probePackets:    probePackets,
 		lowOverheadData: [][]byte{key0LowOverhead, key2LowOverhead},
 	}
 }
@@ -1679,6 +1699,64 @@ func decodeLiveRTPPayloadsWithHighLevelDecoder(t *testing.T, probePayloads [][]b
 		}
 	}
 	return got, emptyPayloads
+}
+
+func decodeRTPPacketsWithHighLevelDecoder(t *testing.T, rtpPackets [][]byte) ([][16]byte, int) {
+	t.Helper()
+	dec, err := av1.NewDecoderFromRTPPackets(rtpPackets)
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPackets: %v", err)
+	}
+	defer dec.Close()
+
+	var got [][16]byte
+	emptyPackets := 0
+	for {
+		frames, ok, err := dec.DecodeNext()
+		if err != nil {
+			t.Fatalf("DecodeNext RTP packet: %v", err)
+		}
+		if !ok {
+			break
+		}
+		if len(frames) == 0 {
+			emptyPackets++
+			continue
+		}
+		for _, f := range frames {
+			got = append(got, frameMD5Visible(f))
+		}
+	}
+	return got, emptyPackets
+}
+
+func decodeLiveRTPPacketsWithHighLevelDecoder(t *testing.T, probePackets [][]byte, rtpPackets [][]byte) ([][16]byte, int) {
+	t.Helper()
+	dec, err := av1.NewDecoderFromRTPPackets(probePackets)
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPackets: %v", err)
+	}
+	defer dec.Close()
+	if err := dec.Reset(); err != nil {
+		t.Fatalf("Reset RTP packet decoder: %v", err)
+	}
+
+	var got [][16]byte
+	emptyPackets := 0
+	for i, packet := range rtpPackets {
+		frames, err := dec.DecodeRTPPacket(packet)
+		if err != nil {
+			t.Fatalf("DecodeRTPPacket packet %d: %v", i, err)
+		}
+		if len(frames) == 0 {
+			emptyPackets++
+			continue
+		}
+		for _, f := range frames {
+			got = append(got, frameMD5Visible(f))
+		}
+	}
+	return got, emptyPackets
 }
 
 func assertPublicDecoderFrameDigests(t *testing.T, path string, spatialID int, got [][16]byte, want [][16]byte) {
@@ -1851,6 +1929,57 @@ func TestNewDecoderFromRTPPayloadsDecodePayloadAfterLoss(t *testing.T) {
 	if _, err := lowDec.DecodeRTPPayload(inputs.key0Payloads[0]); err == nil {
 		t.Fatal("DecodeRTPPayload on low-overhead decoder succeeded")
 	}
+	if _, err := lowDec.DecodeRTPPacket(inputs.key0Packets[0]); err == nil {
+		t.Fatal("DecodeRTPPacket on low-overhead decoder succeeded")
+	}
+
+	packetDec, err := av1.NewDecoderFromRTPPackets(inputs.probePackets)
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPackets: %v", err)
+	}
+	defer packetDec.Close()
+	got = got[:0]
+	for i, packet := range inputs.key0Packets {
+		frames, err := packetDec.DecodeRTPPacket(packet)
+		if err != nil {
+			t.Fatalf("DecodeRTPPacket key0 packet %d: %v", i, err)
+		}
+		appendFrames(frames)
+	}
+	if len(got) != 1 {
+		t.Fatalf("initial key packet decoded %d frames, want 1", len(got))
+	}
+	frames, err = packetDec.DecodeRTPPacket(inputs.deltaPackets[0])
+	if err != nil {
+		t.Fatalf("DecodeRTPPacket dropped delta prefix: %v", err)
+	}
+	if len(frames) != 0 {
+		t.Fatalf("dropped delta packet prefix decoded %d frames, want 0", len(frames))
+	}
+	frames, err = packetDec.DecodeRTPPacketAfterLoss(inputs.key2Packets[0])
+	if err != nil {
+		t.Fatalf("DecodeRTPPacketAfterLoss recovery key first packet: %v", err)
+	}
+	appendFrames(frames)
+	for i, packet := range inputs.key2Packets[1:] {
+		frames, err := packetDec.DecodeRTPPacket(packet)
+		if err != nil {
+			t.Fatalf("DecodeRTPPacket recovery key tail %d: %v", i, err)
+		}
+		appendFrames(frames)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("RTP packet decoder recovered %d frames, low-overhead decoded %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("packet frame %d digest differs after loss: rtp=%s low=%s",
+				i, hex.EncodeToString(got[i][:]), hex.EncodeToString(want[i][:]))
+		}
+	}
+	if _, err := av1.NewDecoderFromRTPPackets([][]byte{{0x80}}); !errors.Is(err, av1.ErrRTPShortPayload) {
+		t.Fatalf("NewDecoderFromRTPPackets invalid err=%v want %v", err, av1.ErrRTPShortPayload)
+	}
 }
 
 func publicDecoderRTPPayloadsForFrame(t testing.TB, frame av1.RTCFrame) [][]byte {
@@ -1882,6 +2011,54 @@ func publicDecoderRTPPayloadsForFrameWithLimits(t testing.TB, frame av1.RTCFrame
 	for i := 0; i < packetCount; i++ {
 		span := spans[i]
 		out[i] = append([]byte(nil), rtpPayloads[span.PayloadOffset:span.PayloadOffset+span.PayloadLength]...)
+	}
+	return out
+}
+
+func publicDecoderRTPPacketsForFrameWithLimits(t testing.TB, frame av1.RTCFrame, limits av1.RTPPayloadSizeLimits) [][]byte {
+	t.Helper()
+	const dependencyDescriptorExtensionID = 42
+	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
+	if err != nil {
+		t.Fatalf("RTPPacketScratchLen first: %v", err)
+	}
+	obuScratch := make([]av1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
+	size, err := frame.RTPPacketScratchLen(limits, obuScratch)
+	if err != nil {
+		t.Fatalf("RTPPacketScratchLen full: %v", err)
+	}
+	packetScratch := make([]av1.RTPPacketPlan, size.Packetizer.Packets)
+	workScratch := make([]av1.RTPPacketPlan, size.Packetizer.Work)
+	payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
+	descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
+	spans := make([]av1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
+	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPackets(payloadBuf, descriptorBuf, spans, limits, obuScratch, packetScratch, workScratch)
+	if err != nil {
+		t.Fatalf("AppendRTPPackets: %v", err)
+	}
+	headerConfig := av1.EncoderWebRTCRTPPacketHeaderConfig{
+		PayloadType:                     96,
+		SequenceNumber:                  uint16(frame.FrameID * 31),
+		Timestamp:                       uint32(frame.FrameID * 3000),
+		SSRC:                            0x11223344 + uint32(frame.SpatialID),
+		DependencyDescriptorExtensionID: dependencyDescriptorExtensionID,
+	}
+	packetSize, err := av1.EncoderWebRTCRTPPacketsWithHeadersSize(headerConfig, rtpPayloads, descriptors, spans[:packetCount])
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTPPacketsWithHeadersSize: %v", err)
+	}
+	headerSpans := make([]av1.EncoderWebRTCRTPPacketHeaderSpan, packetCount)
+	packets, fullCount, err := av1.AppendEncoderWebRTCRTPPacketsWithHeaders(make([]byte, 0, packetSize.Bytes), headerSpans, headerConfig, rtpPayloads, descriptors, spans[:packetCount])
+	if err != nil {
+		t.Fatalf("AppendEncoderWebRTCRTPPacketsWithHeaders: %v", err)
+	}
+	if fullCount != packetCount {
+		t.Fatalf("full packet count=%d want %d", fullCount, packetCount)
+	}
+	out := make([][]byte, fullCount)
+	for i := 0; i < fullCount; i++ {
+		span := headerSpans[i]
+		out[i] = append([]byte(nil), packets[span.Offset:span.Offset+span.Length]...)
 	}
 	return out
 }
