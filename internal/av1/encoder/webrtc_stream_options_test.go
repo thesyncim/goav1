@@ -33,6 +33,59 @@ func TestWebRTCStreamEncoderOptions(t *testing.T) {
 	}
 }
 
+func TestWebRTCStreamEncoderOptionsSurviveSetConfig(t *testing.T) {
+	stream, err := NewWebRTCStreamConfig(Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 500,
+		Scalability:       ScalabilityModeL1T2,
+	})
+	if err != nil {
+		t.Fatalf("NewWebRTCStreamConfig: %v", err)
+	}
+	stream.SetGoldenInterval(0)
+	stream.SetTileColumns(4)
+
+	change := stream.Config()
+	change.Scalability = ScalabilityModeS2T2
+	change.MinBitrateKbps = 120
+	change.MaxBitrateKbps = 1200
+	change.TargetBitrateKbps = 760
+	change.SpatialLayers[0].MinBitrateKbps = 120
+	change.SpatialLayers[0].MaxBitrateKbps = 480
+	change.SpatialLayers[0].TargetBitrateKbps = 260
+	change.SpatialLayers[1].MinBitrateKbps = 300
+	change.SpatialLayers[1].MaxBitrateKbps = 1200
+	change.SpatialLayers[1].TargetBitrateKbps = 760
+	if err := stream.SetConfig(change); err != nil {
+		t.Fatalf("SetConfig simulcast: %v", err)
+	}
+	for i := uint8(0); i < stream.config.SpatialLayerCount; i++ {
+		if got := stream.encoders[i].goldenEvery; got != 0 {
+			t.Fatalf("simulcast layer %d golden interval=%d want 0", i, got)
+		}
+		if got := stream.encoders[i].tileColsLog2; got != 2 {
+			t.Fatalf("simulcast layer %d tileColsLog2=%d want 2", i, got)
+		}
+	}
+
+	change = stream.Config()
+	change.Scalability = ScalabilityModeL2T2
+	if err := stream.SetConfig(change); err != nil {
+		t.Fatalf("SetConfig shared SVC: %v", err)
+	}
+	for i := uint8(0); i < stream.config.SpatialLayerCount; i++ {
+		if got := stream.encoders[i].goldenEvery; got != 0 {
+			t.Fatalf("shared SVC layer %d golden interval=%d want 0", i, got)
+		}
+		if got := stream.encoders[i].tileColsLog2; got != 2 {
+			t.Fatalf("shared SVC layer %d tileColsLog2=%d want 2", i, got)
+		}
+	}
+}
+
 func TestWebRTCStreamConfigAcceptsFullSVCPixelModes(t *testing.T) {
 	stream, err := NewWebRTCStreamConfig(Config{
 		Resolution:        Resolution{Width: 640, Height: 360},
