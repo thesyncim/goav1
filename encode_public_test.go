@@ -1796,11 +1796,8 @@ func TestPublicRTCEncoderSetConfigCQPTransitionsDecode(t *testing.T) {
 	assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
 }
 
-func TestPublicRTCEncoderSingleSpatialSettingsAomdec(t *testing.T) {
-	aomdec, err := exec.LookPath("aomdec")
-	if err != nil {
-		t.Skip("aomdec not on PATH")
-	}
+func TestPublicRTCEncoderSingleSpatialSettingsReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 192, 128
 	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
 	publicRTCApplyControlBitrates(&cfg, 420)
@@ -1876,39 +1873,11 @@ func TestPublicRTCEncoderSingleSpatialSettingsAomdec(t *testing.T) {
 	appendFrame("CBR delta", 6, false)
 
 	ivf := appendPublicIVF(nil, w, h, 30, 1, frames)
-	decoded, err := goav1.DecodeIVF(ivf)
-	if err != nil {
-		t.Fatalf("DecodeIVF: %v", err)
-	}
-	if len(decoded) != len(frames) {
-		t.Fatalf("DecodeIVF frames=%d want %d", len(decoded), len(frames))
-	}
-	want := publicDecodedFramesRawYUV(decoded)
-
-	dir := t.TempDir()
-	ivfPath := filepath.Join(dir, "rtc-settings.ivf")
-	outPath := filepath.Join(dir, "rtc-settings.yuv")
-	if err := os.WriteFile(ivfPath, ivf, 0o644); err != nil {
-		t.Fatalf("write IVF: %v", err)
-	}
-	out, err := exec.Command(aomdec, "--rawvideo", "-o", outPath, ivfPath).CombinedOutput()
-	if err != nil {
-		t.Fatalf("aomdec: %v\n%s", err, out)
-	}
-	got, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatalf("read aomdec output: %v", err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("aomdec output len=%d matches=%v want len=%d", len(got), bytes.Equal(got, want), len(want))
-	}
+	assertPublicIVFMatchesReferenceDecodersRawYUV(t, decoders, "single-spatial-settings", ivf)
 }
 
-func TestPublicRTCEncoderSimulcastSettingsAomdec(t *testing.T) {
-	aomdec, err := exec.LookPath("aomdec")
-	if err != nil {
-		t.Skip("aomdec not on PATH")
-	}
+func TestPublicRTCEncoderSimulcastSettingsReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 1008, 576
 	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeS3T3h)
 	cfg.MaxFramerate = goav1.EncoderRational{Num: 30, Den: 1}
@@ -2009,11 +1978,51 @@ func TestPublicRTCEncoderSimulcastSettingsAomdec(t *testing.T) {
 			t.Fatalf("spatial %d has no frames", spatialID)
 		}
 		ivf := appendPublicIVF(nil, uint16(res.Width), uint16(res.Height), 30, 1, layerFrames[spatialID])
-		assertPublicIVFMatchesAomdecRawYUV(t, aomdec, fmt.Sprintf("simulcast-spatial-%d", spatialID), ivf)
+		assertPublicIVFMatchesReferenceDecodersRawYUV(t, decoders, fmt.Sprintf("simulcast-spatial-%d", spatialID), ivf)
 	}
 }
 
-func assertPublicIVFMatchesAomdecRawYUV(t *testing.T, aomdec string, name string, ivf []byte) {
+type publicReferenceAV1Decoder struct {
+	name string
+	path string
+	args func(outPath string, ivfPath string) []string
+}
+
+func publicReferenceAV1Decoders(t *testing.T) []publicReferenceAV1Decoder {
+	t.Helper()
+	candidates := []publicReferenceAV1Decoder{
+		{
+			name: "aomdec",
+			args: func(outPath string, ivfPath string) []string {
+				return []string{"--rawvideo", "-o", outPath, ivfPath}
+			},
+		},
+		{
+			name: "dav1d",
+			args: func(outPath string, ivfPath string) []string {
+				return []string{"--muxer", "yuv", "-o", outPath, "-i", ivfPath}
+			},
+		},
+	}
+	decoders := make([]publicReferenceAV1Decoder, 0, len(candidates))
+	for _, candidate := range candidates {
+		path, err := exec.LookPath(candidate.name)
+		if err != nil {
+			t.Logf("%s not on PATH", candidate.name)
+			continue
+		}
+		candidate.path = path
+		decoders = append(decoders, candidate)
+	}
+	if len(decoders) == 0 {
+		t.Skip("no reference AV1 decoder on PATH")
+	}
+	return decoders
+}
+
+func assertPublicIVFMatchesReferenceDecodersRawYUV(
+	t *testing.T, decoders []publicReferenceAV1Decoder, name string, ivf []byte,
+) {
 	t.Helper()
 	decoded, err := goav1.DecodeIVF(ivf)
 	if err != nil {
@@ -2023,20 +2032,23 @@ func assertPublicIVFMatchesAomdecRawYUV(t *testing.T, aomdec string, name string
 
 	dir := t.TempDir()
 	ivfPath := filepath.Join(dir, name+".ivf")
-	outPath := filepath.Join(dir, name+".yuv")
 	if err := os.WriteFile(ivfPath, ivf, 0o644); err != nil {
 		t.Fatalf("%s write IVF: %v", name, err)
 	}
-	out, err := exec.Command(aomdec, "--rawvideo", "-o", outPath, ivfPath).CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s aomdec: %v\n%s", name, err, out)
-	}
-	got, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatalf("%s read aomdec output: %v", name, err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("%s aomdec output len=%d matches=%v want len=%d", name, len(got), bytes.Equal(got, want), len(want))
+	for _, decoder := range decoders {
+		outPath := filepath.Join(dir, name+"-"+decoder.name+".yuv")
+		out, err := exec.Command(decoder.path, decoder.args(outPath, ivfPath)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s %s: %v\n%s", name, decoder.name, err, out)
+		}
+		got, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("%s read %s output: %v", name, decoder.name, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("%s %s output len=%d matches=%v want len=%d", name, decoder.name, len(got), bytes.Equal(got, want), len(want))
+		}
+		t.Logf("%s %s: %d frames bit-exact", name, decoder.name, len(decoded))
 	}
 }
 
