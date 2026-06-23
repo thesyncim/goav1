@@ -20,6 +20,9 @@ func ParseRTPPacketDependencyDescriptor(packet []byte, dependencyDescriptorExten
 	if err != nil {
 		return RTPPacketDependencyDescriptor{}, err
 	}
+	if parsedPacket.Header.ExtensionProfile == 0 && len(parsedPacket.Header.ExtensionPayload) == 0 {
+		return RTPPacketDependencyDescriptor{}, ErrRTPHeaderExtensionNotFound
+	}
 	element, ok, err := FindRTPHeaderExtensionElement(parsedPacket.Header.ExtensionProfile, parsedPacket.Header.ExtensionPayload, dependencyDescriptorExtensionID)
 	if err != nil {
 		return RTPPacketDependencyDescriptor{}, err

@@ -1526,6 +1526,27 @@ func TestParseRTPPacketDependencyDescriptorAllocs(t *testing.T) {
 	}
 }
 
+func TestParseRTPPacketDependencyDescriptorMissingExtension(t *testing.T) {
+	packet := make([]byte, av1.RTPHeaderMinSize+1)
+	n, err := av1.PutRTPPacket(packet, av1.RTPHeader{
+		PayloadType:      96,
+		SequenceNumber:   7,
+		Timestamp:        12345,
+		SSRC:             0x01020304,
+		ExtensionProfile: 0,
+	}, []byte{0x12}, 0)
+	if err != nil {
+		t.Fatalf("PutRTPPacket: %v", err)
+	}
+	var state av1.RTPDependencyDescriptorState
+	if _, err := av1.ParseRTPPacketDependencyDescriptor(packet[:n], 42, &state); !errors.Is(err, av1.ErrRTPHeaderExtensionNotFound) {
+		t.Fatalf("ParseRTPPacketDependencyDescriptor missing extension err=%v want %v", err, av1.ErrRTPHeaderExtensionNotFound)
+	}
+	if state.Valid {
+		t.Fatalf("missing extension mutated dependency descriptor state: %+v", state)
+	}
+}
+
 func TestNewDecoderFromRTPPayloadsDecodeRTPPayloadAfterLossAllocs(t *testing.T) {
 	inputs := publicDecoderRTPLossRecoveryPayloads(t)
 	dec, err := av1.NewDecoderFromRTPPayloads(inputs.probePayloads)

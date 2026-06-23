@@ -393,12 +393,15 @@ For RTP receivers, the AV1 aggregation header gives you the
 implement layer drop policy — discard packets above the operating
 point you chose, then feed only the surviving payloads to the
 decoder. For a single decode chain, or for one independent simulcast
-spatial layer at a time, `NewDecoderFromRTPPayloads` is the friendly
-ordered-payload entry point. The returned decoder can also drive live
-payloads with `DecodeRTPPayload`; call `DecodeRTPPayloadAfterLoss` after
-the jitter buffer detects a packet gap to clear retained RTP fragments while
-preserving parser sequence/reference state. For full SVC modes with shared
-reference slots, use `NewLayeredDecoderFromRTPPayloads`; it owns the
+spatial layer at a time, `NewDecoderFromRTPPayloads` and
+`NewDecoderFromRTPPackets` are the friendly ordered receive entry
+points. The returned decoder can also drive live payloads or complete
+packets with `DecodeRTPPayload` / `DecodeRTPPacket`; call the matching
+`AfterLoss` method after the jitter buffer detects a packet gap to clear
+retained RTP fragments while preserving parser sequence/reference state.
+For full SVC modes with shared reference slots, use
+`NewLayeredDecoderFromRTPPayloads` or `NewLayeredDecoderFromRTPPackets`;
+it owns the
 layer-aware frame pool, per-spatial frame-work states, shared reference slots,
 and shared frame contexts needed for references to resolve across
 spatial-layer pools. Use `DecodeNextWithMetadata`,
@@ -406,7 +409,10 @@ spatial-layer pools. Use `DecodeNextWithMetadata`,
 the receive loop needs each output paired with parsed AV1 spatial ID, temporal
 ID, frame type, coded-keyframe flag, and frame-size metadata. Dependency
 descriptor values such as active decode-target masks are RTP header-extension
-metadata and are parsed separately with `ParseRTPDependencyDescriptor`. The
+metadata; receive loops that keep full packets can parse the RTP header,
+negotiated dependency-descriptor extension, and descriptor state together with
+`ParseRTPPacketDependencyDescriptor`, while payload-only integrations can parse
+the extracted extension bytes with `ParseRTPDependencyDescriptor`. The
 SDP helpers (`ParseAV1SDPFmtp`, `ParseAV1SDPExtmap`, `ParseAV1SDPRID`,
 `ParseAV1SDPSimulcast`, `AV1SDPOffersReceiveParams`,
 `AV1SDPOffersReceiveSequence`, and `AV1SDPOffersReceiveFrame`) cover the
