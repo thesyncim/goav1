@@ -144,6 +144,49 @@ func TestPublicRTPTwoByteHeaderExtensionElements(t *testing.T) {
 	}
 }
 
+func TestPublicRTPHeaderExtensionElementFind(t *testing.T) {
+	oneBytePayload := []byte{0x10, 0xaa, 0x32, 0xde, 0xad, 0xbe, 0, 0}
+	element, ok, err := FindRTPHeaderExtensionElement(RTPExtensionProfileOneByte, oneBytePayload, 3)
+	if err != nil || !ok || element.ID != 3 || !bytes.Equal(element.Payload, []byte{0xde, 0xad, 0xbe}) {
+		t.Fatalf("one-byte element=%+v ok=%v err=%v", element, ok, err)
+	}
+	if element, ok, err := FindRTPHeaderExtensionElement(RTPExtensionProfileOneByte, oneBytePayload, 4); err != nil || ok || element.ID != 0 {
+		t.Fatalf("missing one-byte element=%+v ok=%v err=%v", element, ok, err)
+	}
+	if element, ok, err := FindRTPHeaderExtensionElement(RTPExtensionProfileOneByte, []byte{0xf0, 0x10, 0xaa}, 1); err != nil || ok || element.ID != 0 {
+		t.Fatalf("terminated one-byte element=%+v ok=%v err=%v", element, ok, err)
+	}
+	if _, _, err := FindRTPHeaderExtensionElement(RTPExtensionProfileOneByte, oneBytePayload, 0); !errors.Is(err, ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("one-byte id zero err=%v want %v", err, ErrRTPInvalidHeaderExtension)
+	}
+	if _, _, err := FindRTPHeaderExtensionElement(RTPExtensionProfileOneByte, oneBytePayload, 15); !errors.Is(err, ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("one-byte id reserved err=%v want %v", err, ErrRTPInvalidHeaderExtension)
+	}
+	if _, _, err := FindRTPHeaderExtensionElement(RTPExtensionProfileOneByte, []byte{0x31, 0xaa}, 3); !errors.Is(err, ErrRTPShortPayload) {
+		t.Fatalf("short one-byte payload err=%v want %v", err, ErrRTPShortPayload)
+	}
+
+	twoByteProfile := RTPExtensionProfileTwoByte | 0x000f
+	twoBytePayload := []byte{0, 33, 2, 0xca, 0xfe, 9, 0, 0}
+	element, ok, err = FindRTPHeaderExtensionElement(twoByteProfile, twoBytePayload, 33)
+	if err != nil || !ok || element.ID != 33 || !bytes.Equal(element.Payload, []byte{0xca, 0xfe}) {
+		t.Fatalf("two-byte element=%+v ok=%v err=%v", element, ok, err)
+	}
+	element, ok, err = FindRTPHeaderExtensionElement(twoByteProfile, twoBytePayload, 9)
+	if err != nil || !ok || element.ID != 9 || len(element.Payload) != 0 {
+		t.Fatalf("empty two-byte element=%+v ok=%v err=%v", element, ok, err)
+	}
+	if element, ok, err := FindRTPHeaderExtensionElement(twoByteProfile, twoBytePayload, 34); err != nil || ok || element.ID != 0 {
+		t.Fatalf("missing two-byte element=%+v ok=%v err=%v", element, ok, err)
+	}
+	if _, _, err := FindRTPHeaderExtensionElement(twoByteProfile, []byte{33}, 33); !errors.Is(err, ErrRTPShortPayload) {
+		t.Fatalf("short two-byte length err=%v want %v", err, ErrRTPShortPayload)
+	}
+	if _, _, err := FindRTPHeaderExtensionElement(twoByteProfile, []byte{33, 3, 0xca}, 33); !errors.Is(err, ErrRTPShortPayload) {
+		t.Fatalf("short two-byte payload err=%v want %v", err, ErrRTPShortPayload)
+	}
+}
+
 func TestPublicRTPHeaderRejectsInvalid(t *testing.T) {
 	if _, _, err := ParseRTPHeader([]byte{0x80}); !errors.Is(err, ErrRTPShortPayload) {
 		t.Fatalf("short header err=%v want %v", err, ErrRTPShortPayload)

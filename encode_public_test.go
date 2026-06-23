@@ -1187,10 +1187,23 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 		}
 		totalPacketBytes += span.Length
 		raw := fullPackets[span.Offset : span.Offset+span.Length]
-		packet, err := goav1.ParseRTPPacket(raw)
-		if err != nil {
-			t.Fatalf("packet %d ParseRTPPacket: %v", i, err)
+		if i == 0 {
+			if _, err := goav1.ParseRTPPacketDependencyDescriptor(raw, config.DependencyDescriptorExtensionID+1, &goav1.RTPDependencyDescriptorState{}); !errors.Is(err, goav1.ErrRTPHeaderExtensionNotFound) {
+				t.Fatalf("packet %d missing dependency descriptor err=%v want %v", i, err, goav1.ErrRTPHeaderExtensionNotFound)
+			}
+			parsedWithoutState, err := goav1.ParseRTPPacketDependencyDescriptor(raw, config.DependencyDescriptorExtensionID, nil)
+			if err != nil {
+				t.Fatalf("packet %d ParseRTPPacketDependencyDescriptor without state: %v", i, err)
+			}
+			if parsedWithoutState.Descriptor.Mandatory.FrameNumber != uint16(frame.FrameID) {
+				t.Fatalf("packet %d descriptor without state frame=%d want %d", i, parsedWithoutState.Descriptor.Mandatory.FrameNumber, frame.FrameID)
+			}
 		}
+		descriptorPacket, err := goav1.ParseRTPPacketDependencyDescriptor(raw, config.DependencyDescriptorExtensionID, &receiver)
+		if err != nil {
+			t.Fatalf("packet %d ParseRTPPacketDependencyDescriptor: %v", i, err)
+		}
+		packet := descriptorPacket.Packet
 		if packet.Header.PayloadType != config.PayloadType ||
 			packet.Header.SequenceNumber != config.SequenceNumber+uint16(i) ||
 			packet.Header.Timestamp != config.Timestamp ||
@@ -1206,26 +1219,14 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 			span.Marker != packet.Header.Marker {
 			t.Fatalf("packet %d header span=%+v payload=%d", i, span, len(packet.Payload))
 		}
-		var elements [1]goav1.RTPHeaderExtensionElement
-		elementCount, err := goav1.ParseRTPHeaderExtensionElements(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, elements[:])
-		if err != nil {
-			t.Fatalf("packet %d ParseRTPHeaderExtensionElements: %v", i, err)
-		}
-		if elementCount != 1 || elements[0].ID != config.DependencyDescriptorExtensionID {
-			t.Fatalf("packet %d extension count=%d element=%+v", i, elementCount, elements[0])
-		}
-		if !bytes.Equal(elements[0].Payload, fullPackets[span.DependencyDescriptorOffset:span.DependencyDescriptorOffset+span.DependencyDescriptorLength]) {
+		if !bytes.Equal(descriptorPacket.DescriptorPayload, fullPackets[span.DependencyDescriptorOffset:span.DependencyDescriptorOffset+span.DependencyDescriptorLength]) {
 			t.Fatalf("packet %d dependency descriptor span mismatch", i)
 		}
-		parsed, consumed, err := receiver.Parse(elements[0].Payload)
-		if err != nil {
-			t.Fatalf("packet %d dependency descriptor: %v", i, err)
-		}
-		if consumed != len(elements[0].Payload) ||
-			parsed.Mandatory.FrameNumber != uint16(frame.FrameID) ||
+		parsed := descriptorPacket.Descriptor
+		if parsed.Mandatory.FrameNumber != uint16(frame.FrameID) ||
 			parsed.Mandatory.FirstPacketInFrame != (i == 0) ||
 			parsed.Mandatory.LastPacketInFrame != (i == packetCount-1) {
-			t.Fatalf("packet %d mandatory=%+v consumed=%d len=%d", i, parsed.Mandatory, consumed, len(elements[0].Payload))
+			t.Fatalf("packet %d mandatory=%+v len=%d", i, parsed.Mandatory, len(descriptorPacket.DescriptorPayload))
 		}
 		payloadSlices[i] = packet.Payload
 	}
@@ -3300,10 +3301,11 @@ func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDepende
 		span := spans[i]
 		headerSpan := headerSpans[i]
 		raw := fullPackets[headerSpan.Offset : headerSpan.Offset+headerSpan.Length]
-		packet, err := goav1.ParseRTPPacket(raw)
+		descriptorPacket, err := goav1.ParseRTPPacketDependencyDescriptor(raw, dependencyDescriptorExtensionID, receiver)
 		if err != nil {
-			t.Fatalf("packet %d ParseRTPPacket S%d: %v", i, frame.SpatialID, err)
+			t.Fatalf("packet %d ParseRTPPacketDependencyDescriptor S%d: %v", i, frame.SpatialID, err)
 		}
+		packet := descriptorPacket.Packet
 		if packet.Header.PayloadType != headerConfig.PayloadType ||
 			packet.Header.SequenceNumber != headerConfig.SequenceNumber+uint16(i) ||
 			packet.Header.Timestamp != headerConfig.Timestamp ||
@@ -3331,29 +3333,17 @@ func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDepende
 		if header.StartsNewCodedVideoSequence != (frame.CodedKeyframe && i == 0) {
 			t.Fatalf("packet %d N=%v want %v frame=%+v", i, header.StartsNewCodedVideoSequence, frame.CodedKeyframe && i == 0, frame)
 		}
-		var elements [1]goav1.RTPHeaderExtensionElement
-		elementCount, err := goav1.ParseRTPHeaderExtensionElements(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, elements[:])
-		if err != nil {
-			t.Fatalf("packet %d ParseRTPHeaderExtensionElements S%d: %v", i, frame.SpatialID, err)
-		}
-		if elementCount != 1 || elements[0].ID != dependencyDescriptorExtensionID {
-			t.Fatalf("packet %d extension count=%d element=%+v", i, elementCount, elements[0])
-		}
-		desc := elements[0].Payload
+		desc := descriptorPacket.DescriptorPayload
 		wantDesc := descriptors[span.DescriptorOffset : span.DescriptorOffset+span.DescriptorLength]
 		if !bytes.Equal(desc, wantDesc) ||
 			!bytes.Equal(desc, fullPackets[headerSpan.DependencyDescriptorOffset:headerSpan.DependencyDescriptorOffset+headerSpan.DependencyDescriptorLength]) {
 			t.Fatalf("packet %d dependency descriptor span mismatch", i)
 		}
-		parsed, consumed, err := receiver.Parse(desc)
-		if err != nil {
-			t.Fatalf("packet %d descriptor S%d: %v", i, frame.SpatialID, err)
-		}
-		if consumed != len(desc) ||
-			parsed.Mandatory.FrameNumber != uint16(frame.FrameID) ||
+		parsed := descriptorPacket.Descriptor
+		if parsed.Mandatory.FrameNumber != uint16(frame.FrameID) ||
 			parsed.Mandatory.FirstPacketInFrame != (i == 0) ||
 			parsed.Mandatory.LastPacketInFrame != (i == packetCount-1) {
-			t.Fatalf("packet %d mandatory=%+v consumed=%d len=%d frame=%+v", i, parsed.Mandatory, consumed, len(desc), frame)
+			t.Fatalf("packet %d mandatory=%+v len=%d frame=%+v", i, parsed.Mandatory, len(desc), frame)
 		}
 		if span.Marker != (frame.LastFrameInPicture && i == packetCount-1) {
 			t.Fatalf("packet %d marker=%v frame=%+v", i, span.Marker, frame)

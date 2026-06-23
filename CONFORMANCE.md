@@ -278,7 +278,9 @@ ship under `internal/av1/testdata/libaom/`.
 |    | + RTP packet syntax              |         | rtp_header.go                    | single-OBU + fragmented OBU packetization,     |
 |    |                                  |         |                                  | depacketizer state machine, frame assembler,   |
 |    |                                  |         |                                  | fixed RTP header and RFC 8285 one-/two-byte    |
-|    |                                  |         |                                  | extension element parse/build, and high-level  |
+|    |                                  |         |                                  | extension element parse/build/find, complete   |
+|    |                                  |         |                                  | packet dependency-descriptor extraction, and   |
+|    |                                  |         |                                  | high-level                                     |
 |    |                                  |         |                                  | RTP packet decoder entry points; round-trip    |
 |    |                                  |         |                                  | alloc-tested and fuzzed.                       |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+

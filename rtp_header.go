@@ -27,6 +27,10 @@ const (
 // envelope, or packet padding value is malformed.
 var ErrRTPInvalidHeader = errors.New("goav1: invalid RTP header")
 
+// ErrRTPHeaderExtensionNotFound is returned when a negotiated RTP header
+// extension ID is absent from an otherwise valid RTP header-extension block.
+var ErrRTPHeaderExtensionNotFound = errors.New("goav1: rtp header extension not found")
+
 // RTPHeader is the parsed RTP packet header. ExtensionPayload aliases the packet
 // input returned by ParseRTPHeader/ParseRTPPacket and includes RFC 8285 padding
 // bytes up to the 32-bit extension-word boundary.
@@ -169,6 +173,64 @@ func ParseRTPHeaderExtensionElements(profile uint16, payload []byte, out []RTPHe
 		}
 	}
 	return count, nil
+}
+
+// FindRTPHeaderExtensionElement scans an RFC 8285 one-byte or two-byte
+// extension payload for id without allocating. Padding bytes are ignored, and
+// the returned Payload aliases payload.
+func FindRTPHeaderExtensionElement(profile uint16, payload []byte, id uint8) (RTPHeaderExtensionElement, bool, error) {
+	if id == 0 {
+		return RTPHeaderExtensionElement{}, false, ErrRTPInvalidHeaderExtension
+	}
+	kind, err := rtpHeaderExtensionProfileKind(profile)
+	if err != nil {
+		return RTPHeaderExtensionElement{}, false, ErrRTPInvalidHeaderExtension
+	}
+	if kind == rtpHeaderExtensionProfileOneByte && id >= 15 {
+		return RTPHeaderExtensionElement{}, false, ErrRTPInvalidHeaderExtension
+	}
+	off := 0
+	for off < len(payload) {
+		switch kind {
+		case rtpHeaderExtensionProfileOneByte:
+			header := payload[off]
+			off++
+			if header == 0 {
+				continue
+			}
+			elementID := header >> 4
+			if elementID == 15 {
+				return RTPHeaderExtensionElement{}, false, nil
+			}
+			n := int(header&0x0f) + 1
+			if off+n > len(payload) {
+				return RTPHeaderExtensionElement{}, false, ErrRTPShortPayload
+			}
+			if elementID == id {
+				return RTPHeaderExtensionElement{ID: elementID, Payload: payload[off : off+n]}, true, nil
+			}
+			off += n
+		case rtpHeaderExtensionProfileTwoByte:
+			elementID := payload[off]
+			off++
+			if elementID == 0 {
+				continue
+			}
+			if off >= len(payload) {
+				return RTPHeaderExtensionElement{}, false, ErrRTPShortPayload
+			}
+			n := int(payload[off])
+			off++
+			if off+n > len(payload) {
+				return RTPHeaderExtensionElement{}, false, ErrRTPShortPayload
+			}
+			if elementID == id {
+				return RTPHeaderExtensionElement{ID: elementID, Payload: payload[off : off+n]}, true, nil
+			}
+			off += n
+		}
+	}
+	return RTPHeaderExtensionElement{}, false, nil
 }
 
 // RTPHeaderSize reports the bytes required to write header, including CSRCs and
