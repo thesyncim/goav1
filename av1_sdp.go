@@ -971,6 +971,13 @@ func AV1SDPNegotiatesHeaderExtension(sdp string, uri string) bool {
 		av1SDPDirectionIsActive, uri)
 }
 
+// AV1SDPNegotiatesHeaderExtensionID returns the extmap ID for uri from an
+// active video section that binds AV1/90000.
+func AV1SDPNegotiatesHeaderExtensionID(sdp string, uri string) (int, bool) {
+	return av1SDPHeaderExtensionID(sdp, av1SDPDirectionIsActive,
+		av1SDPDirectionIsActive, uri)
+}
+
 // AV1SDPNegotiatesSimulcast reports whether an SDP blob contains an active
 // video section that binds AV1/90000 and declares at least one valid AV1
 // simulcast RID for either direction.
@@ -1004,6 +1011,13 @@ func AV1SDPOffersReceiveRTCPFeedback(sdp string, feedback string) bool {
 // header-extension URI in a receive-compatible extmap direction.
 func AV1SDPOffersReceiveHeaderExtension(sdp string, uri string) bool {
 	return av1SDPHasHeaderExtension(sdp, av1SDPDirectionAllowsReceive,
+		av1SDPDirectionAllowsReceive, uri)
+}
+
+// AV1SDPOffersReceiveHeaderExtensionID returns the extmap ID for uri from an
+// SDP offer video section that can receive AV1/90000.
+func AV1SDPOffersReceiveHeaderExtensionID(sdp string, uri string) (int, bool) {
+	return av1SDPHeaderExtensionID(sdp, av1SDPDirectionAllowsReceive,
 		av1SDPDirectionAllowsReceive, uri)
 }
 
@@ -1050,6 +1064,13 @@ func AV1SDPAnswersSendRTCPFeedback(sdp string, feedback string) bool {
 // header-extension URI in a send-compatible extmap direction.
 func AV1SDPAnswersSendHeaderExtension(sdp string, uri string) bool {
 	return av1SDPHasHeaderExtension(sdp, av1SDPDirectionAllowsSend,
+		av1SDPDirectionAllowsSend, uri)
+}
+
+// AV1SDPAnswersSendHeaderExtensionID returns the extmap ID for uri from an SDP
+// answer video section that can send AV1/90000.
+func AV1SDPAnswersSendHeaderExtensionID(sdp string, uri string) (int, bool) {
+	return av1SDPHeaderExtensionID(sdp, av1SDPDirectionAllowsSend,
 		av1SDPDirectionAllowsSend, uri)
 }
 
@@ -1123,14 +1144,31 @@ func av1SDPHasHeaderExtension(
 	extmapDirectionOK func(string) bool,
 	uri string,
 ) bool {
+	_, ok := av1SDPHeaderExtensionID(sdp, mediaDirectionOK,
+		extmapDirectionOK, uri)
+	return ok
+}
+
+func av1SDPHeaderExtensionID(
+	sdp string,
+	mediaDirectionOK func(string) bool,
+	extmapDirectionOK func(string) bool,
+	uri string,
+) (int, bool) {
 	uri = strings.ToLower(strings.TrimSpace(uri))
 	if uri == "" {
-		return false
+		return 0, false
 	}
-	return av1SDPHas(sdp, mediaDirectionOK,
+	var id int
+	ok := av1SDPHas(sdp, mediaDirectionOK,
 		func(section av1SDPMediaSection, payloadType string) bool {
-			return section.hasHeaderExtension(uri, extmapDirectionOK)
+			got, ok := section.headerExtensionID(uri, extmapDirectionOK)
+			if ok {
+				id = got
+			}
+			return ok
 		})
+	return id, ok
 }
 
 func av1SDPHasRTCPFeedback(
@@ -1296,6 +1334,14 @@ func (s av1SDPMediaSection) hasHeaderExtension(
 	uri string,
 	extmapDirectionOK func(string) bool,
 ) bool {
+	_, ok := s.headerExtensionID(uri, extmapDirectionOK)
+	return ok
+}
+
+func (s av1SDPMediaSection) headerExtensionID(
+	uri string,
+	extmapDirectionOK func(string) bool,
+) (int, bool) {
 	for _, extmap := range s.extmaps {
 		if strings.ToLower(strings.TrimSpace(extmap.URI)) != uri {
 			continue
@@ -1305,10 +1351,10 @@ func (s av1SDPMediaSection) hasHeaderExtension(
 			direction = s.direction
 		}
 		if extmapDirectionOK(direction) {
-			return true
+			return extmap.ID, true
 		}
 	}
-	return false
+	return 0, false
 }
 
 func (s av1SDPMediaSection) allowsAV1Frame(

@@ -901,20 +901,38 @@ func TestAV1SDPHeaderExtensionScanning(t *testing.T) {
 	if !av1.AV1SDPNegotiatesHeaderExtension(sdp, av1.AV1RTPDependencyDescriptorURI) {
 		t.Fatal("AV1SDPNegotiatesHeaderExtension rejected dependency descriptor")
 	}
+	if id, ok := av1.AV1SDPNegotiatesHeaderExtensionID(sdp, av1.AV1RTPDependencyDescriptorURI); !ok || id != 4 {
+		t.Fatalf("AV1SDPNegotiatesHeaderExtensionID dependency descriptor = %d,%v want 4,true", id, ok)
+	}
 	if !av1.AV1SDPOffersReceiveHeaderExtension(sdp, av1.AV1RTPStreamIDURI) {
 		t.Fatal("AV1SDPOffersReceiveHeaderExtension rejected recvonly RID")
+	}
+	if id, ok := av1.AV1SDPOffersReceiveHeaderExtensionID(sdp, av1.AV1RTPStreamIDURI); !ok || id != 2 {
+		t.Fatalf("AV1SDPOffersReceiveHeaderExtensionID RID = %d,%v want 2,true", id, ok)
 	}
 	if av1.AV1SDPAnswersSendHeaderExtension(sdp, av1.AV1RTPStreamIDURI) {
 		t.Fatal("AV1SDPAnswersSendHeaderExtension accepted recvonly RID")
 	}
+	if id, ok := av1.AV1SDPAnswersSendHeaderExtensionID(sdp, av1.AV1RTPStreamIDURI); ok || id != 0 {
+		t.Fatalf("AV1SDPAnswersSendHeaderExtensionID recvonly RID = %d,%v want 0,false", id, ok)
+	}
 	if !av1.AV1SDPAnswersSendHeaderExtension(sdp, av1.AV1RTPRepairedStreamIDURI) {
 		t.Fatal("AV1SDPAnswersSendHeaderExtension rejected sendonly repaired RID")
+	}
+	if id, ok := av1.AV1SDPAnswersSendHeaderExtensionID(sdp, av1.AV1RTPRepairedStreamIDURI); !ok || id != 3 {
+		t.Fatalf("AV1SDPAnswersSendHeaderExtensionID repaired RID = %d,%v want 3,true", id, ok)
 	}
 	if !av1.AV1SDPOffersReceiveHeaderExtension(sdp, av1.AV1RTPMIDURI) {
 		t.Fatal("AV1SDPOffersReceiveHeaderExtension rejected inherited MID")
 	}
+	if id, ok := av1.AV1SDPOffersReceiveHeaderExtensionID(sdp, av1.AV1RTPMIDURI); !ok || id != 1 {
+		t.Fatalf("AV1SDPOffersReceiveHeaderExtensionID MID = %d,%v want 1,true", id, ok)
+	}
 	if av1.AV1SDPOffersReceiveHeaderExtension(sdp, "") {
 		t.Fatal("AV1SDPOffersReceiveHeaderExtension accepted empty URI")
+	}
+	if id, ok := av1.AV1SDPOffersReceiveHeaderExtensionID(sdp, ""); ok || id != 0 {
+		t.Fatalf("AV1SDPOffersReceiveHeaderExtensionID empty URI = %d,%v want 0,false", id, ok)
 	}
 
 	sendOnlySection := joinAV1SDPLines(
@@ -929,6 +947,9 @@ func TestAV1SDPHeaderExtensionScanning(t *testing.T) {
 	if !av1.AV1SDPAnswersSendHeaderExtension(sendOnlySection, av1.AV1RTPMIDURI) {
 		t.Fatal("sendonly inherited extmap did not report send support")
 	}
+	if id, ok := av1.AV1SDPAnswersSendHeaderExtensionID(sendOnlySection, av1.AV1RTPMIDURI); !ok || id != 1 {
+		t.Fatalf("sendonly inherited extmap ID = %d,%v want 1,true", id, ok)
+	}
 
 	wrongMedia := joinAV1SDPLines(
 		"m=audio 9 UDP/TLS/RTP/SAVPF 111",
@@ -937,6 +958,9 @@ func TestAV1SDPHeaderExtensionScanning(t *testing.T) {
 	)
 	if av1.AV1SDPNegotiatesHeaderExtension(wrongMedia, av1.AV1RTPDependencyDescriptorURI) {
 		t.Fatal("audio extmap reported AV1 header-extension support")
+	}
+	if id, ok := av1.AV1SDPNegotiatesHeaderExtensionID(wrongMedia, av1.AV1RTPDependencyDescriptorURI); ok || id != 0 {
+		t.Fatalf("audio extmap ID = %d,%v want 0,false", id, ok)
 	}
 }
 

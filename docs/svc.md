@@ -418,7 +418,7 @@ SDP helpers (`ParseAV1SDPFmtp`, `ParseAV1SDPExtmap`, `ParseAV1SDPRID`,
 `AV1SDPOffersReceiveSequence`, and `AV1SDPOffersReceiveFrame`) cover the
 `AV1/90000` payload binding, the profile/level/tier compatibility check, RTP
 header-extension mapping checks for dependency descriptors and RID/MID SDES
-values, AV1 RID receiver restrictions such as `max-width`, `max-height`,
+values plus the negotiated extmap IDs, AV1 RID receiver restrictions such as `max-width`, `max-height`,
 `max-fps`, `max-fs`, `max-br`, `max-pps`, `max-bpp`, and `depend`, and AV1
 simulcast RID groups before RTP starts flowing. RTP SDES helpers
 (`PutRTPMIDHeaderExtension`, `PutRTPStreamIDHeaderExtension`, and
