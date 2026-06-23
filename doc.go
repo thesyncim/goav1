@@ -28,7 +28,7 @@
 // upscaling, film-grain output helpers, a realtime 8-bit profile-0 AV1 encoder
 // for WebRTC streams with I420/I422/I444/I400/NV12/NV21 and generic Frame
 // input adapters, RTCEncoder config preflight
-// normalization, RTP payload packetization with dependency descriptors,
+// normalization, RTP payload packetization with dependency descriptors, sized
 // complete RTP packet wrapping, multi-spatial EncodePicture output for WebRTC
 // SVC and simulcast modes, and runtime bitrate/framerate/scalability
 // reconfiguration. Lower-level WebRTC encoder

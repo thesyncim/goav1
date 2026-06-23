@@ -1140,8 +1140,8 @@ roll-up.
 | Annex B / IVF / RTP intake            | Complete, including high-level `NewDecoderFromRTPPayloads` plus live `DecodeRTPPayloadAfterLoss` retained-fragment reset for AV1 RTP payload bodies. |
 | WebRTC signaling helpers              | Complete for AV1/90000 SDP/fmtp profile/level/tier checks, RTP fixed-header packet parse/build, RFC 8285 one-/two-byte header-extension element parse/build, RTP header-extension mapping checks, RTP MID/RID/RRID SDES payload helpers, AV1 RID receiver restrictions, AV1 simulcast RID groups, AV1 rtcp-fb checks, generic and compound RTCP packet parsing, RTCP SR/RR/SDES/BYE and RTPFB/PSFB helpers, NACK/Transport-CC/PLI/FIR/REMB helpers, AV1 Layer Refresh Request FCI entry/list parse/build/validation, and force-key classification. |
 | SVC streams                           | Parsed and decoded through the framework path; L1T2/L2T1/L2T2 strict-MD5 gates pass with multi-pool surface routing and scaled inter prediction. See [docs/svc.md](docs/svc.md). |
-| Realtime pixel encoder                | Functional for 8-bit profile-0 WebRTC streams from I420/I422/I444/I400/NV12/NV21 plus generic 8/10/12-bit `Frame` inputs adapted into the current 4:2:0 encode path, including fixed-quality/CBR, forced keyframes, temporal layering, runtime bitrate/framerate/rate-control/scalability reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, tile columns, golden references, RTP payload packetization, complete RTP packet wrapping, dependency descriptors, active decode target signaling, and LRR layer-grid validation. |
-| WebRTC encoder control/metadata       | W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, full decode-target grids, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT dependency templates, explicit sequence color config, exact RTP frame-duration helper, RTP packet spans and complete RTP packet wrapping for caller-supplied frame payloads, and sequence-matched `Frame` validation/loading for profile-0/1/2 8/10/12-bit 4:0:0, 4:2:0, 4:2:2, and 4:4:4 sample formats. |
+| Realtime pixel encoder                | Functional for 8-bit profile-0 WebRTC streams from I420/I422/I444/I400/NV12/NV21 plus generic 8/10/12-bit `Frame` inputs adapted into the current 4:2:0 encode path, including fixed-quality/CBR, forced keyframes, temporal layering, runtime bitrate/framerate/rate-control/scalability reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, tile columns, golden references, RTP payload packetization, sized complete RTP packet wrapping, dependency descriptors, active decode target signaling, and LRR layer-grid validation. |
+| WebRTC encoder control/metadata       | W3C AV1 SVC mode vocabulary, temporal/spatial dependency structures, full decode-target grids, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT dependency templates, explicit sequence color config, exact RTP frame-duration helper, RTP packet spans and sized complete RTP packet wrapping for caller-supplied frame payloads, and sequence-matched `Frame` validation/loading for profile-0/1/2 8/10/12-bit 4:0:0, 4:2:0, 4:2:2, and 4:4:4 sample formats. |
 
 ### Not yet implemented
 
@@ -1150,7 +1150,7 @@ roll-up.
   those inputs still enter the current 8-bit profile-0 4:2:0 encode path.
   Native 10/12-bit and true 4:2:2/4:4:4 bitstream emission remains open.
 - **Full WebRTC media transport.** The package emits AV1 RTP payload bodies,
-  dependency descriptors, complete RTP packet wrappers with fixed headers,
+  dependency descriptors, sized complete RTP packet wrappers with fixed headers,
   RFC 8285 extension elements, raw
   MID/RID/RRID SDES payload helpers, and focused AV1
   SDP/fmtp/extmap/RID/simulcast plus RTCP LRR helper surfaces. SRTP, full SDP

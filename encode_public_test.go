@@ -1139,29 +1139,53 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 		HeaderExtensionProfile:          goav1.RTPExtensionProfileTwoByte | 0x0005,
 	}
 	headerSpans := make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, packetCount)
-	if _, _, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(nil, make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, 1), goav1.EncoderWebRTCRTPPacketHeaderConfig{
+	oneByteConfig := goav1.EncoderWebRTCRTPPacketHeaderConfig{
 		PayloadType:                     config.PayloadType,
 		SequenceNumber:                  config.SequenceNumber,
 		Timestamp:                       config.Timestamp,
 		SSRC:                            config.SSRC,
 		DependencyDescriptorExtensionID: config.DependencyDescriptorExtensionID,
 		HeaderExtensionProfile:          goav1.RTPExtensionProfileOneByte,
-	}, []byte{0xaa}, make([]byte, 17), []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 17}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
+	}
+	if _, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(oneByteConfig, []byte{0xaa}, make([]byte, 17), []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 17}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("one-byte dependency descriptor packet size err=%v want %v", err, goav1.ErrRTPInvalidHeaderExtension)
+	}
+	if _, _, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(nil, make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, 1), oneByteConfig, []byte{0xaa}, make([]byte, 17), []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 17}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
 		t.Fatalf("one-byte dependency descriptor packet err=%v want %v", err, goav1.ErrRTPInvalidHeaderExtension)
 	}
 
-	fullPackets, fullCount, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(nil, headerSpans, config, rtpPayloads, descriptors, packetSpans[:packetCount])
+	sizeInfo, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(config, rtpPayloads, descriptors, packetSpans[:packetCount])
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTPPacketsWithHeadersSize: %v", err)
+	}
+	if sizeInfo.Packets != packetCount || sizeInfo.Bytes <= len(rtpPayloads) ||
+		sizeInfo.MaxPacketBytes <= limits.MaxPayloadLen || sizeInfo.MaxHeaderBytes <= goav1.RTPHeaderMinSize {
+		t.Fatalf("packet header size=%+v packetCount=%d payloadBytes=%d", sizeInfo, packetCount, len(rtpPayloads))
+	}
+	prefix := []byte{0xde, 0xad, 0xbe}
+	fullDst := make([]byte, len(prefix), len(prefix)+sizeInfo.Bytes)
+	copy(fullDst, prefix)
+	fullPackets, fullCount, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(fullDst, headerSpans, config, rtpPayloads, descriptors, packetSpans[:packetCount])
 	if err != nil {
 		t.Fatalf("AppendEncoderWebRTCRTPPacketsWithHeaders: %v", err)
 	}
 	if fullCount != packetCount {
 		t.Fatalf("full packet count=%d want %d", fullCount, packetCount)
 	}
+	if len(fullPackets) != len(prefix)+sizeInfo.Bytes || cap(fullPackets) != cap(fullDst) ||
+		&fullPackets[0] != &fullDst[0] || !bytes.Equal(fullPackets[:len(prefix)], prefix) {
+		t.Fatalf("full packet dst len=%d cap=%d size=%+v prefix=%x", len(fullPackets), cap(fullPackets), sizeInfo, fullPackets[:len(prefix)])
+	}
 
 	payloadSlices := make([][]byte, packetCount)
 	var receiver goav1.RTPDependencyDescriptorState
+	totalPacketBytes := 0
 	for i := 0; i < packetCount; i++ {
 		span := headerSpans[i]
+		if span.Offset < len(prefix) || span.Length > sizeInfo.MaxPacketBytes || span.HeaderSize > sizeInfo.MaxHeaderBytes {
+			t.Fatalf("packet %d span=%+v size=%+v", i, span, sizeInfo)
+		}
+		totalPacketBytes += span.Length
 		raw := fullPackets[span.Offset : span.Offset+span.Length]
 		packet, err := goav1.ParseRTPPacket(raw)
 		if err != nil {
@@ -1204,6 +1228,9 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 			t.Fatalf("packet %d mandatory=%+v consumed=%d len=%d", i, parsed.Mandatory, consumed, len(elements[0].Payload))
 		}
 		payloadSlices[i] = packet.Payload
+	}
+	if totalPacketBytes != sizeInfo.Bytes {
+		t.Fatalf("total packet bytes=%d want %d", totalPacketBytes, sizeInfo.Bytes)
 	}
 	assertPublicRTPPayloadsAssembleToFrame(t, frame.Data, payloadSlices)
 }
