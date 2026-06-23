@@ -343,6 +343,17 @@ func TestParseAV1SDPExtmap(t *testing.T) {
 	if noDirection.ID != 1 || noDirection.Direction != "" || noDirection.URI != av1.AV1RTPMIDURI {
 		t.Fatalf("ParseAV1SDPExtmap no direction = %+v", noDirection)
 	}
+
+	mixedCase, err := av1.ParseAV1SDPExtmap(" A=EXTMAP:5/SENDRECV http://www.webrtc.org/experiments/rtp-hdrext/video-timing timing-attr ")
+	if err != nil {
+		t.Fatalf("ParseAV1SDPExtmap mixed-case prefix returned error: %v", err)
+	}
+	if mixedCase.ID != 5 ||
+		mixedCase.Direction != "sendrecv" ||
+		mixedCase.URI != av1.AV1RTPVideoTimingURI ||
+		mixedCase.Attributes != "timing-attr" {
+		t.Fatalf("ParseAV1SDPExtmap mixed-case prefix = %+v", mixedCase)
+	}
 }
 
 func TestAV1SDPExtmapRejectsInvalidConfig(t *testing.T) {
@@ -419,6 +430,19 @@ func TestParseAV1SDPRID(t *testing.T) {
 		restrictions.MaxHeight != 720 ||
 		restrictions.MaxBitsPerPixelX10000 != 1 {
 		t.Fatalf("ParseAV1SDPRIDRestrictions = %+v", restrictions)
+	}
+
+	mixedCase, err := av1.ParseAV1SDPRID(" A=RID:screen RECV PT=98;MAX-WIDTH=1280;MAX-FPS=30 ")
+	if err != nil {
+		t.Fatalf("ParseAV1SDPRID mixed-case prefix returned error: %v", err)
+	}
+	if mixedCase.ID != "screen" ||
+		mixedCase.Direction != av1.AV1SDPRIDDirectionReceive ||
+		len(mixedCase.PayloadTypes) != 1 ||
+		mixedCase.PayloadTypes[0] != "98" ||
+		mixedCase.Restrictions.MaxWidth != 1280 ||
+		mixedCase.Restrictions.MaxFrameRate != 30 {
+		t.Fatalf("ParseAV1SDPRID mixed-case prefix = %+v", mixedCase)
 	}
 }
 
@@ -550,6 +574,19 @@ func TestParseAV1SDPSimulcast(t *testing.T) {
 	}
 	if line != "a=simulcast:send s recv r" {
 		t.Fatalf("reordered SDP = %q", line)
+	}
+
+	mixedCase, err := av1.ParseAV1SDPSimulcast(" A=SIMULCAST:RECV q SEND h ")
+	if err != nil {
+		t.Fatalf("ParseAV1SDPSimulcast mixed-case prefix returned error: %v", err)
+	}
+	if len(mixedCase.Receive) != 1 ||
+		len(mixedCase.Receive[0]) != 1 ||
+		mixedCase.Receive[0][0].RID != "q" ||
+		len(mixedCase.Send) != 1 ||
+		len(mixedCase.Send[0]) != 1 ||
+		mixedCase.Send[0][0].RID != "h" {
+		t.Fatalf("ParseAV1SDPSimulcast mixed-case prefix = %#v", mixedCase)
 	}
 }
 

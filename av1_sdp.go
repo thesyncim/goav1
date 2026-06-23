@@ -794,9 +794,7 @@ func ParseAV1SDPFmtp(fmtp string) (AV1SDPFmtpParameters, error) {
 // AV1 fmtp parameters are ignored the same way ParseAV1SDPFmtp ignores them.
 func ParseAV1SDPFmtpAttribute(line string) (AV1SDPFmtpAttribute, error) {
 	line = strings.TrimSpace(line)
-	if strings.HasPrefix(strings.ToLower(line), "a=fmtp:") {
-		line = strings.TrimSpace(line[len("a=fmtp:"):])
-	}
+	line = av1SDPTrimAttributePrefix(line, "a=fmtp:")
 	fields := strings.Fields(line)
 	if len(fields) < 2 || !av1SDPValidPayloadType(fields[0]) {
 		return AV1SDPFmtpAttribute{}, ErrSDPInvalidConfig
@@ -815,9 +813,7 @@ func ParseAV1SDPFmtpAttribute(line string) (AV1SDPFmtpAttribute, error) {
 // bind a numeric RTP payload type to AV1/90000.
 func ParseAV1SDPRTPMap(line string) (AV1SDPRTPMap, error) {
 	line = strings.TrimSpace(line)
-	if strings.HasPrefix(strings.ToLower(line), "a=rtpmap:") {
-		line = strings.TrimSpace(line[len("a=rtpmap:"):])
-	}
+	line = av1SDPTrimAttributePrefix(line, "a=rtpmap:")
 	fields := strings.Fields(line)
 	if len(fields) != 2 || !av1SDPValidPayloadType(fields[0]) {
 		return AV1SDPRTPMap{}, ErrSDPInvalidConfig
@@ -838,7 +834,7 @@ func ParseAV1SDPRTPMap(line string) (AV1SDPRTPMap, error) {
 // may include or omit the leading "a=extmap:" prefix.
 func ParseAV1SDPExtmap(line string) (AV1SDPExtmap, error) {
 	line = strings.TrimSpace(line)
-	line = strings.TrimPrefix(line, "a=extmap:")
+	line = av1SDPTrimAttributePrefix(line, "a=extmap:")
 	fields := strings.Fields(line)
 	if len(fields) < 2 {
 		return AV1SDPExtmap{}, ErrSDPInvalidConfig
@@ -880,7 +876,7 @@ func ParseAV1SDPRIDRestrictions(restrictions string) (AV1SDPRIDRestrictions, err
 // include or omit the leading "a=rid:" prefix.
 func ParseAV1SDPRID(line string) (AV1SDPRID, error) {
 	line = strings.TrimSpace(line)
-	line = strings.TrimPrefix(line, "a=rid:")
+	line = av1SDPTrimAttributePrefix(line, "a=rid:")
 	fields := strings.Fields(line)
 	if len(fields) < 2 {
 		return AV1SDPRID{}, ErrSDPInvalidConfig
@@ -907,7 +903,7 @@ func ParseAV1SDPRID(line string) (AV1SDPRID, error) {
 // input may include or omit the leading "a=simulcast:" prefix.
 func ParseAV1SDPSimulcast(line string) (AV1SDPSimulcast, error) {
 	line = strings.TrimSpace(line)
-	line = strings.TrimPrefix(line, "a=simulcast:")
+	line = av1SDPTrimAttributePrefix(line, "a=simulcast:")
 	fields := strings.Fields(line)
 	if len(fields) == 0 || len(fields)%2 != 0 || len(fields) > 4 {
 		return AV1SDPSimulcast{}, ErrSDPInvalidConfig
@@ -1752,6 +1748,13 @@ func av1SDPAllDigits(value string) bool {
 		}
 	}
 	return value != ""
+}
+
+func av1SDPTrimAttributePrefix(line string, prefix string) string {
+	if len(line) >= len(prefix) && strings.EqualFold(line[:len(prefix)], prefix) {
+		return strings.TrimSpace(line[len(prefix):])
+	}
+	return line
 }
 
 func av1SDPAlphaNumeric(ch byte) bool {
