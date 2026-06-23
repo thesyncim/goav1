@@ -774,6 +774,59 @@ func TestSimpleDecoderTileListIVFPlayback(t *testing.T) {
 	}
 }
 
+func TestNewDecoderFromRTPPayloadsTileListPlayback(t *testing.T) {
+	primePayload := publicDecoderResidualRTPPayload()
+	tileListPayload := publicSimpleDecoderTileListRTPPayload()
+
+	dec, err := av1.NewDecoderFromRTPPayloads([][]byte{primePayload, tileListPayload})
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPayloads: %v", err)
+	}
+	defer dec.Close()
+
+	frames, ok, err := dec.DecodeNext()
+	if err != nil {
+		t.Fatalf("DecodeNext prime: %v", err)
+	}
+	if !ok || len(frames) != 1 || frames[0] == nil {
+		t.Fatalf("DecodeNext prime frames=%d ok=%v", len(frames), ok)
+	}
+
+	frames, ok, err = dec.DecodeNext()
+	if err != nil {
+		t.Fatalf("DecodeNext tile-list: %v", err)
+	}
+	if !ok || len(frames) != 1 || frames[0] == nil ||
+		frames[0].Format.Width != 64 ||
+		frames[0].Format.Height != 64 {
+		t.Fatalf("DecodeNext tile-list frames=%d ok=%v frame=%+v", len(frames), ok, frames)
+	}
+
+	live, err := av1.NewDecoderFromRTPPayloads([][]byte{primePayload, tileListPayload})
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPayloads live probe: %v", err)
+	}
+	defer live.Close()
+
+	frames, err = live.DecodeRTPPayload(primePayload)
+	if err != nil {
+		t.Fatalf("DecodeRTPPayload prime: %v", err)
+	}
+	if len(frames) != 1 || frames[0] == nil {
+		t.Fatalf("DecodeRTPPayload prime frames=%d", len(frames))
+	}
+
+	frames, err = live.DecodeRTPPayload(tileListPayload)
+	if err != nil {
+		t.Fatalf("DecodeRTPPayload tile-list: %v", err)
+	}
+	if len(frames) != 1 || frames[0] == nil ||
+		frames[0].Format.Width != 64 ||
+		frames[0].Format.Height != 64 {
+		t.Fatalf("DecodeRTPPayload tile-list frames=%d frame=%+v", len(frames), frames)
+	}
+}
+
 func TestSimpleDecoderTileListIVFPlanErrors(t *testing.T) {
 	validPayload := av1.AppendTileListOBU(nil, av1.TileList{
 		OutputFrameWidthInTilesMinus1:  0,
@@ -838,6 +891,33 @@ func TestSimpleDecoderTileListIVFPlanErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func publicSimpleDecoderTileListRTPPayload() []byte {
+	tilePayload := av1.AppendTileListOBU(nil, av1.TileList{
+		OutputFrameWidthInTilesMinus1:  0,
+		OutputFrameHeightInTilesMinus1: 0,
+		TileCountMinus1:                0,
+		Entries: []av1.TileListEntry{{
+			AnchorFrameIdx:     0,
+			AnchorTileRow:      0,
+			AnchorTileCol:      0,
+			TileDataSizeMinus1: 0,
+			TileData:           []byte{0x80},
+		}},
+	})
+	elements := [...]av1.RTPElement{
+		{Data: publicDecoderResidualRTPElement(av1.OBUFrameHeader, publicDecoderResidualFrameHeaderPayload())},
+		{Data: publicDecoderResidualRTPElement(av1.OBUTileList, tilePayload)},
+	}
+	payload := make([]byte, 128)
+	n, err := av1.PutRTPPayload(payload, av1.RTPAggregationHeader{
+		ElementCount: uint8(len(elements)),
+	}, elements[:])
+	if err != nil {
+		panic(err)
+	}
+	return payload[:n]
 }
 
 func publicSimpleDecoderSwitchFrameHeaderPayload() []byte {

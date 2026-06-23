@@ -1169,13 +1169,7 @@ roll-up.
 2. **Broaden decoder coverage.** Keep expanding profile-2, 12-bit,
    malformed/adversarial, fuzz, and real-world corpus coverage beyond the
    committed vector gates.
-3. **Complete tile-list playback.** Tile-list OBUs parse today and validate
-   source anchors plus uniform decode-layout prerequisites; external anchor
-   frames can be resolved into the libaom-shaped source table, and per-entry
-   decode plans bind that anchor as LAST_FRAME for residual reconstruction.
-   Automatic stream playback, reconstruction blitting, and output-frame
-   publication still need the end-to-end implementation.
-4. **Add SIMD backends.** Wire amd64 and arm64 kernels for the hot DSP entries:
+3. **Add SIMD backends.** Wire amd64 and arm64 kernels for the hot DSP entries:
    inverse transforms, deblocking edges, CDEF, restoration, and convolve
    filters. Each backend must clear `make alloc`,
    `make test-motion-conformance`, and `make test-transform-conformance`
