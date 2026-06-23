@@ -29,8 +29,9 @@
 // for WebRTC streams with I420/I422/I444/I400/NV12/NV21 and generic Frame
 // input adapters, RTCEncoder config preflight
 // normalization, RTP payload packetization with dependency descriptors,
-// multi-spatial EncodePicture output for WebRTC SVC and simulcast modes, and runtime
-// bitrate/framerate/scalability reconfiguration. Lower-level WebRTC encoder
+// complete RTP packet wrapping, multi-spatial EncodePicture output for WebRTC
+// SVC and simulcast modes, and runtime bitrate/framerate/scalability
+// reconfiguration. Lower-level WebRTC encoder
 // helpers expose W3C SVC mode metadata, temporal/spatial dependency
 // structures, decode-target grids, active decode-target masks, key-shift
 // scheduling, explicit sequence color config, sequence-matched sample-plane

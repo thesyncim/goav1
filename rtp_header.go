@@ -73,19 +73,11 @@ func RTPHeaderExtensionElementsSize(profile uint16, elements []RTPHeaderExtensio
 	}
 	size := 0
 	for i := range elements {
-		payloadLen := len(elements[i].Payload)
-		switch kind {
-		case rtpHeaderExtensionProfileOneByte:
-			if elements[i].ID == 0 || elements[i].ID == 15 || payloadLen == 0 || payloadLen > 16 {
-				return 0, ErrRTPInvalidHeaderExtension
-			}
-			size += 1 + payloadLen
-		case rtpHeaderExtensionProfileTwoByte:
-			if elements[i].ID == 0 || payloadLen > 255 {
-				return 0, ErrRTPInvalidHeaderExtension
-			}
-			size += 2 + payloadLen
+		elementSize, err := rtpHeaderExtensionElementSize(kind, elements[i].ID, len(elements[i].Payload))
+		if err != nil {
+			return 0, err
 		}
+		size += elementSize
 	}
 	return size, nil
 }
@@ -377,6 +369,26 @@ func rtpHeaderExtensionProfileKind(profile uint16) (int, error) {
 		return rtpHeaderExtensionProfileOneByte, nil
 	case profile&0xfff0 == RTPExtensionProfileTwoByte:
 		return rtpHeaderExtensionProfileTwoByte, nil
+	default:
+		return 0, ErrRTPInvalidHeaderExtension
+	}
+}
+
+func rtpHeaderExtensionElementSize(kind int, id uint8, payloadLen int) (int, error) {
+	if payloadLen < 0 {
+		return 0, ErrRTPInvalidHeaderExtension
+	}
+	switch kind {
+	case rtpHeaderExtensionProfileOneByte:
+		if id == 0 || id == 15 || payloadLen == 0 || payloadLen > 16 {
+			return 0, ErrRTPInvalidHeaderExtension
+		}
+		return 1 + payloadLen, nil
+	case rtpHeaderExtensionProfileTwoByte:
+		if id == 0 || payloadLen > 255 {
+			return 0, ErrRTPInvalidHeaderExtension
+		}
+		return 2 + payloadLen, nil
 	default:
 		return 0, ErrRTPInvalidHeaderExtension
 	}
