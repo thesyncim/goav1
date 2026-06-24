@@ -1808,7 +1808,8 @@ func TestPublicRTCEncoderSingleSpatialSettingsReferenceDecoders(t *testing.T) {
 	defer enc.Close()
 
 	var frames []publicIVFFrame
-	appendFrame := func(label string, frameIndex int, wantKey bool) {
+	var sequence goav1.SequenceHeader
+	appendFrame := func(label string, frameIndex int, wantKey bool, wantScreen bool) {
 		t.Helper()
 		frame, err := enc.Encode(publicRTCMatrixFrame(w, h, frameIndex), false)
 		if err != nil {
@@ -1817,14 +1818,15 @@ func TestPublicRTCEncoderSingleSpatialSettingsReferenceDecoders(t *testing.T) {
 		if frame.Keyframe != wantKey {
 			t.Fatalf("%s key=%v want %v frame=%+v", label, frame.Keyframe, wantKey, frame)
 		}
+		assertPublicRTCFrameScreenContentHeader(t, label, frame.Data, &sequence, wantScreen)
 		frames = append(frames, publicIVFFrame{
 			timestamp: uint64(len(frames)),
 			payload:   append([]byte(nil), frame.Data...),
 		})
 	}
 
-	appendFrame("initial CBR key", 0, true)
-	appendFrame("warm CBR delta", 1, false)
+	appendFrame("initial CBR key", 0, true, false)
+	appendFrame("warm CBR delta", 1, false, false)
 
 	fpsBitrateChange := enc.Config()
 	fpsBitrateChange.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
@@ -1836,41 +1838,43 @@ func TestPublicRTCEncoderSingleSpatialSettingsReferenceDecoders(t *testing.T) {
 	if got, err := enc.RTPFrameDuration(); err != nil || got != (goav1.EncoderRational{Num: 3003, Den: 2}) {
 		t.Fatalf("fps/bitrate RTPFrameDuration=%+v err=%v", got, err)
 	}
-	appendFrame("fps bitrate delta", 2, false)
+	appendFrame("fps bitrate delta", 2, false, false)
 
 	cqpChange := enc.Config()
 	cqpChange.RateControl = goav1.EncoderRateControlCQP
 	cqpChange.Quantizer = 35
+	cqpChange.Content = goav1.EncoderContentScreen
 	if err := enc.SetConfig(cqpChange); err != nil {
-		t.Fatalf("SetConfig CQP: %v", err)
+		t.Fatalf("SetConfig CQP/screen: %v", err)
 	}
 	assertPublicRTCConfigControls(t, enc.Config(), cqpChange)
-	appendFrame("CQP delta", 3, false)
+	appendFrame("CQP screen delta", 3, false, true)
 
 	scalabilityChange := enc.Config()
 	scalabilityChange.Scalability = goav1.EncoderScalabilityModeL1T3
 	scalabilityChange.MaxFramerate = goav1.EncoderRational{Num: 24, Den: 1}
 	scalabilityChange.Quantizer = 31
 	if err := enc.SetConfig(scalabilityChange); err != nil {
-		t.Fatalf("SetConfig scalability: %v", err)
+		t.Fatalf("SetConfig scalability screen: %v", err)
 	}
 	assertPublicRTCConfigControls(t, enc.Config(), scalabilityChange)
 	if got, err := enc.RTPFrameDuration(); err != nil || got != (goav1.EncoderRational{Num: 3750, Den: 1}) {
 		t.Fatalf("scalability RTPFrameDuration=%+v err=%v", got, err)
 	}
-	appendFrame("L1T3 key", 4, true)
-	appendFrame("L1T3 delta", 5, false)
+	appendFrame("L1T3 screen key", 4, true, true)
+	appendFrame("L1T3 screen delta", 5, false, true)
 
 	cbrChange := enc.Config()
 	cbrChange.RateControl = goav1.EncoderRateControlCBR
 	cbrChange.Quantizer = 0
 	cbrChange.MaxFramerate = goav1.EncoderRational{Num: 120, Den: 1}
+	cbrChange.Content = goav1.EncoderContentCamera
 	publicRTCApplyControlBitrates(&cbrChange, 520)
 	if err := enc.SetConfig(cbrChange); err != nil {
-		t.Fatalf("SetConfig CBR: %v", err)
+		t.Fatalf("SetConfig CBR/camera: %v", err)
 	}
 	assertPublicRTCConfigControls(t, enc.Config(), cbrChange)
-	appendFrame("CBR delta", 6, false)
+	appendFrame("CBR camera delta", 6, false, false)
 
 	ivf := appendPublicIVF(nil, w, h, 30, 1, frames)
 	assertPublicIVFMatchesReferenceDecodersRawYUV(t, decoders, "single-spatial-settings", ivf)
@@ -1901,7 +1905,8 @@ func TestPublicRTCEncoderSimulcastSettingsReferenceDecoders(t *testing.T) {
 	var receiver goav1.RTPDependencyDescriptorState
 	nextFrameID := uint64(0)
 	var layerFrames [goav1.EncoderWebRTCMaxSpatialLayers][]publicIVFFrame
-	appendPicture := func(label string, frameIndex int, wantKey bool) {
+	var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
+	appendPicture := func(label string, frameIndex int, wantKey bool, wantScreen bool) {
 		t.Helper()
 		picture, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, frameIndex), false)
 		if err != nil {
@@ -1921,6 +1926,7 @@ func TestPublicRTCEncoderSimulcastSettingsReferenceDecoders(t *testing.T) {
 				t.Fatalf("%s spatial %d resolution=%+v want stable %+v",
 					label, frame.SpatialID, current.SpatialLayers[frame.SpatialID].Resolution, layerRes[frame.SpatialID])
 			}
+			assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], wantScreen)
 			layerFrames[frame.SpatialID] = append(layerFrames[frame.SpatialID], publicIVFFrame{
 				timestamp: uint64(len(layerFrames[frame.SpatialID])),
 				payload:   append([]byte(nil), frame.Data...),
@@ -1928,8 +1934,8 @@ func TestPublicRTCEncoderSimulcastSettingsReferenceDecoders(t *testing.T) {
 		}
 	}
 
-	appendPicture("initial S3T3h CBR key", 0, true)
-	appendPicture("warm S3T3h CBR delta", 1, false)
+	appendPicture("initial S3T3h CBR key", 0, true, false)
+	appendPicture("warm S3T3h CBR delta", 1, false, false)
 
 	fpsBitrateChange := enc.Config()
 	fpsBitrateChange.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
@@ -1938,16 +1944,17 @@ func TestPublicRTCEncoderSimulcastSettingsReferenceDecoders(t *testing.T) {
 		t.Fatalf("SetConfig fps/bitrate: %v", err)
 	}
 	assertPublicRTCConfigControls(t, enc.Config(), fpsBitrateChange)
-	appendPicture("S3T3h fps bitrate delta", 2, false)
+	appendPicture("S3T3h fps bitrate delta", 2, false, false)
 
 	cqpChange := enc.Config()
 	cqpChange.RateControl = goav1.EncoderRateControlCQP
 	cqpChange.Quantizer = 33
+	cqpChange.Content = goav1.EncoderContentScreen
 	if err := enc.SetConfig(cqpChange); err != nil {
-		t.Fatalf("SetConfig CQP: %v", err)
+		t.Fatalf("SetConfig CQP/screen: %v", err)
 	}
 	assertPublicRTCConfigControls(t, enc.Config(), cqpChange)
-	appendPicture("S3T3h CQP delta", 3, false)
+	appendPicture("S3T3h CQP screen delta", 3, false, true)
 
 	scalabilityChange := enc.Config()
 	scalabilityChange.Scalability = goav1.EncoderScalabilityModeS3T2h
@@ -1955,22 +1962,23 @@ func TestPublicRTCEncoderSimulcastSettingsReferenceDecoders(t *testing.T) {
 	scalabilityChange.RateControl = goav1.EncoderRateControlCQP
 	scalabilityChange.Quantizer = 29
 	if err := enc.SetConfig(scalabilityChange); err != nil {
-		t.Fatalf("SetConfig scalability: %v", err)
+		t.Fatalf("SetConfig scalability screen: %v", err)
 	}
 	assertPublicRTCConfigControls(t, enc.Config(), scalabilityChange)
-	appendPicture("S3T2h structure key", 4, true)
-	appendPicture("S3T2h CQP delta", 5, false)
+	appendPicture("S3T2h screen structure key", 4, true, true)
+	appendPicture("S3T2h CQP screen delta", 5, false, true)
 
 	cbrChange := enc.Config()
 	cbrChange.RateControl = goav1.EncoderRateControlCBR
 	cbrChange.Quantizer = 0
 	cbrChange.MaxFramerate = goav1.EncoderRational{Num: 120, Den: 1}
+	cbrChange.Content = goav1.EncoderContentCamera
 	publicRTCApplyControlBitrates(&cbrChange, 1350)
 	if err := enc.SetConfig(cbrChange); err != nil {
-		t.Fatalf("SetConfig CBR: %v", err)
+		t.Fatalf("SetConfig CBR/camera: %v", err)
 	}
 	assertPublicRTCConfigControls(t, enc.Config(), cbrChange)
-	appendPicture("S3T2h CBR delta", 6, false)
+	appendPicture("S3T2h CBR camera delta", 6, false, false)
 
 	for spatialID := uint8(0); spatialID < spatialLayers; spatialID++ {
 		res := layerRes[spatialID]
@@ -2018,6 +2026,44 @@ func publicReferenceAV1Decoders(t *testing.T) []publicReferenceAV1Decoder {
 		t.Skip("no reference AV1 decoder on PATH")
 	}
 	return decoders
+}
+
+func assertPublicRTCFrameScreenContentHeader(
+	t *testing.T, label string, frameData []byte, sequence *goav1.SequenceHeader, wantScreen bool,
+) {
+	t.Helper()
+	it := goav1.NewLowOverheadIterator(frameData)
+	for {
+		unit, ok, err := it.Next()
+		if err != nil {
+			t.Fatalf("%s OBU iteration: %v", label, err)
+		}
+		if !ok {
+			break
+		}
+		switch unit.Header.Type {
+		case goav1.OBUSequenceHeader:
+			seq, err := goav1.ParseSequenceHeader(unit.Payload)
+			if err != nil {
+				t.Fatalf("%s ParseSequenceHeader: %v", label, err)
+			}
+			*sequence = seq
+		case goav1.OBUFrameHeader, goav1.OBUFrame:
+			if sequence.ColorConfig.BitDepth == 0 {
+				t.Fatalf("%s frame header appeared before sequence header", label)
+			}
+			prefix, err := goav1.ParseFrameHeaderPrefix(unit.Payload, *sequence)
+			if err != nil {
+				t.Fatalf("%s ParseFrameHeaderPrefix: %v", label, err)
+			}
+			if prefix.AllowScreenContentTools != wantScreen || (wantScreen && !prefix.ForceIntegerMV) {
+				t.Fatalf("%s screen flags allow=%v integerMV=%v want screen=%v prefix=%+v",
+					label, prefix.AllowScreenContentTools, prefix.ForceIntegerMV, wantScreen, prefix)
+			}
+			return
+		}
+	}
+	t.Fatalf("%s missing frame header OBU", label)
 }
 
 func assertPublicIVFMatchesReferenceDecodersRawYUV(

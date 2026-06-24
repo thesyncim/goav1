@@ -346,6 +346,10 @@ func (pc *pframeCoder) exportCDFs(dst *frameCDFs) error {
 // miColEnd) reusing the coder's buffers. Bounds must be superblock-aligned;
 // the full-frame single-tile case passes [0, miCols).
 func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, qIndex uint8, prev *frameCDFs, referenceMode parser.ReferenceMode, miColStart, miColEnd uint16) ([]byte, error) {
+	return pc.encodeTileWithOptions(src, ref, golden, recon, qIndex, prev, referenceMode, false, false, miColStart, miColEnd)
+}
+
+func (pc *pframeCoder) encodeTileWithOptions(src SourceFrame420, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, qIndex uint8, prev *frameCDFs, referenceMode parser.ReferenceMode, forceIntegerMV bool, allowScreenContentTools bool, miColStart, miColEnd uint16) ([]byte, error) {
 	miCols := uint16(src.Width / 4)
 	miRows := uint16(src.Height / 4)
 	const sbSizeMIB = 16
@@ -354,6 +358,8 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 		return nil, err
 	}
 	st := &pc.st
+	st.forceIntegerMV = forceIntegerMV
+	st.allowScreenContentTools = allowScreenContentTools
 	st.decisionStats = nil
 	if pc.decisionStatsEnabled {
 		pc.decisionStats.Reset()
@@ -831,7 +837,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, seedDX, seedDY, reach)
 			mv, fullSAD = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}, sad
 		}
-		if bw == bh && fullSAD > n*n*2 {
+		if !st.forceIntegerMV && bw == bh && fullSAD > n*n*2 {
 			fullMV := mv
 			mv, fullSAD = st.subpelRefine(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, mv, fullSAD)
 			// Periodic textures can alias the full-pel raster into a distant
@@ -868,7 +874,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if bw == 8 {
 			gdx, gdy, s := fullPelDiamondSearch(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8)
 			gmv, gsad = motion.Vector{Row: int16(gdy * 8), Col: int16(gdx * 8)}, s
-			if gsad > 8*8*2 {
+			if !st.forceIntegerMV && gsad > 8*8*2 {
 				gmv, gsad = st.subpelRefine(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, gmv, gsad)
 			}
 		} else {
@@ -949,6 +955,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		HaveTop:        block.HaveTop,
 		HaveLeft:       block.HaveLeft,
 		HaveTopRight:   tile.BlockHasTopRight(16, block),
+		ForceIntegerMV: st.forceIntegerMV,
 	}
 	stack, err := modeCtx.BuildReferenceMVStack(stackReq)
 	if err != nil {
@@ -970,7 +977,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		mode := tile.InterModeGlobalMV
 		if mv.Row != 0 || mv.Col != 0 {
 			mode = tile.InterModeNewMV
-			if predRefs, err := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNearestMV}, 0, false, false); err == nil {
+			if predRefs, err := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNearestMV}, 0, false, st.forceIntegerMV); err == nil {
 				switch mv {
 				case predRefs.Nearest[0]:
 					mode = tile.InterModeNearestMV
@@ -1216,7 +1223,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	}
 	var mvRefs tile.InterMVReferenceSet
 	if !interModeResultUsesGlobalOnly(modeResult) {
-		mvRefs, err = stack.Stack.ResolveInterMVReferences(modeResult, 0, false, false)
+		mvRefs, err = stack.Stack.ResolveInterMVReferences(modeResult, 0, false, st.forceIntegerMV)
 		if err != nil {
 			return fmt.Errorf("resolve mv references: %w", err)
 		}
@@ -1231,7 +1238,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		References:   refs,
 		Mode:         modeResult,
 		ReferenceMVs: mvRefs,
-		Precision:    tile.MVSubpelLow,
+		Precision:    tile.MVPrecision(false, st.forceIntegerMV),
 	}, motionResult); err != nil {
 		return fmt.Errorf("motion vector: %w", err)
 	}
@@ -1469,6 +1476,9 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	}
 	if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, tile.ChromaIntraModeDC); err != nil {
 		return fmt.Errorf("mark chroma intra: %w", err)
+	}
+	if err := st.writeNoPaletteMode(modeCtx, block, mode, tile.ChromaIntraModeDC, true); err != nil {
+		return err
 	}
 
 	lfTree, err := tile.WriteTransformTree(st.w, &st.treeCDFs, modeCtx, tile.TransformTreeRequest{

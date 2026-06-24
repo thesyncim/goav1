@@ -70,17 +70,19 @@ type VideoEncoder struct {
 	tileWait      sync.WaitGroup
 	tileWorkers   int
 	tileJobParams struct {
-		src, refRecon SourceFrame420
-		golden        *SourceFrame420
-		out           *SourceFrame420
-		effQ          uint8
-		prevCtx       *frameCDFs
-		referenceMode parser.ReferenceMode
-		tile          TileInfo
-		miCols        uint16
-		lfMap         *threading.FrameWorkLoopFilterMap
-		payloads      []TilePayload
-		errs          []error
+		src, refRecon  SourceFrame420
+		golden         *SourceFrame420
+		out            *SourceFrame420
+		effQ           uint8
+		prevCtx        *frameCDFs
+		referenceMode  parser.ReferenceMode
+		forceIntegerMV bool
+		allowScreen    bool
+		tile           TileInfo
+		miCols         uint16
+		lfMap          *threading.FrameWorkLoopFilterMap
+		payloads       []TilePayload
+		errs           []error
 	}
 
 	// The in-loop filters of a finished frame run concurrently with the
@@ -113,6 +115,9 @@ type VideoEncoder struct {
 	goldenEvery       int
 	sinceGoldenFresh  int
 	sceneCutKeyframes bool
+
+	content                 ContentHint
+	screenContentSelectable bool
 
 	decisionStatsEnabled bool
 	decisionStats        EncoderDecisionStats
@@ -202,6 +207,28 @@ func (e *VideoEncoder) SetSceneCutKeyframes(enabled bool) {
 	e.sceneCutKeyframes = enabled
 }
 
+// SetContentHint selects the content mode used for subsequently emitted AV1
+// frame headers when screen-content selection is enabled.
+func (e *VideoEncoder) SetContentHint(content ContentHint) error {
+	if e == nil {
+		return fmt.Errorf("encoder: nil video encoder")
+	}
+	if !content.Valid() {
+		return ErrInvalidConfig
+	}
+	e.content = content
+	return nil
+}
+
+// SetScreenContentSelection controls whether sequence headers allow per-frame
+// screen-content signaling. WebRTC streams enable this so camera/screen
+// switches can be applied without forcing a new coded sequence.
+func (e *VideoEncoder) SetScreenContentSelection(enabled bool) {
+	if e != nil {
+		e.screenContentSelectable = enabled
+	}
+}
+
 // SetDecisionStatsEnabled toggles encoder decision diagnostics. The default
 // is disabled; when disabled, hot block paths only see a nil stats pointer.
 func (e *VideoEncoder) SetDecisionStatsEnabled(enabled bool) {
@@ -253,6 +280,28 @@ func (e *VideoEncoder) collectDecisionStats(keyframe bool, nTiles int, keyTileZe
 	for t := 0; t < nTiles; t++ {
 		e.decisionStats.add(e.tilePCs[t].decisionStats)
 	}
+}
+
+func (e *VideoEncoder) sequenceHeader(width, height int) SequenceHeader {
+	seq := losslessKeyframeSequence(width, height)
+	if e != nil && e.screenContentSelectable {
+		seq.SeqForceScreenContentTools = SequenceSelectScreenContentTools
+		seq.SeqForceIntegerMV = SequenceSelectIntegerMV
+	}
+	return seq
+}
+
+func (e *VideoEncoder) applyContentHintToFrameHeader(prefix *FrameHeaderPrefix) {
+	if e == nil || !e.screenContentSelectable || prefix == nil {
+		return
+	}
+	screen := e.content == ContentScreen
+	prefix.AllowScreenContentTools = screen
+	if prefix.FrameType.keyOrIntra() {
+		prefix.ForceIntegerMV = true
+		return
+	}
+	prefix.ForceIntegerMV = screen
 }
 
 // copyFrameInto deep-copies src into dst, reusing dst's buffers when sized.
@@ -670,9 +719,10 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 	if settings.UpdateBufferSet {
 		refresh = 1 << settings.UpdateBuffer
 	}
-	seq := losslessKeyframeSequence(maxWidth, maxHeight)
+	seq := e.sequenceHeader(maxWidth, maxHeight)
 	effQ := e.layerQIndex(settings.TemporalID)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, effQ, refresh)
+	e.applyContentHintToFrameHeader(&header.Prefix)
 	header.Prefix.FrameSizeOverride = src.Width != maxWidth || src.Height != maxHeight
 	header.Size.RefFrameIdx = [7]uint8{}
 	for i := range header.Size.RefFrameIdx {
@@ -709,7 +759,7 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 		payloads[i] = TilePayload{}
 	}
 	if nTiles == 1 {
-		data, err := e.pc.encodeTile(src, ref, nil, out, effQ, nil, parser.ReferenceModeSingle, 0, uint16(src.Width/4))
+		data, err := e.pc.encodeTileWithOptions(src, ref, nil, out, effQ, nil, parser.ReferenceModeSingle, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, 0, uint16(src.Width/4))
 		if err != nil {
 			return nil, fmt.Errorf("encode tile: %w", err)
 		}
@@ -724,6 +774,8 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 		tj.src, tj.refRecon, tj.golden, tj.out = src, ref, nil, out
 		tj.effQ, tj.prevCtx = effQ, nil
 		tj.referenceMode = parser.ReferenceModeSingle
+		tj.forceIntegerMV = header.Prefix.ForceIntegerMV
+		tj.allowScreen = header.Prefix.AllowScreenContentTools
 		tj.tile, tj.miCols = header.Tile, miCols
 		tj.lfMap = nil
 		tj.payloads, tj.errs = payloads, errs
@@ -737,7 +789,7 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 			e.tileWork <- tileWorkRange{first: j + 1, stride: jobs, limit: nTiles}
 		}
 		c0, c1 := tileColBounds(header.Tile, 0, miCols)
-		data, err := e.tilePCs[0].encodeTile(src, ref, nil, out, effQ, nil, parser.ReferenceModeSingle, c0, c1)
+		data, err := e.tilePCs[0].encodeTileWithOptions(src, ref, nil, out, effQ, nil, parser.ReferenceModeSingle, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, c0, c1)
 		e.tileWait.Wait()
 		if err != nil {
 			return nil, fmt.Errorf("encode tile 0: %w", err)
@@ -860,9 +912,9 @@ func (e *VideoEncoder) startTileWorkers(workers int) {
 					var data []byte
 					var err error
 					if work.key {
-						data, err = e.tilePCs[t].encodeKeyframeTile(tj.src, tj.out, tj.effQ, c0, c1, tj.lfMap)
+						data, err = e.tilePCs[t].encodeKeyframeTileWithOptions(tj.src, tj.out, tj.effQ, c0, c1, tj.lfMap, tj.allowScreen)
 					} else {
-						data, err = e.tilePCs[t].encodeTile(tj.src, tj.refRecon, tj.golden, tj.out, tj.effQ, tj.prevCtx, tj.referenceMode, c0, c1)
+						data, err = e.tilePCs[t].encodeTileWithOptions(tj.src, tj.refRecon, tj.golden, tj.out, tj.effQ, tj.prevCtx, tj.referenceMode, tj.forceIntegerMV, tj.allowScreen, c0, c1)
 					}
 					if err != nil {
 						tj.errs[t] = err
@@ -880,7 +932,7 @@ func (e *VideoEncoder) runKeyframeTileWorkers(req keyframeTileRun) error {
 	nTiles := len(req.payloads)
 	if nTiles == 1 {
 		c0, c1 := tileColBounds(req.tile, 0, req.miCols)
-		data, err := e.pc.encodeKeyframeTile(req.src, req.recon, req.qIndex, c0, c1, req.lfMap)
+		data, err := e.pc.encodeKeyframeTileWithOptions(req.src, req.recon, req.qIndex, c0, c1, req.lfMap, req.allowScreenContentTools)
 		if err != nil {
 			return fmt.Errorf("encode tile 0: %w", err)
 		}
@@ -890,6 +942,7 @@ func (e *VideoEncoder) runKeyframeTileWorkers(req keyframeTileRun) error {
 	tj := &e.tileJobParams
 	tj.src, tj.out = req.src, req.recon
 	tj.effQ = req.qIndex
+	tj.allowScreen = req.allowScreenContentTools
 	tj.tile, tj.miCols = req.tile, req.miCols
 	tj.lfMap = req.lfMap
 	tj.payloads, tj.errs = req.payloads, req.errs
@@ -903,7 +956,7 @@ func (e *VideoEncoder) runKeyframeTileWorkers(req keyframeTileRun) error {
 		e.tileWork <- tileWorkRange{first: j + 1, stride: jobs, limit: nTiles, key: true}
 	}
 	c0, c1 := tileColBounds(req.tile, 0, req.miCols)
-	data, err := e.pc.encodeKeyframeTile(req.src, req.recon, req.qIndex, c0, c1, req.lfMap)
+	data, err := e.pc.encodeKeyframeTileWithOptions(req.src, req.recon, req.qIndex, c0, c1, req.lfMap, req.allowScreenContentTools)
 	e.tileWait.Wait()
 	if err != nil {
 		return fmt.Errorf("encode tile 0: %w", err)
@@ -1039,9 +1092,10 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			refreshGolden = true
 		}
 	}
-	seq := losslessKeyframeSequence(src.Width, src.Height)
+	seq := e.sequenceHeader(src.Width, src.Height)
 	effQ := e.layerQIndex(temporalID)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, effQ, refresh)
+	e.applyContentHintToFrameHeader(&header.Prefix)
 	if e.renderWidth != e.width || e.renderHeight != e.height {
 		header.Size.RenderWidth = uint32(e.renderWidth)
 		header.Size.RenderHeight = uint32(e.renderHeight)
@@ -1152,7 +1206,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		referenceMode = parser.ReferenceModeSelect
 	}
 	if nTiles == 1 {
-		data, err := e.pc.encodeTile(src, refRecon, golden, out, effQ, prevCtx, referenceMode, 0, uint16(src.Width/4))
+		data, err := e.pc.encodeTileWithOptions(src, refRecon, golden, out, effQ, prevCtx, referenceMode, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, 0, uint16(src.Width/4))
 		if err != nil {
 			return nil, fmt.Errorf("encode tile: %w", err)
 		}
@@ -1174,6 +1228,8 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		tj.src, tj.refRecon, tj.golden, tj.out = src, refRecon, golden, out
 		tj.effQ, tj.prevCtx = effQ, prevCtx
 		tj.referenceMode = referenceMode
+		tj.forceIntegerMV = header.Prefix.ForceIntegerMV
+		tj.allowScreen = header.Prefix.AllowScreenContentTools
 		tj.tile, tj.miCols = header.Tile, miCols
 		tj.lfMap = nil
 		tj.payloads, tj.errs = payloads, errs
@@ -1187,7 +1243,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			e.tileWork <- tileWorkRange{first: j + 1, stride: jobs, limit: nTiles}
 		}
 		c0, c1 := tileColBounds(header.Tile, 0, miCols)
-		data, err := e.tilePCs[0].encodeTile(src, refRecon, golden, out, effQ, prevCtx, referenceMode, c0, c1)
+		data, err := e.tilePCs[0].encodeTileWithOptions(src, refRecon, golden, out, effQ, prevCtx, referenceMode, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, c0, c1)
 		e.tileWait.Wait()
 		if err != nil {
 			return nil, fmt.Errorf("encode tile 0: %w", err)

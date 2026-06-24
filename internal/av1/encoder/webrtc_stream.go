@@ -199,7 +199,13 @@ func newWebRTCStreamLayerEncoder(config Config, layerIndex uint8, fps int, minQ 
 	if err != nil {
 		return nil, err
 	}
+	enc.SetScreenContentSelection(true)
+	if err := enc.SetContentHint(config.Content); err != nil {
+		_ = enc.Close()
+		return nil, err
+	}
 	if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
+		_ = enc.Close()
 		return nil, err
 	}
 	enc.SetSceneCutKeyframes(false)
@@ -331,6 +337,10 @@ func (s *WebRTCStream) updateLayerControls(config Config, fps int) error {
 			return ErrInvalidConfig
 		}
 		if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
+			return err
+		}
+		enc.SetScreenContentSelection(true)
+		if err := enc.SetContentHint(config.Content); err != nil {
 			return err
 		}
 		switch config.RateControl {

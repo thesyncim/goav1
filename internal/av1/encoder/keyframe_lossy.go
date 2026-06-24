@@ -111,7 +111,13 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 		lfMap = &lf.filtMap
 	}
 	seq := losslessKeyframeSequence(seqWidth, seqHeight)
+	if tileOpts.stream != nil {
+		seq = tileOpts.stream.sequenceHeader(seqWidth, seqHeight)
+	}
 	header := lossyKeyframeHeaderForSequence(seq, src.Width, src.Height, qIndex)
+	if tileOpts.stream != nil {
+		tileOpts.stream.applyContentHintToFrameHeader(&header.Prefix)
+	}
 	if renderW > 0 && (renderW != src.Width || renderH != src.Height) {
 		header.Size.RenderWidth = uint32(renderW)
 		header.Size.RenderHeight = uint32(renderH)
@@ -160,14 +166,15 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 		}
 	}
 	req := keyframeTileRun{
-		src:      src,
-		recon:    &recon,
-		qIndex:   qIndex,
-		tile:     header.Tile,
-		miCols:   miCols,
-		lfMap:    lfMap,
-		payloads: payloads,
-		errs:     errs,
+		src:                     src,
+		recon:                   &recon,
+		qIndex:                  qIndex,
+		allowScreenContentTools: header.Prefix.AllowScreenContentTools,
+		tile:                    header.Tile,
+		miCols:                  miCols,
+		lfMap:                   lfMap,
+		payloads:                payloads,
+		errs:                    errs,
 	}
 	var err error
 	if tileOpts.stream != nil {
@@ -231,14 +238,15 @@ type keyframeTileOptions struct {
 }
 
 type keyframeTileRun struct {
-	src      SourceFrame420
-	recon    *SourceFrame420
-	qIndex   uint8
-	tile     TileInfo
-	miCols   uint16
-	lfMap    *threading.FrameWorkLoopFilterMap
-	payloads []TilePayload
-	errs     []error
+	src                     SourceFrame420
+	recon                   *SourceFrame420
+	qIndex                  uint8
+	allowScreenContentTools bool
+	tile                    TileInfo
+	miCols                  uint16
+	lfMap                   *threading.FrameWorkLoopFilterMap
+	payloads                []TilePayload
+	errs                    []error
 }
 
 func runKeyframeTilesDefault(req keyframeTileRun, tilePC func(t int) *pframeCoder) error {
@@ -253,7 +261,7 @@ func runKeyframeTilesDefault(req keyframeTileRun, tilePC func(t int) *pframeCode
 		wg.Add(1)
 		go func(t int, c0, c1 uint16, pc *pframeCoder) {
 			defer wg.Done()
-			data, err := pc.encodeKeyframeTile(req.src, req.recon, req.qIndex, c0, c1, req.lfMap)
+			data, err := pc.encodeKeyframeTileWithOptions(req.src, req.recon, req.qIndex, c0, c1, req.lfMap, req.allowScreenContentTools)
 			if err != nil {
 				req.errs[t] = err
 				return
@@ -266,7 +274,7 @@ func runKeyframeTilesDefault(req keyframeTileRun, tilePC func(t int) *pframeCode
 	if tilePC != nil {
 		pc0 = tilePC(0)
 	}
-	tile0, tile0Err := pc0.encodeKeyframeTile(req.src, req.recon, req.qIndex, c0, c1, req.lfMap)
+	tile0, tile0Err := pc0.encodeKeyframeTileWithOptions(req.src, req.recon, req.qIndex, c0, c1, req.lfMap, req.allowScreenContentTools)
 	wg.Wait()
 	if tile0Err != nil {
 		return fmt.Errorf("encode tile 0: %w", tile0Err)
@@ -315,11 +323,13 @@ type lossyEncodeState struct {
 	treeCDFs  tile.TransformCDFs
 	mvCDFs    tile.MVCDFs
 
-	qIndex        uint8
-	sadCacheEpoch uint32
-	yQuant        quantize.Quantizer
-	uQuant        quantize.Quantizer
-	vQuant        quantize.Quantizer
+	qIndex                  uint8
+	forceIntegerMV          bool
+	allowScreenContentTools bool
+	sadCacheEpoch           uint32
+	yQuant                  quantize.Quantizer
+	uQuant                  quantize.Quantizer
+	vQuant                  quantize.Quantizer
 
 	scan8, scan4, scan16, scan32 []int16
 	scan16x8, scan8x16           []int16
@@ -422,11 +432,17 @@ func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8,
 // the scans, scratch planes, context carrier, and writer buffer carry over
 // from inter coding, so a streaming keyframe allocates nothing per tile.
 func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap) ([]byte, error) {
+	return pc.encodeKeyframeTileWithOptions(src, recon, qIndex, miColStart, miColEnd, lfMap, false)
+}
+
+func (pc *pframeCoder) encodeKeyframeTileWithOptions(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap, allowScreenContentTools bool) ([]byte, error) {
 	if err := pc.partCDFs.InitDefault(); err != nil {
 		return nil, err
 	}
 	st := &pc.st
 	st.qIndex = qIndex
+	st.forceIntegerMV = false
+	st.allowScreenContentTools = allowScreenContentTools
 	st.color = parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}
 	st.lfMap = lfMap
 	st.hme = nil
@@ -656,6 +672,9 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, tile.ChromaIntraModeDC); err != nil {
 		return fmt.Errorf("mark chroma intra: %w", err)
 	}
+	if err := st.writeNoPaletteMode(modeCtx, block, mode, tile.ChromaIntraModeDC, true); err != nil {
+		return err
+	}
 
 	// Largest-TX luma with the tx_type symbol between txb_skip and eob,
 	// then the half-size chroma TXBs.
@@ -711,6 +730,40 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	}
 	if st.decisionStats != nil {
 		st.decisionStats.noteIntraBlock(block.Size)
+	}
+	return nil
+}
+
+func (st *lossyEncodeState) writeNoPaletteMode(modeCtx *tile.BlockModeContext, block tile.BlockVisit, lumaMode tile.IntraMode, chromaMode tile.ChromaIntraMode, chromaModeValid bool) error {
+	if !st.allowScreenContentTools {
+		return nil
+	}
+	hasChroma := tile.HasChromaBlock(tile.TransformTreeRequest{
+		Size: block.Size,
+		X4:   block.X4,
+		Y4:   block.Y4,
+	}, st.color)
+	if err := tile.WriteNoPaletteMode(st.w, &st.intraCDFs, modeCtx, tile.PaletteModeRequest{
+		AllowScreenContentTools: st.allowScreenContentTools,
+		Size:                    block.Size,
+		LumaMode:                lumaMode,
+		X4:                      block.X4,
+		Y4:                      block.Y4,
+		HaveTop:                 block.HaveTop,
+		HaveLeft:                block.HaveLeft,
+		BitDepth:                st.color.BitDepth,
+		Color:                   st.color,
+		ChromaMode:              chromaMode,
+		ChromaModeValid:         chromaModeValid,
+		HasChroma:               hasChroma,
+	}); err != nil {
+		return fmt.Errorf("palette: %w", err)
+	}
+	if err := modeCtx.MarkPaletteY(block.Size, int(block.X4), int(block.Y4), tile.PaletteModeResult{}); err != nil {
+		return fmt.Errorf("mark palette y: %w", err)
+	}
+	if err := modeCtx.MarkPaletteUV(block.Size, int(block.X4), int(block.Y4), tile.PaletteModeResult{}); err != nil {
+		return fmt.Errorf("mark palette uv: %w", err)
 	}
 	return nil
 }

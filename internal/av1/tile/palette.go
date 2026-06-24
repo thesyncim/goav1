@@ -233,6 +233,42 @@ func (s *DecodeState) ReadPaletteMode(cdfs *IntraModeCDFs, ctx *BlockModeContext
 	return s.readPaletteModeUV(cdfs, ctx, req, dst, mapScratch)
 }
 
+// WriteNoPaletteMode mirrors ReadPaletteMode for blocks that explicitly choose
+// not to use palette prediction while screen-content tools are enabled.
+func WriteNoPaletteMode(w *entropy.Writer, cdfs *IntraModeCDFs, ctx *BlockModeContext, req PaletteModeRequest) error {
+	if w == nil || cdfs == nil || ctx == nil {
+		return ErrInvalidDecodeState
+	}
+	allowed, err := PaletteAllowed(req.AllowScreenContentTools, req.Size)
+	if err != nil || !allowed {
+		return err
+	}
+	sizeCtx, err := PaletteBSizeContext(req.Size)
+	if err != nil {
+		return err
+	}
+	if req.LumaMode == IntraModeDC {
+		modeCtx, err := ctx.PaletteYModeContext(int(req.X4), int(req.Y4), req.HaveTop, req.HaveLeft)
+		if err != nil {
+			return err
+		}
+		modeCDF, err := cdfs.PaletteYModeCDF(sizeCtx, modeCtx)
+		if err != nil {
+			return err
+		}
+		w.WriteBinaryCDFTrusted(modeCDF, 0)
+	}
+	if req.Color.MonoChrome || !req.HasChroma || !req.ChromaModeValid || req.ChromaMode != ChromaIntraModeDC {
+		return nil
+	}
+	modeCDF, err := cdfs.PaletteUVModeCDF(0)
+	if err != nil {
+		return err
+	}
+	w.WriteBinaryCDFTrusted(modeCDF, 0)
+	return nil
+}
+
 // ReadPaletteTokens decodes the palette color-map index trees that libaom
 // reads via av1_decode_palette_tokens, after the mbmi syntax is fully
 // consumed.
