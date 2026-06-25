@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/pion/rtcp"
+	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media/samplebuilder"
@@ -150,6 +151,79 @@ func TestEndToEndAV1OverRTPOfferEndpoint(t *testing.T) {
 	assertTemporalUnitsDecodeAndReference(t, "browser-push-offer", tus)
 }
 
+func TestEndToEndAV1OverRTPRTCEncoderControlChurn(t *testing.T) {
+	receiver, decoded, trackSSRC := newAV1ReceivingPeer(t)
+	defer receiver.Close()
+
+	sender, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	waitSenderConnected := waitPeerConnected(t, sender, "sender")
+	track, err := webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeAV1}, "video", "goav1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rtpSender, err := sender.AddTrack(track)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	offer, err := receiver.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	og := webrtc.GatheringCompletePromise(receiver)
+	if err := receiver.SetLocalDescription(offer); err != nil {
+		t.Fatal(err)
+	}
+	<-og
+	if err := sender.SetRemoteDescription(*receiver.LocalDescription()); err != nil {
+		t.Fatal(err)
+	}
+	answer, err := sender.CreateAnswer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := webrtc.GatheringCompletePromise(sender)
+	if err := sender.SetLocalDescription(answer); err != nil {
+		t.Fatal(err)
+	}
+	<-ag
+	if err := receiver.SetRemoteDescription(*sender.LocalDescription()); err != nil {
+		t.Fatal(err)
+	}
+	waitSenderConnected()
+
+	done := make(chan struct{})
+	defer close(done)
+	doneFeedback := make(chan struct{})
+	defer close(doneFeedback)
+	var wantKey atomic.Bool
+	wantKey.Store(true)
+	startSenderPictureLossReader(rtpSender, &wantKey, done)
+	streamErr := make(chan error, 1)
+	go func() {
+		streamErr <- streamRTCEncoderRTP(track, &wantKey, done)
+	}()
+	startPictureLossFeedback(t, receiver, trackSSRC, doneFeedback)
+
+	tus := collectTemporalUnits(t, decoded, 70)
+	if sequenceHeaders := countSequenceHeaderTemporalUnits(tus); sequenceHeaders < 3 {
+		t.Fatalf("sequence headers after control churn/loss=%d want at least 3", sequenceHeaders)
+	}
+	select {
+	case err := <-streamErr:
+		if err != nil {
+			t.Fatalf("RTCEncoder RTP stream stopped early: %v", err)
+		}
+	default:
+	}
+	assertTemporalUnitsDecodeAndReference(t, "browser-push-rtc-control-churn", tus)
+}
+
 type receivedTemporalUnit struct {
 	data []byte
 }
@@ -178,7 +252,7 @@ func newAV1ReceivingPeer(t *testing.T) (*webrtc.PeerConnection, <-chan receivedT
 		case trackSSRC <- uint32(track.SSRC()):
 		default:
 		}
-		sb := samplebuilder.New(64, &codecs.AV1Depacketizer{}, track.Codec().ClockRate)
+		sb := samplebuilder.New(1024, &codecs.AV1Depacketizer{}, track.Codec().ClockRate)
 		for {
 			pkt, _, err := track.ReadRTP()
 			if err != nil {
@@ -238,6 +312,199 @@ func startPictureLossFeedback(
 			}
 		}
 	}()
+}
+
+func startSenderPictureLossReader(sender *webrtc.RTPSender, wantKey *atomic.Bool, done <-chan struct{}) {
+	go func() {
+		buf := make([]byte, 1500)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			n, _, err := sender.Read(buf)
+			if err != nil {
+				return
+			}
+			packets, err := rtcp.Unmarshal(buf[:n])
+			if err != nil {
+				continue
+			}
+			for _, p := range packets {
+				switch p.(type) {
+				case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
+					wantKey.Store(true)
+				}
+			}
+		}
+	}()
+}
+
+func streamRTCEncoderRTP(track *webrtc.TrackLocalStaticRTP, wantKey *atomic.Bool, done <-chan struct{}) error {
+	cfg := rtcControlChurnConfig(0)
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		return err
+	}
+	defer enc.Close()
+	scene := newScene()
+	ticker := time.NewTicker(time.Second / fps)
+	defer ticker.Stop()
+	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 1000}
+	var sequence uint16 = 44000
+	var timestamp uint32 = 900000
+	var timestampRemainder int64
+	var twcc uint16 = 1200
+	for n := 0; ; n++ {
+		select {
+		case <-done:
+			return nil
+		case <-ticker.C:
+		}
+		if n > 0 && n%14 == 0 {
+			cfg = rtcControlChurnConfig(n / 14)
+			if err := enc.SetConfig(cfg); err != nil {
+				return err
+			}
+		}
+		forceKey := wantKey.Swap(false) || n == 28 || n == 56
+		picture, err := enc.EncodePicture(scene.frame(n), forceKey)
+		if err != nil {
+			return err
+		}
+		packets, nextSequence, nextTWCC, err := rtcPictureRTPPackets(picture, limits, sequence, timestamp, twcc)
+		if err != nil {
+			return err
+		}
+		sequence, twcc = nextSequence, nextTWCC
+		for i := range packets {
+			if err := track.WriteRTP(&packets[i]); err != nil {
+				return err
+			}
+		}
+		duration, err := enc.RTPFrameDuration()
+		if err != nil {
+			return err
+		}
+		timestamp += rtcTimestampIncrement(duration, &timestampRemainder)
+	}
+}
+
+func rtcTimestampIncrement(duration goav1.EncoderRational, remainder *int64) uint32 {
+	total := int64(duration.Num) + *remainder
+	step := total / int64(duration.Den)
+	*remainder = total % int64(duration.Den)
+	return uint32(step)
+}
+
+func rtcControlChurnConfig(step int) goav1.EncoderConfig {
+	fpsCycle := []goav1.EncoderRational{
+		{Num: 30, Den: 1},
+		{Num: 60000, Den: 1001},
+		{Num: 24, Den: 1},
+		{Num: 60, Den: 1},
+	}
+	target := int32(3600 + (step%4)*450)
+	cfg := goav1.EncoderConfig{
+		Resolution:         goav1.EncoderResolution{Width: width, Height: height},
+		Profile:            goav1.EncoderProfile0,
+		BitDepth:           8,
+		MaxFramerate:       fpsCycle[step%len(fpsCycle)],
+		MinBitrateKbps:     target / 3,
+		TargetBitrateKbps:  target,
+		MaxBitrateKbps:     target + target/2,
+		RateControl:        goav1.EncoderRateControlCBR,
+		Content:            goav1.EncoderContentCamera,
+		Scalability:        goav1.EncoderScalabilityModeL1T3,
+		MaxThreads:         4,
+		RTPPacketization:   true,
+		LowOverheadOBU:     true,
+		DependencyMetadata: true,
+	}
+	if step%3 == 2 {
+		cfg.RateControl = goav1.EncoderRateControlCQP
+		cfg.Quantizer = uint8(32 + step%12)
+		cfg.Content = goav1.EncoderContentScreen
+	} else if step%2 == 1 {
+		cfg.Content = goav1.EncoderContentScreen
+	}
+	return cfg
+}
+
+func rtcPictureRTPPackets(
+	picture goav1.RTCPicture, limits goav1.RTPPayloadSizeLimits, sequence uint16, timestamp uint32, twcc uint16,
+) ([]rtp.Packet, uint16, uint16, error) {
+	var packets []rtp.Packet
+	for i := 0; i < picture.FrameNum; i++ {
+		framePackets, nextSequence, nextTWCC, err := rtcFrameRTPPackets(
+			picture.Frames[i], limits, sequence, timestamp, twcc)
+		if err != nil {
+			return nil, sequence, twcc, err
+		}
+		sequence, twcc = nextSequence, nextTWCC
+		packets = append(packets, framePackets...)
+	}
+	return packets, sequence, twcc, nil
+}
+
+func rtcFrameRTPPackets(
+	frame goav1.RTCFrame, limits goav1.RTPPayloadSizeLimits, sequence uint16, timestamp uint32, twcc uint16,
+) ([]rtp.Packet, uint16, uint16, error) {
+	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
+	if err != nil {
+		return nil, sequence, twcc, err
+	}
+	obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
+	size, err := frame.RTPPacketScratchLen(limits, obuScratch)
+	if err != nil {
+		return nil, sequence, twcc, err
+	}
+	packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
+	workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
+	spans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
+	payloads, descriptors, count, err := frame.AppendRTPPackets(
+		make([]byte, 0, size.MaxPayloadBytes*size.Packetizer.Packets),
+		make([]byte, 0, size.MaxDescriptorBytes*size.Packetizer.Packets),
+		spans, limits, obuScratch, packetScratch, workScratch)
+	if err != nil {
+		return nil, sequence, twcc, err
+	}
+	headerConfig := goav1.EncoderWebRTCRTPPacketHeaderConfig{
+		PayloadType:                     96,
+		SequenceNumber:                  sequence,
+		Timestamp:                       timestamp,
+		SSRC:                            0xdec0de,
+		DependencyDescriptorExtensionID: 4,
+		TransportWideCCExtensionID:      5,
+		TransportWideCCSequenceNumber:   twcc,
+		HeaderExtensionProfile:          goav1.RTPExtensionProfileTwoByte,
+	}
+	headerSize, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(
+		headerConfig, payloads, descriptors, spans[:count])
+	if err != nil {
+		return nil, sequence, twcc, err
+	}
+	headerSpans := make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, count)
+	rawPackets, packetCount, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(
+		make([]byte, 0, headerSize.Bytes),
+		headerSpans,
+		headerConfig,
+		payloads,
+		descriptors,
+		spans[:count],
+	)
+	if err != nil {
+		return nil, sequence, twcc, err
+	}
+	out := make([]rtp.Packet, packetCount)
+	for i := range out {
+		span := headerSpans[i]
+		if err := out[i].Unmarshal(rawPackets[span.Offset : span.Offset+span.Length]); err != nil {
+			return nil, sequence, twcc, err
+		}
+	}
+	return out, sequence + uint16(packetCount), twcc + uint16(packetCount), nil
 }
 
 func collectTemporalUnits(t *testing.T, decoded <-chan receivedTemporalUnit, want int) [][]byte {
