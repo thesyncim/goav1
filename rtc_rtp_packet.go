@@ -97,7 +97,7 @@ type EncoderWebRTCRTPPacketsWithHeadersSizeInfo struct {
 
 // EncoderWebRTCRTPPacketsWithHeadersSize validates a packet span plan and
 // reports the exact destination size required to wrap all AV1 RTP payload bodies
-// and dependency descriptors into complete RTP packets.
+// and negotiated RTP header extensions into complete RTP packets.
 func EncoderWebRTCRTPPacketsWithHeadersSize(config EncoderWebRTCRTPPacketHeaderConfig, rtpPayloads []byte, descriptors []byte, packetSpans []EncoderWebRTCRTPPacketSpan) (EncoderWebRTCRTPPacketsWithHeadersSizeInfo, error) {
 	var size EncoderWebRTCRTPPacketsWithHeadersSizeInfo
 	if err := validateEncoderWebRTCRTPPacketHeaderConfig(config); err != nil {
@@ -111,10 +111,14 @@ func EncoderWebRTCRTPPacketsWithHeadersSize(config EncoderWebRTCRTPPacketHeaderC
 		if err != nil {
 			return size, err
 		}
-		if len(descriptor) == 0 {
-			return size, ErrEncoderInvalidFrame
+		descriptorLen := 0
+		if config.DependencyDescriptorExtensionID != 0 {
+			if len(descriptor) == 0 {
+				return size, ErrEncoderInvalidFrame
+			}
+			descriptorLen = len(descriptor)
 		}
-		packetSize, err := encoderWebRTCRTPPacketHeaderSize(profile, config, i, len(payload), len(descriptor))
+		packetSize, err := encoderWebRTCRTPPacketHeaderSize(profile, config, i, len(payload), descriptorLen)
 		if err != nil {
 			return size, err
 		}
@@ -135,10 +139,9 @@ func EncoderWebRTCRTPPacketsWithHeadersSize(config EncoderWebRTCRTPPacketHeaderC
 }
 
 // AppendEncoderWebRTCRTPPacketsWithHeaders wraps AV1 RTP payload bodies and
-// dependency descriptors from RTCFrame.AppendRTPPackets into complete RTP
-// packets. The function writes RFC 8285 dependency-descriptor extension elements
-// and fixed RTP headers; SRTP, pacing, retransmission, and network transport
-// remain caller-owned.
+// negotiated RTP header extensions into complete RTP packets. The function writes
+// RFC 8285 extension elements and fixed RTP headers; SRTP, pacing,
+// retransmission, and network transport remain caller-owned.
 func AppendEncoderWebRTCRTPPacketsWithHeaders(dst []byte, headerSpans []EncoderWebRTCRTPPacketHeaderSpan, config EncoderWebRTCRTPPacketHeaderConfig, rtpPayloads []byte, descriptors []byte, packetSpans []EncoderWebRTCRTPPacketSpan) ([]byte, int, error) {
 	if len(headerSpans) < len(packetSpans) {
 		return dst, 0, ErrRTPPacketPlanTooSmall
@@ -155,8 +158,12 @@ func AppendEncoderWebRTCRTPPacketsWithHeaders(dst []byte, headerSpans []EncoderW
 		if err != nil {
 			return dst, 0, err
 		}
+		descriptorLen := 0
+		if config.DependencyDescriptorExtensionID != 0 {
+			descriptorLen = len(descriptor)
+		}
 		start := len(out)
-		packetSize, err := encoderWebRTCRTPPacketHeaderSize(profile, config, i, len(payload), len(descriptor))
+		packetSize, err := encoderWebRTCRTPPacketHeaderSize(profile, config, i, len(payload), descriptorLen)
 		if err != nil {
 			return dst, 0, err
 		}
@@ -177,7 +184,10 @@ func AppendEncoderWebRTCRTPPacketsWithHeaders(dst []byte, headerSpans []EncoderW
 		if err != nil {
 			return dst, 0, err
 		}
-		descriptorOffset := start + extPayloadStart + encoderWebRTCRTPPacketHeaderExtensionElementPrefixLen(profile)
+		descriptorOffset := -1
+		if config.DependencyDescriptorExtensionID != 0 {
+			descriptorOffset = start + extPayloadStart + encoderWebRTCRTPPacketHeaderExtensionElementPrefixLen(profile)
+		}
 		header := RTPHeader{
 			Marker:           span.Marker,
 			PayloadType:      config.PayloadType,
@@ -199,7 +209,7 @@ func AppendEncoderWebRTCRTPPacketsWithHeaders(dst []byte, headerSpans []EncoderW
 			PayloadOffset:              start + headerSize,
 			PayloadLength:              len(payload),
 			DependencyDescriptorOffset: descriptorOffset,
-			DependencyDescriptorLength: len(descriptor),
+			DependencyDescriptorLength: descriptorLen,
 			SequenceNumber:             header.SequenceNumber,
 			Marker:                     span.Marker,
 		}
@@ -224,12 +234,11 @@ func validateEncoderWebRTCRTPPacketHeaderConfig(config EncoderWebRTCRTPPacketHea
 	if config.PayloadType > 127 {
 		return ErrRTPInvalidHeader
 	}
-	if config.DependencyDescriptorExtensionID == 0 {
-		return ErrRTPInvalidHeaderExtension
-	}
 	var ids encoderWebRTCRTPPacketHeaderExtensionIDs
-	if err := ids.add(config.DependencyDescriptorExtensionID); err != nil {
-		return err
+	if config.DependencyDescriptorExtensionID != 0 {
+		if err := ids.add(config.DependencyDescriptorExtensionID); err != nil {
+			return err
+		}
 	}
 	if err := validateEncoderWebRTCRTPPacketHeaderStringExtension(&ids, config.MIDExtensionID, config.MID, ValidateRTPMID); err != nil {
 		return err
@@ -288,6 +297,9 @@ func validateEncoderWebRTCRTPPacketHeaderConfig(config EncoderWebRTCRTPPacketHea
 	}
 	if err := validateEncoderWebRTCRTPPacketHeaderValueExtension(&ids, config.ColorSpaceExtensionID, config.ColorSpace, ValidateRTPColorSpace); err != nil {
 		return err
+	}
+	if ids.n == 0 {
+		return ErrRTPInvalidHeaderExtension
 	}
 	profile := encoderWebRTCRTPPacketHeaderExtensionProfile(config.HeaderExtensionProfile)
 	_, err := rtpHeaderExtensionProfileKind(profile)
@@ -391,12 +403,19 @@ func validateEncoderWebRTCRTPPacketHeaderValueExtension[T comparable](
 }
 
 func encoderWebRTCRTPPacketHeaderExtensionPayloadSize(kind int, config EncoderWebRTCRTPPacketHeaderConfig, packetIndex int, descriptorLen int) (int, error) {
-	if packetIndex < 0 || descriptorLen <= 0 {
+	if packetIndex < 0 {
 		return 0, ErrEncoderInvalidFrame
 	}
-	size, err := rtpHeaderExtensionElementSize(kind, config.DependencyDescriptorExtensionID, descriptorLen)
-	if err != nil {
-		return 0, err
+	size := 0
+	if config.DependencyDescriptorExtensionID != 0 {
+		if descriptorLen <= 0 {
+			return 0, ErrEncoderInvalidFrame
+		}
+		n, err := rtpHeaderExtensionElementSize(kind, config.DependencyDescriptorExtensionID, descriptorLen)
+		if err != nil {
+			return 0, err
+		}
+		size += n
 	}
 	if config.MIDExtensionID != 0 {
 		n, err := rtpHeaderExtensionElementSize(kind, config.MIDExtensionID, len(config.MID))
@@ -521,15 +540,20 @@ func encoderWebRTCRTPPacketHeaderExtensionElements(
 	payloads *encoderWebRTCRTPPacketHeaderExtensionPayloads,
 ) ([13]RTPHeaderExtensionElement, int, error) {
 	var elements [13]RTPHeaderExtensionElement
-	if packetIndex < 0 || len(descriptor) == 0 || payloads == nil {
+	if packetIndex < 0 || payloads == nil {
 		return elements, 0, ErrEncoderInvalidFrame
 	}
 	count := 0
-	elements[count] = RTPHeaderExtensionElement{
-		ID:      config.DependencyDescriptorExtensionID,
-		Payload: descriptor,
+	if config.DependencyDescriptorExtensionID != 0 {
+		if len(descriptor) == 0 {
+			return elements, 0, ErrEncoderInvalidFrame
+		}
+		elements[count] = RTPHeaderExtensionElement{
+			ID:      config.DependencyDescriptorExtensionID,
+			Payload: descriptor,
+		}
+		count++
 	}
-	count++
 
 	if config.MIDExtensionID != 0 {
 		n, err := PutRTPMIDHeaderExtension(payloads.MID[:], config.MID)

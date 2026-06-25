@@ -1224,6 +1224,50 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 	if _, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(danglingExtConfig, []byte{0xaa}, []byte{0xbb}, []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 1}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
 		t.Fatalf("dangling extension value size err=%v want %v", err, goav1.ErrRTPInvalidHeaderExtension)
 	}
+	twccOnlyConfig := goav1.EncoderWebRTCRTPPacketHeaderConfig{
+		PayloadType:                   98,
+		SequenceNumber:                0x4100,
+		Timestamp:                     0x11121314,
+		SSRC:                          0x0badf00d,
+		TransportWideCCExtensionID:    4,
+		TransportWideCCSequenceNumber: 0x9000,
+		HeaderExtensionProfile:        goav1.RTPExtensionProfileTwoByte,
+	}
+	twccOnlySize, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(
+		twccOnlyConfig, rtpPayloads, descriptors, packetSpans[:packetCount])
+	if err != nil {
+		t.Fatalf("TWCC-only EncoderWebRTCRTPPacketsWithHeadersSize: %v", err)
+	}
+	twccOnlySpans := make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, packetCount)
+	twccOnlyPackets, twccOnlyCount, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(
+		make([]byte, 0, twccOnlySize.Bytes), twccOnlySpans, twccOnlyConfig,
+		rtpPayloads, descriptors, packetSpans[:packetCount])
+	if err != nil {
+		t.Fatalf("TWCC-only AppendEncoderWebRTCRTPPacketsWithHeaders: %v", err)
+	}
+	if twccOnlyCount != packetCount {
+		t.Fatalf("TWCC-only packet count=%d want %d", twccOnlyCount, packetCount)
+	}
+	twccRaw := twccOnlyPackets[twccOnlySpans[0].Offset : twccOnlySpans[0].Offset+twccOnlySpans[0].Length]
+	if _, err := goav1.ParseRTPPacketDependencyDescriptor(twccRaw, config.DependencyDescriptorExtensionID, nil); !errors.Is(err, goav1.ErrRTPHeaderExtensionNotFound) {
+		t.Fatalf("TWCC-only dependency descriptor err=%v want %v", err, goav1.ErrRTPHeaderExtensionNotFound)
+	}
+	twccPacket, err := goav1.ParseRTPPacket(twccRaw)
+	if err != nil {
+		t.Fatalf("TWCC-only ParseRTPPacket: %v", err)
+	}
+	twccElement, ok, err := goav1.FindRTPHeaderExtensionElement(
+		twccPacket.Header.ExtensionProfile, twccPacket.Header.ExtensionPayload, twccOnlyConfig.TransportWideCCExtensionID)
+	if err != nil || !ok {
+		t.Fatalf("TWCC-only extension ok=%v err=%v", ok, err)
+	}
+	twccOnly, err := goav1.ParseRTPTransportWideCCHeaderExtension(twccElement.Payload)
+	if err != nil || twccOnly != twccOnlyConfig.TransportWideCCSequenceNumber {
+		t.Fatalf("TWCC-only sequence=%d err=%v want %d", twccOnly, err, twccOnlyConfig.TransportWideCCSequenceNumber)
+	}
+	if twccOnlySpans[0].DependencyDescriptorOffset != -1 || twccOnlySpans[0].DependencyDescriptorLength != 0 {
+		t.Fatalf("TWCC-only dependency span=%+v", twccOnlySpans[0])
+	}
 
 	sizeInfo, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(config, rtpPayloads, descriptors, packetSpans[:packetCount])
 	if err != nil {

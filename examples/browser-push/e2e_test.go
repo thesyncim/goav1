@@ -473,6 +473,7 @@ type rtcSenderFeedbackOptions struct {
 	Counters                          *rtcSenderFeedbackCounters
 	OnNACK                            func(*webrtc.TrackLocalStaticRTP, *rtcp.TransportLayerNack) bool
 	OnReceiverEstimatedMaximumBitrate func(*rtcp.ReceiverEstimatedMaximumBitrate)
+	OnTransportLayerCC                func(*rtcp.TransportLayerCC)
 }
 
 type rtcSenderFeedbackCounters struct {
@@ -480,6 +481,7 @@ type rtcSenderFeedbackCounters struct {
 	FullIntra                       atomic.Int64
 	NACK                            atomic.Int64
 	ReceiverEstimatedMaximumBitrate atomic.Int64
+	TransportLayerCC                atomic.Int64
 }
 
 func rtcReceiverEstimatedMaximumBitrateFromPion(
@@ -546,6 +548,13 @@ func startSenderFeedbackReaderWithOptions(
 					if options.OnReceiverEstimatedMaximumBitrate != nil {
 						options.OnReceiverEstimatedMaximumBitrate(feedback)
 					}
+				case *rtcp.TransportLayerCC:
+					if options.Counters != nil {
+						options.Counters.TransportLayerCC.Add(1)
+					}
+					if options.OnTransportLayerCC != nil {
+						options.OnTransportLayerCC(feedback)
+					}
 				}
 			}
 		}
@@ -585,9 +594,11 @@ type rtcEncoderRTPStreamOptions struct {
 	ReceiverEstimatedMaximumBitrate <-chan goav1.RTCPReceiverEstimatedMaximumBitrate
 	RTPOptionsForPicture            func(picture goav1.RTCPicture) (goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions, error)
 	FrameFilter                     func(frame goav1.RTCFrame) bool
+	DisableTransportWideCC          bool
 	ForceKeyFrame                   func(frameIndex int) bool
 	DropPacket                      func(frameIndex int, packetIndex int, packet rtp.Packet) bool
 	OnPacket                        func(frameIndex int, packetIndex int, packet rtp.Packet, dropped bool) error
+	OnHeaderExtensions              func(rtcRTPHeaderExtensions)
 	OnPicture                       func(frameIndex int, picture goav1.RTCPicture)
 	OnConfigApplied                 func(frameIndex int, step int, cfg goav1.EncoderConfig)
 }
@@ -844,7 +855,9 @@ func rtcFrameRTPPackets(
 	if err != nil {
 		return nil, sequence, twcc, err
 	}
-	if headerExtensions.DependencyDescriptorID == 0 {
+	if headerExtensions.DependencyDescriptorID == 0 &&
+		headerExtensions.TransportWideCCID == 0 &&
+		headerExtensions.TransportWideCC02ID == 0 {
 		return rtcFrameRTPPacketsWithoutHeaderExtensions(payloads, spans[:count], sequence, timestamp)
 	}
 	headerConfig := goav1.EncoderWebRTCRTPPacketHeaderConfig{

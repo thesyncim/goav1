@@ -237,6 +237,7 @@ func TestBrowserLiveRTCEncoderDirectRTPReceiverEstimatedMaximumBitrateControl(t 
 	var rembApplied atomic.Int64
 	var lastREMBTargetKbps atomic.Int64
 	options := defaultRTCEncoderRTPStreamOptions()
+	options.DisableTransportWideCC = true
 	options.ForceKeyFrame = func(frameIndex int) bool { return false }
 	options.DropPacket = func(frameIndex int, packetIndex int, _ rtp.Packet) bool {
 		if frameIndex != 10 || packetIndex >= 4 {
@@ -279,6 +280,84 @@ func TestBrowserLiveRTCEncoderDirectRTPReceiverEstimatedMaximumBitrateControl(t 
 	}
 	t.Logf("direct RTP REMB control: dropped=%d applied=%d targetKbps=%d %s",
 		droppedPackets.Load(), rembApplied.Load(), lastREMBTargetKbps.Load(), rtcSenderFeedbackString(feedback))
+}
+
+func TestBrowserLiveRTCEncoderDirectRTPTransportWideCCFeedback(t *testing.T) {
+	required := os.Getenv(requireBrowserE2EEnv) == "1"
+	if !required && os.Getenv(browserE2EEnv) != "1" {
+		t.Skipf("set %s=1 to run the live browser/libwebrtc AV1 transport-cc gate", browserE2EEnv)
+	}
+	browserPath, err := browserExecutable()
+	if err != nil {
+		if required {
+			t.Fatalf("required browser executable unavailable: %v", err)
+		}
+		t.Skip(err)
+	}
+
+	feedback := &rtcSenderFeedbackCounters{}
+	var negotiatedTWCCID atomic.Int32
+	var sentPackets atomic.Int64
+	var sentTWCCPackets atomic.Int64
+	var reportedPacketStatuses atomic.Int64
+	var reportedRecvDeltas atomic.Int64
+	var lastBaseSequence atomic.Uint32
+	options := defaultRTCEncoderRTPStreamOptions()
+	options.OnHeaderExtensions = func(extensions rtcRTPHeaderExtensions) {
+		switch {
+		case extensions.TransportWideCCID != 0:
+			negotiatedTWCCID.Store(int32(extensions.TransportWideCCID))
+		case extensions.TransportWideCC02ID != 0:
+			negotiatedTWCCID.Store(int32(extensions.TransportWideCC02ID))
+		}
+	}
+	options.OnPacket = func(_ int, _ int, packet rtp.Packet, dropped bool) error {
+		if dropped {
+			return nil
+		}
+		sentPackets.Add(1)
+		if id := negotiatedTWCCID.Load(); id != 0 && len(packet.GetExtension(uint8(id))) > 0 {
+			sentTWCCPackets.Add(1)
+		}
+		return nil
+	}
+
+	got := runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedbackFrames(
+		t,
+		browserPath,
+		"direct-rtp-twcc",
+		"direct-rtp-twcc=1",
+		options,
+		width,
+		height,
+		rtcSenderFeedbackOptions{
+			Counters: feedback,
+			OnTransportLayerCC: func(tcc *rtcp.TransportLayerCC) {
+				reportedPacketStatuses.Add(int64(tcc.PacketStatusCount))
+				reportedRecvDeltas.Add(int64(len(tcc.RecvDeltas)))
+				lastBaseSequence.Store(uint32(tcc.BaseSequenceNumber))
+			},
+		},
+		90,
+	)
+	if got.KeyFramesDecoded < 1 {
+		t.Fatalf("direct RTP transport-cc browser keyframes=%d want at least 1", got.KeyFramesDecoded)
+	}
+	if negotiatedTWCCID.Load() == 0 {
+		t.Fatal("direct RTP transport-cc was not negotiated in the browser answer")
+	}
+	if sentPackets.Load() == 0 || sentTWCCPackets.Load() == 0 {
+		t.Fatalf("direct RTP transport-cc packets sent=%d twccExtensionPackets=%d negotiatedID=%d",
+			sentPackets.Load(), sentTWCCPackets.Load(), negotiatedTWCCID.Load())
+	}
+	if feedback.TransportLayerCC.Load() == 0 || reportedPacketStatuses.Load() == 0 {
+		t.Fatalf("direct RTP transport-cc produced no browser TransportLayerCC feedback; sentTWCC=%d feedback=%s statuses=%d",
+			sentTWCCPackets.Load(), rtcSenderFeedbackString(feedback), reportedPacketStatuses.Load())
+	}
+	t.Logf("direct RTP transport-cc: sent=%d twccPackets=%d reports=%d statuses=%d deltas=%d base=%d %s",
+		sentPackets.Load(), sentTWCCPackets.Load(), feedback.TransportLayerCC.Load(),
+		reportedPacketStatuses.Load(), reportedRecvDeltas.Load(), lastBaseSequence.Load(),
+		rtcSenderFeedbackString(feedback))
 }
 
 type browserRTCEncoderDirectRTPPlaybackScenario struct {
@@ -566,6 +645,15 @@ func runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedback(
 	wantWidth int, wantHeight int, feedback rtcSenderFeedbackOptions,
 ) browserPlaybackEvidence {
 	t.Helper()
+	return runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedbackFrames(
+		t, browserPath, label, query, options, wantWidth, wantHeight, feedback, 45)
+}
+
+func runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedbackFrames(
+	t *testing.T, browserPath string, label string, query string, options rtcEncoderRTPStreamOptions,
+	wantWidth int, wantHeight int, feedback rtcSenderFeedbackOptions, minFrames int,
+) browserPlaybackEvidence {
+	t.Helper()
 	var mu sync.Mutex
 	var peers []*webrtc.PeerConnection
 	streamErr := make(chan error, 4)
@@ -615,7 +703,7 @@ func runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedback(
 	got := browserPlaybackEvidence{}
 	if err := chromedp.Run(browserCtx,
 		chromedp.Navigate(server.URL+"?"+query),
-		chromedp.Evaluate(browserPlaybackProbeJS(45), &got, evalAwaitPromise),
+		chromedp.Evaluate(browserPlaybackProbeJS(minFrames), &got, evalAwaitPromise),
 	); err != nil {
 		t.Fatalf("%s browser AV1 playback probe: %v", label, err)
 	}
@@ -1090,7 +1178,7 @@ func handleRTCEncoderRTPOfferWithStreamOptions(
 	if err != nil {
 		return err
 	}
-	pc, err := newRTCEncoderRTPPeerConnection()
+	pc, err := newRTCEncoderRTPPeerConnectionWithOptions(streamOptions)
 	if err != nil {
 		return err
 	}
@@ -1124,8 +1212,15 @@ func handleRTCEncoderRTPOfferWithStreamOptions(
 				}
 				return
 			}
+			if streamOptions.DisableTransportWideCC {
+				extensions.TransportWideCCID = 0
+				extensions.TransportWideCC02ID = 0
+			}
 			options := streamOptions
 			options.HeaderExtensions = extensions
+			if options.OnHeaderExtensions != nil {
+				options.OnHeaderExtensions(extensions)
+			}
 			go func() {
 				if err := streamRTCEncoderRTPWithOptions(track, &wantKey, done, options); err != nil {
 					select {
@@ -1194,19 +1289,23 @@ func rtcSenderFeedbackTotal(counters *rtcSenderFeedbackCounters) int64 {
 		return 0
 	}
 	return counters.PictureLoss.Load() + counters.FullIntra.Load() + counters.NACK.Load() +
-		counters.ReceiverEstimatedMaximumBitrate.Load()
+		counters.ReceiverEstimatedMaximumBitrate.Load() + counters.TransportLayerCC.Load()
 }
 
 func rtcSenderFeedbackString(counters *rtcSenderFeedbackCounters) string {
 	if counters == nil {
-		return "pli=0 fir=0 nack=0 remb=0"
+		return "pli=0 fir=0 nack=0 remb=0 twcc=0"
 	}
-	return fmt.Sprintf("pli=%d fir=%d nack=%d remb=%d",
+	return fmt.Sprintf("pli=%d fir=%d nack=%d remb=%d twcc=%d",
 		counters.PictureLoss.Load(), counters.FullIntra.Load(), counters.NACK.Load(),
-		counters.ReceiverEstimatedMaximumBitrate.Load())
+		counters.ReceiverEstimatedMaximumBitrate.Load(), counters.TransportLayerCC.Load())
 }
 
 func newRTCEncoderRTPPeerConnection() (*webrtc.PeerConnection, error) {
+	return newRTCEncoderRTPPeerConnectionWithOptions(rtcEncoderRTPStreamOptions{})
+}
+
+func newRTCEncoderRTPPeerConnectionWithOptions(options rtcEncoderRTPStreamOptions) (*webrtc.PeerConnection, error) {
 	var mediaEngine webrtc.MediaEngine
 	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
 		return nil, err
@@ -1216,6 +1315,22 @@ func newRTCEncoderRTPPeerConnection() (*webrtc.PeerConnection, error) {
 		webrtc.RTPCodecTypeVideo,
 	); err != nil {
 		return nil, err
+	}
+	if !options.DisableTransportWideCC {
+		mediaEngine.RegisterFeedback(
+			webrtc.RTCPFeedback{Type: webrtc.TypeRTCPFBTransportCC}, webrtc.RTPCodecTypeVideo)
+		if err := mediaEngine.RegisterHeaderExtension(
+			webrtc.RTPHeaderExtensionCapability{URI: goav1.AV1RTPTransportWideCCURI},
+			webrtc.RTPCodecTypeVideo,
+		); err != nil {
+			return nil, err
+		}
+		if err := mediaEngine.RegisterHeaderExtension(
+			webrtc.RTPHeaderExtensionCapability{URI: goav1.AV1RTPTransportWideCC02URI},
+			webrtc.RTPCodecTypeVideo,
+		); err != nil {
+			return nil, err
+		}
 	}
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(&mediaEngine))
 	return api.NewPeerConnection(webrtc.Configuration{})

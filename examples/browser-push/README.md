@@ -4,7 +4,8 @@ Streams an animated 1080p30 scene from the goav1 encoder to a browser
 `<video>` element as AV1 RTP. The browser sends a receive-only offer, the
 server answers, and loss feedback (PLI/FIR/NACK) forces keyframes so the stream
 recovers from packet loss. The direct-RTP browser gate also proves Generic NACK
-repair with a sender-side retransmission cache. The required browser gate
+repair with a sender-side retransmission cache, browser REMB bitrate control,
+and Transport-CC feedback from Chrome/libwebrtc. The required browser gate
 live-tests every `EncoderWebRTCScalabilityModes()` value: L1 modes are sent
 directly, shared-reference L2/L3 SVC modes forward the base spatial layer, and
 S2/S3 simulcast modes forward the highest spatial layer. The required gate also
@@ -32,8 +33,9 @@ Edge, Firefox, Safari 17+).
 - One goroutine per viewer; the encoder's zero-allocation steady state
   means each stream costs only its compute
 - The direct-RTP test path uses dependency descriptors, exact active
-  decode-target masks, and filtered spatial forwarding for browser-compatible
-  multi-spatial delivery. It does not claim that Chrome can consume all
+  decode-target masks, Transport-CC RTP header extensions, and filtered spatial
+  forwarding for browser-compatible multi-spatial delivery. It does not claim
+  that Chrome can consume all
   spatial layers mixed on one static AV1 RTP track.
 - The repeated direct-RTP soak path opens fresh browser sessions for L1 temporal
   layering, shared-reference SVC base-layer forwarding, and highest-layer
