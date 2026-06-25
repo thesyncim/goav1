@@ -1813,6 +1813,262 @@ func rtcpReceiverEstimatedMaximumBitrateExponentMantissa(bitrateBps uint64) (uin
 	return exponent, uint32(mantissa), nil
 }
 
+// EncoderWebRTCRTCPFeedbackReceiverEstimatedMaximumBitrate parses one RTCP
+// feedback packet and returns its legacy WebRTC REMB estimate. Non-REMB RTPFB,
+// PSFB, or application-layer feedback returns ok=false. Malformed feedback with
+// a REMB unique identifier returns the parser error.
+func EncoderWebRTCRTCPFeedbackReceiverEstimatedMaximumBitrate(
+	packet RTCPFeedbackPacket,
+	ssrcScratch []uint32,
+) (remb RTCPReceiverEstimatedMaximumBitrate, ok bool, err error) {
+	switch packet.PacketType {
+	case RTCPRTPFBPacketType:
+		return RTCPReceiverEstimatedMaximumBitrate{}, false, nil
+	case RTCPPSFBPacketType:
+	default:
+		return RTCPReceiverEstimatedMaximumBitrate{}, false, ErrRTCPInvalidFeedback
+	}
+	if packet.FMT != RTCPPSFBApplicationLayerFeedbackFMT {
+		return RTCPReceiverEstimatedMaximumBitrate{}, false, nil
+	}
+	if len(packet.FCI) < 4 ||
+		binary.BigEndian.Uint32(packet.FCI[0:4]) != RTCPReceiverEstimatedMaximumBitrateUniqueIdentifier {
+		return RTCPReceiverEstimatedMaximumBitrate{}, false, nil
+	}
+	remb, err = ParseRTCPReceiverEstimatedMaximumBitrateFCI(packet.FCI, ssrcScratch)
+	if err != nil {
+		return RTCPReceiverEstimatedMaximumBitrate{}, false, err
+	}
+	return remb, true, nil
+}
+
+// EncoderWebRTCRTCPPacketsReceiverEstimatedMaximumBitrate scans parsed generic
+// RTCP packets and returns the last REMB estimate in packet order. Non-feedback
+// RTCP packets and non-REMB feedback are ignored.
+func EncoderWebRTCRTCPPacketsReceiverEstimatedMaximumBitrate(
+	packets []RTCPPacket,
+	ssrcScratch []uint32,
+) (remb RTCPReceiverEstimatedMaximumBitrate, ok bool, err error) {
+	start := len(ssrcScratch)
+	for i := range packets {
+		packet := packets[i]
+		if packet.PacketType != RTCPRTPFBPacketType && packet.PacketType != RTCPPSFBPacketType {
+			continue
+		}
+		if len(packet.Payload) < RTCPFeedbackCommonSize {
+			return RTCPReceiverEstimatedMaximumBitrate{}, false, ErrRTCPInvalidFeedback
+		}
+		current, currentOK, err := EncoderWebRTCRTCPFeedbackReceiverEstimatedMaximumBitrate(RTCPFeedbackPacket{
+			PacketType: packet.PacketType,
+			FMT:        packet.Count,
+			SenderSSRC: binary.BigEndian.Uint32(packet.Payload[0:4]),
+			MediaSSRC:  binary.BigEndian.Uint32(packet.Payload[4:8]),
+			FCI:        packet.Payload[RTCPFeedbackCommonSize:],
+		}, ssrcScratch[:start:cap(ssrcScratch)])
+		if err != nil {
+			return RTCPReceiverEstimatedMaximumBitrate{}, false, err
+		}
+		if currentOK {
+			remb = current
+			ok = true
+		}
+	}
+	return remb, ok, nil
+}
+
+// EncoderWebRTCRTCPCompoundPacketsReceiverEstimatedMaximumBitrate parses a raw
+// compound RTCP packet stream and returns the last REMB estimate in packet
+// order. Parsed packets are appended into packetScratch without allocation and
+// returned as the newly parsed suffix.
+func EncoderWebRTCRTCPCompoundPacketsReceiverEstimatedMaximumBitrate(
+	compound []byte,
+	packetScratch []RTCPPacket,
+	ssrcScratch []uint32,
+) (remb RTCPReceiverEstimatedMaximumBitrate, ok bool, packets []RTCPPacket, err error) {
+	packets, err = ParseRTCPCompoundPackets(compound, packetScratch)
+	if err != nil {
+		return RTCPReceiverEstimatedMaximumBitrate{}, false, packets, err
+	}
+	remb, ok, err = EncoderWebRTCRTCPPacketsReceiverEstimatedMaximumBitrate(packets, ssrcScratch)
+	return remb, ok, packets, err
+}
+
+// EncoderWebRTCApplyReceiverEstimatedMaximumBitrate applies one REMB bitrate
+// estimate to config's WebRTC target bitrate fields and returns a normalized
+// config suitable for RTCEncoder.SetConfig or WebRTCEncoder.SetConfig. The
+// estimate is rounded up to kbps, clamped by configured min/max bitrate limits,
+// and distributed across active spatial layers in proportion to their current
+// targets. Rate-control mode, framerate, scalability, and keyframe policy are
+// left unchanged.
+func EncoderWebRTCApplyReceiverEstimatedMaximumBitrate(
+	config EncoderConfig,
+	remb RTCPReceiverEstimatedMaximumBitrate,
+) (EncoderConfig, error) {
+	normalized, err := SetWebRTCEncoderSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
+	if err != nil {
+		return EncoderConfig{}, err
+	}
+	targetKbps := encoderWebRTCReceiverEstimatedMaximumBitrateTargetKbps(remb.BitrateBps)
+	targetKbps = encoderWebRTCClampReceiverEstimatedMaximumBitrateKbps(
+		targetKbps,
+		normalized.MinBitrateKbps,
+		normalized.MaxBitrateKbps,
+	)
+	normalized.TargetBitrateKbps = targetKbps
+	if normalized.MaxBitrateKbps == 0 {
+		normalized.MaxBitrateKbps = targetKbps
+	}
+	encoderWebRTCApplyReceiverEstimatedMaximumBitrateSpatialLayers(&normalized, targetKbps)
+	return SetWebRTCEncoderSVCConfig(normalized, normalized.TemporalLayerCount, normalized.SpatialLayerCount)
+}
+
+// EncoderWebRTCRTCPFeedbackApplyReceiverEstimatedMaximumBitrate parses one RTCP
+// feedback packet and applies REMB feedback to config when present. ok is false
+// for non-REMB feedback, and the returned config then aliases the input config.
+func EncoderWebRTCRTCPFeedbackApplyReceiverEstimatedMaximumBitrate(
+	config EncoderConfig,
+	packet RTCPFeedbackPacket,
+	ssrcScratch []uint32,
+) (EncoderConfig, bool, error) {
+	remb, ok, err := EncoderWebRTCRTCPFeedbackReceiverEstimatedMaximumBitrate(packet, ssrcScratch)
+	if err != nil || !ok {
+		return config, ok, err
+	}
+	updated, err := EncoderWebRTCApplyReceiverEstimatedMaximumBitrate(config, remb)
+	if err != nil {
+		return EncoderConfig{}, true, err
+	}
+	return updated, true, nil
+}
+
+// EncoderWebRTCRTCPPacketsApplyReceiverEstimatedMaximumBitrate scans parsed
+// generic RTCP packets and applies the last REMB estimate in packet order.
+func EncoderWebRTCRTCPPacketsApplyReceiverEstimatedMaximumBitrate(
+	config EncoderConfig,
+	packets []RTCPPacket,
+	ssrcScratch []uint32,
+) (EncoderConfig, bool, error) {
+	remb, ok, err := EncoderWebRTCRTCPPacketsReceiverEstimatedMaximumBitrate(packets, ssrcScratch)
+	if err != nil || !ok {
+		return config, ok, err
+	}
+	updated, err := EncoderWebRTCApplyReceiverEstimatedMaximumBitrate(config, remb)
+	if err != nil {
+		return EncoderConfig{}, true, err
+	}
+	return updated, true, nil
+}
+
+// EncoderWebRTCRTCPCompoundPacketsApplyReceiverEstimatedMaximumBitrate parses a
+// raw compound RTCP packet stream and applies the last REMB estimate in packet
+// order. Parsed packets are appended into packetScratch without allocation and
+// returned as the newly parsed suffix.
+func EncoderWebRTCRTCPCompoundPacketsApplyReceiverEstimatedMaximumBitrate(
+	config EncoderConfig,
+	compound []byte,
+	packetScratch []RTCPPacket,
+	ssrcScratch []uint32,
+) (EncoderConfig, bool, []RTCPPacket, error) {
+	remb, ok, packets, err := EncoderWebRTCRTCPCompoundPacketsReceiverEstimatedMaximumBitrate(
+		compound,
+		packetScratch,
+		ssrcScratch,
+	)
+	if err != nil || !ok {
+		return config, ok, packets, err
+	}
+	updated, err := EncoderWebRTCApplyReceiverEstimatedMaximumBitrate(config, remb)
+	if err != nil {
+		return EncoderConfig{}, true, packets, err
+	}
+	return updated, true, packets, nil
+}
+
+func encoderWebRTCReceiverEstimatedMaximumBitrateTargetKbps(bitrateBps uint64) int32 {
+	maxBps := uint64(EncoderWebRTCMaxBitrateKbps) * 1000
+	if bitrateBps >= maxBps {
+		return EncoderWebRTCMaxBitrateKbps
+	}
+	if bitrateBps == 0 {
+		return 1
+	}
+	return int32((bitrateBps + 999) / 1000)
+}
+
+func encoderWebRTCClampReceiverEstimatedMaximumBitrateKbps(targetKbps int32, minKbps int32, maxKbps int32) int32 {
+	if targetKbps < 1 {
+		targetKbps = 1
+	}
+	if maxKbps > 0 && targetKbps > maxKbps {
+		targetKbps = maxKbps
+	}
+	if minKbps > 0 && targetKbps < minKbps {
+		targetKbps = minKbps
+	}
+	return targetKbps
+}
+
+func encoderWebRTCApplyReceiverEstimatedMaximumBitrateSpatialLayers(config *EncoderConfig, targetKbps int32) {
+	layerCount := int(config.SpatialLayerCount)
+	if layerCount <= 0 || layerCount > EncoderMaxSpatialLayers {
+		return
+	}
+
+	lastActive := -1
+	var targetSum int64
+	var weightSum int64
+	for i := 0; i < layerCount; i++ {
+		layer := &config.SpatialLayers[i]
+		if !layer.Active {
+			continue
+		}
+		lastActive = i
+		if layer.TargetBitrateKbps > 0 {
+			targetSum += int64(layer.TargetBitrateKbps)
+		}
+		weightSum += int64(i + 1)
+	}
+	if lastActive < 0 {
+		return
+	}
+
+	var assignedKbps int64
+	for i := 0; i < layerCount; i++ {
+		layer := &config.SpatialLayers[i]
+		if !layer.Active {
+			continue
+		}
+
+		layerTarget := targetKbps
+		if layerCount > 1 {
+			if i == lastActive {
+				layerTarget = int32(int64(targetKbps) - assignedKbps)
+			} else if targetSum > 0 && layer.TargetBitrateKbps > 0 {
+				layerTarget = int32((int64(targetKbps) * int64(layer.TargetBitrateKbps)) / targetSum)
+				assignedKbps += int64(layerTarget)
+			} else if weightSum > 0 {
+				weight := int64(i + 1)
+				layerTarget = int32((int64(targetKbps) * weight) / weightSum)
+				assignedKbps += int64(layerTarget)
+			}
+			if layerTarget < 1 && i != lastActive {
+				assignedKbps += int64(1 - layerTarget)
+				layerTarget = 1
+			}
+		}
+
+		layerTarget = encoderWebRTCClampReceiverEstimatedMaximumBitrateKbps(
+			layerTarget,
+			layer.MinBitrateKbps,
+			layer.MaxBitrateKbps,
+		)
+		layer.TargetBitrateKbps = layerTarget
+		if layer.MaxBitrateKbps == 0 {
+			layer.MaxBitrateKbps = layerTarget
+		}
+	}
+}
+
 // RTCPFullIntraRequestEntry is one Full Intra Request Feedback Control
 // Information entry. SSRC is the media sender requested to send an intra
 // picture; SequenceNumber is the command sequence number for that sender.

@@ -1463,6 +1463,292 @@ func TestEncoderWebRTCRTCPPacketsRequireKeyFrameRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestEncoderWebRTCRTCPFeedbackReceiverEstimatedMaximumBitrate(t *testing.T) {
+	fci := testAV1RTCPReceiverEstimatedMaximumBitrateFCI(t, 640_000, []uint32{0x11112222, 0x33334444})
+	scratch := make([]uint32, 1, 3)
+	scratch[0] = 0xdeadbeef
+	remb, ok, err := av1.EncoderWebRTCRTCPFeedbackReceiverEstimatedMaximumBitrate(av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBApplicationLayerFeedbackFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0,
+		FCI:        fci,
+	}, scratch[:1:3])
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTCPFeedbackReceiverEstimatedMaximumBitrate: %v", err)
+	}
+	if !ok || remb.BitrateBps != 640_000 || len(remb.SSRCs) != 2 ||
+		remb.SSRCs[0] != 0x11112222 || remb.SSRCs[1] != 0x33334444 || scratch[0] != 0xdeadbeef {
+		t.Fatalf("REMB=%+v ok=%v scratch0=%#x", remb, ok, scratch[0])
+	}
+
+	for _, packet := range []av1.RTCPFeedbackPacket{
+		{PacketType: av1.RTCPRTPFBPacketType, FMT: av1.RTCPRTPFBGenericNACKFMT},
+		{PacketType: av1.RTCPPSFBPacketType, FMT: av1.RTCPPSFBPictureLossIndicationFMT},
+		{PacketType: av1.RTCPPSFBPacketType, FMT: av1.RTCPPSFBApplicationLayerFeedbackFMT, FCI: []byte("TEST")},
+	} {
+		remb, ok, err = av1.EncoderWebRTCRTCPFeedbackReceiverEstimatedMaximumBitrate(packet, nil)
+		if err != nil || ok || remb.BitrateBps != 0 || len(remb.SSRCs) != 0 {
+			t.Fatalf("non-REMB packet %+v returned REMB=%+v ok=%v err=%v", packet, remb, ok, err)
+		}
+	}
+
+	if _, _, err := av1.EncoderWebRTCRTCPFeedbackReceiverEstimatedMaximumBitrate(av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPSenderReportPacketType,
+		FMT:        av1.RTCPPSFBApplicationLayerFeedbackFMT,
+		FCI:        fci,
+	}, nil); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("invalid packet type err=%v want %v", err, av1.ErrRTCPInvalidFeedback)
+	}
+	if _, _, err := av1.EncoderWebRTCRTCPFeedbackReceiverEstimatedMaximumBitrate(av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBApplicationLayerFeedbackFMT,
+		FCI:        []byte{'R', 'E', 'M', 'B'},
+	}, nil); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("malformed REMB err=%v want %v", err, av1.ErrRTCPShortBuffer)
+	}
+	if _, _, err := av1.EncoderWebRTCRTCPFeedbackReceiverEstimatedMaximumBitrate(av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBApplicationLayerFeedbackFMT,
+		FCI:        fci,
+	}, make([]uint32, 0, 1)); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short REMB SSRC scratch err=%v want %v", err, av1.ErrRTCPShortBuffer)
+	}
+}
+
+func TestEncoderWebRTCRTCPPacketsReceiverEstimatedMaximumBitrate(t *testing.T) {
+	first := testAV1RTCPReceiverEstimatedMaximumBitratePacket(t, 600_000, []uint32{0x11112222})
+	second := testAV1RTCPReceiverEstimatedMaximumBitratePacket(t, 900_000, []uint32{0x33334444})
+	compound, err := av1.AppendRTCPSenderReportPacket(make([]byte, 0, 256), av1.RTCPSenderReport{
+		SenderSSRC: 0x01020304,
+	})
+	if err != nil {
+		t.Fatalf("AppendRTCPSenderReportPacket: %v", err)
+	}
+	compound, err = av1.AppendRTCPFeedbackPacket(compound, first)
+	if err != nil {
+		t.Fatalf("AppendRTCPFeedbackPacket first REMB: %v", err)
+	}
+	compound, err = av1.AppendRTCPFeedbackPacket(compound, av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPRTPFBPacketType,
+		FMT:        av1.RTCPRTPFBGenericNACKFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0x05060708,
+	})
+	if err != nil {
+		t.Fatalf("AppendRTCPFeedbackPacket NACK: %v", err)
+	}
+	compound, err = av1.AppendRTCPFeedbackPacket(compound, second)
+	if err != nil {
+		t.Fatalf("AppendRTCPFeedbackPacket second REMB: %v", err)
+	}
+
+	packetScratch := make([]av1.RTCPPacket, 1, 5)
+	packetScratch[0] = av1.RTCPPacket{PacketType: av1.RTCPByePacketType, Payload: []byte{0xaa}}
+	ssrcScratch := make([]uint32, 1, 2)
+	ssrcScratch[0] = 0xdeadbeef
+	remb, ok, packets, err := av1.EncoderWebRTCRTCPCompoundPacketsReceiverEstimatedMaximumBitrate(
+		compound,
+		packetScratch[:1:5],
+		ssrcScratch[:1:2],
+	)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTCPCompoundPacketsReceiverEstimatedMaximumBitrate: %v", err)
+	}
+	if !ok || remb.BitrateBps != 900_000 || len(remb.SSRCs) != 1 || remb.SSRCs[0] != 0x33334444 || len(packets) != 4 {
+		t.Fatalf("compound REMB=%+v ok=%v packets=%d", remb, ok, len(packets))
+	}
+	if packetScratch[0].PacketType != av1.RTCPByePacketType || len(packetScratch[0].Payload) != 1 ||
+		ssrcScratch[0] != 0xdeadbeef {
+		t.Fatalf("scratch prefix clobbered packet=%+v ssrc0=%#x", packetScratch[0], ssrcScratch[0])
+	}
+
+	remb, ok, err = av1.EncoderWebRTCRTCPPacketsReceiverEstimatedMaximumBitrate(
+		packets[:2],
+		make([]uint32, 0, 1),
+	)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTCPPacketsReceiverEstimatedMaximumBitrate first: %v", err)
+	}
+	if !ok || remb.BitrateBps != 600_000 || len(remb.SSRCs) != 1 || remb.SSRCs[0] != 0x11112222 {
+		t.Fatalf("first REMB=%+v ok=%v", remb, ok)
+	}
+
+	remb, ok, err = av1.EncoderWebRTCRTCPPacketsReceiverEstimatedMaximumBitrate(packets[:1], nil)
+	if err != nil || ok || remb.BitrateBps != 0 || len(remb.SSRCs) != 0 {
+		t.Fatalf("no REMB=%+v ok=%v err=%v", remb, ok, err)
+	}
+	if _, _, err := av1.EncoderWebRTCRTCPPacketsReceiverEstimatedMaximumBitrate([]av1.RTCPPacket{{
+		PacketType: av1.RTCPPSFBPacketType,
+		Count:      av1.RTCPPSFBApplicationLayerFeedbackFMT,
+		Payload:    []byte{0, 1, 2, 3},
+	}}, nil); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("short feedback payload err=%v want %v", err, av1.ErrRTCPInvalidFeedback)
+	}
+}
+
+func TestEncoderWebRTCApplyReceiverEstimatedMaximumBitrate(t *testing.T) {
+	mode := av1.EncoderScalabilityModeL3T3
+	width, height := publicRTCMatrixGeometry(t, mode)
+	cfg := publicRTCMatrixConfig(width, height, mode)
+	cfg.MinBitrateKbps = 100
+	cfg.MaxBitrateKbps = 1200
+	cfg.TargetBitrateKbps = 1000
+	cfg.SpatialLayers[0].MinBitrateKbps = 50
+	cfg.SpatialLayers[0].MaxBitrateKbps = 300
+	cfg.SpatialLayers[0].TargetBitrateKbps = 100
+	cfg.SpatialLayers[1].MinBitrateKbps = 100
+	cfg.SpatialLayers[1].MaxBitrateKbps = 600
+	cfg.SpatialLayers[1].TargetBitrateKbps = 300
+	cfg.SpatialLayers[2].MinBitrateKbps = 200
+	cfg.SpatialLayers[2].MaxBitrateKbps = 1200
+	cfg.SpatialLayers[2].TargetBitrateKbps = 600
+
+	updated, err := av1.EncoderWebRTCApplyReceiverEstimatedMaximumBitrate(
+		cfg,
+		av1.RTCPReceiverEstimatedMaximumBitrate{BitrateBps: 600_000},
+	)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCApplyReceiverEstimatedMaximumBitrate: %v", err)
+	}
+	if updated.TargetBitrateKbps != 600 ||
+		updated.SpatialLayers[0].TargetBitrateKbps != 60 ||
+		updated.SpatialLayers[1].TargetBitrateKbps != 180 ||
+		updated.SpatialLayers[2].TargetBitrateKbps != 360 {
+		t.Fatalf("updated bitrates target=%d layers=%d/%d/%d",
+			updated.TargetBitrateKbps,
+			updated.SpatialLayers[0].TargetBitrateKbps,
+			updated.SpatialLayers[1].TargetBitrateKbps,
+			updated.SpatialLayers[2].TargetBitrateKbps,
+		)
+	}
+	if updated.Scalability != cfg.Scalability || updated.MaxFramerate != cfg.MaxFramerate || updated.RateControl != cfg.RateControl {
+		t.Fatalf("apply changed non-bitrate controls: before=%+v after=%+v", cfg, updated)
+	}
+
+	low, err := av1.EncoderWebRTCApplyReceiverEstimatedMaximumBitrate(
+		cfg,
+		av1.RTCPReceiverEstimatedMaximumBitrate{BitrateBps: 40_000},
+	)
+	if err != nil {
+		t.Fatalf("low REMB apply: %v", err)
+	}
+	if low.TargetBitrateKbps != 100 ||
+		low.SpatialLayers[0].TargetBitrateKbps != 50 ||
+		low.SpatialLayers[1].TargetBitrateKbps != 100 ||
+		low.SpatialLayers[2].TargetBitrateKbps != 200 {
+		t.Fatalf("low REMB target=%d layers=%d/%d/%d",
+			low.TargetBitrateKbps,
+			low.SpatialLayers[0].TargetBitrateKbps,
+			low.SpatialLayers[1].TargetBitrateKbps,
+			low.SpatialLayers[2].TargetBitrateKbps,
+		)
+	}
+
+	high, err := av1.EncoderWebRTCApplyReceiverEstimatedMaximumBitrate(
+		cfg,
+		av1.RTCPReceiverEstimatedMaximumBitrate{BitrateBps: 5_000_000},
+	)
+	if err != nil {
+		t.Fatalf("high REMB apply: %v", err)
+	}
+	if high.TargetBitrateKbps != 1200 ||
+		high.SpatialLayers[0].TargetBitrateKbps != 120 ||
+		high.SpatialLayers[1].TargetBitrateKbps != 360 ||
+		high.SpatialLayers[2].TargetBitrateKbps != 720 {
+		t.Fatalf("high REMB target=%d layers=%d/%d/%d",
+			high.TargetBitrateKbps,
+			high.SpatialLayers[0].TargetBitrateKbps,
+			high.SpatialLayers[1].TargetBitrateKbps,
+			high.SpatialLayers[2].TargetBitrateKbps,
+		)
+	}
+
+	unsetRange := av1.EncoderConfig{
+		Resolution:   av1.EncoderResolution{Width: 640, Height: 360},
+		MaxFramerate: av1.EncoderRational{Num: 30, Den: 1},
+		RateControl:  av1.EncoderRateControlCBR,
+	}
+	unsetRange, err = av1.EncoderWebRTCApplyReceiverEstimatedMaximumBitrate(
+		unsetRange,
+		av1.RTCPReceiverEstimatedMaximumBitrate{BitrateBps: 123_001},
+	)
+	if err != nil {
+		t.Fatalf("unset range REMB apply: %v", err)
+	}
+	if unsetRange.TargetBitrateKbps != 124 || unsetRange.MaxBitrateKbps != 124 ||
+		unsetRange.SpatialLayers[0].TargetBitrateKbps != 124 ||
+		unsetRange.SpatialLayers[0].MaxBitrateKbps != 124 {
+		t.Fatalf("unset range target=%d max=%d layer=%+v", unsetRange.TargetBitrateKbps, unsetRange.MaxBitrateKbps, unsetRange.SpatialLayers[0])
+	}
+
+	if _, err := av1.EncoderWebRTCApplyReceiverEstimatedMaximumBitrate(
+		av1.EncoderConfig{},
+		av1.RTCPReceiverEstimatedMaximumBitrate{BitrateBps: 100_000},
+	); !errors.Is(err, av1.ErrEncoderInvalidConfig) {
+		t.Fatalf("invalid config err=%v want %v", err, av1.ErrEncoderInvalidConfig)
+	}
+}
+
+func TestEncoderWebRTCRTCPApplyReceiverEstimatedMaximumBitrate(t *testing.T) {
+	cfg := testAV1RTCPEncoderConfig(av1.EncoderScalabilityModeL1T1)
+	first := testAV1RTCPReceiverEstimatedMaximumBitratePacket(t, 350_000, []uint32{0x11112222})
+	second := testAV1RTCPReceiverEstimatedMaximumBitratePacket(t, 450_000, []uint32{0x33334444})
+	compound, err := av1.AppendRTCPFeedbackPacket(make([]byte, 0, 128), first)
+	if err != nil {
+		t.Fatalf("AppendRTCPFeedbackPacket first: %v", err)
+	}
+	compound, err = av1.AppendRTCPFeedbackPacket(compound, second)
+	if err != nil {
+		t.Fatalf("AppendRTCPFeedbackPacket second: %v", err)
+	}
+
+	updated, ok, packets, err := av1.EncoderWebRTCRTCPCompoundPacketsApplyReceiverEstimatedMaximumBitrate(
+		cfg,
+		compound,
+		make([]av1.RTCPPacket, 0, 2),
+		make([]uint32, 0, 1),
+	)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTCPCompoundPacketsApplyReceiverEstimatedMaximumBitrate: %v", err)
+	}
+	if !ok || len(packets) != 2 || updated.TargetBitrateKbps != 450 || updated.SpatialLayers[0].TargetBitrateKbps != 450 {
+		t.Fatalf("updated=%+v ok=%v packets=%d", updated, ok, len(packets))
+	}
+
+	unchanged, ok, err := av1.EncoderWebRTCRTCPFeedbackApplyReceiverEstimatedMaximumBitrate(
+		cfg,
+		av1.RTCPFeedbackPacket{PacketType: av1.RTCPPSFBPacketType, FMT: av1.RTCPPSFBPictureLossIndicationFMT},
+		nil,
+	)
+	if err != nil || ok || unchanged != cfg {
+		t.Fatalf("non-REMB apply config=%+v ok=%v err=%v", unchanged, ok, err)
+	}
+}
+
+func TestEncoderWebRTCRTCPCompoundPacketsReceiverEstimatedMaximumBitrateAllocs(t *testing.T) {
+	packet := testAV1RTCPReceiverEstimatedMaximumBitratePacket(t, 500_000, []uint32{0x11112222})
+	compound := testAV1RTCPFeedbackCompound(t, packet)
+	packetScratch := make([]av1.RTCPPacket, 0, 1)
+	ssrcScratch := make([]uint32, 0, 1)
+	allocs := testing.AllocsPerRun(1000, func() {
+		remb, ok, packets, err := av1.EncoderWebRTCRTCPCompoundPacketsReceiverEstimatedMaximumBitrate(
+			compound,
+			packetScratch[:0],
+			ssrcScratch[:0],
+		)
+		if err != nil {
+			t.Fatalf("EncoderWebRTCRTCPCompoundPacketsReceiverEstimatedMaximumBitrate: %v", err)
+		}
+		if !ok || remb.BitrateBps != 500_000 || len(remb.SSRCs) != 1 || len(packets) != 1 {
+			t.Fatalf("REMB=%+v ok=%v packets=%d", remb, ok, len(packets))
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("EncoderWebRTCRTCPCompoundPacketsReceiverEstimatedMaximumBitrate allocs/run=%f want 0", allocs)
+	}
+}
+
 func TestRTCPPictureLossIndicationFCIRoundTrip(t *testing.T) {
 	var buf [4]byte
 	n, err := av1.PutRTCPPictureLossIndicationFCI(buf[:])
@@ -2433,6 +2719,30 @@ func testAV1RTCPFeedbackCompound(t *testing.T, packet av1.RTCPFeedbackPacket) []
 		t.Fatalf("AppendRTCPFeedbackPacket: %v", err)
 	}
 	return compound
+}
+
+func testAV1RTCPReceiverEstimatedMaximumBitratePacket(t *testing.T, bitrateBps uint64, ssrcs []uint32) av1.RTCPFeedbackPacket {
+	t.Helper()
+	return av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBApplicationLayerFeedbackFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0,
+		FCI:        testAV1RTCPReceiverEstimatedMaximumBitrateFCI(t, bitrateBps, ssrcs),
+	}
+}
+
+func testAV1RTCPReceiverEstimatedMaximumBitrateFCI(t *testing.T, bitrateBps uint64, ssrcs []uint32) []byte {
+	t.Helper()
+	size, err := av1.RTCPReceiverEstimatedMaximumBitrateFCISize(ssrcs)
+	if err != nil {
+		t.Fatalf("RTCPReceiverEstimatedMaximumBitrateFCISize: %v", err)
+	}
+	fci, err := av1.AppendRTCPReceiverEstimatedMaximumBitrateFCI(make([]byte, 0, size), bitrateBps, ssrcs)
+	if err != nil {
+		t.Fatalf("AppendRTCPReceiverEstimatedMaximumBitrateFCI: %v", err)
+	}
+	return fci
 }
 
 func testAV1RTCPLayerRefreshFCI(t *testing.T, entries []av1.AV1RTCPLayerRefreshRequestEntry) []byte {
