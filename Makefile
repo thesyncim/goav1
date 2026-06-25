@@ -241,7 +241,7 @@ tidy-check:
 	exit $$rc
 
 webrtc-reference:
-	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run 'TestPublicRTCEncoder(SingleSpatialSettingsReferenceDecoders|SimulcastSettingsReferenceDecoders|SharedSVCSettingsReferenceDecoders|ScalabilityModeCatalogueReferenceDecoders|PairwiseControlRTPReferenceDecoders|FeedbackControlRTPReferenceDecoders)$$' -count=1 -timeout 900s -v
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run 'TestPublicRTCEncoder.*ReferenceDecoders$$' -count=1 -timeout 900s -v
 
 webrtc-browser:
 	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go -C examples/browser-push test . -run TestEndToEndAV1OverRTP -count=1 -timeout 180s -v
