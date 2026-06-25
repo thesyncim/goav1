@@ -1785,6 +1785,130 @@ func TestPublicEncoderWebRTCVideoLayersAllocationDefaultsMasksAndErrors(t *testi
 	}
 }
 
+func TestPublicEncoderWebRTCVideoLayersAllocationIntoScratchAndRTPHeaders(t *testing.T) {
+	mode := goav1.EncoderScalabilityModeL3T3_KEY_SHIFT
+	width, height := publicRTCMatrixGeometry(t, mode)
+	cfg := publicRTCMatrixConfig(width, height, mode)
+	cfg.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
+	publicRTCApplyControlBitrates(&cfg, 1500)
+	normalized, err := goav1.SetWebRTCEncoderSVCConfig(cfg, cfg.TemporalLayerCount, cfg.SpatialLayerCount)
+	if err != nil {
+		t.Fatalf("SetWebRTCEncoderSVCConfig(%s): %v", mode, err)
+	}
+
+	allocationConfig := goav1.EncoderWebRTCVideoLayersAllocationConfig{
+		IncludeResolutionAndFramerate: true,
+	}
+	publicRTCSetAllocationTargetBitrates(&allocationConfig, int(normalized.SpatialLayerCount), int(normalized.TemporalLayerCount), 420)
+	var scratch goav1.EncoderWebRTCVideoLayersAllocationScratch
+	allocation, err := goav1.EncoderWebRTCVideoLayersAllocationInto(cfg, allocationConfig, &scratch)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCVideoLayersAllocationInto: %v", err)
+	}
+	want, err := goav1.EncoderWebRTCVideoLayersAllocation(cfg, allocationConfig)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCVideoLayersAllocation: %v", err)
+	}
+	if !sameRTPVideoLayersAllocation(allocation, want) {
+		t.Fatalf("scratch allocation=%+v want %+v", allocation, want)
+	}
+	if len(allocation.ActiveSpatialLayers) != int(normalized.SpatialLayerCount) ||
+		&allocation.ActiveSpatialLayers[0] != &scratch.ActiveSpatialLayers[0] ||
+		&allocation.ActiveSpatialLayers[0].TargetBitratesKbps[0] != &scratch.TargetBitratesKbps[0][0] {
+		t.Fatalf("allocation does not alias caller scratch: %+v", allocation)
+	}
+	if _, err := goav1.EncoderWebRTCVideoLayersAllocationInto(cfg, allocationConfig, nil); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
+		t.Fatalf("nil scratch err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	}
+
+	var allocErr error
+	allocs := testing.AllocsPerRun(100, func() {
+		_, allocErr = goav1.EncoderWebRTCVideoLayersAllocationInto(cfg, allocationConfig, &scratch)
+	})
+	if allocErr != nil {
+		t.Fatalf("allocation scratch alloc run: %v", allocErr)
+	}
+	if allocs != 0 {
+		t.Fatalf("EncoderWebRTCVideoLayersAllocationInto allocations=%f want 0", allocs)
+	}
+
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+	picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 0), false)
+	if err != nil {
+		t.Fatalf("EncodePicture: %v", err)
+	}
+	if picture.FrameNum != int(normalized.SpatialLayerCount) {
+		t.Fatalf("picture frames=%d want %d", picture.FrameNum, normalized.SpatialLayerCount)
+	}
+	options, err := picture.ActiveDecodeTargetsRTPOptions(normalized.SpatialLayerCount-1, normalized.TemporalLayerCount-1)
+	if err != nil {
+		t.Fatalf("ActiveDecodeTargetsRTPOptions: %v", err)
+	}
+	frame := picture.Frames[0]
+	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
+	firstSize, err := frame.RTPPacketScratchLenWithOptions(limits, nil, options)
+	if err != nil {
+		t.Fatalf("RTPPacketScratchLenWithOptions first: %v", err)
+	}
+	obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
+	size, err := frame.RTPPacketScratchLenWithOptions(limits, obuScratch, options)
+	if err != nil {
+		t.Fatalf("RTPPacketScratchLenWithOptions full: %v", err)
+	}
+	packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
+	workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
+	payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
+	descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
+	packetSpans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
+	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPacketsWithOptions(payloadBuf, descriptorBuf, packetSpans, limits, obuScratch, packetScratch, workScratch, options)
+	if err != nil {
+		t.Fatalf("AppendRTPPacketsWithOptions: %v", err)
+	}
+	headerConfig := goav1.EncoderWebRTCRTPPacketHeaderConfig{
+		PayloadType:                      96,
+		SequenceNumber:                   0x2100,
+		Timestamp:                        0x11223344,
+		SSRC:                             0x66778899,
+		DependencyDescriptorExtensionID:  4,
+		VideoLayersAllocationExtensionID: 5,
+		VideoLayersAllocation:            allocation,
+	}
+	packetSize, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(headerConfig, rtpPayloads, descriptors, packetSpans[:packetCount])
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTPPacketsWithHeadersSize: %v", err)
+	}
+	headerSpans := make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, packetCount)
+	fullPackets, fullCount, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(make([]byte, 0, packetSize.Bytes), headerSpans, headerConfig, rtpPayloads, descriptors, packetSpans[:packetCount])
+	if err != nil {
+		t.Fatalf("AppendEncoderWebRTCRTPPacketsWithHeaders: %v", err)
+	}
+	if fullCount != packetCount {
+		t.Fatalf("full packet count=%d want %d", fullCount, packetCount)
+	}
+
+	var receiver goav1.RTPDependencyDescriptorState
+	raw := fullPackets[headerSpans[0].Offset : headerSpans[0].Offset+headerSpans[0].Length]
+	descriptorPacket, err := goav1.ParseRTPPacketDependencyDescriptor(raw, headerConfig.DependencyDescriptorExtensionID, &receiver)
+	if err != nil {
+		t.Fatalf("ParseRTPPacketDependencyDescriptor: %v", err)
+	}
+	if !descriptorPacket.Descriptor.HasActiveDecodeTargets || descriptorPacket.Descriptor.ActiveDecodeTargetsMask != options.ActiveDecodeTargetsMask {
+		t.Fatalf("active decode targets=%v/%#x want true/%#x", descriptorPacket.Descriptor.HasActiveDecodeTargets, descriptorPacket.Descriptor.ActiveDecodeTargetsMask, options.ActiveDecodeTargetsMask)
+	}
+	element, ok, err := goav1.FindRTPHeaderExtensionElement(descriptorPacket.Packet.Header.ExtensionProfile, descriptorPacket.Packet.Header.ExtensionPayload, headerConfig.VideoLayersAllocationExtensionID)
+	if err != nil || !ok {
+		t.Fatalf("video-layers-allocation extension ok=%v err=%v", ok, err)
+	}
+	parsed, err := goav1.ParseRTPVideoLayersAllocationHeaderExtension(element.Payload)
+	if err != nil || !sameRTPVideoLayersAllocation(parsed, allocation) {
+		t.Fatalf("parsed allocation=%+v err=%v want %+v", parsed, err, allocation)
+	}
+}
+
 func TestPublicLayeredDecoderRTPPacketDecodeTargetSelection(t *testing.T) {
 	const dependencyDescriptorExtensionID = 42
 	if _, err := goav1.RTPDependencyDescriptorDecodeTargetActive(goav1.RTPDependencyDescriptorState{}, 0); !errors.Is(err, goav1.ErrRTPInvalidDependencyDescriptor) {

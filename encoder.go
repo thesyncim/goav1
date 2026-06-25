@@ -173,6 +173,14 @@ type EncoderWebRTCVideoLayersAllocationConfig struct {
 	IncludeResolutionAndFramerate bool
 }
 
+// EncoderWebRTCVideoLayersAllocationScratch owns the backing storage used by
+// EncoderWebRTCVideoLayersAllocationInto. The returned RTPVideoLayersAllocation
+// aliases this scratch until the next call that reuses it.
+type EncoderWebRTCVideoLayersAllocationScratch struct {
+	ActiveSpatialLayers [EncoderWebRTCMaxSpatialLayers]RTPVideoLayersAllocationLayer
+	TargetBitratesKbps  [EncoderWebRTCMaxSpatialLayers][EncoderWebRTCMaxTemporalLayers]uint32
+}
+
 type EncoderFrameSamplePlanes struct {
 	Y FrameSamplePlane
 	U FrameSamplePlane
@@ -416,6 +424,22 @@ func EncoderWebRTCRTPFrameDuration(config EncoderConfig) (EncoderRational, error
 // PutRTPVideoLayersAllocationHeaderExtension, or
 // EncoderWebRTCRTPPacketHeaderConfig.VideoLayersAllocation.
 func EncoderWebRTCVideoLayersAllocation(config EncoderConfig, allocationConfig EncoderWebRTCVideoLayersAllocationConfig) (RTPVideoLayersAllocation, error) {
+	var scratch EncoderWebRTCVideoLayersAllocationScratch
+	allocation, err := EncoderWebRTCVideoLayersAllocationInto(config, allocationConfig, &scratch)
+	if err != nil {
+		return RTPVideoLayersAllocation{}, err
+	}
+	return cloneRTPVideoLayersAllocation(allocation), nil
+}
+
+// EncoderWebRTCVideoLayersAllocationInto is EncoderWebRTCVideoLayersAllocation
+// with caller-owned scratch for production control loops that refresh layer
+// allocation metadata when bitrate, framerate, active layers, or scalability
+// settings change.
+func EncoderWebRTCVideoLayersAllocationInto(config EncoderConfig, allocationConfig EncoderWebRTCVideoLayersAllocationConfig, scratch *EncoderWebRTCVideoLayersAllocationScratch) (RTPVideoLayersAllocation, error) {
+	if scratch == nil {
+		return RTPVideoLayersAllocation{}, ErrEncoderInvalidConfig
+	}
 	normalized, err := internalencoder.SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
 	if err != nil {
 		return RTPVideoLayersAllocation{}, err
@@ -462,7 +486,7 @@ func EncoderWebRTCVideoLayersAllocation(config EncoderConfig, allocationConfig E
 	allocation := RTPVideoLayersAllocation{
 		RTPStreamID:               allocationConfig.RTPStreamID,
 		RTPStreamCount:            rtpStreamCount,
-		ActiveSpatialLayers:       make([]RTPVideoLayersAllocationLayer, 0, spatialLayers),
+		ActiveSpatialLayers:       scratch.ActiveSpatialLayers[:0],
 		HasResolutionAndFramerate: allocationConfig.IncludeResolutionAndFramerate,
 	}
 	for streamID := 0; streamID < rtpStreamCount; streamID++ {
@@ -477,7 +501,7 @@ func EncoderWebRTCVideoLayersAllocation(config EncoderConfig, allocationConfig E
 			if layerStreamID != streamID {
 				continue
 			}
-			layer, err := encoderWebRTCVideoLayersAllocationLayer(normalized, allocationConfig, spatialID, temporalLayers, layerStreamID, framerate)
+			layer, err := encoderWebRTCVideoLayersAllocationLayer(normalized, allocationConfig, spatialID, temporalLayers, layerStreamID, framerate, scratch.TargetBitratesKbps[spatialID][:])
 			if err != nil {
 				return RTPVideoLayersAllocation{}, err
 			}
@@ -493,8 +517,24 @@ func EncoderWebRTCVideoLayersAllocation(config EncoderConfig, allocationConfig E
 	return allocation, nil
 }
 
-func encoderWebRTCVideoLayersAllocationLayer(config EncoderConfig, allocationConfig EncoderWebRTCVideoLayersAllocationConfig, spatialID int, temporalLayers int, rtpStreamID int, framerate int) (RTPVideoLayersAllocationLayer, error) {
-	targets, err := encoderWebRTCVideoLayersAllocationTargets(config, allocationConfig, spatialID, temporalLayers)
+func cloneRTPVideoLayersAllocation(allocation RTPVideoLayersAllocation) RTPVideoLayersAllocation {
+	out := allocation
+	if len(allocation.ActiveSpatialLayers) == 0 {
+		return out
+	}
+	out.ActiveSpatialLayers = make([]RTPVideoLayersAllocationLayer, len(allocation.ActiveSpatialLayers))
+	copy(out.ActiveSpatialLayers, allocation.ActiveSpatialLayers)
+	for i := range out.ActiveSpatialLayers {
+		targets := allocation.ActiveSpatialLayers[i].TargetBitratesKbps
+		if len(targets) != 0 {
+			out.ActiveSpatialLayers[i].TargetBitratesKbps = append([]uint32(nil), targets...)
+		}
+	}
+	return out
+}
+
+func encoderWebRTCVideoLayersAllocationLayer(config EncoderConfig, allocationConfig EncoderWebRTCVideoLayersAllocationConfig, spatialID int, temporalLayers int, rtpStreamID int, framerate int, targetScratch []uint32) (RTPVideoLayersAllocationLayer, error) {
+	targets, err := encoderWebRTCVideoLayersAllocationTargets(config, allocationConfig, spatialID, temporalLayers, targetScratch)
 	if err != nil {
 		return RTPVideoLayersAllocationLayer{}, err
 	}
@@ -512,8 +552,11 @@ func encoderWebRTCVideoLayersAllocationLayer(config EncoderConfig, allocationCon
 	return layer, nil
 }
 
-func encoderWebRTCVideoLayersAllocationTargets(config EncoderConfig, allocationConfig EncoderWebRTCVideoLayersAllocationConfig, spatialID int, temporalLayers int) ([]uint32, error) {
-	targets := make([]uint32, temporalLayers)
+func encoderWebRTCVideoLayersAllocationTargets(config EncoderConfig, allocationConfig EncoderWebRTCVideoLayersAllocationConfig, spatialID int, temporalLayers int, targetScratch []uint32) ([]uint32, error) {
+	if len(targetScratch) < temporalLayers {
+		return nil, ErrEncoderInvalidConfig
+	}
+	targets := targetScratch[:temporalLayers]
 	var previous uint32
 	for temporalID := 0; temporalID < temporalLayers; temporalID++ {
 		target := allocationConfig.TargetBitratesKbps[spatialID][temporalID]
