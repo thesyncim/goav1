@@ -4361,6 +4361,7 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", initial, err)
 			}
 			var receiver goav1.RTPDependencyDescriptorState
+			var packetReceiver goav1.RTPDependencyDescriptorState
 			var activeReceiver goav1.RTPDependencyDescriptorState
 			activeLimits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}
 			nextFrameID := uint64(0)
@@ -4371,7 +4372,7 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("initial key EncodePicture: %v", err)
 			}
-			appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, key)
+			appendPublicRTCPictureRTPData(t, &packetReceiver, &layerTUs, &orderedTUs, key)
 			assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), key, true, &nextFrameID)
 			assertPublicRTCPictureActiveDecodeTargetOptions(t, &activeReceiver, enc.Config(), key, activeLimits)
 
@@ -4386,7 +4387,7 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("control delta EncodePicture: %v", err)
 			}
-			appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, controlDelta)
+			appendPublicRTCPictureRTPData(t, &packetReceiver, &layerTUs, &orderedTUs, controlDelta)
 			assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), controlDelta, false, &nextFrameID)
 			assertPublicRTCPictureActiveDecodeTargetOptions(t, &activeReceiver, enc.Config(), controlDelta, activeLimits)
 			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
@@ -4404,7 +4405,7 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("structure key EncodePicture: %v", err)
 			}
-			appendPublicRTCPictureLayerData(t, &reconfigLayerTUs, &reconfigOrderedTUs, structureKey)
+			appendPublicRTCPictureRTPData(t, &packetReceiver, &reconfigLayerTUs, &reconfigOrderedTUs, structureKey)
 			assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), structureKey, true, &nextFrameID)
 			assertPublicRTCPictureActiveDecodeTargetOptions(t, &activeReceiver, enc.Config(), structureKey, activeLimits)
 
@@ -4412,7 +4413,7 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("post-reconfigure delta EncodePicture: %v", err)
 			}
-			appendPublicRTCPictureLayerData(t, &reconfigLayerTUs, &reconfigOrderedTUs, postReconfigDelta)
+			appendPublicRTCPictureRTPData(t, &packetReceiver, &reconfigLayerTUs, &reconfigOrderedTUs, postReconfigDelta)
 			assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), postReconfigDelta, false, &nextFrameID)
 			assertPublicRTCPictureActiveDecodeTargetOptions(t, &activeReceiver, enc.Config(), postReconfigDelta, activeLimits)
 			assertPublicRTCLayerStreamsDecode(t, enc.Config(), reconfigLayerTUs, reconfigOrderedTUs)
@@ -5303,6 +5304,16 @@ func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDepende
 		Timestamp:                       uint32(frame.FrameID * 3000),
 		SSRC:                            0x01020304 + uint32(frame.SpatialID),
 		DependencyDescriptorExtensionID: dependencyDescriptorExtensionID,
+		MIDExtensionID:                  1,
+		MID:                             "video",
+		RTPStreamIDExtensionID:          2,
+		RTPStreamID:                     fmt.Sprintf("s%d", frame.SpatialID),
+		TransportWideCCExtensionID:      3,
+		TransportWideCCSequenceNumber:   uint16(frame.FrameID * 31),
+		AbsoluteSendTimeExtensionID:     4,
+		AbsoluteSendTime:                uint32(frame.FrameID*37) & goav1.RTPAbsoluteSendTimeMaxValue,
+		VideoContentTypeExtensionID:     5,
+		VideoContentType:                goav1.RTPVideoContentTypeScreenshare,
 	}
 	packetSize, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(headerConfig, rtpPayloads, descriptors, spans[:packetCount])
 	if err != nil {
@@ -5349,6 +5360,46 @@ func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDepende
 		wantPayload := rtpPayloads[span.PayloadOffset : span.PayloadOffset+span.PayloadLength]
 		if !bytes.Equal(payloadSlices[i], wantPayload) {
 			t.Fatalf("packet %d payload mismatch len=%d want=%d", i, len(payloadSlices[i]), len(wantPayload))
+		}
+		midElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.MIDExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d MID extension ok=%v err=%v", i, ok, err)
+		}
+		mid, err := goav1.ParseRTPMIDHeaderExtension(midElement.Payload)
+		if err != nil || mid != headerConfig.MID {
+			t.Fatalf("packet %d MID=%q err=%v want %q", i, mid, err, headerConfig.MID)
+		}
+		ridElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.RTPStreamIDExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d RID extension ok=%v err=%v", i, ok, err)
+		}
+		rid, err := goav1.ParseRTPStreamIDHeaderExtension(ridElement.Payload)
+		if err != nil || rid != headerConfig.RTPStreamID {
+			t.Fatalf("packet %d RID=%q err=%v want %q", i, rid, err, headerConfig.RTPStreamID)
+		}
+		twccElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.TransportWideCCExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d TWCC extension ok=%v err=%v", i, ok, err)
+		}
+		twcc, err := goav1.ParseRTPTransportWideCCHeaderExtension(twccElement.Payload)
+		if want := headerConfig.TransportWideCCSequenceNumber + uint16(i); err != nil || twcc != want {
+			t.Fatalf("packet %d TWCC=%d err=%v want %d", i, twcc, err, want)
+		}
+		absSendElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.AbsoluteSendTimeExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d abs-send-time extension ok=%v err=%v", i, ok, err)
+		}
+		absSend, err := goav1.ParseRTPAbsoluteSendTimeHeaderExtension(absSendElement.Payload)
+		if err != nil || absSend != headerConfig.AbsoluteSendTime {
+			t.Fatalf("packet %d abs-send-time=%#x err=%v want %#x", i, absSend, err, headerConfig.AbsoluteSendTime)
+		}
+		contentElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.VideoContentTypeExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d content-type extension ok=%v err=%v", i, ok, err)
+		}
+		content, err := goav1.ParseRTPVideoContentTypeHeaderExtension(contentElement.Payload)
+		if err != nil || content != headerConfig.VideoContentType {
+			t.Fatalf("packet %d content-type=%d err=%v want %d", i, content, err, headerConfig.VideoContentType)
 		}
 		header, _, err := goav1.ParseRTPAggregationHeader(payloadSlices[i])
 		if err != nil {
