@@ -113,6 +113,55 @@ func TestBrowserLiveRTCEncoderDirectRTPPlaybackStats(t *testing.T) {
 		t.Skip(err)
 	}
 
+	scenarios := []struct {
+		name         string
+		query        string
+		options      rtcEncoderRTPStreamOptions
+		minKeyFrames int
+	}{
+		{
+			name:         "default-l1t3",
+			query:        "direct-rtp=1",
+			options:      defaultRTCEncoderRTPStreamOptions(),
+			minKeyFrames: 2,
+		},
+		{
+			name:  "temporal-l1t1",
+			query: "direct-rtp-l1t1=1",
+			options: func() rtcEncoderRTPStreamOptions {
+				options := defaultRTCEncoderRTPStreamOptions()
+				options.ConfigForStep = rtcControlChurnConfigForScalabilityMode(goav1.EncoderScalabilityModeL1T1)
+				return options
+			}(),
+			minKeyFrames: 2,
+		},
+		{
+			name:  "temporal-l1t2",
+			query: "direct-rtp-l1t2=1",
+			options: func() rtcEncoderRTPStreamOptions {
+				options := defaultRTCEncoderRTPStreamOptions()
+				options.ConfigForStep = rtcControlChurnConfigForScalabilityMode(goav1.EncoderScalabilityModeL1T2)
+				return options
+			}(),
+			minKeyFrames: 2,
+		},
+	}
+	for _, scenario := range scenarios {
+		scenario := scenario
+		t.Run(scenario.name, func(t *testing.T) {
+			got := runBrowserLiveRTCEncoderDirectRTPPlaybackStats(t, browserPath, scenario.name, scenario.query, scenario.options)
+			if got.KeyFramesDecoded < scenario.minKeyFrames {
+				t.Fatalf("%s browser keyframes=%d want at least %d after forced refresh",
+					scenario.name, got.KeyFramesDecoded, scenario.minKeyFrames)
+			}
+		})
+	}
+}
+
+func runBrowserLiveRTCEncoderDirectRTPPlaybackStats(
+	t *testing.T, browserPath string, label string, query string, options rtcEncoderRTPStreamOptions,
+) browserPlaybackEvidence {
+	t.Helper()
 	var mu sync.Mutex
 	var peers []*webrtc.PeerConnection
 	streamErr := make(chan error, 4)
@@ -122,11 +171,11 @@ func TestBrowserLiveRTCEncoderDirectRTPPlaybackStats(t *testing.T) {
 		w.Write(indexHTML)
 	})
 	mux.HandleFunc("/offer", func(w http.ResponseWriter, r *http.Request) {
-		err := handleRTCEncoderRTPOfferWithPeerConnectionHook(w, r, func(pc *webrtc.PeerConnection) {
+		err := handleRTCEncoderRTPOfferWithStreamOptions(w, r, func(pc *webrtc.PeerConnection) {
 			mu.Lock()
 			peers = append(peers, pc)
 			mu.Unlock()
-		}, streamErr)
+		}, streamErr, options, rtcSenderFeedbackOptions{})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -161,27 +210,25 @@ func TestBrowserLiveRTCEncoderDirectRTPPlaybackStats(t *testing.T) {
 
 	got := browserPlaybackEvidence{}
 	if err := chromedp.Run(browserCtx,
-		chromedp.Navigate(server.URL+"?direct-rtp=1"),
+		chromedp.Navigate(server.URL+"?"+query),
 		chromedp.Evaluate(browserPlaybackProbeJS(45), &got, evalAwaitPromise),
 	); err != nil {
-		t.Fatalf("direct RTP browser AV1 playback probe: %v", err)
+		t.Fatalf("%s browser AV1 playback probe: %v", label, err)
 	}
 	if !got.OK {
 		select {
 		case err := <-streamErr:
-			t.Fatalf("direct RTP stream failed before browser playback: %v; last=%+v", err, got)
+			t.Fatalf("%s stream failed before browser playback: %v; last=%+v", label, err, got)
 		default:
 		}
 	}
-	assertBrowserPlaybackEvidence(t, "direct-rtp", got)
-	if got.KeyFramesDecoded < 2 {
-		t.Fatalf("direct-rtp browser keyframes=%d want at least 2 after forced refresh", got.KeyFramesDecoded)
-	}
+	assertBrowserPlaybackEvidence(t, label, got)
 	select {
 	case err := <-streamErr:
-		t.Fatalf("direct RTP stream failed: %v", err)
+		t.Fatalf("%s stream failed: %v", label, err)
 	default:
 	}
+	return got
 }
 
 func TestBrowserLiveRTCEncoderDirectRTPImpairmentFeedback(t *testing.T) {

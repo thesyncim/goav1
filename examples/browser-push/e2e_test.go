@@ -409,6 +409,7 @@ func streamRTCEncoderRTPWithHeaderExtensions(
 
 type rtcEncoderRTPStreamOptions struct {
 	HeaderExtensions rtcRTPHeaderExtensions
+	ConfigForStep    func(step int) goav1.EncoderConfig
 	ForceKeyFrame    func(frameIndex int) bool
 	DropPacket       func(frameIndex int, packetIndex int, packet rtp.Packet) bool
 	OnPacket         func(frameIndex int, packetIndex int, packet rtp.Packet, dropped bool) error
@@ -430,7 +431,11 @@ func streamRTCEncoderRTPWithOptions(
 	if options.HeaderExtensions.Profile == 0 {
 		options.HeaderExtensions.Profile = goav1.RTPExtensionProfileTwoByte
 	}
-	cfg := rtcControlChurnConfig(0)
+	configForStep := options.ConfigForStep
+	if configForStep == nil {
+		configForStep = rtcControlChurnConfig
+	}
+	cfg := configForStep(0)
 	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		return err
@@ -451,7 +456,7 @@ func streamRTCEncoderRTPWithOptions(
 		case <-ticker.C:
 		}
 		if n > 0 && n%14 == 0 {
-			cfg = rtcControlChurnConfig(n / 14)
+			cfg = configForStep(n / 14)
 			if err := enc.SetConfig(cfg); err != nil {
 				return err
 			}
@@ -534,6 +539,14 @@ func rtcControlChurnConfig(step int) goav1.EncoderConfig {
 		cfg.Content = goav1.EncoderContentScreen
 	}
 	return cfg
+}
+
+func rtcControlChurnConfigForScalabilityMode(mode goav1.EncoderScalabilityMode) func(step int) goav1.EncoderConfig {
+	return func(step int) goav1.EncoderConfig {
+		cfg := rtcControlChurnConfig(step)
+		cfg.Scalability = mode
+		return cfg
+	}
 }
 
 func rtcPictureRTPPackets(
