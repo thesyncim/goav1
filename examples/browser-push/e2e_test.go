@@ -2,14 +2,18 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media/samplebuilder"
@@ -24,44 +28,15 @@ import (
 // content - both ends implement the same RTP and bitstream specs the
 // browser does.
 func TestEndToEndAV1OverRTP(t *testing.T) {
-	receiver, err := webrtc.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	receiver, decoded, _ := newAV1ReceivingPeer(t)
 	defer receiver.Close()
-	if _, err := receiver.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{
-		Direction: webrtc.RTPTransceiverDirectionRecvonly,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	type tu struct {
-		data []byte
-	}
-	decoded := make(chan tu, 256)
-	receiver.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		if track.Codec().MimeType != webrtc.MimeTypeAV1 {
-			t.Errorf("negotiated %s, want AV1", track.Codec().MimeType)
-			return
-		}
-		sb := samplebuilder.New(64, &codecs.AV1Depacketizer{}, track.Codec().ClockRate)
-		for {
-			pkt, _, err := track.ReadRTP()
-			if err != nil {
-				return
-			}
-			sb.Push(pkt)
-			for s := sb.Pop(); s != nil; s = sb.Pop() {
-				decoded <- tu{data: s.Data}
-			}
-		}
-	})
 
 	sender, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sender.Close()
+	waitSenderConnected := waitPeerConnected(t, sender, "sender")
 	track, err := webrtc.NewTrackLocalStaticSample(
 		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeAV1}, "video", "goav1")
 	if err != nil {
@@ -96,18 +71,7 @@ func TestEndToEndAV1OverRTP(t *testing.T) {
 	if err := receiver.SetRemoteDescription(*sender.LocalDescription()); err != nil {
 		t.Fatal(err)
 	}
-
-	connected := make(chan struct{})
-	sender.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		if s == webrtc.PeerConnectionStateConnected {
-			close(connected)
-		}
-	})
-	select {
-	case <-connected:
-	case <-time.After(10 * time.Second):
-		t.Fatal("peer connections never connected")
-	}
+	waitSenderConnected()
 
 	// Stream a couple of seconds through the production path.
 	var wantKey atomic.Bool
@@ -133,9 +97,154 @@ func TestEndToEndAV1OverRTP(t *testing.T) {
 	}()
 
 	// Collect reassembled temporal units and decode them.
+	tus := collectTemporalUnits(t, decoded, 60)
+	assertTemporalUnitsDecodeAndReference(t, "browser-push", tus)
+}
+
+func TestEndToEndAV1OverRTPOfferEndpoint(t *testing.T) {
+	receiver, decoded, trackSSRC := newAV1ReceivingPeer(t)
+	defer receiver.Close()
+	waitReceiverConnected := waitPeerConnected(t, receiver, "receiver")
+
+	offer, err := receiver.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	og := webrtc.GatheringCompletePromise(receiver)
+	if err := receiver.SetLocalDescription(offer); err != nil {
+		t.Fatal(err)
+	}
+	<-og
+
+	var serverPC *webrtc.PeerConnection
+	req := httptest.NewRequest(http.MethodPost, "/offer", strings.NewReader(receiver.LocalDescription().SDP))
+	res := httptest.NewRecorder()
+	if err := handleOfferWithPeerConnectionHook(res, req, 4_000_000, func(pc *webrtc.PeerConnection) {
+		serverPC = pc
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if serverPC == nil {
+		t.Fatal("offer handler did not create a peer connection")
+	}
+	defer serverPC.Close()
+	if res.Code != http.StatusOK {
+		t.Fatalf("offer handler status=%d body=%q", res.Code, res.Body.String())
+	}
+	if err := receiver.SetRemoteDescription(webrtc.SessionDescription{
+		Type: webrtc.SDPTypeAnswer,
+		SDP:  res.Body.String(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReceiverConnected()
+
+	doneFeedback := make(chan struct{})
+	defer close(doneFeedback)
+	startPictureLossFeedback(t, receiver, trackSSRC, doneFeedback)
+
+	tus := collectTemporalUnits(t, decoded, 60)
+	if sequenceHeaders := countSequenceHeaderTemporalUnits(tus); sequenceHeaders < 2 {
+		t.Fatalf("sequence headers after PLI=%d want at least 2", sequenceHeaders)
+	}
+	assertTemporalUnitsDecodeAndReference(t, "browser-push-offer", tus)
+}
+
+type receivedTemporalUnit struct {
+	data []byte
+}
+
+func newAV1ReceivingPeer(t *testing.T) (*webrtc.PeerConnection, <-chan receivedTemporalUnit, <-chan uint32) {
+	t.Helper()
+	receiver, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receiver.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{
+		Direction: webrtc.RTPTransceiverDirectionRecvonly,
+	}); err != nil {
+		receiver.Close()
+		t.Fatal(err)
+	}
+
+	decoded := make(chan receivedTemporalUnit, 256)
+	trackSSRC := make(chan uint32, 1)
+	receiver.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		if track.Codec().MimeType != webrtc.MimeTypeAV1 {
+			t.Errorf("negotiated %s, want AV1", track.Codec().MimeType)
+			return
+		}
+		select {
+		case trackSSRC <- uint32(track.SSRC()):
+		default:
+		}
+		sb := samplebuilder.New(64, &codecs.AV1Depacketizer{}, track.Codec().ClockRate)
+		for {
+			pkt, _, err := track.ReadRTP()
+			if err != nil {
+				return
+			}
+			sb.Push(pkt)
+			for s := sb.Pop(); s != nil; s = sb.Pop() {
+				decoded <- receivedTemporalUnit{data: s.Data}
+			}
+		}
+	})
+	return receiver, decoded, trackSSRC
+}
+
+func waitPeerConnected(t *testing.T, pc *webrtc.PeerConnection, label string) func() {
+	t.Helper()
+	connected := make(chan struct{})
+	var once sync.Once
+	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
+		if s == webrtc.PeerConnectionStateConnected {
+			once.Do(func() { close(connected) })
+		}
+	})
+	return func() {
+		t.Helper()
+		select {
+		case <-connected:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s peer connection never connected", label)
+		}
+	}
+}
+
+func startPictureLossFeedback(
+	t *testing.T, pc *webrtc.PeerConnection, trackSSRC <-chan uint32, done <-chan struct{},
+) {
+	t.Helper()
+	var mediaSSRC uint32
+	select {
+	case mediaSSRC = <-trackSSRC:
+	case <-time.After(10 * time.Second):
+		t.Fatal("remote AV1 track never arrived")
+	}
+	go func() {
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if err := pc.WriteRTCP([]rtcp.Packet{
+					&rtcp.PictureLossIndication{MediaSSRC: mediaSSRC},
+				}); err != nil {
+					return
+				}
+			}
+		}
+	}()
+}
+
+func collectTemporalUnits(t *testing.T, decoded <-chan receivedTemporalUnit, want int) [][]byte {
+	t.Helper()
 	var tus [][]byte
 	deadline := time.After(15 * time.Second)
-	for len(tus) < 60 {
+	for len(tus) < want {
 		select {
 		case u := <-decoded:
 			tus = append(tus, u.data)
@@ -143,10 +252,11 @@ func TestEndToEndAV1OverRTP(t *testing.T) {
 			t.Fatalf("only %d temporal units arrived", len(tus))
 		}
 	}
-	// The sample builder needs a packet of context before it emits, so the
-	// first reassembled units can start mid-sequence - the browser has the
-	// same view and recovers at the next keyframe. Decode from the first
-	// unit that carries a sequence header.
+	return tus
+}
+
+func assertTemporalUnitsDecodeAndReference(t *testing.T, name string, tus [][]byte) {
+	t.Helper()
 	start := -1
 	for i, u := range tus {
 		if len(u) > 0 && (u[0]>>3)&0xF == 1 { // OBU_SEQUENCE_HEADER
@@ -207,12 +317,22 @@ func TestEndToEndAV1OverRTP(t *testing.T) {
 	assertReferenceDecodersRawYUVBytes(
 		t,
 		referenceAV1Decoders(t),
-		"browser-push",
+		name,
 		appendReferenceIVF(nil, width, height, fps, 1, ivfFrames),
 		wantYUV,
 		frames,
 	)
 	t.Logf("decoded %d frames, average sampled luma %d", frames, avg)
+}
+
+func countSequenceHeaderTemporalUnits(tus [][]byte) int {
+	count := 0
+	for _, u := range tus {
+		if len(u) > 0 && (u[0]>>3)&0xF == 1 { // OBU_SEQUENCE_HEADER
+			count++
+		}
+	}
+	return count
 }
 
 type referenceAV1Decoder struct {

@@ -57,6 +57,12 @@ func main() {
 
 // handleOffer answers one browser offer and starts a stream for it.
 func handleOffer(w http.ResponseWriter, r *http.Request, bitrate int) error {
+	return handleOfferWithPeerConnectionHook(w, r, bitrate, nil)
+}
+
+func handleOfferWithPeerConnectionHook(
+	w http.ResponseWriter, r *http.Request, bitrate int, onPeerConnection func(*webrtc.PeerConnection),
+) error {
 	offerSDP, err := io.ReadAll(r.Body)
 	if err != nil {
 		return err
@@ -65,6 +71,9 @@ func handleOffer(w http.ResponseWriter, r *http.Request, bitrate int) error {
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		return err
+	}
+	if onPeerConnection != nil {
+		onPeerConnection(pc)
 	}
 	track, err := webrtc.NewTrackLocalStaticSample(
 		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeAV1},
