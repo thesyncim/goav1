@@ -56,8 +56,11 @@ func TestScalabilityModeParseAndLayers(t *testing.T) {
 		if !ok || spatial != tc.spatial || temporal != tc.temporal || key != tc.key {
 			t.Fatalf("%q Layers() = %d,%d,%v,%v", tc.in, spatial, temporal, key, ok)
 		}
-		if got.UsesSmallResolutionStep() != tc.small || got.IsSimulcast() != tc.sim {
-			t.Fatalf("%q flags small=%v sim=%v", tc.in, got.UsesSmallResolutionStep(), got.IsSimulcast())
+		wantShared := tc.spatial > 1 && !tc.sim
+		if got.UsesSmallResolutionStep() != tc.small ||
+			got.IsSimulcast() != tc.sim ||
+			got.UsesSharedReferenceSlots() != wantShared {
+			t.Fatalf("%q flags small=%v sim=%v shared=%v", tc.in, got.UsesSmallResolutionStep(), got.IsSimulcast(), got.UsesSharedReferenceSlots())
 		}
 		if got.UsesKeyFrameInterLayerDependency() != tc.key {
 			t.Fatalf("%q key flag=%v", tc.in, got.UsesKeyFrameInterLayerDependency())

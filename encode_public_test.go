@@ -62,12 +62,14 @@ func TestPublicEncoderWebRTCScalabilityModeCatalogue(t *testing.T) {
 		}
 		if mode.IsSimulcast() != strings.HasPrefix(name, "S") ||
 			mode.UsesSmallResolutionStep() != strings.Contains(name, "h") ||
+			mode.UsesSharedReferenceSlots() != (wantSpatial > 1 && !strings.HasPrefix(name, "S")) ||
 			mode.UsesKeyFrameInterLayerDependency() != strings.Contains(name, "_KEY") ||
 			mode.UsesKeyFrameInterLayerDependencyShift() != strings.Contains(name, "_KEY_SHIFT") {
-			t.Fatalf("%q flags simulcast=%v small=%v key=%v shift=%v",
+			t.Fatalf("%q flags simulcast=%v small=%v shared=%v key=%v shift=%v",
 				name,
 				mode.IsSimulcast(),
 				mode.UsesSmallResolutionStep(),
+				mode.UsesSharedReferenceSlots(),
 				mode.UsesKeyFrameInterLayerDependency(),
 				mode.UsesKeyFrameInterLayerDependencyShift())
 		}
@@ -5476,8 +5478,7 @@ func assertPublicRTCSpatialLayerDecodes(t *testing.T, spatialID int, tus [][]byt
 }
 
 func publicRTCSharedReferenceSlotMode(mode goav1.EncoderScalabilityMode) bool {
-	spatial, _, _, ok := mode.Layers()
-	return ok && spatial > 1 && !mode.IsSimulcast()
+	return mode.UsesSharedReferenceSlots()
 }
 
 type publicLayeredFrameMetadata struct {

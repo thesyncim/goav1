@@ -367,6 +367,11 @@ func (m ScalabilityMode) IsSimulcast() bool {
 	return m.Valid() && scalabilityModes[m].simulcast
 }
 
+func (m ScalabilityMode) UsesSharedReferenceSlots() bool {
+	spatial, _, _, ok := m.Layers()
+	return ok && spatial > 1 && !m.IsSimulcast()
+}
+
 func (m ScalabilityMode) UsesKeyFrameInterLayerDependency() bool {
 	return m.Valid() && scalabilityModes[m].key
 }
