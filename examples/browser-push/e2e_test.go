@@ -224,6 +224,128 @@ func TestEndToEndAV1OverRTPRTCEncoderControlChurn(t *testing.T) {
 	assertTemporalUnitsDecodeAndReference(t, "browser-push-rtc-control-churn", tus)
 }
 
+func TestEndToEndAV1OverRTPRTCEncoderREMBBitrateControl(t *testing.T) {
+	receiver, decoded, trackSSRC := newAV1ReceivingPeer(t)
+	defer receiver.Close()
+
+	sender, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	waitSenderConnected := waitPeerConnected(t, sender, "sender")
+	track, err := webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeAV1}, "video", "goav1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rtpSender, err := sender.AddTrack(track)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	offer, err := receiver.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	og := webrtc.GatheringCompletePromise(receiver)
+	if err := receiver.SetLocalDescription(offer); err != nil {
+		t.Fatal(err)
+	}
+	<-og
+	if err := sender.SetRemoteDescription(*receiver.LocalDescription()); err != nil {
+		t.Fatal(err)
+	}
+	answer, err := sender.CreateAnswer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := webrtc.GatheringCompletePromise(sender)
+	if err := sender.SetLocalDescription(answer); err != nil {
+		t.Fatal(err)
+	}
+	<-ag
+	if err := receiver.SetRemoteDescription(*sender.LocalDescription()); err != nil {
+		t.Fatal(err)
+	}
+	waitSenderConnected()
+
+	done := make(chan struct{})
+	defer close(done)
+	doneFeedback := make(chan struct{})
+	defer close(doneFeedback)
+	var wantKey atomic.Bool
+	wantKey.Store(true)
+
+	const rembBitrateBps = 700_000
+	rembUpdates := make(chan goav1.RTCPReceiverEstimatedMaximumBitrate, 8)
+	feedback := &rtcSenderFeedbackCounters{}
+	startSenderFeedbackReaderWithOptions(rtpSender, track, &wantKey, done, rtcSenderFeedbackOptions{
+		Counters: feedback,
+		OnReceiverEstimatedMaximumBitrate: func(remb *rtcp.ReceiverEstimatedMaximumBitrate) {
+			if remb == nil || remb.Bitrate <= 0 {
+				return
+			}
+			update := goav1.RTCPReceiverEstimatedMaximumBitrate{
+				BitrateBps: uint64(remb.Bitrate + 0.5),
+				SSRCs:      append([]uint32(nil), remb.SSRCs...),
+			}
+			select {
+			case rembUpdates <- update:
+			default:
+			}
+		},
+	})
+
+	baseConfig := rtcControlChurnConfig(0)
+	baseConfig.MinBitrateKbps = 300
+	baseConfig.TargetBitrateKbps = 3600
+	baseConfig.MaxBitrateKbps = 5000
+	baseConfig.RateControl = goav1.EncoderRateControlCBR
+	baseConfig.Scalability = goav1.EncoderScalabilityModeL1T3
+	var configMu sync.Mutex
+	var configs []goav1.EncoderConfig
+	var rembApplied atomic.Int64
+	options := defaultRTCEncoderRTPStreamOptions()
+	options.ReceiverEstimatedMaximumBitrate = rembUpdates
+	options.ForceKeyFrame = func(frameIndex int) bool { return false }
+	options.ConfigForStep = func(step int) goav1.EncoderConfig { return baseConfig }
+	options.OnConfigApplied = func(frameIndex int, step int, cfg goav1.EncoderConfig) {
+		configMu.Lock()
+		configs = append(configs, cfg)
+		configMu.Unlock()
+		if step < 0 && cfg.TargetBitrateKbps == rembBitrateBps/1000 {
+			rembApplied.Add(1)
+		}
+	}
+
+	streamErr := make(chan error, 1)
+	go func() {
+		streamErr <- streamRTCEncoderRTPWithOptions(track, &wantKey, done, options)
+	}()
+	startReceiverEstimatedMaximumBitrateFeedback(t, receiver, trackSSRC, rembBitrateBps, doneFeedback)
+
+	tus := collectTemporalUnits(t, decoded, 70)
+	if feedback.ReceiverEstimatedMaximumBitrate.Load() == 0 {
+		t.Fatal("sender received no REMB feedback")
+	}
+	if rembApplied.Load() == 0 {
+		configMu.Lock()
+		gotConfigs := append([]goav1.EncoderConfig(nil), configs...)
+		configMu.Unlock()
+		t.Fatalf("REMB did not apply target bitrate %d kbps through RTCEncoder.SetConfig; configs=%v",
+			rembBitrateBps/1000, gotConfigs)
+	}
+	select {
+	case err := <-streamErr:
+		if err != nil {
+			t.Fatalf("RTCEncoder RTP REMB stream stopped early: %v", err)
+		}
+	default:
+	}
+	assertTemporalUnitsDecodeAndReference(t, "browser-push-rtc-remb", tus)
+}
+
 type receivedTemporalUnit struct {
 	data []byte
 }
@@ -314,19 +436,53 @@ func startPictureLossFeedback(
 	}()
 }
 
+func startReceiverEstimatedMaximumBitrateFeedback(
+	t *testing.T, pc *webrtc.PeerConnection, trackSSRC <-chan uint32, bitrateBps uint64, done <-chan struct{},
+) {
+	t.Helper()
+	var mediaSSRC uint32
+	select {
+	case mediaSSRC = <-trackSSRC:
+	case <-time.After(10 * time.Second):
+		t.Fatal("remote AV1 track never arrived")
+	}
+	go func() {
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if err := pc.WriteRTCP([]rtcp.Packet{
+					&rtcp.ReceiverEstimatedMaximumBitrate{
+						SenderSSRC: 0xdec0de,
+						Bitrate:    float32(bitrateBps),
+						SSRCs:      []uint32{mediaSSRC},
+					},
+				}); err != nil {
+					return
+				}
+			}
+		}
+	}()
+}
+
 func startSenderPictureLossReader(sender *webrtc.RTPSender, wantKey *atomic.Bool, done <-chan struct{}) {
 	startSenderFeedbackReader(sender, wantKey, done, nil)
 }
 
 type rtcSenderFeedbackOptions struct {
-	Counters *rtcSenderFeedbackCounters
-	OnNACK   func(*webrtc.TrackLocalStaticRTP, *rtcp.TransportLayerNack) bool
+	Counters                          *rtcSenderFeedbackCounters
+	OnNACK                            func(*webrtc.TrackLocalStaticRTP, *rtcp.TransportLayerNack) bool
+	OnReceiverEstimatedMaximumBitrate func(*rtcp.ReceiverEstimatedMaximumBitrate)
 }
 
 type rtcSenderFeedbackCounters struct {
-	PictureLoss atomic.Int64
-	FullIntra   atomic.Int64
-	NACK        atomic.Int64
+	PictureLoss                     atomic.Int64
+	FullIntra                       atomic.Int64
+	NACK                            atomic.Int64
+	ReceiverEstimatedMaximumBitrate atomic.Int64
 }
 
 func startSenderFeedbackReader(
@@ -374,6 +530,13 @@ func startSenderFeedbackReaderWithOptions(
 					if options.OnNACK == nil || !options.OnNACK(track, feedback) {
 						wantKey.Store(true)
 					}
+				case *rtcp.ReceiverEstimatedMaximumBitrate:
+					if options.Counters != nil {
+						options.Counters.ReceiverEstimatedMaximumBitrate.Add(1)
+					}
+					if options.OnReceiverEstimatedMaximumBitrate != nil {
+						options.OnReceiverEstimatedMaximumBitrate(feedback)
+					}
 				}
 			}
 		}
@@ -408,15 +571,16 @@ func streamRTCEncoderRTPWithHeaderExtensions(
 }
 
 type rtcEncoderRTPStreamOptions struct {
-	HeaderExtensions     rtcRTPHeaderExtensions
-	ConfigForStep        func(step int) goav1.EncoderConfig
-	RTPOptionsForPicture func(picture goav1.RTCPicture) (goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions, error)
-	FrameFilter          func(frame goav1.RTCFrame) bool
-	ForceKeyFrame        func(frameIndex int) bool
-	DropPacket           func(frameIndex int, packetIndex int, packet rtp.Packet) bool
-	OnPacket             func(frameIndex int, packetIndex int, packet rtp.Packet, dropped bool) error
-	OnPicture            func(frameIndex int, picture goav1.RTCPicture)
-	OnConfigApplied      func(frameIndex int, step int, cfg goav1.EncoderConfig)
+	HeaderExtensions                rtcRTPHeaderExtensions
+	ConfigForStep                   func(step int) goav1.EncoderConfig
+	ReceiverEstimatedMaximumBitrate <-chan goav1.RTCPReceiverEstimatedMaximumBitrate
+	RTPOptionsForPicture            func(picture goav1.RTCPicture) (goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions, error)
+	FrameFilter                     func(frame goav1.RTCFrame) bool
+	ForceKeyFrame                   func(frameIndex int) bool
+	DropPacket                      func(frameIndex int, packetIndex int, packet rtp.Packet) bool
+	OnPacket                        func(frameIndex int, packetIndex int, packet rtp.Packet, dropped bool) error
+	OnPicture                       func(frameIndex int, picture goav1.RTCPicture)
+	OnConfigApplied                 func(frameIndex int, step int, cfg goav1.EncoderConfig)
 }
 
 func defaultRTCEncoderRTPStreamOptions() rtcEncoderRTPStreamOptions {
@@ -447,6 +611,38 @@ func streamRTCEncoderRTPWithOptions(
 	if options.OnConfigApplied != nil {
 		options.OnConfigApplied(0, 0, enc.Config())
 	}
+	rembFeedback := options.ReceiverEstimatedMaximumBitrate
+	applyConfig := func(frameIndex int, step int, next goav1.EncoderConfig) error {
+		if err := enc.SetConfig(next); err != nil {
+			return err
+		}
+		cfg = enc.Config()
+		if options.OnConfigApplied != nil {
+			options.OnConfigApplied(frameIndex, step, cfg)
+		}
+		return nil
+	}
+	applyReceiverEstimatedMaximumBitrate := func(frameIndex int) error {
+		for rembFeedback != nil {
+			select {
+			case remb, ok := <-rembFeedback:
+				if !ok {
+					rembFeedback = nil
+					return nil
+				}
+				updated, err := goav1.EncoderWebRTCApplyReceiverEstimatedMaximumBitrate(enc.Config(), remb)
+				if err != nil {
+					return err
+				}
+				if err := applyConfig(frameIndex, -1, updated); err != nil {
+					return err
+				}
+			default:
+				return nil
+			}
+		}
+		return nil
+	}
 	scene := newScene()
 	ticker := time.NewTicker(time.Second / fps)
 	defer ticker.Stop()
@@ -463,12 +659,12 @@ func streamRTCEncoderRTPWithOptions(
 		}
 		if n > 0 && n%14 == 0 {
 			cfg = configForStep(n / 14)
-			if err := enc.SetConfig(cfg); err != nil {
+			if err := applyConfig(n, n/14, cfg); err != nil {
 				return err
 			}
-			if options.OnConfigApplied != nil {
-				options.OnConfigApplied(n, n/14, enc.Config())
-			}
+		}
+		if err := applyReceiverEstimatedMaximumBitrate(n); err != nil {
+			return err
 		}
 		forceKey := wantKey.Swap(false)
 		if options.ForceKeyFrame != nil && options.ForceKeyFrame(n) {

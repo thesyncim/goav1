@@ -1096,15 +1096,17 @@ func rtcSenderFeedbackTotal(counters *rtcSenderFeedbackCounters) int64 {
 	if counters == nil {
 		return 0
 	}
-	return counters.PictureLoss.Load() + counters.FullIntra.Load() + counters.NACK.Load()
+	return counters.PictureLoss.Load() + counters.FullIntra.Load() + counters.NACK.Load() +
+		counters.ReceiverEstimatedMaximumBitrate.Load()
 }
 
 func rtcSenderFeedbackString(counters *rtcSenderFeedbackCounters) string {
 	if counters == nil {
-		return "pli=0 fir=0 nack=0"
+		return "pli=0 fir=0 nack=0 remb=0"
 	}
-	return fmt.Sprintf("pli=%d fir=%d nack=%d",
-		counters.PictureLoss.Load(), counters.FullIntra.Load(), counters.NACK.Load())
+	return fmt.Sprintf("pli=%d fir=%d nack=%d remb=%d",
+		counters.PictureLoss.Load(), counters.FullIntra.Load(), counters.NACK.Load(),
+		counters.ReceiverEstimatedMaximumBitrate.Load())
 }
 
 func newRTCEncoderRTPPeerConnection() (*webrtc.PeerConnection, error) {
