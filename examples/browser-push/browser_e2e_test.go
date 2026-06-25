@@ -219,6 +219,68 @@ func TestBrowserLiveRTCEncoderDirectRTPControlChurnPlayback(t *testing.T) {
 	}
 }
 
+func TestBrowserLiveRTCEncoderDirectRTPReceiverEstimatedMaximumBitrateControl(t *testing.T) {
+	required := os.Getenv(requireBrowserE2EEnv) == "1"
+	if !required && os.Getenv(browserE2EEnv) != "1" {
+		t.Skipf("set %s=1 to run the live browser/libwebrtc AV1 REMB control gate", browserE2EEnv)
+	}
+	browserPath, err := browserExecutable()
+	if err != nil {
+		if required {
+			t.Fatalf("required browser executable unavailable: %v", err)
+		}
+		t.Skip(err)
+	}
+
+	feedback := &rtcSenderFeedbackCounters{}
+	var droppedPackets atomic.Int64
+	var rembApplied atomic.Int64
+	var lastREMBTargetKbps atomic.Int64
+	options := defaultRTCEncoderRTPStreamOptions()
+	options.ForceKeyFrame = func(frameIndex int) bool { return false }
+	options.DropPacket = func(frameIndex int, packetIndex int, _ rtp.Packet) bool {
+		if frameIndex != 10 || packetIndex >= 4 {
+			return false
+		}
+		droppedPackets.Add(1)
+		return true
+	}
+	options.OnConfigApplied = func(_ int, step int, cfg goav1.EncoderConfig) {
+		if step >= 0 {
+			return
+		}
+		rembApplied.Add(1)
+		lastREMBTargetKbps.Store(int64(cfg.TargetBitrateKbps))
+	}
+
+	got := runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedback(
+		t,
+		browserPath,
+		"direct-rtp-remb",
+		"direct-rtp-remb=1",
+		options,
+		width,
+		height,
+		rtcSenderFeedbackOptions{Counters: feedback},
+	)
+	if got.KeyFramesDecoded < 1 {
+		t.Fatalf("direct RTP REMB browser keyframes=%d want at least 1", got.KeyFramesDecoded)
+	}
+	if droppedPackets.Load() == 0 {
+		t.Fatal("direct RTP REMB test did not drop any packets")
+	}
+	if feedback.ReceiverEstimatedMaximumBitrate.Load() == 0 {
+		t.Fatalf("direct RTP REMB test produced no browser REMB feedback after %d dropped packets; feedback=%s",
+			droppedPackets.Load(), rtcSenderFeedbackString(feedback))
+	}
+	if rembApplied.Load() == 0 || lastREMBTargetKbps.Load() == 0 {
+		t.Fatalf("direct RTP REMB feedback was not applied through RTCEncoder.SetConfig; feedback=%s applied=%d target=%d",
+			rtcSenderFeedbackString(feedback), rembApplied.Load(), lastREMBTargetKbps.Load())
+	}
+	t.Logf("direct RTP REMB control: dropped=%d applied=%d targetKbps=%d %s",
+		droppedPackets.Load(), rembApplied.Load(), lastREMBTargetKbps.Load(), rtcSenderFeedbackString(feedback))
+}
+
 type browserRTCEncoderDirectRTPPlaybackScenario struct {
 	name         string
 	query        string
@@ -495,6 +557,15 @@ func runBrowserLiveRTCEncoderDirectRTPPlaybackStats(
 	wantWidth int, wantHeight int,
 ) browserPlaybackEvidence {
 	t.Helper()
+	return runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedback(
+		t, browserPath, label, query, options, wantWidth, wantHeight, rtcSenderFeedbackOptions{})
+}
+
+func runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedback(
+	t *testing.T, browserPath string, label string, query string, options rtcEncoderRTPStreamOptions,
+	wantWidth int, wantHeight int, feedback rtcSenderFeedbackOptions,
+) browserPlaybackEvidence {
+	t.Helper()
 	var mu sync.Mutex
 	var peers []*webrtc.PeerConnection
 	streamErr := make(chan error, 4)
@@ -508,7 +579,7 @@ func runBrowserLiveRTCEncoderDirectRTPPlaybackStats(
 			mu.Lock()
 			peers = append(peers, pc)
 			mu.Unlock()
-		}, streamErr, options, rtcSenderFeedbackOptions{})
+		}, streamErr, options, feedback)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -1040,6 +1111,7 @@ func handleRTCEncoderRTPOfferWithStreamOptions(
 	var wantKey atomic.Bool
 	wantKey.Store(true)
 	done := make(chan struct{})
+	bindBrowserReceiverEstimatedMaximumBitrateFeedback(&streamOptions, &feedback)
 	startSenderFeedbackReaderWithOptions(sender, track, &wantKey, done, feedback)
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		switch s {
@@ -1090,6 +1162,31 @@ func handleRTCEncoderRTPOfferWithStreamOptions(
 	<-gathered
 	fmt.Fprint(w, pc.LocalDescription().SDP)
 	return nil
+}
+
+func bindBrowserReceiverEstimatedMaximumBitrateFeedback(
+	options *rtcEncoderRTPStreamOptions,
+	feedback *rtcSenderFeedbackOptions,
+) {
+	if options == nil || feedback == nil || options.ReceiverEstimatedMaximumBitrate != nil {
+		return
+	}
+	rembUpdates := make(chan goav1.RTCPReceiverEstimatedMaximumBitrate, 16)
+	options.ReceiverEstimatedMaximumBitrate = rembUpdates
+	prev := feedback.OnReceiverEstimatedMaximumBitrate
+	feedback.OnReceiverEstimatedMaximumBitrate = func(remb *rtcp.ReceiverEstimatedMaximumBitrate) {
+		if prev != nil {
+			prev(remb)
+		}
+		update, ok := rtcReceiverEstimatedMaximumBitrateFromPion(remb)
+		if !ok {
+			return
+		}
+		select {
+		case rembUpdates <- update:
+		default:
+		}
+	}
 }
 
 func rtcSenderFeedbackTotal(counters *rtcSenderFeedbackCounters) int64 {

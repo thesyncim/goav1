@@ -283,12 +283,9 @@ func TestEndToEndAV1OverRTPRTCEncoderREMBBitrateControl(t *testing.T) {
 	startSenderFeedbackReaderWithOptions(rtpSender, track, &wantKey, done, rtcSenderFeedbackOptions{
 		Counters: feedback,
 		OnReceiverEstimatedMaximumBitrate: func(remb *rtcp.ReceiverEstimatedMaximumBitrate) {
-			if remb == nil || remb.Bitrate <= 0 {
+			update, ok := rtcReceiverEstimatedMaximumBitrateFromPion(remb)
+			if !ok {
 				return
-			}
-			update := goav1.RTCPReceiverEstimatedMaximumBitrate{
-				BitrateBps: uint64(remb.Bitrate + 0.5),
-				SSRCs:      append([]uint32(nil), remb.SSRCs...),
 			}
 			select {
 			case rembUpdates <- update:
@@ -483,6 +480,18 @@ type rtcSenderFeedbackCounters struct {
 	FullIntra                       atomic.Int64
 	NACK                            atomic.Int64
 	ReceiverEstimatedMaximumBitrate atomic.Int64
+}
+
+func rtcReceiverEstimatedMaximumBitrateFromPion(
+	remb *rtcp.ReceiverEstimatedMaximumBitrate,
+) (goav1.RTCPReceiverEstimatedMaximumBitrate, bool) {
+	if remb == nil || remb.Bitrate <= 0 {
+		return goav1.RTCPReceiverEstimatedMaximumBitrate{}, false
+	}
+	return goav1.RTCPReceiverEstimatedMaximumBitrate{
+		BitrateBps: uint64(remb.Bitrate + 0.5),
+		SSRCs:      append([]uint32(nil), remb.SSRCs...),
+	}, true
 }
 
 func startSenderFeedbackReader(
