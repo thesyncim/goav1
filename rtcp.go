@@ -1263,6 +1263,36 @@ type RTCPTransportFeedback struct {
 	Packets             []RTCPTransportFeedbackPacket
 }
 
+// RTCPTransportFeedbackPacketReception is one packet-status entry expanded
+// into the receive timeline needed by sender-side congestion controllers.
+// ReceiveTimeMicros is valid only when ReceiveTimePresent is true.
+type RTCPTransportFeedbackPacketReception struct {
+	SequenceNumber     uint16
+	Received           bool
+	ReceiveTimePresent bool
+	ReceiveTimeMicros  int64
+}
+
+// RTCPTransportFeedbackReceptionSummary is a compact summary of one
+// transport-wide congestion-control feedback FCI.
+type RTCPTransportFeedbackReceptionSummary struct {
+	BaseSequenceNumber          uint16
+	LastSequenceNumber          uint16
+	FeedbackPacketCount         uint8
+	PacketCount                 int
+	ReceivedCount               int
+	NotReceivedCount            int
+	FirstReceivedSequenceNumber uint16
+	LastReceivedSequenceNumber  uint16
+	DeltasPresent               bool
+	ReceiveTimePresent          bool
+	ReferenceTimeMicros         int64
+	FirstReceiveTimeMicros      int64
+	LastReceiveTimeMicros       int64
+	MinReceiveDeltaMicros       int32
+	MaxReceiveDeltaMicros       int32
+}
+
 // Validate rejects feedback that cannot be represented in a transport-wide
 // congestion-control FCI.
 func (f RTCPTransportFeedback) Validate() error {
@@ -1425,6 +1455,185 @@ func ParseRTCPTransportFeedbackFCI(src []byte, dst []RTCPTransportFeedbackPacket
 		}
 	}
 	return feedback, nil
+}
+
+// RTCPTransportFeedbackReferenceTimeMicros returns feedback's base receive time
+// in microseconds. WebRTC transport-wide feedback stores the 24-bit reference
+// time in 64 ms ticks.
+func RTCPTransportFeedbackReferenceTimeMicros(feedback RTCPTransportFeedback) int64 {
+	return int64(feedback.ReferenceTimeTicks) * int64(RTCPTransportFeedbackBaseTimeTickMicros)
+}
+
+// AppendRTCPTransportFeedbackPacketReceptions appends each packet status in
+// feedback with its reconstructed receive time when receive deltas are present.
+// The first received packet time is reference_time + first_delta; later received
+// packet times are relative to the previous received packet. Missing packets and
+// no-timestamp feedback entries have ReceiveTimePresent=false. dst is not grown
+// beyond its existing capacity.
+func AppendRTCPTransportFeedbackPacketReceptions(
+	dst []RTCPTransportFeedbackPacketReception,
+	feedback RTCPTransportFeedback,
+) ([]RTCPTransportFeedbackPacketReception, error) {
+	if err := feedback.Validate(); err != nil {
+		return dst, err
+	}
+	if cap(dst)-len(dst) < len(feedback.Packets) {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+len(feedback.Packets)]
+	receiveTimeMicros := RTCPTransportFeedbackReferenceTimeMicros(feedback)
+	for i := range feedback.Packets {
+		packet := feedback.Packets[i]
+		reception := RTCPTransportFeedbackPacketReception{
+			SequenceNumber: packet.SequenceNumber,
+			Received:       packet.Received,
+		}
+		if packet.Received && feedback.DeltasPresent {
+			receiveTimeMicros += int64(packet.DeltaTicks) * int64(RTCPTransportFeedbackDeltaTickMicros)
+			reception.ReceiveTimePresent = true
+			reception.ReceiveTimeMicros = receiveTimeMicros
+		}
+		out[off+i] = reception
+	}
+	return out, nil
+}
+
+// SummarizeRTCPTransportFeedback returns aggregate packet and receive-timeline
+// information for one transport-wide congestion-control feedback FCI.
+func SummarizeRTCPTransportFeedback(feedback RTCPTransportFeedback) (RTCPTransportFeedbackReceptionSummary, error) {
+	if err := feedback.Validate(); err != nil {
+		return RTCPTransportFeedbackReceptionSummary{}, err
+	}
+	summary := RTCPTransportFeedbackReceptionSummary{
+		BaseSequenceNumber:  feedback.BaseSequenceNumber,
+		LastSequenceNumber:  feedback.BaseSequenceNumber + uint16(len(feedback.Packets)-1),
+		FeedbackPacketCount: feedback.FeedbackPacketCount,
+		PacketCount:         len(feedback.Packets),
+		DeltasPresent:       feedback.DeltasPresent,
+		ReferenceTimeMicros: RTCPTransportFeedbackReferenceTimeMicros(feedback),
+	}
+	receiveTimeMicros := summary.ReferenceTimeMicros
+	for i := range feedback.Packets {
+		packet := feedback.Packets[i]
+		if !packet.Received {
+			summary.NotReceivedCount++
+			continue
+		}
+		if summary.ReceivedCount == 0 {
+			summary.FirstReceivedSequenceNumber = packet.SequenceNumber
+		}
+		summary.ReceivedCount++
+		summary.LastReceivedSequenceNumber = packet.SequenceNumber
+		if !feedback.DeltasPresent {
+			continue
+		}
+		deltaMicros := int32(packet.DeltaTicks) * int32(RTCPTransportFeedbackDeltaTickMicros)
+		receiveTimeMicros += int64(deltaMicros)
+		if !summary.ReceiveTimePresent {
+			summary.ReceiveTimePresent = true
+			summary.FirstReceiveTimeMicros = receiveTimeMicros
+			summary.MinReceiveDeltaMicros = deltaMicros
+			summary.MaxReceiveDeltaMicros = deltaMicros
+		} else {
+			if deltaMicros < summary.MinReceiveDeltaMicros {
+				summary.MinReceiveDeltaMicros = deltaMicros
+			}
+			if deltaMicros > summary.MaxReceiveDeltaMicros {
+				summary.MaxReceiveDeltaMicros = deltaMicros
+			}
+		}
+		summary.LastReceiveTimeMicros = receiveTimeMicros
+	}
+	return summary, nil
+}
+
+// EncoderWebRTCRTCPFeedbackTransportFeedback parses a single RTCP feedback
+// packet and returns WebRTC transport-wide congestion-control feedback. Non-
+// Transport-CC RTPFB/PSFB feedback returns ok=false.
+func EncoderWebRTCRTCPFeedbackTransportFeedback(
+	packet RTCPFeedbackPacket,
+	transportScratch []RTCPTransportFeedbackPacket,
+) (feedback RTCPTransportFeedback, ok bool, err error) {
+	switch packet.PacketType {
+	case RTCPRTPFBPacketType:
+	case RTCPPSFBPacketType:
+		return RTCPTransportFeedback{}, false, nil
+	default:
+		return RTCPTransportFeedback{}, false, ErrRTCPInvalidFeedback
+	}
+	if packet.FMT != RTCPRTPFBTransportFeedbackFMT {
+		return RTCPTransportFeedback{}, false, nil
+	}
+	feedback, err = ParseRTCPTransportFeedbackFCI(packet.FCI, transportScratch)
+	if err != nil {
+		return RTCPTransportFeedback{}, false, err
+	}
+	return feedback, true, nil
+}
+
+// EncoderWebRTCRTCPPacketsTransportFeedback scans parsed generic RTCP packets
+// and appends every WebRTC Transport-CC feedback FCI into feedbackScratch
+// without allocation. Non-feedback RTCP packets and non-Transport-CC feedback
+// are ignored.
+func EncoderWebRTCRTCPPacketsTransportFeedback(
+	packets []RTCPPacket,
+	feedbackScratch []RTCPTransportFeedback,
+	transportScratch []RTCPTransportFeedbackPacket,
+) ([]RTCPTransportFeedback, error) {
+	feedbackStart := len(feedbackScratch)
+	packetScratch := transportScratch
+	for i := range packets {
+		packet := packets[i]
+		if packet.PacketType != RTCPRTPFBPacketType && packet.PacketType != RTCPPSFBPacketType {
+			continue
+		}
+		if len(packet.Payload) < RTCPFeedbackCommonSize {
+			return nil, ErrRTCPInvalidFeedback
+		}
+		if packet.PacketType != RTCPRTPFBPacketType || packet.Count != RTCPRTPFBTransportFeedbackFMT {
+			continue
+		}
+		if cap(feedbackScratch)-len(feedbackScratch) < 1 {
+			return nil, ErrRTCPShortBuffer
+		}
+		packetStart := len(packetScratch)
+		current, ok, err := EncoderWebRTCRTCPFeedbackTransportFeedback(RTCPFeedbackPacket{
+			PacketType: packet.PacketType,
+			FMT:        packet.Count,
+			SenderSSRC: binary.BigEndian.Uint32(packet.Payload[0:4]),
+			MediaSSRC:  binary.BigEndian.Uint32(packet.Payload[4:8]),
+			FCI:        packet.Payload[RTCPFeedbackCommonSize:],
+		}, packetScratch)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		packetScratch = packetScratch[:packetStart+len(current.Packets)]
+		feedbackScratch = feedbackScratch[:len(feedbackScratch)+1]
+		feedbackScratch[len(feedbackScratch)-1] = current
+	}
+	return feedbackScratch[feedbackStart:], nil
+}
+
+// EncoderWebRTCRTCPCompoundPacketsTransportFeedback parses a raw compound RTCP
+// packet stream and appends every WebRTC Transport-CC feedback FCI into
+// feedbackScratch without allocation. Parsed RTCP packets are appended into
+// packetScratch and returned as the newly parsed suffix.
+func EncoderWebRTCRTCPCompoundPacketsTransportFeedback(
+	compound []byte,
+	packetScratch []RTCPPacket,
+	feedbackScratch []RTCPTransportFeedback,
+	transportScratch []RTCPTransportFeedbackPacket,
+) (feedbacks []RTCPTransportFeedback, packets []RTCPPacket, err error) {
+	packets, err = ParseRTCPCompoundPackets(compound, packetScratch)
+	if err != nil {
+		return nil, packets, err
+	}
+	feedbacks, err = EncoderWebRTCRTCPPacketsTransportFeedback(packets, feedbackScratch, transportScratch)
+	return feedbacks, packets, err
 }
 
 func rtcpTransportFeedbackEncodedChunkStats(

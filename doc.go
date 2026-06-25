@@ -13,10 +13,11 @@
 // RTP sizing, complete RTP packet decode wrappers, generic and compound RTCP packet
 // helpers, RTCP
 // SR/RR/SDES/BYE and RTPFB/PSFB packet helpers, RTCP
-// NACK/Transport-CC/PLI/FIR/REMB FCI helpers, REMB-to-encoder-bitrate config
-// helpers, AV1 RTCP Layer Refresh Request FCI list helpers, RTCP feedback
-// force-key classification for single, parsed compound, and raw compound
-// packets, sequence-header parsing, caller-owned
+// NACK/Transport-CC/PLI/FIR/REMB FCI helpers, Transport-CC reception timeline
+// and summary helpers, REMB-to-encoder-bitrate config helpers, AV1 RTCP Layer
+// Refresh Request FCI list helpers, RTCP feedback force-key classification for
+// single, parsed compound, and raw compound packets, sequence-header parsing,
+// caller-owned
 // frame pools and sample-plane scratch helpers, DSP block/blend helpers, intra/inter
 // prediction, decoder
 // frame-work prediction bridges, residual reconstruction primitives,
