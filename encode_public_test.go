@@ -2281,9 +2281,11 @@ func TestPublicRTCEncoderScalabilityModeCatalogueReferenceDecoders(t *testing.T)
 			var descriptorReceiver goav1.RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
 			var layerFrames [goav1.EncoderWebRTCMaxSpatialLayers][]publicIVFFrame
+			var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
 			var orderedFrames []publicIVFFrame
 			var lowOverheads [][]byte
-			appendPicture := func(label string, frameIndex int, forceKey bool, wantKey bool) {
+			var sharedSequence goav1.SequenceHeader
+			appendPicture := func(label string, frameIndex int, forceKey bool, wantKey bool, wantScreen bool) {
 				t.Helper()
 				picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, frameIndex), forceKey)
 				if err != nil {
@@ -2298,6 +2300,7 @@ func TestPublicRTCEncoderScalabilityModeCatalogueReferenceDecoders(t *testing.T)
 					frame := picture.Frames[i]
 					payload := append([]byte(nil), frame.Data...)
 					if publicRTCSharedReferenceSlotMode(mode) {
+						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), payload, &sharedSequence, wantScreen)
 						orderedFrames = append(orderedFrames, publicIVFFrame{
 							timestamp: uint64(len(orderedFrames)),
 							payload:   payload,
@@ -2308,6 +2311,7 @@ func TestPublicRTCEncoderScalabilityModeCatalogueReferenceDecoders(t *testing.T)
 					if frame.SpatialID >= goav1.EncoderWebRTCMaxSpatialLayers {
 						t.Fatalf("%s spatial id=%d", label, frame.SpatialID)
 					}
+					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), payload, &layerSequences[frame.SpatialID], wantScreen)
 					layerFrames[frame.SpatialID] = append(layerFrames[frame.SpatialID], publicIVFFrame{
 						timestamp: uint64(len(layerFrames[frame.SpatialID])),
 						payload:   payload,
@@ -2315,7 +2319,7 @@ func TestPublicRTCEncoderScalabilityModeCatalogueReferenceDecoders(t *testing.T)
 				}
 			}
 
-			appendPicture("initial key", 0, false, true)
+			appendPicture("initial key", 0, false, true, cfg.Content == goav1.EncoderContentScreen)
 
 			controlChange := enc.Config()
 			controlChange.MaxFramerate = fpsCycle[(step+1)%len(fpsCycle)]
@@ -2336,8 +2340,29 @@ func TestPublicRTCEncoderScalabilityModeCatalogueReferenceDecoders(t *testing.T)
 				t.Fatalf("SetConfig(%s control): %v", mode, err)
 			}
 			assertPublicRTCConfigControls(t, enc.Config(), controlChange)
-			appendPicture("control delta", 1, false, false)
-			appendPicture("forced key", 2, true, true)
+			appendPicture("control delta", 1, false, false, controlChange.Content == goav1.EncoderContentScreen)
+			appendPicture("forced key", 2, true, true, controlChange.Content == goav1.EncoderContentScreen)
+
+			secondControlChange := enc.Config()
+			secondControlChange.MaxFramerate = fpsCycle[(step+2)%len(fpsCycle)]
+			if secondControlChange.RateControl == goav1.EncoderRateControlCQP {
+				secondControlChange.RateControl = goav1.EncoderRateControlCBR
+				secondControlChange.Quantizer = 0
+				publicRTCApplyControlBitrates(&secondControlChange, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*13)+91)
+			} else {
+				secondControlChange.RateControl = goav1.EncoderRateControlCQP
+				secondControlChange.Quantizer = uint8(31 + step%23)
+			}
+			if secondControlChange.Content == goav1.EncoderContentScreen {
+				secondControlChange.Content = goav1.EncoderContentCamera
+			} else {
+				secondControlChange.Content = goav1.EncoderContentScreen
+			}
+			if err := enc.SetConfig(secondControlChange); err != nil {
+				t.Fatalf("SetConfig(%s second control): %v", mode, err)
+			}
+			assertPublicRTCConfigControls(t, enc.Config(), secondControlChange)
+			appendPicture("second control delta", 3, false, false, secondControlChange.Content == goav1.EncoderContentScreen)
 
 			normalized := enc.Config()
 			if publicRTCSharedReferenceSlotMode(mode) {
