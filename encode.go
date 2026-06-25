@@ -51,8 +51,9 @@ type I444Frame struct {
 }
 
 // I400Frame is one 8-bit monochrome picture. Y holds Width x Height luma
-// samples at YStride. The friendly realtime encoder fills neutral chroma and
-// emits through its current 4:2:0 profile-0 encode path.
+// samples at YStride. The friendly realtime stream encoder still fills neutral
+// chroma for I400 inputs, while EncodeI400Keyframe and EncodeI400PFrame emit
+// native AV1 monochrome pictures.
 type I400Frame struct {
 	Y       []byte
 	YStride int
@@ -82,6 +83,19 @@ func EncodeI400Keyframe(frame I400Frame, qIndex uint8) ([]byte, I400Frame, error
 		return tu, recon, nil
 	}
 	tu, recon, err := encoder.EncodeMonochromeKeyframe(src, qIndex)
+	if err != nil {
+		return nil, I400Frame{}, err
+	}
+	return tu, I400Frame(recon), nil
+}
+
+// EncodeI400PFrame encodes one native AV1 monochrome inter frame.
+//
+// ref must be the previous native monochrome reconstruction for the same coded
+// geometry, usually the reconstruction returned by EncodeI400Keyframe or a prior
+// EncodeI400PFrame call. qIndex must be 1..255.
+func EncodeI400PFrame(frame I400Frame, ref I400Frame, qIndex uint8) ([]byte, I400Frame, error) {
+	tu, recon, err := encoder.EncodeMonochromePFrame(encoder.SourceFrameMono(frame), encoder.SourceFrameMono(ref), qIndex)
 	if err != nil {
 		return nil, I400Frame{}, err
 	}

@@ -36,7 +36,7 @@ func TestEncodePBlockCompoundLastGolden8x8(t *testing.T) {
 	recon := solid(0, 0, 0)
 
 	var pc pframeCoder
-	if err := pc.reset(72, 1, nil); err != nil {
+	if err := pc.reset(72, 1, nil, parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}); err != nil {
 		t.Fatal(err)
 	}
 	st := &pc.st
@@ -133,7 +133,7 @@ func TestEncodePBlockGoldenSingleLarge(t *testing.T) {
 			recon := solid(0, 0, 0)
 
 			var pc pframeCoder
-			if err := pc.reset(72, 1, nil); err != nil {
+			if err := pc.reset(72, 1, nil, parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}); err != nil {
 				t.Fatal(err)
 			}
 			st := &pc.st

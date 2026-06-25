@@ -115,3 +115,77 @@ func TestEncodePFrameDecodeMatchesRecon(t *testing.T) {
 		})
 	}
 }
+
+func TestEncodeMonochromePFrameDecodeMatchesRecon(t *testing.T) {
+	const w, h = 128, 96
+	src1 := encoder.SourceFrameMono{
+		Y:       make([]byte, w*h),
+		YStride: w,
+		Width:   w,
+		Height:  h,
+	}
+	rng := rand.New(rand.NewSource(0x1400))
+	for y := range h {
+		for x := range w {
+			src1.Y[y*w+x] = uint8((72 + x*2 + y + rng.Intn(18)) & 0xff)
+		}
+	}
+
+	const shiftX, shiftY = 4, 2
+	src2 := encoder.SourceFrameMono{
+		Y:       make([]byte, w*h),
+		YStride: w,
+		Width:   w,
+		Height:  h,
+	}
+	for y := range h {
+		for x := range w {
+			sx, sy := x-shiftX, y-shiftY
+			if sx < 0 {
+				sx = 0
+			}
+			if sy < 0 {
+				sy = 0
+			}
+			src2.Y[y*w+x] = uint8(min(255, int(src1.Y[sy*w+sx])+1))
+		}
+	}
+
+	const qIndex = 72
+	keyTU, keyRecon, err := encoder.EncodeMonochromeKeyframe(src1, qIndex)
+	if err != nil {
+		t.Fatalf("encode monochrome keyframe: %v", err)
+	}
+	pTU, pRecon, err := encoder.EncodeMonochromePFrame(src2, keyRecon, qIndex)
+	if err != nil {
+		t.Fatalf("encode monochrome p-frame: %v", err)
+	}
+	t.Logf("mono key TU %d bytes, mono P TU %d bytes", len(keyTU), len(pTU))
+
+	dec, err := goav1.NewDecoder([][]byte{keyTU, pTU})
+	if err != nil {
+		t.Fatalf("new decoder: %v", err)
+	}
+	defer dec.Close()
+	frames, err := dec.DecodeAll()
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(frames) != 2 {
+		t.Fatalf("decoded %d frames, want 2", len(frames))
+	}
+	for i, f := range frames {
+		if !f.Format.MonoChrome || f.Format.BitDepth != 8 {
+			t.Fatalf("frame %d format=%+v, want 8-bit monochrome", i, f.Format)
+		}
+		compareAbsentPlane(t, fmt.Sprintf("frame %d U", i), f.U)
+		compareAbsentPlane(t, fmt.Sprintf("frame %d V", i), f.V)
+	}
+	comparePlane(t, "P Y", frames[1].Y, pRecon.Y, w, h, pRecon.YStride)
+
+	psnr := planePSNR(src2.Y, pRecon.Y)
+	t.Logf("mono P-frame luma PSNR(src2, recon) = %.2f dB", psnr)
+	if psnr < 30 {
+		t.Fatalf("mono P-frame luma PSNR %.2f dB below sanity floor", psnr)
+	}
+}

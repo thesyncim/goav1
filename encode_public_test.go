@@ -262,6 +262,84 @@ func TestPublicEncodeI400KeyframeNativeMonochrome(t *testing.T) {
 	}
 }
 
+func TestPublicEncodeI400PFrameNativeMonochrome(t *testing.T) {
+	const w, h, stride = 128, 96, 144
+	src1 := goav1.I400Frame{
+		Y:       make([]byte, stride*h),
+		YStride: stride,
+		Width:   w,
+		Height:  h,
+	}
+	for y := range h {
+		for x := range w {
+			src1.Y[y*stride+x] = uint8((72 + x*2 + y*3 + (x*y)%19) & 0xff)
+		}
+	}
+	src2 := goav1.I400Frame{
+		Y:       make([]byte, stride*h),
+		YStride: stride,
+		Width:   w,
+		Height:  h,
+	}
+	const shiftX, shiftY = 4, 2
+	for y := range h {
+		for x := range w {
+			sx, sy := x-shiftX, y-shiftY
+			if sx < 0 {
+				sx = 0
+			}
+			if sy < 0 {
+				sy = 0
+			}
+			src2.Y[y*stride+x] = uint8(min(255, int(src1.Y[sy*stride+sx])+1))
+		}
+	}
+
+	keyTU, keyRecon, err := goav1.EncodeI400Keyframe(src1, 80)
+	if err != nil {
+		t.Fatalf("EncodeI400Keyframe: %v", err)
+	}
+	pTU, pRecon, err := goav1.EncodeI400PFrame(src2, keyRecon, 80)
+	if err != nil {
+		t.Fatalf("EncodeI400PFrame: %v", err)
+	}
+	if len(pTU) == 0 {
+		t.Fatal("empty P temporal unit")
+	}
+	seq := publicFirstSequenceHeader(t, keyTU)
+	if !seq.ColorConfig.MonoChrome || seq.ColorConfig.BitDepth != 8 {
+		t.Fatalf("sequence color=%+v, want native 8-bit monochrome", seq.ColorConfig)
+	}
+
+	dec, err := goav1.NewDecoder([][]byte{keyTU, pTU})
+	if err != nil {
+		t.Fatalf("NewDecoder: %v", err)
+	}
+	defer dec.Close()
+	frames, err := dec.DecodeAll()
+	if err != nil {
+		t.Fatalf("DecodeAll: %v", err)
+	}
+	if len(frames) != 2 {
+		t.Fatalf("decoded %d frames, want 2", len(frames))
+	}
+	for i, frame := range frames {
+		if !frame.Format.MonoChrome || frame.Format.BitDepth != 8 {
+			t.Fatalf("decoded frame %d format=%+v, want native 8-bit monochrome", i, frame.Format)
+		}
+		if frame.U.Width != 0 || frame.V.Width != 0 || len(frame.U.Pix) != 0 || len(frame.V.Pix) != 0 {
+			t.Fatalf("decoded frame %d chroma U=%+v V=%+v, want absent", i, frame.U, frame.V)
+		}
+	}
+	for y := range h {
+		got := frames[1].Y.Pix[y*frames[1].Y.Stride : y*frames[1].Y.Stride+w]
+		want := pRecon.Y[y*pRecon.YStride : y*pRecon.YStride+w]
+		if !bytes.Equal(got, want) {
+			t.Fatalf("decoded P-frame luma row %d differs from reconstruction", y)
+		}
+	}
+}
+
 func TestPublicEncodeI400KeyframeReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 128, 72

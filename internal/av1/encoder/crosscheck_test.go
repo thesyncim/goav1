@@ -231,3 +231,100 @@ func TestEncodedMonochromeLossyKeyframeDecodesInReferenceDecoders(t *testing.T) 
 		check("dav1d", dav1d, "--muxer", "yuv", "-o", filepath.Join(dir, "dav1d.yuv"), "-i")
 	}
 }
+
+func TestEncodedMonochromePFrameDecodesInReferenceDecoders(t *testing.T) {
+	aomdec, err := exec.LookPath("aomdec")
+	if err != nil {
+		t.Skip("aomdec not on PATH")
+	}
+	const w, h = 128, 96
+	src1 := encoder.SourceFrameMono{
+		Y:       make([]byte, w*h),
+		YStride: w,
+		Width:   w,
+		Height:  h,
+	}
+	rng := rand.New(rand.NewSource(0x4400))
+	for y := range h {
+		for x := range w {
+			src1.Y[y*w+x] = uint8((84 + x*3 + y*2 + rng.Intn(24)) & 0xff)
+		}
+	}
+	src2 := encoder.SourceFrameMono{
+		Y:       make([]byte, w*h),
+		YStride: w,
+		Width:   w,
+		Height:  h,
+	}
+	const shiftX, shiftY = 4, 2
+	for y := range h {
+		for x := range w {
+			sx, sy := x-shiftX, y-shiftY
+			if sx < 0 {
+				sx = 0
+			}
+			if sy < 0 {
+				sy = 0
+			}
+			src2.Y[y*w+x] = uint8(min(255, int(src1.Y[sy*w+sx])+2))
+		}
+	}
+
+	keyTU, keyRecon, err := encoder.EncodeMonochromeKeyframe(src1, 80)
+	if err != nil {
+		t.Fatalf("encode keyframe: %v", err)
+	}
+	pTU, pRecon, err := encoder.EncodeMonochromePFrame(src2, keyRecon, 80)
+	if err != nil {
+		t.Fatalf("encode p-frame: %v", err)
+	}
+	stream := ivf.AppendFileHeader(nil, w, h, 30, 1, 2)
+	stream = ivf.AppendFrame(stream, keyTU, 0)
+	stream = ivf.AppendFrame(stream, pTU, 1)
+
+	dir := t.TempDir()
+	ivfPath := filepath.Join(dir, "mono-p.ivf")
+	if err := os.WriteFile(ivfPath, stream, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wantY := [][]byte{keyRecon.Y, pRecon.Y}
+	check := func(name, bin string, args ...string) {
+		outPath := filepath.Join(dir, name+".yuv")
+		cmd := exec.Command(bin, append(args, ivfPath)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s failed: %v\n%s", name, err, out)
+		}
+		got, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("read %s output: %v", name, err)
+		}
+		yLen := w * h
+		i420Len := yLen + 2*(w/2)*(h/2)
+		frameLen := 0
+		switch len(got) {
+		case len(wantY) * yLen:
+			frameLen = yLen
+		case len(wantY) * i420Len:
+			frameLen = i420Len
+		default:
+			t.Fatalf("%s output %d bytes, want %d Y-only or %d yuv420 bytes", name, len(got), len(wantY)*yLen, len(wantY)*i420Len)
+		}
+		for frame, want := range wantY {
+			frameY := got[frame*frameLen : frame*frameLen+yLen]
+			if !bytes.Equal(frameY, want) {
+				for i := range want {
+					if frameY[i] != want[i] {
+						t.Fatalf("%s frame %d luma differs first at byte %d: got %d want %d", name, frame, i, frameY[i], want[i])
+					}
+				}
+			}
+		}
+		t.Logf("%s: monochrome key+P luma matches reconstruction (%d raw bytes)", name, len(got))
+	}
+
+	check("aomdec", aomdec, "--rawvideo", "-o", filepath.Join(dir, "aomdec.yuv"))
+	if dav1d, err := exec.LookPath("dav1d"); err == nil {
+		check("dav1d", dav1d, "--muxer", "yuv", "-o", filepath.Join(dir, "dav1d.yuv"), "-i")
+	}
+}

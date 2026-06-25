@@ -63,6 +63,47 @@ func EncodePFrame(src SourceFrame420, ref SourceFrame420, qIndex uint8) ([]byte,
 	return out, recon, nil
 }
 
+// EncodeMonochromePFrame encodes src as a native AV1 monochrome inter frame
+// predicting from ref, returning the temporal unit and the encoder
+// reconstruction the decoder must reproduce exactly.
+func EncodeMonochromePFrame(src SourceFrameMono, ref SourceFrameMono, qIndex uint8) ([]byte, SourceFrameMono, error) {
+	if err := validateSourceFrameMono(src); err != nil {
+		return nil, SourceFrameMono{}, err
+	}
+	if err := validateSourceFrameMono(ref); err != nil {
+		return nil, SourceFrameMono{}, err
+	}
+	if src.Width != ref.Width || src.Height != ref.Height {
+		return nil, SourceFrameMono{}, fmt.Errorf("encoder: source %dx%d does not match reference %dx%d", src.Width, src.Height, ref.Width, ref.Height)
+	}
+	if qIndex == 0 {
+		return nil, SourceFrameMono{}, fmt.Errorf("encoder: qindex 0 lossless inter coding is not supported")
+	}
+	recon := SourceFrameMono{
+		Y:       make([]byte, len(src.Y)),
+		YStride: src.YStride,
+		Width:   src.Width,
+		Height:  src.Height,
+	}
+	var pc pframeCoder
+	tilePayload, err := pc.encodeMonochromeTile(src, ref, nil, &recon, qIndex, nil, parser.ReferenceModeSingle, 0, uint16(src.Width/4))
+	if err != nil {
+		return nil, SourceFrameMono{}, fmt.Errorf("encode tile: %w", err)
+	}
+
+	seq := lossyMonochromeKeyframeSequence(src.Width, src.Height)
+	header, refState := repeatPFrameHeader(src.Width, src.Height, qIndex, 0x01)
+	header.References = &refState
+	header.CDEF = CDEFParams{}
+
+	var groupScratch, outScratch []byte
+	out, err := assembleInterTU(seq, header, []TilePayload{{Data: tilePayload}}, 0, &groupScratch, &outScratch)
+	if err != nil {
+		return nil, SourceFrameMono{}, err
+	}
+	return out, recon, nil
+}
+
 // EncodeScaledReferencePFrame encodes src as an inter frame whose LAST
 // reference has different coded dimensions. The returned temporal unit assumes
 // the decoder already holds that smaller or larger reference frame in slot 0.
@@ -213,10 +254,10 @@ func (st *lossyEncodeState) beginSADCacheFrame() {
 // symbol contexts chain from it - the saved state of the frame named by
 // primary_ref_frame - instead of the defaults, exactly as the decoder loads
 // them.
-func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs) error {
+func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs, color parser.ColorConfig) error {
 	st := &pc.st
 	st.qIndex = qIndex
-	st.color = parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}
+	st.color = color
 	if prev != nil {
 		pc.partCDFs = prev.Partition
 		pc.refCDFs = prev.InterRef
@@ -257,6 +298,10 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs) error 
 		}
 	}
 	for plane, dst := range []*quantize.Quantizer{&st.yQuant, &st.uQuant, &st.vQuant} {
+		if color.MonoChrome && plane != 0 {
+			*dst = quantize.Quantizer{}
+			continue
+		}
 		q, err := quantize.PlaneQuantizer(parser.QuantizationParams{}, qIndex, 8, quantize.Plane(plane))
 		if err != nil {
 			return err
@@ -350,11 +395,27 @@ func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden
 }
 
 func (pc *pframeCoder) encodeTileWithOptions(src SourceFrame420, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, qIndex uint8, prev *frameCDFs, referenceMode parser.ReferenceMode, forceIntegerMV bool, allowScreenContentTools bool, miColStart, miColEnd uint16) ([]byte, error) {
+	return pc.encodeTileWithOptionsColor(src, ref, golden, recon, qIndex, prev, referenceMode, forceIntegerMV, allowScreenContentTools, parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}, miColStart, miColEnd)
+}
+
+func (pc *pframeCoder) encodeMonochromeTile(src SourceFrameMono, ref SourceFrameMono, golden *SourceFrameMono, recon *SourceFrameMono, qIndex uint8, prev *frameCDFs, referenceMode parser.ReferenceMode, miColStart, miColEnd uint16) ([]byte, error) {
+	src420 := SourceFrame420{Y: src.Y, YStride: src.YStride, Width: src.Width, Height: src.Height}
+	ref420 := SourceFrame420{Y: ref.Y, YStride: ref.YStride, Width: ref.Width, Height: ref.Height}
+	recon420 := SourceFrame420{Y: recon.Y, YStride: recon.YStride, Width: recon.Width, Height: recon.Height}
+	var golden420 *SourceFrame420
+	if golden != nil {
+		g := SourceFrame420{Y: golden.Y, YStride: golden.YStride, Width: golden.Width, Height: golden.Height}
+		golden420 = &g
+	}
+	return pc.encodeTileWithOptionsColor(src420, ref420, golden420, &recon420, qIndex, prev, referenceMode, false, false, parser.ColorConfig{BitDepth: 8, MonoChrome: true, SubsamplingX: true, SubsamplingY: true}, miColStart, miColEnd)
+}
+
+func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, qIndex uint8, prev *frameCDFs, referenceMode parser.ReferenceMode, forceIntegerMV bool, allowScreenContentTools bool, color parser.ColorConfig, miColStart, miColEnd uint16) ([]byte, error) {
 	miCols := uint16(src.Width / 4)
 	miRows := uint16(src.Height / 4)
 	const sbSizeMIB = 16
 	rootCols := (int(miColEnd-miColStart) + sbSizeMIB - 1) / sbSizeMIB
-	if err := pc.reset(qIndex, rootCols, prev); err != nil {
+	if err := pc.reset(qIndex, rootCols, prev, color); err != nil {
 		return nil, err
 	}
 	st := &pc.st
@@ -755,6 +816,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	}
 	n := bw // square tier size; rect blocks take dedicated paths below
 	cbw, cbh := bw/2, bh/2
+	hasChroma := !st.color.MonoChrome
 	modeCtx := &scratch.Mode
 	coeffCtx := &scratch.CoeffCtx
 
@@ -1047,11 +1109,13 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if err := predictCompoundInto(st.predY[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, compoundMV[0], compoundMV[1], false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
 			return fmt.Errorf("predict compound luma: %w", err)
 		}
-		if err := predictCompoundInto(st.predU[:cbw*cbh], ref.U, ref.ChromaStride, golden.U, golden.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, compoundMV[0], compoundMV[1], true, true, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
-			return fmt.Errorf("predict compound u: %w", err)
-		}
-		if err := predictCompoundInto(st.predV[:cbw*cbh], ref.V, ref.ChromaStride, golden.V, golden.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, compoundMV[0], compoundMV[1], true, true, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
-			return fmt.Errorf("predict compound v: %w", err)
+		if hasChroma {
+			if err := predictCompoundInto(st.predU[:cbw*cbh], ref.U, ref.ChromaStride, golden.U, golden.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, compoundMV[0], compoundMV[1], true, true, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+				return fmt.Errorf("predict compound u: %w", err)
+			}
+			if err := predictCompoundInto(st.predV[:cbw*cbh], ref.V, ref.ChromaStride, golden.V, golden.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, compoundMV[0], compoundMV[1], true, true, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+				return fmt.Errorf("predict compound v: %w", err)
+			}
 		}
 	} else {
 		if refPlanes.Width != src.Width || refPlanes.Height != src.Height {
@@ -1059,21 +1123,25 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			if err := predictIntoScaled(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, refPlanes.Width, refPlanes.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.scaledScratch); err != nil {
 				return fmt.Errorf("predict scaled luma: %w", err)
 			}
-			if err := predictIntoScaled(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, refHalfW, refHalfH, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true, &st.scaledScratch); err != nil {
-				return fmt.Errorf("predict scaled u: %w", err)
-			}
-			if err := predictIntoScaled(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, refHalfW, refHalfH, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true, &st.scaledScratch); err != nil {
-				return fmt.Errorf("predict scaled v: %w", err)
+			if hasChroma {
+				if err := predictIntoScaled(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, refHalfW, refHalfH, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true, &st.scaledScratch); err != nil {
+					return fmt.Errorf("predict scaled u: %w", err)
+				}
+				if err := predictIntoScaled(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, refHalfW, refHalfH, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true, &st.scaledScratch); err != nil {
+					return fmt.Errorf("predict scaled v: %w", err)
+				}
 			}
 		} else {
 			if err := predictInto(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false); err != nil {
 				return fmt.Errorf("predict luma: %w", err)
 			}
-			if err := predictInto(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true); err != nil {
-				return fmt.Errorf("predict u: %w", err)
-			}
-			if err := predictInto(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true); err != nil {
-				return fmt.Errorf("predict v: %w", err)
+			if hasChroma {
+				if err := predictInto(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true); err != nil {
+					return fmt.Errorf("predict u: %w", err)
+				}
+				if err := predictInto(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true); err != nil {
+					return fmt.Errorf("predict v: %w", err)
+				}
 			}
 		}
 	}
@@ -1105,10 +1173,14 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			lumaZero = st.prepareInterTXB(src.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
 		}
 		lumaRdD, lumaRdR := st.rdDcode, st.rdRcode
-		uZero := st.prepareInterTXB(src.U, st.predU[:cbw*cbh], cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, st.uQuant, st.uQ[:cbw*cbh])
-		vZero := st.prepareInterTXB(src.V, st.predV[:cbw*cbh], cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, st.vQuant, st.vQ[:cbw*cbh])
+		if hasChroma {
+			uZero := st.prepareInterTXB(src.U, st.predU[:cbw*cbh], cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, st.uQuant, st.uQ[:cbw*cbh])
+			vZero := st.prepareInterTXB(src.V, st.predV[:cbw*cbh], cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, st.vQuant, st.vQ[:cbw*cbh])
+			skip = lumaZero && uZero && vZero
+		} else {
+			skip = lumaZero
+		}
 		dctRdD = st.rdDcode
-		skip = lumaZero && uZero && vZero
 		if !skip {
 			// Rate-priced skip (RDCOST shapes): code when distortion saved
 			// outweighs the coefficient rate at the working quantizer.
@@ -1243,7 +1315,6 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		return fmt.Errorf("motion vector: %w", err)
 	}
 
-	hasChroma := true // all coded inter sizes (8x8..32x32) at 4:2:0 carry chroma
 	if err := modeCtx.MarkInterMotion(block.Size, int(block.X4), int(block.Y4), motionResult, hasChroma); err != nil {
 		return fmt.Errorf("mark inter motion: %w", err)
 	}
@@ -1288,9 +1359,13 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 	}
 
-	chromaBlock, err := tile.PlaneBlockSize(block.Size, st.color, 1)
-	if err != nil {
-		return fmt.Errorf("chroma plane block: %w", err)
+	var chromaBlock tile.BlockSize
+	if hasChroma {
+		var err error
+		chromaBlock, err = tile.PlaneBlockSize(block.Size, st.color, 1)
+		if err != nil {
+			return fmt.Errorf("chroma plane block: %w", err)
+		}
 	}
 	if skip {
 		// No residual symbols; reset the coefficient entropy contexts per
@@ -1299,14 +1374,18 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if err := coeffCtx.ResetBlock(0, block.Size, int(block.X4), int(block.Y4)); err != nil {
 			return fmt.Errorf("reset luma coeff ctx: %w", err)
 		}
-		for plane := 1; plane <= 2; plane++ {
-			if err := coeffCtx.ResetBlock(plane, chromaBlock, int(block.X4)/2, int(block.Y4)/2); err != nil {
-				return fmt.Errorf("reset chroma %d coeff ctx: %w", plane, err)
+		if hasChroma {
+			for plane := 1; plane <= 2; plane++ {
+				if err := coeffCtx.ResetBlock(plane, chromaBlock, int(block.X4)/2, int(block.Y4)/2); err != nil {
+					return fmt.Errorf("reset chroma %d coeff ctx: %w", plane, err)
+				}
 			}
 		}
 		copyPredScratch(recon.Y, st.predY[:bw*bh], src.YStride, lumaPX, lumaPY, bw, bh)
-		copyPredScratch(recon.U, st.predU[:cbw*cbh], src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh)
-		copyPredScratch(recon.V, st.predV[:cbw*cbh], src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh)
+		if hasChroma {
+			copyPredScratch(recon.U, st.predU[:cbw*cbh], src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh)
+			copyPredScratch(recon.V, st.predV[:cbw*cbh], src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh)
+		}
 		if st.decisionStats != nil {
 			st.decisionStats.noteInterBlock(block.Size, true, false, refs, modeResult, transform.TypeDCTDCT)
 		}
@@ -1378,25 +1457,27 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			return fmt.Errorf("luma txb: %w", err)
 		}
 	}
-	chromaTxType := transform.TypeDCTDCT
-	if !splitTX && bw == 8 && bh == 8 {
-		chromaTxType = txType
-	}
-	for plane := 1; plane <= 2; plane++ {
-		rdata, pred, qc := recon.U, st.predU[:cbw*cbh], st.uQ[:cbw*cbh]
-		q := st.uQuant
-		if plane == 2 {
-			rdata, pred, qc = recon.V, st.predV[:cbw*cbh], st.vQ[:cbw*cbh]
-			q = st.vQuant
+	if hasChroma {
+		chromaTxType := transform.TypeDCTDCT
+		if !splitTX && bw == 8 && bh == 8 {
+			chromaTxType = txType
 		}
-		if err := st.finishInterTXBTyped(rdata, pred, cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, q, qc, tile.CoeffContextRequest{
-			Plane:      uint8(plane),
-			PlaneBlock: chromaBlock,
-			Size:       chromaTX,
-			X4:         block.X4 / 2,
-			Y4:         block.Y4 / 2,
-		}, coeffCtx, chromaScan, nil, chromaTxType); err != nil {
-			return fmt.Errorf("chroma %d txb: %w", plane, err)
+		for plane := 1; plane <= 2; plane++ {
+			rdata, pred, qc := recon.U, st.predU[:cbw*cbh], st.uQ[:cbw*cbh]
+			q := st.uQuant
+			if plane == 2 {
+				rdata, pred, qc = recon.V, st.predV[:cbw*cbh], st.vQ[:cbw*cbh]
+				q = st.vQuant
+			}
+			if err := st.finishInterTXBTyped(rdata, pred, cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, q, qc, tile.CoeffContextRequest{
+				Plane:      uint8(plane),
+				PlaneBlock: chromaBlock,
+				Size:       chromaTX,
+				X4:         block.X4 / 2,
+				Y4:         block.Y4 / 2,
+			}, coeffCtx, chromaScan, nil, chromaTxType); err != nil {
+				return fmt.Errorf("chroma %d txb: %w", plane, err)
+			}
 		}
 	}
 	if st.decisionStats != nil {
@@ -1465,19 +1546,24 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	}, int8(angleDelta)); err != nil {
 		return fmt.Errorf("intra angle delta: %w", err)
 	}
-	cflAllowed, err := tile.ChromaIntraCFLAllowed(block.Size, st.color, false)
-	if err != nil {
-		return fmt.Errorf("cfl allowed: %w", err)
-	}
-	if err := tile.WriteChromaIntraMode(st.w, &st.intraCDFs, tile.ChromaIntraModeRequest{
-		Size: block.Size, LumaMode: mode, CFLAllowed: cflAllowed,
-	}, tile.ChromaIntraModeDC, tile.CFLAlphaResult{}); err != nil {
-		return fmt.Errorf("intra chroma mode: %w", err)
-	}
-	if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, tile.ChromaIntraModeDC); err != nil {
-		return fmt.Errorf("mark chroma intra: %w", err)
-	}
-	if err := st.writeNoPaletteMode(modeCtx, block, mode, tile.ChromaIntraModeDC, true); err != nil {
+	hasChroma := !st.color.MonoChrome
+	if hasChroma {
+		cflAllowed, err := tile.ChromaIntraCFLAllowed(block.Size, st.color, false)
+		if err != nil {
+			return fmt.Errorf("cfl allowed: %w", err)
+		}
+		if err := tile.WriteChromaIntraMode(st.w, &st.intraCDFs, tile.ChromaIntraModeRequest{
+			Size: block.Size, LumaMode: mode, CFLAllowed: cflAllowed,
+		}, tile.ChromaIntraModeDC, tile.CFLAlphaResult{}); err != nil {
+			return fmt.Errorf("intra chroma mode: %w", err)
+		}
+		if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, tile.ChromaIntraModeDC); err != nil {
+			return fmt.Errorf("mark chroma intra: %w", err)
+		}
+		if err := st.writeNoPaletteMode(modeCtx, block, mode, tile.ChromaIntraModeDC, true); err != nil {
+			return err
+		}
+	} else if err := st.writeNoPaletteMode(modeCtx, block, mode, tile.ChromaIntraModeDC, false); err != nil {
 		return err
 	}
 
@@ -1505,6 +1591,12 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		Y4:         block.Y4,
 	}, coeffCtx, st.scan8, st.afterSkipIntra, pred); err != nil {
 		return fmt.Errorf("intra luma txb: %w", err)
+	}
+	if !hasChroma {
+		if st.decisionStats != nil {
+			st.decisionStats.noteIntraBlock(block.Size)
+		}
+		return nil
 	}
 	chromaBlock, err := tile.PlaneBlockSize(block.Size, st.color, 1)
 	if err != nil {
@@ -2140,14 +2232,17 @@ func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lum
 	if !st.armTrial() {
 		return transform.TypeDCTDCT
 	}
+	hasChroma := !st.color.MonoChrome
 	bestType := transform.TypeDCTDCT
 	saveDcode, saveDskip, saveRcode := st.rdDcode, st.rdDskip, st.rdRcode
 	baseTrialCDFs := &st.trial8x8CDFs
 	baseTrialCDFs.save(&st.trialCDFs)
 	bestCost := dctDcode << 7
 	bestCost += st.trialTXBBitsInter8x8((*[64]int16)(st.lumaQ[:64]), transform.TypeDCTDCT)
-	bestCost += st.trialTXBBitsUV4x4((*[16]int16)(st.uQ[:16]))
-	bestCost += st.trialTXBBitsUV4x4((*[16]int16)(st.vQ[:16]))
+	if hasChroma {
+		bestCost += st.trialTXBBitsUV4x4((*[16]int16)(st.uQ[:16]))
+		bestCost += st.trialTXBBitsUV4x4((*[16]int16)(st.vQ[:16]))
+	}
 	tmpY := st.lumaQ2[:64]
 	tmpY64 := (*[64]int16)(tmpY)
 	tmpU := st.lumaQ2[64:80]
@@ -2174,19 +2269,25 @@ func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lum
 		if (lumaDcode<<7)+lumaBits >= bestCost {
 			continue
 		}
-		baseTrialCDFs.restoreUV(&st.trialCDFs)
-		st.prepareInterTXBTyped(src.U, st.predU[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.uQuant, tmpU, typ)
-		st.prepareInterTXBTyped(src.V, st.predV[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.vQuant, tmpV, typ)
-		cost := st.rdDcode << 7
+		cost := lumaDcode << 7
 		cost += lumaBits
-		cost += st.trialTXBBitsUV4x4(tmpU16)
-		cost += st.trialTXBBitsUV4x4(tmpV16)
+		if hasChroma {
+			baseTrialCDFs.restoreUV(&st.trialCDFs)
+			st.prepareInterTXBTyped(src.U, st.predU[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.uQuant, tmpU, typ)
+			st.prepareInterTXBTyped(src.V, st.predV[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.vQuant, tmpV, typ)
+			cost = st.rdDcode << 7
+			cost += lumaBits
+			cost += st.trialTXBBitsUV4x4(tmpU16)
+			cost += st.trialTXBBitsUV4x4(tmpV16)
+		}
 		if cost < bestCost {
 			bestCost = cost
 			bestType = typ
 			copy(st.lumaQ[:64], tmpY)
-			copy(st.uQ[:16], tmpU)
-			copy(st.vQ[:16], tmpV)
+			if hasChroma {
+				copy(st.uQ[:16], tmpU)
+				copy(st.vQ[:16], tmpV)
+			}
 		}
 	}
 	st.rdDcode, st.rdDskip, st.rdRcode = saveDcode, saveDskip, saveRcode
