@@ -3,6 +3,7 @@ package goav1
 import (
 	"encoding/binary"
 	"errors"
+	"math/bits"
 )
 
 const (
@@ -1121,6 +1122,36 @@ func AppendRTCPGenericNACKPairsForLostSequenceNumbers(dst []RTCPGenericNACKPair,
 		}
 		pairIndex++
 		out[pairIndex] = RTCPGenericNACKPair{PacketID: seq}
+	}
+	return out, nil
+}
+
+// AppendRTCPGenericNACKPairSequenceNumbers appends the RTP sequence numbers
+// covered by pairs in Generic NACK PID/BLP order.
+func AppendRTCPGenericNACKPairSequenceNumbers(dst []uint16, pairs []RTCPGenericNACKPair) ([]uint16, error) {
+	count := 0
+	for i := range pairs {
+		count += 1 + bits.OnesCount16(pairs[i].LostPacketBitmask)
+	}
+	if count == 0 {
+		return dst, nil
+	}
+	if cap(dst)-len(dst) < count {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+count]
+	write := off
+	for _, pair := range pairs {
+		out[write] = pair.PacketID
+		write++
+		for bit := uint16(0); bit < 16; bit++ {
+			if pair.LostPacketBitmask&(1<<bit) == 0 {
+				continue
+			}
+			out[write] = pair.PacketID + bit + 1
+			write++
+		}
 	}
 	return out, nil
 }

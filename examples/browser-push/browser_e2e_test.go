@@ -17,6 +17,7 @@ import (
 
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 
@@ -232,7 +233,7 @@ func TestBrowserLiveRTCEncoderDirectRTPImpairmentFeedback(t *testing.T) {
 			mu.Lock()
 			peers = append(peers, pc)
 			mu.Unlock()
-		}, streamErr, options, feedback)
+		}, streamErr, options, rtcSenderFeedbackOptions{Counters: feedback})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -297,6 +298,194 @@ func TestBrowserLiveRTCEncoderDirectRTPImpairmentFeedback(t *testing.T) {
 	}
 	t.Logf("direct RTP impairment feedback: dropped=%d %s browserNACK=%d",
 		droppedPackets.Load(), rtcSenderFeedbackString(feedback), got.NACKCount)
+}
+
+func TestBrowserLiveRTCEncoderDirectRTPNACKRetransmission(t *testing.T) {
+	required := os.Getenv(requireBrowserE2EEnv) == "1"
+	if !required && os.Getenv(browserE2EEnv) != "1" {
+		t.Skipf("set %s=1 to run the live browser/libwebrtc AV1 retransmission gate", browserE2EEnv)
+	}
+	browserPath, err := browserExecutable()
+	if err != nil {
+		if required {
+			t.Fatalf("required browser executable unavailable: %v", err)
+		}
+		t.Skip(err)
+	}
+
+	cacheSlots := make([]goav1.RTPRetransmissionCacheSlot, 4096)
+	for i := range cacheSlots {
+		cacheSlots[i].Packet = make([]byte, 0, 1600)
+	}
+	retransmitCache, err := goav1.BindRTPRetransmissionCache(cacheSlots)
+	if err != nil {
+		t.Fatalf("BindRTPRetransmissionCache: %v", err)
+	}
+
+	feedback := &rtcSenderFeedbackCounters{}
+	var cacheMu sync.Mutex
+	var droppedPackets atomic.Int64
+	var repairedPackets atomic.Int64
+	var repairMisses atomic.Int64
+	var keyPictures atomic.Int64
+	var postFeedbackKeyPictures atomic.Int64
+	options := defaultRTCEncoderRTPStreamOptions()
+	options.ForceKeyFrame = func(frameIndex int) bool { return false }
+	options.DropPacket = func(frameIndex int, packetIndex int, _ rtp.Packet) bool {
+		if frameIndex != 10 || packetIndex >= 4 {
+			return false
+		}
+		droppedPackets.Add(1)
+		return true
+	}
+	options.OnPacket = func(_ int, _ int, packet rtp.Packet, _ bool) error {
+		raw := make([]byte, packet.MarshalSize())
+		n, err := packet.MarshalTo(raw)
+		if err != nil {
+			return err
+		}
+		cacheMu.Lock()
+		defer cacheMu.Unlock()
+		return retransmitCache.Store(raw[:n])
+	}
+	options.OnPicture = func(_ int, picture goav1.RTCPicture) {
+		if !picture.Keyframe {
+			return
+		}
+		keyPictures.Add(1)
+		if rtcSenderFeedbackTotal(feedback) > 0 {
+			postFeedbackKeyPictures.Add(1)
+		}
+	}
+
+	retransmitBuf := make([]byte, 0, 1600*64)
+	retransmitSpans := make([]goav1.RTPRetransmissionPacketSpan, 64)
+	nackSeqs := make([]uint16, 0, 64)
+	repairNACK := func(track *webrtc.TrackLocalStaticRTP, nack *rtcp.TransportLayerNack) bool {
+		if track == nil || len(nack.Nacks) == 0 {
+			return false
+		}
+		pairs := make([]goav1.RTCPGenericNACKPair, len(nack.Nacks))
+		for i := range nack.Nacks {
+			pairs[i] = goav1.RTCPGenericNACKPair{
+				PacketID:          nack.Nacks[i].PacketID,
+				LostPacketBitmask: uint16(nack.Nacks[i].LostPackets),
+			}
+		}
+		var err error
+		nackSeqs, err = goav1.AppendRTCPGenericNACKPairSequenceNumbers(nackSeqs[:0], pairs)
+		if err != nil {
+			repairMisses.Add(1)
+			return false
+		}
+		cacheMu.Lock()
+		out, count, err := retransmitCache.AppendPacketsForRTCPGenericNACKPairs(
+			retransmitBuf[:0], retransmitSpans, pairs)
+		cacheMu.Unlock()
+		if err != nil {
+			repairMisses.Add(1)
+			return false
+		}
+		for i := 0; i < count; i++ {
+			span := retransmitSpans[i]
+			if _, err := track.Write(out[span.Offset : span.Offset+span.Length]); err != nil {
+				repairMisses.Add(1)
+				return false
+			}
+			repairedPackets.Add(1)
+		}
+		if count < len(nackSeqs) {
+			repairMisses.Add(int64(len(nackSeqs) - count))
+			return false
+		}
+		return count > 0
+	}
+
+	var mu sync.Mutex
+	var peers []*webrtc.PeerConnection
+	streamErr := make(chan error, 4)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(indexHTML)
+	})
+	mux.HandleFunc("/offer", func(w http.ResponseWriter, r *http.Request) {
+		err := handleRTCEncoderRTPOfferWithStreamOptions(w, r, func(pc *webrtc.PeerConnection) {
+			mu.Lock()
+			peers = append(peers, pc)
+			mu.Unlock()
+		}, streamErr, options, rtcSenderFeedbackOptions{Counters: feedback, OnNACK: repairNACK})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, pc := range peers {
+			_ = pc.Close()
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx,
+		append(chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.ExecPath(browserPath),
+			chromedp.Flag("headless", "new"),
+			chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
+			chromedp.Flag("disable-background-timer-throttling", true),
+			chromedp.Flag("disable-renderer-backgrounding", true),
+			chromedp.Flag("mute-audio", true),
+			chromedp.NoSandbox,
+			chromedp.UserDataDir(t.TempDir()),
+		)...,
+	)
+	defer cancelAlloc()
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	defer cancelBrowser()
+
+	got := browserPlaybackEvidence{}
+	if err := chromedp.Run(browserCtx,
+		chromedp.Navigate(server.URL+"?direct-rtp-retransmit=1"),
+		chromedp.Evaluate(browserPlaybackProbeJS(45), &got, evalAwaitPromise),
+	); err != nil {
+		t.Fatalf("direct RTP retransmission browser AV1 playback probe: %v", err)
+	}
+	if !got.OK {
+		select {
+		case err := <-streamErr:
+			t.Fatalf("direct RTP retransmission stream failed before browser playback: %v; last=%+v", err, got)
+		default:
+		}
+	}
+	assertBrowserPlaybackEvidence(t, "direct-rtp-retransmission", got)
+	if droppedPackets.Load() == 0 {
+		t.Fatal("direct RTP retransmission test did not drop any packets")
+	}
+	if feedback.NACK.Load() == 0 && got.NACKCount == 0 {
+		t.Fatalf("direct RTP retransmission produced no browser NACK after %d dropped packets", droppedPackets.Load())
+	}
+	if repairedPackets.Load() == 0 {
+		t.Fatalf("direct RTP retransmission did not resend cached packets after %d dropped packets", droppedPackets.Load())
+	}
+	if repairMisses.Load() != 0 {
+		t.Fatalf("direct RTP retransmission repair misses=%d repaired=%d feedback=%s",
+			repairMisses.Load(), repairedPackets.Load(), rtcSenderFeedbackString(feedback))
+	}
+	if postFeedbackKeyPictures.Load() != 0 || got.KeyFramesDecoded > 1 {
+		t.Fatalf("direct RTP retransmission forced key recovery instead of packet repair: serverKeys=%d postFeedback=%d browserKeys=%d feedback=%s",
+			keyPictures.Load(), postFeedbackKeyPictures.Load(), got.KeyFramesDecoded, rtcSenderFeedbackString(feedback))
+	}
+	select {
+	case err := <-streamErr:
+		t.Fatalf("direct RTP retransmission stream failed: %v", err)
+	default:
+	}
+	t.Logf("direct RTP retransmission: dropped=%d repaired=%d %s browserNACK=%d",
+		droppedPackets.Load(), repairedPackets.Load(), rtcSenderFeedbackString(feedback), got.NACKCount)
 }
 
 type browserPlaybackEvidence struct {
@@ -430,7 +619,7 @@ func handleRTCEncoderRTPOfferWithPeerConnectionHook(
 	streamErr chan<- error,
 ) error {
 	return handleRTCEncoderRTPOfferWithStreamOptions(
-		w, r, onPeerConnection, streamErr, defaultRTCEncoderRTPStreamOptions(), nil)
+		w, r, onPeerConnection, streamErr, defaultRTCEncoderRTPStreamOptions(), rtcSenderFeedbackOptions{})
 }
 
 func handleRTCEncoderRTPOfferWithStreamOptions(
@@ -439,7 +628,7 @@ func handleRTCEncoderRTPOfferWithStreamOptions(
 	onPeerConnection func(*webrtc.PeerConnection),
 	streamErr chan<- error,
 	streamOptions rtcEncoderRTPStreamOptions,
-	feedback *rtcSenderFeedbackCounters,
+	feedback rtcSenderFeedbackOptions,
 ) error {
 	offerBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -466,7 +655,7 @@ func handleRTCEncoderRTPOfferWithStreamOptions(
 	var wantKey atomic.Bool
 	wantKey.Store(true)
 	done := make(chan struct{})
-	startSenderFeedbackReader(sender, &wantKey, done, feedback)
+	startSenderFeedbackReaderWithOptions(sender, track, &wantKey, done, feedback)
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		switch s {
 		case webrtc.PeerConnectionStateConnected:

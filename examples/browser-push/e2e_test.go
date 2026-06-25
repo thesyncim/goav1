@@ -318,6 +318,11 @@ func startSenderPictureLossReader(sender *webrtc.RTPSender, wantKey *atomic.Bool
 	startSenderFeedbackReader(sender, wantKey, done, nil)
 }
 
+type rtcSenderFeedbackOptions struct {
+	Counters *rtcSenderFeedbackCounters
+	OnNACK   func(*webrtc.TrackLocalStaticRTP, *rtcp.TransportLayerNack) bool
+}
+
 type rtcSenderFeedbackCounters struct {
 	PictureLoss atomic.Int64
 	FullIntra   atomic.Int64
@@ -326,6 +331,13 @@ type rtcSenderFeedbackCounters struct {
 
 func startSenderFeedbackReader(
 	sender *webrtc.RTPSender, wantKey *atomic.Bool, done <-chan struct{}, counters *rtcSenderFeedbackCounters,
+) {
+	startSenderFeedbackReaderWithOptions(sender, nil, wantKey, done, rtcSenderFeedbackOptions{Counters: counters})
+}
+
+func startSenderFeedbackReaderWithOptions(
+	sender *webrtc.RTPSender, track *webrtc.TrackLocalStaticRTP, wantKey *atomic.Bool, done <-chan struct{},
+	options rtcSenderFeedbackOptions,
 ) {
 	go func() {
 		buf := make([]byte, 1500)
@@ -344,22 +356,24 @@ func startSenderFeedbackReader(
 				continue
 			}
 			for _, p := range packets {
-				switch p.(type) {
+				switch feedback := p.(type) {
 				case *rtcp.PictureLossIndication:
-					if counters != nil {
-						counters.PictureLoss.Add(1)
+					if options.Counters != nil {
+						options.Counters.PictureLoss.Add(1)
 					}
 					wantKey.Store(true)
 				case *rtcp.FullIntraRequest:
-					if counters != nil {
-						counters.FullIntra.Add(1)
+					if options.Counters != nil {
+						options.Counters.FullIntra.Add(1)
 					}
 					wantKey.Store(true)
 				case *rtcp.TransportLayerNack:
-					if counters != nil {
-						counters.NACK.Add(1)
+					if options.Counters != nil {
+						options.Counters.NACK.Add(1)
 					}
-					wantKey.Store(true)
+					if options.OnNACK == nil || !options.OnNACK(track, feedback) {
+						wantKey.Store(true)
+					}
 				}
 			}
 		}
@@ -397,6 +411,7 @@ type rtcEncoderRTPStreamOptions struct {
 	HeaderExtensions rtcRTPHeaderExtensions
 	ForceKeyFrame    func(frameIndex int) bool
 	DropPacket       func(frameIndex int, packetIndex int, packet rtp.Packet) bool
+	OnPacket         func(frameIndex int, packetIndex int, packet rtp.Packet, dropped bool) error
 	OnPicture        func(frameIndex int, picture goav1.RTCPicture)
 }
 
@@ -459,7 +474,13 @@ func streamRTCEncoderRTPWithOptions(
 		}
 		sequence, twcc = nextSequence, nextTWCC
 		for i := range packets {
-			if options.DropPacket != nil && options.DropPacket(n, i, packets[i]) {
+			dropped := options.DropPacket != nil && options.DropPacket(n, i, packets[i])
+			if options.OnPacket != nil {
+				if err := options.OnPacket(n, i, packets[i], dropped); err != nil {
+					return err
+				}
+			}
+			if dropped {
 				continue
 			}
 			if err := track.WriteRTP(&packets[i]); err != nil {

@@ -2,8 +2,9 @@
 
 Streams an animated 1080p30 scene from the goav1 encoder to a browser
 `<video>` element as AV1 RTP. The browser sends a receive-only offer, the
-server answers, and picture-loss feedback (PLI/FIR) forces keyframes so the
-stream recovers from packet loss like a production sender.
+server answers, and loss feedback (PLI/FIR/NACK) forces keyframes so the stream
+recovers from packet loss. The direct-RTP browser gate also proves Generic NACK
+repair with a sender-side retransmission cache.
 
 The example carries its own `go.mod` (with a `replace` to the repository
 root), so its WebRTC dependencies stay out of the main module.
