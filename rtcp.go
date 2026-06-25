@@ -1242,7 +1242,13 @@ const (
 	RTCPTransportFeedbackStatusLargeOrNegativeDelta RTCPTransportFeedbackPacketStatus = 2
 )
 
-const rtcpTransportFeedbackMaxRunLength = 0x1fff
+const (
+	rtcpTransportFeedbackMaxRunLength         = 0x1fff
+	rtcpTransportFeedbackTimeWrapPeriodMicros = int64(RTCPTransportFeedbackMaxReferenceTimeTicks+1) * int64(RTCPTransportFeedbackBaseTimeTickMicros)
+	rtcpTransportFeedbackHalfDeltaTickMicros  = int64(RTCPTransportFeedbackDeltaTickMicros / 2)
+	rtcpTransportFeedbackMinDeltaTicksInt64   = -0x8000
+	rtcpTransportFeedbackMaxDeltaTicksInt64   = 0x7fff
+)
 
 // RTCPTransportFeedbackPacket is one packet status in a transport-wide
 // congestion-control FCI. SequenceNumber must be contiguous from the feedback's
@@ -1261,6 +1267,13 @@ type RTCPTransportFeedback struct {
 	FeedbackPacketCount uint8
 	DeltasPresent       bool
 	Packets             []RTCPTransportFeedbackPacket
+}
+
+// RTCPTransportFeedbackReceivedPacket is one receiver-side packet observation
+// used to build a transport-wide congestion-control feedback FCI.
+type RTCPTransportFeedbackReceivedPacket struct {
+	SequenceNumber    uint16
+	ReceiveTimeMicros int64
 }
 
 // RTCPTransportFeedbackPacketReception is one packet-status entry expanded
@@ -1319,6 +1332,115 @@ func (f RTCPTransportFeedback) Validate() error {
 		}
 	}
 	return nil
+}
+
+// AppendRTCPTransportFeedbackPacketsForReceivedPackets appends the contiguous
+// packet-status window [baseSequenceNumber, lastSequenceNumber] into dst using
+// received as the sorted receiver-side observations inside that window.
+// Receive deltas are rounded to signed 250 us ticks relative to
+// referenceTimeTicks for the first received packet and relative to the previous
+// quantized received packet afterward. Observations must be sorted in feedback
+// sequence order, unique, and in range. dst is not grown beyond its existing
+// capacity.
+func AppendRTCPTransportFeedbackPacketsForReceivedPackets(
+	dst []RTCPTransportFeedbackPacket,
+	baseSequenceNumber uint16,
+	lastSequenceNumber uint16,
+	referenceTimeTicks uint32,
+	received []RTCPTransportFeedbackReceivedPacket,
+) ([]RTCPTransportFeedbackPacket, error) {
+	if referenceTimeTicks > RTCPTransportFeedbackMaxReferenceTimeTicks {
+		return dst, ErrRTCPInvalidFeedback
+	}
+	statusCount := int(uint32(lastSequenceNumber-baseSequenceNumber) + 1)
+	if statusCount == 0 || statusCount > RTCPTransportFeedbackMaxPackets {
+		return dst, ErrRTCPInvalidFeedback
+	}
+	if cap(dst)-len(dst) < statusCount {
+		return dst, ErrRTCPShortBuffer
+	}
+
+	off := len(dst)
+	out := dst[:off+statusCount]
+	for i := 0; i < statusCount; i++ {
+		out[off+i] = RTCPTransportFeedbackPacket{
+			SequenceNumber: baseSequenceNumber + uint16(i),
+		}
+	}
+
+	lastDistance := -1
+	receiveTimeMicros := int64(referenceTimeTicks) * int64(RTCPTransportFeedbackBaseTimeTickMicros)
+	for i := range received {
+		observation := received[i]
+		distance := int(uint16(observation.SequenceNumber - baseSequenceNumber))
+		if distance >= statusCount || distance <= lastDistance {
+			return dst, ErrRTCPInvalidFeedback
+		}
+		deltaTicks, err := rtcpTransportFeedbackRoundedDeltaTicks(observation.ReceiveTimeMicros, receiveTimeMicros)
+		if err != nil {
+			return dst, ErrRTCPInvalidFeedback
+		}
+		out[off+distance] = RTCPTransportFeedbackPacket{
+			SequenceNumber: observation.SequenceNumber,
+			Received:       true,
+			DeltaTicks:     deltaTicks,
+		}
+		receiveTimeMicros += int64(deltaTicks) * int64(RTCPTransportFeedbackDeltaTickMicros)
+		lastDistance = distance
+	}
+	return out, nil
+}
+
+// RTCPTransportFeedbackForReceivedPackets builds one transport-wide
+// congestion-control feedback FCI from receiver-side packet observations.
+// Packets in the returned feedback alias packetScratch.
+func RTCPTransportFeedbackForReceivedPackets(
+	baseSequenceNumber uint16,
+	lastSequenceNumber uint16,
+	referenceTimeTicks uint32,
+	feedbackPacketCount uint8,
+	received []RTCPTransportFeedbackReceivedPacket,
+	packetScratch []RTCPTransportFeedbackPacket,
+) (RTCPTransportFeedback, error) {
+	off := len(packetScratch)
+	packets, err := AppendRTCPTransportFeedbackPacketsForReceivedPackets(
+		packetScratch,
+		baseSequenceNumber,
+		lastSequenceNumber,
+		referenceTimeTicks,
+		received,
+	)
+	if err != nil {
+		return RTCPTransportFeedback{}, err
+	}
+	feedback := RTCPTransportFeedback{
+		BaseSequenceNumber:  baseSequenceNumber,
+		ReferenceTimeTicks:  referenceTimeTicks,
+		FeedbackPacketCount: feedbackPacketCount,
+		DeltasPresent:       true,
+		Packets:             packets[off:],
+	}
+	if err := feedback.Validate(); err != nil {
+		return RTCPTransportFeedback{}, err
+	}
+	return feedback, nil
+}
+
+func rtcpTransportFeedbackRoundedDeltaTicks(timestampMicros int64, previousMicros int64) (int16, error) {
+	deltaMicros := (timestampMicros - previousMicros) % rtcpTransportFeedbackTimeWrapPeriodMicros
+	if deltaMicros > rtcpTransportFeedbackTimeWrapPeriodMicros/2 {
+		deltaMicros -= rtcpTransportFeedbackTimeWrapPeriodMicros
+	}
+	if deltaMicros < 0 {
+		deltaMicros -= rtcpTransportFeedbackHalfDeltaTickMicros
+	} else {
+		deltaMicros += rtcpTransportFeedbackHalfDeltaTickMicros
+	}
+	deltaTicks := deltaMicros / int64(RTCPTransportFeedbackDeltaTickMicros)
+	if deltaTicks < rtcpTransportFeedbackMinDeltaTicksInt64 || deltaTicks > rtcpTransportFeedbackMaxDeltaTicksInt64 {
+		return 0, ErrRTCPInvalidFeedback
+	}
+	return int16(deltaTicks), nil
 }
 
 // RTCPTransportFeedbackFCISize returns the byte count needed to serialize f as

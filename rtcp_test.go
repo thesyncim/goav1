@@ -2377,6 +2377,274 @@ func TestRTCPTransportFeedbackPacketReceptionTimeline(t *testing.T) {
 	}
 }
 
+func TestRTCPTransportFeedbackForReceivedPackets(t *testing.T) {
+	received := []av1.RTCPTransportFeedbackReceivedPacket{
+		{SequenceNumber: 0xfffe, ReceiveTimeMicros: 129_000},
+		{SequenceNumber: 0x0000, ReceiveTimeMicros: 128_500},
+		{SequenceNumber: 0x0002, ReceiveTimeMicros: 130_500},
+	}
+	packetScratch := make([]av1.RTCPTransportFeedbackPacket, 1, 6)
+	packetScratch[0] = av1.RTCPTransportFeedbackPacket{
+		SequenceNumber: 0xdddd,
+		Received:       true,
+		DeltaTicks:     77,
+	}
+	feedback, err := av1.RTCPTransportFeedbackForReceivedPackets(
+		0xfffe,
+		0x0002,
+		2,
+		7,
+		received,
+		packetScratch[:1:cap(packetScratch)],
+	)
+	if err != nil {
+		t.Fatalf("RTCPTransportFeedbackForReceivedPackets: %v", err)
+	}
+	if packetScratch[0].SequenceNumber != 0xdddd || !packetScratch[0].Received || packetScratch[0].DeltaTicks != 77 {
+		t.Fatalf("packet scratch prefix clobbered: %+v", packetScratch[0])
+	}
+	if feedback.BaseSequenceNumber != 0xfffe ||
+		feedback.ReferenceTimeTicks != 2 ||
+		feedback.FeedbackPacketCount != 7 ||
+		!feedback.DeltasPresent {
+		t.Fatalf("feedback header=%+v", feedback)
+	}
+	wantPackets := []av1.RTCPTransportFeedbackPacket{
+		{SequenceNumber: 0xfffe, Received: true, DeltaTicks: 4},
+		{SequenceNumber: 0xffff},
+		{SequenceNumber: 0x0000, Received: true, DeltaTicks: -2},
+		{SequenceNumber: 0x0001},
+		{SequenceNumber: 0x0002, Received: true, DeltaTicks: 8},
+	}
+	assertRTCPTransportFeedbackPackets(t, feedback.Packets, wantPackets)
+
+	fci, err := av1.AppendRTCPTransportFeedbackFCI(make([]byte, 0, 32), feedback)
+	if err != nil {
+		t.Fatalf("AppendRTCPTransportFeedbackFCI: %v", err)
+	}
+	parsed, err := av1.ParseRTCPTransportFeedbackFCI(fci, make([]av1.RTCPTransportFeedbackPacket, 0, len(wantPackets)))
+	if err != nil {
+		t.Fatalf("ParseRTCPTransportFeedbackFCI: %v", err)
+	}
+	assertRTCPTransportFeedbackPackets(t, parsed.Packets, wantPackets)
+
+	summary, err := av1.SummarizeRTCPTransportFeedback(parsed)
+	if err != nil {
+		t.Fatalf("SummarizeRTCPTransportFeedback: %v", err)
+	}
+	if summary.ReceivedCount != 3 ||
+		summary.NotReceivedCount != 2 ||
+		summary.FirstReceiveTimeMicros != 129_000 ||
+		summary.LastReceiveTimeMicros != 130_500 ||
+		summary.MinReceiveDeltaMicros != -500 ||
+		summary.MaxReceiveDeltaMicros != 2_000 {
+		t.Fatalf("summary=%+v", summary)
+	}
+	receptions, err := av1.AppendRTCPTransportFeedbackPacketReceptions(
+		make([]av1.RTCPTransportFeedbackPacketReception, 0, len(wantPackets)),
+		parsed,
+	)
+	if err != nil {
+		t.Fatalf("AppendRTCPTransportFeedbackPacketReceptions: %v", err)
+	}
+	wantReceptions := []av1.RTCPTransportFeedbackPacketReception{
+		{SequenceNumber: 0xfffe, Received: true, ReceiveTimePresent: true, ReceiveTimeMicros: 129_000},
+		{SequenceNumber: 0xffff},
+		{SequenceNumber: 0x0000, Received: true, ReceiveTimePresent: true, ReceiveTimeMicros: 128_500},
+		{SequenceNumber: 0x0001},
+		{SequenceNumber: 0x0002, Received: true, ReceiveTimePresent: true, ReceiveTimeMicros: 130_500},
+	}
+	if len(receptions) != len(wantReceptions) {
+		t.Fatalf("receptions len=%d want %d", len(receptions), len(wantReceptions))
+	}
+	for i := range wantReceptions {
+		if receptions[i] != wantReceptions[i] {
+			t.Fatalf("reception[%d]=%+v want %+v", i, receptions[i], wantReceptions[i])
+		}
+	}
+}
+
+func TestRTCPTransportFeedbackForReceivedPacketsRoundsDeltas(t *testing.T) {
+	received := []av1.RTCPTransportFeedbackReceivedPacket{
+		{SequenceNumber: 10, ReceiveTimeMicros: 126},
+		{SequenceNumber: 11, ReceiveTimeMicros: 624},
+	}
+	feedback, err := av1.RTCPTransportFeedbackForReceivedPackets(
+		10,
+		11,
+		0,
+		1,
+		received,
+		make([]av1.RTCPTransportFeedbackPacket, 0, 2),
+	)
+	if err != nil {
+		t.Fatalf("RTCPTransportFeedbackForReceivedPackets: %v", err)
+	}
+	wantPackets := []av1.RTCPTransportFeedbackPacket{
+		{SequenceNumber: 10, Received: true, DeltaTicks: 1},
+		{SequenceNumber: 11, Received: true, DeltaTicks: 1},
+	}
+	assertRTCPTransportFeedbackPackets(t, feedback.Packets, wantPackets)
+	receptions, err := av1.AppendRTCPTransportFeedbackPacketReceptions(
+		make([]av1.RTCPTransportFeedbackPacketReception, 0, 2),
+		feedback,
+	)
+	if err != nil {
+		t.Fatalf("AppendRTCPTransportFeedbackPacketReceptions: %v", err)
+	}
+	wantReceptions := []av1.RTCPTransportFeedbackPacketReception{
+		{SequenceNumber: 10, Received: true, ReceiveTimePresent: true, ReceiveTimeMicros: 250},
+		{SequenceNumber: 11, Received: true, ReceiveTimePresent: true, ReceiveTimeMicros: 500},
+	}
+	for i := range wantReceptions {
+		if receptions[i] != wantReceptions[i] {
+			t.Fatalf("reception[%d]=%+v want %+v", i, receptions[i], wantReceptions[i])
+		}
+	}
+}
+
+func TestAppendRTCPTransportFeedbackPacketsForReceivedPacketsRejectsInvalid(t *testing.T) {
+	if _, err := av1.AppendRTCPTransportFeedbackPacketsForReceivedPackets(
+		make([]av1.RTCPTransportFeedbackPacket, 0, 1),
+		1,
+		2,
+		0,
+		nil,
+	); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short packet scratch err=%v want %v", err, av1.ErrRTCPShortBuffer)
+	}
+	if _, err := av1.AppendRTCPTransportFeedbackPacketsForReceivedPackets(
+		nil,
+		0,
+		0xffff,
+		0,
+		nil,
+	); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("full 16-bit packet window err=%v want %v", err, av1.ErrRTCPInvalidFeedback)
+	}
+	if _, err := av1.AppendRTCPTransportFeedbackPacketsForReceivedPackets(
+		nil,
+		10,
+		10,
+		av1.RTCPTransportFeedbackMaxReferenceTimeTicks+1,
+		nil,
+	); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+		t.Fatalf("reference overflow err=%v want %v", err, av1.ErrRTCPInvalidFeedback)
+	}
+
+	tests := []struct {
+		name     string
+		received []av1.RTCPTransportFeedbackReceivedPacket
+	}{
+		{
+			name:     "outside-window",
+			received: []av1.RTCPTransportFeedbackReceivedPacket{{SequenceNumber: 13, ReceiveTimeMicros: 0}},
+		},
+		{
+			name: "duplicate",
+			received: []av1.RTCPTransportFeedbackReceivedPacket{
+				{SequenceNumber: 10, ReceiveTimeMicros: 0},
+				{SequenceNumber: 10, ReceiveTimeMicros: 250},
+			},
+		},
+		{
+			name: "unsorted",
+			received: []av1.RTCPTransportFeedbackReceivedPacket{
+				{SequenceNumber: 11, ReceiveTimeMicros: 0},
+				{SequenceNumber: 10, ReceiveTimeMicros: 250},
+			},
+		},
+		{
+			name:     "positive-delta-overflow",
+			received: []av1.RTCPTransportFeedbackReceivedPacket{{SequenceNumber: 10, ReceiveTimeMicros: 8_192_000}},
+		},
+		{
+			name:     "negative-delta-overflow",
+			received: []av1.RTCPTransportFeedbackReceivedPacket{{SequenceNumber: 10, ReceiveTimeMicros: -8_192_250}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			prefix := make([]av1.RTCPTransportFeedbackPacket, 1, 4)
+			prefix[0].SequenceNumber = 0xeeee
+			out, err := av1.AppendRTCPTransportFeedbackPacketsForReceivedPackets(
+				prefix[:1:4],
+				10,
+				12,
+				0,
+				tc.received,
+			)
+			if !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+				t.Fatalf("err=%v want %v", err, av1.ErrRTCPInvalidFeedback)
+			}
+			if len(out) != 1 || out[0].SequenceNumber != 0xeeee {
+				t.Fatalf("invalid append changed returned prefix: %+v", out)
+			}
+		})
+	}
+
+	packets, err := av1.AppendRTCPTransportFeedbackPacketsForReceivedPackets(
+		make([]av1.RTCPTransportFeedbackPacket, 0, 3),
+		100,
+		102,
+		0,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("all-missing packet window: %v", err)
+	}
+	want := []av1.RTCPTransportFeedbackPacket{
+		{SequenceNumber: 100},
+		{SequenceNumber: 101},
+		{SequenceNumber: 102},
+	}
+	assertRTCPTransportFeedbackPackets(t, packets, want)
+}
+
+func TestRTCPTransportFeedbackForReceivedPacketsAllocs(t *testing.T) {
+	received := []av1.RTCPTransportFeedbackReceivedPacket{
+		{SequenceNumber: 100, ReceiveTimeMicros: 64_000},
+		{SequenceNumber: 102, ReceiveTimeMicros: 65_000},
+		{SequenceNumber: 103, ReceiveTimeMicros: 64_750},
+	}
+	packetScratch := make([]av1.RTCPTransportFeedbackPacket, 0, 4)
+	feedback, err := av1.RTCPTransportFeedbackForReceivedPackets(100, 103, 1, 3, received, packetScratch[:0])
+	if err != nil {
+		t.Fatalf("RTCPTransportFeedbackForReceivedPackets: %v", err)
+	}
+	fciSize, err := av1.RTCPTransportFeedbackFCISize(feedback)
+	if err != nil {
+		t.Fatalf("RTCPTransportFeedbackFCISize: %v", err)
+	}
+	fciScratch := make([]byte, 0, fciSize)
+	parseScratch := make([]av1.RTCPTransportFeedbackPacket, 0, 4)
+	receptionScratch := make([]av1.RTCPTransportFeedbackPacketReception, 0, 4)
+	allocs := testing.AllocsPerRun(1000, func() {
+		feedback, err := av1.RTCPTransportFeedbackForReceivedPackets(100, 103, 1, 3, received, packetScratch[:0])
+		if err != nil {
+			t.Fatalf("RTCPTransportFeedbackForReceivedPackets: %v", err)
+		}
+		fci, err := av1.AppendRTCPTransportFeedbackFCI(fciScratch[:0], feedback)
+		if err != nil {
+			t.Fatalf("AppendRTCPTransportFeedbackFCI: %v", err)
+		}
+		parsed, err := av1.ParseRTCPTransportFeedbackFCI(fci, parseScratch[:0])
+		if err != nil {
+			t.Fatalf("ParseRTCPTransportFeedbackFCI: %v", err)
+		}
+		receptions, err := av1.AppendRTCPTransportFeedbackPacketReceptions(receptionScratch[:0], parsed)
+		if err != nil {
+			t.Fatalf("AppendRTCPTransportFeedbackPacketReceptions: %v", err)
+		}
+		if len(receptions) != 4 {
+			t.Fatalf("receptions=%d want 4", len(receptions))
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("Transport-CC received-packet builder allocs/run=%f want 0", allocs)
+	}
+}
+
 func TestEncoderWebRTCRTCPTransportFeedback(t *testing.T) {
 	first := av1.RTCPTransportFeedback{
 		BaseSequenceNumber:  100,

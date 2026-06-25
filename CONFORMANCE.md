@@ -335,8 +335,10 @@ ship under `internal/av1/testdata/libaom/`.
   MID/RID/RRID SDES payload helpers, AV1 RID receiver restrictions, AV1
   simulcast RID groups, generic and compound RTCP packet parsing, RTCP
   SR/RR/SDES/BYE and RTPFB/PSFB packet wrapping/parsing,
-  NACK/Transport-CC/PLI/FIR/REMB feedback helpers, AV1 RTCP LRR FCI entry/list
-  parsing, serialization, layer-grid validation, and single/compound
+  NACK/Transport-CC/PLI/FIR/REMB feedback helpers, Transport-CC
+  receiver-side report construction and receive-timeline reconstruction,
+  AV1 RTCP LRR FCI entry/list parsing, serialization, layer-grid validation,
+  and single/compound
   PLI/FIR/LRR force-key classification, and sequence-matched `Frame`
   validation/loading for
   profile-0/1/2 8/10/12-bit 4:0:0, 4:2:0, 4:2:2, and 4:4:4 buffers,
