@@ -2146,6 +2146,109 @@ func TestPublicRTCEncoderSimulcastSettingsReferenceDecoders(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderSharedSVCSettingsReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	const w, h = 640, 360
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL2T2_KEY_SHIFT)
+	cfg.MaxFramerate = goav1.EncoderRational{Num: 30, Den: 1}
+	publicRTCApplyControlBitrates(&cfg, 900)
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	var descriptorReceiver goav1.RTPDependencyDescriptorState
+	var activeReceiver goav1.RTPDependencyDescriptorState
+	activeLimits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}
+	nextFrameID := uint64(0)
+	var sequence goav1.SequenceHeader
+	var frames []publicIVFFrame
+	var lowOverheads [][]byte
+	appendPicture := func(label string, frameIndex int, forceKey bool, wantKey bool, wantScreen bool) {
+		t.Helper()
+		picture, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, frameIndex), forceKey)
+		if err != nil {
+			t.Fatalf("%s EncodePicture: %v", label, err)
+		}
+		if picture.Keyframe != wantKey {
+			t.Fatalf("%s key=%v want %v picture=%+v", label, picture.Keyframe, wantKey, picture)
+		}
+		current := enc.Config()
+		assertPublicRTCPictureDescriptors(t, &descriptorReceiver, current, picture, wantKey, &nextFrameID)
+		assertPublicRTCPictureActiveDecodeTargetOptions(t, &activeReceiver, current, picture, activeLimits)
+		for i := 0; i < picture.FrameNum; i++ {
+			frame := picture.Frames[i]
+			assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), frame.Data, &sequence, wantScreen)
+			payload := append([]byte(nil), frame.Data...)
+			frames = append(frames, publicIVFFrame{
+				timestamp: uint64(len(frames)),
+				payload:   payload,
+			})
+			lowOverheads = append(lowOverheads, payload)
+		}
+	}
+
+	appendPicture("initial L2T2_KEY_SHIFT CBR key", 0, false, true, false)
+	appendPicture("warm L2T2_KEY_SHIFT CBR delta", 1, false, false, false)
+
+	fpsBitrateChange := enc.Config()
+	fpsBitrateChange.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
+	publicRTCApplyControlBitrates(&fpsBitrateChange, 1100)
+	if err := enc.SetConfig(fpsBitrateChange); err != nil {
+		t.Fatalf("SetConfig fps/bitrate: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), fpsBitrateChange)
+	if got, err := enc.RTPFrameDuration(); err != nil || got != (goav1.EncoderRational{Num: 3003, Den: 2}) {
+		t.Fatalf("fps/bitrate RTPFrameDuration=%+v err=%v", got, err)
+	}
+	appendPicture("L2T2_KEY_SHIFT fps bitrate delta", 2, false, false, false)
+
+	cqpChange := enc.Config()
+	cqpChange.RateControl = goav1.EncoderRateControlCQP
+	cqpChange.Quantizer = 32
+	cqpChange.Content = goav1.EncoderContentScreen
+	if err := enc.SetConfig(cqpChange); err != nil {
+		t.Fatalf("SetConfig CQP/screen: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), cqpChange)
+	appendPicture("L2T2_KEY_SHIFT CQP screen delta", 3, false, false, true)
+	appendPicture("L2T2_KEY_SHIFT forced screen key", 4, true, true, true)
+
+	scalabilityChange := enc.Config()
+	scalabilityChange.Scalability = goav1.EncoderScalabilityModeL2T3_KEY_SHIFT
+	scalabilityChange.MaxFramerate = goav1.EncoderRational{Num: 24, Den: 1}
+	scalabilityChange.Quantizer = 29
+	if err := enc.SetConfig(scalabilityChange); err != nil {
+		t.Fatalf("SetConfig scalability screen: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), scalabilityChange)
+	if got, err := enc.RTPFrameDuration(); err != nil || got != (goav1.EncoderRational{Num: 3750, Den: 1}) {
+		t.Fatalf("scalability RTPFrameDuration=%+v err=%v", got, err)
+	}
+	appendPicture("L2T3_KEY_SHIFT screen structure key", 5, false, true, true)
+	appendPicture("L2T3_KEY_SHIFT CQP screen delta", 6, false, false, true)
+
+	cbrChange := enc.Config()
+	cbrChange.RateControl = goav1.EncoderRateControlCBR
+	cbrChange.Quantizer = 0
+	cbrChange.MaxFramerate = goav1.EncoderRational{Num: 120, Den: 1}
+	cbrChange.Content = goav1.EncoderContentCamera
+	publicRTCApplyControlBitrates(&cbrChange, 780)
+	if err := enc.SetConfig(cbrChange); err != nil {
+		t.Fatalf("SetConfig CBR/camera: %v", err)
+	}
+	assertPublicRTCConfigControls(t, enc.Config(), cbrChange)
+	appendPicture("L2T3_KEY_SHIFT CBR camera delta", 7, false, false, false)
+
+	wantYUV, decodedCount := decodePublicRTCLayerPoolLowOverheadRawYUV(t, lowOverheads...)
+	if decodedCount != len(lowOverheads) {
+		t.Fatalf("shared-SVC decoded frames=%d want %d", decodedCount, len(lowOverheads))
+	}
+	ivf := appendPublicIVF(nil, w, h, 30, 1, frames)
+	assertPublicIVFMatchesReferenceDecodersRawYUVBytes(t, decoders, "shared-svc-settings", ivf, wantYUV, decodedCount)
+}
+
 type publicReferenceAV1Decoder struct {
 	name string
 	path string
@@ -2158,13 +2261,13 @@ func publicReferenceAV1Decoders(t *testing.T) []publicReferenceAV1Decoder {
 		{
 			name: "aomdec",
 			args: func(outPath string, ivfPath string) []string {
-				return []string{"--rawvideo", "-o", outPath, ivfPath}
+				return []string{"--rawvideo", "--all-layers", "-o", outPath, ivfPath}
 			},
 		},
 		{
 			name: "dav1d",
 			args: func(outPath string, ivfPath string) []string {
-				return []string{"--muxer", "yuv", "-o", outPath, "-i", ivfPath}
+				return []string{"--alllayers", "1", "--muxer", "yuv", "-o", outPath, "-i", ivfPath}
 			},
 		},
 	}
@@ -2252,6 +2355,57 @@ func assertPublicIVFMatchesReferenceDecodersRawYUV(
 		}
 		t.Logf("%s %s: %d frames bit-exact", name, decoder.name, len(decoded))
 	}
+}
+
+func assertPublicIVFMatchesReferenceDecodersRawYUVBytes(
+	t *testing.T, decoders []publicReferenceAV1Decoder, name string, ivf []byte, want []byte, frameCount int,
+) {
+	t.Helper()
+	dir := t.TempDir()
+	ivfPath := filepath.Join(dir, name+".ivf")
+	if err := os.WriteFile(ivfPath, ivf, 0o644); err != nil {
+		t.Fatalf("%s write IVF: %v", name, err)
+	}
+	for _, decoder := range decoders {
+		outPath := filepath.Join(dir, name+"-"+decoder.name+".yuv")
+		out, err := exec.Command(decoder.path, decoder.args(outPath, ivfPath)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s %s: %v\n%s", name, decoder.name, err, out)
+		}
+		got, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("%s read %s output: %v", name, decoder.name, err)
+		}
+		if !bytes.Equal(got, want) {
+			offset := firstPublicByteDiff(got, want)
+			var gotByte, wantByte byte
+			if offset >= 0 && offset < len(got) {
+				gotByte = got[offset]
+			}
+			if offset >= 0 && offset < len(want) {
+				wantByte = want[offset]
+			}
+			t.Fatalf("%s %s output len=%d want len=%d first_diff=%d got=%#02x want=%#02x",
+				name, decoder.name, len(got), len(want), offset, gotByte, wantByte)
+		}
+		t.Logf("%s %s: %d frames bit-exact", name, decoder.name, frameCount)
+	}
+}
+
+func firstPublicByteDiff(a []byte, b []byte) int {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	if len(a) != len(b) {
+		return n
+	}
+	return -1
 }
 
 func TestPublicRTCEncoderSetConfigSpatialCycleDecodes(t *testing.T) {
@@ -3779,6 +3933,29 @@ func publicDecodedFramesRawYUV(frames []goav1.DecodedFrame) []byte {
 	return out
 }
 
+func appendPublicFrameRawYUV(dst []byte, frame *goav1.Frame) []byte {
+	if frame == nil {
+		return dst
+	}
+	bytesPerSample := frame.Layout.BytesPerSample
+	dst = appendPublicFramePlaneRawYUV(dst, frame.Y, bytesPerSample)
+	dst = appendPublicFramePlaneRawYUV(dst, frame.U, bytesPerSample)
+	dst = appendPublicFramePlaneRawYUV(dst, frame.V, bytesPerSample)
+	return dst
+}
+
+func appendPublicFramePlaneRawYUV(dst []byte, plane goav1.FramePlane, bytesPerSample int) []byte {
+	if plane.Width == 0 || plane.Height == 0 || len(plane.Pix) == 0 {
+		return dst
+	}
+	rowBytes := plane.Width * bytesPerSample
+	for row := 0; row < plane.Height; row++ {
+		off := row * plane.Stride
+		dst = append(dst, plane.Pix[off:off+rowBytes]...)
+	}
+	return dst
+}
+
 func assertPublicRTCAttachedStructure(t *testing.T, structure goav1.RTPDependencyDescriptorStructure, cfg goav1.EncoderConfig) {
 	t.Helper()
 	spatialLayers, temporalLayers, _, ok := cfg.Scalability.Layers()
@@ -4191,6 +4368,30 @@ func decodePublicRTCLayerPoolLowOverheadDigests(t *testing.T, payloads ...[]byte
 		}
 	}
 	return out
+}
+
+func decodePublicRTCLayerPoolLowOverheadRawYUV(t *testing.T, payloads ...[]byte) ([]byte, int) {
+	t.Helper()
+
+	h := newPublicRTCLayerPoolDecodeHarness(t, len(payloads))
+	defer h.close(t)
+	events := make([]goav1.DecoderEvent, 16)
+	var out []byte
+	frames := 0
+
+	for payloadIndex, payload := range payloads {
+		count, err := h.stream.PushLowOverhead(payload, events)
+		if err != nil {
+			t.Fatalf("payload %d PushLowOverhead: %v", payloadIndex, err)
+		}
+		start := len(h.outputs)
+		h.runEvents(t, payloadIndex, events[:count])
+		for _, frame := range h.outputs[start:] {
+			out = appendPublicFrameRawYUV(out, frame)
+			frames++
+		}
+	}
+	return out, frames
 }
 
 func decodePublicRTCLayerPoolRTPPayloadDigestsWithLabels(t *testing.T, labels []string, payloads ...[]byte) [][16]byte {
