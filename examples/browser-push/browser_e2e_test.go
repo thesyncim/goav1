@@ -17,6 +17,7 @@ import (
 
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 
 	goav1 "github.com/thesyncim/goav1"
@@ -182,6 +183,122 @@ func TestBrowserLiveRTCEncoderDirectRTPPlaybackStats(t *testing.T) {
 	}
 }
 
+func TestBrowserLiveRTCEncoderDirectRTPImpairmentFeedback(t *testing.T) {
+	required := os.Getenv(requireBrowserE2EEnv) == "1"
+	if !required && os.Getenv(browserE2EEnv) != "1" {
+		t.Skipf("set %s=1 to run the live browser/libwebrtc AV1 feedback gate", browserE2EEnv)
+	}
+	browserPath, err := browserExecutable()
+	if err != nil {
+		if required {
+			t.Fatalf("required browser executable unavailable: %v", err)
+		}
+		t.Skip(err)
+	}
+
+	feedback := &rtcSenderFeedbackCounters{}
+	var droppedPackets atomic.Int64
+	var keyPictures atomic.Int64
+	var postFeedbackKeyPictures atomic.Int64
+	options := defaultRTCEncoderRTPStreamOptions()
+	options.ForceKeyFrame = func(frameIndex int) bool { return false }
+	options.DropPacket = func(frameIndex int, packetIndex int, _ rtp.Packet) bool {
+		if frameIndex != 10 || packetIndex >= 4 {
+			return false
+		}
+		droppedPackets.Add(1)
+		return true
+	}
+	options.OnPicture = func(_ int, picture goav1.RTCPicture) {
+		if !picture.Keyframe {
+			return
+		}
+		keyPictures.Add(1)
+		if rtcSenderFeedbackTotal(feedback) > 0 {
+			postFeedbackKeyPictures.Add(1)
+		}
+	}
+
+	var mu sync.Mutex
+	var peers []*webrtc.PeerConnection
+	streamErr := make(chan error, 4)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(indexHTML)
+	})
+	mux.HandleFunc("/offer", func(w http.ResponseWriter, r *http.Request) {
+		err := handleRTCEncoderRTPOfferWithStreamOptions(w, r, func(pc *webrtc.PeerConnection) {
+			mu.Lock()
+			peers = append(peers, pc)
+			mu.Unlock()
+		}, streamErr, options, feedback)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, pc := range peers {
+			_ = pc.Close()
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx,
+		append(chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.ExecPath(browserPath),
+			chromedp.Flag("headless", "new"),
+			chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
+			chromedp.Flag("disable-background-timer-throttling", true),
+			chromedp.Flag("disable-renderer-backgrounding", true),
+			chromedp.Flag("mute-audio", true),
+			chromedp.NoSandbox,
+			chromedp.UserDataDir(t.TempDir()),
+		)...,
+	)
+	defer cancelAlloc()
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	defer cancelBrowser()
+
+	got := browserPlaybackEvidence{}
+	if err := chromedp.Run(browserCtx,
+		chromedp.Navigate(server.URL+"?direct-rtp-loss=1"),
+		chromedp.Evaluate(browserPlaybackProbeJS(45), &got, evalAwaitPromise),
+	); err != nil {
+		t.Fatalf("direct RTP impairment browser AV1 playback probe: %v", err)
+	}
+	if !got.OK {
+		select {
+		case err := <-streamErr:
+			t.Fatalf("direct RTP impairment stream failed before browser playback: %v; last=%+v", err, got)
+		default:
+		}
+	}
+	assertBrowserPlaybackEvidence(t, "direct-rtp-impairment", got)
+	if droppedPackets.Load() == 0 {
+		t.Fatal("direct RTP impairment test did not drop any packets")
+	}
+	if rtcSenderFeedbackTotal(feedback) == 0 {
+		t.Fatalf("direct RTP impairment produced no browser RTCP feedback after %d dropped packets", droppedPackets.Load())
+	}
+	if keyPictures.Load() < 2 || postFeedbackKeyPictures.Load() == 0 || got.KeyFramesDecoded < 2 {
+		t.Fatalf("direct RTP impairment recovery keys server=%d postFeedback=%d browser=%d feedback=%s",
+			keyPictures.Load(), postFeedbackKeyPictures.Load(), got.KeyFramesDecoded, rtcSenderFeedbackString(feedback))
+	}
+	select {
+	case err := <-streamErr:
+		t.Fatalf("direct RTP impairment stream failed: %v", err)
+	default:
+	}
+	t.Logf("direct RTP impairment feedback: dropped=%d %s browserNACK=%d",
+		droppedPackets.Load(), rtcSenderFeedbackString(feedback), got.NACKCount)
+}
+
 type browserPlaybackEvidence struct {
 	OK                    bool   `json:"ok"`
 	Error                 string `json:"error"`
@@ -199,6 +316,7 @@ type browserPlaybackEvidence struct {
 	BytesReceived         int    `json:"bytesReceived"`
 	PLICount              int    `json:"pliCount"`
 	FIRCount              int    `json:"firCount"`
+	NACKCount             int    `json:"nackCount"`
 	FreezeCount           int    `json:"freezeCount"`
 	JitterMS              int    `json:"jitterMS"`
 	CodecMimeType         string `json:"codecMimeType"`
@@ -220,9 +338,9 @@ func assertBrowserPlaybackEvidence(t *testing.T, label string, got browserPlayba
 	if got.CodecMimeType != "" && got.CodecMimeType != "video/AV1" {
 		t.Fatalf("%s browser codec mime=%q want video/AV1", label, got.CodecMimeType)
 	}
-	t.Logf("%s browser AV1 playback: frames=%d keyframes=%d packets=%d bytes=%d decoder=%q pli=%d fir=%d",
+	t.Logf("%s browser AV1 playback: frames=%d keyframes=%d packets=%d bytes=%d decoder=%q pli=%d fir=%d nack=%d",
 		label, got.FramesDecoded, got.KeyFramesDecoded, got.PacketsReceived, got.BytesReceived,
-		got.DecoderImplementation, got.PLICount, got.FIRCount)
+		got.DecoderImplementation, got.PLICount, got.FIRCount, got.NACKCount)
 }
 
 func browserPlaybackProbeJS(minFrames int) string {
@@ -249,6 +367,7 @@ func browserPlaybackProbeJS(minFrames int) string {
       bytesReceived: 0,
       pliCount: 0,
       firCount: 0,
+      nackCount: 0,
       freezeCount: 0,
       jitterMS: 0,
       codecMimeType: '',
@@ -269,6 +388,7 @@ func browserPlaybackProbeJS(minFrames int) string {
       out.bytesReceived = Number(report.bytesReceived || 0);
       out.pliCount = Number(report.pliCount || 0);
       out.firCount = Number(report.firCount || 0);
+      out.nackCount = Number(report.nackCount || 0);
       out.freezeCount = Number(report.freezeCount || 0);
       out.jitterMS = Math.round(Number(report.jitter || 0) * 1000);
       out.decoderImplementation = String(report.decoderImplementation || '');
@@ -309,6 +429,18 @@ func handleRTCEncoderRTPOfferWithPeerConnectionHook(
 	onPeerConnection func(*webrtc.PeerConnection),
 	streamErr chan<- error,
 ) error {
+	return handleRTCEncoderRTPOfferWithStreamOptions(
+		w, r, onPeerConnection, streamErr, defaultRTCEncoderRTPStreamOptions(), nil)
+}
+
+func handleRTCEncoderRTPOfferWithStreamOptions(
+	w http.ResponseWriter,
+	r *http.Request,
+	onPeerConnection func(*webrtc.PeerConnection),
+	streamErr chan<- error,
+	streamOptions rtcEncoderRTPStreamOptions,
+	feedback *rtcSenderFeedbackCounters,
+) error {
 	offerBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		return err
@@ -334,7 +466,7 @@ func handleRTCEncoderRTPOfferWithPeerConnectionHook(
 	var wantKey atomic.Bool
 	wantKey.Store(true)
 	done := make(chan struct{})
-	startSenderPictureLossReader(sender, &wantKey, done)
+	startSenderFeedbackReader(sender, &wantKey, done, feedback)
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		switch s {
 		case webrtc.PeerConnectionStateConnected:
@@ -346,8 +478,10 @@ func handleRTCEncoderRTPOfferWithPeerConnectionHook(
 				}
 				return
 			}
+			options := streamOptions
+			options.HeaderExtensions = extensions
 			go func() {
-				if err := streamRTCEncoderRTPWithHeaderExtensions(track, &wantKey, done, extensions); err != nil {
+				if err := streamRTCEncoderRTPWithOptions(track, &wantKey, done, options); err != nil {
 					select {
 					case streamErr <- err:
 					default:
@@ -382,6 +516,21 @@ func handleRTCEncoderRTPOfferWithPeerConnectionHook(
 	<-gathered
 	fmt.Fprint(w, pc.LocalDescription().SDP)
 	return nil
+}
+
+func rtcSenderFeedbackTotal(counters *rtcSenderFeedbackCounters) int64 {
+	if counters == nil {
+		return 0
+	}
+	return counters.PictureLoss.Load() + counters.FullIntra.Load() + counters.NACK.Load()
+}
+
+func rtcSenderFeedbackString(counters *rtcSenderFeedbackCounters) string {
+	if counters == nil {
+		return "pli=0 fir=0 nack=0"
+	}
+	return fmt.Sprintf("pli=%d fir=%d nack=%d",
+		counters.PictureLoss.Load(), counters.FullIntra.Load(), counters.NACK.Load())
 }
 
 func newRTCEncoderRTPPeerConnection() (*webrtc.PeerConnection, error) {

@@ -105,7 +105,7 @@ func handleOfferWithPeerConnectionHook(
 			}
 			for _, p := range packets {
 				switch p.(type) {
-				case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
+				case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest, *rtcp.TransportLayerNack:
 					wantKey.Store(true)
 				}
 			}

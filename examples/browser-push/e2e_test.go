@@ -315,6 +315,18 @@ func startPictureLossFeedback(
 }
 
 func startSenderPictureLossReader(sender *webrtc.RTPSender, wantKey *atomic.Bool, done <-chan struct{}) {
+	startSenderFeedbackReader(sender, wantKey, done, nil)
+}
+
+type rtcSenderFeedbackCounters struct {
+	PictureLoss atomic.Int64
+	FullIntra   atomic.Int64
+	NACK        atomic.Int64
+}
+
+func startSenderFeedbackReader(
+	sender *webrtc.RTPSender, wantKey *atomic.Bool, done <-chan struct{}, counters *rtcSenderFeedbackCounters,
+) {
 	go func() {
 		buf := make([]byte, 1500)
 		for {
@@ -333,7 +345,20 @@ func startSenderPictureLossReader(sender *webrtc.RTPSender, wantKey *atomic.Bool
 			}
 			for _, p := range packets {
 				switch p.(type) {
-				case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
+				case *rtcp.PictureLossIndication:
+					if counters != nil {
+						counters.PictureLoss.Add(1)
+					}
+					wantKey.Store(true)
+				case *rtcp.FullIntraRequest:
+					if counters != nil {
+						counters.FullIntra.Add(1)
+					}
+					wantKey.Store(true)
+				case *rtcp.TransportLayerNack:
+					if counters != nil {
+						counters.NACK.Add(1)
+					}
 					wantKey.Store(true)
 				}
 			}
@@ -363,6 +388,33 @@ func streamRTCEncoderRTP(track *webrtc.TrackLocalStaticRTP, wantKey *atomic.Bool
 func streamRTCEncoderRTPWithHeaderExtensions(
 	track *webrtc.TrackLocalStaticRTP, wantKey *atomic.Bool, done <-chan struct{}, headerExtensions rtcRTPHeaderExtensions,
 ) error {
+	options := defaultRTCEncoderRTPStreamOptions()
+	options.HeaderExtensions = headerExtensions
+	return streamRTCEncoderRTPWithOptions(track, wantKey, done, options)
+}
+
+type rtcEncoderRTPStreamOptions struct {
+	HeaderExtensions rtcRTPHeaderExtensions
+	ForceKeyFrame    func(frameIndex int) bool
+	DropPacket       func(frameIndex int, packetIndex int, packet rtp.Packet) bool
+	OnPicture        func(frameIndex int, picture goav1.RTCPicture)
+}
+
+func defaultRTCEncoderRTPStreamOptions() rtcEncoderRTPStreamOptions {
+	return rtcEncoderRTPStreamOptions{
+		HeaderExtensions: defaultRTCRTPHeaderExtensions(),
+		ForceKeyFrame: func(frameIndex int) bool {
+			return frameIndex == 28 || frameIndex == 56
+		},
+	}
+}
+
+func streamRTCEncoderRTPWithOptions(
+	track *webrtc.TrackLocalStaticRTP, wantKey *atomic.Bool, done <-chan struct{}, options rtcEncoderRTPStreamOptions,
+) error {
+	if options.HeaderExtensions.Profile == 0 {
+		options.HeaderExtensions.Profile = goav1.RTPExtensionProfileTwoByte
+	}
 	cfg := rtcControlChurnConfig(0)
 	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
 	if err != nil {
@@ -389,18 +441,27 @@ func streamRTCEncoderRTPWithHeaderExtensions(
 				return err
 			}
 		}
-		forceKey := wantKey.Swap(false) || n == 28 || n == 56
+		forceKey := wantKey.Swap(false)
+		if options.ForceKeyFrame != nil && options.ForceKeyFrame(n) {
+			forceKey = true
+		}
 		picture, err := enc.EncodePicture(scene.frame(n), forceKey)
 		if err != nil {
 			return err
 		}
+		if options.OnPicture != nil {
+			options.OnPicture(n, picture)
+		}
 		packets, nextSequence, nextTWCC, err := rtcPictureRTPPackets(
-			picture, limits, sequence, timestamp, twcc, headerExtensions)
+			picture, limits, sequence, timestamp, twcc, options.HeaderExtensions)
 		if err != nil {
 			return err
 		}
 		sequence, twcc = nextSequence, nextTWCC
 		for i := range packets {
+			if options.DropPacket != nil && options.DropPacket(n, i, packets[i]) {
+				continue
+			}
 			if err := track.WriteRTP(&packets[i]); err != nil {
 				return err
 			}
