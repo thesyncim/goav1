@@ -1777,6 +1777,7 @@ type publicRTPLossRecoveryPayloads struct {
 	key2Packets     [][]byte
 	probePackets    [][]byte
 	lowOverheadData [][]byte
+	allLowOverhead  [][]byte
 }
 
 func publicDecoderRTPLossRecoveryPayloads(t *testing.T) publicRTPLossRecoveryPayloads {
@@ -1808,6 +1809,7 @@ func publicDecoderRTPLossRecoveryPayloads(t *testing.T) publicRTPLossRecoveryPay
 	if err != nil {
 		t.Fatalf("Encode dropped delta: %v", err)
 	}
+	deltaLowOverhead := append([]byte(nil), delta.Data...)
 	deltaPayloads := publicDecoderRTPPayloadsForFrameWithLimits(t, delta, limits)
 	deltaPackets := publicDecoderRTPPacketsForFrameWithLimits(t, delta, limits)
 	if len(deltaPayloads) < 2 {
@@ -1839,6 +1841,59 @@ func publicDecoderRTPLossRecoveryPayloads(t *testing.T) publicRTPLossRecoveryPay
 		key2Packets:     key2Packets,
 		probePackets:    probePackets,
 		lowOverheadData: [][]byte{key0LowOverhead, key2LowOverhead},
+		allLowOverhead:  [][]byte{key0LowOverhead, deltaLowOverhead, key2LowOverhead},
+	}
+}
+
+type publicMalformedRTPPacketCase struct {
+	name   string
+	packet []byte
+	want   error
+}
+
+func publicMalformedRTPPacketCases() []publicMalformedRTPPacketCase {
+	return []publicMalformedRTPPacketCase{
+		{
+			name:   "short fixed header",
+			packet: []byte{0x80},
+			want:   av1.ErrRTPShortPayload,
+		},
+		{
+			name: "invalid version",
+			packet: []byte{
+				0x00, 96, 0, 1,
+				0, 0, 0, 1,
+				0, 0, 0, 2,
+			},
+			want: av1.ErrRTPInvalidHeader,
+		},
+		{
+			name: "truncated extension envelope",
+			packet: []byte{
+				0x90, 96, 0, 1,
+				0, 0, 0, 1,
+				0, 0, 0, 2,
+				0xbe, 0xde, 0, 1,
+			},
+			want: av1.ErrRTPShortPayload,
+		},
+		{
+			name: "invalid padding",
+			packet: []byte{
+				0xa0, 96, 0, 1,
+				0, 0, 0, 1,
+				0, 0, 0, 2,
+				0xff, 3,
+			},
+			want: av1.ErrRTPInvalidHeader,
+		},
+	}
+}
+
+func publicAssertMalformedRTPPacketError(t testing.TB, label string, err error, want error) {
+	t.Helper()
+	if !errors.Is(err, want) {
+		t.Fatalf("%s err=%v want %v", label, err, want)
 	}
 }
 
@@ -2178,6 +2233,88 @@ func TestNewDecoderFromRTPPayloadsDecodePayloadAfterLoss(t *testing.T) {
 	}
 	if _, err := av1.NewDecoderFromRTPPackets([][]byte{{0x80}}); !errors.Is(err, av1.ErrRTPShortPayload) {
 		t.Fatalf("NewDecoderFromRTPPackets invalid err=%v want %v", err, av1.ErrRTPShortPayload)
+	}
+}
+
+func TestPublicDecoderRTPPacketRejectsMalformedWithoutMutating(t *testing.T) {
+	inputs := publicDecoderRTPLossRecoveryPayloads(t)
+	for _, tc := range publicMalformedRTPPacketCases() {
+		_, err := av1.NewDecoderFromRTPPackets([][]byte{inputs.key0Packets[0], tc.packet})
+		publicAssertMalformedRTPPacketError(t, "NewDecoderFromRTPPackets "+tc.name, err, tc.want)
+	}
+
+	dec, err := av1.NewDecoderFromRTPPackets(inputs.probePackets)
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPackets: %v", err)
+	}
+	defer dec.Close()
+	if err := dec.Reset(); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	var got [][16]byte
+	appendFrames := func(frames []*av1.Frame) {
+		t.Helper()
+		for _, frame := range frames {
+			got = append(got, frameMD5Visible(frame))
+		}
+	}
+	for i, packet := range inputs.key0Packets {
+		frames, err := dec.DecodeRTPPacket(packet)
+		if err != nil {
+			t.Fatalf("DecodeRTPPacket key0 packet %d: %v", i, err)
+		}
+		appendFrames(frames)
+	}
+	if len(got) != 1 {
+		t.Fatalf("initial key decoded %d frames, want 1", len(got))
+	}
+	for _, tc := range publicMalformedRTPPacketCases() {
+		frames, err := dec.DecodeRTPPacket(tc.packet)
+		publicAssertMalformedRTPPacketError(t, "DecodeRTPPacket "+tc.name, err, tc.want)
+		if len(frames) != 0 {
+			t.Fatalf("DecodeRTPPacket %s returned %d frames on malformed input", tc.name, len(frames))
+		}
+	}
+
+	frames, err := dec.DecodeRTPPacket(inputs.deltaPackets[0])
+	if err != nil {
+		t.Fatalf("DecodeRTPPacket delta prefix: %v", err)
+	}
+	if len(frames) != 0 {
+		t.Fatalf("delta prefix decoded %d frames, want 0", len(frames))
+	}
+	for _, tc := range publicMalformedRTPPacketCases() {
+		frames, err := dec.DecodeRTPPacketAfterLoss(tc.packet)
+		publicAssertMalformedRTPPacketError(t, "DecodeRTPPacketAfterLoss "+tc.name, err, tc.want)
+		if len(frames) != 0 {
+			t.Fatalf("DecodeRTPPacketAfterLoss %s returned %d frames on malformed input", tc.name, len(frames))
+		}
+	}
+	for i, packet := range inputs.deltaPackets[1:] {
+		frames, err := dec.DecodeRTPPacket(packet)
+		if err != nil {
+			t.Fatalf("DecodeRTPPacket delta tail %d after malformed after-loss packets: %v", i, err)
+		}
+		appendFrames(frames)
+	}
+	for i, packet := range inputs.key2Packets {
+		frames, err := dec.DecodeRTPPacket(packet)
+		if err != nil {
+			t.Fatalf("DecodeRTPPacket key2 packet %d after malformed packets: %v", i, err)
+		}
+		appendFrames(frames)
+	}
+
+	want := decodeLowOverheadPayloads(t, inputs.allLowOverhead)
+	if len(got) != len(want) {
+		t.Fatalf("RTP packet decoder produced %d frames after malformed packets, low-overhead decoded %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("frame %d digest differs after malformed RTP packet errors: rtp=%s low=%s",
+				i, hex.EncodeToString(got[i][:]), hex.EncodeToString(want[i][:]))
+		}
 	}
 }
 
