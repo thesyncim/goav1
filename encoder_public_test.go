@@ -2825,7 +2825,8 @@ func assertPublicWebRTCControllerUnit(t *testing.T, receiver *av1.RTPDependencyD
 			}
 		}
 		if settings.RateControl != cfg.RateControl ||
-			(cfg.RateControl == av1.EncoderRateControlCQP && settings.Quantizer != cfg.Quantizer) {
+			(cfg.RateControl == av1.EncoderRateControlCQP && settings.Quantizer != cfg.Quantizer) ||
+			settings.EffortLevel != cfg.Speed {
 			t.Fatalf("frame %d rate settings=%+v config=%+v", i, settings, cfg)
 		}
 		if cfg.Content == av1.EncoderContentScreen {
