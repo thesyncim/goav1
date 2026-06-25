@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
+.PHONY: test bench bench-all bench-public bench-cross gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -239,6 +239,9 @@ tidy-check:
 	if [ $$rc -ne 0 ]; then echo "go.mod/go.sum is not tidy; run 'go mod tidy'" >&2; fi; \
 	exit $$rc
 
+webrtc-reference:
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run 'TestPublicRTCEncoder(SingleSpatialSettingsReferenceDecoders|SimulcastSettingsReferenceDecoders|SharedSVCSettingsReferenceDecoders|ScalabilityModeCatalogueReferenceDecoders)$$' -count=1 -timeout 900s -v
+
 dryrun-fast:
 	GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFastFrameWorkDryRun' -count=1 -timeout 600s -v
 
@@ -320,6 +323,7 @@ help:
 	@echo "  fmt-check                  report any files gofmt would reformat (non-blocking)"
 	@echo "  fmt-check-strict           fail if gofmt would reformat anything"
 	@echo "  tidy-check                 fail if go.mod/go.sum is not tidy"
+	@echo "  webrtc-reference           require aomdec+dav1d for WebRTC encoder reference-decode matrix"
 	@echo "  fuzz-smoke                 short fuzz sweep across packages"
 	@echo "  testvectors                committed test-vector suite (with oracle)"
 	@echo "  testvectors-fast           fast slice of the test-vector suite"

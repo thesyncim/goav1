@@ -2395,6 +2395,7 @@ type publicReferenceAV1Decoder struct {
 
 func publicReferenceAV1Decoders(t *testing.T) []publicReferenceAV1Decoder {
 	t.Helper()
+	requireAll := os.Getenv("GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS") == "1"
 	candidates := []publicReferenceAV1Decoder{
 		{
 			name: "aomdec",
@@ -2410,14 +2411,19 @@ func publicReferenceAV1Decoders(t *testing.T) []publicReferenceAV1Decoder {
 		},
 	}
 	decoders := make([]publicReferenceAV1Decoder, 0, len(candidates))
+	missing := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
 		path, err := exec.LookPath(candidate.name)
 		if err != nil {
+			missing = append(missing, candidate.name)
 			t.Logf("%s not on PATH", candidate.name)
 			continue
 		}
 		candidate.path = path
 		decoders = append(decoders, candidate)
+	}
+	if requireAll && len(missing) > 0 {
+		t.Fatalf("required reference AV1 decoder(s) not on PATH: %s", strings.Join(missing, ", "))
 	}
 	if len(decoders) == 0 {
 		t.Skip("no reference AV1 decoder on PATH")

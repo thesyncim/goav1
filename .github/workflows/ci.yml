@@ -128,6 +128,26 @@ jobs:
         env:
           FUZZTIME: 50000x
 
+  webrtc-reference:
+    name: webrtc reference decoders
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: true
+      - name: install reference decoders
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y aom-tools dav1d
+          command -v aomdec
+          command -v dav1d
+      - name: WebRTC encoder reference-decode matrix
+        run: make webrtc-reference
+
   cli-smoke:
     name: cli smoke (aom-go-dec)
     needs: build
