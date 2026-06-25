@@ -1752,6 +1752,80 @@ func TestParseRTPPacketDependencyDescriptorMissingExtension(t *testing.T) {
 	}
 }
 
+func TestParseRTPPacketDependencyDescriptorRejectsTrailingWithoutStateMutation(t *testing.T) {
+	const dependencyDescriptorExtensionID = 42
+	inputs := publicDecoderRTPLossRecoveryPayloads(t)
+
+	var scanState av1.RTPDependencyDescriptorState
+	var attached av1.RTPPacketDependencyDescriptor
+	var attachedPacket []byte
+	for i, packet := range inputs.probePackets {
+		parsed, err := av1.ParseRTPPacketDependencyDescriptor(packet, dependencyDescriptorExtensionID, &scanState)
+		if err != nil {
+			t.Fatalf("ParseRTPPacketDependencyDescriptor seed packet %d: %v", i, err)
+		}
+		if parsed.Descriptor.HasAttachedStructure {
+			attached = parsed
+			attachedPacket = packet
+			break
+		}
+	}
+	if len(attached.DescriptorPayload) == 0 {
+		t.Fatal("seed packets did not include an attached dependency structure")
+	}
+
+	badDescriptor := append(append([]byte(nil), attached.DescriptorPayload...), 0x00)
+	extElements := []av1.RTPHeaderExtensionElement{{
+		ID:      dependencyDescriptorExtensionID,
+		Payload: badDescriptor,
+	}}
+	extSize, err := av1.RTPHeaderExtensionElementsSize(av1.RTPExtensionProfileTwoByte, extElements)
+	if err != nil {
+		t.Fatalf("RTPHeaderExtensionElementsSize: %v", err)
+	}
+	extPayload := make([]byte, extSize)
+	extN, err := av1.PutRTPHeaderExtensionElements(extPayload, av1.RTPExtensionProfileTwoByte, extElements)
+	if err != nil {
+		t.Fatalf("PutRTPHeaderExtensionElements: %v", err)
+	}
+	header := av1.RTPHeader{
+		Marker:           attached.Packet.Header.Marker,
+		PayloadType:      attached.Packet.Header.PayloadType,
+		SequenceNumber:   attached.Packet.Header.SequenceNumber + 77,
+		Timestamp:        attached.Packet.Header.Timestamp,
+		SSRC:             attached.Packet.Header.SSRC,
+		ExtensionProfile: av1.RTPExtensionProfileTwoByte,
+		ExtensionPayload: extPayload[:extN],
+	}
+	packetSize, err := av1.RTPPacketSize(header, attached.Packet.Payload, 0)
+	if err != nil {
+		t.Fatalf("RTPPacketSize: %v", err)
+	}
+	badPacket := make([]byte, packetSize)
+	packetN, err := av1.PutRTPPacket(badPacket, header, attached.Packet.Payload, 0)
+	if err != nil {
+		t.Fatalf("PutRTPPacket: %v", err)
+	}
+
+	var state av1.RTPDependencyDescriptorState
+	if _, err := av1.ParseRTPPacketDependencyDescriptor(badPacket[:packetN], dependencyDescriptorExtensionID, &state); !errors.Is(err, av1.ErrRTPInvalidDependencyDescriptor) {
+		t.Fatalf("ParseRTPPacketDependencyDescriptor trailing err=%v want %v", err, av1.ErrRTPInvalidDependencyDescriptor)
+	}
+	if state != (av1.RTPDependencyDescriptorState{}) {
+		t.Fatalf("invalid trailing descriptor mutated empty state: %+v", state)
+	}
+	if _, err := av1.ParseRTPPacketDependencyDescriptor(badPacket[:packetN], dependencyDescriptorExtensionID, nil); !errors.Is(err, av1.ErrRTPInvalidDependencyDescriptor) {
+		t.Fatalf("ParseRTPPacketDependencyDescriptor nil state trailing err=%v want %v", err, av1.ErrRTPInvalidDependencyDescriptor)
+	}
+
+	if _, err := av1.ParseRTPPacketDependencyDescriptor(attachedPacket, dependencyDescriptorExtensionID, &state); err != nil {
+		t.Fatalf("valid descriptor after rejected trailing payload: %v", err)
+	}
+	if !state.Valid {
+		t.Fatal("valid descriptor after rejected trailing payload did not populate state")
+	}
+}
+
 func TestNewDecoderFromRTPPayloadsDecodeRTPPayloadAfterLossAllocs(t *testing.T) {
 	inputs := publicDecoderRTPLossRecoveryPayloads(t)
 	dec, err := av1.NewDecoderFromRTPPayloads(inputs.probePayloads)

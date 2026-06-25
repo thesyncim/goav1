@@ -30,12 +30,20 @@ func ParseRTPPacketDependencyDescriptor(packet []byte, dependencyDescriptorExten
 	if !ok {
 		return RTPPacketDependencyDescriptor{}, ErrRTPHeaderExtensionNotFound
 	}
-	descriptor, consumed, err := state.Parse(element.Payload)
+	parseState := state
+	if state != nil {
+		copied := *state
+		parseState = &copied
+	}
+	descriptor, consumed, err := parseState.Parse(element.Payload)
 	if err != nil {
 		return RTPPacketDependencyDescriptor{}, err
 	}
 	if consumed != len(element.Payload) {
 		return RTPPacketDependencyDescriptor{}, ErrRTPInvalidDependencyDescriptor
+	}
+	if state != nil {
+		*state = *parseState
 	}
 	return RTPPacketDependencyDescriptor{
 		Packet:            parsedPacket,
