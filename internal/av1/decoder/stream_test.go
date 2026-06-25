@@ -519,7 +519,7 @@ func TestStreamMetadataOBUParsesHDRCLL(t *testing.T) {
 	}
 }
 
-func TestStreamTileListOBUParses(t *testing.T) {
+func TestStreamTileListOBUParsesAndRequiresFrameContext(t *testing.T) {
 	// One output tile referencing anchor row/col 1 from a larger external
 	// reference tile grid. The output mosaic size is not the anchor bound.
 	payload := []byte{
@@ -538,8 +538,8 @@ func TestStreamTileListOBUParses(t *testing.T) {
 	if event.Kind != EventTileList {
 		t.Fatalf("kind=%v want EventTileList", event.Kind)
 	}
-	if event.TileListErr != nil {
-		t.Fatalf("TileListErr=%v", event.TileListErr)
+	if !errors.Is(event.TileListErr, ErrTileListMissingFrameContext) {
+		t.Fatalf("TileListErr=%v want %v", event.TileListErr, ErrTileListMissingFrameContext)
 	}
 	if event.TileList.TileCount() != 1 || event.TileList.OutputFrameWidthInTiles() != 1 ||
 		event.TileList.OutputFrameHeightInTiles() != 1 {

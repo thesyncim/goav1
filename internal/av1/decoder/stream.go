@@ -66,7 +66,10 @@ type Event struct {
 	// scratch buffer returned by Stream.tileListEntries() (or the caller-owned
 	// PushUnitWithTileListScratch slice). When parsing fails the event is
 	// still emitted with the underlying error in TileListErr so callers can
-	// decide whether to abort or skip.
+	// decide whether to abort or skip. Tile-list OBUs require the common frame
+	// header and tile grid from an active frame context before they can be
+	// decoded; when that context is missing, TileListErr is
+	// ErrTileListMissingFrameContext after successful payload parsing.
 	TileList    parser.TileList
 	TileListErr error
 }
@@ -380,11 +383,13 @@ func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence
 		// subsequent EventTileList reuses it without re-allocating.
 		s.tileListScratch = list.Entries[:len(list.Entries):cap(list.Entries)]
 		event.TileList = list
-		if s.haveFrameHeader {
-			s.applyFrameState(event)
-			if _, _, err := parser.ValidateTileListDecodeLayout(list, event.TileInfo); err != nil {
-				event.TileListErr = err
-			}
+		if !s.haveFrameHeader {
+			event.TileListErr = ErrTileListMissingFrameContext
+			return nil
+		}
+		s.applyFrameState(event)
+		if _, _, err := parser.ValidateTileListDecodeLayout(list, event.TileInfo); err != nil {
+			event.TileListErr = err
 		}
 		return nil
 

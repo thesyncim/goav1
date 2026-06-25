@@ -14,4 +14,5 @@ var (
 	ErrSurfaceReleaseBufferTooSmall   = errors.New("decoder: surface release buffer too small")
 	ErrUnsupportedPostFilter          = errors.New("decoder: unsupported postfilter")
 	ErrUnsupportedTileList            = errors.New("decoder: unsupported tile list")
+	ErrTileListMissingFrameContext    = errors.New("decoder: tile list missing frame context")
 )

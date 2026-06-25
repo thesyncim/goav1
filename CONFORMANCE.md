@@ -211,7 +211,8 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         |                                  | blit helpers cover output                      |
 |    |                                  |         |                                  | sizing/copy rectangles. EventTileList carries  |
 |    |                                  |         |                                  | the parsed structure plus TileListErr for      |
-|    |                                  |         |                                  | partial payloads. The residual event/stream    |
+|    |                                  |         |                                  | partial payloads or missing frame context.     |
+|    |                                  |         |                                  | The residual event/stream                      |
 |    |                                  |         |                                  | runners now resolve anchor frames, decode each |
 |    |                                  |         |                                  | entry through the residual runner, blit decoded |
 |    |                                  |         |                                  | tile rectangles into the mosaic output, and    |
@@ -531,7 +532,8 @@ manifest. The next production-readiness items are:
    the high-level low-overhead, IVF, RTP payload, RTP packet, and sequenced RTP
    packet decoders size an external tile-list output pool when a tile-list
    event carries frame context. Context-less tile-list OBUs still fail early
-   because no tile grid is available to validate or decode against.
+   with `ErrDecoderTileListMissingFrameContext` because no tile grid is
+   available to validate or decode against.
 
 ---
 

@@ -517,6 +517,7 @@ var (
 	ErrDecoderSurfaceReleaseBufferTooSmall   = internaldecoder.ErrSurfaceReleaseBufferTooSmall
 	ErrDecoderUnsupportedPostFilter          = internaldecoder.ErrUnsupportedPostFilter
 	ErrDecoderUnsupportedTileList            = internaldecoder.ErrUnsupportedTileList
+	ErrDecoderTileListMissingFrameContext    = internaldecoder.ErrTileListMissingFrameContext
 
 	ErrTileInvalidPlan       = internaltile.ErrInvalidPlan
 	ErrTileJobBufferTooSmall = internaltile.ErrJobBufferTooSmall

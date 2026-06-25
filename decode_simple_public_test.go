@@ -945,7 +945,7 @@ func TestSimpleDecoderTileListIVFPlanErrors(t *testing.T) {
 		{
 			name:        "contextless tile list requires frame state",
 			tilePayload: validPayload,
-			wantErr:     av1.ErrTileListInvalidAnchorTile,
+			wantErr:     av1.ErrDecoderTileListMissingFrameContext,
 		},
 		{
 			name:        "malformed tile list propagates parse error",
