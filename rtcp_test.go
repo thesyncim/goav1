@@ -1665,6 +1665,88 @@ func TestRTCPGenericNACKPairsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRTCPGenericNACKPairsForLostSequenceNumbers(t *testing.T) {
+	pairs, err := av1.AppendRTCPGenericNACKPairsForLostSequenceNumbers(
+		make([]av1.RTCPGenericNACKPair, 0, 2),
+		[]uint16{100, 101, 104, 116, 117, 130},
+	)
+	if err != nil {
+		t.Fatalf("AppendRTCPGenericNACKPairsForLostSequenceNumbers: %v", err)
+	}
+	want := []av1.RTCPGenericNACKPair{
+		{PacketID: 100, LostPacketBitmask: 0x8009},
+		{PacketID: 117, LostPacketBitmask: 0x1000},
+	}
+	if len(pairs) != len(want) {
+		t.Fatalf("pairs len=%d want %d", len(pairs), len(want))
+	}
+	for i := range want {
+		if pairs[i] != want[i] {
+			t.Fatalf("pair[%d]=%+v want %+v", i, pairs[i], want[i])
+		}
+	}
+
+	wrapped, err := av1.AppendRTCPGenericNACKPairsForLostSequenceNumbers(
+		make([]av1.RTCPGenericNACKPair, 0, 2),
+		[]uint16{0xfffe, 0xffff, 0x0000, 0x000f},
+	)
+	if err != nil {
+		t.Fatalf("AppendRTCPGenericNACKPairsForLostSequenceNumbers wrap: %v", err)
+	}
+	wantWrapped := []av1.RTCPGenericNACKPair{
+		{PacketID: 0xfffe, LostPacketBitmask: 0x0003},
+		{PacketID: 0x000f},
+	}
+	if len(wrapped) != len(wantWrapped) {
+		t.Fatalf("wrapped len=%d want %d", len(wrapped), len(wantWrapped))
+	}
+	for i := range wantWrapped {
+		if wrapped[i] != wantWrapped[i] {
+			t.Fatalf("wrapped[%d]=%+v want %+v", i, wrapped[i], wantWrapped[i])
+		}
+	}
+
+	prefix := make([]av1.RTCPGenericNACKPair, 1, 3)
+	prefix[0] = av1.RTCPGenericNACKPair{PacketID: 7}
+	prefixed, err := av1.AppendRTCPGenericNACKPairsForLostSequenceNumbers(prefix[:1:3], []uint16{20})
+	if err != nil {
+		t.Fatalf("AppendRTCPGenericNACKPairsForLostSequenceNumbers prefixed: %v", err)
+	}
+	if len(prefixed) != 2 || prefixed[0] != prefix[0] || prefixed[1] != (av1.RTCPGenericNACKPair{PacketID: 20}) {
+		t.Fatalf("prefixed=%+v", prefixed)
+	}
+
+	if out, err := av1.AppendRTCPGenericNACKPairsForLostSequenceNumbers(nil, nil); err != nil || len(out) != 0 {
+		t.Fatalf("empty out=%d err=%v", len(out), err)
+	}
+	if _, err := av1.AppendRTCPGenericNACKPairsForLostSequenceNumbers(make([]av1.RTCPGenericNACKPair, 0, 1), []uint16{10, 27}); !errors.Is(err, av1.ErrRTCPShortBuffer) {
+		t.Fatalf("short NACK pair dst err=%v want %v", err, av1.ErrRTCPShortBuffer)
+	}
+	for _, lost := range [][]uint16{
+		{10, 10},
+		{10, 9},
+	} {
+		if _, err := av1.AppendRTCPGenericNACKPairsForLostSequenceNumbers(make([]av1.RTCPGenericNACKPair, 0, 2), lost); !errors.Is(err, av1.ErrRTCPInvalidFeedback) {
+			t.Fatalf("lost=%v err=%v want %v", lost, err, av1.ErrRTCPInvalidFeedback)
+		}
+	}
+}
+
+func TestRTCPGenericNACKPairsForLostSequenceNumbersAllocs(t *testing.T) {
+	lost := []uint16{0xfffc, 0xfffd, 0x0001, 0x0003, 0x0015}
+	pairs := make([]av1.RTCPGenericNACKPair, 0, 3)
+	allocs := testing.AllocsPerRun(1000, func() {
+		var err error
+		pairs, err = av1.AppendRTCPGenericNACKPairsForLostSequenceNumbers(pairs[:0], lost)
+		if err != nil {
+			t.Fatalf("AppendRTCPGenericNACKPairsForLostSequenceNumbers: %v", err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("AppendRTCPGenericNACKPairsForLostSequenceNumbers allocs/run=%f want 0", allocs)
+	}
+}
+
 func TestRTCPGenericNACKPairsRejectsInvalid(t *testing.T) {
 	pair := av1.RTCPGenericNACKPair{PacketID: 1, LostPacketBitmask: 2}
 	var buf [av1.RTCPGenericNACKPairSize]byte

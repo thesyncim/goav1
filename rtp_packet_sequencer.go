@@ -86,6 +86,69 @@ func (s *RTPPacketSequencer) ExpectedSequenceNumber() (uint16, bool) {
 	return s.nextSequenceNumber, true
 }
 
+// AppendMissingSequenceNumbers appends missing RTP sequence numbers between the
+// next expected packet and the furthest buffered packet. It does not advance
+// the sequencer or decide whether those packets have timed out.
+func (s *RTPPacketSequencer) AppendMissingSequenceNumbers(dst []uint16) ([]uint16, error) {
+	summary := s.missingSummary()
+	if summary.missingCount == 0 {
+		return dst, nil
+	}
+	if cap(dst)-len(dst) < summary.missingCount {
+		return dst, ErrRTPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+summary.missingCount]
+	write := off
+	for distance := uint16(0); distance < summary.latestDistance; distance++ {
+		seq := s.nextSequenceNumber + distance
+		if s.hasBufferedSequence(seq) {
+			continue
+		}
+		out[write] = seq
+		write++
+	}
+	return out, nil
+}
+
+// AppendMissingRTCPGenericNACKPairs appends Generic NACK PID/BLP pairs for the
+// currently missing sequence numbers reported by AppendMissingSequenceNumbers.
+// The caller owns the retransmission policy and surrounding RTCP feedback
+// packet.
+func (s *RTPPacketSequencer) AppendMissingRTCPGenericNACKPairs(dst []RTCPGenericNACKPair) ([]RTCPGenericNACKPair, error) {
+	summary := s.missingSummary()
+	if summary.nackPairCount == 0 {
+		return dst, nil
+	}
+	if cap(dst)-len(dst) < summary.nackPairCount {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+summary.nackPairCount]
+	pairIndex := off
+	havePair := false
+	for distance := uint16(0); distance < summary.latestDistance; distance++ {
+		seq := s.nextSequenceNumber + distance
+		if s.hasBufferedSequence(seq) {
+			continue
+		}
+		if !havePair {
+			out[pairIndex] = RTCPGenericNACKPair{PacketID: seq}
+			havePair = true
+			continue
+		}
+		pair := &out[pairIndex]
+		pairDistance := uint16(seq - pair.PacketID)
+		if pairDistance <= 16 {
+			pair.LostPacketBitmask |= 1 << (pairDistance - 1)
+			continue
+		}
+		pairIndex++
+		out[pairIndex] = RTCPGenericNACKPair{PacketID: seq}
+	}
+	return out, nil
+}
+
 // Push parses packet, stores it if it arrived ahead of a gap, and appends any
 // now-contiguous packets to out. Packets older than the next expected sequence
 // number are treated as duplicates or late arrivals and ignored.
@@ -201,6 +264,61 @@ func (s *RTPPacketSequencer) earliestBufferedSequence() (uint16, bool) {
 		}
 	}
 	return best, ok
+}
+
+type rtpPacketSequencerMissingSummary struct {
+	latestDistance uint16
+	missingCount   int
+	nackPairCount  int
+}
+
+func (s *RTPPacketSequencer) missingSummary() rtpPacketSequencerMissingSummary {
+	if s == nil || !s.initialized || s.buffered == 0 || len(s.slots) == 0 {
+		return rtpPacketSequencerMissingSummary{}
+	}
+	latestDistance, ok := s.latestBufferedDistance()
+	if !ok || latestDistance == 0 {
+		return rtpPacketSequencerMissingSummary{}
+	}
+	var summary rtpPacketSequencerMissingSummary
+	summary.latestDistance = latestDistance
+	var pairPacketID uint16
+	havePair := false
+	for distance := uint16(0); distance < latestDistance; distance++ {
+		seq := s.nextSequenceNumber + distance
+		if s.hasBufferedSequence(seq) {
+			continue
+		}
+		summary.missingCount++
+		if !havePair || uint16(seq-pairPacketID) > 16 {
+			summary.nackPairCount++
+			pairPacketID = seq
+			havePair = true
+		}
+	}
+	return summary
+}
+
+func (s *RTPPacketSequencer) latestBufferedDistance() (uint16, bool) {
+	var latest uint16
+	ok := false
+	for i := range s.slots {
+		slot := &s.slots[i]
+		if !slot.occupied {
+			continue
+		}
+		distance := uint16(slot.sequenceNumber - s.nextSequenceNumber)
+		if !ok || distance > latest {
+			latest = distance
+			ok = true
+		}
+	}
+	return latest, ok
+}
+
+func (s *RTPPacketSequencer) hasBufferedSequence(seq uint16) bool {
+	slot := &s.slots[int(seq%uint16(len(s.slots)))]
+	return slot.occupied && slot.sequenceNumber == seq
 }
 
 func (s *RTPPacketSequencer) clearBuffered() {

@@ -1092,6 +1092,59 @@ func RTCPGenericNACKPairsSize(pairs []RTCPGenericNACKPair) (int, error) {
 	return len(pairs) * RTCPGenericNACKPairSize, nil
 }
 
+// AppendRTCPGenericNACKPairsForLostSequenceNumbers appends Generic NACK
+// PID/BLP pairs that cover lost RTP sequence numbers. lost must be sorted in
+// RTP sequence-number order and must not contain duplicates. Sequence-number
+// wraparound is accepted when each next value is unambiguously ahead of the
+// previous one.
+func AppendRTCPGenericNACKPairsForLostSequenceNumbers(dst []RTCPGenericNACKPair, lost []uint16) ([]RTCPGenericNACKPair, error) {
+	pairCount, err := rtcpGenericNACKPairCountForLostSequenceNumbers(lost)
+	if err != nil {
+		return dst, err
+	}
+	if pairCount == 0 {
+		return dst, nil
+	}
+	if cap(dst)-len(dst) < pairCount {
+		return dst, ErrRTCPShortBuffer
+	}
+	off := len(dst)
+	out := dst[:off+pairCount]
+	pairIndex := off
+	out[pairIndex] = RTCPGenericNACKPair{PacketID: lost[0]}
+	for _, seq := range lost[1:] {
+		pair := &out[pairIndex]
+		distance := uint16(seq - pair.PacketID)
+		if distance <= 16 {
+			pair.LostPacketBitmask |= 1 << (distance - 1)
+			continue
+		}
+		pairIndex++
+		out[pairIndex] = RTCPGenericNACKPair{PacketID: seq}
+	}
+	return out, nil
+}
+
+func rtcpGenericNACKPairCountForLostSequenceNumbers(lost []uint16) (int, error) {
+	if len(lost) == 0 {
+		return 0, nil
+	}
+	pairCount := 1
+	pairPacketID := lost[0]
+	prev := lost[0]
+	for _, seq := range lost[1:] {
+		if !rtpSequenceNumberAhead(seq, prev) {
+			return 0, ErrRTCPInvalidFeedback
+		}
+		if uint16(seq-pairPacketID) > 16 {
+			pairCount++
+			pairPacketID = seq
+		}
+		prev = seq
+	}
+	return pairCount, nil
+}
+
 // PutRTCPGenericNACKPair serializes one generic NACK FCI pair into dst.
 func PutRTCPGenericNACKPair(dst []byte, pair RTCPGenericNACKPair) (int, error) {
 	if len(dst) < RTCPGenericNACKPairSize {
