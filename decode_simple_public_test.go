@@ -777,6 +777,16 @@ func TestSimpleDecoderTileListIVFPlayback(t *testing.T) {
 func TestNewDecoderFromRTPPayloadsTileListPlayback(t *testing.T) {
 	primePayload := publicDecoderResidualRTPPayload()
 	tileListPayload := publicSimpleDecoderTileListRTPPayload()
+	primePacket := publicSimpleDecoderRTPPacket(t, primePayload, 0x5000, 90_000)
+	tileListPacket := publicSimpleDecoderRTPPacket(t, tileListPayload, 0x5001, 93_000)
+	assertTileListFrame := func(t *testing.T, label string, frames []*av1.Frame) {
+		t.Helper()
+		if len(frames) != 1 || frames[0] == nil ||
+			frames[0].Format.Width != 64 ||
+			frames[0].Format.Height != 64 {
+			t.Fatalf("%s frames=%d frame=%+v", label, len(frames), frames)
+		}
+	}
 
 	dec, err := av1.NewDecoderFromRTPPayloads([][]byte{primePayload, tileListPayload})
 	if err != nil {
@@ -796,11 +806,33 @@ func TestNewDecoderFromRTPPayloadsTileListPlayback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeNext tile-list: %v", err)
 	}
-	if !ok || len(frames) != 1 || frames[0] == nil ||
-		frames[0].Format.Width != 64 ||
-		frames[0].Format.Height != 64 {
-		t.Fatalf("DecodeNext tile-list frames=%d ok=%v frame=%+v", len(frames), ok, frames)
+	if !ok {
+		t.Fatal("DecodeNext tile-list ok=false")
 	}
+	assertTileListFrame(t, "DecodeNext tile-list", frames)
+
+	packetDec, err := av1.NewDecoderFromRTPPackets([][]byte{primePacket, tileListPacket})
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPackets: %v", err)
+	}
+	defer packetDec.Close()
+
+	frames, ok, err = packetDec.DecodeNext()
+	if err != nil {
+		t.Fatalf("DecodeNext packet prime: %v", err)
+	}
+	if !ok || len(frames) != 1 || frames[0] == nil {
+		t.Fatalf("DecodeNext packet prime frames=%d ok=%v", len(frames), ok)
+	}
+
+	frames, ok, err = packetDec.DecodeNext()
+	if err != nil {
+		t.Fatalf("DecodeNext packet tile-list: %v", err)
+	}
+	if !ok {
+		t.Fatal("DecodeNext packet tile-list ok=false")
+	}
+	assertTileListFrame(t, "DecodeNext packet tile-list", frames)
 
 	live, err := av1.NewDecoderFromRTPPayloads([][]byte{primePayload, tileListPayload})
 	if err != nil {
@@ -820,11 +852,75 @@ func TestNewDecoderFromRTPPayloadsTileListPlayback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeRTPPayload tile-list: %v", err)
 	}
-	if len(frames) != 1 || frames[0] == nil ||
-		frames[0].Format.Width != 64 ||
-		frames[0].Format.Height != 64 {
-		t.Fatalf("DecodeRTPPayload tile-list frames=%d frame=%+v", len(frames), frames)
+	assertTileListFrame(t, "DecodeRTPPayload tile-list", frames)
+
+	liveAfterLoss, err := av1.NewDecoderFromRTPPayloads([][]byte{primePayload, tileListPayload})
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPayloads after-loss probe: %v", err)
 	}
+	defer liveAfterLoss.Close()
+
+	frames, err = liveAfterLoss.DecodeRTPPayload(primePayload)
+	if err != nil {
+		t.Fatalf("DecodeRTPPayload after-loss prime: %v", err)
+	}
+	if len(frames) != 1 || frames[0] == nil {
+		t.Fatalf("DecodeRTPPayload after-loss prime frames=%d", len(frames))
+	}
+
+	frames, err = liveAfterLoss.DecodeRTPPayloadAfterLoss(tileListPayload)
+	if err != nil {
+		t.Fatalf("DecodeRTPPayloadAfterLoss tile-list: %v", err)
+	}
+	assertTileListFrame(t, "DecodeRTPPayloadAfterLoss tile-list", frames)
+
+	livePacket, err := av1.NewDecoderFromRTPPackets([][]byte{primePacket, tileListPacket})
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPackets live probe: %v", err)
+	}
+	defer livePacket.Close()
+
+	frames, err = livePacket.DecodeRTPPacket(primePacket)
+	if err != nil {
+		t.Fatalf("DecodeRTPPacket prime: %v", err)
+	}
+	if len(frames) != 1 || frames[0] == nil {
+		t.Fatalf("DecodeRTPPacket prime frames=%d", len(frames))
+	}
+
+	frames, err = livePacket.DecodeRTPPacket(tileListPacket)
+	if err != nil {
+		t.Fatalf("DecodeRTPPacket tile-list: %v", err)
+	}
+	assertTileListFrame(t, "DecodeRTPPacket tile-list", frames)
+
+	primeRTP, err := av1.ParseRTPPacket(primePacket)
+	if err != nil {
+		t.Fatalf("ParseRTPPacket prime: %v", err)
+	}
+	tileListRTP, err := av1.ParseRTPPacket(tileListPacket)
+	if err != nil {
+		t.Fatalf("ParseRTPPacket tile-list: %v", err)
+	}
+	sequenced, err := av1.NewDecoderFromRTPPackets([][]byte{primePacket, tileListPacket})
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPackets sequenced probe: %v", err)
+	}
+	defer sequenced.Close()
+
+	frames, err = sequenced.DecodeRTPSequencedPacket(av1.RTPSequencedPacket{Packet: primeRTP})
+	if err != nil {
+		t.Fatalf("DecodeRTPSequencedPacket prime: %v", err)
+	}
+	if len(frames) != 1 || frames[0] == nil {
+		t.Fatalf("DecodeRTPSequencedPacket prime frames=%d", len(frames))
+	}
+
+	frames, err = sequenced.DecodeRTPSequencedPacket(av1.RTPSequencedPacket{Packet: tileListRTP, AfterLoss: true})
+	if err != nil {
+		t.Fatalf("DecodeRTPSequencedPacket after-loss tile-list: %v", err)
+	}
+	assertTileListFrame(t, "DecodeRTPSequencedPacket after-loss tile-list", frames)
 }
 
 func TestSimpleDecoderTileListIVFPlanErrors(t *testing.T) {
@@ -918,6 +1014,27 @@ func publicSimpleDecoderTileListRTPPayload() []byte {
 		panic(err)
 	}
 	return payload[:n]
+}
+
+func publicSimpleDecoderRTPPacket(t testing.TB, payload []byte, sequence uint16, timestamp uint32) []byte {
+	t.Helper()
+	header := av1.RTPHeader{
+		Marker:         true,
+		PayloadType:    96,
+		SequenceNumber: sequence,
+		Timestamp:      timestamp,
+		SSRC:           0x11223344,
+	}
+	size, err := av1.RTPPacketSize(header, payload, 0)
+	if err != nil {
+		t.Fatalf("RTPPacketSize: %v", err)
+	}
+	packet := make([]byte, size)
+	n, err := av1.PutRTPPacket(packet, header, payload, 0)
+	if err != nil {
+		t.Fatalf("PutRTPPacket: %v", err)
+	}
+	return packet[:n]
 }
 
 func publicSimpleDecoderSwitchFrameHeaderPayload() []byte {

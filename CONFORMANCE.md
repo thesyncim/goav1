@@ -215,8 +215,9 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         |                                  | runners now resolve anchor frames, decode each |
 |    |                                  |         |                                  | entry through the residual runner, blit decoded |
 |    |                                  |         |                                  | tile rectangles into the mosaic output, and    |
-|    |                                  |         |                                  | publish tile-list outputs when frame context   |
-|    |                                  |         |                                  | is present.                                    |
+|    |                                  |         |                                  | publish tile-list outputs through low-overhead |
+|    |                                  |         |                                  | and RTP payload/packet high-level decode when  |
+|    |                                  |         |                                  | frame context is present.                      |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 25 | Frame type: key                  | Yes     | internal/av1/parser/frame.go     | FrameTypeKey; full reference reset path.       |
 |    | Frame type: intra-only           | Yes     | internal/av1/parser/frame.go     | FrameTypeIntraOnly; intra-only refresh.        |
@@ -520,9 +521,10 @@ manifest. The next production-readiness items are:
    whole-list decoded-tile-to-output-frame blit helpers. The residual
    event/stream runners now perform end-to-end tile-list entry reconstruction,
    blit decoded tiles into a mosaic, publish one tile-list output frame, and
-   the high-level IVF decoder sizes an external tile-list output pool when a
-   tile-list event carries frame context. Context-less tile-list OBUs still
-   fail early because no tile grid is available to validate or decode against.
+   the high-level low-overhead, IVF, RTP payload, RTP packet, and sequenced RTP
+   packet decoders size an external tile-list output pool when a tile-list
+   event carries frame context. Context-less tile-list OBUs still fail early
+   because no tile grid is available to validate or decode against.
 
 ---
 
