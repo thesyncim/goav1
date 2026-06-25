@@ -82,28 +82,16 @@ func TestBrowserLiveAV1PlaybackStats(t *testing.T) {
 	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
 	defer cancelBrowser()
 
-	var got browserPlaybackEvidence
-	if err := chromedp.Run(browserCtx,
-		chromedp.Navigate(server.URL),
-		chromedp.Evaluate(browserPlaybackProbeJS(30), &got, evalAwaitPromise),
-	); err != nil {
-		t.Fatalf("browser AV1 playback probe: %v", err)
+	for i, label := range []string{"initial", "reconnect"} {
+		got := browserPlaybackEvidence{}
+		if err := chromedp.Run(browserCtx,
+			chromedp.Navigate(fmt.Sprintf("%s?session=%d", server.URL, i+1)),
+			chromedp.Evaluate(browserPlaybackProbeJS(30), &got, evalAwaitPromise),
+		); err != nil {
+			t.Fatalf("%s browser AV1 playback probe: %v", label, err)
+		}
+		assertBrowserPlaybackEvidence(t, label, got)
 	}
-	if !got.OK {
-		t.Fatalf("browser AV1 playback probe failed: %s; last=%+v", got.Error, got)
-	}
-	if got.VideoWidth != width || got.VideoHeight != height {
-		t.Fatalf("browser decoded size=%dx%d want %dx%d", got.VideoWidth, got.VideoHeight, width, height)
-	}
-	if got.FramesDecoded < 30 || got.PacketsReceived == 0 || got.BytesReceived == 0 {
-		t.Fatalf("browser stats frames=%d packets=%d bytes=%d", got.FramesDecoded, got.PacketsReceived, got.BytesReceived)
-	}
-	if got.CodecMimeType != "" && got.CodecMimeType != "video/AV1" {
-		t.Fatalf("browser codec mime=%q want video/AV1", got.CodecMimeType)
-	}
-	t.Logf("browser AV1 playback: frames=%d keyframes=%d packets=%d bytes=%d decoder=%q pli=%d fir=%d",
-		got.FramesDecoded, got.KeyFramesDecoded, got.PacketsReceived, got.BytesReceived,
-		got.DecoderImplementation, got.PLICount, got.FIRCount)
 }
 
 type browserPlaybackEvidence struct {
@@ -127,6 +115,26 @@ type browserPlaybackEvidence struct {
 	JitterMS              int    `json:"jitterMS"`
 	CodecMimeType         string `json:"codecMimeType"`
 	DecoderImplementation string `json:"decoderImplementation"`
+}
+
+func assertBrowserPlaybackEvidence(t *testing.T, label string, got browserPlaybackEvidence) {
+	t.Helper()
+	if !got.OK {
+		t.Fatalf("%s browser AV1 playback probe failed: %s; last=%+v", label, got.Error, got)
+	}
+	if got.VideoWidth != width || got.VideoHeight != height {
+		t.Fatalf("%s browser decoded size=%dx%d want %dx%d", label, got.VideoWidth, got.VideoHeight, width, height)
+	}
+	if got.FramesDecoded < 30 || got.PacketsReceived == 0 || got.BytesReceived == 0 {
+		t.Fatalf("%s browser stats frames=%d packets=%d bytes=%d",
+			label, got.FramesDecoded, got.PacketsReceived, got.BytesReceived)
+	}
+	if got.CodecMimeType != "" && got.CodecMimeType != "video/AV1" {
+		t.Fatalf("%s browser codec mime=%q want video/AV1", label, got.CodecMimeType)
+	}
+	t.Logf("%s browser AV1 playback: frames=%d keyframes=%d packets=%d bytes=%d decoder=%q pli=%d fir=%d",
+		label, got.FramesDecoded, got.KeyFramesDecoded, got.PacketsReceived, got.BytesReceived,
+		got.DecoderImplementation, got.PLICount, got.FIRCount)
 }
 
 func browserPlaybackProbeJS(minFrames int) string {
