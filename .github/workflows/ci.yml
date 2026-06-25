@@ -145,8 +145,8 @@ jobs:
           sudo apt-get install -y aom-tools dav1d
           command -v aomdec
           command -v dav1d
-      - name: WebRTC encoder reference-decode matrix
-        run: make webrtc-reference
+      - name: WebRTC production gate
+        run: make webrtc-production
 
   cli-smoke:
     name: cli smoke (aom-go-dec)

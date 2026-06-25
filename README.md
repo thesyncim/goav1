@@ -336,7 +336,9 @@ vendoring large binary clips into this repository.
 
 Known conformance gaps are explicit:
 
-- Tile-list OBU playback is parsed but not reconstructed/published end to end.
+- Contextless tile-list OBUs without frame context or external anchors reject
+  early; tile-list reconstruction and publish paths are covered when frame
+  context is present.
 - Broader profile-2 and real-world corpus breadth should keep expanding even
   though the current committed gates are green.
 
@@ -360,7 +362,7 @@ Current goal order:
   SIMD dispatch and kernels, and parallel post-filter scheduling.
 - Keep quality expanding beyond the committed green vectors: real-world
   corpora, broader profile-2 and 12-bit edge combinations, switch-frame and
-  tile-list end-to-end coverage, malformed stream hardening, and fuzzing.
+  additional tile-list edge coverage, malformed stream hardening, and fuzzing.
 - Expand the realtime encoder beyond the current 8-bit profile-0 path:
   high-bit-depth and true non-4:2:0 bitstream encoding, richer WebRTC tuning
   controls, and
@@ -442,10 +444,16 @@ make trace-zero
 Codec-safe local gate:
 
 ```sh
+make webrtc-production
 make ci-local
 make testvectors-fast
 make dryrun-fast
 ```
+
+`make webrtc-production` requires `aomdec` and `dav1d` on `PATH`; it is the
+strict realtime/WebRTC gate for encoder output, decoder RTP receive paths, SVC
+scalability modes, RTP/RTCP helpers, loss recovery, control reconfiguration, and
+external decoder parity.
 
 Broader parity sweeps:
 
