@@ -6,8 +6,9 @@ package goav1
 // control, with optional temporal layering and WebRTC dependency-descriptor
 // packaging through RTCEncoder. I420/NV12/NV21 preserve 4:2:0 chroma samples;
 // I422/I444 and generic Frame inputs are resampled, I400 and monochrome Frame
-// inputs fill neutral chroma, and 10/12-bit Frame inputs are downshifted before
-// entering the current 8-bit 4:2:0 path. Every emitted stream decodes
+// inputs fill neutral chroma unless an RTCEncoder is explicitly configured for
+// native monochrome, and 10/12-bit Frame inputs are downshifted before entering
+// the current 8-bit path. Every emitted stream decodes
 // bit-exactly to the encoder's own reconstruction in this package's Decoder
 // and in the reference decoders.
 
@@ -51,9 +52,10 @@ type I444Frame struct {
 }
 
 // I400Frame is one 8-bit monochrome picture. Y holds Width x Height luma
-// samples at YStride. The friendly realtime stream encoder still fills neutral
-// chroma for I400 inputs, while EncodeI400Keyframe and EncodeI400PFrame emit
-// native AV1 monochrome pictures.
+// samples at YStride. The friendly realtime stream encoder fills neutral chroma
+// for I400 inputs unless an RTCEncoder is explicitly configured for native
+// monochrome. EncodeI400Keyframe and EncodeI400PFrame always emit native AV1
+// monochrome pictures.
 type I400Frame struct {
 	Y       []byte
 	YStride int
@@ -675,8 +677,11 @@ func (f RTCFrame) AppendRTPPacketsWithOptions(payloadDst []byte, descriptorDst [
 }
 
 // RTCEncoder encodes an 8-bit profile-0 WebRTC AV1 stream from I420, I422,
-// I444, I400, NV12, or NV21 input with per-frame dependency descriptors. I422,
-// I444, and I400 inputs are adapted into the current 4:2:0 encode path.
+// I444, I400, NV12, or NV21 input with per-frame dependency descriptors. I422
+// and I444 inputs are adapted into the current 4:2:0 encode path. I400 inputs
+// are adapted to 4:2:0 unless NewRTCEncoderWithConfig is given an explicit
+// monochrome color config, in which case EncodeI400 and EncodeI400Picture emit
+// native AV1 monochrome streams for single-spatial L1T* modes.
 // NewRTCEncoder covers single-spatial L1T* temporal ladders;
 // NewRTCEncoderWithConfig additionally covers supported multi-spatial
 // WebRTC SVC and simulcast modes under CBR or CQP rate control. NewRTCEncoder
@@ -685,6 +690,7 @@ func (f RTCFrame) AppendRTPPacketsWithOptions(payloadDst []byte, descriptorDst [
 type RTCEncoder struct {
 	stream        *encoder.WebRTCStream
 	yuv420Scratch I420Frame
+	i400Scratch   I400Frame
 }
 
 // NewRTCEncoder creates a WebRTC encoder from cfg.
@@ -857,6 +863,16 @@ func (e *RTCEncoder) EncodeI400(frame I400Frame, forceKey bool) (RTCFrame, error
 	if e == nil || e.stream == nil {
 		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
+	if e.stream.Config().ColorConfig.MonoChrome {
+		if err := validateI400Frame(frame); err != nil {
+			return RTCFrame{}, err
+		}
+		out, err := e.stream.EncodeMonochrome(encoder.SourceFrameMono(frame), forceKey)
+		if err != nil {
+			return RTCFrame{}, err
+		}
+		return rtcFrameFromInternal(out), nil
+	}
 	i420, err := i400ToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
 		return RTCFrame{}, err
@@ -871,6 +887,13 @@ func (e *RTCEncoder) EncodeI400(frame I400Frame, forceKey bool) (RTCFrame, error
 func (e *RTCEncoder) EncodeFrame(frame Frame, forceKey bool) (RTCFrame, error) {
 	if e == nil || e.stream == nil {
 		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	if e.stream.Config().ColorConfig.MonoChrome {
+		i400, err := frameToI400Scratch(&e.i400Scratch, frame)
+		if err != nil {
+			return RTCFrame{}, err
+		}
+		return e.EncodeI400(i400, forceKey)
 	}
 	i420, err := frameToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
@@ -963,6 +986,16 @@ func (e *RTCEncoder) EncodeI400Picture(frame I400Frame, forceKey bool) (RTCPictu
 	if e == nil || e.stream == nil {
 		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
+	if e.stream.Config().ColorConfig.MonoChrome {
+		if err := validateI400Frame(frame); err != nil {
+			return RTCPicture{}, err
+		}
+		out, err := e.stream.EncodeMonochromePicture(encoder.SourceFrameMono(frame), forceKey)
+		if err != nil {
+			return RTCPicture{}, err
+		}
+		return rtcPictureFromInternal(out), nil
+	}
 	i420, err := i400ToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
 		return RTCPicture{}, err
@@ -976,6 +1009,13 @@ func (e *RTCEncoder) EncodeI400Picture(frame I400Frame, forceKey bool) (RTCPictu
 func (e *RTCEncoder) EncodeFramePicture(frame Frame, forceKey bool) (RTCPicture, error) {
 	if e == nil || e.stream == nil {
 		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	if e.stream.Config().ColorConfig.MonoChrome {
+		i400, err := frameToI400Scratch(&e.i400Scratch, frame)
+		if err != nil {
+			return RTCPicture{}, err
+		}
+		return e.EncodeI400Picture(i400, forceKey)
 	}
 	i420, err := frameToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
@@ -1026,6 +1066,16 @@ func rtcFrameFromInternal(out encoder.WebRTCEncodedFrame) RTCFrame {
 		dependencyStructure:       out.Structure,
 		attachDependencyStructure: out.AttachDependencyStructure,
 	}
+}
+
+func rtcPictureFromInternal(out encoder.WebRTCEncodedPicture) RTCPicture {
+	var picture RTCPicture
+	picture.FrameNum = int(out.FrameNum)
+	picture.Keyframe = out.Keyframe
+	for i := 0; i < picture.FrameNum; i++ {
+		picture.Frames[i] = rtcFrameFromInternal(out.Frames[i])
+	}
+	return picture
 }
 
 func validateI420Frame(frame I420Frame) error {
@@ -1237,6 +1287,40 @@ func frameToI420Scratch(dst *I420Frame, frame Frame) (I420Frame, error) {
 	return *dst, nil
 }
 
+func frameToI400Scratch(dst *I400Frame, frame Frame) (I400Frame, error) {
+	format := frame.Format
+	if format.BitDepth == 0 {
+		format.BitDepth = 8
+	}
+	layout, err := FrameRequiredSize(frame.Format)
+	if err != nil {
+		return I400Frame{}, err
+	}
+	if format.Width <= 0 || format.Height <= 0 || format.Width%2 != 0 || format.Height%2 != 0 {
+		return I400Frame{}, fmt.Errorf("goav1: Frame dimensions must be positive even values, got %dx%d", format.Width, format.Height)
+	}
+	if !format.MonoChrome {
+		return I400Frame{}, ErrFrameInvalidFormat
+	}
+	if format.BitDepth != 8 && format.BitDepth != 10 && format.BitDepth != 12 {
+		return I400Frame{}, ErrFrameInvalidFormat
+	}
+	if frame.Y.Width != format.Width || frame.Y.Height != format.Height || !encoderPlaneFits(frame.Y, layout.BytesPerSample) {
+		return I400Frame{}, ErrFrameInvalidPlane
+	}
+	if format.BitDepth == 8 {
+		return I400Frame{
+			Y:       frame.Y.Pix,
+			YStride: frame.Y.Stride,
+			Width:   format.Width,
+			Height:  format.Height,
+		}, nil
+	}
+	frameI400ByteScratch(dst, format.Width, format.Height)
+	copyFramePlaneTo8(dst.Y, dst.YStride, frame.Y, layout.BytesPerSample, format.BitDepth, format.Width, format.Height)
+	return *dst, nil
+}
+
 func frameI420ByteScratch(dst *I420Frame, width int, height int) {
 	chromaWidth := width / 2
 	chromaHeight := height / 2
@@ -1259,6 +1343,18 @@ func frameI420ByteScratch(dst *I420Frame, width int, height int) {
 	}
 	dst.YStride = width
 	dst.ChromaStride = chromaWidth
+	dst.Width = width
+	dst.Height = height
+}
+
+func frameI400ByteScratch(dst *I400Frame, width int, height int) {
+	yLen := width * height
+	if cap(dst.Y) < yLen {
+		dst.Y = make([]byte, yLen)
+	} else {
+		dst.Y = dst.Y[:yLen]
+	}
+	dst.YStride = width
 	dst.Width = width
 	dst.Height = height
 }

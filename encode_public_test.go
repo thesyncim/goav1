@@ -929,6 +929,165 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderI400NativeMonochrome(t *testing.T) {
+	const w, h = 192, 128
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T3)
+	cfg.ColorConfigSet = true
+	cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+		BitDepth:   8,
+		MonoChrome: true,
+	}
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+	if !enc.Config().ColorConfig.MonoChrome {
+		t.Fatalf("normalized config is not monochrome: %+v", enc.Config().ColorConfig)
+	}
+
+	wantTID := []uint8{0, 2, 1, 2, 0, 2}
+	var tus [][]byte
+	for frame := 0; frame < len(wantTID); frame++ {
+		if frame == 3 {
+			control := enc.Config()
+			control.MaxFramerate = goav1.EncoderRational{Num: 60, Den: 1}
+			control.MinBitrateKbps += 15
+			control.MaxBitrateKbps += 180
+			control.TargetBitrateKbps += 90
+			if err := enc.SetConfig(control); err != nil {
+				t.Fatalf("SetConfig control: %v", err)
+			}
+		}
+		src := publicI400FromI420(publicRTCMatrixFrame(w, h, frame))
+		out, err := enc.EncodeI400(src, false)
+		if err != nil {
+			t.Fatalf("EncodeI400(%d): %v", frame, err)
+		}
+		if out.TemporalID != wantTID[frame] {
+			t.Fatalf("frame %d temporal id=%d want %d", frame, out.TemporalID, wantTID[frame])
+		}
+		if frame == 0 {
+			seq := publicFirstSequenceHeader(t, out.Data)
+			if !seq.ColorConfig.MonoChrome || seq.ColorConfig.BitDepth != 8 {
+				t.Fatalf("sequence color=%+v want native 8-bit monochrome", seq.ColorConfig)
+			}
+		}
+		tus = append(tus, append([]byte(nil), out.Data...))
+	}
+
+	frame := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, len(wantTID)), goav1.FrameFormat{
+		Width:      w,
+		Height:     h,
+		BitDepth:   10,
+		MonoChrome: true,
+		Align:      32,
+	})
+	generic, err := enc.EncodeFrame(frame, false)
+	if err != nil {
+		t.Fatalf("EncodeFrame monochrome: %v", err)
+	}
+	tus = append(tus, append([]byte(nil), generic.Data...))
+
+	dec, err := goav1.NewDecoder(tus)
+	if err != nil {
+		t.Fatalf("NewDecoder: %v", err)
+	}
+	defer dec.Close()
+	decoded := 0
+	for {
+		batch, ok, err := dec.DecodeNext()
+		if err != nil {
+			t.Fatalf("DecodeNext: %v", err)
+		}
+		if !ok {
+			break
+		}
+		for _, frame := range batch {
+			if !frame.Format.MonoChrome || frame.Format.BitDepth != 8 || len(frame.U.Pix) != 0 || len(frame.V.Pix) != 0 {
+				t.Fatalf("decoded frame format=%+v U=%d V=%d want native monochrome", frame.Format, len(frame.U.Pix), len(frame.V.Pix))
+			}
+		}
+		decoded += len(batch)
+	}
+	if decoded != len(tus) {
+		t.Fatalf("decoded %d frames want %d", decoded, len(tus))
+	}
+}
+
+func TestPublicRTCEncoderI400NativeMonochromeReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	const w, h = 192, 128
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
+	cfg.RateControl = goav1.EncoderRateControlCQP
+	cfg.Quantizer = 42
+	cfg.ColorConfigSet = true
+	cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+		BitDepth:   8,
+		MonoChrome: true,
+	}
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	frames := make([]publicIVFFrame, 0, 5)
+	for frame := 0; frame < cap(frames); frame++ {
+		picture, err := enc.EncodeI400Picture(publicI400FromI420(publicRTCMatrixFrame(w, h, frame)), false)
+		if err != nil {
+			t.Fatalf("EncodeI400Picture(%d): %v", frame, err)
+		}
+		if picture.FrameNum != 1 || picture.Frames[0].SpatialID != 0 {
+			t.Fatalf("picture %d=%+v", frame, picture)
+		}
+		frames = append(frames, publicIVFFrame{
+			timestamp: uint64(frame),
+			payload:   append([]byte(nil), picture.Frames[0].Data...),
+		})
+	}
+	ivf := appendPublicIVF(nil, w, h, 30, 1, frames)
+	assertPublicIVFMonochromeMatchesReferenceDecoders(t, decoders, "public-rtc-i400-native-monochrome", ivf, w, h)
+}
+
+func TestPublicRTCEncoderSetConfigNativeMonochromeTransition(t *testing.T) {
+	const w, h = 192, 128
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	first, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, 0), false)
+	if err != nil {
+		t.Fatalf("EncodePicture: %v", err)
+	}
+	mono := enc.Config()
+	mono.ColorConfigSet = true
+	mono.ColorConfig = goav1.EncoderSequenceColorConfig{
+		BitDepth:   8,
+		MonoChrome: true,
+	}
+	if err := enc.SetConfig(mono); err != nil {
+		t.Fatalf("SetConfig mono: %v", err)
+	}
+	if !enc.Config().ColorConfig.MonoChrome {
+		t.Fatalf("post-SetConfig color=%+v", enc.Config().ColorConfig)
+	}
+	next, err := enc.EncodeI400Picture(publicI400FromI420(publicRTCMatrixFrame(w, h, 1)), false)
+	if err != nil {
+		t.Fatalf("EncodeI400Picture after SetConfig: %v", err)
+	}
+	if !next.Keyframe || next.FrameNum != 1 || next.Frames[0].FrameID != first.Frames[0].FrameID+uint64(first.FrameNum) {
+		t.Fatalf("mono transition picture=%+v after first=%+v", next, first)
+	}
+	seq := publicFirstSequenceHeader(t, next.Frames[0].Data)
+	if !seq.ColorConfig.MonoChrome {
+		t.Fatalf("transition sequence color=%+v want monochrome", seq.ColorConfig)
+	}
+}
+
 func TestPublicEncoderRuntimeOptions(t *testing.T) {
 	const w, h = 192, 128
 	t.Run("VideoEncoder", func(t *testing.T) {
@@ -1139,6 +1298,21 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 	if normalizedCQP.RateControl != goav1.EncoderRateControlCQP || normalizedCQP.Quantizer != 32 {
 		t.Fatalf("normalized CQP config=%+v", normalizedCQP)
 	}
+	mono := publicRTCMatrixConfig(192, 128, goav1.EncoderScalabilityModeL1T3)
+	mono.ColorConfigSet = true
+	mono.ColorConfig = goav1.EncoderSequenceColorConfig{
+		BitDepth:   8,
+		MonoChrome: true,
+	}
+	normalizedMono, err := goav1.NormalizeRTCEncoderConfig(mono)
+	if err != nil {
+		t.Fatalf("NormalizeRTCEncoderConfig monochrome: %v", err)
+	}
+	if !normalizedMono.ColorConfig.MonoChrome ||
+		normalizedMono.SpatialLayerCount != 1 ||
+		normalizedMono.TemporalLayerCount != 3 {
+		t.Fatalf("normalized monochrome config=%+v", normalizedMono)
+	}
 	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig valid: %v", err)
@@ -1166,7 +1340,7 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 			want: goav1.ErrEncoderUnsupported,
 		},
 		{
-			name: "explicit-monochrome-color-config",
+			name: "explicit-monochrome-multi-spatial-color-config",
 			edit: func(cfg *goav1.EncoderConfig) {
 				cfg.ColorConfigSet = true
 				cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
@@ -3920,6 +4094,61 @@ func assertPublicIVFMatchesReferenceDecodersRawYUVBytes(
 				name, decoder.name, len(got), len(want), offset, gotByte, wantByte)
 		}
 		t.Logf("%s %s: %d frames bit-exact", name, decoder.name, frameCount)
+	}
+}
+
+func assertPublicIVFMonochromeMatchesReferenceDecoders(
+	t *testing.T, decoders []publicReferenceAV1Decoder, name string, ivf []byte, width int, height int,
+) {
+	t.Helper()
+	decoded, err := goav1.DecodeIVF(ivf)
+	if err != nil {
+		t.Fatalf("%s DecodeIVF: %v", name, err)
+	}
+	wantY := make([]byte, 0, len(decoded)*width*height)
+	for i, frame := range decoded {
+		if frame.ChromaWidth != 0 || frame.ChromaHeight != 0 || len(frame.U) != 0 || len(frame.V) != 0 {
+			t.Fatalf("%s decoded frame %d chroma=%dx%d U=%d V=%d want monochrome", name, i, frame.ChromaWidth, frame.ChromaHeight, len(frame.U), len(frame.V))
+		}
+		wantY = append(wantY, frame.Y...)
+	}
+
+	dir := t.TempDir()
+	ivfPath := filepath.Join(dir, name+".ivf")
+	if err := os.WriteFile(ivfPath, ivf, 0o644); err != nil {
+		t.Fatalf("%s write IVF: %v", name, err)
+	}
+	yLen := width * height
+	i420Len := yLen + 2*(width/2)*(height/2)
+	for _, decoder := range decoders {
+		outPath := filepath.Join(dir, name+"-"+decoder.name+".yuv")
+		out, err := exec.Command(decoder.path, decoder.args(outPath, ivfPath)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s %s: %v\n%s", name, decoder.name, err, out)
+		}
+		got, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("%s read %s output: %v", name, decoder.name, err)
+		}
+		switch len(got) {
+		case len(wantY):
+			if !bytes.Equal(got, wantY) {
+				offset := firstPublicByteDiff(got, wantY)
+				t.Fatalf("%s %s Y-only output differs first at byte %d", name, decoder.name, offset)
+			}
+		case len(decoded) * i420Len:
+			for frame := range decoded {
+				gotY := got[frame*i420Len : frame*i420Len+yLen]
+				wantFrameY := wantY[frame*yLen : frame*yLen+yLen]
+				if !bytes.Equal(gotY, wantFrameY) {
+					offset := firstPublicByteDiff(gotY, wantFrameY)
+					t.Fatalf("%s %s expanded frame %d luma differs first at byte %d", name, decoder.name, frame, offset)
+				}
+			}
+		default:
+			t.Fatalf("%s %s output len=%d want %d Y-only or %d yuv420 bytes", name, decoder.name, len(got), len(wantY), len(decoded)*i420Len)
+		}
+		t.Logf("%s %s: %d monochrome frames luma bit-exact", name, decoder.name, len(decoded))
 	}
 }
 

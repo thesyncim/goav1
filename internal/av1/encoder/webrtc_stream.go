@@ -63,6 +63,7 @@ type WebRTCStream struct {
 	goldenIntervalSet bool
 
 	encoders     [WebRTCMaxSpatialLayers]*VideoEncoder
+	monoEncoders [WebRTCMaxSpatialLayers]*MonochromeVideoEncoder
 	scaledFrames [WebRTCMaxSpatialLayers]SourceFrame420
 	layerScratch [WebRTCMaxSpatialLayers][]byte
 
@@ -119,13 +120,24 @@ func NewWebRTCStreamConfig(config Config) (*WebRTCStream, error) {
 	var stream WebRTCStream
 	stream.config = normalized
 	stream.rcMinQ, stream.rcMaxQ = 20, 200
-	for i := uint8(0); i < normalized.SpatialLayerCount; i++ {
-		enc, err := newWebRTCStreamLayerEncoder(normalized, i, fps, stream.rcMinQ, stream.rcMaxQ)
-		if err != nil {
-			_ = stream.closeEncoders()
-			return nil, err
+	if webRTCStreamMonochrome(normalized) {
+		for i := uint8(0); i < normalized.SpatialLayerCount; i++ {
+			enc, err := newWebRTCStreamLayerMonoEncoder(normalized, i, fps, stream.rcMinQ, stream.rcMaxQ)
+			if err != nil {
+				_ = stream.closeEncoders()
+				return nil, err
+			}
+			stream.monoEncoders[i] = enc
 		}
-		stream.encoders[i] = enc
+	} else {
+		for i := uint8(0); i < normalized.SpatialLayerCount; i++ {
+			enc, err := newWebRTCStreamLayerEncoder(normalized, i, fps, stream.rcMinQ, stream.rcMaxQ)
+			if err != nil {
+				_ = stream.closeEncoders()
+				return nil, err
+			}
+			stream.encoders[i] = enc
+		}
 	}
 	return &stream, nil
 }
@@ -168,14 +180,23 @@ func normalizeWebRTCStreamConfig(config Config) (Config, int, error) {
 }
 
 func webRTCPixelScalabilitySupported(config Config) bool {
-	return config.SpatialLayerCount > 0 && config.SpatialLayerCount <= WebRTCMaxSpatialLayers
+	if config.SpatialLayerCount == 0 || config.SpatialLayerCount > WebRTCMaxSpatialLayers {
+		return false
+	}
+	if config.ColorConfig.MonoChrome && config.SpatialLayerCount != 1 {
+		return false
+	}
+	return true
 }
 
 func webRTCStreamPixelColorConfigSupported(color SequenceColorConfig) bool {
 	return color.BitDepth == 8 &&
-		!color.MonoChrome &&
 		color.SubsamplingX &&
 		color.SubsamplingY
+}
+
+func webRTCStreamMonochrome(config Config) bool {
+	return config.ColorConfig.MonoChrome
 }
 
 func newWebRTCStreamLayerEncoder(config Config, layerIndex uint8, fps int, minQ uint8, maxQ uint8) (*VideoEncoder, error) {
@@ -212,6 +233,34 @@ func newWebRTCStreamLayerEncoder(config Config, layerIndex uint8, fps int, minQ 
 	return enc, nil
 }
 
+func newWebRTCStreamLayerMonoEncoder(config Config, layerIndex uint8, fps int, minQ uint8, maxQ uint8) (*MonochromeVideoEncoder, error) {
+	layer := config.SpatialLayers[layerIndex]
+	var enc *MonochromeVideoEncoder
+	var err error
+	switch config.RateControl {
+	case RateControlCBR:
+		targetKbps := webRTCStreamLayerTargetKbps(config, layerIndex)
+		enc, err = NewMonochromeVideoEncoderCBR(int(layer.Resolution.Width), int(layer.Resolution.Height), RateControlConfig{
+			TargetBitsPerSecond: int(targetKbps) * 1000,
+			FramesPerSecond:     fps,
+			MinQIndex:           minQ,
+			MaxQIndex:           maxQ,
+		})
+	case RateControlCQP:
+		enc, err = NewMonochromeVideoEncoder(int(layer.Resolution.Width), int(layer.Resolution.Height), config.Quantizer)
+	default:
+		return nil, ErrUnsupported
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
+		_ = enc.Close()
+		return nil, err
+	}
+	return enc, nil
+}
+
 func webRTCStreamLayerTargetKbps(config Config, layerIndex uint8) int32 {
 	if layerIndex >= config.SpatialLayerCount {
 		return 0
@@ -233,12 +282,17 @@ func (s *WebRTCStream) setRateControlQRange(minQ uint8, maxQ uint8) {
 	s.rcMinQ, s.rcMaxQ = minQ, maxQ
 	for i := uint8(0); i < s.config.SpatialLayerCount; i++ {
 		enc := s.encoders[i]
-		if enc == nil {
-			continue
+		if enc != nil {
+			enc.rcMinQ = minQ
+			enc.rcMaxQ = maxQ
+			enc.qIndex = minQ/2 + maxQ/2
 		}
-		enc.rcMinQ = minQ
-		enc.rcMaxQ = maxQ
-		enc.qIndex = minQ/2 + maxQ/2
+		mono := s.monoEncoders[i]
+		if mono != nil {
+			mono.rcMinQ = minQ
+			mono.rcMaxQ = maxQ
+			mono.qIndex = minQ/2 + maxQ/2
+		}
 	}
 }
 
@@ -250,7 +304,9 @@ func (s *WebRTCStream) SetGoldenInterval(n int) {
 		s.goldenIntervalSet = true
 	}
 	for i := uint8(0); s != nil && i < s.config.SpatialLayerCount; i++ {
-		s.encoders[i].SetGoldenInterval(n)
+		if s.encoders[i] != nil {
+			s.encoders[i].SetGoldenInterval(n)
+		}
 	}
 }
 
@@ -261,7 +317,9 @@ func (s *WebRTCStream) SetTileColumns(cols int) {
 		s.tileColumns = cols
 	}
 	for i := uint8(0); s != nil && i < s.config.SpatialLayerCount; i++ {
-		s.encoders[i].SetTileColumns(cols)
+		if s.encoders[i] != nil {
+			s.encoders[i].SetTileColumns(cols)
+		}
 	}
 }
 
@@ -301,7 +359,8 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 	}
 	sameStructure := oldStructureErr == nil && oldStructure == newStructure
 	sameGeometry := webRTCStreamLayerGeometryEqual(s.config, normalized)
-	if sameGeometry {
+	samePixelFormat := webRTCStreamMonochrome(s.config) == webRTCStreamMonochrome(normalized)
+	if sameGeometry && samePixelFormat {
 		if err := s.updateLayerControls(normalized, fps); err != nil {
 			return err
 		}
@@ -313,15 +372,31 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 		return nil
 	}
 
-	nextEncoders, err := s.buildReplacementLayerEncoders(normalized, fps)
-	if err != nil {
-		return err
-	}
-	if err := s.closeEncoders(); err != nil {
-		closeWebRTCStreamEncoders(nextEncoders)
-		return err
+	var nextEncoders [WebRTCMaxSpatialLayers]*VideoEncoder
+	var nextMonoEncoders [WebRTCMaxSpatialLayers]*MonochromeVideoEncoder
+	if webRTCStreamMonochrome(normalized) {
+		var err error
+		nextMonoEncoders, err = s.buildReplacementMonoLayerEncoders(normalized, fps)
+		if err != nil {
+			return err
+		}
+		if err := s.closeEncoders(); err != nil {
+			closeWebRTCStreamMonoEncoders(nextMonoEncoders)
+			return err
+		}
+	} else {
+		var err error
+		nextEncoders, err = s.buildReplacementLayerEncoders(normalized, fps)
+		if err != nil {
+			return err
+		}
+		if err := s.closeEncoders(); err != nil {
+			closeWebRTCStreamEncoders(nextEncoders)
+			return err
+		}
 	}
 	s.encoders = nextEncoders
+	s.monoEncoders = nextMonoEncoders
 	s.config = normalized
 	s.scaledFrames = [WebRTCMaxSpatialLayers]SourceFrame420{}
 	s.layerScratch = [WebRTCMaxSpatialLayers][]byte{}
@@ -331,6 +406,9 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 }
 
 func (s *WebRTCStream) updateLayerControls(config Config, fps int) error {
+	if webRTCStreamMonochrome(config) {
+		return s.updateMonoLayerControls(config, fps)
+	}
 	for i := uint8(0); i < config.SpatialLayerCount; i++ {
 		enc := s.encoders[i]
 		if enc == nil {
@@ -341,6 +419,37 @@ func (s *WebRTCStream) updateLayerControls(config Config, fps int) error {
 		}
 		enc.SetScreenContentSelection(true)
 		if err := enc.SetContentHint(config.Content); err != nil {
+			return err
+		}
+		switch config.RateControl {
+		case RateControlCBR:
+			targetKbps := webRTCStreamLayerTargetKbps(config, i)
+			if err := enc.SetRateControlConfig(RateControlConfig{
+				TargetBitsPerSecond: int(targetKbps) * 1000,
+				FramesPerSecond:     fps,
+				MinQIndex:           s.rcMinQ,
+				MaxQIndex:           s.rcMaxQ,
+			}); err != nil {
+				return err
+			}
+		case RateControlCQP:
+			if err := enc.SetQIndex(config.Quantizer); err != nil {
+				return err
+			}
+		default:
+			return ErrUnsupported
+		}
+	}
+	return nil
+}
+
+func (s *WebRTCStream) updateMonoLayerControls(config Config, fps int) error {
+	for i := uint8(0); i < config.SpatialLayerCount; i++ {
+		enc := s.monoEncoders[i]
+		if enc == nil {
+			return ErrInvalidConfig
+		}
+		if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
 			return err
 		}
 		switch config.RateControl {
@@ -389,6 +498,24 @@ func (s *WebRTCStream) buildReplacementLayerEncoders(config Config, fps int) ([W
 	return encoders, nil
 }
 
+func (s *WebRTCStream) buildReplacementMonoLayerEncoders(config Config, fps int) ([WebRTCMaxSpatialLayers]*MonochromeVideoEncoder, error) {
+	var encoders [WebRTCMaxSpatialLayers]*MonochromeVideoEncoder
+	for i := uint8(0); i < config.SpatialLayerCount; i++ {
+		enc, err := newWebRTCStreamLayerMonoEncoder(config, i, fps, s.rcMinQ, s.rcMaxQ)
+		if err != nil {
+			closeWebRTCStreamMonoEncoders(encoders)
+			return [WebRTCMaxSpatialLayers]*MonochromeVideoEncoder{}, err
+		}
+		if err := enc.Prewarm(); err != nil {
+			closeWebRTCStreamMonoEncoders(encoders)
+			_ = enc.Close()
+			return [WebRTCMaxSpatialLayers]*MonochromeVideoEncoder{}, err
+		}
+		encoders[i] = enc
+	}
+	return encoders, nil
+}
+
 func webRTCStreamLayerGeometryEqual(a Config, b Config) bool {
 	if a.SpatialLayerCount != b.SpatialLayerCount {
 		return false
@@ -404,17 +531,29 @@ func webRTCStreamLayerGeometryEqual(a Config, b Config) bool {
 func (s *WebRTCStream) closeEncoders() error {
 	var firstErr error
 	for i := uint8(0); i < WebRTCMaxSpatialLayers; i++ {
-		if s.encoders[i] == nil {
-			continue
+		if s.encoders[i] != nil {
+			if err := s.encoders[i].Close(); err != nil && firstErr == nil {
+				firstErr = err
+			}
 		}
-		if err := s.encoders[i].Close(); err != nil && firstErr == nil {
-			firstErr = err
+		if s.monoEncoders[i] != nil {
+			if err := s.monoEncoders[i].Close(); err != nil && firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 	return firstErr
 }
 
 func closeWebRTCStreamEncoders(encoders [WebRTCMaxSpatialLayers]*VideoEncoder) {
+	for i := range encoders {
+		if encoders[i] != nil {
+			_ = encoders[i].Close()
+		}
+	}
+}
+
+func closeWebRTCStreamMonoEncoders(encoders [WebRTCMaxSpatialLayers]*MonochromeVideoEncoder) {
 	for i := range encoders {
 		if encoders[i] != nil {
 			_ = encoders[i].Close()
@@ -433,8 +572,16 @@ func webRTCEncoderStateForNextKey(state WebRTCEncoderState) WebRTCEncoderState {
 // the WebRTC frame metadata.
 func (s *WebRTCStream) Prewarm() error {
 	for i := uint8(0); s != nil && i < s.config.SpatialLayerCount; i++ {
-		if err := s.encoders[i].Prewarm(); err != nil {
-			return err
+		if s.encoders[i] != nil {
+			if err := s.encoders[i].Prewarm(); err != nil {
+				return err
+			}
+			continue
+		}
+		if s.monoEncoders[i] != nil {
+			if err := s.monoEncoders[i].Prewarm(); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -446,7 +593,23 @@ func (s *WebRTCStream) Encode(src SourceFrame420, forceKey bool) (WebRTCEncodedF
 	if s == nil || s.config.SpatialLayerCount != 1 {
 		return WebRTCEncodedFrame{}, ErrUnsupported
 	}
+	if webRTCStreamMonochrome(s.config) {
+		return WebRTCEncodedFrame{}, ErrUnsupported
+	}
 	picture, err := s.EncodePicture(src, forceKey)
+	if err != nil {
+		return WebRTCEncodedFrame{}, err
+	}
+	return picture.Frames[0], nil
+}
+
+// EncodeMonochrome encodes one single-spatial native monochrome frame and
+// returns it with WebRTC packaging metadata.
+func (s *WebRTCStream) EncodeMonochrome(src SourceFrameMono, forceKey bool) (WebRTCEncodedFrame, error) {
+	if s == nil || s.config.SpatialLayerCount != 1 || !webRTCStreamMonochrome(s.config) {
+		return WebRTCEncodedFrame{}, ErrUnsupported
+	}
+	picture, err := s.EncodeMonochromePicture(src, forceKey)
 	if err != nil {
 		return WebRTCEncodedFrame{}, err
 	}
@@ -458,6 +621,9 @@ func (s *WebRTCStream) Encode(src SourceFrame420, forceKey bool) (WebRTCEncodedF
 func (s *WebRTCStream) EncodePicture(src SourceFrame420, forceKey bool) (WebRTCEncodedPicture, error) {
 	if s == nil || s.config.SpatialLayerCount == 0 {
 		return WebRTCEncodedPicture{}, ErrInvalidConfig
+	}
+	if webRTCStreamMonochrome(s.config) {
+		return WebRTCEncodedPicture{}, ErrUnsupported
 	}
 	if src.Width != int(s.config.Resolution.Width) || src.Height != int(s.config.Resolution.Height) {
 		return WebRTCEncodedPicture{}, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", src.Width, src.Height, s.config.Resolution.Width, s.config.Resolution.Height)
@@ -534,6 +700,88 @@ func (s *WebRTCStream) EncodePicture(src SourceFrame420, forceKey bool) (WebRTCE
 		if err := s.updateReferenceFrame(settings, enc); err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
+	}
+	s.state = next
+	return picture, nil
+}
+
+// EncodeMonochromePicture encodes one native monochrome WebRTC picture. Native
+// monochrome pixel coding is currently single-spatial; multi-spatial mono
+// configs are rejected during normalization until scaled mono inter coding is
+// implemented.
+func (s *WebRTCStream) EncodeMonochromePicture(src SourceFrameMono, forceKey bool) (WebRTCEncodedPicture, error) {
+	if s == nil || s.config.SpatialLayerCount == 0 {
+		return WebRTCEncodedPicture{}, ErrInvalidConfig
+	}
+	if !webRTCStreamMonochrome(s.config) || s.config.SpatialLayerCount != 1 {
+		return WebRTCEncodedPicture{}, ErrUnsupported
+	}
+	if src.Width != int(s.config.Resolution.Width) || src.Height != int(s.config.Resolution.Height) {
+		return WebRTCEncodedPicture{}, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", src.Width, src.Height, s.config.Resolution.Width, s.config.Resolution.Height)
+	}
+	unit, next, err := WebRTCNextTemporalUnitForState(s.config, s.state, forceKey)
+	if err != nil {
+		return WebRTCEncodedPicture{}, err
+	}
+	frameNum := webRTCPictureTemporalUnitFrameNum(unit)
+	if frameNum != 1 {
+		return WebRTCEncodedPicture{}, ErrInvalidFrame
+	}
+
+	var picture WebRTCEncodedPicture
+	picture.FrameNum = frameNum
+	picture.Keyframe = unit.Key
+	picture.Unit = unit
+	metadataDims := webRTCScalabilityMetadataDimensionsForConfig(s.config)
+	settings, ok := webRTCPictureUnitFrameSettings(unit, 0)
+	if !ok || settings.SpatialID != 0 {
+		return WebRTCEncodedPicture{}, ErrInvalidFrame
+	}
+	enc := s.monoEncoders[0]
+	if enc == nil {
+		return WebRTCEncodedPicture{}, ErrInvalidConfig
+	}
+	tu, key, err := enc.EncodeWithTemporalID(src, unit.Key, settings.TemporalID)
+	if err != nil {
+		return WebRTCEncodedPicture{}, err
+	}
+	if key != webRTCStreamExpectedCodedKey(unit.Key, settings, s.config.Scalability) {
+		return WebRTCEncodedPicture{}, ErrInvalidFrame
+	}
+	includeScalabilityMetadata := unit.Key
+	layerSize, err := webRTCLayerTemporalUnitSize(tu, settings.TemporalID, settings.SpatialID, s.config.Scalability, includeScalabilityMetadata, metadataDims)
+	if err != nil {
+		return WebRTCEncodedPicture{}, err
+	}
+	if cap(s.layerScratch[0]) < layerSize {
+		s.layerScratch[0] = make([]byte, 0, layerSize)
+	}
+	layerTU, err := appendWebRTCLayerTemporalUnit(s.layerScratch[0][:0], tu, settings.TemporalID, settings.SpatialID, s.config.Scalability, includeScalabilityMetadata, metadataDims)
+	if err != nil {
+		return WebRTCEncodedPicture{}, err
+	}
+	s.layerScratch[0] = layerTU
+	control, structure, err := webRTCPictureTemporalUnitFrameControl(unit, s.state, 0)
+	if err != nil {
+		return WebRTCEncodedPicture{}, err
+	}
+	descSize, err := WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, control.AttachDependencyStructure)
+	if err != nil {
+		return WebRTCEncodedPicture{}, err
+	}
+	descriptor, err := AppendWebRTCDependencyDescriptor(make([]byte, 0, descSize), structure, control.GenericFrameInfo, true, true, control.AttachDependencyStructure)
+	if err != nil {
+		return WebRTCEncodedPicture{}, err
+	}
+	picture.Frames[0] = WebRTCEncodedFrame{
+		TU:                        layerTU,
+		Keyframe:                  unit.Key,
+		CodedKeyframe:             key,
+		LastFrameInPicture:        true,
+		Info:                      control.GenericFrameInfo,
+		Descriptor:                descriptor,
+		Structure:                 structure,
+		AttachDependencyStructure: control.AttachDependencyStructure,
 	}
 	s.state = next
 	return picture, nil
