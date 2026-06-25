@@ -2249,6 +2249,119 @@ func TestPublicRTCEncoderSharedSVCSettingsReferenceDecoders(t *testing.T) {
 	assertPublicIVFMatchesReferenceDecodersRawYUVBytes(t, decoders, "shared-svc-settings", ivf, wantYUV, decodedCount)
 }
 
+func TestPublicRTCEncoderScalabilityModeCatalogueReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	modes := goav1.EncoderWebRTCScalabilityModes()
+	if len(modes) == 0 {
+		t.Fatal("no WebRTC scalability modes")
+	}
+	fpsCycle := []goav1.EncoderRational{
+		{Num: 30, Den: 1},
+		{Num: 60000, Den: 1001},
+		{Num: 24, Den: 1},
+		{Num: 120, Den: 1},
+	}
+	for step, mode := range modes {
+		step, mode := step, mode
+		t.Run(mode.String(), func(t *testing.T) {
+			width, height := publicRTCMatrixGeometry(t, mode)
+			cfg := publicRTCMatrixConfig(width, height, mode)
+			cfg.MaxFramerate = fpsCycle[step%len(fpsCycle)]
+			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*9))
+			if step%2 == 0 {
+				cfg.RateControl = goav1.EncoderRateControlCQP
+				cfg.Quantizer = uint8(24 + step%31)
+			}
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
+			}
+			defer enc.Close()
+
+			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			nextFrameID := uint64(0)
+			var layerFrames [goav1.EncoderWebRTCMaxSpatialLayers][]publicIVFFrame
+			var orderedFrames []publicIVFFrame
+			var lowOverheads [][]byte
+			appendPicture := func(label string, frameIndex int, forceKey bool, wantKey bool) {
+				t.Helper()
+				picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, frameIndex), forceKey)
+				if err != nil {
+					t.Fatalf("%s EncodePicture(%s): %v", label, mode, err)
+				}
+				if picture.Keyframe != wantKey {
+					t.Fatalf("%s key=%v want %v picture=%+v", label, picture.Keyframe, wantKey, picture)
+				}
+				current := enc.Config()
+				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, current, picture, wantKey, &nextFrameID)
+				for i := 0; i < picture.FrameNum; i++ {
+					frame := picture.Frames[i]
+					payload := append([]byte(nil), frame.Data...)
+					if publicRTCSharedReferenceSlotMode(mode) {
+						orderedFrames = append(orderedFrames, publicIVFFrame{
+							timestamp: uint64(len(orderedFrames)),
+							payload:   payload,
+						})
+						lowOverheads = append(lowOverheads, payload)
+						continue
+					}
+					if frame.SpatialID >= goav1.EncoderWebRTCMaxSpatialLayers {
+						t.Fatalf("%s spatial id=%d", label, frame.SpatialID)
+					}
+					layerFrames[frame.SpatialID] = append(layerFrames[frame.SpatialID], publicIVFFrame{
+						timestamp: uint64(len(layerFrames[frame.SpatialID])),
+						payload:   payload,
+					})
+				}
+			}
+
+			appendPicture("initial key", 0, false, true)
+
+			controlChange := enc.Config()
+			controlChange.MaxFramerate = fpsCycle[(step+1)%len(fpsCycle)]
+			if controlChange.RateControl == goav1.EncoderRateControlCQP {
+				controlChange.RateControl = goav1.EncoderRateControlCBR
+				controlChange.Quantizer = 0
+				publicRTCApplyControlBitrates(&controlChange, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*11)+57)
+			} else {
+				controlChange.RateControl = goav1.EncoderRateControlCQP
+				controlChange.Quantizer = uint8(29 + step%27)
+			}
+			if step%3 == 0 {
+				controlChange.Content = goav1.EncoderContentScreen
+			} else {
+				controlChange.Content = goav1.EncoderContentCamera
+			}
+			if err := enc.SetConfig(controlChange); err != nil {
+				t.Fatalf("SetConfig(%s control): %v", mode, err)
+			}
+			assertPublicRTCConfigControls(t, enc.Config(), controlChange)
+			appendPicture("control delta", 1, false, false)
+			appendPicture("forced key", 2, true, true)
+
+			normalized := enc.Config()
+			if publicRTCSharedReferenceSlotMode(mode) {
+				wantYUV, decodedCount := decodePublicRTCLayerPoolLowOverheadRawYUV(t, lowOverheads...)
+				if decodedCount != len(lowOverheads) {
+					t.Fatalf("%s shared-SVC decoded frames=%d want %d", mode, decodedCount, len(lowOverheads))
+				}
+				ivf := appendPublicIVF(nil, uint16(width), uint16(height), 30, 1, orderedFrames)
+				assertPublicIVFMatchesReferenceDecodersRawYUVBytes(t, decoders, "catalogue-"+mode.String(), ivf, wantYUV, decodedCount)
+				return
+			}
+
+			for spatialID := uint8(0); spatialID < normalized.SpatialLayerCount; spatialID++ {
+				if len(layerFrames[spatialID]) == 0 {
+					t.Fatalf("%s spatial %d has no frames", mode, spatialID)
+				}
+				res := normalized.SpatialLayers[spatialID].Resolution
+				ivf := appendPublicIVF(nil, uint16(res.Width), uint16(res.Height), 30, 1, layerFrames[spatialID])
+				assertPublicIVFMatchesReferenceDecodersRawYUV(t, decoders, fmt.Sprintf("catalogue-%s-spatial-%d", mode, spatialID), ivf)
+			}
+		})
+	}
+}
+
 type publicReferenceAV1Decoder struct {
 	name string
 	path string
