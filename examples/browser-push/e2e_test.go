@@ -416,6 +416,7 @@ type rtcEncoderRTPStreamOptions struct {
 	DropPacket           func(frameIndex int, packetIndex int, packet rtp.Packet) bool
 	OnPacket             func(frameIndex int, packetIndex int, packet rtp.Packet, dropped bool) error
 	OnPicture            func(frameIndex int, picture goav1.RTCPicture)
+	OnConfigApplied      func(frameIndex int, step int, cfg goav1.EncoderConfig)
 }
 
 func defaultRTCEncoderRTPStreamOptions() rtcEncoderRTPStreamOptions {
@@ -443,6 +444,9 @@ func streamRTCEncoderRTPWithOptions(
 		return err
 	}
 	defer enc.Close()
+	if options.OnConfigApplied != nil {
+		options.OnConfigApplied(0, 0, enc.Config())
+	}
 	scene := newScene()
 	ticker := time.NewTicker(time.Second / fps)
 	defer ticker.Stop()
@@ -461,6 +465,9 @@ func streamRTCEncoderRTPWithOptions(
 			cfg = configForStep(n / 14)
 			if err := enc.SetConfig(cfg); err != nil {
 				return err
+			}
+			if options.OnConfigApplied != nil {
+				options.OnConfigApplied(n, n/14, enc.Config())
 			}
 		}
 		forceKey := wantKey.Swap(false)

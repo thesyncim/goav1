@@ -9,7 +9,8 @@ live-tests every `EncoderWebRTCScalabilityModes()` value: L1 modes are sent
 directly, shared-reference L2/L3 SVC modes forward the base spatial layer, and
 S2/S3 simulcast modes forward the highest spatial layer. The required gate also
 repeats representative direct-RTP browser playback sessions across those
-delivery shapes.
+delivery shapes and live-tests playback while framerate, bitrate, rate control,
+content hint, and representative scalability settings are reconfigured.
 
 The example carries its own `go.mod` (with a `replace` to the repository
 root), so its WebRTC dependencies stay out of the main module.
@@ -37,3 +38,6 @@ Edge, Firefox, Safari 17+).
 - The repeated direct-RTP soak path opens fresh browser sessions for L1 temporal
   layering, shared-reference SVC base-layer forwarding, and highest-layer
   simulcast forwarding.
+- The live control-churn path proves those browser sessions keep decoding while
+  sender settings change across framerate, bitrate, CBR/CQP, content hint, and
+  single-spatial scalability modes.

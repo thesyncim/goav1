@@ -477,7 +477,9 @@ content hint, and scalability mode. The browser portion live-tests every
 direct L1, exact-base forwarding for shared-reference L2/L3 SVC, and exact-top
 forwarding for S2/S3 simulcast. It also repeats representative direct-RTP
 browser playback sessions for L1 temporal layering, shared-reference SVC
-base-layer forwarding, and highest-layer simulcast forwarding.
+base-layer forwarding, and highest-layer simulcast forwarding, and live-tests
+browser playback while framerate, bitrate, rate control, content hint, and
+representative scalability settings are reconfigured.
 
 Broader parity sweeps:
 

@@ -166,6 +166,58 @@ func TestBrowserLiveRTCEncoderDirectRTPRepeatedPlaybackSoak(t *testing.T) {
 	}
 }
 
+func TestBrowserLiveRTCEncoderDirectRTPControlChurnPlayback(t *testing.T) {
+	required := os.Getenv(requireBrowserE2EEnv) == "1"
+	if !required && os.Getenv(browserE2EEnv) != "1" {
+		t.Skipf("set %s=1 to run the live browser/libwebrtc AV1 control-churn gate", browserE2EEnv)
+	}
+	browserPath, err := browserExecutable()
+	if err != nil {
+		if required {
+			t.Fatalf("required browser executable unavailable: %v", err)
+		}
+		t.Skip(err)
+	}
+
+	allScenarios := browserRTCEncoderDirectRTPPlaybackScenarios(t)
+	scenarios := []browserRTCEncoderDirectRTPControlChurnScenario{
+		{
+			name:       "direct-l1-scalability-controls",
+			query:      "control-churn=direct-l1-scalability",
+			options:    browserRTCEncoderDirectRTPControlChurnOptions(browserRTCEncoderDirectRTPControlChurnSingleSpatialConfig),
+			wantWidth:  width,
+			wantHeight: height,
+			wantModes: []goav1.EncoderScalabilityMode{
+				goav1.EncoderScalabilityModeL1T1,
+				goav1.EncoderScalabilityModeL1T2,
+				goav1.EncoderScalabilityModeL1T3,
+			},
+		},
+		browserRTCEncoderDirectRTPControlChurnScenarioFromPlayback(
+			browserRTCEncoderDirectRTPPlaybackScenarioByName(t, allScenarios, "shared-svc-forward-base-L3T3_KEY_SHIFT"),
+			"shared-svc-base-controls"),
+		browserRTCEncoderDirectRTPControlChurnScenarioFromPlayback(
+			browserRTCEncoderDirectRTPPlaybackScenarioByName(t, allScenarios, "simulcast-forward-top-S3T3h"),
+			"simulcast-top-controls"),
+	}
+
+	for _, scenario := range scenarios {
+		scenario := scenario
+		t.Run(scenario.name, func(t *testing.T) {
+			evidence := &browserRTCEncoderDirectRTPControlChurnEvidence{}
+			options := scenario.options
+			evidence.attach(&options)
+			got := runBrowserLiveRTCEncoderDirectRTPPlaybackStats(
+				t, browserPath, scenario.name, scenario.query, options, scenario.wantWidth, scenario.wantHeight)
+			if got.KeyFramesDecoded < 2 {
+				t.Fatalf("%s browser keyframes=%d want at least 2 during control churn",
+					scenario.name, got.KeyFramesDecoded)
+			}
+			evidence.assert(t, scenario.name, scenario.wantModes)
+		})
+	}
+}
+
 type browserRTCEncoderDirectRTPPlaybackScenario struct {
 	name         string
 	query        string
@@ -173,6 +225,128 @@ type browserRTCEncoderDirectRTPPlaybackScenario struct {
 	wantWidth    int
 	wantHeight   int
 	minKeyFrames int
+}
+
+type browserRTCEncoderDirectRTPControlChurnScenario struct {
+	name       string
+	query      string
+	options    rtcEncoderRTPStreamOptions
+	wantWidth  int
+	wantHeight int
+	wantModes  []goav1.EncoderScalabilityMode
+}
+
+type browserRTCEncoderDirectRTPControlChurnEvidence struct {
+	mu          sync.Mutex
+	configs     []goav1.EncoderConfig
+	pictures    int
+	keyPictures int
+}
+
+func (e *browserRTCEncoderDirectRTPControlChurnEvidence) attach(options *rtcEncoderRTPStreamOptions) {
+	prevConfig := options.OnConfigApplied
+	options.OnConfigApplied = func(frameIndex int, step int, cfg goav1.EncoderConfig) {
+		if prevConfig != nil {
+			prevConfig(frameIndex, step, cfg)
+		}
+		e.mu.Lock()
+		e.configs = append(e.configs, cfg)
+		e.mu.Unlock()
+	}
+	prevPicture := options.OnPicture
+	options.OnPicture = func(frameIndex int, picture goav1.RTCPicture) {
+		if prevPicture != nil {
+			prevPicture(frameIndex, picture)
+		}
+		e.mu.Lock()
+		e.pictures++
+		if picture.Keyframe {
+			e.keyPictures++
+		}
+		e.mu.Unlock()
+	}
+}
+
+func (e *browserRTCEncoderDirectRTPControlChurnEvidence) assert(t *testing.T, label string, wantModes []goav1.EncoderScalabilityMode) {
+	t.Helper()
+	e.mu.Lock()
+	configs := append([]goav1.EncoderConfig(nil), e.configs...)
+	pictures := e.pictures
+	keyPictures := e.keyPictures
+	e.mu.Unlock()
+
+	if len(configs) < 4 {
+		t.Fatalf("%s applied configs=%d want at least 4", label, len(configs))
+	}
+	if pictures < 42 {
+		t.Fatalf("%s encoded pictures=%d want at least 42", label, pictures)
+	}
+	if keyPictures < 2 {
+		t.Fatalf("%s key pictures=%d want at least 2", label, keyPictures)
+	}
+
+	fps := make(map[goav1.EncoderRational]bool)
+	targets := make(map[int32]bool)
+	rateControls := make(map[goav1.EncoderRateControlMode]bool)
+	contents := make(map[goav1.EncoderContentHint]bool)
+	modes := make(map[goav1.EncoderScalabilityMode]bool)
+	for _, cfg := range configs {
+		fps[cfg.MaxFramerate] = true
+		targets[cfg.TargetBitrateKbps] = true
+		rateControls[cfg.RateControl] = true
+		contents[cfg.Content] = true
+		modes[cfg.Scalability] = true
+	}
+	if len(fps) < 3 {
+		t.Fatalf("%s framerate values=%d configs=%v", label, len(fps), configs)
+	}
+	if len(targets) < 3 {
+		t.Fatalf("%s target bitrate values=%d configs=%v", label, len(targets), configs)
+	}
+	if !rateControls[goav1.EncoderRateControlCBR] || !rateControls[goav1.EncoderRateControlCQP] {
+		t.Fatalf("%s rate controls=%v want CBR and CQP", label, rateControls)
+	}
+	if !contents[goav1.EncoderContentCamera] || !contents[goav1.EncoderContentScreen] {
+		t.Fatalf("%s content hints=%v want camera and screen", label, contents)
+	}
+	for _, mode := range wantModes {
+		if !modes[mode] {
+			t.Fatalf("%s missing scalability mode %s in applied configs %v", label, mode, configs)
+		}
+	}
+	t.Logf("%s applied configs=%d pictures=%d keyPictures=%d fps=%d bitrates=%d rateControls=%d contents=%d modes=%d",
+		label, len(configs), pictures, keyPictures, len(fps), len(targets), len(rateControls), len(contents), len(modes))
+}
+
+func browserRTCEncoderDirectRTPControlChurnOptions(configForStep func(step int) goav1.EncoderConfig) rtcEncoderRTPStreamOptions {
+	options := defaultRTCEncoderRTPStreamOptions()
+	options.ConfigForStep = configForStep
+	return options
+}
+
+func browserRTCEncoderDirectRTPControlChurnSingleSpatialConfig(step int) goav1.EncoderConfig {
+	cfg := rtcControlChurnConfig(step)
+	modes := [...]goav1.EncoderScalabilityMode{
+		goav1.EncoderScalabilityModeL1T1,
+		goav1.EncoderScalabilityModeL1T2,
+		goav1.EncoderScalabilityModeL1T3,
+		goav1.EncoderScalabilityModeL1T2,
+	}
+	cfg.Scalability = modes[step%len(modes)]
+	return cfg
+}
+
+func browserRTCEncoderDirectRTPControlChurnScenarioFromPlayback(
+	scenario browserRTCEncoderDirectRTPPlaybackScenario, name string,
+) browserRTCEncoderDirectRTPControlChurnScenario {
+	return browserRTCEncoderDirectRTPControlChurnScenario{
+		name:       name,
+		query:      fmt.Sprintf("%s&control-churn=%s", scenario.query, name),
+		options:    scenario.options,
+		wantWidth:  scenario.wantWidth,
+		wantHeight: scenario.wantHeight,
+		wantModes:  []goav1.EncoderScalabilityMode{scenario.options.ConfigForStep(0).Scalability},
+	}
 }
 
 func browserRTCEncoderDirectRTPPlaybackScenarios(t *testing.T) []browserRTCEncoderDirectRTPPlaybackScenario {
