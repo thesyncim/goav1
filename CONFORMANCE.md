@@ -321,9 +321,11 @@ ship under `internal/av1/testdata/libaom/`.
   8/10/12-bit `Frame` inputs for 4:2:0, 4:2:2, 4:4:4, and monochrome layouts.
   Non-4:2:0 chroma samples are resampled, monochrome fills neutral chroma, and
   10/12-bit `Frame` samples are downshifted before entering the current 8-bit
-  4:2:0 encode path. It supports fixed-quality/CBR, forced keyframes,
-  temporal layering, runtime bitrate/framerate/scalability reconfiguration,
-  multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes,
+  4:2:0 encode path; the strict WebRTC gate packetizes multi-spatial adapter
+  output and checks it against aomdec/dav1d. It supports fixed-quality/CBR,
+  forced keyframes, temporal layering, runtime bitrate/framerate/scalability
+  reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and
+  simulcast modes,
   tile columns, golden references, RTP payload packetization, dependency
   descriptors, and sized complete RTP packet wrapping with
   dependency-descriptor, MID/RID/RRID, and TWCC/TWCC-02 header extensions. The

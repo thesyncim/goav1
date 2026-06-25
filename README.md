@@ -467,6 +467,8 @@ make dryrun-fast
 strict realtime/WebRTC gate for encoder output, decoder RTP receive paths, SVC
 scalability modes, RTP/RTCP helpers, loss recovery, control reconfiguration, and
 external decoder parity, including the Pion/browser-push WebRTC example and
+multi-spatial I422/I444/I400/NV12/NV21 plus generic 8/10/12-bit `Frame`
+adapter output after RTP assembly, as well as
 all-mode `SetConfig` transitions that change framerate, bitrate, rate control,
 content hint, and scalability mode.
 

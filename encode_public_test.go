@@ -467,6 +467,10 @@ func TestPublicVideoEncoderRejectsUnsupportedFrameFormat(t *testing.T) {
 }
 
 func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
+	var referenceDecoders []publicReferenceAV1Decoder
+	if os.Getenv("GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS") == "1" {
+		referenceDecoders = publicReferenceAV1Decoders(t)
+	}
 	formats := []struct {
 		name          string
 		source        func(int, int, int) goav1.I420Frame
@@ -735,6 +739,9 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), picture, frame == 0, &nextFrameID)
 			}
 			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+			if len(referenceDecoders) > 0 {
+				assertPublicRTCRTPReferenceDecoders(t, referenceDecoders, "input-format-"+format.name, enc.Config(), layerTUs, orderedTUs)
+			}
 		})
 	}
 }
