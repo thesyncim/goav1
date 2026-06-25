@@ -2708,6 +2708,127 @@ func TestPublicLayeredDecoderRTPPayloadAfterLossSharedSVC(t *testing.T) {
 	}
 }
 
+func TestPublicLayeredDecoderRTPPacketSequencerAfterLossSharedSVC(t *testing.T) {
+	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
+	mode := goav1.EncoderScalabilityModeL2T1
+	width, height := publicRTCMatrixGeometry(t, mode)
+	cfg := publicRTCMatrixConfig(width, height, mode)
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	key0, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 0), false)
+	if err != nil {
+		t.Fatalf("key0 EncodePicture: %v", err)
+	}
+	key0PacketsRaw := publicRTCPictureRTPPackets(t, key0, limits)
+	key0LowOverheads := publicRTCPictureFramesInOrder(key0)
+	delta, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 1), false)
+	if err != nil {
+		t.Fatalf("delta EncodePicture: %v", err)
+	}
+	deltaPacketsRaw := publicRTCPictureRTPPackets(t, delta, limits)
+	key2, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 2), true)
+	if err != nil {
+		t.Fatalf("key2 EncodePicture: %v", err)
+	}
+	key2PacketsRaw := publicRTCPictureRTPPackets(t, key2, limits)
+	key2LowOverheads := publicRTCPictureFramesInOrder(key2)
+
+	next := uint16(0x4000)
+	key0Packets := publicRewriteRTPPacketSequences(t, key0PacketsRaw, &next)
+	deltaPackets := publicRewriteRTPPacketSequences(t, deltaPacketsRaw, &next)
+	key2Packets := publicRewriteRTPPacketSequences(t, key2PacketsRaw, &next)
+	probePackets := append(append([][]byte(nil), key0Packets...), deltaPackets...)
+	probePackets = append(probePackets, key2Packets...)
+
+	sequencer, err := goav1.BindRTPPacketSequencer(make([]goav1.RTPPacketSequencerSlot, 2048))
+	if err != nil {
+		t.Fatalf("BindRTPPacketSequencer: %v", err)
+	}
+	dec, err := goav1.NewLayeredDecoderFromRTPPackets(probePackets)
+	if err != nil {
+		t.Fatalf("NewLayeredDecoderFromRTPPackets: %v", err)
+	}
+	defer dec.Close()
+
+	var got [][16]byte
+	var gotMetadata []publicLayeredFrameMetadata
+	decodeEvents := func(label string, events []goav1.RTPSequencedPacket) {
+		t.Helper()
+		for i, event := range events {
+			frames, err := dec.DecodeRTPSequencedPacketWithMetadata(event)
+			if err != nil {
+				t.Fatalf("%s event %d DecodeRTPSequencedPacketWithMetadata: %v", label, i, err)
+			}
+			for _, frame := range frames {
+				got = append(got, frameMD5Visible(frame.Frame))
+				gotMetadata = append(gotMetadata, publicLayeredFrameMetadataFromDecoded(t, frame))
+			}
+		}
+	}
+
+	events := make([]goav1.RTPSequencedPacket, 0, 16)
+	for i, packet := range key0Packets {
+		events, err = sequencer.Push(packet, events[:0])
+		if err != nil {
+			t.Fatalf("Push key0 packet %d: %v", i, err)
+		}
+		decodeEvents("key0", events)
+	}
+	if len(got) != key0.FrameNum {
+		t.Fatalf("initial key decoded %d frames, want %d", len(got), key0.FrameNum)
+	}
+
+	events, err = sequencer.Push(key2Packets[0], events[:0])
+	if err != nil {
+		t.Fatalf("Push recovery key first packet: %v", err)
+	}
+	if len(events) != 0 || sequencer.Buffered() != 1 {
+		t.Fatalf("future recovery packet released=%d buffered=%d want 0/1", len(events), sequencer.Buffered())
+	}
+	events = sequencer.SkipMissing(events[:0])
+	if len(events) != 1 || !events[0].AfterLoss {
+		t.Fatalf("SkipMissing events=%d afterLoss=%v", len(events), len(events) == 1 && events[0].AfterLoss)
+	}
+	decodeEvents("recovery first", events)
+
+	events, err = sequencer.Push(deltaPackets[0], events[:0])
+	if err != nil {
+		t.Fatalf("Push late delta packet: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("late delta released %d packets, want 0", len(events))
+	}
+	for i, packet := range key2Packets[1:] {
+		events, err = sequencer.Push(packet, events[:0])
+		if err != nil {
+			t.Fatalf("Push recovery key tail %d: %v", i, err)
+		}
+		decodeEvents("recovery tail", events)
+	}
+
+	lowOverheads := append(append([][]byte(nil), key0LowOverheads...), key2LowOverheads...)
+	want := decodePublicLayeredDecoderLowOverheadDigests(t, lowOverheads...)
+	var wantMetadata []publicLayeredFrameMetadata
+	for _, picture := range []goav1.RTCPicture{key0, key2} {
+		for i := 0; i < picture.FrameNum; i++ {
+			wantMetadata = append(wantMetadata, publicLayeredFrameMetadataFromRTCFrame(picture.Frames[i]))
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("sequenced layered RTP decoder recovered %d frames, low-overhead decoded %d", len(got), len(want))
+	}
+	assertPublicLayeredFrameMetadata(t, gotMetadata, wantMetadata)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sequenced layered frame %d digest differs after loss: got=%x want=%x", i, got[i], want[i])
+		}
+	}
+}
+
 func TestPublicRTCEncoderRTCPCompoundFeedbackForcesKeyPicture(t *testing.T) {
 	mode := goav1.EncoderScalabilityModeL3T2h
 	width, height := publicRTCMatrixGeometry(t, mode)

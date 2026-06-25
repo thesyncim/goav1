@@ -2040,6 +2040,237 @@ func TestNewDecoderFromRTPPayloadsDecodePayloadAfterLoss(t *testing.T) {
 	}
 }
 
+func TestPublicRTPPacketSequencerReordersAndDropsDuplicates(t *testing.T) {
+	if _, err := av1.BindRTPPacketSequencer(nil); !errors.Is(err, av1.ErrRTPInvalidPacketSequencer) {
+		t.Fatalf("BindRTPPacketSequencer nil err=%v want %v", err, av1.ErrRTPInvalidPacketSequencer)
+	}
+
+	const width, height = 192, 128
+	enc, err := av1.NewRTCEncoderWithConfig(av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: width, Height: height},
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    120,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 420,
+		Scalability:       av1.EncoderScalabilityModeL1T1,
+	})
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	frame, err := enc.Encode(publicRTCMatrixFrame(width, height, 0), false)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	packets := publicDecoderRTPPacketsForFrameWithLimits(t, frame, av1.RTPPayloadSizeLimits{MaxPayloadLen: 24})
+	if len(packets) < 4 {
+		t.Fatalf("packetized frame into %d packets, want at least 4", len(packets))
+	}
+	next := uint16(0x2000)
+	packets = publicRewriteRTPPacketSequences(t, packets, &next)
+
+	sequencer, err := av1.BindRTPPacketSequencer(make([]av1.RTPPacketSequencerSlot, 8))
+	if err != nil {
+		t.Fatalf("BindRTPPacketSequencer: %v", err)
+	}
+	var ordered []av1.RTPSequencedPacket
+	push := func(packetIndex int) {
+		t.Helper()
+		var pushErr error
+		ordered, pushErr = sequencer.Push(packets[packetIndex], ordered)
+		if pushErr != nil {
+			t.Fatalf("Push packet %d: %v", packetIndex, pushErr)
+		}
+	}
+	push(0)
+	if len(ordered) != 1 {
+		t.Fatalf("after first packet released %d packets, want 1", len(ordered))
+	}
+	push(2)
+	if len(ordered) != 1 || sequencer.Buffered() != 1 {
+		t.Fatalf("after gap released=%d buffered=%d want 1/1", len(ordered), sequencer.Buffered())
+	}
+	push(2)
+	if len(ordered) != 1 || sequencer.Buffered() != 1 {
+		t.Fatalf("after duplicate released=%d buffered=%d want 1/1", len(ordered), sequencer.Buffered())
+	}
+	push(1)
+	if len(ordered) != 3 || sequencer.Buffered() != 0 {
+		t.Fatalf("after filling gap released=%d buffered=%d want 3/0", len(ordered), sequencer.Buffered())
+	}
+	for i := 3; i < len(packets); i++ {
+		push(i)
+	}
+	if len(ordered) != len(packets) {
+		t.Fatalf("ordered packets=%d want %d", len(ordered), len(packets))
+	}
+	for i, event := range ordered {
+		if event.AfterLoss {
+			t.Fatalf("ordered packet %d unexpectedly marked after loss", i)
+		}
+		if event.Packet.Header.SequenceNumber != uint16(0x2000+i) {
+			t.Fatalf("ordered packet %d sequence=%#x", i, event.Packet.Header.SequenceNumber)
+		}
+	}
+
+	want, _ := decodeRTPPacketsWithHighLevelDecoder(t, packets)
+	dec, err := av1.NewDecoderFromRTPPackets(packets)
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPackets: %v", err)
+	}
+	defer dec.Close()
+	var got [][16]byte
+	for i, event := range ordered {
+		frames, err := dec.DecodeRTPSequencedPacket(event)
+		if err != nil {
+			t.Fatalf("DecodeRTPSequencedPacket ordered %d: %v", i, err)
+		}
+		for _, frame := range frames {
+			got = append(got, frameMD5Visible(frame))
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("sequenced decode frames=%d want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sequenced frame %d digest differs: got=%s want=%s",
+				i, hex.EncodeToString(got[i][:]), hex.EncodeToString(want[i][:]))
+		}
+	}
+}
+
+func TestPublicRTPPacketSequencerAllocs(t *testing.T) {
+	const width, height = 192, 128
+	enc, err := av1.NewRTCEncoderWithConfig(av1.EncoderConfig{
+		Resolution:        av1.EncoderResolution{Width: width, Height: height},
+		MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+		MinBitrateKbps:    120,
+		MaxBitrateKbps:    800,
+		TargetBitrateKbps: 420,
+		Scalability:       av1.EncoderScalabilityModeL1T1,
+	})
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+	frame, err := enc.Encode(publicRTCMatrixFrame(width, height, 0), false)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	packets := publicDecoderRTPPacketsForFrameWithLimits(t, frame, av1.RTPPayloadSizeLimits{MaxPayloadLen: 96})
+	next := uint16(0x2800)
+	packets = publicRewriteRTPPacketSequences(t, packets[:1], &next)
+
+	slots := make([]av1.RTPPacketSequencerSlot, 4)
+	events := make([]av1.RTPSequencedPacket, 0, 1)
+	allocs := testing.AllocsPerRun(100, func() {
+		sequencer, err := av1.BindRTPPacketSequencer(slots)
+		if err != nil {
+			t.Fatalf("BindRTPPacketSequencer: %v", err)
+		}
+		events = events[:0]
+		events, err = sequencer.Push(packets[0], events)
+		if err != nil {
+			t.Fatalf("Push: %v", err)
+		}
+		if len(events) != 1 {
+			t.Fatalf("events=%d want 1", len(events))
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("RTPPacketSequencer Push allocs/run=%f want 0", allocs)
+	}
+}
+
+func TestPublicRTPPacketSequencerSkipMissingDrivesAfterLoss(t *testing.T) {
+	inputs := publicDecoderRTPLossRecoveryPayloads(t)
+	next := uint16(0x3000)
+	key0Packets := publicRewriteRTPPacketSequences(t, inputs.key0Packets, &next)
+	deltaPackets := publicRewriteRTPPacketSequences(t, inputs.deltaPackets, &next)
+	key2Packets := publicRewriteRTPPacketSequences(t, inputs.key2Packets, &next)
+	probePackets := append(append([][]byte(nil), key0Packets...), deltaPackets...)
+	probePackets = append(probePackets, key2Packets...)
+
+	sequencer, err := av1.BindRTPPacketSequencer(make([]av1.RTPPacketSequencerSlot, 128))
+	if err != nil {
+		t.Fatalf("BindRTPPacketSequencer: %v", err)
+	}
+	dec, err := av1.NewDecoderFromRTPPackets(probePackets)
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPackets: %v", err)
+	}
+	defer dec.Close()
+
+	var got [][16]byte
+	decodeEvents := func(label string, events []av1.RTPSequencedPacket) {
+		t.Helper()
+		for i, event := range events {
+			frames, err := dec.DecodeRTPSequencedPacket(event)
+			if err != nil {
+				t.Fatalf("%s event %d DecodeRTPSequencedPacket: %v", label, i, err)
+			}
+			for _, frame := range frames {
+				got = append(got, frameMD5Visible(frame))
+			}
+		}
+	}
+
+	events := make([]av1.RTPSequencedPacket, 0, 16)
+	for i, packet := range key0Packets {
+		var err error
+		events, err = sequencer.Push(packet, events[:0])
+		if err != nil {
+			t.Fatalf("Push key0 packet %d: %v", i, err)
+		}
+		decodeEvents("key0", events)
+	}
+	if len(got) != 1 {
+		t.Fatalf("initial key decoded %d frames, want 1", len(got))
+	}
+
+	events, err = sequencer.Push(key2Packets[0], events[:0])
+	if err != nil {
+		t.Fatalf("Push recovery key first packet: %v", err)
+	}
+	if len(events) != 0 || sequencer.Buffered() != 1 {
+		t.Fatalf("future recovery packet released=%d buffered=%d want 0/1", len(events), sequencer.Buffered())
+	}
+	events = sequencer.SkipMissing(events[:0])
+	if len(events) != 1 || !events[0].AfterLoss {
+		t.Fatalf("SkipMissing events=%d afterLoss=%v", len(events), len(events) == 1 && events[0].AfterLoss)
+	}
+	decodeEvents("recovery first", events)
+
+	events, err = sequencer.Push(deltaPackets[0], events[:0])
+	if err != nil {
+		t.Fatalf("Push late delta packet: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("late delta released %d packets, want 0", len(events))
+	}
+
+	for i, packet := range key2Packets[1:] {
+		events, err = sequencer.Push(packet, events[:0])
+		if err != nil {
+			t.Fatalf("Push recovery key tail %d: %v", i, err)
+		}
+		decodeEvents("recovery tail", events)
+	}
+
+	want := decodeLowOverheadPayloads(t, inputs.lowOverheadData)
+	if len(got) != len(want) {
+		t.Fatalf("sequenced RTP decoder recovered %d frames, low-overhead decoded %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sequenced frame %d digest differs after loss: got=%s want=%s",
+				i, hex.EncodeToString(got[i][:]), hex.EncodeToString(want[i][:]))
+		}
+	}
+}
+
 func publicDecoderRTPPayloadsForFrame(t testing.TB, frame av1.RTCFrame) [][]byte {
 	t.Helper()
 	return publicDecoderRTPPayloadsForFrameWithLimits(t, frame, av1.RTPPayloadSizeLimits{MaxPayloadLen: 96})
@@ -2122,6 +2353,31 @@ func publicDecoderRTPPacketsForFrameWithLimitsAndOptions(t testing.TB, frame av1
 	for i := 0; i < fullCount; i++ {
 		span := headerSpans[i]
 		out[i] = append([]byte(nil), packets[span.Offset:span.Offset+span.Length]...)
+	}
+	return out
+}
+
+func publicRewriteRTPPacketSequences(t testing.TB, packets [][]byte, next *uint16) [][]byte {
+	t.Helper()
+	out := make([][]byte, len(packets))
+	for i, packet := range packets {
+		parsed, err := av1.ParseRTPPacket(packet)
+		if err != nil {
+			t.Fatalf("ParseRTPPacket rewrite packet %d: %v", i, err)
+		}
+		header := parsed.Header
+		header.SequenceNumber = *next
+		*next = *next + 1
+		size, err := av1.RTPPacketSize(header, parsed.Payload, header.PaddingSize)
+		if err != nil {
+			t.Fatalf("RTPPacketSize rewrite packet %d: %v", i, err)
+		}
+		buf := make([]byte, size)
+		n, err := av1.PutRTPPacket(buf, header, parsed.Payload, header.PaddingSize)
+		if err != nil {
+			t.Fatalf("PutRTPPacket rewrite packet %d: %v", i, err)
+		}
+		out[i] = buf[:n]
 	}
 	return out
 }

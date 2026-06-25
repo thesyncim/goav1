@@ -439,6 +439,12 @@ func (d *Decoder) DecodeRTPPacket(packet []byte) ([]*Frame, error) {
 	return d.decodeExternalRTPPayload(rtp.Payload, false)
 }
 
+// DecodeRTPSequencedPacket decodes one packet released by RTPPacketSequencer,
+// using the after-loss RTP path when packet.AfterLoss is set.
+func (d *Decoder) DecodeRTPSequencedPacket(packet RTPSequencedPacket) ([]*Frame, error) {
+	return d.decodeExternalRTPPayload(packet.Packet.Payload, packet.AfterLoss)
+}
+
 // DecodeRTPPayloadAfterLoss clears retained RTP fragment bytes, then decodes
 // one caller-supplied AV1 RTP payload body. Parser sequence and reference state
 // are preserved, matching the lower-level RunRTPPayloadAfterLoss* methods. Use

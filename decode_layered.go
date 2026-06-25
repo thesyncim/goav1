@@ -386,6 +386,25 @@ func (d *LayeredDecoder) DecodeRTPPacketWithMetadata(packet []byte) ([]LayeredFr
 	return d.DecodeRTPPayloadWithMetadata(rtp.Payload)
 }
 
+// DecodeRTPSequencedPacket decodes one packet released by RTPPacketSequencer,
+// using the after-loss RTP path when packet.AfterLoss is set.
+func (d *LayeredDecoder) DecodeRTPSequencedPacket(packet RTPSequencedPacket) ([]*Frame, error) {
+	outputs, err := d.DecodeRTPSequencedPacketWithMetadata(packet)
+	if err != nil {
+		return nil, err
+	}
+	return d.framesFromLayered(outputs), nil
+}
+
+// DecodeRTPSequencedPacketWithMetadata decodes one packet released by
+// RTPPacketSequencer and returns visible frames with parsed AV1 layer metadata.
+func (d *LayeredDecoder) DecodeRTPSequencedPacketWithMetadata(packet RTPSequencedPacket) ([]LayeredFrame, error) {
+	if d == nil || d.payloadKind != decoderPayloadRTP {
+		return nil, errors.New("goav1: layered decoder is not initialized for RTP payloads")
+	}
+	return d.decodePayloadWithMetadata(packet.Packet.Payload, packet.AfterLoss)
+}
+
 // DecodeRTPPayloadAfterLoss clears retained RTP fragment bytes, then decodes
 // one caller-supplied AV1 RTP payload body while preserving parser sequence and
 // reference state.

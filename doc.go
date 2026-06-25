@@ -2,8 +2,8 @@
 // WebRTC use.
 //
 // The package consumes and produces AV1 Open Bitstream Units, AV1 RTP payload
-// bodies, and RTP packet/header syntax. SRTP, full SDP assembly, jitter
-// buffering, packet-loss policy, and network scheduling stay caller-owned.
+// bodies, and RTP packet/header syntax. SRTP, full SDP assembly, NACK/timer
+// policy, and network scheduling stay caller-owned.
 //
 // The implementation is built from byte-exact transport and parser primitives
 // inward. Public helpers expose IVF containers, low-overhead, temporal-unit,
@@ -34,7 +34,8 @@
 // complete RTP packet wrapping, multi-spatial EncodePicture output for WebRTC
 // SVC and simulcast modes, key-frame scalability metadata OBUs, and runtime
 // bitrate/framerate/scalability
-// reconfiguration. Lower-level WebRTC encoder
+// reconfiguration, complete-packet RTP sequencing for duplicate/reorder/gap
+// detection, and after-loss decode routing. Lower-level WebRTC encoder
 // helpers expose W3C SVC mode metadata, temporal/spatial dependency
 // structures, decode-target grids, active decode-target masks, key-shift
 // scheduling, AV1 scalability_mode_idc mapping, predefined and explicit-SS
