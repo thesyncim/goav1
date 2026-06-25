@@ -454,7 +454,8 @@ make dryrun-fast
 `make webrtc-production` requires `aomdec` and `dav1d` on `PATH`; it is the
 strict realtime/WebRTC gate for encoder output, decoder RTP receive paths, SVC
 scalability modes, RTP/RTCP helpers, loss recovery, control reconfiguration, and
-external decoder parity.
+external decoder parity, including all-mode `SetConfig` transitions that change
+framerate, bitrate, rate control, content hint, and scalability mode.
 
 Broader parity sweeps:
 

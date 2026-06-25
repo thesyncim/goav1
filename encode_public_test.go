@@ -2470,6 +2470,160 @@ func TestPublicRTCEncoderScalabilityModeCatalogueReferenceDecoders(t *testing.T)
 	}
 }
 
+func TestPublicRTCEncoderSetConfigScalabilityTransitionReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	modes := goav1.EncoderWebRTCScalabilityModes()
+	if len(modes) == 0 {
+		t.Fatal("no WebRTC scalability modes")
+	}
+	fpsCycle := []goav1.EncoderRational{
+		{Num: 30, Den: 1},
+		{Num: 60000, Den: 1001},
+		{Num: 24, Den: 1},
+		{Num: 120, Den: 1},
+		{Num: 15, Den: 1},
+	}
+	type transitionPhase struct {
+		layerFrames    [goav1.EncoderWebRTCMaxSpatialLayers][]publicIVFFrame
+		layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
+		orderedFrames  []publicIVFFrame
+		lowOverheads   [][]byte
+		sharedSequence goav1.SequenceHeader
+	}
+
+	for step, initial := range modes {
+		step, initial := step, initial
+		reconfig := publicRTCMatrixReconfigMode(t, initial)
+		t.Run(initial.String()+"-to-"+reconfig.String(), func(t *testing.T) {
+			width, height := publicRTCMatrixGeometry(t, initial)
+			cfg := publicRTCMatrixConfig(width, height, initial)
+			cfg.MaxFramerate = fpsCycle[step%len(fpsCycle)]
+			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, initial)+int32(step*7))
+			if step%2 == 1 {
+				cfg.RateControl = goav1.EncoderRateControlCQP
+				cfg.Quantizer = uint8(22 + step%37)
+				cfg.Content = goav1.EncoderContentScreen
+			}
+
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", initial, err)
+			}
+			defer enc.Close()
+
+			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			nextFrameID := uint64(0)
+			appendPicture := func(phase *transitionPhase, label string, frameIndex int, forceKey bool, wantKey bool, wantScreen bool) {
+				t.Helper()
+				picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, frameIndex), forceKey)
+				if err != nil {
+					t.Fatalf("%s EncodePicture: %v", label, err)
+				}
+				if picture.Keyframe != wantKey {
+					t.Fatalf("%s key=%v want %v picture=%+v", label, picture.Keyframe, wantKey, picture)
+				}
+				current := enc.Config()
+				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, current, picture, wantKey, &nextFrameID)
+				for i := 0; i < picture.FrameNum; i++ {
+					frame := picture.Frames[i]
+					payload := append([]byte(nil), frame.Data...)
+					if publicRTCSharedReferenceSlotMode(current.Scalability) {
+						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), payload, &phase.sharedSequence, wantScreen)
+						phase.orderedFrames = append(phase.orderedFrames, publicIVFFrame{
+							timestamp: uint64(len(phase.orderedFrames)),
+							payload:   payload,
+						})
+						phase.lowOverheads = append(phase.lowOverheads, payload)
+						continue
+					}
+					if frame.SpatialID >= goav1.EncoderWebRTCMaxSpatialLayers {
+						t.Fatalf("%s spatial id=%d", label, frame.SpatialID)
+					}
+					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), payload, &phase.layerSequences[frame.SpatialID], wantScreen)
+					phase.layerFrames[frame.SpatialID] = append(phase.layerFrames[frame.SpatialID], publicIVFFrame{
+						timestamp: uint64(len(phase.layerFrames[frame.SpatialID])),
+						payload:   payload,
+					})
+				}
+			}
+			assertPhaseReferenceDecoders := func(label string, cfg goav1.EncoderConfig, phase transitionPhase) {
+				t.Helper()
+				if publicRTCSharedReferenceSlotMode(cfg.Scalability) {
+					if len(phase.lowOverheads) == 0 || len(phase.orderedFrames) == 0 {
+						t.Fatalf("%s has no shared-reference frames", label)
+					}
+					wantYUV, decodedCount := decodePublicRTCLayerPoolLowOverheadRawYUV(t, phase.lowOverheads...)
+					if decodedCount != len(phase.lowOverheads) {
+						t.Fatalf("%s shared-SVC decoded frames=%d want %d", label, decodedCount, len(phase.lowOverheads))
+					}
+					ivf := appendPublicIVF(nil, uint16(cfg.Resolution.Width), uint16(cfg.Resolution.Height), 30, 1, phase.orderedFrames)
+					assertPublicIVFMatchesReferenceDecodersRawYUVBytes(t, decoders, label, ivf, wantYUV, decodedCount)
+					return
+				}
+				for spatialID := uint8(0); spatialID < cfg.SpatialLayerCount; spatialID++ {
+					if len(phase.layerFrames[spatialID]) == 0 {
+						t.Fatalf("%s spatial %d has no frames", label, spatialID)
+					}
+					res := cfg.SpatialLayers[spatialID].Resolution
+					ivf := appendPublicIVF(nil, uint16(res.Width), uint16(res.Height), 30, 1, phase.layerFrames[spatialID])
+					assertPublicIVFMatchesReferenceDecodersRawYUV(t, decoders, fmt.Sprintf("%s-spatial-%d", label, spatialID), ivf)
+				}
+			}
+
+			var initialPhase transitionPhase
+			appendPicture(&initialPhase, "initial key", 0, false, true, cfg.Content == goav1.EncoderContentScreen)
+
+			controlChange := enc.Config()
+			controlChange.MaxFramerate = fpsCycle[(step+1)%len(fpsCycle)]
+			if controlChange.RateControl == goav1.EncoderRateControlCQP {
+				controlChange.RateControl = goav1.EncoderRateControlCBR
+				controlChange.Quantizer = 0
+				publicRTCApplyControlBitrates(&controlChange, publicRTCMatrixControlBitrateKbps(t, initial)+int32(step*11)+61)
+			} else {
+				controlChange.RateControl = goav1.EncoderRateControlCQP
+				controlChange.Quantizer = uint8(28 + step%29)
+			}
+			if step%3 == 0 {
+				controlChange.Content = goav1.EncoderContentScreen
+			} else {
+				controlChange.Content = goav1.EncoderContentCamera
+			}
+			if err := enc.SetConfig(controlChange); err != nil {
+				t.Fatalf("SetConfig(%s controls): %v", initial, err)
+			}
+			assertPublicRTCConfigControls(t, enc.Config(), controlChange)
+			appendPicture(&initialPhase, "control delta", 1, false, false, controlChange.Content == goav1.EncoderContentScreen)
+			assertPhaseReferenceDecoders("transition-"+initial.String()+"-controls", enc.Config(), initialPhase)
+
+			structureChange := enc.Config()
+			structureChange.Scalability = reconfig
+			structureChange.MaxFramerate = fpsCycle[(step+2)%len(fpsCycle)]
+			if structureChange.RateControl == goav1.EncoderRateControlCQP {
+				structureChange.RateControl = goav1.EncoderRateControlCBR
+				structureChange.Quantizer = 0
+				publicRTCApplyControlBitrates(&structureChange, publicRTCMatrixControlBitrateKbps(t, reconfig)+int32(step*13)+83)
+			} else {
+				structureChange.RateControl = goav1.EncoderRateControlCQP
+				structureChange.Quantizer = uint8(30 + step%23)
+			}
+			structureChange.Content = goav1.EncoderContentScreen
+			wantStructureKey := publicRTCSetConfigRequiresKey(t, enc.Config(), structureChange)
+			if err := enc.SetConfig(structureChange); err != nil {
+				t.Fatalf("SetConfig(%s to %s): %v", initial, reconfig, err)
+			}
+			assertPublicRTCConfigControls(t, enc.Config(), structureChange)
+			if !wantStructureKey {
+				t.Fatalf("SetConfig(%s to %s) did not require a key picture", initial, reconfig)
+			}
+
+			var reconfigPhase transitionPhase
+			appendPicture(&reconfigPhase, "structure key", 2, false, true, true)
+			appendPicture(&reconfigPhase, "post-structure delta", 3, false, false, true)
+			assertPhaseReferenceDecoders("transition-"+initial.String()+"-to-"+reconfig.String(), enc.Config(), reconfigPhase)
+		})
+	}
+}
+
 type publicReferenceAV1Decoder struct {
 	name string
 	path string

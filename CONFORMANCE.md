@@ -365,7 +365,8 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   `dav1d` on `PATH`; covers encoder output reference decoding, high-level RTP
   payload/packet receive paths, SVC scalability modes, RTP/RTCP helpers, loss
   recovery, tile-list playback when frame context is present, and runtime
-  bitrate/framerate/rate-control/scalability reconfiguration.
+  bitrate/framerate/rate-control/content/scalability reconfiguration, including
+  all-mode `SetConfig` transition streams checked against reference decoders.
 - `make dryrun-fast`: 14/14 libaom fast vectors pass.
 - `make dryrun-relevant-supported`: 14/14 relevant vectors pass, including
   8-bit and 10-bit film grain and monochrome.
