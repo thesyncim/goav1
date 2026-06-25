@@ -2,21 +2,24 @@
 // WebRTC use.
 //
 // The package consumes and produces AV1 Open Bitstream Units, AV1 RTP payload
-// bodies, and RTP packet/header syntax. SRTP, full SDP assembly, NACK/timer
+// bodies, RTP packet/header syntax, and RFC 4588 RTX repair packet envelopes.
+// SRTP, full SDP assembly, NACK/timer
 // policy, and network scheduling stay caller-owned.
 //
 // The implementation is built from byte-exact transport and parser primitives
 // inward. Public helpers expose IVF containers, low-overhead, temporal-unit,
 // and Annex B OBU parsing, AV1 RTP fixed-header and RFC 8285 extension element
 // framing and negotiated-extension lookup, complete RTP packet dependency
-// descriptor extraction, AV1 RTP payload iteration, construction, caller-owned
+// descriptor extraction, RFC 4588 RTX wrap/parse/restore helpers, AV1 RTP
+// payload iteration, construction, caller-owned
 // RTP sizing, complete RTP packet decode wrappers, generic and compound RTCP packet
 // helpers, RTCP
 // SR/RR/SDES/BYE and RTPFB/PSFB packet helpers, RTCP
 // NACK/Transport-CC/PLI/FIR/REMB FCI helpers, Transport-CC report construction,
 // reception timeline and summary helpers, REMB-to-encoder-bitrate config helpers,
-// AV1 RTCP Layer Refresh Request FCI list helpers, RTCP feedback force-key classification for
-// single, parsed compound, and raw compound packets, sequence-header parsing,
+// AV1 RTCP Layer Refresh Request FCI list and target-selection helpers, RTCP
+// feedback force-key classification for single, parsed compound, and raw
+// compound packets, sequence-header parsing,
 // caller-owned
 // frame pools and sample-plane scratch helpers, DSP block/blend helpers, intra/inter
 // prediction, decoder

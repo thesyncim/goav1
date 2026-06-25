@@ -3642,6 +3642,29 @@ func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 			if len(lostPackets)+1 >= 1<<15 {
 				t.Fatalf("%s lost packet gap=%d exceeds RTP sequencer window", mode, len(lostPackets))
 			}
+			maxPacketLen := 0
+			for _, packetSet := range [][][]byte{key0Packets, lostPackets, recoveryPackets} {
+				for _, packet := range packetSet {
+					if len(packet) > maxPacketLen {
+						maxPacketLen = len(packet)
+					}
+				}
+			}
+			cacheSlots := make([]goav1.RTPRetransmissionCacheSlot, len(key0Packets)+len(lostPackets)+len(recoveryPackets)+8)
+			for i := range cacheSlots {
+				cacheSlots[i].Packet = make([]byte, 0, maxPacketLen+goav1.RTPHeaderMinSize+2)
+			}
+			retransmissionCache, err := goav1.BindRTPRetransmissionCache(cacheSlots)
+			if err != nil {
+				t.Fatalf("BindRTPRetransmissionCache(%s): %v", mode, err)
+			}
+			for _, packetSet := range [][][]byte{key0Packets, lostPackets, recoveryPackets} {
+				for _, packet := range packetSet {
+					if err := retransmissionCache.Store(packet); err != nil {
+						t.Fatalf("%s RTP retransmission cache Store seq=%#x: %v", mode, publicRTPPacketSequence(t, packet), err)
+					}
+				}
+			}
 
 			selectedProbePackets := publicRTCPictureDecodeTargetRTPPackets(t, key0, limits, 0, 0)
 			selectedProbePackets = append(selectedProbePackets, publicRTCPictureDecodeTargetRTPPackets(t, recovery, limits, 0, 0)...)
@@ -3738,7 +3761,54 @@ func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 			if len(duplicate) != 0 || sequencer.Buffered() != 1 {
 				t.Fatalf("%s duplicate released=%d buffered=%d want 0/1", mode, len(duplicate), sequencer.Buffered())
 			}
-			decodeEvents("key0-gap-fill", push("key0-packet-1", key0Packets[1]))
+			originalGapPacket, err := goav1.ParseRTPPacket(key0Packets[1])
+			if err != nil {
+				t.Fatalf("%s ParseRTPPacket original gap: %v", mode, err)
+			}
+			rtxConfig := goav1.RTPRTXPacketConfig{
+				PayloadType:    97,
+				SequenceNumber: uint16(0x7000 + step),
+				SSRC:           0x55667700 + uint32(step),
+			}
+			rtxSpans := make([]goav1.RTPRTXPacketSpan, 1)
+			rtxPackets, rtxCount, nextRTXConfig, err := retransmissionCache.AppendRTXPacketsForRTCPGenericNACKPairs(
+				make([]byte, 0, maxPacketLen+goav1.RTPHeaderMinSize+2),
+				rtxSpans,
+				pairs,
+				rtxConfig,
+			)
+			if err != nil {
+				t.Fatalf("%s AppendRTXPacketsForRTCPGenericNACKPairs key0 gap: %v", mode, err)
+			}
+			if rtxCount != 1 || nextRTXConfig.SequenceNumber != rtxConfig.SequenceNumber+1 {
+				t.Fatalf("%s RTX count=%d next=%#x want 1/%#x", mode, rtxCount, nextRTXConfig.SequenceNumber, rtxConfig.SequenceNumber+1)
+			}
+			rtxPacket := rtxPackets[rtxSpans[0].Offset : rtxSpans[0].Offset+rtxSpans[0].Length]
+			parsedRTX, err := goav1.ParseRTPRTXPacket(rtxPacket)
+			if err != nil {
+				t.Fatalf("%s ParseRTPRTXPacket key0 gap: %v", mode, err)
+			}
+			if rtxSpans[0].OriginalSequenceNumber != wantGapSeq ||
+				rtxSpans[0].RTXSequenceNumber != rtxConfig.SequenceNumber ||
+				parsedRTX.OriginalSequenceNumber != wantGapSeq ||
+				parsedRTX.Header.PayloadType != rtxConfig.PayloadType ||
+				parsedRTX.Header.SequenceNumber != rtxConfig.SequenceNumber ||
+				parsedRTX.Header.SSRC != rtxConfig.SSRC {
+				t.Fatalf("%s RTX repair span=%+v parsed=%+v osn=%#x", mode, rtxSpans[0], parsedRTX.Header, parsedRTX.OriginalSequenceNumber)
+			}
+			restoredGap, err := goav1.AppendRTPPacketFromRTX(
+				make([]byte, 0, len(key0Packets[1])),
+				rtxPacket,
+				originalGapPacket.Header.PayloadType,
+				originalGapPacket.Header.SSRC,
+			)
+			if err != nil {
+				t.Fatalf("%s AppendRTPPacketFromRTX key0 gap: %v", mode, err)
+			}
+			if !bytes.Equal(restoredGap, key0Packets[1]) {
+				t.Fatalf("%s restored RTX packet differs from original gap packet", mode)
+			}
+			decodeEvents("key0-gap-rtx-repair", push("key0-packet-1-rtx-restored", restoredGap))
 			for i := 3; i < len(key0Packets); i++ {
 				decodeEvents(fmt.Sprintf("key0-packet-%d", i), push("key0-tail", key0Packets[i]))
 			}
