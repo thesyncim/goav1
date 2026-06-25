@@ -185,6 +185,109 @@ func TestPublicVideoEncoderRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPublicEncodeI400KeyframeNativeMonochrome(t *testing.T) {
+	const w, h, stride = 96, 64, 112
+	src := goav1.I400Frame{
+		Y:       make([]byte, stride*h),
+		YStride: stride,
+		Width:   w,
+		Height:  h,
+	}
+	for y := range h {
+		for x := range w {
+			src.Y[y*stride+x] = uint8((64 + x*3 + y*5 + (x*y)%17) & 0xff)
+		}
+	}
+
+	for _, tc := range []struct {
+		name     string
+		qIndex   uint8
+		lossless bool
+	}{
+		{name: "lossless", qIndex: 0, lossless: true},
+		{name: "lossy", qIndex: 96},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tu, recon, err := goav1.EncodeI400Keyframe(src, tc.qIndex)
+			if err != nil {
+				t.Fatalf("EncodeI400Keyframe: %v", err)
+			}
+			if len(tu) == 0 {
+				t.Fatal("empty temporal unit")
+			}
+			seq := publicFirstSequenceHeader(t, tu)
+			if !seq.ColorConfig.MonoChrome || seq.ColorConfig.BitDepth != 8 {
+				t.Fatalf("sequence color=%+v, want native 8-bit monochrome", seq.ColorConfig)
+			}
+			if recon.Width != w || recon.Height != h || recon.YStride < w {
+				t.Fatalf("recon geometry=%dx%d stride=%d", recon.Width, recon.Height, recon.YStride)
+			}
+			if tc.lossless {
+				for y := range h {
+					got := recon.Y[y*recon.YStride : y*recon.YStride+w]
+					want := src.Y[y*src.YStride : y*src.YStride+w]
+					if !bytes.Equal(got, want) {
+						t.Fatalf("lossless recon row %d differs", y)
+					}
+				}
+			}
+
+			dec, err := goav1.NewDecoder([][]byte{tu})
+			if err != nil {
+				t.Fatalf("NewDecoder: %v", err)
+			}
+			defer dec.Close()
+			frames, err := dec.DecodeAll()
+			if err != nil {
+				t.Fatalf("DecodeAll: %v", err)
+			}
+			if len(frames) != 1 {
+				t.Fatalf("decoded %d frames, want 1", len(frames))
+			}
+			frame := frames[0]
+			if !frame.Format.MonoChrome || frame.Format.BitDepth != 8 {
+				t.Fatalf("decoded format=%+v, want native 8-bit monochrome", frame.Format)
+			}
+			if frame.U.Width != 0 || frame.V.Width != 0 || len(frame.U.Pix) != 0 || len(frame.V.Pix) != 0 {
+				t.Fatalf("decoded chroma U=%+v V=%+v, want absent", frame.U, frame.V)
+			}
+			for y := range h {
+				got := frame.Y.Pix[y*frame.Y.Stride : y*frame.Y.Stride+w]
+				want := recon.Y[y*recon.YStride : y*recon.YStride+w]
+				if !bytes.Equal(got, want) {
+					t.Fatalf("decoded luma row %d differs from reconstruction", y)
+				}
+			}
+		})
+	}
+}
+
+func TestPublicEncodeI400KeyframeReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	const w, h = 128, 72
+	src := goav1.I400Frame{
+		Y:       make([]byte, w*h),
+		YStride: w,
+		Width:   w,
+		Height:  h,
+	}
+	for y := range h {
+		for x := range w {
+			src.Y[y*w+x] = uint8((80 + x*2 + y*3 + (x^y)%23) & 0xff)
+		}
+	}
+	for _, qIndex := range []uint8{0, 88} {
+		t.Run(fmt.Sprintf("q%d", qIndex), func(t *testing.T) {
+			tu, _, err := goav1.EncodeI400Keyframe(src, qIndex)
+			if err != nil {
+				t.Fatalf("EncodeI400Keyframe: %v", err)
+			}
+			ivf := appendPublicIVF(nil, w, h, 30, 1, []publicIVFFrame{{payload: tu}})
+			assertPublicIVFMatchesReferenceDecodersRawYUV(t, decoders, fmt.Sprintf("public-i400-keyframe-q%d", qIndex), ivf)
+		})
+	}
+}
+
 func TestPublicVideoEncoderClose(t *testing.T) {
 	const w, h = 192, 128
 	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
@@ -3611,6 +3714,30 @@ func publicReferenceAV1Decoders(t *testing.T) []publicReferenceAV1Decoder {
 		t.Skip("no reference AV1 decoder on PATH")
 	}
 	return decoders
+}
+
+func publicFirstSequenceHeader(t *testing.T, frameData []byte) goav1.SequenceHeader {
+	t.Helper()
+	it := goav1.NewLowOverheadIterator(frameData)
+	for {
+		unit, ok, err := it.Next()
+		if err != nil {
+			t.Fatalf("OBU iteration: %v", err)
+		}
+		if !ok {
+			break
+		}
+		if unit.Header.Type != goav1.OBUSequenceHeader {
+			continue
+		}
+		seq, err := goav1.ParseSequenceHeader(unit.Payload)
+		if err != nil {
+			t.Fatalf("ParseSequenceHeader: %v", err)
+		}
+		return seq
+	}
+	t.Fatal("missing sequence header")
+	return goav1.SequenceHeader{}
 }
 
 func assertPublicRTCFrameScreenContentHeader(

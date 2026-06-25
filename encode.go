@@ -60,6 +60,34 @@ type I400Frame struct {
 	Height  int
 }
 
+// EncodeI400Keyframe encodes one native AV1 monochrome keyframe.
+//
+// qIndex 0 emits a lossless keyframe. qIndex 1..255 emits a non-lossless
+// keyframe and returns the encoder-side reconstruction a conformant decoder
+// must reproduce exactly. Frame dimensions must be positive multiples of 8.
+func EncodeI400Keyframe(frame I400Frame, qIndex uint8) ([]byte, I400Frame, error) {
+	src := encoder.SourceFrameMono(frame)
+	if qIndex == 0 {
+		tu, err := encoder.EncodeLosslessMonochromeKeyframe(src)
+		if err != nil {
+			return nil, I400Frame{}, err
+		}
+		recon := I400Frame{
+			Y:       make([]byte, len(frame.Y)),
+			YStride: frame.YStride,
+			Width:   frame.Width,
+			Height:  frame.Height,
+		}
+		copy(recon.Y, frame.Y)
+		return tu, recon, nil
+	}
+	tu, recon, err := encoder.EncodeMonochromeKeyframe(src, qIndex)
+	if err != nil {
+		return nil, I400Frame{}, err
+	}
+	return tu, I400Frame(recon), nil
+}
+
 // NV12Frame is one 8-bit 4:2:0 picture in semi-planar NV12 layout. Y holds
 // Width x Height luma samples at YStride; UV holds interleaved U,V pairs for
 // the half-resolution chroma plane at UVStride bytes per chroma row.
