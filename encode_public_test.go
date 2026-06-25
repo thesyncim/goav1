@@ -2888,6 +2888,18 @@ func TestPublicRTCEncoderRTCPCompoundFeedbackForcesKeyPicture(t *testing.T) {
 	if !forceKey || len(packets) != 2 {
 		t.Fatalf("forceKey=%v packet len=%d want true,2", forceKey, len(packets))
 	}
+	target, ok, targetPackets, err := goav1.EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget(
+		enc.Config(),
+		compound,
+		make([]goav1.RTCPPacket, 0, 2),
+		make([]goav1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+	)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget: %v", err)
+	}
+	if !ok || len(targetPackets) != 2 || target != entry.Target {
+		t.Fatalf("target=%+v ok=%v packet len=%d want %+v,true,2", target, ok, len(targetPackets), entry.Target)
+	}
 
 	recovery, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 2), forceKey)
 	if err != nil {
@@ -2895,6 +2907,22 @@ func TestPublicRTCEncoderRTCPCompoundFeedbackForcesKeyPicture(t *testing.T) {
 	}
 	appendPublicRTCPictureRTPData(t, &receiver, &layerTUs, &orderedTUs, recovery)
 	assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), recovery, true, &nextFrameID)
+	spatialLayers, temporalLayers, _, ok := enc.Config().Scalability.Layers()
+	if !ok {
+		t.Fatalf("invalid scalability mode %s", enc.Config().Scalability)
+	}
+	options, err := recovery.ActiveDecodeTargetsRTPOptions(target.SpatialID, target.TemporalID)
+	if err != nil {
+		t.Fatalf("recovery ActiveDecodeTargetsRTPOptions: %v", err)
+	}
+	wantMask := publicExpectedActiveDecodeTargetsMask(spatialLayers, temporalLayers, target.SpatialID, target.TemporalID)
+	if options.ActiveDecodeTargetsMask != wantMask {
+		t.Fatalf("LRR active mask=%#x want %#x", options.ActiveDecodeTargetsMask, wantMask)
+	}
+	var activeReceiver goav1.RTPDependencyDescriptorState
+	for i := 0; i < recovery.FrameNum; i++ {
+		assertPublicRTCFrameRTPPacketsWithActiveDecodeTargets(t, &activeReceiver, recovery.Frames[i], goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}, options)
+	}
 	assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
 }
 

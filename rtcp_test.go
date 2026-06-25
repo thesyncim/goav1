@@ -1281,6 +1281,139 @@ func TestEncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(t *testing.T) {
 	}
 }
 
+func TestEncoderWebRTCRTCPLayerRefreshTarget(t *testing.T) {
+	mode := av1.EncoderScalabilityModeL3T3
+	width, height := publicRTCMatrixGeometry(t, mode)
+	cfg := publicRTCMatrixConfig(width, height, mode)
+	entries := []av1.AV1RTCPLayerRefreshRequestEntry{
+		{
+			SSRC:           0x11112222,
+			SequenceNumber: 1,
+			PayloadType:    96,
+			Target:         av1.AV1RTCPLayerRefreshLayerIndex{SpatialID: 0, TemporalID: 2},
+			CurrentPresent: true,
+			Current:        av1.AV1RTCPLayerRefreshLayerIndex{SpatialID: 0, TemporalID: 1},
+		},
+		{
+			SSRC:           0x33334444,
+			SequenceNumber: 2,
+			PayloadType:    96,
+			Target:         av1.AV1RTCPLayerRefreshLayerIndex{SpatialID: 2, TemporalID: 1},
+			CurrentPresent: true,
+			Current:        av1.AV1RTCPLayerRefreshLayerIndex{SpatialID: 1, TemporalID: 1},
+		},
+	}
+	target, ok, err := av1.EncoderWebRTCLayerRefreshRequestTarget(cfg, entries)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCLayerRefreshRequestTarget: %v", err)
+	}
+	if !ok || target != (av1.AV1RTCPLayerRefreshLayerIndex{SpatialID: 2, TemporalID: 2}) {
+		t.Fatalf("target=%+v ok=%v want S2/T2,true", target, ok)
+	}
+	if target, ok, err := av1.EncoderWebRTCLayerRefreshRequestTarget(cfg, nil); err != nil || ok || target != (av1.AV1RTCPLayerRefreshLayerIndex{}) {
+		t.Fatalf("empty target=%+v ok=%v err=%v", target, ok, err)
+	}
+
+	feedback := av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBLayerRefreshRequestFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0x05060708,
+		FCI:        testAV1RTCPLayerRefreshFCI(t, entries),
+	}
+	scratch := make([]av1.AV1RTCPLayerRefreshRequestEntry, 1, 3)
+	scratch[0].SSRC = 0xdeadbeef
+	target, ok, err = av1.EncoderWebRTCRTCPFeedbackLayerRefreshTarget(cfg, feedback, scratch[:1:3])
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTCPFeedbackLayerRefreshTarget: %v", err)
+	}
+	if !ok || target != (av1.AV1RTCPLayerRefreshLayerIndex{SpatialID: 2, TemporalID: 2}) ||
+		scratch[0].SSRC != 0xdeadbeef {
+		t.Fatalf("feedback target=%+v ok=%v scratch0=%+v", target, ok, scratch[0])
+	}
+	target, ok, err = av1.EncoderWebRTCRTCPFeedbackLayerRefreshTarget(cfg, av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBPictureLossIndicationFMT,
+	}, nil)
+	if err != nil || ok || target != (av1.AV1RTCPLayerRefreshLayerIndex{}) {
+		t.Fatalf("non-LRR target=%+v ok=%v err=%v", target, ok, err)
+	}
+
+	compound, err := av1.AppendRTCPSenderReportPacket(make([]byte, 0, 160), av1.RTCPSenderReport{SenderSSRC: 0x01020304})
+	if err != nil {
+		t.Fatalf("AppendRTCPSenderReportPacket: %v", err)
+	}
+	compound, err = av1.AppendRTCPFeedbackPacket(compound, av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPRTPFBPacketType,
+		FMT:        av1.RTCPRTPFBGenericNACKFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0x05060708,
+	})
+	if err != nil {
+		t.Fatalf("AppendRTCPFeedbackPacket NACK: %v", err)
+	}
+	compound, err = av1.AppendRTCPFeedbackPacket(compound, feedback)
+	if err != nil {
+		t.Fatalf("AppendRTCPFeedbackPacket LRR: %v", err)
+	}
+	target, ok, packets, err := av1.EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget(
+		cfg,
+		compound,
+		make([]av1.RTCPPacket, 0, 3),
+		make([]av1.AV1RTCPLayerRefreshRequestEntry, 0, 2),
+	)
+	if err != nil {
+		t.Fatalf("EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget: %v", err)
+	}
+	if !ok || target != (av1.AV1RTCPLayerRefreshLayerIndex{SpatialID: 2, TemporalID: 2}) || len(packets) != 3 {
+		t.Fatalf("compound target=%+v ok=%v packets=%d", target, ok, len(packets))
+	}
+
+	bad := entries[:1]
+	bad[0].Target.SpatialID = 3
+	badFCI := testAV1RTCPLayerRefreshFCI(t, bad)
+	if _, _, err := av1.EncoderWebRTCRTCPFeedbackLayerRefreshTarget(cfg, av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBLayerRefreshRequestFMT,
+		FCI:        badFCI,
+	}, make([]av1.AV1RTCPLayerRefreshRequestEntry, 0, 1)); !errors.Is(err, av1.ErrRTCPInvalidLayerRefreshRequest) {
+		t.Fatalf("invalid LRR target err=%v want %v", err, av1.ErrRTCPInvalidLayerRefreshRequest)
+	}
+}
+
+func TestEncoderWebRTCRTCPCompoundPacketsLayerRefreshTargetAllocs(t *testing.T) {
+	mode := av1.EncoderScalabilityModeL2T2
+	width, height := publicRTCMatrixGeometry(t, mode)
+	cfg := publicRTCMatrixConfig(width, height, mode)
+	valid := testAV1RTCPValidLayerRefreshEntry(t, mode)
+	compound := testAV1RTCPFeedbackCompound(t, av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBLayerRefreshRequestFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0x05060708,
+		FCI:        testAV1RTCPLayerRefreshFCI(t, []av1.AV1RTCPLayerRefreshRequestEntry{valid}),
+	})
+	packetScratch := make([]av1.RTCPPacket, 0, 1)
+	lrrScratch := make([]av1.AV1RTCPLayerRefreshRequestEntry, 0, 1)
+	allocs := testing.AllocsPerRun(1000, func() {
+		target, ok, packets, err := av1.EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget(
+			cfg,
+			compound,
+			packetScratch[:0],
+			lrrScratch[:0],
+		)
+		if err != nil {
+			t.Fatalf("EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget: %v", err)
+		}
+		if !ok || target != valid.Target || len(packets) != 1 {
+			t.Fatalf("target=%+v ok=%v packet len=%d want %+v,true,1", target, ok, len(packets), valid.Target)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget allocs/run=%f want 0", allocs)
+	}
+}
+
 func TestEncoderWebRTCRTCPCompoundPacketsRequireKeyFrameAllocs(t *testing.T) {
 	cfg := testAV1RTCPEncoderConfig(av1.EncoderScalabilityModeL1T1)
 	compound := testAV1RTCPFeedbackCompound(t, av1.RTCPFeedbackPacket{
@@ -2140,6 +2273,18 @@ func TestEncoderWebRTCValidateLayerRefreshRequestModeMatrix(t *testing.T) {
 			}
 			if !force || len(packets) != 1 {
 				t.Fatalf("valid LRR force=%v packet len=%d want true,1", force, len(packets))
+			}
+			target, ok, packets, err := av1.EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget(
+				cfg,
+				compound,
+				make([]av1.RTCPPacket, 0, 1),
+				make([]av1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+			)
+			if err != nil {
+				t.Fatalf("valid LRR compound target: %v", err)
+			}
+			if !ok || len(packets) != 1 || target != valid.Target {
+				t.Fatalf("valid LRR target=%+v ok=%v packet len=%d want %+v,true,1", target, ok, len(packets), valid.Target)
 			}
 
 			badTemporal := valid

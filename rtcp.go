@@ -2121,6 +2121,118 @@ func EncoderWebRTCValidateLayerRefreshRequests(config EncoderConfig, entries []A
 	return nil
 }
 
+// EncoderWebRTCLayerRefreshRequestTarget validates entries against config and
+// returns the inclusive spatial/temporal cap that covers all requested LRR
+// target layers. The returned cap can be passed to
+// RTCPicture.ActiveDecodeTargetsRTPOptions after the forced refresh picture is
+// encoded. ok is false when entries is empty.
+func EncoderWebRTCLayerRefreshRequestTarget(
+	config EncoderConfig,
+	entries []AV1RTCPLayerRefreshRequestEntry,
+) (target AV1RTCPLayerRefreshLayerIndex, ok bool, err error) {
+	normalized, err := SetWebRTCEncoderSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
+	if err != nil {
+		return AV1RTCPLayerRefreshLayerIndex{}, false, err
+	}
+	for i := range entries {
+		if err := encoderWebRTCValidateLayerRefreshRequestForConfig(normalized, entries[i]); err != nil {
+			return AV1RTCPLayerRefreshLayerIndex{}, false, err
+		}
+		if !ok || entries[i].Target.SpatialID > target.SpatialID {
+			target.SpatialID = entries[i].Target.SpatialID
+		}
+		if !ok || entries[i].Target.TemporalID > target.TemporalID {
+			target.TemporalID = entries[i].Target.TemporalID
+		}
+		ok = true
+	}
+	return target, ok, nil
+}
+
+// EncoderWebRTCRTCPFeedbackLayerRefreshTarget parses a single RTCP feedback
+// packet and returns the inclusive active decode-target cap requested by valid
+// AV1 LRR feedback. Non-LRR RTPFB/PSFB feedback returns ok=false.
+func EncoderWebRTCRTCPFeedbackLayerRefreshTarget(
+	config EncoderConfig,
+	packet RTCPFeedbackPacket,
+	lrrScratch []AV1RTCPLayerRefreshRequestEntry,
+) (target AV1RTCPLayerRefreshLayerIndex, ok bool, err error) {
+	switch packet.PacketType {
+	case RTCPRTPFBPacketType:
+		return AV1RTCPLayerRefreshLayerIndex{}, false, nil
+	case RTCPPSFBPacketType:
+	default:
+		return AV1RTCPLayerRefreshLayerIndex{}, false, ErrRTCPInvalidFeedback
+	}
+	if packet.FMT != RTCPPSFBLayerRefreshRequestFMT {
+		return AV1RTCPLayerRefreshLayerIndex{}, false, nil
+	}
+	start := len(lrrScratch)
+	entries, err := ParseAV1RTCPLayerRefreshRequestEntries(packet.FCI, lrrScratch)
+	if err != nil {
+		return AV1RTCPLayerRefreshLayerIndex{}, false, err
+	}
+	return EncoderWebRTCLayerRefreshRequestTarget(config, entries[start:])
+}
+
+// EncoderWebRTCRTCPPacketsLayerRefreshTarget scans parsed generic RTCP packets
+// and returns the inclusive active decode-target cap requested by AV1 LRR
+// feedback. Non-feedback RTCP packets are ignored.
+func EncoderWebRTCRTCPPacketsLayerRefreshTarget(
+	config EncoderConfig,
+	packets []RTCPPacket,
+	lrrScratch []AV1RTCPLayerRefreshRequestEntry,
+) (target AV1RTCPLayerRefreshLayerIndex, ok bool, err error) {
+	for i := range packets {
+		packet := packets[i]
+		if packet.PacketType != RTCPRTPFBPacketType && packet.PacketType != RTCPPSFBPacketType {
+			continue
+		}
+		if len(packet.Payload) < RTCPFeedbackCommonSize {
+			return AV1RTCPLayerRefreshLayerIndex{}, false, ErrRTCPInvalidFeedback
+		}
+		current, currentOK, err := EncoderWebRTCRTCPFeedbackLayerRefreshTarget(config, RTCPFeedbackPacket{
+			PacketType: packet.PacketType,
+			FMT:        packet.Count,
+			SenderSSRC: binary.BigEndian.Uint32(packet.Payload[0:4]),
+			MediaSSRC:  binary.BigEndian.Uint32(packet.Payload[4:8]),
+			FCI:        packet.Payload[RTCPFeedbackCommonSize:],
+		}, lrrScratch)
+		if err != nil {
+			return AV1RTCPLayerRefreshLayerIndex{}, false, err
+		}
+		if !currentOK {
+			continue
+		}
+		if !ok || current.SpatialID > target.SpatialID {
+			target.SpatialID = current.SpatialID
+		}
+		if !ok || current.TemporalID > target.TemporalID {
+			target.TemporalID = current.TemporalID
+		}
+		ok = true
+	}
+	return target, ok, nil
+}
+
+// EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget parses a raw compound RTCP
+// packet stream and returns the inclusive active decode-target cap requested by
+// AV1 LRR feedback. Parsed packets are appended into packetScratch without
+// allocation and returned as the newly parsed suffix.
+func EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget(
+	config EncoderConfig,
+	compound []byte,
+	packetScratch []RTCPPacket,
+	lrrScratch []AV1RTCPLayerRefreshRequestEntry,
+) (target AV1RTCPLayerRefreshLayerIndex, ok bool, packets []RTCPPacket, err error) {
+	packets, err = ParseRTCPCompoundPackets(compound, packetScratch)
+	if err != nil {
+		return AV1RTCPLayerRefreshLayerIndex{}, false, packets, err
+	}
+	target, ok, err = EncoderWebRTCRTCPPacketsLayerRefreshTarget(config, packets, lrrScratch)
+	return target, ok, packets, err
+}
+
 // EncoderWebRTCRTCPFeedbackRequiresKeyFrame reports whether a parsed RTCP
 // feedback packet should be satisfied by forcing the next WebRTC encoder
 // picture to be a key picture. PLI and non-empty FIR feedback require a key
