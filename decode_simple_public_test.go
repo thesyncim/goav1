@@ -1338,6 +1338,70 @@ func TestSimpleDecoderMatchesLowLevelPath(t *testing.T) {
 	}
 }
 
+func TestNewDecoderFromRTPPayloadsProfileClipsMatchGolden(t *testing.T) {
+	limits := av1.RTPPayloadSizeLimits{MaxPayloadLen: 48}
+	runClip := func(file string, wantMD5 []string) {
+		t.Helper()
+		t.Run(file, func(t *testing.T) {
+			ivf, err := os.ReadFile(profileClipPath(file))
+			if err != nil {
+				t.Fatalf("read clip: %v", err)
+			}
+			it, err := av1.NewIVFIterator(ivf)
+			if err != nil {
+				t.Fatalf("NewIVFIterator: %v", err)
+			}
+
+			nextSequence := uint16(0x5a00)
+			var rtpPayloads [][]byte
+			var rtpPackets [][]byte
+			fragmentedFrames := 0
+			frameCount := 0
+			for {
+				frame, ok, err := it.Next()
+				if err != nil {
+					t.Fatalf("IVF next: %v", err)
+				}
+				if !ok {
+					break
+				}
+				framePayloads, framePackets := publicPacketizeLowOverheadRTP(t, frame.Payload, limits, frame.Index == 0, &nextSequence, uint32(frame.Timestamp))
+				if len(framePayloads) > 1 {
+					fragmentedFrames++
+				}
+				rtpPayloads = append(rtpPayloads, framePayloads...)
+				rtpPackets = append(rtpPackets, framePackets...)
+				frameCount++
+			}
+			if frameCount != len(wantMD5) {
+				t.Fatalf("IVF frames=%d want golden frames=%d", frameCount, len(wantMD5))
+			}
+			if fragmentedFrames == 0 {
+				t.Fatalf("RTP packetizer produced no fragmented frames for %s", file)
+			}
+
+			queued, queuedEmpty := decodeRTPPayloadsWithHighLevelDecoder(t, rtpPayloads)
+			live, liveEmpty := decodeLiveRTPPayloadsWithHighLevelDecoder(t, rtpPayloads, rtpPayloads)
+			queuedPackets, queuedPacketEmpty := decodeRTPPacketsWithHighLevelDecoder(t, rtpPackets)
+			livePackets, livePacketEmpty := decodeLiveRTPPacketsWithHighLevelDecoder(t, rtpPackets, rtpPackets)
+			if queuedEmpty == 0 || liveEmpty == 0 || queuedPacketEmpty == 0 || livePacketEmpty == 0 {
+				t.Fatalf("RTP decode saw no fragment-only steps payload queued/live=%d/%d packet queued/live=%d/%d",
+					queuedEmpty, liveEmpty, queuedPacketEmpty, livePacketEmpty)
+			}
+			assertPublicDecoderGoldenMD5s(t, "queued RTP payload", queued, wantMD5)
+			assertPublicDecoderGoldenMD5s(t, "live RTP payload", live, wantMD5)
+			assertPublicDecoderGoldenMD5s(t, "queued RTP packet", queuedPackets, wantMD5)
+			assertPublicDecoderGoldenMD5s(t, "live RTP packet", livePackets, wantMD5)
+		})
+	}
+	for _, clip := range profileClips {
+		runClip(clip.file, clip.frameMD5Hex)
+	}
+	for _, clip := range superResProfileClips {
+		runClip(clip.file, clip.frameMD5Hex)
+	}
+}
+
 func TestPublicDecoderRTPPayloadRunnerMatchesLowOverhead(t *testing.T) {
 	const width, height = 192, 128
 	enc, err := av1.NewRTCEncoderWithConfig(av1.EncoderConfig{
@@ -2022,6 +2086,18 @@ func assertPublicDecoderFrameDigests(t *testing.T, path string, spatialID int, g
 		if got[i] != want[i] {
 			t.Fatalf("%s spatial %d frame %d digest differs: got=%s want=%s",
 				path, spatialID, i, hex.EncodeToString(got[i][:]), hex.EncodeToString(want[i][:]))
+		}
+	}
+}
+
+func assertPublicDecoderGoldenMD5s(t *testing.T, path string, got [][16]byte, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s produced %d visible frames, want %d", path, len(got), len(want))
+	}
+	for i := range want {
+		if hex.EncodeToString(got[i][:]) != want[i] {
+			t.Fatalf("%s frame %d md5 got=%s want=%s", path, i, hex.EncodeToString(got[i][:]), want[i])
 		}
 	}
 }
@@ -2731,6 +2807,67 @@ func TestPublicRTPPacketSequencerSkipMissingDrivesAfterLoss(t *testing.T) {
 func publicDecoderRTPPayloadsForFrame(t testing.TB, frame av1.RTCFrame) [][]byte {
 	t.Helper()
 	return publicDecoderRTPPayloadsForFrameWithLimits(t, frame, av1.RTPPayloadSizeLimits{MaxPayloadLen: 96})
+}
+
+func publicPacketizeLowOverheadRTP(t testing.TB, frame []byte, limits av1.RTPPayloadSizeLimits, startsNewCodedVideoSequence bool, nextSequence *uint16, timestamp uint32) ([][]byte, [][]byte) {
+	t.Helper()
+	firstSize, err := av1.RTPPacketizerScratchLen(frame, limits, nil)
+	if err != nil {
+		t.Fatalf("RTPPacketizerScratchLen first: %v", err)
+	}
+	obuScratch := make([]av1.RTPPacketizerOBU, firstSize.OBUs)
+	size, err := av1.RTPPacketizerScratchLen(frame, limits, obuScratch)
+	if err != nil {
+		t.Fatalf("RTPPacketizerScratchLen full: %v", err)
+	}
+	packetScratch := make([]av1.RTPPacketPlan, size.Packets)
+	workScratch := make([]av1.RTPPacketPlan, size.Work)
+	packetizer, err := av1.NewRTPPacketizer(frame, limits, startsNewCodedVideoSequence, true, obuScratch, packetScratch, workScratch)
+	if err != nil {
+		t.Fatalf("NewRTPPacketizer: %v", err)
+	}
+
+	payloads := make([][]byte, 0, packetizer.NumPackets())
+	packets := make([][]byte, 0, packetizer.NumPackets())
+	for {
+		payloadSize, ok := packetizer.NextPacketSize()
+		if !ok {
+			break
+		}
+		payload := make([]byte, payloadSize)
+		n, marker, ok, err := packetizer.NextPacket(payload)
+		if err != nil {
+			t.Fatalf("NextPacket: %v", err)
+		}
+		if !ok {
+			t.Fatal("NextPacket returned ok=false after NextPacketSize returned ok=true")
+		}
+		payload = payload[:n]
+		payloads = append(payloads, payload)
+
+		header := av1.RTPHeader{
+			Marker:         marker,
+			PayloadType:    96,
+			SequenceNumber: *nextSequence,
+			Timestamp:      timestamp,
+			SSRC:           0x22446688,
+		}
+		*nextSequence = *nextSequence + 1
+		packetSize, err := av1.RTPPacketSize(header, payload, 0)
+		if err != nil {
+			t.Fatalf("RTPPacketSize: %v", err)
+		}
+		packet := make([]byte, packetSize)
+		packetN, err := av1.PutRTPPacket(packet, header, payload, 0)
+		if err != nil {
+			t.Fatalf("PutRTPPacket: %v", err)
+		}
+		packets = append(packets, packet[:packetN])
+	}
+	if len(payloads) == 0 {
+		t.Fatal("RTP packetizer produced no payloads")
+	}
+	return payloads, packets
 }
 
 func publicDecoderRTPPayloadsForFrameWithLimits(t testing.TB, frame av1.RTCFrame, limits av1.RTPPayloadSizeLimits) [][]byte {
