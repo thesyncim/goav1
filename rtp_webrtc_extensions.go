@@ -3,6 +3,8 @@ package goav1
 import (
 	"encoding/binary"
 	"errors"
+
+	"github.com/thesyncim/goav1/internal/av1/bitstream"
 )
 
 const (
@@ -51,6 +53,9 @@ const (
 	// RTPColorSpaceHeaderExtensionSize is the payload size, in bytes, of
 	// WebRTC's color-space RTP header extension with HDR metadata.
 	RTPColorSpaceHeaderExtensionSize = 28
+	// RTPVideoLayersAllocationMaxHeaderExtensionSize is the largest payload
+	// size, in bytes, accepted by PutRTPVideoLayersAllocationHeaderExtension.
+	RTPVideoLayersAllocationMaxHeaderExtensionSize = 407
 	// RTPPlayoutDelayMaxMilliseconds is the largest playout delay that fits the
 	// WebRTC playout-delay RTP header extension.
 	RTPPlayoutDelayMaxMilliseconds = 40950
@@ -224,6 +229,38 @@ type RTPColorSpace struct {
 	ChromaSitingVertical   RTPColorSpaceChromaSiting
 	HDRMetadataPresent     bool
 	HDRMetadata            RTPColorSpaceHDRMetadata
+}
+
+// RTPVideoLayersAllocationLayer describes one active spatial layer in
+// WebRTC's video-layers-allocation RTP header-extension payload. Target
+// bitrates are cumulative required bitrates in kbps for temporal IDs in
+// ascending order.
+type RTPVideoLayersAllocationLayer struct {
+	RTPStreamID        int
+	SpatialID          int
+	TargetBitratesKbps []uint32
+	Width              int
+	Height             int
+	Framerate          int
+}
+
+// RTPVideoLayersAllocation is WebRTC's video-layers-allocation RTP header-
+// extension payload. ActiveSpatialLayers are written and parsed in
+// RTPStreamID, SpatialID ascending order. When HasResolutionAndFramerate is
+// true, each active layer also carries width, height, and max framerate.
+type RTPVideoLayersAllocation struct {
+	RTPStreamID               int
+	RTPStreamCount            int
+	ActiveSpatialLayers       []RTPVideoLayersAllocationLayer
+	HasResolutionAndFramerate bool
+}
+
+type rtpVideoLayersAllocationLayout struct {
+	spatialMasks [4]uint8
+	layerIndex   [4][4]int
+	commonMask   uint8
+	layerCount   int
+	size         int
 }
 
 // ParseRTPCoordinationOfVideoOrientationHeaderExtension parses a WebRTC CVO
@@ -599,6 +636,313 @@ func ValidateRTPVideoTiming(timing RTPVideoTiming) error {
 		return ErrRTPInvalidHeaderExtension
 	}
 	return nil
+}
+
+// RTPVideoLayersAllocationSize returns the payload size needed to write
+// allocation. The RTP extension element header is not counted.
+func RTPVideoLayersAllocationSize(allocation RTPVideoLayersAllocation) (int, error) {
+	var layout rtpVideoLayersAllocationLayout
+	if err := analyzeRTPVideoLayersAllocation(allocation, &layout); err != nil {
+		return 0, err
+	}
+	return layout.size, nil
+}
+
+// ParseRTPVideoLayersAllocationHeaderExtension parses WebRTC's
+// video-layers-allocation RTP header-extension element payload. The RTP
+// extension element header is not part of src.
+func ParseRTPVideoLayersAllocationHeaderExtension(src []byte) (RTPVideoLayersAllocation, error) {
+	if len(src) == 0 {
+		return RTPVideoLayersAllocation{}, ErrRTPShortBuffer
+	}
+	if len(src) == 1 && src[0] == 0 {
+		return RTPVideoLayersAllocation{RTPStreamCount: 1}, nil
+	}
+
+	allocation := RTPVideoLayersAllocation{
+		RTPStreamID:    int(src[0] >> 6),
+		RTPStreamCount: int((src[0]>>4)&0x03) + 1,
+	}
+	if allocation.RTPStreamID >= allocation.RTPStreamCount {
+		return RTPVideoLayersAllocation{}, ErrRTPInvalidHeaderExtension
+	}
+
+	var masks [4]uint8
+	offset := 1
+	commonMask := src[0] & 0x0f
+	if commonMask != 0 {
+		for streamID := 0; streamID < allocation.RTPStreamCount; streamID++ {
+			masks[streamID] = commonMask
+		}
+	} else {
+		maskBytes := rtpVideoLayersAllocationSpatialMaskBytes(allocation.RTPStreamCount)
+		if len(src)-offset < maskBytes {
+			return RTPVideoLayersAllocation{}, ErrRTPShortBuffer
+		}
+		for streamID := 0; streamID < allocation.RTPStreamCount; streamID++ {
+			if streamID%2 == 0 {
+				masks[streamID] = (src[offset+streamID/2] >> 4) & 0x0f
+			} else {
+				masks[streamID] = src[offset+streamID/2] & 0x0f
+			}
+		}
+		offset += maskBytes
+	}
+
+	layerCount := 0
+	for streamID := 0; streamID < allocation.RTPStreamCount; streamID++ {
+		for spatialID := 0; spatialID < 4; spatialID++ {
+			if masks[streamID]&(1<<spatialID) != 0 {
+				layerCount++
+			}
+		}
+	}
+	if layerCount == 0 {
+		return RTPVideoLayersAllocation{}, ErrRTPInvalidHeaderExtension
+	}
+
+	tlBytes := rtpVideoLayersAllocationTemporalLayerBytes(layerCount)
+	if len(src)-offset < tlBytes {
+		return RTPVideoLayersAllocation{}, ErrRTPShortBuffer
+	}
+	allocation.ActiveSpatialLayers = make([]RTPVideoLayersAllocationLayer, 0, layerCount)
+	layerOrdinal := 0
+	for streamID := 0; streamID < allocation.RTPStreamCount; streamID++ {
+		for spatialID := 0; spatialID < 4; spatialID++ {
+			if masks[streamID]&(1<<spatialID) == 0 {
+				continue
+			}
+			tlByte := src[offset+layerOrdinal/4]
+			shift := uint(2 * (3 - layerOrdinal%4))
+			temporalLayers := int((tlByte>>shift)&0x03) + 1
+			allocation.ActiveSpatialLayers = append(allocation.ActiveSpatialLayers, RTPVideoLayersAllocationLayer{
+				RTPStreamID:        streamID,
+				SpatialID:          spatialID,
+				TargetBitratesKbps: make([]uint32, temporalLayers),
+			})
+			layerOrdinal++
+		}
+	}
+	offset += tlBytes
+
+	for i := range allocation.ActiveSpatialLayers {
+		for j := range allocation.ActiveSpatialLayers[i].TargetBitratesKbps {
+			value, n, err := bitstream.ReadLEB128(src[offset:])
+			if err != nil {
+				if errors.Is(err, bitstream.ErrShortLEB128) {
+					return RTPVideoLayersAllocation{}, ErrRTPShortBuffer
+				}
+				return RTPVideoLayersAllocation{}, ErrRTPInvalidHeaderExtension
+			}
+			allocation.ActiveSpatialLayers[i].TargetBitratesKbps[j] = value
+			offset += n
+		}
+	}
+
+	remaining := len(src) - offset
+	if remaining == 0 {
+		return allocation, nil
+	}
+	resolutionBytes := layerCount * 5
+	if remaining < resolutionBytes {
+		return RTPVideoLayersAllocation{}, ErrRTPShortBuffer
+	}
+	if remaining != resolutionBytes {
+		return RTPVideoLayersAllocation{}, ErrRTPInvalidHeaderExtension
+	}
+	allocation.HasResolutionAndFramerate = true
+	for i := range allocation.ActiveSpatialLayers {
+		allocation.ActiveSpatialLayers[i].Width = int(binary.BigEndian.Uint16(src[offset:offset+2])) + 1
+		allocation.ActiveSpatialLayers[i].Height = int(binary.BigEndian.Uint16(src[offset+2:offset+4])) + 1
+		allocation.ActiveSpatialLayers[i].Framerate = int(src[offset+4])
+		offset += 5
+	}
+	return allocation, nil
+}
+
+// PutRTPVideoLayersAllocationHeaderExtension writes WebRTC's
+// video-layers-allocation RTP header-extension element payload. The RTP
+// extension element header is not written.
+func PutRTPVideoLayersAllocationHeaderExtension(dst []byte, allocation RTPVideoLayersAllocation) (int, error) {
+	var layout rtpVideoLayersAllocationLayout
+	if err := analyzeRTPVideoLayersAllocation(allocation, &layout); err != nil {
+		return 0, err
+	}
+	if len(dst) < layout.size {
+		return 0, ErrRTPShortBuffer
+	}
+	if layout.layerCount == 0 {
+		dst[0] = 0
+		return 1, nil
+	}
+
+	offset := 0
+	dst[offset] = byte(allocation.RTPStreamID<<6) | byte((allocation.RTPStreamCount-1)<<4) | layout.commonMask
+	offset++
+	if layout.commonMask == 0 {
+		maskBytes := rtpVideoLayersAllocationSpatialMaskBytes(allocation.RTPStreamCount)
+		for i := 0; i < maskBytes; i++ {
+			dst[offset+i] = 0
+		}
+		for streamID := 0; streamID < allocation.RTPStreamCount; streamID++ {
+			if streamID%2 == 0 {
+				dst[offset+streamID/2] |= layout.spatialMasks[streamID] << 4
+			} else {
+				dst[offset+streamID/2] |= layout.spatialMasks[streamID]
+			}
+		}
+		offset += maskBytes
+	}
+
+	tlBytes := rtpVideoLayersAllocationTemporalLayerBytes(layout.layerCount)
+	for i := 0; i < tlBytes; i++ {
+		dst[offset+i] = 0
+	}
+	layerOrdinal := 0
+	for streamID := 0; streamID < allocation.RTPStreamCount; streamID++ {
+		for spatialID := 0; spatialID < 4; spatialID++ {
+			idx := layout.layerIndex[streamID][spatialID]
+			if idx < 0 {
+				continue
+			}
+			tlCount := len(allocation.ActiveSpatialLayers[idx].TargetBitratesKbps)
+			shift := uint(2 * (3 - layerOrdinal%4))
+			dst[offset+layerOrdinal/4] |= byte(tlCount-1) << shift
+			layerOrdinal++
+		}
+	}
+	offset += tlBytes
+
+	for streamID := 0; streamID < allocation.RTPStreamCount; streamID++ {
+		for spatialID := 0; spatialID < 4; spatialID++ {
+			idx := layout.layerIndex[streamID][spatialID]
+			if idx < 0 {
+				continue
+			}
+			layer := allocation.ActiveSpatialLayers[idx]
+			for _, bitrate := range layer.TargetBitratesKbps {
+				n, err := bitstream.PutLEB128(dst[offset:], bitrate)
+				if err != nil {
+					return 0, ErrRTPShortBuffer
+				}
+				offset += n
+			}
+		}
+	}
+
+	if allocation.HasResolutionAndFramerate {
+		for streamID := 0; streamID < allocation.RTPStreamCount; streamID++ {
+			for spatialID := 0; spatialID < 4; spatialID++ {
+				idx := layout.layerIndex[streamID][spatialID]
+				if idx < 0 {
+					continue
+				}
+				layer := allocation.ActiveSpatialLayers[idx]
+				binary.BigEndian.PutUint16(dst[offset:offset+2], uint16(layer.Width-1))
+				binary.BigEndian.PutUint16(dst[offset+2:offset+4], uint16(layer.Height-1))
+				dst[offset+4] = byte(layer.Framerate)
+				offset += 5
+			}
+		}
+	}
+	return layout.size, nil
+}
+
+func ValidateRTPVideoLayersAllocation(allocation RTPVideoLayersAllocation) error {
+	var layout rtpVideoLayersAllocationLayout
+	return analyzeRTPVideoLayersAllocation(allocation, &layout)
+}
+
+func analyzeRTPVideoLayersAllocation(allocation RTPVideoLayersAllocation, layout *rtpVideoLayersAllocationLayout) error {
+	*layout = rtpVideoLayersAllocationLayout{}
+	for streamID := range layout.layerIndex {
+		for spatialID := range layout.layerIndex[streamID] {
+			layout.layerIndex[streamID][spatialID] = -1
+		}
+	}
+
+	if len(allocation.ActiveSpatialLayers) == 0 {
+		if allocation.RTPStreamID != 0 ||
+			allocation.RTPStreamCount < 0 ||
+			allocation.RTPStreamCount > 1 ||
+			allocation.HasResolutionAndFramerate {
+			return ErrRTPInvalidHeaderExtension
+		}
+		layout.size = 1
+		return nil
+	}
+	if allocation.RTPStreamCount <= 0 || allocation.RTPStreamCount > 4 ||
+		allocation.RTPStreamID < 0 || allocation.RTPStreamID >= allocation.RTPStreamCount {
+		return ErrRTPInvalidHeaderExtension
+	}
+
+	for i, layer := range allocation.ActiveSpatialLayers {
+		if layer.RTPStreamID < 0 || layer.RTPStreamID >= allocation.RTPStreamCount ||
+			layer.SpatialID < 0 || layer.SpatialID >= 4 {
+			return ErrRTPInvalidHeaderExtension
+		}
+		if layout.layerIndex[layer.RTPStreamID][layer.SpatialID] >= 0 {
+			return ErrRTPInvalidHeaderExtension
+		}
+		if len(layer.TargetBitratesKbps) == 0 || len(layer.TargetBitratesKbps) > 4 {
+			return ErrRTPInvalidHeaderExtension
+		}
+		if allocation.HasResolutionAndFramerate {
+			if layer.Width <= 0 || layer.Width > 1<<16 ||
+				layer.Height <= 0 || layer.Height > 1<<16 ||
+				layer.Framerate < 0 || layer.Framerate > 0xff {
+				return ErrRTPInvalidHeaderExtension
+			}
+		} else if layer.Width != 0 || layer.Height != 0 || layer.Framerate != 0 {
+			return ErrRTPInvalidHeaderExtension
+		}
+		layout.layerIndex[layer.RTPStreamID][layer.SpatialID] = i
+		layout.spatialMasks[layer.RTPStreamID] |= 1 << layer.SpatialID
+		layout.layerCount++
+	}
+
+	layout.commonMask = rtpVideoLayersAllocationCommonSpatialMask(layout.spatialMasks, allocation.RTPStreamCount)
+	layout.size = 1
+	if layout.commonMask == 0 {
+		layout.size += rtpVideoLayersAllocationSpatialMaskBytes(allocation.RTPStreamCount)
+	}
+	layout.size += rtpVideoLayersAllocationTemporalLayerBytes(layout.layerCount)
+	for streamID := 0; streamID < allocation.RTPStreamCount; streamID++ {
+		for spatialID := 0; spatialID < 4; spatialID++ {
+			idx := layout.layerIndex[streamID][spatialID]
+			if idx < 0 {
+				continue
+			}
+			for _, bitrate := range allocation.ActiveSpatialLayers[idx].TargetBitratesKbps {
+				layout.size += bitstream.LEB128Len(bitrate)
+			}
+		}
+	}
+	if allocation.HasResolutionAndFramerate {
+		layout.size += layout.layerCount * 5
+	}
+	return nil
+}
+
+func rtpVideoLayersAllocationCommonSpatialMask(masks [4]uint8, streamCount int) uint8 {
+	common := masks[0]
+	if common == 0 {
+		return 0
+	}
+	for streamID := 1; streamID < streamCount; streamID++ {
+		if masks[streamID] != common {
+			return 0
+		}
+	}
+	return common
+}
+
+func rtpVideoLayersAllocationSpatialMaskBytes(streamCount int) int {
+	return (streamCount-1)/2 + 1
+}
+
+func rtpVideoLayersAllocationTemporalLayerBytes(layerCount int) int {
+	return (layerCount + 3) / 4
 }
 
 // RTPColorSpaceSize returns the payload size needed to write colorSpace. The

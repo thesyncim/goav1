@@ -58,6 +58,10 @@ type EncoderWebRTCRTPPacketHeaderConfig struct {
 	// extension to every packet.
 	VideoTimingExtensionID uint8
 	VideoTiming            RTPVideoTiming
+	// VideoLayersAllocationExtensionID, when set, adds WebRTC's video-layers-
+	// allocation RTP header extension to every packet.
+	VideoLayersAllocationExtensionID uint8
+	VideoLayersAllocation            RTPVideoLayersAllocation
 	// ColorSpaceExtensionID, when set, adds WebRTC's color-space RTP header
 	// extension to every packet.
 	ColorSpaceExtensionID uint8
@@ -295,6 +299,9 @@ func validateEncoderWebRTCRTPPacketHeaderConfig(config EncoderWebRTCRTPPacketHea
 	if err := validateEncoderWebRTCRTPPacketHeaderValueExtension(&ids, config.VideoTimingExtensionID, config.VideoTiming, ValidateRTPVideoTiming); err != nil {
 		return err
 	}
+	if err := validateEncoderWebRTCRTPPacketHeaderVideoLayersAllocationExtension(&ids, config.VideoLayersAllocationExtensionID, config.VideoLayersAllocation); err != nil {
+		return err
+	}
 	if err := validateEncoderWebRTCRTPPacketHeaderValueExtension(&ids, config.ColorSpaceExtensionID, config.ColorSpace, ValidateRTPColorSpace); err != nil {
 		return err
 	}
@@ -402,6 +409,30 @@ func validateEncoderWebRTCRTPPacketHeaderValueExtension[T comparable](
 	return validate(value)
 }
 
+func validateEncoderWebRTCRTPPacketHeaderVideoLayersAllocationExtension(
+	ids *encoderWebRTCRTPPacketHeaderExtensionIDs,
+	id uint8,
+	allocation RTPVideoLayersAllocation,
+) error {
+	if id == 0 {
+		if !isZeroRTPVideoLayersAllocation(allocation) {
+			return ErrRTPInvalidHeaderExtension
+		}
+		return nil
+	}
+	if err := ids.add(id); err != nil {
+		return err
+	}
+	return ValidateRTPVideoLayersAllocation(allocation)
+}
+
+func isZeroRTPVideoLayersAllocation(allocation RTPVideoLayersAllocation) bool {
+	return allocation.RTPStreamID == 0 &&
+		allocation.RTPStreamCount == 0 &&
+		len(allocation.ActiveSpatialLayers) == 0 &&
+		!allocation.HasResolutionAndFramerate
+}
+
 func encoderWebRTCRTPPacketHeaderExtensionPayloadSize(kind int, config EncoderWebRTCRTPPacketHeaderConfig, packetIndex int, descriptorLen int) (int, error) {
 	if packetIndex < 0 {
 		return 0, ErrEncoderInvalidFrame
@@ -504,6 +535,17 @@ func encoderWebRTCRTPPacketHeaderExtensionPayloadSize(kind int, config EncoderWe
 		}
 		size += n
 	}
+	if config.VideoLayersAllocationExtensionID != 0 {
+		allocationSize, err := RTPVideoLayersAllocationSize(config.VideoLayersAllocation)
+		if err != nil {
+			return 0, err
+		}
+		n, err := rtpHeaderExtensionElementSize(kind, config.VideoLayersAllocationExtensionID, allocationSize)
+		if err != nil {
+			return 0, err
+		}
+		size += n
+	}
 	if config.ColorSpaceExtensionID != 0 {
 		colorSpaceSize, err := RTPColorSpaceSize(config.ColorSpace)
 		if err != nil {
@@ -519,18 +561,19 @@ func encoderWebRTCRTPPacketHeaderExtensionPayloadSize(kind int, config EncoderWe
 }
 
 type encoderWebRTCRTPPacketHeaderExtensionPayloads struct {
-	MID                 [RTPHeaderExtensionSDESMaxLen]byte
-	RTPStreamID         [RTPHeaderExtensionSDESMaxLen]byte
-	RepairedRTPStreamID [RTPHeaderExtensionSDESMaxLen]byte
-	TransportWideCC     [RTPTransportWideCCHeaderExtensionSize]byte
-	TransportWideCC02   [RTPTransportWideCC02HeaderExtensionSize]byte
-	VideoOrientation    [RTPCoordinationOfVideoOrientationHeaderExtensionSize]byte
-	PlayoutDelay        [RTPPlayoutDelayHeaderExtensionSize]byte
-	AbsoluteSendTime    [RTPAbsoluteSendTimeHeaderExtensionSize]byte
-	AbsoluteCaptureTime [RTPAbsoluteCaptureTimeHeaderExtensionSize]byte
-	VideoContentType    [RTPVideoContentTypeHeaderExtensionSize]byte
-	VideoTiming         [RTPVideoTimingHeaderExtensionSize]byte
-	ColorSpace          [RTPColorSpaceHeaderExtensionSize]byte
+	MID                   [RTPHeaderExtensionSDESMaxLen]byte
+	RTPStreamID           [RTPHeaderExtensionSDESMaxLen]byte
+	RepairedRTPStreamID   [RTPHeaderExtensionSDESMaxLen]byte
+	TransportWideCC       [RTPTransportWideCCHeaderExtensionSize]byte
+	TransportWideCC02     [RTPTransportWideCC02HeaderExtensionSize]byte
+	VideoOrientation      [RTPCoordinationOfVideoOrientationHeaderExtensionSize]byte
+	PlayoutDelay          [RTPPlayoutDelayHeaderExtensionSize]byte
+	AbsoluteSendTime      [RTPAbsoluteSendTimeHeaderExtensionSize]byte
+	AbsoluteCaptureTime   [RTPAbsoluteCaptureTimeHeaderExtensionSize]byte
+	VideoContentType      [RTPVideoContentTypeHeaderExtensionSize]byte
+	VideoTiming           [RTPVideoTimingHeaderExtensionSize]byte
+	VideoLayersAllocation [RTPVideoLayersAllocationMaxHeaderExtensionSize]byte
+	ColorSpace            [RTPColorSpaceHeaderExtensionSize]byte
 }
 
 func encoderWebRTCRTPPacketHeaderExtensionElements(
@@ -538,8 +581,8 @@ func encoderWebRTCRTPPacketHeaderExtensionElements(
 	packetIndex int,
 	descriptor []byte,
 	payloads *encoderWebRTCRTPPacketHeaderExtensionPayloads,
-) ([13]RTPHeaderExtensionElement, int, error) {
-	var elements [13]RTPHeaderExtensionElement
+) ([14]RTPHeaderExtensionElement, int, error) {
+	var elements [14]RTPHeaderExtensionElement
 	if packetIndex < 0 || payloads == nil {
 		return elements, 0, ErrEncoderInvalidFrame
 	}
@@ -643,6 +686,14 @@ func encoderWebRTCRTPPacketHeaderExtensionElements(
 			return elements, 0, err
 		}
 		elements[count] = RTPHeaderExtensionElement{ID: config.VideoTimingExtensionID, Payload: payloads.VideoTiming[:n]}
+		count++
+	}
+	if config.VideoLayersAllocationExtensionID != 0 {
+		n, err := PutRTPVideoLayersAllocationHeaderExtension(payloads.VideoLayersAllocation[:], config.VideoLayersAllocation)
+		if err != nil {
+			return elements, 0, err
+		}
+		elements[count] = RTPHeaderExtensionElement{ID: config.VideoLayersAllocationExtensionID, Payload: payloads.VideoLayersAllocation[:n]}
 		count++
 	}
 	if config.ColorSpaceExtensionID != 0 {

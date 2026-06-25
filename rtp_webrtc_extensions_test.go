@@ -1,6 +1,7 @@
 package goav1_test
 
 import (
+	"encoding/hex"
 	"errors"
 	"testing"
 
@@ -46,6 +47,9 @@ func TestPublicRTPWebRTCHeaderExtensionConstants(t *testing.T) {
 	}
 	if av1.RTPColorSpaceHeaderExtensionSize != 28 {
 		t.Fatalf("RTPColorSpaceHeaderExtensionSize = %d, want 28", av1.RTPColorSpaceHeaderExtensionSize)
+	}
+	if av1.RTPVideoLayersAllocationMaxHeaderExtensionSize != 407 {
+		t.Fatalf("RTPVideoLayersAllocationMaxHeaderExtensionSize = %d, want 407", av1.RTPVideoLayersAllocationMaxHeaderExtensionSize)
 	}
 	if av1.RTPPlayoutDelayMaxMilliseconds != 40950 {
 		t.Fatalf("RTPPlayoutDelayMaxMilliseconds = %d, want 40950", av1.RTPPlayoutDelayMaxMilliseconds)
@@ -561,4 +565,207 @@ func TestPublicRTPColorSpaceHeaderExtension(t *testing.T) {
 	if _, err := av1.PutRTPColorSpaceHeaderExtension(buf[:27], withHDR); !errors.Is(err, av1.ErrRTPShortBuffer) {
 		t.Fatalf("short PutRTPColorSpaceHeaderExtension HDR error = %v, want ErrRTPShortBuffer", err)
 	}
+}
+
+func TestPublicRTPVideoLayersAllocationHeaderExtension(t *testing.T) {
+	cases := []struct {
+		name       string
+		allocation av1.RTPVideoLayersAllocation
+		hex        string
+	}{
+		{
+			name: "three streams",
+			allocation: av1.RTPVideoLayersAllocation{
+				RTPStreamID:    0,
+				RTPStreamCount: 3,
+				ActiveSpatialLayers: []av1.RTPVideoLayersAllocationLayer{
+					{RTPStreamID: 0, SpatialID: 0, TargetBitratesKbps: []uint32{150}},
+					{RTPStreamID: 1, SpatialID: 0, TargetBitratesKbps: []uint32{240, 400}},
+					{RTPStreamID: 2, SpatialID: 0, TargetBitratesKbps: []uint32{720, 1200}},
+				},
+			},
+			hex: "21149601f0019003d005b009",
+		},
+		{
+			name: "three streams resolution",
+			allocation: av1.RTPVideoLayersAllocation{
+				RTPStreamID:    2,
+				RTPStreamCount: 3,
+				ActiveSpatialLayers: []av1.RTPVideoLayersAllocationLayer{
+					{RTPStreamID: 0, SpatialID: 0, TargetBitratesKbps: []uint32{150}, Width: 320, Height: 180, Framerate: 30},
+					{RTPStreamID: 1, SpatialID: 0, TargetBitratesKbps: []uint32{240, 400}, Width: 640, Height: 360, Framerate: 30},
+					{RTPStreamID: 2, SpatialID: 0, TargetBitratesKbps: []uint32{720, 1200}, Width: 1280, Height: 720, Framerate: 30},
+				},
+				HasResolutionAndFramerate: true,
+			},
+			hex: "a1149601f0019003d005b009013f00b31e027f01671e04ff02cf1e",
+		},
+		{
+			name: "paused middle stream",
+			allocation: av1.RTPVideoLayersAllocation{
+				RTPStreamID:    1,
+				RTPStreamCount: 3,
+				ActiveSpatialLayers: []av1.RTPVideoLayersAllocationLayer{
+					{RTPStreamID: 0, SpatialID: 0, TargetBitratesKbps: []uint32{150}, Width: 320, Height: 180, Framerate: 30},
+					{RTPStreamID: 2, SpatialID: 0, TargetBitratesKbps: []uint32{720, 1200}, Width: 1280, Height: 720, Framerate: 30},
+				},
+				HasResolutionAndFramerate: true,
+			},
+			hex: "601010109601d005b009013f00b31e04ff02cf1e",
+		},
+		{
+			name: "multiple spatial layers",
+			allocation: av1.RTPVideoLayersAllocation{
+				RTPStreamID:    0,
+				RTPStreamCount: 1,
+				ActiveSpatialLayers: []av1.RTPVideoLayersAllocationLayer{
+					{RTPStreamID: 0, SpatialID: 0, TargetBitratesKbps: []uint32{90}},
+					{RTPStreamID: 0, SpatialID: 1, TargetBitratesKbps: []uint32{180, 260}},
+					{RTPStreamID: 0, SpatialID: 2, TargetBitratesKbps: []uint32{360, 520, 700}},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			size, err := av1.RTPVideoLayersAllocationSize(tc.allocation)
+			if err != nil {
+				t.Fatalf("RTPVideoLayersAllocationSize returned error: %v", err)
+			}
+			buf := make([]byte, size)
+			n, err := av1.PutRTPVideoLayersAllocationHeaderExtension(buf, tc.allocation)
+			if err != nil {
+				t.Fatalf("PutRTPVideoLayersAllocationHeaderExtension returned error: %v", err)
+			}
+			if n != size {
+				t.Fatalf("PutRTPVideoLayersAllocationHeaderExtension n=%d want %d", n, size)
+			}
+			if tc.hex != "" {
+				want, err := hex.DecodeString(tc.hex)
+				if err != nil {
+					t.Fatalf("DecodeString(%q): %v", tc.hex, err)
+				}
+				if string(buf) != string(want) {
+					t.Fatalf("encoded allocation = %x, want %x", buf, want)
+				}
+			}
+			got, err := av1.ParseRTPVideoLayersAllocationHeaderExtension(buf)
+			if err != nil {
+				t.Fatalf("ParseRTPVideoLayersAllocationHeaderExtension returned error: %v", err)
+			}
+			if !sameRTPVideoLayersAllocation(got, tc.allocation) {
+				t.Fatalf("ParseRTPVideoLayersAllocationHeaderExtension = %+v, want %+v", got, tc.allocation)
+			}
+		})
+	}
+}
+
+func TestPublicRTPVideoLayersAllocationHeaderExtensionErrors(t *testing.T) {
+	empty := av1.RTPVideoLayersAllocation{}
+	size, err := av1.RTPVideoLayersAllocationSize(empty)
+	if err != nil {
+		t.Fatalf("RTPVideoLayersAllocationSize(empty) returned error: %v", err)
+	}
+	if size != 1 {
+		t.Fatalf("RTPVideoLayersAllocationSize(empty)=%d want 1", size)
+	}
+	var one [1]byte
+	n, err := av1.PutRTPVideoLayersAllocationHeaderExtension(one[:], empty)
+	if err != nil {
+		t.Fatalf("PutRTPVideoLayersAllocationHeaderExtension(empty) returned error: %v", err)
+	}
+	if n != 1 || one[0] != 0 {
+		t.Fatalf("empty allocation n=%d byte=%#x, want 1/0", n, one[0])
+	}
+	got, err := av1.ParseRTPVideoLayersAllocationHeaderExtension(one[:])
+	if err != nil {
+		t.Fatalf("ParseRTPVideoLayersAllocationHeaderExtension(empty) returned error: %v", err)
+	}
+	if got.RTPStreamID != 0 || got.RTPStreamCount != 1 || len(got.ActiveSpatialLayers) != 0 {
+		t.Fatalf("empty allocation parse = %+v", got)
+	}
+	negativeEmpty := av1.RTPVideoLayersAllocation{RTPStreamCount: -1}
+	if err := av1.ValidateRTPVideoLayersAllocation(negativeEmpty); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("ValidateRTPVideoLayersAllocation negative empty error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+
+	allocation := av1.RTPVideoLayersAllocation{
+		RTPStreamID:    0,
+		RTPStreamCount: 1,
+		ActiveSpatialLayers: []av1.RTPVideoLayersAllocationLayer{
+			{RTPStreamID: 0, SpatialID: 0, TargetBitratesKbps: []uint32{150}},
+		},
+	}
+	if _, err := av1.PutRTPVideoLayersAllocationHeaderExtension(nil, allocation); !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short PutRTPVideoLayersAllocationHeaderExtension error = %v, want ErrRTPShortBuffer", err)
+	}
+	if _, err := av1.ParseRTPVideoLayersAllocationHeaderExtension(nil); !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short ParseRTPVideoLayersAllocationHeaderExtension error = %v, want ErrRTPShortBuffer", err)
+	}
+	if _, err := av1.ParseRTPVideoLayersAllocationHeaderExtension([]byte{0x40}); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("bad RID ParseRTPVideoLayersAllocationHeaderExtension error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+	if _, err := av1.ParseRTPVideoLayersAllocationHeaderExtension([]byte{0x00, 0x00}); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("no-layer ParseRTPVideoLayersAllocationHeaderExtension error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+	if _, err := av1.ParseRTPVideoLayersAllocationHeaderExtension([]byte{0x01, 0x00, 0x80}); !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("truncated LEB ParseRTPVideoLayersAllocationHeaderExtension error = %v, want ErrRTPShortBuffer", err)
+	}
+	if _, err := av1.ParseRTPVideoLayersAllocationHeaderExtension([]byte{0x01, 0x00, 0x96, 0x01, 0x00}); !errors.Is(err, av1.ErrRTPShortBuffer) {
+		t.Fatalf("short resolution ParseRTPVideoLayersAllocationHeaderExtension error = %v, want ErrRTPShortBuffer", err)
+	}
+	if _, err := av1.ParseRTPVideoLayersAllocationHeaderExtension([]byte{0x01, 0x00, 0x96, 0x01, 0, 0, 0, 0, 0, 0}); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("extra resolution ParseRTPVideoLayersAllocationHeaderExtension error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+
+	duplicate := allocation
+	duplicate.ActiveSpatialLayers = append(duplicate.ActiveSpatialLayers, duplicate.ActiveSpatialLayers[0])
+	if err := av1.ValidateRTPVideoLayersAllocation(duplicate); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("ValidateRTPVideoLayersAllocation duplicate error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+	staleResolution := allocation
+	staleResolution.ActiveSpatialLayers[0].Width = 320
+	if err := av1.ValidateRTPVideoLayersAllocation(staleResolution); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("ValidateRTPVideoLayersAllocation stale resolution error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+	badResolution := allocation
+	badResolution.HasResolutionAndFramerate = true
+	badResolution.ActiveSpatialLayers[0].Width = 1 << 16
+	badResolution.ActiveSpatialLayers[0].Height = 720
+	badResolution.ActiveSpatialLayers[0].Framerate = 30
+	if err := av1.ValidateRTPVideoLayersAllocation(badResolution); err != nil {
+		t.Fatalf("ValidateRTPVideoLayersAllocation max resolution returned error: %v", err)
+	}
+	badResolution.ActiveSpatialLayers[0].Width = 1<<16 + 1
+	if err := av1.ValidateRTPVideoLayersAllocation(badResolution); !errors.Is(err, av1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("ValidateRTPVideoLayersAllocation invalid resolution error = %v, want ErrRTPInvalidHeaderExtension", err)
+	}
+}
+
+func sameRTPVideoLayersAllocation(a, b av1.RTPVideoLayersAllocation) bool {
+	if a.RTPStreamID != b.RTPStreamID ||
+		a.RTPStreamCount != b.RTPStreamCount ||
+		a.HasResolutionAndFramerate != b.HasResolutionAndFramerate ||
+		len(a.ActiveSpatialLayers) != len(b.ActiveSpatialLayers) {
+		return false
+	}
+	for i := range a.ActiveSpatialLayers {
+		la := a.ActiveSpatialLayers[i]
+		lb := b.ActiveSpatialLayers[i]
+		if la.RTPStreamID != lb.RTPStreamID ||
+			la.SpatialID != lb.SpatialID ||
+			la.Width != lb.Width ||
+			la.Height != lb.Height ||
+			la.Framerate != lb.Framerate ||
+			len(la.TargetBitratesKbps) != len(lb.TargetBitratesKbps) {
+			return false
+		}
+		for j := range la.TargetBitratesKbps {
+			if la.TargetBitratesKbps[j] != lb.TargetBitratesKbps[j] {
+				return false
+			}
+		}
+	}
+	return true
 }

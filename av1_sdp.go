@@ -51,6 +51,9 @@ const (
 	// AV1RTPVideoTimingURI is the SDP extmap URI for WebRTC's video-timing RTP
 	// header extension.
 	AV1RTPVideoTimingURI = "http://www.webrtc.org/experiments/rtp-hdrext/video-timing"
+	// AV1RTPVideoLayersAllocationURI is the SDP extmap URI for WebRTC's
+	// video-layers-allocation RTP header extension.
+	AV1RTPVideoLayersAllocationURI = "http://www.webrtc.org/experiments/rtp-hdrext/video-layers-allocation00"
 	// AV1RTPColorSpaceURI is the SDP extmap URI for WebRTC's color-space RTP
 	// header extension.
 	AV1RTPColorSpaceURI = "http://www.webrtc.org/experiments/rtp-hdrext/color-space"

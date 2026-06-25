@@ -1188,6 +1188,15 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 			NetworkTimestampDeltaMs:      5,
 			NetworkTimestamp2DeltaMs:     6,
 		},
+		VideoLayersAllocationExtensionID: 13,
+		VideoLayersAllocation: goav1.RTPVideoLayersAllocation{
+			RTPStreamID:    0,
+			RTPStreamCount: 1,
+			ActiveSpatialLayers: []goav1.RTPVideoLayersAllocationLayer{
+				{RTPStreamID: 0, SpatialID: 0, TargetBitratesKbps: []uint32{450, 700}, Width: w, Height: h, Framerate: 30},
+			},
+			HasResolutionAndFramerate: true,
+		},
 		ColorSpaceExtensionID: 12,
 		ColorSpace: goav1.RTPColorSpace{
 			Primaries:              goav1.RTPColorSpacePrimaryBT709,
@@ -1223,6 +1232,11 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 	danglingExtConfig.VideoOrientationExtensionID = 0
 	if _, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(danglingExtConfig, []byte{0xaa}, []byte{0xbb}, []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 1}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
 		t.Fatalf("dangling extension value size err=%v want %v", err, goav1.ErrRTPInvalidHeaderExtension)
+	}
+	danglingExtConfig = config
+	danglingExtConfig.VideoLayersAllocationExtensionID = 0
+	if _, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(danglingExtConfig, []byte{0xaa}, []byte{0xbb}, []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 1}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("dangling VLA extension value size err=%v want %v", err, goav1.ErrRTPInvalidHeaderExtension)
 	}
 	twccOnlyConfig := goav1.EncoderWebRTCRTPPacketHeaderConfig{
 		PayloadType:                   98,
@@ -1444,6 +1458,14 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 		timing, err := goav1.ParseRTPVideoTimingHeaderExtension(timingElement.Payload)
 		if err != nil || timing != config.VideoTiming {
 			t.Fatalf("packet %d video-timing=%+v err=%v want %+v", i, timing, err, config.VideoTiming)
+		}
+		layersElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.VideoLayersAllocationExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d video-layers-allocation extension ok=%v err=%v", i, ok, err)
+		}
+		layers, err := goav1.ParseRTPVideoLayersAllocationHeaderExtension(layersElement.Payload)
+		if err != nil || !sameRTPVideoLayersAllocation(layers, config.VideoLayersAllocation) {
+			t.Fatalf("packet %d video-layers-allocation=%+v err=%v want %+v", i, layers, err, config.VideoLayersAllocation)
 		}
 		colorSpaceElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.ColorSpaceExtensionID)
 		if err != nil || !ok {

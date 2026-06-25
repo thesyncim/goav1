@@ -38,7 +38,8 @@
 // normalization, RTP payload packetization with dependency descriptors, sized
 // complete RTP packet wrapping with dependency-descriptor, MID/RID/RRID, CVO,
 // playout-delay, TWCC/TWCC-02, absolute-send-time, absolute-capture-time,
-// video-content-type, video-timing, and color-space header extensions,
+// video-content-type, video-timing, video-layers-allocation, and color-space
+// header extensions,
 // multi-spatial EncodePicture output for WebRTC
 // SVC and simulcast modes, key-frame scalability metadata OBUs, and runtime
 // bitrate/framerate/scalability

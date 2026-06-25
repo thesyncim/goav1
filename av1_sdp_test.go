@@ -34,6 +34,7 @@ func TestAV1SDPConstants(t *testing.T) {
 		av1.AV1RTPPlayoutDelayURI != "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay" ||
 		av1.AV1RTPVideoContentTypeURI != "http://www.webrtc.org/experiments/rtp-hdrext/video-content-type" ||
 		av1.AV1RTPVideoTimingURI != "http://www.webrtc.org/experiments/rtp-hdrext/video-timing" ||
+		av1.AV1RTPVideoLayersAllocationURI != "http://www.webrtc.org/experiments/rtp-hdrext/video-layers-allocation00" ||
 		av1.AV1RTPColorSpaceURI != "http://www.webrtc.org/experiments/rtp-hdrext/color-space" {
 		t.Fatalf("unexpected WebRTC video extmap URI constants")
 	}
