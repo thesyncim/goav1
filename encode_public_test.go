@@ -1632,6 +1632,159 @@ func TestPublicRTCPictureActiveDecodeTargetsControlMatrix(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderWebRTCVideoLayersAllocationControlMatrix(t *testing.T) {
+	fps := []goav1.EncoderRational{
+		{Num: 30, Den: 1},
+		{Num: 60000, Den: 1001},
+		{Num: 24, Den: 1},
+		{Num: 120, Den: 1},
+	}
+
+	for step, mode := range goav1.EncoderWebRTCScalabilityModes() {
+		mode := mode
+		t.Run(mode.String(), func(t *testing.T) {
+			width, height := publicRTCMatrixGeometry(t, mode)
+			cfg := publicRTCMatrixConfig(width, height, mode)
+			cfg.MaxFramerate = fps[step%len(fps)]
+			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*13))
+
+			normalized, err := goav1.SetWebRTCEncoderSVCConfig(cfg, cfg.TemporalLayerCount, cfg.SpatialLayerCount)
+			if err != nil {
+				t.Fatalf("SetWebRTCEncoderSVCConfig(%s): %v", mode, err)
+			}
+
+			spatialLayers := int(normalized.SpatialLayerCount)
+			temporalLayers := int(normalized.TemporalLayerCount)
+			allocationConfig := goav1.EncoderWebRTCVideoLayersAllocationConfig{
+				IncludeResolutionAndFramerate: true,
+			}
+			if spatialLayers > 1 && step%2 == 1 {
+				allocationConfig.RTPStreamCount = spatialLayers
+				allocationConfig.RTPStreamID = step % spatialLayers
+				for spatialID := 0; spatialID < spatialLayers; spatialID++ {
+					allocationConfig.SpatialLayerRTPStreamIDs[spatialID] = spatialID
+				}
+			}
+			publicRTCSetAllocationTargetBitrates(&allocationConfig, spatialLayers, temporalLayers, uint32(200+step*7))
+
+			allocation, err := goav1.EncoderWebRTCVideoLayersAllocation(cfg, allocationConfig)
+			if err != nil {
+				t.Fatalf("EncoderWebRTCVideoLayersAllocation(%s): %v", mode, err)
+			}
+			want := publicRTCExpectedVideoLayersAllocation(t, normalized, allocationConfig)
+			if !sameRTPVideoLayersAllocation(allocation, want) {
+				t.Fatalf("allocation=%+v want %+v", allocation, want)
+			}
+			size, err := goav1.RTPVideoLayersAllocationSize(allocation)
+			if err != nil {
+				t.Fatalf("RTPVideoLayersAllocationSize(%s): %v", mode, err)
+			}
+			buf := make([]byte, size)
+			n, err := goav1.PutRTPVideoLayersAllocationHeaderExtension(buf, allocation)
+			if err != nil {
+				t.Fatalf("PutRTPVideoLayersAllocationHeaderExtension(%s): %v", mode, err)
+			}
+			if n != size {
+				t.Fatalf("PutRTPVideoLayersAllocationHeaderExtension(%s) n=%d want %d", mode, n, size)
+			}
+			parsed, err := goav1.ParseRTPVideoLayersAllocationHeaderExtension(buf)
+			if err != nil {
+				t.Fatalf("ParseRTPVideoLayersAllocationHeaderExtension(%s): %v", mode, err)
+			}
+			if !sameRTPVideoLayersAllocation(parsed, want) {
+				t.Fatalf("parsed allocation=%+v want %+v", parsed, want)
+			}
+		})
+	}
+}
+
+func TestPublicEncoderWebRTCVideoLayersAllocationDefaultsMasksAndErrors(t *testing.T) {
+	t1Config := publicRTCMatrixConfig(640, 360, goav1.EncoderScalabilityModeL2T1)
+	publicRTCApplyControlBitrates(&t1Config, 900)
+	normalizedT1, err := goav1.SetWebRTCEncoderSVCConfig(t1Config, 0, 0)
+	if err != nil {
+		t.Fatalf("SetWebRTCEncoderSVCConfig L2T1: %v", err)
+	}
+	allocation, err := goav1.EncoderWebRTCVideoLayersAllocation(t1Config, goav1.EncoderWebRTCVideoLayersAllocationConfig{})
+	if err != nil {
+		t.Fatalf("default EncoderWebRTCVideoLayersAllocation: %v", err)
+	}
+	wantDefault := publicRTCExpectedVideoLayersAllocation(t, normalizedT1, goav1.EncoderWebRTCVideoLayersAllocationConfig{})
+	if !sameRTPVideoLayersAllocation(allocation, wantDefault) {
+		t.Fatalf("default allocation=%+v want %+v", allocation, wantDefault)
+	}
+
+	paused, err := goav1.EncoderWebRTCVideoLayersAllocation(t1Config, goav1.EncoderWebRTCVideoLayersAllocationConfig{
+		ActiveSpatialLayerMaskSet: true,
+	})
+	if err != nil {
+		t.Fatalf("paused EncoderWebRTCVideoLayersAllocation: %v", err)
+	}
+	if paused.RTPStreamCount != 1 || len(paused.ActiveSpatialLayers) != 0 {
+		t.Fatalf("paused allocation=%+v", paused)
+	}
+	pausedSize, err := goav1.RTPVideoLayersAllocationSize(paused)
+	if err != nil || pausedSize != 1 {
+		t.Fatalf("paused size=%d err=%v want 1,nil", pausedSize, err)
+	}
+
+	subsetConfig := publicRTCMatrixConfig(960, 540, goav1.EncoderScalabilityModeL3T2)
+	subsetOptions := goav1.EncoderWebRTCVideoLayersAllocationConfig{
+		ActiveSpatialLayerMaskSet:     true,
+		ActiveSpatialLayerMask:        0b101,
+		IncludeResolutionAndFramerate: true,
+	}
+	publicRTCSetAllocationTargetBitrates(&subsetOptions, 3, 2, 300)
+	subset, err := goav1.EncoderWebRTCVideoLayersAllocation(subsetConfig, subsetOptions)
+	if err != nil {
+		t.Fatalf("subset EncoderWebRTCVideoLayersAllocation: %v", err)
+	}
+	if len(subset.ActiveSpatialLayers) != 2 ||
+		subset.ActiveSpatialLayers[0].SpatialID != 0 ||
+		subset.ActiveSpatialLayers[1].SpatialID != 2 {
+		t.Fatalf("subset allocation=%+v", subset)
+	}
+
+	missingTemporalTargets := publicRTCMatrixConfig(640, 360, goav1.EncoderScalabilityModeL1T2)
+	if _, err := goav1.EncoderWebRTCVideoLayersAllocation(missingTemporalTargets, goav1.EncoderWebRTCVideoLayersAllocationConfig{}); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
+		t.Fatalf("missing temporal target err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	}
+	decreasing := goav1.EncoderWebRTCVideoLayersAllocationConfig{}
+	decreasing.TargetBitratesKbps[0][0] = 600
+	decreasing.TargetBitratesKbps[0][1] = 500
+	if _, err := goav1.EncoderWebRTCVideoLayersAllocation(missingTemporalTargets, decreasing); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
+		t.Fatalf("decreasing temporal target err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	}
+	badStream := goav1.EncoderWebRTCVideoLayersAllocationConfig{RTPStreamCount: 2, RTPStreamID: 2}
+	if _, err := goav1.EncoderWebRTCVideoLayersAllocation(t1Config, badStream); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
+		t.Fatalf("bad stream id err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	}
+	badLayerStream := goav1.EncoderWebRTCVideoLayersAllocationConfig{RTPStreamCount: 2}
+	badLayerStream.SpatialLayerRTPStreamIDs[1] = 2
+	if _, err := goav1.EncoderWebRTCVideoLayersAllocation(t1Config, badLayerStream); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
+		t.Fatalf("bad layer stream id err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	}
+	if _, err := goav1.EncoderWebRTCVideoLayersAllocation(t1Config, goav1.EncoderWebRTCVideoLayersAllocationConfig{
+		ActiveSpatialLayerMaskSet: true,
+		ActiveSpatialLayerMask:    0b100,
+	}); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
+		t.Fatalf("bad active spatial mask err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	}
+	if _, err := goav1.EncoderWebRTCVideoLayersAllocation(t1Config, goav1.EncoderWebRTCVideoLayersAllocationConfig{
+		RTPStreamCount:            2,
+		ActiveSpatialLayerMaskSet: true,
+	}); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
+		t.Fatalf("paused multi-stream err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	}
+	highFPS := t1Config
+	highFPS.MaxFramerate = goav1.EncoderRational{Num: 300, Den: 1}
+	if _, err := goav1.EncoderWebRTCVideoLayersAllocation(highFPS, goav1.EncoderWebRTCVideoLayersAllocationConfig{
+		IncludeResolutionAndFramerate: true,
+	}); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
+		t.Fatalf("high fps err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	}
+}
+
 func TestPublicLayeredDecoderRTPPacketDecodeTargetSelection(t *testing.T) {
 	const dependencyDescriptorExtensionID = 42
 	if _, err := goav1.RTPDependencyDescriptorDecodeTargetActive(goav1.RTPDependencyDescriptorState{}, 0); !errors.Is(err, goav1.ErrRTPInvalidDependencyDescriptor) {
@@ -5659,6 +5812,94 @@ func assertPublicRTCFrameRTPPacketsWithActiveDecodeTargets(t *testing.T, receive
 		}
 	}
 	assertPublicRTPPayloadsAssembleToFrame(t, frame.Data, payloadSlices)
+}
+
+func publicRTCSetAllocationTargetBitrates(config *goav1.EncoderWebRTCVideoLayersAllocationConfig, spatialLayers int, temporalLayers int, base uint32) {
+	for spatialID := 0; spatialID < spatialLayers; spatialID++ {
+		cumulative := base + uint32(spatialID*160)
+		for temporalID := 0; temporalID < temporalLayers; temporalID++ {
+			cumulative += uint32(70 + temporalID*35)
+			config.TargetBitratesKbps[spatialID][temporalID] = cumulative
+		}
+	}
+}
+
+func publicRTCExpectedVideoLayersAllocation(t *testing.T, config goav1.EncoderConfig, allocationConfig goav1.EncoderWebRTCVideoLayersAllocationConfig) goav1.RTPVideoLayersAllocation {
+	t.Helper()
+	spatialLayers := int(config.SpatialLayerCount)
+	temporalLayers := int(config.TemporalLayerCount)
+	if spatialLayers <= 0 || temporalLayers <= 0 {
+		t.Fatalf("invalid normalized layer counts spatial=%d temporal=%d", spatialLayers, temporalLayers)
+	}
+	rtpStreamCount := allocationConfig.RTPStreamCount
+	if rtpStreamCount == 0 {
+		rtpStreamCount = 1
+	}
+	activeMask := uint8((1 << uint(spatialLayers)) - 1)
+	if allocationConfig.ActiveSpatialLayerMaskSet {
+		activeMask = allocationConfig.ActiveSpatialLayerMask
+	}
+	if activeMask == 0 {
+		return goav1.RTPVideoLayersAllocation{RTPStreamCount: 1}
+	}
+
+	framerate := 0
+	if allocationConfig.IncludeResolutionAndFramerate {
+		framerate = publicRTCVideoLayersAllocationFramerate(t, config.MaxFramerate)
+	}
+	allocation := goav1.RTPVideoLayersAllocation{
+		RTPStreamID:               allocationConfig.RTPStreamID,
+		RTPStreamCount:            rtpStreamCount,
+		HasResolutionAndFramerate: allocationConfig.IncludeResolutionAndFramerate,
+	}
+	for streamID := 0; streamID < rtpStreamCount; streamID++ {
+		for spatialID := 0; spatialID < spatialLayers; spatialID++ {
+			if activeMask&(1<<uint(spatialID)) == 0 ||
+				allocationConfig.SpatialLayerRTPStreamIDs[spatialID] != streamID {
+				continue
+			}
+			layer := goav1.RTPVideoLayersAllocationLayer{
+				RTPStreamID:        streamID,
+				SpatialID:          spatialID,
+				TargetBitratesKbps: publicRTCVideoLayersAllocationTargets(t, config, allocationConfig, spatialID, temporalLayers),
+			}
+			if allocationConfig.IncludeResolutionAndFramerate {
+				layer.Width = int(config.SpatialLayers[spatialID].Resolution.Width)
+				layer.Height = int(config.SpatialLayers[spatialID].Resolution.Height)
+				layer.Framerate = framerate
+			}
+			allocation.ActiveSpatialLayers = append(allocation.ActiveSpatialLayers, layer)
+		}
+	}
+	return allocation
+}
+
+func publicRTCVideoLayersAllocationTargets(t *testing.T, config goav1.EncoderConfig, allocationConfig goav1.EncoderWebRTCVideoLayersAllocationConfig, spatialID int, temporalLayers int) []uint32 {
+	t.Helper()
+	targets := make([]uint32, temporalLayers)
+	for temporalID := 0; temporalID < temporalLayers; temporalID++ {
+		target := allocationConfig.TargetBitratesKbps[spatialID][temporalID]
+		if target == 0 && temporalLayers == 1 {
+			layerTarget := config.SpatialLayers[spatialID].TargetBitrateKbps
+			if layerTarget <= 0 {
+				layerTarget = config.TargetBitrateKbps
+			}
+			target = uint32(layerTarget)
+		}
+		if target == 0 {
+			t.Fatalf("missing target bitrate for S%d/T%d", spatialID, temporalID)
+		}
+		targets[temporalID] = target
+	}
+	return targets
+}
+
+func publicRTCVideoLayersAllocationFramerate(t *testing.T, rate goav1.EncoderRational) int {
+	t.Helper()
+	if !rate.Valid() {
+		t.Fatalf("invalid framerate %+v", rate)
+	}
+	return int((int64(rate.Num) + int64(rate.Den)/2) / int64(rate.Den))
 }
 
 func publicExpectedActiveDecodeTargetsMask(spatialLayers uint8, temporalLayers uint8, maxSpatialID uint8, maxTemporalID uint8) uint32 {
