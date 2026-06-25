@@ -408,12 +408,14 @@ func streamRTCEncoderRTPWithHeaderExtensions(
 }
 
 type rtcEncoderRTPStreamOptions struct {
-	HeaderExtensions rtcRTPHeaderExtensions
-	ConfigForStep    func(step int) goav1.EncoderConfig
-	ForceKeyFrame    func(frameIndex int) bool
-	DropPacket       func(frameIndex int, packetIndex int, packet rtp.Packet) bool
-	OnPacket         func(frameIndex int, packetIndex int, packet rtp.Packet, dropped bool) error
-	OnPicture        func(frameIndex int, picture goav1.RTCPicture)
+	HeaderExtensions     rtcRTPHeaderExtensions
+	ConfigForStep        func(step int) goav1.EncoderConfig
+	RTPOptionsForPicture func(picture goav1.RTCPicture) (goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions, error)
+	FrameFilter          func(frame goav1.RTCFrame) bool
+	ForceKeyFrame        func(frameIndex int) bool
+	DropPacket           func(frameIndex int, packetIndex int, packet rtp.Packet) bool
+	OnPacket             func(frameIndex int, packetIndex int, packet rtp.Packet, dropped bool) error
+	OnPicture            func(frameIndex int, picture goav1.RTCPicture)
 }
 
 func defaultRTCEncoderRTPStreamOptions() rtcEncoderRTPStreamOptions {
@@ -472,8 +474,15 @@ func streamRTCEncoderRTPWithOptions(
 		if options.OnPicture != nil {
 			options.OnPicture(n, picture)
 		}
+		var rtpOptions goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions
+		if options.RTPOptionsForPicture != nil {
+			rtpOptions, err = options.RTPOptionsForPicture(picture)
+			if err != nil {
+				return err
+			}
+		}
 		packets, nextSequence, nextTWCC, err := rtcPictureRTPPackets(
-			picture, limits, sequence, timestamp, twcc, options.HeaderExtensions)
+			picture, limits, sequence, timestamp, twcc, options.HeaderExtensions, rtpOptions, options.FrameFilter)
 		if err != nil {
 			return err
 		}
@@ -549,14 +558,48 @@ func rtcControlChurnConfigForScalabilityMode(mode goav1.EncoderScalabilityMode) 
 	}
 }
 
+func rtcActiveDecodeTargetOptionsForMaxLayer(
+	maxSpatialID uint8, maxTemporalID uint8,
+) func(goav1.RTCPicture) (goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions, error) {
+	return func(picture goav1.RTCPicture) (goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions, error) {
+		return picture.ActiveDecodeTargetsRTPOptions(maxSpatialID, maxTemporalID)
+	}
+}
+
+func rtcActiveDecodeTargetOptionsForSpatialLayer(
+	spatialID uint8, temporalLayers uint8,
+) func(goav1.RTCPicture) (goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions, error) {
+	return func(picture goav1.RTCPicture) (goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions, error) {
+		if temporalLayers == 0 {
+			return goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions{}, goav1.ErrEncoderInvalidFrame
+		}
+		return picture.SpatialDecodeTargetsRTPOptions(spatialID, temporalLayers-1)
+	}
+}
+
 func rtcPictureRTPPackets(
 	picture goav1.RTCPicture, limits goav1.RTPPayloadSizeLimits, sequence uint16, timestamp uint32, twcc uint16,
-	headerExtensions rtcRTPHeaderExtensions,
+	headerExtensions rtcRTPHeaderExtensions, options goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions,
+	frameFilter func(frame goav1.RTCFrame) bool,
 ) ([]rtp.Packet, uint16, uint16, error) {
 	var packets []rtp.Packet
+	var selected [goav1.EncoderWebRTCMaxSpatialLayers]int
+	selectedCount := 0
 	for i := 0; i < picture.FrameNum; i++ {
+		if frameFilter != nil && !frameFilter(picture.Frames[i]) {
+			continue
+		}
+		selected[selectedCount] = i
+		selectedCount++
+	}
+	if selectedCount == 0 {
+		return nil, sequence, twcc, goav1.ErrEncoderInvalidFrame
+	}
+	for i := 0; i < selectedCount; i++ {
+		frame := picture.Frames[selected[i]]
+		frame.LastFrameInPicture = i+1 == selectedCount
 		framePackets, nextSequence, nextTWCC, err := rtcFrameRTPPackets(
-			picture.Frames[i], limits, sequence, timestamp, twcc, headerExtensions)
+			frame, limits, sequence, timestamp, twcc, headerExtensions, options)
 		if err != nil {
 			return nil, sequence, twcc, err
 		}
@@ -568,24 +611,24 @@ func rtcPictureRTPPackets(
 
 func rtcFrameRTPPackets(
 	frame goav1.RTCFrame, limits goav1.RTPPayloadSizeLimits, sequence uint16, timestamp uint32, twcc uint16,
-	headerExtensions rtcRTPHeaderExtensions,
+	headerExtensions rtcRTPHeaderExtensions, options goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions,
 ) ([]rtp.Packet, uint16, uint16, error) {
-	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
+	firstSize, err := frame.RTPPacketScratchLenWithOptions(limits, nil, options)
 	if err != nil {
 		return nil, sequence, twcc, err
 	}
 	obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
-	size, err := frame.RTPPacketScratchLen(limits, obuScratch)
+	size, err := frame.RTPPacketScratchLenWithOptions(limits, obuScratch, options)
 	if err != nil {
 		return nil, sequence, twcc, err
 	}
 	packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
 	workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
 	spans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
-	payloads, descriptors, count, err := frame.AppendRTPPackets(
+	payloads, descriptors, count, err := frame.AppendRTPPacketsWithOptions(
 		make([]byte, 0, size.MaxPayloadBytes*size.Packetizer.Packets),
 		make([]byte, 0, size.MaxDescriptorBytes*size.Packetizer.Packets),
-		spans, limits, obuScratch, packetScratch, workScratch)
+		spans, limits, obuScratch, packetScratch, workScratch, options)
 	if err != nil {
 		return nil, sequence, twcc, err
 	}

@@ -117,12 +117,16 @@ func TestBrowserLiveRTCEncoderDirectRTPPlaybackStats(t *testing.T) {
 		name         string
 		query        string
 		options      rtcEncoderRTPStreamOptions
+		wantWidth    int
+		wantHeight   int
 		minKeyFrames int
 	}{
 		{
 			name:         "default-l1t3",
 			query:        "direct-rtp=1",
 			options:      defaultRTCEncoderRTPStreamOptions(),
+			wantWidth:    width,
+			wantHeight:   height,
 			minKeyFrames: 2,
 		},
 		{
@@ -133,6 +137,8 @@ func TestBrowserLiveRTCEncoderDirectRTPPlaybackStats(t *testing.T) {
 				options.ConfigForStep = rtcControlChurnConfigForScalabilityMode(goav1.EncoderScalabilityModeL1T1)
 				return options
 			}(),
+			wantWidth:    width,
+			wantHeight:   height,
 			minKeyFrames: 2,
 		},
 		{
@@ -143,13 +149,44 @@ func TestBrowserLiveRTCEncoderDirectRTPPlaybackStats(t *testing.T) {
 				options.ConfigForStep = rtcControlChurnConfigForScalabilityMode(goav1.EncoderScalabilityModeL1T2)
 				return options
 			}(),
+			wantWidth:    width,
+			wantHeight:   height,
+			minKeyFrames: 2,
+		},
+		{
+			name:  "shared-svc-l2t3-key-shift-forward-base",
+			query: "direct-rtp-l2t3-key-shift-base=1",
+			options: func() rtcEncoderRTPStreamOptions {
+				options := defaultRTCEncoderRTPStreamOptions()
+				options.ConfigForStep = rtcControlChurnConfigForScalabilityMode(goav1.EncoderScalabilityModeL2T3_KEY_SHIFT)
+				options.RTPOptionsForPicture = rtcActiveDecodeTargetOptionsForSpatialLayer(0, 3)
+				options.FrameFilter = func(frame goav1.RTCFrame) bool { return frame.SpatialID == 0 }
+				return options
+			}(),
+			wantWidth:    width / 2,
+			wantHeight:   544,
+			minKeyFrames: 2,
+		},
+		{
+			name:  "simulcast-s2t2h-forward-top",
+			query: "direct-rtp-s2t2h-top=1",
+			options: func() rtcEncoderRTPStreamOptions {
+				options := defaultRTCEncoderRTPStreamOptions()
+				options.ConfigForStep = rtcControlChurnConfigForScalabilityMode(goav1.EncoderScalabilityModeS2T2h)
+				options.RTPOptionsForPicture = rtcActiveDecodeTargetOptionsForSpatialLayer(1, 2)
+				options.FrameFilter = func(frame goav1.RTCFrame) bool { return frame.SpatialID == 1 }
+				return options
+			}(),
+			wantWidth:    width,
+			wantHeight:   height,
 			minKeyFrames: 2,
 		},
 	}
 	for _, scenario := range scenarios {
 		scenario := scenario
 		t.Run(scenario.name, func(t *testing.T) {
-			got := runBrowserLiveRTCEncoderDirectRTPPlaybackStats(t, browserPath, scenario.name, scenario.query, scenario.options)
+			got := runBrowserLiveRTCEncoderDirectRTPPlaybackStats(
+				t, browserPath, scenario.name, scenario.query, scenario.options, scenario.wantWidth, scenario.wantHeight)
 			if got.KeyFramesDecoded < scenario.minKeyFrames {
 				t.Fatalf("%s browser keyframes=%d want at least %d after forced refresh",
 					scenario.name, got.KeyFramesDecoded, scenario.minKeyFrames)
@@ -160,6 +197,7 @@ func TestBrowserLiveRTCEncoderDirectRTPPlaybackStats(t *testing.T) {
 
 func runBrowserLiveRTCEncoderDirectRTPPlaybackStats(
 	t *testing.T, browserPath string, label string, query string, options rtcEncoderRTPStreamOptions,
+	wantWidth int, wantHeight int,
 ) browserPlaybackEvidence {
 	t.Helper()
 	var mu sync.Mutex
@@ -222,7 +260,7 @@ func runBrowserLiveRTCEncoderDirectRTPPlaybackStats(
 		default:
 		}
 	}
-	assertBrowserPlaybackEvidence(t, label, got)
+	assertBrowserPlaybackEvidenceWithSize(t, label, got, wantWidth, wantHeight)
 	select {
 	case err := <-streamErr:
 		t.Fatalf("%s stream failed: %v", label, err)
@@ -561,11 +599,16 @@ type browserPlaybackEvidence struct {
 
 func assertBrowserPlaybackEvidence(t *testing.T, label string, got browserPlaybackEvidence) {
 	t.Helper()
+	assertBrowserPlaybackEvidenceWithSize(t, label, got, width, height)
+}
+
+func assertBrowserPlaybackEvidenceWithSize(t *testing.T, label string, got browserPlaybackEvidence, wantWidth int, wantHeight int) {
+	t.Helper()
 	if !got.OK {
 		t.Fatalf("%s browser AV1 playback probe failed: %s; last=%+v", label, got.Error, got)
 	}
-	if got.VideoWidth != width || got.VideoHeight != height {
-		t.Fatalf("%s browser decoded size=%dx%d want %dx%d", label, got.VideoWidth, got.VideoHeight, width, height)
+	if got.VideoWidth != wantWidth || got.VideoHeight != wantHeight {
+		t.Fatalf("%s browser decoded size=%dx%d want %dx%d", label, got.VideoWidth, got.VideoHeight, wantWidth, wantHeight)
 	}
 	if got.FramesDecoded < 30 || got.PacketsReceived == 0 || got.BytesReceived == 0 {
 		t.Fatalf("%s browser stats frames=%d packets=%d bytes=%d",

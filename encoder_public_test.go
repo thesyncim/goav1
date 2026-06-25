@@ -496,6 +496,54 @@ func TestPublicEncoderWebRTCActiveDecodeTargetsMask(t *testing.T) {
 	}
 }
 
+func TestPublicEncoderWebRTCSpatialDecodeTargetsMask(t *testing.T) {
+	for _, mode := range av1.EncoderWebRTCScalabilityModes() {
+		t.Run(mode.String(), func(t *testing.T) {
+			spatialLayers, temporalLayers, _, ok := mode.Layers()
+			if !ok {
+				t.Fatalf("invalid mode %s", mode)
+			}
+			normalized, err := av1.SetWebRTCEncoderSVCConfig(av1.EncoderConfig{
+				Resolution:        av1.EncoderResolution{Width: 1280, Height: 720},
+				MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+				MinBitrateKbps:    120,
+				MaxBitrateKbps:    1600,
+				TargetBitrateKbps: 900,
+				Scalability:       mode,
+			}, 0, 0)
+			if err != nil {
+				t.Fatalf("SetWebRTCEncoderSVCConfig(%s): %v", mode, err)
+			}
+			structure, err := av1.EncoderWebRTCFrameDependencyStructureForConfig(normalized)
+			if err != nil {
+				t.Fatalf("EncoderWebRTCFrameDependencyStructureForConfig(%s): %v", mode, err)
+			}
+			for spatialID := uint8(0); spatialID < spatialLayers; spatialID++ {
+				mask, err := av1.EncoderWebRTCSpatialDecodeTargetsMask(structure, spatialID, temporalLayers-1)
+				if err != nil {
+					t.Fatalf("EncoderWebRTCSpatialDecodeTargetsMask(%s,S%d): %v", mode, spatialID, err)
+				}
+				if bits.OnesCount32(mask) != int(temporalLayers) {
+					t.Fatalf("%s S%d mask=%#x targets=%d want %d",
+						mode, spatialID, mask, bits.OnesCount32(mask), temporalLayers)
+				}
+				for temporalID := uint8(0); temporalID < temporalLayers; temporalID++ {
+					target := uint(spatialID*temporalLayers + temporalID)
+					if mask&(uint32(1)<<target) == 0 {
+						t.Fatalf("%s S%d mask=%#x missing T%d target bit %d", mode, spatialID, mask, temporalID, target)
+					}
+				}
+			}
+			if _, err := av1.EncoderWebRTCSpatialDecodeTargetsMask(structure, spatialLayers, 0); !errors.Is(err, av1.ErrEncoderInvalidFrame) {
+				t.Fatalf("invalid spatial mask err=%v want %v", err, av1.ErrEncoderInvalidFrame)
+			}
+			if _, err := av1.EncoderWebRTCSpatialDecodeTargetsMask(structure, 0, temporalLayers); !errors.Is(err, av1.ErrEncoderInvalidFrame) {
+				t.Fatalf("invalid temporal mask err=%v want %v", err, av1.ErrEncoderInvalidFrame)
+			}
+		})
+	}
+}
+
 func TestPublicEncoderLowOverheadOBU(t *testing.T) {
 	unit := av1.EncoderOBU{
 		Type:       av1.OBUFrame,

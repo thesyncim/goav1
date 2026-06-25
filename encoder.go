@@ -436,6 +436,10 @@ func EncoderWebRTCActiveDecodeTargetsMask(structure EncoderWebRTCFrameDependency
 	return internalencoder.WebRTCActiveDecodeTargetsMask(structure, maxSpatialID, maxTemporalID)
 }
 
+func EncoderWebRTCSpatialDecodeTargetsMask(structure EncoderWebRTCFrameDependencyStructure, spatialID uint8, maxTemporalID uint8) (uint32, error) {
+	return internalencoder.WebRTCSpatialDecodeTargetsMask(structure, spatialID, maxTemporalID)
+}
+
 func EncoderWebRTCDependencyDescriptorSizeWithOptions(structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo, options EncoderWebRTCDependencyDescriptorOptions) (int, error) {
 	return internalencoder.WebRTCDependencyDescriptorSizeWithOptions(structure, info, options)
 }

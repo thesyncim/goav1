@@ -464,11 +464,37 @@ func (p RTCPicture) ActiveDecodeTargetsMask(maxSpatialID uint8, maxTemporalID ui
 	return encoder.WebRTCActiveDecodeTargetsMask(structure, maxSpatialID, maxTemporalID)
 }
 
+// SpatialDecodeTargetsMask returns a dependency-descriptor active decode target
+// mask that enables decode targets for one spatial layer up to maxTemporalID.
+// This is useful when forwarding a browser-compatible simulcast stream or base
+// SVC stream from a multi-spatial encoded picture.
+func (p RTCPicture) SpatialDecodeTargetsMask(spatialID uint8, maxTemporalID uint8) (uint32, error) {
+	structure, err := p.dependencyStructure()
+	if err != nil {
+		return 0, err
+	}
+	return encoder.WebRTCSpatialDecodeTargetsMask(structure, spatialID, maxTemporalID)
+}
+
 // ActiveDecodeTargetsRTPOptions returns packetization options that write the
 // active decode-target mask for maxSpatialID/maxTemporalID on the first RTP
 // packet of each frame in the picture.
 func (p RTCPicture) ActiveDecodeTargetsRTPOptions(maxSpatialID uint8, maxTemporalID uint8) (EncoderWebRTCRTPPacketDependencyDescriptorOptions, error) {
 	mask, err := p.ActiveDecodeTargetsMask(maxSpatialID, maxTemporalID)
+	if err != nil {
+		return EncoderWebRTCRTPPacketDependencyDescriptorOptions{}, err
+	}
+	return EncoderWebRTCRTPPacketDependencyDescriptorOptions{
+		ActiveDecodeTargetsPresentOnFirstPacket: true,
+		ActiveDecodeTargetsMask:                 mask,
+	}, nil
+}
+
+// SpatialDecodeTargetsRTPOptions returns packetization options that write an
+// exact spatial-layer active decode-target mask on the first RTP packet of each
+// frame in the picture.
+func (p RTCPicture) SpatialDecodeTargetsRTPOptions(spatialID uint8, maxTemporalID uint8) (EncoderWebRTCRTPPacketDependencyDescriptorOptions, error) {
+	mask, err := p.SpatialDecodeTargetsMask(spatialID, maxTemporalID)
 	if err != nil {
 		return EncoderWebRTCRTPPacketDependencyDescriptorOptions{}, err
 	}
