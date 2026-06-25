@@ -328,7 +328,9 @@ ship under `internal/av1/testdata/libaom/`.
   simulcast modes,
   tile columns, golden references, RTP payload packetization, dependency
   descriptors, and sized complete RTP packet wrapping with
-  dependency-descriptor, MID/RID/RRID, and TWCC/TWCC-02 header extensions. The
+  dependency-descriptor and negotiated MID/RID/RRID/CVO/playout-delay/
+  TWCC/TWCC-02/absolute-send-time/absolute-capture-time/color-space/
+  video-content-type/video-timing header extensions. The
   lower-level WebRTC encoder surface validates the W3C AV1 SVC mode vocabulary,
   temporal/spatial
   dependency structures, dependency-descriptor decode-target grids,

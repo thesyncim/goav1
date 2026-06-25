@@ -1158,6 +1158,43 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 			IncludeTimestamps:     true,
 			FeedbackSequenceCount: 3,
 		},
+		VideoOrientationExtensionID: 6,
+		VideoOrientation: goav1.RTPCoordinationOfVideoOrientation{
+			Camera:   true,
+			Flip:     true,
+			Rotation: 180,
+		},
+		PlayoutDelayExtensionID:        7,
+		PlayoutDelay:                   goav1.RTPPlayoutDelay{MinDelayMs: 120, MaxDelayMs: 560},
+		AbsoluteSendTimeExtensionID:    8,
+		AbsoluteSendTime:               0x00abc1,
+		AbsoluteCaptureTimeExtensionID: 9,
+		AbsoluteCaptureTime: goav1.RTPAbsoluteCaptureTime{
+			AbsoluteCaptureTimestamp:           0x0102030405060708,
+			EstimatedCaptureClockOffsetPresent: true,
+			EstimatedCaptureClockOffset:        -1234,
+		},
+		VideoContentTypeExtensionID: 10,
+		VideoContentType:            goav1.RTPVideoContentTypeScreenshare,
+		VideoTimingExtensionID:      11,
+		VideoTiming: goav1.RTPVideoTiming{
+			Flags:                        goav1.RTPVideoTimingFlagTriggeredByTimer,
+			EncodeStartDeltaMs:           1,
+			EncodeFinishDeltaMs:          2,
+			PacketizationCompleteDeltaMs: 3,
+			PacerExitDeltaMs:             4,
+			NetworkTimestampDeltaMs:      5,
+			NetworkTimestamp2DeltaMs:     6,
+		},
+		ColorSpaceExtensionID: 12,
+		ColorSpace: goav1.RTPColorSpace{
+			Primaries:              goav1.RTPColorSpacePrimaryBT709,
+			Transfer:               goav1.RTPColorSpaceTransferBT709,
+			Matrix:                 goav1.RTPColorSpaceMatrixBT709,
+			Range:                  goav1.RTPColorSpaceRangeFull,
+			ChromaSitingHorizontal: goav1.RTPColorSpaceChromaSitingHalf,
+			ChromaSitingVertical:   goav1.RTPColorSpaceChromaSitingCollocated,
+		},
 		HeaderExtensionProfile: goav1.RTPExtensionProfileTwoByte | 0x0005,
 	}
 	headerSpans := make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, packetCount)
@@ -1179,6 +1216,11 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 	duplicateExtConfig.MIDExtensionID = config.DependencyDescriptorExtensionID
 	if _, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(duplicateExtConfig, []byte{0xaa}, []byte{0xbb}, []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 1}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
 		t.Fatalf("duplicate extension id size err=%v want %v", err, goav1.ErrRTPInvalidHeaderExtension)
+	}
+	danglingExtConfig := config
+	danglingExtConfig.VideoOrientationExtensionID = 0
+	if _, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(danglingExtConfig, []byte{0xaa}, []byte{0xbb}, []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 1}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("dangling extension value size err=%v want %v", err, goav1.ErrRTPInvalidHeaderExtension)
 	}
 
 	sizeInfo, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(config, rtpPayloads, descriptors, packetSpans[:packetCount])
@@ -1308,6 +1350,62 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 		wantTWCC02.SequenceNumber += uint16(i)
 		if err != nil || twcc02 != wantTWCC02 {
 			t.Fatalf("packet %d TWCC02=%+v err=%v want %+v", i, twcc02, err, wantTWCC02)
+		}
+		orientationElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.VideoOrientationExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d CVO extension ok=%v err=%v", i, ok, err)
+		}
+		orientation, err := goav1.ParseRTPCoordinationOfVideoOrientationHeaderExtension(orientationElement.Payload)
+		if err != nil || orientation != config.VideoOrientation {
+			t.Fatalf("packet %d CVO=%+v err=%v want %+v", i, orientation, err, config.VideoOrientation)
+		}
+		playoutElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.PlayoutDelayExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d playout-delay extension ok=%v err=%v", i, ok, err)
+		}
+		playout, err := goav1.ParseRTPPlayoutDelayHeaderExtension(playoutElement.Payload)
+		if err != nil || playout != config.PlayoutDelay {
+			t.Fatalf("packet %d playout-delay=%+v err=%v want %+v", i, playout, err, config.PlayoutDelay)
+		}
+		absSendElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.AbsoluteSendTimeExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d abs-send-time extension ok=%v err=%v", i, ok, err)
+		}
+		absSend, err := goav1.ParseRTPAbsoluteSendTimeHeaderExtension(absSendElement.Payload)
+		if err != nil || absSend != config.AbsoluteSendTime {
+			t.Fatalf("packet %d abs-send-time=%#x err=%v want %#x", i, absSend, err, config.AbsoluteSendTime)
+		}
+		absCaptureElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.AbsoluteCaptureTimeExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d abs-capture-time extension ok=%v err=%v", i, ok, err)
+		}
+		absCapture, err := goav1.ParseRTPAbsoluteCaptureTimeHeaderExtension(absCaptureElement.Payload)
+		if err != nil || absCapture != config.AbsoluteCaptureTime {
+			t.Fatalf("packet %d abs-capture-time=%+v err=%v want %+v", i, absCapture, err, config.AbsoluteCaptureTime)
+		}
+		contentElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.VideoContentTypeExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d content-type extension ok=%v err=%v", i, ok, err)
+		}
+		contentType, err := goav1.ParseRTPVideoContentTypeHeaderExtension(contentElement.Payload)
+		if err != nil || contentType != config.VideoContentType {
+			t.Fatalf("packet %d content-type=%d err=%v want %d", i, contentType, err, config.VideoContentType)
+		}
+		timingElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.VideoTimingExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d video-timing extension ok=%v err=%v", i, ok, err)
+		}
+		timing, err := goav1.ParseRTPVideoTimingHeaderExtension(timingElement.Payload)
+		if err != nil || timing != config.VideoTiming {
+			t.Fatalf("packet %d video-timing=%+v err=%v want %+v", i, timing, err, config.VideoTiming)
+		}
+		colorSpaceElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.ColorSpaceExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d color-space extension ok=%v err=%v", i, ok, err)
+		}
+		colorSpace, err := goav1.ParseRTPColorSpaceHeaderExtension(colorSpaceElement.Payload)
+		if err != nil || colorSpace != config.ColorSpace {
+			t.Fatalf("packet %d color-space=%+v err=%v want %+v", i, colorSpace, err, config.ColorSpace)
 		}
 		if !bytes.Equal(descriptorPacket.DescriptorPayload, fullPackets[span.DependencyDescriptorOffset:span.DependencyDescriptorOffset+span.DependencyDescriptorLength]) {
 			t.Fatalf("packet %d dependency descriptor span mismatch", i)
