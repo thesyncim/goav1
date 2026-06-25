@@ -4,18 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/pion/webrtc/v4"
+
+	goav1 "github.com/thesyncim/goav1"
 )
 
 const (
@@ -91,6 +95,90 @@ func TestBrowserLiveAV1PlaybackStats(t *testing.T) {
 			t.Fatalf("%s browser AV1 playback probe: %v", label, err)
 		}
 		assertBrowserPlaybackEvidence(t, label, got)
+	}
+}
+
+func TestBrowserLiveRTCEncoderDirectRTPPlaybackStats(t *testing.T) {
+	required := os.Getenv(requireBrowserE2EEnv) == "1"
+	if !required && os.Getenv(browserE2EEnv) != "1" {
+		t.Skipf("set %s=1 to run the live browser/libwebrtc AV1 playback gate", browserE2EEnv)
+	}
+	browserPath, err := browserExecutable()
+	if err != nil {
+		if required {
+			t.Fatalf("required browser executable unavailable: %v", err)
+		}
+		t.Skip(err)
+	}
+
+	var mu sync.Mutex
+	var peers []*webrtc.PeerConnection
+	streamErr := make(chan error, 4)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(indexHTML)
+	})
+	mux.HandleFunc("/offer", func(w http.ResponseWriter, r *http.Request) {
+		err := handleRTCEncoderRTPOfferWithPeerConnectionHook(w, r, func(pc *webrtc.PeerConnection) {
+			mu.Lock()
+			peers = append(peers, pc)
+			mu.Unlock()
+		}, streamErr)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, pc := range peers {
+			_ = pc.Close()
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx,
+		append(chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.ExecPath(browserPath),
+			chromedp.Flag("headless", "new"),
+			chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
+			chromedp.Flag("disable-background-timer-throttling", true),
+			chromedp.Flag("disable-renderer-backgrounding", true),
+			chromedp.Flag("mute-audio", true),
+			chromedp.NoSandbox,
+			chromedp.UserDataDir(t.TempDir()),
+		)...,
+	)
+	defer cancelAlloc()
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	defer cancelBrowser()
+
+	got := browserPlaybackEvidence{}
+	if err := chromedp.Run(browserCtx,
+		chromedp.Navigate(server.URL+"?direct-rtp=1"),
+		chromedp.Evaluate(browserPlaybackProbeJS(45), &got, evalAwaitPromise),
+	); err != nil {
+		t.Fatalf("direct RTP browser AV1 playback probe: %v", err)
+	}
+	if !got.OK {
+		select {
+		case err := <-streamErr:
+			t.Fatalf("direct RTP stream failed before browser playback: %v; last=%+v", err, got)
+		default:
+		}
+	}
+	assertBrowserPlaybackEvidence(t, "direct-rtp", got)
+	if got.KeyFramesDecoded < 2 {
+		t.Fatalf("direct-rtp browser keyframes=%d want at least 2 after forced refresh", got.KeyFramesDecoded)
+	}
+	select {
+	case err := <-streamErr:
+		t.Fatalf("direct RTP stream failed: %v", err)
+	default:
 	}
 }
 
@@ -213,6 +301,129 @@ func browserPlaybackProbeJS(minFrames int) string {
 
 func evalAwaitPromise(p *cdpruntime.EvaluateParams) *cdpruntime.EvaluateParams {
 	return p.WithAwaitPromise(true)
+}
+
+func handleRTCEncoderRTPOfferWithPeerConnectionHook(
+	w http.ResponseWriter,
+	r *http.Request,
+	onPeerConnection func(*webrtc.PeerConnection),
+	streamErr chan<- error,
+) error {
+	offerBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	pc, err := newRTCEncoderRTPPeerConnection()
+	if err != nil {
+		return err
+	}
+	if onPeerConnection != nil {
+		onPeerConnection(pc)
+	}
+	track, err := webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeAV1}, "video", "goav1")
+	if err != nil {
+		pc.Close()
+		return err
+	}
+	sender, err := pc.AddTrack(track)
+	if err != nil {
+		pc.Close()
+		return err
+	}
+	var wantKey atomic.Bool
+	wantKey.Store(true)
+	done := make(chan struct{})
+	startSenderPictureLossReader(sender, &wantKey, done)
+	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
+		switch s {
+		case webrtc.PeerConnectionStateConnected:
+			extensions, err := rtcRTPHeaderExtensionsFromAnswer(pc.LocalDescription().SDP)
+			if err != nil {
+				select {
+				case streamErr <- err:
+				default:
+				}
+				return
+			}
+			go func() {
+				if err := streamRTCEncoderRTPWithHeaderExtensions(track, &wantKey, done, extensions); err != nil {
+					select {
+					case streamErr <- err:
+					default:
+					}
+				}
+			}()
+		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed,
+			webrtc.PeerConnectionStateDisconnected:
+			select {
+			case <-done:
+			default:
+				close(done)
+			}
+		}
+	})
+	if err := pc.SetRemoteDescription(webrtc.SessionDescription{
+		Type: webrtc.SDPTypeOffer, SDP: string(offerBytes),
+	}); err != nil {
+		pc.Close()
+		return err
+	}
+	answer, err := pc.CreateAnswer(nil)
+	if err != nil {
+		pc.Close()
+		return err
+	}
+	gathered := webrtc.GatheringCompletePromise(pc)
+	if err := pc.SetLocalDescription(answer); err != nil {
+		pc.Close()
+		return err
+	}
+	<-gathered
+	fmt.Fprint(w, pc.LocalDescription().SDP)
+	return nil
+}
+
+func newRTCEncoderRTPPeerConnection() (*webrtc.PeerConnection, error) {
+	var mediaEngine webrtc.MediaEngine
+	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
+		return nil, err
+	}
+	if err := mediaEngine.RegisterHeaderExtension(
+		webrtc.RTPHeaderExtensionCapability{URI: goav1.AV1RTPDependencyDescriptorURI},
+		webrtc.RTPCodecTypeVideo,
+	); err != nil {
+		return nil, err
+	}
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(&mediaEngine))
+	return api.NewPeerConnection(webrtc.Configuration{})
+}
+
+func rtcRTPHeaderExtensionsFromAnswer(answerSDP string) (rtcRTPHeaderExtensions, error) {
+	extensions := rtcRTPHeaderExtensions{
+		Profile: goav1.RTPExtensionProfileTwoByte,
+	}
+	if dependencyID, ok := goav1.AV1SDPAnswersSendHeaderExtensionID(
+		answerSDP, goav1.AV1RTPDependencyDescriptorURI); ok {
+		if dependencyID <= 0 || dependencyID > 255 {
+			return rtcRTPHeaderExtensions{}, fmt.Errorf("answer dependency descriptor extmap id=%d", dependencyID)
+		}
+		extensions.DependencyDescriptorID = uint8(dependencyID)
+	}
+	if transportCCID, ok := goav1.AV1SDPAnswersSendHeaderExtensionID(
+		answerSDP, goav1.AV1RTPTransportWideCCURI); ok {
+		if transportCCID <= 0 || transportCCID > 255 {
+			return rtcRTPHeaderExtensions{}, fmt.Errorf("answer transport-wide-cc extmap id=%d", transportCCID)
+		}
+		extensions.TransportWideCCID = uint8(transportCCID)
+	} else if transportCC02ID, ok := goav1.AV1SDPAnswersSendHeaderExtensionID(
+		answerSDP, goav1.AV1RTPTransportWideCC02URI); ok {
+		if transportCC02ID <= 0 || transportCC02ID > 255 {
+			return rtcRTPHeaderExtensions{}, fmt.Errorf("answer transport-wide-cc-02 extmap id=%d", transportCC02ID)
+		}
+		extensions.TransportWideCC02ID = uint8(transportCC02ID)
+	}
+	return extensions, nil
 }
 
 func browserExecutable() (string, error) {

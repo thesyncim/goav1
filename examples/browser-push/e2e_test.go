@@ -341,7 +341,28 @@ func startSenderPictureLossReader(sender *webrtc.RTPSender, wantKey *atomic.Bool
 	}()
 }
 
+type rtcRTPHeaderExtensions struct {
+	DependencyDescriptorID uint8
+	TransportWideCCID      uint8
+	TransportWideCC02ID    uint8
+	Profile                uint16
+}
+
+func defaultRTCRTPHeaderExtensions() rtcRTPHeaderExtensions {
+	return rtcRTPHeaderExtensions{
+		DependencyDescriptorID: 4,
+		TransportWideCCID:      5,
+		Profile:                goav1.RTPExtensionProfileTwoByte,
+	}
+}
+
 func streamRTCEncoderRTP(track *webrtc.TrackLocalStaticRTP, wantKey *atomic.Bool, done <-chan struct{}) error {
+	return streamRTCEncoderRTPWithHeaderExtensions(track, wantKey, done, defaultRTCRTPHeaderExtensions())
+}
+
+func streamRTCEncoderRTPWithHeaderExtensions(
+	track *webrtc.TrackLocalStaticRTP, wantKey *atomic.Bool, done <-chan struct{}, headerExtensions rtcRTPHeaderExtensions,
+) error {
 	cfg := rtcControlChurnConfig(0)
 	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
 	if err != nil {
@@ -373,7 +394,8 @@ func streamRTCEncoderRTP(track *webrtc.TrackLocalStaticRTP, wantKey *atomic.Bool
 		if err != nil {
 			return err
 		}
-		packets, nextSequence, nextTWCC, err := rtcPictureRTPPackets(picture, limits, sequence, timestamp, twcc)
+		packets, nextSequence, nextTWCC, err := rtcPictureRTPPackets(
+			picture, limits, sequence, timestamp, twcc, headerExtensions)
 		if err != nil {
 			return err
 		}
@@ -434,11 +456,12 @@ func rtcControlChurnConfig(step int) goav1.EncoderConfig {
 
 func rtcPictureRTPPackets(
 	picture goav1.RTCPicture, limits goav1.RTPPayloadSizeLimits, sequence uint16, timestamp uint32, twcc uint16,
+	headerExtensions rtcRTPHeaderExtensions,
 ) ([]rtp.Packet, uint16, uint16, error) {
 	var packets []rtp.Packet
 	for i := 0; i < picture.FrameNum; i++ {
 		framePackets, nextSequence, nextTWCC, err := rtcFrameRTPPackets(
-			picture.Frames[i], limits, sequence, timestamp, twcc)
+			picture.Frames[i], limits, sequence, timestamp, twcc, headerExtensions)
 		if err != nil {
 			return nil, sequence, twcc, err
 		}
@@ -450,6 +473,7 @@ func rtcPictureRTPPackets(
 
 func rtcFrameRTPPackets(
 	frame goav1.RTCFrame, limits goav1.RTPPayloadSizeLimits, sequence uint16, timestamp uint32, twcc uint16,
+	headerExtensions rtcRTPHeaderExtensions,
 ) ([]rtp.Packet, uint16, uint16, error) {
 	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
 	if err != nil {
@@ -470,15 +494,19 @@ func rtcFrameRTPPackets(
 	if err != nil {
 		return nil, sequence, twcc, err
 	}
+	if headerExtensions.DependencyDescriptorID == 0 {
+		return rtcFrameRTPPacketsWithoutHeaderExtensions(payloads, spans[:count], sequence, timestamp)
+	}
 	headerConfig := goav1.EncoderWebRTCRTPPacketHeaderConfig{
 		PayloadType:                     96,
 		SequenceNumber:                  sequence,
 		Timestamp:                       timestamp,
 		SSRC:                            0xdec0de,
-		DependencyDescriptorExtensionID: 4,
-		TransportWideCCExtensionID:      5,
+		DependencyDescriptorExtensionID: headerExtensions.DependencyDescriptorID,
+		TransportWideCCExtensionID:      headerExtensions.TransportWideCCID,
+		TransportWideCC02ExtensionID:    headerExtensions.TransportWideCC02ID,
 		TransportWideCCSequenceNumber:   twcc,
-		HeaderExtensionProfile:          goav1.RTPExtensionProfileTwoByte,
+		HeaderExtensionProfile:          headerExtensions.Profile,
 	}
 	headerSize, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(
 		headerConfig, payloads, descriptors, spans[:count])
@@ -505,6 +533,31 @@ func rtcFrameRTPPackets(
 		}
 	}
 	return out, sequence + uint16(packetCount), twcc + uint16(packetCount), nil
+}
+
+func rtcFrameRTPPacketsWithoutHeaderExtensions(
+	payloads []byte, spans []goav1.EncoderWebRTCRTPPacketSpan, sequence uint16, timestamp uint32,
+) ([]rtp.Packet, uint16, uint16, error) {
+	out := make([]rtp.Packet, len(spans))
+	for i, span := range spans {
+		if span.PayloadOffset < 0 || span.PayloadLength < 0 ||
+			span.PayloadOffset > len(payloads) || span.PayloadLength > len(payloads)-span.PayloadOffset {
+			return nil, sequence, 0, goav1.ErrEncoderInvalidFrame
+		}
+		payload := payloads[span.PayloadOffset : span.PayloadOffset+span.PayloadLength]
+		out[i] = rtp.Packet{
+			Header: rtp.Header{
+				Version:        2,
+				Marker:         span.Marker,
+				PayloadType:    96,
+				SequenceNumber: sequence + uint16(i),
+				Timestamp:      timestamp,
+				SSRC:           0xdec0de,
+			},
+			Payload: payload,
+		}
+	}
+	return out, sequence + uint16(len(out)), 0, nil
 }
 
 func collectTemporalUnits(t *testing.T, decoded <-chan receivedTemporalUnit, want int) [][]byte {
