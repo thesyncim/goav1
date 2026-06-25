@@ -36,6 +36,64 @@ func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, e
 	return encodeKeyframeFiltered(src, qIndex, nil, 0, 0, nil, nil, nil)
 }
 
+// EncodeMonochromeKeyframe encodes src at the given base qindex (1..255) as a
+// native AV1 monochrome non-lossless keyframe and returns the encoder-side
+// monochrome reconstruction the decoder must reproduce exactly.
+func EncodeMonochromeKeyframe(src SourceFrameMono, qIndex uint8) ([]byte, SourceFrameMono, error) {
+	if err := validateSourceFrameMono(src); err != nil {
+		return nil, SourceFrameMono{}, err
+	}
+	if qIndex == 0 {
+		return nil, SourceFrameMono{}, fmt.Errorf("encoder: qindex 0 is the lossless path; use EncodeLosslessMonochromeKeyframe")
+	}
+	recon := SourceFrameMono{
+		Y:       make([]byte, len(src.Y)),
+		YStride: src.YStride,
+		Width:   src.Width,
+		Height:  src.Height,
+	}
+
+	var pc pframeCoder
+	tilePayload, err := pc.encodeMonochromeKeyframeTile(src, &recon, qIndex, 0, uint16(src.Width/4))
+	if err != nil {
+		return nil, SourceFrameMono{}, fmt.Errorf("encode tile: %w", err)
+	}
+
+	seq := lossyMonochromeKeyframeSequence(src.Width, src.Height)
+	header := lossyMonochromeKeyframeHeaderForSequence(seq, src.Width, src.Height, qIndex)
+
+	headerSize, err := LowOverheadCompleteIntraHeaderTemporalUnitSize(seq, header)
+	if err != nil {
+		return nil, SourceFrameMono{}, fmt.Errorf("size header TU: %w", err)
+	}
+
+	groupSize, err := TileGroupPayloadSize(header.Tile, 0, 0, []TilePayload{{Data: tilePayload}})
+	if err != nil {
+		return nil, SourceFrameMono{}, fmt.Errorf("size tile group: %w", err)
+	}
+	group := make([]byte, 0, groupSize)
+	group, err = AppendTileGroupPayload(group, header.Tile, 0, 0, []TilePayload{{Data: tilePayload}})
+	if err != nil {
+		return nil, SourceFrameMono{}, fmt.Errorf("append tile group: %w", err)
+	}
+	groupOBU := OBU{Type: obu.TypeTileGroup, Payload: group}
+	groupOBUSize, err := LowOverheadOBUSize(groupOBU)
+	if err != nil {
+		return nil, SourceFrameMono{}, err
+	}
+
+	out := make([]byte, 0, headerSize+groupOBUSize)
+	out, err = AppendLowOverheadCompleteIntraHeaderTemporalUnit(out, seq, header)
+	if err != nil {
+		return nil, SourceFrameMono{}, fmt.Errorf("append header TU: %w", err)
+	}
+	out, err = AppendLowOverheadOBU(out, groupOBU)
+	if err != nil {
+		return nil, SourceFrameMono{}, fmt.Errorf("append tile group OBU: %w", err)
+	}
+	return out, recon, nil
+}
+
 // EncodeKeyframeWithSequenceMax encodes src as a shown keyframe while keeping
 // the sequence header max dimensions at maxWidth x maxHeight. This is useful
 // for scalable streams whose lower spatial layers are smaller than the shared
@@ -309,6 +367,26 @@ func lossyKeyframeHeaderForSequence(seq SequenceHeader, width, height int, qInde
 		ReferenceMode: ReferenceModeSingle,
 	}
 	header.CDEF = CDEFParams{Damping: 3}
+	return header
+}
+
+func lossyMonochromeKeyframeSequence(width, height int) SequenceHeader {
+	seq := losslessMonochromeKeyframeSequence(width, height)
+	seq.EnableCDEF = false
+	return seq
+}
+
+func lossyMonochromeKeyframeHeaderForSequence(seq SequenceHeader, width, height int, qIndex uint8) IntraFrameHeaderParams {
+	header := losslessKeyframeHeaderForSequence(seq, width, height)
+	header.Quantization = QuantizationParams{BaseQIdx: qIndex}
+	header.AllLossless = false
+	header.LoopFilter = LoopFilterParams{
+		Deltas: defaultLoopFilterDeltas(),
+	}
+	header.TransformRef = TransformReferenceParams{
+		TransformMode: TransformModeLargest,
+		ReferenceMode: ReferenceModeSingle,
+	}
 	return header
 }
 
@@ -598,6 +676,141 @@ func (pc *pframeCoder) encodeKeyframeTileWithOptions(src SourceFrame420, recon *
 	return w.Finish()
 }
 
+func (pc *pframeCoder) encodeMonochromeKeyframeTile(src SourceFrameMono, recon *SourceFrameMono, qIndex uint8, miColStart, miColEnd uint16) ([]byte, error) {
+	if err := pc.partCDFs.InitDefault(); err != nil {
+		return nil, err
+	}
+	st := &pc.st
+	st.qIndex = qIndex
+	st.forceIntegerMV = false
+	st.allowScreenContentTools = false
+	st.color = parser.ColorConfig{BitDepth: 8, MonoChrome: true, SubsamplingX: true, SubsamplingY: true}
+	st.lfMap = nil
+	st.hme = nil
+	st.decisionStats = nil
+	if err := st.modeCDFs.InitDefault(); err != nil {
+		return nil, err
+	}
+	if err := st.intraCDFs.InitDefault(); err != nil {
+		return nil, err
+	}
+	if err := st.coeffCDFs.InitDefault(qIndex); err != nil {
+		return nil, err
+	}
+	if err := st.txCDFs.InitDefault(); err != nil {
+		return nil, err
+	}
+	q, err := quantize.PlaneQuantizer(parser.QuantizationParams{}, qIndex, 8, quantize.Plane(0))
+	if err != nil {
+		return nil, err
+	}
+	st.yQuant = q
+	if err := st.trialCDFs.InitDefault(qIndex); err != nil {
+		return nil, err
+	}
+	dcq := float64(st.yQuant.DC)
+	st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))
+	st.keyMIColEnd = uint32(miColEnd)
+	st.keyMIRowEnd = uint32(src.Height / 4)
+	st.keyVisW, st.keyVisH = src.Width, src.Height
+	if err := st.initScans(); err != nil {
+		return nil, err
+	}
+
+	if cap(pc.writerBuf) == 0 {
+		pc.writerBuf = make([]byte, 1<<18)
+	}
+	w := entropy.NewWriter(pc.writerBuf[:0])
+	st.w = &w
+
+	miRows := uint16(src.Height / 4)
+	const sbSizeMIB = 16
+	rootCols := (int(miColEnd-miColStart) + sbSizeMIB - 1) / sbSizeMIB
+
+	scratch := &pc.scratch
+	if len(pc.carrier.Above) < rootCols {
+		pc.carrier.Above = make([]tile.BlockLoopRootAboveContext, rootCols)
+	}
+	pc.carrier.Left = tile.BlockLoopRootLeftContext{}
+	for i := range pc.carrier.Above[:rootCols] {
+		pc.carrier.Above[i] = tile.BlockLoopRootAboveContext{}
+	}
+	carrier := &pc.carrier
+	walkReq := tile.BlockWalkRequest{
+		Root:       tile.BlockLevel64x64,
+		MIColStart: miColStart,
+		MIColEnd:   miColEnd,
+		MIRowEnd:   miRows,
+	}
+	intraRDCost := func(plane []byte, px, py, n int) (int64, int64) {
+		haveTop := py > int(walkReq.MIRowStart)*4
+		haveLeft := px > int(walkReq.MIColStart)*4
+		selectIntraModeN(src.Y, plane, src.YStride, px, py, n, haveTop, haveLeft, st.predY[:n*n])
+		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
+		st.prepareInterTXB(src.Y, st.predY[:n*n], n, src.YStride, px, py, n, n, st.yQuant, st.lumaQ2[:n*n])
+		lumaD := st.rdDcode
+		cost := st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ2[:n*n], n) + lumaD<<7
+		return cost, lumaD
+	}
+	intraHeaderCost := (int64(16) << 9) * st.rdMult >> 9
+	decideCore := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
+		if level == tile.BlockLevel8x8 {
+			return tile.PartitionNone, nil
+		}
+		px, py := int(miCol)*4, int(miRow)*4
+		if level == tile.BlockLevel32x32 && haveRight && haveBottom {
+			if px+32 > src.Width || py+32 > src.Height {
+				return tile.PartitionSplit, nil
+			}
+			selectIntraModeN(src.Y, recon.Y, src.YStride, px, py, 32, py > int(walkReq.MIRowStart)*4, px > int(walkReq.MIColStart)*4, st.predY[:32*32])
+			sad := 0
+			for r := range 32 {
+				row := (py+r)*src.YStride + px
+				for c := range 32 {
+					d := int(src.Y[row+c]) - int(st.predY[r*32+c])
+					if d < 0 {
+						d = -d
+					}
+					sad += d
+				}
+			}
+			if sad <= 32*32*2 {
+				return tile.PartitionNone, nil
+			}
+			return tile.PartitionSplit, nil
+		}
+		if level == tile.BlockLevel16x16 && haveRight && haveBottom {
+			if px+16 > src.Width || py+16 > src.Height {
+				return tile.PartitionSplit, nil
+			}
+			child := int64(0)
+			for _, o8 := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
+				cc, _ := intraRDCost(src.Y, px+o8[0], py+o8[1], 8)
+				child += cc + intraHeaderCost
+			}
+			mc, _ := intraRDCost(recon.Y, px, py, 16)
+			if mc+intraHeaderCost <= child {
+				return tile.PartitionNone, nil
+			}
+		}
+		return tile.PartitionSplit, nil
+	}
+	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
+		partition, err := decideCore(level, ctx, miCol, miRow, haveRight, haveBottom)
+		if err == nil && st.decisionStats != nil {
+			st.decisionStats.notePartition(level, partition)
+		}
+		return partition, err
+	}
+	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
+		return st.encodeMonochromeBlock(src, recon, block, scratch)
+	}
+	if err := tile.WalkBlockLoopWrite(&w, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
+		return nil, err
+	}
+	return w.Finish()
+}
+
 // encodeBlock codes one 8x8 DC-intra block: mode symbols in the decoder's
 // order, then the luma TX_8X8 residual (with the tx_type symbol after
 // txb_skip) and the two chroma TX_4X4 residuals, reconstructing each transform
@@ -727,6 +940,85 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 		}, coeffCtx, chromaScan, nil, block.HaveTop, block.HaveLeft); err != nil {
 			return fmt.Errorf("chroma %d txb: %w", plane, err)
 		}
+	}
+	if st.decisionStats != nil {
+		st.decisionStats.noteIntraBlock(block.Size)
+	}
+	return nil
+}
+
+func (st *lossyEncodeState) encodeMonochromeBlock(src SourceFrameMono, recon *SourceFrameMono, block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
+	var n int
+	switch block.Size {
+	case tile.BlockSize8x8:
+		n = 8
+	case tile.BlockSize16x16:
+		n = 16
+	case tile.BlockSize32x32:
+		n = 32
+	default:
+		return fmt.Errorf("encoder: unexpected block %+v", block)
+	}
+	modeCtx := &scratch.Mode
+	coeffCtx := &scratch.CoeffCtx
+
+	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
+	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, false); err != nil {
+		return fmt.Errorf("skip: %w", err)
+	}
+	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
+		return fmt.Errorf("mark prefix: %w", err)
+	}
+
+	lumaPX := int(block.MICol) * 4
+	lumaPY := int(block.MIRow) * 4
+	pred := st.predY[:n*n]
+	mode := selectIntraModeN(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft, pred)
+	src420 := SourceFrame420{Y: src.Y, YStride: src.YStride, Width: src.Width, Height: src.Height}
+	recon420 := SourceFrame420{Y: recon.Y, YStride: recon.YStride, Width: recon.Width, Height: recon.Height}
+	mode, angleDelta := st.improveIntraModeDirectional(src420, &recon420, block, mode, pred, lumaPX, lumaPY, n)
+
+	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
+		Size: block.Size, X4: block.X4, Y4: block.Y4,
+	}, mode); err != nil {
+		return fmt.Errorf("luma mode: %w", err)
+	}
+	if err := modeCtx.MarkIntra(block.Size, int(block.X4), int(block.Y4), true, mode); err != nil {
+		return fmt.Errorf("mark intra: %w", err)
+	}
+	if err := tile.WriteIntraAngleDelta(st.w, &st.intraCDFs, tile.IntraAngleDeltaRequest{
+		Size: block.Size, Mode: mode,
+	}, int8(angleDelta)); err != nil {
+		return fmt.Errorf("angle delta: %w", err)
+	}
+	if err := st.writeNoPaletteMode(modeCtx, block, mode, tile.ChromaIntraModeDC, false); err != nil {
+		return err
+	}
+
+	lumaTX, lumaScan := tile.TransformSize8x8, st.scan8
+	switch n {
+	case 16:
+		lumaTX, lumaScan = tile.TransformSize16x16, st.scan16
+	case 32:
+		lumaTX, lumaScan = tile.TransformSize32x32, st.scan32
+	}
+	txTypeReq := tile.IntraTransformTypeRequest{
+		Size:        lumaTX,
+		Mode:        mode,
+		QIndexKnown: true,
+		QIndex:      st.qIndex,
+	}
+	afterSkip := func() error {
+		return tile.WriteIntraTransformType(st.w, &st.txCDFs, txTypeReq, transform.TypeDCTDCT)
+	}
+	if err := st.encodeTXBPred(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, n, st.yQuant, tile.CoeffContextRequest{
+		Plane:      0,
+		PlaneBlock: block.Size,
+		Size:       lumaTX,
+		X4:         block.X4,
+		Y4:         block.Y4,
+	}, coeffCtx, lumaScan, afterSkip, pred); err != nil {
+		return fmt.Errorf("luma txb: %w", err)
 	}
 	if st.decisionStats != nil {
 		st.decisionStats.noteIntraBlock(block.Size)

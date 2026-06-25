@@ -86,6 +86,75 @@ func TestEncodeKeyframeDecodeMatchesRecon(t *testing.T) {
 	}
 }
 
+func TestEncodeMonochromeKeyframeDecodeMatchesRecon(t *testing.T) {
+	cases := []struct {
+		w, h    int
+		qIndex  uint8
+		minPSNR float64
+	}{
+		{64, 64, 48, 30},
+		{96, 96, 72, 28},
+		{176, 144, 112, 24},
+		{128, 64, 180, 19},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%dx%d-q%d", tc.w, tc.h, tc.qIndex), func(t *testing.T) {
+			rng := rand.New(rand.NewSource(0x600d + int64(tc.w)*7919 + int64(tc.qIndex)))
+			src := encoder.SourceFrameMono{
+				Y:       make([]byte, tc.w*tc.h),
+				YStride: tc.w,
+				Width:   tc.w,
+				Height:  tc.h,
+			}
+			for y := range tc.h {
+				for x := range tc.w {
+					src.Y[y*tc.w+x] = uint8((96 + x*2 + y + rng.Intn(18)) & 0xff)
+				}
+			}
+
+			tu, recon, err := encoder.EncodeMonochromeKeyframe(src, tc.qIndex)
+			if err != nil {
+				t.Fatalf("encode: %v", err)
+			}
+			t.Logf("encoded mono TU: %d bytes (%.2f bpp)", len(tu), float64(len(tu)*8)/float64(tc.w*tc.h))
+
+			seq, prefix, _ := parseKeyframeSequenceAndSize(t, tu)
+			if !seq.ColorConfig.MonoChrome || seq.ColorConfig.BitDepth != 8 {
+				t.Fatalf("sequence color=%+v, want 8-bit monochrome", seq.ColorConfig)
+			}
+			if !prefix.ShowFrame || prefix.FrameType != parser.FrameTypeKey {
+				t.Fatalf("prefix=%+v, want shown keyframe", prefix)
+			}
+
+			dec, err := goav1.NewDecoder([][]byte{tu})
+			if err != nil {
+				t.Fatalf("new decoder: %v", err)
+			}
+			defer dec.Close()
+			frames, err := dec.DecodeAll()
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(frames) != 1 {
+				t.Fatalf("decoded %d frames, want 1", len(frames))
+			}
+			f := frames[0]
+			if !f.Format.MonoChrome || f.Format.BitDepth != 8 {
+				t.Fatalf("decoded format=%+v, want 8-bit monochrome", f.Format)
+			}
+			comparePlane(t, "Y", f.Y, recon.Y, tc.w, tc.h, tc.w)
+			compareAbsentPlane(t, "U", f.U)
+			compareAbsentPlane(t, "V", f.V)
+
+			psnr := planePSNR(src.Y, recon.Y)
+			t.Logf("mono luma PSNR(src, recon) = %.2f dB", psnr)
+			if psnr < tc.minPSNR {
+				t.Fatalf("luma PSNR %.2f dB below sanity floor %.2f dB", psnr, tc.minPSNR)
+			}
+		})
+	}
+}
+
 func TestEncodeKeyframeWithSequenceMaxDecodeMatchesRecon(t *testing.T) {
 	const (
 		w, h       = 64, 48

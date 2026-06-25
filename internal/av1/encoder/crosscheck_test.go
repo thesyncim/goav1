@@ -168,3 +168,66 @@ func TestEncodedMonochromeKeyframeDecodesInReferenceDecoders(t *testing.T) {
 		check("dav1d", dav1d, "--muxer", "yuv", "-o", filepath.Join(dir, "dav1d.yuv"), "-i")
 	}
 }
+
+func TestEncodedMonochromeLossyKeyframeDecodesInReferenceDecoders(t *testing.T) {
+	aomdec, err := exec.LookPath("aomdec")
+	if err != nil {
+		t.Skip("aomdec not on PATH")
+	}
+	const w, h = 160, 96
+	rng := rand.New(rand.NewSource(0x1a55))
+	src := encoder.SourceFrameMono{
+		Y:       make([]byte, w*h),
+		YStride: w,
+		Width:   w,
+		Height:  h,
+	}
+	for y := range h {
+		for x := range w {
+			src.Y[y*w+x] = uint8((80 + x*3 + y*2 + rng.Intn(32)) & 0xff)
+		}
+	}
+	tu, recon, err := encoder.EncodeMonochromeKeyframe(src, 96)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	stream := ivf.AppendFileHeader(nil, w, h, 30, 1, 1)
+	stream = ivf.AppendFrame(stream, tu, 0)
+
+	dir := t.TempDir()
+	ivfPath := filepath.Join(dir, "mono-lossy.ivf")
+	if err := os.WriteFile(ivfPath, stream, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	check := func(name, bin string, args ...string) {
+		outPath := filepath.Join(dir, name+".yuv")
+		cmd := exec.Command(bin, append(args, ivfPath)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s failed: %v\n%s", name, err, out)
+		}
+		got, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("read %s output: %v", name, err)
+		}
+		yLen := len(recon.Y)
+		i420Len := yLen + 2*(w/2)*(h/2)
+		if len(got) != yLen && len(got) != i420Len {
+			t.Fatalf("%s output %d bytes, want monochrome Y-only %d or yuv420 %d", name, len(got), yLen, i420Len)
+		}
+		if !bytes.Equal(got[:yLen], recon.Y) {
+			for i := range recon.Y {
+				if got[i] != recon.Y[i] {
+					t.Fatalf("%s luma differs first at byte %d: got %d want %d", name, i, got[i], recon.Y[i])
+				}
+			}
+		}
+		t.Logf("%s: monochrome lossy keyframe luma matches reconstruction (%d raw bytes)", name, len(got))
+	}
+
+	check("aomdec", aomdec, "--rawvideo", "-o", filepath.Join(dir, "aomdec.yuv"))
+	if dav1d, err := exec.LookPath("dav1d"); err == nil {
+		check("dav1d", dav1d, "--muxer", "yuv", "-o", filepath.Join(dir, "dav1d.yuv"), "-i")
+	}
+}
