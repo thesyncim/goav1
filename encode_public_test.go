@@ -3487,6 +3487,232 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
+	const dependencyDescriptorExtensionID = 42
+	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 192}
+	fps := []goav1.EncoderRational{
+		{Num: 30, Den: 1},
+		{Num: 60, Den: 1},
+		{Num: 30000, Den: 1001},
+		{Num: 24, Den: 1},
+		{Num: 120, Den: 1},
+	}
+
+	for step, mode := range goav1.EncoderWebRTCScalabilityModes() {
+		mode := mode
+		t.Run(mode.String(), func(t *testing.T) {
+			width, height := publicRTCMatrixGeometry(t, mode)
+			cfg := publicRTCMatrixConfig(width, height, mode)
+			cfg.MaxFramerate = fps[step%len(fps)]
+			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*23))
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
+			}
+			defer enc.Close()
+
+			key0, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 0), false)
+			if err != nil {
+				t.Fatalf("key0 EncodePicture(%s): %v", mode, err)
+			}
+			cloneRTCPictureData(&key0)
+			lost, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 1), false)
+			if err != nil {
+				t.Fatalf("lost delta EncodePicture(%s): %v", mode, err)
+			}
+			cloneRTCPictureData(&lost)
+			recovery, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 2), true)
+			if err != nil {
+				t.Fatalf("recovery key EncodePicture(%s): %v", mode, err)
+			}
+			cloneRTCPictureData(&recovery)
+
+			key0PacketsRaw := publicRTCPictureRTPPackets(t, key0, limits)
+			lostPacketsRaw := publicRTCPictureRTPPackets(t, lost, limits)
+			recoveryPacketsRaw := publicRTCPictureRTPPackets(t, recovery, limits)
+			if len(key0PacketsRaw) < 3 || len(lostPacketsRaw) == 0 || len(recoveryPacketsRaw) == 0 {
+				t.Fatalf("%s packet counts key0=%d lost=%d recovery=%d", mode, len(key0PacketsRaw), len(lostPacketsRaw), len(recoveryPacketsRaw))
+			}
+
+			next := uint16(0x5000)
+			key0Packets := publicRewriteRTPPacketSequences(t, key0PacketsRaw, &next)
+			lostPackets := publicRewriteRTPPacketSequences(t, lostPacketsRaw, &next)
+			recoveryPackets := publicRewriteRTPPacketSequences(t, recoveryPacketsRaw, &next)
+			if len(lostPackets)+1 >= 1<<15 {
+				t.Fatalf("%s lost packet gap=%d exceeds RTP sequencer window", mode, len(lostPackets))
+			}
+
+			selectedProbePackets := publicRTCPictureDecodeTargetRTPPackets(t, key0, limits, 0, 0)
+			selectedProbePackets = append(selectedProbePackets, publicRTCPictureDecodeTargetRTPPackets(t, recovery, limits, 0, 0)...)
+			if len(selectedProbePackets) == 0 {
+				t.Fatalf("%s produced no S0/T0 probe packets", mode)
+			}
+			dec, err := goav1.NewLayeredDecoderFromRTPPackets(selectedProbePackets)
+			if err != nil {
+				t.Fatalf("NewLayeredDecoderFromRTPPackets(%s): %v", mode, err)
+			}
+			defer dec.Close()
+			if err := dec.Reset(); err != nil {
+				t.Fatalf("LayeredDecoder Reset(%s): %v", mode, err)
+			}
+
+			slotCount := len(key0Packets) + len(lostPackets) + len(recoveryPackets) + 8
+			if slotCount < 16 {
+				slotCount = 16
+			}
+			if slotCount > 1<<15 {
+				slotCount = 1 << 15
+			}
+			sequencer, err := goav1.BindRTPPacketSequencer(make([]goav1.RTPPacketSequencerSlot, slotCount))
+			if err != nil {
+				t.Fatalf("BindRTPPacketSequencer(%s): %v", mode, err)
+			}
+			events := make([]goav1.RTPSequencedPacket, 0, 8)
+			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var got [][16]byte
+			var gotMetadata []publicLayeredFrameMetadata
+			pendingLoss := false
+
+			decodeEvents := func(label string, in []goav1.RTPSequencedPacket) {
+				t.Helper()
+				for i, event := range in {
+					parsed, err := goav1.ParseRTPPacketDependencyDescriptor(event.RawPacket, dependencyDescriptorExtensionID, &descriptorReceiver)
+					if err != nil {
+						t.Fatalf("%s %s event %d ParseRTPPacketDependencyDescriptor: %v", mode, label, i, err)
+					}
+					forward, err := goav1.RTPDependencyDescriptorFrameForwardedForDecodeTarget(parsed.Descriptor, descriptorReceiver, 0)
+					if err != nil {
+						t.Fatalf("%s %s event %d FrameForwardedForDecodeTarget: %v", mode, label, i, err)
+					}
+					if event.AfterLoss {
+						pendingLoss = true
+					}
+					if !forward {
+						continue
+					}
+					if pendingLoss {
+						event.AfterLoss = true
+						pendingLoss = false
+					}
+					frames, err := dec.DecodeRTPSequencedPacketWithMetadata(event)
+					if err != nil {
+						t.Fatalf("%s %s event %d DecodeRTPSequencedPacketWithMetadata: %v", mode, label, i, err)
+					}
+					for _, frame := range frames {
+						got = append(got, frameMD5Visible(frame.Frame))
+						gotMetadata = append(gotMetadata, publicLayeredFrameMetadataFromDecoded(t, frame))
+					}
+				}
+			}
+			push := func(label string, packet []byte) []goav1.RTPSequencedPacket {
+				t.Helper()
+				out, err := sequencer.Push(packet, events[:0])
+				if err != nil {
+					t.Fatalf("%s %s Push: %v", mode, label, err)
+				}
+				return out
+			}
+
+			decodeEvents("key0-packet-0", push("key0-packet-0", key0Packets[0]))
+			gapped := push("key0-packet-2", key0Packets[2])
+			if len(gapped) != 0 || sequencer.Buffered() != 1 {
+				t.Fatalf("%s key0 gap released=%d buffered=%d want 0/1", mode, len(gapped), sequencer.Buffered())
+			}
+			missing, err := sequencer.AppendMissingSequenceNumbers(make([]uint16, 0, 1))
+			if err != nil {
+				t.Fatalf("%s AppendMissingSequenceNumbers key0 gap: %v", mode, err)
+			}
+			wantGapSeq := publicRTPPacketSequence(t, key0Packets[1])
+			if len(missing) != 1 || missing[0] != wantGapSeq {
+				t.Fatalf("%s key0 missing=%#v want [%#x]", mode, missing, wantGapSeq)
+			}
+			pairs, err := sequencer.AppendMissingRTCPGenericNACKPairs(make([]goav1.RTCPGenericNACKPair, 0, 1))
+			if err != nil {
+				t.Fatalf("%s AppendMissingRTCPGenericNACKPairs key0 gap: %v", mode, err)
+			}
+			if len(pairs) != 1 || pairs[0] != (goav1.RTCPGenericNACKPair{PacketID: wantGapSeq}) {
+				t.Fatalf("%s key0 NACK pairs=%+v want PID %#x", mode, pairs, wantGapSeq)
+			}
+			duplicate := push("key0-packet-2-duplicate", key0Packets[2])
+			if len(duplicate) != 0 || sequencer.Buffered() != 1 {
+				t.Fatalf("%s duplicate released=%d buffered=%d want 0/1", mode, len(duplicate), sequencer.Buffered())
+			}
+			decodeEvents("key0-gap-fill", push("key0-packet-1", key0Packets[1]))
+			for i := 3; i < len(key0Packets); i++ {
+				decodeEvents(fmt.Sprintf("key0-packet-%d", i), push("key0-tail", key0Packets[i]))
+			}
+
+			wantKey0 := publicRTCPictureDecodeTargetLowOverheads(key0, 0, 0)
+			if len(got) != len(wantKey0) {
+				t.Fatalf("%s decoded key0 target frames=%d want %d", mode, len(got), len(wantKey0))
+			}
+
+			recoveryFirst := push("recovery-first-before-skip", recoveryPackets[0])
+			if len(recoveryFirst) != 0 || sequencer.Buffered() != 1 {
+				t.Fatalf("%s recovery pre-skip released=%d buffered=%d want 0/1", mode, len(recoveryFirst), sequencer.Buffered())
+			}
+			missing, err = sequencer.AppendMissingSequenceNumbers(make([]uint16, 0, len(lostPackets)))
+			if err != nil {
+				t.Fatalf("%s AppendMissingSequenceNumbers lost picture: %v", mode, err)
+			}
+			firstLostSeq := publicRTPPacketSequence(t, lostPackets[0])
+			firstMissing := uint16(0)
+			if len(missing) > 0 {
+				firstMissing = missing[0]
+			}
+			if len(missing) != len(lostPackets) || firstMissing != firstLostSeq {
+				t.Fatalf("%s lost missing len=%d first=%#x want len=%d first=%#x", mode, len(missing), firstMissing, len(lostPackets), firstLostSeq)
+			}
+			nackCap := (len(lostPackets) + 15) / 16
+			pairs, err = sequencer.AppendMissingRTCPGenericNACKPairs(make([]goav1.RTCPGenericNACKPair, 0, nackCap))
+			if err != nil {
+				t.Fatalf("%s AppendMissingRTCPGenericNACKPairs lost picture: %v", mode, err)
+			}
+			if len(pairs) == 0 || pairs[0].PacketID != firstLostSeq {
+				t.Fatalf("%s lost NACK pairs=%+v want first PID %#x", mode, pairs, firstLostSeq)
+			}
+
+			skipped := sequencer.SkipMissing(events[:0])
+			if len(skipped) != 1 || !skipped[0].AfterLoss {
+				t.Fatalf("%s SkipMissing released=%d afterLoss=%v want 1/true", mode, len(skipped), len(skipped) == 1 && skipped[0].AfterLoss)
+			}
+			decodeEvents("recovery-after-loss-first", skipped)
+			late := push("late-lost-packet", lostPackets[0])
+			if len(late) != 0 {
+				t.Fatalf("%s late lost packet released %d events, want 0", mode, len(late))
+			}
+			lateRecoveryDuplicate := push("late-recovery-duplicate", recoveryPackets[0])
+			if len(lateRecoveryDuplicate) != 0 {
+				t.Fatalf("%s late recovery duplicate released %d events, want 0", mode, len(lateRecoveryDuplicate))
+			}
+			for i := 1; i < len(recoveryPackets); i++ {
+				decodeEvents(fmt.Sprintf("recovery-packet-%d", i), push("recovery-tail", recoveryPackets[i]))
+			}
+
+			wantLowOverheads := append(wantKey0, publicRTCPictureDecodeTargetLowOverheads(recovery, 0, 0)...)
+			want := decodePublicLayeredDecoderLowOverheadDigests(t, wantLowOverheads...)
+			var wantMetadata []publicLayeredFrameMetadata
+			for _, picture := range []goav1.RTCPicture{key0, recovery} {
+				for i := 0; i < picture.FrameNum; i++ {
+					frame := picture.Frames[i]
+					if frame.SpatialID == 0 && frame.TemporalID == 0 {
+						wantMetadata = append(wantMetadata, publicLayeredFrameMetadataFromRTCFrame(frame))
+					}
+				}
+			}
+			if len(got) != len(want) {
+				t.Fatalf("%s recovered frames=%d want %d", mode, len(got), len(want))
+			}
+			assertPublicLayeredFrameMetadata(t, gotMetadata, wantMetadata)
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("%s recovered frame %d digest differs after RTP impairment: got=%x want=%x", mode, i, got[i], want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestPublicLayeredDecoderRTPPayloadAfterLossSharedSVC(t *testing.T) {
 	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
 	mode := goav1.EncoderScalabilityModeL2T1
@@ -5026,6 +5252,40 @@ func publicRTCPictureRTPPackets(t *testing.T, picture goav1.RTCPicture, limits g
 		out = append(out, publicDecoderRTPPacketsForFrameWithLimits(t, picture.Frames[i], limits)...)
 	}
 	return out
+}
+
+func publicRTCPictureDecodeTargetRTPPackets(t *testing.T, picture goav1.RTCPicture, limits goav1.RTPPayloadSizeLimits, spatialID uint8, temporalID uint8) [][]byte {
+	t.Helper()
+	var out [][]byte
+	for i := 0; i < picture.FrameNum; i++ {
+		frame := picture.Frames[i]
+		if frame.SpatialID != spatialID || frame.TemporalID != temporalID {
+			continue
+		}
+		out = append(out, publicDecoderRTPPacketsForFrameWithLimits(t, frame, limits)...)
+	}
+	return out
+}
+
+func publicRTCPictureDecodeTargetLowOverheads(picture goav1.RTCPicture, spatialID uint8, temporalID uint8) [][]byte {
+	var out [][]byte
+	for i := 0; i < picture.FrameNum; i++ {
+		frame := picture.Frames[i]
+		if frame.SpatialID != spatialID || frame.TemporalID != temporalID {
+			continue
+		}
+		out = append(out, append([]byte(nil), frame.Data...))
+	}
+	return out
+}
+
+func publicRTPPacketSequence(t testing.TB, packet []byte) uint16 {
+	t.Helper()
+	parsed, err := goav1.ParseRTPPacket(packet)
+	if err != nil {
+		t.Fatalf("ParseRTPPacket sequence: %v", err)
+	}
+	return parsed.Header.SequenceNumber
 }
 
 func frameDigestsVisible(frames []*goav1.Frame) [][16]byte {
