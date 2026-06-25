@@ -126,6 +126,46 @@ func TestBrowserLiveRTCEncoderDirectRTPPlaybackStats(t *testing.T) {
 	}
 }
 
+func TestBrowserLiveRTCEncoderDirectRTPRepeatedPlaybackSoak(t *testing.T) {
+	required := os.Getenv(requireBrowserE2EEnv) == "1"
+	if !required && os.Getenv(browserE2EEnv) != "1" {
+		t.Skipf("set %s=1 to run the repeated live browser/libwebrtc AV1 playback gate", browserE2EEnv)
+	}
+	browserPath, err := browserExecutable()
+	if err != nil {
+		if required {
+			t.Fatalf("required browser executable unavailable: %v", err)
+		}
+		t.Skip(err)
+	}
+
+	allScenarios := browserRTCEncoderDirectRTPPlaybackScenarios(t)
+	soakScenarios := []browserRTCEncoderDirectRTPPlaybackScenario{
+		browserRTCEncoderDirectRTPPlaybackScenarioByName(t, allScenarios, "direct-L1T3"),
+		browserRTCEncoderDirectRTPPlaybackScenarioByName(t, allScenarios, "shared-svc-forward-base-L3T3_KEY_SHIFT"),
+		browserRTCEncoderDirectRTPPlaybackScenarioByName(t, allScenarios, "simulcast-forward-top-S3T3h"),
+	}
+
+	for _, scenario := range soakScenarios {
+		scenario := scenario
+		t.Run(scenario.name, func(t *testing.T) {
+			for loop := 0; loop < 2; loop++ {
+				loop := loop
+				t.Run(fmt.Sprintf("loop-%d", loop+1), func(t *testing.T) {
+					query := fmt.Sprintf("%s&soak-loop=%d", scenario.query, loop+1)
+					label := fmt.Sprintf("%s-loop-%d", scenario.name, loop+1)
+					got := runBrowserLiveRTCEncoderDirectRTPPlaybackStats(
+						t, browserPath, label, query, scenario.options, scenario.wantWidth, scenario.wantHeight)
+					if got.KeyFramesDecoded < scenario.minKeyFrames {
+						t.Fatalf("%s browser keyframes=%d want at least %d after repeated playback",
+							label, got.KeyFramesDecoded, scenario.minKeyFrames)
+					}
+				})
+			}
+		})
+	}
+}
+
 type browserRTCEncoderDirectRTPPlaybackScenario struct {
 	name         string
 	query        string
@@ -176,6 +216,17 @@ func browserRTCEncoderDirectRTPPlaybackScenarios(t *testing.T) []browserRTCEncod
 		})
 	}
 	return scenarios
+}
+
+func browserRTCEncoderDirectRTPPlaybackScenarioByName(t *testing.T, scenarios []browserRTCEncoderDirectRTPPlaybackScenario, name string) browserRTCEncoderDirectRTPPlaybackScenario {
+	t.Helper()
+	for _, scenario := range scenarios {
+		if scenario.name == name {
+			return scenario
+		}
+	}
+	t.Fatalf("browser direct-RTP playback scenario %q not found", name)
+	return browserRTCEncoderDirectRTPPlaybackScenario{}
 }
 
 func browserAV1CodedDimension(renderDimension int) int {

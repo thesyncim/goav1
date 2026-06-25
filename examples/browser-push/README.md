@@ -7,7 +7,9 @@ recovers from packet loss. The direct-RTP browser gate also proves Generic NACK
 repair with a sender-side retransmission cache. The required browser gate
 live-tests every `EncoderWebRTCScalabilityModes()` value: L1 modes are sent
 directly, shared-reference L2/L3 SVC modes forward the base spatial layer, and
-S2/S3 simulcast modes forward the highest spatial layer.
+S2/S3 simulcast modes forward the highest spatial layer. The required gate also
+repeats representative direct-RTP browser playback sessions across those
+delivery shapes.
 
 The example carries its own `go.mod` (with a `replace` to the repository
 root), so its WebRTC dependencies stay out of the main module.
@@ -32,3 +34,6 @@ Edge, Firefox, Safari 17+).
   decode-target masks, and filtered spatial forwarding for browser-compatible
   multi-spatial delivery. It does not claim that Chrome can consume all
   spatial layers mixed on one static AV1 RTP track.
+- The repeated direct-RTP soak path opens fresh browser sessions for L1 temporal
+  layering, shared-reference SVC base-layer forwarding, and highest-layer
+  simulcast forwarding.
