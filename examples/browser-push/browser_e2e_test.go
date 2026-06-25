@@ -113,76 +113,7 @@ func TestBrowserLiveRTCEncoderDirectRTPPlaybackStats(t *testing.T) {
 		t.Skip(err)
 	}
 
-	scenarios := []struct {
-		name         string
-		query        string
-		options      rtcEncoderRTPStreamOptions
-		wantWidth    int
-		wantHeight   int
-		minKeyFrames int
-	}{
-		{
-			name:         "default-l1t3",
-			query:        "direct-rtp=1",
-			options:      defaultRTCEncoderRTPStreamOptions(),
-			wantWidth:    width,
-			wantHeight:   height,
-			minKeyFrames: 2,
-		},
-		{
-			name:  "temporal-l1t1",
-			query: "direct-rtp-l1t1=1",
-			options: func() rtcEncoderRTPStreamOptions {
-				options := defaultRTCEncoderRTPStreamOptions()
-				options.ConfigForStep = rtcControlChurnConfigForScalabilityMode(goav1.EncoderScalabilityModeL1T1)
-				return options
-			}(),
-			wantWidth:    width,
-			wantHeight:   height,
-			minKeyFrames: 2,
-		},
-		{
-			name:  "temporal-l1t2",
-			query: "direct-rtp-l1t2=1",
-			options: func() rtcEncoderRTPStreamOptions {
-				options := defaultRTCEncoderRTPStreamOptions()
-				options.ConfigForStep = rtcControlChurnConfigForScalabilityMode(goav1.EncoderScalabilityModeL1T2)
-				return options
-			}(),
-			wantWidth:    width,
-			wantHeight:   height,
-			minKeyFrames: 2,
-		},
-		{
-			name:  "shared-svc-l2t3-key-shift-forward-base",
-			query: "direct-rtp-l2t3-key-shift-base=1",
-			options: func() rtcEncoderRTPStreamOptions {
-				options := defaultRTCEncoderRTPStreamOptions()
-				options.ConfigForStep = rtcControlChurnConfigForScalabilityMode(goav1.EncoderScalabilityModeL2T3_KEY_SHIFT)
-				options.RTPOptionsForPicture = rtcActiveDecodeTargetOptionsForSpatialLayer(0, 3)
-				options.FrameFilter = func(frame goav1.RTCFrame) bool { return frame.SpatialID == 0 }
-				return options
-			}(),
-			wantWidth:    width / 2,
-			wantHeight:   544,
-			minKeyFrames: 2,
-		},
-		{
-			name:  "simulcast-s2t2h-forward-top",
-			query: "direct-rtp-s2t2h-top=1",
-			options: func() rtcEncoderRTPStreamOptions {
-				options := defaultRTCEncoderRTPStreamOptions()
-				options.ConfigForStep = rtcControlChurnConfigForScalabilityMode(goav1.EncoderScalabilityModeS2T2h)
-				options.RTPOptionsForPicture = rtcActiveDecodeTargetOptionsForSpatialLayer(1, 2)
-				options.FrameFilter = func(frame goav1.RTCFrame) bool { return frame.SpatialID == 1 }
-				return options
-			}(),
-			wantWidth:    width,
-			wantHeight:   height,
-			minKeyFrames: 2,
-		},
-	}
-	for _, scenario := range scenarios {
+	for _, scenario := range browserRTCEncoderDirectRTPPlaybackScenarios(t) {
 		scenario := scenario
 		t.Run(scenario.name, func(t *testing.T) {
 			got := runBrowserLiveRTCEncoderDirectRTPPlaybackStats(
@@ -193,6 +124,62 @@ func TestBrowserLiveRTCEncoderDirectRTPPlaybackStats(t *testing.T) {
 			}
 		})
 	}
+}
+
+type browserRTCEncoderDirectRTPPlaybackScenario struct {
+	name         string
+	query        string
+	options      rtcEncoderRTPStreamOptions
+	wantWidth    int
+	wantHeight   int
+	minKeyFrames int
+}
+
+func browserRTCEncoderDirectRTPPlaybackScenarios(t *testing.T) []browserRTCEncoderDirectRTPPlaybackScenario {
+	t.Helper()
+	modes := goav1.EncoderWebRTCScalabilityModes()
+	scenarios := make([]browserRTCEncoderDirectRTPPlaybackScenario, 0, len(modes))
+	for _, mode := range modes {
+		mode := mode
+		spatialLayers, temporalLayers, _, ok := mode.Layers()
+		if !ok {
+			t.Fatalf("invalid WebRTC scalability mode %s", mode)
+		}
+		options := defaultRTCEncoderRTPStreamOptions()
+		options.ConfigForStep = rtcControlChurnConfigForScalabilityMode(mode)
+		cfg := options.ConfigForStep(0)
+		normalized, err := goav1.SetWebRTCEncoderSVCConfig(cfg, 0, 0)
+		if err != nil {
+			t.Fatalf("normalize %s browser scenario: %v", mode, err)
+		}
+
+		delivery := "direct"
+		targetSpatialID := uint8(0)
+		if spatialLayers > 1 {
+			if mode.IsSimulcast() {
+				delivery = "simulcast-forward-top"
+				targetSpatialID = spatialLayers - 1
+			} else {
+				delivery = "shared-svc-forward-base"
+			}
+			options.RTPOptionsForPicture = rtcActiveDecodeTargetOptionsForSpatialLayer(targetSpatialID, temporalLayers)
+			options.FrameFilter = func(frame goav1.RTCFrame) bool { return frame.SpatialID == targetSpatialID }
+		}
+		layer := normalized.SpatialLayers[targetSpatialID]
+		scenarios = append(scenarios, browserRTCEncoderDirectRTPPlaybackScenario{
+			name:         fmt.Sprintf("%s-%s", delivery, mode),
+			query:        fmt.Sprintf("direct-rtp-mode=%s", mode),
+			options:      options,
+			wantWidth:    browserAV1CodedDimension(int(layer.Resolution.Width)),
+			wantHeight:   browserAV1CodedDimension(int(layer.Resolution.Height)),
+			minKeyFrames: 2,
+		})
+	}
+	return scenarios
+}
+
+func browserAV1CodedDimension(renderDimension int) int {
+	return (renderDimension + 7) &^ 7
 }
 
 func runBrowserLiveRTCEncoderDirectRTPPlaybackStats(

@@ -491,6 +491,7 @@ writing:
 | L1T2 single-pool decode                             | Strict every-frame MD5 pass in `make dryrun-relevant-supported`. |
 | L2T1 / L2T2 multi-pool decode                       | Strict every-frame MD5 pass in `make dryrun-extended`. |
 | WebRTC AV1 SVC control metadata                     | Complete for the W3C mode vocabulary (`L*T*`, `L*T*h`, `L*T*_KEY`, `L*T*_KEY_SHIFT`, `S*T*`, `S*T*h`) with dependency-descriptor decode targets over the full `(spatial, temporal)` grid, W3C key-shift temporal schedules, and pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates. |
+| WebRTC browser delivery                             | `make webrtc-production` live-tests Chrome/libwebrtc playback for every `EncoderWebRTCScalabilityModes()` entry. L1 modes are sent directly; shared-reference L2/L3 SVC modes are browser-forwarded as the base spatial layer with an exact active decode-target mask; S2/S3 simulcast modes are browser-forwarded as the highest spatial layer with an exact active decode-target mask. Sending all spatial layers mixed on one static browser RTP track is not the claimed browser contract. |
 | WebRTC AV1 SDP helpers                              | Complete for the registered `AV1/90000` payload binding, optional `profile` / `level-idx` / `tier` fmtp defaults and validation, RTP header-extension mapping checks, AV1 RID receiver restrictions, AV1 simulcast RID groups, offer receive frame checks, sequence-header compatibility checks, and AV1 rtcp-fb checks. |
 | WebRTC AV1 RTCP generic/SR/RR/SDES/BYE/Transport-CC/REMB/LRR helpers | Complete for generic packet parse/build, compound-packet demux, sender/receiver report packet parse/build, source-description/CNAME packet parse/build, BYE packet parse/build, RTPFB/PSFB packet wrapping/parsing, Generic NACK sequence grouping/expansion, sender-side RTP retransmission caching, transport-wide status chunks, receiver-side report construction, delta ticks, no-timestamp feedback, receive-timeline reconstruction, legacy WebRTC REMB bitrate/SSRC FCI parse/build, AV1 layer-index and LRR FCI entry/list parse/build/validation, encoder-config temporal/spatial layer-grid checks, and single/parsed-compound/raw-compound PLI/FIR/LRR force-key classification. |
 | High-level RTP payload decode                       | `NewDecoderFromRTPPayloads` covers ordered/live AV1 RTP payload bodies for single decode chains and independent simulcast layers; `NewLayeredDecoderFromRTPPayloads` covers shared-reference SVC RTP streams with frame-only and `WithMetadata` AV1 layer outputs; both include `DecodeRTPPayloadAfterLoss` retained-fragment reset after packet gaps. |
@@ -509,8 +510,11 @@ layer geometry or dependency structure make the next picture a key picture.
 the normalized encoder configuration, so callers can pace RTP timestamps from
 the same framerate/timebase the encoder accepted. `RTCPicture` exposes
 `AllDecodeTargetsMask`, `ActiveDecodeTargetsMask`, and
-`ActiveDecodeTargetsRTPOptions` so layer-activation changes can be applied
-consistently to every RTP frame in a multi-spatial picture.
+`ActiveDecodeTargetsRTPOptions` for max-layer activation, plus
+`SpatialDecodeTargetsMask` and `SpatialDecodeTargetsRTPOptions` for exact
+single-spatial forwarding. Browser SFU paths should use the exact-spatial
+helpers when forwarding one decodable spatial stream from a multi-spatial
+picture.
 
 The framework dry-run tests
 (`internal/av1/testvector/libaom_oracle_test.go`) exercise the

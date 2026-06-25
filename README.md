@@ -472,7 +472,10 @@ external decoder parity, including the Pion/browser-push WebRTC example and
 multi-spatial I422/I444/I400/NV12/NV21 plus generic 8/10/12-bit `Frame`
 adapter output after RTP assembly, as well as
 all-mode `SetConfig` transitions that change framerate, bitrate, rate control,
-content hint, and scalability mode.
+content hint, and scalability mode. The browser portion live-tests every
+`EncoderWebRTCScalabilityModes()` entry through the supported delivery shape:
+direct L1, exact-base forwarding for shared-reference L2/L3 SVC, and exact-top
+forwarding for S2/S3 simulcast.
 
 Broader parity sweeps:
 

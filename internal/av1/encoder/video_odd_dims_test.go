@@ -15,7 +15,7 @@ import (
 // region and the streams stay legal for the reference decoders (the TUs ride
 // the same cross-check corpus shape as every other oracle test).
 func TestVideoEncoderOddDimensions(t *testing.T) {
-	for _, dims := range [][2]int{{202, 118}, {158, 94}, {100, 62}} {
+	for _, dims := range [][2]int{{203, 117}, {158, 95}, {101, 62}} {
 		w, h := dims[0], dims[1]
 		t.Run(fmtDims(w, h), func(t *testing.T) {
 			rng := rand.New(rand.NewSource(int64(w*1000 + h)))

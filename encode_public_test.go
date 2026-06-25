@@ -1925,6 +1925,40 @@ func TestPublicRTCEncoderSupportsWebRTCPixelModeMatrix(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderSupportsWebRTC1080pThreeLayerSmallStepModes(t *testing.T) {
+	modes := []goav1.EncoderScalabilityMode{
+		goav1.EncoderScalabilityModeL3T1h,
+		goav1.EncoderScalabilityModeL3T2h,
+		goav1.EncoderScalabilityModeL3T3h,
+		goav1.EncoderScalabilityModeS3T1h,
+		goav1.EncoderScalabilityModeS3T2h,
+		goav1.EncoderScalabilityModeS3T3h,
+	}
+	for _, mode := range modes {
+		t.Run(mode.String(), func(t *testing.T) {
+			cfg := publicRTCMatrixConfig(1920, 1080, mode)
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
+			}
+			defer enc.Close()
+			got := enc.Config()
+			if got.SpatialLayerCount != 3 || got.SpatialLayers[0].Resolution != (goav1.EncoderResolution{Width: 853, Height: 480}) {
+				t.Fatalf("%s normalized layers=%d base=%+v", mode, got.SpatialLayerCount, got.SpatialLayers[0].Resolution)
+			}
+			for frame := 0; frame < 2; frame++ {
+				picture, err := enc.EncodePicture(publicRTCMatrixFrame(1920, 1080, frame), false)
+				if err != nil {
+					t.Fatalf("EncodePicture(%s, %d): %v", mode, frame, err)
+				}
+				if picture.FrameNum != 3 {
+					t.Fatalf("%s picture frames=%d want 3", mode, picture.FrameNum)
+				}
+			}
+		})
+	}
+}
+
 func TestPublicRTCEncoderCQPScalabilityModeMatrixDecodes(t *testing.T) {
 	modes := goav1.EncoderWebRTCScalabilityModes()
 	if len(modes) == 0 {
