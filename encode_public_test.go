@@ -1136,7 +1136,22 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 		Timestamp:                       0x01020304,
 		SSRC:                            0xaabbccdd,
 		DependencyDescriptorExtensionID: 42,
-		HeaderExtensionProfile:          goav1.RTPExtensionProfileTwoByte | 0x0005,
+		MIDExtensionID:                  1,
+		MID:                             "video",
+		RTPStreamIDExtensionID:          2,
+		RTPStreamID:                     "f",
+		RepairedRTPStreamIDExtensionID:  3,
+		RepairedRTPStreamID:             "r",
+		TransportWideCCExtensionID:      4,
+		TransportWideCCSequenceNumber:   0x1234,
+		TransportWideCC02ExtensionID:    5,
+		TransportWideCC02: goav1.RTPTransportWideCC02{
+			SequenceNumber:        0x2234,
+			FeedbackRequest:       true,
+			IncludeTimestamps:     true,
+			FeedbackSequenceCount: 3,
+		},
+		HeaderExtensionProfile: goav1.RTPExtensionProfileTwoByte | 0x0005,
 	}
 	headerSpans := make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, packetCount)
 	oneByteConfig := goav1.EncoderWebRTCRTPPacketHeaderConfig{
@@ -1152,6 +1167,11 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 	}
 	if _, _, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(nil, make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, 1), oneByteConfig, []byte{0xaa}, make([]byte, 17), []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 17}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
 		t.Fatalf("one-byte dependency descriptor packet err=%v want %v", err, goav1.ErrRTPInvalidHeaderExtension)
+	}
+	duplicateExtConfig := config
+	duplicateExtConfig.MIDExtensionID = config.DependencyDescriptorExtensionID
+	if _, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(duplicateExtConfig, []byte{0xaa}, []byte{0xbb}, []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 1}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("duplicate extension id size err=%v want %v", err, goav1.ErrRTPInvalidHeaderExtension)
 	}
 
 	sizeInfo, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(config, rtpPayloads, descriptors, packetSpans[:packetCount])
@@ -1175,6 +1195,27 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 	if len(fullPackets) != len(prefix)+sizeInfo.Bytes || cap(fullPackets) != cap(fullDst) ||
 		&fullPackets[0] != &fullDst[0] || !bytes.Equal(fullPackets[:len(prefix)], prefix) {
 		t.Fatalf("full packet dst len=%d cap=%d size=%+v prefix=%x", len(fullPackets), cap(fullPackets), sizeInfo, fullPackets[:len(prefix)])
+	}
+	var allocErr error
+	sizeAllocs := testing.AllocsPerRun(50, func() {
+		_, allocErr = goav1.EncoderWebRTCRTPPacketsWithHeadersSize(config, rtpPayloads, descriptors, packetSpans[:packetCount])
+	})
+	if allocErr != nil {
+		t.Fatalf("EncoderWebRTCRTPPacketsWithHeadersSize alloc run: %v", allocErr)
+	}
+	if sizeAllocs != 0 {
+		t.Fatalf("EncoderWebRTCRTPPacketsWithHeadersSize allocations=%f want 0", sizeAllocs)
+	}
+	allocDst := make([]byte, 0, sizeInfo.Bytes)
+	allocHeaderSpans := make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, packetCount)
+	appendAllocs := testing.AllocsPerRun(50, func() {
+		_, _, allocErr = goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(allocDst[:0], allocHeaderSpans, config, rtpPayloads, descriptors, packetSpans[:packetCount])
+	})
+	if allocErr != nil {
+		t.Fatalf("AppendEncoderWebRTCRTPPacketsWithHeaders alloc run: %v", allocErr)
+	}
+	if appendAllocs != 0 {
+		t.Fatalf("AppendEncoderWebRTCRTPPacketsWithHeaders allocations=%f want 0", appendAllocs)
 	}
 
 	payloadSlices := make([][]byte, packetCount)
@@ -1218,6 +1259,48 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 			span.SequenceNumber != packet.Header.SequenceNumber ||
 			span.Marker != packet.Header.Marker {
 			t.Fatalf("packet %d header span=%+v payload=%d", i, span, len(packet.Payload))
+		}
+		midElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.MIDExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d MID extension ok=%v err=%v", i, ok, err)
+		}
+		mid, err := goav1.ParseRTPMIDHeaderExtension(midElement.Payload)
+		if err != nil || mid != config.MID {
+			t.Fatalf("packet %d MID=%q err=%v want %q", i, mid, err, config.MID)
+		}
+		ridElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.RTPStreamIDExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d RID extension ok=%v err=%v", i, ok, err)
+		}
+		rid, err := goav1.ParseRTPStreamIDHeaderExtension(ridElement.Payload)
+		if err != nil || rid != config.RTPStreamID {
+			t.Fatalf("packet %d RID=%q err=%v want %q", i, rid, err, config.RTPStreamID)
+		}
+		rridElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.RepairedRTPStreamIDExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d RRID extension ok=%v err=%v", i, ok, err)
+		}
+		rrid, err := goav1.ParseRTPRepairedStreamIDHeaderExtension(rridElement.Payload)
+		if err != nil || rrid != config.RepairedRTPStreamID {
+			t.Fatalf("packet %d RRID=%q err=%v want %q", i, rrid, err, config.RepairedRTPStreamID)
+		}
+		twccElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.TransportWideCCExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d TWCC extension ok=%v err=%v", i, ok, err)
+		}
+		twcc, err := goav1.ParseRTPTransportWideCCHeaderExtension(twccElement.Payload)
+		if want := config.TransportWideCCSequenceNumber + uint16(i); err != nil || twcc != want {
+			t.Fatalf("packet %d TWCC=%d err=%v want %d", i, twcc, err, want)
+		}
+		twcc02Element, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.TransportWideCC02ExtensionID)
+		if err != nil || !ok {
+			t.Fatalf("packet %d TWCC02 extension ok=%v err=%v", i, ok, err)
+		}
+		twcc02, err := goav1.ParseRTPTransportWideCC02HeaderExtension(twcc02Element.Payload)
+		wantTWCC02 := config.TransportWideCC02
+		wantTWCC02.SequenceNumber += uint16(i)
+		if err != nil || twcc02 != wantTWCC02 {
+			t.Fatalf("packet %d TWCC02=%+v err=%v want %+v", i, twcc02, err, wantTWCC02)
 		}
 		if !bytes.Equal(descriptorPacket.DescriptorPayload, fullPackets[span.DependencyDescriptorOffset:span.DependencyDescriptorOffset+span.DependencyDescriptorLength]) {
 			t.Fatalf("packet %d dependency descriptor span mismatch", i)

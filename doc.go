@@ -33,7 +33,8 @@
 // for WebRTC streams with I420/I422/I444/I400/NV12/NV21 and generic Frame
 // input adapters, RTCEncoder config preflight
 // normalization, RTP payload packetization with dependency descriptors, sized
-// complete RTP packet wrapping, multi-spatial EncodePicture output for WebRTC
+// complete RTP packet wrapping with dependency-descriptor, MID/RID/RRID, and
+// TWCC/TWCC-02 header extensions, multi-spatial EncodePicture output for WebRTC
 // SVC and simulcast modes, key-frame scalability metadata OBUs, and runtime
 // bitrate/framerate/scalability
 // reconfiguration, complete-packet RTP sequencing for duplicate/reorder/gap

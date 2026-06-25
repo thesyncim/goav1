@@ -323,10 +323,11 @@ ship under `internal/av1/testdata/libaom/`.
   4:2:0 encode path. It supports fixed-quality/CBR, forced keyframes,
   temporal layering, runtime bitrate/framerate/scalability reconfiguration,
   multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes,
-  tile columns, golden references, RTP payload packetization, sized complete
-  RTP packet wrapping, and dependency descriptors. The lower-level WebRTC
-  encoder
-  surface validates the W3C AV1 SVC mode vocabulary, temporal/spatial
+  tile columns, golden references, RTP payload packetization, dependency
+  descriptors, and sized complete RTP packet wrapping with
+  dependency-descriptor, MID/RID/RRID, and TWCC/TWCC-02 header extensions. The
+  lower-level WebRTC encoder surface validates the W3C AV1 SVC mode vocabulary,
+  temporal/spatial
   dependency structures, dependency-descriptor decode-target grids,
   W3C key-shift temporal schedules,
   pinned-libwebrtc `L2T2_KEY_SHIFT` dependency templates, explicit sequence
