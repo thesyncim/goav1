@@ -310,6 +310,15 @@ func AppendEncoderWebRTCScalabilityModes(dst []EncoderScalabilityMode) []Encoder
 	return internalencoder.AppendWebRTCScalabilityModes(dst)
 }
 
+// ValidateEncoderWebRTCActiveScalabilityModes validates the active
+// scalabilityMode values for one WebRTC sender. Pass only active encodings; a
+// sender with no active encodings is accepted. Per the WebRTC-SVC setParameters
+// rule, multiple active encodings cannot include a single-SSRC simulcast S mode
+// such as S2T1 or S3T3h.
+func ValidateEncoderWebRTCActiveScalabilityModes(modes ...EncoderScalabilityMode) error {
+	return internalencoder.ValidateWebRTCActiveScalabilityModes(modes)
+}
+
 // EncoderWebRTCScalabilityModeIDC maps a W3C WebRTC scalabilityMode value to
 // its predefined AV1 metadata_scalability() scalability_mode_idc value. ok is
 // false when AV1 has no predefined IDC for the WebRTC mode. The metadata OBU

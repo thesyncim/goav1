@@ -336,8 +336,9 @@ ship under `internal/av1/testdata/libaom/`.
   rtpmap/fmtp negotiation parameters, SDP rtcp-fb emission/checks, RTP
   header-extension mapping checks, raw RTP
   MID/RID/RRID SDES payload helpers, AV1 RID receiver restrictions, AV1
-  simulcast RID groups, generic and compound RTCP packet parsing, RTCP
-  SR/RR/SDES/BYE and RTPFB/PSFB packet wrapping/parsing,
+  simulcast RID groups, active-encoding scalabilityMode validation for the
+  WebRTC-SVC single-SSRC simulcast rule, generic and compound RTCP packet
+  parsing, RTCP SR/RR/SDES/BYE and RTPFB/PSFB packet wrapping/parsing,
   NACK/Transport-CC/PLI/FIR/REMB feedback helpers, Transport-CC
   receiver-side report construction and receive-timeline reconstruction,
   AV1 RTCP LRR FCI entry/list parsing, serialization, layer-grid validation,

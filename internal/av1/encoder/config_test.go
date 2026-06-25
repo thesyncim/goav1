@@ -184,6 +184,30 @@ func TestAppendWebRTCScalabilityModesCoversEnum(t *testing.T) {
 	}
 }
 
+func TestValidateWebRTCActiveScalabilityModes(t *testing.T) {
+	for _, modes := range [][]ScalabilityMode{
+		nil,
+		{ScalabilityModeL1T1},
+		{ScalabilityModeS3T3h},
+		{ScalabilityModeL1T3, ScalabilityModeL1T3, ScalabilityModeL1T3},
+		{ScalabilityModeL2T3_KEY_SHIFT, ScalabilityModeL3T3_KEY},
+	} {
+		if err := ValidateWebRTCActiveScalabilityModes(modes); err != nil {
+			t.Fatalf("ValidateWebRTCActiveScalabilityModes(%v): %v", modes, err)
+		}
+	}
+
+	for _, modes := range [][]ScalabilityMode{
+		{ScalabilityMode(scalabilityModeCount)},
+		{ScalabilityModeL1T3, ScalabilityModeS2T1},
+		{ScalabilityModeS2T3h, ScalabilityModeS3T3},
+	} {
+		if err := ValidateWebRTCActiveScalabilityModes(modes); !errors.Is(err, ErrInvalidConfig) {
+			t.Fatalf("ValidateWebRTCActiveScalabilityModes(%v) err=%v want %v", modes, err, ErrInvalidConfig)
+		}
+	}
+}
+
 func TestWebRTCScalabilityModeIDC(t *testing.T) {
 	seen := make(map[ScalabilityMode]bool, scalabilityModeCount)
 	for _, tc := range []struct {

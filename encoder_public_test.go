@@ -222,6 +222,30 @@ func TestPublicEncoderWebRTCScalabilityModes(t *testing.T) {
 	}
 }
 
+func TestPublicValidateEncoderWebRTCActiveScalabilityModes(t *testing.T) {
+	for _, modes := range [][]av1.EncoderScalabilityMode{
+		nil,
+		{av1.EncoderScalabilityModeL1T1},
+		{av1.EncoderScalabilityModeS3T3h},
+		{av1.EncoderScalabilityModeL1T3, av1.EncoderScalabilityModeL1T3, av1.EncoderScalabilityModeL1T3},
+		{av1.EncoderScalabilityModeL2T3_KEY_SHIFT, av1.EncoderScalabilityModeL3T3_KEY},
+	} {
+		if err := av1.ValidateEncoderWebRTCActiveScalabilityModes(modes...); err != nil {
+			t.Fatalf("ValidateEncoderWebRTCActiveScalabilityModes(%v): %v", modes, err)
+		}
+	}
+
+	for _, modes := range [][]av1.EncoderScalabilityMode{
+		{av1.EncoderScalabilityMode(255)},
+		{av1.EncoderScalabilityModeL1T3, av1.EncoderScalabilityModeS2T1},
+		{av1.EncoderScalabilityModeS2T3h, av1.EncoderScalabilityModeS3T3},
+	} {
+		if err := av1.ValidateEncoderWebRTCActiveScalabilityModes(modes...); !errors.Is(err, av1.ErrEncoderInvalidConfig) {
+			t.Fatalf("ValidateEncoderWebRTCActiveScalabilityModes(%v) err=%v want %v", modes, err, av1.ErrEncoderInvalidConfig)
+		}
+	}
+}
+
 func TestPublicEncoderWebRTCScalabilityModeIDC(t *testing.T) {
 	want := map[string]struct {
 		idc uint8

@@ -260,6 +260,25 @@ func AppendWebRTCScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
 	return dst
 }
 
+// ValidateWebRTCActiveScalabilityModes validates the active scalabilityMode
+// values for one WebRTC sender. The WebRTC-SVC API permits multiple active
+// encodings only when none of those encodings uses a single-SSRC S mode.
+func ValidateWebRTCActiveScalabilityModes(modes []ScalabilityMode) error {
+	hasSingleSSRCSimulcast := false
+	for _, mode := range modes {
+		if !mode.Valid() {
+			return ErrInvalidConfig
+		}
+		if mode.IsSimulcast() {
+			hasSingleSSRCSimulcast = true
+		}
+	}
+	if len(modes) > 1 && hasSingleSSRCSimulcast {
+		return ErrInvalidConfig
+	}
+	return nil
+}
+
 // WebRTCScalabilityModeIDC maps a W3C WebRTC scalabilityMode value to its
 // predefined AV1 metadata_scalability() scalability_mode_idc value. ok is
 // false when AV1 has no predefined IDC for the WebRTC mode. The metadata OBU
