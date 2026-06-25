@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -237,10 +238,11 @@ type browserRTCEncoderDirectRTPControlChurnScenario struct {
 }
 
 type browserRTCEncoderDirectRTPControlChurnEvidence struct {
-	mu          sync.Mutex
-	configs     []goav1.EncoderConfig
-	pictures    int
-	keyPictures int
+	mu              sync.Mutex
+	configs         []goav1.EncoderConfig
+	pictures        int
+	keyPictures     int
+	frameTimestamps map[int]uint32
 }
 
 func (e *browserRTCEncoderDirectRTPControlChurnEvidence) attach(options *rtcEncoderRTPStreamOptions) {
@@ -265,6 +267,26 @@ func (e *browserRTCEncoderDirectRTPControlChurnEvidence) attach(options *rtcEnco
 		}
 		e.mu.Unlock()
 	}
+	prevPacket := options.OnPacket
+	options.OnPacket = func(frameIndex int, packetIndex int, packet rtp.Packet, dropped bool) error {
+		if prevPacket != nil {
+			if err := prevPacket(frameIndex, packetIndex, packet, dropped); err != nil {
+				return err
+			}
+		}
+		if dropped {
+			return nil
+		}
+		e.mu.Lock()
+		if e.frameTimestamps == nil {
+			e.frameTimestamps = make(map[int]uint32)
+		}
+		if _, ok := e.frameTimestamps[frameIndex]; !ok {
+			e.frameTimestamps[frameIndex] = packet.Timestamp
+		}
+		e.mu.Unlock()
+		return nil
+	}
 }
 
 func (e *browserRTCEncoderDirectRTPControlChurnEvidence) assert(t *testing.T, label string, wantModes []goav1.EncoderScalabilityMode) {
@@ -273,6 +295,10 @@ func (e *browserRTCEncoderDirectRTPControlChurnEvidence) assert(t *testing.T, la
 	configs := append([]goav1.EncoderConfig(nil), e.configs...)
 	pictures := e.pictures
 	keyPictures := e.keyPictures
+	frameTimestamps := make(map[int]uint32, len(e.frameTimestamps))
+	for frameIndex, timestamp := range e.frameTimestamps {
+		frameTimestamps[frameIndex] = timestamp
+	}
 	e.mu.Unlock()
 
 	if len(configs) < 4 {
@@ -314,8 +340,65 @@ func (e *browserRTCEncoderDirectRTPControlChurnEvidence) assert(t *testing.T, la
 			t.Fatalf("%s missing scalability mode %s in applied configs %v", label, mode, configs)
 		}
 	}
-	t.Logf("%s applied configs=%d pictures=%d keyPictures=%d fps=%d bitrates=%d rateControls=%d contents=%d modes=%d",
-		label, len(configs), pictures, keyPictures, len(fps), len(targets), len(rateControls), len(contents), len(modes))
+	timestampDeltas := browserRTCEncoderDirectRTPFrameTimestampDeltas(frameTimestamps)
+	if len(frameTimestamps) < 42 {
+		t.Fatalf("%s RTP frame timestamps=%d want at least 42", label, len(frameTimestamps))
+	}
+	if len(timestampDeltas) < 3 {
+		t.Fatalf("%s distinct RTP frame timestamp deltas=%d want at least 3", label, len(timestampDeltas))
+	}
+	matchedFPS := browserRTCEncoderDirectRTPMatchedFrameDurations(t, configs, timestampDeltas)
+	if matchedFPS < 3 {
+		t.Fatalf("%s RTP frame timestamp deltas matched %d configured framerates, want at least 3; deltas=%v configs=%v",
+			label, matchedFPS, timestampDeltas, configs)
+	}
+	t.Logf("%s applied configs=%d pictures=%d keyPictures=%d fps=%d bitrates=%d rateControls=%d contents=%d modes=%d rtpFrames=%d rtpDeltas=%d matchedFPS=%d",
+		label, len(configs), pictures, keyPictures, len(fps), len(targets), len(rateControls), len(contents), len(modes),
+		len(frameTimestamps), len(timestampDeltas), matchedFPS)
+}
+
+func browserRTCEncoderDirectRTPFrameTimestampDeltas(frameTimestamps map[int]uint32) map[uint32]bool {
+	frameIndexes := make([]int, 0, len(frameTimestamps))
+	for frameIndex := range frameTimestamps {
+		frameIndexes = append(frameIndexes, frameIndex)
+	}
+	sort.Ints(frameIndexes)
+	deltas := make(map[uint32]bool)
+	for i := 1; i < len(frameIndexes); i++ {
+		prev, curr := frameIndexes[i-1], frameIndexes[i]
+		if curr != prev+1 {
+			continue
+		}
+		delta := frameTimestamps[curr] - frameTimestamps[prev]
+		if delta != 0 {
+			deltas[delta] = true
+		}
+	}
+	return deltas
+}
+
+func browserRTCEncoderDirectRTPMatchedFrameDurations(
+	t *testing.T, configs []goav1.EncoderConfig, timestampDeltas map[uint32]bool,
+) int {
+	t.Helper()
+	matched := make(map[goav1.EncoderRational]bool)
+	for _, cfg := range configs {
+		if matched[cfg.MaxFramerate] {
+			continue
+		}
+		duration, err := goav1.EncoderWebRTCRTPFrameDuration(cfg)
+		if err != nil {
+			t.Fatalf("EncoderWebRTCRTPFrameDuration(%+v): %v", cfg, err)
+		}
+		var remainder int64
+		for i := 0; i < 4; i++ {
+			if timestampDeltas[rtcTimestampIncrement(duration, &remainder)] {
+				matched[cfg.MaxFramerate] = true
+				break
+			}
+		}
+	}
+	return len(matched)
 }
 
 func browserRTCEncoderDirectRTPControlChurnOptions(configForStep func(step int) goav1.EncoderConfig) rtcEncoderRTPStreamOptions {

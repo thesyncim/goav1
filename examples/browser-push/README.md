@@ -40,4 +40,5 @@ Edge, Firefox, Safari 17+).
   simulcast forwarding.
 - The live control-churn path proves those browser sessions keep decoding while
   sender settings change across framerate, bitrate, CBR/CQP, content hint, and
-  single-spatial scalability modes.
+  single-spatial scalability modes, with RTP timestamp cadence matching the
+  configured framerates.

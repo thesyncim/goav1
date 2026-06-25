@@ -479,7 +479,8 @@ forwarding for S2/S3 simulcast. It also repeats representative direct-RTP
 browser playback sessions for L1 temporal layering, shared-reference SVC
 base-layer forwarding, and highest-layer simulcast forwarding, and live-tests
 browser playback while framerate, bitrate, rate control, content hint, and
-representative scalability settings are reconfigured.
+representative scalability settings are reconfigured, including the emitted RTP
+timestamp cadence for the changed framerates.
 
 Broader parity sweeps:
 
