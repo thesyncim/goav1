@@ -15,9 +15,12 @@
   <video id="video" autoplay playsinline muted></video>
   <script>
     const status = document.getElementById('status');
+    const video = document.getElementById('video');
     const pc = new RTCPeerConnection();
+    window.goav1PC = pc;
+    window.goav1Video = video;
     pc.addTransceiver('video', { direction: 'recvonly' });
-    pc.ontrack = (e) => { document.getElementById('video').srcObject = e.streams[0]; };
+    pc.ontrack = (e) => { video.srcObject = e.streams[0]; };
     pc.onconnectionstatechange = () => { status.textContent = pc.connectionState; };
     (async () => {
       const offer = await pc.createOffer();
@@ -29,7 +32,10 @@
       const resp = await fetch('/offer', { method: 'POST', body: pc.localDescription.sdp });
       if (!resp.ok) { status.textContent = 'offer failed: ' + resp.status; return; }
       await pc.setRemoteDescription({ type: 'answer', sdp: await resp.text() });
-    })();
+    })().catch((err) => {
+      window.goav1Error = String(err && err.stack || err);
+      status.textContent = 'failed';
+    });
   </script>
 </body>
 </html>
