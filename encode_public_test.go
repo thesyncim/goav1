@@ -2778,6 +2778,179 @@ func TestPublicRTCEncoderPairwiseControlRTPReferenceDecoders(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	modes := goav1.EncoderWebRTCScalabilityModes()
+	if len(modes) == 0 {
+		t.Fatal("no WebRTC scalability modes")
+	}
+	fpsCycle := []goav1.EncoderRational{
+		{Num: 30, Den: 1},
+		{Num: 60000, Den: 1001},
+		{Num: 24, Den: 1},
+		{Num: 120, Den: 1},
+		{Num: 15, Den: 1},
+	}
+
+	for step, mode := range modes {
+		step, mode := step, mode
+		t.Run(mode.String(), func(t *testing.T) {
+			width, height := publicRTCMatrixGeometry(t, mode)
+			cfg := publicRTCMatrixConfig(width, height, mode)
+			cfg.MaxFramerate = fpsCycle[step%len(fpsCycle)]
+			cfg.Content = goav1.EncoderContentCamera
+			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*17))
+			if step%2 == 1 {
+				cfg.RateControl = goav1.EncoderRateControlCQP
+				cfg.Quantizer = uint8(23 + step%31)
+				cfg.Content = goav1.EncoderContentScreen
+			}
+
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
+			}
+			defer enc.Close()
+
+			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var activeReceiver goav1.RTPDependencyDescriptorState
+			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var orderedTUs [][]byte
+			var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
+			var sharedSequence goav1.SequenceHeader
+			activeLimits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}
+			nextFrameID := uint64(0)
+			frameIndex := 0
+
+			appendPicture := func(label string, forceKey bool, wantKey bool) goav1.RTCPicture {
+				t.Helper()
+				picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, frameIndex), forceKey)
+				if err != nil {
+					t.Fatalf("%s EncodePicture(%s): %v", label, mode, err)
+				}
+				frameIndex++
+				if picture.Keyframe != wantKey {
+					t.Fatalf("%s key=%v want %v picture=%+v", label, picture.Keyframe, wantKey, picture)
+				}
+				current := enc.Config()
+				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, current, picture, wantKey, &nextFrameID)
+				assertPublicRTCPictureActiveDecodeTargetOptions(t, &activeReceiver, current, picture, activeLimits)
+				for i := 0; i < picture.FrameNum; i++ {
+					frame := picture.Frames[i]
+					if publicRTCSharedReferenceSlotMode(current.Scalability) {
+						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), frame.Data, &sharedSequence, current.Content == goav1.EncoderContentScreen)
+						continue
+					}
+					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == goav1.EncoderContentScreen)
+				}
+				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
+				return picture
+			}
+
+			appendPicture("initial key", false, true)
+
+			rembKbps := publicRTCMatrixControlBitrateKbps(t, mode) + int32(step*29) + 73
+			rembCompound := publicRTCREMBFeedbackCompound(t, uint64(rembKbps)*1000)
+			rembConfig, ok, packets, err := goav1.EncoderWebRTCRTCPCompoundPacketsApplyReceiverEstimatedMaximumBitrate(
+				enc.Config(),
+				rembCompound,
+				make([]goav1.RTCPPacket, 0, 2),
+				make([]uint32, 0, 1),
+			)
+			if err != nil {
+				t.Fatalf("REMB apply compound: %v", err)
+			}
+			if !ok || len(packets) != 1 {
+				t.Fatalf("REMB apply ok=%v packet len=%d want true,1", ok, len(packets))
+			}
+			if publicRTCSetConfigRequiresKey(t, enc.Config(), rembConfig) {
+				t.Fatalf("REMB-only config change for %s requires a key picture", mode)
+			}
+			if err := enc.SetConfig(rembConfig); err != nil {
+				t.Fatalf("SetConfig(%s REMB): %v", mode, err)
+			}
+			assertPublicRTCConfigControls(t, enc.Config(), rembConfig)
+			appendPicture("REMB delta", false, false)
+
+			pliCompound := testAV1RTCPFeedbackCompound(t, goav1.RTCPFeedbackPacket{
+				PacketType: goav1.RTCPPSFBPacketType,
+				FMT:        goav1.RTCPPSFBPictureLossIndicationFMT,
+				SenderSSRC: 0x01020304,
+				MediaSSRC:  0x05060708,
+			})
+			forcePLI, pliPackets, err := goav1.EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
+				enc.Config(),
+				pliCompound,
+				make([]goav1.RTCPPacket, 0, 1),
+				nil,
+				nil,
+			)
+			if err != nil {
+				t.Fatalf("PLI compound decision: %v", err)
+			}
+			if !forcePLI || len(pliPackets) != 1 {
+				t.Fatalf("PLI force=%v packet len=%d want true,1", forcePLI, len(pliPackets))
+			}
+			appendPicture("PLI recovery key", forcePLI, true)
+
+			entry := testAV1RTCPValidLayerRefreshEntry(t, mode)
+			lrrCompound := testAV1RTCPFeedbackCompound(t, goav1.RTCPFeedbackPacket{
+				PacketType: goav1.RTCPPSFBPacketType,
+				FMT:        goav1.RTCPPSFBLayerRefreshRequestFMT,
+				SenderSSRC: 0x01020304,
+				MediaSSRC:  entry.SSRC,
+				FCI:        testAV1RTCPLayerRefreshFCI(t, []goav1.AV1RTCPLayerRefreshRequestEntry{entry}),
+			})
+			forceLRR, lrrPackets, err := goav1.EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
+				enc.Config(),
+				lrrCompound,
+				make([]goav1.RTCPPacket, 0, 1),
+				nil,
+				make([]goav1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+			)
+			if err != nil {
+				t.Fatalf("LRR compound decision: %v", err)
+			}
+			if !forceLRR || len(lrrPackets) != 1 {
+				t.Fatalf("LRR force=%v packet len=%d want true,1", forceLRR, len(lrrPackets))
+			}
+			target, ok, targetPackets, err := goav1.EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget(
+				enc.Config(),
+				lrrCompound,
+				make([]goav1.RTCPPacket, 0, 1),
+				make([]goav1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+			)
+			if err != nil {
+				t.Fatalf("LRR target compound: %v", err)
+			}
+			if !ok || len(targetPackets) != 1 || target != entry.Target {
+				t.Fatalf("LRR target=%+v ok=%v packet len=%d want %+v,true,1", target, ok, len(targetPackets), entry.Target)
+			}
+			lrrRecovery := appendPicture("LRR recovery key", forceLRR, true)
+			options, err := lrrRecovery.ActiveDecodeTargetsRTPOptions(target.SpatialID, target.TemporalID)
+			if err != nil {
+				t.Fatalf("LRR recovery ActiveDecodeTargetsRTPOptions: %v", err)
+			}
+			spatialLayers, temporalLayers, _, ok := enc.Config().Scalability.Layers()
+			if !ok {
+				t.Fatalf("invalid mode after LRR recovery %s", enc.Config().Scalability)
+			}
+			wantMask := publicExpectedActiveDecodeTargetsMask(spatialLayers, temporalLayers, target.SpatialID, target.TemporalID)
+			if options.ActiveDecodeTargetsMask != wantMask {
+				t.Fatalf("LRR active mask=%#x want %#x", options.ActiveDecodeTargetsMask, wantMask)
+			}
+			var lrrActiveReceiver goav1.RTPDependencyDescriptorState
+			for i := 0; i < lrrRecovery.FrameNum; i++ {
+				assertPublicRTCFrameRTPPacketsWithActiveDecodeTargets(t, &lrrActiveReceiver, lrrRecovery.Frames[i], activeLimits, options)
+			}
+
+			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+			assertPublicRTCRTPReferenceDecoders(t, decoders, "feedback-controls-"+mode.String(), enc.Config(), layerTUs, orderedTUs)
+		})
+	}
+}
+
 type publicReferenceAV1Decoder struct {
 	name string
 	path string
@@ -2924,6 +3097,65 @@ func assertPublicIVFMatchesReferenceDecodersRawYUVBytes(
 				name, decoder.name, len(got), len(want), offset, gotByte, wantByte)
 		}
 		t.Logf("%s %s: %d frames bit-exact", name, decoder.name, frameCount)
+	}
+}
+
+func publicRTCREMBFeedbackCompound(t *testing.T, bitrateBps uint64) []byte {
+	t.Helper()
+	fci, err := goav1.AppendRTCPReceiverEstimatedMaximumBitrateFCI(
+		make([]byte, 0, goav1.RTCPReceiverEstimatedMaximumBitrateFCIMinSize+goav1.RTCPReceiverEstimatedMaximumBitrateSSRCSize),
+		bitrateBps,
+		[]uint32{0x05060708},
+	)
+	if err != nil {
+		t.Fatalf("AppendRTCPReceiverEstimatedMaximumBitrateFCI: %v", err)
+	}
+	return testAV1RTCPFeedbackCompound(t, goav1.RTCPFeedbackPacket{
+		PacketType: goav1.RTCPPSFBPacketType,
+		FMT:        goav1.RTCPPSFBApplicationLayerFeedbackFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0x05060708,
+		FCI:        fci,
+	})
+}
+
+func assertPublicRTCRTPReferenceDecoders(
+	t *testing.T,
+	decoders []publicReferenceAV1Decoder,
+	name string,
+	cfg goav1.EncoderConfig,
+	layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte,
+	orderedTUs [][]byte,
+) {
+	t.Helper()
+	if publicRTCSharedReferenceSlotMode(cfg.Scalability) {
+		if len(orderedTUs) == 0 {
+			t.Fatalf("%s has no shared-reference RTP-assembled frames", name)
+		}
+		wantYUV, decodedCount := decodePublicRTCLayerPoolLowOverheadRawYUV(t, orderedTUs...)
+		if decodedCount != len(orderedTUs) {
+			t.Fatalf("%s shared-reference decoded frames=%d want %d", name, decodedCount, len(orderedTUs))
+		}
+		frames := make([]publicIVFFrame, 0, len(orderedTUs))
+		for i, payload := range orderedTUs {
+			frames = append(frames, publicIVFFrame{timestamp: uint64(i), payload: append([]byte(nil), payload...)})
+		}
+		ivf := appendPublicIVF(nil, uint16(cfg.Resolution.Width), uint16(cfg.Resolution.Height), 30, 1, frames)
+		assertPublicIVFMatchesReferenceDecodersRawYUVBytes(t, decoders, name, ivf, wantYUV, decodedCount)
+		return
+	}
+
+	for spatialID := uint8(0); spatialID < cfg.SpatialLayerCount; spatialID++ {
+		if len(layerTUs[spatialID]) == 0 {
+			t.Fatalf("%s spatial %d has no RTP-assembled frames", name, spatialID)
+		}
+		frames := make([]publicIVFFrame, 0, len(layerTUs[spatialID]))
+		for i, payload := range layerTUs[spatialID] {
+			frames = append(frames, publicIVFFrame{timestamp: uint64(i), payload: append([]byte(nil), payload...)})
+		}
+		res := cfg.SpatialLayers[spatialID].Resolution
+		ivf := appendPublicIVF(nil, uint16(res.Width), uint16(res.Height), 30, 1, frames)
+		assertPublicIVFMatchesReferenceDecodersRawYUV(t, decoders, fmt.Sprintf("%s-spatial-%d", name, spatialID), ivf)
 	}
 }
 
