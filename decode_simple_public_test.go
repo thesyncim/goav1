@@ -1461,13 +1461,11 @@ func TestNewDecoderFromRTPPayloadsMatchesLowOverhead(t *testing.T) {
 	}
 }
 
-func TestNewDecoderFromRTPPayloadsWebRTCIndependentModeCatalogue(t *testing.T) {
+func TestHighLevelRTPDecodersWebRTCCatalogue(t *testing.T) {
 	limits := av1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
 	covered := 0
+	sharedCovered := 0
 	for step, mode := range av1.EncoderWebRTCScalabilityModes() {
-		if publicRTCSharedReferenceSlotMode(mode) {
-			continue
-		}
 		covered++
 		t.Run(mode.String(), func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, mode)
@@ -1488,6 +1486,9 @@ func TestNewDecoderFromRTPPayloadsWebRTCIndependentModeCatalogue(t *testing.T) {
 			var lowOverheads [av1.EncoderWebRTCMaxSpatialLayers][][]byte
 			var rtpPayloads [av1.EncoderWebRTCMaxSpatialLayers][][]byte
 			var rtpPackets [av1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var orderedLowOverheads [][]byte
+			var orderedRTPPayloads [][]byte
+			var orderedRTPPackets [][]byte
 			for frameIndex := 0; frameIndex < 3; frameIndex++ {
 				if frameIndex == 2 {
 					controlChange := enc.Config()
@@ -1508,10 +1509,30 @@ func TestNewDecoderFromRTPPayloadsWebRTCIndependentModeCatalogue(t *testing.T) {
 					if spatialID >= av1.EncoderWebRTCMaxSpatialLayers {
 						t.Fatalf("frame %d spatial id=%d", outputIndex, spatialID)
 					}
-					lowOverheads[spatialID] = append(lowOverheads[spatialID], append([]byte(nil), frame.Data...))
-					rtpPayloads[spatialID] = append(rtpPayloads[spatialID], publicDecoderRTPPayloadsForFrameWithLimits(t, frame, limits)...)
-					rtpPackets[spatialID] = append(rtpPackets[spatialID], publicDecoderRTPPacketsForFrameWithLimits(t, frame, limits)...)
+					lowOverhead := append([]byte(nil), frame.Data...)
+					framePayloads := publicDecoderRTPPayloadsForFrameWithLimits(t, frame, limits)
+					framePackets := publicDecoderRTPPacketsForFrameWithLimits(t, frame, limits)
+					lowOverheads[spatialID] = append(lowOverheads[spatialID], lowOverhead)
+					rtpPayloads[spatialID] = append(rtpPayloads[spatialID], framePayloads...)
+					rtpPackets[spatialID] = append(rtpPackets[spatialID], framePackets...)
+					orderedLowOverheads = append(orderedLowOverheads, lowOverhead)
+					orderedRTPPayloads = append(orderedRTPPayloads, framePayloads...)
+					orderedRTPPackets = append(orderedRTPPackets, framePackets...)
 				}
+			}
+
+			if publicRTCSharedReferenceSlotMode(mode) {
+				sharedCovered++
+				want := decodePublicLayeredDecoderLowOverheadDigests(t, orderedLowOverheads...)
+				queued := decodePublicLayeredDecoderRTPPayloadDigests(t, orderedRTPPayloads...)
+				live := decodePublicLayeredLiveDecoderRTPPayloadDigests(t, orderedRTPPayloads, orderedRTPPayloads...)
+				queuedPackets := decodePublicLayeredDecoderRTPPacketDigests(t, orderedRTPPackets...)
+				livePackets := decodePublicLayeredLiveDecoderRTPPacketDigests(t, orderedRTPPackets, orderedRTPPackets...)
+				assertPublicDecoderFrameDigests(t, "layered queued RTP", -1, queued, want)
+				assertPublicDecoderFrameDigests(t, "layered live RTP", -1, live, want)
+				assertPublicDecoderFrameDigests(t, "layered queued RTP packet", -1, queuedPackets, want)
+				assertPublicDecoderFrameDigests(t, "layered live RTP packet", -1, livePackets, want)
+				return
 			}
 
 			for spatialID := 0; spatialID < av1.EncoderWebRTCMaxSpatialLayers; spatialID++ {
@@ -1536,6 +1557,9 @@ func TestNewDecoderFromRTPPayloadsWebRTCIndependentModeCatalogue(t *testing.T) {
 	}
 	if covered == 0 {
 		t.Fatal("no high-level RTP-compatible WebRTC modes covered")
+	}
+	if sharedCovered == 0 {
+		t.Fatal("no shared-reference SVC modes covered")
 	}
 }
 
