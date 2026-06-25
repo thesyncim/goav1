@@ -1376,6 +1376,162 @@ func TestPublicRTCPictureActiveDecodeTargetsControlMatrix(t *testing.T) {
 	}
 }
 
+func TestPublicLayeredDecoderRTPPacketDecodeTargetSelection(t *testing.T) {
+	const dependencyDescriptorExtensionID = 42
+	if _, err := goav1.RTPDependencyDescriptorDecodeTargetActive(goav1.RTPDependencyDescriptorState{}, 0); !errors.Is(err, goav1.ErrRTPInvalidDependencyDescriptor) {
+		t.Fatalf("empty RTPDependencyDescriptorDecodeTargetActive err=%v want %v", err, goav1.ErrRTPInvalidDependencyDescriptor)
+	}
+
+	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 32}
+	fps := []goav1.EncoderRational{
+		{Num: 30, Den: 1},
+		{Num: 60, Den: 1},
+		{Num: 30000, Den: 1001},
+		{Num: 24, Den: 1},
+	}
+	for step, mode := range goav1.EncoderWebRTCScalabilityModes() {
+		mode := mode
+		t.Run(mode.String(), func(t *testing.T) {
+			spatialLayers, temporalLayers, _, ok := mode.Layers()
+			if !ok {
+				t.Fatalf("invalid WebRTC scalability mode %s", mode)
+			}
+			width, height := publicRTCMatrixGeometry(t, mode)
+			cfg := publicRTCMatrixConfig(width, height, mode)
+			cfg.MaxFramerate = fps[step%len(fps)]
+			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*11))
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
+			}
+			defer enc.Close()
+
+			var receiver goav1.RTPDependencyDescriptorState
+			var selectedPackets [][]byte
+			var selectedLowOverheads [][]byte
+			var wantMetadata []publicLayeredFrameMetadata
+			selectedPacketCount := 0
+			discardedPacketCount := 0
+			activeSignals := 0
+
+			for frameIndex := 0; frameIndex < 4; frameIndex++ {
+				if frameIndex == 2 {
+					controlChange := enc.Config()
+					controlChange.MaxFramerate = fps[(step+1)%len(fps)]
+					publicRTCApplyControlBitrates(&controlChange, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*17)+47)
+					if err := enc.SetConfig(controlChange); err != nil {
+						t.Fatalf("SetConfig(%s control): %v", mode, err)
+					}
+					assertPublicRTCConfigControls(t, enc.Config(), controlChange)
+				}
+
+				picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, frameIndex), false)
+				if err != nil {
+					t.Fatalf("EncodePicture(%s, %d): %v", mode, frameIndex, err)
+				}
+				options, err := picture.ActiveDecodeTargetsRTPOptions(0, 0)
+				if err != nil {
+					t.Fatalf("%s picture %d ActiveDecodeTargetsRTPOptions(S0,T0): %v", mode, frameIndex, err)
+				}
+				wantActiveMask := publicExpectedActiveDecodeTargetsMask(spatialLayers, temporalLayers, 0, 0)
+				if !options.ActiveDecodeTargetsPresentOnFirstPacket || options.ActiveDecodeTargetsMask != wantActiveMask {
+					t.Fatalf("%s picture %d options=%+v want mask %#x", mode, frameIndex, options, wantActiveMask)
+				}
+
+				for outputIndex := 0; outputIndex < picture.FrameNum; outputIndex++ {
+					frame := picture.Frames[outputIndex]
+					wantForward := frame.SpatialID == 0 && frame.TemporalID == 0
+					if wantForward {
+						selectedLowOverheads = append(selectedLowOverheads, append([]byte(nil), frame.Data...))
+						wantMetadata = append(wantMetadata, publicLayeredFrameMetadataFromRTCFrame(frame))
+					}
+					framePackets := publicDecoderRTPPacketsForFrameWithLimitsAndOptions(t, frame, limits, options)
+					for packetIndex, packet := range framePackets {
+						parsed, err := goav1.ParseRTPPacketDependencyDescriptor(packet, dependencyDescriptorExtensionID, &receiver)
+						if err != nil {
+							t.Fatalf("%s picture %d output %d packet %d ParseRTPPacketDependencyDescriptor: %v", mode, frameIndex, outputIndex, packetIndex, err)
+						}
+						descriptor := parsed.Descriptor
+						if descriptor.FrameDependencies.SpatialID != frame.SpatialID || descriptor.FrameDependencies.TemporalID != frame.TemporalID {
+							t.Fatalf("%s picture %d output %d packet %d dependencies=%+v frame=%+v", mode, frameIndex, outputIndex, packetIndex, descriptor.FrameDependencies, frame)
+						}
+						if packetIndex == 0 {
+							activeSignals++
+							if !descriptor.HasActiveDecodeTargets || descriptor.ActiveDecodeTargetsMask != wantActiveMask {
+								t.Fatalf("%s picture %d output %d first descriptor=%+v want active mask %#x", mode, frameIndex, outputIndex, descriptor, wantActiveMask)
+							}
+						}
+						active, err := goav1.RTPDependencyDescriptorDecodeTargetActive(receiver, 0)
+						if err != nil {
+							t.Fatalf("%s picture %d output %d packet %d DecodeTargetActive: %v", mode, frameIndex, outputIndex, packetIndex, err)
+						}
+						if !active {
+							t.Fatalf("%s picture %d output %d packet %d target 0 unexpectedly inactive", mode, frameIndex, outputIndex, packetIndex)
+						}
+						if spatialLayers*temporalLayers > 1 {
+							inactive, err := goav1.RTPDependencyDescriptorDecodeTargetActive(receiver, 1)
+							if err != nil {
+								t.Fatalf("%s picture %d output %d packet %d DecodeTargetActive(target 1): %v", mode, frameIndex, outputIndex, packetIndex, err)
+							}
+							if inactive {
+								t.Fatalf("%s picture %d output %d packet %d target 1 unexpectedly active under mask %#x", mode, frameIndex, outputIndex, packetIndex, wantActiveMask)
+							}
+							inactiveForward, err := goav1.RTPDependencyDescriptorFrameForwardedForDecodeTarget(descriptor, receiver, 1)
+							if err != nil {
+								t.Fatalf("%s picture %d output %d packet %d FrameForwardedForDecodeTarget(target 1): %v", mode, frameIndex, outputIndex, packetIndex, err)
+							}
+							if inactiveForward {
+								t.Fatalf("%s picture %d output %d packet %d target 1 unexpectedly forwarded under mask %#x", mode, frameIndex, outputIndex, packetIndex, wantActiveMask)
+							}
+						}
+						matches, err := goav1.RTPDependencyDescriptorFrameMatchesDecodeTarget(descriptor, 0)
+						if err != nil {
+							t.Fatalf("%s picture %d output %d packet %d FrameMatchesDecodeTarget: %v", mode, frameIndex, outputIndex, packetIndex, err)
+						}
+						forward, err := goav1.RTPDependencyDescriptorFrameForwardedForDecodeTarget(descriptor, receiver, 0)
+						if err != nil {
+							t.Fatalf("%s picture %d output %d packet %d FrameForwardedForDecodeTarget: %v", mode, frameIndex, outputIndex, packetIndex, err)
+						}
+						if matches != wantForward || forward != wantForward {
+							dti, _ := goav1.RTPDependencyDescriptorFrameDecodeTargetIndication(descriptor, 0)
+							t.Fatalf("%s picture %d output %d packet %d target0 matches/forward=%v/%v want %v dti=%d deps=%+v",
+								mode, frameIndex, outputIndex, packetIndex, matches, forward, wantForward, dti, descriptor.FrameDependencies)
+						}
+						if forward {
+							selectedPackets = append(selectedPackets, append([]byte(nil), packet...))
+							selectedPacketCount++
+						} else {
+							discardedPacketCount++
+						}
+					}
+				}
+			}
+
+			if activeSignals == 0 || selectedPacketCount == 0 || len(selectedLowOverheads) == 0 {
+				t.Fatalf("%s activeSignals=%d selectedPackets=%d selectedFrames=%d", mode, activeSignals, selectedPacketCount, len(selectedLowOverheads))
+			}
+			if spatialLayers > 1 || temporalLayers > 1 {
+				if discardedPacketCount == 0 {
+					t.Fatalf("%s discarded no packets for S0/T0 selection", mode)
+				}
+			}
+
+			want := decodePublicLayeredDecoderLowOverheadDigests(t, selectedLowOverheads...)
+			got := decodePublicLayeredDecoderRTPPacketDigests(t, selectedPackets...)
+			gotMetadata := decodePublicLayeredDecoderRTPPacketMetadata(t, selectedPackets...)
+			if len(got) != len(want) {
+				t.Fatalf("%s selected packet decode frames=%d want %d", mode, len(got), len(want))
+			}
+			assertPublicLayeredFrameMetadata(t, gotMetadata, wantMetadata)
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("%s selected frame %d digest differs: got=%x want=%x", mode, i, got[i], want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestPublicRTCFrameAppendRTPPacketsSpatialPicture(t *testing.T) {
 	const w, h = 640, 360
 	enc, err := goav1.NewRTCEncoderWithConfig(goav1.EncoderConfig{

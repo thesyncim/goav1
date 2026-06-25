@@ -2075,24 +2075,29 @@ func publicDecoderRTPPayloadsForFrameWithLimits(t testing.TB, frame av1.RTCFrame
 
 func publicDecoderRTPPacketsForFrameWithLimits(t testing.TB, frame av1.RTCFrame, limits av1.RTPPayloadSizeLimits) [][]byte {
 	t.Helper()
+	return publicDecoderRTPPacketsForFrameWithLimitsAndOptions(t, frame, limits, av1.EncoderWebRTCRTPPacketDependencyDescriptorOptions{})
+}
+
+func publicDecoderRTPPacketsForFrameWithLimitsAndOptions(t testing.TB, frame av1.RTCFrame, limits av1.RTPPayloadSizeLimits, options av1.EncoderWebRTCRTPPacketDependencyDescriptorOptions) [][]byte {
+	t.Helper()
 	const dependencyDescriptorExtensionID = 42
-	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
+	firstSize, err := frame.RTPPacketScratchLenWithOptions(limits, nil, options)
 	if err != nil {
-		t.Fatalf("RTPPacketScratchLen first: %v", err)
+		t.Fatalf("RTPPacketScratchLenWithOptions first: %v", err)
 	}
 	obuScratch := make([]av1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
-	size, err := frame.RTPPacketScratchLen(limits, obuScratch)
+	size, err := frame.RTPPacketScratchLenWithOptions(limits, obuScratch, options)
 	if err != nil {
-		t.Fatalf("RTPPacketScratchLen full: %v", err)
+		t.Fatalf("RTPPacketScratchLenWithOptions full: %v", err)
 	}
 	packetScratch := make([]av1.RTPPacketPlan, size.Packetizer.Packets)
 	workScratch := make([]av1.RTPPacketPlan, size.Packetizer.Work)
 	payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
 	descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
 	spans := make([]av1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
-	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPackets(payloadBuf, descriptorBuf, spans, limits, obuScratch, packetScratch, workScratch)
+	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPacketsWithOptions(payloadBuf, descriptorBuf, spans, limits, obuScratch, packetScratch, workScratch, options)
 	if err != nil {
-		t.Fatalf("AppendRTPPackets: %v", err)
+		t.Fatalf("AppendRTPPacketsWithOptions: %v", err)
 	}
 	headerConfig := av1.EncoderWebRTCRTPPacketHeaderConfig{
 		PayloadType:                     96,

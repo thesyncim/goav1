@@ -158,6 +158,54 @@ func ParseRTPDependencyDescriptor(src []byte, structure *RTPDependencyDescriptor
 	return internalrtp.ParseDependencyDescriptor(src, structure)
 }
 
+// RTPDependencyDescriptorFrameDecodeTargetIndication returns the descriptor's
+// relation to decodeTargetID for this frame.
+func RTPDependencyDescriptorFrameDecodeTargetIndication(descriptor RTPDependencyDescriptor, decodeTargetID uint8) (RTPDependencyDescriptorDecodeTargetIndication, error) {
+	if decodeTargetID >= descriptor.FrameDependencies.DTINum {
+		return 0, ErrRTPInvalidDependencyDescriptor
+	}
+	dti := descriptor.FrameDependencies.DTIs[decodeTargetID]
+	if !dti.Valid() {
+		return 0, ErrRTPInvalidDependencyDescriptor
+	}
+	return dti, nil
+}
+
+// RTPDependencyDescriptorDecodeTargetActive reports whether decodeTargetID is
+// active in the receiver's current dependency descriptor state. Before an
+// active decode-target mask is signaled, all known decode targets are active.
+func RTPDependencyDescriptorDecodeTargetActive(state RTPDependencyDescriptorState, decodeTargetID uint8) (bool, error) {
+	if !state.Valid || decodeTargetID >= state.Structure.NumDecodeTargets {
+		return false, ErrRTPInvalidDependencyDescriptor
+	}
+	if !state.ActiveDecodeTargetsValid {
+		return true, nil
+	}
+	return state.ActiveDecodeTargetsMask&(uint32(1)<<decodeTargetID) != 0, nil
+}
+
+// RTPDependencyDescriptorFrameMatchesDecodeTarget reports whether descriptor's
+// frame is present for decodeTargetID. It does not apply the active
+// decode-target mask.
+func RTPDependencyDescriptorFrameMatchesDecodeTarget(descriptor RTPDependencyDescriptor, decodeTargetID uint8) (bool, error) {
+	dti, err := RTPDependencyDescriptorFrameDecodeTargetIndication(descriptor, decodeTargetID)
+	if err != nil {
+		return false, err
+	}
+	return dti != RTPDependencyDescriptorDecodeTargetNotPresent, nil
+}
+
+// RTPDependencyDescriptorFrameForwardedForDecodeTarget reports whether a
+// packet carrying descriptor should be forwarded to a decoder receiving
+// decodeTargetID after applying the current active decode-target mask.
+func RTPDependencyDescriptorFrameForwardedForDecodeTarget(descriptor RTPDependencyDescriptor, state RTPDependencyDescriptorState, decodeTargetID uint8) (bool, error) {
+	active, err := RTPDependencyDescriptorDecodeTargetActive(state, decodeTargetID)
+	if err != nil || !active {
+		return false, err
+	}
+	return RTPDependencyDescriptorFrameMatchesDecodeTarget(descriptor, decodeTargetID)
+}
+
 // PutRTPFragment writes one MTU-sized RTP fragment of an OBU into dst. offset
 // is the byte offset of the OBU at which the fragment starts; the function
 // returns the number of bytes written, the next offset, and whether more
