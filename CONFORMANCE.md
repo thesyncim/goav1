@@ -366,7 +366,7 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
 - `make webrtc-production`: strict realtime/WebRTC gate requiring `aomdec` and
   `dav1d` on `PATH`; covers encoder output reference decoding, high-level RTP
   payload/packet receive paths, SVC scalability modes, RTP/RTCP helpers, loss
-  recovery, tile-list playback when frame context is present, the Pion
+  recovery, RFC 4588 RTX wrap/parse/restore, tile-list playback when frame context is present, the Pion
   browser-push WebRTC example, and runtime bitrate/framerate/rate-control/
   content/scalability reconfiguration, including all-mode `SetConfig`
   transition streams checked against reference decoders.
