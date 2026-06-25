@@ -2624,6 +2624,160 @@ func TestPublicRTCEncoderSetConfigScalabilityTransitionReferenceDecoders(t *test
 	}
 }
 
+func TestPublicRTCEncoderPairwiseControlRTPReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	type step struct {
+		label       string
+		fps         goav1.EncoderRational
+		rateControl goav1.EncoderRateControlMode
+		quantizer   uint8
+		targetKbps  int32
+		content     goav1.EncoderContentHint
+		forceKey    bool
+	}
+	scenarios := []struct {
+		name  string
+		mode  goav1.EncoderScalabilityMode
+		steps []step
+	}{
+		{
+			name: "single-spatial-l1t3",
+			mode: goav1.EncoderScalabilityModeL1T3,
+			steps: []step{
+				{label: "camera-cbr-30", fps: goav1.EncoderRational{Num: 30, Den: 1}, rateControl: goav1.EncoderRateControlCBR, targetKbps: 420, content: goav1.EncoderContentCamera},
+				{label: "screen-cqp-ntsc", fps: goav1.EncoderRational{Num: 60000, Den: 1001}, rateControl: goav1.EncoderRateControlCQP, quantizer: 35, targetKbps: 520, content: goav1.EncoderContentScreen},
+				{label: "forced-screen-cqp-24", fps: goav1.EncoderRational{Num: 24, Den: 1}, rateControl: goav1.EncoderRateControlCQP, quantizer: 29, targetKbps: 540, content: goav1.EncoderContentScreen, forceKey: true},
+				{label: "camera-cbr-120", fps: goav1.EncoderRational{Num: 120, Den: 1}, rateControl: goav1.EncoderRateControlCBR, targetKbps: 700, content: goav1.EncoderContentCamera},
+			},
+		},
+		{
+			name: "shared-svc-l2t3-key-shift",
+			mode: goav1.EncoderScalabilityModeL2T3_KEY_SHIFT,
+			steps: []step{
+				{label: "screen-cqp-24", fps: goav1.EncoderRational{Num: 24, Den: 1}, rateControl: goav1.EncoderRateControlCQP, quantizer: 31, targetKbps: 900, content: goav1.EncoderContentScreen},
+				{label: "camera-cbr-30", fps: goav1.EncoderRational{Num: 30, Den: 1}, rateControl: goav1.EncoderRateControlCBR, targetKbps: 1100, content: goav1.EncoderContentCamera},
+				{label: "screen-cqp-ntsc", fps: goav1.EncoderRational{Num: 60000, Den: 1001}, rateControl: goav1.EncoderRateControlCQP, quantizer: 33, targetKbps: 1000, content: goav1.EncoderContentScreen},
+				{label: "forced-camera-cbr-15", fps: goav1.EncoderRational{Num: 15, Den: 1}, rateControl: goav1.EncoderRateControlCBR, targetKbps: 780, content: goav1.EncoderContentCamera, forceKey: true},
+			},
+		},
+		{
+			name: "simulcast-s3t2h",
+			mode: goav1.EncoderScalabilityModeS3T2h,
+			steps: []step{
+				{label: "camera-cbr-30", fps: goav1.EncoderRational{Num: 30, Den: 1}, rateControl: goav1.EncoderRateControlCBR, targetKbps: 1500, content: goav1.EncoderContentCamera},
+				{label: "screen-cqp-ntsc", fps: goav1.EncoderRational{Num: 60000, Den: 1001}, rateControl: goav1.EncoderRateControlCQP, quantizer: 32, targetKbps: 1600, content: goav1.EncoderContentScreen},
+				{label: "forced-camera-cbr-24", fps: goav1.EncoderRational{Num: 24, Den: 1}, rateControl: goav1.EncoderRateControlCBR, targetKbps: 1700, content: goav1.EncoderContentCamera, forceKey: true},
+				{label: "screen-cqp-120", fps: goav1.EncoderRational{Num: 120, Den: 1}, rateControl: goav1.EncoderRateControlCQP, quantizer: 27, targetKbps: 1450, content: goav1.EncoderContentScreen},
+			},
+		},
+	}
+
+	for _, scenario := range scenarios {
+		scenario := scenario
+		t.Run(scenario.name, func(t *testing.T) {
+			width, height := publicRTCMatrixGeometry(t, scenario.mode)
+			configForStep := func(s step) goav1.EncoderConfig {
+				cfg := publicRTCMatrixConfig(width, height, scenario.mode)
+				cfg.MaxFramerate = s.fps
+				cfg.RateControl = s.rateControl
+				cfg.Quantizer = s.quantizer
+				cfg.Content = s.content
+				if cfg.RateControl == goav1.EncoderRateControlCBR {
+					cfg.Quantizer = 0
+				}
+				publicRTCApplyControlBitrates(&cfg, s.targetKbps)
+				return cfg
+			}
+
+			var enc *goav1.RTCEncoder
+			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var activeReceiver goav1.RTPDependencyDescriptorState
+			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var orderedTUs [][]byte
+			var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
+			var sharedSequence goav1.SequenceHeader
+			nextFrameID := uint64(0)
+			activeLimits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}
+
+			for i, s := range scenario.steps {
+				cfg := configForStep(s)
+				wantKey := i == 0 || s.forceKey
+				if enc == nil {
+					var err error
+					enc, err = goav1.NewRTCEncoderWithConfig(cfg)
+					if err != nil {
+						t.Fatalf("NewRTCEncoderWithConfig(%s): %v", scenario.mode, err)
+					}
+					defer enc.Close()
+				} else {
+					wantSetConfigKey := publicRTCSetConfigRequiresKey(t, enc.Config(), cfg)
+					wantKey = wantKey || wantSetConfigKey
+					if err := enc.SetConfig(cfg); err != nil {
+						t.Fatalf("%s SetConfig: %v", s.label, err)
+					}
+				}
+				assertPublicRTCConfigControls(t, enc.Config(), cfg)
+				wantDuration, err := goav1.EncoderWebRTCRTPFrameDuration(enc.Config())
+				if err != nil {
+					t.Fatalf("%s EncoderWebRTCRTPFrameDuration: %v", s.label, err)
+				}
+				if got, err := enc.RTPFrameDuration(); err != nil || got != wantDuration {
+					t.Fatalf("%s RTPFrameDuration=%+v err=%v want %+v", s.label, got, err, wantDuration)
+				}
+
+				picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, i), s.forceKey)
+				if err != nil {
+					t.Fatalf("%s EncodePicture: %v", s.label, err)
+				}
+				if picture.Keyframe != wantKey {
+					t.Fatalf("%s key=%v want %v picture=%+v", s.label, picture.Keyframe, wantKey, picture)
+				}
+				current := enc.Config()
+				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, current, picture, wantKey, &nextFrameID)
+				assertPublicRTCPictureActiveDecodeTargetOptions(t, &activeReceiver, current, picture, activeLimits)
+				for frameIndex := 0; frameIndex < picture.FrameNum; frameIndex++ {
+					frame := picture.Frames[frameIndex]
+					if publicRTCSharedReferenceSlotMode(current.Scalability) {
+						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", s.label, frame.SpatialID), frame.Data, &sharedSequence, current.Content == goav1.EncoderContentScreen)
+						continue
+					}
+					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", s.label, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == goav1.EncoderContentScreen)
+				}
+				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
+			}
+
+			normalized := enc.Config()
+			assertPublicRTCLayerStreamsDecode(t, normalized, layerTUs, orderedTUs)
+			if publicRTCSharedReferenceSlotMode(normalized.Scalability) {
+				wantYUV, decodedCount := decodePublicRTCLayerPoolLowOverheadRawYUV(t, orderedTUs...)
+				if decodedCount != len(orderedTUs) {
+					t.Fatalf("%s shared-reference decoded frames=%d want %d", scenario.name, decodedCount, len(orderedTUs))
+				}
+				frames := make([]publicIVFFrame, 0, len(orderedTUs))
+				for i, payload := range orderedTUs {
+					frames = append(frames, publicIVFFrame{timestamp: uint64(i), payload: append([]byte(nil), payload...)})
+				}
+				ivf := appendPublicIVF(nil, uint16(normalized.Resolution.Width), uint16(normalized.Resolution.Height), 30, 1, frames)
+				assertPublicIVFMatchesReferenceDecodersRawYUVBytes(t, decoders, scenario.name, ivf, wantYUV, decodedCount)
+				return
+			}
+			for spatialID := uint8(0); spatialID < normalized.SpatialLayerCount; spatialID++ {
+				if len(layerTUs[spatialID]) == 0 {
+					t.Fatalf("%s spatial %d has no RTP-assembled frames", scenario.name, spatialID)
+				}
+				frames := make([]publicIVFFrame, 0, len(layerTUs[spatialID]))
+				for i, payload := range layerTUs[spatialID] {
+					frames = append(frames, publicIVFFrame{timestamp: uint64(i), payload: append([]byte(nil), payload...)})
+				}
+				res := normalized.SpatialLayers[spatialID].Resolution
+				ivf := appendPublicIVF(nil, uint16(res.Width), uint16(res.Height), 30, 1, frames)
+				assertPublicIVFMatchesReferenceDecodersRawYUV(t, decoders, fmt.Sprintf("%s-spatial-%d", scenario.name, spatialID), ivf)
+			}
+		})
+	}
+}
+
 type publicReferenceAV1Decoder struct {
 	name string
 	path string
