@@ -267,12 +267,24 @@ func webRTCDependencyDescriptorMatchFrame(structure WebRTCFrameDependencyStructu
 
 	var match webRTCDependencyDescriptorMatch
 	found := false
-	for i := uint8(0); i < structure.TemplateNum; i++ {
-		template := structure.Templates[i]
-		if template.SpatialID == info.SpatialID && template.TemporalID == info.TemporalID {
-			match.templateIndex = i
-			found = true
-			break
+	if info.TemplateIndexHintSet {
+		if info.TemplateIndexHint >= structure.TemplateNum {
+			return webRTCDependencyDescriptorMatch{}, ErrInvalidFrame
+		}
+		template := structure.Templates[info.TemplateIndexHint]
+		if template.SpatialID != info.SpatialID || template.TemporalID != info.TemporalID {
+			return webRTCDependencyDescriptorMatch{}, ErrInvalidFrame
+		}
+		match.templateIndex = info.TemplateIndexHint
+		found = true
+	} else {
+		for i := uint8(0); i < structure.TemplateNum; i++ {
+			template := structure.Templates[i]
+			if template.SpatialID == info.SpatialID && template.TemporalID == info.TemporalID {
+				match.templateIndex = i
+				found = true
+				break
+			}
 		}
 	}
 	if !found {
@@ -298,7 +310,7 @@ func webRTCDependencyDescriptorMatchFrame(structure WebRTCFrameDependencyStructu
 		match.frameDiffs[i] = uint16(diff)
 	}
 	match.needCustomDiffs = webRTCTemplateNeedsCustomDiffs(template, match.frameDiffs, match.frameDiffNum)
-	if match.needCustomDTIs || match.needCustomDiffs {
+	if !info.TemplateIndexHintSet && (match.needCustomDTIs || match.needCustomDiffs) {
 		if better, ok := webRTCDependencyDescriptorBestTemplate(structure, info, match.frameDiffs, match.frameDiffNum); ok {
 			match.templateIndex = better.templateIndex
 			match.needCustomDTIs = better.needCustomDTIs

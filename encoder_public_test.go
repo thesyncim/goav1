@@ -80,7 +80,7 @@ func TestPublicEncoderControlSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncoderWebRTCFrameDependencyStructureForConfig: %v", err)
 	}
-	if structure.NumDecodeTargets != 4 || structure.TemplateNum != 4 {
+	if structure.NumDecodeTargets != 4 || structure.TemplateNum != 6 {
 		t.Fatalf("dependency structure = %+v", structure)
 	}
 

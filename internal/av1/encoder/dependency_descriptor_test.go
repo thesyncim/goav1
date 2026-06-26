@@ -58,7 +58,7 @@ func TestAppendWebRTCDependencyDescriptorCustomFrameDiff(t *testing.T) {
 		DTINum:        structure.NumDecodeTargets,
 	}
 	info.Dependencies[0] = 22
-	info.DTIs = structure.Templates[3].DTIs
+	info.DTIs = structure.Templates[5].DTIs
 
 	var buf [16]byte
 	out, err := AppendWebRTCDependencyDescriptor(buf[:0], structure, info, true, true, false)
@@ -68,7 +68,7 @@ func TestAppendWebRTCDependencyDescriptorCustomFrameDiff(t *testing.T) {
 	if len(out) != 5 {
 		t.Fatalf("descriptor=% x len=%d want 5", out, len(out))
 	}
-	if out[0] != 0xc3 || out[1] != 0x00 || out[2] != 0x17 || out[3] != 0x12 {
+	if out[0] != 0xc5 || out[1] != 0x00 || out[2] != 0x17 || out[3] != 0x12 {
 		t.Fatalf("descriptor prefix=% x", out[:4])
 	}
 }
@@ -101,26 +101,44 @@ func TestAppendWebRTCDependencyDescriptorL1T3TemplateDTIs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WebRTCFrameDependencyStructureForConfig: %v", err)
 	}
-	for temporalID, wantTemplate := range [...]uint8{0, 1, 2} {
+	for _, tc := range [...]struct {
+		temporalID uint8
+		template   uint8
+		frameID    uint64
+		dependency uint64
+		hint       bool
+	}{
+		{temporalID: 0, template: 0, frameID: 100},
+		{temporalID: 0, template: 1, frameID: 104, dependency: 100},
+		{temporalID: 1, template: 2, frameID: 106, dependency: 104},
+		{temporalID: 2, template: 3, frameID: 107, dependency: 106},
+		{temporalID: 2, template: 4, frameID: 109, dependency: 108, hint: true},
+	} {
 		info := WebRTCGenericFrameInfo{
-			FrameID:       uint64(100 + temporalID),
-			TemporalID:    uint8(temporalID),
-			DependencyNum: 1,
-			DTINum:        structure.NumDecodeTargets,
+			FrameID:    tc.frameID,
+			TemporalID: tc.temporalID,
+			DTINum:     structure.NumDecodeTargets,
 		}
-		info.DTIs = structure.Templates[temporalID].DTIs
-		info.Dependencies[0] = info.FrameID - 1
+		info.DTIs = structure.Templates[tc.template].DTIs
+		if tc.dependency != 0 {
+			info.DependencyNum = 1
+			info.Dependencies[0] = tc.dependency
+		}
+		if tc.hint {
+			info.TemplateIndexHint = tc.template
+			info.TemplateIndexHintSet = true
+		}
 
 		match, err := webRTCDependencyDescriptorMatchFrame(structure, info)
 		if err != nil {
-			t.Fatalf("match temporal %d: %v", temporalID, err)
+			t.Fatalf("match template %d: %v", tc.template, err)
 		}
-		if match.templateIndex != wantTemplate || match.needCustomDTIs {
-			t.Fatalf("match temporal %d = %+v", temporalID, match)
+		if match.templateIndex != tc.template || match.needCustomDTIs || match.needCustomDiffs {
+			t.Fatalf("match template %d = %+v", tc.template, match)
 		}
 		var buf [16]byte
 		if _, err := AppendWebRTCDependencyDescriptor(buf[:0], structure, info, true, true, false); err != nil {
-			t.Fatalf("AppendWebRTCDependencyDescriptor temporal %d: %v", temporalID, err)
+			t.Fatalf("AppendWebRTCDependencyDescriptor template %d: %v", tc.template, err)
 		}
 	}
 }

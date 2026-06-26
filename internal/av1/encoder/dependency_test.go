@@ -115,30 +115,20 @@ func TestWebRTCFrameDependencyStructureForConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WebRTCFrameDependencyStructureForConfig: %v", err)
 	}
-	if got.NumDecodeTargets != 4 || got.NumChains != 2 || got.TemplateNum != 4 || got.ResolutionNum != 2 {
+	if got.NumDecodeTargets != 4 || got.NumChains != 2 || got.TemplateNum != 6 || got.ResolutionNum != 2 {
 		t.Fatalf("shape = %+v", got)
 	}
 	if got.Resolutions[0] != (Resolution{Width: 320, Height: 180}) || got.Resolutions[1] != (Resolution{Width: 640, Height: 360}) {
 		t.Fatalf("resolutions = %+v", got.Resolutions)
 	}
-	want := [...]struct {
-		spatial uint8
-		temp    uint8
-		dtis    [4]DecodeTargetIndication
-	}{
-		{spatial: 0, temp: 0, dtis: [4]DecodeTargetIndication{DecodeTargetSwitch, DecodeTargetSwitch, DecodeTargetRequired, DecodeTargetRequired}},
-		{spatial: 0, temp: 1, dtis: [4]DecodeTargetIndication{DecodeTargetNotPresent, DecodeTargetDiscardable, DecodeTargetNotPresent, DecodeTargetRequired}},
-		{spatial: 1, temp: 0, dtis: [4]DecodeTargetIndication{DecodeTargetNotPresent, DecodeTargetNotPresent, DecodeTargetSwitch, DecodeTargetSwitch}},
-		{spatial: 1, temp: 1, dtis: [4]DecodeTargetIndication{DecodeTargetNotPresent, DecodeTargetNotPresent, DecodeTargetNotPresent, DecodeTargetDiscardable}},
-	}
-	for i, want := range want {
-		template := got.Templates[i]
-		if template.SpatialID != want.spatial || template.TemporalID != want.temp ||
-			template.DTINum != 4 || template.DTIs[0] != want.dtis[0] || template.DTIs[1] != want.dtis[1] ||
-			template.DTIs[2] != want.dtis[2] || template.DTIs[3] != want.dtis[3] {
-			t.Fatalf("template[%d] = %+v", i, template)
-		}
-	}
+	assertWebRTCTemplateSpecs(t, got, []webRTCTemplateSpec{
+		{spatial: 0, temporal: 0, dtis: "SSSS", chainDiffs: []uint8{0, 0}},
+		{spatial: 0, temporal: 0, dtis: "SSRR", frameDiffs: []uint16{4}, chainDiffs: []uint8{4, 3}},
+		{spatial: 0, temporal: 1, dtis: "-D-R", frameDiffs: []uint16{2}, chainDiffs: []uint8{2, 1}},
+		{spatial: 1, temporal: 0, dtis: "--SS", frameDiffs: []uint16{1}, chainDiffs: []uint8{1, 1}},
+		{spatial: 1, temporal: 0, dtis: "--SS", frameDiffs: []uint16{4, 1}, chainDiffs: []uint8{1, 1}},
+		{spatial: 1, temporal: 1, dtis: "---D", frameDiffs: []uint16{2, 1}, chainDiffs: []uint8{3, 2}},
+	})
 }
 
 func TestWebRTCFrameDependencyStructureForConfigL2T2KeyShift(t *testing.T) {
@@ -192,6 +182,112 @@ func TestWebRTCFrameDependencyStructureForConfigL2T2KeyShift(t *testing.T) {
 	}
 }
 
+func TestWebRTCFrameDependencyStructureForConfigKeyReferenceTemplates(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode ScalabilityMode
+		want []webRTCTemplateSpec
+	}{
+		{
+			name: "L2T1_KEY",
+			mode: ScalabilityModeL2T1_KEY,
+			want: []webRTCTemplateSpec{
+				{spatial: 0, temporal: 0, dtis: "S-", frameDiffs: []uint16{2}, chainDiffs: []uint8{2, 1}},
+				{spatial: 0, temporal: 0, dtis: "SS", chainDiffs: []uint8{0, 0}},
+				{spatial: 1, temporal: 0, dtis: "-S", frameDiffs: []uint16{2}, chainDiffs: []uint8{1, 2}},
+				{spatial: 1, temporal: 0, dtis: "-S", frameDiffs: []uint16{1}, chainDiffs: []uint8{1, 1}},
+			},
+		},
+		{
+			name: "L2T2_KEY",
+			mode: ScalabilityModeL2T2_KEY,
+			want: []webRTCTemplateSpec{
+				{spatial: 0, temporal: 0, dtis: "SSSS", chainDiffs: []uint8{0, 0}},
+				{spatial: 0, temporal: 0, dtis: "SS--", frameDiffs: []uint16{4}, chainDiffs: []uint8{4, 3}},
+				{spatial: 0, temporal: 1, dtis: "-D--", frameDiffs: []uint16{2}, chainDiffs: []uint8{2, 1}},
+				{spatial: 1, temporal: 0, dtis: "--SS", frameDiffs: []uint16{1}, chainDiffs: []uint8{1, 1}},
+				{spatial: 1, temporal: 0, dtis: "--SS", frameDiffs: []uint16{4}, chainDiffs: []uint8{1, 4}},
+				{spatial: 1, temporal: 1, dtis: "---D", frameDiffs: []uint16{2}, chainDiffs: []uint8{3, 2}},
+			},
+		},
+		{
+			name: "L2T3_KEY",
+			mode: ScalabilityModeL2T3_KEY,
+			want: []webRTCTemplateSpec{
+				{spatial: 0, temporal: 0, dtis: "SSSSSS", chainDiffs: []uint8{0, 0}},
+				{spatial: 0, temporal: 0, dtis: "SSS---", frameDiffs: []uint16{8}, chainDiffs: []uint8{8, 7}},
+				{spatial: 0, temporal: 1, dtis: "-DS---", frameDiffs: []uint16{4}, chainDiffs: []uint8{4, 3}},
+				{spatial: 0, temporal: 2, dtis: "--D---", frameDiffs: []uint16{2}, chainDiffs: []uint8{2, 1}},
+				{spatial: 0, temporal: 2, dtis: "--D---", frameDiffs: []uint16{2}, chainDiffs: []uint8{6, 5}},
+				{spatial: 1, temporal: 0, dtis: "---SSS", frameDiffs: []uint16{1}, chainDiffs: []uint8{1, 1}},
+				{spatial: 1, temporal: 0, dtis: "---SSS", frameDiffs: []uint16{8}, chainDiffs: []uint8{1, 8}},
+				{spatial: 1, temporal: 1, dtis: "----DS", frameDiffs: []uint16{4}, chainDiffs: []uint8{5, 4}},
+				{spatial: 1, temporal: 2, dtis: "-----D", frameDiffs: []uint16{2}, chainDiffs: []uint8{3, 2}},
+				{spatial: 1, temporal: 2, dtis: "-----D", frameDiffs: []uint16{2}, chainDiffs: []uint8{7, 6}},
+			},
+		},
+		{
+			name: "L3T1_KEY",
+			mode: ScalabilityModeL3T1_KEY,
+			want: []webRTCTemplateSpec{
+				{spatial: 0, temporal: 0, dtis: "S--", frameDiffs: []uint16{3}, chainDiffs: []uint8{3, 2, 1}},
+				{spatial: 0, temporal: 0, dtis: "SSS", chainDiffs: []uint8{0, 0, 0}},
+				{spatial: 1, temporal: 0, dtis: "-S-", frameDiffs: []uint16{3}, chainDiffs: []uint8{1, 3, 2}},
+				{spatial: 1, temporal: 0, dtis: "-SS", frameDiffs: []uint16{1}, chainDiffs: []uint8{1, 1, 1}},
+				{spatial: 2, temporal: 0, dtis: "--S", frameDiffs: []uint16{3}, chainDiffs: []uint8{2, 1, 3}},
+				{spatial: 2, temporal: 0, dtis: "--S", frameDiffs: []uint16{1}, chainDiffs: []uint8{2, 1, 1}},
+			},
+		},
+		{
+			name: "L3T2_KEY",
+			mode: ScalabilityModeL3T2_KEY,
+			want: []webRTCTemplateSpec{
+				{spatial: 0, temporal: 0, dtis: "SS----", frameDiffs: []uint16{6}, chainDiffs: []uint8{6, 5, 4}},
+				{spatial: 0, temporal: 0, dtis: "SSSSSS", chainDiffs: []uint8{0, 0, 0}},
+				{spatial: 0, temporal: 1, dtis: "-D----", frameDiffs: []uint16{3}, chainDiffs: []uint8{3, 2, 1}},
+				{spatial: 1, temporal: 0, dtis: "--SS--", frameDiffs: []uint16{6}, chainDiffs: []uint8{1, 6, 5}},
+				{spatial: 1, temporal: 0, dtis: "--SSSS", frameDiffs: []uint16{1}, chainDiffs: []uint8{1, 1, 1}},
+				{spatial: 1, temporal: 1, dtis: "---D--", frameDiffs: []uint16{3}, chainDiffs: []uint8{4, 3, 2}},
+				{spatial: 2, temporal: 0, dtis: "----SS", frameDiffs: []uint16{6}, chainDiffs: []uint8{2, 1, 6}},
+				{spatial: 2, temporal: 0, dtis: "----SS", frameDiffs: []uint16{1}, chainDiffs: []uint8{2, 1, 1}},
+				{spatial: 2, temporal: 1, dtis: "-----D", frameDiffs: []uint16{3}, chainDiffs: []uint8{5, 4, 3}},
+			},
+		},
+		{
+			name: "L3T3_KEY",
+			mode: ScalabilityModeL3T3_KEY,
+			want: []webRTCTemplateSpec{
+				{spatial: 0, temporal: 0, dtis: "SSSSSSSSS", chainDiffs: []uint8{0, 0, 0}},
+				{spatial: 0, temporal: 0, dtis: "SSS------", frameDiffs: []uint16{12}, chainDiffs: []uint8{12, 11, 10}},
+				{spatial: 0, temporal: 1, dtis: "-DS------", frameDiffs: []uint16{6}, chainDiffs: []uint8{6, 5, 4}},
+				{spatial: 0, temporal: 2, dtis: "--D------", frameDiffs: []uint16{3}, chainDiffs: []uint8{3, 2, 1}},
+				{spatial: 0, temporal: 2, dtis: "--D------", frameDiffs: []uint16{3}, chainDiffs: []uint8{9, 8, 7}},
+				{spatial: 1, temporal: 0, dtis: "---SSSSSS", frameDiffs: []uint16{1}, chainDiffs: []uint8{1, 1, 1}},
+				{spatial: 1, temporal: 0, dtis: "---SSS---", frameDiffs: []uint16{12}, chainDiffs: []uint8{1, 12, 11}},
+				{spatial: 1, temporal: 1, dtis: "----DS---", frameDiffs: []uint16{6}, chainDiffs: []uint8{7, 6, 5}},
+				{spatial: 1, temporal: 2, dtis: "-----D---", frameDiffs: []uint16{3}, chainDiffs: []uint8{4, 3, 2}},
+				{spatial: 1, temporal: 2, dtis: "-----D---", frameDiffs: []uint16{3}, chainDiffs: []uint8{10, 9, 8}},
+				{spatial: 2, temporal: 0, dtis: "------SSS", frameDiffs: []uint16{1}, chainDiffs: []uint8{2, 1, 1}},
+				{spatial: 2, temporal: 0, dtis: "------SSS", frameDiffs: []uint16{12}, chainDiffs: []uint8{2, 1, 12}},
+				{spatial: 2, temporal: 1, dtis: "-------DS", frameDiffs: []uint16{6}, chainDiffs: []uint8{8, 7, 6}},
+				{spatial: 2, temporal: 2, dtis: "--------D", frameDiffs: []uint16{3}, chainDiffs: []uint8{5, 4, 3}},
+				{spatial: 2, temporal: 2, dtis: "--------D", frameDiffs: []uint16{3}, chainDiffs: []uint8{11, 10, 9}},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := WebRTCFrameDependencyStructureForConfig(Config{
+				Resolution:  Resolution{Width: 1280, Height: 720},
+				Scalability: tc.mode,
+			})
+			if err != nil {
+				t.Fatalf("WebRTCFrameDependencyStructureForConfig: %v", err)
+			}
+			assertWebRTCTemplateSpecs(t, got, tc.want)
+		})
+	}
+}
+
 func TestWebRTCFrameDependencyStructureForConfigL1T3(t *testing.T) {
 	cfg := Config{
 		Resolution:  Resolution{Width: 640, Height: 360},
@@ -201,24 +297,71 @@ func TestWebRTCFrameDependencyStructureForConfigL1T3(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WebRTCFrameDependencyStructureForConfig: %v", err)
 	}
-	if got.NumDecodeTargets != 3 || got.NumChains != 1 || got.TemplateNum != 3 || got.ResolutionNum != 1 {
+	if got.NumDecodeTargets != 3 || got.NumChains != 1 || got.TemplateNum != 5 || got.ResolutionNum != 1 {
 		t.Fatalf("shape = %+v", got)
 	}
 	if got.Resolutions[0] != (Resolution{Width: 640, Height: 360}) {
 		t.Fatalf("resolutions = %+v", got.Resolutions)
 	}
-	want := [...][3]DecodeTargetIndication{
-		{DecodeTargetSwitch, DecodeTargetSwitch, DecodeTargetSwitch},
-		{DecodeTargetNotPresent, DecodeTargetDiscardable, DecodeTargetSwitch},
-		{DecodeTargetNotPresent, DecodeTargetNotPresent, DecodeTargetDiscardable},
+	assertWebRTCTemplateSpecs(t, got, []webRTCTemplateSpec{
+		{spatial: 0, temporal: 0, dtis: "SSS", chainDiffs: []uint8{0}},
+		{spatial: 0, temporal: 0, dtis: "SSS", frameDiffs: []uint16{4}, chainDiffs: []uint8{4}},
+		{spatial: 0, temporal: 1, dtis: "-DS", frameDiffs: []uint16{2}, chainDiffs: []uint8{2}},
+		{spatial: 0, temporal: 2, dtis: "--D", frameDiffs: []uint16{1}, chainDiffs: []uint8{1}},
+		{spatial: 0, temporal: 2, dtis: "--D", frameDiffs: []uint16{1}, chainDiffs: []uint8{3}},
+	})
+}
+
+type webRTCTemplateSpec struct {
+	spatial    uint8
+	temporal   uint8
+	dtis       string
+	frameDiffs []uint16
+	chainDiffs []uint8
+}
+
+func assertWebRTCTemplateSpecs(t *testing.T, structure WebRTCFrameDependencyStructure, want []webRTCTemplateSpec) {
+	t.Helper()
+	if int(structure.TemplateNum) != len(want) {
+		t.Fatalf("template num=%d want %d", structure.TemplateNum, len(want))
 	}
-	for i, wantDTIs := range want {
-		template := got.Templates[i]
-		if template.SpatialID != 0 || template.TemporalID != uint8(i) ||
-			template.DTINum != 3 || template.DTIs[0] != wantDTIs[0] ||
-			template.DTIs[1] != wantDTIs[1] || template.DTIs[2] != wantDTIs[2] {
-			t.Fatalf("template[%d] = %+v", i, template)
+	for i, want := range want {
+		template := structure.Templates[i]
+		if template.SpatialID != want.spatial || template.TemporalID != want.temporal ||
+			template.DTINum != uint8(len(want.dtis)) ||
+			template.FrameDiffNum != uint8(len(want.frameDiffs)) ||
+			template.ChainDiffNum != uint8(len(want.chainDiffs)) {
+			t.Fatalf("template[%d] shape=%+v want spatial=%d temporal=%d dtis=%q frameDiffs=%v chainDiffs=%v",
+				i, template, want.spatial, want.temporal, want.dtis, want.frameDiffs, want.chainDiffs)
 		}
+		for j := 0; j < len(want.dtis); j++ {
+			if got, want := template.DTIs[j], webRTCTestDTI(want.dtis[j]); got != want {
+				t.Fatalf("template[%d] dti[%d]=%v want %v", i, j, got, want)
+			}
+		}
+		for j := 0; j < len(want.frameDiffs); j++ {
+			if got := template.FrameDiffs[j]; got != want.frameDiffs[j] {
+				t.Fatalf("template[%d] frame diff[%d]=%d want %d", i, j, got, want.frameDiffs[j])
+			}
+		}
+		for j := 0; j < len(want.chainDiffs); j++ {
+			if got := template.ChainDiffs[j]; got != want.chainDiffs[j] {
+				t.Fatalf("template[%d] chain diff[%d]=%d want %d", i, j, got, want.chainDiffs[j])
+			}
+		}
+	}
+}
+
+func webRTCTestDTI(symbol byte) DecodeTargetIndication {
+	switch symbol {
+	case 'D':
+		return DecodeTargetDiscardable
+	case 'S':
+		return DecodeTargetSwitch
+	case 'R':
+		return DecodeTargetRequired
+	default:
+		return DecodeTargetNotPresent
 	}
 }
 
@@ -230,7 +373,7 @@ func TestWebRTCTemplateIDForFrame(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WebRTCFrameDependencyStructureForConfig: %v", err)
 	}
-	structure.StructureID = 62
+	structure.StructureID = 61
 	info := WebRTCGenericFrameInfo{
 		FrameID:       10,
 		SpatialID:     1,
@@ -239,7 +382,7 @@ func TestWebRTCTemplateIDForFrame(t *testing.T) {
 		DTINum:        structure.NumDecodeTargets,
 	}
 	info.Dependencies[0] = 9
-	info.DTIs = structure.Templates[2].DTIs
+	info.DTIs = structure.Templates[3].DTIs
 	id, err := WebRTCTemplateIDForFrame(structure, WebRTCGenericFrameInfo{
 		FrameID:       info.FrameID,
 		SpatialID:     info.SpatialID,
@@ -305,7 +448,7 @@ func TestWebRTCTemporalUnitControlForFramesKeyUnit(t *testing.T) {
 		got.FrameIDState.FrameIDs[0] != 10 || got.FrameIDState.FrameIDs[1] != 11 {
 		t.Fatalf("states = refs %+v ids %+v", got.ReferenceState, got.FrameIDState)
 	}
-	if got.DependencyStructure.TemplateNum != 4 || got.DependencyStructure.NumDecodeTargets != 4 {
+	if got.DependencyStructure.TemplateNum != 6 || got.DependencyStructure.NumDecodeTargets != 4 {
 		t.Fatalf("dependency structure = %+v", got.DependencyStructure)
 	}
 }

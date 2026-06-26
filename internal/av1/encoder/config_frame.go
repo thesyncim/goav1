@@ -178,6 +178,7 @@ func WebRTCKeyFrameTemporalUnitForConfig(config Config, orderHint uint8, firstFr
 	if err != nil {
 		return WebRTCKeyFrameTemporalUnit{}, err
 	}
+	applyWebRTCReferenceTemplateHints(config, &control, 0, false)
 	unit.Control = control
 	return unit, nil
 }
@@ -872,6 +873,7 @@ func webRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config Config, reference
 	if err != nil {
 		return WebRTCDeltaFrameTemporalUnit{}, err
 	}
+	applyWebRTCReferenceTemplateHints(config, &control, deltaPictureIndex, hasDeltaPictureIndex)
 	unit.Control = control
 	for i := uint8(0); i < unit.FrameNum; i++ {
 		header, err := interHeaderFrameForSettings(config, unit.Frames[i], firstFrameID+uint64(i), orderHint)
@@ -1003,6 +1005,7 @@ func webRTCL2T2KeyShiftDeltaFrameTemporalUnitForConfigWithOrderHint(config Confi
 	if err != nil {
 		return WebRTCDeltaFrameTemporalUnit{}, err
 	}
+	applyWebRTCReferenceTemplateHints(config, &control, 0, false)
 	unit.Control = control
 	for i := uint8(0); i < unit.FrameNum; i++ {
 		header, err := interHeaderFrameForSettings(config, unit.Frames[i], firstFrameID+uint64(i), orderHint)

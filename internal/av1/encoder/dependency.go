@@ -67,13 +67,15 @@ type FrameIDBufferState struct {
 }
 
 type WebRTCGenericFrameInfo struct {
-	FrameID       uint64
-	SpatialID     uint8
-	TemporalID    uint8
-	Dependencies  [WebRTCMaxFrameReferences]uint64
-	DependencyNum uint8
-	DTIs          [WebRTCRtpDependencyMaxDecodeTargets]DecodeTargetIndication
-	DTINum        uint8
+	FrameID              uint64
+	SpatialID            uint8
+	TemporalID           uint8
+	Dependencies         [WebRTCMaxFrameReferences]uint64
+	DependencyNum        uint8
+	DTIs                 [WebRTCRtpDependencyMaxDecodeTargets]DecodeTargetIndication
+	DTINum               uint8
+	TemplateIndexHint    uint8
+	TemplateIndexHintSet bool
 }
 
 func WebRTCGenericFrameInfoForFrame(settings FrameEncodeSettings, frameID uint64, state FrameIDBufferState, spatialLayers uint8, temporalLayers uint8) (WebRTCGenericFrameInfo, FrameIDBufferState, error) {
@@ -278,8 +280,7 @@ func WebRTCFrameDependencyStructureForConfig(config Config) (WebRTCFrameDependen
 		structure.DecodeTargetProtectedByChain[target] = spatial
 	}
 
-	if config.Scalability == ScalabilityModeL2T2_KEY_SHIFT {
-		fillWebRTCL2T2KeyShiftTemplates(&structure)
+	if fillWebRTCReferenceDependencyTemplates(&structure, config.Scalability) {
 		return structure, nil
 	}
 
@@ -298,6 +299,233 @@ func WebRTCFrameDependencyStructureForConfig(config Config) (WebRTCFrameDependen
 }
 
 // Ported from libwebrtc:
+// modules/video_coding/svc/scalability_structure_full_svc.cc
+// modules/video_coding/svc/scalability_structure_key_svc.cc
+// modules/video_coding/svc/scalability_structure_l2t2_key_shift.cc
+// modules/video_coding/svc/scalability_structure_simulcast.cc
+func fillWebRTCReferenceDependencyTemplates(structure *WebRTCFrameDependencyStructure, mode ScalabilityMode) bool {
+	switch mode {
+	case ScalabilityModeL1T2:
+		fillWebRTCL1T2Templates(structure)
+	case ScalabilityModeL1T3:
+		fillWebRTCL1T3Templates(structure)
+	case ScalabilityModeL2T1, ScalabilityModeL2T1h:
+		fillWebRTCL2T1Templates(structure)
+	case ScalabilityModeL2T2, ScalabilityModeL2T2h:
+		fillWebRTCL2T2Templates(structure)
+	case ScalabilityModeL2T3, ScalabilityModeL2T3h:
+		fillWebRTCL2T3Templates(structure)
+	case ScalabilityModeL3T1, ScalabilityModeL3T1h:
+		fillWebRTCL3T1Templates(structure)
+	case ScalabilityModeL3T2, ScalabilityModeL3T2h:
+		fillWebRTCL3T2Templates(structure)
+	case ScalabilityModeL3T3, ScalabilityModeL3T3h:
+		fillWebRTCL3T3Templates(structure)
+	case ScalabilityModeL2T1_KEY:
+		fillWebRTCL2T1KeyTemplates(structure)
+	case ScalabilityModeL2T2_KEY:
+		fillWebRTCL2T2KeyTemplates(structure)
+	case ScalabilityModeL2T2_KEY_SHIFT:
+		fillWebRTCL2T2KeyShiftTemplates(structure)
+	case ScalabilityModeL2T3_KEY:
+		fillWebRTCL2T3KeyTemplates(structure)
+	case ScalabilityModeL3T1_KEY:
+		fillWebRTCL3T1KeyTemplates(structure)
+	case ScalabilityModeL3T2_KEY:
+		fillWebRTCL3T2KeyTemplates(structure)
+	case ScalabilityModeL3T3_KEY:
+		fillWebRTCL3T3KeyTemplates(structure)
+	case ScalabilityModeS2T1, ScalabilityModeS2T1h:
+		fillWebRTCS2T1Templates(structure)
+	case ScalabilityModeS2T2, ScalabilityModeS2T2h:
+		fillWebRTCS2T2Templates(structure)
+	case ScalabilityModeS2T3, ScalabilityModeS2T3h:
+		fillWebRTCS2T3Templates(structure)
+	case ScalabilityModeS3T1, ScalabilityModeS3T1h:
+		fillWebRTCS3T1Templates(structure)
+	case ScalabilityModeS3T2, ScalabilityModeS3T2h:
+		fillWebRTCS3T2Templates(structure)
+	case ScalabilityModeS3T3, ScalabilityModeS3T3h:
+		fillWebRTCS3T3Templates(structure)
+	default:
+		return false
+	}
+	return true
+}
+
+func applyWebRTCReferenceTemplateHints(config Config, control *WebRTCTemporalUnitControl, deltaPictureIndex uint64, hasDeltaPictureIndex bool) {
+	if control == nil || !hasWebRTCReferenceDependencyTemplates(config.Scalability) {
+		return
+	}
+	for i := uint8(0); i < control.FrameNum; i++ {
+		hint, ok := webRTCReferenceTemplateHint(config, control.Frames[i].Settings, deltaPictureIndex, hasDeltaPictureIndex)
+		if !ok {
+			continue
+		}
+		info := &control.Frames[i].GenericFrameInfo
+		info.TemplateIndexHint = hint
+		info.TemplateIndexHintSet = true
+	}
+}
+
+func hasWebRTCReferenceDependencyTemplates(mode ScalabilityMode) bool {
+	switch mode {
+	case ScalabilityModeL1T2, ScalabilityModeL1T3,
+		ScalabilityModeL2T1, ScalabilityModeL2T1h,
+		ScalabilityModeL2T2, ScalabilityModeL2T2h,
+		ScalabilityModeL2T3, ScalabilityModeL2T3h,
+		ScalabilityModeL3T1, ScalabilityModeL3T1h,
+		ScalabilityModeL3T2, ScalabilityModeL3T2h,
+		ScalabilityModeL3T3, ScalabilityModeL3T3h,
+		ScalabilityModeL2T1_KEY, ScalabilityModeL2T2_KEY,
+		ScalabilityModeL2T2_KEY_SHIFT, ScalabilityModeL2T3_KEY,
+		ScalabilityModeL3T1_KEY, ScalabilityModeL3T2_KEY,
+		ScalabilityModeL3T3_KEY,
+		ScalabilityModeS2T1, ScalabilityModeS2T1h,
+		ScalabilityModeS2T2, ScalabilityModeS2T2h,
+		ScalabilityModeS2T3, ScalabilityModeS2T3h,
+		ScalabilityModeS3T1, ScalabilityModeS3T1h,
+		ScalabilityModeS3T2, ScalabilityModeS3T2h,
+		ScalabilityModeS3T3, ScalabilityModeS3T3h:
+		return true
+	default:
+		return false
+	}
+}
+
+func webRTCReferenceTemplateHint(config Config, settings FrameEncodeSettings, deltaPictureIndex uint64, hasDeltaPictureIndex bool) (uint8, bool) {
+	if settings.TemporalID != 2 || config.TemporalLayerCount != 3 || !hasDeltaPictureIndex || deltaPictureIndex == 0 {
+		return 0, false
+	}
+	switch config.Scalability {
+	case ScalabilityModeL1T3,
+		ScalabilityModeL2T3, ScalabilityModeL2T3h, ScalabilityModeL2T3_KEY,
+		ScalabilityModeL3T3, ScalabilityModeL3T3h, ScalabilityModeL3T3_KEY,
+		ScalabilityModeS2T3, ScalabilityModeS2T3h,
+		ScalabilityModeS3T3, ScalabilityModeS3T3h:
+	default:
+		return 0, false
+	}
+	phase := (deltaPictureIndex - 1) % 4
+	switch phase {
+	case 0:
+		return settings.SpatialID*5 + 3, true
+	case 2:
+		return settings.SpatialID*5 + 4, true
+	default:
+		return 0, false
+	}
+}
+
+func fillWebRTCL1T2Templates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 3
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "SS", nil, []uint8{0})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SS", []uint16{2}, []uint8{2})
+	setWebRTCTemplate(&structure.Templates[2], 0, 1, "-D", []uint16{1}, []uint8{1})
+}
+
+func fillWebRTCL1T3Templates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 5
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "SSS", nil, []uint8{0})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SSS", []uint16{4}, []uint8{4})
+	setWebRTCTemplate(&structure.Templates[2], 0, 1, "-DS", []uint16{2}, []uint8{2})
+	setWebRTCTemplate(&structure.Templates[3], 0, 2, "--D", []uint16{1}, []uint8{1})
+	setWebRTCTemplate(&structure.Templates[4], 0, 2, "--D", []uint16{1}, []uint8{3})
+}
+
+func fillWebRTCL2T1Templates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 4
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "SR", []uint16{2}, []uint8{2, 1})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SS", nil, []uint8{0, 0})
+	setWebRTCTemplate(&structure.Templates[2], 1, 0, "-S", []uint16{2, 1}, []uint8{1, 1})
+	setWebRTCTemplate(&structure.Templates[3], 1, 0, "-S", []uint16{1}, []uint8{1, 1})
+}
+
+func fillWebRTCL2T2Templates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 6
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "SSSS", nil, []uint8{0, 0})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SSRR", []uint16{4}, []uint8{4, 3})
+	setWebRTCTemplate(&structure.Templates[2], 0, 1, "-D-R", []uint16{2}, []uint8{2, 1})
+	setWebRTCTemplate(&structure.Templates[3], 1, 0, "--SS", []uint16{1}, []uint8{1, 1})
+	setWebRTCTemplate(&structure.Templates[4], 1, 0, "--SS", []uint16{4, 1}, []uint8{1, 1})
+	setWebRTCTemplate(&structure.Templates[5], 1, 1, "---D", []uint16{2, 1}, []uint8{3, 2})
+}
+
+func fillWebRTCL2T3Templates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 10
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "SSSRRR", []uint16{8}, []uint8{8, 7})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SSSSSS", nil, []uint8{0, 0})
+	setWebRTCTemplate(&structure.Templates[2], 0, 1, "-DS-RR", []uint16{4}, []uint8{4, 3})
+	setWebRTCTemplate(&structure.Templates[3], 0, 2, "--D--R", []uint16{2}, []uint8{2, 1})
+	setWebRTCTemplate(&structure.Templates[4], 0, 2, "--D--R", []uint16{2}, []uint8{6, 5})
+	setWebRTCTemplate(&structure.Templates[5], 1, 0, "---SSS", []uint16{8, 1}, []uint8{1, 1})
+	setWebRTCTemplate(&structure.Templates[6], 1, 0, "---SSS", []uint16{1}, []uint8{1, 1})
+	setWebRTCTemplate(&structure.Templates[7], 1, 1, "----DS", []uint16{4, 1}, []uint8{5, 4})
+	setWebRTCTemplate(&structure.Templates[8], 1, 2, "-----D", []uint16{2, 1}, []uint8{3, 2})
+	setWebRTCTemplate(&structure.Templates[9], 1, 2, "-----D", []uint16{2, 1}, []uint8{7, 6})
+}
+
+func fillWebRTCL3T1Templates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 6
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "SRR", []uint16{3}, []uint8{3, 2, 1})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SSS", nil, []uint8{0, 0, 0})
+	setWebRTCTemplate(&structure.Templates[2], 1, 0, "-SR", []uint16{3, 1}, []uint8{1, 1, 1})
+	setWebRTCTemplate(&structure.Templates[3], 1, 0, "-SS", []uint16{1}, []uint8{1, 1, 1})
+	setWebRTCTemplate(&structure.Templates[4], 2, 0, "--S", []uint16{3, 1}, []uint8{2, 1, 1})
+	setWebRTCTemplate(&structure.Templates[5], 2, 0, "--S", []uint16{1}, []uint8{2, 1, 1})
+}
+
+func fillWebRTCL3T2Templates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 9
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "SSRRRR", []uint16{6}, []uint8{6, 5, 4})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SSSSSS", nil, []uint8{0, 0, 0})
+	setWebRTCTemplate(&structure.Templates[2], 0, 1, "-D-R-R", []uint16{3}, []uint8{3, 2, 1})
+	setWebRTCTemplate(&structure.Templates[3], 1, 0, "--SSRR", []uint16{6, 1}, []uint8{1, 1, 1})
+	setWebRTCTemplate(&structure.Templates[4], 1, 0, "--SSSS", []uint16{1}, []uint8{1, 1, 1})
+	setWebRTCTemplate(&structure.Templates[5], 1, 1, "---D-R", []uint16{3, 1}, []uint8{4, 3, 2})
+	setWebRTCTemplate(&structure.Templates[6], 2, 0, "----SS", []uint16{6, 1}, []uint8{2, 1, 1})
+	setWebRTCTemplate(&structure.Templates[7], 2, 0, "----SS", []uint16{1}, []uint8{2, 1, 1})
+	setWebRTCTemplate(&structure.Templates[8], 2, 1, "-----D", []uint16{3, 1}, []uint8{5, 4, 3})
+}
+
+func fillWebRTCL3T3Templates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 15
+	setWebRTCTemplate(&structure.Templates[0x0], 0, 0, "SSSRRRRRR", []uint16{12}, []uint8{12, 11, 10})
+	setWebRTCTemplate(&structure.Templates[0x1], 0, 0, "SSSSSSSSS", nil, []uint8{0, 0, 0})
+	setWebRTCTemplate(&structure.Templates[0x2], 0, 1, "-DS-RR-RR", []uint16{6}, []uint8{6, 5, 4})
+	setWebRTCTemplate(&structure.Templates[0x3], 0, 2, "--D--R--R", []uint16{3}, []uint8{3, 2, 1})
+	setWebRTCTemplate(&structure.Templates[0x4], 0, 2, "--D--R--R", []uint16{3}, []uint8{9, 8, 7})
+	setWebRTCTemplate(&structure.Templates[0x5], 1, 0, "---SSSRRR", []uint16{12, 1}, []uint8{1, 1, 1})
+	setWebRTCTemplate(&structure.Templates[0x6], 1, 0, "---SSSSSS", []uint16{1}, []uint8{1, 1, 1})
+	setWebRTCTemplate(&structure.Templates[0x7], 1, 1, "----DS-RR", []uint16{6, 1}, []uint8{7, 6, 5})
+	setWebRTCTemplate(&structure.Templates[0x8], 1, 2, "-----D--R", []uint16{3, 1}, []uint8{4, 3, 2})
+	setWebRTCTemplate(&structure.Templates[0x9], 1, 2, "-----D--R", []uint16{3, 1}, []uint8{10, 9, 8})
+	setWebRTCTemplate(&structure.Templates[0xA], 2, 0, "------SSS", []uint16{12, 1}, []uint8{2, 1, 1})
+	setWebRTCTemplate(&structure.Templates[0xB], 2, 0, "------SSS", []uint16{1}, []uint8{2, 1, 1})
+	setWebRTCTemplate(&structure.Templates[0xC], 2, 1, "-------DS", []uint16{6, 1}, []uint8{8, 7, 6})
+	setWebRTCTemplate(&structure.Templates[0xD], 2, 2, "--------D", []uint16{3, 1}, []uint8{5, 4, 3})
+	setWebRTCTemplate(&structure.Templates[0xE], 2, 2, "--------D", []uint16{3, 1}, []uint8{11, 10, 9})
+}
+
+func fillWebRTCL2T1KeyTemplates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 4
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "S-", []uint16{2}, []uint8{2, 1})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SS", nil, []uint8{0, 0})
+	setWebRTCTemplate(&structure.Templates[2], 1, 0, "-S", []uint16{2}, []uint8{1, 2})
+	setWebRTCTemplate(&structure.Templates[3], 1, 0, "-S", []uint16{1}, []uint8{1, 1})
+}
+
+func fillWebRTCL2T2KeyTemplates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 6
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "SSSS", nil, []uint8{0, 0})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SS--", []uint16{4}, []uint8{4, 3})
+	setWebRTCTemplate(&structure.Templates[2], 0, 1, "-D--", []uint16{2}, []uint8{2, 1})
+	setWebRTCTemplate(&structure.Templates[3], 1, 0, "--SS", []uint16{1}, []uint8{1, 1})
+	setWebRTCTemplate(&structure.Templates[4], 1, 0, "--SS", []uint16{4}, []uint8{1, 4})
+	setWebRTCTemplate(&structure.Templates[5], 1, 1, "---D", []uint16{2}, []uint8{3, 2})
+}
+
+// Ported from libwebrtc:
 // modules/video_coding/svc/scalability_structure_l2t2_key_shift.cc
 func fillWebRTCL2T2KeyShiftTemplates(structure *WebRTCFrameDependencyStructure) {
 	structure.TemplateNum = 7
@@ -308,6 +536,136 @@ func fillWebRTCL2T2KeyShiftTemplates(structure *WebRTCFrameDependencyStructure) 
 	setWebRTCTemplate(&structure.Templates[4], 1, 0, "--SS", []uint16{1}, []uint8{1, 1})
 	setWebRTCTemplate(&structure.Templates[5], 1, 0, "--SS", []uint16{4}, []uint8{3, 4})
 	setWebRTCTemplate(&structure.Templates[6], 1, 1, "---D", []uint16{2}, []uint8{1, 2})
+}
+
+func fillWebRTCL2T3KeyTemplates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 10
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "SSSSSS", nil, []uint8{0, 0})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SSS---", []uint16{8}, []uint8{8, 7})
+	setWebRTCTemplate(&structure.Templates[2], 0, 1, "-DS---", []uint16{4}, []uint8{4, 3})
+	setWebRTCTemplate(&structure.Templates[3], 0, 2, "--D---", []uint16{2}, []uint8{2, 1})
+	setWebRTCTemplate(&structure.Templates[4], 0, 2, "--D---", []uint16{2}, []uint8{6, 5})
+	setWebRTCTemplate(&structure.Templates[5], 1, 0, "---SSS", []uint16{1}, []uint8{1, 1})
+	setWebRTCTemplate(&structure.Templates[6], 1, 0, "---SSS", []uint16{8}, []uint8{1, 8})
+	setWebRTCTemplate(&structure.Templates[7], 1, 1, "----DS", []uint16{4}, []uint8{5, 4})
+	setWebRTCTemplate(&structure.Templates[8], 1, 2, "-----D", []uint16{2}, []uint8{3, 2})
+	setWebRTCTemplate(&structure.Templates[9], 1, 2, "-----D", []uint16{2}, []uint8{7, 6})
+}
+
+func fillWebRTCL3T1KeyTemplates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 6
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "S--", []uint16{3}, []uint8{3, 2, 1})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SSS", nil, []uint8{0, 0, 0})
+	setWebRTCTemplate(&structure.Templates[2], 1, 0, "-S-", []uint16{3}, []uint8{1, 3, 2})
+	setWebRTCTemplate(&structure.Templates[3], 1, 0, "-SS", []uint16{1}, []uint8{1, 1, 1})
+	setWebRTCTemplate(&structure.Templates[4], 2, 0, "--S", []uint16{3}, []uint8{2, 1, 3})
+	setWebRTCTemplate(&structure.Templates[5], 2, 0, "--S", []uint16{1}, []uint8{2, 1, 1})
+}
+
+func fillWebRTCL3T2KeyTemplates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 9
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "SS----", []uint16{6}, []uint8{6, 5, 4})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SSSSSS", nil, []uint8{0, 0, 0})
+	setWebRTCTemplate(&structure.Templates[2], 0, 1, "-D----", []uint16{3}, []uint8{3, 2, 1})
+	setWebRTCTemplate(&structure.Templates[3], 1, 0, "--SS--", []uint16{6}, []uint8{1, 6, 5})
+	setWebRTCTemplate(&structure.Templates[4], 1, 0, "--SSSS", []uint16{1}, []uint8{1, 1, 1})
+	setWebRTCTemplate(&structure.Templates[5], 1, 1, "---D--", []uint16{3}, []uint8{4, 3, 2})
+	setWebRTCTemplate(&structure.Templates[6], 2, 0, "----SS", []uint16{6}, []uint8{2, 1, 6})
+	setWebRTCTemplate(&structure.Templates[7], 2, 0, "----SS", []uint16{1}, []uint8{2, 1, 1})
+	setWebRTCTemplate(&structure.Templates[8], 2, 1, "-----D", []uint16{3}, []uint8{5, 4, 3})
+}
+
+func fillWebRTCL3T3KeyTemplates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 15
+	setWebRTCTemplate(&structure.Templates[0x0], 0, 0, "SSSSSSSSS", nil, []uint8{0, 0, 0})
+	setWebRTCTemplate(&structure.Templates[0x1], 0, 0, "SSS------", []uint16{12}, []uint8{12, 11, 10})
+	setWebRTCTemplate(&structure.Templates[0x2], 0, 1, "-DS------", []uint16{6}, []uint8{6, 5, 4})
+	setWebRTCTemplate(&structure.Templates[0x3], 0, 2, "--D------", []uint16{3}, []uint8{3, 2, 1})
+	setWebRTCTemplate(&structure.Templates[0x4], 0, 2, "--D------", []uint16{3}, []uint8{9, 8, 7})
+	setWebRTCTemplate(&structure.Templates[0x5], 1, 0, "---SSSSSS", []uint16{1}, []uint8{1, 1, 1})
+	setWebRTCTemplate(&structure.Templates[0x6], 1, 0, "---SSS---", []uint16{12}, []uint8{1, 12, 11})
+	setWebRTCTemplate(&structure.Templates[0x7], 1, 1, "----DS---", []uint16{6}, []uint8{7, 6, 5})
+	setWebRTCTemplate(&structure.Templates[0x8], 1, 2, "-----D---", []uint16{3}, []uint8{4, 3, 2})
+	setWebRTCTemplate(&structure.Templates[0x9], 1, 2, "-----D---", []uint16{3}, []uint8{10, 9, 8})
+	setWebRTCTemplate(&structure.Templates[0xA], 2, 0, "------SSS", []uint16{1}, []uint8{2, 1, 1})
+	setWebRTCTemplate(&structure.Templates[0xB], 2, 0, "------SSS", []uint16{12}, []uint8{2, 1, 12})
+	setWebRTCTemplate(&structure.Templates[0xC], 2, 1, "-------DS", []uint16{6}, []uint8{8, 7, 6})
+	setWebRTCTemplate(&structure.Templates[0xD], 2, 2, "--------D", []uint16{3}, []uint8{5, 4, 3})
+	setWebRTCTemplate(&structure.Templates[0xE], 2, 2, "--------D", []uint16{3}, []uint8{11, 10, 9})
+}
+
+func fillWebRTCS2T1Templates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 4
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "S-", []uint16{2}, []uint8{2, 1})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "S-", nil, []uint8{0, 0})
+	setWebRTCTemplate(&structure.Templates[2], 1, 0, "-S", []uint16{2}, []uint8{1, 2})
+	setWebRTCTemplate(&structure.Templates[3], 1, 0, "-S", nil, []uint8{1, 0})
+}
+
+func fillWebRTCS2T2Templates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 6
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "SS--", []uint16{4}, []uint8{4, 3})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SS--", nil, []uint8{0, 0})
+	setWebRTCTemplate(&structure.Templates[2], 0, 1, "-D--", []uint16{2}, []uint8{2, 1})
+	setWebRTCTemplate(&structure.Templates[3], 1, 0, "--SS", []uint16{4}, []uint8{1, 4})
+	setWebRTCTemplate(&structure.Templates[4], 1, 0, "--SS", nil, []uint8{1, 0})
+	setWebRTCTemplate(&structure.Templates[5], 1, 1, "---D", []uint16{2}, []uint8{3, 2})
+}
+
+func fillWebRTCS2T3Templates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 10
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "SSS---", []uint16{8}, []uint8{8, 7})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SSS---", nil, []uint8{0, 0})
+	setWebRTCTemplate(&structure.Templates[2], 0, 1, "-DS---", []uint16{4}, []uint8{4, 3})
+	setWebRTCTemplate(&structure.Templates[3], 0, 2, "--D---", []uint16{2}, []uint8{2, 1})
+	setWebRTCTemplate(&structure.Templates[4], 0, 2, "--D---", []uint16{2}, []uint8{6, 5})
+	setWebRTCTemplate(&structure.Templates[5], 1, 0, "---SSS", []uint16{8}, []uint8{1, 8})
+	setWebRTCTemplate(&structure.Templates[6], 1, 0, "---SSS", nil, []uint8{1, 0})
+	setWebRTCTemplate(&structure.Templates[7], 1, 1, "----DS", []uint16{4}, []uint8{5, 4})
+	setWebRTCTemplate(&structure.Templates[8], 1, 2, "-----D", []uint16{2}, []uint8{3, 2})
+	setWebRTCTemplate(&structure.Templates[9], 1, 2, "-----D", []uint16{2}, []uint8{7, 6})
+}
+
+func fillWebRTCS3T1Templates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 6
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "S--", []uint16{3}, []uint8{3, 2, 1})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "S--", nil, []uint8{0, 0, 0})
+	setWebRTCTemplate(&structure.Templates[2], 1, 0, "-S-", []uint16{3}, []uint8{1, 3, 2})
+	setWebRTCTemplate(&structure.Templates[3], 1, 0, "-S-", nil, []uint8{1, 0, 0})
+	setWebRTCTemplate(&structure.Templates[4], 2, 0, "--S", []uint16{3}, []uint8{2, 1, 3})
+	setWebRTCTemplate(&structure.Templates[5], 2, 0, "--S", nil, []uint8{2, 1, 0})
+}
+
+func fillWebRTCS3T2Templates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 9
+	setWebRTCTemplate(&structure.Templates[0], 0, 0, "SS----", []uint16{6}, []uint8{6, 5, 4})
+	setWebRTCTemplate(&structure.Templates[1], 0, 0, "SS----", nil, []uint8{0, 0, 0})
+	setWebRTCTemplate(&structure.Templates[2], 0, 1, "-D----", []uint16{3}, []uint8{3, 2, 1})
+	setWebRTCTemplate(&structure.Templates[3], 1, 0, "--SS--", []uint16{6}, []uint8{1, 6, 5})
+	setWebRTCTemplate(&structure.Templates[4], 1, 0, "--SS--", nil, []uint8{1, 0, 0})
+	setWebRTCTemplate(&structure.Templates[5], 1, 1, "---D--", []uint16{3}, []uint8{4, 3, 2})
+	setWebRTCTemplate(&structure.Templates[6], 2, 0, "----SS", []uint16{6}, []uint8{2, 1, 6})
+	setWebRTCTemplate(&structure.Templates[7], 2, 0, "----SS", nil, []uint8{2, 1, 0})
+	setWebRTCTemplate(&structure.Templates[8], 2, 1, "-----D", []uint16{3}, []uint8{5, 4, 3})
+}
+
+func fillWebRTCS3T3Templates(structure *WebRTCFrameDependencyStructure) {
+	structure.TemplateNum = 15
+	setWebRTCTemplate(&structure.Templates[0x0], 0, 0, "SSS------", []uint16{12}, []uint8{12, 11, 10})
+	setWebRTCTemplate(&structure.Templates[0x1], 0, 0, "SSS------", nil, []uint8{0, 0, 0})
+	setWebRTCTemplate(&structure.Templates[0x2], 0, 1, "-DS------", []uint16{6}, []uint8{6, 5, 4})
+	setWebRTCTemplate(&structure.Templates[0x3], 0, 2, "--D------", []uint16{3}, []uint8{3, 2, 1})
+	setWebRTCTemplate(&structure.Templates[0x4], 0, 2, "--D------", []uint16{3}, []uint8{9, 8, 7})
+	setWebRTCTemplate(&structure.Templates[0x5], 1, 0, "---SSS---", []uint16{12}, []uint8{1, 12, 11})
+	setWebRTCTemplate(&structure.Templates[0x6], 1, 0, "---SSS---", nil, []uint8{1, 0, 0})
+	setWebRTCTemplate(&structure.Templates[0x7], 1, 1, "----DS---", []uint16{6}, []uint8{7, 6, 5})
+	setWebRTCTemplate(&structure.Templates[0x8], 1, 2, "-----D---", []uint16{3}, []uint8{4, 3, 2})
+	setWebRTCTemplate(&structure.Templates[0x9], 1, 2, "-----D---", []uint16{3}, []uint8{10, 9, 8})
+	setWebRTCTemplate(&structure.Templates[0xA], 2, 0, "------SSS", []uint16{12}, []uint8{2, 1, 12})
+	setWebRTCTemplate(&structure.Templates[0xB], 2, 0, "------SSS", nil, []uint8{2, 1, 0})
+	setWebRTCTemplate(&structure.Templates[0xC], 2, 1, "-------DS", []uint16{6}, []uint8{8, 7, 6})
+	setWebRTCTemplate(&structure.Templates[0xD], 2, 2, "--------D", []uint16{3}, []uint8{5, 4, 3})
+	setWebRTCTemplate(&structure.Templates[0xE], 2, 2, "--------D", []uint16{3}, []uint8{11, 10, 9})
 }
 
 func setWebRTCTemplate(template *WebRTCFrameDependencyTemplate, spatialID uint8, temporalID uint8, dtis string, frameDiffs []uint16, chainDiffs []uint8) {

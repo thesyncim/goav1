@@ -157,16 +157,44 @@ func TestScalabilityModeAllWebRTCSVCModes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("WebRTCFrameDependencyStructureForConfig(%q): %v", tc.name, err)
 		}
-		wantTemplates := tc.spatial * tc.temporal
-		if mode == ScalabilityModeL2T2_KEY_SHIFT {
-			wantTemplates = 7
-		}
+		wantTemplates := webRTCTestReferenceTemplateNum(mode, tc.spatial, tc.temporal)
 		if structure.NumDecodeTargets != tc.spatial*tc.temporal ||
 			structure.NumChains != tc.spatial ||
 			structure.TemplateNum != wantTemplates ||
 			structure.ResolutionNum != tc.spatial {
 			t.Fatalf("%q structure shape=%+v", tc.name, structure)
 		}
+	}
+}
+
+func webRTCTestReferenceTemplateNum(mode ScalabilityMode, spatial uint8, temporal uint8) uint8 {
+	switch mode {
+	case ScalabilityModeL1T2:
+		return 3
+	case ScalabilityModeL1T3:
+		return 5
+	case ScalabilityModeL2T1, ScalabilityModeL2T1h, ScalabilityModeL2T1_KEY,
+		ScalabilityModeS2T1, ScalabilityModeS2T1h:
+		return 4
+	case ScalabilityModeL2T2, ScalabilityModeL2T2h, ScalabilityModeL2T2_KEY,
+		ScalabilityModeS2T2, ScalabilityModeS2T2h:
+		return 6
+	case ScalabilityModeL2T2_KEY_SHIFT:
+		return 7
+	case ScalabilityModeL2T3, ScalabilityModeL2T3h, ScalabilityModeL2T3_KEY,
+		ScalabilityModeS2T3, ScalabilityModeS2T3h:
+		return 10
+	case ScalabilityModeL3T1, ScalabilityModeL3T1h, ScalabilityModeL3T1_KEY,
+		ScalabilityModeS3T1, ScalabilityModeS3T1h:
+		return 6
+	case ScalabilityModeL3T2, ScalabilityModeL3T2h, ScalabilityModeL3T2_KEY,
+		ScalabilityModeS3T2, ScalabilityModeS3T2h:
+		return 9
+	case ScalabilityModeL3T3, ScalabilityModeL3T3h, ScalabilityModeL3T3_KEY,
+		ScalabilityModeS3T3, ScalabilityModeS3T3h:
+		return 15
+	default:
+		return spatial * temporal
 	}
 }
 
