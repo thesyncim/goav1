@@ -820,7 +820,7 @@ func normalizeConfig(config Config) (Config, error) {
 
 func normalizeConfigColor(config Config) (Config, error) {
 	bitDepth := config.BitDepth
-	if bitDepth == 0 && config.ColorConfigSet && config.ColorConfig.BitDepth != 0 {
+	if config.ColorConfigSet && config.ColorConfig.BitDepth != 0 {
 		bitDepth = config.ColorConfig.BitDepth
 	}
 	if bitDepth == 0 {

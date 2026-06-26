@@ -355,6 +355,38 @@ func TestSetWebRTCSVCConfig(t *testing.T) {
 	}
 }
 
+func TestSetWebRTCSVCConfigExplicitColorBitDepthOverridesStaleTopLevel(t *testing.T) {
+	base := Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    500,
+		TargetBitrateKbps: 350,
+	}
+	normalized, err := SetWebRTCSVCConfig(base, 0, 0)
+	if err != nil {
+		t.Fatalf("SetWebRTCSVCConfig base: %v", err)
+	}
+	if normalized.BitDepth != 8 {
+		t.Fatalf("base normalized bit depth=%d want 8", normalized.BitDepth)
+	}
+
+	reconfigured := normalized
+	reconfigured.Profile = Profile0
+	reconfigured.ColorConfigSet = true
+	reconfigured.ColorConfig = SequenceColorConfig{
+		BitDepth:   10,
+		MonoChrome: true,
+	}
+	got, err := SetWebRTCSVCConfig(reconfigured, 0, 0)
+	if err != nil {
+		t.Fatalf("SetWebRTCSVCConfig high-bit-depth mono reconfigure: %v", err)
+	}
+	if got.BitDepth != 10 || got.ColorConfig.BitDepth != 10 || !got.ColorConfig.MonoChrome {
+		t.Fatalf("reconfigured color=%+v top bitDepth=%d want 10-bit monochrome", got.ColorConfig, got.BitDepth)
+	}
+}
+
 func TestSetWebRTCSVCConfigPreservesSpatialLayerBitrates(t *testing.T) {
 	cfg := Config{
 		Resolution:        Resolution{Width: 640, Height: 360},
