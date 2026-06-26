@@ -1210,6 +1210,75 @@ func TestPublicRTCEncoderI444NativeReferenceDecoders(t *testing.T) {
 	assertPublicIVFMatchesReferenceDecodersRawYUV(t, decoders, "public-rtc-i444-native", ivf)
 }
 
+func TestPublicRTCEncoderI444NativeMultiSpatialReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	scenarios := []struct {
+		name string
+		mode goav1.EncoderScalabilityMode
+	}{
+		{name: "simulcast-s2t2", mode: goav1.EncoderScalabilityModeS2T2},
+		{name: "shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT},
+	}
+	for _, scenario := range scenarios {
+		scenario := scenario
+		t.Run(scenario.name, func(t *testing.T) {
+			w, h := publicRTCMatrixGeometry(t, scenario.mode)
+			cfg := publicRTCMatrixConfig(w, h, scenario.mode)
+			cfg.Profile = goav1.EncoderProfile1
+			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.Quantizer = 32
+			cfg.ColorConfigSet = true
+			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+				BitDepth: 8,
+			}
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+			}
+			defer enc.Close()
+			if enc.Config().Profile != goav1.EncoderProfile1 ||
+				enc.Config().ColorConfig.MonoChrome ||
+				enc.Config().ColorConfig.SubsamplingX ||
+				enc.Config().ColorConfig.SubsamplingY ||
+				enc.Config().SpatialLayerCount < 2 {
+				t.Fatalf("normalized config=%+v want native multi-spatial 4:4:4", enc.Config())
+			}
+
+			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var rtpReceiver goav1.RTPDependencyDescriptorState
+			nextFrameID := uint64(0)
+			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var orderedTUs [][]byte
+			for frame := 0; frame < 4; frame++ {
+				forceKey := frame == 2
+				picture, err := enc.EncodeI444Picture(publicI444NativePattern(w, h, frame), forceKey)
+				if err != nil {
+					t.Fatalf("EncodeI444Picture(%d): %v", frame, err)
+				}
+				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), picture, frame == 0 || forceKey, &nextFrameID)
+				for i := 0; i < picture.FrameNum; i++ {
+					if !picture.Frames[i].CodedKeyframe {
+						continue
+					}
+					seq := publicFirstSequenceHeader(t, picture.Frames[i].Data)
+					if seq.SeqProfile != uint8(goav1.EncoderProfile1) ||
+						seq.ColorConfig.MonoChrome ||
+						seq.ColorConfig.BitDepth != 8 ||
+						seq.ColorConfig.SubsamplingX ||
+						seq.ColorConfig.SubsamplingY {
+						t.Fatalf("picture %d frame %d profile=%d color=%+v want native 8-bit 4:4:4",
+							frame, i, seq.SeqProfile, seq.ColorConfig)
+					}
+				}
+				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
+			}
+
+			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+			assertPublicRTCRTPReferenceDecoders(t, decoders, "public-rtc-i444-native-"+scenario.name, enc.Config(), layerTUs, orderedTUs)
+		})
+	}
+}
+
 func TestPublicRTCEncoderI400NativeMonochrome(t *testing.T) {
 	const w, h = 192, 128
 	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T3)
@@ -1734,6 +1803,68 @@ func TestPublicRTCEncoderSetConfigNativeMonochromeTransition(t *testing.T) {
 	if !seq.ColorConfig.MonoChrome {
 		t.Fatalf("transition sequence color=%+v want monochrome", seq.ColorConfig)
 	}
+}
+
+func TestPublicRTCEncoderSetConfigNativeI444TransitionReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	const w, h = 192, 128
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	first, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, 0), false)
+	if err != nil {
+		t.Fatalf("EncodePicture: %v", err)
+	}
+	i444Config := enc.Config()
+	i444Config.Profile = goav1.EncoderProfile1
+	i444Config.ColorConfigSet = true
+	i444Config.ColorConfig = goav1.EncoderSequenceColorConfig{
+		BitDepth: 8,
+	}
+	if err := enc.SetConfig(i444Config); err != nil {
+		t.Fatalf("SetConfig I444: %v", err)
+	}
+	if enc.Config().Profile != goav1.EncoderProfile1 ||
+		enc.Config().ColorConfig.MonoChrome ||
+		enc.Config().ColorConfig.SubsamplingX ||
+		enc.Config().ColorConfig.SubsamplingY {
+		t.Fatalf("post-SetConfig config=%+v want native 4:4:4", enc.Config())
+	}
+	key, err := enc.EncodeI444Picture(publicI444NativePattern(w, h, 1), false)
+	if err != nil {
+		t.Fatalf("EncodeI444Picture key after SetConfig: %v", err)
+	}
+	if !key.Keyframe || key.FrameNum != 1 || key.Frames[0].FrameID != first.Frames[0].FrameID+uint64(first.FrameNum) {
+		t.Fatalf("I444 transition key=%+v after first=%+v", key, first)
+	}
+	seq := publicFirstSequenceHeader(t, key.Frames[0].Data)
+	if seq.SeqProfile != uint8(goav1.EncoderProfile1) ||
+		seq.ColorConfig.MonoChrome ||
+		seq.ColorConfig.BitDepth != 8 ||
+		seq.ColorConfig.SubsamplingX ||
+		seq.ColorConfig.SubsamplingY {
+		t.Fatalf("transition sequence profile=%d color=%+v want native 8-bit 4:4:4", seq.SeqProfile, seq.ColorConfig)
+	}
+	keyPayload := append([]byte(nil), key.Frames[0].Data...)
+	delta, err := enc.EncodeI444Picture(publicI444NativePattern(w, h, 2), false)
+	if err != nil {
+		t.Fatalf("EncodeI444Picture delta after SetConfig: %v", err)
+	}
+	if delta.Keyframe || delta.FrameNum != 1 {
+		t.Fatalf("I444 transition delta=%+v want single delta picture", delta)
+	}
+	deltaPayload := append([]byte(nil), delta.Frames[0].Data...)
+
+	frames := []publicIVFFrame{
+		{timestamp: 0, payload: keyPayload},
+		{timestamp: 1, payload: deltaPayload},
+	}
+	ivf := appendPublicIVF(nil, w, h, 30, 1, frames)
+	assertPublicIVFMatchesReferenceDecodersRawYUV(t, decoders, "public-rtc-i444-transition", ivf)
 }
 
 func TestPublicEncoderRuntimeOptions(t *testing.T) {
