@@ -6,16 +6,16 @@
 // and dependency metadata controls. Root-level friendly pixel APIs emit AV1
 // bitstreams for 8-bit profile-0 WebRTC streams from I420/NV12/NV21 inputs plus
 // I422/I444/I400 and generic Frame adapters, including native 8-bit profile-2
-// 4:2:2, native 8-bit profile-1 4:4:4, native 8-bit monochrome, and native
-// 10/12-bit monochrome RTC output for explicit single-spatial, simulcast, and
-// shared-reference SVC configs, with runtime bitrate/framerate/scalability
-// reconfiguration. The lower-level WebRTC control surface validates W3C SVC
-// mode metadata, temporal/spatial dependency structures, key-shift scheduling,
-// and RTP dependency descriptors for caller-supplied frame payloads, plus
-// sequence-matched Frame loading for profile-0/1/2 sample formats, including
-// explicit sequence color config. Standalone native high-bit-depth 4:2:0 color
-// keyframes and P-frames are available as the first high-bit-depth color
-// temporal-compression slice; realtime high-bit-depth color WebRTC streaming,
-// broader oracle coverage, and speed-sensitive architecture remain open and
-// should be checked against pinned libaom/libwebrtc/SVT-AV1 behavior.
+// 4:2:2, native 8-bit profile-1 4:4:4, native 8-bit monochrome, native
+// 10/12-bit monochrome, and native 10/12-bit 4:2:0 RTC output for explicit
+// single-spatial, simulcast, and shared-reference SVC configs, with runtime
+// bitrate/framerate/scalability reconfiguration. The lower-level WebRTC
+// control surface validates W3C SVC mode metadata, temporal/spatial dependency
+// structures, key-shift scheduling, and RTP dependency descriptors for
+// caller-supplied frame payloads, plus sequence-matched Frame loading for
+// profile-0/1/2 sample formats, including explicit sequence color config.
+// Standalone native high-bit-depth 4:2:0 color keyframes and P-frames are also
+// available; native high-bit-depth 4:2:2/4:4:4, broader oracle coverage, and
+// speed-sensitive architecture remain open and should be checked against pinned
+// libaom/libwebrtc/SVT-AV1 behavior.
 package encoder

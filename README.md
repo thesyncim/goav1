@@ -186,7 +186,7 @@ result buffer directly. The executable examples in `example_test.go` and
 | WebRTC RTP decode | `NewDecoderFromRTPPayloads` / `NewDecoderFromRTPPackets` cover ordered/live RTP payload bodies or complete packets for single decode chains and simulcast layers; `NewLayeredDecoderFromRTPPayloads` / `NewLayeredDecoderFromRTPPackets` cover shared-reference SVC RTP streams; `DecodeRTPPayloadAfterLoss` and `DecodeRTPPacketAfterLoss` reset retained fragments after packet gaps |
 | SVC | L1T2/L2T1/L2T2 oracle vectors pass through the framework path; public integration guidance lives in [docs/svc.md](docs/svc.md) |
 | Tile groups | Single and multi-tile groups pass current strict-MD5 gates; tile-list OBUs parse, validate source reference anchors/uniform decode layout, resolve external anchor frames through reference slots or provider-backed surface IDs, plan raw tile-list entry decode jobs, bind each entry's external anchor as LAST_FRAME for residual decode, reconstruct entries through the residual runner, blit decoded rectangles into a tile-list output mosaic, and publish tile-list outputs through low-level stream runners plus high-level low-overhead, IVF, RTP payload, RTP packet, and sequenced RTP packet decode when frame context is present |
-| Encoder | Functional realtime WebRTC encoder with I420/I422/I444/I400/NV12/NV21 plus generic 8/10/12-bit `Frame` input adapters, fixed-quality/CBR, forced keyframes, temporal layering, runtime bitrate/framerate/rate-control/scalability reconfiguration, current RTP timestamp-duration helpers, config-derived video-layers-allocation metadata, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, native 8-bit profile-2 4:2:2, native 8-bit profile-1 4:4:4, native 8-bit and 10/12-bit monochrome RTC output for explicit configs across single-spatial, simulcast, and shared-reference SVC, native 10/12-bit monochrome lossless/lossy keyframes and lossy P-frames, standalone native 10/12-bit 4:2:0 color keyframes and P-frames, tile columns, golden references, RTP payload packetization, sized complete RTP packet wrapping with dependency descriptors and negotiated MID/RID/RRID/CVO/playout-delay/TWCC/TWCC-02/absolute-send-time/absolute-capture-time/color-space/video-content-type/video-timing/video-layers-allocation extensions, active decode target signaling, and LRR layer-grid validation; non-monochrome high-bit-depth inputs still adapt into the current 8-bit realtime encode path; lower-level WebRTC controls cover the W3C AV1 SVC mode vocabulary, active-encoding scalabilityMode validation, temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT templates, explicit sequence color config, and `Frame` validation/loading for profile-0/1/2 sample formats |
+| Encoder | Functional realtime WebRTC encoder with I420/I422/I444/I400/NV12/NV21 plus generic 8/10/12-bit `Frame` input adapters, fixed-quality/CBR, forced keyframes, temporal layering, runtime bitrate/framerate/rate-control/scalability reconfiguration, current RTP timestamp-duration helpers, config-derived video-layers-allocation metadata, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and simulcast modes, native 8-bit profile-2 4:2:2, native 8-bit profile-1 4:4:4, native 8-bit and 10/12-bit monochrome plus native 10/12-bit 4:2:0 RTC output for explicit configs across single-spatial, simulcast, and shared-reference SVC, native 10/12-bit monochrome lossless/lossy keyframes and lossy P-frames, standalone and RTC native 10/12-bit 4:2:0 color keyframes and P-frames, tile columns, golden references, RTP payload packetization, sized complete RTP packet wrapping with dependency descriptors and negotiated MID/RID/RRID/CVO/playout-delay/TWCC/TWCC-02/absolute-send-time/absolute-capture-time/color-space/video-content-type/video-timing/video-layers-allocation extensions, active decode target signaling, and LRR layer-grid validation; high-bit-depth 4:2:2/4:4:4 inputs still adapt into the current 8-bit realtime encode path; lower-level WebRTC controls cover the W3C AV1 SVC mode vocabulary, active-encoding scalabilityMode validation, temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT templates, explicit sequence color config, and `Frame` validation/loading for profile-0/1/2 sample formats |
 | SIMD/assembly | CPU-dispatch skeleton plus initial amd64/arm64 motion kernels; broader transform/CDEF/restoration kernels are still roadmap work |
 
 The full feature matrix, status legend, vector coverage, and forward-looking
@@ -209,17 +209,18 @@ There are two public encoder surfaces:
   `RTCEncoder` is explicitly configured for native 8-bit profile-2 4:2:2 or
   native 8-bit profile-1 4:4:4. I400 and monochrome `Frame` inputs fill neutral
   chroma unless `RTCEncoder` is explicitly configured for native monochrome,
-  where 8-bit WebRTC L*/S* modes emit native AV1 monochrome and 10/12-bit
-  monochrome configs emit native high-bit-depth AV1 across single-spatial,
-  simulcast, and shared-reference SVC modes. Non-monochrome
-  10/12-bit `Frame` samples are downshifted before entering the current 8-bit
-  realtime encode path. Native 10/12-bit monochrome keyframes and P-frames are
-  also exposed separately via `EncodeI400HighBitDepthKeyframe`,
+  where 8-bit WebRTC L*/S* modes emit native AV1 monochrome, 10/12-bit
+  monochrome configs emit native high-bit-depth AV1, and explicit 10/12-bit
+  4:2:0 configs emit native high-bit-depth color AV1 across single-spatial,
+  simulcast, and shared-reference SVC modes. High-bit-depth 4:2:2/4:4:4
+  `Frame` samples are downshifted before entering the current 8-bit realtime
+  encode path. Native 10/12-bit monochrome keyframes and P-frames are also
+  exposed separately via `EncodeI400HighBitDepthKeyframe`,
   `EncodeI400HighBitDepthPFrame`, `RTCEncoder.EncodeI400HighBitDepth`, and
-  `RTCEncoder.EncodeI400HighBitDepthPicture`; standalone native 10/12-bit
-  4:2:0 color keyframes and P-frames are exposed via
-  `EncodeI420HighBitDepthKeyframe` and `EncodeI420HighBitDepthPFrame` as the
-  first high-bit-depth color temporal-compression slice.
+  `RTCEncoder.EncodeI400HighBitDepthPicture`; native 10/12-bit 4:2:0 color
+  keyframes and P-frames are exposed via `EncodeI420HighBitDepthKeyframe`,
+  `EncodeI420HighBitDepthPFrame`, `RTCEncoder.EncodeI420HighBitDepth`, and
+  `RTCEncoder.EncodeI420HighBitDepthPicture`.
   `RTCEncoder.Encode` emits one
   single-spatial-layer AV1 temporal unit per call; `RTCEncoder.EncodePicture`
   emits one RTP-frame-ready output per active spatial layer for WebRTC SVC and
@@ -278,8 +279,8 @@ There are two public encoder surfaces:
 
 Multi-spatial pixel output uses independent per-spatial encoders for simulcast
 and shared-reference inter-layer prediction for full SVC, including native
-high-bit-depth monochrome shared-reference prediction. Native high-bit-depth
-non-monochrome realtime color inter frames/WebRTC streaming, broader oracle
+high-bit-depth monochrome and 4:2:0 color shared-reference prediction. Native
+high-bit-depth 4:2:2/4:4:4 realtime bitstream emission, broader oracle
 coverage, and compression efficiency tuning remain open.
 Encoder correctness
 and control behavior should
@@ -398,9 +399,10 @@ Current goal order:
 - Keep quality expanding beyond the committed green vectors: real-world
   corpora, broader profile-2 and 12-bit edge combinations, switch-frame and
   additional tile-list edge coverage, malformed stream hardening, and fuzzing.
-- Expand the realtime encoder beyond the current 8-bit and monochrome paths:
-  native high-bit-depth non-monochrome color, richer WebRTC tuning controls, and
-  broader libaom/libwebrtc/SVT oracle coverage before wider production claims.
+- Expand the realtime encoder beyond the current 8-bit, monochrome, and
+  high-bit-depth 4:2:0 paths: native high-bit-depth 4:2:2/4:4:4, richer WebRTC
+  tuning controls, and broader libaom/libwebrtc/SVT oracle coverage before
+  wider production claims.
 - Preserve upstream C integer widths, signedness, overflow, shift behavior, and
   layout in all new code and touched parity paths. Do not churn untouched legacy
   code solely for type-width cleanup.
@@ -490,7 +492,7 @@ scalability modes, RTP/RTCP helpers, loss recovery, control reconfiguration, and
 external decoder parity, including the Pion/browser-push WebRTC example and
 multi-spatial I422/I444/I400/NV12/NV21 plus generic 8/10/12-bit `Frame`
 adapter output after RTP assembly, native single-spatial monochrome RTC output,
-as well as
+native 10/12-bit I400/I420 RTC output, as well as
 all-mode `SetConfig` transitions that change framerate, bitrate, rate control,
 content hint, and scalability mode. The browser portion live-tests every
 `EncoderWebRTCScalabilityModes()` entry through the supported delivery shape:

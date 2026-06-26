@@ -9,12 +9,12 @@ package goav1
 // configured for profile-2 native 4:2:2 or profile-1 native 4:4:4 and otherwise
 // resampled.
 // I400 and monochrome Frame inputs fill neutral chroma unless an RTCEncoder is
-// explicitly configured for native monochrome across WebRTC L*/S* modes;
-// explicit high-bit-depth monochrome RTC configs preserve 10/12-bit I400 or
-// monochrome Frame input for single-spatial and simulcast streams, while other
-// 10/12-bit Frame inputs are downshifted before entering the current 8-bit
-// realtime path. Native 10/12-bit monochrome keyframes/P-frames and standalone
-// native 10/12-bit 4:2:0 color keyframes/P-frames are also available through
+// explicitly configured for native monochrome across WebRTC L*/S* modes.
+// Explicit high-bit-depth RTC configs preserve 10/12-bit I400/monochrome and
+// I420/4:2:0 Frame input across single-spatial, simulcast, and shared-reference
+// SVC streams, while other 10/12-bit Frame inputs are downshifted before
+// entering the current 8-bit realtime path. Native 10/12-bit monochrome
+// keyframes/P-frames and standalone native 10/12-bit 4:2:0 color keyframes/P-frames are also available through
 // EncodeI400HighBitDepthKeyframe, EncodeI400HighBitDepthPFrame,
 // EncodeI420HighBitDepthKeyframe, and EncodeI420HighBitDepthPFrame. Every
 // emitted stream decodes bit-exactly to the encoder's own reconstruction in
@@ -789,7 +789,9 @@ func (f RTCFrame) AppendRTPPacketsWithOptions(payloadDst []byte, descriptorDst [
 // streams. I400 inputs are adapted to 4:2:0 unless NewRTCEncoderWithConfig is
 // given an explicit monochrome color config, in which case EncodeI400 and
 // EncodeI400Picture emit native AV1 monochrome streams for WebRTC L*/S* modes.
-// NewRTCEncoder covers single-spatial L1T* temporal ladders;
+// Explicit 10/12-bit 4:2:0 configs preserve EncodeI420HighBitDepth /
+// EncodeI420HighBitDepthPicture and matching generic Frame input. NewRTCEncoder
+// covers single-spatial L1T* temporal ladders;
 // NewRTCEncoderWithConfig additionally covers supported multi-spatial
 // WebRTC SVC and simulcast modes under CBR or CQP rate control. NewRTCEncoder
 // is the CBR convenience constructor and still requires TargetBitrate and
@@ -799,6 +801,7 @@ type RTCEncoder struct {
 	yuv420Scratch           I420Frame
 	i400Scratch             I400Frame
 	i400HighBitDepthScratch I400HighBitDepthFrame
+	i420HighBitDepthScratch I420HighBitDepthFrame
 }
 
 // NewRTCEncoder creates a WebRTC encoder from cfg.
@@ -1032,9 +1035,26 @@ func (e *RTCEncoder) EncodeI400HighBitDepth(frame I400HighBitDepthFrame, forceKe
 	return rtcFrameFromInternal(out), nil
 }
 
+// EncodeI420HighBitDepth encodes one single-spatial 10/12-bit 4:2:0 frame
+// with its dependency descriptor when the encoder is configured for native
+// high-bit-depth 4:2:0 color.
+func (e *RTCEncoder) EncodeI420HighBitDepth(frame I420HighBitDepthFrame, forceKey bool) (RTCFrame, error) {
+	if e == nil || e.stream == nil {
+		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	if !rtcEncoderConfigIsNativeHighBitDepthI420(e.stream.Config()) {
+		return RTCFrame{}, ErrEncoderUnsupported
+	}
+	out, err := e.stream.EncodeHighBitDepth420(encoder.SourceFrame42016(frame), forceKey)
+	if err != nil {
+		return RTCFrame{}, err
+	}
+	return rtcFrameFromInternal(out), nil
+}
+
 // EncodeFrame encodes one generic Frame with its dependency descriptor. For
-// explicit high-bit-depth monochrome RTC configs it preserves matching 10/12-bit
-// monochrome input; otherwise it adapts 8/10/12-bit 4:2:0, 4:2:2, 4:4:4, or
+// explicit high-bit-depth monochrome or 4:2:0 RTC configs it preserves matching
+// 10/12-bit input; otherwise it adapts 8/10/12-bit 4:2:0, 4:2:2, 4:4:4, or
 // monochrome samples into the current 8-bit 4:2:0 encode path.
 func (e *RTCEncoder) EncodeFrame(frame Frame, forceKey bool) (RTCFrame, error) {
 	if e == nil || e.stream == nil {
@@ -1075,6 +1095,13 @@ func (e *RTCEncoder) EncodeFrame(frame Frame, forceKey bool) (RTCFrame, error) {
 			return RTCFrame{}, err
 		}
 		return rtcFrameFromInternal(out), nil
+	}
+	if rtcEncoderConfigIsNativeHighBitDepthI420(e.stream.Config()) {
+		i420, err := frameToI420HighBitDepthScratch(&e.i420HighBitDepthScratch, frame, e.stream.Config().ColorConfig.BitDepth)
+		if err != nil {
+			return RTCFrame{}, err
+		}
+		return e.EncodeI420HighBitDepth(i420, forceKey)
 	}
 	i420, err := frameToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
@@ -1225,9 +1252,25 @@ func (e *RTCEncoder) EncodeI400HighBitDepthPicture(frame I400HighBitDepthFrame, 
 	return rtcPictureFromInternal(out), nil
 }
 
+// EncodeI420HighBitDepthPicture encodes one 10/12-bit 4:2:0 WebRTC picture
+// when the encoder is configured for native high-bit-depth 4:2:0 color.
+func (e *RTCEncoder) EncodeI420HighBitDepthPicture(frame I420HighBitDepthFrame, forceKey bool) (RTCPicture, error) {
+	if e == nil || e.stream == nil {
+		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	if !rtcEncoderConfigIsNativeHighBitDepthI420(e.stream.Config()) {
+		return RTCPicture{}, ErrEncoderUnsupported
+	}
+	out, err := e.stream.EncodeHighBitDepth420Picture(encoder.SourceFrame42016(frame), forceKey)
+	if err != nil {
+		return RTCPicture{}, err
+	}
+	return rtcPictureFromInternal(out), nil
+}
+
 // EncodeFramePicture encodes one generic Frame as a WebRTC picture. For
-// explicit high-bit-depth monochrome RTC configs it preserves matching 10/12-bit
-// monochrome input; otherwise it adapts the frame into the current 8-bit 4:2:0
+// explicit high-bit-depth monochrome or 4:2:0 RTC configs it preserves matching
+// 10/12-bit input; otherwise it adapts the frame into the current 8-bit 4:2:0
 // encode path. Multi-spatial output keeps the same dependency-descriptor
 // behavior as EncodePicture.
 func (e *RTCEncoder) EncodeFramePicture(frame Frame, forceKey bool) (RTCPicture, error) {
@@ -1269,6 +1312,13 @@ func (e *RTCEncoder) EncodeFramePicture(frame Frame, forceKey bool) (RTCPicture,
 			return RTCPicture{}, err
 		}
 		return rtcPictureFromInternal(out), nil
+	}
+	if rtcEncoderConfigIsNativeHighBitDepthI420(e.stream.Config()) {
+		i420, err := frameToI420HighBitDepthScratch(&e.i420HighBitDepthScratch, frame, e.stream.Config().ColorConfig.BitDepth)
+		if err != nil {
+			return RTCPicture{}, err
+		}
+		return e.EncodeI420HighBitDepthPicture(i420, forceKey)
 	}
 	i420, err := frameToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
@@ -1681,6 +1731,37 @@ func frameToI400HighBitDepthScratch(dst *I400HighBitDepthFrame, frame Frame, bit
 	return *dst, nil
 }
 
+func frameToI420HighBitDepthScratch(dst *I420HighBitDepthFrame, frame Frame, bitDepth uint8) (I420HighBitDepthFrame, error) {
+	format := frame.Format
+	if format.BitDepth == 0 {
+		format.BitDepth = 8
+	}
+	layout, err := FrameRequiredSize(format)
+	if err != nil {
+		return I420HighBitDepthFrame{}, err
+	}
+	if format.Width <= 0 || format.Height <= 0 || format.Width%2 != 0 || format.Height%2 != 0 {
+		return I420HighBitDepthFrame{}, fmt.Errorf("goav1: Frame dimensions must be positive even values, got %dx%d", format.Width, format.Height)
+	}
+	if format.MonoChrome || format.BitDepth != bitDepth || (bitDepth != 10 && bitDepth != 12) ||
+		!format.SubsamplingX || !format.SubsamplingY {
+		return I420HighBitDepthFrame{}, ErrFrameInvalidFormat
+	}
+	if frame.Y.Width != format.Width || frame.Y.Height != format.Height ||
+		frame.U.Width != layout.ChromaWidth || frame.U.Height != layout.ChromaHeight ||
+		frame.V.Width != layout.ChromaWidth || frame.V.Height != layout.ChromaHeight ||
+		!encoderPlaneFits(frame.Y, layout.BytesPerSample) ||
+		!encoderPlaneFits(frame.U, layout.BytesPerSample) ||
+		!encoderPlaneFits(frame.V, layout.BytesPerSample) {
+		return I420HighBitDepthFrame{}, ErrFrameInvalidPlane
+	}
+	frameI420HighBitDepthScratch(dst, format.Width, format.Height, bitDepth)
+	copyFramePlaneTo16(dst.Y, dst.YStride, frame.Y, layout.BytesPerSample, format.Width, format.Height)
+	copyFramePlaneTo16(dst.U, dst.ChromaStride, frame.U, layout.BytesPerSample, layout.ChromaWidth, layout.ChromaHeight)
+	copyFramePlaneTo16(dst.V, dst.ChromaStride, frame.V, layout.BytesPerSample, layout.ChromaWidth, layout.ChromaHeight)
+	return *dst, nil
+}
+
 func frameI420ByteScratch(dst *I420Frame, width int, height int) {
 	chromaWidth := width / 2
 	chromaHeight := height / 2
@@ -1705,6 +1786,33 @@ func frameI420ByteScratch(dst *I420Frame, width int, height int) {
 	dst.ChromaStride = chromaWidth
 	dst.Width = width
 	dst.Height = height
+}
+
+func frameI420HighBitDepthScratch(dst *I420HighBitDepthFrame, width int, height int, bitDepth uint8) {
+	chromaWidth := width / 2
+	chromaHeight := height / 2
+	yLen := width * height
+	chromaLen := chromaWidth * chromaHeight
+	if cap(dst.Y) < yLen {
+		dst.Y = make([]uint16, yLen)
+	} else {
+		dst.Y = dst.Y[:yLen]
+	}
+	if cap(dst.U) < chromaLen {
+		dst.U = make([]uint16, chromaLen)
+	} else {
+		dst.U = dst.U[:chromaLen]
+	}
+	if cap(dst.V) < chromaLen {
+		dst.V = make([]uint16, chromaLen)
+	} else {
+		dst.V = dst.V[:chromaLen]
+	}
+	dst.YStride = width
+	dst.ChromaStride = chromaWidth
+	dst.Width = width
+	dst.Height = height
+	dst.BitDepth = bitDepth
 }
 
 func frameI422ByteScratch(dst *I420Frame, width int, height int) {
@@ -2019,6 +2127,13 @@ func i420PlaneLen(stride int, width int, height int) (int, bool) {
 func rtcEncoderConfigIsNativeI420(cfg EncoderConfig) bool {
 	return !cfg.ColorConfig.MonoChrome &&
 		cfg.ColorConfig.BitDepth == 8 &&
+		cfg.ColorConfig.SubsamplingX &&
+		cfg.ColorConfig.SubsamplingY
+}
+
+func rtcEncoderConfigIsNativeHighBitDepthI420(cfg EncoderConfig) bool {
+	return !cfg.ColorConfig.MonoChrome &&
+		(cfg.ColorConfig.BitDepth == 10 || cfg.ColorConfig.BitDepth == 12) &&
 		cfg.ColorConfig.SubsamplingX &&
 		cfg.ColorConfig.SubsamplingY
 }

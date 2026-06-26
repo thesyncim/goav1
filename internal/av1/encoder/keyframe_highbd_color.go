@@ -83,13 +83,17 @@ func lossyHighBitDepth420KeyframeSequence(width, height int, bitDepth uint8) Seq
 }
 
 func (pc *pframeCoder) encodeHighBitDepth420KeyframeTile(src SourceFrame42016, recon *SourceFrame42016, qIndex uint8, miColStart, miColEnd uint16) ([]byte, error) {
+	return pc.encodeHighBitDepth420KeyframeTileWithOptions(src, recon, qIndex, miColStart, miColEnd, false)
+}
+
+func (pc *pframeCoder) encodeHighBitDepth420KeyframeTileWithOptions(src SourceFrame42016, recon *SourceFrame42016, qIndex uint8, miColStart, miColEnd uint16, allowScreenContentTools bool) ([]byte, error) {
 	if err := pc.partCDFs.InitDefault(); err != nil {
 		return nil, err
 	}
 	st := &pc.st
 	st.qIndex = qIndex
 	st.forceIntegerMV = false
-	st.allowScreenContentTools = false
+	st.allowScreenContentTools = allowScreenContentTools
 	st.color = parser.ColorConfig{BitDepth: src.BitDepth, SubsamplingX: true, SubsamplingY: true}
 	st.lfMap = nil
 	st.hme = nil
@@ -206,6 +210,9 @@ func (st *lossyEncodeState) encodeHighBitDepth420Block(src SourceFrame42016, rec
 	}
 	if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, tile.ChromaIntraModeDC); err != nil {
 		return fmt.Errorf("mark chroma intra: %w", err)
+	}
+	if err := st.writeNoPaletteMode(modeCtx, block, mode, tile.ChromaIntraModeDC, true); err != nil {
+		return err
 	}
 
 	txTypeReq := tile.IntraTransformTypeRequest{

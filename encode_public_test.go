@@ -2243,6 +2243,435 @@ func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeControlChurnReferenceDe
 	}
 }
 
+func TestPublicRTCEncoderI420HighBitDepthNativeReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	cases := []struct {
+		name     string
+		bitDepth uint8
+		profile  goav1.EncoderProfile
+	}{
+		{name: "10bit", bitDepth: 10, profile: goav1.EncoderProfile0},
+		{name: "12bit", bitDepth: 12, profile: goav1.EncoderProfile2},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			const w, h = 192, 128
+			cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
+			cfg.Profile = tc.profile
+			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.Quantizer = 42
+			cfg.ColorConfigSet = true
+			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+				BitDepth:     tc.bitDepth,
+				SubsamplingX: true,
+				SubsamplingY: true,
+			}
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+			}
+			defer enc.Close()
+			if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); !errors.Is(err, goav1.ErrEncoderUnsupported) {
+				t.Fatalf("Encode(I420) on native %d-bit I420 err=%v want %v", tc.bitDepth, err, goav1.ErrEncoderUnsupported)
+			}
+			if enc.Config().Profile != tc.profile ||
+				enc.Config().ColorConfig.BitDepth != tc.bitDepth ||
+				enc.Config().ColorConfig.MonoChrome ||
+				!enc.Config().ColorConfig.SubsamplingX ||
+				!enc.Config().ColorConfig.SubsamplingY {
+				t.Fatalf("normalized color=%+v profile=%d want native profile=%d %d-bit 4:2:0",
+					enc.Config().ColorConfig, enc.Config().Profile, tc.profile, tc.bitDepth)
+			}
+
+			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var rtpReceiver goav1.RTPDependencyDescriptorState
+			nextFrameID := uint64(0)
+			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var orderedTUs [][]byte
+			for frame := 0; frame < 4; frame++ {
+				forceKey := frame == 2
+				picture, err := enc.EncodeI420HighBitDepthPicture(publicI420HighBitDepthFrame(w, h, tc.bitDepth, frame), forceKey)
+				if err != nil {
+					t.Fatalf("EncodeI420HighBitDepthPicture(%d): %v", frame, err)
+				}
+				if picture.FrameNum != 1 || picture.Frames[0].SpatialID != 0 {
+					t.Fatalf("picture %d=%+v", frame, picture)
+				}
+				if picture.Keyframe != (frame == 0 || forceKey) {
+					t.Fatalf("picture %d key=%v force=%v", frame, picture.Keyframe, forceKey)
+				}
+				if picture.Frames[0].CodedKeyframe {
+					seq := publicFirstSequenceHeader(t, picture.Frames[0].Data)
+					if seq.SeqProfile != uint8(tc.profile) ||
+						seq.ColorConfig.MonoChrome ||
+						seq.ColorConfig.BitDepth != tc.bitDepth ||
+						!seq.ColorConfig.SubsamplingX ||
+						!seq.ColorConfig.SubsamplingY {
+						t.Fatalf("sequence profile=%d color=%+v want profile=%d %d-bit 4:2:0",
+							seq.SeqProfile, seq.ColorConfig, tc.profile, tc.bitDepth)
+					}
+				}
+				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
+				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), picture, frame == 0 || forceKey, &nextFrameID)
+			}
+			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+			assertPublicRTCRTPReferenceDecoders(t, decoders, "public-rtc-i420-"+tc.name+"-native", enc.Config(), layerTUs, orderedTUs)
+		})
+	}
+}
+
+func TestPublicRTCEncoderI420HighBitDepthNativeMultiSpatialReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	scenarios := []struct {
+		name     string
+		mode     goav1.EncoderScalabilityMode
+		bitDepth uint8
+		profile  goav1.EncoderProfile
+	}{
+		{name: "10bit-simulcast-s2t2", mode: goav1.EncoderScalabilityModeS2T2, bitDepth: 10, profile: goav1.EncoderProfile0},
+		{name: "12bit-simulcast-s3t2", mode: goav1.EncoderScalabilityModeS3T2, bitDepth: 12, profile: goav1.EncoderProfile2},
+		{name: "10bit-shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, bitDepth: 10, profile: goav1.EncoderProfile0},
+		{name: "12bit-shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, bitDepth: 12, profile: goav1.EncoderProfile2},
+		{name: "10bit-shared-svc-l3t2-key-shift", mode: goav1.EncoderScalabilityModeL3T2_KEY_SHIFT, bitDepth: 10, profile: goav1.EncoderProfile0},
+		{name: "12bit-shared-svc-l3t2-key-shift", mode: goav1.EncoderScalabilityModeL3T2_KEY_SHIFT, bitDepth: 12, profile: goav1.EncoderProfile2},
+	}
+	for _, scenario := range scenarios {
+		scenario := scenario
+		t.Run(scenario.name, func(t *testing.T) {
+			w, h := publicRTCMatrixGeometry(t, scenario.mode)
+			cfg := publicRTCMatrixConfig(w, h, scenario.mode)
+			cfg.Profile = scenario.profile
+			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.Quantizer = 39
+			cfg.ColorConfigSet = true
+			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+				BitDepth:     scenario.bitDepth,
+				SubsamplingX: true,
+				SubsamplingY: true,
+			}
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+			}
+			defer enc.Close()
+			if enc.Config().Profile != scenario.profile ||
+				enc.Config().ColorConfig.BitDepth != scenario.bitDepth ||
+				enc.Config().ColorConfig.MonoChrome ||
+				!enc.Config().ColorConfig.SubsamplingX ||
+				!enc.Config().ColorConfig.SubsamplingY ||
+				enc.Config().SpatialLayerCount < 2 {
+				t.Fatalf("normalized config=%+v want native multi-spatial profile=%d %d-bit 4:2:0",
+					enc.Config(), scenario.profile, scenario.bitDepth)
+			}
+
+			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var rtpReceiver goav1.RTPDependencyDescriptorState
+			nextFrameID := uint64(0)
+			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var orderedTUs [][]byte
+			for frame := 0; frame < 4; frame++ {
+				forceKey := frame == 2
+				picture, err := enc.EncodeI420HighBitDepthPicture(publicI420HighBitDepthFrame(w, h, scenario.bitDepth, frame), forceKey)
+				if err != nil {
+					t.Fatalf("EncodeI420HighBitDepthPicture(%d): %v", frame, err)
+				}
+				if picture.FrameNum != int(enc.Config().SpatialLayerCount) {
+					t.Fatalf("picture %d frames=%d want %d", frame, picture.FrameNum, enc.Config().SpatialLayerCount)
+				}
+				if picture.Keyframe != (frame == 0 || forceKey) {
+					t.Fatalf("picture %d key=%v force=%v", frame, picture.Keyframe, forceKey)
+				}
+				for i := 0; i < picture.FrameNum; i++ {
+					if !picture.Frames[i].CodedKeyframe {
+						continue
+					}
+					seq := publicFirstSequenceHeader(t, picture.Frames[i].Data)
+					if seq.SeqProfile != uint8(scenario.profile) ||
+						seq.ColorConfig.MonoChrome ||
+						seq.ColorConfig.BitDepth != scenario.bitDepth ||
+						!seq.ColorConfig.SubsamplingX ||
+						!seq.ColorConfig.SubsamplingY {
+						t.Fatalf("picture %d frame %d profile=%d color=%+v want profile=%d %d-bit 4:2:0",
+							frame, i, seq.SeqProfile, seq.ColorConfig, scenario.profile, scenario.bitDepth)
+					}
+				}
+				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
+				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), picture, frame == 0 || forceKey, &nextFrameID)
+			}
+
+			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+			assertPublicRTCRTPReferenceDecoders(t, decoders, "public-rtc-i420-native-"+scenario.name, enc.Config(), layerTUs, orderedTUs)
+		})
+	}
+}
+
+func TestPublicRTCEncoderI420HighBitDepthNativeControlChurnReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	scenarios := []struct {
+		name     string
+		mode     goav1.EncoderScalabilityMode
+		reconfig goav1.EncoderScalabilityMode
+		bitDepth uint8
+		profile  goav1.EncoderProfile
+	}{
+		{name: "10bit-single-l1t2-to-l1t3", mode: goav1.EncoderScalabilityModeL1T2, reconfig: goav1.EncoderScalabilityModeL1T3, bitDepth: 10, profile: goav1.EncoderProfile0},
+		{name: "10bit-simulcast-s2t2-to-s2t3", mode: goav1.EncoderScalabilityModeS2T2, reconfig: goav1.EncoderScalabilityModeS2T3, bitDepth: 10, profile: goav1.EncoderProfile0},
+		{name: "10bit-shared-svc-l2t2-to-l2t3-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, reconfig: goav1.EncoderScalabilityModeL2T3_KEY_SHIFT, bitDepth: 10, profile: goav1.EncoderProfile0},
+		{name: "12bit-shared-svc-l3t2-to-l3t3-key-shift", mode: goav1.EncoderScalabilityModeL3T2_KEY_SHIFT, reconfig: goav1.EncoderScalabilityModeL3T3_KEY_SHIFT, bitDepth: 12, profile: goav1.EncoderProfile2},
+	}
+	for scenarioIndex, scenario := range scenarios {
+		scenarioIndex, scenario := scenarioIndex, scenario
+		t.Run(scenario.name, func(t *testing.T) {
+			width, height := publicRTCMatrixGeometry(t, scenario.mode)
+			cfg := publicRTCMatrixConfig(width, height, scenario.mode)
+			cfg.Profile = scenario.profile
+			cfg.MaxFramerate = goav1.EncoderRational{Num: 30, Den: 1}
+			cfg.ColorConfigSet = true
+			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+				BitDepth:     scenario.bitDepth,
+				SubsamplingX: true,
+				SubsamplingY: true,
+			}
+			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, scenario.mode)+int32(75*scenarioIndex))
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+			}
+			defer enc.Close()
+
+			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var rtpReceiver goav1.RTPDependencyDescriptorState
+			nextFrameID := uint64(0)
+			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var orderedTUs [][]byte
+			var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
+			var sharedSequence goav1.SequenceHeader
+
+			appendPicture := func(label string, frameIndex int, forceKey bool, wantKey bool, wantScreen bool) {
+				t.Helper()
+				picture, err := enc.EncodeI420HighBitDepthPicture(publicI420HighBitDepthFrame(width, height, scenario.bitDepth, frameIndex), forceKey)
+				if err != nil {
+					t.Fatalf("%s EncodeI420HighBitDepthPicture: %v", label, err)
+				}
+				if picture.Keyframe != wantKey {
+					t.Fatalf("%s key=%v want %v picture=%+v", label, picture.Keyframe, wantKey, picture)
+				}
+				current := enc.Config()
+				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, current, picture, wantKey, &nextFrameID)
+				for i := 0; i < picture.FrameNum; i++ {
+					frame := picture.Frames[i]
+					if frame.CodedKeyframe {
+						seq := publicFirstSequenceHeader(t, frame.Data)
+						if seq.SeqProfile != uint8(scenario.profile) ||
+							seq.ColorConfig.MonoChrome ||
+							seq.ColorConfig.BitDepth != scenario.bitDepth ||
+							!seq.ColorConfig.SubsamplingX ||
+							!seq.ColorConfig.SubsamplingY {
+							t.Fatalf("%s frame %d profile=%d color=%+v want profile=%d %d-bit 4:2:0",
+								label, i, seq.SeqProfile, seq.ColorConfig, scenario.profile, scenario.bitDepth)
+						}
+					}
+					if publicRTCSharedReferenceSlotMode(current.Scalability) {
+						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), frame.Data, &sharedSequence, wantScreen)
+						continue
+					}
+					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], wantScreen)
+				}
+				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
+			}
+
+			appendPicture("initial key", 0, false, true, false)
+
+			fpsBitrateChange := enc.Config()
+			fpsBitrateChange.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
+			publicRTCApplyControlBitrates(&fpsBitrateChange, publicRTCMatrixControlBitrateKbps(t, scenario.mode)+int32(150+scenarioIndex*31))
+			if err := enc.SetConfig(fpsBitrateChange); err != nil {
+				t.Fatalf("SetConfig fps/bitrate: %v", err)
+			}
+			assertPublicRTCConfigControls(t, enc.Config(), fpsBitrateChange)
+			appendPicture("fps bitrate delta", 1, false, false, false)
+
+			cqpChange := enc.Config()
+			cqpChange.RateControl = goav1.EncoderRateControlCQP
+			cqpChange.Quantizer = uint8(31 + scenarioIndex)
+			cqpChange.Content = goav1.EncoderContentScreen
+			if err := enc.SetConfig(cqpChange); err != nil {
+				t.Fatalf("SetConfig CQP/screen: %v", err)
+			}
+			assertPublicRTCConfigControls(t, enc.Config(), cqpChange)
+			appendPicture("CQP screen delta", 2, false, false, true)
+
+			scalabilityChange := enc.Config()
+			scalabilityChange.Scalability = scenario.reconfig
+			scalabilityChange.MaxFramerate = goav1.EncoderRational{Num: 24, Den: 1}
+			scalabilityChange.Quantizer = uint8(28 + scenarioIndex)
+			wantReconfigKey := publicRTCSetConfigRequiresKey(t, enc.Config(), scalabilityChange)
+			if err := enc.SetConfig(scalabilityChange); err != nil {
+				t.Fatalf("SetConfig scalability: %v", err)
+			}
+			assertPublicRTCConfigControls(t, enc.Config(), scalabilityChange)
+			if !wantReconfigKey {
+				t.Fatalf("%s to %s unexpectedly did not require a key picture", scenario.mode, scenario.reconfig)
+			}
+			appendPicture("scalability screen key", 3, false, true, true)
+
+			cbrChange := enc.Config()
+			cbrChange.RateControl = goav1.EncoderRateControlCBR
+			cbrChange.Quantizer = 0
+			cbrChange.MaxFramerate = goav1.EncoderRational{Num: 120, Den: 1}
+			cbrChange.Content = goav1.EncoderContentCamera
+			publicRTCApplyControlBitrates(&cbrChange, publicRTCMatrixControlBitrateKbps(t, scenario.reconfig)+int32(220+scenarioIndex*41))
+			if err := enc.SetConfig(cbrChange); err != nil {
+				t.Fatalf("SetConfig CBR/camera: %v", err)
+			}
+			assertPublicRTCConfigControls(t, enc.Config(), cbrChange)
+			appendPicture("CBR camera delta", 4, false, false, false)
+
+			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+			assertPublicRTCRTPReferenceDecoders(t, decoders, "public-rtc-i420-control-"+scenario.name, enc.Config(), layerTUs, orderedTUs)
+		})
+	}
+}
+
+func TestPublicRTCEncoderI420HighBitDepthGenericFrameNative(t *testing.T) {
+	const w, h = 192, 128
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T1)
+	cfg.Profile = goav1.EncoderProfile0
+	cfg.RateControl = goav1.EncoderRateControlCQP
+	cfg.Quantizer = 38
+	cfg.ColorConfigSet = true
+	cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+		BitDepth:     10,
+		SubsamplingX: true,
+		SubsamplingY: true,
+	}
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	frame := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 0), goav1.FrameFormat{
+		Width:        w,
+		Height:       h,
+		BitDepth:     10,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        32,
+	})
+	out, err := enc.EncodeFrame(frame, false)
+	if err != nil {
+		t.Fatalf("EncodeFrame native high-bit-depth I420: %v", err)
+	}
+	seq := publicFirstSequenceHeader(t, out.Data)
+	if seq.SeqProfile != uint8(goav1.EncoderProfile0) ||
+		seq.ColorConfig.MonoChrome ||
+		seq.ColorConfig.BitDepth != 10 ||
+		!seq.ColorConfig.SubsamplingX ||
+		!seq.ColorConfig.SubsamplingY {
+		t.Fatalf("sequence profile=%d color=%+v want native 10-bit 4:2:0", seq.SeqProfile, seq.ColorConfig)
+	}
+
+	bad := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 1), goav1.FrameFormat{
+		Width:        w,
+		Height:       h,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        32,
+	})
+	if _, err := enc.EncodeFrame(bad, false); !errors.Is(err, goav1.ErrFrameInvalidFormat) {
+		t.Fatalf("EncodeFrame 8-bit into 10-bit I420 err=%v want ErrFrameInvalidFormat", err)
+	}
+}
+
+func TestPublicRTCEncoderSetConfigNativeHighBitDepthI420TransitionReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	cases := []struct {
+		name     string
+		bitDepth uint8
+		profile  goav1.EncoderProfile
+	}{
+		{name: "10bit-profile0", bitDepth: 10, profile: goav1.EncoderProfile0},
+		{name: "12bit-profile2", bitDepth: 12, profile: goav1.EncoderProfile2},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			const w, h = 192, 128
+			cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+			}
+			defer enc.Close()
+
+			first, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, 0), false)
+			if err != nil {
+				t.Fatalf("EncodePicture: %v", err)
+			}
+			colorConfig := enc.Config()
+			colorConfig.Profile = tc.profile
+			colorConfig.RateControl = goav1.EncoderRateControlCQP
+			colorConfig.Quantizer = 39
+			colorConfig.ColorConfigSet = true
+			colorConfig.ColorConfig = goav1.EncoderSequenceColorConfig{
+				BitDepth:     tc.bitDepth,
+				SubsamplingX: true,
+				SubsamplingY: true,
+			}
+			if err := enc.SetConfig(colorConfig); err != nil {
+				t.Fatalf("SetConfig high-bit-depth I420: %v", err)
+			}
+			if enc.Config().Profile != tc.profile ||
+				enc.Config().ColorConfig.BitDepth != tc.bitDepth ||
+				enc.Config().ColorConfig.MonoChrome ||
+				!enc.Config().ColorConfig.SubsamplingX ||
+				!enc.Config().ColorConfig.SubsamplingY {
+				t.Fatalf("post-SetConfig config=%+v want profile=%d %d-bit 4:2:0", enc.Config(), tc.profile, tc.bitDepth)
+			}
+
+			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var rtpReceiver goav1.RTPDependencyDescriptorState
+			nextFrameID := first.Frames[0].FrameID + uint64(first.FrameNum)
+			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var orderedTUs [][]byte
+
+			key, err := enc.EncodeI420HighBitDepthPicture(publicI420HighBitDepthFrame(w, h, tc.bitDepth, 1), false)
+			if err != nil {
+				t.Fatalf("EncodeI420HighBitDepthPicture key after SetConfig: %v", err)
+			}
+			if !key.Keyframe || key.FrameNum != 1 || key.Frames[0].FrameID != nextFrameID {
+				t.Fatalf("high-bit-depth I420 transition key=%+v after first=%+v nextFrameID=%d", key, first, nextFrameID)
+			}
+			seq := publicFirstSequenceHeader(t, key.Frames[0].Data)
+			if seq.SeqProfile != uint8(tc.profile) ||
+				seq.ColorConfig.MonoChrome ||
+				seq.ColorConfig.BitDepth != tc.bitDepth ||
+				!seq.ColorConfig.SubsamplingX ||
+				!seq.ColorConfig.SubsamplingY {
+				t.Fatalf("transition sequence profile=%d color=%+v want profile=%d %d-bit 4:2:0", seq.SeqProfile, seq.ColorConfig, tc.profile, tc.bitDepth)
+			}
+			assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), key, true, &nextFrameID)
+			appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, key)
+
+			delta, err := enc.EncodeI420HighBitDepthPicture(publicI420HighBitDepthFrame(w, h, tc.bitDepth, 2), false)
+			if err != nil {
+				t.Fatalf("EncodeI420HighBitDepthPicture delta after SetConfig: %v", err)
+			}
+			if delta.Keyframe || delta.FrameNum != 1 || delta.Frames[0].FrameID != nextFrameID {
+				t.Fatalf("high-bit-depth I420 transition delta=%+v want frameID=%d", delta, nextFrameID)
+			}
+			assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), delta, false, &nextFrameID)
+			appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, delta)
+
+			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+			assertPublicRTCRTPReferenceDecoders(t, decoders, "public-rtc-i420-"+tc.name+"-transition", enc.Config(), layerTUs, orderedTUs)
+		})
+	}
+}
+
 func TestPublicRTCEncoderHighBitDepthMonochromeGenericFrameNative(t *testing.T) {
 	const w, h = 192, 128
 	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T1)
@@ -2773,6 +3202,20 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 		normalizedI444.ColorConfig.SubsamplingY {
 		t.Fatalf("normalized I444 config=%+v", normalizedI444)
 	}
+	highBitDepthI420 := cfg
+	highBitDepthI420.BitDepth = 10
+	normalizedHighBitDepthI420, err := goav1.NormalizeRTCEncoderConfig(highBitDepthI420)
+	if err != nil {
+		t.Fatalf("NormalizeRTCEncoderConfig high-bit-depth I420: %v", err)
+	}
+	if normalizedHighBitDepthI420.Profile != goav1.EncoderProfile0 ||
+		normalizedHighBitDepthI420.BitDepth != 10 ||
+		normalizedHighBitDepthI420.ColorConfig.BitDepth != 10 ||
+		normalizedHighBitDepthI420.ColorConfig.MonoChrome ||
+		!normalizedHighBitDepthI420.ColorConfig.SubsamplingX ||
+		!normalizedHighBitDepthI420.ColorConfig.SubsamplingY {
+		t.Fatalf("normalized high-bit-depth I420 config=%+v", normalizedHighBitDepthI420)
+	}
 	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig valid: %v", err)
@@ -2786,9 +3229,15 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 		want error
 	}{
 		{
-			name: "high-bit-depth",
+			name: "high-bit-depth-i422",
 			edit: func(cfg *goav1.EncoderConfig) {
 				cfg.BitDepth = 10
+				cfg.Profile = goav1.EncoderProfile2
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+					BitDepth:     10,
+					SubsamplingX: true,
+				}
 			},
 			want: goav1.ErrEncoderUnsupported,
 		},
