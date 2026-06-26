@@ -1164,7 +1164,8 @@ roll-up.
 
 ### Open Work
 
-1. **Broaden the WebRTC realtime encoder.** Add native high-bit-depth and
+1. **Broaden the WebRTC realtime encoder.** Add native high-bit-depth WebRTC
+   color streaming and
    true non-4:2:0 bitstream emission, richer tuning controls, broader
    libaom/libwebrtc/SVT oracle coverage, and measured compression-efficiency
    tuning.

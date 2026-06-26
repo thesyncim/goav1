@@ -321,8 +321,9 @@ ship under `internal/av1/testdata/libaom/`.
   8/10/12-bit `Frame` inputs for 4:2:0, 4:2:2, 4:4:4, and monochrome layouts.
   Non-4:2:0 chroma samples are resampled, monochrome fills neutral chroma, and
   10/12-bit `Frame` samples are downshifted before entering the current 8-bit
-  4:2:0 encode path; standalone native 10/12-bit 4:2:0 color keyframes are
-  covered by `EncodeI420HighBitDepthKeyframe` and checked against aomdec/dav1d.
+  4:2:0 encode path; standalone native 10/12-bit 4:2:0 color keyframes and
+  P-frames are covered by `EncodeI420HighBitDepthKeyframe` and
+  `EncodeI420HighBitDepthPFrame` and checked against aomdec/dav1d.
   The strict WebRTC gate packetizes multi-spatial adapter output and checks it
   against aomdec/dav1d. It supports fixed-quality/CBR,
   forced keyframes, temporal layering, runtime bitrate/framerate/scalability

@@ -453,6 +453,8 @@ type lossyEncodeState struct {
 	predY16       [4096]uint16
 	predY16Bytes  [8192]byte
 	refY16Bytes   []byte
+	refU16Bytes   []byte
+	refV16Bytes   []byte
 	predU         [1024]byte
 	predV         [1024]byte
 	sadScratch    [4096]byte

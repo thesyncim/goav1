@@ -1,6 +1,7 @@
 package encoder_test
 
 import (
+	"bytes"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -278,6 +279,122 @@ func TestEncodeHighBitDepthMonochromePFrameDecodeMatchesRecon(t *testing.T) {
 	}
 }
 
+func TestEncodeHighBitDepth420PFrameDecodeMatchesRecon(t *testing.T) {
+	cases := []struct {
+		name     string
+		bitDepth uint8
+		qIndex   uint8
+	}{
+		{name: "10bit", bitDepth: 10, qIndex: 32},
+		{name: "12bit", bitDepth: 12, qIndex: 48},
+	}
+	const w, h = 64, 64
+	cw, ch := w/2, h/2
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			maxSample := uint16((1 << tc.bitDepth) - 1)
+			src1 := encoder.SourceFrame42016{
+				Y:            make([]uint16, w*h),
+				U:            make([]uint16, cw*ch),
+				V:            make([]uint16, cw*ch),
+				YStride:      w,
+				ChromaStride: cw,
+				Width:        w,
+				Height:       h,
+				BitDepth:     tc.bitDepth,
+			}
+			for y := range h {
+				for x := range w {
+					src1.Y[y*w+x] = uint16((41 + x*19 + y*31 + (x*y)%211) & int(maxSample))
+				}
+			}
+			for y := range ch {
+				for x := range cw {
+					off := y*cw + x
+					src1.U[off] = uint16((113 + x*23 + y*17 + (x*y)%127) & int(maxSample))
+					src1.V[off] = uint16((197 + x*11 + y*29 + (x*y)%149) & int(maxSample))
+				}
+			}
+
+			keyTU, keyRecon, err := encoder.EncodeHighBitDepth420Keyframe(src1, tc.qIndex)
+			if err != nil {
+				t.Fatalf("encode high-bit-depth 4:2:0 keyframe: %v", err)
+			}
+			src2 := encoder.SourceFrame42016{
+				Y:            make([]uint16, w*h),
+				U:            make([]uint16, cw*ch),
+				V:            make([]uint16, cw*ch),
+				YStride:      w,
+				ChromaStride: cw,
+				Width:        w,
+				Height:       h,
+				BitDepth:     tc.bitDepth,
+			}
+			for y := range h {
+				for x := range w {
+					base := int(keyRecon.Y[y*keyRecon.YStride+x])
+					delta := ((x*5 + y*3) % 81) - 40
+					src2.Y[y*w+x] = clampUint16(base+delta, maxSample)
+				}
+			}
+			for y := range ch {
+				for x := range cw {
+					off := y*cw + x
+					u := int(keyRecon.U[y*keyRecon.ChromaStride+x]) + ((x*7+y*5)%53 - 26)
+					v := int(keyRecon.V[y*keyRecon.ChromaStride+x]) + ((x*3+y*11)%59 - 29)
+					src2.U[off] = clampUint16(u, maxSample)
+					src2.V[off] = clampUint16(v, maxSample)
+				}
+			}
+
+			pTU, pRecon, err := encoder.EncodeHighBitDepth420PFrame(src2, keyRecon, tc.qIndex)
+			if err != nil {
+				t.Fatalf("encode high-bit-depth 4:2:0 p-frame: %v", err)
+			}
+			t.Logf("high-bit-depth 4:2:0 key TU %d bytes, P TU %d bytes", len(keyTU), len(pTU))
+			if frame42016Equal(pRecon, keyRecon) {
+				t.Fatal("P-frame reconstruction unexpectedly equals the reference; residual path was not exercised")
+			}
+
+			dec, err := goav1.NewDecoder([][]byte{keyTU, pTU})
+			if err != nil {
+				t.Fatalf("new decoder: %v", err)
+			}
+			defer dec.Close()
+			frames, err := dec.DecodeAll()
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(frames) != 2 {
+				t.Fatalf("decoded %d frames, want 2", len(frames))
+			}
+			for i, f := range frames {
+				if f.Format.MonoChrome || f.Format.BitDepth != tc.bitDepth || f.Layout.BytesPerSample != 2 ||
+					!f.Format.SubsamplingX || !f.Format.SubsamplingY {
+					t.Fatalf("frame %d format=%+v bytes=%d, want %d-bit 4:2:0", i, f.Format, f.Layout.BytesPerSample, tc.bitDepth)
+				}
+			}
+			got := appendFramePlaneRaw(nil, frames[1].Y, frames[1].Layout.BytesPerSample)
+			got = appendFramePlaneRaw(got, frames[1].U, frames[1].Layout.BytesPerSample)
+			got = appendFramePlaneRaw(got, frames[1].V, frames[1].Layout.BytesPerSample)
+			want := appendHighBitDepth420Raw(nil, pRecon)
+			if !bytes.Equal(got, want) {
+				t.Fatal("decoded high-bit-depth 4:2:0 P-frame differs from reconstruction")
+			}
+		})
+	}
+}
+
+func clampUint16(v int, max uint16) uint16 {
+	if v < 0 {
+		return 0
+	}
+	if v > int(max) {
+		return max
+	}
+	return uint16(v)
+}
+
 func mono16Equal(a, b encoder.SourceFrameMono16) bool {
 	if a.Width != b.Width || a.Height != b.Height || a.BitDepth != b.BitDepth {
 		return false
@@ -292,4 +409,49 @@ func mono16Equal(a, b encoder.SourceFrameMono16) bool {
 		}
 	}
 	return true
+}
+
+func frame42016Equal(a, b encoder.SourceFrame42016) bool {
+	if a.Width != b.Width || a.Height != b.Height || a.BitDepth != b.BitDepth {
+		return false
+	}
+	for y := range a.Height {
+		ar := a.Y[y*a.YStride : y*a.YStride+a.Width]
+		br := b.Y[y*b.YStride : y*b.YStride+b.Width]
+		for x := range ar {
+			if ar[x] != br[x] {
+				return false
+			}
+		}
+	}
+	cw, ch := a.Width/2, a.Height/2
+	for y := range ch {
+		au := a.U[y*a.ChromaStride : y*a.ChromaStride+cw]
+		bu := b.U[y*b.ChromaStride : y*b.ChromaStride+cw]
+		av := a.V[y*a.ChromaStride : y*a.ChromaStride+cw]
+		bv := b.V[y*b.ChromaStride : y*b.ChromaStride+cw]
+		for x := range cw {
+			if au[x] != bu[x] || av[x] != bv[x] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func appendHighBitDepth420Raw(dst []byte, frame encoder.SourceFrame42016) []byte {
+	dst = appendHighBitDepth420PlaneRaw(dst, frame.Y, frame.YStride, frame.Width, frame.Height)
+	cw, ch := frame.Width/2, frame.Height/2
+	dst = appendHighBitDepth420PlaneRaw(dst, frame.U, frame.ChromaStride, cw, ch)
+	return appendHighBitDepth420PlaneRaw(dst, frame.V, frame.ChromaStride, cw, ch)
+}
+
+func appendHighBitDepth420PlaneRaw(dst []byte, samples []uint16, stride, width, height int) []byte {
+	for y := range height {
+		row := samples[y*stride : y*stride+width]
+		for _, sample := range row {
+			dst = append(dst, byte(sample), byte(sample>>8))
+		}
+	}
+	return dst
 }

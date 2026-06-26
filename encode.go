@@ -13,9 +13,10 @@ package goav1
 // explicit high-bit-depth monochrome RTC configs preserve 10/12-bit I400 or
 // monochrome Frame input for single-spatial and simulcast streams, while other
 // 10/12-bit Frame inputs are downshifted before entering the current 8-bit
-// realtime path. Native 10/12-bit monochrome keyframes and P-frames are also
-// available through
-// EncodeI400HighBitDepthKeyframe and EncodeI400HighBitDepthPFrame. Every
+// realtime path. Native 10/12-bit monochrome keyframes/P-frames and standalone
+// native 10/12-bit 4:2:0 color keyframes/P-frames are also available through
+// EncodeI400HighBitDepthKeyframe, EncodeI400HighBitDepthPFrame,
+// EncodeI420HighBitDepthKeyframe, and EncodeI420HighBitDepthPFrame. Every
 // emitted stream decodes bit-exactly to the encoder's own reconstruction in
 // this package's Decoder and in the reference decoders.
 
@@ -159,6 +160,21 @@ func EncodeI400HighBitDepthLosslessKeyframe(frame I400HighBitDepthFrame) ([]byte
 // must reproduce exactly. qIndex must be 1..255.
 func EncodeI420HighBitDepthKeyframe(frame I420HighBitDepthFrame, qIndex uint8) ([]byte, I420HighBitDepthFrame, error) {
 	tu, recon, err := encoder.EncodeHighBitDepth420Keyframe(encoder.SourceFrame42016(frame), qIndex)
+	if err != nil {
+		return nil, I420HighBitDepthFrame{}, err
+	}
+	return tu, I420HighBitDepthFrame(recon), nil
+}
+
+// EncodeI420HighBitDepthPFrame encodes one native 10/12-bit AV1 4:2:0 inter
+// frame.
+//
+// ref must be the previous native high-bit-depth 4:2:0 reconstruction for the
+// same coded geometry and bit depth, usually the reconstruction returned by
+// EncodeI420HighBitDepthKeyframe or a prior EncodeI420HighBitDepthPFrame call.
+// qIndex must be 1..255.
+func EncodeI420HighBitDepthPFrame(frame I420HighBitDepthFrame, ref I420HighBitDepthFrame, qIndex uint8) ([]byte, I420HighBitDepthFrame, error) {
+	tu, recon, err := encoder.EncodeHighBitDepth420PFrame(encoder.SourceFrame42016(frame), encoder.SourceFrame42016(ref), qIndex)
 	if err != nil {
 		return nil, I420HighBitDepthFrame{}, err
 	}

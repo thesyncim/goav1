@@ -13,9 +13,9 @@
 // mode metadata, temporal/spatial dependency structures, key-shift scheduling,
 // and RTP dependency descriptors for caller-supplied frame payloads, plus
 // sequence-matched Frame loading for profile-0/1/2 sample formats, including
-// explicit sequence color config. Native high-bit-depth 4:2:0 color keyframes
-// are available as the first high-bit-depth color slice; realtime
-// high-bit-depth color inter frames/WebRTC streaming, broader oracle coverage,
-// and speed-sensitive architecture remain open and should be checked against
-// pinned libaom/libwebrtc/SVT-AV1 behavior.
+// explicit sequence color config. Standalone native high-bit-depth 4:2:0 color
+// keyframes and P-frames are available as the first high-bit-depth color
+// temporal-compression slice; realtime high-bit-depth color WebRTC streaming,
+// broader oracle coverage, and speed-sensitive architecture remain open and
+// should be checked against pinned libaom/libwebrtc/SVT-AV1 behavior.
 package encoder

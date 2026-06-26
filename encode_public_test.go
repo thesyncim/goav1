@@ -596,6 +596,86 @@ func TestPublicEncodeI400HighBitDepthPFrameReferenceDecoders(t *testing.T) {
 	}
 }
 
+func TestPublicEncodeI420HighBitDepthPFrameReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	const w, h = 64, 64
+	cases := []struct {
+		bitDepth uint8
+		qIndex   uint8
+	}{
+		{bitDepth: 10, qIndex: 32},
+		{bitDepth: 12, qIndex: 48},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%dbit-q%d", tc.bitDepth, tc.qIndex), func(t *testing.T) {
+			maxSample := uint16((1 << tc.bitDepth) - 1)
+			src1 := publicI420HighBitDepthFrame(w, h, tc.bitDepth, int(tc.qIndex))
+			keyTU, keyRecon, err := goav1.EncodeI420HighBitDepthKeyframe(src1, tc.qIndex)
+			if err != nil {
+				t.Fatalf("EncodeI420HighBitDepthKeyframe: %v", err)
+			}
+			src2 := goav1.I420HighBitDepthFrame{
+				Y:            make([]uint16, w*h),
+				U:            make([]uint16, (w/2)*(h/2)),
+				V:            make([]uint16, (w/2)*(h/2)),
+				YStride:      w,
+				ChromaStride: w / 2,
+				Width:        w,
+				Height:       h,
+				BitDepth:     tc.bitDepth,
+			}
+			for y := range h {
+				for x := range w {
+					base := int(keyRecon.Y[y*keyRecon.YStride+x])
+					src2.Y[y*w+x] = publicClampUint16(base+((x*5+y*3)%81-40), maxSample)
+				}
+			}
+			for y := range h / 2 {
+				for x := range w / 2 {
+					off := y*src2.ChromaStride + x
+					src2.U[off] = publicClampUint16(int(keyRecon.U[y*keyRecon.ChromaStride+x])+((x*7+y*5)%53-26), maxSample)
+					src2.V[off] = publicClampUint16(int(keyRecon.V[y*keyRecon.ChromaStride+x])+((x*3+y*11)%59-29), maxSample)
+				}
+			}
+
+			pTU, pRecon, err := goav1.EncodeI420HighBitDepthPFrame(src2, keyRecon, tc.qIndex)
+			if err != nil {
+				t.Fatalf("EncodeI420HighBitDepthPFrame: %v", err)
+			}
+			if publicI420HighBitDepthFrameEqual(pRecon, keyRecon) {
+				t.Fatal("P-frame reconstruction unexpectedly equals reference")
+			}
+			ivf := appendPublicIVF(nil, w, h, 30, 1, []publicIVFFrame{
+				{payload: keyTU},
+				{timestamp: 1, payload: pTU},
+			})
+			dec, err := goav1.NewDecoder([][]byte{keyTU, pTU})
+			if err != nil {
+				t.Fatalf("NewDecoder: %v", err)
+			}
+			defer dec.Close()
+			decoded, err := dec.DecodeAll()
+			if err != nil {
+				t.Fatalf("DecodeAll: %v", err)
+			}
+			if len(decoded) != 2 {
+				t.Fatalf("decoded %d frames, want 2", len(decoded))
+			}
+			wantYUV := appendPublicI420HighBitDepthRaw(nil, keyRecon)
+			wantYUV = appendPublicI420HighBitDepthRaw(wantYUV, pRecon)
+			var gotYUV []byte
+			for _, frame := range decoded {
+				gotYUV = appendPublicFrameRawYUV(gotYUV, frame)
+			}
+			if !bytes.Equal(gotYUV, wantYUV) {
+				offset := firstPublicByteDiff(gotYUV, wantYUV)
+				t.Fatalf("local decoded high-bit-depth 4:2:0 key+P differs first at byte %d", offset)
+			}
+			assertPublicIVFMatchesReferenceDecodersRawYUVBytes(t, decoders, fmt.Sprintf("public-i420-%dbit-pframe-q%d", tc.bitDepth, tc.qIndex), ivf, wantYUV, 2)
+		})
+	}
+}
+
 func TestPublicEncodeI400HighBitDepthLosslessKeyframeRejectsInvalid(t *testing.T) {
 	valid := goav1.I400HighBitDepthFrame{
 		Y:        make([]uint16, 64*64),
@@ -664,6 +744,28 @@ func TestPublicEncodeI400HighBitDepthPFrameRejectsInvalid(t *testing.T) {
 	dimMismatch.Width = 32
 	if _, _, err := goav1.EncodeI400HighBitDepthPFrame(valid, dimMismatch, 72); err == nil {
 		t.Fatal("EncodeI400HighBitDepthPFrame accepted mismatched dimensions")
+	}
+}
+
+func TestPublicEncodeI420HighBitDepthPFrameRejectsInvalid(t *testing.T) {
+	valid := publicI420HighBitDepthFrame(64, 64, 10, 3)
+	if _, _, err := goav1.EncodeI420HighBitDepthPFrame(valid, valid, 0); err == nil {
+		t.Fatal("EncodeI420HighBitDepthPFrame accepted qindex 0")
+	}
+	bitDepthMismatch := valid
+	bitDepthMismatch.BitDepth = 12
+	if _, _, err := goav1.EncodeI420HighBitDepthPFrame(valid, bitDepthMismatch, 72); err == nil {
+		t.Fatal("EncodeI420HighBitDepthPFrame accepted mismatched bit depth")
+	}
+	dimMismatch := valid
+	dimMismatch.Width = 32
+	if _, _, err := goav1.EncodeI420HighBitDepthPFrame(valid, dimMismatch, 72); err == nil {
+		t.Fatal("EncodeI420HighBitDepthPFrame accepted mismatched dimensions")
+	}
+	shortRef := valid
+	shortRef.V = shortRef.V[:len(shortRef.V)-1]
+	if _, _, err := goav1.EncodeI420HighBitDepthPFrame(valid, shortRef, 72); err == nil {
+		t.Fatal("EncodeI420HighBitDepthPFrame accepted short reference chroma")
 	}
 }
 
@@ -8540,6 +8642,16 @@ func publicI420HighBitDepthFrame(width, height int, bitDepth uint8, seed int) go
 	return frame
 }
 
+func publicClampUint16(v int, max uint16) uint16 {
+	if v < 0 {
+		return 0
+	}
+	if v > int(max) {
+		return max
+	}
+	return uint16(v)
+}
+
 func publicUint16Equal(a []uint16, b []uint16) bool {
 	if len(a) != len(b) {
 		return false
@@ -8547,6 +8659,34 @@ func publicUint16Equal(a []uint16, b []uint16) bool {
 	for i := range a {
 		if a[i] != b[i] {
 			return false
+		}
+	}
+	return true
+}
+
+func publicI420HighBitDepthFrameEqual(a goav1.I420HighBitDepthFrame, b goav1.I420HighBitDepthFrame) bool {
+	if a.Width != b.Width || a.Height != b.Height || a.BitDepth != b.BitDepth {
+		return false
+	}
+	for y := range a.Height {
+		ar := a.Y[y*a.YStride : y*a.YStride+a.Width]
+		br := b.Y[y*b.YStride : y*b.YStride+b.Width]
+		for x := range ar {
+			if ar[x] != br[x] {
+				return false
+			}
+		}
+	}
+	cw, ch := a.Width/2, a.Height/2
+	for y := range ch {
+		au := a.U[y*a.ChromaStride : y*a.ChromaStride+cw]
+		bu := b.U[y*b.ChromaStride : y*b.ChromaStride+cw]
+		av := a.V[y*a.ChromaStride : y*a.ChromaStride+cw]
+		bv := b.V[y*b.ChromaStride : y*b.ChromaStride+cw]
+		for x := range cw {
+			if au[x] != bu[x] || av[x] != bv[x] {
+				return false
+			}
 		}
 	}
 	return true
