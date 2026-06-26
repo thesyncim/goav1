@@ -232,8 +232,8 @@ func fuzzPublicDriveAnnexB(data []byte) {
 }
 
 func TestPublicParseMetadataOBU(t *testing.T) {
-	// HDR-CLL: type=2, max_cll=1000, max_fall=400, trailing 0x80.
-	payload := []byte{0x02, 0x03, 0xE8, 0x01, 0x90, 0x80}
+	// HDR-CLL: type=1, max_cll=1000, max_fall=400, trailing 0x80.
+	payload := []byte{0x01, 0x03, 0xE8, 0x01, 0x90, 0x80}
 	meta, err := av1.ParseMetadataOBU(payload)
 	if err != nil {
 		t.Fatalf("ParseMetadataOBU err=%v", err)
@@ -771,7 +771,7 @@ func TestPublicAnnexBRoundTrip(t *testing.T) {
 }
 
 func TestPublicParseMetadataOBUAllocs(t *testing.T) {
-	payload := []byte{0x03,
+	payload := []byte{0x02,
 		0x12, 0x34, 0x56, 0x78,
 		0x9A, 0xBC, 0xDE, 0xF0,
 		0x11, 0x22, 0x33, 0x44,

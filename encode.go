@@ -5,13 +5,15 @@ package goav1
 // then motion-compensated inter frames) under fixed quality or CBR rate
 // control, with optional temporal layering and WebRTC dependency-descriptor
 // packaging through RTCEncoder. I420/NV12/NV21 preserve 4:2:0 chroma samples;
-// I422/I444 and generic Frame inputs are resampled, I400 and monochrome Frame
-// inputs fill neutral chroma unless an RTCEncoder is explicitly configured for
-// native monochrome across WebRTC L*/S* modes; explicit high-bit-depth
-// monochrome RTC configs preserve 10/12-bit I400 or monochrome Frame input for
-// single-spatial and simulcast streams, while other 10/12-bit Frame inputs are
-// downshifted before entering the current 8-bit realtime path. Native 10/12-bit
-// monochrome keyframes and P-frames are also available through
+// I422 inputs are resampled; I444 inputs are preserved when an RTCEncoder is
+// explicitly configured for profile-1 native 4:4:4 and otherwise resampled.
+// I400 and monochrome Frame inputs fill neutral chroma unless an RTCEncoder is
+// explicitly configured for native monochrome across WebRTC L*/S* modes;
+// explicit high-bit-depth monochrome RTC configs preserve 10/12-bit I400 or
+// monochrome Frame input for single-spatial and simulcast streams, while other
+// 10/12-bit Frame inputs are downshifted before entering the current 8-bit
+// realtime path. Native 10/12-bit monochrome keyframes and P-frames are also
+// available through
 // EncodeI400HighBitDepthKeyframe and EncodeI400HighBitDepthPFrame. Every
 // emitted stream decodes bit-exactly to the encoder's own reconstruction in
 // this package's Decoder and in the reference decoders.
@@ -43,7 +45,8 @@ type I422Frame struct {
 
 // I444Frame is one 8-bit 4:4:4 picture. Y, U, and V all hold Width x Height
 // samples at their respective strides. The friendly realtime encoder resamples
-// this input to its current 4:2:0 profile-0 encode path.
+// this input to 4:2:0 unless RTCEncoder is configured for native profile-1
+// 4:4:4.
 type I444Frame struct {
 	Y       []byte
 	U       []byte
@@ -745,12 +748,14 @@ func (f RTCFrame) AppendRTPPacketsWithOptions(payloadDst []byte, descriptorDst [
 	}
 }
 
-// RTCEncoder encodes an 8-bit profile-0 WebRTC AV1 stream from I420, I422,
-// I444, I400, NV12, or NV21 input with per-frame dependency descriptors. I422
-// and I444 inputs are adapted into the current 4:2:0 encode path. I400 inputs
-// are adapted to 4:2:0 unless NewRTCEncoderWithConfig is given an explicit
-// monochrome color config, in which case EncodeI400 and EncodeI400Picture emit
-// native AV1 monochrome streams for WebRTC L*/S* modes.
+// RTCEncoder encodes WebRTC AV1 streams from I420, I422, I444, I400, NV12, or
+// NV21 input with per-frame dependency descriptors. I422 inputs are adapted to
+// 4:2:0. I444 inputs are adapted to 4:2:0 unless NewRTCEncoderWithConfig is
+// given an explicit profile-1 4:4:4 color config, in which case EncodeI444 and
+// EncodeI444Picture emit native AV1 4:4:4 streams. I400 inputs are adapted to
+// 4:2:0 unless NewRTCEncoderWithConfig is given an explicit monochrome color
+// config, in which case EncodeI400 and EncodeI400Picture emit native AV1
+// monochrome streams for WebRTC L*/S* modes.
 // NewRTCEncoder covers single-spatial L1T* temporal ladders;
 // NewRTCEncoderWithConfig additionally covers supported multi-spatial
 // WebRTC SVC and simulcast modes under CBR or CQP rate control. NewRTCEncoder
@@ -891,6 +896,9 @@ func (e *RTCEncoder) Encode(frame I420Frame, forceKey bool) (RTCFrame, error) {
 	if e == nil || e.stream == nil {
 		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
+	if !rtcEncoderConfigIsNativeI420(e.stream.Config()) {
+		return RTCFrame{}, ErrEncoderUnsupported
+	}
 	if err := validateI420Frame(frame); err != nil {
 		return RTCFrame{}, err
 	}
@@ -915,10 +923,22 @@ func (e *RTCEncoder) EncodeI422(frame I422Frame, forceKey bool) (RTCFrame, error
 }
 
 // EncodeI444 encodes one single-spatial I444 frame with its dependency
-// descriptor after resampling to the current I420 encode path.
+// descriptor, preserving native 4:4:4 when the encoder config requests it and
+// otherwise resampling to the current I420 encode path.
 func (e *RTCEncoder) EncodeI444(frame I444Frame, forceKey bool) (RTCFrame, error) {
 	if e == nil || e.stream == nil {
 		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	if rtcEncoderConfigIsNativeI444(e.stream.Config()) {
+		native, err := i444ToNativeScratch(&e.yuv420Scratch, frame)
+		if err != nil {
+			return RTCFrame{}, err
+		}
+		out, err := e.stream.Encode(native, forceKey)
+		if err != nil {
+			return RTCFrame{}, err
+		}
+		return rtcFrameFromInternal(out), nil
 	}
 	i420, err := i444ToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
@@ -989,6 +1009,17 @@ func (e *RTCEncoder) EncodeFrame(frame Frame, forceKey bool) (RTCFrame, error) {
 		}
 		return e.EncodeI400(i400, forceKey)
 	}
+	if rtcEncoderConfigIsNativeI444(e.stream.Config()) {
+		i444, err := frameToI444NativeScratch(&e.yuv420Scratch, frame)
+		if err != nil {
+			return RTCFrame{}, err
+		}
+		out, err := e.stream.Encode(i444, forceKey)
+		if err != nil {
+			return RTCFrame{}, err
+		}
+		return rtcFrameFromInternal(out), nil
+	}
 	i420, err := frameToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
 		return RTCFrame{}, err
@@ -1029,6 +1060,9 @@ func (e *RTCEncoder) EncodePicture(frame I420Frame, forceKey bool) (RTCPicture, 
 	if e == nil || e.stream == nil {
 		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
+	if !rtcEncoderConfigIsNativeI420(e.stream.Config()) {
+		return RTCPicture{}, ErrEncoderUnsupported
+	}
 	if err := validateI420Frame(frame); err != nil {
 		return RTCPicture{}, err
 	}
@@ -1059,12 +1093,23 @@ func (e *RTCEncoder) EncodeI422Picture(frame I422Frame, forceKey bool) (RTCPictu
 	return e.EncodePicture(i420, forceKey)
 }
 
-// EncodeI444Picture encodes one I444 WebRTC picture after resampling to the
-// current I420 encode path. The returned frames have the same lifetime as
-// EncodePicture.
+// EncodeI444Picture encodes one I444 WebRTC picture, preserving native 4:4:4
+// when the encoder config requests it and otherwise resampling to the current
+// I420 encode path. The returned frames have the same lifetime as EncodePicture.
 func (e *RTCEncoder) EncodeI444Picture(frame I444Frame, forceKey bool) (RTCPicture, error) {
 	if e == nil || e.stream == nil {
 		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	if rtcEncoderConfigIsNativeI444(e.stream.Config()) {
+		native, err := i444ToNativeScratch(&e.yuv420Scratch, frame)
+		if err != nil {
+			return RTCPicture{}, err
+		}
+		out, err := e.stream.EncodePicture(native, forceKey)
+		if err != nil {
+			return RTCPicture{}, err
+		}
+		return rtcPictureFromInternal(out), nil
 	}
 	i420, err := i444ToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
@@ -1135,6 +1180,17 @@ func (e *RTCEncoder) EncodeFramePicture(frame Frame, forceKey bool) (RTCPicture,
 			return RTCPicture{}, err
 		}
 		return e.EncodeI400Picture(i400, forceKey)
+	}
+	if rtcEncoderConfigIsNativeI444(e.stream.Config()) {
+		i444, err := frameToI444NativeScratch(&e.yuv420Scratch, frame)
+		if err != nil {
+			return RTCPicture{}, err
+		}
+		out, err := e.stream.EncodePicture(i444, forceKey)
+		if err != nil {
+			return RTCPicture{}, err
+		}
+		return rtcPictureFromInternal(out), nil
 	}
 	i420, err := frameToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
@@ -1349,7 +1405,7 @@ func frameToI420Scratch(dst *I420Frame, frame Frame) (I420Frame, error) {
 	if format.BitDepth == 0 {
 		format.BitDepth = 8
 	}
-	layout, err := FrameRequiredSize(frame.Format)
+	layout, err := FrameRequiredSize(format)
 	if err != nil {
 		return I420Frame{}, err
 	}
@@ -1406,12 +1462,54 @@ func frameToI420Scratch(dst *I420Frame, frame Frame) (I420Frame, error) {
 	return *dst, nil
 }
 
+func frameToI444NativeScratch(dst *I420Frame, frame Frame) (I420Frame, error) {
+	format := frame.Format
+	if format.BitDepth == 0 {
+		format.BitDepth = 8
+	}
+	layout, err := FrameRequiredSize(format)
+	if err != nil {
+		return I420Frame{}, err
+	}
+	if format.Width <= 0 || format.Height <= 0 || format.Width%2 != 0 || format.Height%2 != 0 {
+		return I420Frame{}, fmt.Errorf("goav1: Frame dimensions must be positive even values, got %dx%d", format.Width, format.Height)
+	}
+	if format.BitDepth != 8 || format.MonoChrome || format.SubsamplingX || format.SubsamplingY {
+		return I420Frame{}, ErrFrameInvalidFormat
+	}
+	if frame.Y.Width != format.Width || frame.Y.Height != format.Height ||
+		frame.U.Width != layout.ChromaWidth || frame.U.Height != layout.ChromaHeight ||
+		frame.V.Width != layout.ChromaWidth || frame.V.Height != layout.ChromaHeight ||
+		!encoderPlaneFits(frame.Y, layout.BytesPerSample) ||
+		!encoderPlaneFits(frame.U, layout.BytesPerSample) ||
+		!encoderPlaneFits(frame.V, layout.BytesPerSample) {
+		return I420Frame{}, ErrFrameInvalidPlane
+	}
+	if frame.U.Stride == frame.V.Stride {
+		return I420Frame{
+			Y:            frame.Y.Pix,
+			U:            frame.U.Pix,
+			V:            frame.V.Pix,
+			YStride:      frame.Y.Stride,
+			ChromaStride: frame.U.Stride,
+			Width:        format.Width,
+			Height:       format.Height,
+		}, nil
+	}
+	frameI444ByteScratch(dst, format.Width, format.Height)
+	dst.Y = frame.Y.Pix
+	dst.YStride = frame.Y.Stride
+	copyFramePlaneTo8(dst.U, dst.ChromaStride, frame.U, layout.BytesPerSample, format.BitDepth, format.Width, format.Height)
+	copyFramePlaneTo8(dst.V, dst.ChromaStride, frame.V, layout.BytesPerSample, format.BitDepth, format.Width, format.Height)
+	return *dst, nil
+}
+
 func frameToI400Scratch(dst *I400Frame, frame Frame) (I400Frame, error) {
 	format := frame.Format
 	if format.BitDepth == 0 {
 		format.BitDepth = 8
 	}
-	layout, err := FrameRequiredSize(frame.Format)
+	layout, err := FrameRequiredSize(format)
 	if err != nil {
 		return I400Frame{}, err
 	}
@@ -1485,6 +1583,30 @@ func frameI420ByteScratch(dst *I420Frame, width int, height int) {
 	}
 	dst.YStride = width
 	dst.ChromaStride = chromaWidth
+	dst.Width = width
+	dst.Height = height
+}
+
+func frameI444ByteScratch(dst *I420Frame, width int, height int) {
+	yLen := width * height
+	chromaLen := width * height
+	if cap(dst.Y) < yLen {
+		dst.Y = make([]byte, yLen)
+	} else {
+		dst.Y = dst.Y[:yLen]
+	}
+	if cap(dst.U) < chromaLen {
+		dst.U = make([]byte, chromaLen)
+	} else {
+		dst.U = dst.U[:chromaLen]
+	}
+	if cap(dst.V) < chromaLen {
+		dst.V = make([]byte, chromaLen)
+	} else {
+		dst.V = dst.V[:chromaLen]
+	}
+	dst.YStride = width
+	dst.ChromaStride = width
 	dst.Width = width
 	dst.Height = height
 }
@@ -1638,6 +1760,31 @@ func i444ToI420Scratch(dst *I420Frame, frame I444Frame) (I420Frame, error) {
 	return *dst, nil
 }
 
+func i444ToNativeScratch(dst *I420Frame, frame I444Frame) (I420Frame, error) {
+	if err := validateI444Frame(frame); err != nil {
+		return I420Frame{}, err
+	}
+	if frame.UStride == frame.VStride {
+		return I420Frame{
+			Y:            frame.Y,
+			U:            frame.U,
+			V:            frame.V,
+			YStride:      frame.YStride,
+			ChromaStride: frame.UStride,
+			Width:        frame.Width,
+			Height:       frame.Height,
+		}, nil
+	}
+	frameI444ByteScratch(dst, frame.Width, frame.Height)
+	dst.Y = frame.Y
+	dst.YStride = frame.YStride
+	for y := 0; y < frame.Height; y++ {
+		copy(dst.U[y*dst.ChromaStride:y*dst.ChromaStride+frame.Width], frame.U[y*frame.UStride:y*frame.UStride+frame.Width])
+		copy(dst.V[y*dst.ChromaStride:y*dst.ChromaStride+frame.Width], frame.V[y*frame.VStride:y*frame.VStride+frame.Width])
+	}
+	return *dst, nil
+}
+
 func i400ToI420Scratch(dst *I420Frame, frame I400Frame) (I420Frame, error) {
 	if err := validateI400Frame(frame); err != nil {
 		return I420Frame{}, err
@@ -1708,4 +1855,19 @@ func i420PlaneLen(stride int, width int, height int) (int, bool) {
 		return 0, false
 	}
 	return rowsBeforeLast*stride + width, true
+}
+
+func rtcEncoderConfigIsNativeI420(cfg EncoderConfig) bool {
+	return !cfg.ColorConfig.MonoChrome &&
+		cfg.ColorConfig.BitDepth == 8 &&
+		cfg.ColorConfig.SubsamplingX &&
+		cfg.ColorConfig.SubsamplingY
+}
+
+func rtcEncoderConfigIsNativeI444(cfg EncoderConfig) bool {
+	return cfg.Profile == EncoderProfile1 &&
+		!cfg.ColorConfig.MonoChrome &&
+		cfg.ColorConfig.BitDepth == 8 &&
+		!cfg.ColorConfig.SubsamplingX &&
+		!cfg.ColorConfig.SubsamplingY
 }

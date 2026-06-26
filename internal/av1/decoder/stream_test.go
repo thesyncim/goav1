@@ -497,8 +497,8 @@ func TestStreamFrameOBUParsesImplicitTileGroup(t *testing.T) {
 }
 
 func TestStreamMetadataOBUParsesHDRCLL(t *testing.T) {
-	// metadata_type=2 (HDR-CLL), max_cll=1000, max_fall=400, trailing 0x80.
-	payload := []byte{0x02, 0x03, 0xE8, 0x01, 0x90, 0x80}
+	// metadata_type=1 (HDR-CLL), max_cll=1000, max_fall=400, trailing 0x80.
+	payload := []byte{0x01, 0x03, 0xE8, 0x01, 0x90, 0x80}
 
 	var dec Stream
 	event, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeMetadata, payload), false)
@@ -573,8 +573,8 @@ func TestStreamTileListOBUCapturesParseError(t *testing.T) {
 }
 
 func TestStreamMetadataOBUCapturesParseError(t *testing.T) {
-	// metadata_type=1 (ITUT_T35) with no country code byte.
-	payload := []byte{0x01}
+	// metadata_type=4 (ITUT_T35) with no country code byte.
+	payload := []byte{0x04}
 
 	var dec Stream
 	event, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeMetadata, payload), false)

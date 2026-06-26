@@ -11,9 +11,9 @@ import (
 )
 
 func TestParseMetadataITUTT35(t *testing.T) {
-	// metadata_type=1 (1 byte leb128 = 0x01), country_code=0xB5 (US),
+	// metadata_type=4 (1 byte leb128 = 0x04), country_code=0xB5 (US),
 	// payload "ABC", trailing byte 0x80.
-	src := []byte{0x01, 0xB5, 'A', 'B', 'C', 0x80}
+	src := []byte{0x04, 0xB5, 'A', 'B', 'C', 0x80}
 	meta, err := ParseMetadata(src)
 	if err != nil {
 		t.Fatalf("ParseMetadata err=%v", err)
@@ -35,7 +35,7 @@ func TestParseMetadataITUTT35(t *testing.T) {
 
 func TestParseMetadataITUTT35Extension(t *testing.T) {
 	// country_code=0xFF triggers an extension byte.
-	src := []byte{0x01, 0xFF, 0x42, 'X', 0x80}
+	src := []byte{0x04, 0xFF, 0x42, 'X', 0x80}
 	meta, err := ParseMetadata(src)
 	if err != nil {
 		t.Fatalf("ParseMetadata err=%v", err)
@@ -54,10 +54,10 @@ func TestParseMetadataITUTT35Errors(t *testing.T) {
 		in   []byte
 		err  error
 	}{
-		{"missing country", []byte{0x01}, ErrMetadataMissingCountry},
-		{"missing extension", []byte{0x01, 0xFF}, ErrMetadataMissingCountryEx},
-		{"missing trailing", []byte{0x01, 0xB5, 0x00, 0x00}, ErrMetadataMissingTrailing},
-		{"invalid trailing", []byte{0x01, 0xB5, 'A', 0x40}, ErrMetadataInvalidTrailing},
+		{"missing country", []byte{0x04}, ErrMetadataMissingCountry},
+		{"missing extension", []byte{0x04, 0xFF}, ErrMetadataMissingCountryEx},
+		{"missing trailing", []byte{0x04, 0xB5, 0x00, 0x00}, ErrMetadataMissingTrailing},
+		{"invalid trailing", []byte{0x04, 0xB5, 'A', 0x40}, ErrMetadataInvalidTrailing},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -70,8 +70,8 @@ func TestParseMetadataITUTT35Errors(t *testing.T) {
 }
 
 func TestParseMetadataHDRCLL(t *testing.T) {
-	// metadata_type=2, max_cll=1000 (0x03E8), max_fall=400 (0x0190), then 0x80.
-	src := []byte{0x02, 0x03, 0xE8, 0x01, 0x90, 0x80}
+	// metadata_type=1, max_cll=1000 (0x03E8), max_fall=400 (0x0190), then 0x80.
+	src := []byte{0x01, 0x03, 0xE8, 0x01, 0x90, 0x80}
 	meta, err := ParseMetadata(src)
 	if err != nil {
 		t.Fatalf("ParseMetadata err=%v", err)
@@ -90,9 +90,9 @@ func TestParseMetadataHDRCLLErrors(t *testing.T) {
 		in   []byte
 		err  error
 	}{
-		{"short", []byte{0x02, 0x00, 0x00, 0x00}, ErrMetadataShortPayload},
-		{"missing trailing", []byte{0x02, 0x00, 0x00, 0x00, 0x00}, ErrMetadataMissingTrailing},
-		{"invalid trailing", []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x40}, ErrMetadataInvalidTrailing},
+		{"short", []byte{0x01, 0x00, 0x00, 0x00}, ErrMetadataShortPayload},
+		{"missing trailing", []byte{0x01, 0x00, 0x00, 0x00, 0x00}, ErrMetadataMissingTrailing},
+		{"invalid trailing", []byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x40}, ErrMetadataInvalidTrailing},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -105,9 +105,9 @@ func TestParseMetadataHDRCLLErrors(t *testing.T) {
 }
 
 func TestParseMetadataHDRMDCV(t *testing.T) {
-	// metadata_type=3 followed by 24 fixed bytes + 0x80 trailing.
+	// metadata_type=2 followed by 24 fixed bytes + 0x80 trailing.
 	src := []byte{
-		0x03,
+		0x02,
 		// Primary R x=0x1234 y=0x5678
 		0x12, 0x34, 0x56, 0x78,
 		// Primary G x=0x9ABC y=0xDEF0
@@ -142,8 +142,8 @@ func TestParseMetadataHDRMDCV(t *testing.T) {
 }
 
 func TestParseMetadataScalability(t *testing.T) {
-	// metadata_type=4 (0x04), mode_idc=2 (L2T1), trailing 0x80.
-	src := []byte{0x04, 0x02, 0x80}
+	// metadata_type=3 (0x03), mode_idc=2 (L2T1), trailing 0x80.
+	src := []byte{0x03, 0x02, 0x80}
 	meta, err := ParseMetadata(src)
 	if err != nil {
 		t.Fatalf("ParseMetadata err=%v", err)
@@ -160,7 +160,7 @@ func TestParseMetadataScalabilitySS(t *testing.T) {
 	// mode_idc=14 (SS) plus an empty scalability_structure: 1 spatial layer
 	// (count_minus_1=0), no dimensions/description/temporal-group flags,
 	// reserved 3 bits = 0. Bits: 00 0 0 0 000 -> 0x00 byte. Then trailing 0x80.
-	src := []byte{0x04, 0x0E, 0x00, 0x80}
+	src := []byte{0x03, 0x0E, 0x00, 0x80}
 	meta, err := ParseMetadata(src)
 	if err != nil {
 		t.Fatalf("ParseMetadata err=%v", err)

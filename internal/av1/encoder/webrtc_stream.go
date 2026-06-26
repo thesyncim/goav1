@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/thesyncim/goav1/internal/av1/obu"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
 // webrtc_stream.go joins the streaming video encoder to the WebRTC packaging
@@ -114,10 +115,10 @@ func NewWebRTCStreamLayers(width, height int, rc RateControlConfig, temporalLaye
 }
 
 // NewWebRTCStreamConfig creates a WebRTC stream from the lower-level WebRTC
-// encoder config. The pixel encoder accepts 8-bit profile-0 I420 and explicit
-// monochrome 8/10/12-bit streams under CBR or CQP. Multi-spatial pixel output
-// is supported for WebRTC SVC and simulcast modes, including key and key-shift
-// schedules.
+// encoder config. The pixel encoder accepts 8-bit profile-0 I420, 8-bit
+// profile-1 I444, and explicit monochrome 8/10/12-bit streams under CBR or
+// CQP. Multi-spatial pixel output is supported for WebRTC SVC and simulcast
+// modes, including key and key-shift schedules.
 func NewWebRTCStreamConfig(config Config) (*WebRTCStream, error) {
 	normalized, fps, err := normalizeWebRTCStreamConfig(config)
 	if err != nil {
@@ -202,9 +203,7 @@ func webRTCPixelScalabilitySupported(config Config) bool {
 }
 
 func webRTCStreamPixelColorConfigSupported(color SequenceColorConfig) bool {
-	return color.BitDepth == 8 &&
-		color.SubsamplingX &&
-		color.SubsamplingY
+	return videoColorSupported(color)
 }
 
 func webRTCStreamPixelFormatSupported(config Config) bool {
@@ -218,9 +217,18 @@ func webRTCStreamPixelFormatSupported(config Config) bool {
 			return false
 		}
 	}
-	return config.Profile == Profile0 &&
-		config.BitDepth == 8 &&
-		webRTCStreamPixelColorConfigSupported(config.ColorConfig)
+	if config.BitDepth != 8 || config.ColorConfig.BitDepth != 8 ||
+		!webRTCStreamPixelColorConfigSupported(config.ColorConfig) {
+		return false
+	}
+	switch config.Profile {
+	case Profile0:
+		return config.ColorConfig.SubsamplingX && config.ColorConfig.SubsamplingY
+	case Profile1:
+		return !config.ColorConfig.SubsamplingX && !config.ColorConfig.SubsamplingY
+	default:
+		return false
+	}
 }
 
 func webRTCStreamMonochrome(config Config) bool {
@@ -238,14 +246,14 @@ func newWebRTCStreamLayerEncoder(config Config, layerIndex uint8, fps int, minQ 
 	switch config.RateControl {
 	case RateControlCBR:
 		targetKbps := webRTCStreamLayerTargetKbps(config, layerIndex)
-		enc, err = NewVideoEncoderCBR(int(layer.Resolution.Width), int(layer.Resolution.Height), RateControlConfig{
+		enc, err = newVideoEncoderCBRWithColor(int(layer.Resolution.Width), int(layer.Resolution.Height), RateControlConfig{
 			TargetBitsPerSecond: int(targetKbps) * 1000,
 			FramesPerSecond:     fps,
 			MinQIndex:           minQ,
 			MaxQIndex:           maxQ,
-		})
+		}, config.ColorConfig)
 	case RateControlCQP:
-		enc, err = NewVideoEncoder(int(layer.Resolution.Width), int(layer.Resolution.Height), config.Quantizer)
+		enc, err = newVideoEncoderWithColor(int(layer.Resolution.Width), int(layer.Resolution.Height), config.Quantizer, config.ColorConfig)
 	default:
 		return nil, ErrUnsupported
 	}
@@ -1328,7 +1336,7 @@ func (s *WebRTCStream) sourceForLayer(src SourceFrame420, spatialID uint8, resol
 	if src.Width == int(resolution.Width) && src.Height == int(resolution.Height) {
 		return src, nil
 	}
-	return scaleSourceFrame420Nearest(&s.scaledFrames[spatialID], src, int(resolution.Width), int(resolution.Height))
+	return scaleSourceFrameColorNearest(&s.scaledFrames[spatialID], src, int(resolution.Width), int(resolution.Height), parserColorConfig(s.config.ColorConfig))
 }
 
 func (s *WebRTCStream) sourceForMonoLayer(src SourceFrameMono, spatialID uint8, resolution Resolution) (SourceFrameMono, error) {
@@ -1351,11 +1359,12 @@ func (s *WebRTCStream) sourceForMono16Layer(src SourceFrameMono16, spatialID uin
 	return scaleSourceFrameMono16Nearest(&s.scaledMono16[spatialID], src, int(resolution.Width), int(resolution.Height))
 }
 
-func scaleSourceFrame420Nearest(dst *SourceFrame420, src SourceFrame420, width, height int) (SourceFrame420, error) {
+func scaleSourceFrameColorNearest(dst *SourceFrame420, src SourceFrame420, width, height int, color parser.ColorConfig) (SourceFrame420, error) {
 	if width <= 0 || height <= 0 {
 		return SourceFrame420{}, ErrInvalidFrame
 	}
-	cw, ch := (width+1)/2, (height+1)/2
+	cw, ch := chromaWidthForColor(width, color), chromaHeightForColor(height, color)
+	srcCW, srcCH := chromaWidthForColor(src.Width, color), chromaHeightForColor(src.Height, color)
 	if len(dst.Y) != width*height {
 		dst.Y = make([]byte, width*height)
 	}
@@ -1370,8 +1379,8 @@ func scaleSourceFrame420Nearest(dst *SourceFrame420, src SourceFrame420, width, 
 	dst.Width = width
 	dst.Height = height
 	scalePlaneNearest(dst.Y, width, width, height, src.Y, src.YStride, src.Width, src.Height)
-	scalePlaneNearest(dst.U, cw, cw, ch, src.U, src.ChromaStride, (src.Width+1)/2, (src.Height+1)/2)
-	scalePlaneNearest(dst.V, cw, cw, ch, src.V, src.ChromaStride, (src.Width+1)/2, (src.Height+1)/2)
+	scalePlaneNearest(dst.U, cw, cw, ch, src.U, src.ChromaStride, srcCW, srcCH)
+	scalePlaneNearest(dst.V, cw, cw, ch, src.V, src.ChromaStride, srcCW, srcCH)
 	return *dst, nil
 }
 

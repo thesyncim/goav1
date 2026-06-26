@@ -21,6 +21,7 @@ type VideoEncoder struct {
 	// they differ from the coded size the source pads by edge replication
 	// and the headers signal them through render_size.
 	renderWidth, renderHeight int
+	color                     SequenceColorConfig
 	padded                    SourceFrame420
 	keyRecon                  SourceFrame420
 	qIndex                    uint8
@@ -78,6 +79,7 @@ type VideoEncoder struct {
 		referenceMode  parser.ReferenceMode
 		forceIntegerMV bool
 		allowScreen    bool
+		color          parser.ColorConfig
 		tile           TileInfo
 		miCols         uint16
 		lfMap          *threading.FrameWorkLoopFilterMap
@@ -144,11 +146,24 @@ type RateControlConfig struct {
 // non-multiple-of-eight; the stream is coded at padded dimensions and signals
 // the requested render size. qIndex must be non-zero.
 func NewVideoEncoder(width, height int, qIndex uint8) (*VideoEncoder, error) {
+	return newVideoEncoderWithColor(width, height, qIndex, defaultVideoColorConfig())
+}
+
+func newVideoEncoderWithColor(width, height int, qIndex uint8, color SequenceColorConfig) (*VideoEncoder, error) {
 	if width < 16 || height < 16 {
 		return nil, fmt.Errorf("encoder: dimensions must be at least 16x16, got %dx%d", width, height)
 	}
 	if qIndex == 0 {
 		return nil, fmt.Errorf("encoder: qindex must be non-zero")
+	}
+	if color.BitDepth == 0 {
+		color.BitDepth = 8
+	}
+	if !videoColorSupported(color) {
+		return nil, ErrUnsupported
+	}
+	if err := validateSequenceColorConfig(videoColorProfile(color), color); err != nil {
+		return nil, err
 	}
 	// The block coders work on whole 8x8 cells; frames whose dimensions are
 	// not multiples of eight encode at the padded coded size (right/bottom
@@ -159,6 +174,7 @@ func NewVideoEncoder(width, height int, qIndex uint8) (*VideoEncoder, error) {
 	e := &VideoEncoder{
 		width: codedW, height: codedH,
 		renderWidth: width, renderHeight: height,
+		color:  color,
 		qIndex: qIndex, goldenEvery: 16, sceneCutKeyframes: true,
 	}
 	e.tileColsLog2 = defaultTileColsLog2(codedW)
@@ -168,7 +184,9 @@ func NewVideoEncoder(width, height int, qIndex uint8) (*VideoEncoder, error) {
 // padSource copies src into the encoder's coded-size scratch frame,
 // replicating the last source column and row across the padding.
 func (e *VideoEncoder) padSource(src SourceFrame420) SourceFrame420 {
-	cw, ch := e.width/2, e.height/2
+	color := e.parserColorConfig()
+	cw, ch := chromaWidthForColor(e.width, color), chromaHeightForColor(e.height, color)
+	srcCW, srcCH := chromaWidthForColor(src.Width, color), chromaHeightForColor(src.Height, color)
 	if e.padded.Y == nil {
 		e.padded = SourceFrame420{
 			Y:            make([]byte, e.width*e.height),
@@ -191,8 +209,8 @@ func (e *VideoEncoder) padSource(src SourceFrame420) SourceFrame420 {
 		}
 	}
 	padPlane(e.padded.Y, e.width, src.Y, src.YStride, src.Width, src.Height, e.width, e.height)
-	padPlane(e.padded.U, cw, src.U, src.ChromaStride, (src.Width+1)/2, (src.Height+1)/2, cw, ch)
-	padPlane(e.padded.V, cw, src.V, src.ChromaStride, (src.Width+1)/2, (src.Height+1)/2, cw, ch)
+	padPlane(e.padded.U, cw, src.U, src.ChromaStride, srcCW, srcCH, cw, ch)
+	padPlane(e.padded.V, cw, src.V, src.ChromaStride, srcCW, srcCH, cw, ch)
 	return e.padded
 }
 
@@ -285,11 +303,25 @@ func (e *VideoEncoder) collectDecisionStats(keyframe bool, nTiles int, keyTileZe
 
 func (e *VideoEncoder) sequenceHeader(width, height int) SequenceHeader {
 	seq := losslessKeyframeSequence(width, height)
+	if e != nil {
+		seq.Profile = videoColorProfile(e.color)
+		seq.ColorConfig = e.color
+		if !videoColorSupportsInLoopFilters(e.parserColorConfig()) {
+			seq.EnableCDEF = false
+		}
+	}
 	if e != nil && e.screenContentSelectable {
 		seq.SeqForceScreenContentTools = SequenceSelectScreenContentTools
 		seq.SeqForceIntegerMV = SequenceSelectIntegerMV
 	}
 	return seq
+}
+
+func (e *VideoEncoder) parserColorConfig() parser.ColorConfig {
+	if e == nil {
+		return parserColorConfig(defaultVideoColorConfig())
+	}
+	return parserColorConfig(e.color)
 }
 
 func (e *VideoEncoder) applyContentHintToFrameHeader(prefix *FrameHeaderPrefix) {
@@ -351,11 +383,15 @@ func (e *VideoEncoder) SetTileColumns(cols int) {
 // encoder starts in the middle of the configured qindex range and adjusts the
 // working qindex after every frame from the bit-budget buffer.
 func NewVideoEncoderCBR(width, height int, rc RateControlConfig) (*VideoEncoder, error) {
+	return newVideoEncoderCBRWithColor(width, height, rc, defaultVideoColorConfig())
+}
+
+func newVideoEncoderCBRWithColor(width, height int, rc RateControlConfig, color SequenceColorConfig) (*VideoEncoder, error) {
 	perFrameBits, err := rateControlPerFrameBits(rc)
 	if err != nil {
 		return nil, err
 	}
-	e, err := NewVideoEncoder(width, height, rc.MinQIndex/2+rc.MaxQIndex/2)
+	e, err := newVideoEncoderWithColor(width, height, rc.MinQIndex/2+rc.MaxQIndex/2, color)
 	if err != nil {
 		return nil, err
 	}
@@ -759,8 +795,12 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 	for i := range payloads {
 		payloads[i] = TilePayload{}
 	}
+	color := e.parserColorConfig()
+	if !videoColorSupportsInLoopFilters(color) {
+		header.CDEF = CDEFParams{}
+	}
 	if nTiles == 1 {
-		data, err := e.pc.encodeTileWithOptions(src, ref, nil, out, effQ, nil, parser.ReferenceModeSingle, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, 0, uint16(src.Width/4))
+		data, err := e.pc.encodeTileWithOptionsColor(src, ref, nil, out, effQ, nil, parser.ReferenceModeSingle, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, color, 0, uint16(src.Width/4))
 		if err != nil {
 			return nil, fmt.Errorf("encode tile: %w", err)
 		}
@@ -777,6 +817,7 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 		tj.referenceMode = parser.ReferenceModeSingle
 		tj.forceIntegerMV = header.Prefix.ForceIntegerMV
 		tj.allowScreen = header.Prefix.AllowScreenContentTools
+		tj.color = color
 		tj.tile, tj.miCols = header.Tile, miCols
 		tj.lfMap = nil
 		tj.payloads, tj.errs = payloads, errs
@@ -790,7 +831,7 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 			e.tileWork <- tileWorkRange{first: j + 1, stride: jobs, limit: nTiles}
 		}
 		c0, c1 := tileColBounds(header.Tile, 0, miCols)
-		data, err := e.tilePCs[0].encodeTileWithOptions(src, ref, nil, out, effQ, nil, parser.ReferenceModeSingle, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, c0, c1)
+		data, err := e.tilePCs[0].encodeTileWithOptionsColor(src, ref, nil, out, effQ, nil, parser.ReferenceModeSingle, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, color, c0, c1)
 		e.tileWait.Wait()
 		if err != nil {
 			return nil, fmt.Errorf("encode tile 0: %w", err)
@@ -836,12 +877,15 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 // per-coder scratch exists before the first real frame: steady-state encoding
 // allocates nothing and the first frame pays no initialization latency.
 func (e *VideoEncoder) Prewarm() error {
+	color := e.parserColorConfig()
+	cw := chromaWidthForColor(e.width, color)
+	ch := chromaHeightForColor(e.height, color)
 	src := SourceFrame420{
 		Y:            make([]byte, e.width*e.height),
-		U:            make([]byte, e.width*e.height/4),
-		V:            make([]byte, e.width*e.height/4),
+		U:            make([]byte, cw*ch),
+		V:            make([]byte, cw*ch),
 		YStride:      e.width,
-		ChromaStride: e.width / 2,
+		ChromaStride: cw,
 		Width:        e.renderWidth,
 		Height:       e.renderHeight,
 	}
@@ -913,9 +957,9 @@ func (e *VideoEncoder) startTileWorkers(workers int) {
 					var data []byte
 					var err error
 					if work.key {
-						data, err = e.tilePCs[t].encodeKeyframeTileWithOptions(tj.src, tj.out, tj.effQ, c0, c1, tj.lfMap, tj.allowScreen)
+						data, err = e.tilePCs[t].encodeKeyframeTileWithColorOptions(tj.src, tj.out, tj.effQ, c0, c1, tj.lfMap, tj.allowScreen, tj.color)
 					} else {
-						data, err = e.tilePCs[t].encodeTileWithOptions(tj.src, tj.refRecon, tj.golden, tj.out, tj.effQ, tj.prevCtx, tj.referenceMode, tj.forceIntegerMV, tj.allowScreen, c0, c1)
+						data, err = e.tilePCs[t].encodeTileWithOptionsColor(tj.src, tj.refRecon, tj.golden, tj.out, tj.effQ, tj.prevCtx, tj.referenceMode, tj.forceIntegerMV, tj.allowScreen, tj.color, c0, c1)
 					}
 					if err != nil {
 						tj.errs[t] = err
@@ -933,7 +977,7 @@ func (e *VideoEncoder) runKeyframeTileWorkers(req keyframeTileRun) error {
 	nTiles := len(req.payloads)
 	if nTiles == 1 {
 		c0, c1 := tileColBounds(req.tile, 0, req.miCols)
-		data, err := e.pc.encodeKeyframeTileWithOptions(req.src, req.recon, req.qIndex, c0, c1, req.lfMap, req.allowScreenContentTools)
+		data, err := e.pc.encodeKeyframeTileWithColorOptions(req.src, req.recon, req.qIndex, c0, c1, req.lfMap, req.allowScreenContentTools, req.color)
 		if err != nil {
 			return fmt.Errorf("encode tile 0: %w", err)
 		}
@@ -944,6 +988,7 @@ func (e *VideoEncoder) runKeyframeTileWorkers(req keyframeTileRun) error {
 	tj.src, tj.out = req.src, req.recon
 	tj.effQ = req.qIndex
 	tj.allowScreen = req.allowScreenContentTools
+	tj.color = req.color
 	tj.tile, tj.miCols = req.tile, req.miCols
 	tj.lfMap = req.lfMap
 	tj.payloads, tj.errs = req.payloads, req.errs
@@ -957,7 +1002,7 @@ func (e *VideoEncoder) runKeyframeTileWorkers(req keyframeTileRun) error {
 		e.tileWork <- tileWorkRange{first: j + 1, stride: jobs, limit: nTiles, key: true}
 	}
 	c0, c1 := tileColBounds(req.tile, 0, req.miCols)
-	data, err := e.pc.encodeKeyframeTileWithOptions(req.src, req.recon, req.qIndex, c0, c1, req.lfMap, req.allowScreenContentTools)
+	data, err := e.pc.encodeKeyframeTileWithColorOptions(req.src, req.recon, req.qIndex, c0, c1, req.lfMap, req.allowScreenContentTools, req.color)
 	e.tileWait.Wait()
 	if err != nil {
 		return fmt.Errorf("encode tile 0: %w", err)
@@ -1108,8 +1153,13 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	// encoder runs the decoder's own loop filter over the reconstruction so
 	// recon stays bit-exact with decoder output.
 	lfLevel := uint8(0)
-	if src.Width*src.Height <= loopFilterMaxArea {
+	color := e.parserColorConfig()
+	filterSupported := videoColorSupportsInLoopFilters(color)
+	if filterSupported && src.Width*src.Height <= loopFilterMaxArea {
 		lfLevel = filterLevelFromQIndex(effQ, false)
+	}
+	if !filterSupported {
+		header.CDEF = CDEFParams{}
 	}
 	if lfLevel > 0 {
 		if !e.lf.bound {
@@ -1137,14 +1187,15 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		header.Size.RefFrameIdx[0] = 2
 	}
 	var prevCtx *frameCDFs
-	if afterT1 && e.haveCtxT1 {
+	contextChainSupported := videoColorIs420(color)
+	if contextChainSupported && afterT1 && e.haveCtxT1 {
 		// Chain from the middle layer's saved state (slot 2 via LAST).
 		header.Prefix.ErrorResilientMode = false
 		header.Prefix.PrimaryRefFrame = 0
 		prev := defaultLoopFilterDeltas()
 		header.PreviousLFDeltas = &prev
 		prevCtx = &e.frameCtxT1
-	} else if !afterT1 && e.haveCtx {
+	} else if contextChainSupported && !afterT1 && e.haveCtx {
 		// Chain the symbol contexts from slot 0's saved frame state. The
 		// header then codes loop-filter deltas relative to that frame's,
 		// which this encoder keeps at the defaults.
@@ -1207,7 +1258,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		referenceMode = parser.ReferenceModeSelect
 	}
 	if nTiles == 1 {
-		data, err := e.pc.encodeTileWithOptions(src, refRecon, golden, out, effQ, prevCtx, referenceMode, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, 0, uint16(src.Width/4))
+		data, err := e.pc.encodeTileWithOptionsColor(src, refRecon, golden, out, effQ, prevCtx, referenceMode, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, color, 0, uint16(src.Width/4))
 		if err != nil {
 			return nil, fmt.Errorf("encode tile: %w", err)
 		}
@@ -1231,6 +1282,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		tj.referenceMode = referenceMode
 		tj.forceIntegerMV = header.Prefix.ForceIntegerMV
 		tj.allowScreen = header.Prefix.AllowScreenContentTools
+		tj.color = color
 		tj.tile, tj.miCols = header.Tile, miCols
 		tj.lfMap = nil
 		tj.payloads, tj.errs = payloads, errs
@@ -1244,7 +1296,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			e.tileWork <- tileWorkRange{first: j + 1, stride: jobs, limit: nTiles}
 		}
 		c0, c1 := tileColBounds(header.Tile, 0, miCols)
-		data, err := e.tilePCs[0].encodeTileWithOptions(src, refRecon, golden, out, effQ, prevCtx, referenceMode, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, c0, c1)
+		data, err := e.tilePCs[0].encodeTileWithOptionsColor(src, refRecon, golden, out, effQ, prevCtx, referenceMode, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, color, c0, c1)
 		e.tileWait.Wait()
 		if err != nil {
 			return nil, fmt.Errorf("encode tile 0: %w", err)

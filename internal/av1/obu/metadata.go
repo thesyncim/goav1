@@ -18,15 +18,15 @@ type MetadataType uint32
 const (
 	// MetadataTypeReserved0 is the reserved leb128 value 0.
 	MetadataTypeReserved0 MetadataType = 0
+	// MetadataTypeHDRCLL carries content light level info (max_cll, max_fall).
+	MetadataTypeHDRCLL MetadataType = 1
+	// MetadataTypeHDRMDCV carries the mastering display color volume.
+	MetadataTypeHDRMDCV MetadataType = 2
+	// MetadataTypeScalability carries the scalability descriptor.
+	MetadataTypeScalability MetadataType = 3
 	// MetadataTypeITUTT35 carries ITU-T T.35 registered payloads (CEA-708,
 	// AFD, HDR10+, Dolby Vision, etc.).
-	MetadataTypeITUTT35 MetadataType = 1
-	// MetadataTypeHDRCLL carries content light level info (max_cll, max_fall).
-	MetadataTypeHDRCLL MetadataType = 2
-	// MetadataTypeHDRMDCV carries the mastering display color volume.
-	MetadataTypeHDRMDCV MetadataType = 3
-	// MetadataTypeScalability carries the scalability descriptor.
-	MetadataTypeScalability MetadataType = 4
+	MetadataTypeITUTT35 MetadataType = 4
 	// MetadataTypeTimecode carries the SMPTE-style timecode payload.
 	MetadataTypeTimecode MetadataType = 5
 )

@@ -366,6 +366,33 @@ func (st *lossyEncodeState) initScans() error {
 	return nil
 }
 
+func (st *lossyEncodeState) scanForTransformSize(size tile.TransformSize) ([]int16, bool) {
+	switch size {
+	case tile.TransformSize4x4:
+		return st.scan4, true
+	case tile.TransformSize8x8:
+		return st.scan8, true
+	case tile.TransformSize16x16:
+		return st.scan16, true
+	case tile.TransformSize32x32:
+		return st.scan32, true
+	case tile.TransformSize16x8:
+		return st.scan16x8, true
+	case tile.TransformSize8x16:
+		return st.scan8x16, true
+	case tile.TransformSize32x16:
+		return st.scan32x16, true
+	case tile.TransformSize16x32:
+		return st.scan16x32, true
+	case tile.TransformSize8x4:
+		return st.scan8x4, true
+	case tile.TransformSize4x8:
+		return st.scan4x8, true
+	default:
+		return nil, false
+	}
+}
+
 func encodePFrameTile(src SourceFrame420, ref SourceFrame420, recon *SourceFrame420, qIndex uint8) ([]byte, error) {
 	var pc pframeCoder
 	return pc.encodeTile(src, ref, nil, recon, qIndex, nil, parser.ReferenceModeSingle, 0, uint16(src.Width/4))
@@ -425,6 +452,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	st := &pc.st
 	st.forceIntegerMV = forceIntegerMV
 	st.allowScreenContentTools = allowScreenContentTools
+	st.transformMode = parser.TransformModeSwitchable
 	st.decisionStats = nil
 	if pc.decisionStatsEnabled {
 		pc.decisionStats.Reset()
@@ -582,6 +610,9 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	decideCore := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {
 			return tile.PartitionNone, nil
+		}
+		if !videoColorIs420(color) {
+			return tile.PartitionSplit, nil
 		}
 		if scaledReference {
 			return tile.PartitionSplit, nil
@@ -819,10 +850,33 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		return fmt.Errorf("encoder: unexpected block %+v", block)
 	}
 	n := bw // square tier size; rect blocks take dedicated paths below
-	cbw, cbh := bw/2, bh/2
+	lumaPX := int(block.MICol) * 4
+	lumaPY := int(block.MIRow) * 4
 	hasChroma := !st.color.MonoChrome
 	modeCtx := &scratch.Mode
 	coeffCtx := &scratch.CoeffCtx
+	cbw, cbh := 0, 0
+	chromaBlock := tile.BlockSize4x4
+	chromaPX, chromaPY := 0, 0
+	chromaX4, chromaY4 := uint8(0), uint8(0)
+	chromaWidth, chromaHeight := 0, 0
+	if hasChroma {
+		var err error
+		chromaBlock, err = tile.PlaneBlockSize(block.Size, st.color, 1)
+		if err != nil {
+			return fmt.Errorf("chroma plane block: %w", err)
+		}
+		cbw, cbh, err = planeBlockPixels(chromaBlock)
+		if err != nil {
+			return fmt.Errorf("chroma plane block dimensions: %w", err)
+		}
+		chromaPX = chromaXForColor(lumaPX, st.color)
+		chromaPY = chromaYForColor(lumaPY, st.color)
+		chromaX4 = chromaX4ForColor(block.X4, st.color)
+		chromaY4 = chromaY4ForColor(block.Y4, st.color)
+		chromaWidth = chromaWidthForColor(src.Width, st.color)
+		chromaHeight = chromaHeightForColor(src.Height, st.color)
+	}
 
 	// Motion estimation first: the skip decision needs the motion-compensated
 	// residual. The partition decider already ran the full-pel searches and
@@ -830,8 +884,6 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// (frame-edge nodes reach the leaf without a 16x16 decision). Subpel
 	// refinement through the decoder's own convolve when the match is
 	// imperfect.
-	lumaPX := int(block.MICol) * 4
-	lumaPY := int(block.MIRow) * 4
 	scaledReference := ref.Width != src.Width || ref.Height != src.Height
 	var mv motion.Vector
 	fullSAD := -1
@@ -1108,30 +1160,30 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	}
 	// Materialize the three plane predictions with the decoder's convolve so
 	// residual coding and reconstruction agree with the decoder bit for bit.
-	halfW, halfH := src.Width/2, src.Height/2
 	if refs.Compound {
 		if err := predictCompoundInto(st.predY[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, compoundMV[0], compoundMV[1], false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
 			return fmt.Errorf("predict compound luma: %w", err)
 		}
 		if hasChroma {
-			if err := predictCompoundInto(st.predU[:cbw*cbh], ref.U, ref.ChromaStride, golden.U, golden.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, compoundMV[0], compoundMV[1], true, true, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+			if err := predictCompoundInto(st.predU[:cbw*cbh], ref.U, ref.ChromaStride, golden.U, golden.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, compoundMV[0], compoundMV[1], st.color.SubsamplingX, st.color.SubsamplingY, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
 				return fmt.Errorf("predict compound u: %w", err)
 			}
-			if err := predictCompoundInto(st.predV[:cbw*cbh], ref.V, ref.ChromaStride, golden.V, golden.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, compoundMV[0], compoundMV[1], true, true, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+			if err := predictCompoundInto(st.predV[:cbw*cbh], ref.V, ref.ChromaStride, golden.V, golden.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, compoundMV[0], compoundMV[1], st.color.SubsamplingX, st.color.SubsamplingY, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
 				return fmt.Errorf("predict compound v: %w", err)
 			}
 		}
 	} else {
 		if refPlanes.Width != src.Width || refPlanes.Height != src.Height {
-			refHalfW, refHalfH := (refPlanes.Width+1)/2, (refPlanes.Height+1)/2
+			refChromaW := chromaWidthForColor(refPlanes.Width, st.color)
+			refChromaH := chromaHeightForColor(refPlanes.Height, st.color)
 			if err := predictIntoScaled(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, refPlanes.Width, refPlanes.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.scaledScratch); err != nil {
 				return fmt.Errorf("predict scaled luma: %w", err)
 			}
 			if hasChroma {
-				if err := predictIntoScaled(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, refHalfW, refHalfH, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true, &st.scaledScratch); err != nil {
+				if err := predictIntoScaled(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, refChromaW, refChromaH, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, &st.scaledScratch); err != nil {
 					return fmt.Errorf("predict scaled u: %w", err)
 				}
-				if err := predictIntoScaled(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, refHalfW, refHalfH, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true, &st.scaledScratch); err != nil {
+				if err := predictIntoScaled(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, refChromaW, refChromaH, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, &st.scaledScratch); err != nil {
 					return fmt.Errorf("predict scaled v: %w", err)
 				}
 			}
@@ -1140,10 +1192,10 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 				return fmt.Errorf("predict luma: %w", err)
 			}
 			if hasChroma {
-				if err := predictInto(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true); err != nil {
+				if err := predictInto(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY); err != nil {
 					return fmt.Errorf("predict u: %w", err)
 				}
-				if err := predictInto(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, halfW, halfH, lumaPX/2, lumaPY/2, cbw, cbh, mv, true, true); err != nil {
+				if err := predictInto(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY); err != nil {
 					return fmt.Errorf("predict v: %w", err)
 				}
 			}
@@ -1178,8 +1230,8 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 		lumaRdD, lumaRdR := st.rdDcode, st.rdRcode
 		if hasChroma {
-			uZero := st.prepareInterTXB(src.U, st.predU[:cbw*cbh], cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, st.uQuant, st.uQ[:cbw*cbh])
-			vZero := st.prepareInterTXB(src.V, st.predV[:cbw*cbh], cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, st.vQuant, st.vQ[:cbw*cbh])
+			uZero := st.prepareInterTXB(src.U, st.predU[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.uQuant, st.uQ[:cbw*cbh])
+			vZero := st.prepareInterTXB(src.V, st.predV[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.vQuant, st.vQ[:cbw*cbh])
 			skip = lumaZero && uZero && vZero
 		} else {
 			skip = lumaZero
@@ -1255,9 +1307,13 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			}
 		}
 	}
+	if !videoColorIs420(st.color) {
+		skip = false
+		splitTX = false
+	}
 
 	txType := transform.TypeDCTDCT
-	if !skip && !splitTX && bw == 8 && bh == 8 && st.qIndex <= 96 {
+	if !skip && !splitTX && bw == 8 && bh == 8 && st.qIndex <= 96 && videoColorIs420(st.color) {
 		txType = st.chooseInter8x8TXType(src, lumaPX, lumaPY, dctRdD)
 	}
 
@@ -1345,7 +1401,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		Size: block.Size, X4: block.X4, Y4: block.Y4,
 		VisibleW4: block.VisibleW4, VisibleH4: block.VisibleH4,
 		HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
-		Color: st.color, TransformMode: parser.TransformModeSwitchable,
+		Color: st.color, TransformMode: st.transformMode,
 		Inter: true, SkipTransform: skip,
 	}, treeRes)
 	if err != nil {
@@ -1363,14 +1419,6 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 	}
 
-	var chromaBlock tile.BlockSize
-	if hasChroma {
-		var err error
-		chromaBlock, err = tile.PlaneBlockSize(block.Size, st.color, 1)
-		if err != nil {
-			return fmt.Errorf("chroma plane block: %w", err)
-		}
-	}
 	if skip {
 		// No residual symbols; reset the coefficient entropy contexts per
 		// plane as the decoder's residual path does for skip blocks, and the
@@ -1380,15 +1428,15 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 		if hasChroma {
 			for plane := 1; plane <= 2; plane++ {
-				if err := coeffCtx.ResetBlock(plane, chromaBlock, int(block.X4)/2, int(block.Y4)/2); err != nil {
+				if err := coeffCtx.ResetBlock(plane, chromaBlock, int(chromaX4), int(chromaY4)); err != nil {
 					return fmt.Errorf("reset chroma %d coeff ctx: %w", plane, err)
 				}
 			}
 		}
 		copyPredScratch(recon.Y, st.predY[:bw*bh], src.YStride, lumaPX, lumaPY, bw, bh)
 		if hasChroma {
-			copyPredScratch(recon.U, st.predU[:cbw*cbh], src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh)
-			copyPredScratch(recon.V, st.predV[:cbw*cbh], src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh)
+			copyPredScratch(recon.U, st.predU[:cbw*cbh], src.ChromaStride, chromaPX, chromaPY, cbw, cbh)
+			copyPredScratch(recon.V, st.predV[:cbw*cbh], src.ChromaStride, chromaPX, chromaPY, cbw, cbh)
 		}
 		if st.decisionStats != nil {
 			st.decisionStats.noteInterBlock(block.Size, true, false, refs, modeResult, transform.TypeDCTDCT)
@@ -1398,28 +1446,32 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 
 	// Residual: largest-TX luma with the inter tx_type symbol, then chroma.
 	lumaTX, lumaScan := tile.TransformSize8x8, st.scan8
-	chromaTX, chromaScan := tile.TransformSize4x4, st.scan4
 	switch {
 	case bw == 16 && bh == 16:
 		lumaTX, lumaScan = tile.TransformSize16x16, st.scan16
-		chromaTX, chromaScan = tile.TransformSize8x8, st.scan8
 	case bw == 32 && bh == 32:
 		lumaTX, lumaScan = tile.TransformSize32x32, st.scan32
-		chromaTX, chromaScan = tile.TransformSize16x16, st.scan16
-	case bw == 64 && bh == 64:
-		chromaTX, chromaScan = tile.TransformSize32x32, st.scan32
 	case bw == 16 && bh == 8:
 		lumaTX, lumaScan = tile.TransformSize16x8, st.scan16x8
-		chromaTX, chromaScan = tile.TransformSize8x4, st.scan8x4
 	case bw == 8 && bh == 16:
 		lumaTX, lumaScan = tile.TransformSize8x16, st.scan8x16
-		chromaTX, chromaScan = tile.TransformSize4x8, st.scan4x8
 	case bw == 32 && bh == 16:
 		lumaTX, lumaScan = tile.TransformSize32x16, st.scan32x16
-		chromaTX, chromaScan = tile.TransformSize16x8, st.scan16x8
 	case bw == 16 && bh == 32:
 		lumaTX, lumaScan = tile.TransformSize16x32, st.scan16x32
-		chromaTX, chromaScan = tile.TransformSize8x16, st.scan8x16
+	}
+	chromaTX, chromaScan := tile.TransformSize4x4, st.scan4
+	if hasChroma {
+		var err error
+		chromaTX, err = tile.MaxTransformSize(block.Size, st.color, 1)
+		if err != nil {
+			return fmt.Errorf("chroma transform size: %w", err)
+		}
+		var ok bool
+		chromaScan, ok = st.scanForTransformSize(chromaTX)
+		if !ok {
+			return fmt.Errorf("encoder: unsupported chroma transform %d", chromaTX)
+		}
 	}
 	if splitTX {
 		// The quadrant TXBs replay in the decoder's recursive order, which
@@ -1473,12 +1525,12 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 				rdata, pred, qc = recon.V, st.predV[:cbw*cbh], st.vQ[:cbw*cbh]
 				q = st.vQuant
 			}
-			if err := st.finishInterTXBTyped(rdata, pred, cbw, src.ChromaStride, lumaPX/2, lumaPY/2, cbw, cbh, q, qc, tile.CoeffContextRequest{
+			if err := st.finishInterTXBTyped(rdata, pred, cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, q, qc, tile.CoeffContextRequest{
 				Plane:      uint8(plane),
 				PlaneBlock: chromaBlock,
 				Size:       chromaTX,
-				X4:         block.X4 / 2,
-				Y4:         block.Y4 / 2,
+				X4:         chromaX4,
+				Y4:         chromaY4,
 			}, coeffCtx, chromaScan, nil, chromaTxType); err != nil {
 				return fmt.Errorf("chroma %d txb: %w", plane, err)
 			}
@@ -1575,7 +1627,7 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		Size: block.Size, X4: block.X4, Y4: block.Y4,
 		VisibleW4: block.VisibleW4, VisibleH4: block.VisibleH4,
 		HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
-		Color: st.color, TransformMode: parser.TransformModeSwitchable,
+		Color: st.color, TransformMode: st.transformMode,
 	}, tile.TransformTreeResult{Y: tile.TransformSize8x8})
 	if err != nil {
 		return fmt.Errorf("intra transform tree: %w", err)
@@ -1606,6 +1658,25 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	if err != nil {
 		return fmt.Errorf("chroma plane block: %w", err)
 	}
+	cw, ch, err := planeBlockPixels(chromaBlock)
+	if err != nil {
+		return fmt.Errorf("chroma plane block dimensions: %w", err)
+	}
+	if cw != ch {
+		return ErrUnsupported
+	}
+	chromaTX, err := tile.MaxTransformSize(block.Size, st.color, 1)
+	if err != nil {
+		return fmt.Errorf("chroma transform size: %w", err)
+	}
+	chromaScan, ok := st.scanForTransformSize(chromaTX)
+	if !ok {
+		return fmt.Errorf("encoder: unsupported chroma transform %d", chromaTX)
+	}
+	chromaX := chromaXForColor(lumaPX, st.color)
+	chromaY := chromaYForColor(lumaPY, st.color)
+	chromaX4 := chromaX4ForColor(block.X4, st.color)
+	chromaY4 := chromaY4ForColor(block.Y4, st.color)
 	for plane := 1; plane <= 2; plane++ {
 		data, rdata := src.U, recon.U
 		q := st.uQuant
@@ -1613,13 +1684,13 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 			data, rdata = src.V, recon.V
 			q = st.vQuant
 		}
-		if err := st.encodeTXBAvail(rdata, data, src.ChromaStride, lumaPX/2, lumaPY/2, 4, q, tile.CoeffContextRequest{
+		if err := st.encodeTXBAvail(rdata, data, src.ChromaStride, chromaX, chromaY, cw, q, tile.CoeffContextRequest{
 			Plane:      uint8(plane),
 			PlaneBlock: chromaBlock,
-			Size:       tile.TransformSize4x4,
-			X4:         block.X4 / 2,
-			Y4:         block.Y4 / 2,
-		}, coeffCtx, st.scan4, nil, block.HaveTop, block.HaveLeft); err != nil {
+			Size:       chromaTX,
+			X4:         chromaX4,
+			Y4:         chromaY4,
+		}, coeffCtx, chromaScan, nil, block.HaveTop, block.HaveLeft); err != nil {
 			return fmt.Errorf("intra chroma %d txb: %w", plane, err)
 		}
 	}

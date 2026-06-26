@@ -1151,6 +1151,65 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderI444NativeReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	const w, h = 192, 128
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
+	cfg.Profile = goav1.EncoderProfile1
+	cfg.ColorConfigSet = true
+	cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+		BitDepth: 8,
+	}
+	cfg.RateControl = goav1.EncoderRateControlCQP
+	cfg.Quantizer = 28
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+	if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); !errors.Is(err, goav1.ErrEncoderUnsupported) {
+		t.Fatalf("Encode(I420) on native I444 err=%v want %v", err, goav1.ErrEncoderUnsupported)
+	}
+
+	frames := make([]publicIVFFrame, 0, 4)
+	for frame := 0; frame < 4; frame++ {
+		out, err := enc.EncodeI444(publicI444NativePattern(w, h, frame), false)
+		if err != nil {
+			t.Fatalf("EncodeI444(%d): %v", frame, err)
+		}
+		if frame == 0 {
+			seq := publicFirstSequenceHeader(t, out.Data)
+			if seq.SeqProfile != uint8(goav1.EncoderProfile1) ||
+				seq.ColorConfig.MonoChrome ||
+				seq.ColorConfig.BitDepth != 8 ||
+				seq.ColorConfig.SubsamplingX ||
+				seq.ColorConfig.SubsamplingY {
+				t.Fatalf("sequence profile=%d color=%+v want native 8-bit 4:4:4", seq.SeqProfile, seq.ColorConfig)
+			}
+		}
+		frames = append(frames, publicIVFFrame{
+			timestamp: uint64(frame),
+			payload:   append([]byte(nil), out.Data...),
+		})
+	}
+
+	ivf := appendPublicIVF(nil, w, h, 30, 1, frames)
+	decoded, err := goav1.DecodeIVF(ivf)
+	if err != nil {
+		t.Fatalf("DecodeIVF: %v", err)
+	}
+	if len(decoded) != len(frames) {
+		t.Fatalf("decoded %d frames want %d", len(decoded), len(frames))
+	}
+	for i, frame := range decoded {
+		if frame.ChromaWidth != w || frame.ChromaHeight != h || len(frame.U) != w*h || len(frame.V) != w*h {
+			t.Fatalf("decoded frame %d chroma=%dx%d U=%d V=%d want %dx%d",
+				i, frame.ChromaWidth, frame.ChromaHeight, len(frame.U), len(frame.V), w, h)
+		}
+	}
+	assertPublicIVFMatchesReferenceDecodersRawYUV(t, decoders, "public-rtc-i444-native", ivf)
+}
+
 func TestPublicRTCEncoderI400NativeMonochrome(t *testing.T) {
 	const w, h = 192, 128
 	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T3)
@@ -1902,6 +1961,22 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 		normalizedMono.TemporalLayerCount != 2 {
 		t.Fatalf("normalized monochrome config=%+v", normalizedMono)
 	}
+	i444 := cfg
+	i444.Profile = goav1.EncoderProfile1
+	i444.ColorConfigSet = true
+	i444.ColorConfig = goav1.EncoderSequenceColorConfig{
+		BitDepth: 8,
+	}
+	normalizedI444, err := goav1.NormalizeRTCEncoderConfig(i444)
+	if err != nil {
+		t.Fatalf("NormalizeRTCEncoderConfig I444: %v", err)
+	}
+	if normalizedI444.Profile != goav1.EncoderProfile1 ||
+		normalizedI444.ColorConfig.BitDepth != 8 ||
+		normalizedI444.ColorConfig.SubsamplingX ||
+		normalizedI444.ColorConfig.SubsamplingY {
+		t.Fatalf("normalized I444 config=%+v", normalizedI444)
+	}
 	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig valid: %v", err)
@@ -1914,13 +1989,6 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 		edit func(*goav1.EncoderConfig)
 		want error
 	}{
-		{
-			name: "profile1-444",
-			edit: func(cfg *goav1.EncoderConfig) {
-				cfg.Profile = goav1.EncoderProfile1
-			},
-			want: goav1.ErrEncoderUnsupported,
-		},
 		{
 			name: "high-bit-depth",
 			edit: func(cfg *goav1.EncoderConfig) {
@@ -6852,6 +6920,30 @@ func publicI444FromI420(src goav1.I420Frame) goav1.I444Frame {
 		VStride: src.Width,
 		Width:   src.Width,
 		Height:  src.Height,
+	}
+}
+
+func publicI444NativePattern(width int, height int, frame int) goav1.I444Frame {
+	base := publicRTCMatrixFrame(width, height, frame)
+	u := make([]byte, width*height)
+	v := make([]byte, width*height)
+	for y := 0; y < height; y++ {
+		ur := u[y*width : y*width+width]
+		vr := v[y*width : y*width+width]
+		for x := 0; x < width; x++ {
+			ur[x] = byte((x*7 + y*3 + frame*17) & 0xff)
+			vr[x] = byte(255 - ((x*5 + y*11 + frame*13) & 0xff))
+		}
+	}
+	return goav1.I444Frame{
+		Y:       base.Y,
+		U:       u,
+		V:       v,
+		YStride: base.YStride,
+		UStride: width,
+		VStride: width,
+		Width:   width,
+		Height:  height,
 	}
 }
 

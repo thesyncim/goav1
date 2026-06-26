@@ -26,6 +26,9 @@ func SequenceHeaderForConfig(config Config) (SequenceHeader, error) {
 		EnableCDEF:                 true,
 		ColorConfig:                config.ColorConfig,
 	}
+	if !videoColorSupportsInLoopFilters(parserColorConfig(config.ColorConfig)) {
+		seq.EnableCDEF = false
+	}
 
 	for i := uint8(0); i < seq.OperatingPointsCount; i++ {
 		seq.OperatingPoints[i].SeqLevelIdx = SequenceLevelMax

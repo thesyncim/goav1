@@ -149,8 +149,12 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 			*reconBuf = recon
 		}
 	}
+	color := parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}
+	if tileOpts.stream != nil {
+		color = tileOpts.stream.parserColorConfig()
+	}
 	lfLevel := uint8(0)
-	if src.Width*src.Height <= loopFilterMaxArea {
+	if videoColorSupportsInLoopFilters(color) && src.Width*src.Height <= loopFilterMaxArea {
 		lfLevel = filterLevelFromQIndex(qIndex, true)
 	}
 	var lfMap *threading.FrameWorkLoopFilterMap
@@ -227,6 +231,7 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 		src:                     src,
 		recon:                   &recon,
 		qIndex:                  qIndex,
+		color:                   color,
 		allowScreenContentTools: header.Prefix.AllowScreenContentTools,
 		tile:                    header.Tile,
 		miCols:                  miCols,
@@ -299,6 +304,7 @@ type keyframeTileRun struct {
 	src                     SourceFrame420
 	recon                   *SourceFrame420
 	qIndex                  uint8
+	color                   parser.ColorConfig
 	allowScreenContentTools bool
 	tile                    TileInfo
 	miCols                  uint16
@@ -319,7 +325,7 @@ func runKeyframeTilesDefault(req keyframeTileRun, tilePC func(t int) *pframeCode
 		wg.Add(1)
 		go func(t int, c0, c1 uint16, pc *pframeCoder) {
 			defer wg.Done()
-			data, err := pc.encodeKeyframeTileWithOptions(req.src, req.recon, req.qIndex, c0, c1, req.lfMap, req.allowScreenContentTools)
+			data, err := pc.encodeKeyframeTileWithColorOptions(req.src, req.recon, req.qIndex, c0, c1, req.lfMap, req.allowScreenContentTools, req.color)
 			if err != nil {
 				req.errs[t] = err
 				return
@@ -332,7 +338,7 @@ func runKeyframeTilesDefault(req keyframeTileRun, tilePC func(t int) *pframeCode
 	if tilePC != nil {
 		pc0 = tilePC(0)
 	}
-	tile0, tile0Err := pc0.encodeKeyframeTileWithOptions(req.src, req.recon, req.qIndex, c0, c1, req.lfMap, req.allowScreenContentTools)
+	tile0, tile0Err := pc0.encodeKeyframeTileWithColorOptions(req.src, req.recon, req.qIndex, c0, c1, req.lfMap, req.allowScreenContentTools, req.color)
 	wg.Wait()
 	if tile0Err != nil {
 		return fmt.Errorf("encode tile 0: %w", tile0Err)
@@ -366,7 +372,11 @@ func lossyKeyframeHeaderForSequence(seq SequenceHeader, width, height int, qInde
 		TransformMode: TransformModeLargest,
 		ReferenceMode: ReferenceModeSingle,
 	}
-	header.CDEF = CDEFParams{Damping: 3}
+	if seq.EnableCDEF && videoColorSupportsInLoopFilters(parserColorConfig(seq.ColorConfig)) {
+		header.CDEF = CDEFParams{Damping: 3}
+	} else {
+		header.LoopFilter = LoopFilterParams{Deltas: defaultLoopFilterDeltas()}
+	}
 	return header
 }
 
@@ -422,6 +432,7 @@ type lossyEncodeState struct {
 	keyVisW, keyVisH             int
 	invScratch                   []int32
 	color                        parser.ColorConfig
+	transformMode                parser.TransformMode
 
 	// Per-block scratch reused across blocks so the hot encode loop stays
 	// allocation-free: quantized coefficients per plane (sized for the largest
@@ -517,6 +528,10 @@ func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame
 }
 
 func (pc *pframeCoder) encodeKeyframeTileWithOptions(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap, allowScreenContentTools bool) ([]byte, error) {
+	return pc.encodeKeyframeTileWithColorOptions(src, recon, qIndex, miColStart, miColEnd, lfMap, allowScreenContentTools, parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true})
+}
+
+func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap, allowScreenContentTools bool, color parser.ColorConfig) ([]byte, error) {
 	if err := pc.partCDFs.InitDefault(); err != nil {
 		return nil, err
 	}
@@ -524,7 +539,7 @@ func (pc *pframeCoder) encodeKeyframeTileWithOptions(src SourceFrame420, recon *
 	st.qIndex = qIndex
 	st.forceIntegerMV = false
 	st.allowScreenContentTools = allowScreenContentTools
-	st.color = parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}
+	st.color = color
 	st.lfMap = lfMap
 	st.hme = nil
 	st.decisionStats = nil
@@ -620,6 +635,9 @@ func (pc *pframeCoder) encodeKeyframeTileWithOptions(src SourceFrame420, recon *
 	decideCore := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {
 			return tile.PartitionNone, nil
+		}
+		if !videoColorIs420(st.color) {
+			return tile.PartitionSplit, nil
 		}
 		px, py := int(miCol)*4, int(miRow)*4
 		if level == tile.BlockLevel32x32 && haveRight && haveBottom {
@@ -834,7 +852,6 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	default:
 		return fmt.Errorf("encoder: unexpected block %+v", block)
 	}
-	cn := n / 2
 	modeCtx := &scratch.Mode
 	coeffCtx := &scratch.CoeffCtx
 
@@ -897,16 +914,13 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	}
 
 	// Largest-TX luma with the tx_type symbol between txb_skip and eob,
-	// then the half-size chroma TXBs.
+	// then chroma TXBs sized to the stream's chroma sampling geometry.
 	lumaTX, lumaScan := tile.TransformSize8x8, st.scan8
-	chromaTX, chromaScan := tile.TransformSize4x4, st.scan4
 	switch n {
 	case 16:
 		lumaTX, lumaScan = tile.TransformSize16x16, st.scan16
-		chromaTX, chromaScan = tile.TransformSize8x8, st.scan8
 	case 32:
 		lumaTX, lumaScan = tile.TransformSize32x32, st.scan32
-		chromaTX, chromaScan = tile.TransformSize16x16, st.scan16
 	}
 	txTypeReq := tile.IntraTransformTypeRequest{
 		Size:        lumaTX,
@@ -931,6 +945,25 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	if err != nil {
 		return fmt.Errorf("chroma plane block: %w", err)
 	}
+	cw, ch, err := planeBlockPixels(chromaBlock)
+	if err != nil {
+		return fmt.Errorf("chroma block dimensions: %w", err)
+	}
+	if cw != ch {
+		return ErrUnsupported
+	}
+	chromaTX, err := tile.MaxTransformSize(block.Size, st.color, 1)
+	if err != nil {
+		return fmt.Errorf("chroma transform size: %w", err)
+	}
+	chromaScan, ok := st.scanForTransformSize(chromaTX)
+	if !ok {
+		return fmt.Errorf("encoder: unsupported chroma transform %d", chromaTX)
+	}
+	chromaX := chromaXForColor(lumaPX, st.color)
+	chromaY := chromaYForColor(lumaPY, st.color)
+	chromaX4 := chromaX4ForColor(block.X4, st.color)
+	chromaY4 := chromaY4ForColor(block.Y4, st.color)
 	for plane := 1; plane <= 2; plane++ {
 		data, rdata := src.U, recon.U
 		q := st.uQuant
@@ -938,12 +971,12 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 			data, rdata = src.V, recon.V
 			q = st.vQuant
 		}
-		if err := st.encodeTXBAvail(rdata, data, src.ChromaStride, lumaPX/2, lumaPY/2, cn, q, tile.CoeffContextRequest{
+		if err := st.encodeTXBAvail(rdata, data, src.ChromaStride, chromaX, chromaY, cw, q, tile.CoeffContextRequest{
 			Plane:      uint8(plane),
 			PlaneBlock: chromaBlock,
 			Size:       chromaTX,
-			X4:         block.X4 / 2,
-			Y4:         block.Y4 / 2,
+			X4:         chromaX4,
+			Y4:         chromaY4,
 		}, coeffCtx, chromaScan, nil, block.HaveTop, block.HaveLeft); err != nil {
 			return fmt.Errorf("chroma %d txb: %w", plane, err)
 		}
@@ -1612,8 +1645,12 @@ func (st *lossyEncodeState) trialTXBBitsInter32x32(qcoeff *[1024]int16, typ tran
 // four small ones - so the split decision must see that rate too. Children
 // estimates predict from the source plane like their luma halves.
 func (st *lossyEncodeState) trialChromaCost(src SourceFrame420, recon *SourceFrame420, useRecon bool, px, py, n int, haveTop, haveLeft bool) int64 {
-	cn := n / 2
-	cx, cy := px/2, py/2
+	cn := n >> chromaShiftX(st.color)
+	ch := n >> chromaShiftY(st.color)
+	if cn != ch {
+		return 0
+	}
+	cx, cy := chromaXForColor(px, st.color), chromaYForColor(py, st.color)
 	total := int64(0)
 	for plane := 1; plane <= 2; plane++ {
 		data, rdata, q := src.U, recon.U, st.uQuant
