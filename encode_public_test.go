@@ -412,6 +412,66 @@ func TestPublicEncodeI400HighBitDepthLosslessKeyframeReferenceDecoders(t *testin
 	}
 }
 
+func TestPublicEncodeI400HighBitDepthKeyframeReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	const w, h = 64, 64
+	cases := []struct {
+		bitDepth uint8
+		qIndex   uint8
+	}{
+		{bitDepth: 10, qIndex: 0},
+		{bitDepth: 10, qIndex: 72},
+		{bitDepth: 12, qIndex: 104},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%dbit-q%d", tc.bitDepth, tc.qIndex), func(t *testing.T) {
+			maxSample := uint16((1 << tc.bitDepth) - 1)
+			src := goav1.I400HighBitDepthFrame{
+				Y:        make([]uint16, w*h),
+				YStride:  w,
+				Width:    w,
+				Height:   h,
+				BitDepth: tc.bitDepth,
+			}
+			for y := range h {
+				for x := range w {
+					src.Y[y*w+x] = uint16((73 + x*29 + y*17 + (x*y)%211) & int(maxSample))
+				}
+			}
+
+			tu, recon, err := goav1.EncodeI400HighBitDepthKeyframe(src, tc.qIndex)
+			if err != nil {
+				t.Fatalf("EncodeI400HighBitDepthKeyframe: %v", err)
+			}
+			if recon.BitDepth != src.BitDepth || recon.Width != src.Width || recon.Height != src.Height ||
+				recon.YStride != src.YStride {
+				t.Fatalf("unexpected reconstruction: got=%+v src=%+v", recon, src)
+			}
+			if tc.qIndex == 0 && !publicUint16Equal(recon.Y, src.Y) {
+				t.Fatalf("lossless reconstruction mismatch: got=%+v src=%+v", recon, src)
+			}
+			if tc.qIndex != 0 && publicUint16Equal(recon.Y, src.Y) {
+				t.Fatalf("lossy reconstruction unexpectedly equals source: got=%+v src=%+v", recon, src)
+			}
+			seq := publicFirstSequenceHeader(t, tu)
+			wantProfile := uint8(0)
+			if tc.bitDepth == 12 {
+				wantProfile = 2
+			}
+			if seq.SeqProfile != wantProfile ||
+				!seq.ColorConfig.MonoChrome ||
+				seq.ColorConfig.BitDepth != tc.bitDepth ||
+				!seq.ColorConfig.HighBitdepth ||
+				(tc.bitDepth == 12 && !seq.ColorConfig.TwelveBit) {
+				t.Fatalf("sequence profile=%d color=%+v want profile=%d native %d-bit monochrome", seq.SeqProfile, seq.ColorConfig, wantProfile, tc.bitDepth)
+			}
+			ivf := appendPublicIVF(nil, w, h, 30, 1, []publicIVFFrame{{payload: tu}})
+			wantY := appendPublicI400HighBitDepthRaw(nil, recon)
+			assertPublicIVFHighBitDepthMonochromeMatchesReferenceDecoders(t, decoders, fmt.Sprintf("public-i400-%dbit-q%d", tc.bitDepth, tc.qIndex), ivf, wantY, w, h, 2)
+		})
+	}
+}
+
 func TestPublicEncodeI400HighBitDepthLosslessKeyframeRejectsInvalid(t *testing.T) {
 	valid := goav1.I400HighBitDepthFrame{
 		Y:        make([]uint16, 64*64),

@@ -155,6 +155,77 @@ func TestEncodeMonochromeKeyframeDecodeMatchesRecon(t *testing.T) {
 	}
 }
 
+func TestEncodeHighBitDepthMonochromeKeyframeDecodeMatchesRecon(t *testing.T) {
+	cases := []struct {
+		name     string
+		w, h     int
+		bitDepth uint8
+		qIndex   uint8
+	}{
+		{name: "10bit-q72", w: 64, h: 64, bitDepth: 10, qIndex: 72},
+		{name: "12bit-q104", w: 96, h: 64, bitDepth: 12, qIndex: 104},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			maxSample := uint16((1 << tc.bitDepth) - 1)
+			src := encoder.SourceFrameMono16{
+				Y:        make([]uint16, tc.w*tc.h),
+				YStride:  tc.w,
+				Width:    tc.w,
+				Height:   tc.h,
+				BitDepth: tc.bitDepth,
+			}
+			for y := range tc.h {
+				for x := range tc.w {
+					src.Y[y*tc.w+x] = uint16((41 + x*23 + y*31 + (x*y)%251) & int(maxSample))
+				}
+			}
+
+			tu, recon, err := encoder.EncodeHighBitDepthMonochromeKeyframe(src, tc.qIndex)
+			if err != nil {
+				t.Fatalf("encode: %v", err)
+			}
+			seq, prefix, _ := parseKeyframeSequenceAndSize(t, tu)
+			wantProfile := uint8(0)
+			if tc.bitDepth == 12 {
+				wantProfile = 2
+			}
+			if seq.SeqProfile != wantProfile ||
+				!seq.ColorConfig.MonoChrome ||
+				seq.ColorConfig.BitDepth != tc.bitDepth {
+				t.Fatalf("sequence profile=%d color=%+v want profile=%d %d-bit monochrome", seq.SeqProfile, seq.ColorConfig, wantProfile, tc.bitDepth)
+			}
+			if !prefix.ShowFrame || prefix.FrameType != parser.FrameTypeKey {
+				t.Fatalf("prefix=%+v, want shown keyframe", prefix)
+			}
+
+			dec, err := goav1.NewDecoder([][]byte{tu})
+			if err != nil {
+				t.Fatalf("new decoder: %v", err)
+			}
+			defer dec.Close()
+			frames, err := dec.DecodeAll()
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(frames) != 1 {
+				t.Fatalf("decoded %d frames, want 1", len(frames))
+			}
+			f := frames[0]
+			if !f.Format.MonoChrome || f.Format.BitDepth != tc.bitDepth || f.Layout.BytesPerSample != 2 {
+				t.Fatalf("decoded format=%+v bytes=%d, want %d-bit monochrome", f.Format, f.Layout.BytesPerSample, tc.bitDepth)
+			}
+			wantY := appendHighBitDepthMonoRaw(nil, recon)
+			gotY := appendFramePlaneRaw(nil, f.Y, f.Layout.BytesPerSample)
+			if string(gotY) != string(wantY) {
+				t.Fatalf("decoded luma differs from reconstruction")
+			}
+			compareAbsentPlane(t, "U", f.U)
+			compareAbsentPlane(t, "V", f.V)
+		})
+	}
+}
+
 func TestEncodeKeyframeWithSequenceMaxDecodeMatchesRecon(t *testing.T) {
 	const (
 		w, h       = 64, 48
@@ -208,6 +279,28 @@ func TestEncodeKeyframeWithSequenceMaxDecodeMatchesRecon(t *testing.T) {
 	comparePlane(t, "Y", frames[0].Y, recon.Y, w, h, w)
 	comparePlane(t, "U", frames[0].U, recon.U, cw, ch, cw)
 	comparePlane(t, "V", frames[0].V, recon.V, cw, ch, cw)
+}
+
+func appendHighBitDepthMonoRaw(dst []byte, frame encoder.SourceFrameMono16) []byte {
+	for y := range frame.Height {
+		row := frame.Y[y*frame.YStride : y*frame.YStride+frame.Width]
+		for _, sample := range row {
+			dst = append(dst, byte(sample), byte(sample>>8))
+		}
+	}
+	return dst
+}
+
+func appendFramePlaneRaw(dst []byte, plane goav1.FramePlane, bytesPerSample int) []byte {
+	if plane.Width == 0 || plane.Height == 0 || len(plane.Pix) == 0 {
+		return dst
+	}
+	rowBytes := plane.Width * bytesPerSample
+	for y := range plane.Height {
+		row := plane.Pix[y*plane.Stride : y*plane.Stride+rowBytes]
+		dst = append(dst, row...)
+	}
+	return dst
 }
 
 func parseKeyframeSequenceAndSize(t *testing.T, tu []byte) (parser.SequenceHeader, parser.FrameHeaderPrefix, parser.FrameSize) {

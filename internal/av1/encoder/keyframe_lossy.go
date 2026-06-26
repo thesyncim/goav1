@@ -439,6 +439,7 @@ type lossyEncodeState struct {
 	// Motion-compensated prediction scratch, filled per block through the
 	// decoder's own convolve so subpel predictions match bit for bit.
 	predY         [4096]byte
+	predY16       [4096]uint16
 	predU         [1024]byte
 	predV         [1024]byte
 	sadScratch    [4096]byte

@@ -9,8 +9,8 @@ package goav1
 // inputs fill neutral chroma unless an RTCEncoder is explicitly configured for
 // native monochrome across WebRTC L*/S* modes, and 10/12-bit Frame inputs are
 // downshifted before entering the current 8-bit realtime path. Native 10/12-bit
-// monochrome lossless keyframes are available through
-// EncodeI400HighBitDepthLosslessKeyframe. Every emitted stream decodes
+// monochrome keyframes are available through EncodeI400HighBitDepthKeyframe.
+// Every emitted stream decodes
 // bit-exactly to the encoder's own reconstruction in this package's Decoder and
 // in the reference decoders.
 
@@ -57,8 +57,7 @@ type I444Frame struct {
 // samples at YStride. The friendly realtime stream encoder fills neutral chroma
 // for I400 inputs unless an RTCEncoder is explicitly configured for native
 // monochrome. EncodeI400Keyframe, EncodeI400PFrame, and
-// EncodeI400HighBitDepthLosslessKeyframe always emit native AV1 monochrome
-// pictures.
+// EncodeI400HighBitDepthKeyframe always emit native AV1 monochrome pictures.
 type I400Frame struct {
 	Y       []byte
 	YStride int
@@ -103,6 +102,24 @@ func EncodeI400Keyframe(frame I400Frame, qIndex uint8) ([]byte, I400Frame, error
 		return nil, I400Frame{}, err
 	}
 	return tu, I400Frame(recon), nil
+}
+
+// EncodeI400HighBitDepthKeyframe encodes one native 10/12-bit AV1 monochrome
+// keyframe.
+//
+// qIndex 0 emits a lossless keyframe. qIndex 1..255 emits a non-lossless
+// keyframe and returns the encoder-side reconstruction a conformant decoder
+// must reproduce exactly. Frame dimensions must be positive multiples of 8.
+func EncodeI400HighBitDepthKeyframe(frame I400HighBitDepthFrame, qIndex uint8) ([]byte, I400HighBitDepthFrame, error) {
+	if qIndex == 0 {
+		return EncodeI400HighBitDepthLosslessKeyframe(frame)
+	}
+	src := encoder.SourceFrameMono16(frame)
+	tu, recon, err := encoder.EncodeHighBitDepthMonochromeKeyframe(src, qIndex)
+	if err != nil {
+		return nil, I400HighBitDepthFrame{}, err
+	}
+	return tu, I400HighBitDepthFrame(recon), nil
 }
 
 // EncodeI400HighBitDepthLosslessKeyframe encodes one native 10/12-bit AV1
