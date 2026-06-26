@@ -7,8 +7,8 @@
 // bitstreams for 8-bit profile-0 WebRTC streams from I420/NV12/NV21 inputs plus
 // I422/I444/I400 and generic Frame adapters, including native monochrome for
 // explicit RTC configs across single-spatial, simulcast, and shared-reference
-// SVC pictures through EncodePicture and native 10/12-bit monochrome keyframes,
-// with runtime
+// SVC pictures through EncodePicture and native 10/12-bit monochrome keyframes
+// and P-frames, with runtime
 // bitrate/framerate/scalability reconfiguration. The lower-level WebRTC control
 // surface validates W3C SVC mode metadata, temporal/spatial dependency
 // structures, key-shift scheduling, and RTP dependency descriptors for

@@ -302,7 +302,7 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs, color 
 			*dst = quantize.Quantizer{}
 			continue
 		}
-		q, err := quantize.PlaneQuantizer(parser.QuantizationParams{}, qIndex, 8, quantize.Plane(plane))
+		q, err := quantize.PlaneQuantizer(parser.QuantizationParams{}, qIndex, color.BitDepth, quantize.Plane(plane))
 		if err != nil {
 			return err
 		}

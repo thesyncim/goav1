@@ -9,10 +9,10 @@ package goav1
 // inputs fill neutral chroma unless an RTCEncoder is explicitly configured for
 // native monochrome across WebRTC L*/S* modes, and 10/12-bit Frame inputs are
 // downshifted before entering the current 8-bit realtime path. Native 10/12-bit
-// monochrome keyframes are available through EncodeI400HighBitDepthKeyframe.
-// Every emitted stream decodes
-// bit-exactly to the encoder's own reconstruction in this package's Decoder and
-// in the reference decoders.
+// monochrome keyframes and P-frames are available through
+// EncodeI400HighBitDepthKeyframe and EncodeI400HighBitDepthPFrame. Every
+// emitted stream decodes bit-exactly to the encoder's own reconstruction in
+// this package's Decoder and in the reference decoders.
 
 import (
 	"fmt"
@@ -56,8 +56,9 @@ type I444Frame struct {
 // I400Frame is one 8-bit monochrome picture. Y holds Width x Height luma
 // samples at YStride. The friendly realtime stream encoder fills neutral chroma
 // for I400 inputs unless an RTCEncoder is explicitly configured for native
-// monochrome. EncodeI400Keyframe, EncodeI400PFrame, and
-// EncodeI400HighBitDepthKeyframe always emit native AV1 monochrome pictures.
+// monochrome. EncodeI400Keyframe, EncodeI400PFrame,
+// EncodeI400HighBitDepthKeyframe, and EncodeI400HighBitDepthPFrame always emit
+// native AV1 monochrome pictures.
 type I400Frame struct {
 	Y       []byte
 	YStride int
@@ -140,6 +141,21 @@ func EncodeI400HighBitDepthLosslessKeyframe(frame I400HighBitDepthFrame) ([]byte
 	}
 	copy(recon.Y, frame.Y)
 	return tu, recon, nil
+}
+
+// EncodeI400HighBitDepthPFrame encodes one native 10/12-bit AV1 monochrome
+// inter frame.
+//
+// ref must be the previous native high-bit-depth monochrome reconstruction for
+// the same coded geometry and bit depth, usually the reconstruction returned by
+// EncodeI400HighBitDepthKeyframe or a prior EncodeI400HighBitDepthPFrame call.
+// qIndex must be 1..255.
+func EncodeI400HighBitDepthPFrame(frame I400HighBitDepthFrame, ref I400HighBitDepthFrame, qIndex uint8) ([]byte, I400HighBitDepthFrame, error) {
+	tu, recon, err := encoder.EncodeHighBitDepthMonochromePFrame(encoder.SourceFrameMono16(frame), encoder.SourceFrameMono16(ref), qIndex)
+	if err != nil {
+		return nil, I400HighBitDepthFrame{}, err
+	}
+	return tu, I400HighBitDepthFrame(recon), nil
 }
 
 // EncodeI400PFrame encodes one native AV1 monochrome inter frame.

@@ -189,3 +189,107 @@ func TestEncodeMonochromePFrameDecodeMatchesRecon(t *testing.T) {
 		t.Fatalf("mono P-frame luma PSNR %.2f dB below sanity floor", psnr)
 	}
 }
+
+func TestEncodeHighBitDepthMonochromePFrameDecodeMatchesRecon(t *testing.T) {
+	cases := []struct {
+		name     string
+		bitDepth uint8
+		qIndex   uint8
+	}{
+		{name: "10bit", bitDepth: 10, qIndex: 32},
+		{name: "12bit", bitDepth: 12, qIndex: 48},
+	}
+	const w, h = 64, 64
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			maxSample := uint16((1 << tc.bitDepth) - 1)
+			src1 := encoder.SourceFrameMono16{
+				Y:        make([]uint16, w*h),
+				YStride:  w,
+				Width:    w,
+				Height:   h,
+				BitDepth: tc.bitDepth,
+			}
+			for y := range h {
+				for x := range w {
+					src1.Y[y*w+x] = uint16((91 + x*17 + y*29 + (x*y)%181) & int(maxSample))
+				}
+			}
+
+			keyTU, keyRecon, err := encoder.EncodeHighBitDepthMonochromeKeyframe(src1, tc.qIndex)
+			if err != nil {
+				t.Fatalf("encode high-bit-depth monochrome keyframe: %v", err)
+			}
+			src2 := encoder.SourceFrameMono16{
+				Y:        make([]uint16, w*h),
+				YStride:  w,
+				Width:    w,
+				Height:   h,
+				BitDepth: tc.bitDepth,
+			}
+			for y := range h {
+				for x := range w {
+					base := int(keyRecon.Y[y*keyRecon.YStride+x])
+					delta := ((x*3 + 2*y) % 65) - 32
+					v := base + delta
+					if v < 0 {
+						v = 0
+					} else if v > int(maxSample) {
+						v = int(maxSample)
+					}
+					src2.Y[y*w+x] = uint16(v)
+				}
+			}
+
+			pTU, pRecon, err := encoder.EncodeHighBitDepthMonochromePFrame(src2, keyRecon, tc.qIndex)
+			if err != nil {
+				t.Fatalf("encode high-bit-depth monochrome p-frame: %v", err)
+			}
+			t.Logf("high-bit-depth mono key TU %d bytes, P TU %d bytes", len(keyTU), len(pTU))
+			if mono16Equal(pRecon, keyRecon) {
+				t.Fatal("P-frame reconstruction unexpectedly equals the reference; residual path was not exercised")
+			}
+
+			dec, err := goav1.NewDecoder([][]byte{keyTU, pTU})
+			if err != nil {
+				t.Fatalf("new decoder: %v", err)
+			}
+			defer dec.Close()
+			frames, err := dec.DecodeAll()
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(frames) != 2 {
+				t.Fatalf("decoded %d frames, want 2", len(frames))
+			}
+			for i, f := range frames {
+				if !f.Format.MonoChrome || f.Format.BitDepth != tc.bitDepth || f.Layout.BytesPerSample != 2 {
+					t.Fatalf("frame %d format=%+v bytes=%d, want %d-bit monochrome", i, f.Format, f.Layout.BytesPerSample, tc.bitDepth)
+				}
+				compareAbsentPlane(t, fmt.Sprintf("frame %d U", i), f.U)
+				compareAbsentPlane(t, fmt.Sprintf("frame %d V", i), f.V)
+			}
+			gotY := appendFramePlaneRaw(nil, frames[1].Y, frames[1].Layout.BytesPerSample)
+			wantY := appendHighBitDepthMonoRaw(nil, pRecon)
+			if string(gotY) != string(wantY) {
+				t.Fatal("decoded high-bit-depth P-frame luma differs from reconstruction")
+			}
+		})
+	}
+}
+
+func mono16Equal(a, b encoder.SourceFrameMono16) bool {
+	if a.Width != b.Width || a.Height != b.Height || a.BitDepth != b.BitDepth {
+		return false
+	}
+	for y := range a.Height {
+		ar := a.Y[y*a.YStride : y*a.YStride+a.Width]
+		br := b.Y[y*b.YStride : y*b.YStride+b.Width]
+		for x := range ar {
+			if ar[x] != br[x] {
+				return false
+			}
+		}
+	}
+	return true
+}
