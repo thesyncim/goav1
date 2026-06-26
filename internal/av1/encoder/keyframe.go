@@ -248,53 +248,76 @@ func validateSourceFrameMono16(src SourceFrameMono16) error {
 }
 
 func validateSourceFrame42016(src SourceFrame42016) error {
+	return validateSourceFrameColor16(src, parser.ColorConfig{BitDepth: src.BitDepth, SubsamplingX: true, SubsamplingY: true}, "4:2:0")
+}
+
+func validateSourceFrameColor16(src SourceFrame42016, color parser.ColorConfig, label string) error {
+	return validateSourceFrameColor16WithGeometry(src, color, label, true)
+}
+
+func validateSourceRenderFrameColor16(src SourceFrame42016, color parser.ColorConfig, label string) error {
+	return validateSourceFrameColor16WithGeometry(src, color, label, false)
+}
+
+func validateSourceFrameColor16WithGeometry(src SourceFrame42016, color parser.ColorConfig, label string, requireCodedMultiple bool) error {
 	if src.BitDepth != 10 && src.BitDepth != 12 {
-		return fmt.Errorf("encoder: high-bit-depth 4:2:0 bit depth must be 10 or 12, got %d", src.BitDepth)
+		return fmt.Errorf("encoder: high-bit-depth %s bit depth must be 10 or 12, got %d", label, src.BitDepth)
 	}
-	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
+	if requireCodedMultiple && (src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0) {
 		return fmt.Errorf("encoder: frame dimensions must be positive multiples of 8, got %dx%d", src.Width, src.Height)
 	}
-	chromaWidth, chromaHeight := src.Width/2, src.Height/2
+	if !requireCodedMultiple && (src.Width <= 0 || src.Height <= 0) {
+		return fmt.Errorf("encoder: frame dimensions must be positive, got %dx%d", src.Width, src.Height)
+	}
+	if color.MonoChrome || color.BitDepth != src.BitDepth {
+		return ErrInvalidFrame
+	}
+	chromaWidth := chromaWidthForColor(src.Width, color)
+	chromaHeight := chromaHeightForColor(src.Height, color)
 	if src.YStride < src.Width {
-		return fmt.Errorf("encoder: 4:2:0 Y stride %d is smaller than width %d", src.YStride, src.Width)
+		return fmt.Errorf("encoder: %s Y stride %d is smaller than width %d", label, src.YStride, src.Width)
 	}
 	if src.ChromaStride < chromaWidth {
-		return fmt.Errorf("encoder: 4:2:0 chroma stride %d is smaller than chroma width %d", src.ChromaStride, chromaWidth)
+		return fmt.Errorf("encoder: %s chroma stride %d is smaller than chroma width %d", label, src.ChromaStride, chromaWidth)
 	}
 	maxInt := int(^uint(0) >> 1)
 	if src.Height > 0 && src.YStride > (maxInt-(src.Width-1))/(src.Height-1) {
-		return fmt.Errorf("encoder: 4:2:0 Y plane dimensions overflow int")
+		return fmt.Errorf("encoder: %s Y plane dimensions overflow int", label)
 	}
 	if chromaHeight > 0 && src.ChromaStride > (maxInt-(chromaWidth-1))/(chromaHeight-1) {
-		return fmt.Errorf("encoder: 4:2:0 chroma plane dimensions overflow int")
+		return fmt.Errorf("encoder: %s chroma plane dimensions overflow int", label)
 	}
 	yNeed := (src.Height-1)*src.YStride + src.Width
 	chromaNeed := (chromaHeight-1)*src.ChromaStride + chromaWidth
 	if len(src.Y) < yNeed {
-		return fmt.Errorf("encoder: 4:2:0 Y plane is too short: got %d samples, need %d", len(src.Y), yNeed)
+		return fmt.Errorf("encoder: %s Y plane is too short: got %d samples, need %d", label, len(src.Y), yNeed)
 	}
 	if len(src.U) < chromaNeed {
-		return fmt.Errorf("encoder: 4:2:0 U plane is too short: got %d samples, need %d", len(src.U), chromaNeed)
+		return fmt.Errorf("encoder: %s U plane is too short: got %d samples, need %d", label, len(src.U), chromaNeed)
 	}
 	if len(src.V) < chromaNeed {
-		return fmt.Errorf("encoder: 4:2:0 V plane is too short: got %d samples, need %d", len(src.V), chromaNeed)
+		return fmt.Errorf("encoder: %s V plane is too short: got %d samples, need %d", label, len(src.V), chromaNeed)
 	}
 	maxSample := uint16((1 << src.BitDepth) - 1)
-	if err := validateSourcePlane42016Samples("Y", src.Y, src.YStride, src.Width, src.Height, maxSample, src.BitDepth); err != nil {
+	if err := validateSourcePlaneColor16Samples(label, "Y", src.Y, src.YStride, src.Width, src.Height, maxSample, src.BitDepth); err != nil {
 		return err
 	}
-	if err := validateSourcePlane42016Samples("U", src.U, src.ChromaStride, chromaWidth, chromaHeight, maxSample, src.BitDepth); err != nil {
+	if err := validateSourcePlaneColor16Samples(label, "U", src.U, src.ChromaStride, chromaWidth, chromaHeight, maxSample, src.BitDepth); err != nil {
 		return err
 	}
-	return validateSourcePlane42016Samples("V", src.V, src.ChromaStride, chromaWidth, chromaHeight, maxSample, src.BitDepth)
+	return validateSourcePlaneColor16Samples(label, "V", src.V, src.ChromaStride, chromaWidth, chromaHeight, maxSample, src.BitDepth)
 }
 
 func validateSourcePlane42016Samples(name string, samples []uint16, stride, width, height int, maxSample uint16, bitDepth uint8) error {
+	return validateSourcePlaneColor16Samples("4:2:0", name, samples, stride, width, height, maxSample, bitDepth)
+}
+
+func validateSourcePlaneColor16Samples(label string, name string, samples []uint16, stride, width, height int, maxSample uint16, bitDepth uint8) error {
 	for y := range height {
 		row := samples[y*stride : y*stride+width]
 		for x, sample := range row {
 			if sample > maxSample {
-				return fmt.Errorf("encoder: 4:2:0 %s sample (%d,%d)=%d exceeds %d-bit maximum %d", name, x, y, sample, bitDepth, maxSample)
+				return fmt.Errorf("encoder: %s %s sample (%d,%d)=%d exceeds %d-bit maximum %d", label, name, x, y, sample, bitDepth, maxSample)
 			}
 		}
 	}

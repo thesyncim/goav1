@@ -118,10 +118,10 @@ func NewWebRTCStreamLayers(width, height int, rc RateControlConfig, temporalLaye
 }
 
 // NewWebRTCStreamConfig creates a WebRTC stream from the lower-level WebRTC
-// encoder config. The pixel encoder accepts 8-bit profile-0 I420, 8-bit
-// profile-2 I422, 8-bit profile-1 I444, and explicit monochrome 8/10/12-bit
-// streams under CBR or CQP. Multi-spatial pixel output is supported for WebRTC
-// SVC and simulcast modes, including key and key-shift schedules.
+// encoder config. The pixel encoder accepts profile-valid 8/10/12-bit I420,
+// I422, I444, and explicit monochrome streams under CBR or CQP. Multi-spatial
+// pixel output is supported for WebRTC SVC and simulcast modes, including key
+// and key-shift schedules.
 func NewWebRTCStreamConfig(config Config) (*WebRTCStream, error) {
 	normalized, fps, err := normalizeWebRTCStreamConfig(config)
 	if err != nil {
@@ -130,7 +130,7 @@ func NewWebRTCStreamConfig(config Config) (*WebRTCStream, error) {
 	var stream WebRTCStream
 	stream.config = normalized
 	stream.rcMinQ, stream.rcMaxQ = 20, 200
-	if webRTCStreamHighBitDepth420(normalized) {
+	if webRTCStreamHighBitDepthColor(normalized) {
 		for i := uint8(0); i < normalized.SpatialLayerCount; i++ {
 			enc, err := newWebRTCStreamLayerColor16Encoder(normalized, i, fps, stream.rcMinQ, stream.rcMaxQ)
 			if err != nil {
@@ -219,13 +219,10 @@ func webRTCStreamPixelColorConfigSupported(color SequenceColorConfig) bool {
 }
 
 func webRTCStreamPixelFormatSupported(config Config) bool {
-	if webRTCStreamHighBitDepth420(config) {
+	if webRTCStreamHighBitDepthColor(config) {
 		return config.ColorConfig.BitDepth == config.BitDepth &&
 			!config.ColorConfig.MonoChrome &&
-			config.ColorConfig.SubsamplingX &&
-			config.ColorConfig.SubsamplingY &&
-			((config.ColorConfig.BitDepth == 10 && config.Profile == Profile0) ||
-				(config.ColorConfig.BitDepth == 12 && config.Profile == Profile2))
+			highBitDepthVideoColorSupported(config.Profile, config.ColorConfig)
 	}
 	if webRTCStreamMonochrome(config) {
 		switch config.ColorConfig.BitDepth {
@@ -266,6 +263,10 @@ func webRTCStreamHighBitDepth420(config Config) bool {
 		config.ColorConfig.BitDepth > 8 &&
 		config.ColorConfig.SubsamplingX &&
 		config.ColorConfig.SubsamplingY
+}
+
+func webRTCStreamHighBitDepthColor(config Config) bool {
+	return !config.ColorConfig.MonoChrome && config.ColorConfig.BitDepth > 8
 }
 
 func newWebRTCStreamLayerEncoder(config Config, layerIndex uint8, fps int, minQ uint8, maxQ uint8) (*VideoEncoder, error) {
@@ -540,7 +541,7 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 	var nextMonoEncoders [WebRTCMaxSpatialLayers]*MonochromeVideoEncoder
 	var nextMono16Encoders [WebRTCMaxSpatialLayers]*HighBitDepthMonochromeVideoEncoder
 	var nextColor16Encoders [WebRTCMaxSpatialLayers]*HighBitDepth420VideoEncoder
-	if webRTCStreamHighBitDepth420(normalized) {
+	if webRTCStreamHighBitDepthColor(normalized) {
 		var err error
 		nextColor16Encoders, err = s.buildReplacementColor16LayerEncoders(normalized, fps)
 		if err != nil {
@@ -600,7 +601,7 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 }
 
 func (s *WebRTCStream) updateLayerControls(config Config, fps int) error {
-	if webRTCStreamHighBitDepth420(config) {
+	if webRTCStreamHighBitDepthColor(config) {
 		return s.updateColor16LayerControls(config, fps)
 	}
 	if webRTCStreamHighBitDepthMonochrome(config) {
@@ -1003,6 +1004,19 @@ func (s *WebRTCStream) EncodeHighBitDepth420(src SourceFrame42016, forceKey bool
 	return picture.Frames[0], nil
 }
 
+// EncodeHighBitDepthColor encodes one single-spatial native 10/12-bit color
+// frame and returns it with WebRTC packaging metadata.
+func (s *WebRTCStream) EncodeHighBitDepthColor(src SourceFrame42016, forceKey bool) (WebRTCEncodedFrame, error) {
+	if s == nil || s.config.SpatialLayerCount != 1 || !webRTCStreamHighBitDepthColor(s.config) {
+		return WebRTCEncodedFrame{}, ErrUnsupported
+	}
+	picture, err := s.EncodeHighBitDepthColorPicture(src, forceKey)
+	if err != nil {
+		return WebRTCEncodedFrame{}, err
+	}
+	return picture.Frames[0], nil
+}
+
 // EncodePicture encodes one picture and returns one frame per active spatial
 // layer with dependency descriptors matching the configured scalability mode.
 func (s *WebRTCStream) EncodePicture(src SourceFrame420, forceKey bool) (WebRTCEncodedPicture, error) {
@@ -1281,6 +1295,18 @@ func (s *WebRTCStream) EncodeHighBitDepth420Picture(src SourceFrame42016, forceK
 	if !webRTCStreamHighBitDepth420(s.config) {
 		return WebRTCEncodedPicture{}, ErrUnsupported
 	}
+	return s.EncodeHighBitDepthColorPicture(src, forceKey)
+}
+
+// EncodeHighBitDepthColorPicture encodes one native 10/12-bit color WebRTC
+// picture.
+func (s *WebRTCStream) EncodeHighBitDepthColorPicture(src SourceFrame42016, forceKey bool) (WebRTCEncodedPicture, error) {
+	if s == nil || s.config.SpatialLayerCount == 0 {
+		return WebRTCEncodedPicture{}, ErrInvalidConfig
+	}
+	if !webRTCStreamHighBitDepthColor(s.config) {
+		return WebRTCEncodedPicture{}, ErrUnsupported
+	}
 	if src.Width != int(s.config.Resolution.Width) || src.Height != int(s.config.Resolution.Height) {
 		return WebRTCEncodedPicture{}, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", src.Width, src.Height, s.config.Resolution.Width, s.config.Resolution.Height)
 	}
@@ -1306,7 +1332,7 @@ func (s *WebRTCStream) EncodeHighBitDepth420Picture(src SourceFrame42016, forceK
 		if !ok {
 			return WebRTCEncodedPicture{}, ErrInvalidFrame
 		}
-		layerSrc, err := s.sourceFor42016Layer(src, settings.SpatialID, settings.Resolution)
+		layerSrc, err := s.sourceForColor16Layer(src, settings.SpatialID, settings.Resolution)
 		if err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
@@ -1356,7 +1382,7 @@ func (s *WebRTCStream) EncodeHighBitDepth420Picture(src SourceFrame42016, forceK
 			Structure:                 structure,
 			AttachDependencyStructure: control.AttachDependencyStructure,
 		}
-		if err := s.update42016ReferenceFrame(settings, enc); err != nil {
+		if err := s.updateColor16ReferenceFrame(settings, enc); err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
 	}
@@ -1645,6 +1671,10 @@ func (s *WebRTCStream) updateMono16ReferenceFrame(settings FrameEncodeSettings, 
 }
 
 func (s *WebRTCStream) update42016ReferenceFrame(settings FrameEncodeSettings, enc *HighBitDepth420VideoEncoder) error {
+	return s.updateColor16ReferenceFrame(settings, enc)
+}
+
+func (s *WebRTCStream) updateColor16ReferenceFrame(settings FrameEncodeSettings, enc *HighBitDepth420VideoEncoder) error {
 	if !settings.UpdateBufferSet {
 		return nil
 	}
@@ -1655,7 +1685,7 @@ func (s *WebRTCStream) update42016ReferenceFrame(settings FrameEncodeSettings, e
 	if recon.Y == nil {
 		return ErrInvalidFrame
 	}
-	copy42016FrameInto(&s.color16ReferenceFrames[settings.UpdateBuffer], recon)
+	copyColor16FrameInto(&s.color16ReferenceFrames[settings.UpdateBuffer], recon, parserColorConfig(s.config.ColorConfig))
 	return nil
 }
 
@@ -1707,13 +1737,17 @@ func (s *WebRTCStream) sourceForMono16Layer(src SourceFrameMono16, spatialID uin
 }
 
 func (s *WebRTCStream) sourceFor42016Layer(src SourceFrame42016, spatialID uint8, resolution Resolution) (SourceFrame42016, error) {
+	return s.sourceForColor16Layer(src, spatialID, resolution)
+}
+
+func (s *WebRTCStream) sourceForColor16Layer(src SourceFrame42016, spatialID uint8, resolution Resolution) (SourceFrame42016, error) {
 	if spatialID >= WebRTCMaxSpatialLayers || !resolution.Valid() {
 		return SourceFrame42016{}, ErrInvalidFrame
 	}
 	if src.Width == int(resolution.Width) && src.Height == int(resolution.Height) {
 		return src, nil
 	}
-	return scaleSourceFrame42016Nearest(&s.scaledFrames16[spatialID], src, int(resolution.Width), int(resolution.Height))
+	return scaleSourceFrameColor16Nearest(&s.scaledFrames16[spatialID], src, int(resolution.Width), int(resolution.Height), parserColorConfig(s.config.ColorConfig))
 }
 
 func scaleSourceFrameColorNearest(dst *SourceFrame420, src SourceFrame420, width, height int, color parser.ColorConfig) (SourceFrame420, error) {

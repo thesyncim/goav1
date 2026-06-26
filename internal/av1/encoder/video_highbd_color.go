@@ -4,11 +4,12 @@ import (
 	"fmt"
 
 	"github.com/thesyncim/goav1/internal/av1/obu"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
-// HighBitDepth420VideoEncoder encodes a same-sized native 10/12-bit AV1 4:2:0
-// stream. It mirrors the monochrome high-bit-depth streaming encoder while
-// reusing the native high-bit-depth 4:2:0 keyframe and P-frame tile coders.
+// HighBitDepth420VideoEncoder encodes a same-sized native 10/12-bit AV1 color
+// stream. The public constructor keeps the historical 4:2:0 name; WebRTC uses
+// the color-aware constructor for native 4:2:0, 4:2:2, and 4:4:4 streams.
 type HighBitDepth420VideoEncoder struct {
 	width, height             int
 	renderWidth, renderHeight int
@@ -66,9 +67,9 @@ func newHighBitDepth420VideoEncoderWithColor(width, height int, profile Profile,
 		return nil, fmt.Errorf("encoder: dimensions must be even and at least 16x16, got %dx%d", width, height)
 	}
 	if color.BitDepth != 10 && color.BitDepth != 12 {
-		return nil, fmt.Errorf("encoder: high-bit-depth 4:2:0 bit depth must be 10 or 12, got %d", color.BitDepth)
+		return nil, fmt.Errorf("encoder: high-bit-depth color bit depth must be 10 or 12, got %d", color.BitDepth)
 	}
-	if color.MonoChrome || !color.SubsamplingX || !color.SubsamplingY {
+	if !highBitDepthVideoColorSupported(profile, color) {
 		return nil, ErrUnsupported
 	}
 	if qIndex == 0 {
@@ -269,7 +270,8 @@ func (e *HighBitDepth420VideoEncoder) Prewarm() error {
 	if e == nil {
 		return nil
 	}
-	cw, ch := e.width/2, e.height/2
+	color := e.parserColorConfig()
+	cw, ch := chromaWidthForColor(e.width, color), chromaHeightForColor(e.height, color)
 	src := SourceFrame42016{
 		Y:            make([]uint16, e.width*e.height),
 		U:            make([]uint16, cw*ch),
@@ -317,46 +319,16 @@ func (e *HighBitDepth420VideoEncoder) validateRenderSource(src SourceFrame42016)
 		return fmt.Errorf("encoder: source bit depth %d does not match stream bit depth %d", src.BitDepth, e.color.BitDepth)
 	}
 	if src.Width <= 0 || src.Height <= 0 || src.Width%2 != 0 || src.Height%2 != 0 {
-		return fmt.Errorf("encoder: 4:2:0 dimensions must be positive even values, got %dx%d", src.Width, src.Height)
+		return fmt.Errorf("encoder: high-bit-depth color dimensions must be positive even values, got %dx%d", src.Width, src.Height)
 	}
-	chromaWidth, chromaHeight := src.Width/2, src.Height/2
-	if src.YStride < src.Width {
-		return fmt.Errorf("encoder: 4:2:0 Y stride %d is smaller than width %d", src.YStride, src.Width)
-	}
-	if src.ChromaStride < chromaWidth {
-		return fmt.Errorf("encoder: 4:2:0 chroma stride %d is smaller than chroma width %d", src.ChromaStride, chromaWidth)
-	}
-	maxInt := int(^uint(0) >> 1)
-	if src.Height > 0 && src.YStride > (maxInt-(src.Width-1))/(src.Height-1) {
-		return fmt.Errorf("encoder: 4:2:0 Y plane dimensions overflow int")
-	}
-	if chromaHeight > 0 && src.ChromaStride > (maxInt-(chromaWidth-1))/(chromaHeight-1) {
-		return fmt.Errorf("encoder: 4:2:0 chroma plane dimensions overflow int")
-	}
-	yNeed := (src.Height-1)*src.YStride + src.Width
-	chromaNeed := (chromaHeight-1)*src.ChromaStride + chromaWidth
-	if len(src.Y) < yNeed {
-		return fmt.Errorf("encoder: 4:2:0 Y plane is too short: got %d samples, need %d", len(src.Y), yNeed)
-	}
-	if len(src.U) < chromaNeed {
-		return fmt.Errorf("encoder: 4:2:0 U plane is too short: got %d samples, need %d", len(src.U), chromaNeed)
-	}
-	if len(src.V) < chromaNeed {
-		return fmt.Errorf("encoder: 4:2:0 V plane is too short: got %d samples, need %d", len(src.V), chromaNeed)
-	}
-	maxSample := uint16((1 << src.BitDepth) - 1)
-	if err := validateSourcePlane42016Samples("Y", src.Y, src.YStride, src.Width, src.Height, maxSample, src.BitDepth); err != nil {
-		return err
-	}
-	if err := validateSourcePlane42016Samples("U", src.U, src.ChromaStride, chromaWidth, chromaHeight, maxSample, src.BitDepth); err != nil {
-		return err
-	}
-	return validateSourcePlane42016Samples("V", src.V, src.ChromaStride, chromaWidth, chromaHeight, maxSample, src.BitDepth)
+	color := e.parserColorConfig()
+	return validateSourceRenderFrameColor16(src, color, videoColorLabel(color))
 }
 
 func (e *HighBitDepth420VideoEncoder) padSource(src SourceFrame42016) SourceFrame42016 {
-	cw, ch := e.width/2, e.height/2
-	srcCW, srcCH := src.Width/2, src.Height/2
+	color := e.parserColorConfig()
+	cw, ch := chromaWidthForColor(e.width, color), chromaHeightForColor(e.height, color)
+	srcCW, srcCH := chromaWidthForColor(src.Width, color), chromaHeightForColor(src.Height, color)
 	if e.padded.Y == nil {
 		e.padded = SourceFrame42016{
 			Y:            make([]uint16, e.width*e.height),
@@ -397,6 +369,13 @@ func (e *HighBitDepth420VideoEncoder) sequenceHeader(width, height int) Sequence
 	return seq
 }
 
+func (e *HighBitDepth420VideoEncoder) parserColorConfig() parser.ColorConfig {
+	if e == nil {
+		return parser.ColorConfig{BitDepth: 10, SubsamplingX: true, SubsamplingY: true}
+	}
+	return parserColorConfig(e.color)
+}
+
 func (e *HighBitDepth420VideoEncoder) applyContentHintToFrameHeader(prefix *FrameHeaderPrefix) {
 	if e == nil || !e.screenContentSelectable || prefix == nil {
 		return
@@ -420,7 +399,7 @@ func (e *HighBitDepth420VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame42
 		header.Size.RenderHeight = uint32(e.renderHeight)
 		header.Size.HaveRenderSize = true
 	}
-	alloc42016Frame(&e.keyRecon, src)
+	allocColor16Frame(&e.keyRecon, src, e.parserColorConfig())
 	payloads, err := e.encodeKeyTilePayloads(seq, src, &e.keyRecon, keyQ, &header)
 	if err != nil {
 		return nil, err
@@ -452,7 +431,7 @@ func (e *HighBitDepth420VideoEncoder) encodePReusing(src SourceFrame42016, tempo
 	default:
 		out = &e.t1Recon
 	}
-	alloc42016Frame(out, src)
+	allocColor16Frame(out, src, e.parserColorConfig())
 
 	refresh := uint8(0x01)
 	if isT1 {
@@ -514,7 +493,7 @@ func (e *HighBitDepth420VideoEncoder) encodeReferencePFrameWithSequenceMax(src S
 	if settings.UpdateBufferSet {
 		out = &e.reconBufs[e.reconIdx]
 	}
-	alloc42016Frame(out, src)
+	allocColor16Frame(out, src, e.parserColorConfig())
 
 	refresh := uint8(0)
 	if settings.UpdateBufferSet {
@@ -578,7 +557,7 @@ func (e *HighBitDepth420VideoEncoder) encodeKeyTilePayloads(seq SequenceHeader, 
 			pc = &e.tilePCs[t]
 		}
 		c0, c1 := tilePayloadColBounds(header.Tile, t, miCols)
-		data, err := pc.encodeHighBitDepth420KeyframeTileWithOptions(src, recon, qIndex, c0, c1, header.Prefix.AllowScreenContentTools)
+		data, err := pc.encodeHighBitDepthColorKeyframeTileWithOptions(src, recon, qIndex, c0, c1, header.Prefix.AllowScreenContentTools, e.parserColorConfig())
 		if err != nil {
 			return nil, fmt.Errorf("encode tile %d: %w", t, err)
 		}
@@ -600,7 +579,7 @@ func (e *HighBitDepth420VideoEncoder) encodePTilePayloads(seq SequenceHeader, sr
 			pc = &e.tilePCs[t]
 		}
 		c0, c1 := tilePayloadColBounds(header.Tile, t, miCols)
-		data, err := pc.encodeHighBitDepth420PFrameTile(src, ref, out, qIndex, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, c0, c1)
+		data, err := pc.encodeHighBitDepthColorPFrameTile(src, ref, out, qIndex, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, e.parserColorConfig(), c0, c1)
 		if err != nil {
 			return nil, fmt.Errorf("encode tile %d: %w", t, err)
 		}
@@ -757,7 +736,11 @@ func (e *HighBitDepth420VideoEncoder) layerQIndex(temporalID uint8) uint8 {
 }
 
 func alloc42016Frame(dst *SourceFrame42016, src SourceFrame42016) {
-	chromaWidth, chromaHeight := src.Width/2, src.Height/2
+	allocColor16Frame(dst, src, parser.ColorConfig{BitDepth: src.BitDepth, SubsamplingX: true, SubsamplingY: true})
+}
+
+func allocColor16Frame(dst *SourceFrame42016, src SourceFrame42016, color parser.ColorConfig) {
+	chromaWidth, chromaHeight := chromaWidthForColor(src.Width, color), chromaHeightForColor(src.Height, color)
 	yNeed := (src.Height-1)*src.YStride + src.Width
 	chromaNeed := (chromaHeight-1)*src.ChromaStride + chromaWidth
 	if len(dst.Y) != yNeed {
@@ -777,11 +760,15 @@ func alloc42016Frame(dst *SourceFrame42016, src SourceFrame42016) {
 }
 
 func copy42016FrameInto(dst *SourceFrame42016, src SourceFrame42016) {
-	alloc42016Frame(dst, src)
+	copyColor16FrameInto(dst, src, parser.ColorConfig{BitDepth: src.BitDepth, SubsamplingX: true, SubsamplingY: true})
+}
+
+func copyColor16FrameInto(dst *SourceFrame42016, src SourceFrame42016, color parser.ColorConfig) {
+	allocColor16Frame(dst, src, color)
 	for y := 0; y < src.Height; y++ {
 		copy(dst.Y[y*dst.YStride:y*dst.YStride+src.Width], src.Y[y*src.YStride:y*src.YStride+src.Width])
 	}
-	chromaWidth, chromaHeight := src.Width/2, src.Height/2
+	chromaWidth, chromaHeight := chromaWidthForColor(src.Width, color), chromaHeightForColor(src.Height, color)
 	for y := 0; y < chromaHeight; y++ {
 		copy(dst.U[y*dst.ChromaStride:y*dst.ChromaStride+chromaWidth], src.U[y*src.ChromaStride:y*src.ChromaStride+chromaWidth])
 		copy(dst.V[y*dst.ChromaStride:y*dst.ChromaStride+chromaWidth], src.V[y*src.ChromaStride:y*src.ChromaStride+chromaWidth])
@@ -789,11 +776,15 @@ func copy42016FrameInto(dst *SourceFrame42016, src SourceFrame42016) {
 }
 
 func scaleSourceFrame42016Nearest(dst *SourceFrame42016, src SourceFrame42016, width, height int) (SourceFrame42016, error) {
+	return scaleSourceFrameColor16Nearest(dst, src, width, height, parser.ColorConfig{BitDepth: src.BitDepth, SubsamplingX: true, SubsamplingY: true})
+}
+
+func scaleSourceFrameColor16Nearest(dst *SourceFrame42016, src SourceFrame42016, width, height int, color parser.ColorConfig) (SourceFrame42016, error) {
 	if width <= 0 || height <= 0 || width%2 != 0 || height%2 != 0 {
 		return SourceFrame42016{}, ErrInvalidFrame
 	}
-	chromaWidth, chromaHeight := width/2, height/2
-	srcChromaWidth, srcChromaHeight := src.Width/2, src.Height/2
+	chromaWidth, chromaHeight := chromaWidthForColor(width, color), chromaHeightForColor(height, color)
+	srcChromaWidth, srcChromaHeight := chromaWidthForColor(src.Width, color), chromaHeightForColor(src.Height, color)
 	if len(dst.Y) != width*height {
 		dst.Y = make([]uint16, width*height)
 	}

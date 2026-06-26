@@ -73,21 +73,8 @@ func TestBrowserLiveAV1PlaybackStats(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx,
-		append(chromedp.DefaultExecAllocatorOptions[:],
-			chromedp.ExecPath(browserPath),
-			chromedp.Flag("headless", "new"),
-			chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
-			chromedp.Flag("disable-background-timer-throttling", true),
-			chromedp.Flag("disable-renderer-backgrounding", true),
-			chromedp.Flag("mute-audio", true),
-			chromedp.NoSandbox,
-			chromedp.UserDataDir(t.TempDir()),
-		)...,
-	)
-	defer cancelAlloc()
-	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
-	defer cancelBrowser()
+	browserCtx, closeBrowser := newBrowserE2EContext(t, ctx, browserPath)
+	defer closeBrowser()
 
 	for i, label := range []string{"initial", "reconnect"} {
 		got := browserPlaybackEvidence{}
@@ -684,21 +671,8 @@ func runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedbackFrames(
 
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx,
-		append(chromedp.DefaultExecAllocatorOptions[:],
-			chromedp.ExecPath(browserPath),
-			chromedp.Flag("headless", "new"),
-			chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
-			chromedp.Flag("disable-background-timer-throttling", true),
-			chromedp.Flag("disable-renderer-backgrounding", true),
-			chromedp.Flag("mute-audio", true),
-			chromedp.NoSandbox,
-			chromedp.UserDataDir(t.TempDir()),
-		)...,
-	)
-	defer cancelAlloc()
-	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
-	defer cancelBrowser()
+	browserCtx, closeBrowser := newBrowserE2EContext(t, ctx, browserPath)
+	defer closeBrowser()
 
 	got := browserPlaybackEvidence{}
 	if err := chromedp.Run(browserCtx,
@@ -789,21 +763,8 @@ func TestBrowserLiveRTCEncoderDirectRTPImpairmentFeedback(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx,
-		append(chromedp.DefaultExecAllocatorOptions[:],
-			chromedp.ExecPath(browserPath),
-			chromedp.Flag("headless", "new"),
-			chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
-			chromedp.Flag("disable-background-timer-throttling", true),
-			chromedp.Flag("disable-renderer-backgrounding", true),
-			chromedp.Flag("mute-audio", true),
-			chromedp.NoSandbox,
-			chromedp.UserDataDir(t.TempDir()),
-		)...,
-	)
-	defer cancelAlloc()
-	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
-	defer cancelBrowser()
+	browserCtx, closeBrowser := newBrowserE2EContext(t, ctx, browserPath)
+	defer closeBrowser()
 
 	got := browserPlaybackEvidence{}
 	if err := chromedp.Run(browserCtx,
@@ -970,21 +931,8 @@ func TestBrowserLiveRTCEncoderDirectRTPNACKRetransmission(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx,
-		append(chromedp.DefaultExecAllocatorOptions[:],
-			chromedp.ExecPath(browserPath),
-			chromedp.Flag("headless", "new"),
-			chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
-			chromedp.Flag("disable-background-timer-throttling", true),
-			chromedp.Flag("disable-renderer-backgrounding", true),
-			chromedp.Flag("mute-audio", true),
-			chromedp.NoSandbox,
-			chromedp.UserDataDir(t.TempDir()),
-		)...,
-	)
-	defer cancelAlloc()
-	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
-	defer cancelBrowser()
+	browserCtx, closeBrowser := newBrowserE2EContext(t, ctx, browserPath)
+	defer closeBrowser()
 
 	got := browserPlaybackEvidence{}
 	if err := chromedp.Run(browserCtx,
@@ -1361,6 +1309,32 @@ func rtcRTPHeaderExtensionsFromAnswer(answerSDP string) (rtcRTPHeaderExtensions,
 		extensions.TransportWideCC02ID = uint8(transportCC02ID)
 	}
 	return extensions, nil
+}
+
+func newBrowserE2EContext(t *testing.T, parent context.Context, browserPath string) (context.Context, func()) {
+	t.Helper()
+	options := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
+	options = append(options,
+		chromedp.ExecPath(browserPath),
+		chromedp.Flag("headless", "new"),
+		chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
+		chromedp.Flag("disable-background-timer-throttling", true),
+		chromedp.Flag("disable-renderer-backgrounding", true),
+		chromedp.Flag("mute-audio", true),
+		chromedp.NoSandbox,
+		chromedp.UserDataDir(t.TempDir()),
+	)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(parent, options...)
+	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
+	return browserCtx, func() {
+		closeCtx, cancelClose := context.WithTimeout(browserCtx, 5*time.Second)
+		if err := chromedp.Cancel(closeCtx); err != nil && !errors.Is(err, context.Canceled) {
+			t.Logf("browser cleanup: %v", err)
+		}
+		cancelClose()
+		cancelBrowser()
+		cancelAlloc()
+	}
 }
 
 func browserExecutable() (string, error) {

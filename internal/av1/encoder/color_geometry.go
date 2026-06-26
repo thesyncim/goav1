@@ -62,6 +62,32 @@ func videoColorSupported(color SequenceColorConfig) bool {
 	return videoColorIs420(pc) || videoColorIs422(pc) || videoColorIs444(pc)
 }
 
+func highBitDepthVideoColorSupported(profile Profile, color SequenceColorConfig) bool {
+	pc := parserColorConfig(color)
+	if pc.MonoChrome || (pc.BitDepth != 10 && pc.BitDepth != 12) {
+		return false
+	}
+	if err := validateSequenceColorConfig(profile, color); err != nil {
+		return false
+	}
+	return (pc.SubsamplingX && pc.SubsamplingY) ||
+		(pc.SubsamplingX && !pc.SubsamplingY) ||
+		(!pc.SubsamplingX && !pc.SubsamplingY)
+}
+
+func videoColorLabel(color parser.ColorConfig) string {
+	switch {
+	case color.MonoChrome:
+		return "monochrome"
+	case color.SubsamplingX && color.SubsamplingY:
+		return "4:2:0"
+	case color.SubsamplingX && !color.SubsamplingY:
+		return "4:2:2"
+	default:
+		return "4:4:4"
+	}
+}
+
 func videoColorSupportsInLoopFilters(color parser.ColorConfig) bool {
 	return videoColorIs420(color)
 }

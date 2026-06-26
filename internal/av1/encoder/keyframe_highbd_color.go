@@ -73,12 +73,22 @@ func EncodeHighBitDepth420Keyframe(src SourceFrame42016, qIndex uint8) ([]byte, 
 }
 
 func lossyHighBitDepth420KeyframeSequence(width, height int, bitDepth uint8) SequenceHeader {
-	seq := losslessKeyframeSequence(width, height)
-	seq.ColorConfig.BitDepth = bitDepth
-	seq.EnableCDEF = false
+	profile := Profile0
 	if bitDepth == 12 {
-		seq.Profile = Profile2
+		profile = Profile2
 	}
+	return lossyHighBitDepthColorKeyframeSequence(width, height, profile, SequenceColorConfig{
+		BitDepth:     bitDepth,
+		SubsamplingX: true,
+		SubsamplingY: true,
+	})
+}
+
+func lossyHighBitDepthColorKeyframeSequence(width, height int, profile Profile, color SequenceColorConfig) SequenceHeader {
+	seq := losslessKeyframeSequence(width, height)
+	seq.Profile = profile
+	seq.ColorConfig = color
+	seq.EnableCDEF = false
 	return seq
 }
 
@@ -87,6 +97,10 @@ func (pc *pframeCoder) encodeHighBitDepth420KeyframeTile(src SourceFrame42016, r
 }
 
 func (pc *pframeCoder) encodeHighBitDepth420KeyframeTileWithOptions(src SourceFrame42016, recon *SourceFrame42016, qIndex uint8, miColStart, miColEnd uint16, allowScreenContentTools bool) ([]byte, error) {
+	return pc.encodeHighBitDepthColorKeyframeTileWithOptions(src, recon, qIndex, miColStart, miColEnd, allowScreenContentTools, parser.ColorConfig{BitDepth: src.BitDepth, SubsamplingX: true, SubsamplingY: true})
+}
+
+func (pc *pframeCoder) encodeHighBitDepthColorKeyframeTileWithOptions(src SourceFrame42016, recon *SourceFrame42016, qIndex uint8, miColStart, miColEnd uint16, allowScreenContentTools bool, color parser.ColorConfig) ([]byte, error) {
 	if err := pc.partCDFs.InitDefault(); err != nil {
 		return nil, err
 	}
@@ -94,7 +108,7 @@ func (pc *pframeCoder) encodeHighBitDepth420KeyframeTileWithOptions(src SourceFr
 	st.qIndex = qIndex
 	st.forceIntegerMV = false
 	st.allowScreenContentTools = allowScreenContentTools
-	st.color = parser.ColorConfig{BitDepth: src.BitDepth, SubsamplingX: true, SubsamplingY: true}
+	st.color = color
 	st.lfMap = nil
 	st.hme = nil
 	st.decisionStats = nil
@@ -163,7 +177,7 @@ func (pc *pframeCoder) encodeHighBitDepth420KeyframeTileWithOptions(src SourceFr
 
 func (st *lossyEncodeState) encodeHighBitDepth420Block(src SourceFrame42016, recon *SourceFrame42016, block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 	if block.Size != tile.BlockSize8x8 {
-		return fmt.Errorf("encoder: unexpected high-bit-depth 4:2:0 block %+v", block)
+		return fmt.Errorf("encoder: unexpected high-bit-depth color block %+v", block)
 	}
 	const n = 8
 	modeCtx := &scratch.Mode
