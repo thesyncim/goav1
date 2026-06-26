@@ -223,7 +223,9 @@ There are two public encoder surfaces:
   `RTCEncoder.Encode` emits one
   single-spatial-layer AV1 temporal unit per call; `RTCEncoder.EncodePicture`
   emits one RTP-frame-ready output per active spatial layer for WebRTC SVC and
-  simulcast modes, including key and key-shift schedules.
+  simulcast modes, including key and key-shift schedules. Returned frame data
+  and single-packet dependency descriptors are encoder-owned hot-path views;
+  copy them before retaining or dispatching asynchronously.
   `RTCEncoder.SetConfig` applies
   bitrate, framerate, CBR/CQP rate-control, fixed quantizer, and supported
   scalability changes atomically; changes that alter layer geometry or

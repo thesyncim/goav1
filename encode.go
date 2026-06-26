@@ -601,9 +601,10 @@ type RTCFrame struct {
 	// FrameID is the dependency-descriptor frame number.
 	FrameID uint64
 	// DependencyDescriptor is the serialized RTP dependency descriptor for a
-	// single-packet frame; keyframes attach the dependency structure. It is
-	// freshly allocated and owned by the caller. Use AppendRTPPackets when the
-	// frame is fragmented across multiple RTP payloads.
+	// single-packet frame; keyframes attach the dependency structure. It aliases
+	// encoder-owned storage reused by the next Encode call; copy it before
+	// retaining or sending asynchronously. Use AppendRTPPackets when the frame
+	// is fragmented across multiple RTP payloads.
 	DependencyDescriptor []byte
 
 	frameInfo                 encoder.WebRTCGenericFrameInfo
@@ -956,8 +957,8 @@ func (e *RTCEncoder) Close() error {
 }
 
 // Encode encodes one frame with its dependency descriptor. The returned Data
-// has the same lifetime as VideoEncoder.Encode; copy it before retaining or
-// sending asynchronously.
+// and DependencyDescriptor have the same lifetime as VideoEncoder.Encode; copy
+// them before retaining or sending asynchronously.
 func (e *RTCEncoder) Encode(frame I420Frame, forceKey bool) (RTCFrame, error) {
 	if e == nil || e.stream == nil {
 		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
@@ -1231,8 +1232,8 @@ func (e *RTCEncoder) EncodeNV21(frame NV21Frame, forceKey bool) (RTCFrame, error
 }
 
 // EncodePicture encodes one WebRTC picture. The returned frames have the same
-// lifetime as VideoEncoder.Encode; copy frame Data before retaining or sending
-// asynchronously.
+// lifetime as VideoEncoder.Encode; copy frame Data and DependencyDescriptor
+// before retaining or sending asynchronously.
 func (e *RTCEncoder) EncodePicture(frame I420Frame, forceKey bool) (RTCPicture, error) {
 	if e == nil || e.stream == nil {
 		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
@@ -1484,8 +1485,8 @@ func (e *RTCEncoder) EncodeFramePicture(frame Frame, forceKey bool) (RTCPicture,
 }
 
 // EncodeNV12Picture encodes one NV12 WebRTC picture. The returned frames have
-// the same lifetime as EncodePicture; copy frame Data before retaining or
-// sending asynchronously.
+// the same lifetime as EncodePicture; copy frame Data and DependencyDescriptor
+// before retaining or sending asynchronously.
 func (e *RTCEncoder) EncodeNV12Picture(frame NV12Frame, forceKey bool) (RTCPicture, error) {
 	if e == nil || e.stream == nil {
 		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
@@ -1498,8 +1499,8 @@ func (e *RTCEncoder) EncodeNV12Picture(frame NV12Frame, forceKey bool) (RTCPictu
 }
 
 // EncodeNV21Picture encodes one NV21 WebRTC picture. The returned frames have
-// the same lifetime as EncodePicture; copy frame Data before retaining or
-// sending asynchronously.
+// the same lifetime as EncodePicture; copy frame Data and DependencyDescriptor
+// before retaining or sending asynchronously.
 func (e *RTCEncoder) EncodeNV21Picture(frame NV21Frame, forceKey bool) (RTCPicture, error) {
 	if e == nil || e.stream == nil {
 		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
@@ -1520,7 +1521,7 @@ func rtcFrameFromInternal(out encoder.WebRTCEncodedFrame) RTCFrame {
 		TemporalID:                out.Info.TemporalID,
 		SpatialID:                 out.Info.SpatialID,
 		FrameID:                   out.Info.FrameID,
-		DependencyDescriptor:      append([]byte(nil), out.Descriptor...),
+		DependencyDescriptor:      out.Descriptor,
 		frameInfo:                 out.Info,
 		dependencyStructure:       out.Structure,
 		attachDependencyStructure: out.AttachDependencyStructure,

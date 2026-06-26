@@ -8,6 +8,61 @@ import (
 
 var publicBenchmarkSink int
 
+func BenchmarkPublicRTCEncoderEncodePicture1080p(b *testing.B) {
+	for _, tc := range []struct {
+		name string
+		mode av1.EncoderScalabilityMode
+	}{
+		{name: "L1T3", mode: av1.EncoderScalabilityModeL1T3},
+		{name: "S3T3", mode: av1.EncoderScalabilityModeS3T3},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			const width, height = 1920, 1080
+			cfg := publicRTCMatrixConfig(width, height, tc.mode)
+			cfg.TargetBitrateKbps = 1800
+			cfg.MaxBitrateKbps = 2400
+			enc, err := av1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				b.Fatalf("NewRTCEncoderWithConfig: %v", err)
+			}
+			defer enc.Close()
+
+			frames := [...]av1.I420Frame{
+				publicRTCMatrixFrame(width, height, 0),
+				publicRTCMatrixFrame(width, height, 1),
+				publicRTCMatrixFrame(width, height, 2),
+				publicRTCMatrixFrame(width, height, 3),
+			}
+			warmPublicRTCEncoderEncodePictureHotPath(b, enc, frames[:])
+
+			b.SetBytes(publicRTCBenchmarkPictureBytes(enc.Config()))
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			sum := 0
+			for i := 0; i < b.N; i++ {
+				picture, err := enc.EncodePicture(frames[i&3], false)
+				if err != nil {
+					b.Fatalf("EncodePicture: %v", err)
+				}
+				for j := 0; j < picture.FrameNum; j++ {
+					sum += len(picture.Frames[j].Data) + len(picture.Frames[j].DependencyDescriptor)
+				}
+			}
+			publicBenchmarkSink = sum
+		})
+	}
+}
+
+func publicRTCBenchmarkPictureBytes(config av1.EncoderConfig) int64 {
+	var bytes int64
+	for i := uint8(0); i < config.SpatialLayerCount; i++ {
+		resolution := config.SpatialLayers[i].Resolution
+		bytes += int64(resolution.Width) * int64(resolution.Height) * 3 / 2
+	}
+	return bytes
+}
+
 func BenchmarkPublicLowOverheadOBUIterator(b *testing.B) {
 	stream := publicBenchmarkLowOverheadStream()
 	b.SetBytes(int64(len(stream)))

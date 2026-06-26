@@ -15,6 +15,8 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/obu"
 )
 
+var publicRTCEncoderHotPathSink int
+
 func TestPublicEncoderWebRTCScalabilityModeCatalogue(t *testing.T) {
 	want := []string{
 		"L1T1", "L1T2", "L1T3",
@@ -3816,7 +3818,7 @@ func TestPublicEncoderRuntimeOptions(t *testing.T) {
 	zeroRTC.SetGoldenInterval(0)
 }
 
-func TestPublicRTCEncoderDependencyDescriptorOwnership(t *testing.T) {
+func TestPublicRTCEncoderDependencyDescriptorBorrowedLifetime(t *testing.T) {
 	t.Run("Encode", func(t *testing.T) {
 		const w, h = 192, 128
 		enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
@@ -3845,8 +3847,8 @@ func TestPublicRTCEncoderDependencyDescriptorOwnership(t *testing.T) {
 		if bytes.Equal(second.DependencyDescriptor, snapshot) {
 			t.Fatal("second descriptor matched first; test did not exercise descriptor replacement")
 		}
-		if !bytes.Equal(first.DependencyDescriptor, snapshot) {
-			t.Fatal("retained Encode dependency descriptor changed after a later encode")
+		if bytes.Equal(first.DependencyDescriptor, snapshot) {
+			t.Fatal("retained Encode dependency descriptor stayed stable after a later encode")
 		}
 	})
 
@@ -3884,11 +3886,81 @@ func TestPublicRTCEncoderDependencyDescriptorOwnership(t *testing.T) {
 			if bytes.Equal(second.Frames[i].DependencyDescriptor, snapshots[i]) {
 				t.Fatalf("second frame %d descriptor matched first; test did not exercise descriptor replacement", i)
 			}
-			if !bytes.Equal(first.Frames[i].DependencyDescriptor, snapshots[i]) {
-				t.Fatalf("retained EncodePicture frame %d dependency descriptor changed after a later encode", i)
+			if bytes.Equal(first.Frames[i].DependencyDescriptor, snapshots[i]) {
+				t.Fatalf("retained EncodePicture frame %d dependency descriptor stayed stable after a later encode", i)
 			}
 		}
 	})
+}
+
+func TestPublicRTCEncoderEncodePicture1080pHotPathAllocs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode goav1.EncoderScalabilityMode
+	}{
+		{name: "L1T3", mode: goav1.EncoderScalabilityModeL1T3},
+		{name: "S3T3", mode: goav1.EncoderScalabilityModeS3T3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const width, height = 1920, 1080
+			cfg := publicRTCMatrixConfig(width, height, tc.mode)
+			cfg.TargetBitrateKbps = 1800
+			cfg.MaxBitrateKbps = 2400
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+			}
+			defer enc.Close()
+
+			frames := [...]goav1.I420Frame{
+				publicRTCMatrixFrame(width, height, 0),
+				publicRTCMatrixFrame(width, height, 1),
+				publicRTCMatrixFrame(width, height, 2),
+				publicRTCMatrixFrame(width, height, 3),
+			}
+			warmPublicRTCEncoderEncodePictureHotPath(t, enc, frames[:])
+
+			var allocErr error
+			frameIndex := 0
+			sum := 0
+			allocs := testing.AllocsPerRun(10, func() {
+				picture, err := enc.EncodePicture(frames[frameIndex&3], false)
+				frameIndex++
+				if err != nil {
+					allocErr = err
+					return
+				}
+				if picture.FrameNum == 0 {
+					allocErr = fmt.Errorf("empty picture")
+					return
+				}
+				for i := 0; i < picture.FrameNum; i++ {
+					sum += len(picture.Frames[i].Data) + len(picture.Frames[i].DependencyDescriptor)
+				}
+			})
+			publicRTCEncoderHotPathSink = sum
+			if allocErr != nil {
+				t.Fatalf("EncodePicture allocation run: %v", allocErr)
+			}
+			if allocs != 0 {
+				t.Fatalf("EncodePicture 1080p %s allocations=%f want 0", tc.name, allocs)
+			}
+		})
+	}
+}
+
+func warmPublicRTCEncoderEncodePictureHotPath(tb testing.TB, enc *goav1.RTCEncoder, frames []goav1.I420Frame) {
+	tb.Helper()
+	for i := 0; i < len(frames)*2; i++ {
+		forceKey := i == 0 || i == len(frames)
+		picture, err := enc.EncodePicture(frames[i%len(frames)], forceKey)
+		if err != nil {
+			tb.Fatalf("warm EncodePicture(%d): %v", i, err)
+		}
+		if picture.FrameNum == 0 {
+			tb.Fatalf("warm EncodePicture(%d) emitted no frames", i)
+		}
+	}
 }
 
 func TestPublicRTCEncoderClose(t *testing.T) {
