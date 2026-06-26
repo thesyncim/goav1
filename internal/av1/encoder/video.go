@@ -687,6 +687,8 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 	tu, recon, err := encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, nil, &e.cdefApp, e.tileColsLog2, keyframeTileOptions{
 		payloads:          e.payloads[:nTiles],
 		errs:              e.tileErrs[:nTiles],
+		groupScratch:      &e.tuGroup,
+		outScratch:        &e.tuScratch,
 		stream:            e,
 		sequenceMaxWidth:  maxWidth,
 		sequenceMaxHeight: maxHeight,
@@ -896,7 +898,7 @@ func (e *VideoEncoder) Prewarm() error {
 	savedQ := e.qIndex
 	// Size the assembly buffers for real content up front; the throwaway
 	// frame below is black and would leave them near-empty.
-	if bound := e.width * e.height / 2; cap(e.tuScratch) < bound {
+	if bound := e.width * e.height; cap(e.tuScratch) < bound {
 		e.tuScratch = make([]byte, 0, bound)
 		e.tuGroup = make([]byte, 0, bound)
 	}

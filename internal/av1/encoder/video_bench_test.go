@@ -234,8 +234,13 @@ func BenchmarkStreamingKeyframe1080p(b *testing.B) {
 			src.Y[y*w+x] = uint8(60 + (x/7+y/9)%70 + rng.Intn(25))
 		}
 	}
-	enc, _ := encoder.NewVideoEncoderCBR(w, h, encoder.RateControlConfig{TargetBitsPerSecond: 8_000_000, FramesPerSecond: 60, MinQIndex: 20, MaxQIndex: 200})
-	enc.Encode(src, true)
+	enc, err := encoder.NewVideoEncoderCBR(w, h, encoder.RateControlConfig{TargetBitsPerSecond: 8_000_000, FramesPerSecond: 60, MinQIndex: 20, MaxQIndex: 200})
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := enc.Prewarm(); err != nil {
+		b.Fatal(err)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {

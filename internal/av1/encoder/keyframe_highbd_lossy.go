@@ -3,7 +3,6 @@ package encoder
 import (
 	"fmt"
 
-	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
@@ -116,8 +115,8 @@ func (pc *pframeCoder) encodeHighBitDepthMonochromeKeyframeTileWithOptions(src S
 	if cap(pc.writerBuf) == 0 {
 		pc.writerBuf = make([]byte, 1<<18)
 	}
-	w := entropy.NewWriter(pc.writerBuf[:0])
-	st.w = &w
+	pc.writer.Reset(pc.writerBuf[:0])
+	st.w = &pc.writer
 
 	miRows := uint16(src.Height / 4)
 	const sbSizeMIB = 16
@@ -147,10 +146,10 @@ func (pc *pframeCoder) encodeHighBitDepthMonochromeKeyframeTileWithOptions(src S
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 		return st.encodeHighBitDepthMonochromeBlock(src, recon, block, scratch)
 	}
-	if err := tile.WalkBlockLoopWrite(&w, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
+	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
 		return nil, err
 	}
-	return w.Finish()
+	return pc.writer.Finish()
 }
 
 func (st *lossyEncodeState) encodeHighBitDepthMonochromeBlock(src SourceFrameMono16, recon *SourceFrameMono16, block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {

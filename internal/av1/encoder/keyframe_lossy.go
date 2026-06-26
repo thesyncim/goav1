@@ -132,11 +132,28 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 		}
 		seqWidth, seqHeight = tileOpts.sequenceMaxWidth, tileOpts.sequenceMaxHeight
 	}
-	var recon SourceFrame420
 	if reconBuf != nil && reconBuf.Y != nil {
-		recon = *reconBuf
-	} else {
-		recon = SourceFrame420{
+		return encodeKeyframeFilteredTilesInto(src, qIndex, lf, renderW, renderH, reconBuf, tilePC, cdefApp, tileColsLog2, tileOpts, seqWidth, seqHeight)
+	}
+	recon := SourceFrame420{
+		Y:            make([]byte, len(src.Y)),
+		U:            make([]byte, len(src.U)),
+		V:            make([]byte, len(src.V)),
+		YStride:      src.YStride,
+		ChromaStride: src.ChromaStride,
+		Width:        src.Width,
+		Height:       src.Height,
+	}
+	if reconBuf != nil {
+		*reconBuf = recon
+		return encodeKeyframeFilteredTilesInto(src, qIndex, lf, renderW, renderH, reconBuf, tilePC, cdefApp, tileColsLog2, tileOpts, seqWidth, seqHeight)
+	}
+	return encodeKeyframeFilteredTilesInto(src, qIndex, lf, renderW, renderH, &recon, tilePC, cdefApp, tileColsLog2, tileOpts, seqWidth, seqHeight)
+}
+
+func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, recon *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier, tileColsLog2 uint8, tileOpts keyframeTileOptions, seqWidth, seqHeight int) ([]byte, SourceFrame420, error) {
+	if recon == nil || recon.Y == nil {
+		recon = &SourceFrame420{
 			Y:            make([]byte, len(src.Y)),
 			U:            make([]byte, len(src.U)),
 			V:            make([]byte, len(src.V)),
@@ -144,9 +161,6 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 			ChromaStride: src.ChromaStride,
 			Width:        src.Width,
 			Height:       src.Height,
-		}
-		if reconBuf != nil {
-			*reconBuf = recon
 		}
 	}
 	color := parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}
@@ -229,7 +243,7 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 	}
 	req := keyframeTileRun{
 		src:                     src,
-		recon:                   &recon,
+		recon:                   recon,
 		qIndex:                  qIndex,
 		color:                   color,
 		allowScreenContentTools: header.Prefix.AllowScreenContentTools,
@@ -250,14 +264,14 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 	}
 
 	if lfLevel > 0 {
-		if err := lf.apply(&recon, parser.LoopFilterParams{
+		if err := lf.apply(recon, parser.LoopFilterParams{
 			LevelY: [2]uint8{lfLevel, lfLevel},
 			LevelU: lfLevel,
 			LevelV: lfLevel,
 		}); err != nil {
 			return nil, SourceFrame420{}, fmt.Errorf("loop filter apply: %w", err)
 		}
-		if err := cdefApp.apply(&recon, cdefParserParams(header.CDEF), &lf.filtMap); err != nil {
+		if err := cdefApp.apply(recon, cdefParserParams(header.CDEF), &lf.filtMap); err != nil {
 			return nil, SourceFrame420{}, fmt.Errorf("cdef apply: %w", err)
 		}
 	}
@@ -270,17 +284,37 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 	if err != nil {
 		return nil, SourceFrame420{}, fmt.Errorf("size tile group: %w", err)
 	}
-	group := make([]byte, 0, groupSize)
+	var group []byte
+	if tileOpts.groupScratch != nil {
+		if cap(*tileOpts.groupScratch) < groupSize {
+			*tileOpts.groupScratch = make([]byte, 0, groupSize+groupSize/2)
+		}
+		group = (*tileOpts.groupScratch)[:0]
+	} else {
+		group = make([]byte, 0, groupSize)
+	}
 	group, err = AppendTileGroupPayload(group, header.Tile, 0, endTile, payloads)
 	if err != nil {
 		return nil, SourceFrame420{}, fmt.Errorf("append tile group: %w", err)
+	}
+	if tileOpts.groupScratch != nil {
+		*tileOpts.groupScratch = group
 	}
 	groupOBU := OBU{Type: obu.TypeTileGroup, Payload: group}
 	groupOBUSize, err := LowOverheadOBUSize(groupOBU)
 	if err != nil {
 		return nil, SourceFrame420{}, err
 	}
-	out := make([]byte, 0, headerSize+groupOBUSize)
+	total := headerSize + groupOBUSize
+	var out []byte
+	if tileOpts.outScratch != nil {
+		if cap(*tileOpts.outScratch) < total {
+			*tileOpts.outScratch = make([]byte, 0, total+total/2)
+		}
+		out = (*tileOpts.outScratch)[:0]
+	} else {
+		out = make([]byte, 0, total)
+	}
 	out, err = AppendLowOverheadCompleteIntraHeaderTemporalUnit(out, seq, header)
 	if err != nil {
 		return nil, SourceFrame420{}, fmt.Errorf("append header TU: %w", err)
@@ -289,12 +323,17 @@ func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilte
 	if err != nil {
 		return nil, SourceFrame420{}, fmt.Errorf("append tile group OBU: %w", err)
 	}
-	return out, recon, nil
+	if tileOpts.outScratch != nil {
+		*tileOpts.outScratch = out
+	}
+	return out, *recon, nil
 }
 
 type keyframeTileOptions struct {
 	payloads          []TilePayload
 	errs              []error
+	groupScratch      *[]byte
+	outScratch        *[]byte
 	stream            *VideoEncoder
 	sequenceMaxWidth  int
 	sequenceMaxHeight int
@@ -588,8 +627,8 @@ func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, re
 	if cap(pc.writerBuf) == 0 {
 		pc.writerBuf = make([]byte, 1<<18)
 	}
-	w := entropy.NewWriter(pc.writerBuf[:0])
-	st.w = &w
+	pc.writer.Reset(pc.writerBuf[:0])
+	st.w = &pc.writer
 
 	miRows := uint16(src.Height / 4)
 	const sbSizeMIB = 16
@@ -693,10 +732,10 @@ func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, re
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 		return st.encodeBlock(src, recon, block, scratch)
 	}
-	if err := tile.WalkBlockLoopWrite(&w, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
+	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
 		return nil, err
 	}
-	return w.Finish()
+	return pc.writer.Finish()
 }
 
 func (pc *pframeCoder) encodeMonochromeKeyframeTile(src SourceFrameMono, recon *SourceFrameMono, qIndex uint8, miColStart, miColEnd uint16) ([]byte, error) {
@@ -747,8 +786,8 @@ func (pc *pframeCoder) encodeMonochromeKeyframeTileWithOptions(src SourceFrameMo
 	if cap(pc.writerBuf) == 0 {
 		pc.writerBuf = make([]byte, 1<<18)
 	}
-	w := entropy.NewWriter(pc.writerBuf[:0])
-	st.w = &w
+	pc.writer.Reset(pc.writerBuf[:0])
+	st.w = &pc.writer
 
 	miRows := uint16(src.Height / 4)
 	const sbSizeMIB = 16
@@ -832,10 +871,10 @@ func (pc *pframeCoder) encodeMonochromeKeyframeTileWithOptions(src SourceFrameMo
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 		return st.encodeMonochromeBlock(src, recon, block, scratch)
 	}
-	if err := tile.WalkBlockLoopWrite(&w, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
+	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
 		return nil, err
 	}
-	return w.Finish()
+	return pc.writer.Finish()
 }
 
 // encodeBlock codes one 8x8 DC-intra block: mode symbols in the decoder's

@@ -168,17 +168,17 @@ func (a *cdefApplier) init(width, height int, cdefParams parser.CDEFParams) erro
 	if err != nil {
 		return err
 	}
-	// Scratch sizing reads the output plane geometry; a zero-pixel frame
-	// with the right shape suffices.
+	// Scratch sizing reads output plane geometry only; nil planes with the
+	// right shape avoid allocating a dummy 1080p frame just to size scratch.
 	shape := frame.Frame{
 		Format: frame.Format{
 			Width: width, Height: height,
 			BitDepth: 8, SubsamplingX: true, SubsamplingY: true,
 		},
 		Layout: frame.Layout{BytesPerSample: 1},
-		Y:      frame.Plane{Pix: make([]byte, width*height), Stride: width, Width: width, Height: height},
-		U:      frame.Plane{Pix: make([]byte, width*height/4), Stride: width / 2, Width: width / 2, Height: height / 2},
-		V:      frame.Plane{Pix: make([]byte, width*height/4), Stride: width / 2, Width: width / 2, Height: height / 2},
+		Y:      frame.Plane{Stride: width, Width: width, Height: height},
+		U:      frame.Plane{Stride: width / 2, Width: width / 2, Height: height / 2},
+		V:      frame.Plane{Stride: width / 2, Width: width / 2, Height: height / 2},
 	}
 	// Scratch sizing requires parameters that still owe a CDEF pass; the
 	// per-frame apply carries the real strengths.
@@ -211,13 +211,18 @@ func (a *cdefApplier) init(width, height int, cdefParams parser.CDEFParams) erro
 	if a.bandIn == nil {
 		a.bandIn = make([][]uint16, cdefApplyBands)
 		a.bandUnit = make([][]uint16, cdefApplyBands)
-		for b := range a.bandIn {
+	}
+	for b := range a.bandIn {
+		if len(a.bandIn[b]) < size.Input {
 			a.bandIn[b] = make([]uint16, size.Input)
+		}
+		if len(a.bandUnit[b]) < size.UnitDst {
 			a.bandUnit[b] = make([]uint16, size.UnitDst)
 		}
 	}
 	a.unitRows = rows
 	a.bound = true
+	a.startWorkers()
 	return nil
 }
 

@@ -3743,6 +3743,7 @@ func TestPublicEncoderRuntimeOptions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("key Encode: %v", err)
 		}
+		keyData := append([]byte(nil), key.Data...)
 		enc.SetTileColumns(4)
 		enc.SetGoldenInterval(0)
 		delta, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false)
@@ -3753,7 +3754,7 @@ func TestPublicEncoderRuntimeOptions(t *testing.T) {
 			t.Fatalf("runtime options key=%v delta=%v", key.Keyframe, delta.Keyframe)
 		}
 		dec, err := goav1.NewDecoder([][]byte{
-			append([]byte(nil), key.Data...),
+			keyData,
 			append([]byte(nil), delta.Data...),
 		})
 		if err != nil {

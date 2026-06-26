@@ -218,7 +218,13 @@ func (a *loopFilterApplier) init(width, height int) error {
 	for i := range a.bandBufs {
 		a.bandBufs[i] = make([]decoder.FrameWorkLoopFilterPostFilterEdge, bandBound)
 	}
+	if cap(a.planeEdges[0]) < len(a.edges) {
+		for p := range a.planeEdges {
+			a.planeEdges[p] = make([]decoder.FrameWorkLoopFilterPostFilterEdge, 0, len(a.edges))
+		}
+	}
 	a.bound = true
+	a.startWorkers()
 	return nil
 }
 
