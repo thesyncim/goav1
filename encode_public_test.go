@@ -4394,6 +4394,124 @@ func TestPublicRTCEncoderPairwiseControlRTPReferenceDecoders(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderDeterministicControlChurnSoakReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	fpsCycle := []goav1.EncoderRational{
+		{Num: 15, Den: 1},
+		{Num: 24, Den: 1},
+		{Num: 30, Den: 1},
+		{Num: 60000, Den: 1001},
+		{Num: 60, Den: 1},
+		{Num: 120, Den: 1},
+	}
+	speedCycle := []int8{
+		goav1.EncoderWebRTCMinEffortLevel,
+		0,
+		1,
+		goav1.EncoderWebRTCMaxEffortLevel,
+	}
+	scenarios := []struct {
+		name string
+		mode goav1.EncoderScalabilityMode
+	}{
+		{name: "single-spatial-l1t3", mode: goav1.EncoderScalabilityModeL1T3},
+		{name: "shared-svc-l2t3-key-shift", mode: goav1.EncoderScalabilityModeL2T3_KEY_SHIFT},
+		{name: "shared-svc-l3t3-key-shift", mode: goav1.EncoderScalabilityModeL3T3_KEY_SHIFT},
+		{name: "simulcast-s3t3h", mode: goav1.EncoderScalabilityModeS3T3h},
+	}
+
+	for scenarioIndex, scenario := range scenarios {
+		scenarioIndex, scenario := scenarioIndex, scenario
+		t.Run(scenario.name, func(t *testing.T) {
+			rng := rand.New(rand.NewSource(int64(0x5eed0000 + scenarioIndex*0x101)))
+			width, height := publicRTCMatrixGeometry(t, scenario.mode)
+			baseKbps := publicRTCMatrixControlBitrateKbps(t, scenario.mode)
+			configForStep := func(step int) goav1.EncoderConfig {
+				cfg := publicRTCMatrixConfig(width, height, scenario.mode)
+				cfg.MaxFramerate = fpsCycle[(step+rng.Intn(len(fpsCycle)))%len(fpsCycle)]
+				cfg.Speed = speedCycle[(step+rng.Intn(len(speedCycle)))%len(speedCycle)]
+				cfg.MaxThreads = int32(1 + rng.Intn(3))
+				cfg.Content = goav1.EncoderContentCamera
+				if rng.Intn(2) == 0 {
+					cfg.Content = goav1.EncoderContentScreen
+				}
+				targetKbps := baseKbps + int32(step*53+rng.Intn(int(baseKbps/2)+1))
+				publicRTCApplyControlBitrates(&cfg, targetKbps)
+				if rng.Intn(2) == 0 {
+					cfg.RateControl = goav1.EncoderRateControlCQP
+					cfg.Quantizer = uint8(22 + rng.Intn(23))
+				} else {
+					cfg.RateControl = goav1.EncoderRateControlCBR
+					cfg.Quantizer = 0
+				}
+				return cfg
+			}
+
+			var enc *goav1.RTCEncoder
+			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var activeReceiver goav1.RTPDependencyDescriptorState
+			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var orderedTUs [][]byte
+			var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
+			var sharedSequence goav1.SequenceHeader
+			nextFrameID := uint64(0)
+			activeLimits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}
+
+			for step := 0; step < 8; step++ {
+				cfg := configForStep(step)
+				forceKey := step == 3 || step == 6 || (step > 0 && rng.Intn(5) == 0)
+				wantKey := step == 0 || forceKey
+				if enc == nil {
+					var err error
+					enc, err = goav1.NewRTCEncoderWithConfig(cfg)
+					if err != nil {
+						t.Fatalf("NewRTCEncoderWithConfig(%s): %v", scenario.mode, err)
+					}
+					defer enc.Close()
+				} else {
+					wantKey = wantKey || publicRTCSetConfigRequiresKey(t, enc.Config(), cfg)
+					if err := enc.SetConfig(cfg); err != nil {
+						t.Fatalf("step %d SetConfig(%s): %v", step, scenario.mode, err)
+					}
+				}
+				assertPublicRTCConfigControls(t, enc.Config(), cfg)
+				wantDuration, err := goav1.EncoderWebRTCRTPFrameDuration(enc.Config())
+				if err != nil {
+					t.Fatalf("step %d EncoderWebRTCRTPFrameDuration: %v", step, err)
+				}
+				if got, err := enc.RTPFrameDuration(); err != nil || got != wantDuration {
+					t.Fatalf("step %d RTPFrameDuration=%+v err=%v want %+v", step, got, err, wantDuration)
+				}
+
+				picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, step*7+rng.Intn(7)), forceKey)
+				if err != nil {
+					t.Fatalf("step %d EncodePicture(%s): %v", step, scenario.mode, err)
+				}
+				if picture.Keyframe != wantKey {
+					t.Fatalf("step %d key=%v want %v picture=%+v", step, picture.Keyframe, wantKey, picture)
+				}
+				current := enc.Config()
+				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, current, picture, wantKey, &nextFrameID)
+				assertPublicRTCPictureActiveDecodeTargetOptions(t, &activeReceiver, current, picture, activeLimits)
+				for frameIndex := 0; frameIndex < picture.FrameNum; frameIndex++ {
+					frame := picture.Frames[frameIndex]
+					if publicRTCSharedReferenceSlotMode(current.Scalability) {
+						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("step-%d S%d", step, frame.SpatialID), frame.Data, &sharedSequence, current.Content == goav1.EncoderContentScreen)
+						continue
+					}
+					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("step-%d S%d", step, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == goav1.EncoderContentScreen)
+				}
+				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
+			}
+
+			normalized := enc.Config()
+			assertPublicRTCLayerStreamsDecode(t, normalized, layerTUs, orderedTUs)
+			assertPublicRTCRTPReferenceDecoders(t, decoders, "control-churn-soak-"+scenario.name, normalized, layerTUs, orderedTUs)
+		})
+	}
+}
+
 func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	modes := goav1.EncoderWebRTCScalabilityModes()
