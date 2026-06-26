@@ -1949,6 +1949,70 @@ func TestPublicRTCEncoderSetConfigNativeMonochromeTransition(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderSetConfigNativeI422TransitionReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	const w, h = 192, 128
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	first, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, 0), false)
+	if err != nil {
+		t.Fatalf("EncodePicture: %v", err)
+	}
+	i422Config := enc.Config()
+	i422Config.Profile = goav1.EncoderProfile2
+	i422Config.ColorConfigSet = true
+	i422Config.ColorConfig = goav1.EncoderSequenceColorConfig{
+		BitDepth:     8,
+		SubsamplingX: true,
+	}
+	if err := enc.SetConfig(i422Config); err != nil {
+		t.Fatalf("SetConfig I422: %v", err)
+	}
+	if enc.Config().Profile != goav1.EncoderProfile2 ||
+		enc.Config().ColorConfig.MonoChrome ||
+		enc.Config().ColorConfig.BitDepth != 8 ||
+		!enc.Config().ColorConfig.SubsamplingX ||
+		enc.Config().ColorConfig.SubsamplingY {
+		t.Fatalf("post-SetConfig config=%+v want native 4:2:2", enc.Config())
+	}
+	key, err := enc.EncodeI422Picture(publicI422NativePattern(w, h, 1), false)
+	if err != nil {
+		t.Fatalf("EncodeI422Picture key after SetConfig: %v", err)
+	}
+	if !key.Keyframe || key.FrameNum != 1 || key.Frames[0].FrameID != first.Frames[0].FrameID+uint64(first.FrameNum) {
+		t.Fatalf("I422 transition key=%+v after first=%+v", key, first)
+	}
+	seq := publicFirstSequenceHeader(t, key.Frames[0].Data)
+	if seq.SeqProfile != uint8(goav1.EncoderProfile2) ||
+		seq.ColorConfig.MonoChrome ||
+		seq.ColorConfig.BitDepth != 8 ||
+		!seq.ColorConfig.SubsamplingX ||
+		seq.ColorConfig.SubsamplingY {
+		t.Fatalf("transition sequence profile=%d color=%+v want native 8-bit 4:2:2", seq.SeqProfile, seq.ColorConfig)
+	}
+	keyPayload := append([]byte(nil), key.Frames[0].Data...)
+	delta, err := enc.EncodeI422Picture(publicI422NativePattern(w, h, 2), false)
+	if err != nil {
+		t.Fatalf("EncodeI422Picture delta after SetConfig: %v", err)
+	}
+	if delta.Keyframe || delta.FrameNum != 1 {
+		t.Fatalf("I422 transition delta=%+v want single delta picture", delta)
+	}
+	deltaPayload := append([]byte(nil), delta.Frames[0].Data...)
+
+	frames := []publicIVFFrame{
+		{timestamp: 0, payload: keyPayload},
+		{timestamp: 1, payload: deltaPayload},
+	}
+	ivf := appendPublicIVF(nil, w, h, 30, 1, frames)
+	assertPublicIVFMatchesReferenceDecodersRawYUV(t, decoders, "public-rtc-i422-transition", ivf)
+}
+
 func TestPublicRTCEncoderSetConfigNativeI444TransitionReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 192, 128
