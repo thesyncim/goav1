@@ -47,6 +47,16 @@ type SourceFrameMono16 struct {
 	BitDepth      uint8
 }
 
+// SourceFrame42016 is one caller-owned 10/12-bit 4:2:0 source picture.
+// Samples are stored as uint16 values in the low bits and strides are in
+// samples, not bytes.
+type SourceFrame42016 struct {
+	Y, U, V               []uint16
+	YStride, ChromaStride int
+	Width, Height         int
+	BitDepth              uint8
+}
+
 // EncodeLosslessKeyframe encodes src (dimensions must be multiples of 8) as
 // one low-overhead temporal unit: temporal delimiter, sequence header, complete
 // lossless keyframe header, and a single-tile tile group carrying the coded
@@ -231,6 +241,60 @@ func validateSourceFrameMono16(src SourceFrameMono16) error {
 		for x, sample := range row {
 			if sample > maxSample {
 				return fmt.Errorf("encoder: monochrome Y sample (%d,%d)=%d exceeds %d-bit maximum %d", x, y, sample, src.BitDepth, maxSample)
+			}
+		}
+	}
+	return nil
+}
+
+func validateSourceFrame42016(src SourceFrame42016) error {
+	if src.BitDepth != 10 && src.BitDepth != 12 {
+		return fmt.Errorf("encoder: high-bit-depth 4:2:0 bit depth must be 10 or 12, got %d", src.BitDepth)
+	}
+	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
+		return fmt.Errorf("encoder: frame dimensions must be positive multiples of 8, got %dx%d", src.Width, src.Height)
+	}
+	chromaWidth, chromaHeight := src.Width/2, src.Height/2
+	if src.YStride < src.Width {
+		return fmt.Errorf("encoder: 4:2:0 Y stride %d is smaller than width %d", src.YStride, src.Width)
+	}
+	if src.ChromaStride < chromaWidth {
+		return fmt.Errorf("encoder: 4:2:0 chroma stride %d is smaller than chroma width %d", src.ChromaStride, chromaWidth)
+	}
+	maxInt := int(^uint(0) >> 1)
+	if src.Height > 0 && src.YStride > (maxInt-(src.Width-1))/(src.Height-1) {
+		return fmt.Errorf("encoder: 4:2:0 Y plane dimensions overflow int")
+	}
+	if chromaHeight > 0 && src.ChromaStride > (maxInt-(chromaWidth-1))/(chromaHeight-1) {
+		return fmt.Errorf("encoder: 4:2:0 chroma plane dimensions overflow int")
+	}
+	yNeed := (src.Height-1)*src.YStride + src.Width
+	chromaNeed := (chromaHeight-1)*src.ChromaStride + chromaWidth
+	if len(src.Y) < yNeed {
+		return fmt.Errorf("encoder: 4:2:0 Y plane is too short: got %d samples, need %d", len(src.Y), yNeed)
+	}
+	if len(src.U) < chromaNeed {
+		return fmt.Errorf("encoder: 4:2:0 U plane is too short: got %d samples, need %d", len(src.U), chromaNeed)
+	}
+	if len(src.V) < chromaNeed {
+		return fmt.Errorf("encoder: 4:2:0 V plane is too short: got %d samples, need %d", len(src.V), chromaNeed)
+	}
+	maxSample := uint16((1 << src.BitDepth) - 1)
+	if err := validateSourcePlane42016Samples("Y", src.Y, src.YStride, src.Width, src.Height, maxSample, src.BitDepth); err != nil {
+		return err
+	}
+	if err := validateSourcePlane42016Samples("U", src.U, src.ChromaStride, chromaWidth, chromaHeight, maxSample, src.BitDepth); err != nil {
+		return err
+	}
+	return validateSourcePlane42016Samples("V", src.V, src.ChromaStride, chromaWidth, chromaHeight, maxSample, src.BitDepth)
+}
+
+func validateSourcePlane42016Samples(name string, samples []uint16, stride, width, height int, maxSample uint16, bitDepth uint8) error {
+	for y := range height {
+		row := samples[y*stride : y*stride+width]
+		for x, sample := range row {
+			if sample > maxSample {
+				return fmt.Errorf("encoder: 4:2:0 %s sample (%d,%d)=%d exceeds %d-bit maximum %d", name, x, y, sample, bitDepth, maxSample)
 			}
 		}
 	}
@@ -763,21 +827,25 @@ func encodeLosslessTXB16(w *entropy.Writer, cdfs *tile.CoeffCDFs, ctx *tile.Coef
 }
 
 func dcPredictN16(plane []uint16, stride, px, py, n int, haveTop, haveLeft bool, bitDepth uint8) uint16 {
+	return dcPredictRect16(plane, stride, px, py, n, n, haveTop, haveLeft, bitDepth)
+}
+
+func dcPredictRect16(plane []uint16, stride, px, py, w, h int, haveTop, haveLeft bool, bitDepth uint8) uint16 {
 	sum := 0
 	count := 0
 	if haveTop && py > 0 {
 		row := (py-1)*stride + px
-		for i := range n {
+		for i := range w {
 			sum += int(plane[row+i])
 		}
-		count += n
+		count += w
 	}
 	if haveLeft && px > 0 {
 		col := py*stride + px - 1
-		for i := range n {
+		for i := range h {
 			sum += int(plane[col+i*stride])
 		}
-		count += n
+		count += h
 	}
 	if count == 0 {
 		return uint16(1 << (bitDepth - 1))

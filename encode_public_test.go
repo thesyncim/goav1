@@ -472,6 +472,62 @@ func TestPublicEncodeI400HighBitDepthKeyframeReferenceDecoders(t *testing.T) {
 	}
 }
 
+func TestPublicEncodeI420HighBitDepthKeyframeReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	const w, h = 64, 64
+	cases := []struct {
+		bitDepth uint8
+		qIndex   uint8
+		profile  uint8
+	}{
+		{bitDepth: 10, qIndex: 72, profile: uint8(goav1.EncoderProfile0)},
+		{bitDepth: 12, qIndex: 104, profile: uint8(goav1.EncoderProfile2)},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%dbit-q%d", tc.bitDepth, tc.qIndex), func(t *testing.T) {
+			src := publicI420HighBitDepthFrame(w, h, tc.bitDepth, int(tc.qIndex))
+			tu, recon, err := goav1.EncodeI420HighBitDepthKeyframe(src, tc.qIndex)
+			if err != nil {
+				t.Fatalf("EncodeI420HighBitDepthKeyframe: %v", err)
+			}
+			if recon.BitDepth != src.BitDepth || recon.Width != src.Width || recon.Height != src.Height ||
+				recon.YStride != src.YStride || recon.ChromaStride != src.ChromaStride {
+				t.Fatalf("unexpected reconstruction: got=%+v src=%+v", recon, src)
+			}
+			seq := publicFirstSequenceHeader(t, tu)
+			if seq.SeqProfile != tc.profile ||
+				seq.ColorConfig.MonoChrome ||
+				seq.ColorConfig.BitDepth != tc.bitDepth ||
+				!seq.ColorConfig.HighBitdepth ||
+				!seq.ColorConfig.SubsamplingX ||
+				!seq.ColorConfig.SubsamplingY ||
+				(tc.bitDepth == 12 && !seq.ColorConfig.TwelveBit) {
+				t.Fatalf("sequence profile=%d color=%+v want profile=%d native %d-bit 4:2:0", seq.SeqProfile, seq.ColorConfig, tc.profile, tc.bitDepth)
+			}
+
+			ivf := appendPublicIVF(nil, w, h, 30, 1, []publicIVFFrame{{payload: tu}})
+			decoded, err := goav1.DecodeIVF(ivf)
+			if err != nil {
+				t.Fatalf("DecodeIVF: %v", err)
+			}
+			if len(decoded) != 1 ||
+				decoded[0].Width != w ||
+				decoded[0].Height != h ||
+				decoded[0].ChromaWidth != w/2 ||
+				decoded[0].ChromaHeight != h/2 ||
+				decoded[0].BytesPerSample != 2 {
+				t.Fatalf("decoded frame=%+v want one %dx%d 2-byte 4:2:0 frame", decoded, w, h)
+			}
+			wantYUV := appendPublicI420HighBitDepthRaw(nil, recon)
+			if got := publicDecodedFramesRawYUV(decoded); !bytes.Equal(got, wantYUV) {
+				offset := firstPublicByteDiff(got, wantYUV)
+				t.Fatalf("local decoded high-bit-depth 4:2:0 differs first at byte %d", offset)
+			}
+			assertPublicIVFMatchesReferenceDecodersRawYUVBytes(t, decoders, fmt.Sprintf("public-i420-%dbit-q%d", tc.bitDepth, tc.qIndex), ivf, wantYUV, 1)
+		})
+	}
+}
+
 func TestPublicEncodeI400HighBitDepthPFrameReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 64, 64
@@ -562,6 +618,29 @@ func TestPublicEncodeI400HighBitDepthLosslessKeyframeRejectsInvalid(t *testing.T
 	invalidSample.Y[17] = 1024
 	if _, _, err := goav1.EncodeI400HighBitDepthLosslessKeyframe(invalidSample); err == nil {
 		t.Fatal("EncodeI400HighBitDepthLosslessKeyframe accepted sample above 10-bit range")
+	}
+}
+
+func TestPublicEncodeI420HighBitDepthKeyframeRejectsInvalid(t *testing.T) {
+	valid := publicI420HighBitDepthFrame(64, 64, 10, 3)
+	if _, _, err := goav1.EncodeI420HighBitDepthKeyframe(valid, 0); err == nil {
+		t.Fatal("EncodeI420HighBitDepthKeyframe accepted qindex 0")
+	}
+	bitDepthMismatch := valid
+	bitDepthMismatch.BitDepth = 9
+	if _, _, err := goav1.EncodeI420HighBitDepthKeyframe(bitDepthMismatch, 72); err == nil {
+		t.Fatal("EncodeI420HighBitDepthKeyframe accepted 9-bit input")
+	}
+	shortChroma := valid
+	shortChroma.U = shortChroma.U[:len(shortChroma.U)-1]
+	if _, _, err := goav1.EncodeI420HighBitDepthKeyframe(shortChroma, 72); err == nil {
+		t.Fatal("EncodeI420HighBitDepthKeyframe accepted short chroma plane")
+	}
+	invalidSample := valid
+	invalidSample.V = append([]uint16(nil), valid.V...)
+	invalidSample.V[7] = 1024
+	if _, _, err := goav1.EncodeI420HighBitDepthKeyframe(invalidSample, 72); err == nil {
+		t.Fatal("EncodeI420HighBitDepthKeyframe accepted sample above 10-bit range")
 	}
 }
 
@@ -8414,6 +8493,51 @@ func appendPublicI400HighBitDepthRaw(dst []byte, frame goav1.I400HighBitDepthFra
 		}
 	}
 	return dst
+}
+
+func appendPublicI420HighBitDepthRaw(dst []byte, frame goav1.I420HighBitDepthFrame) []byte {
+	dst = appendPublicI420HighBitDepthPlaneRaw(dst, frame.Y, frame.YStride, frame.Width, frame.Height)
+	chromaWidth, chromaHeight := frame.Width/2, frame.Height/2
+	dst = appendPublicI420HighBitDepthPlaneRaw(dst, frame.U, frame.ChromaStride, chromaWidth, chromaHeight)
+	return appendPublicI420HighBitDepthPlaneRaw(dst, frame.V, frame.ChromaStride, chromaWidth, chromaHeight)
+}
+
+func appendPublicI420HighBitDepthPlaneRaw(dst []byte, samples []uint16, stride, width, height int) []byte {
+	for y := range height {
+		row := samples[y*stride : y*stride+width]
+		for _, sample := range row {
+			dst = append(dst, byte(sample), byte(sample>>8))
+		}
+	}
+	return dst
+}
+
+func publicI420HighBitDepthFrame(width, height int, bitDepth uint8, seed int) goav1.I420HighBitDepthFrame {
+	chromaWidth, chromaHeight := width/2, height/2
+	frame := goav1.I420HighBitDepthFrame{
+		Y:            make([]uint16, width*height),
+		U:            make([]uint16, chromaWidth*chromaHeight),
+		V:            make([]uint16, chromaWidth*chromaHeight),
+		YStride:      width,
+		ChromaStride: chromaWidth,
+		Width:        width,
+		Height:       height,
+		BitDepth:     bitDepth,
+	}
+	maxSample := (1 << bitDepth) - 1
+	for y := range height {
+		for x := range width {
+			frame.Y[y*frame.YStride+x] = uint16((seed*17 + x*29 + y*23 + (x*y)%257) & maxSample)
+		}
+	}
+	for y := range chromaHeight {
+		for x := range chromaWidth {
+			off := y*frame.ChromaStride + x
+			frame.U[off] = uint16((seed*31 + x*19 + y*43 + (x*y)%113) & maxSample)
+			frame.V[off] = uint16((seed*47 + x*41 + y*13 + (x*y)%167) & maxSample)
+		}
+	}
+	return frame
 }
 
 func publicUint16Equal(a []uint16, b []uint16) bool {

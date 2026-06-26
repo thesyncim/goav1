@@ -30,6 +30,11 @@ import (
 type I420Frame = encoder.SourceFrame420
 type EncoderDecisionStats = encoder.EncoderDecisionStats
 
+// I420HighBitDepthFrame is one 10/12-bit 4:2:0 picture. Y holds Width x Height
+// samples at YStride; U and V hold half-resolution chroma planes at
+// ChromaStride, in uint16 values whose high bits above BitDepth must be zero.
+type I420HighBitDepthFrame = encoder.SourceFrame42016
+
 // I422Frame is one 8-bit 4:2:2 picture. Y holds Width x Height luma samples
 // at YStride; U and V hold half-width, full-height chroma planes at
 // ChromaStride. The friendly realtime encoder resamples this input to 4:2:0
@@ -147,6 +152,17 @@ func EncodeI400HighBitDepthLosslessKeyframe(frame I400HighBitDepthFrame) ([]byte
 	}
 	copy(recon.Y, frame.Y)
 	return tu, recon, nil
+}
+
+// EncodeI420HighBitDepthKeyframe encodes one native 10/12-bit AV1 4:2:0
+// keyframe and returns the encoder-side reconstruction a conformant decoder
+// must reproduce exactly. qIndex must be 1..255.
+func EncodeI420HighBitDepthKeyframe(frame I420HighBitDepthFrame, qIndex uint8) ([]byte, I420HighBitDepthFrame, error) {
+	tu, recon, err := encoder.EncodeHighBitDepth420Keyframe(encoder.SourceFrame42016(frame), qIndex)
+	if err != nil {
+		return nil, I420HighBitDepthFrame{}, err
+	}
+	return tu, I420HighBitDepthFrame(recon), nil
 }
 
 // EncodeI400HighBitDepthPFrame encodes one native 10/12-bit AV1 monochrome

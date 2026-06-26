@@ -216,7 +216,9 @@ There are two public encoder surfaces:
   realtime encode path. Native 10/12-bit monochrome keyframes and P-frames are
   also exposed separately via `EncodeI400HighBitDepthKeyframe`,
   `EncodeI400HighBitDepthPFrame`, `RTCEncoder.EncodeI400HighBitDepth`, and
-  `RTCEncoder.EncodeI400HighBitDepthPicture`.
+  `RTCEncoder.EncodeI400HighBitDepthPicture`; native 10/12-bit 4:2:0 color
+  keyframes are exposed via `EncodeI420HighBitDepthKeyframe` as the first
+  high-bit-depth color encode slice.
   `RTCEncoder.Encode` emits one
   single-spatial-layer AV1 temporal unit per call; `RTCEncoder.EncodePicture`
   emits one RTP-frame-ready output per active spatial layer for WebRTC SVC and
@@ -276,8 +278,8 @@ There are two public encoder surfaces:
 Multi-spatial pixel output uses independent per-spatial encoders for simulcast
 and shared-reference inter-layer prediction for full SVC, including native
 high-bit-depth monochrome shared-reference prediction. Native high-bit-depth
-non-monochrome color, broader oracle coverage, and compression efficiency tuning
-remain open.
+non-monochrome realtime color inter frames/WebRTC streaming, broader oracle
+coverage, and compression efficiency tuning remain open.
 Encoder correctness
 and control behavior should
 continue to be ported from pinned libaom/libwebrtc source;
