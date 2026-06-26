@@ -37,16 +37,15 @@ func EncodeHighBitDepthMonochromePFrame(src SourceFrameMono16, ref SourceFrameMo
 		Height:   src.Height,
 		BitDepth: src.BitDepth,
 	}
-	var pc pframeCoder
-	tilePayload, err := pc.encodeHighBitDepthMonochromePFrameTile(src, ref, &recon, qIndex, 0, uint16(src.Width/4))
-	if err != nil {
-		return nil, SourceFrameMono16{}, fmt.Errorf("encode tile: %w", err)
-	}
-
 	seq := lossyHighBitDepthMonochromeKeyframeSequence(src.Width, src.Height, src.BitDepth)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, qIndex, 0x01)
 	header.References = &refState
 	header.CDEF = CDEFParams{}
+	var pc pframeCoder
+	tilePayload, err := pc.encodeHighBitDepthMonochromePFrameTile(src, ref, &recon, qIndex, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, 0, uint16(src.Width/4))
+	if err != nil {
+		return nil, SourceFrameMono16{}, fmt.Errorf("encode tile: %w", err)
+	}
 
 	var groupScratch, outScratch []byte
 	out, err := assembleInterTU(seq, header, []TilePayload{{Data: tilePayload}}, 0, &groupScratch, &outScratch)
@@ -56,7 +55,7 @@ func EncodeHighBitDepthMonochromePFrame(src SourceFrameMono16, ref SourceFrameMo
 	return out, recon, nil
 }
 
-func (pc *pframeCoder) encodeHighBitDepthMonochromePFrameTile(src SourceFrameMono16, ref SourceFrameMono16, recon *SourceFrameMono16, qIndex uint8, miColStart, miColEnd uint16) ([]byte, error) {
+func (pc *pframeCoder) encodeHighBitDepthMonochromePFrameTile(src SourceFrameMono16, ref SourceFrameMono16, recon *SourceFrameMono16, qIndex uint8, forceIntegerMV bool, allowScreenContentTools bool, miColStart, miColEnd uint16) ([]byte, error) {
 	miRows := uint16(src.Height / 4)
 	const sbSizeMIB = 16
 	rootCols := (int(miColEnd-miColStart) + sbSizeMIB - 1) / sbSizeMIB
@@ -65,8 +64,8 @@ func (pc *pframeCoder) encodeHighBitDepthMonochromePFrameTile(src SourceFrameMon
 		return nil, err
 	}
 	st := &pc.st
-	st.forceIntegerMV = true
-	st.allowScreenContentTools = false
+	st.forceIntegerMV = forceIntegerMV
+	st.allowScreenContentTools = allowScreenContentTools
 	st.lfMap = nil
 	st.hme = nil
 	st.decisionStats = nil
@@ -144,7 +143,7 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 		HaveTop:        block.HaveTop,
 		HaveLeft:       block.HaveLeft,
 		HaveTopRight:   tile.BlockHasTopRight(16, block),
-		ForceIntegerMV: true,
+		ForceIntegerMV: st.forceIntegerMV,
 	}
 	stack, err := modeCtx.BuildReferenceMVStack(stackReq)
 	if err != nil {
@@ -190,7 +189,7 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 	if err := tile.WriteInterMotion(st.w, &st.mvCDFs, tile.InterMotionRequest{
 		References: refs,
 		Mode:       modeResult,
-		Precision:  tile.MVPrecision(false, true),
+		Precision:  tile.MVPrecision(false, st.forceIntegerMV),
 	}, motionResult); err != nil {
 		return fmt.Errorf("motion vector: %w", err)
 	}

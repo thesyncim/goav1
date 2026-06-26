@@ -680,13 +680,17 @@ func (pc *pframeCoder) encodeKeyframeTileWithOptions(src SourceFrame420, recon *
 }
 
 func (pc *pframeCoder) encodeMonochromeKeyframeTile(src SourceFrameMono, recon *SourceFrameMono, qIndex uint8, miColStart, miColEnd uint16) ([]byte, error) {
+	return pc.encodeMonochromeKeyframeTileWithOptions(src, recon, qIndex, miColStart, miColEnd, false)
+}
+
+func (pc *pframeCoder) encodeMonochromeKeyframeTileWithOptions(src SourceFrameMono, recon *SourceFrameMono, qIndex uint8, miColStart, miColEnd uint16, allowScreenContentTools bool) ([]byte, error) {
 	if err := pc.partCDFs.InitDefault(); err != nil {
 		return nil, err
 	}
 	st := &pc.st
 	st.qIndex = qIndex
 	st.forceIntegerMV = false
-	st.allowScreenContentTools = false
+	st.allowScreenContentTools = allowScreenContentTools
 	st.color = parser.ColorConfig{BitDepth: 8, MonoChrome: true, SubsamplingX: true, SubsamplingY: true}
 	st.lfMap = nil
 	st.hme = nil

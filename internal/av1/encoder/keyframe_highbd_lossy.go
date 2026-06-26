@@ -77,13 +77,17 @@ func lossyHighBitDepthMonochromeKeyframeSequence(width, height int, bitDepth uin
 }
 
 func (pc *pframeCoder) encodeHighBitDepthMonochromeKeyframeTile(src SourceFrameMono16, recon *SourceFrameMono16, qIndex uint8, miColStart, miColEnd uint16) ([]byte, error) {
+	return pc.encodeHighBitDepthMonochromeKeyframeTileWithOptions(src, recon, qIndex, miColStart, miColEnd, false)
+}
+
+func (pc *pframeCoder) encodeHighBitDepthMonochromeKeyframeTileWithOptions(src SourceFrameMono16, recon *SourceFrameMono16, qIndex uint8, miColStart, miColEnd uint16, allowScreenContentTools bool) ([]byte, error) {
 	if err := pc.partCDFs.InitDefault(); err != nil {
 		return nil, err
 	}
 	st := &pc.st
 	st.qIndex = qIndex
 	st.forceIntegerMV = false
-	st.allowScreenContentTools = false
+	st.allowScreenContentTools = allowScreenContentTools
 	st.color = parser.ColorConfig{BitDepth: src.BitDepth, MonoChrome: true, SubsamplingX: true, SubsamplingY: true}
 	st.lfMap = nil
 	st.hme = nil
@@ -186,6 +190,9 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromeBlock(src SourceFrameMon
 		Size: block.Size, Mode: mode,
 	}, 0); err != nil {
 		return fmt.Errorf("angle delta: %w", err)
+	}
+	if err := st.writeNoPaletteMode(modeCtx, block, mode, tile.ChromaIntraModeDC, false); err != nil {
+		return fmt.Errorf("palette: %w", err)
 	}
 
 	txTypeReq := tile.IntraTransformTypeRequest{

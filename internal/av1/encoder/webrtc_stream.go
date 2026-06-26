@@ -286,6 +286,11 @@ func newWebRTCStreamLayerMonoEncoder(config Config, layerIndex uint8, fps int, m
 	if err != nil {
 		return nil, err
 	}
+	enc.SetScreenContentSelection(true)
+	if err := enc.SetContentHint(config.Content); err != nil {
+		_ = enc.Close()
+		return nil, err
+	}
 	if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
 		_ = enc.Close()
 		return nil, err
@@ -312,6 +317,11 @@ func newWebRTCStreamLayerMono16Encoder(config Config, layerIndex uint8, fps int,
 		return nil, ErrUnsupported
 	}
 	if err != nil {
+		return nil, err
+	}
+	enc.SetScreenContentSelection(true)
+	if err := enc.SetContentHint(config.Content); err != nil {
+		_ = enc.Close()
 		return nil, err
 	}
 	if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
@@ -539,6 +549,10 @@ func (s *WebRTCStream) updateMonoLayerControls(config Config, fps int) error {
 		if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
 			return err
 		}
+		enc.SetScreenContentSelection(true)
+		if err := enc.SetContentHint(config.Content); err != nil {
+			return err
+		}
 		switch config.RateControl {
 		case RateControlCBR:
 			targetKbps := webRTCStreamLayerTargetKbps(config, i)
@@ -568,6 +582,10 @@ func (s *WebRTCStream) updateMono16LayerControls(config Config, fps int) error {
 			return ErrInvalidConfig
 		}
 		if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
+			return err
+		}
+		enc.SetScreenContentSelection(true)
+		if err := enc.SetContentHint(config.Content); err != nil {
 			return err
 		}
 		switch config.RateControl {

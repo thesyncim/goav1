@@ -399,6 +399,10 @@ func (pc *pframeCoder) encodeTileWithOptions(src SourceFrame420, ref SourceFrame
 }
 
 func (pc *pframeCoder) encodeMonochromeTile(src SourceFrameMono, ref SourceFrameMono, golden *SourceFrameMono, recon *SourceFrameMono, qIndex uint8, prev *frameCDFs, referenceMode parser.ReferenceMode, miColStart, miColEnd uint16) ([]byte, error) {
+	return pc.encodeMonochromeTileWithOptions(src, ref, golden, recon, qIndex, prev, referenceMode, false, false, miColStart, miColEnd)
+}
+
+func (pc *pframeCoder) encodeMonochromeTileWithOptions(src SourceFrameMono, ref SourceFrameMono, golden *SourceFrameMono, recon *SourceFrameMono, qIndex uint8, prev *frameCDFs, referenceMode parser.ReferenceMode, forceIntegerMV bool, allowScreenContentTools bool, miColStart, miColEnd uint16) ([]byte, error) {
 	src420 := SourceFrame420{Y: src.Y, YStride: src.YStride, Width: src.Width, Height: src.Height}
 	ref420 := SourceFrame420{Y: ref.Y, YStride: ref.YStride, Width: ref.Width, Height: ref.Height}
 	recon420 := SourceFrame420{Y: recon.Y, YStride: recon.YStride, Width: recon.Width, Height: recon.Height}
@@ -407,7 +411,7 @@ func (pc *pframeCoder) encodeMonochromeTile(src SourceFrameMono, ref SourceFrame
 		g := SourceFrame420{Y: golden.Y, YStride: golden.YStride, Width: golden.Width, Height: golden.Height}
 		golden420 = &g
 	}
-	return pc.encodeTileWithOptionsColor(src420, ref420, golden420, &recon420, qIndex, prev, referenceMode, false, false, parser.ColorConfig{BitDepth: 8, MonoChrome: true, SubsamplingX: true, SubsamplingY: true}, miColStart, miColEnd)
+	return pc.encodeTileWithOptionsColor(src420, ref420, golden420, &recon420, qIndex, prev, referenceMode, forceIntegerMV, allowScreenContentTools, parser.ColorConfig{BitDepth: 8, MonoChrome: true, SubsamplingX: true, SubsamplingY: true}, miColStart, miColEnd)
 }
 
 func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, qIndex uint8, prev *frameCDFs, referenceMode parser.ReferenceMode, forceIntegerMV bool, allowScreenContentTools bool, color parser.ColorConfig, miColStart, miColEnd uint16) ([]byte, error) {

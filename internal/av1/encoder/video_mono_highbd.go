@@ -15,7 +15,10 @@ type HighBitDepthMonochromeVideoEncoder struct {
 	bitDepth                  uint8
 	padded                    SourceFrameMono16
 
-	qIndex uint8
+	qIndex  uint8
+	content ContentHint
+
+	screenContentSelectable bool
 
 	rcEnabled      bool
 	rcPerFrameBits int
@@ -110,6 +113,27 @@ func (e *HighBitDepthMonochromeVideoEncoder) TemporalID() uint8 {
 		}
 	}
 	return 0
+}
+
+// SetContentHint selects the content mode used for subsequently emitted AV1
+// frame headers when screen-content selection is enabled.
+func (e *HighBitDepthMonochromeVideoEncoder) SetContentHint(content ContentHint) error {
+	if e == nil {
+		return fmt.Errorf("encoder: nil high-bit-depth monochrome video encoder")
+	}
+	if !content.Valid() {
+		return ErrInvalidConfig
+	}
+	e.content = content
+	return nil
+}
+
+// SetScreenContentSelection controls whether sequence headers allow per-frame
+// screen-content signaling.
+func (e *HighBitDepthMonochromeVideoEncoder) SetScreenContentSelection(enabled bool) {
+	if e != nil {
+		e.screenContentSelectable = enabled
+	}
 }
 
 func (e *HighBitDepthMonochromeVideoEncoder) SetQIndex(qIndex uint8) error {
@@ -294,21 +318,44 @@ func (e *HighBitDepthMonochromeVideoEncoder) padSource(src SourceFrameMono16) So
 	return e.padded
 }
 
+func (e *HighBitDepthMonochromeVideoEncoder) sequenceHeader(width, height int) SequenceHeader {
+	seq := lossyHighBitDepthMonochromeKeyframeSequence(width, height, e.bitDepth)
+	if e != nil && e.screenContentSelectable {
+		seq.SeqForceScreenContentTools = SequenceSelectScreenContentTools
+		seq.SeqForceIntegerMV = SequenceSelectIntegerMV
+	}
+	return seq
+}
+
+func (e *HighBitDepthMonochromeVideoEncoder) applyContentHintToFrameHeader(prefix *FrameHeaderPrefix) {
+	if e == nil || !e.screenContentSelectable || prefix == nil {
+		return
+	}
+	screen := e.content == ContentScreen
+	prefix.AllowScreenContentTools = screen
+	if prefix.FrameType.keyOrIntra() {
+		prefix.ForceIntegerMV = true
+		return
+	}
+	prefix.ForceIntegerMV = screen
+}
+
 func (e *HighBitDepthMonochromeVideoEncoder) encodeKeyWithSequenceMax(src SourceFrameMono16, maxWidth, maxHeight int) ([]byte, error) {
 	keyQ := e.keyframeQIndex()
-	allocMono16Frame(&e.keyRecon, src)
-	tilePayload, err := e.pc.encodeHighBitDepthMonochromeKeyframeTile(src, &e.keyRecon, keyQ, 0, uint16(src.Width/4))
-	if err != nil {
-		return nil, fmt.Errorf("encode tile: %w", err)
-	}
-
-	seq := lossyHighBitDepthMonochromeKeyframeSequence(maxWidth, maxHeight, e.bitDepth)
+	seq := e.sequenceHeader(maxWidth, maxHeight)
 	header := lossyMonochromeKeyframeHeaderForSequence(seq, src.Width, src.Height, keyQ)
+	e.applyContentHintToFrameHeader(&header.Prefix)
 	if e.renderWidth != e.width || e.renderHeight != e.height {
 		header.Size.RenderWidth = uint32(e.renderWidth)
 		header.Size.RenderHeight = uint32(e.renderHeight)
 		header.Size.HaveRenderSize = true
 	}
+	allocMono16Frame(&e.keyRecon, src)
+	tilePayload, err := e.pc.encodeHighBitDepthMonochromeKeyframeTileWithOptions(src, &e.keyRecon, keyQ, 0, uint16(src.Width/4), header.Prefix.AllowScreenContentTools)
+	if err != nil {
+		return nil, fmt.Errorf("encode tile: %w", err)
+	}
+
 	out, err := e.assembleKeyTU(seq, header, tilePayload)
 	if err != nil {
 		return nil, err
@@ -343,9 +390,10 @@ func (e *HighBitDepthMonochromeVideoEncoder) encodePReusing(src SourceFrameMono1
 	} else if droppable {
 		refresh = 0
 	}
-	seq := lossyHighBitDepthMonochromeKeyframeSequence(src.Width, src.Height, e.bitDepth)
+	seq := e.sequenceHeader(src.Width, src.Height)
 	effQ := e.layerQIndex(temporalID)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, effQ, refresh)
+	e.applyContentHintToFrameHeader(&header.Prefix)
 	header.References = &refState
 	header.CDEF = CDEFParams{}
 	if e.renderWidth != e.width || e.renderHeight != e.height {
@@ -361,7 +409,7 @@ func (e *HighBitDepthMonochromeVideoEncoder) encodePReusing(src SourceFrameMono1
 		ref = e.t1Recon
 		header.Size.RefFrameIdx[0] = 2
 	}
-	tilePayload, err := e.pc.encodeHighBitDepthMonochromePFrameTile(src, ref, out, effQ, 0, uint16(src.Width/4))
+	tilePayload, err := e.pc.encodeHighBitDepthMonochromePFrameTile(src, ref, out, effQ, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, 0, uint16(src.Width/4))
 	if err != nil {
 		return nil, fmt.Errorf("encode tile: %w", err)
 	}
@@ -403,9 +451,10 @@ func (e *HighBitDepthMonochromeVideoEncoder) encodeReferencePFrameWithSequenceMa
 	if settings.UpdateBufferSet {
 		refresh = 1 << settings.UpdateBuffer
 	}
-	seq := lossyHighBitDepthMonochromeKeyframeSequence(maxWidth, maxHeight, e.bitDepth)
+	seq := e.sequenceHeader(maxWidth, maxHeight)
 	effQ := e.layerQIndex(settings.TemporalID)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, effQ, refresh)
+	e.applyContentHintToFrameHeader(&header.Prefix)
 	header.Prefix.FrameSizeOverride = src.Width != maxWidth || src.Height != maxHeight
 	header.Size.RefFrameIdx = [7]uint8{}
 	for i := range header.Size.RefFrameIdx {
@@ -427,7 +476,7 @@ func (e *HighBitDepthMonochromeVideoEncoder) encodeReferencePFrameWithSequenceMa
 		header.Tile = tiles
 	}
 
-	tilePayload, err := e.pc.encodeHighBitDepthMonochromePFrameTile(src, ref, out, effQ, 0, uint16(src.Width/4))
+	tilePayload, err := e.pc.encodeHighBitDepthMonochromePFrameTile(src, ref, out, effQ, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, 0, uint16(src.Width/4))
 	if err != nil {
 		return nil, fmt.Errorf("encode tile: %w", err)
 	}
