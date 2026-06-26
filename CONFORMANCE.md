@@ -320,17 +320,16 @@ ship under `internal/av1/testdata/libaom/`.
   profile-0 WebRTC use from I420/I422/I444/I400/NV12/NV21 inputs plus generic
   8/10/12-bit `Frame` inputs for 4:2:0, 4:2:2, 4:4:4, and monochrome layouts.
   Non-4:2:0 chroma samples are resampled unless explicitly configured for
-  native 8-bit profile-2 4:2:2 or native 8-bit profile-1 4:4:4, monochrome
-  fills neutral chroma unless configured for native monochrome, and explicit
-  10/12-bit 4:2:0 configs preserve native high-bit-depth color. Native 10/12-bit
-  4:2:0 color keyframes and P-frames are covered by
-  `EncodeI420HighBitDepthKeyframe`, `EncodeI420HighBitDepthPFrame`,
-  `RTCEncoder.EncodeI420HighBitDepth`, and
-  `RTCEncoder.EncodeI420HighBitDepthPicture` and checked against aomdec/dav1d.
-  High-bit-depth 4:2:2/4:4:4 samples are downshifted before entering the
-  current 8-bit realtime encode path. The strict WebRTC gate packetizes
-  multi-spatial adapter and native output and checks it against aomdec/dav1d. It
-  supports fixed-quality/CBR,
+  native profile-2 4:2:2 or native profile-1/profile-2 4:4:4, monochrome fills
+  neutral chroma unless configured for native monochrome, and explicit 10/12-bit
+  configs preserve native high-bit-depth color. Native 10/12-bit color keyframes
+  and P-frames are covered by `EncodeI420HighBitDepthKeyframe`,
+  `EncodeI420HighBitDepthPFrame`, `RTCEncoder.EncodeI420HighBitDepth`,
+  `RTCEncoder.EncodeI420HighBitDepthPicture`,
+  `RTCEncoder.EncodeI422HighBitDepthPicture`, and
+  `RTCEncoder.EncodeI444HighBitDepthPicture` and checked against aomdec/dav1d.
+  The strict WebRTC gate packetizes multi-spatial adapter and native output and
+  checks it against aomdec/dav1d. It supports fixed-quality/CBR,
   forced keyframes, temporal layering, runtime bitrate/framerate/scalability
   reconfiguration, multi-spatial `RTCEncoder.EncodePicture` for W3C SVC and
   simulcast modes,
@@ -358,9 +357,11 @@ ship under `internal/av1/testdata/libaom/`.
   PLI/FIR/LRR force-key classification, and sequence-matched `Frame`
   validation/loading for
   profile-0/1/2 8/10/12-bit 4:0:0, 4:2:0, 4:2:2, and 4:4:4 buffers,
-  including profile-2 12-bit 4:2:0 and 4:4:4 control paths. Native
-  high-bit-depth 4:2:2/4:4:4 bitstream encoding in the friendly pixel encoder,
-  and broader oracle coverage remain open.
+  including profile-2 12-bit 4:2:0 and 4:4:4 control paths. Every
+  `EncoderWebRTCScalabilityModes()` entry, including `_KEY` and `_KEY_SHIFT`
+  variants, is covered for native 10/12-bit 4:2:2/4:4:4 RTP assembly,
+  dependency descriptors, layered local decode, controller `SetConfig` changes,
+  and external reference decode.
 - **SIMD / assembly backends.** Selected hot DSP paths have amd64/arm64 SIMD or
   assembly dispatch; coverage is still expanding behind pure-Go fallbacks.
 - **Work-stealing scheduler.** `threading.Pool` does deterministic
