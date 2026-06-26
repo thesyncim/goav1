@@ -1151,6 +1151,150 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderI422NativeReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	const w, h = 192, 128
+	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
+	cfg.Profile = goav1.EncoderProfile2
+	cfg.ColorConfigSet = true
+	cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+		BitDepth:     8,
+		SubsamplingX: true,
+	}
+	cfg.RateControl = goav1.EncoderRateControlCQP
+	cfg.Quantizer = 28
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+	if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); !errors.Is(err, goav1.ErrEncoderUnsupported) {
+		t.Fatalf("Encode(I420) on native I422 err=%v want %v", err, goav1.ErrEncoderUnsupported)
+	}
+
+	frames := make([]publicIVFFrame, 0, 5)
+	for frame := 0; frame < 4; frame++ {
+		out, err := enc.EncodeI422(publicI422NativePattern(w, h, frame), false)
+		if err != nil {
+			t.Fatalf("EncodeI422(%d): %v", frame, err)
+		}
+		if frame == 0 {
+			seq := publicFirstSequenceHeader(t, out.Data)
+			if seq.SeqProfile != uint8(goav1.EncoderProfile2) ||
+				seq.ColorConfig.MonoChrome ||
+				seq.ColorConfig.BitDepth != 8 ||
+				!seq.ColorConfig.SubsamplingX ||
+				seq.ColorConfig.SubsamplingY {
+				t.Fatalf("sequence profile=%d color=%+v want native 8-bit 4:2:2", seq.SeqProfile, seq.ColorConfig)
+			}
+		}
+		frames = append(frames, publicIVFFrame{
+			timestamp: uint64(frame),
+			payload:   append([]byte(nil), out.Data...),
+		})
+	}
+	generic, err := enc.EncodeFrame(publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 4), goav1.FrameFormat{
+		Width:        w,
+		Height:       h,
+		BitDepth:     8,
+		SubsamplingX: true,
+		Align:        32,
+	}), false)
+	if err != nil {
+		t.Fatalf("EncodeFrame native I422: %v", err)
+	}
+	frames = append(frames, publicIVFFrame{
+		timestamp: 4,
+		payload:   append([]byte(nil), generic.Data...),
+	})
+
+	ivf := appendPublicIVF(nil, w, h, 30, 1, frames)
+	decoded, err := goav1.DecodeIVF(ivf)
+	if err != nil {
+		t.Fatalf("DecodeIVF: %v", err)
+	}
+	if len(decoded) != len(frames) {
+		t.Fatalf("decoded %d frames want %d", len(decoded), len(frames))
+	}
+	for i, frame := range decoded {
+		if frame.ChromaWidth != w/2 || frame.ChromaHeight != h || len(frame.U) != (w/2)*h || len(frame.V) != (w/2)*h {
+			t.Fatalf("decoded frame %d chroma=%dx%d U=%d V=%d want %dx%d",
+				i, frame.ChromaWidth, frame.ChromaHeight, len(frame.U), len(frame.V), w/2, h)
+		}
+	}
+	assertPublicIVFMatchesReferenceDecodersRawYUV(t, decoders, "public-rtc-i422-native", ivf)
+}
+
+func TestPublicRTCEncoderI422NativeMultiSpatialReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	scenarios := []struct {
+		name string
+		mode goav1.EncoderScalabilityMode
+	}{
+		{name: "simulcast-s2t2", mode: goav1.EncoderScalabilityModeS2T2},
+		{name: "shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT},
+	}
+	for _, scenario := range scenarios {
+		scenario := scenario
+		t.Run(scenario.name, func(t *testing.T) {
+			w, h := publicRTCMatrixGeometry(t, scenario.mode)
+			cfg := publicRTCMatrixConfig(w, h, scenario.mode)
+			cfg.Profile = goav1.EncoderProfile2
+			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.Quantizer = 32
+			cfg.ColorConfigSet = true
+			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+				BitDepth:     8,
+				SubsamplingX: true,
+			}
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+			}
+			defer enc.Close()
+			if enc.Config().Profile != goav1.EncoderProfile2 ||
+				enc.Config().ColorConfig.MonoChrome ||
+				!enc.Config().ColorConfig.SubsamplingX ||
+				enc.Config().ColorConfig.SubsamplingY ||
+				enc.Config().SpatialLayerCount < 2 {
+				t.Fatalf("normalized config=%+v want native multi-spatial 4:2:2", enc.Config())
+			}
+
+			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var rtpReceiver goav1.RTPDependencyDescriptorState
+			nextFrameID := uint64(0)
+			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var orderedTUs [][]byte
+			for frame := 0; frame < 4; frame++ {
+				forceKey := frame == 2
+				picture, err := enc.EncodeI422Picture(publicI422NativePattern(w, h, frame), forceKey)
+				if err != nil {
+					t.Fatalf("EncodeI422Picture(%d): %v", frame, err)
+				}
+				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), picture, frame == 0 || forceKey, &nextFrameID)
+				for i := 0; i < picture.FrameNum; i++ {
+					if !picture.Frames[i].CodedKeyframe {
+						continue
+					}
+					seq := publicFirstSequenceHeader(t, picture.Frames[i].Data)
+					if seq.SeqProfile != uint8(goav1.EncoderProfile2) ||
+						seq.ColorConfig.MonoChrome ||
+						seq.ColorConfig.BitDepth != 8 ||
+						!seq.ColorConfig.SubsamplingX ||
+						seq.ColorConfig.SubsamplingY {
+						t.Fatalf("picture %d frame %d profile=%d color=%+v want native 8-bit 4:2:2",
+							frame, i, seq.SeqProfile, seq.ColorConfig)
+					}
+				}
+				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
+			}
+
+			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+			assertPublicRTCRTPReferenceDecoders(t, decoders, "public-rtc-i422-native-"+scenario.name, enc.Config(), layerTUs, orderedTUs)
+		})
+	}
+}
+
 func TestPublicRTCEncoderI444NativeReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 192, 128
@@ -7169,6 +7313,30 @@ func publicI444FromI420(src goav1.I420Frame) goav1.I444Frame {
 		VStride: src.Width,
 		Width:   src.Width,
 		Height:  src.Height,
+	}
+}
+
+func publicI422NativePattern(width int, height int, frame int) goav1.I422Frame {
+	base := publicRTCMatrixFrame(width, height, frame)
+	chromaWidth := width / 2
+	u := make([]byte, chromaWidth*height)
+	v := make([]byte, chromaWidth*height)
+	for y := 0; y < height; y++ {
+		ur := u[y*chromaWidth : y*chromaWidth+chromaWidth]
+		vr := v[y*chromaWidth : y*chromaWidth+chromaWidth]
+		for x := 0; x < chromaWidth; x++ {
+			ur[x] = byte((x*9 + y*5 + frame*17) & 0xff)
+			vr[x] = byte(255 - ((x*7 + y*13 + frame*11) & 0xff))
+		}
+	}
+	return goav1.I422Frame{
+		Y:            base.Y,
+		U:            u,
+		V:            v,
+		YStride:      base.YStride,
+		ChromaStride: chromaWidth,
+		Width:        width,
+		Height:       height,
 	}
 }
 

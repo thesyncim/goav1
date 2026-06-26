@@ -949,9 +949,6 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	if err != nil {
 		return fmt.Errorf("chroma block dimensions: %w", err)
 	}
-	if cw != ch {
-		return ErrUnsupported
-	}
 	chromaTX, err := tile.MaxTransformSize(block.Size, st.color, 1)
 	if err != nil {
 		return fmt.Errorf("chroma transform size: %w", err)
@@ -971,7 +968,7 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 			data, rdata = src.V, recon.V
 			q = st.vQuant
 		}
-		if err := st.encodeTXBAvail(rdata, data, src.ChromaStride, chromaX, chromaY, cw, q, tile.CoeffContextRequest{
+		if err := st.encodeTXBAvailRect(rdata, data, src.ChromaStride, chromaX, chromaY, cw, ch, q, tile.CoeffContextRequest{
 			Plane:      uint8(plane),
 			PlaneBlock: chromaBlock,
 			Size:       chromaTX,
@@ -1123,6 +1120,17 @@ func (st *lossyEncodeState) encodeTXBAvail(reconPlane []byte, srcPlane []byte, s
 	return st.encodeTXBPred(reconPlane, srcPlane, stride, px, py, n, q, ctxReq, coeffCtx, scan, afterSkip, pred)
 }
 
+func (st *lossyEncodeState) encodeTXBAvailRect(reconPlane []byte, srcPlane []byte, stride int, px, py, w, h int, q quantize.Quantizer,
+	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, haveTop, haveLeft bool) error {
+
+	dc := dcPredictRect(reconPlane, stride, px, py, w, h, haveTop, haveLeft)
+	pred := st.predU[:w*h]
+	for i := range pred {
+		pred[i] = dc
+	}
+	return st.encodeTXBPredRect(reconPlane, srcPlane, stride, px, py, w, h, q, ctxReq, coeffCtx, scan, afterSkip, pred)
+}
+
 // encodeTXBPred codes one square n x n transform block against an arbitrary
 // already-materialized prediction (stride n): forward transform the source
 // residual, quantize, write the coefficients, then reconstruct through the
@@ -1191,26 +1199,72 @@ func (st *lossyEncodeState) encodeTXBPred(reconPlane []byte, srcPlane []byte, st
 	return nil
 }
 
+func (st *lossyEncodeState) encodeTXBPredRect(reconPlane []byte, srcPlane []byte, stride int, px, py, w, h int, q quantize.Quantizer,
+	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, pred []byte) error {
+
+	n := w * h
+	residual := &st.resScratch
+	residualBlockImpl(residual[:n], srcPlane, py*stride+px, stride, pred, w, w, h)
+	tran := &st.tranScratch
+	if err := forwardDCTBlock(tran[:n], residual[:n], w, h); err != nil {
+		return err
+	}
+	qcoeff := &st.lumaQ
+	scale := txScaleForSize(max(w, h))
+	if err := quantize.QuantizeBlockScaledB(qcoeff[:n], h, tran[:n], h, w, h, q, scale); err != nil {
+		return err
+	}
+	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff[:n], scan, st.levels, afterSkip); err != nil {
+		return err
+	}
+
+	dq := &st.dqScratch
+	if err := quantize.DequantizeBlockScaledBitDepth(dq[:n], h, qcoeff[:n], h, w, h, q, scale, 8); err != nil {
+		return err
+	}
+	res := &st.invResidual
+	if err := transform.InverseDCTBlock(res[:n], w, dq[:n], h, st.invScratch[:n], transform.Size{Width: uint8(w), Height: uint8(h)}); err != nil {
+		return err
+	}
+	for r := range h {
+		row := (py+r)*stride + px
+		for c := range w {
+			v := int(pred[r*w+c]) + int(res[r*w+c])
+			if v < 0 {
+				v = 0
+			} else if v > 255 {
+				v = 255
+			}
+			reconPlane[row+c] = uint8(v)
+		}
+	}
+	return nil
+}
+
 // dcPredictN is the decoder's DC predictor for one n x n block at pixel
 // (px,py) of plane: the rounded mean of the n above and n left reconstructed
 // neighbors that are available, or 128 when neither edge is. Availability is
 // the caller's tile-relative HaveTop/HaveLeft, not raw frame position.
 func dcPredictN(plane []byte, stride, px, py, n int, haveTop, haveLeft bool) uint8 {
+	return dcPredictRect(plane, stride, px, py, n, n, haveTop, haveLeft)
+}
+
+func dcPredictRect(plane []byte, stride, px, py, w, h int, haveTop, haveLeft bool) uint8 {
 	sum := 0
 	count := 0
 	if haveTop && py > 0 {
 		row := (py-1)*stride + px
-		for i := range n {
+		for i := range w {
 			sum += int(plane[row+i])
 		}
-		count += n
+		count += w
 	}
 	if haveLeft && px > 0 {
 		col := py*stride + px - 1
-		for i := range n {
+		for i := range h {
 			sum += int(plane[col+i*stride])
 		}
-		count += n
+		count += h
 	}
 	if count == 0 {
 		return 128

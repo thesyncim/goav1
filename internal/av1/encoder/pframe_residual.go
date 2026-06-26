@@ -1662,9 +1662,6 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	if err != nil {
 		return fmt.Errorf("chroma plane block dimensions: %w", err)
 	}
-	if cw != ch {
-		return ErrUnsupported
-	}
 	chromaTX, err := tile.MaxTransformSize(block.Size, st.color, 1)
 	if err != nil {
 		return fmt.Errorf("chroma transform size: %w", err)
@@ -1684,7 +1681,7 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 			data, rdata = src.V, recon.V
 			q = st.vQuant
 		}
-		if err := st.encodeTXBAvail(rdata, data, src.ChromaStride, chromaX, chromaY, cw, q, tile.CoeffContextRequest{
+		if err := st.encodeTXBAvailRect(rdata, data, src.ChromaStride, chromaX, chromaY, cw, ch, q, tile.CoeffContextRequest{
 			Plane:      uint8(plane),
 			PlaneBlock: chromaBlock,
 			Size:       chromaTX,
@@ -2285,7 +2282,7 @@ func (st *lossyEncodeState) prepareInterTXBTyped(srcPlane, pred []byte, predStri
 		return false
 	}
 	ts := txScaleForSize(max(w, h))
-	if err := quantize.QuantizeBlockScaledB(qcoeff, h, tran[:n], h, h, w, q, ts); err != nil {
+	if err := quantize.QuantizeBlockScaledB(qcoeff, h, tran[:n], h, w, h, q, ts); err != nil {
 		return false
 	}
 	// The vector statistics apply the AC step to every lane; the DC
@@ -2612,7 +2609,7 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 	}
 	n := w * h
 	dq := &st.dqScratch
-	if err := quantize.DequantizeBlockScaledBitDepth(dq[:n], h, qcoeff, h, h, w, q, txScaleForSize(max(w, h)), 8); err != nil {
+	if err := quantize.DequantizeBlockScaledBitDepth(dq[:n], h, qcoeff, h, w, h, q, txScaleForSize(max(w, h)), 8); err != nil {
 		return err
 	}
 	res := &st.invResidual
