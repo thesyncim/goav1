@@ -107,8 +107,10 @@ type VideoEncoder struct {
 	// each non-droppable frame names its predecessor through
 	// primary_ref_frame and starts from the saved state instead of the
 	// defaults. haveCtx arms after the first keyframe.
-	frameCtx frameCDFs
-	haveCtx  bool
+	frameCtx     frameCDFs
+	haveCtx      bool
+	prevLFDeltas LoopFilterDeltas
+	refState     parser.ReferenceState
 
 	// Golden anchor: slot 1 holds an older high-quality reference refreshed
 	// every goldenEvery base-layer frames (0 disables block-level use). The
@@ -764,15 +766,15 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 	}
 	seq := e.sequenceHeader(maxWidth, maxHeight)
 	effQ := e.layerQIndex(settings.TemporalID)
-	header, refState := repeatPFrameHeader(src.Width, src.Height, effQ, refresh)
+	header, _ := repeatPFrameHeader(src.Width, src.Height, effQ, refresh)
 	e.applyContentHintToFrameHeader(&header.Prefix)
 	header.Prefix.FrameSizeOverride = src.Width != maxWidth || src.Height != maxHeight
 	header.Size.RefFrameIdx = [7]uint8{}
 	for i := range header.Size.RefFrameIdx {
 		header.Size.RefFrameIdx[i] = codedRefBuffer
 	}
-	refState = referenceStateForFrame(ref.Width, ref.Height)
-	header.References = &refState
+	e.refState = referenceStateForFrame(ref.Width, ref.Height)
+	header.References = &e.refState
 	if e.renderWidth != e.width || e.renderHeight != e.height {
 		header.Size.RenderWidth = uint32(e.renderWidth)
 		header.Size.RenderHeight = uint32(e.renderHeight)
@@ -905,12 +907,16 @@ func (e *VideoEncoder) Prewarm() error {
 	if _, _, err := e.Encode(src, true); err != nil {
 		return err
 	}
-	// One frame per temporal layer exercises every reconstruction buffer.
+	// Exercise every reconstruction buffer and the golden-refresh cadence so
+	// delayed scratch growth happens before the first externally visible frame.
 	frames := e.temporalLayers
 	if frames < 2 {
 		frames = 2
 	} else {
 		frames *= 2
+	}
+	if e.goldenEvery > 0 && frames < e.goldenEvery+1 {
+		frames = e.goldenEvery + 1
 	}
 	for i := 0; i < frames; i++ {
 		if _, _, err := e.Encode(src, false); err != nil {
@@ -1154,13 +1160,14 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	seq := e.sequenceHeader(src.Width, src.Height)
 	effQ := e.layerQIndex(temporalID)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, effQ, refresh)
+	e.refState = refState
 	e.applyContentHintToFrameHeader(&header.Prefix)
 	if e.renderWidth != e.width || e.renderHeight != e.height {
 		header.Size.RenderWidth = uint32(e.renderWidth)
 		header.Size.RenderHeight = uint32(e.renderHeight)
 		header.Size.HaveRenderSize = true
 	}
-	header.References = &refState
+	header.References = &e.refState
 	// In-loop deblocking: signal the q-derived filter levels and collect the
 	// per-MI records the frame-level pass needs; after the tiles finish the
 	// encoder runs the decoder's own loop filter over the reconstruction so
@@ -1205,8 +1212,8 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		// Chain from the middle layer's saved state (slot 2 via LAST).
 		header.Prefix.ErrorResilientMode = false
 		header.Prefix.PrimaryRefFrame = 0
-		prev := defaultLoopFilterDeltas()
-		header.PreviousLFDeltas = &prev
+		e.prevLFDeltas = defaultLoopFilterDeltas()
+		header.PreviousLFDeltas = &e.prevLFDeltas
 		prevCtx = &e.frameCtxT1
 	} else if contextChainSupported && !afterT1 && e.haveCtx {
 		// Chain the symbol contexts from slot 0's saved frame state. The
@@ -1214,8 +1221,8 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		// which this encoder keeps at the defaults.
 		header.Prefix.ErrorResilientMode = false
 		header.Prefix.PrimaryRefFrame = 0
-		prev := defaultLoopFilterDeltas()
-		header.PreviousLFDeltas = &prev
+		e.prevLFDeltas = defaultLoopFilterDeltas()
+		header.PreviousLFDeltas = &e.prevLFDeltas
 		prevCtx = &e.frameCtx
 	}
 	if e.tileColsLog2 > 0 {

@@ -129,9 +129,51 @@ func BenchmarkVideoEncoderPFrame1080p(b *testing.B) {
 	}
 }
 
-// BenchmarkEncodeKeyframe1080p measures full-HD keyframe latency - the worst
-// per-frame spike a realtime stream pays - through the tiled intra path.
+// BenchmarkEncodeKeyframe1080p measures full-HD keyframe latency on a reusable
+// stream encoder - the worst per-frame spike a realtime stream pays - through
+// the tiled intra path.
 func BenchmarkEncodeKeyframe1080p(b *testing.B) {
+	const w, h = 1920, 1080
+	cw, ch := w/2, h/2
+	rng := rand.New(rand.NewSource(2))
+	f := encoder.SourceFrame420{
+		Y: make([]byte, w*h), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
+		YStride: w, ChromaStride: cw, Width: w, Height: h,
+	}
+	for i := range f.Y {
+		f.Y[i] = uint8(50 + rng.Intn(120))
+	}
+	for i := range f.U {
+		f.U[i] = 120
+		f.V[i] = 130
+	}
+	enc, err := encoder.NewVideoEncoder(w, h, 80)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := enc.Prewarm(); err != nil {
+		b.Fatal(err)
+	}
+	if _, key, err := enc.Encode(f, true); err != nil {
+		b.Fatal(err)
+	} else if !key {
+		b.Fatal("prewarm keyframe was not coded as keyframe")
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if _, key, err := enc.Encode(f, true); err != nil {
+			b.Fatal(err)
+		} else if !key {
+			b.Fatal("forced frame was not coded as keyframe")
+		}
+	}
+}
+
+// BenchmarkEncodeKeyframeCold measures the full-HD one-shot convenience helper.
+// It intentionally includes returned temporal-unit/reconstruction allocation
+// and is not a realtime/WebRTC hot-path benchmark.
+func BenchmarkEncodeKeyframeCold(b *testing.B) {
 	const w, h = 1920, 1080
 	cw, ch := w/2, h/2
 	rng := rand.New(rand.NewSource(2))

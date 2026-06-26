@@ -118,6 +118,109 @@ func TestVideoEncoderChainDecodesBitExact(t *testing.T) {
 	}
 }
 
+func TestVideoEncoder1080pHotPathAllocs(t *testing.T) {
+	const w, h = 1920, 1080
+	f0 := makeEncoder1080pFrame(0)
+	f1 := makeEncoder1080pFrame(1)
+
+	pEnc, err := encoder.NewVideoEncoderCBR(w, h, encoder.RateControlConfig{
+		TargetBitsPerSecond: 8_000_000,
+		FramesPerSecond:     60,
+		MinQIndex:           20,
+		MaxQIndex:           200,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pEnc.Prewarm(); err != nil {
+		t.Fatal(err)
+	}
+	if _, key, err := pEnc.Encode(f0, true); err != nil {
+		t.Fatal(err)
+	} else if !key {
+		t.Fatal("initial frame was not a keyframe")
+	}
+	pAllocs := testing.AllocsPerRun(5, func() {
+		tu, key, err := pEnc.Encode(f1, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if key {
+			t.Fatal("steady P-frame was coded as keyframe")
+		}
+		if len(tu) == 0 {
+			t.Fatal("empty P-frame temporal unit")
+		}
+	})
+	if pAllocs != 0 {
+		t.Fatalf("1080p steady P-frame allocations=%f want 0", pAllocs)
+	}
+
+	keyEnc, err := encoder.NewVideoEncoderCBR(w, h, encoder.RateControlConfig{
+		TargetBitsPerSecond: 8_000_000,
+		FramesPerSecond:     60,
+		MinQIndex:           20,
+		MaxQIndex:           200,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keyEnc.Prewarm(); err != nil {
+		t.Fatal(err)
+	}
+	if _, key, err := keyEnc.Encode(f0, true); err != nil {
+		t.Fatal(err)
+	} else if !key {
+		t.Fatal("initial frame was not a keyframe")
+	}
+	keyAllocs := testing.AllocsPerRun(5, func() {
+		tu, key, err := keyEnc.Encode(f1, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !key {
+			t.Fatal("forced frame was not a keyframe")
+		}
+		if len(tu) == 0 {
+			t.Fatal("empty keyframe temporal unit")
+		}
+	})
+	if keyAllocs != 0 {
+		t.Fatalf("1080p forced keyframe allocations=%f want 0", keyAllocs)
+	}
+}
+
+func makeEncoder1080pFrame(tick int) encoder.SourceFrame420 {
+	const w, h = 1920, 1080
+	cw, ch := w/2, h/2
+	f := encoder.SourceFrame420{
+		Y:            make([]byte, w*h),
+		U:            make([]byte, cw*ch),
+		V:            make([]byte, cw*ch),
+		YStride:      w,
+		ChromaStride: cw,
+		Width:        w,
+		Height:       h,
+	}
+	for y := 0; y < h; y++ {
+		row := f.Y[y*w : (y+1)*w]
+		for x := range row {
+			row[x] = uint8(64 + (x/9+y/11+tick)%72)
+		}
+	}
+	sx, sy := 240+tick*4, 360+tick*2
+	for y := sy; y < sy+96; y++ {
+		for x := sx; x < sx+96; x++ {
+			f.Y[y*w+x] = 220
+		}
+	}
+	for i := range f.U {
+		f.U[i] = 120
+		f.V[i] = 130
+	}
+	return f
+}
+
 // cloneFrame deep-copies a reconstruction snapshot; the encoder ping-pongs its
 // internal recon buffers, so Recon() contents are only stable until the
 // next-but-one Encode call.
