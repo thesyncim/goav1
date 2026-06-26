@@ -8,9 +8,11 @@ package goav1
 // I422/I444 and generic Frame inputs are resampled, I400 and monochrome Frame
 // inputs fill neutral chroma unless an RTCEncoder is explicitly configured for
 // native monochrome across WebRTC L*/S* modes, and 10/12-bit Frame inputs are
-// downshifted before entering the current 8-bit path. Every emitted stream
-// decodes bit-exactly to the encoder's own reconstruction in this package's
-// Decoder and in the reference decoders.
+// downshifted before entering the current 8-bit realtime path. Native 10/12-bit
+// monochrome lossless keyframes are available through
+// EncodeI400HighBitDepthLosslessKeyframe. Every emitted stream decodes
+// bit-exactly to the encoder's own reconstruction in this package's Decoder and
+// in the reference decoders.
 
 import (
 	"fmt"
@@ -54,13 +56,25 @@ type I444Frame struct {
 // I400Frame is one 8-bit monochrome picture. Y holds Width x Height luma
 // samples at YStride. The friendly realtime stream encoder fills neutral chroma
 // for I400 inputs unless an RTCEncoder is explicitly configured for native
-// monochrome. EncodeI400Keyframe and EncodeI400PFrame always emit native AV1
-// monochrome pictures.
+// monochrome. EncodeI400Keyframe, EncodeI400PFrame, and
+// EncodeI400HighBitDepthLosslessKeyframe always emit native AV1 monochrome
+// pictures.
 type I400Frame struct {
 	Y       []byte
 	YStride int
 	Width   int
 	Height  int
+}
+
+// I400HighBitDepthFrame is one 10/12-bit monochrome picture. Y holds
+// Width x Height samples at YStride, in uint16 values whose high bits above
+// BitDepth must be zero.
+type I400HighBitDepthFrame struct {
+	Y        []uint16
+	YStride  int
+	Width    int
+	Height   int
+	BitDepth uint8
 }
 
 // EncodeI400Keyframe encodes one native AV1 monochrome keyframe.
@@ -89,6 +103,26 @@ func EncodeI400Keyframe(frame I400Frame, qIndex uint8) ([]byte, I400Frame, error
 		return nil, I400Frame{}, err
 	}
 	return tu, I400Frame(recon), nil
+}
+
+// EncodeI400HighBitDepthLosslessKeyframe encodes one native 10/12-bit AV1
+// monochrome lossless keyframe. The returned reconstruction aliases a fresh
+// copy of frame.Y because lossless output must reproduce the source exactly.
+func EncodeI400HighBitDepthLosslessKeyframe(frame I400HighBitDepthFrame) ([]byte, I400HighBitDepthFrame, error) {
+	src := encoder.SourceFrameMono16(frame)
+	tu, err := encoder.EncodeLosslessHighBitDepthMonochromeKeyframe(src)
+	if err != nil {
+		return nil, I400HighBitDepthFrame{}, err
+	}
+	recon := I400HighBitDepthFrame{
+		Y:        make([]uint16, len(frame.Y)),
+		YStride:  frame.YStride,
+		Width:    frame.Width,
+		Height:   frame.Height,
+		BitDepth: frame.BitDepth,
+	}
+	copy(recon.Y, frame.Y)
+	return tu, recon, nil
 }
 
 // EncodeI400PFrame encodes one native AV1 monochrome inter frame.

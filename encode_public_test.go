@@ -366,6 +366,77 @@ func TestPublicEncodeI400KeyframeReferenceDecoders(t *testing.T) {
 	}
 }
 
+func TestPublicEncodeI400HighBitDepthLosslessKeyframeReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	const w, h = 64, 64
+	for _, bitDepth := range []uint8{10, 12} {
+		t.Run(fmt.Sprintf("%dbit", bitDepth), func(t *testing.T) {
+			maxSample := uint16((1 << bitDepth) - 1)
+			src := goav1.I400HighBitDepthFrame{
+				Y:        make([]uint16, w*h),
+				YStride:  w,
+				Width:    w,
+				Height:   h,
+				BitDepth: bitDepth,
+			}
+			for y := range h {
+				for x := range w {
+					src.Y[y*w+x] = uint16((37 + x*19 + y*23 + (x*y)%97) & int(maxSample))
+				}
+			}
+
+			tu, recon, err := goav1.EncodeI400HighBitDepthLosslessKeyframe(src)
+			if err != nil {
+				t.Fatalf("EncodeI400HighBitDepthLosslessKeyframe: %v", err)
+			}
+			if recon.BitDepth != src.BitDepth || recon.Width != src.Width || recon.Height != src.Height ||
+				recon.YStride != src.YStride || !publicUint16Equal(recon.Y, src.Y) {
+				t.Fatalf("reconstruction mismatch: got=%+v src=%+v", recon, src)
+			}
+			seq := publicFirstSequenceHeader(t, tu)
+			wantProfile := uint8(0)
+			if bitDepth == 12 {
+				wantProfile = 2
+			}
+			if seq.SeqProfile != wantProfile ||
+				!seq.ColorConfig.MonoChrome ||
+				seq.ColorConfig.BitDepth != bitDepth ||
+				!seq.ColorConfig.HighBitdepth ||
+				(bitDepth == 12 && !seq.ColorConfig.TwelveBit) {
+				t.Fatalf("sequence profile=%d color=%+v want profile=%d native %d-bit monochrome", seq.SeqProfile, seq.ColorConfig, wantProfile, bitDepth)
+			}
+			ivf := appendPublicIVF(nil, w, h, 30, 1, []publicIVFFrame{{payload: tu}})
+			wantY := appendPublicI400HighBitDepthRaw(nil, src)
+			assertPublicIVFHighBitDepthMonochromeMatchesReferenceDecoders(t, decoders, fmt.Sprintf("public-i400-%dbit-lossless", bitDepth), ivf, wantY, w, h, 2)
+		})
+	}
+}
+
+func TestPublicEncodeI400HighBitDepthLosslessKeyframeRejectsInvalid(t *testing.T) {
+	valid := goav1.I400HighBitDepthFrame{
+		Y:        make([]uint16, 64*64),
+		YStride:  64,
+		Width:    64,
+		Height:   64,
+		BitDepth: 10,
+	}
+	if _, _, err := goav1.EncodeI400HighBitDepthLosslessKeyframe(goav1.I400HighBitDepthFrame{
+		Y:        valid.Y,
+		YStride:  valid.YStride,
+		Width:    valid.Width,
+		Height:   valid.Height,
+		BitDepth: 9,
+	}); err == nil {
+		t.Fatal("EncodeI400HighBitDepthLosslessKeyframe accepted 9-bit input")
+	}
+	invalidSample := valid
+	invalidSample.Y = append([]uint16(nil), valid.Y...)
+	invalidSample.Y[17] = 1024
+	if _, _, err := goav1.EncodeI400HighBitDepthLosslessKeyframe(invalidSample); err == nil {
+		t.Fatal("EncodeI400HighBitDepthLosslessKeyframe accepted sample above 10-bit range")
+	}
+}
+
 func TestPublicVideoEncoderClose(t *testing.T) {
 	const w, h = 192, 128
 	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
@@ -4204,6 +4275,65 @@ func assertPublicIVFMonochromeMatchesReferenceDecoders(
 	}
 }
 
+func assertPublicIVFHighBitDepthMonochromeMatchesReferenceDecoders(
+	t *testing.T, decoders []publicReferenceAV1Decoder, name string, ivf []byte, wantY []byte, width int, height int, bytesPerSample int,
+) {
+	t.Helper()
+	decoded, err := goav1.DecodeIVF(ivf)
+	if err != nil {
+		t.Fatalf("%s DecodeIVF: %v", name, err)
+	}
+	if len(decoded) != 1 {
+		t.Fatalf("%s decoded %d frames, want 1", name, len(decoded))
+	}
+	frame := decoded[0]
+	if frame.Width != width || frame.Height != height ||
+		frame.BytesPerSample != bytesPerSample ||
+		frame.ChromaWidth != 0 || frame.ChromaHeight != 0 ||
+		len(frame.U) != 0 || len(frame.V) != 0 {
+		t.Fatalf("%s decoded frame=%+v want %dx%d %d-byte monochrome", name, frame, width, height, bytesPerSample)
+	}
+	if !bytes.Equal(frame.Y, wantY) {
+		offset := firstPublicByteDiff(frame.Y, wantY)
+		t.Fatalf("%s local decoded luma differs first at byte %d", name, offset)
+	}
+
+	dir := t.TempDir()
+	ivfPath := filepath.Join(dir, name+".ivf")
+	if err := os.WriteFile(ivfPath, ivf, 0o644); err != nil {
+		t.Fatalf("%s write IVF: %v", name, err)
+	}
+	yLen := width * height * bytesPerSample
+	i420Len := yLen + 2*(width/2)*(height/2)*bytesPerSample
+	for _, decoder := range decoders {
+		outPath := filepath.Join(dir, name+"-"+decoder.name+".yuv")
+		out, err := exec.Command(decoder.path, decoder.args(outPath, ivfPath)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s %s: %v\n%s", name, decoder.name, err, out)
+		}
+		got, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("%s read %s output: %v", name, decoder.name, err)
+		}
+		switch len(got) {
+		case len(wantY):
+			if !bytes.Equal(got, wantY) {
+				offset := firstPublicByteDiff(got, wantY)
+				t.Fatalf("%s %s Y-only output differs first at byte %d", name, decoder.name, offset)
+			}
+		case i420Len:
+			gotY := got[:yLen]
+			if !bytes.Equal(gotY, wantY) {
+				offset := firstPublicByteDiff(gotY, wantY)
+				t.Fatalf("%s %s expanded luma differs first at byte %d", name, decoder.name, offset)
+			}
+		default:
+			t.Fatalf("%s %s output len=%d want %d Y-only or %d yuv420 bytes", name, decoder.name, len(got), len(wantY), i420Len)
+		}
+		t.Logf("%s %s: high-bit-depth monochrome luma bit-exact", name, decoder.name)
+	}
+}
+
 func publicRTCREMBFeedbackCompound(t *testing.T, bitrateBps uint64) []byte {
 	t.Helper()
 	fci, err := goav1.AppendRTCPReceiverEstimatedMaximumBitrateFCI(
@@ -6758,6 +6888,28 @@ func publicDecodedFramesRawYUV(frames []goav1.DecodedFrame) []byte {
 		out = append(out, frame.V...)
 	}
 	return out
+}
+
+func appendPublicI400HighBitDepthRaw(dst []byte, frame goav1.I400HighBitDepthFrame) []byte {
+	for y := range frame.Height {
+		row := frame.Y[y*frame.YStride : y*frame.YStride+frame.Width]
+		for _, sample := range row {
+			dst = append(dst, byte(sample), byte(sample>>8))
+		}
+	}
+	return dst
+}
+
+func publicUint16Equal(a []uint16, b []uint16) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func appendPublicFrameRawYUV(dst []byte, frame *goav1.Frame) []byte {
