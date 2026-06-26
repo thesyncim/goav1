@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/obu"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 	internalrtp "github.com/thesyncim/goav1/internal/av1/rtp"
 )
 
@@ -83,6 +85,189 @@ func TestWebRTCStreamEncoderOptionsSurviveSetConfig(t *testing.T) {
 		if got := stream.encoders[i].tileColsLog2; got != 2 {
 			t.Fatalf("shared SVC layer %d tileColsLog2=%d want 2", i, got)
 		}
+	}
+}
+
+func TestWebRTCStreamTileColumnsSurvivePixelFormatReplacement(t *testing.T) {
+	const w, h = 512, 288
+	base := Config{
+		Resolution:        Resolution{Width: w, Height: h},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 500,
+		Scalability:       ScalabilityModeL1T1,
+	}
+
+	for _, tc := range []struct {
+		name      string
+		config    func(Config) Config
+		assert    func(*testing.T, *WebRTCStream)
+		encode    func(*testing.T, *WebRTCStream) WebRTCEncodedPicture
+		wantTiles int
+	}{
+		{
+			name: "i400-8",
+			config: func(cfg Config) Config {
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 8, MonoChrome: true}
+				return cfg
+			},
+			assert: func(t *testing.T, stream *WebRTCStream) {
+				t.Helper()
+				enc := stream.monoEncoders[0]
+				if enc == nil {
+					t.Fatal("missing mono encoder")
+				}
+				if enc.tileColsLog2 != 2 {
+					t.Fatalf("mono encoder tileColsLog2=%d want 2", enc.tileColsLog2)
+				}
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeMonochromePicture(testWebRTCStreamMonoFrame(w, h), false)
+				if err != nil {
+					t.Fatalf("EncodeMonochromePicture: %v", err)
+				}
+				return picture
+			},
+			wantTiles: 4,
+		},
+		{
+			name: "i400-10",
+			config: func(cfg Config) Config {
+				cfg.BitDepth = 10
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 10, MonoChrome: true}
+				return cfg
+			},
+			assert: func(t *testing.T, stream *WebRTCStream) {
+				t.Helper()
+				enc := stream.mono16Encoders[0]
+				if enc == nil {
+					t.Fatal("missing mono16 encoder")
+				}
+				if enc.tileColsLog2 != 2 {
+					t.Fatalf("mono16 encoder tileColsLog2=%d want 2", enc.tileColsLog2)
+				}
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeHighBitDepthMonochromePicture(testWebRTCStreamMono16Frame(w, h, 10), false)
+				if err != nil {
+					t.Fatalf("EncodeHighBitDepthMonochromePicture: %v", err)
+				}
+				return picture
+			},
+			wantTiles: 4,
+		},
+		{
+			name: "i400-12",
+			config: func(cfg Config) Config {
+				cfg.Profile = Profile2
+				cfg.BitDepth = 12
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 12, MonoChrome: true}
+				return cfg
+			},
+			assert: func(t *testing.T, stream *WebRTCStream) {
+				t.Helper()
+				enc := stream.mono16Encoders[0]
+				if enc == nil {
+					t.Fatal("missing mono16 encoder")
+				}
+				if enc.tileColsLog2 != 2 {
+					t.Fatalf("mono16 encoder tileColsLog2=%d want 2", enc.tileColsLog2)
+				}
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeHighBitDepthMonochromePicture(testWebRTCStreamMono16Frame(w, h, 12), false)
+				if err != nil {
+					t.Fatalf("EncodeHighBitDepthMonochromePicture: %v", err)
+				}
+				return picture
+			},
+			wantTiles: 4,
+		},
+		{
+			name: "i420-10",
+			config: func(cfg Config) Config {
+				cfg.BitDepth = 10
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 10, SubsamplingX: true, SubsamplingY: true}
+				return cfg
+			},
+			assert: func(t *testing.T, stream *WebRTCStream) {
+				t.Helper()
+				enc := stream.color16Encoders[0]
+				if enc == nil {
+					t.Fatal("missing color16 encoder")
+				}
+				if enc.tileColsLog2 != 2 {
+					t.Fatalf("color16 encoder tileColsLog2=%d want 2", enc.tileColsLog2)
+				}
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeHighBitDepth420Picture(testWebRTCStream42016Frame(w, h, 10), false)
+				if err != nil {
+					t.Fatalf("EncodeHighBitDepth420Picture: %v", err)
+				}
+				return picture
+			},
+			wantTiles: 4,
+		},
+		{
+			name: "i420-12",
+			config: func(cfg Config) Config {
+				cfg.Profile = Profile2
+				cfg.BitDepth = 12
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 12, SubsamplingX: true, SubsamplingY: true}
+				return cfg
+			},
+			assert: func(t *testing.T, stream *WebRTCStream) {
+				t.Helper()
+				enc := stream.color16Encoders[0]
+				if enc == nil {
+					t.Fatal("missing color16 encoder")
+				}
+				if enc.tileColsLog2 != 2 {
+					t.Fatalf("color16 encoder tileColsLog2=%d want 2", enc.tileColsLog2)
+				}
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeHighBitDepth420Picture(testWebRTCStream42016Frame(w, h, 12), false)
+				if err != nil {
+					t.Fatalf("EncodeHighBitDepth420Picture: %v", err)
+				}
+				return picture
+			},
+			wantTiles: 4,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream, err := NewWebRTCStreamConfig(base)
+			if err != nil {
+				t.Fatalf("NewWebRTCStreamConfig: %v", err)
+			}
+			defer stream.Close()
+			stream.SetTileColumns(4)
+
+			if err := stream.SetConfig(tc.config(base)); err != nil {
+				t.Fatalf("SetConfig: %v", err)
+			}
+			tc.assert(t, stream)
+			picture := tc.encode(t, stream)
+			if !picture.Keyframe || picture.FrameNum != 1 {
+				t.Fatalf("picture key=%v frameNum=%d want key single frame", picture.Keyframe, picture.FrameNum)
+			}
+			if got := parseWebRTCTileColumns(t, picture.Frames[0].TU); got != tc.wantTiles {
+				t.Fatalf("encoded tile columns=%d want %d", got, tc.wantTiles)
+			}
+		})
 	}
 }
 
@@ -643,4 +828,104 @@ func testWebRTCStreamFrame(width int, height int) SourceFrame420 {
 		f.V[i] = 133
 	}
 	return f
+}
+
+func testWebRTCStreamMonoFrame(width int, height int) SourceFrameMono {
+	f := SourceFrameMono{
+		Y:       make([]byte, width*height),
+		YStride: width,
+		Width:   width,
+		Height:  height,
+	}
+	for i := range f.Y {
+		f.Y[i] = uint8(40 + i%170)
+	}
+	return f
+}
+
+func testWebRTCStreamMono16Frame(width int, height int, bitDepth uint8) SourceFrameMono16 {
+	f := SourceFrameMono16{
+		Y:        make([]uint16, width*height),
+		YStride:  width,
+		Width:    width,
+		Height:   height,
+		BitDepth: bitDepth,
+	}
+	base := uint16(1 << max(bitDepth-4, 0))
+	span := uint16((1 << bitDepth) - 1)
+	for i := range f.Y {
+		f.Y[i] = (base + uint16((i*17)%int(span/2))) & span
+	}
+	return f
+}
+
+func testWebRTCStream42016Frame(width int, height int, bitDepth uint8) SourceFrame42016 {
+	cw, ch := width/2, height/2
+	f := SourceFrame42016{
+		Y:            make([]uint16, width*height),
+		U:            make([]uint16, cw*ch),
+		V:            make([]uint16, cw*ch),
+		YStride:      width,
+		ChromaStride: cw,
+		Width:        width,
+		Height:       height,
+		BitDepth:     bitDepth,
+	}
+	maxSample := uint16((1 << bitDepth) - 1)
+	for i := range f.Y {
+		f.Y[i] = uint16((64 + i%512) & int(maxSample))
+	}
+	for i := range f.U {
+		f.U[i] = maxSample / 3
+		f.V[i] = maxSample * 2 / 3
+	}
+	return f
+}
+
+func parseWebRTCTileColumns(t *testing.T, tu []byte) int {
+	t.Helper()
+	var seq parser.SequenceHeader
+	haveSeq := false
+	it := obu.NewLowOverheadIterator(tu)
+	for {
+		unit, ok, err := it.Next()
+		if err != nil {
+			t.Fatalf("parse low-overhead OBU: %v", err)
+		}
+		if !ok {
+			break
+		}
+		switch unit.Header.Type {
+		case obu.TypeSequenceHeader:
+			seq, err = parser.ParseSequenceHeader(unit.Payload)
+			if err != nil {
+				t.Fatalf("ParseSequenceHeader: %v", err)
+			}
+			haveSeq = true
+		case obu.TypeFrameHeader, obu.TypeFrame:
+			if !haveSeq {
+				t.Fatal("frame header before sequence header")
+			}
+			prefix, err := parser.ParseFrameHeaderPrefix(unit.Payload, seq)
+			if err != nil {
+				t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+			}
+			var size parser.FrameSize
+			if prefix.UsesIntraFrameSizePath() {
+				size, err = parser.ParseIntraFrameSize(unit.Payload, seq, prefix, unit.Header.TemporalID, unit.Header.SpatialID)
+			} else {
+				size, err = parser.ParseFrameSize(unit.Payload, seq, prefix, nil, unit.Header.TemporalID, unit.Header.SpatialID)
+			}
+			if err != nil {
+				t.Fatalf("ParseFrameSize: %v", err)
+			}
+			tiles, err := parser.ParseTileInfo(unit.Payload, seq, prefix, size)
+			if err != nil {
+				t.Fatalf("ParseTileInfo: %v", err)
+			}
+			return int(tiles.Cols)
+		}
+	}
+	t.Fatal("missing frame header")
+	return 0
 }

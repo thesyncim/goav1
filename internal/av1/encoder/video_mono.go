@@ -40,9 +40,11 @@ type MonochromeVideoEncoder struct {
 	frameIndex     int
 	lastTemporalID uint8
 
-	payloads  [1]TilePayload
-	tuGroup   []byte
-	tuScratch []byte
+	tileColsLog2 uint8
+	tilePCs      []pframeCoder
+	payloads     []TilePayload
+	tuGroup      []byte
+	tuScratch    []byte
 }
 
 // NewMonochromeVideoEncoder creates a native monochrome streaming encoder.
@@ -90,6 +92,15 @@ func (e *MonochromeVideoEncoder) SetTemporalLayers(n int) error {
 	}
 	e.temporalLayers = n
 	return nil
+}
+
+// SetTileColumns overrides the inter-frame tile column count (rounded down
+// to a power of two, clamped to the legal range for the frame size at encode
+// time). One column disables multi-tile output.
+func (e *MonochromeVideoEncoder) SetTileColumns(cols int) {
+	if e != nil {
+		e.tileColsLog2 = tileColumnsLog2(cols)
+	}
 }
 
 // TemporalID reports the temporal layer the next frame will be coded in.
@@ -346,11 +357,11 @@ func (e *MonochromeVideoEncoder) encodeKeyWithSequenceMax(src SourceFrameMono, m
 		header.Size.HaveRenderSize = true
 	}
 	allocMonoFrame(&e.keyRecon, src)
-	tilePayload, err := e.pc.encodeMonochromeKeyframeTileWithOptions(src, &e.keyRecon, keyQ, 0, uint16(src.Width/4), header.Prefix.AllowScreenContentTools)
+	payloads, err := e.encodeKeyTilePayloads(seq, src, &e.keyRecon, keyQ, &header)
 	if err != nil {
-		return nil, fmt.Errorf("encode tile: %w", err)
+		return nil, err
 	}
-	out, err := e.assembleKeyTU(seq, header, tilePayload)
+	out, err := e.assembleKeyTU(seq, header, payloads)
 	if err != nil {
 		return nil, err
 	}
@@ -403,12 +414,11 @@ func (e *MonochromeVideoEncoder) encodePReusing(src SourceFrameMono, temporalID 
 		ref = e.t1Recon
 		header.Size.RefFrameIdx[0] = 2
 	}
-	tilePayload, err := e.pc.encodeMonochromeTileWithOptions(src, ref, nil, out, effQ, nil, parser.ReferenceModeSingle, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, 0, uint16(src.Width/4))
+	payloads, err := e.encodePTilePayloads(seq, src, ref, out, effQ, &header)
 	if err != nil {
-		return nil, fmt.Errorf("encode tile: %w", err)
+		return nil, err
 	}
-	e.payloads[0] = TilePayload{Data: tilePayload}
-	tu, err := assembleInterTU(seq, header, e.payloads[:], temporalID, &e.tuGroup, &e.tuScratch)
+	tu, err := assembleInterTU(seq, header, payloads, temporalID, &e.tuGroup, &e.tuScratch)
 	if err != nil {
 		return nil, err
 	}
@@ -462,20 +472,19 @@ func (e *MonochromeVideoEncoder) encodeReferencePFrameWithSequenceMax(src Source
 		header.Size.RenderHeight = uint32(e.renderHeight)
 		header.Size.HaveRenderSize = true
 	}
-	if header.Prefix.FrameSizeOverride {
-		tiles, err := interTileInfoForSequence(seq, src.Width, src.Height, 0)
+	if e.tileColsLog2 > 0 || header.Prefix.FrameSizeOverride {
+		tiles, err := interTileInfoForSequence(seq, src.Width, src.Height, e.tileColsLog2)
 		if err != nil {
 			return nil, fmt.Errorf("tile info: %w", err)
 		}
 		header.Tile = tiles
 	}
 
-	tilePayload, err := e.pc.encodeMonochromeTileWithOptions(src, ref, nil, out, effQ, nil, parser.ReferenceModeSingle, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, 0, uint16(src.Width/4))
+	payloads, err := e.encodePTilePayloads(seq, src, ref, out, effQ, &header)
 	if err != nil {
-		return nil, fmt.Errorf("encode tile: %w", err)
+		return nil, err
 	}
-	e.payloads[0] = TilePayload{Data: tilePayload}
-	tu, err := assembleInterTU(seq, header, e.payloads[:], settings.TemporalID, &e.tuGroup, &e.tuScratch)
+	tu, err := assembleInterTU(seq, header, payloads, settings.TemporalID, &e.tuGroup, &e.tuScratch)
 	if err != nil {
 		return nil, err
 	}
@@ -491,13 +500,86 @@ func (e *MonochromeVideoEncoder) encodeReferencePFrameWithSequenceMax(src Source
 	return tu, nil
 }
 
-func (e *MonochromeVideoEncoder) assembleKeyTU(seq SequenceHeader, header IntraFrameHeaderParams, tilePayload []byte) ([]byte, error) {
+func (e *MonochromeVideoEncoder) encodeKeyTilePayloads(seq SequenceHeader, src SourceFrameMono, recon *SourceFrameMono, qIndex uint8, header *IntraFrameHeaderParams) ([]TilePayload, error) {
+	nTiles, err := e.configureTilePayloads(seq, src.Width, src.Height, &header.Tile)
+	if err != nil {
+		return nil, err
+	}
+	payloads := e.ensureTilePayloads(nTiles)
+	miCols := uint16(src.Width / 4)
+	for t := 0; t < nTiles; t++ {
+		pc := &e.pc
+		if t > 0 {
+			pc = &e.tilePCs[t]
+		}
+		c0, c1 := tilePayloadColBounds(header.Tile, t, miCols)
+		data, err := pc.encodeMonochromeKeyframeTileWithOptions(src, recon, qIndex, c0, c1, header.Prefix.AllowScreenContentTools)
+		if err != nil {
+			return nil, fmt.Errorf("encode tile %d: %w", t, err)
+		}
+		payloads[t].Data = data
+	}
+	return payloads, nil
+}
+
+func (e *MonochromeVideoEncoder) encodePTilePayloads(seq SequenceHeader, src SourceFrameMono, ref SourceFrameMono, out *SourceFrameMono, qIndex uint8, header *InterFrameHeaderParams) ([]TilePayload, error) {
+	nTiles, err := e.configureTilePayloads(seq, src.Width, src.Height, &header.Tile)
+	if err != nil {
+		return nil, err
+	}
+	payloads := e.ensureTilePayloads(nTiles)
+	miCols := uint16(src.Width / 4)
+	for t := 0; t < nTiles; t++ {
+		pc := &e.pc
+		if t > 0 {
+			pc = &e.tilePCs[t]
+		}
+		c0, c1 := tilePayloadColBounds(header.Tile, t, miCols)
+		data, err := pc.encodeMonochromeTileWithOptions(src, ref, nil, out, qIndex, nil, parser.ReferenceModeSingle, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, c0, c1)
+		if err != nil {
+			return nil, fmt.Errorf("encode tile %d: %w", t, err)
+		}
+		payloads[t].Data = data
+	}
+	return payloads, nil
+}
+
+func (e *MonochromeVideoEncoder) configureTilePayloads(seq SequenceHeader, width, height int, tiles *TileInfo) (int, error) {
+	if e.tileColsLog2 > 0 || tiles.Cols > 1 {
+		info, err := interTileInfoForSequence(seq, width, height, e.tileColsLog2)
+		if err != nil {
+			return 0, fmt.Errorf("tile info: %w", err)
+		}
+		*tiles = info
+		return int(info.Cols), nil
+	}
+	return 1, nil
+}
+
+func (e *MonochromeVideoEncoder) ensureTilePayloads(nTiles int) []TilePayload {
+	if nTiles < 1 {
+		nTiles = 1
+	}
+	if len(e.tilePCs) < nTiles {
+		e.tilePCs = make([]pframeCoder, nTiles)
+	}
+	if cap(e.payloads) < nTiles {
+		e.payloads = make([]TilePayload, nTiles)
+	}
+	e.payloads = e.payloads[:nTiles]
+	for i := range e.payloads {
+		e.payloads[i] = TilePayload{}
+	}
+	return e.payloads
+}
+
+func (e *MonochromeVideoEncoder) assembleKeyTU(seq SequenceHeader, header IntraFrameHeaderParams, payloads []TilePayload) ([]byte, error) {
 	headerSize, err := LowOverheadCompleteIntraHeaderTemporalUnitSize(seq, header)
 	if err != nil {
 		return nil, fmt.Errorf("size header TU: %w", err)
 	}
-	e.payloads[0] = TilePayload{Data: tilePayload}
-	groupSize, err := TileGroupPayloadSize(header.Tile, 0, 0, e.payloads[:])
+	endTile := uint16(len(payloads) - 1)
+	groupSize, err := TileGroupPayloadSize(header.Tile, 0, endTile, payloads)
 	if err != nil {
 		return nil, fmt.Errorf("size tile group: %w", err)
 	}
@@ -505,7 +587,7 @@ func (e *MonochromeVideoEncoder) assembleKeyTU(seq SequenceHeader, header IntraF
 		e.tuGroup = make([]byte, 0, groupSize+groupSize/2)
 	}
 	group := e.tuGroup[:0]
-	group, err = AppendTileGroupPayload(group, header.Tile, 0, 0, e.payloads[:])
+	group, err = AppendTileGroupPayload(group, header.Tile, 0, endTile, payloads)
 	if err != nil {
 		return nil, fmt.Errorf("append tile group: %w", err)
 	}

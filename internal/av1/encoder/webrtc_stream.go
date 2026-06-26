@@ -472,6 +472,15 @@ func (s *WebRTCStream) SetTileColumns(cols int) {
 		if s.encoders[i] != nil {
 			s.encoders[i].SetTileColumns(cols)
 		}
+		if s.monoEncoders[i] != nil {
+			s.monoEncoders[i].SetTileColumns(cols)
+		}
+		if s.mono16Encoders[i] != nil {
+			s.mono16Encoders[i].SetTileColumns(cols)
+		}
+		if s.color16Encoders[i] != nil {
+			s.color16Encoders[i].SetTileColumns(cols)
+		}
 	}
 }
 
@@ -771,6 +780,9 @@ func (s *WebRTCStream) buildReplacementMonoLayerEncoders(config Config, fps int)
 			closeWebRTCStreamMonoEncoders(encoders)
 			return [WebRTCMaxSpatialLayers]*MonochromeVideoEncoder{}, err
 		}
+		if s.tileColumns > 0 {
+			enc.SetTileColumns(s.tileColumns)
+		}
 		if err := enc.Prewarm(); err != nil {
 			closeWebRTCStreamMonoEncoders(encoders)
 			_ = enc.Close()
@@ -789,6 +801,9 @@ func (s *WebRTCStream) buildReplacementMono16LayerEncoders(config Config, fps in
 			closeWebRTCStreamMono16Encoders(encoders)
 			return [WebRTCMaxSpatialLayers]*HighBitDepthMonochromeVideoEncoder{}, err
 		}
+		if s.tileColumns > 0 {
+			enc.SetTileColumns(s.tileColumns)
+		}
 		if err := enc.Prewarm(); err != nil {
 			closeWebRTCStreamMono16Encoders(encoders)
 			_ = enc.Close()
@@ -806,6 +821,9 @@ func (s *WebRTCStream) buildReplacementColor16LayerEncoders(config Config, fps i
 		if err != nil {
 			closeWebRTCStreamColor16Encoders(encoders)
 			return [WebRTCMaxSpatialLayers]*HighBitDepth420VideoEncoder{}, err
+		}
+		if s.tileColumns > 0 {
+			enc.SetTileColumns(s.tileColumns)
 		}
 		if err := enc.Prewarm(); err != nil {
 			closeWebRTCStreamColor16Encoders(encoders)

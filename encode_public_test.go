@@ -2321,6 +2321,61 @@ func TestPublicRTCEncoderI420HighBitDepthNativeReferenceDecoders(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderI420HighBitDepthNativeTileColumnsReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	cases := []struct {
+		name     string
+		bitDepth uint8
+		profile  goav1.EncoderProfile
+	}{
+		{name: "10bit", bitDepth: 10, profile: goav1.EncoderProfile0},
+		{name: "12bit", bitDepth: 12, profile: goav1.EncoderProfile2},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			const w, h = 512, 288
+			cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T1)
+			cfg.Profile = tc.profile
+			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.Quantizer = 41
+			cfg.ColorConfigSet = true
+			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+				BitDepth:     tc.bitDepth,
+				SubsamplingX: true,
+				SubsamplingY: true,
+			}
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+			}
+			defer enc.Close()
+			enc.SetTileColumns(4)
+
+			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var rtpReceiver goav1.RTPDependencyDescriptorState
+			nextFrameID := uint64(0)
+			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var orderedTUs [][]byte
+			for frame := 0; frame < 3; frame++ {
+				picture, err := enc.EncodeI420HighBitDepthPicture(publicI420HighBitDepthFrame(w, h, tc.bitDepth, frame), false)
+				if err != nil {
+					t.Fatalf("EncodeI420HighBitDepthPicture(%d): %v", frame, err)
+				}
+				if frame == 0 {
+					if got := publicFirstFrameTileColumns(t, picture.Frames[0].Data); got != 4 {
+						t.Fatalf("tile columns=%d want 4", got)
+					}
+				}
+				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
+				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), picture, frame == 0, &nextFrameID)
+			}
+			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+			assertPublicRTCRTPReferenceDecoders(t, decoders, "public-rtc-i420-"+tc.name+"-native-tiles", enc.Config(), layerTUs, orderedTUs)
+		})
+	}
+}
+
 func TestPublicRTCEncoderI420HighBitDepthNativeMultiSpatialReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	scenarios := []struct {
@@ -6074,6 +6129,54 @@ func publicFirstSequenceHeader(t *testing.T, frameData []byte) goav1.SequenceHea
 	}
 	t.Fatal("missing sequence header")
 	return goav1.SequenceHeader{}
+}
+
+func publicFirstFrameTileColumns(t *testing.T, frameData []byte) int {
+	t.Helper()
+	var sequence goav1.SequenceHeader
+	haveSequence := false
+	it := goav1.NewLowOverheadIterator(frameData)
+	for {
+		unit, ok, err := it.Next()
+		if err != nil {
+			t.Fatalf("OBU iteration: %v", err)
+		}
+		if !ok {
+			break
+		}
+		switch unit.Header.Type {
+		case goav1.OBUSequenceHeader:
+			sequence, err = goav1.ParseSequenceHeader(unit.Payload)
+			if err != nil {
+				t.Fatalf("ParseSequenceHeader: %v", err)
+			}
+			haveSequence = true
+		case goav1.OBUFrameHeader, goav1.OBUFrame:
+			if !haveSequence {
+				t.Fatal("frame header appeared before sequence header")
+			}
+			prefix, err := goav1.ParseFrameHeaderPrefix(unit.Payload, sequence)
+			if err != nil {
+				t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+			}
+			var size goav1.FrameSize
+			if prefix.UsesIntraFrameSizePath() {
+				size, err = goav1.ParseIntraFrameSize(unit.Payload, sequence, prefix, unit.Header.TemporalID, unit.Header.SpatialID)
+			} else {
+				size, err = goav1.ParseFrameSize(unit.Payload, sequence, prefix, nil, unit.Header.TemporalID, unit.Header.SpatialID)
+			}
+			if err != nil {
+				t.Fatalf("ParseFrameSize: %v", err)
+			}
+			tiles, err := goav1.ParseTileInfo(unit.Payload, sequence, prefix, size)
+			if err != nil {
+				t.Fatalf("ParseTileInfo: %v", err)
+			}
+			return int(tiles.Cols)
+		}
+	}
+	t.Fatal("missing frame header")
+	return 0
 }
 
 func assertPublicRTCFrameScreenContentHeader(

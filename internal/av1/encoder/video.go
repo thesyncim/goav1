@@ -372,11 +372,15 @@ func defaultTileColsLog2(width int) uint8 {
 // to a power of two, clamped to the legal range for the frame size at encode
 // time). One column disables tile parallelism.
 func (e *VideoEncoder) SetTileColumns(cols int) {
+	e.tileColsLog2 = tileColumnsLog2(cols)
+}
+
+func tileColumnsLog2(cols int) uint8 {
 	log2 := uint8(0)
 	for (2 << log2) <= cols {
 		log2++
 	}
-	e.tileColsLog2 = log2
+	return log2
 }
 
 // NewVideoEncoderCBR creates a streaming encoder under CBR rate control. The
@@ -936,6 +940,13 @@ func tileColBounds(tile TileInfo, t int, miCols uint16) (uint16, uint16) {
 		c1 = miCols
 	}
 	return c0, c1
+}
+
+func tilePayloadColBounds(tile TileInfo, t int, miCols uint16) (uint16, uint16) {
+	if tile.Cols <= 1 {
+		return 0, miCols
+	}
+	return tileColBounds(tile, t, miCols)
 }
 
 // startTileWorkers grows the persistent tile-column worker pool to the number
