@@ -65,9 +65,11 @@ type WebRTCStream struct {
 	encoders     [WebRTCMaxSpatialLayers]*VideoEncoder
 	monoEncoders [WebRTCMaxSpatialLayers]*MonochromeVideoEncoder
 	scaledFrames [WebRTCMaxSpatialLayers]SourceFrame420
+	scaledMono   [WebRTCMaxSpatialLayers]SourceFrameMono
 	layerScratch [WebRTCMaxSpatialLayers][]byte
 
-	referenceFrames [WebRTCReferenceBuffers]SourceFrame420
+	referenceFrames     [WebRTCReferenceBuffers]SourceFrame420
+	monoReferenceFrames [WebRTCReferenceBuffers]SourceFrameMono
 }
 
 // NewWebRTCStream creates an L1T1 WebRTC stream under CBR rate control.
@@ -181,9 +183,6 @@ func normalizeWebRTCStreamConfig(config Config) (Config, int, error) {
 
 func webRTCPixelScalabilitySupported(config Config) bool {
 	if config.SpatialLayerCount == 0 || config.SpatialLayerCount > WebRTCMaxSpatialLayers {
-		return false
-	}
-	if config.ColorConfig.MonoChrome && config.SpatialLayerCount != 1 {
 		return false
 	}
 	return true
@@ -368,6 +367,7 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 		if !sameStructure {
 			s.state = webRTCEncoderStateForNextKey(s.state)
 			s.referenceFrames = [WebRTCReferenceBuffers]SourceFrame420{}
+			s.monoReferenceFrames = [WebRTCReferenceBuffers]SourceFrameMono{}
 		}
 		return nil
 	}
@@ -399,8 +399,10 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 	s.monoEncoders = nextMonoEncoders
 	s.config = normalized
 	s.scaledFrames = [WebRTCMaxSpatialLayers]SourceFrame420{}
+	s.scaledMono = [WebRTCMaxSpatialLayers]SourceFrameMono{}
 	s.layerScratch = [WebRTCMaxSpatialLayers][]byte{}
 	s.referenceFrames = [WebRTCReferenceBuffers]SourceFrame420{}
+	s.monoReferenceFrames = [WebRTCReferenceBuffers]SourceFrameMono{}
 	s.state = webRTCEncoderStateForNextKey(s.state)
 	return nil
 }
@@ -705,15 +707,12 @@ func (s *WebRTCStream) EncodePicture(src SourceFrame420, forceKey bool) (WebRTCE
 	return picture, nil
 }
 
-// EncodeMonochromePicture encodes one native monochrome WebRTC picture. Native
-// monochrome pixel coding is currently single-spatial; multi-spatial mono
-// configs are rejected during normalization until scaled mono inter coding is
-// implemented.
+// EncodeMonochromePicture encodes one native monochrome WebRTC picture.
 func (s *WebRTCStream) EncodeMonochromePicture(src SourceFrameMono, forceKey bool) (WebRTCEncodedPicture, error) {
 	if s == nil || s.config.SpatialLayerCount == 0 {
 		return WebRTCEncodedPicture{}, ErrInvalidConfig
 	}
-	if !webRTCStreamMonochrome(s.config) || s.config.SpatialLayerCount != 1 {
+	if !webRTCStreamMonochrome(s.config) {
 		return WebRTCEncodedPicture{}, ErrUnsupported
 	}
 	if src.Width != int(s.config.Resolution.Width) || src.Height != int(s.config.Resolution.Height) {
@@ -724,7 +723,7 @@ func (s *WebRTCStream) EncodeMonochromePicture(src SourceFrameMono, forceKey boo
 		return WebRTCEncodedPicture{}, err
 	}
 	frameNum := webRTCPictureTemporalUnitFrameNum(unit)
-	if frameNum != 1 {
+	if frameNum == 0 || frameNum > s.config.SpatialLayerCount {
 		return WebRTCEncodedPicture{}, ErrInvalidFrame
 	}
 
@@ -733,55 +732,64 @@ func (s *WebRTCStream) EncodeMonochromePicture(src SourceFrameMono, forceKey boo
 	picture.Keyframe = unit.Key
 	picture.Unit = unit
 	metadataDims := webRTCScalabilityMetadataDimensionsForConfig(s.config)
-	settings, ok := webRTCPictureUnitFrameSettings(unit, 0)
-	if !ok || settings.SpatialID != 0 {
-		return WebRTCEncodedPicture{}, ErrInvalidFrame
-	}
-	enc := s.monoEncoders[0]
-	if enc == nil {
-		return WebRTCEncodedPicture{}, ErrInvalidConfig
-	}
-	tu, key, err := enc.EncodeWithTemporalID(src, unit.Key, settings.TemporalID)
-	if err != nil {
-		return WebRTCEncodedPicture{}, err
-	}
-	if key != webRTCStreamExpectedCodedKey(unit.Key, settings, s.config.Scalability) {
-		return WebRTCEncodedPicture{}, ErrInvalidFrame
-	}
-	includeScalabilityMetadata := unit.Key
-	layerSize, err := webRTCLayerTemporalUnitSize(tu, settings.TemporalID, settings.SpatialID, s.config.Scalability, includeScalabilityMetadata, metadataDims)
-	if err != nil {
-		return WebRTCEncodedPicture{}, err
-	}
-	if cap(s.layerScratch[0]) < layerSize {
-		s.layerScratch[0] = make([]byte, 0, layerSize)
-	}
-	layerTU, err := appendWebRTCLayerTemporalUnit(s.layerScratch[0][:0], tu, settings.TemporalID, settings.SpatialID, s.config.Scalability, includeScalabilityMetadata, metadataDims)
-	if err != nil {
-		return WebRTCEncodedPicture{}, err
-	}
-	s.layerScratch[0] = layerTU
-	control, structure, err := webRTCPictureTemporalUnitFrameControl(unit, s.state, 0)
-	if err != nil {
-		return WebRTCEncodedPicture{}, err
-	}
-	descSize, err := WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, control.AttachDependencyStructure)
-	if err != nil {
-		return WebRTCEncodedPicture{}, err
-	}
-	descriptor, err := AppendWebRTCDependencyDescriptor(make([]byte, 0, descSize), structure, control.GenericFrameInfo, true, true, control.AttachDependencyStructure)
-	if err != nil {
-		return WebRTCEncodedPicture{}, err
-	}
-	picture.Frames[0] = WebRTCEncodedFrame{
-		TU:                        layerTU,
-		Keyframe:                  unit.Key,
-		CodedKeyframe:             key,
-		LastFrameInPicture:        true,
-		Info:                      control.GenericFrameInfo,
-		Descriptor:                descriptor,
-		Structure:                 structure,
-		AttachDependencyStructure: control.AttachDependencyStructure,
+	for i := uint8(0); i < frameNum; i++ {
+		settings, ok := webRTCPictureUnitFrameSettings(unit, i)
+		if !ok {
+			return WebRTCEncodedPicture{}, ErrInvalidFrame
+		}
+		layerSrc, err := s.sourceForMonoLayer(src, settings.SpatialID, settings.Resolution)
+		if err != nil {
+			return WebRTCEncodedPicture{}, err
+		}
+		enc := s.monoEncoders[settings.SpatialID]
+		if enc == nil {
+			return WebRTCEncodedPicture{}, ErrInvalidConfig
+		}
+		tu, key, err := s.encodeMonoPictureLayer(enc, layerSrc, settings, unit.Key)
+		if err != nil {
+			return WebRTCEncodedPicture{}, err
+		}
+		if key != webRTCStreamExpectedCodedKey(unit.Key, settings, s.config.Scalability) {
+			return WebRTCEncodedPicture{}, ErrInvalidFrame
+		}
+		includeScalabilityMetadata := unit.Key && settings.SpatialID == 0
+		layerSize, err := webRTCLayerTemporalUnitSize(tu, settings.TemporalID, settings.SpatialID, s.config.Scalability, includeScalabilityMetadata, metadataDims)
+		if err != nil {
+			return WebRTCEncodedPicture{}, err
+		}
+		if cap(s.layerScratch[i]) < layerSize {
+			s.layerScratch[i] = make([]byte, 0, layerSize)
+		}
+		layerTU, err := appendWebRTCLayerTemporalUnit(s.layerScratch[i][:0], tu, settings.TemporalID, settings.SpatialID, s.config.Scalability, includeScalabilityMetadata, metadataDims)
+		if err != nil {
+			return WebRTCEncodedPicture{}, err
+		}
+		s.layerScratch[i] = layerTU
+		control, structure, err := webRTCPictureTemporalUnitFrameControl(unit, s.state, i)
+		if err != nil {
+			return WebRTCEncodedPicture{}, err
+		}
+		descSize, err := WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, control.AttachDependencyStructure)
+		if err != nil {
+			return WebRTCEncodedPicture{}, err
+		}
+		descriptor, err := AppendWebRTCDependencyDescriptor(make([]byte, 0, descSize), structure, control.GenericFrameInfo, true, true, control.AttachDependencyStructure)
+		if err != nil {
+			return WebRTCEncodedPicture{}, err
+		}
+		picture.Frames[i] = WebRTCEncodedFrame{
+			TU:                        layerTU,
+			Keyframe:                  unit.Key,
+			CodedKeyframe:             key,
+			LastFrameInPicture:        i+1 == frameNum,
+			Info:                      control.GenericFrameInfo,
+			Descriptor:                descriptor,
+			Structure:                 structure,
+			AttachDependencyStructure: control.AttachDependencyStructure,
+		}
+		if err := s.updateMonoReferenceFrame(settings, enc); err != nil {
+			return WebRTCEncodedPicture{}, err
+		}
 	}
 	s.state = next
 	return picture, nil
@@ -832,6 +840,46 @@ func webRTCStreamUsesSharedReferenceSlotCoding(config Config) bool {
 		!config.Scalability.IsSimulcast()
 }
 
+func (s *WebRTCStream) encodeMonoPictureLayer(enc *MonochromeVideoEncoder, layerSrc SourceFrameMono, settings FrameEncodeSettings, keyPicture bool) ([]byte, bool, error) {
+	if !webRTCStreamUsesSharedReferenceSlotCoding(s.config) {
+		tu, key, err := enc.EncodeWithTemporalID(layerSrc, keyPicture, settings.TemporalID)
+		return tu, key, err
+	}
+	maxWidth, maxHeight, err := s.sequenceMaxCodedSizeMono()
+	if err != nil {
+		return nil, false, err
+	}
+	switch settings.Type {
+	case FrameTypeKey:
+		if !keyPicture {
+			return nil, false, ErrInvalidFrame
+		}
+		if layerSrc.Width != enc.renderWidth || layerSrc.Height != enc.renderHeight {
+			return nil, false, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", layerSrc.Width, layerSrc.Height, enc.renderWidth, enc.renderHeight)
+		}
+		if enc.renderWidth != enc.width || enc.renderHeight != enc.height {
+			layerSrc = enc.padSource(layerSrc)
+		}
+		tu, err := enc.encodeKeyWithSequenceMax(layerSrc, maxWidth, maxHeight)
+		return tu, true, err
+	case FrameTypeDelta:
+		if settings.ReferenceCount == 0 {
+			return nil, false, ErrInvalidFrame
+		}
+		refSlot, err := webRTCStreamCodedReferenceBuffer(settings, s.config.Scalability)
+		if err != nil {
+			return nil, false, err
+		}
+		if refSlot >= WebRTCReferenceBuffers || s.monoReferenceFrames[refSlot].Y == nil {
+			return nil, false, ErrInvalidFrame
+		}
+		tu, err := enc.encodeReferencePFrameWithSequenceMax(layerSrc, s.monoReferenceFrames[refSlot], refSlot, settings, maxWidth, maxHeight)
+		return tu, false, err
+	default:
+		return nil, false, ErrInvalidFrame
+	}
+}
+
 func webRTCStreamCodedReferenceBuffer(settings FrameEncodeSettings, mode ScalabilityMode) (uint8, error) {
 	if settings.ReferenceCount == 0 || settings.ReferenceCount > WebRTCMaxFrameReferences {
 		return 0, ErrInvalidFrame
@@ -866,6 +914,18 @@ func (s *WebRTCStream) sequenceMaxCodedSize() (int, int, error) {
 	return enc.width, enc.height, nil
 }
 
+func (s *WebRTCStream) sequenceMaxCodedSizeMono() (int, int, error) {
+	if s == nil || s.config.SpatialLayerCount == 0 {
+		return 0, 0, ErrInvalidConfig
+	}
+	top := s.config.SpatialLayerCount - 1
+	enc := s.monoEncoders[top]
+	if enc == nil {
+		return 0, 0, ErrInvalidConfig
+	}
+	return enc.width, enc.height, nil
+}
+
 func (s *WebRTCStream) updateReferenceFrame(settings FrameEncodeSettings, enc *VideoEncoder) error {
 	if !settings.UpdateBufferSet {
 		return nil
@@ -878,6 +938,21 @@ func (s *WebRTCStream) updateReferenceFrame(settings FrameEncodeSettings, enc *V
 		return err
 	}
 	copyFrameInto(&s.referenceFrames[settings.UpdateBuffer], recon)
+	return nil
+}
+
+func (s *WebRTCStream) updateMonoReferenceFrame(settings FrameEncodeSettings, enc *MonochromeVideoEncoder) error {
+	if !settings.UpdateBufferSet {
+		return nil
+	}
+	if settings.UpdateBuffer >= WebRTCReferenceBuffers || enc == nil {
+		return ErrInvalidFrame
+	}
+	recon := enc.Recon()
+	if recon.Y == nil {
+		return ErrInvalidFrame
+	}
+	copyMonoFrameInto(&s.monoReferenceFrames[settings.UpdateBuffer], recon)
 	return nil
 }
 
@@ -908,6 +983,16 @@ func (s *WebRTCStream) sourceForLayer(src SourceFrame420, spatialID uint8, resol
 	return scaleSourceFrame420Nearest(&s.scaledFrames[spatialID], src, int(resolution.Width), int(resolution.Height))
 }
 
+func (s *WebRTCStream) sourceForMonoLayer(src SourceFrameMono, spatialID uint8, resolution Resolution) (SourceFrameMono, error) {
+	if spatialID >= WebRTCMaxSpatialLayers || !resolution.Valid() {
+		return SourceFrameMono{}, ErrInvalidFrame
+	}
+	if src.Width == int(resolution.Width) && src.Height == int(resolution.Height) {
+		return src, nil
+	}
+	return scaleSourceFrameMonoNearest(&s.scaledMono[spatialID], src, int(resolution.Width), int(resolution.Height))
+}
+
 func scaleSourceFrame420Nearest(dst *SourceFrame420, src SourceFrame420, width, height int) (SourceFrame420, error) {
 	if width <= 0 || height <= 0 {
 		return SourceFrame420{}, ErrInvalidFrame
@@ -929,6 +1014,20 @@ func scaleSourceFrame420Nearest(dst *SourceFrame420, src SourceFrame420, width, 
 	scalePlaneNearest(dst.Y, width, width, height, src.Y, src.YStride, src.Width, src.Height)
 	scalePlaneNearest(dst.U, cw, cw, ch, src.U, src.ChromaStride, (src.Width+1)/2, (src.Height+1)/2)
 	scalePlaneNearest(dst.V, cw, cw, ch, src.V, src.ChromaStride, (src.Width+1)/2, (src.Height+1)/2)
+	return *dst, nil
+}
+
+func scaleSourceFrameMonoNearest(dst *SourceFrameMono, src SourceFrameMono, width, height int) (SourceFrameMono, error) {
+	if width <= 0 || height <= 0 {
+		return SourceFrameMono{}, ErrInvalidFrame
+	}
+	if len(dst.Y) != width*height {
+		dst.Y = make([]byte, width*height)
+	}
+	dst.YStride = width
+	dst.Width = width
+	dst.Height = height
+	scalePlaneNearest(dst.Y, width, width, height, src.Y, src.YStride, src.Width, src.Height)
 	return *dst, nil
 }
 

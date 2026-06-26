@@ -7,10 +7,10 @@ package goav1
 // packaging through RTCEncoder. I420/NV12/NV21 preserve 4:2:0 chroma samples;
 // I422/I444 and generic Frame inputs are resampled, I400 and monochrome Frame
 // inputs fill neutral chroma unless an RTCEncoder is explicitly configured for
-// native monochrome, and 10/12-bit Frame inputs are downshifted before entering
-// the current 8-bit path. Every emitted stream decodes
-// bit-exactly to the encoder's own reconstruction in this package's Decoder
-// and in the reference decoders.
+// native monochrome across WebRTC L*/S* modes, and 10/12-bit Frame inputs are
+// downshifted before entering the current 8-bit path. Every emitted stream
+// decodes bit-exactly to the encoder's own reconstruction in this package's
+// Decoder and in the reference decoders.
 
 import (
 	"fmt"
@@ -681,7 +681,7 @@ func (f RTCFrame) AppendRTPPacketsWithOptions(payloadDst []byte, descriptorDst [
 // and I444 inputs are adapted into the current 4:2:0 encode path. I400 inputs
 // are adapted to 4:2:0 unless NewRTCEncoderWithConfig is given an explicit
 // monochrome color config, in which case EncodeI400 and EncodeI400Picture emit
-// native AV1 monochrome streams for single-spatial L1T* modes.
+// native AV1 monochrome streams for WebRTC L*/S* modes.
 // NewRTCEncoder covers single-spatial L1T* temporal ladders;
 // NewRTCEncoderWithConfig additionally covers supported multi-spatial
 // WebRTC SVC and simulcast modes under CBR or CQP rate control. NewRTCEncoder

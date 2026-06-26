@@ -1050,6 +1050,69 @@ func TestPublicRTCEncoderI400NativeMonochromeReferenceDecoders(t *testing.T) {
 	assertPublicIVFMonochromeMatchesReferenceDecoders(t, decoders, "public-rtc-i400-native-monochrome", ivf, w, h)
 }
 
+func TestPublicRTCEncoderI400NativeMonochromeMultiSpatialReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	scenarios := []struct {
+		name string
+		mode goav1.EncoderScalabilityMode
+	}{
+		{name: "simulcast-s2t2", mode: goav1.EncoderScalabilityModeS2T2},
+		{name: "shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT},
+	}
+	for _, scenario := range scenarios {
+		scenario := scenario
+		t.Run(scenario.name, func(t *testing.T) {
+			w, h := publicRTCMatrixGeometry(t, scenario.mode)
+			cfg := publicRTCMatrixConfig(w, h, scenario.mode)
+			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.Quantizer = 39
+			cfg.ColorConfigSet = true
+			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+				BitDepth:   8,
+				MonoChrome: true,
+			}
+			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+			}
+			defer enc.Close()
+			if !enc.Config().ColorConfig.MonoChrome || enc.Config().SpatialLayerCount < 2 {
+				t.Fatalf("normalized config=%+v want native multi-spatial mono", enc.Config())
+			}
+
+			var receiver goav1.RTPDependencyDescriptorState
+			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var orderedTUs [][]byte
+			for frame := 0; frame < 5; frame++ {
+				forceKey := frame == 3
+				picture, err := enc.EncodeI400Picture(publicI400FromI420(publicRTCMatrixFrame(w, h, frame)), forceKey)
+				if err != nil {
+					t.Fatalf("EncodeI400Picture(%d): %v", frame, err)
+				}
+				if picture.FrameNum != int(enc.Config().SpatialLayerCount) {
+					t.Fatalf("picture %d frames=%d want %d", frame, picture.FrameNum, enc.Config().SpatialLayerCount)
+				}
+				if picture.Keyframe != (frame == 0 || forceKey) {
+					t.Fatalf("picture %d key=%v force=%v", frame, picture.Keyframe, forceKey)
+				}
+				for i := 0; i < picture.FrameNum; i++ {
+					if !picture.Frames[i].CodedKeyframe {
+						continue
+					}
+					seq := publicFirstSequenceHeader(t, picture.Frames[i].Data)
+					if !seq.ColorConfig.MonoChrome || seq.ColorConfig.BitDepth != 8 {
+						t.Fatalf("picture %d frame %d color=%+v want native monochrome", frame, i, seq.ColorConfig)
+					}
+				}
+				appendPublicRTCPictureRTPData(t, &receiver, &layerTUs, &orderedTUs, picture)
+			}
+
+			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+			assertPublicRTCRTPMonochromeReferenceDecoders(t, decoders, scenario.name, enc.Config(), layerTUs, orderedTUs)
+		})
+	}
+}
+
 func TestPublicRTCEncoderSetConfigNativeMonochromeTransition(t *testing.T) {
 	const w, h = 192, 128
 	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
@@ -1298,7 +1361,7 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 	if normalizedCQP.RateControl != goav1.EncoderRateControlCQP || normalizedCQP.Quantizer != 32 {
 		t.Fatalf("normalized CQP config=%+v", normalizedCQP)
 	}
-	mono := publicRTCMatrixConfig(192, 128, goav1.EncoderScalabilityModeL1T3)
+	mono := publicRTCMatrixConfig(640, 360, goav1.EncoderScalabilityModeL2T2)
 	mono.ColorConfigSet = true
 	mono.ColorConfig = goav1.EncoderSequenceColorConfig{
 		BitDepth:   8,
@@ -1309,8 +1372,8 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 		t.Fatalf("NormalizeRTCEncoderConfig monochrome: %v", err)
 	}
 	if !normalizedMono.ColorConfig.MonoChrome ||
-		normalizedMono.SpatialLayerCount != 1 ||
-		normalizedMono.TemporalLayerCount != 3 {
+		normalizedMono.SpatialLayerCount != 2 ||
+		normalizedMono.TemporalLayerCount != 2 {
 		t.Fatalf("normalized monochrome config=%+v", normalizedMono)
 	}
 	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
@@ -1336,17 +1399,6 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 			name: "high-bit-depth",
 			edit: func(cfg *goav1.EncoderConfig) {
 				cfg.BitDepth = 10
-			},
-			want: goav1.ErrEncoderUnsupported,
-		},
-		{
-			name: "explicit-monochrome-multi-spatial-color-config",
-			edit: func(cfg *goav1.EncoderConfig) {
-				cfg.ColorConfigSet = true
-				cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
-					BitDepth:   8,
-					MonoChrome: true,
-				}
 			},
 			want: goav1.ErrEncoderUnsupported,
 		},
@@ -4208,6 +4260,97 @@ func assertPublicRTCRTPReferenceDecoders(
 		res := cfg.SpatialLayers[spatialID].Resolution
 		ivf := appendPublicIVF(nil, uint16(res.Width), uint16(res.Height), 30, 1, frames)
 		assertPublicIVFMatchesReferenceDecodersRawYUV(t, decoders, fmt.Sprintf("%s-spatial-%d", name, spatialID), ivf)
+	}
+}
+
+func assertPublicRTCRTPMonochromeReferenceDecoders(
+	t *testing.T,
+	decoders []publicReferenceAV1Decoder,
+	name string,
+	cfg goav1.EncoderConfig,
+	layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte,
+	orderedTUs [][]byte,
+) {
+	t.Helper()
+	if publicRTCSharedReferenceSlotMode(cfg.Scalability) {
+		if len(orderedTUs) == 0 {
+			t.Fatalf("%s has no shared-reference RTP-assembled frames", name)
+		}
+		wantY, spans := decodePublicRTCLayerPoolLowOverheadMonochromeRawY(t, orderedTUs...)
+		frames := make([]publicIVFFrame, 0, len(orderedTUs))
+		for i, payload := range orderedTUs {
+			frames = append(frames, publicIVFFrame{timestamp: uint64(i), payload: append([]byte(nil), payload...)})
+		}
+		ivf := appendPublicIVF(nil, uint16(cfg.Resolution.Width), uint16(cfg.Resolution.Height), 30, 1, frames)
+		assertPublicIVFMonochromeVariableReferenceDecoders(t, decoders, name, ivf, wantY, spans)
+		return
+	}
+
+	for spatialID := uint8(0); spatialID < cfg.SpatialLayerCount; spatialID++ {
+		if len(layerTUs[spatialID]) == 0 {
+			t.Fatalf("%s spatial %d has no RTP-assembled frames", name, spatialID)
+		}
+		frames := make([]publicIVFFrame, 0, len(layerTUs[spatialID]))
+		for i, payload := range layerTUs[spatialID] {
+			frames = append(frames, publicIVFFrame{timestamp: uint64(i), payload: append([]byte(nil), payload...)})
+		}
+		res := cfg.SpatialLayers[spatialID].Resolution
+		ivf := appendPublicIVF(nil, uint16(res.Width), uint16(res.Height), 30, 1, frames)
+		assertPublicIVFMonochromeMatchesReferenceDecoders(t, decoders, fmt.Sprintf("%s-spatial-%d", name, spatialID), ivf, int(res.Width), int(res.Height))
+	}
+}
+
+type publicMonochromeFrameSpan struct {
+	yLen        int
+	expandedLen int
+}
+
+func assertPublicIVFMonochromeVariableReferenceDecoders(
+	t *testing.T, decoders []publicReferenceAV1Decoder, name string, ivf []byte, wantY []byte, spans []publicMonochromeFrameSpan,
+) {
+	t.Helper()
+	expandedLen := 0
+	for _, span := range spans {
+		expandedLen += span.expandedLen
+	}
+
+	dir := t.TempDir()
+	ivfPath := filepath.Join(dir, name+".ivf")
+	if err := os.WriteFile(ivfPath, ivf, 0o644); err != nil {
+		t.Fatalf("%s write IVF: %v", name, err)
+	}
+	for _, decoder := range decoders {
+		outPath := filepath.Join(dir, name+"-"+decoder.name+".yuv")
+		out, err := exec.Command(decoder.path, decoder.args(outPath, ivfPath)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s %s: %v\n%s", name, decoder.name, err, out)
+		}
+		got, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("%s read %s output: %v", name, decoder.name, err)
+		}
+		switch len(got) {
+		case len(wantY):
+			if !bytes.Equal(got, wantY) {
+				offset := firstPublicByteDiff(got, wantY)
+				t.Fatalf("%s %s Y-only output differs first at byte %d", name, decoder.name, offset)
+			}
+		case expandedLen:
+			gotOffset, wantOffset := 0, 0
+			for frame, span := range spans {
+				gotY := got[gotOffset : gotOffset+span.yLen]
+				wantFrameY := wantY[wantOffset : wantOffset+span.yLen]
+				if !bytes.Equal(gotY, wantFrameY) {
+					offset := firstPublicByteDiff(gotY, wantFrameY)
+					t.Fatalf("%s %s expanded frame %d luma differs first at byte %d", name, decoder.name, frame, offset)
+				}
+				gotOffset += span.expandedLen
+				wantOffset += span.yLen
+			}
+		default:
+			t.Fatalf("%s %s output len=%d want %d Y-only or %d expanded bytes", name, decoder.name, len(got), len(wantY), expandedLen)
+		}
+		t.Logf("%s %s: %d monochrome frames luma bit-exact", name, decoder.name, len(spans))
 	}
 }
 
@@ -7159,6 +7302,42 @@ func decodePublicRTCLayerPoolLowOverheadRawYUV(t *testing.T, payloads ...[]byte)
 		}
 	}
 	return out, frames
+}
+
+func decodePublicRTCLayerPoolLowOverheadMonochromeRawY(t *testing.T, payloads ...[]byte) ([]byte, []publicMonochromeFrameSpan) {
+	t.Helper()
+
+	h := newPublicRTCLayerPoolDecodeHarness(t, len(payloads))
+	defer h.close(t)
+	events := make([]goav1.DecoderEvent, 16)
+	var out []byte
+	var spans []publicMonochromeFrameSpan
+
+	for payloadIndex, payload := range payloads {
+		count, err := h.stream.PushLowOverhead(payload, events)
+		if err != nil {
+			t.Fatalf("payload %d PushLowOverhead: %v", payloadIndex, err)
+		}
+		start := len(h.outputs)
+		h.runEvents(t, payloadIndex, events[:count])
+		for _, frame := range h.outputs[start:] {
+			if frame == nil {
+				t.Fatalf("payload %d decoded nil frame", payloadIndex)
+			}
+			if !frame.Format.MonoChrome || len(frame.U.Pix) != 0 || len(frame.V.Pix) != 0 {
+				t.Fatalf("payload %d decoded frame format=%+v U=%d V=%d want monochrome", payloadIndex, frame.Format, len(frame.U.Pix), len(frame.V.Pix))
+			}
+			before := len(out)
+			out = appendPublicFramePlaneRawYUV(out, frame.Y, frame.Layout.BytesPerSample)
+			yLen := len(out) - before
+			cw, ch := frame.Y.Width/2, frame.Y.Height/2
+			spans = append(spans, publicMonochromeFrameSpan{
+				yLen:        yLen,
+				expandedLen: yLen + 2*cw*ch*frame.Layout.BytesPerSample,
+			})
+		}
+	}
+	return out, spans
 }
 
 func decodePublicRTCLayerPoolRTPPayloadDigestsWithLabels(t *testing.T, labels []string, payloads ...[]byte) [][16]byte {
