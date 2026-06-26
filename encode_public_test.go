@@ -1522,6 +1522,102 @@ func TestPublicRTCEncoderI444NativeMultiSpatialReferenceDecoders(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderI444NativeControlChurnReferenceDecoders(t *testing.T) {
+	decoders := publicReferenceAV1Decoders(t)
+	mode := goav1.EncoderScalabilityModeL2T3_KEY_SHIFT
+	width, height := publicRTCMatrixGeometry(t, mode)
+	baseKbps := publicRTCMatrixControlBitrateKbps(t, mode)
+	fpsCycle := []goav1.EncoderRational{
+		{Num: 15, Den: 1},
+		{Num: 30, Den: 1},
+		{Num: 60000, Den: 1001},
+		{Num: 60, Den: 1},
+	}
+	configForStep := func(step int) goav1.EncoderConfig {
+		cfg := publicRTCMatrixConfig(width, height, mode)
+		cfg.Profile = goav1.EncoderProfile1
+		cfg.ColorConfigSet = true
+		cfg.ColorConfig = goav1.EncoderSequenceColorConfig{BitDepth: 8}
+		cfg.MaxFramerate = fpsCycle[step%len(fpsCycle)]
+		cfg.MaxThreads = int32(1 + step%3)
+		cfg.Content = goav1.EncoderContentCamera
+		if step%2 == 1 {
+			cfg.Content = goav1.EncoderContentScreen
+		}
+		publicRTCApplyControlBitrates(&cfg, baseKbps+int32(step*97))
+		if step%2 == 0 {
+			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.Quantizer = uint8(26 + step)
+		} else {
+			cfg.RateControl = goav1.EncoderRateControlCBR
+			cfg.Quantizer = 0
+		}
+		return cfg
+	}
+
+	var enc *goav1.RTCEncoder
+	var descriptorReceiver goav1.RTPDependencyDescriptorState
+	var rtpReceiver goav1.RTPDependencyDescriptorState
+	var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+	var orderedTUs [][]byte
+	var sequence goav1.SequenceHeader
+	nextFrameID := uint64(0)
+	for step := 0; step < 6; step++ {
+		cfg := configForStep(step)
+		forceKey := step == 3
+		wantKey := step == 0 || forceKey
+		if enc == nil {
+			var err error
+			enc, err = goav1.NewRTCEncoderWithConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+			}
+			defer enc.Close()
+		} else {
+			wantKey = wantKey || publicRTCSetConfigRequiresKey(t, enc.Config(), cfg)
+			if err := enc.SetConfig(cfg); err != nil {
+				t.Fatalf("step %d SetConfig: %v", step, err)
+			}
+		}
+		assertPublicRTCConfigControls(t, enc.Config(), cfg)
+		wantDuration, err := goav1.EncoderWebRTCRTPFrameDuration(enc.Config())
+		if err != nil {
+			t.Fatalf("step %d EncoderWebRTCRTPFrameDuration: %v", step, err)
+		}
+		if got, err := enc.RTPFrameDuration(); err != nil || got != wantDuration {
+			t.Fatalf("step %d RTPFrameDuration=%+v err=%v want %+v", step, got, err, wantDuration)
+		}
+
+		picture, err := enc.EncodeI444Picture(publicI444NativePattern(width, height, step), forceKey)
+		if err != nil {
+			t.Fatalf("step %d EncodeI444Picture: %v", step, err)
+		}
+		if picture.Keyframe != wantKey {
+			t.Fatalf("step %d key=%v want %v picture=%+v", step, picture.Keyframe, wantKey, picture)
+		}
+		assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), picture, wantKey, &nextFrameID)
+		for i := 0; i < picture.FrameNum; i++ {
+			if !picture.Frames[i].CodedKeyframe {
+				continue
+			}
+			assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("native-i444-control-step-%d-S%d", step, picture.Frames[i].SpatialID), picture.Frames[i].Data, &sequence, enc.Config().Content == goav1.EncoderContentScreen)
+			seq := publicFirstSequenceHeader(t, picture.Frames[i].Data)
+			if seq.SeqProfile != uint8(goav1.EncoderProfile1) ||
+				seq.ColorConfig.MonoChrome ||
+				seq.ColorConfig.BitDepth != 8 ||
+				seq.ColorConfig.SubsamplingX ||
+				seq.ColorConfig.SubsamplingY {
+				t.Fatalf("step %d sequence profile=%d color=%+v want native 8-bit 4:4:4", step, seq.SeqProfile, seq.ColorConfig)
+			}
+		}
+		appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
+	}
+
+	normalized := enc.Config()
+	assertPublicRTCLayerStreamsDecode(t, normalized, layerTUs, orderedTUs)
+	assertPublicRTCRTPReferenceDecoders(t, decoders, "public-rtc-i444-native-control-churn", normalized, layerTUs, orderedTUs)
+}
+
 func TestPublicRTCEncoderI400NativeMonochrome(t *testing.T) {
 	const w, h = 192, 128
 	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T3)
