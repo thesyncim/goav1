@@ -202,10 +202,11 @@ func convolveScale2D8YIdentity(dst frame.Plane, ref frame.Plane, dstX int, dstY 
 
 func convolveScale2DHighBDYIdentity(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, width int, height int,
 	startX int64, startY int64, xStep int64, xTable SubpelKernelTable, clamped bool) {
+	round0, _ := highBDRoundBits(bitDepth)
 	xBias := 1 << (int(bitDepth) + filterBits - 1)
-	round0Bias := 1 << (round0Bits - 1)
+	round0Bias := 1 << (round0 - 1)
 	centerOffset := 1 << (int(bitDepth) - 1)
-	const finalRoundBits = filterBits - round0Bits
+	finalRoundBits := filterBits - round0
 	foX := filterTaps/2 - 1
 	baseY := int(scaledIntFloor(startY))
 	for y := range height {
@@ -252,7 +253,7 @@ func convolveScale2DHighBDYIdentity(dst frame.Plane, ref frame.Plane, bitDepth u
 					k6*int(uint16(ref.Pix[o6])|uint16(ref.Pix[o6+1])<<8) +
 					k7*int(uint16(ref.Pix[o7])|uint16(ref.Pix[o7+1])<<8)
 			}
-			imVal := (sum + round0Bias) >> round0Bits
+			imVal := (sum + round0Bias) >> round0
 			v := clipPixelHighBD(roundPowerOfTwo(imVal, finalRoundBits)-centerOffset, max)
 			o := x * 2
 			dstRow[o] = byte(v)
@@ -726,11 +727,12 @@ func convolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max
 	startX int64, xStep int64, startY int64, yStep int64,
 	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int, im *scaledHighBDIM) {
 	const imStride = maxBlockSize
+	round0, round1 := highBDRoundBits(bitDepth)
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	startRow := int(scaledIntFloor(startY)) - foY
 	xBias := 1 << (int(bitDepth) + filterBits - 1)
-	round0Bias := 1 << (round0Bits - 1)
+	round0Bias := 1 << (round0 - 1)
 	for y := range imH {
 		srcRow := startRow + y
 		rowBase := srcRow * ref.Stride
@@ -752,13 +754,13 @@ func convolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max
 			s6 := int(uint16(src[12]) | uint16(src[13])<<8)
 			s7 := int(uint16(src[14]) | uint16(src[15])<<8)
 			sum := xBias + k0*s0 + k1*s1 + k2*s2 + k3*s3 + k4*s4 + k5*s5 + k6*s6 + k7*s7
-			imRow[x] = int32((sum + round0Bias) >> round0Bits)
+			imRow[x] = int32((sum + round0Bias) >> round0)
 			xPos += xStep
 		}
 	}
-	offsetBits := int(bitDepth) + 2*filterBits - round0Bits
-	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
-	bits := 2*filterBits - round0Bits - round1Bits
+	offsetBits := int(bitDepth) + 2*filterBits - round0
+	roundOffset := (1 << (offsetBits - round1)) + (1 << (offsetBits - round1 - 1))
+	bits := 2*filterBits - round0 - round1
 	baseY := int(scaledIntFloor(startY))
 	if yStep == ScaleSubpelScale {
 		yFilterIdx := int(scaledSubpel(startY) >> ScaleExtraBits)
@@ -769,7 +771,7 @@ func convolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max
 				dstRow := dst.Pix[dstOff : dstOff+width*2 : dstOff+width*2]
 				for x := range width {
 					sum := (1 << offsetBits) + 128*int(row[x])
-					res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+					res := roundPowerOfTwo(sum, round1) - roundOffset
 					v := clipPixelHighBD(roundPowerOfTwo(res, bits), max)
 					o := x * 2
 					dstRow[o] = byte(v)
@@ -800,7 +802,7 @@ func convolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max
 			sum := (1 << offsetBits) +
 				k0*int(row0[x]) + k1*int(row1[x]) + k2*int(row2[x]) + k3*int(row3[x]) +
 				k4*int(row4[x]) + k5*int(row5[x]) + k6*int(row6[x]) + k7*int(row7[x])
-			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+			res := roundPowerOfTwo(sum, round1) - roundOffset
 			v := clipPixelHighBD(roundPowerOfTwo(res, bits), max)
 			o := x * 2
 			dstRow[o] = byte(v)
@@ -814,11 +816,12 @@ func convolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uin
 	startX int64, xStep int64, startY int64, yStep int64,
 	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int, im *scaledHighBDIM) {
 	const imStride = maxBlockSize
+	round0, round1 := highBDRoundBits(bitDepth)
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	startRow := int(scaledIntFloor(startY)) - foY
 	xBias := 1 << (int(bitDepth) + filterBits - 1)
-	round0Bias := 1 << (round0Bits - 1)
+	round0Bias := 1 << (round0 - 1)
 	for y := range imH {
 		srcRow := clampInt(startRow+y, 0, ref.Height-1)
 		rowBase := srcRow * ref.Stride
@@ -847,13 +850,13 @@ func convolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uin
 			s6 := int(uint16(ref.Pix[o6]) | uint16(ref.Pix[o6+1])<<8)
 			s7 := int(uint16(ref.Pix[o7]) | uint16(ref.Pix[o7+1])<<8)
 			sum := xBias + k0*s0 + k1*s1 + k2*s2 + k3*s3 + k4*s4 + k5*s5 + k6*s6 + k7*s7
-			imRow[x] = int32((sum + round0Bias) >> round0Bits)
+			imRow[x] = int32((sum + round0Bias) >> round0)
 			xPos += xStep
 		}
 	}
-	offsetBits := int(bitDepth) + 2*filterBits - round0Bits
-	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
-	bits := 2*filterBits - round0Bits - round1Bits
+	offsetBits := int(bitDepth) + 2*filterBits - round0
+	roundOffset := (1 << (offsetBits - round1)) + (1 << (offsetBits - round1 - 1))
+	bits := 2*filterBits - round0 - round1
 	baseY := int(scaledIntFloor(startY))
 	if yStep == ScaleSubpelScale {
 		yFilterIdx := int(scaledSubpel(startY) >> ScaleExtraBits)
@@ -864,7 +867,7 @@ func convolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uin
 				dstRow := dst.Pix[dstOff : dstOff+width*2 : dstOff+width*2]
 				for x := range width {
 					sum := (1 << offsetBits) + 128*int(row[x])
-					res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+					res := roundPowerOfTwo(sum, round1) - roundOffset
 					v := clipPixelHighBD(roundPowerOfTwo(res, bits), max)
 					o := x * 2
 					dstRow[o] = byte(v)
@@ -895,7 +898,7 @@ func convolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uin
 			sum := (1 << offsetBits) +
 				k0*int(row0[x]) + k1*int(row1[x]) + k2*int(row2[x]) + k3*int(row3[x]) +
 				k4*int(row4[x]) + k5*int(row5[x]) + k6*int(row6[x]) + k7*int(row7[x])
-			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
+			res := roundPowerOfTwo(sum, round1) - roundOffset
 			v := clipPixelHighBD(roundPowerOfTwo(res, bits), max)
 			o := x * 2
 			dstRow[o] = byte(v)

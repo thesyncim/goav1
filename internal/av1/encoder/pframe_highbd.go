@@ -3,6 +3,7 @@ package encoder
 import (
 	"fmt"
 
+	av1frame "github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -87,6 +88,11 @@ func (pc *pframeCoder) encodeHighBitDepthMonochromePFrameTile(src SourceFrameMon
 		}
 	}
 
+	refPlane, err := st.highBitDepthMonoReferencePlane(ref)
+	if err != nil {
+		return nil, err
+	}
+
 	scratch := &pc.scratch
 	carrier := &pc.carrier
 	walkReq := tile.BlockWalkRequest{
@@ -102,7 +108,7 @@ func (pc *pframeCoder) encodeHighBitDepthMonochromePFrameTile(src SourceFrameMon
 		return tile.PartitionSplit, nil
 	}
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
-		return st.encodeHighBitDepthMonochromePBlock(src, ref, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, walkReq, uint16(src.Width/4), miRows)
+		return st.encodeHighBitDepthMonochromePBlock(src, refPlane, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, walkReq, uint16(src.Width/4), miRows)
 	}
 	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
 		return nil, err
@@ -110,7 +116,7 @@ func (pc *pframeCoder) encodeHighBitDepthMonochromePFrameTile(src SourceFrameMon
 	return pc.writer.Finish()
 }
 
-func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMono16, ref SourceFrameMono16, recon *SourceFrameMono16, block tile.BlockVisit, scratch *tile.BlockLoopScratch,
+func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMono16, ref av1frame.Plane, recon *SourceFrameMono16, block tile.BlockVisit, scratch *tile.BlockLoopScratch,
 	refCDFs *tile.InterRefCDFs, interModeCDFs *tile.InterModeCDFs, walkReq tile.BlockWalkRequest, miCols, miRows uint16) error {
 	if block.Size != tile.BlockSize8x8 {
 		return fmt.Errorf("encoder: unexpected high-bit-depth monochrome P block %+v", block)
@@ -212,9 +218,8 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 	}
 
 	pred := st.predY16[:n*n]
-	for r := range n {
-		srcOff := (lumaPY+r)*ref.YStride + lumaPX
-		copy(pred[r*n:(r+1)*n], ref.Y[srcOff:srcOff+n])
+	if err := predictIntoScaledHighBitDepthMono16(pred, st.predY16Bytes[:n*n*2], ref, src.BitDepth, src.Width, src.Height, lumaPX, lumaPY, n, n, motion.Vector{}, &st.scaledScratch); err != nil {
+		return fmt.Errorf("high-bit-depth monochrome prediction: %w", err)
 	}
 	st.interTxTypeReq.Size = tile.TransformSize8x8
 	st.interTxType = transform.TypeDCTDCT
@@ -229,6 +234,78 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 	}
 	if st.decisionStats != nil {
 		st.decisionStats.noteInterBlock(block.Size, false, false, refs, modeResult, transform.TypeDCTDCT)
+	}
+	return nil
+}
+
+func (st *lossyEncodeState) highBitDepthMonoReferencePlane(ref SourceFrameMono16) (av1frame.Plane, error) {
+	if err := validateSourceFrameMono16(ref); err != nil {
+		return av1frame.Plane{}, err
+	}
+	strideBytes := ref.YStride * 2
+	need := (ref.Height-1)*strideBytes + ref.Width*2
+	if cap(st.refY16Bytes) < need {
+		st.refY16Bytes = make([]byte, need)
+	}
+	buf := st.refY16Bytes[:need]
+	for y := 0; y < ref.Height; y++ {
+		srcRow := ref.Y[y*ref.YStride : y*ref.YStride+ref.Width]
+		dstRow := buf[y*strideBytes : y*strideBytes+ref.Width*2]
+		for x, sample := range srcRow {
+			dstRow[2*x] = byte(sample)
+			dstRow[2*x+1] = byte(sample >> 8)
+		}
+	}
+	return av1frame.Plane{
+		Pix:    buf,
+		Stride: strideBytes,
+		Width:  ref.Width,
+		Height: ref.Height,
+	}, nil
+}
+
+func predictIntoScaledHighBitDepthMono16(dst []uint16, dstBytes []byte, ref av1frame.Plane, bitDepth uint8, curWidth, curHeight, px, py, bw, bh int, mv motion.Vector, scratch *motion.ScaledConvolveScratch) error {
+	if len(dst) < bw*bh || len(dstBytes) < bw*bh*2 {
+		return ErrInvalidFrame
+	}
+	dstPlane := av1frame.Plane{
+		Pix:    dstBytes[:bw*bh*2],
+		Stride: bw * 2,
+		Width:  bw,
+		Height: bh,
+	}
+	filters := motion.RegularFilters
+	if ref.Width == curWidth && ref.Height == curHeight {
+		refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(px, py, mv, false, false)
+		if err != nil {
+			return err
+		}
+		if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dstPlane, ref, 2, bitDepth, 0, 0, refX, refY, bw, bh, subX, subY, filters); err != nil {
+			return err
+		}
+	} else {
+		sf, err := motion.NewScaleFactors(ref.Width, ref.Height, curWidth, curHeight)
+		if err != nil {
+			return err
+		}
+		startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(px, py, mv, false, false)
+		if err != nil {
+			return err
+		}
+		xTable, err := motion.SubpelKernelTableFor(filters.X, bw)
+		if err != nil {
+			return err
+		}
+		yTable, err := motion.SubpelKernelTableFor(filters.Y, bh)
+		if err != nil {
+			return err
+		}
+		if err := motion.ConvolveScale2DHighBDClampedWithScratch(dstPlane, ref, bitDepth, 0, 0, bw, bh, startX, xStep, startY, yStep, xTable, yTable, scratch); err != nil {
+			return err
+		}
+	}
+	for i := 0; i < bw*bh; i++ {
+		dst[i] = uint16(dstBytes[2*i]) | uint16(dstBytes[2*i+1])<<8
 	}
 	return nil
 }

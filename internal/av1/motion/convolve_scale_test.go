@@ -271,105 +271,115 @@ func TestConvolveScale2D8ClampedMatchesLibaomReferenceAtEdge(t *testing.T) {
 func TestConvolveScale2DHighBDMatchesLibaomReference(t *testing.T) {
 	const w, h = 16, 16
 	const srcPad = 32
-	const bd = 10
-	src := highBDPlane(w+srcPad, h+srcPad, 0x9999, bd)
+	for _, bd := range []int{10, 12} {
+		bd := bd
+		t.Run(fmt.Sprintf("%dbit", bd), func(t *testing.T) {
+			src := highBDPlane(w+srcPad, h+srcPad, 0x9999, bd)
+			round0, round1 := highBDRoundBits(uint8(bd))
 
-	xTable, err := SubpelKernelTableFor(InterpEightTapRegular, w)
-	if err != nil {
-		t.Fatalf("xTable: %v", err)
-	}
-	yTable, err := SubpelKernelTableFor(InterpEightTapSmooth, h)
-	if err != nil {
-		t.Fatalf("yTable: %v", err)
-	}
+			xTable, err := SubpelKernelTableFor(InterpEightTapRegular, w)
+			if err != nil {
+				t.Fatalf("xTable: %v", err)
+			}
+			yTable, err := SubpelKernelTableFor(InterpEightTapSmooth, h)
+			if err != nil {
+				t.Fatalf("yTable: %v", err)
+			}
 
-	for _, step := range []int{ScaleSubpelScale, ScaleSubpelScale / 2, 2 * ScaleSubpelScale, ScaleSubpelScale - 17} {
-		got, _ := testPlane(w, h, 2, w*2)
-		want, _ := testPlane(w, h, 2, w*2)
-		const refX0, refY0 = 8, 8
-		const subpelX, subpelY = 31, 47
-		startX := int64(refX0)*ScaleSubpelScale + int64(subpelX)
-		startY := int64(refY0)*ScaleSubpelScale + int64(subpelY)
-		if err := ConvolveScale2DHighBD(got, src, bd, 0, 0, w, h,
-			startX, int64(step), startY, int64(step), xTable, yTable); err != nil {
-			t.Fatalf("step=%d: %v", step, err)
-		}
-		libaomConvolveScale2DHighBDRef(want, src, bd, refX0, refY0, 0, 0, w, h,
-			subpelX, step, subpelY, step, xTable, yTable, round0Bits, round1Bits)
-		comparePlanes(t, "hb_step", got, want, w, h, 2)
+			for _, step := range []int{ScaleSubpelScale, ScaleSubpelScale / 2, 2 * ScaleSubpelScale, ScaleSubpelScale - 17} {
+				got, _ := testPlane(w, h, 2, w*2)
+				want, _ := testPlane(w, h, 2, w*2)
+				const refX0, refY0 = 8, 8
+				const subpelX, subpelY = 31, 47
+				startX := int64(refX0)*ScaleSubpelScale + int64(subpelX)
+				startY := int64(refY0)*ScaleSubpelScale + int64(subpelY)
+				if err := ConvolveScale2DHighBD(got, src, uint8(bd), 0, 0, w, h,
+					startX, int64(step), startY, int64(step), xTable, yTable); err != nil {
+					t.Fatalf("step=%d: %v", step, err)
+				}
+				libaomConvolveScale2DHighBDRef(want, src, bd, refX0, refY0, 0, 0, w, h,
+					subpelX, step, subpelY, step, xTable, yTable, round0, round1)
+				comparePlanes(t, fmt.Sprintf("hb_%dbit_step_%d", bd, step), got, want, w, h, 2)
+			}
+		})
 	}
 }
 
 func TestConvolveScale2DHighBDClampedMatchesSuperResReference(t *testing.T) {
 	const srcW, srcH = 160, 128
 	const curW, curH = 107, 128
-	const bd = 10
-	src := highBDPlane(srcW, srcH, 0x5eed, bd)
-	sf, err := NewScaleFactors(srcW, srcH, curW, curH)
-	if err != nil {
-		t.Fatalf("NewScaleFactors: %v", err)
-	}
-
-	const pad = 24
-	padded, _ := testPlane(srcW+2*pad, srcH+2*pad, 2, (srcW+2*pad)*2)
-	for y := range srcH + 2*pad {
-		sy := y - pad
-		if sy < 0 {
-			sy = 0
-		} else if sy >= srcH {
-			sy = srcH - 1
-		}
-		for x := range srcW + 2*pad {
-			sx := x - pad
-			if sx < 0 {
-				sx = 0
-			} else if sx >= srcW {
-				sx = srcW - 1
+	for _, bd := range []int{10, 12} {
+		bd := bd
+		t.Run(fmt.Sprintf("%dbit", bd), func(t *testing.T) {
+			src := highBDPlane(srcW, srcH, 0x5eed, bd)
+			round0, round1 := highBDRoundBits(uint8(bd))
+			sf, err := NewScaleFactors(srcW, srcH, curW, curH)
+			if err != nil {
+				t.Fatalf("NewScaleFactors: %v", err)
 			}
-			setSample(padded, 2, x, y, getSample(src, 2, sx, sy))
-		}
-	}
 
-	for _, tc := range []struct {
-		name           string
-		x, y           int
-		blockW, blockH int
-		mv             Vector
-		filterX        InterpFilter
-		filterY        InterpFilter
-	}{
-		{name: "top_left", x: 0, y: 0, blockW: 16, blockH: 16, filterX: InterpEightTapRegular, filterY: InterpEightTapSmooth},
-		{name: "middle", x: 48, y: 0, blockW: 16, blockH: 16, filterX: InterpEightTapRegular, filterY: InterpEightTapSmooth},
-		{name: "right_edge", x: curW - 16, y: 0, blockW: 16, blockH: 16, filterX: InterpEightTapRegular, filterY: InterpEightTapSmooth},
-		{name: "bottom_right", x: curW - 16, y: curH - 16, blockW: 16, blockH: 16, filterX: InterpEightTapRegular, filterY: InterpEightTapSmooth},
-		{name: "moving_obmc_area", x: 96, y: 16, blockW: 8, blockH: 16, mv: Vector{Col: 28, Row: 24}, filterX: InterpEightTapRegular, filterY: InterpEightTapRegular},
-		{name: "moving_direct_area", x: 96, y: 0, blockW: 11, blockH: 16, mv: Vector{Col: 28, Row: 24}, filterX: InterpEightTapRegular, filterY: InterpEightTapRegular},
-	} {
-		xTable, err := SubpelKernelTableFor(tc.filterX, tc.blockW)
-		if err != nil {
-			t.Fatalf("%s xTable: %v", tc.name, err)
-		}
-		yTable, err := SubpelKernelTableFor(tc.filterY, tc.blockH)
-		if err != nil {
-			t.Fatalf("%s yTable: %v", tc.name, err)
-		}
-		startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(tc.x, tc.y, tc.mv, false, false)
-		if err != nil {
-			t.Fatalf("%s ScaledBlockOrigin: %v", tc.name, err)
-		}
-		got, _ := testPlane(tc.blockW, tc.blockH, 2, tc.blockW*2)
-		if err := ConvolveScale2DHighBDClamped(got, src, bd, 0, 0, tc.blockW, tc.blockH, startX, xStep, startY, yStep, xTable, yTable); err != nil {
-			t.Fatalf("%s ConvolveScale2DHighBDClamped: %v", tc.name, err)
-		}
+			const pad = 24
+			padded, _ := testPlane(srcW+2*pad, srcH+2*pad, 2, (srcW+2*pad)*2)
+			for y := range srcH + 2*pad {
+				sy := y - pad
+				if sy < 0 {
+					sy = 0
+				} else if sy >= srcH {
+					sy = srcH - 1
+				}
+				for x := range srcW + 2*pad {
+					sx := x - pad
+					if sx < 0 {
+						sx = 0
+					} else if sx >= srcW {
+						sx = srcW - 1
+					}
+					setSample(padded, 2, x, y, getSample(src, 2, sx, sy))
+				}
+			}
 
-		intX := int(startX >> ScaleSubpelBits)
-		intY := int(startY >> ScaleSubpelBits)
-		subpelX := int(startX & ScaleSubpelMask)
-		subpelY := int(startY & ScaleSubpelMask)
-		want, _ := testPlane(tc.blockW, tc.blockH, 2, tc.blockW*2)
-		libaomConvolveScale2DHighBDRef(want, padded, bd, pad+intX, pad+intY, 0, 0, tc.blockW, tc.blockH,
-			subpelX, int(xStep), subpelY, int(yStep), xTable, yTable, round0Bits, round1Bits)
-		comparePlanes(t, fmt.Sprintf("superres10_%s", tc.name), got, want, tc.blockW, tc.blockH, 2)
+			for _, tc := range []struct {
+				name           string
+				x, y           int
+				blockW, blockH int
+				mv             Vector
+				filterX        InterpFilter
+				filterY        InterpFilter
+			}{
+				{name: "top_left", x: 0, y: 0, blockW: 16, blockH: 16, filterX: InterpEightTapRegular, filterY: InterpEightTapSmooth},
+				{name: "middle", x: 48, y: 0, blockW: 16, blockH: 16, filterX: InterpEightTapRegular, filterY: InterpEightTapSmooth},
+				{name: "right_edge", x: curW - 16, y: 0, blockW: 16, blockH: 16, filterX: InterpEightTapRegular, filterY: InterpEightTapSmooth},
+				{name: "bottom_right", x: curW - 16, y: curH - 16, blockW: 16, blockH: 16, filterX: InterpEightTapRegular, filterY: InterpEightTapSmooth},
+				{name: "moving_obmc_area", x: 96, y: 16, blockW: 8, blockH: 16, mv: Vector{Col: 28, Row: 24}, filterX: InterpEightTapRegular, filterY: InterpEightTapRegular},
+				{name: "moving_direct_area", x: 96, y: 0, blockW: 11, blockH: 16, mv: Vector{Col: 28, Row: 24}, filterX: InterpEightTapRegular, filterY: InterpEightTapRegular},
+			} {
+				xTable, err := SubpelKernelTableFor(tc.filterX, tc.blockW)
+				if err != nil {
+					t.Fatalf("%s xTable: %v", tc.name, err)
+				}
+				yTable, err := SubpelKernelTableFor(tc.filterY, tc.blockH)
+				if err != nil {
+					t.Fatalf("%s yTable: %v", tc.name, err)
+				}
+				startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(tc.x, tc.y, tc.mv, false, false)
+				if err != nil {
+					t.Fatalf("%s ScaledBlockOrigin: %v", tc.name, err)
+				}
+				got, _ := testPlane(tc.blockW, tc.blockH, 2, tc.blockW*2)
+				if err := ConvolveScale2DHighBDClamped(got, src, uint8(bd), 0, 0, tc.blockW, tc.blockH, startX, xStep, startY, yStep, xTable, yTable); err != nil {
+					t.Fatalf("%s ConvolveScale2DHighBDClamped: %v", tc.name, err)
+				}
+
+				intX := int(startX >> ScaleSubpelBits)
+				intY := int(startY >> ScaleSubpelBits)
+				subpelX := int(startX & ScaleSubpelMask)
+				subpelY := int(startY & ScaleSubpelMask)
+				want, _ := testPlane(tc.blockW, tc.blockH, 2, tc.blockW*2)
+				libaomConvolveScale2DHighBDRef(want, padded, bd, pad+intX, pad+intY, 0, 0, tc.blockW, tc.blockH,
+					subpelX, int(xStep), subpelY, int(yStep), xTable, yTable, round0, round1)
+				comparePlanes(t, fmt.Sprintf("superres%d_%s", bd, tc.name), got, want, tc.blockW, tc.blockH, 2)
+			}
+		})
 	}
 }
 

@@ -8,14 +8,14 @@
 // I422/I444/I400 and generic Frame adapters, including native 8-bit monochrome
 // for explicit RTC configs across single-spatial, simulcast, and
 // shared-reference SVC pictures, plus native 10/12-bit monochrome RTC output
-// for explicit single-spatial and simulcast configs, with runtime
+// for explicit single-spatial, simulcast, and shared-reference SVC configs, with runtime
 // bitrate/framerate/scalability reconfiguration. The lower-level WebRTC control
 // surface validates W3C SVC mode metadata, temporal/spatial dependency
 // structures, key-shift scheduling, and RTP dependency descriptors for
 // caller-supplied frame payloads, plus sequence-matched Frame loading for
 // profile-0/1/2 sample formats, including explicit sequence color config.
-// Shared-reference high-bit-depth SVC and true chroma non-4:2:0 bitstream
-// encoding in the friendly pixel encoder, plus broader oracle coverage, remain
-// open and should be ported from pinned libaom/libwebrtc behavior with
+// True chroma non-4:2:0 bitstream encoding in the friendly pixel encoder, plus
+// broader oracle coverage, remain open and should be ported from pinned
+// libaom/libwebrtc behavior with
 // speed-sensitive architecture checked against pinned SVT-AV1.
 package encoder

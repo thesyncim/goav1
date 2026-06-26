@@ -1408,6 +1408,10 @@ func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeMultiSpatialReferenceDe
 	}{
 		{name: "10bit-simulcast-s2t2", mode: goav1.EncoderScalabilityModeS2T2, bitDepth: 10, profile: goav1.EncoderProfile0},
 		{name: "12bit-simulcast-s3t2", mode: goav1.EncoderScalabilityModeS3T2, bitDepth: 12, profile: goav1.EncoderProfile2},
+		{name: "10bit-shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, bitDepth: 10, profile: goav1.EncoderProfile0},
+		{name: "12bit-shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, bitDepth: 12, profile: goav1.EncoderProfile2},
+		{name: "10bit-shared-svc-l3t2-key-shift", mode: goav1.EncoderScalabilityModeL3T2_KEY_SHIFT, bitDepth: 10, profile: goav1.EncoderProfile0},
+		{name: "12bit-shared-svc-l3t2-key-shift", mode: goav1.EncoderScalabilityModeL3T2_KEY_SHIFT, bitDepth: 12, profile: goav1.EncoderProfile2},
 	}
 	for _, scenario := range scenarios {
 		scenario := scenario
@@ -1465,20 +1469,6 @@ func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeMultiSpatialReferenceDe
 			assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
 			assertPublicRTCRTPMonochromeReferenceDecoders(t, decoders, scenario.name, enc.Config(), layerTUs, orderedTUs)
 		})
-	}
-}
-
-func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeRejectsSharedReferenceSVC(t *testing.T) {
-	cfg := publicRTCMatrixConfig(640, 360, goav1.EncoderScalabilityModeL2T2_KEY_SHIFT)
-	cfg.RateControl = goav1.EncoderRateControlCQP
-	cfg.Quantizer = 39
-	cfg.ColorConfigSet = true
-	cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
-		BitDepth:   10,
-		MonoChrome: true,
-	}
-	if _, err := goav1.NewRTCEncoderWithConfig(cfg); !errors.Is(err, goav1.ErrEncoderUnsupported) {
-		t.Fatalf("NewRTCEncoderWithConfig high-bit-depth shared-reference SVC err=%v want ErrEncoderUnsupported", err)
 	}
 }
 
