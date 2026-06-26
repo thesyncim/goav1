@@ -216,6 +216,79 @@ func TestWebRTCStreamControlCombinationMatrixDecode(t *testing.T) {
 	}
 }
 
+func TestWebRTCStream1080pHotPathAllocs(t *testing.T) {
+	for _, mode := range []encoder.ScalabilityMode{
+		encoder.ScalabilityModeL1T3,
+		encoder.ScalabilityModeS3T3,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			cfg := webRTC1080pAllocConfig(mode)
+			stream, err := encoder.NewWebRTCStreamConfig(cfg)
+			if err != nil {
+				t.Fatalf("NewWebRTCStreamConfig(%s): %v", mode, err)
+			}
+			t.Cleanup(func() { _ = stream.Close() })
+
+			frames := [4]encoder.SourceFrame420{
+				makeEncoder1080pFrame(0),
+				makeEncoder1080pFrame(1),
+				makeEncoder1080pFrame(2),
+				makeEncoder1080pFrame(3),
+			}
+			if err := stream.Prewarm(); err != nil {
+				t.Fatalf("Prewarm(%s): %v", mode, err)
+			}
+			for i := 0; i < 12; i++ {
+				forceKey := i == 0 || i == 6
+				picture, err := stream.EncodePicture(frames[i&3], forceKey)
+				if err != nil {
+					t.Fatalf("warm EncodePicture(%s, %d): %v", mode, i, err)
+				}
+				if picture.FrameNum == 0 {
+					t.Fatalf("warm EncodePicture(%s, %d) emitted no frames", mode, i)
+				}
+			}
+
+			frameIndex := 0
+			pAllocs := testing.AllocsPerRun(3, func() {
+				picture, err := stream.EncodePicture(frames[frameIndex&3], false)
+				frameIndex++
+				if err != nil {
+					t.Fatal(err)
+				}
+				if picture.Keyframe {
+					t.Fatal("steady WebRTC picture was coded as keyframe")
+				}
+				if picture.FrameNum == 0 {
+					t.Fatal("empty steady WebRTC picture")
+				}
+			})
+			if pAllocs != 0 {
+				t.Fatalf("1080p WebRTC %s steady picture allocations=%f want 0", mode, pAllocs)
+			}
+
+			if _, err := stream.EncodePicture(frames[0], true); err != nil {
+				t.Fatalf("forced-key warm EncodePicture(%s): %v", mode, err)
+			}
+			keyAllocs := testing.AllocsPerRun(3, func() {
+				picture, err := stream.EncodePicture(frames[1], true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !picture.Keyframe {
+					t.Fatal("forced WebRTC picture was not coded as keyframe")
+				}
+				if picture.FrameNum == 0 {
+					t.Fatal("empty forced-key WebRTC picture")
+				}
+			})
+			if keyAllocs != 0 {
+				t.Fatalf("1080p WebRTC %s forced-key picture allocations=%f want 0", mode, keyAllocs)
+			}
+		})
+	}
+}
+
 func acceptedWebRTCStreamPixelModes() []encoder.ScalabilityMode {
 	return []encoder.ScalabilityMode{
 		encoder.ScalabilityModeL1T1,
@@ -255,6 +328,18 @@ func acceptedWebRTCStreamPixelModes() []encoder.ScalabilityMode {
 		encoder.ScalabilityModeS3T2h,
 		encoder.ScalabilityModeS3T3,
 		encoder.ScalabilityModeS3T3h,
+	}
+}
+
+func webRTC1080pAllocConfig(mode encoder.ScalabilityMode) encoder.Config {
+	return encoder.Config{
+		Resolution:        encoder.Resolution{Width: 1920, Height: 1080},
+		MaxFramerate:      encoder.Rational{Num: 60, Den: 1},
+		MinBitrateKbps:    800,
+		MaxBitrateKbps:    8_000,
+		TargetBitrateKbps: 4_000,
+		Scalability:       mode,
+		RateControl:       encoder.RateControlCBR,
 	}
 }
 

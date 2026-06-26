@@ -1520,7 +1520,7 @@ func rtcFrameFromInternal(out encoder.WebRTCEncodedFrame) RTCFrame {
 		TemporalID:                out.Info.TemporalID,
 		SpatialID:                 out.Info.SpatialID,
 		FrameID:                   out.Info.FrameID,
-		DependencyDescriptor:      out.Descriptor,
+		DependencyDescriptor:      append([]byte(nil), out.Descriptor...),
 		frameInfo:                 out.Info,
 		dependencyStructure:       out.Structure,
 		attachDependencyStructure: out.AttachDependencyStructure,

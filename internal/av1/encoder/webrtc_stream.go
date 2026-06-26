@@ -63,15 +63,16 @@ type WebRTCStream struct {
 	goldenInterval    int
 	goldenIntervalSet bool
 
-	encoders        [WebRTCMaxSpatialLayers]*VideoEncoder
-	monoEncoders    [WebRTCMaxSpatialLayers]*MonochromeVideoEncoder
-	mono16Encoders  [WebRTCMaxSpatialLayers]*HighBitDepthMonochromeVideoEncoder
-	color16Encoders [WebRTCMaxSpatialLayers]*HighBitDepth420VideoEncoder
-	scaledFrames    [WebRTCMaxSpatialLayers]SourceFrame420
-	scaledMono      [WebRTCMaxSpatialLayers]SourceFrameMono
-	scaledMono16    [WebRTCMaxSpatialLayers]SourceFrameMono16
-	scaledFrames16  [WebRTCMaxSpatialLayers]SourceFrame42016
-	layerScratch    [WebRTCMaxSpatialLayers][]byte
+	encoders          [WebRTCMaxSpatialLayers]*VideoEncoder
+	monoEncoders      [WebRTCMaxSpatialLayers]*MonochromeVideoEncoder
+	mono16Encoders    [WebRTCMaxSpatialLayers]*HighBitDepthMonochromeVideoEncoder
+	color16Encoders   [WebRTCMaxSpatialLayers]*HighBitDepth420VideoEncoder
+	scaledFrames      [WebRTCMaxSpatialLayers]SourceFrame420
+	scaledMono        [WebRTCMaxSpatialLayers]SourceFrameMono
+	scaledMono16      [WebRTCMaxSpatialLayers]SourceFrameMono16
+	scaledFrames16    [WebRTCMaxSpatialLayers]SourceFrame42016
+	layerScratch      [WebRTCMaxSpatialLayers][]byte
+	descriptorScratch [WebRTCMaxSpatialLayers][]byte
 
 	referenceFrames        [WebRTCReferenceBuffers]SourceFrame420
 	monoReferenceFrames    [WebRTCReferenceBuffers]SourceFrameMono
@@ -592,6 +593,7 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 	s.scaledMono16 = [WebRTCMaxSpatialLayers]SourceFrameMono16{}
 	s.scaledFrames16 = [WebRTCMaxSpatialLayers]SourceFrame42016{}
 	s.layerScratch = [WebRTCMaxSpatialLayers][]byte{}
+	s.descriptorScratch = [WebRTCMaxSpatialLayers][]byte{}
 	s.referenceFrames = [WebRTCReferenceBuffers]SourceFrame420{}
 	s.monoReferenceFrames = [WebRTCReferenceBuffers]SourceFrameMono{}
 	s.mono16ReferenceFrames = [WebRTCReferenceBuffers]SourceFrameMono16{}
@@ -923,30 +925,91 @@ func webRTCEncoderStateForNextKey(state WebRTCEncoderState) WebRTCEncoderState {
 // Prewarm sizes the underlying encoders' reusable buffers without advancing
 // the WebRTC frame metadata.
 func (s *WebRTCStream) Prewarm() error {
-	for i := uint8(0); s != nil && i < s.config.SpatialLayerCount; i++ {
+	if s == nil {
+		return nil
+	}
+	maxLayerBytes := 0
+	for i := uint8(0); i < s.config.SpatialLayerCount; i++ {
+		if layerBytes := webRTCStreamLayerPrewarmBytes(s.config, i); layerBytes > maxLayerBytes {
+			maxLayerBytes = layerBytes
+		}
+	}
+	descriptorBytes, err := webRTCStreamDescriptorPrewarmBytes(s.config)
+	if err != nil {
+		return err
+	}
+	for i := uint8(0); i < s.config.SpatialLayerCount; i++ {
 		if s.encoders[i] != nil {
 			if err := s.encoders[i].Prewarm(); err != nil {
 				return err
 			}
-			continue
-		}
-		if s.monoEncoders[i] != nil {
+		} else if s.monoEncoders[i] != nil {
 			if err := s.monoEncoders[i].Prewarm(); err != nil {
 				return err
 			}
-		}
-		if s.mono16Encoders[i] != nil {
+		} else if s.mono16Encoders[i] != nil {
 			if err := s.mono16Encoders[i].Prewarm(); err != nil {
 				return err
 			}
-		}
-		if s.color16Encoders[i] != nil {
+		} else if s.color16Encoders[i] != nil {
 			if err := s.color16Encoders[i].Prewarm(); err != nil {
 				return err
 			}
 		}
+		if cap(s.layerScratch[i]) < maxLayerBytes {
+			s.layerScratch[i] = make([]byte, 0, maxLayerBytes)
+		}
+		if cap(s.descriptorScratch[i]) < descriptorBytes {
+			s.descriptorScratch[i] = make([]byte, 0, descriptorBytes)
+		}
 	}
 	return nil
+}
+
+func webRTCStreamLayerPrewarmBytes(config Config, spatialID uint8) int {
+	if spatialID >= config.SpatialLayerCount {
+		return 0
+	}
+	resolution := config.SpatialLayers[spatialID].Resolution
+	pixels := int(resolution.Width) * int(resolution.Height)
+	if pixels < 1024 {
+		pixels = 1024
+	}
+	return pixels + pixels/16 + 4096
+}
+
+func webRTCStreamDescriptorPrewarmBytes(config Config) (int, error) {
+	state := WebRTCEncoderState{}
+	steps := int(config.TemporalLayerCount)*2 + 2
+	if steps < 4 {
+		steps = 4
+	}
+	maxBytes := 0
+	for step := 0; step < steps; step++ {
+		unit, next, err := WebRTCNextTemporalUnitForState(config, state, step == 0)
+		if err != nil {
+			return 0, err
+		}
+		frameNum := webRTCPictureTemporalUnitFrameNum(unit)
+		for i := uint8(0); i < frameNum; i++ {
+			control, structure, err := webRTCPictureTemporalUnitFrameControl(unit, state, i)
+			if err != nil {
+				return 0, err
+			}
+			size, err := WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, control.AttachDependencyStructure)
+			if err != nil {
+				return 0, err
+			}
+			if size > maxBytes {
+				maxBytes = size
+			}
+		}
+		state = next
+	}
+	if maxBytes == 0 {
+		return 0, ErrInvalidFrame
+	}
+	return maxBytes, nil
 }
 
 // Encode encodes one single-spatial frame and returns it with WebRTC packaging
@@ -1080,11 +1143,7 @@ func (s *WebRTCStream) EncodePicture(src SourceFrame420, forceKey bool) (WebRTCE
 		if err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
-		descSize, err := WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, control.AttachDependencyStructure)
-		if err != nil {
-			return WebRTCEncodedPicture{}, err
-		}
-		descriptor, err := AppendWebRTCDependencyDescriptor(make([]byte, 0, descSize), structure, control.GenericFrameInfo, true, true, control.AttachDependencyStructure)
+		descriptor, err := s.appendPictureDependencyDescriptor(i, structure, control.GenericFrameInfo, control.AttachDependencyStructure)
 		if err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
@@ -1168,11 +1227,7 @@ func (s *WebRTCStream) EncodeMonochromePicture(src SourceFrameMono, forceKey boo
 		if err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
-		descSize, err := WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, control.AttachDependencyStructure)
-		if err != nil {
-			return WebRTCEncodedPicture{}, err
-		}
-		descriptor, err := AppendWebRTCDependencyDescriptor(make([]byte, 0, descSize), structure, control.GenericFrameInfo, true, true, control.AttachDependencyStructure)
+		descriptor, err := s.appendPictureDependencyDescriptor(i, structure, control.GenericFrameInfo, control.AttachDependencyStructure)
 		if err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
@@ -1260,11 +1315,7 @@ func (s *WebRTCStream) EncodeHighBitDepthMonochromePicture(src SourceFrameMono16
 		if err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
-		descSize, err := WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, control.AttachDependencyStructure)
-		if err != nil {
-			return WebRTCEncodedPicture{}, err
-		}
-		descriptor, err := AppendWebRTCDependencyDescriptor(make([]byte, 0, descSize), structure, control.GenericFrameInfo, true, true, control.AttachDependencyStructure)
+		descriptor, err := s.appendPictureDependencyDescriptor(i, structure, control.GenericFrameInfo, control.AttachDependencyStructure)
 		if err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
@@ -1364,11 +1415,7 @@ func (s *WebRTCStream) EncodeHighBitDepthColorPicture(src SourceFrame42016, forc
 		if err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
-		descSize, err := WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, control.AttachDependencyStructure)
-		if err != nil {
-			return WebRTCEncodedPicture{}, err
-		}
-		descriptor, err := AppendWebRTCDependencyDescriptor(make([]byte, 0, descSize), structure, control.GenericFrameInfo, true, true, control.AttachDependencyStructure)
+		descriptor, err := s.appendPictureDependencyDescriptor(i, structure, control.GenericFrameInfo, control.AttachDependencyStructure)
 		if err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
@@ -1575,6 +1622,25 @@ func webRTCStreamExpectedCodedKey(keyPicture bool, settings FrameEncodeSettings,
 		return false
 	}
 	return keyPicture
+}
+
+func (s *WebRTCStream) appendPictureDependencyDescriptor(frameIndex uint8, structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo, attachStructure bool) ([]byte, error) {
+	if s == nil || frameIndex >= WebRTCMaxSpatialLayers {
+		return nil, ErrInvalidFrame
+	}
+	size, err := WebRTCDependencyDescriptorSize(structure, info, attachStructure)
+	if err != nil {
+		return nil, err
+	}
+	if cap(s.descriptorScratch[frameIndex]) < size {
+		s.descriptorScratch[frameIndex] = make([]byte, 0, size)
+	}
+	descriptor, err := AppendWebRTCDependencyDescriptor(s.descriptorScratch[frameIndex][:0], structure, info, true, true, attachStructure)
+	if err != nil {
+		return nil, err
+	}
+	s.descriptorScratch[frameIndex] = descriptor
+	return descriptor, nil
 }
 
 func (s *WebRTCStream) sequenceMaxCodedSize() (int, int, error) {
