@@ -16,8 +16,9 @@ import (
 // profileClips are the vendored non-superres profile-conformance clips and
 // their per-frame aomdec MD5 goldens. They cover profile-0 S_FRAME,
 // profile-1 4:4:4 8/10-bit, palette, CDEF/restoration, odd-edge filtering,
-// film grain, profile-2 4:2:2/4:2:0, 12-bit film grain, edge motion,
-// 128x128 superblocks, and multi-tile streams.
+// film grain, profile-2 4:2:2/4:2:0 including 10-bit 4:2:2 inter
+// CDEF/restoration, 12-bit film grain, edge motion, 128x128 superblocks,
+// and multi-tile streams.
 var profileClips = []struct {
 	file        string
 	frameMD5Hex []string
@@ -216,6 +217,19 @@ var profileClips = []struct {
 			"275861a447790a60e26cf3f574cab809",
 			"61013488539b1b1a169f1e372d96d180",
 			"0eca225d9dd9f6f768ab49a216511304",
+		},
+	},
+	{
+		file: "profile2-422-10bit-inter-cdef-restoration-160x128.ivf",
+		frameMD5Hex: []string{
+			"b5f242b59ee8ea0eb7d13df19d5d5ced",
+			"a51c61951c1f3b2d9ee87a31c9c95020",
+			"73cecc2864d5b2c36c4411d5dce7a93e",
+			"eb98cdf9365718019e415e8793f35776",
+			"87d2ad38f163244327bf9f5d3d29e161",
+			"5673a85048021891382bfa66da1eb7d8",
+			"cb55a9f1eff1491fd72186686d878ba8",
+			"47f035eb1f1df9c34f43a50d919dae7e",
 		},
 	},
 	{

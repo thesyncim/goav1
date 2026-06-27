@@ -37,7 +37,8 @@
 // clip. All are committed under
 // internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
 // ships no 4:4:4 (profile 1), 4:2:2 (profile 2) or 12-bit (profile 2) vectors,
-// so these clips guard those decode paths.
+// so these clips guard those decode paths, including 10-bit 4:2:2 inter
+// prediction through CDEF and loop restoration.
 //
 // Regen recipe (run from a libaom v3.14.0 build tree, e.g. /tmp/aom-build):
 //
@@ -246,6 +247,13 @@
 //	  --cq-level=32 --kf-max-dist=1 --lag-in-frames=0 \
 //	  --enable-cdef=0 --enable-restoration=0 \
 //	  -o profile2-422-10bit-66x66.ivf src422_10_edge.yuv
+//	# 4:2:2 10-bit inter with active CDEF + loop restoration:
+//	aomenc --i422 --width=160 --height=128 --limit=8 --ivf --profile=2 \
+//	  --bit-depth=10 --input-bit-depth=10 --cpu-used=4 --end-usage=q \
+//	  --cq-level=30 --kf-max-dist=999 --lag-in-frames=0 \
+//	  --enable-cdef=1 --enable-restoration=1 \
+//	  -o profile2-422-10bit-inter-cdef-restoration-160x128.ivf \
+//	  src422_10_inter_filters.yuv
 //	# 4:2:2 12-bit odd edge-size:
 //	libaom encoder API, AOM_IMG_FMT_I42216, profile=2, bit_depth=12,
 //	  input_bit_depth=12, chroma_subsampling_x=1, chroma_subsampling_y=0,
@@ -691,6 +699,30 @@ var profileClips = []profileClip{
 		wantBitDepth:     8,
 		wantSubsamplingX: true,
 		wantSubsamplingY: false,
+	},
+	{
+		// Profile 2: 4:2:2 10-bit INTER with active CDEF and loop restoration,
+		// guarding high-bit-depth professional-profile chroma through
+		// inter-prediction and post-filter publication.
+		name: "profile2-422-10bit-inter-cdef-restoration-160x128",
+		file: "profile2-422-10bit-inter-cdef-restoration-160x128.ivf",
+		frameMD5Hex: []string{
+			"b5f242b59ee8ea0eb7d13df19d5d5ced",
+			"a51c61951c1f3b2d9ee87a31c9c95020",
+			"73cecc2864d5b2c36c4411d5dce7a93e",
+			"eb98cdf9365718019e415e8793f35776",
+			"87d2ad38f163244327bf9f5d3d29e161",
+			"5673a85048021891382bfa66da1eb7d8",
+			"cb55a9f1eff1491fd72186686d878ba8",
+			"47f035eb1f1df9c34f43a50d919dae7e",
+		},
+		wantSeqProfile:        2,
+		wantBitDepth:          10,
+		wantSubsamplingX:      true,
+		wantSubsamplingY:      false,
+		wantCDEFFrames:        1,
+		wantRestorationFrames: 1,
+		wantInterFrames:       7,
 	},
 	{
 		// Profile 2: 4:2:0 12-bit. 2 bytes/sample, BitDepth=12.
