@@ -28,11 +28,13 @@ type LayeredDecoder struct {
 	frameContexts DecoderSharedFrameContextStore
 	stats         DecoderFrameWorkTileResidualStats
 	sideData      DecoderFrameWorkSideData
+	sideRunner    decoderFrameWorkResidualSideDataRunner
 	batch         DecoderFrameWorkBatchResidualRunner
 	hasBatch      bool
 
-	layerPool FrameLayerPool
-	adapter   DecoderFrameLayerPool
+	layerPool  FrameLayerPool
+	adapter    DecoderFrameLayerPool
+	globalPool *FramePool
 
 	referenceSurfaces [InterRefsPerFrame]int
 	referenceFrames   [InterRefsPerFrame]*Frame
@@ -57,6 +59,8 @@ type LayeredDecoder struct {
 	shownHeldBuf  [2 * (RefFrames + 1)]layeredShownSurface
 	outputSurface []layeredShownSurface
 	outputSurfBuf [2 * (RefFrames + 1)]layeredShownSurface
+
+	globalSurface func(local int) int
 }
 
 // LayeredFrame is one visible output from LayeredDecoder with the AV1 layer
@@ -206,6 +210,12 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 	}
 	d.shownHeld = d.shownHeldBuf[:0]
 	d.outputSurface = d.outputSurfBuf[:0]
+	d.frameContexts.Prealloc(2 * (RefFrames + 1))
+	d.sideRunner = decoderFrameWorkResidualSideDataRunner{
+		SideData:    &d.sideData,
+		BatchRunner: &d.batch,
+	}
+	d.globalSurface = d.globalSurfaceForCurrentPool
 	d.postFilter.size = postArena
 	d.postFilter.runner.Scratch = decoderPostFilterScratchFromArena(postArena, &arena)
 
@@ -577,13 +587,8 @@ func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]LayeredFrame, error
 			return out, err
 		}
 		batchRunner := d.batchRunnerForEvent(event)
-		globalSurface := func(local int) int {
-			if framePool == nil {
-				return -1
-			}
-			return DecoderLayerPoolGlobalSurfaceID(&d.layerPool, framePool, local)
-		}
-		result, err := RunDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
+		d.bindGlobalSurfacePool(framePool)
+		result, err := runDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
 			State:             state,
 			Refs:              &d.refs,
 			FramePool:         framePool,
@@ -604,11 +609,11 @@ func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]LayeredFrame, error
 			Stats:             &d.stats,
 			External: DecoderFrameWorkExternalReferenceRuntime{
 				Provider:      d.adapter,
-				GlobalSurface: globalSurface,
+				GlobalSurface: d.globalSurface,
 				Releaser:      d.adapter,
 				FrameContexts: &d.frameContexts,
 			},
-		})
+		}, d.sideRunnerForEvent(sideData, batchRunner))
 		if err != nil {
 			return out, err
 		}
@@ -628,6 +633,26 @@ func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]LayeredFrame, error
 	d.trackShownSurfaces(d.outputSurface)
 	d.visibleMeta = out
 	return out, nil
+}
+
+func (d *LayeredDecoder) bindGlobalSurfacePool(framePool *FramePool) {
+	d.globalPool = framePool
+}
+
+func (d *LayeredDecoder) globalSurfaceForCurrentPool(local int) int {
+	if d == nil || d.globalPool == nil || d.globalPool.Cap() == 0 {
+		return -1
+	}
+	return DecoderLayerPoolGlobalSurfaceID(&d.layerPool, d.globalPool, local)
+}
+
+func (d *LayeredDecoder) sideRunnerForEvent(sideData *DecoderFrameWorkSideData, batchRunner *DecoderFrameWorkBatchResidualRunner) DecoderFrameWorkSideDataRunner {
+	if sideData == nil {
+		return nil
+	}
+	d.sideRunner.SideData = sideData
+	d.sideRunner.BatchRunner = batchRunner
+	return &d.sideRunner
 }
 
 func layeredFrameFromEvent(frame *Frame, event DecoderEvent) LayeredFrame {

@@ -1694,6 +1694,71 @@ func TestNewDecoderFromRTPPayloadsDecodeRTPPayloadAllocs(t *testing.T) {
 	}
 }
 
+func TestNewDecoderFromRTPPayloadsDecodeRTPPayload1080pAllocs(t *testing.T) {
+	rtpPayloads, wantVisible := publicDecoder1080pRTPPayloads(t, av1.EncoderScalabilityModeL1T3)
+	dec, err := av1.NewDecoderFromRTPPayloads(rtpPayloads)
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPayloads: %v", err)
+	}
+	defer dec.Close()
+
+	decodeAll := func() {
+		if err := dec.Reset(); err != nil {
+			t.Fatalf("Reset: %v", err)
+		}
+		visible := 0
+		for i, payload := range rtpPayloads {
+			frames, err := dec.DecodeRTPPayload(payload)
+			if err != nil {
+				t.Fatalf("DecodeRTPPayload packet %d: %v", i, err)
+			}
+			visible += len(frames)
+		}
+		if visible != wantVisible {
+			t.Fatalf("decoded %d visible 1080p RTP frames, want %d", visible, wantVisible)
+		}
+	}
+
+	decodeAll()
+	allocs := testing.AllocsPerRun(3, decodeAll)
+	if allocs != 0 {
+		t.Fatalf("DecodeRTPPayload 1080p allocs/run=%f want 0", allocs)
+	}
+}
+
+func TestNewLayeredDecoderFromRTPPayloadsDecodeRTPPayload1080pAllocs(t *testing.T) {
+	rtpPayloads, _ := publicDecoder1080pRTPPayloads(t, av1.EncoderScalabilityModeL3T3)
+	wantVisible := publicLayeredDecoderVisibleRTPPayloadFrames(t, rtpPayloads)
+	dec, err := av1.NewLayeredDecoderFromRTPPayloads(rtpPayloads)
+	if err != nil {
+		t.Fatalf("NewLayeredDecoderFromRTPPayloads: %v", err)
+	}
+	defer dec.Close()
+
+	decodeAll := func() {
+		if err := dec.Reset(); err != nil {
+			t.Fatalf("Reset: %v", err)
+		}
+		visible := 0
+		for i, payload := range rtpPayloads {
+			frames, err := dec.DecodeRTPPayload(payload)
+			if err != nil {
+				t.Fatalf("LayeredDecoder DecodeRTPPayload packet %d: %v", i, err)
+			}
+			visible += len(frames)
+		}
+		if visible != wantVisible {
+			t.Fatalf("decoded %d visible 1080p layered RTP frames, want %d", visible, wantVisible)
+		}
+	}
+
+	decodeAll()
+	allocs := testing.AllocsPerRun(3, decodeAll)
+	if allocs != 0 {
+		t.Fatalf("LayeredDecoder DecodeRTPPayload 1080p allocs/run=%f want 0", allocs)
+	}
+}
+
 func TestParseRTPPacketDependencyDescriptorAllocs(t *testing.T) {
 	const dependencyDescriptorExtensionID = 42
 	inputs := publicDecoderRTPLossRecoveryPayloads(t)
@@ -1903,6 +1968,58 @@ func publicDecoderAllocRTPPayloads(t testing.TB) ([][]byte, int) {
 		rtpPayloads = append(rtpPayloads, publicDecoderRTPPayloadsForFrameWithLimits(t, frame, limits)...)
 	}
 	return rtpPayloads, 4
+}
+
+func publicDecoder1080pRTPPayloads(t testing.TB, mode av1.EncoderScalabilityMode) ([][]byte, int) {
+	t.Helper()
+	const width, height = 1920, 1080
+	cfg := publicRTCMatrixConfig(width, height, mode)
+	cfg.TargetBitrateKbps = 1800
+	cfg.MaxBitrateKbps = 2400
+	enc, err := av1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
+	}
+	defer enc.Close()
+
+	limits := av1.RTPPayloadSizeLimits{MaxPayloadLen: 1200}
+	var rtpPayloads [][]byte
+	visible := 0
+	for i := 0; i < 2; i++ {
+		picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, i), false)
+		if err != nil {
+			t.Fatalf("EncodePicture 1080p frame %d %s: %v", i, mode, err)
+		}
+		if picture.FrameNum == 0 {
+			t.Fatalf("EncodePicture 1080p frame %d %s produced no frames", i, mode)
+		}
+		visible += picture.FrameNum
+		for j := 0; j < picture.FrameNum; j++ {
+			rtpPayloads = append(rtpPayloads, publicDecoderRTPPayloadsForFrameWithLimits(t, picture.Frames[j], limits)...)
+		}
+	}
+	return rtpPayloads, visible
+}
+
+func publicLayeredDecoderVisibleRTPPayloadFrames(t testing.TB, rtpPayloads [][]byte) int {
+	t.Helper()
+	dec, err := av1.NewLayeredDecoderFromRTPPayloads(rtpPayloads)
+	if err != nil {
+		t.Fatalf("NewLayeredDecoderFromRTPPayloads visible probe: %v", err)
+	}
+	defer dec.Close()
+	visible := 0
+	for i, payload := range rtpPayloads {
+		frames, err := dec.DecodeRTPPayload(payload)
+		if err != nil {
+			t.Fatalf("LayeredDecoder visible probe packet %d: %v", i, err)
+		}
+		visible += len(frames)
+	}
+	if visible == 0 {
+		t.Fatal("LayeredDecoder visible probe decoded no frames")
+	}
+	return visible
 }
 
 type publicRTPLossRecoveryPayloads struct {

@@ -229,17 +229,39 @@ func (fn FrameSurfaceReleaserFunc) ReleaseFrameSurfaces(ids []int) error {
 // concurrent use across frames; AV1 decoding is serial across the frame-begin,
 // tile, and frame-finish events that touch it.
 type SharedFrameContextStore struct {
-	contexts map[int]threading.FrameWorkTileResidualCDFStorage
+	contexts map[int]int
+	backing  []threading.FrameWorkTileResidualCDFStorage
+	used     int
+}
+
+// Prealloc primes the retained frame-context map so realtime shared-reference
+// decoders can keep Reset and subsequent store operations allocation-free.
+func (s *SharedFrameContextStore) Prealloc(capacity int) {
+	if s == nil || capacity <= 0 {
+		return
+	}
+	if s.contexts == nil {
+		s.contexts = make(map[int]int, capacity)
+	}
+	if len(s.contexts) == 0 && len(s.backing) < capacity {
+		if cap(s.backing) >= capacity {
+			s.backing = s.backing[:capacity]
+		} else {
+			s.backing = make([]threading.FrameWorkTileResidualCDFStorage, capacity)
+		}
+	}
 }
 
 // Reset clears every saved frame context. Callers invoke this at a new coded
 // video sequence boundary, matching ResetFrameSurfaceReferences clearing the
-// stream-global reference slots.
+// stream-global reference slots. Existing map capacity is retained for hot
+// decode paths that reuse a decoder across streams.
 func (s *SharedFrameContextStore) Reset() {
 	if s == nil {
 		return
 	}
-	s.contexts = nil
+	clear(s.contexts)
+	s.used = 0
 }
 
 // load returns the saved frame context for the global surface ID, reporting
@@ -248,8 +270,11 @@ func (s *SharedFrameContextStore) load(globalID int) (threading.FrameWorkTileRes
 	if s == nil || globalID < 0 || s.contexts == nil {
 		return threading.FrameWorkTileResidualCDFStorage{}, false
 	}
-	ctx, ok := s.contexts[globalID]
-	return ctx, ok
+	index, ok := s.contexts[globalID]
+	if !ok || index < 0 || index >= s.used || index >= len(s.backing) {
+		return threading.FrameWorkTileResidualCDFStorage{}, false
+	}
+	return s.backing[index], true
 }
 
 // store saves the adapted frame context under the global surface ID, mirroring
@@ -259,9 +284,30 @@ func (s *SharedFrameContextStore) store(globalID int, ctx threading.FrameWorkTil
 		return
 	}
 	if s.contexts == nil {
-		s.contexts = make(map[int]threading.FrameWorkTileResidualCDFStorage)
+		s.Prealloc(parser.RefFrames)
 	}
-	s.contexts[globalID] = ctx
+	if index, ok := s.contexts[globalID]; ok {
+		if index >= 0 && index < len(s.backing) {
+			s.backing[index] = ctx
+		}
+		return
+	}
+	if s.used >= len(s.backing) {
+		nextLen := len(s.backing) * 2
+		if nextLen < parser.RefFrames {
+			nextLen = parser.RefFrames
+		}
+		if nextLen <= s.used {
+			nextLen = s.used + 1
+		}
+		next := make([]threading.FrameWorkTileResidualCDFStorage, nextLen)
+		copy(next, s.backing)
+		s.backing = next
+	}
+	index := s.used
+	s.used++
+	s.backing[index] = ctx
+	s.contexts[globalID] = index
 }
 
 func frameWorkIdentityGlobalSurface(local int) int { return local }

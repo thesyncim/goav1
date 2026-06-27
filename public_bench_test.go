@@ -269,6 +269,91 @@ func BenchmarkPublicDecodeRTPPayload(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
+func BenchmarkPublicDecodeRTPPayload1080p(b *testing.B) {
+	rtpPayloads, wantVisible := publicDecoder1080pRTPPayloads(b, av1.EncoderScalabilityModeL1T3)
+	dec, err := av1.NewDecoderFromRTPPayloads(rtpPayloads)
+	if err != nil {
+		b.Fatalf("NewDecoderFromRTPPayloads: %v", err)
+	}
+	defer dec.Close()
+
+	bytesPerRun := publicRTPPayloadBytes(rtpPayloads)
+	decodeAll := func() int {
+		if err := dec.Reset(); err != nil {
+			b.Fatalf("Reset: %v", err)
+		}
+		visible := 0
+		for i, payload := range rtpPayloads {
+			frames, err := dec.DecodeRTPPayload(payload)
+			if err != nil {
+				b.Fatalf("DecodeRTPPayload packet %d: %v", i, err)
+			}
+			visible += len(frames)
+		}
+		if visible != wantVisible {
+			b.Fatalf("decoded %d visible 1080p RTP frames, want %d", visible, wantVisible)
+		}
+		return visible
+	}
+
+	publicBenchmarkSink = decodeAll()
+	b.SetBytes(int64(bytesPerRun))
+	b.ReportAllocs()
+	b.ResetTimer()
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		sum += decodeAll()
+	}
+	publicBenchmarkSink = sum
+}
+
+func BenchmarkPublicLayeredDecodeRTPPayload1080p(b *testing.B) {
+	rtpPayloads, _ := publicDecoder1080pRTPPayloads(b, av1.EncoderScalabilityModeL3T3)
+	wantVisible := publicLayeredDecoderVisibleRTPPayloadFrames(b, rtpPayloads)
+	dec, err := av1.NewLayeredDecoderFromRTPPayloads(rtpPayloads)
+	if err != nil {
+		b.Fatalf("NewLayeredDecoderFromRTPPayloads: %v", err)
+	}
+	defer dec.Close()
+
+	bytesPerRun := publicRTPPayloadBytes(rtpPayloads)
+	decodeAll := func() int {
+		if err := dec.Reset(); err != nil {
+			b.Fatalf("Reset: %v", err)
+		}
+		visible := 0
+		for i, payload := range rtpPayloads {
+			frames, err := dec.DecodeRTPPayload(payload)
+			if err != nil {
+				b.Fatalf("LayeredDecoder DecodeRTPPayload packet %d: %v", i, err)
+			}
+			visible += len(frames)
+		}
+		if visible != wantVisible {
+			b.Fatalf("decoded %d visible 1080p layered RTP frames, want %d", visible, wantVisible)
+		}
+		return visible
+	}
+
+	publicBenchmarkSink = decodeAll()
+	b.SetBytes(int64(bytesPerRun))
+	b.ReportAllocs()
+	b.ResetTimer()
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		sum += decodeAll()
+	}
+	publicBenchmarkSink = sum
+}
+
+func publicRTPPayloadBytes(payloads [][]byte) int {
+	total := 0
+	for _, payload := range payloads {
+		total += len(payload)
+	}
+	return total
+}
+
 func BenchmarkPublicFrameBindAndSampleRoundTrip(b *testing.B) {
 	format := av1.FrameFormat{
 		Width:        128,
