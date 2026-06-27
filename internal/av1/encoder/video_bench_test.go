@@ -114,6 +114,9 @@ func BenchmarkVideoEncoderPFrame1080p(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() {
+		_ = enc.Close()
+	})
 	if err := enc.Prewarm(); err != nil {
 		b.Fatal(err)
 	}
@@ -151,6 +154,9 @@ func BenchmarkEncodeKeyframe1080p(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() {
+		_ = enc.Close()
+	})
 	if err := enc.Prewarm(); err != nil {
 		b.Fatal(err)
 	}
@@ -161,13 +167,14 @@ func BenchmarkEncodeKeyframe1080p(b *testing.B) {
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if _, key, err := enc.Encode(f, true); err != nil {
 			b.Fatal(err)
 		} else if !key {
 			b.Fatal("forced frame was not coded as keyframe")
 		}
 	}
+	b.StopTimer()
 }
 
 // BenchmarkEncodeKeyframeCold measures the full-HD one-shot convenience helper.
@@ -244,6 +251,9 @@ func BenchmarkVideoEncoderPFramePan1080p(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() {
+		_ = enc.Close()
+	})
 	frames := make([]encoder.SourceFrame420, 32)
 	for i := range frames {
 		frames[i] = makeFrame(i)
@@ -280,6 +290,9 @@ func BenchmarkStreamingKeyframe1080p(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() {
+		_ = enc.Close()
+	})
 	if err := enc.Prewarm(); err != nil {
 		b.Fatal(err)
 	}
