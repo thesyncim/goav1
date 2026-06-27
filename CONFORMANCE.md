@@ -398,14 +398,14 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 39/39 vendored profile clips pass, covering
+- `make dryrun-profiles`: 40/40 vendored profile clips pass, covering
   profile 0 4:2:0 8-bit S_FRAME altref,
   profile 1 4:4:4 8/10-bit all-intra, inter, screen-content palette,
   CDEF/restoration, 8/10-bit odd edge-size CDEF/restoration, 8/10-bit film grain,
   8/10-bit edge-motion, 8-bit multi-tile, 10-bit inter multi-tile, all-key
   superres, inter superres, and 10-bit superres plus loop restoration,
   profile 2 4:2:2 8-bit all-intra/inter,
-  profile 2 4:2:2 10-bit inter CDEF/restoration,
+  profile 2 4:2:2 10/12-bit inter CDEF/restoration,
   profile 2 4:2:2 10/12-bit edge-size,
   profile 2 4:4:4 12-bit edge-size, profile 2 4:2:0 12-bit including
   odd edge sizes, 12-bit film grain,
@@ -539,11 +539,12 @@ manifest. The next production-readiness items are:
 1. **Broader real-world/profile corpus.** Keep expanding the local generated
    real-content corpus and add small committed representative clips when the
    licensing/size tradeoff is acceptable. Keep adding broader profile-2 12-bit
-   4:4:4 inter/filter combinations and 12-bit 4:2:2 inter/filter streams
-   as upstream or locally generated goldens become available; the current
+   4:4:4 inter/filter combinations and additional profile-2 12-bit
+   real-content/tiled combinations as upstream or locally generated goldens
+   become available; the current
    vendored corpus includes profile-1 4:4:4 8/10-bit odd-size CDEF/restoration,
    8/10-bit edge-motion, 10-bit inter multi-tile,
-   profile-2 4:2:2 10-bit inter CDEF/restoration,
+   profile-2 4:2:2 10/12-bit inter CDEF/restoration,
    and 10-bit superres plus loop restoration, plus 4:2:0 12-bit odd-size CDEF,
    film grain, edge-motion, and super-res coverage.
 2. **Large-scale tile corpus.** Tile-list playback now follows libaom's

@@ -37,7 +37,7 @@
 // clip. All are committed under
 // internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
 // ships no 4:4:4 (profile 1), 4:2:2 (profile 2) or 12-bit (profile 2) vectors,
-// so these clips guard those decode paths, including 10-bit 4:2:2 inter
+// so these clips guard those decode paths, including 10/12-bit 4:2:2 inter
 // prediction through CDEF and loop restoration.
 //
 // Regen recipe (run from a libaom v3.14.0 build tree, e.g. /tmp/aom-build):
@@ -259,6 +259,11 @@
 //	  input_bit_depth=12, chroma_subsampling_x=1, chroma_subsampling_y=0,
 //	  cpu-used=4, q=34, kf-min/max-dist=1, lag-in-frames=0,
 //	  enable-cdef=0, enable-restoration=0.
+//	# 4:2:2 12-bit inter with active CDEF + loop restoration:
+//	libaom encoder API, AOM_IMG_FMT_I42216, profile=2, bit_depth=12,
+//	  input_bit_depth=12, chroma_subsampling_x=1, chroma_subsampling_y=0,
+//	  cpu-used=1, q=28, kf-max-dist=999, lag-in-frames=0,
+//	  enable-cdef=1, enable-restoration=1.
 //	# 4:4:4 12-bit odd edge-size:
 //	libaom encoder API, AOM_IMG_FMT_I44416, profile=2, bit_depth=12,
 //	  input_bit_depth=12, cpu-used=8, q=34, kf-min/max-dist=1,
@@ -718,6 +723,30 @@ var profileClips = []profileClip{
 		},
 		wantSeqProfile:        2,
 		wantBitDepth:          10,
+		wantSubsamplingX:      true,
+		wantSubsamplingY:      false,
+		wantCDEFFrames:        1,
+		wantRestorationFrames: 1,
+		wantInterFrames:       7,
+	},
+	{
+		// Profile 2: 4:2:2 12-bit INTER with active CDEF and loop restoration,
+		// guarding the professional profile's maximum bit depth on subsampled
+		// chroma through inter-prediction and post-filter publication.
+		name: "profile2-422-12bit-inter-cdef-restoration-160x128",
+		file: "profile2-422-12bit-inter-cdef-restoration-160x128.ivf",
+		frameMD5Hex: []string{
+			"d8796f3a72cdcd22edf8663d4163e172",
+			"5c13df2a4465e3a7c7ca0d67657532e5",
+			"7a1210c41a1db72c7f54d61614c1160b",
+			"0f4f8b5e331dda67f86a75895edeaf12",
+			"ca049512bf4de66db09aa080052bceb3",
+			"50bcec9a77ef3466f92539ddb04fdc1d",
+			"b53d40f526f30cc59ddb0f1675b75aa3",
+			"a858fc5e356287c5061601a1d7b74c7f",
+		},
+		wantSeqProfile:        2,
+		wantBitDepth:          12,
 		wantSubsamplingX:      true,
 		wantSubsamplingY:      false,
 		wantCDEFFrames:        1,
