@@ -301,8 +301,10 @@ WebRTC control reconfiguration. Every emitted stream decodes bit-exactly to the
 encoder's own reconstruction in this package's decoder and in aomdec/dav1d
 (enforced by the test gates), including single-spatial and simulcast WebRTC
 settings cycles and shared-reference SVC paths that change bitrate, framerate,
-rate control, and scalability;
-steady-state encoding allocates a handful of objects per frame. See
+rate control, and scalability. The public WebRTC 1080p encode/decode RTP hot
+paths and internal 1080p streaming encoder hot paths are guarded at
+`0 B/op` and `0 allocs/op`; cold one-shot helpers may still allocate returned
+buffers. See
 `ExampleVideoEncoder` and `ExampleRTCEncoder` for
 the round trip, and `cmd/encbench` for the standing 1080p60 performance
 measurement against SVT-AV1 (throughput currently exceeds SVT preset 12 on
@@ -371,11 +373,13 @@ The external-corpus lane accepts stream-MD5 or frame-MD5 sidecars and is meant
 for Argon Streams, dav1d-test-data, FATE, and local lab corpora without
 vendoring large binary clips into this repository.
 
-Known conformance gaps are explicit:
+Known conformance gaps and validity boundaries are explicit:
 
-- Contextless tile-list OBUs without frame context or external anchors reject
-  early; tile-list reconstruction and publish paths are covered when frame
-  context is present.
+- Standalone tile-list OBUs without the required common frame header reject
+  early with `ErrDecoderTileListMissingFrameContext`, matching libaom
+  large-scale tile mode. Tile-list reconstruction and publish paths are covered
+  when frame context is present, including split frame-header/tile-list RTP
+  payloads.
 - Broader profile-2 and real-world corpus breadth should keep expanding even
   though the current committed gates are green.
 

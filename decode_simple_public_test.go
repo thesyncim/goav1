@@ -777,6 +777,8 @@ func TestSimpleDecoderTileListIVFPlayback(t *testing.T) {
 func TestNewDecoderFromRTPPayloadsTileListPlayback(t *testing.T) {
 	primePayload := publicDecoderResidualRTPPayload()
 	tileListPayload := publicSimpleDecoderTileListRTPPayload()
+	tileListHeaderPayload := publicSimpleDecoderRTPPayloadForElement(av1.OBUFrameHeader, publicDecoderResidualFrameHeaderPayload())
+	tileListOnlyPayload := publicSimpleDecoderRTPPayloadForElement(av1.OBUTileList, publicSimpleDecoderTileListPayload())
 	primePacket := publicSimpleDecoderRTPPacket(t, primePayload, 0x5000, 90_000)
 	tileListPacket := publicSimpleDecoderRTPPacket(t, tileListPayload, 0x5001, 93_000)
 	assertTileListFrame := func(t *testing.T, label string, frames []*av1.Frame) {
@@ -853,6 +855,61 @@ func TestNewDecoderFromRTPPayloadsTileListPlayback(t *testing.T) {
 		t.Fatalf("DecodeRTPPayload tile-list: %v", err)
 	}
 	assertTileListFrame(t, "DecodeRTPPayload tile-list", frames)
+
+	split, err := av1.NewDecoderFromRTPPayloads([][]byte{primePayload, tileListHeaderPayload, tileListOnlyPayload})
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPayloads split tile-list: %v", err)
+	}
+	defer split.Close()
+
+	frames, ok, err = split.DecodeNext()
+	if err != nil {
+		t.Fatalf("DecodeNext split prime: %v", err)
+	}
+	if !ok || len(frames) != 1 || frames[0] == nil {
+		t.Fatalf("DecodeNext split prime frames=%d ok=%v", len(frames), ok)
+	}
+	frames, ok, err = split.DecodeNext()
+	if err != nil {
+		t.Fatalf("DecodeNext split frame-header: %v", err)
+	}
+	if !ok || len(frames) != 0 {
+		t.Fatalf("DecodeNext split frame-header frames=%d ok=%v", len(frames), ok)
+	}
+	frames, ok, err = split.DecodeNext()
+	if err != nil {
+		t.Fatalf("DecodeNext split tile-list: %v", err)
+	}
+	if !ok {
+		t.Fatal("DecodeNext split tile-list ok=false")
+	}
+	assertTileListFrame(t, "DecodeNext split tile-list", frames)
+
+	splitLive, err := av1.NewDecoderFromRTPPayloads([][]byte{primePayload, tileListHeaderPayload, tileListOnlyPayload})
+	if err != nil {
+		t.Fatalf("NewDecoderFromRTPPayloads split live probe: %v", err)
+	}
+	defer splitLive.Close()
+
+	frames, err = splitLive.DecodeRTPPayload(primePayload)
+	if err != nil {
+		t.Fatalf("DecodeRTPPayload split prime: %v", err)
+	}
+	if len(frames) != 1 || frames[0] == nil {
+		t.Fatalf("DecodeRTPPayload split prime frames=%d", len(frames))
+	}
+	frames, err = splitLive.DecodeRTPPayload(tileListHeaderPayload)
+	if err != nil {
+		t.Fatalf("DecodeRTPPayload split frame-header: %v", err)
+	}
+	if len(frames) != 0 {
+		t.Fatalf("DecodeRTPPayload split frame-header frames=%d", len(frames))
+	}
+	frames, err = splitLive.DecodeRTPPayload(tileListOnlyPayload)
+	if err != nil {
+		t.Fatalf("DecodeRTPPayload split tile-list: %v", err)
+	}
+	assertTileListFrame(t, "DecodeRTPPayload split tile-list", frames)
 
 	liveAfterLoss, err := av1.NewDecoderFromRTPPayloads([][]byte{primePayload, tileListPayload})
 	if err != nil {
@@ -990,18 +1047,7 @@ func TestSimpleDecoderTileListIVFPlanErrors(t *testing.T) {
 }
 
 func publicSimpleDecoderTileListRTPPayload() []byte {
-	tilePayload := av1.AppendTileListOBU(nil, av1.TileList{
-		OutputFrameWidthInTilesMinus1:  0,
-		OutputFrameHeightInTilesMinus1: 0,
-		TileCountMinus1:                0,
-		Entries: []av1.TileListEntry{{
-			AnchorFrameIdx:     0,
-			AnchorTileRow:      0,
-			AnchorTileCol:      0,
-			TileDataSizeMinus1: 0,
-			TileData:           []byte{0x80},
-		}},
-	})
+	tilePayload := publicSimpleDecoderTileListPayload()
 	elements := [...]av1.RTPElement{
 		{Data: publicDecoderResidualRTPElement(av1.OBUFrameHeader, publicDecoderResidualFrameHeaderPayload())},
 		{Data: publicDecoderResidualRTPElement(av1.OBUTileList, tilePayload)},
@@ -1014,6 +1060,35 @@ func publicSimpleDecoderTileListRTPPayload() []byte {
 		panic(err)
 	}
 	return payload[:n]
+}
+
+func publicSimpleDecoderTileListPayload() []byte {
+	return av1.AppendTileListOBU(nil, av1.TileList{
+		OutputFrameWidthInTilesMinus1:  0,
+		OutputFrameHeightInTilesMinus1: 0,
+		TileCountMinus1:                0,
+		Entries: []av1.TileListEntry{{
+			AnchorFrameIdx:     0,
+			AnchorTileRow:      0,
+			AnchorTileCol:      0,
+			TileDataSizeMinus1: 0,
+			TileData:           []byte{0x80},
+		}},
+	})
+}
+
+func publicSimpleDecoderRTPPayloadForElement(typ av1.OBUType, obuPayload []byte) []byte {
+	elements := [...]av1.RTPElement{
+		{Data: publicDecoderResidualRTPElement(typ, obuPayload)},
+	}
+	rtpPayload := make([]byte, 128)
+	n, err := av1.PutRTPPayload(rtpPayload, av1.RTPAggregationHeader{
+		ElementCount: uint8(len(elements)),
+	}, elements[:])
+	if err != nil {
+		panic(err)
+	}
+	return rtpPayload[:n]
 }
 
 func publicSimpleDecoderRTPPacket(t testing.TB, payload []byte, sequence uint16, timestamp uint32) []byte {

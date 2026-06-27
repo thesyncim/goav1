@@ -191,7 +191,7 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         |                                  | committed fast-suite vector uses Cols=1 Rows=1.|
 |    | Tile groups: multiple            | Yes     | internal/av1/parser/tile_group.go | SVC multi-tile vectors and a vendored non-SVC  |
 |    |                                  |         | internal/av1/decoder/stream.go   | multi-tile clip pass strict MD5.               |
-|    | Tile lists (OBU_TILE_LIST)       | Partial | internal/av1/parser/tile_list.go | ParseTileListOBU parses the                    |
+|    | Tile lists (OBU_TILE_LIST)       | Yes     | internal/av1/parser/tile_list.go | ParseTileListOBU parses the                    |
 |    |                                  |         | internal/av1/decoder/stream.go   | tile_list_obu() header and per-tile entries    |
 |    |                                  |         |                                  | (anchor_frame_idx, anchor_tile_row/col,        |
 |    |                                  |         |                                  | tile_data_size, tile data slice); anchor       |
@@ -217,8 +217,13 @@ ship under `internal/av1/testdata/libaom/`.
 |    |                                  |         |                                  | entry through the residual runner, blit decoded |
 |    |                                  |         |                                  | tile rectangles into the mosaic output, and    |
 |    |                                  |         |                                  | publish tile-list outputs through low-overhead |
-|    |                                  |         |                                  | and RTP payload/packet high-level decode when  |
-|    |                                  |         |                                  | frame context is present.                      |
+|    |                                  |         |                                  | and RTP payload/packet high-level decode,      |
+|    |                                  |         |                                  | including frame-header and tile-list OBUs      |
+|    |                                  |         |                                  | split across RTP payloads. Standalone          |
+|    |                                  |         |                                  | context-less tile-list OBUs reject early,      |
+|    |                                  |         |                                  | matching libaom large-scale tile mode's        |
+|    |                                  |         |                                  | requirement that the common frame header be    |
+|    |                                  |         |                                  | decoded first.                                 |
 +----+----------------------------------+---------+----------------------------------+------------------------------------------------+
 | 25 | Frame type: key                  | Yes     | internal/av1/parser/frame.go     | FrameTypeKey; full reference reset path.       |
 |    | Frame type: intra-only           | Yes     | internal/av1/parser/frame.go     | FrameTypeIntraOnly; intra-only refresh.        |
@@ -538,19 +543,14 @@ manifest. The next production-readiness items are:
    8/10-bit edge-motion, 10-bit inter multi-tile,
    and 10-bit superres plus loop restoration, plus 4:2:0 12-bit odd-size CDEF,
    film grain, edge-motion, and super-res coverage.
-2. **Tile list OBU playback.** `EventTileList` parsing is present with
-   reference-grid anchor validation, libaom-compatible uniform tile-size
-   prerequisite checks, raw tile-list entry job planning, libaom-shaped
-   external anchor-frame resolution, per-entry LAST_FRAME binding for residual
-   decode, output geometry/format/copy-region helpers, and entry-level plus
-   whole-list decoded-tile-to-output-frame blit helpers. The residual
-   event/stream runners now perform end-to-end tile-list entry reconstruction,
-   blit decoded tiles into a mosaic, publish one tile-list output frame, and
-   the high-level low-overhead, IVF, RTP payload, RTP packet, and sequenced RTP
-   packet decoders size an external tile-list output pool when a tile-list
-   event carries frame context. Context-less tile-list OBUs still fail early
-   with `ErrDecoderTileListMissingFrameContext` because no tile grid is
-   available to validate or decode against.
+2. **Large-scale tile corpus.** Tile-list playback now follows libaom's
+   large-scale tile model: the common frame header supplies the frame context,
+   then one or more `OBU_TILE_LIST` payloads provide tile entries. Committed
+   coverage includes low-overhead, IVF, RTP payload, RTP packet, sequenced RTP,
+   and split frame-header/tile-list RTP paths. Keep adding real large-scale
+   tile bitstreams when upstream or locally generated goldens are available.
+   Standalone tile-list OBUs without the required frame context continue to
+   reject with `ErrDecoderTileListMissingFrameContext`.
 
 ---
 
