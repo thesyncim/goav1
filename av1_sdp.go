@@ -1035,6 +1035,21 @@ func AV1SDPOffersReceiveFrame(sdp string, width int, height int, fps int) bool {
 		AV1SDPRIDDirectionReceive, width, height, fps)
 }
 
+// AV1SDPOffersReceiveEncodedFrame reports whether an SDP offer contains a
+// video section that can receive AV1/90000 and does not declare AV1-applicable
+// RID restrictions below width x height at fps, bitrate, and frameBits.
+func AV1SDPOffersReceiveEncodedFrame(
+	sdp string,
+	width int,
+	height int,
+	fps int,
+	bitrate int,
+	frameBits int,
+) bool {
+	return av1SDPHasEncodedFrame(sdp, av1SDPDirectionAllowsReceive,
+		AV1SDPRIDDirectionReceive, width, height, fps, bitrate, frameBits)
+}
+
 // AV1SDPOffersReceiveSequence reports whether an SDP offer contains a video
 // section that can receive the AV1 stream described by seq.
 func AV1SDPOffersReceiveSequence(sdp string, seq SequenceHeader) bool {
@@ -1088,6 +1103,21 @@ func AV1SDPAnswersSendFrame(sdp string, width int, height int, fps int) bool {
 		AV1SDPRIDDirectionSend, width, height, fps)
 }
 
+// AV1SDPAnswersSendEncodedFrame reports whether an SDP answer contains a video
+// section that can send AV1/90000 and does not declare AV1-applicable RID
+// restrictions below width x height at fps, bitrate, and frameBits.
+func AV1SDPAnswersSendEncodedFrame(
+	sdp string,
+	width int,
+	height int,
+	fps int,
+	bitrate int,
+	frameBits int,
+) bool {
+	return av1SDPHasEncodedFrame(sdp, av1SDPDirectionAllowsSend,
+		AV1SDPRIDDirectionSend, width, height, fps, bitrate, frameBits)
+}
+
 func av1SDPHasParams(
 	sdp string,
 	directionOK func(string) bool,
@@ -1119,10 +1149,37 @@ func av1SDPHasFrame(
 	height int,
 	fps int,
 ) bool {
+	return av1SDPHasRestrictedFrame(sdp, directionOK, ridDirection,
+		func(restrictions AV1SDPRIDRestrictions) (bool, error) {
+			return restrictions.AllowsFrame(width, height, fps)
+		})
+}
+
+func av1SDPHasEncodedFrame(
+	sdp string,
+	directionOK func(string) bool,
+	ridDirection string,
+	width int,
+	height int,
+	fps int,
+	bitrate int,
+	frameBits int,
+) bool {
+	return av1SDPHasRestrictedFrame(sdp, directionOK, ridDirection,
+		func(restrictions AV1SDPRIDRestrictions) (bool, error) {
+			return restrictions.AllowsEncodedFrame(width, height, fps, bitrate, frameBits)
+		})
+}
+
+func av1SDPHasRestrictedFrame(
+	sdp string,
+	directionOK func(string) bool,
+	ridDirection string,
+	allows av1SDPRIDRestrictionAllows,
+) bool {
 	return av1SDPHas(sdp, directionOK,
 		func(section av1SDPMediaSection, payloadType string) bool {
-			return section.allowsAV1Frame(payloadType, ridDirection,
-				width, height, fps)
+			return section.allowsAV1RestrictedFrame(payloadType, ridDirection, allows)
 		})
 }
 
@@ -1297,6 +1354,8 @@ type av1SDPMediaSection struct {
 	simulcastDuplicate bool
 }
 
+type av1SDPRIDRestrictionAllows func(AV1SDPRIDRestrictions) (bool, error)
+
 func (s av1SDPMediaSection) parsesVideoPayloadAttributes() bool {
 	return s.media == "video" && s.portActive
 }
@@ -1356,12 +1415,10 @@ func (s av1SDPMediaSection) headerExtensionID(
 	return 0, false
 }
 
-func (s av1SDPMediaSection) allowsAV1Frame(
+func (s av1SDPMediaSection) allowsAV1RestrictedFrame(
 	payloadType string,
 	ridDirection string,
-	width int,
-	height int,
-	fps int,
+	allows av1SDPRIDRestrictionAllows,
 ) bool {
 	if simulcastRIDs, ok := s.simulcastRIDs(ridDirection); ok {
 		for _, ridID := range simulcastRIDs {
@@ -1369,7 +1426,7 @@ func (s av1SDPMediaSection) allowsAV1Frame(
 			if !ok || !av1SDPRIDPayloadTypesAllow(rid.PayloadTypes, payloadType) {
 				continue
 			}
-			allowed, err := rid.Restrictions.AllowsFrame(width, height, fps)
+			allowed, err := allows(rid.Restrictions)
 			if err == nil && allowed {
 				return true
 			}
@@ -1384,7 +1441,7 @@ func (s av1SDPMediaSection) allowsAV1Frame(
 			continue
 		}
 		matchedRID = true
-		allowed, err := rid.Restrictions.AllowsFrame(width, height, fps)
+		allowed, err := allows(rid.Restrictions)
 		if err == nil && allowed {
 			return true
 		}

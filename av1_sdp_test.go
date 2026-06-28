@@ -1075,6 +1075,45 @@ func TestAV1SDPRIDFrameScanning(t *testing.T) {
 	}
 }
 
+func TestAV1SDPRIDEncodedFrameScanning(t *testing.T) {
+	sdp := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 96 98",
+		"a=rtpmap:96 VP8/90000",
+		"a=rtpmap:98 AV1/90000",
+		"a=rid:v recv pt=96;max-width=320;max-height=180;max-br=100000;max-bpp=0.50",
+		"a=rid:q recv pt=98;max-width=640;max-height=360;max-fps=30;max-br=700000;max-bpp=1.25",
+		"a=rid:out send pt=98;max-width=1920;max-height=1080;max-fps=60;max-br=1500000;max-bpp=2.00",
+	)
+	if !av1.AV1SDPOffersReceiveEncodedFrame(sdp, 640, 360, 30, 700000, 280000) {
+		t.Fatal("AV1SDPOffersReceiveEncodedFrame rejected matching bitrate and bpp")
+	}
+	if av1.AV1SDPOffersReceiveEncodedFrame(sdp, 640, 360, 30, 700001, 280000) {
+		t.Fatal("AV1SDPOffersReceiveEncodedFrame accepted frame above RID max-br")
+	}
+	if av1.AV1SDPOffersReceiveEncodedFrame(sdp, 640, 360, 30, 700000, 300000) {
+		t.Fatal("AV1SDPOffersReceiveEncodedFrame accepted frame above RID max-bpp")
+	}
+	if av1.AV1SDPOffersReceiveEncodedFrame(sdp, 640, 360, 30, 0, 280000) {
+		t.Fatal("AV1SDPOffersReceiveEncodedFrame accepted invalid bitrate under max-br")
+	}
+	if !av1.AV1SDPAnswersSendEncodedFrame(sdp, 1920, 1080, 60, 1500000, 4000000) {
+		t.Fatal("AV1SDPAnswersSendEncodedFrame rejected matching send RID")
+	}
+	if av1.AV1SDPAnswersSendEncodedFrame(sdp, 1920, 1080, 60, 1500000, 4200000) {
+		t.Fatal("AV1SDPAnswersSendEncodedFrame accepted send frame above max-bpp")
+	}
+
+	wrongPayloadRIDOnly := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 96 98",
+		"a=rtpmap:96 VP8/90000",
+		"a=rtpmap:98 AV1/90000",
+		"a=rid:v recv pt=96;max-width=320;max-height=180;max-br=100000;max-bpp=0.50",
+	)
+	if !av1.AV1SDPOffersReceiveEncodedFrame(wrongPayloadRIDOnly, 1920, 1080, 60, 5000000, 5000000) {
+		t.Fatal("non-AV1 encoded RID restrictions constrained AV1 payload")
+	}
+}
+
 func TestAV1SDPSimulcastScanning(t *testing.T) {
 	sdp := joinAV1SDPLines(
 		"m=video 9 UDP/TLS/RTP/SAVPF 96 98 99 100",
@@ -1159,6 +1198,29 @@ func TestAV1SDPSimulcastScanning(t *testing.T) {
 	}
 	if av1.AV1SDPOffersReceiveFrame(missingRID, 640, 360, 30) {
 		t.Fatal("AV1SDPOffersReceiveFrame accepted simulcast RID without restrictions")
+	}
+}
+
+func TestAV1SDPSimulcastEncodedFrameScanning(t *testing.T) {
+	sdp := joinAV1SDPLines(
+		"m=video 9 UDP/TLS/RTP/SAVPF 98 99",
+		"a=rtpmap:98 AV1/90000",
+		"a=rtpmap:99 AV1/90000",
+		"a=rid:q recv pt=98;max-width=640;max-height=360;max-fps=30;max-br=700000;max-bpp=1.25",
+		"a=rid:h recv pt=99;max-width=1280;max-height=720;max-fps=30;max-br=1200000;max-bpp=1.00",
+		"a=simulcast:recv q;h",
+	)
+	if !av1.AV1SDPOffersReceiveEncodedFrame(sdp, 1280, 720, 30, 1200000, 900000) {
+		t.Fatal("AV1SDPOffersReceiveEncodedFrame rejected matching simulcast RID")
+	}
+	if av1.AV1SDPOffersReceiveEncodedFrame(sdp, 1280, 720, 30, 1200001, 900000) {
+		t.Fatal("AV1SDPOffersReceiveEncodedFrame accepted simulcast frame above max-br")
+	}
+	if av1.AV1SDPOffersReceiveEncodedFrame(sdp, 1280, 720, 30, 1200000, 930000) {
+		t.Fatal("AV1SDPOffersReceiveEncodedFrame accepted simulcast frame above max-bpp")
+	}
+	if av1.AV1SDPOffersReceiveEncodedFrame(sdp, 1920, 1080, 30, 1200000, 900000) {
+		t.Fatal("AV1SDPOffersReceiveEncodedFrame used RID outside simulcast recv limits")
 	}
 }
 

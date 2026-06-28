@@ -431,7 +431,8 @@ negotiated dependency-descriptor extension, and descriptor state together with
 the extracted extension bytes with `ParseRTPDependencyDescriptor`. The
 SDP helpers (`ParseAV1SDPFmtp`, `ParseAV1SDPExtmap`, `ParseAV1SDPRID`,
 `ParseAV1SDPSimulcast`, `AV1SDPOffersReceiveParams`,
-`AV1SDPOffersReceiveSequence`, and `AV1SDPOffersReceiveFrame`) cover the
+`AV1SDPOffersReceiveSequence`, `AV1SDPOffersReceiveFrame`, and
+`AV1SDPOffersReceiveEncodedFrame`) cover the
 `AV1/90000` payload binding, the profile/level/tier compatibility check, RTP
 header-extension mapping checks for dependency descriptors and RID/MID SDES
 values plus the negotiated extmap IDs, AV1 RID receiver restrictions such as `max-width`, `max-height`,
