@@ -299,6 +299,10 @@ func (e *VideoEncoder) configureDecisionStats(nTiles int) {
 	}
 }
 
+func (e *VideoEncoder) fastestRealtimeEffort() bool {
+	return e != nil && e.effortLevel <= WebRTCMinEffortLevel
+}
+
 func (e *VideoEncoder) collectDecisionStats(keyframe bool, nTiles int, keyTileZeroUsesPrimary bool) {
 	if !e.decisionStatsEnabled {
 		return
@@ -1244,7 +1248,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	lfLevel := uint8(0)
 	color := e.parserColorConfig()
 	filterSupported := videoColorSupportsInLoopFilters(color)
-	if filterSupported && src.Width*src.Height <= loopFilterMaxArea {
+	if filterSupported && !e.fastestRealtimeEffort() && src.Width*src.Height <= loopFilterMaxArea {
 		lfLevel = filterLevelFromQIndex(effQ, false)
 	}
 	if !filterSupported {

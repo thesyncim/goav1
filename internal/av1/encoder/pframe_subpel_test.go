@@ -133,6 +133,17 @@ func TestVideoEncoderMinEffortSkipsSubpelMotion(t *testing.T) {
 	if prefix.AllowScreenContentTools || prefix.ForceIntegerMV {
 		t.Fatalf("min effort changed camera content MV signaling: prefix=%+v", prefix)
 	}
+	defaultLF, _ := parseFirstInterFrameFilters(t, defaultP, seq, w, h)
+	if defaultLF.LevelY == [2]uint8{} {
+		t.Fatalf("default effort loop filter levels=%+v want enabled", defaultLF.LevelY)
+	}
+	minLF, minCDEF := parseFirstInterFrameFilters(t, minP, seq, w, h)
+	if minLF.LevelY != [2]uint8{} || minLF.LevelU != 0 || minLF.LevelV != 0 {
+		t.Fatalf("min effort loop filter=%+v want disabled", minLF)
+	}
+	if minCDEF.StrengthCount != 1 || minCDEF.YStrength[0] != 0 || minCDEF.UVStrength[0] != 0 {
+		t.Fatalf("min effort cdef=%+v want no-op strengths", minCDEF)
+	}
 	decodeTemporalUnits(t, defaultKey, defaultP)
 	decodeTemporalUnits(t, minKey, minP)
 }
@@ -227,6 +238,79 @@ func parseFirstFramePrefix(t *testing.T, tu []byte, seq parser.SequenceHeader) p
 	}
 	t.Fatal("missing frame header")
 	return parser.FrameHeaderPrefix{}
+}
+
+func parseFirstInterFrameFilters(t *testing.T, tu []byte, seq parser.SequenceHeader, width, height int) (parser.LoopFilterParams, parser.CDEFParams) {
+	t.Helper()
+	it := obu.NewLowOverheadIterator(tu)
+	for {
+		unit, ok, err := it.Next()
+		if err != nil {
+			t.Fatalf("parse low-overhead OBU: %v", err)
+		}
+		if !ok {
+			break
+		}
+		if unit.Header.Type != obu.TypeFrameHeader && unit.Header.Type != obu.TypeFrame {
+			continue
+		}
+		prefix, err := parser.ParseFrameHeaderPrefix(unit.Payload, seq)
+		if err != nil {
+			t.Fatalf("ParseFrameHeaderPrefix: %v", err)
+		}
+		refs := parserReferenceStateForFrame(width, height)
+		size, err := parser.ParseFrameSize(unit.Payload, seq, prefix, &refs, unit.Header.TemporalID, unit.Header.SpatialID)
+		if err != nil {
+			t.Fatalf("ParseFrameSize: %v", err)
+		}
+		tiles, err := parser.ParseTileInfo(unit.Payload, seq, prefix, size)
+		if err != nil {
+			t.Fatalf("ParseTileInfo: %v", err)
+		}
+		quant, err := parser.ParseQuantizationParams(unit.Payload, seq, tiles)
+		if err != nil {
+			t.Fatalf("ParseQuantizationParams: %v", err)
+		}
+		seg, err := parser.ParseSegmentationParams(unit.Payload, prefix, quant, nil)
+		if err != nil {
+			t.Fatalf("ParseSegmentationParams: %v", err)
+		}
+		delta, err := parser.ParseDeltaParams(unit.Payload, size, quant, seg)
+		if err != nil {
+			t.Fatalf("ParseDeltaParams: %v", err)
+		}
+		lf, err := parser.ParseLoopFilterParams(unit.Payload, seq, prefix, size, seg, delta, nil)
+		if err != nil {
+			t.Fatalf("ParseLoopFilterParams: %v", err)
+		}
+		cdef, err := parser.ParseCDEFParams(unit.Payload, seq, size, seg, lf)
+		if err != nil {
+			t.Fatalf("ParseCDEFParams: %v", err)
+		}
+		return lf, cdef
+	}
+	t.Fatal("missing frame header")
+	return parser.LoopFilterParams{}, parser.CDEFParams{}
+}
+
+func parserReferenceStateForFrame(width, height int) parser.ReferenceState {
+	var refs parser.ReferenceState
+	defaultGlobal := parser.DefaultGlobalMotionParams()
+	for i := range parser.RefFrames {
+		refs.Frames[i] = parser.ReferenceFrame{
+			Valid:        true,
+			GlobalMotion: defaultGlobal,
+			Size: parser.FrameSize{
+				CodedWidth:          uint32(width),
+				UpscaledWidth:       uint32(width),
+				Height:              uint32(height),
+				RenderWidth:         uint32(width),
+				RenderHeight:        uint32(height),
+				SuperResDenominator: 8,
+			},
+		}
+	}
+	return refs
 }
 
 func decodeTemporalUnits(t *testing.T, payloads ...[]byte) {
