@@ -77,17 +77,126 @@ func TestForwardBlockHybridInverseRoundTrip(t *testing.T) {
 	}
 }
 
+func TestForwardBlockExtendedHybridInverseRoundTrip(t *testing.T) {
+	cases := []struct {
+		name string
+		size Size
+		typ  Type
+		tol  int
+	}{
+		{name: "flipadst_dct_8x8", size: Size{Width: 8, Height: 8}, typ: TypeFlipADSTDCT, tol: 3},
+		{name: "dct_flipadst_8x8", size: Size{Width: 8, Height: 8}, typ: TypeDCTFlipADST, tol: 3},
+		{name: "flipadst_flipadst_8x8", size: Size{Width: 8, Height: 8}, typ: TypeFlipADSTFlipADST, tol: 3},
+		{name: "adst_flipadst_8x8", size: Size{Width: 8, Height: 8}, typ: TypeADSTFlipADST, tol: 3},
+		{name: "flipadst_adst_8x8", size: Size{Width: 8, Height: 8}, typ: TypeFlipADSTADST, tol: 3},
+		{name: "v_adst_16x16", size: Size{Width: 16, Height: 16}, typ: TypeVADST, tol: 4},
+		{name: "h_adst_16x16", size: Size{Width: 16, Height: 16}, typ: TypeHADST, tol: 4},
+		{name: "adst_adst_16x16", size: Size{Width: 16, Height: 16}, typ: TypeADSTADST, tol: 4},
+		{name: "flipadst_adst_16x8", size: Size{Width: 16, Height: 8}, typ: TypeFlipADSTADST, tol: 4},
+		{name: "adst_flipadst_8x16", size: Size{Width: 8, Height: 16}, typ: TypeADSTFlipADST, tol: 4},
+		{name: "h_adst_4x16", size: Size{Width: 4, Height: 16}, typ: TypeHADST, tol: 5},
+		{name: "v_adst_16x4", size: Size{Width: 16, Height: 4}, typ: TypeVADST, tol: 5},
+		{name: "adst_dct_32x8", size: Size{Width: 32, Height: 8}, typ: TypeADSTDCT, tol: 5},
+		{name: "dct_adst_8x32", size: Size{Width: 8, Height: 32}, typ: TypeDCTADST, tol: 5},
+		{name: "v_adst_32x16", size: Size{Width: 32, Height: 16}, typ: TypeVADST, tol: 5},
+		{name: "h_adst_16x32", size: Size{Width: 16, Height: 32}, typ: TypeHADST, tol: 5},
+		{name: "hdct_32x16", size: Size{Width: 32, Height: 16}, typ: TypeHDCT, tol: 5},
+		{name: "vdct_16x32", size: Size{Width: 16, Height: 32}, typ: TypeVDCT, tol: 5},
+		{name: "idtx_32x32", size: Size{Width: 32, Height: 32}, typ: TypeIDTX, tol: 5},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			width := int(tc.size.Width)
+			height := int(tc.size.Height)
+			rng := rand.New(rand.NewSource(int64(9000 + width*height + int(tc.typ))))
+			coeff := make([]int32, width*height)
+			scratch := make([]int32, width*height)
+			invScratch := make([]int32, width*height)
+			residual := make([]int16, width*height)
+			dst := make([]int16, width*height)
+			for range 200 {
+				for i := range residual {
+					residual[i] = int16(rng.Intn(511) - 255)
+				}
+				if err := ForwardBlock(coeff, height, residual, width, scratch, tc.size, tc.typ); err != nil {
+					t.Fatalf("forward: %v", err)
+				}
+				if err := InverseBlock(dst, width, coeff, height, invScratch, tc.size, tc.typ); err != nil {
+					t.Fatalf("inverse: %v", err)
+				}
+				for i := range dst {
+					diff := int(dst[i]) - int(residual[i])
+					if diff < -tc.tol || diff > tc.tol {
+						t.Fatalf("%s round-trip error %d at %d", tc.name, diff, i)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestForwardBlockFlipADSTMatchesLibaomFlipShape(t *testing.T) {
+	type flipCase struct {
+		name     string
+		flipType Type
+		baseType Type
+		flipRows bool
+		flipCols bool
+	}
+	cases := []flipCase{
+		{name: "vertical", flipType: TypeFlipADSTDCT, baseType: TypeADSTDCT, flipRows: true},
+		{name: "horizontal", flipType: TypeDCTFlipADST, baseType: TypeDCTADST, flipCols: true},
+		{name: "both", flipType: TypeFlipADSTFlipADST, baseType: TypeADSTADST, flipRows: true, flipCols: true},
+		{name: "adst_horizontal", flipType: TypeADSTFlipADST, baseType: TypeADSTADST, flipCols: true},
+		{name: "vertical_adst", flipType: TypeFlipADSTADST, baseType: TypeADSTADST, flipRows: true},
+	}
+	rng := rand.New(rand.NewSource(17))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var residual, flipped [64]int16
+			for i := range residual {
+				residual[i] = int16(rng.Intn(511) - 255)
+			}
+			for r := range 8 {
+				for c := range 8 {
+					srcR, srcC := r, c
+					if tc.flipRows {
+						srcR = 7 - srcR
+					}
+					if tc.flipCols {
+						srcC = 7 - srcC
+					}
+					flipped[r*8+c] = residual[srcR*8+srcC]
+				}
+			}
+			var got, want [64]int32
+			var gotScratch, wantScratch [64]int32
+			if err := forwardGenericBlock(got[:], 8, residual[:], 8, gotScratch[:], Size{Width: 8, Height: 8}, tc.flipType); err != nil {
+				t.Fatalf("flip forward: %v", err)
+			}
+			if err := forwardGenericBlock(want[:], 8, flipped[:], 8, wantScratch[:], Size{Width: 8, Height: 8}, tc.baseType); err != nil {
+				t.Fatalf("base forward: %v", err)
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("coeff[%d]=%d want %d", i, got[i], want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestForwardBlockRejectsUnsupportedHybrid(t *testing.T) {
-	var residual [64]int16
-	var coeff [64]int32
-	var scratch [64]int32
-	if err := ForwardBlock(coeff[:], 8, residual[:], 8, scratch[:], Size{Width: 8, Height: 8}, TypeFlipADSTDCT); !errors.Is(err, ErrInvalidTransform) {
-		t.Fatalf("FlipADST err=%v want %v", err, ErrInvalidTransform)
+	residual := make([]int16, 64*16)
+	coeff := make([]int32, 64*16)
+	scratch := make([]int32, 64*16)
+	if err := ForwardBlock(coeff, 16, residual, 64, scratch, Size{Width: 64, Height: 16}, TypeHDCT); !errors.Is(err, ErrInvalidTransform) {
+		t.Fatalf("DCT64-dependent HDCT err=%v want %v", err, ErrInvalidTransform)
 	}
-	if err := ForwardBlock(coeff[:], 8, residual[:], 8, scratch[:], Size{Width: 16, Height: 16}, TypeADSTADST); !errors.Is(err, ErrInvalidTransform) {
-		t.Fatalf("16x16 ADST err=%v want %v", err, ErrInvalidTransform)
+	if err := ForwardBlock(coeff, 32, residual, 32, scratch, Size{Width: 32, Height: 32}, TypeDCTADST); !errors.Is(err, ErrInvalidTransform) {
+		t.Fatalf("ADST32-dependent DCT_ADST err=%v want %v", err, ErrInvalidTransform)
 	}
-	if err := ForwardBlock(coeff[:], 8, residual[:], 8, nil, Size{Width: 8, Height: 8}, TypeADSTADST); !errors.Is(err, ErrInvalidTransform) {
+	if err := ForwardBlock(coeff[:64], 8, residual[:64], 8, nil, Size{Width: 8, Height: 8}, TypeADSTADST); !errors.Is(err, ErrInvalidTransform) {
 		t.Fatalf("short scratch err=%v want %v", err, ErrInvalidTransform)
 	}
 }
@@ -216,6 +325,43 @@ func TestFwdDCT8ValuesMatchesPointerCore(t *testing.T) {
 			if got[i] != want[i] {
 				t.Fatalf("trial %d output[%d]=%d want %d", trial, i, got[i], want[i])
 			}
+		}
+	}
+}
+
+func TestForwardParameterized1DCoresMatchExistingQ13(t *testing.T) {
+	rng := rand.New(rand.NewSource(18))
+	for range 1000 {
+		var in4 [4]int32
+		var gotDCT4, wantDCT4, gotADST4, wantADST4 [4]int32
+		for i := range in4 {
+			in4[i] = int32(rng.Intn(4097) - 2048)
+		}
+		fwdDCT4ByCosBit(&in4, &gotDCT4, &fwdCospi13, 13)
+		fwdDCT4(&in4, &wantDCT4)
+		fwdADST4ByCosBit(&in4, &gotADST4, &fwdSinpi13, 13)
+		fwdADST4(&in4, &wantADST4)
+		if gotDCT4 != wantDCT4 {
+			t.Fatalf("DCT4 got %v want %v", gotDCT4, wantDCT4)
+		}
+		if gotADST4 != wantADST4 {
+			t.Fatalf("ADST4 got %v want %v", gotADST4, wantADST4)
+		}
+
+		var in8 [8]int32
+		var gotDCT8, wantDCT8, gotADST8, wantADST8 [8]int32
+		for i := range in8 {
+			in8[i] = int32(rng.Intn(4097) - 2048)
+		}
+		fwdDCT8ByCosBit(&in8, &gotDCT8, &fwdCospi13, 13)
+		fwdDCT8(&in8, &wantDCT8)
+		fwdADST8ByCosBit(&in8, &gotADST8, &fwdCospi13, 13)
+		fwdADST8(&in8, &wantADST8)
+		if gotDCT8 != wantDCT8 {
+			t.Fatalf("DCT8 got %v want %v", gotDCT8, wantDCT8)
+		}
+		if gotADST8 != wantADST8 {
+			t.Fatalf("ADST8 got %v want %v", gotADST8, wantADST8)
 		}
 	}
 }

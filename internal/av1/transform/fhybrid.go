@@ -1,8 +1,8 @@
 // Ported from libaom:
-//   av1/encoder/av1_fwd_txfm1d.c (av1_fadst4, av1_fadst8,
-//   av1_fidentity4_c, av1_fidentity8_c)
-//   av1/encoder/av1_fwd_txfm2d.c (fwd_txfm2d_c for square 4x4/8x8)
-//   av1/common/av1_txfm.c (av1_sinpi_arr_data, cos_bit 13 row)
+//   av1/encoder/av1_fwd_txfm1d.c (av1_fadst4/8/16,
+//   av1_fidentity4/8/16/32_c)
+//   av1/encoder/av1_fwd_txfm2d.c (fwd_txfm2d_c)
+//   av1/common/av1_txfm.c (av1_sinpi_arr_data, cos-bit rows)
 //
 // SPDX-License-Identifier: BSD-2-Clause
 //
@@ -16,16 +16,15 @@ var fwdSinpi13 = [5]int32{0, 2642, 4964, 6689, 7606}
 
 // ForwardBlock computes the AV1 forward transform for a residual block and
 // writes coefficients in decoder coefficient layout (coeff[col*stride + row]).
-// This generic path currently covers the square 4x4/8x8 ADST/DCT and IDTX
-// families needed before the encoder can make tx_type decisions. Larger DCT_DCT
-// sizes continue to dispatch through the existing specialized DCT entry points.
+// DCT_DCT keeps the specialized square/rectangular DCT entry points, and the
+// remaining supported tx_type families follow libaom's fwd_txfm2d_c flip,
+// shift, 1-D transform, rectangular scale, and transposed-store order.
 func ForwardBlock(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, size Size, typ Type) error {
 	if typ == TypeDCTDCT {
 		return forwardDCTBySize(coeff, coeffStride, residual, residualStride, size)
 	}
-	if size.Width == 8 && size.Height == 8 {
-		if !forwardBlock8x8HybridSupported(typ) ||
-			coeffStride < 8 || residualStride < 8 ||
+	if size.Width == 8 && size.Height == 8 && forwardBlock8x8HybridSupported(typ) {
+		if coeffStride < 8 || residualStride < 8 ||
 			!blockFits(len(residual), residualStride, 8, 8) ||
 			!coeffBlockFits(len(coeff), coeffStride, 8, 8) ||
 			len(scratch) < 64 {
@@ -34,40 +33,7 @@ func ForwardBlock(coeff []int32, coeffStride int, residual []int16, residualStri
 		forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, typ)
 		return nil
 	}
-	if !forwardHybridSupported(size, typ) {
-		return ErrInvalidTransform
-	}
-	n := int(size.Width)
-	if coeffStride < n || residualStride < n ||
-		!blockFits(len(residual), residualStride, n, n) ||
-		!coeffBlockFits(len(coeff), coeffStride, n, n) ||
-		len(scratch) < n*n {
-		return ErrInvalidTransform
-	}
-	vertical, horizontal, _ := typ.tx1DTypes()
-	var in, out [8]int32
-	for c := range n {
-		for r := range n {
-			in[r] = int32(residual[r*residualStride+c]) << 2
-		}
-		fwd1D(in[:n], out[:n], vertical)
-		if n == 8 {
-			fwdRoundShift1(out[:n])
-		}
-		for r := range n {
-			scratch[r*n+c] = out[r]
-		}
-	}
-	for r := range n {
-		for c := range n {
-			in[c] = scratch[r*n+c]
-		}
-		fwd1D(in[:n], out[:n], horizontal)
-		for c := range n {
-			coeff[c*coeffStride+r] = out[c]
-		}
-	}
-	return nil
+	return forwardGenericBlock(coeff, coeffStride, residual, residualStride, scratch, size, typ)
 }
 
 // ForwardBlock8x8HybridTrusted computes the 8x8 non-DCT_DCT forward transform
@@ -280,15 +246,7 @@ func forwardBlock8x8IDTXPureGo(coeff []int32, coeffStride int, residual []int16,
 }
 
 func forwardHybridSupported(size Size, typ Type) bool {
-	if size.Width != size.Height || (size.Width != 4 && size.Width != 8) {
-		return false
-	}
-	switch typ {
-	case TypeADSTDCT, TypeDCTADST, TypeADSTADST, TypeIDTX:
-		return typ.Supported(size)
-	default:
-		return false
-	}
+	return forwardGenericSupported(size, typ)
 }
 
 func forwardDCTBySize(coeff []int32, coeffStride int, residual []int16, residualStride int, size Size) error {
@@ -596,6 +554,14 @@ func fwdIdentity1D(input []int32, output []int32) {
 	case 8:
 		for i, v := range input {
 			output[i] = v * 2
+		}
+	case 16:
+		for i, v := range input {
+			output[i] = int32(roundShift(int64(v)*11586, 12))
+		}
+	case 32:
+		for i, v := range input {
+			output[i] = v * 4
 		}
 	}
 }
