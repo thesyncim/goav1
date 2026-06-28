@@ -303,8 +303,8 @@ encoder's own reconstruction in this package's decoder and in aomdec/dav1d
 settings cycles and shared-reference SVC paths that change bitrate, framerate,
 rate control, and scalability. The public WebRTC 1080p encode/decode RTP hot
 paths and internal 1080p streaming encoder hot paths are guarded at
-`0 B/op` and `0 allocs/op`; cold one-shot helpers may still allocate returned
-buffers. See
+`0 B/op` and `0 allocs/op` by `make alloc`; cold one-shot helpers may still
+allocate returned buffers. See
 `ExampleVideoEncoder` and `ExampleRTCEncoder` for
 the round trip, and `cmd/encbench` for the standing 1080p60 performance
 measurement against SVT-AV1 (throughput currently exceeds SVT preset 12 on

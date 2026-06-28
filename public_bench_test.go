@@ -25,7 +25,7 @@ func BenchmarkPublicRTCEncoderEncodePicture1080p(b *testing.B) {
 			if err != nil {
 				b.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
-			defer enc.Close()
+			b.Cleanup(func() { _ = enc.Close() })
 
 			frames := [...]av1.I420Frame{
 				publicRTCMatrixFrame(width, height, 0),
@@ -40,7 +40,7 @@ func BenchmarkPublicRTCEncoderEncodePicture1080p(b *testing.B) {
 			b.ResetTimer()
 
 			sum := 0
-			for i := 0; i < b.N; i++ {
+			for i := 0; b.Loop(); i++ {
 				picture, err := enc.EncodePicture(frames[i&3], false)
 				if err != nil {
 					b.Fatalf("EncodePicture: %v", err)
@@ -234,7 +234,7 @@ func BenchmarkPublicDecodeRTPPayload(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewDecoderFromRTPPayloads: %v", err)
 	}
-	defer dec.Close()
+	b.Cleanup(func() { dec.Close() })
 
 	bytesPerRun := 0
 	for _, payload := range rtpPayloads {
@@ -263,7 +263,7 @@ func BenchmarkPublicDecodeRTPPayload(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	sum := 0
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sum += decodeAll()
 	}
 	publicBenchmarkSink = sum
@@ -275,7 +275,7 @@ func BenchmarkPublicDecodeRTPPayload1080p(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewDecoderFromRTPPayloads: %v", err)
 	}
-	defer dec.Close()
+	b.Cleanup(func() { dec.Close() })
 
 	bytesPerRun := publicRTPPayloadBytes(rtpPayloads)
 	decodeAll := func() int {
@@ -301,7 +301,7 @@ func BenchmarkPublicDecodeRTPPayload1080p(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	sum := 0
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sum += decodeAll()
 	}
 	publicBenchmarkSink = sum
@@ -314,7 +314,7 @@ func BenchmarkPublicLayeredDecodeRTPPayload1080p(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewLayeredDecoderFromRTPPayloads: %v", err)
 	}
-	defer dec.Close()
+	b.Cleanup(func() { dec.Close() })
 
 	bytesPerRun := publicRTPPayloadBytes(rtpPayloads)
 	decodeAll := func() int {
@@ -340,7 +340,7 @@ func BenchmarkPublicLayeredDecodeRTPPayload1080p(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	sum := 0
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sum += decodeAll()
 	}
 	publicBenchmarkSink = sum
