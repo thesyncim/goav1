@@ -266,8 +266,9 @@ There are three public encoder surfaces:
   `RTCEncoder.RTCPLayerRefreshTarget`, and
   `WebRTCEncoder.RTCPLayerRefreshTarget` classify PLI/FIR/LRR feedback before
   callers force a full key picture or signal a narrower active decode-target
-  mask. `SetTileColumns` and `SetGoldenInterval` let callers
-  retune tile parallelism and golden-reference refresh policy between frames.
+  mask. `SetMaxThreads`, `SetTileColumns`, and `SetGoldenInterval` let callers
+  retune execution-lane limits, tile parallelism, and golden-reference refresh
+  policy between frames; `MaxThreads=1` selects the one-lane realtime path.
 - `KeyframeEncoder` is the reusable 8-bit I420 keyframe-only surface. It keeps
   keyframe output and reconstruction storage encoder-owned, giving realtime
   callers a zero-allocation alternative to owned-output one-shot helpers.
@@ -299,8 +300,8 @@ overflow, shifts, or ABI-shaped state.
 
 The realtime encoder is now functional. `goav1.VideoEncoder` turns 4:2:0
 frames into AV1 temporal units under fixed quality or CBR rate control, with
-forced keyframes, L1T2/L1T3 temporal layering, parallel tile columns, golden
-reference anchors, and access to the exact reconstruction a conformant
+forced keyframes, L1T2/L1T3 temporal layering, MaxThreads-controlled one-lane
+or parallel tile execution, golden reference anchors, and access to the exact reconstruction a conformant
 decoder produces; `goav1.RTCEncoder` wraps the same engine with per-frame RTP
 dependency descriptors, caller-owned RTP payload packetization, and runtime
 WebRTC control reconfiguration. Every emitted stream decodes bit-exactly to the

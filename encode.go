@@ -338,8 +338,15 @@ type VideoEncoderConfig struct {
 
 	// TileColumns overrides the tile-column count used for parallel inter
 	// encoding (rounded down to a power of two, clamped to the legal range);
-	// zero selects automatically from the frame width.
+	// zero selects automatically from the frame width. Ignored when MaxThreads
+	// is positive.
 	TileColumns int
+
+	// MaxThreads bounds encoder execution lanes. Positive values select the
+	// same tile-column count; MaxThreads=1 also disables internal worker fan-out
+	// so one-lane realtime deployments avoid scheduler noise. Zero keeps the
+	// automatic tile-column policy unless TileColumns is set.
+	MaxThreads int
 
 	// GoldenInterval is the number of base-layer frames between golden
 	// anchor refreshes; zero keeps the default (16) and a negative value
@@ -473,7 +480,9 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 			return nil, err
 		}
 	}
-	if cfg.TileColumns > 0 {
+	if cfg.MaxThreads > 0 {
+		enc.SetMaxThreads(cfg.MaxThreads)
+	} else if cfg.TileColumns > 0 {
 		enc.SetTileColumns(cfg.TileColumns)
 	}
 	if cfg.GoldenInterval < 0 {
@@ -504,6 +513,15 @@ func (e *VideoEncoder) SetGoldenInterval(n int) {
 func (e *VideoEncoder) SetTileColumns(cols int) {
 	if e != nil && e.enc != nil {
 		e.enc.SetTileColumns(cols)
+	}
+}
+
+// SetMaxThreads bounds encoder execution lanes for subsequent frames.
+// SetMaxThreads(1) also disables internal worker fan-out in the 8-bit realtime
+// path. Zero restores the automatic tile-column policy.
+func (e *VideoEncoder) SetMaxThreads(n int) {
+	if e != nil && e.enc != nil {
+		e.enc.SetMaxThreads(n)
 	}
 }
 
@@ -949,6 +967,9 @@ func NewRTCEncoder(cfg VideoEncoderConfig) (*RTCEncoder, error) {
 	if cfg.TileColumns > 0 {
 		stream.SetTileColumns(cfg.TileColumns)
 	}
+	if cfg.MaxThreads > 0 {
+		stream.SetMaxThreads(cfg.MaxThreads)
+	}
 	if cfg.GoldenInterval < 0 {
 		stream.SetGoldenInterval(0)
 	} else if cfg.GoldenInterval > 0 {
@@ -1080,6 +1101,16 @@ func (e *RTCEncoder) SetGoldenInterval(n int) {
 func (e *RTCEncoder) SetTileColumns(cols int) {
 	if e != nil && e.stream != nil {
 		e.stream.SetTileColumns(cols)
+	}
+}
+
+// SetMaxThreads bounds encoder execution lanes in every active spatial encoder
+// for subsequent encoded pictures. SetMaxThreads(1) also disables internal
+// worker fan-out in 8-bit I420 realtime layers. Zero restores the automatic
+// tile-column policy.
+func (e *RTCEncoder) SetMaxThreads(n int) {
+	if e != nil && e.stream != nil {
+		e.stream.SetMaxThreads(n)
 	}
 }
 

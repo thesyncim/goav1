@@ -3943,10 +3943,98 @@ func TestPublicEncoderRuntimeOptions(t *testing.T) {
 
 	var zeroVideo goav1.VideoEncoder
 	zeroVideo.SetTileColumns(4)
+	zeroVideo.SetMaxThreads(1)
 	zeroVideo.SetGoldenInterval(0)
 	var zeroRTC goav1.RTCEncoder
 	zeroRTC.SetTileColumns(4)
+	zeroRTC.SetMaxThreads(1)
 	zeroRTC.SetGoldenInterval(0)
+}
+
+func TestPublicEncoderConfigMaxThreadsControlsTileColumns(t *testing.T) {
+	const w, h = 640, 360
+	t.Run("VideoEncoder", func(t *testing.T) {
+		enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+			Width: w, Height: h,
+			TargetBitrate: 900_000, Framerate: 30,
+			MaxThreads: 1,
+		})
+		if err != nil {
+			t.Fatalf("NewVideoEncoder: %v", err)
+		}
+		defer enc.Close()
+		key, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false)
+		if err != nil {
+			t.Fatalf("single-thread key Encode: %v", err)
+		}
+		if got := publicFirstFrameTileColumns(t, key.Data); got != 1 {
+			t.Fatalf("single-thread tile columns=%d want 1", got)
+		}
+
+		enc.SetMaxThreads(4)
+		key, err = enc.Encode(publicRTCMatrixFrame(w, h, 1), true)
+		if err != nil {
+			t.Fatalf("four-thread key Encode: %v", err)
+		}
+		if got := publicFirstFrameTileColumns(t, key.Data); got != 4 {
+			t.Fatalf("four-thread tile columns=%d want 4", got)
+		}
+
+		enc.SetMaxThreads(0)
+		key, err = enc.Encode(publicRTCMatrixFrame(w, h, 2), true)
+		if err != nil {
+			t.Fatalf("default-thread key Encode: %v", err)
+		}
+		if got := publicFirstFrameTileColumns(t, key.Data); got != 2 {
+			t.Fatalf("default tile columns=%d want 2", got)
+		}
+	})
+
+	t.Run("RTCEncoder", func(t *testing.T) {
+		enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+			Width: w, Height: h,
+			TargetBitrate: 900_000, Framerate: 30,
+			MaxThreads: 1,
+		})
+		if err != nil {
+			t.Fatalf("NewRTCEncoder: %v", err)
+		}
+		defer enc.Close()
+		if got := enc.Config().MaxThreads; got != 1 {
+			t.Fatalf("initial Config MaxThreads=%d want 1", got)
+		}
+		key, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false)
+		if err != nil {
+			t.Fatalf("single-thread key Encode: %v", err)
+		}
+		if got := publicFirstFrameTileColumns(t, key.Data); got != 1 {
+			t.Fatalf("single-thread tile columns=%d want 1", got)
+		}
+
+		enc.SetMaxThreads(4)
+		if got := enc.Config().MaxThreads; got != 4 {
+			t.Fatalf("updated Config MaxThreads=%d want 4", got)
+		}
+		key, err = enc.Encode(publicRTCMatrixFrame(w, h, 1), true)
+		if err != nil {
+			t.Fatalf("four-thread key Encode: %v", err)
+		}
+		if got := publicFirstFrameTileColumns(t, key.Data); got != 4 {
+			t.Fatalf("four-thread tile columns=%d want 4", got)
+		}
+
+		enc.SetMaxThreads(0)
+		if got := enc.Config().MaxThreads; got != 0 {
+			t.Fatalf("default Config MaxThreads=%d want 0", got)
+		}
+		key, err = enc.Encode(publicRTCMatrixFrame(w, h, 2), true)
+		if err != nil {
+			t.Fatalf("default-thread key Encode: %v", err)
+		}
+		if got := publicFirstFrameTileColumns(t, key.Data); got != 2 {
+			t.Fatalf("default tile columns=%d want 2", got)
+		}
+	})
 }
 
 func TestPublicRTCEncoderDependencyDescriptorBorrowedLifetime(t *testing.T) {

@@ -489,6 +489,17 @@ func (s *WebRTCStream) SetTileColumns(cols int) {
 	}
 }
 
+func (s *WebRTCStream) SetMaxThreads(n int) {
+	if s == nil {
+		return
+	}
+	if n < 0 {
+		n = 0
+	}
+	s.config.MaxThreads = int32(n)
+	s.applyConfiguredTileColumns(s.config)
+}
+
 func (s *WebRTCStream) configuredTileColumns(config Config) (int, bool) {
 	if config.MaxThreads > 0 {
 		return int(config.MaxThreads), true
