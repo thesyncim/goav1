@@ -208,6 +208,50 @@ func BenchmarkEncodeKeyframeCold(b *testing.B) {
 	}
 }
 
+// BenchmarkEncodeKeyframeReusable1080p measures repeated full-HD keyframes
+// through the reusable keyframe-only state. This is the zero-allocation
+// alternative to the owned-output one-shot helper above.
+func BenchmarkEncodeKeyframeReusable1080p(b *testing.B) {
+	const w, h = 1920, 1080
+	cw, ch := w/2, h/2
+	rng := rand.New(rand.NewSource(2))
+	f := encoder.SourceFrame420{
+		Y: make([]byte, w*h), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
+		YStride: w, ChromaStride: cw, Width: w, Height: h,
+	}
+	for i := range f.Y {
+		f.Y[i] = uint8(50 + rng.Intn(120))
+	}
+	for i := range f.U {
+		f.U[i] = 120
+		f.V[i] = 130
+	}
+	enc, err := encoder.NewKeyframeEncoder(w, h, 80)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() {
+		_ = enc.Close()
+	})
+	if err := enc.Prewarm(); err != nil {
+		b.Fatal(err)
+	}
+	if tu, recon, err := enc.Encode(f); err != nil {
+		b.Fatal(err)
+	} else if len(tu) == 0 || len(recon.Y) == 0 {
+		b.Fatal("empty reusable keyframe output")
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if tu, recon, err := enc.Encode(f); err != nil {
+			b.Fatal(err)
+		} else if len(tu) == 0 || len(recon.Y) == 0 {
+			b.Fatal("empty reusable keyframe output")
+		}
+	}
+}
+
 // BenchmarkVideoEncoderPFramePan1080p measures the steady P-frame cost on
 // camera-like content (box-blurred texture under a continuous pan with
 // movers, the cmd/encbench scene shape) - the realtime budget meter. The

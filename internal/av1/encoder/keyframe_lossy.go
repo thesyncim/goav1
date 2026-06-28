@@ -36,6 +36,69 @@ func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, e
 	return encodeKeyframeFiltered(src, qIndex, nil, 0, 0, nil, nil, nil)
 }
 
+// KeyframeEncoder is a reusable keyframe-only encoder. It keeps the same
+// writer, tile-coder, reconstruction, and filter scratch between calls as the
+// streaming VideoEncoder, so repeated forced keyframes do not allocate once
+// Prewarm has run. Returned temporal units and reconstructions alias
+// encoder-owned storage and remain valid until the next Encode call.
+type KeyframeEncoder struct {
+	enc *VideoEncoder
+}
+
+// NewKeyframeEncoder creates a reusable keyframe encoder for same-sized 8-bit
+// 4:2:0 frames. qIndex must be non-zero; SetQIndex can update it later without
+// rebuilding the scratch state.
+func NewKeyframeEncoder(width, height int, qIndex uint8) (*KeyframeEncoder, error) {
+	enc, err := NewVideoEncoder(width, height, qIndex)
+	if err != nil {
+		return nil, err
+	}
+	return &KeyframeEncoder{enc: enc}, nil
+}
+
+// Prewarm sizes the reusable scratch and worker pool before the first externally
+// visible Encode call.
+func (e *KeyframeEncoder) Prewarm() error {
+	if e == nil || e.enc == nil {
+		return fmt.Errorf("encoder: nil keyframe encoder")
+	}
+	return e.enc.Prewarm()
+}
+
+// Close waits for background filter work and releases persistent workers.
+func (e *KeyframeEncoder) Close() error {
+	if e == nil || e.enc == nil {
+		return nil
+	}
+	err := e.enc.Close()
+	e.enc = nil
+	return err
+}
+
+// SetQIndex updates the fixed keyframe qindex used by later Encode calls.
+func (e *KeyframeEncoder) SetQIndex(qIndex uint8) error {
+	if e == nil || e.enc == nil {
+		return fmt.Errorf("encoder: nil keyframe encoder")
+	}
+	return e.enc.SetQIndex(qIndex)
+}
+
+// Encode emits src as a shown keyframe and returns the encoder-side
+// reconstruction a conformant decoder must reproduce exactly.
+func (e *KeyframeEncoder) Encode(src SourceFrame420) ([]byte, SourceFrame420, error) {
+	if e == nil || e.enc == nil {
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: nil keyframe encoder")
+	}
+	tu, key, err := e.enc.Encode(src, true)
+	if err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	if !key {
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: forced keyframe was not coded as keyframe")
+	}
+	return tu, e.enc.Recon(), nil
+}
+
 // EncodeMonochromeKeyframe encodes src at the given base qindex (1..255) as a
 // native AV1 monochrome non-lossless keyframe and returns the encoder-side
 // monochrome reconstruction the decoder must reproduce exactly.

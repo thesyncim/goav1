@@ -232,6 +232,36 @@ func TestVideoEncoder1080pHotPathAllocs(t *testing.T) {
 	}
 }
 
+func TestKeyframeEncoder1080pHotPathAllocs(t *testing.T) {
+	const w, h = 1920, 1080
+	f := makeEncoder1080pFrame(0)
+	enc, err := encoder.NewKeyframeEncoder(w, h, 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = enc.Close() })
+	if err := enc.Prewarm(); err != nil {
+		t.Fatal(err)
+	}
+	if tu, recon, err := enc.Encode(f); err != nil {
+		t.Fatal(err)
+	} else if len(tu) == 0 || len(recon.Y) == 0 {
+		t.Fatal("empty reusable keyframe output")
+	}
+	allocs := testing.AllocsPerRun(5, func() {
+		tu, recon, err := enc.Encode(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(tu) == 0 || len(recon.Y) == 0 {
+			t.Fatal("empty reusable keyframe output")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("1080p reusable keyframe allocations=%f want 0", allocs)
+	}
+}
+
 func makeEncoder1080pFrame(tick int) encoder.SourceFrame420 {
 	const w, h = 1920, 1080
 	cw, ch := w/2, h/2
