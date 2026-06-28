@@ -1027,6 +1027,12 @@ func encodeLosslessTXBWithHook(w *entropy.Writer, cdfs *tile.CoeffCDFs, ctx *til
 func encodeLosslessTXB16(w *entropy.Writer, cdfs *tile.CoeffCDFs, ctx *tile.CoeffEntropyContext,
 	ctxReq tile.CoeffContextRequest, plane []uint16, stride, px, py int, bitDepth uint8,
 	scan []int16, levels []uint8) error {
+	return encodeLosslessTXB16WithHook(w, cdfs, ctx, ctxReq, plane, stride, px, py, bitDepth, scan, levels, nil)
+}
+
+func encodeLosslessTXB16WithHook(w *entropy.Writer, cdfs *tile.CoeffCDFs, ctx *tile.CoeffEntropyContext,
+	ctxReq tile.CoeffContextRequest, plane []uint16, stride, px, py int, bitDepth uint8,
+	scan []int16, levels []uint8, afterSkip func() error) error {
 
 	dc := dcPredictN16(plane, stride, px, py, 4, py > 0, px > 0, bitDepth)
 
@@ -1045,7 +1051,7 @@ func encodeLosslessTXB16(w *entropy.Writer, cdfs *tile.CoeffCDFs, ctx *tile.Coef
 	for i, v := range wht {
 		coeffs[i] = int16(v >> 2)
 	}
-	_, err := tile.WriteCoefficientsTXBWithContext(w, cdfs, ctx, ctxReq, transform.Class2D, coeffs[:], scan, levels)
+	_, err := tile.WriteCoefficientsTXBWithContextHook(w, cdfs, ctx, ctxReq, transform.Class2D, coeffs[:], scan, levels, afterSkip)
 	return err
 }
 

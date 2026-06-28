@@ -655,7 +655,9 @@ func TestPublicEncodeI400HighBitDepthPFrameReferenceDecoders(t *testing.T) {
 		bitDepth uint8
 		qIndex   uint8
 	}{
+		{bitDepth: 10, qIndex: 0},
 		{bitDepth: 10, qIndex: 32},
+		{bitDepth: 12, qIndex: 0},
 		{bitDepth: 12, qIndex: 48},
 	}
 	for _, tc := range cases {
@@ -705,6 +707,9 @@ func TestPublicEncodeI400HighBitDepthPFrameReferenceDecoders(t *testing.T) {
 			if publicI400HighBitDepthFrameEqual(pRecon, keyRecon) {
 				t.Fatal("P-frame reconstruction unexpectedly equals reference")
 			}
+			if tc.qIndex == 0 && !publicI400HighBitDepthFrameEqual(pRecon, src2) {
+				t.Fatal("lossless high-bit-depth monochrome P-frame reconstruction differs from source")
+			}
 			ivf := appendPublicIVF(nil, w, h, 30, 1, []publicIVFFrame{
 				{payload: keyTU},
 				{timestamp: 1, payload: pTU},
@@ -723,7 +728,9 @@ func TestPublicEncodeI420HighBitDepthPFrameReferenceDecoders(t *testing.T) {
 		bitDepth uint8
 		qIndex   uint8
 	}{
+		{bitDepth: 10, qIndex: 0},
 		{bitDepth: 10, qIndex: 32},
+		{bitDepth: 12, qIndex: 0},
 		{bitDepth: 12, qIndex: 48},
 	}
 	for _, tc := range cases {
@@ -764,6 +771,9 @@ func TestPublicEncodeI420HighBitDepthPFrameReferenceDecoders(t *testing.T) {
 			}
 			if publicI420HighBitDepthFrameEqual(pRecon, keyRecon) {
 				t.Fatal("P-frame reconstruction unexpectedly equals reference")
+			}
+			if tc.qIndex == 0 && !publicI420HighBitDepthFrameEqual(pRecon, src2) {
+				t.Fatal("lossless high-bit-depth 4:2:0 P-frame reconstruction differs from source")
 			}
 			ivf := appendPublicIVF(nil, w, h, 30, 1, []publicIVFFrame{
 				{payload: keyTU},
@@ -861,9 +871,6 @@ func TestPublicEncodeI400HighBitDepthPFrameRejectsInvalid(t *testing.T) {
 		Height:   64,
 		BitDepth: 10,
 	}
-	if _, _, err := goav1.EncodeI400HighBitDepthPFrame(valid, valid, 0); err == nil {
-		t.Fatal("EncodeI400HighBitDepthPFrame accepted qindex 0")
-	}
 	bitDepthMismatch := valid
 	bitDepthMismatch.BitDepth = 12
 	if _, _, err := goav1.EncodeI400HighBitDepthPFrame(valid, bitDepthMismatch, 72); err == nil {
@@ -878,9 +885,6 @@ func TestPublicEncodeI400HighBitDepthPFrameRejectsInvalid(t *testing.T) {
 
 func TestPublicEncodeI420HighBitDepthPFrameRejectsInvalid(t *testing.T) {
 	valid := publicI420HighBitDepthFrame(64, 64, 10, 3)
-	if _, _, err := goav1.EncodeI420HighBitDepthPFrame(valid, valid, 0); err == nil {
-		t.Fatal("EncodeI420HighBitDepthPFrame accepted qindex 0")
-	}
 	bitDepthMismatch := valid
 	bitDepthMismatch.BitDepth = 12
 	if _, _, err := goav1.EncodeI420HighBitDepthPFrame(valid, bitDepthMismatch, 72); err == nil {

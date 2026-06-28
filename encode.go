@@ -217,7 +217,8 @@ func EncodeI420HighBitDepthKeyframe(frame I420HighBitDepthFrame, qIndex uint8) (
 // ref must be the previous native high-bit-depth 4:2:0 reconstruction for the
 // same coded geometry and bit depth, usually the reconstruction returned by
 // EncodeI420HighBitDepthKeyframe or a prior EncodeI420HighBitDepthPFrame call.
-// qIndex must be 1..255.
+// qIndex 0 emits a lossless inter frame; qIndex 1..255 emits a non-lossless
+// inter frame.
 func EncodeI420HighBitDepthPFrame(frame I420HighBitDepthFrame, ref I420HighBitDepthFrame, qIndex uint8) ([]byte, I420HighBitDepthFrame, error) {
 	tu, recon, err := encoder.EncodeHighBitDepth420PFrame(encoder.SourceFrame42016(frame), encoder.SourceFrame42016(ref), qIndex)
 	if err != nil {
@@ -232,7 +233,8 @@ func EncodeI420HighBitDepthPFrame(frame I420HighBitDepthFrame, ref I420HighBitDe
 // ref must be the previous native high-bit-depth monochrome reconstruction for
 // the same coded geometry and bit depth, usually the reconstruction returned by
 // EncodeI400HighBitDepthKeyframe or a prior EncodeI400HighBitDepthPFrame call.
-// qIndex must be 1..255.
+// qIndex 0 emits a lossless inter frame; qIndex 1..255 emits a non-lossless
+// inter frame.
 func EncodeI400HighBitDepthPFrame(frame I400HighBitDepthFrame, ref I400HighBitDepthFrame, qIndex uint8) ([]byte, I400HighBitDepthFrame, error) {
 	tu, recon, err := encoder.EncodeHighBitDepthMonochromePFrame(encoder.SourceFrameMono16(frame), encoder.SourceFrameMono16(ref), qIndex)
 	if err != nil {

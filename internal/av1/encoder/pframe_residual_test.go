@@ -316,7 +316,9 @@ func TestEncodeHighBitDepthMonochromePFrameDecodeMatchesRecon(t *testing.T) {
 		bitDepth uint8
 		qIndex   uint8
 	}{
+		{name: "10bit-lossless", bitDepth: 10, qIndex: 0},
 		{name: "10bit", bitDepth: 10, qIndex: 32},
+		{name: "12bit-lossless", bitDepth: 12, qIndex: 0},
 		{name: "12bit", bitDepth: 12, qIndex: 48},
 	}
 	const w, h = 64, 64
@@ -336,9 +338,28 @@ func TestEncodeHighBitDepthMonochromePFrameDecodeMatchesRecon(t *testing.T) {
 				}
 			}
 
-			keyTU, keyRecon, err := encoder.EncodeHighBitDepthMonochromeKeyframe(src1, tc.qIndex)
-			if err != nil {
-				t.Fatalf("encode high-bit-depth monochrome keyframe: %v", err)
+			var (
+				keyTU    []byte
+				keyRecon encoder.SourceFrameMono16
+				err      error
+			)
+			if tc.qIndex == 0 {
+				keyTU, err = encoder.EncodeLosslessHighBitDepthMonochromeKeyframe(src1)
+				if err != nil {
+					t.Fatalf("encode lossless high-bit-depth monochrome keyframe: %v", err)
+				}
+				keyRecon = encoder.SourceFrameMono16{
+					Y:        append([]uint16(nil), src1.Y...),
+					YStride:  src1.YStride,
+					Width:    src1.Width,
+					Height:   src1.Height,
+					BitDepth: src1.BitDepth,
+				}
+			} else {
+				keyTU, keyRecon, err = encoder.EncodeHighBitDepthMonochromeKeyframe(src1, tc.qIndex)
+				if err != nil {
+					t.Fatalf("encode high-bit-depth monochrome keyframe: %v", err)
+				}
 			}
 			src2 := encoder.SourceFrameMono16{
 				Y:        make([]uint16, w*h),
@@ -368,6 +389,9 @@ func TestEncodeHighBitDepthMonochromePFrameDecodeMatchesRecon(t *testing.T) {
 			t.Logf("high-bit-depth mono key TU %d bytes, P TU %d bytes", len(keyTU), len(pTU))
 			if mono16Equal(pRecon, keyRecon) {
 				t.Fatal("P-frame reconstruction unexpectedly equals the reference; residual path was not exercised")
+			}
+			if tc.qIndex == 0 && !mono16Equal(pRecon, src2) {
+				t.Fatal("lossless high-bit-depth monochrome P-frame reconstruction differs from source")
 			}
 
 			dec, err := goav1.NewDecoder([][]byte{keyTU, pTU})
@@ -404,7 +428,9 @@ func TestEncodeHighBitDepth420PFrameDecodeMatchesRecon(t *testing.T) {
 		bitDepth uint8
 		qIndex   uint8
 	}{
+		{name: "10bit-lossless", bitDepth: 10, qIndex: 0},
 		{name: "10bit", bitDepth: 10, qIndex: 32},
+		{name: "12bit-lossless", bitDepth: 12, qIndex: 0},
 		{name: "12bit", bitDepth: 12, qIndex: 48},
 	}
 	const w, h = 64, 64
@@ -473,6 +499,9 @@ func TestEncodeHighBitDepth420PFrameDecodeMatchesRecon(t *testing.T) {
 			t.Logf("high-bit-depth 4:2:0 key TU %d bytes, P TU %d bytes", len(keyTU), len(pTU))
 			if frame42016Equal(pRecon, keyRecon) {
 				t.Fatal("P-frame reconstruction unexpectedly equals the reference; residual path was not exercised")
+			}
+			if tc.qIndex == 0 && !frame42016Equal(pRecon, src2) {
+				t.Fatal("lossless high-bit-depth 4:2:0 P-frame reconstruction differs from source")
 			}
 
 			dec, err := goav1.NewDecoder([][]byte{keyTU, pTU})
