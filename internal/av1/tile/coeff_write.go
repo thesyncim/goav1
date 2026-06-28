@@ -1426,6 +1426,7 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
+	var nonZeroBits [16]uint64
 	for c := range eob {
 		p := &scanHot[c]
 		pos := int(p.pos)
@@ -1438,6 +1439,7 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 			maxScanLine = pos
 		}
 		level := absInt(int(cv))
+		nonZeroBits[c>>6] |= 1 << uint(c&63)
 		culLevel += level
 		if pos == 0 {
 			dcValue = int(cv)
@@ -1515,26 +1517,26 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 		}
 	}
 
-	for c := range eob {
-		p := &scanHot[c]
-		pos := int(p.pos)
-		cv := coeff1024[pos]
-		if cv == 0 {
-			continue
-		}
-		sign := int(uint16(cv) >> 15)
-		if pos == 0 {
-			w.WriteBinaryCDFTrusted(&cdfs.DCSign[plane][dcSignContext], sign)
-		} else {
-			w.WriteBit(sign)
-		}
-		level := levels[p.padded]
-		if clearLevels {
-			levels[p.padded] = 0
-		}
-		if level >= MaxBaseBRRange {
-			level := absInt(int(cv))
-			writeGolomb(w, level-MaxBaseBRRange)
+	for word, bits64 := range nonZeroBits {
+		for nz := bits64; nz != 0; nz &= nz - 1 {
+			c := word*64 + bits.TrailingZeros64(nz)
+			p := &scanHot[c]
+			pos := int(p.pos)
+			cv := coeff1024[pos]
+			sign := int(uint16(cv) >> 15)
+			if pos == 0 {
+				w.WriteBinaryCDFTrusted(&cdfs.DCSign[plane][dcSignContext], sign)
+			} else {
+				w.WriteBit(sign)
+			}
+			level := levels[p.padded]
+			if clearLevels {
+				levels[p.padded] = 0
+			}
+			if level >= MaxBaseBRRange {
+				level := absInt(int(cv))
+				writeGolomb(w, level-MaxBaseBRRange)
+			}
 		}
 	}
 	if culLevel > CoeffContextMask {
