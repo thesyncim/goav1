@@ -31,9 +31,10 @@ type publicClip struct {
 // profile-0 S_FRAME, profile-1 4:4:4 8/10-bit, profile-1 screen-content
 // palette, profile-1 CDEF/restoration, profile-1 odd-edge filtering,
 // profile-1 film grain, profile-2 4:2:2 8/10/12-bit including 10/12-bit 4:2:2
-// inter CDEF/restoration, profile-2 4:2:0 12-bit including odd edge sizes,
-// film grain, edge-motion, large-superblock, and multi-tile streams, including
-// non-4:2:0 clips that libaom's published vector suite does not ship.
+// inter CDEF/restoration, profile-2 12-bit 4:4:4 inter CDEF/restoration,
+// profile-2 4:2:0 12-bit including odd edge sizes, film grain, edge-motion,
+// large-superblock, and multi-tile streams, including non-4:2:0 clips that
+// libaom's published vector suite does not ship.
 var publicClips = []publicClip{
 	{
 		file: "profile0-420-8bit-sframe-64x64.ivf",
@@ -216,6 +217,19 @@ var publicClips = []publicClip{
 			"949936ee55d10f23afd156c8aa5f9564",
 			"e70adc26dabc35bd3cc294e2eeca4c5c",
 			"b4951e75489506c04dfc110213b53031",
+		},
+	},
+	{
+		file: "profile2-444-12bit-inter-cdef-restoration-160x128.ivf",
+		frameMD5Hex: []string{
+			"751b09e10de27a8fe52a2105464435ef",
+			"fd1f024646cfaef90ff96942a8063590",
+			"4c287dda16bf92dba8dff37f77b937e0",
+			"d29bf4ffae239c9df488aba8a7782571",
+			"ecf4025d1addf8b6a0623e14023dacb9",
+			"abbc28d5425c25a8dda033eae3cbd074",
+			"f05304312816830c27973eceaab70c93",
+			"41771eeb3a7132aa9b50d76a2444524c",
 		},
 	},
 	{
