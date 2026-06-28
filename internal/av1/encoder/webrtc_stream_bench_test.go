@@ -76,7 +76,7 @@ func BenchmarkWebRTCStreamEncodePicture1080p(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			sum := 0
-			for i := 0; b.Loop(); i++ {
+			for i := 0; i < b.N; i++ {
 				picture, err := stream.EncodePicture(frames[i&3], false)
 				if err != nil {
 					b.Fatalf("EncodePicture(%s): %v", mode, err)

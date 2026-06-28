@@ -40,7 +40,7 @@ func BenchmarkPublicRTCEncoderEncodePicture1080p(b *testing.B) {
 			b.ResetTimer()
 
 			sum := 0
-			for i := 0; b.Loop(); i++ {
+			for i := 0; i < b.N; i++ {
 				picture, err := enc.EncodePicture(frames[i&3], false)
 				if err != nil {
 					b.Fatalf("EncodePicture: %v", err)
@@ -301,7 +301,7 @@ func BenchmarkPublicDecodeRTPPayload1080p(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	sum := 0
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		sum += decodeAll()
 	}
 	publicBenchmarkSink = sum
@@ -340,7 +340,7 @@ func BenchmarkPublicLayeredDecodeRTPPayload1080p(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	sum := 0
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		sum += decodeAll()
 	}
 	publicBenchmarkSink = sum

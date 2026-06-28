@@ -42,9 +42,12 @@ func benchCorpus(b *testing.B, path string, fps, bitrate int) {
 	if _, _, err := enc.Encode(frames[0], true); err != nil {
 		b.Fatal(err)
 	}
+	if err := enc.Flush(); err != nil {
+		b.Fatal(err)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; b.Loop(); i++ {
+	for i := 0; i < b.N; i++ {
 		if _, _, err := enc.Encode(frames[1+i%(nf-1)], false); err != nil {
 			b.Fatal(err)
 		}

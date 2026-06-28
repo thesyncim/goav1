@@ -123,9 +123,12 @@ func BenchmarkVideoEncoderPFrame1080p(b *testing.B) {
 	if _, _, err := enc.Encode(frames[0], false); err != nil {
 		b.Fatal(err)
 	}
+	if err := enc.Flush(); err != nil {
+		b.Fatal(err)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; b.Loop(); i++ {
+	for i := 0; i < b.N; i++ {
 		if _, _, err := enc.Encode(frames[1+i%7], false); err != nil {
 			b.Fatal(err)
 		}
@@ -165,9 +168,12 @@ func BenchmarkEncodeKeyframe1080p(b *testing.B) {
 	} else if !key {
 		b.Fatal("prewarm keyframe was not coded as keyframe")
 	}
+	if err := enc.Flush(); err != nil {
+		b.Fatal(err)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if _, key, err := enc.Encode(f, true); err != nil {
 			b.Fatal(err)
 		} else if !key {
@@ -263,9 +269,12 @@ func BenchmarkVideoEncoderPFramePan1080p(b *testing.B) {
 	if _, _, err := enc.Encode(frames[0], true); err != nil {
 		b.Fatal(err)
 	}
+	if err := enc.Flush(); err != nil {
+		b.Fatal(err)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; b.Loop(); i++ {
+	for i := 0; i < b.N; i++ {
 		if _, _, err := enc.Encode(frames[1+i%31], false); err != nil {
 			b.Fatal(err)
 		}
@@ -297,7 +306,7 @@ func BenchmarkStreamingKeyframe1080p(b *testing.B) {
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if _, _, err := enc.Encode(src, true); err != nil {
 			b.Fatal(err)
 		}

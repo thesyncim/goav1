@@ -577,6 +577,15 @@ func (e *VideoEncoder) Close() error {
 	return err
 }
 
+// Flush waits for background work from the previous Encode call to complete
+// without closing the encoder or resetting stream state.
+func (e *VideoEncoder) Flush() error {
+	if e == nil {
+		return nil
+	}
+	return e.joinFilter()
+}
+
 // SetTemporalLayers selects the temporal-layer count: 1 (default) or 2 for
 // the WebRTC L1T2 pattern, where odd frames are droppable (they refresh no
 // reference slot and always predict from the latest layer-0 frame).
