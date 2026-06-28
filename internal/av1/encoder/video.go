@@ -601,6 +601,9 @@ func (e *VideoEncoder) Close() error {
 		e.filterWork = nil
 		e.filterStarted = false
 	}
+	e.lf.close()
+	e.cdefApp.close()
+	e.hme.close()
 	return err
 }
 
@@ -1089,14 +1092,21 @@ func (e *VideoEncoder) startFilterWorker() {
 }
 
 func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cdef parser.CDEFParams) error {
-	if err := e.lf.apply(out, parser.LoopFilterParams{
+	lf := parser.LoopFilterParams{
 		LevelY: [2]uint8{lfLevel, lfLevel},
 		LevelU: lfLevel,
 		LevelV: lfLevel,
-	}); err != nil {
+	}
+	applyLF := e.lf.apply
+	applyCDEF := e.cdefApp.apply
+	if e.singleThread {
+		applyLF = e.lf.applySerial
+		applyCDEF = e.cdefApp.applySerial
+	}
+	if err := applyLF(out, lf); err != nil {
 		return fmt.Errorf("loop filter apply: %w", err)
 	}
-	if err := e.cdefApp.apply(out, cdef, &e.lf.filtMap); err != nil {
+	if err := applyCDEF(out, cdef, &e.lf.filtMap); err != nil {
 		return fmt.Errorf("cdef apply: %w", err)
 	}
 	return nil

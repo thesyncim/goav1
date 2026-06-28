@@ -327,14 +327,21 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 	}
 
 	if lfLevel > 0 {
-		if err := lf.apply(recon, parser.LoopFilterParams{
+		lfParams := parser.LoopFilterParams{
 			LevelY: [2]uint8{lfLevel, lfLevel},
 			LevelU: lfLevel,
 			LevelV: lfLevel,
-		}); err != nil {
+		}
+		applyLF := lf.apply
+		applyCDEF := cdefApp.apply
+		if tileOpts.stream != nil && tileOpts.stream.singleThread {
+			applyLF = lf.applySerial
+			applyCDEF = cdefApp.applySerial
+		}
+		if err := applyLF(recon, lfParams); err != nil {
 			return nil, SourceFrame420{}, fmt.Errorf("loop filter apply: %w", err)
 		}
-		if err := cdefApp.apply(recon, cdefParserParams(header.CDEF), &lf.filtMap); err != nil {
+		if err := applyCDEF(recon, cdefParserParams(header.CDEF), &lf.filtMap); err != nil {
 			return nil, SourceFrame420{}, fmt.Errorf("cdef apply: %w", err)
 		}
 	}

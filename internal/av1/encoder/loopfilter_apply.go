@@ -224,7 +224,6 @@ func (a *loopFilterApplier) init(width, height int) error {
 		}
 	}
 	a.bound = true
-	a.startWorkers()
 	return nil
 }
 
@@ -233,15 +232,21 @@ func (a *loopFilterApplier) reset() error {
 	return a.filtMap.Reset()
 }
 
-// apply runs the decoder's deblocking planner and kernels over the encoder
-// reconstruction with the frame's signaled filter levels, leaving recon equal
-// to the decoder's post-loop-filter output.
-func (a *loopFilterApplier) apply(recon *SourceFrame420, lf parser.LoopFilterParams) error {
+func (a *loopFilterApplier) close() {
+	if a.work != nil {
+		close(a.work)
+		a.work = nil
+	}
+	a.done = nil
+	a.started = false
+}
+
+func (a *loopFilterApplier) bindApplyContext(recon *SourceFrame420, lf parser.LoopFilterParams) (bool, error) {
 	if !a.bound {
-		return fmt.Errorf("encoder: loop-filter applier not initialized")
+		return false, fmt.Errorf("encoder: loop-filter applier not initialized")
 	}
 	if lf.LevelY[0] == 0 && lf.LevelY[1] == 0 && lf.LevelU == 0 && lf.LevelV == 0 {
-		return nil
+		return false, nil
 	}
 	event := a.event
 	event.LoopFilter = lf
@@ -259,6 +264,17 @@ func (a *loopFilterApplier) apply(recon *SourceFrame420, lf parser.LoopFilterPar
 		Event:         event,
 		Output:        &a.output,
 		LoopFilterMap: &a.filtMap,
+	}
+	return true, nil
+}
+
+// apply runs the decoder's deblocking planner and kernels over the encoder
+// reconstruction with the frame's signaled filter levels, leaving recon equal
+// to the decoder's post-loop-filter output.
+func (a *loopFilterApplier) apply(recon *SourceFrame420, lf parser.LoopFilterParams) error {
+	active, err := a.bindApplyContext(recon, lf)
+	if err != nil || !active {
+		return err
 	}
 	a.startWorkers()
 
@@ -321,4 +337,25 @@ func (a *loopFilterApplier) apply(recon *SourceFrame420, lf parser.LoopFilterPar
 		}
 	}
 	return nil
+}
+
+func (a *loopFilterApplier) applySerial(recon *SourceFrame420, lf parser.LoopFilterParams) error {
+	active, err := a.bindApplyContext(recon, lf)
+	if err != nil || !active {
+		return err
+	}
+	plan, err := a.jobCtx.LoopFilterPostFilterPlan(decoder.FrameWorkLoopFilterPostFilterRequest{
+		Map:             a.filtMap,
+		Edges:           a.edges,
+		TrustedCoverage: true,
+	})
+	switch {
+	case err != nil:
+		return err
+	case plan.DroppedEdges != 0:
+		return fmt.Errorf("encoder: loop-filter dropped %d edges", plan.DroppedEdges)
+	}
+	edges := a.edges[:plan.StoredEdges]
+	_, err = a.jobCtx.ApplyPlannedLoopFilterEdges(edges, a.schedule[:plan.StoredEdges])
+	return err
 }

@@ -222,7 +222,6 @@ func (a *cdefApplier) init(width, height int, cdefParams parser.CDEFParams) erro
 	}
 	a.unitRows = rows
 	a.bound = true
-	a.startWorkers()
 	return nil
 }
 
@@ -248,12 +247,18 @@ func (a *cdefApplier) markFromLoopFilterMap(m *threading.FrameWorkLoopFilterMap)
 	}
 }
 
-// apply runs the decoder's banded CDEF over the reconstruction with the
-// frame's signaled parameters, leaving recon equal to the decoder's
-// post-CDEF output.
-func (a *cdefApplier) apply(recon *SourceFrame420, cdefParams parser.CDEFParams, lfMap *threading.FrameWorkLoopFilterMap) error {
+func (a *cdefApplier) close() {
+	if a.work != nil {
+		close(a.work)
+		a.work = nil
+	}
+	a.done = nil
+	a.started = false
+}
+
+func (a *cdefApplier) bindApplyContext(recon *SourceFrame420, cdefParams parser.CDEFParams, lfMap *threading.FrameWorkLoopFilterMap) (bool, error) {
 	if !a.bound {
-		return fmt.Errorf("encoder: cdef applier not initialized")
+		return false, fmt.Errorf("encoder: cdef applier not initialized")
 	}
 	zero := true
 	for i := 0; i < int(cdefParams.StrengthCount); i++ {
@@ -263,7 +268,7 @@ func (a *cdefApplier) apply(recon *SourceFrame420, cdefParams parser.CDEFParams,
 		}
 	}
 	if zero {
-		return nil
+		return false, nil
 	}
 	a.markFromLoopFilterMap(lfMap)
 	a.output = frame.Frame{
@@ -293,6 +298,17 @@ func (a *cdefApplier) apply(recon *SourceFrame420, cdefParams parser.CDEFParams,
 		VarianceGrid:  a.varGrid,
 	}
 	if err := a.jobCtx.LoadCDEFPostFilterSamples(a.jobReq); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// apply runs the decoder's banded CDEF over the reconstruction with the
+// frame's signaled parameters, leaving recon equal to the decoder's
+// post-CDEF output.
+func (a *cdefApplier) apply(recon *SourceFrame420, cdefParams parser.CDEFParams, lfMap *threading.FrameWorkLoopFilterMap) error {
+	active, err := a.bindApplyContext(recon, cdefParams, lfMap)
+	if err != nil || !active {
 		return err
 	}
 	bands := cdefApplyBands
@@ -322,4 +338,16 @@ func (a *cdefApplier) apply(recon *SourceFrame420, cdefParams parser.CDEFParams,
 		}
 	}
 	return nil
+}
+
+func (a *cdefApplier) applySerial(recon *SourceFrame420, cdefParams parser.CDEFParams, lfMap *threading.FrameWorkLoopFilterMap) error {
+	active, err := a.bindApplyContext(recon, cdefParams, lfMap)
+	if err != nil || !active {
+		return err
+	}
+	req := a.jobReq
+	req.InputScratch = a.bandIn[0]
+	req.UnitDstScratch = a.bandUnit[0]
+	_, err = a.jobCtx.ApplyCDEFPostFilterUnitRows(req, 0, a.unitRows)
+	return err
 }

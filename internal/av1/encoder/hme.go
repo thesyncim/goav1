@@ -78,6 +78,15 @@ func (h *hmeState) startWorkers() {
 	h.started = true
 }
 
+func (h *hmeState) close() {
+	if h.work != nil {
+		close(h.work)
+		h.work = nil
+	}
+	h.done = nil
+	h.started = false
+}
+
 // hmeCutRegionSAD marks a region as unmatched: ~25 per quarter-res sample
 // over an 8x8 block, far above textured-content match SADs.
 const hmeCutRegionSAD = 8 * 8 * 25
