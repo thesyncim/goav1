@@ -1383,37 +1383,35 @@ func dcPredictRect(plane []byte, stride, px, py, w, h int, haveTop, haveLeft boo
 func selectIntraModeN(srcPlane, reconPlane []byte, stride, px, py, n int, haveTop, haveLeft bool, pred []byte) tile.IntraMode {
 	dc := dcPredictN(reconPlane, stride, px, py, n, haveTop, haveLeft)
 	sadDC, sadV, sadH := 0, 1<<30, 1<<30
+	if haveTop {
+		sadV = 0
+	}
+	if haveLeft {
+		sadH = 0
+	}
+	above := (py-1)*stride + px
 	for r := range n {
 		row := (py+r)*stride + px
+		left := 0
+		if haveLeft {
+			left = int(reconPlane[row-1])
+		}
 		for c := range n {
-			d := int(srcPlane[row+c]) - int(dc)
+			src := int(srcPlane[row+c])
+			d := src - int(dc)
 			if d < 0 {
 				d = -d
 			}
 			sadDC += d
-		}
-	}
-	above := (py-1)*stride + px
-	if haveTop {
-		sadV = 0
-		for r := range n {
-			row := (py+r)*stride + px
-			for c := range n {
-				d := int(srcPlane[row+c]) - int(reconPlane[above+c])
+			if haveTop {
+				d = src - int(reconPlane[above+c])
 				if d < 0 {
 					d = -d
 				}
 				sadV += d
 			}
-		}
-	}
-	if haveLeft {
-		sadH = 0
-		for r := range n {
-			row := (py+r)*stride + px
-			left := int(reconPlane[row-1])
-			for c := range n {
-				d := int(srcPlane[row+c]) - left
+			if haveLeft {
+				d = src - left
 				if d < 0 {
 					d = -d
 				}
