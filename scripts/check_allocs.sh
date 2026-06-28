@@ -37,7 +37,44 @@ check_zero_alloc_benchmarks() {
 			failed = 1
 		}
 		exit failed
-	}'
+		}'
+}
+
+check_zero_alloc_benchmarks_at_least() {
+	min_count=$1
+	name_re=$2
+	bench_output=$3
+	printf '%s\n' "$bench_output" | awk -v min="$min_count" -v name_re="$name_re" '
+		BEGIN { count = 0; failed = 0 }
+		$1 ~ name_re {
+			count++
+			b = ""
+			a = ""
+			for (i = 1; i <= NF; i++) {
+				if ($i == "B/op") {
+					b = $(i - 1)
+				}
+				if ($i == "allocs/op") {
+					a = $(i - 1)
+				}
+			}
+			if (b == "" || a == "") {
+				printf("missing allocation metrics for %s\n", $1) > "/dev/stderr"
+				failed = 1
+				next
+			}
+			if (b != 0 || a != 0) {
+				printf("%s allocated: %s B/op %s allocs/op\n", $1, b, a) > "/dev/stderr"
+				failed = 1
+			}
+		}
+		END {
+			if (count < min) {
+				printf("ran %d allocation benchmarks, want at least %d\n", count, min) > "/dev/stderr"
+				failed = 1
+			}
+			exit failed
+		}'
 }
 
 # Keep the benchmark count high enough that one-time runtime first touches do
@@ -54,10 +91,10 @@ check_zero_alloc_benchmarks 6 '^BenchmarkDecode' "$bench_out"
 # at -benchtime=1x; these rows prove the reusable encoder/decoder hot paths
 # themselves stay at zero heap traffic.
 bench1080_time=${GOAV1_ALLOC_1080P_BENCHTIME:-1x}
-encoder1080_re='^Benchmark(VideoEncoderPFrame1080p|EncodeKeyframe1080p|VideoEncoderPFramePan1080p|StreamingKeyframe1080p|WebRTCStreamEncodePicture1080p)$'
+encoder1080_re='^Benchmark.*1080p$'
 encoder1080_out=$(GOMAXPROCS=1 GOGC=off go test ./internal/av1/encoder -run '^$' -bench="$encoder1080_re" -benchmem -benchtime="$bench1080_time" -count=1)
 printf '%s\n' "$encoder1080_out"
-check_zero_alloc_benchmarks 6 '^Benchmark(VideoEncoderPFrame1080p|EncodeKeyframe1080p|VideoEncoderPFramePan1080p|StreamingKeyframe1080p|WebRTCStreamEncodePicture1080p)' "$encoder1080_out"
+check_zero_alloc_benchmarks_at_least 6 '^Benchmark.*1080p' "$encoder1080_out"
 
 # Keep the public 1080p benchmark canaries isolated from each other so runtime
 # first touches in one benchmark do not get charged to a later hot-path row.
