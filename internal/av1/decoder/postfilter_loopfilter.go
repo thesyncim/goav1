@@ -566,9 +566,6 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesInPlaneRange(result *F
 		var schedule [frameWorkLoopFilterApplyScheduleCap]uint32
 		return ctx.applyLoopFilterEdgesInPlanePassOrderSchedule(result, edges, schedule[:len(edges)], minPlane, maxPlane, before, expected)
 	}
-	if len(scheduleScratch) >= len(edges) {
-		return ctx.applyLoopFilterEdgesInPlanePassOrderSchedule(result, edges, scheduleScratch[:len(edges)], minPlane, maxPlane, before, expected)
-	}
 	return ctx.applyLoopFilterEdgesInPlanePassOrderScan(result, edges, minPlane, maxPlane, before, expected)
 }
 

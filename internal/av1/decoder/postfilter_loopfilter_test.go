@@ -1397,7 +1397,7 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesUsesPlanePassOrder(t *tes
 	}
 }
 
-func TestFrameWorkPostFilterContextApplyLoopFilterEdgesLargeScheduleScratch(t *testing.T) {
+func TestFrameWorkPostFilterContextApplyLoopFilterEdgesLargeScanMatchesScheduledOrder(t *testing.T) {
 	ctx, edges := testLargeFrameWorkLoopFilterEdgeApplyFixture(t, frameWorkLoopFilterApplyScheduleCap+1)
 	scanFrame := testCloneFrameWorkLoopFilterFrame(ctx.Output)
 	scheduledFrame := testCloneFrameWorkLoopFilterFrame(ctx.Output)
@@ -1405,14 +1405,18 @@ func TestFrameWorkPostFilterContextApplyLoopFilterEdgesLargeScheduleScratch(t *t
 	scanCtx.Output = &scanFrame
 	scheduledCtx := ctx
 	scheduledCtx.Output = &scheduledFrame
+	expected, ok := frameWorkLoopFilterCounter(len(edges))
+	if !ok {
+		t.Fatal("edge count overflow")
+	}
 
 	var scanResult FrameWorkLoopFilterPostFilterApplyResult
-	if err := scanCtx.applyLoopFilterEdgesInPlanePassOrder(&scanResult, edges, nil, loopfilter.PlaneV); err != nil {
+	if err := scanCtx.applyLoopFilterEdgesInPlanePassOrderScan(&scanResult, edges, loopfilter.PlaneY, loopfilter.PlaneV, 0, expected); err != nil {
 		t.Fatal(err)
 	}
 	schedule := make([]uint32, len(edges))
 	var scheduledResult FrameWorkLoopFilterPostFilterApplyResult
-	if err := scheduledCtx.applyLoopFilterEdgesInPlanePassOrder(&scheduledResult, edges, schedule, loopfilter.PlaneV); err != nil {
+	if err := scheduledCtx.applyLoopFilterEdgesInPlanePassOrderSchedule(&scheduledResult, edges, schedule, loopfilter.PlaneY, loopfilter.PlaneV, 0, expected); err != nil {
 		t.Fatal(err)
 	}
 	if scheduledResult != scanResult {
