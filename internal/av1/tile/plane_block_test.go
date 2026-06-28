@@ -61,6 +61,16 @@ func TestHasChromaBlockMatchesDav1dCondition(t *testing.T) {
 	if HasChromaBlock(TransformTreeRequest{Size: BlockSize8x8}, parser.ColorConfig{MonoChrome: true}) {
 		t.Fatal("monochrome block unexpectedly has chroma")
 	}
+	for _, size := range []BlockSize{BlockSize4x4, BlockSize4x8, BlockSize8x4, BlockSize8x8, BlockSize16x16} {
+		for y4 := 0; y4 < 4; y4++ {
+			for x4 := 0; x4 < 4; x4++ {
+				req := TransformTreeRequest{Size: size, X4: uint8(x4), Y4: uint8(y4)}
+				if got, want := HasChromaBlockAt(size, x4, y4, color420), HasChromaBlock(req, color420); got != want {
+					t.Fatalf("HasChromaBlockAt(%d,%d,%d)=%v want %v", size, x4, y4, got, want)
+				}
+			}
+		}
+	}
 }
 
 func BenchmarkHasChromaForBlock420(b *testing.B) {

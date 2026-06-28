@@ -69,6 +69,12 @@ func HasChromaBlock(req TransformTreeRequest, color parser.ColorConfig) bool {
 	return hasChromaForBlock(req.Size, int(req.X4), int(req.Y4), color)
 }
 
+// HasChromaBlockAt reports whether a block at the given 4x4 origin has a
+// chroma block, without requiring callers to build a full transform request.
+func HasChromaBlockAt(size BlockSize, x4, y4 int, color parser.ColorConfig) bool {
+	return hasChromaForBlock(size, x4, y4, color)
+}
+
 // hasChromaForBlock is the small, inlinable core of HasChromaBlock. It takes
 // the three fields the chroma-presence test actually depends on (block size
 // and the block's 4x4 origin) by value rather than a TransformTreeRequest, so

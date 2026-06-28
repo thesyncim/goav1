@@ -1171,11 +1171,7 @@ func (st *lossyEncodeState) writeNoPaletteMode(modeCtx *tile.BlockModeContext, b
 	if !st.allowScreenContentTools {
 		return nil
 	}
-	hasChroma := tile.HasChromaBlock(tile.TransformTreeRequest{
-		Size: block.Size,
-		X4:   block.X4,
-		Y4:   block.Y4,
-	}, st.color)
+	hasChroma := tile.HasChromaBlockAt(block.Size, int(block.X4), int(block.Y4), st.color)
 	if err := tile.WriteNoPaletteMode(st.w, &st.intraCDFs, modeCtx, tile.PaletteModeRequest{
 		AllowScreenContentTools: st.allowScreenContentTools,
 		Size:                    block.Size,

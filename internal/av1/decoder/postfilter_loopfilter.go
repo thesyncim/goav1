@@ -2782,7 +2782,7 @@ func frameWorkLoopFilterChromaBlockWithShifts(color parser.ColorConfig, record *
 }
 
 func frameWorkLoopFilterChromaBlockFromRequestWithShifts(color parser.ColorConfig, record *threading.FrameWorkLoopFilterBlockRecord, req tile.TransformTreeRequest, ssX uint8, ssY uint8) (tile.TransformBlock, bool, error) {
-	if color.MonoChrome || !tile.HasChromaBlock(req, color) {
+	if !tile.HasChromaBlockAt(req.Size, int(req.X4), int(req.Y4), color) {
 		return tile.TransformBlock{}, false, nil
 	}
 	if !record.TransformTree.HasUV || !record.TransformTree.UV.Valid() {
