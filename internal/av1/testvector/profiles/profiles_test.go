@@ -31,7 +31,8 @@
 // 10-bit 4:4:4, plus 8/10-bit 4:4:4 screen-content clips that require luma and
 // chroma palette prediction, 8/10-bit 4:4:4 CDEF/restoration clips, 8/10-bit
 // 4:4:4 film-grain clips, a 10-bit 4:4:4 inter multi-tile clip, a profile-0
-// hidden S_FRAME altref stream, and 8/10-bit 4:4:4 super-res clips that run
+// hidden S_FRAME altref stream, a 12-bit profile-2 4:4:4 inter multi-tile
+// clip, and 8/10-bit 4:4:4 super-res clips that run
 // the caller-owned full postfilter output path, including inter streams that
 // reference super-res output and a high-bit-depth super-res + loop-restoration
 // clip. All are committed under
@@ -274,6 +275,11 @@
 //	  input_bit_depth=12, chroma_subsampling_x=0, chroma_subsampling_y=0,
 //	  cpu-used=1, q=28, kf-max-dist=999, lag-in-frames=0,
 //	  enable-cdef=1, enable-restoration=1.
+//	# 4:4:4 12-bit inter multi-tile:
+//	libaom encoder API, AOM_IMG_FMT_I44416, profile=2, bit_depth=12,
+//	  input_bit_depth=12, chroma_subsampling_x=0, chroma_subsampling_y=0,
+//	  cpu-used=1, q=28, kf-max-dist=999, lag-in-frames=0,
+//	  tile-columns=1, tile-rows=0.
 //	# 4:2:0 12-bit:
 //	aomenc --i420 ... --profile=2 --bit-depth=12 --input-bit-depth=12 \
 //	  --cq-level=40 ... -o profile2-420-12bit-64x64.ivf src420_12.yuv
@@ -597,6 +603,31 @@ var profileClips = []profileClip{
 		wantCDEFFrames:        1,
 		wantRestorationFrames: 1,
 		wantInterFrames:       7,
+	},
+	{
+		// Profile 2: 4:4:4 12-bit inter multi-tile, combining maximum bit
+		// depth, non-subsampled chroma, reference frames, and split tile
+		// layout.
+		name: "profile2-444-12bit-multitile-inter-2x1-160x128",
+		file: "profile2-444-12bit-multitile-inter-2x1-160x128.ivf",
+		frameMD5Hex: []string{
+			"3e339124189e6c7f3e40b93c92e67370",
+			"45ebaa04f5ea7cdbc4df45822db02580",
+			"1eb4a8dae07e0021bbd7bc6be014a93a",
+			"40940460c998437870e1b16a696c37c6",
+			"789b991fbfb17892c6c661a668cd3bad",
+			"80e11012fc9f000836a67b06c3b94e52",
+			"6b2ba8536258e846f8c9ff2d5b6ecb91",
+			"c0d08ad798151532ba78d94d0104b7b7",
+		},
+		wantSeqProfile:     2,
+		wantBitDepth:       12,
+		wantSubsamplingX:   false,
+		wantSubsamplingY:   false,
+		wantInterFrames:    7,
+		wantTileCols:       2,
+		wantTileRows:       1,
+		wantTileGroupTiles: 2,
 	},
 	{
 		// Profile 1: 4:4:4 8-bit INTER. 8 frames (1 keyframe + 7 inter,
