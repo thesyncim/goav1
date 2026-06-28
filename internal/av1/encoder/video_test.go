@@ -3,6 +3,9 @@ package encoder_test
 import (
 	"fmt"
 	"math/rand"
+	"os"
+	"os/exec"
+	"runtime"
 	"testing"
 
 	goav1 "github.com/thesyncim/goav1"
@@ -259,6 +262,53 @@ func TestKeyframeEncoder1080pHotPathAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("1080p reusable keyframe allocations=%f want 0", allocs)
+	}
+}
+
+func TestKeyframeEncoder1080pMulticoreMemStatsAllocs(t *testing.T) {
+	if os.Getenv("GOAV1_ENCODER_1080P_ALLOC_CHILD") != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestKeyframeEncoder1080pMulticoreMemStatsAllocs$")
+		cmd.Env = append(os.Environ(), "GOAV1_ENCODER_1080P_ALLOC_CHILD=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("isolated 1080p allocation guard failed: %v\n%s", err, out)
+		}
+		return
+	}
+
+	const w, h = 1920, 1080
+	f := makeEncoder1080pFrame(0)
+	enc, err := encoder.NewKeyframeEncoder(w, h, 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = enc.Close() })
+	if err := enc.Prewarm(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if tu, recon, err := enc.Encode(f); err != nil {
+			t.Fatal(err)
+		} else if len(tu) == 0 || len(recon.Y) == 0 {
+			t.Fatal("empty reusable keyframe output")
+		}
+	}
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for i := 0; i < 16; i++ {
+		if tu, recon, err := enc.Encode(f); err != nil {
+			t.Fatal(err)
+		} else if len(tu) == 0 || len(recon.Y) == 0 {
+			t.Fatal("empty reusable keyframe output")
+		}
+	}
+	runtime.ReadMemStats(&after)
+	if bytes := after.TotalAlloc - before.TotalAlloc; bytes != 0 {
+		t.Fatalf("1080p multicore reusable keyframe bytes allocated=%d want 0", bytes)
+	}
+	if mallocs := after.Mallocs - before.Mallocs; mallocs != 0 {
+		t.Fatalf("1080p multicore reusable keyframe mallocs=%d want 0", mallocs)
 	}
 }
 

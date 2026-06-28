@@ -27,7 +27,10 @@ func BenchmarkWebRTCStreamEncodePictureModes(b *testing.B) {
 			if err != nil {
 				b.Fatalf("NewWebRTCStreamConfig(%s): %v", mode, err)
 			}
-			b.Cleanup(func() { _ = stream.Close() })
+			b.Cleanup(func() {
+				b.StopTimer()
+				_ = stream.Close()
+			})
 			frames := make([]encoder.SourceFrame420, 8)
 			for i := range frames {
 				frames[i] = webRTCDecodeMatrixFrame(int(cfg.Resolution.Width), int(cfg.Resolution.Height), i)
@@ -63,7 +66,10 @@ func BenchmarkWebRTCStreamEncodePicture1080p(b *testing.B) {
 			if err != nil {
 				b.Fatalf("NewWebRTCStreamConfig(%s): %v", mode, err)
 			}
-			b.Cleanup(func() { _ = stream.Close() })
+			b.Cleanup(func() {
+				b.StopTimer()
+				_ = stream.Close()
+			})
 			frames := []encoder.SourceFrame420{
 				makeEncoder1080pFrame(0),
 				makeEncoder1080pFrame(1),

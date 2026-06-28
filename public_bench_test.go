@@ -14,7 +14,10 @@ func BenchmarkPublicKeyframeEncoderEncode1080p(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewKeyframeEncoder: %v", err)
 	}
-	b.Cleanup(func() { _ = enc.Close() })
+	b.Cleanup(func() {
+		b.StopTimer()
+		_ = enc.Close()
+	})
 	frames := [...]av1.I420Frame{
 		publicRTCMatrixFrame(width, height, 0),
 		publicRTCMatrixFrame(width, height, 1),
@@ -56,7 +59,10 @@ func BenchmarkPublicRTCEncoderEncodePicture1080p(b *testing.B) {
 			if err != nil {
 				b.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
-			b.Cleanup(func() { _ = enc.Close() })
+			b.Cleanup(func() {
+				b.StopTimer()
+				_ = enc.Close()
+			})
 
 			frames := [...]av1.I420Frame{
 				publicRTCMatrixFrame(width, height, 0),
@@ -265,7 +271,10 @@ func BenchmarkPublicDecodeRTPPayload(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewDecoderFromRTPPayloads: %v", err)
 	}
-	b.Cleanup(func() { dec.Close() })
+	b.Cleanup(func() {
+		b.StopTimer()
+		dec.Close()
+	})
 
 	bytesPerRun := 0
 	for _, payload := range rtpPayloads {
@@ -306,7 +315,10 @@ func BenchmarkPublicDecodeRTPPayload1080p(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewDecoderFromRTPPayloads: %v", err)
 	}
-	b.Cleanup(func() { dec.Close() })
+	b.Cleanup(func() {
+		b.StopTimer()
+		dec.Close()
+	})
 
 	bytesPerRun := publicRTPPayloadBytes(rtpPayloads)
 	decodeAll := func() int {
@@ -345,7 +357,10 @@ func BenchmarkPublicLayeredDecodeRTPPayload1080p(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewLayeredDecoderFromRTPPayloads: %v", err)
 	}
-	b.Cleanup(func() { dec.Close() })
+	b.Cleanup(func() {
+		b.StopTimer()
+		dec.Close()
+	})
 
 	bytesPerRun := publicRTPPayloadBytes(rtpPayloads)
 	decodeAll := func() int {

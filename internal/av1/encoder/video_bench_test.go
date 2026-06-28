@@ -115,6 +115,7 @@ func BenchmarkVideoEncoderPFrame1080p(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() {
+		b.StopTimer()
 		_ = enc.Close()
 	})
 	if err := enc.Prewarm(); err != nil {
@@ -158,6 +159,7 @@ func BenchmarkEncodeKeyframe1080p(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() {
+		b.StopTimer()
 		_ = enc.Close()
 	})
 	if err := enc.Prewarm(); err != nil {
@@ -231,6 +233,7 @@ func BenchmarkEncodeKeyframeReusable1080p(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() {
+		b.StopTimer()
 		_ = enc.Close()
 	})
 	if err := enc.Prewarm(); err != nil {
@@ -301,6 +304,7 @@ func BenchmarkVideoEncoderPFramePan1080p(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() {
+		b.StopTimer()
 		_ = enc.Close()
 	})
 	frames := make([]encoder.SourceFrame420, 32)
@@ -343,6 +347,7 @@ func BenchmarkStreamingKeyframe1080p(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() {
+		b.StopTimer()
 		_ = enc.Close()
 	})
 	if err := enc.Prewarm(); err != nil {
