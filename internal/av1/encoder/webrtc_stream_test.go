@@ -139,6 +139,27 @@ func TestWebRTCStreamAcceptedScalabilityModesDecode(t *testing.T) {
 	}
 }
 
+func TestWebRTCStreamAcceptedScalabilityModesCoverExportedModes(t *testing.T) {
+	modes := acceptedWebRTCStreamPixelModes()
+	if len(modes) != encoder.WebRTCScalabilityModeCount() {
+		t.Fatalf("accepted mode count=%d want exported count=%d", len(modes), encoder.WebRTCScalabilityModeCount())
+	}
+	seen := make(map[encoder.ScalabilityMode]bool, len(modes))
+	for _, mode := range modes {
+		if !mode.Valid() {
+			t.Fatalf("accepted invalid mode %d", mode)
+		}
+		if seen[mode] {
+			t.Fatalf("accepted duplicate mode %s", mode)
+		}
+		seen[mode] = true
+		parsed, ok := encoder.ParseScalabilityMode(mode.String())
+		if !ok || parsed != mode {
+			t.Fatalf("mode %s parse round trip=(%s,%v)", mode, parsed, ok)
+		}
+	}
+}
+
 func TestWebRTCStreamControlCombinationMatrixDecode(t *testing.T) {
 	for _, mode := range acceptedWebRTCStreamPixelModes() {
 		t.Run(mode.String(), func(t *testing.T) {
@@ -290,45 +311,7 @@ func TestWebRTCStream1080pHotPathAllocs(t *testing.T) {
 }
 
 func acceptedWebRTCStreamPixelModes() []encoder.ScalabilityMode {
-	return []encoder.ScalabilityMode{
-		encoder.ScalabilityModeL1T1,
-		encoder.ScalabilityModeL1T2,
-		encoder.ScalabilityModeL1T3,
-		encoder.ScalabilityModeL2T1,
-		encoder.ScalabilityModeL2T1h,
-		encoder.ScalabilityModeL2T1_KEY,
-		encoder.ScalabilityModeL2T2,
-		encoder.ScalabilityModeL2T2h,
-		encoder.ScalabilityModeL2T2_KEY,
-		encoder.ScalabilityModeL2T2_KEY_SHIFT,
-		encoder.ScalabilityModeL2T3,
-		encoder.ScalabilityModeL2T3h,
-		encoder.ScalabilityModeL2T3_KEY,
-		encoder.ScalabilityModeL2T3_KEY_SHIFT,
-		encoder.ScalabilityModeL3T1,
-		encoder.ScalabilityModeL3T1h,
-		encoder.ScalabilityModeL3T1_KEY,
-		encoder.ScalabilityModeL3T2,
-		encoder.ScalabilityModeL3T2h,
-		encoder.ScalabilityModeL3T2_KEY,
-		encoder.ScalabilityModeL3T2_KEY_SHIFT,
-		encoder.ScalabilityModeL3T3,
-		encoder.ScalabilityModeL3T3h,
-		encoder.ScalabilityModeL3T3_KEY,
-		encoder.ScalabilityModeL3T3_KEY_SHIFT,
-		encoder.ScalabilityModeS2T1,
-		encoder.ScalabilityModeS2T1h,
-		encoder.ScalabilityModeS2T2,
-		encoder.ScalabilityModeS2T2h,
-		encoder.ScalabilityModeS2T3,
-		encoder.ScalabilityModeS2T3h,
-		encoder.ScalabilityModeS3T1,
-		encoder.ScalabilityModeS3T1h,
-		encoder.ScalabilityModeS3T2,
-		encoder.ScalabilityModeS3T2h,
-		encoder.ScalabilityModeS3T3,
-		encoder.ScalabilityModeS3T3h,
-	}
+	return encoder.AppendWebRTCScalabilityModes(make([]encoder.ScalabilityMode, 0, encoder.WebRTCScalabilityModeCount()))
 }
 
 func webRTC1080pAllocConfig(mode encoder.ScalabilityMode) encoder.Config {

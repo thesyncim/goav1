@@ -293,6 +293,11 @@ func TestKeyframeEncoder1080pMulticoreMemStatsAllocs(t *testing.T) {
 			t.Fatal("empty reusable keyframe output")
 		}
 	}
+	// Exclude runtime channel wait-state allocation from workers parking after
+	// the warmup encodes; the guard below measures only the hot Encode calls.
+	for i := 0; i < 4; i++ {
+		runtime.Gosched()
+	}
 
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
