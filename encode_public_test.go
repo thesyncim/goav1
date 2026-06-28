@@ -187,6 +187,106 @@ func TestPublicVideoEncoderRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPublicKeyframeEncoderRoundTripAnd1080pAllocs(t *testing.T) {
+	const w, h = 1920, 1080
+	enc, err := goav1.NewKeyframeEncoder(w, h, 80)
+	if err != nil {
+		t.Fatalf("NewKeyframeEncoder: %v", err)
+	}
+	defer enc.Close()
+
+	frames := [...]goav1.I420Frame{
+		publicRTCMatrixFrame(w, h, 0),
+		publicRTCMatrixFrame(w, h, 1),
+		publicRTCMatrixFrame(w, h, 2),
+		publicRTCMatrixFrame(w, h, 3),
+	}
+	out, err := enc.Encode(frames[0])
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if !out.Keyframe || out.TemporalID != 0 || len(out.Data) == 0 {
+		t.Fatalf("encoded frame key=%v tid=%d len=%d", out.Keyframe, out.TemporalID, len(out.Data))
+	}
+	publicAssertI420TUDecodesToRecon(t, out.Data, enc.Reconstruction())
+	if err := enc.SetQIndex(72); err != nil {
+		t.Fatalf("SetQIndex: %v", err)
+	}
+	if out, err = enc.Encode(frames[1]); err != nil {
+		t.Fatalf("Encode after SetQIndex: %v", err)
+	} else if !out.Keyframe || len(out.Data) == 0 {
+		t.Fatalf("encoded frame after SetQIndex key=%v len=%d", out.Keyframe, len(out.Data))
+	}
+
+	var allocErr error
+	frameIndex := 0
+	sum := 0
+	allocs := testing.AllocsPerRun(5, func() {
+		out, err := enc.Encode(frames[frameIndex&3])
+		frameIndex++
+		if err != nil {
+			allocErr = err
+			return
+		}
+		recon := enc.Reconstruction()
+		if !out.Keyframe || len(out.Data) == 0 || len(recon.Y) == 0 {
+			allocErr = fmt.Errorf("empty keyframe output")
+			return
+		}
+		sum += len(out.Data) + len(recon.Y)
+	})
+	publicRTCEncoderHotPathSink = sum
+	if allocErr != nil {
+		t.Fatalf("Encode allocation run: %v", allocErr)
+	}
+	if allocs != 0 {
+		t.Fatalf("KeyframeEncoder Encode 1080p allocations=%f want 0", allocs)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	if _, err := enc.Encode(frames[2]); err == nil {
+		t.Fatal("Encode after Close succeeded")
+	}
+}
+
+func publicAssertI420TUDecodesToRecon(t *testing.T, tu []byte, recon goav1.I420Frame) {
+	t.Helper()
+	dec, err := goav1.NewDecoder([][]byte{append([]byte(nil), tu...)})
+	if err != nil {
+		t.Fatalf("NewDecoder: %v", err)
+	}
+	defer dec.Close()
+	frames, err := dec.DecodeAll()
+	if err != nil {
+		t.Fatalf("DecodeAll: %v", err)
+	}
+	if len(frames) != 1 {
+		t.Fatalf("decoded %d frames, want 1", len(frames))
+	}
+	got := frames[0]
+	for y := 0; y < recon.Height; y++ {
+		gotRow := got.Y.Pix[y*got.Y.Stride : y*got.Y.Stride+recon.Width]
+		wantRow := recon.Y[y*recon.YStride : y*recon.YStride+recon.Width]
+		if !bytes.Equal(gotRow, wantRow) {
+			t.Fatalf("decoded Y row %d mismatch", y)
+		}
+	}
+	chromaW, chromaH := recon.Width/2, recon.Height/2
+	for y := 0; y < chromaH; y++ {
+		gotU := got.U.Pix[y*got.U.Stride : y*got.U.Stride+chromaW]
+		gotV := got.V.Pix[y*got.V.Stride : y*got.V.Stride+chromaW]
+		wantU := recon.U[y*recon.ChromaStride : y*recon.ChromaStride+chromaW]
+		wantV := recon.V[y*recon.ChromaStride : y*recon.ChromaStride+chromaW]
+		if !bytes.Equal(gotU, wantU) || !bytes.Equal(gotV, wantV) {
+			t.Fatalf("decoded chroma row %d mismatch", y)
+		}
+	}
+}
+
 func TestPublicEncodeI400KeyframeNativeMonochrome(t *testing.T) {
 	const w, h, stride = 96, 64, 112
 	src := goav1.I400Frame{

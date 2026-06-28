@@ -98,6 +98,10 @@ check_zero_alloc_benchmarks_at_least 6 '^Benchmark.*1080p' "$encoder1080_out"
 
 # Keep the public 1080p benchmark canaries isolated from each other so runtime
 # first touches in one benchmark do not get charged to a later hot-path row.
+public_keyframe1080_out=$(GOMAXPROCS=1 GOGC=off go test . -run '^$' -bench='^BenchmarkPublicKeyframeEncoderEncode1080p$' -benchmem -benchtime="$bench1080_time" -count=1)
+printf '%s\n' "$public_keyframe1080_out"
+check_zero_alloc_benchmarks 1 '^BenchmarkPublicKeyframeEncoderEncode1080p' "$public_keyframe1080_out"
+
 public_rtc1080_out=$(GOMAXPROCS=1 GOGC=off go test . -run '^$' -bench='^BenchmarkPublicRTCEncoderEncodePicture1080p$' -benchmem -benchtime="$bench1080_time" -count=1)
 printf '%s\n' "$public_rtc1080_out"
 check_zero_alloc_benchmarks 2 '^BenchmarkPublicRTCEncoderEncodePicture1080p' "$public_rtc1080_out"

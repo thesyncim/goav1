@@ -338,6 +338,72 @@ type EncodedFrame struct {
 	TemporalID uint8
 }
 
+// KeyframeEncoder encodes repeated shown 8-bit 4:2:0 keyframes with reusable
+// state. Returned Data and Reconstruction planes alias encoder-owned storage and
+// remain valid until the next Encode call.
+type KeyframeEncoder struct {
+	enc   *encoder.KeyframeEncoder
+	recon I420Frame
+}
+
+// NewKeyframeEncoder creates a reusable keyframe-only encoder for same-sized
+// 8-bit 4:2:0 frames. qIndex must be 1..255.
+func NewKeyframeEncoder(width, height int, qIndex uint8) (*KeyframeEncoder, error) {
+	enc, err := encoder.NewKeyframeEncoder(width, height, qIndex)
+	if err != nil {
+		return nil, err
+	}
+	if err := enc.Prewarm(); err != nil {
+		_ = enc.Close()
+		return nil, err
+	}
+	return &KeyframeEncoder{enc: enc}, nil
+}
+
+// SetQIndex updates the keyframe quantizer for subsequent Encode calls.
+func (e *KeyframeEncoder) SetQIndex(qIndex uint8) error {
+	if e == nil || e.enc == nil {
+		return fmt.Errorf("goav1: KeyframeEncoder is not initialized")
+	}
+	return e.enc.SetQIndex(qIndex)
+}
+
+// Encode emits frame as a shown keyframe.
+func (e *KeyframeEncoder) Encode(frame I420Frame) (EncodedFrame, error) {
+	if e == nil || e.enc == nil {
+		return EncodedFrame{}, fmt.Errorf("goav1: KeyframeEncoder is not initialized")
+	}
+	if err := validateI420Frame(frame); err != nil {
+		return EncodedFrame{}, err
+	}
+	tu, recon, err := e.enc.Encode(frame)
+	if err != nil {
+		return EncodedFrame{}, err
+	}
+	e.recon = recon
+	return EncodedFrame{Data: tu, Keyframe: true}, nil
+}
+
+// Reconstruction returns the most recent keyframe reconstruction. The planes
+// alias encoder-owned buffers that are reused by the next Encode call.
+func (e *KeyframeEncoder) Reconstruction() I420Frame {
+	if e == nil || e.enc == nil {
+		return I420Frame{}
+	}
+	return e.recon
+}
+
+// Close waits for any background encoder work to finish and releases
+// persistent workers. It is safe to call more than once.
+func (e *KeyframeEncoder) Close() error {
+	if e == nil || e.enc == nil {
+		return nil
+	}
+	err := e.enc.Close()
+	e.enc = nil
+	return err
+}
+
 // VideoEncoder encodes a stream of same-sized 4:2:0 frames.
 type VideoEncoder struct {
 	enc           *encoder.VideoEncoder

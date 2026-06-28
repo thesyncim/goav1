@@ -8,6 +8,37 @@ import (
 
 var publicBenchmarkSink int
 
+func BenchmarkPublicKeyframeEncoderEncode1080p(b *testing.B) {
+	const width, height = 1920, 1080
+	enc, err := av1.NewKeyframeEncoder(width, height, 80)
+	if err != nil {
+		b.Fatalf("NewKeyframeEncoder: %v", err)
+	}
+	b.Cleanup(func() { _ = enc.Close() })
+	frames := [...]av1.I420Frame{
+		publicRTCMatrixFrame(width, height, 0),
+		publicRTCMatrixFrame(width, height, 1),
+		publicRTCMatrixFrame(width, height, 2),
+		publicRTCMatrixFrame(width, height, 3),
+	}
+	if _, err := enc.Encode(frames[0]); err != nil {
+		b.Fatalf("warm Encode: %v", err)
+	}
+
+	b.SetBytes(int64(width * height * 3 / 2))
+	b.ReportAllocs()
+	b.ResetTimer()
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		out, err := enc.Encode(frames[i&3])
+		if err != nil {
+			b.Fatalf("Encode: %v", err)
+		}
+		sum += len(out.Data) + len(enc.Reconstruction().Y)
+	}
+	publicBenchmarkSink = sum
+}
+
 func BenchmarkPublicRTCEncoderEncodePicture1080p(b *testing.B) {
 	for _, tc := range []struct {
 		name string

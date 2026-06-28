@@ -200,7 +200,7 @@ Encoder implementation is scoped to realtime WebRTC AV1. It is not intended to
 be an offline encoder, a full authoring tool, or a general replacement for
 `aomenc`.
 
-There are two public encoder surfaces:
+There are three public encoder surfaces:
 
 - `VideoEncoder` / `RTCEncoder` is the friendly realtime pixel encoder. It
   accepts 8-bit I420, I422, I444, I400, NV12, and NV21 input plus generic
@@ -265,6 +265,9 @@ There are two public encoder surfaces:
   picture or signal a narrower active decode-target mask. `SetTileColumns` and
   `SetGoldenInterval` let callers
   retune tile parallelism and golden-reference refresh policy between frames.
+- `KeyframeEncoder` is the reusable 8-bit I420 keyframe-only surface. It keeps
+  keyframe output and reconstruction storage encoder-owned, giving realtime
+  callers a zero-allocation alternative to owned-output one-shot helpers.
 - `WebRTCEncoder` is the lower-level control/metadata surface for WebRTC
   picture scheduling. It validates the W3C AV1 SVC mode vocabulary
   (`L*T*`, `L*T*h`, `L*T*_KEY`, `L*T*_KEY_SHIFT`, and `S*T*`/`S*T*h`
@@ -302,7 +305,8 @@ encoder's own reconstruction in this package's decoder and in aomdec/dav1d
 (enforced by the test gates), including single-spatial and simulcast WebRTC
 settings cycles and shared-reference SVC paths that change bitrate, framerate,
 rate control, and scalability. The public WebRTC 1080p encode/decode RTP hot
-paths and internal 1080p streaming encoder hot paths are guarded at
+paths, public reusable 1080p keyframe path, and internal 1080p streaming encoder
+hot paths are guarded at
 `0 B/op` and `0 allocs/op` by `make alloc`; cold one-shot helpers may still
 allocate returned buffers. See
 `ExampleVideoEncoder` and `ExampleRTCEncoder` for
