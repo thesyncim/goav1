@@ -997,7 +997,12 @@ func encodeLosslessHighBitDepth420KeyframeBlock(w *entropy.Writer, src SourceFra
 func encodeLosslessTXB(w *entropy.Writer, cdfs *tile.CoeffCDFs, ctx *tile.CoeffEntropyContext,
 	ctxReq tile.CoeffContextRequest, plane []byte, stride, px, py int,
 	scan []int16, levels []uint8) error {
+	return encodeLosslessTXBWithHook(w, cdfs, ctx, ctxReq, plane, stride, px, py, scan, levels, nil)
+}
 
+func encodeLosslessTXBWithHook(w *entropy.Writer, cdfs *tile.CoeffCDFs, ctx *tile.CoeffEntropyContext,
+	ctxReq tile.CoeffContextRequest, plane []byte, stride, px, py int,
+	scan []int16, levels []uint8, afterSkip func() error) error {
 	dc := dcPredictN(plane, stride, px, py, 4, py > 0, px > 0)
 
 	var residual [16]int16
@@ -1015,7 +1020,7 @@ func encodeLosslessTXB(w *entropy.Writer, cdfs *tile.CoeffCDFs, ctx *tile.CoeffE
 	for i, v := range wht {
 		coeffs[i] = int16(v >> 2) // qindex 0: dequant 4 restores the x4 WHT scale
 	}
-	_, err := tile.WriteCoefficientsTXBWithContext(w, cdfs, ctx, ctxReq, transform.Class2D, coeffs[:], scan, levels)
+	_, err := tile.WriteCoefficientsTXBWithContextHook(w, cdfs, ctx, ctxReq, transform.Class2D, coeffs[:], scan, levels, afterSkip)
 	return err
 }
 

@@ -106,6 +106,91 @@ func TestEncodedStreamDecodesInReferenceDecoders(t *testing.T) {
 	}
 }
 
+func TestEncodedLosslessPFrameDecodesInReferenceDecoders(t *testing.T) {
+	aomdec, err := exec.LookPath("aomdec")
+	if err != nil {
+		t.Skip("aomdec not on PATH")
+	}
+	const w, h = 96, 64
+	cw, ch := w/2, h/2
+	makeFrame := func(seed int) encoder.SourceFrame420 {
+		rng := rand.New(rand.NewSource(int64(seed)))
+		f := encoder.SourceFrame420{
+			Y:            make([]byte, w*h),
+			U:            make([]byte, cw*ch),
+			V:            make([]byte, cw*ch),
+			YStride:      w,
+			ChromaStride: cw,
+			Width:        w,
+			Height:       h,
+		}
+		for y := range h {
+			for x := range w {
+				f.Y[y*w+x] = uint8((x*5 + y*3 + rng.Intn(41)) & 0xff)
+			}
+		}
+		for y := range ch {
+			for x := range cw {
+				f.U[y*cw+x] = uint8((84 + x*9 + y*5 + rng.Intn(17)) & 0xff)
+				f.V[y*cw+x] = uint8((168 + x*3 + y*7 + rng.Intn(29)) & 0xff)
+			}
+		}
+		return f
+	}
+	src1 := makeFrame(101)
+	src2 := makeFrame(202)
+	keyTU, keyRecon, err := encoder.EncodeKeyframe(src1, 72)
+	if err != nil {
+		t.Fatalf("encode keyframe: %v", err)
+	}
+	pTU, pRecon, err := encoder.EncodePFrame(src2, keyRecon, 0)
+	if err != nil {
+		t.Fatalf("encode lossless p-frame: %v", err)
+	}
+
+	stream := ivf.AppendFileHeader(nil, w, h, 30, 1, 2)
+	stream = ivf.AppendFrame(stream, keyTU, 0)
+	stream = ivf.AppendFrame(stream, pTU, 1)
+	wantYUV := make([]byte, 0, 2*(w*h+2*cw*ch))
+	wantYUV = append(wantYUV, keyRecon.Y...)
+	wantYUV = append(wantYUV, keyRecon.U...)
+	wantYUV = append(wantYUV, keyRecon.V...)
+	wantYUV = append(wantYUV, pRecon.Y...)
+	wantYUV = append(wantYUV, pRecon.U...)
+	wantYUV = append(wantYUV, pRecon.V...)
+
+	dir := t.TempDir()
+	ivfPath := filepath.Join(dir, "lossless-p.ivf")
+	if err := os.WriteFile(ivfPath, stream, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check := func(name, bin string, args ...string) {
+		outPath := filepath.Join(dir, name+".yuv")
+		cmd := exec.Command(bin, append(args, ivfPath)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s failed: %v\n%s", name, err, out)
+		}
+		got, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("read %s output: %v", name, err)
+		}
+		if !bytes.Equal(got, wantYUV) {
+			for i := range min(len(got), len(wantYUV)) {
+				if got[i] != wantYUV[i] {
+					t.Fatalf("%s output differs first at byte %d: got %d want %d", name, i, got[i], wantYUV[i])
+				}
+			}
+			t.Fatalf("%s output %d bytes, want %d", name, len(got), len(wantYUV))
+		}
+		t.Logf("%s: qindex-0 P-frame stream bit-exact", name)
+	}
+	check("aomdec", aomdec, "--rawvideo", "-o", filepath.Join(dir, "aomdec.yuv"))
+	if dav1d, err := exec.LookPath("dav1d"); err == nil {
+		check("dav1d", dav1d, "--muxer", "yuv", "-o", filepath.Join(dir, "dav1d.yuv"), "-i")
+	}
+}
+
 func TestEncodedMonochromeKeyframeDecodesInReferenceDecoders(t *testing.T) {
 	aomdec, err := exec.LookPath("aomdec")
 	if err != nil {

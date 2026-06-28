@@ -34,9 +34,6 @@ func EncodePFrame(src SourceFrame420, ref SourceFrame420, qIndex uint8) ([]byte,
 	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: P-frame requires multiple-of-8 dimensions, got %dx%d", src.Width, src.Height)
 	}
-	if qIndex == 0 {
-		return nil, SourceFrame420{}, fmt.Errorf("encoder: qindex 0 lossless inter coding is not supported")
-	}
 	recon := SourceFrame420{
 		Y:            make([]byte, len(src.Y)),
 		U:            make([]byte, len(src.U)),
@@ -442,6 +439,9 @@ func (pc *pframeCoder) encodeMonochromeTileWithOptions(src SourceFrameMono, ref 
 }
 
 func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, qIndex uint8, prev *frameCDFs, referenceMode parser.ReferenceMode, forceIntegerMV bool, allowScreenContentTools bool, color parser.ColorConfig, miColStart, miColEnd uint16) ([]byte, error) {
+	if qIndex == 0 {
+		return pc.encodeLosslessIntraInterTile(src, recon, prev, forceIntegerMV, allowScreenContentTools, color, miColStart, miColEnd)
+	}
 	miCols := uint16(src.Width / 4)
 	miRows := uint16(src.Height / 4)
 	const sbSizeMIB = 16
@@ -818,6 +818,226 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		return nil, err
 	}
 	return pc.writer.Finish()
+}
+
+func (pc *pframeCoder) encodeLosslessIntraInterTile(src SourceFrame420, recon *SourceFrame420, prev *frameCDFs, forceIntegerMV bool, allowScreenContentTools bool, color parser.ColorConfig, miColStart, miColEnd uint16) ([]byte, error) {
+	miRows := uint16(src.Height / 4)
+	const sbSizeMIB = 16
+	rootCols := (int(miColEnd-miColStart) + sbSizeMIB - 1) / sbSizeMIB
+	if err := pc.reset(0, rootCols, prev, color); err != nil {
+		return nil, err
+	}
+	st := &pc.st
+	st.forceIntegerMV = forceIntegerMV
+	st.allowScreenContentTools = allowScreenContentTools
+	st.transformMode = parser.TransformMode4x4Only
+	st.lfMap = nil
+	st.decisionStats = nil
+	if pc.decisionStatsEnabled {
+		pc.decisionStats.Reset()
+		pc.decisionStats.Tiles = 1
+		st.decisionStats = &pc.decisionStats
+	}
+
+	pc.writer.Reset(pc.writerBuf[:0])
+	st.w = &pc.writer
+	st.intraTxTypeReq = tile.IntraTransformTypeRequest{
+		Size:        tile.TransformSize4x4,
+		Mode:        tile.IntraModeDC,
+		Lossless:    true,
+		QIndexKnown: true,
+		QIndex:      0,
+	}
+	if st.afterSkipIntra == nil {
+		st.afterSkipIntra = func() error {
+			return tile.WriteIntraTransformType(st.w, &st.txCDFs, st.intraTxTypeReq, transform.TypeDCTDCT)
+		}
+	}
+
+	scratch := &pc.scratch
+	carrier := &pc.carrier
+	walkReq := tile.BlockWalkRequest{
+		Root:       tile.BlockLevel64x64,
+		MIColStart: miColStart,
+		MIColEnd:   miColEnd,
+		MIRowEnd:   miRows,
+	}
+	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
+		if level == tile.BlockLevel8x8 {
+			return tile.PartitionNone, nil
+		}
+		return tile.PartitionSplit, nil
+	}
+	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
+		return st.encodeLosslessIntraInterBlock(src, block, scratch)
+	}
+	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
+		return nil, err
+	}
+	copyLosslessTileSourceToRecon(src, recon, color, miColStart, miColEnd)
+	return pc.writer.Finish()
+}
+
+func (st *lossyEncodeState) encodeLosslessIntraInterBlock(src SourceFrame420, block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
+	dims, ok := block.Size.Dimensions()
+	if !ok || dims.W4 < 2 || dims.H4 < 2 {
+		return fmt.Errorf("encoder: unexpected lossless intra-inter block %+v", block)
+	}
+	modeCtx := &scratch.Mode
+	coeffCtx := &scratch.CoeffCtx
+	const lumaMode = tile.IntraModeDC
+	const chromaMode = tile.ChromaIntraModeDC
+
+	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
+	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, false); err != nil {
+		return fmt.Errorf("lossless intra-inter skip: %w", err)
+	}
+	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
+		return fmt.Errorf("lossless intra-inter mark prefix: %w", err)
+	}
+	modeCtx.TxNeighborValid = false
+	if int(block.X4) < tile.MaxBlockModeSlots && int(block.Y4) < tile.MaxBlockModeSlots {
+		modeCtx.TxNeighborValid = true
+		modeCtx.TxAboveNeighborIntra = modeCtx.AboveIntra[block.X4]
+		modeCtx.TxAboveNeighborBlockSize = modeCtx.AboveBlockSize[block.X4]
+		modeCtx.TxLeftNeighborIntra = modeCtx.LeftIntra[block.Y4]
+		modeCtx.TxLeftNeighborBlockSize = modeCtx.LeftBlockSize[block.Y4]
+	}
+	if err := tile.WriteIntraFlag(st.w, &st.intraCDFs, modeCtx, tile.IntraFlagRequest{
+		FrameType: parser.FrameTypeInter,
+		X4:        block.X4, Y4: block.Y4,
+		HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
+	}, true); err != nil {
+		return fmt.Errorf("lossless intra-inter intra flag: %w", err)
+	}
+	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
+		FrameType: parser.FrameTypeInter,
+		Size:      block.Size, X4: block.X4, Y4: block.Y4,
+	}, lumaMode); err != nil {
+		return fmt.Errorf("lossless intra-inter luma mode: %w", err)
+	}
+	if err := modeCtx.MarkIntra(block.Size, int(block.X4), int(block.Y4), true, lumaMode); err != nil {
+		return fmt.Errorf("lossless intra-inter mark intra: %w", err)
+	}
+	if err := tile.WriteIntraAngleDelta(st.w, &st.intraCDFs, tile.IntraAngleDeltaRequest{
+		Size: block.Size, Mode: lumaMode,
+	}, 0); err != nil {
+		return fmt.Errorf("lossless intra-inter angle delta: %w", err)
+	}
+	hasChroma := !st.color.MonoChrome
+	if hasChroma {
+		cflAllowed, err := tile.ChromaIntraCFLAllowed(block.Size, st.color, false)
+		if err != nil {
+			return fmt.Errorf("lossless intra-inter cfl allowed: %w", err)
+		}
+		if err := tile.WriteChromaIntraMode(st.w, &st.intraCDFs, tile.ChromaIntraModeRequest{
+			Size: block.Size, LumaMode: lumaMode, CFLAllowed: cflAllowed,
+		}, chromaMode, tile.CFLAlphaResult{}); err != nil {
+			return fmt.Errorf("lossless intra-inter chroma mode: %w", err)
+		}
+		if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, chromaMode); err != nil {
+			return fmt.Errorf("lossless intra-inter mark chroma: %w", err)
+		}
+		if err := st.writeNoPaletteMode(modeCtx, block, lumaMode, chromaMode, true); err != nil {
+			return err
+		}
+	} else if err := st.writeNoPaletteMode(modeCtx, block, lumaMode, chromaMode, false); err != nil {
+		return err
+	}
+
+	if _, err := tile.WriteTransformTree(st.w, &st.treeCDFs, modeCtx, tile.TransformTreeRequest{
+		Size: block.Size, X4: block.X4, Y4: block.Y4,
+		VisibleW4: block.VisibleW4, VisibleH4: block.VisibleH4,
+		HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
+		Color: st.color, TransformMode: parser.TransformMode4x4Only,
+		Lossless: true,
+	}, tile.TransformTreeResult{Y: tile.TransformSize4x4}); err != nil {
+		return fmt.Errorf("lossless intra-inter transform tree: %w", err)
+	}
+
+	lumaPX := int(block.MICol) * 4
+	lumaPY := int(block.MIRow) * 4
+	st.intraTxTypeReq.Mode = lumaMode
+	st.intraTxTypeReq.Size = tile.TransformSize4x4
+	st.intraTxTypeReq.Lossless = true
+	for ty := range int(block.VisibleH4) {
+		for tx := range int(block.VisibleW4) {
+			if err := encodeLosslessTXBWithHook(st.w, &st.coeffCDFs, coeffCtx, tile.CoeffContextRequest{
+				Plane:      0,
+				PlaneBlock: block.Size,
+				Size:       tile.TransformSize4x4,
+				X4:         block.X4 + uint8(tx),
+				Y4:         block.Y4 + uint8(ty),
+			}, src.Y, src.YStride, lumaPX+tx*4, lumaPY+ty*4, st.scan4, st.levels, st.afterSkipIntra); err != nil {
+				return fmt.Errorf("lossless intra-inter luma txb (%d,%d): %w", tx, ty, err)
+			}
+		}
+	}
+	if !hasChroma {
+		if st.decisionStats != nil {
+			st.decisionStats.noteIntraBlock(block.Size)
+		}
+		return nil
+	}
+	chromaBlock, err := tile.PlaneBlockSize(block.Size, st.color, 1)
+	if err != nil {
+		return fmt.Errorf("lossless intra-inter chroma plane block: %w", err)
+	}
+	cw, ch, err := planeBlockPixels(chromaBlock)
+	if err != nil {
+		return fmt.Errorf("lossless intra-inter chroma plane block dimensions: %w", err)
+	}
+	chromaPX := chromaXForColor(lumaPX, st.color)
+	chromaPY := chromaYForColor(lumaPY, st.color)
+	chromaX4 := chromaX4ForColor(block.X4, st.color)
+	chromaY4 := chromaY4ForColor(block.Y4, st.color)
+	for plane := 1; plane <= 2; plane++ {
+		data := src.U
+		if plane == 2 {
+			data = src.V
+		}
+		for py := 0; py < ch; py += 4 {
+			for px := 0; px < cw; px += 4 {
+				if err := encodeLosslessTXB(st.w, &st.coeffCDFs, coeffCtx, tile.CoeffContextRequest{
+					Plane:      uint8(plane),
+					PlaneBlock: chromaBlock,
+					Size:       tile.TransformSize4x4,
+					X4:         chromaX4 + uint8(px/4),
+					Y4:         chromaY4 + uint8(py/4),
+				}, data, src.ChromaStride, chromaPX+px, chromaPY+py, st.scan4, st.levels); err != nil {
+					return fmt.Errorf("lossless intra-inter chroma %d txb (%d,%d): %w", plane, px/4, py/4, err)
+				}
+			}
+		}
+	}
+	if st.decisionStats != nil {
+		st.decisionStats.noteIntraBlock(block.Size)
+	}
+	return nil
+}
+
+func copyLosslessTileSourceToRecon(src SourceFrame420, recon *SourceFrame420, color parser.ColorConfig, miColStart, miColEnd uint16) {
+	if recon == nil {
+		return
+	}
+	x0 := int(miColStart) * 4
+	x1 := int(miColEnd) * 4
+	if x1 > src.Width {
+		x1 = src.Width
+	}
+	for y := 0; y < src.Height; y++ {
+		copy(recon.Y[y*recon.YStride+x0:y*recon.YStride+x1], src.Y[y*src.YStride+x0:y*src.YStride+x1])
+	}
+	if color.MonoChrome {
+		return
+	}
+	cx0 := chromaXForColor(x0, color)
+	cx1 := chromaXForColor(x1, color)
+	ch := chromaHeightForColor(src.Height, color)
+	for y := 0; y < ch; y++ {
+		copy(recon.U[y*recon.ChromaStride+cx0:y*recon.ChromaStride+cx1], src.U[y*src.ChromaStride+cx0:y*src.ChromaStride+cx1])
+		copy(recon.V[y*recon.ChromaStride+cx0:y*recon.ChromaStride+cx1], src.V[y*src.ChromaStride+cx0:y*src.ChromaStride+cx1])
+	}
 }
 
 // encodePBlock codes one inter block (8x8 or 16x16) with residual: the inter

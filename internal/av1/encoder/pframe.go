@@ -126,6 +126,7 @@ func repeatPFrameHeader(width, height int, qIndex uint8, refreshFlags uint8) (In
 	base := losslessKeyframeHeader(width, height)
 	tiles := base.Tile
 	tiles.InterpolationFilter = InterpolationEightTap
+	allLossless := qIndex == 0
 	header := InterFrameHeaderParams{
 		Prefix: FrameHeaderPrefix{
 			FrameType:          FrameHeaderTypeInter,
@@ -157,6 +158,13 @@ func repeatPFrameHeader(width, height int, qIndex uint8, refreshFlags uint8) (In
 		FrameMode:    FrameModeParams{},
 		GlobalMotion: DefaultGlobalMotionParams(),
 		CDEF:         CDEFParams{Damping: 3},
+		AllLossless:  allLossless,
+	}
+	if allLossless {
+		header.LoopFilter.ModeRefDeltaEnabled = true
+		header.LoopFilter.ModeRefDeltaUpdate = true
+		header.TransformRef.TransformMode = TransformMode4x4Only
+		header.CDEF = CDEFParams{}
 	}
 	return header, refs
 }
