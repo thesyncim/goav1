@@ -132,6 +132,7 @@ func TestVideoEncoder1080pHotPathAllocs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = pEnc.Close() })
 	if err := pEnc.Prewarm(); err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +157,46 @@ func TestVideoEncoder1080pHotPathAllocs(t *testing.T) {
 		t.Fatalf("1080p steady P-frame allocations=%f want 0", pAllocs)
 	}
 
+	panFrames := makeEncoder1080pPanFrames(8)
+	panEnc, err := encoder.NewVideoEncoderCBR(w, h, encoder.RateControlConfig{
+		TargetBitsPerSecond: 8_000_000,
+		FramesPerSecond:     60,
+		MinQIndex:           20,
+		MaxQIndex:           200,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = panEnc.Close() })
+	if err := panEnc.Prewarm(); err != nil {
+		t.Fatal(err)
+	}
+	if _, key, err := panEnc.Encode(panFrames[0], true); err != nil {
+		t.Fatal(err)
+	} else if !key {
+		t.Fatal("initial pan frame was not a keyframe")
+	}
+	panFrameIndex := 1
+	panAllocs := testing.AllocsPerRun(5, func() {
+		tu, key, err := panEnc.Encode(panFrames[panFrameIndex], false)
+		panFrameIndex++
+		if panFrameIndex == len(panFrames) {
+			panFrameIndex = 1
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if key {
+			t.Fatal("steady pan P-frame was coded as keyframe")
+		}
+		if len(tu) == 0 {
+			t.Fatal("empty pan P-frame temporal unit")
+		}
+	})
+	if panAllocs != 0 {
+		t.Fatalf("1080p pan P-frame allocations=%f want 0", panAllocs)
+	}
+
 	keyEnc, err := encoder.NewVideoEncoderCBR(w, h, encoder.RateControlConfig{
 		TargetBitsPerSecond: 8_000_000,
 		FramesPerSecond:     60,
@@ -165,6 +206,7 @@ func TestVideoEncoder1080pHotPathAllocs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = keyEnc.Close() })
 	if err := keyEnc.Prewarm(); err != nil {
 		t.Fatal(err)
 	}
@@ -219,6 +261,46 @@ func makeEncoder1080pFrame(tick int) encoder.SourceFrame420 {
 		f.V[i] = 130
 	}
 	return f
+}
+
+func makeEncoder1080pPanFrames(count int) []encoder.SourceFrame420 {
+	const w, h = 1920, 1080
+	cw, ch := w/2, h/2
+	rng := rand.New(rand.NewSource(15))
+	wide := make([]byte, (w+512)*h)
+	for y := range h {
+		for x := 0; x < w+512; x++ {
+			wide[y*(w+512)+x] = uint8(60 + (x/7+y/9)%70 + rng.Intn(25))
+		}
+	}
+	for y := range h {
+		row := wide[y*(w+512) : (y+1)*(w+512)]
+		for x := 1; x < len(row)-1; x++ {
+			row[x] = uint8((int(row[x-1]) + 2*int(row[x]) + int(row[x+1])) >> 2)
+		}
+	}
+	frames := make([]encoder.SourceFrame420, count)
+	for i := range frames {
+		f := encoder.SourceFrame420{
+			Y:            make([]byte, w*h),
+			U:            make([]byte, cw*ch),
+			V:            make([]byte, cw*ch),
+			YStride:      w,
+			ChromaStride: cw,
+			Width:        w,
+			Height:       h,
+		}
+		off := (i * 4) % 512
+		for y := range h {
+			copy(f.Y[y*w:(y+1)*w], wide[y*(w+512)+off:])
+		}
+		for j := range f.U {
+			f.U[j] = 120
+			f.V[j] = 130
+		}
+		frames[i] = f
+	}
+	return frames
 }
 
 // cloneFrame deep-copies a reconstruction snapshot; the encoder ping-pongs its

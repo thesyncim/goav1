@@ -54,12 +54,21 @@ check_zero_alloc_benchmarks 6 '^BenchmarkDecode' "$bench_out"
 # at -benchtime=1x; these rows prove the reusable encoder/decoder hot paths
 # themselves stay at zero heap traffic.
 bench1080_time=${GOAV1_ALLOC_1080P_BENCHTIME:-1x}
-encoder1080_re='^Benchmark(EncodeKeyframe1080p|StreamingKeyframe1080p|WebRTCStreamEncodePicture1080p)$'
+encoder1080_re='^Benchmark(VideoEncoderPFrame1080p|EncodeKeyframe1080p|VideoEncoderPFramePan1080p|StreamingKeyframe1080p|WebRTCStreamEncodePicture1080p)$'
 encoder1080_out=$(GOMAXPROCS=1 GOGC=off go test ./internal/av1/encoder -run '^$' -bench="$encoder1080_re" -benchmem -benchtime="$bench1080_time" -count=1)
 printf '%s\n' "$encoder1080_out"
-check_zero_alloc_benchmarks 4 '^Benchmark(EncodeKeyframe1080p|StreamingKeyframe1080p|WebRTCStreamEncodePicture1080p)' "$encoder1080_out"
+check_zero_alloc_benchmarks 6 '^Benchmark(VideoEncoderPFrame1080p|EncodeKeyframe1080p|VideoEncoderPFramePan1080p|StreamingKeyframe1080p|WebRTCStreamEncodePicture1080p)' "$encoder1080_out"
 
-public1080_re='^BenchmarkPublic(RTCEncoderEncodePicture1080p|DecodeRTPPayload1080p|LayeredDecodeRTPPayload1080p)$'
-public1080_out=$(GOMAXPROCS=1 GOGC=off go test . -run '^$' -bench="$public1080_re" -benchmem -benchtime="$bench1080_time" -count=1)
-printf '%s\n' "$public1080_out"
-check_zero_alloc_benchmarks 4 '^BenchmarkPublic(RTCEncoderEncodePicture1080p|DecodeRTPPayload1080p|LayeredDecodeRTPPayload1080p)' "$public1080_out"
+# Keep the public 1080p benchmark canaries isolated from each other so runtime
+# first touches in one benchmark do not get charged to a later hot-path row.
+public_rtc1080_out=$(GOMAXPROCS=1 GOGC=off go test . -run '^$' -bench='^BenchmarkPublicRTCEncoderEncodePicture1080p$' -benchmem -benchtime="$bench1080_time" -count=1)
+printf '%s\n' "$public_rtc1080_out"
+check_zero_alloc_benchmarks 2 '^BenchmarkPublicRTCEncoderEncodePicture1080p' "$public_rtc1080_out"
+
+public_decode1080_out=$(GOMAXPROCS=1 GOGC=off go test . -run '^$' -bench='^BenchmarkPublicDecodeRTPPayload1080p$' -benchmem -benchtime="$bench1080_time" -count=1)
+printf '%s\n' "$public_decode1080_out"
+check_zero_alloc_benchmarks 1 '^BenchmarkPublicDecodeRTPPayload1080p' "$public_decode1080_out"
+
+public_layered_decode1080_out=$(GOMAXPROCS=1 GOGC=off go test . -run '^$' -bench='^BenchmarkPublicLayeredDecodeRTPPayload1080p$' -benchmem -benchtime="$bench1080_time" -count=1)
+printf '%s\n' "$public_layered_decode1080_out"
+check_zero_alloc_benchmarks 1 '^BenchmarkPublicLayeredDecodeRTPPayload1080p' "$public_layered_decode1080_out"
