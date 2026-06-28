@@ -157,8 +157,56 @@ var scalabilityModes = [...]scalabilityInfo{
 	{name: "S3T3h", spatial: 3, temporal: 3, smallStep: true, simulcast: true},
 }
 
+// Ported from pinned libwebrtc:
+// api/video_codecs/scalability_mode.h kAllScalabilityModes.
+var webRTCScalabilityModes = [...]ScalabilityMode{
+	ScalabilityModeL1T1,
+	ScalabilityModeL1T2,
+	ScalabilityModeL1T3,
+	ScalabilityModeL2T1,
+	ScalabilityModeL2T1h,
+	ScalabilityModeL2T1_KEY,
+	ScalabilityModeL2T2,
+	ScalabilityModeL2T2h,
+	ScalabilityModeL2T2_KEY,
+	ScalabilityModeL2T2_KEY_SHIFT,
+	ScalabilityModeL2T3,
+	ScalabilityModeL2T3h,
+	ScalabilityModeL2T3_KEY,
+	ScalabilityModeL3T1,
+	ScalabilityModeL3T1h,
+	ScalabilityModeL3T1_KEY,
+	ScalabilityModeL3T2,
+	ScalabilityModeL3T2h,
+	ScalabilityModeL3T2_KEY,
+	ScalabilityModeL3T3,
+	ScalabilityModeL3T3h,
+	ScalabilityModeL3T3_KEY,
+	ScalabilityModeS2T1,
+	ScalabilityModeS2T1h,
+	ScalabilityModeS2T2,
+	ScalabilityModeS2T2h,
+	ScalabilityModeS2T3,
+	ScalabilityModeS2T3h,
+	ScalabilityModeS3T1,
+	ScalabilityModeS3T1h,
+	ScalabilityModeS3T2,
+	ScalabilityModeS3T2h,
+	ScalabilityModeS3T3,
+	ScalabilityModeS3T3h,
+}
+
 func (m ScalabilityMode) Valid() bool {
 	return m < scalabilityModeCount
+}
+
+func (m ScalabilityMode) webRTCSupported() bool {
+	for _, mode := range webRTCScalabilityModes {
+		if m == mode {
+			return true
+		}
+	}
+	return false
 }
 
 func (m ScalabilityMode) String() string {
@@ -250,14 +298,11 @@ func ParseScalabilityMode(mode string) (ScalabilityMode, bool) {
 }
 
 func WebRTCScalabilityModeCount() int {
-	return int(scalabilityModeCount)
+	return len(webRTCScalabilityModes)
 }
 
 func AppendWebRTCScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
-	for mode := ScalabilityMode(0); mode < scalabilityModeCount; mode++ {
-		dst = append(dst, mode)
-	}
-	return dst
+	return append(dst, webRTCScalabilityModes[:]...)
 }
 
 // ValidateWebRTCActiveScalabilityModes validates the active scalabilityMode
@@ -266,7 +311,7 @@ func AppendWebRTCScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
 func ValidateWebRTCActiveScalabilityModes(modes []ScalabilityMode) error {
 	hasSingleSSRCSimulcast := false
 	for _, mode := range modes {
-		if !mode.Valid() {
+		if !mode.webRTCSupported() {
 			return ErrInvalidConfig
 		}
 		if mode.IsSimulcast() {

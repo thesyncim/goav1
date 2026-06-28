@@ -333,14 +333,14 @@ func ParseEncoderScalabilityMode(mode string) (EncoderScalabilityMode, bool) {
 	return internalencoder.ParseScalabilityMode(mode)
 }
 
-// EncoderWebRTCScalabilityModes returns the W3C WebRTC SVC scalabilityMode
-// values supported by the WebRTC encoder/control surfaces.
+// EncoderWebRTCScalabilityModes returns the pinned-libwebrtc WebRTC SVC
+// scalabilityMode values supported by the WebRTC encoder/control surfaces.
 func EncoderWebRTCScalabilityModes() []EncoderScalabilityMode {
 	out := make([]EncoderScalabilityMode, 0, internalencoder.WebRTCScalabilityModeCount())
 	return internalencoder.AppendWebRTCScalabilityModes(out)
 }
 
-// AppendEncoderWebRTCScalabilityModes appends the W3C WebRTC SVC
+// AppendEncoderWebRTCScalabilityModes appends the pinned-libwebrtc WebRTC SVC
 // scalabilityMode values supported by the WebRTC encoder/control surfaces to
 // dst and returns the extended slice.
 func AppendEncoderWebRTCScalabilityModes(dst []EncoderScalabilityMode) []EncoderScalabilityMode {

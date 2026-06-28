@@ -74,7 +74,7 @@ func TestScalabilityModeParseAndLayers(t *testing.T) {
 	}
 }
 
-func TestScalabilityModeAllWebRTCSVCModes(t *testing.T) {
+func TestScalabilityModePinnedLibWebRTCSVCModes(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		spatial   uint8
@@ -97,18 +97,15 @@ func TestScalabilityModeAllWebRTCSVCModes(t *testing.T) {
 		{name: "L2T3", spatial: 2, temporal: 3},
 		{name: "L2T3h", spatial: 2, temporal: 3, smallStep: true},
 		{name: "L2T3_KEY", spatial: 2, temporal: 3, key: true},
-		{name: "L2T3_KEY_SHIFT", spatial: 2, temporal: 3, key: true, keyShift: true},
 		{name: "L3T1", spatial: 3, temporal: 1},
 		{name: "L3T1h", spatial: 3, temporal: 1, smallStep: true},
 		{name: "L3T1_KEY", spatial: 3, temporal: 1, key: true},
 		{name: "L3T2", spatial: 3, temporal: 2},
 		{name: "L3T2h", spatial: 3, temporal: 2, smallStep: true},
 		{name: "L3T2_KEY", spatial: 3, temporal: 2, key: true},
-		{name: "L3T2_KEY_SHIFT", spatial: 3, temporal: 2, key: true, keyShift: true},
 		{name: "L3T3", spatial: 3, temporal: 3},
 		{name: "L3T3h", spatial: 3, temporal: 3, smallStep: true},
 		{name: "L3T3_KEY", spatial: 3, temporal: 3, key: true},
-		{name: "L3T3_KEY_SHIFT", spatial: 3, temporal: 3, key: true, keyShift: true},
 		{name: "S2T1", spatial: 2, temporal: 1, simulcast: true},
 		{name: "S2T1h", spatial: 2, temporal: 1, smallStep: true, simulcast: true},
 		{name: "S2T2", spatial: 2, temporal: 2, simulcast: true},
@@ -198,19 +195,72 @@ func webRTCTestReferenceTemplateNum(mode ScalabilityMode, spatial uint8, tempora
 	}
 }
 
-func TestAppendWebRTCScalabilityModesCoversEnum(t *testing.T) {
+func TestAppendWebRTCScalabilityModesMatchesPinnedLibWebRTC(t *testing.T) {
+	want := []ScalabilityMode{
+		ScalabilityModeL1T1,
+		ScalabilityModeL1T2,
+		ScalabilityModeL1T3,
+		ScalabilityModeL2T1,
+		ScalabilityModeL2T1h,
+		ScalabilityModeL2T1_KEY,
+		ScalabilityModeL2T2,
+		ScalabilityModeL2T2h,
+		ScalabilityModeL2T2_KEY,
+		ScalabilityModeL2T2_KEY_SHIFT,
+		ScalabilityModeL2T3,
+		ScalabilityModeL2T3h,
+		ScalabilityModeL2T3_KEY,
+		ScalabilityModeL3T1,
+		ScalabilityModeL3T1h,
+		ScalabilityModeL3T1_KEY,
+		ScalabilityModeL3T2,
+		ScalabilityModeL3T2h,
+		ScalabilityModeL3T2_KEY,
+		ScalabilityModeL3T3,
+		ScalabilityModeL3T3h,
+		ScalabilityModeL3T3_KEY,
+		ScalabilityModeS2T1,
+		ScalabilityModeS2T1h,
+		ScalabilityModeS2T2,
+		ScalabilityModeS2T2h,
+		ScalabilityModeS2T3,
+		ScalabilityModeS2T3h,
+		ScalabilityModeS3T1,
+		ScalabilityModeS3T1h,
+		ScalabilityModeS3T2,
+		ScalabilityModeS3T2h,
+		ScalabilityModeS3T3,
+		ScalabilityModeS3T3h,
+	}
 	prefix := []ScalabilityMode{ScalabilityModeL3T3}
 	modes := AppendWebRTCScalabilityModes(prefix)
-	if len(modes) != WebRTCScalabilityModeCount()+1 {
-		t.Fatalf("len=%d want %d", len(modes), WebRTCScalabilityModeCount()+1)
+	if WebRTCScalabilityModeCount() != len(want) {
+		t.Fatalf("WebRTCScalabilityModeCount=%d want %d", WebRTCScalabilityModeCount(), len(want))
+	}
+	if len(modes) != len(want)+1 {
+		t.Fatalf("len=%d want %d", len(modes), len(want)+1)
 	}
 	if modes[0] != ScalabilityModeL3T3 {
 		t.Fatalf("prefix mutated to %s", modes[0])
 	}
-	for i, mode := range modes[1:] {
-		want := ScalabilityMode(i)
-		if mode != want || !mode.Valid() {
-			t.Fatalf("mode[%d]=%s valid=%v want %s", i+1, mode, mode.Valid(), want)
+	seen := make(map[ScalabilityMode]bool, len(want))
+	for i, wantMode := range want {
+		mode := modes[i+1]
+		if mode != wantMode || !mode.webRTCSupported() {
+			t.Fatalf("mode[%d]=%s supported=%v want %s", i+1, mode, mode.webRTCSupported(), wantMode)
+		}
+		if seen[mode] {
+			t.Fatalf("duplicate mode %s", mode)
+		}
+		seen[mode] = true
+	}
+	for _, unsupported := range []ScalabilityMode{
+		ScalabilityModeL2T3_KEY_SHIFT,
+		ScalabilityModeL3T2_KEY_SHIFT,
+		ScalabilityModeL3T3_KEY_SHIFT,
+	} {
+		if unsupported.webRTCSupported() {
+			t.Fatalf("%s unexpectedly exported as a pinned libwebrtc WebRTC mode", unsupported)
 		}
 	}
 }
@@ -221,7 +271,7 @@ func TestValidateWebRTCActiveScalabilityModes(t *testing.T) {
 		{ScalabilityModeL1T1},
 		{ScalabilityModeS3T3h},
 		{ScalabilityModeL1T3, ScalabilityModeL1T3, ScalabilityModeL1T3},
-		{ScalabilityModeL2T3_KEY_SHIFT, ScalabilityModeL3T3_KEY},
+		{ScalabilityModeL2T3_KEY, ScalabilityModeL3T3_KEY},
 	} {
 		if err := ValidateWebRTCActiveScalabilityModes(modes); err != nil {
 			t.Fatalf("ValidateWebRTCActiveScalabilityModes(%v): %v", modes, err)
@@ -230,6 +280,9 @@ func TestValidateWebRTCActiveScalabilityModes(t *testing.T) {
 
 	for _, modes := range [][]ScalabilityMode{
 		{ScalabilityMode(scalabilityModeCount)},
+		{ScalabilityModeL2T3_KEY_SHIFT},
+		{ScalabilityModeL3T2_KEY_SHIFT},
+		{ScalabilityModeL3T3_KEY_SHIFT},
 		{ScalabilityModeL1T3, ScalabilityModeS2T1},
 		{ScalabilityModeS2T3h, ScalabilityModeS3T3},
 	} {
