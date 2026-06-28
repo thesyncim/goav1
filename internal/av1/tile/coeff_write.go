@@ -389,7 +389,11 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
 				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
 			}
-			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
+			if level == 0 {
+				w.WriteCDF4Zero(&baseCDFs[ctx])
+			} else {
+				w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
+			}
 		}
 		if level > NumBaseLevels {
 			brCtx := 0
@@ -540,7 +544,11 @@ func CountCoefficientsTXB8x8UV2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16
 					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
 				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
 			}
-			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
+			if level == 0 {
+				w.WriteCDF4Zero(&baseCDFs[ctx])
+			} else {
+				w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
+			}
 		}
 		if level > NumBaseLevels {
 			brCtx := 0
@@ -716,7 +724,11 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
 				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
 			}
-			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
+			if level == 0 {
+				w.WriteCDF4Zero(&baseCDFs[ctx])
+			} else {
+				w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
+			}
 		}
 		if level > NumBaseLevels {
 			brCtx := 0

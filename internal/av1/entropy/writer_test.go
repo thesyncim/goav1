@@ -489,7 +489,11 @@ func TestCountingWriterTellMatchesWriter(t *testing.T) {
 			sym := rng.Intn(4)
 			normal.WriteCDF4(&normalCDF, sym)
 			count.WriteCDF4(&countCDF, sym)
-			bitCounter.WriteCDF4(&bitCounterCDF, sym)
+			if sym == 0 {
+				bitCounter.WriteCDF4Zero(&bitCounterCDF)
+			} else {
+				bitCounter.WriteCDF4(&bitCounterCDF, sym)
+			}
 			if normalCDF != countCDF || normalCDF != bitCounterCDF {
 				t.Fatalf("cdf diverged after symbol %d: normal=%v count=%v bitCounter=%v", i, normalCDF.Values(), countCDF.Values(), bitCounterCDF.Values())
 			}
