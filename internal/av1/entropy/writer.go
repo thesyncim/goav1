@@ -710,6 +710,28 @@ func (w *BitCounter) WriteCDF4(cdf *CDF, s int) {
 	w.normalize(r)
 }
 
+// WriteCDF4Zero codes a known zero symbol in a four-symbol CDF.
+func (w *Writer) WriteCDF4Zero(cdf *CDF) {
+	values := &cdf.values
+	if traceEntropyReads {
+		traceWriteCDF(values[0], 4)
+	}
+	v0, v1, v2 := values[0], values[1], values[2]
+	l := w.low
+	r := w.rng
+	count := values[4]
+	rate := uint(5 + (count >> 4))
+	q := r >> 8
+	r -= ((q * (uint32(v0) >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb*3
+	values[0] = v0 - (v0 >> rate)
+	values[1] = v1 - (v1 >> rate)
+	values[2] = v2 - (v2 >> rate)
+	if count < MaxCDFCount {
+		values[4] = count + 1
+	}
+	w.normalize(l, r)
+}
+
 // WriteCDF4Zero prices/adapts a known zero symbol in a four-symbol CDF.
 func (w *BitCounter) WriteCDF4Zero(cdf *CDF) {
 	values := &cdf.values

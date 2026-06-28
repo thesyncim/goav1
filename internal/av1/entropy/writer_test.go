@@ -487,11 +487,13 @@ func TestCountingWriterTellMatchesWriter(t *testing.T) {
 			bitCounter.WriteBit(bit)
 		case 2:
 			sym := rng.Intn(4)
-			normal.WriteCDF4(&normalCDF, sym)
-			count.WriteCDF4(&countCDF, sym)
 			if sym == 0 {
+				normal.WriteCDF4Zero(&normalCDF)
+				count.WriteCDF4Zero(&countCDF)
 				bitCounter.WriteCDF4Zero(&bitCounterCDF)
 			} else {
+				normal.WriteCDF4(&normalCDF, sym)
+				count.WriteCDF4(&countCDF, sym)
 				bitCounter.WriteCDF4(&bitCounterCDF, sym)
 			}
 			if normalCDF != countCDF || normalCDF != bitCounterCDF {

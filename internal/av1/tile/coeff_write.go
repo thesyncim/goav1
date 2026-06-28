@@ -1455,7 +1455,11 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 		mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 			clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
 		ctx := minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
-		w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
+		if level == 0 {
+			w.WriteCDF4Zero(&baseCDFs[ctx])
+		} else {
+			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
+		}
 		if level > NumBaseLevels {
 			mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 				minInt(int(levels[pad+stride]), MaxBaseBRRange) +
@@ -1475,7 +1479,11 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 	if eob > 1 {
 		p := &scanHot[0]
 		level := minInt(int(levels[p.padded]), MaxBaseBRRange)
-		w.WriteCDF4(&baseCDFs[0], minInt(level, 3))
+		if level == 0 {
+			w.WriteCDF4Zero(&baseCDFs[0])
+		} else {
+			w.WriteCDF4(&baseCDFs[0], minInt(level, 3))
+		}
 		if level > NumBaseLevels {
 			pad := p.padded
 			mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
