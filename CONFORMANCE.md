@@ -398,7 +398,7 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   including the 8-bit and 10-bit quantizer sweeps, odd-size clips, larger
   sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage carried by the SVC
   streams.
-- `make dryrun-profiles`: 43/43 vendored profile clips pass, covering
+- `make dryrun-profiles`: 44/44 vendored profile clips pass, covering
   profile 0 4:2:0 8-bit S_FRAME altref,
   profile 1 4:4:4 8/10-bit all-intra, inter, screen-content palette,
   CDEF/restoration, 8/10-bit odd edge-size CDEF/restoration, 8/10-bit film grain,
@@ -408,7 +408,7 @@ The framework dry-run gates use strict per-frame MD5. Current coverage is:
   profile 2 4:2:2 10/12-bit inter CDEF/restoration,
   profile 2 4:2:2 10/12-bit edge-size,
   profile 2 4:4:4 12-bit edge-size, inter CDEF/restoration, multi-tile,
-  and film grain,
+  film grain, and super-res,
   profile 2 4:2:0 12-bit including odd edge sizes, 12-bit film grain,
   12-bit superres, 8-bit superres,
   superres plus loop restoration, a forced-root 128x128 superblock clip,
@@ -540,13 +540,13 @@ manifest. The next production-readiness items are:
 1. **Broader real-world/profile corpus.** Keep expanding the local generated
    real-content corpus and add small committed representative clips when the
    licensing/size tradeoff is acceptable. Keep adding broader profile-2 12-bit
-   super-res, larger-tiled, real-content, and combined 12-bit film-grain
+   larger-tiled, real-content, super-res-inter, and combined 12-bit film-grain
    combinations as upstream or locally generated goldens become available;
    the current
    vendored corpus includes profile-1 4:4:4 8/10-bit odd-size CDEF/restoration,
    8/10-bit edge-motion, 10-bit inter multi-tile,
    profile-2 4:2:2 10/12-bit and 4:4:4 12-bit inter CDEF/restoration,
-   profile-2 4:4:4 12-bit multi-tile and film grain,
+   profile-2 4:4:4 12-bit multi-tile, film grain, and super-res,
    and 10-bit superres plus loop restoration, plus 4:2:0 12-bit odd-size CDEF,
    film grain, edge-motion, and super-res coverage.
 2. **Large-scale tile corpus.** Tile-list playback now follows libaom's

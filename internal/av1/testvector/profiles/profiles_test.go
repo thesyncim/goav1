@@ -31,8 +31,8 @@
 // 10-bit 4:4:4, plus 8/10-bit 4:4:4 screen-content clips that require luma and
 // chroma palette prediction, 8/10-bit 4:4:4 CDEF/restoration clips, 8/10-bit
 // 4:4:4 film-grain clips, a 10-bit 4:4:4 inter multi-tile clip, a profile-0
-// hidden S_FRAME altref stream, a 12-bit profile-2 4:4:4 inter multi-tile
-// clip, a 12-bit profile-2 4:4:4 film-grain clip, and 8/10-bit 4:4:4
+// hidden S_FRAME altref stream, 12-bit profile-2 4:4:4 inter multi-tile,
+// film-grain, and super-res clips, and 8/10-bit 4:4:4
 // super-res clips that run the caller-owned full postfilter output path,
 // including inter streams that
 // reference super-res output and a high-bit-depth super-res + loop-restoration
@@ -310,6 +310,13 @@
 //	  --superres-mode=1 --superres-denominator=12 \
 //	  --superres-kf-denominator=12 --enable-cdef=0 --enable-restoration=0 \
 //	  -o profile2-420-12bit-superres-160x128.ivf src420_12_superres.yuv
+//	# 4:4:4 12-bit super-res:
+//	libaom encoder API, AOM_IMG_FMT_I44416, profile=2, bit_depth=12,
+//	  input_bit_depth=12, chroma_subsampling_x=0, chroma_subsampling_y=0,
+//	  cpu-used=4, q=36, kf-min/max-dist=1, lag-in-frames=0,
+//	  superres-mode=fixed, superres-denominator=12,
+//	  superres-kf-denominator=12, enable-cdef=0, enable-restoration=0,
+//	  enable-palette=0.
 //
 //	# --- inter (kf-max-dist=30, 8 frames, moving synthetic source) ---
 //	# 4:4:4 8-bit inter:
@@ -901,6 +908,24 @@ var profileClips = []profileClip{
 		wantBitDepth:     12,
 		wantSubsamplingX: true,
 		wantSubsamplingY: true,
+		superRes:         true,
+	},
+	{
+		// Profile 2: 4:4:4 12-bit super-res. The coded width is smaller than
+		// the displayed 160x128 output, guarding maximum-bit-depth super-res
+		// output with no chroma subsampling.
+		name: "profile2-444-12bit-superres-160x128",
+		file: "profile2-444-12bit-superres-160x128.ivf",
+		frameMD5Hex: []string{
+			"58e9987a9c28bb5da63e8fbfa851d855",
+			"ce74fbe503ec410b1544827fd8f1194d",
+			"66f8c30fb1aaf403be704ece0d31640c",
+			"25a20b0841482a8e346e998ebed5501d",
+		},
+		wantSeqProfile:   2,
+		wantBitDepth:     12,
+		wantSubsamplingX: false,
+		wantSubsamplingY: false,
 		superRes:         true,
 	},
 	{

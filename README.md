@@ -179,7 +179,7 @@ result buffer directly. The executable examples in `example_test.go` and
 | Area | Status |
 | --- | --- |
 | Containers and transport | IVF, AV1 low-overhead OBU, Annex B, Section 5 temporal units, RTP fixed-header and RFC 8285 one-/two-byte extension element parse/build, sized encoded-frame RTP packet wrapping with dependency-descriptor/MID/RID/RRID/CVO/playout-delay/TWCC/TWCC-02/absolute-send-time/absolute-capture-time/color-space/video-content-type/video-timing/video-layers-allocation extensions, RFC 4588 RTX wrap/parse/restore helpers, AV1 RTP payload parse/build/fragment/reassemble, AV1 SDP/fmtp/profile/level/tier/extmap/RID/simulcast/rtcp-fb helpers, raw RTP extension payload helpers, RTCP generic/compound/SR/RR/SDES/BYE/NACK/Transport-CC report construction and receive timelines/PLI/FIR/REMB, RTP gap-to-NACK, sender retransmission cache, and AV1 LRR helpers |
-| Decoder profiles | Profile 0 and Profile 1 pass committed/vendored strict-MD5 gates; Profile 2 has passing 4:2:2 8/10/12-bit plus 4:2:0 and 4:4:4 12-bit profile clips, including 10/12-bit 4:2:2, 12-bit 4:4:4 inter CDEF/restoration, 12-bit 4:4:4 multi-tile, and 12-bit 4:4:4 film grain, with wider 12-bit breadth still expanding |
+| Decoder profiles | Profile 0 and Profile 1 pass committed/vendored strict-MD5 gates; Profile 2 has passing 4:2:2 8/10/12-bit plus 4:2:0 and 4:4:4 12-bit profile clips, including 10/12-bit 4:2:2, 12-bit 4:4:4 inter CDEF/restoration, 12-bit 4:4:4 multi-tile, film grain, and super-res, with wider 12-bit breadth still expanding |
 | Bit depths and formats | 8-bit and 10-bit covered broadly; 12-bit covered by targeted profile-2 4:2:0, 4:2:2, and 4:4:4 clips; 4:2:0, 4:2:2, 4:4:4, and monochrome surfaces |
 | Prediction and residuals | Intra, directional intra, filter intra, CfL, palette, IntraBC, inter/compound, OBMC, warped motion, scaled motion, transforms, dequantization, and CDF adaptation |
 | Post filters | Loop filter, CDEF, super-resolution, loop restoration, and film grain are wired into the high-level decode/output path |
@@ -358,7 +358,7 @@ this repository's strict framework gates:
 | `make dryrun-relevant-supported` | 14/14 relevant vectors pass, including 8/10-bit film grain and monochrome |
 | `make dryrun-full` | 240/240 committed remote libaom vectors pass |
 | `make dryrun-extended` | 226/226 opt-in diagnostic vectors pass, including quantizer sweeps, odd/larger sizes, SVC L1T2/L2T1/L2T2, and multi-tile coverage |
-| `make dryrun-profiles` | 43/43 vendored profile clips pass, including profile-0 S_FRAME, profile-1 4:4:4, profile-2 4:2:2 8/10/12-bit, profile-2 4:4:4 12-bit, targeted 12-bit profile-2, 10/12-bit 4:2:2 and 12-bit 4:4:4 inter CDEF/restoration, 12-bit 4:4:4 multi-tile, 12-bit 4:4:4 film grain, 4:2:0 12-bit film grain, super-res, edge-motion, and non-SVC multi-tile clips |
+| `make dryrun-profiles` | 44/44 vendored profile clips pass, including profile-0 S_FRAME, profile-1 4:4:4, profile-2 4:2:2 8/10/12-bit, profile-2 4:4:4 12-bit, targeted 12-bit profile-2, 10/12-bit 4:2:2 and 12-bit 4:4:4 inter CDEF/restoration, 12-bit 4:4:4 multi-tile, 12-bit 4:4:4 film grain, 12-bit 4:4:4 super-res, 4:2:0 12-bit film grain, super-res, edge-motion, and non-SVC multi-tile clips |
 
 Optional local corpus lanes are available for broader real-world coverage:
 

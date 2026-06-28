@@ -432,6 +432,15 @@ var superResProfileClips = []struct {
 		},
 	},
 	{
+		file: "profile2-444-12bit-superres-160x128.ivf",
+		frameMD5Hex: []string{
+			"58e9987a9c28bb5da63e8fbfa851d855",
+			"ce74fbe503ec410b1544827fd8f1194d",
+			"66f8c30fb1aaf403be704ece0d31640c",
+			"25a20b0841482a8e346e998ebed5501d",
+		},
+	},
+	{
 		file: "profile1-444-10bit-superres-inter-static-160x128.ivf",
 		frameMD5Hex: []string{
 			"ab4284f9b59b7cfd81bdf5ab27d7e10b",
