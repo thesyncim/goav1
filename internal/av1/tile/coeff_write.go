@@ -375,42 +375,62 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 	baseEOBCDFs := &cdfs.CoeffBaseEOB[txCtx][CoeffPlaneY]
 	baseCDFs := &cdfs.CoeffBase[txCtx][CoeffPlaneY]
 	brCDFs := &cdfs.CoeffBR[txBR][CoeffPlaneY]
-	for c := eob - 1; c >= 0; c-- {
-		p := &scanHot[c]
-		pos := int(p.pos)
-		level := int(absLevels[c])
-		if c == eob-1 {
-			ctx := int(p.lowerEOBCtx)
-			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
-		} else {
-			ctx := 0
-			if pos != 0 {
-				pad := p.padded
-				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
-					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
-			}
-			if level == 0 {
-				w.WriteCDF4Zero(&baseCDFs[ctx])
-			} else {
-				w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
+
+	c := eob - 1
+	p := &scanHot[c]
+	level := int(absLevels[c])
+	w.WriteCDF3(&baseEOBCDFs[int(p.lowerEOBCtx)], minInt(level, 3)-1)
+	if level > NumBaseLevels {
+		brCDF := &brCDFs[int(p.brEOBCtx)]
+		baseRange := level - 1 - NumBaseLevels
+		for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
+			k := minInt(baseRange-idx, BRCDFSize-1)
+			w.WriteCDF4(brCDF, k)
+			if k < BRCDFSize-1 {
+				break
 			}
 		}
+	}
+	for c = eob - 2; c > 0; c-- {
+		p := &scanHot[c]
+		level := int(absLevels[c])
+		pad := p.padded
+		mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
+			clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
+		ctx := minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+		if level == 0 {
+			w.WriteCDF4Zero(&baseCDFs[ctx])
+		} else {
+			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
+		}
 		if level > NumBaseLevels {
-			brCtx := 0
-			if c == eob-1 {
-				brCtx = int(p.brEOBCtx)
-			} else if pos != 0 {
-				pad := p.padded
-				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
-					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
-					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
-				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
-			} else {
-				pad := p.padded
-				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
-				brCtx = minInt((mag+1)>>1, 6)
+			mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
+				minInt(int(levels[pad+stride]), MaxBaseBRRange) +
+				minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
+			brCtx := minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+			brCDF := &brCDFs[brCtx]
+			baseRange := level - 1 - NumBaseLevels
+			for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
+				k := minInt(baseRange-idx, BRCDFSize-1)
+				w.WriteCDF4(brCDF, k)
+				if k < BRCDFSize-1 {
+					break
+				}
 			}
+		}
+	}
+	if eob > 1 {
+		p := &scanHot[0]
+		level := int(absLevels[0])
+		if level == 0 {
+			w.WriteCDF4Zero(&baseCDFs[0])
+		} else {
+			w.WriteCDF4(&baseCDFs[0], minInt(level, 3))
+		}
+		if level > NumBaseLevels {
+			pad := p.padded
+			mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
+			brCtx := minInt((mag+1)>>1, 6)
 			brCDF := &brCDFs[brCtx]
 			baseRange := level - 1 - NumBaseLevels
 			for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
