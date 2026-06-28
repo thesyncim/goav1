@@ -94,7 +94,7 @@ bench1080_time=${GOAV1_ALLOC_1080P_BENCHTIME:-1x}
 encoder1080_re='^Benchmark.*1080p$'
 encoder1080_out=$(GOMAXPROCS=1 GOGC=off go test ./internal/av1/encoder -run '^$' -bench="$encoder1080_re" -benchmem -benchtime="$bench1080_time" -count=1)
 printf '%s\n' "$encoder1080_out"
-check_zero_alloc_benchmarks_at_least 6 '^Benchmark.*1080p' "$encoder1080_out"
+check_zero_alloc_benchmarks_at_least 7 '^Benchmark.*1080p' "$encoder1080_out"
 
 # Keep the public 1080p benchmark canaries isolated from each other so runtime
 # first touches in one benchmark do not get charged to a later hot-path row.
