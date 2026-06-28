@@ -349,25 +349,26 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 		p := &scanHot[c]
 		pos := int(p.pos)
 		cv := coeff64[pos]
+		if cv == 0 {
+			continue
+		}
 		level := absInt(int(cv))
 		if level > 127 {
 			levels[p.padded] = 127
 		} else {
 			levels[p.padded] = uint8(level)
 		}
-		if cv != 0 {
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			absLevels[c] = uint16(level)
-			nonZeroBits |= 1 << uint(c)
-			if cv < 0 {
-				signBits |= 1 << uint(c)
-			}
-			culLevel += level
-			if pos == 0 {
-				dcValue = int(cv)
-			}
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		absLevels[c] = uint16(level)
+		nonZeroBits |= 1 << uint(c)
+		if cv < 0 {
+			signBits |= 1 << uint(c)
+		}
+		culLevel += level
+		if pos == 0 {
+			dcValue = int(cv)
 		}
 	}
 
@@ -508,21 +509,22 @@ func CountCoefficientsTXB8x8UV2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16
 		p := &scanHot[c]
 		pos := int(p.pos)
 		cv := coeff64[pos]
+		if cv == 0 {
+			continue
+		}
 		levels[p.padded] = coeffAbsClamp127(cv)
-		if cv != 0 {
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			level := absInt(int(cv))
-			absLevels[c] = uint16(level)
-			nonZeroBits |= 1 << uint(c)
-			if cv < 0 {
-				signBits |= 1 << uint(c)
-			}
-			culLevel += level
-			if pos == 0 {
-				dcValue = int(cv)
-			}
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		level := absInt(int(cv))
+		absLevels[c] = uint16(level)
+		nonZeroBits |= 1 << uint(c)
+		if cv < 0 {
+			signBits |= 1 << uint(c)
+		}
+		culLevel += level
+		if pos == 0 {
+			dcValue = int(cv)
 		}
 	}
 
@@ -686,23 +688,24 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 		p := &scanHot[c]
 		pos := int(p.pos)
 		cv := coeff256[pos]
+		if cv == 0 {
+			continue
+		}
 		levels[p.padded] = coeffAbsClamp127(cv)
-		if cv != 0 {
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			level := absInt(int(cv))
-			absLevels[c] = uint16(level)
-			word := c >> 6
-			bit := uint(c & 63)
-			nonZeroBits[word] |= 1 << bit
-			if cv < 0 {
-				signBits[word] |= 1 << bit
-			}
-			culLevel += level
-			if pos == 0 {
-				dcValue = int(cv)
-			}
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		level := absInt(int(cv))
+		absLevels[c] = uint16(level)
+		word := c >> 6
+		bit := uint(c & 63)
+		nonZeroBits[word] |= 1 << bit
+		if cv < 0 {
+			signBits[word] |= 1 << bit
+		}
+		culLevel += level
+		if pos == 0 {
+			dcValue = int(cv)
 		}
 	}
 
@@ -844,17 +847,18 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 		p := &scanHot[c]
 		pos := int(p.pos)
 		cv := coeff256[pos]
+		if cv == 0 {
+			continue
+		}
 		levels[p.padded] = coeffAbsClamp127(cv)
-		if cv != 0 {
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			level := absInt(int(cv))
-			absLevels[c] = uint16(level)
-			culLevel += level
-			if pos == 0 {
-				dcValue = int(cv)
-			}
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		level := absInt(int(cv))
+		absLevels[c] = uint16(level)
+		culLevel += level
+		if pos == 0 {
+			dcValue = int(cv)
 		}
 	}
 
@@ -1014,17 +1018,18 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 		p := &scanHot[c]
 		pos := int(p.pos)
 		cv := coeff256[pos]
+		if cv == 0 {
+			continue
+		}
 		levels[p.padded] = coeffAbsClamp127(cv)
-		if cv != 0 {
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			level := absInt(int(cv))
-			absLevels[c] = uint16(level)
-			culLevel += level
-			if pos == 0 {
-				dcValue = int(cv)
-			}
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		level := absInt(int(cv))
+		absLevels[c] = uint16(level)
+		culLevel += level
+		if pos == 0 {
+			dcValue = int(cv)
 		}
 	}
 
@@ -1200,17 +1205,18 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 		p := &scanHot[c]
 		pos := int(p.pos)
 		cv := coeff1024[pos]
+		if cv == 0 {
+			continue
+		}
 		levels[p.padded] = coeffAbsClamp127(cv)
-		if cv != 0 {
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			level := absInt(int(cv))
-			nonZeroBits[c>>6] |= 1 << uint(c&63)
-			culLevel += level
-			if pos == 0 {
-				dcValue = int(cv)
-			}
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		level := absInt(int(cv))
+		nonZeroBits[c>>6] |= 1 << uint(c&63)
+		culLevel += level
+		if pos == 0 {
+			dcValue = int(cv)
 		}
 	}
 
@@ -1369,16 +1375,17 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 		p := &scanHot[c]
 		pos := int(p.pos)
 		cv := coeff1024[pos]
+		if cv == 0 {
+			continue
+		}
 		levels[p.padded] = coeffAbsClamp127(cv)
-		if cv != 0 {
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			level := absInt(int(cv))
-			culLevel += level
-			if pos == 0 {
-				dcValue = int(cv)
-			}
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		level := absInt(int(cv))
+		culLevel += level
+		if pos == 0 {
+			dcValue = int(cv)
 		}
 	}
 
@@ -1539,20 +1546,21 @@ func writeCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *Coef
 		p := &scanHot[c]
 		pos := int(p.pos)
 		cv := coeffs[pos]
+		if cv == 0 {
+			continue
+		}
 		levels[p.padded] = coeffAbsClamp127(cv)
-		if cv != 0 {
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			level := absInt(int(cv))
-			absLevels[c] = uint16(level)
-			if cv < 0 {
-				signBits |= uint16(1) << uint(c)
-			}
-			culLevel += level
-			if pos == 0 {
-				dcValue = int(cv)
-			}
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		level := absInt(int(cv))
+		absLevels[c] = uint16(level)
+		if cv < 0 {
+			signBits |= uint16(1) << uint(c)
+		}
+		culLevel += level
+		if pos == 0 {
+			dcValue = int(cv)
 		}
 	}
 
@@ -1689,20 +1697,21 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 		p := &scanHot[c]
 		pos := int(p.pos)
 		cv := coeff16[pos]
+		if cv == 0 {
+			continue
+		}
 		levels[p.padded] = coeffAbsClamp127(cv)
-		if cv != 0 {
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			level := absInt(int(cv))
-			absLevels[c] = uint16(level)
-			if cv < 0 {
-				signBits |= uint16(1) << uint(c)
-			}
-			culLevel += level
-			if pos == 0 {
-				dcValue = int(cv)
-			}
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		level := absInt(int(cv))
+		absLevels[c] = uint16(level)
+		if cv < 0 {
+			signBits |= uint16(1) << uint(c)
+		}
+		culLevel += level
+		if pos == 0 {
+			dcValue = int(cv)
 		}
 	}
 
@@ -1836,20 +1845,21 @@ func WriteCoefficientsTXB4x4UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 		p := &scanHot[c]
 		pos := int(p.pos)
 		cv := coeffs[pos]
+		if cv == 0 {
+			continue
+		}
 		levels[p.padded] = coeffAbsClamp127(cv)
-		if cv != 0 {
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			level := absInt(int(cv))
-			absLevels[c] = uint16(level)
-			if cv < 0 {
-				signBits |= uint16(1) << uint(c)
-			}
-			culLevel += level
-			if pos == 0 {
-				dcValue = int(cv)
-			}
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		level := absInt(int(cv))
+		absLevels[c] = uint16(level)
+		if cv < 0 {
+			signBits |= uint16(1) << uint(c)
+		}
+		culLevel += level
+		if pos == 0 {
+			dcValue = int(cv)
 		}
 	}
 
@@ -1987,20 +1997,21 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 		p := &scanHot[c]
 		pos := int(p.pos)
 		cv := coeff16[pos]
+		if cv == 0 {
+			continue
+		}
 		levels[p.padded] = coeffAbsClamp127(cv)
-		if cv != 0 {
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			level := absInt(int(cv))
-			absLevels[c] = uint16(level)
-			if cv < 0 {
-				signBits |= uint16(1) << uint(c)
-			}
-			culLevel += level
-			if pos == 0 {
-				dcValue = int(cv)
-			}
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		level := absInt(int(cv))
+		absLevels[c] = uint16(level)
+		if cv < 0 {
+			signBits |= uint16(1) << uint(c)
+		}
+		culLevel += level
+		if pos == 0 {
+			dcValue = int(cv)
 		}
 	}
 
@@ -2148,20 +2159,21 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 		p := &scanHot[c]
 		pos := int(p.pos)
 		cv := coeff64[pos]
+		if cv == 0 {
+			continue
+		}
 		levels[p.padded] = coeffAbsClamp127(cv)
-		if cv != 0 {
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			level := absInt(int(cv))
-			absLevels[c] = uint16(level)
-			if cv < 0 {
-				signBits |= uint64(1) << uint(c)
-			}
-			culLevel += level
-			if pos == 0 {
-				dcValue = int(cv)
-			}
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		level := absInt(int(cv))
+		absLevels[c] = uint16(level)
+		if cv < 0 {
+			signBits |= uint64(1) << uint(c)
+		}
+		culLevel += level
+		if pos == 0 {
+			dcValue = int(cv)
 		}
 	}
 
@@ -2299,20 +2311,21 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 		p := &scanHot[c]
 		pos := int(p.pos)
 		cv := coeffs[pos]
+		if cv == 0 {
+			continue
+		}
 		levels[p.padded] = coeffAbsClamp127(cv)
-		if cv != 0 {
-			if pos > maxScanLine {
-				maxScanLine = pos
-			}
-			level := absInt(int(cv))
-			absLevels[c] = uint16(level)
-			if cv < 0 {
-				signBits |= uint64(1) << uint(c)
-			}
-			culLevel += level
-			if pos == 0 {
-				dcValue = int(cv)
-			}
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		level := absInt(int(cv))
+		absLevels[c] = uint16(level)
+		if cv < 0 {
+			signBits |= uint64(1) << uint(c)
+		}
+		culLevel += level
+		if pos == 0 {
+			dcValue = int(cv)
 		}
 	}
 
