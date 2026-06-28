@@ -73,9 +73,6 @@ func EncodeMonochromePFrame(src SourceFrameMono, ref SourceFrameMono, qIndex uin
 	if src.Width != ref.Width || src.Height != ref.Height {
 		return nil, SourceFrameMono{}, fmt.Errorf("encoder: source %dx%d does not match reference %dx%d", src.Width, src.Height, ref.Width, ref.Height)
 	}
-	if qIndex == 0 {
-		return nil, SourceFrameMono{}, fmt.Errorf("encoder: qindex 0 lossless inter coding is not supported")
-	}
 	recon := SourceFrameMono{
 		Y:       make([]byte, len(src.Y)),
 		YStride: src.YStride,

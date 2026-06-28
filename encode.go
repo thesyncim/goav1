@@ -245,7 +245,8 @@ func EncodeI400HighBitDepthPFrame(frame I400HighBitDepthFrame, ref I400HighBitDe
 //
 // ref must be the previous native monochrome reconstruction for the same coded
 // geometry, usually the reconstruction returned by EncodeI400Keyframe or a prior
-// EncodeI400PFrame call. qIndex must be 1..255.
+// EncodeI400PFrame call. qIndex 0 emits a lossless inter frame; qIndex 1..255
+// emits a non-lossless inter frame.
 func EncodeI400PFrame(frame I400Frame, ref I400Frame, qIndex uint8) ([]byte, I400Frame, error) {
 	tu, recon, err := encoder.EncodeMonochromePFrame(encoder.SourceFrameMono(frame), encoder.SourceFrameMono(ref), qIndex)
 	if err != nil {

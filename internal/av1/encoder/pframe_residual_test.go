@@ -180,6 +180,62 @@ func TestEncodeLosslessPFrameDecodeMatchesSource(t *testing.T) {
 	}
 }
 
+func TestEncodeLosslessMonochromePFrameDecodeMatchesSource(t *testing.T) {
+	const w, h = 128, 96
+	makeFrame := func(seed int) encoder.SourceFrameMono {
+		rng := rand.New(rand.NewSource(int64(seed)))
+		f := encoder.SourceFrameMono{
+			Y:       make([]byte, w*h),
+			YStride: w,
+			Width:   w,
+			Height:  h,
+		}
+		for y := range h {
+			for x := range w {
+				f.Y[y*w+x] = uint8((x*5 + y*7 + rng.Intn(43)) & 0xff)
+			}
+		}
+		return f
+	}
+	src1 := makeFrame(41)
+	src2 := makeFrame(83)
+
+	keyTU, keyRecon, err := encoder.EncodeMonochromeKeyframe(src1, 72)
+	if err != nil {
+		t.Fatalf("encode monochrome keyframe: %v", err)
+	}
+	pTU, pRecon, err := encoder.EncodeMonochromePFrame(src2, keyRecon, 0)
+	if err != nil {
+		t.Fatalf("encode lossless monochrome p-frame: %v", err)
+	}
+	if !bytes.Equal(pRecon.Y, src2.Y) {
+		t.Fatal("lossless monochrome P-frame reconstruction differs from source")
+	}
+
+	dec, err := goav1.NewDecoder([][]byte{keyTU, pTU})
+	if err != nil {
+		t.Fatalf("new decoder: %v", err)
+	}
+	defer dec.Close()
+	frames, err := dec.DecodeAll()
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(frames) != 2 {
+		t.Fatalf("decoded %d frames, want 2", len(frames))
+	}
+	f := frames[1]
+	if !f.Format.MonoChrome || f.Format.BitDepth != 8 {
+		t.Fatalf("decoded format=%+v, want 8-bit monochrome", f.Format)
+	}
+	compareAbsentPlane(t, "decoded U", f.U)
+	compareAbsentPlane(t, "decoded V", f.V)
+	comparePlane(t, "decoded Y", f.Y, src2.Y, w, h, w)
+	if bytes.Equal(pTU, keyTU) {
+		t.Fatal("lossless monochrome P-frame unexpectedly matched keyframe bytes")
+	}
+}
+
 func TestEncodeMonochromePFrameDecodeMatchesRecon(t *testing.T) {
 	const w, h = 128, 96
 	src1 := encoder.SourceFrameMono{

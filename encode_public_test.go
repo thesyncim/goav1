@@ -401,44 +401,57 @@ func TestPublicEncodeI400PFrameNativeMonochrome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncodeI400Keyframe: %v", err)
 	}
-	pTU, pRecon, err := goav1.EncodeI400PFrame(src2, keyRecon, 80)
-	if err != nil {
-		t.Fatalf("EncodeI400PFrame: %v", err)
-	}
-	if len(pTU) == 0 {
-		t.Fatal("empty P temporal unit")
-	}
 	seq := publicFirstSequenceHeader(t, keyTU)
 	if !seq.ColorConfig.MonoChrome || seq.ColorConfig.BitDepth != 8 {
 		t.Fatalf("sequence color=%+v, want native 8-bit monochrome", seq.ColorConfig)
 	}
 
-	dec, err := goav1.NewDecoder([][]byte{keyTU, pTU})
-	if err != nil {
-		t.Fatalf("NewDecoder: %v", err)
-	}
-	defer dec.Close()
-	frames, err := dec.DecodeAll()
-	if err != nil {
-		t.Fatalf("DecodeAll: %v", err)
-	}
-	if len(frames) != 2 {
-		t.Fatalf("decoded %d frames, want 2", len(frames))
-	}
-	for i, frame := range frames {
-		if !frame.Format.MonoChrome || frame.Format.BitDepth != 8 {
-			t.Fatalf("decoded frame %d format=%+v, want native 8-bit monochrome", i, frame.Format)
-		}
-		if frame.U.Width != 0 || frame.V.Width != 0 || len(frame.U.Pix) != 0 || len(frame.V.Pix) != 0 {
-			t.Fatalf("decoded frame %d chroma U=%+v V=%+v, want absent", i, frame.U, frame.V)
-		}
-	}
-	for y := range h {
-		got := frames[1].Y.Pix[y*frames[1].Y.Stride : y*frames[1].Y.Stride+w]
-		want := pRecon.Y[y*pRecon.YStride : y*pRecon.YStride+w]
-		if !bytes.Equal(got, want) {
-			t.Fatalf("decoded P-frame luma row %d differs from reconstruction", y)
-		}
+	for _, tc := range []struct {
+		name   string
+		qIndex uint8
+	}{
+		{name: "lossless", qIndex: 0},
+		{name: "lossy", qIndex: 80},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pTU, pRecon, err := goav1.EncodeI400PFrame(src2, keyRecon, tc.qIndex)
+			if err != nil {
+				t.Fatalf("EncodeI400PFrame: %v", err)
+			}
+			if len(pTU) == 0 {
+				t.Fatal("empty P temporal unit")
+			}
+			if tc.qIndex == 0 && !bytes.Equal(pRecon.Y, src2.Y) {
+				t.Fatal("lossless P-frame reconstruction differs from source")
+			}
+			dec, err := goav1.NewDecoder([][]byte{keyTU, pTU})
+			if err != nil {
+				t.Fatalf("NewDecoder: %v", err)
+			}
+			defer dec.Close()
+			frames, err := dec.DecodeAll()
+			if err != nil {
+				t.Fatalf("DecodeAll: %v", err)
+			}
+			if len(frames) != 2 {
+				t.Fatalf("decoded %d frames, want 2", len(frames))
+			}
+			for i, frame := range frames {
+				if !frame.Format.MonoChrome || frame.Format.BitDepth != 8 {
+					t.Fatalf("decoded frame %d format=%+v, want native 8-bit monochrome", i, frame.Format)
+				}
+				if frame.U.Width != 0 || frame.V.Width != 0 || len(frame.U.Pix) != 0 || len(frame.V.Pix) != 0 {
+					t.Fatalf("decoded frame %d chroma U=%+v V=%+v, want absent", i, frame.U, frame.V)
+				}
+			}
+			for y := range h {
+				got := frames[1].Y.Pix[y*frames[1].Y.Stride : y*frames[1].Y.Stride+w]
+				want := pRecon.Y[y*pRecon.YStride : y*pRecon.YStride+w]
+				if !bytes.Equal(got, want) {
+					t.Fatalf("decoded P-frame luma row %d differs from reconstruction", y)
+				}
+			}
+		})
 	}
 }
 
