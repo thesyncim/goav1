@@ -88,6 +88,170 @@ func TestWebRTCStreamEncoderOptionsSurviveSetConfig(t *testing.T) {
 	}
 }
 
+func TestWebRTCStreamConfigMaxThreadsControlsTileColumns(t *testing.T) {
+	const w, h = 640, 360
+	stream, err := NewWebRTCStreamConfig(Config{
+		Resolution:        Resolution{Width: w, Height: h},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 500,
+		Scalability:       ScalabilityModeL1T1,
+		MaxThreads:        1,
+	})
+	if err != nil {
+		t.Fatalf("NewWebRTCStreamConfig: %v", err)
+	}
+	defer stream.Close()
+	if got := stream.encoders[0].tileColsLog2; got != 0 {
+		t.Fatalf("initial tileColsLog2=%d want 0", got)
+	}
+	if !stream.encoders[0].singleThread {
+		t.Fatal("initial MaxThreads=1 did not enable single-thread mode")
+	}
+	picture, err := stream.EncodePicture(testWebRTCStreamFrame(w, h), true)
+	if err != nil {
+		t.Fatalf("initial EncodePicture: %v", err)
+	}
+	if got := parseWebRTCTileColumns(t, picture.Frames[0].TU); got != 1 {
+		t.Fatalf("initial encoded tile columns=%d want 1", got)
+	}
+
+	change := stream.Config()
+	change.MaxThreads = 4
+	if err := stream.SetConfig(change); err != nil {
+		t.Fatalf("SetConfig MaxThreads=4: %v", err)
+	}
+	if got := stream.encoders[0].tileColsLog2; got != 2 {
+		t.Fatalf("updated tileColsLog2=%d want 2", got)
+	}
+	if stream.encoders[0].singleThread {
+		t.Fatal("updated MaxThreads=4 left single-thread mode enabled")
+	}
+	picture, err = stream.EncodePicture(testWebRTCStreamFrame(w, h), true)
+	if err != nil {
+		t.Fatalf("updated EncodePicture: %v", err)
+	}
+	if got := parseWebRTCTileColumns(t, picture.Frames[0].TU); got != 4 {
+		t.Fatalf("updated encoded tile columns=%d want 4", got)
+	}
+
+	change = stream.Config()
+	change.MaxThreads = 0
+	if err := stream.SetConfig(change); err != nil {
+		t.Fatalf("SetConfig MaxThreads=0: %v", err)
+	}
+	if got, want := stream.encoders[0].tileColsLog2, defaultTileColsLog2(w); got != want {
+		t.Fatalf("defaulted tileColsLog2=%d want %d", got, want)
+	}
+	if stream.encoders[0].singleThread {
+		t.Fatal("defaulted MaxThreads=0 left single-thread mode enabled")
+	}
+	picture, err = stream.EncodePicture(testWebRTCStreamFrame(w, h), true)
+	if err != nil {
+		t.Fatalf("defaulted EncodePicture: %v", err)
+	}
+	if got := parseWebRTCTileColumns(t, picture.Frames[0].TU); got != 2 {
+		t.Fatalf("defaulted encoded tile columns=%d want 2", got)
+	}
+}
+
+func TestWebRTCStreamConfigMaxThreadsAppliesToPixelEncoders(t *testing.T) {
+	const w, h = 512, 288
+	base := Config{
+		Resolution:        Resolution{Width: w, Height: h},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 500,
+		Scalability:       ScalabilityModeL1T1,
+		MaxThreads:        4,
+	}
+	for _, tc := range []struct {
+		name   string
+		config func(Config) Config
+		assert func(*testing.T, *WebRTCStream)
+	}{
+		{
+			name: "i420-8",
+			config: func(cfg Config) Config {
+				return cfg
+			},
+			assert: func(t *testing.T, stream *WebRTCStream) {
+				t.Helper()
+				if stream.encoders[0] == nil {
+					t.Fatal("missing i420 encoder")
+				}
+				if got := stream.encoders[0].tileColsLog2; got != 2 {
+					t.Fatalf("i420 encoder tileColsLog2=%d want 2", got)
+				}
+			},
+		},
+		{
+			name: "i400-8",
+			config: func(cfg Config) Config {
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 8, MonoChrome: true}
+				return cfg
+			},
+			assert: func(t *testing.T, stream *WebRTCStream) {
+				t.Helper()
+				if stream.monoEncoders[0] == nil {
+					t.Fatal("missing mono encoder")
+				}
+				if got := stream.monoEncoders[0].tileColsLog2; got != 2 {
+					t.Fatalf("mono encoder tileColsLog2=%d want 2", got)
+				}
+			},
+		},
+		{
+			name: "i400-10",
+			config: func(cfg Config) Config {
+				cfg.BitDepth = 10
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 10, MonoChrome: true}
+				return cfg
+			},
+			assert: func(t *testing.T, stream *WebRTCStream) {
+				t.Helper()
+				if stream.mono16Encoders[0] == nil {
+					t.Fatal("missing mono16 encoder")
+				}
+				if got := stream.mono16Encoders[0].tileColsLog2; got != 2 {
+					t.Fatalf("mono16 encoder tileColsLog2=%d want 2", got)
+				}
+			},
+		},
+		{
+			name: "i420-10",
+			config: func(cfg Config) Config {
+				cfg.BitDepth = 10
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 10, SubsamplingX: true, SubsamplingY: true}
+				return cfg
+			},
+			assert: func(t *testing.T, stream *WebRTCStream) {
+				t.Helper()
+				if stream.color16Encoders[0] == nil {
+					t.Fatal("missing color16 encoder")
+				}
+				if got := stream.color16Encoders[0].tileColsLog2; got != 2 {
+					t.Fatalf("color16 encoder tileColsLog2=%d want 2", got)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream, err := NewWebRTCStreamConfig(tc.config(base))
+			if err != nil {
+				t.Fatalf("NewWebRTCStreamConfig: %v", err)
+			}
+			defer stream.Close()
+			tc.assert(t, stream)
+		})
+	}
+}
+
 func TestWebRTCStreamTileColumnsSurvivePixelFormatReplacement(t *testing.T) {
 	const w, h = 512, 288
 	base := Config{

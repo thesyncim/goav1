@@ -48,6 +48,7 @@ type VideoEncoder struct {
 	lf           loopFilterApplier
 	cdefApp      cdefApplier
 	hme          hmeState
+	singleThread bool
 
 	temporalLayers int
 	t2Recon        SourceFrame420
@@ -377,6 +378,32 @@ func (e *VideoEncoder) SetTileColumns(cols int) {
 	e.tileColsLog2 = tileColumnsLog2(cols)
 }
 
+func (e *VideoEncoder) SetMaxThreads(n int) {
+	if e == nil {
+		return
+	}
+	e.singleThread = n == 1
+	if n > 0 {
+		e.SetTileColumns(n)
+		return
+	}
+	e.setDefaultTileColumns()
+}
+
+func (e *VideoEncoder) setDefaultTileColumns() {
+	if e != nil {
+		e.tileColsLog2 = defaultTileColsLog2(e.width)
+	}
+}
+
+func (e *VideoEncoder) runHME(src SourceFrame420) {
+	if e.singleThread {
+		e.hme.runSerial(src)
+		return
+	}
+	e.hme.run(src)
+}
+
 func tileColumnsLog2(cols int) uint8 {
 	log2 := uint8(0)
 	for (2 << log2) <= cols {
@@ -654,7 +681,7 @@ func (e *VideoEncoder) EncodeWithTemporalID(src SourceFrame420, forceKey bool, t
 	// coding would cost near-keyframe bits at worse quality, so restart the
 	// chain with a real keyframe instead. The spacing guard keeps noisy
 	// content from forcing key storms.
-	e.hme.run(src)
+	e.runHME(src)
 	if e.sceneCutKeyframes && e.frameIndex >= 4 && e.hme.cutDetected() {
 		return e.Encode(src, true)
 	}
@@ -747,7 +774,7 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 	}
 
 	hmeArmed := e.hme.armed
-	e.hme.run(src)
+	e.runHME(src)
 	e.pc.st.hme = &e.hme
 	for t := range e.tilePCs {
 		e.tilePCs[t].st.hme = &e.hme
@@ -1055,22 +1082,24 @@ func (e *VideoEncoder) startFilterWorker() {
 	go func() {
 		for range e.filterWork {
 			p := &e.filterParams
-			if err := e.lf.apply(p.out, parser.LoopFilterParams{
-				LevelY: [2]uint8{p.lfLevel, p.lfLevel},
-				LevelU: p.lfLevel,
-				LevelV: p.lfLevel,
-			}); err != nil {
-				e.filterDone <- fmt.Errorf("loop filter apply: %w", err)
-				continue
-			}
-			if err := e.cdefApp.apply(p.out, p.cdef, &e.lf.filtMap); err != nil {
-				e.filterDone <- fmt.Errorf("cdef apply: %w", err)
-				continue
-			}
-			e.filterDone <- nil
+			e.filterDone <- e.applyInLoopFilters(p.out, p.lfLevel, p.cdef)
 		}
 	}()
 	e.filterStarted = true
+}
+
+func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cdef parser.CDEFParams) error {
+	if err := e.lf.apply(out, parser.LoopFilterParams{
+		LevelY: [2]uint8{lfLevel, lfLevel},
+		LevelU: lfLevel,
+		LevelV: lfLevel,
+	}); err != nil {
+		return fmt.Errorf("loop filter apply: %w", err)
+	}
+	if err := e.cdefApp.apply(out, cdef, &e.lf.filtMap); err != nil {
+		return fmt.Errorf("cdef apply: %w", err)
+	}
+	return nil
 }
 
 // joinFilter blocks until a backgrounded in-loop filter pass finishes. It
@@ -1337,20 +1366,26 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			}
 		}
 	}
-	if lfLevel > 0 {
+	filterCDEF := cdefParserParams(header.CDEF)
+	if lfLevel > 0 && !e.singleThread {
 		// The filters run behind the temporal-unit assembly and the next
 		// frame's source-only stages; everything reading the filtered
 		// planes or the applier state joins first.
 		e.startFilterWorker()
 		e.filterParams.out = out
 		e.filterParams.lfLevel = lfLevel
-		e.filterParams.cdef = cdefParserParams(header.CDEF)
+		e.filterParams.cdef = filterCDEF
 		e.filterPending = true
 		e.filterWork <- struct{}{}
 	}
 	tu, err := assembleInterTU(seq, header, payloads, temporalID, &e.tuGroup, &e.tuScratch)
 	if err != nil {
 		return nil, err
+	}
+	if lfLevel > 0 && e.singleThread {
+		if err := e.applyInLoopFilters(out, lfLevel, filterCDEF); err != nil {
+			return nil, err
+		}
 	}
 	e.collectDecisionStats(false, nTiles, false)
 	e.lastRecon = *out

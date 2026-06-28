@@ -133,6 +133,12 @@ func (e *HighBitDepth420VideoEncoder) SetTileColumns(cols int) {
 	}
 }
 
+func (e *HighBitDepth420VideoEncoder) setDefaultTileColumns() {
+	if e != nil {
+		e.tileColsLog2 = 0
+	}
+}
+
 func (e *HighBitDepth420VideoEncoder) TemporalID() uint8 {
 	if e == nil || !e.haveKey {
 		return 0

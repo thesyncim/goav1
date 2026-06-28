@@ -106,6 +106,12 @@ func (e *HighBitDepthMonochromeVideoEncoder) SetTileColumns(cols int) {
 	}
 }
 
+func (e *HighBitDepthMonochromeVideoEncoder) setDefaultTileColumns() {
+	if e != nil {
+		e.tileColsLog2 = 0
+	}
+}
+
 func (e *HighBitDepthMonochromeVideoEncoder) TemporalID() uint8 {
 	if e == nil || !e.haveKey {
 		return 0

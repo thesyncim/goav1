@@ -175,6 +175,33 @@ func (h *hmeState) run(src SourceFrame420) {
 	h.srcQ, h.refQ = h.refQ, h.srcQ
 }
 
+func (h *hmeState) runSerial(src SourceFrame420) {
+	w, ht := src.Width, src.Height
+	qw, qh := w/4, ht/4
+	if qw < 8 || qh < 8 || !h.armed {
+		h.cols, h.rows = 0, 0
+		return
+	}
+	cols := (w + 31) / 32
+	rows := (ht + 31) / 32
+	if len(h.seeds) < cols*rows {
+		h.seeds = make([]motion.Vector, cols*rows)
+		h.seedSADs = make([]int32, cols*rows)
+	}
+	h.qw, h.qh, h.cols, h.rows = qw, qh, cols, rows
+	buildQuarterPlane(h.srcQ, src.Y, src.YStride, qw, qh)
+	for b := range hmeBands {
+		h.bandCut[b] = 0
+		h.bandStatic[b] = 0
+		r0 := b * rows / hmeBands
+		r1 := (b + 1) * rows / hmeBands
+		if r0 < r1 {
+			h.searchRows(b, r0, r1)
+		}
+	}
+	h.srcQ, h.refQ = h.refQ, h.srcQ
+}
+
 // cutDetected reports whether the last run looks like a scene cut: at least
 // sixty percent of the regions found no quarter-res match.
 func (h *hmeState) cutDetected() bool {

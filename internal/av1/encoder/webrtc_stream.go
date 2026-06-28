@@ -60,6 +60,7 @@ type WebRTCStream struct {
 	rcMinQ, rcMaxQ uint8
 
 	tileColumns       int
+	tileColumnsSet    bool
 	goldenInterval    int
 	goldenIntervalSet bool
 
@@ -168,6 +169,7 @@ func NewWebRTCStreamConfig(config Config) (*WebRTCStream, error) {
 			stream.encoders[i] = enc
 		}
 	}
+	stream.applyConfiguredTileColumns(normalized)
 	return &stream, nil
 }
 
@@ -469,6 +471,7 @@ func (s *WebRTCStream) SetGoldenInterval(n int) {
 func (s *WebRTCStream) SetTileColumns(cols int) {
 	if s != nil {
 		s.tileColumns = cols
+		s.tileColumnsSet = true
 	}
 	for i := uint8(0); s != nil && i < s.config.SpatialLayerCount; i++ {
 		if s.encoders[i] != nil {
@@ -484,6 +487,74 @@ func (s *WebRTCStream) SetTileColumns(cols int) {
 			s.color16Encoders[i].SetTileColumns(cols)
 		}
 	}
+}
+
+func (s *WebRTCStream) configuredTileColumns(config Config) (int, bool) {
+	if config.MaxThreads > 0 {
+		return int(config.MaxThreads), true
+	}
+	if s != nil && s.tileColumnsSet {
+		return s.tileColumns, true
+	}
+	return 0, false
+}
+
+func (s *WebRTCStream) applyConfiguredTileColumns(config Config) {
+	for i := uint8(0); s != nil && i < config.SpatialLayerCount; i++ {
+		s.applyConfiguredTileColumnsToVideo(config, s.encoders[i])
+		s.applyConfiguredTileColumnsToMono(config, s.monoEncoders[i])
+		s.applyConfiguredTileColumnsToMono16(config, s.mono16Encoders[i])
+		s.applyConfiguredTileColumnsToColor16(config, s.color16Encoders[i])
+	}
+}
+
+func (s *WebRTCStream) applyConfiguredTileColumnsToVideo(config Config, enc *VideoEncoder) {
+	if enc == nil {
+		return
+	}
+	if config.MaxThreads > 0 {
+		enc.SetMaxThreads(int(config.MaxThreads))
+		return
+	}
+	enc.singleThread = false
+	if cols, ok := s.configuredTileColumns(config); ok {
+		enc.SetTileColumns(cols)
+		return
+	}
+	enc.setDefaultTileColumns()
+}
+
+func (s *WebRTCStream) applyConfiguredTileColumnsToMono(config Config, enc *MonochromeVideoEncoder) {
+	if enc == nil {
+		return
+	}
+	if cols, ok := s.configuredTileColumns(config); ok {
+		enc.SetTileColumns(cols)
+		return
+	}
+	enc.setDefaultTileColumns()
+}
+
+func (s *WebRTCStream) applyConfiguredTileColumnsToMono16(config Config, enc *HighBitDepthMonochromeVideoEncoder) {
+	if enc == nil {
+		return
+	}
+	if cols, ok := s.configuredTileColumns(config); ok {
+		enc.SetTileColumns(cols)
+		return
+	}
+	enc.setDefaultTileColumns()
+}
+
+func (s *WebRTCStream) applyConfiguredTileColumnsToColor16(config Config, enc *HighBitDepth420VideoEncoder) {
+	if enc == nil {
+		return
+	}
+	if cols, ok := s.configuredTileColumns(config); ok {
+		enc.SetTileColumns(cols)
+		return
+	}
+	enc.setDefaultTileColumns()
 }
 
 // Config returns the normalized WebRTC stream config.
@@ -527,6 +598,7 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 		if err := s.updateLayerControls(normalized, fps); err != nil {
 			return err
 		}
+		s.applyConfiguredTileColumns(normalized)
 		s.config = normalized
 		if !sameStructure {
 			s.state = webRTCEncoderStateForNextKey(s.state)
@@ -762,6 +834,7 @@ func (s *WebRTCStream) buildReplacementLayerEncoders(config Config, fps int) ([W
 		if s.tileColumns > 0 {
 			enc.SetTileColumns(s.tileColumns)
 		}
+		s.applyConfiguredTileColumnsToVideo(config, enc)
 		if s.goldenIntervalSet {
 			enc.SetGoldenInterval(s.goldenInterval)
 		}
@@ -786,6 +859,7 @@ func (s *WebRTCStream) buildReplacementMonoLayerEncoders(config Config, fps int)
 		if s.tileColumns > 0 {
 			enc.SetTileColumns(s.tileColumns)
 		}
+		s.applyConfiguredTileColumnsToMono(config, enc)
 		if err := enc.Prewarm(); err != nil {
 			closeWebRTCStreamMonoEncoders(encoders)
 			_ = enc.Close()
@@ -807,6 +881,7 @@ func (s *WebRTCStream) buildReplacementMono16LayerEncoders(config Config, fps in
 		if s.tileColumns > 0 {
 			enc.SetTileColumns(s.tileColumns)
 		}
+		s.applyConfiguredTileColumnsToMono16(config, enc)
 		if err := enc.Prewarm(); err != nil {
 			closeWebRTCStreamMono16Encoders(encoders)
 			_ = enc.Close()
@@ -828,6 +903,7 @@ func (s *WebRTCStream) buildReplacementColor16LayerEncoders(config Config, fps i
 		if s.tileColumns > 0 {
 			enc.SetTileColumns(s.tileColumns)
 		}
+		s.applyConfiguredTileColumnsToColor16(config, enc)
 		if err := enc.Prewarm(); err != nil {
 			closeWebRTCStreamColor16Encoders(encoders)
 			_ = enc.Close()

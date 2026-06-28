@@ -103,6 +103,12 @@ func (e *MonochromeVideoEncoder) SetTileColumns(cols int) {
 	}
 }
 
+func (e *MonochromeVideoEncoder) setDefaultTileColumns() {
+	if e != nil {
+		e.tileColsLog2 = 0
+	}
+}
+
 // TemporalID reports the temporal layer the next frame will be coded in.
 func (e *MonochromeVideoEncoder) TemporalID() uint8 {
 	if e == nil || !e.haveKey {

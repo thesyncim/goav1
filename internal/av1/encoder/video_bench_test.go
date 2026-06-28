@@ -260,6 +260,17 @@ func BenchmarkEncodeKeyframeReusable1080p(b *testing.B) {
 // movers, the cmd/encbench scene shape) - the realtime budget meter. The
 // noise benchmark above stays as the worst-case bound.
 func BenchmarkVideoEncoderPFramePan1080p(b *testing.B) {
+	benchmarkVideoEncoderPFramePan1080p(b, 0)
+}
+
+// BenchmarkVideoEncoderPFramePan1080pSingleThread measures the same camera-like
+// 1080p steady-state path with tile, filter, and HME worker fan-out disabled
+// for one-lane WebRTC deployments and profiler runs.
+func BenchmarkVideoEncoderPFramePan1080pSingleThread(b *testing.B) {
+	benchmarkVideoEncoderPFramePan1080p(b, 1)
+}
+
+func benchmarkVideoEncoderPFramePan1080p(b *testing.B, maxThreads int) {
 	const w, h = 1920, 1080
 	cw, ch := w/2, h/2
 	rng := rand.New(rand.NewSource(15))
@@ -302,6 +313,9 @@ func BenchmarkVideoEncoderPFramePan1080p(b *testing.B) {
 	})
 	if err != nil {
 		b.Fatal(err)
+	}
+	if maxThreads > 0 {
+		enc.SetMaxThreads(maxThreads)
 	}
 	b.Cleanup(func() {
 		b.StopTimer()
