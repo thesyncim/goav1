@@ -32,14 +32,16 @@
 // chroma palette prediction, 8/10-bit 4:4:4 CDEF/restoration clips, 8/10-bit
 // 4:4:4 film-grain clips, a 10-bit 4:4:4 inter multi-tile clip, a profile-0
 // hidden S_FRAME altref stream, a 12-bit profile-2 4:4:4 inter multi-tile
-// clip, and 8/10-bit 4:4:4 super-res clips that run
-// the caller-owned full postfilter output path, including inter streams that
+// clip, a 12-bit profile-2 4:4:4 film-grain clip, and 8/10-bit 4:4:4
+// super-res clips that run the caller-owned full postfilter output path,
+// including inter streams that
 // reference super-res output and a high-bit-depth super-res + loop-restoration
 // clip. All are committed under
 // internal/av1/testvector/testdata/profiles/. libaom's published AV1 test-data
 // ships no 4:4:4 (profile 1), 4:2:2 (profile 2) or 12-bit (profile 2) vectors,
-// so these clips guard those decode paths, including 10/12-bit 4:2:2 and
-// 12-bit 4:4:4 inter prediction through CDEF and loop restoration.
+// so these clips guard those decode paths, including 10/12-bit 4:2:2,
+// 12-bit 4:4:4 film grain, and 12-bit 4:4:4 inter prediction through CDEF and
+// loop restoration.
 //
 // Regen recipe (run from a libaom v3.14.0 build tree, e.g. /tmp/aom-build):
 //
@@ -280,6 +282,12 @@
 //	  input_bit_depth=12, chroma_subsampling_x=0, chroma_subsampling_y=0,
 //	  cpu-used=1, q=28, kf-max-dist=999, lag-in-frames=0,
 //	  tile-columns=1, tile-rows=0.
+//	# 4:4:4 12-bit film grain:
+//	libaom encoder API, AOM_IMG_FMT_I44416, profile=2, bit_depth=12,
+//	  input_bit_depth=12, chroma_subsampling_x=0, chroma_subsampling_y=0,
+//	  cpu-used=4, q=40, kf-min/max-dist=1, lag-in-frames=0,
+//	  enable-cdef=0, enable-restoration=0, enable-palette=0,
+//	  film-grain-test-vector=1.
 //	# 4:2:0 12-bit:
 //	aomenc --i420 ... --profile=2 --bit-depth=12 --input-bit-depth=12 \
 //	  --cq-level=40 ... -o profile2-420-12bit-64x64.ivf src420_12.yuv
@@ -628,6 +636,23 @@ var profileClips = []profileClip{
 		wantTileCols:       2,
 		wantTileRows:       1,
 		wantTileGroupTiles: 2,
+	},
+	{
+		// Profile 2: 4:4:4 12-bit with active film grain, guarding
+		// professional-profile grain synthesis on maximum bit depth with no
+		// chroma subsampling.
+		name: "profile2-444-12bit-filmgrain-96x96",
+		file: "profile2-444-12bit-filmgrain-96x96.ivf",
+		frameMD5Hex: []string{
+			"f4c3bef48b1b82f77e1bbf4cd19eedce",
+			"0e7459be18f3a689a56e32331d2b8580",
+			"bc1e26931031e844f1fff10914fc2de1",
+		},
+		wantSeqProfile:      2,
+		wantBitDepth:        12,
+		wantSubsamplingX:    false,
+		wantSubsamplingY:    false,
+		wantFilmGrainFrames: 1,
 	},
 	{
 		// Profile 1: 4:4:4 8-bit INTER. 8 frames (1 keyframe + 7 inter,

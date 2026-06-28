@@ -18,8 +18,8 @@ import (
 // profile-1 4:4:4 8/10-bit, palette, CDEF/restoration, odd-edge filtering,
 // film grain, profile-2 4:2:2/4:2:0 including 10/12-bit 4:2:2 inter
 // CDEF/restoration, profile-2 12-bit 4:4:4 inter CDEF/restoration,
-// profile-2 12-bit 4:4:4 multi-tile, 12-bit film grain, edge motion,
-// 128x128 superblocks, and multi-tile streams.
+// profile-2 12-bit 4:4:4 multi-tile and film grain, profile-2 4:2:0 12-bit
+// film grain, edge motion, 128x128 superblocks, and multi-tile streams.
 var profileClips = []struct {
 	file        string
 	frameMD5Hex []string
@@ -231,6 +231,14 @@ var profileClips = []struct {
 			"80e11012fc9f000836a67b06c3b94e52",
 			"6b2ba8536258e846f8c9ff2d5b6ecb91",
 			"c0d08ad798151532ba78d94d0104b7b7",
+		},
+	},
+	{
+		file: "profile2-444-12bit-filmgrain-96x96.ivf",
+		frameMD5Hex: []string{
+			"f4c3bef48b1b82f77e1bbf4cd19eedce",
+			"0e7459be18f3a689a56e32331d2b8580",
+			"bc1e26931031e844f1fff10914fc2de1",
 		},
 	},
 	{
