@@ -252,18 +252,19 @@ There are three public encoder surfaces:
   metadata from the normalized encoder config, including optional
   resolution/framerate fields, active spatial-layer masks, and explicit
   per-temporal-layer cumulative bitrate ladders.
-  `EncoderWebRTCRTCPCompoundPacketsApplyReceiverEstimatedMaximumBitrate` applies
-  legacy WebRTC REMB feedback to bounded target bitrate fields before callers
-  pass the result to `RTCEncoder.SetConfig`;
+  `RTCEncoder.ApplyRTCPReceiverEstimatedMaximumBitrate` and
+  `WebRTCEncoder.ApplyRTCPReceiverEstimatedMaximumBitrate` apply legacy WebRTC
+  REMB feedback to bounded target bitrate fields;
   `ValidateEncoderWebRTCActiveScalabilityModes` preflights the W3C
   setParameters rule that a sender cannot mix a single-SSRC `S*`
   scalability mode with multiple active encodings;
   `EncoderWebRTCValidateLayerRefreshRequests` validates AV1 RTCP LRR feedback
-  against the configured temporal/spatial grid, and
-  `EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget` extracts the highest
-  requested refresh target before callers decide whether to force a full key
-  picture or signal a narrower active decode-target mask. `SetTileColumns` and
-  `SetGoldenInterval` let callers
+  against the configured temporal/spatial grid, while
+  `RTCEncoder.RTCPRequiresKeyFrame`, `WebRTCEncoder.RTCPRequiresKeyFrame`,
+  `RTCEncoder.RTCPLayerRefreshTarget`, and
+  `WebRTCEncoder.RTCPLayerRefreshTarget` classify PLI/FIR/LRR feedback before
+  callers force a full key picture or signal a narrower active decode-target
+  mask. `SetTileColumns` and `SetGoldenInterval` let callers
   retune tile parallelism and golden-reference refresh policy between frames.
 - `KeyframeEncoder` is the reusable 8-bit I420 keyframe-only surface. It keeps
   keyframe output and reconstruction storage encoder-owned, giving realtime

@@ -1375,6 +1375,59 @@ func (e *WebRTCEncoder) SetConfig(config EncoderConfig) error {
 	return nil
 }
 
+// ApplyRTCPReceiverEstimatedMaximumBitrate parses a raw compound RTCP packet
+// stream, applies the last WebRTC REMB estimate to the encoder bitrate config
+// when present, and returns the parsed packet suffix. Caller-owned scratch keeps
+// the feedback path allocation-free once sized.
+func (e *WebRTCEncoder) ApplyRTCPReceiverEstimatedMaximumBitrate(compound []byte, packetScratch []RTCPPacket, ssrcScratch []uint32) (applied bool, packets []RTCPPacket, err error) {
+	if e == nil {
+		return false, packetScratch, ErrEncoderInvalidConfig
+	}
+	updated, ok, packets, err := EncoderWebRTCRTCPCompoundPacketsApplyReceiverEstimatedMaximumBitrate(
+		e.config,
+		compound,
+		packetScratch,
+		ssrcScratch,
+	)
+	if err != nil || !ok {
+		return ok, packets, err
+	}
+	if err := e.SetConfig(updated); err != nil {
+		return true, packets, err
+	}
+	return true, packets, nil
+}
+
+// RTCPRequiresKeyFrame parses a raw compound RTCP packet stream and reports
+// whether PLI, FIR, or valid AV1 LRR feedback asks the caller to force the next
+// encoded picture as a key picture.
+func (e *WebRTCEncoder) RTCPRequiresKeyFrame(compound []byte, packetScratch []RTCPPacket, firScratch []RTCPFullIntraRequestEntry, lrrScratch []AV1RTCPLayerRefreshRequestEntry) (forceKey bool, packets []RTCPPacket, err error) {
+	if e == nil {
+		return false, packetScratch, ErrEncoderInvalidConfig
+	}
+	return EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
+		e.config,
+		compound,
+		packetScratch,
+		firScratch,
+		lrrScratch,
+	)
+}
+
+// RTCPLayerRefreshTarget parses a raw compound RTCP packet stream and returns
+// the highest active decode-target cap requested by valid AV1 LRR feedback.
+func (e *WebRTCEncoder) RTCPLayerRefreshTarget(compound []byte, packetScratch []RTCPPacket, lrrScratch []AV1RTCPLayerRefreshRequestEntry) (target AV1RTCPLayerRefreshLayerIndex, ok bool, packets []RTCPPacket, err error) {
+	if e == nil {
+		return AV1RTCPLayerRefreshLayerIndex{}, false, packetScratch, ErrEncoderInvalidConfig
+	}
+	return EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget(
+		e.config,
+		compound,
+		packetScratch,
+		lrrScratch,
+	)
+}
+
 func encoderWebRTCStateForNextKey(state EncoderWebRTCState) EncoderWebRTCState {
 	return EncoderWebRTCState{
 		NextOrderHint: state.NextOrderHint,

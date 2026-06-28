@@ -6627,25 +6627,24 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 
 			rembKbps := publicRTCMatrixControlBitrateKbps(t, mode) + int32(step*29) + 73
 			rembCompound := publicRTCREMBFeedbackCompound(t, uint64(rembKbps)*1000)
-			rembConfig, ok, packets, err := goav1.EncoderWebRTCRTCPCompoundPacketsApplyReceiverEstimatedMaximumBitrate(
-				enc.Config(),
+			beforeREMB := enc.Config()
+			ok, packets, err := enc.ApplyRTCPReceiverEstimatedMaximumBitrate(
 				rembCompound,
 				make([]goav1.RTCPPacket, 0, 2),
 				make([]uint32, 0, 1),
 			)
 			if err != nil {
-				t.Fatalf("REMB apply compound: %v", err)
+				t.Fatalf("ApplyRTCPReceiverEstimatedMaximumBitrate: %v", err)
 			}
 			if !ok || len(packets) != 1 {
 				t.Fatalf("REMB apply ok=%v packet len=%d want true,1", ok, len(packets))
 			}
-			if publicRTCSetConfigRequiresKey(t, enc.Config(), rembConfig) {
+			if enc.Config().TargetBitrateKbps != rembKbps {
+				t.Fatalf("REMB target=%d want %d", enc.Config().TargetBitrateKbps, rembKbps)
+			}
+			if publicRTCSetConfigRequiresKey(t, beforeREMB, enc.Config()) {
 				t.Fatalf("REMB-only config change for %s requires a key picture", mode)
 			}
-			if err := enc.SetConfig(rembConfig); err != nil {
-				t.Fatalf("SetConfig(%s REMB): %v", mode, err)
-			}
-			assertPublicRTCConfigControls(t, enc.Config(), rembConfig)
 			appendPicture("REMB delta", false, false)
 
 			pliCompound := testAV1RTCPFeedbackCompound(t, goav1.RTCPFeedbackPacket{
@@ -6654,8 +6653,7 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 				SenderSSRC: 0x01020304,
 				MediaSSRC:  0x05060708,
 			})
-			forcePLI, pliPackets, err := goav1.EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
-				enc.Config(),
+			forcePLI, pliPackets, err := enc.RTCPRequiresKeyFrame(
 				pliCompound,
 				make([]goav1.RTCPPacket, 0, 1),
 				nil,
@@ -6677,8 +6675,7 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 				MediaSSRC:  entry.SSRC,
 				FCI:        testAV1RTCPLayerRefreshFCI(t, []goav1.AV1RTCPLayerRefreshRequestEntry{entry}),
 			})
-			forceLRR, lrrPackets, err := goav1.EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
-				enc.Config(),
+			forceLRR, lrrPackets, err := enc.RTCPRequiresKeyFrame(
 				lrrCompound,
 				make([]goav1.RTCPPacket, 0, 1),
 				nil,
@@ -6690,8 +6687,7 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 			if !forceLRR || len(lrrPackets) != 1 {
 				t.Fatalf("LRR force=%v packet len=%d want true,1", forceLRR, len(lrrPackets))
 			}
-			target, ok, targetPackets, err := goav1.EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget(
-				enc.Config(),
+			target, ok, targetPackets, err := enc.RTCPLayerRefreshTarget(
 				lrrCompound,
 				make([]goav1.RTCPPacket, 0, 1),
 				make([]goav1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
@@ -8839,8 +8835,7 @@ func TestPublicRTCEncoderRTCPCompoundFeedbackForcesKeyPicture(t *testing.T) {
 		t.Fatalf("AppendRTCPFeedbackPacket LRR: %v", err)
 	}
 
-	forceKey, packets, err := goav1.EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
-		enc.Config(),
+	forceKey, packets, err := enc.RTCPRequiresKeyFrame(
 		compound,
 		make([]goav1.RTCPPacket, 0, 2),
 		nil,
@@ -8852,8 +8847,7 @@ func TestPublicRTCEncoderRTCPCompoundFeedbackForcesKeyPicture(t *testing.T) {
 	if !forceKey || len(packets) != 2 {
 		t.Fatalf("forceKey=%v packet len=%d want true,2", forceKey, len(packets))
 	}
-	target, ok, targetPackets, err := goav1.EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget(
-		enc.Config(),
+	target, ok, targetPackets, err := enc.RTCPLayerRefreshTarget(
 		compound,
 		make([]goav1.RTCPPacket, 0, 2),
 		make([]goav1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
@@ -8888,6 +8882,52 @@ func TestPublicRTCEncoderRTCPCompoundFeedbackForcesKeyPicture(t *testing.T) {
 		assertPublicRTCFrameRTPPacketsWithActiveDecodeTargets(t, &activeReceiver, recovery.Frames[i], goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}, options)
 	}
 	assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
+}
+
+func TestPublicRTCEncoderRTCPFeedbackMethodsAllocs(t *testing.T) {
+	mode := goav1.EncoderScalabilityModeL3T2h
+	width, height := publicRTCMatrixGeometry(t, mode)
+	cfg := publicRTCMatrixConfig(width, height, mode)
+	publicRTCApplyControlBitrates(&cfg, 1500)
+	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
+	}
+	defer enc.Close()
+
+	rembCompound := publicRTCREMBFeedbackCompound(t, 700_000)
+	pliCompound := testAV1RTCPFeedbackCompound(t, goav1.RTCPFeedbackPacket{
+		PacketType: goav1.RTCPPSFBPacketType,
+		FMT:        goav1.RTCPPSFBPictureLossIndicationFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0x05060708,
+	})
+	entry := testAV1RTCPValidLayerRefreshEntry(t, mode)
+	lrrCompound := testAV1RTCPFeedbackCompound(t, goav1.RTCPFeedbackPacket{
+		PacketType: goav1.RTCPPSFBPacketType,
+		FMT:        goav1.RTCPPSFBLayerRefreshRequestFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  entry.SSRC,
+		FCI:        testAV1RTCPLayerRefreshFCI(t, []goav1.AV1RTCPLayerRefreshRequestEntry{entry}),
+	})
+	packetScratch := make([]goav1.RTCPPacket, 0, 1)
+	ssrcScratch := make([]uint32, 0, 1)
+	lrrScratch := make([]goav1.AV1RTCPLayerRefreshRequestEntry, 0, 1)
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if ok, packets, err := enc.ApplyRTCPReceiverEstimatedMaximumBitrate(rembCompound, packetScratch[:0], ssrcScratch[:0]); err != nil || !ok || len(packets) != 1 {
+			t.Fatalf("alloc REMB ok=%v packets=%d err=%v", ok, len(packets), err)
+		}
+		if force, packets, err := enc.RTCPRequiresKeyFrame(pliCompound, packetScratch[:0], nil, nil); err != nil || !force || len(packets) != 1 {
+			t.Fatalf("alloc PLI force=%v packets=%d err=%v", force, len(packets), err)
+		}
+		if target, ok, packets, err := enc.RTCPLayerRefreshTarget(lrrCompound, packetScratch[:0], lrrScratch[:0]); err != nil || !ok || len(packets) != 1 || target != entry.Target {
+			t.Fatalf("alloc LRR target=%+v ok=%v packets=%d err=%v", target, ok, len(packets), err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("RTCEncoder RTCP feedback method allocs/run=%f want 0", allocs)
+	}
 }
 
 func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {

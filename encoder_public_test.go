@@ -124,6 +124,103 @@ func TestPublicEncoderControlSurface(t *testing.T) {
 	}
 }
 
+func TestPublicWebRTCEncoderRTCPFeedbackMethods(t *testing.T) {
+	mode := av1.EncoderScalabilityModeL3T2h
+	width, height := publicRTCMatrixGeometry(t, mode)
+	cfg := publicRTCMatrixConfig(width, height, mode)
+	publicRTCApplyControlBitrates(&cfg, 1500)
+	state := av1.EncoderWebRTCState{NextOrderHint: 9, NextFrameID: 23}
+	enc, err := av1.NewWebRTCEncoder(cfg, state)
+	if err != nil {
+		t.Fatalf("NewWebRTCEncoder: %v", err)
+	}
+
+	pliCompound := testAV1RTCPFeedbackCompound(t, av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBPictureLossIndicationFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  0x05060708,
+	})
+	applied, packets, err := enc.ApplyRTCPReceiverEstimatedMaximumBitrate(
+		pliCompound,
+		make([]av1.RTCPPacket, 0, 1),
+		make([]uint32, 0, 1),
+	)
+	if err != nil {
+		t.Fatalf("ApplyRTCPReceiverEstimatedMaximumBitrate non-REMB: %v", err)
+	}
+	if applied || len(packets) != 1 || enc.Config().TargetBitrateKbps != cfg.TargetBitrateKbps {
+		t.Fatalf("non-REMB applied=%v packets=%d target=%d want false,1,%d", applied, len(packets), enc.Config().TargetBitrateKbps, cfg.TargetBitrateKbps)
+	}
+
+	rembCompound := publicRTCREMBFeedbackCompound(t, 700_000)
+	applied, packets, err = enc.ApplyRTCPReceiverEstimatedMaximumBitrate(
+		rembCompound,
+		make([]av1.RTCPPacket, 0, 1),
+		make([]uint32, 0, 1),
+	)
+	if err != nil {
+		t.Fatalf("ApplyRTCPReceiverEstimatedMaximumBitrate: %v", err)
+	}
+	if !applied || len(packets) != 1 || enc.Config().TargetBitrateKbps != 700 {
+		t.Fatalf("REMB applied=%v packets=%d target=%d want true,1,700", applied, len(packets), enc.Config().TargetBitrateKbps)
+	}
+	if enc.State() != state {
+		t.Fatalf("REMB control change reset state: got %+v want %+v", enc.State(), state)
+	}
+
+	forceKey, packets, err := enc.RTCPRequiresKeyFrame(
+		pliCompound,
+		make([]av1.RTCPPacket, 0, 1),
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("RTCPRequiresKeyFrame PLI: %v", err)
+	}
+	if !forceKey || len(packets) != 1 {
+		t.Fatalf("PLI forceKey=%v packets=%d want true,1", forceKey, len(packets))
+	}
+
+	entry := testAV1RTCPValidLayerRefreshEntry(t, mode)
+	lrrCompound := testAV1RTCPFeedbackCompound(t, av1.RTCPFeedbackPacket{
+		PacketType: av1.RTCPPSFBPacketType,
+		FMT:        av1.RTCPPSFBLayerRefreshRequestFMT,
+		SenderSSRC: 0x01020304,
+		MediaSSRC:  entry.SSRC,
+		FCI:        testAV1RTCPLayerRefreshFCI(t, []av1.AV1RTCPLayerRefreshRequestEntry{entry}),
+	})
+	target, ok, packets, err := enc.RTCPLayerRefreshTarget(
+		lrrCompound,
+		make([]av1.RTCPPacket, 0, 1),
+		make([]av1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+	)
+	if err != nil {
+		t.Fatalf("RTCPLayerRefreshTarget: %v", err)
+	}
+	if !ok || len(packets) != 1 || target != entry.Target {
+		t.Fatalf("LRR target=%+v ok=%v packets=%d want %+v,true,1", target, ok, len(packets), entry.Target)
+	}
+
+	packetScratch := make([]av1.RTCPPacket, 0, 1)
+	ssrcScratch := make([]uint32, 0, 1)
+	lrrScratch := make([]av1.AV1RTCPLayerRefreshRequestEntry, 0, 1)
+	allocs := testing.AllocsPerRun(1000, func() {
+		if ok, packets, err := enc.ApplyRTCPReceiverEstimatedMaximumBitrate(rembCompound, packetScratch[:0], ssrcScratch[:0]); err != nil || !ok || len(packets) != 1 {
+			t.Fatalf("alloc REMB ok=%v packets=%d err=%v", ok, len(packets), err)
+		}
+		if force, packets, err := enc.RTCPRequiresKeyFrame(pliCompound, packetScratch[:0], nil, nil); err != nil || !force || len(packets) != 1 {
+			t.Fatalf("alloc PLI force=%v packets=%d err=%v", force, len(packets), err)
+		}
+		if target, ok, packets, err := enc.RTCPLayerRefreshTarget(lrrCompound, packetScratch[:0], lrrScratch[:0]); err != nil || !ok || len(packets) != 1 || target != entry.Target {
+			t.Fatalf("alloc LRR target=%+v ok=%v packets=%d err=%v", target, ok, len(packets), err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("WebRTCEncoder RTCP feedback method allocs/run=%f want 0", allocs)
+	}
+}
+
 func TestPublicEncoderWebRTCRTPFrameDuration(t *testing.T) {
 	base := av1.EncoderConfig{
 		Resolution:        av1.EncoderResolution{Width: 640, Height: 360},

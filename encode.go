@@ -992,6 +992,59 @@ func (e *RTCEncoder) SetConfig(cfg EncoderConfig) error {
 	return e.stream.SetConfig(cfg)
 }
 
+// ApplyRTCPReceiverEstimatedMaximumBitrate parses a raw compound RTCP packet
+// stream, applies the last WebRTC REMB estimate to the encoder bitrate config
+// when present, and returns the parsed packet suffix. Caller-owned scratch keeps
+// the feedback path allocation-free once sized.
+func (e *RTCEncoder) ApplyRTCPReceiverEstimatedMaximumBitrate(compound []byte, packetScratch []RTCPPacket, ssrcScratch []uint32) (applied bool, packets []RTCPPacket, err error) {
+	if e == nil || e.stream == nil {
+		return false, packetScratch, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	updated, ok, packets, err := EncoderWebRTCRTCPCompoundPacketsApplyReceiverEstimatedMaximumBitrate(
+		e.stream.Config(),
+		compound,
+		packetScratch,
+		ssrcScratch,
+	)
+	if err != nil || !ok {
+		return ok, packets, err
+	}
+	if err := e.SetConfig(updated); err != nil {
+		return true, packets, err
+	}
+	return true, packets, nil
+}
+
+// RTCPRequiresKeyFrame parses a raw compound RTCP packet stream and reports
+// whether PLI, FIR, or valid AV1 LRR feedback asks the caller to force the next
+// encoded picture as a key picture.
+func (e *RTCEncoder) RTCPRequiresKeyFrame(compound []byte, packetScratch []RTCPPacket, firScratch []RTCPFullIntraRequestEntry, lrrScratch []AV1RTCPLayerRefreshRequestEntry) (forceKey bool, packets []RTCPPacket, err error) {
+	if e == nil || e.stream == nil {
+		return false, packetScratch, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	return EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
+		e.stream.Config(),
+		compound,
+		packetScratch,
+		firScratch,
+		lrrScratch,
+	)
+}
+
+// RTCPLayerRefreshTarget parses a raw compound RTCP packet stream and returns
+// the highest active decode-target cap requested by valid AV1 LRR feedback.
+func (e *RTCEncoder) RTCPLayerRefreshTarget(compound []byte, packetScratch []RTCPPacket, lrrScratch []AV1RTCPLayerRefreshRequestEntry) (target AV1RTCPLayerRefreshLayerIndex, ok bool, packets []RTCPPacket, err error) {
+	if e == nil || e.stream == nil {
+		return AV1RTCPLayerRefreshLayerIndex{}, false, packetScratch, fmt.Errorf("goav1: RTCEncoder is not initialized")
+	}
+	return EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget(
+		e.stream.Config(),
+		compound,
+		packetScratch,
+		lrrScratch,
+	)
+}
+
 // SetGoldenInterval sets how many base-layer inter frames pass between golden
 // reference refreshes in every active spatial encoder. Zero disables golden
 // references.
