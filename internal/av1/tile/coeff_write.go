@@ -1358,6 +1358,17 @@ func WriteCoefficientsTXB32x32Y2DContextTrustedArray(w *entropy.Writer, cdfs *Co
 	return writeCoefficientsTXB32x32Plane2DContextTrustedArray(w, cdfs, coeffs, CoeffPlaneY, txbSkipContext, dcSignContext, txCDF, txSymbol)
 }
 
+// WriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevels is the encoder-owned
+// scratch form of WriteCoefficientsTXB32x32Y2DContextTrustedArray. levelsScratch
+// must be zeroed on entry and is restored to zero before return.
+func WriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevels(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[1024]int16, levelsScratch []uint8, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
+	const scratchLen = 1296
+	if len(levelsScratch) < scratchLen {
+		return WriteCoefficientsTXB32x32Y2DContextTrustedArray(w, cdfs, coeffs, txbSkipContext, dcSignContext, txCDF, txSymbol)
+	}
+	return writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w, cdfs, coeffs, (*[scratchLen]uint8)(levelsScratch[:scratchLen]), true, CoeffPlaneY, txbSkipContext, dcSignContext, txCDF, txSymbol)
+}
+
 // WriteCoefficientsTXB32x32UV2DContextTrusted is the validation-free 32x32
 // chroma/Class2D specialization for real coding with already-derived
 // coefficient contexts.
@@ -1372,12 +1383,17 @@ func WriteCoefficientsTXB32x32UV2DContextTrustedArray(w *entropy.Writer, cdfs *C
 }
 
 func writeCoefficientsTXB32x32Plane2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeff1024 *[1024]int16, plane CoeffPlaneType, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
+	const scratchLen = 1296
+	var levels [scratchLen]uint8
+	return writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w, cdfs, coeff1024, &levels, false, plane, txbSkipContext, dcSignContext, txCDF, txSymbol)
+}
+
+func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer, cdfs *CoeffCDFs, coeff1024 *[1024]int16, levels *[1296]uint8, clearLevels bool, plane CoeffPlaneType, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
 	const (
-		maxEOB     = 1024
-		scratchLen = 1296
-		stride     = uint16(36)
-		txCtx      = 3
-		txBR       = 3
+		maxEOB = 1024
+		stride = uint16(36)
+		txCtx  = 3
+		txBR   = 3
 	)
 	scanHot := &coeffScanHot32x32Y2D
 
@@ -1407,7 +1423,6 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 		}
 	}
 
-	var levels [scratchLen]uint8
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
@@ -1513,7 +1528,11 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 		} else {
 			w.WriteBit(sign)
 		}
-		if levels[p.padded] >= MaxBaseBRRange {
+		level := levels[p.padded]
+		if clearLevels {
+			levels[p.padded] = 0
+		}
+		if level >= MaxBaseBRRange {
 			level := absInt(int(cv))
 			writeGolomb(w, level-MaxBaseBRRange)
 		}

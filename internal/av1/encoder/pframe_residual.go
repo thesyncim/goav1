@@ -2776,7 +2776,7 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 				return tile.ErrInvalidDecodeState
 			}
 			txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 8, H4: 8}, blockDims)
-			txbResult = tile.WriteCoefficientsTXB32x32Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			txbResult = tile.WriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevels(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), st.levels32Zeroed[:], txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
 			if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 				return err
 			}

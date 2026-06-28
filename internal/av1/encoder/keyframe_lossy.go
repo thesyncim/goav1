@@ -534,6 +534,7 @@ type lossyEncodeState struct {
 	scan32x16, scan16x32         []int16
 	scan8x4, scan4x8             []int16
 	levels                       []uint8
+	levels32Zeroed               [1296]uint8
 	trialCDFs                    tile.CoeffCDFs
 	trialReady                   bool
 	trial8x8CDFs                 coeffTrial8x8Snapshot
