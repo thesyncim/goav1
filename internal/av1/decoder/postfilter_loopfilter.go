@@ -1231,28 +1231,32 @@ func frameWorkLoopFilterValidateBlockVisible(record *threading.FrameWorkLoopFilt
 }
 
 func frameWorkLoopFilterPreviousLumaRunInBlock(record *threading.FrameWorkLoopFilterBlockRecord, edge loopfilter.Edge, x4 int, y4 int, length4 int) bool {
-	startX4, startY4, err := frameWorkLoopFilterPreviousTarget4(edge, x4, y4)
-	if err != nil {
-		return false
-	}
-	endBoundaryX4, endBoundaryY4 := frameWorkLoopFilterBoundaryOffset(edge, x4, y4, length4-1)
-	endX4, endY4, err := frameWorkLoopFilterPreviousTarget4(edge, endBoundaryX4, endBoundaryY4)
-	if err != nil {
+	if length4 <= 0 {
 		return false
 	}
 	block := record.Block
-	startLocalX4 := int(block.X4) + startX4 - int(block.MICol)
-	startLocalY4 := int(block.Y4) + startY4 - int(block.MIRow)
-	endLocalX4 := int(block.X4) + endX4 - int(block.MICol)
-	endLocalY4 := int(block.Y4) + endY4 - int(block.MIRow)
 	reqX4 := int(block.X4)
 	reqY4 := int(block.Y4)
-	return startLocalX4 >= reqX4 && startLocalY4 >= reqY4 &&
-		startLocalX4 < reqX4+int(block.VisibleW4) &&
-		startLocalY4 < reqY4+int(block.VisibleH4) &&
-		endLocalX4 >= reqX4 && endLocalY4 >= reqY4 &&
-		endLocalX4 < reqX4+int(block.VisibleW4) &&
-		endLocalY4 < reqY4+int(block.VisibleH4)
+	reqEndX4 := reqX4 + int(block.VisibleW4)
+	reqEndY4 := reqY4 + int(block.VisibleH4)
+	baseX4 := reqX4 - int(block.MICol)
+	baseY4 := reqY4 - int(block.MIRow)
+	switch edge {
+	case loopfilter.EdgeVertical:
+		prevLocalX4 := baseX4 + x4 - 1
+		startLocalY4 := baseY4 + y4
+		endLocalY4 := startLocalY4 + length4 - 1
+		return prevLocalX4 >= reqX4 && prevLocalX4 < reqEndX4 &&
+			startLocalY4 >= reqY4 && endLocalY4 < reqEndY4
+	case loopfilter.EdgeHorizontal:
+		startLocalX4 := baseX4 + x4
+		endLocalX4 := startLocalX4 + length4 - 1
+		prevLocalY4 := baseY4 + y4 - 1
+		return startLocalX4 >= reqX4 && endLocalX4 < reqEndX4 &&
+			prevLocalY4 >= reqY4 && prevLocalY4 < reqEndY4
+	default:
+		return false
+	}
 }
 
 type frameWorkLoopFilterLumaPreviousCache struct {
@@ -2150,21 +2154,35 @@ func frameWorkLoopFilterPreviousChromaRecordCoversRun(record *threading.FrameWor
 }
 
 func frameWorkLoopFilterPreviousChromaRunInBlock(record *threading.FrameWorkLoopFilterBlockRecord, block tile.TransformBlock, edge loopfilter.Edge, x4 int, y4 int, length4 int, ssX uint8, ssY uint8) bool {
-	startX4, startY4, err := frameWorkLoopFilterPreviousTarget4(edge, x4, y4)
-	if err != nil {
+	if length4 <= 0 {
 		return false
 	}
-	endBoundaryX4, endBoundaryY4 := frameWorkLoopFilterBoundaryOffset(edge, x4, y4, length4-1)
-	endX4, endY4, err := frameWorkLoopFilterPreviousTarget4(edge, endBoundaryX4, endBoundaryY4)
-	if err != nil {
+	blockX4 := int(record.Block.X4) >> ssX
+	blockY4 := int(record.Block.Y4) >> ssY
+	miCol := int(record.Block.MICol) >> ssX
+	miRow := int(record.Block.MIRow) >> ssY
+	baseX4 := blockX4 - miCol
+	baseY4 := blockY4 - miRow
+	txX4 := int(block.X4)
+	txY4 := int(block.Y4)
+	txEndX4 := txX4 + int(block.VisibleW4)
+	txEndY4 := txY4 + int(block.VisibleH4)
+	switch edge {
+	case loopfilter.EdgeVertical:
+		prevLocalX4 := baseX4 + x4 - 1
+		startLocalY4 := baseY4 + y4
+		endLocalY4 := startLocalY4 + length4 - 1
+		return prevLocalX4 >= txX4 && prevLocalX4 < txEndX4 &&
+			startLocalY4 >= txY4 && endLocalY4 < txEndY4
+	case loopfilter.EdgeHorizontal:
+		startLocalX4 := baseX4 + x4
+		endLocalX4 := startLocalX4 + length4 - 1
+		prevLocalY4 := baseY4 + y4 - 1
+		return startLocalX4 >= txX4 && endLocalX4 < txEndX4 &&
+			prevLocalY4 >= txY4 && prevLocalY4 < txEndY4
+	default:
 		return false
 	}
-	startLocalX4 := (int(record.Block.X4) >> ssX) + startX4 - (int(record.Block.MICol) >> ssX)
-	startLocalY4 := (int(record.Block.Y4) >> ssY) + startY4 - (int(record.Block.MIRow) >> ssY)
-	endLocalX4 := (int(record.Block.X4) >> ssX) + endX4 - (int(record.Block.MICol) >> ssX)
-	endLocalY4 := (int(record.Block.Y4) >> ssY) + endY4 - (int(record.Block.MIRow) >> ssY)
-	return frameWorkLoopFilterTransformBlockContains(block, startLocalX4, startLocalY4) &&
-		frameWorkLoopFilterTransformBlockContains(block, endLocalX4, endLocalY4)
 }
 
 type frameWorkLoopFilterChromaPreviousCache struct {
