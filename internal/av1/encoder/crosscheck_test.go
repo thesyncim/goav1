@@ -191,6 +191,79 @@ func TestEncodedLosslessPFrameDecodesInReferenceDecoders(t *testing.T) {
 	}
 }
 
+func TestEncodedScaledReferenceLosslessPFrameDecodesInReferenceDecoders(t *testing.T) {
+	aomdec, err := exec.LookPath("aomdec")
+	if err != nil {
+		t.Skip("aomdec not on PATH")
+	}
+	const (
+		baseW, baseH = 64, 48
+		topW, topH   = 128, 96
+	)
+	baseSrc := scaledReferenceDecodeBaseFrame(baseW, baseH)
+	keyTU, baseRecon, err := encoder.EncodeKeyframeWithSequenceMax(baseSrc, 64, topW, topH)
+	if err != nil {
+		t.Fatalf("EncodeKeyframeWithSequenceMax: %v", err)
+	}
+	topSrc := scaleSource420(baseRecon, topW, topH)
+	pTU, topRecon, err := encoder.EncodeScaledReferencePFrame(topSrc, baseRecon, 0)
+	if err != nil {
+		t.Fatalf("EncodeScaledReferencePFrame: %v", err)
+	}
+
+	stream := ivf.AppendFileHeader(nil, topW, topH, 30, 1, 2)
+	stream = ivf.AppendFrame(stream, keyTU, 0)
+	stream = ivf.AppendFrame(stream, pTU, 1)
+	wantYUV := make([]byte, 0, baseW*baseH*3/2+topW*topH*3/2)
+	wantYUV = append420(wantYUV, baseRecon)
+	wantYUV = append420(wantYUV, topRecon)
+
+	dir := t.TempDir()
+	ivfPath := filepath.Join(dir, "scaled-lossless-p.ivf")
+	if err := os.WriteFile(ivfPath, stream, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check := func(name, bin string, args ...string) {
+		outPath := filepath.Join(dir, name+".yuv")
+		cmd := exec.Command(bin, append(args, ivfPath)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s failed: %v\n%s", name, err, out)
+		}
+		got, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("read %s output: %v", name, err)
+		}
+		if !bytes.Equal(got, wantYUV) {
+			for i := range min(len(got), len(wantYUV)) {
+				if got[i] != wantYUV[i] {
+					t.Fatalf("%s output differs first at byte %d: got %d want %d", name, i, got[i], wantYUV[i])
+				}
+			}
+			t.Fatalf("%s output %d bytes, want %d", name, len(got), len(wantYUV))
+		}
+		t.Logf("%s: scaled-reference qindex-0 P-frame stream bit-exact", name)
+	}
+	check("aomdec", aomdec, "--rawvideo", "-o", filepath.Join(dir, "aomdec.yuv"))
+	if dav1d, err := exec.LookPath("dav1d"); err == nil {
+		check("dav1d", dav1d, "--muxer", "yuv", "-o", filepath.Join(dir, "dav1d.yuv"), "-i")
+	}
+}
+
+func append420(dst []byte, f encoder.SourceFrame420) []byte {
+	for y := range f.Height {
+		dst = append(dst, f.Y[y*f.YStride:y*f.YStride+f.Width]...)
+	}
+	cw, ch := f.Width/2, f.Height/2
+	for y := range ch {
+		dst = append(dst, f.U[y*f.ChromaStride:y*f.ChromaStride+cw]...)
+	}
+	for y := range ch {
+		dst = append(dst, f.V[y*f.ChromaStride:y*f.ChromaStride+cw]...)
+	}
+	return dst
+}
+
 func TestEncodedMonochromeKeyframeDecodesInReferenceDecoders(t *testing.T) {
 	aomdec, err := exec.LookPath("aomdec")
 	if err != nil {

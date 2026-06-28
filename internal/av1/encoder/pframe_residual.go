@@ -108,9 +108,6 @@ func EncodeScaledReferencePFrame(src SourceFrame420, ref SourceFrame420, qIndex 
 	if ref.Width <= 0 || ref.Height <= 0 || ref.Width%8 != 0 || ref.Height%8 != 0 {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: scaled-reference P-frame requires multiple-of-8 reference dimensions, got %dx%d", ref.Width, ref.Height)
 	}
-	if qIndex == 0 {
-		return nil, SourceFrame420{}, fmt.Errorf("encoder: qindex 0 lossless inter coding is not supported")
-	}
 	if _, err := motion.NewScaleFactors(ref.Width, ref.Height, src.Width, src.Height); err != nil {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: invalid scaled reference: %w", err)
 	}

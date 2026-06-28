@@ -12,7 +12,6 @@ func TestEncodeScaledReferencePFrameLayerPoolDecodeMatchesRecon(t *testing.T) {
 		baseW, baseH = 64, 48
 		topW, topH   = 128, 96
 		keyQ         = 64
-		pQ           = 72
 	)
 
 	baseSrc := scaledReferenceDecodeBaseFrame(baseW, baseH)
@@ -22,21 +21,49 @@ func TestEncodeScaledReferencePFrameLayerPoolDecodeMatchesRecon(t *testing.T) {
 	}
 
 	topSrc := scaleSource420(baseRecon, topW, topH)
-	scaledTU, topRecon, err := encoder.EncodeScaledReferencePFrame(topSrc, baseRecon, pQ)
-	if err != nil {
-		t.Fatalf("EncodeScaledReferencePFrame: %v", err)
-	}
+	for _, tc := range []struct {
+		name   string
+		qIndex uint8
+	}{
+		{name: "lossless", qIndex: 0},
+		{name: "lossy", qIndex: 72},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scaledTU, topRecon, err := encoder.EncodeScaledReferencePFrame(topSrc, baseRecon, tc.qIndex)
+			if err != nil {
+				t.Fatalf("EncodeScaledReferencePFrame: %v", err)
+			}
+			if tc.qIndex == 0 {
+				compareBytePlane(t, "lossless source Y", topRecon.Y, topRecon.YStride, topSrc.Y, topSrc.YStride, topW, topH)
+				compareBytePlane(t, "lossless source U", topRecon.U, topRecon.ChromaStride, topSrc.U, topSrc.ChromaStride, topW/2, topH/2)
+				compareBytePlane(t, "lossless source V", topRecon.V, topRecon.ChromaStride, topSrc.V, topSrc.ChromaStride, topW/2, topH/2)
+			}
 
-	frames := decodeLayerPoolLowOverheads(t, keyTU, scaledTU)
-	if len(frames) != 2 {
-		t.Fatalf("decoded %d frames, want 2", len(frames))
+			frames := decodeLayerPoolLowOverheads(t, keyTU, scaledTU)
+			if len(frames) != 2 {
+				t.Fatalf("decoded %d frames, want 2", len(frames))
+			}
+			comparePlane(t, "base Y", frames[0].Y, baseRecon.Y, baseW, baseH, baseW)
+			comparePlane(t, "base U", frames[0].U, baseRecon.U, baseW/2, baseH/2, baseW/2)
+			comparePlane(t, "base V", frames[0].V, baseRecon.V, baseW/2, baseH/2, baseW/2)
+			comparePlane(t, "top Y", frames[1].Y, topRecon.Y, topW, topH, topW)
+			comparePlane(t, "top U", frames[1].U, topRecon.U, topW/2, topH/2, topW/2)
+			comparePlane(t, "top V", frames[1].V, topRecon.V, topW/2, topH/2, topW/2)
+		})
 	}
-	comparePlane(t, "base Y", frames[0].Y, baseRecon.Y, baseW, baseH, baseW)
-	comparePlane(t, "base U", frames[0].U, baseRecon.U, baseW/2, baseH/2, baseW/2)
-	comparePlane(t, "base V", frames[0].V, baseRecon.V, baseW/2, baseH/2, baseW/2)
-	comparePlane(t, "top Y", frames[1].Y, topRecon.Y, topW, topH, topW)
-	comparePlane(t, "top U", frames[1].U, topRecon.U, topW/2, topH/2, topW/2)
-	comparePlane(t, "top V", frames[1].V, topRecon.V, topW/2, topH/2, topW/2)
+}
+
+func compareBytePlane(t *testing.T, name string, got []byte, gotStride int, want []byte, wantStride int, w, h int) {
+	t.Helper()
+	for y := range h {
+		gotRow := got[y*gotStride : y*gotStride+w]
+		wantRow := want[y*wantStride : y*wantStride+w]
+		for x := range w {
+			if gotRow[x] != wantRow[x] {
+				t.Fatalf("%s differs at (%d,%d): got %d want %d", name, x, y, gotRow[x], wantRow[x])
+			}
+		}
+	}
 }
 
 func decodeLayerPoolLowOverheads(t *testing.T, payloads ...[]byte) []*goav1.Frame {
