@@ -238,15 +238,23 @@ func TestWebRTCStreamControlCombinationMatrixDecode(t *testing.T) {
 }
 
 func TestWebRTCStream1080pHotPathAllocs(t *testing.T) {
-	for _, mode := range []encoder.ScalabilityMode{
-		encoder.ScalabilityModeL1T3,
-		encoder.ScalabilityModeS3T3,
+	for _, tc := range []struct {
+		name       string
+		mode       encoder.ScalabilityMode
+		speed      int8
+		maxThreads int32
+	}{
+		{name: encoder.ScalabilityModeL1T3.String(), mode: encoder.ScalabilityModeL1T3},
+		{name: encoder.ScalabilityModeS3T3.String(), mode: encoder.ScalabilityModeS3T3},
+		{name: "L1T3-single-thread-min-effort", mode: encoder.ScalabilityModeL1T3, speed: encoder.WebRTCMinEffortLevel, maxThreads: 1},
 	} {
-		t.Run(mode.String(), func(t *testing.T) {
-			cfg := webRTC1080pAllocConfig(mode)
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := webRTC1080pAllocConfig(tc.mode)
+			cfg.Speed = tc.speed
+			cfg.MaxThreads = tc.maxThreads
 			stream, err := encoder.NewWebRTCStreamConfig(cfg)
 			if err != nil {
-				t.Fatalf("NewWebRTCStreamConfig(%s): %v", mode, err)
+				t.Fatalf("NewWebRTCStreamConfig(%s): %v", tc.name, err)
 			}
 			t.Cleanup(func() { _ = stream.Close() })
 
@@ -257,16 +265,16 @@ func TestWebRTCStream1080pHotPathAllocs(t *testing.T) {
 				makeEncoder1080pFrame(3),
 			}
 			if err := stream.Prewarm(); err != nil {
-				t.Fatalf("Prewarm(%s): %v", mode, err)
+				t.Fatalf("Prewarm(%s): %v", tc.name, err)
 			}
 			for i := 0; i < 12; i++ {
 				forceKey := i == 0 || i == 6
 				picture, err := stream.EncodePicture(frames[i&3], forceKey)
 				if err != nil {
-					t.Fatalf("warm EncodePicture(%s, %d): %v", mode, i, err)
+					t.Fatalf("warm EncodePicture(%s, %d): %v", tc.name, i, err)
 				}
 				if picture.FrameNum == 0 {
-					t.Fatalf("warm EncodePicture(%s, %d) emitted no frames", mode, i)
+					t.Fatalf("warm EncodePicture(%s, %d) emitted no frames", tc.name, i)
 				}
 			}
 
@@ -285,11 +293,11 @@ func TestWebRTCStream1080pHotPathAllocs(t *testing.T) {
 				}
 			})
 			if pAllocs != 0 {
-				t.Fatalf("1080p WebRTC %s steady picture allocations=%f want 0", mode, pAllocs)
+				t.Fatalf("1080p WebRTC %s steady picture allocations=%f want 0", tc.name, pAllocs)
 			}
 
 			if _, err := stream.EncodePicture(frames[0], true); err != nil {
-				t.Fatalf("forced-key warm EncodePicture(%s): %v", mode, err)
+				t.Fatalf("forced-key warm EncodePicture(%s): %v", tc.name, err)
 			}
 			keyAllocs := testing.AllocsPerRun(3, func() {
 				picture, err := stream.EncodePicture(frames[1], true)
@@ -304,7 +312,7 @@ func TestWebRTCStream1080pHotPathAllocs(t *testing.T) {
 				}
 			})
 			if keyAllocs != 0 {
-				t.Fatalf("1080p WebRTC %s forced-key picture allocations=%f want 0", mode, keyAllocs)
+				t.Fatalf("1080p WebRTC %s forced-key picture allocations=%f want 0", tc.name, keyAllocs)
 			}
 		})
 	}

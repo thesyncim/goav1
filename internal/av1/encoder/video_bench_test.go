@@ -260,17 +260,24 @@ func BenchmarkEncodeKeyframeReusable1080p(b *testing.B) {
 // movers, the cmd/encbench scene shape) - the realtime budget meter. The
 // noise benchmark above stays as the worst-case bound.
 func BenchmarkVideoEncoderPFramePan1080p(b *testing.B) {
-	benchmarkVideoEncoderPFramePan1080p(b, 0)
+	benchmarkVideoEncoderPFramePan1080p(b, 0, 0)
 }
 
 // BenchmarkVideoEncoderPFramePan1080pSingleThread measures the same camera-like
 // 1080p steady-state path with tile, filter, and HME worker fan-out disabled
 // for one-lane WebRTC deployments and profiler runs.
 func BenchmarkVideoEncoderPFramePan1080pSingleThread(b *testing.B) {
-	benchmarkVideoEncoderPFramePan1080p(b, 1)
+	benchmarkVideoEncoderPFramePan1080p(b, 1, 0)
 }
 
-func benchmarkVideoEncoderPFramePan1080p(b *testing.B, maxThreads int) {
+// BenchmarkVideoEncoderPFramePan1080pSingleThreadMinEffort measures the
+// fastest valid single-thread camera path exposed through the WebRTC Speed
+// control.
+func BenchmarkVideoEncoderPFramePan1080pSingleThreadMinEffort(b *testing.B) {
+	benchmarkVideoEncoderPFramePan1080p(b, 1, encoder.WebRTCMinEffortLevel)
+}
+
+func benchmarkVideoEncoderPFramePan1080p(b *testing.B, maxThreads int, effort int8) {
 	const w, h = 1920, 1080
 	cw, ch := w/2, h/2
 	rng := rand.New(rand.NewSource(15))
@@ -316,6 +323,11 @@ func benchmarkVideoEncoderPFramePan1080p(b *testing.B, maxThreads int) {
 	}
 	if maxThreads > 0 {
 		enc.SetMaxThreads(maxThreads)
+	}
+	if effort != 0 {
+		if err := enc.SetEffortLevel(effort); err != nil {
+			b.Fatal(err)
+		}
 	}
 	b.Cleanup(func() {
 		b.StopTimer()

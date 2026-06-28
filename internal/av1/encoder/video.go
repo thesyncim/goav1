@@ -49,6 +49,7 @@ type VideoEncoder struct {
 	cdefApp      cdefApplier
 	hme          hmeState
 	singleThread bool
+	effortLevel  int8
 
 	temporalLayers int
 	t2Recon        SourceFrame420
@@ -251,6 +252,24 @@ func (e *VideoEncoder) SetScreenContentSelection(enabled bool) {
 	}
 }
 
+// SetEffortLevel selects the realtime encoder effort level. The default zero
+// preserves the current quality/speed balance; WebRTCMinEffortLevel disables
+// subpel search for the fastest valid bitstream path.
+func (e *VideoEncoder) SetEffortLevel(level int8) error {
+	if e == nil {
+		return fmt.Errorf("encoder: nil video encoder")
+	}
+	if !validWebRTCEffortLevel(level) {
+		return ErrInvalidConfig
+	}
+	e.effortLevel = level
+	e.pc.effortLevel = level
+	for i := range e.tilePCs {
+		e.tilePCs[i].effortLevel = level
+	}
+	return nil
+}
+
 // SetDecisionStatsEnabled toggles encoder decision diagnostics. The default
 // is disabled; when disabled, hot block paths only see a nil stats pointer.
 func (e *VideoEncoder) SetDecisionStatsEnabled(enabled bool) {
@@ -269,11 +288,13 @@ func (e *VideoEncoder) DecisionStats() EncoderDecisionStats {
 }
 
 func (e *VideoEncoder) configureDecisionStats(nTiles int) {
+	e.pc.effortLevel = e.effortLevel
 	e.pc.decisionStatsEnabled = e.decisionStatsEnabled
 	for i := range e.tilePCs {
 		if nTiles > 0 && i >= nTiles {
 			break
 		}
+		e.tilePCs[i].effortLevel = e.effortLevel
 		e.tilePCs[i].decisionStatsEnabled = e.decisionStatsEnabled
 	}
 }

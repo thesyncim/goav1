@@ -199,6 +199,7 @@ type frameCDFs = threading.FrameWorkTileResidualCDFStorage
 // state frame encoding allocates nothing beyond the temporal-unit assembly.
 type pframeCoder struct {
 	st                   lossyEncodeState
+	effortLevel          int8
 	partCDFs             tile.PartitionCDFs
 	refCDFs              tile.InterRefCDFs
 	modeCDFs             tile.InterModeCDFs
@@ -249,6 +250,7 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs, color 
 	st := &pc.st
 	st.qIndex = qIndex
 	st.color = color
+	st.effortLevel = pc.effortLevel
 	if prev != nil {
 		pc.partCDFs = prev.Partition
 		pc.refCDFs = prev.InterRef
@@ -1169,7 +1171,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, seedDX, seedDY, reach)
 			mv, fullSAD = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}, sad
 		}
-		if !st.forceIntegerMV && bw == bh && fullSAD > n*n*2 {
+		if st.allowSubpelRefinement() && bw == bh && fullSAD > n*n*2 {
 			fullMV := mv
 			mv, fullSAD = st.subpelRefine(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, mv, fullSAD)
 			// Periodic textures can alias the full-pel raster into a distant
@@ -1206,7 +1208,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if bw == 8 {
 			gdx, gdy, s := fullPelDiamondSearch(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8)
 			gmv, gsad = motion.Vector{Row: int16(gdy * 8), Col: int16(gdx * 8)}, s
-			if !st.forceIntegerMV && gsad > 8*8*2 {
+			if st.allowSubpelRefinement() && gsad > 8*8*2 {
 				gmv, gsad = st.subpelRefine(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, gmv, gsad)
 			}
 		} else {
@@ -2058,6 +2060,10 @@ func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, he
 		return st.subpelRefine32x32(src, refPlane, stride, width, height, px, py, mv, bestSAD)
 	}
 	return st.subpelRefineGeneric(src, refPlane, stride, width, height, px, py, n, mv, bestSAD)
+}
+
+func (st *lossyEncodeState) allowSubpelRefinement() bool {
+	return !st.forceIntegerMV && st.effortLevel > WebRTCMinEffortLevel
 }
 
 func (st *lossyEncodeState) subpelRefine8x8(src, refPlane []byte, stride, width, height, px, py int, mv motion.Vector, bestSAD int) (motion.Vector, int) {

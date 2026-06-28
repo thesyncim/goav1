@@ -252,6 +252,56 @@ func TestWebRTCStreamConfigMaxThreadsAppliesToPixelEncoders(t *testing.T) {
 	}
 }
 
+func TestWebRTCStreamConfigSpeedAppliesTo8BitPixelEncoders(t *testing.T) {
+	const w, h = 512, 288
+	base := Config{
+		Resolution:        Resolution{Width: w, Height: h},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 500,
+		Scalability:       ScalabilityModeL1T1,
+		Speed:             WebRTCMinEffortLevel,
+	}
+
+	stream, err := NewWebRTCStreamConfig(base)
+	if err != nil {
+		t.Fatalf("NewWebRTCStreamConfig i420: %v", err)
+	}
+	defer stream.Close()
+	if got := stream.encoders[0].effortLevel; got != WebRTCMinEffortLevel {
+		t.Fatalf("i420 initial effort=%d want %d", got, WebRTCMinEffortLevel)
+	}
+	change := stream.Config()
+	change.Speed = WebRTCMaxEffortLevel
+	if err := stream.SetConfig(change); err != nil {
+		t.Fatalf("SetConfig i420 speed: %v", err)
+	}
+	if got := stream.encoders[0].effortLevel; got != WebRTCMaxEffortLevel {
+		t.Fatalf("i420 updated effort=%d want %d", got, WebRTCMaxEffortLevel)
+	}
+
+	monoConfig := base
+	monoConfig.ColorConfigSet = true
+	monoConfig.ColorConfig = SequenceColorConfig{BitDepth: 8, MonoChrome: true}
+	monoStream, err := NewWebRTCStreamConfig(monoConfig)
+	if err != nil {
+		t.Fatalf("NewWebRTCStreamConfig i400: %v", err)
+	}
+	defer monoStream.Close()
+	if got := monoStream.monoEncoders[0].effortLevel; got != WebRTCMinEffortLevel {
+		t.Fatalf("i400 initial effort=%d want %d", got, WebRTCMinEffortLevel)
+	}
+	monoChange := monoStream.Config()
+	monoChange.Speed = WebRTCMaxEffortLevel
+	if err := monoStream.SetConfig(monoChange); err != nil {
+		t.Fatalf("SetConfig i400 speed: %v", err)
+	}
+	if got := monoStream.monoEncoders[0].effortLevel; got != WebRTCMaxEffortLevel {
+		t.Fatalf("i400 updated effort=%d want %d", got, WebRTCMaxEffortLevel)
+	}
+}
+
 func TestWebRTCStreamTileColumnsSurvivePixelFormatReplacement(t *testing.T) {
 	const w, h = 512, 288
 	base := Config{

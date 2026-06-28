@@ -523,6 +523,7 @@ type lossyEncodeState struct {
 	qIndex                  uint8
 	forceIntegerMV          bool
 	allowScreenContentTools bool
+	effortLevel             int8
 	sadCacheEpoch           uint32
 	yQuant                  quantize.Quantizer
 	uQuant                  quantize.Quantizer

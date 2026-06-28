@@ -794,7 +794,7 @@ func normalizeConfig(config Config) (Config, error) {
 	} else if !config.RTPTimebase.Valid() {
 		return Config{}, ErrInvalidConfig
 	}
-	if config.Speed < WebRTCMinEffortLevel || config.Speed > WebRTCMaxEffortLevel {
+	if !validWebRTCEffortLevel(config.Speed) {
 		return Config{}, ErrInvalidConfig
 	}
 	if config.MinBitrateKbps < 0 || config.MaxBitrateKbps < 0 || config.TargetBitrateKbps < 0 || config.MinBitrateKbps > config.MaxBitrateKbps {
@@ -816,6 +816,10 @@ func normalizeConfig(config Config) (Config, error) {
 		return Config{}, ErrInvalidConfig
 	}
 	return config, nil
+}
+
+func validWebRTCEffortLevel(level int8) bool {
+	return level >= WebRTCMinEffortLevel && level <= WebRTCMaxEffortLevel
 }
 
 func normalizeConfigColor(config Config) (Config, error) {

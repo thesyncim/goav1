@@ -15,8 +15,9 @@ type MonochromeVideoEncoder struct {
 	renderWidth, renderHeight int
 	padded                    SourceFrameMono
 
-	qIndex  uint8
-	content ContentHint
+	qIndex      uint8
+	content     ContentHint
+	effortLevel int8
 
 	screenContentSelectable bool
 
@@ -149,6 +150,24 @@ func (e *MonochromeVideoEncoder) SetScreenContentSelection(enabled bool) {
 	if e != nil {
 		e.screenContentSelectable = enabled
 	}
+}
+
+// SetEffortLevel selects the realtime encoder effort level. The default zero
+// preserves the current quality/speed balance; WebRTCMinEffortLevel disables
+// subpel search for the fastest valid bitstream path.
+func (e *MonochromeVideoEncoder) SetEffortLevel(level int8) error {
+	if e == nil {
+		return fmt.Errorf("encoder: nil monochrome video encoder")
+	}
+	if !validWebRTCEffortLevel(level) {
+		return ErrInvalidConfig
+	}
+	e.effortLevel = level
+	e.pc.effortLevel = level
+	for i := range e.tilePCs {
+		e.tilePCs[i].effortLevel = level
+	}
+	return nil
 }
 
 // SetQIndex switches future frames to fixed-quality encoding.
@@ -568,6 +587,10 @@ func (e *MonochromeVideoEncoder) ensureTilePayloads(nTiles int) []TilePayload {
 	}
 	if len(e.tilePCs) < nTiles {
 		e.tilePCs = make([]pframeCoder, nTiles)
+	}
+	e.pc.effortLevel = e.effortLevel
+	for i := 0; i < nTiles; i++ {
+		e.tilePCs[i].effortLevel = e.effortLevel
 	}
 	if cap(e.payloads) < nTiles {
 		e.payloads = make([]TilePayload, nTiles)

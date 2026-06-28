@@ -298,6 +298,10 @@ func newWebRTCStreamLayerEncoder(config Config, layerIndex uint8, fps int, minQ 
 		_ = enc.Close()
 		return nil, err
 	}
+	if err := enc.SetEffortLevel(config.Speed); err != nil {
+		_ = enc.Close()
+		return nil, err
+	}
 	if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
 		_ = enc.Close()
 		return nil, err
@@ -329,6 +333,10 @@ func newWebRTCStreamLayerMonoEncoder(config Config, layerIndex uint8, fps int, m
 	}
 	enc.SetScreenContentSelection(true)
 	if err := enc.SetContentHint(config.Content); err != nil {
+		_ = enc.Close()
+		return nil, err
+	}
+	if err := enc.SetEffortLevel(config.Speed); err != nil {
 		_ = enc.Close()
 		return nil, err
 	}
@@ -707,6 +715,9 @@ func (s *WebRTCStream) updateLayerControls(config Config, fps int) error {
 		if err := enc.SetContentHint(config.Content); err != nil {
 			return err
 		}
+		if err := enc.SetEffortLevel(config.Speed); err != nil {
+			return err
+		}
 		switch config.RateControl {
 		case RateControlCBR:
 			targetKbps := webRTCStreamLayerTargetKbps(config, i)
@@ -740,6 +751,9 @@ func (s *WebRTCStream) updateMonoLayerControls(config Config, fps int) error {
 		}
 		enc.SetScreenContentSelection(true)
 		if err := enc.SetContentHint(config.Content); err != nil {
+			return err
+		}
+		if err := enc.SetEffortLevel(config.Speed); err != nil {
 			return err
 		}
 		switch config.RateControl {
