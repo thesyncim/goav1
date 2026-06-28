@@ -673,6 +673,45 @@ func TestReadCoefficientsTXBDecodesSingleDC(t *testing.T) {
 	}
 }
 
+func TestReadCoeffGolombCursorRoundTrip(t *testing.T) {
+	values := []int{0, 1, 2, 3, 4, 7, 15, 31, 63, 127, 255, 1023, 4095, (1 << 20) - 2}
+	w := entropy.NewWriter(make([]byte, 0, 128))
+	for _, v := range values {
+		writeGolomb(&w, v)
+	}
+	payload, err := w.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := entropy.NewReader(payload)
+	cursor := r.Cursor()
+	for _, want := range values {
+		got, err := readCoeffGolombCursor(&cursor)
+		if err != nil {
+			t.Fatalf("readCoeffGolombCursor(%d) err=%v", want, err)
+		}
+		if got != want {
+			t.Fatalf("readCoeffGolombCursor=%d want %d", got, want)
+		}
+	}
+}
+
+func TestReadCoeffGolombCursorRejectsLongPrefix(t *testing.T) {
+	w := entropy.NewWriter(make([]byte, 0, 8))
+	for range 21 {
+		w.WriteBit(0)
+	}
+	payload, err := w.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := entropy.NewReader(payload)
+	cursor := r.Cursor()
+	if _, err := readCoeffGolombCursor(&cursor); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("readCoeffGolombCursor err=%v want %v", err, ErrInvalidDecodeState)
+	}
+}
+
 // TestCoeffEOB1TX64x64ContextsMatchLibaomMVFrame1 pins the entropy-decode
 // context invariants for the canonical inter-frame eob=1 single-DC TX_64X64
 // block. libaom's mv test vector at frame 1 mi=(0,0) plane=0 produces a

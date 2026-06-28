@@ -1753,28 +1753,11 @@ func readEOBCursorKnown(reader *entropy.Cursor, eobCDF *entropy.CDF, eobSymbols 
 }
 
 func readCoeffGolombCursor(reader *entropy.Cursor) (int, error) {
-	x := 1
-	length := 0
-	for {
-		bit := reader.ReadBitTrusted()
-		length++
-		if length > 20 {
-			return 0, ErrInvalidDecodeState
-		}
-		if bit != 0 {
-			break
-		}
+	v, ok := reader.ReadUnsignedGolombTrusted(20)
+	if !ok {
+		return 0, ErrInvalidDecodeState
 	}
-	if length > 1 {
-		var suffix uint32
-		if length == 2 {
-			suffix = uint32(reader.ReadBitTrusted())
-		} else {
-			suffix = reader.ReadBitsTrusted(uint8(length - 1))
-		}
-		x = (1 << (length - 1)) | int(suffix)
-	}
-	return x - 1, nil
+	return int(v), nil
 }
 
 // coeffCDF returns a coefficient CDF for a trusted read. It verifies only the

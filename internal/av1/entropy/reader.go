@@ -455,6 +455,122 @@ func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 	return v
 }
 
+// ReadUnsignedGolombTrusted decodes the unary-prefix/equiprobable-suffix
+// Exp-Golomb shape used by AV1 coefficient tails. It returns ok=false after
+// consuming the bit that pushes the prefix beyond maxLength, matching callers
+// that validate malformed coefficient tails after the read.
+//
+//go:nosplit
+func (c *Cursor) ReadUnsignedGolombTrusted(maxLength uint8) (uint32, bool) {
+	dif := c.dif
+	rng := uint32(c.rng)
+	cnt := int32(c.cnt)
+	pos := 0
+	tellOffs := int32(0)
+	posLoaded := false
+	length := uint8(0)
+
+	for {
+		rangeValue := rng
+		traceDif := dif
+		split := (rangeValue >> 8) << 7
+		split += ecMinProb
+		window := split << (ecWindow - 16)
+
+		bit := uint8(1)
+		nextRange := split
+		if dif >= window {
+			dif -= window
+			nextRange = rangeValue - split
+			bit = 0
+		}
+
+		if traceEntropyReads {
+			if !posLoaded {
+				pos = int(c.pos)
+				tellOffs = int32(c.tellOffs)
+				posLoaded = true
+			}
+			traceBoolRead(CDFProbTop/2, traceDif, rng, readerTell(pos, cnt, tellOffs))
+		}
+		shift := normShift16(nextRange)
+		cnt -= shift
+		dif = ((dif + 1) << uint(shift)) - 1
+		rng = nextRange << uint(shift)
+		if cnt < 0 {
+			if !posLoaded {
+				pos = int(c.pos)
+				tellOffs = int32(c.tellOffs)
+				posLoaded = true
+			}
+			pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
+		}
+		length++
+		if length > maxLength {
+			if posLoaded {
+				c.pos = uint32(pos)
+				c.tellOffs = int16(tellOffs)
+			}
+			c.dif = dif
+			c.rng = uint16(rng)
+			c.cnt = int16(cnt)
+			return 0, false
+		}
+		if bit != 0 {
+			break
+		}
+	}
+
+	var suffix uint32
+	for i := uint8(1); i < length; i++ {
+		rangeValue := rng
+		traceDif := dif
+		split := (rangeValue >> 8) << 7
+		split += ecMinProb
+		window := split << (ecWindow - 16)
+
+		bit := uint8(1)
+		nextRange := split
+		if dif >= window {
+			dif -= window
+			nextRange = rangeValue - split
+			bit = 0
+		}
+
+		if traceEntropyReads {
+			if !posLoaded {
+				pos = int(c.pos)
+				tellOffs = int32(c.tellOffs)
+				posLoaded = true
+			}
+			traceBoolRead(CDFProbTop/2, traceDif, rng, readerTell(pos, cnt, tellOffs))
+		}
+		shift := normShift16(nextRange)
+		cnt -= shift
+		dif = ((dif + 1) << uint(shift)) - 1
+		rng = nextRange << uint(shift)
+		if cnt < 0 {
+			if !posLoaded {
+				pos = int(c.pos)
+				tellOffs = int32(c.tellOffs)
+				posLoaded = true
+			}
+			pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
+		}
+		suffix = (suffix << 1) | uint32(bit)
+	}
+
+	if posLoaded {
+		c.pos = uint32(pos)
+		c.tellOffs = int16(tellOffs)
+	}
+	c.dif = dif
+	c.rng = uint16(rng)
+	c.cnt = int16(cnt)
+	value := (uint32(1) << uint(length-1)) | suffix
+	return value - 1, true
+}
+
 // ReadUniform decodes an AV1 ns(n)-style uniformly distributed value in
 // [0, n). It consumes equiprobable range-coded bits.
 func (r *Reader) ReadUniform(n uint32) (uint32, error) {
