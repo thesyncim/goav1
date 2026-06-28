@@ -327,9 +327,11 @@ ship under `internal/av1/testdata/libaom/`.
   Non-4:2:0 chroma samples are resampled unless explicitly configured for
   native profile-2 4:2:2 or native profile-1/profile-2 4:4:4, monochrome fills
   neutral chroma unless configured for native monochrome, and explicit 10/12-bit
-  configs preserve native high-bit-depth color. Native 10/12-bit color keyframes
-  and P-frames are covered by `EncodeI420HighBitDepthKeyframe`,
-  `EncodeI420HighBitDepthPFrame`, `RTCEncoder.EncodeI420HighBitDepth`,
+  configs preserve native high-bit-depth color. Native 10/12-bit color
+  lossless/lossy keyframes and lossy P-frames are covered by
+  `EncodeI420HighBitDepthLosslessKeyframe`,
+  `EncodeI420HighBitDepthKeyframe`, `EncodeI420HighBitDepthPFrame`,
+  `RTCEncoder.EncodeI420HighBitDepth`,
   `RTCEncoder.EncodeI420HighBitDepthPicture`,
   `RTCEncoder.EncodeI422HighBitDepthPicture`, and
   `RTCEncoder.EncodeI444HighBitDepthPicture` and checked against aomdec/dav1d.

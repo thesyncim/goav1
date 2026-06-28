@@ -10,15 +10,32 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
-// EncodeHighBitDepth420Keyframe encodes src at qIndex 1..255 as one native
-// 10/12-bit 4:2:0 AV1 keyframe and returns the encoder-side reconstruction a
-// conformant decoder must reproduce exactly.
+// EncodeHighBitDepth420Keyframe encodes src as one native 10/12-bit 4:2:0 AV1
+// keyframe and returns the encoder-side reconstruction a conformant decoder
+// must reproduce exactly. qIndex 0 emits a lossless keyframe.
 func EncodeHighBitDepth420Keyframe(src SourceFrame42016, qIndex uint8) ([]byte, SourceFrame42016, error) {
 	if err := validateSourceFrame42016(src); err != nil {
 		return nil, SourceFrame42016{}, err
 	}
 	if qIndex == 0 {
-		return nil, SourceFrame42016{}, fmt.Errorf("encoder: qindex 0 is the lossless path; high-bit-depth 4:2:0 lossless keyframes are not implemented")
+		tu, err := EncodeLosslessHighBitDepth420Keyframe(src)
+		if err != nil {
+			return nil, SourceFrame42016{}, err
+		}
+		recon := SourceFrame42016{
+			Y:            make([]uint16, len(src.Y)),
+			U:            make([]uint16, len(src.U)),
+			V:            make([]uint16, len(src.V)),
+			YStride:      src.YStride,
+			ChromaStride: src.ChromaStride,
+			Width:        src.Width,
+			Height:       src.Height,
+			BitDepth:     src.BitDepth,
+		}
+		copy(recon.Y, src.Y)
+		copy(recon.U, src.U)
+		copy(recon.V, src.V)
+		return tu, recon, nil
 	}
 	recon := SourceFrame42016{
 		Y:            make([]uint16, len(src.Y)),

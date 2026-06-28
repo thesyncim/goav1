@@ -582,7 +582,9 @@ func TestPublicEncodeI420HighBitDepthKeyframeReferenceDecoders(t *testing.T) {
 		qIndex   uint8
 		profile  uint8
 	}{
+		{bitDepth: 10, qIndex: 0, profile: uint8(goav1.EncoderProfile0)},
 		{bitDepth: 10, qIndex: 72, profile: uint8(goav1.EncoderProfile0)},
+		{bitDepth: 12, qIndex: 0, profile: uint8(goav1.EncoderProfile2)},
 		{bitDepth: 12, qIndex: 104, profile: uint8(goav1.EncoderProfile2)},
 	}
 	for _, tc := range cases {
@@ -595,6 +597,9 @@ func TestPublicEncodeI420HighBitDepthKeyframeReferenceDecoders(t *testing.T) {
 			if recon.BitDepth != src.BitDepth || recon.Width != src.Width || recon.Height != src.Height ||
 				recon.YStride != src.YStride || recon.ChromaStride != src.ChromaStride {
 				t.Fatalf("unexpected reconstruction: got=%+v src=%+v", recon, src)
+			}
+			if tc.qIndex == 0 && !publicI420HighBitDepthFrameEqual(recon, src) {
+				t.Fatal("lossless high-bit-depth 4:2:0 reconstruction differs from source")
 			}
 			seq := publicFirstSequenceHeader(t, tu)
 			if seq.SeqProfile != tc.profile ||
@@ -805,22 +810,31 @@ func TestPublicEncodeI400HighBitDepthLosslessKeyframeRejectsInvalid(t *testing.T
 
 func TestPublicEncodeI420HighBitDepthKeyframeRejectsInvalid(t *testing.T) {
 	valid := publicI420HighBitDepthFrame(64, 64, 10, 3)
-	if _, _, err := goav1.EncodeI420HighBitDepthKeyframe(valid, 0); err == nil {
-		t.Fatal("EncodeI420HighBitDepthKeyframe accepted qindex 0")
+	if _, _, err := goav1.EncodeI420HighBitDepthLosslessKeyframe(valid); err != nil {
+		t.Fatalf("EncodeI420HighBitDepthLosslessKeyframe valid: %v", err)
 	}
 	bitDepthMismatch := valid
 	bitDepthMismatch.BitDepth = 9
+	if _, _, err := goav1.EncodeI420HighBitDepthLosslessKeyframe(bitDepthMismatch); err == nil {
+		t.Fatal("EncodeI420HighBitDepthLosslessKeyframe accepted 9-bit input")
+	}
 	if _, _, err := goav1.EncodeI420HighBitDepthKeyframe(bitDepthMismatch, 72); err == nil {
 		t.Fatal("EncodeI420HighBitDepthKeyframe accepted 9-bit input")
 	}
 	shortChroma := valid
 	shortChroma.U = shortChroma.U[:len(shortChroma.U)-1]
+	if _, _, err := goav1.EncodeI420HighBitDepthLosslessKeyframe(shortChroma); err == nil {
+		t.Fatal("EncodeI420HighBitDepthLosslessKeyframe accepted short chroma plane")
+	}
 	if _, _, err := goav1.EncodeI420HighBitDepthKeyframe(shortChroma, 72); err == nil {
 		t.Fatal("EncodeI420HighBitDepthKeyframe accepted short chroma plane")
 	}
 	invalidSample := valid
 	invalidSample.V = append([]uint16(nil), valid.V...)
 	invalidSample.V[7] = 1024
+	if _, _, err := goav1.EncodeI420HighBitDepthLosslessKeyframe(invalidSample); err == nil {
+		t.Fatal("EncodeI420HighBitDepthLosslessKeyframe accepted sample above 10-bit range")
+	}
 	if _, _, err := goav1.EncodeI420HighBitDepthKeyframe(invalidSample, 72); err == nil {
 		t.Fatal("EncodeI420HighBitDepthKeyframe accepted sample above 10-bit range")
 	}

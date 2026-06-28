@@ -13,9 +13,11 @@ package goav1
 // Explicit high-bit-depth RTC configs preserve 10/12-bit I400/monochrome,
 // I420/4:2:0, I422/4:2:2, and I444/4:4:4 Frame input across single-spatial,
 // simulcast, and shared-reference SVC streams. Native 10/12-bit monochrome
-// keyframes/P-frames and standalone native 10/12-bit 4:2:0 color keyframes/P-frames are also available through
+// lossless/lossy keyframes and P-frames, plus standalone native 10/12-bit
+// 4:2:0 color lossless/lossy keyframes and lossy P-frames, are also available through
 // EncodeI400HighBitDepthKeyframe, EncodeI400HighBitDepthPFrame,
-// EncodeI420HighBitDepthKeyframe, and EncodeI420HighBitDepthPFrame. Every
+// EncodeI420HighBitDepthLosslessKeyframe, EncodeI420HighBitDepthKeyframe, and
+// EncodeI420HighBitDepthPFrame. Every
 // emitted stream decodes bit-exactly to the encoder's own reconstruction in
 // this package's Decoder and in the reference decoders.
 
@@ -183,10 +185,25 @@ func EncodeI400HighBitDepthLosslessKeyframe(frame I400HighBitDepthFrame) ([]byte
 	return tu, recon, nil
 }
 
+// EncodeI420HighBitDepthLosslessKeyframe encodes one native 10/12-bit AV1
+// 4:2:0 lossless keyframe. The returned reconstruction aliases a fresh copy of
+// frame planes because lossless output must reproduce the source exactly.
+func EncodeI420HighBitDepthLosslessKeyframe(frame I420HighBitDepthFrame) ([]byte, I420HighBitDepthFrame, error) {
+	tu, recon, err := encoder.EncodeHighBitDepth420Keyframe(encoder.SourceFrame42016(frame), 0)
+	if err != nil {
+		return nil, I420HighBitDepthFrame{}, err
+	}
+	return tu, I420HighBitDepthFrame(recon), nil
+}
+
 // EncodeI420HighBitDepthKeyframe encodes one native 10/12-bit AV1 4:2:0
 // keyframe and returns the encoder-side reconstruction a conformant decoder
-// must reproduce exactly. qIndex must be 1..255.
+// must reproduce exactly. qIndex 0 emits a lossless keyframe; qIndex 1..255
+// emits a non-lossless keyframe.
 func EncodeI420HighBitDepthKeyframe(frame I420HighBitDepthFrame, qIndex uint8) ([]byte, I420HighBitDepthFrame, error) {
+	if qIndex == 0 {
+		return EncodeI420HighBitDepthLosslessKeyframe(frame)
+	}
 	tu, recon, err := encoder.EncodeHighBitDepth420Keyframe(encoder.SourceFrame42016(frame), qIndex)
 	if err != nil {
 		return nil, I420HighBitDepthFrame{}, err
