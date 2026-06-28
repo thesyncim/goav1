@@ -2981,6 +2981,11 @@ func frameWorkResolveLoopFilterRecordLevels(levelCtx frameWorkLoopFilterLevelCon
 	if levelCtx.lumaZero {
 		return levels, nil
 	}
+	if !levelCtx.delta.DeltaLFPresent &&
+		!levelCtx.segmentation.Enabled &&
+		!levelCtx.loopFilter.ModeRefDeltaEnabled {
+		return levelCtx.base, nil
+	}
 	planeCount := 3
 	if levelCtx.monoChrome {
 		planeCount = 1
