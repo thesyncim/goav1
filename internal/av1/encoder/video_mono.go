@@ -104,6 +104,17 @@ func (e *MonochromeVideoEncoder) SetTileColumns(cols int) {
 	}
 }
 
+func (e *MonochromeVideoEncoder) SetMaxThreads(n int) {
+	if e == nil {
+		return
+	}
+	if n > 0 {
+		e.SetTileColumns(n)
+		return
+	}
+	e.setDefaultTileColumns()
+}
+
 func (e *MonochromeVideoEncoder) setDefaultTileColumns() {
 	if e != nil {
 		e.tileColsLog2 = 0

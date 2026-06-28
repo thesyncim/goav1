@@ -15,8 +15,9 @@ type HighBitDepthMonochromeVideoEncoder struct {
 	bitDepth                  uint8
 	padded                    SourceFrameMono16
 
-	qIndex  uint8
-	content ContentHint
+	qIndex      uint8
+	content     ContentHint
+	effortLevel int8
 
 	screenContentSelectable bool
 
@@ -106,6 +107,17 @@ func (e *HighBitDepthMonochromeVideoEncoder) SetTileColumns(cols int) {
 	}
 }
 
+func (e *HighBitDepthMonochromeVideoEncoder) SetMaxThreads(n int) {
+	if e == nil {
+		return
+	}
+	if n > 0 {
+		e.SetTileColumns(n)
+		return
+	}
+	e.setDefaultTileColumns()
+}
+
 func (e *HighBitDepthMonochromeVideoEncoder) setDefaultTileColumns() {
 	if e != nil {
 		e.tileColsLog2 = 0
@@ -151,6 +163,22 @@ func (e *HighBitDepthMonochromeVideoEncoder) SetScreenContentSelection(enabled b
 	if e != nil {
 		e.screenContentSelectable = enabled
 	}
+}
+
+// SetEffortLevel selects the realtime encoder effort level.
+func (e *HighBitDepthMonochromeVideoEncoder) SetEffortLevel(level int8) error {
+	if e == nil {
+		return fmt.Errorf("encoder: nil high-bit-depth monochrome video encoder")
+	}
+	if !validWebRTCEffortLevel(level) {
+		return ErrInvalidConfig
+	}
+	e.effortLevel = level
+	e.pc.effortLevel = level
+	for i := range e.tilePCs {
+		e.tilePCs[i].effortLevel = level
+	}
+	return nil
 }
 
 func (e *HighBitDepthMonochromeVideoEncoder) SetQIndex(qIndex uint8) error {
@@ -574,6 +602,10 @@ func (e *HighBitDepthMonochromeVideoEncoder) ensureTilePayloads(nTiles int) []Ti
 	}
 	if len(e.tilePCs) < nTiles {
 		e.tilePCs = make([]pframeCoder, nTiles)
+	}
+	e.pc.effortLevel = e.effortLevel
+	for i := 0; i < nTiles; i++ {
+		e.tilePCs[i].effortLevel = e.effortLevel
 	}
 	if cap(e.payloads) < nTiles {
 		e.payloads = make([]TilePayload, nTiles)

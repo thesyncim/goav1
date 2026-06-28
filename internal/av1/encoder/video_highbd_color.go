@@ -17,8 +17,9 @@ type HighBitDepth420VideoEncoder struct {
 	color                     SequenceColorConfig
 	padded                    SourceFrame42016
 
-	qIndex  uint8
-	content ContentHint
+	qIndex      uint8
+	content     ContentHint
+	effortLevel int8
 
 	screenContentSelectable bool
 
@@ -133,6 +134,17 @@ func (e *HighBitDepth420VideoEncoder) SetTileColumns(cols int) {
 	}
 }
 
+func (e *HighBitDepth420VideoEncoder) SetMaxThreads(n int) {
+	if e == nil {
+		return
+	}
+	if n > 0 {
+		e.SetTileColumns(n)
+		return
+	}
+	e.setDefaultTileColumns()
+}
+
 func (e *HighBitDepth420VideoEncoder) setDefaultTileColumns() {
 	if e != nil {
 		e.tileColsLog2 = 0
@@ -178,6 +190,22 @@ func (e *HighBitDepth420VideoEncoder) SetScreenContentSelection(enabled bool) {
 	if e != nil {
 		e.screenContentSelectable = enabled
 	}
+}
+
+// SetEffortLevel selects the realtime encoder effort level.
+func (e *HighBitDepth420VideoEncoder) SetEffortLevel(level int8) error {
+	if e == nil {
+		return fmt.Errorf("encoder: nil high-bit-depth 4:2:0 video encoder")
+	}
+	if !validWebRTCEffortLevel(level) {
+		return ErrInvalidConfig
+	}
+	e.effortLevel = level
+	e.pc.effortLevel = level
+	for i := range e.tilePCs {
+		e.tilePCs[i].effortLevel = level
+	}
+	return nil
 }
 
 func (e *HighBitDepth420VideoEncoder) SetQIndex(qIndex uint8) error {
@@ -612,6 +640,10 @@ func (e *HighBitDepth420VideoEncoder) ensureTilePayloads(nTiles int) []TilePaylo
 	}
 	if len(e.tilePCs) < nTiles {
 		e.tilePCs = make([]pframeCoder, nTiles)
+	}
+	e.pc.effortLevel = e.effortLevel
+	for i := 0; i < nTiles; i++ {
+		e.tilePCs[i].effortLevel = e.effortLevel
 	}
 	if cap(e.payloads) < nTiles {
 		e.payloads = make([]TilePayload, nTiles)

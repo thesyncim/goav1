@@ -171,6 +171,7 @@ func TestWebRTCStreamConfigMaxThreadsAppliesToPixelEncoders(t *testing.T) {
 		name   string
 		config func(Config) Config
 		assert func(*testing.T, *WebRTCStream)
+		encode func(*testing.T, *WebRTCStream) WebRTCEncodedPicture
 	}{
 		{
 			name: "i420-8",
@@ -185,6 +186,14 @@ func TestWebRTCStreamConfigMaxThreadsAppliesToPixelEncoders(t *testing.T) {
 				if got := stream.encoders[0].tileColsLog2; got != 2 {
 					t.Fatalf("i420 encoder tileColsLog2=%d want 2", got)
 				}
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodePicture(testWebRTCStreamFrame(w, h), true)
+				if err != nil {
+					t.Fatalf("EncodePicture: %v", err)
+				}
+				return picture
 			},
 		},
 		{
@@ -202,6 +211,14 @@ func TestWebRTCStreamConfigMaxThreadsAppliesToPixelEncoders(t *testing.T) {
 				if got := stream.monoEncoders[0].tileColsLog2; got != 2 {
 					t.Fatalf("mono encoder tileColsLog2=%d want 2", got)
 				}
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeMonochromePicture(testWebRTCStreamMonoFrame(w, h), true)
+				if err != nil {
+					t.Fatalf("EncodeMonochromePicture: %v", err)
+				}
+				return picture
 			},
 		},
 		{
@@ -221,6 +238,14 @@ func TestWebRTCStreamConfigMaxThreadsAppliesToPixelEncoders(t *testing.T) {
 					t.Fatalf("mono16 encoder tileColsLog2=%d want 2", got)
 				}
 			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeHighBitDepthMonochromePicture(testWebRTCStreamMono16Frame(w, h, 10), true)
+				if err != nil {
+					t.Fatalf("EncodeHighBitDepthMonochromePicture: %v", err)
+				}
+				return picture
+			},
 		},
 		{
 			name: "i420-10",
@@ -239,6 +264,14 @@ func TestWebRTCStreamConfigMaxThreadsAppliesToPixelEncoders(t *testing.T) {
 					t.Fatalf("color16 encoder tileColsLog2=%d want 2", got)
 				}
 			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeHighBitDepth420Picture(testWebRTCStream42016Frame(w, h, 10), true)
+				if err != nil {
+					t.Fatalf("EncodeHighBitDepth420Picture: %v", err)
+				}
+				return picture
+			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -248,11 +281,150 @@ func TestWebRTCStreamConfigMaxThreadsAppliesToPixelEncoders(t *testing.T) {
 			}
 			defer stream.Close()
 			tc.assert(t, stream)
+			picture := tc.encode(t, stream)
+			if got := parseWebRTCTileColumns(t, picture.Frames[0].TU); got != 4 {
+				t.Fatalf("encoded tile columns=%d want 4", got)
+			}
+
+			change := stream.Config()
+			change.MaxThreads = 1
+			if err := stream.SetConfig(change); err != nil {
+				t.Fatalf("SetConfig MaxThreads=1: %v", err)
+			}
+			picture = tc.encode(t, stream)
+			if got := parseWebRTCTileColumns(t, picture.Frames[0].TU); got != 1 {
+				t.Fatalf("updated encoded tile columns=%d want 1", got)
+			}
 		})
 	}
 }
 
-func TestWebRTCStreamConfigSpeedAppliesTo8BitPixelEncoders(t *testing.T) {
+func TestWebRTCStreamMaxThreadsSurvivePixelFormatReplacement(t *testing.T) {
+	const w, h = 512, 288
+	base := Config{
+		Resolution:        Resolution{Width: w, Height: h},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 500,
+		Scalability:       ScalabilityModeL1T1,
+		MaxThreads:        4,
+	}
+
+	for _, tc := range []struct {
+		name   string
+		config func(Config) Config
+		encode func(*testing.T, *WebRTCStream) WebRTCEncodedPicture
+	}{
+		{
+			name: "i400-8",
+			config: func(cfg Config) Config {
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 8, MonoChrome: true}
+				return cfg
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeMonochromePicture(testWebRTCStreamMonoFrame(w, h), true)
+				if err != nil {
+					t.Fatalf("EncodeMonochromePicture: %v", err)
+				}
+				return picture
+			},
+		},
+		{
+			name: "i400-10",
+			config: func(cfg Config) Config {
+				cfg.BitDepth = 10
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 10, MonoChrome: true}
+				return cfg
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeHighBitDepthMonochromePicture(testWebRTCStreamMono16Frame(w, h, 10), true)
+				if err != nil {
+					t.Fatalf("EncodeHighBitDepthMonochromePicture: %v", err)
+				}
+				return picture
+			},
+		},
+		{
+			name: "i400-12",
+			config: func(cfg Config) Config {
+				cfg.Profile = Profile2
+				cfg.BitDepth = 12
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 12, MonoChrome: true}
+				return cfg
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeHighBitDepthMonochromePicture(testWebRTCStreamMono16Frame(w, h, 12), true)
+				if err != nil {
+					t.Fatalf("EncodeHighBitDepthMonochromePicture: %v", err)
+				}
+				return picture
+			},
+		},
+		{
+			name: "i420-10",
+			config: func(cfg Config) Config {
+				cfg.BitDepth = 10
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 10, SubsamplingX: true, SubsamplingY: true}
+				return cfg
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeHighBitDepth420Picture(testWebRTCStream42016Frame(w, h, 10), true)
+				if err != nil {
+					t.Fatalf("EncodeHighBitDepth420Picture: %v", err)
+				}
+				return picture
+			},
+		},
+		{
+			name: "i420-12",
+			config: func(cfg Config) Config {
+				cfg.Profile = Profile2
+				cfg.BitDepth = 12
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 12, SubsamplingX: true, SubsamplingY: true}
+				return cfg
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeHighBitDepth420Picture(testWebRTCStream42016Frame(w, h, 12), true)
+				if err != nil {
+					t.Fatalf("EncodeHighBitDepth420Picture: %v", err)
+				}
+				return picture
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream, err := NewWebRTCStreamConfig(base)
+			if err != nil {
+				t.Fatalf("NewWebRTCStreamConfig: %v", err)
+			}
+			defer stream.Close()
+
+			if err := stream.SetConfig(tc.config(base)); err != nil {
+				t.Fatalf("SetConfig: %v", err)
+			}
+			picture := tc.encode(t, stream)
+			if !picture.Keyframe || picture.FrameNum != 1 {
+				t.Fatalf("picture key=%v frameNum=%d want key single frame", picture.Keyframe, picture.FrameNum)
+			}
+			if got := parseWebRTCTileColumns(t, picture.Frames[0].TU); got != 4 {
+				t.Fatalf("encoded tile columns=%d want 4", got)
+			}
+		})
+	}
+}
+
+func TestWebRTCStreamConfigSpeedAppliesToPixelEncoders(t *testing.T) {
 	const w, h = 512, 288
 	base := Config{
 		Resolution:        Resolution{Width: w, Height: h},
@@ -264,41 +436,132 @@ func TestWebRTCStreamConfigSpeedAppliesTo8BitPixelEncoders(t *testing.T) {
 		Speed:             WebRTCMinEffortLevel,
 	}
 
-	stream, err := NewWebRTCStreamConfig(base)
-	if err != nil {
-		t.Fatalf("NewWebRTCStreamConfig i420: %v", err)
-	}
-	defer stream.Close()
-	if got := stream.encoders[0].effortLevel; got != WebRTCMinEffortLevel {
-		t.Fatalf("i420 initial effort=%d want %d", got, WebRTCMinEffortLevel)
-	}
-	change := stream.Config()
-	change.Speed = WebRTCMaxEffortLevel
-	if err := stream.SetConfig(change); err != nil {
-		t.Fatalf("SetConfig i420 speed: %v", err)
-	}
-	if got := stream.encoders[0].effortLevel; got != WebRTCMaxEffortLevel {
-		t.Fatalf("i420 updated effort=%d want %d", got, WebRTCMaxEffortLevel)
-	}
-
-	monoConfig := base
-	monoConfig.ColorConfigSet = true
-	monoConfig.ColorConfig = SequenceColorConfig{BitDepth: 8, MonoChrome: true}
-	monoStream, err := NewWebRTCStreamConfig(monoConfig)
-	if err != nil {
-		t.Fatalf("NewWebRTCStreamConfig i400: %v", err)
-	}
-	defer monoStream.Close()
-	if got := monoStream.monoEncoders[0].effortLevel; got != WebRTCMinEffortLevel {
-		t.Fatalf("i400 initial effort=%d want %d", got, WebRTCMinEffortLevel)
-	}
-	monoChange := monoStream.Config()
-	monoChange.Speed = WebRTCMaxEffortLevel
-	if err := monoStream.SetConfig(monoChange); err != nil {
-		t.Fatalf("SetConfig i400 speed: %v", err)
-	}
-	if got := monoStream.monoEncoders[0].effortLevel; got != WebRTCMaxEffortLevel {
-		t.Fatalf("i400 updated effort=%d want %d", got, WebRTCMaxEffortLevel)
+	for _, tc := range []struct {
+		name         string
+		config       func(Config) Config
+		assertEffort func(*testing.T, *WebRTCStream, int8)
+	}{
+		{
+			name: "i420-8",
+			config: func(cfg Config) Config {
+				return cfg
+			},
+			assertEffort: func(t *testing.T, stream *WebRTCStream, want int8) {
+				t.Helper()
+				if stream.encoders[0] == nil {
+					t.Fatal("missing i420 encoder")
+				}
+				if got := stream.encoders[0].effortLevel; got != want {
+					t.Fatalf("i420 effort=%d want %d", got, want)
+				}
+			},
+		},
+		{
+			name: "i400-8",
+			config: func(cfg Config) Config {
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 8, MonoChrome: true}
+				return cfg
+			},
+			assertEffort: func(t *testing.T, stream *WebRTCStream, want int8) {
+				t.Helper()
+				if stream.monoEncoders[0] == nil {
+					t.Fatal("missing mono encoder")
+				}
+				if got := stream.monoEncoders[0].effortLevel; got != want {
+					t.Fatalf("mono effort=%d want %d", got, want)
+				}
+			},
+		},
+		{
+			name: "i400-10",
+			config: func(cfg Config) Config {
+				cfg.BitDepth = 10
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 10, MonoChrome: true}
+				return cfg
+			},
+			assertEffort: func(t *testing.T, stream *WebRTCStream, want int8) {
+				t.Helper()
+				if stream.mono16Encoders[0] == nil {
+					t.Fatal("missing mono16 encoder")
+				}
+				if got := stream.mono16Encoders[0].effortLevel; got != want {
+					t.Fatalf("mono16 effort=%d want %d", got, want)
+				}
+			},
+		},
+		{
+			name: "i400-12",
+			config: func(cfg Config) Config {
+				cfg.Profile = Profile2
+				cfg.BitDepth = 12
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 12, MonoChrome: true}
+				return cfg
+			},
+			assertEffort: func(t *testing.T, stream *WebRTCStream, want int8) {
+				t.Helper()
+				if stream.mono16Encoders[0] == nil {
+					t.Fatal("missing mono16 encoder")
+				}
+				if got := stream.mono16Encoders[0].effortLevel; got != want {
+					t.Fatalf("mono16 effort=%d want %d", got, want)
+				}
+			},
+		},
+		{
+			name: "i420-10",
+			config: func(cfg Config) Config {
+				cfg.BitDepth = 10
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 10, SubsamplingX: true, SubsamplingY: true}
+				return cfg
+			},
+			assertEffort: func(t *testing.T, stream *WebRTCStream, want int8) {
+				t.Helper()
+				if stream.color16Encoders[0] == nil {
+					t.Fatal("missing color16 encoder")
+				}
+				if got := stream.color16Encoders[0].effortLevel; got != want {
+					t.Fatalf("color16 effort=%d want %d", got, want)
+				}
+			},
+		},
+		{
+			name: "i420-12",
+			config: func(cfg Config) Config {
+				cfg.Profile = Profile2
+				cfg.BitDepth = 12
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 12, SubsamplingX: true, SubsamplingY: true}
+				return cfg
+			},
+			assertEffort: func(t *testing.T, stream *WebRTCStream, want int8) {
+				t.Helper()
+				if stream.color16Encoders[0] == nil {
+					t.Fatal("missing color16 encoder")
+				}
+				if got := stream.color16Encoders[0].effortLevel; got != want {
+					t.Fatalf("color16 effort=%d want %d", got, want)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream, err := NewWebRTCStreamConfig(tc.config(base))
+			if err != nil {
+				t.Fatalf("NewWebRTCStreamConfig: %v", err)
+			}
+			defer stream.Close()
+			tc.assertEffort(t, stream, WebRTCMinEffortLevel)
+			change := stream.Config()
+			change.Speed = WebRTCMaxEffortLevel
+			if err := stream.SetConfig(change); err != nil {
+				t.Fatalf("SetConfig speed: %v", err)
+			}
+			tc.assertEffort(t, stream, WebRTCMaxEffortLevel)
+		})
 	}
 }
 

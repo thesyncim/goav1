@@ -373,6 +373,10 @@ func newWebRTCStreamLayerMono16Encoder(config Config, layerIndex uint8, fps int,
 		_ = enc.Close()
 		return nil, err
 	}
+	if err := enc.SetEffortLevel(config.Speed); err != nil {
+		_ = enc.Close()
+		return nil, err
+	}
 	if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
 		_ = enc.Close()
 		return nil, err
@@ -403,6 +407,10 @@ func newWebRTCStreamLayerColor16Encoder(config Config, layerIndex uint8, fps int
 	}
 	enc.SetScreenContentSelection(true)
 	if err := enc.SetContentHint(config.Content); err != nil {
+		_ = enc.Close()
+		return nil, err
+	}
+	if err := enc.SetEffortLevel(config.Speed); err != nil {
 		_ = enc.Close()
 		return nil, err
 	}
@@ -547,6 +555,10 @@ func (s *WebRTCStream) applyConfiguredTileColumnsToMono(config Config, enc *Mono
 	if enc == nil {
 		return
 	}
+	if config.MaxThreads > 0 {
+		enc.SetMaxThreads(int(config.MaxThreads))
+		return
+	}
 	if cols, ok := s.configuredTileColumns(config); ok {
 		enc.SetTileColumns(cols)
 		return
@@ -558,6 +570,10 @@ func (s *WebRTCStream) applyConfiguredTileColumnsToMono16(config Config, enc *Hi
 	if enc == nil {
 		return
 	}
+	if config.MaxThreads > 0 {
+		enc.SetMaxThreads(int(config.MaxThreads))
+		return
+	}
 	if cols, ok := s.configuredTileColumns(config); ok {
 		enc.SetTileColumns(cols)
 		return
@@ -567,6 +583,10 @@ func (s *WebRTCStream) applyConfiguredTileColumnsToMono16(config Config, enc *Hi
 
 func (s *WebRTCStream) applyConfiguredTileColumnsToColor16(config Config, enc *HighBitDepth420VideoEncoder) {
 	if enc == nil {
+		return
+	}
+	if config.MaxThreads > 0 {
+		enc.SetMaxThreads(int(config.MaxThreads))
 		return
 	}
 	if cols, ok := s.configuredTileColumns(config); ok {
@@ -791,6 +811,9 @@ func (s *WebRTCStream) updateMono16LayerControls(config Config, fps int) error {
 		if err := enc.SetContentHint(config.Content); err != nil {
 			return err
 		}
+		if err := enc.SetEffortLevel(config.Speed); err != nil {
+			return err
+		}
 		switch config.RateControl {
 		case RateControlCBR:
 			targetKbps := webRTCStreamLayerTargetKbps(config, i)
@@ -824,6 +847,9 @@ func (s *WebRTCStream) updateColor16LayerControls(config Config, fps int) error 
 		}
 		enc.SetScreenContentSelection(true)
 		if err := enc.SetContentHint(config.Content); err != nil {
+			return err
+		}
+		if err := enc.SetEffortLevel(config.Speed); err != nil {
 			return err
 		}
 		switch config.RateControl {
