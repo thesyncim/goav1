@@ -188,6 +188,17 @@ func BenchmarkFindDirection(b *testing.B) {
 	}
 }
 
+func BenchmarkFindDirection8(b *testing.B) {
+	img := make([]uint16, 64)
+	for i := range img {
+		img[i] = uint16((i * 41) & 0xff)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _, _ = FindDirection(img, 8, 0)
+	}
+}
+
 func BenchmarkFindDirectionDual(b *testing.B) {
 	const stride = 16
 	img := make([]uint16, stride*8)
@@ -197,6 +208,18 @@ func BenchmarkFindDirectionDual(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		_, _, _, _, _ = FindDirectionDual(img, img[8:], stride, 4)
+	}
+}
+
+func BenchmarkFindDirectionDual8(b *testing.B) {
+	const stride = 16
+	img := make([]uint16, stride*8)
+	for i := range img {
+		img[i] = uint16((i * 41) & 0xff)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _, _, _, _ = FindDirectionDual(img, img[8:], stride, 0)
 	}
 }
 

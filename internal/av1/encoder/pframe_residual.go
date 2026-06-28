@@ -2692,6 +2692,7 @@ func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, predStride, 
 
 func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, txType transform.Type) error {
+	var txbResult tile.TXBDecodeResult
 	if w == 4 && h == 4 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize4x4 && afterSkip != nil {
 		qcoeff4 := (*[16]int16)(qcoeff)
 		var txCDF *entropy.CDF
@@ -2709,12 +2710,16 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 				return tile.ErrInvalidDecodeState
 			}
 			txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 1, H4: 1}, blockDims)
-			result := tile.WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(st.w, &st.coeffCDFs, qcoeff4, txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
-			if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+			txbResult = tile.WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(st.w, &st.coeffCDFs, qcoeff4, txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 				return err
 			}
-		} else if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
-			return err
+		} else {
+			var err error
+			txbResult, err = tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip)
+			if err != nil {
+				return err
+			}
 		}
 	} else if w == 8 && h == 8 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize8x8 && afterSkip != nil {
 		txCDF, txSymbol, ok := st.interTXCDFAndSymbol(ctxReq.Size, txType)
@@ -2727,12 +2732,16 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 				return tile.ErrInvalidDecodeState
 			}
 			txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 2, H4: 2}, blockDims)
-			result := tile.WriteCoefficientsTXB8x8Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
-			if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+			txbResult = tile.WriteCoefficientsTXB8x8Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 				return err
 			}
-		} else if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
-			return err
+		} else {
+			var err error
+			txbResult, err = tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip)
+			if err != nil {
+				return err
+			}
 		}
 	} else if w == 16 && h == 16 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize16x16 && afterSkip != nil && txType == transform.TypeDCTDCT {
 		txCDF, txSymbol, ok := st.interTXCDFAndSymbol(ctxReq.Size, txType)
@@ -2745,12 +2754,16 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 				return tile.ErrInvalidDecodeState
 			}
 			txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 4, H4: 4}, blockDims)
-			result := tile.WriteCoefficientsTXB16x16Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
-			if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+			txbResult = tile.WriteCoefficientsTXB16x16Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 				return err
 			}
-		} else if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
-			return err
+		} else {
+			var err error
+			txbResult, err = tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip)
+			if err != nil {
+				return err
+			}
 		}
 	} else if w == 32 && h == 32 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize32x32 && afterSkip != nil && txType == transform.TypeDCTDCT {
 		txCDF, txSymbol, ok := st.interTXCDFAndSymbol(ctxReq.Size, txType)
@@ -2763,12 +2776,16 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 				return tile.ErrInvalidDecodeState
 			}
 			txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 8, H4: 8}, blockDims)
-			result := tile.WriteCoefficientsTXB32x32Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
-			if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+			txbResult = tile.WriteCoefficientsTXB32x32Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 				return err
 			}
-		} else if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
-			return err
+		} else {
+			var err error
+			txbResult, err = tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip)
+			if err != nil {
+				return err
+			}
 		}
 	} else if w == 4 && h == 4 && ctxReq.Plane != 0 && ctxReq.Size == tile.TransformSize4x4 && afterSkip == nil && txType == transform.TypeDCTDCT {
 		if coeffCtx == nil {
@@ -2779,8 +2796,8 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 			return tile.ErrInvalidDecodeState
 		}
 		txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 1, H4: 1}, blockDims)
-		result := tile.WriteCoefficientsTXB4x4UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[16]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
-		if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+		txbResult = tile.WriteCoefficientsTXB4x4UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[16]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
+		if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 			return err
 		}
 	} else if w == 8 && h == 8 && ctxReq.Plane != 0 && ctxReq.Size == tile.TransformSize8x8 && afterSkip == nil && txType == transform.TypeDCTDCT {
@@ -2792,8 +2809,8 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 			return tile.ErrInvalidDecodeState
 		}
 		txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 2, H4: 2}, blockDims)
-		result := tile.WriteCoefficientsTXB8x8UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
-		if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+		txbResult = tile.WriteCoefficientsTXB8x8UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
+		if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 			return err
 		}
 	} else if w == 16 && h == 16 && ctxReq.Plane != 0 && ctxReq.Size == tile.TransformSize16x16 && afterSkip == nil && txType == transform.TypeDCTDCT {
@@ -2805,8 +2822,8 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 			return tile.ErrInvalidDecodeState
 		}
 		txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 4, H4: 4}, blockDims)
-		result := tile.WriteCoefficientsTXB16x16UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
-		if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+		txbResult = tile.WriteCoefficientsTXB16x16UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
+		if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 			return err
 		}
 	} else if w == 32 && h == 32 && ctxReq.Plane != 0 && ctxReq.Size == tile.TransformSize32x32 && afterSkip == nil && txType == transform.TypeDCTDCT {
@@ -2818,23 +2835,36 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 			return tile.ErrInvalidDecodeState
 		}
 		txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 8, H4: 8}, blockDims)
-		result := tile.WriteCoefficientsTXB32x32UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
-		if err := coeffCtx.MarkTXB(ctxReq, result); err != nil {
+		txbResult = tile.WriteCoefficientsTXB32x32UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
+		if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 			return err
 		}
 	} else {
-		if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip); err != nil {
+		var err error
+		txbResult, err = tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip)
+		if err != nil {
 			return err
 		}
 	}
 	n := w * h
-	dq := &st.dqScratch
-	if err := quantize.DequantizeBlockScaledBitDepth(dq[:n], h, qcoeff, h, w, h, q, txScaleForSize(max(w, h)), 8); err != nil {
-		return err
+	if txbResult.AllZero {
+		copyPredToReconBlock(reconPlane, pred, predStride, stride, px, py, w, h)
+		return nil
 	}
+	size := transform.Size{Width: uint8(w), Height: uint8(h)}
+	txScale := txScaleForSize(max(w, h))
 	res := &st.invResidual
-	if err := transform.InverseBlock(res[:n], w, dq[:n], h, st.invScratch[:n], transform.Size{Width: uint8(w), Height: uint8(h)}, txType); err != nil {
-		return err
+	if txbResult.EOB == 1 && txType == transform.TypeDCTDCT {
+		dc := quantize.DequantizeDCCoeffBitDepthTrusted(qcoeff[0], q, txScale, nil, 8)
+		if err := transform.InverseDCTDCOnlyBlockBitDepth(res[:n], w, dc, st.invScratch[:n], size, 8); err != nil {
+			return err
+		}
+	} else {
+		dq := &st.dqScratch
+		quantize.DequantizeBlockScaledBitDepthEOBTrusted(dq[:n], h, qcoeff, h, scan, int(txbResult.EOB), w, h, q, txScale, 8)
+		if err := transform.InverseBlock(res[:n], w, dq[:n], h, st.invScratch[:n], size, txType); err != nil {
+			return err
+		}
 	}
 	for r := range h {
 		row := (py+r)*stride + px
@@ -2849,6 +2879,13 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 		}
 	}
 	return nil
+}
+
+func copyPredToReconBlock(reconPlane, pred []byte, predStride, stride, px, py, w, h int) {
+	for r := range h {
+		row := (py+r)*stride + px
+		copy(reconPlane[row:row+w], pred[r*predStride:r*predStride+w])
+	}
 }
 
 func txb4x4NonZero(coeffs *[16]int16) bool {
