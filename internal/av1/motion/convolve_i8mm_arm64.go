@@ -45,6 +45,26 @@ type convolveX8I8MMCtx struct {
 //go:noescape
 func convolveX8I8MMAsm(ctx *convolveX8I8MMCtx)
 
+// convolve2D8I8MMCtx carries the resident lowbd single-prediction 2D I8MM
+// kernel arguments. Field offsets are mirrored by convolve_i8mm_arm64.s.
+type convolve2D8I8MMCtx struct {
+	dst     *byte
+	ref     *byte
+	xFilter *byte
+	permute *byte
+	yKernel *int16
+	dstStr  uintptr
+	refStr  uintptr
+	width   uintptr
+	height  uintptr
+	im      *int16
+	imStr   uintptr
+	f0      uintptr
+}
+
+//go:noescape
+func convolve2D8I8MMAsm(ctx *convolve2D8I8MMCtx)
+
 // SVT ASM_NEON_I8MM/convolve_neon_i8mm.c: svt_kMatMul8PermuteTbl.
 var convolveX8I8MMPermute = [32]byte{
 	1, 2, 3, 4, 5, 6, 7, 8, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -126,4 +146,47 @@ func convolveX8I8MM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX i
 		f0:      uintptr(f0),
 	}
 	convolveX8I8MMAsm(&ctx)
+}
+
+func convolve2D8I8MM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	convolve2D8I8MMWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, nil)
+}
+
+func convolve2D8I8MMWithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
+	if !cpu.Detected.I8MM || width < 8 || width%8 != 0 {
+		convolve2D8NEONWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
+		return
+	}
+	xFilter, f0, ok := convolveX8I8MMFilter(xKernel)
+	if !ok {
+		convolve2D8NEONWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
+		return
+	}
+	yk := yKernel
+	if scratch != nil {
+		convolve2D8I8MMWithIM(dst, ref, dstX, dstY, refX, refY, width, height, xFilter, f0, yk, &scratch.im[0], convolve2DNEONIMStride)
+		return
+	}
+	var im [(maxBlockSize + filterTaps - 1) * convolve2DNEONIMStride]int16
+	convolve2D8I8MMWithIM(dst, ref, dstX, dstY, refX, refY, width, height, xFilter, f0, yk, &im[0], convolve2DNEONIMStride)
+}
+
+func convolve2D8I8MMWithIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xFilter [16]byte, f0 uint8, yk [filterTaps]int16, im *int16, imStride int) {
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	ctx := convolve2D8I8MMCtx{
+		dst:     &dst.Pix[dstY*dst.Stride+dstX],
+		ref:     &ref.Pix[(refY-foY)*ref.Stride+refX-foX],
+		xFilter: &xFilter[0],
+		permute: &convolveX8I8MMPermute[0],
+		yKernel: &yk[0],
+		dstStr:  uintptr(dst.Stride),
+		refStr:  uintptr(ref.Stride),
+		width:   uintptr(width),
+		height:  uintptr(height),
+		im:      im,
+		imStr:   uintptr(imStride),
+		f0:      uintptr(f0),
+	}
+	convolve2D8I8MMAsm(&ctx)
 }

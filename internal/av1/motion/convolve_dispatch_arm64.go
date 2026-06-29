@@ -26,10 +26,16 @@ func init() {
 		if cpu.Detected.I8MM {
 			convolveX8Impl = convolveX8I8MM
 		}
-		// The 2D NEON kernel handles width-4 and every width>=8 8-tap shape; its
-		// Go wrapper falls back to pure-Go only for non-multiple-of-8 widths != 4.
+		// The 2D kernels handle width-4 and every width>=8 8-tap shape; their Go
+		// wrappers fall back to the next proven tier for unsupported widths.
+		// Keep the no-scratch slot on NEON: indirect dispatch into the I8MM
+		// wrapper loses enough stack-scratch optimization on Apple M4 that the
+		// measured row no longer wins. The caller-scratch hot path does win.
 		convolve2D8Impl = convolve2D8NEON
 		convolve2D8WithScratchImpl = convolve2D8NEONWithScratch
+		if cpu.Detected.I8MM {
+			convolve2D8WithScratchImpl = convolve2D8I8MMWithScratch
+		}
 
 		// Edge-clamped 8-bit: the wrappers route to the fast NEON path when the
 		// tap window is fully resident and clamp via pure-Go otherwise.

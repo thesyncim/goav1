@@ -46,6 +46,28 @@ func BenchmarkConvolve2D8_32(b *testing.B) {
 	})
 }
 
+// 2D 8-tap convolve, 32x32 block using caller-owned scratch.
+func BenchmarkConvolve2D8WithScratch_32(b *testing.B) {
+	dst, ref := benchPlanes(32, 8)
+	xk := subpelFilters8[3]
+	yk := subpelFilters8[5]
+	var scratch ConvolveScratch
+	runConvolveBench(b, 32, 32, func() {
+		convolve2D8WithScratchImpl(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk, yk, &scratch)
+	})
+}
+
+// 2D 8-tap convolve, 32x32 block through the caller-scratch dispatch slot with
+// nil scratch, matching callers that do not reuse a ConvolveScratch.
+func BenchmarkConvolve2D8WithScratchNil_32(b *testing.B) {
+	dst, ref := benchPlanes(32, 8)
+	xk := subpelFilters8[3]
+	yk := subpelFilters8[5]
+	runConvolveBench(b, 32, 32, func() {
+		convolve2D8WithScratchImpl(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk, yk, nil)
+	})
+}
+
 // 2D 8-tap convolve, 8x8 block.
 func BenchmarkConvolve2D8_8(b *testing.B) {
 	dst, ref := benchPlanes(8, 8)

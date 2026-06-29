@@ -7,6 +7,7 @@
 package motion
 
 import (
+	"math/rand"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
@@ -237,5 +238,196 @@ func BenchmarkConvolveX8NEONDirect_32(b *testing.B) {
 	xk := subpelFilters8[3]
 	runConvolveBench(b, 32, 32, func() {
 		convolveX8NEON(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk)
+	})
+}
+
+func TestConvolve2D8I8MMMatchesPureGo(t *testing.T) {
+	if !cpu.Detected.I8MM {
+		t.Skip("I8MM not detected")
+	}
+	rng := rand.New(rand.NewSource(0x2181e8dd))
+	filters := []InterpFilter{
+		InterpEightTapRegular,
+		InterpEightTapSmooth,
+		InterpMultiTapSharp,
+		InterpBilinear,
+	}
+	sizes := []struct {
+		width  int
+		height int
+	}{
+		{8, 8},
+		{16, 7},
+		{32, 13},
+		{64, 16},
+	}
+	for _, filter := range filters {
+		for _, size := range sizes {
+			ref, _ := testPlane(size.width+2*filterTaps, size.height+2*filterTaps, 1, size.width+2*filterTaps)
+			for i := range ref.Pix {
+				ref.Pix[i] = byte(rng.Intn(256))
+			}
+			got, _ := testPlane(size.width, size.height, 1, size.width)
+			gotScratch, _ := testPlane(size.width, size.height, 1, size.width)
+			want, _ := testPlane(size.width, size.height, 1, size.width)
+			var scratch ConvolveScratch
+			for subX := 0; subX <= subpelQ4Mask; subX++ {
+				xKernel, err := interpKernel(filter, size.width, subX)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for subY := 0; subY <= subpelQ4Mask; subY++ {
+					yKernel, err := interpKernel(filter, size.width, subY)
+					if err != nil {
+						t.Fatal(err)
+					}
+					clear(got.Pix)
+					clear(gotScratch.Pix)
+					clear(want.Pix)
+					convolve2D8I8MM(got, ref, 0, 0, filterTaps, filterTaps, size.width, size.height, xKernel, yKernel)
+					convolve2D8I8MMWithScratch(gotScratch, ref, 0, 0, filterTaps, filterTaps, size.width, size.height, xKernel, yKernel, &scratch)
+					convolve2D8PureGo(want, ref, 0, 0, filterTaps, filterTaps, size.width, size.height, xKernel, yKernel)
+					for y := 0; y < size.height; y++ {
+						row := y * size.width
+						for x := 0; x < size.width; x++ {
+							i := row + x
+							if got.Pix[i] != want.Pix[i] || gotScratch.Pix[i] != want.Pix[i] {
+								t.Fatalf("filter=%d size=%dx%d sub=(%d,%d) sample=(%d,%d) I8MM=%d I8MM-scratch=%d PureGo=%d",
+									filter, size.width, size.height, subX, subY, x, y, got.Pix[i], gotScratch.Pix[i], want.Pix[i])
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	fourTapTables := [][16][filterTaps]int16{subpelFilters4, subpelFilters4Smooth}
+	for _, table := range fourTapTables {
+		for _, size := range []struct {
+			width  int
+			height int
+		}{{8, 8}, {32, 13}} {
+			ref, _ := testPlane(size.width+2*filterTaps, size.height+2*filterTaps, 1, size.width+2*filterTaps)
+			for i := range ref.Pix {
+				ref.Pix[i] = byte(rng.Intn(256))
+			}
+			got, _ := testPlane(size.width, size.height, 1, size.width)
+			want, _ := testPlane(size.width, size.height, 1, size.width)
+			for subX := 0; subX <= subpelQ4Mask; subX++ {
+				for subY := 0; subY <= subpelQ4Mask; subY++ {
+					clear(got.Pix)
+					clear(want.Pix)
+					convolve2D8I8MM(got, ref, 0, 0, filterTaps, filterTaps, size.width, size.height, table[subX], table[subY])
+					convolve2D8PureGo(want, ref, 0, 0, filterTaps, filterTaps, size.width, size.height, table[subX], table[subY])
+					for y := 0; y < size.height; y++ {
+						row := y * size.width
+						for x := 0; x < size.width; x++ {
+							i := row + x
+							if got.Pix[i] != want.Pix[i] {
+								t.Fatalf("4tap size=%dx%d sub=(%d,%d) sample=(%d,%d) I8MM=%d PureGo=%d",
+									size.width, size.height, subX, subY, x, y, got.Pix[i], want.Pix[i])
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestConvolve2D8I8MMFallbackMatchesNEON(t *testing.T) {
+	if !cpu.Detected.I8MM {
+		t.Skip("I8MM not detected")
+	}
+	ref, _ := testPlane(32, 32, 1, 32)
+	fillMotionTestPlane(ref)
+	xKernel, err := interpKernel(InterpEightTapRegular, 4, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yKernel, err := interpKernel(InterpEightTapSmooth, 4, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := testPlane(4, 16, 1, 4)
+	want, _ := testPlane(4, 16, 1, 4)
+	convolve2D8I8MM(got, ref, 0, 0, filterTaps, filterTaps, 4, 16, xKernel, yKernel)
+	convolve2D8NEON(want, ref, 0, 0, filterTaps, filterTaps, 4, 16, xKernel, yKernel)
+	for i := range got.Pix {
+		if got.Pix[i] != want.Pix[i] {
+			t.Fatalf("width-4 fallback sample=%d I8MM wrapper=%d NEON=%d", i, got.Pix[i], want.Pix[i])
+		}
+	}
+}
+
+func TestConvolve2D8I8MMZeroAlloc(t *testing.T) {
+	if !cpu.Detected.I8MM {
+		t.Skip("I8MM not detected")
+	}
+	dst, ref := benchPlanes(32, 8)
+	xKernel := subpelFilters8[3]
+	yKernel := subpelFilters8[5]
+	var scratch ConvolveScratch
+	allocs := testing.AllocsPerRun(50, func() {
+		convolve2D8I8MMWithScratch(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xKernel, yKernel, &scratch)
+	})
+	if allocs != 0 {
+		t.Fatalf("convolve 2D I8MM allocated %v times, want 0", allocs)
+	}
+}
+
+func BenchmarkConvolve2D8I8MM_32(b *testing.B) {
+	if !cpu.Detected.I8MM {
+		b.Skip("I8MM not detected")
+	}
+	dst, ref := benchPlanes(32, 8)
+	xk := subpelFilters8[3]
+	yk := subpelFilters8[5]
+	runConvolveBench(b, 32, 32, func() {
+		convolve2D8I8MM(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk, yk)
+	})
+}
+
+func BenchmarkConvolve2D8I8MMWithScratch_32(b *testing.B) {
+	if !cpu.Detected.I8MM {
+		b.Skip("I8MM not detected")
+	}
+	dst, ref := benchPlanes(32, 8)
+	xk := subpelFilters8[3]
+	yk := subpelFilters8[5]
+	var scratch ConvolveScratch
+	runConvolveBench(b, 32, 32, func() {
+		convolve2D8I8MMWithScratch(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk, yk, &scratch)
+	})
+}
+
+func BenchmarkConvolve2D8I8MM_4tap_32(b *testing.B) {
+	if !cpu.Detected.I8MM {
+		b.Skip("I8MM not detected")
+	}
+	dst, ref := benchPlanes(32, 8)
+	xk := subpelFilters4[3]
+	yk := subpelFilters4[5]
+	runConvolveBench(b, 32, 32, func() {
+		convolve2D8I8MM(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk, yk)
+	})
+}
+
+func BenchmarkConvolve2D8NEONWithScratchDirect_32(b *testing.B) {
+	dst, ref := benchPlanes(32, 8)
+	xk := subpelFilters8[3]
+	yk := subpelFilters8[5]
+	var scratch ConvolveScratch
+	runConvolveBench(b, 32, 32, func() {
+		convolve2D8NEONWithScratch(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk, yk, &scratch)
+	})
+}
+
+func BenchmarkConvolve2D8NEONDirect_32(b *testing.B) {
+	dst, ref := benchPlanes(32, 8)
+	xk := subpelFilters8[3]
+	yk := subpelFilters8[5]
+	runConvolveBench(b, 32, 32, func() {
+		convolve2D8NEON(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk, yk)
 	})
 }
