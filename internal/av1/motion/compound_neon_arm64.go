@@ -380,6 +380,7 @@ func init() {
 		predictInterCompoundRef8ToConvBufYImpl = predictInterCompoundRef8ToConvBufYNEON
 		if cpu.Detected.I8MM {
 			predictInterCompoundRef8ToConvBufXImpl = predictInterCompoundRef8ToConvBufXI8MM
+			predictInterCompoundRef8ToConvBufYImpl = predictInterCompoundRef8ToConvBufYI8MM
 		}
 		if cpu.Detected.DOTPROD {
 			predictInterCompoundRef8ToConvBufXImpl = predictInterCompoundRef8ToConvBufXDotProd

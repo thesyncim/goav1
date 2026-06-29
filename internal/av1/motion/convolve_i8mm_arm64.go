@@ -25,8 +25,28 @@ type compoundX8I8MMCtx struct {
 	f0        uintptr
 }
 
+// compoundY8I8MMCtx carries the resident lowbd compound-Y I8MM kernel
+// arguments. Field offsets are mirrored by convolve_i8mm_arm64.s.
+type compoundY8I8MMCtx struct {
+	dst         *uint16
+	ref         *byte
+	filter      *byte
+	merge       *byte
+	dstStr      uintptr
+	refStr      uintptr
+	width       uintptr
+	height      uintptr
+	roundOffset uintptr
+}
+
 //go:noescape
 func compoundX8I8MMAsm(ctx *compoundX8I8MMCtx)
+
+//go:noescape
+func compoundY8I8MMAsm(ctx *compoundY8I8MMCtx)
+
+//go:noescape
+func compoundY4TapI8MMAsm(ctx *compoundY8I8MMCtx)
 
 // convolveX8I8MMCtx carries the resident lowbd single-prediction X I8MM kernel
 // arguments. Field offsets are mirrored by convolve_i8mm_arm64.s.
@@ -178,6 +198,42 @@ func predictInterCompoundRef8ToConvBufXI8MM(out []uint16, ref frame.Plane, refX 
 		f0:        uintptr(f0),
 	}
 	compoundX8I8MMAsm(&ctx)
+}
+
+func predictInterCompoundRef8ToConvBufYI8MM(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
+	if !cpu.Detected.I8MM ||
+		round0 != compoundRound0Bits ||
+		!(width == 4 || (width >= 8 && width%8 == 0)) ||
+		height%4 != 0 ||
+		!planeRegionFits(ref, 1, refX, refY-(filterTaps/2-1), width, height+filterTaps-1) {
+		predictInterCompoundRef8ToConvBufYNEON(out, ref, refX, refY, width, height, kernel, round0, roundOffset)
+		return
+	}
+	filter, taps, ok := convolveY8I8MMFilter(kernel)
+	if !ok {
+		predictInterCompoundRef8ToConvBufYNEON(out, ref, refX, refY, width, height, kernel, round0, roundOffset)
+		return
+	}
+	fo := filterTaps/2 - 1
+	if taps == 4 {
+		fo = 1
+	}
+	ctx := compoundY8I8MMCtx{
+		dst:         &out[0],
+		ref:         &ref.Pix[(refY-fo)*ref.Stride+refX],
+		filter:      &filter[0],
+		merge:       &convolveY8I8MMMergeBlock[0],
+		dstStr:      uintptr(width * 2),
+		refStr:      uintptr(ref.Stride),
+		width:       uintptr(width),
+		height:      uintptr(height),
+		roundOffset: uintptr(roundOffset),
+	}
+	if taps == 4 {
+		compoundY4TapI8MMAsm(&ctx)
+		return
+	}
+	compoundY8I8MMAsm(&ctx)
 }
 
 func convolveX8I8MM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
