@@ -434,6 +434,7 @@ func TestRealtimeIntProProjectionMatchesClampedReference(t *testing.T) {
 		{name: "in bounds 96x32", x: 16, y: 24, projWidth: 96, projHeight: 32},
 		{name: "left clamp", x: -12, y: 32, projWidth: 64, projHeight: 64},
 		{name: "top clamp", x: 48, y: -20, projWidth: 64, projHeight: 64},
+		{name: "bottom clamp x in bounds", x: 48, y: 112, projWidth: 64, projHeight: 64},
 		{name: "right bottom clamp", x: 112, y: 96, projWidth: 64, projHeight: 64},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

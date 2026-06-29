@@ -932,6 +932,10 @@ func realtimeIntProCol(dst []int16, ref []byte, stride, width, height, x, y, pro
 		realtimeIntProColInBounds(dst, ref[y*stride+x:], stride, projWidth, projHeight, normFactor)
 		return
 	}
+	if x >= 0 && x+projWidth <= width {
+		realtimeIntProColXInBounds(dst, ref, stride, height, x, y, projWidth, projHeight, normFactor)
+		return
+	}
 	for yy := 0; yy < projHeight; yy++ {
 		clampedY := y + yy
 		if clampedY < 0 {
@@ -949,6 +953,23 @@ func realtimeIntProCol(dst []int16, ref []byte, stride, width, height, x, y, pro
 				clampedX = width - 1
 			}
 			sum += int(ref[row+clampedX])
+		}
+		dst[yy] = int16(sum >> uint(normFactor))
+	}
+}
+
+func realtimeIntProColXInBounds(dst []int16, ref []byte, stride, height, x, y, projWidth, projHeight, normFactor int) {
+	for yy := 0; yy < projHeight; yy++ {
+		clampedY := y + yy
+		if clampedY < 0 {
+			clampedY = 0
+		} else if clampedY >= height {
+			clampedY = height - 1
+		}
+		row := clampedY*stride + x
+		sum := 0
+		for idx := 0; idx < projWidth; idx++ {
+			sum += int(ref[row+idx])
 		}
 		dst[yy] = int16(sum >> uint(normFactor))
 	}
