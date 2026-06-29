@@ -133,8 +133,8 @@ func buildQuarterPlane(dst []byte, src []byte, stride, qw, qh int) {
 
 // run rebuilds the source pyramid, searches it against the previous frame's
 // (the reference pyramid), and fills the seed grid. The quarter-res search
-// probes a stride-2 raster over +-8 quarter pels (+-32 full pels) and
-// refines +-1, on 8x8 quarter blocks (32x32 regions).
+// runs the same exhaustive mesh primitive as the full-pel search over 8x8
+// quarter blocks (32x32 regions).
 func (h *hmeState) run(src SourceFrame420) {
 	w, ht := src.Width, src.Height
 	qw, qh := w/4, ht/4
@@ -235,33 +235,9 @@ func (h *hmeState) searchRows(band, r0, r1 int) {
 			qy := min(ry*8, qh-8)
 			srcBlock := h.srcQ[qy*qw+qx:]
 			zero := sad8x8Dual(srcBlock, qw, h.refQ[qy*qw+qx:], qw)
-			bestDX, bestDY, bestSAD := 0, 0, zero
-			// Static fast path mirrors the full-res search's bar.
+			bestDX, bestDY, bestSAD := hmeQuarterMeshSearch(srcBlock, h.refQ, qw, qw, qh, qx, qy)
 			if zero <= 8*8*2 {
 				h.bandStatic[band]++
-			}
-			if zero > 8*8*2 {
-				minDX, maxDX := max(-8, -qx), min(8, qw-8-qx)
-				minDY, maxDY := max(-8, -qy), min(8, qh-8-qy)
-				for dy := minDY; dy <= maxDY; dy += 2 {
-					for dx := minDX; dx <= maxDX; dx += 2 {
-						if dx == 0 && dy == 0 {
-							continue
-						}
-						if s := sad8x8Dual(srcBlock, qw, h.refQ[(qy+dy)*qw+qx+dx:], qw); s < bestSAD {
-							bestSAD, bestDX, bestDY = s, dx, dy
-						}
-					}
-				}
-				for _, cand := range [4][2]int{{bestDX + 1, bestDY}, {bestDX - 1, bestDY}, {bestDX, bestDY + 1}, {bestDX, bestDY - 1}} {
-					dx, dy := cand[0], cand[1]
-					if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
-						continue
-					}
-					if s := sad8x8Dual(srcBlock, qw, h.refQ[(qy+dy)*qw+qx+dx:], qw); s < bestSAD {
-						bestSAD, bestDX, bestDY = s, dx, dy
-					}
-				}
 			}
 			// Quarter-pel offsets scale to multiples of four full pels,
 			// keeping the even-offset chroma alignment invariant.
@@ -272,6 +248,109 @@ func (h *hmeState) searchRows(band, r0, r1 int) {
 			}
 		}
 	}
+}
+
+func hmeQuarterMeshSearch(srcBlock, ref []byte, stride, width, height, qx, qy int) (int, int, int) {
+	bestDX, bestDY, _ := hmeQuarterExhaustiveMeshSearch(srcBlock, ref, stride, width, height, qx, qy, 0, 0, 8, 2)
+	return hmeQuarterExhaustiveMeshSearch(srcBlock, ref, stride, width, height, qx, qy, bestDX, bestDY, 1, 1)
+}
+
+// Ported from libaom av1/encoder/mcomp.c exhaustive_mesh_search. HME supplies
+// the quarter-resolution mesh pattern used for realtime seed generation.
+func hmeQuarterExhaustiveMeshSearch(srcBlock, ref []byte, stride, width, height, qx, qy int, startDX, startDY, searchRange, step int) (int, int, int) {
+	if step < 1 {
+		step = 1
+	}
+	startDX = min(max(startDX, -qx), width-8-qx)
+	startDY = min(max(startDY, -qy), height-8-qy)
+	minDX, maxDX := -qx, width-8-qx
+	minDY, maxDY := -qy, height-8-qy
+
+	startCol := max(-searchRange, minDX-startDX)
+	endCol := min(searchRange, maxDX-startDX)
+	startRow := max(-searchRange, minDY-startDY)
+	endRow := min(searchRange, maxDY-startDY)
+
+	bestDX, bestDY := startDX, startDY
+	bestRawSAD := sad8x8Dual(srcBlock, stride, ref[(qy+startDY)*stride+qx+startDX:], stride)
+	bestCost := bestRawSAD + hmeQuarterMVCost(startDX, startDY, width, height)
+	colStep := step
+	if step <= 1 {
+		colStep = 4
+	}
+	for row := startRow; row <= endRow; row += step {
+		col := startCol
+		if step > 1 {
+			for ; col+3*step <= endCol; col += step * 4 {
+				dy := startDY + row
+				dx0 := startDX + col
+				dx1 := dx0 + step
+				dx2 := dx1 + step
+				dx3 := dx2 + step
+				ref0 := ref[(qy+dy)*stride+qx+dx0:]
+				ref1 := ref[(qy+dy)*stride+qx+dx1:]
+				ref2 := ref[(qy+dy)*stride+qx+dx2:]
+				ref3 := ref[(qy+dy)*stride+qx+dx3:]
+				s0, s1, s2, s3 := sad8x8x4(srcBlock, ref0, ref1, ref2, ref3, stride)
+				hmeQuarterUpdateBest(s0, dx0, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
+				hmeQuarterUpdateBest(s1, dx1, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
+				hmeQuarterUpdateBest(s2, dx2, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
+				hmeQuarterUpdateBest(s3, dx3, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
+			}
+			for ; col <= endCol; col += step {
+				dx, dy := startDX+col, startDY+row
+				s := sad8x8Dual(srcBlock, stride, ref[(qy+dy)*stride+qx+dx:], stride)
+				hmeQuarterUpdateBest(s, dx, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
+			}
+			continue
+		}
+		for ; col+3 <= endCol; col += colStep {
+			dy := startDY + row
+			dx0 := startDX + col
+			dx1 := dx0 + 1
+			dx2 := dx1 + 1
+			dx3 := dx2 + 1
+			ref0 := ref[(qy+dy)*stride+qx+dx0:]
+			ref1 := ref[(qy+dy)*stride+qx+dx1:]
+			ref2 := ref[(qy+dy)*stride+qx+dx2:]
+			ref3 := ref[(qy+dy)*stride+qx+dx3:]
+			s0, s1, s2, s3 := sad8x8x4(srcBlock, ref0, ref1, ref2, ref3, stride)
+			hmeQuarterUpdateBest(s0, dx0, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
+			hmeQuarterUpdateBest(s1, dx1, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
+			hmeQuarterUpdateBest(s2, dx2, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
+			hmeQuarterUpdateBest(s3, dx3, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
+		}
+		for i := 0; i < endCol-col; i++ {
+			dx, dy := startDX+col+i, startDY+row
+			s := sad8x8Dual(srcBlock, stride, ref[(qy+dy)*stride+qx+dx:], stride)
+			hmeQuarterUpdateBest(s, dx, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
+		}
+	}
+	return bestDX, bestDY, bestRawSAD
+}
+
+func hmeQuarterUpdateBest(rawSAD, dx, dy, width, height int, bestCost, bestRawSAD, bestDX, bestDY *int) {
+	if rawSAD >= *bestCost {
+		return
+	}
+	cost := rawSAD + hmeQuarterMVCost(dx, dy, width, height)
+	if cost < *bestCost {
+		*bestCost, *bestRawSAD, *bestDX, *bestDY = cost, rawSAD, dx, dy
+	}
+}
+
+func hmeQuarterMVCost(dx, dy, width, height int) int {
+	minFrame := min(width, height) * 4
+	lambda := 32
+	if minFrame >= 720 {
+		lambda = 8
+	} else if minFrame >= 480 {
+		lambda = 15
+	}
+	// Libaom's MV_COST_L1_* mvsad cost is
+	// (lambda * GET_MV_SUBPEL(abs(row)+abs(col))) >> 3; in the quarter plane
+	// the searched offsets are full-pel already, so *8 and >>3 cancel.
+	return lambda * (abs(dx) + abs(dy))
 }
 
 // staticFraction reports the share of regions whose zero-motion match was
