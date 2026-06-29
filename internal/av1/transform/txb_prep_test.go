@@ -71,6 +71,29 @@ func TestTXBPrep8x8Levels2DMatchesScalar(t *testing.T) {
 	}
 }
 
+func TestTXBPrep8x8Levels2DWritesZeroAbsLevels(t *testing.T) {
+	var coeffs [64]int16
+	coeffs[txb8x8Scan2D[0]] = 1
+	coeffs[txb8x8Scan2D[2]] = -2
+	coeffs[txb8x8Scan2D[7]] = 3
+
+	var levels [256]uint8
+	var absLevels [64]uint16
+	for i := range absLevels {
+		absLevels[i] = 0xffff
+	}
+
+	const eob = 8
+	_ = PrepTXB8x8Levels2D(&coeffs, &levels, &absLevels, eob)
+	for c := range eob {
+		pos := txb8x8Scan2D[c]
+		want := uint16(txbAbsInt16(coeffs[pos]))
+		if absLevels[c] != want {
+			t.Fatalf("absLevels[%d]=%d want %d for coeff pos %d", c, absLevels[c], want, pos)
+		}
+	}
+}
+
 func TestTXBPrep8x8Levels2DZeroAlloc(t *testing.T) {
 	var coeffs [64]int16
 	for i := range coeffs {

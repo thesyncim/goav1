@@ -63,18 +63,45 @@ func txbPrep8x8Summary(coeffs *[64]int16, absLevels *[64]uint16, eob int) TXB8x8
 	if eob > txb8x8PrepCoeffCount {
 		eob = txb8x8PrepCoeffCount
 	}
+	if eob <= 0 {
+		return result
+	}
+	if eob == 1 {
+		cv := coeffs[0]
+		level := txbAbsInt16(cv)
+		absLevels[0] = uint16(level)
+		if cv == 0 {
+			return result
+		}
+		result.NonZeroBits = 1
+		if cv < 0 {
+			result.SignBits = 1
+		}
+		if level > txbCoeffContextMask {
+			level = txbCoeffContextMask
+		}
+		switch {
+		case cv < 0:
+			level |= txbCoeffContextNegativeDC
+		case cv > 0:
+			level += txbCoeffContextPositiveDC
+		}
+		result.CulLevel = uint8(level)
+		return result
+	}
 	culLevel := 0
 	for c := range eob {
 		pos := txb8x8Scan2D[c]
 		cv := coeffs[pos]
 		if cv == 0 {
+			absLevels[c] = 0
 			continue
-		}
-		if uint16(pos) > result.MaxScanLine {
-			result.MaxScanLine = uint16(pos)
 		}
 		level := txbAbsInt16(cv)
 		absLevels[c] = uint16(level)
+		if uint16(pos) > result.MaxScanLine {
+			result.MaxScanLine = uint16(pos)
+		}
 		result.NonZeroBits |= 1 << uint(c)
 		if cv < 0 {
 			result.SignBits |= 1 << uint(c)
