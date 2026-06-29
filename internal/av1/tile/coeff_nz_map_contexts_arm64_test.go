@@ -16,7 +16,7 @@ func TestCoeffNZMapContextsNEONMatchesScalar(t *testing.T) {
 	rnd := newCoeffContextRandom(0x4e5a4d41)
 	for size := range transformSizeCount {
 		geo := coeffGeometryTable[size]
-		if !geo.valid || (geo.scanHeight != 16 && geo.scanHeight != 32) {
+		if !geo.valid || (geo.scanHeight != 4 && geo.scanHeight != 8 && geo.scanHeight != 16 && geo.scanHeight != 32) {
 			continue
 		}
 		maxEOB := int(geo.maxEOB)

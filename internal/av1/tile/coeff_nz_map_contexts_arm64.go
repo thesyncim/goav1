@@ -12,6 +12,12 @@ import (
 )
 
 //go:noescape
+func coeffNZMapContexts4Rows2DNEONAsm(levels *uint8, offsets *uint8, contexts *int8, columns uintptr, stride uintptr)
+
+//go:noescape
+func coeffNZMapContexts8Rows2DNEONAsm(levels *uint8, offsets *uint8, contexts *int8, columns uintptr, stride uintptr)
+
+//go:noescape
 func coeffNZMapContexts16Rows2DNEONAsm(levels *uint8, offsets *uint8, contexts *int8, columns uintptr, stride uintptr)
 
 //go:noescape
@@ -34,6 +40,34 @@ func coeffNZMapContextsArch(levels []uint8, size TransformSize, class transform.
 		return false
 	}
 	switch geo.scanHeight {
+	case 4:
+		if eob == maxEOB {
+			if !coeffNZMapContexts2DFullArch(levels, size, contexts) {
+				return false
+			}
+			coeffNZMapFinalizeFull(contexts, scan, eob, maxEOB)
+			return true
+		}
+		var full [maxCoeffScanLen]int8
+		if !coeffNZMapContexts2DFullArch(levels, size, full[:]) {
+			return false
+		}
+		coeffNZMapCopyPartial(full[:], contexts, scan, eob, maxEOB)
+		return true
+	case 8:
+		if eob == maxEOB {
+			if !coeffNZMapContexts2DFullArch(levels, size, contexts) {
+				return false
+			}
+			coeffNZMapFinalizeFull(contexts, scan, eob, maxEOB)
+			return true
+		}
+		var full [maxCoeffScanLen]int8
+		if !coeffNZMapContexts2DFullArch(levels, size, full[:]) {
+			return false
+		}
+		coeffNZMapCopyPartial(full[:], contexts, scan, eob, maxEOB)
+		return true
 	case 16:
 		if eob == maxEOB {
 			if !coeffNZMapContexts2DFullArch(levels, size, contexts) {
@@ -81,6 +115,10 @@ func coeffNZMapContexts2DFullArch(levels []uint8, size TransformSize, contexts [
 		return false
 	}
 	switch geo.scanHeight {
+	case 4:
+		coeffNZMapContexts4Rows2DNEONAsm(&levels[0], &offsets[0], &contexts[0], uintptr(geo.scanWidth), uintptr(geo.stride))
+	case 8:
+		coeffNZMapContexts8Rows2DNEONAsm(&levels[0], &offsets[0], &contexts[0], uintptr(geo.scanWidth), uintptr(geo.stride))
 	case 16:
 		coeffNZMapContexts16Rows2DNEONAsm(&levels[0], &offsets[0], &contexts[0], uintptr(geo.scanWidth), uintptr(geo.stride))
 	case 32:

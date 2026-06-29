@@ -13,8 +13,94 @@
 //
 //   count = min((sum(min(level[neighbour], 3)) + 1) >> 1, 4) + pos_offset
 //
-// goav1 stores TXB levels column-major, so each vector covers 16 rows from one
-// coefficient column instead of SVT's row-major 16-wide stripe.
+// goav1 stores TXB levels column-major, so each vector covers rows from one
+// coefficient column instead of SVT's row-major stripes.
+
+// func coeffNZMapContexts4Rows2DNEONAsm(levels *uint8, offsets *uint8, contexts *int8, columns uintptr, stride uintptr)
+TEXT ·coeffNZMapContexts4Rows2DNEONAsm(SB), NOSPLIT, $0-40
+	MOVD levels+0(FP), R0
+	MOVD offsets+8(FP), R1
+	MOVD contexts+16(FP), R2
+	MOVD columns+24(FP), R3
+	MOVD stride+32(FP), R4
+
+	WORD $0x0f00e47f // movi v31.8b, #3
+	WORD $0x0f00e49e // movi v30.8b, #4
+
+coeffNZMap4Loop:
+	ADD  $1, R0, R5
+	ADD  R4, R0, R6
+	ADD  $1, R6, R7
+	ADD  R4, R6, R8
+	ADD  $2, R0, R9
+	WORD $0x0c4070a0 // ld1.8b { v0 }, [x5]  level + 1
+	WORD $0x0c4070c1 // ld1.8b { v1 }, [x6]  level + stride
+	WORD $0x0c4070e2 // ld1.8b { v2 }, [x7]  level + stride + 1
+	WORD $0x0c407103 // ld1.8b { v3 }, [x8]  level + 2*stride
+	WORD $0x0c407124 // ld1.8b { v4 }, [x9]  level + 2
+	WORD $0x0c407025 // ld1.8b { v5 }, [x1]  positional offset
+	WORD $0x2e3f6c00 // umin.8b v0, v0, v31
+	WORD $0x2e3f6c21 // umin.8b v1, v1, v31
+	WORD $0x2e3f6c42 // umin.8b v2, v2, v31
+	WORD $0x2e3f6c63 // umin.8b v3, v3, v31
+	WORD $0x2e3f6c84 // umin.8b v4, v4, v31
+	WORD $0x0e218400 // add.8b v0, v0, v1
+	WORD $0x0e228400 // add.8b v0, v0, v2
+	WORD $0x0e238400 // add.8b v0, v0, v3
+	WORD $0x0e248400 // add.8b v0, v0, v4
+	WORD $0x2f0f2400 // urshr.8b v0, v0, #1
+	WORD $0x2e3e6c00 // umin.8b v0, v0, v30
+	WORD $0x0e258400 // add.8b v0, v0, v5
+	WORD $0x0d008040 // st1.s { v0 }[0], [x2]
+	ADD  R4, R0, R0
+	ADD  $4, R1, R1
+	ADD  $4, R2, R2
+	SUB  $1, R3, R3
+	CBNZ R3, coeffNZMap4Loop
+	RET
+
+// func coeffNZMapContexts8Rows2DNEONAsm(levels *uint8, offsets *uint8, contexts *int8, columns uintptr, stride uintptr)
+TEXT ·coeffNZMapContexts8Rows2DNEONAsm(SB), NOSPLIT, $0-40
+	MOVD levels+0(FP), R0
+	MOVD offsets+8(FP), R1
+	MOVD contexts+16(FP), R2
+	MOVD columns+24(FP), R3
+	MOVD stride+32(FP), R4
+
+	WORD $0x0f00e47f // movi v31.8b, #3
+	WORD $0x0f00e49e // movi v30.8b, #4
+
+coeffNZMap8Loop:
+	ADD  $1, R0, R5
+	ADD  R4, R0, R6
+	ADD  $1, R6, R7
+	ADD  R4, R6, R8
+	ADD  $2, R0, R9
+	WORD $0x0c4070a0 // ld1.8b { v0 }, [x5]  level + 1
+	WORD $0x0c4070c1 // ld1.8b { v1 }, [x6]  level + stride
+	WORD $0x0c4070e2 // ld1.8b { v2 }, [x7]  level + stride + 1
+	WORD $0x0c407103 // ld1.8b { v3 }, [x8]  level + 2*stride
+	WORD $0x0c407124 // ld1.8b { v4 }, [x9]  level + 2
+	WORD $0x0c407025 // ld1.8b { v5 }, [x1]  positional offset
+	WORD $0x2e3f6c00 // umin.8b v0, v0, v31
+	WORD $0x2e3f6c21 // umin.8b v1, v1, v31
+	WORD $0x2e3f6c42 // umin.8b v2, v2, v31
+	WORD $0x2e3f6c63 // umin.8b v3, v3, v31
+	WORD $0x2e3f6c84 // umin.8b v4, v4, v31
+	WORD $0x0e218400 // add.8b v0, v0, v1
+	WORD $0x0e228400 // add.8b v0, v0, v2
+	WORD $0x0e238400 // add.8b v0, v0, v3
+	WORD $0x0e248400 // add.8b v0, v0, v4
+	WORD $0x2f0f2400 // urshr.8b v0, v0, #1
+	WORD $0x2e3e6c00 // umin.8b v0, v0, v30
+	WORD $0x0e258400 // add.8b v0, v0, v5
+	WORD $0x0c007040 // st1.8b { v0 }, [x2]
+	ADD  R4, R0, R0
+	ADD  $8, R1, R1
+	ADD  $8, R2, R2
+	SUB  $1, R3, R3
+	CBNZ R3, coeffNZMap8Loop
+	RET
 
 // func coeffNZMapContexts16Rows2DNEONAsm(levels *uint8, offsets *uint8, contexts *int8, columns uintptr, stride uintptr)
 TEXT ·coeffNZMapContexts16Rows2DNEONAsm(SB), NOSPLIT, $0-40

@@ -63,9 +63,13 @@ func BenchmarkCoeffInitLevels(b *testing.B) {
 
 func BenchmarkCoeffNZMapContexts(b *testing.B) {
 	sizes := [...]TransformSize{
+		TransformSize4x4,
+		TransformSize8x8,
 		TransformSize16x16,
 		TransformSize32x32,
 		TransformSize64x64,
+		TransformSize8x4,
+		TransformSize16x8,
 		TransformSize4x16,
 		TransformSize8x32,
 	}
