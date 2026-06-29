@@ -39,6 +39,22 @@ type compoundY8I8MMCtx struct {
 	roundOffset uintptr
 }
 
+// compound2D8I8MMCtx carries the resident lowbd compound-2D I8MM kernel
+// arguments. Field offsets are mirrored by convolve_i8mm_arm64.s.
+type compound2D8I8MMCtx struct {
+	dst     *uint16
+	ref     *byte
+	xFilter *byte
+	permute *byte
+	yKernel *int16
+	refStr  uintptr
+	width   uintptr
+	height  uintptr
+	im      *int16
+	imStr   uintptr
+	f0      uintptr
+}
+
 //go:noescape
 func compoundX8I8MMAsm(ctx *compoundX8I8MMCtx)
 
@@ -47,6 +63,9 @@ func compoundY8I8MMAsm(ctx *compoundY8I8MMCtx)
 
 //go:noescape
 func compoundY4TapI8MMAsm(ctx *compoundY8I8MMCtx)
+
+//go:noescape
+func compound2D8I8MMAsm(ctx *compound2D8I8MMCtx)
 
 // convolveX8I8MMCtx carries the resident lowbd single-prediction X I8MM kernel
 // arguments. Field offsets are mirrored by convolve_i8mm_arm64.s.
@@ -234,6 +253,49 @@ func predictInterCompoundRef8ToConvBufYI8MM(out []uint16, ref frame.Plane, refX 
 		return
 	}
 	compoundY8I8MMAsm(&ctx)
+}
+
+func predictInterCompoundRef8ToConvBuf2DI8MM(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, offsetBits int, scratch *CompoundConvolveScratch) {
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	if !cpu.Detected.I8MM ||
+		offsetBits != 19 ||
+		width < 8 || width%8 != 0 ||
+		!planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps, height+filterTaps-1) {
+		predictInterCompoundRef8ToConvBuf2DNEON(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
+		return
+	}
+	xFilter, f0, ok := convolveX8I8MMFilter(xKernel)
+	if !ok {
+		predictInterCompoundRef8ToConvBuf2DNEON(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
+		return
+	}
+	yk := yKernel
+	if scratch != nil {
+		predictInterCompoundRef8ToConvBuf2DI8MMWithIM(out, ref, refX, refY, width, height, xFilter, f0, yk, &scratch.im8)
+		return
+	}
+	var im compoundIM16
+	predictInterCompoundRef8ToConvBuf2DI8MMWithIM(out, ref, refX, refY, width, height, xFilter, f0, yk, &im)
+}
+
+func predictInterCompoundRef8ToConvBuf2DI8MMWithIM(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xFilter [16]byte, f0 uint8, yk [filterTaps]int16, im *compoundIM16) {
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	ctx := compound2D8I8MMCtx{
+		dst:     &out[0],
+		ref:     &ref.Pix[(refY-foY)*ref.Stride+refX-foX],
+		xFilter: &xFilter[0],
+		permute: &convolveX8I8MMPermute[0],
+		yKernel: &yk[0],
+		refStr:  uintptr(ref.Stride),
+		width:   uintptr(width),
+		height:  uintptr(height),
+		im:      &im[0],
+		imStr:   uintptr(maxBlockSize),
+		f0:      uintptr(f0),
+	}
+	compound2D8I8MMAsm(&ctx)
 }
 
 func convolveX8I8MM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {

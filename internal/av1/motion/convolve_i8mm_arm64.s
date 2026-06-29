@@ -50,6 +50,18 @@
 #define CYI8_HEIGHT      56
 #define CYI8_ROUNDOFFSET 64
 
+#define C2DI8_DST     0
+#define C2DI8_REF     8
+#define C2DI8_XFILTER 16
+#define C2DI8_PERMUTE 24
+#define C2DI8_YKERNEL 32
+#define C2DI8_REFSTR  40
+#define C2DI8_WIDTH   48
+#define C2DI8_HEIGHT  56
+#define C2DI8_IM      64
+#define C2DI8_IMSTR   72
+#define C2DI8_F0      80
+
 #define T2D_DST      0
 #define T2D_REF      8
 #define T2D_XFILTER  16
@@ -525,6 +537,134 @@ cy4I8W4RowLoop:
 
 	SUB  $4, R11, R11
 	CBNZ R11, cy4I8W4RowLoop
+	RET
+
+// func compound2D8I8MMAsm(ctx *compound2D8I8MMCtx)
+//
+// Resident width>=8 lowbd compound 2D convolve. The horizontal pass mirrors
+// SVT's dist_wtd_convolve_2d_horiz_8tap_neon_i8mm and the local
+// convolve2D8I8MMAsm pass: halve the even AV1 taps, use USMMLA, subtract tap 0
+// separately, add the ROUND0 shim, then shift by ROUND0_BITS-1 into int16.
+// The vertical pass writes CONV_BUF precision:
+//     dst = round((1 << offsetBits) + vertical_sum, COMPOUND_ROUND1_BITS)
+TEXT ·compound2D8I8MMAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD C2DI8_DST(R0), R1
+	MOVD C2DI8_REF(R0), R2
+	MOVD C2DI8_XFILTER(R0), R3
+	MOVD C2DI8_PERMUTE(R0), R12
+	MOVD C2DI8_REFSTR(R0), R5
+	MOVD C2DI8_WIDTH(R0), R6
+	MOVD C2DI8_HEIGHT(R0), R7
+	MOVD C2DI8_IM(R0), R13
+	MOVD C2DI8_IMSTR(R0), R14
+	MOVD C2DI8_F0(R0), R15
+	LSL  $1, R14, R14
+
+	ADD  $7, R7, R11
+
+	VLD1   (R3), [V0.B16]
+	VLD1.P 16(R12), [V28.B16]
+	VLD1   (R12), [V29.B16]
+	MOVD   $8194, R3
+	WORD   $0x4e020c79 // dup v25.8h, w3
+	WORD   $0x0e010dfa // dup v26.8b, w15
+
+	MOVD R2, R16
+	MOVD R13, R17
+
+ct2dHRowLoop:
+	CBZ  R11, ct2dHDone
+	MOVD R16, R9
+	MOVD R17, R10
+	MOVD R6, R8
+
+ct2dHColLoop:
+	VLD1 (R9), [V1.B16]
+	WORD $0x4e1c0025 // tbl v5.16b, {v1.16b}, v28.16b
+	WORD $0x4e1d0026 // tbl v6.16b, {v1.16b}, v29.16b
+	WORD $0x4f000410 // movi v16.4s, #0
+	WORD $0x4f000411 // movi v17.4s, #0
+	WORD $0x4e80acb0 // usmmla v16.4s, v5.16b, v0.16b
+	WORD $0x4e80acd1 // usmmla v17.4s, v6.16b, v0.16b
+	WORD $0x0e612a10 // xtn  v16.4h, v16.4s
+	WORD $0x4e612a30 // xtn2 v16.8h, v17.4s
+	WORD $0x2e3aa030 // umlsl v16.8h, v1.8b, v26.8b
+	WORD $0x4e798610 // add  v16.8h, v16.8h, v25.8h
+	WORD $0x6f1e0610 // ushr v16.8h, v16.8h, #2
+	WORD $0x4c007550 // st1  {v16.8h}, [x10]
+
+	ADD  $8, R9, R9
+	ADD  $16, R10, R10
+	SUB  $8, R8, R8
+	CBNZ R8, ct2dHColLoop
+
+	ADD  R5, R16, R16
+	ADD  R14, R17, R17
+	SUB  $1, R11, R11
+	CBNZ R11, ct2dHRowLoop
+
+ct2dHDone:
+	MOVD C2DI8_YKERNEL(R0), R3
+	WORD $0x4c407460 // ld1 {v0.8h}, [x3]
+	MOVD $524288, R11
+	WORD $0x4e040d72 // dup v18.4s, w11
+
+	MOVD R13, R17
+
+ct2dVRowLoop:
+	CBZ  R7, ct2dVDone
+	MOVD R1, R10
+	MOVD R17, R11
+	MOVD R6, R8
+
+ct2dVColLoop:
+	MOVD R11, R9
+	WORD $0x4eb21e50 // mov v16.16b, v18.16b
+	WORD $0x4eb21e51 // mov v17.16b, v18.16b
+
+	WORD $0x4cce7521 // ld1 {v1.8h}, [x9], x14
+	WORD $0x0f402030 // smlal  v16.4s, v1.4h, v0.h[0]
+	WORD $0x4f402031 // smlal2 v17.4s, v1.8h, v0.h[0]
+	WORD $0x4cce7521
+	WORD $0x0f502030
+	WORD $0x4f502031
+	WORD $0x4cce7521
+	WORD $0x0f602030
+	WORD $0x4f602031
+	WORD $0x4cce7521
+	WORD $0x0f702030
+	WORD $0x4f702031
+	WORD $0x4cce7521
+	WORD $0x0f402830
+	WORD $0x4f402831
+	WORD $0x4cce7521
+	WORD $0x0f502830
+	WORD $0x4f502831
+	WORD $0x4cce7521
+	WORD $0x0f602830
+	WORD $0x4f602831
+	WORD $0x4cce7521
+	WORD $0x0f702830
+	WORD $0x4f702831
+
+	WORD $0x4f392610 // srshr v16.4s, v16.4s, #7
+	WORD $0x4f392631 // srshr v17.4s, v17.4s, #7
+	WORD $0x0e614a10 // sqxtn  v16.4h, v16.4s
+	WORD $0x4e614a30 // sqxtn2 v16.8h, v17.4s
+	WORD $0x4c007550 // st1 {v16.8h}, [x10]
+
+	ADD  $16, R10, R10
+	ADD  $16, R11, R11
+	SUB  $8, R8, R8
+	CBNZ R8, ct2dVColLoop
+
+	ADD  R6<<1, R1
+	ADD  R14, R17, R17
+	SUB  $1, R7, R7
+	CBNZ R7, ct2dVRowLoop
+
+ct2dVDone:
 	RET
 
 // func convolveX8I8MMAsm(ctx *convolveX8I8MMCtx)

@@ -217,6 +217,132 @@ func TestCompoundY8I8MMZeroAlloc(t *testing.T) {
 	}
 }
 
+func TestCompound2D8I8MMMatchesPureGo(t *testing.T) {
+	if !cpu.Detected.I8MM {
+		t.Skip("I8MM not detected")
+	}
+	rng := rand.New(rand.NewSource(0x2d18c0ff))
+	ref, _ := testPlane(160, 128, 1, 160)
+	for i := range ref.Pix {
+		ref.Pix[i] = byte(rng.Intn(256))
+	}
+	filterPairs := []struct {
+		x InterpFilter
+		y InterpFilter
+	}{
+		{InterpEightTapRegular, InterpEightTapRegular},
+		{InterpEightTapSmooth, InterpMultiTapSharp},
+		{InterpMultiTapSharp, InterpEightTapSmooth},
+		{InterpBilinear, InterpEightTapRegular},
+	}
+	sizes := []struct {
+		width  int
+		height int
+	}{
+		{8, 8},
+		{16, 8},
+		{32, 12},
+		{64, 16},
+	}
+	fastCases := 0
+	for _, filters := range filterPairs {
+		for _, size := range sizes {
+			for subX := 1; subX <= subpelQ4Mask; subX++ {
+				xKernel, err := interpKernel(filters.x, size.width, subX)
+				if err != nil {
+					t.Fatal(err)
+				}
+				xFilter, f0, ok := convolveX8I8MMFilter(xKernel)
+				if !ok {
+					continue
+				}
+				for subY := 1; subY <= subpelQ4Mask; subY++ {
+					yKernel, err := interpKernel(filters.y, size.height, subY)
+					if err != nil {
+						t.Fatal(err)
+					}
+					got := make([]uint16, size.width*size.height)
+					gotScratch := make([]uint16, size.width*size.height)
+					want := make([]uint16, size.width*size.height)
+					var im compoundIM16
+					var scratch CompoundConvolveScratch
+					refX, refY := filterTaps, filterTaps
+					predictInterCompoundRef8ToConvBuf2DI8MMWithIM(got, ref, refX, refY, size.width, size.height, xFilter, f0, yKernel, &im)
+					predictInterCompoundRef8ToConvBuf2DI8MM(gotScratch, ref, refX, refY, size.width, size.height, xKernel, yKernel, 19, &scratch)
+					predictInterCompoundRef8ToConvBuf2DPureGo(want, ref, refX, refY, size.width, size.height, xKernel, yKernel, 19, nil)
+					for i := range want {
+						if got[i] != want[i] || gotScratch[i] != want[i] {
+							t.Fatalf("filters=%d/%d size=%dx%d sub=(%d,%d) sample=%d I8MM=%d I8MM-scratch=%d PureGo=%d",
+								filters.x, filters.y, size.width, size.height, subX, subY, i, got[i], gotScratch[i], want[i])
+						}
+					}
+					fastCases++
+				}
+			}
+		}
+	}
+	if fastCases == 0 {
+		t.Fatal("no compound 2D I8MM fast-path cases covered")
+	}
+}
+
+func TestCompound2D8I8MMFallbackMatchesNEON(t *testing.T) {
+	if !cpu.Detected.I8MM {
+		t.Skip("I8MM not detected")
+	}
+	ref, _ := testPlane(40, 40, 1, 40)
+	fillMotionTestPlane(ref)
+	xKernel, err := interpKernel(InterpEightTapRegular, 8, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yKernel, err := interpKernel(InterpEightTapSmooth, 8, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name          string
+		refX, refY    int
+		width, height int
+		offsetBits    int
+	}{
+		{name: "width4", refX: filterTaps, refY: filterTaps, width: 4, height: 16, offsetBits: 19},
+		{name: "odd_width", refX: filterTaps, refY: filterTaps, width: 12, height: 8, offsetBits: 19},
+		{name: "right_edge", refX: 33, refY: filterTaps, width: 8, height: 8, offsetBits: 19},
+		{name: "bad_offset", refX: filterTaps, refY: filterTaps, width: 8, height: 8, offsetBits: 18},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := make([]uint16, tc.width*tc.height)
+			want := make([]uint16, tc.width*tc.height)
+			predictInterCompoundRef8ToConvBuf2DI8MM(got, ref, tc.refX, tc.refY, tc.width, tc.height, xKernel, yKernel, tc.offsetBits, nil)
+			predictInterCompoundRef8ToConvBuf2DNEON(want, ref, tc.refX, tc.refY, tc.width, tc.height, xKernel, yKernel, tc.offsetBits, nil)
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("%s sample=%d I8MM wrapper=%d NEON=%d", tc.name, i, got[i], want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestCompound2D8I8MMZeroAlloc(t *testing.T) {
+	if !cpu.Detected.I8MM {
+		t.Skip("I8MM not detected")
+	}
+	ref, _ := benchPlanes(32, 8)
+	out := make([]uint16, 32*32)
+	xKernel := subpelFilters8[3]
+	yKernel := subpelFilters8[5]
+	var scratch CompoundConvolveScratch
+	allocs := testing.AllocsPerRun(50, func() {
+		predictInterCompoundRef8ToConvBuf2DI8MM(out, ref, filterTaps, filterTaps, 32, 32, xKernel, yKernel, 19, &scratch)
+	})
+	if allocs != 0 {
+		t.Fatalf("compound 2D I8MM allocated %v times, want 0", allocs)
+	}
+}
+
 func BenchmarkCompoundConvBufX8I8MM_32(b *testing.B) {
 	if !cpu.Detected.I8MM {
 		b.Skip("I8MM not detected")
@@ -271,6 +397,39 @@ func BenchmarkCompoundConvBufY8NEONDirect_32(b *testing.B) {
 	roundOffset := compoundRoundOffset8()
 	runConvolveBench(b, 32, 32, func() {
 		predictInterCompoundRef8ToConvBufYNEON(out, ref, filterTaps, filterTaps, 32, 32, kernel, compoundRound0Bits, roundOffset)
+	})
+}
+
+func BenchmarkCompoundConvBuf2D8I8MM_32(b *testing.B) {
+	if !cpu.Detected.I8MM {
+		b.Skip("I8MM not detected")
+	}
+	_, ref := benchPlanes(32, 8)
+	var buf CompoundConvBuf
+	out, ok := compoundConvBufView(&buf, 32, 32)
+	if !ok {
+		b.Fatal("invalid convbuf")
+	}
+	xKernel := subpelFilters8[3]
+	yKernel := subpelFilters8[5]
+	var scratch CompoundConvolveScratch
+	runConvolveBench(b, 32, 32, func() {
+		predictInterCompoundRef8ToConvBuf2DI8MM(out, ref, filterTaps, filterTaps, 32, 32, xKernel, yKernel, 19, &scratch)
+	})
+}
+
+func BenchmarkCompoundConvBuf2D8NEONDirect_32(b *testing.B) {
+	_, ref := benchPlanes(32, 8)
+	var buf CompoundConvBuf
+	out, ok := compoundConvBufView(&buf, 32, 32)
+	if !ok {
+		b.Fatal("invalid convbuf")
+	}
+	xKernel := subpelFilters8[3]
+	yKernel := subpelFilters8[5]
+	var scratch CompoundConvolveScratch
+	runConvolveBench(b, 32, 32, func() {
+		predictInterCompoundRef8ToConvBuf2DNEON(out, ref, filterTaps, filterTaps, 32, 32, xKernel, yKernel, 19, &scratch)
 	})
 }
 
