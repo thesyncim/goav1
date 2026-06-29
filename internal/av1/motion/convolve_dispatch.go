@@ -56,6 +56,12 @@ func convolve2D8WithScratchDefault(dst frame.Plane, ref frame.Plane, dstX int, d
 	convolve2D8Impl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
 }
 
-func convolve2D8ClampedWithScratchDefault(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, _ *ConvolveScratch) {
+func convolve2D8ClampedWithScratchDefault(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	if scratch != nil && !planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
+		convolve2D8ClampedPureGoWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
+		return
+	}
 	convolve2D8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
 }

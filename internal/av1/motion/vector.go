@@ -735,12 +735,24 @@ func convolve2D8NarrowPureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 }
 
 func convolve2D8ClampedPureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	convolve2D8ClampedPureGoWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, nil)
+}
+
+func convolve2D8ClampedPureGoWithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
 	if width > 0 && width <= convolve2D8NarrowStride {
 		convolve2D8ClampedNarrowPureGo(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
 		return
 	}
-	const imStride = maxBlockSize
+	if scratch != nil {
+		convolve2D8ClampedPureGoWithIM(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, &scratch.im)
+		return
+	}
 	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int16
+	convolve2D8ClampedPureGoWithIM(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, &im)
+}
+
+func convolve2D8ClampedPureGoWithIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, im *[(maxBlockSize + filterTaps - 1) * maxBlockSize]int16) {
+	const imStride = maxBlockSize
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1

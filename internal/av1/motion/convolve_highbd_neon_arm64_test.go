@@ -145,9 +145,9 @@ func TestConvolveHighBDNEONZeroAlloc(t *testing.T) {
 
 // TestConvolveClampedNEONMatchesPureGo asserts the edge-clamped NEON wrappers
 // (8-bit and high-bit-depth) stay bit-identical to the pure-Go clamped
-// references at genuine frame edges, where the tap window falls off the plane
-// and the wrapper must use the per-tap-clamping pure-Go path. It also covers the
-// in-bounds case where the wrapper routes to the fast NEON kernel.
+// references at genuine frame edges, where the tap window falls off the plane.
+// It also covers the in-bounds case where the wrapper routes to the fast NEON
+// kernel.
 func TestConvolveClampedNEONMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xc1a))
 	sizes := []int{4, 8, 12, 16, 32}
@@ -226,6 +226,126 @@ func TestConvolveClampedNEONMatchesPureGo(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestConvolve1D8ClampedEdgeNEONMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x1d8c1a))
+	xWidths := []int{4, 8, 12, 15, 16, 24, 32}
+	yWidths := []int{4, 8, 16, 24, 32}
+	heights := []int{4, 8, 12, 15, 16, 24, 32}
+	kernels := [][filterTaps]int16{
+		subpelFilters8[3],
+		subpelFilters8Smooth[6],
+		subpelFilters8Sharp[9],
+		bilinearFilters[7],
+	}
+
+	for _, w := range xWidths {
+		for _, h := range heights {
+			for _, k := range kernels {
+				for _, edge := range []string{"left", "right"} {
+					const refW = 96
+					refH := h + 2*filterTaps
+					ref, _ := testPlane(refW, refH, 1, refW)
+					for i := range ref.Pix {
+						ref.Pix[i] = byte(rng.Intn(256))
+					}
+					refX := 1
+					if edge == "right" {
+						refX = refW - w - 3
+					}
+					refY := filterTaps
+					got, _ := testPlane(w, h, 1, w)
+					want, _ := testPlane(w, h, 1, w)
+					convolveX8ClampedNEON(got, ref, 0, 0, refX, refY, w, h, k)
+					convolveX8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, k)
+					assertBytesEqual(t, got, want, w, h, "X8horizontal-edge", w, h, edge)
+				}
+			}
+		}
+	}
+
+	for _, w := range yWidths {
+		for _, h := range heights {
+			for _, k := range kernels {
+				for _, edge := range []string{"top", "bottom"} {
+					refW := w + 2*filterTaps
+					const refH = 96
+					ref, _ := testPlane(refW, refH, 1, refW)
+					for i := range ref.Pix {
+						ref.Pix[i] = byte(rng.Intn(256))
+					}
+					refX := filterTaps
+					refY := 1
+					if edge == "bottom" {
+						refY = refH - h - 3
+					}
+					got, _ := testPlane(w, h, 1, w)
+					want, _ := testPlane(w, h, 1, w)
+					convolveY8ClampedNEON(got, ref, 0, 0, refX, refY, w, h, k)
+					convolveY8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, k)
+					assertBytesEqual(t, got, want, w, h, "Y8vertical-edge", w, h, edge)
+				}
+			}
+		}
+	}
+}
+
+func TestConvolve2D8ClampedHorizontalEdgeNEONMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x2d8c1a))
+	widths := []int{8, 12, 15, 16, 24, 32}
+	heights := []int{4, 8, 16, 32}
+	phasePairs := [][2][filterTaps]int16{
+		{subpelFilters8[3], subpelFilters8[5]},
+		{subpelFilters8Smooth[6], subpelFilters8Smooth[11]},
+		{subpelFilters8Sharp[9], subpelFilters8Sharp[13]},
+		{bilinearFilters[7], bilinearFilters[2]},
+	}
+
+	for _, w := range widths {
+		for _, h := range heights {
+			for _, kernels := range phasePairs {
+				for _, edge := range []string{"left", "right"} {
+					const refW = 96
+					refH := h + 2*filterTaps
+					ref, _ := testPlane(refW, refH, 1, refW)
+					for i := range ref.Pix {
+						ref.Pix[i] = byte(rng.Intn(256))
+					}
+					refX := 1
+					if edge == "right" {
+						refX = refW - w - 3
+					}
+					refY := filterTaps
+					got, _ := testPlane(w, h, 1, w)
+					gotScratch, _ := testPlane(w, h, 1, w)
+					want, _ := testPlane(w, h, 1, w)
+					var scratch ConvolveScratch
+					convolve2D8ClampedNEON(got, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
+					convolve2D8ClampedNEONWithScratch(gotScratch, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &scratch)
+					convolve2D8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
+					assertBytesEqual(t, got, want, w, h, "2D8horizontal-edge", w, h, edge)
+					assertBytesEqual(t, gotScratch, want, w, h, "2D8horizontal-edge-scratch", w, h, edge)
+				}
+			}
+		}
+	}
+
+	const refW = 64
+	const w = 16
+	const h = 16
+	ref, _ := testPlane(refW, h+2*filterTaps, 1, refW)
+	for i := range ref.Pix {
+		ref.Pix[i] = byte(rng.Intn(256))
+	}
+	dst, _ := testPlane(w, h, 1, w)
+	var scratch ConvolveScratch
+	allocs := testing.AllocsPerRun(50, func() {
+		convolve2D8ClampedNEONWithScratch(dst, ref, 0, 0, refW-w-3, filterTaps, w, h, subpelFilters8[3], subpelFilters8[5], &scratch)
+	})
+	if allocs != 0 {
+		t.Fatalf("convolve2D8ClampedNEONWithScratch horizontal edge allocated %v times, want 0", allocs)
 	}
 }
 

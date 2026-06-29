@@ -110,6 +110,32 @@ func BenchmarkConvolveY8_4tap_32(b *testing.B) {
 	})
 }
 
+func BenchmarkConvolveX8ClampedEdge_16(b *testing.B) {
+	const plane = 64
+	ref, _ := testPlane(plane, plane, 1, plane)
+	fillMotionTestPlane(ref)
+	dst, _ := testPlane(16, 16, 1, 16)
+	xk := subpelFilters8[3]
+	refX := plane - 13
+	refY := 20
+	runConvolveBench(b, 16, 16, func() {
+		convolveX8ClampedImpl(dst, ref, 0, 0, refX, refY, 16, 16, xk)
+	})
+}
+
+func BenchmarkConvolveY8ClampedEdge_16(b *testing.B) {
+	const plane = 64
+	ref, _ := testPlane(plane, plane, 1, plane)
+	fillMotionTestPlane(ref)
+	dst, _ := testPlane(16, 16, 1, 16)
+	yk := subpelFilters8[5]
+	refX := 20
+	refY := plane - 13
+	runConvolveBench(b, 16, 16, func() {
+		convolveY8ClampedImpl(dst, ref, 0, 0, refX, refY, 16, 16, yk)
+	})
+}
+
 func BenchmarkCompoundConvBuf2D8_32(b *testing.B) {
 	_, ref := benchPlanes(32, 8)
 	var buf CompoundConvBuf
@@ -283,6 +309,21 @@ func BenchmarkConvolve2D8ClampedEdge_16(b *testing.B) {
 	refY := 20
 	runConvolveBench(b, 16, 16, func() {
 		convolve2D8ClampedImpl(dst, ref, 0, 0, refX, refY, 16, 16, xk, yk)
+	})
+}
+
+func BenchmarkConvolve2D8ClampedEdge_16WithScratch(b *testing.B) {
+	const plane = 64
+	ref, _ := testPlane(plane, plane, 1, plane)
+	fillMotionTestPlane(ref)
+	dst, _ := testPlane(16, 16, 1, 16)
+	xk := subpelFilters8[3]
+	yk := subpelFilters8[5]
+	refX := plane - 13
+	refY := 20
+	var scratch ConvolveScratch
+	runConvolveBench(b, 16, 16, func() {
+		convolve2D8ClampedWithScratchImpl(dst, ref, 0, 0, refX, refY, 16, 16, xk, yk, &scratch)
 	})
 }
 
