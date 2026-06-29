@@ -571,7 +571,7 @@ func fullPelDiamondSearchSeededReference(src, ref []byte, stride, width, height,
 	return mesh(bestDX, bestDY, 2, 2)
 }
 
-func TestSubpelRefineMatchesReference(t *testing.T) {
+func TestSubpelRefineMatchesLibaomTreeReference(t *testing.T) {
 	rng := rand.New(rand.NewSource(59))
 	const (
 		width  = 128
@@ -598,16 +598,29 @@ func TestSubpelRefineMatchesReference(t *testing.T) {
 
 			var gotState, wantState lossyEncodeState
 			gotMV, gotSAD := gotState.subpelRefine(src, ref, stride, width, height, px, py, n, mv, bestSAD)
-			wantMV, wantSAD := wantState.subpelRefineReference(src, ref, stride, width, height, px, py, n, mv, bestSAD)
+			wantMV, wantSAD := wantState.subpelRefineReference(src, ref, stride, width, height, px, py, n, mv, bestSAD, realtimeSubpelStopQuarter)
 			if gotMV != wantMV || gotSAD != wantSAD {
 				t.Fatalf("n=%d px=%d py=%d mv=%+v best=%d: got (%+v,%d) want (%+v,%d)",
 					n, px, py, mv, bestSAD, gotMV, gotSAD, wantMV, wantSAD)
+			}
+			gotHalfMV, gotHalfSAD := gotState.subpelRefineWithStop(src, ref, stride, width, height, px, py, n, mv, bestSAD, realtimeSubpelStopHalf)
+			wantHalfMV, wantHalfSAD := wantState.subpelRefineReference(src, ref, stride, width, height, px, py, n, mv, bestSAD, realtimeSubpelStopHalf)
+			if gotHalfMV != wantHalfMV || gotHalfSAD != wantHalfSAD {
+				t.Fatalf("half n=%d px=%d py=%d mv=%+v best=%d: got (%+v,%d) want (%+v,%d)",
+					n, px, py, mv, bestSAD, gotHalfMV, gotHalfSAD, wantHalfMV, wantHalfSAD)
+			}
+			gotFullMV, gotFullSAD := gotState.subpelRefineWithStop(src, ref, stride, width, height, px, py, n, mv, bestSAD, realtimeSubpelStopFull)
+			if gotFullMV != mv || gotFullSAD != bestSAD {
+				t.Fatalf("full stop n=%d: got (%+v,%d) want (%+v,%d)", n, gotFullMV, gotFullSAD, mv, bestSAD)
 			}
 		}
 	}
 }
 
-func (st *lossyEncodeState) subpelRefineReference(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
+func (st *lossyEncodeState) subpelRefineReference(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int, stop realtimeSubpelStop) (motion.Vector, int) {
+	if stop == realtimeSubpelStopFull {
+		return mv, bestSAD
+	}
 	st.prober.Init(frame.Plane{
 		Pix: refPlane, Stride: stride, Width: width, Height: height,
 	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, n)
@@ -627,51 +640,70 @@ func (st *lossyEncodeState) subpelRefineReference(src, refPlane []byte, stride, 
 		}
 		return s
 	}
-	start := mv
-	center := bestSAD
-	var half [4]int
-	offs := [4]motion.Vector{
-		{Row: start.Row, Col: start.Col - 4},
-		{Row: start.Row, Col: start.Col + 4},
-		{Row: start.Row - 4, Col: start.Col},
-		{Row: start.Row + 4, Col: start.Col},
-	}
-	for i, cand := range offs {
+	const invalid = int(^uint(0) >> 1)
+	check := func(cand motion.Vector) int {
 		s := exact(cand)
-		half[i] = s
-		if s >= 0 && s < bestSAD {
+		if s < 0 {
+			return invalid
+		}
+		if s < bestSAD {
 			bestSAD, mv = s, cand
 		}
+		return s
 	}
-	quarterAxis := func(sl, sr int) int {
-		if sl < 0 || sr < 0 {
-			return 0
-		}
-		den := sl + sr - 2*center
-		if den <= 0 {
-			return 0
-		}
-		est := (sl - sr) * 2 / den
-		if est > 4 {
-			est = 4
-		}
-		if est < -4 {
-			est = -4
-		}
-		return est
+	checkChanged := func(cand motion.Vector) bool {
+		oldSAD, oldMV := bestSAD, mv
+		check(cand)
+		return bestSAD != oldSAD || mv != oldMV
 	}
-	estX := quarterAxis(half[0], half[1])
-	estY := quarterAxis(half[2], half[3])
-	for _, e := range [2][2]int{{estX &^ 1, estY &^ 1}, {(estX + 1) &^ 1, (estY + 1) &^ 1}} {
-		if e[0] == 0 && e[1] == 0 {
-			continue
+	diagStep := func(step int16, left, right, up, down int) motion.Vector {
+		diag := motion.Vector{Row: step, Col: step}
+		if up <= down {
+			diag.Row = -step
 		}
-		cand := motion.Vector{Row: start.Row + int16(e[1]), Col: start.Col + int16(e[0])}
-		if cand == mv || cand == start {
-			continue
+		if left <= right {
+			diag.Col = -step
 		}
-		if s := exact(cand); s >= 0 && s < bestSAD {
-			bestSAD, mv = s, cand
+		return diag
+	}
+	firstLevel := func(center motion.Vector, step int16) motion.Vector {
+		left := check(motion.Vector{Row: center.Row, Col: center.Col - step})
+		right := check(motion.Vector{Row: center.Row, Col: center.Col + step})
+		up := check(motion.Vector{Row: center.Row - step, Col: center.Col})
+		down := check(motion.Vector{Row: center.Row + step, Col: center.Col})
+		diag := diagStep(step, left, right, up, down)
+		check(motion.Vector{Row: center.Row + diag.Row, Col: center.Col + diag.Col})
+		return diag
+	}
+	secondLevel := func(center motion.Vector, diag motion.Vector) {
+		if center == mv {
+			return
+		}
+		if center.Row == mv.Row {
+			diag.Row *= -1
+		} else if center.Col == mv.Col {
+			diag.Col *= -1
+		}
+		rowBias := motion.Vector{Row: mv.Row + diag.Row, Col: mv.Col}
+		colBias := motion.Vector{Row: mv.Row, Col: mv.Col + diag.Col}
+		diagBias := motion.Vector{Row: mv.Row + diag.Row, Col: mv.Col + diag.Col}
+		hasBetter := checkChanged(rowBias)
+		if checkChanged(colBias) {
+			hasBetter = true
+		}
+		if hasBetter {
+			check(diagBias)
+		}
+	}
+
+	for step := int16(4); ; step >>= 1 {
+		center := mv
+		diag := firstLevel(center, step)
+		if center != mv {
+			secondLevel(center, diag)
+		}
+		if stop == realtimeSubpelStopHalf || step == 2 {
+			break
 		}
 	}
 	return mv, bestSAD

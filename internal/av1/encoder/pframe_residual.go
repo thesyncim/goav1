@@ -2732,15 +2732,10 @@ func interModeResultUsesGlobalOnly(mode tile.InterModeResult) bool {
 	return mode.Mode == tile.InterModeGlobalMV
 }
 
-// subpelRefine improves a full-pel luma motion vector in two bounded
-// stages. Stage one probes the four half-pel neighbors with the decoder's
-// exact convolve - integer SAD surfaces cannot localize a subpel optimum on
-// detailed content, so these four predictions are the irreducible cost.
-// Stage two fits a parabola per axis through the EXACT half-pel SADs and
-// verifies only the quarter-pel positions surrounding the fitted minimum,
-// at most two more predictions. Six convolves bound the search against the
-// eight to sixteen of a greedy descent; the coded prediction always goes
-// through the exact convolve later, so search shape cannot affect parity.
+// subpelRefine improves a full-pel luma motion vector with libaom's
+// av1_find_best_sub_pixel_tree search shape. The realtime path signals low MV
+// precision, so the tree stops after the quarter-pel round unless the speed
+// feature asks to stop at half-pel or full-pel.
 func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
 	switch n {
 	case 8:
@@ -2818,199 +2813,19 @@ func (st *lossyEncodeState) subpelRefineWithStop(src, refPlane []byte, stride, w
 }
 
 func (st *lossyEncodeState) subpelRefine8x8(src, refPlane []byte, stride, width, height, px, py int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
-	st.prober.Init(frame.Plane{
-		Pix: refPlane, Stride: stride, Width: width, Height: height,
-	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, 8)
-	start := mv
-	center := bestSAD
-	probe := st.sadScratch[:64]
-	srcBlock := src[py*stride+px:]
-
-	left := motion.Vector{Row: start.Row, Col: start.Col - 4}
-	halfLeft := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, left)
-	if halfLeft >= 0 && halfLeft < bestSAD {
-		bestSAD, mv = halfLeft, left
-	}
-	right := motion.Vector{Row: start.Row, Col: start.Col + 4}
-	halfRight := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, right)
-	if halfRight >= 0 && halfRight < bestSAD {
-		bestSAD, mv = halfRight, right
-	}
-	up := motion.Vector{Row: start.Row - 4, Col: start.Col}
-	halfUp := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, up)
-	if halfUp >= 0 && halfUp < bestSAD {
-		bestSAD, mv = halfUp, up
-	}
-	down := motion.Vector{Row: start.Row + 4, Col: start.Col}
-	halfDown := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, down)
-	if halfDown >= 0 && halfDown < bestSAD {
-		bestSAD, mv = halfDown, down
-	}
-
-	estX := subpelQuarterAxis(halfLeft, halfRight, center)
-	estY := subpelQuarterAxis(halfUp, halfDown, center)
-	qx, qy := estX&^1, estY&^1
-	if qx != 0 || qy != 0 {
-		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
-		if cand != mv && cand != start {
-			if s := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
-				bestSAD, mv = s, cand
-			}
-		}
-	}
-	qx, qy = (estX+1)&^1, (estY+1)&^1
-	if qx != 0 || qy != 0 {
-		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
-		if cand != mv && cand != start {
-			if s := st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
-				bestSAD, mv = s, cand
-			}
-		}
-	}
-	return mv, bestSAD
+	return st.subpelRefineLibaomTree(src, refPlane, stride, width, height, px, py, 8, mv, bestSAD, realtimeSubpelStopQuarter)
 }
 
 func (st *lossyEncodeState) subpelRefine16x16(src, refPlane []byte, stride, width, height, px, py int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
-	st.prober.Init(frame.Plane{
-		Pix: refPlane, Stride: stride, Width: width, Height: height,
-	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, 16)
-	start := mv
-	center := bestSAD
-	probe := st.sadScratch[:256]
-	srcBlock := src[py*stride+px:]
-
-	left := motion.Vector{Row: start.Row, Col: start.Col - 4}
-	halfLeft := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, left)
-	if halfLeft >= 0 && halfLeft < bestSAD {
-		bestSAD, mv = halfLeft, left
-	}
-	right := motion.Vector{Row: start.Row, Col: start.Col + 4}
-	halfRight := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, right)
-	if halfRight >= 0 && halfRight < bestSAD {
-		bestSAD, mv = halfRight, right
-	}
-	up := motion.Vector{Row: start.Row - 4, Col: start.Col}
-	halfUp := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, up)
-	if halfUp >= 0 && halfUp < bestSAD {
-		bestSAD, mv = halfUp, up
-	}
-	down := motion.Vector{Row: start.Row + 4, Col: start.Col}
-	halfDown := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, down)
-	if halfDown >= 0 && halfDown < bestSAD {
-		bestSAD, mv = halfDown, down
-	}
-
-	estX := subpelQuarterAxis(halfLeft, halfRight, center)
-	estY := subpelQuarterAxis(halfUp, halfDown, center)
-	qx, qy := estX&^1, estY&^1
-	if qx != 0 || qy != 0 {
-		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
-		if cand != mv && cand != start {
-			if s := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
-				bestSAD, mv = s, cand
-			}
-		}
-	}
-	qx, qy = (estX+1)&^1, (estY+1)&^1
-	if qx != 0 || qy != 0 {
-		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
-		if cand != mv && cand != start {
-			if s := st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
-				bestSAD, mv = s, cand
-			}
-		}
-	}
-	return mv, bestSAD
+	return st.subpelRefineLibaomTree(src, refPlane, stride, width, height, px, py, 16, mv, bestSAD, realtimeSubpelStopQuarter)
 }
 
 func (st *lossyEncodeState) subpelRefine32x32(src, refPlane []byte, stride, width, height, px, py int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
-	st.prober.Init(frame.Plane{
-		Pix: refPlane, Stride: stride, Width: width, Height: height,
-	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, 32)
-	start := mv
-	center := bestSAD
-	probe := st.sadScratch[:1024]
-	srcBlock := src[py*stride+px:]
-
-	left := motion.Vector{Row: start.Row, Col: start.Col - 4}
-	halfLeft := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, left)
-	if halfLeft >= 0 && halfLeft < bestSAD {
-		bestSAD, mv = halfLeft, left
-	}
-	right := motion.Vector{Row: start.Row, Col: start.Col + 4}
-	halfRight := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, right)
-	if halfRight >= 0 && halfRight < bestSAD {
-		bestSAD, mv = halfRight, right
-	}
-	up := motion.Vector{Row: start.Row - 4, Col: start.Col}
-	halfUp := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, up)
-	if halfUp >= 0 && halfUp < bestSAD {
-		bestSAD, mv = halfUp, up
-	}
-	down := motion.Vector{Row: start.Row + 4, Col: start.Col}
-	halfDown := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, down)
-	if halfDown >= 0 && halfDown < bestSAD {
-		bestSAD, mv = halfDown, down
-	}
-
-	estX := subpelQuarterAxis(halfLeft, halfRight, center)
-	estY := subpelQuarterAxis(halfUp, halfDown, center)
-	qx, qy := estX&^1, estY&^1
-	if qx != 0 || qy != 0 {
-		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
-		if cand != mv && cand != start {
-			if s := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
-				bestSAD, mv = s, cand
-			}
-		}
-	}
-	qx, qy = (estX+1)&^1, (estY+1)&^1
-	if qx != 0 || qy != 0 {
-		cand := motion.Vector{Row: start.Row + int16(qy), Col: start.Col + int16(qx)}
-		if cand != mv && cand != start {
-			if s := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
-				bestSAD, mv = s, cand
-			}
-		}
-	}
-	return mv, bestSAD
+	return st.subpelRefineLibaomTree(src, refPlane, stride, width, height, px, py, 32, mv, bestSAD, realtimeSubpelStopQuarter)
 }
 
 func (st *lossyEncodeState) subpelRefineHalf(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
-	st.prober.Init(frame.Plane{
-		Pix: refPlane, Stride: stride, Width: width, Height: height,
-	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, n)
-	start := mv
-	probe := st.sadScratch[:n*n]
-	srcBlock := src[py*stride+px:]
-	exact := func(cand motion.Vector) int {
-		switch n {
-		case 8:
-			return st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand)
-		case 16:
-			return st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand)
-		case 32:
-			return st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand)
-		default:
-			if !st.prober.Predict(probe, motion.Vector{Row: cand.Row - start.Row, Col: cand.Col - start.Col}) {
-				if err := predictInto(probe, refPlane, stride, width, height, px, py, n, n, cand, false, false); err != nil {
-					return -1
-				}
-			}
-			return sadDualBlock(srcBlock, stride, probe, n, n)
-		}
-	}
-	for _, cand := range [4]motion.Vector{
-		{Row: start.Row, Col: start.Col - 4},
-		{Row: start.Row, Col: start.Col + 4},
-		{Row: start.Row - 4, Col: start.Col},
-		{Row: start.Row + 4, Col: start.Col},
-	} {
-		if s := exact(cand); s >= 0 && s < bestSAD {
-			bestSAD, mv = s, cand
-		}
-	}
-	return mv, bestSAD
+	return st.subpelRefineLibaomTree(src, refPlane, stride, width, height, px, py, n, mv, bestSAD, realtimeSubpelStopHalf)
 }
 
 func (st *lossyEncodeState) subpelExact8x8(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
@@ -3040,28 +2855,14 @@ func (st *lossyEncodeState) subpelExact32x32(probe, srcBlock, refPlane []byte, s
 	return sad32x32Dual(srcBlock, stride, probe, 32)
 }
 
-func subpelQuarterAxis(sl, sr, center int) int {
-	if sl < 0 || sr < 0 {
-		return 0
-	}
-	den := sl + sr - 2*center
-	if den <= 0 {
-		return 0
-	}
-	est := (sl - sr) * 2 / den // half-pel steps are 4 eighths
-	if est > 4 {
-		return 4
-	}
-	if est < -4 {
-		return -4
-	}
-	return est
+func (st *lossyEncodeState) subpelRefineGeneric(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
+	return st.subpelRefineLibaomTree(src, refPlane, stride, width, height, px, py, n, mv, bestSAD, realtimeSubpelStopQuarter)
 }
 
-func (st *lossyEncodeState) subpelRefineGeneric(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
-	// The probes sit within one pixel of the full-pel start, so geometry
-	// validation hoists into the prober; blocks near the frame edge fall
-	// back to the fully validated predictor per probe.
+func (st *lossyEncodeState) subpelRefineLibaomTree(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int, stop realtimeSubpelStop) (motion.Vector, int) {
+	if stop == realtimeSubpelStopFull {
+		return mv, bestSAD
+	}
 	st.prober.Init(frame.Plane{
 		Pix: refPlane, Stride: stride, Width: width, Height: height,
 	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, n)
@@ -3069,56 +2870,103 @@ func (st *lossyEncodeState) subpelRefineGeneric(src, refPlane []byte, stride, wi
 	probe := st.sadScratch[:n*n]
 	srcBlock := src[py*stride+px:]
 	exact := func(cand motion.Vector) int {
+		switch n {
+		case 8:
+			return st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, startMV, cand)
+		case 16:
+			return st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, startMV, cand)
+		case 32:
+			return st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, startMV, cand)
+		}
 		if !st.prober.Predict(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
 			if err := predictInto(probe, refPlane, stride, width, height, px, py, n, n, cand, false, false); err != nil {
 				return -1
 			}
 		}
-		switch n {
-		case 8:
-			return sad8x8Dual(srcBlock, stride, probe, n)
-		case 16:
-			return sad16x16Dual(srcBlock, stride, probe, n)
-		case 32:
-			return sad32x32Dual(srcBlock, stride, probe, n)
-		default:
-			return sadDualBlock(srcBlock, stride, probe, n, n)
-		}
+		return sadDualBlock(srcBlock, stride, probe, n, n)
 	}
-	start := mv
-	center := bestSAD
-	// Stage 1: exact half-pel cross.
-	var half [4]int // left, right, up, down
-	offs := [4]motion.Vector{
-		{Row: start.Row, Col: start.Col - 4},
-		{Row: start.Row, Col: start.Col + 4},
-		{Row: start.Row - 4, Col: start.Col},
-		{Row: start.Row + 4, Col: start.Col},
-	}
-	for i, cand := range offs {
-		s := exact(cand)
-		half[i] = s
-		if s >= 0 && s < bestSAD {
-			bestSAD, mv = s, cand
+
+	for hstep := int16(4); ; hstep >>= 1 {
+		iterCenter := mv
+		diagStep := subpelFirstLevelCheck(exact, iterCenter, hstep, &mv, &bestSAD)
+		if iterCenter != mv {
+			subpelSecondLevelCheckV2(exact, iterCenter, diagStep, &mv, &bestSAD)
 		}
-	}
-	// Stage 2: per-axis parabola through the exact half-pel SADs locates the
-	// quarter-pel minimum; verify its surrounding even-1/8 positions.
-	estX := subpelQuarterAxis(half[0], half[1], center)
-	estY := subpelQuarterAxis(half[2], half[3], center)
-	for _, e := range [2][2]int{{estX &^ 1, estY &^ 1}, {(estX + 1) &^ 1, (estY + 1) &^ 1}} {
-		if e[0] == 0 && e[1] == 0 {
-			continue
-		}
-		cand := motion.Vector{Row: start.Row + int16(e[1]), Col: start.Col + int16(e[0])}
-		if cand == mv || cand == start {
-			continue
-		}
-		if s := exact(cand); s >= 0 && s < bestSAD {
-			bestSAD, mv = s, cand
+		if stop == realtimeSubpelStopHalf || hstep == 2 {
+			break
 		}
 	}
 	return mv, bestSAD
+}
+
+func subpelFirstLevelCheck(exact func(motion.Vector) int, thisMV motion.Vector, hstep int16, bestMV *motion.Vector, bestSAD *int) motion.Vector {
+	leftMV := motion.Vector{Row: thisMV.Row, Col: thisMV.Col - hstep}
+	left := subpelCheckBetter(exact, leftMV, bestMV, bestSAD)
+	rightMV := motion.Vector{Row: thisMV.Row, Col: thisMV.Col + hstep}
+	right := subpelCheckBetter(exact, rightMV, bestMV, bestSAD)
+	topMV := motion.Vector{Row: thisMV.Row - hstep, Col: thisMV.Col}
+	up := subpelCheckBetter(exact, topMV, bestMV, bestSAD)
+	bottomMV := motion.Vector{Row: thisMV.Row + hstep, Col: thisMV.Col}
+	down := subpelCheckBetter(exact, bottomMV, bestMV, bestSAD)
+
+	diagStep := subpelBestDiagStep(hstep, left, right, up, down)
+	diagMV := motion.Vector{Row: thisMV.Row + diagStep.Row, Col: thisMV.Col + diagStep.Col}
+	subpelCheckBetter(exact, diagMV, bestMV, bestSAD)
+	return diagStep
+}
+
+func subpelSecondLevelCheckV2(exact func(motion.Vector) int, thisMV motion.Vector, diagStep motion.Vector, bestMV *motion.Vector, bestSAD *int) {
+	if thisMV == *bestMV {
+		return
+	}
+	if thisMV.Row == bestMV.Row {
+		diagStep.Row *= -1
+	} else if thisMV.Col == bestMV.Col {
+		diagStep.Col *= -1
+	}
+
+	rowBiasMV := motion.Vector{Row: bestMV.Row + diagStep.Row, Col: bestMV.Col}
+	colBiasMV := motion.Vector{Row: bestMV.Row, Col: bestMV.Col + diagStep.Col}
+	diagBiasMV := motion.Vector{Row: bestMV.Row + diagStep.Row, Col: bestMV.Col + diagStep.Col}
+	hasBetter := subpelCheckBetterChanged(exact, rowBiasMV, bestMV, bestSAD)
+	if subpelCheckBetterChanged(exact, colBiasMV, bestMV, bestSAD) {
+		hasBetter = true
+	}
+	if hasBetter {
+		subpelCheckBetter(exact, diagBiasMV, bestMV, bestSAD)
+	}
+}
+
+const subpelInvalidCost = int(^uint(0) >> 1)
+
+func subpelCheckBetter(exact func(motion.Vector) int, cand motion.Vector, bestMV *motion.Vector, bestSAD *int) int {
+	sad := exact(cand)
+	if sad < 0 {
+		return subpelInvalidCost
+	}
+	if sad < *bestSAD {
+		*bestSAD = sad
+		*bestMV = cand
+	}
+	return sad
+}
+
+func subpelCheckBetterChanged(exact func(motion.Vector) int, cand motion.Vector, bestMV *motion.Vector, bestSAD *int) bool {
+	oldSAD := *bestSAD
+	oldMV := *bestMV
+	subpelCheckBetter(exact, cand, bestMV, bestSAD)
+	return *bestSAD != oldSAD || *bestMV != oldMV
+}
+
+func subpelBestDiagStep(step int16, leftCost, rightCost, upCost, downCost int) motion.Vector {
+	diag := motion.Vector{Row: step, Col: step}
+	if upCost <= downCost {
+		diag.Row = -step
+	}
+	if leftCost <= rightCost {
+		diag.Col = -step
+	}
+	return diag
 }
 
 // txScaleForSize is get_tx_scale for the square transforms the encoder
