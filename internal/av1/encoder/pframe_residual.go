@@ -1823,8 +1823,12 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		bw, bh = 64, 64
 	case tile.BlockSize64x32:
 		bw, bh = 64, 32
+	case tile.BlockSize64x16:
+		bw, bh = 64, 16
 	case tile.BlockSize32x64:
 		bw, bh = 32, 64
+	case tile.BlockSize16x64:
+		bw, bh = 16, 64
 	case tile.BlockSize16x8:
 		bw, bh = 16, 8
 	case tile.BlockSize8x16:
@@ -1974,7 +1978,8 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	goldenEligible := (bw == 8 && bh == 8) ||
 		(bw == 16 && bh == 16) || (bw == 32 && bh == 32) ||
 		(bw == 16 && bh == 8) || (bw == 8 && bh == 16) ||
-		(bw == 32 && bh == 16) || (bw == 16 && bh == 32)
+		(bw == 32 && bh == 16) || (bw == 16 && bh == 32) ||
+		(bw == 64 && bh == 16) || (bw == 16 && bh == 64)
 	if !scaledReference && golden != nil && golden.Y != nil && goldenEligible && fullSAD > bw*bh*4 {
 		lastMV, lastSAD := mv, fullSAD
 		var gmv motion.Vector
@@ -2403,6 +2408,10 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		lumaTX, lumaScan = tile.TransformSize32x16, st.scan32x16
 	case bw == 16 && bh == 32:
 		lumaTX, lumaScan = tile.TransformSize16x32, st.scan16x32
+	case bw == 64 && bh == 16:
+		lumaTX, lumaScan = tile.TransformSize64x16, st.scan64x16
+	case bw == 16 && bh == 64:
+		lumaTX, lumaScan = tile.TransformSize16x64, st.scan16x64
 	}
 	chromaTX, chromaScan := tile.TransformSize4x4, st.scan4
 	if hasChroma {
@@ -3280,8 +3289,12 @@ func realtimeInterBlockSizeForPixels(w, h int) (tile.BlockSize, bool) {
 		return tile.BlockSize64x64, true
 	case w == 64 && h == 32:
 		return tile.BlockSize64x32, true
+	case w == 64 && h == 16:
+		return tile.BlockSize64x16, true
 	case w == 32 && h == 64:
 		return tile.BlockSize32x64, true
+	case w == 16 && h == 64:
+		return tile.BlockSize16x64, true
 	case w == 32 && h == 32:
 		return tile.BlockSize32x32, true
 	case w == 32 && h == 16:

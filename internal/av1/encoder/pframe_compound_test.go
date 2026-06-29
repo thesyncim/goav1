@@ -458,6 +458,8 @@ func TestRealtimeInterTXPlanReplayMatchesTransformTree(t *testing.T) {
 		{name: "32x32 leaf8", size: tile.BlockSize32x32, leaf: 8, wantSplit: [2]uint16{1, 0x0033}, wantLeaves: 16},
 		{name: "32x16 leaf16", size: tile.BlockSize32x16, leaf: 16, wantSplit: [2]uint16{1, 0}, wantLeaves: 2},
 		{name: "32x32 leaf16", size: tile.BlockSize32x32, leaf: 16, wantSplit: [2]uint16{1, 0}, wantLeaves: 4},
+		{name: "64x16 leaf16", size: tile.BlockSize64x16, leaf: 16, wantSplit: [2]uint16{1, 0x0003}, wantLeaves: 4},
+		{name: "16x64 leaf16", size: tile.BlockSize16x64, leaf: 16, wantSplit: [2]uint16{1, 0x0011}, wantLeaves: 4},
 		{name: "64x64 leaf16", size: tile.BlockSize64x64, leaf: 16, wantSplit: [2]uint16{1, 0x0033}, wantLeaves: 16},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -620,6 +622,8 @@ func TestEncodePBlockGoldenSingleLarge(t *testing.T) {
 		{name: "8x16", w: 8, h: 16, size: tile.BlockSize8x16, tx: tile.TransformSize8x16},
 		{name: "32x16", w: 32, h: 16, size: tile.BlockSize32x16, tx: tile.TransformSize32x16},
 		{name: "16x32", w: 16, h: 32, size: tile.BlockSize16x32, tx: tile.TransformSize16x32},
+		{name: "64x16", w: 64, h: 16, size: tile.BlockSize64x16, tx: tile.TransformSize64x16},
+		{name: "16x64", w: 16, h: 64, size: tile.BlockSize16x64, tx: tile.TransformSize16x64},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w, h := tc.w, tc.h
