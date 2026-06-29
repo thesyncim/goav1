@@ -52,6 +52,7 @@ go run ./cmd/qualitybench \
   -gomaxprocs 4 \
   -timing-mode e2e \
   -run-order bitrate-encoder \
+  -runs 3 -warmup-runs 1 \
   -svt-lp 0 \
   -csv quality.csv -summary-csv quality-summary.csv -require-summary \
   -stats-csv quality-encoder-stats.csv \
@@ -75,10 +76,11 @@ Use `-publish` for rows that will be copied into performance or quality tables.
 Publish mode requires a clean tracked git worktree, explicit `-workdir`, `-csv`,
 `-metadata-json`, `-manifest`, `-require-corpus`, `-min-clips`,
 `-require-encoders all`, `-require-metrics`, `-summary-csv`,
-`-require-summary`, `-gomaxprocs`, `-timing-mode e2e`, and `-run-order`. It
-also requires explicit libaom concurrency settings when `aomenc` is selected,
-explicit SVT parallelism and assembly settings when `svt-av1` is selected, and
-exact raw I420 input byte counts for every manifest row.
+`-require-summary`, `-gomaxprocs`, `-timing-mode e2e`, `-run-order`,
+`-runs >= 3`, and `-warmup-runs >= 1`. It also requires explicit libaom
+concurrency settings when `aomenc` is selected, explicit SVT parallelism and
+assembly settings when `svt-av1` is selected, and exact raw I420 input byte
+counts for every manifest row.
 
 `-timing-mode core` preserves the historical goav1 timer that accumulates only
 per-frame `Encode` calls. Use it for local code-path profiling, not for fair
@@ -91,6 +93,10 @@ It also records `run_order` and `shuffle_seed`. Use
 `-run-order encoder-bitrate` to keep one encoder warm across the bitrate sweep,
 or `-run-order shuffle -shuffle-seed N` to rotate encoder/bitrate tuple order
 deterministically.
+For repeated runs, qualitybench writes one normal CSV row per encoder/bitrate
+using the median wall-time measured sample after warmups. The metadata JSON
+stores every measured sample plus min, median, max, and IQR wall time for the
+tuple.
 For goav1 rows, `encoded_path` is a replayable `uint32_le length + low-overhead
 temporal-unit payload` stream. `compressed_bytes` remains the sum of payload
 bytes, while `encoded_bytes` and `encoded_sha256` describe that on-disk

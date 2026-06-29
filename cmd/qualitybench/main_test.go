@@ -741,6 +741,8 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		timingMode:       timingModeEndToEnd,
 		runOrder:         runOrderShuffle,
 		shuffleSeed:      42,
+		runs:             5,
+		warmupRuns:       1,
 		publish:          true,
 	}
 	got := metadataConfigFor(cfg)
@@ -753,7 +755,8 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		!got.RequireSummary || !got.RequireCorpus || got.MinClips != 6 ||
 		got.GoMaxProcs != 4 || got.AOMThreads != 1 || got.AOMRowMT != 0 ||
 		got.SVTLP != 5 || got.TimingMode != timingModeEndToEnd ||
-		got.RunOrder != runOrderShuffle || got.ShuffleSeed != 42 || !got.Publish {
+		got.RunOrder != runOrderShuffle || got.ShuffleSeed != 42 ||
+		got.Runs != 5 || got.WarmupRuns != 1 || !got.Publish {
 		t.Fatalf("metadata config aliases inputs: %+v", got)
 	}
 }
@@ -765,6 +768,7 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "observed_parallelism") ||
 		!strings.Contains(joined, "timing_mode") ||
 		!strings.Contains(joined, "run_order") ||
+		!strings.Contains(joined, "median wall-time") ||
 		!strings.Contains(joined, "sweep --lp 0..6") ||
 		!strings.Contains(joined, "-aom-threads") ||
 		!strings.Contains(joined, "-aom-row-mt") ||
@@ -796,6 +800,8 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		svtASM:              "neon",
 		timingMode:          timingModeEndToEnd,
 		runOrder:            runOrderBitrateEncoder,
+		runs:                3,
+		warmupRuns:          1,
 		explicitFlags: map[string]bool{
 			"workdir":          true,
 			"csv":              true,
@@ -810,6 +816,8 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"gomaxprocs":       true,
 			"timing-mode":      true,
 			"run-order":        true,
+			"runs":             true,
+			"warmup-runs":      true,
 			"aom-threads":      true,
 			"aom-row-mt":       true,
 			"svt-lp":           true,
@@ -844,6 +852,20 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	if err := validatePublishConfig(shuffled, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "-shuffle-seed") {
 		t.Fatalf("implicit shuffle seed error=%v", err)
+	}
+
+	tooFewRuns := cfg
+	tooFewRuns.runs = 2
+	if err := validatePublishConfig(tooFewRuns, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-runs >= 3") {
+		t.Fatalf("too few runs error=%v", err)
+	}
+
+	noWarmup := cfg
+	noWarmup.warmupRuns = 0
+	if err := validatePublishConfig(noWarmup, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-warmup-runs >= 1") {
+		t.Fatalf("missing warmup error=%v", err)
 	}
 
 	dirty := cfg
@@ -893,6 +915,31 @@ func encodeJobLabels(jobs []encodeJob) string {
 		labels[i] = strconv.Itoa(job.bitrate) + ":" + job.encoder
 	}
 	return strings.Join(labels, ",")
+}
+
+func TestAttachEncodeRunSummaryUsesMedianWallSample(t *testing.T) {
+	results := []encodeResult{
+		{encoder: "goav1", selectedRun: 1, duration: 300 * time.Millisecond, bytes: 30, status: "ok"},
+		{encoder: "goav1", selectedRun: 2, duration: 100 * time.Millisecond, bytes: 10, status: "ok"},
+		{encoder: "goav1", selectedRun: 3, duration: 200 * time.Millisecond, bytes: 20, status: "ok"},
+	}
+	selected := attachEncodeRunSummary(medianEncodeResult(results), results, 1, 3)
+	if selected.selectedRun != 3 || selected.duration != 200*time.Millisecond {
+		t.Fatalf("selected run=%d duration=%s", selected.selectedRun, selected.duration)
+	}
+	if selected.warmupRuns != 1 || selected.runs != 3 ||
+		selected.minWall != 100*time.Millisecond ||
+		selected.medianWall != 200*time.Millisecond ||
+		selected.maxWall != 300*time.Millisecond ||
+		selected.iqrWall != 200*time.Millisecond {
+		t.Fatalf("summary warmup=%d runs=%d min=%s median=%s max=%s iqr=%s",
+			selected.warmupRuns, selected.runs, selected.minWall, selected.medianWall, selected.maxWall, selected.iqrWall)
+	}
+	if len(selected.samples) != 3 || selected.samples[0].Run != 1 ||
+		selected.samples[1].EncodeWallSecs != 0.1 ||
+		selected.samples[2].CompressedBytes != 20 {
+		t.Fatalf("samples=%+v", selected.samples)
+	}
 }
 
 func TestValidatePublishClipInputsRequiresExactSize(t *testing.T) {

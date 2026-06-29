@@ -78,6 +78,8 @@ type benchConfig struct {
 	aomRowMT            int
 	svtLP               int
 	svtASM              string
+	runs                int
+	warmupRuns          int
 	publish             bool
 	keep                bool
 	explicitFlags       map[string]bool
@@ -104,6 +106,14 @@ type encodeResult struct {
 	frameStats       []goAV1FrameStats
 	command          []string
 	settings         map[string]string
+	runs             int
+	warmupRuns       int
+	selectedRun      int
+	minWall          time.Duration
+	medianWall       time.Duration
+	maxWall          time.Duration
+	iqrWall          time.Duration
+	samples          []encodeSampleMetadata
 }
 
 type metrics struct {
@@ -237,6 +247,8 @@ type metadataConfig struct {
 	TimingMode       string   `json:"timing_mode"`
 	RunOrder         string   `json:"run_order"`
 	ShuffleSeed      int64    `json:"shuffle_seed,omitempty"`
+	Runs             int      `json:"runs"`
+	WarmupRuns       int      `json:"warmup_runs"`
 	Publish          bool     `json:"publish,omitempty"`
 }
 
@@ -262,37 +274,62 @@ type clipMetadata struct {
 }
 
 type encoderInvocationMetadata struct {
-	Clip             string            `json:"clip"`
-	Width            int               `json:"width"`
-	Height           int               `json:"height"`
-	Frames           int               `json:"frames"`
-	FPS              int               `json:"fps"`
-	Encoder          string            `json:"encoder"`
-	TargetBPS        int               `json:"target_bps"`
-	ActualBPS        int64             `json:"actual_bps"`
-	CompressedBytes  int64             `json:"compressed_bytes,omitempty"`
-	EncodedPath      string            `json:"encoded_path,omitempty"`
-	EncodedContainer string            `json:"encoded_container,omitempty"`
-	EncodedBytes     int64             `json:"encoded_bytes,omitempty"`
-	EncodedSHA256    string            `json:"encoded_sha256,omitempty"`
-	DecodedPath      string            `json:"decoded_path,omitempty"`
-	DecodedBytes     int64             `json:"decoded_bytes,omitempty"`
-	DecodedSHA256    string            `json:"decoded_sha256,omitempty"`
-	EncodeWallSecs   float64           `json:"encode_wall_seconds,omitempty"`
-	CPUAvailable     bool              `json:"cpu_available,omitempty"`
-	CPUUserSecs      float64           `json:"cpu_user_seconds,omitempty"`
-	CPUSystemSecs    float64           `json:"cpu_system_seconds,omitempty"`
-	CPUTotalSecs     float64           `json:"cpu_total_seconds,omitempty"`
-	ObservedParallel float64           `json:"observed_parallelism,omitempty"`
-	Status           string            `json:"status"`
-	Error            string            `json:"error,omitempty"`
-	Command          []string          `json:"command,omitempty"`
-	Settings         map[string]string `json:"settings,omitempty"`
+	Clip             string                 `json:"clip"`
+	Width            int                    `json:"width"`
+	Height           int                    `json:"height"`
+	Frames           int                    `json:"frames"`
+	FPS              int                    `json:"fps"`
+	Encoder          string                 `json:"encoder"`
+	TargetBPS        int                    `json:"target_bps"`
+	ActualBPS        int64                  `json:"actual_bps"`
+	CompressedBytes  int64                  `json:"compressed_bytes,omitempty"`
+	EncodedPath      string                 `json:"encoded_path,omitempty"`
+	EncodedContainer string                 `json:"encoded_container,omitempty"`
+	EncodedBytes     int64                  `json:"encoded_bytes,omitempty"`
+	EncodedSHA256    string                 `json:"encoded_sha256,omitempty"`
+	DecodedPath      string                 `json:"decoded_path,omitempty"`
+	DecodedBytes     int64                  `json:"decoded_bytes,omitempty"`
+	DecodedSHA256    string                 `json:"decoded_sha256,omitempty"`
+	EncodeWallSecs   float64                `json:"encode_wall_seconds,omitempty"`
+	CPUAvailable     bool                   `json:"cpu_available,omitempty"`
+	CPUUserSecs      float64                `json:"cpu_user_seconds,omitempty"`
+	CPUSystemSecs    float64                `json:"cpu_system_seconds,omitempty"`
+	CPUTotalSecs     float64                `json:"cpu_total_seconds,omitempty"`
+	ObservedParallel float64                `json:"observed_parallelism,omitempty"`
+	Status           string                 `json:"status"`
+	Error            string                 `json:"error,omitempty"`
+	Command          []string               `json:"command,omitempty"`
+	Settings         map[string]string      `json:"settings,omitempty"`
+	Runs             int                    `json:"runs,omitempty"`
+	WarmupRuns       int                    `json:"warmup_runs,omitempty"`
+	SelectedRun      int                    `json:"selected_run,omitempty"`
+	MinWallSecs      float64                `json:"min_wall_seconds,omitempty"`
+	MedianWallSecs   float64                `json:"median_wall_seconds,omitempty"`
+	MaxWallSecs      float64                `json:"max_wall_seconds,omitempty"`
+	IQRWallSecs      float64                `json:"iqr_wall_seconds,omitempty"`
+	Samples          []encodeSampleMetadata `json:"samples,omitempty"`
 }
 
 type processCPUTimes struct {
 	user   time.Duration
 	system time.Duration
+}
+
+type encodeSampleMetadata struct {
+	Run              int     `json:"run"`
+	EncodeWallSecs   float64 `json:"encode_wall_seconds,omitempty"`
+	CPUAvailable     bool    `json:"cpu_available,omitempty"`
+	CPUUserSecs      float64 `json:"cpu_user_seconds,omitempty"`
+	CPUSystemSecs    float64 `json:"cpu_system_seconds,omitempty"`
+	CPUTotalSecs     float64 `json:"cpu_total_seconds,omitempty"`
+	ObservedParallel float64 `json:"observed_parallelism,omitempty"`
+	CompressedBytes  int64   `json:"compressed_bytes,omitempty"`
+	EncodedBytes     int64   `json:"encoded_bytes,omitempty"`
+	EncodedSHA256    string  `json:"encoded_sha256,omitempty"`
+	DecodedBytes     int64   `json:"decoded_bytes,omitempty"`
+	DecodedSHA256    string  `json:"decoded_sha256,omitempty"`
+	Status           string  `json:"status"`
+	Error            string  `json:"error,omitempty"`
 }
 
 type encodeJob struct {
@@ -505,6 +542,8 @@ func parseFlags() (benchConfig, error) {
 	flag.IntVar(&cfg.aomRowMT, "aom-row-mt", 1, "aomenc --row-mt value for libaom rows (0 = off, 1 = on)")
 	flag.IntVar(&cfg.svtLP, "svt-lp", 0, "SVT --lp parallelism level, not a thread count (0 = SVT auto, valid range 0..6)")
 	flag.StringVar(&cfg.svtASM, "svt-asm", "", "limit SVT --asm instruction set (empty = SVT default max; e.g. c,neon,neon_dotprod,neon_i8mm,sve,sve2)")
+	flag.IntVar(&cfg.runs, "runs", 1, "measured encode runs per encoder/bitrate tuple; the median wall-time run is reported")
+	flag.IntVar(&cfg.warmupRuns, "warmup-runs", 0, "unreported warmup encode runs per encoder/bitrate tuple")
 	flag.StringVar(&cfg.workdir, "workdir", "", "directory for raw, decoded, and encoded intermediates")
 	flag.StringVar(&cfg.csvPath, "csv", "", "write CSV to this path instead of stdout")
 	flag.StringVar(&cfg.summaryCSVPath, "summary-csv", "", "write BD-rate summary CSV to this path")
@@ -594,6 +633,12 @@ func parseFlags() (benchConfig, error) {
 	if cfg.svtLP < 0 || cfg.svtLP > 6 {
 		return benchConfig{}, fmt.Errorf("invalid SVT --lp level %d: valid range is 0..6; --lp is a parallelism level, not a thread count", cfg.svtLP)
 	}
+	if cfg.runs <= 0 {
+		return benchConfig{}, fmt.Errorf("invalid measured run count %d", cfg.runs)
+	}
+	if cfg.warmupRuns < 0 {
+		return benchConfig{}, fmt.Errorf("invalid warmup run count %d", cfg.warmupRuns)
+	}
 	if cfg.svtASM != "" {
 		var ok bool
 		cfg.svtASM, ok = canonicalSVTASMName(cfg.svtASM)
@@ -633,6 +678,8 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"gomaxprocs",
 		"timing-mode",
 		"run-order",
+		"runs",
+		"warmup-runs",
 	}
 	for _, name := range required {
 		if err := requireExplicitFlag(cfg, name); err != nil {
@@ -652,6 +699,12 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		if err := requireExplicitFlag(cfg, "shuffle-seed"); err != nil {
 			return err
 		}
+	}
+	if cfg.runs < 3 {
+		return errors.New("publish requires -runs >= 3")
+	}
+	if cfg.warmupRuns < 1 {
+		return errors.New("publish requires -warmup-runs >= 1")
 	}
 	if !cfg.requireCorpus || cfg.manifestPath == "" || cfg.minClips < 2 {
 		return errors.New("publish requires -require-corpus with -manifest and -min-clips >= 2")
@@ -1111,7 +1164,7 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 	requiredEncoders := requiredEncoderSet(cfg.requiredEncoders)
 	for _, job := range encodeJobsForConfig(cfg) {
 		bitrate, encoderName := job.bitrate, job.encoder
-		result := runEncoder(clipCfg, frames, refPath, encoderName, bitrate)
+		result := runEncoderMeasured(clipCfg, frames, refPath, encoderName, bitrate)
 		m := metrics{psnr: "NA", ssim: "NA", xpsnr: "NA", vmaf: "NA"}
 		var metricErr error
 		if result.status == "ok" {
@@ -1189,6 +1242,14 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 			Error:            result.errText,
 			Command:          result.command,
 			Settings:         result.settings,
+			Runs:             result.runs,
+			WarmupRuns:       result.warmupRuns,
+			SelectedRun:      result.selectedRun,
+			MinWallSecs:      durationSeconds(result.minWall),
+			MedianWallSecs:   durationSeconds(result.medianWall),
+			MaxWallSecs:      durationSeconds(result.maxWall),
+			IQRWallSecs:      durationSeconds(result.iqrWall),
+			Samples:          result.samples,
 		})
 		if err := writeBenchRow(writer, row); err != nil {
 			return nil, nil, err
@@ -1644,6 +1705,8 @@ func metadataConfigFor(cfg benchConfig) metadataConfig {
 		TimingMode:       cfg.timingMode,
 		RunOrder:         cfg.runOrder,
 		ShuffleSeed:      cfg.shuffleSeed,
+		Runs:             cfg.runs,
+		WarmupRuns:       cfg.warmupRuns,
 		Publish:          cfg.publish,
 	}
 }
@@ -1724,6 +1787,7 @@ func fairnessNotes(cfg benchConfig) []string {
 		"CSV and metadata include wall seconds, CPU seconds, and observed_parallelism=cpu_total_seconds/encode_wall_seconds so comparisons can be checked against observed CPU budget.",
 		"qualitybench records timing_mode; core mode keeps the historical goav1 per-frame Encode timer, while e2e mode times goav1 setup, encode calls, and decoded-output writes for fairer CLI comparisons.",
 		"qualitybench records run_order and shuffle_seed so encoder/bitrate order effects can be reproduced or randomized deterministically.",
+		"qualitybench records every measured encode sample in metadata; the normal CSV row reports the median wall-time sample after any configured warmup runs.",
 		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or sweep --lp 0..6, then report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
 		"For fair libaom comparisons, set -aom-threads and -aom-row-mt explicitly and report both; qualitybench forwards them to aomenc --threads and --row-mt and records them in metadata.",
 		"SVT-AV1 --asm defaults to max and may use CPU-specific kernels such as neon_dotprod or neon_i8mm; use -svt-asm to pin the assembly tier when comparing against goav1's current SIMD coverage.",
@@ -2164,6 +2228,96 @@ func runEncoder(cfg benchConfig, frames []goav1.I420Frame, refPath string, encod
 	default:
 		return encodeResult{encoder: encoderName, targetBPS: bitrate, status: "skipped", errText: "unknown encoder"}
 	}
+}
+
+func runEncoderMeasured(cfg benchConfig, frames []goav1.I420Frame, refPath string, encoderName string, bitrate int) encodeResult {
+	encoderName = canonicalEncoderName(encoderName)
+	repeated := cfg.warmupRuns > 0 || cfg.runs > 1
+	for run := 1; run <= cfg.warmupRuns; run++ {
+		warmupCfg, err := encodeSampleConfig(cfg, encoderName, bitrate, "warmup", run, repeated)
+		if err != nil {
+			return encodeResult{encoder: encoderName, targetBPS: bitrate, status: "error", errText: err.Error()}
+		}
+		result := runEncoder(warmupCfg, frames, refPath, encoderName, bitrate)
+		if result.status != "ok" {
+			result.warmupRuns = cfg.warmupRuns
+			result.runs = cfg.runs
+			return result
+		}
+	}
+
+	results := make([]encodeResult, 0, cfg.runs)
+	for run := 1; run <= cfg.runs; run++ {
+		sampleCfg, err := encodeSampleConfig(cfg, encoderName, bitrate, "run", run, repeated)
+		if err != nil {
+			return encodeResult{encoder: encoderName, targetBPS: bitrate, status: "error", errText: err.Error()}
+		}
+		result := runEncoder(sampleCfg, frames, refPath, encoderName, bitrate)
+		result.selectedRun = run
+		results = append(results, result)
+		if result.status != "ok" {
+			return attachEncodeRunSummary(result, results, cfg.warmupRuns, cfg.runs)
+		}
+	}
+	selected := medianEncodeResult(results)
+	return attachEncodeRunSummary(selected, results, cfg.warmupRuns, cfg.runs)
+}
+
+func encodeSampleConfig(cfg benchConfig, encoderName string, bitrate int, kind string, run int, repeated bool) (benchConfig, error) {
+	if !repeated {
+		return cfg, nil
+	}
+	out := cfg
+	out.workdir = filepath.Join(cfg.workdir, fmt.Sprintf("%s_%d_%s_%02d", encoderName, bitrate, kind, run))
+	if err := os.MkdirAll(out.workdir, 0o755); err != nil {
+		return benchConfig{}, err
+	}
+	return out, nil
+}
+
+func medianEncodeResult(results []encodeResult) encodeResult {
+	ordered := append([]encodeResult(nil), results...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return ordered[i].duration < ordered[j].duration
+	})
+	return ordered[len(ordered)/2]
+}
+
+func attachEncodeRunSummary(selected encodeResult, results []encodeResult, warmupRuns, runs int) encodeResult {
+	selected.warmupRuns = warmupRuns
+	selected.runs = runs
+	selected.samples = make([]encodeSampleMetadata, 0, len(results))
+	if len(results) == 0 {
+		return selected
+	}
+	walls := make([]time.Duration, 0, len(results))
+	for _, result := range results {
+		walls = append(walls, result.duration)
+		selected.samples = append(selected.samples, encodeSampleMetadata{
+			Run:              result.selectedRun,
+			EncodeWallSecs:   durationSeconds(result.duration),
+			CPUAvailable:     result.cpuAvailable,
+			CPUUserSecs:      durationSeconds(result.cpuUser),
+			CPUSystemSecs:    durationSeconds(result.cpuSystem),
+			CPUTotalSecs:     durationSeconds(totalCPU(result.cpuUser, result.cpuSystem)),
+			ObservedParallel: observedParallelism(result.duration, result.cpuUser, result.cpuSystem, result.cpuAvailable),
+			CompressedBytes:  result.bytes,
+			EncodedBytes:     result.encodedBytes,
+			EncodedSHA256:    result.encodedSHA256,
+			DecodedBytes:     result.decodedBytes,
+			DecodedSHA256:    result.decodedSHA256,
+			Status:           result.status,
+			Error:            result.errText,
+		})
+	}
+	sort.Slice(walls, func(i, j int) bool { return walls[i] < walls[j] })
+	selected.minWall = walls[0]
+	selected.medianWall = walls[len(walls)/2]
+	selected.maxWall = walls[len(walls)-1]
+	if len(walls) > 1 {
+		selected.iqrWall = walls[(3*len(walls))/4] - walls[len(walls)/4]
+	}
+	return selected
 }
 
 func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeResult {
