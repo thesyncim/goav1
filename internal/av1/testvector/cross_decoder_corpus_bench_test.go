@@ -15,8 +15,10 @@ package testvector
 // coding tools (all-intra vs inter GOP, single vs multi tile-column), bit
 // depths (8-bit primary plus 10/12-bit profile coverage), and chroma sampling
 // (4:2:0 primary plus a profile-2 4:2:2 probe). At that length steady-state
-// decode dominates startup, so the goav1-vs-dav1d-vs-aomdec ratios are an
-// honest single-thread throughput comparison.
+// decode dominates startup, so the goav1-vs-dav1d-vs-aomdec ratios are a
+// cleaner requested-single-thread throughput comparison. SVT rows, when
+// present, are requested with SvtAv1DecApp --lp 1; SVT documents --lp as a
+// parallelism level rather than a processor/thread count.
 //
 // The corpus is NOT committed (it is large binary video). Regenerate it with
 // scripts/gen_bench_corpus.sh, which scales/length-extends a small source y4m
@@ -49,10 +51,12 @@ package testvector
 //     excluded from the timing aggregate and reported prominently. This bench
 //     therefore doubles as a conformance probe on real content, not just a perf
 //     tool.
-//   - UNIFORM, FAIR TIMING. Every decoder is single-threaded
-//     (goav1 worker pool = 1; aomdec --threads=1; dav1d --threads 1) and
-//     decode-only with output discarded. Each (decoder, clip) is warmed up once
-//     then run best-of-N (min wall-clock) to reject scheduler/IO noise.
+//   - UNIFORM, FAIR TIMING. goav1, aomdec, and dav1d are single-threaded
+//     (goav1 worker pool = 1; aomdec --threads=1; dav1d --threads 1). SVT is
+//     requested with SvtAv1DecApp --lp 1, which is a parallelism level rather
+//     than a verified thread-count knob. All decoders are decode-only with
+//     output discarded. Each (decoder, clip) is warmed up once then run
+//     best-of-N (min wall-clock) to reject scheduler/IO noise.
 //   - IN-PROCESS vs SUBPROCESS. goav1 is timed in-process (no exec/startup);
 //     the C decoders are subprocesses whose raw wall-clock includes process
 //     startup. We measure each external decoder's startup baseline and report
@@ -2230,6 +2234,7 @@ type corpusPublishReportTiming struct {
 	Runs                 int    `json:"runs"`
 	WarmupRuns           int    `json:"warmup_runs"`
 	Statistic            string `json:"statistic"`
+	ConcurrencyModel     string `json:"concurrency_model"`
 	InProcessGoAV1       bool   `json:"in_process_goav1"`
 	ExternalStartupModel string `json:"external_startup_model"`
 }
@@ -2652,6 +2657,7 @@ func writeCorpusPublishReport(path, dir string, manifest corpusPublishManifest, 
 			Runs:                 crossBenchRuns,
 			WarmupRuns:           1,
 			Statistic:            "minimum wall-clock selected; JSON stores every measured sample plus median and IQR",
+			ConcurrencyModel:     "goav1 worker pool = 1; aomdec --threads=1; dav1d --threads 1; SvtAv1DecApp --lp 1 requests SVT parallelism level 1, not a verified thread count",
 			InProcessGoAV1:       true,
 			ExternalStartupModel: "raw includes subprocess startup; adjusted subtracts one measured startup baseline per clip",
 		},
@@ -2971,12 +2977,13 @@ func printCorpusReport(t *testing.T, clips []corpusClip, results []decoderResult
 	fmt.Fprintf(&b, " goav1 multi-config cross-decoder throughput  (steady-state; PERF TRACKING)\n")
 	fmt.Fprintf(&b, "==================================================================================\n")
 	fmt.Fprintf(&b, " %s\n", corpusClipCoverageSummary(clips))
-	fmt.Fprintf(&b, " best-of-%d (min wall-clock); single-thread; full decode + post-filter; output discarded.\n", crossBenchRuns)
+	fmt.Fprintf(&b, " best-of-%d (min wall-clock); requested single-thread controls; full decode + post-filter; output discarded.\n", crossBenchRuns)
 	fmt.Fprintf(&b, " timing order: deterministic clip-rotated decoder interleave to reduce thermal/load column bias.\n")
 	fmt.Fprintf(&b, " goav1: IN-PROCESS, byte-exact verified once while loading corpus; timed path discards output.\n")
 	fmt.Fprintf(&b, " others: SUBPROCESS, decode-only, output discarded; raw includes process startup,\n")
 	fmt.Fprintf(&b, "         adj subtracts one measured startup baseline per invocation. At ~48 frames/clip\n")
 	fmt.Fprintf(&b, "         the startup share is small, so raw≈adj (that's the point of the longer clips).\n")
+	fmt.Fprintf(&b, " SVT note: SvtAv1DecApp uses --lp 1 here; --lp is SVT's parallelism level, not a verified thread count.\n")
 	fmt.Fprintf(&b, "==================================================================================\n\n")
 
 	// ---- clip manifest (config detail) ----

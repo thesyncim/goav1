@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -139,6 +140,25 @@ func TestValidateRequiredMetrics(t *testing.T) {
 	delete(filters, "libvmaf")
 	if err := validateRequiredMetrics(filters, []string{"vmaf"}); err == nil {
 		t.Fatal("missing libvmaf accepted")
+	}
+}
+
+func TestParseFFmpegAV1Decoders(t *testing.T) {
+	raw := []byte(strings.Join([]string{
+		" V..... libdav1d             dav1d AV1 decoder by VideoLAN (codec av1)",
+		" V....D av1                  Alliance for Open Media AV1",
+		" A....D wmav1                Windows Media Audio 1",
+	}, "\n"))
+	got := parseFFmpegAV1Decoders(raw)
+	if !got["libdav1d"] || !got["av1"] || got["wmav1"] {
+		t.Fatalf("av1 decoders=%v", got)
+	}
+	if err := validateFFmpegAV1Decoder("libdav1d", got); err != nil {
+		t.Fatalf("valid decoder failed: %v", err)
+	}
+	if err := validateFFmpegAV1Decoder("wmav1", got); err == nil ||
+		!strings.Contains(err.Error(), "available AV1 decoders") {
+		t.Fatalf("invalid decoder error=%v", err)
 	}
 }
 
@@ -947,6 +967,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		aomCPUUsed:       8,
 		svtLP:            5,
 		svtPreset:        13,
+		ffmpegAV1Decoder: "libdav1d",
 		timingMode:       timingModeEndToEnd,
 		runOrder:         runOrderShuffle,
 		shuffleSeed:      42,
@@ -968,8 +989,10 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		got.GoMaxProcs != 4 || got.GoAV1MaxThreads != 4 ||
 		got.GoAV1Effort != int(goav1.EncoderWebRTCMinEffortLevel) ||
 		got.GoAV1SceneCut ||
+		got.TileColumnsLog2 != 0 || got.TileSemantics != "tile-columns-log2" ||
 		got.AOMThreads != 1 || got.AOMRowMT != 0 ||
 		got.AOMCPUUsed != 8 || got.SVTLP != 5 || got.SVTPreset != 13 ||
+		got.FFmpegAV1Decoder != "libdav1d" ||
 		got.TimingMode != timingModeEndToEnd ||
 		got.RunOrder != runOrderShuffle || got.ShuffleSeed != 42 ||
 		got.SampleOrder != "interleaved-by-sample-pass" ||
@@ -992,6 +1015,9 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "-goav1-max-threads") ||
 		!strings.Contains(joined, "-goav1-effort") ||
 		!strings.Contains(joined, "-goav1-scene-cut=false") ||
+		!strings.Contains(joined, "tile-column log2") ||
+		!strings.Contains(joined, "-ffmpeg-av1-decoder") ||
+		!strings.Contains(joined, "1000/500/600 ms") ||
 		!strings.Contains(joined, "-aom-cpu-used") ||
 		!strings.Contains(joined, "-aom-threads") ||
 		!strings.Contains(joined, "-aom-row-mt") ||
@@ -1008,19 +1034,20 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 func TestExternalBaselineSettingsRecordPinnedKnobs(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	cfg := benchConfig{
-		workdir:     t.TempDir(),
-		width:       64,
-		height:      64,
-		fps:         60,
-		frames:      31,
-		tiles:       2,
-		keyInterval: 60,
-		aomThreads:  3,
-		aomRowMT:    1,
-		aomCPUUsed:  8,
-		svtLP:       4,
-		svtPreset:   13,
-		svtASM:      "neon",
+		workdir:          t.TempDir(),
+		width:            64,
+		height:           64,
+		fps:              60,
+		frames:           31,
+		tiles:            2,
+		keyInterval:      60,
+		aomThreads:       3,
+		aomRowMT:         1,
+		aomCPUUsed:       8,
+		svtLP:            4,
+		svtPreset:        13,
+		svtASM:           "neon",
+		ffmpegAV1Decoder: "libdav1d",
 	}
 
 	aom := encodeAOM(cfg, filepath.Join(cfg.workdir, "input.yuv"), 1_200_000)
@@ -1028,29 +1055,32 @@ func TestExternalBaselineSettingsRecordPinnedKnobs(t *testing.T) {
 		t.Fatalf("aom status=%q want skipped", aom.status)
 	}
 	assertSettings(t, aom.settings, map[string]string{
-		"profile":         "0",
-		"bit_depth":       "8",
-		"input_bit_depth": "8",
-		"color_format":    "i420",
-		"quiet":           "1",
-		"deadline":        "rt",
-		"end_usage":       "cbr",
-		"target_kbps":     "1200",
-		"fps":             "60/1",
-		"cpu_used":        "8",
-		"aom_threads":     "3",
-		"aom_row_mt":      "1",
-		"lag_in_frames":   "0",
-		"auto_alt_ref":    "0",
-		"enable_fwd_kf":   "0",
-		"drop_frame":      "0",
-		"buf_sz_ms":       "1000",
-		"buf_initial_ms":  "500",
-		"buf_optimal_ms":  "600",
-		"limit_frames":    "31",
-		"kf_min_dist":     "60",
-		"kf_max_dist":     "60",
-		"tile_columns":    "2",
+		"profile":            "0",
+		"bit_depth":          "8",
+		"input_bit_depth":    "8",
+		"color_format":       "i420",
+		"quiet":              "1",
+		"deadline":           "rt",
+		"end_usage":          "cbr",
+		"target_kbps":        "1200",
+		"fps":                "60/1",
+		"cpu_used":           "8",
+		"aom_threads":        "3",
+		"aom_row_mt":         "1",
+		"lag_in_frames":      "0",
+		"auto_alt_ref":       "0",
+		"enable_fwd_kf":      "0",
+		"drop_frame":         "0",
+		"buf_sz_ms":          "1000",
+		"buf_initial_ms":     "500",
+		"buf_optimal_ms":     "600",
+		"limit_frames":       "31",
+		"kf_min_dist":        "60",
+		"kf_max_dist":        "60",
+		"tile_columns":       "2",
+		"tile_columns_log2":  "2",
+		"tile_semantics":     "tile-columns-log2",
+		"ffmpeg_av1_decoder": "libdav1d",
 	})
 
 	svt := encodeSVT(cfg, filepath.Join(cfg.workdir, "input.yuv"), 1_200_000)
@@ -1058,27 +1088,33 @@ func TestExternalBaselineSettingsRecordPinnedKnobs(t *testing.T) {
 		t.Fatalf("svt status=%q want skipped", svt.status)
 	}
 	assertSettings(t, svt.settings, map[string]string{
-		"preset":        "13",
-		"profile":       "0",
-		"level":         "0",
-		"input_depth":   "8",
-		"color_format":  "1",
-		"fps_num":       "60",
-		"fps_denom":     "1",
-		"frames":        "31",
-		"rate_control":  "cbr",
-		"target_kbps":   "1200",
-		"lookahead":     "0",
-		"pred_struct":   "1",
-		"rtc":           "1",
-		"scd":           "0",
-		"tf":            "0",
-		"irefresh_type": "2",
-		"keyint":        "60",
-		"progress":      "0",
-		"tile_columns":  "2",
-		"svt_lp":        "4",
-		"svt_asm":       "neon",
+		"preset":             "13",
+		"profile":            "0",
+		"level":              "0",
+		"input_depth":        "8",
+		"color_format":       "1",
+		"fps_num":            "60",
+		"fps_denom":          "1",
+		"frames":             "31",
+		"rate_control":       "cbr",
+		"target_kbps":        "1200",
+		"buf_sz_ms":          "1000",
+		"buf_initial_ms":     "500",
+		"buf_optimal_ms":     "600",
+		"lookahead":          "0",
+		"pred_struct":        "1",
+		"rtc":                "1",
+		"scd":                "0",
+		"tf":                 "0",
+		"irefresh_type":      "2",
+		"keyint":             "60",
+		"progress":           "0",
+		"tile_columns":       "2",
+		"tile_columns_log2":  "2",
+		"tile_semantics":     "tile-columns-log2",
+		"ffmpeg_av1_decoder": "libdav1d",
+		"svt_lp":             "4",
+		"svt_asm":            "neon",
 	})
 }
 
@@ -1088,6 +1124,37 @@ func assertSettings(t *testing.T, got map[string]string, want map[string]string)
 		if gotValue := got[key]; gotValue != wantValue {
 			t.Fatalf("settings[%q]=%q want %q in %+v", key, gotValue, wantValue, got)
 		}
+	}
+}
+
+func TestTimeCommandCapturesFailureWithoutRerun(t *testing.T) {
+	dir := t.TempDir()
+	countPath := filepath.Join(dir, "count")
+	scriptPath := filepath.Join(dir, "fail-once.sh")
+	script := fmt.Sprintf(`#!/bin/sh
+n=$(cat %q 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" > %q
+echo "stdout-run-$n"
+echo "stderr-run-$n" >&2
+exit 7
+`, countPath, countPath)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var result encodeResult
+	_ = timeCommand(scriptPath, nil, &result)
+	rawCount, err := os.ReadFile(countPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(rawCount)) != "1" {
+		t.Fatalf("command ran %s times, want once", strings.TrimSpace(string(rawCount)))
+	}
+	if result.status != "error" ||
+		!strings.Contains(result.errText, "stdout-run-1") ||
+		!strings.Contains(result.errText, "stderr-run-1") {
+		t.Fatalf("result status=%q err=%q", result.status, result.errText)
 	}
 }
 
@@ -1121,6 +1188,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		svtLP:               4,
 		svtPreset:           13,
 		svtASM:              "neon",
+		ffmpegAV1Decoder:    "libdav1d",
 		timingMode:          timingModeEndToEnd,
 		runOrder:            runOrderShuffle,
 		shuffleSeed:         7,
@@ -1128,40 +1196,41 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		warmupRuns:          1,
 		environmentNotes:    "fixed power mode, idle machine",
 		explicitFlags: map[string]bool{
-			"bitrates":          true,
-			"encoders":          true,
-			"workdir":           true,
-			"csv":               true,
-			"metadata-json":     true,
-			"manifest":          true,
-			"require-corpus":    true,
-			"min-clips":         true,
-			"require-encoders":  true,
-			"require-metrics":   true,
-			"summary-csv":       true,
-			"require-summary":   true,
-			"gomaxprocs":        true,
-			"fps":               true,
-			"layers":            true,
-			"tiles":             true,
-			"golden":            true,
-			"keyint":            true,
-			"anchor":            true,
-			"timing-mode":       true,
-			"run-order":         true,
-			"shuffle-seed":      true,
-			"runs":              true,
-			"warmup-runs":       true,
-			"goav1-max-threads": true,
-			"goav1-effort":      true,
-			"goav1-scene-cut":   true,
-			"environment-notes": true,
-			"aom-cpu-used":      true,
-			"aom-threads":       true,
-			"aom-row-mt":        true,
-			"svt-preset":        true,
-			"svt-lp":            true,
-			"svt-asm":           true,
+			"bitrates":           true,
+			"encoders":           true,
+			"workdir":            true,
+			"csv":                true,
+			"metadata-json":      true,
+			"manifest":           true,
+			"require-corpus":     true,
+			"min-clips":          true,
+			"require-encoders":   true,
+			"require-metrics":    true,
+			"summary-csv":        true,
+			"require-summary":    true,
+			"gomaxprocs":         true,
+			"fps":                true,
+			"layers":             true,
+			"tiles":              true,
+			"golden":             true,
+			"keyint":             true,
+			"anchor":             true,
+			"timing-mode":        true,
+			"run-order":          true,
+			"shuffle-seed":       true,
+			"runs":               true,
+			"warmup-runs":        true,
+			"goav1-max-threads":  true,
+			"goav1-effort":       true,
+			"goav1-scene-cut":    true,
+			"environment-notes":  true,
+			"aom-cpu-used":       true,
+			"aom-threads":        true,
+			"aom-row-mt":         true,
+			"svt-preset":         true,
+			"svt-lp":             true,
+			"svt-asm":            true,
+			"ffmpeg-av1-decoder": true,
 		},
 	}
 	if err := validatePublishConfig(cfg, gitMetadata{Commit: "abc"}); err != nil {
@@ -1289,6 +1358,24 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	sceneCutGoAV1Only.goav1SceneCut = true
 	if err := validatePublishConfig(sceneCutGoAV1Only, gitMetadata{Commit: "abc"}); err != nil {
 		t.Fatalf("goav1-only scene-cut publish config failed: %v", err)
+	}
+
+	missingDecoder := cfg
+	missingDecoder.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingDecoder.explicitFlags[k] = v
+	}
+	delete(missingDecoder.explicitFlags, "ffmpeg-av1-decoder")
+	if err := validatePublishConfig(missingDecoder, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-ffmpeg-av1-decoder") {
+		t.Fatalf("missing explicit ffmpeg decoder error=%v", err)
+	}
+
+	emptyDecoder := cfg
+	emptyDecoder.ffmpegAV1Decoder = ""
+	if err := validatePublishConfig(emptyDecoder, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "non-empty -ffmpeg-av1-decoder") {
+		t.Fatalf("empty ffmpeg decoder error=%v", err)
 	}
 
 	coreTiming := cfg

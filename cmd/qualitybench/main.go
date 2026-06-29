@@ -58,6 +58,7 @@ type benchConfig struct {
 	frameMetricsCSVPath string
 	metadataPath        string
 	environmentNotes    string
+	ffmpegAV1Decoder    string
 	anchorEncoder       string
 	requiredEncodersRaw string
 	timingMode          string
@@ -268,6 +269,8 @@ type metadataConfig struct {
 	Anchor           string   `json:"anchor"`
 	Layers           int      `json:"layers"`
 	Tiles            int      `json:"tiles"`
+	TileColumnsLog2  int      `json:"tile_columns_log2"`
+	TileSemantics    string   `json:"tile_semantics"`
 	GoldenInterval   int      `json:"golden_interval"`
 	KeyInterval      int      `json:"key_interval"`
 	GoMaxProcs       int      `json:"gomaxprocs"`
@@ -280,6 +283,7 @@ type metadataConfig struct {
 	SVTLP            int      `json:"svt_lp"`
 	SVTPreset        int      `json:"svt_preset"`
 	SVTASM           string   `json:"svt_asm,omitempty"`
+	FFmpegAV1Decoder string   `json:"ffmpeg_av1_decoder,omitempty"`
 	TimingMode       string   `json:"timing_mode"`
 	RunOrder         string   `json:"run_order"`
 	ShuffleSeed      int64    `json:"shuffle_seed,omitempty"`
@@ -420,6 +424,11 @@ func run() error {
 	filters := ffmpegFilters()
 	if err := validateRequiredMetrics(filters, cfg.requiredMetrics); err != nil {
 		return err
+	}
+	if externalBaselineSelected(cfg) && cfg.ffmpegAV1Decoder != "" {
+		if err := validateFFmpegAV1Decoder(cfg.ffmpegAV1Decoder, ffmpegDecoders()); err != nil {
+			return err
+		}
 	}
 	if err := validateRequiredEncoderTools(cfg, exec.LookPath); err != nil {
 		return err
@@ -609,6 +618,7 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.frameMetricsCSVPath, "frame-metrics-csv", "", "write per-frame decoded PSNR/SSIM diagnostics CSV to this path")
 	flag.StringVar(&cfg.metadataPath, "metadata-json", "", "write reproducibility metadata JSON to this path")
 	flag.StringVar(&cfg.environmentNotes, "environment-notes", "", "free-form notes for publish runs: power mode, thermal state, and background load")
+	flag.StringVar(&cfg.ffmpegAV1Decoder, "ffmpeg-av1-decoder", "", "FFmpeg AV1 decoder for external encoder metric decode (empty = FFmpeg default; e.g. libdav1d or av1)")
 	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
 	flag.StringVar(&cfg.timingMode, "timing-mode", timingModeCore, "encode timing mode: core or e2e")
 	flag.StringVar(&cfg.runOrder, "run-order", runOrderBitrateEncoder, "encode tuple order: bitrate-encoder, encoder-bitrate, or shuffle")
@@ -719,6 +729,10 @@ func parseFlags() (benchConfig, error) {
 			return benchConfig{}, fmt.Errorf("invalid SVT --asm value %q: valid values are c, neon, crc32, neon_dotprod, neon_i8mm, sve, sve2, max", cfg.svtASM)
 		}
 	}
+	cfg.ffmpegAV1Decoder = strings.TrimSpace(cfg.ffmpegAV1Decoder)
+	if cfg.ffmpegAV1Decoder != "" && len(strings.Fields(cfg.ffmpegAV1Decoder)) != 1 {
+		return benchConfig{}, fmt.Errorf("invalid FFmpeg AV1 decoder %q: expected a single decoder name", cfg.ffmpegAV1Decoder)
+	}
 	return cfg, nil
 }
 
@@ -819,6 +833,14 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	if cfg.goav1SceneCut && (encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1")) {
 		return errors.New("publish requires -goav1-scene-cut=false when aomenc or svt-av1 baselines are selected; external scene-cut-equivalent settings are disabled")
 	}
+	if externalBaselineSelected(cfg) {
+		if err := requireExplicitFlag(cfg, "ffmpeg-av1-decoder"); err != nil {
+			return err
+		}
+		if cfg.ffmpegAV1Decoder == "" {
+			return errors.New("publish requires non-empty -ffmpeg-av1-decoder when external baselines are selected")
+		}
+	}
 	if encoderSelected(cfg, "aomenc") {
 		if err := requireExplicitFlag(cfg, "aom-cpu-used"); err != nil {
 			return err
@@ -842,6 +864,10 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		}
 	}
 	return nil
+}
+
+func externalBaselineSelected(cfg benchConfig) bool {
+	return encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1")
 }
 
 func requireExplicitFlag(cfg benchConfig, name string) error {
@@ -1125,6 +1151,21 @@ func validateRequiredMetrics(filters map[string]bool, metrics []string) error {
 		}
 	}
 	return nil
+}
+
+func validateFFmpegAV1Decoder(decoder string, decoders map[string]bool) error {
+	if decoders[decoder] {
+		return nil
+	}
+	if len(decoders) == 0 {
+		return fmt.Errorf("ffmpeg AV1 decoder %q unavailable: ffmpeg -decoders returned no decoder list", decoder)
+	}
+	available := make([]string, 0, len(decoders))
+	for name := range decoders {
+		available = append(available, name)
+	}
+	sort.Strings(available)
+	return fmt.Errorf("ffmpeg AV1 decoder %q unavailable; available AV1 decoders: %s", decoder, strings.Join(available, ","))
 }
 
 func ffmpegFilterForMetric(metric string) string {
@@ -1985,6 +2026,8 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		Anchor:           cfg.anchorEncoder,
 		Layers:           cfg.layers,
 		Tiles:            cfg.tiles,
+		TileColumnsLog2:  cfg.tiles,
+		TileSemantics:    "tile-columns-log2",
 		GoldenInterval:   cfg.goldenInterval,
 		KeyInterval:      cfg.keyInterval,
 		GoMaxProcs:       cfg.goMaxProcs,
@@ -1997,6 +2040,7 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		SVTLP:            cfg.svtLP,
 		SVTPreset:        cfg.svtPreset,
 		SVTASM:           cfg.svtASM,
+		FFmpegAV1Decoder: cfg.ffmpegAV1Decoder,
 		TimingMode:       cfg.timingMode,
 		RunOrder:         cfg.runOrder,
 		ShuffleSeed:      cfg.shuffleSeed,
@@ -2095,9 +2139,11 @@ func fairnessNotes(cfg benchConfig) []string {
 		"Publishable rows use -run-order shuffle with an explicit seed so every table has a reproducible encoder/bitrate order without always favoring the same encoder column.",
 		"For fair goav1 comparisons, set -goav1-max-threads and -goav1-effort explicitly; qualitybench forwards them to VideoEncoderConfig.MaxThreads and Speed and records them in metadata.",
 		"For fair external-baseline comparisons, set -goav1-scene-cut=false unless equivalent scene-cut behavior is enabled and recorded for every selected external encoder.",
+		"Tile controls are recorded as tile-column log2 settings; a requested -tiles value of N means 2^N tile columns for goav1, aomenc, and SVT rows.",
+		"For fair external-baseline metric comparisons, set -ffmpeg-av1-decoder explicitly so external IVF decode does not depend on FFmpeg's implicit decoder selection.",
 		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or sweep --lp 0..6, then report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
 		"For fair libaom comparisons, set -aom-cpu-used, -aom-threads, and -aom-row-mt explicitly and report all three; qualitybench forwards them to aomenc --cpu-used, --threads, and --row-mt and records them in metadata.",
-		"For fair SVT comparisons, set -svt-preset explicitly and report it with -svt-lp and -svt-asm; qualitybench forwards it to SvtAv1EncApp --preset and records it in metadata.",
+		"For fair SVT comparisons, set -svt-preset explicitly and report it with -svt-lp and -svt-asm; qualitybench forwards it to SvtAv1EncApp --preset and records it in metadata. SVT and aomenc CBR rows are pinned to the same 1000/500/600 ms client buffer model.",
 		"SVT-AV1 --asm defaults to max and may use CPU-specific kernels such as neon_dotprod or neon_i8mm; use -svt-asm to pin the assembly tier when comparing against goav1's current SIMD coverage.",
 		"goav1 metadata records detected simd_tier and simd_features; compare those against SVT's recorded svt_asm setting instead of assuming --asm max and goav1 cover the same kernels.",
 	}
@@ -2895,22 +2941,24 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		encodedPath:      filepath.Join(cfg.workdir, fmt.Sprintf("goav1_%d.obus", bitrate)),
 		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("goav1_%d.yuv", bitrate)),
 		settings: map[string]string{
-			"width":           strconv.Itoa(cfg.width),
-			"height":          strconv.Itoa(cfg.height),
-			"target_bitrate":  strconv.Itoa(bitrate),
-			"framerate":       strconv.Itoa(cfg.fps),
-			"temporal_layers": strconv.Itoa(cfg.layers),
-			"tile_columns":    strconv.Itoa(cfg.tiles),
-			"max_threads":     strconv.Itoa(cfg.goav1MaxThreads),
-			"effort":          strconv.Itoa(cfg.goav1Effort),
-			"scene_cut":       strconv.FormatBool(cfg.goav1SceneCut),
-			"golden_interval": strconv.Itoa(cfg.goldenInterval),
-			"key_interval":    strconv.Itoa(cfg.keyInterval),
-			"gomaxprocs":      strconv.Itoa(runtime.GOMAXPROCS(0)),
-			"num_cpu":         strconv.Itoa(runtime.NumCPU()),
-			"simd_tier":       detectedSIMDTier(),
-			"simd_features":   strings.Join(detectedSIMDFeatures(), ","),
-			"timing_mode":     cfg.timingMode,
+			"width":             strconv.Itoa(cfg.width),
+			"height":            strconv.Itoa(cfg.height),
+			"target_bitrate":    strconv.Itoa(bitrate),
+			"framerate":         strconv.Itoa(cfg.fps),
+			"temporal_layers":   strconv.Itoa(cfg.layers),
+			"tile_columns":      strconv.Itoa(cfg.tiles),
+			"tile_columns_log2": strconv.Itoa(cfg.tiles),
+			"tile_semantics":    "tile-columns-log2",
+			"max_threads":       strconv.Itoa(cfg.goav1MaxThreads),
+			"effort":            strconv.Itoa(cfg.goav1Effort),
+			"scene_cut":         strconv.FormatBool(cfg.goav1SceneCut),
+			"golden_interval":   strconv.Itoa(cfg.goldenInterval),
+			"key_interval":      strconv.Itoa(cfg.keyInterval),
+			"gomaxprocs":        strconv.Itoa(runtime.GOMAXPROCS(0)),
+			"num_cpu":           strconv.Itoa(runtime.NumCPU()),
+			"simd_tier":         detectedSIMDTier(),
+			"simd_features":     strings.Join(detectedSIMDFeatures(), ","),
+			"timing_mode":       cfg.timingMode,
 		},
 	}
 	var endToEndStart time.Time
@@ -3063,29 +3111,32 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		encodedContainer: "ivf",
 		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("aomenc_%d.yuv", bitrate)),
 		settings: map[string]string{
-			"profile":         "0",
-			"bit_depth":       "8",
-			"input_bit_depth": "8",
-			"color_format":    "i420",
-			"quiet":           "1",
-			"deadline":        "rt",
-			"end_usage":       "cbr",
-			"target_kbps":     strconv.Itoa(kbps(bitrate)),
-			"fps":             strconv.Itoa(cfg.fps) + "/1",
-			"cpu_used":        strconv.Itoa(cfg.aomCPUUsed),
-			"aom_threads":     strconv.Itoa(cfg.aomThreads),
-			"aom_row_mt":      strconv.Itoa(cfg.aomRowMT),
-			"lag_in_frames":   "0",
-			"auto_alt_ref":    "0",
-			"enable_fwd_kf":   "0",
-			"drop_frame":      "0",
-			"buf_sz_ms":       "1000",
-			"buf_initial_ms":  "500",
-			"buf_optimal_ms":  "600",
-			"limit_frames":    strconv.Itoa(cfg.frames),
-			"kf_min_dist":     kfMinDist,
-			"kf_max_dist":     kfMaxDist,
-			"tile_columns":    strconv.Itoa(cfg.tiles),
+			"profile":            "0",
+			"bit_depth":          "8",
+			"input_bit_depth":    "8",
+			"color_format":       "i420",
+			"quiet":              "1",
+			"deadline":           "rt",
+			"end_usage":          "cbr",
+			"target_kbps":        strconv.Itoa(kbps(bitrate)),
+			"fps":                strconv.Itoa(cfg.fps) + "/1",
+			"cpu_used":           strconv.Itoa(cfg.aomCPUUsed),
+			"aom_threads":        strconv.Itoa(cfg.aomThreads),
+			"aom_row_mt":         strconv.Itoa(cfg.aomRowMT),
+			"lag_in_frames":      "0",
+			"auto_alt_ref":       "0",
+			"enable_fwd_kf":      "0",
+			"drop_frame":         "0",
+			"buf_sz_ms":          "1000",
+			"buf_initial_ms":     "500",
+			"buf_optimal_ms":     "600",
+			"limit_frames":       strconv.Itoa(cfg.frames),
+			"kf_min_dist":        kfMinDist,
+			"kf_max_dist":        kfMaxDist,
+			"tile_columns":       strconv.Itoa(cfg.tiles),
+			"tile_columns_log2":  strconv.Itoa(cfg.tiles),
+			"tile_semantics":     "tile-columns-log2",
+			"ffmpeg_av1_decoder": ffmpegAV1DecoderSetting(cfg.ffmpegAV1Decoder),
 		},
 	}
 	if _, err := exec.LookPath("aomenc"); err != nil {
@@ -3146,7 +3197,7 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	}
 	result.encodedBytes = encodedBytes
 	result.encodedSHA256 = encodedHash
-	decodedBytes, decodedHash, err := decodeIVFWithFFmpeg(ivfPath, result.decodedYUV, cfg.width, cfg.height, cfg.frames)
+	decodedBytes, decodedHash, err := decodeIVFWithFFmpeg(ivfPath, result.decodedYUV, cfg.width, cfg.height, cfg.frames, cfg.ffmpegAV1Decoder)
 	if err != nil {
 		result.status, result.errText = "error", err.Error()
 		return result
@@ -3168,27 +3219,33 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		encodedContainer: "ivf",
 		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("svtav1_%d.yuv", bitrate)),
 		settings: map[string]string{
-			"preset":        strconv.Itoa(cfg.svtPreset),
-			"profile":       "0",
-			"level":         "0",
-			"input_depth":   "8",
-			"color_format":  "1",
-			"fps_num":       strconv.Itoa(cfg.fps),
-			"fps_denom":     "1",
-			"frames":        strconv.Itoa(cfg.frames),
-			"rate_control":  "cbr",
-			"target_kbps":   strconv.Itoa(kbps(bitrate)),
-			"lookahead":     "0",
-			"pred_struct":   "1",
-			"rtc":           "1",
-			"scd":           "0",
-			"tf":            "0",
-			"irefresh_type": "2",
-			"keyint":        keyint,
-			"progress":      "0",
-			"tile_columns":  strconv.Itoa(cfg.tiles),
-			"svt_lp":        strconv.Itoa(cfg.svtLP),
-			"svt_lp_note":   "parallelism level 0..6, not a processor/thread count",
+			"preset":             strconv.Itoa(cfg.svtPreset),
+			"profile":            "0",
+			"level":              "0",
+			"input_depth":        "8",
+			"color_format":       "1",
+			"fps_num":            strconv.Itoa(cfg.fps),
+			"fps_denom":          "1",
+			"frames":             strconv.Itoa(cfg.frames),
+			"rate_control":       "cbr",
+			"target_kbps":        strconv.Itoa(kbps(bitrate)),
+			"buf_sz_ms":          "1000",
+			"buf_initial_ms":     "500",
+			"buf_optimal_ms":     "600",
+			"lookahead":          "0",
+			"pred_struct":        "1",
+			"rtc":                "1",
+			"scd":                "0",
+			"tf":                 "0",
+			"irefresh_type":      "2",
+			"keyint":             keyint,
+			"progress":           "0",
+			"tile_columns":       strconv.Itoa(cfg.tiles),
+			"tile_columns_log2":  strconv.Itoa(cfg.tiles),
+			"tile_semantics":     "tile-columns-log2",
+			"ffmpeg_av1_decoder": ffmpegAV1DecoderSetting(cfg.ffmpegAV1Decoder),
+			"svt_lp":             strconv.Itoa(cfg.svtLP),
+			"svt_lp_note":        "parallelism level 0..6, not a processor/thread count",
 		},
 	}
 	if cfg.svtASM == "" {
@@ -3218,6 +3275,9 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		"--preset", strconv.Itoa(cfg.svtPreset),
 		"--rc", "2",
 		"--tbr", strconv.Itoa(kbps(bitrate)),
+		"--buf-sz", "1000",
+		"--buf-initial-sz", "500",
+		"--buf-optimal-sz", "600",
 		"--lookahead", "0",
 		"--pred-struct", "1",
 		"--rtc", "1",
@@ -3252,7 +3312,7 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	}
 	result.encodedBytes = encodedBytes
 	result.encodedSHA256 = encodedHash
-	decodedBytes, decodedHash, err := decodeIVFWithFFmpeg(ivfPath, result.decodedYUV, cfg.width, cfg.height, cfg.frames)
+	decodedBytes, decodedHash, err := decodeIVFWithFFmpeg(ivfPath, result.decodedYUV, cfg.width, cfg.height, cfg.frames, cfg.ffmpegAV1Decoder)
 	if err != nil {
 		result.status, result.errText = "error", err.Error()
 		return result
@@ -3273,8 +3333,9 @@ func kbps(bps int) int {
 func timeCommand(name string, args []string, result *encodeResult) time.Duration {
 	start := time.Now()
 	cmd := exec.Command(name, args...)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	var capture boundedCommandOutput
+	cmd.Stdout = &capture
+	cmd.Stderr = &capture
 	err := cmd.Run()
 	elapsed := time.Since(start)
 	if cmd.ProcessState != nil {
@@ -3283,16 +3344,37 @@ func timeCommand(name string, args []string, result *encodeResult) time.Duration
 		result.cpuAvailable = true
 	}
 	if err != nil {
-		capture := exec.Command(name, args...)
-		out, captureErr := capture.CombinedOutput()
 		result.status = "error"
-		if captureErr != nil {
-			result.errText = trimCommandOutput(captureErr, out)
-		} else {
-			result.errText = err.Error()
-		}
+		result.errText = trimCommandOutput(err, capture.Bytes())
 	}
 	return elapsed
+}
+
+type boundedCommandOutput struct {
+	buf       [4096]byte
+	n         int
+	truncated bool
+}
+
+func (b *boundedCommandOutput) Write(p []byte) (int, error) {
+	if b.n < len(b.buf) {
+		copied := copy(b.buf[b.n:], p)
+		b.n += copied
+		if copied < len(p) {
+			b.truncated = true
+		}
+	} else if len(p) > 0 {
+		b.truncated = true
+	}
+	return len(p), nil
+}
+
+func (b *boundedCommandOutput) Bytes() []byte {
+	out := b.buf[:b.n]
+	if !b.truncated {
+		return out
+	}
+	return append(append([]byte(nil), out...), []byte("\n[output truncated]")...)
 }
 
 func nonNegativeDuration(d time.Duration) time.Duration {
@@ -3321,17 +3403,29 @@ func trimCommandOutput(err error, out []byte) string {
 	return msg
 }
 
-func decodeIVFWithFFmpeg(ivfPath, yuvPath string, width, height, frames int) (int64, string, error) {
+func ffmpegAV1DecoderSetting(decoder string) string {
+	if decoder == "" {
+		return "ffmpeg-default"
+	}
+	return decoder
+}
+
+func decodeIVFWithFFmpeg(ivfPath, yuvPath string, width, height, frames int, decoder string) (int64, string, error) {
 	args := []string{
 		"-y",
 		"-hide_banner",
 		"-loglevel", "error",
+	}
+	if decoder != "" {
+		args = append(args, "-c:v", decoder)
+	}
+	args = append(args,
 		"-i", ivfPath,
 		"-pix_fmt", "yuv420p",
 		"-frames:v", strconv.Itoa(frames),
 		"-f", "rawvideo",
 		yuvPath,
-	}
+	)
 	cmd := exec.Command("ffmpeg", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return 0, "", fmt.Errorf("ffmpeg decode: %s", trimCommandOutput(err, out))
@@ -3394,6 +3488,32 @@ func ffmpegFilters() map[string]bool {
 		fields := strings.Fields(line)
 		if len(fields) >= 2 {
 			out[fields[1]] = true
+		}
+	}
+	return out
+}
+
+func ffmpegDecoders() map[string]bool {
+	cmd := exec.Command("ffmpeg", "-hide_banner", "-decoders")
+	raw, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	return parseFFmpegAV1Decoders(raw)
+}
+
+func parseFFmpegAV1Decoders(raw []byte) map[string]bool {
+	out := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		name := fields[1]
+		lineLower := strings.ToLower(line)
+		nameLower := strings.ToLower(name)
+		if name == "av1" || strings.Contains(nameLower, "dav1d") || strings.Contains(lineLower, "codec av1") {
+			out[name] = true
 		}
 	}
 	return out

@@ -8,7 +8,7 @@ import (
 )
 
 // BenchmarkVideoEncoderPFrame measures steady-state inter-frame encoding of a
-// moving 384x256 scene — the realtime hot path (motion search, skip decisions,
+// moving 640x360 scene — the realtime hot path (motion search, skip decisions,
 // transforms, entropy coding) plus any per-frame setup cost.
 func BenchmarkVideoEncoderPFrame(b *testing.B) {
 	const w, h = 640, 360

@@ -28,9 +28,11 @@ package testvector
 //     timing run that completes without t.Fatal IS a proof that goav1 produced
 //     the correct, fully post-filtered output.
 //
-//  2. UNIFORM METHODOLOGY. Every decoder is run single-threaded
-//     (goav1 worker pool = 1; aomdec --threads=1; dav1d --threads 1;
-//     SvtAv1DecApp single-thread) and decode-only with output DISCARDED
+//  2. UNIFORM METHODOLOGY. goav1, aomdec, and dav1d are run single-threaded
+//     (goav1 worker pool = 1; aomdec --threads=1; dav1d --threads 1). SVT is
+//     requested with SvtAv1DecApp --lp 1, which SVT documents as a parallelism
+//     level rather than a processor/thread count. All decoders are decode-only
+//     with output DISCARDED
 //     (aomdec --rawvideo -o /dev/null; dav1d --muxer null -o /dev/null). Each
 //     (decoder, vector) is warmed up once, then run best-of-N (crossBenchRuns,
 //     N>=7); we keep the MIN wall-clock, which is the standard way to reject
@@ -98,7 +100,7 @@ type externalDecoder struct {
 	// lookups are candidate binary names/paths tried in order with
 	// exec.LookPath (and as an absolute path); the first that resolves wins.
 	lookups []string
-	// decodeArgs builds the decode-only, single-threaded, output-discarded
+	// decodeArgs builds the decode-only, output-discarded
 	// argv (excluding the binary itself) for the given input IVF path.
 	decodeArgs func(bin, input string) []string
 	// startupArgs builds the argv used to measure fixed process-startup
@@ -141,7 +143,8 @@ func crossBenchExternalDecoders() []externalDecoder {
 			name:    "SvtAv1DecApp",
 			lookups: []string{"SvtAv1DecApp"},
 			decodeArgs: func(_ string, input string) []string {
-				// Single-thread, decode-only, discard output.
+				// Request SVT --lp 1, decode-only, discard output. SVT documents
+				// --lp as a parallelism level rather than a thread-count knob.
 				return []string{"-i", input, "-o", os.DevNull, "--lp", "1"}
 			},
 			startupArgs: func(_ string) []string { return []string{"--help"} },
@@ -392,11 +395,12 @@ func printCrossBenchReport(t *testing.T, vectors []crossBenchVector, results []d
 	fmt.Fprintf(&b, "==================================================================================\n")
 	fmt.Fprintf(&b, " goav1 cross-decoder throughput  (PERF TRACKING ONLY — NOT a conformance gate)\n")
 	fmt.Fprintf(&b, "==================================================================================\n")
-	fmt.Fprintf(&b, " vectors: %d bundled libaom IVF clips   best-of-%d (min wall-clock)   single-thread\n", len(vectors), crossBenchRuns)
+	fmt.Fprintf(&b, " vectors: %d bundled libaom IVF clips   best-of-%d (min wall-clock)   requested single-thread controls\n", len(vectors), crossBenchRuns)
 	fmt.Fprintf(&b, " goav1: IN-PROCESS, full decode + post-filter (LF/CDEF/LR/super-res/film-grain),\n")
 	fmt.Fprintf(&b, "        MD5-verified against official libaom digests (correctness proven by run).\n")
 	fmt.Fprintf(&b, " others: SUBPROCESS, decode-only, output discarded; raw time INCLUDES process\n")
 	fmt.Fprintf(&b, "         startup. These clips are tiny, so startup dominates the raw numbers.\n")
+	fmt.Fprintf(&b, " SVT note: SvtAv1DecApp uses --lp 1 here; --lp is SVT's parallelism level, not a verified thread count.\n")
 	fmt.Fprintf(&b, "==================================================================================\n\n")
 
 	// Find goav1 for the speedup baseline.
