@@ -53,6 +53,21 @@ type compound2D8NEONCtx struct {
 	imStr  uintptr
 }
 
+type compound2DHighBDNEONCtx struct {
+	dst    *uint16
+	ref    *byte
+	kernel *int16
+	xKern  *int16
+	refStr uintptr
+	width  uintptr
+	height uintptr
+	im     *int32
+	imStr  uintptr
+	round0 uintptr
+	xBias  uintptr
+	yBias  uintptr
+}
+
 //go:noescape
 func compoundCopy8NEONAsm(ctx *compoundCopy8NEONCtx)
 
@@ -94,6 +109,9 @@ func compound2D8NEONAsm(ctx *compound2D8NEONCtx)
 
 //go:noescape
 func compound2D8NEONAsmW4(ctx *compound2D8NEONCtx)
+
+//go:noescape
+func compound2DHighBDNEONAsm(ctx *compound2DHighBDNEONCtx)
 
 func predictInterCompoundRef8ToConvBufCopyNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, round0 int, roundOffset int) {
 	if round0 != compoundRound0Bits ||
@@ -212,6 +230,37 @@ func predictInterCompoundRefHighBDToConvBufYResidentNEON(out []uint16, ref frame
 	compoundYHighBDNEONAsm(&ctx)
 }
 
+func predictInterCompoundRefHighBDToConvBuf2DResidentNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, bitDepth int, im *compoundIM) {
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	// The horizontal slide loads one extra uint16 sample in the last 4-column
+	// group. Keep exact resident/clamped behavior by falling back when that
+	// single extra sample is not available.
+	if (round0 != compoundRound0Bits && round0 != compoundRound0Bits+2) ||
+		width < 4 || width%4 != 0 ||
+		!planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps, height+filterTaps-1) {
+		predictInterCompoundRefHighBDToConvBuf2DResident(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, im)
+		return
+	}
+	xk := xKernel
+	yk := yKernel
+	ctx := compound2DHighBDNEONCtx{
+		dst:    &out[0],
+		ref:    &ref.Pix[(refY-foY)*ref.Stride+(refX-foX)*2],
+		kernel: &yk[0],
+		xKern:  &xk[0],
+		refStr: uintptr(ref.Stride),
+		width:  uintptr(width),
+		height: uintptr(height),
+		im:     &im[0],
+		imStr:  uintptr(maxBlockSize),
+		round0: uintptr(round0),
+		xBias:  uintptr(1 << (bitDepth + filterBits - 1)),
+		yBias:  uintptr(1 << offsetBits),
+	}
+	compound2DHighBDNEONAsm(&ctx)
+}
+
 func predictInterCompoundRef8ToConvBufXNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, roundOffset int) {
 	fo := filterTaps/2 - 1
 	// The horizontal asm loads one extra byte in the last 8-column group while
@@ -324,6 +373,7 @@ func init() {
 		predictInterCompoundRef8ToConvBuf2DImpl = predictInterCompoundRef8ToConvBuf2DNEON
 		predictInterCompoundRef8ToConvBufCopyImpl = predictInterCompoundRef8ToConvBufCopyNEON
 		predictInterCompoundRefHighBDToConvBufCopyResidentImpl = predictInterCompoundRefHighBDToConvBufCopyResidentNEON
+		predictInterCompoundRefHighBDToConvBuf2DResidentImpl = predictInterCompoundRefHighBDToConvBuf2DResidentNEON
 		predictInterCompoundRefHighBDToConvBufXResidentImpl = predictInterCompoundRefHighBDToConvBufXResidentNEON
 		predictInterCompoundRefHighBDToConvBufYResidentImpl = predictInterCompoundRefHighBDToConvBufYResidentNEON
 		predictInterCompoundRef8ToConvBufXImpl = predictInterCompoundRef8ToConvBufXNEON

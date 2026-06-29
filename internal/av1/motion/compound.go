@@ -132,14 +132,14 @@ func predictInterCompoundRefHighBDToConvBuf(out []uint16, ref frame.Plane, bitDe
 	case subX != 0 && subY != 0:
 		if scratch != nil {
 			if planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
-				predictInterCompoundRefHighBDToConvBuf2DResident(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &scratch.im)
+				predictInterCompoundRefHighBDToConvBuf2DResidentImpl(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &scratch.im)
 			} else {
 				predictInterCompoundRefHighBDToConvBuf2DClamped(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &scratch.im)
 			}
 		} else {
 			var im compoundIM
 			if planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
-				predictInterCompoundRefHighBDToConvBuf2DResident(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &im)
+				predictInterCompoundRefHighBDToConvBuf2DResidentImpl(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &im)
 			} else {
 				predictInterCompoundRefHighBDToConvBuf2DClamped(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &im)
 			}
@@ -406,6 +406,7 @@ func predictInterCompoundRefHighBDToConvBufYClamped(out []uint16, ref frame.Plan
 }
 
 var predictInterCompoundRefHighBDToConvBufCopyResidentImpl = predictInterCompoundRefHighBDToConvBufCopyResidentPureGo
+var predictInterCompoundRefHighBDToConvBuf2DResidentImpl = predictInterCompoundRefHighBDToConvBuf2DResident
 var predictInterCompoundRefHighBDToConvBufXResidentImpl = predictInterCompoundRefHighBDToConvBufXResident
 var predictInterCompoundRefHighBDToConvBufYResidentImpl = predictInterCompoundRefHighBDToConvBufYResident
 
