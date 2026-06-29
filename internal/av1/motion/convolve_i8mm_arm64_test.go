@@ -241,6 +241,159 @@ func BenchmarkConvolveX8NEONDirect_32(b *testing.B) {
 	})
 }
 
+func TestConvolveY8I8MMMatchesPureGo(t *testing.T) {
+	if !cpu.Detected.I8MM {
+		t.Skip("I8MM not detected")
+	}
+	rng := rand.New(rand.NewSource(0x91e7a1))
+	eightTables := [][16][filterTaps]int16{subpelFilters8, subpelFilters8Smooth, subpelFilters8Sharp}
+	fourTables := [][16][filterTaps]int16{subpelFilters4, subpelFilters4Smooth}
+	sizes := []struct {
+		width  int
+		height int
+	}{
+		{4, 4},
+		{4, 16},
+		{8, 4},
+		{16, 8},
+		{32, 16},
+		{64, 16},
+	}
+	for _, size := range sizes {
+		ref, _ := testPlane(size.width+2*filterTaps, size.height+2*filterTaps, 1, size.width+2*filterTaps)
+		for i := range ref.Pix {
+			ref.Pix[i] = byte(rng.Intn(256))
+		}
+		got, _ := testPlane(size.width, size.height, 1, size.width)
+		want, _ := testPlane(size.width, size.height, 1, size.width)
+		for _, table := range eightTables {
+			for subY := 1; subY <= subpelQ4Mask; subY++ {
+				clear(got.Pix)
+				clear(want.Pix)
+				convolveY8I8MM(got, ref, 0, 0, filterTaps, filterTaps, size.width, size.height, table[subY])
+				convolveY8PureGo(want, ref, 0, 0, filterTaps, filterTaps, size.width, size.height, table[subY])
+				for y := 0; y < size.height; y++ {
+					row := y * size.width
+					for x := 0; x < size.width; x++ {
+						i := row + x
+						if got.Pix[i] != want.Pix[i] {
+							t.Fatalf("8tap size=%dx%d subY=%d sample=(%d,%d) I8MM=%d PureGo=%d",
+								size.width, size.height, subY, x, y, got.Pix[i], want.Pix[i])
+						}
+					}
+				}
+			}
+		}
+		for _, table := range fourTables {
+			for subY := 1; subY <= subpelQ4Mask; subY++ {
+				clear(got.Pix)
+				clear(want.Pix)
+				convolveY8I8MM(got, ref, 0, 0, filterTaps, filterTaps, size.width, size.height, table[subY])
+				convolveY8PureGo(want, ref, 0, 0, filterTaps, filterTaps, size.width, size.height, table[subY])
+				for y := 0; y < size.height; y++ {
+					row := y * size.width
+					for x := 0; x < size.width; x++ {
+						i := row + x
+						if got.Pix[i] != want.Pix[i] {
+							t.Fatalf("4tap size=%dx%d subY=%d sample=(%d,%d) I8MM=%d PureGo=%d",
+								size.width, size.height, subY, x, y, got.Pix[i], want.Pix[i])
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestConvolveY8I8MMFallbackMatchesNEON(t *testing.T) {
+	if !cpu.Detected.I8MM {
+		t.Skip("I8MM not detected")
+	}
+	ref, _ := testPlane(48, 48, 1, 48)
+	fillMotionTestPlane(ref)
+	cases := []struct {
+		name          string
+		width, height int
+		kernel        [filterTaps]int16
+	}{
+		{name: "odd_width", width: 12, height: 8, kernel: subpelFilters8[5]},
+		{name: "non_multiple_height", width: 16, height: 6, kernel: subpelFilters8[7]},
+		{name: "bilinear_two_tap", width: 16, height: 8, kernel: bilinearFilters[8]},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := testPlane(tc.width, tc.height, 1, tc.width)
+			want, _ := testPlane(tc.width, tc.height, 1, tc.width)
+			convolveY8I8MM(got, ref, 0, 0, filterTaps, filterTaps, tc.width, tc.height, tc.kernel)
+			convolveY8NEON(want, ref, 0, 0, filterTaps, filterTaps, tc.width, tc.height, tc.kernel)
+			for i := range got.Pix {
+				if got.Pix[i] != want.Pix[i] {
+					t.Fatalf("%s sample=%d I8MM wrapper=%d NEON=%d", tc.name, i, got.Pix[i], want.Pix[i])
+				}
+			}
+		})
+	}
+}
+
+func TestConvolveY8I8MMZeroAlloc(t *testing.T) {
+	if !cpu.Detected.I8MM {
+		t.Skip("I8MM not detected")
+	}
+	dst, ref := benchPlanes(32, 8)
+	yk := subpelFilters8[5]
+	allocs := testing.AllocsPerRun(50, func() {
+		convolveY8I8MM(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, yk)
+	})
+	if allocs != 0 {
+		t.Fatalf("convolve Y I8MM allocated %v times, want 0", allocs)
+	}
+	yk4 := subpelFilters4[5]
+	allocs = testing.AllocsPerRun(50, func() {
+		convolveY8I8MM(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, yk4)
+	})
+	if allocs != 0 {
+		t.Fatalf("convolve Y 4-tap I8MM allocated %v times, want 0", allocs)
+	}
+}
+
+func BenchmarkConvolveY8I8MM_32(b *testing.B) {
+	if !cpu.Detected.I8MM {
+		b.Skip("I8MM not detected")
+	}
+	dst, ref := benchPlanes(32, 8)
+	yk := subpelFilters8[5]
+	runConvolveBench(b, 32, 32, func() {
+		convolveY8I8MM(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, yk)
+	})
+}
+
+func BenchmarkConvolveY8I8MM_4tap_32(b *testing.B) {
+	if !cpu.Detected.I8MM {
+		b.Skip("I8MM not detected")
+	}
+	dst, ref := benchPlanes(32, 8)
+	yk := subpelFilters4[5]
+	runConvolveBench(b, 32, 32, func() {
+		convolveY8I8MM(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, yk)
+	})
+}
+
+func BenchmarkConvolveY8NEONDirect_32(b *testing.B) {
+	dst, ref := benchPlanes(32, 8)
+	yk := subpelFilters8[5]
+	runConvolveBench(b, 32, 32, func() {
+		convolveY8NEON(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, yk)
+	})
+}
+
+func BenchmarkConvolveY8NEONDirect_4tap_32(b *testing.B) {
+	dst, ref := benchPlanes(32, 8)
+	yk := subpelFilters4[5]
+	runConvolveBench(b, 32, 32, func() {
+		convolveY8NEON(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, yk)
+	})
+}
+
 func TestConvolve2D8I8MMMatchesPureGo(t *testing.T) {
 	if !cpu.Detected.I8MM {
 		t.Skip("I8MM not detected")

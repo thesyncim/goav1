@@ -31,6 +31,15 @@
 #define XSR_HEIGHT   56
 #define XSR_F0       64
 
+#define YSR_DST      0
+#define YSR_REF      8
+#define YSR_FILTER   16
+#define YSR_MERGE    24
+#define YSR_DSTSTR   32
+#define YSR_REFSTR   40
+#define YSR_WIDTH    48
+#define YSR_HEIGHT   56
+
 #define T2D_DST      0
 #define T2D_REF      8
 #define T2D_XFILTER  16
@@ -148,6 +157,426 @@ xsrI8ColLoop:
 	CBNZ R7, xsrI8RowLoop
 
 xsrI8Done:
+	RET
+
+// func convolveY8I8MMAsm(ctx *convolveY8I8MMCtx)
+//
+// Resident lowbd Y convolve, 8-tap/6-tap tier. This mirrors SVT's
+// convolve_y_sr_8tap_neon_i8mm: halve the even AV1 taps, transpose/concatenate
+// 4-row windows, merge sliding windows with svt_kDotProdMergeBlockTbl, then use
+// USDOT lane 0/1 and vqrshrun_n_s16(..., FILTER_BITS-1).
+TEXT ·convolveY8I8MMAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD YSR_DST(R0), R1
+	MOVD YSR_REF(R0), R2
+	MOVD YSR_FILTER(R0), R3
+	MOVD YSR_MERGE(R0), R12
+	MOVD YSR_DSTSTR(R0), R4
+	MOVD YSR_REFSTR(R0), R5
+	MOVD YSR_WIDTH(R0), R6
+	MOVD YSR_HEIGHT(R0), R7
+
+	VLD1   (R3), [V0.B16]
+	VLD1.P 16(R12), [V28.B16]
+	VLD1.P 16(R12), [V29.B16]
+	VLD1   (R12), [V30.B16]
+
+	CMP $4, R6
+	BEQ y8I8W4Col
+
+y8I8ColLoop:
+	MOVD R2, R9          // src row cursor for this 8-column stripe
+	MOVD R1, R10         // dst row cursor for this 8-column stripe
+	MOVD R7, R11         // remaining rows
+
+	// load_u8_8x7(s0..s6)
+	WORD $0x0cc57121     // ld1 {v1.8b}, [x9], x5
+	WORD $0x0cc57122     // ld1 {v2.8b}, [x9], x5
+	WORD $0x0cc57123     // ld1 {v3.8b}, [x9], x5
+	WORD $0x0cc57124     // ld1 {v4.8b}, [x9], x5
+	WORD $0x0cc57125     // ld1 {v5.8b}, [x9], x5
+	WORD $0x0cc57126     // ld1 {v6.8b}, [x9], x5
+	WORD $0x0cc57127     // ld1 {v7.8b}, [x9], x5
+
+	// transpose_concat_elems_u8_8x4(s0,s1,s2,s3) -> v8/v9
+	WORD $0x4e03383a     // zip1 v26.16b, v1.16b, v3.16b
+	WORD $0x4e04385b     // zip1 v27.16b, v2.16b, v4.16b
+	WORD $0x4e1b3b48     // zip1 v8.16b,  v26.16b, v27.16b
+	WORD $0x4e1b7b49     // zip2 v9.16b,  v26.16b, v27.16b
+	// transpose_concat_elems_u8_8x4(s1,s2,s3,s4) -> v10/v11
+	WORD $0x4e04385a     // zip1 v26.16b, v2.16b, v4.16b
+	WORD $0x4e05387b     // zip1 v27.16b, v3.16b, v5.16b
+	WORD $0x4e1b3b4a     // zip1 v10.16b, v26.16b, v27.16b
+	WORD $0x4e1b7b4b     // zip2 v11.16b, v26.16b, v27.16b
+	// transpose_concat_elems_u8_8x4(s2,s3,s4,s5) -> v12/v13
+	WORD $0x4e05387a     // zip1 v26.16b, v3.16b, v5.16b
+	WORD $0x4e06389b     // zip1 v27.16b, v4.16b, v6.16b
+	WORD $0x4e1b3b4c     // zip1 v12.16b, v26.16b, v27.16b
+	WORD $0x4e1b7b4d     // zip2 v13.16b, v26.16b, v27.16b
+	// transpose_concat_elems_u8_8x4(s3,s4,s5,s6) -> v14/v18
+	WORD $0x4e06389a     // zip1 v26.16b, v4.16b, v6.16b
+	WORD $0x4e0738bb     // zip1 v27.16b, v5.16b, v7.16b
+	WORD $0x4e1b3b4e     // zip1 v14.16b, v26.16b, v27.16b
+	WORD $0x4e1b7b52     // zip2 v18.16b, v26.16b, v27.16b
+
+y8I8Row4Loop:
+	// load_u8_8x4(s7..sA)
+	WORD $0x0cc57121     // ld1 {v1.8b}, [x9], x5
+	WORD $0x0cc57122     // ld1 {v2.8b}, [x9], x5
+	WORD $0x0cc57123     // ld1 {v3.8b}, [x9], x5
+	WORD $0x0cc57124     // ld1 {v4.8b}, [x9], x5
+	// transpose_concat_elems_u8_8x4(s7,s8,s9,sA) -> v15/v19
+	WORD $0x4e03383a     // zip1 v26.16b, v1.16b, v3.16b
+	WORD $0x4e04385b     // zip1 v27.16b, v2.16b, v4.16b
+	WORD $0x4e1b3b4f     // zip1 v15.16b, v26.16b, v27.16b
+	WORD $0x4e1b7b53     // zip2 v19.16b, v26.16b, v27.16b
+
+	// Merge shifted windows from {s3456,s789A}.
+	WORD $0x4e1c21d4     // tbl v20.16b, {v14.16b, v15.16b}, v28.16b
+	WORD $0x4e1c2255     // tbl v21.16b, {v18.16b, v19.16b}, v28.16b
+	WORD $0x4e1d21d6     // tbl v22.16b, {v14.16b, v15.16b}, v29.16b
+	WORD $0x4e1d2257     // tbl v23.16b, {v18.16b, v19.16b}, v29.16b
+	WORD $0x4e1e21d8     // tbl v24.16b, {v14.16b, v15.16b}, v30.16b
+	WORD $0x4e1e2259     // tbl v25.16b, {v18.16b, v19.16b}, v30.16b
+
+	// d0 = convolve8_8_y(s0123, s4567)
+	WORD $0x4f000410     // movi v16.4s, #0
+	WORD $0x4f000411     // movi v17.4s, #0
+	WORD $0x4f80f110     // usdot v16.4s, v8.16b,  v0.4b[0]
+	WORD $0x4fa0f290     // usdot v16.4s, v20.16b, v0.4b[1]
+	WORD $0x4f80f131     // usdot v17.4s, v9.16b,  v0.4b[0]
+	WORD $0x4fa0f2b1     // usdot v17.4s, v21.16b, v0.4b[1]
+	WORD $0x0e612a10     // xtn  v16.4h, v16.4s
+	WORD $0x4e612a30     // xtn2 v16.8h, v17.4s
+	WORD $0x2f0a8e10     // sqrshrun v16.8b, v16.8h, #6
+	WORD $0x0c007150     // st1 {v16.8b}, [x10]
+	ADD  R4, R10, R10
+
+	// d1 = convolve8_8_y(s1234, s5678)
+	WORD $0x4f000410     // movi v16.4s, #0
+	WORD $0x4f000411     // movi v17.4s, #0
+	WORD $0x4f80f150     // usdot v16.4s, v10.16b, v0.4b[0]
+	WORD $0x4fa0f2d0     // usdot v16.4s, v22.16b, v0.4b[1]
+	WORD $0x4f80f171     // usdot v17.4s, v11.16b, v0.4b[0]
+	WORD $0x4fa0f2f1     // usdot v17.4s, v23.16b, v0.4b[1]
+	WORD $0x0e612a10     // xtn  v16.4h, v16.4s
+	WORD $0x4e612a30     // xtn2 v16.8h, v17.4s
+	WORD $0x2f0a8e10     // sqrshrun v16.8b, v16.8h, #6
+	WORD $0x0c007150     // st1 {v16.8b}, [x10]
+	ADD  R4, R10, R10
+
+	// d2 = convolve8_8_y(s2345, s6789)
+	WORD $0x4f000410     // movi v16.4s, #0
+	WORD $0x4f000411     // movi v17.4s, #0
+	WORD $0x4f80f190     // usdot v16.4s, v12.16b, v0.4b[0]
+	WORD $0x4fa0f310     // usdot v16.4s, v24.16b, v0.4b[1]
+	WORD $0x4f80f1b1     // usdot v17.4s, v13.16b, v0.4b[0]
+	WORD $0x4fa0f331     // usdot v17.4s, v25.16b, v0.4b[1]
+	WORD $0x0e612a10     // xtn  v16.4h, v16.4s
+	WORD $0x4e612a30     // xtn2 v16.8h, v17.4s
+	WORD $0x2f0a8e10     // sqrshrun v16.8b, v16.8h, #6
+	WORD $0x0c007150     // st1 {v16.8b}, [x10]
+	ADD  R4, R10, R10
+
+	// d3 = convolve8_8_y(s3456, s789A)
+	WORD $0x4f000410     // movi v16.4s, #0
+	WORD $0x4f000411     // movi v17.4s, #0
+	WORD $0x4f80f1d0     // usdot v16.4s, v14.16b, v0.4b[0]
+	WORD $0x4fa0f1f0     // usdot v16.4s, v15.16b, v0.4b[1]
+	WORD $0x4f80f251     // usdot v17.4s, v18.16b, v0.4b[0]
+	WORD $0x4fa0f271     // usdot v17.4s, v19.16b, v0.4b[1]
+	WORD $0x0e612a10     // xtn  v16.4h, v16.4s
+	WORD $0x4e612a30     // xtn2 v16.8h, v17.4s
+	WORD $0x2f0a8e10     // sqrshrun v16.8b, v16.8h, #6
+	WORD $0x0c007150     // st1 {v16.8b}, [x10]
+	ADD  R4, R10, R10
+
+	// Shuffle everything up four rows.
+	WORD $0x4eb41e88     // mov v8.16b,  v20.16b
+	WORD $0x4eb51ea9     // mov v9.16b,  v21.16b
+	WORD $0x4eb61eca     // mov v10.16b, v22.16b
+	WORD $0x4eb71eeb     // mov v11.16b, v23.16b
+	WORD $0x4eb81f0c     // mov v12.16b, v24.16b
+	WORD $0x4eb91f2d     // mov v13.16b, v25.16b
+	WORD $0x4eaf1dee     // mov v14.16b, v15.16b
+	WORD $0x4eb31e72     // mov v18.16b, v19.16b
+
+	SUB  $4, R11, R11
+	CBNZ R11, y8I8Row4Loop
+
+	ADD  $8, R2, R2
+	ADD  $8, R1, R1
+	SUB  $8, R6, R6
+	CBNZ R6, y8I8ColLoop
+	RET
+
+y8I8W4Col:
+	MOVD R2, R9
+	MOVD R1, R10
+	MOVD R7, R11
+
+	// load_u8_4x7(s0..s6)
+	WORD $0x0dc58121     // ld1 {v1.s}[0], [x9], x5
+	WORD $0x0dc58122     // ld1 {v2.s}[0], [x9], x5
+	WORD $0x0dc58123     // ld1 {v3.s}[0], [x9], x5
+	WORD $0x0dc58124     // ld1 {v4.s}[0], [x9], x5
+	WORD $0x0dc58125     // ld1 {v5.s}[0], [x9], x5
+	WORD $0x0dc58126     // ld1 {v6.s}[0], [x9], x5
+	WORD $0x0dc58127     // ld1 {v7.s}[0], [x9], x5
+
+	// transpose_concat_elems_u8_4x4(s0,s1,s2,s3) -> v8
+	WORD $0x4e03383a
+	WORD $0x4e04385b
+	WORD $0x4e1b3b48
+	// transpose_concat_elems_u8_4x4(s1,s2,s3,s4) -> v10
+	WORD $0x4e04385a
+	WORD $0x4e05387b
+	WORD $0x4e1b3b4a
+	// transpose_concat_elems_u8_4x4(s2,s3,s4,s5) -> v12
+	WORD $0x4e05387a
+	WORD $0x4e06389b
+	WORD $0x4e1b3b4c
+	// transpose_concat_elems_u8_4x4(s3,s4,s5,s6) -> v14
+	WORD $0x4e06389a
+	WORD $0x4e0738bb
+	WORD $0x4e1b3b4e
+
+y8I8W4RowLoop:
+	// load_u8_4x4(s7..sA)
+	WORD $0x0dc58121
+	WORD $0x0dc58122
+	WORD $0x0dc58123
+	WORD $0x0dc58124
+	// transpose_concat_elems_u8_4x4(s7,s8,s9,sA) -> v15
+	WORD $0x4e03383a
+	WORD $0x4e04385b
+	WORD $0x4e1b3b4f
+
+	WORD $0x4e1c21d4     // tbl v20.16b, {v14.16b, v15.16b}, v28.16b
+	WORD $0x4e1d21d6     // tbl v22.16b, {v14.16b, v15.16b}, v29.16b
+	WORD $0x4e1e21d8     // tbl v24.16b, {v14.16b, v15.16b}, v30.16b
+
+	// d0
+	WORD $0x4f000410
+	WORD $0x4f80f110     // usdot v16.4s, v8.16b,  v0.4b[0]
+	WORD $0x4fa0f290     // usdot v16.4s, v20.16b, v0.4b[1]
+	WORD $0x0e612a10
+	WORD $0x2f0a8e10
+	WORD $0x0d008150     // st1 {v16.s}[0], [x10]
+	ADD  R4, R10, R10
+
+	// d1
+	WORD $0x4f000410
+	WORD $0x4f80f150     // usdot v16.4s, v10.16b, v0.4b[0]
+	WORD $0x4fa0f2d0     // usdot v16.4s, v22.16b, v0.4b[1]
+	WORD $0x0e612a10
+	WORD $0x2f0a8e10
+	WORD $0x0d008150
+	ADD  R4, R10, R10
+
+	// d2
+	WORD $0x4f000410
+	WORD $0x4f80f190     // usdot v16.4s, v12.16b, v0.4b[0]
+	WORD $0x4fa0f310     // usdot v16.4s, v24.16b, v0.4b[1]
+	WORD $0x0e612a10
+	WORD $0x2f0a8e10
+	WORD $0x0d008150
+	ADD  R4, R10, R10
+
+	// d3
+	WORD $0x4f000410
+	WORD $0x4f80f1d0     // usdot v16.4s, v14.16b, v0.4b[0]
+	WORD $0x4fa0f1f0     // usdot v16.4s, v15.16b, v0.4b[1]
+	WORD $0x0e612a10
+	WORD $0x2f0a8e10
+	WORD $0x0d008150
+	ADD  R4, R10, R10
+
+	WORD $0x4eb41e88     // mov v8.16b,  v20.16b
+	WORD $0x4eb61eca     // mov v10.16b, v22.16b
+	WORD $0x4eb81f0c     // mov v12.16b, v24.16b
+	WORD $0x4eaf1dee     // mov v14.16b, v15.16b
+
+	SUB  $4, R11, R11
+	CBNZ R11, y8I8W4RowLoop
+	RET
+
+// func convolveY4TapI8MMAsm(ctx *convolveY8I8MMCtx)
+//
+// Resident lowbd Y convolve, 4-tap tier. Mirrors
+// convolve_y_sr_4tap_neon_i8mm with y_filter_ptr+2 packed into USDOT lane 0.
+TEXT ·convolveY4TapI8MMAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD YSR_DST(R0), R1
+	MOVD YSR_REF(R0), R2
+	MOVD YSR_FILTER(R0), R3
+	MOVD YSR_MERGE(R0), R12
+	MOVD YSR_DSTSTR(R0), R4
+	MOVD YSR_REFSTR(R0), R5
+	MOVD YSR_WIDTH(R0), R6
+	MOVD YSR_HEIGHT(R0), R7
+
+	VLD1   (R3), [V0.B16]
+	VLD1.P 16(R12), [V28.B16]
+	VLD1.P 16(R12), [V29.B16]
+	VLD1   (R12), [V30.B16]
+
+	CMP $4, R6
+	BEQ y4I8W4Col
+
+y4I8ColLoop:
+	MOVD R2, R9
+	MOVD R1, R10
+	MOVD R7, R11
+
+	// load_u8_8x4(s0..s3) into v4..v7, then transpose -> v14/v18.
+	WORD $0x0cc57124     // ld1 {v4.8b}, [x9], x5
+	WORD $0x0cc57125     // ld1 {v5.8b}, [x9], x5
+	WORD $0x0cc57126     // ld1 {v6.8b}, [x9], x5
+	WORD $0x0cc57127     // ld1 {v7.8b}, [x9], x5
+	WORD $0x4e06389a     // zip1 v26.16b, v4.16b, v6.16b
+	WORD $0x4e0738bb     // zip1 v27.16b, v5.16b, v7.16b
+	WORD $0x4e1b3b4e     // zip1 v14.16b, v26.16b, v27.16b
+	WORD $0x4e1b7b52     // zip2 v18.16b, v26.16b, v27.16b
+
+y4I8Row4Loop:
+	// load_u8_8x4(s4..s7), transpose -> v15/v19.
+	WORD $0x0cc57121
+	WORD $0x0cc57122
+	WORD $0x0cc57123
+	WORD $0x0cc57124
+	WORD $0x4e03383a
+	WORD $0x4e04385b
+	WORD $0x4e1b3b4f
+	WORD $0x4e1b7b53
+
+	WORD $0x4e1c21d4     // tbl v20.16b, {v14.16b, v15.16b}, v28.16b
+	WORD $0x4e1c2255     // tbl v21.16b, {v18.16b, v19.16b}, v28.16b
+	WORD $0x4e1d21d6     // tbl v22.16b, {v14.16b, v15.16b}, v29.16b
+	WORD $0x4e1d2257     // tbl v23.16b, {v18.16b, v19.16b}, v29.16b
+	WORD $0x4e1e21d8     // tbl v24.16b, {v14.16b, v15.16b}, v30.16b
+	WORD $0x4e1e2259     // tbl v25.16b, {v18.16b, v19.16b}, v30.16b
+
+	// d0 = convolve4_8_y(s0123)
+	WORD $0x4f000410
+	WORD $0x4f000411
+	WORD $0x4f80f1d0     // usdot v16.4s, v14.16b, v0.4b[0]
+	WORD $0x4f80f251     // usdot v17.4s, v18.16b, v0.4b[0]
+	WORD $0x0e612a10
+	WORD $0x4e612a30
+	WORD $0x2f0a8e10
+	WORD $0x0c007150
+	ADD  R4, R10, R10
+
+	// d1 = convolve4_8_y(s1234)
+	WORD $0x4f000410
+	WORD $0x4f000411
+	WORD $0x4f80f290     // usdot v16.4s, v20.16b, v0.4b[0]
+	WORD $0x4f80f2b1     // usdot v17.4s, v21.16b, v0.4b[0]
+	WORD $0x0e612a10
+	WORD $0x4e612a30
+	WORD $0x2f0a8e10
+	WORD $0x0c007150
+	ADD  R4, R10, R10
+
+	// d2 = convolve4_8_y(s2345)
+	WORD $0x4f000410
+	WORD $0x4f000411
+	WORD $0x4f80f2d0     // usdot v16.4s, v22.16b, v0.4b[0]
+	WORD $0x4f80f2f1     // usdot v17.4s, v23.16b, v0.4b[0]
+	WORD $0x0e612a10
+	WORD $0x4e612a30
+	WORD $0x2f0a8e10
+	WORD $0x0c007150
+	ADD  R4, R10, R10
+
+	// d3 = convolve4_8_y(s3456)
+	WORD $0x4f000410
+	WORD $0x4f000411
+	WORD $0x4f80f310     // usdot v16.4s, v24.16b, v0.4b[0]
+	WORD $0x4f80f331     // usdot v17.4s, v25.16b, v0.4b[0]
+	WORD $0x0e612a10
+	WORD $0x4e612a30
+	WORD $0x2f0a8e10
+	WORD $0x0c007150
+	ADD  R4, R10, R10
+
+	WORD $0x4eaf1dee     // mov v14.16b, v15.16b
+	WORD $0x4eb31e72     // mov v18.16b, v19.16b
+
+	SUB  $4, R11, R11
+	CBNZ R11, y4I8Row4Loop
+
+	ADD  $8, R2, R2
+	ADD  $8, R1, R1
+	SUB  $8, R6, R6
+	CBNZ R6, y4I8ColLoop
+	RET
+
+y4I8W4Col:
+	MOVD R2, R9
+	MOVD R1, R10
+	MOVD R7, R11
+
+	// load_u8_4x4(s0..s3), transpose -> v14.
+	WORD $0x0dc58124
+	WORD $0x0dc58125
+	WORD $0x0dc58126
+	WORD $0x0dc58127
+	WORD $0x4e06389a
+	WORD $0x4e0738bb
+	WORD $0x4e1b3b4e
+
+y4I8W4RowLoop:
+	// load_u8_4x4(s4..s7), transpose -> v15.
+	WORD $0x0dc58121
+	WORD $0x0dc58122
+	WORD $0x0dc58123
+	WORD $0x0dc58124
+	WORD $0x4e03383a
+	WORD $0x4e04385b
+	WORD $0x4e1b3b4f
+
+	WORD $0x4e1c21d4     // tbl v20.16b, {v14.16b, v15.16b}, v28.16b
+	WORD $0x4e1d21d6     // tbl v22.16b, {v14.16b, v15.16b}, v29.16b
+	WORD $0x4e1e21d8     // tbl v24.16b, {v14.16b, v15.16b}, v30.16b
+
+	// d0
+	WORD $0x4f000410
+	WORD $0x4f80f1d0     // usdot v16.4s, v14.16b, v0.4b[0]
+	WORD $0x0e612a10
+	WORD $0x2f0a8e10
+	WORD $0x0d008150
+	ADD  R4, R10, R10
+
+	// d1
+	WORD $0x4f000410
+	WORD $0x4f80f290     // usdot v16.4s, v20.16b, v0.4b[0]
+	WORD $0x0e612a10
+	WORD $0x2f0a8e10
+	WORD $0x0d008150
+	ADD  R4, R10, R10
+
+	// d2
+	WORD $0x4f000410
+	WORD $0x4f80f2d0     // usdot v16.4s, v22.16b, v0.4b[0]
+	WORD $0x0e612a10
+	WORD $0x2f0a8e10
+	WORD $0x0d008150
+	ADD  R4, R10, R10
+
+	// d3
+	WORD $0x4f000410
+	WORD $0x4f80f310     // usdot v16.4s, v24.16b, v0.4b[0]
+	WORD $0x0e612a10
+	WORD $0x2f0a8e10
+	WORD $0x0d008150
+	ADD  R4, R10, R10
+
+	WORD $0x4eaf1dee     // mov v14.16b, v15.16b
+
+	SUB  $4, R11, R11
+	CBNZ R11, y4I8W4RowLoop
 	RET
 
 // func convolve2D8I8MMAsm(ctx *convolve2D8I8MMCtx)

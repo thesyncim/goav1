@@ -45,6 +45,25 @@ type convolveX8I8MMCtx struct {
 //go:noescape
 func convolveX8I8MMAsm(ctx *convolveX8I8MMCtx)
 
+// convolveY8I8MMCtx carries the resident lowbd single-prediction Y I8MM kernel
+// arguments. Field offsets are mirrored by convolve_i8mm_arm64.s.
+type convolveY8I8MMCtx struct {
+	dst    *byte
+	ref    *byte
+	filter *byte
+	merge  *byte
+	dstStr uintptr
+	refStr uintptr
+	width  uintptr
+	height uintptr
+}
+
+//go:noescape
+func convolveY8I8MMAsm(ctx *convolveY8I8MMCtx)
+
+//go:noescape
+func convolveY4TapI8MMAsm(ctx *convolveY8I8MMCtx)
+
 // convolve2D8I8MMCtx carries the resident lowbd single-prediction 2D I8MM
 // kernel arguments. Field offsets are mirrored by convolve_i8mm_arm64.s.
 type convolve2D8I8MMCtx struct {
@@ -71,6 +90,13 @@ var convolveX8I8MMPermute = [32]byte{
 	5, 6, 7, 8, 9, 10, 11, 12, 7, 8, 9, 10, 11, 12, 13, 14,
 }
 
+// SVT ASM_NEON_DOTPROD/convolve_neon_dotprod.c: svt_kDotProdMergeBlockTbl.
+var convolveY8I8MMMergeBlock = [48]byte{
+	1, 2, 3, 16, 5, 6, 7, 20, 9, 10, 11, 24, 13, 14, 15, 28,
+	2, 3, 16, 17, 6, 7, 20, 21, 10, 11, 24, 25, 14, 15, 28, 29,
+	3, 16, 17, 18, 7, 20, 21, 22, 11, 24, 25, 26, 15, 28, 29, 30,
+}
+
 func convolveX8I8MMFilter(kernel [filterTaps]int16) (filter [16]byte, f0 uint8, ok bool) {
 	for i := range kernel {
 		if kernel[i]%2 != 0 {
@@ -93,6 +119,37 @@ func convolveX8I8MMFilter(kernel [filterTaps]int16) (filter [16]byte, f0 uint8, 
 		filter[i+8] = byte(int8(v))
 	}
 	return filter, uint8(tap0), true
+}
+
+func convolveY8I8MMFilter(kernel [filterTaps]int16) (filter [16]byte, taps int, ok bool) {
+	for i := range kernel {
+		if kernel[i]%2 != 0 {
+			return [16]byte{}, 0, false
+		}
+	}
+	if kernel[0] == 0 && kernel[1] == 0 && kernel[6] == 0 && kernel[7] == 0 {
+		// SVT routes <=2-tap filters through NEON. Keep that split so the I8MM
+		// entry covers the real 4-tap vertical family.
+		if kernel[2] == 0 && kernel[5] == 0 {
+			return [16]byte{}, 0, false
+		}
+		for i := range 4 {
+			v := int(kernel[i+2] >> 1)
+			if v < -128 || v > 127 {
+				return [16]byte{}, 0, false
+			}
+			filter[i] = byte(int8(v))
+		}
+		return filter, 4, true
+	}
+	for i := range kernel {
+		v := int(kernel[i] >> 1)
+		if v < -128 || v > 127 {
+			return [16]byte{}, 0, false
+		}
+		filter[i] = byte(int8(v))
+	}
+	return filter, 8, true
 }
 
 func predictInterCompoundRef8ToConvBufXI8MM(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, roundOffset int) {
@@ -146,6 +203,39 @@ func convolveX8I8MM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX i
 		f0:      uintptr(f0),
 	}
 	convolveX8I8MMAsm(&ctx)
+}
+
+func convolveY8I8MM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+	if !cpu.Detected.I8MM ||
+		!(width == 4 || (width >= 8 && width%8 == 0)) ||
+		height%4 != 0 {
+		convolveY8NEON(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+		return
+	}
+	filter, taps, ok := convolveY8I8MMFilter(kernel)
+	if !ok {
+		convolveY8NEON(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+		return
+	}
+	fo := filterTaps/2 - 1
+	if taps == 4 {
+		fo = 1
+	}
+	ctx := convolveY8I8MMCtx{
+		dst:    &dst.Pix[dstY*dst.Stride+dstX],
+		ref:    &ref.Pix[(refY-fo)*ref.Stride+refX],
+		filter: &filter[0],
+		merge:  &convolveY8I8MMMergeBlock[0],
+		dstStr: uintptr(dst.Stride),
+		refStr: uintptr(ref.Stride),
+		width:  uintptr(width),
+		height: uintptr(height),
+	}
+	if taps == 4 {
+		convolveY4TapI8MMAsm(&ctx)
+		return
+	}
+	convolveY8I8MMAsm(&ctx)
 }
 
 func convolve2D8I8MM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
