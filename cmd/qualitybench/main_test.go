@@ -672,6 +672,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		aomThreads:       1,
 		aomRowMT:         0,
 		svtLP:            5,
+		timingMode:       timingModeEndToEnd,
 		publish:          true,
 	}
 	got := metadataConfigFor(cfg)
@@ -683,16 +684,17 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		got.RequiredMetrics[0] != "psnr" || got.RequiredEncoders[0] != "goav1" ||
 		!got.RequireSummary || !got.RequireCorpus || got.MinClips != 6 ||
 		got.GoMaxProcs != 4 || got.AOMThreads != 1 || got.AOMRowMT != 0 ||
-		got.SVTLP != 5 || !got.Publish {
+		got.SVTLP != 5 || got.TimingMode != timingModeEndToEnd || !got.Publish {
 		t.Fatalf("metadata config aliases inputs: %+v", got)
 	}
 }
 
 func TestFairnessNotesDocumentSVTLP(t *testing.T) {
-	notes := fairnessNotes(benchConfig{svtLP: 0, publish: true})
+	notes := fairnessNotes(benchConfig{svtLP: 0, timingMode: timingModeEndToEnd, publish: true})
 	joined := strings.Join(notes, "\n")
 	if !strings.Contains(joined, "not a target processor or thread count") ||
 		!strings.Contains(joined, "observed_parallelism") ||
+		!strings.Contains(joined, "timing_mode") ||
 		!strings.Contains(joined, "sweep --lp 0..6") ||
 		!strings.Contains(joined, "-aom-threads") ||
 		!strings.Contains(joined, "-aom-row-mt") ||
@@ -722,6 +724,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		aomRowMT:            1,
 		svtLP:               4,
 		svtASM:              "neon",
+		timingMode:          timingModeEndToEnd,
 		explicitFlags: map[string]bool{
 			"workdir":          true,
 			"csv":              true,
@@ -734,6 +737,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"summary-csv":      true,
 			"require-summary":  true,
 			"gomaxprocs":       true,
+			"timing-mode":      true,
 			"aom-threads":      true,
 			"aom-row-mt":       true,
 			"svt-lp":           true,
@@ -753,6 +757,13 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	if err := validatePublishConfig(missing, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "-aom-row-mt") {
 		t.Fatalf("missing explicit aom row-mt error=%v", err)
+	}
+
+	coreTiming := cfg
+	coreTiming.timingMode = timingModeCore
+	if err := validatePublishConfig(coreTiming, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-timing-mode e2e") {
+		t.Fatalf("core timing publish error=%v", err)
 	}
 
 	dirty := cfg

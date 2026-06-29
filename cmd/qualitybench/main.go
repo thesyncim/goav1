@@ -34,6 +34,9 @@ const (
 	defaultHeight = 1080
 	defaultFrames = 120
 	defaultFPS    = 60
+
+	timingModeCore     = "core"
+	timingModeEndToEnd = "e2e"
 )
 
 type benchConfig struct {
@@ -52,6 +55,7 @@ type benchConfig struct {
 	metadataPath        string
 	anchorEncoder       string
 	requiredEncodersRaw string
+	timingMode          string
 	encoders            []string
 	bitrates            []int
 	requiredMetrics     []string
@@ -224,6 +228,7 @@ type metadataConfig struct {
 	AOMRowMT         int      `json:"aom_row_mt"`
 	SVTLP            int      `json:"svt_lp"`
 	SVTASM           string   `json:"svt_asm,omitempty"`
+	TimingMode       string   `json:"timing_mode"`
 	Publish          bool     `json:"publish,omitempty"`
 }
 
@@ -494,6 +499,7 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.frameMetricsCSVPath, "frame-metrics-csv", "", "write per-frame decoded PSNR/SSIM diagnostics CSV to this path")
 	flag.StringVar(&cfg.metadataPath, "metadata-json", "", "write reproducibility metadata JSON to this path")
 	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
+	flag.StringVar(&cfg.timingMode, "timing-mode", timingModeCore, "encode timing mode: core or e2e")
 	flag.BoolVar(&cfg.requireSummary, "require-summary", false, "fail if required BD-rate summary rows are missing or invalid")
 	flag.BoolVar(&cfg.requireCorpus, "require-corpus", false, "require a manifest-backed real clip corpus before encoding")
 	flag.BoolVar(&cfg.publish, "publish", false, "require strict reproducibility controls for published benchmark tables")
@@ -562,6 +568,9 @@ func parseFlags() (benchConfig, error) {
 	if cfg.aomRowMT != 0 && cfg.aomRowMT != 1 {
 		return benchConfig{}, fmt.Errorf("invalid aomenc --row-mt value %d: valid values are 0 or 1", cfg.aomRowMT)
 	}
+	if cfg.timingMode != timingModeCore && cfg.timingMode != timingModeEndToEnd {
+		return benchConfig{}, fmt.Errorf("invalid timing mode %q: valid values are core or e2e", cfg.timingMode)
+	}
 	if cfg.svtLP < 0 || cfg.svtLP > 6 {
 		return benchConfig{}, fmt.Errorf("invalid SVT --lp level %d: valid range is 0..6; --lp is a parallelism level, not a thread count", cfg.svtLP)
 	}
@@ -602,6 +611,7 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"summary-csv",
 		"require-summary",
 		"gomaxprocs",
+		"timing-mode",
 	}
 	for _, name := range required {
 		if err := requireExplicitFlag(cfg, name); err != nil {
@@ -613,6 +623,9 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	}
 	if cfg.goMaxProcs <= 0 {
 		return errors.New("publish requires -gomaxprocs > 0")
+	}
+	if cfg.timingMode != timingModeEndToEnd {
+		return errors.New("publish requires -timing-mode e2e")
 	}
 	if !cfg.requireCorpus || cfg.manifestPath == "" || cfg.minClips < 2 {
 		return errors.New("publish requires -require-corpus with -manifest and -min-clips >= 2")
@@ -1574,6 +1587,7 @@ func metadataConfigFor(cfg benchConfig) metadataConfig {
 		AOMRowMT:         cfg.aomRowMT,
 		SVTLP:            cfg.svtLP,
 		SVTASM:           cfg.svtASM,
+		TimingMode:       cfg.timingMode,
 		Publish:          cfg.publish,
 	}
 }
@@ -1652,6 +1666,7 @@ func fairnessNotes(cfg benchConfig) []string {
 	notes := []string{
 		"SVT-AV1 --lp is a documented parallelism level in the range 0..6, not a target processor or thread count; numeric equality with GOMAXPROCS is not treated as equivalent concurrency.",
 		"CSV and metadata include wall seconds, CPU seconds, and observed_parallelism=cpu_total_seconds/encode_wall_seconds so comparisons can be checked against observed CPU budget.",
+		"qualitybench records timing_mode; core mode keeps the historical goav1 per-frame Encode timer, while e2e mode times goav1 setup, encode calls, and decoded-output writes for fairer CLI comparisons.",
 		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or sweep --lp 0..6, then report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
 		"For fair libaom comparisons, set -aom-threads and -aom-row-mt explicitly and report both; qualitybench forwards them to aomenc --threads and --row-mt and records them in metadata.",
 		"SVT-AV1 --asm defaults to max and may use CPU-specific kernels such as neon_dotprod or neon_i8mm; use -svt-asm to pin the assembly tier when comparing against goav1's current SIMD coverage.",
@@ -2093,7 +2108,15 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 			"num_cpu":         strconv.Itoa(runtime.NumCPU()),
 			"simd_tier":       detectedSIMDTier(),
 			"simd_features":   strings.Join(detectedSIMDFeatures(), ","),
+			"timing_mode":     cfg.timingMode,
 		},
+	}
+	var endToEndStart time.Time
+	var endToEndCPUBefore processCPUTimes
+	var endToEndCPUOK bool
+	if cfg.timingMode == timingModeEndToEnd {
+		endToEndStart = time.Now()
+		endToEndCPUBefore, endToEndCPUOK = currentProcessCPUTimes()
 	}
 	out, err := os.Create(result.decodedYUV)
 	if err != nil {
@@ -2139,7 +2162,7 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		encoded, err := enc.Encode(frame, forceKey)
 		frameDuration := time.Since(frameStart)
 		encodeDuration += frameDuration
-		if cpuOK {
+		if cfg.timingMode == timingModeCore && cpuOK {
 			if cpuAfter, ok := currentProcessCPUTimes(); ok {
 				result.cpuUser += nonNegativeDuration(cpuAfter.user - cpuBefore.user)
 				result.cpuSystem += nonNegativeDuration(cpuAfter.system - cpuBefore.system)
@@ -2177,6 +2200,18 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		return result
 	}
 	closed = true
+	if cfg.timingMode == timingModeEndToEnd {
+		result.duration = time.Since(endToEndStart)
+		if endToEndCPUOK {
+			if cpuAfter, ok := currentProcessCPUTimes(); ok {
+				result.cpuUser = nonNegativeDuration(cpuAfter.user - endToEndCPUBefore.user)
+				result.cpuSystem = nonNegativeDuration(cpuAfter.system - endToEndCPUBefore.system)
+				result.cpuAvailable = true
+			}
+		}
+	} else {
+		result.duration = encodeDuration
+	}
 	result.encodedBytes = result.bytes
 	result.encodedSHA256 = hex.EncodeToString(encodedHash.Sum(nil))
 	decodedBytes, decodedHash, err := fileBytesAndSHA256(result.decodedYUV)
@@ -2189,7 +2224,6 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 	if statsEnabled {
 		result.stats = enc.DecisionStats()
 	}
-	result.duration = encodeDuration
 	result.status = "ok"
 	return result
 }

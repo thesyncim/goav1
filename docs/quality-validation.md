@@ -50,6 +50,7 @@ go run ./cmd/qualitybench \
   -require-encoders all \
   -require-metrics xpsnr,vmaf \
   -gomaxprocs 4 \
+  -timing-mode e2e \
   -svt-lp 0 \
   -csv quality.csv -summary-csv quality-summary.csv -require-summary \
   -stats-csv quality-encoder-stats.csv \
@@ -73,10 +74,15 @@ Use `-publish` for rows that will be copied into performance or quality tables.
 Publish mode requires a clean tracked git worktree, explicit `-workdir`, `-csv`,
 `-metadata-json`, `-manifest`, `-require-corpus`, `-min-clips`,
 `-require-encoders all`, `-require-metrics`, `-summary-csv`,
-`-require-summary`, and `-gomaxprocs`. It also requires explicit libaom
-concurrency settings when `aomenc` is selected, explicit SVT parallelism and
-assembly settings when `svt-av1` is selected, and exact raw I420 input byte
-counts for every manifest row.
+`-require-summary`, `-gomaxprocs`, and `-timing-mode e2e`. It also requires
+explicit libaom concurrency settings when `aomenc` is selected, explicit SVT
+parallelism and assembly settings when `svt-av1` is selected, and exact raw
+I420 input byte counts for every manifest row.
+
+`-timing-mode core` preserves the historical goav1 timer that accumulates only
+per-frame `Encode` calls. Use it for local code-path profiling, not for fair
+tables. `-timing-mode e2e` times goav1 setup, encode calls, and decoded-output
+writes, while external rows continue to time the encoder command invocation.
 
 For speed comparisons against SVT-AV1, do not treat numeric concurrency knobs as
 equivalent. `GOMAXPROCS` is a Go scheduler processor cap; SVT-AV1 `--lp` is an
