@@ -9,6 +9,82 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
+func TestRealtimeInterTX16TreeMatchesLibaomNonRDCap(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		w, h       int
+		size       tile.BlockSize
+		wantSplit  [2]uint16
+		wantLeaves int
+	}{
+		{name: "32x16", w: 32, h: 16, size: tile.BlockSize32x16, wantSplit: [2]uint16{1, 0}, wantLeaves: 2},
+		{name: "16x32", w: 16, h: 32, size: tile.BlockSize16x32, wantSplit: [2]uint16{1, 0}, wantLeaves: 2},
+		{name: "32x32", w: 32, h: 32, size: tile.BlockSize32x32, wantSplit: [2]uint16{1, 0}, wantLeaves: 4},
+		{name: "64x64", w: 64, h: 64, size: tile.BlockSize64x64, wantSplit: [2]uint16{1, 0x0033}, wantLeaves: 16},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !realtimeInterTXUses16x16Leaves(tc.w, tc.h) {
+				t.Fatalf("realtimeInterTXUses16x16Leaves(%d,%d)=false", tc.w, tc.h)
+			}
+			tree := realtimeInterTX16Tree(tc.w, tc.h)
+			if tree.Split != tc.wantSplit {
+				t.Fatalf("split=%#v want %#v", tree.Split, tc.wantSplit)
+			}
+			var helperLeaves []tile.TransformBlock
+			if err := forEachRealtimeInterTX16Leaf(tc.w, tc.h, func(i, dx, dy int) error {
+				if dx%16 != 0 || dy%16 != 0 {
+					t.Fatalf("leaf %d offset=(%d,%d) not 16-aligned", i, dx, dy)
+				}
+				helperLeaves = append(helperLeaves, tile.TransformBlock{
+					X4:        uint8(dx / 4),
+					Y4:        uint8(dy / 4),
+					Size:      tile.TransformSize16x16,
+					VisibleW4: 4,
+					VisibleH4: 4,
+				})
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if len(helperLeaves) != tc.wantLeaves {
+				t.Fatalf("helper leaves=%d want %d", len(helperLeaves), tc.wantLeaves)
+			}
+
+			maxY, err := tile.MaxTransformSize(tc.size, parser.ColorConfig{}, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tree.Y = maxY
+			tree.Variable = true
+			var replayLeaves []tile.TransformBlock
+			err = tree.ForEachLumaTXB(tile.TransformTreeRequest{
+				Size:          tc.size,
+				VisibleW4:     uint8(tc.w / 4),
+				VisibleH4:     uint8(tc.h / 4),
+				TransformMode: parser.TransformModeSwitchable,
+				Inter:         true,
+			}, func(block tile.TransformBlock) error {
+				replayLeaves = append(replayLeaves, block)
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(replayLeaves) != tc.wantLeaves {
+				t.Fatalf("replay leaves=%d got=%+v want %d", len(replayLeaves), replayLeaves, tc.wantLeaves)
+			}
+			for i, leaf := range replayLeaves {
+				if leaf.Size != tile.TransformSize16x16 || leaf.VisibleW4 != 4 || leaf.VisibleH4 != 4 {
+					t.Fatalf("leaf[%d]=%+v want visible 16x16", i, leaf)
+				}
+				if leaf != helperLeaves[i] {
+					t.Fatalf("leaf[%d]=%+v helper %+v", i, leaf, helperLeaves[i])
+				}
+			}
+		})
+	}
+}
+
 func TestEncodePBlockCompoundLastGolden8x8(t *testing.T) {
 	const w, h = 16, 16
 	solid := func(y, u, v byte) SourceFrame420 {

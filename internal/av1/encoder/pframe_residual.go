@@ -1427,19 +1427,22 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// way, so this cannot affect parity).
 	skip := fullSAD*4 <= bw*bh
 	splitTX := false
+	realtimeTX16 := videoColorIs420(st.color) && realtimeInterTXUses16x16Leaves(bw, bh)
 	dctRdD := int64(0)
 	if !skip {
 		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
 		var lumaZero bool
-		if bw == 64 {
-			// No 64-point transform in the coder: the luma residual always
-			// codes as a one-level split into four 32x32 quadrant TXBs.
+		if realtimeTX16 {
+			// libaom realtime nonrd_pickmode.c calculate_tx_size() caps luma
+			// inter transform leaves at TX_16X16 for these block shapes.
 			lumaZero = true
-			for i := range 4 {
-				dy, dx := (i>>1)*32, (i&1)*32
-				if !st.prepareInterTXB(src.Y, st.predY[dy*64+dx:], 64, src.YStride, lumaPX+dx, lumaPY+dy, 32, 32, st.yQuant, st.lumaQ2[i*1024:(i+1)*1024]) {
+			if err := forEachRealtimeInterTX16Leaf(bw, bh, func(i, dx, dy int) error {
+				if !st.prepareInterTXB(src.Y, st.predY[dy*bw+dx:], bw, src.YStride, lumaPX+dx, lumaPY+dy, 16, 16, st.yQuant, st.lumaQ2[i*256:(i+1)*256]) {
 					lumaZero = false
 				}
+				return nil
+			}); err != nil {
+				return fmt.Errorf("prepare realtime tx16 luma: %w", err)
 			}
 		} else {
 			lumaZero = st.prepareInterTXB(src.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
@@ -1462,7 +1465,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 				skip = true
 			}
 		}
-		if !skip && bw == 64 {
+		if !skip && realtimeTX16 {
 			splitTX = true
 		}
 		if !skip && bw == 8 && bh == 8 && !lumaZero {
@@ -1611,7 +1614,11 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// one split decision per node.
 	var treeRes tile.TransformTreeResult
 	if splitTX {
-		treeRes.Split[0] = 1
+		if realtimeTX16 {
+			treeRes = realtimeInterTX16Tree(bw, bh)
+		} else {
+			treeRes.Split[0] = 1
+		}
 	}
 	lfTree, err := tile.WriteTransformTree(st.w, &st.treeCDFs, modeCtx, tile.TransformTreeRequest{
 		Size: block.Size, X4: block.X4, Y4: block.Y4,
@@ -1660,7 +1667,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		return nil
 	}
 
-	// Residual: largest-TX luma with the inter tx_type symbol, then chroma.
+	// Residual: luma with source-shaped realtime TX partitioning, then chroma.
 	lumaTX, lumaScan := tile.TransformSize8x8, st.scan8
 	switch {
 	case bw == 16 && bh == 16:
@@ -1690,30 +1697,44 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 	}
 	if splitTX {
-		// The quadrant TXBs replay in the decoder's recursive order, which
-		// is raster for a square one-level split.
-		childTX, childScan := tile.TransformSize4x4, st.scan4
-		switch n {
-		case 16:
-			childTX, childScan = tile.TransformSize8x8, st.scan8
-		case 32:
-			childTX, childScan = tile.TransformSize16x16, st.scan16
-		case 64:
-			childTX, childScan = tile.TransformSize32x32, st.scan32
-		}
-		st.interTxTypeReq.Size = childTX
-		st.interTxType = transform.TypeDCTDCT
-		cN := n / 2
-		for i := range 4 {
-			dy, dx := (i>>1)*cN, (i&1)*cN
-			if err := st.finishInterTXB(recon.Y, st.predY[dy*n+dx:], n, src.YStride, lumaPX+dx, lumaPY+dy, cN, cN, st.yQuant, st.lumaQ2[i*cN*cN:(i+1)*cN*cN], tile.CoeffContextRequest{
-				Plane:      0,
-				PlaneBlock: block.Size,
-				Size:       childTX,
-				X4:         block.X4 + uint8(dx/4),
-				Y4:         block.Y4 + uint8(dy/4),
-			}, coeffCtx, childScan, st.afterSkipInter); err != nil {
-				return fmt.Errorf("luma child txb %d: %w", i, err)
+		if realtimeTX16 {
+			st.interTxTypeReq.Size = tile.TransformSize16x16
+			st.interTxType = transform.TypeDCTDCT
+			if err := forEachRealtimeInterTX16Leaf(bw, bh, func(i, dx, dy int) error {
+				return st.finishInterTXB(recon.Y, st.predY[dy*bw+dx:], bw, src.YStride, lumaPX+dx, lumaPY+dy, 16, 16, st.yQuant, st.lumaQ2[i*256:(i+1)*256], tile.CoeffContextRequest{
+					Plane:      0,
+					PlaneBlock: block.Size,
+					Size:       tile.TransformSize16x16,
+					X4:         block.X4 + uint8(dx/4),
+					Y4:         block.Y4 + uint8(dy/4),
+				}, coeffCtx, st.scan16, st.afterSkipInter)
+			}); err != nil {
+				return fmt.Errorf("luma realtime tx16: %w", err)
+			}
+		} else {
+			// The quadrant TXBs replay in the decoder's recursive order,
+			// which is raster for a square one-level split.
+			childTX, childScan := tile.TransformSize4x4, st.scan4
+			switch n {
+			case 16:
+				childTX, childScan = tile.TransformSize8x8, st.scan8
+			case 32:
+				childTX, childScan = tile.TransformSize16x16, st.scan16
+			}
+			st.interTxTypeReq.Size = childTX
+			st.interTxType = transform.TypeDCTDCT
+			cN := n / 2
+			for i := range 4 {
+				dy, dx := (i>>1)*cN, (i&1)*cN
+				if err := st.finishInterTXB(recon.Y, st.predY[dy*n+dx:], n, src.YStride, lumaPX+dx, lumaPY+dy, cN, cN, st.yQuant, st.lumaQ2[i*cN*cN:(i+1)*cN*cN], tile.CoeffContextRequest{
+					Plane:      0,
+					PlaneBlock: block.Size,
+					Size:       childTX,
+					X4:         block.X4 + uint8(dx/4),
+					Y4:         block.Y4 + uint8(dy/4),
+				}, coeffCtx, childScan, st.afterSkipInter); err != nil {
+					return fmt.Errorf("luma child txb %d: %w", i, err)
+				}
 			}
 		}
 	} else {
@@ -2340,6 +2361,80 @@ func txScaleForSize(n int) uint8 {
 		return 1
 	}
 	return 0
+}
+
+// realtimeInterTXUses16x16Leaves mirrors libaom's realtime nonrd transform cap:
+// av1/encoder/nonrd_pickmode.c calculate_tx_size() returns at most TX_16X16,
+// and CAP_TX_SIZE_FOR_BSIZE_GT32 forces TX_16X16 for blocks larger than 32x32.
+func realtimeInterTXUses16x16Leaves(w, h int) bool {
+	return w > 16 || h > 16
+}
+
+// realtimeInterTX16Tree returns the var-tx split masks needed to express the
+// libaom realtime TX_16X16 cap in AV1's MAX_VARTX_DEPTH=2 tree. Split mask bits
+// use dav1d/libaom tx_split0/tx_split1 order: bit y_off*4+x_off.
+func realtimeInterTX16Tree(w, h int) tile.TransformTreeResult {
+	var tree tile.TransformTreeResult
+	if !realtimeInterTXUses16x16Leaves(w, h) {
+		return tree
+	}
+	tree.Split[0] = 1
+	if w <= 32 && h <= 32 {
+		return tree
+	}
+	for dy := 0; dy < h; dy += 32 {
+		for dx := 0; dx < w; dx += 32 {
+			tree.Split[1] |= 1 << ((dy/32)*4 + dx/32)
+		}
+	}
+	return tree
+}
+
+func forEachRealtimeInterTX16Leaf(w, h int, visit func(i, dx, dy int) error) error {
+	if visit == nil || w < 16 || h < 16 || w%16 != 0 || h%16 != 0 || w > 64 || h > 64 {
+		return fmt.Errorf("encoder: invalid realtime tx16 block %dx%d", w, h)
+	}
+	i := 0
+	return walkRealtimeInterTX16Leaf(w, h, 0, 0, &i, visit)
+}
+
+func walkRealtimeInterTX16Leaf(w, h int, x, y int, i *int, visit func(i, dx, dy int) error) error {
+	if w == 16 && h == 16 {
+		if err := visit(*i, x, y); err != nil {
+			return err
+		}
+		(*i)++
+		return nil
+	}
+	subW, subH := w, h
+	if w >= h {
+		subW = w / 2
+	}
+	if h >= w {
+		subH = h / 2
+	}
+	if subW < 16 || subH < 16 {
+		return fmt.Errorf("encoder: invalid realtime tx16 split %dx%d", w, h)
+	}
+	if err := walkRealtimeInterTX16Leaf(subW, subH, x, y, i, visit); err != nil {
+		return err
+	}
+	if w >= h {
+		if err := walkRealtimeInterTX16Leaf(subW, subH, x+subW, y, i, visit); err != nil {
+			return err
+		}
+	}
+	if h >= w {
+		if err := walkRealtimeInterTX16Leaf(subW, subH, x, y+subH, i, visit); err != nil {
+			return err
+		}
+		if w >= h {
+			if err := walkRealtimeInterTX16Leaf(subW, subH, x+subW, y+subH, i, visit); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // sadBlock is the generic n x n SAD with the 8x8 kernel fast path; limit is
