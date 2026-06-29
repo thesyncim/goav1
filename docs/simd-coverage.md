@@ -130,8 +130,10 @@ use the generated corpus lane for steady-state decoder claims.
 
 The generated decoder corpus is the fairer steady-state surface. Current corpus
 generation writes `manifest.tsv` with source, tool, IVF, and MD5 hashes; publish
-decoder rows should cite that manifest. With 18 local generated clips / 864
-frames, single-thread full decode plus postfilter measured:
+decoder rows should cite that manifest and come from `make bench-corpus-publish`
+so missing `aomdec`, `dav1d`, or `SvtAv1DecApp` binaries fail before timing
+starts. With 18 local generated clips / 864 frames, single-thread full decode
+plus postfilter measured:
 
 | Decoder | Frames | Raw FPS | Adjusted FPS | Raw speed vs goav1 |
 | --- | ---: | ---: | ---: | ---: |

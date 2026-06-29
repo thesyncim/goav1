@@ -24,6 +24,12 @@ package testvector
 // gracefully when the corpus directory is absent, so a plain `go test` (or this
 // test without GOAV1_BENCH_CORPUS=1) is unaffected.
 //
+// Set GOAV1_BENCH_CORPUS_PUBLISH=1 for any row copied into a performance
+// table. Publish mode requires every registered external reference decoder to
+// resolve, so a missing dav1d/aomdec/SVT binary cannot silently remove a
+// competitor column. GOAV1_BENCH_CORPUS_REQUIRE_DECODERS can require a named
+// comma-separated subset (or "all") for local audits.
+//
 // METHODOLOGY (mirrors cross_decoder_bench_test.go)
 //
 //   - SAME WORK. goav1 runs the FULL decode INCLUDING the post-filter chain
@@ -107,6 +113,12 @@ type corpusOracleKind uint8
 const (
 	corpusOracleStreamMD5 corpusOracleKind = iota + 1
 	corpusOracleFrameMD5
+)
+
+const (
+	envBenchCorpus                = "GOAV1_BENCH_CORPUS"
+	envBenchCorpusPublish         = "GOAV1_BENCH_CORPUS_PUBLISH"
+	envBenchCorpusRequireDecoders = "GOAV1_BENCH_CORPUS_REQUIRE_DECODERS"
 )
 
 type corpusOracleSidecar struct {
@@ -1115,6 +1127,97 @@ func TestParseCorpusOracleSidecar(t *testing.T) {
 	}
 }
 
+func TestCorpusRequiredExternalDecoderNames(t *testing.T) {
+	decoders := []externalDecoder{
+		{name: "aomdec"},
+		{name: "dav1d"},
+		{name: "SvtAv1DecApp"},
+	}
+	for _, tc := range []struct {
+		name    string
+		publish bool
+		raw     string
+		want    []string
+		wantErr bool
+	}{
+		{
+			name: "local run requires none",
+		},
+		{
+			name:    "publish requires all",
+			publish: true,
+			want:    []string{"aomdec", "dav1d", "SvtAv1DecApp"},
+		},
+		{
+			name:    "publish cannot be narrowed",
+			publish: true,
+			raw:     "dav1d",
+			want:    []string{"aomdec", "dav1d", "SvtAv1DecApp"},
+		},
+		{
+			name: "explicit subset is case insensitive",
+			raw:  "DAV1D, svtav1decapp",
+			want: []string{"dav1d", "SvtAv1DecApp"},
+		},
+		{
+			name: "explicit all",
+			raw:  "all",
+			want: []string{"aomdec", "dav1d", "SvtAv1DecApp"},
+		},
+		{
+			name:    "unknown decoder fails",
+			raw:     "dav1d,missingdec",
+			wantErr: true,
+		},
+		{
+			name:    "empty explicit list fails",
+			raw:     " , ; ",
+			wantErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := corpusRequiredExternalDecoderNames(decoders, tc.publish, tc.raw)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("corpusRequiredExternalDecoderNames: %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("required len=%d want %d (%v)", len(got), len(tc.want), got)
+			}
+			for _, name := range tc.want {
+				if !got[name] {
+					t.Fatalf("required[%q]=false want true (%v)", name, got)
+				}
+			}
+		})
+	}
+}
+
+func TestResolveCorpusExternalDecodersRequiresMissing(t *testing.T) {
+	decoders := []externalDecoder{
+		{name: "aomdec"},
+		{name: "dav1d"},
+	}
+	required := map[string]bool{"aomdec": true}
+	resolved, missing := resolveCorpusExternalDecoders(decoders, required, func(dec externalDecoder) (string, bool) {
+		if dec.name == "dav1d" {
+			return "/reference/dav1d", true
+		}
+		return "", false
+	})
+	if len(missing) != 1 || missing[0] != "aomdec" {
+		t.Fatalf("missing=%v want [aomdec]", missing)
+	}
+	if len(resolved) != 1 || resolved[0].decoder.name != "dav1d" || resolved[0].bin != "/reference/dav1d" {
+		t.Fatalf("resolved=%v want dav1d", resolved)
+	}
+}
+
 func TestExternalCorpusFrameMD5SidecarSmoke(t *testing.T) {
 	src := filepath.Join("testdata", "profiles", "profile1-444-8bit-64x64.ivf")
 	data, err := os.ReadFile(src)
@@ -1317,12 +1420,95 @@ func externalCorpusClipName(root, path string) string {
 	return prefix + "/" + rel
 }
 
+type resolvedCorpusExternalDecoder struct {
+	decoder externalDecoder
+	bin     string
+}
+
+func corpusRequiredExternalDecoderNames(decoders []externalDecoder, publish bool, raw string) (map[string]bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" && !publish {
+		return nil, nil
+	}
+
+	names := make([]string, 0, len(decoders))
+	known := make(map[string]string, len(decoders))
+	for _, dec := range decoders {
+		names = append(names, dec.name)
+		known[strings.ToLower(dec.name)] = dec.name
+	}
+	sortedNames := append([]string(nil), names...)
+	sort.Strings(sortedNames)
+
+	required := make(map[string]bool, len(decoders))
+	requireAll := publish
+	for _, token := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	}) {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		if strings.EqualFold(token, "all") {
+			requireAll = true
+			continue
+		}
+		name, ok := known[strings.ToLower(token)]
+		if !ok {
+			return nil, fmt.Errorf("unknown external decoder %q in %s (known: %s, all)",
+				token, envBenchCorpusRequireDecoders, strings.Join(sortedNames, ", "))
+		}
+		required[name] = true
+	}
+	if requireAll {
+		for _, name := range names {
+			required[name] = true
+		}
+	}
+	if raw != "" && len(required) == 0 {
+		return nil, fmt.Errorf("%s did not name any external decoders", envBenchCorpusRequireDecoders)
+	}
+	return required, nil
+}
+
+func resolveCorpusExternalDecoders(decoders []externalDecoder, required map[string]bool, resolve func(externalDecoder) (string, bool)) (resolved []resolvedCorpusExternalDecoder, missing []string) {
+	for _, dec := range decoders {
+		bin, ok := resolve(dec)
+		if !ok {
+			if required[dec.name] {
+				missing = append(missing, dec.name)
+			}
+			continue
+		}
+		resolved = append(resolved, resolvedCorpusExternalDecoder{decoder: dec, bin: bin})
+	}
+	return resolved, missing
+}
+
+func corpusExternalDecoderLookupSummary(decoders []externalDecoder, names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	need := make(map[string]bool, len(names))
+	for _, name := range names {
+		need[name] = true
+	}
+	var parts []string
+	for _, dec := range decoders {
+		if !need[dec.name] {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=[%s]", dec.name, strings.Join(dec.lookups, ", ")))
+	}
+	return strings.Join(parts, "; ")
+}
+
 // TestCrossDecoderCorpus is the multi-config steady-state throughput benchmark.
 // It requires the goav1_oracle build tag AND GOAV1_BENCH_CORPUS=1, and the
 // generated corpus on disk (scripts/gen_bench_corpus.sh). It is skipped
 // otherwise so plain test runs are unaffected.
 func TestCrossDecoderCorpus(t *testing.T) {
-	if os.Getenv("GOAV1_BENCH_CORPUS") != "1" {
+	if os.Getenv(envBenchCorpus) != "1" {
 		t.Skip("set GOAV1_BENCH_CORPUS=1 (with the generated corpus) to run the multi-config cross-decoder throughput benchmark")
 	}
 	dir, ok := corpusDir(t)
@@ -1346,6 +1532,28 @@ func TestCrossDecoderCorpus(t *testing.T) {
 	}
 	if len(clips) == 0 {
 		t.Skip("cross-corpus: no usable clips")
+	}
+
+	decoders := crossBenchExternalDecoders()
+	requiredDecoders, err := corpusRequiredExternalDecoderNames(decoders, os.Getenv(envBenchCorpusPublish) == "1", os.Getenv(envBenchCorpusRequireDecoders))
+	if err != nil {
+		t.Fatalf("cross-corpus: %v", err)
+	}
+	resolvedExternal, missingExternal := resolveCorpusExternalDecoders(decoders, requiredDecoders, func(dec externalDecoder) (string, bool) {
+		return dec.resolveBinary()
+	})
+	if len(missingExternal) > 0 {
+		t.Fatalf("cross-corpus: required external decoder(s) not found on PATH: %s (lookups: %s)",
+			strings.Join(missingExternal, ", "), corpusExternalDecoderLookupSummary(decoders, missingExternal))
+	}
+	resolvedNames := make(map[string]bool, len(resolvedExternal))
+	for _, resolved := range resolvedExternal {
+		resolvedNames[resolved.decoder.name] = true
+	}
+	for _, dec := range decoders {
+		if !resolvedNames[dec.name] && !requiredDecoders[dec.name] {
+			t.Logf("cross-corpus: %s not found on PATH -- skipping", dec.name)
+		}
 	}
 
 	// ----- goav1 (in-process, full decode + post-filter, MD5-verified) -----
@@ -1372,12 +1580,9 @@ func TestCrossDecoderCorpus(t *testing.T) {
 	results := []decoderResult{goav1}
 
 	// ----- external reference decoders -----
-	for _, dec := range crossBenchExternalDecoders() {
-		bin, ok := dec.resolveBinary()
-		if !ok {
-			t.Logf("cross-corpus: %s not found on PATH — skipping", dec.name)
-			continue
-		}
+	for _, resolved := range resolvedExternal {
+		dec := resolved.decoder
+		bin := resolved.bin
 		t.Logf("cross-corpus: %s resolved to %s", dec.name, bin)
 
 		startup, err := minDuration(1, crossBenchRuns, func() error {
@@ -1396,7 +1601,10 @@ func TestCrossDecoderCorpus(t *testing.T) {
 				return runExternal(bin, dec.decodeArgs(bin, clip.ivfPath))
 			})
 			if err != nil {
-				t.Logf("cross-corpus: %s failed to decode %s (%v) — excluding decoder", dec.name, clip.name, err)
+				if requiredDecoders[dec.name] {
+					t.Fatalf("cross-corpus: required decoder %s failed to decode %s (%v)", dec.name, clip.name, err)
+				}
+				t.Logf("cross-corpus: %s failed to decode %s (%v) -- excluding decoder", dec.name, clip.name, err)
 				usable = false
 				break
 			}

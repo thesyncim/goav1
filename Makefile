@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference webrtc-browser webrtc-production dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
+.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference webrtc-browser webrtc-production dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -37,6 +37,12 @@ bench-public:
 # can reach the oracle decode helper.
 bench-cross:
 	GOAV1_CROSS_BENCH=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle -run TestCrossDecoderThroughput ./internal/av1/testvector -v -count=1 -timeout 600s
+
+bench-corpus:
+	GOAV1_BENCH_CORPUS=1 go test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
+
+bench-corpus-publish:
+	GOAV1_BENCH_CORPUS=1 GOAV1_BENCH_CORPUS_PUBLISH=1 go test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
 
 gc-metrics:
 	GODEBUG=gctrace=1 go test -run '^$$' -bench='BenchmarkDecode.*GCMetrics|BenchmarkDecodeFullVectorAllocs' -benchmem -count=$(GCMETRICS_COUNT) .
@@ -339,6 +345,8 @@ help:
 	@echo "  bench-all                  full microbenchmark sweep across every package"
 	@echo "  bench-public               run public benchmarks"
 	@echo "  bench-cross                goav1 vs aomdec/dav1d/SVT throughput (perf tool, startup-aware)"
+	@echo "  bench-corpus               generated corpus goav1 vs reference decoder throughput"
+	@echo "  bench-corpus-publish       strict generated corpus throughput requiring all reference decoders"
 	@echo "  gc-metrics                 decode GC scan/object-count benchmarks"
 	@echo "  compiler-reports           fail on new hot-package heap escapes; report BCE sites"
 	@echo "  alloc                      run allocation regression checks"

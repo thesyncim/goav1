@@ -459,14 +459,17 @@ For the longer steady-state corpus comparison:
 
 ```sh
 scripts/gen_bench_corpus.sh
-GOAV1_BENCH_CORPUS=1 go test -tags goav1_oracle \
-    -run TestCrossDecoderCorpus \
-    -timeout 30m ./internal/av1/testvector -v -count=1
+make bench-corpus-publish
 ```
 
 The generator pins aomenc `--threads` and `--row-mt`, expects 25 clips, and
 writes `manifest.tsv` with source, tool, IVF, and MD5 hashes next to the local
 ignored corpus.
+
+`bench-corpus-publish` enables `GOAV1_BENCH_CORPUS_PUBLISH=1`, which requires
+every registered reference decoder (`aomdec`, `dav1d`, and `SvtAv1DecApp`) to
+resolve before timing starts. Use `make bench-corpus` only for exploratory local
+runs where missing decoder columns are acceptable.
 
 That report prints per-clip and aggregate fps, raw and startup-adjusted external
 decoder timings, and the goav1/dav1d ratio that should drive optimization work.
