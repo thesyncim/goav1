@@ -672,6 +672,103 @@ func TestSubpelRefineMatchesLibaomTreeReference(t *testing.T) {
 	}
 }
 
+func TestSubpelLibaomTreeCandidateDeltaBound(t *testing.T) {
+	quarterDeltas := enumerateSubpelLibaomTreeCandidateDeltas(realtimeSubpelStopQuarter)
+	if got, want := maxAbsSubpelDelta(quarterDeltas), int16(12); got != want {
+		t.Fatalf("quarter-pel candidate bound=%d want %d", got, want)
+	}
+	for _, want := range []motion.Vector{
+		{Row: 12, Col: 12},
+		{Row: -12, Col: 12},
+		{Row: 12, Col: -12},
+		{Row: -12, Col: -12},
+	} {
+		if _, ok := quarterDeltas[want]; !ok {
+			t.Fatalf("quarter-pel candidates missing boundary delta %+v", want)
+		}
+	}
+
+	halfDeltas := enumerateSubpelLibaomTreeCandidateDeltas(realtimeSubpelStopHalf)
+	if got, want := maxAbsSubpelDelta(halfDeltas), int16(8); got != want {
+		t.Fatalf("half-pel candidate bound=%d want %d", got, want)
+	}
+}
+
+func enumerateSubpelLibaomTreeCandidateDeltas(stop realtimeSubpelStop) map[motion.Vector]struct{} {
+	centers := map[motion.Vector]struct{}{{}: {}}
+	checked := make(map[motion.Vector]struct{})
+	for step := int16(4); ; step >>= 1 {
+		nextCenters := make(map[motion.Vector]struct{})
+		for center := range centers {
+			for _, diag := range []motion.Vector{
+				{Row: step, Col: step},
+				{Row: step, Col: -step},
+				{Row: -step, Col: step},
+				{Row: -step, Col: -step},
+			} {
+				firstLevel := []motion.Vector{
+					{Row: center.Row, Col: center.Col - step},
+					{Row: center.Row, Col: center.Col + step},
+					{Row: center.Row - step, Col: center.Col},
+					{Row: center.Row + step, Col: center.Col},
+					{Row: center.Row + diag.Row, Col: center.Col + diag.Col},
+				}
+				for _, cand := range firstLevel {
+					checked[cand] = struct{}{}
+				}
+				bestOptions := append([]motion.Vector{center}, firstLevel...)
+				for _, best := range bestOptions {
+					if best == center {
+						nextCenters[best] = struct{}{}
+						continue
+					}
+					nextCenters[best] = struct{}{}
+					secondDiag := diag
+					if center.Row == best.Row {
+						secondDiag.Row *= -1
+					} else if center.Col == best.Col {
+						secondDiag.Col *= -1
+					}
+					rowBias := motion.Vector{Row: best.Row + secondDiag.Row, Col: best.Col}
+					colBias := motion.Vector{Row: best.Row, Col: best.Col + secondDiag.Col}
+					diagBias := motion.Vector{Row: best.Row + secondDiag.Row, Col: best.Col + secondDiag.Col}
+					checked[rowBias] = struct{}{}
+					checked[colBias] = struct{}{}
+					checked[diagBias] = struct{}{}
+					nextCenters[rowBias] = struct{}{}
+					nextCenters[colBias] = struct{}{}
+					nextCenters[diagBias] = struct{}{}
+				}
+			}
+		}
+		if stop == realtimeSubpelStopHalf || step == 2 {
+			break
+		}
+		centers = nextCenters
+	}
+	return checked
+}
+
+func maxAbsSubpelDelta(deltas map[motion.Vector]struct{}) int16 {
+	var maxDelta int16
+	for delta := range deltas {
+		if v := absInt16(delta.Row); v > maxDelta {
+			maxDelta = v
+		}
+		if v := absInt16(delta.Col); v > maxDelta {
+			maxDelta = v
+		}
+	}
+	return maxDelta
+}
+
+func absInt16(v int16) int16 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 func (st *lossyEncodeState) subpelRefineReference(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int, stop realtimeSubpelStop) (motion.Vector, int) {
 	if stop == realtimeSubpelStopFull {
 		return mv, bestSAD

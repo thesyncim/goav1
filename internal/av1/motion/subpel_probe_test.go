@@ -26,6 +26,8 @@ func TestLumaSubpelProberMatchesRegularPredictor(t *testing.T) {
 		{Row: 4, Col: 4},
 		{Row: -6, Col: 2},
 		{Row: 8, Col: -8},
+		{Row: 10, Col: -12},
+		{Row: -12, Col: 12},
 	}
 
 	for _, n := range []int{4, 8, 16, 32} {
@@ -82,6 +84,8 @@ func TestLumaSubpelProberMatchesRegularPredictorAtEdges(t *testing.T) {
 		{Row: 4, Col: 4},
 		{Row: -6, Col: 2},
 		{Row: 8, Col: -8},
+		{Row: 10, Col: -12},
+		{Row: -12, Col: 12},
 	}
 
 	for _, n := range []int{4, 8, 16, 32} {
@@ -206,6 +210,59 @@ func BenchmarkLumaSubpelProberPredictEdgeFallback(b *testing.B) {
 		{Row: 4, Col: 0},
 		{Row: 4, Col: 4},
 		{Row: -6, Col: 2},
+	}
+
+	for _, n := range []int{8, 16, 32} {
+		name := "8x8"
+		if n == 16 {
+			name = "16x16"
+		} else if n == 32 {
+			name = "32x32"
+		}
+		b.Run(name, func(b *testing.B) {
+			var prober LumaSubpelProber
+			prober.Init(refPlane, ox, oy, n)
+			dst := make([]byte, n*n)
+			dstPlane := frame.Plane{Pix: dst, Stride: n, Width: n, Height: n}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				delta := deltas[i&3]
+				if !predictSubpelForSize(&prober, dst, n, delta) {
+					posX := int64(ox)*16 + int64(delta.Col)*2
+					posY := int64(oy)*16 + int64(delta.Row)*2
+					refX := int(posX >> 4)
+					refY := int(posY >> 4)
+					subX := int(posX & 15)
+					subY := int(posY & 15)
+					if err := PredictInterPlaneBlockFromOriginWithFilter(dstPlane, refPlane, 1, 0, 0, refX, refY, n, n, subX, subY, RegularFilters); err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+			subpelProbeSink = dst[(b.N-1)&(len(dst)-1)]
+		})
+	}
+}
+
+func BenchmarkLumaSubpelProberPredictWideDeltaFallback(b *testing.B) {
+	const (
+		width  = 192
+		height = 192
+		stride = 208
+		ox     = 64
+		oy     = 64
+	)
+	ref := make([]byte, stride*height)
+	for i := range ref {
+		ref[i] = byte((i*37 + i/stride*11) & 0xff)
+	}
+	refPlane := frame.Plane{Pix: ref, Stride: stride, Width: width, Height: height}
+	deltas := [...]Vector{
+		{Row: 12, Col: 12},
+		{Row: -12, Col: 10},
+		{Row: 10, Col: -12},
+		{Row: -10, Col: -10},
 	}
 
 	for _, n := range []int{8, 16, 32} {

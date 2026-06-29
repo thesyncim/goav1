@@ -19,26 +19,37 @@ type LumaSubpelProber struct {
 	scratch      ConvolveScratch
 }
 
+const (
+	// Libaom av1_find_best_sub_pixel_tree starts with hstep=4, then for the
+	// realtime low-precision path runs the hstep=2 quarter-pel round. Its
+	// first-level plus second_level_check_v2 pattern can probe up to 8 eighth-pel
+	// units from the full-pel start in the half-pel round, then another 4 in the
+	// quarter-pel round.
+	lumaSubpelProbeDeltaLimit  int16 = 12
+	lumaSubpelProbeMinRefPixel       = -2
+	lumaSubpelProbeMaxRefPixel       = 1
+)
+
 // Init prepares probes around the full-pel origin (ox, oy) of the reference
 // plane, reusing the prober's convolve scratch across blocks. Validity covers
-// every delta within one pixel plus the eight-tap support; Predict reports
-// false outside that.
+// every low-precision libaom-tree delta plus the eight-tap support; Predict
+// reports false outside that.
 func (p *LumaSubpelProber) Init(ref frame.Plane, ox, oy, n int) {
 	const fo = filterTaps/2 - 1
 	p.ref, p.ox, p.oy, p.n = ref, ox, oy, n
 	p.clampedValid = n > 0 && n <= maxBlockSize &&
 		planeRegionFits(ref, 1, 0, 0, ref.Width, ref.Height)
 	p.valid = p.clampedValid &&
-		ox-1-fo >= 0 && oy-1-fo >= 0 &&
-		ox+1+n+fo+1 <= ref.Width && oy+1+n+fo+1 <= ref.Height
+		ox+lumaSubpelProbeMinRefPixel-fo >= 0 && oy+lumaSubpelProbeMinRefPixel-fo >= 0 &&
+		ox+lumaSubpelProbeMaxRefPixel+n+fo+1 <= ref.Width && oy+lumaSubpelProbeMaxRefPixel+n+fo+1 <= ref.Height
 }
 
 // Predict fills dst (stride n) with the EIGHTTAP prediction for the probe at
-// delta (1/8-pel units, within +-8 of the origin) and reports whether the
-// fast path covered it; callers fall back to the validated predictor when it
-// returns false.
+// delta (1/8-pel units, within the source-shaped low-precision libaom tree
+// range) and reports whether the fast path covered it; callers fall back to
+// the validated predictor when it returns false.
 func (p *LumaSubpelProber) Predict(dst []byte, delta Vector) bool {
-	if !p.clampedValid || delta.Col < -8 || delta.Col > 8 || delta.Row < -8 || delta.Row > 8 {
+	if !p.clampedValid || !lumaSubpelProbeDeltaInRange(delta) {
 		return false
 	}
 	// referenceOriginQ4 semantics at luma scale: position in Q4 units.
@@ -87,7 +98,7 @@ func (p *LumaSubpelProber) Predict(dst []byte, delta Vector) bool {
 
 func (p *LumaSubpelProber) Predict8x8(dst []byte, delta Vector) bool {
 	const n = 8
-	if !p.clampedValid || p.n != n || delta.Col < -8 || delta.Col > 8 || delta.Row < -8 || delta.Row > 8 {
+	if !p.clampedValid || p.n != n || !lumaSubpelProbeDeltaInRange(delta) {
 		return false
 	}
 	posX := int64(p.ox)*16 + int64(delta.Col)*2
@@ -129,7 +140,7 @@ func (p *LumaSubpelProber) Predict8x8(dst []byte, delta Vector) bool {
 
 func (p *LumaSubpelProber) Predict16x16(dst []byte, delta Vector) bool {
 	const n = 16
-	if !p.clampedValid || p.n != n || delta.Col < -8 || delta.Col > 8 || delta.Row < -8 || delta.Row > 8 {
+	if !p.clampedValid || p.n != n || !lumaSubpelProbeDeltaInRange(delta) {
 		return false
 	}
 	posX := int64(p.ox)*16 + int64(delta.Col)*2
@@ -171,7 +182,7 @@ func (p *LumaSubpelProber) Predict16x16(dst []byte, delta Vector) bool {
 
 func (p *LumaSubpelProber) Predict32x32(dst []byte, delta Vector) bool {
 	const n = 32
-	if !p.clampedValid || p.n != n || delta.Col < -8 || delta.Col > 8 || delta.Row < -8 || delta.Row > 8 {
+	if !p.clampedValid || p.n != n || !lumaSubpelProbeDeltaInRange(delta) {
 		return false
 	}
 	posX := int64(p.ox)*16 + int64(delta.Col)*2
@@ -216,4 +227,11 @@ func regularSubpelKernel(blockSize int, subpelQ4 int) [filterTaps]int16 {
 		return subpelFilters4[subpelQ4]
 	}
 	return subpelFilters8[subpelQ4]
+}
+
+func lumaSubpelProbeDeltaInRange(delta Vector) bool {
+	return delta.Col >= -lumaSubpelProbeDeltaLimit &&
+		delta.Col <= lumaSubpelProbeDeltaLimit &&
+		delta.Row >= -lumaSubpelProbeDeltaLimit &&
+		delta.Row <= lumaSubpelProbeDeltaLimit
 }
