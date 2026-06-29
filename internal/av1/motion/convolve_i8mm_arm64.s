@@ -667,6 +667,91 @@ ct2dVColLoop:
 ct2dVDone:
 	RET
 
+// func compound2D4TapW4I8MMAsm(ctx *compound2D8I8MMCtx)
+//
+// Resident width-4 lowbd compound 2D convolve. The horizontal pass mirrors
+// SVT's convolve_2d_sr_horiz_4tap_neon_i8mm W4 path over the local small-block
+// 4-tap kernels; the vertical pass writes CONV_BUF precision.
+TEXT ·compound2D4TapW4I8MMAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD C2DI8_DST(R0), R1
+	MOVD C2DI8_REF(R0), R2
+	MOVD C2DI8_XFILTER(R0), R3
+	MOVD C2DI8_PERMUTE(R0), R12
+	MOVD C2DI8_REFSTR(R0), R5
+	MOVD C2DI8_HEIGHT(R0), R7
+	MOVD C2DI8_IM(R0), R13
+	MOVD C2DI8_IMSTR(R0), R14
+	LSL  $1, R14, R14
+
+	ADD  $7, R7, R6
+
+	VLD1 (R3), [V0.B16]
+	VLD1 (R12), [V28.B16]
+	MOVD $8194, R11
+	WORD $0x4e040d72 // dup v18.4s, w11
+
+	MOVD R2, R16
+	MOVD R13, R17
+
+ct2dH4RowLoop:
+	CBZ  R6, ct2dH4Done
+	MOVD R16, R9
+	WORD $0x4eb21e50 // mov v16.16b, v18.16b
+	WORD $0x0c407121 // ld1 {v1.8b}, [x9]
+	WORD $0x4e1c0025 // tbl v5.16b, {v1.16b}, v28.16b
+	WORD $0x4f80f0b0 // usdot v16.4s, v5.16b, v0.4b[0]
+	WORD $0x0f1e8610 // shrn v16.4h, v16.4s, #2
+	WORD $0x0c007630 // st1 {v16.4h}, [x17]
+
+	ADD  R5, R16, R16
+	ADD  R14, R17, R17
+	SUB  $1, R6, R6
+	CBNZ R6, ct2dH4RowLoop
+
+ct2dH4Done:
+	MOVD C2DI8_YKERNEL(R0), R3
+	WORD $0x4c407460 // ld1 {v0.8h}, [x3]
+	MOVD $524288, R11
+	WORD $0x4e040d72 // dup v18.4s, w11
+
+	MOVD R13, R17
+
+ct2dV4RowLoop:
+	CBZ  R7, ct2dV4Done
+	MOVD R17, R9
+	MOVD R1, R10
+	WORD $0x4eb21e50 // mov v16.16b, v18.16b
+
+	WORD $0x0cce7521 // ld1 {v1.4h}, [x9], x14
+	WORD $0x0f402030 // smlal v16.4s, v1.4h, v0.h[0]
+	WORD $0x0cce7521
+	WORD $0x0f502030
+	WORD $0x0cce7521
+	WORD $0x0f602030
+	WORD $0x0cce7521
+	WORD $0x0f702030
+	WORD $0x0cce7521
+	WORD $0x0f402830
+	WORD $0x0cce7521
+	WORD $0x0f502830
+	WORD $0x0cce7521
+	WORD $0x0f602830
+	WORD $0x0cce7521
+	WORD $0x0f702830
+
+	WORD $0x4f392610 // srshr v16.4s, v16.4s, #7
+	WORD $0x0e614a10 // sqxtn v16.4h, v16.4s
+	WORD $0x0c007550 // st1 {v16.4h}, [x10]
+
+	ADD  $8, R1, R1
+	ADD  R14, R17, R17
+	SUB  $1, R7, R7
+	CBNZ R7, ct2dV4RowLoop
+
+ct2dV4Done:
+	RET
+
 // func convolveX8I8MMAsm(ctx *convolveX8I8MMCtx)
 TEXT ·convolveX8I8MMAsm(SB), NOSPLIT, $0-8
 	MOVD ctx+0(FP), R0
@@ -1138,6 +1223,95 @@ y4I8W4RowLoop:
 
 	SUB  $4, R11, R11
 	CBNZ R11, y4I8W4RowLoop
+	RET
+
+// func convolve2D4TapW4I8MMAsm(ctx *convolve2D8I8MMCtx)
+//
+// Resident width-4 lowbd 2D convolve. The horizontal pass mirrors SVT's
+// convolve_2d_sr_horiz_4tap_neon_i8mm W4 path, and the vertical pass mirrors
+// convolve2D8NEONAsmW4's byte-output finalization.
+TEXT ·convolve2D4TapW4I8MMAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD T2D_DST(R0), R1
+	MOVD T2D_REF(R0), R2
+	MOVD T2D_XFILTER(R0), R3
+	MOVD T2D_PERMUTE(R0), R12
+	MOVD T2D_DSTSTR(R0), R4
+	MOVD T2D_REFSTR(R0), R5
+	MOVD T2D_HEIGHT(R0), R7
+	MOVD T2D_IM(R0), R13
+	MOVD T2D_IMSTR(R0), R14
+	LSL  $1, R14, R14
+
+	ADD  $7, R7, R6
+
+	VLD1 (R3), [V0.B16]
+	VLD1 (R12), [V28.B16]
+	MOVD $8194, R11
+	WORD $0x4e040d72 // dup v18.4s, w11
+
+	MOVD R2, R16
+	MOVD R13, R17
+
+t2dH4I8RowLoop:
+	CBZ  R6, t2dH4I8Done
+	MOVD R16, R9
+	WORD $0x4eb21e50 // mov v16.16b, v18.16b
+	WORD $0x0c407121 // ld1 {v1.8b}, [x9]
+	WORD $0x4e1c0025 // tbl v5.16b, {v1.16b}, v28.16b
+	WORD $0x4f80f0b0 // usdot v16.4s, v5.16b, v0.4b[0]
+	WORD $0x0f1e8610 // shrn v16.4h, v16.4s, #2
+	WORD $0x0c007630 // st1 {v16.4h}, [x17]
+
+	ADD  R5, R16, R16
+	ADD  R14, R17, R17
+	SUB  $1, R6, R6
+	CBNZ R6, t2dH4I8RowLoop
+
+t2dH4I8Done:
+	MOVD T2D_YKERNEL(R0), R3
+	WORD $0x4c407460 // ld1 {v0.8h}, [x3]
+	MOVD $524288, R11
+	WORD $0x4e040d72 // dup v18.4s, w11
+	MOVD $384, R11
+	WORD $0x4e040d73 // dup v19.4s, w11
+
+	MOVD R13, R17
+
+t2dV4I8RowLoop:
+	CBZ  R7, t2dV4I8Done
+	MOVD R17, R9
+	WORD $0x4eb21e50 // mov v16.16b, v18.16b
+
+	WORD $0x0cce7521 // ld1 {v1.4h}, [x9], x14
+	WORD $0x0f402030 // smlal v16.4s, v1.4h, v0.h[0]
+	WORD $0x0cce7521
+	WORD $0x0f502030
+	WORD $0x0cce7521
+	WORD $0x0f602030
+	WORD $0x0cce7521
+	WORD $0x0f702030
+	WORD $0x0cce7521
+	WORD $0x0f402830
+	WORD $0x0cce7521
+	WORD $0x0f502830
+	WORD $0x0cce7521
+	WORD $0x0f602830
+	WORD $0x0cce7521
+	WORD $0x0f702830
+
+	WORD $0x4f352610 // srshr v16.4s, v16.4s, #11
+	WORD $0x6eb38610 // sub v16.4s, v16.4s, v19.4s
+	WORD $0x0e614a10 // sqxtn v16.4h, v16.4s
+	WORD $0x2e212a10 // sqxtun v16.8b, v16.8h
+	WORD $0x0d008030 // st1 {v16.s}[0], [x1]
+
+	ADD  R4, R1, R1
+	ADD  R14, R17, R17
+	SUB  $1, R7, R7
+	CBNZ R7, t2dV4I8RowLoop
+
+t2dV4I8Done:
 	RET
 
 // func convolve2D8I8MMAsm(ctx *convolve2D8I8MMCtx)

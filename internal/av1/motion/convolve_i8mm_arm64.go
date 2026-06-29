@@ -67,6 +67,9 @@ func compoundY4TapI8MMAsm(ctx *compoundY8I8MMCtx)
 //go:noescape
 func compound2D8I8MMAsm(ctx *compound2D8I8MMCtx)
 
+//go:noescape
+func compound2D4TapW4I8MMAsm(ctx *compound2D8I8MMCtx)
+
 // convolveX8I8MMCtx carries the resident lowbd single-prediction X I8MM kernel
 // arguments. Field offsets are mirrored by convolve_i8mm_arm64.s.
 type convolveX8I8MMCtx struct {
@@ -123,10 +126,18 @@ type convolve2D8I8MMCtx struct {
 //go:noescape
 func convolve2D8I8MMAsm(ctx *convolve2D8I8MMCtx)
 
+//go:noescape
+func convolve2D4TapW4I8MMAsm(ctx *convolve2D8I8MMCtx)
+
 // SVT ASM_NEON_I8MM/convolve_neon_i8mm.c: svt_kMatMul8PermuteTbl.
 var convolveX8I8MMPermute = [32]byte{
 	1, 2, 3, 4, 5, 6, 7, 8, 3, 4, 5, 6, 7, 8, 9, 10,
 	5, 6, 7, 8, 9, 10, 11, 12, 7, 8, 9, 10, 11, 12, 13, 14,
+}
+
+// SVT ASM_NEON_DOTPROD/convolve_neon_dotprod.c: svt_kDotProdPermuteTbl.
+var convolveX4I8MMPermute = [16]byte{
+	0, 1, 2, 3, 1, 2, 3, 4, 2, 3, 4, 5, 3, 4, 5, 6,
 }
 
 // SVT ASM_NEON_DOTPROD/convolve_neon_dotprod.c: svt_kDotProdMergeBlockTbl.
@@ -158,6 +169,20 @@ func convolveX8I8MMFilter(kernel [filterTaps]int16) (filter [16]byte, f0 uint8, 
 		filter[i+8] = byte(int8(v))
 	}
 	return filter, uint8(tap0), true
+}
+
+func convolveX4I8MMFilter(kernel [filterTaps]int16) (filter [16]byte, ok bool) {
+	if kernel[0] != 0 || kernel[1] != 0 || kernel[6] != 0 || kernel[7] != 0 {
+		return [16]byte{}, false
+	}
+	for i := range 4 {
+		v := int(kernel[i+2] >> 1)
+		if v < -128 || v > 127 {
+			return [16]byte{}, false
+		}
+		filter[i] = byte(int8(v))
+	}
+	return filter, true
 }
 
 func convolveY8I8MMFilter(kernel [filterTaps]int16) (filter [16]byte, taps int, ok bool) {
@@ -258,9 +283,27 @@ func predictInterCompoundRef8ToConvBufYI8MM(out []uint16, ref frame.Plane, refX 
 func predictInterCompoundRef8ToConvBuf2DI8MM(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, offsetBits int, scratch *CompoundConvolveScratch) {
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
-	if !cpu.Detected.I8MM ||
-		offsetBits != 19 ||
-		width < 8 || width%8 != 0 ||
+	if !cpu.Detected.I8MM || offsetBits != 19 {
+		predictInterCompoundRef8ToConvBuf2DNEON(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
+		return
+	}
+	if width == 4 {
+		xFilter, ok := convolveX4I8MMFilter(xKernel)
+		if !ok || !planeRegionFits(ref, 1, refX-1, refY-foY, 8, height+filterTaps-1) {
+			predictInterCompoundRef8ToConvBuf2DNEON(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
+			return
+		}
+		yk := yKernel
+		const w4Stride = 4
+		if scratch != nil {
+			predictInterCompoundRef8ToConvBuf2DI8MMW4WithIMStride(out, ref, refX, refY, height, xFilter, yk, &scratch.im8[0], w4Stride)
+			return
+		}
+		var im [(maxBlockSize + filterTaps - 1) * w4Stride]int16
+		predictInterCompoundRef8ToConvBuf2DI8MMW4WithIMStride(out, ref, refX, refY, height, xFilter, yk, &im[0], w4Stride)
+		return
+	}
+	if width < 8 || width%8 != 0 ||
 		!planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps, height+filterTaps-1) {
 		predictInterCompoundRef8ToConvBuf2DNEON(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
 		return
@@ -296,6 +339,23 @@ func predictInterCompoundRef8ToConvBuf2DI8MMWithIM(out []uint16, ref frame.Plane
 		f0:      uintptr(f0),
 	}
 	compound2D8I8MMAsm(&ctx)
+}
+
+func predictInterCompoundRef8ToConvBuf2DI8MMW4WithIMStride(out []uint16, ref frame.Plane, refX int, refY int, height int, xFilter [16]byte, yk [filterTaps]int16, im *int16, imStride int) {
+	foY := filterTaps/2 - 1
+	ctx := compound2D8I8MMCtx{
+		dst:     &out[0],
+		ref:     &ref.Pix[(refY-foY)*ref.Stride+refX-1],
+		xFilter: &xFilter[0],
+		permute: &convolveX4I8MMPermute[0],
+		yKernel: &yk[0],
+		refStr:  uintptr(ref.Stride),
+		width:   4,
+		height:  uintptr(height),
+		im:      im,
+		imStr:   uintptr(imStride),
+	}
+	compound2D4TapW4I8MMAsm(&ctx)
 }
 
 func convolveX8I8MM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
@@ -361,7 +421,27 @@ func convolve2D8I8MM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX 
 }
 
 func convolve2D8I8MMWithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
-	if !cpu.Detected.I8MM || width < 8 || width%8 != 0 {
+	if !cpu.Detected.I8MM {
+		convolve2D8NEONWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
+		return
+	}
+	if width == 4 {
+		xFilter, ok := convolveX4I8MMFilter(xKernel)
+		if !ok {
+			convolve2D8NEONWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
+			return
+		}
+		yk := yKernel
+		const w4Stride = 4
+		if scratch != nil {
+			convolve2D4TapW4I8MMWithIMStride(dst, ref, dstX, dstY, refX, refY, height, xFilter, yk, &scratch.im[0], w4Stride)
+			return
+		}
+		var im [(maxBlockSize + filterTaps - 1) * w4Stride]int16
+		convolve2D4TapW4I8MMWithIMStride(dst, ref, dstX, dstY, refX, refY, height, xFilter, yk, &im[0], w4Stride)
+		return
+	}
+	if width < 8 || width%8 != 0 {
 		convolve2D8NEONWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
 		return
 	}
@@ -397,4 +477,22 @@ func convolve2D8I8MMWithIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int,
 		f0:      uintptr(f0),
 	}
 	convolve2D8I8MMAsm(&ctx)
+}
+
+func convolve2D4TapW4I8MMWithIMStride(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, height int, xFilter [16]byte, yk [filterTaps]int16, im *int16, imStride int) {
+	foY := filterTaps/2 - 1
+	ctx := convolve2D8I8MMCtx{
+		dst:     &dst.Pix[dstY*dst.Stride+dstX],
+		ref:     &ref.Pix[(refY-foY)*ref.Stride+refX-1],
+		xFilter: &xFilter[0],
+		permute: &convolveX4I8MMPermute[0],
+		yKernel: &yk[0],
+		dstStr:  uintptr(dst.Stride),
+		refStr:  uintptr(ref.Stride),
+		width:   4,
+		height:  uintptr(height),
+		im:      im,
+		imStr:   uintptr(imStride),
+	}
+	convolve2D4TapW4I8MMAsm(&ctx)
 }

@@ -88,6 +88,16 @@ func BenchmarkConvolve2D8_4tap_4(b *testing.B) {
 	})
 }
 
+func BenchmarkConvolve2D8WithScratch_4tap_4(b *testing.B) {
+	dst, ref := benchPlanes(4, 8)
+	xk := subpelFilters4[3]
+	yk := subpelFilters4[5]
+	var scratch ConvolveScratch
+	runConvolveBench(b, 4, 4, func() {
+		convolve2D8WithScratchImpl(dst, ref, 0, 0, filterTaps, filterTaps, 4, 4, xk, yk, &scratch)
+	})
+}
+
 // 2D mixed: 4 wide x 16 tall (4-tap X, 8-tap Y) - the common per-axis small case.
 func BenchmarkConvolve2D8_mixed_4x16(b *testing.B) {
 	dst, ref := benchPlanes(16, 8)
@@ -95,6 +105,16 @@ func BenchmarkConvolve2D8_mixed_4x16(b *testing.B) {
 	yk := subpelFilters8[5]
 	runConvolveBench(b, 4, 16, func() {
 		convolve2D8Impl(dst, ref, 0, 0, filterTaps, filterTaps, 4, 16, xk, yk)
+	})
+}
+
+func BenchmarkConvolve2D8WithScratch_mixed_4x16(b *testing.B) {
+	dst, ref := benchPlanes(16, 8)
+	xk := subpelFilters4[3]
+	yk := subpelFilters8[5]
+	var scratch ConvolveScratch
+	runConvolveBench(b, 4, 16, func() {
+		convolve2D8WithScratchImpl(dst, ref, 0, 0, filterTaps, filterTaps, 4, 16, xk, yk, &scratch)
 	})
 }
 
