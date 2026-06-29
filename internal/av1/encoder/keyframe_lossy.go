@@ -629,6 +629,8 @@ type lossyEncodeState struct {
 	sourceContentGrid  []realtimeContentStateSB
 	sourceVarianceGrid []uint32
 	sourceContentCols  int
+	varPartGrid        []realtimeVarPartSB
+	varPartCols        int
 }
 
 func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap) ([]byte, error) {

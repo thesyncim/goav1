@@ -214,6 +214,154 @@ func TestRealtimeSourceVariancePerPixelMatchesAV1VarOffs(t *testing.T) {
 	}
 }
 
+func TestRealtimeVarPartSpeedFeaturesMatchLibaomRT(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		w, h       int
+		effort     int8
+		speed      int
+		prefer     int
+		qidx       int
+		splitShift uint
+		disable8x8 bool
+	}{
+		{name: "1080p speed8", w: 1920, h: 1080, effort: 0, speed: 8, prefer: 0, qidx: 4, splitShift: 8},
+		{name: "1080p speed9", w: 1920, h: 1080, effort: -1, speed: 9, prefer: 3, qidx: 0, splitShift: 9},
+		{name: "1080p speed10", w: 1920, h: 1080, effort: WebRTCMinEffortLevel, speed: 10, prefer: 3, qidx: 0, splitShift: 10},
+		{name: "qvga speed8", w: 320, h: 180, effort: 0, speed: 8, prefer: 1, qidx: 4, splitShift: 8},
+		{name: "360p speed6 disables 8x8 by q", w: 640, h: 360, effort: 2, speed: 6, prefer: 0, qidx: 2, splitShift: 7, disable8x8: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := realtimeVarPartSpeedFeatures(tc.w, tc.h, tc.effort)
+			if got.speed != tc.speed || got.preferLargeBlocks != tc.prefer ||
+				got.varPartBasedOnQidx != tc.qidx || got.splitThresholdShift != tc.splitShift ||
+				got.disable8x8ByQidx != tc.disable8x8 {
+				t.Fatalf("features=%+v want speed=%d prefer=%d qidx=%d split=%d disable8x8=%v",
+					got, tc.speed, tc.prefer, tc.qidx, tc.splitShift, tc.disable8x8)
+			}
+		})
+	}
+}
+
+func TestRealtimeVarPartMotionLevelMatchesLibaomRT(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		w, h   int
+		effort int8
+		want   int
+	}{
+		{name: "speed8", w: 1920, h: 1080, effort: 0, want: 2},
+		{name: "speed9", w: 1920, h: 1080, effort: -1, want: 3},
+		{name: "speed10 1080p", w: 1920, h: 1080, effort: WebRTCMinEffortLevel, want: 3},
+		{name: "speed10 qvga", w: 320, h: 180, effort: WebRTCMinEffortLevel, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := realtimeEstimateMotionForVarBasedPartition(tc.w, tc.h, tc.effort); got != tc.want {
+				t.Fatalf("est_motion=%d want %d", got, tc.want)
+			}
+		})
+	}
+	col, row, large := realtimeIntProSearchWindow64(1920, 1080, realtimeSourceSADHigh)
+	if col != 256 || row != 256 || !large {
+		t.Fatalf("1080p high-SAD search=(%d,%d,%v), want (256,256,true)", col, row, large)
+	}
+	col, row, large = realtimeIntProSearchWindow64(1920, 1080, realtimeSourceSADMed)
+	if col != 32 || row != 32 || large {
+		t.Fatalf("1080p medium-SAD search=(%d,%d,%v), want (32,32,false)", col, row, large)
+	}
+}
+
+func TestRealtimeVarPartThresholdsMatchLibaomRT(t *testing.T) {
+	content := defaultRealtimeContentStateSB()
+	got := realtimeVarPartThresholds(1920, 1080, 120, 100, 0, content, 0)
+	want := [5]int64{62, 125, 750, 64000, 500}
+	if got != want {
+		t.Fatalf("speed8 thresholds=%v want %v", got, want)
+	}
+	content.sourceSADNonRD = realtimeSourceSADLow
+	got = realtimeVarPartThresholds(320, 180, 60, 80, 0, content, 0)
+	want = [5]int64{50, 12, 52, 933, 400}
+	if got != want {
+		t.Fatalf("qvga thresholds=%v want %v", got, want)
+	}
+}
+
+func TestRealtimeVectorMatchMatchesLibaomSearchOrder(t *testing.T) {
+	var ref [128]int16
+	var src [64]int16
+	for i := range ref {
+		ref[i] = int16((i*i*17 + i*29 + 7) & 511)
+	}
+	copy(src[:], ref[32:32+64])
+	center, sad := realtimeVectorMatch(ref[:], src[:], 4, 32, 32, false)
+	if center != 0 || sad != 0 {
+		t.Fatalf("center=%d sad=%d want center=0 sad=0", center, sad)
+	}
+}
+
+func TestRealtimeIntProMotionEstimation64MatchesLibaomShift(t *testing.T) {
+	const width, height = 160, 160
+	const px, py = 48, 48
+	const wantDX, wantDY = 16, -16
+	ref := make([]byte, width*height)
+	src := make([]byte, width*height)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			ref[y*width+x] = byte((x*37 + y*19 + x*y*3 + (x>>2)*11 + (y>>1)*5) & 255)
+			src[y*width+x] = byte((x*13 + y*7 + 91) & 255)
+		}
+	}
+	for y := 0; y < 64; y++ {
+		copy(src[(py+y)*width+px:(py+y)*width+px+64], ref[(py+wantDY+y)*width+px+wantDX:(py+wantDY+y)*width+px+wantDX+64])
+	}
+	dx, dy, sad, zeroSAD, ok := realtimeIntProMotionEstimation64(src, ref, width, width, height, px, py, realtimeSourceSADHigh, 0)
+	if !ok {
+		t.Fatal("projection ME disabled")
+	}
+	if dx != wantDX || dy != wantDY || sad != 0 {
+		t.Fatalf("motion=(%d,%d) sad=%d want (%d,%d) sad=0", dx, dy, sad, wantDX, wantDY)
+	}
+	if zeroSAD == 0 {
+		t.Fatal("zero-motion SAD unexpectedly zero")
+	}
+}
+
+func TestRealtimeSetVTPartitioningMatchesLibaomOrder(t *testing.T) {
+	var part realtimeVPartVariances
+	realtimeFillVariance(100, 0, 0, &part.none)
+	realtimeFillVariance(1, 0, 0, &part.vert[0])
+	realtimeFillVariance(1, 0, 0, &part.vert[1])
+	realtimeFillVariance(100, 0, 0, &part.horz[0])
+	realtimeFillVariance(100, 0, 0, &part.horz[1])
+	if got := realtimeSetVTPartitioning(&part, 1000, tile.BlockLevel32x32, tile.BlockLevel16x16, realtimePartEvalAll); got != tile.PartitionV {
+		t.Fatalf("partition=%d want vertical", got)
+	}
+	if got := realtimeSetVTPartitioning(&part, 1000, tile.BlockLevel32x32, tile.BlockLevel16x16, realtimePartEvalOnlySplit); got != tile.PartitionSplit {
+		t.Fatalf("forced split partition=%d", got)
+	}
+	if got := realtimeSetVTPartitioning(&part, 1000, tile.BlockLevel32x32, tile.BlockLevel16x16, realtimePartEvalOnlyNone); got != tile.PartitionNone {
+		t.Fatalf("forced none partition=%d", got)
+	}
+}
+
+func TestRealtimeVarianceTreeMatchesLibaomVPartVarMath(t *testing.T) {
+	var vt realtimeVarTree16
+	realtimeFillVariance(0, 0, 0, &vt.split[0])
+	realtimeFillVariance(100, 10, 0, &vt.split[1])
+	realtimeFillVariance(0, 0, 0, &vt.split[2])
+	realtimeFillVariance(100, 10, 0, &vt.split[3])
+	realtimeFillVarianceTree16(&vt)
+	if got := realtimeGetVariance(&vt.part.none); got != 6400 {
+		t.Fatalf("variance=%d want 6400", got)
+	}
+	if got := realtimeGetVariance(&vt.part.horz[0]); got != 6400 {
+		t.Fatalf("horizontal half variance=%d want 6400", got)
+	}
+	if got := realtimeGetVariance(&vt.part.vert[0]); got != 0 {
+		t.Fatalf("vertical half variance=%d want 0", got)
+	}
+}
+
 func TestRealtimeReduceMVPelPrecisionLowcomplexLevelMatchesSpeedFeatures(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

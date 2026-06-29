@@ -95,10 +95,10 @@ func TestEncodePFrameVariableBlocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("global-shift P: %d bytes vs key %d", len(gTU), len(keyTU))
-	// Interior nodes merge to 32x32 skips; the residual cost is the clamped
-	// top/left edge stripes, which bounds the frame well below the keyframe.
-	if len(gTU)*6 >= len(keyTU) {
-		t.Fatalf("global-shift P %d bytes not far below key %d: 32x32 merges not engaged?", len(gTU), len(keyTU))
+	// The variance-partitioned inter frame still collapses the clean global
+	// shift well below the keyframe while preserving the clamped edge stripes.
+	if len(gTU)*4 >= len(keyTU) {
+		t.Fatalf("global-shift P %d bytes not far below key %d", len(gTU), len(keyTU))
 	}
 	dec2, err := goav1.NewDecoder([][]byte{keyTU, gTU})
 	if err != nil {

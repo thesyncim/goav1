@@ -407,6 +407,796 @@ func roundPowerOfTwoUint32(v uint32, shift uint) uint32 {
 	return (v + (1 << (shift - 1))) >> shift
 }
 
+type realtimePartEvalStatus uint8
+
+const (
+	realtimePartEvalAll realtimePartEvalStatus = iota
+	realtimePartEvalOnlySplit
+	realtimePartEvalOnlyNone
+)
+
+const (
+	realtimeResolution288P  = 352 * 288
+	realtimeResolution360P  = 640 * 360
+	realtimeResolution480P  = 640 * 480
+	realtimeResolution720P  = 1280 * 720
+	realtimeResolution1080P = 1920 * 1080
+	realtimeResolution1440P = 2560 * 1440
+	realtimeMaxInt64        = int64(^uint64(0) >> 1)
+	realtimeQIndexLargeBlk  = 100
+)
+
+type realtimeVarPartFeatures struct {
+	speed               int
+	preferLargeBlocks   int
+	varPartBasedOnQidx  int
+	splitThresholdShift uint
+	disable8x8ByQidx    bool
+}
+
+func realtimeVarPartSpeedFeatures(width, height int, effort int8) realtimeVarPartFeatures {
+	speed := realtimeLibaomSpeedForEffort(effort)
+	minDim := minInt(width, height)
+	sf := realtimeVarPartFeatures{
+		speed:               speed,
+		varPartBasedOnQidx:  1,
+		splitThresholdShift: 5,
+	}
+	if speed >= 6 {
+		sf.varPartBasedOnQidx = 2
+		sf.splitThresholdShift = 7
+	}
+	if minDim >= 360 && speed == 6 {
+		sf.disable8x8ByQidx = true
+	}
+	if speed >= 7 {
+		sf.varPartBasedOnQidx = 3
+	}
+	switch {
+	case minDim < 360:
+		if speed == 7 {
+			sf.preferLargeBlocks = 2
+		}
+		if speed == 8 {
+			sf.preferLargeBlocks = 1
+		}
+	case minDim < 720:
+		if speed == 7 {
+			sf.preferLargeBlocks = 1
+		}
+	}
+	if speed >= 8 {
+		sf.varPartBasedOnQidx = 4
+		sf.splitThresholdShift = 8
+	}
+	if speed >= 9 {
+		sf.preferLargeBlocks = 3
+		sf.varPartBasedOnQidx = 0
+		sf.splitThresholdShift = 9
+	}
+	if speed >= 10 {
+		sf.splitThresholdShift = 10
+	}
+	return sf
+}
+
+func realtimeVarPartThresholds(width, height int, qIndex uint8, qAC int32, effort int8, content realtimeContentStateSB, blockSAD uint64) [5]int64 {
+	sf := realtimeVarPartSpeedFeatures(width, height, effort)
+	thresholdBase := int64(qAC)
+	if thresholdBase < 1 {
+		thresholdBase = 1
+	}
+	numPixels := width * height
+
+	thresholdBase = realtimeScalePartThreshContent(thresholdBase, sf.speed, false, content.sourceSADNonRD == realtimeSourceSADZero)
+	thresholds := [5]int64{
+		thresholdBase >> 1,
+		thresholdBase,
+		0,
+		thresholdBase << sf.splitThresholdShift,
+		thresholdBase << 2,
+	}
+	realtimeTuneThreshBasedOnResolution(&thresholds, thresholdBase, int(qIndex), content.sourceSADRD, numPixels, sf.varPartBasedOnQidx, sf.speed)
+	realtimeTuneThreshBasedOnQIndex(&thresholds, blockSAD, int(qIndex), numPixels, false, content.sourceSADNonRD, content.lightingChange, sf.preferLargeBlocks)
+	if sf.disable8x8ByQidx && qIndex < 128 {
+		thresholds[3] = realtimeMaxInt64
+	}
+	return thresholds
+}
+
+func realtimeScalePartThreshContent(thresholdBase int64, speed int, nonReferenceFrame bool, isStatic bool) int64 {
+	threshold := thresholdBase
+	if nonReferenceFrame && !isStatic {
+		threshold = (3 * threshold) >> 1
+	}
+	if speed >= 8 {
+		return (5 * threshold) >> 2
+	}
+	return threshold
+}
+
+func realtimeTuneThreshBasedOnResolution(thresholds *[5]int64, thresholdBase int64, qIndex int, sourceSADRD realtimeSourceSAD, numPixels int, varPartBasedOnQidx int, speed int) {
+	if numPixels >= realtimeResolution720P {
+		thresholds[3] <<= 1
+	}
+	if numPixels <= realtimeResolution288P {
+		qindexThr := [5][2]int{{200, 220}, {140, 170}, {120, 150}, {200, 210}, {170, 220}}
+		thIdx := 0
+		if varPartBasedOnQidx >= 1 {
+			if sourceSADRD <= realtimeSourceSADLow {
+				thIdx = varPartBasedOnQidx
+			}
+		}
+		if varPartBasedOnQidx >= 3 {
+			thIdx = varPartBasedOnQidx
+		}
+		if thIdx < 0 {
+			thIdx = 0
+		} else if thIdx >= len(qindexThr) {
+			thIdx = len(qindexThr) - 1
+		}
+		low := qindexThr[thIdx][0]
+		high := qindexThr[thIdx][1]
+		if qIndex >= high {
+			thresholdBase = (5 * thresholdBase) >> 1
+			thresholds[1] = thresholdBase >> 3
+			thresholds[2] = thresholdBase << 2
+			thresholds[3] = thresholdBase << 5
+		} else if qIndex < low {
+			thresholds[1] = thresholdBase >> 3
+			thresholds[2] = thresholdBase >> 1
+			thresholds[3] = thresholdBase << 3
+		} else {
+			qiDiffLow := int64(qIndex - low)
+			qiDiffHigh := int64(high - qIndex)
+			thresholdDiff := int64(high - low)
+			if thresholdDiff <= 0 {
+				thresholdDiff = 1
+			}
+			thresholdBaseHigh := (5 * thresholdBase) >> 1
+			thresholdBase = (qiDiffLow*thresholdBaseHigh + qiDiffHigh*thresholdBase) / thresholdDiff
+			thresholds[1] = thresholdBase >> 3
+			thresholds[2] = (qiDiffLow*thresholdBase + qiDiffHigh*(thresholdBase>>1)) / thresholdDiff
+			thresholds[3] = (qiDiffLow*(thresholdBase<<5) + qiDiffHigh*(thresholdBase<<3)) / thresholdDiff
+		}
+		return
+	}
+	switch {
+	case numPixels < realtimeResolution720P:
+		thresholds[2] = (5 * thresholdBase) >> 2
+	case numPixels < realtimeResolution1080P:
+		thresholds[2] = thresholdBase << 1
+	default:
+		if numPixels < realtimeResolution1440P {
+			if speed > 7 {
+				thresholds[2] = 6 * thresholdBase
+			} else {
+				thresholds[2] = 3 * thresholdBase
+			}
+		} else if speed > 7 {
+			thresholds[2] = 6 * thresholdBase
+		} else {
+			thresholds[2] = 3 * thresholdBase
+		}
+	}
+}
+
+func realtimeTuneThreshBasedOnQIndex(thresholds *[5]int64, blockSAD uint64, qIndex int, numPixels int, segmentBoosted bool, sourceSADNonRD realtimeSourceSAD, lightingChange bool, preferLargeBlocks int) {
+	switch {
+	case preferLargeBlocks >= 3:
+		const win = 20
+		weight := realtimeQIndexWeight(qIndex, realtimeQIndexLargeBlk, win)
+		if numPixels > realtimeResolution480P {
+			for i := 0; i < 4; i++ {
+				thresholds[i] <<= 1
+			}
+		}
+		if numPixels <= realtimeResolution288P {
+			thresholds[3] = realtimeMaxInt64
+			if !segmentBoosted {
+				thresholds[1] <<= 2
+				if sourceSADNonRD <= realtimeSourceSADLow {
+					thresholds[2] <<= 5
+				} else {
+					thresholds[2] <<= 4
+				}
+			} else {
+				thresholds[1] <<= 1
+				thresholds[2] <<= 3
+			}
+			avgSourceSADThresh := uint64(25000)
+			blockSADLow := uint64(25000)
+			blockSADHigh := uint64(50000)
+			if !segmentBoosted && blockSAD > blockSADLow && blockSAD < blockSADHigh && blockSAD < avgSourceSADThresh && !lightingChange {
+				thresholds[2] = (3 * thresholds[2]) >> 2
+				thresholds[3] = thresholds[2] << 3
+			}
+		} else if numPixels > realtimeResolution480P && !segmentBoosted && sourceSADNonRD != realtimeSourceSADHigh {
+			thresholds[0] = (3 * thresholds[0]) >> 1
+			thresholds[3] = realtimeMaxInt64
+			if qIndex > realtimeQIndexLargeBlk {
+				thresholds[1] = realtimeBlendShiftThreshold(thresholds[1], 1, weight)
+				thresholds[2] = realtimeBlendShiftThreshold(thresholds[2], 1, weight)
+			}
+		} else if qIndex > realtimeQIndexLargeBlk && !segmentBoosted && sourceSADNonRD != realtimeSourceSADHigh {
+			thresholds[1] = realtimeBlendShiftThreshold(thresholds[1], 2, weight)
+			thresholds[2] = realtimeBlendShiftThreshold(thresholds[2], 4, weight)
+			thresholds[3] = realtimeMaxInt64
+		}
+	case preferLargeBlocks >= 2:
+		if sourceSADNonRD <= realtimeSourceSADLow {
+			thresholds[1] <<= 2
+			thresholds[2] *= 3
+		}
+	case preferLargeBlocks >= 1:
+		fac := uint(1)
+		if sourceSADNonRD <= realtimeSourceSADLow {
+			fac = 2
+		}
+		weight := realtimeQIndexWeight(qIndex, realtimeQIndexLargeBlk, 45)
+		thresholds[1] = realtimeBlendShiftThreshold(thresholds[1], 1, weight)
+		thresholds[2] = realtimeBlendShiftThreshold(thresholds[2], 1, weight)
+		thresholds[3] = realtimeBlendShiftThreshold(thresholds[3], fac, weight)
+	}
+}
+
+func realtimeQIndexWeight(qIndex, center, win int) float64 {
+	if qIndex < center-win {
+		return 1
+	}
+	if qIndex > center+win {
+		return 0
+	}
+	return 1 - float64(qIndex-center+win)/float64(2*win)
+}
+
+func realtimeBlendShiftThreshold(base int64, shift uint, weight float64) int64 {
+	return int64((1-weight)*float64(base<<shift) + weight*float64(base))
+}
+
+type realtimeVPartVar struct {
+	sumSquareError uint32
+	sumError       int32
+	log2Count      int
+	variance       int
+}
+
+type realtimeVPartVariances struct {
+	none realtimeVPartVar
+	horz [2]realtimeVPartVar
+	vert [2]realtimeVPartVar
+}
+
+type realtimeVarTree16 struct {
+	part  realtimeVPartVariances
+	split [4]realtimeVPartVar
+}
+
+type realtimeVarTree32 struct {
+	part  realtimeVPartVariances
+	split [4]realtimeVarTree16
+}
+
+type realtimeVarTree64 struct {
+	part  realtimeVPartVariances
+	split [4]realtimeVarTree32
+}
+
+type realtimeVarPartSB struct {
+	ready      bool
+	thresholds [5]int64
+	tree       realtimeVarTree64
+	force64    realtimePartEvalStatus
+	force32    [4]realtimePartEvalStatus
+	force16    [4][4]realtimePartEvalStatus
+}
+
+func realtimeFillVariance(s2 uint32, s int32, c int, v *realtimeVPartVar) {
+	v.sumSquareError = s2
+	v.sumError = s
+	v.log2Count = c
+	v.variance = 0
+}
+
+func realtimeGetVariance(v *realtimeVPartVar) int {
+	sse := int64(v.sumSquareError)
+	sum := int64(v.sumError)
+	variance := sse - ((sum * sum) >> uint(v.log2Count))
+	if variance < 0 {
+		variance = 0
+	}
+	v.variance = int((256 * variance) >> uint(v.log2Count))
+	return v.variance
+}
+
+func realtimeSum2Variances(a, b *realtimeVPartVar, r *realtimeVPartVar) {
+	realtimeFillVariance(a.sumSquareError+b.sumSquareError, a.sumError+b.sumError, a.log2Count+1, r)
+}
+
+func realtimeFillVarianceTree16(vt *realtimeVarTree16) {
+	realtimeSum2Variances(&vt.split[0], &vt.split[1], &vt.part.horz[0])
+	realtimeSum2Variances(&vt.split[2], &vt.split[3], &vt.part.horz[1])
+	realtimeSum2Variances(&vt.split[0], &vt.split[2], &vt.part.vert[0])
+	realtimeSum2Variances(&vt.split[1], &vt.split[3], &vt.part.vert[1])
+	realtimeSum2Variances(&vt.part.vert[0], &vt.part.vert[1], &vt.part.none)
+}
+
+func realtimeFillVarianceTree32(vt *realtimeVarTree32) {
+	realtimeSum2Variances(&vt.split[0].part.none, &vt.split[1].part.none, &vt.part.horz[0])
+	realtimeSum2Variances(&vt.split[2].part.none, &vt.split[3].part.none, &vt.part.horz[1])
+	realtimeSum2Variances(&vt.split[0].part.none, &vt.split[2].part.none, &vt.part.vert[0])
+	realtimeSum2Variances(&vt.split[1].part.none, &vt.split[3].part.none, &vt.part.vert[1])
+	realtimeSum2Variances(&vt.part.vert[0], &vt.part.vert[1], &vt.part.none)
+}
+
+func realtimeFillVarianceTree64(vt *realtimeVarTree64) {
+	realtimeSum2Variances(&vt.split[0].part.none, &vt.split[1].part.none, &vt.part.horz[0])
+	realtimeSum2Variances(&vt.split[2].part.none, &vt.split[3].part.none, &vt.part.horz[1])
+	realtimeSum2Variances(&vt.split[0].part.none, &vt.split[2].part.none, &vt.part.vert[0])
+	realtimeSum2Variances(&vt.split[1].part.none, &vt.split[3].part.none, &vt.part.vert[1])
+	realtimeSum2Variances(&vt.part.vert[0], &vt.part.vert[1], &vt.part.none)
+}
+
+func realtimeAvg8x8(src []byte, stride int) int {
+	sum := 0
+	for y := range 8 {
+		row := y * stride
+		for x := range 8 {
+			sum += int(src[row+x])
+		}
+	}
+	return (sum + 32) >> 6
+}
+
+func realtimeAvg8x8At(plane []byte, stride, width, height, x, y int) int {
+	if x >= 0 && y >= 0 && x+8 <= width && y+8 <= height {
+		return realtimeAvg8x8(plane[y*stride+x:], stride)
+	}
+	sum := 0
+	for r := range 8 {
+		yy := y + r
+		if yy < 0 {
+			yy = 0
+		} else if yy >= height {
+			yy = height - 1
+		}
+		row := yy * stride
+		for c := range 8 {
+			xx := x + c
+			if xx < 0 {
+				xx = 0
+			} else if xx >= width {
+				xx = width - 1
+			}
+			sum += int(plane[row+xx])
+		}
+	}
+	return (sum + 32) >> 6
+}
+
+func realtimeFillVariance8x8AvgAt(src []byte, srcStride int, ref []byte, refStride int, width, height int, srcX, srcY, refX, refY int, vt *realtimeVarTree16) {
+	for idx := range 4 {
+		xOff := (idx & 1) << 3
+		yOff := (idx >> 1) << 3
+		srcAvg := realtimeAvg8x8At(src, srcStride, width, height, srcX+xOff, srcY+yOff)
+		refAvg := realtimeAvg8x8At(ref, refStride, width, height, refX+xOff, refY+yOff)
+		sum := int32(srcAvg - refAvg)
+		realtimeFillVariance(uint32(sum*sum), sum, 0, &vt.split[idx])
+	}
+}
+
+func realtimeEstimateMotionForVarBasedPartition(width, height int, effort int8) int {
+	speed := realtimeLibaomSpeedForEffort(effort)
+	estMotion := 2
+	if speed >= 9 {
+		estMotion = 3
+	}
+	if speed >= 10 && minInt(width, height) < 360 {
+		estMotion = 0
+	}
+	return estMotion
+}
+
+func realtimeIntProSearchWindow64(width, height int, sourceSAD realtimeSourceSAD) (col, row int, largeSearch bool) {
+	largeSearch = sourceSAD > realtimeSourceSADMed && width*height > 1280*720
+	if largeSearch {
+		col, row = 256, 256
+	} else {
+		col, row = 32, 32
+	}
+	if width*height >= 3840*2160 {
+		col <<= 1
+		row <<= 1
+	}
+	return col, row, largeSearch
+}
+
+const realtimeIntProMaxSamples64 = 64 + 2*1024
+
+func realtimeIntProRow(dst []int16, ref []byte, stride, width, height, x, y, projWidth, projHeight, normFactor int) {
+	for idx := 0; idx < projWidth; idx++ {
+		xx := x + idx
+		if xx < 0 {
+			xx = 0
+		} else if xx >= width {
+			xx = width - 1
+		}
+		sum := 0
+		for i := 0; i < projHeight; i++ {
+			yy := y + i
+			if yy < 0 {
+				yy = 0
+			} else if yy >= height {
+				yy = height - 1
+			}
+			sum += int(ref[yy*stride+xx])
+		}
+		dst[idx] = int16(sum >> uint(normFactor))
+	}
+}
+
+func realtimeIntProCol(dst []int16, ref []byte, stride, width, height, x, y, projWidth, projHeight, normFactor int) {
+	for yy := 0; yy < projHeight; yy++ {
+		clampedY := y + yy
+		if clampedY < 0 {
+			clampedY = 0
+		} else if clampedY >= height {
+			clampedY = height - 1
+		}
+		row := clampedY * stride
+		sum := 0
+		for xx := 0; xx < projWidth; xx++ {
+			clampedX := x + xx
+			if clampedX < 0 {
+				clampedX = 0
+			} else if clampedX >= width {
+				clampedX = width - 1
+			}
+			sum += int(ref[row+clampedX])
+		}
+		dst[yy] = int16(sum >> uint(normFactor))
+	}
+}
+
+func realtimeVectorVar(ref, src []int16, bwl int) int {
+	width := 4 << uint(bwl)
+	sse := 0
+	mean := 0
+	for i := 0; i < width; i++ {
+		diff := int(ref[i]) - int(src[i])
+		mean += diff
+		sse += diff * diff
+	}
+	if mean < 0 {
+		mean = -mean
+	}
+	meanAbs := uint32(mean)
+	return sse - int((meanAbs*meanAbs)>>uint(bwl+2))
+}
+
+func realtimeVectorMatch(ref, src []int16, bwl int, searchSizeTop, searchSizeBottom int, fullSearch bool) (center, sad int) {
+	bestSAD := int(^uint(0) >> 1)
+	offset := 0
+	bw := searchSizeTop + searchSizeBottom
+	if fullSearch {
+		for d := 0; d <= bw; d++ {
+			thisSAD := realtimeVectorVar(ref[d:], src, bwl)
+			if thisSAD < bestSAD {
+				bestSAD = thisSAD
+				offset = d
+			}
+		}
+		return offset - searchSizeTop, bestSAD
+	}
+	for d := 0; d <= bw; d += 16 {
+		thisSAD := realtimeVectorVar(ref[d:], src, bwl)
+		if thisSAD < bestSAD {
+			bestSAD = thisSAD
+			offset = d
+		}
+	}
+	center = offset
+	for d := -8; d <= 8; d += 16 {
+		thisPos := offset + d
+		if thisPos < 0 || thisPos > bw {
+			continue
+		}
+		thisSAD := realtimeVectorVar(ref[thisPos:], src, bwl)
+		if thisSAD < bestSAD {
+			bestSAD = thisSAD
+			center = thisPos
+		}
+	}
+	offset = center
+	for d := -4; d <= 4; d += 8 {
+		thisPos := offset + d
+		if thisPos < 0 || thisPos > bw {
+			continue
+		}
+		thisSAD := realtimeVectorVar(ref[thisPos:], src, bwl)
+		if thisSAD < bestSAD {
+			bestSAD = thisSAD
+			center = thisPos
+		}
+	}
+	offset = center
+	for d := -2; d <= 2; d += 4 {
+		thisPos := offset + d
+		if thisPos < 0 || thisPos > bw {
+			continue
+		}
+		thisSAD := realtimeVectorVar(ref[thisPos:], src, bwl)
+		if thisSAD < bestSAD {
+			bestSAD = thisSAD
+			center = thisPos
+		}
+	}
+	offset = center
+	for d := -1; d <= 1; d += 2 {
+		thisPos := offset + d
+		if thisPos < 0 || thisPos > bw {
+			continue
+		}
+		thisSAD := realtimeVectorVar(ref[thisPos:], src, bwl)
+		if thisSAD < bestSAD {
+			bestSAD = thisSAD
+			center = thisPos
+		}
+	}
+	return center - searchSizeTop, bestSAD
+}
+
+func realtimeSAD64Clamped(src, ref []byte, stride, width, height, px, py, refX, refY int, limit int) int {
+	if refX >= 0 && refY >= 0 && refX+64 <= width && refY+64 <= height {
+		return sad64x64(src[py*stride+px:], ref[refY*stride+refX:], stride)
+	}
+	total := 0
+	for y := range 64 {
+		srcRow := (py + y) * stride
+		yy := refY + y
+		if yy < 0 {
+			yy = 0
+		} else if yy >= height {
+			yy = height - 1
+		}
+		refRow := yy * stride
+		for x := range 64 {
+			xx := refX + x
+			if xx < 0 {
+				xx = 0
+			} else if xx >= width {
+				xx = width - 1
+			}
+			d := int(src[srcRow+px+x]) - int(ref[refRow+xx])
+			if d < 0 {
+				d = -d
+			}
+			total += d
+		}
+		if total >= limit {
+			return total
+		}
+	}
+	return total
+}
+
+func realtimeIntProMotionEstimation64(src, ref []byte, stride, width, height, px, py int, sourceSAD realtimeSourceSAD, effort int8) (dx, dy, sad, zeroSAD int, ok bool) {
+	estMotion := realtimeEstimateMotionForVarBasedPartition(width, height, effort)
+	if estMotion > 2 && sourceSAD > realtimeSourceSADMed {
+		estMotion = 2
+	}
+	if (estMotion != 1 && estMotion != 2) || sourceSAD <= realtimeSourceSADLow {
+		return 0, 0, 0, 0, false
+	}
+	searchCol, searchRow, scrollSuperblock := realtimeIntProSearchWindow64(width, height, sourceSAD)
+	searchCol &= ^15
+	searchRow &= ^15
+	widthRefBuf := searchCol + searchCol + 64
+	heightRefBuf := searchRow + searchRow + 64
+	if widthRefBuf > realtimeIntProMaxSamples64 || heightRefBuf > realtimeIntProMaxSamples64 {
+		return 0, 0, 0, 0, false
+	}
+
+	var hbuf, vbuf, srcHBuf, srcVBuf [realtimeIntProMaxSamples64]int16
+	const bwl = 4
+	const normFactor64 = 5
+	realtimeIntProRow(hbuf[:widthRefBuf], ref, stride, width, height, px-searchCol, py, widthRefBuf, 64, normFactor64)
+	realtimeIntProCol(vbuf[:heightRefBuf], ref, stride, width, height, px, py-searchRow, 64, heightRefBuf, normFactor64)
+	realtimeIntProRow(srcHBuf[:64], src, stride, width, height, px, py, 64, 64, normFactor64)
+	realtimeIntProCol(srcVBuf[:64], src, stride, width, height, px, py, 64, 64, normFactor64)
+
+	bestDX, bestSADCol := realtimeVectorMatch(hbuf[:widthRefBuf], srcHBuf[:64], bwl, searchCol, searchCol, false)
+	bestDY, bestSADRow := realtimeVectorMatch(vbuf[:heightRefBuf], srcVBuf[:64], bwl, searchRow, searchRow, false)
+	bestSAD := realtimeSAD64Clamped(src, ref, stride, width, height, px, py, px+bestDX, py+bestDY, int(^uint(0)>>1))
+	if scrollSuperblock {
+		if bestSADCol < bestSADRow && bestSADCol < bestSAD {
+			bestDY = 0
+			bestSAD = bestSADCol
+		} else if bestSADRow < bestSADCol && bestSADRow < bestSAD {
+			bestDX = 0
+			bestSAD = bestSADRow
+		}
+	}
+	thisDX, thisDY := bestDX, bestDY
+	zeroSAD = realtimeSAD64Clamped(src, ref, stride, width, height, px, py, px, py, int(^uint(0)>>1))
+	if bestDX != 0 || bestDY != 0 {
+		if zeroSAD < bestSAD {
+			bestDX, bestDY = 0, 0
+			thisDX, thisDY = 0, 0
+			bestSAD = zeroSAD
+		}
+	} else {
+		zeroSAD = bestSAD
+	}
+	if !scrollSuperblock {
+		thisSAD := [4]int{
+			realtimeSAD64Clamped(src, ref, stride, width, height, px, py, px+thisDX, py+thisDY-1, bestSAD),
+			realtimeSAD64Clamped(src, ref, stride, width, height, px, py, px+thisDX-1, py+thisDY, bestSAD),
+			realtimeSAD64Clamped(src, ref, stride, width, height, px, py, px+thisDX+1, py+thisDY, bestSAD),
+			realtimeSAD64Clamped(src, ref, stride, width, height, px, py, px+thisDX, py+thisDY+1, bestSAD),
+		}
+		searchPos := [4][2]int{{0, -1}, {-1, 0}, {1, 0}, {0, 1}}
+		for idx := range thisSAD {
+			if thisSAD[idx] < bestSAD {
+				bestSAD = thisSAD[idx]
+				bestDX = searchPos[idx][0] + thisDX
+				bestDY = searchPos[idx][1] + thisDY
+			}
+		}
+		if thisSAD[0] < thisSAD[3] {
+			thisDY--
+		} else {
+			thisDY++
+		}
+		if thisSAD[1] < thisSAD[2] {
+			thisDX--
+		} else {
+			thisDX++
+		}
+		tmpSAD := realtimeSAD64Clamped(src, ref, stride, width, height, px, py, px+thisDX, py+thisDY, bestSAD)
+		if bestSAD > tmpSAD {
+			bestDX, bestDY = thisDX, thisDY
+			bestSAD = tmpSAD
+		}
+	}
+	return bestDX, bestDY, bestSAD, zeroSAD, true
+}
+
+func (st *lossyEncodeState) prepareRealtimeVarPartitioning(gridCols, gridRows int) {
+	st.varPartCols = gridCols
+	need := gridCols * gridRows
+	if need <= 0 {
+		return
+	}
+	if len(st.varPartGrid) < need {
+		st.varPartGrid = make([]realtimeVarPartSB, need)
+	}
+	for i := range st.varPartGrid[:need] {
+		st.varPartGrid[i].ready = false
+	}
+}
+
+func (st *lossyEncodeState) realtimeVarPartitionSB(src, ref SourceFrame420, px, py int) *realtimeVarPartSB {
+	if st == nil || st.varPartCols <= 0 || px < 0 || py < 0 || px+64 > src.Width || py+64 > src.Height ||
+		src.Width != ref.Width || src.Height != ref.Height {
+		return nil
+	}
+	idx := (py/64)*st.varPartCols + px/64
+	if idx < 0 || idx >= len(st.varPartGrid) {
+		return nil
+	}
+	sb := &st.varPartGrid[idx]
+	if sb.ready {
+		return sb
+	}
+	st.buildRealtimeVarPartitionSB(sb, src, ref, px, py)
+	return sb
+}
+
+func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, src, ref SourceFrame420, px, py int) {
+	content := st.realtimeContentStateForBlock(px, py)
+	*sb = realtimeVarPartSB{
+		ready:      true,
+		thresholds: realtimeVarPartThresholds(src.Width, src.Height, st.qIndex, st.yQuant.AC, st.effortLevel, content, 0),
+	}
+	for i := range sb.force32 {
+		sb.force32[i] = realtimePartEvalAll
+		for j := range sb.force16[i] {
+			sb.force16[i][j] = realtimePartEvalAll
+		}
+	}
+	sb.force64 = realtimePartEvalAll
+
+	refDX, refDY := 0, 0
+	if content.sourceSADNonRD > realtimeSourceSADLow && st.realtimeSourceVarianceForBlock(src, px, py, 64, 64) > 100 {
+		dx, dy, sad, zeroSAD, ok := realtimeIntProMotionEstimation64(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, content.sourceSADNonRD, st.effortLevel)
+		if ok && sad < zeroSAD>>1 && sad < 20000 {
+			refDX, refDY = dx, dy
+		}
+	}
+	refX, refY := px+refDX, py+refDY
+	for lvl1 := range 4 {
+		x32 := px + (lvl1&1)*32
+		y32 := py + (lvl1>>1)*32
+		avg16 := 0
+		max16 := 0
+		min16 := int(^uint(0) >> 1)
+		for lvl2 := range 4 {
+			x16 := x32 + (lvl2&1)*16
+			y16 := y32 + (lvl2>>1)*16
+			v16 := &sb.tree.split[lvl1].split[lvl2]
+			realtimeFillVariance8x8AvgAt(src.Y, src.YStride, ref.Y, ref.YStride, src.Width, src.Height, x16, y16, refX+(x16-px), refY+(y16-py), v16)
+			realtimeFillVarianceTree16(v16)
+			val16 := realtimeGetVariance(&v16.part.none)
+			avg16 += val16
+			if val16 > max16 {
+				max16 = val16
+			}
+			if val16 < min16 {
+				min16 = val16
+			}
+			if int64(val16) > sb.thresholds[3] {
+				sb.force16[lvl1][lvl2] = realtimePartEvalOnlySplit
+				sb.force32[lvl1] = realtimePartEvalOnlySplit
+				sb.force64 = realtimePartEvalOnlySplit
+			}
+		}
+		realtimeFillVarianceTree32(&sb.tree.split[lvl1])
+		if sb.force32[lvl1] == realtimePartEvalAll {
+			var32 := realtimeGetVariance(&sb.tree.split[lvl1].part.none)
+			maxMin16Diff := max16 - min16
+			if int64(var32) > sb.thresholds[2] ||
+				(int64(var32) > sb.thresholds[2]>>1 && var32 > avg16>>1) ||
+				(src.Width*src.Height <= realtimeResolution360P && maxMin16Diff > int(sb.thresholds[2]>>1) && int64(max16) > sb.thresholds[2]) {
+				sb.force32[lvl1] = realtimePartEvalOnlySplit
+				sb.force64 = realtimePartEvalOnlySplit
+			}
+		}
+	}
+	if sb.force64 == realtimePartEvalAll {
+		realtimeFillVarianceTree64(&sb.tree)
+		realtimeGetVariance(&sb.tree.part.none)
+	}
+}
+
+func (sb *realtimeVarPartSB) partition64() tile.Partition {
+	return realtimeSetVTPartitioning(&sb.tree.part, sb.thresholds[1], tile.BlockLevel64x64, tile.BlockLevel16x16, sb.force64)
+}
+
+func (sb *realtimeVarPartSB) partition32(lvl1 int) tile.Partition {
+	return realtimeSetVTPartitioning(&sb.tree.split[lvl1].part, sb.thresholds[2], tile.BlockLevel32x32, tile.BlockLevel16x16, sb.force32[lvl1])
+}
+
+func (sb *realtimeVarPartSB) partition16(lvl1, lvl2 int) tile.Partition {
+	return realtimeSetVTPartitioning(&sb.tree.split[lvl1].split[lvl2].part, sb.thresholds[3], tile.BlockLevel16x16, tile.BlockLevel8x8, sb.force16[lvl1][lvl2])
+}
+
+func realtimeSetVTPartitioning(part *realtimeVPartVariances, threshold int64, level, minLevel tile.BlockLevel, force realtimePartEvalStatus) tile.Partition {
+	if force == realtimePartEvalOnlyNone {
+		return tile.PartitionNone
+	}
+	if force == realtimePartEvalOnlySplit {
+		return tile.PartitionSplit
+	}
+	noneVar := realtimeGetVariance(&part.none)
+	if int64(noneVar) < threshold {
+		return tile.PartitionNone
+	}
+	if level < minLevel {
+		left := realtimeGetVariance(&part.vert[0])
+		right := realtimeGetVariance(&part.vert[1])
+		if int64(left) < threshold && int64(right) < threshold {
+			return tile.PartitionV
+		}
+		top := realtimeGetVariance(&part.horz[0])
+		bottom := realtimeGetVariance(&part.horz[1])
+		if int64(top) < threshold && int64(bottom) < threshold {
+			return tile.PartitionH
+		}
+	}
+	return tile.PartitionSplit
+}
+
 // reset (re)initializes the per-frame CDF and quantizer state. Buffers are
 // allocated on first use and reused afterwards. When prev is non-nil the
 // symbol contexts chain from it - the saved state of the frame named by
@@ -698,78 +1488,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	}
 	st.beginSADCacheFrame()
 	st.prepareRealtimeSourceContent(src, ref, st.grid64Cols, grid64Rows, miColStart, miColEnd)
-	sadEpoch := st.sadCacheEpoch
-	// mergeBias16 is the extra full-pel SAD a merged 16x16 block may carry
-	// over the four independent 8x8 searches and still be coded as one block:
-	// the saved mode/MV syntax of three blocks outweighs a small residual
-	// increase at realtime rates. mergeBias32 plays the same role one tier up
-	// (a 32x32 merge saves up to three 16x16 blocks' syntax).
-	const mergeBias16 = 64
-	const mergeBias32 = 192
-	// A 64x64 merge saves up to three 32-tier block headers and the extra
-	// partition symbols beneath them.
-	const mergeBias64 = 576
-	// evaluate16 fills the 16x16 and child 8x8 motion grids for the 16x16
-	// region at (px, py) — searching only on first use — and returns the
-	// merged SAD and the sum of the four child SADs.
-	// evaluate16Merged searches only the merged 16x16; the children search
-	// on demand so blocks the dead-zone bar merges outright never pay for
-	// four child searches they cannot use.
-	evaluate16Merged := func(px, py int) int {
-		idx16 := (py/16)*st.grid16Cols + px/16
-		sad16Entry := st.sad16Grid[idx16]
-		if !sadCacheValid(sad16Entry, sadEpoch) {
-			seedDX, seedDY, reach := 0, 0, fullPelReach
-			if st.hme != nil {
-				var trusted bool
-				seedDX, seedDY, trusted = st.hme.seedAt(px, py)
-				if trusted {
-					reach = fullPelReachTrusted
-				}
-			}
-			dx16, dy16, sad16 := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, 16, seedDX, seedDY, reach)
-			if (seedDX > reach || seedDX < -reach || seedDY > reach || seedDY < -reach) && sad16 > 16*16*2 {
-				// The seeded window excludes the fine zero neighborhood
-				// when the regional vector is large; blocks that disagree
-				// with their region (mover boundaries) refall back to the
-				// zero-centered window when the seeded match stays poor.
-				if zx, zy, zsad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, 16, 0, 0, fullPelReach); zsad < sad16 {
-					dx16, dy16, sad16 = zx, zy, zsad
-				}
-			}
-			st.mv16Grid[idx16] = motion.Vector{Row: int16(dy16 * 8), Col: int16(dx16 * 8)}
-			sad16Entry = sadCachePack(sadEpoch, sad16)
-			st.sad16Grid[idx16] = sad16Entry
-		}
-		return sadCacheValue(sad16Entry)
-	}
-	children8 := func(px, py int) int {
-		seedDX, seedDY, reach := 0, 0, fullPelReach
-		if st.hme != nil {
-			var trusted bool
-			seedDX, seedDY, trusted = st.hme.seedAt(px, py)
-			if trusted {
-				reach = fullPelReachTrusted
-			}
-		}
-		sum8 := 0
-		for _, off := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
-			cx, cy := px+off[0], py+off[1]
-			idx8 := (cy/8)*st.grid8Cols + cx/8
-			sad8Entry := st.sad8Grid[idx8]
-			if !sadCacheValid(sad8Entry, sadEpoch) {
-				dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, cx, cy, 8, seedDX, seedDY, reach)
-				st.mv8Grid[idx8] = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}
-				sad8Entry = sadCachePack(sadEpoch, sad)
-				st.sad8Grid[idx8] = sad8Entry
-			}
-			sum8 += sadCacheValue(sad8Entry)
-		}
-		return sum8
-	}
-	evaluate16 := func(px, py int) (int, int) {
-		return evaluate16Merged(px, py), children8(px, py)
-	}
+	st.prepareRealtimeVarPartitioning(st.grid64Cols, grid64Rows)
 	decideCore := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {
 			return tile.PartitionNone, nil
@@ -784,185 +1503,37 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 			return tile.PartitionSplit, nil
 		}
 		px, py := int(miCol)*4, int(miRow)*4
+		if px+64 > src.Width || py+64 > src.Height {
+			if level == tile.BlockLevel64x64 {
+				return tile.PartitionSplit, nil
+			}
+		}
+		sbPX, sbPY := (px/64)*64, (py/64)*64
+		sb := st.realtimeVarPartitionSB(src, ref, sbPX, sbPY)
+		if sb == nil {
+			return tile.PartitionSplit, nil
+		}
 		switch level {
 		case tile.BlockLevel64x64:
-			// One tier above the 32 merge with the same shape: all sixteen
-			// 16x16 descendants must settle on one full-pel vector, then a
-			// single merged probe prices the whole superblock as one block.
 			if px+64 > src.Width || py+64 > src.Height {
 				return tile.PartitionSplit, nil
 			}
-			childCost := 0
-			var mv64 motion.Vector
-			for i, off := range [16][2]int{
-				{0, 0}, {16, 0}, {32, 0}, {48, 0},
-				{0, 16}, {16, 16}, {32, 16}, {48, 16},
-				{0, 32}, {16, 32}, {32, 32}, {48, 32},
-				{0, 48}, {16, 48}, {32, 48}, {48, 48},
-			} {
-				sad16, sum8 := evaluate16(px+off[0], py+off[1])
-				childCost += min(sad16, sum8)
-				cmv := st.mv16Grid[((py+off[1])/16)*st.grid16Cols+(px+off[0])/16]
-				if i == 0 {
-					mv64 = cmv
-				} else if cmv != mv64 {
-					return tile.PartitionSplit, nil
-				}
-			}
-			dx, dy := int(mv64.Col)/8, int(mv64.Row)/8
-			if py+dy < 0 || px+dx < 0 || py+dy+64 > src.Height || px+dx+64 > src.Width {
-				return tile.PartitionSplit, nil
-			}
-			base := py*src.YStride + px
-			refBase := (py+dy)*src.YStride + px + dx
-			sad64 := sad64x64(src.Y[base:], ref.Y[refBase:], src.YStride)
-			if sad64 <= childCost+mergeBias64 {
-				idx64 := (py/64)*st.grid64Cols + px/64
-				st.mv64Grid[idx64] = mv64
-				st.sad64Grid[idx64] = sadCachePack(sadEpoch, sad64)
-				return tile.PartitionNone, nil
-			}
-			return tile.PartitionSplit, nil
+			return sb.partition64(), nil
 		case tile.BlockLevel32x32:
-			// haveRight/haveBottom only certify the half extents; a 32x32
-			// leaf must lie fully inside the frame for the unclipped
-			// residual path (overhanging nodes split into contained 16s).
 			if px+32 > src.Width || py+32 > src.Height {
 				return tile.PartitionSplit, nil
 			}
-			// Merge signal without a 32x32 search: when all four 16x16
-			// children settled on the same full-pel vector, one SAD probe of
-			// the merged block at that vector decides; disagreeing children
-			// mean real sub-block motion and the node splits.
-			childCost := 0
-			agree := true
-			var mv32 motion.Vector
-			for i, off := range [4][2]int{{0, 0}, {16, 0}, {0, 16}, {16, 16}} {
-				sad16, sum8 := evaluate16(px+off[0], py+off[1])
-				childCost += min(sad16, sum8)
-				cmv := st.mv16Grid[((py+off[1])/16)*st.grid16Cols+(px+off[0])/16]
-				if i == 0 {
-					mv32 = cmv
-				} else if cmv != mv32 {
-					agree = false
-				}
-			}
-			if !agree {
-				return tile.PartitionSplit, nil
-			}
-			dx, dy := int(mv32.Col)/8, int(mv32.Row)/8
-			base := py*src.YStride + px
-			refBase := (py+dy)*src.YStride + px + dx
-			if py+dy < 0 || px+dx < 0 || py+dy+32 > src.Height || px+dx+32 > src.Width {
-				return tile.PartitionSplit, nil
-			}
-			sad32 := sadBlock(src.Y, ref.Y, base, refBase, src.YStride, 32, 1<<30)
-			if sad32 <= childCost+mergeBias32 {
-				idx32 := (py/32)*st.grid32Cols + px/32
-				st.mv32Grid[idx32] = mv32
-				st.sad32Grid[idx32] = sadCachePack(sadEpoch, sad32)
-				return tile.PartitionNone, nil
-			}
-			// Rect halves one tier up from the 16-tier shape: a 32x16
-			// (16x32) half coded with one vector saves two blocks' syntax
-			// and gains the whole-half transform.
-			i0 := (py/16)*st.grid16Cols + px/16
-			idx := [4]int{i0, i0 + 1, i0 + st.grid16Cols, i0 + st.grid16Cols + 1}
-			const halfBias32 = 128
-			const halfSADGate32 = 32 * 16 * 2
-			halfSAD := func(cx, cy int, mv motion.Vector) int {
-				dx, dy := int(mv.Col)/8, int(mv.Row)/8
-				if cy+dy < 0 || cx+dx < 0 || cy+dy+16 > src.Height || cx+dx+16 > src.Width {
-					return 1 << 30
-				}
-				return sadBlock(src.Y, ref.Y, cy*src.YStride+cx, (cy+dy)*src.YStride+cx+dx, src.YStride, 16, 1<<30)
-			}
-			tryHalf := func(ia, ib int, ax, ay, bx, by int) bool {
-				mva := st.mv16Grid[idx[ia]]
-				mvb := st.mv16Grid[idx[ib]]
-				sa, sb := sadCacheValue(st.sad16Grid[idx[ia]]), sadCacheValue(st.sad16Grid[idx[ib]])
-				best, bestA, bestB := mva, sa, halfSAD(bx, by, mva)
-				if mvb != mva {
-					ca, cb := halfSAD(ax, ay, mvb), sb
-					if ca+cb < bestA+bestB {
-						best, bestA, bestB = mvb, ca, cb
-					}
-				}
-				if bestA+bestB > sa+sb+halfBias32 || bestA+bestB > halfSADGate32 {
-					return false
-				}
-				st.mv16Grid[idx[ia]], st.mv16Grid[idx[ib]] = best, best
-				st.sad16Grid[idx[ia]], st.sad16Grid[idx[ib]] = sadCachePack(sadEpoch, bestA), sadCachePack(sadEpoch, bestB)
-				return true
-			}
-			if tryHalf(0, 1, px, py, px+16, py) && tryHalf(2, 3, px, py+16, px+16, py+16) {
-				return tile.PartitionH, nil
-			}
-			if tryHalf(0, 2, px, py, px, py+16) && tryHalf(1, 3, px+16, py, px+16, py+16) {
-				return tile.PartitionV, nil
-			}
-			return tile.PartitionSplit, nil
+			relX, relY := px-sbPX, py-sbPY
+			lvl1 := (relY/32)*2 + relX/32
+			return sb.partition32(lvl1), nil
 		case tile.BlockLevel16x16:
-			sad16 := evaluate16Merged(px, py)
-			// Inside the quantizer's dead zone both shapes code almost
-			// nothing and headers favor the merge outright - and the four
-			// child searches never need to run.
-			skipBar := 16 * 16 * int(st.yQuant.AC) / 24
-			if sad16 <= skipBar {
-				return tile.PartitionNone, nil
+			if px+16 > src.Width || py+16 > src.Height {
+				return tile.PartitionSplit, nil
 			}
-			sum8 := children8(px, py)
-			margin := sad16 - (sum8 + mergeBias16)
-			if margin <= 0 {
-				return tile.PartitionNone, nil
-			}
-			// Rect halves: a 16x8 (8x16) half coded with one vector saves a
-			// block's mode/MV syntax and gains the whole-half transform.
-			// Each half probes its two child vectors and merges when the
-			// best whole-half SAD stays within a one-block syntax bias of
-			// the children's independent matches - the merge logic one tier
-			// below 16, with the same fixed-bias shape. The absolute gate
-			// keeps halves whose children would have wanted subpel
-			// refinement coded as separate 8x8s instead.
-			i0 := (py/8)*st.grid8Cols + px/8
-			idx := [4]int{i0, i0 + 1, i0 + st.grid8Cols, i0 + st.grid8Cols + 1}
-			const halfBias = 32
-			const halfSADGate = 16 * 8 * 2
-			childSAD := func(cx, cy int, mv motion.Vector) int {
-				dx, dy := int(mv.Col)/8, int(mv.Row)/8
-				if cy+dy < 0 || cx+dx < 0 || cy+dy+8 > src.Height || cx+dx+8 > src.Width {
-					return 1 << 30
-				}
-				return sadBlock(src.Y, ref.Y, cy*src.YStride+cx, (cy+dy)*src.YStride+cx+dx, src.YStride, 8, 1<<30)
-			}
-			// tryHalf probes the half spanning children ia/ib (child pixel
-			// origins given) and on success rewrites the pair's grid slots
-			// with the shared vector so the leaf coder reads them directly.
-			tryHalf := func(ia, ib int, ax, ay, bx, by int) bool {
-				mva := st.mv8Grid[idx[ia]]
-				mvb := st.mv8Grid[idx[ib]]
-				sa, sb := sadCacheValue(st.sad8Grid[idx[ia]]), sadCacheValue(st.sad8Grid[idx[ib]])
-				best, bestA, bestB := mva, sa, childSAD(bx, by, mva)
-				if mvb != mva {
-					ca, cb := childSAD(ax, ay, mvb), sb
-					if ca+cb < bestA+bestB {
-						best, bestA, bestB = mvb, ca, cb
-					}
-				}
-				if bestA+bestB > sa+sb+halfBias || bestA+bestB > halfSADGate {
-					return false
-				}
-				st.mv8Grid[idx[ia]], st.mv8Grid[idx[ib]] = best, best
-				st.sad8Grid[idx[ia]], st.sad8Grid[idx[ib]] = sadCachePack(sadEpoch, bestA), sadCachePack(sadEpoch, bestB)
-				return true
-			}
-			if tryHalf(0, 1, px, py, px+8, py) && tryHalf(2, 3, px, py+8, px+8, py+8) {
-				return tile.PartitionH, nil
-			}
-			if tryHalf(0, 2, px, py, px, py+8) && tryHalf(1, 3, px+8, py, px+8, py+8) {
-				return tile.PartitionV, nil
-			}
-			return tile.PartitionSplit, nil
+			relX, relY := px-sbPX, py-sbPY
+			lvl1 := (relY/32)*2 + relX/32
+			lvl2 := ((relY%32)/16)*2 + (relX%32)/16
+			return sb.partition16(lvl1, lvl2), nil
 		}
 		return tile.PartitionSplit, nil
 	}
@@ -1221,6 +1792,10 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		bw, bh = 32, 32
 	case tile.BlockSize64x64:
 		bw, bh = 64, 64
+	case tile.BlockSize64x32:
+		bw, bh = 64, 32
+	case tile.BlockSize32x64:
+		bw, bh = 32, 64
 	case tile.BlockSize16x8:
 		bw, bh = 16, 8
 	case tile.BlockSize8x16:
@@ -1324,9 +1899,6 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			}
 		}
 		if fullSAD < 0 {
-			if bw != bh {
-				return fmt.Errorf("encoder: rect block %+v without scored children", block)
-			}
 			seedDX, seedDY, reach := 0, 0, fullPelReach
 			if st.hme != nil {
 				var trusted bool
@@ -1335,7 +1907,12 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 					reach = fullPelReachTrusted
 				}
 			}
-			dx, dy, sad := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, seedDX, seedDY, reach)
+			dx, dy, sad := 0, 0, 0
+			if bw == bh {
+				dx, dy, sad = fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, seedDX, seedDY, reach)
+			} else {
+				dx, dy, sad = fullPelDiamondSearchRectSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, seedDX, seedDY, reach)
+			}
 			mv, fullSAD = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}, sad
 		}
 		if st.allowSubpelRefinement() && bw == bh && fullSAD > n*n*2 {
@@ -2813,6 +3390,10 @@ func realtimeInterBlockSizeForPixels(w, h int) (tile.BlockSize, bool) {
 	switch {
 	case w == 64 && h == 64:
 		return tile.BlockSize64x64, true
+	case w == 64 && h == 32:
+		return tile.BlockSize64x32, true
+	case w == 32 && h == 64:
+		return tile.BlockSize32x64, true
 	case w == 32 && h == 32:
 		return tile.BlockSize32x32, true
 	case w == 32 && h == 16:
@@ -3637,6 +4218,43 @@ func fullPelDiamondSearchSeeded(src, ref []byte, stride, width, height, px, py, 
 	default:
 		return fullPelDiamondSearchGeneric(src, ref, base, stride, n, minDX, maxDX, minDY, maxDY)
 	}
+}
+
+func fullPelDiamondSearchRectSeeded(src, ref []byte, stride, width, height, px, py, bw, bh int, seedDX, seedDY, reach int) (int, int, int) {
+	seedDX = minInt(maxInt(seedDX, -px), width-bw-px) &^ 1
+	seedDY = minInt(maxInt(seedDY, -py), height-bh-py) &^ 1
+	minDX := maxInt(seedDX-reach, -px)
+	maxDX := minInt(seedDX+reach, width-bw-px)
+	minDY := maxInt(seedDY-reach, -py)
+	maxDY := minInt(seedDY+reach, height-bh-py)
+
+	base := py*stride + px
+	bestDX, bestDY := 0, 0
+	bestSAD := sadRectBlock(src, ref, base, base, stride, bw, bh, 1<<30)
+	if bestSAD <= bw*bh*2 {
+		return 0, 0, bestSAD
+	}
+	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
+		refRow := base + dy*stride
+		for dx := minDX &^ 1; dx <= maxDX; dx += 4 {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			if s := sadRectBlock(src, ref, base, refRow+dx, stride, bw, bh, bestSAD); s < bestSAD {
+				bestSAD, bestDX, bestDY = s, dx, dy
+			}
+		}
+	}
+	for _, cand := range [4][2]int{{bestDX + 2, bestDY}, {bestDX - 2, bestDY}, {bestDX, bestDY + 2}, {bestDX, bestDY - 2}} {
+		dx, dy := cand[0], cand[1]
+		if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
+			continue
+		}
+		if s := sadRectBlock(src, ref, base, base+dy*stride+dx, stride, bw, bh, bestSAD); s < bestSAD {
+			bestSAD, bestDX, bestDY = s, dx, dy
+		}
+	}
+	return bestDX, bestDY, bestSAD
 }
 
 func fullPelDiamondSearch8(srcBlock []byte, ref []byte, base, stride, minDX, maxDX, minDY, maxDY int) (int, int, int) {
