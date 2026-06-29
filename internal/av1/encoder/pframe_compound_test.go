@@ -1,6 +1,7 @@
 package encoder
 
 import (
+	"math/rand"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/motion"
@@ -240,6 +241,33 @@ func TestRealtimeSourceVariancePerPixelMatchesAV1VarOffs(t *testing.T) {
 	want := (variance + 32) >> 6
 	if got := realtimeSourceVariancePerPixel(src, 8, 8, 8); got != want {
 		t.Fatalf("source variance=%d want %d", got, want)
+	}
+}
+
+func TestRealtimeAvg8x8MatchesLibaomCShape(t *testing.T) {
+	rng := rand.New(rand.NewSource(9101))
+	const (
+		stride = 73
+		height = 40
+	)
+	plane := make([]byte, stride*height)
+	for i := range plane {
+		plane[i] = uint8(rng.Intn(256))
+	}
+	for range 500 {
+		x := rng.Intn(stride - 16)
+		y := rng.Intn(height - 16)
+		off := y*stride + x
+		if got, want := realtimeAvg8x8(plane[off:], stride), realtimeAvg8x8PureGo(plane[off:], stride); got != want {
+			t.Fatalf("avg8x8 off=%d got %d want %d", off, got, want)
+		}
+		g0, g1, g2, g3 := realtimeAvg8x8Quad(plane[off:], stride)
+		w0, w1, w2, w3 := realtimeAvg8x8QuadPureGo(plane[off:], stride)
+		got := [4]int{g0, g1, g2, g3}
+		want := [4]int{w0, w1, w2, w3}
+		if got != want {
+			t.Fatalf("avg8x8 quad off=%d got %v want %v", off, got, want)
+		}
 	}
 }
 

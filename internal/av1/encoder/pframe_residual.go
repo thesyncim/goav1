@@ -737,7 +737,14 @@ func realtimeFillVarianceTree64(vt *realtimeVarTree64) {
 	realtimeSum2Variances(&vt.part.vert[0], &vt.part.vert[1], &vt.part.none)
 }
 
+var realtimeAvg8x8Impl = realtimeAvg8x8PureGo
+var realtimeAvg8x8QuadImpl = realtimeAvg8x8QuadPureGo
+
 func realtimeAvg8x8(src []byte, stride int) int {
+	return realtimeAvg8x8Impl(src, stride)
+}
+
+func realtimeAvg8x8PureGo(src []byte, stride int) int {
 	sum := 0
 	for y := range 8 {
 		row := y * stride
@@ -746,6 +753,17 @@ func realtimeAvg8x8(src []byte, stride int) int {
 		}
 	}
 	return (sum + 32) >> 6
+}
+
+func realtimeAvg8x8Quad(src []byte, stride int) (int, int, int, int) {
+	return realtimeAvg8x8QuadImpl(src, stride)
+}
+
+func realtimeAvg8x8QuadPureGo(src []byte, stride int) (int, int, int, int) {
+	return realtimeAvg8x8PureGo(src, stride),
+		realtimeAvg8x8PureGo(src[8:], stride),
+		realtimeAvg8x8PureGo(src[8*stride:], stride),
+		realtimeAvg8x8PureGo(src[8*stride+8:], stride)
 }
 
 func realtimeAvg8x8At(plane []byte, stride, width, height, x, y int) int {
@@ -775,12 +793,25 @@ func realtimeAvg8x8At(plane []byte, stride, width, height, x, y int) int {
 }
 
 func realtimeFillVariance8x8AvgAt(src []byte, srcStride int, ref []byte, refStride int, width, height int, srcX, srcY, refX, refY int, vt *realtimeVarTree16) {
+	var srcAvg, refAvg [4]int
+	srcInside := srcX >= 0 && srcY >= 0 && srcX+16 <= width && srcY+16 <= height
+	refInside := refX >= 0 && refY >= 0 && refX+16 <= width && refY+16 <= height
+	if srcInside {
+		srcAvg[0], srcAvg[1], srcAvg[2], srcAvg[3] = realtimeAvg8x8Quad(src[srcY*srcStride+srcX:], srcStride)
+	}
+	if refInside {
+		refAvg[0], refAvg[1], refAvg[2], refAvg[3] = realtimeAvg8x8Quad(ref[refY*refStride+refX:], refStride)
+	}
 	for idx := range 4 {
 		xOff := (idx & 1) << 3
 		yOff := (idx >> 1) << 3
-		srcAvg := realtimeAvg8x8At(src, srcStride, width, height, srcX+xOff, srcY+yOff)
-		refAvg := realtimeAvg8x8At(ref, refStride, width, height, refX+xOff, refY+yOff)
-		sum := int32(srcAvg - refAvg)
+		if !srcInside {
+			srcAvg[idx] = realtimeAvg8x8At(src, srcStride, width, height, srcX+xOff, srcY+yOff)
+		}
+		if !refInside {
+			refAvg[idx] = realtimeAvg8x8At(ref, refStride, width, height, refX+xOff, refY+yOff)
+		}
+		sum := int32(srcAvg[idx] - refAvg[idx])
 		realtimeFillVariance(uint32(sum*sum), sum, 0, &vt.split[idx])
 	}
 }
