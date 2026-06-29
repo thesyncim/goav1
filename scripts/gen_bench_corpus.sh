@@ -6,8 +6,9 @@
 # internal/av1/testvector/cross_decoder_corpus_bench_test.go) needs clips that
 # are long enough (~30-60 frames) that steady-state decode dominates process
 # startup. The bundled libaom conformance vectors are only a couple of frames
-# each, so this script synthesizes a representative matrix from a single small
-# source clip by scaling/length-extending with ffmpeg and encoding with aomenc.
+# each, so this script synthesizes a representative matrix from one explicitly
+# supplied source clip by scaling/length-extending with ffmpeg and encoding
+# with aomenc.
 #
 # The generated .ivf clips are NOT committed to git (the output dir is in
 # .gitignore). Run this script to (re)materialize them; the benchmark skips
@@ -19,7 +20,7 @@
 # same digest from goav1's in-process decode and fails any clip that does not
 # match -- so the corpus doubles as a conformance probe on real content.
 #
-# Axes covered: resolution (256x144, 640x360, 1280x720), rate/quality
+# Axes covered: resolution (256x144, 512x288, 640x360, 1280x720), rate/quality
 # (cq-level 20/32/55), coding tools (all-intra vs inter GOP, single vs 2 tile
 # columns), bit depth (8-bit primary plus 10/12-bit profile coverage), and
 # chroma sampling (4:2:0 primary plus profile-1 4:4:4 and profile-2 4:2:2
@@ -30,6 +31,10 @@
 #
 # OUTDIR defaults to $GOAV1_BENCH_CORPUS_DIR, then to testdata/benchcorpus
 # under the repo root.
+#
+# Required input:
+#   GOAV1_BENCH_SOURCE=/path/to/source_8bit_420.y4m
+#   GOAV1_BENCH_SOURCE_SHA256=<sha256 of that source>
 
 set -euo pipefail
 
@@ -49,10 +54,19 @@ done
 # --- locate source + output dir ---------------------------------------------
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-SRC=${GOAV1_BENCH_SOURCE:-/Users/thesyncim/GolandProjects/govpx/internal/coracle/build/test-data/encoder/park_joy_90p_8_420.y4m}
+SRC=${GOAV1_BENCH_SOURCE:-}
+SRC_EXPECTED_SHA=${GOAV1_BENCH_SOURCE_SHA256:-}
+if [ -z "$SRC" ]; then
+  echo "ERROR: set GOAV1_BENCH_SOURCE to a 4:2:0 8-bit y4m source clip" >&2
+  exit 1
+fi
 if [ ! -f "$SRC" ]; then
   echo "ERROR: source y4m not found: $SRC" >&2
-  echo "       set GOAV1_BENCH_SOURCE to a 4:2:0 8-bit y4m" >&2
+  echo "       set GOAV1_BENCH_SOURCE to a 4:2:0 8-bit y4m source clip" >&2
+  exit 1
+fi
+if [ -z "$SRC_EXPECTED_SHA" ]; then
+  echo "ERROR: set GOAV1_BENCH_SOURCE_SHA256 to pin the source clip content" >&2
   exit 1
 fi
 
@@ -62,6 +76,7 @@ mkdir -p "$OUTDIR"
 # Number of frames each clip is length-extended to (steady-state dominates
 # startup at this length). The source clip is short, so ffmpeg loops it.
 FRAMES=${GOAV1_BENCH_FRAMES:-48}
+FPS=${GOAV1_BENCH_FPS:-30}
 EXPECTED_CLIPS=25
 AOM_THREADS=${GOAV1_BENCH_AOM_THREADS:-1}
 AOM_ROW_MT=${GOAV1_BENCH_AOM_ROW_MT:-1}
@@ -70,6 +85,18 @@ MANIFEST="$OUTDIR/manifest.tsv"
 case "$AOM_THREADS" in
   ''|*[!0-9]*|0)
     echo "ERROR: GOAV1_BENCH_AOM_THREADS must be a positive integer" >&2
+    exit 1
+    ;;
+esac
+case "$FRAMES" in
+  ''|*[!0-9]*|0)
+    echo "ERROR: GOAV1_BENCH_FRAMES must be a positive integer" >&2
+    exit 1
+    ;;
+esac
+case "$FPS" in
+  ''|*[!0-9]*|0)
+    echo "ERROR: GOAV1_BENCH_FPS must be a positive integer" >&2
     exit 1
     ;;
 esac
@@ -87,12 +114,21 @@ trap 'rm -rf "$WORK"' EXIT
 echo "source : $SRC"
 echo "outdir : $OUTDIR"
 echo "frames : $FRAMES"
+echo "fps    : $FPS"
 echo "aomenc : threads=$AOM_THREADS row-mt=$AOM_ROW_MT"
 echo
 
 sha256_file() {
   shasum -a 256 "$1" | awk '{print $1}'
 }
+
+SRC_ACTUAL_SHA=$(sha256_file "$SRC")
+if [ "$SRC_ACTUAL_SHA" != "$SRC_EXPECTED_SHA" ]; then
+  echo "ERROR: source sha256 mismatch for $SRC" >&2
+  echo "       got  $SRC_ACTUAL_SHA" >&2
+  echo "       want $SRC_EXPECTED_SHA" >&2
+  exit 1
+fi
 
 tool_sha256() {
   local tool=$1
@@ -117,8 +153,9 @@ write_manifest_header() {
     printf '# goav1_bench_corpus_manifest_v1\n'
     printf '# generated_at_utc=%s\n' "$generated_at"
     printf '# source_path=%s\n' "$SRC"
-    printf '# source_sha256=%s\n' "$(sha256_file "$SRC")"
+    printf '# source_sha256=%s\n' "$SRC_ACTUAL_SHA"
     printf '# frames=%s\n' "$FRAMES"
+    printf '# fps=%s\n' "$FPS"
     printf '# expected_clips=%s\n' "$EXPECTED_CLIPS"
     printf '# aomenc_path=%s\n' "$AOMENC"
     printf '# aomenc_sha256=%s\n' "$(tool_sha256 "$AOMENC")"
@@ -166,7 +203,8 @@ scaled_source() {
   fi
   # -stream_loop large enough to exceed FRAMES after the 10-frame source.
   "$FFMPEG" -v error -y -stream_loop 200 -i "$SRC" -frames:v "$FRAMES" \
-    -vf "scale=${w}:${h}" -pix_fmt "$fmt" "${strict[@]}" "$out"
+    -vf "fps=${FPS},scale=${w}:${h}:flags=bicubic,format=${fmt}" \
+    -pix_fmt "$fmt" "${strict[@]}" "$out"
   echo "$out"
 }
 

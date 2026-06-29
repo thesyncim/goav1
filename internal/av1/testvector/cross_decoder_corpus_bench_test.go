@@ -123,16 +123,20 @@ type corpusPublishManifest struct {
 }
 
 type corpusPublishManifestRow struct {
-	name      string
-	width     int
-	height    int
-	frames    int
-	bitDepth  uint8
-	chroma    string
-	ivfBytes  int64
-	ivfSHA256 string
-	md5       MD5
-	md5SHA256 string
+	name       string
+	width      int
+	height     int
+	frames     int
+	cq         int
+	bitDepth   uint8
+	chroma     string
+	profile    int
+	ivfBytes   int64
+	ivfSHA256  string
+	md5        MD5
+	md5SHA256  string
+	dav1dCheck string
+	aomencArgs string
 }
 
 type corpusOracleKind uint8
@@ -1274,6 +1278,19 @@ func TestCorpusInterleavedTimingJobsRotateDecoders(t *testing.T) {
 	}
 }
 
+func TestCorpusClipCoverageSummaryDerivesLoadedAxes(t *testing.T) {
+	clips := []corpusClip{
+		{width: 256, height: 144, bitDepth: 8, chroma: "420", tileCols: 0, allIntra: true},
+		{width: 512, height: 288, bitDepth: 10, chroma: "444", tileCols: 1, allIntra: false},
+	}
+	got := corpusClipCoverageSummary(clips)
+	for _, want := range []string{"2 generated", "256x144", "512x288", "8/10", "420/444", "0/1", "inter/intra"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary %q missing %q", got, want)
+		}
+	}
+}
+
 func TestLoadCorpusPublishManifestValidatesFiles(t *testing.T) {
 	dir := t.TempDir()
 	md5Hex := "0123456789abcdeffedcba9876543210"
@@ -1288,7 +1305,9 @@ func TestLoadCorpusPublishManifestValidatesFiles(t *testing.T) {
 		t.Fatalf("loadCorpusPublishManifest: %v", err)
 	}
 	row := manifest.rows["clip"]
-	if manifest.expectedClips != 1 || row.width != 2 || row.height != 4 || row.frames != 3 || row.bitDepth != 8 || row.chroma != "420" || row.md5 != md5 {
+	if manifest.expectedClips != 1 || row.width != 2 || row.height != 4 || row.frames != 3 ||
+		row.cq != 32 || row.bitDepth != 8 || row.chroma != "420" || row.profile != 0 ||
+		row.md5 != md5 || row.dav1dCheck != "dav1d=OK" || row.aomencArgs != "args" {
 		t.Fatalf("manifest=%+v row=%+v", manifest, row)
 	}
 	clip := corpusClip{name: "clip", width: 2, height: 4, frames: 3, bitDepth: 8, chroma: "420", oracleKind: corpusOracleStreamMD5, wantMD5: md5}
@@ -1395,7 +1414,9 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 	if report.Corpus.ManifestSHA256 != manifestSHA || report.Corpus.ExpectedClips != 1 || report.Corpus.LoadedClips != 1 || report.Corpus.TotalFrames != 3 {
 		t.Fatalf("corpus report=%+v want manifest hash/clip counts", report.Corpus)
 	}
-	if len(report.Clips) != 1 || report.Clips[0].Name != "clip" || report.Clips[0].BitDepth != 8 {
+	if len(report.Clips) != 1 || report.Clips[0].Name != "clip" || report.Clips[0].CQ != 32 ||
+		report.Clips[0].BitDepth != 8 || report.Clips[0].Profile != 0 ||
+		report.Clips[0].DAV1DCheck != "dav1d=OK" || report.Clips[0].AOMEncArgs != "args" {
 		t.Fatalf("clips=%+v", report.Clips)
 	}
 	if len(report.Tools) != 2 || !report.Tools[0].InProcess || report.Tools[1].SHA256 == "" {
@@ -1800,12 +1821,20 @@ func parseCorpusPublishManifestRow(line string) (corpusPublishManifestRow, error
 	if err != nil {
 		return corpusPublishManifestRow{}, err
 	}
+	cq, err := parsePositiveCorpusManifestInt(fields[4], "cq")
+	if err != nil {
+		return corpusPublishManifestRow{}, err
+	}
 	depth, err := parsePositiveCorpusManifestInt(fields[5], "depth")
 	if err != nil {
 		return corpusPublishManifestRow{}, err
 	}
 	if depth > 255 {
 		return corpusPublishManifestRow{}, fmt.Errorf("depth=%d out of range", depth)
+	}
+	profile, err := parseCorpusManifestProfile(fields[7])
+	if err != nil {
+		return corpusPublishManifestRow{}, err
 	}
 	ivfBytes, err := strconv.ParseInt(fields[8], 10, 64)
 	if err != nil || ivfBytes <= 0 {
@@ -1827,18 +1856,38 @@ func parseCorpusPublishManifestRow(line string) (corpusPublishManifestRow, error
 	default:
 		return corpusPublishManifestRow{}, fmt.Errorf("invalid chroma=%q", chroma)
 	}
+	dav1dCheck := strings.TrimSpace(fields[12])
+	if dav1dCheck == "" {
+		return corpusPublishManifestRow{}, errors.New("empty dav1d_check")
+	}
+	aomencArgs := strings.TrimSpace(fields[13])
+	if aomencArgs == "" {
+		return corpusPublishManifestRow{}, errors.New("empty aomenc_args")
+	}
 	return corpusPublishManifestRow{
-		name:      name,
-		width:     width,
-		height:    height,
-		frames:    frames,
-		bitDepth:  uint8(depth),
-		chroma:    chroma,
-		ivfBytes:  ivfBytes,
-		ivfSHA256: strings.ToLower(strings.TrimSpace(fields[9])),
-		md5:       md5,
-		md5SHA256: strings.ToLower(strings.TrimSpace(fields[11])),
+		name:       name,
+		width:      width,
+		height:     height,
+		frames:     frames,
+		cq:         cq,
+		bitDepth:   uint8(depth),
+		chroma:     chroma,
+		profile:    profile,
+		ivfBytes:   ivfBytes,
+		ivfSHA256:  strings.ToLower(strings.TrimSpace(fields[9])),
+		md5:        md5,
+		md5SHA256:  strings.ToLower(strings.TrimSpace(fields[11])),
+		dav1dCheck: dav1dCheck,
+		aomencArgs: aomencArgs,
 	}, nil
+}
+
+func parseCorpusManifestProfile(raw string) (int, error) {
+	profile, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || profile < 0 || profile > 2 {
+		return 0, fmt.Errorf("invalid profile=%q", raw)
+	}
+	return profile, nil
 }
 
 func parsePositiveCorpusManifestInt(raw, name string) (int, error) {
@@ -2051,15 +2100,19 @@ type corpusPublishReportTool struct {
 }
 
 type corpusPublishReportClip struct {
-	Name     string `json:"name"`
-	Path     string `json:"path"`
-	Frames   int    `json:"frames"`
-	Width    int    `json:"width"`
-	Height   int    `json:"height"`
-	BitDepth uint8  `json:"bit_depth"`
-	Chroma   string `json:"chroma"`
-	TileCols uint8  `json:"tile_cols"`
-	AllIntra bool   `json:"all_intra"`
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	Frames     int    `json:"frames"`
+	Width      int    `json:"width"`
+	Height     int    `json:"height"`
+	CQ         int    `json:"cq,omitempty"`
+	BitDepth   uint8  `json:"bit_depth"`
+	Chroma     string `json:"chroma"`
+	Profile    int    `json:"profile"`
+	TileCols   uint8  `json:"tile_cols"`
+	AllIntra   bool   `json:"all_intra"`
+	DAV1DCheck string `json:"dav1d_check,omitempty"`
+	AOMEncArgs string `json:"aomenc_args,omitempty"`
 }
 
 type corpusPublishReportDecoder struct {
@@ -2451,7 +2504,7 @@ func writeCorpusPublishReport(path, dir string, manifest corpusPublishManifest, 
 			ExternalStartupModel: "raw includes subprocess startup; adjusted subtracts one measured startup baseline per clip",
 		},
 		Tools:    corpusPublishReportTools(timers),
-		Clips:    corpusPublishReportClips(clips),
+		Clips:    corpusPublishReportClips(clips, manifest),
 		Decoders: corpusPublishReportDecoders(clips, results),
 	}
 	raw, err := json.MarshalIndent(report, "", "  ")
@@ -2560,19 +2613,32 @@ func firstCorpusNonEmptyLine(s string) string {
 	return ""
 }
 
-func corpusPublishReportClips(clips []corpusClip) []corpusPublishReportClip {
+func corpusPublishReportClips(clips []corpusClip, manifest corpusPublishManifest) []corpusPublishReportClip {
 	out := make([]corpusPublishReportClip, 0, len(clips))
 	for _, clip := range clips {
+		row, haveRow := manifest.rows[clip.name]
+		cq, profile := 0, 0
+		dav1dCheck, aomencArgs := "", ""
+		if haveRow {
+			cq = row.cq
+			profile = row.profile
+			dav1dCheck = row.dav1dCheck
+			aomencArgs = row.aomencArgs
+		}
 		out = append(out, corpusPublishReportClip{
-			Name:     clip.name,
-			Path:     clip.ivfPath,
-			Frames:   clip.frames,
-			Width:    clip.width,
-			Height:   clip.height,
-			BitDepth: clip.bitDepth,
-			Chroma:   clip.chroma,
-			TileCols: clip.tileCols,
-			AllIntra: clip.allIntra,
+			Name:       clip.name,
+			Path:       clip.ivfPath,
+			Frames:     clip.frames,
+			Width:      clip.width,
+			Height:     clip.height,
+			CQ:         cq,
+			BitDepth:   clip.bitDepth,
+			Chroma:     clip.chroma,
+			Profile:    profile,
+			TileCols:   clip.tileCols,
+			AllIntra:   clip.allIntra,
+			DAV1DCheck: dav1dCheck,
+			AOMEncArgs: aomencArgs,
 		})
 	}
 	return out
@@ -2666,7 +2732,7 @@ func printCorpusReport(t *testing.T, clips []corpusClip, results []decoderResult
 	fmt.Fprintf(&b, "==================================================================================\n")
 	fmt.Fprintf(&b, " goav1 multi-config cross-decoder throughput  (steady-state; PERF TRACKING)\n")
 	fmt.Fprintf(&b, "==================================================================================\n")
-	fmt.Fprintf(&b, " clips: %d generated (256x144/640x360/1280x720; cq 20/32/55; intra/inter; tiles; 8/10/12-bit; 4:2:0/4:2:2)\n", len(clips))
+	fmt.Fprintf(&b, " %s\n", corpusClipCoverageSummary(clips))
 	fmt.Fprintf(&b, " best-of-%d (min wall-clock); single-thread; full decode + post-filter; output discarded.\n", crossBenchRuns)
 	fmt.Fprintf(&b, " timing order: deterministic clip-rotated decoder interleave to reduce thermal/load column bias.\n")
 	fmt.Fprintf(&b, " goav1: IN-PROCESS, byte-exact verified once while loading corpus; timed path discards output.\n")
@@ -2786,4 +2852,60 @@ func printCorpusReport(t *testing.T, clips []corpusClip, results []decoderResult
 	fmt.Fprintf(&b, "\n")
 	fmt.Fprintf(&b, "goav1/dav1d < 1 means goav1 is slower than dav1d by that factor (the honest gap).\n")
 	t.Log(b.String())
+}
+
+func corpusClipCoverageSummary(clips []corpusClip) string {
+	resolutions := make(map[string]bool, len(clips))
+	bitDepths := make(map[int]bool, 3)
+	chromas := make(map[string]bool, 3)
+	tileCols := make(map[int]bool, 2)
+	types := make(map[string]bool, 2)
+	for _, clip := range clips {
+		resolutions[fmt.Sprintf("%dx%d", clip.width, clip.height)] = true
+		bitDepths[int(clip.bitDepth)] = true
+		chromas[clip.chroma] = true
+		tileCols[int(clip.tileCols)] = true
+		if clip.allIntra {
+			types["intra"] = true
+		} else {
+			types["inter"] = true
+		}
+	}
+	return fmt.Sprintf(
+		"clips: %d generated (resolutions %s; bit-depths %s; chroma %s; tile-columns %s; types %s)",
+		len(clips),
+		joinSortedSet(resolutions),
+		joinSortedIntSet(bitDepths),
+		joinSortedSet(chromas),
+		joinSortedIntSet(tileCols),
+		joinSortedSet(types),
+	)
+}
+
+func joinSortedSet(values map[string]bool) string {
+	if len(values) == 0 {
+		return "none"
+	}
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return strings.Join(out, "/")
+}
+
+func joinSortedIntSet(values map[int]bool) string {
+	if len(values) == 0 {
+		return "none"
+	}
+	out := make([]int, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Ints(out)
+	parts := make([]string, len(out))
+	for i, value := range out {
+		parts[i] = strconv.Itoa(value)
+	}
+	return strings.Join(parts, "/")
 }

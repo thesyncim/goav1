@@ -63,10 +63,11 @@ func BenchmarkVideoEncoderPFrame(b *testing.B) {
 	}
 }
 
-// BenchmarkVideoEncoderPFrame1080p is the SVT-AV1 comparison point: full-HD
-// steady-state inter encoding with textured content, global drift, and two
-// moving objects, exercising motion search, merge decisions, subpel, and
-// four parallel tile columns.
+// BenchmarkVideoEncoderPFrame1080p is a goav1 hot-path profiling point:
+// full-HD steady-state inter encoding with textured content, global drift, and
+// two moving objects, exercising motion search, merge decisions, subpel, and
+// four parallel tile columns. Use cmd/qualitybench publish mode for external
+// SVT-AV1/libaom comparison tables.
 func BenchmarkVideoEncoderPFrame1080p(b *testing.B) {
 	const w, h = 1920, 1080
 	cw, ch := w/2, h/2

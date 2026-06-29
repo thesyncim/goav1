@@ -183,8 +183,9 @@ func main() {
 		}
 		cw, ch := w/2, h/2
 		frameLen := lumaPixels + 2*cw*ch
-		if len(raw) < nFrames*frameLen {
-			fmt.Fprintf(os.Stderr, "input holds %d frames, need %d\n", len(raw)/frameLen, nFrames)
+		expected := nFrames * frameLen
+		if len(raw) != expected {
+			fmt.Fprintf(os.Stderr, "input size=%d, want exact raw I420 size %d (%d frames)\n", len(raw), expected, nFrames)
 			os.Exit(1)
 		}
 		for n := range nFrames {

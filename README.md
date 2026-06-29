@@ -458,13 +458,16 @@ decoders are skipped so the target can run on lightweight developer machines.
 For the longer steady-state corpus comparison:
 
 ```sh
+export GOAV1_BENCH_SOURCE=/path/to/source_8bit_420.y4m
+export GOAV1_BENCH_SOURCE_SHA256=$(shasum -a 256 "$GOAV1_BENCH_SOURCE" | awk '{print $1}')
 scripts/gen_bench_corpus.sh
 make bench-corpus-publish
 ```
 
-The generator pins aomenc `--threads` and `--row-mt`, expects 25 clips, and
-writes `manifest.tsv` with source, tool, IVF, and MD5 hashes next to the local
-ignored corpus.
+The generator requires an explicit source clip plus source SHA-256, pins aomenc
+`--threads` and `--row-mt`, expects 25 clips, and writes `manifest.tsv` with
+source, tool, encode-argument, IVF, and MD5 hashes next to the local ignored
+corpus.
 
 `bench-corpus-publish` enables `GOAV1_BENCH_CORPUS_PUBLISH=1`, which requires
 `manifest.tsv` to match the generator schema, expected clip count, IVF and MD5
