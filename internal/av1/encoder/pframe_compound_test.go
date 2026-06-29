@@ -86,7 +86,10 @@ func TestRealtimeInterTX16TreeMatchesLibaomNonRDCap(t *testing.T) {
 }
 
 func TestRealtimeInterTXLeafSizeMatchesLibaomCalculateTXSize(t *testing.T) {
-	const qAC = int32(88)
+	const (
+		qAC     = int32(88)
+		txLevel = 2
+	)
 	for _, tc := range []struct {
 		name      string
 		block     tile.BlockSize
@@ -104,14 +107,14 @@ func TestRealtimeInterTXLeafSizeMatchesLibaomCalculateTXSize(t *testing.T) {
 		{name: "larger than 32 forced to 16x16", block: tile.BlockSize64x64, qIndex: 72, sse: 1000, variance: 1000, wantLeaf: 16, wantSplit: [2]uint16{1, 0x0033}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			gotLeaf, err := realtimeInterTXLeafSizeForBlock(tc.block, tc.qIndex, qAC, tc.sse, tc.variance)
+			gotLeaf, err := realtimeInterTXLeafSizeForBlock(tc.block, tc.qIndex, qAC, txLevel, tc.sse, tc.variance)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if gotLeaf != tc.wantLeaf {
 				t.Fatalf("leaf=%d want %d", gotLeaf, tc.wantLeaf)
 			}
-			plan, err := realtimeInterTXPlanForBlock(tc.block, tc.qIndex, qAC, tc.sse, tc.variance)
+			plan, err := realtimeInterTXPlanForBlock(tc.block, tc.qIndex, qAC, txLevel, tc.sse, tc.variance)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,6 +125,56 @@ func TestRealtimeInterTXLeafSizeMatchesLibaomCalculateTXSize(t *testing.T) {
 				t.Fatalf("split=%#v want %#v", plan.tree.Split, tc.wantSplit)
 			}
 		})
+	}
+}
+
+func TestRealtimeTXSizeLevelBasedOnQstepMatchesSpeedFeatures(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		w, h   int
+		effort int8
+		speed  int
+		level  int
+	}{
+		{name: "1080p default speed8 level2", w: 1920, h: 1080, effort: 0, speed: 8, level: 2},
+		{name: "1080p fastest speed10 disables qstep level", w: 1920, h: 1080, effort: WebRTCMinEffortLevel, speed: 10, level: 0},
+		{name: "1080p max effort speed4 disables qstep level", w: 1920, h: 1080, effort: WebRTCMaxEffortLevel, speed: 4, level: 0},
+		{name: "360p default speed8 level2", w: 640, h: 360, effort: 0, speed: 8, level: 2},
+		{name: "below 360p default speed8 level1", w: 320, h: 180, effort: 0, speed: 8, level: 1},
+		{name: "below 360p fastest speed10 keeps level1", w: 320, h: 180, effort: WebRTCMinEffortLevel, speed: 10, level: 1},
+		{name: "720p speed7 disables qstep level", w: 1280, h: 720, effort: 1, speed: 7, level: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := realtimeLibaomSpeedForEffort(tc.effort); got != tc.speed {
+				t.Fatalf("speed=%d want %d", got, tc.speed)
+			}
+			if got := realtimeTXSizeLevelBasedOnQstep(tc.w, tc.h, tc.effort); got != tc.level {
+				t.Fatalf("level=%d want %d", got, tc.level)
+			}
+		})
+	}
+}
+
+func TestRealtimeInterTXLeafSizeHonorsQstepSpeedFeatureLevel(t *testing.T) {
+	const (
+		qIndex   = uint8(72)
+		qAC      = int32(88)
+		sse      = uint32(100)
+		variance = uint32(100)
+	)
+	level0, err := realtimeInterTXLeafSizeForBlock(tile.BlockSize16x16, qIndex, qAC, 0, sse, variance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if level0 != 8 {
+		t.Fatalf("level0 leaf=%d want 8", level0)
+	}
+	level2, err := realtimeInterTXLeafSizeForBlock(tile.BlockSize16x16, qIndex, qAC, 2, sse, variance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if level2 != 16 {
+		t.Fatalf("level2 leaf=%d want 16", level2)
 	}
 }
 

@@ -1432,7 +1432,8 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	if useRealtimeTXPlan {
 		sse, variance := realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
 		var err error
-		txPlan, err = realtimeInterTXPlanForBlock(block.Size, st.qIndex, st.yQuant.AC, sse, variance)
+		txLevel := realtimeTXSizeLevelBasedOnQstep(src.Width, src.Height, st.effortLevel)
+		txPlan, err = realtimeInterTXPlanForBlock(block.Size, st.qIndex, st.yQuant.AC, txLevel, sse, variance)
 		if err != nil {
 			return err
 		}
@@ -2352,8 +2353,8 @@ func (p realtimeInterTXPlan) walkLeaf(from tile.TransformSize, depth int, x4, y4
 	return nil
 }
 
-func realtimeInterTXPlanForBlock(block tile.BlockSize, qIndex uint8, qAC int32, sse, variance uint32) (realtimeInterTXPlan, error) {
-	leafSize, err := realtimeInterTXLeafSizeForBlock(block, qIndex, qAC, sse, variance)
+func realtimeInterTXPlanForBlock(block tile.BlockSize, qIndex uint8, qAC int32, txSizeLevelBasedOnQstep int, sse, variance uint32) (realtimeInterTXPlan, error) {
+	leafSize, err := realtimeInterTXLeafSizeForBlock(block, qIndex, qAC, txSizeLevelBasedOnQstep, sse, variance)
 	if err != nil {
 		return realtimeInterTXPlan{}, err
 	}
@@ -2418,12 +2419,45 @@ func buildRealtimeInterTXTree(tree *tile.TransformTreeResult, from tile.Transfor
 	return nil
 }
 
+// realtimeLibaomSpeedForEffort maps the public WebRTC effort range onto
+// libaom's realtime speed numbers. Effort 0 is the speed-8 baseline; lower
+// effort selects speed 9/10 behavior, higher effort selects speed 7..4.
+func realtimeLibaomSpeedForEffort(effort int8) int {
+	if effort < WebRTCMinEffortLevel {
+		effort = WebRTCMinEffortLevel
+	} else if effort > WebRTCMaxEffortLevel {
+		effort = WebRTCMaxEffortLevel
+	}
+	return 8 - int(effort)
+}
+
+// realtimeTXSizeLevelBasedOnQstep mirrors the
+// speed_features.c set_rt_speed_feature_framesize_dependent() assignments for
+// rt_sf.tx_size_level_based_on_qstep in low-bitdepth realtime mode.
+func realtimeTXSizeLevelBasedOnQstep(width, height int, effort int8) int {
+	speed := realtimeLibaomSpeedForEffort(effort)
+	if minInt(width, height) < 360 {
+		if speed >= 8 {
+			return 1
+		}
+		return 0
+	}
+	if speed >= 10 {
+		return 0
+	}
+	if speed >= 8 {
+		return 2
+	}
+	return 0
+}
+
 // realtimeInterTXLeafSizeForBlock mirrors av1/encoder/nonrd_pickmode.c
 // calculate_tx_size() for realtime TX_MODE_SELECT without cyclic-refresh AQ:
-// qstep-scaled SSE/variance select TX_8X8 versus the block's max square TX, the
-// result is capped at TX_16X16, and blocks larger than 32x32 force TX_16X16.
-func realtimeInterTXLeafSizeForBlock(block tile.BlockSize, qIndex uint8, qAC int32, sse, variance uint32) (int, error) {
-	if qAC <= 0 {
+// qstep-scaled SSE/variance select TX_8X8 versus the block's max square TX when
+// the speed feature is enabled, the result is capped at TX_16X16, and blocks
+// larger than 32x32 force TX_16X16.
+func realtimeInterTXLeafSizeForBlock(block tile.BlockSize, qIndex uint8, qAC int32, txSizeLevelBasedOnQstep int, sse, variance uint32) (int, error) {
+	if txSizeLevelBasedOnQstep != 0 && qAC <= 0 {
 		return 0, fmt.Errorf("encoder: invalid realtime tx qstep %d", qAC)
 	}
 	dims, ok := block.Dimensions()
@@ -2438,11 +2472,15 @@ func realtimeInterTXLeafSizeForBlock(block tile.BlockSize, qIndex uint8, qAC int
 	if w > 32 || h > 32 {
 		return 16, nil
 	}
-	qband := int(qIndex) >> 6
-	multiplier := [...]uint32{8, 7, 6, 5}[qband]
-	qstep := uint32(qAC >> 3)
-	qstepSq := qstep * qstep
-	varThresh := qstepSq * 2
+	multiplier := uint32(8)
+	varThresh := uint32(0)
+	if txSizeLevelBasedOnQstep != 0 {
+		qband := int(qIndex) >> 6
+		multiplier = [...]uint32{8, 7, 6, 5}[qband]
+		qstep := uint32(qAC >> 3)
+		qstepSq := qstep * qstep
+		varThresh = qstepSq * 2
+	}
 	if uint64(sse) > (uint64(variance)*uint64(multiplier))>>2 || variance < varThresh {
 		if maxSquare > 16 {
 			return 16, nil
