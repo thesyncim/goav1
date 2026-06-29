@@ -762,7 +762,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 }
 
 func TestFairnessNotesDocumentSVTLP(t *testing.T) {
-	notes := fairnessNotes(benchConfig{svtLP: 0, timingMode: timingModeEndToEnd, publish: true})
+	notes := fairnessNotes(benchConfig{encoders: []string{"goav1", "aomenc", "svt-av1"}, svtLP: 0, timingMode: timingModeEndToEnd, publish: true})
 	joined := strings.Join(notes, "\n")
 	if !strings.Contains(joined, "not a target processor or thread count") ||
 		!strings.Contains(joined, "observed_parallelism") ||
@@ -775,6 +775,7 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "simd_tier") ||
 		!strings.Contains(joined, "svt_asm") ||
 		!strings.Contains(joined, "--lp 0") ||
+		!strings.Contains(joined, "-layers 1") ||
 		!strings.Contains(joined, "Publish mode") {
 		t.Fatalf("fairness notes=%q", joined)
 	}
@@ -794,6 +795,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		minClips:            2,
 		requireSummary:      true,
 		goMaxProcs:          4,
+		layers:              1,
 		aomThreads:          4,
 		aomRowMT:            1,
 		svtLP:               4,
@@ -814,6 +816,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"summary-csv":      true,
 			"require-summary":  true,
 			"gomaxprocs":       true,
+			"layers":           true,
 			"timing-mode":      true,
 			"run-order":        true,
 			"runs":             true,
@@ -837,6 +840,31 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	if err := validatePublishConfig(missing, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "-aom-row-mt") {
 		t.Fatalf("missing explicit aom row-mt error=%v", err)
+	}
+
+	missingLayers := cfg
+	missingLayers.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingLayers.explicitFlags[k] = v
+	}
+	delete(missingLayers.explicitFlags, "layers")
+	if err := validatePublishConfig(missingLayers, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-layers") {
+		t.Fatalf("missing explicit layers error=%v", err)
+	}
+
+	layeredExternal := cfg
+	layeredExternal.layers = 3
+	if err := validatePublishConfig(layeredExternal, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-layers 1") {
+		t.Fatalf("layered external publish error=%v", err)
+	}
+
+	layeredGoAV1Only := cfg
+	layeredGoAV1Only.encoders = []string{"goav1"}
+	layeredGoAV1Only.layers = 3
+	if err := validatePublishConfig(layeredGoAV1Only, gitMetadata{Commit: "abc"}); err != nil {
+		t.Fatalf("goav1-only layered publish config failed: %v", err)
 	}
 
 	coreTiming := cfg

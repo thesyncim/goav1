@@ -676,6 +676,7 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"summary-csv",
 		"require-summary",
 		"gomaxprocs",
+		"layers",
 		"timing-mode",
 		"run-order",
 		"runs",
@@ -714,6 +715,9 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	}
 	if len(cfg.requiredMetrics) == 0 {
 		return errors.New("publish requires -require-metrics")
+	}
+	if cfg.layers != 1 && (encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1")) {
+		return errors.New("publish requires -layers 1 when aomenc or svt-av1 baselines are selected; equivalent external temporal-layer settings are not implemented")
 	}
 	if encoderSelected(cfg, "aomenc") {
 		if err := requireExplicitFlag(cfg, "aom-threads"); err != nil {
@@ -1795,6 +1799,9 @@ func fairnessNotes(cfg benchConfig) []string {
 	}
 	if cfg.publish {
 		notes = append(notes, "Publish mode required a clean tracked git worktree, explicit artifact paths, manifest-backed corpus, exact raw input sizes, explicit concurrency controls, required encoders, required metrics, and required BD-rate summary rows.")
+		if encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1") {
+			notes = append(notes, "Publish mode requires -layers 1 when aomenc or svt-av1 baselines are selected, because equivalent external temporal-layer settings are not yet implemented by qualitybench.")
+		}
 	}
 	if cfg.svtLP == 0 {
 		notes = append(notes, "SVT-AV1 is run with --lp 0 by default, letting SVT choose its parallelism level from the machine rather than forcing a misleading numeric match.")

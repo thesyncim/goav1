@@ -45,7 +45,7 @@ go run ./cmd/qualitybench \
   -manifest corpus/clips.csv -fps 60 \
   -bitrates 3000000,6000000,9000000,12000000 \
   -encoders goav1,aomenc,svt-av1 \
-  -anchor aomenc -layers 3 -keyint 60 \
+  -anchor aomenc -layers 1 -keyint 60 \
   -require-corpus -min-clips 6 \
   -require-encoders all \
   -require-metrics xpsnr,vmaf \
@@ -80,7 +80,10 @@ Publish mode requires a clean tracked git worktree, explicit `-workdir`, `-csv`,
 `-runs >= 3`, and `-warmup-runs >= 1`. It also requires explicit libaom
 concurrency settings when `aomenc` is selected, explicit SVT parallelism and
 assembly settings when `svt-av1` is selected, and exact raw I420 input byte
-counts for every manifest row.
+counts for every manifest row. When `aomenc` or `svt-av1` baselines are
+selected, publish mode requires `-layers 1`; goav1 multi-temporal-layer/SVC
+audits must stay goav1-only until equivalent external baseline settings are
+implemented and recorded.
 
 `-timing-mode core` preserves the historical goav1 timer that accumulates only
 per-frame `Encode` calls. Use it for local code-path profiling, not for fair
