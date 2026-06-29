@@ -130,10 +130,11 @@ use the generated corpus lane for steady-state decoder claims.
 
 The generated decoder corpus is the fairer steady-state surface. Current corpus
 generation writes `manifest.tsv` with source, tool, IVF, and MD5 hashes; publish
-decoder rows should cite that manifest and come from `make bench-corpus-publish`
-so missing `aomdec`, `dav1d`, or `SvtAv1DecApp` binaries fail before timing
-starts. With 18 local generated clips / 864 frames, single-thread full decode
-plus postfilter measured:
+decoder rows must cite that manifest and come from `make bench-corpus-publish`
+so missing/stale corpus files, hash drift, or missing `aomdec`, `dav1d`, or
+`SvtAv1DecApp` binaries fail before timing starts. The older local snapshot
+below used 18 clips / 864 frames before the strict publish manifest gate, so
+treat it as directional until rerun with the 25-clip manifest-backed corpus:
 
 | Decoder | Frames | Raw FPS | Adjusted FPS | Raw speed vs goav1 |
 | --- | ---: | ---: | ---: | ---: |

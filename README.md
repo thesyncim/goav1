@@ -467,9 +467,11 @@ writes `manifest.tsv` with source, tool, IVF, and MD5 hashes next to the local
 ignored corpus.
 
 `bench-corpus-publish` enables `GOAV1_BENCH_CORPUS_PUBLISH=1`, which requires
-every registered reference decoder (`aomdec`, `dav1d`, and `SvtAv1DecApp`) to
-resolve before timing starts. Use `make bench-corpus` only for exploratory local
-runs where missing decoder columns are acceptable.
+`manifest.tsv` to match the generator schema, expected clip count, IVF and MD5
+sidecar hashes, decoded clip metadata, and every registered reference decoder
+(`aomdec`, `dav1d`, and `SvtAv1DecApp`) before timing starts. Use
+`make bench-corpus` only for exploratory local runs where missing decoder
+columns or an absent manifest are acceptable.
 
 That report prints per-clip and aggregate fps, raw and startup-adjusted external
 decoder timings, and the goav1/dav1d ratio that should drive optimization work.

@@ -291,5 +291,7 @@ if [ "$clip_count" != "$EXPECTED_CLIPS" ]; then
 fi
 echo "done. $clip_count clips in $OUTDIR"
 echo "manifest: $MANIFEST"
-echo "run the benchmark with:"
-echo "  GOAV1_BENCH_CORPUS=1 go test -tags goav1_oracle -run TestCrossDecoderCorpus -timeout 30m ./internal/av1/testvector/"
+echo "run an exploratory benchmark with:"
+echo "  make bench-corpus"
+echo "run a publish benchmark with manifest/hash/reference-decoder checks:"
+echo "  make bench-corpus-publish"

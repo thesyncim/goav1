@@ -64,13 +64,16 @@ package testvector
 import (
 	"bytes"
 	"crypto/md5"
+	"crypto/sha256"
 	"fmt"
 	"hash"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +111,25 @@ type corpusClipCandidate struct {
 	ivfPath string
 }
 
+type corpusPublishManifest struct {
+	path          string
+	expectedClips int
+	rows          map[string]corpusPublishManifestRow
+}
+
+type corpusPublishManifestRow struct {
+	name      string
+	width     int
+	height    int
+	frames    int
+	bitDepth  uint8
+	chroma    string
+	ivfBytes  int64
+	ivfSHA256 string
+	md5       MD5
+	md5SHA256 string
+}
+
 type corpusOracleKind uint8
 
 const (
@@ -119,6 +141,12 @@ const (
 	envBenchCorpus                = "GOAV1_BENCH_CORPUS"
 	envBenchCorpusPublish         = "GOAV1_BENCH_CORPUS_PUBLISH"
 	envBenchCorpusRequireDecoders = "GOAV1_BENCH_CORPUS_REQUIRE_DECODERS"
+)
+
+const (
+	corpusManifestFile    = "manifest.tsv"
+	corpusManifestMagic   = "# goav1_bench_corpus_manifest_v1"
+	corpusManifestColumns = "name\twidth\theight\tframes\tcq\tdepth\tchroma\tprofile\tivf_bytes\tivf_sha256\tmd5\tmd5_sha256\tdav1d_check\taomenc_args"
 )
 
 type corpusOracleSidecar struct {
@@ -1218,6 +1246,112 @@ func TestResolveCorpusExternalDecodersRequiresMissing(t *testing.T) {
 	}
 }
 
+func TestLoadCorpusPublishManifestValidatesFiles(t *testing.T) {
+	dir := t.TempDir()
+	md5Hex := "0123456789abcdeffedcba9876543210"
+	md5, err := ParseMD5Hex([]byte(md5Hex))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCorpusManifestFixture(t, dir, "clip", []byte("ivf-data"), []byte(md5Hex+"\n"), md5Hex, 2, 4, 3, 8, "420", 1)
+
+	manifest, err := loadCorpusPublishManifest(dir)
+	if err != nil {
+		t.Fatalf("loadCorpusPublishManifest: %v", err)
+	}
+	row := manifest.rows["clip"]
+	if manifest.expectedClips != 1 || row.width != 2 || row.height != 4 || row.frames != 3 || row.bitDepth != 8 || row.chroma != "420" || row.md5 != md5 {
+		t.Fatalf("manifest=%+v row=%+v", manifest, row)
+	}
+	clip := corpusClip{name: "clip", width: 2, height: 4, frames: 3, bitDepth: 8, chroma: "420", oracleKind: corpusOracleStreamMD5, wantMD5: md5}
+	if err := validateCorpusPublishLoadedClips(manifest, []corpusClip{clip}); err != nil {
+		t.Fatalf("validateCorpusPublishLoadedClips: %v", err)
+	}
+	clip.width = 8
+	if err := validateCorpusPublishLoadedClips(manifest, []corpusClip{clip}); err == nil {
+		t.Fatal("validateCorpusPublishLoadedClips accepted mismatched metadata")
+	}
+}
+
+func TestLoadCorpusPublishManifestRejectsStaleCorpus(t *testing.T) {
+	md5Hex := "0123456789abcdeffedcba9876543210"
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, dir string)
+	}{
+		{
+			name: "missing manifest",
+		},
+		{
+			name: "expected count mismatch",
+			setup: func(t *testing.T, dir string) {
+				writeCorpusManifestFixture(t, dir, "clip", []byte("ivf-data"), []byte(md5Hex+"\n"), md5Hex, 2, 4, 3, 8, "420", 2)
+			},
+		},
+		{
+			name: "ivf hash mismatch",
+			setup: func(t *testing.T, dir string) {
+				writeCorpusManifestFixture(t, dir, "clip", []byte("ivf-data"), []byte(md5Hex+"\n"), md5Hex, 2, 4, 3, 8, "420", 1)
+				path := filepath.Join(dir, corpusManifestFile)
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				badHash := strings.Repeat("0", 64)
+				data = []byte(strings.Replace(string(data), testSHA256([]byte("ivf-data")), badHash, 1))
+				if err := os.WriteFile(path, data, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "extra ivf",
+			setup: func(t *testing.T, dir string) {
+				writeCorpusManifestFixture(t, dir, "clip", []byte("ivf-data"), []byte(md5Hex+"\n"), md5Hex, 2, 4, 3, 8, "420", 1)
+				if err := os.WriteFile(filepath.Join(dir, "extra.ivf"), []byte("extra"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.setup != nil {
+				tc.setup(t, dir)
+			}
+			if _, err := loadCorpusPublishManifest(dir); err == nil {
+				t.Fatal("loadCorpusPublishManifest accepted stale corpus")
+			}
+		})
+	}
+}
+
+func writeCorpusManifestFixture(t *testing.T, dir, name string, ivfData, md5Data []byte, md5Hex string, width, height, frames, depth int, chroma string, expectedClips int) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name+".ivf"), ivfData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".md5"), md5Data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	row := fmt.Sprintf("%s\t%d\t%d\t%d\t32\t%d\t%s\t0\t%d\t%s\t%s\t%s\tdav1d=OK\targs",
+		name, width, height, frames, depth, chroma, len(ivfData), testSHA256(ivfData), md5Hex, testSHA256(md5Data))
+	text := strings.Join([]string{
+		corpusManifestMagic,
+		fmt.Sprintf("# expected_clips=%d", expectedClips),
+		corpusManifestColumns,
+		row,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, corpusManifestFile), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testSHA256(data []byte) string {
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum[:])
+}
+
 func TestExternalCorpusFrameMD5SidecarSmoke(t *testing.T) {
 	src := filepath.Join("testdata", "profiles", "profile1-444-8bit-64x64.ivf")
 	data, err := os.ReadFile(src)
@@ -1420,6 +1554,259 @@ func externalCorpusClipName(root, path string) string {
 	return prefix + "/" + rel
 }
 
+func loadCorpusPublishManifest(dir string) (corpusPublishManifest, error) {
+	path := filepath.Join(dir, corpusManifestFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return corpusPublishManifest{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != corpusManifestMagic {
+		return corpusPublishManifest{}, fmt.Errorf("%s: missing %q header", path, corpusManifestMagic)
+	}
+
+	headers := map[string]string{}
+	manifest := corpusPublishManifest{
+		path: path,
+		rows: map[string]corpusPublishManifestRow{},
+	}
+	sawColumns := false
+	for i, line := range lines[1:] {
+		lineNo := i + 2
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			if sawColumns {
+				return corpusPublishManifest{}, fmt.Errorf("%s:%d: comment after column header", path, lineNo)
+			}
+			key, value, ok := strings.Cut(strings.TrimSpace(strings.TrimPrefix(line, "#")), "=")
+			if ok {
+				headers[strings.TrimSpace(key)] = strings.TrimSpace(value)
+			}
+			continue
+		}
+		if !sawColumns {
+			if line != corpusManifestColumns {
+				return corpusPublishManifest{}, fmt.Errorf("%s:%d: unexpected columns %q", path, lineNo, line)
+			}
+			sawColumns = true
+			continue
+		}
+		row, err := parseCorpusPublishManifestRow(line)
+		if err != nil {
+			return corpusPublishManifest{}, fmt.Errorf("%s:%d: %w", path, lineNo, err)
+		}
+		if _, exists := manifest.rows[row.name]; exists {
+			return corpusPublishManifest{}, fmt.Errorf("%s:%d: duplicate clip %q", path, lineNo, row.name)
+		}
+		manifest.rows[row.name] = row
+	}
+	if !sawColumns {
+		return corpusPublishManifest{}, fmt.Errorf("%s: missing column header", path)
+	}
+
+	expectedRaw, ok := headers["expected_clips"]
+	if !ok {
+		return corpusPublishManifest{}, fmt.Errorf("%s: missing expected_clips header", path)
+	}
+	expected, err := strconv.Atoi(expectedRaw)
+	if err != nil || expected <= 0 {
+		return corpusPublishManifest{}, fmt.Errorf("%s: invalid expected_clips=%q", path, expectedRaw)
+	}
+	manifest.expectedClips = expected
+	if len(manifest.rows) != expected {
+		return corpusPublishManifest{}, fmt.Errorf("%s: manifest rows=%d, expected_clips=%d", path, len(manifest.rows), expected)
+	}
+	if err := validateCorpusPublishManifestFiles(dir, manifest); err != nil {
+		return corpusPublishManifest{}, err
+	}
+	return manifest, nil
+}
+
+func parseCorpusPublishManifestRow(line string) (corpusPublishManifestRow, error) {
+	fields := strings.Split(line, "\t")
+	if len(fields) != 14 {
+		return corpusPublishManifestRow{}, fmt.Errorf("fields=%d want 14", len(fields))
+	}
+	name := strings.TrimSpace(fields[0])
+	if name == "" || strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
+		return corpusPublishManifestRow{}, fmt.Errorf("invalid clip name %q", fields[0])
+	}
+	width, err := parsePositiveCorpusManifestInt(fields[1], "width")
+	if err != nil {
+		return corpusPublishManifestRow{}, err
+	}
+	height, err := parsePositiveCorpusManifestInt(fields[2], "height")
+	if err != nil {
+		return corpusPublishManifestRow{}, err
+	}
+	frames, err := parsePositiveCorpusManifestInt(fields[3], "frames")
+	if err != nil {
+		return corpusPublishManifestRow{}, err
+	}
+	depth, err := parsePositiveCorpusManifestInt(fields[5], "depth")
+	if err != nil {
+		return corpusPublishManifestRow{}, err
+	}
+	if depth > 255 {
+		return corpusPublishManifestRow{}, fmt.Errorf("depth=%d out of range", depth)
+	}
+	ivfBytes, err := strconv.ParseInt(fields[8], 10, 64)
+	if err != nil || ivfBytes <= 0 {
+		return corpusPublishManifestRow{}, fmt.Errorf("invalid ivf_bytes=%q", fields[8])
+	}
+	if err := validateCorpusManifestSHA256(fields[9], "ivf_sha256"); err != nil {
+		return corpusPublishManifestRow{}, err
+	}
+	md5, err := ParseMD5Hex([]byte(strings.TrimSpace(fields[10])))
+	if err != nil {
+		return corpusPublishManifestRow{}, fmt.Errorf("invalid md5=%q", fields[10])
+	}
+	if err := validateCorpusManifestSHA256(fields[11], "md5_sha256"); err != nil {
+		return corpusPublishManifestRow{}, err
+	}
+	chroma := strings.TrimSpace(fields[6])
+	switch chroma {
+	case "420", "422", "444":
+	default:
+		return corpusPublishManifestRow{}, fmt.Errorf("invalid chroma=%q", chroma)
+	}
+	return corpusPublishManifestRow{
+		name:      name,
+		width:     width,
+		height:    height,
+		frames:    frames,
+		bitDepth:  uint8(depth),
+		chroma:    chroma,
+		ivfBytes:  ivfBytes,
+		ivfSHA256: strings.ToLower(strings.TrimSpace(fields[9])),
+		md5:       md5,
+		md5SHA256: strings.ToLower(strings.TrimSpace(fields[11])),
+	}, nil
+}
+
+func parsePositiveCorpusManifestInt(raw, name string) (int, error) {
+	v, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || v <= 0 {
+		return 0, fmt.Errorf("invalid %s=%q", name, raw)
+	}
+	return v, nil
+}
+
+func validateCorpusManifestSHA256(raw, name string) error {
+	raw = strings.TrimSpace(raw)
+	if len(raw) != 64 {
+		return fmt.Errorf("invalid %s length=%d", name, len(raw))
+	}
+	for _, c := range raw {
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
+			continue
+		}
+		return fmt.Errorf("invalid %s=%q", name, raw)
+	}
+	return nil
+}
+
+func validateCorpusPublishManifestFiles(dir string, manifest corpusPublishManifest) error {
+	paths, err := filepath.Glob(filepath.Join(dir, "*.ivf"))
+	if err != nil {
+		return fmt.Errorf("glob corpus IVF: %w", err)
+	}
+	for _, path := range paths {
+		name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		if _, ok := manifest.rows[name]; !ok {
+			return fmt.Errorf("%s: extra IVF not listed in manifest: %s", manifest.path, filepath.Base(path))
+		}
+	}
+
+	names := make([]string, 0, len(manifest.rows))
+	for name := range manifest.rows {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		row := manifest.rows[name]
+		ivfPath := filepath.Join(dir, row.name+".ivf")
+		ivfSHA, ivfBytes, err := corpusFileSHA256(ivfPath)
+		if err != nil {
+			return fmt.Errorf("%s: %w", manifest.path, err)
+		}
+		if ivfBytes != row.ivfBytes {
+			return fmt.Errorf("%s: %s.ivf bytes=%d want %d", manifest.path, row.name, ivfBytes, row.ivfBytes)
+		}
+		if !strings.EqualFold(ivfSHA, row.ivfSHA256) {
+			return fmt.Errorf("%s: %s.ivf sha256=%s want %s", manifest.path, row.name, ivfSHA, row.ivfSHA256)
+		}
+
+		md5Path := filepath.Join(dir, row.name+".md5")
+		md5SHA, _, err := corpusFileSHA256(md5Path)
+		if err != nil {
+			return fmt.Errorf("%s: %w", manifest.path, err)
+		}
+		if !strings.EqualFold(md5SHA, row.md5SHA256) {
+			return fmt.Errorf("%s: %s.md5 sha256=%s want %s", manifest.path, row.name, md5SHA, row.md5SHA256)
+		}
+		oracle, err := loadCorpusOracleSidecar(ivfPath)
+		if err != nil {
+			return fmt.Errorf("%s: %s.md5: %w", manifest.path, row.name, err)
+		}
+		if oracle.kind != corpusOracleStreamMD5 {
+			return fmt.Errorf("%s: %s.md5 is not a stream-MD5 sidecar", manifest.path, row.name)
+		}
+		if oracle.streamMD5 != row.md5 {
+			return fmt.Errorf("%s: %s.md5=%x want %x", manifest.path, row.name, oracle.streamMD5, row.md5)
+		}
+	}
+	return nil
+}
+
+func corpusFileSHA256(path string) (string, int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", 0, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, f)
+	if err != nil {
+		return "", 0, err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), n, nil
+}
+
+func validateCorpusPublishLoadedClips(manifest corpusPublishManifest, clips []corpusClip) error {
+	seen := make(map[string]bool, len(clips))
+	for _, clip := range clips {
+		row, ok := manifest.rows[clip.name]
+		if !ok {
+			return fmt.Errorf("%s: loaded clip %q is not listed in manifest", manifest.path, clip.name)
+		}
+		seen[clip.name] = true
+		if clip.width != row.width || clip.height != row.height || clip.frames != row.frames || clip.bitDepth != row.bitDepth || clip.chroma != row.chroma {
+			return fmt.Errorf("%s: %s metadata=%dx%d frames=%d depth=%d chroma=%s, want %dx%d frames=%d depth=%d chroma=%s",
+				manifest.path, clip.name, clip.width, clip.height, clip.frames, clip.bitDepth, clip.chroma,
+				row.width, row.height, row.frames, row.bitDepth, row.chroma)
+		}
+		if clip.oracleKind != corpusOracleStreamMD5 || clip.wantMD5 != row.md5 {
+			return fmt.Errorf("%s: %s oracle md5=%x kind=%d, want stream md5=%x",
+				manifest.path, clip.name, clip.wantMD5, clip.oracleKind, row.md5)
+		}
+	}
+	if len(seen) != len(manifest.rows) {
+		names := make([]string, 0, len(manifest.rows))
+		for name := range manifest.rows {
+			if !seen[name] {
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		return fmt.Errorf("%s: manifest clip(s) not loaded: %s", manifest.path, strings.Join(names, ", "))
+	}
+	return nil
+}
+
 type resolvedCorpusExternalDecoder struct {
 	decoder externalDecoder
 	bin     string
@@ -1511,11 +1898,25 @@ func TestCrossDecoderCorpus(t *testing.T) {
 	if os.Getenv(envBenchCorpus) != "1" {
 		t.Skip("set GOAV1_BENCH_CORPUS=1 (with the generated corpus) to run the multi-config cross-decoder throughput benchmark")
 	}
+	publish := os.Getenv(envBenchCorpusPublish) == "1"
 	dir, ok := corpusDir(t)
 	if !ok {
+		if publish {
+			t.Fatalf("cross-corpus publish: no clips in %s (regenerate with scripts/gen_bench_corpus.sh)", dir)
+		}
 		t.Skipf("cross-corpus: no clips in %s (regenerate with scripts/gen_bench_corpus.sh)", dir)
 	}
 	t.Logf("cross-corpus: corpus dir = %s", dir)
+
+	var manifest corpusPublishManifest
+	if publish {
+		var err error
+		manifest, err = loadCorpusPublishManifest(dir)
+		if err != nil {
+			t.Fatalf("cross-corpus publish: %v", err)
+		}
+		t.Logf("cross-corpus publish: manifest=%s expected_clips=%d", manifest.path, manifest.expectedClips)
+	}
 
 	clips, failed := loadCorpusClips(t, dir)
 
@@ -1531,11 +1932,19 @@ func TestCrossDecoderCorpus(t *testing.T) {
 		t.Fatalf("cross-corpus: %d corpus clip(s) failed goav1 byte-exact decode", len(failed))
 	}
 	if len(clips) == 0 {
+		if publish {
+			t.Fatal("cross-corpus publish: no usable clips")
+		}
 		t.Skip("cross-corpus: no usable clips")
+	}
+	if publish {
+		if err := validateCorpusPublishLoadedClips(manifest, clips); err != nil {
+			t.Fatalf("cross-corpus publish: %v", err)
+		}
 	}
 
 	decoders := crossBenchExternalDecoders()
-	requiredDecoders, err := corpusRequiredExternalDecoderNames(decoders, os.Getenv(envBenchCorpusPublish) == "1", os.Getenv(envBenchCorpusRequireDecoders))
+	requiredDecoders, err := corpusRequiredExternalDecoderNames(decoders, publish, os.Getenv(envBenchCorpusRequireDecoders))
 	if err != nil {
 		t.Fatalf("cross-corpus: %v", err)
 	}
