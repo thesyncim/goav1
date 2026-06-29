@@ -20,8 +20,10 @@ protocol:
   one bitrate is useful only as a local regression check. For
   claim-supporting runs, use `-summary-csv` with `-require-summary` so missing
   or invalid required BD-rate rows fail the run.
-- Measure decoded output against the same source frames. Report actual bitrate
-  from compressed payload bytes, not just requested bitrate.
+- Measure decoded output against the same source frames. Explicit raw I420 input
+  files must match the declared frame count exactly; extra trailing frames or
+  bytes are rejected instead of silently benchmarking a prefix. Report actual
+  bitrate from compressed payload bytes, not just requested bitrate.
 - Prefer perceptual metrics when available. VMAF should be reported when the
   local FFmpeg build has libvmaf; PSNR, SSIM, and XPSNR remain useful secondary
   metrics and regression guards. For claim-supporting runs, use
@@ -89,9 +91,12 @@ implemented and recorded.
 
 `-timing-mode core` preserves the historical goav1 timer that accumulates only
 per-frame `Encode` calls. Use it for local code-path profiling, not for fair
-tables. `-timing-mode e2e` times goav1 setup, encode calls, and decoded-output
-writes, while external rows continue to time the encoder command invocation.
-The metadata JSON records command paths, binary SHA-256 hashes, and version/help
+tables. `-timing-mode e2e` times goav1 setup, encode calls, encoded artifact
+writes, and encoder shutdown, while external rows continue to time the encoder
+command invocation. Metric YUV is decoded after timing for every encoder;
+goav1 rows are decoded by replaying the persisted low-overhead payload stream
+through the public decoder, not by scoring encoder reconstruction buffers. The
+metadata JSON records command paths, binary SHA-256 hashes, and version/help
 probes for the external tools used by the run. It also records
 `manifest_sha256`, the effective `GOMAXPROCS`, CPU count/model when available,
 and selected Go runtime environment variables (`GOFLAGS`, `GOGC`, `GOMEMLIMIT`,

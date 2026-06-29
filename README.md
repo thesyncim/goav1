@@ -315,10 +315,10 @@ hot paths are guarded at
 `0 B/op` and `0 allocs/op` by `make alloc`; cold one-shot helpers may still
 allocate returned buffers. See
 `ExampleVideoEncoder` and `ExampleRTCEncoder` for
-the round trip, and `cmd/encbench` for the standing 1080p60 performance
-measurement against SVT-AV1 (throughput currently exceeds SVT preset 12 on
-identical input; rate-distortion quality remains behind and is the active
-work track).
+the round trip, `cmd/encbench` for local goav1-only 1080p60 profiling, and
+`cmd/qualitybench -publish` for claim-supporting SVT-AV1/libaom comparisons.
+Rate-distortion quality and single-thread performance remain active work
+tracks.
 
 ## CLI
 
@@ -473,7 +473,7 @@ sidecar hashes, decoded clip metadata, a machine-readable report path
 `/tmp/goav1-bench-corpus-report.json`), and every registered reference decoder
 (`aomdec`, `dav1d`, and `SvtAv1DecApp`) before timing starts. Use
 `make bench-corpus` only for exploratory local runs where missing decoder
-columns or an absent manifest are acceptable.
+columns or manifest warnings are acceptable.
 
 That report prints per-clip and aggregate fps, raw and startup-adjusted external
 decoder timings, and the goav1/dav1d ratio that should drive optimization work.

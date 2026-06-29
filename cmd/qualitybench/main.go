@@ -1822,7 +1822,7 @@ func fairnessNotes(cfg benchConfig) []string {
 	notes := []string{
 		"SVT-AV1 --lp is a documented parallelism level in the range 0..6, not a target processor or thread count; numeric equality with GOMAXPROCS is not treated as equivalent concurrency.",
 		"CSV and metadata include wall seconds, CPU seconds, and observed_parallelism=cpu_total_seconds/encode_wall_seconds so comparisons can be checked against observed CPU budget.",
-		"qualitybench records timing_mode; core mode keeps the historical goav1 per-frame Encode timer, while e2e mode times goav1 setup, encode calls, and decoded-output writes for fairer CLI comparisons.",
+		"qualitybench records timing_mode; core mode keeps the historical goav1 per-frame Encode timer, while e2e mode times goav1 setup, encode calls, encoded artifact writes, and encoder shutdown for fairer CLI comparisons. Metric decode runs after timing for every encoder.",
 		"qualitybench records run_order and shuffle_seed so encoder/bitrate order effects can be reproduced or randomized deterministically.",
 		"qualitybench records every measured encode sample in metadata; the normal CSV row reports the median wall-time sample after any configured warmup runs.",
 		"Publishable rows use -run-order shuffle with an explicit seed so every table has a reproducible encoder/bitrate order without always favoring the same encoder column.",
@@ -2158,8 +2158,9 @@ func loadFrames(cfg benchConfig) ([]goav1.I420Frame, string, error) {
 	}
 	cw, ch := cfg.width/2, cfg.height/2
 	frameLen := cfg.width*cfg.height + 2*cw*ch
-	if len(raw) < cfg.frames*frameLen {
-		return nil, "", fmt.Errorf("input holds %d frames, need %d", len(raw)/frameLen, cfg.frames)
+	expected := cfg.frames * frameLen
+	if len(raw) != expected {
+		return nil, "", fmt.Errorf("input size=%d, want exact raw I420 size %d (%d frames)", len(raw), expected, cfg.frames)
 	}
 	frames := make([]goav1.I420Frame, cfg.frames)
 	for n := range cfg.frames {
@@ -2298,6 +2299,134 @@ func writeLengthPrefixedPayload(w io.Writer, payload []byte) error {
 	}
 	_, err := w.Write(payload)
 	return err
+}
+
+func readLengthPrefixedPayloadFile(path string) ([][]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var header [4]byte
+	var payloads [][]byte
+	maxInt := uint64(^uint(0) >> 1)
+	for {
+		_, err := io.ReadFull(f, header[:])
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: short length prefix: %w", path, err)
+		}
+		n := binary.LittleEndian.Uint32(header[:])
+		if n == 0 {
+			return nil, fmt.Errorf("%s: empty payload in length-prefixed stream", path)
+		}
+		if uint64(n) > maxInt {
+			return nil, fmt.Errorf("%s: payload too large: %d bytes", path, n)
+		}
+		payload := make([]byte, int(n))
+		if _, err := io.ReadFull(f, payload); err != nil {
+			return nil, fmt.Errorf("%s: short payload length %d: %w", path, n, err)
+		}
+		payloads = append(payloads, payload)
+	}
+	if len(payloads) == 0 {
+		return nil, fmt.Errorf("%s: no payloads in length-prefixed stream", path)
+	}
+	return payloads, nil
+}
+
+func decodeLengthPrefixedLowOverheadToYUV(payloadPath, yuvPath string, width, height, wantFrames int) (int64, string, error) {
+	payloads, err := readLengthPrefixedPayloadFile(payloadPath)
+	if err != nil {
+		return 0, "", err
+	}
+	dec, err := goav1.NewDecoder(payloads)
+	if err != nil {
+		return 0, "", err
+	}
+	defer dec.Close()
+
+	out, err := os.Create(yuvPath)
+	if err != nil {
+		return 0, "", err
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			_ = out.Close()
+		}
+	}()
+
+	decoded := 0
+	for {
+		frames, ok, err := dec.DecodeNext()
+		if err != nil {
+			return 0, "", err
+		}
+		if !ok {
+			break
+		}
+		for _, frame := range frames {
+			if err := writeDecoded420Frame(out, frame, width, height); err != nil {
+				return 0, "", err
+			}
+			decoded++
+		}
+	}
+	if decoded != wantFrames {
+		return 0, "", fmt.Errorf("decoded %d visible frames, want %d", decoded, wantFrames)
+	}
+	if err := out.Close(); err != nil {
+		closed = true
+		return 0, "", err
+	}
+	closed = true
+	return fileBytesAndSHA256(yuvPath)
+}
+
+func writeDecoded420Frame(w io.Writer, frame *goav1.Frame, width, height int) error {
+	if frame == nil {
+		return errors.New("nil decoded frame")
+	}
+	if frame.Layout.BytesPerSample != 1 {
+		return fmt.Errorf("decoded frame bit depth uses %d bytes/sample, want 1", frame.Layout.BytesPerSample)
+	}
+	if frame.Y.Width != width || frame.Y.Height != height {
+		return fmt.Errorf("decoded luma size=%dx%d, want %dx%d", frame.Y.Width, frame.Y.Height, width, height)
+	}
+	cw, ch := width/2, height/2
+	if frame.U.Width != cw || frame.U.Height != ch || frame.V.Width != cw || frame.V.Height != ch {
+		return fmt.Errorf("decoded chroma size U=%dx%d V=%dx%d, want %dx%d", frame.U.Width, frame.U.Height, frame.V.Width, frame.V.Height, cw, ch)
+	}
+	if err := writeDecodedPlane(w, frame.Y); err != nil {
+		return fmt.Errorf("Y plane: %w", err)
+	}
+	if err := writeDecodedPlane(w, frame.U); err != nil {
+		return fmt.Errorf("U plane: %w", err)
+	}
+	if err := writeDecodedPlane(w, frame.V); err != nil {
+		return fmt.Errorf("V plane: %w", err)
+	}
+	return nil
+}
+
+func writeDecodedPlane(w io.Writer, plane goav1.FramePlane) error {
+	if plane.Width == 0 || plane.Height == 0 {
+		return errors.New("empty plane")
+	}
+	if plane.Stride < plane.Width {
+		return fmt.Errorf("stride=%d width=%d", plane.Stride, plane.Width)
+	}
+	for y := 0; y < plane.Height; y++ {
+		row := plane.Pix[y*plane.Stride : y*plane.Stride+plane.Width]
+		if _, err := w.Write(row); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func runEncoder(cfg benchConfig, frames []goav1.I420Frame, refPath string, encoderName string, bitrate int) encodeResult {
@@ -2445,17 +2574,6 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 			_ = encodedOut.Close()
 		}
 	}()
-	out, err := os.Create(result.decodedYUV)
-	if err != nil {
-		result.status, result.errText = "error", err.Error()
-		return result
-	}
-	closed := false
-	defer func() {
-		if !closed {
-			_ = out.Close()
-		}
-	}()
 
 	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
 		Width:          cfg.width,
@@ -2470,6 +2588,12 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		result.status, result.errText = "error", err.Error()
 		return result
 	}
+	encClosed := false
+	defer func() {
+		if !encClosed {
+			_ = enc.Close()
+		}
+	}()
 	statsEnabled := goAV1DiagnosticsEnabled(cfg)
 	if statsEnabled {
 		enc.ResetDecisionStats()
@@ -2507,10 +2631,6 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 			result.status, result.errText = "error", err.Error()
 			return result
 		}
-		if err := writeFrame(out, enc.Reconstruction(), cfg.width, cfg.height); err != nil {
-			result.status, result.errText = "error", err.Error()
-			return result
-		}
 		if cfg.frameStatsCSVPath != "" {
 			result.frameStats = append(result.frameStats, goAV1FrameStats{
 				FrameIndex:      i,
@@ -2525,18 +2645,21 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 			})
 		}
 	}
-	if err := out.Close(); err != nil {
-		closed = true
-		result.status, result.errText = "error", err.Error()
-		return result
+	if statsEnabled {
+		result.stats = enc.DecisionStats()
 	}
-	closed = true
 	if err := encodedOut.Close(); err != nil {
 		encodedClosed = true
 		result.status, result.errText = "error", err.Error()
 		return result
 	}
 	encodedClosed = true
+	if err := enc.Close(); err != nil {
+		encClosed = true
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	encClosed = true
 	if cfg.timingMode == timingModeEndToEnd {
 		result.duration = time.Since(endToEndStart)
 		if endToEndCPUOK {
@@ -2557,16 +2680,13 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 	}
 	result.encodedBytes = encodedBytes
 	result.encodedSHA256 = encodedFileHash
-	decodedBytes, decodedHash, err := fileBytesAndSHA256(result.decodedYUV)
+	decodedBytes, decodedHash, err := decodeLengthPrefixedLowOverheadToYUV(result.encodedPath, result.decodedYUV, cfg.width, cfg.height, len(frames))
 	if err != nil {
 		result.status, result.errText = "error", err.Error()
 		return result
 	}
 	result.decodedBytes = decodedBytes
 	result.decodedSHA256 = decodedHash
-	if statsEnabled {
-		result.stats = enc.DecisionStats()
-	}
 	result.status = "ok"
 	return result
 }
@@ -2997,12 +3117,12 @@ func rawMetricArgs(cfg benchConfig, refPath, decodedPath, filterName string) []s
 		"-pixel_format", "yuv420p",
 		"-video_size", size,
 		"-framerate", strconv.Itoa(cfg.fps),
-		"-i", refPath,
+		"-i", decodedPath,
 		"-f", "rawvideo",
 		"-pixel_format", "yuv420p",
 		"-video_size", size,
 		"-framerate", strconv.Itoa(cfg.fps),
-		"-i", decodedPath,
+		"-i", refPath,
 		"-lavfi", fmt.Sprintf("[0:v][1:v]%s", filterName),
 		"-frames:v", strconv.Itoa(cfg.frames),
 		"-f", "null",
@@ -3012,26 +3132,7 @@ func rawMetricArgs(cfg benchConfig, refPath, decodedPath, filterName string) []s
 
 func runVMAF(cfg benchConfig, refPath, decodedPath, encoderName string, bitrate int) (float64, error) {
 	logPath := filepath.Join(cfg.workdir, fmt.Sprintf("%s_%d_vmaf.json", encoderName, bitrate))
-	filter := fmt.Sprintf("[0:v][1:v]libvmaf=log_path=%s:log_fmt=json", escapeFilterPath(logPath))
-	size := fmt.Sprintf("%dx%d", cfg.width, cfg.height)
-	args := []string{
-		"-hide_banner",
-		"-nostats",
-		"-f", "rawvideo",
-		"-pixel_format", "yuv420p",
-		"-video_size", size,
-		"-framerate", strconv.Itoa(cfg.fps),
-		"-i", refPath,
-		"-f", "rawvideo",
-		"-pixel_format", "yuv420p",
-		"-video_size", size,
-		"-framerate", strconv.Itoa(cfg.fps),
-		"-i", decodedPath,
-		"-lavfi", filter,
-		"-frames:v", strconv.Itoa(cfg.frames),
-		"-f", "null",
-		"-",
-	}
+	args := vmafArgs(cfg, refPath, decodedPath, logPath)
 	cmd := exec.Command("ffmpeg", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return 0, fmt.Errorf("libvmaf: %s", trimCommandOutput(err, out))
@@ -3041,6 +3142,29 @@ func runVMAF(cfg benchConfig, refPath, decodedPath, encoderName string, bitrate 
 		return 0, err
 	}
 	return parseVMAFMean(raw)
+}
+
+func vmafArgs(cfg benchConfig, refPath, decodedPath, logPath string) []string {
+	filter := fmt.Sprintf("[0:v][1:v]libvmaf=log_path=%s:log_fmt=json", escapeFilterPath(logPath))
+	size := fmt.Sprintf("%dx%d", cfg.width, cfg.height)
+	return []string{
+		"-hide_banner",
+		"-nostats",
+		"-f", "rawvideo",
+		"-pixel_format", "yuv420p",
+		"-video_size", size,
+		"-framerate", strconv.Itoa(cfg.fps),
+		"-i", decodedPath,
+		"-f", "rawvideo",
+		"-pixel_format", "yuv420p",
+		"-video_size", size,
+		"-framerate", strconv.Itoa(cfg.fps),
+		"-i", refPath,
+		"-lavfi", filter,
+		"-frames:v", strconv.Itoa(cfg.frames),
+		"-f", "null",
+		"-",
+	}
 }
 
 func parseVMAFMean(raw []byte) (float64, error) {

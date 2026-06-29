@@ -290,7 +290,7 @@ func TestWriteLengthPrefixedPayload(t *testing.T) {
 	}
 }
 
-func TestEncodeGoAV1PersistsLengthPrefixedPayloadStream(t *testing.T) {
+func TestEncodeGoAV1PersistsAndDecodesLengthPrefixedPayloadStream(t *testing.T) {
 	cfg := benchConfig{
 		width:      64,
 		height:     64,
@@ -339,6 +339,40 @@ func TestEncodeGoAV1PersistsLengthPrefixedPayloadStream(t *testing.T) {
 	if frames != cfg.frames || payloadBytes != result.bytes || result.encodedBytes != result.bytes+int64(4*cfg.frames) {
 		t.Fatalf("artifact frames=%d payload=%d encoded=%d result_payload=%d", frames, payloadBytes, result.encodedBytes, result.bytes)
 	}
+	decodedBytes, decodedHash, err := fileBytesAndSHA256(result.decodedYUV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.decodedBytes != expectedRawI420Bytes(cfg.width, cfg.height, cfg.frames) ||
+		result.decodedBytes != decodedBytes ||
+		result.decodedSHA256 != decodedHash {
+		t.Fatalf("decoded metadata bytes/hash=%d/%s want %d/%s", result.decodedBytes, result.decodedSHA256, decodedBytes, decodedHash)
+	}
+}
+
+func TestLoadFramesRequiresExactRawInputSize(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "clip.yuv")
+	exact := expectedRawI420Bytes(16, 16, 2)
+	if err := os.WriteFile(input, make([]byte, exact+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := loadFrames(benchConfig{
+		input:  input,
+		width:  16,
+		height: 16,
+		frames: 2,
+	})
+	if err == nil || !strings.Contains(err.Error(), "exact raw I420") {
+		t.Fatalf("trailing input error=%v", err)
+	}
+
+	if err := os.WriteFile(input, make([]byte, exact), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if frames, _, err := loadFrames(benchConfig{input: input, width: 16, height: 16, frames: 2}); err != nil || len(frames) != 2 {
+		t.Fatalf("exact input frames=%d err=%v", len(frames), err)
+	}
 }
 
 func TestParseVMAFMean(t *testing.T) {
@@ -380,6 +414,35 @@ func TestParseFrameMetricValues(t *testing.T) {
 	if _, err := parseFrameMetricValues([]byte("summary only"), `All:([0-9.]+)`); err == nil {
 		t.Fatal("missing frame values accepted")
 	}
+}
+
+func TestMetricArgsUseDecodedAsMainAndReferenceSecond(t *testing.T) {
+	cfg := benchConfig{width: 64, height: 32, frames: 2, fps: 30}
+	scalar := rawMetricArgs(cfg, "source.yuv", "decoded.yuv", "psnr")
+	if got := metricInputOrder(scalar); strings.Join(got, ",") != "decoded.yuv,source.yuv" {
+		t.Fatalf("scalar metric inputs=%v args=%v", got, scalar)
+	}
+	if !strings.Contains(strings.Join(scalar, "\x00"), "[0:v][1:v]psnr") {
+		t.Fatalf("scalar metric filter args=%v", scalar)
+	}
+
+	vmaf := vmafArgs(cfg, "source.yuv", "decoded.yuv", "vmaf.json")
+	if got := metricInputOrder(vmaf); strings.Join(got, ",") != "decoded.yuv,source.yuv" {
+		t.Fatalf("vmaf metric inputs=%v args=%v", got, vmaf)
+	}
+	if !strings.Contains(strings.Join(vmaf, "\x00"), "[0:v][1:v]libvmaf") {
+		t.Fatalf("vmaf filter args=%v", vmaf)
+	}
+}
+
+func metricInputOrder(args []string) []string {
+	var inputs []string
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-i" {
+			inputs = append(inputs, args[i+1])
+		}
+	}
+	return inputs
 }
 
 func TestBDRatePercent(t *testing.T) {

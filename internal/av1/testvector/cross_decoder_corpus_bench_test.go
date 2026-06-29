@@ -1301,6 +1301,20 @@ func TestLoadCorpusPublishManifestValidatesFiles(t *testing.T) {
 	}
 }
 
+func TestLoadCorpusBenchmarkManifestAllowsOnlyExploratoryMissingManifest(t *testing.T) {
+	dir := t.TempDir()
+	if manifest, ok := loadCorpusBenchmarkManifest(t, dir, false); ok || manifest.path != "" {
+		t.Fatalf("missing exploratory manifest ok=%v manifest=%+v", ok, manifest)
+	}
+
+	md5Hex := "0123456789abcdeffedcba9876543210"
+	writeCorpusManifestFixture(t, dir, "clip", []byte("ivf-data"), []byte(md5Hex+"\n"), md5Hex, 2, 4, 3, 8, "420", 1)
+	manifest, ok := loadCorpusBenchmarkManifest(t, dir, false)
+	if !ok || manifest.expectedClips != 1 || manifest.path == "" {
+		t.Fatalf("valid exploratory manifest ok=%v manifest=%+v", ok, manifest)
+	}
+}
+
 func TestWriteCorpusPublishReport(t *testing.T) {
 	dir := t.TempDir()
 	md5Hex := "0123456789abcdeffedcba9876543210"
@@ -1947,6 +1961,25 @@ func validateCorpusPublishLoadedClips(manifest corpusPublishManifest, clips []co
 	return nil
 }
 
+func loadCorpusBenchmarkManifest(t *testing.T, dir string, publish bool) (corpusPublishManifest, bool) {
+	t.Helper()
+	manifest, err := loadCorpusPublishManifest(dir)
+	if err != nil {
+		if publish {
+			t.Fatalf("cross-corpus publish: %v", err)
+		}
+		t.Logf("cross-corpus: WARNING: no valid %s in %s (%v); exploratory timing is not publishable and may use stale or partial ignored corpus data",
+			corpusManifestFile, dir, err)
+		return corpusPublishManifest{}, false
+	}
+	label := "cross-corpus"
+	if publish {
+		label = "cross-corpus publish"
+	}
+	t.Logf("%s: manifest=%s expected_clips=%d", label, manifest.path, manifest.expectedClips)
+	return manifest, true
+}
+
 type resolvedCorpusExternalDecoder struct {
 	decoder externalDecoder
 	bin     string
@@ -2222,15 +2255,7 @@ func TestCrossDecoderCorpus(t *testing.T) {
 	}
 	t.Logf("cross-corpus: corpus dir = %s", dir)
 
-	var manifest corpusPublishManifest
-	if publish {
-		var err error
-		manifest, err = loadCorpusPublishManifest(dir)
-		if err != nil {
-			t.Fatalf("cross-corpus publish: %v", err)
-		}
-		t.Logf("cross-corpus publish: manifest=%s expected_clips=%d", manifest.path, manifest.expectedClips)
-	}
+	manifest, haveManifest := loadCorpusBenchmarkManifest(t, dir, publish)
 
 	clips, failed := loadCorpusClips(t, dir)
 
@@ -2251,10 +2276,14 @@ func TestCrossDecoderCorpus(t *testing.T) {
 		}
 		t.Skip("cross-corpus: no usable clips")
 	}
-	if publish {
+	if haveManifest {
 		if err := validateCorpusPublishLoadedClips(manifest, clips); err != nil {
-			t.Fatalf("cross-corpus publish: %v", err)
+			if publish {
+				t.Fatalf("cross-corpus publish: %v", err)
+			}
+			t.Fatalf("cross-corpus: valid manifest does not match loaded clips: %v", err)
 		}
+		t.Logf("cross-corpus: loaded %d/%d manifest clips", len(clips), manifest.expectedClips)
 	}
 
 	decoders := crossBenchExternalDecoders()

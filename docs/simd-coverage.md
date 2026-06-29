@@ -87,16 +87,17 @@ projection (`refmvs`). goav1 has SIMD in several DSP/postfilter families, but
 the remaining decode-side work should be selected from `bench-cross` or corpus
 profiles rather than breadth-first file matching.
 
-## Current Speed Snapshot
+## Historical Speed Spot Check
 
-Fresh synthetic 1080p/120-frame single-rate rows on 2026-06-29 at commit
+Synthetic 1080p/120-frame single-rate rows from 2026-06-29 at commit
 `14ae2e34` use `qualitybench -bitrates 8000000` on the deterministic synthetic
 fixture. They are spot-check rows, not a full corpus quality claim. The aomenc
 row used `-aom-threads 4 -aom-row-mt 1`, which forwards to
 `aomenc --threads=4 --row-mt=1`; use `-aom-threads 1` for a single-thread
 libaom control row and report the chosen `-aom-row-mt` setting. These rows
 predate strict `qualitybench -publish -timing-mode e2e` mode; treat them as
-directional spot checks until rerun through the publish gate.
+historical directional spot checks until rerun through the publish gate at the
+current commit.
 
 | Comparison row | goav1 FPS | Other FPS | goav1 CPU s | Other CPU s | goav1 observed | Other observed | Wall gap | CPU-efficiency gap |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
