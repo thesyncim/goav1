@@ -999,6 +999,91 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 	}
 }
 
+func TestExternalBaselineSettingsRecordPinnedKnobs(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	cfg := benchConfig{
+		workdir:     t.TempDir(),
+		width:       64,
+		height:      64,
+		fps:         60,
+		frames:      31,
+		tiles:       2,
+		keyInterval: 60,
+		aomThreads:  3,
+		aomRowMT:    1,
+		aomCPUUsed:  8,
+		svtLP:       4,
+		svtPreset:   13,
+		svtASM:      "neon",
+	}
+
+	aom := encodeAOM(cfg, filepath.Join(cfg.workdir, "input.yuv"), 1_200_000)
+	if aom.status != "skipped" {
+		t.Fatalf("aom status=%q want skipped", aom.status)
+	}
+	assertSettings(t, aom.settings, map[string]string{
+		"profile":         "0",
+		"bit_depth":       "8",
+		"input_bit_depth": "8",
+		"color_format":    "i420",
+		"deadline":        "rt",
+		"end_usage":       "cbr",
+		"target_kbps":     "1200",
+		"fps":             "60/1",
+		"cpu_used":        "8",
+		"aom_threads":     "3",
+		"aom_row_mt":      "1",
+		"lag_in_frames":   "0",
+		"auto_alt_ref":    "0",
+		"enable_fwd_kf":   "0",
+		"drop_frame":      "0",
+		"buf_sz_ms":       "1000",
+		"buf_initial_ms":  "500",
+		"buf_optimal_ms":  "600",
+		"limit_frames":    "31",
+		"kf_min_dist":     "60",
+		"kf_max_dist":     "60",
+		"tile_columns":    "2",
+	})
+
+	svt := encodeSVT(cfg, filepath.Join(cfg.workdir, "input.yuv"), 1_200_000)
+	if svt.status != "skipped" {
+		t.Fatalf("svt status=%q want skipped", svt.status)
+	}
+	assertSettings(t, svt.settings, map[string]string{
+		"preset":        "13",
+		"profile":       "0",
+		"level":         "0",
+		"input_depth":   "8",
+		"color_format":  "1",
+		"fps_num":       "60",
+		"fps_denom":     "1",
+		"frames":        "31",
+		"rate_control":  "cbr",
+		"target_kbps":   "1200",
+		"lookahead":     "0",
+		"pred_struct":   "1",
+		"rtc":           "1",
+		"scd":           "0",
+		"tf":            "0",
+		"irefresh_type": "2",
+		"keyint":        "60",
+		"progress":      "0",
+		"tile_columns":  "2",
+		"svt_lp":        "4",
+		"svt_asm":       "neon",
+	})
+}
+
+func assertSettings(t *testing.T, got map[string]string, want map[string]string) {
+	t.Helper()
+	for key, wantValue := range want {
+		if gotValue := got[key]; gotValue != wantValue {
+			t.Fatalf("settings[%q]=%q want %q in %+v", key, gotValue, wantValue, got)
+		}
+	}
+}
+
 func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	cfg := benchConfig{
 		workdir:             "/tmp/work",

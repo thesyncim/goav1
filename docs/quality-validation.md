@@ -171,6 +171,14 @@ value. The external baseline commands also pin and record profile-0, 8-bit,
 I420 identity settings; external decoded YUV must match the exact expected raw
 I420 byte count before metrics are accepted.
 
+The external baseline settings recorded in metadata are part of the benchmark
+contract:
+
+| Encoder | Low-delay/rate pins | Speed and parallelism pins | Stream and picture pins |
+| --- | --- | --- | --- |
+| `aomenc` | `--rt`, `--end-usage=cbr`, `--lag-in-frames=0`, `--auto-alt-ref=0`, `--enable-fwd-kf=0`, `--drop-frame=0`, `--buf-sz=1000`, `--buf-initial-sz=500`, `--buf-optimal-sz=600` | `--cpu-used`, `--threads`, `--row-mt` from `-aom-cpu-used`, `-aom-threads`, and `-aom-row-mt` | profile 0, 8-bit I420, `--target-bitrate`, `--fps`, `--limit`, `--kf-min-dist`, `--kf-max-dist`, and optional `--tile-columns` |
+| `SvtAv1EncApp` | `--rc 2`, `--lookahead 0`, `--pred-struct 1`, `--rtc 1`, `--scd 0`, `--enable-tf 0`, `--irefresh-type 2` | `--preset`, `--lp`, and optional `--asm` from `-svt-preset`, `-svt-lp`, and `-svt-asm` | profile 0, level 0, 8-bit I420 (`--color-format 1`), `--tbr`, `--fps-num`, `--fps-denom`, `--frames`, `--keyint`, `--progress 0`, and optional `--tile-columns` |
+
 When `-stats-csv` is set, goav1 rows also include encoder decision counters:
 partition choices, block sizes, skip/coded block counts, references, inter
 modes, transform types, and tile/frame counts. These counters are diagnostic

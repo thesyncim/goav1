@@ -3041,6 +3041,11 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 }
 
 func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
+	kfMinDist, kfMaxDist := "9999", "9999"
+	if cfg.keyInterval > 0 {
+		kfMinDist = strconv.Itoa(cfg.keyInterval)
+		kfMaxDist = strconv.Itoa(cfg.keyInterval)
+	}
 	result := encodeResult{
 		encoder:          "aomenc",
 		targetBPS:        bitrate,
@@ -3051,9 +3056,24 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 			"bit_depth":       "8",
 			"input_bit_depth": "8",
 			"color_format":    "i420",
+			"deadline":        "rt",
+			"end_usage":       "cbr",
+			"target_kbps":     strconv.Itoa(kbps(bitrate)),
+			"fps":             strconv.Itoa(cfg.fps) + "/1",
 			"cpu_used":        strconv.Itoa(cfg.aomCPUUsed),
 			"aom_threads":     strconv.Itoa(cfg.aomThreads),
 			"aom_row_mt":      strconv.Itoa(cfg.aomRowMT),
+			"lag_in_frames":   "0",
+			"auto_alt_ref":    "0",
+			"enable_fwd_kf":   "0",
+			"drop_frame":      "0",
+			"buf_sz_ms":       "1000",
+			"buf_initial_ms":  "500",
+			"buf_optimal_ms":  "600",
+			"limit_frames":    strconv.Itoa(cfg.frames),
+			"kf_min_dist":     kfMinDist,
+			"kf_max_dist":     kfMaxDist,
+			"tile_columns":    strconv.Itoa(cfg.tiles),
 		},
 	}
 	if _, err := exec.LookPath("aomenc"); err != nil {
@@ -3090,14 +3110,10 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	if cfg.tiles > 0 {
 		args = append(args, fmt.Sprintf("--tile-columns=%d", cfg.tiles))
 	}
-	if cfg.keyInterval > 0 {
-		args = append(args,
-			fmt.Sprintf("--kf-min-dist=%d", cfg.keyInterval),
-			fmt.Sprintf("--kf-max-dist=%d", cfg.keyInterval),
-		)
-	} else {
-		args = append(args, "--kf-min-dist=9999", "--kf-max-dist=9999")
-	}
+	args = append(args,
+		fmt.Sprintf("--kf-min-dist=%s", kfMinDist),
+		fmt.Sprintf("--kf-max-dist=%s", kfMaxDist),
+	)
 	args = append(args, "-o", ivfPath, refPath)
 	result.command = commandLine("aomenc", args)
 	result.duration = timeCommand("aomenc", args, &result)
@@ -3129,26 +3145,37 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 }
 
 func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
+	keyint := "-1"
+	if cfg.keyInterval > 0 {
+		keyint = strconv.Itoa(cfg.keyInterval)
+	}
 	result := encodeResult{
 		encoder:          "svt-av1",
 		targetBPS:        bitrate,
 		encodedContainer: "ivf",
 		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("svtav1_%d.yuv", bitrate)),
 		settings: map[string]string{
-			"preset":       strconv.Itoa(cfg.svtPreset),
-			"profile":      "0",
-			"level":        "0",
-			"input_depth":  "8",
-			"color_format": "1",
-			"rate_control": "cbr",
-			"target_kbps":  strconv.Itoa(kbps(bitrate)),
-			"lookahead":    "0",
-			"pred_struct":  "1",
-			"rtc":          "1",
-			"scd":          "0",
-			"tf":           "0",
-			"svt_lp":       strconv.Itoa(cfg.svtLP),
-			"svt_lp_note":  "parallelism level 0..6, not a processor/thread count",
+			"preset":        strconv.Itoa(cfg.svtPreset),
+			"profile":       "0",
+			"level":         "0",
+			"input_depth":   "8",
+			"color_format":  "1",
+			"fps_num":       strconv.Itoa(cfg.fps),
+			"fps_denom":     "1",
+			"frames":        strconv.Itoa(cfg.frames),
+			"rate_control":  "cbr",
+			"target_kbps":   strconv.Itoa(kbps(bitrate)),
+			"lookahead":     "0",
+			"pred_struct":   "1",
+			"rtc":           "1",
+			"scd":           "0",
+			"tf":            "0",
+			"irefresh_type": "2",
+			"keyint":        keyint,
+			"progress":      "0",
+			"tile_columns":  strconv.Itoa(cfg.tiles),
+			"svt_lp":        strconv.Itoa(cfg.svtLP),
+			"svt_lp_note":   "parallelism level 0..6, not a processor/thread count",
 		},
 	}
 	if cfg.svtASM == "" {
@@ -3163,10 +3190,6 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	}
 	ivfPath := filepath.Join(cfg.workdir, fmt.Sprintf("svtav1_%d.ivf", bitrate))
 	result.encodedPath = ivfPath
-	keyint := "-1"
-	if cfg.keyInterval > 0 {
-		keyint = strconv.Itoa(cfg.keyInterval)
-	}
 	args := []string{
 		"-i", refPath,
 		"-b", ivfPath,
