@@ -118,9 +118,9 @@ emits `8.07 Mbps`, PSNR `43.3041`, SSIM `0.9828`, XPSNR `42.6234`; SVT emits
 `43.9237-44.0192`.
 
 Fresh `make bench-cross` on the same commit verifies the bundled libaom vectors
-and reports the tiny-vector decoder smoke comparison below. These clips are
-startup-dominated for external subprocess decoders, so use the generated corpus
-lane for steady-state decoder claims.
+under strict per-frame MD5 and reports the tiny-vector decoder smoke comparison
+below. These clips are startup-dominated for external subprocess decoders, so
+use the generated corpus lane for steady-state decoder claims.
 
 | Decoder | Frames | Raw FPS | Adjusted FPS | Raw speed vs goav1 |
 | --- | ---: | ---: | ---: | ---: |

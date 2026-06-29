@@ -27,7 +27,7 @@ bench-public:
 	go test -run '^$$' -bench='BenchmarkPublic' -benchmem -benchtime=$(BENCHTIME) .
 
 # bench-cross is a PERF-TRACKING tool (not a conformance gate). It times
-# goav1's full decode + post-filter chain (reusing the MD5-verifying oracle
+# goav1's full decode + post-filter chain (reusing the strict-MD5 oracle
 # harness) against the reference C decoders found on PATH: libaom's aomdec,
 # dav1d, and SVT-AV1's SvtAv1DecApp if present. Missing decoders are skipped,
 # never a hard failure. goav1 is timed in-process while the C decoders run as
@@ -36,7 +36,7 @@ bench-public:
 # the caveats made impossible to miss. Needs the goav1_oracle build tag so it
 # can reach the oracle decode helper.
 bench-cross:
-	GOAV1_CROSS_BENCH=1 go test -tags goav1_oracle -run TestCrossDecoderThroughput ./internal/av1/testvector -v -count=1 -timeout 600s
+	GOAV1_CROSS_BENCH=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle -run TestCrossDecoderThroughput ./internal/av1/testvector -v -count=1 -timeout 600s
 
 gc-metrics:
 	GODEBUG=gctrace=1 go test -run '^$$' -bench='BenchmarkDecode.*GCMetrics|BenchmarkDecodeFullVectorAllocs' -benchmem -count=$(GCMETRICS_COUNT) .

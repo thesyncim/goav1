@@ -12,7 +12,8 @@ package testvector
 // bundled libaom conformance IVF vectors so we can watch goav1's relative
 // throughput move over time. It deliberately never runs under the normal
 // `go test ./...` invocation: it is gated behind GOAV1_CROSS_BENCH=1 AND the
-// goav1_oracle build tag, and is invoked via `make bench-cross`.
+// goav1_oracle build tag, and is invoked via `make bench-cross`, which also
+// sets GOAV1_STRICT_MD5=1.
 //
 // WHAT IS MEASURED (and why it is a FAIR comparison)
 //
