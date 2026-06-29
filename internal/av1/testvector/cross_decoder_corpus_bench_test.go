@@ -1501,6 +1501,28 @@ func TestLoadCorpusPublishManifestRejectsStaleCorpus(t *testing.T) {
 	}
 }
 
+func TestParseCorpusPublishManifestRowRequiresDAV1DOKForCheckedRows(t *testing.T) {
+	md5Hex := "0123456789abcdeffedcba9876543210"
+	sha := strings.Repeat("1", 64)
+	row := func(depth int, chroma string, dav1d string) string {
+		return fmt.Sprintf("clip\t64\t64\t3\t32\t%d\t%s\t0\t123\t%s\t%s\t%s\t%s\targs",
+			depth, chroma, sha, md5Hex, sha, dav1d)
+	}
+	if _, err := parseCorpusPublishManifestRow(row(8, "420", "dav1d=MISMATCH(deadbeef)")); err == nil ||
+		!strings.Contains(err.Error(), "dav1d_check") {
+		t.Fatalf("8-bit 4:2:0 mismatch error=%v", err)
+	}
+	if _, err := parseCorpusPublishManifestRow(row(8, "420", "dav1d=OK")); err != nil {
+		t.Fatalf("8-bit 4:2:0 dav1d OK failed: %v", err)
+	}
+	if _, err := parseCorpusPublishManifestRow(row(10, "420", "dav1d skipped")); err != nil {
+		t.Fatalf("10-bit row should not require dav1d OK: %v", err)
+	}
+	if _, err := parseCorpusPublishManifestRow(row(8, "444", "dav1d skipped")); err != nil {
+		t.Fatalf("4:4:4 row should not require dav1d OK: %v", err)
+	}
+}
+
 func writeCorpusManifestFixture(t *testing.T, dir, name string, ivfData, md5Data []byte, md5Hex string, width, height, frames, depth int, chroma string, expectedClips int) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name+".ivf"), ivfData, 0o644); err != nil {
@@ -1859,6 +1881,9 @@ func parseCorpusPublishManifestRow(line string) (corpusPublishManifestRow, error
 	dav1dCheck := strings.TrimSpace(fields[12])
 	if dav1dCheck == "" {
 		return corpusPublishManifestRow{}, errors.New("empty dav1d_check")
+	}
+	if depth == 8 && chroma == "420" && dav1dCheck != "dav1d=OK" {
+		return corpusPublishManifestRow{}, fmt.Errorf("8-bit 4:2:0 dav1d_check=%q, want dav1d=OK", dav1dCheck)
 	}
 	aomencArgs := strings.TrimSpace(fields[13])
 	if aomencArgs == "" {

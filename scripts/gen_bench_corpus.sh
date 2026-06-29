@@ -270,6 +270,10 @@ encode() {
       x="dav1d=OK"
     else
       x="dav1d=MISMATCH($d)"
+      echo "ERROR: dav1d md5 mismatch for $name" >&2
+      echo "       dav1d: $d" >&2
+      echo "       aomdec: $ref" >&2
+      exit 1
     fi
   fi
 
