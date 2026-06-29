@@ -914,6 +914,10 @@ func realtimeIntProRow(dst []int16, ref []byte, stride, width, height, x, y, pro
 }
 
 func realtimeIntProRowInBounds(dst []int16, ref []byte, stride, projWidth, projHeight, normFactor int) {
+	realtimeIntProRowInBoundsArch(dst, ref, stride, projWidth, projHeight, normFactor)
+}
+
+func realtimeIntProRowInBoundsPureGo(dst []int16, ref []byte, stride, projWidth, projHeight, normFactor int) {
 	for idx := 0; idx < projWidth; idx++ {
 		sum := 0
 		for i := 0; i < projHeight; i++ {
@@ -951,6 +955,10 @@ func realtimeIntProCol(dst []int16, ref []byte, stride, width, height, x, y, pro
 }
 
 func realtimeIntProColInBounds(dst []int16, ref []byte, stride, projWidth, projHeight, normFactor int) {
+	realtimeIntProColInBoundsArch(dst, ref, stride, projWidth, projHeight, normFactor)
+}
+
+func realtimeIntProColInBoundsPureGo(dst []int16, ref []byte, stride, projWidth, projHeight, normFactor int) {
 	for yy := 0; yy < projHeight; yy++ {
 		row := yy * stride
 		sum := 0
