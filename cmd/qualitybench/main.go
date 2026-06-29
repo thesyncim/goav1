@@ -2083,6 +2083,19 @@ func writeFrame(w io.Writer, frame goav1.I420Frame, width, height int) error {
 	return nil
 }
 
+func writeLengthPrefixedPayload(w io.Writer, payload []byte) error {
+	if uint64(len(payload)) > uint64(^uint32(0)) {
+		return fmt.Errorf("payload too large: %d bytes", len(payload))
+	}
+	var length [4]byte
+	binary.LittleEndian.PutUint32(length[:], uint32(len(payload)))
+	if _, err := w.Write(length[:]); err != nil {
+		return err
+	}
+	_, err := w.Write(payload)
+	return err
+}
+
 func runEncoder(cfg benchConfig, frames []goav1.I420Frame, refPath string, encoderName string, bitrate int) encodeResult {
 	encoderName = canonicalEncoderName(encoderName)
 	switch encoderName {
@@ -2101,7 +2114,8 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 	result := encodeResult{
 		encoder:          "goav1",
 		targetBPS:        bitrate,
-		encodedContainer: "goav1-payload-stream",
+		encodedContainer: "goav1-length-prefixed-low-overhead-stream",
+		encodedPath:      filepath.Join(cfg.workdir, fmt.Sprintf("goav1_%d.obus", bitrate)),
 		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("goav1_%d.yuv", bitrate)),
 		settings: map[string]string{
 			"width":           strconv.Itoa(cfg.width),
@@ -2126,6 +2140,17 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		endToEndStart = time.Now()
 		endToEndCPUBefore, endToEndCPUOK = currentProcessCPUTimes()
 	}
+	encodedOut, err := os.Create(result.encodedPath)
+	if err != nil {
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	encodedClosed := false
+	defer func() {
+		if !encodedClosed {
+			_ = encodedOut.Close()
+		}
+	}()
 	out, err := os.Create(result.decodedYUV)
 	if err != nil {
 		result.status, result.errText = "error", err.Error()
@@ -2184,6 +2209,10 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		frameBytes := int64(len(encoded.Data))
 		result.bytes += frameBytes
 		_, _ = encodedHash.Write(encoded.Data)
+		if err := writeLengthPrefixedPayload(encodedOut, encoded.Data); err != nil {
+			result.status, result.errText = "error", err.Error()
+			return result
+		}
 		if err := writeFrame(out, enc.Reconstruction(), cfg.width, cfg.height); err != nil {
 			result.status, result.errText = "error", err.Error()
 			return result
@@ -2208,6 +2237,12 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		return result
 	}
 	closed = true
+	if err := encodedOut.Close(); err != nil {
+		encodedClosed = true
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	encodedClosed = true
 	if cfg.timingMode == timingModeEndToEnd {
 		result.duration = time.Since(endToEndStart)
 		if endToEndCPUOK {
@@ -2220,8 +2255,14 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 	} else {
 		result.duration = encodeDuration
 	}
-	result.encodedBytes = result.bytes
-	result.encodedSHA256 = hex.EncodeToString(encodedHash.Sum(nil))
+	result.settings["payload_sha256"] = hex.EncodeToString(encodedHash.Sum(nil))
+	encodedBytes, encodedFileHash, err := fileBytesAndSHA256(result.encodedPath)
+	if err != nil {
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	result.encodedBytes = encodedBytes
+	result.encodedSHA256 = encodedFileHash
 	decodedBytes, decodedHash, err := fileBytesAndSHA256(result.decodedYUV)
 	if err != nil {
 		result.status, result.errText = "error", err.Error()

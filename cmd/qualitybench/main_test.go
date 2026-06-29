@@ -275,6 +275,71 @@ func TestIVFPayloadBytes(t *testing.T) {
 	}
 }
 
+func TestWriteLengthPrefixedPayload(t *testing.T) {
+	var buf bytes.Buffer
+	if err := writeLengthPrefixedPayload(&buf, []byte{1, 2, 3}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeLengthPrefixedPayload(&buf, []byte{4, 5}); err != nil {
+		t.Fatal(err)
+	}
+	want := []byte{3, 0, 0, 0, 1, 2, 3, 2, 0, 0, 0, 4, 5}
+	if !bytes.Equal(buf.Bytes(), want) {
+		t.Fatalf("stream=%v want %v", buf.Bytes(), want)
+	}
+}
+
+func TestEncodeGoAV1PersistsLengthPrefixedPayloadStream(t *testing.T) {
+	cfg := benchConfig{
+		width:      64,
+		height:     64,
+		frames:     2,
+		fps:        30,
+		workdir:    t.TempDir(),
+		layers:     1,
+		timingMode: timingModeEndToEnd,
+	}
+	result := encodeGoAV1(cfg, syntheticFrames(cfg.frames, cfg.width, cfg.height), 100000)
+	if result.status != "ok" {
+		t.Fatalf("encode status=%s err=%s", result.status, result.errText)
+	}
+	if result.encodedPath == "" || result.encodedContainer != "goav1-length-prefixed-low-overhead-stream" {
+		t.Fatalf("encoded artifact path=%q container=%q", result.encodedPath, result.encodedContainer)
+	}
+	encodedBytes, encodedHash, err := fileBytesAndSHA256(result.encodedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.encodedBytes != encodedBytes || result.encodedSHA256 != encodedHash {
+		t.Fatalf("encoded metadata bytes/hash=%d/%s want %d/%s", result.encodedBytes, result.encodedSHA256, encodedBytes, encodedHash)
+	}
+	if result.settings["payload_sha256"] == "" {
+		t.Fatalf("settings missing payload hash: %+v", result.settings)
+	}
+	raw, err := os.ReadFile(result.encodedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payloadBytes int64
+	frames := 0
+	for off := 0; off < len(raw); {
+		if len(raw)-off < 4 {
+			t.Fatalf("short length prefix at offset %d", off)
+		}
+		n := int(binary.LittleEndian.Uint32(raw[off : off+4]))
+		off += 4
+		if n < 0 || n > len(raw)-off {
+			t.Fatalf("bad payload length %d at offset %d stream=%d", n, off-4, len(raw))
+		}
+		payloadBytes += int64(n)
+		off += n
+		frames++
+	}
+	if frames != cfg.frames || payloadBytes != result.bytes || result.encodedBytes != result.bytes+int64(4*cfg.frames) {
+		t.Fatalf("artifact frames=%d payload=%d encoded=%d result_payload=%d", frames, payloadBytes, result.encodedBytes, result.bytes)
+	}
+}
+
 func TestParseVMAFMean(t *testing.T) {
 	got, err := parseVMAFMean([]byte(`{"pooled_metrics":{"vmaf":{"mean":91.25}}}`))
 	if err != nil {

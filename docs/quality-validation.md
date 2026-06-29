@@ -85,6 +85,10 @@ tables. `-timing-mode e2e` times goav1 setup, encode calls, and decoded-output
 writes, while external rows continue to time the encoder command invocation.
 The metadata JSON records command paths, binary SHA-256 hashes, and version/help
 probes for the external tools used by the run.
+For goav1 rows, `encoded_path` is a replayable `uint32_le length + low-overhead
+temporal-unit payload` stream. `compressed_bytes` remains the sum of payload
+bytes, while `encoded_bytes` and `encoded_sha256` describe that on-disk
+length-prefixed artifact.
 
 For speed comparisons against SVT-AV1, do not treat numeric concurrency knobs as
 equivalent. `GOMAXPROCS` is a Go scheduler processor cap; SVT-AV1 `--lp` is an
