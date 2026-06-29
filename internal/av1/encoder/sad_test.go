@@ -190,7 +190,7 @@ func TestSAD32x32ImplMatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestSAD64x64ComposedMatchesReference(t *testing.T) {
+func TestSAD64x64MatchesReference(t *testing.T) {
 	rng := rand.New(rand.NewSource(4564))
 	const stride = 151
 	src := make([]byte, stride*160)
@@ -203,6 +203,25 @@ func TestSAD64x64ComposedMatchesReference(t *testing.T) {
 		off := rng.Intn(stride*96) + rng.Intn(stride-64)
 		want := sadRectBlockReference(src, ref, off, off, stride, 64, 64)
 		got := sad64x64(src[off:], ref[off:], stride)
+		if got != want {
+			t.Fatalf("off %d: impl %d want %d", off, got, want)
+		}
+	}
+}
+
+func TestSAD64x64ComposedMatchesReference(t *testing.T) {
+	rng := rand.New(rand.NewSource(45640))
+	const stride = 151
+	src := make([]byte, stride*160)
+	ref := make([]byte, stride*160)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+		ref[i] = uint8(rng.Intn(256))
+	}
+	for range 2000 {
+		off := rng.Intn(stride*96) + rng.Intn(stride-64)
+		want := sadRectBlockReference(src, ref, off, off, stride, 64, 64)
+		got := sad64x64Composed(src[off:], ref[off:], stride)
 		if got != want {
 			t.Fatalf("off %d: impl %d want %d", off, got, want)
 		}
@@ -945,6 +964,19 @@ func BenchmarkSAD64x64(b *testing.B) {
 	}
 }
 
+func BenchmarkSAD64x64Composed(b *testing.B) {
+	src := make([]byte, 96*96)
+	ref := make([]byte, 96*96)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		sad64x64Composed(src, ref, 96)
+	}
+}
+
 func BenchmarkSAD64x64x4Step4(b *testing.B) {
 	src := make([]byte, 96*96)
 	ref := make([]byte, 96*96)
@@ -1002,10 +1034,10 @@ func BenchmarkSAD64x64x4Composed(b *testing.B) {
 	off := 64*stride + 64
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = sad64x64(src[off:], ref[off+2:], stride) +
-			sad64x64(src[off:], ref[off-2:], stride) +
-			sad64x64(src[off:], ref[off+2*stride:], stride) +
-			sad64x64(src[off:], ref[off-2*stride:], stride)
+		_ = sad64x64Composed(src[off:], ref[off+2:], stride) +
+			sad64x64Composed(src[off:], ref[off-2:], stride) +
+			sad64x64Composed(src[off:], ref[off+2*stride:], stride) +
+			sad64x64Composed(src[off:], ref[off-2*stride:], stride)
 	}
 }
 

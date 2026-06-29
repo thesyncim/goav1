@@ -92,6 +92,21 @@ func sad32x32DotProd(src, ref []byte, stride int) int {
 	return int(ctx.Sum)
 }
 
+//go:noescape
+func sad64x64NEONAsm(ctx *sad8x8NEONCtx)
+
+// sad64x64NEON computes the full 64x64 SAD in one assembly call, matching
+// libaom's direct 64-wide arm SAD shape instead of composing four 32x32 calls.
+func sad64x64NEON(src, ref []byte, stride int) int {
+	ctx := sad8x8NEONCtx{
+		Src:    unsafe.Pointer(&src[0]),
+		Ref:    unsafe.Pointer(&ref[0]),
+		Stride: int64(stride),
+	}
+	sad64x64NEONAsm(&ctx)
+	return int(ctx.Sum)
+}
+
 // sad8x8x4Step4NEONCtx carries four horizontal 8x8 SAD outputs for reference
 // origins separated by four bytes. Field offsets are mirrored in assembly.
 type sad8x8x4Step4NEONCtx struct {

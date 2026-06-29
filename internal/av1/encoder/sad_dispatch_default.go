@@ -14,6 +14,10 @@ func sad32x32(src, ref []byte, stride int) int {
 	return sad32x32Impl(src, ref, stride)
 }
 
+func sad64x64(src, ref []byte, stride int) int {
+	return sad64x64Composed(src, ref, stride)
+}
+
 func sad8x8x4Step4(src, ref []byte, stride int) (int, int, int, int) {
 	return sad8x8x4Step4Impl(src, ref, stride)
 }

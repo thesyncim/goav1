@@ -109,9 +109,10 @@ func sad32x32PureGo(src, ref []byte, stride int) int {
 	return total
 }
 
-// sad64x64 composes the square 64x64 shape from the active 32x32 kernel. This
-// keeps 64-tier merge/fallback probes on the same optimized path as 32x32.
-func sad64x64(src, ref []byte, stride int) int {
+// sad64x64Composed composes the square 64x64 shape from the active 32x32
+// kernel. It is the portable fallback and the benchmark reference for direct
+// 64-wide architecture kernels.
+func sad64x64Composed(src, ref []byte, stride int) int {
 	return sad32x32(src, ref, stride) +
 		sad32x32(src[32:], ref[32:], stride) +
 		sad32x32(src[32*stride:], ref[32*stride:], stride) +
