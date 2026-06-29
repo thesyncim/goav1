@@ -85,6 +85,129 @@ func TestRealtimeInterTX16TreeMatchesLibaomNonRDCap(t *testing.T) {
 	}
 }
 
+func TestRealtimeInterTXLeafSizeMatchesLibaomCalculateTXSize(t *testing.T) {
+	const qAC = int32(88)
+	for _, tc := range []struct {
+		name      string
+		block     tile.BlockSize
+		qIndex    uint8
+		sse       uint32
+		variance  uint32
+		wantLeaf  int
+		wantSplit [2]uint16
+	}{
+		{name: "high variance keeps 8x8", block: tile.BlockSize16x16, qIndex: 72, sse: 1000, variance: 1000, wantLeaf: 8, wantSplit: [2]uint16{1, 0}},
+		{name: "dc dominated uses max square", block: tile.BlockSize16x16, qIndex: 72, sse: 2000, variance: 1000, wantLeaf: 16},
+		{name: "low ac variance uses max square", block: tile.BlockSize16x16, qIndex: 72, sse: 200, variance: 100, wantLeaf: 16},
+		{name: "rect max square is 8x8", block: tile.BlockSize16x8, qIndex: 72, sse: 2000, variance: 1000, wantLeaf: 8, wantSplit: [2]uint16{1, 0}},
+		{name: "32x32 max square capped to 16x16", block: tile.BlockSize32x32, qIndex: 72, sse: 5000, variance: 1000, wantLeaf: 16, wantSplit: [2]uint16{1, 0}},
+		{name: "larger than 32 forced to 16x16", block: tile.BlockSize64x64, qIndex: 72, sse: 1000, variance: 1000, wantLeaf: 16, wantSplit: [2]uint16{1, 0x0033}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotLeaf, err := realtimeInterTXLeafSizeForBlock(tc.block, tc.qIndex, qAC, tc.sse, tc.variance)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotLeaf != tc.wantLeaf {
+				t.Fatalf("leaf=%d want %d", gotLeaf, tc.wantLeaf)
+			}
+			plan, err := realtimeInterTXPlanForBlock(tc.block, tc.qIndex, qAC, tc.sse, tc.variance)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.leafSize != tc.wantLeaf {
+				t.Fatalf("plan leaf=%d want %d", plan.leafSize, tc.wantLeaf)
+			}
+			if plan.tree.Split != tc.wantSplit {
+				t.Fatalf("split=%#v want %#v", plan.tree.Split, tc.wantSplit)
+			}
+		})
+	}
+}
+
+func TestRealtimeInterTXPlanReplayMatchesTransformTree(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		size       tile.BlockSize
+		leaf       int
+		wantSplit  [2]uint16
+		wantLeaves int
+	}{
+		{name: "8x8 leaf8", size: tile.BlockSize8x8, leaf: 8, wantLeaves: 1},
+		{name: "16x8 leaf8", size: tile.BlockSize16x8, leaf: 8, wantSplit: [2]uint16{1, 0}, wantLeaves: 2},
+		{name: "8x16 leaf8", size: tile.BlockSize8x16, leaf: 8, wantSplit: [2]uint16{1, 0}, wantLeaves: 2},
+		{name: "16x16 leaf8", size: tile.BlockSize16x16, leaf: 8, wantSplit: [2]uint16{1, 0}, wantLeaves: 4},
+		{name: "32x16 leaf8", size: tile.BlockSize32x16, leaf: 8, wantSplit: [2]uint16{1, 0x0003}, wantLeaves: 8},
+		{name: "16x32 leaf8", size: tile.BlockSize16x32, leaf: 8, wantSplit: [2]uint16{1, 0x0011}, wantLeaves: 8},
+		{name: "32x32 leaf8", size: tile.BlockSize32x32, leaf: 8, wantSplit: [2]uint16{1, 0x0033}, wantLeaves: 16},
+		{name: "32x16 leaf16", size: tile.BlockSize32x16, leaf: 16, wantSplit: [2]uint16{1, 0}, wantLeaves: 2},
+		{name: "32x32 leaf16", size: tile.BlockSize32x32, leaf: 16, wantSplit: [2]uint16{1, 0}, wantLeaves: 4},
+		{name: "64x64 leaf16", size: tile.BlockSize64x64, leaf: 16, wantSplit: [2]uint16{1, 0x0033}, wantLeaves: 16},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan, err := realtimeInterTXPlanForLeafSize(tc.size, tc.leaf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.tree.Split != tc.wantSplit {
+				t.Fatalf("split=%#v want %#v", plan.tree.Split, tc.wantSplit)
+			}
+
+			var helperLeaves []tile.TransformBlock
+			err = plan.ForEachLeaf(func(i, dx, dy int) error {
+				helperLeaves = append(helperLeaves, tile.TransformBlock{
+					X4:        uint8(dx / 4),
+					Y4:        uint8(dy / 4),
+					Size:      plan.leafTX,
+					VisibleW4: uint8(tc.leaf / 4),
+					VisibleH4: uint8(tc.leaf / 4),
+				})
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(helperLeaves) != tc.wantLeaves {
+				t.Fatalf("helper leaves=%d want %d", len(helperLeaves), tc.wantLeaves)
+			}
+
+			dims, ok := tc.size.Dimensions()
+			if !ok {
+				t.Fatal("bad block size")
+			}
+			maxY, err := tile.MaxTransformSize(tc.size, parser.ColorConfig{}, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tree := plan.tree
+			tree.Y = maxY
+			tree.Variable = plan.Variable()
+			var replayLeaves []tile.TransformBlock
+			err = tree.ForEachLumaTXB(tile.TransformTreeRequest{
+				Size:          tc.size,
+				VisibleW4:     dims.W4,
+				VisibleH4:     dims.H4,
+				TransformMode: parser.TransformModeSwitchable,
+				Inter:         true,
+			}, func(block tile.TransformBlock) error {
+				replayLeaves = append(replayLeaves, block)
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(replayLeaves) != len(helperLeaves) {
+				t.Fatalf("replay leaves=%d helper=%d replay=%+v helper=%+v", len(replayLeaves), len(helperLeaves), replayLeaves, helperLeaves)
+			}
+			for i := range replayLeaves {
+				if replayLeaves[i] != helperLeaves[i] {
+					t.Fatalf("leaf[%d]=%+v helper %+v", i, replayLeaves[i], helperLeaves[i])
+				}
+			}
+		})
+	}
+}
+
 func TestEncodePBlockCompoundLastGolden8x8(t *testing.T) {
 	const w, h = 16, 16
 	solid := func(y, u, v byte) SourceFrame420 {
