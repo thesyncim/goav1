@@ -516,10 +516,13 @@ make dryrun-fast
 `make webrtc-production` requires `aomdec` and `dav1d` on `PATH`; it is the
 strict realtime/WebRTC gate for encoder output, decoder RTP receive paths, SVC
 scalability modes, RTP/RTCP helpers, loss recovery, control reconfiguration, and
-external decoder parity, including internal pinned-libwebrtc scalability
-catalogue checks, accepted pixel-mode decode, control-combination decode,
-non-catalog key-shift temporal schedule checks, the Pion/browser-push WebRTC
-example, multi-spatial I422/I444/I400/NV12/NV21 plus generic 8/10/12-bit
+external decoder parity. The reference-decode lane selects every maintained
+`*ReferenceDecoders` row, including public I400/I420 high-bit-depth/lossless and
+P-frame profiles plus the WebRTC/control matrix. It also covers internal
+pinned-libwebrtc scalability catalogue checks, accepted pixel-mode decode,
+control-combination decode, non-catalog key-shift temporal schedule checks, the
+Pion/browser-push WebRTC example, multi-spatial I422/I444/I400/NV12/NV21 plus
+generic 8/10/12-bit
 `Frame` adapter output after RTP assembly, native single-spatial monochrome RTC
 output, native 10/12-bit I400/I420/I422/I444 RTC output, as well as all-mode
 `SetConfig` transitions that change framerate, bitrate, rate control, content

@@ -384,7 +384,9 @@ ship under `internal/av1/testdata/libaom/`.
 The framework dry-run gates use strict per-frame MD5. Current coverage is:
 
 - `make webrtc-production`: strict realtime/WebRTC gate requiring `aomdec` and
-  `dav1d` on `PATH`; covers encoder output reference decoding, high-level RTP
+  `dav1d` on `PATH`; covers every maintained public encoder/WebRTC
+  `*ReferenceDecoders` row, including I400/I420 high-bit-depth/lossless and
+  P-frame profile output plus WebRTC control/scalability output, high-level RTP
   payload/packet receive paths, pinned-libwebrtc scalability catalogue parity,
   accepted pixel-mode decode, control-combination decode, non-catalog key-shift
   temporal schedules, SVC scalability modes, RTP/RTCP helpers, loss recovery,
