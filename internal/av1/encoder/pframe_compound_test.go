@@ -1,6 +1,7 @@
 package encoder
 
 import (
+	"math/bits"
 	"math/rand"
 	"testing"
 
@@ -241,6 +242,39 @@ func TestRealtimeSourceVariancePerPixelMatchesAV1VarOffs(t *testing.T) {
 	want := (variance + 32) >> 6
 	if got := realtimeSourceVariancePerPixel(src, 8, 8, 8); got != want {
 		t.Fatalf("source variance=%d want %d", got, want)
+	}
+}
+
+func TestRealtimeSourceVarianceAgainstAV1VarOffsMatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(9102))
+	const (
+		stride = 160
+		height = 96
+	)
+	src := make([]byte, stride*height)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+	}
+	for _, size := range []int{8, 16, 32, 64} {
+		for range 200 {
+			x := rng.Intn(stride - size)
+			y := rng.Intn(height - size)
+			off := y*stride + x
+			sse, sum := pixelStats128PureGo(src[off:], stride, size, size)
+			shift := uint(bits.TrailingZeros(uint(size * size)))
+			want := varianceFromStats(sse, sum, shift)
+			got, ok := realtimeSourceVarianceAgainstAV1VarOffs(src[off:], stride, size, size)
+			if !ok {
+				t.Fatalf("%dx%d AV1 var offsets path disabled", size, size)
+			}
+			if got != want {
+				t.Fatalf("%dx%d off=%d variance=%d want %d", size, size, off, got, want)
+			}
+			want = roundPowerOfTwoUint32(want, shift)
+			if got := realtimeSourceVariancePerPixel(src[off:], stride, size, size); got != want {
+				t.Fatalf("%dx%d off=%d perpixel variance=%d want %d", size, size, off, got, want)
+			}
+		}
 	}
 }
 

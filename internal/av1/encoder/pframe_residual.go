@@ -380,10 +380,53 @@ func (st *lossyEncodeState) realtimeSourceVarianceForBlock(src SourceFrame420, p
 }
 
 func realtimeSourceVariancePerPixel(src []byte, stride, w, h int) uint32 {
+	if variance, ok := realtimeSourceVarianceAgainstAV1VarOffs(src, stride, w, h); ok {
+		shift := uint(bits.TrailingZeros(uint(w * h)))
+		return roundPowerOfTwoUint32(variance, shift)
+	}
 	sse, sum := pixelStats128PureGo(src, stride, w, h)
 	shift := uint(bits.TrailingZeros(uint(w * h)))
 	variance := varianceFromStats(sse, sum, shift)
 	return roundPowerOfTwoUint32(variance, shift)
+}
+
+var realtimeAV1VarOffs = [128]byte{
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+	128, 128, 128, 128, 128, 128, 128, 128,
+}
+
+func realtimeSourceVarianceAgainstAV1VarOffs(src []byte, stride, w, h int) (uint32, bool) {
+	ref := realtimeAV1VarOffs[:]
+	switch {
+	case w == 64 && h == 64:
+		_, variance := sseVariance64x64(src, stride, ref, 0)
+		return variance, true
+	case w == 32 && h == 32:
+		_, variance := sseVariance32x32(src, stride, ref, 0)
+		return variance, true
+	case w == 16 && h == 16:
+		_, variance := sseVariance16x16(src, stride, ref, 0)
+		return variance, true
+	case w == 8 && h == 8:
+		_, variance := sseVariance8x8(src, stride, ref, 0)
+		return variance, true
+	default:
+		return 0, false
+	}
 }
 
 func pixelStats128PureGo(src []byte, stride, w, h int) (sse uint32, sum int32) {
