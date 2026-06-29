@@ -690,6 +690,8 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 			dcValue = int(cv)
 		}
 	}
+	var lowerContexts [maxEOB]int8
+	lowerContextMap := coeffNZMapContexts2DFullArch(levels[:], TransformSize16x16, lowerContexts[:])
 
 	baseEOBCDFs := &cdfs.CoeffBaseEOB[txCtx][CoeffPlaneY]
 	baseCDFs := &cdfs.CoeffBase[txCtx][CoeffPlaneY]
@@ -714,9 +716,12 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 		p := &scanHot[c]
 		level := int(absLevels[c])
 		pad := p.padded
-		mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
-			clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-		ctx := minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+		ctx := int(lowerContexts[p.pos])
+		if !lowerContextMap {
+			mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
+				clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
+			ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+		}
 		if level == 0 {
 			w.WriteCDF4Zero(&baseCDFs[ctx])
 		} else {

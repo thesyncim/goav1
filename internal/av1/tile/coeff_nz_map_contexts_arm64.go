@@ -36,27 +36,60 @@ func coeffNZMapContextsArch(levels []uint8, size TransformSize, class transform.
 	switch geo.scanHeight {
 	case 16:
 		if eob == maxEOB {
-			coeffNZMapContexts16Rows2DNEONAsm(&levels[0], &offsets[0], &contexts[0], uintptr(geo.scanWidth), uintptr(geo.stride))
+			if !coeffNZMapContexts2DFullArch(levels, size, contexts) {
+				return false
+			}
 			coeffNZMapFinalizeFull(contexts, scan, eob, maxEOB)
 			return true
 		}
 		var full [maxCoeffScanLen]int8
-		coeffNZMapContexts16Rows2DNEONAsm(&levels[0], &offsets[0], &full[0], uintptr(geo.scanWidth), uintptr(geo.stride))
+		if !coeffNZMapContexts2DFullArch(levels, size, full[:]) {
+			return false
+		}
 		coeffNZMapCopyPartial(full[:], contexts, scan, eob, maxEOB)
 		return true
 	case 32:
 		if eob == maxEOB {
-			coeffNZMapContexts32Rows2DNEONAsm(&levels[0], &offsets[0], &contexts[0], uintptr(geo.scanWidth), uintptr(geo.stride))
+			if !coeffNZMapContexts2DFullArch(levels, size, contexts) {
+				return false
+			}
 			coeffNZMapFinalizeFull(contexts, scan, eob, maxEOB)
 			return true
 		}
 		var full [maxCoeffScanLen]int8
-		coeffNZMapContexts32Rows2DNEONAsm(&levels[0], &offsets[0], &full[0], uintptr(geo.scanWidth), uintptr(geo.stride))
+		if !coeffNZMapContexts2DFullArch(levels, size, full[:]) {
+			return false
+		}
 		coeffNZMapCopyPartial(full[:], contexts, scan, eob, maxEOB)
 		return true
 	default:
 		return false
 	}
+}
+
+func coeffNZMapContexts2DFullArch(levels []uint8, size TransformSize, contexts []int8) bool {
+	if !cpu.Detected.NEON {
+		return false
+	}
+	geo := coeffGeometryTable[size]
+	maxEOB := int(geo.maxEOB)
+	if !geo.valid || len(levels) < int(geo.scratchLen) || len(contexts) < maxEOB {
+		return false
+	}
+	offsets := coeffLower2DOffsetTable[size]
+	if len(offsets) < maxEOB {
+		return false
+	}
+	switch geo.scanHeight {
+	case 16:
+		coeffNZMapContexts16Rows2DNEONAsm(&levels[0], &offsets[0], &contexts[0], uintptr(geo.scanWidth), uintptr(geo.stride))
+	case 32:
+		coeffNZMapContexts32Rows2DNEONAsm(&levels[0], &offsets[0], &contexts[0], uintptr(geo.scanWidth), uintptr(geo.stride))
+	default:
+		return false
+	}
+	contexts[0] = 0
+	return true
 }
 
 func coeffNZMapFinalizeFull(contexts []int8, scan []int16, eob int, maxEOB int) {
