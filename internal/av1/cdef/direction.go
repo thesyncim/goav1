@@ -12,6 +12,14 @@ var ErrInvalidCDEF = errors.New("cdef: invalid input")
 
 var cdefDirectionDivTable = [...]int32{0, 840, 420, 280, 210, 168, 140, 120, 105}
 
+type findDirectionFunc func([]uint16, int, int) (int, int32)
+type findDirectionDualFunc func([]uint16, []uint16, int, int) (int, int32, int, int32)
+
+var (
+	findDirectionImpl     findDirectionFunc     = findDirectionScalar
+	findDirectionDualImpl findDirectionDualFunc = findDirectionDualScalar
+)
+
 // FindDirection ports libaom's cdef_find_dir_c. img must contain an 8x8 block
 // addressed with stride. coeffShift is bitDepth-8 for 8/10/12-bit input.
 func FindDirection(img []uint16, stride int, coeffShift int) (int, int32, error) {
@@ -23,6 +31,10 @@ func FindDirection(img []uint16, stride int, coeffShift int) (int, int32, error)
 }
 
 func findDirectionUnchecked(img []uint16, stride int, coeffShift int) (int, int32) {
+	return findDirectionImpl(img, stride, coeffShift)
+}
+
+func findDirectionScalar(img []uint16, stride int, coeffShift int) (int, int32) {
 	if coeffShift == 0 {
 		return findDirection8Unchecked(img, stride)
 	}
@@ -78,6 +90,10 @@ func FindDirectionDual(img1 []uint16, img2 []uint16, stride int, coeffShift int)
 }
 
 func findDirectionDualUnchecked(img1 []uint16, img2 []uint16, stride int, coeffShift int) (int, int32, int, int32) {
+	return findDirectionDualImpl(img1, img2, stride, coeffShift)
+}
+
+func findDirectionDualScalar(img1 []uint16, img2 []uint16, stride int, coeffShift int) (int, int32, int, int32) {
 	if coeffShift == 0 {
 		return findDirectionDual8Unchecked(img1, img2, stride)
 	}
