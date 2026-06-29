@@ -892,6 +892,10 @@ func realtimeIntProRow(dst []int16, ref []byte, stride, width, height, x, y, pro
 		realtimeIntProRowInBounds(dst, ref[y*stride+x:], stride, projWidth, projHeight, normFactor)
 		return
 	}
+	if y >= 0 && y+projHeight <= height {
+		realtimeIntProRowYInBounds(dst, ref, stride, width, x, y, projWidth, projHeight, normFactor)
+		return
+	}
 	for idx := 0; idx < projWidth; idx++ {
 		xx := x + idx
 		if xx < 0 {
@@ -908,6 +912,22 @@ func realtimeIntProRow(dst []int16, ref []byte, stride, width, height, x, y, pro
 				yy = height - 1
 			}
 			sum += int(ref[yy*stride+xx])
+		}
+		dst[idx] = int16(sum >> uint(normFactor))
+	}
+}
+
+func realtimeIntProRowYInBounds(dst []int16, ref []byte, stride, width, x, y, projWidth, projHeight, normFactor int) {
+	for idx := 0; idx < projWidth; idx++ {
+		xx := x + idx
+		if xx < 0 {
+			xx = 0
+		} else if xx >= width {
+			xx = width - 1
+		}
+		sum := 0
+		for i := 0; i < projHeight; i++ {
+			sum += int(ref[(y+i)*stride+xx])
 		}
 		dst[idx] = int16(sum >> uint(normFactor))
 	}
