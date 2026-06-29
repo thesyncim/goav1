@@ -121,6 +121,51 @@ func TestConvolve2D8AVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestConvolve2D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x2d8a11e))
+	widths := []int{16, 24, 32}
+	heights := []int{4, 8, 16, 32}
+	phasePairs := [][2][filterTaps]int16{
+		{subpelFilters8[3], subpelFilters8[5]},
+		{subpelFilters8Smooth[6], subpelFilters8Smooth[11]},
+		{subpelFilters8Sharp[9], subpelFilters8Sharp[13]},
+		{bilinearFilters[7], bilinearFilters[2]},
+	}
+
+	for _, w := range widths {
+		for _, h := range heights {
+			for _, kernels := range phasePairs {
+				for _, edge := range []string{"left", "right"} {
+					const refW = 96
+					refH := h + 2*filterTaps
+					ref, _ := testPlane(refW, refH, 1, refW)
+					for i := range ref.Pix {
+						ref.Pix[i] = byte(rng.Intn(256))
+					}
+					refX := 1
+					if edge == "right" {
+						refX = refW - w - 3
+					}
+					refY := filterTaps
+					got, _ := testPlane(w, h, 1, w)
+					gotScratch, _ := testPlane(w, h, 1, w)
+					want, _ := testPlane(w, h, 1, w)
+					var scratch ConvolveScratch
+					if !convolve2D8ClampedEdgeSplitAVX2WithScratch(got, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], nil) {
+						t.Fatalf("2D8horizontal-edge AVX2 split path was not used w=%d h=%d edge=%s", w, h, edge)
+					}
+					if !convolve2D8ClampedEdgeSplitAVX2WithScratch(gotScratch, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &scratch) {
+						t.Fatalf("2D8horizontal-edge AVX2 scratch split path was not used w=%d h=%d edge=%s", w, h, edge)
+					}
+					convolve2D8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
+					diffPlanes8(t, got, want, w, h, "2Dclamped-edge", kernels[0], kernels[1])
+					diffPlanes8(t, gotScratch, want, w, h, "2Dclamped-edge-scratch", kernels[0], kernels[1])
+				}
+			}
+		}
+	}
+}
+
 func TestConvolveHighBDAVX2MatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x6BD0FACE))
 	const pad = filterTaps

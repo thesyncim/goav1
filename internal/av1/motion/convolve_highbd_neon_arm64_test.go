@@ -320,13 +320,19 @@ func TestConvolve2D8ClampedHorizontalEdgeNEONMatchesPureGo(t *testing.T) {
 					refY := filterTaps
 					got, _ := testPlane(w, h, 1, w)
 					gotScratch, _ := testPlane(w, h, 1, w)
+					gotSplit, _ := testPlane(w, h, 1, w)
 					want, _ := testPlane(w, h, 1, w)
 					var scratch ConvolveScratch
+					var splitScratch ConvolveScratch
 					convolve2D8ClampedNEON(got, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
 					convolve2D8ClampedNEONWithScratch(gotScratch, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &scratch)
+					if !convolve2D8ClampedEdgeSplitNEONWithScratch(gotSplit, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &splitScratch) {
+						t.Fatalf("2D8horizontal-edge split path was not used w=%d h=%d edge=%s", w, h, edge)
+					}
 					convolve2D8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
 					assertBytesEqual(t, got, want, w, h, "2D8horizontal-edge", w, h, edge)
 					assertBytesEqual(t, gotScratch, want, w, h, "2D8horizontal-edge-scratch", w, h, edge)
+					assertBytesEqual(t, gotSplit, want, w, h, "2D8horizontal-edge-split", w, h, edge)
 				}
 			}
 		}

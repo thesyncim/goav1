@@ -304,5 +304,68 @@ func convolve2D8ClampedNEONWithScratch(dst frame.Plane, ref frame.Plane, dstX in
 		convolve2D8NEONWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
 		return
 	}
+	if convolve2D8ClampedEdgeSplitNEONWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch) {
+		return
+	}
 	convolve2D8ClampedPureGoWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
+}
+
+func convolve2D8ClampedEdgeSplitNEONWithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) bool {
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	xLo, xHi := clampedXInterior(refX-foX, filterTaps, ref.Width, width)
+	yLo, yHi := clampedXInterior(refY-foY, filterTaps, ref.Height, height)
+	if xHi <= xLo || yHi <= yLo {
+		return false
+	}
+
+	var starts [16]int
+	var widths [16]int
+	n := 0
+	for start := xLo; start < xHi && n < len(starts); {
+		remaining := xHi - start
+		if remaining >= 8 {
+			chunk := remaining &^ 7
+			starts[n], widths[n] = start, chunk
+			n++
+			start += chunk
+			continue
+		}
+		if remaining >= 4 {
+			const w4Halo = 4 + filterTaps
+			if !planeRegionFits(ref, 1, refX+start-foX, refY+yLo-foY, w4Halo, yHi-yLo+filterTaps-1) {
+				break
+			}
+			starts[n], widths[n] = start, 4
+			n++
+			start += 4
+			continue
+		}
+		break
+	}
+	if n == 0 {
+		return false
+	}
+
+	if yLo > 0 {
+		convolve2D8ClampedPureGoWithScratch(dst, ref, dstX, dstY, refX, refY, width, yLo, xKernel, yKernel, scratch)
+	}
+	midH := yHi - yLo
+	if xLo > 0 {
+		convolve2D8ClampedPureGoWithScratch(dst, ref, dstX, dstY+yLo, refX, refY+yLo, xLo, midH, xKernel, yKernel, scratch)
+	}
+	coveredHi := xLo
+	for i := 0; i < n; i++ {
+		start := starts[i]
+		chunk := widths[i]
+		convolve2D8NEONWithScratch(dst, ref, dstX+start, dstY+yLo, refX+start, refY+yLo, chunk, midH, xKernel, yKernel, scratch)
+		coveredHi = start + chunk
+	}
+	if coveredHi < width {
+		convolve2D8ClampedPureGoWithScratch(dst, ref, dstX+coveredHi, dstY+yLo, refX+coveredHi, refY+yLo, width-coveredHi, midH, xKernel, yKernel, scratch)
+	}
+	if yHi < height {
+		convolve2D8ClampedPureGoWithScratch(dst, ref, dstX, dstY+yHi, refX, refY+yHi, width, height-yHi, xKernel, yKernel, scratch)
+	}
+	return true
 }

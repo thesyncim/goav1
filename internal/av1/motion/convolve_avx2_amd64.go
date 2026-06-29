@@ -102,15 +102,27 @@ func convolveY8AVX2(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX i
 const convolve2DAVX2IMStride = maxBlockSize
 
 func convolve2D8AVX2(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	convolve2D8AVX2WithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, nil)
+}
+
+func convolve2D8AVX2WithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
 	if width < 8 || width%8 != 0 {
 		convolve2D8PureGo(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
 		return
 	}
-	foX := filterTaps/2 - 1
-	foY := filterTaps/2 - 1
 	xk := xKernel
 	yk := yKernel
+	if scratch != nil {
+		convolve2D8AVX2WithIM(dst, ref, dstX, dstY, refX, refY, width, height, xk, yk, &scratch.im[0], convolve2DAVX2IMStride)
+		return
+	}
 	var im [(maxBlockSize + filterTaps - 1) * convolve2DAVX2IMStride]int16
+	convolve2D8AVX2WithIM(dst, ref, dstX, dstY, refX, refY, width, height, xk, yk, &im[0], convolve2DAVX2IMStride)
+}
+
+func convolve2D8AVX2WithIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xk [filterTaps]int16, yk [filterTaps]int16, im *int16, imStride int) {
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
 	ctx := convolveAVX2Ctx{
 		dst:    &dst.Pix[dstY*dst.Stride+dstX],
 		ref:    &ref.Pix[(refY-foY)*ref.Stride+refX-foX],
@@ -120,8 +132,8 @@ func convolve2D8AVX2(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX 
 		refStr: uintptr(ref.Stride),
 		width:  uintptr(width),
 		height: uintptr(height),
-		im:     &im[0],
-		imStr:  uintptr(convolve2DAVX2IMStride),
+		im:     im,
+		imStr:  uintptr(imStride),
 	}
 	convolve2D8AVX2Asm(&ctx)
 }
@@ -152,12 +164,68 @@ func convolveY8ClampedAVX2(dst frame.Plane, ref frame.Plane, dstX int, dstY int,
 }
 
 func convolve2D8ClampedAVX2(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	convolve2D8ClampedAVX2WithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, nil)
+}
+
+func convolve2D8ClampedAVX2WithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	if width >= 8 && width%8 == 0 &&
 		planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
-		convolve2D8AVX2(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+		convolve2D8AVX2WithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
 		return
 	}
-	convolve2D8ClampedPureGo(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+	if convolve2D8ClampedEdgeSplitAVX2WithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch) {
+		return
+	}
+	convolve2D8ClampedPureGoWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
+}
+
+func convolve2D8ClampedEdgeSplitAVX2WithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) bool {
+	foX := filterTaps/2 - 1
+	foY := filterTaps/2 - 1
+	xLo, xHi := clampedXInterior(refX-foX, filterTaps, ref.Width, width)
+	yLo, yHi := clampedXInterior(refY-foY, filterTaps, ref.Height, height)
+	if xHi <= xLo || yHi <= yLo {
+		return false
+	}
+
+	var starts [16]int
+	var widths [16]int
+	n := 0
+	for start := xLo; start < xHi && n < len(starts); {
+		remaining := xHi - start
+		if remaining < 8 {
+			break
+		}
+		chunk := remaining &^ 7
+		starts[n], widths[n] = start, chunk
+		n++
+		start += chunk
+	}
+	if n == 0 {
+		return false
+	}
+
+	if yLo > 0 {
+		convolve2D8ClampedPureGoWithScratch(dst, ref, dstX, dstY, refX, refY, width, yLo, xKernel, yKernel, scratch)
+	}
+	midH := yHi - yLo
+	if xLo > 0 {
+		convolve2D8ClampedPureGoWithScratch(dst, ref, dstX, dstY+yLo, refX, refY+yLo, xLo, midH, xKernel, yKernel, scratch)
+	}
+	coveredHi := xLo
+	for i := 0; i < n; i++ {
+		start := starts[i]
+		chunk := widths[i]
+		convolve2D8AVX2WithScratch(dst, ref, dstX+start, dstY+yLo, refX+start, refY+yLo, chunk, midH, xKernel, yKernel, scratch)
+		coveredHi = start + chunk
+	}
+	if coveredHi < width {
+		convolve2D8ClampedPureGoWithScratch(dst, ref, dstX+coveredHi, dstY+yLo, refX+coveredHi, refY+yLo, width-coveredHi, midH, xKernel, yKernel, scratch)
+	}
+	if yHi < height {
+		convolve2D8ClampedPureGoWithScratch(dst, ref, dstX, dstY+yHi, refX, refY+yHi, width, height-yHi, xKernel, yKernel, scratch)
+	}
+	return true
 }

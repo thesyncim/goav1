@@ -1,9 +1,9 @@
-# SIMD Coverage Against SVT-AV1
+# SIMD Coverage Against SVT-AV1 and dav1d
 
 This ledger tracks whether goav1 has the same useful assembly coverage as the
-SVT-AV1 build used for speed comparisons. It is intentionally profile-driven:
+SVT-AV1 and dav1d builds used for speed comparisons. It is intentionally profile-driven:
 matching every upstream file name is not the goal; matching the active kernels
-that matter for this encoder, and not giving SVT an unreported SIMD tier
+that matter for this encoder/decoder, and not giving a reference implementation an unreported SIMD tier
 advantage, is the goal.
 
 ## Source Truth
@@ -15,6 +15,11 @@ advantage, is the goal.
 - Repo architecture pin: `third_party/upstream/svt-av1`, tag `v4.1.0`, commit
   `c04f951541ad600e0d9c10836f2ab7b9bc69816d`
 - Upstream repository: <https://gitlab.com/AOMediaCodec/SVT-AV1>
+- dav1d repository pin: `third_party/upstream/dav1d`, tag `1.5.3`, commit
+  `b546257f770768b2c88258c533da38b91a06f737`
+- dav1d reference assembly families: arm64 `cdef`, `filmgrain`, `ipred`,
+  `itx`, `loopfilter`, `looprestoration`, `mc`, `mc_dotprod`, `msac`,
+  `refmvs`; x86 SSE/AVX2/AVX512 equivalents under `src/x86`.
 - Local platform for this audit: `darwin/arm64`, Apple M4 Max
 - macOS-reported Arm features: `hw.optional.neon=1`,
   `hw.optional.arm.FEAT_DotProd=1`, `hw.optional.arm.FEAT_I8MM=1`
@@ -69,6 +74,14 @@ NEON kernels. DOTPROD/I8MM convolve and CDEF are max-tier fairness gaps, but
 they should follow a profile row that shows those paths are active enough to
 matter in the measured encoder mode.
 
+For dav1d-class decode parity, the broad source families to keep mapped are
+motion compensation (`mc`, `mc_dotprod`, `mc16`), inverse transforms (`itx`,
+`itx16`), intra prediction (`ipred`, `ipred16`), CDEF, loop filter,
+restoration, film grain, entropy/range coding (`msac`), and reference-MV
+projection (`refmvs`). goav1 has SIMD in several DSP/postfilter families, but
+the remaining decode-side work should be selected from `bench-cross` or corpus
+profiles rather than breadth-first file matching.
+
 ## Current Speed Snapshot
 
 Fresh synthetic 1080p/120-frame single-rate rows on 2026-06-14 with
@@ -108,7 +121,7 @@ parallelism level and still consumes less observed CPU parallelism than
 | Variance, SSE, block error, SATD, Hadamard | `variance_neon.c`, `sse_neon.c`, `block_error_neon.c`, `hadamard_path_neon.c`, plus DOTPROD SSE/variance | goav1 has residual/RD stats NEON, baseline-NEON pixel SSE+variance stats for the practical 4-wide and width-multiple-of-8 square/rectangular low-bitdepth shapes through 64x64, a measured DOTPROD SSE/variance tier for winning width-multiple-of-8 rows, an arm64 NEON coefficient block-error reducer matching SVT's `svt_av1_block_error_neon`, an arm64 NEON coefficient SATD reducer matching SVT's `svt_aom_satd_neon`, and arm64 NEON 4x4/8x8/16x16/32x32 low-bitdepth Hadamard producers matching SVT's NEON order. These metric kernels are now dispatched by feature tier but still do not change encoder mode decisions unless that path is called. | DOTPROD SSE/variance is partially closed for measured-winning rows; small `8x4`/`8x8` variance remains baseline NEON because DOTPROD loses there. Baseline block-error is covered; broader max-tier metric/search coverage remains open. Only wire these into mode/search scoring after a focused profile proves they beat the current SAD/RD flow. |
 | Forward transforms | `highbd_fwd_txfm_neon.c` covers square, rectangular, N2/N4, and many tx types including ADST paths | Forward DCT 4/8/16/32 has NEON; the active trusted 8x8 IDTX, ADST_DCT, DCT_ADST, and ADST_ADST tx-type trials now have arm64 NEON matching SVT's identity, ADST-column/DCT-row, DCT-column/ADST-row, and ADST-column/ADST-row surfaces. The scalar source-shaped forward path now covers the non-DCT_DCT FlipADST, ADST16, DCT64-backed realtime 64x64/32x64/64x32 DCT shapes, and 1D DCT/ADST/IDTX combinations whose axes fit the local 1D kernels. | High for the current profile: the active 8x8 tx-type trial surface is covered, and broader scalar correctness is better, but SVT's wider SIMD matrix still includes rectangular/N2/N4/flip ADST and DCT64/N2/N4 SIMD variants. |
 | Quantize/dequant | FP/B quantize, 32x32/64x64 variants, highbd quantize | Quantize B/FP and dequant have NEON/AVX2 surfaces | Mostly covered for current 8-bit path; revisit after TXB/search gaps. |
-| Inter prediction/convolve | Convolve, compound, joint compound, scale, warp, highbd, DOTPROD and I8MM variants | 8-bit and highbd X/Y/2D convolve have NEON/AVX2; arm64 8-bit X/Y one-axis convolve now keeps width>=8 4-tap filters on the NEON body instead of falling back to scalar. The 8-bit compound/joint-convolve copy, X-only, Y-only, and filtered 2D branches now have arm64 NEON kernels for resident width-multiple-of-8 and resident width-4 CONV_BUF blocks. Clamped-edge, scaled, highbd compound, and max-tier dotprod/i8mm compound variants remain uncovered. | Baseline coverage is better for active 4-tap one-axis paths and the copy/X/Y/2D compound branches, but max-tier coverage is still not equivalent. DOTPROD/I8MM should come after CPU feature detection and profiler confirmation. |
+| Inter prediction/convolve | SVT convolve, compound, joint compound, scale, warp, highbd, DOTPROD and I8MM variants; dav1d `mc`, `mc_dotprod`, and `mc16` | 8-bit and highbd X/Y/2D convolve have NEON/AVX2; arm64 8-bit X/Y one-axis convolve keeps width>=8 4-tap filters on the NEON body instead of falling back to scalar. The 8-bit compound/joint-convolve copy, X-only, Y-only, and filtered 2D branches have arm64 NEON kernels for resident width-multiple-of-8 and resident width-4 CONV_BUF blocks. 8-bit clamped 2D edge blocks now split exact pure-Go clamped strips from resident SIMD rectangles on arm64 NEON and amd64 AVX2, including caller-scratch dispatch. Scaled, highbd compound, and max-tier DOTPROD/I8MM compound variants remain uncovered. | Baseline edge-convolve coverage is now materially better for the active WebRTC encoder profile. Max-tier coverage is still not equivalent. DOTPROD/I8MM should come after CPU feature detection and profiler confirmation. |
 | Intra, CFL, blend, wedge, palette | Intra, CFL, blend, wedge, palette-related SIMD | Intra predictors, CFL, blend and min/max have NEON/AVX2 coverage; wedge/palette are feature-dependent | Low unless these paths become hot in the encoder mode set. |
 | Loop filter, CDEF, restoration, superres, film grain | Broad NEON and highbd variants | goav1 has NEON/AVX2 coverage for these postfilter/decoder-style kernels | Mostly covered for current profile. Loopfilter still appears, so optimize only with a focused profile. |
 | Temporal filtering, pic analysis, k-means, mem | SVT has NEON files for these encoder pipeline helpers | Not part of the current low-delay goav1 encode path | Do not chase for this benchmark until the feature exists and profiles hot. |
@@ -167,6 +180,16 @@ parallelism level and still consumes less observed CPU parallelism than
   scalar row to `509.1 ns/op` with the NEON dispatch, and
   `BenchmarkCompoundConvBuf2D8_8` measures `57.72 ns/op`, all zero
   allocations.
+- arm64/amd64 8-bit clamped 2D edge convolve now routes resident interior
+  rectangles through the existing NEON/AVX2 2D kernels while keeping exact
+  pure-Go clamping for top, bottom, left, and right strips. On Apple M4 Max,
+  `BenchmarkConvolve2D8ClampedEdge_16WithScratch` measures about
+  `1.46 us/op`, zero allocations. In the 1080p single-thread encoder profile,
+  `convolve2D8ClampedPureGoWithIM` dropped from the previous `~0.31s` flat
+  hotspot to `~0.06s`, and
+  `BenchmarkVideoEncoderPFramePan1080pSingleThread` moved from the previous
+  `~49.0 ms/op` range to `~46.5-47.6 ms/op`, still `0 B/op` and
+  `0 allocs/op`.
 - arm64 8-bit width-4 compound CONV_BUF now has dedicated NEON rows for copy,
   X, Y, and 2D resident blocks. Paired pure-Go vs NEON medians on
   `BenchmarkCompoundConvBuf*_4x16` were: copy `56.11 ns/op` to `28.68 ns/op`,
