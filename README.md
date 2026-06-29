@@ -467,7 +467,10 @@ make bench-corpus-publish
 The generator requires an explicit source clip plus source SHA-256, pins aomenc
 `--threads` and `--row-mt`, expects 25 clips, and writes `manifest.tsv` with
 source, tool, encode-argument, IVF, and MD5 hashes next to the local ignored
-corpus.
+corpus. Quality benchmark manifests used for publishable encoder tables must
+also declare raw `pix_fmt=i420`, `bit_depth=8`, `chroma=4:2:0`, per-input
+SHA-256, source/provenance fields, and category labels; declared raw hashes are
+verified before timing starts.
 
 `bench-corpus-publish` enables `GOAV1_BENCH_CORPUS_PUBLISH=1`, which requires
 `manifest.tsv` to match the generator schema, expected clip count, IVF and MD5

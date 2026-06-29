@@ -83,8 +83,11 @@ Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-run-order shuffle`, explicit `-shuffle-seed`, `-runs >= 3`, and
 `-warmup-runs >= 1`. It also requires explicit libaom concurrency settings
 when `aomenc` is selected, explicit SVT parallelism and assembly settings when
-`svt-av1` is selected, and exact raw I420 input byte counts for every manifest
-row. Publish mode rejects duplicate encoder/bitrate entries, requires the
+`svt-av1` is selected, exact raw I420 input byte counts for every manifest row,
+and manifest-declared `pix_fmt=i420`, `bit_depth=8`, `chroma=4:2:0`, `sha256`,
+`source_id`, `source_url`, `source_license`, and `category` fields. Declared
+input hashes are verified before timing starts. Publish mode rejects duplicate
+encoder/bitrate entries, requires the
 BD-rate anchor to be one of the selected encoders, and requires at least four
 distinct bitrate points. When `aomenc` or `svt-av1` baselines are
 selected, publish mode requires `-layers 1`; goav1 multi-temporal-layer/SVC
@@ -175,22 +178,24 @@ Use `-metadata-json` for claim-supporting runs. The sidecar records the
 goav1 git revision and dirty state, Go runtime, selected configuration,
 required corpus settings, metrics, encoders, and summary enforcement,
 metric-filter availability, tool paths/version probes, per-clip source
-geometry, expected raw byte counts, actual input byte counts, SHA-256 hashes,
+geometry, declared raw format, expected raw byte counts, actual input byte
+counts, declared and actual SHA-256 hashes, source/provenance fields,
 per-encoder invocations or goav1 settings, compressed payload byte counts,
 encoded output SHA-256 hashes, and decoded YUV SHA-256 hashes.
 
 For a corpus, use `-manifest` instead of `-input`. The manifest is CSV with a
-header and these columns:
+header. Local exploratory runs may use the minimal geometry columns, but
+publishable rows require the full raw-format and provenance columns:
 
 ```csv
-clip,input,width,height,frames,fps
-talking_head,clips/talking_head_1920x1080_i420.yuv,1920,1080,120,60
-screen,clips/screen_1280x720_i420.yuv,1280,720,120,60
+clip,input,width,height,frames,fps,pix_fmt,bit_depth,chroma,sha256,source_id,source_url,source_license,category
+talking_head,clips/talking_head_1920x1080_i420.yuv,1920,1080,120,60,i420,8,4:2:0,0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,lab-head,https://example.invalid/head,CC-BY-4.0,talking-head
+screen,clips/screen_1280x720_i420.yuv,1280,720,120,60,i420,8,4:2:0,fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210,lab-screen,https://example.invalid/screen,CC-BY-4.0,screen-content
 ```
 
 Relative `input` paths resolve from the manifest's directory. `fps` is optional
-and falls back to `-fps`. Each clip gets its own work subdirectory and its own
-raw/summary CSV rows.
+and falls back to `-fps`. If `sha256` is present, it is verified in every mode.
+Each clip gets its own work subdirectory and its own raw/summary CSV rows.
 
 When `-require-corpus` is set, `qualitybench` requires `-manifest`, requires
 `-min-clips` to be at least 2, rejects manifest rows with an empty `input`, and

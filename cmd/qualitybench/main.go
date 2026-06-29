@@ -124,12 +124,20 @@ type metrics struct {
 }
 
 type clipSpec struct {
-	Name   string
-	Input  string
-	Width  int
-	Height int
-	Frames int
-	FPS    int
+	Name          string
+	Input         string
+	Width         int
+	Height        int
+	Frames        int
+	FPS           int
+	PixFmt        string
+	BitDepth      int
+	Chroma        string
+	DeclaredHash  string
+	SourceID      string
+	SourceURL     string
+	SourceLicense string
+	Category      string
 }
 
 type benchRow struct {
@@ -274,16 +282,24 @@ type toolMetadata struct {
 }
 
 type clipMetadata struct {
-	Name          string `json:"name"`
-	Input         string `json:"input,omitempty"`
-	Synthetic     bool   `json:"synthetic,omitempty"`
-	Width         int    `json:"width"`
-	Height        int    `json:"height"`
-	Frames        int    `json:"frames"`
-	FPS           int    `json:"fps"`
-	ExpectedBytes int64  `json:"expected_bytes"`
-	InputBytes    int64  `json:"input_bytes,omitempty"`
-	SHA256        string `json:"sha256,omitempty"`
+	Name           string `json:"name"`
+	Input          string `json:"input,omitempty"`
+	Synthetic      bool   `json:"synthetic,omitempty"`
+	Width          int    `json:"width"`
+	Height         int    `json:"height"`
+	Frames         int    `json:"frames"`
+	FPS            int    `json:"fps"`
+	PixFmt         string `json:"pix_fmt,omitempty"`
+	BitDepth       int    `json:"bit_depth,omitempty"`
+	Chroma         string `json:"chroma,omitempty"`
+	DeclaredSHA256 string `json:"declared_sha256,omitempty"`
+	SourceID       string `json:"source_id,omitempty"`
+	SourceURL      string `json:"source_url,omitempty"`
+	SourceLicense  string `json:"source_license,omitempty"`
+	Category       string `json:"category,omitempty"`
+	ExpectedBytes  int64  `json:"expected_bytes"`
+	InputBytes     int64  `json:"input_bytes,omitempty"`
+	SHA256         string `json:"sha256,omitempty"`
 }
 
 type encoderInvocationMetadata struct {
@@ -462,6 +478,9 @@ func run() error {
 		return err
 	}
 	if err := validateRequiredCorpus(cfg, clips); err != nil {
+		return err
+	}
+	if err := validateClipManifestExactness(cfg, clips); err != nil {
 		return err
 	}
 	if cfg.publish {
@@ -1118,8 +1137,16 @@ func readClipManifest(path string, defaults benchConfig) ([]clipSpec, error) {
 	if !ok {
 		return nil, errors.New("manifest missing frames column")
 	}
-	clipCol, haveClip := header["clip"]
-	fpsCol, haveFPS := header["fps"]
+	clipCol, haveClip := manifestColumn(header, "clip", "name")
+	fpsCol, haveFPS := manifestColumn(header, "fps")
+	pixFmtCol, havePixFmt := manifestColumn(header, "pix_fmt", "pixfmt", "pixel_format")
+	bitDepthCol, haveBitDepth := manifestColumn(header, "bit_depth", "bitdepth", "input_bit_depth")
+	chromaCol, haveChroma := manifestColumn(header, "chroma", "chroma_format")
+	hashCol, haveHash := manifestColumn(header, "sha256", "source_sha256", "input_sha256")
+	sourceIDCol, haveSourceID := manifestColumn(header, "source_id", "source")
+	sourceURLCol, haveSourceURL := manifestColumn(header, "source_url", "url")
+	sourceLicenseCol, haveSourceLicense := manifestColumn(header, "source_license", "license")
+	categoryCol, haveCategory := manifestColumn(header, "category", "content_category")
 
 	clips := make([]clipSpec, 0, len(records)-1)
 	for rowIndex, record := range records[1:] {
@@ -1147,6 +1174,13 @@ func readClipManifest(path string, defaults benchConfig) ([]clipSpec, error) {
 				return nil, err
 			}
 		}
+		bitDepth := 0
+		if haveBitDepth && strings.TrimSpace(manifestField(record, bitDepthCol)) != "" {
+			bitDepth, err = parseManifestPositiveInt(record, bitDepthCol, "bit_depth", rowNum)
+			if err != nil {
+				return nil, err
+			}
+		}
 		name := ""
 		if haveClip {
 			name = strings.TrimSpace(manifestField(record, clipCol))
@@ -1162,15 +1196,32 @@ func readClipManifest(path string, defaults benchConfig) ([]clipSpec, error) {
 			return nil, fmt.Errorf("manifest row %d invalid frame size %dx%d: need even dimensions >= 16", rowNum, width, height)
 		}
 		clips = append(clips, clipSpec{
-			Name:   name,
-			Input:  input,
-			Width:  width,
-			Height: height,
-			Frames: frames,
-			FPS:    fps,
+			Name:          name,
+			Input:         input,
+			Width:         width,
+			Height:        height,
+			Frames:        frames,
+			FPS:           fps,
+			PixFmt:        manifestFieldIfPresent(record, pixFmtCol, havePixFmt),
+			BitDepth:      bitDepth,
+			Chroma:        manifestFieldIfPresent(record, chromaCol, haveChroma),
+			DeclaredHash:  manifestFieldIfPresent(record, hashCol, haveHash),
+			SourceID:      manifestFieldIfPresent(record, sourceIDCol, haveSourceID),
+			SourceURL:     manifestFieldIfPresent(record, sourceURLCol, haveSourceURL),
+			SourceLicense: manifestFieldIfPresent(record, sourceLicenseCol, haveSourceLicense),
+			Category:      manifestFieldIfPresent(record, categoryCol, haveCategory),
 		})
 	}
 	return clips, nil
+}
+
+func manifestColumn(header map[string]int, names ...string) (int, bool) {
+	for _, name := range names {
+		if col, ok := header[name]; ok {
+			return col, true
+		}
+	}
+	return 0, false
 }
 
 func manifestField(record []string, col int) string {
@@ -1178,6 +1229,13 @@ func manifestField(record []string, col int) string {
 		return ""
 	}
 	return strings.TrimSpace(record[col])
+}
+
+func manifestFieldIfPresent(record []string, col int, ok bool) string {
+	if !ok {
+		return ""
+	}
+	return manifestField(record, col)
 }
 
 func parseManifestPositiveInt(record []string, col int, name string, row int) (int, error) {
@@ -1215,6 +1273,80 @@ func validateRequiredCorpus(cfg benchConfig, clips []clipSpec) error {
 		}
 	}
 	return nil
+}
+
+func validateClipManifestExactness(cfg benchConfig, clips []clipSpec) error {
+	for _, clip := range clips {
+		if strings.TrimSpace(clip.Input) == "" {
+			if cfg.publish {
+				return fmt.Errorf("%s: publish requires manifest-backed raw input", clip.Name)
+			}
+			continue
+		}
+		if clip.DeclaredHash != "" {
+			declared, err := canonicalSHA256(clip.DeclaredHash)
+			if err != nil {
+				return fmt.Errorf("%s: invalid declared sha256: %w", clip.Name, err)
+			}
+			actual, err := sha256File(clip.Input)
+			if err != nil {
+				return fmt.Errorf("%s: sha256 %s: %w", clip.Name, clip.Input, err)
+			}
+			if actual != declared {
+				return fmt.Errorf("%s: declared sha256 %s does not match actual %s", clip.Name, declared, actual)
+			}
+		}
+		if !cfg.publish {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(clip.PixFmt)) != "i420" {
+			return fmt.Errorf("%s: publish requires manifest pix_fmt=i420, got %q", clip.Name, clip.PixFmt)
+		}
+		if clip.BitDepth != 8 {
+			return fmt.Errorf("%s: publish requires manifest bit_depth=8, got %d", clip.Name, clip.BitDepth)
+		}
+		if normalizeChroma(clip.Chroma) != "4:2:0" {
+			return fmt.Errorf("%s: publish requires manifest chroma=4:2:0, got %q", clip.Name, clip.Chroma)
+		}
+		if clip.DeclaredHash == "" {
+			return fmt.Errorf("%s: publish requires manifest sha256", clip.Name)
+		}
+		if strings.TrimSpace(clip.SourceID) == "" {
+			return fmt.Errorf("%s: publish requires manifest source_id", clip.Name)
+		}
+		if strings.TrimSpace(clip.SourceURL) == "" {
+			return fmt.Errorf("%s: publish requires manifest source_url", clip.Name)
+		}
+		if strings.TrimSpace(clip.SourceLicense) == "" {
+			return fmt.Errorf("%s: publish requires manifest source_license", clip.Name)
+		}
+		if strings.TrimSpace(clip.Category) == "" {
+			return fmt.Errorf("%s: publish requires manifest category", clip.Name)
+		}
+	}
+	return nil
+}
+
+func canonicalSHA256(s string) (string, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if len(s) != 64 {
+		return "", fmt.Errorf("got %d hex characters, want 64", len(s))
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return "", fmt.Errorf("contains non-hex character %q", r)
+		}
+	}
+	return s, nil
+}
+
+func normalizeChroma(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "4:2:0", "420", "yuv420", "i420":
+		return "4:2:0"
+	default:
+		return strings.ToLower(strings.TrimSpace(s))
+	}
 }
 
 func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *csv.Writer, statsWriter *csv.Writer, frameStatsWriter *csv.Writer, frameMetricsWriter *csv.Writer) ([]benchRow, []encoderInvocationMetadata, error) {
@@ -1703,14 +1835,22 @@ func clipMetadataFor(clips []clipSpec) ([]clipMetadata, error) {
 	out := make([]clipMetadata, 0, len(clips))
 	for _, clip := range clips {
 		meta := clipMetadata{
-			Name:          clip.Name,
-			Input:         clip.Input,
-			Synthetic:     clip.Input == "",
-			Width:         clip.Width,
-			Height:        clip.Height,
-			Frames:        clip.Frames,
-			FPS:           clip.FPS,
-			ExpectedBytes: expectedRawI420Bytes(clip.Width, clip.Height, clip.Frames),
+			Name:           clip.Name,
+			Input:          clip.Input,
+			Synthetic:      clip.Input == "",
+			Width:          clip.Width,
+			Height:         clip.Height,
+			Frames:         clip.Frames,
+			FPS:            clip.FPS,
+			PixFmt:         clip.PixFmt,
+			BitDepth:       clip.BitDepth,
+			Chroma:         clip.Chroma,
+			DeclaredSHA256: strings.ToLower(strings.TrimSpace(clip.DeclaredHash)),
+			SourceID:       clip.SourceID,
+			SourceURL:      clip.SourceURL,
+			SourceLicense:  clip.SourceLicense,
+			Category:       clip.Category,
+			ExpectedBytes:  expectedRawI420Bytes(clip.Width, clip.Height, clip.Frames),
 		}
 		if clip.Input != "" {
 			info, err := os.Stat(clip.Input)

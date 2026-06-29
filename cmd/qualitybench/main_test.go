@@ -196,7 +196,12 @@ func TestValidateRequiredEncoderTools(t *testing.T) {
 func TestReadClipManifest(t *testing.T) {
 	dir := t.TempDir()
 	manifest := filepath.Join(dir, "clips.csv")
-	if err := os.WriteFile(manifest, []byte("clip,input,width,height,frames,fps\nTalking Head,clips/head.yuv,1920,1080,120,60\nSynthetic,,320,180,30,\n"), 0o644); err != nil {
+	manifestCSV := strings.Join([]string{
+		"clip,input,width,height,frames,fps,pix_fmt,bit_depth,chroma,sha256,source_id,source_url,source_license,category",
+		"Talking Head,clips/head.yuv,1920,1080,120,60,i420,8,4:2:0,0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,lab-head,https://example.invalid/head,CC-BY-4.0,talking-head",
+		"Synthetic,,320,180,30,,,,,,,,,",
+	}, "\n") + "\n"
+	if err := os.WriteFile(manifest, []byte(manifestCSV), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	clips, err := readClipManifest(manifest, benchConfig{fps: 30})
@@ -209,7 +214,12 @@ func TestReadClipManifest(t *testing.T) {
 	if clips[0].Name != "Talking Head" ||
 		clips[0].Input != filepath.Join(dir, "clips/head.yuv") ||
 		clips[0].Width != 1920 || clips[0].Height != 1080 ||
-		clips[0].Frames != 120 || clips[0].FPS != 60 {
+		clips[0].Frames != 120 || clips[0].FPS != 60 ||
+		clips[0].PixFmt != "i420" || clips[0].BitDepth != 8 ||
+		clips[0].Chroma != "4:2:0" || clips[0].SourceID != "lab-head" ||
+		clips[0].SourceURL != "https://example.invalid/head" ||
+		clips[0].SourceLicense != "CC-BY-4.0" ||
+		clips[0].Category != "talking-head" {
 		t.Fatalf("clip[0]=%+v", clips[0])
 	}
 	if clips[1].Name != "Synthetic" || clips[1].Input != "" || clips[1].FPS != 30 {
@@ -270,6 +280,61 @@ func TestValidateRequiredCorpus(t *testing.T) {
 	clips[1].Input = filepath.Join(dir, "missing.yuv")
 	if err := validateRequiredCorpus(cfg, clips); err == nil {
 		t.Fatal("missing corpus input accepted")
+	}
+}
+
+func TestValidateClipManifestExactness(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "clip.yuv")
+	if err := os.WriteFile(input, make([]byte, expectedRawI420Bytes(16, 16, 2)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := sha256File(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := []clipSpec{{
+		Name:          "clip",
+		Input:         input,
+		Width:         16,
+		Height:        16,
+		Frames:        2,
+		FPS:           30,
+		PixFmt:        "i420",
+		BitDepth:      8,
+		Chroma:        "4:2:0",
+		DeclaredHash:  strings.ToUpper(hash),
+		SourceID:      "lab-clip",
+		SourceURL:     "https://example.invalid/clip",
+		SourceLicense: "CC-BY-4.0",
+		Category:      "talking-head",
+	}}
+	if err := validateClipManifestExactness(benchConfig{publish: true}, valid); err != nil {
+		t.Fatalf("valid publish manifest failed: %v", err)
+	}
+	clone := func() []clipSpec {
+		return append([]clipSpec(nil), valid...)
+	}
+
+	wrongHash := clone()
+	wrongHash[0].DeclaredHash = strings.Repeat("0", 64)
+	if err := validateClipManifestExactness(benchConfig{}, wrongHash); err == nil ||
+		!strings.Contains(err.Error(), "does not match actual") {
+		t.Fatalf("wrong hash error=%v", err)
+	}
+
+	missingFormat := clone()
+	missingFormat[0].PixFmt = ""
+	if err := validateClipManifestExactness(benchConfig{publish: true}, missingFormat); err == nil ||
+		!strings.Contains(err.Error(), "pix_fmt=i420") {
+		t.Fatalf("missing format error=%v", err)
+	}
+
+	missingProvenance := clone()
+	missingProvenance[0].Category = ""
+	if err := validateClipManifestExactness(benchConfig{publish: true}, missingProvenance); err == nil ||
+		!strings.Contains(err.Error(), "category") {
+		t.Fatalf("missing provenance error=%v", err)
 	}
 }
 
