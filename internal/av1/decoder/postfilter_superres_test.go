@@ -352,6 +352,92 @@ func TestFrameWorkPostFilterContextApplyCallerPostFiltersRunsSuperResThenFilmGra
 	}
 }
 
+func TestFrameWorkPostFilterContextApplyCallerPostFiltersForPublicationKeepsFilmGrainDisplayOnly(t *testing.T) {
+	seq := testSequence()
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          8,
+			UpscaledWidth:       13,
+			Height:              32,
+			SuperResEnabled:     true,
+			SuperResDenominator: 13,
+		},
+		FilmGrain: parser.FilmGrainParams{
+			ParamsPresent: true,
+			Apply:         true,
+			Seed:          0x1234,
+			BitDepth:      8,
+			NumYPoints:    1,
+			YPoints:       [parser.MaxFilmGrainYPoints][2]uint8{{0, 64}},
+			ScalingShift:  8,
+			Overlap:       true,
+		},
+	}
+	codedFormat, err := codedFrameFormatFromHeaders(seq, event.FrameSize, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := testFrameWorkCDEFFrame(t, codedFormat)
+	for y := 0; y < output.Y.Height; y++ {
+		for x := 0; x < output.Y.Width; x++ {
+			output.Y.Pix[y*output.Y.Stride+x] = 100
+		}
+	}
+
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+	var superResView frame.Frame
+	var filmGrainView frame.Frame
+	options := FrameWorkPostFilterBindOptions{
+		SuperResOutputView:  &superResView,
+		FilmGrainOutputView: &filmGrainView,
+	}
+	probe := frameWorkCallerPostFilterProbeRequest(options)
+	first, err := ctx.CallerPostFilterScratchLen(probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstScratch := testFrameWorkPostFilterScratchStorage(first)
+	probe, err = first.BindRequest(options, firstScratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, err := ctx.CallerPostFilterScratchLen(probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch := testFrameWorkPostFilterScratchStorage(full)
+	req, err := full.BindRequest(options, scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	next, display, result, err := ctx.ApplyCallerPostFiltersForPublication(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCompleted := FrameWorkPostFilterSuperRes | FrameWorkPostFilterFilmGrain
+	if result.Completed != wantCompleted ||
+		result.SuperRes.Output.Format.Width != 13 ||
+		result.FilmGrain.NoOp ||
+		result.FilmGrain.LumaRows != 1 ||
+		next.RemainingPostFilters() != 0 {
+		t.Fatalf("next remaining=%b result=%+v", next.RemainingPostFilters(), result)
+	}
+	if next.Output != &superResView || display != &filmGrainView || display == next.Output {
+		t.Fatalf("publish=%p display=%p superresView=%p filmGrainView=%p", next.Output, display, &superResView, &filmGrainView)
+	}
+	if testFrameWorkFilmGrainPlaneChangedFromValue(next.Output.Y, next.Output.Layout.BytesPerSample, 100) {
+		t.Fatal("publication output includes display film grain")
+	}
+	if !testFrameWorkFilmGrainPlaneChangedFromValue(display.Y, display.Layout.BytesPerSample, 100) {
+		t.Fatal("display output did not receive film grain")
+	}
+	if output.Y.Pix[0] != 100 {
+		t.Fatalf("coded output mutated: %d", output.Y.Pix[0])
+	}
+}
+
 func TestFrameWorkCallerPostFilterRunnerApplyRunsSuperRes(t *testing.T) {
 	seq := testSequence()
 	event := Event{
@@ -407,6 +493,101 @@ func TestFrameWorkCallerPostFilterRunnerApplyRunsSuperRes(t *testing.T) {
 	}
 	if output.Format.Width != 8 || output.Y.Pix[0] != 64 {
 		t.Fatalf("coded output mutated: width=%d first=%d", output.Format.Width, output.Y.Pix[0])
+	}
+}
+
+func TestFrameWorkLayerPoolPostFilterRunnerPublishesSuperResSurface(t *testing.T) {
+	seq := testSequence()
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize: parser.FrameSize{
+			CodedWidth:          8,
+			UpscaledWidth:       13,
+			Height:              16,
+			SuperResEnabled:     true,
+			SuperResDenominator: 13,
+		},
+	}
+	codedFormat, err := codedFrameFormatFromHeaders(seq, event.FrameSize, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := testFrameWorkCDEFFrame(t, codedFormat)
+	for y := 0; y < output.Y.Height; y++ {
+		for x := 0; x < output.Y.Width; x++ {
+			output.Y.Pix[y*output.Y.Stride+x] = byte(64 + x)
+		}
+	}
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+
+	pool, _ := newTestLayerPool(t, 2)
+	outputFormat, err := outputFrameFormatFromHeaders(seq, event.FrameSize, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	global, outputFrame, err := pool.Acquire(outputFormat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing, err := frameWorkPostFilterFrameBacking(outputFrame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := frameWorkCallerPostFilterProbeRequest(FrameWorkPostFilterBindOptions{})
+	probe.SuperRes.OutputFrame = backing
+	probe.SuperRes.OutputView = outputFrame
+	size, err := ctx.CallerPostFilterScratchLen(probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.Release(global); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := FrameWorkLayerPoolPostFilterRunner{
+		Pool:    pool,
+		Scratch: testFrameWorkPostFilterScratchStorage(size),
+	}
+	if err := runner.Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	published, ok := runner.PublishedFrameWorkGlobalSurface()
+	if !ok || published < 0 {
+		t.Fatalf("published=%d ok=%v", published, ok)
+	}
+	provider := NewFrameLayerPool(pool)
+	publishedFrame, err := provider.FrameSurface(published)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runner.Context.Output != publishedFrame ||
+		runner.DisplayOutput != publishedFrame ||
+		runner.Result.Completed != FrameWorkPostFilterSuperRes ||
+		runner.Result.SuperRes.Output.Format.Width != 13 ||
+		runner.Context.RemainingPostFilters() != 0 {
+		t.Fatalf("publishedFrame=%p context=%p display=%p result=%+v remaining=%b", publishedFrame, runner.Context.Output, runner.DisplayOutput, runner.Result, runner.Context.RemainingPostFilters())
+	}
+	if output.Format.Width != 8 || output.Y.Pix[0] != 64 {
+		t.Fatalf("coded output mutated: width=%d first=%d", output.Format.Width, output.Y.Pix[0])
+	}
+	if err := pool.Release(published); err != nil {
+		t.Fatal(err)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := runner.Apply(ctx); err != nil {
+			t.Fatal(err)
+		}
+		published, ok := runner.PublishedFrameWorkGlobalSurface()
+		if !ok {
+			t.Fatal("runner did not publish superres surface")
+		}
+		if err := pool.Release(published); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("layer-pool superres postfilter runner allocated: %f", allocs)
 	}
 }
 

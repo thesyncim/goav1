@@ -293,18 +293,7 @@ func (r *FrameWorkBoundSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterC
 	if r == nil {
 		return ErrInvalidFrameWorkState
 	}
-	options := r.Options
-	if frameWorkLoopFilterMapEmpty(options.LoopFilterMap) && ctx.LoopFilterMap != nil {
-		options.LoopFilterMap = *ctx.LoopFilterMap
-		options.LoopFilterTrustedCoverage = true
-	}
-	if frameWorkCDEFIndexMapEmpty(options.CDEFIndexMap) && ctx.CDEFIndexMap != nil {
-		options.CDEFIndexMap = *ctx.CDEFIndexMap
-	}
-	if frameWorkRestorationRecordsEmpty(options.RestorationRecords) && ctx.RestorationFrameBuffers != nil {
-		options.RestorationRecords = ctx.RestorationFrameBuffers.Records
-		options.RestorationBoundaries = ctx.RestorationFrameBuffers.Boundaries
-	}
+	options := frameWorkPostFilterBindOptionsFromContext(ctx, r.Options)
 	probe := FrameWorkPostFilterRequest{
 		LoopFilter: FrameWorkLoopFilterPostFilterRequest{
 			Map:             options.LoopFilterMap,
@@ -337,6 +326,21 @@ func (r *FrameWorkBoundSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterC
 	r.Result = result
 	r.DisplayOutput = display
 	return nil
+}
+
+func frameWorkPostFilterBindOptionsFromContext(ctx FrameWorkPostFilterContext, options FrameWorkPostFilterBindOptions) FrameWorkPostFilterBindOptions {
+	if frameWorkLoopFilterMapEmpty(options.LoopFilterMap) && ctx.LoopFilterMap != nil {
+		options.LoopFilterMap = *ctx.LoopFilterMap
+		options.LoopFilterTrustedCoverage = true
+	}
+	if frameWorkCDEFIndexMapEmpty(options.CDEFIndexMap) && ctx.CDEFIndexMap != nil {
+		options.CDEFIndexMap = *ctx.CDEFIndexMap
+	}
+	if frameWorkRestorationRecordsEmpty(options.RestorationRecords) && ctx.RestorationFrameBuffers != nil {
+		options.RestorationRecords = ctx.RestorationFrameBuffers.Records
+		options.RestorationBoundaries = ctx.RestorationFrameBuffers.Boundaries
+	}
+	return options
 }
 
 // boundSupportedPostFilterScratchLen sizes a bound runner from the scratch it
@@ -893,32 +897,8 @@ func (ctx FrameWorkPostFilterContext) saveRestorationDeblockBoundariesSuperRes(p
 // consumers that can keep that detached frame alive.
 func (ctx FrameWorkPostFilterContext) ApplyCallerPostFilters(req FrameWorkPostFilterRequest) (FrameWorkPostFilterContext, FrameWorkCallerPostFilterResult, error) {
 	var result FrameWorkCallerPostFilterResult
-	remaining := ctx.RemainingPostFilters()
-	if remaining.Has(FrameWorkPostFilterCDEF) {
-		if err := ctx.validateCDEFPostFilterRequest(req.CDEF); err != nil {
-			return ctx, result, err
-		}
-	}
-	validateTailCtx := ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF)
-	if validateTailCtx.RemainingPostFilters().Has(FrameWorkPostFilterSuperRes) {
-		if err := validateTailCtx.validateSuperResPostFilterRequest(req.SuperRes); err != nil {
-			return ctx, result, err
-		}
-		var err error
-		validateTailCtx, err = validateTailCtx.bindSuperResPostFilterOutputContext(req.SuperRes)
-		if err != nil {
-			return ctx, result, err
-		}
-	}
-	if validateTailCtx.RemainingPostFilters().Has(FrameWorkPostFilterLoopRestoration) {
-		if err := validateTailCtx.validateLoopRestorationPostFilterRequest(req.Restoration); err != nil {
-			return ctx, result, err
-		}
-	}
-	if validateTailCtx.RemainingPostFilters().Has(FrameWorkPostFilterFilmGrain) {
-		if err := validateTailCtx.validateFilmGrainPostFilterRequest(req.FilmGrain); err != nil {
-			return ctx, result, err
-		}
+	if _, err := ctx.validateCallerPostFilterRequest(req); err != nil {
+		return ctx, result, err
 	}
 
 	next, prefixResult, err := ctx.ApplyPreSuperResPostFilters(req)
@@ -947,6 +927,87 @@ func (ctx FrameWorkPostFilterContext) ApplyCallerPostFilters(req FrameWorkPostFi
 	result.Restoration = tailResult.Restoration
 	result.FilmGrain = tailResult.FilmGrain
 	return next, result, nil
+}
+
+func (ctx FrameWorkPostFilterContext) validateCallerPostFilterRequest(req FrameWorkPostFilterRequest) (FrameWorkPostFilterContext, error) {
+	remaining := ctx.RemainingPostFilters()
+	if remaining.Has(FrameWorkPostFilterCDEF) {
+		if err := ctx.validateCDEFPostFilterRequest(req.CDEF); err != nil {
+			return ctx, err
+		}
+	}
+	validateTailCtx := ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF)
+	if validateTailCtx.RemainingPostFilters().Has(FrameWorkPostFilterSuperRes) {
+		if err := validateTailCtx.validateSuperResPostFilterRequest(req.SuperRes); err != nil {
+			return ctx, err
+		}
+		var err error
+		validateTailCtx, err = validateTailCtx.bindSuperResPostFilterOutputContext(req.SuperRes)
+		if err != nil {
+			return ctx, err
+		}
+	}
+	if validateTailCtx.RemainingPostFilters().Has(FrameWorkPostFilterLoopRestoration) {
+		if err := validateTailCtx.validateLoopRestorationPostFilterRequest(req.Restoration); err != nil {
+			return ctx, err
+		}
+	}
+	if validateTailCtx.RemainingPostFilters().Has(FrameWorkPostFilterFilmGrain) {
+		if err := validateTailCtx.validateFilmGrainPostFilterRequest(req.FilmGrain); err != nil {
+			return ctx, err
+		}
+	}
+	return validateTailCtx, nil
+}
+
+// ApplyCallerPostFiltersForPublication runs the full caller-owned AV1
+// postfilter chain while preserving a clean publishable reference surface. When
+// film grain is active, the returned context/output remain the post-superres and
+// post-restoration reference frame, and display receives a separate grain-applied
+// frame.
+func (ctx FrameWorkPostFilterContext) ApplyCallerPostFiltersForPublication(req FrameWorkPostFilterRequest) (FrameWorkPostFilterContext, *frame.Frame, FrameWorkCallerPostFilterResult, error) {
+	var result FrameWorkCallerPostFilterResult
+	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterFilmGrain) {
+		next, result, err := ctx.ApplyCallerPostFilters(req)
+		return next, next.Output, result, err
+	}
+	validateTailCtx, err := ctx.validateCallerPostFilterRequest(req)
+	if err != nil {
+		return ctx, nil, result, err
+	}
+	if err := validateTailCtx.validateFilmGrainPostFilterOutputRequest(req.FilmGrain); err != nil {
+		return ctx, nil, result, err
+	}
+
+	publishCtx, result, err := ctx.WithCompletedPostFilters(FrameWorkPostFilterFilmGrain).ApplyCallerPostFilters(req)
+	if err != nil {
+		return ctx, nil, result, err
+	}
+
+	displayCtx := publishCtx
+	displayCtx.completedPostFilters &^= FrameWorkPostFilterFilmGrain
+	displayOutput, err := displayCtx.BindFilmGrainPostFilterOutput(req.FilmGrain)
+	if err != nil {
+		return ctx, nil, result, err
+	}
+	if displayOutput != nil {
+		displayCtx.Output = displayOutput
+		displayCtx.detachedPostFilterOutput = true
+	}
+	filmGrainResult, err := displayCtx.ApplyFilmGrainPostFilter(req.FilmGrain)
+	if err != nil {
+		return ctx, nil, result, err
+	}
+	if displayOutput == nil {
+		displayOutput = publishCtx.Output
+	} else if filmGrainResult.OutputSize == 0 {
+		filmGrainResult.Output = displayOutput
+		filmGrainResult.OutputSize = displayOutput.Layout.Size
+	}
+	publishCtx = publishCtx.WithCompletedPostFilters(FrameWorkPostFilterFilmGrain)
+	result.Completed |= FrameWorkPostFilterFilmGrain
+	result.FilmGrain = filmGrainResult
+	return publishCtx, displayOutput, result, nil
 }
 
 // ApplyPreSuperResPostFilters runs the coded-surface postfilter prefix in AV1

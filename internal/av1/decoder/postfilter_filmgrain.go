@@ -712,6 +712,23 @@ func (ctx FrameWorkPostFilterContext) validateFilmGrainPostFilterRequest(req Fra
 	return nil
 }
 
+func (ctx FrameWorkPostFilterContext) validateFilmGrainPostFilterOutputRequest(req FrameWorkFilmGrainPostFilterRequest) error {
+	plan, err := ctx.FilmGrainPostFilterPlan()
+	if err != nil {
+		return err
+	}
+	if !plan.Active || frameWorkFilmGrainNoOp(plan.Params) {
+		return nil
+	}
+	if ctx.Output == nil {
+		return frame.ErrInvalidSlot
+	}
+	if len(req.OutputFrame) < ctx.Output.Layout.Size {
+		return frame.ErrShortBuffer
+	}
+	return nil
+}
+
 func frameWorkValidateFilmGrainParams(params parser.FilmGrainParams, format frame.Format) error {
 	if params.BitDepth != 0 && params.BitDepth != format.BitDepth {
 		return frame.ErrInvalidFormat
