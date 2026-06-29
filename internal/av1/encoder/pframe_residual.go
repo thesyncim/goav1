@@ -888,6 +888,10 @@ func realtimeIntProSearchWindow64(width, height int, sourceSAD realtimeSourceSAD
 const realtimeIntProMaxSamples64 = 64 + 2*1024
 
 func realtimeIntProRow(dst []int16, ref []byte, stride, width, height, x, y, projWidth, projHeight, normFactor int) {
+	if x >= 0 && y >= 0 && x+projWidth <= width && y+projHeight <= height {
+		realtimeIntProRowInBounds(dst, ref[y*stride+x:], stride, projWidth, projHeight, normFactor)
+		return
+	}
 	for idx := 0; idx < projWidth; idx++ {
 		xx := x + idx
 		if xx < 0 {
@@ -909,7 +913,21 @@ func realtimeIntProRow(dst []int16, ref []byte, stride, width, height, x, y, pro
 	}
 }
 
+func realtimeIntProRowInBounds(dst []int16, ref []byte, stride, projWidth, projHeight, normFactor int) {
+	for idx := 0; idx < projWidth; idx++ {
+		sum := 0
+		for i := 0; i < projHeight; i++ {
+			sum += int(ref[i*stride+idx])
+		}
+		dst[idx] = int16(sum >> uint(normFactor))
+	}
+}
+
 func realtimeIntProCol(dst []int16, ref []byte, stride, width, height, x, y, projWidth, projHeight, normFactor int) {
+	if x >= 0 && y >= 0 && x+projWidth <= width && y+projHeight <= height {
+		realtimeIntProColInBounds(dst, ref[y*stride+x:], stride, projWidth, projHeight, normFactor)
+		return
+	}
 	for yy := 0; yy < projHeight; yy++ {
 		clampedY := y + yy
 		if clampedY < 0 {
@@ -927,6 +945,17 @@ func realtimeIntProCol(dst []int16, ref []byte, stride, width, height, x, y, pro
 				clampedX = width - 1
 			}
 			sum += int(ref[row+clampedX])
+		}
+		dst[yy] = int16(sum >> uint(normFactor))
+	}
+}
+
+func realtimeIntProColInBounds(dst []int16, ref []byte, stride, projWidth, projHeight, normFactor int) {
+	for yy := 0; yy < projHeight; yy++ {
+		row := yy * stride
+		sum := 0
+		for idx := 0; idx < projWidth; idx++ {
+			sum += int(ref[row+idx])
 		}
 		dst[yy] = int16(sum >> uint(normFactor))
 	}

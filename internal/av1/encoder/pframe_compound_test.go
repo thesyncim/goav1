@@ -417,6 +417,99 @@ func TestRealtimeIntProMotionEstimation64MatchesLibaomShift(t *testing.T) {
 	}
 }
 
+func TestRealtimeIntProProjectionMatchesClampedReference(t *testing.T) {
+	const width, height = 160, 144
+	plane := make([]byte, width*height)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			plane[y*width+x] = byte((x*31 + y*17 + x*y*7 + 19) & 255)
+		}
+	}
+	for _, tc := range []struct {
+		name                  string
+		x, y                  int
+		projWidth, projHeight int
+	}{
+		{name: "in bounds 64", x: 48, y: 40, projWidth: 64, projHeight: 64},
+		{name: "in bounds 96x32", x: 16, y: 24, projWidth: 96, projHeight: 32},
+		{name: "left clamp", x: -12, y: 32, projWidth: 64, projHeight: 64},
+		{name: "top clamp", x: 48, y: -20, projWidth: 64, projHeight: 64},
+		{name: "right bottom clamp", x: 112, y: 96, projWidth: 64, projHeight: 64},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotRow := make([]int16, tc.projWidth)
+			wantRow := make([]int16, tc.projWidth)
+			realtimeIntProRow(gotRow, plane, width, width, height, tc.x, tc.y, tc.projWidth, tc.projHeight, 5)
+			referenceIntProRow(wantRow, plane, width, width, height, tc.x, tc.y, tc.projWidth, tc.projHeight, 5)
+			if gotRow[len(gotRow)/2] != wantRow[len(wantRow)/2] || gotRow[0] != wantRow[0] || gotRow[len(gotRow)-1] != wantRow[len(wantRow)-1] {
+				t.Fatalf("row projection got edge/mid %d/%d/%d want %d/%d/%d",
+					gotRow[0], gotRow[len(gotRow)/2], gotRow[len(gotRow)-1],
+					wantRow[0], wantRow[len(wantRow)/2], wantRow[len(wantRow)-1])
+			}
+			for i := range gotRow {
+				if gotRow[i] != wantRow[i] {
+					t.Fatalf("row[%d]=%d want %d", i, gotRow[i], wantRow[i])
+				}
+			}
+
+			gotCol := make([]int16, tc.projHeight)
+			wantCol := make([]int16, tc.projHeight)
+			realtimeIntProCol(gotCol, plane, width, width, height, tc.x, tc.y, tc.projWidth, tc.projHeight, 5)
+			referenceIntProCol(wantCol, plane, width, width, height, tc.x, tc.y, tc.projWidth, tc.projHeight, 5)
+			for i := range gotCol {
+				if gotCol[i] != wantCol[i] {
+					t.Fatalf("col[%d]=%d want %d", i, gotCol[i], wantCol[i])
+				}
+			}
+		})
+	}
+}
+
+func referenceIntProRow(dst []int16, ref []byte, stride, width, height, x, y, projWidth, projHeight, normFactor int) {
+	for idx := 0; idx < projWidth; idx++ {
+		xx := x + idx
+		if xx < 0 {
+			xx = 0
+		} else if xx >= width {
+			xx = width - 1
+		}
+		sum := 0
+		for i := 0; i < projHeight; i++ {
+			yy := y + i
+			if yy < 0 {
+				yy = 0
+			} else if yy >= height {
+				yy = height - 1
+			}
+			sum += int(ref[yy*stride+xx])
+		}
+		dst[idx] = int16(sum >> uint(normFactor))
+	}
+}
+
+func referenceIntProCol(dst []int16, ref []byte, stride, width, height, x, y, projWidth, projHeight, normFactor int) {
+	for yy := 0; yy < projHeight; yy++ {
+		clampedY := y + yy
+		if clampedY < 0 {
+			clampedY = 0
+		} else if clampedY >= height {
+			clampedY = height - 1
+		}
+		row := clampedY * stride
+		sum := 0
+		for xx := 0; xx < projWidth; xx++ {
+			clampedX := x + xx
+			if clampedX < 0 {
+				clampedX = 0
+			} else if clampedX >= width {
+				clampedX = width - 1
+			}
+			sum += int(ref[row+clampedX])
+		}
+		dst[yy] = int16(sum >> uint(normFactor))
+	}
+}
+
 func TestRealtimeSetVTPartitioningMatchesLibaomOrder(t *testing.T) {
 	var part realtimeVPartVariances
 	realtimeFillVariance(100, 0, 0, &part.none)
