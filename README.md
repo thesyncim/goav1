@@ -460,13 +460,18 @@ For the longer steady-state corpus comparison:
 ```sh
 export GOAV1_BENCH_SOURCE=/path/to/source_8bit_420.y4m
 export GOAV1_BENCH_SOURCE_SHA256=$(shasum -a 256 "$GOAV1_BENCH_SOURCE" | awk '{print $1}')
+export GOAV1_BENCH_SOURCE_ID=source-id
+export GOAV1_BENCH_SOURCE_URL=https://example.invalid/source
+export GOAV1_BENCH_SOURCE_LICENSE=license-or-usage-grant
+export GOAV1_BENCH_SOURCE_CATEGORY=content-category
 scripts/gen_bench_corpus.sh
 make bench-corpus-publish
 ```
 
 The generator requires an explicit source clip plus source SHA-256, pins aomenc
-`--threads` and `--row-mt`, expects 25 clips, and writes `manifest.tsv` with
-source, tool, encode-argument, IVF, and MD5 hashes next to the local ignored
+`--threads` and `--row-mt`, requires source ID/URL/license/category metadata,
+expects 25 clips, and writes `manifest.tsv` with source, tool version/hash,
+encode-argument, IVF, MD5, and dav1d agreement data next to the local ignored
 corpus. Quality benchmark manifests used for publishable encoder tables must
 also declare raw `pix_fmt=i420`, `bit_depth=8`, `chroma=4:2:0`, per-input
 SHA-256, source/provenance fields, and category labels; declared raw hashes are

@@ -35,6 +35,10 @@
 # Required input:
 #   GOAV1_BENCH_SOURCE=/path/to/source_8bit_420.y4m
 #   GOAV1_BENCH_SOURCE_SHA256=<sha256 of that source>
+#   GOAV1_BENCH_SOURCE_ID=<stable source identifier>
+#   GOAV1_BENCH_SOURCE_URL=<source URL or internal provenance URI>
+#   GOAV1_BENCH_SOURCE_LICENSE=<license or usage grant>
+#   GOAV1_BENCH_SOURCE_CATEGORY=<content category>
 
 set -euo pipefail
 
@@ -56,6 +60,10 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 SRC=${GOAV1_BENCH_SOURCE:-}
 SRC_EXPECTED_SHA=${GOAV1_BENCH_SOURCE_SHA256:-}
+SRC_ID=${GOAV1_BENCH_SOURCE_ID:-}
+SRC_URL=${GOAV1_BENCH_SOURCE_URL:-}
+SRC_LICENSE=${GOAV1_BENCH_SOURCE_LICENSE:-}
+SRC_CATEGORY=${GOAV1_BENCH_SOURCE_CATEGORY:-}
 if [ -z "$SRC" ]; then
   echo "ERROR: set GOAV1_BENCH_SOURCE to a 4:2:0 8-bit y4m source clip" >&2
   exit 1
@@ -67,6 +75,22 @@ if [ ! -f "$SRC" ]; then
 fi
 if [ -z "$SRC_EXPECTED_SHA" ]; then
   echo "ERROR: set GOAV1_BENCH_SOURCE_SHA256 to pin the source clip content" >&2
+  exit 1
+fi
+if [ -z "$SRC_ID" ]; then
+  echo "ERROR: set GOAV1_BENCH_SOURCE_ID to a stable source identifier" >&2
+  exit 1
+fi
+if [ -z "$SRC_URL" ]; then
+  echo "ERROR: set GOAV1_BENCH_SOURCE_URL to a source URL or internal provenance URI" >&2
+  exit 1
+fi
+if [ -z "$SRC_LICENSE" ]; then
+  echo "ERROR: set GOAV1_BENCH_SOURCE_LICENSE to the source license or usage grant" >&2
+  exit 1
+fi
+if [ -z "$SRC_CATEGORY" ]; then
+  echo "ERROR: set GOAV1_BENCH_SOURCE_CATEGORY to the source content category" >&2
   exit 1
 fi
 
@@ -137,6 +161,13 @@ tool_sha256() {
   fi
 }
 
+tool_version() {
+  local tool=$1; shift
+  if [ -n "$tool" ] && [ -f "$tool" ]; then
+    "$tool" "$@" 2>&1 | awk 'NF { print; exit }' || true
+  fi
+}
+
 quoted_args() {
   local out="" arg
   for arg in "$@"; do
@@ -154,19 +185,27 @@ write_manifest_header() {
     printf '# generated_at_utc=%s\n' "$generated_at"
     printf '# source_path=%s\n' "$SRC"
     printf '# source_sha256=%s\n' "$SRC_ACTUAL_SHA"
+    printf '# source_id=%s\n' "$SRC_ID"
+    printf '# source_url=%s\n' "$SRC_URL"
+    printf '# source_license=%s\n' "$SRC_LICENSE"
+    printf '# source_category=%s\n' "$SRC_CATEGORY"
     printf '# frames=%s\n' "$FRAMES"
     printf '# fps=%s\n' "$FPS"
     printf '# expected_clips=%s\n' "$EXPECTED_CLIPS"
     printf '# aomenc_path=%s\n' "$AOMENC"
     printf '# aomenc_sha256=%s\n' "$(tool_sha256 "$AOMENC")"
+    printf '# aomenc_version=%s\n' "$(tool_version "$AOMENC" --version)"
     printf '# aomenc_threads=%s\n' "$AOM_THREADS"
     printf '# aomenc_row_mt=%s\n' "$AOM_ROW_MT"
     printf '# aomdec_path=%s\n' "$AOMDEC"
     printf '# aomdec_sha256=%s\n' "$(tool_sha256 "$AOMDEC")"
+    printf '# aomdec_version=%s\n' "$(tool_version "$AOMDEC" --help)"
     printf '# dav1d_path=%s\n' "${DAV1D:-}"
     printf '# dav1d_sha256=%s\n' "$(tool_sha256 "${DAV1D:-}")"
+    printf '# dav1d_version=%s\n' "$(tool_version "${DAV1D:-}" --version)"
     printf '# ffmpeg_path=%s\n' "$FFMPEG"
     printf '# ffmpeg_sha256=%s\n' "$(tool_sha256 "$FFMPEG")"
+    printf '# ffmpeg_version=%s\n' "$(tool_version "$FFMPEG" -hide_banner -version)"
     printf 'name\twidth\theight\tframes\tcq\tdepth\tchroma\tprofile\tivf_bytes\tivf_sha256\tmd5\tmd5_sha256\tdav1d_check\taomenc_args\n'
   } > "$MANIFEST"
 }
