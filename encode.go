@@ -357,6 +357,10 @@ type VideoEncoderConfig struct {
 	// anchor refreshes; zero keeps the default (16) and a negative value
 	// disables golden references.
 	GoldenInterval int
+
+	// DisableSceneCutKeyframes disables automatic keyframe promotion on hard
+	// content cuts. The default keeps the stream encoder's historical behavior.
+	DisableSceneCutKeyframes bool
 }
 
 // EncodedFrame is one encoded picture as a low-overhead temporal unit.
@@ -505,6 +509,9 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 	} else if cfg.GoldenInterval > 0 {
 		enc.SetGoldenInterval(cfg.GoldenInterval)
 	}
+	if cfg.DisableSceneCutKeyframes {
+		enc.SetSceneCutKeyframes(false)
+	}
 	// Every buffer, pool and per-coder scratch is sized now, so the first
 	// real frame pays no initialization latency and steady-state encoding
 	// allocates nothing.
@@ -520,6 +527,14 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 func (e *VideoEncoder) SetGoldenInterval(n int) {
 	if e != nil && e.enc != nil {
 		e.enc.SetGoldenInterval(n)
+	}
+}
+
+// SetSceneCutKeyframes controls whether the encoder may promote a delta frame
+// to a keyframe when the motion search sees a hard content cut.
+func (e *VideoEncoder) SetSceneCutKeyframes(enabled bool) {
+	if e != nil && e.enc != nil {
+		e.enc.SetSceneCutKeyframes(enabled)
 	}
 }
 

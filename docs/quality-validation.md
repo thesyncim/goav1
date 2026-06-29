@@ -54,6 +54,7 @@ go run ./cmd/qualitybench \
   -gomaxprocs 4 \
   -goav1-max-threads 4 \
   -goav1-effort 0 \
+  -goav1-scene-cut=false \
   -timing-mode e2e \
   -run-order shuffle -shuffle-seed 1 \
   -runs 3 -warmup-runs 1 \
@@ -91,7 +92,7 @@ Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`,
 `-run-order shuffle`, explicit `-shuffle-seed`, `-runs >= 3`, and
 `-warmup-runs >= 1`, plus a non-empty `-environment-notes` value. It also
-requires explicit goav1 execution-lane and effort settings, explicit libaom
+requires explicit goav1 execution-lane, effort, and scene-cut settings, explicit libaom
 concurrency settings and realtime speed setting when `aomenc` is selected,
 explicit SVT preset, parallelism, and assembly settings when `svt-av1` is
 selected, exact raw I420 input byte counts for every manifest row, and
@@ -104,7 +105,9 @@ BD-rate anchor to be one of the selected encoders, and requires at least four
 distinct bitrate points. When `aomenc` or `svt-av1` baselines are
 selected, publish mode requires `-layers 1`; goav1 multi-temporal-layer/SVC
 audits must stay goav1-only until equivalent external baseline settings are
-implemented and recorded.
+implemented and recorded. When `aomenc` or `svt-av1` baselines are selected,
+publish mode requires `-goav1-scene-cut=false` because the external low-delay
+baseline command lines disable scene-cut-equivalent keyframe insertion.
 
 `-timing-mode core` preserves the historical goav1 timer that accumulates only
 per-frame `Encode` calls. Use it for local code-path profiling, not for fair
@@ -172,15 +175,16 @@ Also report libaom's speed and concurrency settings.
 must use `-aom-threads 1`, row-mt experiments must state `-aom-row-mt 0` or
 `-aom-row-mt 1`, and realtime-speed sweeps must state each `-aom-cpu-used`
 value. The external baseline commands also pin and record profile-0, 8-bit,
-I420 identity settings; external decoded YUV must match the exact expected raw
-I420 byte count before metrics are accepted.
+I420 identity settings; `aomenc` is run with `--quiet` so progress logging is
+not part of the timed encode path. External decoded YUV must match the exact
+expected raw I420 byte count before metrics are accepted.
 
 The external baseline settings recorded in metadata are part of the benchmark
 contract:
 
 | Encoder | Low-delay/rate pins | Speed and parallelism pins | Stream and picture pins |
 | --- | --- | --- | --- |
-| `aomenc` | `--rt`, `--end-usage=cbr`, `--lag-in-frames=0`, `--auto-alt-ref=0`, `--enable-fwd-kf=0`, `--drop-frame=0`, `--buf-sz=1000`, `--buf-initial-sz=500`, `--buf-optimal-sz=600` | `--cpu-used`, `--threads`, `--row-mt` from `-aom-cpu-used`, `-aom-threads`, and `-aom-row-mt` | profile 0, 8-bit I420, `--target-bitrate`, `--fps`, `--limit`, `--kf-min-dist`, `--kf-max-dist`, and optional `--tile-columns` |
+| `aomenc` | `--rt`, `--end-usage=cbr`, `--lag-in-frames=0`, `--auto-alt-ref=0`, `--enable-fwd-kf=0`, `--drop-frame=0`, `--buf-sz=1000`, `--buf-initial-sz=500`, `--buf-optimal-sz=600` | `--cpu-used`, `--threads`, and `--row-mt` from `-aom-cpu-used`, `-aom-threads`, and `-aom-row-mt`; `--quiet` is always set | profile 0, 8-bit I420, `--target-bitrate`, `--fps`, `--limit`, `--kf-min-dist`, `--kf-max-dist`, and optional `--tile-columns` |
 | `SvtAv1EncApp` | `--rc 2`, `--lookahead 0`, `--pred-struct 1`, `--rtc 1`, `--scd 0`, `--enable-tf 0`, `--irefresh-type 2` | `--preset`, `--lp`, and optional `--asm` from `-svt-preset`, `-svt-lp`, and `-svt-asm` | profile 0, level 0, 8-bit I420 (`--color-format 1`), `--tbr`, `--fps-num`, `--fps-denom`, `--frames`, `--keyint`, `--progress 0`, and optional `--tile-columns` |
 
 When `-stats-csv` is set, goav1 rows also include encoder decision counters:

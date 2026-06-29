@@ -455,6 +455,9 @@ func TestEncodeGoAV1PersistsAndDecodesLengthPrefixedPayloadStream(t *testing.T) 
 	if result.settings["payload_sha256"] == "" {
 		t.Fatalf("settings missing payload hash: %+v", result.settings)
 	}
+	if result.settings["scene_cut"] != "false" {
+		t.Fatalf("scene-cut setting=%q want false", result.settings["scene_cut"])
+	}
 	raw, err := os.ReadFile(result.encodedPath)
 	if err != nil {
 		t.Fatal(err)
@@ -938,6 +941,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		goMaxProcs:       4,
 		goav1MaxThreads:  4,
 		goav1Effort:      int(goav1.EncoderWebRTCMinEffortLevel),
+		goav1SceneCut:    false,
 		aomThreads:       1,
 		aomRowMT:         0,
 		aomCPUUsed:       8,
@@ -963,6 +967,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		!got.RequireSummary || !got.RequireCorpus || got.MinClips != 6 ||
 		got.GoMaxProcs != 4 || got.GoAV1MaxThreads != 4 ||
 		got.GoAV1Effort != int(goav1.EncoderWebRTCMinEffortLevel) ||
+		got.GoAV1SceneCut ||
 		got.AOMThreads != 1 || got.AOMRowMT != 0 ||
 		got.AOMCPUUsed != 8 || got.SVTLP != 5 || got.SVTPreset != 13 ||
 		got.TimingMode != timingModeEndToEnd ||
@@ -986,6 +991,7 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "sweep --lp 0..6") ||
 		!strings.Contains(joined, "-goav1-max-threads") ||
 		!strings.Contains(joined, "-goav1-effort") ||
+		!strings.Contains(joined, "-goav1-scene-cut=false") ||
 		!strings.Contains(joined, "-aom-cpu-used") ||
 		!strings.Contains(joined, "-aom-threads") ||
 		!strings.Contains(joined, "-aom-row-mt") ||
@@ -1026,6 +1032,7 @@ func TestExternalBaselineSettingsRecordPinnedKnobs(t *testing.T) {
 		"bit_depth":       "8",
 		"input_bit_depth": "8",
 		"color_format":    "i420",
+		"quiet":           "1",
 		"deadline":        "rt",
 		"end_usage":       "cbr",
 		"target_kbps":     "1200",
@@ -1103,6 +1110,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		goMaxProcs:          4,
 		goav1MaxThreads:     4,
 		goav1Effort:         0,
+		goav1SceneCut:       false,
 		layers:              1,
 		tiles:               0,
 		goldenInterval:      0,
@@ -1146,6 +1154,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"warmup-runs":       true,
 			"goav1-max-threads": true,
 			"goav1-effort":      true,
+			"goav1-scene-cut":   true,
 			"environment-notes": true,
 			"aom-cpu-used":      true,
 			"aom-threads":       true,
@@ -1197,6 +1206,17 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	if err := validatePublishConfig(missingGoAV1Effort, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "-goav1-effort") {
 		t.Fatalf("missing explicit goav1 effort error=%v", err)
+	}
+
+	missingGoAV1SceneCut := cfg
+	missingGoAV1SceneCut.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingGoAV1SceneCut.explicitFlags[k] = v
+	}
+	delete(missingGoAV1SceneCut.explicitFlags, "goav1-scene-cut")
+	if err := validatePublishConfig(missingGoAV1SceneCut, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-goav1-scene-cut") {
+		t.Fatalf("missing explicit goav1 scene-cut error=%v", err)
 	}
 
 	missing := cfg
@@ -1255,6 +1275,20 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	layeredGoAV1Only.layers = 3
 	if err := validatePublishConfig(layeredGoAV1Only, gitMetadata{Commit: "abc"}); err != nil {
 		t.Fatalf("goav1-only layered publish config failed: %v", err)
+	}
+
+	sceneCutExternal := cfg
+	sceneCutExternal.goav1SceneCut = true
+	if err := validatePublishConfig(sceneCutExternal, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-goav1-scene-cut=false") {
+		t.Fatalf("scene-cut external publish error=%v", err)
+	}
+
+	sceneCutGoAV1Only := cfg
+	sceneCutGoAV1Only.encoders = []string{"goav1"}
+	sceneCutGoAV1Only.goav1SceneCut = true
+	if err := validatePublishConfig(sceneCutGoAV1Only, gitMetadata{Commit: "abc"}); err != nil {
+		t.Fatalf("goav1-only scene-cut publish config failed: %v", err)
 	}
 
 	coreTiming := cfg

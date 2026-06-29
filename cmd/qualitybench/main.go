@@ -77,6 +77,7 @@ type benchConfig struct {
 	goMaxProcs          int
 	goav1MaxThreads     int
 	goav1Effort         int
+	goav1SceneCut       bool
 	aomThreads          int
 	aomRowMT            int
 	aomCPUUsed          int
@@ -272,6 +273,7 @@ type metadataConfig struct {
 	GoMaxProcs       int      `json:"gomaxprocs"`
 	GoAV1MaxThreads  int      `json:"goav1_max_threads"`
 	GoAV1Effort      int      `json:"goav1_effort"`
+	GoAV1SceneCut    bool     `json:"goav1_scene_cut_keyframes"`
 	AOMThreads       int      `json:"aom_threads"`
 	AOMRowMT         int      `json:"aom_row_mt"`
 	AOMCPUUsed       int      `json:"aom_cpu_used"`
@@ -590,6 +592,7 @@ func parseFlags() (benchConfig, error) {
 	flag.IntVar(&cfg.goMaxProcs, "gomaxprocs", 0, "set Go GOMAXPROCS for in-process goav1 encodes (0 = keep environment/runtime default)")
 	flag.IntVar(&cfg.goav1MaxThreads, "goav1-max-threads", 0, "goav1 MaxThreads execution-lane cap (0 = encoder automatic policy)")
 	flag.IntVar(&cfg.goav1Effort, "goav1-effort", 0, "goav1 WebRTC effort level (-2..4; 0 = default quality/speed balance)")
+	flag.BoolVar(&cfg.goav1SceneCut, "goav1-scene-cut", true, "allow goav1 automatic scene-cut keyframes")
 	flag.IntVar(&cfg.aomThreads, "aom-threads", 4, "aomenc --threads value for libaom rows")
 	flag.IntVar(&cfg.aomRowMT, "aom-row-mt", 1, "aomenc --row-mt value for libaom rows (0 = off, 1 = on)")
 	flag.IntVar(&cfg.aomCPUUsed, "aom-cpu-used", 8, "aomenc realtime --cpu-used speed setting (5..12)")
@@ -760,6 +763,7 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"warmup-runs",
 		"goav1-max-threads",
 		"goav1-effort",
+		"goav1-scene-cut",
 		"environment-notes",
 	}
 	for _, name := range required {
@@ -811,6 +815,9 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	}
 	if cfg.layers != 1 && (encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1")) {
 		return errors.New("publish requires -layers 1 when aomenc or svt-av1 baselines are selected; equivalent external temporal-layer settings are not implemented")
+	}
+	if cfg.goav1SceneCut && (encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1")) {
+		return errors.New("publish requires -goav1-scene-cut=false when aomenc or svt-av1 baselines are selected; external scene-cut-equivalent settings are disabled")
 	}
 	if encoderSelected(cfg, "aomenc") {
 		if err := requireExplicitFlag(cfg, "aom-cpu-used"); err != nil {
@@ -1983,6 +1990,7 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		GoMaxProcs:       cfg.goMaxProcs,
 		GoAV1MaxThreads:  cfg.goav1MaxThreads,
 		GoAV1Effort:      cfg.goav1Effort,
+		GoAV1SceneCut:    cfg.goav1SceneCut,
 		AOMThreads:       cfg.aomThreads,
 		AOMRowMT:         cfg.aomRowMT,
 		AOMCPUUsed:       cfg.aomCPUUsed,
@@ -2086,6 +2094,7 @@ func fairnessNotes(cfg benchConfig) []string {
 		"qualitybench runs warmups and measured samples in deterministic sample passes across all encoder/bitrate tuples, records every measured encode sample in metadata, and reports the median wall-time sample in the normal CSV row.",
 		"Publishable rows use -run-order shuffle with an explicit seed so every table has a reproducible encoder/bitrate order without always favoring the same encoder column.",
 		"For fair goav1 comparisons, set -goav1-max-threads and -goav1-effort explicitly; qualitybench forwards them to VideoEncoderConfig.MaxThreads and Speed and records them in metadata.",
+		"For fair external-baseline comparisons, set -goav1-scene-cut=false unless equivalent scene-cut behavior is enabled and recorded for every selected external encoder.",
 		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or sweep --lp 0..6, then report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
 		"For fair libaom comparisons, set -aom-cpu-used, -aom-threads, and -aom-row-mt explicitly and report all three; qualitybench forwards them to aomenc --cpu-used, --threads, and --row-mt and records them in metadata.",
 		"For fair SVT comparisons, set -svt-preset explicitly and report it with -svt-lp and -svt-asm; qualitybench forwards it to SvtAv1EncApp --preset and records it in metadata.",
@@ -2894,6 +2903,7 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 			"tile_columns":    strconv.Itoa(cfg.tiles),
 			"max_threads":     strconv.Itoa(cfg.goav1MaxThreads),
 			"effort":          strconv.Itoa(cfg.goav1Effort),
+			"scene_cut":       strconv.FormatBool(cfg.goav1SceneCut),
 			"golden_interval": strconv.Itoa(cfg.goldenInterval),
 			"key_interval":    strconv.Itoa(cfg.keyInterval),
 			"gomaxprocs":      strconv.Itoa(runtime.GOMAXPROCS(0)),
@@ -2923,15 +2933,16 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 	}()
 
 	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
-		Width:          cfg.width,
-		Height:         cfg.height,
-		TargetBitrate:  bitrate,
-		Framerate:      cfg.fps,
-		TemporalLayers: cfg.layers,
-		TileColumns:    cfg.tiles,
-		MaxThreads:     cfg.goav1MaxThreads,
-		Speed:          int8(cfg.goav1Effort),
-		GoldenInterval: cfg.goldenInterval,
+		Width:                    cfg.width,
+		Height:                   cfg.height,
+		TargetBitrate:            bitrate,
+		Framerate:                cfg.fps,
+		TemporalLayers:           cfg.layers,
+		TileColumns:              cfg.tiles,
+		MaxThreads:               cfg.goav1MaxThreads,
+		Speed:                    int8(cfg.goav1Effort),
+		GoldenInterval:           cfg.goldenInterval,
+		DisableSceneCutKeyframes: !cfg.goav1SceneCut,
 	})
 	if err != nil {
 		result.status, result.errText = "error", err.Error()
@@ -3056,6 +3067,7 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 			"bit_depth":       "8",
 			"input_bit_depth": "8",
 			"color_format":    "i420",
+			"quiet":           "1",
 			"deadline":        "rt",
 			"end_usage":       "cbr",
 			"target_kbps":     strconv.Itoa(kbps(bitrate)),
@@ -3085,6 +3097,7 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	args := []string{
 		"--ivf",
 		"--codec=av1",
+		"--quiet",
 		"--rt",
 		fmt.Sprintf("--cpu-used=%d", cfg.aomCPUUsed),
 		"--end-usage=cbr",
@@ -3260,7 +3273,9 @@ func kbps(bps int) int {
 func timeCommand(name string, args []string, result *encodeResult) time.Duration {
 	start := time.Now()
 	cmd := exec.Command(name, args...)
-	out, err := cmd.CombinedOutput()
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	err := cmd.Run()
 	elapsed := time.Since(start)
 	if cmd.ProcessState != nil {
 		result.cpuUser = cmd.ProcessState.UserTime()
@@ -3268,8 +3283,14 @@ func timeCommand(name string, args []string, result *encodeResult) time.Duration
 		result.cpuAvailable = true
 	}
 	if err != nil {
+		capture := exec.Command(name, args...)
+		out, captureErr := capture.CombinedOutput()
 		result.status = "error"
-		result.errText = trimCommandOutput(err, out)
+		if captureErr != nil {
+			result.errText = trimCommandOutput(captureErr, out)
+		} else {
+			result.errText = err.Error()
+		}
 	}
 	return elapsed
 }

@@ -7,10 +7,9 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/encoder"
 )
 
-// benchCorpus measures steady-state back-to-back encoding of one corpus
-// segment - the honest throughput comparison against external encoders
-// (no harness work between Encode calls, so the background filter pass
-// cannot hide in an untimed gap).
+// benchCorpus measures steady-state back-to-back encoding of one local corpus
+// segment. It is a goav1 hot-path profiler, not a publishable external
+// comparison; use cmd/qualitybench -publish for SVT-AV1/libaom tables.
 func benchCorpus(b *testing.B, path string, fps, bitrate int) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -18,7 +17,13 @@ func benchCorpus(b *testing.B, path string, fps, bitrate int) {
 	}
 	const w, h = 1920, 1080
 	fl := w * h * 3 / 2
+	if len(raw)%fl != 0 {
+		b.Fatalf("%s size=%d is not an exact number of 1080p I420 frames", path, len(raw))
+	}
 	nf := len(raw) / fl
+	if nf < 2 {
+		b.Fatalf("%s has %d frame(s), want at least 2", path, nf)
+	}
 	frames := make([]encoder.SourceFrame420, nf)
 	for i := 0; i < nf; i++ {
 		base := i * fl
@@ -33,6 +38,10 @@ func benchCorpus(b *testing.B, path string, fps, bitrate int) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() {
+		b.StopTimer()
+		_ = enc.Close()
+	})
 	if err := enc.SetTemporalLayers(2); err != nil {
 		b.Fatal(err)
 	}

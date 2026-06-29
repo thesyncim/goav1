@@ -252,6 +252,81 @@ func TestPublicVideoEncoderRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPublicVideoEncoderDisableSceneCutKeyframes(t *testing.T) {
+	const w, h = 320, 192
+	sceneA := make([]byte, (w+64)*h)
+	sceneB := make([]byte, w*h)
+	rngA := rand.New(rand.NewSource(21))
+	rngB := rand.New(rand.NewSource(22))
+	for y := range h {
+		for x := 0; x < w+64; x++ {
+			sceneA[y*(w+64)+x] = uint8(60 + (x/5+y/7)%60 + rngA.Intn(40))
+		}
+	}
+	for i := range sceneB {
+		sceneB[i] = uint8(140 + (i/9)%50 + rngB.Intn(50))
+	}
+	makeFrame := func(idx int) goav1.I420Frame {
+		f := goav1.I420Frame{
+			Y:            make([]byte, w*h),
+			U:            make([]byte, w*h/4),
+			V:            make([]byte, w*h/4),
+			YStride:      w,
+			ChromaStride: w / 2,
+			Width:        w,
+			Height:       h,
+		}
+		if idx < 6 {
+			off := idx * 6
+			for y := range h {
+				copy(f.Y[y*w:(y+1)*w], sceneA[y*(w+64)+off:])
+			}
+		} else {
+			copy(f.Y, sceneB)
+		}
+		for i := range f.U {
+			f.U[i], f.V[i] = 120, 128
+		}
+		return f
+	}
+	encodeKeys := func(disable bool) []bool {
+		t.Helper()
+		enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+			Width:                    w,
+			Height:                   h,
+			QIndex:                   110,
+			DisableSceneCutKeyframes: disable,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer enc.Close()
+		keys := make([]bool, 9)
+		for i := range keys {
+			out, err := enc.Encode(makeFrame(i), false)
+			if err != nil {
+				t.Fatalf("encode frame %d disable=%v: %v", i, disable, err)
+			}
+			keys[i] = out.Keyframe
+		}
+		return keys
+	}
+
+	defaultKeys := encodeKeys(false)
+	if !defaultKeys[0] || !defaultKeys[6] {
+		t.Fatalf("default scene-cut keys=%v, want frames 0 and 6", defaultKeys)
+	}
+	disabledKeys := encodeKeys(true)
+	if !disabledKeys[0] {
+		t.Fatalf("disabled scene-cut keys=%v, want first frame key", disabledKeys)
+	}
+	for i := 1; i < len(disabledKeys); i++ {
+		if disabledKeys[i] {
+			t.Fatalf("disabled scene-cut emitted keyframe at %d: %v", i, disabledKeys)
+		}
+	}
+}
+
 func TestPublicKeyframeEncoderRoundTripAnd1080pAllocs(t *testing.T) {
 	const w, h = 1920, 1080
 	enc, err := goav1.NewKeyframeEncoder(w, h, 80)
