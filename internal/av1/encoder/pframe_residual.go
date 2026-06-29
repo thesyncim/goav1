@@ -217,6 +217,32 @@ const (
 	sadCacheMaxEpoch  = (uint32(1) << (32 - sadCacheBits)) - 1
 )
 
+type realtimeSourceSAD uint8
+
+const (
+	realtimeSourceSADZero realtimeSourceSAD = iota
+	realtimeSourceSADVeryLow
+	realtimeSourceSADLow
+	realtimeSourceSADMed
+	realtimeSourceSADHigh
+)
+
+const realtimeSourceVarianceUnknown = ^uint32(0)
+
+type realtimeContentStateSB struct {
+	sourceSADNonRD realtimeSourceSAD
+	sourceSADRD    realtimeSourceSAD
+	lightingChange bool
+	lowSumDiff     bool
+}
+
+func defaultRealtimeContentStateSB() realtimeContentStateSB {
+	return realtimeContentStateSB{
+		sourceSADNonRD: realtimeSourceSADMed,
+		sourceSADRD:    realtimeSourceSADMed,
+	}
+}
+
 func sadCachePack(epoch uint32, sad int) uint32 {
 	return epoch<<sadCacheBits | uint32(sad)
 }
@@ -239,6 +265,146 @@ func (st *lossyEncodeState) beginSADCacheFrame() {
 	clear(st.sad32Grid)
 	clear(st.sad64Grid)
 	st.sadCacheEpoch = 1
+}
+
+func realtimeSourceContentSB(src, last SourceFrame420, px, py int, increaseSourceSADThresh bool) realtimeContentStateSB {
+	state := defaultRealtimeContentStateSB()
+	if src.Width != last.Width || src.Height != last.Height ||
+		px < 0 || py < 0 || px+64 > src.Width || py+64 > src.Height {
+		return state
+	}
+	srcOff := py*src.YStride + px
+	lastOff := py*last.YStride + px
+	tmpSSE, tmpVariance := sseVariance64x64(src.Y[srcOff:], src.YStride, last.Y[lastOff:], last.YStride)
+	veryLowThresh := uint64(10000)
+	lowThreshNonRD := uint64(100000)
+	lowThreshRD := uint64(36000)
+	highThresh := uint64(1000000)
+	if increaseSourceSADThresh {
+		highThresh <<= 1
+		lowThreshNonRD <<= 1
+		veryLowThresh <<= 1
+	}
+	if uint64(tmpSSE) < lowThreshRD {
+		state.sourceSADRD = realtimeSourceSADLow
+	}
+	if tmpSSE == 0 {
+		state.sourceSADNonRD = realtimeSourceSADZero
+		return state
+	}
+	switch {
+	case uint64(tmpSSE) < veryLowThresh:
+		state.sourceSADNonRD = realtimeSourceSADVeryLow
+	case uint64(tmpSSE) < lowThreshNonRD:
+		state.sourceSADNonRD = realtimeSourceSADLow
+	case uint64(tmpSSE) > highThresh:
+		state.sourceSADNonRD = realtimeSourceSADHigh
+	}
+	sumSqThresh := uint32(10000)
+	sumSq := tmpSSE - tmpVariance
+	state.lightingChange = tmpVariance < tmpSSE>>1 && sumSq > sumSqThresh
+	state.lowSumDiff = sumSq < sumSqThresh>>1
+	return state
+}
+
+func (st *lossyEncodeState) prepareRealtimeSourceContent(src, last SourceFrame420, gridCols, gridRows int, miColStart, miColEnd uint16) {
+	st.sourceContentCols = gridCols
+	need := gridCols * gridRows
+	if need <= 0 {
+		return
+	}
+	if len(st.sourceContentGrid) < need {
+		st.sourceContentGrid = make([]realtimeContentStateSB, need)
+	}
+	if len(st.sourceVarianceGrid) < need {
+		st.sourceVarianceGrid = make([]uint32, need)
+	}
+	for i := range st.sourceContentGrid[:need] {
+		st.sourceContentGrid[i] = defaultRealtimeContentStateSB()
+		st.sourceVarianceGrid[i] = realtimeSourceVarianceUnknown
+	}
+	if src.Width != last.Width || src.Height != last.Height {
+		return
+	}
+	startCol := (int(miColStart) * 4) / 64
+	endCol := (int(miColEnd)*4 + 63) / 64
+	if startCol < 0 {
+		startCol = 0
+	}
+	if endCol > gridCols {
+		endCol = gridCols
+	}
+	for py := 0; py+64 <= src.Height; py += 64 {
+		row := py / 64
+		if row >= gridRows {
+			break
+		}
+		for col := startCol; col < endCol; col++ {
+			px := col * 64
+			if px+64 > src.Width {
+				continue
+			}
+			idx := row*gridCols + col
+			state := realtimeSourceContentSB(src, last, px, py, false)
+			st.sourceContentGrid[idx] = state
+			if state.sourceSADNonRD > realtimeSourceSADLow {
+				st.sourceVarianceGrid[idx] = realtimeSourceVariancePerPixel(src.Y[py*src.YStride+px:], src.YStride, 64, 64)
+			}
+		}
+	}
+}
+
+func (st *lossyEncodeState) realtimeContentStateForBlock(px, py int) realtimeContentStateSB {
+	if st == nil || st.sourceContentCols <= 0 || px < 0 || py < 0 {
+		return defaultRealtimeContentStateSB()
+	}
+	col, row := px/64, py/64
+	idx := row*st.sourceContentCols + col
+	if idx < 0 || idx >= len(st.sourceContentGrid) {
+		return defaultRealtimeContentStateSB()
+	}
+	return st.sourceContentGrid[idx]
+}
+
+func (st *lossyEncodeState) realtimeSourceVarianceForBlock(src SourceFrame420, px, py, w, h int) uint32 {
+	if st == nil || px < 0 || py < 0 || px+w > src.Width || py+h > src.Height {
+		return realtimeSourceVarianceUnknown
+	}
+	if w == 64 && h == 64 && st.sourceContentCols > 0 {
+		idx := (py/64)*st.sourceContentCols + px/64
+		if idx >= 0 && idx < len(st.sourceVarianceGrid) && st.sourceVarianceGrid[idx] != realtimeSourceVarianceUnknown {
+			return st.sourceVarianceGrid[idx]
+		}
+	}
+	return realtimeSourceVariancePerPixel(src.Y[py*src.YStride+px:], src.YStride, w, h)
+}
+
+func realtimeSourceVariancePerPixel(src []byte, stride, w, h int) uint32 {
+	sse, sum := pixelStats128PureGo(src, stride, w, h)
+	shift := uint(bits.TrailingZeros(uint(w * h)))
+	variance := varianceFromStats(sse, sum, shift)
+	return roundPowerOfTwoUint32(variance, shift)
+}
+
+func pixelStats128PureGo(src []byte, stride, w, h int) (sse uint32, sum int32) {
+	total := 0
+	sumInt := 0
+	for r := range h {
+		row := r * stride
+		for c := range w {
+			d := int(src[row+c]) - 128
+			sumInt += d
+			total += d * d
+		}
+	}
+	return uint32(total), int32(sumInt)
+}
+
+func roundPowerOfTwoUint32(v uint32, shift uint) uint32 {
+	if shift == 0 {
+		return v
+	}
+	return (v + (1 << (shift - 1))) >> shift
 }
 
 // reset (re)initializes the per-frame CDF and quantizer state. Buffers are
@@ -531,6 +697,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		st.sad64Grid = make([]uint32, st.grid64Cols*grid64Rows)
 	}
 	st.beginSADCacheFrame()
+	st.prepareRealtimeSourceContent(src, ref, st.grid64Cols, grid64Rows, miColStart, miColEnd)
 	sadEpoch := st.sadCacheEpoch
 	// mergeBias16 is the extra full-pel SAD a merged 16x16 block may carry
 	// over the four independent 8x8 searches and still be coded as one block:
@@ -1173,16 +1340,17 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 		if st.allowSubpelRefinement() && bw == bh && fullSAD > n*n*2 {
 			fullMV := mv
-			mv, fullSAD = st.subpelRefine(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, mv, fullSAD)
+			subpelStop := st.realtimeSubpelStopForBlock(src, lumaPX, lumaPY, n)
+			mv, fullSAD = st.subpelRefineWithStop(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, mv, fullSAD, subpelStop)
 			// Periodic textures can alias the full-pel raster into a distant
 			// basin; a second refinement seeded at zero motion recovers the
 			// near-origin subpel optimum when it is better.
 			// The zero probe is cheap; the second subpel refinement only pays
 			// when zero is already competitive with the searched vector.
-			if fullSAD > n*n*2 && (fullMV.Row != 0 || fullMV.Col != 0) {
+			if subpelStop != realtimeSubpelStopFull && fullSAD > n*n*2 && (fullMV.Row != 0 || fullMV.Col != 0) {
 				zeroSAD := sadBlock(src.Y, ref.Y, lumaPY*src.YStride+lumaPX, lumaPY*src.YStride+lumaPX, src.YStride, n, 1<<30)
 				if zeroSAD < fullSAD*2 {
-					if zmv, zsad := st.subpelRefine(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, motion.Vector{}, zeroSAD); zsad < fullSAD {
+					if zmv, zsad := st.subpelRefineWithStop(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, motion.Vector{}, zeroSAD, subpelStop); zsad < fullSAD {
 						mv, fullSAD = zmv, zsad
 					}
 				}
@@ -1209,7 +1377,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			gdx, gdy, s := fullPelDiamondSearch(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8)
 			gmv, gsad = motion.Vector{Row: int16(gdy * 8), Col: int16(gdx * 8)}, s
 			if st.allowSubpelRefinement() && gsad > 8*8*2 {
-				gmv, gsad = st.subpelRefine(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, gmv, gsad)
+				gmv, gsad = st.subpelRefineWithStop(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, gmv, gsad, st.realtimeSubpelStopForBlock(src, lumaPX, lumaPY, 8))
 			}
 		} else {
 			base := lumaPY*src.YStride + lumaPX
@@ -2012,6 +2180,66 @@ func (st *lossyEncodeState) allowSubpelRefinement() bool {
 	return !st.forceIntegerMV && st.effortLevel > WebRTCMinEffortLevel
 }
 
+type realtimeSubpelStop uint8
+
+const (
+	realtimeSubpelStopQuarter realtimeSubpelStop = iota
+	realtimeSubpelStopHalf
+	realtimeSubpelStopFull
+)
+
+func realtimeReduceMVPelPrecisionLowcomplexLevel(width, height int, effort int8) int {
+	speed := realtimeLibaomSpeedForEffort(effort)
+	minDim := minInt(width, height)
+	if minDim < 360 {
+		if speed >= 10 {
+			return 1
+		}
+		return 0
+	}
+	if minDim >= 720 {
+		if speed >= 9 {
+			return 0
+		}
+		if speed >= 7 {
+			return 2
+		}
+	}
+	return 0
+}
+
+func (st *lossyEncodeState) realtimeSubpelStopForBlock(src SourceFrame420, px, py, n int) realtimeSubpelStop {
+	if st == nil {
+		return realtimeSubpelStopQuarter
+	}
+	if realtimeReduceMVPelPrecisionLowcomplexLevel(src.Width, src.Height, st.effortLevel) < 2 {
+		return realtimeSubpelStopQuarter
+	}
+	qband := int(st.qIndex) >> 6
+	state := st.realtimeContentStateForBlock(px, py)
+	if state.sourceSADNonRD <= realtimeSourceSADVeryLow && n > 16 && qband != 0 {
+		sourceVariance := st.realtimeSourceVarianceForBlock(src, px, py, n, n)
+		if sourceVariance < 500 {
+			return realtimeSubpelStopFull
+		}
+		if sourceVariance < 5000 {
+			return realtimeSubpelStopHalf
+		}
+	}
+	return realtimeSubpelStopQuarter
+}
+
+func (st *lossyEncodeState) subpelRefineWithStop(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int, stop realtimeSubpelStop) (motion.Vector, int) {
+	switch stop {
+	case realtimeSubpelStopFull:
+		return mv, bestSAD
+	case realtimeSubpelStopHalf:
+		return st.subpelRefineHalf(src, refPlane, stride, width, height, px, py, n, mv, bestSAD)
+	default:
+		return st.subpelRefine(src, refPlane, stride, width, height, px, py, n, mv, bestSAD)
+	}
+}
+
 func (st *lossyEncodeState) subpelRefine8x8(src, refPlane []byte, stride, width, height, px, py int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
 	st.prober.Init(frame.Plane{
 		Pix: refPlane, Stride: stride, Width: width, Height: height,
@@ -2166,6 +2394,43 @@ func (st *lossyEncodeState) subpelRefine32x32(src, refPlane []byte, stride, widt
 			if s := st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand); s >= 0 && s < bestSAD {
 				bestSAD, mv = s, cand
 			}
+		}
+	}
+	return mv, bestSAD
+}
+
+func (st *lossyEncodeState) subpelRefineHalf(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
+	st.prober.Init(frame.Plane{
+		Pix: refPlane, Stride: stride, Width: width, Height: height,
+	}, px+int(mv.Col)>>3, py+int(mv.Row)>>3, n)
+	start := mv
+	probe := st.sadScratch[:n*n]
+	srcBlock := src[py*stride+px:]
+	exact := func(cand motion.Vector) int {
+		switch n {
+		case 8:
+			return st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand)
+		case 16:
+			return st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand)
+		case 32:
+			return st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, start, cand)
+		default:
+			if !st.prober.Predict(probe, motion.Vector{Row: cand.Row - start.Row, Col: cand.Col - start.Col}) {
+				if err := predictInto(probe, refPlane, stride, width, height, px, py, n, n, cand, false, false); err != nil {
+					return -1
+				}
+			}
+			return sadDualBlock(srcBlock, stride, probe, n, n)
+		}
+	}
+	for _, cand := range [4]motion.Vector{
+		{Row: start.Row, Col: start.Col - 4},
+		{Row: start.Row, Col: start.Col + 4},
+		{Row: start.Row - 4, Col: start.Col},
+		{Row: start.Row + 4, Col: start.Col},
+	} {
+		if s := exact(cand); s >= 0 && s < bestSAD {
+			bestSAD, mv = s, cand
 		}
 	}
 	return mv, bestSAD

@@ -155,6 +155,121 @@ func TestRealtimeTXSizeLevelBasedOnQstepMatchesSpeedFeatures(t *testing.T) {
 	}
 }
 
+func TestRealtimeSourceContentSBMatchesLibaomThresholds(t *testing.T) {
+	makePair := func(delta byte) (SourceFrame420, SourceFrame420) {
+		src := SourceFrame420{Y: make([]byte, 64*64), YStride: 64, Width: 64, Height: 64}
+		last := SourceFrame420{Y: make([]byte, 64*64), YStride: 64, Width: 64, Height: 64}
+		for i := range src.Y {
+			last.Y[i] = 80
+			src.Y[i] = 80 + delta
+		}
+		return src, last
+	}
+	for _, tc := range []struct {
+		name         string
+		delta        byte
+		wantNonRD    realtimeSourceSAD
+		wantRD       realtimeSourceSAD
+		wantLighting bool
+		wantLowSum   bool
+	}{
+		{name: "zero", delta: 0, wantNonRD: realtimeSourceSADZero, wantRD: realtimeSourceSADLow},
+		{name: "very-low", delta: 1, wantNonRD: realtimeSourceSADVeryLow, wantRD: realtimeSourceSADLow, wantLowSum: true},
+		{name: "low", delta: 3, wantNonRD: realtimeSourceSADLow, wantRD: realtimeSourceSADMed, wantLighting: true},
+		{name: "high", delta: 16, wantNonRD: realtimeSourceSADHigh, wantRD: realtimeSourceSADMed, wantLighting: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src, last := makePair(tc.delta)
+			got := realtimeSourceContentSB(src, last, 0, 0, false)
+			if got.sourceSADNonRD != tc.wantNonRD || got.sourceSADRD != tc.wantRD ||
+				got.lightingChange != tc.wantLighting || got.lowSumDiff != tc.wantLowSum {
+				t.Fatalf("content=%+v want nonrd=%d rd=%d lighting=%v lowSum=%v",
+					got, tc.wantNonRD, tc.wantRD, tc.wantLighting, tc.wantLowSum)
+			}
+		})
+	}
+}
+
+func TestRealtimeSourceVariancePerPixelMatchesAV1VarOffs(t *testing.T) {
+	src := make([]byte, 8*8)
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			if (x+y)&1 == 0 {
+				src[y*8+x] = 80
+			} else {
+				src[y*8+x] = 176
+			}
+		}
+	}
+	total, sum := 0, 0
+	for _, px := range src {
+		d := int(px) - 128
+		sum += d
+		total += d * d
+	}
+	variance := uint32(total) - uint32((int64(sum)*int64(sum))>>6)
+	want := (variance + 32) >> 6
+	if got := realtimeSourceVariancePerPixel(src, 8, 8, 8); got != want {
+		t.Fatalf("source variance=%d want %d", got, want)
+	}
+}
+
+func TestRealtimeReduceMVPelPrecisionLowcomplexLevelMatchesSpeedFeatures(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		w, h   int
+		effort int8
+		want   int
+	}{
+		{name: "1080p speed8", w: 1920, h: 1080, effort: 0, want: 2},
+		{name: "1080p speed10", w: 1920, h: 1080, effort: WebRTCMinEffortLevel, want: 0},
+		{name: "720p speed7", w: 1280, h: 720, effort: 1, want: 2},
+		{name: "below360 speed10", w: 320, h: 180, effort: WebRTCMinEffortLevel, want: 1},
+		{name: "360p speed8", w: 640, h: 360, effort: 0, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := realtimeReduceMVPelPrecisionLowcomplexLevel(tc.w, tc.h, tc.effort); got != tc.want {
+				t.Fatalf("level=%d want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRealtimeSubpelStopForBlockMatchesLibaomLowcomplexRule(t *testing.T) {
+	makeFrame := func(v0, v1 byte) SourceFrame420 {
+		f := SourceFrame420{Y: make([]byte, 1280*720), YStride: 1280, Width: 1280, Height: 720}
+		for y := 0; y < 720; y++ {
+			for x := 0; x < 1280; x++ {
+				if (x+y)&1 == 0 {
+					f.Y[y*1280+x] = v0
+				} else {
+					f.Y[y*1280+x] = v1
+				}
+			}
+		}
+		return f
+	}
+	for _, tc := range []struct {
+		name string
+		src  SourceFrame420
+		want realtimeSubpelStop
+	}{
+		{name: "flat-fullpel", src: makeFrame(128, 128), want: realtimeSubpelStopFull},
+		{name: "moderate-halfpel", src: makeFrame(80, 176), want: realtimeSubpelStopHalf},
+		{name: "high-quarterpel", src: makeFrame(0, 255), want: realtimeSubpelStopQuarter},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var st lossyEncodeState
+			st.qIndex = 72
+			st.effortLevel = 0
+			st.prepareRealtimeSourceContent(tc.src, tc.src, 20, 12, 0, uint16(tc.src.Width/4))
+			if got := st.realtimeSubpelStopForBlock(tc.src, 0, 0, 32); got != tc.want {
+				t.Fatalf("stop=%d want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRealtimeInterTXLeafSizeHonorsQstepSpeedFeatureLevel(t *testing.T) {
 	const (
 		qIndex   = uint8(72)
