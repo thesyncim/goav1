@@ -4176,152 +4176,86 @@ func forwardDCTBlock(tran []int32, residual []int16, w, h int) error {
 	return transform.ErrInvalidTransform
 }
 
-// fullPelDiamondSearch finds the even full-pel offset (dx, dy) within an 8px
-// window that minimizes the luma SAD of the n x n block at (px, py) against
-// the reference plane, keeping the offset window fully inside the frame. Even
-// offsets keep chroma prediction at integer positions at 4:2:0. A small
-// diamond refinement around the best raster candidate keeps the search cheap.
+// fullPelDiamondSearch finds the full-pel offset (dx, dy) that minimizes the
+// luma SAD of the n x n block at (px, py) against the reference plane, keeping
+// the offset window fully inside the frame.
 func fullPelDiamondSearch(src, ref []byte, stride, width, height, px, py, n int) (int, int, int) {
 	return fullPelDiamondSearchSeeded(src, ref, stride, width, height, px, py, n, 0, 0, fullPelReach)
 }
 
-// fullPelReach is the raster half-window around the seed; trusted seeds
-// (clean coarse matches, see hmeTrustRegionSAD) narrow it to the seed's own
-// four-pel quantization step.
+// fullPelReach is the largest libaom mesh-search radius around the seed;
+// trusted seeds (clean coarse matches, see hmeTrustRegionSAD) narrow it to the
+// seed's own four-pel quantization step.
 const (
 	fullPelReach        = 8
 	fullPelReachTrusted = 4
 )
 
-// fullPelDiamondSearchSeeded recenters the raster window on a coarse-search
-// seed (the hierarchical pre-pass vector), extending reach to the seed
-// +-reach px while always probing zero motion first.
+// fullPelDiamondSearchSeeded recenters libaom's mesh search on a
+// coarse-search seed (the hierarchical pre-pass vector).
 func fullPelDiamondSearchSeeded(src, ref []byte, stride, width, height, px, py, n int, seedDX, seedDY, reach int) (int, int, int) {
-	seedDX = minInt(maxInt(seedDX, -px), width-n-px) &^ 1
-	seedDY = minInt(maxInt(seedDY, -py), height-n-py) &^ 1
-	minDX := maxInt(seedDX-reach, -px)
-	maxDX := minInt(seedDX+reach, width-n-px)
-	minDY := maxInt(seedDY-reach, -py)
-	maxDY := minInt(seedDY+reach, height-n-py)
-
-	base := py*stride + px
-	srcBlock := src[base:]
-	switch n {
-	case 8:
-		return fullPelDiamondSearch8(srcBlock, ref, base, stride, minDX, maxDX, minDY, maxDY)
-	case 16:
-		return fullPelDiamondSearch16(srcBlock, ref, base, stride, minDX, maxDX, minDY, maxDY)
-	case 32:
-		return fullPelDiamondSearch32(srcBlock, ref, base, stride, minDX, maxDX, minDY, maxDY)
-	case 64:
-		return fullPelDiamondSearch64(srcBlock, ref, base, stride, minDX, maxDX, minDY, maxDY)
-	default:
-		return fullPelDiamondSearchGeneric(src, ref, base, stride, n, minDX, maxDX, minDY, maxDY)
-	}
+	return fullPelLibaomMeshSearch(src, ref, stride, width, height, px, py, n, n, seedDX, seedDY, reach)
 }
 
 func fullPelDiamondSearchRectSeeded(src, ref []byte, stride, width, height, px, py, bw, bh int, seedDX, seedDY, reach int) (int, int, int) {
-	seedDX = minInt(maxInt(seedDX, -px), width-bw-px) &^ 1
-	seedDY = minInt(maxInt(seedDY, -py), height-bh-py) &^ 1
-	minDX := maxInt(seedDX-reach, -px)
-	maxDX := minInt(seedDX+reach, width-bw-px)
-	minDY := maxInt(seedDY-reach, -py)
-	maxDY := minInt(seedDY+reach, height-bh-py)
+	return fullPelLibaomMeshSearch(src, ref, stride, width, height, px, py, bw, bh, seedDX, seedDY, reach)
+}
+
+func fullPelLibaomMeshSearch(src, ref []byte, stride, width, height, px, py, bw, bh int, seedDX, seedDY, reach int) (int, int, int) {
+	seedDX = minInt(maxInt(seedDX, -px), width-bw-px)
+	seedDY = minInt(maxInt(seedDY, -py), height-bh-py)
+	bestDX, bestDY, _ := fullPelLibaomExhaustiveMeshSearch(src, ref, stride, width, height, px, py, bw, bh, seedDX, seedDY, reach, 4)
+	return fullPelLibaomExhaustiveMeshSearch(src, ref, stride, width, height, px, py, bw, bh, bestDX, bestDY, 2, 2)
+}
+
+// Ported from libaom av1/encoder/mcomp.c exhaustive_mesh_search. The local
+// caller supplies the mesh pattern used by the realtime HME-seeded search.
+func fullPelLibaomExhaustiveMeshSearch(src, ref []byte, stride, width, height, px, py, bw, bh int, startDX, startDY, searchRange, step int) (int, int, int) {
+	if step < 1 {
+		step = 1
+	}
+	startDX = minInt(maxInt(startDX, -px), width-bw-px)
+	startDY = minInt(maxInt(startDY, -py), height-bh-py)
+	minDX := -px
+	maxDX := width - bw - px
+	minDY := -py
+	maxDY := height - bh - py
+
+	startCol := maxInt(-searchRange, minDX-startDX)
+	endCol := minInt(searchRange, maxDX-startDX)
+	startRow := maxInt(-searchRange, minDY-startDY)
+	endRow := minInt(searchRange, maxDY-startDY)
 
 	base := py*stride + px
-	bestDX, bestDY := 0, 0
-	bestSAD := sadRectBlock(src, ref, base, base, stride, bw, bh, 1<<30)
-	if bestSAD <= bw*bh*2 {
-		return 0, 0, bestSAD
+	srcBlock := src[base:]
+	bestDX, bestDY := startDX, startDY
+	bestSAD := fullPelSearchSAD(srcBlock, ref[base+startDY*stride+startDX:], stride, bw, bh, 1<<30)
+	colStep := step
+	if step <= 1 {
+		colStep = 4
 	}
-	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
-		refRow := base + dy*stride
-		for dx := minDX &^ 1; dx <= maxDX; dx += 4 {
-			if dx == 0 && dy == 0 {
+	for row := startRow; row <= endRow; row += step {
+		for col := startCol; col <= endCol; col += colStep {
+			dx := startDX + col
+			dy := startDY + row
+			if step <= 1 && col+3 <= endCol && bw == bh {
+				s0, s1, s2, s3 := fullPelSearchSAD4(srcBlock, ref, base, stride, bw, bh,
+					dx, dy, dx+1, dy, dx+2, dy, dx+3, dy)
+				if s0 < bestSAD {
+					bestSAD, bestDX, bestDY = s0, dx, dy
+				}
+				if s1 < bestSAD {
+					bestSAD, bestDX, bestDY = s1, dx+1, dy
+				}
+				if s2 < bestSAD {
+					bestSAD, bestDX, bestDY = s2, dx+2, dy
+				}
+				if s3 < bestSAD {
+					bestSAD, bestDX, bestDY = s3, dx+3, dy
+				}
 				continue
 			}
-			if s := sadRectBlock(src, ref, base, refRow+dx, stride, bw, bh, bestSAD); s < bestSAD {
-				bestSAD, bestDX, bestDY = s, dx, dy
-			}
-		}
-	}
-	for _, cand := range [4][2]int{{bestDX + 2, bestDY}, {bestDX - 2, bestDY}, {bestDX, bestDY + 2}, {bestDX, bestDY - 2}} {
-		dx, dy := cand[0], cand[1]
-		if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
-			continue
-		}
-		if s := sadRectBlock(src, ref, base, base+dy*stride+dx, stride, bw, bh, bestSAD); s < bestSAD {
-			bestSAD, bestDX, bestDY = s, dx, dy
-		}
-	}
-	return bestDX, bestDY, bestSAD
-}
-
-func fullPelDiamondSearch8(srcBlock []byte, ref []byte, base, stride, minDX, maxDX, minDY, maxDY int) (int, int, int) {
-	bestDX, bestDY := 0, 0
-	bestSAD := sad8x8(srcBlock, ref[base:], stride, 1<<30)
-	// Static-content fast path: when zero motion is already a near-perfect
-	// match (below ~2 per sample, the quantizer's noise floor at realtime
-	// qindexes), searching cannot pay for its own cost.
-	if bestSAD <= 8*8*2 {
-		return 0, 0, bestSAD
-	}
-	// Coarse even-step raster with row-granular early exit, then a +-2 even
-	// diamond refinement.
-	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
-		refRow := base + dy*stride
-		dx := minDX &^ 1
-		for ; dx+12 <= maxDX; dx += 16 {
-			s0, s1, s2, s3 := sad8x8x4Step4(srcBlock, ref[refRow+dx:], stride)
-			if s0 < bestSAD {
-				bestSAD, bestDX, bestDY = s0, dx, dy
-			}
-			if s1 < bestSAD {
-				bestSAD, bestDX, bestDY = s1, dx+4, dy
-			}
-			if s2 < bestSAD {
-				bestSAD, bestDX, bestDY = s2, dx+8, dy
-			}
-			if s3 < bestSAD {
-				bestSAD, bestDX, bestDY = s3, dx+12, dy
-			}
-		}
-		for ; dx <= maxDX; dx += 4 {
-			if dx == 0 && dy == 0 {
-				continue
-			}
-			if s := sad8x8(srcBlock, ref[refRow+dx:], stride, bestSAD); s < bestSAD {
-				bestSAD, bestDX, bestDY = s, dx, dy
-			}
-		}
-	}
-	refineDX, refineDY := bestDX, bestDY
-	if refineDX+2 <= maxDX && refineDX-2 >= minDX && refineDY+2 <= maxDY && refineDY-2 >= minDY {
-		s0, s1, s2, s3 := sad8x8x4(srcBlock,
-			ref[base+refineDY*stride+refineDX+2:],
-			ref[base+refineDY*stride+refineDX-2:],
-			ref[base+(refineDY+2)*stride+refineDX:],
-			ref[base+(refineDY-2)*stride+refineDX:],
-			stride)
-		if s0 < bestSAD {
-			bestSAD, bestDX, bestDY = s0, refineDX+2, refineDY
-		}
-		if s1 < bestSAD {
-			bestSAD, bestDX, bestDY = s1, refineDX-2, refineDY
-		}
-		if s2 < bestSAD {
-			bestSAD, bestDX, bestDY = s2, refineDX, refineDY+2
-		}
-		if s3 < bestSAD {
-			bestSAD, bestDX, bestDY = s3, refineDX, refineDY-2
-		}
-	} else {
-		for _, cand := range [4][2]int{{refineDX + 2, refineDY}, {refineDX - 2, refineDY}, {refineDX, refineDY + 2}, {refineDX, refineDY - 2}} {
-			dx, dy := cand[0], cand[1]
-			if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
-				continue
-			}
-			if s := sad8x8(srcBlock, ref[base+dy*stride+dx:], stride, bestSAD); s < bestSAD {
+			if s := fullPelSearchSAD(srcBlock, ref[base+dy*stride+dx:], stride, bw, bh, bestSAD); s < bestSAD {
 				bestSAD, bestDX, bestDY = s, dx, dy
 			}
 		}
@@ -4329,232 +4263,41 @@ func fullPelDiamondSearch8(srcBlock []byte, ref []byte, base, stride, minDX, max
 	return bestDX, bestDY, bestSAD
 }
 
-func fullPelDiamondSearch16(srcBlock []byte, ref []byte, base, stride, minDX, maxDX, minDY, maxDY int) (int, int, int) {
-	bestDX, bestDY := 0, 0
-	bestSAD := sad16x16(srcBlock, ref[base:], stride)
-	if bestSAD <= 16*16*2 {
-		return 0, 0, bestSAD
-	}
-	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
-		refRow := base + dy*stride
-		dx := minDX &^ 1
-		for ; dx+12 <= maxDX; dx += 16 {
-			s0, s1, s2, s3 := sad16x16x4Step4(srcBlock, ref[refRow+dx:], stride)
-			if s0 < bestSAD {
-				bestSAD, bestDX, bestDY = s0, dx, dy
-			}
-			if s1 < bestSAD {
-				bestSAD, bestDX, bestDY = s1, dx+4, dy
-			}
-			if s2 < bestSAD {
-				bestSAD, bestDX, bestDY = s2, dx+8, dy
-			}
-			if s3 < bestSAD {
-				bestSAD, bestDX, bestDY = s3, dx+12, dy
-			}
-		}
-		for ; dx <= maxDX; dx += 4 {
-			if dx == 0 && dy == 0 {
-				continue
-			}
-			if s := sad16x16(srcBlock, ref[refRow+dx:], stride); s < bestSAD {
-				bestSAD, bestDX, bestDY = s, dx, dy
-			}
+func fullPelSearchSAD(srcBlock, refBlock []byte, stride, bw, bh, limit int) int {
+	if bw == bh {
+		switch bw {
+		case 8:
+			return sad8x8(srcBlock, refBlock, stride, limit)
+		case 16:
+			return sad16x16(srcBlock, refBlock, stride)
+		case 32:
+			return sad32x32(srcBlock, refBlock, stride)
+		case 64:
+			return sad64x64(srcBlock, refBlock, stride)
 		}
 	}
-	refineDX, refineDY := bestDX, bestDY
-	if refineDX+2 <= maxDX && refineDX-2 >= minDX && refineDY+2 <= maxDY && refineDY-2 >= minDY {
-		s0, s1, s2, s3 := sad16x16x4(srcBlock,
-			ref[base+refineDY*stride+refineDX+2:],
-			ref[base+refineDY*stride+refineDX-2:],
-			ref[base+(refineDY+2)*stride+refineDX:],
-			ref[base+(refineDY-2)*stride+refineDX:],
-			stride)
-		if s0 < bestSAD {
-			bestSAD, bestDX, bestDY = s0, refineDX+2, refineDY
-		}
-		if s1 < bestSAD {
-			bestSAD, bestDX, bestDY = s1, refineDX-2, refineDY
-		}
-		if s2 < bestSAD {
-			bestSAD, bestDX, bestDY = s2, refineDX, refineDY+2
-		}
-		if s3 < bestSAD {
-			bestSAD, bestDX, bestDY = s3, refineDX, refineDY-2
-		}
-	} else {
-		for _, cand := range [4][2]int{{refineDX + 2, refineDY}, {refineDX - 2, refineDY}, {refineDX, refineDY + 2}, {refineDX, refineDY - 2}} {
-			dx, dy := cand[0], cand[1]
-			if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
-				continue
-			}
-			if s := sad16x16(srcBlock, ref[base+dy*stride+dx:], stride); s < bestSAD {
-				bestSAD, bestDX, bestDY = s, dx, dy
-			}
-		}
-	}
-	return bestDX, bestDY, bestSAD
+	return sadRectDualBlock(srcBlock, stride, refBlock, stride, bw, bh)
 }
 
-func fullPelDiamondSearch32(srcBlock []byte, ref []byte, base, stride, minDX, maxDX, minDY, maxDY int) (int, int, int) {
-	bestDX, bestDY := 0, 0
-	bestSAD := sad32x32(srcBlock, ref[base:], stride)
-	if bestSAD <= 32*32*2 {
-		return 0, 0, bestSAD
-	}
-	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
-		refRow := base + dy*stride
-		dx := minDX &^ 1
-		for ; dx+12 <= maxDX; dx += 16 {
-			s0, s1, s2, s3 := sad32x32x4Step4(srcBlock, ref[refRow+dx:], stride)
-			if s0 < bestSAD {
-				bestSAD, bestDX, bestDY = s0, dx, dy
-			}
-			if s1 < bestSAD {
-				bestSAD, bestDX, bestDY = s1, dx+4, dy
-			}
-			if s2 < bestSAD {
-				bestSAD, bestDX, bestDY = s2, dx+8, dy
-			}
-			if s3 < bestSAD {
-				bestSAD, bestDX, bestDY = s3, dx+12, dy
-			}
-		}
-		for ; dx <= maxDX; dx += 4 {
-			if dx == 0 && dy == 0 {
-				continue
-			}
-			if s := sad32x32(srcBlock, ref[refRow+dx:], stride); s < bestSAD {
-				bestSAD, bestDX, bestDY = s, dx, dy
-			}
+func fullPelSearchSAD4(srcBlock, ref []byte, base, stride, bw, bh int, dx0, dy0, dx1, dy1, dx2, dy2, dx3, dy3 int) (int, int, int, int) {
+	ref0 := ref[base+dy0*stride+dx0:]
+	ref1 := ref[base+dy1*stride+dx1:]
+	ref2 := ref[base+dy2*stride+dx2:]
+	ref3 := ref[base+dy3*stride+dx3:]
+	if bw == bh {
+		switch bw {
+		case 8:
+			return sad8x8x4(srcBlock, ref0, ref1, ref2, ref3, stride)
+		case 16:
+			return sad16x16x4(srcBlock, ref0, ref1, ref2, ref3, stride)
+		case 32:
+			return sad32x32x4(srcBlock, ref0, ref1, ref2, ref3, stride)
+		case 64:
+			return sad64x64x4(srcBlock, ref0, ref1, ref2, ref3, stride)
 		}
 	}
-	refineDX, refineDY := bestDX, bestDY
-	if refineDX+2 <= maxDX && refineDX-2 >= minDX && refineDY+2 <= maxDY && refineDY-2 >= minDY {
-		s0, s1, s2, s3 := sad32x32x4(srcBlock,
-			ref[base+refineDY*stride+refineDX+2:],
-			ref[base+refineDY*stride+refineDX-2:],
-			ref[base+(refineDY+2)*stride+refineDX:],
-			ref[base+(refineDY-2)*stride+refineDX:],
-			stride)
-		if s0 < bestSAD {
-			bestSAD, bestDX, bestDY = s0, refineDX+2, refineDY
-		}
-		if s1 < bestSAD {
-			bestSAD, bestDX, bestDY = s1, refineDX-2, refineDY
-		}
-		if s2 < bestSAD {
-			bestSAD, bestDX, bestDY = s2, refineDX, refineDY+2
-		}
-		if s3 < bestSAD {
-			bestSAD, bestDX, bestDY = s3, refineDX, refineDY-2
-		}
-	} else {
-		for _, cand := range [4][2]int{{refineDX + 2, refineDY}, {refineDX - 2, refineDY}, {refineDX, refineDY + 2}, {refineDX, refineDY - 2}} {
-			dx, dy := cand[0], cand[1]
-			if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
-				continue
-			}
-			if s := sad32x32(srcBlock, ref[base+dy*stride+dx:], stride); s < bestSAD {
-				bestSAD, bestDX, bestDY = s, dx, dy
-			}
-		}
-	}
-	return bestDX, bestDY, bestSAD
-}
-
-func fullPelDiamondSearch64(srcBlock []byte, ref []byte, base, stride, minDX, maxDX, minDY, maxDY int) (int, int, int) {
-	bestDX, bestDY := 0, 0
-	bestSAD := sad64x64(srcBlock, ref[base:], stride)
-	if bestSAD <= 64*64*2 {
-		return 0, 0, bestSAD
-	}
-	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
-		refRow := base + dy*stride
-		dx := minDX &^ 1
-		for ; dx+12 <= maxDX; dx += 16 {
-			s0, s1, s2, s3 := sad64x64x4Step4(srcBlock, ref[refRow+dx:], stride)
-			if s0 < bestSAD {
-				bestSAD, bestDX, bestDY = s0, dx, dy
-			}
-			if s1 < bestSAD {
-				bestSAD, bestDX, bestDY = s1, dx+4, dy
-			}
-			if s2 < bestSAD {
-				bestSAD, bestDX, bestDY = s2, dx+8, dy
-			}
-			if s3 < bestSAD {
-				bestSAD, bestDX, bestDY = s3, dx+12, dy
-			}
-		}
-		for ; dx <= maxDX; dx += 4 {
-			if dx == 0 && dy == 0 {
-				continue
-			}
-			if s := sad64x64(srcBlock, ref[refRow+dx:], stride); s < bestSAD {
-				bestSAD, bestDX, bestDY = s, dx, dy
-			}
-		}
-	}
-	refineDX, refineDY := bestDX, bestDY
-	if refineDX+2 <= maxDX && refineDX-2 >= minDX && refineDY+2 <= maxDY && refineDY-2 >= minDY {
-		s0, s1, s2, s3 := sad64x64x4(srcBlock,
-			ref[base+refineDY*stride+refineDX+2:],
-			ref[base+refineDY*stride+refineDX-2:],
-			ref[base+(refineDY+2)*stride+refineDX:],
-			ref[base+(refineDY-2)*stride+refineDX:],
-			stride)
-		if s0 < bestSAD {
-			bestSAD, bestDX, bestDY = s0, refineDX+2, refineDY
-		}
-		if s1 < bestSAD {
-			bestSAD, bestDX, bestDY = s1, refineDX-2, refineDY
-		}
-		if s2 < bestSAD {
-			bestSAD, bestDX, bestDY = s2, refineDX, refineDY+2
-		}
-		if s3 < bestSAD {
-			bestSAD, bestDX, bestDY = s3, refineDX, refineDY-2
-		}
-	} else {
-		for _, cand := range [4][2]int{{refineDX + 2, refineDY}, {refineDX - 2, refineDY}, {refineDX, refineDY + 2}, {refineDX, refineDY - 2}} {
-			dx, dy := cand[0], cand[1]
-			if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
-				continue
-			}
-			if s := sad64x64(srcBlock, ref[base+dy*stride+dx:], stride); s < bestSAD {
-				bestSAD, bestDX, bestDY = s, dx, dy
-			}
-		}
-	}
-	return bestDX, bestDY, bestSAD
-}
-
-func fullPelDiamondSearchGeneric(src, ref []byte, base, stride, n, minDX, maxDX, minDY, maxDY int) (int, int, int) {
-	bestDX, bestDY := 0, 0
-	bestSAD := sadBlock(src, ref, base, base, stride, n, 1<<30)
-	if bestSAD <= n*n*2 {
-		return 0, 0, bestSAD
-	}
-	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
-		refRow := base + dy*stride
-		for dx := minDX &^ 1; dx <= maxDX; dx += 4 {
-			if dx == 0 && dy == 0 {
-				continue
-			}
-			if s := sadBlock(src, ref, base, refRow+dx, stride, n, bestSAD); s < bestSAD {
-				bestSAD, bestDX, bestDY = s, dx, dy
-			}
-		}
-	}
-	for _, cand := range [4][2]int{{bestDX + 2, bestDY}, {bestDX - 2, bestDY}, {bestDX, bestDY + 2}, {bestDX, bestDY - 2}} {
-		dx, dy := cand[0], cand[1]
-		if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
-			continue
-		}
-		if s := sadBlock(src, ref, base, base+dy*stride+dx, stride, n, bestSAD); s < bestSAD {
-			bestSAD, bestDX, bestDY = s, dx, dy
-		}
-	}
-	return bestDX, bestDY, bestSAD
+	return fullPelSearchSAD(srcBlock, ref0, stride, bw, bh, 1<<30),
+		fullPelSearchSAD(srcBlock, ref1, stride, bw, bh, 1<<30),
+		fullPelSearchSAD(srcBlock, ref2, stride, bw, bh, 1<<30),
+		fullPelSearchSAD(srcBlock, ref3, stride, bw, bh, 1<<30)
 }

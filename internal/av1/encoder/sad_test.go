@@ -466,7 +466,7 @@ func sadRectDualBlockReference(src []byte, srcStride int, ref []byte, refStride 
 	return total
 }
 
-func TestFullPelDiamondSearchSeededMatchesReference(t *testing.T) {
+func TestFullPelDiamondSearchSeededMatchesLibaomReference(t *testing.T) {
 	rng := rand.New(rand.NewSource(53))
 	const (
 		width  = 96
@@ -529,50 +529,46 @@ func fullPelDiamondSearchSeededReference(src, ref []byte, stride, width, height,
 		}
 		return total
 	}
-	clampLo := func(v, lo int) int {
-		if v < lo {
-			return lo
-		}
-		return v
-	}
-	clampHi := func(v, hi int) int {
-		if v > hi {
-			return hi
-		}
-		return v
-	}
-	seedDX = clampHi(clampLo(seedDX, -px), width-n-px) &^ 1
-	seedDY = clampHi(clampLo(seedDY, -py), height-n-py) &^ 1
-	minDX := clampLo(seedDX-reach, -px)
-	maxDX := clampHi(seedDX+reach, width-n-px)
-	minDY := clampLo(seedDY-reach, -py)
-	maxDY := clampHi(seedDY+reach, height-n-py)
+	seedDX = minInt(maxInt(seedDX, -px), width-n-px)
+	seedDY = minInt(maxInt(seedDY, -py), height-n-py)
 
-	bestDX, bestDY := 0, 0
-	bestSAD := sad(0, 0, 1<<30)
-	if bestSAD <= n*n*2 {
-		return 0, 0, bestSAD
-	}
-	for dy := minDY &^ 1; dy <= maxDY; dy += 4 {
-		for dx := minDX &^ 1; dx <= maxDX; dx += 4 {
-			if dx == 0 && dy == 0 {
-				continue
+	mesh := func(startDX, startDY, searchRange, step int) (int, int, int) {
+		if step < 1 {
+			step = 1
+		}
+		startDX = minInt(maxInt(startDX, -px), width-n-px)
+		startDY = minInt(maxInt(startDY, -py), height-n-py)
+		startCol := maxInt(-searchRange, -px-startDX)
+		endCol := minInt(searchRange, width-n-px-startDX)
+		startRow := maxInt(-searchRange, -py-startDY)
+		endRow := minInt(searchRange, height-n-py-startDY)
+		bestDX, bestDY := startDX, startDY
+		bestSAD := sad(bestDX, bestDY, 1<<30)
+		colStep := step
+		if step <= 1 {
+			colStep = 4
+		}
+		for row := startRow; row <= endRow; row += step {
+			for col := startCol; col <= endCol; col += colStep {
+				dx := startDX + col
+				dy := startDY + row
+				if step <= 1 && col+3 <= endCol {
+					for i := 0; i < 4; i++ {
+						if s := sad(dx+i, dy, bestSAD); s < bestSAD {
+							bestSAD, bestDX, bestDY = s, dx+i, dy
+						}
+					}
+					continue
+				}
+				if s := sad(dx, dy, bestSAD); s < bestSAD {
+					bestSAD, bestDX, bestDY = s, dx, dy
+				}
 			}
-			if s := sad(dx, dy, bestSAD); s < bestSAD {
-				bestSAD, bestDX, bestDY = s, dx, dy
-			}
 		}
+		return bestDX, bestDY, bestSAD
 	}
-	for _, cand := range [4][2]int{{bestDX + 2, bestDY}, {bestDX - 2, bestDY}, {bestDX, bestDY + 2}, {bestDX, bestDY - 2}} {
-		dx, dy := cand[0], cand[1]
-		if dx < minDX || dx > maxDX || dy < minDY || dy > maxDY {
-			continue
-		}
-		if s := sad(dx, dy, bestSAD); s < bestSAD {
-			bestSAD, bestDX, bestDY = s, dx, dy
-		}
-	}
-	return bestDX, bestDY, bestSAD
+	bestDX, bestDY, _ := mesh(seedDX, seedDY, reach, 4)
+	return mesh(bestDX, bestDY, 2, 2)
 }
 
 func TestSubpelRefineMatchesReference(t *testing.T) {
