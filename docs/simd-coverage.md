@@ -50,9 +50,11 @@ SVT `--asm max` on this machine can select baseline NEON, DOTPROD, and I8MM
 families. goav1 now detects the same arm64 feature bits and has measured
 DOTPROD tiers for selected pixel-domain SSE/variance shapes and step-4 SAD
 search groups plus resident lowbd compound-X CONV_BUF. The resident lowbd
-compound-X I8MM kernel is also ported and direct-tested, but Apple M4 keeps the
-live dispatcher on DOTPROD because DOTPROD is faster for that row. Convolve,
-CDEF, and other max-tier DOTPROD/I8MM surfaces are still broader in SVT. Report max-tier
+single-prediction X convolve path now has a live I8MM tier, and the resident
+lowbd compound-X I8MM kernel is also ported and direct-tested, but Apple M4
+keeps compound-X live dispatch on DOTPROD because DOTPROD is faster for that
+row. Convolve, CDEF, and other max-tier DOTPROD/I8MM surfaces are still broader
+in SVT. Report max-tier
 SVT rows as best-SVT rows and baseline `-svt-asm neon` rows as the closest
 assembly-tier control.
 
@@ -124,7 +126,7 @@ parallelism level and still consumes less observed CPU parallelism than
 | Variance, SSE, block error, SATD, Hadamard | `variance_neon.c`, `sse_neon.c`, `block_error_neon.c`, `hadamard_path_neon.c`, plus DOTPROD SSE/variance | goav1 has residual/RD stats NEON, baseline-NEON pixel SSE+variance stats for the practical 4-wide and width-multiple-of-8 square/rectangular low-bitdepth shapes through 64x64, a measured DOTPROD SSE/variance tier for winning width-multiple-of-8 rows, an arm64 NEON coefficient block-error reducer matching SVT's `svt_av1_block_error_neon`, an arm64 NEON coefficient SATD reducer matching SVT's `svt_aom_satd_neon`, and arm64 NEON 4x4/8x8/16x16/32x32 low-bitdepth Hadamard producers matching SVT's NEON order. These metric kernels are now dispatched by feature tier but still do not change encoder mode decisions unless that path is called. | DOTPROD SSE/variance is partially closed for measured-winning rows; small `8x4`/`8x8` variance remains baseline NEON because DOTPROD loses there. Baseline block-error is covered; broader max-tier metric/search coverage remains open. Only wire these into mode/search scoring after a focused profile proves they beat the current SAD/RD flow. |
 | Forward transforms | `highbd_fwd_txfm_neon.c` covers square, rectangular, N2/N4, and many tx types including ADST paths | Forward DCT 4/8/16/32 has NEON; the active trusted 8x8 IDTX, ADST_DCT, DCT_ADST, and ADST_ADST tx-type trials now have arm64 NEON matching SVT's identity, ADST-column/DCT-row, DCT-column/ADST-row, and ADST-column/ADST-row surfaces. The scalar source-shaped forward path now covers the non-DCT_DCT FlipADST, ADST16, DCT64-backed realtime 64x64/32x64/64x32 DCT shapes, and 1D DCT/ADST/IDTX combinations whose axes fit the local 1D kernels. | High for the current profile: the active 8x8 tx-type trial surface is covered, and broader scalar correctness is better, but SVT's wider SIMD matrix still includes rectangular/N2/N4/flip ADST and DCT64/N2/N4 SIMD variants. |
 | Quantize/dequant | FP/B quantize, 32x32/64x64 variants, highbd quantize | Quantize B/FP and dequant have NEON/AVX2 surfaces | Mostly covered for current 8-bit path; revisit after TXB/search gaps. |
-| Inter prediction/convolve | SVT convolve, compound, joint compound, scale, warp, highbd, DOTPROD and I8MM variants; dav1d `mc`, `mc_dotprod`, and `mc16` | 8-bit and highbd X/Y/2D convolve have NEON/AVX2; arm64 8-bit X/Y one-axis convolve keeps width>=8 4-tap filters on the NEON body instead of falling back to scalar. The 8-bit compound/joint-convolve copy, X-only, Y-only, and filtered 2D branches have arm64 NEON kernels for resident width-multiple-of-8 and resident width-4 CONV_BUF blocks, with a measured DOTPROD tier for resident width-multiple-of-8 X-only. That resident X-only surface also has a direct-tested I8MM `usmmla` tier for width-multiple-of-8 blocks; DOTPROD stays first on Apple M4 because it is faster. 8-bit clamped X/Y/2D edge blocks now split exact pure-Go clamped strips from resident SIMD rectangles on arm64 NEON and amd64 AVX2, including caller-scratch dispatch for 2D. Scaled compound, highbd compound, and the remaining DOTPROD/I8MM compound variants remain uncovered. | Baseline edge-convolve coverage is now materially better for the active WebRTC encoder profile and closer across arm64/amd64. Max-tier coverage is still not equivalent. Continue DOTPROD/I8MM convolve only with source-shaped ports and paired CPU-feature benchmark proof. |
+| Inter prediction/convolve | SVT convolve, compound, joint compound, scale, warp, highbd, DOTPROD and I8MM variants; dav1d `mc`, `mc_dotprod`, and `mc16` | 8-bit and highbd X/Y/2D convolve have NEON/AVX2; arm64 8-bit single-prediction X now has a live I8MM tier for resident width-multiple-of-8 blocks, including 4-tap filters via zeroed end taps. The 8-bit compound/joint-convolve copy, X-only, Y-only, and filtered 2D branches have arm64 NEON kernels for resident width-multiple-of-8 and resident width-4 CONV_BUF blocks, with a measured DOTPROD tier for resident width-multiple-of-8 X-only. That resident compound X-only surface also has a direct-tested I8MM `usmmla` tier for width-multiple-of-8 blocks; DOTPROD stays first on Apple M4 because it is faster. 8-bit clamped X/Y/2D edge blocks now split exact pure-Go clamped strips from resident SIMD rectangles on arm64 NEON and amd64 AVX2, including caller-scratch dispatch for 2D. Scaled compound, highbd compound, single-prediction I8MM Y/2D, and the remaining DOTPROD/I8MM compound variants remain uncovered. | Baseline edge-convolve coverage is now materially better for the active WebRTC encoder profile and closer across arm64/amd64. Max-tier coverage is still not equivalent. Continue DOTPROD/I8MM convolve only with source-shaped ports and paired CPU-feature benchmark proof. |
 | Intra, CFL, blend, wedge, palette | Intra, CFL, blend, wedge, palette-related SIMD | Intra predictors, CFL, blend and min/max have NEON/AVX2 coverage; wedge/palette are feature-dependent | Low unless these paths become hot in the encoder mode set. |
 | Loop filter, CDEF, restoration, superres, film grain | Broad NEON and highbd variants | goav1 has NEON/AVX2 coverage for these postfilter/decoder-style kernels | Mostly covered for current profile. Loopfilter still appears, so optimize only with a focused profile. |
 | Temporal filtering, pic analysis, k-means, mem | SVT has NEON files for these encoder pipeline helpers | Not part of the current low-delay goav1 encode path | Do not chase for this benchmark until the feature exists and profiles hot. |
@@ -165,6 +167,15 @@ parallelism level and still consumes less observed CPU parallelism than
   moved from a `1185 ns/op` median to `275.2 ns/op`, and
   `BenchmarkConvolveY8_4tap_32` moved from `1171 ns/op` to `247.4 ns/op`, all
   zero allocations.
+- arm64 8-bit single-prediction X convolve now has an I8MM tier matching SVT's
+  `svt_av1_convolve_x_sr_neon_i8mm` 8-tap output branch: it permutes with
+  `svt_kMatMul8PermuteTbl`, multiplies f1..f7 through `usmmla`, subtracts tap
+  0 separately, adds the single-prediction horizontal round shim, and finishes
+  with signed saturating rounded narrow to 8-bit pixels. On Apple M4 Max,
+  `BenchmarkConvolveX8_32` dispatch reports `98.01-99.83 ns/op`, direct I8MM
+  reports `99.48-100.8 ns/op`, and direct NEON reports `260.9-262.6 ns/op`,
+  all zero allocations. Width>=8 4-tap X filters ride the same I8MM body via
+  zeroed taps, measuring `98.69-100.1 ns/op`.
 - arm64 8-bit compound copy-to-CONV_BUF now mirrors SVT's
   `svt_av1_jnt_convolve_2d_copy_neon` surface for resident width-multiple-of-8
   blocks. `BenchmarkCompoundConvBufCopy8_32` moved from a `381.3 ns/op` median

@@ -28,13 +28,30 @@ type compoundX8I8MMCtx struct {
 //go:noescape
 func compoundX8I8MMAsm(ctx *compoundX8I8MMCtx)
 
+// convolveX8I8MMCtx carries the resident lowbd single-prediction X I8MM kernel
+// arguments. Field offsets are mirrored by convolve_i8mm_arm64.s.
+type convolveX8I8MMCtx struct {
+	dst     *byte
+	ref     *byte
+	filter  *byte
+	permute *byte
+	dstStr  uintptr
+	refStr  uintptr
+	width   uintptr
+	height  uintptr
+	f0      uintptr
+}
+
+//go:noescape
+func convolveX8I8MMAsm(ctx *convolveX8I8MMCtx)
+
 // SVT ASM_NEON_I8MM/convolve_neon_i8mm.c: svt_kMatMul8PermuteTbl.
-var compoundX8I8MMPermute = [32]byte{
+var convolveX8I8MMPermute = [32]byte{
 	1, 2, 3, 4, 5, 6, 7, 8, 3, 4, 5, 6, 7, 8, 9, 10,
 	5, 6, 7, 8, 9, 10, 11, 12, 7, 8, 9, 10, 11, 12, 13, 14,
 }
 
-func compoundX8I8MMFilter(kernel [filterTaps]int16) (filter [16]byte, f0 uint8, ok bool) {
+func convolveX8I8MMFilter(kernel [filterTaps]int16) (filter [16]byte, f0 uint8, ok bool) {
 	for i := range kernel {
 		if kernel[i]%2 != 0 {
 			return [16]byte{}, 0, false
@@ -66,7 +83,7 @@ func predictInterCompoundRef8ToConvBufXI8MM(out []uint16, ref frame.Plane, refX 
 		predictInterCompoundRef8ToConvBufXDotProd(out, ref, refX, refY, width, height, kernel, roundOffset)
 		return
 	}
-	filter, f0, ok := compoundX8I8MMFilter(kernel)
+	filter, f0, ok := convolveX8I8MMFilter(kernel)
 	if !ok {
 		predictInterCompoundRef8ToConvBufXDotProd(out, ref, refX, refY, width, height, kernel, roundOffset)
 		return
@@ -76,7 +93,7 @@ func predictInterCompoundRef8ToConvBufXI8MM(out []uint16, ref frame.Plane, refX 
 		dst:       &out[0],
 		ref:       &ref.Pix[refY*ref.Stride+refX-fo],
 		filter:    &filter[0],
-		permute:   &compoundX8I8MMPermute[0],
+		permute:   &convolveX8I8MMPermute[0],
 		refStr:    uintptr(ref.Stride),
 		width:     uintptr(width),
 		height:    uintptr(height),
@@ -84,4 +101,29 @@ func predictInterCompoundRef8ToConvBufXI8MM(out []uint16, ref frame.Plane, refX 
 		f0:        uintptr(f0),
 	}
 	compoundX8I8MMAsm(&ctx)
+}
+
+func convolveX8I8MM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+	if !cpu.Detected.I8MM || width < 8 || width%8 != 0 {
+		convolveX8NEON(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+		return
+	}
+	filter, f0, ok := convolveX8I8MMFilter(kernel)
+	if !ok {
+		convolveX8NEON(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+		return
+	}
+	fo := filterTaps/2 - 1
+	ctx := convolveX8I8MMCtx{
+		dst:     &dst.Pix[dstY*dst.Stride+dstX],
+		ref:     &ref.Pix[refY*ref.Stride+refX-fo],
+		filter:  &filter[0],
+		permute: &convolveX8I8MMPermute[0],
+		dstStr:  uintptr(dst.Stride),
+		refStr:  uintptr(ref.Stride),
+		width:   uintptr(width),
+		height:  uintptr(height),
+		f0:      uintptr(f0),
+	}
+	convolveX8I8MMAsm(&ctx)
 }
