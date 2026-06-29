@@ -274,6 +274,9 @@ type decoderResult struct {
 	inProcess bool
 	// startup is the measured fixed process-startup baseline (0 for goav1).
 	startup time.Duration
+	// startupSamples records every measured startup probe for publishable corpus
+	// reports. The tiny cross-bench report does not populate it.
+	startupSamples corpusDurationSamples
 	// totalRaw is the summed best wall-clock across all vectors (raw, includes
 	// per-invocation startup for external decoders).
 	totalRaw time.Duration
@@ -282,6 +285,9 @@ type decoderResult struct {
 	// perVector records best raw time per vector path, used for the detail
 	// table.
 	perVector map[string]time.Duration
+	// perVectorSamples records every measured corpus run for the publish JSON
+	// sidecar. It is intentionally optional for non-publish benchmark paths.
+	perVectorSamples map[string]corpusDurationSamples
 }
 
 // TestCrossDecoderThroughput is the gated cross-decoder performance benchmark.

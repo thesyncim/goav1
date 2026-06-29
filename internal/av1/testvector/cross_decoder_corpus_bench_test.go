@@ -1338,13 +1338,20 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 			totalRaw:    30 * time.Millisecond,
 			totalFrames: 3,
 			perVector:   map[string]time.Duration{ivfPath: 30 * time.Millisecond},
+			perVectorSamples: map[string]corpusDurationSamples{
+				ivfPath: summarizeCorpusDurations([]time.Duration{40 * time.Millisecond, 30 * time.Millisecond, 35 * time.Millisecond}),
+			},
 		},
 		{
-			name:        "dav1d",
-			startup:     time.Millisecond,
-			totalRaw:    15 * time.Millisecond,
-			totalFrames: 3,
-			perVector:   map[string]time.Duration{ivfPath: 15 * time.Millisecond},
+			name:           "dav1d",
+			startup:        time.Millisecond,
+			startupSamples: summarizeCorpusDurations([]time.Duration{2 * time.Millisecond, time.Millisecond, 3 * time.Millisecond}),
+			totalRaw:       15 * time.Millisecond,
+			totalFrames:    3,
+			perVector:      map[string]time.Duration{ivfPath: 15 * time.Millisecond},
+			perVectorSamples: map[string]corpusDurationSamples{
+				ivfPath: summarizeCorpusDurations([]time.Duration{16 * time.Millisecond, 15 * time.Millisecond, 18 * time.Millisecond}),
+			},
 		},
 	}
 	timers := []corpusTimingDecoder{
@@ -1380,10 +1387,14 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 	if len(report.Tools) != 2 || !report.Tools[0].InProcess || report.Tools[1].SHA256 == "" {
 		t.Fatalf("tools=%+v", report.Tools)
 	}
-	if len(report.Decoders) != 2 || report.Decoders[1].AdjustedMS != 14 || report.Decoders[1].VsGoAV1Raw != 2 {
+	if len(report.Decoders) != 2 || report.Decoders[1].AdjustedMS != 14 || report.Decoders[1].VsGoAV1Raw != 2 ||
+		report.Decoders[1].StartupMedianMS != 2 || report.Decoders[1].StartupIQRMS != 2 ||
+		len(report.Decoders[1].StartupSamplesMS) != 3 {
 		t.Fatalf("decoders=%+v", report.Decoders)
 	}
-	if len(report.Decoders[1].PerClip) != 1 || report.Decoders[1].PerClip[0].AdjustedMS != 14 {
+	if len(report.Decoders[1].PerClip) != 1 || report.Decoders[1].PerClip[0].AdjustedMS != 14 ||
+		report.Decoders[1].PerClip[0].MedianMS != 16 || report.Decoders[1].PerClip[0].IQRMS != 3 ||
+		len(report.Decoders[1].PerClip[0].SamplesMS) != 3 {
 		t.Fatalf("per-clip=%+v", report.Decoders[1].PerClip)
 	}
 }
@@ -2019,24 +2030,38 @@ type corpusPublishReportClip struct {
 }
 
 type corpusPublishReportDecoder struct {
-	Name        string                          `json:"name"`
-	InProcess   bool                            `json:"in_process,omitempty"`
-	Frames      int                             `json:"frames"`
-	RawMS       float64                         `json:"raw_ms"`
-	RawFPS      float64                         `json:"raw_fps"`
-	StartupMS   float64                         `json:"startup_ms,omitempty"`
-	AdjustedMS  float64                         `json:"adjusted_ms,omitempty"`
-	AdjustedFPS float64                         `json:"adjusted_fps,omitempty"`
-	VsGoAV1Raw  float64                         `json:"vs_goav1_raw,omitempty"`
-	PerClip     []corpusPublishReportClipTiming `json:"per_clip"`
+	Name             string                          `json:"name"`
+	InProcess        bool                            `json:"in_process,omitempty"`
+	Frames           int                             `json:"frames"`
+	RawMS            float64                         `json:"raw_ms"`
+	RawFPS           float64                         `json:"raw_fps"`
+	StartupMS        float64                         `json:"startup_ms,omitempty"`
+	StartupSamplesMS []float64                       `json:"startup_samples_ms,omitempty"`
+	StartupMedianMS  float64                         `json:"startup_median_ms,omitempty"`
+	StartupIQRMS     float64                         `json:"startup_iqr_ms,omitempty"`
+	AdjustedMS       float64                         `json:"adjusted_ms,omitempty"`
+	AdjustedFPS      float64                         `json:"adjusted_fps,omitempty"`
+	VsGoAV1Raw       float64                         `json:"vs_goav1_raw,omitempty"`
+	PerClip          []corpusPublishReportClipTiming `json:"per_clip"`
 }
 
 type corpusPublishReportClipTiming struct {
-	Clip        string  `json:"clip"`
-	RawMS       float64 `json:"raw_ms"`
-	AdjustedMS  float64 `json:"adjusted_ms,omitempty"`
-	FPS         float64 `json:"fps"`
-	AdjustedFPS float64 `json:"adjusted_fps,omitempty"`
+	Clip        string    `json:"clip"`
+	RawMS       float64   `json:"raw_ms"`
+	SamplesMS   []float64 `json:"samples_ms,omitempty"`
+	MedianMS    float64   `json:"median_ms,omitempty"`
+	IQRMS       float64   `json:"iqr_ms,omitempty"`
+	AdjustedMS  float64   `json:"adjusted_ms,omitempty"`
+	FPS         float64   `json:"fps"`
+	AdjustedFPS float64   `json:"adjusted_fps,omitempty"`
+}
+
+type corpusDurationSamples struct {
+	Runs   []time.Duration
+	Min    time.Duration
+	Median time.Duration
+	Max    time.Duration
+	IQR    time.Duration
 }
 
 type corpusTimingJob struct {
@@ -2058,6 +2083,38 @@ func corpusInterleavedTimingJobs(clipCount, decoderCount int) []corpusTimingJob 
 		}
 	}
 	return jobs
+}
+
+func measureCorpusDurations(warmup int, runs int, fn func() error) (corpusDurationSamples, error) {
+	for i := 0; i < warmup; i++ {
+		if err := fn(); err != nil {
+			return corpusDurationSamples{}, err
+		}
+	}
+	samples := make([]time.Duration, 0, runs)
+	for i := 0; i < runs; i++ {
+		start := time.Now()
+		if err := fn(); err != nil {
+			return corpusDurationSamples{}, err
+		}
+		samples = append(samples, time.Since(start))
+	}
+	return summarizeCorpusDurations(samples), nil
+}
+
+func summarizeCorpusDurations(samples []time.Duration) corpusDurationSamples {
+	if len(samples) == 0 {
+		return corpusDurationSamples{}
+	}
+	ordered := append([]time.Duration(nil), samples...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+	return corpusDurationSamples{
+		Runs:   append([]time.Duration(nil), samples...),
+		Min:    ordered[0],
+		Median: ordered[len(ordered)/2],
+		Max:    ordered[len(ordered)-1],
+		IQR:    ordered[(3*len(ordered))/4] - ordered[len(ordered)/4],
+	}
 }
 
 func corpusRequiredExternalDecoderNames(decoders []externalDecoder, publish bool, raw string) (map[string]bool, error) {
@@ -2226,9 +2283,10 @@ func TestCrossDecoderCorpus(t *testing.T) {
 	// clip-rotated order so thermal/load drift cannot always favor the same
 	// decoder column.
 	results := []decoderResult{{
-		name:      "goav1",
-		inProcess: true,
-		perVector: map[string]time.Duration{},
+		name:             "goav1",
+		inProcess:        true,
+		perVector:        map[string]time.Duration{},
+		perVectorSamples: map[string]corpusDurationSamples{},
 	}}
 	timers := []corpusTimingDecoder{{
 		name:       "goav1",
@@ -2243,15 +2301,22 @@ func TestCrossDecoderCorpus(t *testing.T) {
 		bin := resolved.bin
 		t.Logf("cross-corpus: %s resolved to %s", dec.name, bin)
 
-		startup, err := minDuration(1, crossBenchRuns, func() error {
+		startupSamples, err := measureCorpusDurations(1, crossBenchRuns, func() error {
 			_ = runExternal(bin, dec.startupArgs(bin))
 			return nil
 		})
+		startup := startupSamples.Min
 		if err != nil {
 			startup = 0
 		}
 
-		results = append(results, decoderResult{name: dec.name, startup: startup, perVector: map[string]time.Duration{}})
+		results = append(results, decoderResult{
+			name:             dec.name,
+			startup:          startup,
+			startupSamples:   startupSamples,
+			perVector:        map[string]time.Duration{},
+			perVectorSamples: map[string]corpusDurationSamples{},
+		})
 		timers = append(timers, corpusTimingDecoder{
 			name:       dec.name,
 			external:   dec,
@@ -2270,10 +2335,10 @@ func TestCrossDecoderCorpus(t *testing.T) {
 		}
 		clip := clips[job.clipIndex]
 		timer := timers[job.decoderIndex]
-		var best time.Duration
+		var samples corpusDurationSamples
 		var err error
 		if timer.inProcess {
-			best, err = minDuration(1, crossBenchRuns, func() error {
+			samples, err = measureCorpusDurations(1, crossBenchRuns, func() error {
 				result, err := decodeCorpusClipDiscard(clip.ivfData)
 				if err == nil && result.frames != clip.frames {
 					err = fmt.Errorf("decoded %d visible frames, want %d", result.frames, clip.frames)
@@ -2285,7 +2350,7 @@ func TestCrossDecoderCorpus(t *testing.T) {
 			}
 		} else {
 			dec := timer.external
-			best, err = minDuration(1, crossBenchRuns, func() error {
+			samples, err = measureCorpusDurations(1, crossBenchRuns, func() error {
 				return runExternal(timer.bin, dec.decodeArgs(timer.bin, clip.ivfPath))
 			})
 			if err != nil {
@@ -2298,8 +2363,9 @@ func TestCrossDecoderCorpus(t *testing.T) {
 			}
 		}
 		res := &results[timer.resultSlot]
-		res.perVector[clip.ivfPath] = best
-		res.totalRaw += best
+		res.perVector[clip.ivfPath] = samples.Min
+		res.perVectorSamples[clip.ivfPath] = samples
+		res.totalRaw += samples.Min
 		res.totalFrames += clip.frames
 	}
 
@@ -2351,7 +2417,7 @@ func writeCorpusPublishReport(path, dir string, manifest corpusPublishManifest, 
 		Timing: corpusPublishReportTiming{
 			Runs:                 crossBenchRuns,
 			WarmupRuns:           1,
-			Statistic:            "minimum wall-clock across measured runs",
+			Statistic:            "minimum wall-clock selected; JSON stores every measured sample plus median and IQR",
 			InProcessGoAV1:       true,
 			ExternalStartupModel: "raw includes subprocess startup; adjusted subtracts one measured startup baseline per clip",
 		},
@@ -2501,15 +2567,18 @@ func corpusPublishReportDecoders(clips []corpusClip, results []decoderResult) []
 			adjusted = 0
 		}
 		row := corpusPublishReportDecoder{
-			Name:        result.name,
-			InProcess:   result.inProcess,
-			Frames:      result.totalFrames,
-			RawMS:       durationMilliseconds(result.totalRaw),
-			RawFPS:      fpsOf(result.totalFrames, result.totalRaw),
-			StartupMS:   durationMilliseconds(result.startup),
-			AdjustedMS:  durationMilliseconds(adjusted),
-			AdjustedFPS: fpsOf(result.totalFrames, adjusted),
-			PerClip:     corpusPublishReportPerClipTimings(clips, result),
+			Name:             result.name,
+			InProcess:        result.inProcess,
+			Frames:           result.totalFrames,
+			RawMS:            durationMilliseconds(result.totalRaw),
+			RawFPS:           fpsOf(result.totalFrames, result.totalRaw),
+			StartupMS:        durationMilliseconds(result.startup),
+			StartupSamplesMS: durationListMilliseconds(result.startupSamples.Runs),
+			StartupMedianMS:  durationMilliseconds(result.startupSamples.Median),
+			StartupIQRMS:     durationMilliseconds(result.startupSamples.IQR),
+			AdjustedMS:       durationMilliseconds(adjusted),
+			AdjustedFPS:      fpsOf(result.totalFrames, adjusted),
+			PerClip:          corpusPublishReportPerClipTimings(clips, result),
 		}
 		if baseRaw > 0 && result.totalRaw > 0 {
 			row.VsGoAV1Raw = float64(baseRaw) / float64(result.totalRaw)
@@ -2523,6 +2592,7 @@ func corpusPublishReportPerClipTimings(clips []corpusClip, result decoderResult)
 	out := make([]corpusPublishReportClipTiming, 0, len(clips))
 	for _, clip := range clips {
 		raw := result.perVector[clip.ivfPath]
+		samples := result.perVectorSamples[clip.ivfPath]
 		adjusted := raw
 		if !result.inProcess {
 			adjusted = raw - result.startup
@@ -2533,6 +2603,9 @@ func corpusPublishReportPerClipTimings(clips []corpusClip, result decoderResult)
 		out = append(out, corpusPublishReportClipTiming{
 			Clip:        clip.name,
 			RawMS:       durationMilliseconds(raw),
+			SamplesMS:   durationListMilliseconds(samples.Runs),
+			MedianMS:    durationMilliseconds(samples.Median),
+			IQRMS:       durationMilliseconds(samples.IQR),
 			AdjustedMS:  durationMilliseconds(adjusted),
 			FPS:         fpsOf(clip.frames, raw),
 			AdjustedFPS: fpsOf(clip.frames, adjusted),
@@ -2543,6 +2616,17 @@ func corpusPublishReportPerClipTimings(clips []corpusClip, result decoderResult)
 
 func durationMilliseconds(d time.Duration) float64 {
 	return float64(d.Nanoseconds()) / 1e6
+}
+
+func durationListMilliseconds(in []time.Duration) []float64 {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]float64, 0, len(in))
+	for _, d := range in {
+		out = append(out, durationMilliseconds(d))
+	}
+	return out
 }
 
 // printCorpusReport renders the per-clip and aggregate throughput tables.
