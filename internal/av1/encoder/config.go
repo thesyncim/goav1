@@ -301,8 +301,19 @@ func WebRTCScalabilityModeCount() int {
 	return len(webRTCScalabilityModes)
 }
 
+func ScalabilityModeCount() int {
+	return int(scalabilityModeCount)
+}
+
 func AppendWebRTCScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
 	return append(dst, webRTCScalabilityModes[:]...)
+}
+
+func AppendScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
+	for mode := ScalabilityMode(0); mode < scalabilityModeCount; mode++ {
+		dst = append(dst, mode)
+	}
+	return dst
 }
 
 // ValidateWebRTCActiveScalabilityModes validates the active scalabilityMode

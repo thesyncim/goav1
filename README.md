@@ -260,6 +260,10 @@ There are three public encoder surfaces:
   `ValidateEncoderWebRTCActiveScalabilityModes` preflights the W3C
   setParameters rule that a sender cannot mix a single-SSRC `S*`
   scalability mode with multiple active encodings;
+  `EncoderWebRTCScalabilityModes()` enumerates the pinned libwebrtc/W3C
+  browser catalogue, while `EncoderScalabilityModes()` enumerates every
+  explicit encoder mode accepted by config, including implemented non-catalog
+  key-shift variants;
   `EncoderWebRTCValidateLayerRefreshRequests` validates AV1 RTCP LRR feedback
   against the configured temporal/spatial grid, while
   `RTCEncoder.RTCPRequiresKeyFrame`, `WebRTCEncoder.RTCPRequiresKeyFrame`,
@@ -540,7 +544,10 @@ output, native 10/12-bit I400/I420/I422/I444 RTC output, as well as all-mode
 `SetConfig` transitions that change framerate, bitrate, rate control, content
 hint, scalability mode, and native high-bit-depth non-4:2:0 color. The browser
 portion live-tests every
-`EncoderWebRTCScalabilityModes()` entry through the supported delivery shape:
+`EncoderWebRTCScalabilityModes()` entry through the supported delivery shape;
+`EncoderScalabilityModes()` enumerates every explicit encoder config mode,
+including implemented non-catalog key-shift variants. Browser catalogue values
+continue to come from `EncoderWebRTCScalabilityModes()`:
 direct L1, exact-base forwarding for shared-reference L2/L3 SVC, and exact-top
 forwarding for S2/S3 simulcast. It also repeats representative direct-RTP
 browser playback sessions for L1 temporal layering, shared-reference SVC

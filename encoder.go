@@ -333,6 +333,21 @@ func ParseEncoderScalabilityMode(mode string) (EncoderScalabilityMode, bool) {
 	return internalencoder.ParseScalabilityMode(mode)
 }
 
+// EncoderScalabilityModes returns every explicit encoder scalabilityMode value
+// accepted by encoder config, including implemented key-shift variants that
+// are not in the pinned WebRTC catalogue. Use EncoderWebRTCScalabilityModes
+// when validating browser setParameters()/libwebrtc catalogue values.
+func EncoderScalabilityModes() []EncoderScalabilityMode {
+	out := make([]EncoderScalabilityMode, 0, internalencoder.ScalabilityModeCount())
+	return internalencoder.AppendScalabilityModes(out)
+}
+
+// AppendEncoderScalabilityModes appends every explicit encoder scalabilityMode
+// value accepted by encoder config to dst and returns the extended slice.
+func AppendEncoderScalabilityModes(dst []EncoderScalabilityMode) []EncoderScalabilityMode {
+	return internalencoder.AppendScalabilityModes(dst)
+}
+
 // EncoderWebRTCScalabilityModes returns the pinned-libwebrtc WebRTC SVC
 // scalabilityMode values supported by the WebRTC encoder/control surfaces.
 func EncoderWebRTCScalabilityModes() []EncoderScalabilityMode {
