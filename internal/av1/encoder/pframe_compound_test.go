@@ -5,9 +5,38 @@ import (
 
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
+
+func TestRealtimeSADPerBitMatchesLibaomMELUT(t *testing.T) {
+	for _, tc := range []struct {
+		qIndex   uint8
+		bitDepth uint8
+		scale    float64
+	}{
+		{qIndex: 37, bitDepth: 8, scale: 4},
+		{qIndex: 160, bitDepth: 8, scale: 4},
+		{qIndex: 255, bitDepth: 8, scale: 4},
+		{qIndex: 160, bitDepth: 10, scale: 16},
+		{qIndex: 160, bitDepth: 12, scale: 64},
+	} {
+		q, err := quantize.PlaneQuantizer(parser.QuantizationParams{}, tc.qIndex, tc.bitDepth, quantize.PlaneY)
+		if err != nil {
+			t.Fatalf("PlaneQuantizer(q=%d bd=%d): %v", tc.qIndex, tc.bitDepth, err)
+		}
+		got := realtimeSADPerBit(q, tc.bitDepth)
+		want := int(0.0418*(float64(q.AC)/tc.scale) + 2.4107)
+		if got != want {
+			t.Fatalf("q=%d bd=%d sadPerBit=%d want %d", tc.qIndex, tc.bitDepth, got, want)
+		}
+		dcBased := int(0.0418*(float64(q.DC)/tc.scale) + 2.4107)
+		if q.DC != q.AC && dcBased != want && got == dcBased {
+			t.Fatalf("q=%d bd=%d used DC quantizer: got %d want AC-based %d", tc.qIndex, tc.bitDepth, got, want)
+		}
+	}
+}
 
 func TestRealtimeInterTX16TreeMatchesLibaomNonRDCap(t *testing.T) {
 	for _, tc := range []struct {
@@ -569,7 +598,7 @@ func TestEncodePBlockCompoundLastGolden8x8(t *testing.T) {
 	}
 	dcq := float64(st.yQuant.DC)
 	st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))
-	st.sadPerBit = int(0.0418*(dcq/4) + 2.4107)
+	st.sadPerBit = realtimeSADPerBit(st.yQuant, 8)
 	st.grid8Cols = 2
 	st.mv8Grid = make([]motion.Vector, 4)
 	st.sad8Grid = make([]uint32, 4)
@@ -668,7 +697,7 @@ func TestEncodePBlockGoldenSingleLarge(t *testing.T) {
 			}
 			dcq := float64(st.yQuant.DC)
 			st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))
-			st.sadPerBit = int(0.0418*(dcq/4) + 2.4107)
+			st.sadPerBit = realtimeSADPerBit(st.yQuant, 8)
 			switch {
 			case w == 16 && h == 16:
 				st.grid16Cols = 1

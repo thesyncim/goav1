@@ -1478,9 +1478,9 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	// 512-units-per-bit and distortion shifted by RDDIV_BITS.
 	dcq := float64(st.yQuant.DC)
 	st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))
-	// av1's sad-per-bit lut formula: full-pel motion search prices one bit
-	// of side information at this many SAD units (q is the dc step over 4).
-	st.sadPerBit = int(0.0418*(dcq/4) + 2.4107)
+	// av1's sad-per-bit LUT formula: full-pel motion search prices one bit
+	// of side information at this many SAD units.
+	st.sadPerBit = realtimeSADPerBit(st.yQuant, color.BitDepth)
 	scaledReference := ref.Width != src.Width || ref.Height != src.Height
 
 	scratch := &pc.scratch
@@ -3914,6 +3914,25 @@ func (st *lossyEncodeState) interTXCDFAndSymbol(size tile.TransformSize, typ tra
 		return nil, 0, false
 	}
 	return cdf, symbol, true
+}
+
+// realtimeSADPerBit mirrors libaom's ME LUT setup:
+//
+//	av1/encoder/rd.c init_me_luts_bd()
+//	av1/encoder/ratectrl.c av1_convert_qindex_to_q()
+//
+// Motion-estimation pricing uses the AC quantizer converted back to the old Q
+// scale; the DC step is only used by the RD multiplier path.
+func realtimeSADPerBit(q quantize.Quantizer, bitDepth uint8) int {
+	scale := 4.0
+	switch bitDepth {
+	case 10:
+		scale = 16.0
+	case 12:
+		scale = 64.0
+	}
+	oldQ := float64(q.AC) / scale
+	return int(0.0418*oldQ + 2.4107)
 }
 
 func (st *lossyEncodeState) inter8x8TXCDFAndSymbol(typ transform.Type) (*entropy.CDF, int, bool) {
