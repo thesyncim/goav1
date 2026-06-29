@@ -665,6 +665,8 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		return errors.New("publish requires a clean tracked git worktree")
 	}
 	required := []string{
+		"bitrates",
+		"encoders",
 		"workdir",
 		"csv",
 		"metadata-json",
@@ -676,7 +678,12 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"summary-csv",
 		"require-summary",
 		"gomaxprocs",
+		"fps",
 		"layers",
+		"tiles",
+		"golden",
+		"keyint",
+		"anchor",
 		"timing-mode",
 		"run-order",
 		"runs",
@@ -1798,7 +1805,7 @@ func fairnessNotes(cfg benchConfig) []string {
 		"goav1 metadata records detected simd_tier and simd_features; compare those against SVT's recorded svt_asm setting instead of assuming --asm max and goav1 cover the same kernels.",
 	}
 	if cfg.publish {
-		notes = append(notes, "Publish mode required a clean tracked git worktree, explicit artifact paths, manifest-backed corpus, exact raw input sizes, explicit concurrency controls, required encoders, required metrics, and required BD-rate summary rows.")
+		notes = append(notes, "Publish mode required a clean tracked git worktree, explicit artifact paths, manifest-backed corpus, exact raw input sizes, explicit encode controls, explicit concurrency controls, required encoders, required metrics, and required BD-rate summary rows.")
 		if encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1") {
 			notes = append(notes, "Publish mode requires -layers 1 when aomenc or svt-av1 baselines are selected, because equivalent external temporal-layer settings are not yet implemented by qualitybench.")
 		}

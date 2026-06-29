@@ -42,10 +42,10 @@ Example:
 
 ```sh
 go run ./cmd/qualitybench \
-  -manifest corpus/clips.csv -fps 60 \
+  -manifest corpus/clips.csv \
   -bitrates 3000000,6000000,9000000,12000000 \
   -encoders goav1,aomenc,svt-av1 \
-  -anchor aomenc -layers 1 -keyint 60 \
+  -anchor aomenc -fps 60 -layers 1 -tiles 0 -golden 0 -keyint 60 \
   -require-corpus -min-clips 6 \
   -require-encoders all \
   -require-metrics xpsnr,vmaf \
@@ -73,10 +73,11 @@ scene as `encbench`. That path is for smoke testing the harness, not for quality
 claims.
 
 Use `-publish` for rows that will be copied into performance or quality tables.
-Publish mode requires a clean tracked git worktree, explicit `-workdir`, `-csv`,
-`-metadata-json`, `-manifest`, `-require-corpus`, `-min-clips`,
-`-require-encoders all`, `-require-metrics`, `-summary-csv`,
-`-require-summary`, `-gomaxprocs`, `-timing-mode e2e`, `-run-order`,
+Publish mode requires a clean tracked git worktree, explicit `-bitrates`,
+`-encoders`, `-workdir`, `-csv`, `-metadata-json`, `-manifest`,
+`-require-corpus`, `-min-clips`, `-require-encoders all`, `-require-metrics`,
+`-summary-csv`, `-require-summary`, `-gomaxprocs`, `-fps`, `-layers`,
+`-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`, `-run-order`,
 `-runs >= 3`, and `-warmup-runs >= 1`. It also requires explicit libaom
 concurrency settings when `aomenc` is selected, explicit SVT parallelism and
 assembly settings when `svt-av1` is selected, and exact raw I420 input byte
