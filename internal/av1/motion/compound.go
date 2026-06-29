@@ -775,7 +775,44 @@ func PredictScaledCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref fram
 	if !planeRegionFits(ref, bytesPerSample, 0, 0, ref.Width, ref.Height) {
 		return ErrInvalidMotion
 	}
+	if xStep == ScaleSubpelScale && yStep == ScaleSubpelScale &&
+		predictScaledCompoundRefToConvBufIdentityStep(out, ref, bytesPerSample, bitDepth, width, height, startX, startY, xTable, yTable, scratch) {
+		return nil
+	}
+	predictScaledCompoundRefToConvBufGeneric(out, ref, bytesPerSample, bitDepth, width, height,
+		startX, xStep, startY, yStep, xTable, yTable, imH, scratch)
+	return nil
+}
 
+func predictScaledCompoundRefToConvBufIdentityStep(out []uint16, ref frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int,
+	startX int64, startY int64, xTable SubpelKernelTable, yTable SubpelKernelTable, scratch *ScaledConvolveScratch) bool {
+	refX, refY, subX, subY, ok := scaledIdentityStepOrigin(startX, startY)
+	if !ok {
+		return false
+	}
+	xKernel := xTable[subX]
+	yKernel := yTable[subY]
+	round0 := compoundRound0(bitDepth)
+	offsetBits := int(bitDepth) + 2*filterBits - round0
+	roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
+	if bytesPerSample == 1 {
+		predictInterCompoundRef8ToConvBuf(out, ref, refX, refY, width, height, subX, subY, xKernel, yKernel, round0, offsetBits, roundOffset, nil)
+		return true
+	}
+	if subX != 0 && subY != 0 && scratch == nil {
+		return false
+	}
+	var compoundScratch *CompoundConvolveScratch
+	if scratch != nil {
+		compoundScratch = &scratch.compound
+	}
+	predictInterCompoundRefHighBDToConvBuf(out, ref, int(bitDepth), refX, refY, width, height, subX, subY, xKernel, yKernel, round0, offsetBits, roundOffset, compoundScratch)
+	return true
+}
+
+func predictScaledCompoundRefToConvBufGeneric(out []uint16, ref frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int,
+	startX int64, xStep int64, startY int64, yStep int64,
+	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int, scratch *ScaledConvolveScratch) {
 	const imStride = maxBlockSize
 	im, pooled := scaledHighBDIMForScratch(scratch)
 	foX := filterTaps/2 - 1
@@ -821,7 +858,6 @@ func PredictScaledCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref fram
 		}
 	}
 	putScaledHighBDIM(im, pooled)
-	return nil
 }
 
 // PredictWarpedCompoundToConvBuf fills buf with the un-rounded 16-bit CONV_BUF

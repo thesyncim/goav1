@@ -191,6 +191,102 @@ func BenchmarkCompoundConvBuf2D8_4x16(b *testing.B) {
 	})
 }
 
+func BenchmarkScaledCompoundConvBufIdentity8_32(b *testing.B) {
+	_, ref := benchPlanes(32, 8)
+	var buf CompoundConvBuf
+	var scratch ScaledConvolveScratch
+	xTable, err := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	if err != nil {
+		b.Fatal(err)
+	}
+	yTable, err := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	if err != nil {
+		b.Fatal(err)
+	}
+	startX := int64(filterTaps)*ScaleSubpelScale + int64(3<<ScaleExtraBits)
+	startY := int64(filterTaps)*ScaleSubpelScale + int64(5<<ScaleExtraBits)
+	runConvolveBench(b, 32, 32, func() {
+		if err := PredictScaledCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, 32, 32, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable, &scratch); err != nil {
+			b.Fatal(err)
+		}
+	})
+}
+
+func BenchmarkScaledCompoundConvBufIdentity8GenericDirect_32(b *testing.B) {
+	_, ref := benchPlanes(32, 8)
+	var buf CompoundConvBuf
+	var scratch ScaledConvolveScratch
+	out, ok := compoundConvBufView(&buf, 32, 32)
+	if !ok {
+		b.Fatal("invalid convbuf")
+	}
+	xTable, err := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	if err != nil {
+		b.Fatal(err)
+	}
+	yTable, err := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	if err != nil {
+		b.Fatal(err)
+	}
+	startX := int64(filterTaps)*ScaleSubpelScale + int64(3<<ScaleExtraBits)
+	startY := int64(filterTaps)*ScaleSubpelScale + int64(5<<ScaleExtraBits)
+	imH, ok := scaledIMHeight(32, startY, ScaleSubpelScale)
+	if !ok {
+		b.Fatal("invalid intermediate height")
+	}
+	runConvolveBench(b, 32, 32, func() {
+		predictScaledCompoundRefToConvBufGeneric(out, ref, 1, 8, 32, 32, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable, imH, &scratch)
+	})
+}
+
+func BenchmarkScaledCompoundConvBufIdentityHighBD_32(b *testing.B) {
+	_, ref := benchPlanes(32, 10)
+	var buf CompoundConvBuf
+	var scratch ScaledConvolveScratch
+	xTable, err := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	if err != nil {
+		b.Fatal(err)
+	}
+	yTable, err := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	if err != nil {
+		b.Fatal(err)
+	}
+	startX := int64(filterTaps)*ScaleSubpelScale + int64(3<<ScaleExtraBits)
+	startY := int64(filterTaps)*ScaleSubpelScale + int64(5<<ScaleExtraBits)
+	runConvolveBench(b, 32, 32, func() {
+		if err := PredictScaledCompoundRefToConvBufWithScratch(&buf, ref, 2, 10, 32, 32, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable, &scratch); err != nil {
+			b.Fatal(err)
+		}
+	})
+}
+
+func BenchmarkScaledCompoundConvBufIdentityHighBDGenericDirect_32(b *testing.B) {
+	_, ref := benchPlanes(32, 10)
+	var buf CompoundConvBuf
+	var scratch ScaledConvolveScratch
+	out, ok := compoundConvBufView(&buf, 32, 32)
+	if !ok {
+		b.Fatal("invalid convbuf")
+	}
+	xTable, err := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	if err != nil {
+		b.Fatal(err)
+	}
+	yTable, err := SubpelKernelTableFor(InterpEightTapRegular, 32)
+	if err != nil {
+		b.Fatal(err)
+	}
+	startX := int64(filterTaps)*ScaleSubpelScale + int64(3<<ScaleExtraBits)
+	startY := int64(filterTaps)*ScaleSubpelScale + int64(5<<ScaleExtraBits)
+	imH, ok := scaledIMHeight(32, startY, ScaleSubpelScale)
+	if !ok {
+		b.Fatal("invalid intermediate height")
+	}
+	runConvolveBench(b, 32, 32, func() {
+		predictScaledCompoundRefToConvBufGeneric(out, ref, 2, 10, 32, 32, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable, imH, &scratch)
+	})
+}
+
 func BenchmarkCompoundConvBufX8_32(b *testing.B) {
 	_, ref := benchPlanes(32, 8)
 	var buf CompoundConvBuf

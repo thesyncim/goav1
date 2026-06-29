@@ -11,8 +11,9 @@ type scaledIM [scaledIMMaxSamples]int16
 // interpolation. It keeps the large intermediate blocks out of hot call frames
 // on framework decode paths.
 type ScaledConvolveScratch struct {
-	im     scaledIM
-	highBD scaledHighBDIM
+	im       scaledIM
+	highBD   scaledHighBDIM
+	compound CompoundConvolveScratch
 }
 
 var scaledHighBDIMPool = sync.Pool{
