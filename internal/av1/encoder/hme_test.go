@@ -7,6 +7,67 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/motion"
 )
 
+func TestBuildQuarterPlaneMatchesPureGo(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		qw, qh    int
+		srcStride int
+		salt      int
+	}{
+		{name: "tiny scalar", qw: 7, qh: 5, srcStride: 37, salt: 3},
+		{name: "neon aligned", qw: 32, qh: 9, srcStride: 160, salt: 11},
+		{name: "neon with tail", qw: 31, qh: 7, srcStride: 133, salt: 23},
+		{name: "1080p row shape", qw: 480, qh: 8, srcStride: 1920, salt: 41},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := make([]byte, tc.srcStride*tc.qh*4)
+			for y := 0; y < tc.qh*4; y++ {
+				for x := 0; x < tc.qw*4; x++ {
+					src[y*tc.srcStride+x] = byte((x*29 + y*17 + x*y*tc.salt + 97) & 255)
+				}
+			}
+			got := make([]byte, tc.qw*tc.qh)
+			want := make([]byte, tc.qw*tc.qh)
+			buildQuarterPlane(got, src, tc.srcStride, tc.qw, tc.qh)
+			buildQuarterPlanePureGo(want, src, tc.srcStride, tc.qw, tc.qh)
+			for i := range got {
+				if got[i] != want[i] {
+					t.Fatalf("quarter[%d]=%d want %d", i, got[i], want[i])
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkBuildQuarterPlane1080p(b *testing.B) {
+	const w, h = 1920, 1080
+	const qw, qh = w / 4, h / 4
+	src := make([]byte, w*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			src[y*w+x] = byte((x*13 + y*31 + x*y*7 + 5) & 255)
+		}
+	}
+	b.Run("dispatch", func(b *testing.B) {
+		dst := make([]byte, qw*qh)
+		b.ReportAllocs()
+		b.SetBytes(int64(w * h))
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			buildQuarterPlane(dst, src, w, qw, qh)
+		}
+	})
+	b.Run("purego", func(b *testing.B) {
+		dst := make([]byte, qw*qh)
+		b.ReportAllocs()
+		b.SetBytes(int64(w * h))
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			buildQuarterPlanePureGo(dst, src, w, qw, qh)
+		}
+	})
+}
+
 func TestHMEQuarterMeshSearchMatchesLibaomReference(t *testing.T) {
 	const qw, qh = 37, 29
 	cols := (qw*4 + 31) / 32

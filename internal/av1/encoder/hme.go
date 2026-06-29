@@ -117,6 +117,10 @@ func (h *hmeState) prime(src SourceFrame420) {
 
 // buildQuarterPlane box-averages src 4:1 in both dimensions into dst.
 func buildQuarterPlane(dst []byte, src []byte, stride, qw, qh int) {
+	buildQuarterPlaneArch(dst, src, stride, qw, qh)
+}
+
+func buildQuarterPlanePureGo(dst []byte, src []byte, stride, qw, qh int) {
 	for qy := 0; qy < qh; qy++ {
 		base := qy * 4 * stride
 		drow := qy * qw
