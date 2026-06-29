@@ -76,7 +76,9 @@ type benchConfig struct {
 	goMaxProcs          int
 	aomThreads          int
 	aomRowMT            int
+	aomCPUUsed          int
 	svtLP               int
+	svtPreset           int
 	svtASM              string
 	runs                int
 	warmupRuns          int
@@ -262,7 +264,9 @@ type metadataConfig struct {
 	GoMaxProcs       int      `json:"gomaxprocs"`
 	AOMThreads       int      `json:"aom_threads"`
 	AOMRowMT         int      `json:"aom_row_mt"`
+	AOMCPUUsed       int      `json:"aom_cpu_used"`
 	SVTLP            int      `json:"svt_lp"`
+	SVTPreset        int      `json:"svt_preset"`
 	SVTASM           string   `json:"svt_asm,omitempty"`
 	TimingMode       string   `json:"timing_mode"`
 	RunOrder         string   `json:"run_order"`
@@ -576,7 +580,9 @@ func parseFlags() (benchConfig, error) {
 	flag.IntVar(&cfg.goMaxProcs, "gomaxprocs", 0, "set Go GOMAXPROCS for in-process goav1 encodes (0 = keep environment/runtime default)")
 	flag.IntVar(&cfg.aomThreads, "aom-threads", 4, "aomenc --threads value for libaom rows")
 	flag.IntVar(&cfg.aomRowMT, "aom-row-mt", 1, "aomenc --row-mt value for libaom rows (0 = off, 1 = on)")
+	flag.IntVar(&cfg.aomCPUUsed, "aom-cpu-used", 8, "aomenc realtime --cpu-used speed setting (5..12)")
 	flag.IntVar(&cfg.svtLP, "svt-lp", 0, "SVT --lp parallelism level, not a thread count (0 = SVT auto, valid range 0..6)")
+	flag.IntVar(&cfg.svtPreset, "svt-preset", 13, "SVT --preset speed setting (0..13; higher is faster)")
 	flag.StringVar(&cfg.svtASM, "svt-asm", "", "limit SVT --asm instruction set (empty = SVT default max; e.g. c,neon,neon_dotprod,neon_i8mm,sve,sve2)")
 	flag.IntVar(&cfg.runs, "runs", 1, "measured encode runs per encoder/bitrate tuple; the median wall-time run is reported")
 	flag.IntVar(&cfg.warmupRuns, "warmup-runs", 0, "unreported warmup encode runs per encoder/bitrate tuple")
@@ -662,6 +668,9 @@ func parseFlags() (benchConfig, error) {
 	if cfg.aomRowMT != 0 && cfg.aomRowMT != 1 {
 		return benchConfig{}, fmt.Errorf("invalid aomenc --row-mt value %d: valid values are 0 or 1", cfg.aomRowMT)
 	}
+	if cfg.aomCPUUsed < 5 || cfg.aomCPUUsed > 12 {
+		return benchConfig{}, fmt.Errorf("invalid aomenc realtime --cpu-used value %d: valid range is 5..12", cfg.aomCPUUsed)
+	}
 	if cfg.timingMode != timingModeCore && cfg.timingMode != timingModeEndToEnd {
 		return benchConfig{}, fmt.Errorf("invalid timing mode %q: valid values are core or e2e", cfg.timingMode)
 	}
@@ -671,6 +680,9 @@ func parseFlags() (benchConfig, error) {
 	}
 	if cfg.svtLP < 0 || cfg.svtLP > 6 {
 		return benchConfig{}, fmt.Errorf("invalid SVT --lp level %d: valid range is 0..6; --lp is a parallelism level, not a thread count", cfg.svtLP)
+	}
+	if cfg.svtPreset < 0 || cfg.svtPreset > 13 {
+		return benchConfig{}, fmt.Errorf("invalid SVT --preset value %d: valid range is 0..13", cfg.svtPreset)
 	}
 	if cfg.runs <= 0 {
 		return benchConfig{}, fmt.Errorf("invalid measured run count %d", cfg.runs)
@@ -776,6 +788,9 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		return errors.New("publish requires -layers 1 when aomenc or svt-av1 baselines are selected; equivalent external temporal-layer settings are not implemented")
 	}
 	if encoderSelected(cfg, "aomenc") {
+		if err := requireExplicitFlag(cfg, "aom-cpu-used"); err != nil {
+			return err
+		}
 		if err := requireExplicitFlag(cfg, "aom-threads"); err != nil {
 			return err
 		}
@@ -784,6 +799,9 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		}
 	}
 	if encoderSelected(cfg, "svt-av1") {
+		if err := requireExplicitFlag(cfg, "svt-preset"); err != nil {
+			return err
+		}
 		if err := requireExplicitFlag(cfg, "svt-lp"); err != nil {
 			return err
 		}
@@ -1928,7 +1946,9 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		GoMaxProcs:       cfg.goMaxProcs,
 		AOMThreads:       cfg.aomThreads,
 		AOMRowMT:         cfg.aomRowMT,
+		AOMCPUUsed:       cfg.aomCPUUsed,
 		SVTLP:            cfg.svtLP,
+		SVTPreset:        cfg.svtPreset,
 		SVTASM:           cfg.svtASM,
 		TimingMode:       cfg.timingMode,
 		RunOrder:         cfg.runOrder,
@@ -2027,7 +2047,8 @@ func fairnessNotes(cfg benchConfig) []string {
 		"qualitybench runs warmups and measured samples in deterministic sample passes across all encoder/bitrate tuples, records every measured encode sample in metadata, and reports the median wall-time sample in the normal CSV row.",
 		"Publishable rows use -run-order shuffle with an explicit seed so every table has a reproducible encoder/bitrate order without always favoring the same encoder column.",
 		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or sweep --lp 0..6, then report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
-		"For fair libaom comparisons, set -aom-threads and -aom-row-mt explicitly and report both; qualitybench forwards them to aomenc --threads and --row-mt and records them in metadata.",
+		"For fair libaom comparisons, set -aom-cpu-used, -aom-threads, and -aom-row-mt explicitly and report all three; qualitybench forwards them to aomenc --cpu-used, --threads, and --row-mt and records them in metadata.",
+		"For fair SVT comparisons, set -svt-preset explicitly and report it with -svt-lp and -svt-asm; qualitybench forwards it to SvtAv1EncApp --preset and records it in metadata.",
 		"SVT-AV1 --asm defaults to max and may use CPU-specific kernels such as neon_dotprod or neon_i8mm; use -svt-asm to pin the assembly tier when comparing against goav1's current SIMD coverage.",
 		"goav1 metadata records detected simd_tier and simd_features; compare those against SVT's recorded svt_asm setting instead of assuming --asm max and goav1 cover the same kernels.",
 	}
@@ -2950,6 +2971,7 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 			"bit_depth":       "8",
 			"input_bit_depth": "8",
 			"color_format":    "i420",
+			"cpu_used":        strconv.Itoa(cfg.aomCPUUsed),
 			"aom_threads":     strconv.Itoa(cfg.aomThreads),
 			"aom_row_mt":      strconv.Itoa(cfg.aomRowMT),
 		},
@@ -2964,7 +2986,7 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		"--ivf",
 		"--codec=av1",
 		"--rt",
-		"--cpu-used=8",
+		fmt.Sprintf("--cpu-used=%d", cfg.aomCPUUsed),
 		"--end-usage=cbr",
 		fmt.Sprintf("--target-bitrate=%d", kbps(bitrate)),
 		fmt.Sprintf("--fps=%d/1", cfg.fps),
@@ -3033,7 +3055,7 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		encodedContainer: "ivf",
 		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("svtav1_%d.yuv", bitrate)),
 		settings: map[string]string{
-			"preset":       "13",
+			"preset":       strconv.Itoa(cfg.svtPreset),
 			"profile":      "0",
 			"level":        "0",
 			"input_depth":  "8",
@@ -3077,7 +3099,7 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		"--color-format", "1",
 		"--profile", "0",
 		"--level", "0",
-		"--preset", "13",
+		"--preset", strconv.Itoa(cfg.svtPreset),
 		"--rc", "2",
 		"--tbr", strconv.Itoa(kbps(bitrate)),
 		"--lookahead", "0",

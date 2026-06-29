@@ -892,7 +892,9 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		goMaxProcs:       4,
 		aomThreads:       1,
 		aomRowMT:         0,
+		aomCPUUsed:       8,
 		svtLP:            5,
+		svtPreset:        13,
 		timingMode:       timingModeEndToEnd,
 		runOrder:         runOrderShuffle,
 		shuffleSeed:      42,
@@ -912,7 +914,8 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		got.RequiredMetrics[0] != "psnr" || got.RequiredEncoders[0] != "goav1" ||
 		!got.RequireSummary || !got.RequireCorpus || got.MinClips != 6 ||
 		got.GoMaxProcs != 4 || got.AOMThreads != 1 || got.AOMRowMT != 0 ||
-		got.SVTLP != 5 || got.TimingMode != timingModeEndToEnd ||
+		got.AOMCPUUsed != 8 || got.SVTLP != 5 || got.SVTPreset != 13 ||
+		got.TimingMode != timingModeEndToEnd ||
 		got.RunOrder != runOrderShuffle || got.ShuffleSeed != 42 ||
 		got.SampleOrder != "interleaved-by-sample-pass" ||
 		got.Runs != 5 || got.WarmupRuns != 1 || !got.Publish {
@@ -931,8 +934,10 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "sample passes") ||
 		!strings.Contains(joined, "median wall-time") ||
 		!strings.Contains(joined, "sweep --lp 0..6") ||
+		!strings.Contains(joined, "-aom-cpu-used") ||
 		!strings.Contains(joined, "-aom-threads") ||
 		!strings.Contains(joined, "-aom-row-mt") ||
+		!strings.Contains(joined, "-svt-preset") ||
 		!strings.Contains(joined, "simd_tier") ||
 		!strings.Contains(joined, "svt_asm") ||
 		!strings.Contains(joined, "--lp 0") ||
@@ -965,7 +970,9 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		keyInterval:         60,
 		aomThreads:          4,
 		aomRowMT:            1,
+		aomCPUUsed:          8,
 		svtLP:               4,
+		svtPreset:           13,
 		svtASM:              "neon",
 		timingMode:          timingModeEndToEnd,
 		runOrder:            runOrderShuffle,
@@ -997,8 +1004,10 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"shuffle-seed":     true,
 			"runs":             true,
 			"warmup-runs":      true,
+			"aom-cpu-used":     true,
 			"aom-threads":      true,
 			"aom-row-mt":       true,
+			"svt-preset":       true,
 			"svt-lp":           true,
 			"svt-asm":          true,
 		},
@@ -1016,6 +1025,28 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	if err := validatePublishConfig(missing, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "-aom-row-mt") {
 		t.Fatalf("missing explicit aom row-mt error=%v", err)
+	}
+
+	missingAOMSpeed := cfg
+	missingAOMSpeed.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingAOMSpeed.explicitFlags[k] = v
+	}
+	delete(missingAOMSpeed.explicitFlags, "aom-cpu-used")
+	if err := validatePublishConfig(missingAOMSpeed, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-aom-cpu-used") {
+		t.Fatalf("missing explicit aom speed error=%v", err)
+	}
+
+	missingSVTPreset := cfg
+	missingSVTPreset.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingSVTPreset.explicitFlags[k] = v
+	}
+	delete(missingSVTPreset.explicitFlags, "svt-preset")
+	if err := validatePublishConfig(missingSVTPreset, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-svt-preset") {
+		t.Fatalf("missing explicit svt preset error=%v", err)
 	}
 
 	missingLayers := cfg

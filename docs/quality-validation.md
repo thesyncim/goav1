@@ -55,6 +55,8 @@ go run ./cmd/qualitybench \
   -timing-mode e2e \
   -run-order shuffle -shuffle-seed 1 \
   -runs 3 -warmup-runs 1 \
+  -aom-cpu-used 8 \
+  -svt-preset 13 \
   -svt-lp 0 \
   -csv quality.csv -summary-csv quality-summary.csv -require-summary \
   -stats-csv quality-encoder-stats.csv \
@@ -82,10 +84,11 @@ Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`,
 `-run-order shuffle`, explicit `-shuffle-seed`, `-runs >= 3`, and
 `-warmup-runs >= 1`. It also requires explicit libaom concurrency settings
-when `aomenc` is selected, explicit SVT parallelism and assembly settings when
-`svt-av1` is selected, exact raw I420 input byte counts for every manifest row,
-and manifest-declared `pix_fmt=i420`, `bit_depth=8`, `chroma=4:2:0`, `sha256`,
-`source_id`, `source_url`, `source_license`, and `category` fields. Declared
+and realtime speed setting when `aomenc` is selected, explicit SVT preset,
+parallelism, and assembly settings when `svt-av1` is selected, exact raw I420
+input byte counts for every manifest row, and manifest-declared
+`pix_fmt=i420`, `bit_depth=8`, `chroma=4:2:0`, `sha256`, `source_id`,
+`source_url`, `source_license`, and `category` fields. Declared
 input hashes are verified before timing starts. Publish mode rejects duplicate
 encoder/bitrate entries, requires the
 BD-rate anchor to be one of the selected encoders, and requires at least four
@@ -129,10 +132,12 @@ length-prefixed artifact.
 For speed comparisons against SVT-AV1, do not treat numeric concurrency knobs as
 equivalent. `GOMAXPROCS` is a Go scheduler processor cap; SVT-AV1 `--lp` is an
 encoder parallelism level in the range `0..6`, where `0` lets SVT choose from
-the machine. Use `-gomaxprocs` to make the goav1 cap explicit for a run. A fair
-report should include the chosen `GOMAXPROCS`, the chosen `-svt-lp`, and the
-CSV/metadata timing columns: `encode_wall_sec`,
-`cpu_user_sec`, `cpu_system_sec`, `cpu_total_sec`, and
+the machine. `qualitybench -svt-preset` forwards to SVT `--preset`; higher
+presets are faster with a quality tradeoff, so publishable rows must report the
+selected preset. Use `-gomaxprocs` to make the goav1 cap explicit for a run. A
+fair report should include the chosen `GOMAXPROCS`, the chosen `-svt-preset`,
+the chosen `-svt-lp`, and the CSV/metadata timing columns:
+`encode_wall_sec`, `cpu_user_sec`, `cpu_system_sec`, `cpu_total_sec`, and
 `observed_parallelism`. Use wall time for user-visible speed, and CPU seconds
 or `observed_parallelism=cpu_total_sec/encode_wall_sec` to check whether one
 encoder consumed a larger CPU budget. If sweeping SVT levels, report each
@@ -146,14 +151,15 @@ use kernels above baseline NEON on Apple silicon, such as `neon_dotprod` or
 metadata. Use `-svt-asm neon` for a baseline-NEON row against goav1's current
 arm64 SIMD coverage, and omit it or pass `-svt-asm max` for a best-SVT row.
 
-Also report libaom's concurrency settings. `qualitybench -aom-threads` forwards
-the value to `aomenc --threads`, and `-aom-row-mt` forwards the value to
-`aomenc --row-mt`. Both are recorded in metadata, so single-thread rows must use
-`-aom-threads 1`, row-mt experiments must state `-aom-row-mt 0` or
-`-aom-row-mt 1`, and multi-thread rows must state both chosen values. The
-external baseline commands also pin and record profile-0, 8-bit, I420 identity
-settings; external decoded YUV must match the exact expected raw I420 byte
-count before metrics are accepted.
+Also report libaom's speed and concurrency settings.
+`qualitybench -aom-cpu-used` forwards to `aomenc --cpu-used` in realtime mode,
+`-aom-threads` forwards to `aomenc --threads`, and `-aom-row-mt` forwards to
+`aomenc --row-mt`. All three are recorded in metadata, so single-thread rows
+must use `-aom-threads 1`, row-mt experiments must state `-aom-row-mt 0` or
+`-aom-row-mt 1`, and realtime-speed sweeps must state each `-aom-cpu-used`
+value. The external baseline commands also pin and record profile-0, 8-bit,
+I420 identity settings; external decoded YUV must match the exact expected raw
+I420 byte count before metrics are accepted.
 
 When `-stats-csv` is set, goav1 rows also include encoder decision counters:
 partition choices, block sizes, skip/coded block counts, references, inter
