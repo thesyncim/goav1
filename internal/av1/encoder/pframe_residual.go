@@ -1299,6 +1299,8 @@ func (st *lossyEncodeState) initScans() error {
 		{&st.scan16x8, 16, 8}, {&st.scan8x16, 8, 16},
 		{&st.scan8x4, 8, 4}, {&st.scan4x8, 4, 8},
 		{&st.scan32x16, 32, 16}, {&st.scan16x32, 16, 32},
+		{&st.scan4x16, 4, 16}, {&st.scan16x4, 16, 4},
+		{&st.scan8x32, 8, 32}, {&st.scan32x8, 32, 8},
 	} {
 		*rs.dst = make([]int16, int(rs.w)*int(rs.h))
 		inv := make([]int16, int(rs.w)*int(rs.h))
@@ -1337,6 +1339,22 @@ func (st *lossyEncodeState) scanForTransformSize(size tile.TransformSize) ([]int
 		return st.scan8x4, true
 	case tile.TransformSize4x8:
 		return st.scan4x8, true
+	default:
+		return nil, false
+	}
+}
+
+//go:noinline
+func (st *lossyEncodeState) scanForThinTransformSize(size tile.TransformSize) ([]int16, bool) {
+	switch size {
+	case tile.TransformSize4x16:
+		return st.scan4x16, true
+	case tile.TransformSize16x4:
+		return st.scan16x4, true
+	case tile.TransformSize8x32:
+		return st.scan8x32, true
+	case tile.TransformSize32x8:
+		return st.scan32x8, true
 	default:
 		return nil, false
 	}
@@ -2385,11 +2403,17 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		var ok bool
 		chromaScan, ok = st.scanForTransformSize(chromaTX)
 		if !ok {
+			chromaScan, ok = st.scanForThinTransformSize(chromaTX)
+		}
+		if !ok {
 			return fmt.Errorf("encoder: unsupported chroma transform %d", chromaTX)
 		}
 	}
 	if splitTX {
 		childScan, ok := st.scanForTransformSize(txPlan.leafTX)
+		if !ok {
+			childScan, ok = st.scanForThinTransformSize(txPlan.leafTX)
+		}
 		if !ok {
 			return fmt.Errorf("encoder: unsupported realtime luma transform %d", txPlan.leafTX)
 		}
@@ -2574,6 +2598,9 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		return fmt.Errorf("chroma transform size: %w", err)
 	}
 	chromaScan, ok := st.scanForTransformSize(chromaTX)
+	if !ok {
+		chromaScan, ok = st.scanForThinTransformSize(chromaTX)
+	}
 	if !ok {
 		return fmt.Errorf("encoder: unsupported chroma transform %d", chromaTX)
 	}
@@ -4020,6 +4047,14 @@ func forwardDCTBlock(tran []int32, residual []int16, w, h int) error {
 		return transform.ForwardDCT32x16(tran, 16, residual, 32)
 	case w == 16 && h == 32:
 		return transform.ForwardDCT16x32(tran, 32, residual, 16)
+	case w == 4 && h == 16:
+		return transform.ForwardBlock(tran, 16, residual, 4, tran, transform.Size{Width: 4, Height: 16}, transform.TypeDCTDCT)
+	case w == 16 && h == 4:
+		return transform.ForwardBlock(tran, 4, residual, 16, tran, transform.Size{Width: 16, Height: 4}, transform.TypeDCTDCT)
+	case w == 8 && h == 32:
+		return transform.ForwardBlock(tran, 32, residual, 8, tran, transform.Size{Width: 8, Height: 32}, transform.TypeDCTDCT)
+	case w == 32 && h == 8:
+		return transform.ForwardBlock(tran, 8, residual, 32, tran, transform.Size{Width: 32, Height: 8}, transform.TypeDCTDCT)
 	}
 	return transform.ErrInvalidTransform
 }

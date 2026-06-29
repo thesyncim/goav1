@@ -277,6 +277,10 @@ func forwardDCTBySize(coeff []int32, coeffStride int, residual []int16, residual
 		return ForwardDCT32x64(coeff, coeffStride, residual, residualStride)
 	case Size{Width: 64, Height: 32}:
 		return ForwardDCT64x32(coeff, coeffStride, residual, residualStride)
+	case Size{Width: 4, Height: 16}, Size{Width: 16, Height: 4},
+		Size{Width: 8, Height: 32}, Size{Width: 32, Height: 8},
+		Size{Width: 16, Height: 64}, Size{Width: 64, Height: 16}:
+		return forwardDCT64Extent(coeff, coeffStride, residual, residualStride, size)
 	default:
 		return ErrInvalidTransform
 	}

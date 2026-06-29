@@ -533,6 +533,8 @@ type lossyEncodeState struct {
 	scan16x8, scan8x16           []int16
 	scan32x16, scan16x32         []int16
 	scan8x4, scan4x8             []int16
+	scan4x16, scan16x4           []int16
+	scan8x32, scan32x8           []int16
 	levels                       []uint8
 	levels32Zeroed               [1296]uint8
 	trialCDFs                    tile.CoeffCDFs
@@ -1073,6 +1075,9 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 		return fmt.Errorf("chroma transform size: %w", err)
 	}
 	chromaScan, ok := st.scanForTransformSize(chromaTX)
+	if !ok {
+		chromaScan, ok = st.scanForThinTransformSize(chromaTX)
+	}
 	if !ok {
 		return fmt.Errorf("encoder: unsupported chroma transform %d", chromaTX)
 	}

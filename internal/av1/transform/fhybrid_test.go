@@ -39,6 +39,74 @@ func TestForwardBlockDCTMatchesSpecialized(t *testing.T) {
 	}
 }
 
+func TestForwardBlockDCTThinRectangles(t *testing.T) {
+	cases := []Size{
+		{Width: 4, Height: 16},
+		{Width: 16, Height: 4},
+		{Width: 8, Height: 32},
+		{Width: 32, Height: 8},
+	}
+	rng := rand.New(rand.NewSource(416))
+	for _, size := range cases {
+		t.Run(sizeName(size), func(t *testing.T) {
+			width := int(size.Width)
+			height := int(size.Height)
+			n := width * height
+			residual := make([]int16, n)
+			coeff := make([]int32, n)
+			scratch := make([]int32, n)
+			invScratch := make([]int32, n)
+			dst := make([]int16, n)
+			for range 500 {
+				for i := range residual {
+					residual[i] = int16(rng.Intn(511) - 255)
+				}
+				if err := ForwardBlock(coeff, height, residual, width, scratch, size, TypeDCTDCT); err != nil {
+					t.Fatalf("forward: %v", err)
+				}
+				if err := InverseBlock(dst, width, coeff, height, invScratch, size, TypeDCTDCT); err != nil {
+					t.Fatalf("inverse: %v", err)
+				}
+				for i := range dst {
+					diff := int(dst[i]) - int(residual[i])
+					if diff < -5 || diff > 5 {
+						t.Fatalf("%s round-trip error %d at %d", sizeName(size), diff, i)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestForwardBlockDCTReduced64ExtentDC(t *testing.T) {
+	for _, size := range []Size{{Width: 16, Height: 64}, {Width: 64, Height: 16}} {
+		t.Run(sizeName(size), func(t *testing.T) {
+			width := int(size.Width)
+			height := int(size.Height)
+			coeffSize := adjustedScanSize(size)
+			coeffW := int(coeffSize.Width)
+			coeffH := int(coeffSize.Height)
+			residual := make([]int16, width*height)
+			for i := range residual {
+				residual[i] = 100
+			}
+			coeff := make([]int32, coeffW*coeffH)
+			scratch := make([]int32, width*height)
+			if err := ForwardBlock(coeff, coeffH, residual, width, scratch, size, TypeDCTDCT); err != nil {
+				t.Fatalf("forward: %v", err)
+			}
+			if coeff[0] == 0 {
+				t.Fatal("DC coefficient is zero")
+			}
+			for i := 1; i < len(coeff); i++ {
+				if coeff[i] != 0 {
+					t.Fatalf("AC coeff[%d]=%d want 0", i, coeff[i])
+				}
+			}
+		})
+	}
+}
+
 func TestForwardBlockHybridInverseRoundTrip(t *testing.T) {
 	types := []Type{TypeADSTDCT, TypeDCTADST, TypeADSTADST, TypeIDTX}
 	for _, size := range []Size{{Width: 4, Height: 4}, {Width: 8, Height: 8}} {

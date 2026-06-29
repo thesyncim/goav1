@@ -700,6 +700,9 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 	}
 	chromaScan, ok := st.scanForTransformSize(chromaTX)
 	if !ok {
+		chromaScan, ok = st.scanForThinTransformSize(chromaTX)
+	}
+	if !ok {
 		return fmt.Errorf("encoder: unsupported chroma transform %d", chromaTX)
 	}
 	chromaX := chromaXForColor(lumaPX, st.color)
