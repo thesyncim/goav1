@@ -148,6 +148,88 @@ func TestCompoundHighBDXNEONFallbackMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestCompoundHighBDYNEONMatchesPureGo(t *testing.T) {
+	const pad = filterTaps
+	rng := rand.New(rand.NewSource(0x7c0f21))
+	filters := []InterpFilter{
+		InterpEightTapRegular,
+		InterpEightTapSmooth,
+		InterpMultiTapSharp,
+		InterpBilinear,
+	}
+	sizes := []struct {
+		width  int
+		height int
+	}{
+		{4, 4},
+		{4, 13},
+		{8, 1},
+		{16, 7},
+		{32, 11},
+		{64, 16},
+	}
+	for _, bitDepth := range []uint8{10, 12} {
+		max := uint16((1 << int(bitDepth)) - 1)
+		round0 := compoundRound0(bitDepth)
+		offsetBits := int(bitDepth) + 2*filterBits - round0
+		roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
+		for _, size := range sizes {
+			refW := size.width + 2*pad
+			refH := size.height + 2*pad
+			stride := refW * 2
+			ref := frame.Plane{Pix: make([]byte, stride*refH), Stride: stride, Width: refW, Height: refH}
+			for y := range refH {
+				for x := range refW {
+					storeHighBDSample(ref, x, y, uint16(rng.Intn(int(max)+1)))
+				}
+			}
+			for _, filter := range filters {
+				for subY := 1; subY <= subpelQ4Mask; subY++ {
+					kernel, err := interpKernel(filter, size.height, subY)
+					if err != nil {
+						t.Fatal(err)
+					}
+					got := make([]uint16, size.width*size.height)
+					want := make([]uint16, size.width*size.height)
+					predictInterCompoundRefHighBDToConvBufYResidentNEON(got, ref, pad, pad, size.width, size.height, kernel, round0, roundOffset)
+					predictInterCompoundRefHighBDToConvBufYResident(want, ref, pad, pad, size.width, size.height, kernel, round0, roundOffset)
+					for i := range want {
+						if got[i] != want[i] {
+							t.Fatalf("bd=%d filter=%d size=%dx%d subY=%d sample=%d NEON=%d PureGo=%d",
+								bitDepth, filter, size.width, size.height, subY, i, got[i], want[i])
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestCompoundHighBDYNEONFallbackMatchesPureGo(t *testing.T) {
+	const (
+		refW   = 48
+		refH   = 24
+		stride = refW * 2
+		refX   = filterTaps
+		refY   = filterTaps
+	)
+	ref := frame.Plane{Pix: make([]byte, stride*refH), Stride: stride, Width: refW, Height: refH}
+	fillHighBDMotionTestPlane(ref, 0x3ff)
+	round0 := compoundRound0(10)
+	offsetBits := 10 + 2*filterBits - round0
+	roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
+	kernel := subpelFilters8[5]
+	got := make([]uint16, 12*8)
+	want := make([]uint16, 12*8)
+	predictInterCompoundRefHighBDToConvBufYResidentNEON(got, ref, refX, refY, 12, 8, kernel, round0, roundOffset)
+	predictInterCompoundRefHighBDToConvBufYResident(want, ref, refX, refY, 12, 8, kernel, round0, roundOffset)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("odd_width sample=%d NEON wrapper=%d PureGo=%d", i, got[i], want[i])
+		}
+	}
+}
+
 func BenchmarkCompoundConvBufXHighBDNEONDirect_32(b *testing.B) {
 	_, ref := benchPlanes(32, 10)
 	out := make([]uint16, 32*32)
@@ -169,5 +251,29 @@ func BenchmarkCompoundConvBufXHighBDPureGoDirect_32(b *testing.B) {
 	roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
 	runConvolveBench(b, 32, 32, func() {
 		predictInterCompoundRefHighBDToConvBufXResident(out, ref, filterTaps, filterTaps, 32, 32, kernel, round0, roundOffset)
+	})
+}
+
+func BenchmarkCompoundConvBufYHighBDNEONDirect_32(b *testing.B) {
+	_, ref := benchPlanes(32, 10)
+	out := make([]uint16, 32*32)
+	kernel := subpelFilters8[5]
+	round0 := compoundRound0(10)
+	offsetBits := 10 + 2*filterBits - round0
+	roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
+	runConvolveBench(b, 32, 32, func() {
+		predictInterCompoundRefHighBDToConvBufYResidentNEON(out, ref, filterTaps, filterTaps, 32, 32, kernel, round0, roundOffset)
+	})
+}
+
+func BenchmarkCompoundConvBufYHighBDPureGoDirect_32(b *testing.B) {
+	_, ref := benchPlanes(32, 10)
+	out := make([]uint16, 32*32)
+	kernel := subpelFilters8[5]
+	round0 := compoundRound0(10)
+	offsetBits := 10 + 2*filterBits - round0
+	roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
+	runConvolveBench(b, 32, 32, func() {
+		predictInterCompoundRefHighBDToConvBufYResident(out, ref, filterTaps, filterTaps, 32, 32, kernel, round0, roundOffset)
 	})
 }

@@ -75,6 +75,12 @@ func compoundXHighBDNEONAsm(ctx *compoundFilterHighBDNEONCtx)
 func compoundXHighBDNEONAsmW4(ctx *compoundFilterHighBDNEONCtx)
 
 //go:noescape
+func compoundYHighBDNEONAsm(ctx *compoundFilterHighBDNEONCtx)
+
+//go:noescape
+func compoundYHighBDNEONAsmW4(ctx *compoundFilterHighBDNEONCtx)
+
+//go:noescape
 func compoundX8NEONAsmW4(ctx *compoundFilter8NEONCtx)
 
 //go:noescape
@@ -176,6 +182,34 @@ func predictInterCompoundRefHighBDToConvBufXResidentNEON(out []uint16, ref frame
 		roundOffset: uintptr(roundOffset),
 	}
 	compoundXHighBDNEONAsm(&ctx)
+}
+
+func predictInterCompoundRefHighBDToConvBufYResidentNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
+	fo := filterTaps/2 - 1
+	if round0 != compoundRound0Bits && round0 != compoundRound0Bits+2 {
+		predictInterCompoundRefHighBDToConvBufYResident(out, ref, refX, refY, width, height, kernel, round0, roundOffset)
+		return
+	}
+	if !(width == 4 || (width >= 8 && width%8 == 0)) {
+		predictInterCompoundRefHighBDToConvBufYResident(out, ref, refX, refY, width, height, kernel, round0, roundOffset)
+		return
+	}
+	k := kernel
+	ctx := compoundFilterHighBDNEONCtx{
+		dst:         &out[0],
+		ref:         &ref.Pix[(refY-fo)*ref.Stride+refX*2],
+		kernel:      &k[0],
+		refStr:      uintptr(ref.Stride),
+		width:       uintptr(width),
+		height:      uintptr(height),
+		round0:      uintptr(round0),
+		roundOffset: uintptr(roundOffset),
+	}
+	if width == 4 {
+		compoundYHighBDNEONAsmW4(&ctx)
+		return
+	}
+	compoundYHighBDNEONAsm(&ctx)
 }
 
 func predictInterCompoundRef8ToConvBufXNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, roundOffset int) {
@@ -291,6 +325,7 @@ func init() {
 		predictInterCompoundRef8ToConvBufCopyImpl = predictInterCompoundRef8ToConvBufCopyNEON
 		predictInterCompoundRefHighBDToConvBufCopyResidentImpl = predictInterCompoundRefHighBDToConvBufCopyResidentNEON
 		predictInterCompoundRefHighBDToConvBufXResidentImpl = predictInterCompoundRefHighBDToConvBufXResidentNEON
+		predictInterCompoundRefHighBDToConvBufYResidentImpl = predictInterCompoundRefHighBDToConvBufYResidentNEON
 		predictInterCompoundRef8ToConvBufXImpl = predictInterCompoundRef8ToConvBufXNEON
 		predictInterCompoundRef8ToConvBufYImpl = predictInterCompoundRef8ToConvBufYNEON
 		if cpu.Detected.I8MM {
