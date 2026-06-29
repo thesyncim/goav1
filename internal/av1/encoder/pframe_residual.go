@@ -1301,10 +1301,17 @@ func (st *lossyEncodeState) initScans() error {
 		{&st.scan32x16, 32, 16}, {&st.scan16x32, 16, 32},
 		{&st.scan4x16, 4, 16}, {&st.scan16x4, 16, 4},
 		{&st.scan8x32, 8, 32}, {&st.scan32x8, 32, 8},
+		{&st.scan16x64, 16, 64}, {&st.scan64x16, 64, 16},
 	} {
-		*rs.dst = make([]int16, int(rs.w)*int(rs.h))
-		inv := make([]int16, int(rs.w)*int(rs.h))
-		if err := transform.FillDefaultScan(*rs.dst, inv, transform.Size{Width: rs.w, Height: rs.h}, transform.Class2D); err != nil {
+		size := transform.Size{Width: rs.w, Height: rs.h}
+		scanSize, err := transform.ScanSize(size)
+		if err != nil {
+			return err
+		}
+		total := int(scanSize.Width) * int(scanSize.Height)
+		*rs.dst = make([]int16, total)
+		inv := make([]int16, total)
+		if err := transform.FillDefaultScan(*rs.dst, inv, size, transform.Class2D); err != nil {
 			return err
 		}
 	}
@@ -1355,6 +1362,10 @@ func (st *lossyEncodeState) scanForThinTransformSize(size tile.TransformSize) ([
 		return st.scan8x32, true
 	case tile.TransformSize32x8:
 		return st.scan32x8, true
+	case tile.TransformSize16x64:
+		return st.scan16x64, true
+	case tile.TransformSize64x16:
+		return st.scan64x16, true
 	default:
 		return nil, false
 	}
@@ -2996,9 +3007,11 @@ func subpelBestDiagStep(step int16, leftCost, rightCost, upCost, downCost int) m
 	return diag
 }
 
-// txScaleForSize is get_tx_scale for the square transforms the encoder
-// emits: TX_32X32 dequantizes with one extra right shift, smaller sizes none.
+// txScaleForSize is get_tx_scale for square transforms.
 func txScaleForSize(n int) uint8 {
+	if n >= 64 {
+		return 2
+	}
 	if n >= 32 {
 		return 1
 	}
@@ -3439,24 +3452,31 @@ func (st *lossyEncodeState) prepareInterTXB(srcPlane, pred []byte, predStride, s
 }
 
 func (st *lossyEncodeState) prepareInterTXBTyped(srcPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16, txType transform.Type) bool {
-	residual := &st.resScratch
-	residualBlockImpl(residual[:w*h], srcPlane, py*stride+px, stride, pred, predStride, w, h)
-	n := w * h
-	tran := &st.tranScratch
-	if err := forwardTransformBlock(tran[:n], residual[:n], st.dqScratch[:n], w, h, txType); err != nil {
+	geo, err := txBlockGeometryForDimensions(w, h)
+	if err != nil {
 		return false
 	}
-	ts := txScaleForSize(max(w, h))
-	if err := quantize.QuantizeBlockScaledB(qcoeff, h, tran[:n], h, w, h, q, ts); err != nil {
+	residual := &st.resScratch
+	residualBlockImpl(residual[:w*h], srcPlane, py*stride+px, stride, pred, predStride, w, h)
+	n := geo.sampleCount
+	cn := geo.coeffCount
+	tran := &st.tranScratch
+	if err := forwardTransformBlock(tran[:cn], residual[:n], st.dqScratch[:n], w, h, txType); err != nil {
+		return false
+	}
+	if len(qcoeff) < cn {
+		return false
+	}
+	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
 		return false
 	}
 	// The vector statistics apply the AC step to every lane; the DC
 	// coefficient's coded distortion is then corrected with the DC step.
-	dskip, dcode, rate, allZero := rdStatsBlockImpl(tran[:n], qcoeff[:n], n, q.AC, ts)
+	dskip, dcode, rate, allZero := rdStatsBlockImpl(tran[:cn], qcoeff[:cn], cn, q.AC, geo.txScale)
 	if v := qcoeff[0]; v != 0 {
 		c := int64(tran[0])
-		eAC := c - ((int64(v) * int64(q.AC)) >> ts)
-		eDC := c - ((int64(v) * int64(q.DC)) >> ts)
+		eAC := c - ((int64(v) * int64(q.AC)) >> geo.txScale)
+		eDC := c - ((int64(v) * int64(q.DC)) >> geo.txScale)
 		dcode += eDC*eDC - eAC*eAC
 	}
 	st.rdDskip += dskip
@@ -3637,6 +3657,14 @@ func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, predStride, 
 
 func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, txType transform.Type) error {
+	geo, err := txBlockGeometryForTransformSize(ctxReq.Size)
+	if err != nil {
+		return err
+	}
+	if !geo.matchesDimensions(w, h) || len(qcoeff) < geo.coeffCount {
+		return tile.ErrInvalidDecodeState
+	}
+	qcoeff = qcoeff[:geo.coeffCount]
 	var txbResult tile.TXBDecodeResult
 	if w == 4 && h == 4 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize4x4 && afterSkip != nil {
 		qcoeff4 := (*[16]int16)(qcoeff)
@@ -3785,29 +3813,26 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 			return err
 		}
 	} else {
-		var err error
 		txbResult, err = tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip)
 		if err != nil {
 			return err
 		}
 	}
-	n := w * h
+	n := geo.sampleCount
 	if txbResult.AllZero {
 		copyPredToReconBlock(reconPlane, pred, predStride, stride, px, py, w, h)
 		return nil
 	}
-	size := transform.Size{Width: uint8(w), Height: uint8(h)}
-	txScale := txScaleForSize(max(w, h))
 	res := &st.invResidual
 	if txbResult.EOB == 1 && txType == transform.TypeDCTDCT {
-		dc := quantize.DequantizeDCCoeffBitDepthTrusted(qcoeff[0], q, txScale, nil, 8)
-		if err := transform.InverseDCTDCOnlyBlockBitDepth(res[:n], w, dc, st.invScratch[:n], size, 8); err != nil {
+		dc := quantize.DequantizeDCCoeffBitDepthTrusted(qcoeff[0], q, geo.txScale, nil, 8)
+		if err := transform.InverseDCTDCOnlyBlockBitDepth(res[:n], w, dc, st.invScratch[:n], geo.size, 8); err != nil {
 			return err
 		}
 	} else {
 		dq := &st.dqScratch
-		quantize.DequantizeBlockScaledBitDepthEOBTrusted(dq[:n], h, qcoeff, h, scan, int(txbResult.EOB), w, h, q, txScale, 8)
-		if err := transform.InverseBlock(res[:n], w, dq[:n], h, st.invScratch[:n], size, txType); err != nil {
+		quantize.DequantizeBlockScaledBitDepthEOBTrusted(dq[:geo.coeffCount], geo.coeffHeight, qcoeff, geo.coeffHeight, scan, int(txbResult.EOB), geo.coeffWidth, geo.coeffHeight, q, geo.txScale, 8)
+		if err := transform.InverseBlock(res[:n], w, dq[:geo.coeffCount], geo.coeffHeight, st.invScratch[:n], geo.size, txType); err != nil {
 			return err
 		}
 	}
@@ -4055,6 +4080,10 @@ func forwardDCTBlock(tran []int32, residual []int16, w, h int) error {
 		return transform.ForwardBlock(tran, 32, residual, 8, tran, transform.Size{Width: 8, Height: 32}, transform.TypeDCTDCT)
 	case w == 32 && h == 8:
 		return transform.ForwardBlock(tran, 8, residual, 32, tran, transform.Size{Width: 32, Height: 8}, transform.TypeDCTDCT)
+	case w == 16 && h == 64:
+		return transform.ForwardBlock(tran, 32, residual, 16, tran, transform.Size{Width: 16, Height: 64}, transform.TypeDCTDCT)
+	case w == 64 && h == 16:
+		return transform.ForwardBlock(tran, 16, residual, 64, tran, transform.Size{Width: 64, Height: 16}, transform.TypeDCTDCT)
 	}
 	return transform.ErrInvalidTransform
 }

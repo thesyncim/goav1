@@ -535,6 +535,7 @@ type lossyEncodeState struct {
 	scan8x4, scan4x8             []int16
 	scan4x16, scan16x4           []int16
 	scan8x32, scan32x8           []int16
+	scan16x64, scan64x16         []int16
 	levels                       []uint8
 	levels32Zeroed               [1296]uint8
 	trialCDFs                    tile.CoeffCDFs
@@ -1322,28 +1323,35 @@ func (st *lossyEncodeState) encodeTXBPred(reconPlane []byte, srcPlane []byte, st
 func (st *lossyEncodeState) encodeTXBPredRect(reconPlane []byte, srcPlane []byte, stride int, px, py, w, h int, q quantize.Quantizer,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, pred []byte) error {
 
-	n := w * h
+	geo, err := txBlockGeometryForTransformSize(ctxReq.Size)
+	if err != nil {
+		return err
+	}
+	if !geo.matchesDimensions(w, h) {
+		return tile.ErrInvalidDecodeState
+	}
+	n := geo.sampleCount
+	cn := geo.coeffCount
 	residual := &st.resScratch
 	residualBlockImpl(residual[:n], srcPlane, py*stride+px, stride, pred, w, w, h)
 	tran := &st.tranScratch
-	if err := forwardDCTBlock(tran[:n], residual[:n], w, h); err != nil {
+	if err := forwardDCTBlock(tran[:cn], residual[:n], w, h); err != nil {
 		return err
 	}
 	qcoeff := &st.lumaQ
-	scale := txScaleForSize(max(w, h))
-	if err := quantize.QuantizeBlockScaledB(qcoeff[:n], h, tran[:n], h, w, h, q, scale); err != nil {
+	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
 		return err
 	}
-	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff[:n], scan, st.levels, afterSkip); err != nil {
+	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff[:cn], scan, st.levels, afterSkip); err != nil {
 		return err
 	}
 
 	dq := &st.dqScratch
-	if err := quantize.DequantizeBlockScaledBitDepth(dq[:n], h, qcoeff[:n], h, w, h, q, scale, 8); err != nil {
+	if err := quantize.DequantizeBlockScaledBitDepth(dq[:cn], geo.coeffHeight, qcoeff[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale, 8); err != nil {
 		return err
 	}
 	res := &st.invResidual
-	if err := transform.InverseDCTBlock(res[:n], w, dq[:n], h, st.invScratch[:n], transform.Size{Width: uint8(w), Height: uint8(h)}); err != nil {
+	if err := transform.InverseDCTBlock(res[:n], w, dq[:cn], geo.coeffHeight, st.invScratch[:n], geo.size); err != nil {
 		return err
 	}
 	for r := range h {

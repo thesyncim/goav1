@@ -321,7 +321,15 @@ func (st *lossyEncodeState) encodeTXBAvailRect16(reconPlane []uint16, srcPlane [
 func (st *lossyEncodeState) encodeTXBPredRect16(reconPlane []uint16, srcPlane []uint16, stride int, px, py, w, h int, bitDepth uint8, q quantize.Quantizer,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, pred []uint16) error {
 
-	n := w * h
+	geo, err := txBlockGeometryForTransformSize(ctxReq.Size)
+	if err != nil {
+		return err
+	}
+	if !geo.matchesDimensions(w, h) {
+		return tile.ErrInvalidDecodeState
+	}
+	n := geo.sampleCount
+	cn := geo.coeffCount
 	residual := &st.resScratch
 	for r := range h {
 		row := (py+r)*stride + px
@@ -330,25 +338,23 @@ func (st *lossyEncodeState) encodeTXBPredRect16(reconPlane []uint16, srcPlane []
 		}
 	}
 	tran := &st.tranScratch
-	if err := forwardDCTBlock(tran[:n], residual[:n], w, h); err != nil {
+	if err := forwardDCTBlock(tran[:cn], residual[:n], w, h); err != nil {
 		return err
 	}
 	qcoeff := &st.lumaQ
-	scale := txScaleForSize(max(w, h))
-	if err := quantize.QuantizeBlockScaledB(qcoeff[:n], h, tran[:n], h, w, h, q, scale); err != nil {
+	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
 		return err
 	}
-	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff[:n], scan, st.levels, afterSkip); err != nil {
+	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff[:cn], scan, st.levels, afterSkip); err != nil {
 		return err
 	}
 
 	dq := &st.dqScratch
-	if err := quantize.DequantizeBlockScaledBitDepth(dq[:n], h, qcoeff[:n], h, w, h, q, scale, bitDepth); err != nil {
+	if err := quantize.DequantizeBlockScaledBitDepth(dq[:cn], geo.coeffHeight, qcoeff[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale, bitDepth); err != nil {
 		return err
 	}
 	res := &st.invResidual
-	size := transform.Size{Width: uint8(w), Height: uint8(h)}
-	if err := transform.InverseBlockBitDepth(res[:n], w, dq[:n], h, st.invScratch[:n], size, transform.TypeDCTDCT, bitDepth); err != nil {
+	if err := transform.InverseBlockBitDepth(res[:n], w, dq[:cn], geo.coeffHeight, st.invScratch[:n], geo.size, transform.TypeDCTDCT, bitDepth); err != nil {
 		return err
 	}
 	maxSample := int((1 << bitDepth) - 1)
