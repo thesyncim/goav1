@@ -670,6 +670,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		anchorEncoder:    "goav1",
 		goMaxProcs:       4,
 		aomThreads:       1,
+		aomRowMT:         0,
 		svtLP:            5,
 	}
 	got := metadataConfigFor(cfg)
@@ -680,7 +681,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 	if got.Encoders[0] != "goav1" || got.Bitrates[0] != 100000 ||
 		got.RequiredMetrics[0] != "psnr" || got.RequiredEncoders[0] != "goav1" ||
 		!got.RequireSummary || !got.RequireCorpus || got.MinClips != 6 ||
-		got.GoMaxProcs != 4 || got.AOMThreads != 1 || got.SVTLP != 5 {
+		got.GoMaxProcs != 4 || got.AOMThreads != 1 || got.AOMRowMT != 0 || got.SVTLP != 5 {
 		t.Fatalf("metadata config aliases inputs: %+v", got)
 	}
 }
@@ -692,6 +693,7 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "observed_parallelism") ||
 		!strings.Contains(joined, "sweep --lp 0..6") ||
 		!strings.Contains(joined, "-aom-threads") ||
+		!strings.Contains(joined, "-aom-row-mt") ||
 		!strings.Contains(joined, "simd_tier") ||
 		!strings.Contains(joined, "svt_asm") ||
 		!strings.Contains(joined, "--lp 0") {

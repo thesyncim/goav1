@@ -92,16 +92,17 @@ profiles rather than breadth-first file matching.
 Fresh synthetic 1080p/120-frame single-rate rows on 2026-06-29 at commit
 `14ae2e34` use `qualitybench -bitrates 8000000` on the deterministic synthetic
 fixture. They are spot-check rows, not a full corpus quality claim. The aomenc
-row used `-aom-threads 4`, which forwards to `aomenc --threads=4`; use
-`-aom-threads 1` for a single-thread libaom control row.
+row used `-aom-threads 4 -aom-row-mt 1`, which forwards to
+`aomenc --threads=4 --row-mt=1`; use `-aom-threads 1` for a single-thread
+libaom control row and report the chosen `-aom-row-mt` setting.
 
 | Comparison row | goav1 FPS | Other FPS | goav1 CPU s | Other CPU s | goav1 observed | Other observed | Wall gap | CPU-efficiency gap |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | SVT-AV1 `--lp 4 --asm max`, `GOMAXPROCS=4` | 119.54 | 165.25 | 3.335 | 1.643 | 3.32x | 2.26x | 1.38x | 2.03x |
 | SVT-AV1 `--lp 4 --asm neon`, `GOMAXPROCS=4` | 118.53 | 178.93 | 3.338 | 1.665 | 3.30x | 2.48x | 1.51x | 2.00x |
-| aomenc `-aom-threads 4`, `GOMAXPROCS=4` | 117.19 | 123.25 | 3.396 | 2.399 | 3.32x | 2.46x | 1.05x | 1.42x |
+| aomenc `-aom-threads 4 -aom-row-mt 1`, `GOMAXPROCS=4` | 117.19 | 123.25 | 3.396 | 2.399 | 3.32x | 2.46x | 1.05x | 1.42x |
 | SVT-AV1 `--lp 1 --asm max`, `GOMAXPROCS=1` | 35.07 | 87.11 | 3.417 | 1.353 | 1.00x | 0.98x | 2.48x | 2.53x |
-| aomenc `-aom-threads 1`, `GOMAXPROCS=1` | 34.79 | 53.82 | 3.434 | 2.221 | 1.00x | 1.00x | 1.55x | 1.55x |
+| aomenc `-aom-threads 1 -aom-row-mt 1`, `GOMAXPROCS=1` | 34.79 | 53.82 | 3.434 | 2.221 | 1.00x | 1.00x | 1.55x | 1.55x |
 
 The fresh 4-way encoder wall gap is roughly `1.38x-1.51x` versus SVT on this
 synthetic row and `1.05x` versus the harness `aomenc --threads=4` row. By
