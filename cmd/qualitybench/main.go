@@ -235,6 +235,7 @@ type metadataConfig struct {
 type toolMetadata struct {
 	Path         string `json:"path,omitempty"`
 	Found        bool   `json:"found"`
+	SHA256       string `json:"sha256,omitempty"`
 	Version      string `json:"version,omitempty"`
 	VersionError string `json:"version_error,omitempty"`
 }
@@ -1697,26 +1698,33 @@ func metricFilterAvailability(filters map[string]bool) map[string]bool {
 
 func toolMetadataForRun() map[string]toolMetadata {
 	return map[string]toolMetadata{
-		"ffmpeg":       commandMetadata("ffmpeg", "-hide_banner", "-version"),
-		"aomenc":       commandMetadata("aomenc", "--version"),
-		"SvtAv1EncApp": commandMetadata("SvtAv1EncApp", "--version"),
+		"ffmpeg":       commandMetadata("ffmpeg", []string{"-hide_banner", "-version"}),
+		"aomenc":       commandMetadata("aomenc", []string{"--version"}, []string{"--help"}),
+		"SvtAv1EncApp": commandMetadata("SvtAv1EncApp", []string{"--version"}),
 	}
 }
 
-func commandMetadata(name string, versionArgs ...string) toolMetadata {
+func commandMetadata(name string, versionArgSets ...[]string) toolMetadata {
 	path, err := exec.LookPath(name)
 	if err != nil {
 		return toolMetadata{Found: false, VersionError: err.Error()}
 	}
 	meta := toolMetadata{Found: true, Path: path}
-	out, err := exec.Command(path, versionArgs...).CombinedOutput()
-	line := firstNonEmptyLine(string(out))
-	if err != nil {
-		meta.VersionError = trimCommandOutput(err, out)
-		return meta
+	if hash, err := sha256File(path); err == nil {
+		meta.SHA256 = hash
 	}
-	if line != "" {
-		meta.Version = line
+	for _, args := range versionArgSets {
+		out, err := exec.Command(path, args...).CombinedOutput()
+		line := firstNonEmptyLine(string(out))
+		if err != nil {
+			meta.VersionError = trimCommandOutput(err, out)
+			continue
+		}
+		meta.VersionError = ""
+		if line != "" {
+			meta.Version = line
+		}
+		return meta
 	}
 	return meta
 }

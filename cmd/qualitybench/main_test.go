@@ -872,6 +872,13 @@ func TestFileBytesAndSHA256(t *testing.T) {
 	}
 }
 
+func TestCommandMetadataRecordsBinaryHash(t *testing.T) {
+	meta := commandMetadata("go", []string{"version"})
+	if !meta.Found || meta.Path == "" || meta.SHA256 == "" || meta.Version == "" {
+		t.Fatalf("go metadata=%+v", meta)
+	}
+}
+
 func TestWriteMetadataJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "metadata.json")

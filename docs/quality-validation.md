@@ -83,6 +83,8 @@ I420 input byte counts for every manifest row.
 per-frame `Encode` calls. Use it for local code-path profiling, not for fair
 tables. `-timing-mode e2e` times goav1 setup, encode calls, and decoded-output
 writes, while external rows continue to time the encoder command invocation.
+The metadata JSON records command paths, binary SHA-256 hashes, and version/help
+probes for the external tools used by the run.
 
 For speed comparisons against SVT-AV1, do not treat numeric concurrency knobs as
 equivalent. `GOMAXPROCS` is a Go scheduler processor cap; SVT-AV1 `--lp` is an
