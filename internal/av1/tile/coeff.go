@@ -510,6 +510,14 @@ func CoeffInitLevels(coeffs []int16, size TransformSize, levels []uint8) error {
 	if len(coeffs) < maxEOB || len(levels) < scratchLen {
 		return ErrInvalidDecodeState
 	}
+	if coeffInitLevelsArch(coeffs, scanWidth, scanHeight, levels, scratchLen) {
+		return nil
+	}
+	coeffInitLevelsPureGo(coeffs, scanWidth, scanHeight, levels, scratchLen)
+	return nil
+}
+
+func coeffInitLevelsPureGo(coeffs []int16, scanWidth int, scanHeight int, levels []uint8, scratchLen int) {
 	for i := range scratchLen {
 		levels[i] = 0
 	}
@@ -521,7 +529,6 @@ func CoeffInitLevels(coeffs []int16, size TransformSize, levels []uint8) error {
 			levels[dst+row] = coeffAbsClamp127(coeffs[src+row])
 		}
 	}
-	return nil
 }
 
 // CoeffNZMapContexts ports libaom's av1_get_nz_map_contexts_c. It writes
