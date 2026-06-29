@@ -890,6 +890,8 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		minClips:         6,
 		anchorEncoder:    "goav1",
 		goMaxProcs:       4,
+		goav1MaxThreads:  4,
+		goav1Effort:      int(goav1.EncoderWebRTCMinEffortLevel),
 		aomThreads:       1,
 		aomRowMT:         0,
 		aomCPUUsed:       8,
@@ -913,7 +915,9 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 	if got.Encoders[0] != "goav1" || got.Bitrates[0] != 100000 ||
 		got.RequiredMetrics[0] != "psnr" || got.RequiredEncoders[0] != "goav1" ||
 		!got.RequireSummary || !got.RequireCorpus || got.MinClips != 6 ||
-		got.GoMaxProcs != 4 || got.AOMThreads != 1 || got.AOMRowMT != 0 ||
+		got.GoMaxProcs != 4 || got.GoAV1MaxThreads != 4 ||
+		got.GoAV1Effort != int(goav1.EncoderWebRTCMinEffortLevel) ||
+		got.AOMThreads != 1 || got.AOMRowMT != 0 ||
 		got.AOMCPUUsed != 8 || got.SVTLP != 5 || got.SVTPreset != 13 ||
 		got.TimingMode != timingModeEndToEnd ||
 		got.RunOrder != runOrderShuffle || got.ShuffleSeed != 42 ||
@@ -934,6 +938,8 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "sample passes") ||
 		!strings.Contains(joined, "median wall-time") ||
 		!strings.Contains(joined, "sweep --lp 0..6") ||
+		!strings.Contains(joined, "-goav1-max-threads") ||
+		!strings.Contains(joined, "-goav1-effort") ||
 		!strings.Contains(joined, "-aom-cpu-used") ||
 		!strings.Contains(joined, "-aom-threads") ||
 		!strings.Contains(joined, "-aom-row-mt") ||
@@ -964,6 +970,8 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		requireSummary:      true,
 		fps:                 60,
 		goMaxProcs:          4,
+		goav1MaxThreads:     4,
+		goav1Effort:         0,
 		layers:              1,
 		tiles:               0,
 		goldenInterval:      0,
@@ -980,40 +988,64 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		runs:                3,
 		warmupRuns:          1,
 		explicitFlags: map[string]bool{
-			"bitrates":         true,
-			"encoders":         true,
-			"workdir":          true,
-			"csv":              true,
-			"metadata-json":    true,
-			"manifest":         true,
-			"require-corpus":   true,
-			"min-clips":        true,
-			"require-encoders": true,
-			"require-metrics":  true,
-			"summary-csv":      true,
-			"require-summary":  true,
-			"gomaxprocs":       true,
-			"fps":              true,
-			"layers":           true,
-			"tiles":            true,
-			"golden":           true,
-			"keyint":           true,
-			"anchor":           true,
-			"timing-mode":      true,
-			"run-order":        true,
-			"shuffle-seed":     true,
-			"runs":             true,
-			"warmup-runs":      true,
-			"aom-cpu-used":     true,
-			"aom-threads":      true,
-			"aom-row-mt":       true,
-			"svt-preset":       true,
-			"svt-lp":           true,
-			"svt-asm":          true,
+			"bitrates":          true,
+			"encoders":          true,
+			"workdir":           true,
+			"csv":               true,
+			"metadata-json":     true,
+			"manifest":          true,
+			"require-corpus":    true,
+			"min-clips":         true,
+			"require-encoders":  true,
+			"require-metrics":   true,
+			"summary-csv":       true,
+			"require-summary":   true,
+			"gomaxprocs":        true,
+			"fps":               true,
+			"layers":            true,
+			"tiles":             true,
+			"golden":            true,
+			"keyint":            true,
+			"anchor":            true,
+			"timing-mode":       true,
+			"run-order":         true,
+			"shuffle-seed":      true,
+			"runs":              true,
+			"warmup-runs":       true,
+			"goav1-max-threads": true,
+			"goav1-effort":      true,
+			"aom-cpu-used":      true,
+			"aom-threads":       true,
+			"aom-row-mt":        true,
+			"svt-preset":        true,
+			"svt-lp":            true,
+			"svt-asm":           true,
 		},
 	}
 	if err := validatePublishConfig(cfg, gitMetadata{Commit: "abc"}); err != nil {
 		t.Fatalf("valid publish config failed: %v", err)
+	}
+
+	missingGoAV1Threads := cfg
+	missingGoAV1Threads.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingGoAV1Threads.explicitFlags[k] = v
+	}
+	delete(missingGoAV1Threads.explicitFlags, "goav1-max-threads")
+	if err := validatePublishConfig(missingGoAV1Threads, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-goav1-max-threads") {
+		t.Fatalf("missing explicit goav1 max threads error=%v", err)
+	}
+
+	missingGoAV1Effort := cfg
+	missingGoAV1Effort.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingGoAV1Effort.explicitFlags[k] = v
+	}
+	delete(missingGoAV1Effort.explicitFlags, "goav1-effort")
+	if err := validatePublishConfig(missingGoAV1Effort, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-goav1-effort") {
+		t.Fatalf("missing explicit goav1 effort error=%v", err)
 	}
 
 	missing := cfg

@@ -3945,10 +3945,37 @@ func TestPublicEncoderRuntimeOptions(t *testing.T) {
 	zeroVideo.SetTileColumns(4)
 	zeroVideo.SetMaxThreads(1)
 	zeroVideo.SetGoldenInterval(0)
+	if err := zeroVideo.SetEffortLevel(0); err == nil {
+		t.Fatal("zero VideoEncoder SetEffortLevel unexpectedly succeeded")
+	}
 	var zeroRTC goav1.RTCEncoder
 	zeroRTC.SetTileColumns(4)
 	zeroRTC.SetMaxThreads(1)
 	zeroRTC.SetGoldenInterval(0)
+}
+
+func TestPublicVideoEncoderConfigSpeedValidation(t *testing.T) {
+	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+		Width: 64, Height: 64,
+		TargetBitrate: 100_000, Framerate: 30,
+		Speed: goav1.EncoderWebRTCMinEffortLevel,
+	})
+	if err != nil {
+		t.Fatalf("NewVideoEncoder min effort: %v", err)
+	}
+	if err := enc.SetEffortLevel(goav1.EncoderWebRTCMaxEffortLevel); err != nil {
+		t.Fatalf("SetEffortLevel max effort: %v", err)
+	}
+	_ = enc.Close()
+
+	_, err = goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+		Width: 64, Height: 64,
+		TargetBitrate: 100_000, Framerate: 30,
+		Speed: goav1.EncoderWebRTCMinEffortLevel - 1,
+	})
+	if err == nil {
+		t.Fatal("NewVideoEncoder accepted invalid effort")
+	}
 }
 
 func TestPublicEncoderConfigMaxThreadsControlsTileColumns(t *testing.T) {

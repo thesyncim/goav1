@@ -348,6 +348,11 @@ type VideoEncoderConfig struct {
 	// automatic tile-column policy unless TileColumns is set.
 	MaxThreads int
 
+	// Speed selects the WebRTC realtime effort level. Zero is the default
+	// quality/speed balance; EncoderWebRTCMinEffortLevel is fastest and
+	// EncoderWebRTCMaxEffortLevel is slowest.
+	Speed int8
+
 	// GoldenInterval is the number of base-layer frames between golden
 	// anchor refreshes; zero keeps the default (16) and a negative value
 	// disables golden references.
@@ -485,6 +490,16 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 	} else if cfg.TileColumns > 0 {
 		enc.SetTileColumns(cfg.TileColumns)
 	}
+	if cfg.Speed < EncoderWebRTCMinEffortLevel || cfg.Speed > EncoderWebRTCMaxEffortLevel {
+		_ = enc.Close()
+		return nil, fmt.Errorf("goav1: VideoEncoderConfig Speed=%d outside supported WebRTC effort range [%d,%d]", cfg.Speed, EncoderWebRTCMinEffortLevel, EncoderWebRTCMaxEffortLevel)
+	}
+	if cfg.Speed != 0 {
+		if err := enc.SetEffortLevel(cfg.Speed); err != nil {
+			_ = enc.Close()
+			return nil, err
+		}
+	}
 	if cfg.GoldenInterval < 0 {
 		enc.SetGoldenInterval(0)
 	} else if cfg.GoldenInterval > 0 {
@@ -523,6 +538,15 @@ func (e *VideoEncoder) SetMaxThreads(n int) {
 	if e != nil && e.enc != nil {
 		e.enc.SetMaxThreads(n)
 	}
+}
+
+// SetEffortLevel selects the realtime encoder effort level for subsequent
+// frames. Zero restores the default quality/speed balance.
+func (e *VideoEncoder) SetEffortLevel(level int8) error {
+	if e == nil || e.enc == nil {
+		return fmt.Errorf("goav1: VideoEncoder is not initialized")
+	}
+	return e.enc.SetEffortLevel(level)
 }
 
 // Encode encodes one frame. forceKey restarts the stream with a keyframe.

@@ -52,6 +52,8 @@ go run ./cmd/qualitybench \
   -require-encoders all \
   -require-metrics xpsnr,vmaf \
   -gomaxprocs 4 \
+  -goav1-max-threads 4 \
+  -goav1-effort 0 \
   -timing-mode e2e \
   -run-order shuffle -shuffle-seed 1 \
   -runs 3 -warmup-runs 1 \
@@ -83,10 +85,11 @@ Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-summary-csv`, `-require-summary`, `-gomaxprocs`, `-fps`, `-layers`,
 `-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`,
 `-run-order shuffle`, explicit `-shuffle-seed`, `-runs >= 3`, and
-`-warmup-runs >= 1`. It also requires explicit libaom concurrency settings
-and realtime speed setting when `aomenc` is selected, explicit SVT preset,
-parallelism, and assembly settings when `svt-av1` is selected, exact raw I420
-input byte counts for every manifest row, and manifest-declared
+`-warmup-runs >= 1`. It also requires explicit goav1 execution-lane and effort
+settings, explicit libaom concurrency settings and realtime speed setting when
+`aomenc` is selected, explicit SVT preset, parallelism, and assembly settings
+when `svt-av1` is selected, exact raw I420 input byte counts for every manifest
+row, and manifest-declared
 `pix_fmt=i420`, `bit_depth=8`, `chroma=4:2:0`, `sha256`, `source_id`,
 `source_url`, `source_license`, and `category` fields. Declared
 input hashes are verified before timing starts. Publish mode rejects duplicate
@@ -130,13 +133,17 @@ bytes, while `encoded_bytes` and `encoded_sha256` describe that on-disk
 length-prefixed artifact.
 
 For speed comparisons against SVT-AV1, do not treat numeric concurrency knobs as
-equivalent. `GOMAXPROCS` is a Go scheduler processor cap; SVT-AV1 `--lp` is an
-encoder parallelism level in the range `0..6`, where `0` lets SVT choose from
-the machine. `qualitybench -svt-preset` forwards to SVT `--preset`; higher
-presets are faster with a quality tradeoff, so publishable rows must report the
-selected preset. Use `-gomaxprocs` to make the goav1 cap explicit for a run. A
-fair report should include the chosen `GOMAXPROCS`, the chosen `-svt-preset`,
-the chosen `-svt-lp`, and the CSV/metadata timing columns:
+equivalent. `GOMAXPROCS` is a Go scheduler processor cap; goav1
+`-goav1-max-threads` is the encoder execution-lane cap passed to
+`VideoEncoderConfig.MaxThreads`; SVT-AV1 `--lp` is an encoder parallelism level
+in the range `0..6`, where `0` lets SVT choose from the machine. goav1
+`-goav1-effort` maps to the WebRTC effort level where `0` is the default
+quality/speed balance; `qualitybench -svt-preset` forwards to SVT `--preset`,
+where higher presets are faster with a quality tradeoff. Publishable rows must
+report both encoders' speed/effort knobs. Use `-gomaxprocs` to make the Go
+scheduler cap explicit for a run. A fair report should include the chosen
+`GOMAXPROCS`, the chosen `-goav1-max-threads`, the chosen `-goav1-effort`, the
+chosen `-svt-preset`, the chosen `-svt-lp`, and the CSV/metadata timing columns:
 `encode_wall_sec`, `cpu_user_sec`, `cpu_system_sec`, `cpu_total_sec`, and
 `observed_parallelism`. Use wall time for user-visible speed, and CPU seconds
 or `observed_parallelism=cpu_total_sec/encode_wall_sec` to check whether one

@@ -74,6 +74,8 @@ type benchConfig struct {
 	goldenInterval      int
 	keyInterval         int
 	goMaxProcs          int
+	goav1MaxThreads     int
+	goav1Effort         int
 	aomThreads          int
 	aomRowMT            int
 	aomCPUUsed          int
@@ -262,6 +264,8 @@ type metadataConfig struct {
 	GoldenInterval   int      `json:"golden_interval"`
 	KeyInterval      int      `json:"key_interval"`
 	GoMaxProcs       int      `json:"gomaxprocs"`
+	GoAV1MaxThreads  int      `json:"goav1_max_threads"`
+	GoAV1Effort      int      `json:"goav1_effort"`
 	AOMThreads       int      `json:"aom_threads"`
 	AOMRowMT         int      `json:"aom_row_mt"`
 	AOMCPUUsed       int      `json:"aom_cpu_used"`
@@ -578,6 +582,8 @@ func parseFlags() (benchConfig, error) {
 	flag.IntVar(&cfg.goldenInterval, "golden", 0, "goav1 golden refresh interval (0 = default, negative = disabled)")
 	flag.IntVar(&cfg.keyInterval, "keyint", 0, "force periodic keyframes every N frames after frame 0 (0 = only initial key)")
 	flag.IntVar(&cfg.goMaxProcs, "gomaxprocs", 0, "set Go GOMAXPROCS for in-process goav1 encodes (0 = keep environment/runtime default)")
+	flag.IntVar(&cfg.goav1MaxThreads, "goav1-max-threads", 0, "goav1 MaxThreads execution-lane cap (0 = encoder automatic policy)")
+	flag.IntVar(&cfg.goav1Effort, "goav1-effort", 0, "goav1 WebRTC effort level (-2..4; 0 = default quality/speed balance)")
 	flag.IntVar(&cfg.aomThreads, "aom-threads", 4, "aomenc --threads value for libaom rows")
 	flag.IntVar(&cfg.aomRowMT, "aom-row-mt", 1, "aomenc --row-mt value for libaom rows (0 = off, 1 = on)")
 	flag.IntVar(&cfg.aomCPUUsed, "aom-cpu-used", 8, "aomenc realtime --cpu-used speed setting (5..12)")
@@ -662,6 +668,12 @@ func parseFlags() (benchConfig, error) {
 	if cfg.goMaxProcs < 0 {
 		return benchConfig{}, fmt.Errorf("invalid GOMAXPROCS %d", cfg.goMaxProcs)
 	}
+	if cfg.goav1MaxThreads < 0 {
+		return benchConfig{}, fmt.Errorf("invalid goav1 MaxThreads %d", cfg.goav1MaxThreads)
+	}
+	if cfg.goav1Effort < goav1.EncoderWebRTCMinEffortLevel || cfg.goav1Effort > goav1.EncoderWebRTCMaxEffortLevel {
+		return benchConfig{}, fmt.Errorf("invalid goav1 effort level %d: valid range is %d..%d", cfg.goav1Effort, goav1.EncoderWebRTCMinEffortLevel, goav1.EncoderWebRTCMaxEffortLevel)
+	}
 	if cfg.aomThreads <= 0 {
 		return benchConfig{}, fmt.Errorf("invalid aomenc --threads value %d", cfg.aomThreads)
 	}
@@ -739,6 +751,8 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"run-order",
 		"runs",
 		"warmup-runs",
+		"goav1-max-threads",
+		"goav1-effort",
 	}
 	for _, name := range required {
 		if err := requireExplicitFlag(cfg, name); err != nil {
@@ -1944,6 +1958,8 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		GoldenInterval:   cfg.goldenInterval,
 		KeyInterval:      cfg.keyInterval,
 		GoMaxProcs:       cfg.goMaxProcs,
+		GoAV1MaxThreads:  cfg.goav1MaxThreads,
+		GoAV1Effort:      cfg.goav1Effort,
 		AOMThreads:       cfg.aomThreads,
 		AOMRowMT:         cfg.aomRowMT,
 		AOMCPUUsed:       cfg.aomCPUUsed,
@@ -2046,6 +2062,7 @@ func fairnessNotes(cfg benchConfig) []string {
 		"qualitybench records run_order and shuffle_seed so encoder/bitrate order effects can be reproduced or randomized deterministically.",
 		"qualitybench runs warmups and measured samples in deterministic sample passes across all encoder/bitrate tuples, records every measured encode sample in metadata, and reports the median wall-time sample in the normal CSV row.",
 		"Publishable rows use -run-order shuffle with an explicit seed so every table has a reproducible encoder/bitrate order without always favoring the same encoder column.",
+		"For fair goav1 comparisons, set -goav1-max-threads and -goav1-effort explicitly; qualitybench forwards them to VideoEncoderConfig.MaxThreads and Speed and records them in metadata.",
 		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or sweep --lp 0..6, then report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
 		"For fair libaom comparisons, set -aom-cpu-used, -aom-threads, and -aom-row-mt explicitly and report all three; qualitybench forwards them to aomenc --cpu-used, --threads, and --row-mt and records them in metadata.",
 		"For fair SVT comparisons, set -svt-preset explicitly and report it with -svt-lp and -svt-asm; qualitybench forwards it to SvtAv1EncApp --preset and records it in metadata.",
@@ -2816,6 +2833,8 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 			"framerate":       strconv.Itoa(cfg.fps),
 			"temporal_layers": strconv.Itoa(cfg.layers),
 			"tile_columns":    strconv.Itoa(cfg.tiles),
+			"max_threads":     strconv.Itoa(cfg.goav1MaxThreads),
+			"effort":          strconv.Itoa(cfg.goav1Effort),
 			"golden_interval": strconv.Itoa(cfg.goldenInterval),
 			"key_interval":    strconv.Itoa(cfg.keyInterval),
 			"gomaxprocs":      strconv.Itoa(runtime.GOMAXPROCS(0)),
@@ -2851,6 +2870,8 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		Framerate:      cfg.fps,
 		TemporalLayers: cfg.layers,
 		TileColumns:    cfg.tiles,
+		MaxThreads:     cfg.goav1MaxThreads,
+		Speed:          int8(cfg.goav1Effort),
 		GoldenInterval: cfg.goldenInterval,
 	})
 	if err != nil {
