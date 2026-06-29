@@ -9,8 +9,97 @@
 package transform
 
 const (
-	txPadHorLog2 = 2
+	txPadHorLog2              = 2
+	txb8x8LevelStride         = 8 + (1 << txPadHorLog2)
+	txb8x8PrepCoeffCount      = 64
+	txbCoeffContextBits       = 3
+	txbCoeffContextMask       = (1 << txbCoeffContextBits) - 1
+	txbCoeffContextNegativeDC = 1 << txbCoeffContextBits
+	txbCoeffContextPositiveDC = 2 << txbCoeffContextBits
 )
+
+// TXB8x8PrepResult is the coefficient-prep summary used by trusted 8x8 TXB
+// writers. The bit masks are indexed by scan order, while MaxScanLine is the
+// largest raster coefficient position reached by a non-zero coefficient.
+type TXB8x8PrepResult struct {
+	NonZeroBits uint64
+	SignBits    uint64
+	MaxScanLine uint16
+	CulLevel    uint8
+}
+
+var txb8x8Scan2D = [...]uint8{
+	0, 8, 1, 2, 9, 16, 24, 17,
+	10, 3, 4, 11, 18, 25, 32, 40,
+	33, 26, 19, 12, 5, 6, 13, 20,
+	27, 34, 41, 48, 56, 49, 42, 35,
+	28, 21, 14, 7, 15, 22, 29, 36,
+	43, 50, 57, 58, 51, 44, 37, 30,
+	23, 31, 38, 45, 52, 59, 60, 53,
+	46, 39, 47, 54, 61, 62, 55, 63,
+}
+
+func txbPrep8x8Levels2DPureGo(coeffs *[64]int16, levels *[256]uint8, absLevels *[64]uint16, eob int) TXB8x8PrepResult {
+	txbInitLevels8x8PureGo(coeffs, levels)
+	return txbPrep8x8Summary(coeffs, absLevels, eob)
+}
+
+func txbInitLevels8x8PureGo(coeffs *[64]int16, levels *[256]uint8) {
+	for col := range 8 {
+		src := col * 8
+		dst := col * txb8x8LevelStride
+		for row := range 8 {
+			level := txbAbsInt16(coeffs[src+row])
+			if level > 127 {
+				level = 127
+			}
+			levels[dst+row] = uint8(level)
+		}
+	}
+}
+
+func txbPrep8x8Summary(coeffs *[64]int16, absLevels *[64]uint16, eob int) TXB8x8PrepResult {
+	var result TXB8x8PrepResult
+	if eob > txb8x8PrepCoeffCount {
+		eob = txb8x8PrepCoeffCount
+	}
+	culLevel := 0
+	for c := range eob {
+		pos := txb8x8Scan2D[c]
+		cv := coeffs[pos]
+		if cv == 0 {
+			continue
+		}
+		if uint16(pos) > result.MaxScanLine {
+			result.MaxScanLine = uint16(pos)
+		}
+		level := txbAbsInt16(cv)
+		absLevels[c] = uint16(level)
+		result.NonZeroBits |= 1 << uint(c)
+		if cv < 0 {
+			result.SignBits |= 1 << uint(c)
+		}
+		culLevel += level
+	}
+	if culLevel > txbCoeffContextMask {
+		culLevel = txbCoeffContextMask
+	}
+	switch {
+	case coeffs[0] < 0:
+		culLevel |= txbCoeffContextNegativeDC
+	case coeffs[0] > 0:
+		culLevel += txbCoeffContextPositiveDC
+	}
+	result.CulLevel = uint8(culLevel)
+	return result
+}
+
+func txbAbsInt16(v int16) int {
+	if v < 0 {
+		return -int(v)
+	}
+	return int(v)
+}
 
 // MaxEOB returns libaom's av1_get_max_eob() value for size.
 func MaxEOB(size Size) (int, error) {
