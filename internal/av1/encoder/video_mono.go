@@ -21,11 +21,17 @@ type MonochromeVideoEncoder struct {
 
 	screenContentSelectable bool
 
-	rcEnabled      bool
-	rcPerFrameBits int
-	rcBuffer       int
-	rcRecentBits   [2]int
-	rcMinQ, rcMaxQ uint8
+	rcEnabled              bool
+	rcTargetBits           int
+	rcFramesPerSec         int
+	rcPerFrameBits         int
+	rcBuffer               int
+	rcRecentBits           [2]int
+	rcMinQ, rcMaxQ         uint8
+	rcTemporalQ            [WebRTCMaxTemporalLayers]uint8
+	rcTemporalBuffer       [WebRTCMaxTemporalLayers]int
+	rcTemporalRecentBits   [WebRTCMaxTemporalLayers][2]int
+	rcTemporalPerFrameBits [WebRTCMaxTemporalLayers]int
 
 	pc        pframeCoder
 	keyRecon  SourceFrameMono
@@ -80,9 +86,12 @@ func NewMonochromeVideoEncoderCBR(width, height int, rc RateControlConfig) (*Mon
 		return nil, err
 	}
 	e.rcEnabled = true
+	e.rcTargetBits = rc.TargetBitsPerSecond
+	e.rcFramesPerSec = rc.FramesPerSecond
 	e.rcPerFrameBits = perFrameBits
 	e.rcMinQ = rc.MinQIndex
 	e.rcMaxQ = rc.MaxQIndex
+	e.resetRCTemporalState()
 	return e, nil
 }
 
@@ -92,6 +101,9 @@ func (e *MonochromeVideoEncoder) SetTemporalLayers(n int) error {
 		return fmt.Errorf("encoder: unsupported temporal layer count %d", n)
 	}
 	e.temporalLayers = n
+	if e.rcEnabled {
+		e.resetRCTemporalState()
+	}
 	return nil
 }
 
@@ -191,9 +203,15 @@ func (e *MonochromeVideoEncoder) SetQIndex(qIndex uint8) error {
 	}
 	e.rcEnabled = false
 	e.qIndex = qIndex
+	e.rcTargetBits = 0
+	e.rcFramesPerSec = 0
 	e.rcPerFrameBits = 0
 	e.rcBuffer = 0
 	e.rcRecentBits = [2]int{}
+	e.rcTemporalQ = [WebRTCMaxTemporalLayers]uint8{}
+	e.rcTemporalBuffer = [WebRTCMaxTemporalLayers]int{}
+	e.rcTemporalRecentBits = [WebRTCMaxTemporalLayers][2]int{}
+	e.rcTemporalPerFrameBits = [WebRTCMaxTemporalLayers]int{}
 	return nil
 }
 
@@ -207,6 +225,8 @@ func (e *MonochromeVideoEncoder) SetRateControlConfig(rc RateControlConfig) erro
 		return err
 	}
 	e.rcEnabled = true
+	e.rcTargetBits = rc.TargetBitsPerSecond
+	e.rcFramesPerSec = rc.FramesPerSecond
 	e.rcPerFrameBits = perFrameBits
 	e.rcMinQ = rc.MinQIndex
 	e.rcMaxQ = rc.MaxQIndex
@@ -217,6 +237,7 @@ func (e *MonochromeVideoEncoder) SetRateControlConfig(rc RateControlConfig) erro
 	}
 	e.rcBuffer = 0
 	e.rcRecentBits = [2]int{}
+	e.resetRCTemporalState()
 	return nil
 }
 
@@ -278,7 +299,7 @@ func (e *MonochromeVideoEncoder) EncodeWithTemporalID(src SourceFrameMono, force
 	}
 	e.frameIndex++
 	e.lastTemporalID = temporalID
-	e.rcUpdate(len(tu) * 8)
+	e.rcUpdate(len(tu)*8, temporalID)
 	return tu, false, nil
 }
 
@@ -406,7 +427,7 @@ func (e *MonochromeVideoEncoder) encodeKeyWithSequenceMax(src SourceFrameMono, m
 	e.haveKey = true
 	e.frameIndex = 1
 	e.lastTemporalID = 0
-	e.rcUpdate(len(out) * 8)
+	e.rcUpdate(len(out)*8, 0)
 	return out, nil
 }
 
@@ -532,7 +553,7 @@ func (e *MonochromeVideoEncoder) encodeReferencePFrameWithSequenceMax(src Source
 	e.haveKey = true
 	e.frameIndex++
 	e.lastTemporalID = settings.TemporalID
-	e.rcUpdate(len(tu) * 8)
+	e.rcUpdate(len(tu)*8, settings.TemporalID)
 	return tu, nil
 }
 
@@ -654,33 +675,21 @@ func (e *MonochromeVideoEncoder) assembleKeyTU(seq SequenceHeader, header IntraF
 	return out, nil
 }
 
-func (e *MonochromeVideoEncoder) rcUpdate(frameBits int) {
+func (e *MonochromeVideoEncoder) resetRCTemporalState() {
+	resetRateControlTemporalState(e.qIndex, e.rcTargetBits, e.rcFramesPerSec, e.temporalLayers, e.rcPerFrameBits, &e.rcTemporalQ, &e.rcTemporalBuffer, &e.rcTemporalRecentBits, &e.rcTemporalPerFrameBits)
+}
+
+func (e *MonochromeVideoEncoder) rcUpdate(frameBits int, temporalID uint8) {
 	if !e.rcEnabled {
 		return
 	}
-	e.rcRecentBits[0], e.rcRecentBits[1] = e.rcRecentBits[1], frameBits
-	e.rcBuffer += e.rcPerFrameBits - frameBits
-	if limit := 24 * e.rcPerFrameBits; e.rcBuffer < -limit {
-		e.rcBuffer = -limit
+	idx := rateControlTemporalLayerIndex(e.temporalLayers, temporalID)
+	if e.temporalLayers > 1 {
+		e.rcTemporalQ[idx] = rcUpdateState(frameBits, e.rcTemporalPerFrameBits[idx], e.rcSurplusFrameLimit(), e.rcMinQ, e.rcMaxQ, e.rcTemporalQ[idx], &e.rcTemporalBuffer[idx], &e.rcTemporalRecentBits[idx])
+		e.qIndex = e.rcTemporalQ[0]
+		return
 	}
-	if limit := e.rcSurplusFrameLimit() * e.rcPerFrameBits; e.rcBuffer > limit {
-		e.rcBuffer = limit
-	}
-	q := int(e.qIndex)
-	step := -e.rcBuffer * 4 / e.rcPerFrameBits
-	if step > 12 {
-		step = 12
-	} else if step < -12 {
-		step = -12
-	}
-	q += step
-	if q < int(e.rcMinQ) {
-		q = int(e.rcMinQ)
-	}
-	if q > int(e.rcMaxQ) {
-		q = int(e.rcMaxQ)
-	}
-	e.qIndex = uint8(q)
+	e.qIndex = rcUpdateState(frameBits, e.rcPerFrameBits, e.rcSurplusFrameLimit(), e.rcMinQ, e.rcMaxQ, e.qIndex, &e.rcBuffer, &e.rcRecentBits)
 }
 
 func (e *MonochromeVideoEncoder) rcSurplusFrameLimit() int {
@@ -691,44 +700,22 @@ func (e *MonochromeVideoEncoder) rcSurplusFrameLimit() int {
 }
 
 func (e *MonochromeVideoEncoder) keyframeQIndex() uint8 {
-	keyQ := e.qIndex
-	if !e.rcEnabled {
-		return keyQ
+	qIndex := e.qIndex
+	perFrameBits := e.rcPerFrameBits
+	buffer := e.rcBuffer
+	if e.rcEnabled && e.temporalLayers > 1 {
+		qIndex = e.rcTemporalQ[0]
+		perFrameBits = e.rcTemporalPerFrameBits[0]
+		buffer = e.rcTemporalBuffer[0]
 	}
-	boost := e.rcPerFrameBits / 1600
-	if boost > 50 {
-		boost = 50
-	} else if boost < 12 {
-		boost = 12
-	}
-	if e.rcBuffer < 0 {
-		horizon := 24 * e.rcPerFrameBits
-		credit := horizon + e.rcBuffer
-		if credit < 0 {
-			credit = 0
-		}
-		boost = boost * (3*horizon + credit) / (4 * horizon)
-	}
-	if int(keyQ)-boost > int(e.rcMinQ) {
-		keyQ -= uint8(boost)
-	} else {
-		keyQ = e.rcMinQ
-	}
-	if e.rcBuffer >= 0 {
-		maxKeyQ := int(e.rcMinQ) + (int(e.rcMaxQ)-int(e.rcMinQ))*2/3
-		if int(keyQ) > maxKeyQ {
-			keyQ = uint8(maxKeyQ)
-		}
-	}
-	return keyQ
+	return rcKeyframeQIndex(qIndex, e.rcEnabled, perFrameBits, buffer, e.rcMinQ, e.rcMaxQ)
 }
 
 func (e *MonochromeVideoEncoder) layerQIndex(temporalID uint8) uint8 {
-	q := int(e.qIndex) + int(temporalID)*layerQIndexOffset
-	if q > 255 {
-		q = 255
+	if e.rcEnabled && e.temporalLayers > 1 {
+		return rateControlTemporalLayerQIndex(e.rcTemporalQ, e.rcMinQ, e.rcMaxQ, e.temporalLayers, temporalID)
 	}
-	return uint8(q)
+	return e.qIndex
 }
 
 func allocMonoFrame(dst *SourceFrameMono, src SourceFrameMono) {

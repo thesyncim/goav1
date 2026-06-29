@@ -29,12 +29,18 @@ type VideoEncoder struct {
 	haveKey                   bool
 
 	rcEnabled      bool
+	rcTargetBits   int
+	rcFramesPerSec int
 	rcPerFrameBits int
 	rcBuffer       int
-	// rcRecentBits holds the last two frames' coded sizes (one full
-	// layer pair), the static-content signal for the layer offset.
-	rcRecentBits   [2]int
-	rcMinQ, rcMaxQ uint8
+	// rcRecentBits holds the last two coded sizes for the single-layer
+	// controller; temporal SVC keeps the same state per temporal layer below.
+	rcRecentBits           [2]int
+	rcMinQ, rcMaxQ         uint8
+	rcTemporalQ            [WebRTCMaxTemporalLayers]uint8
+	rcTemporalBuffer       [WebRTCMaxTemporalLayers]int
+	rcTemporalRecentBits   [WebRTCMaxTemporalLayers][2]int
+	rcTemporalPerFrameBits [WebRTCMaxTemporalLayers]int
 
 	pc        pframeCoder
 	reconBufs [2]SourceFrame420
@@ -454,9 +460,12 @@ func newVideoEncoderCBRWithColor(width, height int, rc RateControlConfig, color 
 		return nil, err
 	}
 	e.rcEnabled = true
+	e.rcTargetBits = rc.TargetBitsPerSecond
+	e.rcFramesPerSec = rc.FramesPerSecond
 	e.rcPerFrameBits = perFrameBits
 	e.rcMinQ = rc.MinQIndex
 	e.rcMaxQ = rc.MaxQIndex
+	e.resetRCTemporalState()
 	return e, nil
 }
 
@@ -471,9 +480,15 @@ func (e *VideoEncoder) SetQIndex(qIndex uint8) error {
 	}
 	e.rcEnabled = false
 	e.qIndex = qIndex
+	e.rcTargetBits = 0
+	e.rcFramesPerSec = 0
 	e.rcPerFrameBits = 0
 	e.rcBuffer = 0
 	e.rcRecentBits = [2]int{}
+	e.rcTemporalQ = [WebRTCMaxTemporalLayers]uint8{}
+	e.rcTemporalBuffer = [WebRTCMaxTemporalLayers]int{}
+	e.rcTemporalRecentBits = [WebRTCMaxTemporalLayers][2]int{}
+	e.rcTemporalPerFrameBits = [WebRTCMaxTemporalLayers]int{}
 	return nil
 }
 
@@ -502,6 +517,8 @@ func (e *VideoEncoder) SetRateControlConfig(rc RateControlConfig) error {
 		return err
 	}
 	e.rcEnabled = true
+	e.rcTargetBits = rc.TargetBitsPerSecond
+	e.rcFramesPerSec = rc.FramesPerSecond
 	e.rcPerFrameBits = perFrameBits
 	e.rcMinQ = rc.MinQIndex
 	e.rcMaxQ = rc.MaxQIndex
@@ -512,47 +529,27 @@ func (e *VideoEncoder) SetRateControlConfig(rc RateControlConfig) error {
 	}
 	e.rcBuffer = 0
 	e.rcRecentBits = [2]int{}
+	e.resetRCTemporalState()
 	return nil
 }
 
-// rcUpdate feeds one frame's actual size into the leaky-bucket controller and
-// steps the working qindex toward the per-frame budget. The step grows with
-// the buffer excursion so keyframe overshoot recovers within a few frames.
-func (e *VideoEncoder) rcUpdate(frameBits int) {
+func (e *VideoEncoder) resetRCTemporalState() {
+	resetRateControlTemporalState(e.qIndex, e.rcTargetBits, e.rcFramesPerSec, e.temporalLayers, e.rcPerFrameBits, &e.rcTemporalQ, &e.rcTemporalBuffer, &e.rcTemporalRecentBits, &e.rcTemporalPerFrameBits)
+}
+
+// rcUpdate feeds one frame's actual size into the layer-local leaky-bucket
+// controller and steps that layer's qindex toward its per-frame budget.
+func (e *VideoEncoder) rcUpdate(frameBits int, temporalID uint8) {
 	if !e.rcEnabled {
 		return
 	}
-	e.rcRecentBits[0], e.rcRecentBits[1] = e.rcRecentBits[1], frameBits
-
-	e.rcBuffer += e.rcPerFrameBits - frameBits
-	// Asymmetric clamp: debt (a boosted keyframe) stays on the books for
-	// a second so the controller actually repays it, while surplus stays
-	// short so a static stretch cannot bank bits for a burst.
-	if limit := 24 * e.rcPerFrameBits; e.rcBuffer < -limit {
-		e.rcBuffer = -limit
+	idx := rateControlTemporalLayerIndex(e.temporalLayers, temporalID)
+	if e.temporalLayers > 1 {
+		e.rcTemporalQ[idx] = rcUpdateState(frameBits, e.rcTemporalPerFrameBits[idx], e.rcSurplusFrameLimit(), e.rcMinQ, e.rcMaxQ, e.rcTemporalQ[idx], &e.rcTemporalBuffer[idx], &e.rcTemporalRecentBits[idx])
+		e.qIndex = e.rcTemporalQ[0]
+		return
 	}
-	if limit := e.rcSurplusFrameLimit() * e.rcPerFrameBits; e.rcBuffer > limit {
-		e.rcBuffer = limit
-	}
-	// Proportional step: a quarter qindex unit per quarter-frame of buffer
-	// excursion, clamped so a clamped buffer moves the quantizer twelve
-	// units per frame at most. Small excursions round to zero, which keeps
-	// the steady-state deadband.
-	q := int(e.qIndex)
-	step := -e.rcBuffer * 4 / e.rcPerFrameBits
-	if step > 12 {
-		step = 12
-	} else if step < -12 {
-		step = -12
-	}
-	q += step
-	if q < int(e.rcMinQ) {
-		q = int(e.rcMinQ)
-	}
-	if q > int(e.rcMaxQ) {
-		q = int(e.rcMaxQ)
-	}
-	e.qIndex = uint8(q)
+	e.qIndex = rcUpdateState(frameBits, e.rcPerFrameBits, e.rcSurplusFrameLimit(), e.rcMinQ, e.rcMaxQ, e.qIndex, &e.rcBuffer, &e.rcRecentBits)
 }
 
 func (e *VideoEncoder) rcSurplusFrameLimit() int {
@@ -563,46 +560,15 @@ func (e *VideoEncoder) rcSurplusFrameLimit() int {
 }
 
 func (e *VideoEncoder) keyframeQIndex() uint8 {
-	keyQ := e.qIndex
-	if !e.rcEnabled {
-		return keyQ
+	qIndex := e.qIndex
+	perFrameBits := e.rcPerFrameBits
+	buffer := e.rcBuffer
+	if e.rcEnabled && e.temporalLayers > 1 {
+		qIndex = e.rcTemporalQ[0]
+		perFrameBits = e.rcTemporalPerFrameBits[0]
+		buffer = e.rcTemporalBuffer[0]
 	}
-	// The boost scales with the per-frame budget: rich streams can
-	// repay a much finer key inside the controller's debt horizon,
-	// while starved ones would queue behind an oversized key.
-	boost := e.rcPerFrameBits / 1600
-	if boost > 50 {
-		boost = 50
-	} else if boost < 12 {
-		boost = 12
-	}
-	if e.rcBuffer < 0 {
-		horizon := 24 * e.rcPerFrameBits
-		credit := horizon + e.rcBuffer
-		if credit < 0 {
-			credit = 0
-		}
-		// Keep most of the reference-quality boost, but trim it as the
-		// leaky bucket fills with debt so repeated keyframe requests do not
-		// repeatedly spend the same recovery budget.
-		boost = boost * (3*horizon + credit) / (4 * horizon)
-	}
-	if int(keyQ)-boost > int(e.rcMinQ) {
-		keyQ -= uint8(boost)
-	} else {
-		keyQ = e.rcMinQ
-	}
-	// Forced keyframes can arrive while inter frames are pinned at
-	// max Q; cap key quality in the top third of the configured
-	// range so the recovery picture stays useful without spending
-	// a full high-quality keyframe during debt.
-	if e.rcBuffer >= 0 {
-		maxKeyQ := int(e.rcMinQ) + (int(e.rcMaxQ)-int(e.rcMinQ))*2/3
-		if int(keyQ) > maxKeyQ {
-			keyQ = uint8(maxKeyQ)
-		}
-	}
-	return keyQ
+	return rcKeyframeQIndex(qIndex, e.rcEnabled, perFrameBits, buffer, e.rcMinQ, e.rcMaxQ)
 }
 
 // QIndex reports the working qindex the next frame will use.
@@ -649,6 +615,9 @@ func (e *VideoEncoder) SetTemporalLayers(n int) error {
 		return fmt.Errorf("encoder: unsupported temporal layer count %d", n)
 	}
 	e.temporalLayers = n
+	if e.rcEnabled {
+		e.resetRCTemporalState()
+	}
 	return nil
 }
 
@@ -719,7 +688,7 @@ func (e *VideoEncoder) EncodeWithTemporalID(src SourceFrame420, forceKey bool, t
 	}
 	e.frameIndex++
 	e.lastTemporalID = temporalID
-	e.rcUpdate(len(tu) * 8)
+	e.rcUpdate(len(tu)*8, temporalID)
 	return tu, false, nil
 }
 
@@ -779,7 +748,7 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 		copyFrameInto(&e.golden, recon)
 		e.sinceGoldenFresh = 0
 	}
-	e.rcUpdate(len(tu) * 8)
+	e.rcUpdate(len(tu)*8, 0)
 	return tu, nil
 }
 
@@ -937,7 +906,7 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 		copyFrameInto(&e.golden, *out)
 		e.sinceGoldenFresh = 0
 	}
-	e.rcUpdate(len(tu) * 8)
+	e.rcUpdate(len(tu)*8, settings.TemporalID)
 	return tu, nil
 }
 
@@ -1152,36 +1121,11 @@ func (e *VideoEncoder) joinFilter() error {
 	return err
 }
 
-// layerQIndexOffset is the quantizer-index boost applied per temporal layer:
-// droppable frames are never referenced, so their extra distortion does not
-// propagate, while the bits they give back flow (through rate control) to the
-// frames every later frame predicts from. The shape mirrors the layered QP
-// offsets realtime encoders assign inside a low-delay mini-GOP.
-const layerQIndexOffset = 40
-
-// layerQIndex is the effective base quantizer index for a frame at the given
-// temporal layer. The offset shrinks as the coarse search reports the scene
-// static: the boost pays off by freeing leaf bits for the reference frames,
-// and static regions have none to free - their leaves are already nearly
-// empty, so the extra quantization is pure damage.
 func (e *VideoEncoder) layerQIndex(temporalID uint8) uint8 {
-	offset := int(temporalID) * layerQIndexOffset
-	if e.rcEnabled && offset > 0 && e.hme.staticFraction() > 192 {
-		// Both signals must agree the scene is static: the coarse search
-		// seeing mostly clean zero-motion matches separates static from
-		// merely cheap-to-code motion, and the recent coded sizes scale
-		// how far the offset shrinks.
-		recent := (e.rcRecentBits[0] + e.rcRecentBits[1]) / 2
-		full := e.rcPerFrameBits / 2
-		if recent < full {
-			offset = offset * recent / full
-		}
+	if e.rcEnabled && e.temporalLayers > 1 {
+		return rateControlTemporalLayerQIndex(e.rcTemporalQ, e.rcMinQ, e.rcMaxQ, e.temporalLayers, temporalID)
 	}
-	q := int(e.qIndex) + offset
-	if q > 255 {
-		q = 255
-	}
-	return uint8(q)
+	return e.qIndex
 }
 
 func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]byte, error) {
