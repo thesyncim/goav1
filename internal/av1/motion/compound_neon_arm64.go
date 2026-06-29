@@ -30,6 +30,17 @@ type compoundFilter8NEONCtx struct {
 	roundOffset uintptr
 }
 
+type compoundFilterHighBDNEONCtx struct {
+	dst         *uint16
+	ref         *byte
+	kernel      *int16
+	refStr      uintptr
+	width       uintptr
+	height      uintptr
+	round0      uintptr
+	roundOffset uintptr
+}
+
 type compound2D8NEONCtx struct {
 	dst    *uint16
 	ref    *byte
@@ -56,6 +67,12 @@ func compoundCopyHighBDNEONAsmS2(ctx *compoundCopy8NEONCtx)
 
 //go:noescape
 func compoundX8NEONAsm(ctx *compoundFilter8NEONCtx)
+
+//go:noescape
+func compoundXHighBDNEONAsm(ctx *compoundFilterHighBDNEONCtx)
+
+//go:noescape
+func compoundXHighBDNEONAsmW4(ctx *compoundFilterHighBDNEONCtx)
 
 //go:noescape
 func compoundX8NEONAsmW4(ctx *compoundFilter8NEONCtx)
@@ -117,6 +134,48 @@ func predictInterCompoundRefHighBDToConvBufCopyResidentNEON(out []uint16, ref fr
 		return
 	}
 	compoundCopyHighBDNEONAsmS2(&ctx)
+}
+
+func predictInterCompoundRefHighBDToConvBufXResidentNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
+	fo := filterTaps/2 - 1
+	if round0 != compoundRound0Bits && round0 != compoundRound0Bits+2 {
+		predictInterCompoundRefHighBDToConvBufXResident(out, ref, refX, refY, width, height, kernel, round0, roundOffset)
+		return
+	}
+	k := kernel
+	if width == 4 {
+		if k[0] != 0 || k[1] != 0 || k[6] != 0 || k[7] != 0 {
+			predictInterCompoundRefHighBDToConvBufXResident(out, ref, refX, refY, width, height, kernel, round0, roundOffset)
+			return
+		}
+		ctx := compoundFilterHighBDNEONCtx{
+			dst:         &out[0],
+			ref:         &ref.Pix[refY*ref.Stride+(refX-1)*2],
+			kernel:      &k[2],
+			refStr:      uintptr(ref.Stride),
+			width:       uintptr(width),
+			height:      uintptr(height),
+			round0:      uintptr(round0),
+			roundOffset: uintptr(roundOffset),
+		}
+		compoundXHighBDNEONAsmW4(&ctx)
+		return
+	}
+	if width < 8 || width%8 != 0 {
+		predictInterCompoundRefHighBDToConvBufXResident(out, ref, refX, refY, width, height, kernel, round0, roundOffset)
+		return
+	}
+	ctx := compoundFilterHighBDNEONCtx{
+		dst:         &out[0],
+		ref:         &ref.Pix[refY*ref.Stride+(refX-fo)*2],
+		kernel:      &k[0],
+		refStr:      uintptr(ref.Stride),
+		width:       uintptr(width),
+		height:      uintptr(height),
+		round0:      uintptr(round0),
+		roundOffset: uintptr(roundOffset),
+	}
+	compoundXHighBDNEONAsm(&ctx)
 }
 
 func predictInterCompoundRef8ToConvBufXNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, roundOffset int) {
@@ -231,6 +290,7 @@ func init() {
 		predictInterCompoundRef8ToConvBuf2DImpl = predictInterCompoundRef8ToConvBuf2DNEON
 		predictInterCompoundRef8ToConvBufCopyImpl = predictInterCompoundRef8ToConvBufCopyNEON
 		predictInterCompoundRefHighBDToConvBufCopyResidentImpl = predictInterCompoundRefHighBDToConvBufCopyResidentNEON
+		predictInterCompoundRefHighBDToConvBufXResidentImpl = predictInterCompoundRefHighBDToConvBufXResidentNEON
 		predictInterCompoundRef8ToConvBufXImpl = predictInterCompoundRef8ToConvBufXNEON
 		predictInterCompoundRef8ToConvBufYImpl = predictInterCompoundRef8ToConvBufYNEON
 		if cpu.Detected.I8MM {

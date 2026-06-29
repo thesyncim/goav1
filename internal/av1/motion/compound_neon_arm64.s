@@ -154,6 +154,146 @@ hccS2Done:
 #define X_HEIGHT      40
 #define X_ROUNDOFFSET 48
 
+#define HX_DST         0
+#define HX_REF         8
+#define HX_KERNEL      16
+#define HX_REFSTR      24
+#define HX_WIDTH       32
+#define HX_HEIGHT      40
+#define HX_ROUND0      48
+#define HX_ROUNDOFFSET 56
+
+// func compoundXHighBDNEONAsm(ctx *compoundFilterHighBDNEONCtx)
+//
+// Resident high-bit-depth horizontal joint convolve with do_average == 0:
+//     dst = round(k0*s0 + ... + k7*s7, round0) + roundOffset
+// This is the local round0-aware form of SVT's highbd_jnt_convolve_x_neon.
+TEXT ·compoundXHighBDNEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD HX_DST(R0), R1
+	MOVD HX_REF(R0), R2
+	MOVD HX_KERNEL(R0), R3
+	MOVD HX_REFSTR(R0), R5
+	MOVD HX_WIDTH(R0), R6
+	MOVD HX_HEIGHT(R0), R7
+	MOVD HX_ROUND0(R0), R11
+	MOVD HX_ROUNDOFFSET(R0), R12
+
+	WORD $0x4c407460       // ld1 {v0.8h}, [x3]  load 8 taps
+	NEG  R11, R11
+	WORD $0x4e040d74       // dup v20.4s, w11    -round0
+	MOVD R12, R11
+	WORD $0x4e040d75       // dup v21.4s, w11    roundOffset
+
+hcxRowLoop:
+	CBZ  R7, hcxDone
+	MOVD R1, R10
+	MOVD R2, R9
+	MOVD R6, R8
+
+hcxColLoop:
+	WORD $0x4c407521       // ld1 {v1.8h}, [x9]       s0
+	ADD  $2, R9, R15
+	WORD $0x4c4075e2       // ld1 {v2.8h}, [x15]      s1
+	ADD  $4, R9, R15
+	WORD $0x4c4075e3       // ld1 {v3.8h}, [x15]      s2
+	ADD  $6, R9, R15
+	WORD $0x4c4075e4       // ld1 {v4.8h}, [x15]      s3
+	ADD  $8, R9, R15
+	WORD $0x4c4075e5       // ld1 {v5.8h}, [x15]      s4
+	ADD  $10, R9, R15
+	WORD $0x4c4075e6       // ld1 {v6.8h}, [x15]      s5
+	ADD  $12, R9, R15
+	WORD $0x4c4075e7       // ld1 {v7.8h}, [x15]      s6
+	ADD  $14, R9, R15
+	WORD $0x4c4075e8       // ld1 {v8.8h}, [x15]      s7
+
+	WORD $0x4f000410       // movi v16.4s, #0
+	WORD $0x4f000411       // movi v17.4s, #0
+	WORD $0x0f402030       // smlal  v16.4s, v1.4h, v0.h[0]
+	WORD $0x4f402031       // smlal2 v17.4s, v1.8h, v0.h[0]
+	WORD $0x0f502050       // smlal  v16.4s, v2.4h, v0.h[1]
+	WORD $0x4f502051       // smlal2 v17.4s, v2.8h, v0.h[1]
+	WORD $0x0f602070       // smlal  v16.4s, v3.4h, v0.h[2]
+	WORD $0x4f602071       // smlal2 v17.4s, v3.8h, v0.h[2]
+	WORD $0x0f702090       // smlal  v16.4s, v4.4h, v0.h[3]
+	WORD $0x4f702091       // smlal2 v17.4s, v4.8h, v0.h[3]
+	WORD $0x0f4028b0       // smlal  v16.4s, v5.4h, v0.h[4]
+	WORD $0x4f4028b1       // smlal2 v17.4s, v5.8h, v0.h[4]
+	WORD $0x0f5028d0       // smlal  v16.4s, v6.4h, v0.h[5]
+	WORD $0x4f5028d1       // smlal2 v17.4s, v6.8h, v0.h[5]
+	WORD $0x0f6028f0       // smlal  v16.4s, v7.4h, v0.h[6]
+	WORD $0x4f6028f1       // smlal2 v17.4s, v7.8h, v0.h[6]
+	WORD $0x0f702910       // smlal  v16.4s, v8.4h, v0.h[7]
+	WORD $0x4f702911       // smlal2 v17.4s, v8.8h, v0.h[7]
+
+	WORD $0x4eb45610       // srshl v16.4s, v16.4s, v20.4s
+	WORD $0x4eb45631       // srshl v17.4s, v17.4s, v20.4s
+	WORD $0x4eb58610       // add v16.4s, v16.4s, v21.4s
+	WORD $0x4eb58631       // add v17.4s, v17.4s, v21.4s
+	WORD $0x0e612a10       // xtn  v16.4h, v16.4s
+	WORD $0x4e612a30       // xtn2 v16.8h, v17.4s
+	WORD $0x4c007550       // st1 {v16.8h}, [x10]
+
+	ADD  $16, R10, R10
+	ADD  $16, R9, R9
+	SUB  $8, R8, R8
+	CBNZ R8, hcxColLoop
+
+	ADD  R6<<1, R1
+	ADD  R5, R2, R2
+	SUB  $1, R7, R7
+	CBNZ R7, hcxRowLoop
+
+hcxDone:
+	RET
+
+// func compoundXHighBDNEONAsmW4(ctx *compoundFilterHighBDNEONCtx)
+//
+// Width-4 high-bit-depth compound-X. The wrapper passes refX-1 and
+// x_filter_ptr+2, matching SVT's width-4 4-tap branch.
+TEXT ·compoundXHighBDNEONAsmW4(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD HX_DST(R0), R1
+	MOVD HX_REF(R0), R2
+	MOVD HX_KERNEL(R0), R3
+	MOVD HX_REFSTR(R0), R5
+	MOVD HX_HEIGHT(R0), R7
+	MOVD HX_ROUND0(R0), R11
+	MOVD HX_ROUNDOFFSET(R0), R12
+
+	WORD $0x0c407460       // ld1 {v0.4h}, [x3]  load k2..k5
+	NEG  R11, R11
+	WORD $0x4e040d74       // dup v20.4s, w11    -round0
+	MOVD R12, R11
+	WORD $0x4e040d75       // dup v21.4s, w11    roundOffset
+
+hcx4RowLoop:
+	CBZ  R7, hcx4Done
+	MOVD R1, R10
+	MOVD R2, R9
+	WORD $0x4c407521       // ld1 {v1.8h}, [x9]  s0..s7
+	WORD $0x6e011022       // ext v2.16b, v1.16b, v1.16b, #2
+	WORD $0x6e012023       // ext v3.16b, v1.16b, v1.16b, #4
+	WORD $0x6e013024       // ext v4.16b, v1.16b, v1.16b, #6
+	WORD $0x4f000410       // movi v16.4s, #0
+	WORD $0x0f402030       // smlal v16.4s, v1.4h, v0.h[0]
+	WORD $0x0f502050       // smlal v16.4s, v2.4h, v0.h[1]
+	WORD $0x0f602070       // smlal v16.4s, v3.4h, v0.h[2]
+	WORD $0x0f702090       // smlal v16.4s, v4.4h, v0.h[3]
+	WORD $0x4eb45610       // srshl v16.4s, v16.4s, v20.4s
+	WORD $0x4eb58610       // add v16.4s, v16.4s, v21.4s
+	WORD $0x0e612a10       // xtn v16.4h, v16.4s
+	WORD $0x0c007550       // st1 {v16.4h}, [x10]
+
+	ADD  $8, R1, R1
+	ADD  R5, R2, R2
+	SUB  $1, R7, R7
+	CBNZ R7, hcx4RowLoop
+
+hcx4Done:
+	RET
+
 // func compoundX8NEONAsm(ctx *compoundFilter8NEONCtx)
 //
 // Resident horizontal 8-tap joint convolve with do_average == 0:
