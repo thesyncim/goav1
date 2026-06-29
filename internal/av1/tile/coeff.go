@@ -178,6 +178,7 @@ type coeffGeometry struct {
 }
 
 var coeffGeometryTable [transformSizeCount]coeffGeometry
+var coeffLower2DOffsetTable [transformSizeCount][]uint8
 
 // coeffPos is the precomputed scan position for one coefficient index: the
 // padded scratch offset (col*stride+row) plus the unpadded row/col. Computing
@@ -316,6 +317,11 @@ func init() {
 			}
 		}
 		coeffPosTable[size] = positions
+		lower2DOffsets := make([]uint8, maxEOB)
+		for idx, p := range positions {
+			lower2DOffsets[idx] = uint8(p.lower2DOffset)
+		}
+		coeffLower2DOffsetTable[size] = lower2DOffsets
 		hotPositions := make([]coeffPosHot, maxEOB)
 		for idx, p := range positions {
 			hotPositions[idx] = coeffPosHot{
@@ -553,18 +559,32 @@ func CoeffNZMapContexts(levels []uint8, size TransformSize, class transform.Clas
 	if eob > maxEOB || len(scan) < eob || len(contexts) < maxEOB || len(levels) < scratchLen {
 		return ErrInvalidDecodeState
 	}
+	if err := coeffNZMapValidateScan(scan, eob, maxEOB); err != nil {
+		return err
+	}
+	if coeffNZMapContextsArch(levels, size, class, scan, eob, contexts, maxEOB) {
+		return nil
+	}
+	return coeffNZMapContextsScalar(levels, size, class, scan, eob, contexts, maxEOB)
+}
+
+func coeffNZMapValidateScan(scan []int16, eob int, maxEOB int) error {
 	for i := range eob {
 		pos := int(scan[i])
 		if pos < 0 || pos >= maxEOB {
 			return ErrInvalidDecodeState
 		}
+	}
+	return nil
+}
+
+func coeffNZMapContextsScalar(levels []uint8, size TransformSize, class transform.Class, scan []int16, eob int, contexts []int8, maxEOB int) error {
+	for i := range eob {
+		pos := int(scan[i])
 		var ctx int
 		var err error
 		if i == eob-1 {
-			ctx, err = transform.LowerLevelsCtxEOB(scanSize, i)
-			if err != nil {
-				return ErrInvalidDecodeState
-			}
+			ctx = int(coeffLowerLevelsCtxEOBFast(maxEOB, i))
 		} else {
 			ctx, err = CoeffLowerLevelsContext(levels, size, class, pos)
 			if err != nil {

@@ -652,6 +652,22 @@ func TestCoeffTXBLevelHelpersDoNotAllocate(t *testing.T) {
 	}
 }
 
+func TestCoeffNZMapContextsRejectsInvalidScanPosition(t *testing.T) {
+	size := TransformSize16x16
+	geo := coeffGeometryTable[size]
+	levels := make([]uint8, int(geo.scratchLen))
+	contexts := make([]int8, int(geo.maxEOB))
+	scan := append([]int16(nil), coeffScanTable[size][transform.Class2D]...)
+	scan[2] = int16(geo.maxEOB)
+	if err := CoeffNZMapContexts(levels, size, transform.Class2D, scan, 3, contexts); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("large scan position err=%v want %v", err, ErrInvalidDecodeState)
+	}
+	scan[2] = -1
+	if err := CoeffNZMapContexts(levels, size, transform.Class2D, scan, 3, contexts); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("negative scan position err=%v want %v", err, ErrInvalidDecodeState)
+	}
+}
+
 func TestReadCoefficientsTXBDecodesSingleDC(t *testing.T) {
 	result, coeffs := readCoefficientsTXBForTest(t, []byte{0x00}, TransformSize4x4, transform.Class2D, CoeffPlaneY, 0)
 	if result.AllZero {

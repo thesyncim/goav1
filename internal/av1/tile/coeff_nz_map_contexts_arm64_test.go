@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
+//go:build arm64 && !purego
+
+package tile
+
+import (
+	"testing"
+
+	"github.com/thesyncim/goav1/internal/av1/transform"
+)
+
+func TestCoeffNZMapContextsNEONMatchesScalar(t *testing.T) {
+	rnd := newCoeffContextRandom(0x4e5a4d41)
+	for size := range transformSizeCount {
+		geo := coeffGeometryTable[size]
+		if !geo.valid || (geo.scanHeight != 16 && geo.scanHeight != 32) {
+			continue
+		}
+		maxEOB := int(geo.maxEOB)
+		levels := make([]uint8, int(geo.scratchLen))
+		scan := coeffScanTable[size][transform.Class2D]
+		if len(scan) < maxEOB {
+			t.Fatalf("size=%d missing class2d scan", size)
+		}
+		for iter := 0; iter < 16; iter++ {
+			for i := range levels {
+				levels[i] = rnd.u8() & 0x7f
+			}
+			for _, eob := range coeffNZMapEOBCases(maxEOB) {
+				if eob <= 1 {
+					continue
+				}
+				got := make([]int8, maxEOB)
+				want := make([]int8, maxEOB)
+				for i := range got {
+					v := int8(rnd.u8() & 0x3f)
+					got[i] = v
+					want[i] = v
+				}
+				if err := coeffNZMapContextsScalar(levels, size, transform.Class2D, scan, eob, want, maxEOB); err != nil {
+					t.Fatal(err)
+				}
+				if !coeffNZMapContextsArch(levels, size, transform.Class2D, scan, eob, got, maxEOB) {
+					t.Fatalf("size=%d eob=%d did not use arch path", size, eob)
+				}
+				for i := range got {
+					if got[i] != want[i] {
+						t.Fatalf("size=%d eob=%d iter=%d context[%d]=%d want %d", size, eob, iter, i, got[i], want[i])
+					}
+				}
+			}
+		}
+	}
+}
