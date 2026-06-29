@@ -91,7 +91,10 @@ per-frame `Encode` calls. Use it for local code-path profiling, not for fair
 tables. `-timing-mode e2e` times goav1 setup, encode calls, and decoded-output
 writes, while external rows continue to time the encoder command invocation.
 The metadata JSON records command paths, binary SHA-256 hashes, and version/help
-probes for the external tools used by the run.
+probes for the external tools used by the run. It also records
+`manifest_sha256`, the effective `GOMAXPROCS`, CPU count/model when available,
+and selected Go runtime environment variables (`GOFLAGS`, `GOGC`, `GOMEMLIMIT`,
+`GODEBUG`).
 It also records `run_order` and `shuffle_seed`. Use
 `-run-order bitrate-encoder` to preserve the historical loop order,
 `-run-order encoder-bitrate` to keep one encoder warm across the bitrate sweep,

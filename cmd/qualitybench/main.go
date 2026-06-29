@@ -197,6 +197,7 @@ type frameMetricValue struct {
 type qualitybenchMetadata struct {
 	GeneratedAtUTC string                      `json:"generated_at_utc"`
 	Go             runtimeMetadata             `json:"go"`
+	Environment    environmentMetadata         `json:"environment"`
 	Git            gitMetadata                 `json:"git"`
 	Config         metadataConfig              `json:"config"`
 	FairnessNotes  []string                    `json:"fairness_notes,omitempty"`
@@ -214,6 +215,16 @@ type runtimeMetadata struct {
 	SIMDFeatures []string `json:"simd_features,omitempty"`
 }
 
+type environmentMetadata struct {
+	GOMAXPROCS int    `json:"gomaxprocs"`
+	NumCPU     int    `json:"num_cpu"`
+	CPUModel   string `json:"cpu_model,omitempty"`
+	GOFLAGS    string `json:"goflags,omitempty"`
+	GOGC       string `json:"gogc,omitempty"`
+	GOMEMLIMIT string `json:"gomemlimit,omitempty"`
+	GODEBUG    string `json:"godebug,omitempty"`
+}
+
 type gitMetadata struct {
 	Commit string `json:"commit"`
 	Dirty  bool   `json:"dirty"`
@@ -227,6 +238,7 @@ type metadataConfig struct {
 	FPS              int      `json:"fps"`
 	Input            string   `json:"input,omitempty"`
 	Manifest         string   `json:"manifest,omitempty"`
+	ManifestSHA256   string   `json:"manifest_sha256,omitempty"`
 	Encoders         []string `json:"encoders"`
 	Bitrates         []int    `json:"bitrates"`
 	RequiredMetrics  []string `json:"required_metrics,omitempty"`
@@ -1597,6 +1609,10 @@ func writeMetadataJSON(cfg benchConfig, filters map[string]bool, clips []clipSpe
 	if err != nil {
 		return err
 	}
+	configMetadata, err := metadataConfigFor(cfg)
+	if err != nil {
+		return err
+	}
 	doc := qualitybenchMetadata{
 		GeneratedAtUTC: time.Now().UTC().Format(time.RFC3339Nano),
 		Go: runtimeMetadata{
@@ -1606,8 +1622,9 @@ func writeMetadataJSON(cfg benchConfig, filters map[string]bool, clips []clipSpe
 			SIMDTier:     detectedSIMDTier(),
 			SIMDFeatures: detectedSIMDFeatures(),
 		},
+		Environment:   environmentMetadataForRun(),
 		Git:           currentGitMetadata(),
-		Config:        metadataConfigFor(cfg),
+		Config:        configMetadata,
 		FairnessNotes: fairnessNotes(cfg),
 		MetricFilters: metricFilterAvailability(filters),
 		Tools:         toolMetadataForRun(),
@@ -1684,12 +1701,12 @@ func fileBytesAndSHA256(path string) (int64, string, error) {
 	return info.Size(), hash, nil
 }
 
-func metadataConfigFor(cfg benchConfig) metadataConfig {
+func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 	encoders := append([]string(nil), cfg.encoders...)
 	bitrates := append([]int(nil), cfg.bitrates...)
 	required := append([]string(nil), cfg.requiredMetrics...)
 	requiredEncoders := append([]string(nil), cfg.requiredEncoders...)
-	return metadataConfig{
+	out := metadataConfig{
 		Width:            cfg.width,
 		Height:           cfg.height,
 		Frames:           cfg.frames,
@@ -1720,6 +1737,14 @@ func metadataConfigFor(cfg benchConfig) metadataConfig {
 		WarmupRuns:       cfg.warmupRuns,
 		Publish:          cfg.publish,
 	}
+	if cfg.manifestPath != "" {
+		hash, err := sha256File(cfg.manifestPath)
+		if err != nil {
+			return metadataConfig{}, fmt.Errorf("manifest metadata: %w", err)
+		}
+		out.ManifestSHA256 = hash
+	}
+	return out, nil
 }
 
 func detectedSIMDTier() string {
@@ -1828,6 +1853,45 @@ func metricFilterAvailability(filters map[string]bool) map[string]bool {
 		"xpsnr":   filters["xpsnr"],
 		"libvmaf": filters["libvmaf"],
 	}
+}
+
+func environmentMetadataForRun() environmentMetadata {
+	return environmentMetadata{
+		GOMAXPROCS: runtime.GOMAXPROCS(0),
+		NumCPU:     runtime.NumCPU(),
+		CPUModel:   detectCPUModel(),
+		GOFLAGS:    os.Getenv("GOFLAGS"),
+		GOGC:       os.Getenv("GOGC"),
+		GOMEMLIMIT: os.Getenv("GOMEMLIMIT"),
+		GODEBUG:    os.Getenv("GODEBUG"),
+	}
+}
+
+func detectCPUModel() string {
+	switch runtime.GOOS {
+	case "darwin":
+		out, err := exec.Command("sysctl", "-n", "machdep.cpu.brand_string").Output()
+		if err == nil {
+			return strings.TrimSpace(string(out))
+		}
+	case "linux":
+		data, err := os.ReadFile("/proc/cpuinfo")
+		if err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				key, value, ok := strings.Cut(line, ":")
+				if !ok {
+					continue
+				}
+				key = strings.TrimSpace(strings.ToLower(key))
+				if key == "model name" || key == "hardware" {
+					if value = strings.TrimSpace(value); value != "" {
+						return value
+					}
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func toolMetadataForRun() map[string]toolMetadata {

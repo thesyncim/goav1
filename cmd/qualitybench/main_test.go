@@ -745,7 +745,10 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		warmupRuns:       1,
 		publish:          true,
 	}
-	got := metadataConfigFor(cfg)
+	got, err := metadataConfigFor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg.encoders[0] = "mutated"
 	cfg.bitrates[0] = 1
 	cfg.requiredMetrics[0] = "vmaf"
@@ -1089,11 +1092,20 @@ func TestWriteMetadataJSON(t *testing.T) {
 	if err := os.WriteFile(input, []byte("abc"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	manifest := filepath.Join(dir, "clips.csv")
+	if err := os.WriteFile(manifest, []byte("clip,input,width,height,frames,fps\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifestSHA, err := sha256File(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := benchConfig{
 		width:            64,
 		height:           64,
 		frames:           2,
 		fps:              30,
+		manifestPath:     manifest,
 		metadataPath:     path,
 		encoders:         []string{"goav1"},
 		bitrates:         []int{100000},
@@ -1148,6 +1160,12 @@ func TestWriteMetadataJSON(t *testing.T) {
 	}
 	if doc.Go.SIMDTier == "" {
 		t.Fatalf("missing simd metadata: %+v", doc.Go)
+	}
+	if doc.Environment.GOMAXPROCS <= 0 || doc.Environment.NumCPU <= 0 {
+		t.Fatalf("environment metadata=%+v", doc.Environment)
+	}
+	if doc.Config.ManifestSHA256 != manifestSHA {
+		t.Fatalf("manifest sha=%q want %q", doc.Config.ManifestSHA256, manifestSHA)
 	}
 	if len(doc.Config.RequiredEncoders) != 1 || doc.Config.RequiredEncoders[0] != "goav1" {
 		t.Fatalf("required encoders=%+v", doc.Config.RequiredEncoders)
