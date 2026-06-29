@@ -514,13 +514,15 @@ make dryrun-fast
 `make webrtc-production` requires `aomdec` and `dav1d` on `PATH`; it is the
 strict realtime/WebRTC gate for encoder output, decoder RTP receive paths, SVC
 scalability modes, RTP/RTCP helpers, loss recovery, control reconfiguration, and
-external decoder parity, including the Pion/browser-push WebRTC example and
-  multi-spatial I422/I444/I400/NV12/NV21 plus generic 8/10/12-bit `Frame`
-  adapter output after RTP assembly, native single-spatial monochrome RTC output,
-  native 10/12-bit I400/I420/I422/I444 RTC output, as well as all-mode
-  `SetConfig` transitions that change framerate, bitrate, rate control,
-  content hint, scalability mode, and native high-bit-depth non-4:2:0 color. The
-  browser portion live-tests every
+external decoder parity, including internal pinned-libwebrtc scalability
+catalogue checks, accepted pixel-mode decode, control-combination decode,
+non-catalog key-shift temporal schedule checks, the Pion/browser-push WebRTC
+example, multi-spatial I422/I444/I400/NV12/NV21 plus generic 8/10/12-bit
+`Frame` adapter output after RTP assembly, native single-spatial monochrome RTC
+output, native 10/12-bit I400/I420/I422/I444 RTC output, as well as all-mode
+`SetConfig` transitions that change framerate, bitrate, rate control, content
+hint, scalability mode, and native high-bit-depth non-4:2:0 color. The browser
+portion live-tests every
 `EncoderWebRTCScalabilityModes()` entry through the supported delivery shape:
 direct L1, exact-base forwarding for shared-reference L2/L3 SVC, and exact-top
 forwarding for S2/S3 simulcast. It also repeats representative direct-RTP
