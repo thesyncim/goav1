@@ -259,6 +259,7 @@ type metadataConfig struct {
 	TimingMode       string   `json:"timing_mode"`
 	RunOrder         string   `json:"run_order"`
 	ShuffleSeed      int64    `json:"shuffle_seed,omitempty"`
+	SampleOrder      string   `json:"sample_order"`
 	Runs             int      `json:"runs"`
 	WarmupRuns       int      `json:"warmup_runs"`
 	Publish          bool     `json:"publish,omitempty"`
@@ -361,8 +362,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	git := currentGitMetadata()
 	if cfg.publish {
-		if err := validatePublishConfig(cfg, currentGitMetadata()); err != nil {
+		if err := validatePublishConfig(cfg, git); err != nil {
 			return err
 		}
 	}
@@ -385,6 +387,9 @@ func run() error {
 
 	filters := ffmpegFilters()
 	if err := validateRequiredMetrics(filters, cfg.requiredMetrics); err != nil {
+		return err
+	}
+	if err := validateRequiredEncoderTools(cfg, exec.LookPath); err != nil {
 		return err
 	}
 	var out io.Writer = os.Stdout
@@ -486,7 +491,7 @@ func run() error {
 		summaryErr = validateRequiredSummaries(cfg, rows, summaries)
 	}
 	if cfg.metadataPath != "" {
-		if err := writeMetadataJSON(cfg, filters, clips, invocations); err != nil {
+		if err := writeMetadataJSON(cfg, filters, git, clips, invocations); err != nil {
 			return err
 		}
 	}
@@ -611,6 +616,9 @@ func parseFlags() (benchConfig, error) {
 	} else {
 		cfg.anchorEncoder = canonicalEncoderName(cfg.anchorEncoder)
 	}
+	if !encoderSelected(cfg, cfg.anchorEncoder) {
+		return benchConfig{}, fmt.Errorf("anchor encoder %s is not selected by -encoders", cfg.anchorEncoder)
+	}
 	if cfg.width < 16 || cfg.height < 16 || cfg.width%2 != 0 || cfg.height%2 != 0 {
 		return benchConfig{}, fmt.Errorf("invalid frame size %dx%d: need even dimensions >= 16", cfg.width, cfg.height)
 	}
@@ -709,6 +717,15 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	if strings.TrimSpace(strings.ToLower(cfg.requiredEncodersRaw)) != "all" {
 		return errors.New("publish requires -require-encoders all")
 	}
+	if hasDuplicateStrings(cfg.encoders) {
+		return errors.New("publish requires each -encoders entry to be unique after alias canonicalization")
+	}
+	if hasDuplicateInts(cfg.bitrates) {
+		return errors.New("publish requires each -bitrates entry to be unique")
+	}
+	if len(cfg.bitrates) < 4 {
+		return errors.New("publish requires at least four distinct -bitrates for BD-rate")
+	}
 	if cfg.goMaxProcs <= 0 {
 		return errors.New("publish requires -gomaxprocs > 0")
 	}
@@ -770,6 +787,28 @@ func encoderSelected(cfg benchConfig, name string) bool {
 		if selected == name {
 			return true
 		}
+	}
+	return false
+}
+
+func hasDuplicateStrings(values []string) bool {
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		if seen[value] {
+			return true
+		}
+		seen[value] = true
+	}
+	return false
+}
+
+func hasDuplicateInts(values []int) bool {
+	seen := make(map[int]bool, len(values))
+	for _, value := range values {
+		if seen[value] {
+			return true
+		}
+		seen[value] = true
 	}
 	return false
 }
@@ -990,6 +1029,25 @@ func requiredEncoderSet(encoders []string) map[string]bool {
 	return out
 }
 
+func validateRequiredEncoderTools(cfg benchConfig, lookPath func(string) (string, error)) error {
+	for _, encoder := range cfg.requiredEncoders {
+		switch encoder {
+		case "goav1":
+		case "aomenc":
+			if _, err := lookPath("aomenc"); err != nil {
+				return fmt.Errorf("required encoder aomenc unavailable: %w", err)
+			}
+		case "svt-av1":
+			if _, err := lookPath("SvtAv1EncApp"); err != nil {
+				return fmt.Errorf("required encoder svt-av1 unavailable: %w", err)
+			}
+		default:
+			return fmt.Errorf("required encoder %s has no tool preflight", encoder)
+		}
+	}
+	return nil
+}
+
 func validateRequiredMetrics(filters map[string]bool, metrics []string) error {
 	for _, metric := range metrics {
 		filter := ffmpegFilterForMetric(metric)
@@ -1186,9 +1244,10 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 	var invocations []encoderInvocationMetadata
 	required := requiredMetricSet(cfg.requiredMetrics)
 	requiredEncoders := requiredEncoderSet(cfg.requiredEncoders)
-	for _, job := range encodeJobsForConfig(cfg) {
-		bitrate, encoderName := job.bitrate, job.encoder
-		result := runEncoderMeasured(clipCfg, frames, refPath, encoderName, bitrate)
+	jobs := encodeJobsForConfig(cfg)
+	results := runEncoderJobsMeasured(clipCfg, frames, refPath, jobs)
+	for i, result := range results {
+		bitrate, encoderName := jobs[i].bitrate, jobs[i].encoder
 		m := metrics{psnr: "NA", ssim: "NA", xpsnr: "NA", vmaf: "NA"}
 		var metricErr error
 		if result.status == "ok" {
@@ -1605,7 +1664,7 @@ func formatU64(n uint64) string {
 	return strconv.FormatUint(n, 10)
 }
 
-func writeMetadataJSON(cfg benchConfig, filters map[string]bool, clips []clipSpec, invocations []encoderInvocationMetadata) error {
+func writeMetadataJSON(cfg benchConfig, filters map[string]bool, git gitMetadata, clips []clipSpec, invocations []encoderInvocationMetadata) error {
 	clipMetadata, err := clipMetadataFor(clips)
 	if err != nil {
 		return err
@@ -1624,7 +1683,7 @@ func writeMetadataJSON(cfg benchConfig, filters map[string]bool, clips []clipSpe
 			SIMDFeatures: detectedSIMDFeatures(),
 		},
 		Environment:   environmentMetadataForRun(),
-		Git:           currentGitMetadata(),
+		Git:           git,
 		Config:        configMetadata,
 		FairnessNotes: fairnessNotes(cfg),
 		MetricFilters: metricFilterAvailability(filters),
@@ -1734,6 +1793,7 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		TimingMode:       cfg.timingMode,
 		RunOrder:         cfg.runOrder,
 		ShuffleSeed:      cfg.shuffleSeed,
+		SampleOrder:      "interleaved-by-sample-pass",
 		Runs:             cfg.runs,
 		WarmupRuns:       cfg.warmupRuns,
 		Publish:          cfg.publish,
@@ -1824,7 +1884,7 @@ func fairnessNotes(cfg benchConfig) []string {
 		"CSV and metadata include wall seconds, CPU seconds, and observed_parallelism=cpu_total_seconds/encode_wall_seconds so comparisons can be checked against observed CPU budget.",
 		"qualitybench records timing_mode; core mode keeps the historical goav1 per-frame Encode timer, while e2e mode times goav1 setup, encode calls, encoded artifact writes, and encoder shutdown for fairer CLI comparisons. Metric decode runs after timing for every encoder.",
 		"qualitybench records run_order and shuffle_seed so encoder/bitrate order effects can be reproduced or randomized deterministically.",
-		"qualitybench records every measured encode sample in metadata; the normal CSV row reports the median wall-time sample after any configured warmup runs.",
+		"qualitybench runs warmups and measured samples in deterministic sample passes across all encoder/bitrate tuples, records every measured encode sample in metadata, and reports the median wall-time sample in the normal CSV row.",
 		"Publishable rows use -run-order shuffle with an explicit seed so every table has a reproducible encoder/bitrate order without always favoring the same encoder column.",
 		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or sweep --lp 0..6, then report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
 		"For fair libaom comparisons, set -aom-threads and -aom-row-mt explicitly and report both; qualitybench forwards them to aomenc --threads and --row-mt and records them in metadata.",
@@ -2444,36 +2504,84 @@ func runEncoder(cfg benchConfig, frames []goav1.I420Frame, refPath string, encod
 }
 
 func runEncoderMeasured(cfg benchConfig, frames []goav1.I420Frame, refPath string, encoderName string, bitrate int) encodeResult {
-	encoderName = canonicalEncoderName(encoderName)
-	repeated := cfg.warmupRuns > 0 || cfg.runs > 1
+	results := runEncoderJobsMeasured(cfg, frames, refPath, []encodeJob{{bitrate: bitrate, encoder: canonicalEncoderName(encoderName)}})
+	if len(results) == 0 {
+		return encodeResult{encoder: canonicalEncoderName(encoderName), targetBPS: bitrate, status: "error", errText: "no encoder result"}
+	}
+	return results[0]
+}
+
+func runEncoderJobsMeasured(cfg benchConfig, frames []goav1.I420Frame, refPath string, jobs []encodeJob) []encodeResult {
+	return runEncoderJobsMeasuredWithRunner(cfg, frames, refPath, jobs, runEncoder)
+}
+
+func runEncoderJobsMeasuredWithRunner(
+	cfg benchConfig,
+	frames []goav1.I420Frame,
+	refPath string,
+	jobs []encodeJob,
+	runner func(benchConfig, []goav1.I420Frame, string, string, int) encodeResult,
+) []encodeResult {
+	results := make([][]encodeResult, len(jobs))
+	final := make([]encodeResult, len(jobs))
+	done := make([]bool, len(jobs))
+
 	for run := 1; run <= cfg.warmupRuns; run++ {
-		warmupCfg, err := encodeSampleConfig(cfg, encoderName, bitrate, "warmup", run, repeated)
-		if err != nil {
-			return encodeResult{encoder: encoderName, targetBPS: bitrate, status: "error", errText: err.Error()}
-		}
-		result := runEncoder(warmupCfg, frames, refPath, encoderName, bitrate)
-		if result.status != "ok" {
-			result.warmupRuns = cfg.warmupRuns
-			result.runs = cfg.runs
-			return result
+		for i, job := range jobs {
+			if done[i] {
+				continue
+			}
+			warmupCfg, err := encodeSampleConfig(cfg, job.encoder, job.bitrate, "warmup", run, true)
+			if err != nil {
+				final[i] = encodeResult{encoder: job.encoder, targetBPS: job.bitrate, status: "error", errText: err.Error(), warmupRuns: cfg.warmupRuns, runs: cfg.runs}
+				done[i] = true
+				continue
+			}
+			result := runner(warmupCfg, frames, refPath, job.encoder, job.bitrate)
+			if result.status != "ok" {
+				result.warmupRuns = cfg.warmupRuns
+				result.runs = cfg.runs
+				final[i] = result
+				done[i] = true
+			}
 		}
 	}
 
-	results := make([]encodeResult, 0, cfg.runs)
+	repeated := cfg.warmupRuns > 0 || cfg.runs > 1
 	for run := 1; run <= cfg.runs; run++ {
-		sampleCfg, err := encodeSampleConfig(cfg, encoderName, bitrate, "run", run, repeated)
-		if err != nil {
-			return encodeResult{encoder: encoderName, targetBPS: bitrate, status: "error", errText: err.Error()}
-		}
-		result := runEncoder(sampleCfg, frames, refPath, encoderName, bitrate)
-		result.selectedRun = run
-		results = append(results, result)
-		if result.status != "ok" {
-			return attachEncodeRunSummary(result, results, cfg.warmupRuns, cfg.runs)
+		for i, job := range jobs {
+			if done[i] {
+				continue
+			}
+			sampleCfg, err := encodeSampleConfig(cfg, job.encoder, job.bitrate, "run", run, repeated)
+			if err != nil {
+				result := encodeResult{encoder: job.encoder, targetBPS: job.bitrate, status: "error", errText: err.Error(), selectedRun: run}
+				results[i] = append(results[i], result)
+				final[i] = attachEncodeRunSummary(result, results[i], cfg.warmupRuns, cfg.runs)
+				done[i] = true
+				continue
+			}
+			result := runner(sampleCfg, frames, refPath, job.encoder, job.bitrate)
+			result.selectedRun = run
+			results[i] = append(results[i], result)
+			if result.status != "ok" {
+				final[i] = attachEncodeRunSummary(result, results[i], cfg.warmupRuns, cfg.runs)
+				done[i] = true
+			}
 		}
 	}
-	selected := medianEncodeResult(results)
-	return attachEncodeRunSummary(selected, results, cfg.warmupRuns, cfg.runs)
+
+	for i, job := range jobs {
+		if done[i] {
+			continue
+		}
+		if len(results[i]) == 0 {
+			final[i] = encodeResult{encoder: job.encoder, targetBPS: job.bitrate, status: "error", errText: "no measured runs"}
+			continue
+		}
+		final[i] = attachEncodeRunSummary(medianEncodeResult(results[i]), results[i], cfg.warmupRuns, cfg.runs)
+	}
+	return final
 }
 
 func encodeSampleConfig(cfg benchConfig, encoderName string, bitrate int, kind string, run int, repeated bool) (benchConfig, error) {
@@ -2698,8 +2806,12 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		encodedContainer: "ivf",
 		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("aomenc_%d.yuv", bitrate)),
 		settings: map[string]string{
-			"aom_threads": strconv.Itoa(cfg.aomThreads),
-			"aom_row_mt":  strconv.Itoa(cfg.aomRowMT),
+			"profile":         "0",
+			"bit_depth":       "8",
+			"input_bit_depth": "8",
+			"color_format":    "i420",
+			"aom_threads":     strconv.Itoa(cfg.aomThreads),
+			"aom_row_mt":      strconv.Itoa(cfg.aomRowMT),
 		},
 	}
 	if _, err := exec.LookPath("aomenc"); err != nil {
@@ -2719,6 +2831,9 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		fmt.Sprintf("--width=%d", cfg.width),
 		fmt.Sprintf("--height=%d", cfg.height),
 		"--i420",
+		"--profile=0",
+		"--bit-depth=8",
+		"--input-bit-depth=8",
 		fmt.Sprintf("--threads=%d", cfg.aomThreads),
 		fmt.Sprintf("--row-mt=%d", cfg.aomRowMT),
 		"--lag-in-frames=0",
@@ -2760,11 +2875,7 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	}
 	result.encodedBytes = encodedBytes
 	result.encodedSHA256 = encodedHash
-	if err := decodeIVFWithFFmpeg(ivfPath, result.decodedYUV, cfg.frames); err != nil {
-		result.status, result.errText = "error", err.Error()
-		return result
-	}
-	decodedBytes, decodedHash, err := fileBytesAndSHA256(result.decodedYUV)
+	decodedBytes, decodedHash, err := decodeIVFWithFFmpeg(ivfPath, result.decodedYUV, cfg.width, cfg.height, cfg.frames)
 	if err != nil {
 		result.status, result.errText = "error", err.Error()
 		return result
@@ -2783,6 +2894,10 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("svtav1_%d.yuv", bitrate)),
 		settings: map[string]string{
 			"preset":       "13",
+			"profile":      "0",
+			"level":        "0",
+			"input_depth":  "8",
+			"color_format": "1",
 			"rate_control": "cbr",
 			"target_kbps":  strconv.Itoa(kbps(bitrate)),
 			"lookahead":    "0",
@@ -2820,6 +2935,8 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		"--frames", strconv.Itoa(cfg.frames),
 		"--input-depth", "8",
 		"--color-format", "1",
+		"--profile", "0",
+		"--level", "0",
 		"--preset", "13",
 		"--rc", "2",
 		"--tbr", strconv.Itoa(kbps(bitrate)),
@@ -2857,11 +2974,7 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	}
 	result.encodedBytes = encodedBytes
 	result.encodedSHA256 = encodedHash
-	if err := decodeIVFWithFFmpeg(ivfPath, result.decodedYUV, cfg.frames); err != nil {
-		result.status, result.errText = "error", err.Error()
-		return result
-	}
-	decodedBytes, decodedHash, err := fileBytesAndSHA256(result.decodedYUV)
+	decodedBytes, decodedHash, err := decodeIVFWithFFmpeg(ivfPath, result.decodedYUV, cfg.width, cfg.height, cfg.frames)
 	if err != nil {
 		result.status, result.errText = "error", err.Error()
 		return result
@@ -2922,7 +3035,7 @@ func trimCommandOutput(err error, out []byte) string {
 	return msg
 }
 
-func decodeIVFWithFFmpeg(ivfPath, yuvPath string, frames int) error {
+func decodeIVFWithFFmpeg(ivfPath, yuvPath string, width, height, frames int) (int64, string, error) {
 	args := []string{
 		"-y",
 		"-hide_banner",
@@ -2935,9 +3048,21 @@ func decodeIVFWithFFmpeg(ivfPath, yuvPath string, frames int) error {
 	}
 	cmd := exec.Command("ffmpeg", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("ffmpeg decode: %s", trimCommandOutput(err, out))
+		return 0, "", fmt.Errorf("ffmpeg decode: %s", trimCommandOutput(err, out))
 	}
-	return nil
+	return decodedYUVMetadata(yuvPath, width, height, frames)
+}
+
+func decodedYUVMetadata(path string, width, height, frames int) (int64, string, error) {
+	bytes, hash, err := fileBytesAndSHA256(path)
+	if err != nil {
+		return 0, "", err
+	}
+	expected := expectedRawI420Bytes(width, height, frames)
+	if bytes != expected {
+		return 0, "", fmt.Errorf("%s decoded YUV size=%d, want exact raw I420 size %d (%d frames)", path, bytes, expected, frames)
+	}
+	return bytes, hash, nil
 }
 
 func ivfPayloadBytes(path string) (int64, error) {

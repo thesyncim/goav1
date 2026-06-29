@@ -166,6 +166,33 @@ func TestRequiredEncoderError(t *testing.T) {
 	}
 }
 
+func TestValidateRequiredEncoderTools(t *testing.T) {
+	cfg := benchConfig{requiredEncoders: []string{"goav1", "aomenc"}}
+	if err := validateRequiredEncoderTools(cfg, func(name string) (string, error) {
+		if name != "aomenc" {
+			t.Fatalf("unexpected tool lookup %q", name)
+		}
+		return "/bin/aomenc", nil
+	}); err != nil {
+		t.Fatalf("valid tools failed: %v", err)
+	}
+
+	cfg.requiredEncoders = []string{"svt-av1"}
+	if err := validateRequiredEncoderTools(cfg, func(name string) (string, error) {
+		return "", os.ErrNotExist
+	}); err == nil || !strings.Contains(err.Error(), "required encoder svt-av1 unavailable") {
+		t.Fatalf("missing required SVT error=%v", err)
+	}
+
+	cfg.requiredEncoders = nil
+	if err := validateRequiredEncoderTools(cfg, func(name string) (string, error) {
+		t.Fatalf("optional encoder should not be looked up")
+		return "", os.ErrNotExist
+	}); err != nil {
+		t.Fatalf("optional lookup failed: %v", err)
+	}
+}
+
 func TestReadClipManifest(t *testing.T) {
 	dir := t.TempDir()
 	manifest := filepath.Join(dir, "clips.csv")
@@ -822,6 +849,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		got.GoMaxProcs != 4 || got.AOMThreads != 1 || got.AOMRowMT != 0 ||
 		got.SVTLP != 5 || got.TimingMode != timingModeEndToEnd ||
 		got.RunOrder != runOrderShuffle || got.ShuffleSeed != 42 ||
+		got.SampleOrder != "interleaved-by-sample-pass" ||
 		got.Runs != 5 || got.WarmupRuns != 1 || !got.Publish {
 		t.Fatalf("metadata config aliases inputs: %+v", got)
 	}
@@ -835,6 +863,7 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "timing_mode") ||
 		!strings.Contains(joined, "run_order") ||
 		!strings.Contains(joined, "explicit seed") ||
+		!strings.Contains(joined, "sample passes") ||
 		!strings.Contains(joined, "median wall-time") ||
 		!strings.Contains(joined, "sweep --lp 0..6") ||
 		!strings.Contains(joined, "-aom-threads") ||
@@ -858,7 +887,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		anchorEncoder:       "aomenc",
 		requiredEncodersRaw: "all",
 		encoders:            []string{"goav1", "aomenc", "svt-av1"},
-		bitrates:            []int{3000000, 6000000},
+		bitrates:            []int{3000000, 6000000, 9000000, 12000000},
 		requiredMetrics:     []string{"psnr", "ssim"},
 		requireCorpus:       true,
 		minClips:            2,
@@ -1001,6 +1030,27 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		!strings.Contains(err.Error(), "-require-encoders all") {
 		t.Fatalf("non-all required encoders error=%v", err)
 	}
+
+	tooFewBitrates := cfg
+	tooFewBitrates.bitrates = []int{3000000, 6000000, 9000000}
+	if err := validatePublishConfig(tooFewBitrates, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "four distinct -bitrates") {
+		t.Fatalf("too few bitrates error=%v", err)
+	}
+
+	duplicateBitrates := cfg
+	duplicateBitrates.bitrates = []int{3000000, 6000000, 6000000, 12000000}
+	if err := validatePublishConfig(duplicateBitrates, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "each -bitrates entry") {
+		t.Fatalf("duplicate bitrates error=%v", err)
+	}
+
+	duplicateEncoders := cfg
+	duplicateEncoders.encoders = []string{"goav1", "aomenc", "aomenc"}
+	if err := validatePublishConfig(duplicateEncoders, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "each -encoders entry") {
+		t.Fatalf("duplicate encoders error=%v", err)
+	}
 }
 
 func TestEncodeJobsRunOrder(t *testing.T) {
@@ -1027,6 +1077,55 @@ func TestEncodeJobsRunOrder(t *testing.T) {
 	cfg.shuffleSeed = 10
 	if third := encodeJobLabels(encodeJobsForConfig(cfg)); third == first {
 		t.Fatalf("different shuffle seed produced same order: %s", third)
+	}
+}
+
+func TestRunEncoderJobsMeasuredInterleavesSamplesByPass(t *testing.T) {
+	cfg := benchConfig{
+		workdir:    t.TempDir(),
+		runs:       2,
+		warmupRuns: 1,
+	}
+	jobs := []encodeJob{
+		{bitrate: 100, encoder: "goav1"},
+		{bitrate: 200, encoder: "aomenc"},
+	}
+	var calls []string
+	results := runEncoderJobsMeasuredWithRunner(cfg, nil, "source.yuv", jobs, func(sampleCfg benchConfig, _ []goav1.I420Frame, refPath, encoderName string, bitrate int) encodeResult {
+		if refPath != "source.yuv" {
+			t.Fatalf("refPath=%q", refPath)
+		}
+		calls = append(calls, filepath.Base(sampleCfg.workdir))
+		return encodeResult{
+			encoder:       encoderName,
+			targetBPS:     bitrate,
+			duration:      time.Duration(len(calls)) * time.Millisecond,
+			bytes:         int64(bitrate),
+			encodedBytes:  int64(bitrate + 1),
+			decodedBytes:  int64(bitrate + 2),
+			encodedSHA256: strconv.Itoa(bitrate),
+			decodedSHA256: strconv.Itoa(bitrate + 10),
+			status:        "ok",
+		}
+	})
+	wantCalls := []string{
+		"goav1_100_warmup_01",
+		"aomenc_200_warmup_01",
+		"goav1_100_run_01",
+		"aomenc_200_run_01",
+		"goav1_100_run_02",
+		"aomenc_200_run_02",
+	}
+	if strings.Join(calls, ",") != strings.Join(wantCalls, ",") {
+		t.Fatalf("calls=%v want %v", calls, wantCalls)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results=%d", len(results))
+	}
+	for _, result := range results {
+		if result.status != "ok" || result.runs != 2 || result.warmupRuns != 1 || len(result.samples) != 2 {
+			t.Fatalf("result=%+v", result)
+		}
 	}
 }
 
@@ -1167,6 +1266,27 @@ func TestFileBytesAndSHA256(t *testing.T) {
 	}
 }
 
+func TestDecodedYUVMetadataRequiresExactSize(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "decoded.yuv")
+	exact := expectedRawI420Bytes(16, 16, 2)
+	if err := os.WriteFile(path, make([]byte, exact), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bytes, hash, err := decodedYUVMetadata(path, 16, 16, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes != exact || hash == "" {
+		t.Fatalf("metadata bytes=%d hash=%q", bytes, hash)
+	}
+	if err := os.WriteFile(path, make([]byte, exact-1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := decodedYUVMetadata(path, 16, 16, 2); err == nil || !strings.Contains(err.Error(), "exact raw I420") {
+		t.Fatalf("short decoded size error=%v", err)
+	}
+}
+
 func TestCommandMetadataRecordsBinaryHash(t *testing.T) {
 	meta := commandMetadata("go", []string{"version"})
 	if !meta.Found || meta.Path == "" || meta.SHA256 == "" || meta.Version == "" {
@@ -1233,7 +1353,8 @@ func TestWriteMetadataJSON(t *testing.T) {
 		Frames: 2,
 		FPS:    30,
 	}}
-	if err := writeMetadataJSON(cfg, map[string]bool{"psnr": true, "ssim": false}, clips, invocations); err != nil {
+	git := gitMetadata{Commit: "snapshot", Dirty: false}
+	if err := writeMetadataJSON(cfg, map[string]bool{"psnr": true, "ssim": false}, git, clips, invocations); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(path)
@@ -1247,6 +1368,9 @@ func TestWriteMetadataJSON(t *testing.T) {
 	if doc.GeneratedAtUTC == "" || doc.Go.Version == "" || doc.Config.Width != 64 {
 		t.Fatalf("metadata header=%+v", doc)
 	}
+	if doc.Git.Commit != "snapshot" || doc.Git.Dirty {
+		t.Fatalf("git snapshot=%+v", doc.Git)
+	}
 	if doc.Go.SIMDTier == "" {
 		t.Fatalf("missing simd metadata: %+v", doc.Go)
 	}
@@ -1255,6 +1379,9 @@ func TestWriteMetadataJSON(t *testing.T) {
 	}
 	if doc.Config.ManifestSHA256 != manifestSHA {
 		t.Fatalf("manifest sha=%q want %q", doc.Config.ManifestSHA256, manifestSHA)
+	}
+	if doc.Config.SampleOrder != "interleaved-by-sample-pass" {
+		t.Fatalf("sample order=%q", doc.Config.SampleOrder)
 	}
 	if len(doc.Config.RequiredEncoders) != 1 || doc.Config.RequiredEncoders[0] != "goav1" {
 		t.Fatalf("required encoders=%+v", doc.Config.RequiredEncoders)

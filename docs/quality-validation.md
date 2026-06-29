@@ -84,7 +84,9 @@ Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-warmup-runs >= 1`. It also requires explicit libaom concurrency settings
 when `aomenc` is selected, explicit SVT parallelism and assembly settings when
 `svt-av1` is selected, and exact raw I420 input byte counts for every manifest
-row. When `aomenc` or `svt-av1` baselines are
+row. Publish mode rejects duplicate encoder/bitrate entries, requires the
+BD-rate anchor to be one of the selected encoders, and requires at least four
+distinct bitrate points. When `aomenc` or `svt-av1` baselines are
 selected, publish mode requires `-layers 1`; goav1 multi-temporal-layer/SVC
 audits must stay goav1-only until equivalent external baseline settings are
 implemented and recorded.
@@ -110,9 +112,12 @@ diagnostics, use
 or `-run-order shuffle -shuffle-seed N` to rotate encoder/bitrate tuple order
 deterministically.
 For repeated runs, qualitybench writes one normal CSV row per encoder/bitrate
-using the median wall-time measured sample after warmups. The metadata JSON
-stores every measured sample plus min, median, max, and IQR wall time for the
-tuple.
+using the median wall-time measured sample after warmups. Warmups and measured
+samples run in deterministic sample passes across the selected encoder/bitrate
+tuples, so one tuple does not receive all of its samples in a single load or
+thermal window. The metadata JSON stores every measured sample plus min,
+median, max, and IQR wall time for the tuple, and records
+`sample_order=interleaved-by-sample-pass`.
 For goav1 rows, `encoded_path` is a replayable `uint32_le length + low-overhead
 temporal-unit payload` stream. `compressed_bytes` remains the sum of payload
 bytes, while `encoded_bytes` and `encoded_sha256` describe that on-disk
@@ -142,7 +147,10 @@ Also report libaom's concurrency settings. `qualitybench -aom-threads` forwards
 the value to `aomenc --threads`, and `-aom-row-mt` forwards the value to
 `aomenc --row-mt`. Both are recorded in metadata, so single-thread rows must use
 `-aom-threads 1`, row-mt experiments must state `-aom-row-mt 0` or
-`-aom-row-mt 1`, and multi-thread rows must state both chosen values.
+`-aom-row-mt 1`, and multi-thread rows must state both chosen values. The
+external baseline commands also pin and record profile-0, 8-bit, I420 identity
+settings; external decoded YUV must match the exact expected raw I420 byte
+count before metrics are accepted.
 
 When `-stats-csv` is set, goav1 rows also include encoder decision counters:
 partition choices, block sizes, skip/coded block counts, references, inter
