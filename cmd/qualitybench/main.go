@@ -1181,6 +1181,8 @@ func readClipManifest(path string, defaults benchConfig) ([]clipSpec, error) {
 	categoryCol, haveCategory := manifestColumn(header, "category", "content_category")
 
 	clips := make([]clipSpec, 0, len(records)-1)
+	seenClipRows := map[string]int{}
+	seenSafeDirs := map[string]string{}
 	for rowIndex, record := range records[1:] {
 		rowNum := rowIndex + 2
 		input := manifestField(record, inputCol)
@@ -1227,6 +1229,16 @@ func readClipManifest(path string, defaults benchConfig) ([]clipSpec, error) {
 		if width < 16 || height < 16 || width%2 != 0 || height%2 != 0 {
 			return nil, fmt.Errorf("manifest row %d invalid frame size %dx%d: need even dimensions >= 16", rowNum, width, height)
 		}
+		if previousRow, ok := seenClipRows[name]; ok {
+			return nil, fmt.Errorf("manifest row %d duplicate clip name %q (previous row %d)", rowNum, name, previousRow)
+		}
+		safeDir := safeClipDir(name)
+		safeDirKey := strings.ToLower(safeDir)
+		if previousName, ok := seenSafeDirs[safeDirKey]; ok {
+			return nil, fmt.Errorf("manifest row %d clip name %q collides with %q after sanitizing to workdir %q", rowNum, name, previousName, safeDir)
+		}
+		seenClipRows[name] = rowNum
+		seenSafeDirs[safeDirKey] = name
 		clips = append(clips, clipSpec{
 			Name:          name,
 			Input:         input,

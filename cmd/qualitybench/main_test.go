@@ -237,6 +237,52 @@ func TestReadClipManifestRejectsBadGeometry(t *testing.T) {
 	}
 }
 
+func TestReadClipManifestRejectsDuplicateClipIdentity(t *testing.T) {
+	tests := []struct {
+		name    string
+		rows    []string
+		wantErr string
+	}{
+		{
+			name: "duplicate-name",
+			rows: []string{
+				"same,first.yuv,64,64,2,30",
+				"same,second.yuv,64,64,2,30",
+			},
+			wantErr: "duplicate clip name",
+		},
+		{
+			name: "safe-dir-collision",
+			rows: []string{
+				"talking/head,first.yuv,64,64,2,30",
+				"talking:head,second.yuv,64,64,2,30",
+			},
+			wantErr: "collides",
+		},
+		{
+			name: "case-folded-safe-dir-collision",
+			rows: []string{
+				"ClipA,first.yuv,64,64,2,30",
+				"clipa,second.yuv,64,64,2,30",
+			},
+			wantErr: "collides",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := filepath.Join(t.TempDir(), "clips.csv")
+			body := "clip,input,width,height,frames,fps\n" + strings.Join(tc.rows, "\n") + "\n"
+			if err := os.WriteFile(manifest, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := readClipManifest(manifest, benchConfig{fps: 30}); err == nil ||
+				!strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("manifest error=%v want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidateRequiredCorpus(t *testing.T) {
 	dir := t.TempDir()
 	first := filepath.Join(dir, "first.yuv")
