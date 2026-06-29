@@ -63,6 +63,7 @@ type benchConfig struct {
 	goldenInterval      int
 	keyInterval         int
 	goMaxProcs          int
+	aomThreads          int
 	svtLP               int
 	svtASM              string
 	keep                bool
@@ -215,6 +216,7 @@ type metadataConfig struct {
 	GoldenInterval   int      `json:"golden_interval"`
 	KeyInterval      int      `json:"key_interval"`
 	GoMaxProcs       int      `json:"gomaxprocs"`
+	AOMThreads       int      `json:"aom_threads"`
 	SVTLP            int      `json:"svt_lp"`
 	SVTASM           string   `json:"svt_asm,omitempty"`
 }
@@ -464,6 +466,7 @@ func parseFlags() (benchConfig, error) {
 	flag.IntVar(&cfg.goldenInterval, "golden", 0, "goav1 golden refresh interval (0 = default, negative = disabled)")
 	flag.IntVar(&cfg.keyInterval, "keyint", 0, "force periodic keyframes every N frames after frame 0 (0 = only initial key)")
 	flag.IntVar(&cfg.goMaxProcs, "gomaxprocs", 0, "set Go GOMAXPROCS for in-process goav1 encodes (0 = keep environment/runtime default)")
+	flag.IntVar(&cfg.aomThreads, "aom-threads", 4, "aomenc --threads value for libaom rows")
 	flag.IntVar(&cfg.svtLP, "svt-lp", 0, "SVT --lp parallelism level, not a thread count (0 = SVT auto, valid range 0..6)")
 	flag.StringVar(&cfg.svtASM, "svt-asm", "", "limit SVT --asm instruction set (empty = SVT default max; e.g. c,neon,neon_dotprod,neon_i8mm,sve,sve2)")
 	flag.StringVar(&cfg.workdir, "workdir", "", "directory for raw, decoded, and encoded intermediates")
@@ -532,6 +535,9 @@ func parseFlags() (benchConfig, error) {
 	}
 	if cfg.goMaxProcs < 0 {
 		return benchConfig{}, fmt.Errorf("invalid GOMAXPROCS %d", cfg.goMaxProcs)
+	}
+	if cfg.aomThreads <= 0 {
+		return benchConfig{}, fmt.Errorf("invalid aomenc --threads value %d", cfg.aomThreads)
 	}
 	if cfg.svtLP < 0 || cfg.svtLP > 6 {
 		return benchConfig{}, fmt.Errorf("invalid SVT --lp level %d: valid range is 0..6; --lp is a parallelism level, not a thread count", cfg.svtLP)
@@ -1441,6 +1447,7 @@ func metadataConfigFor(cfg benchConfig) metadataConfig {
 		GoldenInterval:   cfg.goldenInterval,
 		KeyInterval:      cfg.keyInterval,
 		GoMaxProcs:       cfg.goMaxProcs,
+		AOMThreads:       cfg.aomThreads,
 		SVTLP:            cfg.svtLP,
 		SVTASM:           cfg.svtASM,
 	}
@@ -1521,6 +1528,7 @@ func fairnessNotes(cfg benchConfig) []string {
 		"SVT-AV1 --lp is a documented parallelism level in the range 0..6, not a target processor or thread count; numeric equality with GOMAXPROCS is not treated as equivalent concurrency.",
 		"CSV and metadata include wall seconds, CPU seconds, and observed_parallelism=cpu_total_seconds/encode_wall_seconds so comparisons can be checked against observed CPU budget.",
 		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or sweep --lp 0..6, then report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
+		"For fair libaom comparisons, set -aom-threads explicitly and report it; qualitybench forwards it to aomenc --threads and records it in metadata.",
 		"SVT-AV1 --asm defaults to max and may use CPU-specific kernels such as neon_dotprod or neon_i8mm; use -svt-asm to pin the assembly tier when comparing against goav1's current SIMD coverage.",
 		"goav1 metadata records detected simd_tier and simd_features; compare those against SVT's recorded svt_asm setting instead of assuming --asm max and goav1 cover the same kernels.",
 	}
@@ -2064,6 +2072,9 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		targetBPS:        bitrate,
 		encodedContainer: "ivf",
 		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("aomenc_%d.yuv", bitrate)),
+		settings: map[string]string{
+			"aom_threads": strconv.Itoa(cfg.aomThreads),
+		},
 	}
 	if _, err := exec.LookPath("aomenc"); err != nil {
 		result.status, result.errText = "skipped", "aomenc not found"
@@ -2082,7 +2093,7 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		fmt.Sprintf("--width=%d", cfg.width),
 		fmt.Sprintf("--height=%d", cfg.height),
 		"--i420",
-		"--threads=4",
+		fmt.Sprintf("--threads=%d", cfg.aomThreads),
 		"--lag-in-frames=0",
 		"--auto-alt-ref=0",
 		"--enable-fwd-kf=0",

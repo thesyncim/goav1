@@ -89,29 +89,54 @@ profiles rather than breadth-first file matching.
 
 ## Current Speed Snapshot
 
-Fresh synthetic 1080p/120-frame single-rate rows on 2026-06-29 with
-`GOMAXPROCS=4` for goav1, after the latest metric/search/convolve assembly
-safe points through resident 8-bit single-prediction 2D I8MM. These
-rows use `qualitybench -encoders goav1,svt-av1 -bitrates 8000000` on the
-synthetic fixture. SVT `--lp` was swept from `0..6`; no max-tier or
-baseline-NEON row reached goav1's observed `3.32x-3.36x` CPU parallelism, so
-there is still no true equal-CPU-budget row in this sweep.
+Fresh synthetic 1080p/120-frame single-rate rows on 2026-06-29 at commit
+`14ae2e34` use `qualitybench -bitrates 8000000` on the deterministic synthetic
+fixture. They are spot-check rows, not a full corpus quality claim. The aomenc
+row used `-aom-threads 4`, which forwards to `aomenc --threads=4`; use
+`-aom-threads 1` for a single-thread libaom control row.
 
-The latest selected warm/interleaved rows are:
-
-| Comparison row | goav1 FPS | SVT FPS | goav1 CPU s | SVT CPU s | goav1 observed | SVT observed | Wall gap | CPU-efficiency gap |
+| Comparison row | goav1 FPS | Other FPS | goav1 CPU s | Other CPU s | goav1 observed | Other observed | Wall gap | CPU-efficiency gap |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| SVT-AV1 `--lp 4 --asm max` | 117.52 | 216.95 | 3.40 | 1.49 | 3.33x | 2.69x | 1.85x | 2.28x |
-| SVT-AV1 `--lp 4 --asm neon` | 114.59 | 218.65 | 3.36 | 1.49 | 3.35x | 2.72x | 1.91x | 2.26x |
+| SVT-AV1 `--lp 4 --asm max`, `GOMAXPROCS=4` | 119.54 | 165.25 | 3.335 | 1.643 | 3.32x | 2.26x | 1.38x | 2.03x |
+| SVT-AV1 `--lp 4 --asm neon`, `GOMAXPROCS=4` | 118.53 | 178.93 | 3.338 | 1.665 | 3.30x | 2.48x | 1.51x | 2.00x |
+| aomenc `-aom-threads 4`, `GOMAXPROCS=4` | 117.19 | 123.25 | 3.396 | 2.399 | 3.32x | 2.46x | 1.05x | 1.42x |
+| SVT-AV1 `--lp 1 --asm max`, `GOMAXPROCS=1` | 35.07 | 87.11 | 3.417 | 1.353 | 1.00x | 0.98x | 2.48x | 2.53x |
+| aomenc `-aom-threads 1`, `GOMAXPROCS=1` | 34.79 | 53.82 | 3.434 | 2.221 | 1.00x | 1.00x | 1.55x | 1.55x |
 
-The honest current gap is therefore roughly `1.85x-1.91x` by wall time on the
-selected warmed rows, and roughly `2.26x-2.28x` by frames per CPU-second. The
-Y-I8MM safe point below has a focused microkernel win but is not included in
-these top-level rows yet; rerun qualitybench after the safe point to update the
-encoder-level delta. The gap should be reported by CPU seconds or frames/CPU-s
-as well as wall FPS, because SVT `--lp 4` is an encoder parallelism level and
-still consumes less observed CPU parallelism than `GOMAXPROCS=4` does for
-goav1.
+The fresh 4-way encoder wall gap is roughly `1.38x-1.51x` versus SVT on this
+synthetic row and `1.05x` versus the harness `aomenc --threads=4` row. By
+frames per CPU-second, the gap is still larger: roughly `2.00x-2.03x` versus
+SVT and `1.42x` versus aomenc in the 4-thread harness row. The exact
+single-thread libaom control is `1.55x` faster by both wall time and
+frames/CPU-second. Quality is not equalized in these rows: goav1
+emits `8.07 Mbps`, PSNR `43.3041`, SSIM `0.9828`, XPSNR `42.6234`; SVT emits
+`7.32 Mbps`, PSNR `39.7198`, SSIM `0.9597`, XPSNR `38.7122`; aomenc emits
+`7.12-7.31 Mbps`, PSNR `44.3194-44.4154`, SSIM `0.9864-0.9867`, XPSNR
+`43.9237-44.0192`.
+
+Fresh `make bench-cross` on the same commit verifies the bundled libaom vectors
+and reports the tiny-vector decoder smoke comparison below. These clips are
+startup-dominated for external subprocess decoders, so use the generated corpus
+lane for steady-state decoder claims.
+
+| Decoder | Frames | Raw FPS | Adjusted FPS | Raw speed vs goav1 |
+| --- | ---: | ---: | ---: | ---: |
+| goav1 | 107 | 151.1 | in-process | 1.00x |
+| aomdec | 107 | 311.8 | 351.5 | 2.06x |
+| dav1d | 107 | 502.6 | 575.7 | 3.33x |
+
+The generated decoder corpus is the fairer steady-state surface. With 18 local
+generated clips / 864 frames, single-thread full decode plus postfilter measured:
+
+| Decoder | Frames | Raw FPS | Adjusted FPS | Raw speed vs goav1 |
+| --- | ---: | ---: | ---: | ---: |
+| goav1 | 864 | 237.1 | in-process | 1.00x |
+| aomdec | 864 | 821.7 | 861.5 | 3.47x |
+| dav1d | 864 | 1363.9 | 1455.1 | 5.75x |
+
+The decoder profile still points at coefficient entropy/TXB decode as the next
+source-shaped target after recent convolve/CDEF work; do not choose another
+motion kernel unless a fresh profile makes it hot again.
 
 ## Coverage Ledger
 

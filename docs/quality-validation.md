@@ -54,6 +54,7 @@ go run ./cmd/qualitybench \
   -csv quality.csv -summary-csv quality-summary.csv -require-summary \
   -stats-csv quality-encoder-stats.csv \
   -metadata-json quality-metadata.json \
+  -aom-threads 4 \
   -svt-asm neon \
   -workdir /tmp/goav1-quality
 ```
@@ -85,6 +86,10 @@ use kernels above baseline NEON on Apple silicon, such as `neon_dotprod` or
 `neon_i8mm`. `qualitybench -svt-asm` forwards this limiter and records it in
 metadata. Use `-svt-asm neon` for a baseline-NEON row against goav1's current
 arm64 SIMD coverage, and omit it or pass `-svt-asm max` for a best-SVT row.
+
+Also report libaom's thread setting. `qualitybench -aom-threads` forwards the
+value to `aomenc --threads` and records it in metadata, so single-thread rows
+must use `-aom-threads 1` and multi-thread rows must state their chosen value.
 
 When `-stats-csv` is set, goav1 rows also include encoder decision counters:
 partition choices, block sizes, skip/coded block counts, references, inter
