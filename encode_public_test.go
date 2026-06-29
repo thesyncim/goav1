@@ -2083,6 +2083,92 @@ func TestPublicRTCEncoderI400NativeMonochrome(t *testing.T) {
 	}
 }
 
+func TestPublicRTCEncoderI400NativeMonochromeGoldenInterval(t *testing.T) {
+	const w, h = 192, 128
+	rng := rand.New(rand.NewSource(29))
+	base := make([]byte, w*h)
+	for i := range base {
+		base[i] = uint8(50 + rng.Intn(170))
+	}
+	mk := func(boxX int) goav1.I400Frame {
+		f := goav1.I400Frame{
+			Y: append([]byte(nil), base...), YStride: w, Width: w, Height: h,
+		}
+		if boxX >= 0 {
+			for y := 32; y < 96; y++ {
+				for x := boxX; x < boxX+64 && x < w; x++ {
+					f.Y[y*w+x] = 235
+				}
+			}
+		}
+		return f
+	}
+	frames := []goav1.I400Frame{
+		mk(-1),
+		mk(64),
+		mk(-1),
+	}
+	encode := func(goldenInterval int) [][]byte {
+		cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T1)
+		cfg.MinBitrateKbps = 2000
+		cfg.MaxBitrateKbps = 2000
+		cfg.TargetBitrateKbps = 2000
+		cfg.ColorConfigSet = true
+		cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			BitDepth:   8,
+			MonoChrome: true,
+		}
+		enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer enc.Close()
+		enc.SetGoldenInterval(goldenInterval)
+		var tus [][]byte
+		for i, f := range frames {
+			picture, err := enc.EncodeI400Picture(f, false)
+			if err != nil {
+				t.Fatalf("EncodeI400Picture(%d): %v", i, err)
+			}
+			if picture.FrameNum != 1 || picture.Frames[0].SpatialID != 0 || picture.Frames[0].TemporalID != 0 {
+				t.Fatalf("picture %d=%+v", i, picture)
+			}
+			tus = append(tus, append([]byte(nil), picture.Frames[0].Data...))
+		}
+		return tus
+	}
+	lastOnly := encode(0)
+	withGolden := encode(16)
+	t.Logf("rtc monochrome reveal frame: last-only %dB, with golden %dB", len(lastOnly[2]), len(withGolden[2]))
+	if len(withGolden[2])*5 >= len(lastOnly[2])*4 {
+		t.Fatalf("golden interval did not materially reduce monochrome reveal frame: last-only %dB, golden %dB", len(lastOnly[2]), len(withGolden[2]))
+	}
+	dec, err := goav1.NewDecoder(withGolden)
+	if err != nil {
+		t.Fatalf("NewDecoder: %v", err)
+	}
+	defer dec.Close()
+	decoded := 0
+	for {
+		batch, ok, err := dec.DecodeNext()
+		if err != nil {
+			t.Fatalf("DecodeNext: %v", err)
+		}
+		if !ok {
+			break
+		}
+		for _, frame := range batch {
+			if !frame.Format.MonoChrome || frame.Format.BitDepth != 8 {
+				t.Fatalf("decoded frame format=%+v want native 8-bit monochrome", frame.Format)
+			}
+		}
+		decoded += len(batch)
+	}
+	if decoded != len(withGolden) {
+		t.Fatalf("decoded %d frames want %d", decoded, len(withGolden))
+	}
+}
+
 func TestPublicRTCEncoderI400NativeMonochromeReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 192, 128

@@ -479,6 +479,9 @@ func (s *WebRTCStream) SetGoldenInterval(n int) {
 		if s.encoders[i] != nil {
 			s.encoders[i].SetGoldenInterval(n)
 		}
+		if s.monoEncoders[i] != nil {
+			s.monoEncoders[i].SetGoldenInterval(n)
+		}
 	}
 }
 
@@ -911,6 +914,9 @@ func (s *WebRTCStream) buildReplacementMonoLayerEncoders(config Config, fps int)
 			enc.SetTileColumns(s.tileColumns)
 		}
 		s.applyConfiguredTileColumnsToMono(config, enc)
+		if s.goldenIntervalSet {
+			enc.SetGoldenInterval(s.goldenInterval)
+		}
 		if err := enc.Prewarm(); err != nil {
 			closeWebRTCStreamMonoEncoders(encoders)
 			_ = enc.Close()

@@ -156,6 +156,39 @@ func TestWebRTCStreamConfigMaxThreadsControlsTileColumns(t *testing.T) {
 	}
 }
 
+func TestWebRTCStreamGoldenIntervalSurvivesMonochromeReplacement(t *testing.T) {
+	stream, err := NewWebRTCStreamConfig(Config{
+		Resolution:        Resolution{Width: 640, Height: 360},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 500,
+		Scalability:       ScalabilityModeL1T1,
+	})
+	if err != nil {
+		t.Fatalf("NewWebRTCStreamConfig: %v", err)
+	}
+	stream.SetGoldenInterval(0)
+
+	mono := stream.Config()
+	mono.ColorConfigSet = true
+	mono.ColorConfig = SequenceColorConfig{BitDepth: 8, MonoChrome: true}
+	if err := stream.SetConfig(mono); err != nil {
+		t.Fatalf("SetConfig monochrome: %v", err)
+	}
+	if stream.monoEncoders[0] == nil {
+		t.Fatal("missing monochrome encoder")
+	}
+	if got := stream.monoEncoders[0].goldenEvery; got != 0 {
+		t.Fatalf("monochrome replacement golden interval=%d want 0", got)
+	}
+
+	stream.SetGoldenInterval(7)
+	if got := stream.monoEncoders[0].goldenEvery; got != 7 {
+		t.Fatalf("monochrome live golden interval=%d want 7", got)
+	}
+}
+
 func TestWebRTCStreamConfigMaxThreadsAppliesToPixelEncoders(t *testing.T) {
 	const w, h = 512, 288
 	base := Config{

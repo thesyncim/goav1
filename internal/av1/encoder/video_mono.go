@@ -41,11 +41,14 @@ type MonochromeVideoEncoder struct {
 	t1Recon   SourceFrameMono
 	t2Recon   SourceFrameMono
 	lastRecon SourceFrameMono
+	golden    SourceFrameMono
 
-	haveKey        bool
-	temporalLayers int
-	frameIndex     int
-	lastTemporalID uint8
+	haveKey          bool
+	temporalLayers   int
+	frameIndex       int
+	lastTemporalID   uint8
+	goldenEvery      int
+	sinceGoldenFresh int
 
 	tileColsLog2 uint8
 	tilePCs      []pframeCoder
@@ -70,7 +73,7 @@ func NewMonochromeVideoEncoder(width, height int, qIndex uint8) (*MonochromeVide
 	return &MonochromeVideoEncoder{
 		width: codedW, height: codedH,
 		renderWidth: width, renderHeight: height,
-		qIndex: qIndex,
+		qIndex: qIndex, goldenEvery: 16,
 	}, nil
 }
 
@@ -113,6 +116,14 @@ func (e *MonochromeVideoEncoder) SetTemporalLayers(n int) error {
 func (e *MonochromeVideoEncoder) SetTileColumns(cols int) {
 	if e != nil {
 		e.tileColsLog2 = tileColumnsLog2(cols)
+	}
+}
+
+// SetGoldenInterval sets how many base-layer inter frames pass between
+// golden-anchor refreshes; zero disables golden references entirely.
+func (e *MonochromeVideoEncoder) SetGoldenInterval(n int) {
+	if e != nil {
+		e.goldenEvery = n
 	}
 }
 
@@ -323,11 +334,16 @@ func (e *MonochromeVideoEncoder) Prewarm() error {
 	if _, _, err := e.Encode(src, true); err != nil {
 		return err
 	}
+	// Exercise every reconstruction buffer and the golden-refresh cadence so
+	// delayed scratch growth happens before the first externally visible frame.
 	frames := e.temporalLayers
 	if frames < 2 {
 		frames = 2
 	} else {
 		frames *= 2
+	}
+	if e.goldenEvery > 0 && frames < e.goldenEvery+1 {
+		frames = e.goldenEvery + 1
 	}
 	for i := 0; i < frames; i++ {
 		if _, _, err := e.Encode(src, false); err != nil {
@@ -340,6 +356,7 @@ func (e *MonochromeVideoEncoder) Prewarm() error {
 	e.qIndex = savedQ
 	e.rcBuffer = 0
 	e.rcRecentBits = [2]int{}
+	e.sinceGoldenFresh = 0
 	e.lastRecon = SourceFrameMono{}
 	return nil
 }
@@ -427,6 +444,10 @@ func (e *MonochromeVideoEncoder) encodeKeyWithSequenceMax(src SourceFrameMono, m
 	e.haveKey = true
 	e.frameIndex = 1
 	e.lastTemporalID = 0
+	if e.goldenEvery > 0 {
+		copyMonoFrameInto(&e.golden, e.keyRecon)
+		e.sinceGoldenFresh = 0
+	}
 	e.rcUpdate(len(out)*8, 0)
 	return out, nil
 }
@@ -447,10 +468,17 @@ func (e *MonochromeVideoEncoder) encodePReusing(src SourceFrameMono, temporalID 
 	allocMonoFrame(out, src)
 
 	refresh := uint8(0x01)
+	refreshGolden := false
 	if isT1 {
 		refresh = 0x04
 	} else if droppable {
 		refresh = 0
+	} else if e.goldenEvery > 0 {
+		e.sinceGoldenFresh++
+		if e.sinceGoldenFresh >= e.goldenEvery {
+			refresh |= 0x02
+			refreshGolden = true
+		}
 	}
 	seq := e.sequenceHeader(src.Width, src.Height)
 	effQ := e.layerQIndex(temporalID)
@@ -471,7 +499,19 @@ func (e *MonochromeVideoEncoder) encodePReusing(src SourceFrameMono, temporalID 
 		ref = e.t1Recon
 		header.Size.RefFrameIdx[0] = 2
 	}
-	payloads, err := e.encodePTilePayloads(seq, src, ref, out, effQ, &header)
+	var golden *SourceFrameMono
+	referenceMode := parser.ReferenceModeSingle
+	if e.goldenEvery > 0 && e.golden.Y != nil {
+		golden = &e.golden
+		src420 := SourceFrame420{Y: src.Y, YStride: src.YStride, Width: src.Width, Height: src.Height}
+		ref420 := SourceFrame420{Y: ref.Y, YStride: ref.YStride, Width: ref.Width, Height: ref.Height}
+		golden420 := SourceFrame420{Y: golden.Y, YStride: golden.YStride, Width: golden.Width, Height: golden.Height}
+		if compoundGoldenLikely(&e.pc.st, src420, ref420, &golden420) {
+			header.TransformRef.ReferenceMode = ReferenceModeSelect
+			referenceMode = parser.ReferenceModeSelect
+		}
+	}
+	payloads, err := e.encodePTilePayloads(seq, src, ref, golden, out, effQ, referenceMode, &header)
 	if err != nil {
 		return nil, err
 	}
@@ -483,6 +523,10 @@ func (e *MonochromeVideoEncoder) encodePReusing(src SourceFrameMono, temporalID 
 	if !droppable {
 		e.recon = *out
 		e.reconIdx ^= 1
+	}
+	if refreshGolden {
+		copyMonoFrameInto(&e.golden, *out)
+		e.sinceGoldenFresh = 0
 	}
 	return tu, nil
 }
@@ -537,7 +581,7 @@ func (e *MonochromeVideoEncoder) encodeReferencePFrameWithSequenceMax(src Source
 		header.Tile = tiles
 	}
 
-	payloads, err := e.encodePTilePayloads(seq, src, ref, out, effQ, &header)
+	payloads, err := e.encodePTilePayloads(seq, src, ref, nil, out, effQ, parser.ReferenceModeSingle, &header)
 	if err != nil {
 		return nil, err
 	}
@@ -579,7 +623,7 @@ func (e *MonochromeVideoEncoder) encodeKeyTilePayloads(seq SequenceHeader, src S
 	return payloads, nil
 }
 
-func (e *MonochromeVideoEncoder) encodePTilePayloads(seq SequenceHeader, src SourceFrameMono, ref SourceFrameMono, out *SourceFrameMono, qIndex uint8, header *InterFrameHeaderParams) ([]TilePayload, error) {
+func (e *MonochromeVideoEncoder) encodePTilePayloads(seq SequenceHeader, src SourceFrameMono, ref SourceFrameMono, golden *SourceFrameMono, out *SourceFrameMono, qIndex uint8, referenceMode parser.ReferenceMode, header *InterFrameHeaderParams) ([]TilePayload, error) {
 	nTiles, err := e.configureTilePayloads(seq, src.Width, src.Height, &header.Tile)
 	if err != nil {
 		return nil, err
@@ -592,7 +636,7 @@ func (e *MonochromeVideoEncoder) encodePTilePayloads(seq SequenceHeader, src Sou
 			pc = &e.tilePCs[t]
 		}
 		c0, c1 := tilePayloadColBounds(header.Tile, t, miCols)
-		data, err := pc.encodeMonochromeTileWithOptions(src, ref, nil, out, qIndex, nil, parser.ReferenceModeSingle, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, c0, c1)
+		data, err := pc.encodeMonochromeTileWithOptions(src, ref, golden, out, qIndex, nil, referenceMode, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, c0, c1)
 		if err != nil {
 			return nil, fmt.Errorf("encode tile %d: %w", t, err)
 		}
