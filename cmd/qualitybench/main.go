@@ -51,6 +51,7 @@ type benchConfig struct {
 	frameMetricsCSVPath string
 	metadataPath        string
 	anchorEncoder       string
+	requiredEncodersRaw string
 	encoders            []string
 	bitrates            []int
 	requiredMetrics     []string
@@ -67,7 +68,9 @@ type benchConfig struct {
 	aomRowMT            int
 	svtLP               int
 	svtASM              string
+	publish             bool
 	keep                bool
+	explicitFlags       map[string]bool
 }
 
 type encodeResult struct {
@@ -221,6 +224,7 @@ type metadataConfig struct {
 	AOMRowMT         int      `json:"aom_row_mt"`
 	SVTLP            int      `json:"svt_lp"`
 	SVTASM           string   `json:"svt_asm,omitempty"`
+	Publish          bool     `json:"publish,omitempty"`
 }
 
 type toolMetadata struct {
@@ -288,6 +292,11 @@ func run() error {
 	cfg, err := parseFlags()
 	if err != nil {
 		return err
+	}
+	if cfg.publish {
+		if err := validatePublishConfig(cfg, currentGitMetadata()); err != nil {
+			return err
+		}
 	}
 	if cfg.goMaxProcs > 0 {
 		runtime.GOMAXPROCS(cfg.goMaxProcs)
@@ -381,6 +390,11 @@ func run() error {
 	}
 	if err := validateRequiredCorpus(cfg, clips); err != nil {
 		return err
+	}
+	if cfg.publish {
+		if err := validatePublishClipInputs(clips); err != nil {
+			return err
+		}
 	}
 	for _, clip := range clips {
 		clipRows, clipInvocations, err := runClip(cfg, clip, filters, writer, statsWriter, frameStatsWriter, frameMetricsWriter)
@@ -482,8 +496,11 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
 	flag.BoolVar(&cfg.requireSummary, "require-summary", false, "fail if required BD-rate summary rows are missing or invalid")
 	flag.BoolVar(&cfg.requireCorpus, "require-corpus", false, "require a manifest-backed real clip corpus before encoding")
+	flag.BoolVar(&cfg.publish, "publish", false, "require strict reproducibility controls for published benchmark tables")
 	flag.BoolVar(&cfg.keep, "keep", false, "keep the temporary workdir when -workdir is not set")
 	flag.Parse()
+	cfg.explicitFlags = explicitFlagSet()
+	cfg.requiredEncodersRaw = *requiredEncoders
 
 	var err error
 	cfg.bitrates, err = parsePositiveList(*bitrates)
@@ -556,6 +573,106 @@ func parseFlags() (benchConfig, error) {
 		}
 	}
 	return cfg, nil
+}
+
+func explicitFlagSet() map[string]bool {
+	set := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) {
+		set[f.Name] = true
+	})
+	return set
+}
+
+func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
+	if git.Error != "" {
+		return fmt.Errorf("publish requires git metadata: %s", git.Error)
+	}
+	if git.Dirty {
+		return errors.New("publish requires a clean tracked git worktree")
+	}
+	required := []string{
+		"workdir",
+		"csv",
+		"metadata-json",
+		"manifest",
+		"require-corpus",
+		"min-clips",
+		"require-encoders",
+		"require-metrics",
+		"summary-csv",
+		"require-summary",
+		"gomaxprocs",
+	}
+	for _, name := range required {
+		if err := requireExplicitFlag(cfg, name); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(strings.ToLower(cfg.requiredEncodersRaw)) != "all" {
+		return errors.New("publish requires -require-encoders all")
+	}
+	if cfg.goMaxProcs <= 0 {
+		return errors.New("publish requires -gomaxprocs > 0")
+	}
+	if !cfg.requireCorpus || cfg.manifestPath == "" || cfg.minClips < 2 {
+		return errors.New("publish requires -require-corpus with -manifest and -min-clips >= 2")
+	}
+	if cfg.csvPath == "" || cfg.metadataPath == "" || cfg.summaryCSVPath == "" || !cfg.requireSummary {
+		return errors.New("publish requires -csv, -metadata-json, -summary-csv, and -require-summary")
+	}
+	if len(cfg.requiredMetrics) == 0 {
+		return errors.New("publish requires -require-metrics")
+	}
+	if encoderSelected(cfg, "aomenc") {
+		if err := requireExplicitFlag(cfg, "aom-threads"); err != nil {
+			return err
+		}
+		if err := requireExplicitFlag(cfg, "aom-row-mt"); err != nil {
+			return err
+		}
+	}
+	if encoderSelected(cfg, "svt-av1") {
+		if err := requireExplicitFlag(cfg, "svt-lp"); err != nil {
+			return err
+		}
+		if err := requireExplicitFlag(cfg, "svt-asm"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func requireExplicitFlag(cfg benchConfig, name string) error {
+	if !cfg.explicitFlags[name] {
+		return fmt.Errorf("publish requires explicit -%s", name)
+	}
+	return nil
+}
+
+func encoderSelected(cfg benchConfig, name string) bool {
+	for _, selected := range cfg.encoders {
+		if selected == name {
+			return true
+		}
+	}
+	return false
+}
+
+func validatePublishClipInputs(clips []clipSpec) error {
+	for _, clip := range clips {
+		if clip.Input == "" {
+			return fmt.Errorf("publish requires %s to use a manifest input file", clip.Name)
+		}
+		info, err := os.Stat(clip.Input)
+		if err != nil {
+			return fmt.Errorf("%s input: %w", clip.Name, err)
+		}
+		expected := expectedRawI420Bytes(clip.Width, clip.Height, clip.Frames)
+		if info.Size() != expected {
+			return fmt.Errorf("%s input size=%d, want exact raw I420 size %d", clip.Name, info.Size(), expected)
+		}
+	}
+	return nil
 }
 
 func parsePositiveList(s string) ([]int, error) {
@@ -1457,6 +1574,7 @@ func metadataConfigFor(cfg benchConfig) metadataConfig {
 		AOMRowMT:         cfg.aomRowMT,
 		SVTLP:            cfg.svtLP,
 		SVTASM:           cfg.svtASM,
+		Publish:          cfg.publish,
 	}
 }
 
@@ -1538,6 +1656,9 @@ func fairnessNotes(cfg benchConfig) []string {
 		"For fair libaom comparisons, set -aom-threads and -aom-row-mt explicitly and report both; qualitybench forwards them to aomenc --threads and --row-mt and records them in metadata.",
 		"SVT-AV1 --asm defaults to max and may use CPU-specific kernels such as neon_dotprod or neon_i8mm; use -svt-asm to pin the assembly tier when comparing against goav1's current SIMD coverage.",
 		"goav1 metadata records detected simd_tier and simd_features; compare those against SVT's recorded svt_asm setting instead of assuming --asm max and goav1 cover the same kernels.",
+	}
+	if cfg.publish {
+		notes = append(notes, "Publish mode required a clean tracked git worktree, explicit artifact paths, manifest-backed corpus, exact raw input sizes, explicit concurrency controls, required encoders, required metrics, and required BD-rate summary rows.")
 	}
 	if cfg.svtLP == 0 {
 		notes = append(notes, "SVT-AV1 is run with --lp 0 by default, letting SVT choose its parallelism level from the machine rather than forcing a misleading numeric match.")

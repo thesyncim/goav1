@@ -672,6 +672,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		aomThreads:       1,
 		aomRowMT:         0,
 		svtLP:            5,
+		publish:          true,
 	}
 	got := metadataConfigFor(cfg)
 	cfg.encoders[0] = "mutated"
@@ -681,13 +682,14 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 	if got.Encoders[0] != "goav1" || got.Bitrates[0] != 100000 ||
 		got.RequiredMetrics[0] != "psnr" || got.RequiredEncoders[0] != "goav1" ||
 		!got.RequireSummary || !got.RequireCorpus || got.MinClips != 6 ||
-		got.GoMaxProcs != 4 || got.AOMThreads != 1 || got.AOMRowMT != 0 || got.SVTLP != 5 {
+		got.GoMaxProcs != 4 || got.AOMThreads != 1 || got.AOMRowMT != 0 ||
+		got.SVTLP != 5 || !got.Publish {
 		t.Fatalf("metadata config aliases inputs: %+v", got)
 	}
 }
 
 func TestFairnessNotesDocumentSVTLP(t *testing.T) {
-	notes := fairnessNotes(benchConfig{svtLP: 0})
+	notes := fairnessNotes(benchConfig{svtLP: 0, publish: true})
 	joined := strings.Join(notes, "\n")
 	if !strings.Contains(joined, "not a target processor or thread count") ||
 		!strings.Contains(joined, "observed_parallelism") ||
@@ -696,8 +698,105 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "-aom-row-mt") ||
 		!strings.Contains(joined, "simd_tier") ||
 		!strings.Contains(joined, "svt_asm") ||
-		!strings.Contains(joined, "--lp 0") {
+		!strings.Contains(joined, "--lp 0") ||
+		!strings.Contains(joined, "Publish mode") {
 		t.Fatalf("fairness notes=%q", joined)
+	}
+}
+
+func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
+	cfg := benchConfig{
+		workdir:             "/tmp/work",
+		csvPath:             "/tmp/quality.csv",
+		metadataPath:        "/tmp/meta.json",
+		manifestPath:        "/tmp/clips.csv",
+		summaryCSVPath:      "/tmp/summary.csv",
+		requiredEncodersRaw: "all",
+		encoders:            []string{"goav1", "aomenc", "svt-av1"},
+		requiredMetrics:     []string{"psnr", "ssim"},
+		requireCorpus:       true,
+		minClips:            2,
+		requireSummary:      true,
+		goMaxProcs:          4,
+		aomThreads:          4,
+		aomRowMT:            1,
+		svtLP:               4,
+		svtASM:              "neon",
+		explicitFlags: map[string]bool{
+			"workdir":          true,
+			"csv":              true,
+			"metadata-json":    true,
+			"manifest":         true,
+			"require-corpus":   true,
+			"min-clips":        true,
+			"require-encoders": true,
+			"require-metrics":  true,
+			"summary-csv":      true,
+			"require-summary":  true,
+			"gomaxprocs":       true,
+			"aom-threads":      true,
+			"aom-row-mt":       true,
+			"svt-lp":           true,
+			"svt-asm":          true,
+		},
+	}
+	if err := validatePublishConfig(cfg, gitMetadata{Commit: "abc"}); err != nil {
+		t.Fatalf("valid publish config failed: %v", err)
+	}
+
+	missing := cfg
+	missing.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missing.explicitFlags[k] = v
+	}
+	delete(missing.explicitFlags, "aom-row-mt")
+	if err := validatePublishConfig(missing, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-aom-row-mt") {
+		t.Fatalf("missing explicit aom row-mt error=%v", err)
+	}
+
+	dirty := cfg
+	if err := validatePublishConfig(dirty, gitMetadata{Commit: "abc", Dirty: true}); err == nil ||
+		!strings.Contains(err.Error(), "clean") {
+		t.Fatalf("dirty git error=%v", err)
+	}
+
+	notAll := cfg
+	notAll.requiredEncodersRaw = "goav1,aomenc,svt-av1"
+	if err := validatePublishConfig(notAll, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-require-encoders all") {
+		t.Fatalf("non-all required encoders error=%v", err)
+	}
+}
+
+func TestValidatePublishClipInputsRequiresExactSize(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.yuv")
+	if err := os.WriteFile(good, make([]byte, expectedRawI420Bytes(16, 16, 2)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePublishClipInputs([]clipSpec{{
+		Name:   "good",
+		Input:  good,
+		Width:  16,
+		Height: 16,
+		Frames: 2,
+	}}); err != nil {
+		t.Fatalf("valid clip failed: %v", err)
+	}
+
+	trailing := filepath.Join(dir, "trailing.yuv")
+	if err := os.WriteFile(trailing, make([]byte, expectedRawI420Bytes(16, 16, 2)+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePublishClipInputs([]clipSpec{{
+		Name:   "trailing",
+		Input:  trailing,
+		Width:  16,
+		Height: 16,
+		Frames: 2,
+	}}); err == nil || !strings.Contains(err.Error(), "exact raw I420") {
+		t.Fatalf("trailing bytes error=%v", err)
 	}
 }
 

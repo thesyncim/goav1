@@ -57,6 +57,7 @@ go run ./cmd/qualitybench \
   -aom-threads 4 \
   -aom-row-mt 1 \
   -svt-asm neon \
+  -publish \
   -workdir /tmp/goav1-quality
 ```
 
@@ -67,6 +68,15 @@ non-VMAF run as state-of-the-art visual validation.
 If `-input` is omitted, `qualitybench` uses the same deterministic synthetic
 scene as `encbench`. That path is for smoke testing the harness, not for quality
 claims.
+
+Use `-publish` for rows that will be copied into performance or quality tables.
+Publish mode requires a clean tracked git worktree, explicit `-workdir`, `-csv`,
+`-metadata-json`, `-manifest`, `-require-corpus`, `-min-clips`,
+`-require-encoders all`, `-require-metrics`, `-summary-csv`,
+`-require-summary`, and `-gomaxprocs`. It also requires explicit libaom
+concurrency settings when `aomenc` is selected, explicit SVT parallelism and
+assembly settings when `svt-av1` is selected, and exact raw I420 input byte
+counts for every manifest row.
 
 For speed comparisons against SVT-AV1, do not treat numeric concurrency knobs as
 equivalent. `GOMAXPROCS` is a Go scheduler processor cap; SVT-AV1 `--lp` is an
