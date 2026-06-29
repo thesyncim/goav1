@@ -2798,6 +2798,76 @@ func TestPublicWebRTCEncoderControllerSettingsMatrix(t *testing.T) {
 	}
 }
 
+func TestPublicWebRTCEncoderExplicitKeyShiftControllerModes(t *testing.T) {
+	for _, mode := range []av1.EncoderScalabilityMode{
+		av1.EncoderScalabilityModeL2T3_KEY_SHIFT,
+		av1.EncoderScalabilityModeL3T2_KEY_SHIFT,
+		av1.EncoderScalabilityModeL3T3_KEY_SHIFT,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			cfg := av1.EncoderConfig{
+				Resolution:        av1.EncoderResolution{Width: 1280, Height: 720},
+				Scalability:       mode,
+				MaxFramerate:      av1.EncoderRational{Num: 30, Den: 1},
+				MinBitrateKbps:    120,
+				MaxBitrateKbps:    1800,
+				TargetBitrateKbps: 900,
+				Content:           av1.EncoderContentCamera,
+			}
+			enc, err := av1.NewWebRTCEncoder(cfg, av1.EncoderWebRTCState{NextFrameID: 4000})
+			if err != nil {
+				t.Fatalf("NewWebRTCEncoder(%s): %v", mode, err)
+			}
+			if enc.Config().Scalability != mode {
+				t.Fatalf("normalized mode=%s want %s", enc.Config().Scalability, mode)
+			}
+
+			var receiver av1.RTPDependencyDescriptorState
+			history := make(map[uint64]publicWebRTCControllerLayer, 32)
+			nextFrameID := uint64(4000)
+			key, err := enc.NextTemporalUnit(false)
+			if err != nil {
+				t.Fatalf("initial key NextTemporalUnit: %v", err)
+			}
+			assertPublicWebRTCControllerUnit(t, &receiver, enc.Config(), enc.State(), key, true, 0, &nextFrameID, history)
+
+			_, temporalLayers, _, ok := enc.Config().Scalability.Layers()
+			if !ok {
+				t.Fatalf("invalid normalized mode=%s", enc.Config().Scalability)
+			}
+			for step := uint64(0); step < publicWebRTCControllerMatrixSteps(temporalLayers); step++ {
+				before := enc.State()
+				unit, err := enc.NextTemporalUnit(false)
+				if err != nil {
+					t.Fatalf("delta %d NextTemporalUnit: %v", step, err)
+				}
+				assertPublicWebRTCControllerUnit(t, &receiver, enc.Config(), enc.State(), unit, false, before.DeltaPictureIndex, &nextFrameID, history)
+			}
+
+			controlChange := enc.Config()
+			controlChange.MaxFramerate = av1.EncoderRational{Num: 60, Den: 1}
+			controlChange.MinBitrateKbps = 200
+			controlChange.MaxBitrateKbps = 2200
+			controlChange.TargetBitrateKbps = 1200
+			controlChange.Content = av1.EncoderContentScreen
+			before := enc.State()
+			if err := enc.SetConfig(controlChange); err != nil {
+				t.Fatalf("SetConfig control change: %v", err)
+			}
+			if enc.State() != before {
+				t.Fatalf("control change reset state: before=%+v after=%+v", before, enc.State())
+			}
+			assertPublicRTCConfigControls(t, enc.Config(), controlChange)
+			assertPublicWebRTCEncoderDuration(t, &enc)
+			unit, err := enc.NextTemporalUnit(false)
+			if err != nil {
+				t.Fatalf("delta after control change: %v", err)
+			}
+			assertPublicWebRTCControllerUnit(t, &receiver, enc.Config(), enc.State(), unit, false, before.DeltaPictureIndex, &nextFrameID, history)
+		})
+	}
+}
+
 func assertPublicWebRTCEncoderDuration(t *testing.T, enc *av1.WebRTCEncoder) {
 	t.Helper()
 	cfg := enc.Config()
