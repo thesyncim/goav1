@@ -128,8 +128,10 @@ use the generated corpus lane for steady-state decoder claims.
 | aomdec | 107 | 311.8 | 351.5 | 2.06x |
 | dav1d | 107 | 502.6 | 575.7 | 3.33x |
 
-The generated decoder corpus is the fairer steady-state surface. With 18 local
-generated clips / 864 frames, single-thread full decode plus postfilter measured:
+The generated decoder corpus is the fairer steady-state surface. Current corpus
+generation writes `manifest.tsv` with source, tool, IVF, and MD5 hashes; publish
+decoder rows should cite that manifest. With 18 local generated clips / 864
+frames, single-thread full decode plus postfilter measured:
 
 | Decoder | Frames | Raw FPS | Adjusted FPS | Raw speed vs goav1 |
 | --- | ---: | ---: | ---: | ---: |

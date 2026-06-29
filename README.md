@@ -464,6 +464,10 @@ GOAV1_BENCH_CORPUS=1 go test -tags goav1_oracle \
     -timeout 30m ./internal/av1/testvector -v -count=1
 ```
 
+The generator pins aomenc `--threads` and `--row-mt`, expects 25 clips, and
+writes `manifest.tsv` with source, tool, IVF, and MD5 hashes next to the local
+ignored corpus.
+
 That report prints per-clip and aggregate fps, raw and startup-adjusted external
 decoder timings, and the goav1/dav1d ratio that should drive optimization work.
 

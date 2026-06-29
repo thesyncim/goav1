@@ -62,6 +62,24 @@ mkdir -p "$OUTDIR"
 # Number of frames each clip is length-extended to (steady-state dominates
 # startup at this length). The source clip is short, so ffmpeg loops it.
 FRAMES=${GOAV1_BENCH_FRAMES:-48}
+EXPECTED_CLIPS=25
+AOM_THREADS=${GOAV1_BENCH_AOM_THREADS:-1}
+AOM_ROW_MT=${GOAV1_BENCH_AOM_ROW_MT:-1}
+MANIFEST="$OUTDIR/manifest.tsv"
+
+case "$AOM_THREADS" in
+  ''|*[!0-9]*|0)
+    echo "ERROR: GOAV1_BENCH_AOM_THREADS must be a positive integer" >&2
+    exit 1
+    ;;
+esac
+case "$AOM_ROW_MT" in
+  0|1) ;;
+  *)
+    echo "ERROR: GOAV1_BENCH_AOM_ROW_MT must be 0 or 1" >&2
+    exit 1
+    ;;
+esac
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -69,7 +87,54 @@ trap 'rm -rf "$WORK"' EXIT
 echo "source : $SRC"
 echo "outdir : $OUTDIR"
 echo "frames : $FRAMES"
+echo "aomenc : threads=$AOM_THREADS row-mt=$AOM_ROW_MT"
 echo
+
+sha256_file() {
+  shasum -a 256 "$1" | awk '{print $1}'
+}
+
+tool_sha256() {
+  local tool=$1
+  if [ -n "$tool" ] && [ -f "$tool" ]; then
+    sha256_file "$tool"
+  fi
+}
+
+quoted_args() {
+  local out="" arg
+  for arg in "$@"; do
+    printf -v arg '%q' "$arg"
+    out+="${out:+ }$arg"
+  done
+  printf '%s' "$out"
+}
+
+write_manifest_header() {
+  local generated_at
+  generated_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  {
+    printf '# goav1_bench_corpus_manifest_v1\n'
+    printf '# generated_at_utc=%s\n' "$generated_at"
+    printf '# source_path=%s\n' "$SRC"
+    printf '# source_sha256=%s\n' "$(sha256_file "$SRC")"
+    printf '# frames=%s\n' "$FRAMES"
+    printf '# expected_clips=%s\n' "$EXPECTED_CLIPS"
+    printf '# aomenc_path=%s\n' "$AOMENC"
+    printf '# aomenc_sha256=%s\n' "$(tool_sha256 "$AOMENC")"
+    printf '# aomenc_threads=%s\n' "$AOM_THREADS"
+    printf '# aomenc_row_mt=%s\n' "$AOM_ROW_MT"
+    printf '# aomdec_path=%s\n' "$AOMDEC"
+    printf '# aomdec_sha256=%s\n' "$(tool_sha256 "$AOMDEC")"
+    printf '# dav1d_path=%s\n' "${DAV1D:-}"
+    printf '# dav1d_sha256=%s\n' "$(tool_sha256 "${DAV1D:-}")"
+    printf '# ffmpeg_path=%s\n' "$FFMPEG"
+    printf '# ffmpeg_sha256=%s\n' "$(tool_sha256 "$FFMPEG")"
+    printf 'name\twidth\theight\tframes\tcq\tdepth\tchroma\tprofile\tivf_bytes\tivf_sha256\tmd5\tmd5_sha256\tdav1d_check\taomenc_args\n'
+  } > "$MANIFEST"
+}
+
+write_manifest_header
 
 # scaled_source WxH -> path to a length-extended y4m at that resolution.
 # Cached per resolution within one run.
@@ -136,9 +201,13 @@ encode() {
     profile_args=(--profile=0)
   fi
 
-  "$AOMENC" --quiet --cpu-used=6 --end-usage=q --cq-level="$cq" \
-    "${depth_args[@]}" "${profile_args[@]}" "${extra[@]}" \
+  local aom_args=(
+    --quiet --cpu-used=6 --end-usage=q --cq-level="$cq"
+    --threads="$AOM_THREADS" --row-mt="$AOM_ROW_MT"
+    "${depth_args[@]}" "${profile_args[@]}" "${extra[@]}"
     --ivf -o "$ivf" "$src"
+  )
+  "$AOMENC" "${aom_args[@]}"
 
   # libaom stream MD5: md5 over concatenated visible-frame planes (no padding).
   # aomdec --i420 forces 8-bit 4:2:0 YUV; for high bit depth or non-4:2:0 use
@@ -166,7 +235,15 @@ encode() {
     fi
   fi
 
-  local bytes; bytes=$(wc -c < "$ivf" | tr -d ' ')
+  local bytes ivf_sha md5_sha profile aom_args_text
+  bytes=$(wc -c < "$ivf" | tr -d ' ')
+  ivf_sha=$(sha256_file "$ivf")
+  md5_sha=$(sha256_file "$md5")
+  profile=${profile_args[0]#--profile=}
+  aom_args_text=$(quoted_args "${aom_args[@]}")
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$name" "$w" "$h" "$FRAMES" "$cq" "$depth" "$chroma" "$profile" \
+    "$bytes" "$ivf_sha" "$ref" "$md5_sha" "$x" "$aom_args_text" >> "$MANIFEST"
   printf '  %-30s %-9s cq=%-2s d=%-2s c=%-3s %8s bytes  md5=%s  %s\n' \
     "$name" "${w}x${h}" "$cq" "$depth" "$chroma" "$bytes" "$ref" "$x"
 }
@@ -207,6 +284,12 @@ encode p720_inter_q55  1280 720 55 8
 encode p720_inter_q32_2tiles 1280 720 32 8 --tile-columns=1
 
 echo
-echo "done. $(ls "$OUTDIR"/*.ivf 2>/dev/null | wc -l | tr -d ' ') clips in $OUTDIR"
+clip_count=$(ls "$OUTDIR"/*.ivf 2>/dev/null | wc -l | tr -d ' ')
+if [ "$clip_count" != "$EXPECTED_CLIPS" ]; then
+  echo "ERROR: generated $clip_count clips, expected $EXPECTED_CLIPS" >&2
+  exit 1
+fi
+echo "done. $clip_count clips in $OUTDIR"
+echo "manifest: $MANIFEST"
 echo "run the benchmark with:"
 echo "  GOAV1_BENCH_CORPUS=1 go test -tags goav1_oracle -run TestCrossDecoderCorpus -timeout 30m ./internal/av1/testvector/"
