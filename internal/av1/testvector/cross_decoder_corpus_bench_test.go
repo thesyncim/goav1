@@ -1246,6 +1246,28 @@ func TestResolveCorpusExternalDecodersRequiresMissing(t *testing.T) {
 	}
 }
 
+func TestCorpusInterleavedTimingJobsRotateDecoders(t *testing.T) {
+	jobs := corpusInterleavedTimingJobs(3, 4)
+	var got []string
+	for _, job := range jobs {
+		got = append(got, fmt.Sprintf("c%d:d%d", job.clipIndex, job.decoderIndex))
+	}
+	want := strings.Join([]string{
+		"c0:d0", "c0:d1", "c0:d2", "c0:d3",
+		"c1:d1", "c1:d2", "c1:d3", "c1:d0",
+		"c2:d2", "c2:d3", "c2:d0", "c2:d1",
+	}, ",")
+	if strings.Join(got, ",") != want {
+		t.Fatalf("jobs=%s want %s", strings.Join(got, ","), want)
+	}
+	if jobs := corpusInterleavedTimingJobs(0, 4); len(jobs) != 0 {
+		t.Fatalf("empty clip jobs=%v", jobs)
+	}
+	if jobs := corpusInterleavedTimingJobs(3, 0); len(jobs) != 0 {
+		t.Fatalf("empty decoder jobs=%v", jobs)
+	}
+}
+
 func TestLoadCorpusPublishManifestValidatesFiles(t *testing.T) {
 	dir := t.TempDir()
 	md5Hex := "0123456789abcdeffedcba9876543210"
@@ -1812,6 +1834,35 @@ type resolvedCorpusExternalDecoder struct {
 	bin     string
 }
 
+type corpusTimingDecoder struct {
+	name       string
+	inProcess  bool
+	external   externalDecoder
+	bin        string
+	resultSlot int
+}
+
+type corpusTimingJob struct {
+	clipIndex    int
+	decoderIndex int
+}
+
+func corpusInterleavedTimingJobs(clipCount, decoderCount int) []corpusTimingJob {
+	if clipCount <= 0 || decoderCount <= 0 {
+		return nil
+	}
+	jobs := make([]corpusTimingJob, 0, clipCount*decoderCount)
+	for clipIndex := 0; clipIndex < clipCount; clipIndex++ {
+		for offset := 0; offset < decoderCount; offset++ {
+			jobs = append(jobs, corpusTimingJob{
+				clipIndex:    clipIndex,
+				decoderIndex: (clipIndex + offset) % decoderCount,
+			})
+		}
+	}
+	return jobs
+}
+
 func corpusRequiredExternalDecoderNames(decoders []externalDecoder, publish bool, raw string) (map[string]bool, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" && !publish {
@@ -1965,30 +2016,22 @@ func TestCrossDecoderCorpus(t *testing.T) {
 		}
 	}
 
-	// ----- goav1 (in-process, full decode + post-filter, MD5-verified) -----
-	goav1 := decoderResult{name: "goav1", inProcess: true, perVector: map[string]time.Duration{}}
-	for _, clip := range clips {
-		clip := clip
-		best, err := minDuration(1, crossBenchRuns, func() error {
-			result, err := decodeCorpusClipDiscard(clip.ivfData)
-			if err == nil && result.frames != clip.frames {
-				err = fmt.Errorf("decoded %d visible frames, want %d", result.frames, clip.frames)
-			}
-			return err
-		})
-		if err != nil {
-			// Should not happen (loadCorpusClips already decoded it), but treat
-			// as a conformance failure rather than crashing the bench.
-			failed = append(failed, corpusFailure{name: clip.name, reason: fmt.Sprintf("goav1 timed decode error: %v", err)})
-			continue
-		}
-		goav1.perVector[clip.ivfPath] = best
-		goav1.totalRaw += best
-		goav1.totalFrames += clip.frames
-	}
-	results := []decoderResult{goav1}
+	// Build decoder result slots first, then time decode jobs in a deterministic
+	// clip-rotated order so thermal/load drift cannot always favor the same
+	// decoder column.
+	results := []decoderResult{{
+		name:      "goav1",
+		inProcess: true,
+		perVector: map[string]time.Duration{},
+	}}
+	timers := []corpusTimingDecoder{{
+		name:       "goav1",
+		inProcess:  true,
+		resultSlot: 0,
+	}}
 
-	// ----- external reference decoders -----
+	// External startup baselines are measured before the interleaved decode
+	// pass; the report still prints both raw and startup-adjusted timings.
 	for _, resolved := range resolvedExternal {
 		dec := resolved.decoder
 		bin := resolved.bin
@@ -2002,31 +2045,66 @@ func TestCrossDecoderCorpus(t *testing.T) {
 			startup = 0
 		}
 
-		res := decoderResult{name: dec.name, startup: startup, perVector: map[string]time.Duration{}}
-		usable := true
-		for _, clip := range clips {
-			clip := clip
-			best, err := minDuration(1, crossBenchRuns, func() error {
-				return runExternal(bin, dec.decodeArgs(bin, clip.ivfPath))
+		results = append(results, decoderResult{name: dec.name, startup: startup, perVector: map[string]time.Duration{}})
+		timers = append(timers, corpusTimingDecoder{
+			name:       dec.name,
+			external:   dec,
+			bin:        bin,
+			resultSlot: len(results) - 1,
+		})
+	}
+
+	usable := make([]bool, len(timers))
+	for i := range usable {
+		usable[i] = true
+	}
+	for _, job := range corpusInterleavedTimingJobs(len(clips), len(timers)) {
+		if !usable[job.decoderIndex] {
+			continue
+		}
+		clip := clips[job.clipIndex]
+		timer := timers[job.decoderIndex]
+		var best time.Duration
+		var err error
+		if timer.inProcess {
+			best, err = minDuration(1, crossBenchRuns, func() error {
+				result, err := decodeCorpusClipDiscard(clip.ivfData)
+				if err == nil && result.frames != clip.frames {
+					err = fmt.Errorf("decoded %d visible frames, want %d", result.frames, clip.frames)
+				}
+				return err
+			})
+			if err != nil {
+				t.Fatalf("cross-corpus: goav1 timed decode error on %s (%v)", clip.name, err)
+			}
+		} else {
+			dec := timer.external
+			best, err = minDuration(1, crossBenchRuns, func() error {
+				return runExternal(timer.bin, dec.decodeArgs(timer.bin, clip.ivfPath))
 			})
 			if err != nil {
 				if requiredDecoders[dec.name] {
 					t.Fatalf("cross-corpus: required decoder %s failed to decode %s (%v)", dec.name, clip.name, err)
 				}
 				t.Logf("cross-corpus: %s failed to decode %s (%v) -- excluding decoder", dec.name, clip.name, err)
-				usable = false
-				break
+				usable[job.decoderIndex] = false
+				continue
 			}
-			res.perVector[clip.ivfPath] = best
-			res.totalRaw += best
-			res.totalFrames += clip.frames
 		}
-		if usable {
-			results = append(results, res)
+		res := &results[timer.resultSlot]
+		res.perVector[clip.ivfPath] = best
+		res.totalRaw += best
+		res.totalFrames += clip.frames
+	}
+
+	filteredResults := results[:0]
+	for i, timer := range timers {
+		if usable[i] {
+			filteredResults = append(filteredResults, results[timer.resultSlot])
 		}
 	}
 
-	printCorpusReport(t, clips, results)
+	printCorpusReport(t, clips, filteredResults)
 }
 
 // printCorpusReport renders the per-clip and aggregate throughput tables.
@@ -2039,6 +2117,7 @@ func printCorpusReport(t *testing.T, clips []corpusClip, results []decoderResult
 	fmt.Fprintf(&b, "==================================================================================\n")
 	fmt.Fprintf(&b, " clips: %d generated (256x144/640x360/1280x720; cq 20/32/55; intra/inter; tiles; 8/10/12-bit; 4:2:0/4:2:2)\n", len(clips))
 	fmt.Fprintf(&b, " best-of-%d (min wall-clock); single-thread; full decode + post-filter; output discarded.\n", crossBenchRuns)
+	fmt.Fprintf(&b, " timing order: deterministic clip-rotated decoder interleave to reduce thermal/load column bias.\n")
 	fmt.Fprintf(&b, " goav1: IN-PROCESS, byte-exact verified once while loading corpus; timed path discards output.\n")
 	fmt.Fprintf(&b, " others: SUBPROCESS, decode-only, output discarded; raw includes process startup,\n")
 	fmt.Fprintf(&b, "         adj subtracts one measured startup baseline per invocation. At ~48 frames/clip\n")

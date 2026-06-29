@@ -475,6 +475,8 @@ columns or an absent manifest are acceptable.
 
 That report prints per-clip and aggregate fps, raw and startup-adjusted external
 decoder timings, and the goav1/dav1d ratio that should drive optimization work.
+Measured decode jobs use a deterministic clip-rotated decoder interleave so one
+decoder column does not always run first or last across the corpus.
 
 Allocation and compiler guardrails are part of performance, not an afterthought:
 
