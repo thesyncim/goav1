@@ -80,6 +80,80 @@ func TestConvolveY8AVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestConvolve1D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x1d8a11e))
+	widths := []int{16, 24, 32}
+	heights := []int{4, 8, 16, 32}
+	kernels := [][filterTaps]int16{
+		subpelFilters8Sharp[2],
+		subpelFilters8Sharp[9],
+	}
+	for _, k := range kernels {
+		if isFourTap(k) {
+			t.Fatalf("test kernel unexpectedly uses AVX2 four-tap fallback: %v", k)
+		}
+	}
+	if !isFourTap(bilinearFilters[7]) {
+		t.Fatalf("bilinear fallback guard no longer exercises a four-tap kernel: %v", bilinearFilters[7])
+	}
+
+	for _, w := range widths {
+		for _, h := range heights {
+			for _, k := range kernels {
+				for _, edge := range []string{"left", "right"} {
+					const refW = 96
+					refH := h + 2*filterTaps
+					ref, _ := testPlane(refW, refH, 1, refW)
+					for i := range ref.Pix {
+						ref.Pix[i] = byte(rng.Intn(256))
+					}
+					refX := 1
+					if edge == "right" {
+						refX = refW - w - 3
+					}
+					refY := filterTaps
+					got, _ := testPlane(w, h, 1, w)
+					want, _ := testPlane(w, h, 1, w)
+					if !convolveX8HorizontalEdgeAVX2(got, ref, 0, 0, refX, refY, w, h, k) {
+						t.Fatalf("X8horizontal-edge AVX2 split path was not used w=%d h=%d edge=%s", w, h, edge)
+					}
+					convolveX8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, k)
+					diffPlanes8(t, got, want, w, h, "Xclamped-edge", k, k)
+				}
+				for _, edge := range []string{"top", "bottom"} {
+					const refH = 96
+					refW := w + 2*filterTaps
+					ref, _ := testPlane(refW, refH, 1, refW)
+					for i := range ref.Pix {
+						ref.Pix[i] = byte(rng.Intn(256))
+					}
+					refX := filterTaps
+					refY := 1
+					if edge == "bottom" {
+						refY = refH - h - 3
+					}
+					got, _ := testPlane(w, h, 1, w)
+					want, _ := testPlane(w, h, 1, w)
+					if !convolveY8VerticalEdgeAVX2(got, ref, 0, 0, refX, refY, w, h, k) {
+						t.Fatalf("Y8vertical-edge AVX2 split path was not used w=%d h=%d edge=%s", w, h, edge)
+					}
+					convolveY8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, k)
+					diffPlanes8(t, got, want, w, h, "Yclamped-edge", k, k)
+				}
+			}
+		}
+	}
+
+	ref, _ := testPlane(64, 64, 1, 64)
+	got, _ := testPlane(16, 16, 1, 16)
+	if convolveX8HorizontalEdgeAVX2(got, ref, 0, 0, 1, filterTaps, 16, 16, bilinearFilters[7]) {
+		t.Fatalf("X8horizontal-edge AVX2 accepted four-tap fallback kernel")
+	}
+	if convolveY8VerticalEdgeAVX2(got, ref, 0, 0, filterTaps, 1, 16, 16, bilinearFilters[7]) {
+		t.Fatalf("Y8vertical-edge AVX2 accepted four-tap fallback kernel")
+	}
+}
+
 func TestConvolve2D8AVX2MatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x2d20feed))
 	const pad = filterTaps

@@ -150,6 +150,9 @@ func convolveX8ClampedAVX2(dst frame.Plane, ref frame.Plane, dstX int, dstY int,
 		convolveX8AVX2(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 		return
 	}
+	if convolveX8HorizontalEdgeAVX2(dst, ref, dstX, dstY, refX, refY, width, height, kernel) {
+		return
+	}
 	convolveX8ClampedPureGo(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 }
 
@@ -160,7 +163,68 @@ func convolveY8ClampedAVX2(dst frame.Plane, ref frame.Plane, dstX int, dstY int,
 		convolveY8AVX2(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 		return
 	}
+	if convolveY8VerticalEdgeAVX2(dst, ref, dstX, dstY, refX, refY, width, height, kernel) {
+		return
+	}
 	convolveY8ClampedPureGo(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+}
+
+func convolveX8HorizontalEdgeAVX2(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) bool {
+	if width < 8 || width%8 != 0 || isFourTap(kernel) {
+		return false
+	}
+	if !planeRegionFits(ref, 1, 0, refY, ref.Width, height) {
+		return false
+	}
+	fo := filterTaps/2 - 1
+	xLo, xHi := clampedXInterior(refX-fo, filterTaps, ref.Width, width)
+	if xHi <= xLo {
+		return false
+	}
+	if xLo > 0 {
+		convolveX8ClampedPureGo(dst, ref, dstX, dstY, refX, refY, xLo, height, kernel)
+	}
+	start := xLo
+	didAVX2 := false
+	for start < xHi {
+		remaining := xHi - start
+		if remaining < 8 {
+			break
+		}
+		chunk := remaining &^ 7
+		convolveX8AVX2(dst, ref, dstX+start, dstY, refX+start, refY, chunk, height, kernel)
+		start += chunk
+		didAVX2 = true
+	}
+	if !didAVX2 {
+		return false
+	}
+	if start < width {
+		convolveX8ClampedPureGo(dst, ref, dstX+start, dstY, refX+start, refY, width-start, height, kernel)
+	}
+	return true
+}
+
+func convolveY8VerticalEdgeAVX2(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) bool {
+	if width < 8 || width%8 != 0 || isFourTap(kernel) {
+		return false
+	}
+	if !planeRegionFits(ref, 1, refX, 0, width, ref.Height) {
+		return false
+	}
+	fo := filterTaps/2 - 1
+	yLo, yHi := clampedXInterior(refY-fo, filterTaps, ref.Height, height)
+	if yHi <= yLo {
+		return false
+	}
+	if yLo > 0 {
+		convolveY8ClampedPureGo(dst, ref, dstX, dstY, refX, refY, width, yLo, kernel)
+	}
+	convolveY8AVX2(dst, ref, dstX, dstY+yLo, refX, refY+yLo, width, yHi-yLo, kernel)
+	if yHi < height {
+		convolveY8ClampedPureGo(dst, ref, dstX, dstY+yHi, refX, refY+yHi, width, height-yHi, kernel)
+	}
+	return true
 }
 
 func convolve2D8ClampedAVX2(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
