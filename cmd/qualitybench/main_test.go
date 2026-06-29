@@ -1033,6 +1033,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		shuffleSeed:         7,
 		runs:                3,
 		warmupRuns:          1,
+		environmentNotes:    "fixed power mode, idle machine",
 		explicitFlags: map[string]bool{
 			"bitrates":          true,
 			"encoders":          true,
@@ -1060,6 +1061,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"warmup-runs":       true,
 			"goav1-max-threads": true,
 			"goav1-effort":      true,
+			"environment-notes": true,
 			"aom-cpu-used":      true,
 			"aom-threads":       true,
 			"aom-row-mt":        true,
@@ -1070,6 +1072,24 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	}
 	if err := validatePublishConfig(cfg, gitMetadata{Commit: "abc"}); err != nil {
 		t.Fatalf("valid publish config failed: %v", err)
+	}
+
+	missingEnvironmentNotes := cfg
+	missingEnvironmentNotes.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingEnvironmentNotes.explicitFlags[k] = v
+	}
+	delete(missingEnvironmentNotes.explicitFlags, "environment-notes")
+	if err := validatePublishConfig(missingEnvironmentNotes, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-environment-notes") {
+		t.Fatalf("missing environment notes error=%v", err)
+	}
+
+	emptyEnvironmentNotes := cfg
+	emptyEnvironmentNotes.environmentNotes = " "
+	if err := validatePublishConfig(emptyEnvironmentNotes, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "non-empty -environment-notes") {
+		t.Fatalf("empty environment notes error=%v", err)
 	}
 
 	missingGoAV1Threads := cfg
@@ -1499,6 +1519,7 @@ func TestWriteMetadataJSON(t *testing.T) {
 		minClips:         6,
 		anchorEncoder:    "goav1",
 		layers:           1,
+		environmentNotes: "fixed power mode",
 	}
 	invocations := []encoderInvocationMetadata{{
 		Clip:             "clip",
@@ -1550,6 +1571,9 @@ func TestWriteMetadataJSON(t *testing.T) {
 	}
 	if doc.Environment.GOMAXPROCS <= 0 || doc.Environment.NumCPU <= 0 {
 		t.Fatalf("environment metadata=%+v", doc.Environment)
+	}
+	if doc.Environment.Notes != "fixed power mode" {
+		t.Fatalf("environment notes=%q", doc.Environment.Notes)
 	}
 	if doc.Config.ManifestSHA256 != manifestSHA {
 		t.Fatalf("manifest sha=%q want %q", doc.Config.ManifestSHA256, manifestSHA)

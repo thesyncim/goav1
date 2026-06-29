@@ -464,6 +464,7 @@ export GOAV1_BENCH_SOURCE_ID=source-id
 export GOAV1_BENCH_SOURCE_URL=https://example.invalid/source
 export GOAV1_BENCH_SOURCE_LICENSE=license-or-usage-grant
 export GOAV1_BENCH_SOURCE_CATEGORY=content-category
+export GOAV1_BENCH_CORPUS_ENVIRONMENT_NOTES="fixed power mode; idle machine; cool start"
 scripts/gen_bench_corpus.sh
 make bench-corpus-publish
 ```

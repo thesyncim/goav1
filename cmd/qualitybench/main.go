@@ -57,6 +57,7 @@ type benchConfig struct {
 	frameStatsCSVPath   string
 	frameMetricsCSVPath string
 	metadataPath        string
+	environmentNotes    string
 	anchorEncoder       string
 	requiredEncodersRaw string
 	timingMode          string
@@ -228,13 +229,18 @@ type runtimeMetadata struct {
 }
 
 type environmentMetadata struct {
-	GOMAXPROCS int    `json:"gomaxprocs"`
-	NumCPU     int    `json:"num_cpu"`
-	CPUModel   string `json:"cpu_model,omitempty"`
-	GOFLAGS    string `json:"goflags,omitempty"`
-	GOGC       string `json:"gogc,omitempty"`
-	GOMEMLIMIT string `json:"gomemlimit,omitempty"`
-	GODEBUG    string `json:"godebug,omitempty"`
+	GOMAXPROCS    int    `json:"gomaxprocs"`
+	NumCPU        int    `json:"num_cpu"`
+	CPUModel      string `json:"cpu_model,omitempty"`
+	Hostname      string `json:"hostname,omitempty"`
+	OSVersion     string `json:"os_version,omitempty"`
+	KernelVersion string `json:"kernel_version,omitempty"`
+	PATH          string `json:"path,omitempty"`
+	GOFLAGS       string `json:"goflags,omitempty"`
+	GOGC          string `json:"gogc,omitempty"`
+	GOMEMLIMIT    string `json:"gomemlimit,omitempty"`
+	GODEBUG       string `json:"godebug,omitempty"`
+	Notes         string `json:"notes,omitempty"`
 }
 
 type gitMetadata struct {
@@ -599,6 +605,7 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.frameStatsCSVPath, "frame-stats-csv", "", "write per-frame goav1 rate-control and decision diagnostics CSV to this path")
 	flag.StringVar(&cfg.frameMetricsCSVPath, "frame-metrics-csv", "", "write per-frame decoded PSNR/SSIM diagnostics CSV to this path")
 	flag.StringVar(&cfg.metadataPath, "metadata-json", "", "write reproducibility metadata JSON to this path")
+	flag.StringVar(&cfg.environmentNotes, "environment-notes", "", "free-form notes for publish runs: power mode, thermal state, and background load")
 	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
 	flag.StringVar(&cfg.timingMode, "timing-mode", timingModeCore, "encode timing mode: core or e2e")
 	flag.StringVar(&cfg.runOrder, "run-order", runOrderBitrateEncoder, "encode tuple order: bitrate-encoder, encoder-bitrate, or shuffle")
@@ -753,11 +760,15 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"warmup-runs",
 		"goav1-max-threads",
 		"goav1-effort",
+		"environment-notes",
 	}
 	for _, name := range required {
 		if err := requireExplicitFlag(cfg, name); err != nil {
 			return err
 		}
+	}
+	if strings.TrimSpace(cfg.environmentNotes) == "" {
+		return errors.New("publish requires non-empty -environment-notes")
 	}
 	if strings.TrimSpace(strings.ToLower(cfg.requiredEncodersRaw)) != "all" {
 		return errors.New("publish requires -require-encoders all")
@@ -1858,7 +1869,7 @@ func writeMetadataJSON(cfg benchConfig, filters map[string]bool, git gitMetadata
 			SIMDTier:     detectedSIMDTier(),
 			SIMDFeatures: detectedSIMDFeatures(),
 		},
-		Environment:   environmentMetadataForRun(),
+		Environment:   environmentMetadataForRun(cfg.environmentNotes),
 		Git:           git,
 		Config:        configMetadata,
 		FairnessNotes: fairnessNotes(cfg),
@@ -2107,15 +2118,21 @@ func metricFilterAvailability(filters map[string]bool) map[string]bool {
 	}
 }
 
-func environmentMetadataForRun() environmentMetadata {
+func environmentMetadataForRun(notes string) environmentMetadata {
+	hostname, _ := os.Hostname()
 	return environmentMetadata{
-		GOMAXPROCS: runtime.GOMAXPROCS(0),
-		NumCPU:     runtime.NumCPU(),
-		CPUModel:   detectCPUModel(),
-		GOFLAGS:    os.Getenv("GOFLAGS"),
-		GOGC:       os.Getenv("GOGC"),
-		GOMEMLIMIT: os.Getenv("GOMEMLIMIT"),
-		GODEBUG:    os.Getenv("GODEBUG"),
+		GOMAXPROCS:    runtime.GOMAXPROCS(0),
+		NumCPU:        runtime.NumCPU(),
+		CPUModel:      detectCPUModel(),
+		Hostname:      hostname,
+		OSVersion:     detectOSVersion(),
+		KernelVersion: detectKernelVersion(),
+		PATH:          os.Getenv("PATH"),
+		GOFLAGS:       os.Getenv("GOFLAGS"),
+		GOGC:          os.Getenv("GOGC"),
+		GOMEMLIMIT:    os.Getenv("GOMEMLIMIT"),
+		GODEBUG:       os.Getenv("GODEBUG"),
+		Notes:         strings.TrimSpace(notes),
 	}
 }
 
@@ -2144,6 +2161,36 @@ func detectCPUModel() string {
 		}
 	}
 	return ""
+}
+
+func detectOSVersion() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return firstCommandLine("sw_vers", "-productVersion")
+	case "linux":
+		data, err := os.ReadFile("/etc/os-release")
+		if err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				key, value, ok := strings.Cut(line, "=")
+				if ok && key == "PRETTY_NAME" {
+					return strings.Trim(strings.TrimSpace(value), `"`)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func detectKernelVersion() string {
+	return firstCommandLine("uname", "-srvm")
+}
+
+func firstCommandLine(name string, args ...string) string {
+	out, err := exec.Command(name, args...).Output()
+	if err != nil {
+		return ""
+	}
+	return firstNonEmptyLine(string(out))
 }
 
 func toolMetadataForRun() map[string]toolMetadata {

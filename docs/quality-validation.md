@@ -63,6 +63,7 @@ go run ./cmd/qualitybench \
   -csv quality.csv -summary-csv quality-summary.csv -require-summary \
   -stats-csv quality-encoder-stats.csv \
   -metadata-json quality-metadata.json \
+  -environment-notes "fixed power mode; idle machine; cool start" \
   -aom-threads 4 \
   -aom-row-mt 1 \
   -svt-asm neon \
@@ -85,11 +86,12 @@ Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-summary-csv`, `-require-summary`, `-gomaxprocs`, `-fps`, `-layers`,
 `-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`,
 `-run-order shuffle`, explicit `-shuffle-seed`, `-runs >= 3`, and
-`-warmup-runs >= 1`. It also requires explicit goav1 execution-lane and effort
-settings, explicit libaom concurrency settings and realtime speed setting when
-`aomenc` is selected, explicit SVT preset, parallelism, and assembly settings
-when `svt-av1` is selected, exact raw I420 input byte counts for every manifest
-row, and manifest-declared
+`-warmup-runs >= 1`, plus a non-empty `-environment-notes` value. It also
+requires explicit goav1 execution-lane and effort settings, explicit libaom
+concurrency settings and realtime speed setting when `aomenc` is selected,
+explicit SVT preset, parallelism, and assembly settings when `svt-av1` is
+selected, exact raw I420 input byte counts for every manifest row, and
+manifest-declared
 `pix_fmt=i420`, `bit_depth=8`, `chroma=4:2:0`, `sha256`, `source_id`,
 `source_url`, `source_license`, and `category` fields. Declared
 input hashes are verified before timing starts. Publish mode rejects duplicate
@@ -110,8 +112,9 @@ through the public decoder, not by scoring encoder reconstruction buffers. The
 metadata JSON records command paths, binary SHA-256 hashes, and version/help
 probes for the external tools used by the run. It also records
 `manifest_sha256`, the effective `GOMAXPROCS`, CPU count/model when available,
-and selected Go runtime environment variables (`GOFLAGS`, `GOGC`, `GOMEMLIMIT`,
-`GODEBUG`).
+hostname, OS/kernel version when available, `PATH`, selected Go runtime
+environment variables (`GOFLAGS`, `GOGC`, `GOMEMLIMIT`, `GODEBUG`), and
+free-form environment notes for power, thermal, and background-load context.
 It also records `run_order` and `shuffle_seed`. Publish mode requires
 `-run-order shuffle -shuffle-seed N` so claim-supporting rows use a
 deterministic order without always running the same encoder first. For local

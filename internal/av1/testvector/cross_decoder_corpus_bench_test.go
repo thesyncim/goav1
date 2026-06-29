@@ -152,10 +152,11 @@ const (
 )
 
 const (
-	envBenchCorpus                = "GOAV1_BENCH_CORPUS"
-	envBenchCorpusPublish         = "GOAV1_BENCH_CORPUS_PUBLISH"
-	envBenchCorpusRequireDecoders = "GOAV1_BENCH_CORPUS_REQUIRE_DECODERS"
-	envBenchCorpusReportJSON      = "GOAV1_BENCH_CORPUS_REPORT_JSON"
+	envBenchCorpus                 = "GOAV1_BENCH_CORPUS"
+	envBenchCorpusPublish          = "GOAV1_BENCH_CORPUS_PUBLISH"
+	envBenchCorpusRequireDecoders  = "GOAV1_BENCH_CORPUS_REQUIRE_DECODERS"
+	envBenchCorpusReportJSON       = "GOAV1_BENCH_CORPUS_REPORT_JSON"
+	envBenchCorpusEnvironmentNotes = "GOAV1_BENCH_CORPUS_ENVIRONMENT_NOTES"
 )
 
 const (
@@ -1340,6 +1341,7 @@ func TestLoadCorpusBenchmarkManifestAllowsOnlyExploratoryMissingManifest(t *test
 }
 
 func TestWriteCorpusPublishReport(t *testing.T) {
+	t.Setenv(envBenchCorpusEnvironmentNotes, "fixed power mode")
 	dir := t.TempDir()
 	md5Hex := "0123456789abcdeffedcba9876543210"
 	md5, err := ParseMD5Hex([]byte(md5Hex))
@@ -1428,6 +1430,10 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 		report.Corpus.ToolVersions["ffmpeg"] != "ffmpeg fixture" {
 		t.Fatalf("corpus provenance=%+v", report.Corpus)
 	}
+	if report.Environment.Notes != "fixed power mode" || report.Environment.GOMAXPROCS <= 0 ||
+		report.Environment.NumCPU <= 0 || report.Environment.PATH == "" {
+		t.Fatalf("environment=%+v", report.Environment)
+	}
 	if len(report.Clips) != 1 || report.Clips[0].Name != "clip" || report.Clips[0].CQ != 32 ||
 		report.Clips[0].BitDepth != 8 || report.Clips[0].Profile != 0 ||
 		report.Clips[0].DAV1DCheck != "dav1d=OK" || report.Clips[0].AOMEncArgs != "args" {
@@ -1459,6 +1465,16 @@ func TestValidateCorpusPublishGitClean(t *testing.T) {
 	if err := validateCorpusPublishGitClean(corpusPublishGit{Error: "no git"}); err == nil ||
 		!strings.Contains(err.Error(), "metadata unavailable") {
 		t.Fatalf("missing git error=%v", err)
+	}
+}
+
+func TestValidateCorpusPublishEnvironmentNotes(t *testing.T) {
+	if err := validateCorpusPublishEnvironmentNotes("fixed power mode"); err != nil {
+		t.Fatalf("valid notes failed: %v", err)
+	}
+	if err := validateCorpusPublishEnvironmentNotes(" "); err == nil ||
+		!strings.Contains(err.Error(), envBenchCorpusEnvironmentNotes) {
+		t.Fatalf("empty notes error=%v", err)
 	}
 }
 
@@ -2152,15 +2168,21 @@ type corpusPublishGit struct {
 }
 
 type corpusPublishEnvironment struct {
-	GoVersion  string `json:"go_version"`
-	GOOS       string `json:"goos"`
-	GOARCH     string `json:"goarch"`
-	GOMAXPROCS int    `json:"gomaxprocs"`
-	NumCPU     int    `json:"num_cpu"`
-	GOFLAGS    string `json:"goflags,omitempty"`
-	GOGC       string `json:"gogc,omitempty"`
-	GOMEMLIMIT string `json:"gomemlimit,omitempty"`
-	GODEBUG    string `json:"godebug,omitempty"`
+	GoVersion     string `json:"go_version"`
+	GOOS          string `json:"goos"`
+	GOARCH        string `json:"goarch"`
+	GOMAXPROCS    int    `json:"gomaxprocs"`
+	NumCPU        int    `json:"num_cpu"`
+	CPUModel      string `json:"cpu_model,omitempty"`
+	Hostname      string `json:"hostname,omitempty"`
+	OSVersion     string `json:"os_version,omitempty"`
+	KernelVersion string `json:"kernel_version,omitempty"`
+	PATH          string `json:"path,omitempty"`
+	GOFLAGS       string `json:"goflags,omitempty"`
+	GOGC          string `json:"gogc,omitempty"`
+	GOMEMLIMIT    string `json:"gomemlimit,omitempty"`
+	GODEBUG       string `json:"godebug,omitempty"`
+	Notes         string `json:"notes,omitempty"`
 }
 
 type corpusPublishReportCorpus struct {
@@ -2393,6 +2415,9 @@ func TestCrossDecoderCorpus(t *testing.T) {
 	}
 	if publish {
 		if err := validateCorpusPublishGitClean(currentCorpusPublishGit()); err != nil {
+			t.Fatalf("cross-corpus publish: %v", err)
+		}
+		if err := validateCorpusPublishEnvironmentNotes(os.Getenv(envBenchCorpusEnvironmentNotes)); err != nil {
 			t.Fatalf("cross-corpus publish: %v", err)
 		}
 	}
@@ -2660,18 +2685,91 @@ func validateCorpusPublishGitClean(git corpusPublishGit) error {
 	return nil
 }
 
-func currentCorpusPublishEnvironment() corpusPublishEnvironment {
-	return corpusPublishEnvironment{
-		GoVersion:  runtime.Version(),
-		GOOS:       runtime.GOOS,
-		GOARCH:     runtime.GOARCH,
-		GOMAXPROCS: runtime.GOMAXPROCS(0),
-		NumCPU:     runtime.NumCPU(),
-		GOFLAGS:    os.Getenv("GOFLAGS"),
-		GOGC:       os.Getenv("GOGC"),
-		GOMEMLIMIT: os.Getenv("GOMEMLIMIT"),
-		GODEBUG:    os.Getenv("GODEBUG"),
+func validateCorpusPublishEnvironmentNotes(notes string) error {
+	if strings.TrimSpace(notes) == "" {
+		return fmt.Errorf("set %s to describe power mode, thermal state, and background load", envBenchCorpusEnvironmentNotes)
 	}
+	return nil
+}
+
+func currentCorpusPublishEnvironment() corpusPublishEnvironment {
+	hostname, _ := os.Hostname()
+	return corpusPublishEnvironment{
+		GoVersion:     runtime.Version(),
+		GOOS:          runtime.GOOS,
+		GOARCH:        runtime.GOARCH,
+		GOMAXPROCS:    runtime.GOMAXPROCS(0),
+		NumCPU:        runtime.NumCPU(),
+		CPUModel:      detectCorpusCPUModel(),
+		Hostname:      hostname,
+		OSVersion:     detectCorpusOSVersion(),
+		KernelVersion: detectCorpusKernelVersion(),
+		PATH:          os.Getenv("PATH"),
+		GOFLAGS:       os.Getenv("GOFLAGS"),
+		GOGC:          os.Getenv("GOGC"),
+		GOMEMLIMIT:    os.Getenv("GOMEMLIMIT"),
+		GODEBUG:       os.Getenv("GODEBUG"),
+		Notes:         strings.TrimSpace(os.Getenv(envBenchCorpusEnvironmentNotes)),
+	}
+}
+
+func detectCorpusCPUModel() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return corpusFirstCommandLine("sysctl", "-n", "machdep.cpu.brand_string")
+	case "linux":
+		data, err := os.ReadFile("/proc/cpuinfo")
+		if err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				key, value, ok := strings.Cut(line, ":")
+				if !ok {
+					continue
+				}
+				key = strings.TrimSpace(strings.ToLower(key))
+				if key == "model name" || key == "hardware" {
+					if value = strings.TrimSpace(value); value != "" {
+						return value
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func detectCorpusOSVersion() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return corpusFirstCommandLine("sw_vers", "-productVersion")
+	case "linux":
+		data, err := os.ReadFile("/etc/os-release")
+		if err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				key, value, ok := strings.Cut(line, "=")
+				if ok && key == "PRETTY_NAME" {
+					return strings.Trim(strings.TrimSpace(value), `"`)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func detectCorpusKernelVersion() string {
+	return corpusFirstCommandLine("uname", "-srvm")
+}
+
+func corpusFirstCommandLine(name string, args ...string) string {
+	out, err := exec.Command(name, args...).Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func corpusTotalFrames(clips []corpusClip) int {
