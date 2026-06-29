@@ -216,3 +216,405 @@ coeffNZMap32Loop:
 	SUB  $1, R3, R3
 	CBNZ R3, coeffNZMap32Loop
 	RET
+
+// func coeffNZMapContexts4RowsHorizNEONAsm(levels *uint8, offsets *uint8, contexts *int8, columns uintptr, stride uintptr)
+TEXT ·coeffNZMapContexts4RowsHorizNEONAsm(SB), NOSPLIT, $0-40
+	MOVD levels+0(FP), R0
+	MOVD offsets+8(FP), R1
+	MOVD contexts+16(FP), R2
+	MOVD columns+24(FP), R3
+	MOVD stride+32(FP), R4
+
+	WORD $0x0f00e47f // movi v31.8b, #3
+	WORD $0x0f00e49e // movi v30.8b, #4
+
+coeffNZMap4HorizLoop:
+	ADD  $1, R0, R5
+	ADD  R4, R0, R6
+	ADD  R4, R6, R7
+	ADD  R4, R7, R8
+	ADD  R4, R8, R9
+	WORD $0x0c4070a0 // ld1.8b { v0 }, [x5]  level + 1
+	WORD $0x0c4070c1 // ld1.8b { v1 }, [x6]  level + stride
+	WORD $0x0c4070e2 // ld1.8b { v2 }, [x7]  level + 2*stride
+	WORD $0x0c407103 // ld1.8b { v3 }, [x8]  level + 3*stride
+	WORD $0x0c407124 // ld1.8b { v4 }, [x9]  level + 4*stride
+	WORD $0x0c407025 // ld1.8b { v5 }, [x1]  positional offset
+	WORD $0x2e3f6c00 // umin.8b v0, v0, v31
+	WORD $0x2e3f6c21 // umin.8b v1, v1, v31
+	WORD $0x2e3f6c42 // umin.8b v2, v2, v31
+	WORD $0x2e3f6c63 // umin.8b v3, v3, v31
+	WORD $0x2e3f6c84 // umin.8b v4, v4, v31
+	WORD $0x0e218400 // add.8b v0, v0, v1
+	WORD $0x0e228400 // add.8b v0, v0, v2
+	WORD $0x0e238400 // add.8b v0, v0, v3
+	WORD $0x0e248400 // add.8b v0, v0, v4
+	WORD $0x2f0f2400 // urshr.8b v0, v0, #1
+	WORD $0x2e3e6c00 // umin.8b v0, v0, v30
+	WORD $0x0e258400 // add.8b v0, v0, v5
+	WORD $0x0d008040 // st1.s { v0 }[0], [x2]
+	ADD  R4, R0, R0
+	ADD  $4, R1, R1
+	ADD  $4, R2, R2
+	SUB  $1, R3, R3
+	CBNZ R3, coeffNZMap4HorizLoop
+	RET
+
+// func coeffNZMapContexts8RowsHorizNEONAsm(levels *uint8, offsets *uint8, contexts *int8, columns uintptr, stride uintptr)
+TEXT ·coeffNZMapContexts8RowsHorizNEONAsm(SB), NOSPLIT, $0-40
+	MOVD levels+0(FP), R0
+	MOVD offsets+8(FP), R1
+	MOVD contexts+16(FP), R2
+	MOVD columns+24(FP), R3
+	MOVD stride+32(FP), R4
+
+	WORD $0x0f00e47f // movi v31.8b, #3
+	WORD $0x0f00e49e // movi v30.8b, #4
+
+coeffNZMap8HorizLoop:
+	ADD  $1, R0, R5
+	ADD  R4, R0, R6
+	ADD  R4, R6, R7
+	ADD  R4, R7, R8
+	ADD  R4, R8, R9
+	WORD $0x0c4070a0 // ld1.8b { v0 }, [x5]  level + 1
+	WORD $0x0c4070c1 // ld1.8b { v1 }, [x6]  level + stride
+	WORD $0x0c4070e2 // ld1.8b { v2 }, [x7]  level + 2*stride
+	WORD $0x0c407103 // ld1.8b { v3 }, [x8]  level + 3*stride
+	WORD $0x0c407124 // ld1.8b { v4 }, [x9]  level + 4*stride
+	WORD $0x0c407025 // ld1.8b { v5 }, [x1]  positional offset
+	WORD $0x2e3f6c00 // umin.8b v0, v0, v31
+	WORD $0x2e3f6c21 // umin.8b v1, v1, v31
+	WORD $0x2e3f6c42 // umin.8b v2, v2, v31
+	WORD $0x2e3f6c63 // umin.8b v3, v3, v31
+	WORD $0x2e3f6c84 // umin.8b v4, v4, v31
+	WORD $0x0e218400 // add.8b v0, v0, v1
+	WORD $0x0e228400 // add.8b v0, v0, v2
+	WORD $0x0e238400 // add.8b v0, v0, v3
+	WORD $0x0e248400 // add.8b v0, v0, v4
+	WORD $0x2f0f2400 // urshr.8b v0, v0, #1
+	WORD $0x2e3e6c00 // umin.8b v0, v0, v30
+	WORD $0x0e258400 // add.8b v0, v0, v5
+	WORD $0x0c007040 // st1.8b { v0 }, [x2]
+	ADD  R4, R0, R0
+	ADD  $8, R1, R1
+	ADD  $8, R2, R2
+	SUB  $1, R3, R3
+	CBNZ R3, coeffNZMap8HorizLoop
+	RET
+
+// func coeffNZMapContexts16RowsHorizNEONAsm(levels *uint8, offsets *uint8, contexts *int8, columns uintptr, stride uintptr)
+TEXT ·coeffNZMapContexts16RowsHorizNEONAsm(SB), NOSPLIT, $0-40
+	MOVD levels+0(FP), R0
+	MOVD offsets+8(FP), R1
+	MOVD contexts+16(FP), R2
+	MOVD columns+24(FP), R3
+	MOVD stride+32(FP), R4
+
+	WORD $0x4f00e47f // movi v31.16b, #3
+	WORD $0x4f00e49e // movi v30.16b, #4
+
+coeffNZMap16HorizLoop:
+	ADD  $1, R0, R5
+	ADD  R4, R0, R6
+	ADD  R4, R6, R7
+	ADD  R4, R7, R8
+	ADD  R4, R8, R9
+	WORD $0x3dc000a0 // ldr q0, [x5]  level + 1
+	WORD $0x3dc000c1 // ldr q1, [x6]  level + stride
+	WORD $0x3dc000e2 // ldr q2, [x7]  level + 2*stride
+	WORD $0x3dc00103 // ldr q3, [x8]  level + 3*stride
+	WORD $0x3dc00124 // ldr q4, [x9]  level + 4*stride
+	WORD $0x3dc00025 // ldr q5, [x1]  positional offset
+	WORD $0x6e3f6c00 // umin v0.16b, v0.16b, v31.16b
+	WORD $0x6e3f6c21 // umin v1.16b, v1.16b, v31.16b
+	WORD $0x6e3f6c42 // umin v2.16b, v2.16b, v31.16b
+	WORD $0x6e3f6c63 // umin v3.16b, v3.16b, v31.16b
+	WORD $0x6e3f6c84 // umin v4.16b, v4.16b, v31.16b
+	WORD $0x4e218400 // add v0.16b, v0.16b, v1.16b
+	WORD $0x4e228400 // add v0.16b, v0.16b, v2.16b
+	WORD $0x4e238400 // add v0.16b, v0.16b, v3.16b
+	WORD $0x4e248400 // add v0.16b, v0.16b, v4.16b
+	WORD $0x6f0f2400 // urshr v0.16b, v0.16b, #1
+	WORD $0x6e3e6c00 // umin v0.16b, v0.16b, v30.16b
+	WORD $0x4e258400 // add v0.16b, v0.16b, v5.16b
+	WORD $0x3d800040 // str q0, [x2]
+	ADD  R4, R0, R0
+	ADD  $16, R1, R1
+	ADD  $16, R2, R2
+	SUB  $1, R3, R3
+	CBNZ R3, coeffNZMap16HorizLoop
+	RET
+
+// func coeffNZMapContexts32RowsHorizNEONAsm(levels *uint8, offsets *uint8, contexts *int8, columns uintptr, stride uintptr)
+TEXT ·coeffNZMapContexts32RowsHorizNEONAsm(SB), NOSPLIT, $0-40
+	MOVD levels+0(FP), R0
+	MOVD offsets+8(FP), R1
+	MOVD contexts+16(FP), R2
+	MOVD columns+24(FP), R3
+	MOVD stride+32(FP), R4
+
+	WORD $0x4f00e47f // movi v31.16b, #3
+	WORD $0x4f00e49e // movi v30.16b, #4
+
+coeffNZMap32HorizLoop:
+	ADD  $1, R0, R5
+	ADD  R4, R0, R6
+	ADD  R4, R6, R7
+	ADD  R4, R7, R8
+	ADD  R4, R8, R9
+	WORD $0x3dc000a0 // ldr q0, [x5]
+	WORD $0x3dc000c1 // ldr q1, [x6]
+	WORD $0x3dc000e2 // ldr q2, [x7]
+	WORD $0x3dc00103 // ldr q3, [x8]
+	WORD $0x3dc00124 // ldr q4, [x9]
+	WORD $0x3dc00025 // ldr q5, [x1]
+	WORD $0x6e3f6c00 // umin v0.16b, v0.16b, v31.16b
+	WORD $0x6e3f6c21 // umin v1.16b, v1.16b, v31.16b
+	WORD $0x6e3f6c42 // umin v2.16b, v2.16b, v31.16b
+	WORD $0x6e3f6c63 // umin v3.16b, v3.16b, v31.16b
+	WORD $0x6e3f6c84 // umin v4.16b, v4.16b, v31.16b
+	WORD $0x4e218400 // add v0.16b, v0.16b, v1.16b
+	WORD $0x4e228400 // add v0.16b, v0.16b, v2.16b
+	WORD $0x4e238400 // add v0.16b, v0.16b, v3.16b
+	WORD $0x4e248400 // add v0.16b, v0.16b, v4.16b
+	WORD $0x6f0f2400 // urshr v0.16b, v0.16b, #1
+	WORD $0x6e3e6c00 // umin v0.16b, v0.16b, v30.16b
+	WORD $0x4e258400 // add v0.16b, v0.16b, v5.16b
+	WORD $0x3d800040 // str q0, [x2]
+
+	ADD  $16, R0, R10
+	ADD  $16, R1, R11
+	ADD  $16, R2, R12
+	ADD  $1, R10, R5
+	ADD  R4, R10, R6
+	ADD  R4, R6, R7
+	ADD  R4, R7, R8
+	ADD  R4, R8, R9
+	WORD $0x3dc000a0 // ldr q0, [x5]
+	WORD $0x3dc000c1 // ldr q1, [x6]
+	WORD $0x3dc000e2 // ldr q2, [x7]
+	WORD $0x3dc00103 // ldr q3, [x8]
+	WORD $0x3dc00124 // ldr q4, [x9]
+	WORD $0x3dc00165 // ldr q5, [x11]
+	WORD $0x6e3f6c00 // umin v0.16b, v0.16b, v31.16b
+	WORD $0x6e3f6c21 // umin v1.16b, v1.16b, v31.16b
+	WORD $0x6e3f6c42 // umin v2.16b, v2.16b, v31.16b
+	WORD $0x6e3f6c63 // umin v3.16b, v3.16b, v31.16b
+	WORD $0x6e3f6c84 // umin v4.16b, v4.16b, v31.16b
+	WORD $0x4e218400 // add v0.16b, v0.16b, v1.16b
+	WORD $0x4e228400 // add v0.16b, v0.16b, v2.16b
+	WORD $0x4e238400 // add v0.16b, v0.16b, v3.16b
+	WORD $0x4e248400 // add v0.16b, v0.16b, v4.16b
+	WORD $0x6f0f2400 // urshr v0.16b, v0.16b, #1
+	WORD $0x6e3e6c00 // umin v0.16b, v0.16b, v30.16b
+	WORD $0x4e258400 // add v0.16b, v0.16b, v5.16b
+	WORD $0x3d800180 // str q0, [x12]
+
+	ADD  R4, R0, R0
+	ADD  $32, R1, R1
+	ADD  $32, R2, R2
+	SUB  $1, R3, R3
+	CBNZ R3, coeffNZMap32HorizLoop
+	RET
+
+// func coeffNZMapContexts4RowsVertNEONAsm(levels *uint8, offsets *uint8, contexts *int8, columns uintptr, stride uintptr)
+TEXT ·coeffNZMapContexts4RowsVertNEONAsm(SB), NOSPLIT, $0-40
+	MOVD levels+0(FP), R0
+	MOVD offsets+8(FP), R1
+	MOVD contexts+16(FP), R2
+	MOVD columns+24(FP), R3
+	MOVD stride+32(FP), R4
+
+	WORD $0x0f00e47f // movi v31.8b, #3
+	WORD $0x0f00e49e // movi v30.8b, #4
+
+coeffNZMap4VertLoop:
+	ADD  $1, R0, R5
+	ADD  R4, R0, R6
+	ADD  $2, R0, R7
+	ADD  $3, R0, R8
+	ADD  $4, R0, R9
+	WORD $0x0c4070a0 // ld1.8b { v0 }, [x5]  level + 1
+	WORD $0x0c4070c1 // ld1.8b { v1 }, [x6]  level + stride
+	WORD $0x0c4070e2 // ld1.8b { v2 }, [x7]  level + 2
+	WORD $0x0c407103 // ld1.8b { v3 }, [x8]  level + 3
+	WORD $0x0c407124 // ld1.8b { v4 }, [x9]  level + 4
+	WORD $0x0c407025 // ld1.8b { v5 }, [x1]  positional offset
+	WORD $0x2e3f6c00 // umin.8b v0, v0, v31
+	WORD $0x2e3f6c21 // umin.8b v1, v1, v31
+	WORD $0x2e3f6c42 // umin.8b v2, v2, v31
+	WORD $0x2e3f6c63 // umin.8b v3, v3, v31
+	WORD $0x2e3f6c84 // umin.8b v4, v4, v31
+	WORD $0x0e218400 // add.8b v0, v0, v1
+	WORD $0x0e228400 // add.8b v0, v0, v2
+	WORD $0x0e238400 // add.8b v0, v0, v3
+	WORD $0x0e248400 // add.8b v0, v0, v4
+	WORD $0x2f0f2400 // urshr.8b v0, v0, #1
+	WORD $0x2e3e6c00 // umin.8b v0, v0, v30
+	WORD $0x0e258400 // add.8b v0, v0, v5
+	WORD $0x0d008040 // st1.s { v0 }[0], [x2]
+	ADD  R4, R0, R0
+	ADD  $4, R1, R1
+	ADD  $4, R2, R2
+	SUB  $1, R3, R3
+	CBNZ R3, coeffNZMap4VertLoop
+	RET
+
+// func coeffNZMapContexts8RowsVertNEONAsm(levels *uint8, offsets *uint8, contexts *int8, columns uintptr, stride uintptr)
+TEXT ·coeffNZMapContexts8RowsVertNEONAsm(SB), NOSPLIT, $0-40
+	MOVD levels+0(FP), R0
+	MOVD offsets+8(FP), R1
+	MOVD contexts+16(FP), R2
+	MOVD columns+24(FP), R3
+	MOVD stride+32(FP), R4
+
+	WORD $0x0f00e47f // movi v31.8b, #3
+	WORD $0x0f00e49e // movi v30.8b, #4
+
+coeffNZMap8VertLoop:
+	ADD  $1, R0, R5
+	ADD  R4, R0, R6
+	ADD  $2, R0, R7
+	ADD  $3, R0, R8
+	ADD  $4, R0, R9
+	WORD $0x0c4070a0 // ld1.8b { v0 }, [x5]  level + 1
+	WORD $0x0c4070c1 // ld1.8b { v1 }, [x6]  level + stride
+	WORD $0x0c4070e2 // ld1.8b { v2 }, [x7]  level + 2
+	WORD $0x0c407103 // ld1.8b { v3 }, [x8]  level + 3
+	WORD $0x0c407124 // ld1.8b { v4 }, [x9]  level + 4
+	WORD $0x0c407025 // ld1.8b { v5 }, [x1]  positional offset
+	WORD $0x2e3f6c00 // umin.8b v0, v0, v31
+	WORD $0x2e3f6c21 // umin.8b v1, v1, v31
+	WORD $0x2e3f6c42 // umin.8b v2, v2, v31
+	WORD $0x2e3f6c63 // umin.8b v3, v3, v31
+	WORD $0x2e3f6c84 // umin.8b v4, v4, v31
+	WORD $0x0e218400 // add.8b v0, v0, v1
+	WORD $0x0e228400 // add.8b v0, v0, v2
+	WORD $0x0e238400 // add.8b v0, v0, v3
+	WORD $0x0e248400 // add.8b v0, v0, v4
+	WORD $0x2f0f2400 // urshr.8b v0, v0, #1
+	WORD $0x2e3e6c00 // umin.8b v0, v0, v30
+	WORD $0x0e258400 // add.8b v0, v0, v5
+	WORD $0x0c007040 // st1.8b { v0 }, [x2]
+	ADD  R4, R0, R0
+	ADD  $8, R1, R1
+	ADD  $8, R2, R2
+	SUB  $1, R3, R3
+	CBNZ R3, coeffNZMap8VertLoop
+	RET
+
+// func coeffNZMapContexts16RowsVertNEONAsm(levels *uint8, offsets *uint8, contexts *int8, columns uintptr, stride uintptr)
+TEXT ·coeffNZMapContexts16RowsVertNEONAsm(SB), NOSPLIT, $0-40
+	MOVD levels+0(FP), R0
+	MOVD offsets+8(FP), R1
+	MOVD contexts+16(FP), R2
+	MOVD columns+24(FP), R3
+	MOVD stride+32(FP), R4
+
+	WORD $0x4f00e47f // movi v31.16b, #3
+	WORD $0x4f00e49e // movi v30.16b, #4
+
+coeffNZMap16VertLoop:
+	ADD  $1, R0, R5
+	ADD  R4, R0, R6
+	ADD  $2, R0, R7
+	ADD  $3, R0, R8
+	ADD  $4, R0, R9
+	WORD $0x3dc000a0 // ldr q0, [x5]  level + 1
+	WORD $0x3dc000c1 // ldr q1, [x6]  level + stride
+	WORD $0x3dc000e2 // ldr q2, [x7]  level + 2
+	WORD $0x3dc00103 // ldr q3, [x8]  level + 3
+	WORD $0x3dc00124 // ldr q4, [x9]  level + 4
+	WORD $0x3dc00025 // ldr q5, [x1]  positional offset
+	WORD $0x6e3f6c00 // umin v0.16b, v0.16b, v31.16b
+	WORD $0x6e3f6c21 // umin v1.16b, v1.16b, v31.16b
+	WORD $0x6e3f6c42 // umin v2.16b, v2.16b, v31.16b
+	WORD $0x6e3f6c63 // umin v3.16b, v3.16b, v31.16b
+	WORD $0x6e3f6c84 // umin v4.16b, v4.16b, v31.16b
+	WORD $0x4e218400 // add v0.16b, v0.16b, v1.16b
+	WORD $0x4e228400 // add v0.16b, v0.16b, v2.16b
+	WORD $0x4e238400 // add v0.16b, v0.16b, v3.16b
+	WORD $0x4e248400 // add v0.16b, v0.16b, v4.16b
+	WORD $0x6f0f2400 // urshr v0.16b, v0.16b, #1
+	WORD $0x6e3e6c00 // umin v0.16b, v0.16b, v30.16b
+	WORD $0x4e258400 // add v0.16b, v0.16b, v5.16b
+	WORD $0x3d800040 // str q0, [x2]
+	ADD  R4, R0, R0
+	ADD  $16, R1, R1
+	ADD  $16, R2, R2
+	SUB  $1, R3, R3
+	CBNZ R3, coeffNZMap16VertLoop
+	RET
+
+// func coeffNZMapContexts32RowsVertNEONAsm(levels *uint8, offsets *uint8, contexts *int8, columns uintptr, stride uintptr)
+TEXT ·coeffNZMapContexts32RowsVertNEONAsm(SB), NOSPLIT, $0-40
+	MOVD levels+0(FP), R0
+	MOVD offsets+8(FP), R1
+	MOVD contexts+16(FP), R2
+	MOVD columns+24(FP), R3
+	MOVD stride+32(FP), R4
+
+	WORD $0x4f00e47f // movi v31.16b, #3
+	WORD $0x4f00e49e // movi v30.16b, #4
+
+coeffNZMap32VertLoop:
+	ADD  $1, R0, R5
+	ADD  R4, R0, R6
+	ADD  $2, R0, R7
+	ADD  $3, R0, R8
+	ADD  $4, R0, R9
+	WORD $0x3dc000a0 // ldr q0, [x5]
+	WORD $0x3dc000c1 // ldr q1, [x6]
+	WORD $0x3dc000e2 // ldr q2, [x7]
+	WORD $0x3dc00103 // ldr q3, [x8]
+	WORD $0x3dc00124 // ldr q4, [x9]
+	WORD $0x3dc00025 // ldr q5, [x1]
+	WORD $0x6e3f6c00 // umin v0.16b, v0.16b, v31.16b
+	WORD $0x6e3f6c21 // umin v1.16b, v1.16b, v31.16b
+	WORD $0x6e3f6c42 // umin v2.16b, v2.16b, v31.16b
+	WORD $0x6e3f6c63 // umin v3.16b, v3.16b, v31.16b
+	WORD $0x6e3f6c84 // umin v4.16b, v4.16b, v31.16b
+	WORD $0x4e218400 // add v0.16b, v0.16b, v1.16b
+	WORD $0x4e228400 // add v0.16b, v0.16b, v2.16b
+	WORD $0x4e238400 // add v0.16b, v0.16b, v3.16b
+	WORD $0x4e248400 // add v0.16b, v0.16b, v4.16b
+	WORD $0x6f0f2400 // urshr v0.16b, v0.16b, #1
+	WORD $0x6e3e6c00 // umin v0.16b, v0.16b, v30.16b
+	WORD $0x4e258400 // add v0.16b, v0.16b, v5.16b
+	WORD $0x3d800040 // str q0, [x2]
+
+	ADD  $16, R0, R10
+	ADD  $16, R1, R11
+	ADD  $16, R2, R12
+	ADD  $1, R10, R5
+	ADD  R4, R10, R6
+	ADD  $2, R10, R7
+	ADD  $3, R10, R8
+	ADD  $4, R10, R9
+	WORD $0x3dc000a0 // ldr q0, [x5]
+	WORD $0x3dc000c1 // ldr q1, [x6]
+	WORD $0x3dc000e2 // ldr q2, [x7]
+	WORD $0x3dc00103 // ldr q3, [x8]
+	WORD $0x3dc00124 // ldr q4, [x9]
+	WORD $0x3dc00165 // ldr q5, [x11]
+	WORD $0x6e3f6c00 // umin v0.16b, v0.16b, v31.16b
+	WORD $0x6e3f6c21 // umin v1.16b, v1.16b, v31.16b
+	WORD $0x6e3f6c42 // umin v2.16b, v2.16b, v31.16b
+	WORD $0x6e3f6c63 // umin v3.16b, v3.16b, v31.16b
+	WORD $0x6e3f6c84 // umin v4.16b, v4.16b, v31.16b
+	WORD $0x4e218400 // add v0.16b, v0.16b, v1.16b
+	WORD $0x4e228400 // add v0.16b, v0.16b, v2.16b
+	WORD $0x4e238400 // add v0.16b, v0.16b, v3.16b
+	WORD $0x4e248400 // add v0.16b, v0.16b, v4.16b
+	WORD $0x6f0f2400 // urshr v0.16b, v0.16b, #1
+	WORD $0x6e3e6c00 // umin v0.16b, v0.16b, v30.16b
+	WORD $0x4e258400 // add v0.16b, v0.16b, v5.16b
+	WORD $0x3d800180 // str q0, [x12]
+
+	ADD  R4, R0, R0
+	ADD  $32, R1, R1
+	ADD  $32, R2, R2
+	SUB  $1, R3, R3
+	CBNZ R3, coeffNZMap32VertLoop
+	RET

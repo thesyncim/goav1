@@ -179,6 +179,8 @@ type coeffGeometry struct {
 
 var coeffGeometryTable [transformSizeCount]coeffGeometry
 var coeffLower2DOffsetTable [transformSizeCount][]uint8
+var coeffLowerHorizOffsetTable [transformSizeCount][]uint8
+var coeffLowerVertOffsetTable [transformSizeCount][]uint8
 
 // coeffPos is the precomputed scan position for one coefficient index: the
 // padded scratch offset (col*stride+row) plus the unpadded row/col. Computing
@@ -318,10 +320,16 @@ func init() {
 		}
 		coeffPosTable[size] = positions
 		lower2DOffsets := make([]uint8, maxEOB)
+		lowerHorizOffsets := make([]uint8, maxEOB)
+		lowerVertOffsets := make([]uint8, maxEOB)
 		for idx, p := range positions {
 			lower2DOffsets[idx] = uint8(p.lower2DOffset)
+			lowerHorizOffsets[idx] = uint8(coeff1DContextOffset(int(p.col)))
+			lowerVertOffsets[idx] = uint8(coeff1DContextOffset(int(p.row)))
 		}
 		coeffLower2DOffsetTable[size] = lower2DOffsets
+		coeffLowerHorizOffsetTable[size] = lowerHorizOffsets
+		coeffLowerVertOffsetTable[size] = lowerVertOffsets
 		hotPositions := make([]coeffPosHot, maxEOB)
 		for idx, p := range positions {
 			hotPositions[idx] = coeffPosHot{

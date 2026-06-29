@@ -11,6 +11,19 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
+func coeffBenchClassName(class transform.Class) string {
+	switch class {
+	case transform.Class2D:
+		return "2d"
+	case transform.ClassHoriz:
+		return "horiz"
+	case transform.ClassVert:
+		return "vert"
+	default:
+		return fmt.Sprintf("class%d", class)
+	}
+}
+
 func BenchmarkCoeffInitLevels(b *testing.B) {
 	sizes := [...]TransformSize{
 		TransformSize4x4,
@@ -83,7 +96,6 @@ func BenchmarkCoeffNZMapContexts(b *testing.B) {
 		coeffs := make([]int16, maxEOB)
 		levels := make([]uint8, scratchLen)
 		contexts := make([]int8, maxEOB)
-		scan := coeffScanTable[size][transform.Class2D]
 		for i := range coeffs {
 			switch i & 7 {
 			case 0, 1:
@@ -99,21 +111,29 @@ func BenchmarkCoeffNZMapContexts(b *testing.B) {
 		}
 		dims, _ := size.Dimensions()
 		name := fmt.Sprintf("%dx%d_scan%dx%d", int(dims.W4)*4, int(dims.H4)*4, geo.scanWidth, geo.scanHeight)
-		b.Run(name+"/impl-full", func(b *testing.B) {
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				if err := CoeffNZMapContexts(levels, size, transform.Class2D, scan, maxEOB, contexts); err != nil {
-					b.Fatal(err)
-				}
+		classes := [...]transform.Class{transform.Class2D, transform.ClassHoriz, transform.ClassVert}
+		for _, class := range classes {
+			class := class
+			scan := coeffScanTable[size][class]
+			if len(scan) < maxEOB {
+				b.Fatalf("size=%d class=%d missing scan", size, class)
 			}
-		})
-		b.Run(name+"/scalar-full", func(b *testing.B) {
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				if err := coeffNZMapContextsScalar(levels, size, transform.Class2D, scan, maxEOB, contexts, maxEOB); err != nil {
-					b.Fatal(err)
+			b.Run(name+"/"+coeffBenchClassName(class)+"/impl-full", func(b *testing.B) {
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					if err := CoeffNZMapContexts(levels, size, class, scan, maxEOB, contexts); err != nil {
+						b.Fatal(err)
+					}
 				}
-			}
-		})
+			})
+			b.Run(name+"/"+coeffBenchClassName(class)+"/scalar-full", func(b *testing.B) {
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					if err := coeffNZMapContextsScalar(levels, size, class, scan, maxEOB, contexts, maxEOB); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
 	}
 }
