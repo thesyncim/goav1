@@ -1242,6 +1242,31 @@ func TestCorpusRequiredExternalDecoderNames(t *testing.T) {
 	}
 }
 
+func TestCorpusPublishReportToolsUsesVersionArgs(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "version-fixture")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho version args: \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tools := corpusPublishReportTools([]corpusTimingDecoder{{
+		name: "fixturedec",
+		external: externalDecoder{
+			name:        "fixturedec",
+			startupArgs: func(string) []string { return []string{"--startup"} },
+			versionArgs: func(string) []string { return []string{"--real-version"} },
+		},
+		bin: bin,
+	}})
+	if len(tools) != 1 {
+		t.Fatalf("tools len=%d want 1", len(tools))
+	}
+	if tools[0].Version != "version args: --real-version" {
+		t.Fatalf("version=%q want version args from versionArgs", tools[0].Version)
+	}
+	if tools[0].VersionError != "" {
+		t.Fatalf("version error=%q want empty", tools[0].VersionError)
+	}
+}
+
 func TestResolveCorpusExternalDecodersRequiresMissing(t *testing.T) {
 	decoders := []externalDecoder{
 		{name: "aomdec"},
@@ -2795,7 +2820,7 @@ func corpusPublishReportTools(timers []corpusTimingDecoder) []corpusPublishRepor
 		if sha, _, err := corpusFileSHA256(timer.bin); err == nil {
 			tool.SHA256 = sha
 		}
-		line, versionErr := corpusCommandVersionLine(timer.bin, timer.external.startupArgs(timer.bin))
+		line, versionErr := corpusCommandVersionLine(timer.bin, timer.external.versionArgsFor(timer.bin))
 		tool.Version = line
 		tool.VersionError = versionErr
 		tools = append(tools, tool)

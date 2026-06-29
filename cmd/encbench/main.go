@@ -1,6 +1,8 @@
 // Command encbench measures goav1's realtime encoder on a deterministic
 // synthetic scene (textured global pan plus two movers) and can dump the same
 // scene as raw I420 so external encoders run on identical input.
+// It is a local profiling tool, not a claim-supporting cross-encoder quality
+// harness; use cmd/qualitybench -publish for publishable comparisons.
 //
 //	encbench -dump seq.yuv          write the scene as raw I420
 //	encbench -bitrate 6000000       encode with goav1 CBR and report

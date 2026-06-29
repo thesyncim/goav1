@@ -75,6 +75,10 @@ If the local FFmpeg build lacks `libvmaf`, a command that requires VMAF exits
 before encoding. Use that failure as a toolchain setup signal; do not treat a
 non-VMAF run as state-of-the-art visual validation.
 
+The same strict path is available as `make qualitybench-publish`; set
+`QUALITYBENCH_MANIFEST` and `QUALITYBENCH_ENVIRONMENT_NOTES`, then override the
+`QUALITYBENCH_*` variables when sweeping speed, assembly, or bitrate settings.
+
 If `-input` is omitted, `qualitybench` uses the same deterministic synthetic
 scene as `encbench`. That path is for smoke testing the harness, not for quality
 claims.

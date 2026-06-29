@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference webrtc-browser webrtc-production dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
+.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish qualitybench-publish gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference webrtc-browser webrtc-production dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -6,6 +6,36 @@ FUZZFLAGS = -run '^$$' -fuzztime=$(FUZZTIME) -parallel=$(FUZZPARALLEL)
 BENCHTIME ?= 3s
 GCMETRICS_COUNT ?= 5
 BENCH_CORPUS_REPORT_JSON ?= /tmp/goav1-bench-corpus-report.json
+QUALITYBENCH_MANIFEST ?=
+QUALITYBENCH_WORKDIR ?= /tmp/goav1-quality
+QUALITYBENCH_CSV ?= $(QUALITYBENCH_WORKDIR)/quality.csv
+QUALITYBENCH_SUMMARY_CSV ?= $(QUALITYBENCH_WORKDIR)/quality-summary.csv
+QUALITYBENCH_STATS_CSV ?= $(QUALITYBENCH_WORKDIR)/quality-encoder-stats.csv
+QUALITYBENCH_METADATA_JSON ?= $(QUALITYBENCH_WORKDIR)/quality-metadata.json
+QUALITYBENCH_ENVIRONMENT_NOTES ?=
+QUALITYBENCH_ENCODERS ?= goav1,aomenc,svt-av1
+QUALITYBENCH_REQUIRED_ENCODERS ?= all
+QUALITYBENCH_ANCHOR ?= aomenc
+QUALITYBENCH_BITRATES ?= 3000000,6000000,9000000,12000000
+QUALITYBENCH_REQUIRED_METRICS ?= xpsnr,vmaf
+QUALITYBENCH_MIN_CLIPS ?= 6
+QUALITYBENCH_FPS ?= 60
+QUALITYBENCH_LAYERS ?= 1
+QUALITYBENCH_TILES ?= 0
+QUALITYBENCH_GOLDEN ?= 0
+QUALITYBENCH_KEYINT ?= 60
+QUALITYBENCH_GOMAXPROCS ?= 4
+QUALITYBENCH_GOAV1_MAX_THREADS ?= 4
+QUALITYBENCH_GOAV1_EFFORT ?= 0
+QUALITYBENCH_SHUFFLE_SEED ?= 1
+QUALITYBENCH_RUNS ?= 3
+QUALITYBENCH_WARMUP_RUNS ?= 1
+QUALITYBENCH_AOM_CPU_USED ?= 8
+QUALITYBENCH_AOM_THREADS ?= 4
+QUALITYBENCH_AOM_ROW_MT ?= 1
+QUALITYBENCH_SVT_PRESET ?= 13
+QUALITYBENCH_SVT_LP ?= 0
+QUALITYBENCH_SVT_ASM ?= neon
 WEBRTC_REFERENCE_TESTS = Test.*ReferenceDecoders$$
 WEBRTC_PRODUCTION_TESTS = Test(AV1SDP|AV1RTCP|EncoderWebRTC|HighLevelRTPDecodersWebRTCCatalogue|NewDecoderFromRTPPayloads|ParseRTPPacketDependencyDescriptor|PublicDecoderFrameWorkResidual(EventRunner.*TileList|StreamRunnerRTP)|PublicDecoderRTP(Packet|PayloadRunner)|PublicEncodeI(400|420)|PublicEncoderWebRTC|PublicLayeredDecoderRTP|PublicParseTileListOBU|PublicPlanDecoderTileList|PublicResolveDecoderTileList|PublicRTC|PublicRTP|PublicTileList|PublicWebRTCEncoder|RTCP|SimpleDecoderTileListIVFPlayback)
 WEBRTC_PRODUCTION_INTERNAL_TESTS = Test(AppendWebRTCScalabilityModesMatchesPinnedLibWebRTC|WebRTCStreamAcceptedScalabilityModes(CoverExportedModes|Decode)|WebRTCStreamControlCombinationMatrixDecode|WebRTCEncoderStateTemporalUnitsKeyShiftModes)
@@ -46,6 +76,47 @@ bench-corpus:
 
 bench-corpus-publish:
 	GOAV1_BENCH_CORPUS=1 GOAV1_BENCH_CORPUS_PUBLISH=1 GOAV1_BENCH_CORPUS_REPORT_JSON=$(BENCH_CORPUS_REPORT_JSON) go test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
+
+qualitybench-publish:
+	@if [ -z "$(QUALITYBENCH_MANIFEST)" ]; then echo "set QUALITYBENCH_MANIFEST=/path/to/clips.csv"; exit 2; fi
+	@if [ -z "$(QUALITYBENCH_ENVIRONMENT_NOTES)" ]; then echo "set QUALITYBENCH_ENVIRONMENT_NOTES='power, thermal, and background-load context'"; exit 2; fi
+	mkdir -p "$(QUALITYBENCH_WORKDIR)"
+	go run ./cmd/qualitybench \
+		-manifest "$(QUALITYBENCH_MANIFEST)" \
+		-bitrates "$(QUALITYBENCH_BITRATES)" \
+		-encoders "$(QUALITYBENCH_ENCODERS)" \
+		-anchor "$(QUALITYBENCH_ANCHOR)" \
+		-fps "$(QUALITYBENCH_FPS)" \
+		-layers "$(QUALITYBENCH_LAYERS)" \
+		-tiles "$(QUALITYBENCH_TILES)" \
+		-golden "$(QUALITYBENCH_GOLDEN)" \
+		-keyint "$(QUALITYBENCH_KEYINT)" \
+		-require-corpus \
+		-min-clips "$(QUALITYBENCH_MIN_CLIPS)" \
+		-require-encoders "$(QUALITYBENCH_REQUIRED_ENCODERS)" \
+		-require-metrics "$(QUALITYBENCH_REQUIRED_METRICS)" \
+		-gomaxprocs "$(QUALITYBENCH_GOMAXPROCS)" \
+		-goav1-max-threads "$(QUALITYBENCH_GOAV1_MAX_THREADS)" \
+		-goav1-effort "$(QUALITYBENCH_GOAV1_EFFORT)" \
+		-timing-mode e2e \
+		-run-order shuffle \
+		-shuffle-seed "$(QUALITYBENCH_SHUFFLE_SEED)" \
+		-runs "$(QUALITYBENCH_RUNS)" \
+		-warmup-runs "$(QUALITYBENCH_WARMUP_RUNS)" \
+		-aom-cpu-used "$(QUALITYBENCH_AOM_CPU_USED)" \
+		-aom-threads "$(QUALITYBENCH_AOM_THREADS)" \
+		-aom-row-mt "$(QUALITYBENCH_AOM_ROW_MT)" \
+		-svt-preset "$(QUALITYBENCH_SVT_PRESET)" \
+		-svt-lp "$(QUALITYBENCH_SVT_LP)" \
+		-svt-asm "$(QUALITYBENCH_SVT_ASM)" \
+		-csv "$(QUALITYBENCH_CSV)" \
+		-summary-csv "$(QUALITYBENCH_SUMMARY_CSV)" \
+		-require-summary \
+		-stats-csv "$(QUALITYBENCH_STATS_CSV)" \
+		-metadata-json "$(QUALITYBENCH_METADATA_JSON)" \
+		-environment-notes "$(QUALITYBENCH_ENVIRONMENT_NOTES)" \
+		-publish \
+		-workdir "$(QUALITYBENCH_WORKDIR)"
 
 gc-metrics:
 	GODEBUG=gctrace=1 go test -run '^$$' -bench='BenchmarkDecode.*GCMetrics|BenchmarkDecodeFullVectorAllocs' -benchmem -count=$(GCMETRICS_COUNT) .

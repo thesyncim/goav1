@@ -22,11 +22,11 @@ package testvector
 //     FULL decode INCLUDING the post-filter chain (loop-filter / CDEF /
 //     loop-restoration / super-res / film-grain) for every completed frame and
 //     verifies every emitted frame's MD5 against the official libaom digests.
-//     We do NOT use cmd/aom-go-dec, whose throughput config SKIPS the
-//     post-filter chain and would make goav1 look unfairly fast. Because the
-//     timed path is the MD5-verifying oracle path, a timing run that completes
-//     without t.Fatal IS a proof that goav1 produced the correct, fully
-//     post-filtered output.
+//     We keep this benchmark on the oracle harness rather than cmd/aom-go-dec
+//     so timing rows remain coupled to conformance proof instead of CLI output
+//     plumbing. Because the timed path is the MD5-verifying oracle path, a
+//     timing run that completes without t.Fatal IS a proof that goav1 produced
+//     the correct, fully post-filtered output.
 //
 //  2. UNIFORM METHODOLOGY. Every decoder is run single-threaded
 //     (goav1 worker pool = 1; aomdec --threads=1; dav1d --threads 1;
@@ -104,6 +104,10 @@ type externalDecoder struct {
 	// startupArgs builds the argv used to measure fixed process-startup
 	// overhead (a fast no-decode path such as --help/--version).
 	startupArgs func(bin string) []string
+	// versionArgs builds the argv used for report-only binary version capture.
+	// It can differ from startupArgs because a low-overhead startup probe is
+	// not always the best version probe.
+	versionArgs func(bin string) []string
 }
 
 // crossBenchExternalDecoders is the registry of reference decoders. SVT-AV1 is
@@ -119,6 +123,7 @@ func crossBenchExternalDecoders() []externalDecoder {
 				return []string{"--rawvideo", "--threads=1", "-o", os.DevNull, input}
 			},
 			startupArgs: func(_ string) []string { return []string{"--help"} },
+			versionArgs: func(_ string) []string { return []string{"--version"} },
 		},
 		{
 			name:    "dav1d",
@@ -129,6 +134,7 @@ func crossBenchExternalDecoders() []externalDecoder {
 				return []string{"--quiet", "--muxer", "null", "-o", os.DevNull, "--threads", "1", "-i", input}
 			},
 			startupArgs: func(_ string) []string { return []string{"--version"} },
+			versionArgs: func(_ string) []string { return []string{"--version"} },
 		},
 		{
 			// SVT-AV1 decoder: auto-detected, absent on this machine.
@@ -139,8 +145,16 @@ func crossBenchExternalDecoders() []externalDecoder {
 				return []string{"-i", input, "-o", os.DevNull, "--lp", "1"}
 			},
 			startupArgs: func(_ string) []string { return []string{"--help"} },
+			versionArgs: func(_ string) []string { return []string{"--version"} },
 		},
 	}
+}
+
+func (d externalDecoder) versionArgsFor(bin string) []string {
+	if d.versionArgs != nil {
+		return d.versionArgs(bin)
+	}
+	return d.startupArgs(bin)
 }
 
 // resolveBinary returns the first resolvable binary path among the candidates.
