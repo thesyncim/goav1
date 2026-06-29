@@ -51,7 +51,7 @@ go run ./cmd/qualitybench \
   -require-metrics xpsnr,vmaf \
   -gomaxprocs 4 \
   -timing-mode e2e \
-  -run-order bitrate-encoder \
+  -run-order shuffle -shuffle-seed 1 \
   -runs 3 -warmup-runs 1 \
   -svt-lp 0 \
   -csv quality.csv -summary-csv quality-summary.csv -require-summary \
@@ -73,15 +73,16 @@ scene as `encbench`. That path is for smoke testing the harness, not for quality
 claims.
 
 Use `-publish` for rows that will be copied into performance or quality tables.
-Publish mode requires a clean tracked git worktree, explicit `-bitrates`,
+Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-encoders`, `-workdir`, `-csv`, `-metadata-json`, `-manifest`,
 `-require-corpus`, `-min-clips`, `-require-encoders all`, `-require-metrics`,
 `-summary-csv`, `-require-summary`, `-gomaxprocs`, `-fps`, `-layers`,
-`-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`, `-run-order`,
-`-runs >= 3`, and `-warmup-runs >= 1`. It also requires explicit libaom
-concurrency settings when `aomenc` is selected, explicit SVT parallelism and
-assembly settings when `svt-av1` is selected, and exact raw I420 input byte
-counts for every manifest row. When `aomenc` or `svt-av1` baselines are
+`-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`,
+`-run-order shuffle`, explicit `-shuffle-seed`, `-runs >= 3`, and
+`-warmup-runs >= 1`. It also requires explicit libaom concurrency settings
+when `aomenc` is selected, explicit SVT parallelism and assembly settings when
+`svt-av1` is selected, and exact raw I420 input byte counts for every manifest
+row. When `aomenc` or `svt-av1` baselines are
 selected, publish mode requires `-layers 1`; goav1 multi-temporal-layer/SVC
 audits must stay goav1-only until equivalent external baseline settings are
 implemented and recorded.
@@ -95,7 +96,10 @@ probes for the external tools used by the run. It also records
 `manifest_sha256`, the effective `GOMAXPROCS`, CPU count/model when available,
 and selected Go runtime environment variables (`GOFLAGS`, `GOGC`, `GOMEMLIMIT`,
 `GODEBUG`).
-It also records `run_order` and `shuffle_seed`. Use
+It also records `run_order` and `shuffle_seed`. Publish mode requires
+`-run-order shuffle -shuffle-seed N` so claim-supporting rows use a
+deterministic order without always running the same encoder first. For local
+diagnostics, use
 `-run-order bitrate-encoder` to preserve the historical loop order,
 `-run-order encoder-bitrate` to keep one encoder warm across the bitrate sweep,
 or `-run-order shuffle -shuffle-seed N` to rotate encoder/bitrate tuple order

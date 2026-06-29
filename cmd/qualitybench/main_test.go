@@ -771,6 +771,7 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "observed_parallelism") ||
 		!strings.Contains(joined, "timing_mode") ||
 		!strings.Contains(joined, "run_order") ||
+		!strings.Contains(joined, "explicit seed") ||
 		!strings.Contains(joined, "median wall-time") ||
 		!strings.Contains(joined, "sweep --lp 0..6") ||
 		!strings.Contains(joined, "-aom-threads") ||
@@ -810,7 +811,8 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		svtLP:               4,
 		svtASM:              "neon",
 		timingMode:          timingModeEndToEnd,
-		runOrder:            runOrderBitrateEncoder,
+		runOrder:            runOrderShuffle,
+		shuffleSeed:         7,
 		runs:                3,
 		warmupRuns:          1,
 		explicitFlags: map[string]bool{
@@ -835,6 +837,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"anchor":           true,
 			"timing-mode":      true,
 			"run-order":        true,
+			"shuffle-seed":     true,
 			"runs":             true,
 			"warmup-runs":      true,
 			"aom-threads":      true,
@@ -890,8 +893,19 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		t.Fatalf("core timing publish error=%v", err)
 	}
 
+	fixedOrder := cfg
+	fixedOrder.runOrder = runOrderBitrateEncoder
+	if err := validatePublishConfig(fixedOrder, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-run-order shuffle") {
+		t.Fatalf("fixed-order publish error=%v", err)
+	}
+
 	shuffled := cfg
 	shuffled.runOrder = runOrderShuffle
+	shuffled.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		shuffled.explicitFlags[k] = v
+	}
 	delete(shuffled.explicitFlags, "shuffle-seed")
 	if err := validatePublishConfig(shuffled, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "-shuffle-seed") {
@@ -1027,6 +1041,18 @@ func TestSIMDMetadataFor(t *testing.T) {
 	}
 	if tier := simdTierFor(cpufeatures.Features{}); tier != "purego" {
 		t.Fatalf("purego tier=%q", tier)
+	}
+}
+
+func TestGitDirtyFromStatusCountsUntracked(t *testing.T) {
+	if gitDirtyFromStatus(nil) {
+		t.Fatal("empty status reported dirty")
+	}
+	if !gitDirtyFromStatus([]byte(" M cmd/qualitybench/main.go\n")) {
+		t.Fatal("modified tracked file reported clean")
+	}
+	if !gitDirtyFromStatus([]byte("?? local_experiment.go\n")) {
+		t.Fatal("untracked source file reported clean")
 	}
 }
 

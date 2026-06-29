@@ -715,10 +715,11 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	if cfg.timingMode != timingModeEndToEnd {
 		return errors.New("publish requires -timing-mode e2e")
 	}
-	if cfg.runOrder == runOrderShuffle {
-		if err := requireExplicitFlag(cfg, "shuffle-seed"); err != nil {
-			return err
-		}
+	if cfg.runOrder != runOrderShuffle {
+		return errors.New("publish requires -run-order shuffle to avoid fixed encoder/bitrate order bias")
+	}
+	if err := requireExplicitFlag(cfg, "shuffle-seed"); err != nil {
+		return err
 	}
 	if cfg.runs < 3 {
 		return errors.New("publish requires -runs >= 3")
@@ -1824,13 +1825,14 @@ func fairnessNotes(cfg benchConfig) []string {
 		"qualitybench records timing_mode; core mode keeps the historical goav1 per-frame Encode timer, while e2e mode times goav1 setup, encode calls, and decoded-output writes for fairer CLI comparisons.",
 		"qualitybench records run_order and shuffle_seed so encoder/bitrate order effects can be reproduced or randomized deterministically.",
 		"qualitybench records every measured encode sample in metadata; the normal CSV row reports the median wall-time sample after any configured warmup runs.",
+		"Publishable rows use -run-order shuffle with an explicit seed so every table has a reproducible encoder/bitrate order without always favoring the same encoder column.",
 		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or sweep --lp 0..6, then report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
 		"For fair libaom comparisons, set -aom-threads and -aom-row-mt explicitly and report both; qualitybench forwards them to aomenc --threads and --row-mt and records them in metadata.",
 		"SVT-AV1 --asm defaults to max and may use CPU-specific kernels such as neon_dotprod or neon_i8mm; use -svt-asm to pin the assembly tier when comparing against goav1's current SIMD coverage.",
 		"goav1 metadata records detected simd_tier and simd_features; compare those against SVT's recorded svt_asm setting instead of assuming --asm max and goav1 cover the same kernels.",
 	}
 	if cfg.publish {
-		notes = append(notes, "Publish mode required a clean tracked git worktree, explicit artifact paths, manifest-backed corpus, exact raw input sizes, explicit encode controls, explicit concurrency controls, required encoders, required metrics, and required BD-rate summary rows.")
+		notes = append(notes, "Publish mode required a clean git worktree, explicit artifact paths, manifest-backed corpus, exact raw input sizes, explicit encode controls, deterministic shuffled run order, explicit concurrency controls, required encoders, required metrics, and required BD-rate summary rows.")
 		if encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1") {
 			notes = append(notes, "Publish mode requires -layers 1 when aomenc or svt-av1 baselines are selected, because equivalent external temporal-layer settings are not yet implemented by qualitybench.")
 		}
@@ -1945,13 +1947,17 @@ func currentGitMetadata() gitMetadata {
 		return meta
 	}
 	meta.Commit = strings.TrimSpace(string(out))
-	status, err := exec.Command("git", "status", "--short", "--untracked-files=no").Output()
+	status, err := exec.Command("git", "status", "--short").Output()
 	if err != nil {
 		meta.Error = err.Error()
 		return meta
 	}
-	meta.Dirty = strings.TrimSpace(string(status)) != ""
+	meta.Dirty = gitDirtyFromStatus(status)
 	return meta
+}
+
+func gitDirtyFromStatus(status []byte) bool {
+	return strings.TrimSpace(string(status)) != ""
 }
 
 func writeSummaryCSV(path string, summaries []summaryRow) error {
