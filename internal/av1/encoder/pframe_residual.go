@@ -4331,7 +4331,27 @@ func fullPelLibaomExhaustiveMeshSearch(src, ref []byte, stride, width, height, p
 		colStep = 4
 	}
 	for row := startRow; row <= endRow; row += step {
-		for col := startCol; col <= endCol; col += colStep {
+		col := startCol
+		if step == 4 && bw == bh {
+			for ; col+3*step <= endCol; col += step * 4 {
+				dx := startDX + col
+				dy := startDY + row
+				s0, s1, s2, s3 := fullPelSearchSAD4Step4(srcBlock, ref, base, stride, bw, bh, dx, dy)
+				if s0 < bestSAD {
+					bestSAD, bestDX, bestDY = s0, dx, dy
+				}
+				if s1 < bestSAD {
+					bestSAD, bestDX, bestDY = s1, dx+step, dy
+				}
+				if s2 < bestSAD {
+					bestSAD, bestDX, bestDY = s2, dx+2*step, dy
+				}
+				if s3 < bestSAD {
+					bestSAD, bestDX, bestDY = s3, dx+3*step, dy
+				}
+			}
+		}
+		for ; col <= endCol; col += colStep {
 			dx := startDX + col
 			dy := startDY + row
 			if step <= 1 && col+3 <= endCol && bw == bh {
@@ -4373,6 +4393,26 @@ func fullPelSearchSAD(srcBlock, refBlock []byte, stride, bw, bh, limit int) int 
 		}
 	}
 	return sadRectDualBlock(srcBlock, stride, refBlock, stride, bw, bh)
+}
+
+func fullPelSearchSAD4Step4(srcBlock, ref []byte, base, stride, bw, bh int, dx, dy int) (int, int, int, int) {
+	ref0 := ref[base+dy*stride+dx:]
+	if bw == bh {
+		switch bw {
+		case 8:
+			return sad8x8x4Step4(srcBlock, ref0, stride)
+		case 16:
+			return sad16x16x4Step4(srcBlock, ref0, stride)
+		case 32:
+			return sad32x32x4Step4(srcBlock, ref0, stride)
+		case 64:
+			return sad64x64x4Step4(srcBlock, ref0, stride)
+		}
+	}
+	return fullPelSearchSAD(srcBlock, ref0, stride, bw, bh, 1<<30),
+		fullPelSearchSAD(srcBlock, ref0[4:], stride, bw, bh, 1<<30),
+		fullPelSearchSAD(srcBlock, ref0[8:], stride, bw, bh, 1<<30),
+		fullPelSearchSAD(srcBlock, ref0[12:], stride, bw, bh, 1<<30)
 }
 
 func fullPelSearchSAD4(srcBlock, ref []byte, base, stride, bw, bh int, dx0, dy0, dx1, dy1, dx2, dy2, dx3, dy3 int) (int, int, int, int) {

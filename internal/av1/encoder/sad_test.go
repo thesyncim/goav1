@@ -237,6 +237,42 @@ func TestSAD64x64x4Step4MatchesReference(t *testing.T) {
 	}
 }
 
+func TestFullPelSearchSAD4Step4MatchesSingles(t *testing.T) {
+	rng := rand.New(rand.NewSource(4567))
+	const (
+		stride = 160
+		height = 160
+		px     = 64
+		py     = 64
+	)
+	src := make([]byte, stride*height)
+	ref := make([]byte, stride*height)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+		ref[i] = uint8(rng.Intn(256))
+	}
+	shapes := [][2]int{{8, 8}, {16, 16}, {32, 32}, {64, 64}, {16, 8}}
+	base := py*stride + px
+	srcBlock := src[base:]
+	for _, shape := range shapes {
+		bw, bh := shape[0], shape[1]
+		for range 500 {
+			dx := rng.Intn(17) - 8
+			dy := rng.Intn(17) - 8
+			ref0 := ref[base+dy*stride+dx:]
+			w0 := fullPelSearchSAD(srcBlock, ref0, stride, bw, bh, 1<<30)
+			w1 := fullPelSearchSAD(srcBlock, ref0[4:], stride, bw, bh, 1<<30)
+			w2 := fullPelSearchSAD(srcBlock, ref0[8:], stride, bw, bh, 1<<30)
+			w3 := fullPelSearchSAD(srcBlock, ref0[12:], stride, bw, bh, 1<<30)
+			g0, g1, g2, g3 := fullPelSearchSAD4Step4(srcBlock, ref, base, stride, bw, bh, dx, dy)
+			if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+				t.Fatalf("%dx%d dx=%d dy=%d: got (%d,%d,%d,%d) want (%d,%d,%d,%d)",
+					bw, bh, dx, dy, g0, g1, g2, g3, w0, w1, w2, w3)
+			}
+		}
+	}
+}
+
 func TestSAD64x64x4MatchesReference(t *testing.T) {
 	rng := rand.New(rand.NewSource(4566))
 	const (
