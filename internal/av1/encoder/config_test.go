@@ -2,6 +2,9 @@ package encoder
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/obu"
@@ -196,42 +199,7 @@ func webRTCTestReferenceTemplateNum(mode ScalabilityMode, spatial uint8, tempora
 }
 
 func TestAppendWebRTCScalabilityModesMatchesPinnedLibWebRTC(t *testing.T) {
-	want := []ScalabilityMode{
-		ScalabilityModeL1T1,
-		ScalabilityModeL1T2,
-		ScalabilityModeL1T3,
-		ScalabilityModeL2T1,
-		ScalabilityModeL2T1h,
-		ScalabilityModeL2T1_KEY,
-		ScalabilityModeL2T2,
-		ScalabilityModeL2T2h,
-		ScalabilityModeL2T2_KEY,
-		ScalabilityModeL2T2_KEY_SHIFT,
-		ScalabilityModeL2T3,
-		ScalabilityModeL2T3h,
-		ScalabilityModeL2T3_KEY,
-		ScalabilityModeL3T1,
-		ScalabilityModeL3T1h,
-		ScalabilityModeL3T1_KEY,
-		ScalabilityModeL3T2,
-		ScalabilityModeL3T2h,
-		ScalabilityModeL3T2_KEY,
-		ScalabilityModeL3T3,
-		ScalabilityModeL3T3h,
-		ScalabilityModeL3T3_KEY,
-		ScalabilityModeS2T1,
-		ScalabilityModeS2T1h,
-		ScalabilityModeS2T2,
-		ScalabilityModeS2T2h,
-		ScalabilityModeS2T3,
-		ScalabilityModeS2T3h,
-		ScalabilityModeS3T1,
-		ScalabilityModeS3T1h,
-		ScalabilityModeS3T2,
-		ScalabilityModeS3T2h,
-		ScalabilityModeS3T3,
-		ScalabilityModeS3T3h,
-	}
+	want := pinnedLibWebRTCScalabilityModes(t)
 	prefix := []ScalabilityMode{ScalabilityModeL3T3}
 	modes := AppendWebRTCScalabilityModes(prefix)
 	if WebRTCScalabilityModeCount() != len(want) {
@@ -262,6 +230,68 @@ func TestAppendWebRTCScalabilityModesMatchesPinnedLibWebRTC(t *testing.T) {
 		if unsupported.webRTCSupported() {
 			t.Fatalf("%s unexpectedly exported as a pinned libwebrtc WebRTC mode", unsupported)
 		}
+	}
+}
+
+func pinnedLibWebRTCScalabilityModes(t *testing.T) []ScalabilityMode {
+	t.Helper()
+	root := repoRootFromTestWD(t)
+	path := filepath.Join(root, "third_party", "upstream", "webrtc", "api", "video_codecs", "scalability_mode.h")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read pinned libwebrtc scalability mode source: %v", err)
+	}
+
+	var modes []ScalabilityMode
+	inCatalog := false
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(line, "kAllScalabilityModes[]") {
+			inCatalog = true
+			continue
+		}
+		if !inCatalog {
+			continue
+		}
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "};") {
+			break
+		}
+		const token = "ScalabilityMode::k"
+		idx := strings.Index(line, token)
+		if idx < 0 {
+			continue
+		}
+		name := line[idx+len(token):]
+		if end := strings.IndexAny(name, ", \t\r/"); end >= 0 {
+			name = name[:end]
+		}
+		mode, ok := ParseScalabilityMode(name)
+		if !ok {
+			t.Fatalf("pinned libwebrtc scalability mode %q is not implemented", name)
+		}
+		modes = append(modes, mode)
+	}
+	if len(modes) == 0 {
+		t.Fatalf("no pinned libwebrtc scalability modes found in %s", path)
+	}
+	return modes
+}
+
+func repoRootFromTestWD(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get test working directory: %v", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("could not find repo root from %s", dir)
+		}
+		dir = parent
 	}
 }
 
