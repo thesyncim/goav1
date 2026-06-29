@@ -27,8 +27,10 @@ package testvector
 // Set GOAV1_BENCH_CORPUS_PUBLISH=1 for any row copied into a performance
 // table. Publish mode requires every registered external reference decoder to
 // resolve, so a missing dav1d/aomdec/SVT binary cannot silently remove a
-// competitor column. GOAV1_BENCH_CORPUS_REQUIRE_DECODERS can require a named
-// comma-separated subset (or "all") for local audits.
+// competitor column. It also requires GOAV1_BENCH_CORPUS_REPORT_JSON so the
+// exact git/env/tool/corpus/timing provenance is persisted alongside the human
+// log. GOAV1_BENCH_CORPUS_REQUIRE_DECODERS can require a named comma-separated
+// subset (or "all") for local audits.
 //
 // METHODOLOGY (mirrors cross_decoder_bench_test.go)
 //
@@ -65,11 +67,14 @@ import (
 	"bytes"
 	"crypto/md5"
 	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -141,6 +146,7 @@ const (
 	envBenchCorpus                = "GOAV1_BENCH_CORPUS"
 	envBenchCorpusPublish         = "GOAV1_BENCH_CORPUS_PUBLISH"
 	envBenchCorpusRequireDecoders = "GOAV1_BENCH_CORPUS_REQUIRE_DECODERS"
+	envBenchCorpusReportJSON      = "GOAV1_BENCH_CORPUS_REPORT_JSON"
 )
 
 const (
@@ -1295,6 +1301,107 @@ func TestLoadCorpusPublishManifestValidatesFiles(t *testing.T) {
 	}
 }
 
+func TestWriteCorpusPublishReport(t *testing.T) {
+	dir := t.TempDir()
+	md5Hex := "0123456789abcdeffedcba9876543210"
+	md5, err := ParseMD5Hex([]byte(md5Hex))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ivfPath := filepath.Join(dir, "clip.ivf")
+	writeCorpusManifestFixture(t, dir, "clip", []byte("ivf-data"), []byte(md5Hex+"\n"), md5Hex, 2, 4, 3, 8, "420", 1)
+	manifest, err := loadCorpusPublishManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestSHA, _, err := corpusFileSHA256(manifest.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolBin := os.Args[0]
+	clip := corpusClip{
+		name:       "clip",
+		ivfPath:    ivfPath,
+		wantMD5:    md5,
+		oracleKind: corpusOracleStreamMD5,
+		frames:     3,
+		width:      2,
+		height:     4,
+		bitDepth:   8,
+		chroma:     "420",
+		tileCols:   1,
+	}
+	results := []decoderResult{
+		{
+			name:        "goav1",
+			inProcess:   true,
+			totalRaw:    30 * time.Millisecond,
+			totalFrames: 3,
+			perVector:   map[string]time.Duration{ivfPath: 30 * time.Millisecond},
+		},
+		{
+			name:        "dav1d",
+			startup:     time.Millisecond,
+			totalRaw:    15 * time.Millisecond,
+			totalFrames: 3,
+			perVector:   map[string]time.Duration{ivfPath: 15 * time.Millisecond},
+		},
+	}
+	timers := []corpusTimingDecoder{
+		{name: "goav1", inProcess: true, resultSlot: 0},
+		{
+			name: "dav1d",
+			external: externalDecoder{
+				name:        "dav1d",
+				startupArgs: func(string) []string { return []string{"-test.run=^$"} },
+			},
+			bin:        toolBin,
+			resultSlot: 1,
+		},
+	}
+	reportPath := filepath.Join(dir, "report", "corpus.json")
+	if err := writeCorpusPublishReport(reportPath, dir, manifest, []corpusClip{clip}, results, timers); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report corpusPublishReport
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Corpus.ManifestSHA256 != manifestSHA || report.Corpus.ExpectedClips != 1 || report.Corpus.LoadedClips != 1 || report.Corpus.TotalFrames != 3 {
+		t.Fatalf("corpus report=%+v want manifest hash/clip counts", report.Corpus)
+	}
+	if len(report.Clips) != 1 || report.Clips[0].Name != "clip" || report.Clips[0].BitDepth != 8 {
+		t.Fatalf("clips=%+v", report.Clips)
+	}
+	if len(report.Tools) != 2 || !report.Tools[0].InProcess || report.Tools[1].SHA256 == "" {
+		t.Fatalf("tools=%+v", report.Tools)
+	}
+	if len(report.Decoders) != 2 || report.Decoders[1].AdjustedMS != 14 || report.Decoders[1].VsGoAV1Raw != 2 {
+		t.Fatalf("decoders=%+v", report.Decoders)
+	}
+	if len(report.Decoders[1].PerClip) != 1 || report.Decoders[1].PerClip[0].AdjustedMS != 14 {
+		t.Fatalf("per-clip=%+v", report.Decoders[1].PerClip)
+	}
+}
+
+func TestValidateCorpusPublishGitClean(t *testing.T) {
+	if err := validateCorpusPublishGitClean(corpusPublishGit{Commit: "abc"}); err != nil {
+		t.Fatalf("clean git failed: %v", err)
+	}
+	if err := validateCorpusPublishGitClean(corpusPublishGit{Commit: "abc", Dirty: true}); err == nil ||
+		!strings.Contains(err.Error(), "clean git worktree") {
+		t.Fatalf("dirty git error=%v", err)
+	}
+	if err := validateCorpusPublishGitClean(corpusPublishGit{Error: "no git"}); err == nil ||
+		!strings.Contains(err.Error(), "metadata unavailable") {
+		t.Fatalf("missing git error=%v", err)
+	}
+}
+
 func TestLoadCorpusPublishManifestRejectsStaleCorpus(t *testing.T) {
 	md5Hex := "0123456789abcdeffedcba9876543210"
 	for _, tc := range []struct {
@@ -1842,6 +1949,96 @@ type corpusTimingDecoder struct {
 	resultSlot int
 }
 
+type corpusPublishReport struct {
+	GeneratedAtUTC string                       `json:"generated_at_utc"`
+	Git            corpusPublishGit             `json:"git"`
+	Environment    corpusPublishEnvironment     `json:"environment"`
+	Corpus         corpusPublishReportCorpus    `json:"corpus"`
+	Timing         corpusPublishReportTiming    `json:"timing"`
+	Tools          []corpusPublishReportTool    `json:"tools"`
+	Clips          []corpusPublishReportClip    `json:"clips"`
+	Decoders       []corpusPublishReportDecoder `json:"decoders"`
+}
+
+type corpusPublishGit struct {
+	Commit string `json:"commit"`
+	Dirty  bool   `json:"dirty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type corpusPublishEnvironment struct {
+	GoVersion  string `json:"go_version"`
+	GOOS       string `json:"goos"`
+	GOARCH     string `json:"goarch"`
+	GOMAXPROCS int    `json:"gomaxprocs"`
+	NumCPU     int    `json:"num_cpu"`
+	GOFLAGS    string `json:"goflags,omitempty"`
+	GOGC       string `json:"gogc,omitempty"`
+	GOMEMLIMIT string `json:"gomemlimit,omitempty"`
+	GODEBUG    string `json:"godebug,omitempty"`
+}
+
+type corpusPublishReportCorpus struct {
+	Dir              string `json:"dir"`
+	Manifest         string `json:"manifest"`
+	ManifestSHA256   string `json:"manifest_sha256"`
+	ExpectedClips    int    `json:"expected_clips"`
+	LoadedClips      int    `json:"loaded_clips"`
+	TotalFrames      int    `json:"total_frames"`
+	TimingOrder      string `json:"timing_order"`
+	RequiredDecoders string `json:"required_decoders,omitempty"`
+}
+
+type corpusPublishReportTiming struct {
+	Runs                 int    `json:"runs"`
+	WarmupRuns           int    `json:"warmup_runs"`
+	Statistic            string `json:"statistic"`
+	InProcessGoAV1       bool   `json:"in_process_goav1"`
+	ExternalStartupModel string `json:"external_startup_model"`
+}
+
+type corpusPublishReportTool struct {
+	Decoder      string `json:"decoder"`
+	InProcess    bool   `json:"in_process,omitempty"`
+	Path         string `json:"path,omitempty"`
+	SHA256       string `json:"sha256,omitempty"`
+	Version      string `json:"version,omitempty"`
+	VersionError string `json:"version_error,omitempty"`
+}
+
+type corpusPublishReportClip struct {
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Frames   int    `json:"frames"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
+	BitDepth uint8  `json:"bit_depth"`
+	Chroma   string `json:"chroma"`
+	TileCols uint8  `json:"tile_cols"`
+	AllIntra bool   `json:"all_intra"`
+}
+
+type corpusPublishReportDecoder struct {
+	Name        string                          `json:"name"`
+	InProcess   bool                            `json:"in_process,omitempty"`
+	Frames      int                             `json:"frames"`
+	RawMS       float64                         `json:"raw_ms"`
+	RawFPS      float64                         `json:"raw_fps"`
+	StartupMS   float64                         `json:"startup_ms,omitempty"`
+	AdjustedMS  float64                         `json:"adjusted_ms,omitempty"`
+	AdjustedFPS float64                         `json:"adjusted_fps,omitempty"`
+	VsGoAV1Raw  float64                         `json:"vs_goav1_raw,omitempty"`
+	PerClip     []corpusPublishReportClipTiming `json:"per_clip"`
+}
+
+type corpusPublishReportClipTiming struct {
+	Clip        string  `json:"clip"`
+	RawMS       float64 `json:"raw_ms"`
+	AdjustedMS  float64 `json:"adjusted_ms,omitempty"`
+	FPS         float64 `json:"fps"`
+	AdjustedFPS float64 `json:"adjusted_fps,omitempty"`
+}
+
 type corpusTimingJob struct {
 	clipIndex    int
 	decoderIndex int
@@ -1950,6 +2147,15 @@ func TestCrossDecoderCorpus(t *testing.T) {
 		t.Skip("set GOAV1_BENCH_CORPUS=1 (with the generated corpus) to run the multi-config cross-decoder throughput benchmark")
 	}
 	publish := os.Getenv(envBenchCorpusPublish) == "1"
+	reportPath := strings.TrimSpace(os.Getenv(envBenchCorpusReportJSON))
+	if publish && reportPath == "" {
+		t.Fatalf("cross-corpus publish: set %s to write the machine-readable benchmark sidecar", envBenchCorpusReportJSON)
+	}
+	if publish {
+		if err := validateCorpusPublishGitClean(currentCorpusPublishGit()); err != nil {
+			t.Fatalf("cross-corpus publish: %v", err)
+		}
+	}
 	dir, ok := corpusDir(t)
 	if !ok {
 		if publish {
@@ -2098,13 +2304,245 @@ func TestCrossDecoderCorpus(t *testing.T) {
 	}
 
 	filteredResults := results[:0]
+	filteredTimers := timers[:0]
 	for i, timer := range timers {
 		if usable[i] {
 			filteredResults = append(filteredResults, results[timer.resultSlot])
+			filteredTimers = append(filteredTimers, timer)
 		}
 	}
 
+	if publish {
+		if err := writeCorpusPublishReport(reportPath, dir, manifest, clips, filteredResults, filteredTimers); err != nil {
+			t.Fatalf("cross-corpus: write %s: %v", reportPath, err)
+		}
+		t.Logf("cross-corpus: wrote report JSON %s", reportPath)
+	}
+
 	printCorpusReport(t, clips, filteredResults)
+}
+
+func writeCorpusPublishReport(path, dir string, manifest corpusPublishManifest, clips []corpusClip, results []decoderResult, timers []corpusTimingDecoder) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("%s is empty", envBenchCorpusReportJSON)
+	}
+	manifestSHA := ""
+	if manifest.path != "" {
+		sha, _, err := corpusFileSHA256(manifest.path)
+		if err != nil {
+			return fmt.Errorf("manifest sha256: %w", err)
+		}
+		manifestSHA = sha
+	}
+	report := corpusPublishReport{
+		GeneratedAtUTC: time.Now().UTC().Format(time.RFC3339Nano),
+		Git:            currentCorpusPublishGit(),
+		Environment:    currentCorpusPublishEnvironment(),
+		Corpus: corpusPublishReportCorpus{
+			Dir:              dir,
+			Manifest:         manifest.path,
+			ManifestSHA256:   manifestSHA,
+			ExpectedClips:    manifest.expectedClips,
+			LoadedClips:      len(clips),
+			TotalFrames:      corpusTotalFrames(clips),
+			TimingOrder:      "deterministic clip-rotated decoder interleave",
+			RequiredDecoders: os.Getenv(envBenchCorpusRequireDecoders),
+		},
+		Timing: corpusPublishReportTiming{
+			Runs:                 crossBenchRuns,
+			WarmupRuns:           1,
+			Statistic:            "minimum wall-clock across measured runs",
+			InProcessGoAV1:       true,
+			ExternalStartupModel: "raw includes subprocess startup; adjusted subtracts one measured startup baseline per clip",
+		},
+		Tools:    corpusPublishReportTools(timers),
+		Clips:    corpusPublishReportClips(clips),
+		Decoders: corpusPublishReportDecoders(clips, results),
+	}
+	raw, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o644)
+}
+
+func currentCorpusPublishGit() corpusPublishGit {
+	var meta corpusPublishGit
+	out, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		meta.Error = err.Error()
+		return meta
+	}
+	meta.Commit = strings.TrimSpace(string(out))
+	status, err := exec.Command("git", "status", "--short").Output()
+	if err != nil {
+		meta.Error = err.Error()
+		return meta
+	}
+	meta.Dirty = strings.TrimSpace(string(status)) != ""
+	return meta
+}
+
+func validateCorpusPublishGitClean(git corpusPublishGit) error {
+	if git.Error != "" {
+		return fmt.Errorf("git metadata unavailable: %s", git.Error)
+	}
+	if git.Dirty {
+		return errors.New("requires a clean git worktree")
+	}
+	return nil
+}
+
+func currentCorpusPublishEnvironment() corpusPublishEnvironment {
+	return corpusPublishEnvironment{
+		GoVersion:  runtime.Version(),
+		GOOS:       runtime.GOOS,
+		GOARCH:     runtime.GOARCH,
+		GOMAXPROCS: runtime.GOMAXPROCS(0),
+		NumCPU:     runtime.NumCPU(),
+		GOFLAGS:    os.Getenv("GOFLAGS"),
+		GOGC:       os.Getenv("GOGC"),
+		GOMEMLIMIT: os.Getenv("GOMEMLIMIT"),
+		GODEBUG:    os.Getenv("GODEBUG"),
+	}
+}
+
+func corpusTotalFrames(clips []corpusClip) int {
+	total := 0
+	for _, clip := range clips {
+		total += clip.frames
+	}
+	return total
+}
+
+func corpusPublishReportTools(timers []corpusTimingDecoder) []corpusPublishReportTool {
+	tools := make([]corpusPublishReportTool, 0, len(timers))
+	for _, timer := range timers {
+		tool := corpusPublishReportTool{
+			Decoder:   timer.name,
+			InProcess: timer.inProcess,
+			Path:      timer.bin,
+		}
+		if timer.inProcess {
+			tools = append(tools, tool)
+			continue
+		}
+		if sha, _, err := corpusFileSHA256(timer.bin); err == nil {
+			tool.SHA256 = sha
+		}
+		line, versionErr := corpusCommandVersionLine(timer.bin, timer.external.startupArgs(timer.bin))
+		tool.Version = line
+		tool.VersionError = versionErr
+		tools = append(tools, tool)
+	}
+	return tools
+}
+
+func corpusCommandVersionLine(bin string, args []string) (string, string) {
+	out, err := exec.Command(bin, args...).CombinedOutput()
+	line := firstCorpusNonEmptyLine(string(out))
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return line, msg
+	}
+	return line, ""
+}
+
+func firstCorpusNonEmptyLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func corpusPublishReportClips(clips []corpusClip) []corpusPublishReportClip {
+	out := make([]corpusPublishReportClip, 0, len(clips))
+	for _, clip := range clips {
+		out = append(out, corpusPublishReportClip{
+			Name:     clip.name,
+			Path:     clip.ivfPath,
+			Frames:   clip.frames,
+			Width:    clip.width,
+			Height:   clip.height,
+			BitDepth: clip.bitDepth,
+			Chroma:   clip.chroma,
+			TileCols: clip.tileCols,
+			AllIntra: clip.allIntra,
+		})
+	}
+	return out
+}
+
+func corpusPublishReportDecoders(clips []corpusClip, results []decoderResult) []corpusPublishReportDecoder {
+	baseRaw := time.Duration(0)
+	for _, result := range results {
+		if result.inProcess {
+			baseRaw = result.totalRaw
+			break
+		}
+	}
+	out := make([]corpusPublishReportDecoder, 0, len(results))
+	for _, result := range results {
+		adjusted := result.totalRaw - result.startup*time.Duration(len(clips))
+		if result.inProcess {
+			adjusted = result.totalRaw
+		}
+		if adjusted < 0 {
+			adjusted = 0
+		}
+		row := corpusPublishReportDecoder{
+			Name:        result.name,
+			InProcess:   result.inProcess,
+			Frames:      result.totalFrames,
+			RawMS:       durationMilliseconds(result.totalRaw),
+			RawFPS:      fpsOf(result.totalFrames, result.totalRaw),
+			StartupMS:   durationMilliseconds(result.startup),
+			AdjustedMS:  durationMilliseconds(adjusted),
+			AdjustedFPS: fpsOf(result.totalFrames, adjusted),
+			PerClip:     corpusPublishReportPerClipTimings(clips, result),
+		}
+		if baseRaw > 0 && result.totalRaw > 0 {
+			row.VsGoAV1Raw = float64(baseRaw) / float64(result.totalRaw)
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+func corpusPublishReportPerClipTimings(clips []corpusClip, result decoderResult) []corpusPublishReportClipTiming {
+	out := make([]corpusPublishReportClipTiming, 0, len(clips))
+	for _, clip := range clips {
+		raw := result.perVector[clip.ivfPath]
+		adjusted := raw
+		if !result.inProcess {
+			adjusted = raw - result.startup
+			if adjusted < 0 {
+				adjusted = 0
+			}
+		}
+		out = append(out, corpusPublishReportClipTiming{
+			Clip:        clip.name,
+			RawMS:       durationMilliseconds(raw),
+			AdjustedMS:  durationMilliseconds(adjusted),
+			FPS:         fpsOf(clip.frames, raw),
+			AdjustedFPS: fpsOf(clip.frames, adjusted),
+		})
+	}
+	return out
+}
+
+func durationMilliseconds(d time.Duration) float64 {
+	return float64(d.Nanoseconds()) / 1e6
 }
 
 // printCorpusReport renders the per-clip and aggregate throughput tables.

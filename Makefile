@@ -5,6 +5,7 @@ FUZZPARALLEL ?= 8
 FUZZFLAGS = -run '^$$' -fuzztime=$(FUZZTIME) -parallel=$(FUZZPARALLEL)
 BENCHTIME ?= 3s
 GCMETRICS_COUNT ?= 5
+BENCH_CORPUS_REPORT_JSON ?= /tmp/goav1-bench-corpus-report.json
 WEBRTC_PRODUCTION_TESTS = Test(AV1SDP|AV1RTCP|EncoderWebRTC|HighLevelRTPDecodersWebRTCCatalogue|NewDecoderFromRTPPayloads|ParseRTPPacketDependencyDescriptor|PublicDecoderFrameWorkResidual(EventRunner.*TileList|StreamRunnerRTP)|PublicDecoderRTP(Packet|PayloadRunner)|PublicEncodeI(400|420)|PublicEncoderWebRTC|PublicLayeredDecoderRTP|PublicParseTileListOBU|PublicPlanDecoderTileList|PublicResolveDecoderTileList|PublicRTC|PublicRTP|PublicTileList|PublicWebRTCEncoder|RTCP|SimpleDecoderTileListIVFPlayback)
 WEBRTC_PRODUCTION_INTERNAL_TESTS = Test(AppendWebRTCScalabilityModesMatchesPinnedLibWebRTC|WebRTCStreamAcceptedScalabilityModes(CoverExportedModes|Decode)|WebRTCStreamControlCombinationMatrixDecode|WebRTCEncoderStateTemporalUnitsKeyShiftModes)
 
@@ -43,7 +44,7 @@ bench-corpus:
 	GOAV1_BENCH_CORPUS=1 go test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
 
 bench-corpus-publish:
-	GOAV1_BENCH_CORPUS=1 GOAV1_BENCH_CORPUS_PUBLISH=1 go test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
+	GOAV1_BENCH_CORPUS=1 GOAV1_BENCH_CORPUS_PUBLISH=1 GOAV1_BENCH_CORPUS_REPORT_JSON=$(BENCH_CORPUS_REPORT_JSON) go test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
 
 gc-metrics:
 	GODEBUG=gctrace=1 go test -run '^$$' -bench='BenchmarkDecode.*GCMetrics|BenchmarkDecodeFullVectorAllocs' -benchmem -count=$(GCMETRICS_COUNT) .
