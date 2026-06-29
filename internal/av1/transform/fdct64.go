@@ -1,0 +1,822 @@
+// Ported from libaom:
+//   av1/encoder/av1_fwd_txfm1d.c (av1_fdct64)
+//   av1/encoder/av1_fwd_txfm2d.c (av1_fwd_txfm2d_64x64_c,
+//   av1_fwd_txfm2d_32x64_c, av1_fwd_txfm2d_64x32_c)
+//
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
+
+package transform
+
+// ForwardDCT64x64 computes the AV1 forward 64x64 DCT_DCT. libaom's
+// av1_fwd_txfm2d_64x64_c computes a full 64x64 intermediate, zeros the
+// high-frequency 64-extent regions, then repacks the first 32x32 coefficients.
+// This API writes that adjusted 32x32 coefficient plane directly in
+// coeff[col*coeffStride+row] layout.
+func ForwardDCT64x64(coeff []int32, coeffStride int, residual []int16, residualStride int) error {
+	return forwardDCT64Extent(coeff, coeffStride, residual, residualStride, Size{Width: 64, Height: 64})
+}
+
+// ForwardDCT32x64 computes the AV1 forward 32x64 DCT_DCT and writes the
+// adjusted 32x32 coefficient plane produced by libaom's repack step.
+func ForwardDCT32x64(coeff []int32, coeffStride int, residual []int16, residualStride int) error {
+	return forwardDCT64Extent(coeff, coeffStride, residual, residualStride, Size{Width: 32, Height: 64})
+}
+
+// ForwardDCT64x32 computes the AV1 forward 64x32 DCT_DCT and writes the
+// adjusted 32x32 coefficient plane produced after libaom zeros the upper
+// 32 columns.
+func ForwardDCT64x32(coeff []int32, coeffStride int, residual []int16, residualStride int) error {
+	return forwardDCT64Extent(coeff, coeffStride, residual, residualStride, Size{Width: 64, Height: 32})
+}
+
+func forwardDCT64Extent(coeff []int32, coeffStride int, residual []int16, residualStride int, size Size) error {
+	params, ok := fwdTxfm2DParams(size)
+	if !ok {
+		return ErrInvalidTransform
+	}
+	width := int(size.Width)
+	height := int(size.Height)
+	coeffSize := adjustedScanSize(size)
+	coeffWidth := int(coeffSize.Width)
+	coeffHeight := int(coeffSize.Height)
+	if coeffStride < coeffHeight ||
+		residualStride < width ||
+		!blockFits(len(residual), residualStride, width, height) ||
+		!coeffBlockFits(len(coeff), coeffStride, coeffWidth, coeffHeight) {
+		return ErrInvalidTransform
+	}
+
+	var buf [64 * 64]int32
+	var in, out [64]int32
+	for c := range width {
+		for r := range height {
+			in[r] = int32(residual[r*residualStride+c])
+		}
+		fwdRoundShiftArray(in[:height], -int(params.shift[0]))
+		fwdDCTByLength(in[:height], out[:height], uint(params.cosBitCol))
+		fwdRoundShiftArray(out[:height], -int(params.shift[1]))
+		for r := range height {
+			buf[r*width+c] = out[r]
+		}
+	}
+
+	for r := range height {
+		row := buf[r*width : r*width+width : r*width+width]
+		fwdDCTByLength(row, out[:width], uint(params.cosBitRow))
+		fwdRoundShiftArray(out[:width], -int(params.shift[2]))
+		if size.IsRect2() {
+			fwdRoundShiftSqrt2(out[:width])
+		}
+		if r >= coeffHeight {
+			continue
+		}
+		for c := range coeffWidth {
+			coeff[c*coeffStride+r] = out[c]
+		}
+	}
+	return nil
+}
+
+// fwdDCT64 is av1_fdct64 with the cospi table and cos_bit of the active pass.
+func fwdDCT64(input, output *[64]int32, cospi *[64]int32, cosBit uint) {
+	var step [64]int32
+	var bf0, bf1 *[64]int32
+	// stage 1;
+	bf1 = output
+	bf1[0] = input[0] + input[63]
+	bf1[1] = input[1] + input[62]
+	bf1[2] = input[2] + input[61]
+	bf1[3] = input[3] + input[60]
+	bf1[4] = input[4] + input[59]
+	bf1[5] = input[5] + input[58]
+	bf1[6] = input[6] + input[57]
+	bf1[7] = input[7] + input[56]
+	bf1[8] = input[8] + input[55]
+	bf1[9] = input[9] + input[54]
+	bf1[10] = input[10] + input[53]
+	bf1[11] = input[11] + input[52]
+	bf1[12] = input[12] + input[51]
+	bf1[13] = input[13] + input[50]
+	bf1[14] = input[14] + input[49]
+	bf1[15] = input[15] + input[48]
+	bf1[16] = input[16] + input[47]
+	bf1[17] = input[17] + input[46]
+	bf1[18] = input[18] + input[45]
+	bf1[19] = input[19] + input[44]
+	bf1[20] = input[20] + input[43]
+	bf1[21] = input[21] + input[42]
+	bf1[22] = input[22] + input[41]
+	bf1[23] = input[23] + input[40]
+	bf1[24] = input[24] + input[39]
+	bf1[25] = input[25] + input[38]
+	bf1[26] = input[26] + input[37]
+	bf1[27] = input[27] + input[36]
+	bf1[28] = input[28] + input[35]
+	bf1[29] = input[29] + input[34]
+	bf1[30] = input[30] + input[33]
+	bf1[31] = input[31] + input[32]
+	bf1[32] = -input[32] + input[31]
+	bf1[33] = -input[33] + input[30]
+	bf1[34] = -input[34] + input[29]
+	bf1[35] = -input[35] + input[28]
+	bf1[36] = -input[36] + input[27]
+	bf1[37] = -input[37] + input[26]
+	bf1[38] = -input[38] + input[25]
+	bf1[39] = -input[39] + input[24]
+	bf1[40] = -input[40] + input[23]
+	bf1[41] = -input[41] + input[22]
+	bf1[42] = -input[42] + input[21]
+	bf1[43] = -input[43] + input[20]
+	bf1[44] = -input[44] + input[19]
+	bf1[45] = -input[45] + input[18]
+	bf1[46] = -input[46] + input[17]
+	bf1[47] = -input[47] + input[16]
+	bf1[48] = -input[48] + input[15]
+	bf1[49] = -input[49] + input[14]
+	bf1[50] = -input[50] + input[13]
+	bf1[51] = -input[51] + input[12]
+	bf1[52] = -input[52] + input[11]
+	bf1[53] = -input[53] + input[10]
+	bf1[54] = -input[54] + input[9]
+	bf1[55] = -input[55] + input[8]
+	bf1[56] = -input[56] + input[7]
+	bf1[57] = -input[57] + input[6]
+	bf1[58] = -input[58] + input[5]
+	bf1[59] = -input[59] + input[4]
+	bf1[60] = -input[60] + input[3]
+	bf1[61] = -input[61] + input[2]
+	bf1[62] = -input[62] + input[1]
+	bf1[63] = -input[63] + input[0]
+	// stage 2
+	bf0 = output
+	bf1 = &step
+	bf1[0] = bf0[0] + bf0[31]
+	bf1[1] = bf0[1] + bf0[30]
+	bf1[2] = bf0[2] + bf0[29]
+	bf1[3] = bf0[3] + bf0[28]
+	bf1[4] = bf0[4] + bf0[27]
+	bf1[5] = bf0[5] + bf0[26]
+	bf1[6] = bf0[6] + bf0[25]
+	bf1[7] = bf0[7] + bf0[24]
+	bf1[8] = bf0[8] + bf0[23]
+	bf1[9] = bf0[9] + bf0[22]
+	bf1[10] = bf0[10] + bf0[21]
+	bf1[11] = bf0[11] + bf0[20]
+	bf1[12] = bf0[12] + bf0[19]
+	bf1[13] = bf0[13] + bf0[18]
+	bf1[14] = bf0[14] + bf0[17]
+	bf1[15] = bf0[15] + bf0[16]
+	bf1[16] = -bf0[16] + bf0[15]
+	bf1[17] = -bf0[17] + bf0[14]
+	bf1[18] = -bf0[18] + bf0[13]
+	bf1[19] = -bf0[19] + bf0[12]
+	bf1[20] = -bf0[20] + bf0[11]
+	bf1[21] = -bf0[21] + bf0[10]
+	bf1[22] = -bf0[22] + bf0[9]
+	bf1[23] = -bf0[23] + bf0[8]
+	bf1[24] = -bf0[24] + bf0[7]
+	bf1[25] = -bf0[25] + bf0[6]
+	bf1[26] = -bf0[26] + bf0[5]
+	bf1[27] = -bf0[27] + bf0[4]
+	bf1[28] = -bf0[28] + bf0[3]
+	bf1[29] = -bf0[29] + bf0[2]
+	bf1[30] = -bf0[30] + bf0[1]
+	bf1[31] = -bf0[31] + bf0[0]
+	bf1[32] = bf0[32]
+	bf1[33] = bf0[33]
+	bf1[34] = bf0[34]
+	bf1[35] = bf0[35]
+	bf1[36] = bf0[36]
+	bf1[37] = bf0[37]
+	bf1[38] = bf0[38]
+	bf1[39] = bf0[39]
+	bf1[40] = fwdHalfBtf(-cospi[32], bf0[40], cospi[32], bf0[55], cosBit)
+	bf1[41] = fwdHalfBtf(-cospi[32], bf0[41], cospi[32], bf0[54], cosBit)
+	bf1[42] = fwdHalfBtf(-cospi[32], bf0[42], cospi[32], bf0[53], cosBit)
+	bf1[43] = fwdHalfBtf(-cospi[32], bf0[43], cospi[32], bf0[52], cosBit)
+	bf1[44] = fwdHalfBtf(-cospi[32], bf0[44], cospi[32], bf0[51], cosBit)
+	bf1[45] = fwdHalfBtf(-cospi[32], bf0[45], cospi[32], bf0[50], cosBit)
+	bf1[46] = fwdHalfBtf(-cospi[32], bf0[46], cospi[32], bf0[49], cosBit)
+	bf1[47] = fwdHalfBtf(-cospi[32], bf0[47], cospi[32], bf0[48], cosBit)
+	bf1[48] = fwdHalfBtf(cospi[32], bf0[48], cospi[32], bf0[47], cosBit)
+	bf1[49] = fwdHalfBtf(cospi[32], bf0[49], cospi[32], bf0[46], cosBit)
+	bf1[50] = fwdHalfBtf(cospi[32], bf0[50], cospi[32], bf0[45], cosBit)
+	bf1[51] = fwdHalfBtf(cospi[32], bf0[51], cospi[32], bf0[44], cosBit)
+	bf1[52] = fwdHalfBtf(cospi[32], bf0[52], cospi[32], bf0[43], cosBit)
+	bf1[53] = fwdHalfBtf(cospi[32], bf0[53], cospi[32], bf0[42], cosBit)
+	bf1[54] = fwdHalfBtf(cospi[32], bf0[54], cospi[32], bf0[41], cosBit)
+	bf1[55] = fwdHalfBtf(cospi[32], bf0[55], cospi[32], bf0[40], cosBit)
+	bf1[56] = bf0[56]
+	bf1[57] = bf0[57]
+	bf1[58] = bf0[58]
+	bf1[59] = bf0[59]
+	bf1[60] = bf0[60]
+	bf1[61] = bf0[61]
+	bf1[62] = bf0[62]
+	bf1[63] = bf0[63]
+	// stage 3
+	bf0 = &step
+	bf1 = output
+	bf1[0] = bf0[0] + bf0[15]
+	bf1[1] = bf0[1] + bf0[14]
+	bf1[2] = bf0[2] + bf0[13]
+	bf1[3] = bf0[3] + bf0[12]
+	bf1[4] = bf0[4] + bf0[11]
+	bf1[5] = bf0[5] + bf0[10]
+	bf1[6] = bf0[6] + bf0[9]
+	bf1[7] = bf0[7] + bf0[8]
+	bf1[8] = -bf0[8] + bf0[7]
+	bf1[9] = -bf0[9] + bf0[6]
+	bf1[10] = -bf0[10] + bf0[5]
+	bf1[11] = -bf0[11] + bf0[4]
+	bf1[12] = -bf0[12] + bf0[3]
+	bf1[13] = -bf0[13] + bf0[2]
+	bf1[14] = -bf0[14] + bf0[1]
+	bf1[15] = -bf0[15] + bf0[0]
+	bf1[16] = bf0[16]
+	bf1[17] = bf0[17]
+	bf1[18] = bf0[18]
+	bf1[19] = bf0[19]
+	bf1[20] = fwdHalfBtf(-cospi[32], bf0[20], cospi[32], bf0[27], cosBit)
+	bf1[21] = fwdHalfBtf(-cospi[32], bf0[21], cospi[32], bf0[26], cosBit)
+	bf1[22] = fwdHalfBtf(-cospi[32], bf0[22], cospi[32], bf0[25], cosBit)
+	bf1[23] = fwdHalfBtf(-cospi[32], bf0[23], cospi[32], bf0[24], cosBit)
+	bf1[24] = fwdHalfBtf(cospi[32], bf0[24], cospi[32], bf0[23], cosBit)
+	bf1[25] = fwdHalfBtf(cospi[32], bf0[25], cospi[32], bf0[22], cosBit)
+	bf1[26] = fwdHalfBtf(cospi[32], bf0[26], cospi[32], bf0[21], cosBit)
+	bf1[27] = fwdHalfBtf(cospi[32], bf0[27], cospi[32], bf0[20], cosBit)
+	bf1[28] = bf0[28]
+	bf1[29] = bf0[29]
+	bf1[30] = bf0[30]
+	bf1[31] = bf0[31]
+	bf1[32] = bf0[32] + bf0[47]
+	bf1[33] = bf0[33] + bf0[46]
+	bf1[34] = bf0[34] + bf0[45]
+	bf1[35] = bf0[35] + bf0[44]
+	bf1[36] = bf0[36] + bf0[43]
+	bf1[37] = bf0[37] + bf0[42]
+	bf1[38] = bf0[38] + bf0[41]
+	bf1[39] = bf0[39] + bf0[40]
+	bf1[40] = -bf0[40] + bf0[39]
+	bf1[41] = -bf0[41] + bf0[38]
+	bf1[42] = -bf0[42] + bf0[37]
+	bf1[43] = -bf0[43] + bf0[36]
+	bf1[44] = -bf0[44] + bf0[35]
+	bf1[45] = -bf0[45] + bf0[34]
+	bf1[46] = -bf0[46] + bf0[33]
+	bf1[47] = -bf0[47] + bf0[32]
+	bf1[48] = -bf0[48] + bf0[63]
+	bf1[49] = -bf0[49] + bf0[62]
+	bf1[50] = -bf0[50] + bf0[61]
+	bf1[51] = -bf0[51] + bf0[60]
+	bf1[52] = -bf0[52] + bf0[59]
+	bf1[53] = -bf0[53] + bf0[58]
+	bf1[54] = -bf0[54] + bf0[57]
+	bf1[55] = -bf0[55] + bf0[56]
+	bf1[56] = bf0[56] + bf0[55]
+	bf1[57] = bf0[57] + bf0[54]
+	bf1[58] = bf0[58] + bf0[53]
+	bf1[59] = bf0[59] + bf0[52]
+	bf1[60] = bf0[60] + bf0[51]
+	bf1[61] = bf0[61] + bf0[50]
+	bf1[62] = bf0[62] + bf0[49]
+	bf1[63] = bf0[63] + bf0[48]
+	// stage 4
+	bf0 = output
+	bf1 = &step
+	bf1[0] = bf0[0] + bf0[7]
+	bf1[1] = bf0[1] + bf0[6]
+	bf1[2] = bf0[2] + bf0[5]
+	bf1[3] = bf0[3] + bf0[4]
+	bf1[4] = -bf0[4] + bf0[3]
+	bf1[5] = -bf0[5] + bf0[2]
+	bf1[6] = -bf0[6] + bf0[1]
+	bf1[7] = -bf0[7] + bf0[0]
+	bf1[8] = bf0[8]
+	bf1[9] = bf0[9]
+	bf1[10] = fwdHalfBtf(-cospi[32], bf0[10], cospi[32], bf0[13], cosBit)
+	bf1[11] = fwdHalfBtf(-cospi[32], bf0[11], cospi[32], bf0[12], cosBit)
+	bf1[12] = fwdHalfBtf(cospi[32], bf0[12], cospi[32], bf0[11], cosBit)
+	bf1[13] = fwdHalfBtf(cospi[32], bf0[13], cospi[32], bf0[10], cosBit)
+	bf1[14] = bf0[14]
+	bf1[15] = bf0[15]
+	bf1[16] = bf0[16] + bf0[23]
+	bf1[17] = bf0[17] + bf0[22]
+	bf1[18] = bf0[18] + bf0[21]
+	bf1[19] = bf0[19] + bf0[20]
+	bf1[20] = -bf0[20] + bf0[19]
+	bf1[21] = -bf0[21] + bf0[18]
+	bf1[22] = -bf0[22] + bf0[17]
+	bf1[23] = -bf0[23] + bf0[16]
+	bf1[24] = -bf0[24] + bf0[31]
+	bf1[25] = -bf0[25] + bf0[30]
+	bf1[26] = -bf0[26] + bf0[29]
+	bf1[27] = -bf0[27] + bf0[28]
+	bf1[28] = bf0[28] + bf0[27]
+	bf1[29] = bf0[29] + bf0[26]
+	bf1[30] = bf0[30] + bf0[25]
+	bf1[31] = bf0[31] + bf0[24]
+	bf1[32] = bf0[32]
+	bf1[33] = bf0[33]
+	bf1[34] = bf0[34]
+	bf1[35] = bf0[35]
+	bf1[36] = fwdHalfBtf(-cospi[16], bf0[36], cospi[48], bf0[59], cosBit)
+	bf1[37] = fwdHalfBtf(-cospi[16], bf0[37], cospi[48], bf0[58], cosBit)
+	bf1[38] = fwdHalfBtf(-cospi[16], bf0[38], cospi[48], bf0[57], cosBit)
+	bf1[39] = fwdHalfBtf(-cospi[16], bf0[39], cospi[48], bf0[56], cosBit)
+	bf1[40] = fwdHalfBtf(-cospi[48], bf0[40], -cospi[16], bf0[55], cosBit)
+	bf1[41] = fwdHalfBtf(-cospi[48], bf0[41], -cospi[16], bf0[54], cosBit)
+	bf1[42] = fwdHalfBtf(-cospi[48], bf0[42], -cospi[16], bf0[53], cosBit)
+	bf1[43] = fwdHalfBtf(-cospi[48], bf0[43], -cospi[16], bf0[52], cosBit)
+	bf1[44] = bf0[44]
+	bf1[45] = bf0[45]
+	bf1[46] = bf0[46]
+	bf1[47] = bf0[47]
+	bf1[48] = bf0[48]
+	bf1[49] = bf0[49]
+	bf1[50] = bf0[50]
+	bf1[51] = bf0[51]
+	bf1[52] = fwdHalfBtf(cospi[48], bf0[52], -cospi[16], bf0[43], cosBit)
+	bf1[53] = fwdHalfBtf(cospi[48], bf0[53], -cospi[16], bf0[42], cosBit)
+	bf1[54] = fwdHalfBtf(cospi[48], bf0[54], -cospi[16], bf0[41], cosBit)
+	bf1[55] = fwdHalfBtf(cospi[48], bf0[55], -cospi[16], bf0[40], cosBit)
+	bf1[56] = fwdHalfBtf(cospi[16], bf0[56], cospi[48], bf0[39], cosBit)
+	bf1[57] = fwdHalfBtf(cospi[16], bf0[57], cospi[48], bf0[38], cosBit)
+	bf1[58] = fwdHalfBtf(cospi[16], bf0[58], cospi[48], bf0[37], cosBit)
+	bf1[59] = fwdHalfBtf(cospi[16], bf0[59], cospi[48], bf0[36], cosBit)
+	bf1[60] = bf0[60]
+	bf1[61] = bf0[61]
+	bf1[62] = bf0[62]
+	bf1[63] = bf0[63]
+	// stage 5
+	bf0 = &step
+	bf1 = output
+	bf1[0] = bf0[0] + bf0[3]
+	bf1[1] = bf0[1] + bf0[2]
+	bf1[2] = -bf0[2] + bf0[1]
+	bf1[3] = -bf0[3] + bf0[0]
+	bf1[4] = bf0[4]
+	bf1[5] = fwdHalfBtf(-cospi[32], bf0[5], cospi[32], bf0[6], cosBit)
+	bf1[6] = fwdHalfBtf(cospi[32], bf0[6], cospi[32], bf0[5], cosBit)
+	bf1[7] = bf0[7]
+	bf1[8] = bf0[8] + bf0[11]
+	bf1[9] = bf0[9] + bf0[10]
+	bf1[10] = -bf0[10] + bf0[9]
+	bf1[11] = -bf0[11] + bf0[8]
+	bf1[12] = -bf0[12] + bf0[15]
+	bf1[13] = -bf0[13] + bf0[14]
+	bf1[14] = bf0[14] + bf0[13]
+	bf1[15] = bf0[15] + bf0[12]
+	bf1[16] = bf0[16]
+	bf1[17] = bf0[17]
+	bf1[18] = fwdHalfBtf(-cospi[16], bf0[18], cospi[48], bf0[29], cosBit)
+	bf1[19] = fwdHalfBtf(-cospi[16], bf0[19], cospi[48], bf0[28], cosBit)
+	bf1[20] = fwdHalfBtf(-cospi[48], bf0[20], -cospi[16], bf0[27], cosBit)
+	bf1[21] = fwdHalfBtf(-cospi[48], bf0[21], -cospi[16], bf0[26], cosBit)
+	bf1[22] = bf0[22]
+	bf1[23] = bf0[23]
+	bf1[24] = bf0[24]
+	bf1[25] = bf0[25]
+	bf1[26] = fwdHalfBtf(cospi[48], bf0[26], -cospi[16], bf0[21], cosBit)
+	bf1[27] = fwdHalfBtf(cospi[48], bf0[27], -cospi[16], bf0[20], cosBit)
+	bf1[28] = fwdHalfBtf(cospi[16], bf0[28], cospi[48], bf0[19], cosBit)
+	bf1[29] = fwdHalfBtf(cospi[16], bf0[29], cospi[48], bf0[18], cosBit)
+	bf1[30] = bf0[30]
+	bf1[31] = bf0[31]
+	bf1[32] = bf0[32] + bf0[39]
+	bf1[33] = bf0[33] + bf0[38]
+	bf1[34] = bf0[34] + bf0[37]
+	bf1[35] = bf0[35] + bf0[36]
+	bf1[36] = -bf0[36] + bf0[35]
+	bf1[37] = -bf0[37] + bf0[34]
+	bf1[38] = -bf0[38] + bf0[33]
+	bf1[39] = -bf0[39] + bf0[32]
+	bf1[40] = -bf0[40] + bf0[47]
+	bf1[41] = -bf0[41] + bf0[46]
+	bf1[42] = -bf0[42] + bf0[45]
+	bf1[43] = -bf0[43] + bf0[44]
+	bf1[44] = bf0[44] + bf0[43]
+	bf1[45] = bf0[45] + bf0[42]
+	bf1[46] = bf0[46] + bf0[41]
+	bf1[47] = bf0[47] + bf0[40]
+	bf1[48] = bf0[48] + bf0[55]
+	bf1[49] = bf0[49] + bf0[54]
+	bf1[50] = bf0[50] + bf0[53]
+	bf1[51] = bf0[51] + bf0[52]
+	bf1[52] = -bf0[52] + bf0[51]
+	bf1[53] = -bf0[53] + bf0[50]
+	bf1[54] = -bf0[54] + bf0[49]
+	bf1[55] = -bf0[55] + bf0[48]
+	bf1[56] = -bf0[56] + bf0[63]
+	bf1[57] = -bf0[57] + bf0[62]
+	bf1[58] = -bf0[58] + bf0[61]
+	bf1[59] = -bf0[59] + bf0[60]
+	bf1[60] = bf0[60] + bf0[59]
+	bf1[61] = bf0[61] + bf0[58]
+	bf1[62] = bf0[62] + bf0[57]
+	bf1[63] = bf0[63] + bf0[56]
+	// stage 6
+	bf0 = output
+	bf1 = &step
+	bf1[0] = fwdHalfBtf(cospi[32], bf0[0], cospi[32], bf0[1], cosBit)
+	bf1[1] = fwdHalfBtf(-cospi[32], bf0[1], cospi[32], bf0[0], cosBit)
+	bf1[2] = fwdHalfBtf(cospi[48], bf0[2], cospi[16], bf0[3], cosBit)
+	bf1[3] = fwdHalfBtf(cospi[48], bf0[3], -cospi[16], bf0[2], cosBit)
+	bf1[4] = bf0[4] + bf0[5]
+	bf1[5] = -bf0[5] + bf0[4]
+	bf1[6] = -bf0[6] + bf0[7]
+	bf1[7] = bf0[7] + bf0[6]
+	bf1[8] = bf0[8]
+	bf1[9] = fwdHalfBtf(-cospi[16], bf0[9], cospi[48], bf0[14], cosBit)
+	bf1[10] = fwdHalfBtf(-cospi[48], bf0[10], -cospi[16], bf0[13], cosBit)
+	bf1[11] = bf0[11]
+	bf1[12] = bf0[12]
+	bf1[13] = fwdHalfBtf(cospi[48], bf0[13], -cospi[16], bf0[10], cosBit)
+	bf1[14] = fwdHalfBtf(cospi[16], bf0[14], cospi[48], bf0[9], cosBit)
+	bf1[15] = bf0[15]
+	bf1[16] = bf0[16] + bf0[19]
+	bf1[17] = bf0[17] + bf0[18]
+	bf1[18] = -bf0[18] + bf0[17]
+	bf1[19] = -bf0[19] + bf0[16]
+	bf1[20] = -bf0[20] + bf0[23]
+	bf1[21] = -bf0[21] + bf0[22]
+	bf1[22] = bf0[22] + bf0[21]
+	bf1[23] = bf0[23] + bf0[20]
+	bf1[24] = bf0[24] + bf0[27]
+	bf1[25] = bf0[25] + bf0[26]
+	bf1[26] = -bf0[26] + bf0[25]
+	bf1[27] = -bf0[27] + bf0[24]
+	bf1[28] = -bf0[28] + bf0[31]
+	bf1[29] = -bf0[29] + bf0[30]
+	bf1[30] = bf0[30] + bf0[29]
+	bf1[31] = bf0[31] + bf0[28]
+	bf1[32] = bf0[32]
+	bf1[33] = bf0[33]
+	bf1[34] = fwdHalfBtf(-cospi[8], bf0[34], cospi[56], bf0[61], cosBit)
+	bf1[35] = fwdHalfBtf(-cospi[8], bf0[35], cospi[56], bf0[60], cosBit)
+	bf1[36] = fwdHalfBtf(-cospi[56], bf0[36], -cospi[8], bf0[59], cosBit)
+	bf1[37] = fwdHalfBtf(-cospi[56], bf0[37], -cospi[8], bf0[58], cosBit)
+	bf1[38] = bf0[38]
+	bf1[39] = bf0[39]
+	bf1[40] = bf0[40]
+	bf1[41] = bf0[41]
+	bf1[42] = fwdHalfBtf(-cospi[40], bf0[42], cospi[24], bf0[53], cosBit)
+	bf1[43] = fwdHalfBtf(-cospi[40], bf0[43], cospi[24], bf0[52], cosBit)
+	bf1[44] = fwdHalfBtf(-cospi[24], bf0[44], -cospi[40], bf0[51], cosBit)
+	bf1[45] = fwdHalfBtf(-cospi[24], bf0[45], -cospi[40], bf0[50], cosBit)
+	bf1[46] = bf0[46]
+	bf1[47] = bf0[47]
+	bf1[48] = bf0[48]
+	bf1[49] = bf0[49]
+	bf1[50] = fwdHalfBtf(cospi[24], bf0[50], -cospi[40], bf0[45], cosBit)
+	bf1[51] = fwdHalfBtf(cospi[24], bf0[51], -cospi[40], bf0[44], cosBit)
+	bf1[52] = fwdHalfBtf(cospi[40], bf0[52], cospi[24], bf0[43], cosBit)
+	bf1[53] = fwdHalfBtf(cospi[40], bf0[53], cospi[24], bf0[42], cosBit)
+	bf1[54] = bf0[54]
+	bf1[55] = bf0[55]
+	bf1[56] = bf0[56]
+	bf1[57] = bf0[57]
+	bf1[58] = fwdHalfBtf(cospi[56], bf0[58], -cospi[8], bf0[37], cosBit)
+	bf1[59] = fwdHalfBtf(cospi[56], bf0[59], -cospi[8], bf0[36], cosBit)
+	bf1[60] = fwdHalfBtf(cospi[8], bf0[60], cospi[56], bf0[35], cosBit)
+	bf1[61] = fwdHalfBtf(cospi[8], bf0[61], cospi[56], bf0[34], cosBit)
+	bf1[62] = bf0[62]
+	bf1[63] = bf0[63]
+	// stage 7
+	bf0 = &step
+	bf1 = output
+	bf1[0] = bf0[0]
+	bf1[1] = bf0[1]
+	bf1[2] = bf0[2]
+	bf1[3] = bf0[3]
+	bf1[4] = fwdHalfBtf(cospi[56], bf0[4], cospi[8], bf0[7], cosBit)
+	bf1[5] = fwdHalfBtf(cospi[24], bf0[5], cospi[40], bf0[6], cosBit)
+	bf1[6] = fwdHalfBtf(cospi[24], bf0[6], -cospi[40], bf0[5], cosBit)
+	bf1[7] = fwdHalfBtf(cospi[56], bf0[7], -cospi[8], bf0[4], cosBit)
+	bf1[8] = bf0[8] + bf0[9]
+	bf1[9] = -bf0[9] + bf0[8]
+	bf1[10] = -bf0[10] + bf0[11]
+	bf1[11] = bf0[11] + bf0[10]
+	bf1[12] = bf0[12] + bf0[13]
+	bf1[13] = -bf0[13] + bf0[12]
+	bf1[14] = -bf0[14] + bf0[15]
+	bf1[15] = bf0[15] + bf0[14]
+	bf1[16] = bf0[16]
+	bf1[17] = fwdHalfBtf(-cospi[8], bf0[17], cospi[56], bf0[30], cosBit)
+	bf1[18] = fwdHalfBtf(-cospi[56], bf0[18], -cospi[8], bf0[29], cosBit)
+	bf1[19] = bf0[19]
+	bf1[20] = bf0[20]
+	bf1[21] = fwdHalfBtf(-cospi[40], bf0[21], cospi[24], bf0[26], cosBit)
+	bf1[22] = fwdHalfBtf(-cospi[24], bf0[22], -cospi[40], bf0[25], cosBit)
+	bf1[23] = bf0[23]
+	bf1[24] = bf0[24]
+	bf1[25] = fwdHalfBtf(cospi[24], bf0[25], -cospi[40], bf0[22], cosBit)
+	bf1[26] = fwdHalfBtf(cospi[40], bf0[26], cospi[24], bf0[21], cosBit)
+	bf1[27] = bf0[27]
+	bf1[28] = bf0[28]
+	bf1[29] = fwdHalfBtf(cospi[56], bf0[29], -cospi[8], bf0[18], cosBit)
+	bf1[30] = fwdHalfBtf(cospi[8], bf0[30], cospi[56], bf0[17], cosBit)
+	bf1[31] = bf0[31]
+	bf1[32] = bf0[32] + bf0[35]
+	bf1[33] = bf0[33] + bf0[34]
+	bf1[34] = -bf0[34] + bf0[33]
+	bf1[35] = -bf0[35] + bf0[32]
+	bf1[36] = -bf0[36] + bf0[39]
+	bf1[37] = -bf0[37] + bf0[38]
+	bf1[38] = bf0[38] + bf0[37]
+	bf1[39] = bf0[39] + bf0[36]
+	bf1[40] = bf0[40] + bf0[43]
+	bf1[41] = bf0[41] + bf0[42]
+	bf1[42] = -bf0[42] + bf0[41]
+	bf1[43] = -bf0[43] + bf0[40]
+	bf1[44] = -bf0[44] + bf0[47]
+	bf1[45] = -bf0[45] + bf0[46]
+	bf1[46] = bf0[46] + bf0[45]
+	bf1[47] = bf0[47] + bf0[44]
+	bf1[48] = bf0[48] + bf0[51]
+	bf1[49] = bf0[49] + bf0[50]
+	bf1[50] = -bf0[50] + bf0[49]
+	bf1[51] = -bf0[51] + bf0[48]
+	bf1[52] = -bf0[52] + bf0[55]
+	bf1[53] = -bf0[53] + bf0[54]
+	bf1[54] = bf0[54] + bf0[53]
+	bf1[55] = bf0[55] + bf0[52]
+	bf1[56] = bf0[56] + bf0[59]
+	bf1[57] = bf0[57] + bf0[58]
+	bf1[58] = -bf0[58] + bf0[57]
+	bf1[59] = -bf0[59] + bf0[56]
+	bf1[60] = -bf0[60] + bf0[63]
+	bf1[61] = -bf0[61] + bf0[62]
+	bf1[62] = bf0[62] + bf0[61]
+	bf1[63] = bf0[63] + bf0[60]
+	// stage 8
+	bf0 = output
+	bf1 = &step
+	bf1[0] = bf0[0]
+	bf1[1] = bf0[1]
+	bf1[2] = bf0[2]
+	bf1[3] = bf0[3]
+	bf1[4] = bf0[4]
+	bf1[5] = bf0[5]
+	bf1[6] = bf0[6]
+	bf1[7] = bf0[7]
+	bf1[8] = fwdHalfBtf(cospi[60], bf0[8], cospi[4], bf0[15], cosBit)
+	bf1[9] = fwdHalfBtf(cospi[28], bf0[9], cospi[36], bf0[14], cosBit)
+	bf1[10] = fwdHalfBtf(cospi[44], bf0[10], cospi[20], bf0[13], cosBit)
+	bf1[11] = fwdHalfBtf(cospi[12], bf0[11], cospi[52], bf0[12], cosBit)
+	bf1[12] = fwdHalfBtf(cospi[12], bf0[12], -cospi[52], bf0[11], cosBit)
+	bf1[13] = fwdHalfBtf(cospi[44], bf0[13], -cospi[20], bf0[10], cosBit)
+	bf1[14] = fwdHalfBtf(cospi[28], bf0[14], -cospi[36], bf0[9], cosBit)
+	bf1[15] = fwdHalfBtf(cospi[60], bf0[15], -cospi[4], bf0[8], cosBit)
+	bf1[16] = bf0[16] + bf0[17]
+	bf1[17] = -bf0[17] + bf0[16]
+	bf1[18] = -bf0[18] + bf0[19]
+	bf1[19] = bf0[19] + bf0[18]
+	bf1[20] = bf0[20] + bf0[21]
+	bf1[21] = -bf0[21] + bf0[20]
+	bf1[22] = -bf0[22] + bf0[23]
+	bf1[23] = bf0[23] + bf0[22]
+	bf1[24] = bf0[24] + bf0[25]
+	bf1[25] = -bf0[25] + bf0[24]
+	bf1[26] = -bf0[26] + bf0[27]
+	bf1[27] = bf0[27] + bf0[26]
+	bf1[28] = bf0[28] + bf0[29]
+	bf1[29] = -bf0[29] + bf0[28]
+	bf1[30] = -bf0[30] + bf0[31]
+	bf1[31] = bf0[31] + bf0[30]
+	bf1[32] = bf0[32]
+	bf1[33] = fwdHalfBtf(-cospi[4], bf0[33], cospi[60], bf0[62], cosBit)
+	bf1[34] = fwdHalfBtf(-cospi[60], bf0[34], -cospi[4], bf0[61], cosBit)
+	bf1[35] = bf0[35]
+	bf1[36] = bf0[36]
+	bf1[37] = fwdHalfBtf(-cospi[36], bf0[37], cospi[28], bf0[58], cosBit)
+	bf1[38] = fwdHalfBtf(-cospi[28], bf0[38], -cospi[36], bf0[57], cosBit)
+	bf1[39] = bf0[39]
+	bf1[40] = bf0[40]
+	bf1[41] = fwdHalfBtf(-cospi[20], bf0[41], cospi[44], bf0[54], cosBit)
+	bf1[42] = fwdHalfBtf(-cospi[44], bf0[42], -cospi[20], bf0[53], cosBit)
+	bf1[43] = bf0[43]
+	bf1[44] = bf0[44]
+	bf1[45] = fwdHalfBtf(-cospi[52], bf0[45], cospi[12], bf0[50], cosBit)
+	bf1[46] = fwdHalfBtf(-cospi[12], bf0[46], -cospi[52], bf0[49], cosBit)
+	bf1[47] = bf0[47]
+	bf1[48] = bf0[48]
+	bf1[49] = fwdHalfBtf(cospi[12], bf0[49], -cospi[52], bf0[46], cosBit)
+	bf1[50] = fwdHalfBtf(cospi[52], bf0[50], cospi[12], bf0[45], cosBit)
+	bf1[51] = bf0[51]
+	bf1[52] = bf0[52]
+	bf1[53] = fwdHalfBtf(cospi[44], bf0[53], -cospi[20], bf0[42], cosBit)
+	bf1[54] = fwdHalfBtf(cospi[20], bf0[54], cospi[44], bf0[41], cosBit)
+	bf1[55] = bf0[55]
+	bf1[56] = bf0[56]
+	bf1[57] = fwdHalfBtf(cospi[28], bf0[57], -cospi[36], bf0[38], cosBit)
+	bf1[58] = fwdHalfBtf(cospi[36], bf0[58], cospi[28], bf0[37], cosBit)
+	bf1[59] = bf0[59]
+	bf1[60] = bf0[60]
+	bf1[61] = fwdHalfBtf(cospi[60], bf0[61], -cospi[4], bf0[34], cosBit)
+	bf1[62] = fwdHalfBtf(cospi[4], bf0[62], cospi[60], bf0[33], cosBit)
+	bf1[63] = bf0[63]
+	// stage 9
+	bf0 = &step
+	bf1 = output
+	bf1[0] = bf0[0]
+	bf1[1] = bf0[1]
+	bf1[2] = bf0[2]
+	bf1[3] = bf0[3]
+	bf1[4] = bf0[4]
+	bf1[5] = bf0[5]
+	bf1[6] = bf0[6]
+	bf1[7] = bf0[7]
+	bf1[8] = bf0[8]
+	bf1[9] = bf0[9]
+	bf1[10] = bf0[10]
+	bf1[11] = bf0[11]
+	bf1[12] = bf0[12]
+	bf1[13] = bf0[13]
+	bf1[14] = bf0[14]
+	bf1[15] = bf0[15]
+	bf1[16] = fwdHalfBtf(cospi[62], bf0[16], cospi[2], bf0[31], cosBit)
+	bf1[17] = fwdHalfBtf(cospi[30], bf0[17], cospi[34], bf0[30], cosBit)
+	bf1[18] = fwdHalfBtf(cospi[46], bf0[18], cospi[18], bf0[29], cosBit)
+	bf1[19] = fwdHalfBtf(cospi[14], bf0[19], cospi[50], bf0[28], cosBit)
+	bf1[20] = fwdHalfBtf(cospi[54], bf0[20], cospi[10], bf0[27], cosBit)
+	bf1[21] = fwdHalfBtf(cospi[22], bf0[21], cospi[42], bf0[26], cosBit)
+	bf1[22] = fwdHalfBtf(cospi[38], bf0[22], cospi[26], bf0[25], cosBit)
+	bf1[23] = fwdHalfBtf(cospi[6], bf0[23], cospi[58], bf0[24], cosBit)
+	bf1[24] = fwdHalfBtf(cospi[6], bf0[24], -cospi[58], bf0[23], cosBit)
+	bf1[25] = fwdHalfBtf(cospi[38], bf0[25], -cospi[26], bf0[22], cosBit)
+	bf1[26] = fwdHalfBtf(cospi[22], bf0[26], -cospi[42], bf0[21], cosBit)
+	bf1[27] = fwdHalfBtf(cospi[54], bf0[27], -cospi[10], bf0[20], cosBit)
+	bf1[28] = fwdHalfBtf(cospi[14], bf0[28], -cospi[50], bf0[19], cosBit)
+	bf1[29] = fwdHalfBtf(cospi[46], bf0[29], -cospi[18], bf0[18], cosBit)
+	bf1[30] = fwdHalfBtf(cospi[30], bf0[30], -cospi[34], bf0[17], cosBit)
+	bf1[31] = fwdHalfBtf(cospi[62], bf0[31], -cospi[2], bf0[16], cosBit)
+	bf1[32] = bf0[32] + bf0[33]
+	bf1[33] = -bf0[33] + bf0[32]
+	bf1[34] = -bf0[34] + bf0[35]
+	bf1[35] = bf0[35] + bf0[34]
+	bf1[36] = bf0[36] + bf0[37]
+	bf1[37] = -bf0[37] + bf0[36]
+	bf1[38] = -bf0[38] + bf0[39]
+	bf1[39] = bf0[39] + bf0[38]
+	bf1[40] = bf0[40] + bf0[41]
+	bf1[41] = -bf0[41] + bf0[40]
+	bf1[42] = -bf0[42] + bf0[43]
+	bf1[43] = bf0[43] + bf0[42]
+	bf1[44] = bf0[44] + bf0[45]
+	bf1[45] = -bf0[45] + bf0[44]
+	bf1[46] = -bf0[46] + bf0[47]
+	bf1[47] = bf0[47] + bf0[46]
+	bf1[48] = bf0[48] + bf0[49]
+	bf1[49] = -bf0[49] + bf0[48]
+	bf1[50] = -bf0[50] + bf0[51]
+	bf1[51] = bf0[51] + bf0[50]
+	bf1[52] = bf0[52] + bf0[53]
+	bf1[53] = -bf0[53] + bf0[52]
+	bf1[54] = -bf0[54] + bf0[55]
+	bf1[55] = bf0[55] + bf0[54]
+	bf1[56] = bf0[56] + bf0[57]
+	bf1[57] = -bf0[57] + bf0[56]
+	bf1[58] = -bf0[58] + bf0[59]
+	bf1[59] = bf0[59] + bf0[58]
+	bf1[60] = bf0[60] + bf0[61]
+	bf1[61] = -bf0[61] + bf0[60]
+	bf1[62] = -bf0[62] + bf0[63]
+	bf1[63] = bf0[63] + bf0[62]
+	// stage 10
+	bf0 = output
+	bf1 = &step
+	bf1[0] = bf0[0]
+	bf1[1] = bf0[1]
+	bf1[2] = bf0[2]
+	bf1[3] = bf0[3]
+	bf1[4] = bf0[4]
+	bf1[5] = bf0[5]
+	bf1[6] = bf0[6]
+	bf1[7] = bf0[7]
+	bf1[8] = bf0[8]
+	bf1[9] = bf0[9]
+	bf1[10] = bf0[10]
+	bf1[11] = bf0[11]
+	bf1[12] = bf0[12]
+	bf1[13] = bf0[13]
+	bf1[14] = bf0[14]
+	bf1[15] = bf0[15]
+	bf1[16] = bf0[16]
+	bf1[17] = bf0[17]
+	bf1[18] = bf0[18]
+	bf1[19] = bf0[19]
+	bf1[20] = bf0[20]
+	bf1[21] = bf0[21]
+	bf1[22] = bf0[22]
+	bf1[23] = bf0[23]
+	bf1[24] = bf0[24]
+	bf1[25] = bf0[25]
+	bf1[26] = bf0[26]
+	bf1[27] = bf0[27]
+	bf1[28] = bf0[28]
+	bf1[29] = bf0[29]
+	bf1[30] = bf0[30]
+	bf1[31] = bf0[31]
+	bf1[32] = fwdHalfBtf(cospi[63], bf0[32], cospi[1], bf0[63], cosBit)
+	bf1[33] = fwdHalfBtf(cospi[31], bf0[33], cospi[33], bf0[62], cosBit)
+	bf1[34] = fwdHalfBtf(cospi[47], bf0[34], cospi[17], bf0[61], cosBit)
+	bf1[35] = fwdHalfBtf(cospi[15], bf0[35], cospi[49], bf0[60], cosBit)
+	bf1[36] = fwdHalfBtf(cospi[55], bf0[36], cospi[9], bf0[59], cosBit)
+	bf1[37] = fwdHalfBtf(cospi[23], bf0[37], cospi[41], bf0[58], cosBit)
+	bf1[38] = fwdHalfBtf(cospi[39], bf0[38], cospi[25], bf0[57], cosBit)
+	bf1[39] = fwdHalfBtf(cospi[7], bf0[39], cospi[57], bf0[56], cosBit)
+	bf1[40] = fwdHalfBtf(cospi[59], bf0[40], cospi[5], bf0[55], cosBit)
+	bf1[41] = fwdHalfBtf(cospi[27], bf0[41], cospi[37], bf0[54], cosBit)
+	bf1[42] = fwdHalfBtf(cospi[43], bf0[42], cospi[21], bf0[53], cosBit)
+	bf1[43] = fwdHalfBtf(cospi[11], bf0[43], cospi[53], bf0[52], cosBit)
+	bf1[44] = fwdHalfBtf(cospi[51], bf0[44], cospi[13], bf0[51], cosBit)
+	bf1[45] = fwdHalfBtf(cospi[19], bf0[45], cospi[45], bf0[50], cosBit)
+	bf1[46] = fwdHalfBtf(cospi[35], bf0[46], cospi[29], bf0[49], cosBit)
+	bf1[47] = fwdHalfBtf(cospi[3], bf0[47], cospi[61], bf0[48], cosBit)
+	bf1[48] = fwdHalfBtf(cospi[3], bf0[48], -cospi[61], bf0[47], cosBit)
+	bf1[49] = fwdHalfBtf(cospi[35], bf0[49], -cospi[29], bf0[46], cosBit)
+	bf1[50] = fwdHalfBtf(cospi[19], bf0[50], -cospi[45], bf0[45], cosBit)
+	bf1[51] = fwdHalfBtf(cospi[51], bf0[51], -cospi[13], bf0[44], cosBit)
+	bf1[52] = fwdHalfBtf(cospi[11], bf0[52], -cospi[53], bf0[43], cosBit)
+	bf1[53] = fwdHalfBtf(cospi[43], bf0[53], -cospi[21], bf0[42], cosBit)
+	bf1[54] = fwdHalfBtf(cospi[27], bf0[54], -cospi[37], bf0[41], cosBit)
+	bf1[55] = fwdHalfBtf(cospi[59], bf0[55], -cospi[5], bf0[40], cosBit)
+	bf1[56] = fwdHalfBtf(cospi[7], bf0[56], -cospi[57], bf0[39], cosBit)
+	bf1[57] = fwdHalfBtf(cospi[39], bf0[57], -cospi[25], bf0[38], cosBit)
+	bf1[58] = fwdHalfBtf(cospi[23], bf0[58], -cospi[41], bf0[37], cosBit)
+	bf1[59] = fwdHalfBtf(cospi[55], bf0[59], -cospi[9], bf0[36], cosBit)
+	bf1[60] = fwdHalfBtf(cospi[15], bf0[60], -cospi[49], bf0[35], cosBit)
+	bf1[61] = fwdHalfBtf(cospi[47], bf0[61], -cospi[17], bf0[34], cosBit)
+	bf1[62] = fwdHalfBtf(cospi[31], bf0[62], -cospi[33], bf0[33], cosBit)
+	bf1[63] = fwdHalfBtf(cospi[63], bf0[63], -cospi[1], bf0[32], cosBit)
+	// stage 11
+	bf0 = &step
+	bf1 = output
+	bf1[0] = bf0[0]
+	bf1[1] = bf0[32]
+	bf1[2] = bf0[16]
+	bf1[3] = bf0[48]
+	bf1[4] = bf0[8]
+	bf1[5] = bf0[40]
+	bf1[6] = bf0[24]
+	bf1[7] = bf0[56]
+	bf1[8] = bf0[4]
+	bf1[9] = bf0[36]
+	bf1[10] = bf0[20]
+	bf1[11] = bf0[52]
+	bf1[12] = bf0[12]
+	bf1[13] = bf0[44]
+	bf1[14] = bf0[28]
+	bf1[15] = bf0[60]
+	bf1[16] = bf0[2]
+	bf1[17] = bf0[34]
+	bf1[18] = bf0[18]
+	bf1[19] = bf0[50]
+	bf1[20] = bf0[10]
+	bf1[21] = bf0[42]
+	bf1[22] = bf0[26]
+	bf1[23] = bf0[58]
+	bf1[24] = bf0[6]
+	bf1[25] = bf0[38]
+	bf1[26] = bf0[22]
+	bf1[27] = bf0[54]
+	bf1[28] = bf0[14]
+	bf1[29] = bf0[46]
+	bf1[30] = bf0[30]
+	bf1[31] = bf0[62]
+	bf1[32] = bf0[1]
+	bf1[33] = bf0[33]
+	bf1[34] = bf0[17]
+	bf1[35] = bf0[49]
+	bf1[36] = bf0[9]
+	bf1[37] = bf0[41]
+	bf1[38] = bf0[25]
+	bf1[39] = bf0[57]
+	bf1[40] = bf0[5]
+	bf1[41] = bf0[37]
+	bf1[42] = bf0[21]
+	bf1[43] = bf0[53]
+	bf1[44] = bf0[13]
+	bf1[45] = bf0[45]
+	bf1[46] = bf0[29]
+	bf1[47] = bf0[61]
+	bf1[48] = bf0[3]
+	bf1[49] = bf0[35]
+	bf1[50] = bf0[19]
+	bf1[51] = bf0[51]
+	bf1[52] = bf0[11]
+	bf1[53] = bf0[43]
+	bf1[54] = bf0[27]
+	bf1[55] = bf0[59]
+	bf1[56] = bf0[7]
+	bf1[57] = bf0[39]
+	bf1[58] = bf0[23]
+	bf1[59] = bf0[55]
+	bf1[60] = bf0[15]
+	bf1[61] = bf0[47]
+	bf1[62] = bf0[31]
+	bf1[63] = bf0[63]
+}

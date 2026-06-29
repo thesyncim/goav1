@@ -34,11 +34,14 @@ func forwardGenericBlock(coeff []int32, coeffStride int, residual []int16, resid
 	}
 	width := int(size.Width)
 	height := int(size.Height)
-	if coeffStride < height ||
+	coeffSize := adjustedScanSize(size)
+	coeffWidth := int(coeffSize.Width)
+	coeffHeight := int(coeffSize.Height)
+	if coeffStride < coeffHeight ||
 		residualStride < width ||
 		len(scratch) < width*height ||
 		!blockFits(len(residual), residualStride, width, height) ||
-		!coeffBlockFits(len(coeff), coeffStride, width, height) {
+		!coeffBlockFits(len(coeff), coeffStride, coeffWidth, coeffHeight) {
 		return ErrInvalidTransform
 	}
 
@@ -46,7 +49,7 @@ func forwardGenericBlock(coeff []int32, coeffStride int, residual []int16, resid
 	udFlip, lrFlip := fwdFlipFlags(typ)
 	scratch = scratch[:width*height]
 
-	var tempIn, tempOut [32]int32
+	var tempIn, tempOut [64]int32
 	for c := range width {
 		for r := range height {
 			srcRow := r
@@ -74,7 +77,10 @@ func forwardGenericBlock(coeff []int32, coeffStride int, residual []int16, resid
 		if size.IsRect2() {
 			fwdRoundShiftSqrt2(tempOut[:width])
 		}
-		for c := range width {
+		if r >= coeffHeight {
+			continue
+		}
+		for c := range coeffWidth {
 			coeff[c*coeffStride+r] = tempOut[c]
 		}
 	}
@@ -83,6 +89,10 @@ func forwardGenericBlock(coeff []int32, coeffStride int, residual []int16, resid
 
 func forwardGenericSupported(size Size, typ Type) bool {
 	if typ == TypeDCTDCT {
+		return false
+	}
+	switch size {
+	case Size{Width: 16, Height: 64}, Size{Width: 64, Height: 16}:
 		return false
 	}
 	if _, ok := fwdTxfm2DParams(size); !ok {
@@ -122,7 +132,7 @@ func fwdTxfm2DParams(size Size) (fwdTxfm2DConfig, bool) {
 }
 
 func fwdCosBitSupported(cosBit uint8) bool {
-	return cosBit == 12 || cosBit == 13
+	return cosBit >= 10 && cosBit <= 13
 }
 
 func fwdShiftForSize(size Size) [3]int8 {
@@ -177,7 +187,7 @@ func forward1DSupported(typ tx1DType, length int) bool {
 	switch typ {
 	case tx1DDCT:
 		switch length {
-		case 4, 8, 16, 32:
+		case 4, 8, 16, 32, 64:
 			return true
 		}
 	case tx1DADST, tx1DFlipADST:
@@ -228,6 +238,11 @@ func fwdDCTByLength(input []int32, output []int32, cosBit uint) {
 		copy(in[:], input)
 		fwdDCT32(&in, &out, cospi, cosBit)
 		copy(output, out[:])
+	case 64:
+		var in, out [64]int32
+		copy(in[:], input)
+		fwdDCT64(&in, &out, cospi, cosBit)
+		copy(output, out[:])
 	}
 }
 
@@ -253,10 +268,16 @@ func fwdADSTByLength(input []int32, output []int32, cosBit uint) {
 }
 
 func fwdCospiForBit(cosBit uint) *[64]int32 {
-	if cosBit == 12 {
+	switch cosBit {
+	case 10:
+		return &fwdCospi10
+	case 11:
+		return &fwdCospi11
+	case 12:
 		return &fwdCospi12
+	default:
+		return &fwdCospi13
 	}
-	return &fwdCospi13
 }
 
 func fwdSinpiForBit(cosBit uint) *[5]int32 {

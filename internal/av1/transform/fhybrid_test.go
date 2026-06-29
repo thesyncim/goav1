@@ -191,7 +191,7 @@ func TestForwardBlockRejectsUnsupportedHybrid(t *testing.T) {
 	coeff := make([]int32, 64*16)
 	scratch := make([]int32, 64*16)
 	if err := ForwardBlock(coeff, 16, residual, 64, scratch, Size{Width: 64, Height: 16}, TypeHDCT); !errors.Is(err, ErrInvalidTransform) {
-		t.Fatalf("DCT64-dependent HDCT err=%v want %v", err, ErrInvalidTransform)
+		t.Fatalf("non-realtime 64x16 HDCT err=%v want %v", err, ErrInvalidTransform)
 	}
 	if err := ForwardBlock(coeff, 32, residual, 32, scratch, Size{Width: 32, Height: 32}, TypeDCTADST); !errors.Is(err, ErrInvalidTransform) {
 		t.Fatalf("ADST32-dependent DCT_ADST err=%v want %v", err, ErrInvalidTransform)

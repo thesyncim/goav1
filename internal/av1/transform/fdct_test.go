@@ -201,3 +201,86 @@ func TestForwardDCTRectDCScale(t *testing.T) {
 	check("8x4", 8, 4, ForwardDCT8x4, 4529)
 	check("4x8", 4, 8, ForwardDCT4x8, 4529)
 }
+
+func TestForwardDCT64ExtentDCScale(t *testing.T) {
+	check := func(name string, w, h int, fwd func([]int32, int, []int16, int) error, wantDC int32) {
+		coeffSize := adjustedScanSize(Size{Width: uint8(w), Height: uint8(h)})
+		coeffW := int(coeffSize.Width)
+		coeffH := int(coeffSize.Height)
+		residual := make([]int16, w*h)
+		for i := range residual {
+			residual[i] = 100
+		}
+		coeff := make([]int32, coeffW*coeffH)
+		if err := fwd(coeff, coeffH, residual, w); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for i := 1; i < len(coeff); i++ {
+			if coeff[i] != 0 {
+				t.Fatalf("%s AC coeff[%d]=%d want 0", name, i, coeff[i])
+			}
+		}
+		if coeff[0] != wantDC {
+			t.Fatalf("%s DC=%d want %d", name, coeff[0], wantDC)
+		}
+	}
+	check("64x64", 64, 64, ForwardDCT64x64, 12806)
+	check("32x64", 32, 64, ForwardDCT32x64, 9056)
+	check("64x32", 64, 32, ForwardDCT64x32, 9056)
+}
+
+func TestForwardDCT64ExtentDispatchMatchesForwardBlock(t *testing.T) {
+	cases := []struct {
+		name string
+		size Size
+		fwd  func([]int32, int, []int16, int) error
+	}{
+		{name: "64x64", size: Size{Width: 64, Height: 64}, fwd: ForwardDCT64x64},
+		{name: "32x64", size: Size{Width: 32, Height: 64}, fwd: ForwardDCT32x64},
+		{name: "64x32", size: Size{Width: 64, Height: 32}, fwd: ForwardDCT64x32},
+	}
+	rng := rand.New(rand.NewSource(6400))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			width := int(tc.size.Width)
+			height := int(tc.size.Height)
+			coeffSize := adjustedScanSize(tc.size)
+			coeffW := int(coeffSize.Width)
+			coeffH := int(coeffSize.Height)
+			residual := make([]int16, width*height)
+			for i := range residual {
+				residual[i] = int16(rng.Intn(511) - 255)
+			}
+			got := make([]int32, coeffW*coeffH)
+			want := make([]int32, coeffW*coeffH)
+			scratch := make([]int32, width*height)
+			if err := ForwardBlock(got, coeffH, residual, width, scratch, tc.size, TypeDCTDCT); err != nil {
+				t.Fatalf("ForwardBlock: %v", err)
+			}
+			if err := tc.fwd(want, coeffH, residual, width); err != nil {
+				t.Fatalf("specialized: %v", err)
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("coeff[%d]=%d want %d", i, got[i], want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestForwardDCT64ExtentZeroAlloc(t *testing.T) {
+	var residual [64 * 64]int16
+	for i := range residual {
+		residual[i] = int16(i%511) - 255
+	}
+	var coeff [32 * 32]int32
+	allocs := testing.AllocsPerRun(20, func() {
+		_ = ForwardDCT64x64(coeff[:], 32, residual[:], 64)
+		_ = ForwardDCT32x64(coeff[:], 32, residual[:32*64], 32)
+		_ = ForwardDCT64x32(coeff[:], 32, residual[:64*32], 64)
+	})
+	if allocs != 0 {
+		t.Fatalf("forward DCT64 extent allocated %v objects/run, want 0", allocs)
+	}
+}

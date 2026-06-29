@@ -1,5 +1,6 @@
 // Ported from libaom:
-//   av1/encoder/av1_fwd_txfm1d.c (av1_fdct4, av1_fdct8, av1_fdct16, av1_fdct32)
+//   av1/encoder/av1_fwd_txfm1d.c (av1_fdct4, av1_fdct8, av1_fdct16, av1_fdct32,
+//   av1_fdct64)
 //   av1/encoder/av1_fwd_txfm2d.c (fwd_txfm2d_c, fwd_shift_4x4, fwd_shift_8x8,
 //   fwd_shift_16x16, fwd_shift_32x32, fwd_shift_16x8/8x16/8x4/4x8, the
 //   rectangular NewSqrt2 row scaling, av1_fwd_cos_bit_col/row)
@@ -21,6 +22,27 @@ var fwdCospi13 = [64]int32{
 	5649, 5501, 5351, 5197, 5040, 4880, 4717, 4551, 4383, 4212, 4038,
 	3862, 3683, 3503, 3320, 3135, 2948, 2760, 2570, 2378, 2185, 1990,
 	1795, 1598, 1401, 1202, 1003, 803, 603, 402, 201,
+}
+
+// fwdCospi11 is av1_cospi_arr_data[11-cos_bit_min]. The 64-extent forward
+// DCT row pass uses it for 32x64 and 64x32 shapes.
+var fwdCospi11 = [64]int32{
+	2048, 2047, 2046, 2042, 2038, 2033, 2026, 2018, 2009, 1998, 1987,
+	1974, 1960, 1945, 1928, 1911, 1892, 1872, 1851, 1829, 1806, 1782,
+	1757, 1730, 1703, 1674, 1645, 1615, 1583, 1551, 1517, 1483, 1448,
+	1412, 1375, 1338, 1299, 1260, 1220, 1179, 1138, 1096, 1053, 1009,
+	965, 921, 876, 830, 784, 737, 690, 642, 595, 546, 498,
+	449, 400, 350, 301, 251, 201, 151, 100, 50,
+}
+
+// fwdCospi10 is av1_cospi_arr_data[10-cos_bit_min]. The 64x64 forward DCT
+// row pass uses it.
+var fwdCospi10 = [64]int32{
+	1024, 1024, 1023, 1021, 1019, 1016, 1013, 1009, 1004, 999, 993, 987, 980,
+	972, 964, 955, 946, 936, 926, 915, 903, 891, 878, 865, 851, 837,
+	822, 807, 792, 775, 759, 742, 724, 706, 688, 669, 650, 630, 610,
+	590, 569, 548, 526, 505, 483, 460, 438, 415, 392, 369, 345, 321,
+	297, 273, 249, 224, 200, 175, 150, 125, 100, 75, 50, 25,
 }
 
 // fwdCospi12 is av1_cospi_arr_data[12-cos_bit_min]: cos(i*pi/64) in Q12, the
