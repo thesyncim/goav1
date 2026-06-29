@@ -37,6 +37,10 @@ const (
 
 	timingModeCore     = "core"
 	timingModeEndToEnd = "e2e"
+
+	runOrderBitrateEncoder = "bitrate-encoder"
+	runOrderEncoderBitrate = "encoder-bitrate"
+	runOrderShuffle        = "shuffle"
 )
 
 type benchConfig struct {
@@ -56,6 +60,8 @@ type benchConfig struct {
 	anchorEncoder       string
 	requiredEncodersRaw string
 	timingMode          string
+	runOrder            string
+	shuffleSeed         int64
 	encoders            []string
 	bitrates            []int
 	requiredMetrics     []string
@@ -229,6 +235,8 @@ type metadataConfig struct {
 	SVTLP            int      `json:"svt_lp"`
 	SVTASM           string   `json:"svt_asm,omitempty"`
 	TimingMode       string   `json:"timing_mode"`
+	RunOrder         string   `json:"run_order"`
+	ShuffleSeed      int64    `json:"shuffle_seed,omitempty"`
 	Publish          bool     `json:"publish,omitempty"`
 }
 
@@ -285,6 +293,11 @@ type encoderInvocationMetadata struct {
 type processCPUTimes struct {
 	user   time.Duration
 	system time.Duration
+}
+
+type encodeJob struct {
+	bitrate int
+	encoder string
 }
 
 func main() {
@@ -501,6 +514,8 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.metadataPath, "metadata-json", "", "write reproducibility metadata JSON to this path")
 	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
 	flag.StringVar(&cfg.timingMode, "timing-mode", timingModeCore, "encode timing mode: core or e2e")
+	flag.StringVar(&cfg.runOrder, "run-order", runOrderBitrateEncoder, "encode tuple order: bitrate-encoder, encoder-bitrate, or shuffle")
+	flag.Int64Var(&cfg.shuffleSeed, "shuffle-seed", 1, "deterministic seed used when -run-order=shuffle")
 	flag.BoolVar(&cfg.requireSummary, "require-summary", false, "fail if required BD-rate summary rows are missing or invalid")
 	flag.BoolVar(&cfg.requireCorpus, "require-corpus", false, "require a manifest-backed real clip corpus before encoding")
 	flag.BoolVar(&cfg.publish, "publish", false, "require strict reproducibility controls for published benchmark tables")
@@ -572,6 +587,10 @@ func parseFlags() (benchConfig, error) {
 	if cfg.timingMode != timingModeCore && cfg.timingMode != timingModeEndToEnd {
 		return benchConfig{}, fmt.Errorf("invalid timing mode %q: valid values are core or e2e", cfg.timingMode)
 	}
+	cfg.runOrder = strings.TrimSpace(strings.ToLower(cfg.runOrder))
+	if !validRunOrder(cfg.runOrder) {
+		return benchConfig{}, fmt.Errorf("invalid run order %q: valid values are %s, %s, or %s", cfg.runOrder, runOrderBitrateEncoder, runOrderEncoderBitrate, runOrderShuffle)
+	}
 	if cfg.svtLP < 0 || cfg.svtLP > 6 {
 		return benchConfig{}, fmt.Errorf("invalid SVT --lp level %d: valid range is 0..6; --lp is a parallelism level, not a thread count", cfg.svtLP)
 	}
@@ -613,6 +632,7 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"require-summary",
 		"gomaxprocs",
 		"timing-mode",
+		"run-order",
 	}
 	for _, name := range required {
 		if err := requireExplicitFlag(cfg, name); err != nil {
@@ -627,6 +647,11 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	}
 	if cfg.timingMode != timingModeEndToEnd {
 		return errors.New("publish requires -timing-mode e2e")
+	}
+	if cfg.runOrder == runOrderShuffle {
+		if err := requireExplicitFlag(cfg, "shuffle-seed"); err != nil {
+			return err
+		}
 	}
 	if !cfg.requireCorpus || cfg.manifestPath == "" || cfg.minClips < 2 {
 		return errors.New("publish requires -require-corpus with -manifest and -min-clips >= 2")
@@ -687,6 +712,35 @@ func validatePublishClipInputs(clips []clipSpec) error {
 		}
 	}
 	return nil
+}
+
+func validRunOrder(order string) bool {
+	return order == runOrderBitrateEncoder || order == runOrderEncoderBitrate || order == runOrderShuffle
+}
+
+func encodeJobsForConfig(cfg benchConfig) []encodeJob {
+	jobs := make([]encodeJob, 0, len(cfg.bitrates)*len(cfg.encoders))
+	switch cfg.runOrder {
+	case runOrderEncoderBitrate:
+		for _, encoderName := range cfg.encoders {
+			for _, bitrate := range cfg.bitrates {
+				jobs = append(jobs, encodeJob{bitrate: bitrate, encoder: encoderName})
+			}
+		}
+	default:
+		for _, bitrate := range cfg.bitrates {
+			for _, encoderName := range cfg.encoders {
+				jobs = append(jobs, encodeJob{bitrate: bitrate, encoder: encoderName})
+			}
+		}
+	}
+	if cfg.runOrder == runOrderShuffle {
+		rng := rand.New(rand.NewSource(cfg.shuffleSeed))
+		rng.Shuffle(len(jobs), func(i, j int) {
+			jobs[i], jobs[j] = jobs[j], jobs[i]
+		})
+	}
+	return jobs
 }
 
 func parsePositiveList(s string) ([]int, error) {
@@ -1055,111 +1109,110 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 	var invocations []encoderInvocationMetadata
 	required := requiredMetricSet(cfg.requiredMetrics)
 	requiredEncoders := requiredEncoderSet(cfg.requiredEncoders)
-	for _, bitrate := range cfg.bitrates {
-		for _, encoderName := range cfg.encoders {
-			result := runEncoder(clipCfg, frames, refPath, encoderName, bitrate)
-			m := metrics{psnr: "NA", ssim: "NA", xpsnr: "NA", vmaf: "NA"}
-			var metricErr error
-			if result.status == "ok" {
-				m, metricErr = measureDecoded(clipCfg, filters, required, refPath, result.decodedYUV, encoderName, bitrate)
-				if metricErr != nil {
-					result.status, result.errText = "error", metricErr.Error()
+	for _, job := range encodeJobsForConfig(cfg) {
+		bitrate, encoderName := job.bitrate, job.encoder
+		result := runEncoder(clipCfg, frames, refPath, encoderName, bitrate)
+		m := metrics{psnr: "NA", ssim: "NA", xpsnr: "NA", vmaf: "NA"}
+		var metricErr error
+		if result.status == "ok" {
+			m, metricErr = measureDecoded(clipCfg, filters, required, refPath, result.decodedYUV, encoderName, bitrate)
+			if metricErr != nil {
+				result.status, result.errText = "error", metricErr.Error()
+			}
+			if metricErr == nil && frameMetricsWriter != nil {
+				if err := writeFrameMetricRows(clipCfg, filters, frameMetricsWriter, clip.Name, result.encoder, bitrate, refPath, result.decodedYUV); err != nil {
+					return rows, invocations, err
 				}
-				if metricErr == nil && frameMetricsWriter != nil {
-					if err := writeFrameMetricRows(clipCfg, filters, frameMetricsWriter, clip.Name, result.encoder, bitrate, refPath, result.decodedYUV); err != nil {
-						return rows, invocations, err
-					}
-					frameMetricsWriter.Flush()
-				}
+				frameMetricsWriter.Flush()
 			}
-			actualBPS := int64(0)
-			if result.bytes > 0 && clip.Frames > 0 {
-				actualBPS = result.bytes * 8 * int64(clip.FPS) / int64(clip.Frames)
-			}
-			encodeFPS := ""
-			if result.duration > 0 {
-				encodeFPS = strconv.FormatFloat(float64(clip.Frames)/result.duration.Seconds(), 'f', 2, 64)
-			}
-			row := benchRow{
-				clip:      clip.Name,
-				width:     clip.Width,
-				height:    clip.Height,
-				frames:    clip.Frames,
-				fps:       clip.FPS,
-				encoder:   result.encoder,
-				targetBPS: result.targetBPS,
-				actualBPS: actualBPS,
-				duration:  result.duration,
-				cpuUser:   result.cpuUser,
-				cpuSystem: result.cpuSystem,
-				cpuOK:     result.cpuAvailable,
-				encodeFPS: encodeFPS,
-				bytes:     result.bytes,
-				metrics:   m,
-				status:    result.status,
-				errText:   result.errText,
-			}
-			rows = append(rows, row)
-			encodedPath, encodedContainer := result.encodedPath, result.encodedContainer
-			if result.encodedSHA256 == "" {
-				encodedPath, encodedContainer = "", ""
-			}
-			decodedPath := result.decodedYUV
-			if result.decodedSHA256 == "" {
-				decodedPath = ""
-			}
-			invocations = append(invocations, encoderInvocationMetadata{
-				Clip:             clip.Name,
-				Width:            clip.Width,
-				Height:           clip.Height,
-				Frames:           clip.Frames,
-				FPS:              clip.FPS,
-				Encoder:          result.encoder,
-				TargetBPS:        result.targetBPS,
-				ActualBPS:        actualBPS,
-				CompressedBytes:  result.bytes,
-				EncodedPath:      encodedPath,
-				EncodedContainer: encodedContainer,
-				EncodedBytes:     result.encodedBytes,
-				EncodedSHA256:    result.encodedSHA256,
-				DecodedPath:      decodedPath,
-				DecodedBytes:     result.decodedBytes,
-				DecodedSHA256:    result.decodedSHA256,
-				EncodeWallSecs:   durationSeconds(result.duration),
-				CPUAvailable:     result.cpuAvailable,
-				CPUUserSecs:      durationSeconds(result.cpuUser),
-				CPUSystemSecs:    durationSeconds(result.cpuSystem),
-				CPUTotalSecs:     durationSeconds(totalCPU(result.cpuUser, result.cpuSystem)),
-				ObservedParallel: observedParallelism(result.duration, result.cpuUser, result.cpuSystem, result.cpuAvailable),
-				Status:           result.status,
-				Error:            result.errText,
-				Command:          result.command,
-				Settings:         result.settings,
-			})
-			if err := writeBenchRow(writer, row); err != nil {
+		}
+		actualBPS := int64(0)
+		if result.bytes > 0 && clip.Frames > 0 {
+			actualBPS = result.bytes * 8 * int64(clip.FPS) / int64(clip.Frames)
+		}
+		encodeFPS := ""
+		if result.duration > 0 {
+			encodeFPS = strconv.FormatFloat(float64(clip.Frames)/result.duration.Seconds(), 'f', 2, 64)
+		}
+		row := benchRow{
+			clip:      clip.Name,
+			width:     clip.Width,
+			height:    clip.Height,
+			frames:    clip.Frames,
+			fps:       clip.FPS,
+			encoder:   result.encoder,
+			targetBPS: result.targetBPS,
+			actualBPS: actualBPS,
+			duration:  result.duration,
+			cpuUser:   result.cpuUser,
+			cpuSystem: result.cpuSystem,
+			cpuOK:     result.cpuAvailable,
+			encodeFPS: encodeFPS,
+			bytes:     result.bytes,
+			metrics:   m,
+			status:    result.status,
+			errText:   result.errText,
+		}
+		rows = append(rows, row)
+		encodedPath, encodedContainer := result.encodedPath, result.encodedContainer
+		if result.encodedSHA256 == "" {
+			encodedPath, encodedContainer = "", ""
+		}
+		decodedPath := result.decodedYUV
+		if result.decodedSHA256 == "" {
+			decodedPath = ""
+		}
+		invocations = append(invocations, encoderInvocationMetadata{
+			Clip:             clip.Name,
+			Width:            clip.Width,
+			Height:           clip.Height,
+			Frames:           clip.Frames,
+			FPS:              clip.FPS,
+			Encoder:          result.encoder,
+			TargetBPS:        result.targetBPS,
+			ActualBPS:        actualBPS,
+			CompressedBytes:  result.bytes,
+			EncodedPath:      encodedPath,
+			EncodedContainer: encodedContainer,
+			EncodedBytes:     result.encodedBytes,
+			EncodedSHA256:    result.encodedSHA256,
+			DecodedPath:      decodedPath,
+			DecodedBytes:     result.decodedBytes,
+			DecodedSHA256:    result.decodedSHA256,
+			EncodeWallSecs:   durationSeconds(result.duration),
+			CPUAvailable:     result.cpuAvailable,
+			CPUUserSecs:      durationSeconds(result.cpuUser),
+			CPUSystemSecs:    durationSeconds(result.cpuSystem),
+			CPUTotalSecs:     durationSeconds(totalCPU(result.cpuUser, result.cpuSystem)),
+			ObservedParallel: observedParallelism(result.duration, result.cpuUser, result.cpuSystem, result.cpuAvailable),
+			Status:           result.status,
+			Error:            result.errText,
+			Command:          result.command,
+			Settings:         result.settings,
+		})
+		if err := writeBenchRow(writer, row); err != nil {
+			return nil, nil, err
+		}
+		if statsWriter != nil && result.encoder == "goav1" {
+			if err := writeStatsRow(statsWriter, row, result.stats); err != nil {
 				return nil, nil, err
 			}
-			if statsWriter != nil && result.encoder == "goav1" {
-				if err := writeStatsRow(statsWriter, row, result.stats); err != nil {
+			statsWriter.Flush()
+		}
+		if frameStatsWriter != nil && result.encoder == "goav1" {
+			for _, frameStats := range result.frameStats {
+				if err := writeFrameStatsRow(frameStatsWriter, row, frameStats); err != nil {
 					return nil, nil, err
 				}
-				statsWriter.Flush()
 			}
-			if frameStatsWriter != nil && result.encoder == "goav1" {
-				for _, frameStats := range result.frameStats {
-					if err := writeFrameStatsRow(frameStatsWriter, row, frameStats); err != nil {
-						return nil, nil, err
-					}
-				}
-				frameStatsWriter.Flush()
-			}
-			writer.Flush()
-			if err := requiredEncoderError(requiredEncoders, clip.Name, result, bitrate); err != nil {
-				return rows, invocations, err
-			}
-			if metricErr != nil {
-				return rows, invocations, fmt.Errorf("%s %s %d bps: %w", clip.Name, result.encoder, bitrate, metricErr)
-			}
+			frameStatsWriter.Flush()
+		}
+		writer.Flush()
+		if err := requiredEncoderError(requiredEncoders, clip.Name, result, bitrate); err != nil {
+			return rows, invocations, err
+		}
+		if metricErr != nil {
+			return rows, invocations, fmt.Errorf("%s %s %d bps: %w", clip.Name, result.encoder, bitrate, metricErr)
 		}
 	}
 	return rows, invocations, nil
@@ -1589,6 +1642,8 @@ func metadataConfigFor(cfg benchConfig) metadataConfig {
 		SVTLP:            cfg.svtLP,
 		SVTASM:           cfg.svtASM,
 		TimingMode:       cfg.timingMode,
+		RunOrder:         cfg.runOrder,
+		ShuffleSeed:      cfg.shuffleSeed,
 		Publish:          cfg.publish,
 	}
 }
@@ -1668,6 +1723,7 @@ func fairnessNotes(cfg benchConfig) []string {
 		"SVT-AV1 --lp is a documented parallelism level in the range 0..6, not a target processor or thread count; numeric equality with GOMAXPROCS is not treated as equivalent concurrency.",
 		"CSV and metadata include wall seconds, CPU seconds, and observed_parallelism=cpu_total_seconds/encode_wall_seconds so comparisons can be checked against observed CPU budget.",
 		"qualitybench records timing_mode; core mode keeps the historical goav1 per-frame Encode timer, while e2e mode times goav1 setup, encode calls, and decoded-output writes for fairer CLI comparisons.",
+		"qualitybench records run_order and shuffle_seed so encoder/bitrate order effects can be reproduced or randomized deterministically.",
 		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or sweep --lp 0..6, then report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
 		"For fair libaom comparisons, set -aom-threads and -aom-row-mt explicitly and report both; qualitybench forwards them to aomenc --threads and --row-mt and records them in metadata.",
 		"SVT-AV1 --asm defaults to max and may use CPU-specific kernels such as neon_dotprod or neon_i8mm; use -svt-asm to pin the assembly tier when comparing against goav1's current SIMD coverage.",

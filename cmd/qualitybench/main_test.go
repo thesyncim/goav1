@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -738,6 +739,8 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		aomRowMT:         0,
 		svtLP:            5,
 		timingMode:       timingModeEndToEnd,
+		runOrder:         runOrderShuffle,
+		shuffleSeed:      42,
 		publish:          true,
 	}
 	got := metadataConfigFor(cfg)
@@ -749,7 +752,8 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		got.RequiredMetrics[0] != "psnr" || got.RequiredEncoders[0] != "goav1" ||
 		!got.RequireSummary || !got.RequireCorpus || got.MinClips != 6 ||
 		got.GoMaxProcs != 4 || got.AOMThreads != 1 || got.AOMRowMT != 0 ||
-		got.SVTLP != 5 || got.TimingMode != timingModeEndToEnd || !got.Publish {
+		got.SVTLP != 5 || got.TimingMode != timingModeEndToEnd ||
+		got.RunOrder != runOrderShuffle || got.ShuffleSeed != 42 || !got.Publish {
 		t.Fatalf("metadata config aliases inputs: %+v", got)
 	}
 }
@@ -760,6 +764,7 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 	if !strings.Contains(joined, "not a target processor or thread count") ||
 		!strings.Contains(joined, "observed_parallelism") ||
 		!strings.Contains(joined, "timing_mode") ||
+		!strings.Contains(joined, "run_order") ||
 		!strings.Contains(joined, "sweep --lp 0..6") ||
 		!strings.Contains(joined, "-aom-threads") ||
 		!strings.Contains(joined, "-aom-row-mt") ||
@@ -790,6 +795,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		svtLP:               4,
 		svtASM:              "neon",
 		timingMode:          timingModeEndToEnd,
+		runOrder:            runOrderBitrateEncoder,
 		explicitFlags: map[string]bool{
 			"workdir":          true,
 			"csv":              true,
@@ -803,6 +809,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"require-summary":  true,
 			"gomaxprocs":       true,
 			"timing-mode":      true,
+			"run-order":        true,
 			"aom-threads":      true,
 			"aom-row-mt":       true,
 			"svt-lp":           true,
@@ -831,6 +838,14 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		t.Fatalf("core timing publish error=%v", err)
 	}
 
+	shuffled := cfg
+	shuffled.runOrder = runOrderShuffle
+	delete(shuffled.explicitFlags, "shuffle-seed")
+	if err := validatePublishConfig(shuffled, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-shuffle-seed") {
+		t.Fatalf("implicit shuffle seed error=%v", err)
+	}
+
 	dirty := cfg
 	if err := validatePublishConfig(dirty, gitMetadata{Commit: "abc", Dirty: true}); err == nil ||
 		!strings.Contains(err.Error(), "clean") {
@@ -843,6 +858,41 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		!strings.Contains(err.Error(), "-require-encoders all") {
 		t.Fatalf("non-all required encoders error=%v", err)
 	}
+}
+
+func TestEncodeJobsRunOrder(t *testing.T) {
+	cfg := benchConfig{
+		encoders: []string{"goav1", "aomenc"},
+		bitrates: []int{100, 200},
+		runOrder: runOrderBitrateEncoder,
+	}
+	if got := encodeJobLabels(encodeJobsForConfig(cfg)); got != "100:goav1,100:aomenc,200:goav1,200:aomenc" {
+		t.Fatalf("bitrate order=%s", got)
+	}
+	cfg.runOrder = runOrderEncoderBitrate
+	if got := encodeJobLabels(encodeJobsForConfig(cfg)); got != "100:goav1,200:goav1,100:aomenc,200:aomenc" {
+		t.Fatalf("encoder order=%s", got)
+	}
+	cfg.bitrates = []int{100, 200, 300}
+	cfg.runOrder = runOrderShuffle
+	cfg.shuffleSeed = 9
+	first := encodeJobLabels(encodeJobsForConfig(cfg))
+	second := encodeJobLabels(encodeJobsForConfig(cfg))
+	if first != second {
+		t.Fatalf("shuffle not deterministic: %s vs %s", first, second)
+	}
+	cfg.shuffleSeed = 10
+	if third := encodeJobLabels(encodeJobsForConfig(cfg)); third == first {
+		t.Fatalf("different shuffle seed produced same order: %s", third)
+	}
+}
+
+func encodeJobLabels(jobs []encodeJob) string {
+	labels := make([]string, len(jobs))
+	for i, job := range jobs {
+		labels[i] = strconv.Itoa(job.bitrate) + ":" + job.encoder
+	}
+	return strings.Join(labels, ",")
 }
 
 func TestValidatePublishClipInputsRequiresExactSize(t *testing.T) {
