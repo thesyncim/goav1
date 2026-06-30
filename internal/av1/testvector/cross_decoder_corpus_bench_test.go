@@ -57,7 +57,8 @@ package testvector
 //     requested with SvtAv1DecApp --lp 1, which is a parallelism level rather
 //     than a verified thread-count knob. All decoders are decode-only with
 //     output discarded. Each (decoder, clip) is warmed up once then run
-//     best-of-N (min wall-clock) to reject scheduler/IO noise.
+//     N times; the median measured sample is the reported table value, with min
+//     and IQR retained in JSON for noise audits.
 //   - IN-PROCESS vs SUBPROCESS. goav1 is timed in-process (no exec/startup);
 //     the C decoders are subprocesses whose raw wall-clock includes process
 //     startup. We measure each external decoder's startup baseline and report
@@ -128,6 +129,7 @@ type corpusPublishManifest struct {
 	sourceLicense  string
 	sourceCategory string
 	toolVersions   map[string]string
+	toolSHA256     map[string]string
 	expectedClips  int
 	rows           map[string]corpusPublishManifestRow
 }
@@ -1417,6 +1419,11 @@ func TestLoadCorpusPublishManifestValidatesFiles(t *testing.T) {
 		row.md5 != md5 || row.dav1dCheck != "dav1d=OK" || row.aomencArgs != "args" {
 		t.Fatalf("manifest=%+v row=%+v", manifest, row)
 	}
+	if manifest.toolSHA256["aomenc"] != testSHA256([]byte("aomenc fixture")) ||
+		manifest.toolSHA256["aomdec"] != testSHA256([]byte("aomdec fixture")) ||
+		manifest.toolSHA256["ffmpeg"] != testSHA256([]byte("ffmpeg fixture")) {
+		t.Fatalf("tool hashes=%+v", manifest.toolSHA256)
+	}
 	clip := corpusClip{name: "clip", width: 2, height: 4, frames: 3, bitDepth: 8, chroma: "420", oracleKind: corpusOracleStreamMD5, wantMD5: md5}
 	if err := validateCorpusPublishLoadedClips(manifest, []corpusClip{clip}); err != nil {
 		t.Fatalf("validateCorpusPublishLoadedClips: %v", err)
@@ -1472,26 +1479,29 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 		chroma:     "420",
 		tileCols:   1,
 	}
+	goav1Samples := summarizeCorpusDurations([]time.Duration{40 * time.Millisecond, 30 * time.Millisecond, 32 * time.Millisecond})
+	dav1dStartupSamples := summarizeCorpusDurations([]time.Duration{2 * time.Millisecond, time.Millisecond, 3 * time.Millisecond})
+	dav1dSamples := summarizeCorpusDurations([]time.Duration{16 * time.Millisecond, 15 * time.Millisecond, 18 * time.Millisecond})
 	results := []decoderResult{
 		{
 			name:        "goav1",
 			inProcess:   true,
-			totalRaw:    30 * time.Millisecond,
+			totalRaw:    corpusSelectedDuration(goav1Samples),
 			totalFrames: 3,
-			perVector:   map[string]time.Duration{ivfPath: 30 * time.Millisecond},
+			perVector:   map[string]time.Duration{ivfPath: corpusSelectedDuration(goav1Samples)},
 			perVectorSamples: map[string]corpusDurationSamples{
-				ivfPath: summarizeCorpusDurations([]time.Duration{40 * time.Millisecond, 30 * time.Millisecond, 35 * time.Millisecond}),
+				ivfPath: goav1Samples,
 			},
 		},
 		{
 			name:           "dav1d",
-			startup:        time.Millisecond,
-			startupSamples: summarizeCorpusDurations([]time.Duration{2 * time.Millisecond, time.Millisecond, 3 * time.Millisecond}),
-			totalRaw:       15 * time.Millisecond,
+			startup:        corpusSelectedDuration(dav1dStartupSamples),
+			startupSamples: dav1dStartupSamples,
+			totalRaw:       corpusSelectedDuration(dav1dSamples),
 			totalFrames:    3,
-			perVector:      map[string]time.Duration{ivfPath: 15 * time.Millisecond},
+			perVector:      map[string]time.Duration{ivfPath: corpusSelectedDuration(dav1dSamples)},
 			perVectorSamples: map[string]corpusDurationSamples{
-				ivfPath: summarizeCorpusDurations([]time.Duration{16 * time.Millisecond, 15 * time.Millisecond, 18 * time.Millisecond}),
+				ivfPath: dav1dSamples,
 			},
 		},
 	}
@@ -1531,9 +1541,17 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 		report.Corpus.ToolVersions["ffmpeg"] != "ffmpeg fixture" {
 		t.Fatalf("corpus provenance=%+v", report.Corpus)
 	}
+	if report.Corpus.ToolSHA256["aomenc"] != testSHA256([]byte("aomenc fixture")) ||
+		report.Corpus.ToolSHA256["aomdec"] != testSHA256([]byte("aomdec fixture")) ||
+		report.Corpus.ToolSHA256["ffmpeg"] != testSHA256([]byte("ffmpeg fixture")) {
+		t.Fatalf("corpus tool hashes=%+v", report.Corpus.ToolSHA256)
+	}
 	if report.Environment.Notes != "fixed power mode" || report.Environment.GOMAXPROCS <= 0 ||
 		report.Environment.NumCPU <= 0 || report.Environment.PATH == "" {
 		t.Fatalf("environment=%+v", report.Environment)
+	}
+	if !strings.Contains(report.Timing.Statistic, "median measured") {
+		t.Fatalf("timing statistic=%q", report.Timing.Statistic)
 	}
 	if len(report.Clips) != 1 || report.Clips[0].Name != "clip" || report.Clips[0].CQ != 32 ||
 		report.Clips[0].BitDepth != 8 || report.Clips[0].Profile != 0 ||
@@ -1671,6 +1689,21 @@ func TestLoadCorpusPublishManifestRejectsStaleCorpus(t *testing.T) {
 			},
 		},
 		{
+			name: "missing tool sha256",
+			setup: func(t *testing.T, dir string) {
+				writeCorpusManifestFixture(t, dir, "clip", []byte("ivf-data"), []byte(md5Hex+"\n"), md5Hex, 2, 4, 3, 8, "420", 1)
+				path := filepath.Join(dir, corpusManifestFile)
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				data = []byte(strings.Replace(string(data), "# aomenc_sha256="+testSHA256([]byte("aomenc fixture"))+"\n", "", 1))
+				if err := os.WriteFile(path, data, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
 			name: "ivf hash mismatch",
 			setup: func(t *testing.T, dir string) {
 				writeCorpusManifestFixture(t, dir, "clip", []byte("ivf-data"), []byte(md5Hex+"\n"), md5Hex, 2, 4, 3, 8, "420", 1)
@@ -1746,8 +1779,11 @@ func writeCorpusManifestFixture(t *testing.T, dir, name string, ivfData, md5Data
 		"# source_url=https://example.invalid/source",
 		"# source_license=fixture-license",
 		"# source_category=fixture-category",
+		"# aomenc_sha256=" + testSHA256([]byte("aomenc fixture")),
 		"# aomenc_version=aomenc fixture",
+		"# aomdec_sha256=" + testSHA256([]byte("aomdec fixture")),
 		"# aomdec_version=aomdec fixture",
+		"# ffmpeg_sha256=" + testSHA256([]byte("ffmpeg fixture")),
 		"# ffmpeg_version=ffmpeg fixture",
 		fmt.Sprintf("# expected_clips=%d", expectedClips),
 		corpusManifestColumns,
@@ -1814,7 +1850,7 @@ func TestExternalCorpusFrameMD5SidecarSmoke(t *testing.T) {
 }
 
 // TestGeneratedCorpusConformance verifies every generated corpus clip once,
-// without the best-of-N timing loop from TestCrossDecoderCorpus. It is an
+// without the repeated timing loop from TestCrossDecoderCorpus. It is an
 // opt-in broad real-content conformance gate for locally materialized clips.
 func TestGeneratedCorpusConformance(t *testing.T) {
 	if os.Getenv("GOAV1_CORPUS_CONFORMANCE") != "1" {
@@ -1981,6 +2017,7 @@ func loadCorpusPublishManifest(dir string) (corpusPublishManifest, error) {
 	manifest := corpusPublishManifest{
 		path:         path,
 		toolVersions: map[string]string{},
+		toolSHA256:   map[string]string{},
 		rows:         map[string]corpusPublishManifestRow{},
 	}
 	sawColumns := false
@@ -2035,10 +2072,15 @@ func loadCorpusPublishManifest(dir string) (corpusPublishManifest, error) {
 		if err != nil {
 			return corpusPublishManifest{}, err
 		}
+		sha, err := requiredCorpusManifestSHA256Header(path, headers, tool+"_sha256")
+		if err != nil {
+			return corpusPublishManifest{}, err
+		}
 		manifest.toolVersions[tool] = version
+		manifest.toolSHA256[tool] = sha
 	}
-	if version := strings.TrimSpace(headers["dav1d_version"]); version != "" {
-		manifest.toolVersions["dav1d"] = version
+	if err := loadOptionalCorpusToolManifestHeader(path, headers, "dav1d", manifest.toolVersions, manifest.toolSHA256); err != nil {
+		return corpusPublishManifest{}, err
 	}
 
 	expectedRaw, ok := headers["expected_clips"]
@@ -2065,6 +2107,37 @@ func requiredCorpusManifestHeader(path string, headers map[string]string, name s
 		return "", fmt.Errorf("%s: missing %s header", path, name)
 	}
 	return value, nil
+}
+
+func requiredCorpusManifestSHA256Header(path string, headers map[string]string, name string) (string, error) {
+	value, err := requiredCorpusManifestHeader(path, headers, name)
+	if err != nil {
+		return "", err
+	}
+	if err := validateCorpusManifestSHA256(value, name); err != nil {
+		return "", fmt.Errorf("%s: %w", path, err)
+	}
+	return strings.ToLower(strings.TrimSpace(value)), nil
+}
+
+func loadOptionalCorpusToolManifestHeader(path string, headers map[string]string, tool string, versions, hashes map[string]string) error {
+	version := strings.TrimSpace(headers[tool+"_version"])
+	sha := strings.TrimSpace(headers[tool+"_sha256"])
+	if version == "" && sha == "" {
+		return nil
+	}
+	if version == "" {
+		return fmt.Errorf("%s: missing %s_version header for present %s_sha256", path, tool, tool)
+	}
+	if sha == "" {
+		return fmt.Errorf("%s: missing %s_sha256 header for present %s_version", path, tool, tool)
+	}
+	if err := validateCorpusManifestSHA256(sha, tool+"_sha256"); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	versions[tool] = version
+	hashes[tool] = strings.ToLower(sha)
+	return nil
 }
 
 func parseCorpusPublishManifestRow(line string) (corpusPublishManifestRow, error) {
@@ -2357,6 +2430,7 @@ type corpusPublishReportCorpus struct {
 	SourceLicense    string            `json:"source_license"`
 	SourceCategory   string            `json:"source_category"`
 	ToolVersions     map[string]string `json:"tool_versions,omitempty"`
+	ToolSHA256       map[string]string `json:"tool_sha256,omitempty"`
 	ExpectedClips    int               `json:"expected_clips"`
 	LoadedClips      int               `json:"loaded_clips"`
 	TotalFrames      int               `json:"total_frames"`
@@ -2484,6 +2558,10 @@ func summarizeCorpusDurations(samples []time.Duration) corpusDurationSamples {
 		Max:    ordered[len(ordered)-1],
 		IQR:    ordered[(3*len(ordered))/4] - ordered[len(ordered)/4],
 	}
+}
+
+func corpusSelectedDuration(samples corpusDurationSamples) time.Duration {
+	return samples.Median
 }
 
 func corpusRequiredExternalDecoderNames(decoders []externalDecoder, publish bool, raw string) (map[string]bool, error) {
@@ -2736,7 +2814,7 @@ func TestCrossDecoderCorpus(t *testing.T) {
 			_ = runExternal(bin, dec.startupArgs(bin))
 			return nil
 		})
-		startup := startupSamples.Min
+		startup := corpusSelectedDuration(startupSamples)
 		if err != nil {
 			startup = 0
 		}
@@ -2794,9 +2872,10 @@ func TestCrossDecoderCorpus(t *testing.T) {
 			}
 		}
 		res := &results[timer.resultSlot]
-		res.perVector[clip.ivfPath] = samples.Min
+		selected := corpusSelectedDuration(samples)
+		res.perVector[clip.ivfPath] = selected
 		res.perVectorSamples[clip.ivfPath] = samples
-		res.totalRaw += samples.Min
+		res.totalRaw += selected
 		res.totalFrames += clip.frames
 	}
 
@@ -2843,7 +2922,8 @@ func writeCorpusPublishReport(path, dir string, manifest corpusPublishManifest, 
 			SourceURL:        manifest.sourceURL,
 			SourceLicense:    manifest.sourceLicense,
 			SourceCategory:   manifest.sourceCategory,
-			ToolVersions:     copyCorpusToolVersions(manifest.toolVersions),
+			ToolVersions:     copyCorpusNonEmptyStringMap(manifest.toolVersions),
+			ToolSHA256:       copyCorpusNonEmptyStringMap(manifest.toolSHA256),
 			ExpectedClips:    manifest.expectedClips,
 			LoadedClips:      len(clips),
 			TotalFrames:      corpusTotalFrames(clips),
@@ -2853,7 +2933,7 @@ func writeCorpusPublishReport(path, dir string, manifest corpusPublishManifest, 
 		Timing: corpusPublishReportTiming{
 			Runs:                 crossBenchRuns,
 			WarmupRuns:           1,
-			Statistic:            "minimum wall-clock selected; JSON stores every measured sample plus median and IQR",
+			Statistic:            "median measured wall-clock selected; JSON stores every measured sample plus min, max, and IQR",
 			ConcurrencyModel:     "goav1 worker pool = 1; aomdec --threads=1; dav1d --threads 1; SvtAv1DecApp --lp 1 requests SVT parallelism level 1, not a verified thread count",
 			InProcessGoAV1:       true,
 			ExternalStartupModel: "raw includes subprocess startup; adjusted subtracts one measured startup baseline per clip",
@@ -2873,7 +2953,7 @@ func writeCorpusPublishReport(path, dir string, manifest corpusPublishManifest, 
 	return os.WriteFile(path, raw, 0o644)
 }
 
-func copyCorpusToolVersions(src map[string]string) map[string]string {
+func copyCorpusNonEmptyStringMap(src map[string]string) map[string]string {
 	if len(src) == 0 {
 		return nil
 	}
@@ -3202,7 +3282,7 @@ func printCorpusReport(t *testing.T, clips []corpusClip, results []decoderResult
 	fmt.Fprintf(&b, " goav1 multi-config cross-decoder throughput  (steady-state; PERF TRACKING)\n")
 	fmt.Fprintf(&b, "==================================================================================\n")
 	fmt.Fprintf(&b, " %s\n", corpusClipCoverageSummary(clips))
-	fmt.Fprintf(&b, " best-of-%d (min wall-clock); requested single-thread controls; full decode + post-filter; output discarded.\n", crossBenchRuns)
+	fmt.Fprintf(&b, " median-of-%d measured samples; requested single-thread controls; full decode + post-filter; output discarded.\n", crossBenchRuns)
 	fmt.Fprintf(&b, " timing order: deterministic clip-rotated decoder interleave to reduce thermal/load column bias.\n")
 	fmt.Fprintf(&b, " goav1: IN-PROCESS, byte-exact verified once while loading corpus; timed path discards output.\n")
 	fmt.Fprintf(&b, " others: SUBPROCESS, decode-only, output discarded; raw includes process startup,\n")

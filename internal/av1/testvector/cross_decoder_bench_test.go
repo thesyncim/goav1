@@ -294,13 +294,15 @@ type decoderResult struct {
 	// startupSamples records every measured startup probe for publishable corpus
 	// reports. The tiny cross-bench report does not populate it.
 	startupSamples corpusDurationSamples
-	// totalRaw is the summed best wall-clock across all vectors (raw, includes
-	// per-invocation startup for external decoders).
+	// totalRaw is the summed selected wall-clock across all vectors (raw,
+	// includes per-invocation startup for external decoders). The tiny
+	// cross-bench selects the minimum; the corpus publish benchmark selects the
+	// median.
 	totalRaw time.Duration
 	// totalFrames is the summed IVF frame count across all decoded vectors.
 	totalFrames int
-	// perVector records best raw time per vector path, used for the detail
-	// table.
+	// perVector records the selected raw time per vector path, used for the
+	// detail table.
 	perVector map[string]time.Duration
 	// perVectorSamples records every measured corpus run for the publish JSON
 	// sidecar. It is intentionally optional for non-publish benchmark paths.
