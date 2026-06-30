@@ -62,6 +62,9 @@ func cdefFilterBlock8NEON(ctx *filterBlockNEONCtx)
 func cdefFilterBlock8PrimaryNEON(ctx *filterBlockNEONCtx)
 
 //go:noescape
+func cdefFilterBlock8SecondaryNEON(ctx *filterBlockNEONCtx)
+
+//go:noescape
 func cdefFilterBlock4NEON(ctx *filterBlockNEONCtx)
 
 func filterBlockNEON(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
@@ -76,6 +79,8 @@ func filterBlockNEON(dst []uint16, dstStride int, dstOrigin int, input []uint16,
 		switch {
 		case primaryStrength != 0 && secondaryStrength == 0:
 			cdefFilterBlock8PrimaryNEON(&ctx)
+		case primaryStrength == 0 && secondaryStrength != 0:
+			cdefFilterBlock8SecondaryNEON(&ctx)
 		default:
 			cdefFilterBlock8NEON(&ctx)
 		}

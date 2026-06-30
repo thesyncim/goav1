@@ -167,6 +167,13 @@ func BenchmarkFilterBlock8x8SecondaryOnlyGenericNEON(b *testing.B) {
 	}, cdefFilterBlock8NEON)
 }
 
+func BenchmarkFilterBlock8x8SecondaryOnlySplitNEON(b *testing.B) {
+	benchFilterBlock8Asm(b, BlockFilterParams{
+		PrimaryStrength: 0, SecondaryStrength: 4, Direction: 5,
+		PrimaryDamping: 5, SecondaryDamping: 4, Width: 8, Height: 8,
+	}, cdefFilterBlock8SecondaryNEON)
+}
+
 func benchFilterBlock8Asm(b *testing.B, params BlockFilterParams, fn func(*filterBlockNEONCtx)) {
 	input := make([]uint16, BStride*24)
 	for i := range input {
