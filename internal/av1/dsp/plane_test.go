@@ -238,6 +238,65 @@ func TestAddConstantResidualPlaneBlockTrustedMatchesResidualAdd(t *testing.T) {
 	}
 }
 
+func TestAddRawTransformPlaneBlockTrustedMatchesResidualAdd(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		bytesPerSample int
+		bitDepth       uint8
+		fill           uint16
+		max            uint16
+	}{
+		{name: "8-bit", bytesPerSample: 1, bitDepth: 8, fill: 91, max: 255},
+		{name: "10-bit", bytesPerSample: 2, bitDepth: 10, fill: 512, max: 1023},
+		{name: "12-bit", bytesPerSample: 2, bitDepth: 12, fill: 2048, max: 4095},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			widths := []int{1, 4, 7, 8, 13, 16, 31, 32, 64}
+			for _, width := range widths {
+				const height = 5
+				stride := (width + 3) * tt.bytesPerSample
+				rawStride := width + 5
+				want, _ := testPlane(width, height, tt.bytesPerSample, stride)
+				got, _ := testPlane(width, height, tt.bytesPerSample, stride)
+				if err := FillPlaneBlock(want, tt.bytesPerSample, 0, 0, width, height, tt.fill); err != nil {
+					t.Fatal(err)
+				}
+				if err := FillPlaneBlock(got, tt.bytesPerSample, 0, 0, width, height, tt.fill); err != nil {
+					t.Fatal(err)
+				}
+				raw := make([]int32, rawStride*height)
+				residual := make([]int16, width*height)
+				for row := 0; row < height; row++ {
+					for col := 0; col < width; col++ {
+						v := int32((row*width + col) * 97)
+						switch (row + col) & 7 {
+						case 0:
+							v = -1 << 22
+						case 1:
+							v = 1 << 22
+						case 2:
+							v = -600
+						case 3:
+							v = 600
+						}
+						raw[row*rawStride+col] = v
+						residual[row*width+col] = int16(rawTransformResidual(v))
+					}
+				}
+				if err := AddResidualPlaneBlock(want, tt.bytesPerSample, tt.bitDepth, 0, 0, width, height, residual, width); err != nil {
+					t.Fatal(err)
+				}
+				AddRawTransformPlaneBlockTrusted(got.Pix, got.Stride, tt.bytesPerSample, tt.max, width, height, raw, rawStride)
+				for i := range want.Pix {
+					if got.Pix[i] != want.Pix[i] {
+						t.Fatalf("width=%d pix[%d]=%d want %d", width, i, got.Pix[i], want.Pix[i])
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestPlaneBlockRejectsInvalidInputs(t *testing.T) {
 	plane, _ := testPlane(4, 4, 1, 4)
 	if err := FillPlaneBlock(plane, 3, 0, 0, 1, 1, 0); !errors.Is(err, ErrInvalidBlock) {

@@ -140,6 +140,27 @@ func InverseBlockBitDepthBoundedRows(dst []int16, dstStride int, coeff []int32, 
 	return inverseSeparableBlockClampedRows(dst, dstStride, coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax, activeRows)
 }
 
+// InverseBlockBitDepthRaw writes the post-column inverse-transform values into
+// dst before the final round-by-four and int16 narrow. It is the dav1d/SVT
+// fused-add boundary: callers that are adding into a prediction plane can use
+// the existing exact transform kernels without first materializing an int16
+// residual block.
+func InverseBlockBitDepthRaw(dst []int32, coeff []int32, coeffStride int, size Size, t Type, bitDepth uint8, activeRows int) error {
+	rowMin, rowMax, colMin, colMax, ok := stageRangeBounds(bitDepth)
+	if !ok {
+		return ErrInvalidTransform
+	}
+	if t == TypeIDTX || !t.Supported(size) {
+		return ErrInvalidTransform
+	}
+	width := int(size.Width)
+	height := int(size.Height)
+	if len(dst) < width*height {
+		return ErrInvalidTransform
+	}
+	return inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, dst, size, t, rowMin, rowMax, colMin, colMax, activeRows)
+}
+
 // InverseDCTDCOnlyBlockBitDepth writes the residual for a DCT_DCT block whose
 // only non-zero coefficient is DC. It uses the same 1D DCT kernels and stage
 // clamps as InverseBlockBitDepth, but evaluates only the single horizontal and

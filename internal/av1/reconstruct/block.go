@@ -202,15 +202,23 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 		if err := transform.InverseWHT4x4Block(residual, width, dequant, scanHeight, eob); err != nil {
 			return ErrInvalidBlock
 		}
-	} else if activeRows > 0 {
-		if err := transform.InverseBlockBitDepthBoundedRows(residual, width, dequant, scanHeight, transformScratch, cfg.Size, cfg.Transform, bitDepth, activeRows); err != nil {
+		max := uint16((1 << bitDepth) - 1)
+		dsp.AddResidualPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, residual, width)
+		return nil
+	}
+	if cfg.Transform == transform.TypeIDTX {
+		if err := transform.InverseBlockBitDepth(residual, width, dequant, scanHeight, transformScratch, cfg.Size, cfg.Transform, bitDepth); err != nil {
 			return ErrInvalidBlock
 		}
-	} else if err := transform.InverseBlockBitDepth(residual, width, dequant, scanHeight, transformScratch, cfg.Size, cfg.Transform, bitDepth); err != nil {
+		max := uint16((1 << bitDepth) - 1)
+		dsp.AddResidualPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, residual, width)
+		return nil
+	}
+	if err := transform.InverseBlockBitDepthRaw(transformScratch, dequant, scanHeight, cfg.Size, cfg.Transform, bitDepth, activeRows); err != nil {
 		return ErrInvalidBlock
 	}
 	max := uint16((1 << bitDepth) - 1)
-	dsp.AddResidualPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, residual, width)
+	dsp.AddRawTransformPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, transformScratch, width)
 	return nil
 }
 

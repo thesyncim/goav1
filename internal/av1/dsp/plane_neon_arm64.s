@@ -129,3 +129,127 @@ rowAdvance16:
 
 done16:
 	RET
+
+// func addRawTransform8NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, groups uintptr, height uintptr)
+//
+// 8-bit destination with raw int32 inverse-transform samples. Each raw sample
+// is rounded right by four, saturated to int16 like transform.narrowStore, then
+// added to the predicted pixel and clipped to [0, max].
+TEXT ·addRawTransform8NEONAsm(SB), NOSPLIT, $0-56
+	MOVD dst+0(FP), R0
+	MOVD dstStride+8(FP), R1
+	MOVD raw+16(FP), R2
+	MOVD rawStride+24(FP), R3
+	MOVW max+32(FP), R12
+	MOVD groups+40(FP), R4
+	MOVD height+48(FP), R5
+
+	WORD $0x4f000505 // movi v5.4s, #8
+	WORD $0x4f000406 // movi v6.4s, #0
+	WORD $0x4e040d87 // dup v7.4s, w12
+
+rawRowLoop8:
+	CBZ  R5, rawDone8
+	MOVD R0, R6 // dst row cursor
+	MOVD R2, R7 // raw row cursor
+	MOVD R4, R8 // groups remaining
+
+rawColLoop8:
+	CBZ  R8, rawRowAdvance8
+	WORD $0x0c4070c0 // ld1 {v0.8b}, [x6]
+	WORD $0x4c4078e1 // ld1 {v1.4s}, [x7]
+	ADD  $16, R7, R9
+	WORD $0x4c407922 // ld1 {v2.4s}, [x9]
+	WORD $0x4ea58421 // add v1.4s, v1.4s, v5.4s
+	WORD $0x4ea58442 // add v2.4s, v2.4s, v5.4s
+	WORD $0x4f3c0421 // sshr v1.4s, v1.4s, #4
+	WORD $0x4f3c0442 // sshr v2.4s, v2.4s, #4
+	WORD $0x0e614821 // sqxtn v1.4h, v1.4s
+	WORD $0x4e614841 // sqxtn2 v1.8h, v2.4s
+	WORD $0x2f08a400 // uxtl v0.8h, v0.8b
+	WORD $0x0f10a422 // sxtl v2.4s, v1.4h
+	WORD $0x4f10a423 // sxtl2 v3.4s, v1.8h
+	WORD $0x2f10a404 // uxtl v4.4s, v0.4h
+	WORD $0x6f10a400 // uxtl2 v0.4s, v0.8h
+	WORD $0x4ea28484 // add v4.4s, v4.4s, v2.4s
+	WORD $0x4ea38400 // add v0.4s, v0.4s, v3.4s
+	WORD $0x4ea66484 // smax v4.4s, v4.4s, v6.4s
+	WORD $0x4ea66400 // smax v0.4s, v0.4s, v6.4s
+	WORD $0x4ea76c84 // smin v4.4s, v4.4s, v7.4s
+	WORD $0x4ea76c00 // smin v0.4s, v0.4s, v7.4s
+	WORD $0x0e612884 // xtn v4.4h, v4.4s
+	WORD $0x4e612804 // xtn2 v4.8h, v0.4s
+	WORD $0x0e212884 // xtn v4.8b, v4.8h
+	WORD $0x0c0070c4 // st1 {v4.8b}, [x6]
+	ADD  $8, R6, R6
+	ADD  $32, R7, R7
+	SUB  $1, R8, R8
+	B    rawColLoop8
+
+rawRowAdvance8:
+	ADD  R1, R0, R0
+	ADD  R3, R2, R2
+	SUB  $1, R5, R5
+	B    rawRowLoop8
+
+rawDone8:
+	RET
+
+// func addRawTransform16NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, groups uintptr, height uintptr)
+TEXT ·addRawTransform16NEONAsm(SB), NOSPLIT, $0-56
+	MOVD dst+0(FP), R0
+	MOVD dstStride+8(FP), R1
+	MOVD raw+16(FP), R2
+	MOVD rawStride+24(FP), R3
+	MOVW max+32(FP), R12
+	MOVD groups+40(FP), R4
+	MOVD height+48(FP), R5
+
+	WORD $0x4f000505 // movi v5.4s, #8
+	WORD $0x4f000406 // movi v6.4s, #0
+	WORD $0x4e040d87 // dup v7.4s, w12
+
+rawRowLoop16:
+	CBZ  R5, rawDone16
+	MOVD R0, R6 // dst row cursor
+	MOVD R2, R7 // raw row cursor
+	MOVD R4, R8 // groups remaining
+
+rawColLoop16:
+	CBZ  R8, rawRowAdvance16
+	WORD $0x4c4074c0 // ld1 {v0.8h}, [x6]
+	WORD $0x4c4078e1 // ld1 {v1.4s}, [x7]
+	ADD  $16, R7, R9
+	WORD $0x4c407922 // ld1 {v2.4s}, [x9]
+	WORD $0x4ea58421 // add v1.4s, v1.4s, v5.4s
+	WORD $0x4ea58442 // add v2.4s, v2.4s, v5.4s
+	WORD $0x4f3c0421 // sshr v1.4s, v1.4s, #4
+	WORD $0x4f3c0442 // sshr v2.4s, v2.4s, #4
+	WORD $0x0e614821 // sqxtn v1.4h, v1.4s
+	WORD $0x4e614841 // sqxtn2 v1.8h, v2.4s
+	WORD $0x2f10a402 // uxtl v2.4s, v0.4h
+	WORD $0x6f10a403 // uxtl2 v3.4s, v0.8h
+	WORD $0x0f10a424 // sxtl v4.4s, v1.4h
+	WORD $0x4f10a420 // sxtl2 v0.4s, v1.8h
+	WORD $0x4ea48442 // add v2.4s, v2.4s, v4.4s
+	WORD $0x4ea08463 // add v3.4s, v3.4s, v0.4s
+	WORD $0x4ea66442 // smax v2.4s, v2.4s, v6.4s
+	WORD $0x4ea66463 // smax v3.4s, v3.4s, v6.4s
+	WORD $0x4ea76c42 // smin v2.4s, v2.4s, v7.4s
+	WORD $0x4ea76c63 // smin v3.4s, v3.4s, v7.4s
+	WORD $0x0e612842 // xtn v2.4h, v2.4s
+	WORD $0x4e612862 // xtn2 v2.8h, v3.4s
+	WORD $0x4c0074c2 // st1 {v2.8h}, [x6]
+	ADD  $16, R6, R6
+	ADD  $32, R7, R7
+	SUB  $1, R8, R8
+	B    rawColLoop16
+
+rawRowAdvance16:
+	ADD  R1, R0, R0
+	ADD  R3, R2, R2
+	SUB  $1, R5, R5
+	B    rawRowLoop16
+
+rawDone16:
+	RET

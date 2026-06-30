@@ -66,6 +66,7 @@ func CopyPlaneBlock(dst frame.Plane, src frame.Plane, bytesPerSample int, dstX i
 // feature-detection branches. It is only invoked after AddResidualPlaneBlock
 // has validated every input, so it never has to re-check bounds.
 var addResidualPlaneBlockImpl = addResidualPlaneBlockPureGo
+var addRawTransformPlaneBlockImpl = addRawTransformPlaneBlockPureGo
 
 // AddResidualPlaneBlock adds signed transform residuals to an already-predicted
 // destination block and clips to bitDepth.
@@ -146,6 +147,70 @@ func AddConstantResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSam
 			}
 		}
 	}
+}
+
+// AddRawTransformPlaneBlockTrusted adds the inverse-transform column-pass
+// output directly to an already-predicted destination block. raw contains
+// int32 samples before AV1's final round-by-four and int16 saturation; this is
+// the fused-add boundary used by dav1d/SVT-style reconstruction paths.
+func AddRawTransformPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample int, max uint16, width int, height int, raw []int32, rawStride int) {
+	block := planeBlock{
+		pix:      dst,
+		stride:   dstStride,
+		width:    width,
+		height:   height,
+		rowBytes: width * bytesPerSample,
+	}
+	addRawTransformPlaneBlockImpl(block, bytesPerSample, max, width, raw, rawStride)
+}
+
+func addRawTransformPlaneBlockPureGo(block planeBlock, bytesPerSample int, max uint16, width int, raw []int32, rawStride int) {
+	switch bytesPerSample {
+	case 1:
+		maxInt := int(max)
+		for row := 0; row < block.height; row++ {
+			line := block.pix[row*block.stride : row*block.stride+width : row*block.stride+width]
+			rawLine := raw[row*rawStride : row*rawStride+width : row*rawStride+width]
+			for col, sample := range line {
+				v := int(sample) + rawTransformResidual(rawLine[col])
+				if v < 0 {
+					v = 0
+				} else if v > maxInt {
+					v = maxInt
+				}
+				line[col] = byte(v)
+			}
+		}
+	case 2:
+		maxInt := int(max)
+		rowBytes := width * 2
+		for row := 0; row < block.height; row++ {
+			line := block.pix[row*block.stride : row*block.stride+rowBytes : row*block.stride+rowBytes]
+			rawLine := raw[row*rawStride : row*rawStride+width : row*rawStride+width]
+			for col := 0; col < width; col++ {
+				i := col * 2
+				v := int(uint16(line[i])|uint16(line[i+1])<<8) + rawTransformResidual(rawLine[col])
+				if v < 0 {
+					v = 0
+				} else if v > maxInt {
+					v = maxInt
+				}
+				line[i] = byte(v)
+				line[i+1] = byte(v >> 8)
+			}
+		}
+	}
+}
+
+func rawTransformResidual(v int32) int {
+	r := int((int64(v) + 8) >> 4)
+	if r < -32768 {
+		return -32768
+	}
+	if r > 32767 {
+		return 32767
+	}
+	return r
 }
 
 // addResidualPlaneBlockPureGo is the portable reference for the residual-add

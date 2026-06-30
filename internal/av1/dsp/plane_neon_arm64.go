@@ -21,6 +21,12 @@ func addResidual8NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uin
 //go:noescape
 func addResidual16NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uintptr, max uint32, groups uintptr, height uintptr)
 
+//go:noescape
+func addRawTransform8NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, groups uintptr, height uintptr)
+
+//go:noescape
+func addRawTransform16NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, groups uintptr, height uintptr)
+
 func addResidualPlaneBlockNEON(block planeBlock, bytesPerSample int, max uint16, width int, residual []int16, residualStride int) {
 	groups := width >> 3
 	if groups == 0 {
@@ -85,6 +91,71 @@ func addResidualPlaneBlockNEON(block planeBlock, bytesPerSample int, max uint16,
 				}
 				pair[0] = byte(v)
 				pair[1] = byte(v >> 8)
+			}
+		}
+	}
+}
+
+func addRawTransformPlaneBlockNEON(block planeBlock, bytesPerSample int, max uint16, width int, raw []int32, rawStride int) {
+	groups := width >> 3
+	if groups == 0 {
+		addRawTransformPlaneBlockPureGo(block, bytesPerSample, max, width, raw, rawStride)
+		return
+	}
+	vecCols := groups << 3
+	maxInt := int(max)
+
+	switch bytesPerSample {
+	case 1:
+		addRawTransform8NEONAsm(
+			&block.pix[0], uintptr(block.stride),
+			&raw[0], uintptr(rawStride*4),
+			uint32(max), uintptr(groups), uintptr(block.height),
+		)
+		if vecCols == width {
+			return
+		}
+		tail := width - vecCols
+		for row := 0; row < block.height; row++ {
+			base := row*block.stride + vecCols
+			rawBase := row*rawStride + vecCols
+			line := block.pix[base : base+tail : base+tail]
+			rawLine := raw[rawBase : rawBase+tail : rawBase+tail]
+			for col, sample := range line {
+				v := int(sample) + rawTransformResidual(rawLine[col])
+				if v < 0 {
+					v = 0
+				} else if v > maxInt {
+					v = maxInt
+				}
+				line[col] = byte(v)
+			}
+		}
+	case 2:
+		addRawTransform16NEONAsm(
+			&block.pix[0], uintptr(block.stride),
+			&raw[0], uintptr(rawStride*4),
+			uint32(max), uintptr(groups), uintptr(block.height),
+		)
+		if vecCols == width {
+			return
+		}
+		tail := width - vecCols
+		for row := 0; row < block.height; row++ {
+			base := row*block.stride + vecCols*2
+			rawBase := row*rawStride + vecCols
+			line := block.pix[base : base+2*tail : base+2*tail]
+			rawLine := raw[rawBase : rawBase+tail : rawBase+tail]
+			for col, rv := range rawLine {
+				i := col * 2
+				v := int(uint16(line[i])|uint16(line[i+1])<<8) + rawTransformResidual(rv)
+				if v < 0 {
+					v = 0
+				} else if v > maxInt {
+					v = maxInt
+				}
+				line[i] = byte(v)
+				line[i+1] = byte(v >> 8)
 			}
 		}
 	}

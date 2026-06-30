@@ -474,6 +474,10 @@ func newDecodeBenchmarkHarness(b testing.TB, frames []av1.IVFFrame) *decodeBench
 		releases:   make([]int, av1.RefFrames),
 		payloads:   payloads,
 	}
+	if err := h.state.PreallocTemporalMotionScratch(plan.Bind.Event.FrameSize); err != nil {
+		workerPool.Close()
+		b.Fatal(err)
+	}
 	h.scratch = newBenchStreamScratch(plan.Size)
 
 	runner, _, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(plan, &h.stream, av1.DecoderFrameWorkResidualEventRuntime{

@@ -82,6 +82,19 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 }
 
 func inverseSeparableBlockClampedRows(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size, typ Type, rowMin int32, rowMax int32, colMin int32, colMax int32, activeRows int) error {
+	width := int(size.Width)
+	height := int(size.Height)
+	if dstStride < width || !blockFits(len(dst), dstStride, width, height) {
+		return ErrInvalidTransform
+	}
+	if err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, scratch, size, typ, rowMin, rowMax, colMin, colMax, activeRows); err != nil {
+		return err
+	}
+	narrowStoreImpl(dst, dstStride, scratch, width, height)
+	return nil
+}
+
+func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, scratch []int32, size Size, typ Type, rowMin int32, rowMax int32, colMin int32, colMax int32, activeRows int) error {
 	// Resolve every per-size datum from a single compact index instead of
 	// re-deriving it through size.shift(), adjustedScanSize() and IsRect2(),
 	// each of which would recompute sizeIndex on this hot path.
@@ -107,10 +120,8 @@ func inverseSeparableBlockClampedRows(dst []int16, dstStride int, coeff []int32,
 		typ == TypeIDTX ||
 		!tx1DSupported(horizontal, width) ||
 		!tx1DSupported(vertical, height) ||
-		dstStride < width ||
 		coeffStride < coeffH ||
 		len(scratch) < scratchLen ||
-		!blockFits(len(dst), dstStride, width, height) ||
 		!coeffBlockFits(len(coeff), coeffStride, coeffW, coeffH) {
 		return ErrInvalidTransform
 	}
@@ -226,7 +237,6 @@ func inverseSeparableBlockClampedRows(dst []int16, dstStride int, coeff []int32,
 		inverse1D(scratch[col:], width, height, vertical, colMin, colMax)
 	}
 
-	narrowStoreImpl(dst, dstStride, scratch, width, height)
 	return nil
 }
 
