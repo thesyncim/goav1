@@ -2499,20 +2499,23 @@ func (r *Reader) readCDF4Known(values *[MaxSymbols + 1]uint16) int {
 		c0 := uint32(values[0])
 		c1 := uint32(values[1])
 		c2 := uint32(values[2])
-		if symbol > 0 {
-			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
-		} else {
+		switch symbol {
+		case 0:
 			values[0] = uint16(c0 - (c0 >> rate))
-		}
-		if symbol > 1 {
-			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
-		} else {
 			values[1] = uint16(c1 - (c1 >> rate))
-		}
-		if symbol > 2 {
-			values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
-		} else {
 			values[2] = uint16(c2 - (c2 >> rate))
+		case 1:
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+			values[1] = uint16(c1 - (c1 >> rate))
+			values[2] = uint16(c2 - (c2 >> rate))
+		case 2:
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+			values[2] = uint16(c2 - (c2 >> rate))
+		default:
+			values[0] = uint16(c0 + ((CDFProbTop - c0) >> rate))
+			values[1] = uint16(c1 + ((CDFProbTop - c1) >> rate))
+			values[2] = uint16(c2 + ((CDFProbTop - c2) >> rate))
 		}
 		if count < MaxCDFCount {
 			values[4] = count + 1
@@ -2626,20 +2629,23 @@ func (c *Cursor) readCDF4UpdateKnown(values *[MaxSymbols + 1]uint16) int {
 	c0u := uint32(c0)
 	c1u := uint32(c1)
 	c2u := uint32(c2)
-	if symbol > 0 {
-		c0u += (CDFProbTop - c0u) >> rate
-	} else {
+	switch symbol {
+	case 0:
 		c0u -= c0u >> rate
-	}
-	if symbol > 1 {
-		c1u += (CDFProbTop - c1u) >> rate
-	} else {
 		c1u -= c1u >> rate
-	}
-	if symbol > 2 {
-		c2u += (CDFProbTop - c2u) >> rate
-	} else {
 		c2u -= c2u >> rate
+	case 1:
+		c0u += (CDFProbTop - c0u) >> rate
+		c1u -= c1u >> rate
+		c2u -= c2u >> rate
+	case 2:
+		c0u += (CDFProbTop - c0u) >> rate
+		c1u += (CDFProbTop - c1u) >> rate
+		c2u -= c2u >> rate
+	default:
+		c0u += (CDFProbTop - c0u) >> rate
+		c1u += (CDFProbTop - c1u) >> rate
+		c2u += (CDFProbTop - c2u) >> rate
 	}
 	values[0] = uint16(c0u)
 	values[1] = uint16(c1u)
