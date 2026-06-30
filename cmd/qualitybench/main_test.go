@@ -421,25 +421,52 @@ func TestSafeClipDir(t *testing.T) {
 
 func TestIVFPayloadBytes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tiny.ivf")
-	var data []byte
-	header := make([]byte, 32)
-	copy(header[:4], "DKIF")
-	data = append(data, header...)
-	for _, size := range []uint32{3, 5} {
-		frame := make([]byte, 12)
-		binary.LittleEndian.PutUint32(frame[:4], size)
-		data = append(data, frame...)
-		data = append(data, make([]byte, size)...)
-	}
+	data := ivf.AppendFileHeader(nil, 16, 16, 30, 1, 2)
+	data = ivf.AppendFrame(data, []byte{1, 2, 3}, 0)
+	data = ivf.AppendFrame(data, []byte{4, 5, 6, 7, 8}, 1)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ivfPayloadBytes(path)
+	got, err := ivfPayloadBytes(path, 16, 16, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != 8 {
 		t.Fatalf("payload bytes=%d want 8", got)
+	}
+}
+
+func TestIVFPayloadBytesRequiresExactContainer(t *testing.T) {
+	dir := t.TempDir()
+	valid := ivf.AppendFileHeader(nil, 16, 16, 30, 1, 1)
+	valid = ivf.AppendFrame(valid, []byte{1, 2, 3}, 0)
+	validPath := filepath.Join(dir, "valid.ivf")
+	if err := os.WriteFile(validPath, valid, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ivfPayloadBytes(validPath, 32, 16, 1); err == nil || !strings.Contains(err.Error(), "IVF size") {
+		t.Fatalf("wrong size error=%v", err)
+	}
+	if _, err := ivfPayloadBytes(validPath, 16, 16, 2); err == nil || !strings.Contains(err.Error(), "frame count") {
+		t.Fatalf("wrong frame count error=%v", err)
+	}
+
+	empty := ivf.AppendFileHeader(nil, 16, 16, 30, 1, 1)
+	empty = ivf.AppendFrame(empty, nil, 0)
+	emptyPath := filepath.Join(dir, "empty.ivf")
+	if err := os.WriteFile(emptyPath, empty, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ivfPayloadBytes(emptyPath, 16, 16, 1); err == nil || !strings.Contains(err.Error(), "empty payload") {
+		t.Fatalf("empty payload error=%v", err)
+	}
+
+	truncatedPath := filepath.Join(dir, "truncated.ivf")
+	if err := os.WriteFile(truncatedPath, valid[:len(valid)-1], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ivfPayloadBytes(truncatedPath, 16, 16, 1); err == nil {
+		t.Fatal("truncated IVF accepted")
 	}
 }
 
@@ -1136,6 +1163,7 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "explicit seed") ||
 		!strings.Contains(joined, "sample passes") ||
 		!strings.Contains(joined, "median wall-time") ||
+		!strings.Contains(joined, "artifact hashes") ||
 		!strings.Contains(joined, "sweep --lp 0..6") ||
 		!strings.Contains(joined, "-goav1-max-threads") ||
 		!strings.Contains(joined, "-goav1-effort") ||
@@ -1738,6 +1766,50 @@ func TestRunEncoderJobsMeasuredInterleavesSamplesByPass(t *testing.T) {
 		if result.status != "ok" || result.runs != 2 || result.warmupRuns != 1 || len(result.samples) != 2 {
 			t.Fatalf("result=%+v", result)
 		}
+	}
+}
+
+func TestRunEncoderJobsMeasuredPublishRequiresDeterministicArtifacts(t *testing.T) {
+	cfg := benchConfig{
+		workdir: t.TempDir(),
+		runs:    3,
+		publish: true,
+	}
+	jobs := []encodeJob{{bitrate: 100, encoder: "goav1"}}
+	call := 0
+	results := runEncoderJobsMeasuredWithRunner(cfg, nil, "source.yuv", jobs, func(sampleCfg benchConfig, _ []goav1.I420Frame, refPath, encoderName string, bitrate int) encodeResult {
+		call++
+		if refPath != "source.yuv" {
+			t.Fatalf("refPath=%q", refPath)
+		}
+		encodedHash := "encoded-same"
+		if call == 2 {
+			encodedHash = "encoded-drift"
+		}
+		return encodeResult{
+			encoder:       encoderName,
+			targetBPS:     bitrate,
+			duration:      time.Duration(call) * time.Millisecond,
+			bytes:         10,
+			encodedBytes:  20,
+			decodedBytes:  30,
+			encodedSHA256: encodedHash,
+			decodedSHA256: "decoded-same",
+			status:        "ok",
+			encodedPath:   filepath.Join(sampleCfg.workdir, "encoded.ivf"),
+			decodedYUV:    filepath.Join(sampleCfg.workdir, "decoded.yuv"),
+		}
+	})
+	if len(results) != 1 {
+		t.Fatalf("results=%d", len(results))
+	}
+	got := results[0]
+	if got.status != "error" || !strings.Contains(got.errText, "deterministic") ||
+		!strings.Contains(got.errText, "encoded artifact sha256") {
+		t.Fatalf("publish drift result=%+v", got)
+	}
+	if got.runs != 3 || len(got.samples) != 3 {
+		t.Fatalf("summary runs=%d samples=%d", got.runs, len(got.samples))
 	}
 }
 

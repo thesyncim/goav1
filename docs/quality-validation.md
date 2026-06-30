@@ -192,12 +192,19 @@ samples run in deterministic sample passes across the selected encoder/bitrate
 tuples, so one tuple does not receive all of its samples in a single load or
 thermal window. The metadata JSON stores every measured sample plus min,
 median, max, and IQR wall time for the tuple, and records
-`sample_order=interleaved-by-sample-pass`.
+`sample_order=interleaved-by-sample-pass`. Publish mode also requires the
+measured samples for each encoder/bitrate tuple to produce identical compressed
+byte counts, encoded artifact hashes, decoded byte counts, and decoded hashes;
+hash drift fails the tuple instead of silently picking the fastest or median
+sample.
 For goav1 rows, `encoded_path` is a replayable `uint32_le length + low-overhead
 temporal-unit payload` stream. `compressed_bytes` remains the sum of payload
 bytes, while `encoded_bytes` and `encoded_sha256` describe that on-disk
 length-prefixed artifact. When metric decode uses FFmpeg, the goav1 row settings
 also record the generated IVF sidecar path, container, bytes, and SHA-256.
+External encoder IVF outputs are parsed through the shared exact IVF reader, so
+the codec signature, dimensions, frame count, non-empty payloads, and complete
+frame payloads are validated before payload bytes can affect `actual_bps`.
 
 For speed comparisons against SVT-AV1, do not treat numeric concurrency knobs as
 equivalent. `GOMAXPROCS` is a Go scheduler processor cap; goav1

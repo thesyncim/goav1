@@ -2397,7 +2397,7 @@ func fairnessNotes(cfg benchConfig) []string {
 		"CSV and metadata include wall seconds, CPU seconds, and observed_parallelism=cpu_total_seconds/encode_wall_seconds so comparisons can be checked against observed CPU budget.",
 		"qualitybench records timing_mode; core mode keeps the historical goav1 per-frame Encode timer, while e2e mode times goav1 setup, encode calls, encoded artifact writes, and encoder shutdown for fairer CLI comparisons. Metric decode runs after timing for every encoder.",
 		"qualitybench records run_order and shuffle_seed so encoder/bitrate order effects can be reproduced or randomized deterministically.",
-		"qualitybench runs warmups and measured samples in deterministic sample passes across all encoder/bitrate tuples, records every measured encode sample in metadata, and reports the median wall-time sample in the normal CSV row.",
+		"qualitybench runs warmups and measured samples in deterministic sample passes across all encoder/bitrate tuples, records every measured encode sample in metadata, and reports the median wall-time sample in the normal CSV row. Publish mode rejects a tuple when repeated measured samples produce different encoded or decoded artifact hashes.",
 		"Publishable rows use -run-order shuffle with an explicit seed so every table has a reproducible encoder/bitrate order without always favoring the same encoder column.",
 		"For fair goav1 comparisons, set -goav1-max-threads and -goav1-effort explicitly; qualitybench forwards them to VideoEncoderConfig.MaxThreads and Speed and records them in metadata.",
 		"For fair external-baseline comparisons, set -goav1-scene-cut=false unless equivalent scene-cut behavior is enabled and recorded for every selected external encoder.",
@@ -3191,9 +3191,78 @@ func runEncoderJobsMeasuredWithRunner(
 			final[i] = encodeResult{encoder: job.encoder, targetBPS: job.bitrate, status: "error", errText: "no measured runs"}
 			continue
 		}
+		if cfg.publish {
+			if err := validateEncodeRunDeterminism(job.encoder, job.bitrate, results[i]); err != nil {
+				result := encodeResult{encoder: job.encoder, targetBPS: job.bitrate, status: "error", errText: err.Error()}
+				final[i] = attachEncodeRunSummary(result, results[i], cfg.warmupRuns, cfg.runs)
+				continue
+			}
+		}
 		final[i] = attachEncodeRunSummary(medianEncodeResult(results[i]), results[i], cfg.warmupRuns, cfg.runs)
 	}
 	return final
+}
+
+func validateEncodeRunDeterminism(encoder string, bitrate int, results []encodeResult) error {
+	if len(results) == 0 {
+		return errors.New("publish requires measured encode samples")
+	}
+	first := results[0]
+	if err := validateEncodeResultArtifacts(first); err != nil {
+		return fmt.Errorf("publish requires deterministic %s %d bps sample run %d: %w", encoder, bitrate, first.selectedRun, err)
+	}
+	for i := 1; i < len(results); i++ {
+		next := results[i]
+		if err := validateEncodeResultArtifacts(next); err != nil {
+			return fmt.Errorf("publish requires deterministic %s %d bps sample run %d: %w", encoder, bitrate, next.selectedRun, err)
+		}
+		if next.bytes != first.bytes {
+			return fmt.Errorf("publish requires deterministic %s %d bps compressed bytes: run %d got %d, run %d got %d",
+				encoder, bitrate, next.selectedRun, next.bytes, first.selectedRun, first.bytes)
+		}
+		if next.encodedBytes != first.encodedBytes {
+			return fmt.Errorf("publish requires deterministic %s %d bps encoded artifact bytes: run %d got %d, run %d got %d",
+				encoder, bitrate, next.selectedRun, next.encodedBytes, first.selectedRun, first.encodedBytes)
+		}
+		if next.encodedSHA256 != first.encodedSHA256 {
+			return fmt.Errorf("publish requires deterministic %s %d bps encoded artifact sha256: run %d got %s, run %d got %s",
+				encoder, bitrate, next.selectedRun, next.encodedSHA256, first.selectedRun, first.encodedSHA256)
+		}
+		if next.decodedBytes != first.decodedBytes {
+			return fmt.Errorf("publish requires deterministic %s %d bps decoded artifact bytes: run %d got %d, run %d got %d",
+				encoder, bitrate, next.selectedRun, next.decodedBytes, first.selectedRun, first.decodedBytes)
+		}
+		if next.decodedSHA256 != first.decodedSHA256 {
+			return fmt.Errorf("publish requires deterministic %s %d bps decoded artifact sha256: run %d got %s, run %d got %s",
+				encoder, bitrate, next.selectedRun, next.decodedSHA256, first.selectedRun, first.decodedSHA256)
+		}
+	}
+	return nil
+}
+
+func validateEncodeResultArtifacts(result encodeResult) error {
+	if result.status != "ok" {
+		if result.errText != "" {
+			return fmt.Errorf("status %s: %s", result.status, result.errText)
+		}
+		return fmt.Errorf("status %s", result.status)
+	}
+	if result.bytes <= 0 {
+		return fmt.Errorf("empty compressed payload bytes %d", result.bytes)
+	}
+	if result.encodedBytes <= 0 {
+		return fmt.Errorf("empty encoded artifact bytes %d", result.encodedBytes)
+	}
+	if result.encodedSHA256 == "" {
+		return errors.New("missing encoded artifact sha256")
+	}
+	if result.decodedBytes <= 0 {
+		return fmt.Errorf("empty decoded artifact bytes %d", result.decodedBytes)
+	}
+	if result.decodedSHA256 == "" {
+		return errors.New("missing decoded artifact sha256")
+	}
+	return nil
 }
 
 func encodeSampleConfig(cfg benchConfig, encoderName string, bitrate int, kind string, run int, repeated bool) (benchConfig, error) {
@@ -3506,7 +3575,7 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	if result.status != "" {
 		return result
 	}
-	payloadBytes, err := ivfPayloadBytes(ivfPath)
+	payloadBytes, err := ivfPayloadBytes(ivfPath, cfg.width, cfg.height, cfg.frames)
 	if err != nil {
 		result.status, result.errText = "error", err.Error()
 		return result
@@ -3623,7 +3692,7 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	if result.status != "" {
 		return result
 	}
-	payloadBytes, err := ivfPayloadBytes(ivfPath)
+	payloadBytes, err := ivfPayloadBytes(ivfPath, cfg.width, cfg.height, cfg.frames)
 	if err != nil {
 		result.status, result.errText = "error", err.Error()
 		return result
@@ -3769,34 +3838,40 @@ func decodedYUVMetadata(path string, width, height, frames int) (int64, string, 
 	return bytes, hash, nil
 }
 
-func ivfPayloadBytes(path string) (int64, error) {
-	f, err := os.Open(path)
+func ivfPayloadBytes(path string, width, height, frames int) (int64, error) {
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
-	var header [32]byte
-	if _, err := io.ReadFull(f, header[:]); err != nil {
+	it, err := ivf.NewIterator(raw)
+	if err != nil {
 		return 0, err
 	}
-	if string(header[:4]) != "DKIF" {
-		return 0, errors.New("not an IVF file")
+	header := it.Header()
+	if int(header.Width) != width || int(header.Height) != height {
+		return 0, fmt.Errorf("%s IVF size=%dx%d, want %dx%d", path, header.Width, header.Height, width, height)
+	}
+	if int(header.FrameCount) != frames {
+		return 0, fmt.Errorf("%s IVF header frame count=%d, want %d", path, header.FrameCount, frames)
 	}
 	var total int64
+	count := 0
 	for {
-		var frameHeader [12]byte
-		_, err := io.ReadFull(f, frameHeader[:])
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			break
-		}
+		frame, ok, err := it.Next()
 		if err != nil {
 			return 0, err
 		}
-		size := int64(binary.LittleEndian.Uint32(frameHeader[:4]))
-		total += size
-		if _, err := f.Seek(size, io.SeekCurrent); err != nil {
-			return 0, err
+		if !ok {
+			break
 		}
+		if len(frame.Payload) == 0 {
+			return 0, fmt.Errorf("%s IVF frame %d has empty payload", path, frame.Index)
+		}
+		total += int64(len(frame.Payload))
+		count++
+	}
+	if count != frames {
+		return 0, fmt.Errorf("%s IVF payload frame count=%d, want %d", path, count, frames)
 	}
 	return total, nil
 }
