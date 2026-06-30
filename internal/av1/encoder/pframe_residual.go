@@ -354,6 +354,104 @@ func (st *lossyEncodeState) prepareRealtimeSourceContent(src, last SourceFrame42
 	}
 }
 
+func realtimeStatic64METhreshold(effort int8) int {
+	speed := realtimeLibaomSpeedForEffort(effort)
+	if speed <= 12 {
+		return 64 * 64
+	}
+	return 2 * 64 * 64
+}
+
+func (st *lossyEncodeState) prepareStatic64MEBypass(src, ref SourceFrame420, gridRows int, miColStart, miColEnd uint16) {
+	if st == nil || st.grid64Cols <= 0 || gridRows <= 0 || st.sadCacheEpoch == 0 ||
+		src.Width != ref.Width || src.Height != ref.Height ||
+		src.Width <= 0 || src.Height <= 0 ||
+		len(st.mv64Grid) < st.grid64Cols*gridRows ||
+		len(st.sad64Grid) < st.grid64Cols*gridRows {
+		return
+	}
+	threshold := realtimeStatic64METhreshold(st.effortLevel)
+	if threshold <= 0 {
+		return
+	}
+	startCol := (int(miColStart) * 4) / 64
+	endCol := (int(miColEnd)*4 + 63) / 64
+	if startCol < 0 {
+		startCol = 0
+	}
+	if endCol > st.grid64Cols {
+		endCol = st.grid64Cols
+	}
+	zero := motion.Vector{}
+	for py := 0; py+64 <= src.Height; py += 64 {
+		row64 := py / 64
+		if row64 >= gridRows {
+			break
+		}
+		for col64 := startCol; col64 < endCol; col64++ {
+			px := col64 * 64
+			if px+64 > src.Width {
+				continue
+			}
+			base := py*src.YStride + px
+			sad64 := sad64x64(src.Y[base:], ref.Y[base:], src.YStride)
+			if sad64 >= threshold {
+				continue
+			}
+			idx64 := row64*st.grid64Cols + col64
+			st.mv64Grid[idx64] = zero
+			st.sad64Grid[idx64] = sadCachePack(st.sadCacheEpoch, sad64)
+			st.fillStatic64ChildSADCaches(src, ref, px, py)
+		}
+	}
+}
+
+func (st *lossyEncodeState) fillStatic64ChildSADCaches(src, ref SourceFrame420, px, py int) {
+	zero := motion.Vector{}
+	if st.grid32Cols > 0 && len(st.mv32Grid) > 0 && len(st.sad32Grid) == len(st.mv32Grid) {
+		for dy := 0; dy < 64; dy += 32 {
+			for dx := 0; dx < 64; dx += 32 {
+				x, y := px+dx, py+dy
+				idx := (y/32)*st.grid32Cols + x/32
+				if uint(idx) >= uint(len(st.sad32Grid)) {
+					continue
+				}
+				base := y*src.YStride + x
+				st.mv32Grid[idx] = zero
+				st.sad32Grid[idx] = sadCachePack(st.sadCacheEpoch, sad32x32(src.Y[base:], ref.Y[base:], src.YStride))
+			}
+		}
+	}
+	if st.grid16Cols > 0 && len(st.mv16Grid) > 0 && len(st.sad16Grid) == len(st.mv16Grid) {
+		for dy := 0; dy < 64; dy += 16 {
+			for dx := 0; dx < 64; dx += 16 {
+				x, y := px+dx, py+dy
+				idx := (y/16)*st.grid16Cols + x/16
+				if uint(idx) >= uint(len(st.sad16Grid)) {
+					continue
+				}
+				base := y*src.YStride + x
+				st.mv16Grid[idx] = zero
+				st.sad16Grid[idx] = sadCachePack(st.sadCacheEpoch, sad16x16(src.Y[base:], ref.Y[base:], src.YStride))
+			}
+		}
+	}
+	if st.grid8Cols > 0 && len(st.mv8Grid) > 0 && len(st.sad8Grid) == len(st.mv8Grid) {
+		for dy := 0; dy < 64; dy += 8 {
+			for dx := 0; dx < 64; dx += 8 {
+				x, y := px+dx, py+dy
+				idx := (y/8)*st.grid8Cols + x/8
+				if uint(idx) >= uint(len(st.sad8Grid)) {
+					continue
+				}
+				base := y*src.YStride + x
+				st.mv8Grid[idx] = zero
+				st.sad8Grid[idx] = sadCachePack(st.sadCacheEpoch, sad8x8(src.Y[base:], ref.Y[base:], src.YStride, 1<<30))
+			}
+		}
+	}
+}
+
 func (st *lossyEncodeState) realtimeContentStateForBlock(px, py int) realtimeContentStateSB {
 	if st == nil || st.sourceContentCols <= 0 || px < 0 || py < 0 {
 		return defaultRealtimeContentStateSB()
@@ -1669,6 +1767,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	}
 	st.beginSADCacheFrame()
 	st.prepareRealtimeSourceContent(src, ref, st.grid64Cols, grid64Rows, miColStart, miColEnd)
+	st.prepareStatic64MEBypass(src, ref, grid64Rows, miColStart, miColEnd)
 	st.prepareRealtimeVarPartitioning(st.grid64Cols, grid64Rows)
 	decideCore := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		if level == tile.BlockLevel8x8 {

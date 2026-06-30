@@ -604,6 +604,101 @@ func TestRealtimeSubpelStopForBlockMatchesLibaomLowcomplexRule(t *testing.T) {
 	}
 }
 
+func TestStatic64MEBypassFillsExactZeroMVCaches(t *testing.T) {
+	src := SourceFrame420{Y: make([]byte, 64*64), YStride: 64, Width: 64, Height: 64}
+	ref := SourceFrame420{Y: make([]byte, 64*64), YStride: 64, Width: 64, Height: 64}
+	for i := range src.Y {
+		src.Y[i] = 90
+		ref.Y[i] = 90
+	}
+	for i := 0; i < 128; i++ {
+		src.Y[i]++
+	}
+
+	var st lossyEncodeState
+	st.effortLevel = 0
+	st.grid64Cols, st.grid32Cols, st.grid16Cols, st.grid8Cols = 1, 2, 4, 8
+	st.mv64Grid, st.sad64Grid = make([]motion.Vector, 1), make([]uint32, 1)
+	st.mv32Grid, st.sad32Grid = make([]motion.Vector, 4), make([]uint32, 4)
+	st.mv16Grid, st.sad16Grid = make([]motion.Vector, 16), make([]uint32, 16)
+	st.mv8Grid, st.sad8Grid = make([]motion.Vector, 64), make([]uint32, 64)
+	st.beginSADCacheFrame()
+
+	st.prepareStatic64MEBypass(src, ref, 1, 0, 16)
+
+	if !sadCacheValid(st.sad64Grid[0], st.sadCacheEpoch) {
+		t.Fatal("64x64 static cache was not filled")
+	}
+	if got := sadCacheValue(st.sad64Grid[0]); got != 128 {
+		t.Fatalf("64x64 SAD=%d want 128", got)
+	}
+	if st.mv64Grid[0] != (motion.Vector{}) {
+		t.Fatalf("64x64 MV=%+v want zero", st.mv64Grid[0])
+	}
+	for idx, packed := range st.sad32Grid {
+		if !sadCacheValid(packed, st.sadCacheEpoch) {
+			t.Fatalf("32x32 cache[%d] was not filled", idx)
+		}
+		x := (idx % st.grid32Cols) * 32
+		y := (idx / st.grid32Cols) * 32
+		base := y*src.YStride + x
+		want := sad32x32(src.Y[base:], ref.Y[base:], src.YStride)
+		if got := sadCacheValue(packed); got != want {
+			t.Fatalf("32x32 cache[%d]=%d want exact %d", idx, got, want)
+		}
+		if st.mv32Grid[idx] != (motion.Vector{}) {
+			t.Fatalf("32x32 MV[%d]=%+v want zero", idx, st.mv32Grid[idx])
+		}
+	}
+	for idx, packed := range st.sad16Grid {
+		if !sadCacheValid(packed, st.sadCacheEpoch) {
+			t.Fatalf("16x16 cache[%d] was not filled", idx)
+		}
+	}
+	for idx, packed := range st.sad8Grid {
+		if !sadCacheValid(packed, st.sadCacheEpoch) {
+			t.Fatalf("8x8 cache[%d] was not filled", idx)
+		}
+	}
+}
+
+func TestStatic64MEBypassThresholdBoundary(t *testing.T) {
+	const w, h = 128, 64
+	src := SourceFrame420{Y: make([]byte, w*h), YStride: w, Width: w, Height: h}
+	ref := SourceFrame420{Y: make([]byte, w*h), YStride: w, Width: w, Height: h}
+	for i := range src.Y {
+		src.Y[i] = 100
+		ref.Y[i] = 100
+	}
+	for i := 0; i < 64*64-1; i++ {
+		src.Y[(i/64)*w+i%64]++
+	}
+	for i := 0; i < 64*64; i++ {
+		src.Y[(i/64)*w+64+i%64]++
+	}
+
+	var st lossyEncodeState
+	st.effortLevel = 0
+	st.grid64Cols, st.grid32Cols, st.grid16Cols, st.grid8Cols = 2, 4, 8, 16
+	st.mv64Grid, st.sad64Grid = make([]motion.Vector, 2), make([]uint32, 2)
+	st.mv32Grid, st.sad32Grid = make([]motion.Vector, 8), make([]uint32, 8)
+	st.mv16Grid, st.sad16Grid = make([]motion.Vector, 32), make([]uint32, 32)
+	st.mv8Grid, st.sad8Grid = make([]motion.Vector, 128), make([]uint32, 128)
+	st.beginSADCacheFrame()
+
+	st.prepareStatic64MEBypass(src, ref, 1, 0, 32)
+
+	if !sadCacheValid(st.sad64Grid[0], st.sadCacheEpoch) {
+		t.Fatal("SAD below threshold should fill static cache")
+	}
+	if got := sadCacheValue(st.sad64Grid[0]); got != realtimeStatic64METhreshold(0)-1 {
+		t.Fatalf("below-threshold SAD=%d", got)
+	}
+	if sadCacheValid(st.sad64Grid[1], st.sadCacheEpoch) {
+		t.Fatalf("threshold-equal block unexpectedly cached with SAD %d", sadCacheValue(st.sad64Grid[1]))
+	}
+}
+
 func TestRealtimeInterTXLeafSizeHonorsQstepSpeedFeatureLevel(t *testing.T) {
 	const (
 		qIndex   = uint8(72)

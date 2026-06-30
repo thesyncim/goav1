@@ -278,6 +278,58 @@ func BenchmarkVideoEncoderPFramePan1080pSingleThreadMinEffort(b *testing.B) {
 	benchmarkVideoEncoderPFramePan1080p(b, 1, encoder.WebRTCMinEffortLevel)
 }
 
+// BenchmarkVideoEncoderPFrameStatic1080pSingleThread measures static-camera
+// realtime P-frame cost where SVT-style static 64x64 ME bypass should stay hot.
+func BenchmarkVideoEncoderPFrameStatic1080pSingleThread(b *testing.B) {
+	const w, h = 1920, 1080
+	cw, ch := w/2, h/2
+	f := encoder.SourceFrame420{
+		Y:            make([]byte, w*h),
+		U:            make([]byte, cw*ch),
+		V:            make([]byte, cw*ch),
+		YStride:      w,
+		ChromaStride: cw,
+		Width:        w,
+		Height:       h,
+	}
+	for y := range h {
+		for x := range w {
+			f.Y[y*w+x] = uint8(48 + (x/5+y/7)%120)
+		}
+	}
+	for i := range f.U {
+		f.U[i] = 120
+		f.V[i] = 130
+	}
+	enc, err := encoder.NewVideoEncoderCBR(w, h, encoder.RateControlConfig{
+		TargetBitsPerSecond: 8_000_000, FramesPerSecond: 60, MinQIndex: 20, MaxQIndex: 200,
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	enc.SetMaxThreads(1)
+	b.Cleanup(func() {
+		b.StopTimer()
+		_ = enc.Close()
+	})
+	if err := enc.Prewarm(); err != nil {
+		b.Fatal(err)
+	}
+	if _, _, err := enc.Encode(f, true); err != nil {
+		b.Fatal(err)
+	}
+	if err := enc.Flush(); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, err := enc.Encode(f, false); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func benchmarkVideoEncoderPFramePan1080p(b *testing.B, maxThreads int, effort int8) {
 	const w, h = 1920, 1080
 	cw, ch := w/2, h/2
