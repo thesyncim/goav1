@@ -1298,10 +1298,7 @@ func validatePublishVMAFModel(model string) error {
 		return err
 	}
 	if !ok {
-		if strings.Contains(model, "version=") {
-			return nil
-		}
-		return errors.New("publish requires -vmaf-model to include version=... or path=/absolute/model")
+		return errors.New("publish requires -vmaf-model path=/absolute/model when vmaf is required; version=... is allowed only for exploratory non-publish runs")
 	}
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("publish requires VMAF model path to be absolute: %s", path)

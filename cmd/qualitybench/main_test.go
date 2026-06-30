@@ -1704,7 +1704,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		svtPreset:           13,
 		svtASM:              "neon",
 		ffmpegAV1Decoder:    "libdav1d",
-		vmafModel:           "version=vmaf_v0.6.1",
+		vmafModel:           "path=" + vmafModelPath,
 		timingMode:          timingModeEndToEnd,
 		runOrder:            runOrderShuffle,
 		publishCompareMode:  publishComparisonModeMatchedBudget,
@@ -1854,10 +1854,11 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	}
 	observeBenchmarkCPUState = oldProbe
 
-	pathModel := cfg
-	pathModel.vmafModel = "path=" + vmafModelPath
-	if err := validatePublishConfig(pathModel, gitMetadata{Commit: "abc"}); err != nil {
-		t.Fatalf("absolute VMAF path model failed: %v", err)
+	versionModel := cfg
+	versionModel.vmafModel = "version=vmaf_v0.6.1"
+	if err := validatePublishConfig(versionModel, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "path=/absolute/model") {
+		t.Fatalf("version-only VMAF model error=%v", err)
 	}
 
 	relativePathModel := cfg

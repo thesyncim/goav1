@@ -43,7 +43,8 @@ Publishable rows must satisfy these controls:
   default.
 - Keep timeout, run order, shuffle seed, warmup, measured run count,
   `GOMAXPROCS`, GC, thread/parallelism, bitrate, FPS, scalability, and VMAF
-  model settings in metadata.
+  model settings in metadata. Publish rows that require VMAF must use
+  `path=/absolute/model` so the metadata records the model SHA-256.
 - Derive any published comparison table from the saved CSV/JSON sidecars with
   stable sorting and fixed formatting; omit volatile fields such as generation
   timestamp, absolute temporary paths, and host name from byte-for-byte table

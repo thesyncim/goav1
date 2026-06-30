@@ -80,7 +80,7 @@ GO_SHA256=$(shasum -a 256 "$GO_BIN" | awk '{print $1}')
   -ffmpeg-bin /opt/homebrew/bin/ffmpeg \
   -ffmpeg-sha256 <sha256-of-ffmpeg> \
   -ffmpeg-av1-decoder libdav1d \
-  -vmaf-model version=vmaf_v0.6.1 \
+  -vmaf-model path=/absolute/path/to/vmaf_v0.6.1.json \
   -aomenc-bin /opt/homebrew/bin/aomenc \
   -aomenc-sha256 <sha256-of-aomenc> \
   -svt-bin /opt/homebrew/bin/SvtAv1EncApp \
@@ -111,11 +111,11 @@ The same strict path is available as `make qualitybench-publish`; set
 the other `QUALITYBENCH_*` variables when sweeping speed, assembly, bitrate
 settings, the per-command timeout (`QUALITYBENCH_COMMAND_TIMEOUT`, default
 `30m`), or the explicit FFmpeg AV1 decoder
-(`QUALITYBENCH_FFMPEG_AV1_DECODER`, default `libdav1d`) and VMAF model
-(`QUALITYBENCH_VMAF_MODEL`, default
-`version=vmaf_v0.6.1`). Publish runs that require VMAF must use either
-`version=...` or `path=/absolute/model`; path-based models are SHA-256 hashed
-into the metadata sidecar.
+(`QUALITYBENCH_FFMPEG_AV1_DECODER`, default `libdav1d`) and VMAF model.
+Publish runs that require VMAF must set `QUALITYBENCH_VMAF_MODEL` to
+`path=/absolute/model`; the model file is SHA-256 hashed into the metadata
+sidecar. Version-only VMAF model strings remain available for exploratory
+non-publish runs only.
 
 If `-input` is omitted, `qualitybench` uses the same deterministic synthetic
 scene as `encbench`. That path is for smoke testing the harness, not for quality
@@ -346,11 +346,13 @@ I420 identity settings; `aomenc` is run with `--quiet` so progress logging is
 not part of the timed encode path. External decoded YUV must match the exact
 expected raw I420 byte count before metrics are accepted.
 
-When VMAF is required, publish mode requires an explicit `-vmaf-model` value.
-The value is forwarded to FFmpeg `libvmaf`'s `model` option and written to the
-metadata JSON as `vmaf_model`; use this to pin rows to a named model such as
-`version=vmaf_v0.6.1` instead of relying on the FFmpeg build's implicit
-default.
+When VMAF is required, publish mode requires an explicit path-based
+`-vmaf-model` value such as `path=/absolute/path/to/vmaf_v0.6.1.json`. The
+value is forwarded to FFmpeg `libvmaf`'s `model` option and written to the
+metadata JSON as `vmaf_model`; the model path and SHA-256 are recorded as
+`vmaf_model_path` and `vmaf_model_sha256`. Version-only model strings such as
+`version=vmaf_v0.6.1` are accepted only for exploratory non-publish runs because
+they do not identify a model file hash.
 
 The external baseline settings recorded in metadata are part of the benchmark
 contract:
