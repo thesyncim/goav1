@@ -89,6 +89,33 @@ If `-input` is omitted, `qualitybench` uses the same deterministic synthetic
 scene as `encbench`. That path is for smoke testing the harness, not for quality
 claims.
 
+Internal Go microbenchmark rows used to justify SIMD or hot-path changes should
+use `make bench-go-publish`, not the smoke-oriented `make bench` or
+`make bench-all` targets. The publish runner requires a clean tracked worktree,
+explicit environment notes, `-benchmem`, at least five measured runs, fixed
+`GOMAXPROCS`, fixed `go test -cpu`, and explicit package/benchmark selection.
+It writes the raw `go test` output and a metadata JSON sidecar containing the
+git revision, Go runtime, `GOGC`, command line, output SHA-256, and run
+controls. Example:
+
+```sh
+make bench-go-publish \
+  GO_BENCH_PUBLISH_PKG=./internal/av1/tile \
+  GO_BENCH_PUBLISH_BENCH='^BenchmarkCoeffCulLevel$$' \
+  GO_BENCH_PUBLISH_OUT=/tmp/goav1-coeff-cul-level.txt \
+  GO_BENCH_PUBLISH_METADATA_JSON=/tmp/goav1-coeff-cul-level.json \
+  GO_BENCH_PUBLISH_ENVIRONMENT_NOTES="fixed power mode; idle machine; cool start" \
+  GO_BENCH_PUBLISH_GOMAXPROCS=1 \
+  GO_BENCH_PUBLISH_CPU=1 \
+  GO_BENCH_PUBLISH_COUNT=7 \
+  GO_BENCH_PUBLISH_BENCHTIME=500ms \
+  GO_BENCH_PUBLISH_GOGC=off
+```
+
+Rows from plain `go test -bench`, `make bench`, or `make bench-all` remain
+useful for local exploration, but do not use them as publishable performance
+evidence unless the same command controls and metadata are reproduced.
+
 Use `-publish` for rows that will be copied into performance or quality tables.
 Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-encoders`, `-workdir`, `-csv`, `-metadata-json`, `-manifest`,

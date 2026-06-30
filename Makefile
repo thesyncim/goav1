@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish qualitybench-publish gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference webrtc-browser webrtc-production dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
+.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish qualitybench-publish gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference webrtc-browser webrtc-production dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -6,6 +6,17 @@ FUZZFLAGS = -run '^$$' -fuzztime=$(FUZZTIME) -parallel=$(FUZZPARALLEL)
 BENCHTIME ?= 3s
 GCMETRICS_COUNT ?= 5
 BENCH_CORPUS_REPORT_JSON ?= /tmp/goav1-bench-corpus-report.json
+GO_BENCH_PUBLISH_PKG ?= ./internal/av1/tile
+GO_BENCH_PUBLISH_BENCH ?= .
+GO_BENCH_PUBLISH_OUT ?= /tmp/goav1-go-bench.txt
+GO_BENCH_PUBLISH_METADATA_JSON ?= /tmp/goav1-go-bench-metadata.json
+GO_BENCH_PUBLISH_ENVIRONMENT_NOTES ?=
+GO_BENCH_PUBLISH_GOMAXPROCS ?= 1
+GO_BENCH_PUBLISH_CPU ?= 1
+GO_BENCH_PUBLISH_COUNT ?= 7
+GO_BENCH_PUBLISH_BENCHTIME ?= 500ms
+GO_BENCH_PUBLISH_TAGS ?=
+GO_BENCH_PUBLISH_GOGC ?= off
 QUALITYBENCH_MANIFEST ?=
 QUALITYBENCH_WORKDIR ?= /tmp/goav1-quality
 QUALITYBENCH_CSV ?= $(QUALITYBENCH_WORKDIR)/quality.csv
@@ -79,6 +90,21 @@ bench-corpus:
 
 bench-corpus-publish:
 	GOAV1_BENCH_CORPUS=1 GOAV1_BENCH_CORPUS_PUBLISH=1 GOAV1_BENCH_CORPUS_REPORT_JSON=$(BENCH_CORPUS_REPORT_JSON) go test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
+
+bench-go-publish:
+	go run ./cmd/gobenchpublish \
+		-pkg "$(GO_BENCH_PUBLISH_PKG)" \
+		-bench "$(GO_BENCH_PUBLISH_BENCH)" \
+		-out "$(GO_BENCH_PUBLISH_OUT)" \
+		-metadata-json "$(GO_BENCH_PUBLISH_METADATA_JSON)" \
+		-environment-notes "$(GO_BENCH_PUBLISH_ENVIRONMENT_NOTES)" \
+		-gomaxprocs "$(GO_BENCH_PUBLISH_GOMAXPROCS)" \
+		-cpu "$(GO_BENCH_PUBLISH_CPU)" \
+		-count "$(GO_BENCH_PUBLISH_COUNT)" \
+		-benchtime "$(GO_BENCH_PUBLISH_BENCHTIME)" \
+		-tags "$(GO_BENCH_PUBLISH_TAGS)" \
+		-gogc "$(GO_BENCH_PUBLISH_GOGC)" \
+		-publish
 
 qualitybench-publish:
 	@if [ -z "$(QUALITYBENCH_MANIFEST)" ]; then echo "set QUALITYBENCH_MANIFEST=/path/to/clips.csv"; exit 2; fi
@@ -428,6 +454,7 @@ help:
 	@echo "  bench-cross                goav1 vs aomdec/dav1d/SVT throughput (perf tool, startup-aware)"
 	@echo "  bench-corpus               generated corpus goav1 vs reference decoder throughput"
 	@echo "  bench-corpus-publish       strict generated corpus throughput requiring all reference decoders"
+	@echo "  bench-go-publish           strict Go benchmark runner with metadata sidecar"
 	@echo "  gc-metrics                 decode GC scan/object-count benchmarks"
 	@echo "  compiler-reports           fail on new hot-package heap escapes; report BCE sites"
 	@echo "  alloc                      run allocation regression checks"
