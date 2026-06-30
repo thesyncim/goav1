@@ -14,7 +14,10 @@ Publishable rows must satisfy these controls:
 - Keep ambient Go target, compiler, cache, and runtime env overrides unset; use
   explicit runner flags for intentional controls.
 - Record structured CPU affinity, power mode, thermal state, frequency policy,
-  and background-load fields.
+  and background-load fields. When the OS exposes CPU affinity/frequency
+  probes, metadata records the observed state and publish mode rejects a
+  machine-checkable contradiction such as `cpu-affinity=none` under a restricted
+  Linux CPU mask.
 - Use corpus-backed real clips for quality claims and require manifest/source
   hashes, exact frame metric traces, and required metrics/encoders.
 - Keep timeout, run order, shuffle seed, warmup, measured run count,

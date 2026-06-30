@@ -1358,6 +1358,12 @@ exit 7
 
 func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	clearQualitybenchPublishGoEnv(t)
+	stubQualitybenchCPUState(t, benchenv.CPUState{
+		GOOS:                "test",
+		AffinitySupported:   true,
+		AffinityAllowedList: "0-3",
+		CPUOnlineList:       "0-3",
+	})
 	ffmpegBin, ffmpegHash := writeTestExecutableWithSHA256(t, "ffmpeg")
 	aomencBin, aomencHash := writeTestExecutableWithSHA256(t, "aomenc")
 	svtBin, svtHash := writeTestExecutableWithSHA256(t, "SvtAv1EncApp")
@@ -1473,6 +1479,21 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	if err := validatePublishConfig(cfg, gitMetadata{Commit: "abc"}); err != nil {
 		t.Fatalf("valid publish config failed: %v", err)
 	}
+	oldProbe := observeBenchmarkCPUState
+	observeBenchmarkCPUState = func() benchenv.CPUState {
+		return benchenv.CPUState{
+			GOOS:                "test",
+			AffinitySupported:   true,
+			AffinityAllowedList: "0-1",
+			CPUOnlineList:       "0-3",
+		}
+	}
+	if err := validatePublishConfig(cfg, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "restricted CPU affinity") {
+		t.Fatalf("restricted CPU affinity error=%v", err)
+	}
+	observeBenchmarkCPUState = oldProbe
+
 	pathModel := cfg
 	pathModel.vmafModel = "path=" + vmafModelPath
 	if err := validatePublishConfig(pathModel, gitMetadata{Commit: "abc"}); err != nil {
@@ -2004,6 +2025,13 @@ func clearQualitybenchPublishGoEnv(t *testing.T) {
 	}
 }
 
+func stubQualitybenchCPUState(t *testing.T, state benchenv.CPUState) {
+	t.Helper()
+	old := observeBenchmarkCPUState
+	observeBenchmarkCPUState = func() benchenv.CPUState { return state }
+	t.Cleanup(func() { observeBenchmarkCPUState = old })
+}
+
 func encodeJobLabels(jobs []encodeJob) string {
 	labels := make([]string, len(jobs))
 	for i, job := range jobs {
@@ -2204,6 +2232,12 @@ func TestCommandMetadataRecordsBinaryHash(t *testing.T) {
 }
 
 func TestWriteMetadataJSON(t *testing.T) {
+	stubQualitybenchCPUState(t, benchenv.CPUState{
+		GOOS:                "test",
+		AffinitySupported:   true,
+		AffinityAllowedList: "0-3",
+		CPUOnlineList:       "0-3",
+	})
 	dir := t.TempDir()
 	path := filepath.Join(dir, "metadata.json")
 	input := filepath.Join(dir, "clip.yuv")
@@ -2301,6 +2335,10 @@ func TestWriteMetadataJSON(t *testing.T) {
 	}
 	if doc.Environment.GOMAXPROCS <= 0 || doc.Environment.NumCPU <= 0 {
 		t.Fatalf("environment metadata=%+v", doc.Environment)
+	}
+	if doc.Environment.ObservedCPUState.AffinityAllowedList != "0-3" ||
+		doc.Environment.ObservedCPUState.CPUOnlineList != "0-3" {
+		t.Fatalf("observed cpu state=%+v", doc.Environment.ObservedCPUState)
 	}
 	if doc.Environment.Notes != "fixed power mode" ||
 		doc.Environment.CPUAffinity != "none" ||

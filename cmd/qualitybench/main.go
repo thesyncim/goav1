@@ -33,6 +33,8 @@ import (
 	"github.com/thesyncim/goav1/internal/benchenv"
 )
 
+var observeBenchmarkCPUState = benchenv.ObserveCPUState
+
 const (
 	defaultWidth          = 1920
 	defaultHeight         = 1080
@@ -253,23 +255,24 @@ type runtimeMetadata struct {
 }
 
 type environmentMetadata struct {
-	GOMAXPROCS      int    `json:"gomaxprocs"`
-	NumCPU          int    `json:"num_cpu"`
-	CPUModel        string `json:"cpu_model,omitempty"`
-	Hostname        string `json:"hostname,omitempty"`
-	OSVersion       string `json:"os_version,omitempty"`
-	KernelVersion   string `json:"kernel_version,omitempty"`
-	PATH            string `json:"path,omitempty"`
-	GOFLAGS         string `json:"goflags,omitempty"`
-	GOGC            string `json:"gogc,omitempty"`
-	GOMEMLIMIT      string `json:"gomemlimit,omitempty"`
-	GODEBUG         string `json:"godebug,omitempty"`
-	CPUAffinity     string `json:"cpu_affinity,omitempty"`
-	PowerMode       string `json:"power_mode,omitempty"`
-	ThermalState    string `json:"thermal_state,omitempty"`
-	FrequencyPolicy string `json:"frequency_policy,omitempty"`
-	BackgroundLoad  string `json:"background_load,omitempty"`
-	Notes           string `json:"notes,omitempty"`
+	GOMAXPROCS       int               `json:"gomaxprocs"`
+	NumCPU           int               `json:"num_cpu"`
+	CPUModel         string            `json:"cpu_model,omitempty"`
+	Hostname         string            `json:"hostname,omitempty"`
+	OSVersion        string            `json:"os_version,omitempty"`
+	KernelVersion    string            `json:"kernel_version,omitempty"`
+	PATH             string            `json:"path,omitempty"`
+	GOFLAGS          string            `json:"goflags,omitempty"`
+	GOGC             string            `json:"gogc,omitempty"`
+	GOMEMLIMIT       string            `json:"gomemlimit,omitempty"`
+	GODEBUG          string            `json:"godebug,omitempty"`
+	CPUAffinity      string            `json:"cpu_affinity,omitempty"`
+	PowerMode        string            `json:"power_mode,omitempty"`
+	ThermalState     string            `json:"thermal_state,omitempty"`
+	FrequencyPolicy  string            `json:"frequency_policy,omitempty"`
+	BackgroundLoad   string            `json:"background_load,omitempty"`
+	Notes            string            `json:"notes,omitempty"`
+	ObservedCPUState benchenv.CPUState `json:"observed_cpu_state"`
 }
 
 type gitMetadata struct {
@@ -914,6 +917,9 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		if err := validateNonEmptyPublishTextFlag(field.name, field.value); err != nil {
 			return err
 		}
+	}
+	if err := benchenv.ValidateCPUAffinityClaim(cfg.cpuAffinity, observeBenchmarkCPUState()); err != nil {
+		return err
 	}
 	if strings.TrimSpace(strings.ToLower(cfg.requiredEncodersRaw)) != "all" {
 		return errors.New("publish requires -require-encoders all")
@@ -2587,23 +2593,24 @@ func metricFilterAvailability(filters map[string]bool) map[string]bool {
 func environmentMetadataForRun(cfg benchConfig) environmentMetadata {
 	hostname, _ := os.Hostname()
 	return environmentMetadata{
-		GOMAXPROCS:      runtime.GOMAXPROCS(0),
-		NumCPU:          runtime.NumCPU(),
-		CPUModel:        detectCPUModel(),
-		Hostname:        hostname,
-		OSVersion:       detectOSVersion(),
-		KernelVersion:   detectKernelVersion(),
-		PATH:            os.Getenv("PATH"),
-		GOFLAGS:         os.Getenv("GOFLAGS"),
-		GOGC:            os.Getenv("GOGC"),
-		GOMEMLIMIT:      os.Getenv("GOMEMLIMIT"),
-		GODEBUG:         os.Getenv("GODEBUG"),
-		CPUAffinity:     strings.TrimSpace(cfg.cpuAffinity),
-		PowerMode:       strings.TrimSpace(cfg.powerMode),
-		ThermalState:    strings.TrimSpace(cfg.thermalState),
-		FrequencyPolicy: strings.TrimSpace(cfg.frequencyPolicy),
-		BackgroundLoad:  strings.TrimSpace(cfg.backgroundLoad),
-		Notes:           strings.TrimSpace(cfg.environmentNotes),
+		GOMAXPROCS:       runtime.GOMAXPROCS(0),
+		NumCPU:           runtime.NumCPU(),
+		CPUModel:         detectCPUModel(),
+		Hostname:         hostname,
+		OSVersion:        detectOSVersion(),
+		KernelVersion:    detectKernelVersion(),
+		PATH:             os.Getenv("PATH"),
+		GOFLAGS:          os.Getenv("GOFLAGS"),
+		GOGC:             os.Getenv("GOGC"),
+		GOMEMLIMIT:       os.Getenv("GOMEMLIMIT"),
+		GODEBUG:          os.Getenv("GODEBUG"),
+		CPUAffinity:      strings.TrimSpace(cfg.cpuAffinity),
+		PowerMode:        strings.TrimSpace(cfg.powerMode),
+		ThermalState:     strings.TrimSpace(cfg.thermalState),
+		FrequencyPolicy:  strings.TrimSpace(cfg.frequencyPolicy),
+		BackgroundLoad:   strings.TrimSpace(cfg.backgroundLoad),
+		Notes:            strings.TrimSpace(cfg.environmentNotes),
+		ObservedCPUState: observeBenchmarkCPUState(),
 	}
 }
 

@@ -1720,6 +1720,17 @@ func TestValidateCorpusPublishEnvironmentRejectsAmbientGoDrift(t *testing.T) {
 			want: "GODEBUG unset",
 		},
 		{
+			name: "restricted cpu affinity",
+			mut: func(env *corpusPublishEnvironment) {
+				env.ObservedCPUState = benchenv.CPUState{
+					AffinitySupported:   true,
+					AffinityAllowedList: "0-1",
+					CPUOnlineList:       "0-3",
+				}
+			},
+			want: "restricted CPU affinity",
+		},
+		{
 			name: "goamd64",
 			mut: func(env *corpusPublishEnvironment) {
 				env.BlockedGoEnv = map[string]string{"GOAMD64": "v4"}
@@ -2522,17 +2533,18 @@ type corpusPublishGit struct {
 }
 
 type corpusPublishEnvironment struct {
-	GoVersion     string            `json:"go_version"`
-	GOOS          string            `json:"goos"`
-	GOARCH        string            `json:"goarch"`
-	GOMAXPROCS    int               `json:"gomaxprocs"`
-	GOMAXPROCSEnv string            `json:"gomaxprocs_env,omitempty"`
-	NumCPU        int               `json:"num_cpu"`
-	SIMDTier      string            `json:"simd_tier"`
-	SIMDFeatures  []string          `json:"simd_features,omitempty"`
-	BuildSettings map[string]string `json:"build_settings,omitempty"`
-	GoEnv         map[string]any    `json:"go_env,omitempty"`
-	BlockedGoEnv  map[string]string `json:"blocked_go_env,omitempty"`
+	GoVersion        string            `json:"go_version"`
+	GOOS             string            `json:"goos"`
+	GOARCH           string            `json:"goarch"`
+	GOMAXPROCS       int               `json:"gomaxprocs"`
+	GOMAXPROCSEnv    string            `json:"gomaxprocs_env,omitempty"`
+	NumCPU           int               `json:"num_cpu"`
+	SIMDTier         string            `json:"simd_tier"`
+	SIMDFeatures     []string          `json:"simd_features,omitempty"`
+	BuildSettings    map[string]string `json:"build_settings,omitempty"`
+	GoEnv            map[string]any    `json:"go_env,omitempty"`
+	BlockedGoEnv     map[string]string `json:"blocked_go_env,omitempty"`
+	ObservedCPUState benchenv.CPUState `json:"observed_cpu_state"`
 
 	CPUModel        string `json:"cpu_model,omitempty"`
 	Hostname        string `json:"hostname,omitempty"`
@@ -3200,6 +3212,9 @@ func validateCorpusPublishEnvironment(env corpusPublishEnvironment) error {
 	if strings.TrimSpace(env.GODEBUG) != "" {
 		return errors.New("corpus publish requires GODEBUG unset")
 	}
+	if err := benchenv.ValidateCPUAffinityClaim(env.CPUAffinity, env.ObservedCPUState); err != nil {
+		return err
+	}
 	for _, name := range benchenv.PublishBlockedGoEnvVars() {
 		if strings.TrimSpace(env.BlockedGoEnv[name]) != "" {
 			return fmt.Errorf("corpus publish requires %s unset; use explicit go test flags or record a separate environment", name)
@@ -3225,32 +3240,33 @@ func validateCorpusPublishEnvironment(env corpusPublishEnvironment) error {
 func currentCorpusPublishEnvironment() corpusPublishEnvironment {
 	hostname, _ := os.Hostname()
 	return corpusPublishEnvironment{
-		GoVersion:       runtime.Version(),
-		GOOS:            runtime.GOOS,
-		GOARCH:          runtime.GOARCH,
-		GOMAXPROCS:      runtime.GOMAXPROCS(0),
-		GOMAXPROCSEnv:   os.Getenv("GOMAXPROCS"),
-		NumCPU:          runtime.NumCPU(),
-		SIMDTier:        corpusSIMDTier(),
-		SIMDFeatures:    corpusSIMDFeatures(),
-		BuildSettings:   corpusGoBuildSettings(),
-		GoEnv:           benchenv.GoEnvForMetadata(),
-		BlockedGoEnv:    corpusBlockedGoEnv(),
-		CPUModel:        detectCorpusCPUModel(),
-		Hostname:        hostname,
-		OSVersion:       detectCorpusOSVersion(),
-		KernelVersion:   detectCorpusKernelVersion(),
-		PATH:            os.Getenv("PATH"),
-		GOFLAGS:         os.Getenv("GOFLAGS"),
-		GOGC:            os.Getenv("GOGC"),
-		GOMEMLIMIT:      os.Getenv("GOMEMLIMIT"),
-		GODEBUG:         os.Getenv("GODEBUG"),
-		CPUAffinity:     strings.TrimSpace(os.Getenv(envBenchCorpusCPUAffinity)),
-		PowerMode:       strings.TrimSpace(os.Getenv(envBenchCorpusPowerMode)),
-		ThermalState:    strings.TrimSpace(os.Getenv(envBenchCorpusThermalState)),
-		FrequencyPolicy: strings.TrimSpace(os.Getenv(envBenchCorpusFrequencyPolicy)),
-		BackgroundLoad:  strings.TrimSpace(os.Getenv(envBenchCorpusBackgroundLoad)),
-		Notes:           strings.TrimSpace(os.Getenv(envBenchCorpusEnvironmentNotes)),
+		GoVersion:        runtime.Version(),
+		GOOS:             runtime.GOOS,
+		GOARCH:           runtime.GOARCH,
+		GOMAXPROCS:       runtime.GOMAXPROCS(0),
+		GOMAXPROCSEnv:    os.Getenv("GOMAXPROCS"),
+		NumCPU:           runtime.NumCPU(),
+		SIMDTier:         corpusSIMDTier(),
+		SIMDFeatures:     corpusSIMDFeatures(),
+		BuildSettings:    corpusGoBuildSettings(),
+		GoEnv:            benchenv.GoEnvForMetadata(),
+		BlockedGoEnv:     corpusBlockedGoEnv(),
+		ObservedCPUState: benchenv.ObserveCPUState(),
+		CPUModel:         detectCorpusCPUModel(),
+		Hostname:         hostname,
+		OSVersion:        detectCorpusOSVersion(),
+		KernelVersion:    detectCorpusKernelVersion(),
+		PATH:             os.Getenv("PATH"),
+		GOFLAGS:          os.Getenv("GOFLAGS"),
+		GOGC:             os.Getenv("GOGC"),
+		GOMEMLIMIT:       os.Getenv("GOMEMLIMIT"),
+		GODEBUG:          os.Getenv("GODEBUG"),
+		CPUAffinity:      strings.TrimSpace(os.Getenv(envBenchCorpusCPUAffinity)),
+		PowerMode:        strings.TrimSpace(os.Getenv(envBenchCorpusPowerMode)),
+		ThermalState:     strings.TrimSpace(os.Getenv(envBenchCorpusThermalState)),
+		FrequencyPolicy:  strings.TrimSpace(os.Getenv(envBenchCorpusFrequencyPolicy)),
+		BackgroundLoad:   strings.TrimSpace(os.Getenv(envBenchCorpusBackgroundLoad)),
+		Notes:            strings.TrimSpace(os.Getenv(envBenchCorpusEnvironmentNotes)),
 	}
 }
 

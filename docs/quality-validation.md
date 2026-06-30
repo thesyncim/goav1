@@ -114,7 +114,10 @@ Publishable benchmark rows must record structured machine-state controls, not
 just prose notes: CPU affinity or the explicit value `none`, power mode, thermal
 state, frequency policy/governor, and background-load policy. Keep
 `-environment-notes` for extra context, but do not use it as the only place these
-controls are documented.
+controls are documented. On platforms where the OS exposes process CPU
+affinity, publish mode records the observed affinity/online CPU lists and rejects
+claims such as `cpu-affinity=none` when the process is actually running under a
+restricted CPU mask.
 
 Internal Go microbenchmark rows used to justify SIMD or hot-path changes should
 use `make bench-go-publish`, not the smoke-oriented `make bench` or
@@ -203,8 +206,9 @@ buffers. The metadata JSON records command paths, binary SHA-256 hashes, and
 version/help probes for the external tools used by the run. It also records
 `manifest_sha256`, the Go runtime build settings exposed by the benchmark
 binary, full `go env -json` metadata, VMAF model file SHA-256 when
-`-vmaf-model path=...` is used, the external command timeout, the
-effective `GOMAXPROCS`, CPU count/model when available, hostname,
+`-vmaf-model path=...` is used, observed CPU affinity/frequency probe data when
+available, the external command timeout, the effective `GOMAXPROCS`, CPU
+count/model when available, hostname,
 OS/kernel version when available, `PATH`, selected Go runtime environment
 variables (`GOFLAGS`, `GOGC`, `GOMEMLIMIT`, `GODEBUG`), and structured
 CPU-affinity, power-mode, thermal-state, frequency-policy, and background-load
