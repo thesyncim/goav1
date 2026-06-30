@@ -136,7 +136,9 @@ that manifest and come from `make bench-corpus-publish` so missing/stale corpus
 files, source-diversity gaps, hash drift, or missing `aomdec`, `dav1d`, or
 `SvtAv1DecApp` binaries fail before timing starts. The benchmark uses a
 deterministic clip-rotated decoder interleave to reduce thermal/load bias
-between columns. The older local snapshot below used 18 clips / 864 frames
+between columns, and each timed in-process goav1 sample reads the IVF file
+before decode while still excluding subprocess startup. The older local snapshot
+below used 18 clips / 864 frames
 before the strict publish manifest gate and interleaved timing order, so treat
 it as directional until rerun with the multi-source manifest-backed corpus:
 

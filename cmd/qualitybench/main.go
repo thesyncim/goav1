@@ -2576,7 +2576,7 @@ func fairnessNotes(cfg benchConfig) []string {
 	notes := []string{
 		"SVT-AV1 --lp is a documented parallelism level in the range 0..6, not a target processor or thread count; numeric equality with GOMAXPROCS is not treated as equivalent concurrency.",
 		"CSV and metadata include wall seconds, CPU seconds, and observed_parallelism=cpu_total_seconds/encode_wall_seconds so comparisons can be checked against observed CPU budget.",
-		"qualitybench records timing_mode; core mode keeps the historical goav1 per-frame Encode timer, while e2e mode times goav1 setup, encode calls, encoded artifact writes, and encoder shutdown for fairer CLI comparisons. Metric decode runs after timing for every encoder.",
+		"qualitybench records timing_mode; core mode keeps the historical goav1 per-frame Encode timer, while e2e mode times goav1 raw input loading/frame construction, setup, encode calls, encoded artifact writes, and encoder shutdown for fairer CLI comparisons. Metric decode runs after timing for every encoder.",
 		"qualitybench records run_order and shuffle_seed so encoder/bitrate order effects can be reproduced or randomized deterministically.",
 		"qualitybench runs warmups and measured samples in deterministic sample passes across all encoder/bitrate tuples, records every measured encode sample in metadata, and reports the median wall-time sample in the normal CSV row. Publish mode rejects a tuple when repeated measured samples produce different encoded or decoded artifact hashes.",
 		"Publishable rows use -run-order shuffle with an explicit seed so every table has a reproducible encoder/bitrate order without always favoring the same encoder column.",
@@ -3294,7 +3294,11 @@ func runEncoder(cfg benchConfig, frames []goav1.I420Frame, refPath string, encod
 	encoderName = canonicalEncoderName(encoderName)
 	switch encoderName {
 	case "goav1":
-		return encodeGoAV1(cfg, frames, bitrate)
+		goCfg := cfg
+		if cfg.timingMode == timingModeEndToEnd && refPath != "" {
+			goCfg.input = refPath
+		}
+		return encodeGoAV1(goCfg, frames, bitrate)
 	case "aomenc":
 		return encodeAOM(cfg, refPath, bitrate)
 	case "svt-av1":
@@ -3521,6 +3525,7 @@ func attachEncodeRunSummary(selected encodeResult, results []encodeResult, warmu
 }
 
 func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeResult {
+	timedFrames := frames
 	result := encodeResult{
 		encoder:          "goav1",
 		targetBPS:        bitrate,
@@ -3528,24 +3533,25 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 		encodedPath:      filepath.Join(cfg.workdir, fmt.Sprintf("goav1_%d.obus", bitrate)),
 		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("goav1_%d.yuv", bitrate)),
 		settings: map[string]string{
-			"width":             strconv.Itoa(cfg.width),
-			"height":            strconv.Itoa(cfg.height),
-			"target_bitrate":    strconv.Itoa(bitrate),
-			"framerate":         strconv.Itoa(cfg.fps),
-			"temporal_layers":   strconv.Itoa(cfg.layers),
-			"tile_columns":      strconv.Itoa(cfg.tiles),
-			"tile_columns_log2": strconv.Itoa(cfg.tiles),
-			"tile_semantics":    "tile-columns-log2",
-			"max_threads":       strconv.Itoa(cfg.goav1MaxThreads),
-			"effort":            strconv.Itoa(cfg.goav1Effort),
-			"scene_cut":         strconv.FormatBool(cfg.goav1SceneCut),
-			"golden_interval":   strconv.Itoa(cfg.goldenInterval),
-			"key_interval":      strconv.Itoa(cfg.keyInterval),
-			"gomaxprocs":        strconv.Itoa(runtime.GOMAXPROCS(0)),
-			"num_cpu":           strconv.Itoa(runtime.NumCPU()),
-			"simd_tier":         detectedSIMDTier(),
-			"simd_features":     strings.Join(detectedSIMDFeatures(), ","),
-			"timing_mode":       cfg.timingMode,
+			"width":              strconv.Itoa(cfg.width),
+			"height":             strconv.Itoa(cfg.height),
+			"target_bitrate":     strconv.Itoa(bitrate),
+			"framerate":          strconv.Itoa(cfg.fps),
+			"temporal_layers":    strconv.Itoa(cfg.layers),
+			"tile_columns":       strconv.Itoa(cfg.tiles),
+			"tile_columns_log2":  strconv.Itoa(cfg.tiles),
+			"tile_semantics":     "tile-columns-log2",
+			"max_threads":        strconv.Itoa(cfg.goav1MaxThreads),
+			"effort":             strconv.Itoa(cfg.goav1Effort),
+			"scene_cut":          strconv.FormatBool(cfg.goav1SceneCut),
+			"golden_interval":    strconv.Itoa(cfg.goldenInterval),
+			"key_interval":       strconv.Itoa(cfg.keyInterval),
+			"gomaxprocs":         strconv.Itoa(runtime.GOMAXPROCS(0)),
+			"num_cpu":            strconv.Itoa(runtime.NumCPU()),
+			"simd_tier":          detectedSIMDTier(),
+			"simd_features":      strings.Join(detectedSIMDFeatures(), ","),
+			"timing_mode":        cfg.timingMode,
+			"input_timing_scope": "preloaded",
 		},
 	}
 	var endToEndStart time.Time
@@ -3554,6 +3560,17 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 	if cfg.timingMode == timingModeEndToEnd {
 		endToEndStart = time.Now()
 		endToEndCPUBefore, endToEndCPUOK = currentProcessCPUTimes()
+		var err error
+		timedFrames, _, err = loadFrames(cfg)
+		if err != nil {
+			result.status, result.errText = "error", err.Error()
+			return result
+		}
+		if cfg.input == "" {
+			result.settings["input_timing_scope"] = "synthetic-frame-generation"
+		} else {
+			result.settings["input_timing_scope"] = "raw-file-read-and-frame-construction"
+		}
 	}
 	encodedOut, err := os.Create(result.encodedPath)
 	if err != nil {
@@ -3596,7 +3613,7 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 	}
 	var encodeDuration time.Duration
 	encodedHash := sha256.New()
-	for i, frame := range frames {
+	for i, frame := range timedFrames {
 		qBefore := enc.QIndex()
 		statsBefore := goav1.EncoderDecisionStats{}
 		if statsEnabled {
@@ -3675,7 +3692,7 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 	}
 	result.encodedBytes = encodedBytes
 	result.encodedSHA256 = encodedFileHash
-	decodedBytes, decodedHash, err := decodeGoAV1MetricYUV(cfg, result.encodedPath, result.decodedYUV, cfg.width, cfg.height, len(frames), result.settings)
+	decodedBytes, decodedHash, err := decodeGoAV1MetricYUV(cfg, result.encodedPath, result.decodedYUV, cfg.width, cfg.height, len(timedFrames), result.settings)
 	if err != nil {
 		result.status, result.errText = "error", err.Error()
 		return result

@@ -538,6 +538,9 @@ func TestEncodeGoAV1PersistsAndDecodesLengthPrefixedPayloadStream(t *testing.T) 
 	if result.settings["payload_sha256"] == "" {
 		t.Fatalf("settings missing payload hash: %+v", result.settings)
 	}
+	if result.settings["input_timing_scope"] != "synthetic-frame-generation" {
+		t.Fatalf("input timing scope=%q", result.settings["input_timing_scope"])
+	}
 	if result.settings["scene_cut"] != "false" {
 		t.Fatalf("scene-cut setting=%q want false", result.settings["scene_cut"])
 	}
@@ -574,6 +577,55 @@ func TestEncodeGoAV1PersistsAndDecodesLengthPrefixedPayloadStream(t *testing.T) 
 		result.decodedBytes != decodedBytes ||
 		result.decodedSHA256 != decodedHash {
 		t.Fatalf("decoded metadata bytes/hash=%d/%s want %d/%s", result.decodedBytes, result.decodedSHA256, decodedBytes, decodedHash)
+	}
+}
+
+func TestEncodeGoAV1EndToEndReloadsRawInputInsideTiming(t *testing.T) {
+	cfg := benchConfig{
+		width:      64,
+		height:     64,
+		frames:     2,
+		fps:        30,
+		workdir:    t.TempDir(),
+		input:      filepath.Join(t.TempDir(), "bad.yuv"),
+		layers:     1,
+		timingMode: timingModeEndToEnd,
+	}
+	if err := os.WriteFile(cfg.input, []byte("too short"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result := encodeGoAV1(cfg, syntheticFrames(cfg.frames, cfg.width, cfg.height), 100000)
+	if result.status != "error" || !strings.Contains(result.errText, "want exact raw I420 size") {
+		t.Fatalf("encode status=%s err=%s", result.status, result.errText)
+	}
+}
+
+func TestRunEncoderGoAV1EndToEndReadsSharedReferencePath(t *testing.T) {
+	dir := t.TempDir()
+	cfg := benchConfig{
+		width:      64,
+		height:     64,
+		frames:     2,
+		fps:        30,
+		workdir:    dir,
+		input:      filepath.Join(dir, "bad-original.yuv"),
+		layers:     1,
+		timingMode: timingModeEndToEnd,
+	}
+	if err := os.WriteFile(cfg.input, []byte("bad"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	frames := syntheticFrames(cfg.frames, cfg.width, cfg.height)
+	refPath := filepath.Join(dir, "source.yuv")
+	if err := writeFrames(refPath, frames, cfg.width, cfg.height); err != nil {
+		t.Fatal(err)
+	}
+	result := runEncoder(cfg, frames, refPath, "goav1", 100000)
+	if result.status != "ok" {
+		t.Fatalf("encode status=%s err=%s", result.status, result.errText)
+	}
+	if result.settings["input_timing_scope"] != "raw-file-read-and-frame-construction" {
+		t.Fatalf("input timing scope=%q", result.settings["input_timing_scope"])
 	}
 }
 
@@ -1217,6 +1269,7 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 	if !strings.Contains(joined, "not a target processor or thread count") ||
 		!strings.Contains(joined, "observed_parallelism") ||
 		!strings.Contains(joined, "timing_mode") ||
+		!strings.Contains(joined, "raw input loading") ||
 		!strings.Contains(joined, "run_order") ||
 		!strings.Contains(joined, "explicit seed") ||
 		!strings.Contains(joined, "sample passes") ||

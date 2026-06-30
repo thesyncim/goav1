@@ -210,9 +210,10 @@ than mostly subprocess startup.
 
 `-timing-mode core` preserves the historical goav1 timer that accumulates only
 per-frame `Encode` calls. Use it for local code-path profiling, not for fair
-tables. `-timing-mode e2e` times goav1 setup, encode calls, encoded artifact
-writes, and encoder shutdown, while external rows continue to time the encoder
-command invocation. Metric YUV is decoded after timing for every encoder;
+tables. `-timing-mode e2e` times goav1 raw input loading/frame construction,
+setup, encode calls, encoded artifact writes, and encoder shutdown, while
+external rows continue to time the encoder command invocation, including their
+own raw input reads. Metric YUV is decoded after timing for every encoder;
 when an external baseline or explicit `-ffmpeg-av1-decoder` is selected, goav1
 rows wrap the persisted low-overhead temporal units in an IVF sidecar and decode
 that sidecar through the same FFmpeg AV1 decoder path used for AOM/SVT rows.

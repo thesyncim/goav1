@@ -59,8 +59,10 @@ package testvector
 //     output discarded. Each (decoder, clip) is warmed up once then run
 //     N times; the median measured sample is the reported table value, with min
 //     and IQR retained in JSON for noise audits.
-//   - IN-PROCESS vs SUBPROCESS. goav1 is timed in-process (no exec/startup);
-//     the C decoders are subprocesses whose raw wall-clock includes process
+//   - IN-PROCESS vs SUBPROCESS. goav1 is timed in-process (no exec/startup),
+//     but each timed goav1 sample still reads the IVF file before decode so the
+//     input is not preloaded while external decoders read their IVF paths. The
+//     C decoders are subprocesses whose raw wall-clock includes process
 //     startup. We measure each external decoder's startup baseline and report
 //     BOTH raw and startup-adjusted numbers, exactly like the existing bench.
 //     At ~48 frames/clip the startup share is small, so raw and adjusted are
@@ -475,6 +477,14 @@ func decodeCorpusClip(ivfData []byte) (corpusDecodeResult, error) {
 
 func decodeCorpusClipDiscard(ivfData []byte) (corpusDecodeResult, error) {
 	return decodeCorpusClipWithMode(ivfData, false)
+}
+
+func decodeCorpusClipTimedFromFile(clip corpusClip) (corpusDecodeResult, error) {
+	ivfData, err := os.ReadFile(clip.ivfPath)
+	if err != nil {
+		return corpusDecodeResult{}, err
+	}
+	return decodeCorpusClipDiscard(ivfData)
 }
 
 func decodeCorpusClipWithMode(ivfData []byte, verify bool) (corpusDecodeResult, error) {
@@ -1473,6 +1483,18 @@ func TestCorpusClipCoverageSummaryDerivesLoadedAxes(t *testing.T) {
 	}
 }
 
+func TestDecodeCorpusClipTimedFromFileReadsIVFPath(t *testing.T) {
+	clip := corpusClip{
+		name:    "missing",
+		ivfPath: filepath.Join(t.TempDir(), "missing.ivf"),
+		ivfData: []byte("preloaded data must not be used by timed decode"),
+	}
+	if _, err := decodeCorpusClipTimedFromFile(clip); err == nil ||
+		!strings.Contains(err.Error(), "missing.ivf") {
+		t.Fatalf("decodeCorpusClipTimedFromFile error=%v", err)
+	}
+}
+
 func TestLoadCorpusPublishManifestValidatesFiles(t *testing.T) {
 	dir := t.TempDir()
 	md5Hex := "0123456789abcdeffedcba9876543210"
@@ -1682,7 +1704,8 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 		t.Fatalf("environment=%+v", report.Environment)
 	}
 	if !strings.Contains(report.Timing.Statistic, "median measured") ||
-		report.Timing.ExternalCommandTimeout != externalDecoderCommandTimeout.String() {
+		report.Timing.ExternalCommandTimeout != externalDecoderCommandTimeout.String() ||
+		!strings.Contains(report.Timing.GoAV1InputModel, "reads the IVF file") {
 		t.Fatalf("timing=%+v", report.Timing)
 	}
 	if len(report.Clips) != 1 || report.Clips[0].Name != "clip" || report.Clips[0].CQ != 32 ||
@@ -2914,6 +2937,7 @@ type corpusPublishReportTiming struct {
 	ConcurrencyModel       string `json:"concurrency_model"`
 	InProcessGoAV1         bool   `json:"in_process_goav1"`
 	ExternalStartupModel   string `json:"external_startup_model"`
+	GoAV1InputModel        string `json:"goav1_input_model"`
 	ExternalCommandTimeout string `json:"external_command_timeout"`
 }
 
@@ -3364,7 +3388,7 @@ func TestCrossDecoderCorpus(t *testing.T) {
 		var err error
 		if timer.inProcess {
 			samples, err = measureCorpusDurations(1, crossBenchRuns, func() error {
-				result, err := decodeCorpusClipDiscard(clip.ivfData)
+				result, err := decodeCorpusClipTimedFromFile(clip)
 				if err == nil && result.frames != clip.frames {
 					err = fmt.Errorf("decoded %d visible frames, want %d", result.frames, clip.frames)
 				}
@@ -3457,6 +3481,7 @@ func writeCorpusPublishReport(path, dir string, manifest corpusPublishManifest, 
 			ConcurrencyModel:       "goav1 worker pool = 1; aomdec --threads=1; dav1d --threads 1; SvtAv1DecApp --lp 1 requests SVT parallelism level 1, not a verified thread count",
 			InProcessGoAV1:         true,
 			ExternalStartupModel:   "raw includes subprocess startup; adjusted subtracts one measured startup baseline per clip",
+			GoAV1InputModel:        "each timed in-process goav1 sample reads the IVF file before decode; it still excludes subprocess exec/startup",
 			ExternalCommandTimeout: externalDecoderCommandTimeout.String(),
 		},
 		Tools:    corpusPublishReportTools(timers),
