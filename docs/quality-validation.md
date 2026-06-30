@@ -102,7 +102,9 @@ other `QUALITYBENCH_*` variables when sweeping speed, assembly, bitrate settings
 the per-command timeout (`QUALITYBENCH_COMMAND_TIMEOUT`, default `30m`), or the
 explicit FFmpeg AV1 decoder (`QUALITYBENCH_FFMPEG_AV1_DECODER`, default
 `libdav1d`) and VMAF model (`QUALITYBENCH_VMAF_MODEL`, default
-`version=vmaf_v0.6.1`).
+`version=vmaf_v0.6.1`). Publish runs that require VMAF must use either
+`version=...` or `path=/absolute/model`; path-based models are SHA-256 hashed
+into the metadata sidecar.
 
 If `-input` is omitted, `qualitybench` uses the same deterministic synthetic
 scene as `encbench`. That path is for smoke testing the harness, not for quality
@@ -200,7 +202,8 @@ low-overhead stream through the public decoder, never encoder reconstruction
 buffers. The metadata JSON records command paths, binary SHA-256 hashes, and
 version/help probes for the external tools used by the run. It also records
 `manifest_sha256`, the Go runtime build settings exposed by the benchmark
-binary, full `go env -json` metadata, the external command timeout, the
+binary, full `go env -json` metadata, VMAF model file SHA-256 when
+`-vmaf-model path=...` is used, the external command timeout, the
 effective `GOMAXPROCS`, CPU count/model when available, hostname,
 OS/kernel version when available, `PATH`, selected Go runtime environment
 variables (`GOFLAGS`, `GOGC`, `GOMEMLIMIT`, `GODEBUG`), and structured

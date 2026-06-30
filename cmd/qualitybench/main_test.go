@@ -1361,6 +1361,10 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	ffmpegBin, ffmpegHash := writeTestExecutableWithSHA256(t, "ffmpeg")
 	aomencBin, aomencHash := writeTestExecutableWithSHA256(t, "aomenc")
 	svtBin, svtHash := writeTestExecutableWithSHA256(t, "SvtAv1EncApp")
+	vmafModelPath := filepath.Join(t.TempDir(), "vmaf.json")
+	if err := os.WriteFile(vmafModelPath, []byte(`{"model":"fixture"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg := benchConfig{
 		workdir:             "/tmp/work",
@@ -1468,6 +1472,25 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	}
 	if err := validatePublishConfig(cfg, gitMetadata{Commit: "abc"}); err != nil {
 		t.Fatalf("valid publish config failed: %v", err)
+	}
+	pathModel := cfg
+	pathModel.vmafModel = "path=" + vmafModelPath
+	if err := validatePublishConfig(pathModel, gitMetadata{Commit: "abc"}); err != nil {
+		t.Fatalf("absolute VMAF path model failed: %v", err)
+	}
+
+	relativePathModel := cfg
+	relativePathModel.vmafModel = "path=relative-model.json"
+	if err := validatePublishConfig(relativePathModel, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "absolute") {
+		t.Fatalf("relative VMAF path model error=%v", err)
+	}
+
+	ambiguousModel := cfg
+	ambiguousModel.vmafModel = "vmaf_v0.6.1"
+	if err := validatePublishConfig(ambiguousModel, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "version=") {
+		t.Fatalf("ambiguous VMAF model error=%v", err)
 	}
 
 	missingEnvironmentNotes := cfg
@@ -2195,6 +2218,14 @@ func TestWriteMetadataJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	vmafModel := filepath.Join(dir, "vmaf.json")
+	if err := os.WriteFile(vmafModel, []byte(`{"model":"fixture"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vmafModelSHA, err := sha256File(vmafModel)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := benchConfig{
 		width:            64,
 		height:           64,
@@ -2218,6 +2249,7 @@ func TestWriteMetadataJSON(t *testing.T) {
 		frequencyPolicy:  "automatic",
 		backgroundLoad:   "idle machine",
 		commandTimeout:   45 * time.Second,
+		vmafModel:        "path=" + vmafModel,
 	}
 	invocations := []encoderInvocationMetadata{{
 		Clip:             "clip",
@@ -2286,6 +2318,10 @@ func TestWriteMetadataJSON(t *testing.T) {
 	}
 	if doc.Config.CommandTimeout != "45s" {
 		t.Fatalf("command timeout=%q", doc.Config.CommandTimeout)
+	}
+	if doc.Config.VMAFModelPath != vmafModel || doc.Config.VMAFModelSHA256 != vmafModelSHA {
+		t.Fatalf("vmaf model path=%q sha=%q want %q %q",
+			doc.Config.VMAFModelPath, doc.Config.VMAFModelSHA256, vmafModel, vmafModelSHA)
 	}
 	if len(doc.Config.RequiredEncoders) != 1 || doc.Config.RequiredEncoders[0] != "goav1" {
 		t.Fatalf("required encoders=%+v", doc.Config.RequiredEncoders)

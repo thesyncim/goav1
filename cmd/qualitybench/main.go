@@ -315,6 +315,8 @@ type metadataConfig struct {
 	FFmpegSHA256     string   `json:"ffmpeg_sha256,omitempty"`
 	FFmpegAV1Decoder string   `json:"ffmpeg_av1_decoder,omitempty"`
 	VMAFModel        string   `json:"vmaf_model,omitempty"`
+	VMAFModelPath    string   `json:"vmaf_model_path,omitempty"`
+	VMAFModelSHA256  string   `json:"vmaf_model_sha256,omitempty"`
 	AOMEncBin        string   `json:"aomenc_bin,omitempty"`
 	AOMEncSHA256     string   `json:"aomenc_sha256,omitempty"`
 	SVTBin           string   `json:"svt_bin,omitempty"`
@@ -976,6 +978,9 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		if cfg.vmafModel == "" {
 			return errors.New("publish requires non-empty -vmaf-model when vmaf is required")
 		}
+		if err := validatePublishVMAFModel(cfg.vmafModel); err != nil {
+			return err
+		}
 	}
 	if cfg.layers != 1 && (encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1")) {
 		return errors.New("publish requires -layers 1 when aomenc or svt-av1 baselines are selected; equivalent external temporal-layer settings are not implemented")
@@ -1020,6 +1025,51 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		}
 	}
 	return nil
+}
+
+func validatePublishVMAFModel(model string) error {
+	if strings.TrimSpace(model) == "" {
+		return errors.New("publish requires non-empty -vmaf-model when vmaf is required")
+	}
+	path, ok, err := vmafModelPath(model)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		if strings.Contains(model, "version=") {
+			return nil
+		}
+		return errors.New("publish requires -vmaf-model to include version=... or path=/absolute/model")
+	}
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("publish requires VMAF model path to be absolute: %s", path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("publish VMAF model path: %w", err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("publish VMAF model path is a directory: %s", path)
+	}
+	if _, err := sha256File(path); err != nil {
+		return fmt.Errorf("publish VMAF model sha256: %w", err)
+	}
+	return nil
+}
+
+func vmafModelPath(model string) (string, bool, error) {
+	for _, field := range strings.Split(model, ":") {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok || key != "path" {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return "", false, errors.New("VMAF model path is empty")
+		}
+		return value, true, nil
+	}
+	return "", false, nil
 }
 
 func requirePinnedPublishTool(cfg benchConfig, toolName, binFlag, binPath, hashFlag, expectedHash string) error {
@@ -2388,6 +2438,16 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 			return metadataConfig{}, fmt.Errorf("manifest metadata: %w", err)
 		}
 		out.ManifestSHA256 = hash
+	}
+	if path, ok, err := vmafModelPath(cfg.vmafModel); err != nil {
+		return metadataConfig{}, err
+	} else if ok {
+		hash, err := sha256File(path)
+		if err != nil {
+			return metadataConfig{}, fmt.Errorf("vmaf model metadata: %w", err)
+		}
+		out.VMAFModelPath = path
+		out.VMAFModelSHA256 = hash
 	}
 	return out, nil
 }
