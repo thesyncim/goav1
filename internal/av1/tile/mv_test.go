@@ -2,6 +2,7 @@ package tile
 
 import (
 	"errors"
+	"math/rand"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
@@ -391,4 +392,61 @@ func FuzzReadMotionVector(f *testing.F) {
 			t.Fatalf("bad residual=%+v precision=%d", residual, precision)
 		}
 	})
+}
+
+func BenchmarkReadMotionVectorStream(b *testing.B) {
+	const n = 4096
+	rng := rand.New(rand.NewSource(71))
+	precisions := []MVSubpelPrecision{MVSubpelNone, MVSubpelLow, MVSubpelHigh}
+	refs := make([]motion.Vector, n)
+	mvs := make([]motion.Vector, n)
+	precisionForOp := make([]MVSubpelPrecision, n)
+
+	var enc MVCDFs
+	if err := enc.InitDefault(); err != nil {
+		b.Fatal(err)
+	}
+	w := entropy.NewWriter(make([]byte, 0, 1<<17))
+	for i := range n {
+		precision := precisions[rng.Intn(len(precisions))]
+		ref := motion.Vector{Row: int16(rng.Intn(257) - 128), Col: int16(rng.Intn(257) - 128)}
+		diffRow := randomMVDiff(rng, precision)
+		diffCol := randomMVDiff(rng, precision)
+		mv := motion.Vector{Row: ref.Row + int16(diffRow), Col: ref.Col + int16(diffCol)}
+		if err := WriteMotionVector(&w, &enc, mv, ref, precision); err != nil {
+			b.Fatal(err)
+		}
+		refs[i] = ref
+		mvs[i] = mv
+		precisionForOp[i] = precision
+	}
+	buf, err := w.Finish()
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	var sum int16
+	for range b.N {
+		var dec MVCDFs
+		if err := dec.InitDefault(); err != nil {
+			b.Fatal(err)
+		}
+		var state DecodeState
+		if err := state.Reset(buf, Job{Offset: 0, Size: uint32(len(buf))}, DecodeOptions{}); err != nil {
+			b.Fatal(err)
+		}
+		for i := range n {
+			mv, _, err := state.ReadMotionVector(&dec, refs[i], precisionForOp[i])
+			if err != nil {
+				b.Fatal(err)
+			}
+			if mv != mvs[i] {
+				b.Fatalf("op %d mv=%+v want %+v", i, mv, mvs[i])
+			}
+			sum ^= mv.Row ^ mv.Col
+		}
+	}
+	_ = sum
 }

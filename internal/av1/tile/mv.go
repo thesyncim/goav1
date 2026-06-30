@@ -261,26 +261,26 @@ func (s *DecodeState) ReadMotionVector(cdfs *MVCDFs, ref motion.Vector, precisio
 	if s == nil || !precision.Valid() {
 		return motion.Vector{}, MVResidualResult{}, ErrInvalidDecodeState
 	}
-	cdf, err := cdfs.JointCDF()
-	if err != nil {
-		return motion.Vector{}, MVResidualResult{}, err
+	if cdfs == nil || cdfs.Joint.Symbols() != MVJoints {
+		return motion.Vector{}, MVResidualResult{}, entropy.ErrInvalidCDF
 	}
-	symbol, err := s.Reader.ReadCDF(cdf)
-	if err != nil {
-		return motion.Vector{}, MVResidualResult{}, err
-	}
+	reader := s.Reader.Cursor()
+	symbol := reader.ReadCDF4Unchecked(&cdfs.Joint)
 	joint := MVJoint(symbol)
 	if !joint.Valid() {
+		reader.CommitStateTo(&s.Reader)
 		return motion.Vector{}, MVResidualResult{}, ErrInvalidDecodeState
 	}
 	result := MVResidualResult{Joint: joint, Precision: precision}
 	if joint.HasVertical() {
-		diff, component, err := s.ReadMVComponentDiff(&cdfs.Components[mvComponentRow], precision)
+		diff, component, err := readMVComponentDiffCursor(&reader, &cdfs.Components[mvComponentRow], precision)
 		if err != nil {
+			reader.CommitStateTo(&s.Reader)
 			return motion.Vector{}, MVResidualResult{}, err
 		}
 		componentDiff, ok := motionVectorComponentFromInt32(diff)
 		if !ok {
+			reader.CommitStateTo(&s.Reader)
 			return motion.Vector{}, MVResidualResult{}, ErrInvalidDecodeState
 		}
 		result.Diff.Row = componentDiff
@@ -288,12 +288,14 @@ func (s *DecodeState) ReadMotionVector(cdfs *MVCDFs, ref motion.Vector, precisio
 		result.ComponentValid[mvComponentRow] = true
 	}
 	if joint.HasHorizontal() {
-		diff, component, err := s.ReadMVComponentDiff(&cdfs.Components[mvComponentCol], precision)
+		diff, component, err := readMVComponentDiffCursor(&reader, &cdfs.Components[mvComponentCol], precision)
 		if err != nil {
+			reader.CommitStateTo(&s.Reader)
 			return motion.Vector{}, MVResidualResult{}, err
 		}
 		componentDiff, ok := motionVectorComponentFromInt32(diff)
 		if !ok {
+			reader.CommitStateTo(&s.Reader)
 			return motion.Vector{}, MVResidualResult{}, ErrInvalidDecodeState
 		}
 		result.Diff.Col = componentDiff
@@ -305,8 +307,10 @@ func (s *DecodeState) ReadMotionVector(cdfs *MVCDFs, ref motion.Vector, precisio
 		int32(ref.Col)+int32(result.Diff.Col),
 	)
 	if !ok {
+		reader.CommitStateTo(&s.Reader)
 		return motion.Vector{}, MVResidualResult{}, ErrInvalidDecodeState
 	}
+	reader.CommitStateTo(&s.Reader)
 	return mv, result, nil
 }
 
@@ -314,22 +318,23 @@ func (s *DecodeState) ReadMVComponentDiff(cdfs *MVComponentCDFs, precision MVSub
 	if s == nil || !precision.Valid() {
 		return 0, MVComponentResult{}, ErrInvalidDecodeState
 	}
-	signCDF, err := cdfs.SignCDF()
-	if err != nil {
-		return 0, MVComponentResult{}, err
+	reader := s.Reader.Cursor()
+	diff, result, err := readMVComponentDiffCursor(&reader, cdfs, precision)
+	reader.CommitStateTo(&s.Reader)
+	return diff, result, err
+}
+
+// readMVComponentDiffCursor ports dav1d's read_mv_component_diff(): keep the
+// arithmetic decoder state hot while reading sign, class, integer, fractional,
+// and high-precision component syntax.
+func readMVComponentDiffCursor(reader *entropy.Cursor, cdfs *MVComponentCDFs, precision MVSubpelPrecision) (int32, MVComponentResult, error) {
+	if reader == nil || cdfs == nil || !precision.Valid() ||
+		cdfs.Sign.Symbols() != 2 ||
+		cdfs.Classes.Symbols() != MVClasses {
+		return 0, MVComponentResult{}, entropy.ErrInvalidCDF
 	}
-	signSymbol, err := s.Reader.ReadCDF(signCDF)
-	if err != nil {
-		return 0, MVComponentResult{}, err
-	}
-	classesCDF, err := cdfs.ClassesCDF()
-	if err != nil {
-		return 0, MVComponentResult{}, err
-	}
-	mvClass, err := s.Reader.ReadCDF(classesCDF)
-	if err != nil {
-		return 0, MVComponentResult{}, err
-	}
+	signSymbol := reader.ReadBinaryCDFUnchecked(&cdfs.Sign)
+	mvClass := reader.ReadCDFSymbolsUnchecked(&cdfs.Classes, MVClasses)
 
 	result := MVComponentResult{
 		Sign:          signSymbol != 0,
@@ -341,61 +346,47 @@ func (s *DecodeState) ReadMVComponentDiff(cdfs *MVComponentCDFs, precision MVSub
 	mag := 0
 	integerPart := 0
 	if result.Class0 {
-		class0CDF, err := cdfs.Class0CDF()
-		if err != nil {
-			return 0, MVComponentResult{}, err
+		if cdfs.Class0.Symbols() != MVClass0Size {
+			return 0, MVComponentResult{}, entropy.ErrInvalidCDF
 		}
-		d, err := s.Reader.ReadCDF(class0CDF)
-		if err != nil {
-			return 0, MVComponentResult{}, err
-		}
-		integerPart = d
+		integerPart = reader.ReadBinaryCDFUnchecked(&cdfs.Class0)
 	} else {
 		n := mvClass + MVClass0Bits - 1
 		for i := range n {
-			bitCDF, err := cdfs.BitCDF(i)
-			if err != nil {
-				return 0, MVComponentResult{}, err
+			if cdfs.Bits[i].Symbols() != 2 {
+				return 0, MVComponentResult{}, entropy.ErrInvalidCDF
 			}
-			bit, err := s.Reader.ReadCDF(bitCDF)
-			if err != nil {
-				return 0, MVComponentResult{}, err
-			}
+			bit := reader.ReadBinaryCDFUnchecked(&cdfs.Bits[i])
 			integerPart |= bit << i
 		}
 		mag = MVClass0Size << (mvClass + 2)
 	}
 
 	if precision.UsesSubpel() {
-		var fpCDF *entropy.CDF
 		if result.Class0 {
-			fpCDF, err = cdfs.Class0FPCDF(integerPart)
+			if integerPart < 0 || integerPart >= MVClass0Size ||
+				cdfs.Class0FP[integerPart].Symbols() != MVFPSize {
+				return 0, MVComponentResult{}, entropy.ErrInvalidCDF
+			}
+			result.Fraction = uint8(reader.ReadCDF4Unchecked(&cdfs.Class0FP[integerPart]))
 		} else {
-			fpCDF, err = cdfs.FPCDF()
+			if cdfs.FP.Symbols() != MVFPSize {
+				return 0, MVComponentResult{}, entropy.ErrInvalidCDF
+			}
+			result.Fraction = uint8(reader.ReadCDF4Unchecked(&cdfs.FP))
 		}
-		if err != nil {
-			return 0, MVComponentResult{}, err
-		}
-		fraction, err := s.Reader.ReadCDF(fpCDF)
-		if err != nil {
-			return 0, MVComponentResult{}, err
-		}
-		result.Fraction = uint8(fraction)
 		if precision.UsesHighPrecision() {
-			var hpCDF *entropy.CDF
 			if result.Class0 {
-				hpCDF, err = cdfs.Class0HPCDF()
+				if cdfs.Class0HP.Symbols() != 2 {
+					return 0, MVComponentResult{}, entropy.ErrInvalidCDF
+				}
+				result.HighPrecision = uint8(reader.ReadBinaryCDFUnchecked(&cdfs.Class0HP))
 			} else {
-				hpCDF, err = cdfs.HPCDF()
+				if cdfs.HP.Symbols() != 2 {
+					return 0, MVComponentResult{}, entropy.ErrInvalidCDF
+				}
+				result.HighPrecision = uint8(reader.ReadBinaryCDFUnchecked(&cdfs.HP))
 			}
-			if err != nil {
-				return 0, MVComponentResult{}, err
-			}
-			highPrecision, err := s.Reader.ReadCDF(hpCDF)
-			if err != nil {
-				return 0, MVComponentResult{}, err
-			}
-			result.HighPrecision = uint8(highPrecision)
 		}
 	}
 
