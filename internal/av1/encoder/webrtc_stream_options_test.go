@@ -1261,6 +1261,284 @@ func TestWebRTCStreamSetConfigRateControlTransitions(t *testing.T) {
 	}
 }
 
+func TestWebRTCStreamSetConfigControlsAllPixelEncoders(t *testing.T) {
+	const w, h = 320, 180
+	base := Config{
+		Resolution:        Resolution{Width: w, Height: h},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    120,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 480,
+		Scalability:       ScalabilityModeL1T2,
+		RateControl:       RateControlCBR,
+	}
+	type controlSnapshot struct {
+		rcEnabled              bool
+		rcTargetBits           int
+		rcFramesPerSec         int
+		rcPerFrameBits         int
+		qIndex                 uint8
+		temporalLayers         int
+		rcTemporalPerFrameBits [WebRTCMaxTemporalLayers]int
+	}
+	type pixelCase struct {
+		name     string
+		config   func(Config) Config
+		encode   func(*testing.T, *WebRTCStream) WebRTCEncodedPicture
+		snapshot func(*WebRTCStream) controlSnapshot
+	}
+
+	cases := []pixelCase{
+		{
+			name: "i420-8",
+			config: func(cfg Config) Config {
+				return cfg
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodePicture(testWebRTCStreamFrame(w, h), false)
+				if err != nil {
+					t.Fatalf("EncodePicture: %v", err)
+				}
+				return picture
+			},
+			snapshot: func(stream *WebRTCStream) controlSnapshot {
+				enc := stream.encoders[0]
+				if enc == nil {
+					return controlSnapshot{}
+				}
+				return controlSnapshot{
+					rcEnabled:              enc.rcEnabled,
+					rcTargetBits:           enc.rcTargetBits,
+					rcFramesPerSec:         enc.rcFramesPerSec,
+					rcPerFrameBits:         enc.rcPerFrameBits,
+					qIndex:                 enc.qIndex,
+					temporalLayers:         enc.temporalLayers,
+					rcTemporalPerFrameBits: enc.rcTemporalPerFrameBits,
+				}
+			},
+		},
+		{
+			name: "i400-8",
+			config: func(cfg Config) Config {
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 8, MonoChrome: true}
+				return cfg
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeMonochromePicture(testWebRTCStreamMonoFrame(w, h), false)
+				if err != nil {
+					t.Fatalf("EncodeMonochromePicture: %v", err)
+				}
+				return picture
+			},
+			snapshot: func(stream *WebRTCStream) controlSnapshot {
+				enc := stream.monoEncoders[0]
+				if enc == nil {
+					return controlSnapshot{}
+				}
+				return controlSnapshot{
+					rcEnabled:              enc.rcEnabled,
+					rcTargetBits:           enc.rcTargetBits,
+					rcFramesPerSec:         enc.rcFramesPerSec,
+					rcPerFrameBits:         enc.rcPerFrameBits,
+					qIndex:                 enc.qIndex,
+					temporalLayers:         enc.temporalLayers,
+					rcTemporalPerFrameBits: enc.rcTemporalPerFrameBits,
+				}
+			},
+		},
+		{
+			name: "i400-10",
+			config: func(cfg Config) Config {
+				cfg.BitDepth = 10
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 10, MonoChrome: true}
+				return cfg
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeHighBitDepthMonochromePicture(testWebRTCStreamMono16Frame(w, h, 10), false)
+				if err != nil {
+					t.Fatalf("EncodeHighBitDepthMonochromePicture: %v", err)
+				}
+				return picture
+			},
+			snapshot: func(stream *WebRTCStream) controlSnapshot {
+				enc := stream.mono16Encoders[0]
+				if enc == nil {
+					return controlSnapshot{}
+				}
+				return controlSnapshot{
+					rcEnabled:              enc.rcEnabled,
+					rcTargetBits:           enc.rcTargetBits,
+					rcFramesPerSec:         enc.rcFramesPerSec,
+					rcPerFrameBits:         enc.rcPerFrameBits,
+					qIndex:                 enc.qIndex,
+					temporalLayers:         enc.temporalLayers,
+					rcTemporalPerFrameBits: enc.rcTemporalPerFrameBits,
+				}
+			},
+		},
+		{
+			name: "i420-10",
+			config: func(cfg Config) Config {
+				cfg.BitDepth = 10
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 10, SubsamplingX: true, SubsamplingY: true}
+				return cfg
+			},
+			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {
+				t.Helper()
+				picture, err := stream.EncodeHighBitDepth420Picture(testWebRTCStream42016Frame(w, h, 10), false)
+				if err != nil {
+					t.Fatalf("EncodeHighBitDepth420Picture: %v", err)
+				}
+				return picture
+			},
+			snapshot: func(stream *WebRTCStream) controlSnapshot {
+				enc := stream.color16Encoders[0]
+				if enc == nil {
+					return controlSnapshot{}
+				}
+				return controlSnapshot{
+					rcEnabled:              enc.rcEnabled,
+					rcTargetBits:           enc.rcTargetBits,
+					rcFramesPerSec:         enc.rcFramesPerSec,
+					rcPerFrameBits:         enc.rcPerFrameBits,
+					qIndex:                 enc.qIndex,
+					temporalLayers:         enc.temporalLayers,
+					rcTemporalPerFrameBits: enc.rcTemporalPerFrameBits,
+				}
+			},
+		},
+	}
+
+	assertCBR := func(t *testing.T, stream *WebRTCStream, tc pixelCase) {
+		t.Helper()
+		cfg := stream.Config()
+		snap := tc.snapshot(stream)
+		if !snap.rcEnabled {
+			t.Fatalf("%s CBR disabled: %+v", tc.name, snap)
+		}
+		fps := webRTCStreamFramesPerSecond(cfg.MaxFramerate)
+		targetBits := int(webRTCStreamLayerTargetKbps(cfg, 0)) * 1000
+		wantPerFrame, err := rateControlPerFrameBits(RateControlConfig{
+			TargetBitsPerSecond: targetBits,
+			FramesPerSecond:     fps,
+			MinQIndex:           stream.rcMinQ,
+			MaxQIndex:           stream.rcMaxQ,
+		})
+		if err != nil {
+			t.Fatalf("%s rateControlPerFrameBits: %v", tc.name, err)
+		}
+		if snap.rcTargetBits != targetBits || snap.rcFramesPerSec != fps ||
+			snap.rcPerFrameBits != wantPerFrame || snap.temporalLayers != int(cfg.TemporalLayerCount) {
+			t.Fatalf("%s CBR snapshot=%+v target=%d fps=%d perFrame=%d temporal=%d",
+				tc.name, snap, targetBits, fps, wantPerFrame, cfg.TemporalLayerCount)
+		}
+		for temporalID := uint8(0); temporalID < cfg.TemporalLayerCount; temporalID++ {
+			want := rateControlTemporalLayerPerFrameBits(targetBits, fps, int(cfg.TemporalLayerCount), temporalID, wantPerFrame)
+			if got := snap.rcTemporalPerFrameBits[temporalID]; got != want {
+				t.Fatalf("%s T%d per-frame bits=%d want %d snapshot=%+v", tc.name, temporalID, got, want, snap)
+			}
+		}
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stream, err := NewWebRTCStreamConfig(tc.config(base))
+			if err != nil {
+				t.Fatalf("NewWebRTCStreamConfig: %v", err)
+			}
+			defer stream.Close()
+			var receiver internalrtp.DependencyDescriptorState
+
+			key := tc.encode(t, stream)
+			if !key.Keyframe || key.FrameNum != 1 || key.Frames[0].Info.TemporalID != 0 {
+				t.Fatalf("initial key picture=%+v", key)
+			}
+			assertWebRTCStreamPictureDependencyDescriptors(t, &receiver, key)
+			delta := tc.encode(t, stream)
+			if delta.Keyframe || delta.FrameNum != 1 || delta.Frames[0].Info.TemporalID != 1 {
+				t.Fatalf("initial delta picture=%+v", delta)
+			}
+			assertWebRTCStreamPictureDependencyDescriptors(t, &receiver, delta)
+			assertCBR(t, stream, tc)
+
+			controlChange := stream.Config()
+			controlChange.MaxFramerate = Rational{Num: 60, Den: 1}
+			controlChange.MinBitrateKbps = 160
+			controlChange.MaxBitrateKbps = 1200
+			controlChange.TargetBitrateKbps = 720
+			beforeState := stream.state
+			if err := stream.SetConfig(controlChange); err != nil {
+				t.Fatalf("SetConfig CBR control change: %v", err)
+			}
+			if stream.state != beforeState {
+				t.Fatalf("CBR control change reset state: before=%+v after=%+v", beforeState, stream.state)
+			}
+			assertCBR(t, stream, tc)
+			beforeFrameID := stream.state.NextFrameID
+			delta = tc.encode(t, stream)
+			if delta.Keyframe || delta.Frames[0].Info.FrameID != beforeFrameID {
+				t.Fatalf("CBR control change picture=%+v beforeFrameID=%d", delta, beforeFrameID)
+			}
+			assertWebRTCStreamPictureDependencyDescriptors(t, &receiver, delta)
+
+			toCQP := stream.Config()
+			toCQP.RateControl = RateControlCQP
+			toCQP.Quantizer = 37
+			beforeState = stream.state
+			if err := stream.SetConfig(toCQP); err != nil {
+				t.Fatalf("SetConfig CQP: %v", err)
+			}
+			if stream.state != beforeState {
+				t.Fatalf("CQP transition reset state: before=%+v after=%+v", beforeState, stream.state)
+			}
+			snap := tc.snapshot(stream)
+			if snap.rcEnabled || snap.rcTargetBits != 0 || snap.rcFramesPerSec != 0 ||
+				snap.rcPerFrameBits != 0 || snap.qIndex != toCQP.Quantizer {
+				t.Fatalf("CQP snapshot=%+v want q=%d", snap, toCQP.Quantizer)
+			}
+			beforeFrameID = stream.state.NextFrameID
+			delta = tc.encode(t, stream)
+			if delta.Keyframe || delta.Frames[0].Info.FrameID != beforeFrameID {
+				t.Fatalf("CQP transition picture=%+v beforeFrameID=%d", delta, beforeFrameID)
+			}
+			assertWebRTCStreamPictureDependencyDescriptors(t, &receiver, delta)
+
+			structureChange := stream.Config()
+			structureChange.Scalability = ScalabilityModeL1T3
+			structureChange.RateControl = RateControlCBR
+			structureChange.Quantizer = 0
+			structureChange.MaxFramerate = Rational{Num: 30, Den: 1}
+			structureChange.MinBitrateKbps = 180
+			structureChange.MaxBitrateKbps = 1500
+			structureChange.TargetBitrateKbps = 900
+			beforeFrameID = stream.state.NextFrameID
+			if err := stream.SetConfig(structureChange); err != nil {
+				t.Fatalf("SetConfig structure change: %v", err)
+			}
+			assertCBR(t, stream, tc)
+			key = tc.encode(t, stream)
+			if !key.Keyframe || key.Frames[0].Info.FrameID != beforeFrameID ||
+				!key.Frames[0].AttachDependencyStructure || key.Frames[0].Info.TemporalID != 0 {
+				t.Fatalf("structure change key=%+v beforeFrameID=%d", key, beforeFrameID)
+			}
+			assertWebRTCStreamPictureDependencyDescriptors(t, &receiver, key)
+			beforeFrameID = stream.state.NextFrameID
+			delta = tc.encode(t, stream)
+			if delta.Keyframe || delta.Frames[0].Info.FrameID != beforeFrameID ||
+				delta.Frames[0].Info.TemporalID != 2 {
+				t.Fatalf("L1T3 delta=%+v beforeFrameID=%d", delta, beforeFrameID)
+			}
+			assertWebRTCStreamPictureDependencyDescriptors(t, &receiver, delta)
+		})
+	}
+}
+
 func TestWebRTCStreamSetConfigCBRPreservesRateControlState(t *testing.T) {
 	const w, h = 640, 360
 	cfg := Config{
