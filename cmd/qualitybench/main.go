@@ -148,10 +148,77 @@ type encodeResult struct {
 }
 
 type metrics struct {
-	psnr  string
-	ssim  string
-	xpsnr string
-	vmaf  string
+	psnr       string
+	ssim       string
+	xpsnr      string
+	vmaf       string
+	psnrValue  float64
+	ssimValue  float64
+	xpsnrValue float64
+	vmafValue  float64
+	psnrValid  bool
+	ssimValid  bool
+	xpsnrValid bool
+	vmafValid  bool
+}
+
+func metricsNA() metrics {
+	return metrics{psnr: "NA", ssim: "NA", xpsnr: "NA", vmaf: "NA"}
+}
+
+func (m *metrics) setPSNR(v float64) {
+	m.psnr = formatMetric(v)
+	m.psnrValue = v
+	m.psnrValid = finiteMetric(v)
+}
+
+func (m *metrics) setSSIM(v float64) {
+	m.ssim = formatMetric(v)
+	m.ssimValue = v
+	m.ssimValid = finiteMetric(v)
+}
+
+func (m *metrics) setXPSNR(v float64) {
+	m.xpsnr = formatMetric(v)
+	m.xpsnrValue = v
+	m.xpsnrValid = finiteMetric(v)
+}
+
+func (m *metrics) setVMAF(v float64) {
+	m.vmaf = formatMetric(v)
+	m.vmafValue = v
+	m.vmafValid = finiteMetric(v)
+}
+
+func (m metrics) psnrRDMetric() (float64, bool) {
+	return rdMetricValue(m.psnr, m.psnrValue, m.psnrValid)
+}
+
+func (m metrics) ssimRDMetric() (float64, bool) {
+	return rdMetricValue(m.ssim, m.ssimValue, m.ssimValid)
+}
+
+func (m metrics) xpsnrRDMetric() (float64, bool) {
+	return rdMetricValue(m.xpsnr, m.xpsnrValue, m.xpsnrValid)
+}
+
+func (m metrics) vmafRDMetric() (float64, bool) {
+	return rdMetricValue(m.vmaf, m.vmafValue, m.vmafValid)
+}
+
+func rdMetricValue(text string, value float64, valid bool) (float64, bool) {
+	if valid && finiteMetric(value) {
+		return value, true
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+	if err != nil || !finiteMetric(v) {
+		return 0, false
+	}
+	return v, true
+}
+
+func finiteMetric(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0)
 }
 
 type clipSpec struct {
@@ -1879,7 +1946,7 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 	results := runEncoderJobsMeasured(clipCfg, frames, refPath, jobs)
 	for i, result := range results {
 		bitrate, encoderName := jobs[i].bitrate, jobs[i].encoder
-		m := metrics{psnr: "NA", ssim: "NA", xpsnr: "NA", vmaf: "NA"}
+		m := metricsNA()
 		var metricErr error
 		if result.status == "ok" {
 			m, metricErr = measureDecoded(clipCfg, filters, required, refPath, result.decodedYUV, encoderName, bitrate)
@@ -2890,12 +2957,12 @@ func summarizeBDRate(anchor string, rows []benchRow) []summaryRow {
 	anchor = canonicalEncoderName(anchor)
 	metricsByName := [...]struct {
 		name string
-		get  func(metrics) string
+		get  func(metrics) (float64, bool)
 	}{
-		{name: "psnr_avg", get: func(m metrics) string { return m.psnr }},
-		{name: "ssim_all", get: func(m metrics) string { return m.ssim }},
-		{name: "xpsnr_y", get: func(m metrics) string { return m.xpsnr }},
-		{name: "vmaf", get: func(m metrics) string { return m.vmaf }},
+		{name: "psnr_avg", get: metrics.psnrRDMetric},
+		{name: "ssim_all", get: metrics.ssimRDMetric},
+		{name: "xpsnr_y", get: metrics.xpsnrRDMetric},
+		{name: "vmaf", get: metrics.vmafRDMetric},
 	}
 
 	seenClips := map[string]bool{}
@@ -2947,14 +3014,14 @@ func summarizeBDRate(anchor string, rows []benchRow) []summaryRow {
 	return summaries
 }
 
-func rdPointsFor(rows []benchRow, clip string, encoder string, getMetric func(metrics) string) []rdPoint {
+func rdPointsFor(rows []benchRow, clip string, encoder string, getMetric func(metrics) (float64, bool)) []rdPoint {
 	var points []rdPoint
 	for _, row := range rows {
 		if row.status != "ok" || row.clip != clip || strings.ToLower(row.encoder) != encoder || row.actualBPS <= 0 {
 			continue
 		}
-		metric, err := strconv.ParseFloat(getMetric(row.metrics), 64)
-		if err != nil || math.IsNaN(metric) || math.IsInf(metric, 0) {
+		metric, ok := getMetric(row.metrics)
+		if !ok {
 			continue
 		}
 		points = append(points, rdPoint{
@@ -4160,10 +4227,10 @@ func parseFFmpegAV1Decoders(raw []byte) map[string]bool {
 }
 
 func measureDecoded(cfg benchConfig, filters map[string]bool, required map[string]bool, refPath, decodedPath, encoderName string, bitrate int) (metrics, error) {
-	m := metrics{psnr: "NA", ssim: "NA", xpsnr: "NA", vmaf: "NA"}
+	m := metricsNA()
 	if filters["psnr"] {
 		if v, err := runScalarMetric(cfg, refPath, decodedPath, "psnr", `average:([0-9.]+|inf|Inf|INF)`); err == nil {
-			m.psnr = formatMetric(v)
+			m.setPSNR(v)
 		} else if required["psnr"] {
 			return m, fmt.Errorf("required metric psnr: %w", err)
 		}
@@ -4172,7 +4239,7 @@ func measureDecoded(cfg benchConfig, filters map[string]bool, required map[strin
 	}
 	if filters["ssim"] {
 		if v, err := runScalarMetric(cfg, refPath, decodedPath, "ssim", `All:([0-9.]+|inf|Inf|INF)`); err == nil {
-			m.ssim = formatMetric(v)
+			m.setSSIM(v)
 		} else if required["ssim"] {
 			return m, fmt.Errorf("required metric ssim: %w", err)
 		}
@@ -4181,7 +4248,7 @@ func measureDecoded(cfg benchConfig, filters map[string]bool, required map[strin
 	}
 	if filters["xpsnr"] {
 		if v, err := runScalarMetric(cfg, refPath, decodedPath, "xpsnr", `XPSNR\s+y:\s*([0-9]+(?:\.[0-9]+)?|inf|Inf|INF)`); err == nil {
-			m.xpsnr = formatMetric(v)
+			m.setXPSNR(v)
 		} else if required["xpsnr"] {
 			return m, fmt.Errorf("required metric xpsnr: %w", err)
 		}
@@ -4190,7 +4257,7 @@ func measureDecoded(cfg benchConfig, filters map[string]bool, required map[strin
 	}
 	if filters["libvmaf"] {
 		if v, err := runVMAF(cfg, refPath, decodedPath, encoderName, bitrate); err == nil {
-			m.vmaf = formatMetric(v)
+			m.setVMAF(v)
 		} else if required["vmaf"] {
 			return m, fmt.Errorf("required metric vmaf: %w", err)
 		}
@@ -4421,25 +4488,22 @@ func normalizedRDPoints(points []rdPoint) ([]rdPoint, error) {
 		return nil, fmt.Errorf("need at least 4 RD points, got %d", len(points))
 	}
 	out := append([]rdPoint(nil), points...)
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].Metric < out[j].Metric
-	})
-	write := 0
 	for _, point := range out {
 		if point.Rate <= 0 || math.IsNaN(point.Rate) || math.IsInf(point.Rate, 0) ||
 			math.IsNaN(point.Metric) || math.IsInf(point.Metric, 0) {
 			return nil, errors.New("invalid RD point")
 		}
-		if write > 0 && math.Abs(point.Metric-out[write-1].Metric) < 1e-9 {
-			out[write-1].Rate = point.Rate
-			continue
-		}
-		out[write] = point
-		write++
 	}
-	out = out[:write]
-	if len(out) < 4 {
-		return nil, fmt.Errorf("need at least 4 unique metric points, got %d", len(out))
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Metric == out[j].Metric {
+			return out[i].Rate < out[j].Rate
+		}
+		return out[i].Metric < out[j].Metric
+	})
+	for i := 1; i < len(out); i++ {
+		if out[i].Metric == out[i-1].Metric {
+			return nil, fmt.Errorf("duplicate RD metric point %.12g at rates %.0f and %.0f", out[i].Metric, out[i-1].Rate, out[i].Rate)
+		}
 	}
 	return out, nil
 }

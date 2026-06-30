@@ -198,7 +198,10 @@ and the manifest-declared
 input hashes are verified before timing starts. Publish mode rejects duplicate
 encoder/bitrate entries, requires the
 BD-rate anchor to be one of the selected encoders, and requires at least four
-distinct bitrate points. When `aomenc` or `svt-av1` baselines are
+distinct bitrate points. BD-rate summaries use unrounded metric values from the
+measurement step and format only the emitted artifacts; repeated metric values
+for a fitted curve are reported as summary errors instead of being merged. When
+`aomenc` or `svt-av1` baselines are
 selected, publish mode requires `-layers 1`; goav1 multi-temporal-layer/SVC
 audits must stay goav1-only until equivalent external baseline settings are
 implemented and recorded. When `aomenc` or `svt-av1` baselines are selected,
@@ -370,8 +373,9 @@ When `-summary-csv` is set, `qualitybench` writes BD-rate rows for each
 candidate encoder against `-anchor` (default: the first encoder in `-encoders`).
 Positive `bd_rate_pct` means the candidate needed more bitrate than the anchor
 over the common metric range; negative means it needed less. Rows with fewer
-than four valid points, missing metrics, or no overlapping quality range are
-reported as explicit errors instead of synthesized numbers. When
+than four valid points, missing metrics, duplicate metric values within either
+curve, or no overlapping quality range are reported as explicit errors instead
+of synthesized numbers. When
 `-require-summary` is set, any missing or non-`ok` summary row for a
 `-require-metrics` metric and selected non-anchor encoder makes the command
 exit nonzero after writing the summary CSV.

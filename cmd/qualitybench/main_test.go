@@ -910,6 +910,50 @@ func TestBDRatePercentRejectsInsufficientPoints(t *testing.T) {
 	}
 }
 
+func TestBDRatePercentRejectsDuplicateMetricValues(t *testing.T) {
+	anchor := []rdPoint{
+		{Metric: 30, Rate: 100_000},
+		{Metric: 35, Rate: 200_000},
+		{Metric: 35, Rate: 250_000},
+		{Metric: 40, Rate: 400_000},
+		{Metric: 45, Rate: 800_000},
+	}
+	candidate := []rdPoint{
+		{Metric: 30, Rate: 200_000},
+		{Metric: 35, Rate: 400_000},
+		{Metric: 40, Rate: 800_000},
+		{Metric: 45, Rate: 1_600_000},
+	}
+	_, _, _, err := bdRatePercent(anchor, candidate)
+	if err == nil || !strings.Contains(err.Error(), "anchor: duplicate RD metric point 35") {
+		t.Fatalf("duplicate metric error=%v", err)
+	}
+}
+
+func TestRDPointsForUsesFullPrecisionMetricValues(t *testing.T) {
+	const want = 40.00004
+	rows := []benchRow{
+		{
+			clip:      "clip",
+			encoder:   "goav1",
+			actualBPS: 100_000,
+			metrics: metrics{
+				psnr:      "40.0000",
+				psnrValue: want,
+				psnrValid: true,
+			},
+			status: "ok",
+		},
+	}
+	points := rdPointsFor(rows, "clip", "goav1", metrics.psnrRDMetric)
+	if len(points) != 1 {
+		t.Fatalf("points=%v", points)
+	}
+	if points[0].Metric != want {
+		t.Fatalf("metric=%0.8f want full precision %0.8f", points[0].Metric, want)
+	}
+}
+
 func TestSummarizeBDRateUsesActualBitrate(t *testing.T) {
 	rows := []benchRow{
 		{clip: "clip", encoder: "anchor", actualBPS: 100_000, metrics: metrics{psnr: "30"}, status: "ok"},
