@@ -1296,6 +1296,31 @@ func TestReadCoefficientsTXBTrackedMatchesPlainMatrix(t *testing.T) {
 	}
 }
 
+func TestReadCoefficientsTXBTracked2DFastPathMatchesGeneric(t *testing.T) {
+	for _, tc := range coeffTXBMatrixCases() {
+		if tc.class != transform.Class2D {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			scan, scratch, payload := coeffTXBMatrixInputs(t, tc)
+			genericResult, genericCoeffs, genericDirty, genericLevelDirty := decodeKnownTracked2DTXBForTest(t, tc, scan, scratch, payload, false)
+			fastResult, fastCoeffs, fastDirty, fastLevelDirty := decodeKnownTracked2DTXBForTest(t, tc, scan, scratch, payload, true)
+			if fastResult != genericResult {
+				t.Fatalf("fast result=%+v want generic %+v", fastResult, genericResult)
+			}
+			if !slices.Equal(fastCoeffs, genericCoeffs) {
+				t.Fatalf("fast coeffs=%v want generic %v", fastCoeffs, genericCoeffs)
+			}
+			if !slices.Equal(fastDirty, genericDirty) {
+				t.Fatalf("fast dirty=%v want generic %v", fastDirty, genericDirty)
+			}
+			if !slices.Equal(fastLevelDirty, genericLevelDirty) {
+				t.Fatalf("fast level dirty=%v want generic %v", fastLevelDirty, genericLevelDirty)
+			}
+		})
+	}
+}
+
 func TestReadCoefficientsTXBTrackedMatrixAllocs(t *testing.T) {
 	for _, tc := range coeffTXBMatrixCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1374,6 +1399,69 @@ func coeffTXBMatrixCases() []coeffTXBMatrixCase {
 		{name: "8x8_2d_no_update", size: TransformSize8x8, class: transform.Class2D, opts: DecodeOptions{DisableCDFUpdate: true}},
 		{name: "16x16_2d_update", size: TransformSize16x16, class: transform.Class2D},
 	}
+}
+
+func decodeKnownTracked2DTXBForTest(t testing.TB, tc coeffTXBMatrixCase, scan []int16, scratch []uint8, payload []byte, fast bool) (TXBDecodeResult, []int16, []int16, []int16) {
+	t.Helper()
+	coeffs := make([]int16, len(scan))
+	var levelArena [maxCoeffScratchLen]uint8
+	levels := levelArena[:len(scratch)]
+	var dirtyPos [maxCoeffScanLen]int16
+	var dirtyLen uint16
+	var levelDirty [maxCoeffScanLen]int16
+	var levelDirtyLen uint16
+	levelArena[0] = 7
+	levelArena[1] = 9
+	levelDirty[0] = 0
+	levelDirty[1] = 1
+	levelDirtyLen = 2
+	req := TXBDecodeRequest{
+		Size:                  tc.size,
+		Plane:                 CoeffPlaneY,
+		Class:                 transform.Class2D,
+		TXBSkipContext:        0,
+		DCSignContext:         0,
+		EOBMultiContext:       0,
+		TXBSkipKnown:          true,
+		knownNonZero:          true,
+		SkipAllZeroCoeffClear: true,
+		skipNonZeroCoeffClear: true,
+		coeffDirtyPos:         &dirtyPos,
+		coeffDirtyLen:         &dirtyLen,
+		levelDirtyPos:         &levelDirty,
+		levelDirtyLen:         &levelDirtyLen,
+		levelDirtyScratch:     &levelArena,
+		trustedScan:           true,
+	}
+	var cdfs CoeffCDFs
+	if err := cdfs.InitDefault(0); err != nil {
+		t.Fatal(err)
+	}
+	var state DecodeState
+	if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, tc.opts); err != nil {
+		t.Fatal(err)
+	}
+	allZero, err := state.ReadTXBSkip(&cdfs, TXBSkipRequest{Size: tc.size, Context: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allZero {
+		t.Fatal("matrix payload unexpectedly decoded as all-zero after TXB skip")
+	}
+	geo, ok := coeffGeoPtr(tc.size)
+	if !ok {
+		t.Fatal("missing coefficient geometry")
+	}
+	var result TXBDecodeResult
+	if fast {
+		result, err = state.readCoefficientsTXBTracked2DWithGeo(&cdfs, req, coeffs, scan, levels, geo)
+	} else {
+		result, err = state.readCoefficientsTXBWithGeo(&cdfs, req, coeffs, scan, levels, geo)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result, coeffs, slices.Clone(dirtyPos[:dirtyLen]), slices.Clone(levelDirty[:levelDirtyLen])
 }
 
 func decodeCoeffTXBMatrixCase(t testing.TB, tc coeffTXBMatrixCase, scan []int16, scratch []uint8, payload []byte, tracked bool) (TXBDecodeResult, []int16) {

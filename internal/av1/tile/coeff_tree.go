@@ -793,7 +793,12 @@ func (s *DecodeState) decodeCoeffTXBWithKnownContext(cdfs *CoeffCDFs, ctx *Coeff
 	req.levelDirtyLen = &scratch.levelDirtyLen
 	req.levelDirtyScratch = &scratch.Levels
 	req.trustedScan = true
-	result, err := s.readCoefficientsTXBWithGeo(cdfs, req, coeffs, scan, levels, geo)
+	var result TXBDecodeResult
+	if selectedClass == transform.Class2D && !allZero && req.SkipAllZeroCoeffClear {
+		result, err = s.readCoefficientsTXBTracked2DWithGeo(cdfs, req, coeffs, scan, levels, geo)
+	} else {
+		result, err = s.readCoefficientsTXBWithGeo(cdfs, req, coeffs, scan, levels, geo)
+	}
 	if err != nil {
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("read coeff txb req=%+v coeffs=%d scan=%d levels=%d selected=%v: %w", req, len(coeffs), len(scan), len(levels), selected, err)
 	}

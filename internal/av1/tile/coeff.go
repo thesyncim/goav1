@@ -1703,6 +1703,352 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 	}, nil
 }
 
+func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req TXBDecodeRequest, coeffs []int16, scan []int16, levelsScratch []uint8, geo *coeffGeometry) (TXBDecodeResult, error) {
+	if s == nil || geo == nil {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	maxEOB := int(geo.maxEOB)
+	if len(coeffs) < maxEOB || len(scan) < maxEOB {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	coeffs = coeffs[:maxEOB]
+	scan = scan[:maxEOB]
+	scratchLen := int(geo.scratchLen)
+	if len(levelsScratch) < scratchLen {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	levelsScratch = levelsScratch[:scratchLen]
+	if req.Size >= transformSizeCount || !req.Plane.Valid() || req.Class != transform.Class2D || !req.knownNonZero || !req.trustedScan {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	dirtyArr := req.coeffDirtyPos
+	dirtyLen := req.coeffDirtyLen
+	levelDirtyArr := req.levelDirtyPos
+	levelDirtyLen := req.levelDirtyLen
+	if dirtyArr == nil || dirtyLen == nil || levelDirtyArr == nil || levelDirtyLen == nil || *dirtyLen != 0 {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	if !req.skipNonZeroCoeffClear {
+		clear(coeffs[:maxEOB])
+	}
+
+	scanHotSlice := coeffScanHotTable[req.Size][transform.Class2D]
+	if len(scanHotSlice) < maxEOB {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	scanHotSlice = scanHotSlice[:maxEOB]
+	txCtx := int(geo.txCtx)
+	txBR := int(geo.txBRCtx)
+	if cdfs == nil || txCtx >= CoeffTxSizeContexts || txBR >= CoeffTxSizeContexts ||
+		req.DCSignContext >= 3 ||
+		req.EOBMultiContext >= maxEOBFlagContexts {
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+	baseArr := &cdfs.CoeffBase[txCtx][req.Plane]
+	baseEOBArr := &cdfs.CoeffBaseEOB[txCtx][req.Plane]
+	brArr := &cdfs.CoeffBR[txBR][req.Plane]
+	eobCDF := eobFlagCDFKnown(cdfs, req.Size, req.Plane, req.EOBMultiContext)
+	eobSymbols := int(eobMultiSizeTable[req.Size]) + 5
+	eobExtraArr := &cdfs.EOBExtra[txCtx][req.Plane]
+	dcSignCDF := &cdfs.DCSign[req.Plane][req.DCSignContext]
+	cdfUpdate := s.Reader.AllowCDFUpdate()
+	reader := s.Reader.Cursor()
+	eob, err := readEOBCursorKnown(&reader, eobCDF, eobSymbols, eobExtraArr)
+	if err != nil {
+		reader.CommitStateTo(&s.Reader)
+		return TXBDecodeResult{}, err
+	}
+	eobPos := int(eob.Position)
+	if eobPos <= 0 || eobPos > maxEOB {
+		reader.CommitStateTo(&s.Reader)
+		return TXBDecodeResult{}, ErrInvalidDecodeState
+	}
+
+	lastC := eobPos - 1
+	lastHot := scanHotSlice[lastC]
+	lastPos := int(lastHot.pos)
+	lastLevel := reader.ReadCDF3Unchecked(&baseEOBArr[lastHot.lowerEOBCtx]) + 1
+	if lastLevel > NumBaseLevels {
+		var extra uint8
+		if cdfUpdate {
+			extra = readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, int(lastHot.brEOBCtx))
+		} else {
+			extra = readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, int(lastHot.brEOBCtx))
+		}
+		lastLevel += int(extra)
+	}
+	if eobPos == 1 {
+		if coeffTraceEnabled {
+			coeffTraceBlock(int(req.Plane), 0, 0, int(req.Size), int(req.Class), eobPos)
+		}
+		negative := reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
+		baseLevel := lastLevel
+		golombExtra := 0
+		if lastLevel >= MaxBaseBRRange {
+			tail, err := readCoeffGolombCursor(&reader)
+			if err != nil {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, err
+			}
+			golombExtra = tail
+			lastLevel += tail
+		}
+		signBit := 0
+		if negative {
+			signBit = 1
+		}
+		if coeffTraceEnabled {
+			coeffTraceCoeff(0, lastPos, baseLevel, golombExtra, lastLevel, signBit)
+		}
+		if lastLevel > int(^uint16(0)>>1) {
+			reader.CommitStateTo(&s.Reader)
+			return TXBDecodeResult{}, ErrInvalidDecodeState
+		}
+		signed := int16(lastLevel)
+		if negative {
+			signed = -signed
+		}
+		coeffs[lastPos] = signed
+		dirtyArr[0] = int16(lastPos)
+		*dirtyLen = 1
+
+		culLevel := lastLevel
+		if culLevel > CoeffContextMask {
+			culLevel = CoeffContextMask
+		}
+		if signed < 0 {
+			culLevel |= 1 << CoeffContextBits
+		} else if signed > 0 {
+			culLevel += 2 << CoeffContextBits
+		}
+		if coeffTraceEnabled {
+			coeffTraceCulLevel(culLevel)
+		}
+		reader.CommitStateTo(&s.Reader)
+		return TXBDecodeResult{
+			EOB:         1,
+			MaxScanLine: uint16(lastPos),
+			CulLevel:    uint8(culLevel),
+		}, nil
+	}
+
+	levelClearScratch := levelsScratch
+	if req.levelDirtyScratch != nil {
+		levelClearScratch = req.levelDirtyScratch[:]
+	}
+	for i := 0; i < int(*levelDirtyLen); i++ {
+		padded := int(levelDirtyArr[i])
+		if uint(padded) < uint(len(levelClearScratch)) {
+			levelClearScratch[padded] = 0
+		}
+	}
+	*levelDirtyLen = 0
+	levelDirtyNext := 0
+	lastPadded := int(lastHot.padded)
+	levelsScratch[lastPadded] = uint8(lastLevel)
+	levelDirtyArr[levelDirtyNext] = int16(lastPadded)
+	levelDirtyNext++
+	dirtyArr[0] = packCoeffDirty(lastPos, lastLevel)
+	nonzeroScanLen := 1
+
+	stride := int(geo.stride)
+	if cdfUpdate {
+		for c := eobPos - 2; c >= 0; c-- {
+			p := scanHotSlice[c]
+			pos := int(p.pos)
+			padded := int(p.padded)
+			ctx := 0
+			if pos != 0 {
+				s1 := padded + stride
+				s1p1 := s1 + 1
+				s2 := s1 + stride
+				p1 := padded + 1
+				p2 := padded + 2
+				_ = levelsScratch[s2]
+				_ = levelsScratch[p2]
+				mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
+					clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
+				ctx = (mag + 1) >> 1
+				if ctx > 4 {
+					ctx = 4
+				}
+				ctx += int(p.lower2DOffset)
+			}
+			level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
+			if level == NumBaseLevels+1 {
+				s1 := padded + stride
+				s1p1 := s1 + 1
+				p1 := padded + 1
+				_ = levelsScratch[s1p1]
+				mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
+				if mag > 6 {
+					mag = 6
+				}
+				brCtx := mag + int(p.br2DOffset)
+				extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
+				level += int(extra)
+			}
+			if level != 0 {
+				levelsScratch[padded] = uint8(level)
+				levelDirtyArr[levelDirtyNext] = int16(padded)
+				levelDirtyNext++
+				dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
+				nonzeroScanLen++
+			}
+		}
+	} else {
+		for c := eobPos - 2; c >= 0; c-- {
+			p := scanHotSlice[c]
+			pos := int(p.pos)
+			padded := int(p.padded)
+			ctx := 0
+			if pos != 0 {
+				s1 := padded + stride
+				s1p1 := s1 + 1
+				s2 := s1 + stride
+				p1 := padded + 1
+				p2 := padded + 2
+				_ = levelsScratch[s2]
+				_ = levelsScratch[p2]
+				mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
+					clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
+				ctx = (mag + 1) >> 1
+				if ctx > 4 {
+					ctx = 4
+				}
+				ctx += int(p.lower2DOffset)
+			}
+			level := reader.ReadCDF4NoUpdateUnchecked(&baseArr[ctx])
+			if level == NumBaseLevels+1 {
+				s1 := padded + stride
+				s1p1 := s1 + 1
+				p1 := padded + 1
+				_ = levelsScratch[s1p1]
+				mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
+				if mag > 6 {
+					mag = 6
+				}
+				brCtx := mag + int(p.br2DOffset)
+				extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
+				level += int(extra)
+			}
+			if level != 0 {
+				levelsScratch[padded] = uint8(level)
+				levelDirtyArr[levelDirtyNext] = int16(padded)
+				levelDirtyNext++
+				dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
+				nonzeroScanLen++
+			}
+		}
+	}
+	*levelDirtyLen = uint16(levelDirtyNext)
+
+	if coeffTraceEnabled {
+		coeffTraceBlock(int(req.Plane), 0, 0, int(req.Size), int(req.Class), eobPos)
+	}
+	culLevel := 0
+	dcValue := 0
+	maxScanLine := 0
+	i := nonzeroScanLen - 1
+	if i >= 0 && coeffDirtyPackedPos(dirtyArr[i]) == 0 {
+		pos := 0
+		level := int(uint16(dirtyArr[i]) >> 10)
+		negative := reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
+		baseLevel := level
+		golombExtra := 0
+		if level >= MaxBaseBRRange {
+			tail, err := readCoeffGolombCursor(&reader)
+			if err != nil {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, err
+			}
+			golombExtra = tail
+			level += tail
+		}
+		signBit := 0
+		if negative {
+			signBit = 1
+		}
+		if coeffTraceEnabled {
+			c := coeffTraceScanIndex(scan, pos, eobPos)
+			coeffTraceCoeff(c, pos, baseLevel, golombExtra, level, signBit)
+		}
+		culLevel += level
+		if level > int(^uint16(0)>>1) {
+			reader.CommitStateTo(&s.Reader)
+			return TXBDecodeResult{}, ErrInvalidDecodeState
+		}
+		signed := int16(level)
+		if negative {
+			signed = -signed
+		}
+		dcValue = int(signed)
+		coeffs[pos] = signed
+		dirtyArr[i] = int16(pos)
+		i--
+	}
+	for ; i >= 0; i-- {
+		packed := uint16(dirtyArr[i])
+		pos := int(packed) & coeffDirtyPosMask
+		level := int(packed >> 10)
+		if pos > maxScanLine {
+			maxScanLine = pos
+		}
+		bit := reader.ReadBitTrusted()
+		negative := bit != 0
+		baseLevel := level
+		golombExtra := 0
+		if level >= MaxBaseBRRange {
+			tail, err := readCoeffGolombCursor(&reader)
+			if err != nil {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, err
+			}
+			golombExtra = tail
+			level += tail
+		}
+		signBit := 0
+		if negative {
+			signBit = 1
+		}
+		if coeffTraceEnabled {
+			c := coeffTraceScanIndex(scan, pos, eobPos)
+			coeffTraceCoeff(c, pos, baseLevel, golombExtra, level, signBit)
+		}
+		culLevel += level
+		if level > int(^uint16(0)>>1) {
+			reader.CommitStateTo(&s.Reader)
+			return TXBDecodeResult{}, ErrInvalidDecodeState
+		}
+		signed := int16(level)
+		if negative {
+			signed = -signed
+		}
+		coeffs[pos] = signed
+		dirtyArr[i] = int16(pos)
+	}
+	*dirtyLen = uint16(nonzeroScanLen)
+
+	if culLevel > CoeffContextMask {
+		culLevel = CoeffContextMask
+	}
+	if dcValue < 0 {
+		culLevel |= 1 << CoeffContextBits
+	} else if dcValue > 0 {
+		culLevel += 2 << CoeffContextBits
+	}
+
+	if coeffTraceEnabled {
+		coeffTraceCulLevel(culLevel)
+	}
+	reader.CommitStateTo(&s.Reader)
+	return TXBDecodeResult{
+		EOB:         uint16(eobPos),
+		MaxScanLine: uint16(maxScanLine),
+		CulLevel:    uint8(culLevel),
+	}, nil
+}
+
 func readBaseRangeFromArrCursorUpdateTrusted(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context int) uint8 {
 	return reader.ReadCDF4HighTokenUpdateUnchecked(&arr[context])
 }
