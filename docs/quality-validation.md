@@ -139,9 +139,10 @@ machine-state controls, `-benchmem`, at least five measured runs, fixed
 raw-output and metadata paths, no ambient `GOFLAGS`, `GOMEMLIMIT`, `GODEBUG`,
 Go target/compiler/cache overrides such as `GOAMD64`, `GOARM64`,
 `GOEXPERIMENT`, `CGO_ENABLED`, `CC`, `CXX`, `GOCACHE`, `GOMODCACHE`, `GOPATH`,
-or `GOTMPDIR`, one concrete package, and an exact `^BenchmarkName$` selector.
-Publish mode parses the raw output and rejects zero-row runs, unexpected
-benchmark rows, CPU-suffix drift, or rows with fewer/more samples than
+or `GOTMPDIR`, one concrete package, and an exact `^BenchmarkName$` benchmark
+function selector. Publish mode allows subbenchmark output rows only under that
+selected function; it parses the raw output and rejects zero-row runs,
+unexpected benchmark rows, CPU-suffix drift, or rows with fewer/more samples than
 `-count`. Publish mode rejects
 defaulted package, benchmark, count, benchtime, CPU, GOMAXPROCS, GC, output,
 Go tool, and metadata settings; pass every control explicitly.

@@ -14,8 +14,9 @@ Publishable rows must satisfy these controls:
   before timing starts; metadata must collect `go env` from that pinned Go
   executable, not from ambient `PATH`.
 - For Go microbenchmark publish rows, use one concrete package and an exact
-  `^BenchmarkName$` selector. Publish mode parses the raw `go test` output and
-  rejects zero-row runs, unexpected benchmark rows, CPU-suffix drift, or missing
+  `^BenchmarkName$` benchmark function selector. Publish mode allows
+  subbenchmark output rows only under that selected function, then rejects
+  zero-row runs, unexpected benchmark rows, CPU-suffix drift, or missing
   repeated samples.
 - Keep ambient Go target, compiler, cache, and runtime env overrides unset; use
   explicit runner flags for intentional controls.

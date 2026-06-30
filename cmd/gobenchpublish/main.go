@@ -89,16 +89,18 @@ type goMetadata struct {
 }
 
 type metadataConfig struct {
-	Package    string `json:"package"`
-	Benchmark  string `json:"benchmark"`
-	Tags       string `json:"tags,omitempty"`
-	GoBin      string `json:"go_bin"`
-	GoMaxProcs int    `json:"gomaxprocs"`
-	CPU        string `json:"cpu"`
-	Count      int    `json:"count"`
-	BenchTime  string `json:"benchtime"`
-	BenchMem   bool   `json:"benchmem"`
-	Publish    bool   `json:"publish"`
+	Package                 string `json:"package"`
+	Benchmark               string `json:"benchmark"`
+	BenchmarkFunction       string `json:"benchmark_function,omitempty"`
+	SubbenchmarkRowsAllowed bool   `json:"subbenchmark_rows_allowed"`
+	Tags                    string `json:"tags,omitempty"`
+	GoBin                   string `json:"go_bin"`
+	GoMaxProcs              int    `json:"gomaxprocs"`
+	CPU                     string `json:"cpu"`
+	Count                   int    `json:"count"`
+	BenchTime               string `json:"benchtime"`
+	BenchMem                bool   `json:"benchmem"`
+	Publish                 bool   `json:"publish"`
 }
 
 type environmentConfig struct {
@@ -359,7 +361,7 @@ func validatePublishBenchmarkSelection(cfg config) error {
 	}
 	bench := strings.TrimSpace(cfg.Bench)
 	if !isExactBenchmarkRegexp(bench) {
-		return fmt.Errorf("publish requires -bench to select exactly one top-level benchmark as ^BenchmarkName$, got %q", cfg.Bench)
+		return fmt.Errorf("publish requires -bench to select exactly one benchmark function as ^BenchmarkName$; subbenchmark output rows are allowed only below that function, got %q", cfg.Bench)
 	}
 	return nil
 }
@@ -397,14 +399,14 @@ func validateBenchmarkOutput(cfg config, raw []byte) error {
 	}
 	expectedName := exactBenchmarkName(cfg.Bench)
 	if expectedName == "" {
-		return fmt.Errorf("publish requires exact benchmark selection, got %q", cfg.Bench)
+		return fmt.Errorf("publish requires exact benchmark function selection, got %q", cfg.Bench)
 	}
 	expectedCPU, err := singlePositiveIntFlag("-cpu", cfg.CPU)
 	if err != nil {
 		return err
 	}
 	for _, row := range rows {
-		if row.Name != expectedName && !strings.HasPrefix(row.Name, expectedName+"/") {
+		if !benchmarkRowMatchesSelectedFunction(row.Name, expectedName) {
 			return fmt.Errorf("publish benchmark output contains unexpected row %q for -bench %q", row.Name, cfg.Bench)
 		}
 		if row.Samples != cfg.Count {
@@ -415,6 +417,10 @@ func validateBenchmarkOutput(cfg config, raw []byte) error {
 		}
 	}
 	return nil
+}
+
+func benchmarkRowMatchesSelectedFunction(rowName, benchmarkFunction string) bool {
+	return rowName == benchmarkFunction || strings.HasPrefix(rowName, benchmarkFunction+"/")
 }
 
 func parseBenchmarkOutputRows(raw []byte) []benchmarkRowMetadata {
@@ -613,16 +619,18 @@ func buildMetadata(cfg config, git gitMetadata, command []string, status, errTex
 			ToolFingerprintError: goTool.fingerprintError,
 		},
 		Config: metadataConfig{
-			Package:    cfg.Pkg,
-			Benchmark:  cfg.Bench,
-			Tags:       cfg.Tags,
-			GoBin:      cfg.GoBin,
-			GoMaxProcs: cfg.GoMaxProcs,
-			CPU:        cfg.CPU,
-			Count:      cfg.Count,
-			BenchTime:  cfg.BenchTime,
-			BenchMem:   cfg.BenchMem,
-			Publish:    cfg.Publish,
+			Package:                 cfg.Pkg,
+			Benchmark:               cfg.Bench,
+			BenchmarkFunction:       exactBenchmarkName(cfg.Bench),
+			SubbenchmarkRowsAllowed: true,
+			Tags:                    cfg.Tags,
+			GoBin:                   cfg.GoBin,
+			GoMaxProcs:              cfg.GoMaxProcs,
+			CPU:                     cfg.CPU,
+			Count:                   cfg.Count,
+			BenchTime:               cfg.BenchTime,
+			BenchMem:                cfg.BenchMem,
+			Publish:                 cfg.Publish,
 		},
 		Environment: environmentConfig{
 			GOGC:             effectiveGOGC(cfg),

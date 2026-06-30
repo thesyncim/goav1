@@ -138,7 +138,7 @@ func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
 	broadBench := cfg
 	broadBench.Bench = "."
 	if err := validateConfig(broadBench, gitMetadata{Commit: "abc"}); err == nil ||
-		!strings.Contains(err.Error(), "exactly one top-level benchmark") {
+		!strings.Contains(err.Error(), "exactly one benchmark function") {
 		t.Fatalf("broad benchmark error=%v", err)
 	}
 
@@ -274,6 +274,11 @@ func TestValidateBenchmarkOutputRequiresExactRows(t *testing.T) {
 	if err := validateBenchmarkOutput(cfg, []byte(subRows)); err != nil {
 		t.Fatalf("valid subbenchmark rows failed: %v", err)
 	}
+
+	if !benchmarkRowMatchesSelectedFunction("BenchmarkFoo/subcase", "BenchmarkFoo") ||
+		benchmarkRowMatchesSelectedFunction("BenchmarkFoobar", "BenchmarkFoo") {
+		t.Fatalf("benchmark row selector matching is not exact")
+	}
 }
 
 func TestParseBenchmarkOutputRows(t *testing.T) {
@@ -330,7 +335,7 @@ func TestMetadataJSONRecordsOutputHash(t *testing.T) {
 	goBin, goSHA := stubGobenchPublishGoTool(t)
 	cfg := config{
 		Pkg:              ".",
-		Bench:            "BenchmarkX",
+		Bench:            "^BenchmarkX$",
 		GoBin:            goBin,
 		GoSHA256:         goSHA,
 		OutputPath:       out,
@@ -369,6 +374,7 @@ func TestMetadataJSONRecordsOutputHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Output.Bytes == 0 || got.Output.SHA256 == "" || got.Config.Count != 5 ||
+		got.Config.BenchmarkFunction != "BenchmarkX" || !got.Config.SubbenchmarkRowsAllowed ||
 		got.Config.GoMaxProcs != 1 || got.Environment.GOGC != "off" ||
 		got.Go.SIMDTier == "" || len(got.Go.Env) == 0 ||
 		got.Go.ToolPath != goBin || got.Go.ToolSHA256 != goSHA || !got.Go.ToolSHA256Verified ||
