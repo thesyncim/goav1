@@ -4050,12 +4050,8 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 		available := min(edgeWidth, readBoundX-x)
 		if available > 0 {
 			nTopPx = available
-			for col := 0; col < available; col++ {
-				sample, ok := frameWorkLoadSample(dst, bytesPerSample, x+col, y-1)
-				if !ok {
-					return prediction.IntraEdges{}, ErrInvalidBatch
-				}
-				above[col] = sample
+			if !frameWorkLoadSampleRow(dst, bytesPerSample, x, y-1, above[:available]) {
+				return prediction.IntraEdges{}, ErrInvalidBatch
 			}
 			last := above[available-1]
 			for col := available; col < edgeWidth; col++ {
@@ -4099,12 +4095,8 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 		available := min(edgeHeight, readBoundY-y)
 		if available > 0 {
 			nLeftPx = available
-			for row := 0; row < available; row++ {
-				sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y+row)
-				if !ok {
-					return prediction.IntraEdges{}, ErrInvalidBatch
-				}
-				left[row] = sample
+			if !frameWorkLoadSampleCol(dst, bytesPerSample, x-1, y, left[:available]) {
+				return prediction.IntraEdges{}, ErrInvalidBatch
 			}
 			last := left[available-1]
 			for row := available; row < edgeHeight; row++ {
@@ -4617,6 +4609,78 @@ func frameWorkIntraBoundaryDefault(bitDepth uint8, offset int) (uint16, bool) {
 		return 0, false
 	}
 	return uint16(value), true
+}
+
+func frameWorkLoadSampleRow(plane frame.Plane, bytesPerSample int, x int, y int, out []uint16) bool {
+	if len(out) == 0 {
+		return true
+	}
+	if x < 0 || y < 0 || y >= plane.Height || len(out) > plane.Width-x {
+		return false
+	}
+	offset := y*plane.Stride + x*bytesPerSample
+	if offset < 0 {
+		return false
+	}
+	switch bytesPerSample {
+	case 1:
+		end := offset + len(out)
+		if end < offset || end > len(plane.Pix) {
+			return false
+		}
+		src := plane.Pix[offset:end:end]
+		for i, v := range src {
+			out[i] = uint16(v)
+		}
+	case 2:
+		rowBytes := len(out) << 1
+		end := offset + rowBytes
+		if end < offset || end > len(plane.Pix) {
+			return false
+		}
+		src := plane.Pix[offset:end:end]
+		for i := range out {
+			j := i << 1
+			out[i] = uint16(src[j]) | uint16(src[j+1])<<8
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+func frameWorkLoadSampleCol(plane frame.Plane, bytesPerSample int, x int, y int, out []uint16) bool {
+	if len(out) == 0 {
+		return true
+	}
+	if x < 0 || y < 0 || x >= plane.Width || len(out) > plane.Height-y {
+		return false
+	}
+	offset := y*plane.Stride + x*bytesPerSample
+	last := offset + (len(out)-1)*plane.Stride
+	if offset < 0 || last < offset {
+		return false
+	}
+	switch bytesPerSample {
+	case 1:
+		if last >= len(plane.Pix) {
+			return false
+		}
+		for i := range out {
+			out[i] = uint16(plane.Pix[offset+i*plane.Stride])
+		}
+	case 2:
+		if last > len(plane.Pix)-2 {
+			return false
+		}
+		for i := range out {
+			sample := offset + i*plane.Stride
+			out[i] = uint16(plane.Pix[sample]) | uint16(plane.Pix[sample+1])<<8
+		}
+	default:
+		return false
+	}
+	return true
 }
 
 func frameWorkLoadSample(plane frame.Plane, bytesPerSample int, x int, y int) (uint16, bool) {
