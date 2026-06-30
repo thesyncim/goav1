@@ -120,6 +120,47 @@ func ValidateCPUAffinityClaim(claim string, state CPUState) error {
 	return nil
 }
 
+func ValidateCPUFrequencyPolicyClaim(claim string, state CPUState) error {
+	trimmed := strings.TrimSpace(claim)
+	if trimmed == "" {
+		return nil
+	}
+	governor := strings.TrimSpace(state.FrequencyGovernor)
+	driver := strings.TrimSpace(state.FrequencyDriver)
+	if governor == "" && driver == "" {
+		if isUnverifiedFrequencyClaim(trimmed) {
+			return nil
+		}
+		reason := strings.TrimSpace(state.FrequencyProbeError)
+		if reason == "" {
+			if state.GOOS != "" {
+				reason = "cpu frequency probe unsupported on " + state.GOOS
+			} else {
+				reason = "cpu frequency probe unsupported"
+			}
+		}
+		return fmt.Errorf("frequency-policy claim %q cannot be verified: %s; use unsupported or automatic when the run uses the system default policy", trimmed, reason)
+	}
+	if isUnsupportedFrequencyClaim(trimmed) {
+		return fmt.Errorf("frequency-policy claims %q but OS reports frequency policy governor=%q driver=%q", trimmed, governor, driver)
+	}
+	claimGovernor, haveGovernor := frequencyPolicyClaimValue(trimmed, "governor")
+	claimDriver, haveDriver := frequencyPolicyClaimValue(trimmed, "driver")
+	if haveGovernor && !equalPolicyValue(claimGovernor, governor) {
+		return fmt.Errorf("frequency-policy claims governor=%q but OS reports governor=%q", claimGovernor, governor)
+	}
+	if haveDriver && !equalPolicyValue(claimDriver, driver) {
+		return fmt.Errorf("frequency-policy claims driver=%q but OS reports driver=%q", claimDriver, driver)
+	}
+	if haveGovernor || haveDriver {
+		return nil
+	}
+	if equalPolicyValue(trimmed, governor) || equalPolicyValue(trimmed, driver) {
+		return nil
+	}
+	return fmt.Errorf("frequency-policy claim %q is not machine-checkable against observed governor=%q driver=%q; use governor=%s or driver=%s", trimmed, governor, driver, governor, driver)
+}
+
 func observeLinuxCPUState(state *CPUState) {
 	onlineRaw, onlineErr := os.ReadFile("/sys/devices/system/cpu/online")
 	online := strings.TrimSpace(string(onlineRaw))
@@ -202,6 +243,54 @@ func isUnpinnedAffinityClaim(claim string) bool {
 	default:
 		return false
 	}
+}
+
+func isUnverifiedFrequencyClaim(claim string) bool {
+	normalized := normalizePolicyValue(claim)
+	if strings.Contains(normalized, "unsupported") ||
+		strings.Contains(normalized, "probe unsupported") ||
+		strings.Contains(normalized, "automatic") ||
+		strings.Contains(normalized, "system default") ||
+		strings.Contains(normalized, "default") ||
+		strings.Contains(normalized, "unverified") ||
+		strings.Contains(normalized, "not controlled") ||
+		strings.Contains(normalized, "not pinned") {
+		return true
+	}
+	return false
+}
+
+func isUnsupportedFrequencyClaim(claim string) bool {
+	normalized := normalizePolicyValue(claim)
+	return strings.Contains(normalized, "unsupported") || strings.Contains(normalized, "probe unsupported")
+}
+
+func frequencyPolicyClaimValue(claim, key string) (string, bool) {
+	key = strings.ToLower(strings.TrimSpace(key))
+	for _, token := range strings.FieldsFunc(claim, func(r rune) bool {
+		return unicode.IsSpace(r) || r == ';' || r == ','
+	}) {
+		tokenKey, value, ok := strings.Cut(token, "=")
+		if !ok {
+			tokenKey, value, ok = strings.Cut(token, ":")
+		}
+		if !ok || strings.ToLower(strings.TrimSpace(tokenKey)) != key {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func equalPolicyValue(a, b string) bool {
+	return normalizePolicyValue(a) == normalizePolicyValue(b)
+}
+
+func normalizePolicyValue(value string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
 }
 
 func CPUListFromAffinityClaim(claim string) (string, bool) {

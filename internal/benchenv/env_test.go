@@ -91,3 +91,40 @@ func TestValidateCPUAffinityClaim(t *testing.T) {
 		t.Fatalf("unsupported concrete claim error=%v", err)
 	}
 }
+
+func TestValidateCPUFrequencyPolicyClaim(t *testing.T) {
+	observed := CPUState{
+		GOOS:              "linux",
+		FrequencyGovernor: "performance",
+		FrequencyDriver:   "amd-pstate",
+	}
+	if err := ValidateCPUFrequencyPolicyClaim("governor=performance driver=amd-pstate", observed); err != nil {
+		t.Fatalf("matching structured claim failed: %v", err)
+	}
+	if err := ValidateCPUFrequencyPolicyClaim("performance", observed); err != nil {
+		t.Fatalf("matching governor shorthand failed: %v", err)
+	}
+	if err := ValidateCPUFrequencyPolicyClaim("governor=powersave", observed); err == nil ||
+		!strings.Contains(err.Error(), "governor") {
+		t.Fatalf("mismatched governor error=%v", err)
+	}
+	if err := ValidateCPUFrequencyPolicyClaim("unsupported", observed); err == nil ||
+		!strings.Contains(err.Error(), "OS reports frequency policy") {
+		t.Fatalf("false unsupported error=%v", err)
+	}
+
+	unsupported := CPUState{
+		GOOS:                "darwin",
+		FrequencyProbeError: "cpu frequency probe unsupported on darwin",
+	}
+	if err := ValidateCPUFrequencyPolicyClaim("macOS automatic", unsupported); err != nil {
+		t.Fatalf("automatic unsupported claim failed: %v", err)
+	}
+	if err := ValidateCPUFrequencyPolicyClaim("unsupported", unsupported); err != nil {
+		t.Fatalf("explicit unsupported claim failed: %v", err)
+	}
+	if err := ValidateCPUFrequencyPolicyClaim("governor=performance", unsupported); err == nil ||
+		!strings.Contains(err.Error(), "cannot be verified") {
+		t.Fatalf("unsupported concrete claim error=%v", err)
+	}
+}

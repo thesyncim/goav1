@@ -1071,7 +1071,11 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 			return err
 		}
 	}
-	if err := benchenv.ValidateCPUAffinityClaim(cfg.cpuAffinity, observeBenchmarkCPUState()); err != nil {
+	cpuState := observeBenchmarkCPUState()
+	if err := benchenv.ValidateCPUAffinityClaim(cfg.cpuAffinity, cpuState); err != nil {
+		return err
+	}
+	if err := benchenv.ValidateCPUFrequencyPolicyClaim(cfg.frequencyPolicy, cpuState); err != nil {
 		return err
 	}
 	if strings.TrimSpace(strings.ToLower(cfg.requiredEncodersRaw)) != "all" {

@@ -247,6 +247,11 @@ OS/kernel version when available, `PATH`, selected Go runtime environment
 variables (`GOFLAGS`, `GOGC`, `GOMEMLIMIT`, `GODEBUG`), and structured
 CPU-affinity, power-mode, thermal-state, frequency-policy, and background-load
 fields plus free-form environment notes for extra context.
+When Linux exposes CPU frequency policy, `-frequency-policy` can be written as
+`governor=performance`, `driver=amd-pstate`, or both; publish mode rejects a
+different observed governor or driver. On platforms where frequency probing is
+unsupported, use `unsupported` or an automatic/system-default wording instead of
+a concrete governor claim.
 It also records `run_order` and `shuffle_seed`. Publish mode requires
 `-run-order shuffle -shuffle-seed N` so claim-supporting rows use a
 deterministic order without always running the same encoder first. For local

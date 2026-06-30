@@ -3597,6 +3597,9 @@ func validateCorpusPublishEnvironment(env corpusPublishEnvironment) error {
 	if err := benchenv.ValidateCPUAffinityClaim(env.CPUAffinity, env.ObservedCPUState); err != nil {
 		return err
 	}
+	if err := benchenv.ValidateCPUFrequencyPolicyClaim(env.FrequencyPolicy, env.ObservedCPUState); err != nil {
+		return err
+	}
 	for _, name := range benchenv.PublishBlockedGoEnvVars() {
 		if strings.TrimSpace(env.BlockedGoEnv[name]) != "" {
 			return fmt.Errorf("corpus publish requires %s unset; use explicit go test flags or record a separate environment", name)

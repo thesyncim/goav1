@@ -314,7 +314,11 @@ func validateConfig(cfg config, git gitMetadata) error {
 				return err
 			}
 		}
-		if err := benchenv.ValidateCPUAffinityClaim(cfg.CPUAffinity, observeBenchmarkCPUState()); err != nil {
+		cpuState := observeBenchmarkCPUState()
+		if err := benchenv.ValidateCPUAffinityClaim(cfg.CPUAffinity, cpuState); err != nil {
+			return err
+		}
+		if err := benchenv.ValidateCPUFrequencyPolicyClaim(cfg.FrequencyPolicy, cpuState); err != nil {
 			return err
 		}
 		if cfg.Count < 5 {

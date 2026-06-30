@@ -24,7 +24,8 @@ Publishable rows must satisfy these controls:
   and background-load fields. When the OS exposes CPU affinity/frequency
   probes, metadata records the observed state and publish mode rejects a
   machine-checkable contradiction such as `cpu-affinity=none` under a restricted
-  Linux CPU mask.
+  Linux CPU mask or `frequency-policy=governor=powersave` while Linux reports
+  `performance`.
 - Use corpus-backed real clips for quality claims and require manifest/source
   hashes, exact frame metric traces, and required metrics/encoders.
 - For generated decoder corpus publish rows, require the v2 manifest produced
