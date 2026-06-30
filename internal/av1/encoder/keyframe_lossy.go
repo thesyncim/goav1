@@ -563,19 +563,22 @@ type lossyEncodeState struct {
 
 	// Motion-compensated prediction scratch, filled per block through the
 	// decoder's own convolve so subpel predictions match bit for bit.
-	predY         [4096]byte
-	predY16       [4096]uint16
-	predY16Bytes  [8192]byte
-	refY16Bytes   []byte
-	refU16Bytes   []byte
-	refV16Bytes   []byte
-	predU         [1024]byte
-	predV         [1024]byte
-	sadScratch    [4096]byte
-	compBuf0      motion.CompoundConvBuf
-	compBuf1      motion.CompoundConvBuf
-	compScratch   motion.CompoundConvolveScratch
-	scaledScratch motion.ScaledConvolveScratch
+	predY          [4096]byte
+	predY16        [4096]uint16
+	predY16Bytes   [8192]byte
+	refY16Bytes    []byte
+	refU16Bytes    []byte
+	refV16Bytes    []byte
+	goldenY16Bytes []byte
+	goldenU16Bytes []byte
+	goldenV16Bytes []byte
+	predU          [1024]byte
+	predV          [1024]byte
+	sadScratch     [4096]byte
+	compBuf0       motion.CompoundConvBuf
+	compBuf1       motion.CompoundConvBuf
+	compScratch    motion.CompoundConvolveScratch
+	scaledScratch  motion.ScaledConvolveScratch
 
 	// Transform/quant scratch for the inter TXB pipeline (residual in,
 	// forward transform out, dequant + inverse residual back), state-owned so

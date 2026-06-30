@@ -189,6 +189,121 @@ func TestWebRTCStreamGoldenIntervalSurvivesMonochromeReplacement(t *testing.T) {
 	}
 }
 
+func TestWebRTCStreamGoldenIntervalAppliesToHighBitDepthPixelEncoders(t *testing.T) {
+	const w, h = 512, 288
+	base := Config{
+		Resolution:        Resolution{Width: w, Height: h},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 500,
+		Scalability:       ScalabilityModeL1T1,
+	}
+	for _, tc := range []struct {
+		name   string
+		config func(Config) Config
+		assert func(*testing.T, *WebRTCStream, int)
+	}{
+		{
+			name: "i400-10",
+			config: func(cfg Config) Config {
+				cfg.BitDepth = 10
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 10, MonoChrome: true}
+				return cfg
+			},
+			assert: func(t *testing.T, stream *WebRTCStream, want int) {
+				t.Helper()
+				if stream.mono16Encoders[0] == nil {
+					t.Fatal("missing mono16 encoder")
+				}
+				if got := stream.mono16Encoders[0].goldenEvery; got != want {
+					t.Fatalf("mono16 golden interval=%d want %d", got, want)
+				}
+			},
+		},
+		{
+			name: "i400-12",
+			config: func(cfg Config) Config {
+				cfg.Profile = Profile2
+				cfg.BitDepth = 12
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 12, MonoChrome: true}
+				return cfg
+			},
+			assert: func(t *testing.T, stream *WebRTCStream, want int) {
+				t.Helper()
+				if stream.mono16Encoders[0] == nil {
+					t.Fatal("missing mono16 encoder")
+				}
+				if got := stream.mono16Encoders[0].goldenEvery; got != want {
+					t.Fatalf("mono16 golden interval=%d want %d", got, want)
+				}
+			},
+		},
+		{
+			name: "i420-10",
+			config: func(cfg Config) Config {
+				cfg.BitDepth = 10
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 10, SubsamplingX: true, SubsamplingY: true}
+				return cfg
+			},
+			assert: func(t *testing.T, stream *WebRTCStream, want int) {
+				t.Helper()
+				if stream.color16Encoders[0] == nil {
+					t.Fatal("missing color16 encoder")
+				}
+				if got := stream.color16Encoders[0].goldenEvery; got != want {
+					t.Fatalf("color16 golden interval=%d want %d", got, want)
+				}
+			},
+		},
+		{
+			name: "i420-12",
+			config: func(cfg Config) Config {
+				cfg.Profile = Profile2
+				cfg.BitDepth = 12
+				cfg.ColorConfigSet = true
+				cfg.ColorConfig = SequenceColorConfig{BitDepth: 12, SubsamplingX: true, SubsamplingY: true}
+				return cfg
+			},
+			assert: func(t *testing.T, stream *WebRTCStream, want int) {
+				t.Helper()
+				if stream.color16Encoders[0] == nil {
+					t.Fatal("missing color16 encoder")
+				}
+				if got := stream.color16Encoders[0].goldenEvery; got != want {
+					t.Fatalf("color16 golden interval=%d want %d", got, want)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			live, err := NewWebRTCStreamConfig(tc.config(base))
+			if err != nil {
+				t.Fatalf("NewWebRTCStreamConfig live: %v", err)
+			}
+			defer live.Close()
+			live.SetGoldenInterval(7)
+			tc.assert(t, live, 7)
+			live.SetGoldenInterval(0)
+			tc.assert(t, live, 0)
+
+			replacement, err := NewWebRTCStreamConfig(base)
+			if err != nil {
+				t.Fatalf("NewWebRTCStreamConfig replacement base: %v", err)
+			}
+			defer replacement.Close()
+			replacement.SetGoldenInterval(0)
+			if err := replacement.SetConfig(tc.config(base)); err != nil {
+				t.Fatalf("SetConfig replacement: %v", err)
+			}
+			tc.assert(t, replacement, 0)
+		})
+	}
+}
+
 func TestWebRTCStreamConfigMaxThreadsAppliesToPixelEncoders(t *testing.T) {
 	const w, h = 512, 288
 	base := Config{

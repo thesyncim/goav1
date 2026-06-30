@@ -38,16 +38,19 @@ type HighBitDepth420VideoEncoder struct {
 	pc        pframeCoder
 	keyRecon  SourceFrame42016
 	recon     SourceFrame42016
+	golden    SourceFrame42016
 	reconBufs [2]SourceFrame42016
 	reconIdx  int
 	t1Recon   SourceFrame42016
 	t2Recon   SourceFrame42016
 	lastRecon SourceFrame42016
 
-	haveKey        bool
-	temporalLayers int
-	frameIndex     int
-	lastTemporalID uint8
+	haveKey          bool
+	temporalLayers   int
+	frameIndex       int
+	lastTemporalID   uint8
+	goldenEvery      int
+	sinceGoldenFresh int
 
 	tileColsLog2 uint8
 	tilePCs      []pframeCoder
@@ -90,9 +93,10 @@ func newHighBitDepth420VideoEncoderWithColor(width, height int, profile Profile,
 	return &HighBitDepth420VideoEncoder{
 		width: codedW, height: codedH,
 		renderWidth: width, renderHeight: height,
-		profile: profile,
-		color:   color,
-		qIndex:  qIndex,
+		profile:     profile,
+		color:       color,
+		qIndex:      qIndex,
+		goldenEvery: 16,
 	}, nil
 }
 
@@ -143,6 +147,14 @@ func (e *HighBitDepth420VideoEncoder) SetTemporalLayers(n int) error {
 func (e *HighBitDepth420VideoEncoder) SetTileColumns(cols int) {
 	if e != nil {
 		e.tileColsLog2 = tileColumnsLog2(cols)
+	}
+}
+
+// SetGoldenInterval sets how many base-layer inter frames pass between
+// golden-anchor refreshes; zero disables golden references entirely.
+func (e *HighBitDepth420VideoEncoder) SetGoldenInterval(n int) {
+	if e != nil {
+		e.goldenEvery = n
 	}
 }
 
@@ -469,6 +481,10 @@ func (e *HighBitDepth420VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame42
 	e.haveKey = true
 	e.frameIndex = 1
 	e.lastTemporalID = 0
+	if e.goldenEvery > 0 {
+		copyColor16FrameInto(&e.golden, e.keyRecon, e.parserColorConfig())
+		e.sinceGoldenFresh = 0
+	}
 	e.rcUpdate(len(out)*8, 0)
 	return out, nil
 }
@@ -489,10 +505,17 @@ func (e *HighBitDepth420VideoEncoder) encodePReusing(src SourceFrame42016, tempo
 	allocColor16Frame(out, src, e.parserColorConfig())
 
 	refresh := uint8(0x01)
+	refreshGolden := false
 	if isT1 {
 		refresh = 0x04
 	} else if droppable {
 		refresh = 0
+	} else if e.goldenEvery > 0 {
+		e.sinceGoldenFresh++
+		if e.sinceGoldenFresh >= e.goldenEvery {
+			refresh |= 0x02
+			refreshGolden = true
+		}
 	}
 	seq := e.sequenceHeader(src.Width, src.Height)
 	effQ := e.layerQIndex(temporalID)
@@ -513,7 +536,11 @@ func (e *HighBitDepth420VideoEncoder) encodePReusing(src SourceFrame42016, tempo
 		ref = e.t1Recon
 		header.Size.RefFrameIdx[0] = 2
 	}
-	payloads, err := e.encodePTilePayloads(seq, src, ref, out, effQ, &header)
+	var golden *SourceFrame42016
+	if e.goldenEvery > 0 && e.golden.Y != nil {
+		golden = &e.golden
+	}
+	payloads, err := e.encodePTilePayloads(seq, src, ref, golden, out, effQ, &header)
 	if err != nil {
 		return nil, err
 	}
@@ -525,6 +552,10 @@ func (e *HighBitDepth420VideoEncoder) encodePReusing(src SourceFrame42016, tempo
 	if !droppable {
 		e.recon = *out
 		e.reconIdx ^= 1
+	}
+	if refreshGolden {
+		copyColor16FrameInto(&e.golden, *out, e.parserColorConfig())
+		e.sinceGoldenFresh = 0
 	}
 	return tu, nil
 }
@@ -579,7 +610,7 @@ func (e *HighBitDepth420VideoEncoder) encodeReferencePFrameWithSequenceMax(src S
 		header.Tile = tiles
 	}
 
-	payloads, err := e.encodePTilePayloads(seq, src, ref, out, effQ, &header)
+	payloads, err := e.encodePTilePayloads(seq, src, ref, nil, out, effQ, &header)
 	if err != nil {
 		return nil, err
 	}
@@ -621,7 +652,7 @@ func (e *HighBitDepth420VideoEncoder) encodeKeyTilePayloads(seq SequenceHeader, 
 	return payloads, nil
 }
 
-func (e *HighBitDepth420VideoEncoder) encodePTilePayloads(seq SequenceHeader, src SourceFrame42016, ref SourceFrame42016, out *SourceFrame42016, qIndex uint8, header *InterFrameHeaderParams) ([]TilePayload, error) {
+func (e *HighBitDepth420VideoEncoder) encodePTilePayloads(seq SequenceHeader, src SourceFrame42016, ref SourceFrame42016, golden *SourceFrame42016, out *SourceFrame42016, qIndex uint8, header *InterFrameHeaderParams) ([]TilePayload, error) {
 	nTiles, err := e.configureTilePayloads(seq, src.Width, src.Height, &header.Tile)
 	if err != nil {
 		return nil, err
@@ -634,7 +665,7 @@ func (e *HighBitDepth420VideoEncoder) encodePTilePayloads(seq SequenceHeader, sr
 			pc = &e.tilePCs[t]
 		}
 		c0, c1 := tilePayloadColBounds(header.Tile, t, miCols)
-		data, err := pc.encodeHighBitDepthColorPFrameTile(src, ref, out, qIndex, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, e.parserColorConfig(), c0, c1)
+		data, err := pc.encodeHighBitDepthColorPFrameTile(src, ref, golden, out, qIndex, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, e.parserColorConfig(), c0, c1)
 		if err != nil {
 			return nil, fmt.Errorf("encode tile %d: %w", t, err)
 		}

@@ -99,6 +99,161 @@ func TestVideoEncoderGoldenReference(t *testing.T) {
 	}
 }
 
+func TestHighBitDepthVideoEncoderGoldenReference(t *testing.T) {
+	t.Run("mono10", func(t *testing.T) {
+		const w, h = 128, 96
+		const bitDepth = uint8(10)
+		maxSample := uint16((1 << bitDepth) - 1)
+		rng := rand.New(rand.NewSource(29))
+		base := make([]uint16, w*h)
+		for i := range base {
+			base[i] = uint16(80 + rng.Intn(760))
+		}
+		mk := func(boxX int) encoder.SourceFrameMono16 {
+			f := encoder.SourceFrameMono16{
+				Y:        append([]uint16(nil), base...),
+				YStride:  w,
+				Width:    w,
+				Height:   h,
+				BitDepth: bitDepth,
+			}
+			if boxX >= 0 {
+				for y := 24; y < 72; y++ {
+					for x := boxX; x < boxX+48 && x < w; x++ {
+						f.Y[y*w+x] = maxSample - 12
+					}
+				}
+			}
+			return f
+		}
+		frames := []encoder.SourceFrameMono16{mk(-1), mk(40), mk(-1)}
+		encode := func(goldenInterval int) ([][]byte, []encoder.SourceFrameMono16) {
+			enc, err := encoder.NewHighBitDepthMonochromeVideoEncoder(w, h, bitDepth, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			enc.SetGoldenInterval(goldenInterval)
+			var tus [][]byte
+			var recons []encoder.SourceFrameMono16
+			for i, f := range frames {
+				tu, _, err := enc.Encode(f, false)
+				if err != nil {
+					t.Fatalf("encode frame %d: %v", i, err)
+				}
+				tus = append(tus, append([]byte(nil), tu...))
+				recons = append(recons, cloneMono16Frame(enc.Recon()))
+			}
+			return tus, recons
+		}
+
+		lastOnly, _ := encode(0)
+		withGolden, recons := encode(32)
+		t.Logf("10-bit mono reveal frame: last-only %dB, with golden %dB", len(lastOnly[2]), len(withGolden[2]))
+		if len(withGolden[2])*5 >= len(lastOnly[2])*4 {
+			t.Fatalf("10-bit mono golden reveal %dB not below last-only %dB", len(withGolden[2]), len(lastOnly[2]))
+		}
+		dec, err := goav1.NewDecoder(withGolden)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer dec.Close()
+		decoded, err := dec.DecodeAll()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(decoded) != len(frames) {
+			t.Fatalf("decoded %d frames, want %d", len(decoded), len(frames))
+		}
+		got := appendFramePlaneRaw(nil, decoded[2].Y, decoded[2].Layout.BytesPerSample)
+		want := appendHighBitDepthMonoRaw(nil, recons[2])
+		if string(got) != string(want) {
+			t.Fatal("decoded 10-bit mono reveal differs from reconstruction")
+		}
+	})
+
+	t.Run("i420-10", func(t *testing.T) {
+		const w, h = 128, 96
+		const bitDepth = uint8(10)
+		cw, ch := w/2, h/2
+		maxSample := uint16((1 << bitDepth) - 1)
+		rng := rand.New(rand.NewSource(31))
+		base := make([]uint16, w*h)
+		for i := range base {
+			base[i] = uint16(96 + rng.Intn(720))
+		}
+		mk := func(boxX int) encoder.SourceFrame42016 {
+			f := encoder.SourceFrame42016{
+				Y:            append([]uint16(nil), base...),
+				U:            make([]uint16, cw*ch),
+				V:            make([]uint16, cw*ch),
+				YStride:      w,
+				ChromaStride: cw,
+				Width:        w,
+				Height:       h,
+				BitDepth:     bitDepth,
+			}
+			for i := range f.U {
+				f.U[i] = maxSample / 3
+				f.V[i] = maxSample * 2 / 3
+			}
+			if boxX >= 0 {
+				for y := 24; y < 72; y++ {
+					for x := boxX; x < boxX+48 && x < w; x++ {
+						f.Y[y*w+x] = maxSample - 8
+					}
+				}
+			}
+			return f
+		}
+		frames := []encoder.SourceFrame42016{mk(-1), mk(40), mk(-1)}
+		encode := func(goldenInterval int) ([][]byte, []encoder.SourceFrame42016) {
+			enc, err := encoder.NewHighBitDepth420VideoEncoder(w, h, bitDepth, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			enc.SetGoldenInterval(goldenInterval)
+			var tus [][]byte
+			var recons []encoder.SourceFrame42016
+			for i, f := range frames {
+				tu, _, err := enc.Encode(f, false)
+				if err != nil {
+					t.Fatalf("encode frame %d: %v", i, err)
+				}
+				tus = append(tus, append([]byte(nil), tu...))
+				recons = append(recons, clone42016Frame(enc.Recon()))
+			}
+			return tus, recons
+		}
+
+		lastOnly, _ := encode(0)
+		withGolden, recons := encode(32)
+		t.Logf("10-bit 4:2:0 reveal frame: last-only %dB, with golden %dB", len(lastOnly[2]), len(withGolden[2]))
+		if len(withGolden[2])*5 >= len(lastOnly[2])*4 {
+			t.Fatalf("10-bit 4:2:0 golden reveal %dB not below last-only %dB", len(withGolden[2]), len(lastOnly[2]))
+		}
+		dec, err := goav1.NewDecoder(withGolden)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer dec.Close()
+		decoded, err := dec.DecodeAll()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(decoded) != len(frames) {
+			t.Fatalf("decoded %d frames, want %d", len(decoded), len(frames))
+		}
+		var got []byte
+		got = appendFramePlaneRaw(got, decoded[2].Y, decoded[2].Layout.BytesPerSample)
+		got = appendFramePlaneRaw(got, decoded[2].U, decoded[2].Layout.BytesPerSample)
+		got = appendFramePlaneRaw(got, decoded[2].V, decoded[2].Layout.BytesPerSample)
+		want := appendHighBitDepth420Raw(nil, recons[2])
+		if string(got) != string(want) {
+			t.Fatal("decoded 10-bit 4:2:0 reveal differs from reconstruction")
+		}
+	})
+}
+
 func TestVideoEncoderCompoundGoldenAverageReference(t *testing.T) {
 	const w, h = 192, 128
 	cw, ch := w/2, h/2
@@ -244,5 +399,28 @@ func TestVideoEncoderCompoundGoldenAverageReference(t *testing.T) {
 	}
 	if i != len(recons) {
 		t.Fatalf("decoded %d frames, want %d", i, len(recons))
+	}
+}
+
+func cloneMono16Frame(f encoder.SourceFrameMono16) encoder.SourceFrameMono16 {
+	return encoder.SourceFrameMono16{
+		Y:        append([]uint16(nil), f.Y...),
+		YStride:  f.YStride,
+		Width:    f.Width,
+		Height:   f.Height,
+		BitDepth: f.BitDepth,
+	}
+}
+
+func clone42016Frame(f encoder.SourceFrame42016) encoder.SourceFrame42016 {
+	return encoder.SourceFrame42016{
+		Y:            append([]uint16(nil), f.Y...),
+		U:            append([]uint16(nil), f.U...),
+		V:            append([]uint16(nil), f.V...),
+		YStride:      f.YStride,
+		ChromaStride: f.ChromaStride,
+		Width:        f.Width,
+		Height:       f.Height,
+		BitDepth:     f.BitDepth,
 	}
 }

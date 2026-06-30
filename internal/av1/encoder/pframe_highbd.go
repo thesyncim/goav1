@@ -39,7 +39,7 @@ func EncodeHighBitDepthMonochromePFrame(src SourceFrameMono16, ref SourceFrameMo
 	header.References = &refState
 	header.CDEF = CDEFParams{}
 	var pc pframeCoder
-	tilePayload, err := pc.encodeHighBitDepthMonochromePFrameTile(src, ref, &recon, qIndex, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, 0, uint16(src.Width/4))
+	tilePayload, err := pc.encodeHighBitDepthMonochromePFrameTile(src, ref, nil, &recon, qIndex, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, 0, uint16(src.Width/4))
 	if err != nil {
 		return nil, SourceFrameMono16{}, fmt.Errorf("encode tile: %w", err)
 	}
@@ -83,7 +83,7 @@ func EncodeHighBitDepth420PFrame(src SourceFrame42016, ref SourceFrame42016, qIn
 	header.References = &refState
 	header.CDEF = CDEFParams{}
 	var pc pframeCoder
-	tilePayload, err := pc.encodeHighBitDepth420PFrameTile(src, ref, &recon, qIndex, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, 0, uint16(src.Width/4))
+	tilePayload, err := pc.encodeHighBitDepth420PFrameTile(src, ref, nil, &recon, qIndex, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, 0, uint16(src.Width/4))
 	if err != nil {
 		return nil, SourceFrame42016{}, fmt.Errorf("encode tile: %w", err)
 	}
@@ -96,7 +96,7 @@ func EncodeHighBitDepth420PFrame(src SourceFrame42016, ref SourceFrame42016, qIn
 	return out, recon, nil
 }
 
-func (pc *pframeCoder) encodeHighBitDepthMonochromePFrameTile(src SourceFrameMono16, ref SourceFrameMono16, recon *SourceFrameMono16, qIndex uint8, forceIntegerMV bool, allowScreenContentTools bool, miColStart, miColEnd uint16) ([]byte, error) {
+func (pc *pframeCoder) encodeHighBitDepthMonochromePFrameTile(src SourceFrameMono16, ref SourceFrameMono16, golden *SourceFrameMono16, recon *SourceFrameMono16, qIndex uint8, forceIntegerMV bool, allowScreenContentTools bool, miColStart, miColEnd uint16) ([]byte, error) {
 	if qIndex == 0 {
 		src420 := SourceFrame42016{Y: src.Y, YStride: src.YStride, Width: src.Width, Height: src.Height, BitDepth: src.BitDepth}
 		recon420 := SourceFrame42016{Y: recon.Y, YStride: recon.YStride, Width: recon.Width, Height: recon.Height, BitDepth: recon.BitDepth}
@@ -137,6 +137,14 @@ func (pc *pframeCoder) encodeHighBitDepthMonochromePFrameTile(src SourceFrameMon
 	if err != nil {
 		return nil, err
 	}
+	var goldenPlane *av1frame.Plane
+	if golden != nil && golden.Y != nil {
+		gp, err := st.highBitDepthMonoGoldenPlane(*golden)
+		if err != nil {
+			return nil, err
+		}
+		goldenPlane = &gp
+	}
 
 	scratch := &pc.scratch
 	carrier := &pc.carrier
@@ -153,7 +161,7 @@ func (pc *pframeCoder) encodeHighBitDepthMonochromePFrameTile(src SourceFrameMon
 		return tile.PartitionSplit, nil
 	}
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
-		return st.encodeHighBitDepthMonochromePBlock(src, refPlane, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, walkReq, uint16(src.Width/4), miRows)
+		return st.encodeHighBitDepthMonochromePBlock(src, refPlane, goldenPlane, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, walkReq, uint16(src.Width/4), miRows)
 	}
 	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
 		return nil, err
@@ -161,11 +169,11 @@ func (pc *pframeCoder) encodeHighBitDepthMonochromePFrameTile(src SourceFrameMon
 	return pc.writer.Finish()
 }
 
-func (pc *pframeCoder) encodeHighBitDepth420PFrameTile(src SourceFrame42016, ref SourceFrame42016, recon *SourceFrame42016, qIndex uint8, forceIntegerMV bool, allowScreenContentTools bool, miColStart, miColEnd uint16) ([]byte, error) {
-	return pc.encodeHighBitDepthColorPFrameTile(src, ref, recon, qIndex, forceIntegerMV, allowScreenContentTools, parser.ColorConfig{BitDepth: src.BitDepth, SubsamplingX: true, SubsamplingY: true}, miColStart, miColEnd)
+func (pc *pframeCoder) encodeHighBitDepth420PFrameTile(src SourceFrame42016, ref SourceFrame42016, golden *SourceFrame42016, recon *SourceFrame42016, qIndex uint8, forceIntegerMV bool, allowScreenContentTools bool, miColStart, miColEnd uint16) ([]byte, error) {
+	return pc.encodeHighBitDepthColorPFrameTile(src, ref, golden, recon, qIndex, forceIntegerMV, allowScreenContentTools, parser.ColorConfig{BitDepth: src.BitDepth, SubsamplingX: true, SubsamplingY: true}, miColStart, miColEnd)
 }
 
-func (pc *pframeCoder) encodeHighBitDepthColorPFrameTile(src SourceFrame42016, ref SourceFrame42016, recon *SourceFrame42016, qIndex uint8, forceIntegerMV bool, allowScreenContentTools bool, color parser.ColorConfig, miColStart, miColEnd uint16) ([]byte, error) {
+func (pc *pframeCoder) encodeHighBitDepthColorPFrameTile(src SourceFrame42016, ref SourceFrame42016, golden *SourceFrame42016, recon *SourceFrame42016, qIndex uint8, forceIntegerMV bool, allowScreenContentTools bool, color parser.ColorConfig, miColStart, miColEnd uint16) ([]byte, error) {
 	if qIndex == 0 {
 		return pc.encodeHighBitDepthLosslessIntraInterTile(src, recon, forceIntegerMV, allowScreenContentTools, color, miColStart, miColEnd)
 	}
@@ -203,6 +211,14 @@ func (pc *pframeCoder) encodeHighBitDepthColorPFrameTile(src SourceFrame42016, r
 	if err != nil {
 		return nil, err
 	}
+	var goldenPlanes *[3]av1frame.Plane
+	if golden != nil && golden.Y != nil {
+		gp, err := st.highBitDepthColorGoldenPlanes(*golden, color)
+		if err != nil {
+			return nil, err
+		}
+		goldenPlanes = &gp
+	}
 
 	scratch := &pc.scratch
 	carrier := &pc.carrier
@@ -219,7 +235,7 @@ func (pc *pframeCoder) encodeHighBitDepthColorPFrameTile(src SourceFrame42016, r
 		return tile.PartitionSplit, nil
 	}
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
-		return st.encodeHighBitDepth420PBlock(src, refPlanes, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, walkReq, uint16(src.Width/4), miRows)
+		return st.encodeHighBitDepth420PBlock(src, refPlanes, goldenPlanes, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, walkReq, uint16(src.Width/4), miRows)
 	}
 	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
 		return nil, err
@@ -447,7 +463,7 @@ func copyLosslessHighBitDepthTileSourceToRecon(src SourceFrame42016, recon *Sour
 	}
 }
 
-func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMono16, ref av1frame.Plane, recon *SourceFrameMono16, block tile.BlockVisit, scratch *tile.BlockLoopScratch,
+func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMono16, ref av1frame.Plane, golden *av1frame.Plane, recon *SourceFrameMono16, block tile.BlockVisit, scratch *tile.BlockLoopScratch,
 	refCDFs *tile.InterRefCDFs, interModeCDFs *tile.InterModeCDFs, walkReq tile.BlockWalkRequest, miCols, miRows uint16) error {
 	if block.Size != tile.BlockSize8x8 {
 		return fmt.Errorf("encoder: unexpected high-bit-depth monochrome P block %+v", block)
@@ -459,6 +475,11 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 	lumaPY := int(block.MIRow) * 4
 
 	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+	refPlane := ref
+	if golden != nil && highBitDepthGoldenReferenceWins(src.Y, src.YStride, ref, *golden, lumaPX, lumaPY, n, n, src.BitDepth) {
+		refs.Ref[0] = tile.ReferenceFrameGolden
+		refPlane = *golden
+	}
 	stackReq := tile.ReferenceMVStackRequest{
 		MICol:          block.MICol,
 		MIRow:          block.MIRow,
@@ -549,7 +570,7 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 	}
 
 	pred := st.predY16[:n*n]
-	if err := predictIntoScaledHighBitDepthMono16(pred, st.predY16Bytes[:n*n*2], ref, src.BitDepth, src.Width, src.Height, lumaPX, lumaPY, n, n, motion.Vector{}, &st.scaledScratch); err != nil {
+	if err := predictIntoScaledHighBitDepthMono16(pred, st.predY16Bytes[:n*n*2], refPlane, src.BitDepth, src.Width, src.Height, lumaPX, lumaPY, n, n, motion.Vector{}, &st.scaledScratch); err != nil {
 		return fmt.Errorf("high-bit-depth monochrome prediction: %w", err)
 	}
 	st.interTxTypeReq.Size = tile.TransformSize8x8
@@ -569,7 +590,7 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 	return nil
 }
 
-func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, refs [3]av1frame.Plane, recon *SourceFrame42016, block tile.BlockVisit, scratch *tile.BlockLoopScratch,
+func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, refs [3]av1frame.Plane, golden *[3]av1frame.Plane, recon *SourceFrame42016, block tile.BlockVisit, scratch *tile.BlockLoopScratch,
 	refCDFs *tile.InterRefCDFs, interModeCDFs *tile.InterModeCDFs, walkReq tile.BlockWalkRequest, miCols, miRows uint16) error {
 	if block.Size != tile.BlockSize8x8 {
 		return fmt.Errorf("encoder: unexpected high-bit-depth color P block %+v", block)
@@ -581,6 +602,11 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 	lumaPY := int(block.MIRow) * 4
 
 	interRefs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+	refPlanes := refs
+	if golden != nil && highBitDepthGoldenReferenceWins(src.Y, src.YStride, refs[0], (*golden)[0], lumaPX, lumaPY, n, n, src.BitDepth) {
+		interRefs.Ref[0] = tile.ReferenceFrameGolden
+		refPlanes = *golden
+	}
 	stackReq := tile.ReferenceMVStackRequest{
 		MICol:          block.MICol,
 		MIRow:          block.MIRow,
@@ -671,7 +697,7 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 	}
 
 	pred := st.predY16[:n*n]
-	if err := predictIntoScaledHighBitDepthMono16(pred, st.predY16Bytes[:n*n*2], refs[0], src.BitDepth, src.Width, src.Height, lumaPX, lumaPY, n, n, motion.Vector{}, &st.scaledScratch); err != nil {
+	if err := predictIntoScaledHighBitDepthMono16(pred, st.predY16Bytes[:n*n*2], refPlanes[0], src.BitDepth, src.Width, src.Height, lumaPX, lumaPY, n, n, motion.Vector{}, &st.scaledScratch); err != nil {
 		return fmt.Errorf("high-bit-depth color luma prediction: %w", err)
 	}
 	st.interTxTypeReq.Size = tile.TransformSize8x8
@@ -718,7 +744,7 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 			q = st.vQuant
 		}
 		chromaPred := st.predY16[:cw*ch]
-		if err := predictIntoScaledHighBitDepthMono16(chromaPred, st.predY16Bytes[:cw*ch*2], refs[plane], src.BitDepth, chromaWidth, chromaHeight, chromaX, chromaY, cw, ch, motion.Vector{}, &st.scaledScratch); err != nil {
+		if err := predictIntoScaledHighBitDepthMono16(chromaPred, st.predY16Bytes[:cw*ch*2], refPlanes[plane], src.BitDepth, chromaWidth, chromaHeight, chromaX, chromaY, cw, ch, motion.Vector{}, &st.scaledScratch); err != nil {
 			return fmt.Errorf("high-bit-depth color chroma %d prediction: %w", plane, err)
 		}
 		if err := st.encodeTXBPredRect16(rdata, data, src.ChromaStride, chromaX, chromaY, cw, ch, src.BitDepth, q, tile.CoeffContextRequest{
@@ -744,6 +770,13 @@ func (st *lossyEncodeState) highBitDepthMonoReferencePlane(ref SourceFrameMono16
 	return highBitDepthReferencePlane(ref.Y, ref.YStride, ref.Width, ref.Height, &st.refY16Bytes)
 }
 
+func (st *lossyEncodeState) highBitDepthMonoGoldenPlane(ref SourceFrameMono16) (av1frame.Plane, error) {
+	if err := validateSourceFrameMono16(ref); err != nil {
+		return av1frame.Plane{}, err
+	}
+	return highBitDepthReferencePlane(ref.Y, ref.YStride, ref.Width, ref.Height, &st.goldenY16Bytes)
+}
+
 func (st *lossyEncodeState) highBitDepth420ReferencePlanes(ref SourceFrame42016) ([3]av1frame.Plane, error) {
 	return st.highBitDepthColorReferencePlanes(ref, parser.ColorConfig{BitDepth: ref.BitDepth, SubsamplingX: true, SubsamplingY: true})
 }
@@ -762,6 +795,26 @@ func (st *lossyEncodeState) highBitDepthColorReferencePlanes(ref SourceFrame4201
 		return [3]av1frame.Plane{}, err
 	}
 	v, err := highBitDepthReferencePlane(ref.V, ref.ChromaStride, chromaWidth, chromaHeight, &st.refV16Bytes)
+	if err != nil {
+		return [3]av1frame.Plane{}, err
+	}
+	return [3]av1frame.Plane{y, u, v}, nil
+}
+
+func (st *lossyEncodeState) highBitDepthColorGoldenPlanes(ref SourceFrame42016, color parser.ColorConfig) ([3]av1frame.Plane, error) {
+	if err := validateSourceFrameColor16(ref, color, videoColorLabel(color)); err != nil {
+		return [3]av1frame.Plane{}, err
+	}
+	chromaWidth, chromaHeight := chromaWidthForColor(ref.Width, color), chromaHeightForColor(ref.Height, color)
+	y, err := highBitDepthReferencePlane(ref.Y, ref.YStride, ref.Width, ref.Height, &st.goldenY16Bytes)
+	if err != nil {
+		return [3]av1frame.Plane{}, err
+	}
+	u, err := highBitDepthReferencePlane(ref.U, ref.ChromaStride, chromaWidth, chromaHeight, &st.goldenU16Bytes)
+	if err != nil {
+		return [3]av1frame.Plane{}, err
+	}
+	v, err := highBitDepthReferencePlane(ref.V, ref.ChromaStride, chromaWidth, chromaHeight, &st.goldenV16Bytes)
 	if err != nil {
 		return [3]av1frame.Plane{}, err
 	}
@@ -789,6 +842,33 @@ func highBitDepthReferencePlane(samples []uint16, stride, width, height int, scr
 		Width:  width,
 		Height: height,
 	}, nil
+}
+
+func highBitDepthGoldenReferenceWins(src []uint16, srcStride int, last, golden av1frame.Plane, x, y, w, h int, bitDepth uint8) bool {
+	lastSAD := highBitDepthPlaneSAD(src, srcStride, last, x, y, w, h)
+	goldenSAD := highBitDepthPlaneSAD(src, srcStride, golden, x, y, w, h)
+	margin := int64(32)
+	if bitDepth > 8 {
+		margin <<= uint(bitDepth - 8)
+	}
+	return goldenSAD+margin < lastSAD
+}
+
+func highBitDepthPlaneSAD(src []uint16, srcStride int, ref av1frame.Plane, x, y, w, h int) int64 {
+	var sad int64
+	for r := 0; r < h; r++ {
+		srcRow := src[(y+r)*srcStride+x:]
+		refRow := ref.Pix[(y+r)*ref.Stride+x*2:]
+		for c := 0; c < w; c++ {
+			refSample := uint16(refRow[c*2]) | uint16(refRow[c*2+1])<<8
+			d := int64(srcRow[c]) - int64(refSample)
+			if d < 0 {
+				d = -d
+			}
+			sad += d
+		}
+	}
+	return sad
 }
 
 func predictIntoScaledHighBitDepthMono16(dst []uint16, dstBytes []byte, ref av1frame.Plane, bitDepth uint8, curWidth, curHeight, px, py, bw, bh int, mv motion.Vector, scratch *motion.ScaledConvolveScratch) error {

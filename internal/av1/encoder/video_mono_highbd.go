@@ -36,16 +36,19 @@ type HighBitDepthMonochromeVideoEncoder struct {
 	pc        pframeCoder
 	keyRecon  SourceFrameMono16
 	recon     SourceFrameMono16
+	golden    SourceFrameMono16
 	reconBufs [2]SourceFrameMono16
 	reconIdx  int
 	t1Recon   SourceFrameMono16
 	t2Recon   SourceFrameMono16
 	lastRecon SourceFrameMono16
 
-	haveKey        bool
-	temporalLayers int
-	frameIndex     int
-	lastTemporalID uint8
+	haveKey          bool
+	temporalLayers   int
+	frameIndex       int
+	lastTemporalID   uint8
+	goldenEvery      int
+	sinceGoldenFresh int
 
 	tileColsLog2 uint8
 	tilePCs      []pframeCoder
@@ -73,7 +76,7 @@ func NewHighBitDepthMonochromeVideoEncoder(width, height int, bitDepth uint8, qI
 		width: codedW, height: codedH,
 		renderWidth: width, renderHeight: height,
 		bitDepth: bitDepth,
-		qIndex:   qIndex,
+		qIndex:   qIndex, goldenEvery: 16,
 	}, nil
 }
 
@@ -116,6 +119,14 @@ func (e *HighBitDepthMonochromeVideoEncoder) SetTemporalLayers(n int) error {
 func (e *HighBitDepthMonochromeVideoEncoder) SetTileColumns(cols int) {
 	if e != nil {
 		e.tileColsLog2 = tileColumnsLog2(cols)
+	}
+}
+
+// SetGoldenInterval sets how many base-layer inter frames pass between
+// golden-anchor refreshes; zero disables golden references entirely.
+func (e *HighBitDepthMonochromeVideoEncoder) SetGoldenInterval(n int) {
+	if e != nil {
+		e.goldenEvery = n
 	}
 }
 
@@ -431,6 +442,10 @@ func (e *HighBitDepthMonochromeVideoEncoder) encodeKeyWithSequenceMax(src Source
 	e.haveKey = true
 	e.frameIndex = 1
 	e.lastTemporalID = 0
+	if e.goldenEvery > 0 {
+		copyMono16FrameInto(&e.golden, e.keyRecon)
+		e.sinceGoldenFresh = 0
+	}
 	e.rcUpdate(len(out)*8, 0)
 	return out, nil
 }
@@ -451,10 +466,17 @@ func (e *HighBitDepthMonochromeVideoEncoder) encodePReusing(src SourceFrameMono1
 	allocMono16Frame(out, src)
 
 	refresh := uint8(0x01)
+	refreshGolden := false
 	if isT1 {
 		refresh = 0x04
 	} else if droppable {
 		refresh = 0
+	} else if e.goldenEvery > 0 {
+		e.sinceGoldenFresh++
+		if e.sinceGoldenFresh >= e.goldenEvery {
+			refresh |= 0x02
+			refreshGolden = true
+		}
 	}
 	seq := e.sequenceHeader(src.Width, src.Height)
 	effQ := e.layerQIndex(temporalID)
@@ -475,7 +497,11 @@ func (e *HighBitDepthMonochromeVideoEncoder) encodePReusing(src SourceFrameMono1
 		ref = e.t1Recon
 		header.Size.RefFrameIdx[0] = 2
 	}
-	payloads, err := e.encodePTilePayloads(seq, src, ref, out, effQ, &header)
+	var golden *SourceFrameMono16
+	if e.goldenEvery > 0 && e.golden.Y != nil {
+		golden = &e.golden
+	}
+	payloads, err := e.encodePTilePayloads(seq, src, ref, golden, out, effQ, &header)
 	if err != nil {
 		return nil, err
 	}
@@ -487,6 +513,10 @@ func (e *HighBitDepthMonochromeVideoEncoder) encodePReusing(src SourceFrameMono1
 	if !droppable {
 		e.recon = *out
 		e.reconIdx ^= 1
+	}
+	if refreshGolden {
+		copyMono16FrameInto(&e.golden, *out)
+		e.sinceGoldenFresh = 0
 	}
 	return tu, nil
 }
@@ -541,7 +571,7 @@ func (e *HighBitDepthMonochromeVideoEncoder) encodeReferencePFrameWithSequenceMa
 		header.Tile = tiles
 	}
 
-	payloads, err := e.encodePTilePayloads(seq, src, ref, out, effQ, &header)
+	payloads, err := e.encodePTilePayloads(seq, src, ref, nil, out, effQ, &header)
 	if err != nil {
 		return nil, err
 	}
@@ -583,7 +613,7 @@ func (e *HighBitDepthMonochromeVideoEncoder) encodeKeyTilePayloads(seq SequenceH
 	return payloads, nil
 }
 
-func (e *HighBitDepthMonochromeVideoEncoder) encodePTilePayloads(seq SequenceHeader, src SourceFrameMono16, ref SourceFrameMono16, out *SourceFrameMono16, qIndex uint8, header *InterFrameHeaderParams) ([]TilePayload, error) {
+func (e *HighBitDepthMonochromeVideoEncoder) encodePTilePayloads(seq SequenceHeader, src SourceFrameMono16, ref SourceFrameMono16, golden *SourceFrameMono16, out *SourceFrameMono16, qIndex uint8, header *InterFrameHeaderParams) ([]TilePayload, error) {
 	nTiles, err := e.configureTilePayloads(seq, src.Width, src.Height, &header.Tile)
 	if err != nil {
 		return nil, err
@@ -596,7 +626,7 @@ func (e *HighBitDepthMonochromeVideoEncoder) encodePTilePayloads(seq SequenceHea
 			pc = &e.tilePCs[t]
 		}
 		c0, c1 := tilePayloadColBounds(header.Tile, t, miCols)
-		data, err := pc.encodeHighBitDepthMonochromePFrameTile(src, ref, out, qIndex, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, c0, c1)
+		data, err := pc.encodeHighBitDepthMonochromePFrameTile(src, ref, golden, out, qIndex, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, c0, c1)
 		if err != nil {
 			return nil, fmt.Errorf("encode tile %d: %w", t, err)
 		}
