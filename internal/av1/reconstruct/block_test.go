@@ -170,9 +170,11 @@ func TestReconstructPlaneBlockVisibleWithGeometryMatchesDefault(t *testing.T) {
 	want, _ := testPlane(10, 10, 1, 10)
 	got, _ := testPlane(10, 10, 1, 10)
 	gotSparse, _ := testPlane(10, 10, 1, 10)
+	gotTrustedSparse, _ := testPlane(10, 10, 1, 10)
 	fillPlane(want, 1, 100)
 	fillPlane(got, 1, 100)
 	fillPlane(gotSparse, 1, 100)
+	fillPlane(gotTrustedSparse, 1, 100)
 	if err := ReconstructPlaneBlockVisible(want, 1, 8, 2, 1, 6, 7, quantized, int(scanSize.Height), make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -188,6 +190,15 @@ func TestReconstructPlaneBlockVisibleWithGeometryMatchesDefault(t *testing.T) {
 	}
 	if !bytes.Equal(gotSparse.Pix, want.Pix) {
 		t.Fatalf("scan geometry path output differs from default")
+	}
+	dstOffset := 1*gotTrustedSparse.Stride + 2
+	dstLen := (7-1)*gotTrustedSparse.Stride + 6
+	dst := gotTrustedSparse.Pix[dstOffset : dstOffset+dstLen : dstOffset+dstLen]
+	if err := ReconstructPlaneBlockVisibleTrustedAtWithGeometryAndScan(dst, gotTrustedSparse.Stride, 1, 8, 6, 7, quantized, int(scanSize.Height), scan, scanSize, txScale, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotTrustedSparse.Pix, want.Pix) {
+		t.Fatalf("trusted scan geometry path output differs from default")
 	}
 }
 

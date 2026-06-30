@@ -122,6 +122,24 @@ func InverseBlockBitDepth(dst []int16, dstStride int, coeff []int32, coeffStride
 	return inverseSeparableBlockClamped(dst, dstStride, coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax)
 }
 
+// InverseBlockBitDepthBoundedRows is InverseBlockBitDepth with the dav1d-style
+// first 1D pass bounded to rows that can contain non-zero dequantized
+// coefficients. activeRows must be exact; callers should derive it from the
+// decoded EOB scan prefix and fall back to InverseBlockBitDepth when unsure.
+func InverseBlockBitDepthBoundedRows(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size, t Type, bitDepth uint8, activeRows int) error {
+	rowMin, rowMax, colMin, colMax, ok := stageRangeBounds(bitDepth)
+	if !ok {
+		return ErrInvalidTransform
+	}
+	if t == TypeIDTX {
+		return inverseIdentityBlockClamped(dst, dstStride, coeff, coeffStride, size, rowMin, rowMax, colMin, colMax)
+	}
+	if !t.Supported(size) {
+		return ErrInvalidTransform
+	}
+	return inverseSeparableBlockClampedRows(dst, dstStride, coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax, activeRows)
+}
+
 // InverseDCTDCOnlyBlockBitDepth writes the residual for a DCT_DCT block whose
 // only non-zero coefficient is DC. It uses the same 1D DCT kernels and stage
 // clamps as InverseBlockBitDepth, but evaluates only the single horizontal and

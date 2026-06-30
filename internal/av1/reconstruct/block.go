@@ -181,6 +181,10 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 	}
 
 	useSparseDequant := eob > 0 && len(scan) >= eob && eob*sparseDequantWorkFactor <= dequantLen
+	activeRows := 0
+	if useSparseDequant {
+		activeRows = activeTransformRowsFromScan(scan, eob, scanHeight)
+	}
 	if cfg.InverseQMatrix != nil {
 		if useSparseDequant {
 			quantize.DequantizeBlockScaledQMatrixBitDepthEOBTrusted(dequant, scanHeight, quantized, quantizedStride, scan, eob, scanWidth, scanHeight, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth)
@@ -198,12 +202,27 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 		if err := transform.InverseWHT4x4Block(residual, width, dequant, scanHeight, eob); err != nil {
 			return ErrInvalidBlock
 		}
+	} else if activeRows > 0 {
+		if err := transform.InverseBlockBitDepthBoundedRows(residual, width, dequant, scanHeight, transformScratch, cfg.Size, cfg.Transform, bitDepth, activeRows); err != nil {
+			return ErrInvalidBlock
+		}
 	} else if err := transform.InverseBlockBitDepth(residual, width, dequant, scanHeight, transformScratch, cfg.Size, cfg.Transform, bitDepth); err != nil {
 		return ErrInvalidBlock
 	}
 	max := uint16((1 << bitDepth) - 1)
 	dsp.AddResidualPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, residual, width)
 	return nil
+}
+
+func activeTransformRowsFromScan(scan []int16, eob int, scanHeight int) int {
+	activeRows := 0
+	for i := 0; i < eob; i++ {
+		row := int(scan[i]) % scanHeight
+		if row >= activeRows {
+			activeRows = row + 1
+		}
+	}
+	return activeRows
 }
 
 func reconstructPlaneBlockWithGeometry(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, scan []int16, scanSize transform.Size, txScale uint8, int32Scratch []int32, residualScratch []int16, cfg Block) error {

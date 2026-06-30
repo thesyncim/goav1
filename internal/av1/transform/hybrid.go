@@ -78,6 +78,10 @@ func inverseSeparableBlock(dst []int16, dstStride int, coeff []int32, coeffStrid
 // bits for the row clamp and max(bd+6, 16) bits for the column clamp — see
 // clamp_buf() and av1_gen_inv_stage_range() in av1_inv_txfm2d.c.
 func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size, typ Type, rowMin int32, rowMax int32, colMin int32, colMax int32) error {
+	return inverseSeparableBlockClampedRows(dst, dstStride, coeff, coeffStride, scratch, size, typ, rowMin, rowMax, colMin, colMax, 0)
+}
+
+func inverseSeparableBlockClampedRows(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size, typ Type, rowMin int32, rowMax int32, colMin int32, colMax int32, activeRows int) error {
 	// Resolve every per-size datum from a single compact index instead of
 	// re-deriving it through size.shift(), adjustedScanSize() and IsRect2(),
 	// each of which would recompute sizeIndex on this hot path.
@@ -110,16 +114,50 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 		!coeffBlockFits(len(coeff), coeffStride, coeffW, coeffH) {
 		return ErrInvalidTransform
 	}
+	if activeRows < 0 || activeRows > height {
+		return ErrInvalidTransform
+	}
 
 	// Reslice scratch to its exact span so the row/column copy loops below
 	// index a provably-bounded buffer.
 	scratch = scratch[:scratchLen]
 	rect2 := size.IsRect2()
+	rowLimit := height
+	if activeRows > 0 && activeRows < rowLimit {
+		rowLimit = activeRows
+	}
 
 	// Stage the row inputs into scratch, then run the row pass. The input
 	// staging is kept separate from the transform so the transform can batch
 	// two already-staged rows through the SIMD-accelerated inverse1DRow2.
-	if coeffW == width && coeffH == height {
+	if rowLimit < height {
+		rowsToStage := rowLimit
+		if rowsToStage > coeffH {
+			rowsToStage = coeffH
+		}
+		if rect2 {
+			for row := 0; row < rowsToStage; row++ {
+				tmpLine := scratch[row*width : row*width+width : row*width+width]
+				for col := 0; col < coeffW; col++ {
+					tmpLine[col] = clipRange(int64(rect2Scale(coeff[col*coeffStride+row])), rowMin, rowMax)
+				}
+				clear(tmpLine[coeffW:])
+			}
+		} else {
+			for row := 0; row < rowsToStage; row++ {
+				tmpLine := scratch[row*width : row*width+width : row*width+width]
+				for col := 0; col < coeffW; col++ {
+					tmpLine[col] = clipRange(int64(coeff[col*coeffStride+row]), rowMin, rowMax)
+				}
+				clear(tmpLine[coeffW:])
+			}
+		}
+		for row := rowsToStage; row < height; row++ {
+			tmpLine := scratch[row*width : row*width+width : row*width+width]
+			clear(tmpLine)
+		}
+		rowLimit = rowsToStage
+	} else if coeffW == width && coeffH == height {
 		if rect2 {
 			for row := range height {
 				tmpLine := scratch[row*width : row*width+width : row*width+width]
@@ -164,12 +202,12 @@ func inverseSeparableBlockClamped(dst []int16, dstStride int, coeff []int32, coe
 	// lengths without a batched kernel. inverse1DRow2 itself guarantees the
 	// result equals two independent inverse1DRow calls.
 	row := 0
-	for ; row+1 < height; row += 2 {
+	for ; row+1 < rowLimit; row += 2 {
 		r0 := scratch[row*width : row*width+width : row*width+width]
 		r1 := scratch[(row+1)*width : (row+1)*width+width : (row+1)*width+width]
 		inverse1DRow2(r0, r1, width, horizontal, rowMin, rowMax)
 	}
-	if row < height {
+	if row < rowLimit {
 		tmpLine := scratch[row*width : row*width+width : row*width+width]
 		inverse1DRow(tmpLine, width, horizontal, rowMin, rowMax)
 	}
