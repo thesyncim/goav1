@@ -362,6 +362,20 @@ func AppendEncoderWebRTCScalabilityModes(dst []EncoderScalabilityMode) []Encoder
 	return internalencoder.AppendWebRTCScalabilityModes(dst)
 }
 
+// EncoderWebRTCSVCScalabilityModes returns every W3C WebRTC-SVC scalabilityMode
+// value implemented by the encoder/control surfaces, including W3C KEY_SHIFT
+// variants that are not present in the pinned libwebrtc catalogue.
+func EncoderWebRTCSVCScalabilityModes() []EncoderScalabilityMode {
+	out := make([]EncoderScalabilityMode, 0, internalencoder.WebRTCSVCScalabilityModeCount())
+	return internalencoder.AppendWebRTCSVCScalabilityModes(out)
+}
+
+// AppendEncoderWebRTCSVCScalabilityModes appends every implemented W3C
+// WebRTC-SVC scalabilityMode value to dst and returns the extended slice.
+func AppendEncoderWebRTCSVCScalabilityModes(dst []EncoderScalabilityMode) []EncoderScalabilityMode {
+	return internalencoder.AppendWebRTCSVCScalabilityModes(dst)
+}
+
 // ValidateEncoderWebRTCActiveScalabilityModes validates the active
 // scalabilityMode values for one WebRTC sender. Pass only active encodings; a
 // sender with no active encodings is accepted. Per the WebRTC-SVC setParameters

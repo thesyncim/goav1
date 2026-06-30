@@ -186,7 +186,7 @@ result buffer directly. The executable examples in `example_test.go` and
 | WebRTC RTP decode | `NewDecoderFromRTPPayloads` / `NewDecoderFromRTPPackets` cover ordered/live RTP payload bodies or complete packets for single decode chains and simulcast layers; `NewLayeredDecoderFromRTPPayloads` / `NewLayeredDecoderFromRTPPackets` cover shared-reference SVC RTP streams; `DecodeRTPPayloadAfterLoss` and `DecodeRTPPacketAfterLoss` reset retained fragments after packet gaps |
 | SVC | L1T2/L2T1/L2T2 oracle vectors pass through the framework path; public integration guidance lives in [docs/svc.md](docs/svc.md) |
 | Tile groups | Single and multi-tile groups pass current strict-MD5 gates; tile-list OBUs parse, validate source reference anchors/uniform decode layout, resolve external anchor frames through reference slots or provider-backed surface IDs, plan raw tile-list entry decode jobs, bind each entry's external anchor as LAST_FRAME for residual decode, reconstruct entries through the residual runner, blit decoded rectangles into a tile-list output mosaic, and publish tile-list outputs through low-level stream runners plus high-level low-overhead, IVF, RTP payload, RTP packet, and sequenced RTP packet decode when frame context is present |
-| Encoder | Functional realtime WebRTC encoder with I420/I422/I444/I400/NV12/NV21 plus generic 8/10/12-bit `Frame` input adapters, fixed-quality/CBR, forced keyframes, temporal layering, runtime bitrate/framerate/rate-control/scalability reconfiguration, current RTP timestamp-duration helpers, config-derived video-layers-allocation metadata, multi-spatial `RTCEncoder.EncodePicture` for pinned-libwebrtc SVC and simulcast modes plus explicitly configured W3C key-shift schedules, native 8-bit profile-2 4:2:2, native 8-bit profile-1 4:4:4, native 8-bit and 10/12-bit monochrome plus native 10/12-bit 4:2:0, 4:2:2, and 4:4:4 RTC output for explicit configs across single-spatial, simulcast, and shared-reference SVC, native 10/12-bit monochrome lossless/lossy keyframes and lossy P-frames, standalone and RTC native 10/12-bit 4:2:0 color lossless/lossy keyframes and lossy P-frames, tile columns, golden references, RTP payload packetization, sized complete RTP packet wrapping with dependency descriptors and negotiated MID/RID/RRID/CVO/playout-delay/TWCC/TWCC-02/absolute-send-time/absolute-capture-time/color-space/video-content-type/video-timing/video-layers-allocation extensions, active decode target signaling, and LRR layer-grid validation; exported WebRTC catalogs and active-encoding validation follow pinned-libwebrtc, while explicit RTC configs retain temporal/spatial dependency structures, dependency-descriptor decode targets, W3C key-shift temporal schedules, pinned-libwebrtc L2T2_KEY_SHIFT templates, explicit sequence color config, and `Frame` validation/loading for profile-0/1/2 sample formats |
+| Encoder | Functional realtime WebRTC encoder with I420/I422/I444/I400/NV12/NV21 plus generic 8/10/12-bit `Frame` input adapters, fixed-quality/CBR, forced keyframes, temporal layering, runtime bitrate/framerate/rate-control/scalability reconfiguration, current RTP timestamp-duration helpers, config-derived video-layers-allocation metadata, multi-spatial `RTCEncoder.EncodePicture` for pinned-libwebrtc SVC and simulcast modes plus explicitly configured W3C key-shift schedules, native 8-bit profile-2 4:2:2, native 8-bit profile-1 4:4:4, native 8-bit and 10/12-bit monochrome plus native 10/12-bit 4:2:0, 4:2:2, and 4:4:4 RTC output for explicit configs across single-spatial, simulcast, and shared-reference SVC, native 10/12-bit monochrome lossless/lossy keyframes and lossy P-frames, standalone and RTC native 10/12-bit 4:2:0 color lossless/lossy keyframes and lossy P-frames, tile columns, golden references, RTP payload packetization, sized complete RTP packet wrapping with dependency descriptors and negotiated MID/RID/RRID/CVO/playout-delay/TWCC/TWCC-02/absolute-send-time/absolute-capture-time/color-space/video-content-type/video-timing/video-layers-allocation extensions, active decode target signaling, and LRR layer-grid validation; exported WebRTC catalogs include both the pinned-libwebrtc browser list and the complete W3C WebRTC-SVC list, while active-encoding validation accepts every implemented W3C SVC mode and still rejects invalid multi-active single-SSRC simulcast combinations |
 | SIMD/assembly | CPU-dispatch skeleton plus initial amd64/arm64 motion kernels; broader transform/CDEF/restoration kernels are still roadmap work |
 
 The full feature matrix, status legend, vector coverage, and forward-looking
@@ -260,10 +260,11 @@ There are three public encoder surfaces:
   `ValidateEncoderWebRTCActiveScalabilityModes` preflights the W3C
   setParameters rule that a sender cannot mix a single-SSRC `S*`
   scalability mode with multiple active encodings;
-  `EncoderWebRTCScalabilityModes()` enumerates the pinned libwebrtc/W3C
-  browser catalogue, while `EncoderScalabilityModes()` enumerates every
-  explicit encoder mode accepted by config, including implemented non-catalog
-  key-shift variants;
+  `EncoderWebRTCScalabilityModes()` enumerates the pinned libwebrtc browser
+  catalogue, `EncoderWebRTCSVCScalabilityModes()` enumerates the complete W3C
+  WebRTC-SVC catalogue implemented by config including every `_KEY_SHIFT`
+  variant, and `EncoderScalabilityModes()` enumerates every explicit encoder
+  mode accepted by config;
   `EncoderWebRTCValidateLayerRefreshRequests` validates AV1 RTCP LRR feedback
   against the configured temporal/spatial grid, while
   `RTCEncoder.RTCPRequiresKeyFrame`, `WebRTCEncoder.RTCPRequiresKeyFrame`,
@@ -554,8 +555,8 @@ scalability modes, RTP/RTCP helpers, loss recovery, control reconfiguration, and
 external decoder parity. The reference-decode lane selects every maintained
 `*ReferenceDecoders` row, including public I400/I420 high-bit-depth/lossless and
 P-frame profiles plus the WebRTC/control matrix. It also covers internal
-pinned-libwebrtc scalability catalogue checks, accepted pixel-mode decode,
-control-combination decode, non-catalog key-shift temporal schedule checks, the
+pinned-libwebrtc scalability catalogue checks, complete W3C SVC catalogue checks,
+accepted pixel-mode decode, control-combination decode, key-shift temporal schedule checks, the
 Pion/browser-push WebRTC example, multi-spatial I422/I444/I400/NV12/NV21 plus
 generic 8/10/12-bit
 `Frame` adapter output after RTP assembly, native single-spatial monochrome RTC
@@ -564,9 +565,10 @@ output, native 10/12-bit I400/I420/I422/I444 RTC output, as well as all-mode
 hint, scalability mode, and native high-bit-depth non-4:2:0 color. The browser
 portion live-tests every
 `EncoderWebRTCScalabilityModes()` entry through the supported delivery shape;
-`EncoderScalabilityModes()` enumerates every explicit encoder config mode,
-including implemented non-catalog key-shift variants. Browser catalogue values
-continue to come from `EncoderWebRTCScalabilityModes()`:
+`EncoderWebRTCSVCScalabilityModes()` enumerates the complete implemented W3C
+WebRTC-SVC catalogue, including `_KEY_SHIFT` variants beyond Chromium's pinned
+browser list. Browser catalogue values continue to come from
+`EncoderWebRTCScalabilityModes()`:
 direct L1, exact-base forwarding for shared-reference L2/L3 SVC, and exact-top
 forwarding for S2/S3 simulcast. It also repeats representative direct-RTP
 browser playback sessions for L1 temporal layering, shared-reference SVC

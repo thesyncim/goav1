@@ -115,9 +115,13 @@ func TestPublicEncoderScalabilityModeCatalogueIncludesExplicitModes(t *testing.T
 		}
 	}
 
-	webRTCOnly := make(map[goav1.EncoderScalabilityMode]bool)
+	pinnedLibWebRTCOnly := make(map[goav1.EncoderScalabilityMode]bool)
 	for _, mode := range goav1.EncoderWebRTCScalabilityModes() {
-		webRTCOnly[mode] = true
+		pinnedLibWebRTCOnly[mode] = true
+	}
+	webRTCSVC := make(map[goav1.EncoderScalabilityMode]bool)
+	for _, mode := range goav1.EncoderWebRTCSVCScalabilityModes() {
+		webRTCSVC[mode] = true
 	}
 	for _, mode := range []goav1.EncoderScalabilityMode{
 		goav1.EncoderScalabilityModeL2T3_KEY_SHIFT,
@@ -127,13 +131,59 @@ func TestPublicEncoderScalabilityModeCatalogueIncludesExplicitModes(t *testing.T
 		if !containsEncoderScalabilityMode(modes, mode) {
 			t.Fatalf("EncoderScalabilityModes omitted explicit mode %s", mode)
 		}
-		if webRTCOnly[mode] {
+		if pinnedLibWebRTCOnly[mode] {
 			t.Fatalf("%s unexpectedly exported by EncoderWebRTCScalabilityModes", mode)
 		}
-		if err := goav1.ValidateEncoderWebRTCActiveScalabilityModes(mode); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
-			t.Fatalf("ValidateEncoderWebRTCActiveScalabilityModes(%s) err=%v want %v",
-				mode, err, goav1.ErrEncoderInvalidConfig)
+		if !webRTCSVC[mode] {
+			t.Fatalf("EncoderWebRTCSVCScalabilityModes omitted W3C mode %s", mode)
 		}
+		if err := goav1.ValidateEncoderWebRTCActiveScalabilityModes(mode); err != nil {
+			t.Fatalf("ValidateEncoderWebRTCActiveScalabilityModes(%s): %v", mode, err)
+		}
+	}
+}
+
+func TestPublicEncoderWebRTCSVCScalabilityModeCatalogueIncludesCompleteW3CList(t *testing.T) {
+	want := []string{
+		"L1T1", "L1T2", "L1T3",
+		"L2T1", "L2T1h", "L2T1_KEY",
+		"L2T2", "L2T2h", "L2T2_KEY", "L2T2_KEY_SHIFT",
+		"L2T3", "L2T3h", "L2T3_KEY", "L2T3_KEY_SHIFT",
+		"L3T1", "L3T1h", "L3T1_KEY",
+		"L3T2", "L3T2h", "L3T2_KEY", "L3T2_KEY_SHIFT",
+		"L3T3", "L3T3h", "L3T3_KEY", "L3T3_KEY_SHIFT",
+		"S2T1", "S2T1h", "S2T2", "S2T2h", "S2T3", "S2T3h",
+		"S3T1", "S3T1h", "S3T2", "S3T2h", "S3T3", "S3T3h",
+	}
+	modes := goav1.EncoderWebRTCSVCScalabilityModes()
+	if len(modes) != len(want) {
+		t.Fatalf("EncoderWebRTCSVCScalabilityModes len=%d want %d", len(modes), len(want))
+	}
+	prefixed := goav1.AppendEncoderWebRTCSVCScalabilityModes([]goav1.EncoderScalabilityMode{goav1.EncoderScalabilityModeL3T3})
+	if len(prefixed) != len(want)+1 || prefixed[0] != goav1.EncoderScalabilityModeL3T3 {
+		t.Fatalf("AppendEncoderWebRTCSVCScalabilityModes prefix len=%d first=%s", len(prefixed), prefixed[0])
+	}
+	seen := make(map[goav1.EncoderScalabilityMode]bool, len(modes))
+	for i, name := range want {
+		mode := modes[i]
+		if prefixed[i+1] != mode {
+			t.Fatalf("prefixed mode %d=%s want %s", i+1, prefixed[i+1], mode)
+		}
+		parsed, ok := goav1.ParseEncoderScalabilityMode(name)
+		if !ok || parsed != mode {
+			t.Fatalf("ParseEncoderScalabilityMode(%q)=%s,%v want %s,true", name, parsed, ok, mode)
+		}
+		if got := mode.String(); got != name {
+			t.Fatalf("mode %d String()=%q want %q", i, got, name)
+		}
+		if seen[mode] {
+			t.Fatalf("duplicate mode %s", mode)
+		}
+		seen[mode] = true
+	}
+	modes[0] = goav1.EncoderScalabilityModeS3T3h
+	if got := goav1.EncoderWebRTCSVCScalabilityModes()[0]; got != goav1.EncoderScalabilityModeL1T1 {
+		t.Fatalf("EncoderWebRTCSVCScalabilityModes aliased caller mutation: %s", got)
 	}
 }
 

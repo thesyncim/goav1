@@ -301,12 +301,20 @@ func WebRTCScalabilityModeCount() int {
 	return len(webRTCScalabilityModes)
 }
 
+func WebRTCSVCScalabilityModeCount() int {
+	return int(scalabilityModeCount)
+}
+
 func ScalabilityModeCount() int {
 	return int(scalabilityModeCount)
 }
 
 func AppendWebRTCScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
 	return append(dst, webRTCScalabilityModes[:]...)
+}
+
+func AppendWebRTCSVCScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
+	return AppendScalabilityModes(dst)
 }
 
 func AppendScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
@@ -322,7 +330,7 @@ func AppendScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
 func ValidateWebRTCActiveScalabilityModes(modes []ScalabilityMode) error {
 	hasSingleSSRCSimulcast := false
 	for _, mode := range modes {
-		if !mode.webRTCSupported() {
+		if !mode.Valid() {
 			return ErrInvalidConfig
 		}
 		if mode.IsSimulcast() {

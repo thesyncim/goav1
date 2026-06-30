@@ -326,6 +326,9 @@ func TestPublicValidateEncoderWebRTCActiveScalabilityModes(t *testing.T) {
 		{av1.EncoderScalabilityModeS3T3h},
 		{av1.EncoderScalabilityModeL1T3, av1.EncoderScalabilityModeL1T3, av1.EncoderScalabilityModeL1T3},
 		{av1.EncoderScalabilityModeL2T3_KEY, av1.EncoderScalabilityModeL3T3_KEY},
+		{av1.EncoderScalabilityModeL2T3_KEY_SHIFT},
+		{av1.EncoderScalabilityModeL3T2_KEY_SHIFT},
+		{av1.EncoderScalabilityModeL3T3_KEY_SHIFT},
 	} {
 		if err := av1.ValidateEncoderWebRTCActiveScalabilityModes(modes...); err != nil {
 			t.Fatalf("ValidateEncoderWebRTCActiveScalabilityModes(%v): %v", modes, err)
@@ -334,9 +337,6 @@ func TestPublicValidateEncoderWebRTCActiveScalabilityModes(t *testing.T) {
 
 	for _, modes := range [][]av1.EncoderScalabilityMode{
 		{av1.EncoderScalabilityMode(255)},
-		{av1.EncoderScalabilityModeL2T3_KEY_SHIFT},
-		{av1.EncoderScalabilityModeL3T2_KEY_SHIFT},
-		{av1.EncoderScalabilityModeL3T3_KEY_SHIFT},
 		{av1.EncoderScalabilityModeL1T3, av1.EncoderScalabilityModeS2T1},
 		{av1.EncoderScalabilityModeS2T3h, av1.EncoderScalabilityModeS3T3},
 	} {

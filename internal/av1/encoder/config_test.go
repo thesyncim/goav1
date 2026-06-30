@@ -233,6 +233,40 @@ func TestAppendWebRTCScalabilityModesMatchesPinnedLibWebRTC(t *testing.T) {
 	}
 }
 
+func TestAppendWebRTCSVCScalabilityModesIncludesW3CKeyShiftModes(t *testing.T) {
+	prefix := []ScalabilityMode{ScalabilityModeL1T1}
+	modes := AppendWebRTCSVCScalabilityModes(prefix)
+	if WebRTCSVCScalabilityModeCount() != ScalabilityModeCount() {
+		t.Fatalf("WebRTCSVCScalabilityModeCount=%d want %d", WebRTCSVCScalabilityModeCount(), ScalabilityModeCount())
+	}
+	if len(modes) != ScalabilityModeCount()+1 {
+		t.Fatalf("len=%d want %d", len(modes), ScalabilityModeCount()+1)
+	}
+	if modes[0] != ScalabilityModeL1T1 {
+		t.Fatalf("prefix mutated to %s", modes[0])
+	}
+	seen := make(map[ScalabilityMode]bool, ScalabilityModeCount())
+	for _, mode := range modes[1:] {
+		if !mode.Valid() {
+			t.Fatalf("complete WebRTC-SVC catalog exported invalid mode %d", mode)
+		}
+		if seen[mode] {
+			t.Fatalf("complete WebRTC-SVC catalog duplicated %s", mode)
+		}
+		seen[mode] = true
+	}
+	for _, mode := range []ScalabilityMode{
+		ScalabilityModeL2T2_KEY_SHIFT,
+		ScalabilityModeL2T3_KEY_SHIFT,
+		ScalabilityModeL3T2_KEY_SHIFT,
+		ScalabilityModeL3T3_KEY_SHIFT,
+	} {
+		if !seen[mode] {
+			t.Fatalf("complete WebRTC-SVC catalog omitted %s", mode)
+		}
+	}
+}
+
 func pinnedLibWebRTCScalabilityModes(t *testing.T) []ScalabilityMode {
 	t.Helper()
 	root := repoRootFromTestWD(t)
@@ -302,6 +336,9 @@ func TestValidateWebRTCActiveScalabilityModes(t *testing.T) {
 		{ScalabilityModeS3T3h},
 		{ScalabilityModeL1T3, ScalabilityModeL1T3, ScalabilityModeL1T3},
 		{ScalabilityModeL2T3_KEY, ScalabilityModeL3T3_KEY},
+		{ScalabilityModeL2T3_KEY_SHIFT},
+		{ScalabilityModeL3T2_KEY_SHIFT},
+		{ScalabilityModeL3T3_KEY_SHIFT},
 	} {
 		if err := ValidateWebRTCActiveScalabilityModes(modes); err != nil {
 			t.Fatalf("ValidateWebRTCActiveScalabilityModes(%v): %v", modes, err)
@@ -310,9 +347,6 @@ func TestValidateWebRTCActiveScalabilityModes(t *testing.T) {
 
 	for _, modes := range [][]ScalabilityMode{
 		{ScalabilityMode(scalabilityModeCount)},
-		{ScalabilityModeL2T3_KEY_SHIFT},
-		{ScalabilityModeL3T2_KEY_SHIFT},
-		{ScalabilityModeL3T3_KEY_SHIFT},
 		{ScalabilityModeL1T3, ScalabilityModeS2T1},
 		{ScalabilityModeS2T3h, ScalabilityModeS3T3},
 	} {
