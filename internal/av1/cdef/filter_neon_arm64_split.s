@@ -311,3 +311,261 @@ secondary8_finalize:
 	SUB $1, R4
 	CBNZ R4, secondary8_row
 	RET
+
+// func cdefFilterBlock4PrimaryNEON(ctx *filterBlockNEONCtx)
+TEXT ·cdefFilterBlock4PrimaryNEON(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD C_DST(R0), R1
+	MOVD C_INPUT(R0), R2
+	MOVD C_DSTSTR(R0), R3
+	LSL  $1, R3
+	MOVD C_HEIGHT(R0), R4
+	MOVD C_PRISTR(R0), R5
+	WORD $0x4e020cb0 // dup v16.8h, w5
+	MOVD C_PRISHIFT(R0), R5
+	NEG  R5, R5
+	WORD $0x4e020cb2 // dup v18.8h, w5
+	MOVD C_PRITAP0(R0), R5
+	WORD $0x4e020cb4 // dup v20.8h, w5
+	MOVD C_PRITAP1(R0), R5
+	WORD $0x4e020cb5 // dup v21.8h, w5
+	MOVD C_PRI0(R0), R6
+	LSL  $1, R6
+	MOVD C_PRI1(R0), R7
+	LSL  $1, R7
+	MOVD $(144*2), R15
+
+primary4_row:
+	VLD1 (R2), [V0.H4]
+	WORD $0x2e211c21 // eor v1.8b, v1.8b, v1.8b
+
+	ADD R6, R2, R16
+	VLD1 (R16), [V5.H4]
+	WORD $0x2e6084a6 // sub v6.4h, v5.4h, v0.4h
+	WORD $0x0e60b8c7 // abs v7.4h, v6.4h
+	WORD $0x2e7244e8 // ushl v8.4h, v7.4h, v18.4h
+	WORD $0x2e688608 // sub v8.4h, v16.4h, v8.4h
+	WORD $0x2e291d29 // eor v9.8b, v9.8b, v9.8b
+	WORD $0x0e696508 // smax v8.4h, v8.4h, v9.4h
+	WORD $0x0e676d08 // smin v8.4h, v8.4h, v7.4h
+	WORD $0x0f1104c9 // sshr v9.4h, v6.4h, #15
+	WORD $0x2e291d08 // eor v8.8b, v8.8b, v9.8b
+	WORD $0x2e698508 // sub v8.4h, v8.4h, v9.4h
+	WORD $0x0e748101 // smlal v1.4s, v8.4h, v20.4h
+
+	SUB R6, R2, R16
+	VLD1 (R16), [V5.H4]
+	WORD $0x2e6084a6 // sub v6.4h, v5.4h, v0.4h
+	WORD $0x0e60b8c7 // abs v7.4h, v6.4h
+	WORD $0x2e7244e8 // ushl v8.4h, v7.4h, v18.4h
+	WORD $0x2e688608 // sub v8.4h, v16.4h, v8.4h
+	WORD $0x2e291d29 // eor v9.8b, v9.8b, v9.8b
+	WORD $0x0e696508 // smax v8.4h, v8.4h, v9.4h
+	WORD $0x0e676d08 // smin v8.4h, v8.4h, v7.4h
+	WORD $0x0f1104c9 // sshr v9.4h, v6.4h, #15
+	WORD $0x2e291d08 // eor v8.8b, v8.8b, v9.8b
+	WORD $0x2e698508 // sub v8.4h, v8.4h, v9.4h
+	WORD $0x0e748101 // smlal v1.4s, v8.4h, v20.4h
+
+	ADD R7, R2, R16
+	VLD1 (R16), [V5.H4]
+	WORD $0x2e6084a6 // sub v6.4h, v5.4h, v0.4h
+	WORD $0x0e60b8c7 // abs v7.4h, v6.4h
+	WORD $0x2e7244e8 // ushl v8.4h, v7.4h, v18.4h
+	WORD $0x2e688608 // sub v8.4h, v16.4h, v8.4h
+	WORD $0x2e291d29 // eor v9.8b, v9.8b, v9.8b
+	WORD $0x0e696508 // smax v8.4h, v8.4h, v9.4h
+	WORD $0x0e676d08 // smin v8.4h, v8.4h, v7.4h
+	WORD $0x0f1104c9 // sshr v9.4h, v6.4h, #15
+	WORD $0x2e291d08 // eor v8.8b, v8.8b, v9.8b
+	WORD $0x2e698508 // sub v8.4h, v8.4h, v9.4h
+	WORD $0x0e758101 // smlal v1.4s, v8.4h, v21.4h
+
+	SUB R7, R2, R16
+	VLD1 (R16), [V5.H4]
+	WORD $0x2e6084a6 // sub v6.4h, v5.4h, v0.4h
+	WORD $0x0e60b8c7 // abs v7.4h, v6.4h
+	WORD $0x2e7244e8 // ushl v8.4h, v7.4h, v18.4h
+	WORD $0x2e688608 // sub v8.4h, v16.4h, v8.4h
+	WORD $0x2e291d29 // eor v9.8b, v9.8b, v9.8b
+	WORD $0x0e696508 // smax v8.4h, v8.4h, v9.4h
+	WORD $0x0e676d08 // smin v8.4h, v8.4h, v7.4h
+	WORD $0x0f1104c9 // sshr v9.4h, v6.4h, #15
+	WORD $0x2e291d08 // eor v8.8b, v8.8b, v9.8b
+	WORD $0x2e698508 // sub v8.4h, v8.4h, v9.4h
+	WORD $0x0e758101 // smlal v1.4s, v8.4h, v21.4h
+
+primary4_finalize:
+	WORD $0x4f210425 // sshr v5.4s, v1.4s, #31
+	WORD $0x4ea58421 // add v1.4s, v1.4s, v5.4s
+	MOVD $8, R16
+	VDUP R16, V5.S4
+	WORD $0x4ea58421 // add v1.4s, v1.4s, v5.4s
+	WORD $0x4f3c0421 // sshr v1.4s, v1.4s, #4
+	WORD $0x0e612825 // xtn v5.4h, v1.4s
+	WORD $0x0e6084a5 // add v5.4h, v5.4h, v0.4h
+	VST1 [V5.H4], (R1)
+	ADD R3, R1
+	ADD R15, R2
+	SUB $1, R4
+	CBNZ R4, primary4_row
+	RET
+
+// func cdefFilterBlock4SecondaryNEON(ctx *filterBlockNEONCtx)
+TEXT ·cdefFilterBlock4SecondaryNEON(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD C_DST(R0), R1
+	MOVD C_INPUT(R0), R2
+	MOVD C_DSTSTR(R0), R3
+	LSL  $1, R3
+	MOVD C_HEIGHT(R0), R4
+	MOVD C_SECSTR(R0), R5
+	WORD $0x4e020cb1 // dup v17.8h, w5
+	MOVD C_SECSHIFT(R0), R5
+	NEG  R5, R5
+	WORD $0x4e020cb3 // dup v19.8h, w5
+	MOVD C_SECTAP0(R0), R5
+	WORD $0x4e020cb6 // dup v22.8h, w5
+	MOVD C_SECTAP1(R0), R5
+	WORD $0x4e020cb7 // dup v23.8h, w5
+	MOVD C_SEC0(R0), R8
+	LSL  $1, R8
+	MOVD C_SEC1(R0), R9
+	LSL  $1, R9
+	MOVD C_SEC2(R0), R10
+	LSL  $1, R10
+	MOVD C_SEC3(R0), R11
+	LSL  $1, R11
+	MOVD $(144*2), R15
+
+secondary4_row:
+	VLD1 (R2), [V0.H4]
+	WORD $0x2e211c21 // eor v1.8b, v1.8b, v1.8b
+
+	ADD R8, R2, R16
+	VLD1 (R16), [V5.H4]
+	WORD $0x2e6084a6 // sub v6.4h, v5.4h, v0.4h
+	WORD $0x0e60b8c7 // abs v7.4h, v6.4h
+	WORD $0x2e7344e8 // ushl v8.4h, v7.4h, v19.4h
+	WORD $0x2e688628 // sub v8.4h, v17.4h, v8.4h
+	WORD $0x2e291d29 // eor v9.8b, v9.8b, v9.8b
+	WORD $0x0e696508 // smax v8.4h, v8.4h, v9.4h
+	WORD $0x0e676d08 // smin v8.4h, v8.4h, v7.4h
+	WORD $0x0f1104c9 // sshr v9.4h, v6.4h, #15
+	WORD $0x2e291d08 // eor v8.8b, v8.8b, v9.8b
+	WORD $0x2e698508 // sub v8.4h, v8.4h, v9.4h
+	WORD $0x0e768101 // smlal v1.4s, v8.4h, v22.4h
+
+	SUB R8, R2, R16
+	VLD1 (R16), [V5.H4]
+	WORD $0x2e6084a6 // sub v6.4h, v5.4h, v0.4h
+	WORD $0x0e60b8c7 // abs v7.4h, v6.4h
+	WORD $0x2e7344e8 // ushl v8.4h, v7.4h, v19.4h
+	WORD $0x2e688628 // sub v8.4h, v17.4h, v8.4h
+	WORD $0x2e291d29 // eor v9.8b, v9.8b, v9.8b
+	WORD $0x0e696508 // smax v8.4h, v8.4h, v9.4h
+	WORD $0x0e676d08 // smin v8.4h, v8.4h, v7.4h
+	WORD $0x0f1104c9 // sshr v9.4h, v6.4h, #15
+	WORD $0x2e291d08 // eor v8.8b, v8.8b, v9.8b
+	WORD $0x2e698508 // sub v8.4h, v8.4h, v9.4h
+	WORD $0x0e768101 // smlal v1.4s, v8.4h, v22.4h
+
+	ADD R9, R2, R16
+	VLD1 (R16), [V5.H4]
+	WORD $0x2e6084a6 // sub v6.4h, v5.4h, v0.4h
+	WORD $0x0e60b8c7 // abs v7.4h, v6.4h
+	WORD $0x2e7344e8 // ushl v8.4h, v7.4h, v19.4h
+	WORD $0x2e688628 // sub v8.4h, v17.4h, v8.4h
+	WORD $0x2e291d29 // eor v9.8b, v9.8b, v9.8b
+	WORD $0x0e696508 // smax v8.4h, v8.4h, v9.4h
+	WORD $0x0e676d08 // smin v8.4h, v8.4h, v7.4h
+	WORD $0x0f1104c9 // sshr v9.4h, v6.4h, #15
+	WORD $0x2e291d08 // eor v8.8b, v8.8b, v9.8b
+	WORD $0x2e698508 // sub v8.4h, v8.4h, v9.4h
+	WORD $0x0e768101 // smlal v1.4s, v8.4h, v22.4h
+
+	SUB R9, R2, R16
+	VLD1 (R16), [V5.H4]
+	WORD $0x2e6084a6 // sub v6.4h, v5.4h, v0.4h
+	WORD $0x0e60b8c7 // abs v7.4h, v6.4h
+	WORD $0x2e7344e8 // ushl v8.4h, v7.4h, v19.4h
+	WORD $0x2e688628 // sub v8.4h, v17.4h, v8.4h
+	WORD $0x2e291d29 // eor v9.8b, v9.8b, v9.8b
+	WORD $0x0e696508 // smax v8.4h, v8.4h, v9.4h
+	WORD $0x0e676d08 // smin v8.4h, v8.4h, v7.4h
+	WORD $0x0f1104c9 // sshr v9.4h, v6.4h, #15
+	WORD $0x2e291d08 // eor v8.8b, v8.8b, v9.8b
+	WORD $0x2e698508 // sub v8.4h, v8.4h, v9.4h
+	WORD $0x0e768101 // smlal v1.4s, v8.4h, v22.4h
+
+	ADD R10, R2, R16
+	VLD1 (R16), [V5.H4]
+	WORD $0x2e6084a6 // sub v6.4h, v5.4h, v0.4h
+	WORD $0x0e60b8c7 // abs v7.4h, v6.4h
+	WORD $0x2e7344e8 // ushl v8.4h, v7.4h, v19.4h
+	WORD $0x2e688628 // sub v8.4h, v17.4h, v8.4h
+	WORD $0x2e291d29 // eor v9.8b, v9.8b, v9.8b
+	WORD $0x0e696508 // smax v8.4h, v8.4h, v9.4h
+	WORD $0x0e676d08 // smin v8.4h, v8.4h, v7.4h
+	WORD $0x0f1104c9 // sshr v9.4h, v6.4h, #15
+	WORD $0x2e291d08 // eor v8.8b, v8.8b, v9.8b
+	WORD $0x2e698508 // sub v8.4h, v8.4h, v9.4h
+	WORD $0x0e778101 // smlal v1.4s, v8.4h, v23.4h
+
+	SUB R10, R2, R16
+	VLD1 (R16), [V5.H4]
+	WORD $0x2e6084a6 // sub v6.4h, v5.4h, v0.4h
+	WORD $0x0e60b8c7 // abs v7.4h, v6.4h
+	WORD $0x2e7344e8 // ushl v8.4h, v7.4h, v19.4h
+	WORD $0x2e688628 // sub v8.4h, v17.4h, v8.4h
+	WORD $0x2e291d29 // eor v9.8b, v9.8b, v9.8b
+	WORD $0x0e696508 // smax v8.4h, v8.4h, v9.4h
+	WORD $0x0e676d08 // smin v8.4h, v8.4h, v7.4h
+	WORD $0x0f1104c9 // sshr v9.4h, v6.4h, #15
+	WORD $0x2e291d08 // eor v8.8b, v8.8b, v9.8b
+	WORD $0x2e698508 // sub v8.4h, v8.4h, v9.4h
+	WORD $0x0e778101 // smlal v1.4s, v8.4h, v23.4h
+
+	ADD R11, R2, R16
+	VLD1 (R16), [V5.H4]
+	WORD $0x2e6084a6 // sub v6.4h, v5.4h, v0.4h
+	WORD $0x0e60b8c7 // abs v7.4h, v6.4h
+	WORD $0x2e7344e8 // ushl v8.4h, v7.4h, v19.4h
+	WORD $0x2e688628 // sub v8.4h, v17.4h, v8.4h
+	WORD $0x2e291d29 // eor v9.8b, v9.8b, v9.8b
+	WORD $0x0e696508 // smax v8.4h, v8.4h, v9.4h
+	WORD $0x0e676d08 // smin v8.4h, v8.4h, v7.4h
+	WORD $0x0f1104c9 // sshr v9.4h, v6.4h, #15
+	WORD $0x2e291d08 // eor v8.8b, v8.8b, v9.8b
+	WORD $0x2e698508 // sub v8.4h, v8.4h, v9.4h
+	WORD $0x0e778101 // smlal v1.4s, v8.4h, v23.4h
+
+	SUB R11, R2, R16
+	VLD1 (R16), [V5.H4]
+	WORD $0x2e6084a6 // sub v6.4h, v5.4h, v0.4h
+	WORD $0x0e60b8c7 // abs v7.4h, v6.4h
+	WORD $0x2e7344e8 // ushl v8.4h, v7.4h, v19.4h
+	WORD $0x2e688628 // sub v8.4h, v17.4h, v8.4h
+	WORD $0x2e291d29 // eor v9.8b, v9.8b, v9.8b
+	WORD $0x0e696508 // smax v8.4h, v8.4h, v9.4h
+	WORD $0x0e676d08 // smin v8.4h, v8.4h, v7.4h
+	WORD $0x0f1104c9 // sshr v9.4h, v6.4h, #15
+	WORD $0x2e291d08 // eor v8.8b, v8.8b, v9.8b
+	WORD $0x2e698508 // sub v8.4h, v8.4h, v9.4h
+	WORD $0x0e778101 // smlal v1.4s, v8.4h, v23.4h
+
+secondary4_finalize:
+	WORD $0x4f210425 // sshr v5.4s, v1.4s, #31
+	WORD $0x4ea58421 // add v1.4s, v1.4s, v5.4s
+	MOVD $8, R16
+	VDUP R16, V5.S4
+	WORD $0x4ea58421 // add v1.4s, v1.4s, v5.4s
+	WORD $0x4f3c0421 // sshr v1.4s, v1.4s, #4
+	WORD $0x0e612825 // xtn v5.4h, v1.4s
+	WORD $0x0e6084a5 // add v5.4h, v5.4h, v0.4h
+	VST1 [V5.H4], (R1)
+	ADD R3, R1
+	ADD R15, R2
+	SUB $1, R4
+	CBNZ R4, secondary4_row
+	RET

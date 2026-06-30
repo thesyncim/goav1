@@ -67,6 +67,12 @@ func cdefFilterBlock8SecondaryNEON(ctx *filterBlockNEONCtx)
 //go:noescape
 func cdefFilterBlock4NEON(ctx *filterBlockNEONCtx)
 
+//go:noescape
+func cdefFilterBlock4PrimaryNEON(ctx *filterBlockNEONCtx)
+
+//go:noescape
+func cdefFilterBlock4SecondaryNEON(ctx *filterBlockNEONCtx)
+
 func filterBlockNEON(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
 	if w := int(params.Width); w != 8 && w != 4 {
 		filterBlockPureGo(dst, dstStride, dstOrigin, input, inputOrigin, params)
@@ -85,7 +91,14 @@ func filterBlockNEON(dst []uint16, dstStride int, dstOrigin int, input []uint16,
 			cdefFilterBlock8NEON(&ctx)
 		}
 	} else {
-		cdefFilterBlock4NEON(&ctx)
+		switch {
+		case primaryStrength != 0 && secondaryStrength == 0:
+			cdefFilterBlock4PrimaryNEON(&ctx)
+		case primaryStrength == 0 && secondaryStrength != 0:
+			cdefFilterBlock4SecondaryNEON(&ctx)
+		default:
+			cdefFilterBlock4NEON(&ctx)
+		}
 	}
 }
 

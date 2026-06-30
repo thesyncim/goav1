@@ -74,27 +74,42 @@ func TestFilterBlockNEONStrengthCasesMatchPureGo(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			shapes := []struct {
+				width  int
+				height int
+			}{
+				{width: 8, height: 8},
+				{width: 4, height: 8},
+				{width: 4, height: 4},
+			}
 			for coeffShift := uint8(0); coeffShift <= 2; coeffShift++ {
 				for direction := uint8(0); direction < 8; direction++ {
-					input := makeCDEFBlockInput(newCDEFRandom(cdefDeterministicSeed^uint32(direction)^uint32(coeffShift)<<8), 8+int(coeffShift), int(direction)&0xf, int(coeffShift)+1)
-					params := BlockFilterParams{
-						PrimaryStrength:   tc.primary << coeffShift,
-						SecondaryStrength: tc.secondary << coeffShift,
-						Direction:         direction,
-						PrimaryDamping:    4 + coeffShift,
-						SecondaryDamping:  4 + coeffShift,
-						CoeffShift:        coeffShift,
-						Width:             8,
-						Height:            8,
-					}
-					origin := cdefBlockOrigin()
-					want := make([]uint16, 16*16)
-					got := make([]uint16, 16*16)
-					filterBlockPureGo(want, 16, 0, input, origin, params)
-					filterBlockNEON(got, 16, 0, input, origin, params)
-					for i := range want {
-						if want[i] != got[i] {
-							t.Fatalf("%s coeffShift=%d direction=%d dst[%d] neon %d want %d", tc.name, coeffShift, direction, i, got[i], want[i])
+					for _, shape := range shapes {
+						seed := cdefDeterministicSeed ^
+							uint32(direction) ^
+							(uint32(coeffShift) << 8) ^
+							(uint32(shape.width) << 16) ^
+							(uint32(shape.height) << 20)
+						input := makeCDEFBlockInput(newCDEFRandom(seed), 8+int(coeffShift), int(direction)&0xf, int(coeffShift)+1)
+						params := BlockFilterParams{
+							PrimaryStrength:   tc.primary << coeffShift,
+							SecondaryStrength: tc.secondary << coeffShift,
+							Direction:         direction,
+							PrimaryDamping:    4 + coeffShift,
+							SecondaryDamping:  4 + coeffShift,
+							CoeffShift:        coeffShift,
+							Width:             uint8(shape.width),
+							Height:            uint8(shape.height),
+						}
+						origin := cdefBlockOrigin()
+						want := make([]uint16, 16*16)
+						got := make([]uint16, 16*16)
+						filterBlockPureGo(want, 16, 0, input, origin, params)
+						filterBlockNEON(got, 16, 0, input, origin, params)
+						for i := range want {
+							if want[i] != got[i] {
+								t.Fatalf("%s %dx%d coeffShift=%d direction=%d dst[%d] neon %d want %d", tc.name, shape.width, shape.height, coeffShift, direction, i, got[i], want[i])
+							}
 						}
 					}
 				}
@@ -174,7 +189,62 @@ func BenchmarkFilterBlock8x8SecondaryOnlySplitNEON(b *testing.B) {
 	}, cdefFilterBlock8SecondaryNEON)
 }
 
+func BenchmarkFilterBlock4x4PrimaryOnlyDispatchNEON(b *testing.B) {
+	benchFilterNEONParams(b, BlockFilterParams{
+		PrimaryStrength: 13, SecondaryStrength: 0, Direction: 5,
+		PrimaryDamping: 5, SecondaryDamping: 4, Width: 4, Height: 4,
+	}, filterBlockNEON)
+}
+
+func BenchmarkFilterBlock4x4PrimaryOnlyGenericNEON(b *testing.B) {
+	benchFilterBlock4Asm(b, BlockFilterParams{
+		PrimaryStrength: 13, SecondaryStrength: 0, Direction: 5,
+		PrimaryDamping: 5, SecondaryDamping: 4, Width: 4, Height: 4,
+	}, cdefFilterBlock4NEON)
+}
+
+func BenchmarkFilterBlock4x4PrimaryOnlySplitNEON(b *testing.B) {
+	benchFilterBlock4Asm(b, BlockFilterParams{
+		PrimaryStrength: 13, SecondaryStrength: 0, Direction: 5,
+		PrimaryDamping: 5, SecondaryDamping: 4, Width: 4, Height: 4,
+	}, cdefFilterBlock4PrimaryNEON)
+}
+
+func BenchmarkFilterBlock4x4SecondaryOnlyDispatchNEON(b *testing.B) {
+	benchFilterNEONParams(b, BlockFilterParams{
+		PrimaryStrength: 0, SecondaryStrength: 4, Direction: 5,
+		PrimaryDamping: 5, SecondaryDamping: 4, Width: 4, Height: 4,
+	}, filterBlockNEON)
+}
+
+func BenchmarkFilterBlock4x4SecondaryOnlyGenericNEON(b *testing.B) {
+	benchFilterBlock4Asm(b, BlockFilterParams{
+		PrimaryStrength: 0, SecondaryStrength: 4, Direction: 5,
+		PrimaryDamping: 5, SecondaryDamping: 4, Width: 4, Height: 4,
+	}, cdefFilterBlock4NEON)
+}
+
+func BenchmarkFilterBlock4x4SecondaryOnlySplitNEON(b *testing.B) {
+	benchFilterBlock4Asm(b, BlockFilterParams{
+		PrimaryStrength: 0, SecondaryStrength: 4, Direction: 5,
+		PrimaryDamping: 5, SecondaryDamping: 4, Width: 4, Height: 4,
+	}, cdefFilterBlock4SecondaryNEON)
+}
+
 func benchFilterBlock8Asm(b *testing.B, params BlockFilterParams, fn func(*filterBlockNEONCtx)) {
+	input := make([]uint16, BStride*24)
+	for i := range input {
+		input[i] = uint16(i * 7 % 256)
+	}
+	dst := make([]uint16, 16*16)
+	ctx := makeFilterBlockNEONCtx(dst, 16, 0, input, BStride*8+16, params, int(params.PrimaryStrength), int(params.SecondaryStrength))
+	b.ReportAllocs()
+	for b.Loop() {
+		fn(&ctx)
+	}
+}
+
+func benchFilterBlock4Asm(b *testing.B, params BlockFilterParams, fn func(*filterBlockNEONCtx)) {
 	input := make([]uint16, BStride*24)
 	for i := range input {
 		input[i] = uint16(i * 7 % 256)
