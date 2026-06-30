@@ -112,6 +112,10 @@ func warpAffine8Offset(dst frame.Plane, ref frame.Plane, matX int, matY int, wri
 	for i := matY; i < matY+height; i += 8 {
 		for j := matX; j < matX+width; j += 8 {
 			baseSY := warpHorizontal8(&tmp, ref, i, j, matrix, alpha, beta, gamma, delta, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
+			if i+8 <= matY+height && j+8 <= matX+width {
+				warpVertical8Full(dst, &tmp, i, j, rowShift, colShift, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert)
+				continue
+			}
 			for k := -4; k < minWarpInt(4, matY+height-i-4); k++ {
 				sy := baseSY + delta*(k+4)
 				for l := -4; l < minWarpInt(4, matX+width-j-4); l++ {
@@ -129,6 +133,33 @@ func warpAffine8Offset(dst frame.Plane, ref frame.Plane, matX int, matY int, wri
 					sy += gamma
 				}
 			}
+		}
+	}
+}
+
+func warpVertical8Full(dst frame.Plane, tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, i int, j int, rowShift int, colShift int, baseSY int, gamma int, delta int, reduceBitsVert int, offsetBitsVert int) {
+	for k := -4; k < 4; k++ {
+		sy := baseSY + delta*(k+4)
+		dstRow := (i+rowShift+k+4)*dst.Stride + j + colShift
+		tmpRow := (k + 4) * warpedIntermediateColumns
+		for l := -4; l < 4; l++ {
+			offs := roundPowerOfTwo(sy, warpedDiffPrecBits) + warpedPixelPrecShifts
+			if offs >= 0 && offs < len(warpedFilter) {
+				coeffs := warpedFilter[offs]
+				col := l + 4
+				sum := 1 << offsetBitsVert
+				sum += int(coeffs[0]) * int(tmp[tmpRow+0*warpedIntermediateColumns+col])
+				sum += int(coeffs[1]) * int(tmp[tmpRow+1*warpedIntermediateColumns+col])
+				sum += int(coeffs[2]) * int(tmp[tmpRow+2*warpedIntermediateColumns+col])
+				sum += int(coeffs[3]) * int(tmp[tmpRow+3*warpedIntermediateColumns+col])
+				sum += int(coeffs[4]) * int(tmp[tmpRow+4*warpedIntermediateColumns+col])
+				sum += int(coeffs[5]) * int(tmp[tmpRow+5*warpedIntermediateColumns+col])
+				sum += int(coeffs[6]) * int(tmp[tmpRow+6*warpedIntermediateColumns+col])
+				sum += int(coeffs[7]) * int(tmp[tmpRow+7*warpedIntermediateColumns+col])
+				sum = roundPowerOfTwo(sum, reduceBitsVert)
+				dst.Pix[dstRow+l+4] = byte(clipPixel(sum - (1 << 7) - (1 << 8)))
+			}
+			sy += gamma
 		}
 	}
 }
@@ -222,6 +253,10 @@ func warpAffineHighBDOffset(dst frame.Plane, ref frame.Plane, bitDepth uint8, ma
 	for i := matY; i < matY+height; i += 8 {
 		for j := matX; j < matX+width; j += 8 {
 			baseSY := warpHorizontalHighBD(&tmp, ref, i, j, matrix, alpha, beta, gamma, delta, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
+			if i+8 <= matY+height && j+8 <= matX+width {
+				warpVerticalHighBDFull(dst, bitDepth, max, &tmp, i, j, rowShift, colShift, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert)
+				continue
+			}
 			for k := -4; k < minWarpInt(4, matY+height-i-4); k++ {
 				sy := baseSY + delta*(k+4)
 				for l := -4; l < minWarpInt(4, matX+width-j-4); l++ {
@@ -239,6 +274,33 @@ func warpAffineHighBDOffset(dst frame.Plane, ref frame.Plane, bitDepth uint8, ma
 					sy += gamma
 				}
 			}
+		}
+	}
+}
+
+func warpVerticalHighBDFull(dst frame.Plane, bitDepth uint8, max uint16, tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, i int, j int, rowShift int, colShift int, baseSY int, gamma int, delta int, reduceBitsVert int, offsetBitsVert int) {
+	for k := -4; k < 4; k++ {
+		sy := baseSY + delta*(k+4)
+		dstY := i + rowShift + k + 4
+		tmpRow := (k + 4) * warpedIntermediateColumns
+		for l := -4; l < 4; l++ {
+			offs := roundPowerOfTwo(sy, warpedDiffPrecBits) + warpedPixelPrecShifts
+			if offs >= 0 && offs < len(warpedFilter) {
+				coeffs := warpedFilter[offs]
+				col := l + 4
+				sum := 1 << offsetBitsVert
+				sum += int(coeffs[0]) * int(tmp[tmpRow+0*warpedIntermediateColumns+col])
+				sum += int(coeffs[1]) * int(tmp[tmpRow+1*warpedIntermediateColumns+col])
+				sum += int(coeffs[2]) * int(tmp[tmpRow+2*warpedIntermediateColumns+col])
+				sum += int(coeffs[3]) * int(tmp[tmpRow+3*warpedIntermediateColumns+col])
+				sum += int(coeffs[4]) * int(tmp[tmpRow+4*warpedIntermediateColumns+col])
+				sum += int(coeffs[5]) * int(tmp[tmpRow+5*warpedIntermediateColumns+col])
+				sum += int(coeffs[6]) * int(tmp[tmpRow+6*warpedIntermediateColumns+col])
+				sum += int(coeffs[7]) * int(tmp[tmpRow+7*warpedIntermediateColumns+col])
+				sum = roundPowerOfTwo(sum, reduceBitsVert)
+				storeHighBDSample(dst, j+colShift+l+4, dstY, clipPixelHighBD(sum-(1<<(bitDepth-1))-(1<<bitDepth), max))
+			}
+			sy += gamma
 		}
 	}
 }
