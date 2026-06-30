@@ -65,6 +65,7 @@ go run ./cmd/qualitybench \
   -stats-csv quality-encoder-stats.csv \
   -metadata-json quality-metadata.json \
   -ffmpeg-av1-decoder libdav1d \
+  -vmaf-model version=vmaf_v0.6.1 \
   -environment-notes "fixed power mode; idle machine; cool start" \
   -aom-threads 4 \
   -aom-row-mt 1 \
@@ -81,7 +82,8 @@ The same strict path is available as `make qualitybench-publish`; set
 `QUALITYBENCH_MANIFEST` and `QUALITYBENCH_ENVIRONMENT_NOTES`, then override the
 `QUALITYBENCH_*` variables when sweeping speed, assembly, bitrate settings, or
 the explicit FFmpeg AV1 decoder (`QUALITYBENCH_FFMPEG_AV1_DECODER`, default
-`libdav1d`).
+`libdav1d`) and VMAF model (`QUALITYBENCH_VMAF_MODEL`, default
+`version=vmaf_v0.6.1`).
 
 If `-input` is omitted, `qualitybench` uses the same deterministic synthetic
 scene as `encbench`. That path is for smoke testing the harness, not for quality
@@ -93,8 +95,9 @@ Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-require-corpus`, `-min-clips`, `-require-encoders all`, `-require-metrics`,
 `-summary-csv`, `-require-summary`, `-gomaxprocs`, `-fps`, `-layers`,
 `-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`,
-`-run-order shuffle`, explicit `-shuffle-seed`, `-runs >= 3`, and
-`-warmup-runs >= 1`, plus a non-empty `-environment-notes` value. It also
+`-run-order shuffle`, explicit `-shuffle-seed`, `-runs >= 3`,
+`-warmup-runs >= 1`, and explicit `-vmaf-model` when VMAF is required, plus a
+non-empty `-environment-notes` value. It also
 requires explicit goav1 execution-lane, effort, and scene-cut settings, an
 explicit FFmpeg AV1 decoder when external baselines are selected, explicit
 libaom concurrency settings and realtime speed setting when `aomenc` is
@@ -182,6 +185,12 @@ value. The external baseline commands also pin and record profile-0, 8-bit,
 I420 identity settings; `aomenc` is run with `--quiet` so progress logging is
 not part of the timed encode path. External decoded YUV must match the exact
 expected raw I420 byte count before metrics are accepted.
+
+When VMAF is required, publish mode requires an explicit `-vmaf-model` value.
+The value is forwarded to FFmpeg `libvmaf`'s `model` option and written to the
+metadata JSON as `vmaf_model`; use this to pin rows to a named model such as
+`version=vmaf_v0.6.1` instead of relying on the FFmpeg build's implicit
+default.
 
 The external baseline settings recorded in metadata are part of the benchmark
 contract:

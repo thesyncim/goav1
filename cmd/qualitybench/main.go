@@ -59,6 +59,7 @@ type benchConfig struct {
 	metadataPath        string
 	environmentNotes    string
 	ffmpegAV1Decoder    string
+	vmafModel           string
 	anchorEncoder       string
 	requiredEncodersRaw string
 	timingMode          string
@@ -284,6 +285,7 @@ type metadataConfig struct {
 	SVTPreset        int      `json:"svt_preset"`
 	SVTASM           string   `json:"svt_asm,omitempty"`
 	FFmpegAV1Decoder string   `json:"ffmpeg_av1_decoder,omitempty"`
+	VMAFModel        string   `json:"vmaf_model,omitempty"`
 	TimingMode       string   `json:"timing_mode"`
 	RunOrder         string   `json:"run_order"`
 	ShuffleSeed      int64    `json:"shuffle_seed,omitempty"`
@@ -619,6 +621,7 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.metadataPath, "metadata-json", "", "write reproducibility metadata JSON to this path")
 	flag.StringVar(&cfg.environmentNotes, "environment-notes", "", "free-form notes for publish runs: power mode, thermal state, and background load")
 	flag.StringVar(&cfg.ffmpegAV1Decoder, "ffmpeg-av1-decoder", "", "FFmpeg AV1 decoder for external encoder metric decode (empty = FFmpeg default; e.g. libdav1d or av1)")
+	flag.StringVar(&cfg.vmafModel, "vmaf-model", "", "FFmpeg libvmaf model option value (e.g. version=vmaf_v0.6.1); required by publish mode when vmaf is required")
 	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
 	flag.StringVar(&cfg.timingMode, "timing-mode", timingModeCore, "encode timing mode: core or e2e")
 	flag.StringVar(&cfg.runOrder, "run-order", runOrderBitrateEncoder, "encode tuple order: bitrate-encoder, encoder-bitrate, or shuffle")
@@ -733,6 +736,10 @@ func parseFlags() (benchConfig, error) {
 	if cfg.ffmpegAV1Decoder != "" && len(strings.Fields(cfg.ffmpegAV1Decoder)) != 1 {
 		return benchConfig{}, fmt.Errorf("invalid FFmpeg AV1 decoder %q: expected a single decoder name", cfg.ffmpegAV1Decoder)
 	}
+	cfg.vmafModel = strings.TrimSpace(cfg.vmafModel)
+	if strings.ContainsAny(cfg.vmafModel, "\r\n") {
+		return benchConfig{}, fmt.Errorf("invalid VMAF model %q: newlines are not allowed", cfg.vmafModel)
+	}
 	return cfg, nil
 }
 
@@ -827,6 +834,14 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	if len(cfg.requiredMetrics) == 0 {
 		return errors.New("publish requires -require-metrics")
 	}
+	if metricRequired(cfg, "vmaf") {
+		if err := requireExplicitFlag(cfg, "vmaf-model"); err != nil {
+			return err
+		}
+		if cfg.vmafModel == "" {
+			return errors.New("publish requires non-empty -vmaf-model when vmaf is required")
+		}
+	}
 	if cfg.layers != 1 && (encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1")) {
 		return errors.New("publish requires -layers 1 when aomenc or svt-av1 baselines are selected; equivalent external temporal-layer settings are not implemented")
 	}
@@ -868,6 +883,15 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 
 func externalBaselineSelected(cfg benchConfig) bool {
 	return encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1")
+}
+
+func metricRequired(cfg benchConfig, metric string) bool {
+	for _, required := range cfg.requiredMetrics {
+		if required == metric {
+			return true
+		}
+	}
+	return false
 }
 
 func requireExplicitFlag(cfg benchConfig, name string) error {
@@ -2041,6 +2065,7 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		SVTPreset:        cfg.svtPreset,
 		SVTASM:           cfg.svtASM,
 		FFmpegAV1Decoder: cfg.ffmpegAV1Decoder,
+		VMAFModel:        cfg.vmafModel,
 		TimingMode:       cfg.timingMode,
 		RunOrder:         cfg.runOrder,
 		ShuffleSeed:      cfg.shuffleSeed,
@@ -2141,6 +2166,7 @@ func fairnessNotes(cfg benchConfig) []string {
 		"For fair external-baseline comparisons, set -goav1-scene-cut=false unless equivalent scene-cut behavior is enabled and recorded for every selected external encoder.",
 		"Tile controls are recorded as tile-column log2 settings; a requested -tiles value of N means 2^N tile columns for goav1, aomenc, and SVT rows.",
 		"For fair external-baseline metric comparisons, set -ffmpeg-av1-decoder explicitly so external IVF decode does not depend on FFmpeg's implicit decoder selection.",
+		"For fair VMAF comparisons, set -vmaf-model explicitly and report it; qualitybench forwards the value to FFmpeg libvmaf's model option and records it in metadata.",
 		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or sweep --lp 0..6, then report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
 		"For fair libaom comparisons, set -aom-cpu-used, -aom-threads, and -aom-row-mt explicitly and report all three; qualitybench forwards them to aomenc --cpu-used, --threads, and --row-mt and records them in metadata.",
 		"For fair SVT comparisons, set -svt-preset explicitly and report it with -svt-lp and -svt-asm; qualitybench forwards it to SvtAv1EncApp --preset and records it in metadata. SVT and aomenc CBR rows are pinned to the same 1000/500/600 ms client buffer model.",
@@ -3677,6 +3703,9 @@ func runVMAF(cfg benchConfig, refPath, decodedPath, encoderName string, bitrate 
 
 func vmafArgs(cfg benchConfig, refPath, decodedPath, logPath string) []string {
 	filter := fmt.Sprintf("[0:v][1:v]libvmaf=log_path=%s:log_fmt=json", escapeFilterPath(logPath))
+	if cfg.vmafModel != "" {
+		filter += ":model=" + escapeFilterValue(cfg.vmafModel)
+	}
 	size := fmt.Sprintf("%dx%d", cfg.width, cfg.height)
 	return []string{
 		"-hide_banner",
@@ -3845,6 +3874,10 @@ func integrateCubicFit(fit cubicFit, lo float64, hi float64) float64 {
 
 func escapeFilterPath(path string) string {
 	return strings.ReplaceAll(path, ":", `\:`)
+}
+
+func escapeFilterValue(value string) string {
+	return strings.ReplaceAll(value, ":", `\:`)
 }
 
 func formatMetric(v float64) string {

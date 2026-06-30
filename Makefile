@@ -14,6 +14,7 @@ QUALITYBENCH_STATS_CSV ?= $(QUALITYBENCH_WORKDIR)/quality-encoder-stats.csv
 QUALITYBENCH_METADATA_JSON ?= $(QUALITYBENCH_WORKDIR)/quality-metadata.json
 QUALITYBENCH_ENVIRONMENT_NOTES ?=
 QUALITYBENCH_FFMPEG_AV1_DECODER ?= libdav1d
+QUALITYBENCH_VMAF_MODEL ?= version=vmaf_v0.6.1
 QUALITYBENCH_ENCODERS ?= goav1,aomenc,svt-av1
 QUALITYBENCH_REQUIRED_ENCODERS ?= all
 QUALITYBENCH_ANCHOR ?= aomenc
@@ -118,6 +119,7 @@ qualitybench-publish:
 		-stats-csv "$(QUALITYBENCH_STATS_CSV)" \
 		-metadata-json "$(QUALITYBENCH_METADATA_JSON)" \
 		-ffmpeg-av1-decoder "$(QUALITYBENCH_FFMPEG_AV1_DECODER)" \
+		-vmaf-model "$(QUALITYBENCH_VMAF_MODEL)" \
 		-environment-notes "$(QUALITYBENCH_ENVIRONMENT_NOTES)" \
 		-publish \
 		-workdir "$(QUALITYBENCH_WORKDIR)"

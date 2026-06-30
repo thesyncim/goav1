@@ -594,6 +594,12 @@ func TestMetricArgsUseDecodedAsMainAndReferenceSecond(t *testing.T) {
 	if !strings.Contains(strings.Join(vmaf, "\x00"), "[0:v][1:v]libvmaf") {
 		t.Fatalf("vmaf filter args=%v", vmaf)
 	}
+	modelCfg := cfg
+	modelCfg.vmafModel = "version=vmaf_v0.6.1:name=default"
+	vmaf = vmafArgs(modelCfg, "source.yuv", "decoded.yuv", "vmaf.json")
+	if !strings.Contains(strings.Join(vmaf, "\x00"), `model=version=vmaf_v0.6.1\:name=default`) {
+		t.Fatalf("vmaf model filter args=%v", vmaf)
+	}
 }
 
 func metricInputOrder(args []string) []string {
@@ -968,6 +974,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		svtLP:            5,
 		svtPreset:        13,
 		ffmpegAV1Decoder: "libdav1d",
+		vmafModel:        "version=vmaf_v0.6.1",
 		timingMode:       timingModeEndToEnd,
 		runOrder:         runOrderShuffle,
 		shuffleSeed:      42,
@@ -993,6 +1000,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		got.AOMThreads != 1 || got.AOMRowMT != 0 ||
 		got.AOMCPUUsed != 8 || got.SVTLP != 5 || got.SVTPreset != 13 ||
 		got.FFmpegAV1Decoder != "libdav1d" ||
+		got.VMAFModel != "version=vmaf_v0.6.1" ||
 		got.TimingMode != timingModeEndToEnd ||
 		got.RunOrder != runOrderShuffle || got.ShuffleSeed != 42 ||
 		got.SampleOrder != "interleaved-by-sample-pass" ||
@@ -1169,7 +1177,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		requiredEncodersRaw: "all",
 		encoders:            []string{"goav1", "aomenc", "svt-av1"},
 		bitrates:            []int{3000000, 6000000, 9000000, 12000000},
-		requiredMetrics:     []string{"psnr", "ssim"},
+		requiredMetrics:     []string{"psnr", "vmaf"},
 		requireCorpus:       true,
 		minClips:            2,
 		requireSummary:      true,
@@ -1189,6 +1197,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		svtPreset:           13,
 		svtASM:              "neon",
 		ffmpegAV1Decoder:    "libdav1d",
+		vmafModel:           "version=vmaf_v0.6.1",
 		timingMode:          timingModeEndToEnd,
 		runOrder:            runOrderShuffle,
 		shuffleSeed:         7,
@@ -1231,6 +1240,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"svt-lp":             true,
 			"svt-asm":            true,
 			"ffmpeg-av1-decoder": true,
+			"vmaf-model":         true,
 		},
 	}
 	if err := validatePublishConfig(cfg, gitMetadata{Commit: "abc"}); err != nil {
@@ -1376,6 +1386,24 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	if err := validatePublishConfig(emptyDecoder, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "non-empty -ffmpeg-av1-decoder") {
 		t.Fatalf("empty ffmpeg decoder error=%v", err)
+	}
+
+	missingVMAFModel := cfg
+	missingVMAFModel.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingVMAFModel.explicitFlags[k] = v
+	}
+	delete(missingVMAFModel.explicitFlags, "vmaf-model")
+	if err := validatePublishConfig(missingVMAFModel, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-vmaf-model") {
+		t.Fatalf("missing explicit vmaf model error=%v", err)
+	}
+
+	emptyVMAFModel := cfg
+	emptyVMAFModel.vmafModel = ""
+	if err := validatePublishConfig(emptyVMAFModel, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "non-empty -vmaf-model") {
+		t.Fatalf("empty vmaf model error=%v", err)
 	}
 
 	coreTiming := cfg
