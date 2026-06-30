@@ -17,6 +17,7 @@ import (
 	goav1 "github.com/thesyncim/goav1"
 	cpufeatures "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 	"github.com/thesyncim/goav1/internal/av1/ivf"
+	"github.com/thesyncim/goav1/internal/benchenv"
 )
 
 func TestParsePositiveList(t *testing.T) {
@@ -1356,9 +1357,7 @@ exit 7
 }
 
 func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
-	t.Setenv("GOFLAGS", "")
-	t.Setenv("GOMEMLIMIT", "")
-	t.Setenv("GODEBUG", "")
+	clearQualitybenchPublishGoEnv(t)
 	ffmpegBin, ffmpegHash := writeTestExecutableWithSHA256(t, "ffmpeg")
 	aomencBin, aomencHash := writeTestExecutableWithSHA256(t, "aomenc")
 	svtBin, svtHash := writeTestExecutableWithSHA256(t, "SvtAv1EncApp")
@@ -1587,6 +1586,20 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		t.Fatalf("hidden GOFLAGS error=%v", err)
 	}
 	t.Setenv("GOFLAGS", "")
+
+	t.Setenv("GOAMD64", "v4")
+	if err := validatePublishConfig(cfg, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "GOAMD64 unset") {
+		t.Fatalf("hidden GOAMD64 error=%v", err)
+	}
+	t.Setenv("GOAMD64", "")
+
+	t.Setenv("GOCACHE", filepath.Join(t.TempDir(), "cache"))
+	if err := validatePublishConfig(cfg, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "GOCACHE unset") {
+		t.Fatalf("hidden GOCACHE error=%v", err)
+	}
+	t.Setenv("GOCACHE", "")
 
 	missing := cfg
 	missing.explicitFlags = map[string]bool{}
@@ -1957,6 +1970,13 @@ func writeTestExecutableWithSHA256(t *testing.T, name string) (string, string) {
 		t.Fatal(err)
 	}
 	return path, hash
+}
+
+func clearQualitybenchPublishGoEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range benchenv.PublishAmbientGoEnvVars() {
+		t.Setenv(name, "")
+	}
 }
 
 func encodeJobLabels(jobs []encodeJob) string {

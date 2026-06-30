@@ -5,6 +5,7 @@ FUZZPARALLEL ?= 8
 FUZZFLAGS = -run '^$$' -fuzztime=$(FUZZTIME) -parallel=$(FUZZPARALLEL)
 BENCHTIME ?= 3s
 GCMETRICS_COUNT ?= 5
+PUBLISH_GO_ENV = GOFLAGS= GOMEMLIMIT= GODEBUG= GOAMD64= GOARM64= GO386= GOARM= GOMIPS= GOMIPS64= GOPPC64= GOWASM= GOTOOLCHAIN= GOEXPERIMENT= CGO_ENABLED= CC= CXX= GOCACHE= GOMODCACHE= GOPATH= GOTMPDIR=
 BENCH_CORPUS_REPORT_JSON ?= /tmp/goav1-bench-corpus-report.json
 BENCH_CORPUS_AOMDEC_BIN ?=
 BENCH_CORPUS_AOMDEC_SHA256 ?=
@@ -81,7 +82,7 @@ QUALITYBENCH_SVT_ASM ?= neon
 QUALITYBENCH_SVT_BIN ?=
 QUALITYBENCH_SVT_SHA256 ?=
 WEBRTC_REFERENCE_TESTS = Test.*ReferenceDecoders$$
-WEBRTC_PRODUCTION_TESTS = Test(AV1SDP|AV1RTCP|EncoderWebRTC|HighLevelRTPDecodersWebRTCCatalogue|NewDecoderFromRTPPayloads|ParseRTPPacketDependencyDescriptor|PublicDecoderFrameWorkResidual(EventRunner.*TileList|StreamRunnerRTP)|PublicDecoderRTP(Packet|PayloadRunner)|PublicEncodeI(400|420)|PublicEncoderWebRTC|PublicLayeredDecoderRTP|PublicParseTileListOBU|PublicPlanDecoderTileList|PublicResolveDecoderTileList|PublicRTC|PublicRTP|PublicTileList|PublicWebRTCEncoder|RTCP|SimpleDecoderTileListIVFPlayback)
+WEBRTC_PRODUCTION_TESTS = Test(AV1SDP|AV1RTCP|EncoderWebRTC|HighLevelRTPDecodersWebRTCSVCCatalogue|NewDecoderFromRTPPayloads|ParseRTPPacketDependencyDescriptor|PublicDecoderFrameWorkResidual(EventRunner.*TileList|StreamRunnerRTP)|PublicDecoderRTP(Packet|PayloadRunner)|PublicEncodeI(400|420)|PublicEncoderWebRTC|PublicLayeredDecoderRTP|PublicParseTileListOBU|PublicPlanDecoderTileList|PublicResolveDecoderTileList|PublicRTC|PublicRTP|PublicTileList|PublicWebRTCEncoder|RTCP|SimpleDecoderTileListIVFPlayback)
 WEBRTC_PRODUCTION_INTERNAL_TESTS = Test(AppendWebRTCScalabilityModesMatchesPinnedLibWebRTC|WebRTCStreamAcceptedScalabilityModes(CoverExportedModes|Decode)|WebRTCStreamControlCombinationMatrixDecode|WebRTCEncoderStateTemporalUnitsKeyShiftModes)
 
 test:
@@ -125,11 +126,9 @@ bench-corpus-publish:
 	@if [ -z "$(BENCH_CORPUS_THERMAL_STATE)" ]; then echo "set BENCH_CORPUS_THERMAL_STATE='thermal state before run'"; exit 2; fi
 	@if [ -z "$(BENCH_CORPUS_FREQUENCY_POLICY)" ]; then echo "set BENCH_CORPUS_FREQUENCY_POLICY='frequency/governor policy'"; exit 2; fi
 	@if [ -z "$(BENCH_CORPUS_BACKGROUND_LOAD)" ]; then echo "set BENCH_CORPUS_BACKGROUND_LOAD='background-load policy'"; exit 2; fi
+	$(PUBLISH_GO_ENV) \
 	GOMAXPROCS=1 \
 	GOGC=off \
-	GOFLAGS= \
-	GOMEMLIMIT= \
-	GODEBUG= \
 	GOAV1_BENCH_CORPUS=1 \
 	GOAV1_BENCH_CORPUS_PUBLISH=1 \
 	GOAV1_BENCH_CORPUS_REPORT_JSON="$(BENCH_CORPUS_REPORT_JSON)" \
@@ -154,6 +153,7 @@ bench-go-publish:
 	@if [ -z "$(GO_BENCH_PUBLISH_THERMAL_STATE)" ]; then echo "set GO_BENCH_PUBLISH_THERMAL_STATE='thermal state before run'"; exit 2; fi
 	@if [ -z "$(GO_BENCH_PUBLISH_FREQUENCY_POLICY)" ]; then echo "set GO_BENCH_PUBLISH_FREQUENCY_POLICY='frequency/governor policy'"; exit 2; fi
 	@if [ -z "$(GO_BENCH_PUBLISH_BACKGROUND_LOAD)" ]; then echo "set GO_BENCH_PUBLISH_BACKGROUND_LOAD='background-load policy'"; exit 2; fi
+	$(PUBLISH_GO_ENV) \
 	go run ./cmd/gobenchpublish \
 		-pkg "$(GO_BENCH_PUBLISH_PKG)" \
 		-bench "$(GO_BENCH_PUBLISH_BENCH)" \
@@ -183,6 +183,7 @@ qualitybench-publish:
 	@if [ -z "$(QUALITYBENCH_FREQUENCY_POLICY)" ]; then echo "set QUALITYBENCH_FREQUENCY_POLICY='frequency/governor policy'"; exit 2; fi
 	@if [ -z "$(QUALITYBENCH_BACKGROUND_LOAD)" ]; then echo "set QUALITYBENCH_BACKGROUND_LOAD='background-load policy'"; exit 2; fi
 	mkdir -p "$(QUALITYBENCH_WORKDIR)"
+	$(PUBLISH_GO_ENV) \
 	go run ./cmd/qualitybench \
 		-manifest "$(QUALITYBENCH_MANIFEST)" \
 		-bitrates "$(QUALITYBENCH_BITRATES)" \

@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/thesyncim/goav1/internal/benchenv"
 )
 
 func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
@@ -252,7 +254,7 @@ func TestMetadataJSONRecordsOutputHash(t *testing.T) {
 
 func clearGobenchPublishGoEnv(t *testing.T) {
 	t.Helper()
-	for _, name := range append([]string{"GOFLAGS", "GOMEMLIMIT", "GODEBUG"}, publishBlockedGoEnvVars()...) {
+	for _, name := range benchenv.PublishAmbientGoEnvVars() {
 		t.Setenv(name, "")
 	}
 }

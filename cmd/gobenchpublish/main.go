@@ -23,6 +23,7 @@ import (
 	"time"
 
 	cpufeatures "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
+	"github.com/thesyncim/goav1/internal/benchenv"
 )
 
 type config struct {
@@ -287,35 +288,13 @@ func validateConfig(cfg config, git gitMetadata) error {
 		if os.Getenv("GODEBUG") != "" {
 			return errors.New("publish requires GODEBUG unset")
 		}
-		for _, name := range publishBlockedGoEnvVars() {
+		for _, name := range benchenv.PublishBlockedGoEnvVars() {
 			if os.Getenv(name) != "" {
 				return fmt.Errorf("publish requires %s unset; use explicit runner flags or record a separate environment", name)
 			}
 		}
 	}
 	return nil
-}
-
-func publishBlockedGoEnvVars() []string {
-	return []string{
-		"GOAMD64",
-		"GOARM64",
-		"GO386",
-		"GOARM",
-		"GOMIPS",
-		"GOMIPS64",
-		"GOPPC64",
-		"GOWASM",
-		"GOTOOLCHAIN",
-		"GOEXPERIMENT",
-		"CGO_ENABLED",
-		"CC",
-		"CXX",
-		"GOCACHE",
-		"GOMODCACHE",
-		"GOPATH",
-		"GOTMPDIR",
-	}
 }
 
 func requireExplicitFlag(cfg config, name string) error {
@@ -411,7 +390,7 @@ func buildMetadata(cfg config, git gitMetadata, command []string, status, errTex
 			SIMDTier:      detectedSIMDTier(),
 			SIMDFeatures:  detectedSIMDFeatures(),
 			BuildSettings: goBuildSettings(),
-			Env:           goEnvForMetadata(),
+			Env:           benchenv.GoEnvForMetadata(),
 		},
 		Config: metadataConfig{
 			Package:    cfg.Pkg,
@@ -444,18 +423,6 @@ func buildMetadata(cfg config, git gitMetadata, command []string, status, errTex
 		Status: status,
 		Error:  errText,
 	}
-}
-
-func goEnvForMetadata() map[string]any {
-	out, err := exec.Command("go", "env", "-json").Output()
-	if err != nil {
-		return map[string]any{"error": err.Error()}
-	}
-	var env map[string]any
-	if err := json.Unmarshal(out, &env); err != nil {
-		return map[string]any{"error": err.Error()}
-	}
-	return env
 }
 
 func goBuildSettings() map[string]string {

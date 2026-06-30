@@ -83,6 +83,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -91,11 +92,13 @@ import (
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/decoder"
+	cpufeatures "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/ivf"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
+	"github.com/thesyncim/goav1/internal/benchenv"
 )
 
 // corpusClip is one benchmark/corpus clip resolved on disk together with its
@@ -1716,6 +1719,20 @@ func TestValidateCorpusPublishEnvironmentRejectsAmbientGoDrift(t *testing.T) {
 			want: "GODEBUG unset",
 		},
 		{
+			name: "goamd64",
+			mut: func(env *corpusPublishEnvironment) {
+				env.BlockedGoEnv = map[string]string{"GOAMD64": "v4"}
+			},
+			want: "GOAMD64 unset",
+		},
+		{
+			name: "gocache",
+			mut: func(env *corpusPublishEnvironment) {
+				env.BlockedGoEnv = map[string]string{"GOCACHE": filepath.Join(t.TempDir(), "cache")}
+			},
+			want: "GOCACHE unset",
+		},
+		{
 			name: "missing cpu affinity",
 			mut:  func(env *corpusPublishEnvironment) { env.CPUAffinity = " " },
 			want: envBenchCorpusCPUAffinity,
@@ -2504,12 +2521,18 @@ type corpusPublishGit struct {
 }
 
 type corpusPublishEnvironment struct {
-	GoVersion       string `json:"go_version"`
-	GOOS            string `json:"goos"`
-	GOARCH          string `json:"goarch"`
-	GOMAXPROCS      int    `json:"gomaxprocs"`
-	GOMAXPROCSEnv   string `json:"gomaxprocs_env,omitempty"`
-	NumCPU          int    `json:"num_cpu"`
+	GoVersion     string            `json:"go_version"`
+	GOOS          string            `json:"goos"`
+	GOARCH        string            `json:"goarch"`
+	GOMAXPROCS    int               `json:"gomaxprocs"`
+	GOMAXPROCSEnv string            `json:"gomaxprocs_env,omitempty"`
+	NumCPU        int               `json:"num_cpu"`
+	SIMDTier      string            `json:"simd_tier"`
+	SIMDFeatures  []string          `json:"simd_features,omitempty"`
+	BuildSettings map[string]string `json:"build_settings,omitempty"`
+	GoEnv         map[string]any    `json:"go_env,omitempty"`
+	BlockedGoEnv  map[string]string `json:"blocked_go_env,omitempty"`
+
 	CPUModel        string `json:"cpu_model,omitempty"`
 	Hostname        string `json:"hostname,omitempty"`
 	OSVersion       string `json:"os_version,omitempty"`
@@ -3174,6 +3197,11 @@ func validateCorpusPublishEnvironment(env corpusPublishEnvironment) error {
 	if strings.TrimSpace(env.GODEBUG) != "" {
 		return errors.New("corpus publish requires GODEBUG unset")
 	}
+	for _, name := range benchenv.PublishBlockedGoEnvVars() {
+		if strings.TrimSpace(env.BlockedGoEnv[name]) != "" {
+			return fmt.Errorf("corpus publish requires %s unset; use explicit go test flags or record a separate environment", name)
+		}
+	}
 	for _, field := range []struct {
 		name  string
 		value string
@@ -3200,6 +3228,11 @@ func currentCorpusPublishEnvironment() corpusPublishEnvironment {
 		GOMAXPROCS:      runtime.GOMAXPROCS(0),
 		GOMAXPROCSEnv:   os.Getenv("GOMAXPROCS"),
 		NumCPU:          runtime.NumCPU(),
+		SIMDTier:        corpusSIMDTier(),
+		SIMDFeatures:    corpusSIMDFeatures(),
+		BuildSettings:   corpusGoBuildSettings(),
+		GoEnv:           benchenv.GoEnvForMetadata(),
+		BlockedGoEnv:    corpusBlockedGoEnv(),
 		CPUModel:        detectCorpusCPUModel(),
 		Hostname:        hostname,
 		OSVersion:       detectCorpusOSVersion(),
@@ -3216,6 +3249,106 @@ func currentCorpusPublishEnvironment() corpusPublishEnvironment {
 		BackgroundLoad:  strings.TrimSpace(os.Getenv(envBenchCorpusBackgroundLoad)),
 		Notes:           strings.TrimSpace(os.Getenv(envBenchCorpusEnvironmentNotes)),
 	}
+}
+
+func corpusBlockedGoEnv() map[string]string {
+	out := make(map[string]string)
+	for _, name := range benchenv.PublishBlockedGoEnvVars() {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			out[name] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func corpusGoBuildSettings() map[string]string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || len(info.Settings) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(info.Settings))
+	for _, setting := range info.Settings {
+		if setting.Key != "" {
+			out[setting.Key] = setting.Value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func corpusSIMDTier() string {
+	return simdTierForCorpus(cpufeatures.Detected)
+}
+
+func corpusSIMDFeatures() []string {
+	return simdFeaturesForCorpus(cpufeatures.Detected)
+}
+
+func simdTierForCorpus(f cpufeatures.Features) string {
+	switch {
+	case f.SVE2:
+		return "sve2"
+	case f.SVE:
+		return "sve"
+	case f.I8MM:
+		return "neon_i8mm"
+	case f.DOTPROD:
+		return "neon_dotprod"
+	case f.NEON:
+		return "neon"
+	case f.AVX512:
+		return "avx512"
+	case f.AVX2:
+		return "avx2"
+	case f.SSE42:
+		return "sse4_2"
+	case f.SSE41:
+		return "sse4_1"
+	case f.SSE2:
+		return "sse2"
+	default:
+		return "purego"
+	}
+}
+
+func simdFeaturesForCorpus(f cpufeatures.Features) []string {
+	var out []string
+	if f.SSE2 {
+		out = append(out, "sse2")
+	}
+	if f.SSE41 {
+		out = append(out, "sse4_1")
+	}
+	if f.SSE42 {
+		out = append(out, "sse4_2")
+	}
+	if f.AVX2 {
+		out = append(out, "avx2")
+	}
+	if f.AVX512 {
+		out = append(out, "avx512")
+	}
+	if f.NEON {
+		out = append(out, "neon")
+	}
+	if f.DOTPROD {
+		out = append(out, "neon_dotprod")
+	}
+	if f.I8MM {
+		out = append(out, "neon_i8mm")
+	}
+	if f.SVE {
+		out = append(out, "sve")
+	}
+	if f.SVE2 {
+		out = append(out, "sve2")
+	}
+	return out
 }
 
 func detectCorpusCPUModel() string {

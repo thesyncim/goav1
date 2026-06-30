@@ -29,6 +29,7 @@ import (
 	goav1 "github.com/thesyncim/goav1"
 	cpufeatures "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 	"github.com/thesyncim/goav1/internal/av1/ivf"
+	"github.com/thesyncim/goav1/internal/benchenv"
 )
 
 const (
@@ -245,6 +246,7 @@ type runtimeMetadata struct {
 	SIMDTier      string            `json:"simd_tier"`
 	SIMDFeatures  []string          `json:"simd_features,omitempty"`
 	BuildSettings map[string]string `json:"build_settings,omitempty"`
+	Env           map[string]any    `json:"env,omitempty"`
 }
 
 type environmentMetadata struct {
@@ -921,14 +923,10 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	if strings.TrimSpace(cfg.goGC) == "" {
 		return errors.New("publish requires explicit non-empty -gogc")
 	}
-	if os.Getenv("GOFLAGS") != "" {
-		return errors.New("publish requires GOFLAGS unset")
-	}
-	if os.Getenv("GOMEMLIMIT") != "" {
-		return errors.New("publish requires GOMEMLIMIT unset")
-	}
-	if os.Getenv("GODEBUG") != "" {
-		return errors.New("publish requires GODEBUG unset")
+	for _, name := range benchenv.PublishAmbientGoEnvVars() {
+		if os.Getenv(name) != "" {
+			return fmt.Errorf("publish requires %s unset; use explicit flags or record a separate environment", name)
+		}
 	}
 	if cfg.timingMode != timingModeEndToEnd {
 		return errors.New("publish requires -timing-mode e2e")
@@ -2228,6 +2226,7 @@ func writeMetadataJSON(cfg benchConfig, filters map[string]bool, git gitMetadata
 			SIMDTier:      detectedSIMDTier(),
 			SIMDFeatures:  detectedSIMDFeatures(),
 			BuildSettings: goBuildSettings(),
+			Env:           benchenv.GoEnvForMetadata(),
 		},
 		Environment:   environmentMetadataForRun(cfg),
 		Git:           git,
