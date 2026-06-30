@@ -1826,6 +1826,8 @@ func TestRunEncoderJobsMeasuredPublishRequiresDeterministicArtifacts(t *testing.
 			status:        "ok",
 			encodedPath:   filepath.Join(sampleCfg.workdir, "encoded.ivf"),
 			decodedYUV:    filepath.Join(sampleCfg.workdir, "decoded.yuv"),
+			cpuAvailable:  true,
+			cpuUser:       time.Duration(call) * time.Millisecond,
 		}
 	})
 	if len(results) != 1 {
@@ -1835,6 +1837,45 @@ func TestRunEncoderJobsMeasuredPublishRequiresDeterministicArtifacts(t *testing.
 	if got.status != "error" || !strings.Contains(got.errText, "deterministic") ||
 		!strings.Contains(got.errText, "encoded artifact sha256") {
 		t.Fatalf("publish drift result=%+v", got)
+	}
+	if got.runs != 3 || len(got.samples) != 3 {
+		t.Fatalf("summary runs=%d samples=%d", got.runs, len(got.samples))
+	}
+}
+
+func TestRunEncoderJobsMeasuredPublishRequiresCPUBudgetEvidence(t *testing.T) {
+	cfg := benchConfig{
+		workdir: t.TempDir(),
+		runs:    3,
+		publish: true,
+	}
+	jobs := []encodeJob{{bitrate: 100, encoder: "goav1"}}
+	call := 0
+	results := runEncoderJobsMeasuredWithRunner(cfg, nil, "source.yuv", jobs, func(sampleCfg benchConfig, _ []goav1.I420Frame, refPath, encoderName string, bitrate int) encodeResult {
+		call++
+		if refPath != "source.yuv" {
+			t.Fatalf("refPath=%q", refPath)
+		}
+		return encodeResult{
+			encoder:       encoderName,
+			targetBPS:     bitrate,
+			duration:      time.Duration(call) * time.Millisecond,
+			bytes:         10,
+			encodedBytes:  20,
+			decodedBytes:  30,
+			encodedSHA256: "encoded-same",
+			decodedSHA256: "decoded-same",
+			status:        "ok",
+			encodedPath:   filepath.Join(sampleCfg.workdir, "encoded.ivf"),
+			decodedYUV:    filepath.Join(sampleCfg.workdir, "decoded.yuv"),
+		}
+	})
+	if len(results) != 1 {
+		t.Fatalf("results=%d", len(results))
+	}
+	got := results[0]
+	if got.status != "error" || !strings.Contains(got.errText, "process CPU timing") {
+		t.Fatalf("missing CPU evidence result=%+v", got)
 	}
 	if got.runs != 3 || len(got.samples) != 3 {
 		t.Fatalf("summary runs=%d samples=%d", got.runs, len(got.samples))

@@ -159,17 +159,18 @@ const (
 )
 
 const (
-	envBenchCorpus                 = "GOAV1_BENCH_CORPUS"
-	envBenchCorpusPublish          = "GOAV1_BENCH_CORPUS_PUBLISH"
-	envBenchCorpusRequireDecoders  = "GOAV1_BENCH_CORPUS_REQUIRE_DECODERS"
-	envBenchCorpusReportJSON       = "GOAV1_BENCH_CORPUS_REPORT_JSON"
-	envBenchCorpusEnvironmentNotes = "GOAV1_BENCH_CORPUS_ENVIRONMENT_NOTES"
-	envBenchCorpusCPUAffinity      = "GOAV1_BENCH_CORPUS_CPU_AFFINITY"
-	envBenchCorpusPowerMode        = "GOAV1_BENCH_CORPUS_POWER_MODE"
-	envBenchCorpusThermalState     = "GOAV1_BENCH_CORPUS_THERMAL_STATE"
-	envBenchCorpusFrequencyPolicy  = "GOAV1_BENCH_CORPUS_FREQUENCY_POLICY"
-	envBenchCorpusBackgroundLoad   = "GOAV1_BENCH_CORPUS_BACKGROUND_LOAD"
-	envBenchCorpusDecoderPrefix    = "GOAV1_BENCH_CORPUS_"
+	envBenchCorpus                  = "GOAV1_BENCH_CORPUS"
+	envBenchCorpusPublish           = "GOAV1_BENCH_CORPUS_PUBLISH"
+	envBenchCorpusAllowUnmanifested = "GOAV1_BENCH_CORPUS_ALLOW_UNMANIFESTED"
+	envBenchCorpusRequireDecoders   = "GOAV1_BENCH_CORPUS_REQUIRE_DECODERS"
+	envBenchCorpusReportJSON        = "GOAV1_BENCH_CORPUS_REPORT_JSON"
+	envBenchCorpusEnvironmentNotes  = "GOAV1_BENCH_CORPUS_ENVIRONMENT_NOTES"
+	envBenchCorpusCPUAffinity       = "GOAV1_BENCH_CORPUS_CPU_AFFINITY"
+	envBenchCorpusPowerMode         = "GOAV1_BENCH_CORPUS_POWER_MODE"
+	envBenchCorpusThermalState      = "GOAV1_BENCH_CORPUS_THERMAL_STATE"
+	envBenchCorpusFrequencyPolicy   = "GOAV1_BENCH_CORPUS_FREQUENCY_POLICY"
+	envBenchCorpusBackgroundLoad    = "GOAV1_BENCH_CORPUS_BACKGROUND_LOAD"
+	envBenchCorpusDecoderPrefix     = "GOAV1_BENCH_CORPUS_"
 )
 
 const (
@@ -1441,8 +1442,13 @@ func TestLoadCorpusPublishManifestValidatesFiles(t *testing.T) {
 
 func TestLoadCorpusBenchmarkManifestAllowsOnlyExploratoryMissingManifest(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv(envBenchCorpusAllowUnmanifested, "1")
 	if manifest, ok := loadCorpusBenchmarkManifest(t, dir, false); ok || manifest.path != "" {
 		t.Fatalf("missing exploratory manifest ok=%v manifest=%+v", ok, manifest)
+	}
+	t.Setenv(envBenchCorpusAllowUnmanifested, "")
+	if allowMissingCorpusBenchmarkManifest() {
+		t.Fatal("missing manifest allow gate accepted empty value")
 	}
 
 	md5Hex := "0123456789abcdeffedcba9876543210"
@@ -2406,6 +2412,10 @@ func loadCorpusBenchmarkManifest(t *testing.T, dir string, publish bool) (corpus
 		if publish {
 			t.Fatalf("cross-corpus publish: %v", err)
 		}
+		if !allowMissingCorpusBenchmarkManifest() {
+			t.Fatalf("cross-corpus: no valid %s in %s (%v); set %s=1 only for exploratory timing on intentionally unmanifested local data",
+				corpusManifestFile, dir, err, envBenchCorpusAllowUnmanifested)
+		}
 		t.Logf("cross-corpus: WARNING: no valid %s in %s (%v); exploratory timing is not publishable and may use stale or partial ignored corpus data",
 			corpusManifestFile, dir, err)
 		return corpusPublishManifest{}, false
@@ -2416,6 +2426,10 @@ func loadCorpusBenchmarkManifest(t *testing.T, dir string, publish bool) (corpus
 	}
 	t.Logf("%s: manifest=%s expected_clips=%d", label, manifest.path, manifest.expectedClips)
 	return manifest, true
+}
+
+func allowMissingCorpusBenchmarkManifest() bool {
+	return os.Getenv(envBenchCorpusAllowUnmanifested) == "1"
 }
 
 type resolvedCorpusExternalDecoder struct {

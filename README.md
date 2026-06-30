@@ -506,8 +506,9 @@ also requires absolute decoder paths and matching SHA-256 pins, plus explicit
 `GOMAXPROCS`/`GOGC`, structured CPU affinity, power mode, thermal state,
 frequency policy, and background-load fields, with hidden Go runtime environment
 knobs unset. Use `make bench-corpus` only for exploratory local runs where
-missing decoder columns, PATH-selected tools, or manifest warnings are
-acceptable.
+missing decoder columns or PATH-selected tools are acceptable. Exploratory timing
+without `manifest.tsv` now requires `GOAV1_BENCH_CORPUS_ALLOW_UNMANIFESTED=1`,
+so stale or partial ignored corpus data cannot be used by accident.
 
 That report prints per-clip and aggregate fps, raw and startup-adjusted external
 decoder timings, and the goav1/dav1d ratio that should drive optimization work.

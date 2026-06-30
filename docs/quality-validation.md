@@ -243,8 +243,10 @@ chosen `-svt-preset`, the chosen `-svt-lp`, and the CSV/metadata timing columns:
 `encode_wall_sec`, `cpu_user_sec`, `cpu_system_sec`, `cpu_total_sec`, and
 `observed_parallelism`. Use wall time for user-visible speed, and CPU seconds
 or `observed_parallelism=cpu_total_sec/encode_wall_sec` to check whether one
-encoder consumed a larger CPU budget. If sweeping SVT levels, report each
-`--lp` as an SVT level, not as a target thread count. For a closest-budget SVT
+encoder consumed a larger CPU budget. Publish mode fails a measured tuple when
+any successful sample lacks positive wall time or process CPU timing, so copied
+tables cannot silently omit CPU-budget evidence. If sweeping SVT levels, report
+each `--lp` as an SVT level, not as a target thread count. For a closest-budget SVT
 row, sweep `-svt-lp 0..6` and select by measured `observed_parallelism`, not by
 matching `GOMAXPROCS=N` to `--lp N`.
 

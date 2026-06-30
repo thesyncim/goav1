@@ -3295,6 +3295,15 @@ func validateEncodeResultArtifacts(result encodeResult) error {
 		}
 		return fmt.Errorf("status %s", result.status)
 	}
+	if result.duration <= 0 {
+		return fmt.Errorf("missing measured wall time %s", result.duration)
+	}
+	if !result.cpuAvailable {
+		return errors.New("missing process CPU timing")
+	}
+	if totalCPU(result.cpuUser, result.cpuSystem) <= 0 {
+		return errors.New("missing positive process CPU time")
+	}
 	if result.bytes <= 0 {
 		return fmt.Errorf("empty compressed payload bytes %d", result.bytes)
 	}
