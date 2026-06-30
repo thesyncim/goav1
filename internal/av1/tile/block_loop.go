@@ -993,23 +993,22 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 		ctx.TxLeftNeighborBlockSize = ctx.LeftBlockSize[blockY4]
 	}
 
-	var prediction BlockPredictionModeResult
-	if req.DecodePredictionModes {
-		prediction, err = s.decodeBlockPredictionMode(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.Palette)
-		if err != nil {
-			return nil, fmt.Errorf("decode prediction: %w", err)
-		}
-	}
-
 	visit := &scratch.visit
 	visit.Block = block
 	visit.SegmentID = segmentID
 	visit.Segment = segment
 	visit.SegmentPredicted = segmentPredicted
 	visit.Prefix = prefix
-	visit.Prediction = prediction
+	visit.Prediction = BlockPredictionModeResult{}
 	visit.CoefficientsValid = false
 	visit.Delta = delta
+
+	if req.DecodePredictionModes {
+		visit.Prediction, err = s.decodeBlockPredictionMode(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.Palette)
+		if err != nil {
+			return nil, fmt.Errorf("decode prediction: %w", err)
+		}
+	}
 	if req.CurrentMVFrame != nil {
 		if err := req.CurrentMVFrame.MarkBlockPtr(uint16(block.MICol), uint16(block.MIRow), block.VisibleW4, block.VisibleH4, &visit.Prediction, req.RefFrameSide); err != nil {
 			return nil, err
