@@ -1324,6 +1324,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		aomThreads:         1,
 		aomRowMT:           0,
 		aomCPUUsed:         8,
+		aomThreadSweep:     true,
 		svtLP:              5,
 		svtLPSweep:         true,
 		svtPreset:          13,
@@ -1359,7 +1360,9 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		got.GoAV1SceneCut || !got.GoAV1ProcessTime ||
 		got.TileColumnsLog2 != 0 || got.TileSemantics != "tile-columns-log2" ||
 		got.AOMThreads != 1 || got.AOMRowMT != 0 ||
-		got.AOMCPUUsed != 8 || got.SVTLP != 5 || got.SVTPreset != 13 ||
+		got.AOMCPUUsed != 8 || !got.AOMThreadSweep ||
+		strings.Join(got.AOMThreadLevels, ";") != "threads=1,row-mt=0;threads=1,row-mt=1" ||
+		got.SVTLP != 5 || got.SVTPreset != 13 ||
 		!got.SVTLPSweep || strings.Trim(strings.Join(strings.Fields(fmt.Sprint(got.SVTLPSweepLevels)), ","), "[]") != "0,1,2,3,4,5,6" ||
 		got.FFmpegBin != "/tools/ffmpeg" || got.FFmpegSHA256 != strings.Repeat("1", 64) ||
 		got.FFmpegAV1Decoder != "libdav1d" ||
@@ -1375,7 +1378,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 }
 
 func TestFairnessNotesDocumentSVTLP(t *testing.T) {
-	notes := fairnessNotes(benchConfig{encoders: []string{"goav1", "aomenc", "svt-av1"}, svtLP: 0, svtLPSweep: true, timingMode: timingModeEndToEnd, publish: true})
+	notes := fairnessNotes(benchConfig{encoders: []string{"goav1", "aomenc", "svt-av1"}, aomThreads: 4, aomThreadSweep: true, svtLP: 0, svtLPSweep: true, timingMode: timingModeEndToEnd, publish: true})
 	joined := strings.Join(notes, "\n")
 	if !strings.Contains(joined, "not a target processor or thread count") ||
 		!strings.Contains(joined, "observed_parallelism") ||
@@ -1399,6 +1402,8 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "-aom-cpu-used") ||
 		!strings.Contains(joined, "-aom-threads") ||
 		!strings.Contains(joined, "-aom-row-mt") ||
+		!strings.Contains(joined, "-aom-thread-sweep") ||
+		!strings.Contains(joined, "aomenc thread sweep") ||
 		!strings.Contains(joined, "-svt-preset") ||
 		!strings.Contains(joined, "simd_tier") ||
 		!strings.Contains(joined, "svt_asm") ||
@@ -1623,6 +1628,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		aomThreads:          4,
 		aomRowMT:            1,
 		aomCPUUsed:          8,
+		aomThreadSweep:      true,
 		svtLP:               4,
 		svtLPSweep:          true,
 		svtPreset:           13,
@@ -1695,6 +1701,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"aom-cpu-used":         true,
 			"aom-threads":          true,
 			"aom-row-mt":           true,
+			"aom-thread-sweep":     true,
 			"aomenc-bin":           true,
 			"aomenc-sha256":        true,
 			"svt-preset":           true,
@@ -1912,6 +1919,24 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	if err := validatePublishConfig(missingAOMSpeed, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "-aom-cpu-used") {
 		t.Fatalf("missing explicit aom speed error=%v", err)
+	}
+
+	missingAOMThreadSweep := cfg
+	missingAOMThreadSweep.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingAOMThreadSweep.explicitFlags[k] = v
+	}
+	delete(missingAOMThreadSweep.explicitFlags, "aom-thread-sweep")
+	if err := validatePublishConfig(missingAOMThreadSweep, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-aom-thread-sweep") {
+		t.Fatalf("missing explicit aom thread sweep error=%v", err)
+	}
+
+	disabledAOMThreadSweep := cfg
+	disabledAOMThreadSweep.aomThreadSweep = false
+	if err := validatePublishConfig(disabledAOMThreadSweep, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-aom-thread-sweep=true") {
+		t.Fatalf("disabled aom thread sweep error=%v", err)
 	}
 
 	missingSVTPreset := cfg
@@ -2198,6 +2223,63 @@ func TestMeasuredEncodeJobsExpandSVTLPSweep(t *testing.T) {
 	}
 }
 
+func TestMeasuredEncodeJobsExpandAOMThreadSweep(t *testing.T) {
+	cfg := benchConfig{
+		encoders:       []string{"goav1", "aomenc"},
+		bitrates:       []int{100},
+		runOrder:       runOrderBitrateEncoder,
+		aomThreads:     3,
+		aomThreadSweep: true,
+	}
+	got := encodeJobLabels(measuredEncodeJobsForConfig(cfg))
+	want := "100:goav1,100:aomenc/th1-rowmt0,100:aomenc/th1-rowmt1,100:aomenc/th2-rowmt0,100:aomenc/th2-rowmt1,100:aomenc/th3-rowmt0,100:aomenc/th3-rowmt1"
+	if got != want {
+		t.Fatalf("measured jobs=%s want %s", got, want)
+	}
+}
+
+func TestSelectReportedEncodeResultsChoosesClosestAOMThreadCandidate(t *testing.T) {
+	jobs := []encodeJob{{bitrate: 100, encoder: "goav1"}}
+	for _, candidate := range aomThreadSweepCandidates(3) {
+		jobs = append(jobs, encodeJob{
+			bitrate:            100,
+			encoder:            "aomenc",
+			aomThreads:         candidate.Threads,
+			aomRowMT:           candidate.RowMT,
+			aomSweepMaxThreads: 3,
+			aomSweepCandidate:  true,
+		})
+	}
+	results := []encodeResult{parallelismResult("goav1", 100, 2.00)}
+	for _, parallel := range []float64{0.75, 1.25, 1.90, 2.30, 3.00, 4.00} {
+		results = append(results, parallelismResult("aomenc", 100, parallel))
+	}
+	reportJobs, reportResults, nonreported, err := selectReportedEncodeResults(benchConfig{aomThreadSweep: true}, jobs, results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := encodeJobLabels(reportJobs); got != "100:goav1,100:aomenc" {
+		t.Fatalf("reported jobs=%s", got)
+	}
+	if len(reportResults) != 2 || len(nonreported) != 5 {
+		t.Fatalf("reported=%d nonreported=%d", len(reportResults), len(nonreported))
+	}
+	selected := reportResults[1]
+	if selected.settings["aom_thread_sweep_selected"] != "true" ||
+		selected.settings["aom_thread_sweep_candidate_threads"] != "2" ||
+		selected.settings["aom_thread_sweep_candidate_row_mt"] != "0" ||
+		selected.settings["aom_thread_sweep_target_observed_parallelism"] != "2.000000" ||
+		selected.settings["aom_thread_sweep_selected_observed_parallelism"] != "1.900000" {
+		t.Fatalf("selected settings=%+v", selected.settings)
+	}
+	for _, result := range nonreported {
+		if result.settings["metadata_role"] != "aom-thread-sweep-candidate" ||
+			result.settings["aom_thread_sweep_candidate"] != "true" {
+			t.Fatalf("nonreported settings=%+v", result.settings)
+		}
+	}
+}
+
 func TestSelectReportedEncodeResultsChoosesClosestSVTLP(t *testing.T) {
 	jobs := []encodeJob{{bitrate: 100, encoder: "goav1"}}
 	for _, lp := range svtLPSweepLevels() {
@@ -2414,6 +2496,9 @@ func encodeJobLabels(jobs []encodeJob) string {
 	labels := make([]string, len(jobs))
 	for i, job := range jobs {
 		labels[i] = strconv.Itoa(job.bitrate) + ":" + job.encoder
+		if job.aomSweepCandidate {
+			labels[i] += "/th" + strconv.Itoa(job.aomThreads) + "-rowmt" + strconv.Itoa(job.aomRowMT)
+		}
 		if job.svtLPSweepCandidate {
 			labels[i] += "/lp" + strconv.Itoa(job.svtLP)
 		}

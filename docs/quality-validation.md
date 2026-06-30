@@ -66,6 +66,9 @@ GO_SHA256=$(shasum -a 256 "$GO_BIN" | awk '{print $1}')
   -run-order shuffle -shuffle-seed 1 \
   -runs 3 -warmup-runs 1 \
   -aom-cpu-used 8 \
+  -aom-threads 4 \
+  -aom-row-mt 1 \
+  -aom-thread-sweep=true \
   -svt-preset 13 \
   -svt-lp 0 \
   -svt-lp-sweep=true \
@@ -87,8 +90,6 @@ GO_SHA256=$(shasum -a 256 "$GO_BIN" | awk '{print $1}')
   -thermal-state "cool start; no throttling observed" \
   -frequency-policy "macOS automatic" \
   -background-load "idle machine; no concurrent jobs" \
-  -aom-threads 4 \
-  -aom-row-mt 1 \
   -svt-asm neon \
   -publish \
   -workdir /tmp/goav1-quality
@@ -194,7 +195,7 @@ explicit `-gogc` value with ambient `GOFLAGS`, `GOMEMLIMIT`, and `GODEBUG`
 unset, explicit absolute `-ffmpeg-bin`, `-aomenc-bin`, and `-svt-bin` paths
 with matching SHA-256 pins for every selected external tool, an explicit
 FFmpeg AV1 decoder when external baselines are selected, explicit
-libaom concurrency settings and realtime speed setting when `aomenc` is
+libaom realtime speed, concurrency, and thread-sweep policy when `aomenc` is
 selected, explicit SVT preset, parallelism, sweep policy, and assembly settings
 when `svt-av1` is selected, distinct CSV, metadata, summary, and diagnostic artifact
 paths, an empty `-workdir` before timing starts, exact raw I420 input byte
@@ -292,7 +293,11 @@ and the CSV/metadata timing columns:
 or `observed_parallelism=cpu_total_sec/encode_wall_sec` to check whether one
 encoder consumed a larger CPU budget. Publish mode fails a measured tuple when
 any successful sample lacks positive wall time or process CPU timing, so copied
-tables cannot silently omit CPU-budget evidence. With `-svt-lp-sweep=true`,
+tables cannot silently omit CPU-budget evidence. With `-aom-thread-sweep=true`,
+qualitybench measures libaom `--threads 1..-aom-threads` crossed with
+`--row-mt 0/1`, reports the candidate whose measured `observed_parallelism` is
+closest to the matched goav1 row, and records the nonreported candidates in
+metadata. With `-svt-lp-sweep=true`,
 qualitybench measures SVT `--lp 0..6`, reports the candidate whose measured
 `observed_parallelism` is closest to the matched goav1 row, and records the
 nonreported candidates in metadata. Treat every `--lp` as an SVT level, not as a
@@ -307,7 +312,9 @@ arm64 SIMD coverage, and omit it or pass `-svt-asm max` for a best-SVT row.
 Also report libaom's speed and concurrency settings.
 `qualitybench -aom-cpu-used` forwards to `aomenc --cpu-used` in realtime mode,
 `-aom-threads` forwards to `aomenc --threads`, and `-aom-row-mt` forwards to
-`aomenc --row-mt`. All three are recorded in metadata, so single-thread rows
+`aomenc --row-mt`. With `-aom-thread-sweep=true`, `-aom-threads` is the sweep
+ceiling and the reported row is selected by observed CPU budget instead of a
+fixed thread knob. All settings are recorded in metadata, so single-thread rows
 must use `-aom-threads 1`, row-mt experiments must state `-aom-row-mt 0` or
 `-aom-row-mt 1`, and realtime-speed sweeps must state each `-aom-cpu-used`
 value. The external baseline commands also pin and record profile-0, 8-bit,
@@ -326,7 +333,7 @@ contract:
 
 | Encoder | Low-delay/rate pins | Speed and parallelism pins | Stream and picture pins |
 | --- | --- | --- | --- |
-| `aomenc` | `--rt`, `--end-usage=cbr`, `--lag-in-frames=0`, `--auto-alt-ref=0`, `--enable-fwd-kf=0`, `--drop-frame=0`, `--buf-sz=1000`, `--buf-initial-sz=500`, `--buf-optimal-sz=600` | `--cpu-used`, `--threads`, and `--row-mt` from `-aom-cpu-used`, `-aom-threads`, and `-aom-row-mt`; `--quiet` is always set | profile 0, 8-bit I420, `--target-bitrate`, `--fps`, `--limit`, `--kf-min-dist`, `--kf-max-dist`, and optional `--tile-columns` |
+| `aomenc` | `--rt`, `--end-usage=cbr`, `--lag-in-frames=0`, `--auto-alt-ref=0`, `--enable-fwd-kf=0`, `--drop-frame=0`, `--buf-sz=1000`, `--buf-initial-sz=500`, `--buf-optimal-sz=600` | `--cpu-used`, optional automated `--threads 1..N` and `--row-mt 0/1` sweep selection, fixed `--threads`, and fixed `--row-mt` from `-aom-cpu-used`, `-aom-thread-sweep`, `-aom-threads`, and `-aom-row-mt`; `--quiet` is always set | profile 0, 8-bit I420, `--target-bitrate`, `--fps`, `--limit`, `--kf-min-dist`, `--kf-max-dist`, and optional `--tile-columns` |
 | `SvtAv1EncApp` | `--rc 2`, `--buf-sz 1000`, `--buf-initial-sz 500`, `--buf-optimal-sz 600`, `--lookahead 0`, `--pred-struct 1`, `--rtc 1`, `--scd 0`, `--enable-tf 0`, `--irefresh-type 2` | `--preset`, `--lp`, optional automated `--lp 0..6` sweep selection, and optional `--asm` from `-svt-preset`, `-svt-lp`, `-svt-lp-sweep`, and `-svt-asm` | profile 0, level 0, 8-bit I420 (`--color-format 1`), `--tbr`, `--fps-num`, `--fps-denom`, `--frames`, `--keyint`, `--progress 0`, and optional `--tile-columns` |
 
 When `-stats-csv` is set, goav1 rows also include encoder decision counters:

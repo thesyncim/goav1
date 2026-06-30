@@ -110,6 +110,8 @@ type benchConfig struct {
 	aomThreads          int
 	aomRowMT            int
 	aomCPUUsed          int
+	aomThreadSweep      bool
+	aomSweepCandidate   bool
 	svtLP               int
 	svtLPSweep          bool
 	svtLPSweepCandidate bool
@@ -416,6 +418,8 @@ type metadataConfig struct {
 	AOMThreads       int      `json:"aom_threads"`
 	AOMRowMT         int      `json:"aom_row_mt"`
 	AOMCPUUsed       int      `json:"aom_cpu_used"`
+	AOMThreadSweep   bool     `json:"aom_thread_sweep,omitempty"`
+	AOMThreadLevels  []string `json:"aom_thread_sweep_candidates,omitempty"`
 	SVTLP            int      `json:"svt_lp"`
 	SVTLPSweep       bool     `json:"svt_lp_sweep,omitempty"`
 	SVTLPSweepLevels []int    `json:"svt_lp_sweep_levels,omitempty"`
@@ -534,6 +538,10 @@ type encodeSampleMetadata struct {
 type encodeJob struct {
 	bitrate             int
 	encoder             string
+	aomThreads          int
+	aomRowMT            int
+	aomSweepMaxThreads  int
+	aomSweepCandidate   bool
 	svtLP               int
 	svtLPSweepCandidate bool
 }
@@ -778,6 +786,7 @@ func parseFlags() (benchConfig, error) {
 	flag.IntVar(&cfg.aomThreads, "aom-threads", 4, "aomenc --threads value for libaom rows")
 	flag.IntVar(&cfg.aomRowMT, "aom-row-mt", 1, "aomenc --row-mt value for libaom rows (0 = off, 1 = on)")
 	flag.IntVar(&cfg.aomCPUUsed, "aom-cpu-used", 8, "aomenc realtime --cpu-used speed setting (5..12)")
+	flag.BoolVar(&cfg.aomThreadSweep, "aom-thread-sweep", false, "run aomenc --threads 1..-aom-threads crossed with --row-mt 0/1 and report the candidate closest to goav1 observed CPU parallelism")
 	flag.IntVar(&cfg.svtLP, "svt-lp", 0, "SVT --lp parallelism level, not a thread count (0 = SVT auto, valid range 0..6)")
 	flag.BoolVar(&cfg.svtLPSweep, "svt-lp-sweep", false, "run SVT --lp 0..6 candidates and report the candidate closest to goav1 observed CPU parallelism")
 	flag.IntVar(&cfg.svtPreset, "svt-preset", 13, "SVT --preset speed setting (0..13; higher is faster)")
@@ -898,6 +907,14 @@ func parseFlags() (benchConfig, error) {
 	}
 	if cfg.aomCPUUsed < 5 || cfg.aomCPUUsed > 12 {
 		return benchConfig{}, fmt.Errorf("invalid aomenc realtime --cpu-used value %d: valid range is 5..12", cfg.aomCPUUsed)
+	}
+	if cfg.aomThreadSweep {
+		if !encoderSelected(cfg, "aomenc") {
+			return benchConfig{}, errors.New("-aom-thread-sweep requires aomenc in -encoders")
+		}
+		if !encoderSelected(cfg, "goav1") {
+			return benchConfig{}, errors.New("-aom-thread-sweep requires goav1 in -encoders for observed_parallelism selection")
+		}
 	}
 	if cfg.timingMode != timingModeCore && cfg.timingMode != timingModeEndToEnd {
 		return benchConfig{}, fmt.Errorf("invalid timing mode %q: valid values are core or e2e", cfg.timingMode)
@@ -1167,6 +1184,12 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		}
 		if err := requireExplicitFlag(cfg, "aom-row-mt"); err != nil {
 			return err
+		}
+		if err := requireExplicitFlag(cfg, "aom-thread-sweep"); err != nil {
+			return err
+		}
+		if encoderSelected(cfg, "goav1") && !cfg.aomThreadSweep {
+			return errors.New("publish requires -aom-thread-sweep=true when comparing goav1 against aomenc")
 		}
 	}
 	if encoderSelected(cfg, "svt-av1") {
@@ -1453,11 +1476,22 @@ func encodeJobsForConfig(cfg benchConfig) []encodeJob {
 
 func measuredEncodeJobsForConfig(cfg benchConfig) []encodeJob {
 	base := encodeJobsForConfig(cfg)
-	if !cfg.svtLPSweep {
+	if !cfg.aomThreadSweep && !cfg.svtLPSweep {
 		return base
 	}
-	jobs := make([]encodeJob, 0, len(base)+6*countEncoderJobs(base, "svt-av1"))
+	jobs := make([]encodeJob, 0, len(base)+len(aomThreadSweepCandidates(cfg.aomThreads))*countEncoderJobs(base, "aomenc")+6*countEncoderJobs(base, "svt-av1"))
 	for _, job := range base {
+		if cfg.aomThreadSweep && job.encoder == "aomenc" {
+			for _, candidate := range aomThreadSweepCandidates(cfg.aomThreads) {
+				next := job
+				next.aomThreads = candidate.Threads
+				next.aomRowMT = candidate.RowMT
+				next.aomSweepMaxThreads = cfg.aomThreads
+				next.aomSweepCandidate = true
+				jobs = append(jobs, next)
+			}
+			continue
+		}
 		if job.encoder != "svt-av1" {
 			jobs = append(jobs, job)
 			continue
@@ -1470,6 +1504,32 @@ func measuredEncodeJobsForConfig(cfg benchConfig) []encodeJob {
 		}
 	}
 	return jobs
+}
+
+type aomThreadCandidate struct {
+	Threads int
+	RowMT   int
+}
+
+func aomThreadSweepCandidates(maxThreads int) []aomThreadCandidate {
+	if maxThreads < 1 {
+		maxThreads = 1
+	}
+	out := make([]aomThreadCandidate, 0, maxThreads*2)
+	for threads := 1; threads <= maxThreads; threads++ {
+		out = append(out, aomThreadCandidate{Threads: threads, RowMT: 0})
+		out = append(out, aomThreadCandidate{Threads: threads, RowMT: 1})
+	}
+	return out
+}
+
+func aomThreadSweepCandidateLabels(maxThreads int) []string {
+	candidates := aomThreadSweepCandidates(maxThreads)
+	out := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		out = append(out, fmt.Sprintf("threads=%d,row-mt=%d", candidate.Threads, candidate.RowMT))
+	}
+	return out
 }
 
 func countEncoderJobs(jobs []encodeJob, encoder string) int {
@@ -2221,7 +2281,7 @@ func selectReportedEncodeResults(cfg benchConfig, jobs []encodeJob, results []en
 	if len(jobs) != len(results) {
 		return nil, nil, nil, fmt.Errorf("internal result/job mismatch: %d jobs, %d results", len(jobs), len(results))
 	}
-	if !cfg.svtLPSweep {
+	if !cfg.aomThreadSweep && !cfg.svtLPSweep {
 		return jobs, results, nil, nil
 	}
 	targets := goAV1ObservedParallelismByBitrate(jobs, results)
@@ -2230,6 +2290,35 @@ func selectReportedEncodeResults(cfg benchConfig, jobs []encodeJob, results []en
 	var nonreported []encodeResult
 	for i := 0; i < len(jobs); {
 		job := jobs[i]
+		if job.encoder == "aomenc" && job.aomSweepCandidate {
+			start := i
+			for i < len(jobs) && jobs[i].encoder == "aomenc" && jobs[i].aomSweepCandidate && jobs[i].bitrate == job.bitrate {
+				i++
+			}
+			candidateJobs := jobs[start:i]
+			candidates := append([]encodeResult(nil), results[start:i]...)
+			target, ok := targets[job.bitrate]
+			if !ok || target <= 0 || math.IsNaN(target) || math.IsInf(target, 0) {
+				selected := aomThreadSweepErrorResult(candidateJobs[0], candidates[0], "aom thread sweep requires an ok goav1 row with positive observed_parallelism for the same bitrate")
+				reportJobs = append(reportJobs, encodeJob{bitrate: job.bitrate, encoder: "aomenc"})
+				reportResults = append(reportResults, selected)
+				nonreported = append(nonreported, markNonreportedAOMThreadSweepCandidates(candidateJobs, candidates, -1, 0)...)
+				continue
+			}
+			selectedIndex, ok := selectAOMThreadSweepCandidate(candidateJobs, candidates, target)
+			if !ok {
+				selected := aomThreadSweepErrorResult(candidateJobs[0], candidates[0], "aom thread sweep found no successful candidate with positive process CPU timing")
+				reportJobs = append(reportJobs, encodeJob{bitrate: job.bitrate, encoder: "aomenc"})
+				reportResults = append(reportResults, selected)
+				nonreported = append(nonreported, markNonreportedAOMThreadSweepCandidates(candidateJobs, candidates, -1, target)...)
+				continue
+			}
+			selected := markSelectedAOMThreadSweepCandidate(candidateJobs[selectedIndex], candidates[selectedIndex], target)
+			reportJobs = append(reportJobs, encodeJob{bitrate: job.bitrate, encoder: "aomenc"})
+			reportResults = append(reportResults, selected)
+			nonreported = append(nonreported, markNonreportedAOMThreadSweepCandidates(candidateJobs, candidates, selectedIndex, target)...)
+			continue
+		}
 		if job.encoder != "svt-av1" || !job.svtLPSweepCandidate {
 			reportJobs = append(reportJobs, job)
 			reportResults = append(reportResults, results[i])
@@ -2278,6 +2367,96 @@ func goAV1ObservedParallelismByBitrate(jobs []encodeJob, results []encodeResult)
 		}
 	}
 	return out
+}
+
+func selectAOMThreadSweepCandidate(jobs []encodeJob, candidates []encodeResult, target float64) (int, bool) {
+	best := -1
+	bestDiff := math.Inf(1)
+	bestParallel := 0.0
+	const epsilon = 1e-9
+	for i, result := range candidates {
+		if result.status != "ok" {
+			continue
+		}
+		parallel := observedParallelism(result.duration, result.cpuUser, result.cpuSystem, result.cpuAvailable)
+		if parallel <= 0 || math.IsNaN(parallel) || math.IsInf(parallel, 0) {
+			continue
+		}
+		diff := math.Abs(parallel - target)
+		if best < 0 || diff < bestDiff-epsilon {
+			best, bestDiff, bestParallel = i, diff, parallel
+			continue
+		}
+		if math.Abs(diff-bestDiff) > epsilon {
+			continue
+		}
+		bestOver, candidateOver := bestParallel > target, parallel > target
+		if bestOver != candidateOver {
+			if !candidateOver {
+				best, bestDiff, bestParallel = i, diff, parallel
+			}
+			continue
+		}
+		if jobs[i].aomThreads < jobs[best].aomThreads ||
+			jobs[i].aomThreads == jobs[best].aomThreads && jobs[i].aomRowMT < jobs[best].aomRowMT {
+			best, bestDiff, bestParallel = i, diff, parallel
+		}
+	}
+	return best, best >= 0
+}
+
+func markSelectedAOMThreadSweepCandidate(job encodeJob, result encodeResult, target float64) encodeResult {
+	result = markAOMThreadSweepCandidate(job, result, "reported-row")
+	parallel := observedParallelism(result.duration, result.cpuUser, result.cpuSystem, result.cpuAvailable)
+	result.settings["aom_thread_sweep_selected"] = "true"
+	result.settings["aom_thread_sweep_target_encoder"] = "goav1"
+	result.settings["aom_thread_sweep_target_observed_parallelism"] = formatParallelism(target)
+	result.settings["aom_thread_sweep_selected_observed_parallelism"] = formatParallelism(parallel)
+	result.settings["aom_thread_sweep_selected_abs_delta"] = formatParallelism(math.Abs(parallel - target))
+	return result
+}
+
+func markNonreportedAOMThreadSweepCandidates(jobs []encodeJob, candidates []encodeResult, selectedIndex int, target float64) []encodeResult {
+	out := make([]encodeResult, 0, len(candidates)-1)
+	for i, result := range candidates {
+		if i == selectedIndex {
+			continue
+		}
+		result = markAOMThreadSweepCandidate(jobs[i], result, "aom-thread-sweep-candidate")
+		if target > 0 && !math.IsNaN(target) && !math.IsInf(target, 0) {
+			parallel := observedParallelism(result.duration, result.cpuUser, result.cpuSystem, result.cpuAvailable)
+			result.settings["aom_thread_sweep_target_encoder"] = "goav1"
+			result.settings["aom_thread_sweep_target_observed_parallelism"] = formatParallelism(target)
+			if parallel > 0 && !math.IsNaN(parallel) && !math.IsInf(parallel, 0) {
+				result.settings["aom_thread_sweep_candidate_observed_parallelism"] = formatParallelism(parallel)
+				result.settings["aom_thread_sweep_candidate_abs_delta"] = formatParallelism(math.Abs(parallel - target))
+			}
+		}
+		out = append(out, result)
+	}
+	return out
+}
+
+func aomThreadSweepErrorResult(job encodeJob, result encodeResult, errText string) encodeResult {
+	result = markAOMThreadSweepCandidate(job, result, "reported-row")
+	result.status = "error"
+	result.errText = errText
+	result.settings["aom_thread_sweep_selected"] = "false"
+	result.settings["aom_thread_sweep_error"] = errText
+	return result
+}
+
+func markAOMThreadSweepCandidate(job encodeJob, result encodeResult, role string) encodeResult {
+	if result.settings == nil {
+		result.settings = map[string]string{}
+	}
+	result.settings["metadata_role"] = role
+	result.settings["aom_thread_sweep"] = "true"
+	result.settings["aom_thread_sweep_candidates"] = strings.Join(aomThreadSweepCandidateLabels(job.aomSweepMaxThreads), ";")
+	result.settings["aom_thread_sweep_candidate"] = "true"
+	result.settings["aom_thread_sweep_candidate_threads"] = strconv.Itoa(job.aomThreads)
+	result.settings["aom_thread_sweep_candidate_row_mt"] = strconv.Itoa(job.aomRowMT)
+	return result
 }
 
 func selectSVTLPSweepCandidate(jobs []encodeJob, candidates []encodeResult, target float64) (int, bool) {
@@ -2825,6 +3004,7 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		AOMThreads:       cfg.aomThreads,
 		AOMRowMT:         cfg.aomRowMT,
 		AOMCPUUsed:       cfg.aomCPUUsed,
+		AOMThreadSweep:   cfg.aomThreadSweep,
 		SVTLP:            cfg.svtLP,
 		SVTLPSweep:       cfg.svtLPSweep,
 		SVTPreset:        cfg.svtPreset,
@@ -2847,6 +3027,9 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 	}
 	if cfg.commandTimeout > 0 {
 		out.CommandTimeout = cfg.commandTimeout.String()
+	}
+	if cfg.aomThreadSweep {
+		out.AOMThreadLevels = aomThreadSweepCandidateLabels(cfg.aomThreads)
 	}
 	if cfg.svtLPSweep {
 		out.SVTLPSweepLevels = svtLPSweepLevels()
@@ -2972,7 +3155,7 @@ func fairnessNotes(cfg benchConfig) []string {
 		"For fair external-baseline metric comparisons, set -ffmpeg-av1-decoder explicitly so external IVF decode does not depend on FFmpeg's implicit decoder selection.",
 		"For fair VMAF comparisons, set -vmaf-model explicitly and report it; qualitybench forwards the value to FFmpeg libvmaf's model option and records it in metadata.",
 		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or use -svt-lp-sweep=true to measure --lp 0..6 and report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
-		"For fair libaom comparisons, set -aom-cpu-used, -aom-threads, and -aom-row-mt explicitly and report all three; qualitybench forwards them to aomenc --cpu-used, --threads, and --row-mt and records them in metadata.",
+		"For fair libaom comparisons, set -aom-cpu-used, -aom-threads, -aom-row-mt, and -aom-thread-sweep explicitly; with -aom-thread-sweep=true, qualitybench measures --threads 1..-aom-threads crossed with --row-mt 0/1 and reports the candidate whose observed_parallelism is closest to goav1.",
 		"For fair SVT comparisons, set -svt-preset explicitly and report it with -svt-lp and -svt-asm; qualitybench forwards it to SvtAv1EncApp --preset and records it in metadata. SVT and aomenc CBR rows are pinned to the same 1000/500/600 ms client buffer model.",
 		"SVT-AV1 --asm defaults to max and may use CPU-specific kernels such as neon_dotprod or neon_i8mm; use -svt-asm to pin the assembly tier when comparing against goav1's current SIMD coverage.",
 		"goav1 metadata records detected simd_tier and simd_features; compare those against SVT's recorded svt_asm setting instead of assuming --asm max and goav1 cover the same kernels.",
@@ -2992,6 +3175,9 @@ func fairnessNotes(cfg benchConfig) []string {
 	}
 	if cfg.svtLPSweep {
 		notes = append(notes, "SVT-AV1 --lp sweep is enabled: qualitybench measures --lp 0..6 candidates, records nonreported candidates in metadata, and reports the candidate closest to the matched goav1 observed_parallelism.")
+	}
+	if cfg.aomThreadSweep {
+		notes = append(notes, "aomenc thread sweep is enabled: qualitybench measures --threads 1.."+strconv.Itoa(cfg.aomThreads)+" crossed with --row-mt 0/1, records nonreported candidates in metadata, and reports the candidate closest to the matched goav1 observed_parallelism.")
 	}
 	if cfg.svtASM == "" {
 		notes = append(notes, "SVT-AV1 is run with its default --asm max setting; report this as a best-SVT row, not as baseline-NEON-equivalent SIMD coverage.")
@@ -4157,6 +4343,11 @@ func validateEncodeResultArtifacts(result encodeResult) error {
 
 func encodeSampleConfig(cfg benchConfig, job encodeJob, kind string, run int, repeated bool) (benchConfig, error) {
 	out := cfg
+	if job.aomSweepCandidate {
+		out.aomThreads = job.aomThreads
+		out.aomRowMT = job.aomRowMT
+		out.aomSweepCandidate = true
+	}
 	if job.svtLPSweepCandidate {
 		out.svtLP = job.svtLP
 		out.svtLPSweepCandidate = true
@@ -4173,6 +4364,9 @@ func encodeSampleConfig(cfg benchConfig, job encodeJob, kind string, run int, re
 
 func encodeJobWorkdirPrefix(job encodeJob) string {
 	prefix := fmt.Sprintf("%s_%d", job.encoder, job.bitrate)
+	if job.aomSweepCandidate {
+		prefix += fmt.Sprintf("_aomthreads%d_rowmt%d", job.aomThreads, job.aomRowMT)
+	}
 	if job.svtLPSweepCandidate {
 		prefix += fmt.Sprintf("_svtlp%d", job.svtLP)
 	}
@@ -4456,6 +4650,11 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 			"ffmpeg_av1_decoder": ffmpegAV1DecoderSetting(cfg.ffmpegAV1Decoder),
 			"aomenc_bin":         aomenc,
 		},
+	}
+	if cfg.aomSweepCandidate {
+		result.settings["aom_thread_sweep_candidate"] = "true"
+		result.settings["aom_thread_sweep_candidate_threads"] = strconv.Itoa(cfg.aomThreads)
+		result.settings["aom_thread_sweep_candidate_row_mt"] = strconv.Itoa(cfg.aomRowMT)
 	}
 	if _, err := resolveCommandPath(cfg.aomencBin, "aomenc", exec.LookPath); err != nil {
 		result.status, result.errText = "skipped", "aomenc not found: "+err.Error()
