@@ -125,7 +125,9 @@ state, frequency policy/governor, and background-load policy. Keep
 controls are documented. On platforms where the OS exposes process CPU
 affinity, publish mode records the observed affinity/online CPU lists and rejects
 claims such as `cpu-affinity=none` when the process is actually running under a
-restricted CPU mask.
+restricted CPU mask. On platforms where affinity probing is unsupported, use
+`-cpu-affinity none` or `-cpu-affinity unsupported`; concrete CPU pinning claims
+are rejected because the harness cannot verify them.
 
 Internal Go microbenchmark rows used to justify SIMD or hot-path changes should
 use `make bench-go-publish`, not the smoke-oriented `make bench` or

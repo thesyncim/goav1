@@ -87,8 +87,20 @@ func ObserveCPUState() CPUState {
 }
 
 func ValidateCPUAffinityClaim(claim string, state CPUState) error {
+	trimmed := strings.TrimSpace(claim)
 	if !state.AffinitySupported || strings.TrimSpace(state.AffinityAllowedList) == "" || strings.TrimSpace(state.CPUOnlineList) == "" {
-		return nil
+		if trimmed == "" || isUnpinnedAffinityClaim(trimmed) {
+			return nil
+		}
+		reason := strings.TrimSpace(state.AffinityProbeError)
+		if reason == "" {
+			if state.GOOS != "" {
+				reason = "cpu affinity probe unsupported on " + state.GOOS
+			} else {
+				reason = "cpu affinity probe unsupported"
+			}
+		}
+		return fmt.Errorf("cpu-affinity claim %q cannot be verified: %s; use none or unsupported when the run is intentionally unpinned", trimmed, reason)
 	}
 	allowed, err := CanonicalCPUList(state.AffinityAllowedList)
 	if err != nil {
@@ -99,7 +111,6 @@ func ValidateCPUAffinityClaim(claim string, state CPUState) error {
 		return fmt.Errorf("observed online CPU list %q is invalid: %w", state.CPUOnlineList, err)
 	}
 	restricted := allowed != online
-	trimmed := strings.TrimSpace(claim)
 	if isUnpinnedAffinityClaim(trimmed) && restricted {
 		return fmt.Errorf("cpu-affinity claims %q but OS reports restricted CPU affinity allowed=%s online=%s", trimmed, allowed, online)
 	}
@@ -186,7 +197,7 @@ func linuxCPUFrequencyPolicy() (governor string, driver string, err error) {
 func isUnpinnedAffinityClaim(claim string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(claim))
 	switch normalized {
-	case "", "none", "no", "no pinning", "no affinity", "unpinned", "unrestricted", "all", "all cpus", "default", "system default":
+	case "", "none", "no", "no pinning", "no affinity", "unpinned", "unrestricted", "unsupported", "probe unsupported", "unsupported/unpinned", "all", "all cpus", "default", "system default":
 		return true
 	default:
 		return false

@@ -79,4 +79,15 @@ func TestValidateCPUAffinityClaim(t *testing.T) {
 	if err := ValidateCPUAffinityClaim("none", CPUState{}); err != nil {
 		t.Fatalf("unsupported probe should not fail: %v", err)
 	}
+	unsupported := CPUState{
+		GOOS:               "darwin",
+		AffinityProbeError: "cpu affinity probe unsupported on darwin",
+	}
+	if err := ValidateCPUAffinityClaim("unsupported", unsupported); err != nil {
+		t.Fatalf("explicit unsupported claim failed: %v", err)
+	}
+	if err := ValidateCPUAffinityClaim("taskset 0-1", unsupported); err == nil ||
+		!strings.Contains(err.Error(), "cannot be verified") {
+		t.Fatalf("unsupported concrete claim error=%v", err)
+	}
 }
