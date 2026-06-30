@@ -28,6 +28,7 @@ import (
 
 	goav1 "github.com/thesyncim/goav1"
 	cpufeatures "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
+	"github.com/thesyncim/goav1/internal/av1/ivf"
 )
 
 const (
@@ -2965,6 +2966,30 @@ func readLengthPrefixedPayloadFile(path string) ([][]byte, error) {
 	return payloads, nil
 }
 
+func writeLengthPrefixedLowOverheadIVF(payloadPath, ivfPath string, width, height, fps, frames int) (int64, string, error) {
+	payloads, err := readLengthPrefixedPayloadFile(payloadPath)
+	if err != nil {
+		return 0, "", err
+	}
+	if len(payloads) != frames {
+		return 0, "", fmt.Errorf("%s contains %d temporal-unit payloads, want %d", payloadPath, len(payloads), frames)
+	}
+	if width <= 0 || width > int(^uint16(0)) || height <= 0 || height > int(^uint16(0)) {
+		return 0, "", fmt.Errorf("cannot wrap %dx%d stream in IVF", width, height)
+	}
+	if fps <= 0 {
+		return 0, "", fmt.Errorf("cannot wrap stream with fps=%d in IVF", fps)
+	}
+	stream := ivf.AppendFileHeader(nil, uint16(width), uint16(height), uint32(fps), 1, uint32(frames))
+	for i, payload := range payloads {
+		stream = ivf.AppendFrame(stream, payload, uint64(i))
+	}
+	if err := os.WriteFile(ivfPath, stream, 0o644); err != nil {
+		return 0, "", err
+	}
+	return fileBytesAndSHA256(ivfPath)
+}
+
 func decodeLengthPrefixedLowOverheadToYUV(payloadPath, yuvPath string, width, height, wantFrames int) (int64, string, error) {
 	payloads, err := readLengthPrefixedPayloadFile(payloadPath)
 	if err != nil {
@@ -3012,6 +3037,26 @@ func decodeLengthPrefixedLowOverheadToYUV(payloadPath, yuvPath string, width, he
 	}
 	closed = true
 	return fileBytesAndSHA256(yuvPath)
+}
+
+func decodeGoAV1MetricYUV(cfg benchConfig, payloadPath, yuvPath string, width, height, frames int, settings map[string]string) (int64, string, error) {
+	if externalBaselineSelected(cfg) || cfg.ffmpegAV1Decoder != "" {
+		ivfPath := strings.TrimSuffix(payloadPath, filepath.Ext(payloadPath)) + ".ivf"
+		ivfBytes, ivfHash, err := writeLengthPrefixedLowOverheadIVF(payloadPath, ivfPath, width, height, cfg.fps, frames)
+		if err != nil {
+			return 0, "", err
+		}
+		settings["metric_decode"] = "ffmpeg"
+		settings["metric_bitstream_path"] = ivfPath
+		settings["metric_bitstream_container"] = "ivf"
+		settings["metric_bitstream_bytes"] = strconv.FormatInt(ivfBytes, 10)
+		settings["metric_bitstream_sha256"] = ivfHash
+		settings["ffmpeg_av1_decoder"] = ffmpegAV1DecoderSetting(cfg.ffmpegAV1Decoder)
+		return decodeIVFWithFFmpeg(cfg, ivfPath, yuvPath, width, height, frames, cfg.ffmpegAV1Decoder)
+	}
+	settings["metric_decode"] = "goav1-public-decoder"
+	settings["metric_bitstream_container"] = "goav1-length-prefixed-low-overhead-stream"
+	return decodeLengthPrefixedLowOverheadToYUV(payloadPath, yuvPath, width, height, frames)
 }
 
 func writeDecoded420Frame(w io.Writer, frame *goav1.Frame, width, height int) error {
@@ -3363,7 +3408,7 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 	}
 	result.encodedBytes = encodedBytes
 	result.encodedSHA256 = encodedFileHash
-	decodedBytes, decodedHash, err := decodeLengthPrefixedLowOverheadToYUV(result.encodedPath, result.decodedYUV, cfg.width, cfg.height, len(frames))
+	decodedBytes, decodedHash, err := decodeGoAV1MetricYUV(cfg, result.encodedPath, result.decodedYUV, cfg.width, cfg.height, len(frames), result.settings)
 	if err != nil {
 		result.status, result.errText = "error", err.Error()
 		return result

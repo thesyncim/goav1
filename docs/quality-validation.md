@@ -167,10 +167,13 @@ per-frame `Encode` calls. Use it for local code-path profiling, not for fair
 tables. `-timing-mode e2e` times goav1 setup, encode calls, encoded artifact
 writes, and encoder shutdown, while external rows continue to time the encoder
 command invocation. Metric YUV is decoded after timing for every encoder;
-goav1 rows are decoded by replaying the persisted low-overhead payload stream
-through the public decoder, not by scoring encoder reconstruction buffers. The
-metadata JSON records command paths, binary SHA-256 hashes, and version/help
-probes for the external tools used by the run. It also records
+when an external baseline or explicit `-ffmpeg-av1-decoder` is selected, goav1
+rows wrap the persisted low-overhead temporal units in an IVF sidecar and decode
+that sidecar through the same FFmpeg AV1 decoder path used for AOM/SVT rows.
+goav1-only local runs without an FFmpeg decoder still replay the persisted
+low-overhead stream through the public decoder, never encoder reconstruction
+buffers. The metadata JSON records command paths, binary SHA-256 hashes, and
+version/help probes for the external tools used by the run. It also records
 `manifest_sha256`, the effective `GOMAXPROCS`, CPU count/model when available,
 hostname, OS/kernel version when available, `PATH`, selected Go runtime
 environment variables (`GOFLAGS`, `GOGC`, `GOMEMLIMIT`, `GODEBUG`), and
@@ -193,7 +196,8 @@ median, max, and IQR wall time for the tuple, and records
 For goav1 rows, `encoded_path` is a replayable `uint32_le length + low-overhead
 temporal-unit payload` stream. `compressed_bytes` remains the sum of payload
 bytes, while `encoded_bytes` and `encoded_sha256` describe that on-disk
-length-prefixed artifact.
+length-prefixed artifact. When metric decode uses FFmpeg, the goav1 row settings
+also record the generated IVF sidecar path, container, bytes, and SHA-256.
 
 For speed comparisons against SVT-AV1, do not treat numeric concurrency knobs as
 equivalent. `GOMAXPROCS` is a Go scheduler processor cap; goav1

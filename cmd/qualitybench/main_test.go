@@ -16,6 +16,7 @@ import (
 
 	goav1 "github.com/thesyncim/goav1"
 	cpufeatures "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
+	"github.com/thesyncim/goav1/internal/av1/ivf"
 )
 
 func TestParsePositiveList(t *testing.T) {
@@ -486,6 +487,9 @@ func TestEncodeGoAV1PersistsAndDecodesLengthPrefixedPayloadStream(t *testing.T) 
 	if result.settings["scene_cut"] != "false" {
 		t.Fatalf("scene-cut setting=%q want false", result.settings["scene_cut"])
 	}
+	if result.settings["metric_decode"] != "goav1-public-decoder" {
+		t.Fatalf("metric decode=%q want public decoder", result.settings["metric_decode"])
+	}
 	raw, err := os.ReadFile(result.encodedPath)
 	if err != nil {
 		t.Fatal(err)
@@ -516,6 +520,101 @@ func TestEncodeGoAV1PersistsAndDecodesLengthPrefixedPayloadStream(t *testing.T) 
 		result.decodedBytes != decodedBytes ||
 		result.decodedSHA256 != decodedHash {
 		t.Fatalf("decoded metadata bytes/hash=%d/%s want %d/%s", result.decodedBytes, result.decodedSHA256, decodedBytes, decodedHash)
+	}
+}
+
+func TestEncodeGoAV1ExternalBaselineMetricsUseFFmpegDecode(t *testing.T) {
+	dir := t.TempDir()
+	ffmpegPath := filepath.Join(dir, "ffmpeg")
+	argsPath := filepath.Join(dir, "ffmpeg.args")
+	script := `#!/bin/sh
+: > "$QUALITYBENCH_FAKE_FFMPEG_ARGS"
+for arg in "$@"; do
+	printf '%s\n' "$arg" >> "$QUALITYBENCH_FAKE_FFMPEG_ARGS"
+done
+out=""
+for arg in "$@"; do
+	out="$arg"
+done
+dd if=/dev/zero of="$out" bs="$QUALITYBENCH_FAKE_YUV_BYTES" count=1 2>/dev/null
+`
+	if err := os.WriteFile(ffmpegPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := benchConfig{
+		width:            64,
+		height:           64,
+		frames:           2,
+		fps:              30,
+		workdir:          dir,
+		layers:           1,
+		timingMode:       timingModeEndToEnd,
+		encoders:         []string{"goav1", "aomenc"},
+		ffmpegBin:        ffmpegPath,
+		ffmpegAV1Decoder: "libdav1d",
+	}
+	t.Setenv("QUALITYBENCH_FAKE_FFMPEG_ARGS", argsPath)
+	t.Setenv("QUALITYBENCH_FAKE_YUV_BYTES", strconv.FormatInt(expectedRawI420Bytes(cfg.width, cfg.height, cfg.frames), 10))
+
+	result := encodeGoAV1(cfg, syntheticFrames(cfg.frames, cfg.width, cfg.height), 100000)
+	if result.status != "ok" {
+		t.Fatalf("encode status=%s err=%s", result.status, result.errText)
+	}
+	if result.settings["metric_decode"] != "ffmpeg" ||
+		result.settings["ffmpeg_av1_decoder"] != "libdav1d" ||
+		result.settings["metric_bitstream_container"] != "ivf" {
+		t.Fatalf("metric settings=%+v", result.settings)
+	}
+	metricPath := result.settings["metric_bitstream_path"]
+	if metricPath == "" || filepath.Ext(metricPath) != ".ivf" {
+		t.Fatalf("metric bitstream path=%q", metricPath)
+	}
+	metricBytes, metricSHA, err := fileBytesAndSHA256(metricPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.settings["metric_bitstream_bytes"] != strconv.FormatInt(metricBytes, 10) ||
+		result.settings["metric_bitstream_sha256"] != metricSHA {
+		t.Fatalf("metric artifact settings=%+v want bytes=%d sha=%s", result.settings, metricBytes, metricSHA)
+	}
+	ivfData, err := os.ReadFile(metricPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	it, err := ivf.NewIterator(ivfData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := it.Header()
+	if header.Width != uint16(cfg.width) || header.Height != uint16(cfg.height) ||
+		header.TimebaseNum != uint32(cfg.fps) || header.TimebaseDen != 1 ||
+		header.FrameCount != uint32(cfg.frames) {
+		t.Fatalf("ivf header=%+v", header)
+	}
+	for i := 0; i < cfg.frames; i++ {
+		frame, ok, err := it.Next()
+		if err != nil || !ok {
+			t.Fatalf("ivf frame %d ok=%v err=%v", i, ok, err)
+		}
+		if frame.Timestamp != uint64(i) || len(frame.Payload) == 0 {
+			t.Fatalf("ivf frame %d=%+v", i, frame)
+		}
+	}
+	if _, ok, err := it.Next(); err != nil || ok {
+		t.Fatalf("unexpected extra ivf frame ok=%v err=%v", ok, err)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argText := string(args)
+	for _, want := range []string{"-c:v\nlibdav1d\n", "-i\n" + metricPath + "\n", "-f\nrawvideo\n" + result.decodedYUV + "\n"} {
+		if !strings.Contains(argText, want) {
+			t.Fatalf("ffmpeg args missing %q in:\n%s", want, argText)
+		}
+	}
+	if result.decodedBytes != expectedRawI420Bytes(cfg.width, cfg.height, cfg.frames) {
+		t.Fatalf("decoded bytes=%d", result.decodedBytes)
 	}
 }
 
