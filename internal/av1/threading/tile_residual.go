@@ -3,7 +3,6 @@ package threading
 import (
 	"fmt"
 	"os"
-	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -360,7 +359,13 @@ type frameWorkReconWavefront struct {
 	int32Stride    uint16
 	residualStride uint16
 	doneAlloc      []atomic.Int32
-	aborted        atomic.Bool
+	progress       *frameWorkReconWavefrontProgress
+}
+
+type frameWorkReconWavefrontProgress struct {
+	mu      sync.Mutex
+	cond    sync.Cond
+	aborted atomic.Bool
 }
 
 func (wf *frameWorkReconWavefront) reuseSBs() []frameWorkReconSB {
@@ -397,6 +402,56 @@ func (wf *frameWorkReconWavefront) ensureDone(rowCount int) {
 		wf.doneAlloc = make([]atomic.Int32, rowCount)
 	}
 	wf.done = wf.doneAlloc[:rowCount]
+}
+
+func (wf *frameWorkReconWavefront) ensureProgress() *frameWorkReconWavefrontProgress {
+	if wf.progress == nil {
+		p := &frameWorkReconWavefrontProgress{}
+		p.cond.L = &p.mu
+		wf.progress = p
+	}
+	return wf.progress
+}
+
+func (wf *frameWorkReconWavefront) resetProgress(rowCount int) {
+	p := wf.ensureProgress()
+	p.mu.Lock()
+	p.aborted.Store(false)
+	for r := range rowCount {
+		wf.done[r].Store(0)
+	}
+	p.mu.Unlock()
+}
+
+func (wf *frameWorkReconWavefront) abortProgress() {
+	p := wf.ensureProgress()
+	p.mu.Lock()
+	p.aborted.Store(true)
+	p.cond.Broadcast()
+	p.mu.Unlock()
+}
+
+func (wf *frameWorkReconWavefront) waitForRowProgress(done *atomic.Int32, need int32) bool {
+	p := wf.ensureProgress()
+	p.mu.Lock()
+	for done.Load() < need {
+		if p.aborted.Load() {
+			p.mu.Unlock()
+			return false
+		}
+		p.cond.Wait()
+	}
+	ok := !p.aborted.Load()
+	p.mu.Unlock()
+	return ok
+}
+
+func (wf *frameWorkReconWavefront) publishRowProgress(done *atomic.Int32, value int32) {
+	p := wf.ensureProgress()
+	p.mu.Lock()
+	done.Store(value)
+	p.cond.Broadcast()
+	p.mu.Unlock()
 }
 
 // ensureStates lazily allocates wavefrontWorkers per-goroutine reconstruction
@@ -1744,11 +1799,8 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 	wf.events = c.scratch.reconEvents
 	wf.visits = c.scratch.reconVisits
 	wf.blocks = c.scratch.reconBlocks
-	wf.aborted.Store(false)
 	wf.ensureDone(rowCount)
-	for r := range rowCount {
-		wf.done[r].Store(0)
-	}
+	wf.resetProgress(rowCount)
 
 	if err := wf.ensureStates(workers, c); err != nil {
 		return err
@@ -1763,11 +1815,11 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 			st := &wf.states[w]
 			for row := w; row < rowCount; row += workers {
 				if err := wf.reconstructRow(st, row, rowCount); err != nil {
-					// Signal abort so any goroutine spinning on this row's (now
-					// never-published) done counter stops waiting instead of
+					// Signal abort so any goroutine waiting on this row's (now
+					// never-published) progress stops waiting instead of
 					// deadlocking, then record the first error.
-					wf.aborted.Store(true)
 					firstErr.CompareAndSwap(nil, &wavefrontError{err: err})
+					wf.abortProgress()
 					return
 				}
 			}
@@ -1846,11 +1898,8 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row i
 			if int(need) > aboveCount {
 				need = int32(aboveCount)
 			}
-			for donePrev.Load() < need {
-				if wf.aborted.Load() {
-					return nil
-				}
-				runtime.Gosched()
+			if !wf.waitForRowProgress(donePrev, need) {
+				return nil
 			}
 		}
 		if sb.start < 0 || sb.end < sb.start || sb.end > eventCount {
@@ -1859,7 +1908,7 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row i
 		if err := frameWorkReplayReconEvents(st, wf.eventSpan(int(sb.start), int(sb.end)), wf.visits, wf.blocks); err != nil {
 			return err
 		}
-		doneCur.Store(sb.col + 1)
+		wf.publishRowProgress(doneCur, sb.col+1)
 	}
 	return nil
 }

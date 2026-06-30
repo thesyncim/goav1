@@ -181,6 +181,69 @@ func TestReconWavefrontScratchUsesFlatArenas(t *testing.T) {
 	}
 }
 
+func testReconWavefrontTwoRows() *frameWorkReconWavefront {
+	wf := &frameWorkReconWavefront{
+		rowStart: []int32{0, 1, 2},
+		sbSpans: []frameWorkReconSB{
+			{start: 0, end: 0, col: 0},
+			{start: 0, end: 0, col: 0},
+		},
+	}
+	wf.ensureDone(2)
+	wf.resetProgress(2)
+	return wf
+}
+
+func TestReconWavefrontProgressBlocksUntilPublished(t *testing.T) {
+	wf := testReconWavefrontTwoRows()
+	done := make(chan error, 1)
+	go func() {
+		var st frameWorkReconState
+		done <- wf.reconstructRow(&st, 1, 2)
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("row reconstructed before upper-row progress was published: %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+
+	wf.publishRowProgress(&wf.done[0], 1)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("reconstruct row after progress: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("row did not reconstruct after upper-row progress was published")
+	}
+}
+
+func TestReconWavefrontAbortWakesWaiter(t *testing.T) {
+	wf := testReconWavefrontTwoRows()
+	done := make(chan error, 1)
+	go func() {
+		var st frameWorkReconState
+		done <- wf.reconstructRow(&st, 1, 2)
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("row reconstructed before abort: %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+
+	wf.abortProgress()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("reconstruct row after abort: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("row waiter did not wake after abort")
+	}
+}
+
 func BenchmarkReconWavefrontEnsureStates(b *testing.B) {
 	c := frameWorkTileResidualLoopController{
 		req: FrameWorkTileResidualRequest{
