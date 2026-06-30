@@ -19,7 +19,9 @@ Publishable rows must satisfy these controls:
   zero-row runs, unexpected benchmark rows, CPU-suffix drift, or missing
   repeated samples.
 - Keep ambient Go target, compiler, cache, and runtime env overrides unset; use
-  explicit runner flags for intentional controls.
+  explicit runner flags for intentional controls. Go microbenchmark publish rows
+  run the benchmark subprocess under a sanitized command environment and record
+  the effective environment plus filtered high-impact ambient variable names.
 - Record structured CPU affinity, power mode, thermal state, frequency policy,
   and background-load fields. When the OS exposes CPU affinity/frequency
   probes, metadata records the observed state and publish mode rejects a

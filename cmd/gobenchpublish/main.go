@@ -104,18 +104,21 @@ type metadataConfig struct {
 }
 
 type environmentConfig struct {
-	GOGC             string            `json:"gogc,omitempty"`
-	GOFLAGS          string            `json:"goflags,omitempty"`
-	GOMEMLIMIT       string            `json:"gomemlimit,omitempty"`
-	GODEBUG          string            `json:"godebug,omitempty"`
-	CPUAffinity      string            `json:"cpu_affinity,omitempty"`
-	PowerMode        string            `json:"power_mode,omitempty"`
-	ThermalState     string            `json:"thermal_state,omitempty"`
-	FrequencyPolicy  string            `json:"frequency_policy,omitempty"`
-	BackgroundLoad   string            `json:"background_load,omitempty"`
-	Notes            string            `json:"notes,omitempty"`
-	ObservedCPUState benchenv.CPUState `json:"observed_cpu_state"`
-	EffectiveCommand string            `json:"effective_command"`
+	GOGC               string            `json:"gogc,omitempty"`
+	GOFLAGS            string            `json:"goflags,omitempty"`
+	GOMEMLIMIT         string            `json:"gomemlimit,omitempty"`
+	GODEBUG            string            `json:"godebug,omitempty"`
+	CommandEnvPolicy   string            `json:"benchmark_command_env_policy,omitempty"`
+	CommandEnv         map[string]string `json:"benchmark_command_env,omitempty"`
+	CommandFilteredEnv []string          `json:"benchmark_command_filtered_env,omitempty"`
+	CPUAffinity        string            `json:"cpu_affinity,omitempty"`
+	PowerMode          string            `json:"power_mode,omitempty"`
+	ThermalState       string            `json:"thermal_state,omitempty"`
+	FrequencyPolicy    string            `json:"frequency_policy,omitempty"`
+	BackgroundLoad     string            `json:"background_load,omitempty"`
+	Notes              string            `json:"notes,omitempty"`
+	ObservedCPUState   benchenv.CPUState `json:"observed_cpu_state"`
+	EffectiveCommand   string            `json:"effective_command"`
 }
 
 type outputMetadata struct {
@@ -582,12 +585,119 @@ func goTestArgs(cfg config) []string {
 }
 
 func commandEnv(cfg config) []string {
+	if cfg.Publish {
+		return envMapToList(publishBenchmarkCommandEnvMap(cfg))
+	}
 	env := os.Environ()
 	env = setEnv(env, "GOMAXPROCS", strconv.Itoa(cfg.GoMaxProcs))
 	if cfg.GOGC != "" {
 		env = setEnv(env, "GOGC", cfg.GOGC)
 	}
 	return env
+}
+
+const publishBenchmarkCommandEnvPolicy = "allowlist PATH, HOME, TMPDIR, TEMP, TMP, XDG_RUNTIME_DIR, SystemRoot, WINDIR, ComSpec; force LANG=C, LC_ALL=C, TZ=UTC; set GOMAXPROCS and GOGC from explicit flags"
+
+var publishBenchmarkCommandEnvAllowlist = []string{
+	"PATH",
+	"HOME",
+	"TMPDIR",
+	"TEMP",
+	"TMP",
+	"XDG_RUNTIME_DIR",
+	"SystemRoot",
+	"WINDIR",
+	"ComSpec",
+}
+
+var publishBenchmarkCommandEnvReportedFilters = []string{
+	"LANG",
+	"LC_ALL",
+	"LC_CTYPE",
+	"TZ",
+	"OMP_NUM_THREADS",
+	"OMP_DYNAMIC",
+	"OMP_PROC_BIND",
+	"OMP_PLACES",
+	"GOMP_CPU_AFFINITY",
+	"KMP_AFFINITY",
+	"KMP_HW_SUBSET",
+	"KMP_BLOCKTIME",
+	"KMP_SETTINGS",
+	"MKL_NUM_THREADS",
+	"OPENBLAS_NUM_THREADS",
+	"VECLIB_MAXIMUM_THREADS",
+	"BLIS_NUM_THREADS",
+	"NUMEXPR_NUM_THREADS",
+	"RAYON_NUM_THREADS",
+	"TBB_NUM_THREADS",
+	"LD_PRELOAD",
+	"LD_LIBRARY_PATH",
+	"DYLD_INSERT_LIBRARIES",
+	"DYLD_LIBRARY_PATH",
+	"DYLD_FRAMEWORK_PATH",
+	"DYLD_FALLBACK_LIBRARY_PATH",
+	"MallocNanoZone",
+}
+
+var publishBenchmarkCommandEnvReportedPrefixes = []string{
+	"MALLOC_",
+}
+
+func publishBenchmarkCommandEnvMap(cfg config) map[string]string {
+	env := make(map[string]string, len(publishBenchmarkCommandEnvAllowlist)+5)
+	for _, key := range publishBenchmarkCommandEnvAllowlist {
+		if value, ok := os.LookupEnv(key); ok {
+			env[key] = value
+		}
+	}
+	env["LANG"] = "C"
+	env["LC_ALL"] = "C"
+	env["TZ"] = "UTC"
+	env["GOMAXPROCS"] = strconv.Itoa(cfg.GoMaxProcs)
+	if cfg.GOGC != "" {
+		env["GOGC"] = cfg.GOGC
+	}
+	return env
+}
+
+func envMapToList(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, key+"="+env[key])
+	}
+	return out
+}
+
+func presentPublishBenchmarkCommandFilteredEnv() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, key := range publishBenchmarkCommandEnvReportedFilters {
+		if value, ok := os.LookupEnv(key); ok && value != "" {
+			seen[key] = true
+			out = append(out, key)
+		}
+	}
+	for _, item := range os.Environ() {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok || value == "" || seen[key] {
+			continue
+		}
+		for _, prefix := range publishBenchmarkCommandEnvReportedPrefixes {
+			if strings.HasPrefix(key, prefix) {
+				seen[key] = true
+				out = append(out, key)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func setEnv(env []string, key, value string) []string {
@@ -603,6 +713,25 @@ func setEnv(env []string, key, value string) []string {
 
 func buildMetadata(cfg config, git gitMetadata, command []string, status, errText string) metadata {
 	goTool := goToolMetadata(cfg.GoBin, cfg.GoSHA256)
+	environment := environmentConfig{
+		GOGC:             effectiveGOGC(cfg),
+		GOFLAGS:          os.Getenv("GOFLAGS"),
+		GOMEMLIMIT:       os.Getenv("GOMEMLIMIT"),
+		GODEBUG:          os.Getenv("GODEBUG"),
+		CPUAffinity:      strings.TrimSpace(cfg.CPUAffinity),
+		PowerMode:        strings.TrimSpace(cfg.PowerMode),
+		ThermalState:     strings.TrimSpace(cfg.ThermalState),
+		FrequencyPolicy:  strings.TrimSpace(cfg.FrequencyPolicy),
+		BackgroundLoad:   strings.TrimSpace(cfg.BackgroundLoad),
+		Notes:            strings.TrimSpace(cfg.EnvironmentNotes),
+		ObservedCPUState: observeBenchmarkCPUState(),
+		EffectiveCommand: strings.Join(command, " "),
+	}
+	if cfg.Publish {
+		environment.CommandEnvPolicy = publishBenchmarkCommandEnvPolicy
+		environment.CommandEnv = publishBenchmarkCommandEnvMap(cfg)
+		environment.CommandFilteredEnv = presentPublishBenchmarkCommandFilteredEnv()
+	}
 	return metadata{
 		GeneratedAtUTC: time.Now().UTC().Format(time.RFC3339),
 		Git:            git,
@@ -636,21 +765,8 @@ func buildMetadata(cfg config, git gitMetadata, command []string, status, errTex
 			BenchMem:                cfg.BenchMem,
 			Publish:                 cfg.Publish,
 		},
-		Environment: environmentConfig{
-			GOGC:             effectiveGOGC(cfg),
-			GOFLAGS:          os.Getenv("GOFLAGS"),
-			GOMEMLIMIT:       os.Getenv("GOMEMLIMIT"),
-			GODEBUG:          os.Getenv("GODEBUG"),
-			CPUAffinity:      strings.TrimSpace(cfg.CPUAffinity),
-			PowerMode:        strings.TrimSpace(cfg.PowerMode),
-			ThermalState:     strings.TrimSpace(cfg.ThermalState),
-			FrequencyPolicy:  strings.TrimSpace(cfg.FrequencyPolicy),
-			BackgroundLoad:   strings.TrimSpace(cfg.BackgroundLoad),
-			Notes:            strings.TrimSpace(cfg.EnvironmentNotes),
-			ObservedCPUState: observeBenchmarkCPUState(),
-			EffectiveCommand: strings.Join(command, " "),
-		},
-		Command: command,
+		Environment: environment,
+		Command:     command,
 		Output: outputMetadata{
 			Path: cfg.OutputPath,
 		},

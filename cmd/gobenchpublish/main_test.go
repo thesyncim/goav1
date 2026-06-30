@@ -226,6 +226,31 @@ func TestValidatePublishConfigRejectsHiddenGoEnvironment(t *testing.T) {
 	}
 }
 
+func TestPublishCommandEnvSanitizesAmbient(t *testing.T) {
+	t.Setenv("OMP_NUM_THREADS", "99")
+	t.Setenv("DYLD_INSERT_LIBRARIES", "/tmp/not-real.dylib")
+	t.Setenv("MALLOC_CONF", "prof:true")
+	t.Setenv("LC_ALL", "fr_FR.UTF-8")
+	t.Setenv("TZ", "Europe/Lisbon")
+	cfg := config{Publish: true, GoMaxProcs: 2, GOGC: "off"}
+	env := envListMap(commandEnv(cfg))
+	for _, key := range []string{"OMP_NUM_THREADS", "DYLD_INSERT_LIBRARIES", "MALLOC_CONF"} {
+		if _, ok := env[key]; ok {
+			t.Fatalf("publish command env leaked %s in %v", key, env)
+		}
+	}
+	if env["GOMAXPROCS"] != "2" || env["GOGC"] != "off" ||
+		env["LANG"] != "C" || env["LC_ALL"] != "C" || env["TZ"] != "UTC" {
+		t.Fatalf("publish command env controls=%v", env)
+	}
+	filtered := strings.Join(presentPublishBenchmarkCommandFilteredEnv(), ",")
+	for _, want := range []string{"DYLD_INSERT_LIBRARIES", "LC_ALL", "MALLOC_CONF", "OMP_NUM_THREADS", "TZ"} {
+		if !strings.Contains(filtered, want) {
+			t.Fatalf("filtered env %q missing %s", filtered, want)
+		}
+	}
+}
+
 func TestValidateBenchmarkOutputRequiresExactRows(t *testing.T) {
 	cfg := config{
 		Bench: "^BenchmarkFoo$",
@@ -376,6 +401,9 @@ func TestMetadataJSONRecordsOutputHash(t *testing.T) {
 	if got.Output.Bytes == 0 || got.Output.SHA256 == "" || got.Config.Count != 5 ||
 		got.Config.BenchmarkFunction != "BenchmarkX" || !got.Config.SubbenchmarkRowsAllowed ||
 		got.Config.GoMaxProcs != 1 || got.Environment.GOGC != "off" ||
+		got.Environment.CommandEnvPolicy == "" ||
+		got.Environment.CommandEnv["GOGC"] != "off" ||
+		got.Environment.CommandEnv["LC_ALL"] != "C" ||
 		got.Go.SIMDTier == "" || len(got.Go.Env) == 0 ||
 		got.Go.ToolPath != goBin || got.Go.ToolSHA256 != goSHA || !got.Go.ToolSHA256Verified ||
 		got.Environment.Notes != "idle" ||
@@ -387,6 +415,17 @@ func TestMetadataJSONRecordsOutputHash(t *testing.T) {
 		got.Environment.ObservedCPUState.AffinityAllowedList != "0" {
 		t.Fatalf("metadata=%+v", got)
 	}
+}
+
+func envListMap(env []string) map[string]string {
+	out := make(map[string]string, len(env))
+	for _, item := range env {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 func clearGobenchPublishGoEnv(t *testing.T) {

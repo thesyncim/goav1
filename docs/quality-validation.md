@@ -149,7 +149,11 @@ defaulted package, benchmark, count, benchtime, CPU, GOMAXPROCS, GC, output,
 Go tool, and metadata settings; pass every control explicitly.
 It writes the raw `go test` output and a metadata JSON sidecar containing the
 git revision, Go runtime, pinned Go tool path/hash, parsed benchmark row sample
-counts, `GOGC`, command line, output SHA-256, and run controls. Example:
+counts, `GOGC`, command line, output SHA-256, and run controls. In publish mode
+the benchmark subprocess runs under an allowlisted environment: path/temp/home
+variables are preserved, locale/timezone are forced to `LANG=C`, `LC_ALL=C`,
+`TZ=UTC`, and metadata records both that effective command environment and
+high-impact ambient variables that were filtered out. Example:
 
 ```sh
 GO_BIN=$(command -v go)
