@@ -111,6 +111,8 @@ type benchConfig struct {
 	aomRowMT            int
 	aomCPUUsed          int
 	svtLP               int
+	svtLPSweep          bool
+	svtLPSweepCandidate bool
 	svtPreset           int
 	svtASM              string
 	runs                int
@@ -415,6 +417,8 @@ type metadataConfig struct {
 	AOMRowMT         int      `json:"aom_row_mt"`
 	AOMCPUUsed       int      `json:"aom_cpu_used"`
 	SVTLP            int      `json:"svt_lp"`
+	SVTLPSweep       bool     `json:"svt_lp_sweep,omitempty"`
+	SVTLPSweepLevels []int    `json:"svt_lp_sweep_levels,omitempty"`
 	SVTPreset        int      `json:"svt_preset"`
 	SVTASM           string   `json:"svt_asm,omitempty"`
 	FFmpegBin        string   `json:"ffmpeg_bin,omitempty"`
@@ -528,8 +532,10 @@ type encodeSampleMetadata struct {
 }
 
 type encodeJob struct {
-	bitrate int
-	encoder string
+	bitrate             int
+	encoder             string
+	svtLP               int
+	svtLPSweepCandidate bool
 }
 
 func main() {
@@ -773,6 +779,7 @@ func parseFlags() (benchConfig, error) {
 	flag.IntVar(&cfg.aomRowMT, "aom-row-mt", 1, "aomenc --row-mt value for libaom rows (0 = off, 1 = on)")
 	flag.IntVar(&cfg.aomCPUUsed, "aom-cpu-used", 8, "aomenc realtime --cpu-used speed setting (5..12)")
 	flag.IntVar(&cfg.svtLP, "svt-lp", 0, "SVT --lp parallelism level, not a thread count (0 = SVT auto, valid range 0..6)")
+	flag.BoolVar(&cfg.svtLPSweep, "svt-lp-sweep", false, "run SVT --lp 0..6 candidates and report the candidate closest to goav1 observed CPU parallelism")
 	flag.IntVar(&cfg.svtPreset, "svt-preset", 13, "SVT --preset speed setting (0..13; higher is faster)")
 	flag.StringVar(&cfg.svtASM, "svt-asm", "", "limit SVT --asm instruction set (empty = SVT default max; e.g. c,neon,neon_dotprod,neon_i8mm,sve,sve2)")
 	flag.IntVar(&cfg.runs, "runs", 1, "measured encode runs per encoder/bitrate tuple; the median wall-time run is reported")
@@ -901,6 +908,14 @@ func parseFlags() (benchConfig, error) {
 	}
 	if cfg.svtLP < 0 || cfg.svtLP > 6 {
 		return benchConfig{}, fmt.Errorf("invalid SVT --lp level %d: valid range is 0..6; --lp is a parallelism level, not a thread count", cfg.svtLP)
+	}
+	if cfg.svtLPSweep {
+		if !encoderSelected(cfg, "svt-av1") {
+			return benchConfig{}, errors.New("-svt-lp-sweep requires svt-av1 in -encoders")
+		}
+		if !encoderSelected(cfg, "goav1") {
+			return benchConfig{}, errors.New("-svt-lp-sweep requires goav1 in -encoders for observed_parallelism selection")
+		}
 	}
 	if cfg.svtPreset < 0 || cfg.svtPreset > 13 {
 		return benchConfig{}, fmt.Errorf("invalid SVT --preset value %d: valid range is 0..13", cfg.svtPreset)
@@ -1163,6 +1178,12 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		}
 		if err := requireExplicitFlag(cfg, "svt-lp"); err != nil {
 			return err
+		}
+		if err := requireExplicitFlag(cfg, "svt-lp-sweep"); err != nil {
+			return err
+		}
+		if encoderSelected(cfg, "goav1") && !cfg.svtLPSweep {
+			return errors.New("publish requires -svt-lp-sweep=true when comparing goav1 against svt-av1")
 		}
 		if err := requireExplicitFlag(cfg, "svt-asm"); err != nil {
 			return err
@@ -1428,6 +1449,41 @@ func encodeJobsForConfig(cfg benchConfig) []encodeJob {
 		})
 	}
 	return jobs
+}
+
+func measuredEncodeJobsForConfig(cfg benchConfig) []encodeJob {
+	base := encodeJobsForConfig(cfg)
+	if !cfg.svtLPSweep {
+		return base
+	}
+	jobs := make([]encodeJob, 0, len(base)+6*countEncoderJobs(base, "svt-av1"))
+	for _, job := range base {
+		if job.encoder != "svt-av1" {
+			jobs = append(jobs, job)
+			continue
+		}
+		for _, lp := range svtLPSweepLevels() {
+			candidate := job
+			candidate.svtLP = lp
+			candidate.svtLPSweepCandidate = true
+			jobs = append(jobs, candidate)
+		}
+	}
+	return jobs
+}
+
+func countEncoderJobs(jobs []encodeJob, encoder string) int {
+	n := 0
+	for _, job := range jobs {
+		if job.encoder == encoder {
+			n++
+		}
+	}
+	return n
+}
+
+func svtLPSweepLevels() []int {
+	return []int{0, 1, 2, 3, 4, 5, 6}
 }
 
 func parsePositiveList(s string) ([]int, error) {
@@ -2024,10 +2080,14 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 	var invocations []encoderInvocationMetadata
 	required := requiredMetricSet(cfg.requiredMetrics)
 	requiredEncoders := requiredEncoderSet(cfg.requiredEncoders)
-	jobs := encodeJobsForConfig(cfg)
+	jobs := measuredEncodeJobsForConfig(cfg)
 	results := runEncoderJobsMeasured(clipCfg, frames, refPath, jobs)
-	for i, result := range results {
-		bitrate, encoderName := jobs[i].bitrate, jobs[i].encoder
+	reportJobs, reportResults, nonreportedResults, err := selectReportedEncodeResults(cfg, jobs, results)
+	if err != nil {
+		return rows, invocations, fmt.Errorf("%s: %w", clip.Name, err)
+	}
+	for i, result := range reportResults {
+		bitrate, encoderName := reportJobs[i].bitrate, reportJobs[i].encoder
 		m := metricsNA()
 		var metricErr error
 		if result.status == "ok" {
@@ -2042,14 +2102,8 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 				frameMetricsWriter.Flush()
 			}
 		}
-		actualBPS := int64(0)
-		if result.bytes > 0 && clip.Frames > 0 {
-			actualBPS = result.bytes * 8 * int64(clip.FPS) / int64(clip.Frames)
-		}
-		encodeFPS := ""
-		if result.duration > 0 {
-			encodeFPS = strconv.FormatFloat(float64(clip.Frames)/result.duration.Seconds(), 'f', 2, 64)
-		}
+		actualBPS := actualBPSForResult(result, clip)
+		encodeFPS := encodeFPSForResult(result, clip)
 		row := benchRow{
 			clip:      clip.Name,
 			width:     clip.Width,
@@ -2070,50 +2124,7 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 			errText:   result.errText,
 		}
 		rows = append(rows, row)
-		encodedPath, encodedContainer := result.encodedPath, result.encodedContainer
-		if result.encodedSHA256 == "" {
-			encodedPath, encodedContainer = "", ""
-		}
-		decodedPath := result.decodedYUV
-		if result.decodedSHA256 == "" {
-			decodedPath = ""
-		}
-		invocations = append(invocations, encoderInvocationMetadata{
-			Clip:             clip.Name,
-			Width:            clip.Width,
-			Height:           clip.Height,
-			Frames:           clip.Frames,
-			FPS:              clip.FPS,
-			Encoder:          result.encoder,
-			TargetBPS:        result.targetBPS,
-			ActualBPS:        actualBPS,
-			CompressedBytes:  result.bytes,
-			EncodedPath:      encodedPath,
-			EncodedContainer: encodedContainer,
-			EncodedBytes:     result.encodedBytes,
-			EncodedSHA256:    result.encodedSHA256,
-			DecodedPath:      decodedPath,
-			DecodedBytes:     result.decodedBytes,
-			DecodedSHA256:    result.decodedSHA256,
-			EncodeWallSecs:   durationSeconds(result.duration),
-			CPUAvailable:     result.cpuAvailable,
-			CPUUserSecs:      durationSeconds(result.cpuUser),
-			CPUSystemSecs:    durationSeconds(result.cpuSystem),
-			CPUTotalSecs:     durationSeconds(totalCPU(result.cpuUser, result.cpuSystem)),
-			ObservedParallel: observedParallelism(result.duration, result.cpuUser, result.cpuSystem, result.cpuAvailable),
-			Status:           result.status,
-			Error:            result.errText,
-			Command:          result.command,
-			Settings:         result.settings,
-			Runs:             result.runs,
-			WarmupRuns:       result.warmupRuns,
-			SelectedRun:      result.selectedRun,
-			MinWallSecs:      durationSeconds(result.minWall),
-			MedianWallSecs:   durationSeconds(result.medianWall),
-			MaxWallSecs:      durationSeconds(result.maxWall),
-			IQRWallSecs:      durationSeconds(result.iqrWall),
-			Samples:          result.samples,
-		})
+		invocations = append(invocations, encoderInvocationMetadataForResult(clip, result, actualBPS))
 		if err := writeBenchRow(writer, row); err != nil {
 			return nil, nil, err
 		}
@@ -2139,7 +2150,226 @@ func runClip(cfg benchConfig, clip clipSpec, filters map[string]bool, writer *cs
 			return rows, invocations, fmt.Errorf("%s %s %d bps: %w", clip.Name, result.encoder, bitrate, metricErr)
 		}
 	}
+	for _, result := range nonreportedResults {
+		invocations = append(invocations, encoderInvocationMetadataForResult(clip, result, actualBPSForResult(result, clip)))
+	}
 	return rows, invocations, nil
+}
+
+func actualBPSForResult(result encodeResult, clip clipSpec) int64 {
+	if result.bytes <= 0 || clip.Frames <= 0 {
+		return 0
+	}
+	return result.bytes * 8 * int64(clip.FPS) / int64(clip.Frames)
+}
+
+func encodeFPSForResult(result encodeResult, clip clipSpec) string {
+	if result.duration <= 0 {
+		return ""
+	}
+	return strconv.FormatFloat(float64(clip.Frames)/result.duration.Seconds(), 'f', 2, 64)
+}
+
+func encoderInvocationMetadataForResult(clip clipSpec, result encodeResult, actualBPS int64) encoderInvocationMetadata {
+	encodedPath, encodedContainer := result.encodedPath, result.encodedContainer
+	if result.encodedSHA256 == "" {
+		encodedPath, encodedContainer = "", ""
+	}
+	decodedPath := result.decodedYUV
+	if result.decodedSHA256 == "" {
+		decodedPath = ""
+	}
+	return encoderInvocationMetadata{
+		Clip:             clip.Name,
+		Width:            clip.Width,
+		Height:           clip.Height,
+		Frames:           clip.Frames,
+		FPS:              clip.FPS,
+		Encoder:          result.encoder,
+		TargetBPS:        result.targetBPS,
+		ActualBPS:        actualBPS,
+		CompressedBytes:  result.bytes,
+		EncodedPath:      encodedPath,
+		EncodedContainer: encodedContainer,
+		EncodedBytes:     result.encodedBytes,
+		EncodedSHA256:    result.encodedSHA256,
+		DecodedPath:      decodedPath,
+		DecodedBytes:     result.decodedBytes,
+		DecodedSHA256:    result.decodedSHA256,
+		EncodeWallSecs:   durationSeconds(result.duration),
+		CPUAvailable:     result.cpuAvailable,
+		CPUUserSecs:      durationSeconds(result.cpuUser),
+		CPUSystemSecs:    durationSeconds(result.cpuSystem),
+		CPUTotalSecs:     durationSeconds(totalCPU(result.cpuUser, result.cpuSystem)),
+		ObservedParallel: observedParallelism(result.duration, result.cpuUser, result.cpuSystem, result.cpuAvailable),
+		Status:           result.status,
+		Error:            result.errText,
+		Command:          result.command,
+		Settings:         result.settings,
+		Runs:             result.runs,
+		WarmupRuns:       result.warmupRuns,
+		SelectedRun:      result.selectedRun,
+		MinWallSecs:      durationSeconds(result.minWall),
+		MedianWallSecs:   durationSeconds(result.medianWall),
+		MaxWallSecs:      durationSeconds(result.maxWall),
+		IQRWallSecs:      durationSeconds(result.iqrWall),
+		Samples:          result.samples,
+	}
+}
+
+func selectReportedEncodeResults(cfg benchConfig, jobs []encodeJob, results []encodeResult) ([]encodeJob, []encodeResult, []encodeResult, error) {
+	if len(jobs) != len(results) {
+		return nil, nil, nil, fmt.Errorf("internal result/job mismatch: %d jobs, %d results", len(jobs), len(results))
+	}
+	if !cfg.svtLPSweep {
+		return jobs, results, nil, nil
+	}
+	targets := goAV1ObservedParallelismByBitrate(jobs, results)
+	reportJobs := make([]encodeJob, 0, len(jobs))
+	reportResults := make([]encodeResult, 0, len(jobs))
+	var nonreported []encodeResult
+	for i := 0; i < len(jobs); {
+		job := jobs[i]
+		if job.encoder != "svt-av1" || !job.svtLPSweepCandidate {
+			reportJobs = append(reportJobs, job)
+			reportResults = append(reportResults, results[i])
+			i++
+			continue
+		}
+		start := i
+		for i < len(jobs) && jobs[i].encoder == "svt-av1" && jobs[i].svtLPSweepCandidate && jobs[i].bitrate == job.bitrate {
+			i++
+		}
+		candidateJobs := jobs[start:i]
+		candidates := append([]encodeResult(nil), results[start:i]...)
+		target, ok := targets[job.bitrate]
+		if !ok || target <= 0 || math.IsNaN(target) || math.IsInf(target, 0) {
+			selected := svtLPSweepErrorResult(candidateJobs[0], candidates[0], "svt lp sweep requires an ok goav1 row with positive observed_parallelism for the same bitrate")
+			reportJobs = append(reportJobs, encodeJob{bitrate: job.bitrate, encoder: "svt-av1"})
+			reportResults = append(reportResults, selected)
+			nonreported = append(nonreported, markNonreportedSVTLPSweepCandidates(candidateJobs, candidates, -1, 0)...)
+			continue
+		}
+		selectedIndex, ok := selectSVTLPSweepCandidate(candidateJobs, candidates, target)
+		if !ok {
+			selected := svtLPSweepErrorResult(candidateJobs[0], candidates[0], "svt lp sweep found no successful candidate with positive process CPU timing")
+			reportJobs = append(reportJobs, encodeJob{bitrate: job.bitrate, encoder: "svt-av1"})
+			reportResults = append(reportResults, selected)
+			nonreported = append(nonreported, markNonreportedSVTLPSweepCandidates(candidateJobs, candidates, -1, target)...)
+			continue
+		}
+		selected := markSelectedSVTLPSweepCandidate(candidateJobs[selectedIndex], candidates[selectedIndex], target)
+		reportJobs = append(reportJobs, encodeJob{bitrate: job.bitrate, encoder: "svt-av1"})
+		reportResults = append(reportResults, selected)
+		nonreported = append(nonreported, markNonreportedSVTLPSweepCandidates(candidateJobs, candidates, selectedIndex, target)...)
+	}
+	return reportJobs, reportResults, nonreported, nil
+}
+
+func goAV1ObservedParallelismByBitrate(jobs []encodeJob, results []encodeResult) map[int]float64 {
+	out := map[int]float64{}
+	for i, job := range jobs {
+		if job.encoder != "goav1" || results[i].status != "ok" {
+			continue
+		}
+		parallel := observedParallelism(results[i].duration, results[i].cpuUser, results[i].cpuSystem, results[i].cpuAvailable)
+		if parallel > 0 && !math.IsNaN(parallel) && !math.IsInf(parallel, 0) {
+			out[job.bitrate] = parallel
+		}
+	}
+	return out
+}
+
+func selectSVTLPSweepCandidate(jobs []encodeJob, candidates []encodeResult, target float64) (int, bool) {
+	best := -1
+	bestDiff := math.Inf(1)
+	bestParallel := 0.0
+	const epsilon = 1e-9
+	for i, result := range candidates {
+		if result.status != "ok" {
+			continue
+		}
+		parallel := observedParallelism(result.duration, result.cpuUser, result.cpuSystem, result.cpuAvailable)
+		if parallel <= 0 || math.IsNaN(parallel) || math.IsInf(parallel, 0) {
+			continue
+		}
+		diff := math.Abs(parallel - target)
+		if best < 0 || diff < bestDiff-epsilon {
+			best, bestDiff, bestParallel = i, diff, parallel
+			continue
+		}
+		if math.Abs(diff-bestDiff) > epsilon {
+			continue
+		}
+		bestOver, candidateOver := bestParallel > target, parallel > target
+		if bestOver != candidateOver {
+			if !candidateOver {
+				best, bestDiff, bestParallel = i, diff, parallel
+			}
+			continue
+		}
+		if jobs[i].svtLP < jobs[best].svtLP {
+			best, bestDiff, bestParallel = i, diff, parallel
+		}
+	}
+	return best, best >= 0
+}
+
+func markSelectedSVTLPSweepCandidate(job encodeJob, result encodeResult, target float64) encodeResult {
+	result = markSVTLPSweepCandidate(job, result, "reported-row")
+	parallel := observedParallelism(result.duration, result.cpuUser, result.cpuSystem, result.cpuAvailable)
+	result.settings["svt_lp_sweep_selected"] = "true"
+	result.settings["svt_lp_sweep_target_encoder"] = "goav1"
+	result.settings["svt_lp_sweep_target_observed_parallelism"] = formatParallelism(target)
+	result.settings["svt_lp_sweep_selected_observed_parallelism"] = formatParallelism(parallel)
+	result.settings["svt_lp_sweep_selected_abs_delta"] = formatParallelism(math.Abs(parallel - target))
+	return result
+}
+
+func markNonreportedSVTLPSweepCandidates(jobs []encodeJob, candidates []encodeResult, selectedIndex int, target float64) []encodeResult {
+	out := make([]encodeResult, 0, len(candidates)-1)
+	for i, result := range candidates {
+		if i == selectedIndex {
+			continue
+		}
+		result = markSVTLPSweepCandidate(jobs[i], result, "svt-lp-sweep-candidate")
+		if target > 0 && !math.IsNaN(target) && !math.IsInf(target, 0) {
+			parallel := observedParallelism(result.duration, result.cpuUser, result.cpuSystem, result.cpuAvailable)
+			result.settings["svt_lp_sweep_target_encoder"] = "goav1"
+			result.settings["svt_lp_sweep_target_observed_parallelism"] = formatParallelism(target)
+			if parallel > 0 && !math.IsNaN(parallel) && !math.IsInf(parallel, 0) {
+				result.settings["svt_lp_sweep_candidate_observed_parallelism"] = formatParallelism(parallel)
+				result.settings["svt_lp_sweep_candidate_abs_delta"] = formatParallelism(math.Abs(parallel - target))
+			}
+		}
+		out = append(out, result)
+	}
+	return out
+}
+
+func svtLPSweepErrorResult(job encodeJob, result encodeResult, errText string) encodeResult {
+	result = markSVTLPSweepCandidate(job, result, "reported-row")
+	result.status = "error"
+	result.errText = errText
+	result.settings["svt_lp_sweep_selected"] = "false"
+	result.settings["svt_lp_sweep_error"] = errText
+	return result
+}
+
+func markSVTLPSweepCandidate(job encodeJob, result encodeResult, role string) encodeResult {
+	if result.settings == nil {
+		result.settings = map[string]string{}
+	}
+	result.settings["metadata_role"] = role
+	result.settings["svt_lp_sweep"] = "true"
+	result.settings["svt_lp_sweep_levels"] = strings.Trim(strings.Join(strings.Fields(fmt.Sprint(svtLPSweepLevels())), ","), "[]")
+	result.settings["svt_lp_sweep_candidate"] = "true"
+	result.settings["svt_lp_sweep_candidate_lp"] = strconv.Itoa(job.svtLP)
+	return result
+}
+
+func formatParallelism(v float64) string {
+	return strconv.FormatFloat(v, 'f', 6, 64)
 }
 
 func requiredEncoderError(required map[string]bool, clipName string, result encodeResult, bitrate int) error {
@@ -2596,6 +2826,7 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		AOMRowMT:         cfg.aomRowMT,
 		AOMCPUUsed:       cfg.aomCPUUsed,
 		SVTLP:            cfg.svtLP,
+		SVTLPSweep:       cfg.svtLPSweep,
 		SVTPreset:        cfg.svtPreset,
 		SVTASM:           cfg.svtASM,
 		FFmpegBin:        cfg.ffmpegBin,
@@ -2616,6 +2847,9 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 	}
 	if cfg.commandTimeout > 0 {
 		out.CommandTimeout = cfg.commandTimeout.String()
+	}
+	if cfg.svtLPSweep {
+		out.SVTLPSweepLevels = svtLPSweepLevels()
 	}
 	if cfg.manifestPath != "" {
 		hash, err := sha256File(cfg.manifestPath)
@@ -2737,7 +2971,7 @@ func fairnessNotes(cfg benchConfig) []string {
 		"Tile controls are recorded as tile-column log2 settings; a requested -tiles value of N means 2^N tile columns for goav1, aomenc, and SVT rows.",
 		"For fair external-baseline metric comparisons, set -ffmpeg-av1-decoder explicitly so external IVF decode does not depend on FFmpeg's implicit decoder selection.",
 		"For fair VMAF comparisons, set -vmaf-model explicitly and report it; qualitybench forwards the value to FFmpeg libvmaf's model option and records it in metadata.",
-		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or sweep --lp 0..6, then report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
+		"For fair SVT comparisons, keep GOMAXPROCS explicit for goav1 and either leave SVT at --lp 0 or use -svt-lp-sweep=true to measure --lp 0..6 and report the SVT level whose observed_parallelism is closest to goav1 rather than matching knob values.",
 		"For fair libaom comparisons, set -aom-cpu-used, -aom-threads, and -aom-row-mt explicitly and report all three; qualitybench forwards them to aomenc --cpu-used, --threads, and --row-mt and records them in metadata.",
 		"For fair SVT comparisons, set -svt-preset explicitly and report it with -svt-lp and -svt-asm; qualitybench forwards it to SvtAv1EncApp --preset and records it in metadata. SVT and aomenc CBR rows are pinned to the same 1000/500/600 ms client buffer model.",
 		"SVT-AV1 --asm defaults to max and may use CPU-specific kernels such as neon_dotprod or neon_i8mm; use -svt-asm to pin the assembly tier when comparing against goav1's current SIMD coverage.",
@@ -2755,6 +2989,9 @@ func fairnessNotes(cfg benchConfig) []string {
 	}
 	if cfg.svtLP == 0 {
 		notes = append(notes, "SVT-AV1 is run with --lp 0 by default, letting SVT choose its parallelism level from the machine rather than forcing a misleading numeric match.")
+	}
+	if cfg.svtLPSweep {
+		notes = append(notes, "SVT-AV1 --lp sweep is enabled: qualitybench measures --lp 0..6 candidates, records nonreported candidates in metadata, and reports the candidate closest to the matched goav1 observed_parallelism.")
 	}
 	if cfg.svtASM == "" {
 		notes = append(notes, "SVT-AV1 is run with its default --asm max setting; report this as a best-SVT row, not as baseline-NEON-equivalent SIMD coverage.")
@@ -3787,7 +4024,7 @@ func runEncoderJobsMeasuredWithRunner(
 			if done[i] {
 				continue
 			}
-			warmupCfg, err := encodeSampleConfig(cfg, job.encoder, job.bitrate, "warmup", run, true)
+			warmupCfg, err := encodeSampleConfig(cfg, job, "warmup", run, true)
 			if err != nil {
 				final[i] = encodeResult{encoder: job.encoder, targetBPS: job.bitrate, status: "error", errText: err.Error(), warmupRuns: cfg.warmupRuns, runs: cfg.runs}
 				done[i] = true
@@ -3809,7 +4046,7 @@ func runEncoderJobsMeasuredWithRunner(
 			if done[i] {
 				continue
 			}
-			sampleCfg, err := encodeSampleConfig(cfg, job.encoder, job.bitrate, "run", run, repeated)
+			sampleCfg, err := encodeSampleConfig(cfg, job, "run", run, repeated)
 			if err != nil {
 				result := encodeResult{encoder: job.encoder, targetBPS: job.bitrate, status: "error", errText: err.Error(), selectedRun: run}
 				results[i] = append(results[i], result)
@@ -3918,16 +4155,28 @@ func validateEncodeResultArtifacts(result encodeResult) error {
 	return nil
 }
 
-func encodeSampleConfig(cfg benchConfig, encoderName string, bitrate int, kind string, run int, repeated bool) (benchConfig, error) {
-	if !repeated {
-		return cfg, nil
-	}
+func encodeSampleConfig(cfg benchConfig, job encodeJob, kind string, run int, repeated bool) (benchConfig, error) {
 	out := cfg
-	out.workdir = filepath.Join(cfg.workdir, fmt.Sprintf("%s_%d_%s_%02d", encoderName, bitrate, kind, run))
+	if job.svtLPSweepCandidate {
+		out.svtLP = job.svtLP
+		out.svtLPSweepCandidate = true
+	}
+	if !repeated && !job.svtLPSweepCandidate {
+		return out, nil
+	}
+	out.workdir = filepath.Join(cfg.workdir, fmt.Sprintf("%s_%s_%02d", encodeJobWorkdirPrefix(job), kind, run))
 	if err := os.MkdirAll(out.workdir, 0o755); err != nil {
 		return benchConfig{}, err
 	}
 	return out, nil
+}
+
+func encodeJobWorkdirPrefix(job encodeJob) string {
+	prefix := fmt.Sprintf("%s_%d", job.encoder, job.bitrate)
+	if job.svtLPSweepCandidate {
+		prefix += fmt.Sprintf("_svtlp%d", job.svtLP)
+	}
+	return prefix
 }
 
 func medianEncodeResult(results []encodeResult) encodeResult {
@@ -4316,8 +4565,13 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 			"ffmpeg_av1_decoder": ffmpegAV1DecoderSetting(cfg.ffmpegAV1Decoder),
 			"svt_lp":             strconv.Itoa(cfg.svtLP),
 			"svt_lp_note":        "parallelism level 0..6, not a processor/thread count",
+			"svt_lp_sweep":       strconv.FormatBool(cfg.svtLPSweep),
 			"svt_bin":            svt,
 		},
+	}
+	if cfg.svtLPSweepCandidate {
+		result.settings["svt_lp_sweep_candidate"] = "true"
+		result.settings["svt_lp_sweep_candidate_lp"] = strconv.Itoa(cfg.svtLP)
 	}
 	if cfg.svtASM == "" {
 		result.settings["svt_asm"] = "default"

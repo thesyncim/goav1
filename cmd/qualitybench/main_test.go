@@ -1325,6 +1325,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		aomRowMT:           0,
 		aomCPUUsed:         8,
 		svtLP:              5,
+		svtLPSweep:         true,
 		svtPreset:          13,
 		ffmpegBin:          "/tools/ffmpeg",
 		ffmpegSHA256:       strings.Repeat("1", 64),
@@ -1359,6 +1360,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		got.TileColumnsLog2 != 0 || got.TileSemantics != "tile-columns-log2" ||
 		got.AOMThreads != 1 || got.AOMRowMT != 0 ||
 		got.AOMCPUUsed != 8 || got.SVTLP != 5 || got.SVTPreset != 13 ||
+		!got.SVTLPSweep || strings.Trim(strings.Join(strings.Fields(fmt.Sprint(got.SVTLPSweepLevels)), ","), "[]") != "0,1,2,3,4,5,6" ||
 		got.FFmpegBin != "/tools/ffmpeg" || got.FFmpegSHA256 != strings.Repeat("1", 64) ||
 		got.FFmpegAV1Decoder != "libdav1d" ||
 		got.VMAFModel != "version=vmaf_v0.6.1" ||
@@ -1373,7 +1375,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 }
 
 func TestFairnessNotesDocumentSVTLP(t *testing.T) {
-	notes := fairnessNotes(benchConfig{encoders: []string{"goav1", "aomenc", "svt-av1"}, svtLP: 0, timingMode: timingModeEndToEnd, publish: true})
+	notes := fairnessNotes(benchConfig{encoders: []string{"goav1", "aomenc", "svt-av1"}, svtLP: 0, svtLPSweep: true, timingMode: timingModeEndToEnd, publish: true})
 	joined := strings.Join(notes, "\n")
 	if !strings.Contains(joined, "not a target processor or thread count") ||
 		!strings.Contains(joined, "observed_parallelism") ||
@@ -1384,7 +1386,8 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "sample passes") ||
 		!strings.Contains(joined, "median wall-time") ||
 		!strings.Contains(joined, "artifact hashes") ||
-		!strings.Contains(joined, "sweep --lp 0..6") ||
+		!strings.Contains(joined, "-svt-lp-sweep=true") ||
+		!strings.Contains(joined, "records nonreported candidates") ||
 		!strings.Contains(joined, "-goav1-max-threads") ||
 		!strings.Contains(joined, "-goav1-effort") ||
 		!strings.Contains(joined, "goav1_process_timing") ||
@@ -1621,6 +1624,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		aomRowMT:            1,
 		aomCPUUsed:          8,
 		svtLP:               4,
+		svtLPSweep:          true,
 		svtPreset:           13,
 		svtASM:              "neon",
 		ffmpegAV1Decoder:    "libdav1d",
@@ -1695,6 +1699,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"aomenc-sha256":        true,
 			"svt-preset":           true,
 			"svt-lp":               true,
+			"svt-lp-sweep":         true,
 			"svt-asm":              true,
 			"svt-bin":              true,
 			"svt-sha256":           true,
@@ -1918,6 +1923,24 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	if err := validatePublishConfig(missingSVTPreset, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "-svt-preset") {
 		t.Fatalf("missing explicit svt preset error=%v", err)
+	}
+
+	missingSVTLPSweep := cfg
+	missingSVTLPSweep.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingSVTLPSweep.explicitFlags[k] = v
+	}
+	delete(missingSVTLPSweep.explicitFlags, "svt-lp-sweep")
+	if err := validatePublishConfig(missingSVTLPSweep, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-svt-lp-sweep") {
+		t.Fatalf("missing explicit svt lp sweep error=%v", err)
+	}
+
+	disabledSVTLPSweep := cfg
+	disabledSVTLPSweep.svtLPSweep = false
+	if err := validatePublishConfig(disabledSVTLPSweep, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-svt-lp-sweep=true") {
+		t.Fatalf("disabled svt lp sweep error=%v", err)
 	}
 
 	missingLayers := cfg
@@ -2161,6 +2184,71 @@ func TestEncodeJobsRunOrder(t *testing.T) {
 	}
 }
 
+func TestMeasuredEncodeJobsExpandSVTLPSweep(t *testing.T) {
+	cfg := benchConfig{
+		encoders:   []string{"goav1", "svt-av1"},
+		bitrates:   []int{100},
+		runOrder:   runOrderBitrateEncoder,
+		svtLPSweep: true,
+	}
+	got := encodeJobLabels(measuredEncodeJobsForConfig(cfg))
+	want := "100:goav1,100:svt-av1/lp0,100:svt-av1/lp1,100:svt-av1/lp2,100:svt-av1/lp3,100:svt-av1/lp4,100:svt-av1/lp5,100:svt-av1/lp6"
+	if got != want {
+		t.Fatalf("measured jobs=%s want %s", got, want)
+	}
+}
+
+func TestSelectReportedEncodeResultsChoosesClosestSVTLP(t *testing.T) {
+	jobs := []encodeJob{{bitrate: 100, encoder: "goav1"}}
+	for _, lp := range svtLPSweepLevels() {
+		jobs = append(jobs, encodeJob{bitrate: 100, encoder: "svt-av1", svtLP: lp, svtLPSweepCandidate: true})
+	}
+	results := []encodeResult{parallelismResult("goav1", 100, 2.00)}
+	for _, parallel := range []float64{0.75, 1.25, 1.90, 2.30, 3.00, 4.00, 5.00} {
+		results = append(results, parallelismResult("svt-av1", 100, parallel))
+	}
+	reportJobs, reportResults, nonreported, err := selectReportedEncodeResults(benchConfig{svtLPSweep: true}, jobs, results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := encodeJobLabels(reportJobs); got != "100:goav1,100:svt-av1" {
+		t.Fatalf("reported jobs=%s", got)
+	}
+	if len(reportResults) != 2 || len(nonreported) != 6 {
+		t.Fatalf("reported=%d nonreported=%d", len(reportResults), len(nonreported))
+	}
+	selected := reportResults[1]
+	if selected.settings["svt_lp_sweep_selected"] != "true" ||
+		selected.settings["svt_lp_sweep_candidate_lp"] != "2" ||
+		selected.settings["svt_lp_sweep_target_observed_parallelism"] != "2.000000" ||
+		selected.settings["svt_lp_sweep_selected_observed_parallelism"] != "1.900000" {
+		t.Fatalf("selected settings=%+v", selected.settings)
+	}
+	for _, result := range nonreported {
+		if result.settings["metadata_role"] != "svt-lp-sweep-candidate" ||
+			result.settings["svt_lp_sweep_candidate"] != "true" {
+			t.Fatalf("nonreported settings=%+v", result.settings)
+		}
+	}
+}
+
+func parallelismResult(encoder string, bitrate int, parallelism float64) encodeResult {
+	return encodeResult{
+		encoder:       encoder,
+		targetBPS:     bitrate,
+		duration:      time.Second,
+		cpuUser:       time.Duration(parallelism * float64(time.Second)),
+		cpuAvailable:  true,
+		bytes:         int64(bitrate),
+		encodedBytes:  int64(bitrate + 1),
+		decodedBytes:  int64(bitrate + 2),
+		encodedSHA256: encoder + "-encoded",
+		decodedSHA256: encoder + "-decoded",
+		status:        "ok",
+		settings:      map[string]string{},
+	}
+}
+
 func TestRunEncoderJobsMeasuredInterleavesSamplesByPass(t *testing.T) {
 	cfg := benchConfig{
 		workdir:    t.TempDir(),
@@ -2326,6 +2414,9 @@ func encodeJobLabels(jobs []encodeJob) string {
 	labels := make([]string, len(jobs))
 	for i, job := range jobs {
 		labels[i] = strconv.Itoa(job.bitrate) + ":" + job.encoder
+		if job.svtLPSweepCandidate {
+			labels[i] += "/lp" + strconv.Itoa(job.svtLP)
+		}
 	}
 	return strings.Join(labels, ",")
 }

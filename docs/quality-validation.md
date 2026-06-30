@@ -68,6 +68,7 @@ GO_SHA256=$(shasum -a 256 "$GO_BIN" | awk '{print $1}')
   -aom-cpu-used 8 \
   -svt-preset 13 \
   -svt-lp 0 \
+  -svt-lp-sweep=true \
   -csv quality.csv -summary-csv quality-summary.csv -require-summary \
   -stats-csv quality-encoder-stats.csv \
   -frame-metrics-csv quality-frame-metrics.csv \
@@ -193,8 +194,8 @@ unset, explicit absolute `-ffmpeg-bin`, `-aomenc-bin`, and `-svt-bin` paths
 with matching SHA-256 pins for every selected external tool, an explicit
 FFmpeg AV1 decoder when external baselines are selected, explicit
 libaom concurrency settings and realtime speed setting when `aomenc` is
-selected, explicit SVT preset, parallelism, and assembly settings when
-`svt-av1` is selected, distinct CSV, metadata, summary, and diagnostic artifact
+selected, explicit SVT preset, parallelism, sweep policy, and assembly settings
+when `svt-av1` is selected, distinct CSV, metadata, summary, and diagnostic artifact
 paths, an empty `-workdir` before timing starts, exact raw I420 input byte
 counts for every manifest row,
 and the manifest-declared
@@ -283,16 +284,18 @@ where higher presets are faster with a quality tradeoff. Publishable rows must
 report both encoders' speed/effort knobs. Use `-gomaxprocs` to make the Go
 scheduler cap explicit for a run. A fair report should include the chosen
 `GOMAXPROCS`, the chosen `-goav1-max-threads`, the chosen `-goav1-effort`, the
-chosen `-svt-preset`, the chosen `-svt-lp`, and the CSV/metadata timing columns:
+chosen `-svt-preset`, the chosen `-svt-lp`, the chosen `-svt-lp-sweep` policy,
+and the CSV/metadata timing columns:
 `encode_wall_sec`, `cpu_user_sec`, `cpu_system_sec`, `cpu_total_sec`, and
 `observed_parallelism`. Use wall time for user-visible speed, and CPU seconds
 or `observed_parallelism=cpu_total_sec/encode_wall_sec` to check whether one
 encoder consumed a larger CPU budget. Publish mode fails a measured tuple when
 any successful sample lacks positive wall time or process CPU timing, so copied
-tables cannot silently omit CPU-budget evidence. If sweeping SVT levels, report
-each `--lp` as an SVT level, not as a target thread count. For a closest-budget SVT
-row, sweep `-svt-lp 0..6` and select by measured `observed_parallelism`, not by
-matching `GOMAXPROCS=N` to `--lp N`.
+tables cannot silently omit CPU-budget evidence. With `-svt-lp-sweep=true`,
+qualitybench measures SVT `--lp 0..6`, reports the candidate whose measured
+`observed_parallelism` is closest to the matched goav1 row, and records the
+nonreported candidates in metadata. Treat every `--lp` as an SVT level, not as a
+target thread count; do not match `GOMAXPROCS=N` to `--lp N`.
 
 Also report SVT's assembly tier. SVT-AV1 `--asm` defaults to `max`, which may
 use kernels above baseline NEON on Apple silicon, such as `neon_dotprod` or
@@ -323,7 +326,7 @@ contract:
 | Encoder | Low-delay/rate pins | Speed and parallelism pins | Stream and picture pins |
 | --- | --- | --- | --- |
 | `aomenc` | `--rt`, `--end-usage=cbr`, `--lag-in-frames=0`, `--auto-alt-ref=0`, `--enable-fwd-kf=0`, `--drop-frame=0`, `--buf-sz=1000`, `--buf-initial-sz=500`, `--buf-optimal-sz=600` | `--cpu-used`, `--threads`, and `--row-mt` from `-aom-cpu-used`, `-aom-threads`, and `-aom-row-mt`; `--quiet` is always set | profile 0, 8-bit I420, `--target-bitrate`, `--fps`, `--limit`, `--kf-min-dist`, `--kf-max-dist`, and optional `--tile-columns` |
-| `SvtAv1EncApp` | `--rc 2`, `--buf-sz 1000`, `--buf-initial-sz 500`, `--buf-optimal-sz 600`, `--lookahead 0`, `--pred-struct 1`, `--rtc 1`, `--scd 0`, `--enable-tf 0`, `--irefresh-type 2` | `--preset`, `--lp`, and optional `--asm` from `-svt-preset`, `-svt-lp`, and `-svt-asm` | profile 0, level 0, 8-bit I420 (`--color-format 1`), `--tbr`, `--fps-num`, `--fps-denom`, `--frames`, `--keyint`, `--progress 0`, and optional `--tile-columns` |
+| `SvtAv1EncApp` | `--rc 2`, `--buf-sz 1000`, `--buf-initial-sz 500`, `--buf-optimal-sz 600`, `--lookahead 0`, `--pred-struct 1`, `--rtc 1`, `--scd 0`, `--enable-tf 0`, `--irefresh-type 2` | `--preset`, `--lp`, optional automated `--lp 0..6` sweep selection, and optional `--asm` from `-svt-preset`, `-svt-lp`, `-svt-lp-sweep`, and `-svt-asm` | profile 0, level 0, 8-bit I420 (`--color-format 1`), `--tbr`, `--fps-num`, `--fps-denom`, `--frames`, `--keyint`, `--progress 0`, and optional `--tile-columns` |
 
 When `-stats-csv` is set, goav1 rows also include encoder decision counters:
 partition choices, block sizes, skip/coded block counts, references, inter
