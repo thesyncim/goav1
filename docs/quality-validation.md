@@ -99,7 +99,8 @@ The same strict path is available as `make qualitybench-publish`; set
 `QUALITYBENCH_FFMPEG_SHA256`, and the matching `QUALITYBENCH_AOMENC_*` /
 `QUALITYBENCH_SVT_*` variables for selected external encoders, then override the
 other `QUALITYBENCH_*` variables when sweeping speed, assembly, bitrate settings,
-or the explicit FFmpeg AV1 decoder (`QUALITYBENCH_FFMPEG_AV1_DECODER`, default
+the per-command timeout (`QUALITYBENCH_COMMAND_TIMEOUT`, default `30m`), or the
+explicit FFmpeg AV1 decoder (`QUALITYBENCH_FFMPEG_AV1_DECODER`, default
 `libdav1d`) and VMAF model (`QUALITYBENCH_VMAF_MODEL`, default
 `version=vmaf_v0.6.1`).
 
@@ -199,8 +200,8 @@ low-overhead stream through the public decoder, never encoder reconstruction
 buffers. The metadata JSON records command paths, binary SHA-256 hashes, and
 version/help probes for the external tools used by the run. It also records
 `manifest_sha256`, the Go runtime build settings exposed by the benchmark
-binary, full `go env -json` metadata, the effective `GOMAXPROCS`, CPU
-count/model when available, hostname,
+binary, full `go env -json` metadata, the external command timeout, the
+effective `GOMAXPROCS`, CPU count/model when available, hostname,
 OS/kernel version when available, `PATH`, selected Go runtime environment
 variables (`GOFLAGS`, `GOGC`, `GOMEMLIMIT`, `GODEBUG`), and structured
 CPU-affinity, power-mode, thermal-state, frequency-policy, and background-load

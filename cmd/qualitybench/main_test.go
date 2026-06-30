@@ -1341,7 +1341,7 @@ exit 7
 		t.Fatal(err)
 	}
 	var result encodeResult
-	_ = timeCommand(scriptPath, nil, &result)
+	_ = timeCommand(defaultCommandTimeout, scriptPath, nil, &result)
 	rawCount, err := os.ReadFile(countPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1399,6 +1399,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		shuffleSeed:         7,
 		runs:                3,
 		warmupRuns:          1,
+		commandTimeout:      30 * time.Minute,
 		environmentNotes:    "fixed power mode, idle machine",
 		cpuAffinity:         "none",
 		powerMode:           "high power",
@@ -1439,6 +1440,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"shuffle-seed":       true,
 			"runs":               true,
 			"warmup-runs":        true,
+			"command-timeout":    true,
 			"goav1-max-threads":  true,
 			"goav1-effort":       true,
 			"goav1-scene-cut":    true,
@@ -2215,6 +2217,7 @@ func TestWriteMetadataJSON(t *testing.T) {
 		thermalState:     "cool start",
 		frequencyPolicy:  "automatic",
 		backgroundLoad:   "idle machine",
+		commandTimeout:   45 * time.Second,
 	}
 	invocations := []encoderInvocationMetadata{{
 		Clip:             "clip",
@@ -2281,6 +2284,9 @@ func TestWriteMetadataJSON(t *testing.T) {
 	if doc.Config.SampleOrder != "interleaved-by-sample-pass" {
 		t.Fatalf("sample order=%q", doc.Config.SampleOrder)
 	}
+	if doc.Config.CommandTimeout != "45s" {
+		t.Fatalf("command timeout=%q", doc.Config.CommandTimeout)
+	}
 	if len(doc.Config.RequiredEncoders) != 1 || doc.Config.RequiredEncoders[0] != "goav1" {
 		t.Fatalf("required encoders=%+v", doc.Config.RequiredEncoders)
 	}
@@ -2307,5 +2313,25 @@ func TestWriteMetadataJSON(t *testing.T) {
 	}
 	if _, ok := doc.Tools["ffmpeg"]; !ok {
 		t.Fatalf("tools=%+v", doc.Tools)
+	}
+}
+
+func TestCommandTimeoutReportsDeadline(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "sleepy")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nsleep 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var result encodeResult
+	elapsed := timeCommand(10*time.Millisecond, bin, nil, &result)
+	if result.status != "error" || !strings.Contains(result.errText, "command timed out after 10ms") {
+		t.Fatalf("timeout result=%+v", result)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("timeout elapsed=%s, want prompt cancellation", elapsed)
+	}
+
+	out, err := combinedOutputWithTimeout(10*time.Millisecond, bin)
+	if err == nil || !strings.Contains(err.Error(), "command timed out after 10ms") {
+		t.Fatalf("combined timeout err=%v out=%q", err, out)
 	}
 }

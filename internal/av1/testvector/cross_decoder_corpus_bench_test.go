@@ -1616,8 +1616,9 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 		report.Environment.NumCPU <= 0 || report.Environment.PATH == "" {
 		t.Fatalf("environment=%+v", report.Environment)
 	}
-	if !strings.Contains(report.Timing.Statistic, "median measured") {
-		t.Fatalf("timing statistic=%q", report.Timing.Statistic)
+	if !strings.Contains(report.Timing.Statistic, "median measured") ||
+		report.Timing.ExternalCommandTimeout != externalDecoderCommandTimeout.String() {
+		t.Fatalf("timing=%+v", report.Timing)
 	}
 	if len(report.Clips) != 1 || report.Clips[0].Name != "clip" || report.Clips[0].CQ != 32 ||
 		report.Clips[0].BitDepth != 8 || report.Clips[0].Profile != 0 ||
@@ -2568,12 +2569,13 @@ type corpusPublishReportCorpus struct {
 }
 
 type corpusPublishReportTiming struct {
-	Runs                 int    `json:"runs"`
-	WarmupRuns           int    `json:"warmup_runs"`
-	Statistic            string `json:"statistic"`
-	ConcurrencyModel     string `json:"concurrency_model"`
-	InProcessGoAV1       bool   `json:"in_process_goav1"`
-	ExternalStartupModel string `json:"external_startup_model"`
+	Runs                   int    `json:"runs"`
+	WarmupRuns             int    `json:"warmup_runs"`
+	Statistic              string `json:"statistic"`
+	ConcurrencyModel       string `json:"concurrency_model"`
+	InProcessGoAV1         bool   `json:"in_process_goav1"`
+	ExternalStartupModel   string `json:"external_startup_model"`
+	ExternalCommandTimeout string `json:"external_command_timeout"`
 }
 
 type corpusPublishReportTool struct {
@@ -3096,12 +3098,13 @@ func writeCorpusPublishReport(path, dir string, manifest corpusPublishManifest, 
 			RequiredDecoders: os.Getenv(envBenchCorpusRequireDecoders),
 		},
 		Timing: corpusPublishReportTiming{
-			Runs:                 crossBenchRuns,
-			WarmupRuns:           1,
-			Statistic:            "median measured wall-clock selected; JSON stores every measured sample plus min, max, and IQR",
-			ConcurrencyModel:     "goav1 worker pool = 1; aomdec --threads=1; dav1d --threads 1; SvtAv1DecApp --lp 1 requests SVT parallelism level 1, not a verified thread count",
-			InProcessGoAV1:       true,
-			ExternalStartupModel: "raw includes subprocess startup; adjusted subtracts one measured startup baseline per clip",
+			Runs:                   crossBenchRuns,
+			WarmupRuns:             1,
+			Statistic:              "median measured wall-clock selected; JSON stores every measured sample plus min, max, and IQR",
+			ConcurrencyModel:       "goav1 worker pool = 1; aomdec --threads=1; dav1d --threads 1; SvtAv1DecApp --lp 1 requests SVT parallelism level 1, not a verified thread count",
+			InProcessGoAV1:         true,
+			ExternalStartupModel:   "raw includes subprocess startup; adjusted subtracts one measured startup baseline per clip",
+			ExternalCommandTimeout: externalDecoderCommandTimeout.String(),
 		},
 		Tools:    corpusPublishReportTools(timers),
 		Clips:    corpusPublishReportClips(clips, manifest),

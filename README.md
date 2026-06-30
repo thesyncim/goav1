@@ -529,7 +529,8 @@ data cannot be used by accident.
 That report prints per-clip and aggregate fps, raw and startup-adjusted external
 decoder timings, and the goav1/dav1d ratio that should drive optimization work.
 Measured decode jobs use a deterministic clip-rotated decoder interleave so one
-decoder column does not always run first or last across the corpus.
+decoder column does not always run first or last across the corpus. External
+decoder invocations have an explicit 30m timeout recorded in the report.
 
 Allocation and compiler guardrails are part of performance, not an afterthought:
 

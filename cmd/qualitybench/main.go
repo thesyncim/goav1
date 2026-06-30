@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/csv"
@@ -33,10 +34,11 @@ import (
 )
 
 const (
-	defaultWidth  = 1920
-	defaultHeight = 1080
-	defaultFrames = 120
-	defaultFPS    = 60
+	defaultWidth          = 1920
+	defaultHeight         = 1080
+	defaultFrames         = 120
+	defaultFPS            = 60
+	defaultCommandTimeout = 30 * time.Minute
 
 	timingModeCore     = "core"
 	timingModeEndToEnd = "e2e"
@@ -103,6 +105,7 @@ type benchConfig struct {
 	svtASM              string
 	runs                int
 	warmupRuns          int
+	commandTimeout      time.Duration
 	publish             bool
 	keep                bool
 	explicitFlags       map[string]bool
@@ -322,6 +325,7 @@ type metadataConfig struct {
 	SampleOrder      string   `json:"sample_order"`
 	Runs             int      `json:"runs"`
 	WarmupRuns       int      `json:"warmup_runs"`
+	CommandTimeout   string   `json:"command_timeout,omitempty"`
 	Publish          bool     `json:"publish,omitempty"`
 }
 
@@ -659,6 +663,7 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.svtASM, "svt-asm", "", "limit SVT --asm instruction set (empty = SVT default max; e.g. c,neon,neon_dotprod,neon_i8mm,sve,sve2)")
 	flag.IntVar(&cfg.runs, "runs", 1, "measured encode runs per encoder/bitrate tuple; the median wall-time run is reported")
 	flag.IntVar(&cfg.warmupRuns, "warmup-runs", 0, "unreported warmup encode runs per encoder/bitrate tuple")
+	flag.DurationVar(&cfg.commandTimeout, "command-timeout", defaultCommandTimeout, "per-invocation timeout for external encoder, decode, and metric commands")
 	flag.StringVar(&cfg.workdir, "workdir", "", "directory for raw, decoded, and encoded intermediates")
 	flag.StringVar(&cfg.csvPath, "csv", "", "write CSV to this path instead of stdout")
 	flag.StringVar(&cfg.summaryCSVPath, "summary-csv", "", "write BD-rate summary CSV to this path")
@@ -783,6 +788,9 @@ func parseFlags() (benchConfig, error) {
 	}
 	if cfg.warmupRuns < 0 {
 		return benchConfig{}, fmt.Errorf("invalid warmup run count %d", cfg.warmupRuns)
+	}
+	if cfg.commandTimeout <= 0 {
+		return benchConfig{}, fmt.Errorf("invalid command timeout %s", cfg.commandTimeout)
 	}
 	if cfg.svtASM != "" {
 		var ok bool
@@ -942,6 +950,9 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	}
 	if cfg.warmupRuns < 1 {
 		return errors.New("publish requires -warmup-runs >= 1")
+	}
+	if err := requireExplicitFlag(cfg, "command-timeout"); err != nil {
+		return err
 	}
 	if !cfg.requireCorpus || cfg.manifestPath == "" || cfg.minClips < 2 {
 		return errors.New("publish requires -require-corpus with -manifest and -min-clips >= 2")
@@ -2368,6 +2379,9 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		WarmupRuns:       cfg.warmupRuns,
 		Publish:          cfg.publish,
 	}
+	if cfg.commandTimeout > 0 {
+		out.CommandTimeout = cfg.commandTimeout.String()
+	}
 	if cfg.manifestPath != "" {
 		hash, err := sha256File(cfg.manifestPath)
 		if err != nil {
@@ -3659,7 +3673,7 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	)
 	args = append(args, "-o", ivfPath, refPath)
 	result.command = commandLine(aomenc, args)
-	result.duration = timeCommand(aomenc, args, &result)
+	result.duration = timeCommand(cfg.commandTimeout, aomenc, args, &result)
 	if result.status != "" {
 		return result
 	}
@@ -3776,7 +3790,7 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		args = append(args, "--tile-columns", strconv.Itoa(cfg.tiles))
 	}
 	result.command = commandLine(svt, args)
-	result.duration = timeCommand(svt, args, &result)
+	result.duration = timeCommand(cfg.commandTimeout, svt, args, &result)
 	if result.status != "" {
 		return result
 	}
@@ -3811,9 +3825,11 @@ func kbps(bps int) int {
 	return (bps + 500) / 1000
 }
 
-func timeCommand(name string, args []string, result *encodeResult) time.Duration {
+func timeCommand(timeout time.Duration, name string, args []string, result *encodeResult) time.Duration {
 	start := time.Now()
-	cmd := exec.Command(name, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), effectiveCommandTimeout(timeout))
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
 	var capture boundedCommandOutput
 	cmd.Stdout = &capture
 	cmd.Stderr = &capture
@@ -3826,9 +3842,34 @@ func timeCommand(name string, args []string, result *encodeResult) time.Duration
 	}
 	if err != nil {
 		result.status = "error"
-		result.errText = trimCommandOutput(err, capture.Bytes())
+		result.errText = trimCommandOutput(commandTimeoutError(ctx, timeout, err), capture.Bytes())
 	}
 	return elapsed
+}
+
+func combinedOutputWithTimeout(timeout time.Duration, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), effectiveCommandTimeout(timeout))
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return out, commandTimeoutError(ctx, timeout, err)
+	}
+	return out, nil
+}
+
+func effectiveCommandTimeout(timeout time.Duration) time.Duration {
+	if timeout > 0 {
+		return timeout
+	}
+	return defaultCommandTimeout
+}
+
+func commandTimeoutError(ctx context.Context, timeout time.Duration, err error) error {
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("command timed out after %s: %w", effectiveCommandTimeout(timeout), ctx.Err())
+	}
+	return err
 }
 
 type boundedCommandOutput struct {
@@ -3907,8 +3948,7 @@ func decodeIVFWithFFmpeg(cfg benchConfig, ivfPath, yuvPath string, width, height
 		"-f", "rawvideo",
 		yuvPath,
 	)
-	cmd := exec.Command(commandSetting(cfg.ffmpegBin, "ffmpeg"), args...)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := combinedOutputWithTimeout(cfg.commandTimeout, commandSetting(cfg.ffmpegBin, "ffmpeg"), args...); err != nil {
 		return 0, "", fmt.Errorf("ffmpeg decode: %s", trimCommandOutput(err, out))
 	}
 	return decodedYUVMetadata(yuvPath, width, height, frames)
@@ -4049,8 +4089,7 @@ func measureDecoded(cfg benchConfig, filters map[string]bool, required map[strin
 
 func runScalarMetric(cfg benchConfig, refPath, decodedPath, filterName, pattern string) (float64, error) {
 	args := rawMetricArgs(cfg, refPath, decodedPath, filterName)
-	cmd := exec.Command(commandSetting(cfg.ffmpegBin, "ffmpeg"), args...)
-	out, err := cmd.CombinedOutput()
+	out, err := combinedOutputWithTimeout(cfg.commandTimeout, commandSetting(cfg.ffmpegBin, "ffmpeg"), args...)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %s", filterName, trimCommandOutput(err, out))
 	}
@@ -4071,8 +4110,7 @@ func runFrameMetric(cfg benchConfig, refPath, decodedPath, encoderName string, b
 	_ = os.Remove(logPath)
 	filterSpec := fmt.Sprintf("%s=stats_file=%s", filterName, escapeFilterPath(logPath))
 	args := rawMetricArgs(cfg, refPath, decodedPath, filterSpec)
-	cmd := exec.Command(commandSetting(cfg.ffmpegBin, "ffmpeg"), args...)
-	out, err := cmd.CombinedOutput()
+	out, err := combinedOutputWithTimeout(cfg.commandTimeout, commandSetting(cfg.ffmpegBin, "ffmpeg"), args...)
 	if err != nil {
 		return nil, fmt.Errorf("%s frame metrics: %s", filterName, trimCommandOutput(err, out))
 	}
@@ -4182,8 +4220,7 @@ func rawMetricArgs(cfg benchConfig, refPath, decodedPath, filterName string) []s
 func runVMAF(cfg benchConfig, refPath, decodedPath, encoderName string, bitrate int) (float64, error) {
 	logPath := filepath.Join(cfg.workdir, fmt.Sprintf("%s_%d_vmaf.json", encoderName, bitrate))
 	args := vmafArgs(cfg, refPath, decodedPath, logPath)
-	cmd := exec.Command(commandSetting(cfg.ffmpegBin, "ffmpeg"), args...)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := combinedOutputWithTimeout(cfg.commandTimeout, commandSetting(cfg.ffmpegBin, "ffmpeg"), args...); err != nil {
 		return 0, fmt.Errorf("libvmaf: %s", trimCommandOutput(err, out))
 	}
 	raw, err := os.ReadFile(logPath)

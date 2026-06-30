@@ -91,6 +91,8 @@ import (
 // keep the MIN wall-clock across runs to reject scheduler/IO noise.
 const crossBenchRuns = 9
 
+const externalDecoderCommandTimeout = 30 * time.Minute
+
 // externalDecoder describes one reference C decoder we shell out to.
 type externalDecoder struct {
 	// name is the column label in the report.
@@ -265,11 +267,23 @@ func minDuration(warmup int, runs int, fn func() error) (time.Duration, error) {
 // result. Stdout/stderr are bounded-captured on that same invocation so a
 // failed sample cannot be masked by a successful diagnostic rerun.
 func runExternal(bin string, args []string) error {
-	cmd := exec.Command(bin, args...)
+	return runExternalWithTimeout(externalDecoderCommandTimeout, bin, args)
+}
+
+func runExternalWithTimeout(timeout time.Duration, bin string, args []string) error {
+	if timeout <= 0 {
+		timeout = externalDecoderCommandTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
 	var sink boundedExternalOutput
 	cmd.Stdout = &sink
 	cmd.Stderr = &sink
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			err = fmt.Errorf("external decoder timed out after %s: %w", timeout, ctx.Err())
+		}
 		msg := strings.TrimSpace(sink.String())
 		if msg == "" {
 			return err
@@ -325,6 +339,17 @@ exit 0
 	err := runExternal(bin, []string{state})
 	if err == nil || !strings.Contains(err.Error(), "first invocation failed") {
 		t.Fatalf("runExternal error=%v, want original first failure", err)
+	}
+}
+
+func TestRunExternalReportsTimeout(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "sleepy-decoder")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nsleep 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := runExternalWithTimeout(10*time.Millisecond, bin, nil)
+	if err == nil || !strings.Contains(err.Error(), "external decoder timed out after 10ms") {
+		t.Fatalf("runExternalWithTimeout error=%v, want timeout", err)
 	}
 }
 
