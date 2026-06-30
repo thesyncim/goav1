@@ -135,6 +135,9 @@ func warpAffine8Offset(dst frame.Plane, ref frame.Plane, matX int, matY int, wri
 
 func warpHorizontal8(tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, ref frame.Plane, i int, j int, matrix [6]int32, alpha int, beta int, gamma int, delta int, ssX int, ssY int, reduceBitsHoriz int, offsetBitsHoriz int) int {
 	ix4, sx4, iy4, sy4 := warpBlockOrigin(i, j, matrix, alpha, beta, gamma, delta, ssX, ssY)
+	if iy4 >= 7 && iy4+7 < ref.Height && ix4 >= 7 && ix4+8 <= ref.Width {
+		return warpHorizontal8Resident(tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz)
+	}
 	for k := -7; k < 8; k++ {
 		iy := clampInt(iy4+k, 0, ref.Height-1)
 		row := iy * ref.Stride
@@ -163,6 +166,34 @@ func warpHorizontal8(tmp *[warpedIntermediateRows * warpedIntermediateColumns]in
 					sum += int(ref.Pix[row+sampleX]) * int(coeffs[m])
 				}
 			}
+			tmp[(k+7)*warpedIntermediateColumns+(l+4)] = int32(roundPowerOfTwo(sum, reduceBitsHoriz))
+			sx += alpha
+		}
+	}
+	return sy4
+}
+
+func warpHorizontal8Resident(tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, ref frame.Plane, ix4 int, sx4 int, iy4 int, sy4 int, alpha int, beta int, reduceBitsHoriz int, offsetBitsHoriz int) int {
+	for k := -7; k < 8; k++ {
+		row := (iy4 + k) * ref.Stride
+		sx := sx4 + beta*(k+4)
+		for l := -4; l < 4; l++ {
+			ix := ix4 + l - 3
+			offs := roundPowerOfTwo(sx, warpedDiffPrecBits) + warpedPixelPrecShifts
+			if offs < 0 || offs >= len(warpedFilter) {
+				offs = clampInt(offs, 0, len(warpedFilter)-1)
+			}
+			coeffs := warpedFilter[offs]
+			base := row + ix
+			sum := 1 << offsetBitsHoriz
+			sum += int(ref.Pix[base+0]) * int(coeffs[0])
+			sum += int(ref.Pix[base+1]) * int(coeffs[1])
+			sum += int(ref.Pix[base+2]) * int(coeffs[2])
+			sum += int(ref.Pix[base+3]) * int(coeffs[3])
+			sum += int(ref.Pix[base+4]) * int(coeffs[4])
+			sum += int(ref.Pix[base+5]) * int(coeffs[5])
+			sum += int(ref.Pix[base+6]) * int(coeffs[6])
+			sum += int(ref.Pix[base+7]) * int(coeffs[7])
 			tmp[(k+7)*warpedIntermediateColumns+(l+4)] = int32(roundPowerOfTwo(sum, reduceBitsHoriz))
 			sx += alpha
 		}
@@ -214,6 +245,9 @@ func warpAffineHighBDOffset(dst frame.Plane, ref frame.Plane, bitDepth uint8, ma
 
 func warpHorizontalHighBD(tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, ref frame.Plane, i int, j int, matrix [6]int32, alpha int, beta int, gamma int, delta int, ssX int, ssY int, reduceBitsHoriz int, offsetBitsHoriz int) int {
 	ix4, sx4, iy4, sy4 := warpBlockOrigin(i, j, matrix, alpha, beta, gamma, delta, ssX, ssY)
+	if iy4 >= 7 && iy4+7 < ref.Height && ix4 >= 7 && ix4+8 <= ref.Width {
+		return warpHorizontalHighBDResident(tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz)
+	}
 	for k := -7; k < 8; k++ {
 		iy := clampInt(iy4+k, 0, ref.Height-1)
 		row := iy * ref.Stride
@@ -243,6 +277,34 @@ func warpHorizontalHighBD(tmp *[warpedIntermediateRows * warpedIntermediateColum
 					sum += int(uint16(ref.Pix[sample])|uint16(ref.Pix[sample+1])<<8) * int(coeffs[m])
 				}
 			}
+			tmp[(k+7)*warpedIntermediateColumns+(l+4)] = int32(roundPowerOfTwo(sum, reduceBitsHoriz))
+			sx += alpha
+		}
+	}
+	return sy4
+}
+
+func warpHorizontalHighBDResident(tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, ref frame.Plane, ix4 int, sx4 int, iy4 int, sy4 int, alpha int, beta int, reduceBitsHoriz int, offsetBitsHoriz int) int {
+	for k := -7; k < 8; k++ {
+		row := (iy4 + k) * ref.Stride
+		sx := sx4 + beta*(k+4)
+		for l := -4; l < 4; l++ {
+			ix := ix4 + l - 3
+			offs := roundPowerOfTwo(sx, warpedDiffPrecBits) + warpedPixelPrecShifts
+			if offs < 0 || offs >= len(warpedFilter) {
+				offs = clampInt(offs, 0, len(warpedFilter)-1)
+			}
+			coeffs := warpedFilter[offs]
+			base := row + ix*2
+			sum := 1 << offsetBitsHoriz
+			sum += int(uint16(ref.Pix[base+0])|uint16(ref.Pix[base+1])<<8) * int(coeffs[0])
+			sum += int(uint16(ref.Pix[base+2])|uint16(ref.Pix[base+3])<<8) * int(coeffs[1])
+			sum += int(uint16(ref.Pix[base+4])|uint16(ref.Pix[base+5])<<8) * int(coeffs[2])
+			sum += int(uint16(ref.Pix[base+6])|uint16(ref.Pix[base+7])<<8) * int(coeffs[3])
+			sum += int(uint16(ref.Pix[base+8])|uint16(ref.Pix[base+9])<<8) * int(coeffs[4])
+			sum += int(uint16(ref.Pix[base+10])|uint16(ref.Pix[base+11])<<8) * int(coeffs[5])
+			sum += int(uint16(ref.Pix[base+12])|uint16(ref.Pix[base+13])<<8) * int(coeffs[6])
+			sum += int(uint16(ref.Pix[base+14])|uint16(ref.Pix[base+15])<<8) * int(coeffs[7])
 			tmp[(k+7)*warpedIntermediateColumns+(l+4)] = int32(roundPowerOfTwo(sum, reduceBitsHoriz))
 			sx += alpha
 		}
