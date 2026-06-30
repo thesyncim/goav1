@@ -764,9 +764,7 @@ func (c *BlockModeContext) MarkIntra(size BlockSize, x4 int, y4 int, intra bool,
 		c.AboveRef[1][x4+i] = ref1
 		c.AboveCompound[x4+i] = 0
 		c.AboveInterIntra[x4+i] = 0
-		c.AboveInterMotion[x4+i] = InterMotionResult{}
 		c.AboveMotionValid[x4+i] = 0
-		c.AboveInterp[x4+i] = motion.InterpFilters{}
 		c.AboveInterpValid[x4+i] = 0
 		c.AboveBlockSize[x4+i] = size
 	}
@@ -775,9 +773,7 @@ func (c *BlockModeContext) MarkIntra(size BlockSize, x4 int, y4 int, intra bool,
 		c.LeftRef[1][y4+i] = ref1
 		c.LeftCompound[y4+i] = 0
 		c.LeftInterIntra[y4+i] = 0
-		c.LeftInterMotion[y4+i] = InterMotionResult{}
 		c.LeftMotionValid[y4+i] = 0
-		c.LeftInterp[y4+i] = motion.InterpFilters{}
 		c.LeftInterpValid[y4+i] = 0
 		c.LeftBlockSize[y4+i] = size
 	}

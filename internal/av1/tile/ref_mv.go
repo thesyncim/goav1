@@ -379,7 +379,6 @@ func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, res
 		c.AboveCompound[x4+i] = 0
 		c.AboveInterMotion[x4+i] = result
 		c.AboveMotionValid[x4+i] = 1
-		c.AboveInterp[x4+i] = motion.InterpFilters{}
 		c.AboveInterpValid[x4+i] = 0
 		c.AboveBlockSize[x4+i] = size
 		c.AbovePaletteY[x4+i] = paletteContext{}
@@ -397,7 +396,6 @@ func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, res
 		c.LeftCompound[y4+i] = 0
 		c.LeftInterMotion[y4+i] = result
 		c.LeftMotionValid[y4+i] = 1
-		c.LeftInterp[y4+i] = motion.InterpFilters{}
 		c.LeftInterpValid[y4+i] = 0
 		c.LeftBlockSize[y4+i] = size
 		c.LeftPaletteY[y4+i] = paletteContext{}
@@ -433,6 +431,10 @@ func (c *BlockModeContext) markGridInterMotion(size BlockSize, x4 int, y4 int, r
 // blocks deeper in the column/row are skipped. Zeroing GridBlockSize would
 // collapse the step to 1 (4x4) and let goav1's outer scan oversample cells
 // libaom never visits, producing a spurious column/row match.
+// The stale motion payload is intentionally left untouched: every consumer
+// must gate GridInterMotion on GridMotionValid, matching libaom's valid mbmi
+// state and avoiding a full InterMotionResult store for intra/reference-only
+// blocks.
 func (c *BlockModeContext) clearGridInterMotion(size BlockSize, x4 int, y4 int, dims BlockDimensions) {
 	for y := y4; y < y4+int(dims.H4); y++ {
 		if y < 0 || y >= MaxBlockModeSlots {
@@ -442,7 +444,6 @@ func (c *BlockModeContext) clearGridInterMotion(size BlockSize, x4 int, y4 int, 
 			if x < 0 || x >= MaxBlockModeSlots {
 				continue
 			}
-			c.GridInterMotion[y][x] = InterMotionResult{}
 			c.GridMotionValid[y][x] = 0
 			c.GridBlockSize[y][x] = size
 			c.GridBlockSizeVisited[y][x] = 1
