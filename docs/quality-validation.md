@@ -52,6 +52,7 @@ go run ./cmd/qualitybench \
   -require-encoders all \
   -require-metrics xpsnr,vmaf \
   -gomaxprocs 4 \
+  -gogc off \
   -goav1-max-threads 4 \
   -goav1-effort 0 \
   -goav1-scene-cut=false \
@@ -64,8 +65,14 @@ go run ./cmd/qualitybench \
   -csv quality.csv -summary-csv quality-summary.csv -require-summary \
   -stats-csv quality-encoder-stats.csv \
   -metadata-json quality-metadata.json \
+  -ffmpeg-bin /opt/homebrew/bin/ffmpeg \
+  -ffmpeg-sha256 <sha256-of-ffmpeg> \
   -ffmpeg-av1-decoder libdav1d \
   -vmaf-model version=vmaf_v0.6.1 \
+  -aomenc-bin /opt/homebrew/bin/aomenc \
+  -aomenc-sha256 <sha256-of-aomenc> \
+  -svt-bin /opt/homebrew/bin/SvtAv1EncApp \
+  -svt-sha256 <sha256-of-SvtAv1EncApp> \
   -environment-notes "fixed power mode; idle machine; cool start" \
   -aom-threads 4 \
   -aom-row-mt 1 \
@@ -79,10 +86,13 @@ before encoding. Use that failure as a toolchain setup signal; do not treat a
 non-VMAF run as state-of-the-art visual validation.
 
 The same strict path is available as `make qualitybench-publish`; set
-`QUALITYBENCH_MANIFEST` and `QUALITYBENCH_ENVIRONMENT_NOTES`, then override the
-`QUALITYBENCH_*` variables when sweeping speed, assembly, bitrate settings, or
-the explicit FFmpeg AV1 decoder (`QUALITYBENCH_FFMPEG_AV1_DECODER`, default
-`libdav1d`) and VMAF model (`QUALITYBENCH_VMAF_MODEL`, default
+`QUALITYBENCH_MANIFEST`, `QUALITYBENCH_ENVIRONMENT_NOTES`,
+`QUALITYBENCH_FFMPEG_BIN`, `QUALITYBENCH_FFMPEG_SHA256`, and the matching
+`QUALITYBENCH_AOMENC_*` / `QUALITYBENCH_SVT_*` variables for selected external
+encoders, then override the other `QUALITYBENCH_*` variables when sweeping
+speed, assembly, bitrate settings, or the explicit FFmpeg AV1 decoder
+(`QUALITYBENCH_FFMPEG_AV1_DECODER`, default `libdav1d`) and VMAF model
+(`QUALITYBENCH_VMAF_MODEL`, default
 `version=vmaf_v0.6.1`).
 
 If `-input` is omitted, `qualitybench` uses the same deterministic synthetic
@@ -93,7 +103,11 @@ Internal Go microbenchmark rows used to justify SIMD or hot-path changes should
 use `make bench-go-publish`, not the smoke-oriented `make bench` or
 `make bench-all` targets. The publish runner requires a clean tracked worktree,
 explicit environment notes, `-benchmem`, at least five measured runs, fixed
-`GOMAXPROCS`, fixed `go test -cpu`, and explicit package/benchmark selection.
+`GOMAXPROCS`, a single matching `go test -cpu` value, explicit `GOGC`, distinct
+raw-output and metadata paths, no ambient `GOFLAGS`, `GOMEMLIMIT`, or
+`GODEBUG`, and explicit package/benchmark selection. Publish mode rejects
+defaulted package, benchmark, count, benchtime, CPU, GOMAXPROCS, GC, output,
+and metadata settings; pass every control explicitly.
 It writes the raw `go test` output and a metadata JSON sidecar containing the
 git revision, Go runtime, `GOGC`, command line, output SHA-256, and run
 controls. Example:
@@ -126,12 +140,17 @@ Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-warmup-runs >= 1`, and explicit `-vmaf-model` when VMAF is required, plus a
 non-empty `-environment-notes` value. It also
 requires explicit goav1 execution-lane, effort, and scene-cut settings, an
-explicit FFmpeg AV1 decoder when external baselines are selected, explicit
+explicit `-gogc` value with ambient `GOFLAGS`, `GOMEMLIMIT`, and `GODEBUG`
+unset, explicit absolute `-ffmpeg-bin`, `-aomenc-bin`, and `-svt-bin` paths
+with matching SHA-256 pins for every selected external tool, an explicit
+FFmpeg AV1 decoder when external baselines are selected, explicit
 libaom concurrency settings and realtime speed setting when `aomenc` is
 selected, explicit SVT preset, parallelism, and assembly settings when
-`svt-av1` is selected, exact raw I420 input byte counts for every manifest row,
+`svt-av1` is selected, distinct CSV, metadata, summary, and diagnostic artifact
+paths, an empty `-workdir` before timing starts, exact raw I420 input byte
+counts for every manifest row,
 and the manifest-declared
-`pix_fmt=i420`, `bit_depth=8`, `chroma=4:2:0`, `sha256`, `source_id`,
+`fps`, `pix_fmt=i420`, `bit_depth=8`, `chroma=4:2:0`, `sha256`, `source_id`,
 `source_url`, `source_license`, and `category` fields. Declared
 input hashes are verified before timing starts. Publish mode rejects duplicate
 encoder/bitrate entries, requires the
@@ -253,7 +272,9 @@ metric-filter availability, tool paths/version probes, per-clip source
 geometry, declared raw format, expected raw byte counts, actual input byte
 counts, declared and actual SHA-256 hashes, source/provenance fields,
 per-encoder invocations or goav1 settings, compressed payload byte counts,
-encoded output SHA-256 hashes, and decoded YUV SHA-256 hashes.
+encoded output SHA-256 hashes, and decoded YUV SHA-256 hashes. It also records
+the exact configured binary paths, expected SHA-256 pins, actual binary
+SHA-256s, and whether each hash was verified.
 
 For a corpus, use `-manifest` instead of `-input`. The manifest is CSV with a
 header. Local exploratory runs may use the minimal geometry columns, but
@@ -266,7 +287,8 @@ screen,clips/screen_1280x720_i420.yuv,1280,720,120,60,i420,8,4:2:0,fedcba9876543
 ```
 
 Relative `input` paths resolve from the manifest's directory. `fps` is optional
-and falls back to `-fps`. If `sha256` is present, it is verified in every mode.
+for exploratory manifests and falls back to `-fps`; publish manifests must
+declare `fps` on every row. If `sha256` is present, it is verified in every mode.
 Each clip gets its own work subdirectory and its own raw/summary CSV rows.
 
 When `-require-corpus` is set, `qualitybench` requires `-manifest`, requires

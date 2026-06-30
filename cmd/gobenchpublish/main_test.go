@@ -14,6 +14,10 @@ import (
 )
 
 func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
+	t.Setenv("GOFLAGS", "")
+	t.Setenv("GOMEMLIMIT", "")
+	t.Setenv("GODEBUG", "")
+
 	cfg := config{
 		Pkg:              "./internal/av1/tile",
 		Bench:            "^BenchmarkCoeffCulLevel$",
@@ -27,6 +31,7 @@ func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
 		GOGC:             "off",
 		Publish:          true,
 		BenchMem:         true,
+		ExplicitFlags:    gobenchPublishExplicitFlags(),
 	}
 	if err := validateConfig(cfg, gitMetadata{Commit: "abc"}); err != nil {
 		t.Fatalf("valid publish config failed: %v", err)
@@ -57,6 +62,74 @@ func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
 	if err := validateConfig(noBenchMem, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "-benchmem") {
 		t.Fatalf("missing benchmem error=%v", err)
+	}
+
+	sameOutput := cfg
+	sameOutput.MetadataPath = sameOutput.OutputPath
+	if err := validateConfig(sameOutput, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "different paths") {
+		t.Fatalf("same output path error=%v", err)
+	}
+
+	cpuSweep := cfg
+	cpuSweep.CPU = "1,4"
+	if err := validateConfig(cpuSweep, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "single positive integer") {
+		t.Fatalf("cpu sweep error=%v", err)
+	}
+
+	cpuMismatch := cfg
+	cpuMismatch.CPU = "2"
+	if err := validateConfig(cpuMismatch, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "match -gomaxprocs") {
+		t.Fatalf("cpu mismatch error=%v", err)
+	}
+
+	noGOGC := cfg
+	noGOGC.GOGC = " "
+	if err := validateConfig(noGOGC, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-gogc") {
+		t.Fatalf("missing gogc error=%v", err)
+	}
+}
+
+func TestValidatePublishConfigRejectsHiddenGoEnvironment(t *testing.T) {
+	cfg := config{
+		Pkg:              "./internal/av1/tile",
+		Bench:            "^BenchmarkCoeffCulLevel$",
+		OutputPath:       "/tmp/bench.txt",
+		MetadataPath:     "/tmp/bench.json",
+		EnvironmentNotes: "fixed power mode, idle machine",
+		GoMaxProcs:       1,
+		CPU:              "1",
+		Count:            5,
+		BenchTime:        "500ms",
+		GOGC:             "off",
+		Publish:          true,
+		BenchMem:         true,
+		ExplicitFlags:    gobenchPublishExplicitFlags(),
+	}
+
+	t.Setenv("GOFLAGS", "-race")
+	t.Setenv("GOMEMLIMIT", "")
+	t.Setenv("GODEBUG", "")
+	if err := validateConfig(cfg, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "GOFLAGS unset") {
+		t.Fatalf("hidden GOFLAGS error=%v", err)
+	}
+
+	t.Setenv("GOFLAGS", "")
+	t.Setenv("GOMEMLIMIT", "512MiB")
+	if err := validateConfig(cfg, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "GOMEMLIMIT unset") {
+		t.Fatalf("hidden GOMEMLIMIT error=%v", err)
+	}
+
+	t.Setenv("GOMEMLIMIT", "")
+	t.Setenv("GODEBUG", "gcstoptheworld=1")
+	if err := validateConfig(cfg, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "GODEBUG unset") {
+		t.Fatalf("hidden GODEBUG error=%v", err)
 	}
 }
 
@@ -101,6 +174,7 @@ func TestMetadataJSONRecordsOutputHash(t *testing.T) {
 		GOGC:             "off",
 		Publish:          true,
 		BenchMem:         true,
+		ExplicitFlags:    gobenchPublishExplicitFlags(),
 	}
 	meta := buildMetadata(cfg, gitMetadata{Commit: "abc"}, []string{"go", "test"}, "ok", "")
 	bytes, hash, err := fileInfoAndSHA256(out)
@@ -124,5 +198,20 @@ func TestMetadataJSONRecordsOutputHash(t *testing.T) {
 		got.Config.GoMaxProcs != 1 || got.Environment.GOGC != "off" ||
 		got.Environment.Notes != "idle" {
 		t.Fatalf("metadata=%+v", got)
+	}
+}
+
+func gobenchPublishExplicitFlags() map[string]bool {
+	return map[string]bool{
+		"pkg":               true,
+		"bench":             true,
+		"out":               true,
+		"metadata-json":     true,
+		"environment-notes": true,
+		"gomaxprocs":        true,
+		"cpu":               true,
+		"count":             true,
+		"benchtime":         true,
+		"gogc":              true,
 	}
 }

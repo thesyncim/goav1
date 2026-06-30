@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,8 +59,15 @@ type benchConfig struct {
 	frameMetricsCSVPath string
 	metadataPath        string
 	environmentNotes    string
+	goGC                string
+	ffmpegBin           string
+	ffmpegSHA256        string
 	ffmpegAV1Decoder    string
 	vmafModel           string
+	aomencBin           string
+	aomencSHA256        string
+	svtBin              string
+	svtSHA256           string
 	anchorEncoder       string
 	requiredEncodersRaw string
 	timingMode          string
@@ -138,6 +146,7 @@ type clipSpec struct {
 	Height        int
 	Frames        int
 	FPS           int
+	FPSPresent    bool
 	PixFmt        string
 	BitDepth      int
 	Chroma        string
@@ -275,6 +284,7 @@ type metadataConfig struct {
 	GoldenInterval   int      `json:"golden_interval"`
 	KeyInterval      int      `json:"key_interval"`
 	GoMaxProcs       int      `json:"gomaxprocs"`
+	GoGC             string   `json:"gogc,omitempty"`
 	GoAV1MaxThreads  int      `json:"goav1_max_threads"`
 	GoAV1Effort      int      `json:"goav1_effort"`
 	GoAV1SceneCut    bool     `json:"goav1_scene_cut_keyframes"`
@@ -284,8 +294,14 @@ type metadataConfig struct {
 	SVTLP            int      `json:"svt_lp"`
 	SVTPreset        int      `json:"svt_preset"`
 	SVTASM           string   `json:"svt_asm,omitempty"`
+	FFmpegBin        string   `json:"ffmpeg_bin,omitempty"`
+	FFmpegSHA256     string   `json:"ffmpeg_sha256,omitempty"`
 	FFmpegAV1Decoder string   `json:"ffmpeg_av1_decoder,omitempty"`
 	VMAFModel        string   `json:"vmaf_model,omitempty"`
+	AOMEncBin        string   `json:"aomenc_bin,omitempty"`
+	AOMEncSHA256     string   `json:"aomenc_sha256,omitempty"`
+	SVTBin           string   `json:"svt_bin,omitempty"`
+	SVTSHA256        string   `json:"svt_sha256,omitempty"`
 	TimingMode       string   `json:"timing_mode"`
 	RunOrder         string   `json:"run_order"`
 	ShuffleSeed      int64    `json:"shuffle_seed,omitempty"`
@@ -296,11 +312,13 @@ type metadataConfig struct {
 }
 
 type toolMetadata struct {
-	Path         string `json:"path,omitempty"`
-	Found        bool   `json:"found"`
-	SHA256       string `json:"sha256,omitempty"`
-	Version      string `json:"version,omitempty"`
-	VersionError string `json:"version_error,omitempty"`
+	Path           string `json:"path,omitempty"`
+	Found          bool   `json:"found"`
+	SHA256         string `json:"sha256,omitempty"`
+	ExpectedSHA256 string `json:"expected_sha256,omitempty"`
+	SHA256Verified bool   `json:"sha256_verified,omitempty"`
+	Version        string `json:"version,omitempty"`
+	VersionError   string `json:"version_error,omitempty"`
 }
 
 type clipMetadata struct {
@@ -406,6 +424,9 @@ func run() error {
 			return err
 		}
 	}
+	if err := applyGoRuntimeControls(cfg); err != nil {
+		return err
+	}
 	if cfg.goMaxProcs > 0 {
 		runtime.GOMAXPROCS(cfg.goMaxProcs)
 	}
@@ -416,19 +437,26 @@ func run() error {
 			return err
 		}
 		cleanup = !cfg.keep
-	} else if err := os.MkdirAll(cfg.workdir, 0o755); err != nil {
-		return err
+	} else {
+		if cfg.publish {
+			if err := validatePublishWorkdir(cfg.workdir); err != nil {
+				return err
+			}
+		}
+		if err := os.MkdirAll(cfg.workdir, 0o755); err != nil {
+			return err
+		}
 	}
 	if cleanup {
 		defer os.RemoveAll(cfg.workdir)
 	}
 
-	filters := ffmpegFilters()
+	filters := ffmpegFilters(cfg.ffmpegBin)
 	if err := validateRequiredMetrics(filters, cfg.requiredMetrics); err != nil {
 		return err
 	}
 	if externalBaselineSelected(cfg) && cfg.ffmpegAV1Decoder != "" {
-		if err := validateFFmpegAV1Decoder(cfg.ffmpegAV1Decoder, ffmpegDecoders()); err != nil {
+		if err := validateFFmpegAV1Decoder(cfg.ffmpegAV1Decoder, ffmpegDecoders(cfg.ffmpegBin)); err != nil {
 			return err
 		}
 	}
@@ -620,8 +648,15 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.frameMetricsCSVPath, "frame-metrics-csv", "", "write per-frame decoded PSNR/SSIM diagnostics CSV to this path")
 	flag.StringVar(&cfg.metadataPath, "metadata-json", "", "write reproducibility metadata JSON to this path")
 	flag.StringVar(&cfg.environmentNotes, "environment-notes", "", "free-form notes for publish runs: power mode, thermal state, and background load")
+	flag.StringVar(&cfg.goGC, "gogc", "", "Go GC percent for in-process goav1 encodes; use off to disable GC during publish runs")
+	flag.StringVar(&cfg.ffmpegBin, "ffmpeg-bin", "ffmpeg", "ffmpeg executable path")
+	flag.StringVar(&cfg.ffmpegSHA256, "ffmpeg-sha256", "", "expected SHA-256 of -ffmpeg-bin for publish runs")
 	flag.StringVar(&cfg.ffmpegAV1Decoder, "ffmpeg-av1-decoder", "", "FFmpeg AV1 decoder for external encoder metric decode (empty = FFmpeg default; e.g. libdav1d or av1)")
 	flag.StringVar(&cfg.vmafModel, "vmaf-model", "", "FFmpeg libvmaf model option value (e.g. version=vmaf_v0.6.1); required by publish mode when vmaf is required")
+	flag.StringVar(&cfg.aomencBin, "aomenc-bin", "aomenc", "aomenc executable path")
+	flag.StringVar(&cfg.aomencSHA256, "aomenc-sha256", "", "expected SHA-256 of -aomenc-bin for publish runs")
+	flag.StringVar(&cfg.svtBin, "svt-bin", "SvtAv1EncApp", "SvtAv1EncApp executable path")
+	flag.StringVar(&cfg.svtSHA256, "svt-sha256", "", "expected SHA-256 of -svt-bin for publish runs")
 	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
 	flag.StringVar(&cfg.timingMode, "timing-mode", timingModeCore, "encode timing mode: core or e2e")
 	flag.StringVar(&cfg.runOrder, "run-order", runOrderBitrateEncoder, "encode tuple order: bitrate-encoder, encoder-bitrate, or shuffle")
@@ -740,7 +775,39 @@ func parseFlags() (benchConfig, error) {
 	if strings.ContainsAny(cfg.vmafModel, "\r\n") {
 		return benchConfig{}, fmt.Errorf("invalid VMAF model %q: newlines are not allowed", cfg.vmafModel)
 	}
+	cfg.goGC = strings.TrimSpace(cfg.goGC)
+	if cfg.goGC != "" {
+		if err := validateGoGCSetting(cfg.goGC); err != nil {
+			return benchConfig{}, err
+		}
+	}
+	cfg.ffmpegBin = strings.TrimSpace(cfg.ffmpegBin)
+	cfg.ffmpegSHA256 = strings.TrimSpace(cfg.ffmpegSHA256)
+	cfg.aomencBin = strings.TrimSpace(cfg.aomencBin)
+	cfg.aomencSHA256 = strings.TrimSpace(cfg.aomencSHA256)
+	cfg.svtBin = strings.TrimSpace(cfg.svtBin)
+	cfg.svtSHA256 = strings.TrimSpace(cfg.svtSHA256)
+	for name, value := range map[string]string{
+		"ffmpeg-bin": cfg.ffmpegBin,
+		"aomenc-bin": cfg.aomencBin,
+		"svt-bin":    cfg.svtBin,
+	} {
+		if value == "" || strings.ContainsAny(value, "\r\n") {
+			return benchConfig{}, fmt.Errorf("invalid -%s %q", name, value)
+		}
+	}
 	return cfg, nil
+}
+
+func validateGoGCSetting(value string) error {
+	if strings.EqualFold(value, "off") {
+		return nil
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 0 {
+		return fmt.Errorf("invalid -gogc %q: expected off or a non-negative integer", value)
+	}
+	return nil
 }
 
 func explicitFlagSet() map[string]bool {
@@ -772,6 +839,7 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"summary-csv",
 		"require-summary",
 		"gomaxprocs",
+		"gogc",
 		"fps",
 		"layers",
 		"tiles",
@@ -810,6 +878,18 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	if cfg.goMaxProcs <= 0 {
 		return errors.New("publish requires -gomaxprocs > 0")
 	}
+	if strings.TrimSpace(cfg.goGC) == "" {
+		return errors.New("publish requires explicit non-empty -gogc")
+	}
+	if os.Getenv("GOFLAGS") != "" {
+		return errors.New("publish requires GOFLAGS unset")
+	}
+	if os.Getenv("GOMEMLIMIT") != "" {
+		return errors.New("publish requires GOMEMLIMIT unset")
+	}
+	if os.Getenv("GODEBUG") != "" {
+		return errors.New("publish requires GODEBUG unset")
+	}
 	if cfg.timingMode != timingModeEndToEnd {
 		return errors.New("publish requires -timing-mode e2e")
 	}
@@ -831,8 +911,14 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	if cfg.csvPath == "" || cfg.metadataPath == "" || cfg.summaryCSVPath == "" || !cfg.requireSummary {
 		return errors.New("publish requires -csv, -metadata-json, -summary-csv, and -require-summary")
 	}
+	if err := validateDistinctPublishArtifacts(cfg); err != nil {
+		return err
+	}
 	if len(cfg.requiredMetrics) == 0 {
 		return errors.New("publish requires -require-metrics")
+	}
+	if err := requirePinnedPublishTool(cfg, "ffmpeg", "ffmpeg-bin", cfg.ffmpegBin, "ffmpeg-sha256", cfg.ffmpegSHA256); err != nil {
+		return err
 	}
 	if metricRequired(cfg, "vmaf") {
 		if err := requireExplicitFlag(cfg, "vmaf-model"); err != nil {
@@ -857,6 +943,9 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		}
 	}
 	if encoderSelected(cfg, "aomenc") {
+		if err := requirePinnedPublishTool(cfg, "aomenc", "aomenc-bin", cfg.aomencBin, "aomenc-sha256", cfg.aomencSHA256); err != nil {
+			return err
+		}
 		if err := requireExplicitFlag(cfg, "aom-cpu-used"); err != nil {
 			return err
 		}
@@ -868,6 +957,9 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		}
 	}
 	if encoderSelected(cfg, "svt-av1") {
+		if err := requirePinnedPublishTool(cfg, "svt-av1", "svt-bin", cfg.svtBin, "svt-sha256", cfg.svtSHA256); err != nil {
+			return err
+		}
 		if err := requireExplicitFlag(cfg, "svt-preset"); err != nil {
 			return err
 		}
@@ -879,6 +971,112 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		}
 	}
 	return nil
+}
+
+func requirePinnedPublishTool(cfg benchConfig, toolName, binFlag, binPath, hashFlag, expectedHash string) error {
+	if err := requireExplicitFlag(cfg, binFlag); err != nil {
+		return err
+	}
+	if err := requireExplicitFlag(cfg, hashFlag); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(binPath) {
+		return fmt.Errorf("publish requires -%s to be an absolute path for %s", binFlag, toolName)
+	}
+	expected, err := canonicalSHA256(expectedHash)
+	if err != nil {
+		return fmt.Errorf("publish requires valid -%s: %w", hashFlag, err)
+	}
+	info, err := os.Stat(binPath)
+	if err != nil {
+		return fmt.Errorf("publish requires -%s %s: %w", binFlag, binPath, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("publish requires -%s %s to be an executable file, got directory", binFlag, binPath)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("publish requires -%s %s to be executable", binFlag, binPath)
+	}
+	actual, err := sha256File(binPath)
+	if err != nil {
+		return fmt.Errorf("publish requires -%s %s hash: %w", binFlag, binPath, err)
+	}
+	if actual != expected {
+		return fmt.Errorf("publish requires -%s %s to match -%s %s, got %s", binFlag, binPath, hashFlag, expected, actual)
+	}
+	return nil
+}
+
+func applyGoRuntimeControls(cfg benchConfig) error {
+	if cfg.goGC == "" {
+		return nil
+	}
+	if strings.EqualFold(cfg.goGC, "off") {
+		debug.SetGCPercent(-1)
+		_ = os.Setenv("GOGC", "off")
+		return nil
+	}
+	n, err := strconv.Atoi(cfg.goGC)
+	if err != nil || n < 0 {
+		return fmt.Errorf("invalid -gogc %q: expected off or a non-negative integer", cfg.goGC)
+	}
+	debug.SetGCPercent(n)
+	_ = os.Setenv("GOGC", strconv.Itoa(n))
+	return nil
+}
+
+func validatePublishWorkdir(path string) error {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("publish workdir %s: %w", path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("publish workdir %s is not a directory", path)
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return fmt.Errorf("publish workdir %s: %w", path, err)
+	}
+	if len(entries) > 0 {
+		return fmt.Errorf("publish requires -workdir %s to be empty before timing", path)
+	}
+	return nil
+}
+
+func validateDistinctPublishArtifacts(cfg benchConfig) error {
+	paths := []struct {
+		flag string
+		path string
+	}{
+		{flag: "csv", path: cfg.csvPath},
+		{flag: "metadata-json", path: cfg.metadataPath},
+		{flag: "summary-csv", path: cfg.summaryCSVPath},
+		{flag: "stats-csv", path: cfg.statsCSVPath},
+		{flag: "frame-stats-csv", path: cfg.frameStatsCSVPath},
+		{flag: "frame-metrics-csv", path: cfg.frameMetricsCSVPath},
+	}
+	seen := make(map[string]string, len(paths))
+	for _, item := range paths {
+		if strings.TrimSpace(item.path) == "" {
+			continue
+		}
+		key := pathSettingKey(item.path)
+		if previous, ok := seen[key]; ok {
+			return fmt.Errorf("publish requires -%s and -%s to be different paths", previous, item.flag)
+		}
+		seen[key] = item.flag
+	}
+	return nil
+}
+
+func pathSettingKey(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(path)
 }
 
 func externalBaselineSelected(cfg benchConfig) bool {
@@ -1153,11 +1351,11 @@ func validateRequiredEncoderTools(cfg benchConfig, lookPath func(string) (string
 		switch encoder {
 		case "goav1":
 		case "aomenc":
-			if _, err := lookPath("aomenc"); err != nil {
+			if _, err := resolveCommandPath(cfg.aomencBin, "aomenc", lookPath); err != nil {
 				return fmt.Errorf("required encoder aomenc unavailable: %w", err)
 			}
 		case "svt-av1":
-			if _, err := lookPath("SvtAv1EncApp"); err != nil {
+			if _, err := resolveCommandPath(cfg.svtBin, "SvtAv1EncApp", lookPath); err != nil {
 				return fmt.Errorf("required encoder svt-av1 unavailable: %w", err)
 			}
 		default:
@@ -1165,6 +1363,32 @@ func validateRequiredEncoderTools(cfg benchConfig, lookPath func(string) (string
 		}
 	}
 	return nil
+}
+
+func resolveCommandPath(setting, fallback string, lookPath func(string) (string, error)) (string, error) {
+	name := commandSetting(setting, fallback)
+	if filepath.IsAbs(name) {
+		info, err := os.Stat(name)
+		if err != nil {
+			return "", err
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("%s is a directory", name)
+		}
+		if info.Mode().Perm()&0o111 == 0 {
+			return "", fmt.Errorf("%s is not executable", name)
+		}
+		return name, nil
+	}
+	return lookPath(name)
+}
+
+func commandSetting(setting, fallback string) string {
+	setting = strings.TrimSpace(setting)
+	if setting == "" {
+		return fallback
+	}
+	return setting
 }
 
 func validateRequiredMetrics(filters map[string]bool, metrics []string) error {
@@ -1285,7 +1509,8 @@ func readClipManifest(path string, defaults benchConfig) ([]clipSpec, error) {
 			return nil, err
 		}
 		fps := defaults.fps
-		if haveFPS && strings.TrimSpace(manifestField(record, fpsCol)) != "" {
+		fpsPresent := haveFPS && strings.TrimSpace(manifestField(record, fpsCol)) != ""
+		if fpsPresent {
 			fps, err = parseManifestPositiveInt(record, fpsCol, "fps", rowNum)
 			if err != nil {
 				return nil, err
@@ -1329,6 +1554,7 @@ func readClipManifest(path string, defaults benchConfig) ([]clipSpec, error) {
 			Height:        height,
 			Frames:        frames,
 			FPS:           fps,
+			FPSPresent:    fpsPresent,
 			PixFmt:        manifestFieldIfPresent(record, pixFmtCol, havePixFmt),
 			BitDepth:      bitDepth,
 			Chroma:        manifestFieldIfPresent(record, chromaCol, haveChroma),
@@ -1428,6 +1654,9 @@ func validateClipManifestExactness(cfg benchConfig, clips []clipSpec) error {
 		}
 		if strings.ToLower(strings.TrimSpace(clip.PixFmt)) != "i420" {
 			return fmt.Errorf("%s: publish requires manifest pix_fmt=i420, got %q", clip.Name, clip.PixFmt)
+		}
+		if !clip.FPSPresent {
+			return fmt.Errorf("%s: publish requires manifest fps", clip.Name)
 		}
 		if clip.BitDepth != 8 {
 			return fmt.Errorf("%s: publish requires manifest bit_depth=8, got %d", clip.Name, clip.BitDepth)
@@ -1946,7 +2175,7 @@ func writeMetadataJSON(cfg benchConfig, filters map[string]bool, git gitMetadata
 		Config:        configMetadata,
 		FairnessNotes: fairnessNotes(cfg),
 		MetricFilters: metricFilterAvailability(filters),
-		Tools:         toolMetadataForRun(),
+		Tools:         toolMetadataForRun(cfg),
 		Clips:         clipMetadata,
 		Encodes:       invocations,
 	}
@@ -2055,6 +2284,7 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		GoldenInterval:   cfg.goldenInterval,
 		KeyInterval:      cfg.keyInterval,
 		GoMaxProcs:       cfg.goMaxProcs,
+		GoGC:             cfg.goGC,
 		GoAV1MaxThreads:  cfg.goav1MaxThreads,
 		GoAV1Effort:      cfg.goav1Effort,
 		GoAV1SceneCut:    cfg.goav1SceneCut,
@@ -2064,8 +2294,14 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		SVTLP:            cfg.svtLP,
 		SVTPreset:        cfg.svtPreset,
 		SVTASM:           cfg.svtASM,
+		FFmpegBin:        cfg.ffmpegBin,
+		FFmpegSHA256:     cfg.ffmpegSHA256,
 		FFmpegAV1Decoder: cfg.ffmpegAV1Decoder,
 		VMAFModel:        cfg.vmafModel,
+		AOMEncBin:        cfg.aomencBin,
+		AOMEncSHA256:     cfg.aomencSHA256,
+		SVTBin:           cfg.svtBin,
+		SVTSHA256:        cfg.svtSHA256,
 		TimingMode:       cfg.timingMode,
 		RunOrder:         cfg.runOrder,
 		ShuffleSeed:      cfg.shuffleSeed,
@@ -2174,7 +2410,7 @@ func fairnessNotes(cfg benchConfig) []string {
 		"goav1 metadata records detected simd_tier and simd_features; compare those against SVT's recorded svt_asm setting instead of assuming --asm max and goav1 cover the same kernels.",
 	}
 	if cfg.publish {
-		notes = append(notes, "Publish mode required a clean git worktree, explicit artifact paths, manifest-backed corpus, exact raw input sizes, explicit encode controls, deterministic shuffled run order, explicit concurrency controls, required encoders, required metrics, and required BD-rate summary rows.")
+		notes = append(notes, "Publish mode required a clean git worktree, explicit artifact paths, an empty workdir before timing, manifest-backed corpus, exact raw input sizes, explicit encode controls, explicit GC control with hidden Go runtime env unset, pinned external binary paths and SHA-256 hashes, deterministic shuffled run order, explicit concurrency controls, required encoders, required metrics, and required BD-rate summary rows.")
 		if encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1") {
 			notes = append(notes, "Publish mode requires -layers 1 when aomenc or svt-av1 baselines are selected, because equivalent external temporal-layer settings are not yet implemented by qualitybench.")
 		}
@@ -2274,22 +2510,35 @@ func firstCommandLine(name string, args ...string) string {
 	return firstNonEmptyLine(string(out))
 }
 
-func toolMetadataForRun() map[string]toolMetadata {
+func toolMetadataForRun(cfg benchConfig) map[string]toolMetadata {
 	return map[string]toolMetadata{
-		"ffmpeg":       commandMetadata("ffmpeg", []string{"-hide_banner", "-version"}),
-		"aomenc":       commandMetadata("aomenc", []string{"--version"}, []string{"--help"}),
-		"SvtAv1EncApp": commandMetadata("SvtAv1EncApp", []string{"--version"}),
+		"ffmpeg":       commandMetadataWithExpected(commandSetting(cfg.ffmpegBin, "ffmpeg"), cfg.ffmpegSHA256, []string{"-hide_banner", "-version"}),
+		"aomenc":       commandMetadataWithExpected(commandSetting(cfg.aomencBin, "aomenc"), cfg.aomencSHA256, []string{"--version"}, []string{"--help"}),
+		"SvtAv1EncApp": commandMetadataWithExpected(commandSetting(cfg.svtBin, "SvtAv1EncApp"), cfg.svtSHA256, []string{"--version"}),
 	}
 }
 
 func commandMetadata(name string, versionArgSets ...[]string) toolMetadata {
+	return commandMetadataWithExpected(name, "", versionArgSets...)
+}
+
+func commandMetadataWithExpected(name, expectedHash string, versionArgSets ...[]string) toolMetadata {
 	path, err := exec.LookPath(name)
 	if err != nil {
 		return toolMetadata{Found: false, VersionError: err.Error()}
 	}
 	meta := toolMetadata{Found: true, Path: path}
+	if expectedHash = strings.TrimSpace(expectedHash); expectedHash != "" {
+		if canonical, err := canonicalSHA256(expectedHash); err == nil {
+			meta.ExpectedSHA256 = canonical
+		} else {
+			meta.ExpectedSHA256 = expectedHash
+			meta.VersionError = err.Error()
+		}
+	}
 	if hash, err := sha256File(path); err == nil {
 		meta.SHA256 = hash
+		meta.SHA256Verified = meta.ExpectedSHA256 != "" && hash == meta.ExpectedSHA256
 	}
 	for _, args := range versionArgSets {
 		out, err := exec.Command(path, args...).CombinedOutput()
@@ -3131,6 +3380,7 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		kfMinDist = strconv.Itoa(cfg.keyInterval)
 		kfMaxDist = strconv.Itoa(cfg.keyInterval)
 	}
+	aomenc := commandSetting(cfg.aomencBin, "aomenc")
 	result := encodeResult{
 		encoder:          "aomenc",
 		targetBPS:        bitrate,
@@ -3163,10 +3413,11 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 			"tile_columns_log2":  strconv.Itoa(cfg.tiles),
 			"tile_semantics":     "tile-columns-log2",
 			"ffmpeg_av1_decoder": ffmpegAV1DecoderSetting(cfg.ffmpegAV1Decoder),
+			"aomenc_bin":         aomenc,
 		},
 	}
-	if _, err := exec.LookPath("aomenc"); err != nil {
-		result.status, result.errText = "skipped", "aomenc not found"
+	if _, err := resolveCommandPath(cfg.aomencBin, "aomenc", exec.LookPath); err != nil {
+		result.status, result.errText = "skipped", "aomenc not found: "+err.Error()
 		return result
 	}
 	ivfPath := filepath.Join(cfg.workdir, fmt.Sprintf("aomenc_%d.ivf", bitrate))
@@ -3205,8 +3456,8 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		fmt.Sprintf("--kf-max-dist=%s", kfMaxDist),
 	)
 	args = append(args, "-o", ivfPath, refPath)
-	result.command = commandLine("aomenc", args)
-	result.duration = timeCommand("aomenc", args, &result)
+	result.command = commandLine(aomenc, args)
+	result.duration = timeCommand(aomenc, args, &result)
 	if result.status != "" {
 		return result
 	}
@@ -3223,7 +3474,7 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	}
 	result.encodedBytes = encodedBytes
 	result.encodedSHA256 = encodedHash
-	decodedBytes, decodedHash, err := decodeIVFWithFFmpeg(ivfPath, result.decodedYUV, cfg.width, cfg.height, cfg.frames, cfg.ffmpegAV1Decoder)
+	decodedBytes, decodedHash, err := decodeIVFWithFFmpeg(cfg, ivfPath, result.decodedYUV, cfg.width, cfg.height, cfg.frames, cfg.ffmpegAV1Decoder)
 	if err != nil {
 		result.status, result.errText = "error", err.Error()
 		return result
@@ -3239,6 +3490,7 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	if cfg.keyInterval > 0 {
 		keyint = strconv.Itoa(cfg.keyInterval)
 	}
+	svt := commandSetting(cfg.svtBin, "SvtAv1EncApp")
 	result := encodeResult{
 		encoder:          "svt-av1",
 		targetBPS:        bitrate,
@@ -3272,6 +3524,7 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 			"ffmpeg_av1_decoder": ffmpegAV1DecoderSetting(cfg.ffmpegAV1Decoder),
 			"svt_lp":             strconv.Itoa(cfg.svtLP),
 			"svt_lp_note":        "parallelism level 0..6, not a processor/thread count",
+			"svt_bin":            svt,
 		},
 	}
 	if cfg.svtASM == "" {
@@ -3280,8 +3533,8 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	} else {
 		result.settings["svt_asm"] = cfg.svtASM
 	}
-	if _, err := exec.LookPath("SvtAv1EncApp"); err != nil {
-		result.status, result.errText = "skipped", "SvtAv1EncApp not found"
+	if _, err := resolveCommandPath(cfg.svtBin, "SvtAv1EncApp", exec.LookPath); err != nil {
+		result.status, result.errText = "skipped", "SvtAv1EncApp not found: "+err.Error()
 		return result
 	}
 	ivfPath := filepath.Join(cfg.workdir, fmt.Sprintf("svtav1_%d.ivf", bitrate))
@@ -3320,8 +3573,8 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	if cfg.tiles > 0 {
 		args = append(args, "--tile-columns", strconv.Itoa(cfg.tiles))
 	}
-	result.command = commandLine("SvtAv1EncApp", args)
-	result.duration = timeCommand("SvtAv1EncApp", args, &result)
+	result.command = commandLine(svt, args)
+	result.duration = timeCommand(svt, args, &result)
 	if result.status != "" {
 		return result
 	}
@@ -3338,7 +3591,7 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 	}
 	result.encodedBytes = encodedBytes
 	result.encodedSHA256 = encodedHash
-	decodedBytes, decodedHash, err := decodeIVFWithFFmpeg(ivfPath, result.decodedYUV, cfg.width, cfg.height, cfg.frames, cfg.ffmpegAV1Decoder)
+	decodedBytes, decodedHash, err := decodeIVFWithFFmpeg(cfg, ivfPath, result.decodedYUV, cfg.width, cfg.height, cfg.frames, cfg.ffmpegAV1Decoder)
 	if err != nil {
 		result.status, result.errText = "error", err.Error()
 		return result
@@ -3436,7 +3689,7 @@ func ffmpegAV1DecoderSetting(decoder string) string {
 	return decoder
 }
 
-func decodeIVFWithFFmpeg(ivfPath, yuvPath string, width, height, frames int, decoder string) (int64, string, error) {
+func decodeIVFWithFFmpeg(cfg benchConfig, ivfPath, yuvPath string, width, height, frames int, decoder string) (int64, string, error) {
 	args := []string{
 		"-y",
 		"-hide_banner",
@@ -3452,7 +3705,7 @@ func decodeIVFWithFFmpeg(ivfPath, yuvPath string, width, height, frames int, dec
 		"-f", "rawvideo",
 		yuvPath,
 	)
-	cmd := exec.Command("ffmpeg", args...)
+	cmd := exec.Command(commandSetting(cfg.ffmpegBin, "ffmpeg"), args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return 0, "", fmt.Errorf("ffmpeg decode: %s", trimCommandOutput(err, out))
 	}
@@ -3503,9 +3756,9 @@ func ivfPayloadBytes(path string) (int64, error) {
 	return total, nil
 }
 
-func ffmpegFilters() map[string]bool {
+func ffmpegFilters(ffmpegBin string) map[string]bool {
 	out := map[string]bool{}
-	cmd := exec.Command("ffmpeg", "-hide_banner", "-filters")
+	cmd := exec.Command(commandSetting(ffmpegBin, "ffmpeg"), "-hide_banner", "-filters")
 	raw, err := cmd.Output()
 	if err != nil {
 		return out
@@ -3519,8 +3772,8 @@ func ffmpegFilters() map[string]bool {
 	return out
 }
 
-func ffmpegDecoders() map[string]bool {
-	cmd := exec.Command("ffmpeg", "-hide_banner", "-decoders")
+func ffmpegDecoders(ffmpegBin string) map[string]bool {
+	cmd := exec.Command(commandSetting(ffmpegBin, "ffmpeg"), "-hide_banner", "-decoders")
 	raw, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -3588,7 +3841,7 @@ func measureDecoded(cfg benchConfig, filters map[string]bool, required map[strin
 
 func runScalarMetric(cfg benchConfig, refPath, decodedPath, filterName, pattern string) (float64, error) {
 	args := rawMetricArgs(cfg, refPath, decodedPath, filterName)
-	cmd := exec.Command("ffmpeg", args...)
+	cmd := exec.Command(commandSetting(cfg.ffmpegBin, "ffmpeg"), args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return 0, fmt.Errorf("%s: %s", filterName, trimCommandOutput(err, out))
@@ -3606,7 +3859,7 @@ func runFrameMetric(cfg benchConfig, refPath, decodedPath, encoderName string, b
 	_ = os.Remove(logPath)
 	filterSpec := fmt.Sprintf("%s=stats_file=%s", filterName, escapeFilterPath(logPath))
 	args := rawMetricArgs(cfg, refPath, decodedPath, filterSpec)
-	cmd := exec.Command("ffmpeg", args...)
+	cmd := exec.Command(commandSetting(cfg.ffmpegBin, "ffmpeg"), args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%s frame metrics: %s", filterName, trimCommandOutput(err, out))
@@ -3690,7 +3943,7 @@ func rawMetricArgs(cfg benchConfig, refPath, decodedPath, filterName string) []s
 func runVMAF(cfg benchConfig, refPath, decodedPath, encoderName string, bitrate int) (float64, error) {
 	logPath := filepath.Join(cfg.workdir, fmt.Sprintf("%s_%d_vmaf.json", encoderName, bitrate))
 	args := vmafArgs(cfg, refPath, decodedPath, logPath)
-	cmd := exec.Command("ffmpeg", args...)
+	cmd := exec.Command(commandSetting(cfg.ffmpegBin, "ffmpeg"), args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return 0, fmt.Errorf("libvmaf: %s", trimCommandOutput(err, out))
 	}

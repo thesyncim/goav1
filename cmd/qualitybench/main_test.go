@@ -234,7 +234,7 @@ func TestReadClipManifest(t *testing.T) {
 	if clips[0].Name != "Talking Head" ||
 		clips[0].Input != filepath.Join(dir, "clips/head.yuv") ||
 		clips[0].Width != 1920 || clips[0].Height != 1080 ||
-		clips[0].Frames != 120 || clips[0].FPS != 60 ||
+		clips[0].Frames != 120 || clips[0].FPS != 60 || !clips[0].FPSPresent ||
 		clips[0].PixFmt != "i420" || clips[0].BitDepth != 8 ||
 		clips[0].Chroma != "4:2:0" || clips[0].SourceID != "lab-head" ||
 		clips[0].SourceURL != "https://example.invalid/head" ||
@@ -242,7 +242,7 @@ func TestReadClipManifest(t *testing.T) {
 		clips[0].Category != "talking-head" {
 		t.Fatalf("clip[0]=%+v", clips[0])
 	}
-	if clips[1].Name != "Synthetic" || clips[1].Input != "" || clips[1].FPS != 30 {
+	if clips[1].Name != "Synthetic" || clips[1].Input != "" || clips[1].FPS != 30 || clips[1].FPSPresent {
 		t.Fatalf("clip[1]=%+v", clips[1])
 	}
 }
@@ -366,6 +366,7 @@ func TestValidateClipManifestExactness(t *testing.T) {
 		Height:        16,
 		Frames:        2,
 		FPS:           30,
+		FPSPresent:    true,
 		PixFmt:        "i420",
 		BitDepth:      8,
 		Chroma:        "4:2:0",
@@ -394,6 +395,13 @@ func TestValidateClipManifestExactness(t *testing.T) {
 	if err := validateClipManifestExactness(benchConfig{publish: true}, missingFormat); err == nil ||
 		!strings.Contains(err.Error(), "pix_fmt=i420") {
 		t.Fatalf("missing format error=%v", err)
+	}
+
+	missingFPS := clone()
+	missingFPS[0].FPSPresent = false
+	if err := validateClipManifestExactness(benchConfig{publish: true}, missingFPS); err == nil ||
+		!strings.Contains(err.Error(), "manifest fps") {
+		t.Fatalf("missing fps error=%v", err)
 	}
 
 	missingProvenance := clone()
@@ -965,6 +973,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		minClips:         6,
 		anchorEncoder:    "goav1",
 		goMaxProcs:       4,
+		goGC:             "off",
 		goav1MaxThreads:  4,
 		goav1Effort:      int(goav1.EncoderWebRTCMinEffortLevel),
 		goav1SceneCut:    false,
@@ -973,8 +982,14 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		aomCPUUsed:       8,
 		svtLP:            5,
 		svtPreset:        13,
+		ffmpegBin:        "/tools/ffmpeg",
+		ffmpegSHA256:     strings.Repeat("1", 64),
 		ffmpegAV1Decoder: "libdav1d",
 		vmafModel:        "version=vmaf_v0.6.1",
+		aomencBin:        "/tools/aomenc",
+		aomencSHA256:     strings.Repeat("2", 64),
+		svtBin:           "/tools/SvtAv1EncApp",
+		svtSHA256:        strings.Repeat("3", 64),
 		timingMode:       timingModeEndToEnd,
 		runOrder:         runOrderShuffle,
 		shuffleSeed:      42,
@@ -993,14 +1008,17 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 	if got.Encoders[0] != "goav1" || got.Bitrates[0] != 100000 ||
 		got.RequiredMetrics[0] != "psnr" || got.RequiredEncoders[0] != "goav1" ||
 		!got.RequireSummary || !got.RequireCorpus || got.MinClips != 6 ||
-		got.GoMaxProcs != 4 || got.GoAV1MaxThreads != 4 ||
+		got.GoMaxProcs != 4 || got.GoGC != "off" || got.GoAV1MaxThreads != 4 ||
 		got.GoAV1Effort != int(goav1.EncoderWebRTCMinEffortLevel) ||
 		got.GoAV1SceneCut ||
 		got.TileColumnsLog2 != 0 || got.TileSemantics != "tile-columns-log2" ||
 		got.AOMThreads != 1 || got.AOMRowMT != 0 ||
 		got.AOMCPUUsed != 8 || got.SVTLP != 5 || got.SVTPreset != 13 ||
+		got.FFmpegBin != "/tools/ffmpeg" || got.FFmpegSHA256 != strings.Repeat("1", 64) ||
 		got.FFmpegAV1Decoder != "libdav1d" ||
 		got.VMAFModel != "version=vmaf_v0.6.1" ||
+		got.AOMEncBin != "/tools/aomenc" || got.AOMEncSHA256 != strings.Repeat("2", 64) ||
+		got.SVTBin != "/tools/SvtAv1EncApp" || got.SVTSHA256 != strings.Repeat("3", 64) ||
 		got.TimingMode != timingModeEndToEnd ||
 		got.RunOrder != runOrderShuffle || got.ShuffleSeed != 42 ||
 		got.SampleOrder != "interleaved-by-sample-pass" ||
@@ -1167,6 +1185,13 @@ exit 7
 }
 
 func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
+	t.Setenv("GOFLAGS", "")
+	t.Setenv("GOMEMLIMIT", "")
+	t.Setenv("GODEBUG", "")
+	ffmpegBin, ffmpegHash := writeTestExecutableWithSHA256(t, "ffmpeg")
+	aomencBin, aomencHash := writeTestExecutableWithSHA256(t, "aomenc")
+	svtBin, svtHash := writeTestExecutableWithSHA256(t, "SvtAv1EncApp")
+
 	cfg := benchConfig{
 		workdir:             "/tmp/work",
 		csvPath:             "/tmp/quality.csv",
@@ -1204,6 +1229,13 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		runs:                3,
 		warmupRuns:          1,
 		environmentNotes:    "fixed power mode, idle machine",
+		goGC:                "off",
+		ffmpegBin:           ffmpegBin,
+		ffmpegSHA256:        ffmpegHash,
+		aomencBin:           aomencBin,
+		aomencSHA256:        aomencHash,
+		svtBin:              svtBin,
+		svtSHA256:           svtHash,
 		explicitFlags: map[string]bool{
 			"bitrates":           true,
 			"encoders":           true,
@@ -1218,6 +1250,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"summary-csv":        true,
 			"require-summary":    true,
 			"gomaxprocs":         true,
+			"gogc":               true,
 			"fps":                true,
 			"layers":             true,
 			"tiles":              true,
@@ -1233,12 +1266,18 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"goav1-effort":       true,
 			"goav1-scene-cut":    true,
 			"environment-notes":  true,
+			"ffmpeg-bin":         true,
+			"ffmpeg-sha256":      true,
 			"aom-cpu-used":       true,
 			"aom-threads":        true,
 			"aom-row-mt":         true,
+			"aomenc-bin":         true,
+			"aomenc-sha256":      true,
 			"svt-preset":         true,
 			"svt-lp":             true,
 			"svt-asm":            true,
+			"svt-bin":            true,
+			"svt-sha256":         true,
 			"ffmpeg-av1-decoder": true,
 			"vmaf-model":         true,
 		},
@@ -1297,6 +1336,38 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		!strings.Contains(err.Error(), "-goav1-scene-cut") {
 		t.Fatalf("missing explicit goav1 scene-cut error=%v", err)
 	}
+
+	missingGoGC := cfg
+	missingGoGC.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingGoGC.explicitFlags[k] = v
+	}
+	delete(missingGoGC.explicitFlags, "gogc")
+	if err := validatePublishConfig(missingGoGC, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-gogc") {
+		t.Fatalf("missing explicit gogc error=%v", err)
+	}
+
+	relativeFFmpeg := cfg
+	relativeFFmpeg.ffmpegBin = "ffmpeg"
+	if err := validatePublishConfig(relativeFFmpeg, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "absolute path") {
+		t.Fatalf("relative ffmpeg error=%v", err)
+	}
+
+	badFFmpegHash := cfg
+	badFFmpegHash.ffmpegSHA256 = strings.Repeat("0", 64)
+	if err := validatePublishConfig(badFFmpegHash, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "to match") {
+		t.Fatalf("bad ffmpeg hash error=%v", err)
+	}
+
+	t.Setenv("GOFLAGS", "-race")
+	if err := validatePublishConfig(cfg, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "GOFLAGS unset") {
+		t.Fatalf("hidden GOFLAGS error=%v", err)
+	}
+	t.Setenv("GOFLAGS", "")
 
 	missing := cfg
 	missing.explicitFlags = map[string]bool{}
@@ -1479,6 +1550,20 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		!strings.Contains(err.Error(), "each -encoders entry") {
 		t.Fatalf("duplicate encoders error=%v", err)
 	}
+
+	collidingMetadata := cfg
+	collidingMetadata.metadataPath = collidingMetadata.csvPath
+	if err := validatePublishConfig(collidingMetadata, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "different paths") {
+		t.Fatalf("colliding metadata path error=%v", err)
+	}
+
+	collidingDiagnostics := cfg
+	collidingDiagnostics.statsCSVPath = collidingDiagnostics.summaryCSVPath
+	if err := validatePublishConfig(collidingDiagnostics, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "different paths") {
+		t.Fatalf("colliding diagnostics path error=%v", err)
+	}
 }
 
 func TestEncodeJobsRunOrder(t *testing.T) {
@@ -1557,6 +1642,19 @@ func TestRunEncoderJobsMeasuredInterleavesSamplesByPass(t *testing.T) {
 	}
 }
 
+func writeTestExecutableWithSHA256(t *testing.T, name string) (string, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := sha256File(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path, hash
+}
+
 func encodeJobLabels(jobs []encodeJob) string {
 	labels := make([]string, len(jobs))
 	for i, job := range jobs {
@@ -1618,6 +1716,40 @@ func TestValidatePublishClipInputsRequiresExactSize(t *testing.T) {
 		Frames: 2,
 	}}); err == nil || !strings.Contains(err.Error(), "exact raw I420") {
 		t.Fatalf("trailing bytes error=%v", err)
+	}
+}
+
+func TestValidatePublishWorkdirRequiresEmptyDirectory(t *testing.T) {
+	base := t.TempDir()
+	missing := filepath.Join(base, "missing")
+	if err := validatePublishWorkdir(missing); err != nil {
+		t.Fatalf("missing workdir should be creatable: %v", err)
+	}
+	filePath := filepath.Join(base, "file")
+	if err := os.WriteFile(filePath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePublishWorkdir(filePath); err == nil ||
+		!strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("file workdir error=%v", err)
+	}
+	nonEmpty := filepath.Join(base, "non-empty")
+	if err := os.Mkdir(nonEmpty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nonEmpty, "old.csv"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePublishWorkdir(nonEmpty); err == nil ||
+		!strings.Contains(err.Error(), "empty before timing") {
+		t.Fatalf("non-empty workdir error=%v", err)
+	}
+	empty := filepath.Join(base, "empty")
+	if err := os.Mkdir(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePublishWorkdir(empty); err != nil {
+		t.Fatalf("empty workdir failed: %v", err)
 	}
 }
 

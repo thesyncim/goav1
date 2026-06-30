@@ -24,6 +24,9 @@ QUALITYBENCH_SUMMARY_CSV ?= $(QUALITYBENCH_WORKDIR)/quality-summary.csv
 QUALITYBENCH_STATS_CSV ?= $(QUALITYBENCH_WORKDIR)/quality-encoder-stats.csv
 QUALITYBENCH_METADATA_JSON ?= $(QUALITYBENCH_WORKDIR)/quality-metadata.json
 QUALITYBENCH_ENVIRONMENT_NOTES ?=
+QUALITYBENCH_GOGC ?= off
+QUALITYBENCH_FFMPEG_BIN ?=
+QUALITYBENCH_FFMPEG_SHA256 ?=
 QUALITYBENCH_FFMPEG_AV1_DECODER ?= libdav1d
 QUALITYBENCH_VMAF_MODEL ?= version=vmaf_v0.6.1
 QUALITYBENCH_ENCODERS ?= goav1,aomenc,svt-av1
@@ -47,9 +50,13 @@ QUALITYBENCH_WARMUP_RUNS ?= 1
 QUALITYBENCH_AOM_CPU_USED ?= 8
 QUALITYBENCH_AOM_THREADS ?= 4
 QUALITYBENCH_AOM_ROW_MT ?= 1
+QUALITYBENCH_AOMENC_BIN ?=
+QUALITYBENCH_AOMENC_SHA256 ?=
 QUALITYBENCH_SVT_PRESET ?= 13
 QUALITYBENCH_SVT_LP ?= 0
 QUALITYBENCH_SVT_ASM ?= neon
+QUALITYBENCH_SVT_BIN ?=
+QUALITYBENCH_SVT_SHA256 ?=
 WEBRTC_REFERENCE_TESTS = Test.*ReferenceDecoders$$
 WEBRTC_PRODUCTION_TESTS = Test(AV1SDP|AV1RTCP|EncoderWebRTC|HighLevelRTPDecodersWebRTCCatalogue|NewDecoderFromRTPPayloads|ParseRTPPacketDependencyDescriptor|PublicDecoderFrameWorkResidual(EventRunner.*TileList|StreamRunnerRTP)|PublicDecoderRTP(Packet|PayloadRunner)|PublicEncodeI(400|420)|PublicEncoderWebRTC|PublicLayeredDecoderRTP|PublicParseTileListOBU|PublicPlanDecoderTileList|PublicResolveDecoderTileList|PublicRTC|PublicRTP|PublicTileList|PublicWebRTCEncoder|RTCP|SimpleDecoderTileListIVFPlayback)
 WEBRTC_PRODUCTION_INTERNAL_TESTS = Test(AppendWebRTCScalabilityModesMatchesPinnedLibWebRTC|WebRTCStreamAcceptedScalabilityModes(CoverExportedModes|Decode)|WebRTCStreamControlCombinationMatrixDecode|WebRTCEncoderStateTemporalUnitsKeyShiftModes)
@@ -125,6 +132,7 @@ qualitybench-publish:
 		-require-encoders "$(QUALITYBENCH_REQUIRED_ENCODERS)" \
 		-require-metrics "$(QUALITYBENCH_REQUIRED_METRICS)" \
 		-gomaxprocs "$(QUALITYBENCH_GOMAXPROCS)" \
+		-gogc "$(QUALITYBENCH_GOGC)" \
 		-goav1-max-threads "$(QUALITYBENCH_GOAV1_MAX_THREADS)" \
 		-goav1-effort "$(QUALITYBENCH_GOAV1_EFFORT)" \
 		-goav1-scene-cut="$(QUALITYBENCH_GOAV1_SCENE_CUT)" \
@@ -136,14 +144,20 @@ qualitybench-publish:
 		-aom-cpu-used "$(QUALITYBENCH_AOM_CPU_USED)" \
 		-aom-threads "$(QUALITYBENCH_AOM_THREADS)" \
 		-aom-row-mt "$(QUALITYBENCH_AOM_ROW_MT)" \
+		-aomenc-bin "$(QUALITYBENCH_AOMENC_BIN)" \
+		-aomenc-sha256 "$(QUALITYBENCH_AOMENC_SHA256)" \
 		-svt-preset "$(QUALITYBENCH_SVT_PRESET)" \
 		-svt-lp "$(QUALITYBENCH_SVT_LP)" \
 		-svt-asm "$(QUALITYBENCH_SVT_ASM)" \
+		-svt-bin "$(QUALITYBENCH_SVT_BIN)" \
+		-svt-sha256 "$(QUALITYBENCH_SVT_SHA256)" \
 		-csv "$(QUALITYBENCH_CSV)" \
 		-summary-csv "$(QUALITYBENCH_SUMMARY_CSV)" \
 		-require-summary \
 		-stats-csv "$(QUALITYBENCH_STATS_CSV)" \
 		-metadata-json "$(QUALITYBENCH_METADATA_JSON)" \
+		-ffmpeg-bin "$(QUALITYBENCH_FFMPEG_BIN)" \
+		-ffmpeg-sha256 "$(QUALITYBENCH_FFMPEG_SHA256)" \
 		-ffmpeg-av1-decoder "$(QUALITYBENCH_FFMPEG_AV1_DECODER)" \
 		-vmaf-model "$(QUALITYBENCH_VMAF_MODEL)" \
 		-environment-notes "$(QUALITYBENCH_ENVIRONMENT_NOTES)" \

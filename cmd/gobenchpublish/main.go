@@ -36,6 +36,7 @@ type config struct {
 	GOGC             string
 	Publish          bool
 	BenchMem         bool
+	ExplicitFlags    map[string]bool
 }
 
 type gitMetadata struct {
@@ -150,7 +151,16 @@ func parseFlags() config {
 	flag.BoolVar(&cfg.Publish, "publish", false, "require claim-supporting benchmark controls")
 	flag.BoolVar(&cfg.BenchMem, "benchmem", true, "include go test -benchmem")
 	flag.Parse()
+	cfg.ExplicitFlags = explicitFlagSet()
 	return cfg
+}
+
+func explicitFlagSet() map[string]bool {
+	set := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) {
+		set[f.Name] = true
+	})
+	return set
 }
 
 func validateConfig(cfg config, git gitMetadata) error {
@@ -165,6 +175,9 @@ func validateConfig(cfg config, git gitMetadata) error {
 	}
 	if strings.TrimSpace(cfg.MetadataPath) == "" {
 		return errors.New("missing -metadata-json")
+	}
+	if samePathSetting(cfg.OutputPath, cfg.MetadataPath) {
+		return errors.New("-out and -metadata-json must be different paths")
 	}
 	if cfg.GoMaxProcs <= 0 {
 		return errors.New("-gomaxprocs must be > 0")
@@ -187,6 +200,22 @@ func validateConfig(cfg config, git gitMetadata) error {
 		if git.Error != "" {
 			return fmt.Errorf("publish requires git metadata: %s", git.Error)
 		}
+		for _, name := range []string{
+			"pkg",
+			"bench",
+			"out",
+			"metadata-json",
+			"environment-notes",
+			"gomaxprocs",
+			"cpu",
+			"count",
+			"benchtime",
+			"gogc",
+		} {
+			if err := requireExplicitFlag(cfg, name); err != nil {
+				return err
+			}
+		}
 		if git.Dirty {
 			return errors.New("publish requires a clean tracked git worktree")
 		}
@@ -199,8 +228,60 @@ func validateConfig(cfg config, git gitMetadata) error {
 		if !cfg.BenchMem {
 			return errors.New("publish requires -benchmem")
 		}
+		cpu, err := singlePositiveIntFlag("-cpu", cfg.CPU)
+		if err != nil {
+			return err
+		}
+		if cpu != cfg.GoMaxProcs {
+			return errors.New("publish requires -cpu to match -gomaxprocs; use separate publish runs for CPU sweeps")
+		}
+		if strings.TrimSpace(cfg.GOGC) == "" {
+			return errors.New("publish requires explicit non-empty -gogc")
+		}
+		if os.Getenv("GOFLAGS") != "" {
+			return errors.New("publish requires GOFLAGS unset; use explicit runner flags such as -tags")
+		}
+		if os.Getenv("GOMEMLIMIT") != "" {
+			return errors.New("publish requires GOMEMLIMIT unset")
+		}
+		if os.Getenv("GODEBUG") != "" {
+			return errors.New("publish requires GODEBUG unset")
+		}
 	}
 	return nil
+}
+
+func requireExplicitFlag(cfg config, name string) error {
+	if cfg.ExplicitFlags == nil || !cfg.ExplicitFlags[name] {
+		return fmt.Errorf("publish requires explicit -%s", name)
+	}
+	return nil
+}
+
+func singlePositiveIntFlag(name, value string) (int, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, fmt.Errorf("missing %s", name)
+	}
+	if strings.Contains(trimmed, ",") {
+		return 0, fmt.Errorf("publish requires %s to be a single positive integer, got %q", name, value)
+	}
+	n, err := strconv.Atoi(trimmed)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("publish requires %s to be a single positive integer, got %q", name, value)
+	}
+	return n, nil
+}
+
+func samePathSetting(a, b string) bool {
+	return pathSettingKey(a) == pathSettingKey(b)
+}
+
+func pathSettingKey(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(path)
 }
 
 func goTestArgs(cfg config) []string {
