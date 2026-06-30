@@ -50,6 +50,9 @@ const (
 	runOrderEncoderBitrate = "encoder-bitrate"
 	runOrderShuffle        = "shuffle"
 
+	publishComparisonModeMatchedBudget = "matched-cpu-budget"
+	publishComparisonModeSingleThread  = "fixed-single-thread"
+
 	goAV1EncodeHelperCommand = "__qualitybench_goav1_encode"
 )
 
@@ -86,6 +89,7 @@ type benchConfig struct {
 	requiredEncodersRaw string
 	timingMode          string
 	runOrder            string
+	publishCompareMode  string
 	shuffleSeed         int64
 	encoders            []string
 	bitrates            []int
@@ -437,6 +441,7 @@ type metadataConfig struct {
 	SVTBin           string   `json:"svt_bin,omitempty"`
 	SVTSHA256        string   `json:"svt_sha256,omitempty"`
 	TimingMode       string   `json:"timing_mode"`
+	PublishCompare   string   `json:"publish_comparison_mode,omitempty"`
 	RunOrder         string   `json:"run_order"`
 	ShuffleSeed      int64    `json:"shuffle_seed,omitempty"`
 	SampleOrder      string   `json:"sample_order"`
@@ -821,6 +826,7 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.anchorEncoder, "anchor", "", "encoder name to use as BD-rate anchor (default: first -encoders entry)")
 	flag.StringVar(&cfg.timingMode, "timing-mode", timingModeCore, "encode timing mode: core or e2e")
 	flag.StringVar(&cfg.runOrder, "run-order", runOrderBitrateEncoder, "encode tuple order: bitrate-encoder, encoder-bitrate, or shuffle")
+	flag.StringVar(&cfg.publishCompareMode, "publish-comparison-mode", publishComparisonModeMatchedBudget, "publish comparison mode: matched-cpu-budget or fixed-single-thread")
 	flag.Int64Var(&cfg.shuffleSeed, "shuffle-seed", 1, "deterministic seed used when -run-order=shuffle")
 	flag.BoolVar(&cfg.requireSummary, "require-summary", false, "fail if required BD-rate summary rows are missing or invalid")
 	flag.BoolVar(&cfg.requireCorpus, "require-corpus", false, "require a manifest-backed real clip corpus before encoding")
@@ -924,6 +930,10 @@ func parseFlags() (benchConfig, error) {
 	cfg.runOrder = strings.TrimSpace(strings.ToLower(cfg.runOrder))
 	if !validRunOrder(cfg.runOrder) {
 		return benchConfig{}, fmt.Errorf("invalid run order %q: valid values are %s, %s, or %s", cfg.runOrder, runOrderBitrateEncoder, runOrderEncoderBitrate, runOrderShuffle)
+	}
+	cfg.publishCompareMode = strings.TrimSpace(strings.ToLower(cfg.publishCompareMode))
+	if !validPublishComparisonMode(cfg.publishCompareMode) {
+		return benchConfig{}, fmt.Errorf("invalid publish comparison mode %q: valid values are %s or %s", cfg.publishCompareMode, publishComparisonModeMatchedBudget, publishComparisonModeSingleThread)
 	}
 	if cfg.svtLP < 0 || cfg.svtLP > 6 {
 		return benchConfig{}, fmt.Errorf("invalid SVT --lp level %d: valid range is 0..6; --lp is a parallelism level, not a thread count", cfg.svtLP)
@@ -1040,6 +1050,7 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"keyint",
 		"anchor",
 		"timing-mode",
+		"publish-comparison-mode",
 		"run-order",
 		"runs",
 		"warmup-runs",
@@ -1194,8 +1205,10 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		if err := requireExplicitFlag(cfg, "aom-thread-sweep"); err != nil {
 			return err
 		}
-		if encoderSelected(cfg, "goav1") && !cfg.aomThreadSweep {
-			return errors.New("publish requires -aom-thread-sweep=true when comparing goav1 against aomenc")
+		if encoderSelected(cfg, "goav1") {
+			if err := validateAOMPublishComparisonMode(cfg); err != nil {
+				return err
+			}
 		}
 	}
 	if encoderSelected(cfg, "svt-av1") {
@@ -1211,12 +1224,67 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		if err := requireExplicitFlag(cfg, "svt-lp-sweep"); err != nil {
 			return err
 		}
-		if encoderSelected(cfg, "goav1") && !cfg.svtLPSweep {
-			return errors.New("publish requires -svt-lp-sweep=true when comparing goav1 against svt-av1")
+		if encoderSelected(cfg, "goav1") {
+			if err := validateSVTPublishComparisonMode(cfg); err != nil {
+				return err
+			}
 		}
 		if err := requireExplicitFlag(cfg, "svt-asm"); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateAOMPublishComparisonMode(cfg benchConfig) error {
+	switch cfg.publishCompareMode {
+	case publishComparisonModeMatchedBudget:
+		if !cfg.aomThreadSweep {
+			return errors.New("publish comparison mode matched-cpu-budget requires -aom-thread-sweep=true when comparing goav1 against aomenc")
+		}
+	case publishComparisonModeSingleThread:
+		if cfg.goMaxProcs != 1 {
+			return errors.New("publish comparison mode fixed-single-thread requires -gomaxprocs 1")
+		}
+		if cfg.goav1MaxThreads != 1 {
+			return errors.New("publish comparison mode fixed-single-thread requires -goav1-max-threads 1")
+		}
+		if cfg.aomThreadSweep {
+			return errors.New("publish comparison mode fixed-single-thread requires -aom-thread-sweep=false")
+		}
+		if cfg.aomThreads != 1 {
+			return errors.New("publish comparison mode fixed-single-thread requires -aom-threads 1")
+		}
+		if cfg.aomRowMT != 0 {
+			return errors.New("publish comparison mode fixed-single-thread requires -aom-row-mt 0")
+		}
+	default:
+		return fmt.Errorf("invalid publish comparison mode %q", cfg.publishCompareMode)
+	}
+	return nil
+}
+
+func validateSVTPublishComparisonMode(cfg benchConfig) error {
+	switch cfg.publishCompareMode {
+	case publishComparisonModeMatchedBudget:
+		if !cfg.svtLPSweep {
+			return errors.New("publish comparison mode matched-cpu-budget requires -svt-lp-sweep=true when comparing goav1 against svt-av1")
+		}
+	case publishComparisonModeSingleThread:
+		if cfg.goMaxProcs != 1 {
+			return errors.New("publish comparison mode fixed-single-thread requires -gomaxprocs 1")
+		}
+		if cfg.goav1MaxThreads != 1 {
+			return errors.New("publish comparison mode fixed-single-thread requires -goav1-max-threads 1")
+		}
+		if cfg.svtLPSweep {
+			return errors.New("publish comparison mode fixed-single-thread requires -svt-lp-sweep=false")
+		}
+		if cfg.svtLP != 1 {
+			return errors.New("publish comparison mode fixed-single-thread requires -svt-lp 1")
+		}
+	default:
+		return fmt.Errorf("invalid publish comparison mode %q", cfg.publishCompareMode)
 	}
 	return nil
 }
@@ -1453,6 +1521,10 @@ func validatePublishClipInputs(clips []clipSpec) error {
 
 func validRunOrder(order string) bool {
 	return order == runOrderBitrateEncoder || order == runOrderEncoderBitrate || order == runOrderShuffle
+}
+
+func validPublishComparisonMode(mode string) bool {
+	return mode == publishComparisonModeMatchedBudget || mode == publishComparisonModeSingleThread
 }
 
 func encodeJobsForConfig(cfg benchConfig) []encodeJob {
@@ -3024,6 +3096,7 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		SVTBin:           cfg.svtBin,
 		SVTSHA256:        cfg.svtSHA256,
 		TimingMode:       cfg.timingMode,
+		PublishCompare:   cfg.publishCompareMode,
 		RunOrder:         cfg.runOrder,
 		ShuffleSeed:      cfg.shuffleSeed,
 		SampleOrder:      "interleaved-by-sample-pass",

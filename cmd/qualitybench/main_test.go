@@ -1707,6 +1707,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		vmafModel:           "version=vmaf_v0.6.1",
 		timingMode:          timingModeEndToEnd,
 		runOrder:            runOrderShuffle,
+		publishCompareMode:  publishComparisonModeMatchedBudget,
 		shuffleSeed:         7,
 		runs:                3,
 		warmupRuns:          1,
@@ -1725,68 +1726,105 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		svtBin:              svtBin,
 		svtSHA256:           svtHash,
 		explicitFlags: map[string]bool{
-			"bitrates":             true,
-			"encoders":             true,
-			"workdir":              true,
-			"csv":                  true,
-			"metadata-json":        true,
-			"manifest":             true,
-			"require-corpus":       true,
-			"min-clips":            true,
-			"min-source-ids":       true,
-			"min-categories":       true,
-			"require-encoders":     true,
-			"require-metrics":      true,
-			"summary-csv":          true,
-			"frame-metrics-csv":    true,
-			"require-summary":      true,
-			"gomaxprocs":           true,
-			"go-bin":               true,
-			"go-sha256":            true,
-			"gogc":                 true,
-			"fps":                  true,
-			"layers":               true,
-			"tiles":                true,
-			"golden":               true,
-			"keyint":               true,
-			"anchor":               true,
-			"timing-mode":          true,
-			"run-order":            true,
-			"shuffle-seed":         true,
-			"runs":                 true,
-			"warmup-runs":          true,
-			"command-timeout":      true,
-			"goav1-max-threads":    true,
-			"goav1-effort":         true,
-			"goav1-scene-cut":      true,
-			"goav1-process-timing": true,
-			"environment-notes":    true,
-			"cpu-affinity":         true,
-			"power-mode":           true,
-			"thermal-state":        true,
-			"frequency-policy":     true,
-			"background-load":      true,
-			"ffmpeg-bin":           true,
-			"ffmpeg-sha256":        true,
-			"aom-cpu-used":         true,
-			"aom-threads":          true,
-			"aom-row-mt":           true,
-			"aom-thread-sweep":     true,
-			"aomenc-bin":           true,
-			"aomenc-sha256":        true,
-			"svt-preset":           true,
-			"svt-lp":               true,
-			"svt-lp-sweep":         true,
-			"svt-asm":              true,
-			"svt-bin":              true,
-			"svt-sha256":           true,
-			"ffmpeg-av1-decoder":   true,
-			"vmaf-model":           true,
+			"bitrates":                true,
+			"encoders":                true,
+			"workdir":                 true,
+			"csv":                     true,
+			"metadata-json":           true,
+			"manifest":                true,
+			"require-corpus":          true,
+			"min-clips":               true,
+			"min-source-ids":          true,
+			"min-categories":          true,
+			"require-encoders":        true,
+			"require-metrics":         true,
+			"summary-csv":             true,
+			"frame-metrics-csv":       true,
+			"require-summary":         true,
+			"gomaxprocs":              true,
+			"go-bin":                  true,
+			"go-sha256":               true,
+			"gogc":                    true,
+			"fps":                     true,
+			"layers":                  true,
+			"tiles":                   true,
+			"golden":                  true,
+			"keyint":                  true,
+			"anchor":                  true,
+			"timing-mode":             true,
+			"publish-comparison-mode": true,
+			"run-order":               true,
+			"shuffle-seed":            true,
+			"runs":                    true,
+			"warmup-runs":             true,
+			"command-timeout":         true,
+			"goav1-max-threads":       true,
+			"goav1-effort":            true,
+			"goav1-scene-cut":         true,
+			"goav1-process-timing":    true,
+			"environment-notes":       true,
+			"cpu-affinity":            true,
+			"power-mode":              true,
+			"thermal-state":           true,
+			"frequency-policy":        true,
+			"background-load":         true,
+			"ffmpeg-bin":              true,
+			"ffmpeg-sha256":           true,
+			"aom-cpu-used":            true,
+			"aom-threads":             true,
+			"aom-row-mt":              true,
+			"aom-thread-sweep":        true,
+			"aomenc-bin":              true,
+			"aomenc-sha256":           true,
+			"svt-preset":              true,
+			"svt-lp":                  true,
+			"svt-lp-sweep":            true,
+			"svt-asm":                 true,
+			"svt-bin":                 true,
+			"svt-sha256":              true,
+			"ffmpeg-av1-decoder":      true,
+			"vmaf-model":              true,
 		},
 	}
 	if err := validatePublishConfig(cfg, gitMetadata{Commit: "abc"}); err != nil {
 		t.Fatalf("valid publish config failed: %v", err)
 	}
+
+	missingPublishMode := cfg
+	missingPublishMode.explicitFlags = copyStringBoolMap(cfg.explicitFlags)
+	delete(missingPublishMode.explicitFlags, "publish-comparison-mode")
+	if err := validatePublishConfig(missingPublishMode, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-publish-comparison-mode") {
+		t.Fatalf("missing publish comparison mode error=%v", err)
+	}
+
+	singleThread := cfg
+	singleThread.publishCompareMode = publishComparisonModeSingleThread
+	singleThread.goMaxProcs = 1
+	singleThread.goav1MaxThreads = 1
+	singleThread.aomThreads = 1
+	singleThread.aomRowMT = 0
+	singleThread.aomThreadSweep = false
+	singleThread.svtLP = 1
+	singleThread.svtLPSweep = false
+	if err := validatePublishConfig(singleThread, gitMetadata{Commit: "abc"}); err != nil {
+		t.Fatalf("valid single-thread publish config failed: %v", err)
+	}
+
+	badSingleThread := singleThread
+	badSingleThread.aomThreads = 2
+	if err := validatePublishConfig(badSingleThread, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-aom-threads 1") {
+		t.Fatalf("bad single-thread aom config error=%v", err)
+	}
+
+	badSingleThread = singleThread
+	badSingleThread.svtLPSweep = true
+	if err := validatePublishConfig(badSingleThread, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-svt-lp-sweep=false") {
+		t.Fatalf("bad single-thread svt config error=%v", err)
+	}
+
 	missingGoPin := cfg
 	missingGoPin.explicitFlags = copyStringBoolMap(cfg.explicitFlags)
 	delete(missingGoPin.explicitFlags, "go-sha256")

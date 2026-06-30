@@ -33,6 +33,10 @@ Publishable rows must satisfy these controls:
   `performance`.
 - Use corpus-backed real clips for quality claims and require manifest/source
   hashes, exact frame metric traces, and required metrics/encoders.
+- Choose the publish comparison mode explicitly: `matched-cpu-budget` uses the
+  aom/SVT sweep selectors by observed CPU budget, while `fixed-single-thread`
+  requires `GOMAXPROCS=1`, goav1 max threads 1, aom `--threads=1 --row-mt=0`,
+  and SVT `--lp 1`.
 - For generated decoder corpus publish rows, require the v2 manifest produced
   from `GOAV1_BENCH_SOURCES_TSV`; it carries row-level source provenance and
   publish mode rejects fewer than two source clips or two content categories by

@@ -321,7 +321,9 @@ hot paths are guarded at
 allocate returned buffers. See
 `ExampleVideoEncoder` and `ExampleRTCEncoder` for
 the round trip, `cmd/encbench` for local goav1-only 1080p60 profiling, and
-`cmd/qualitybench -publish` for claim-supporting SVT-AV1/libaom comparisons.
+`cmd/qualitybench -publish` for claim-supporting SVT-AV1/libaom comparisons;
+use `make qualitybench-publish` for matched-CPU-budget rows and
+`make qualitybench-publish-singlethread` for fixed single-thread rows.
 Rate-distortion quality and single-thread performance remain active work
 tracks.
 

@@ -63,6 +63,7 @@ GO_SHA256=$(shasum -a 256 "$GO_BIN" | awk '{print $1}')
   -goav1-scene-cut=false \
   -goav1-process-timing=true \
   -timing-mode e2e \
+  -publish-comparison-mode matched-cpu-budget \
   -run-order shuffle -shuffle-seed 1 \
   -runs 3 -warmup-runs 1 \
   -aom-cpu-used 8 \
@@ -306,7 +307,9 @@ and the CSV/metadata timing columns:
 or `observed_parallelism=cpu_total_sec/encode_wall_sec` to check whether one
 encoder consumed a larger CPU budget. Publish mode fails a measured tuple when
 any successful sample lacks positive wall time or process CPU timing, so copied
-tables cannot silently omit CPU-budget evidence. With `-aom-thread-sweep=true`,
+tables cannot silently omit CPU-budget evidence. Use
+`-publish-comparison-mode matched-cpu-budget` for the default publish table:
+with `-aom-thread-sweep=true`,
 qualitybench measures libaom `--threads 1..-aom-threads` crossed with
 `--row-mt 0/1`, reports the candidate whose measured `observed_parallelism` is
 closest to the matched goav1 row, and records the nonreported candidates in
@@ -315,6 +318,14 @@ qualitybench measures SVT `--lp 0..6`, reports the candidate whose measured
 `observed_parallelism` is closest to the matched goav1 row, and records the
 nonreported candidates in metadata. Treat every `--lp` as an SVT level, not as a
 target thread count; do not match `GOMAXPROCS=N` to `--lp N`.
+
+Use `-publish-comparison-mode fixed-single-thread` for a deterministic
+single-thread table. Publish mode then requires `-gomaxprocs 1`,
+`-goav1-max-threads 1`, `-aom-thread-sweep=false`, `-aom-threads 1`,
+`-aom-row-mt 0`, `-svt-lp-sweep=false`, and `-svt-lp 1`. The Make wrapper
+`make qualitybench-publish-singlethread` applies those controls while reusing
+the same manifest, pinning, metric, run-order, and metadata requirements as
+`make qualitybench-publish`.
 
 Also report SVT's assembly tier. SVT-AV1 `--asm` defaults to `max`, which may
 use kernels above baseline NEON on Apple silicon, such as `neon_dotprod` or

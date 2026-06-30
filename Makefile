@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish qualitybench-publish gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference webrtc-browser webrtc-production dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
+.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference webrtc-browser webrtc-production dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -41,6 +41,7 @@ GO_BENCH_PUBLISH_TAGS ?=
 GO_BENCH_PUBLISH_GOGC ?= off
 QUALITYBENCH_MANIFEST ?=
 QUALITYBENCH_WORKDIR ?= /tmp/goav1-quality
+QUALITYBENCH_SINGLETHREAD_WORKDIR ?= /tmp/goav1-quality-singlethread
 QUALITYBENCH_CSV ?= $(QUALITYBENCH_WORKDIR)/quality.csv
 QUALITYBENCH_SUMMARY_CSV ?= $(QUALITYBENCH_WORKDIR)/quality-summary.csv
 QUALITYBENCH_STATS_CSV ?= $(QUALITYBENCH_WORKDIR)/quality-encoder-stats.csv
@@ -77,6 +78,7 @@ QUALITYBENCH_GOAV1_MAX_THREADS ?= 4
 QUALITYBENCH_GOAV1_EFFORT ?= 0
 QUALITYBENCH_GOAV1_SCENE_CUT ?= false
 QUALITYBENCH_GOAV1_PROCESS_TIMING ?= true
+QUALITYBENCH_PUBLISH_COMPARISON_MODE ?= matched-cpu-budget
 QUALITYBENCH_SHUFFLE_SEED ?= 1
 QUALITYBENCH_RUNS ?= 3
 QUALITYBENCH_WARMUP_RUNS ?= 1
@@ -231,6 +233,7 @@ qualitybench-publish:
 		-goav1-scene-cut="$(QUALITYBENCH_GOAV1_SCENE_CUT)" \
 		-goav1-process-timing="$(QUALITYBENCH_GOAV1_PROCESS_TIMING)" \
 		-timing-mode e2e \
+		-publish-comparison-mode "$(QUALITYBENCH_PUBLISH_COMPARISON_MODE)" \
 		-run-order shuffle \
 		-shuffle-seed "$(QUALITYBENCH_SHUFFLE_SEED)" \
 		-runs "$(QUALITYBENCH_RUNS)" \
@@ -266,6 +269,18 @@ qualitybench-publish:
 		-background-load "$(QUALITYBENCH_BACKGROUND_LOAD)" \
 		-publish \
 		-workdir "$(QUALITYBENCH_WORKDIR)"
+
+qualitybench-publish-singlethread:
+	$(MAKE) qualitybench-publish \
+		QUALITYBENCH_WORKDIR="$(QUALITYBENCH_SINGLETHREAD_WORKDIR)" \
+		QUALITYBENCH_PUBLISH_COMPARISON_MODE=fixed-single-thread \
+		QUALITYBENCH_GOMAXPROCS=1 \
+		QUALITYBENCH_GOAV1_MAX_THREADS=1 \
+		QUALITYBENCH_AOM_THREADS=1 \
+		QUALITYBENCH_AOM_ROW_MT=0 \
+		QUALITYBENCH_AOM_THREAD_SWEEP=false \
+		QUALITYBENCH_SVT_LP=1 \
+		QUALITYBENCH_SVT_LP_SWEEP=false
 
 gc-metrics:
 	GODEBUG=gctrace=1 go test -run '^$$' -bench='BenchmarkDecode.*GCMetrics|BenchmarkDecodeFullVectorAllocs' -benchmem -count=$(GCMETRICS_COUNT) .
@@ -572,6 +587,8 @@ help:
 	@echo "  bench-corpus               generated corpus goav1 vs reference decoder throughput"
 	@echo "  bench-corpus-publish       strict generated corpus throughput requiring all reference decoders"
 	@echo "  bench-go-publish           strict Go benchmark runner with metadata sidecar"
+	@echo "  qualitybench-publish       matched-CPU-budget publish encoder comparison"
+	@echo "  qualitybench-publish-singlethread fixed single-thread publish encoder comparison"
 	@echo "  gc-metrics                 decode GC scan/object-count benchmarks"
 	@echo "  compiler-reports           fail on new hot-package heap escapes; report BCE sites"
 	@echo "  alloc                      run allocation regression checks"
