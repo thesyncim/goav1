@@ -119,8 +119,10 @@ use `make bench-go-publish`, not the smoke-oriented `make bench` or
 explicit structured machine-state controls, `-benchmem`, at least five measured
 runs, fixed `GOMAXPROCS`, a single matching `go test -cpu` value, explicit
 `GOGC`, distinct raw-output and metadata paths, no ambient `GOFLAGS`,
-`GOMEMLIMIT`, or `GODEBUG`, and explicit package/benchmark selection. Publish
-mode rejects
+`GOMEMLIMIT`, `GODEBUG`, Go target/compiler/cache overrides such as `GOAMD64`,
+`GOARM64`, `GOEXPERIMENT`, `CGO_ENABLED`, `CC`, `CXX`, `GOCACHE`,
+`GOMODCACHE`, `GOPATH`, or `GOTMPDIR`, and explicit package/benchmark
+selection. Publish mode rejects
 defaulted package, benchmark, count, benchtime, CPU, GOMAXPROCS, GC, output,
 and metadata settings; pass every control explicitly.
 It writes the raw `go test` output and a metadata JSON sidecar containing the
@@ -197,7 +199,8 @@ low-overhead stream through the public decoder, never encoder reconstruction
 buffers. The metadata JSON records command paths, binary SHA-256 hashes, and
 version/help probes for the external tools used by the run. It also records
 `manifest_sha256`, the Go runtime build settings exposed by the benchmark
-binary, the effective `GOMAXPROCS`, CPU count/model when available, hostname,
+binary, full `go env -json` metadata, the effective `GOMAXPROCS`, CPU
+count/model when available, hostname,
 OS/kernel version when available, `PATH`, selected Go runtime environment
 variables (`GOFLAGS`, `GOGC`, `GOMEMLIMIT`, `GODEBUG`), and structured
 CPU-affinity, power-mode, thermal-state, frequency-policy, and background-load

@@ -44,8 +44,60 @@
 # generator-time dav1d MD5 agreement for 8-bit 4:2:0 rows. Set
 # GOAV1_BENCH_CORPUS_ALLOW_MISSING_DAV1D=1 only for exploratory local corpora
 # that will never be used for publishable goav1-vs-dav1d tables.
+#
+# Publishable corpus generation requires absolute tool paths and SHA-256 pins:
+#   GOAV1_BENCH_AOMENC_SHA256=<sha256 of $AOMENC>
+#   GOAV1_BENCH_AOMDEC_SHA256=<sha256 of $AOMDEC>
+#   GOAV1_BENCH_FFMPEG_SHA256=<sha256 of $FFMPEG>
+#   GOAV1_BENCH_DAV1D_SHA256=<sha256 of $DAV1D>
+# Set GOAV1_BENCH_CORPUS_ALLOW_UNPINNED_TOOLS=1 only for exploratory local
+# corpora that will never be used for publishable benchmark tables.
 
 set -euo pipefail
+
+sha256_file() {
+  shasum -a 256 "$1" | awk '{print $1}'
+}
+
+canonical_sha256() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+verify_tool_pin() {
+  local tool_name=$1 tool_path=$2 expected_sha=$3 env_name=$4
+  if [ "${GOAV1_BENCH_CORPUS_ALLOW_UNPINNED_TOOLS:-}" = "1" ]; then
+    return
+  fi
+  if [ -z "$expected_sha" ]; then
+    echo "ERROR: set $env_name to pin $tool_name for publishable corpus generation" >&2
+    echo "       set GOAV1_BENCH_CORPUS_ALLOW_UNPINNED_TOOLS=1 only for exploratory non-publishable corpora" >&2
+    exit 1
+  fi
+  case "$tool_path" in
+    /*) ;;
+    *)
+      echo "ERROR: $tool_name path must be absolute for publishable corpus generation: $tool_path" >&2
+      exit 1
+      ;;
+  esac
+  if [ ! -f "$tool_path" ]; then
+    echo "ERROR: $tool_name path is not a file: $tool_path" >&2
+    exit 1
+  fi
+  local want got
+  want=$(canonical_sha256 "$expected_sha")
+  if [[ ! "$want" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "ERROR: $env_name must be a 64-hex SHA-256, got: $expected_sha" >&2
+    exit 1
+  fi
+  got=$(sha256_file "$tool_path")
+  if [ "$got" != "$want" ]; then
+    echo "ERROR: $tool_name sha256 mismatch for $tool_path" >&2
+    echo "       got  $got" >&2
+    echo "       want $want" >&2
+    exit 1
+  fi
+}
 
 # --- locate tools -----------------------------------------------------------
 AOMENC=${AOMENC:-$(command -v aomenc || true)}
@@ -63,6 +115,12 @@ if [ -z "$DAV1D" ] && [ "${GOAV1_BENCH_CORPUS_ALLOW_MISSING_DAV1D:-}" != "1" ]; 
   echo "ERROR: DAV1D not found on PATH" >&2
   echo "       install dav1d or set GOAV1_BENCH_CORPUS_ALLOW_MISSING_DAV1D=1 for exploratory non-publishable corpus generation" >&2
   exit 1
+fi
+verify_tool_pin "aomenc" "$AOMENC" "${GOAV1_BENCH_AOMENC_SHA256:-}" "GOAV1_BENCH_AOMENC_SHA256"
+verify_tool_pin "aomdec" "$AOMDEC" "${GOAV1_BENCH_AOMDEC_SHA256:-}" "GOAV1_BENCH_AOMDEC_SHA256"
+verify_tool_pin "ffmpeg" "$FFMPEG" "${GOAV1_BENCH_FFMPEG_SHA256:-}" "GOAV1_BENCH_FFMPEG_SHA256"
+if [ -n "$DAV1D" ]; then
+  verify_tool_pin "dav1d" "$DAV1D" "${GOAV1_BENCH_DAV1D_SHA256:-}" "GOAV1_BENCH_DAV1D_SHA256"
 fi
 
 # --- locate source + output dir ---------------------------------------------
@@ -151,10 +209,6 @@ echo "frames : $FRAMES"
 echo "fps    : $FPS"
 echo "aomenc : threads=$AOM_THREADS row-mt=$AOM_ROW_MT"
 echo
-
-sha256_file() {
-  shasum -a 256 "$1" | awk '{print $1}'
-}
 
 SRC_ACTUAL_SHA=$(sha256_file "$SRC")
 if [ "$SRC_ACTUAL_SHA" != "$SRC_EXPECTED_SHA" ]; then

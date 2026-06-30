@@ -471,6 +471,14 @@ export GOAV1_BENCH_SOURCE_ID=source-id
 export GOAV1_BENCH_SOURCE_URL=https://example.invalid/source
 export GOAV1_BENCH_SOURCE_LICENSE=license-or-usage-grant
 export GOAV1_BENCH_SOURCE_CATEGORY=content-category
+export AOMENC=/absolute/path/to/aomenc
+export AOMDEC=/absolute/path/to/aomdec
+export DAV1D=/absolute/path/to/dav1d
+export FFMPEG=/absolute/path/to/ffmpeg
+export GOAV1_BENCH_AOMENC_SHA256=$(shasum -a 256 "$AOMENC" | awk '{print $1}')
+export GOAV1_BENCH_AOMDEC_SHA256=$(shasum -a 256 "$AOMDEC" | awk '{print $1}')
+export GOAV1_BENCH_DAV1D_SHA256=$(shasum -a 256 "$DAV1D" | awk '{print $1}')
+export GOAV1_BENCH_FFMPEG_SHA256=$(shasum -a 256 "$FFMPEG" | awk '{print $1}')
 export GOAV1_BENCH_CORPUS_ENVIRONMENT_NOTES="fixed power mode; idle machine; cool start"
 export BENCH_CORPUS_ENVIRONMENT_NOTES="$GOAV1_BENCH_CORPUS_ENVIRONMENT_NOTES"
 export BENCH_CORPUS_CPU_AFFINITY=none
@@ -489,10 +497,14 @@ make bench-corpus-publish
 ```
 
 The generator requires an explicit source clip plus source SHA-256, pins aomenc
-`--threads` and `--row-mt`, requires `dav1d` unless
+`--threads` and `--row-mt`, requires absolute `aomenc`, `aomdec`, `dav1d`, and
+`ffmpeg` tool paths with matching SHA-256 pins before encoding starts, requires
+`dav1d` unless
 `GOAV1_BENCH_CORPUS_ALLOW_MISSING_DAV1D=1` is set for exploratory
-non-publishable runs, requires source ID/URL/license/category metadata, expects
-25 clips, and writes `manifest.tsv` with source, tool version/hash,
+non-publishable runs, and allows unpinned generator tools only with
+`GOAV1_BENCH_CORPUS_ALLOW_UNPINNED_TOOLS=1` for exploratory non-publishable
+corpora. It also requires source ID/URL/license/category metadata, expects 25
+clips, and writes `manifest.tsv` with source, tool version/hash,
 encode-argument, IVF, MD5, and dav1d agreement data next to the local ignored
 corpus. Quality benchmark manifests used for publishable encoder tables must
 also declare raw `pix_fmt=i420`, `bit_depth=8`, `chroma=4:2:0`, per-input
@@ -509,9 +521,10 @@ also requires absolute decoder paths and matching SHA-256 pins, plus explicit
 `GOMAXPROCS`/`GOGC`, structured CPU affinity, power mode, thermal state,
 frequency policy, and background-load fields, with hidden Go runtime environment
 knobs unset. Use `make bench-corpus` only for exploratory local runs where
-missing decoder columns or PATH-selected tools are acceptable. Exploratory timing
-without `manifest.tsv` now requires `GOAV1_BENCH_CORPUS_ALLOW_UNMANIFESTED=1`,
-so stale or partial ignored corpus data cannot be used by accident.
+missing decoder columns or explicitly unpinned generator tools are acceptable.
+Exploratory timing without `manifest.tsv` now requires
+`GOAV1_BENCH_CORPUS_ALLOW_UNMANIFESTED=1`, so stale or partial ignored corpus
+data cannot be used by accident.
 
 That report prints per-clip and aggregate fps, raw and startup-adjusted external
 decoder timings, and the goav1/dav1d ratio that should drive optimization work.
