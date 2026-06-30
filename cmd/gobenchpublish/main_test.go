@@ -24,6 +24,11 @@ func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
 		OutputPath:       "/tmp/bench.txt",
 		MetadataPath:     "/tmp/bench.json",
 		EnvironmentNotes: "fixed power mode, idle machine",
+		CPUAffinity:      "none",
+		PowerMode:        "high power",
+		ThermalState:     "cool start",
+		FrequencyPolicy:  "automatic",
+		BackgroundLoad:   "idle machine",
 		GoMaxProcs:       1,
 		CPU:              "1",
 		Count:            5,
@@ -48,6 +53,13 @@ func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
 	if err := validateConfig(noNotes, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "environment-notes") {
 		t.Fatalf("missing notes error=%v", err)
+	}
+
+	noMachineState := cfg
+	noMachineState.CPUAffinity = " "
+	if err := validateConfig(noMachineState, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "cpu-affinity") {
+		t.Fatalf("missing cpu-affinity error=%v", err)
 	}
 
 	tooFew := cfg
@@ -108,6 +120,11 @@ func TestValidatePublishConfigRejectsHiddenGoEnvironment(t *testing.T) {
 		OutputPath:       "/tmp/bench.txt",
 		MetadataPath:     "/tmp/bench.json",
 		EnvironmentNotes: "fixed power mode, idle machine",
+		CPUAffinity:      "none",
+		PowerMode:        "high power",
+		ThermalState:     "cool start",
+		FrequencyPolicy:  "automatic",
+		BackgroundLoad:   "idle machine",
 		GoMaxProcs:       1,
 		CPU:              "1",
 		Count:            5,
@@ -175,6 +192,11 @@ func TestMetadataJSONRecordsOutputHash(t *testing.T) {
 		OutputPath:       out,
 		MetadataPath:     metaPath,
 		EnvironmentNotes: "idle",
+		CPUAffinity:      "none",
+		PowerMode:        "high power",
+		ThermalState:     "cool start",
+		FrequencyPolicy:  "automatic",
+		BackgroundLoad:   "idle machine",
 		GoMaxProcs:       1,
 		CPU:              "1",
 		Count:            5,
@@ -204,7 +226,12 @@ func TestMetadataJSONRecordsOutputHash(t *testing.T) {
 	}
 	if got.Output.Bytes == 0 || got.Output.SHA256 == "" || got.Config.Count != 5 ||
 		got.Config.GoMaxProcs != 1 || got.Environment.GOGC != "off" ||
-		got.Environment.Notes != "idle" {
+		got.Environment.Notes != "idle" ||
+		got.Environment.CPUAffinity != "none" ||
+		got.Environment.PowerMode != "high power" ||
+		got.Environment.ThermalState != "cool start" ||
+		got.Environment.FrequencyPolicy != "automatic" ||
+		got.Environment.BackgroundLoad != "idle machine" {
 		t.Fatalf("metadata=%+v", got)
 	}
 }
@@ -216,6 +243,11 @@ func gobenchPublishExplicitFlags() map[string]bool {
 		"out":               true,
 		"metadata-json":     true,
 		"environment-notes": true,
+		"cpu-affinity":      true,
+		"power-mode":        true,
+		"thermal-state":     true,
+		"frequency-policy":  true,
+		"background-load":   true,
 		"gomaxprocs":        true,
 		"cpu":               true,
 		"count":             true,

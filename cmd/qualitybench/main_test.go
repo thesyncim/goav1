@@ -1356,6 +1356,11 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		runs:                3,
 		warmupRuns:          1,
 		environmentNotes:    "fixed power mode, idle machine",
+		cpuAffinity:         "none",
+		powerMode:           "high power",
+		thermalState:        "cool start",
+		frequencyPolicy:     "automatic",
+		backgroundLoad:      "idle machine",
 		goGC:                "off",
 		ffmpegBin:           ffmpegBin,
 		ffmpegSHA256:        ffmpegHash,
@@ -1393,6 +1398,11 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"goav1-effort":       true,
 			"goav1-scene-cut":    true,
 			"environment-notes":  true,
+			"cpu-affinity":       true,
+			"power-mode":         true,
+			"thermal-state":      true,
+			"frequency-policy":   true,
+			"background-load":    true,
 			"ffmpeg-bin":         true,
 			"ffmpeg-sha256":      true,
 			"aom-cpu-used":       true,
@@ -1429,6 +1439,24 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	if err := validatePublishConfig(emptyEnvironmentNotes, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "non-empty -environment-notes") {
 		t.Fatalf("empty environment notes error=%v", err)
+	}
+
+	missingMachineState := cfg
+	missingMachineState.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingMachineState.explicitFlags[k] = v
+	}
+	delete(missingMachineState.explicitFlags, "thermal-state")
+	if err := validatePublishConfig(missingMachineState, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-thermal-state") {
+		t.Fatalf("missing thermal-state error=%v", err)
+	}
+
+	emptyMachineState := cfg
+	emptyMachineState.backgroundLoad = " "
+	if err := validatePublishConfig(emptyMachineState, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "non-empty -background-load") {
+		t.Fatalf("empty background-load error=%v", err)
 	}
 
 	missingGoAV1Threads := cfg
@@ -2057,6 +2085,11 @@ func TestWriteMetadataJSON(t *testing.T) {
 		anchorEncoder:    "goav1",
 		layers:           1,
 		environmentNotes: "fixed power mode",
+		cpuAffinity:      "none",
+		powerMode:        "high power",
+		thermalState:     "cool start",
+		frequencyPolicy:  "automatic",
+		backgroundLoad:   "idle machine",
 	}
 	invocations := []encoderInvocationMetadata{{
 		Clip:             "clip",
@@ -2109,8 +2142,13 @@ func TestWriteMetadataJSON(t *testing.T) {
 	if doc.Environment.GOMAXPROCS <= 0 || doc.Environment.NumCPU <= 0 {
 		t.Fatalf("environment metadata=%+v", doc.Environment)
 	}
-	if doc.Environment.Notes != "fixed power mode" {
-		t.Fatalf("environment notes=%q", doc.Environment.Notes)
+	if doc.Environment.Notes != "fixed power mode" ||
+		doc.Environment.CPUAffinity != "none" ||
+		doc.Environment.PowerMode != "high power" ||
+		doc.Environment.ThermalState != "cool start" ||
+		doc.Environment.FrequencyPolicy != "automatic" ||
+		doc.Environment.BackgroundLoad != "idle machine" {
+		t.Fatalf("environment metadata=%+v", doc.Environment)
 	}
 	if doc.Config.ManifestSHA256 != manifestSHA {
 		t.Fatalf("manifest sha=%q want %q", doc.Config.ManifestSHA256, manifestSHA)

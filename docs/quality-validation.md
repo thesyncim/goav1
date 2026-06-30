@@ -74,6 +74,11 @@ go run ./cmd/qualitybench \
   -svt-bin /opt/homebrew/bin/SvtAv1EncApp \
   -svt-sha256 <sha256-of-SvtAv1EncApp> \
   -environment-notes "fixed power mode; idle machine; cool start" \
+  -cpu-affinity "none" \
+  -power-mode "plugged in; high power mode" \
+  -thermal-state "cool start; no throttling observed" \
+  -frequency-policy "macOS automatic" \
+  -background-load "idle machine; no concurrent jobs" \
   -aom-threads 4 \
   -aom-row-mt 1 \
   -svt-asm neon \
@@ -87,25 +92,34 @@ non-VMAF run as state-of-the-art visual validation.
 
 The same strict path is available as `make qualitybench-publish`; set
 `QUALITYBENCH_MANIFEST`, `QUALITYBENCH_ENVIRONMENT_NOTES`,
-`QUALITYBENCH_FFMPEG_BIN`, `QUALITYBENCH_FFMPEG_SHA256`, and the matching
-`QUALITYBENCH_AOMENC_*` / `QUALITYBENCH_SVT_*` variables for selected external
-encoders, then override the other `QUALITYBENCH_*` variables when sweeping
-speed, assembly, bitrate settings, or the explicit FFmpeg AV1 decoder
-(`QUALITYBENCH_FFMPEG_AV1_DECODER`, default `libdav1d`) and VMAF model
-(`QUALITYBENCH_VMAF_MODEL`, default
+`QUALITYBENCH_CPU_AFFINITY`, `QUALITYBENCH_POWER_MODE`,
+`QUALITYBENCH_THERMAL_STATE`, `QUALITYBENCH_FREQUENCY_POLICY`,
+`QUALITYBENCH_BACKGROUND_LOAD`, `QUALITYBENCH_FFMPEG_BIN`,
+`QUALITYBENCH_FFMPEG_SHA256`, and the matching `QUALITYBENCH_AOMENC_*` /
+`QUALITYBENCH_SVT_*` variables for selected external encoders, then override the
+other `QUALITYBENCH_*` variables when sweeping speed, assembly, bitrate settings,
+or the explicit FFmpeg AV1 decoder (`QUALITYBENCH_FFMPEG_AV1_DECODER`, default
+`libdav1d`) and VMAF model (`QUALITYBENCH_VMAF_MODEL`, default
 `version=vmaf_v0.6.1`).
 
 If `-input` is omitted, `qualitybench` uses the same deterministic synthetic
 scene as `encbench`. That path is for smoke testing the harness, not for quality
 claims.
 
+Publishable benchmark rows must record structured machine-state controls, not
+just prose notes: CPU affinity or the explicit value `none`, power mode, thermal
+state, frequency policy/governor, and background-load policy. Keep
+`-environment-notes` for extra context, but do not use it as the only place these
+controls are documented.
+
 Internal Go microbenchmark rows used to justify SIMD or hot-path changes should
 use `make bench-go-publish`, not the smoke-oriented `make bench` or
 `make bench-all` targets. The publish runner requires a clean tracked worktree,
-explicit environment notes, `-benchmem`, at least five measured runs, fixed
-`GOMAXPROCS`, a single matching `go test -cpu` value, explicit `GOGC`, distinct
-raw-output and metadata paths, no ambient `GOFLAGS`, `GOMEMLIMIT`, or
-`GODEBUG`, and explicit package/benchmark selection. Publish mode rejects
+explicit structured machine-state controls, `-benchmem`, at least five measured
+runs, fixed `GOMAXPROCS`, a single matching `go test -cpu` value, explicit
+`GOGC`, distinct raw-output and metadata paths, no ambient `GOFLAGS`,
+`GOMEMLIMIT`, or `GODEBUG`, and explicit package/benchmark selection. Publish
+mode rejects
 defaulted package, benchmark, count, benchtime, CPU, GOMAXPROCS, GC, output,
 and metadata settings; pass every control explicitly.
 It writes the raw `go test` output and a metadata JSON sidecar containing the
@@ -119,6 +133,11 @@ make bench-go-publish \
   GO_BENCH_PUBLISH_OUT=/tmp/goav1-coeff-cul-level.txt \
   GO_BENCH_PUBLISH_METADATA_JSON=/tmp/goav1-coeff-cul-level.json \
   GO_BENCH_PUBLISH_ENVIRONMENT_NOTES="fixed power mode; idle machine; cool start" \
+  GO_BENCH_PUBLISH_CPU_AFFINITY=none \
+  GO_BENCH_PUBLISH_POWER_MODE="plugged in; high power mode" \
+  GO_BENCH_PUBLISH_THERMAL_STATE="cool start; no throttling observed" \
+  GO_BENCH_PUBLISH_FREQUENCY_POLICY="macOS automatic" \
+  GO_BENCH_PUBLISH_BACKGROUND_LOAD="idle machine; no concurrent jobs" \
   GO_BENCH_PUBLISH_GOMAXPROCS=1 \
   GO_BENCH_PUBLISH_CPU=1 \
   GO_BENCH_PUBLISH_COUNT=7 \
@@ -138,7 +157,9 @@ Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`,
 `-run-order shuffle`, explicit `-shuffle-seed`, `-runs >= 3`,
 `-warmup-runs >= 1`, and explicit `-vmaf-model` when VMAF is required, plus a
-non-empty `-environment-notes` value. It also
+non-empty `-environment-notes` value and explicit non-empty `-cpu-affinity`,
+`-power-mode`, `-thermal-state`, `-frequency-policy`, and `-background-load`
+values. It also
 requires explicit goav1 execution-lane, effort, and scene-cut settings, an
 explicit `-gogc` value with ambient `GOFLAGS`, `GOMEMLIMIT`, and `GODEBUG`
 unset, explicit absolute `-ffmpeg-bin`, `-aomenc-bin`, and `-svt-bin` paths
@@ -177,7 +198,8 @@ version/help probes for the external tools used by the run. It also records
 `manifest_sha256`, the effective `GOMAXPROCS`, CPU count/model when available,
 hostname, OS/kernel version when available, `PATH`, selected Go runtime
 environment variables (`GOFLAGS`, `GOGC`, `GOMEMLIMIT`, `GODEBUG`), and
-free-form environment notes for power, thermal, and background-load context.
+structured CPU-affinity, power-mode, thermal-state, frequency-policy, and
+background-load fields plus free-form environment notes for extra context.
 It also records `run_order` and `shuffle_seed`. Publish mode requires
 `-run-order shuffle -shuffle-seed N` so claim-supporting rows use a
 deterministic order without always running the same encoder first. For local

@@ -12,11 +12,22 @@ BENCH_CORPUS_DAV1D_BIN ?=
 BENCH_CORPUS_DAV1D_SHA256 ?=
 BENCH_CORPUS_SVTAV1DECAPP_BIN ?=
 BENCH_CORPUS_SVTAV1DECAPP_SHA256 ?=
+BENCH_CORPUS_ENVIRONMENT_NOTES ?=
+BENCH_CORPUS_CPU_AFFINITY ?=
+BENCH_CORPUS_POWER_MODE ?=
+BENCH_CORPUS_THERMAL_STATE ?=
+BENCH_CORPUS_FREQUENCY_POLICY ?=
+BENCH_CORPUS_BACKGROUND_LOAD ?=
 GO_BENCH_PUBLISH_PKG ?= ./internal/av1/tile
 GO_BENCH_PUBLISH_BENCH ?= .
 GO_BENCH_PUBLISH_OUT ?= /tmp/goav1-go-bench.txt
 GO_BENCH_PUBLISH_METADATA_JSON ?= /tmp/goav1-go-bench-metadata.json
 GO_BENCH_PUBLISH_ENVIRONMENT_NOTES ?=
+GO_BENCH_PUBLISH_CPU_AFFINITY ?=
+GO_BENCH_PUBLISH_POWER_MODE ?=
+GO_BENCH_PUBLISH_THERMAL_STATE ?=
+GO_BENCH_PUBLISH_FREQUENCY_POLICY ?=
+GO_BENCH_PUBLISH_BACKGROUND_LOAD ?=
 GO_BENCH_PUBLISH_GOMAXPROCS ?= 1
 GO_BENCH_PUBLISH_CPU ?= 1
 GO_BENCH_PUBLISH_COUNT ?= 7
@@ -30,6 +41,11 @@ QUALITYBENCH_SUMMARY_CSV ?= $(QUALITYBENCH_WORKDIR)/quality-summary.csv
 QUALITYBENCH_STATS_CSV ?= $(QUALITYBENCH_WORKDIR)/quality-encoder-stats.csv
 QUALITYBENCH_METADATA_JSON ?= $(QUALITYBENCH_WORKDIR)/quality-metadata.json
 QUALITYBENCH_ENVIRONMENT_NOTES ?=
+QUALITYBENCH_CPU_AFFINITY ?=
+QUALITYBENCH_POWER_MODE ?=
+QUALITYBENCH_THERMAL_STATE ?=
+QUALITYBENCH_FREQUENCY_POLICY ?=
+QUALITYBENCH_BACKGROUND_LOAD ?=
 QUALITYBENCH_GOGC ?= off
 QUALITYBENCH_FFMPEG_BIN ?=
 QUALITYBENCH_FFMPEG_SHA256 ?=
@@ -102,6 +118,12 @@ bench-corpus:
 	GOAV1_BENCH_CORPUS=1 go test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
 
 bench-corpus-publish:
+	@if [ -z "$(BENCH_CORPUS_ENVIRONMENT_NOTES)" ]; then echo "set BENCH_CORPUS_ENVIRONMENT_NOTES='power, thermal, and background-load context'"; exit 2; fi
+	@if [ -z "$(BENCH_CORPUS_CPU_AFFINITY)" ]; then echo "set BENCH_CORPUS_CPU_AFFINITY='none or explicit CPU pinning'"; exit 2; fi
+	@if [ -z "$(BENCH_CORPUS_POWER_MODE)" ]; then echo "set BENCH_CORPUS_POWER_MODE='power source/performance mode'"; exit 2; fi
+	@if [ -z "$(BENCH_CORPUS_THERMAL_STATE)" ]; then echo "set BENCH_CORPUS_THERMAL_STATE='thermal state before run'"; exit 2; fi
+	@if [ -z "$(BENCH_CORPUS_FREQUENCY_POLICY)" ]; then echo "set BENCH_CORPUS_FREQUENCY_POLICY='frequency/governor policy'"; exit 2; fi
+	@if [ -z "$(BENCH_CORPUS_BACKGROUND_LOAD)" ]; then echo "set BENCH_CORPUS_BACKGROUND_LOAD='background-load policy'"; exit 2; fi
 	GOMAXPROCS=1 \
 	GOGC=off \
 	GOFLAGS= \
@@ -110,6 +132,12 @@ bench-corpus-publish:
 	GOAV1_BENCH_CORPUS=1 \
 	GOAV1_BENCH_CORPUS_PUBLISH=1 \
 	GOAV1_BENCH_CORPUS_REPORT_JSON="$(BENCH_CORPUS_REPORT_JSON)" \
+	GOAV1_BENCH_CORPUS_ENVIRONMENT_NOTES="$(BENCH_CORPUS_ENVIRONMENT_NOTES)" \
+	GOAV1_BENCH_CORPUS_CPU_AFFINITY="$(BENCH_CORPUS_CPU_AFFINITY)" \
+	GOAV1_BENCH_CORPUS_POWER_MODE="$(BENCH_CORPUS_POWER_MODE)" \
+	GOAV1_BENCH_CORPUS_THERMAL_STATE="$(BENCH_CORPUS_THERMAL_STATE)" \
+	GOAV1_BENCH_CORPUS_FREQUENCY_POLICY="$(BENCH_CORPUS_FREQUENCY_POLICY)" \
+	GOAV1_BENCH_CORPUS_BACKGROUND_LOAD="$(BENCH_CORPUS_BACKGROUND_LOAD)" \
 	GOAV1_BENCH_CORPUS_AOMDEC_BIN="$(BENCH_CORPUS_AOMDEC_BIN)" \
 	GOAV1_BENCH_CORPUS_AOMDEC_SHA256="$(BENCH_CORPUS_AOMDEC_SHA256)" \
 	GOAV1_BENCH_CORPUS_DAV1D_BIN="$(BENCH_CORPUS_DAV1D_BIN)" \
@@ -119,12 +147,23 @@ bench-corpus-publish:
 	go test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
 
 bench-go-publish:
+	@if [ -z "$(GO_BENCH_PUBLISH_ENVIRONMENT_NOTES)" ]; then echo "set GO_BENCH_PUBLISH_ENVIRONMENT_NOTES='power, thermal, and background-load context'"; exit 2; fi
+	@if [ -z "$(GO_BENCH_PUBLISH_CPU_AFFINITY)" ]; then echo "set GO_BENCH_PUBLISH_CPU_AFFINITY='none or explicit CPU pinning'"; exit 2; fi
+	@if [ -z "$(GO_BENCH_PUBLISH_POWER_MODE)" ]; then echo "set GO_BENCH_PUBLISH_POWER_MODE='power source/performance mode'"; exit 2; fi
+	@if [ -z "$(GO_BENCH_PUBLISH_THERMAL_STATE)" ]; then echo "set GO_BENCH_PUBLISH_THERMAL_STATE='thermal state before run'"; exit 2; fi
+	@if [ -z "$(GO_BENCH_PUBLISH_FREQUENCY_POLICY)" ]; then echo "set GO_BENCH_PUBLISH_FREQUENCY_POLICY='frequency/governor policy'"; exit 2; fi
+	@if [ -z "$(GO_BENCH_PUBLISH_BACKGROUND_LOAD)" ]; then echo "set GO_BENCH_PUBLISH_BACKGROUND_LOAD='background-load policy'"; exit 2; fi
 	go run ./cmd/gobenchpublish \
 		-pkg "$(GO_BENCH_PUBLISH_PKG)" \
 		-bench "$(GO_BENCH_PUBLISH_BENCH)" \
 		-out "$(GO_BENCH_PUBLISH_OUT)" \
 		-metadata-json "$(GO_BENCH_PUBLISH_METADATA_JSON)" \
 		-environment-notes "$(GO_BENCH_PUBLISH_ENVIRONMENT_NOTES)" \
+		-cpu-affinity "$(GO_BENCH_PUBLISH_CPU_AFFINITY)" \
+		-power-mode "$(GO_BENCH_PUBLISH_POWER_MODE)" \
+		-thermal-state "$(GO_BENCH_PUBLISH_THERMAL_STATE)" \
+		-frequency-policy "$(GO_BENCH_PUBLISH_FREQUENCY_POLICY)" \
+		-background-load "$(GO_BENCH_PUBLISH_BACKGROUND_LOAD)" \
 		-gomaxprocs "$(GO_BENCH_PUBLISH_GOMAXPROCS)" \
 		-cpu "$(GO_BENCH_PUBLISH_CPU)" \
 		-count "$(GO_BENCH_PUBLISH_COUNT)" \
@@ -137,6 +176,11 @@ bench-go-publish:
 qualitybench-publish:
 	@if [ -z "$(QUALITYBENCH_MANIFEST)" ]; then echo "set QUALITYBENCH_MANIFEST=/path/to/clips.csv"; exit 2; fi
 	@if [ -z "$(QUALITYBENCH_ENVIRONMENT_NOTES)" ]; then echo "set QUALITYBENCH_ENVIRONMENT_NOTES='power, thermal, and background-load context'"; exit 2; fi
+	@if [ -z "$(QUALITYBENCH_CPU_AFFINITY)" ]; then echo "set QUALITYBENCH_CPU_AFFINITY='none or explicit CPU pinning'"; exit 2; fi
+	@if [ -z "$(QUALITYBENCH_POWER_MODE)" ]; then echo "set QUALITYBENCH_POWER_MODE='power source/performance mode'"; exit 2; fi
+	@if [ -z "$(QUALITYBENCH_THERMAL_STATE)" ]; then echo "set QUALITYBENCH_THERMAL_STATE='thermal state before run'"; exit 2; fi
+	@if [ -z "$(QUALITYBENCH_FREQUENCY_POLICY)" ]; then echo "set QUALITYBENCH_FREQUENCY_POLICY='frequency/governor policy'"; exit 2; fi
+	@if [ -z "$(QUALITYBENCH_BACKGROUND_LOAD)" ]; then echo "set QUALITYBENCH_BACKGROUND_LOAD='background-load policy'"; exit 2; fi
 	mkdir -p "$(QUALITYBENCH_WORKDIR)"
 	go run ./cmd/qualitybench \
 		-manifest "$(QUALITYBENCH_MANIFEST)" \
@@ -182,6 +226,11 @@ qualitybench-publish:
 		-ffmpeg-av1-decoder "$(QUALITYBENCH_FFMPEG_AV1_DECODER)" \
 		-vmaf-model "$(QUALITYBENCH_VMAF_MODEL)" \
 		-environment-notes "$(QUALITYBENCH_ENVIRONMENT_NOTES)" \
+		-cpu-affinity "$(QUALITYBENCH_CPU_AFFINITY)" \
+		-power-mode "$(QUALITYBENCH_POWER_MODE)" \
+		-thermal-state "$(QUALITYBENCH_THERMAL_STATE)" \
+		-frequency-policy "$(QUALITYBENCH_FREQUENCY_POLICY)" \
+		-background-load "$(QUALITYBENCH_BACKGROUND_LOAD)" \
 		-publish \
 		-workdir "$(QUALITYBENCH_WORKDIR)"
 

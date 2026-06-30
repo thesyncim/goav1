@@ -29,6 +29,11 @@ type config struct {
 	OutputPath       string
 	MetadataPath     string
 	EnvironmentNotes string
+	CPUAffinity      string
+	PowerMode        string
+	ThermalState     string
+	FrequencyPolicy  string
+	BackgroundLoad   string
 	GoMaxProcs       int
 	CPU              string
 	Count            int
@@ -81,6 +86,11 @@ type environmentConfig struct {
 	GOFLAGS          string `json:"goflags,omitempty"`
 	GOMEMLIMIT       string `json:"gomemlimit,omitempty"`
 	GODEBUG          string `json:"godebug,omitempty"`
+	CPUAffinity      string `json:"cpu_affinity,omitempty"`
+	PowerMode        string `json:"power_mode,omitempty"`
+	ThermalState     string `json:"thermal_state,omitempty"`
+	FrequencyPolicy  string `json:"frequency_policy,omitempty"`
+	BackgroundLoad   string `json:"background_load,omitempty"`
 	Notes            string `json:"notes,omitempty"`
 	EffectiveCommand string `json:"effective_command"`
 }
@@ -143,6 +153,11 @@ func parseFlags() config {
 	flag.StringVar(&cfg.OutputPath, "out", "/tmp/goav1-go-bench.txt", "raw go test benchmark output path")
 	flag.StringVar(&cfg.MetadataPath, "metadata-json", "/tmp/goav1-go-bench-metadata.json", "metadata JSON path")
 	flag.StringVar(&cfg.EnvironmentNotes, "environment-notes", "", "power, thermal, and background-load notes")
+	flag.StringVar(&cfg.CPUAffinity, "cpu-affinity", "", "CPU affinity/pinning used for publish runs; use none if the process is intentionally unpinned")
+	flag.StringVar(&cfg.PowerMode, "power-mode", "", "power source and performance mode used for publish runs")
+	flag.StringVar(&cfg.ThermalState, "thermal-state", "", "pre-run thermal state used for publish runs")
+	flag.StringVar(&cfg.FrequencyPolicy, "frequency-policy", "", "CPU frequency/governor policy used for publish runs")
+	flag.StringVar(&cfg.BackgroundLoad, "background-load", "", "background-load policy used for publish runs")
 	flag.IntVar(&cfg.GoMaxProcs, "gomaxprocs", 1, "GOMAXPROCS value for the benchmark process")
 	flag.StringVar(&cfg.CPU, "cpu", "1", "go test -cpu value")
 	flag.IntVar(&cfg.Count, "count", 7, "go test -count value")
@@ -206,6 +221,11 @@ func validateConfig(cfg config, git gitMetadata) error {
 			"out",
 			"metadata-json",
 			"environment-notes",
+			"cpu-affinity",
+			"power-mode",
+			"thermal-state",
+			"frequency-policy",
+			"background-load",
 			"gomaxprocs",
 			"cpu",
 			"count",
@@ -220,8 +240,20 @@ func validateConfig(cfg config, git gitMetadata) error {
 		if git.Dirty {
 			return errors.New("publish requires a clean tracked git worktree")
 		}
-		if strings.TrimSpace(cfg.EnvironmentNotes) == "" {
-			return errors.New("publish requires non-empty -environment-notes")
+		for _, field := range []struct {
+			name  string
+			value string
+		}{
+			{name: "environment-notes", value: cfg.EnvironmentNotes},
+			{name: "cpu-affinity", value: cfg.CPUAffinity},
+			{name: "power-mode", value: cfg.PowerMode},
+			{name: "thermal-state", value: cfg.ThermalState},
+			{name: "frequency-policy", value: cfg.FrequencyPolicy},
+			{name: "background-load", value: cfg.BackgroundLoad},
+		} {
+			if err := validateNonEmptyPublishTextFlag(field.name, field.value); err != nil {
+				return err
+			}
 		}
 		if cfg.Count < 5 {
 			return errors.New("publish requires -count >= 5")
@@ -255,6 +287,17 @@ func validateConfig(cfg config, git gitMetadata) error {
 func requireExplicitFlag(cfg config, name string) error {
 	if cfg.ExplicitFlags == nil || !cfg.ExplicitFlags[name] {
 		return fmt.Errorf("publish requires explicit -%s", name)
+	}
+	return nil
+}
+
+func validateNonEmptyPublishTextFlag(name, value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fmt.Errorf("publish requires non-empty -%s", name)
+	}
+	if strings.ContainsAny(trimmed, "\r\n") {
+		return fmt.Errorf("publish requires -%s without newlines", name)
 	}
 	return nil
 }
@@ -348,7 +391,12 @@ func buildMetadata(cfg config, git gitMetadata, command []string, status, errTex
 			GOFLAGS:          os.Getenv("GOFLAGS"),
 			GOMEMLIMIT:       os.Getenv("GOMEMLIMIT"),
 			GODEBUG:          os.Getenv("GODEBUG"),
-			Notes:            cfg.EnvironmentNotes,
+			CPUAffinity:      strings.TrimSpace(cfg.CPUAffinity),
+			PowerMode:        strings.TrimSpace(cfg.PowerMode),
+			ThermalState:     strings.TrimSpace(cfg.ThermalState),
+			FrequencyPolicy:  strings.TrimSpace(cfg.FrequencyPolicy),
+			BackgroundLoad:   strings.TrimSpace(cfg.BackgroundLoad),
+			Notes:            strings.TrimSpace(cfg.EnvironmentNotes),
 			EffectiveCommand: strings.Join(command, " "),
 		},
 		Command: command,

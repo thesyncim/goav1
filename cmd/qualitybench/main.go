@@ -60,6 +60,11 @@ type benchConfig struct {
 	frameMetricsCSVPath string
 	metadataPath        string
 	environmentNotes    string
+	cpuAffinity         string
+	powerMode           string
+	thermalState        string
+	frequencyPolicy     string
+	backgroundLoad      string
 	goGC                string
 	ffmpegBin           string
 	ffmpegSHA256        string
@@ -242,18 +247,23 @@ type runtimeMetadata struct {
 }
 
 type environmentMetadata struct {
-	GOMAXPROCS    int    `json:"gomaxprocs"`
-	NumCPU        int    `json:"num_cpu"`
-	CPUModel      string `json:"cpu_model,omitempty"`
-	Hostname      string `json:"hostname,omitempty"`
-	OSVersion     string `json:"os_version,omitempty"`
-	KernelVersion string `json:"kernel_version,omitempty"`
-	PATH          string `json:"path,omitempty"`
-	GOFLAGS       string `json:"goflags,omitempty"`
-	GOGC          string `json:"gogc,omitempty"`
-	GOMEMLIMIT    string `json:"gomemlimit,omitempty"`
-	GODEBUG       string `json:"godebug,omitempty"`
-	Notes         string `json:"notes,omitempty"`
+	GOMAXPROCS      int    `json:"gomaxprocs"`
+	NumCPU          int    `json:"num_cpu"`
+	CPUModel        string `json:"cpu_model,omitempty"`
+	Hostname        string `json:"hostname,omitempty"`
+	OSVersion       string `json:"os_version,omitempty"`
+	KernelVersion   string `json:"kernel_version,omitempty"`
+	PATH            string `json:"path,omitempty"`
+	GOFLAGS         string `json:"goflags,omitempty"`
+	GOGC            string `json:"gogc,omitempty"`
+	GOMEMLIMIT      string `json:"gomemlimit,omitempty"`
+	GODEBUG         string `json:"godebug,omitempty"`
+	CPUAffinity     string `json:"cpu_affinity,omitempty"`
+	PowerMode       string `json:"power_mode,omitempty"`
+	ThermalState    string `json:"thermal_state,omitempty"`
+	FrequencyPolicy string `json:"frequency_policy,omitempty"`
+	BackgroundLoad  string `json:"background_load,omitempty"`
+	Notes           string `json:"notes,omitempty"`
 }
 
 type gitMetadata struct {
@@ -649,6 +659,11 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.frameMetricsCSVPath, "frame-metrics-csv", "", "write per-frame decoded PSNR/SSIM diagnostics CSV to this path")
 	flag.StringVar(&cfg.metadataPath, "metadata-json", "", "write reproducibility metadata JSON to this path")
 	flag.StringVar(&cfg.environmentNotes, "environment-notes", "", "free-form notes for publish runs: power mode, thermal state, and background load")
+	flag.StringVar(&cfg.cpuAffinity, "cpu-affinity", "", "CPU affinity/pinning used for publish runs; use none if the process is intentionally unpinned")
+	flag.StringVar(&cfg.powerMode, "power-mode", "", "power source and performance mode used for publish runs")
+	flag.StringVar(&cfg.thermalState, "thermal-state", "", "pre-run thermal state used for publish runs")
+	flag.StringVar(&cfg.frequencyPolicy, "frequency-policy", "", "CPU frequency/governor policy used for publish runs")
+	flag.StringVar(&cfg.backgroundLoad, "background-load", "", "background-load policy used for publish runs")
 	flag.StringVar(&cfg.goGC, "gogc", "", "Go GC percent for in-process goav1 encodes; use off to disable GC during publish runs")
 	flag.StringVar(&cfg.ffmpegBin, "ffmpeg-bin", "ffmpeg", "ffmpeg executable path")
 	flag.StringVar(&cfg.ffmpegSHA256, "ffmpeg-sha256", "", "expected SHA-256 of -ffmpeg-bin for publish runs")
@@ -855,14 +870,31 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"goav1-effort",
 		"goav1-scene-cut",
 		"environment-notes",
+		"cpu-affinity",
+		"power-mode",
+		"thermal-state",
+		"frequency-policy",
+		"background-load",
 	}
 	for _, name := range required {
 		if err := requireExplicitFlag(cfg, name); err != nil {
 			return err
 		}
 	}
-	if strings.TrimSpace(cfg.environmentNotes) == "" {
-		return errors.New("publish requires non-empty -environment-notes")
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "environment-notes", value: cfg.environmentNotes},
+		{name: "cpu-affinity", value: cfg.cpuAffinity},
+		{name: "power-mode", value: cfg.powerMode},
+		{name: "thermal-state", value: cfg.thermalState},
+		{name: "frequency-policy", value: cfg.frequencyPolicy},
+		{name: "background-load", value: cfg.backgroundLoad},
+	} {
+		if err := validateNonEmptyPublishTextFlag(field.name, field.value); err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(strings.ToLower(cfg.requiredEncodersRaw)) != "all" {
 		return errors.New("publish requires -require-encoders all")
@@ -1096,6 +1128,17 @@ func metricRequired(cfg benchConfig, metric string) bool {
 func requireExplicitFlag(cfg benchConfig, name string) error {
 	if !cfg.explicitFlags[name] {
 		return fmt.Errorf("publish requires explicit -%s", name)
+	}
+	return nil
+}
+
+func validateNonEmptyPublishTextFlag(name, value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fmt.Errorf("publish requires non-empty -%s", name)
+	}
+	if strings.ContainsAny(trimmed, "\r\n") {
+		return fmt.Errorf("publish requires -%s without newlines", name)
 	}
 	return nil
 }
@@ -2171,7 +2214,7 @@ func writeMetadataJSON(cfg benchConfig, filters map[string]bool, git gitMetadata
 			SIMDTier:     detectedSIMDTier(),
 			SIMDFeatures: detectedSIMDFeatures(),
 		},
-		Environment:   environmentMetadataForRun(cfg.environmentNotes),
+		Environment:   environmentMetadataForRun(cfg),
 		Git:           git,
 		Config:        configMetadata,
 		FairnessNotes: fairnessNotes(cfg),
@@ -2411,7 +2454,7 @@ func fairnessNotes(cfg benchConfig) []string {
 		"goav1 metadata records detected simd_tier and simd_features; compare those against SVT's recorded svt_asm setting instead of assuming --asm max and goav1 cover the same kernels.",
 	}
 	if cfg.publish {
-		notes = append(notes, "Publish mode required a clean git worktree, explicit artifact paths, an empty workdir before timing, manifest-backed corpus, exact raw input sizes, explicit encode controls, explicit GC control with hidden Go runtime env unset, pinned external binary paths and SHA-256 hashes, deterministic shuffled run order, explicit concurrency controls, required encoders, required metrics, and required BD-rate summary rows.")
+		notes = append(notes, "Publish mode required a clean git worktree, explicit artifact paths, an empty workdir before timing, manifest-backed corpus, exact raw input sizes, explicit structured machine-state controls, explicit encode controls, explicit GC control with hidden Go runtime env unset, pinned external binary paths and SHA-256 hashes, deterministic shuffled run order, explicit concurrency controls, required encoders, required metrics, and required BD-rate summary rows.")
 		if encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1") {
 			notes = append(notes, "Publish mode requires -layers 1 when aomenc or svt-av1 baselines are selected, because equivalent external temporal-layer settings are not yet implemented by qualitybench.")
 		}
@@ -2436,21 +2479,26 @@ func metricFilterAvailability(filters map[string]bool) map[string]bool {
 	}
 }
 
-func environmentMetadataForRun(notes string) environmentMetadata {
+func environmentMetadataForRun(cfg benchConfig) environmentMetadata {
 	hostname, _ := os.Hostname()
 	return environmentMetadata{
-		GOMAXPROCS:    runtime.GOMAXPROCS(0),
-		NumCPU:        runtime.NumCPU(),
-		CPUModel:      detectCPUModel(),
-		Hostname:      hostname,
-		OSVersion:     detectOSVersion(),
-		KernelVersion: detectKernelVersion(),
-		PATH:          os.Getenv("PATH"),
-		GOFLAGS:       os.Getenv("GOFLAGS"),
-		GOGC:          os.Getenv("GOGC"),
-		GOMEMLIMIT:    os.Getenv("GOMEMLIMIT"),
-		GODEBUG:       os.Getenv("GODEBUG"),
-		Notes:         strings.TrimSpace(notes),
+		GOMAXPROCS:      runtime.GOMAXPROCS(0),
+		NumCPU:          runtime.NumCPU(),
+		CPUModel:        detectCPUModel(),
+		Hostname:        hostname,
+		OSVersion:       detectOSVersion(),
+		KernelVersion:   detectKernelVersion(),
+		PATH:            os.Getenv("PATH"),
+		GOFLAGS:         os.Getenv("GOFLAGS"),
+		GOGC:            os.Getenv("GOGC"),
+		GOMEMLIMIT:      os.Getenv("GOMEMLIMIT"),
+		GODEBUG:         os.Getenv("GODEBUG"),
+		CPUAffinity:     strings.TrimSpace(cfg.cpuAffinity),
+		PowerMode:       strings.TrimSpace(cfg.powerMode),
+		ThermalState:    strings.TrimSpace(cfg.thermalState),
+		FrequencyPolicy: strings.TrimSpace(cfg.frequencyPolicy),
+		BackgroundLoad:  strings.TrimSpace(cfg.backgroundLoad),
+		Notes:           strings.TrimSpace(cfg.environmentNotes),
 	}
 }
 
