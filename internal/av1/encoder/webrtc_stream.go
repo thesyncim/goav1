@@ -750,7 +750,7 @@ func (s *WebRTCStream) updateLayerControls(config Config, fps int) error {
 		switch config.RateControl {
 		case RateControlCBR:
 			targetKbps := webRTCStreamLayerTargetKbps(config, i)
-			if err := enc.SetRateControlConfig(RateControlConfig{
+			if err := enc.UpdateRateControlConfig(RateControlConfig{
 				TargetBitsPerSecond: int(targetKbps) * 1000,
 				FramesPerSecond:     fps,
 				MinQIndex:           s.rcMinQ,
@@ -788,7 +788,7 @@ func (s *WebRTCStream) updateMonoLayerControls(config Config, fps int) error {
 		switch config.RateControl {
 		case RateControlCBR:
 			targetKbps := webRTCStreamLayerTargetKbps(config, i)
-			if err := enc.SetRateControlConfig(RateControlConfig{
+			if err := enc.UpdateRateControlConfig(RateControlConfig{
 				TargetBitsPerSecond: int(targetKbps) * 1000,
 				FramesPerSecond:     fps,
 				MinQIndex:           s.rcMinQ,
@@ -826,7 +826,7 @@ func (s *WebRTCStream) updateMono16LayerControls(config Config, fps int) error {
 		switch config.RateControl {
 		case RateControlCBR:
 			targetKbps := webRTCStreamLayerTargetKbps(config, i)
-			if err := enc.SetRateControlConfig(RateControlConfig{
+			if err := enc.UpdateRateControlConfig(RateControlConfig{
 				TargetBitsPerSecond: int(targetKbps) * 1000,
 				FramesPerSecond:     fps,
 				MinQIndex:           s.rcMinQ,
@@ -864,7 +864,7 @@ func (s *WebRTCStream) updateColor16LayerControls(config Config, fps int) error 
 		switch config.RateControl {
 		case RateControlCBR:
 			targetKbps := webRTCStreamLayerTargetKbps(config, i)
-			if err := enc.SetRateControlConfig(RateControlConfig{
+			if err := enc.UpdateRateControlConfig(RateControlConfig{
 				TargetBitsPerSecond: int(targetKbps) * 1000,
 				FramesPerSecond:     fps,
 				MinQIndex:           s.rcMinQ,

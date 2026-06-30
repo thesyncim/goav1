@@ -1261,6 +1261,86 @@ func TestWebRTCStreamSetConfigRateControlTransitions(t *testing.T) {
 	}
 }
 
+func TestWebRTCStreamSetConfigCBRPreservesRateControlState(t *testing.T) {
+	const w, h = 640, 360
+	cfg := Config{
+		Resolution:        Resolution{Width: w, Height: h},
+		MaxFramerate:      Rational{Num: 30, Den: 1},
+		MinBitrateKbps:    100,
+		MaxBitrateKbps:    900,
+		TargetBitrateKbps: 500,
+		Scalability:       ScalabilityModeL1T3,
+		RateControl:       RateControlCBR,
+	}
+	stream, err := NewWebRTCStreamConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewWebRTCStreamConfig: %v", err)
+	}
+	defer stream.Close()
+	if _, err := stream.EncodePicture(testWebRTCStreamFrame(w, h), false); err != nil {
+		t.Fatalf("key EncodePicture: %v", err)
+	}
+
+	enc := stream.encoders[0]
+	if enc == nil {
+		t.Fatal("missing video encoder")
+	}
+	enc.qIndex = 92
+	enc.rcBuffer = -1234
+	enc.rcRecentBits = [2]int{111, 222}
+	enc.rcTemporalQ = [WebRTCMaxTemporalLayers]uint8{92, 96, 104}
+	enc.rcTemporalBuffer = [WebRTCMaxTemporalLayers]int{1400, -900, 300}
+	enc.rcTemporalRecentBits = [WebRTCMaxTemporalLayers][2]int{{11, 12}, {21, 22}, {31, 32}}
+	beforeState := stream.state
+	beforeQ := enc.rcTemporalQ
+	beforeBuffer := enc.rcBuffer
+	beforeRecent := enc.rcRecentBits
+	beforeTemporalBuffer := enc.rcTemporalBuffer
+	beforeTemporalRecent := enc.rcTemporalRecentBits
+
+	change := stream.Config()
+	change.MaxFramerate = Rational{Num: 60, Den: 1}
+	change.MinBitrateKbps = 200
+	change.MaxBitrateKbps = 1200
+	change.TargetBitrateKbps = 720
+	if err := stream.SetConfig(change); err != nil {
+		t.Fatalf("SetConfig CBR soft update: %v", err)
+	}
+	if stream.state != beforeState {
+		t.Fatalf("CBR soft update reset stream state: before=%+v after=%+v", beforeState, stream.state)
+	}
+	if enc.rcTemporalQ != beforeQ || enc.rcBuffer != beforeBuffer || enc.rcRecentBits != beforeRecent ||
+		enc.rcTemporalBuffer != beforeTemporalBuffer || enc.rcTemporalRecentBits != beforeTemporalRecent {
+		t.Fatalf("CBR soft update reset controller: q=%v buffer=%d recent=%v temporalBuffer=%v temporalRecent=%v",
+			enc.rcTemporalQ, enc.rcBuffer, enc.rcRecentBits, enc.rcTemporalBuffer, enc.rcTemporalRecentBits)
+	}
+	wantPerFrame, err := rateControlPerFrameBits(RateControlConfig{
+		TargetBitsPerSecond: int(change.TargetBitrateKbps) * 1000,
+		FramesPerSecond:     60,
+		MinQIndex:           stream.rcMinQ,
+		MaxQIndex:           stream.rcMaxQ,
+	})
+	if err != nil {
+		t.Fatalf("rateControlPerFrameBits: %v", err)
+	}
+	if enc.rcPerFrameBits != wantPerFrame {
+		t.Fatalf("rcPerFrameBits=%d want %d", enc.rcPerFrameBits, wantPerFrame)
+	}
+	for temporalID := 0; temporalID < int(change.TemporalLayerCount); temporalID++ {
+		wantLayerBits := rateControlTemporalLayerPerFrameBits(int(change.TargetBitrateKbps)*1000, 60, int(change.TemporalLayerCount), uint8(temporalID), wantPerFrame)
+		if got := enc.rcTemporalPerFrameBits[temporalID]; got != wantLayerBits {
+			t.Fatalf("temporal layer %d per-frame bits=%d want %d", temporalID, got, wantLayerBits)
+		}
+	}
+	picture, err := stream.EncodePicture(testWebRTCStreamFrame(w, h), false)
+	if err != nil {
+		t.Fatalf("delta after CBR soft update: %v", err)
+	}
+	if picture.Keyframe || picture.Frames[0].Info.FrameID != beforeState.NextFrameID {
+		t.Fatalf("CBR soft update picture=%+v before=%+v state=%+v", picture, beforeState, stream.state)
+	}
+}
+
 func TestWebRTCStreamSetConfigRejectsInvalidWithoutMutation(t *testing.T) {
 	const w, h = 640, 360
 	stream, err := NewWebRTCStreamConfig(Config{

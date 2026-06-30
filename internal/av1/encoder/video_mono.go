@@ -103,6 +103,9 @@ func (e *MonochromeVideoEncoder) SetTemporalLayers(n int) error {
 	if n < 1 || n > 3 {
 		return fmt.Errorf("encoder: unsupported temporal layer count %d", n)
 	}
+	if e.temporalLayers == n {
+		return nil
+	}
 	e.temporalLayers = n
 	if e.rcEnabled {
 		e.resetRCTemporalState()
@@ -249,6 +252,23 @@ func (e *MonochromeVideoEncoder) SetRateControlConfig(rc RateControlConfig) erro
 	e.rcBuffer = 0
 	e.rcRecentBits = [2]int{}
 	e.resetRCTemporalState()
+	return nil
+}
+
+// UpdateRateControlConfig changes compatible CBR settings while preserving the
+// controller's learned buffer and temporal-layer q state. Use SetRateControlConfig
+// for a hard controller reinitialization.
+func (e *MonochromeVideoEncoder) UpdateRateControlConfig(rc RateControlConfig) error {
+	if e == nil {
+		return fmt.Errorf("encoder: nil monochrome video encoder")
+	}
+	if !e.rcEnabled {
+		return e.SetRateControlConfig(rc)
+	}
+	if err := applyRateControlConfigPreservingState(rc, e.temporalLayers, e.rcSurplusFrameLimit(), &e.qIndex, &e.rcTargetBits, &e.rcFramesPerSec, &e.rcPerFrameBits, &e.rcMinQ, &e.rcMaxQ, &e.rcBuffer, &e.rcTemporalQ, &e.rcTemporalBuffer, &e.rcTemporalPerFrameBits); err != nil {
+		return err
+	}
+	e.rcEnabled = true
 	return nil
 }
 

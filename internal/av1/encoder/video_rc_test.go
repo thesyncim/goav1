@@ -94,6 +94,146 @@ func TestRateControlTemporalLayerStateUsesLayerBudgets(t *testing.T) {
 	}
 }
 
+func TestSetTemporalLayersSameCountPreservesRateControlState(t *testing.T) {
+	enc, err := NewVideoEncoderCBR(64, 64, RateControlConfig{
+		TargetBitsPerSecond: 1_000_000,
+		FramesPerSecond:     30,
+		MinQIndex:           20,
+		MaxQIndex:           200,
+	})
+	if err != nil {
+		t.Fatalf("NewVideoEncoderCBR: %v", err)
+	}
+	if err := enc.SetTemporalLayers(3); err != nil {
+		t.Fatalf("SetTemporalLayers: %v", err)
+	}
+	enc.rcTemporalQ = [WebRTCMaxTemporalLayers]uint8{80, 84, 88}
+	enc.rcTemporalBuffer = [WebRTCMaxTemporalLayers]int{1200, -800, 300}
+	enc.rcTemporalRecentBits = [WebRTCMaxTemporalLayers][2]int{{11, 12}, {21, 22}, {31, 32}}
+	keepQ := enc.rcTemporalQ
+	keepBuffers := enc.rcTemporalBuffer
+	keepRecent := enc.rcTemporalRecentBits
+
+	if err := enc.SetTemporalLayers(3); err != nil {
+		t.Fatalf("SetTemporalLayers same: %v", err)
+	}
+	if enc.rcTemporalQ != keepQ || enc.rcTemporalBuffer != keepBuffers || enc.rcTemporalRecentBits != keepRecent {
+		t.Fatalf("same temporal layer reset rc state: q=%v buffers=%v recent=%v", enc.rcTemporalQ, enc.rcTemporalBuffer, enc.rcTemporalRecentBits)
+	}
+
+	if err := enc.SetTemporalLayers(2); err != nil {
+		t.Fatalf("SetTemporalLayers changed: %v", err)
+	}
+	if enc.rcTemporalBuffer != ([WebRTCMaxTemporalLayers]int{}) || enc.rcTemporalRecentBits != ([WebRTCMaxTemporalLayers][2]int{}) {
+		t.Fatalf("changed temporal layer did not reset rc state: buffers=%v recent=%v", enc.rcTemporalBuffer, enc.rcTemporalRecentBits)
+	}
+}
+
+type rcControllerSnapshot struct {
+	qIndex              uint8
+	buffer              int
+	recent              [2]int
+	temporalQ           [WebRTCMaxTemporalLayers]uint8
+	temporalBuffer      [WebRTCMaxTemporalLayers]int
+	temporalRecentBits  [WebRTCMaxTemporalLayers][2]int
+	temporalPerFrameBit [WebRTCMaxTemporalLayers]int
+	perFrameBits        int
+}
+
+func TestUpdateRateControlConfigPreservesControllerState(t *testing.T) {
+	oldRC := RateControlConfig{
+		TargetBitsPerSecond: 1_200_000,
+		FramesPerSecond:     30,
+		MinQIndex:           20,
+		MaxQIndex:           200,
+	}
+	nextRC := RateControlConfig{
+		TargetBitsPerSecond: 900_000,
+		FramesPerSecond:     60,
+		MinQIndex:           30,
+		MaxQIndex:           180,
+	}
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{
+			name: "i420",
+			run: func(t *testing.T) {
+				enc, err := NewVideoEncoderCBR(64, 64, oldRC)
+				if err != nil {
+					t.Fatalf("NewVideoEncoderCBR: %v", err)
+				}
+				if err := enc.SetTemporalLayers(3); err != nil {
+					t.Fatalf("SetTemporalLayers: %v", err)
+				}
+				seedVideoRCState(&enc.qIndex, &enc.rcBuffer, &enc.rcRecentBits, &enc.rcTemporalQ, &enc.rcTemporalBuffer, &enc.rcTemporalRecentBits)
+				before := snapshotVideoRC(enc.qIndex, enc.rcBuffer, enc.rcRecentBits, enc.rcTemporalQ, enc.rcTemporalBuffer, enc.rcTemporalRecentBits, enc.rcTemporalPerFrameBits, enc.rcPerFrameBits)
+				if err := enc.UpdateRateControlConfig(nextRC); err != nil {
+					t.Fatalf("UpdateRateControlConfig: %v", err)
+				}
+				assertPreservedRCUpdate(t, before, snapshotVideoRC(enc.qIndex, enc.rcBuffer, enc.rcRecentBits, enc.rcTemporalQ, enc.rcTemporalBuffer, enc.rcTemporalRecentBits, enc.rcTemporalPerFrameBits, enc.rcPerFrameBits), nextRC, enc.temporalLayers)
+			},
+		},
+		{
+			name: "i400",
+			run: func(t *testing.T) {
+				enc, err := NewMonochromeVideoEncoderCBR(64, 64, oldRC)
+				if err != nil {
+					t.Fatalf("NewMonochromeVideoEncoderCBR: %v", err)
+				}
+				if err := enc.SetTemporalLayers(3); err != nil {
+					t.Fatalf("SetTemporalLayers: %v", err)
+				}
+				seedVideoRCState(&enc.qIndex, &enc.rcBuffer, &enc.rcRecentBits, &enc.rcTemporalQ, &enc.rcTemporalBuffer, &enc.rcTemporalRecentBits)
+				before := snapshotVideoRC(enc.qIndex, enc.rcBuffer, enc.rcRecentBits, enc.rcTemporalQ, enc.rcTemporalBuffer, enc.rcTemporalRecentBits, enc.rcTemporalPerFrameBits, enc.rcPerFrameBits)
+				if err := enc.UpdateRateControlConfig(nextRC); err != nil {
+					t.Fatalf("UpdateRateControlConfig: %v", err)
+				}
+				assertPreservedRCUpdate(t, before, snapshotVideoRC(enc.qIndex, enc.rcBuffer, enc.rcRecentBits, enc.rcTemporalQ, enc.rcTemporalBuffer, enc.rcTemporalRecentBits, enc.rcTemporalPerFrameBits, enc.rcPerFrameBits), nextRC, enc.temporalLayers)
+			},
+		},
+		{
+			name: "i400-10",
+			run: func(t *testing.T) {
+				enc, err := NewHighBitDepthMonochromeVideoEncoderCBR(64, 64, 10, oldRC)
+				if err != nil {
+					t.Fatalf("NewHighBitDepthMonochromeVideoEncoderCBR: %v", err)
+				}
+				if err := enc.SetTemporalLayers(3); err != nil {
+					t.Fatalf("SetTemporalLayers: %v", err)
+				}
+				seedVideoRCState(&enc.qIndex, &enc.rcBuffer, &enc.rcRecentBits, &enc.rcTemporalQ, &enc.rcTemporalBuffer, &enc.rcTemporalRecentBits)
+				before := snapshotVideoRC(enc.qIndex, enc.rcBuffer, enc.rcRecentBits, enc.rcTemporalQ, enc.rcTemporalBuffer, enc.rcTemporalRecentBits, enc.rcTemporalPerFrameBits, enc.rcPerFrameBits)
+				if err := enc.UpdateRateControlConfig(nextRC); err != nil {
+					t.Fatalf("UpdateRateControlConfig: %v", err)
+				}
+				assertPreservedRCUpdate(t, before, snapshotVideoRC(enc.qIndex, enc.rcBuffer, enc.rcRecentBits, enc.rcTemporalQ, enc.rcTemporalBuffer, enc.rcTemporalRecentBits, enc.rcTemporalPerFrameBits, enc.rcPerFrameBits), nextRC, enc.temporalLayers)
+			},
+		},
+		{
+			name: "i420-10",
+			run: func(t *testing.T) {
+				enc, err := NewHighBitDepth420VideoEncoderCBR(64, 64, 10, oldRC)
+				if err != nil {
+					t.Fatalf("NewHighBitDepth420VideoEncoderCBR: %v", err)
+				}
+				if err := enc.SetTemporalLayers(3); err != nil {
+					t.Fatalf("SetTemporalLayers: %v", err)
+				}
+				seedVideoRCState(&enc.qIndex, &enc.rcBuffer, &enc.rcRecentBits, &enc.rcTemporalQ, &enc.rcTemporalBuffer, &enc.rcTemporalRecentBits)
+				before := snapshotVideoRC(enc.qIndex, enc.rcBuffer, enc.rcRecentBits, enc.rcTemporalQ, enc.rcTemporalBuffer, enc.rcTemporalRecentBits, enc.rcTemporalPerFrameBits, enc.rcPerFrameBits)
+				if err := enc.UpdateRateControlConfig(nextRC); err != nil {
+					t.Fatalf("UpdateRateControlConfig: %v", err)
+				}
+				assertPreservedRCUpdate(t, before, snapshotVideoRC(enc.qIndex, enc.rcBuffer, enc.rcRecentBits, enc.rcTemporalQ, enc.rcTemporalBuffer, enc.rcTemporalRecentBits, enc.rcTemporalPerFrameBits, enc.rcPerFrameBits), nextRC, enc.temporalLayers)
+			},
+		},
+	} {
+		t.Run(tc.name, tc.run)
+	}
+}
+
 func TestRateControlTemporalLayerQClampMatchesAdjustQCBR(t *testing.T) {
 	qs := [WebRTCMaxTemporalLayers]uint8{80, 70, 60}
 	for _, temporalID := range []uint8{1, 2} {
@@ -106,6 +246,50 @@ func TestRateControlTemporalLayerQClampMatchesAdjustQCBR(t *testing.T) {
 	qs[1] = 1
 	if got := rateControlTemporalLayerQIndex(qs, 20, 200, 2, 1); got != 20 {
 		t.Fatalf("min-clamped temporal q=%d want 20", got)
+	}
+}
+
+func seedVideoRCState(q *uint8, buffer *int, recent *[2]int, temporalQ *[WebRTCMaxTemporalLayers]uint8, temporalBuffer *[WebRTCMaxTemporalLayers]int, temporalRecent *[WebRTCMaxTemporalLayers][2]int) {
+	*q = 92
+	*buffer = -1234
+	*recent = [2]int{111, 222}
+	*temporalQ = [WebRTCMaxTemporalLayers]uint8{92, 96, 104}
+	*temporalBuffer = [WebRTCMaxTemporalLayers]int{1400, -900, 300}
+	*temporalRecent = [WebRTCMaxTemporalLayers][2]int{{11, 12}, {21, 22}, {31, 32}}
+}
+
+func snapshotVideoRC(q uint8, buffer int, recent [2]int, temporalQ [WebRTCMaxTemporalLayers]uint8, temporalBuffer [WebRTCMaxTemporalLayers]int, temporalRecent [WebRTCMaxTemporalLayers][2]int, temporalPerFrameBits [WebRTCMaxTemporalLayers]int, perFrameBits int) rcControllerSnapshot {
+	return rcControllerSnapshot{
+		qIndex:              q,
+		buffer:              buffer,
+		recent:              recent,
+		temporalQ:           temporalQ,
+		temporalBuffer:      temporalBuffer,
+		temporalRecentBits:  temporalRecent,
+		temporalPerFrameBit: temporalPerFrameBits,
+		perFrameBits:        perFrameBits,
+	}
+}
+
+func assertPreservedRCUpdate(t *testing.T, before rcControllerSnapshot, after rcControllerSnapshot, rc RateControlConfig, temporalLayers int) {
+	t.Helper()
+	wantPerFrame, err := rateControlPerFrameBits(rc)
+	if err != nil {
+		t.Fatalf("rateControlPerFrameBits: %v", err)
+	}
+	if after.qIndex != before.qIndex || after.buffer != before.buffer || after.recent != before.recent ||
+		after.temporalQ != before.temporalQ || after.temporalBuffer != before.temporalBuffer ||
+		after.temporalRecentBits != before.temporalRecentBits {
+		t.Fatalf("controller state not preserved: before=%+v after=%+v", before, after)
+	}
+	if after.perFrameBits != wantPerFrame {
+		t.Fatalf("per-frame bits=%d want %d", after.perFrameBits, wantPerFrame)
+	}
+	for temporalID := 0; temporalID < temporalLayers; temporalID++ {
+		wantLayerBits := rateControlTemporalLayerPerFrameBits(rc.TargetBitsPerSecond, rc.FramesPerSecond, temporalLayers, uint8(temporalID), wantPerFrame)
+		if got := after.temporalPerFrameBit[temporalID]; got != wantLayerBits {
+			t.Fatalf("temporal layer %d per-frame bits=%d want %d", temporalID, got, wantLayerBits)
+		}
 	}
 }
 

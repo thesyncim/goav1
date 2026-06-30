@@ -52,6 +52,44 @@ func resetRateControlTemporalState(qIndex uint8, targetBitsPerSecond int, frames
 	}
 }
 
+func applyRateControlConfigPreservingState(rc RateControlConfig, temporalLayers int, surplusFrameLimit int, qIndex *uint8, targetBitsPerSecond *int, framesPerSecond *int, perFrameBits *int, minQ *uint8, maxQ *uint8, buffer *int, temporalQ *[WebRTCMaxTemporalLayers]uint8, temporalBuffers *[WebRTCMaxTemporalLayers]int, temporalPerFrameBits *[WebRTCMaxTemporalLayers]int) error {
+	nextPerFrameBits, err := rateControlPerFrameBits(rc)
+	if err != nil {
+		return err
+	}
+	*targetBitsPerSecond = rc.TargetBitsPerSecond
+	*framesPerSecond = rc.FramesPerSecond
+	*perFrameBits = nextPerFrameBits
+	*minQ = rc.MinQIndex
+	*maxQ = rc.MaxQIndex
+	*qIndex = clampRateControlQIndex(*qIndex, *minQ, *maxQ)
+	*buffer = clampRateControlBuffer(*buffer, nextPerFrameBits, surplusFrameLimit)
+	updateRateControlTemporalBudgetsPreservingState(*qIndex, rc.TargetBitsPerSecond, rc.FramesPerSecond, temporalLayers, nextPerFrameBits, surplusFrameLimit, *minQ, *maxQ, temporalQ, temporalBuffers, temporalPerFrameBits)
+	return nil
+}
+
+func updateRateControlTemporalBudgetsPreservingState(qIndex uint8, targetBitsPerSecond int, framesPerSecond int, temporalLayers int, fallbackPerFrameBits int, surplusFrameLimit int, minQ uint8, maxQ uint8, q *[WebRTCMaxTemporalLayers]uint8, buffers *[WebRTCMaxTemporalLayers]int, perFrameBits *[WebRTCMaxTemporalLayers]int) {
+	for i := range perFrameBits {
+		perFrameBits[i] = fallbackPerFrameBits
+	}
+	if temporalLayers < 1 {
+		temporalLayers = 1
+	}
+	if temporalLayers > WebRTCMaxTemporalLayers {
+		temporalLayers = WebRTCMaxTemporalLayers
+	}
+	for tl := 0; tl < temporalLayers; tl++ {
+		if q[tl] == 0 {
+			q[tl] = qIndex
+		}
+		q[tl] = clampRateControlQIndex(q[tl], minQ, maxQ)
+		perFrameBits[tl] = rateControlTemporalLayerPerFrameBits(targetBitsPerSecond, framesPerSecond, temporalLayers, uint8(tl), fallbackPerFrameBits)
+	}
+	for i := range buffers {
+		buffers[i] = clampRateControlBuffer(buffers[i], perFrameBits[i], surplusFrameLimit)
+	}
+}
+
 func rateControlTemporalLayerPerFrameBits(targetBitsPerSecond int, framesPerSecond int, temporalLayers int, temporalID uint8, fallback int) int {
 	if targetBitsPerSecond <= 0 || framesPerSecond <= 0 {
 		if fallback > 0 {
@@ -101,6 +139,34 @@ func divRoundNearest(num int, den int) int {
 		return (num + den/2) / den
 	}
 	return -((-num + den/2) / den)
+}
+
+func clampRateControlQIndex(q uint8, minQ uint8, maxQ uint8) uint8 {
+	if q < minQ {
+		return minQ
+	}
+	if q > maxQ {
+		return maxQ
+	}
+	return q
+}
+
+func clampRateControlBuffer(buffer int, perFrameBits int, surplusFrameLimit int) int {
+	if perFrameBits <= 0 {
+		perFrameBits = 1
+	}
+	if surplusFrameLimit < 1 {
+		surplusFrameLimit = 1
+	}
+	minBuffer := -24 * perFrameBits
+	if buffer < minBuffer {
+		return minBuffer
+	}
+	maxBuffer := surplusFrameLimit * perFrameBits
+	if buffer > maxBuffer {
+		return maxBuffer
+	}
+	return buffer
 }
 
 func rcUpdateState(frameBits int, perFrameBits int, surplusFrameLimit int, minQ uint8, maxQ uint8, qIndex uint8, buffer *int, recent *[2]int) uint8 {
