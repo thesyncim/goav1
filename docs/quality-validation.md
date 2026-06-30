@@ -197,6 +197,9 @@ audits must stay goav1-only until equivalent external baseline settings are
 implemented and recorded. When `aomenc` or `svt-av1` baselines are selected,
 publish mode requires `-goav1-scene-cut=false` because the external low-delay
 baseline command lines disable scene-cut-equivalent keyframe insertion.
+When external baselines are selected, every manifest clip must be at least two
+seconds long (`frames >= 2 * fps`) so the table measures encoder work rather
+than mostly subprocess startup.
 
 `-timing-mode core` preserves the historical goav1 timer that accumulates only
 per-frame `Encode` calls. Use it for local code-path profiling, not for fair

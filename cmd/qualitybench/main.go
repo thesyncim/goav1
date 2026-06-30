@@ -36,11 +36,12 @@ import (
 var observeBenchmarkCPUState = benchenv.ObserveCPUState
 
 const (
-	defaultWidth          = 1920
-	defaultHeight         = 1080
-	defaultFrames         = 120
-	defaultFPS            = 60
-	defaultCommandTimeout = 30 * time.Minute
+	defaultWidth                          = 1920
+	defaultHeight                         = 1080
+	defaultFrames                         = 120
+	defaultFPS                            = 60
+	defaultCommandTimeout                 = 30 * time.Minute
+	publishMinExternalBaselineClipSeconds = 2
 
 	timingModeCore     = "core"
 	timingModeEndToEnd = "e2e"
@@ -1781,6 +1782,10 @@ func validateClipManifestExactness(cfg benchConfig, clips []clipSpec) error {
 		if !clip.FPSPresent {
 			return fmt.Errorf("%s: publish requires manifest fps", clip.Name)
 		}
+		if externalBaselineSelected(cfg) && clip.Frames < clip.FPS*publishMinExternalBaselineClipSeconds {
+			return fmt.Errorf("%s: publish external-baseline clips must be at least %ds to keep subprocess startup from dominating timing, got %d frames at %d fps",
+				clip.Name, publishMinExternalBaselineClipSeconds, clip.Frames, clip.FPS)
+		}
 		if clip.BitDepth != 8 {
 			return fmt.Errorf("%s: publish requires manifest bit_depth=8, got %d", clip.Name, clip.BitDepth)
 		}
@@ -2568,6 +2573,7 @@ func fairnessNotes(cfg benchConfig) []string {
 		notes = append(notes, "Publish mode required a clean git worktree, explicit artifact paths, an empty workdir before timing, manifest-backed corpus, exact raw input sizes, explicit structured machine-state controls, explicit encode controls, explicit GC control with hidden Go runtime env unset, pinned external binary paths and SHA-256 hashes, deterministic shuffled run order, explicit concurrency controls, required encoders, required metrics, and required BD-rate summary rows.")
 		if encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1") {
 			notes = append(notes, "Publish mode requires -layers 1 when aomenc or svt-av1 baselines are selected, because equivalent external temporal-layer settings are not yet implemented by qualitybench.")
+			notes = append(notes, fmt.Sprintf("Publish mode requires each external-baseline clip to be at least %d seconds long so external subprocess startup cannot dominate encoder timing.", publishMinExternalBaselineClipSeconds))
 		}
 	}
 	if cfg.svtLP == 0 {

@@ -419,6 +419,19 @@ func TestValidateClipManifestExactness(t *testing.T) {
 		t.Fatalf("missing fps error=%v", err)
 	}
 
+	shortExternal := clone()
+	if err := validateClipManifestExactness(benchConfig{publish: true, encoders: []string{"goav1", "aomenc"}}, shortExternal); err == nil ||
+		!strings.Contains(err.Error(), "at least 2s") {
+		t.Fatalf("short external clip error=%v", err)
+	}
+
+	longExternal := clone()
+	longExternal[0].Frames = 60
+	longExternal[0].FPS = 30
+	if err := validateClipManifestExactness(benchConfig{publish: true, encoders: []string{"goav1", "aomenc"}}, longExternal); err != nil {
+		t.Fatalf("long external clip failed: %v", err)
+	}
+
 	missingProvenance := clone()
 	missingProvenance[0].Category = ""
 	if err := validateClipManifestExactness(benchConfig{publish: true}, missingProvenance); err == nil ||
