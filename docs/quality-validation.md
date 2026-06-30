@@ -60,6 +60,7 @@ GO_SHA256=$(shasum -a 256 "$GO_BIN" | awk '{print $1}')
   -goav1-max-threads 4 \
   -goav1-effort 0 \
   -goav1-scene-cut=false \
+  -goav1-process-timing=true \
   -timing-mode e2e \
   -run-order shuffle -shuffle-seed 1 \
   -runs 3 -warmup-runs 1 \
@@ -177,6 +178,7 @@ Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-summary-csv`, `-frame-metrics-csv`, `-require-summary`, `-gomaxprocs`,
 absolute pinned `-go-bin` plus matching `-go-sha256`, `-fps`, `-layers`,
 `-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`,
+`-goav1-process-timing=true`,
 `-run-order shuffle`, explicit `-shuffle-seed`, `-runs >= 3`,
 `-warmup-runs >= 1`, and explicit `-vmaf-model` when VMAF is required, plus a
 non-empty `-environment-notes` value and explicit non-empty `-cpu-affinity`,
@@ -207,6 +209,10 @@ audits must stay goav1-only until equivalent external baseline settings are
 implemented and recorded. When `aomenc` or `svt-av1` baselines are selected,
 publish mode requires `-goav1-scene-cut=false` because the external low-delay
 baseline command lines disable scene-cut-equivalent keyframe insertion.
+When goav1 is compared with `aomenc` or `svt-av1`, publish mode also requires
+`-goav1-process-timing=true`; goav1 is then encoded by a helper subprocess and
+the reported wall/CPU time comes from that process boundary, matching the
+native encoder command boundary.
 When external baselines are selected, every manifest clip must be at least two
 seconds long (`frames >= 2 * fps`) so the table measures encoder work rather
 than mostly subprocess startup.
@@ -214,9 +220,11 @@ than mostly subprocess startup.
 `-timing-mode core` preserves the historical goav1 timer that accumulates only
 per-frame `Encode` calls. Use it for local code-path profiling, not for fair
 tables. `-timing-mode e2e` times goav1 raw input loading/frame construction,
-setup, encode calls, encoded artifact writes, and encoder shutdown, while
-external rows continue to time the encoder command invocation, including their
-own raw input reads. Metric YUV is decoded after timing for every encoder;
+setup, encode calls, encoded artifact writes, and encoder shutdown. With
+`-goav1-process-timing=true`, that e2e encode path runs in a helper subprocess
+so goav1 timing includes process startup like `aomenc` and SVT rows. External
+rows continue to time the encoder command invocation, including their own raw
+input reads. Metric YUV is decoded after timing for every encoder;
 when an external baseline or explicit `-ffmpeg-av1-decoder` is selected, goav1
 rows wrap the persisted low-overhead temporal units in an IVF sidecar and decode
 that sidecar through the same FFmpeg AV1 decoder path used for AOM/SVT rows.

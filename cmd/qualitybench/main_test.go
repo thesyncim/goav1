@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -629,6 +630,51 @@ func TestRunEncoderGoAV1EndToEndReadsSharedReferencePath(t *testing.T) {
 	}
 }
 
+func TestGoAV1EncodeHelperWritesArtifactResult(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "source.yuv")
+	frames := syntheticFrames(2, 64, 64)
+	if err := writeFrames(input, frames, 64, 64); err != nil {
+		t.Fatal(err)
+	}
+	resultPath := filepath.Join(dir, "helper.json")
+	args := []string{
+		"-width", "64",
+		"-height", "64",
+		"-frames", "2",
+		"-fps", "30",
+		"-input", input,
+		"-workdir", dir,
+		"-bitrate", "100000",
+		"-layers", "1",
+		"-result-json", resultPath,
+	}
+	if err := runGoAV1EncodeHelper(args); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(resultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var helper goAV1EncodeHelperResult
+	if err := json.Unmarshal(raw, &helper); err != nil {
+		t.Fatal(err)
+	}
+	if helper.Status != "ok" || helper.EncodedPath == "" || helper.EncodedSHA256 == "" || helper.Bytes <= 0 {
+		t.Fatalf("helper result=%+v", helper)
+	}
+	if helper.Settings["timing_mode"] != timingModeEndToEnd ||
+		helper.Settings["input_timing_scope"] != "raw-file-read-and-frame-construction" {
+		t.Fatalf("helper settings=%+v", helper.Settings)
+	}
+	if _, err := os.Stat(helper.EncodedPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(helper.DecodedYUV); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("helper should not decode inside timing, decodedYUV=%q err=%v", helper.DecodedYUV, err)
+	}
+}
+
 func TestEncodeGoAV1ExternalBaselineMetricsUseFFmpegDecode(t *testing.T) {
 	dir := t.TempDir()
 	ffmpegPath := filepath.Join(dir, "ffmpeg")
@@ -1239,42 +1285,43 @@ func TestWriteBenchRowIncludesCPUBudgetColumns(t *testing.T) {
 
 func TestMetadataConfigCopiesSlices(t *testing.T) {
 	cfg := benchConfig{
-		width:            64,
-		height:           64,
-		frames:           4,
-		fps:              30,
-		encoders:         []string{"goav1"},
-		bitrates:         []int{100000},
-		requiredMetrics:  []string{"psnr"},
-		requiredEncoders: []string{"goav1"},
-		requireSummary:   true,
-		requireCorpus:    true,
-		minClips:         6,
-		anchorEncoder:    "goav1",
-		goMaxProcs:       4,
-		goGC:             "off",
-		goav1MaxThreads:  4,
-		goav1Effort:      int(goav1.EncoderWebRTCMinEffortLevel),
-		goav1SceneCut:    false,
-		aomThreads:       1,
-		aomRowMT:         0,
-		aomCPUUsed:       8,
-		svtLP:            5,
-		svtPreset:        13,
-		ffmpegBin:        "/tools/ffmpeg",
-		ffmpegSHA256:     strings.Repeat("1", 64),
-		ffmpegAV1Decoder: "libdav1d",
-		vmafModel:        "version=vmaf_v0.6.1",
-		aomencBin:        "/tools/aomenc",
-		aomencSHA256:     strings.Repeat("2", 64),
-		svtBin:           "/tools/SvtAv1EncApp",
-		svtSHA256:        strings.Repeat("3", 64),
-		timingMode:       timingModeEndToEnd,
-		runOrder:         runOrderShuffle,
-		shuffleSeed:      42,
-		runs:             5,
-		warmupRuns:       1,
-		publish:          true,
+		width:              64,
+		height:             64,
+		frames:             4,
+		fps:                30,
+		encoders:           []string{"goav1"},
+		bitrates:           []int{100000},
+		requiredMetrics:    []string{"psnr"},
+		requiredEncoders:   []string{"goav1"},
+		requireSummary:     true,
+		requireCorpus:      true,
+		minClips:           6,
+		anchorEncoder:      "goav1",
+		goMaxProcs:         4,
+		goGC:               "off",
+		goav1MaxThreads:    4,
+		goav1Effort:        int(goav1.EncoderWebRTCMinEffortLevel),
+		goav1SceneCut:      false,
+		goav1ProcessTiming: true,
+		aomThreads:         1,
+		aomRowMT:           0,
+		aomCPUUsed:         8,
+		svtLP:              5,
+		svtPreset:          13,
+		ffmpegBin:          "/tools/ffmpeg",
+		ffmpegSHA256:       strings.Repeat("1", 64),
+		ffmpegAV1Decoder:   "libdav1d",
+		vmafModel:          "version=vmaf_v0.6.1",
+		aomencBin:          "/tools/aomenc",
+		aomencSHA256:       strings.Repeat("2", 64),
+		svtBin:             "/tools/SvtAv1EncApp",
+		svtSHA256:          strings.Repeat("3", 64),
+		timingMode:         timingModeEndToEnd,
+		runOrder:           runOrderShuffle,
+		shuffleSeed:        42,
+		runs:               5,
+		warmupRuns:         1,
+		publish:            true,
 	}
 	got, err := metadataConfigFor(cfg)
 	if err != nil {
@@ -1289,7 +1336,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		!got.RequireSummary || !got.RequireCorpus || got.MinClips != 6 ||
 		got.GoMaxProcs != 4 || got.GoGC != "off" || got.GoAV1MaxThreads != 4 ||
 		got.GoAV1Effort != int(goav1.EncoderWebRTCMinEffortLevel) ||
-		got.GoAV1SceneCut ||
+		got.GoAV1SceneCut || !got.GoAV1ProcessTime ||
 		got.TileColumnsLog2 != 0 || got.TileSemantics != "tile-columns-log2" ||
 		got.AOMThreads != 1 || got.AOMRowMT != 0 ||
 		got.AOMCPUUsed != 8 || got.SVTLP != 5 || got.SVTPreset != 13 ||
@@ -1321,6 +1368,8 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "sweep --lp 0..6") ||
 		!strings.Contains(joined, "-goav1-max-threads") ||
 		!strings.Contains(joined, "-goav1-effort") ||
+		!strings.Contains(joined, "goav1_process_timing") ||
+		!strings.Contains(joined, "-goav1-process-timing=true") ||
 		!strings.Contains(joined, "-goav1-scene-cut=false") ||
 		!strings.Contains(joined, "tile-column log2") ||
 		!strings.Contains(joined, "-ffmpeg-av1-decoder") ||
@@ -1542,6 +1591,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		goav1MaxThreads:     4,
 		goav1Effort:         0,
 		goav1SceneCut:       false,
+		goav1ProcessTiming:  true,
 		layers:              1,
 		tiles:               0,
 		goldenInterval:      0,
@@ -1574,58 +1624,59 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		svtBin:              svtBin,
 		svtSHA256:           svtHash,
 		explicitFlags: map[string]bool{
-			"bitrates":           true,
-			"encoders":           true,
-			"workdir":            true,
-			"csv":                true,
-			"metadata-json":      true,
-			"manifest":           true,
-			"require-corpus":     true,
-			"min-clips":          true,
-			"require-encoders":   true,
-			"require-metrics":    true,
-			"summary-csv":        true,
-			"frame-metrics-csv":  true,
-			"require-summary":    true,
-			"gomaxprocs":         true,
-			"go-bin":             true,
-			"go-sha256":          true,
-			"gogc":               true,
-			"fps":                true,
-			"layers":             true,
-			"tiles":              true,
-			"golden":             true,
-			"keyint":             true,
-			"anchor":             true,
-			"timing-mode":        true,
-			"run-order":          true,
-			"shuffle-seed":       true,
-			"runs":               true,
-			"warmup-runs":        true,
-			"command-timeout":    true,
-			"goav1-max-threads":  true,
-			"goav1-effort":       true,
-			"goav1-scene-cut":    true,
-			"environment-notes":  true,
-			"cpu-affinity":       true,
-			"power-mode":         true,
-			"thermal-state":      true,
-			"frequency-policy":   true,
-			"background-load":    true,
-			"ffmpeg-bin":         true,
-			"ffmpeg-sha256":      true,
-			"aom-cpu-used":       true,
-			"aom-threads":        true,
-			"aom-row-mt":         true,
-			"aomenc-bin":         true,
-			"aomenc-sha256":      true,
-			"svt-preset":         true,
-			"svt-lp":             true,
-			"svt-asm":            true,
-			"svt-bin":            true,
-			"svt-sha256":         true,
-			"ffmpeg-av1-decoder": true,
-			"vmaf-model":         true,
+			"bitrates":             true,
+			"encoders":             true,
+			"workdir":              true,
+			"csv":                  true,
+			"metadata-json":        true,
+			"manifest":             true,
+			"require-corpus":       true,
+			"min-clips":            true,
+			"require-encoders":     true,
+			"require-metrics":      true,
+			"summary-csv":          true,
+			"frame-metrics-csv":    true,
+			"require-summary":      true,
+			"gomaxprocs":           true,
+			"go-bin":               true,
+			"go-sha256":            true,
+			"gogc":                 true,
+			"fps":                  true,
+			"layers":               true,
+			"tiles":                true,
+			"golden":               true,
+			"keyint":               true,
+			"anchor":               true,
+			"timing-mode":          true,
+			"run-order":            true,
+			"shuffle-seed":         true,
+			"runs":                 true,
+			"warmup-runs":          true,
+			"command-timeout":      true,
+			"goav1-max-threads":    true,
+			"goav1-effort":         true,
+			"goav1-scene-cut":      true,
+			"goav1-process-timing": true,
+			"environment-notes":    true,
+			"cpu-affinity":         true,
+			"power-mode":           true,
+			"thermal-state":        true,
+			"frequency-policy":     true,
+			"background-load":      true,
+			"ffmpeg-bin":           true,
+			"ffmpeg-sha256":        true,
+			"aom-cpu-used":         true,
+			"aom-threads":          true,
+			"aom-row-mt":           true,
+			"aomenc-bin":           true,
+			"aomenc-sha256":        true,
+			"svt-preset":           true,
+			"svt-lp":               true,
+			"svt-asm":              true,
+			"svt-bin":              true,
+			"svt-sha256":           true,
+			"ffmpeg-av1-decoder":   true,
+			"vmaf-model":           true,
 		},
 	}
 	if err := validatePublishConfig(cfg, gitMetadata{Commit: "abc"}); err != nil {
@@ -1883,6 +1934,31 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	sceneCutGoAV1Only.goav1SceneCut = true
 	if err := validatePublishConfig(sceneCutGoAV1Only, gitMetadata{Commit: "abc"}); err != nil {
 		t.Fatalf("goav1-only scene-cut publish config failed: %v", err)
+	}
+
+	missingGoAV1ProcessTiming := cfg
+	missingGoAV1ProcessTiming.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingGoAV1ProcessTiming.explicitFlags[k] = v
+	}
+	delete(missingGoAV1ProcessTiming.explicitFlags, "goav1-process-timing")
+	if err := validatePublishConfig(missingGoAV1ProcessTiming, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-goav1-process-timing") {
+		t.Fatalf("missing goav1 process timing error=%v", err)
+	}
+
+	inProcessGoAV1External := cfg
+	inProcessGoAV1External.goav1ProcessTiming = false
+	if err := validatePublishConfig(inProcessGoAV1External, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-goav1-process-timing=true") {
+		t.Fatalf("in-process goav1 external publish error=%v", err)
+	}
+
+	inProcessGoAV1Only := cfg
+	inProcessGoAV1Only.encoders = []string{"goav1"}
+	inProcessGoAV1Only.goav1ProcessTiming = false
+	if err := validatePublishConfig(inProcessGoAV1Only, gitMetadata{Commit: "abc"}); err != nil {
+		t.Fatalf("goav1-only in-process publish config failed: %v", err)
 	}
 
 	missingDecoder := cfg

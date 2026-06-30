@@ -49,6 +49,8 @@ const (
 	runOrderBitrateEncoder = "bitrate-encoder"
 	runOrderEncoderBitrate = "encoder-bitrate"
 	runOrderShuffle        = "shuffle"
+
+	goAV1EncodeHelperCommand = "__qualitybench_goav1_encode"
 )
 
 type benchConfig struct {
@@ -102,6 +104,7 @@ type benchConfig struct {
 	goav1MaxThreads     int
 	goav1Effort         int
 	goav1SceneCut       bool
+	goav1ProcessTiming  bool
 	aomThreads          int
 	aomRowMT            int
 	aomCPUUsed          int
@@ -145,6 +148,22 @@ type encodeResult struct {
 	maxWall          time.Duration
 	iqrWall          time.Duration
 	samples          []encodeSampleMetadata
+}
+
+type goAV1EncodeHelperResult struct {
+	Encoder          string                     `json:"encoder"`
+	TargetBPS        int                        `json:"target_bps"`
+	Bytes            int64                      `json:"bytes"`
+	EncodedPath      string                     `json:"encoded_path,omitempty"`
+	EncodedContainer string                     `json:"encoded_container,omitempty"`
+	EncodedBytes     int64                      `json:"encoded_bytes,omitempty"`
+	EncodedSHA256    string                     `json:"encoded_sha256,omitempty"`
+	DecodedYUV       string                     `json:"decoded_yuv,omitempty"`
+	Status           string                     `json:"status"`
+	Error            string                     `json:"error,omitempty"`
+	Stats            goav1.EncoderDecisionStats `json:"stats,omitempty"`
+	FrameStats       []goAV1FrameStats          `json:"frame_stats,omitempty"`
+	Settings         map[string]string          `json:"settings,omitempty"`
 }
 
 type metrics struct {
@@ -387,6 +406,7 @@ type metadataConfig struct {
 	GoAV1MaxThreads  int      `json:"goav1_max_threads"`
 	GoAV1Effort      int      `json:"goav1_effort"`
 	GoAV1SceneCut    bool     `json:"goav1_scene_cut_keyframes"`
+	GoAV1ProcessTime bool     `json:"goav1_process_timing"`
 	AOMThreads       int      `json:"aom_threads"`
 	AOMRowMT         int      `json:"aom_row_mt"`
 	AOMCPUUsed       int      `json:"aom_cpu_used"`
@@ -516,6 +536,9 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == goAV1EncodeHelperCommand {
+		return runGoAV1EncodeHelper(os.Args[2:])
+	}
 	cfg, err := parseFlags()
 	if err != nil {
 		return err
@@ -735,12 +758,13 @@ func parseFlags() (benchConfig, error) {
 	flag.IntVar(&cfg.tiles, "tiles", 0, "tile-column log2 override for encoders that expose one")
 	flag.IntVar(&cfg.goldenInterval, "golden", 0, "goav1 golden refresh interval (0 = default, negative = disabled)")
 	flag.IntVar(&cfg.keyInterval, "keyint", 0, "force periodic keyframes every N frames after frame 0 (0 = only initial key)")
-	flag.IntVar(&cfg.goMaxProcs, "gomaxprocs", 0, "set Go GOMAXPROCS for in-process goav1 encodes (0 = keep environment/runtime default)")
+	flag.IntVar(&cfg.goMaxProcs, "gomaxprocs", 0, "set Go GOMAXPROCS for goav1 encodes (0 = keep environment/runtime default)")
 	flag.StringVar(&cfg.goBin, "go-bin", "go", "Go executable used to run qualitybench; publish mode requires an absolute pinned path")
 	flag.StringVar(&cfg.goSHA256, "go-sha256", "", "expected SHA-256 of -go-bin for publish runs")
 	flag.IntVar(&cfg.goav1MaxThreads, "goav1-max-threads", 0, "goav1 MaxThreads execution-lane cap (0 = encoder automatic policy)")
 	flag.IntVar(&cfg.goav1Effort, "goav1-effort", 0, "goav1 WebRTC effort level (-2..4; 0 = default quality/speed balance)")
 	flag.BoolVar(&cfg.goav1SceneCut, "goav1-scene-cut", true, "allow goav1 automatic scene-cut keyframes")
+	flag.BoolVar(&cfg.goav1ProcessTiming, "goav1-process-timing", false, "time goav1 encode rows in a subprocess so publish comparisons include process startup like native CLI encoders")
 	flag.IntVar(&cfg.aomThreads, "aom-threads", 4, "aomenc --threads value for libaom rows")
 	flag.IntVar(&cfg.aomRowMT, "aom-row-mt", 1, "aomenc --row-mt value for libaom rows (0 = off, 1 = on)")
 	flag.IntVar(&cfg.aomCPUUsed, "aom-cpu-used", 8, "aomenc realtime --cpu-used speed setting (5..12)")
@@ -763,7 +787,7 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.thermalState, "thermal-state", "", "pre-run thermal state used for publish runs")
 	flag.StringVar(&cfg.frequencyPolicy, "frequency-policy", "", "CPU frequency/governor policy used for publish runs")
 	flag.StringVar(&cfg.backgroundLoad, "background-load", "", "background-load policy used for publish runs")
-	flag.StringVar(&cfg.goGC, "gogc", "", "Go GC percent for in-process goav1 encodes; use off to disable GC during publish runs")
+	flag.StringVar(&cfg.goGC, "gogc", "", "Go GC percent for goav1 encodes; use off to disable GC during publish runs")
 	flag.StringVar(&cfg.ffmpegBin, "ffmpeg-bin", "ffmpeg", "ffmpeg executable path")
 	flag.StringVar(&cfg.ffmpegSHA256, "ffmpeg-sha256", "", "expected SHA-256 of -ffmpeg-bin for publish runs")
 	flag.StringVar(&cfg.ffmpegAV1Decoder, "ffmpeg-av1-decoder", "", "FFmpeg AV1 decoder for external encoder metric decode (empty = FFmpeg default; e.g. libdav1d or av1)")
@@ -1079,6 +1103,14 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	}
 	if cfg.goav1SceneCut && (encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1")) {
 		return errors.New("publish requires -goav1-scene-cut=false when aomenc or svt-av1 baselines are selected; external scene-cut-equivalent settings are disabled")
+	}
+	if externalBaselineSelected(cfg) && encoderSelected(cfg, "goav1") {
+		if err := requireExplicitFlag(cfg, "goav1-process-timing"); err != nil {
+			return err
+		}
+		if !cfg.goav1ProcessTiming {
+			return errors.New("publish requires -goav1-process-timing=true when comparing goav1 against subprocess encoders")
+		}
 	}
 	if externalBaselineSelected(cfg) {
 		if err := requireExplicitFlag(cfg, "ffmpeg-av1-decoder"); err != nil {
@@ -2510,6 +2542,7 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		GoAV1MaxThreads:  cfg.goav1MaxThreads,
 		GoAV1Effort:      cfg.goav1Effort,
 		GoAV1SceneCut:    cfg.goav1SceneCut,
+		GoAV1ProcessTime: cfg.goav1ProcessTiming,
 		AOMThreads:       cfg.aomThreads,
 		AOMRowMT:         cfg.aomRowMT,
 		AOMCPUUsed:       cfg.aomCPUUsed,
@@ -2646,7 +2679,7 @@ func fairnessNotes(cfg benchConfig) []string {
 	notes := []string{
 		"SVT-AV1 --lp is a documented parallelism level in the range 0..6, not a target processor or thread count; numeric equality with GOMAXPROCS is not treated as equivalent concurrency.",
 		"CSV and metadata include wall seconds, CPU seconds, and observed_parallelism=cpu_total_seconds/encode_wall_seconds so comparisons can be checked against observed CPU budget.",
-		"qualitybench records timing_mode; core mode keeps the historical goav1 per-frame Encode timer, while e2e mode times goav1 raw input loading/frame construction, setup, encode calls, encoded artifact writes, and encoder shutdown for fairer CLI comparisons. Metric decode runs after timing for every encoder.",
+		"qualitybench records timing_mode and goav1_process_timing; core mode keeps the historical goav1 per-frame Encode timer, e2e mode times goav1 raw input loading/frame construction, setup, encode calls, encoded artifact writes, and encoder shutdown, and goav1_process_timing=true wraps that e2e encode path in a helper subprocess so native-encoder comparisons include matching process startup. Metric decode runs after timing for every encoder.",
 		"qualitybench records run_order and shuffle_seed so encoder/bitrate order effects can be reproduced or randomized deterministically.",
 		"qualitybench runs warmups and measured samples in deterministic sample passes across all encoder/bitrate tuples, records every measured encode sample in metadata, and reports the median wall-time sample in the normal CSV row. Publish mode rejects a tuple when repeated measured samples produce different encoded or decoded artifact hashes.",
 		"Publishable rows use -run-order shuffle with an explicit seed so every table has a reproducible encoder/bitrate order without always favoring the same encoder column.",
@@ -2666,6 +2699,9 @@ func fairnessNotes(cfg benchConfig) []string {
 		if encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1") {
 			notes = append(notes, "Publish mode requires -layers 1 when aomenc or svt-av1 baselines are selected, because equivalent external temporal-layer settings are not yet implemented by qualitybench.")
 			notes = append(notes, fmt.Sprintf("Publish mode requires each external-baseline clip to be at least %d seconds long so external subprocess startup cannot dominate encoder timing.", publishMinExternalBaselineClipSeconds))
+			if encoderSelected(cfg, "goav1") {
+				notes = append(notes, "Publish mode requires -goav1-process-timing=true when goav1 is compared against subprocess encoders, so the reported goav1 wall and CPU time come from the helper process boundary rather than the qualitybench library call boundary.")
+			}
 		}
 	}
 	if cfg.svtLP == 0 {
@@ -3382,6 +3418,109 @@ func decodeLengthPrefixedLowOverheadToYUV(payloadPath, yuvPath string, width, he
 	return fileBytesAndSHA256(yuvPath)
 }
 
+func runGoAV1EncodeHelper(args []string) error {
+	fs := flag.NewFlagSet(goAV1EncodeHelperCommand, flag.ContinueOnError)
+	var cfg benchConfig
+	var bitrate int
+	var resultPath string
+	var statsEnabled bool
+	var frameStatsEnabled bool
+	fs.IntVar(&cfg.width, "width", 0, "frame width")
+	fs.IntVar(&cfg.height, "height", 0, "frame height")
+	fs.IntVar(&cfg.frames, "frames", 0, "frame count")
+	fs.IntVar(&cfg.fps, "fps", 0, "frame rate")
+	fs.StringVar(&cfg.input, "input", "", "raw I420 input path")
+	fs.StringVar(&cfg.workdir, "workdir", "", "working directory")
+	fs.IntVar(&bitrate, "bitrate", 0, "target bitrate")
+	fs.IntVar(&cfg.layers, "layers", 1, "temporal layers")
+	fs.IntVar(&cfg.tiles, "tiles", 0, "tile column log2")
+	fs.IntVar(&cfg.goldenInterval, "golden", 0, "golden refresh interval")
+	fs.IntVar(&cfg.keyInterval, "keyint", 0, "keyframe interval")
+	fs.IntVar(&cfg.goMaxProcs, "gomaxprocs", 0, "GOMAXPROCS")
+	fs.StringVar(&cfg.goGC, "gogc", "", "Go GC setting")
+	fs.IntVar(&cfg.goav1MaxThreads, "goav1-max-threads", 0, "goav1 MaxThreads")
+	fs.IntVar(&cfg.goav1Effort, "goav1-effort", 0, "goav1 effort")
+	fs.BoolVar(&cfg.goav1SceneCut, "goav1-scene-cut", true, "goav1 scene cut")
+	fs.BoolVar(&statsEnabled, "stats-enabled", false, "collect aggregate encoder stats")
+	fs.BoolVar(&frameStatsEnabled, "frame-stats-enabled", false, "collect per-frame encoder stats")
+	fs.StringVar(&resultPath, "result-json", "", "helper result JSON path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if resultPath == "" {
+		return errors.New("missing -result-json")
+	}
+	if cfg.width <= 0 || cfg.height <= 0 || cfg.frames <= 0 || cfg.fps <= 0 || bitrate <= 0 {
+		return errors.New("invalid goav1 helper dimensions, frame rate, frame count, or bitrate")
+	}
+	if cfg.input == "" {
+		return errors.New("missing -input")
+	}
+	if cfg.workdir == "" {
+		return errors.New("missing -workdir")
+	}
+	if statsEnabled {
+		cfg.statsCSVPath = "helper-stats"
+	}
+	if frameStatsEnabled {
+		cfg.frameStatsCSVPath = "helper-frame-stats"
+	}
+	cfg.timingMode = timingModeEndToEnd
+	if err := applyGoRuntimeControls(cfg); err != nil {
+		return err
+	}
+	if cfg.goMaxProcs > 0 {
+		runtime.GOMAXPROCS(cfg.goMaxProcs)
+	}
+	result := encodeGoAV1Artifact(cfg, nil, bitrate)
+	return writeGoAV1EncodeHelperResult(resultPath, result)
+}
+
+func writeGoAV1EncodeHelperResult(path string, result encodeResult) error {
+	raw, err := json.Marshal(goAV1EncodeHelperResultFromEncodeResult(result))
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	return os.WriteFile(path, raw, 0o644)
+}
+
+func goAV1EncodeHelperResultFromEncodeResult(result encodeResult) goAV1EncodeHelperResult {
+	return goAV1EncodeHelperResult{
+		Encoder:          result.encoder,
+		TargetBPS:        result.targetBPS,
+		Bytes:            result.bytes,
+		EncodedPath:      result.encodedPath,
+		EncodedContainer: result.encodedContainer,
+		EncodedBytes:     result.encodedBytes,
+		EncodedSHA256:    result.encodedSHA256,
+		DecodedYUV:       result.decodedYUV,
+		Status:           result.status,
+		Error:            result.errText,
+		Stats:            result.stats,
+		FrameStats:       result.frameStats,
+		Settings:         result.settings,
+	}
+}
+
+func encodeResultFromGoAV1EncodeHelper(helper goAV1EncodeHelperResult) encodeResult {
+	return encodeResult{
+		encoder:          helper.Encoder,
+		targetBPS:        helper.TargetBPS,
+		bytes:            helper.Bytes,
+		encodedPath:      helper.EncodedPath,
+		encodedContainer: helper.EncodedContainer,
+		encodedBytes:     helper.EncodedBytes,
+		encodedSHA256:    helper.EncodedSHA256,
+		decodedYUV:       helper.DecodedYUV,
+		status:           helper.Status,
+		errText:          helper.Error,
+		stats:            helper.Stats,
+		frameStats:       helper.FrameStats,
+		settings:         helper.Settings,
+	}
+}
+
 func decodeGoAV1MetricYUV(cfg benchConfig, payloadPath, yuvPath string, width, height, frames int, settings map[string]string) (int64, string, error) {
 	if externalBaselineSelected(cfg) || cfg.ffmpegAV1Decoder != "" {
 		ivfPath := strings.TrimSuffix(payloadPath, filepath.Ext(payloadPath)) + ".ivf"
@@ -3444,10 +3583,119 @@ func writeDecodedPlane(w io.Writer, plane goav1.FramePlane) error {
 	return nil
 }
 
+func encodeGoAV1Process(cfg benchConfig, refPath string, bitrate int) encodeResult {
+	result := encodeResult{
+		encoder:          "goav1",
+		targetBPS:        bitrate,
+		encodedContainer: "goav1-length-prefixed-low-overhead-stream",
+		encodedPath:      filepath.Join(cfg.workdir, fmt.Sprintf("goav1_%d.obus", bitrate)),
+		decodedYUV:       filepath.Join(cfg.workdir, fmt.Sprintf("goav1_%d.yuv", bitrate)),
+		settings:         map[string]string{"timing_process": "subprocess"},
+	}
+	if refPath == "" {
+		result.status, result.errText = "error", "goav1 process timing requires a raw input path"
+		return result
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	processBinSHA := ""
+	if hash, err := sha256File(exe); err == nil {
+		processBinSHA = hash
+	}
+	resultPath := filepath.Join(cfg.workdir, fmt.Sprintf("goav1_%d_helper.json", bitrate))
+	args := goAV1EncodeHelperArgs(cfg, refPath, bitrate, resultPath)
+	result.command = commandLine(exe, args)
+	result.settings["goav1_process_bin"] = exe
+	if processBinSHA != "" {
+		result.settings["goav1_process_bin_sha256"] = processBinSHA
+	}
+
+	var processResult encodeResult
+	processResult.encoder = "goav1"
+	processResult.targetBPS = bitrate
+	duration := timeCommand(cfg.commandTimeout, exe, args, &processResult)
+	if processResult.status != "" {
+		processResult.encoder = "goav1"
+		processResult.targetBPS = bitrate
+		processResult.duration = duration
+		processResult.command = result.command
+		processResult.settings = result.settings
+		return processResult
+	}
+
+	raw, err := os.ReadFile(resultPath)
+	if err != nil {
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	var helper goAV1EncodeHelperResult
+	if err := json.Unmarshal(raw, &helper); err != nil {
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	result = encodeResultFromGoAV1EncodeHelper(helper)
+	if result.settings == nil {
+		result.settings = map[string]string{}
+	}
+	result.command = commandLine(exe, args)
+	result.duration = duration
+	result.cpuUser = processResult.cpuUser
+	result.cpuSystem = processResult.cpuSystem
+	result.cpuAvailable = processResult.cpuAvailable
+	result.settings["timing_process"] = "subprocess"
+	result.settings["timing_process_scope"] = "qualitybench helper process startup, raw input load, frame construction, encode, artifact write, and encoder shutdown"
+	result.settings["goav1_process_bin"] = exe
+	if processBinSHA != "" {
+		result.settings["goav1_process_bin_sha256"] = processBinSHA
+	}
+	if result.status != "ok" {
+		return result
+	}
+	decodedBytes, decodedHash, err := decodeGoAV1MetricYUV(cfg, result.encodedPath, result.decodedYUV, cfg.width, cfg.height, cfg.frames, result.settings)
+	if err != nil {
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	result.decodedBytes = decodedBytes
+	result.decodedSHA256 = decodedHash
+	return result
+}
+
+func goAV1EncodeHelperArgs(cfg benchConfig, refPath string, bitrate int, resultPath string) []string {
+	return []string{
+		goAV1EncodeHelperCommand,
+		"-width", strconv.Itoa(cfg.width),
+		"-height", strconv.Itoa(cfg.height),
+		"-frames", strconv.Itoa(cfg.frames),
+		"-fps", strconv.Itoa(cfg.fps),
+		"-input", refPath,
+		"-workdir", cfg.workdir,
+		"-bitrate", strconv.Itoa(bitrate),
+		"-layers", strconv.Itoa(cfg.layers),
+		"-tiles", strconv.Itoa(cfg.tiles),
+		"-golden", strconv.Itoa(cfg.goldenInterval),
+		"-keyint", strconv.Itoa(cfg.keyInterval),
+		"-gomaxprocs", strconv.Itoa(cfg.goMaxProcs),
+		"-gogc", cfg.goGC,
+		"-goav1-max-threads", strconv.Itoa(cfg.goav1MaxThreads),
+		"-goav1-effort", strconv.Itoa(cfg.goav1Effort),
+		"-goav1-scene-cut=" + strconv.FormatBool(cfg.goav1SceneCut),
+		"-stats-enabled=" + strconv.FormatBool(cfg.statsCSVPath != ""),
+		"-frame-stats-enabled=" + strconv.FormatBool(cfg.frameStatsCSVPath != ""),
+		"-result-json", resultPath,
+	}
+}
+
 func runEncoder(cfg benchConfig, frames []goav1.I420Frame, refPath string, encoderName string, bitrate int) encodeResult {
 	encoderName = canonicalEncoderName(encoderName)
 	switch encoderName {
 	case "goav1":
+		if cfg.goav1ProcessTiming {
+			return encodeGoAV1Process(cfg, refPath, bitrate)
+		}
 		goCfg := cfg
 		if cfg.timingMode == timingModeEndToEnd && refPath != "" {
 			goCfg.input = refPath
@@ -3679,6 +3927,25 @@ func attachEncodeRunSummary(selected encodeResult, results []encodeResult, warmu
 }
 
 func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeResult {
+	result := encodeGoAV1Artifact(cfg, frames, bitrate)
+	if result.status != "ok" {
+		return result
+	}
+	frameCount := len(frames)
+	if cfg.timingMode == timingModeEndToEnd {
+		frameCount = cfg.frames
+	}
+	decodedBytes, decodedHash, err := decodeGoAV1MetricYUV(cfg, result.encodedPath, result.decodedYUV, cfg.width, cfg.height, frameCount, result.settings)
+	if err != nil {
+		result.status, result.errText = "error", err.Error()
+		return result
+	}
+	result.decodedBytes = decodedBytes
+	result.decodedSHA256 = decodedHash
+	return result
+}
+
+func encodeGoAV1Artifact(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeResult {
 	timedFrames := frames
 	result := encodeResult{
 		encoder:          "goav1",
@@ -3846,13 +4113,6 @@ func encodeGoAV1(cfg benchConfig, frames []goav1.I420Frame, bitrate int) encodeR
 	}
 	result.encodedBytes = encodedBytes
 	result.encodedSHA256 = encodedFileHash
-	decodedBytes, decodedHash, err := decodeGoAV1MetricYUV(cfg, result.encodedPath, result.decodedYUV, cfg.width, cfg.height, len(timedFrames), result.settings)
-	if err != nil {
-		result.status, result.errText = "error", err.Error()
-		return result
-	}
-	result.decodedBytes = decodedBytes
-	result.decodedSHA256 = decodedHash
 	result.status = "ok"
 	return result
 }
