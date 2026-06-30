@@ -472,6 +472,12 @@ export GOAV1_BENCH_SOURCE_LICENSE=license-or-usage-grant
 export GOAV1_BENCH_SOURCE_CATEGORY=content-category
 export GOAV1_BENCH_CORPUS_ENVIRONMENT_NOTES="fixed power mode; idle machine; cool start"
 scripts/gen_bench_corpus.sh
+BENCH_CORPUS_AOMDEC_BIN=/absolute/path/to/aomdec \
+BENCH_CORPUS_AOMDEC_SHA256=$(shasum -a 256 /absolute/path/to/aomdec | awk '{print $1}') \
+BENCH_CORPUS_DAV1D_BIN=/absolute/path/to/dav1d \
+BENCH_CORPUS_DAV1D_SHA256=$(shasum -a 256 /absolute/path/to/dav1d | awk '{print $1}') \
+BENCH_CORPUS_SVTAV1DECAPP_BIN=/absolute/path/to/SvtAv1DecApp \
+BENCH_CORPUS_SVTAV1DECAPP_SHA256=$(shasum -a 256 /absolute/path/to/SvtAv1DecApp | awk '{print $1}') \
 make bench-corpus-publish
 ```
 
@@ -489,9 +495,11 @@ verified before timing starts.
 sidecar hashes, decoded clip metadata, a machine-readable report path
 (`GOAV1_BENCH_CORPUS_REPORT_JSON`, defaulting through `make` to
 `/tmp/goav1-bench-corpus-report.json`), and every registered reference decoder
-(`aomdec`, `dav1d`, and `SvtAv1DecApp`) before timing starts. Use
+(`aomdec`, `dav1d`, and `SvtAv1DecApp`) before timing starts. Publish mode
+also requires absolute decoder paths and matching SHA-256 pins, plus explicit
+`GOMAXPROCS`/`GOGC` with hidden Go runtime environment knobs unset. Use
 `make bench-corpus` only for exploratory local runs where missing decoder
-columns or manifest warnings are acceptable.
+columns, PATH-selected tools, or manifest warnings are acceptable.
 
 That report prints per-clip and aggregate fps, raw and startup-adjusted external
 decoder timings, and the goav1/dav1d ratio that should drive optimization work.

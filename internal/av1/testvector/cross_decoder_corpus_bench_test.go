@@ -27,11 +27,12 @@ package testvector
 // test without GOAV1_BENCH_CORPUS=1) is unaffected.
 //
 // Set GOAV1_BENCH_CORPUS_PUBLISH=1 for any row copied into a performance
-// table. Publish mode requires every registered external reference decoder to
-// resolve, so a missing dav1d/aomdec/SVT binary cannot silently remove a
-// competitor column. It also requires GOAV1_BENCH_CORPUS_REPORT_JSON so the
-// exact git/env/tool/corpus/timing provenance is persisted alongside the human
-// log. GOAV1_BENCH_CORPUS_REQUIRE_DECODERS can require a named comma-separated
+// table. Publish mode requires every registered external reference decoder
+// path and SHA-256 to be pinned explicitly, so a missing or PATH-drifted
+// dav1d/aomdec/SVT binary cannot silently change a competitor column. It also
+// requires GOAV1_BENCH_CORPUS_REPORT_JSON so the exact git/env/tool/corpus/
+// timing provenance is persisted alongside the human log.
+// GOAV1_BENCH_CORPUS_REQUIRE_DECODERS can require a named comma-separated
 // subset (or "all") for local audits.
 //
 // METHODOLOGY (mirrors cross_decoder_bench_test.go)
@@ -161,6 +162,7 @@ const (
 	envBenchCorpusRequireDecoders  = "GOAV1_BENCH_CORPUS_REQUIRE_DECODERS"
 	envBenchCorpusReportJSON       = "GOAV1_BENCH_CORPUS_REPORT_JSON"
 	envBenchCorpusEnvironmentNotes = "GOAV1_BENCH_CORPUS_ENVIRONMENT_NOTES"
+	envBenchCorpusDecoderPrefix    = "GOAV1_BENCH_CORPUS_"
 )
 
 const (
@@ -1289,6 +1291,76 @@ func TestResolveCorpusExternalDecodersRequiresMissing(t *testing.T) {
 	if len(resolved) != 1 || resolved[0].decoder.name != "dav1d" || resolved[0].bin != "/reference/dav1d" {
 		t.Fatalf("resolved=%v want dav1d", resolved)
 	}
+}
+
+func TestResolveCorpusPublishExternalDecodersRequiresPinnedTools(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "dav1d")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sha, _, err := corpusFileSHA256(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoders := []externalDecoder{{name: "dav1d"}}
+	required := map[string]bool{"dav1d": true}
+	binEnv, shaEnv := corpusPublishExternalDecoderPinEnvNames("dav1d")
+
+	t.Run("valid", func(t *testing.T) {
+		t.Setenv(binEnv, bin)
+		t.Setenv(shaEnv, sha)
+		resolved, err := resolveCorpusPublishExternalDecoders(decoders, required)
+		if err != nil {
+			t.Fatalf("resolveCorpusPublishExternalDecoders: %v", err)
+		}
+		if len(resolved) != 1 || resolved[0].bin != bin || resolved[0].decoder.name != "dav1d" {
+			t.Fatalf("resolved=%+v", resolved)
+		}
+	})
+
+	t.Run("missing path", func(t *testing.T) {
+		t.Setenv(binEnv, "")
+		t.Setenv(shaEnv, sha)
+		if _, err := resolveCorpusPublishExternalDecoders(decoders, required); err == nil ||
+			!strings.Contains(err.Error(), binEnv) {
+			t.Fatalf("missing path error=%v", err)
+		}
+	})
+
+	t.Run("relative path", func(t *testing.T) {
+		t.Setenv(binEnv, "dav1d")
+		t.Setenv(shaEnv, sha)
+		if _, err := resolveCorpusPublishExternalDecoders(decoders, required); err == nil ||
+			!strings.Contains(err.Error(), "absolute path") {
+			t.Fatalf("relative path error=%v", err)
+		}
+	})
+
+	t.Run("not executable", func(t *testing.T) {
+		plain := filepath.Join(t.TempDir(), "dav1d")
+		if err := os.WriteFile(plain, []byte("fixture"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		plainSHA, _, err := corpusFileSHA256(plain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(binEnv, plain)
+		t.Setenv(shaEnv, plainSHA)
+		if _, err := resolveCorpusPublishExternalDecoders(decoders, required); err == nil ||
+			!strings.Contains(err.Error(), "not an executable") {
+			t.Fatalf("not executable error=%v", err)
+		}
+	})
+
+	t.Run("bad hash", func(t *testing.T) {
+		t.Setenv(binEnv, bin)
+		t.Setenv(shaEnv, strings.Repeat("0", 64))
+		if _, err := resolveCorpusPublishExternalDecoders(decoders, required); err == nil ||
+			!strings.Contains(err.Error(), "sha256") {
+			t.Fatalf("bad hash error=%v", err)
+		}
+	})
 }
 
 func TestCorpusInterleavedTimingJobsRotateDecoders(t *testing.T) {
@@ -2474,6 +2546,57 @@ func resolveCorpusExternalDecoders(decoders []externalDecoder, required map[stri
 	return resolved, missing
 }
 
+func resolveCorpusPublishExternalDecoders(decoders []externalDecoder, required map[string]bool) ([]resolvedCorpusExternalDecoder, error) {
+	resolved := make([]resolvedCorpusExternalDecoder, 0, len(required))
+	for _, dec := range decoders {
+		if !required[dec.name] {
+			continue
+		}
+		binEnv, shaEnv := corpusPublishExternalDecoderPinEnvNames(dec.name)
+		bin := strings.TrimSpace(os.Getenv(binEnv))
+		if bin == "" {
+			return nil, fmt.Errorf("set %s to the absolute %s decoder path for corpus publish", binEnv, dec.name)
+		}
+		if !filepath.IsAbs(bin) {
+			return nil, fmt.Errorf("%s must be an absolute path, got %q", binEnv, bin)
+		}
+		info, err := os.Stat(bin)
+		if err != nil {
+			return nil, fmt.Errorf("%s %q: %w", binEnv, bin, err)
+		}
+		if info.IsDir() || info.Mode()&0o111 == 0 {
+			return nil, fmt.Errorf("%s %q is not an executable file", binEnv, bin)
+		}
+		wantSHA := strings.ToLower(strings.TrimSpace(os.Getenv(shaEnv)))
+		if err := validateCorpusManifestSHA256(wantSHA, shaEnv); err != nil {
+			return nil, fmt.Errorf("%s: %w", shaEnv, err)
+		}
+		gotSHA, _, err := corpusFileSHA256(bin)
+		if err != nil {
+			return nil, fmt.Errorf("%s %q sha256: %w", binEnv, bin, err)
+		}
+		if !strings.EqualFold(gotSHA, wantSHA) {
+			return nil, fmt.Errorf("%s %q sha256=%s want %s", binEnv, bin, gotSHA, wantSHA)
+		}
+		resolved = append(resolved, resolvedCorpusExternalDecoder{decoder: dec, bin: bin})
+	}
+	return resolved, nil
+}
+
+func corpusPublishExternalDecoderPinEnvNames(decoderName string) (binEnv string, shaEnv string) {
+	var suffix strings.Builder
+	for _, r := range decoderName {
+		switch {
+		case r >= 'a' && r <= 'z':
+			suffix.WriteRune(r - 'a' + 'A')
+		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			suffix.WriteRune(r)
+		}
+	}
+	base := envBenchCorpusDecoderPrefix + suffix.String()
+	return base + "_BIN", base + "_SHA256"
+}
+
 func corpusExternalDecoderLookupSummary(decoders []externalDecoder, names []string) string {
 	if len(names) == 0 {
 		return ""
@@ -2561,12 +2684,21 @@ func TestCrossDecoderCorpus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cross-corpus: %v", err)
 	}
-	resolvedExternal, missingExternal := resolveCorpusExternalDecoders(decoders, requiredDecoders, func(dec externalDecoder) (string, bool) {
-		return dec.resolveBinary()
-	})
-	if len(missingExternal) > 0 {
-		t.Fatalf("cross-corpus: required external decoder(s) not found on PATH: %s (lookups: %s)",
-			strings.Join(missingExternal, ", "), corpusExternalDecoderLookupSummary(decoders, missingExternal))
+	var resolvedExternal []resolvedCorpusExternalDecoder
+	if publish {
+		resolvedExternal, err = resolveCorpusPublishExternalDecoders(decoders, requiredDecoders)
+		if err != nil {
+			t.Fatalf("cross-corpus publish: %v", err)
+		}
+	} else {
+		var missingExternal []string
+		resolvedExternal, missingExternal = resolveCorpusExternalDecoders(decoders, requiredDecoders, func(dec externalDecoder) (string, bool) {
+			return dec.resolveBinary()
+		})
+		if len(missingExternal) > 0 {
+			t.Fatalf("cross-corpus: required external decoder(s) not found on PATH: %s (lookups: %s)",
+				strings.Join(missingExternal, ", "), corpusExternalDecoderLookupSummary(decoders, missingExternal))
+		}
 	}
 	resolvedNames := make(map[string]bool, len(resolvedExternal))
 	for _, resolved := range resolvedExternal {
