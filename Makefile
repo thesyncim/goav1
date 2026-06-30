@@ -96,7 +96,7 @@ bench-corpus:
 	GOAV1_BENCH_CORPUS=1 go test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
 
 bench-corpus-publish:
-	GOAV1_BENCH_CORPUS=1 GOAV1_BENCH_CORPUS_PUBLISH=1 GOAV1_BENCH_CORPUS_REPORT_JSON=$(BENCH_CORPUS_REPORT_JSON) go test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
+	GOMAXPROCS=1 GOGC=off GOFLAGS= GOMEMLIMIT= GODEBUG= GOAV1_BENCH_CORPUS=1 GOAV1_BENCH_CORPUS_PUBLISH=1 GOAV1_BENCH_CORPUS_REPORT_JSON=$(BENCH_CORPUS_REPORT_JSON) go test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
 
 bench-go-publish:
 	go run ./cmd/gobenchpublish \
@@ -109,6 +109,7 @@ bench-go-publish:
 		-cpu "$(GO_BENCH_PUBLISH_CPU)" \
 		-count "$(GO_BENCH_PUBLISH_COUNT)" \
 		-benchtime "$(GO_BENCH_PUBLISH_BENCHTIME)" \
+		-benchmem=true \
 		-tags "$(GO_BENCH_PUBLISH_TAGS)" \
 		-gogc "$(GO_BENCH_PUBLISH_GOGC)" \
 		-publish

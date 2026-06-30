@@ -64,6 +64,14 @@ func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
 		t.Fatalf("missing benchmem error=%v", err)
 	}
 
+	implicitBenchMem := cfg
+	implicitBenchMem.ExplicitFlags = gobenchPublishExplicitFlags()
+	delete(implicitBenchMem.ExplicitFlags, "benchmem")
+	if err := validateConfig(implicitBenchMem, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-benchmem") {
+		t.Fatalf("implicit benchmem error=%v", err)
+	}
+
 	sameOutput := cfg
 	sameOutput.MetadataPath = sameOutput.OutputPath
 	if err := validateConfig(sameOutput, gitMetadata{Commit: "abc"}); err == nil ||
@@ -212,6 +220,7 @@ func gobenchPublishExplicitFlags() map[string]bool {
 		"cpu":               true,
 		"count":             true,
 		"benchtime":         true,
+		"benchmem":          true,
 		"gogc":              true,
 	}
 }

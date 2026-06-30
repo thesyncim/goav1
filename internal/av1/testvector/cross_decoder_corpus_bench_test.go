@@ -1507,6 +1507,67 @@ func TestValidateCorpusPublishEnvironmentNotes(t *testing.T) {
 	}
 }
 
+func TestValidateCorpusPublishEnvironmentRejectsAmbientGoDrift(t *testing.T) {
+	valid := corpusPublishEnvironment{
+		GOMAXPROCS:    1,
+		GOMAXPROCSEnv: "1",
+		GOGC:          "off",
+	}
+	if err := validateCorpusPublishEnvironment(valid); err != nil {
+		t.Fatalf("valid environment failed: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		mut  func(*corpusPublishEnvironment)
+		want string
+	}{
+		{
+			name: "missing gomaxprocs",
+			mut:  func(env *corpusPublishEnvironment) { env.GOMAXPROCSEnv = "" },
+			want: "GOMAXPROCS",
+		},
+		{
+			name: "bad gomaxprocs",
+			mut:  func(env *corpusPublishEnvironment) { env.GOMAXPROCSEnv = "1,2" },
+			want: "GOMAXPROCS",
+		},
+		{
+			name: "runtime mismatch",
+			mut:  func(env *corpusPublishEnvironment) { env.GOMAXPROCS = 2 },
+			want: "does not match",
+		},
+		{
+			name: "missing gogc",
+			mut:  func(env *corpusPublishEnvironment) { env.GOGC = "" },
+			want: "GOGC",
+		},
+		{
+			name: "goflags",
+			mut:  func(env *corpusPublishEnvironment) { env.GOFLAGS = "-race" },
+			want: "GOFLAGS unset",
+		},
+		{
+			name: "gomemlimit",
+			mut:  func(env *corpusPublishEnvironment) { env.GOMEMLIMIT = "512MiB" },
+			want: "GOMEMLIMIT unset",
+		},
+		{
+			name: "godebug",
+			mut:  func(env *corpusPublishEnvironment) { env.GODEBUG = "gcstoptheworld=1" },
+			want: "GODEBUG unset",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := valid
+			tc.mut(&env)
+			if err := validateCorpusPublishEnvironment(env); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error=%v want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadCorpusPublishManifestRejectsStaleCorpus(t *testing.T) {
 	md5Hex := "0123456789abcdeffedcba9876543210"
 	for _, tc := range []struct {
@@ -2201,6 +2262,7 @@ type corpusPublishEnvironment struct {
 	GOOS          string `json:"goos"`
 	GOARCH        string `json:"goarch"`
 	GOMAXPROCS    int    `json:"gomaxprocs"`
+	GOMAXPROCSEnv string `json:"gomaxprocs_env,omitempty"`
 	NumCPU        int    `json:"num_cpu"`
 	CPUModel      string `json:"cpu_model,omitempty"`
 	Hostname      string `json:"hostname,omitempty"`
@@ -2448,6 +2510,9 @@ func TestCrossDecoderCorpus(t *testing.T) {
 			t.Fatalf("cross-corpus publish: %v", err)
 		}
 		if err := validateCorpusPublishEnvironmentNotes(os.Getenv(envBenchCorpusEnvironmentNotes)); err != nil {
+			t.Fatalf("cross-corpus publish: %v", err)
+		}
+		if err := validateCorpusPublishEnvironment(currentCorpusPublishEnvironment()); err != nil {
 			t.Fatalf("cross-corpus publish: %v", err)
 		}
 	}
@@ -2723,6 +2788,33 @@ func validateCorpusPublishEnvironmentNotes(notes string) error {
 	return nil
 }
 
+func validateCorpusPublishEnvironment(env corpusPublishEnvironment) error {
+	setting := strings.TrimSpace(env.GOMAXPROCSEnv)
+	if setting == "" {
+		return errors.New("set GOMAXPROCS to a single positive integer for corpus publish")
+	}
+	gomaxprocs, err := strconv.Atoi(setting)
+	if err != nil || gomaxprocs <= 0 {
+		return fmt.Errorf("set GOMAXPROCS to a single positive integer for corpus publish, got %q", env.GOMAXPROCSEnv)
+	}
+	if env.GOMAXPROCS != gomaxprocs {
+		return fmt.Errorf("GOMAXPROCS environment value %d does not match runtime GOMAXPROCS %d", gomaxprocs, env.GOMAXPROCS)
+	}
+	if strings.TrimSpace(env.GOGC) == "" {
+		return errors.New("set GOGC explicitly for corpus publish")
+	}
+	if strings.TrimSpace(env.GOFLAGS) != "" {
+		return errors.New("corpus publish requires GOFLAGS unset; use explicit go test flags")
+	}
+	if strings.TrimSpace(env.GOMEMLIMIT) != "" {
+		return errors.New("corpus publish requires GOMEMLIMIT unset")
+	}
+	if strings.TrimSpace(env.GODEBUG) != "" {
+		return errors.New("corpus publish requires GODEBUG unset")
+	}
+	return nil
+}
+
 func currentCorpusPublishEnvironment() corpusPublishEnvironment {
 	hostname, _ := os.Hostname()
 	return corpusPublishEnvironment{
@@ -2730,6 +2822,7 @@ func currentCorpusPublishEnvironment() corpusPublishEnvironment {
 		GOOS:          runtime.GOOS,
 		GOARCH:        runtime.GOARCH,
 		GOMAXPROCS:    runtime.GOMAXPROCS(0),
+		GOMAXPROCSEnv: os.Getenv("GOMAXPROCS"),
 		NumCPU:        runtime.NumCPU(),
 		CPUModel:      detectCorpusCPUModel(),
 		Hostname:      hostname,

@@ -210,6 +210,7 @@ func validateConfig(cfg config, git gitMetadata) error {
 			"cpu",
 			"count",
 			"benchtime",
+			"benchmem",
 			"gogc",
 		} {
 			if err := requireExplicitFlag(cfg, name); err != nil {
