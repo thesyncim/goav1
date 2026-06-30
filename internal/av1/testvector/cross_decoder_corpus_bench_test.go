@@ -127,31 +127,48 @@ type corpusClipCandidate struct {
 
 type corpusPublishManifest struct {
 	path           string
+	formatVersion  int
 	sourceID       string
+	sourceSHA256   string
 	sourceURL      string
 	sourceLicense  string
 	sourceCategory string
+	sources        []corpusPublishManifestSource
 	toolVersions   map[string]string
 	toolSHA256     map[string]string
 	expectedClips  int
 	rows           map[string]corpusPublishManifestRow
 }
 
+type corpusPublishManifestSource struct {
+	id       string
+	sha256   string
+	url      string
+	license  string
+	category string
+	clips    int
+}
+
 type corpusPublishManifestRow struct {
-	name       string
-	width      int
-	height     int
-	frames     int
-	cq         int
-	bitDepth   uint8
-	chroma     string
-	profile    int
-	ivfBytes   int64
-	ivfSHA256  string
-	md5        MD5
-	md5SHA256  string
-	dav1dCheck string
-	aomencArgs string
+	name           string
+	width          int
+	height         int
+	frames         int
+	cq             int
+	bitDepth       uint8
+	chroma         string
+	profile        int
+	ivfBytes       int64
+	ivfSHA256      string
+	md5            MD5
+	md5SHA256      string
+	dav1dCheck     string
+	aomencArgs     string
+	sourceID       string
+	sourceSHA256   string
+	sourceURL      string
+	sourceLicense  string
+	sourceCategory string
 }
 
 type corpusOracleKind uint8
@@ -167,6 +184,8 @@ const (
 	envBenchCorpusAllowUnmanifested = "GOAV1_BENCH_CORPUS_ALLOW_UNMANIFESTED"
 	envBenchCorpusRequireDecoders   = "GOAV1_BENCH_CORPUS_REQUIRE_DECODERS"
 	envBenchCorpusReportJSON        = "GOAV1_BENCH_CORPUS_REPORT_JSON"
+	envBenchCorpusMinSources        = "GOAV1_BENCH_CORPUS_MIN_SOURCES"
+	envBenchCorpusMinCategories     = "GOAV1_BENCH_CORPUS_MIN_CATEGORIES"
 	envBenchCorpusEnvironmentNotes  = "GOAV1_BENCH_CORPUS_ENVIRONMENT_NOTES"
 	envBenchCorpusCPUAffinity       = "GOAV1_BENCH_CORPUS_CPU_AFFINITY"
 	envBenchCorpusPowerMode         = "GOAV1_BENCH_CORPUS_POWER_MODE"
@@ -177,9 +196,11 @@ const (
 )
 
 const (
-	corpusManifestFile    = "manifest.tsv"
-	corpusManifestMagic   = "# goav1_bench_corpus_manifest_v1"
-	corpusManifestColumns = "name\twidth\theight\tframes\tcq\tdepth\tchroma\tprofile\tivf_bytes\tivf_sha256\tmd5\tmd5_sha256\tdav1d_check\taomenc_args"
+	corpusManifestFile      = "manifest.tsv"
+	corpusManifestMagicV1   = "# goav1_bench_corpus_manifest_v1"
+	corpusManifestMagicV2   = "# goav1_bench_corpus_manifest_v2"
+	corpusManifestColumnsV1 = "name\twidth\theight\tframes\tcq\tdepth\tchroma\tprofile\tivf_bytes\tivf_sha256\tmd5\tmd5_sha256\tdav1d_check\taomenc_args"
+	corpusManifestColumnsV2 = corpusManifestColumnsV1 + "\tsource_id\tsource_sha256\tsource_url\tsource_license\tsource_category"
 )
 
 type corpusOracleSidecar struct {
@@ -1484,6 +1505,43 @@ func TestLoadCorpusPublishManifestValidatesFiles(t *testing.T) {
 	}
 }
 
+func TestLoadCorpusPublishManifestV2RecordsSourceDiversity(t *testing.T) {
+	t.Setenv(envBenchCorpusMinSources, "2")
+	t.Setenv(envBenchCorpusMinCategories, "2")
+	dir := t.TempDir()
+	md5Hex := "0123456789abcdeffedcba9876543210"
+	writeCorpusManifestV2Fixture(t, dir, []corpusManifestV2FixtureClip{
+		{name: "camera_pan_p144_inter_q32", sourceID: "camera-pan", sourceCategory: "camera-motion", sourceData: []byte("source-a")},
+		{name: "screen_share_p144_inter_q32", sourceID: "screen-share", sourceCategory: "screen-content", sourceData: []byte("source-b")},
+	}, md5Hex)
+
+	manifest, err := loadCorpusPublishManifest(dir)
+	if err != nil {
+		t.Fatalf("loadCorpusPublishManifest: %v", err)
+	}
+	if manifest.formatVersion != 2 || len(manifest.sources) != 2 || manifest.sourceID != "multiple" ||
+		corpusManifestSourceCategoryCount(manifest.sources) != 2 {
+		t.Fatalf("manifest source summary=%+v sources=%+v", manifest, manifest.sources)
+	}
+	if err := validateCorpusPublishSourceCoverage(manifest); err != nil {
+		t.Fatalf("validateCorpusPublishSourceCoverage: %v", err)
+	}
+	row := manifest.rows["screen_share_p144_inter_q32"]
+	if row.sourceID != "screen-share" || row.sourceCategory != "screen-content" || row.sourceSHA256 != testSHA256([]byte("source-b")) {
+		t.Fatalf("row source provenance=%+v", row)
+	}
+	clips := []corpusClip{
+		{name: "camera_pan_p144_inter_q32", ivfPath: filepath.Join(dir, "camera_pan_p144_inter_q32.ivf"), frames: 3, width: 2, height: 4, bitDepth: 8, chroma: "420"},
+		{name: "screen_share_p144_inter_q32", ivfPath: filepath.Join(dir, "screen_share_p144_inter_q32.ivf"), frames: 3, width: 2, height: 4, bitDepth: 8, chroma: "420"},
+	}
+	reportClips := corpusPublishReportClips(clips, manifest)
+	if len(reportClips) != 2 || reportClips[1].SourceID != "screen-share" ||
+		reportClips[1].SourceSHA256 != testSHA256([]byte("source-b")) ||
+		reportClips[1].SourceCategory != "screen-content" {
+		t.Fatalf("report clips=%+v", reportClips)
+	}
+}
+
 func TestLoadCorpusBenchmarkManifestAllowsOnlyExploratoryMissingManifest(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(envBenchCorpusAllowUnmanifested, "1")
@@ -1593,9 +1651,14 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 		t.Fatalf("corpus report=%+v want manifest hash/clip counts", report.Corpus)
 	}
 	if report.Corpus.SourceID != "fixture-source" ||
+		report.Corpus.SourceSHA256 != testSHA256([]byte("source fixture")) ||
 		report.Corpus.SourceURL != "https://example.invalid/source" ||
 		report.Corpus.SourceLicense != "fixture-license" ||
 		report.Corpus.SourceCategory != "fixture-category" ||
+		report.Corpus.SourceCount != 1 ||
+		report.Corpus.SourceCategories != 1 ||
+		len(report.Corpus.Sources) != 1 ||
+		report.Corpus.Sources[0].ID != "fixture-source" ||
 		report.Corpus.ToolVersions["aomenc"] != "aomenc fixture" ||
 		report.Corpus.ToolVersions["aomdec"] != "aomdec fixture" ||
 		report.Corpus.ToolVersions["ffmpeg"] != "ffmpeg fixture" {
@@ -1622,6 +1685,8 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 	}
 	if len(report.Clips) != 1 || report.Clips[0].Name != "clip" || report.Clips[0].CQ != 32 ||
 		report.Clips[0].BitDepth != 8 || report.Clips[0].Profile != 0 ||
+		report.Clips[0].SourceID != "fixture-source" ||
+		report.Clips[0].SourceSHA256 != testSHA256([]byte("source fixture")) ||
 		report.Clips[0].DAV1DCheck != "dav1d=OK" || report.Clips[0].AOMEncArgs != "args" {
 		t.Fatalf("clips=%+v", report.Clips)
 	}
@@ -1896,8 +1961,9 @@ func writeCorpusManifestFixture(t *testing.T, dir, name string, ivfData, md5Data
 	row := fmt.Sprintf("%s\t%d\t%d\t%d\t32\t%d\t%s\t0\t%d\t%s\t%s\t%s\tdav1d=OK\targs",
 		name, width, height, frames, depth, chroma, len(ivfData), testSHA256(ivfData), md5Hex, testSHA256(md5Data))
 	text := strings.Join([]string{
-		corpusManifestMagic,
+		corpusManifestMagicV1,
 		"# source_id=fixture-source",
+		"# source_sha256=" + testSHA256([]byte("source fixture")),
 		"# source_url=https://example.invalid/source",
 		"# source_license=fixture-license",
 		"# source_category=fixture-category",
@@ -1908,9 +1974,51 @@ func writeCorpusManifestFixture(t *testing.T, dir, name string, ivfData, md5Data
 		"# ffmpeg_sha256=" + testSHA256([]byte("ffmpeg fixture")),
 		"# ffmpeg_version=ffmpeg fixture",
 		fmt.Sprintf("# expected_clips=%d", expectedClips),
-		corpusManifestColumns,
+		corpusManifestColumnsV1,
 		row,
 	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, corpusManifestFile), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type corpusManifestV2FixtureClip struct {
+	name           string
+	sourceID       string
+	sourceCategory string
+	sourceData     []byte
+}
+
+func writeCorpusManifestV2Fixture(t *testing.T, dir string, clips []corpusManifestV2FixtureClip, md5Hex string) {
+	t.Helper()
+	md5Data := []byte(md5Hex + "\n")
+	rows := make([]string, 0, len(clips))
+	for i, clip := range clips {
+		ivfData := []byte(fmt.Sprintf("ivf-data-%d", i))
+		if err := os.WriteFile(filepath.Join(dir, clip.name+".ivf"), ivfData, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, clip.name+".md5"), md5Data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, fmt.Sprintf("%s\t2\t4\t3\t32\t8\t420\t0\t%d\t%s\t%s\t%s\tdav1d=OK\targs\t%s\t%s\thttps://example.invalid/%s\tfixture-license\t%s",
+			clip.name, len(ivfData), testSHA256(ivfData), md5Hex, testSHA256(md5Data),
+			clip.sourceID, testSHA256(clip.sourceData), clip.sourceID, clip.sourceCategory))
+	}
+	lines := []string{
+		corpusManifestMagicV2,
+		fmt.Sprintf("# source_count=%d", len(clips)),
+		"# aomenc_sha256=" + testSHA256([]byte("aomenc fixture")),
+		"# aomenc_version=aomenc fixture",
+		"# aomdec_sha256=" + testSHA256([]byte("aomdec fixture")),
+		"# aomdec_version=aomdec fixture",
+		"# ffmpeg_sha256=" + testSHA256([]byte("ffmpeg fixture")),
+		"# ffmpeg_version=ffmpeg fixture",
+		fmt.Sprintf("# expected_clips=%d", len(clips)),
+		corpusManifestColumnsV2,
+	}
+	lines = append(lines, rows...)
+	text := strings.Join(lines, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(dir, corpusManifestFile), []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2131,16 +2239,29 @@ func loadCorpusPublishManifest(dir string) (corpusPublishManifest, error) {
 	}
 	text := strings.ReplaceAll(string(data), "\r\n", "\n")
 	lines := strings.Split(text, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != corpusManifestMagic {
-		return corpusPublishManifest{}, fmt.Errorf("%s: missing %q header", path, corpusManifestMagic)
+	if len(lines) == 0 {
+		return corpusPublishManifest{}, fmt.Errorf("%s: missing manifest header", path)
+	}
+	formatVersion := 0
+	columns := ""
+	switch strings.TrimSpace(lines[0]) {
+	case corpusManifestMagicV1:
+		formatVersion = 1
+		columns = corpusManifestColumnsV1
+	case corpusManifestMagicV2:
+		formatVersion = 2
+		columns = corpusManifestColumnsV2
+	default:
+		return corpusPublishManifest{}, fmt.Errorf("%s: missing %q or %q header", path, corpusManifestMagicV1, corpusManifestMagicV2)
 	}
 
 	headers := map[string]string{}
 	manifest := corpusPublishManifest{
-		path:         path,
-		toolVersions: map[string]string{},
-		toolSHA256:   map[string]string{},
-		rows:         map[string]corpusPublishManifestRow{},
+		path:          path,
+		formatVersion: formatVersion,
+		toolVersions:  map[string]string{},
+		toolSHA256:    map[string]string{},
+		rows:          map[string]corpusPublishManifestRow{},
 	}
 	sawColumns := false
 	for i, line := range lines[1:] {
@@ -2159,13 +2280,13 @@ func loadCorpusPublishManifest(dir string) (corpusPublishManifest, error) {
 			continue
 		}
 		if !sawColumns {
-			if line != corpusManifestColumns {
+			if line != columns {
 				return corpusPublishManifest{}, fmt.Errorf("%s:%d: unexpected columns %q", path, lineNo, line)
 			}
 			sawColumns = true
 			continue
 		}
-		row, err := parseCorpusPublishManifestRow(line)
+		row, err := parseCorpusPublishManifestRowVersion(line, formatVersion)
 		if err != nil {
 			return corpusPublishManifest{}, fmt.Errorf("%s:%d: %w", path, lineNo, err)
 		}
@@ -2177,17 +2298,52 @@ func loadCorpusPublishManifest(dir string) (corpusPublishManifest, error) {
 	if !sawColumns {
 		return corpusPublishManifest{}, fmt.Errorf("%s: missing column header", path)
 	}
-	if manifest.sourceID, err = requiredCorpusManifestHeader(path, headers, "source_id"); err != nil {
-		return corpusPublishManifest{}, err
-	}
-	if manifest.sourceURL, err = requiredCorpusManifestHeader(path, headers, "source_url"); err != nil {
-		return corpusPublishManifest{}, err
-	}
-	if manifest.sourceLicense, err = requiredCorpusManifestHeader(path, headers, "source_license"); err != nil {
-		return corpusPublishManifest{}, err
-	}
-	if manifest.sourceCategory, err = requiredCorpusManifestHeader(path, headers, "source_category"); err != nil {
-		return corpusPublishManifest{}, err
+	switch formatVersion {
+	case 1:
+		if manifest.sourceID, err = requiredCorpusManifestHeader(path, headers, "source_id"); err != nil {
+			return corpusPublishManifest{}, err
+		}
+		if manifest.sourceSHA256, err = requiredCorpusManifestSHA256Header(path, headers, "source_sha256"); err != nil {
+			return corpusPublishManifest{}, err
+		}
+		if manifest.sourceURL, err = requiredCorpusManifestHeader(path, headers, "source_url"); err != nil {
+			return corpusPublishManifest{}, err
+		}
+		if manifest.sourceLicense, err = requiredCorpusManifestHeader(path, headers, "source_license"); err != nil {
+			return corpusPublishManifest{}, err
+		}
+		if manifest.sourceCategory, err = requiredCorpusManifestHeader(path, headers, "source_category"); err != nil {
+			return corpusPublishManifest{}, err
+		}
+		manifest.sources = []corpusPublishManifestSource{{
+			id:       manifest.sourceID,
+			sha256:   manifest.sourceSHA256,
+			url:      manifest.sourceURL,
+			license:  manifest.sourceLicense,
+			category: manifest.sourceCategory,
+			clips:    len(manifest.rows),
+		}}
+		for name, row := range manifest.rows {
+			row.sourceID = manifest.sourceID
+			row.sourceSHA256 = manifest.sourceSHA256
+			row.sourceURL = manifest.sourceURL
+			row.sourceLicense = manifest.sourceLicense
+			row.sourceCategory = manifest.sourceCategory
+			manifest.rows[name] = row
+		}
+	case 2:
+		expectedSources, err := requiredPositiveCorpusManifestHeader(path, headers, "source_count")
+		if err != nil {
+			return corpusPublishManifest{}, err
+		}
+		manifest.sources, err = corpusPublishManifestSources(manifest.rows)
+		if err != nil {
+			return corpusPublishManifest{}, fmt.Errorf("%s: %w", path, err)
+		}
+		if len(manifest.sources) != expectedSources {
+			return corpusPublishManifest{}, fmt.Errorf("%s: source_count=%d but rows contain %d source(s)", path, expectedSources, len(manifest.sources))
+		}
+		manifest.assignLegacySourceSummary()
 	}
 	for _, tool := range []string{"aomenc", "aomdec", "ffmpeg"} {
 		version, err := requiredCorpusManifestHeader(path, headers, tool+"_version")
@@ -2242,6 +2398,18 @@ func requiredCorpusManifestSHA256Header(path string, headers map[string]string, 
 	return strings.ToLower(strings.TrimSpace(value)), nil
 }
 
+func requiredPositiveCorpusManifestHeader(path string, headers map[string]string, name string) (int, error) {
+	value := strings.TrimSpace(headers[name])
+	if value == "" {
+		return 0, fmt.Errorf("%s: missing %s header", path, name)
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("%s: invalid %s=%q", path, name, value)
+	}
+	return parsed, nil
+}
+
 func loadOptionalCorpusToolManifestHeader(path string, headers map[string]string, tool string, versions, hashes map[string]string) error {
 	version := strings.TrimSpace(headers[tool+"_version"])
 	sha := strings.TrimSpace(headers[tool+"_sha256"])
@@ -2263,9 +2431,17 @@ func loadOptionalCorpusToolManifestHeader(path string, headers map[string]string
 }
 
 func parseCorpusPublishManifestRow(line string) (corpusPublishManifestRow, error) {
+	return parseCorpusPublishManifestRowVersion(line, 1)
+}
+
+func parseCorpusPublishManifestRowVersion(line string, formatVersion int) (corpusPublishManifestRow, error) {
 	fields := strings.Split(line, "\t")
-	if len(fields) != 14 {
-		return corpusPublishManifestRow{}, fmt.Errorf("fields=%d want 14", len(fields))
+	wantFields := 14
+	if formatVersion == 2 {
+		wantFields = 19
+	}
+	if len(fields) != wantFields {
+		return corpusPublishManifestRow{}, fmt.Errorf("fields=%d want %d", len(fields), wantFields)
 	}
 	name := strings.TrimSpace(fields[0])
 	if name == "" || strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
@@ -2329,7 +2505,7 @@ func parseCorpusPublishManifestRow(line string) (corpusPublishManifestRow, error
 	if aomencArgs == "" {
 		return corpusPublishManifestRow{}, errors.New("empty aomenc_args")
 	}
-	return corpusPublishManifestRow{
+	row := corpusPublishManifestRow{
 		name:       name,
 		width:      width,
 		height:     height,
@@ -2344,7 +2520,89 @@ func parseCorpusPublishManifestRow(line string) (corpusPublishManifestRow, error
 		md5SHA256:  strings.ToLower(strings.TrimSpace(fields[11])),
 		dav1dCheck: dav1dCheck,
 		aomencArgs: aomencArgs,
-	}, nil
+	}
+	if formatVersion == 2 {
+		if row.sourceID, err = parseRequiredCorpusManifestField(fields[14], "source_id"); err != nil {
+			return corpusPublishManifestRow{}, err
+		}
+		if err := validateCorpusManifestSHA256(fields[15], "source_sha256"); err != nil {
+			return corpusPublishManifestRow{}, err
+		}
+		row.sourceSHA256 = strings.ToLower(strings.TrimSpace(fields[15]))
+		if row.sourceURL, err = parseRequiredCorpusManifestField(fields[16], "source_url"); err != nil {
+			return corpusPublishManifestRow{}, err
+		}
+		if row.sourceLicense, err = parseRequiredCorpusManifestField(fields[17], "source_license"); err != nil {
+			return corpusPublishManifestRow{}, err
+		}
+		if row.sourceCategory, err = parseRequiredCorpusManifestField(fields[18], "source_category"); err != nil {
+			return corpusPublishManifestRow{}, err
+		}
+	}
+	return row, nil
+}
+
+func parseRequiredCorpusManifestField(raw, name string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", fmt.Errorf("empty %s", name)
+	}
+	if strings.ContainsAny(value, "\r\n\t") {
+		return "", fmt.Errorf("invalid %s contains control whitespace", name)
+	}
+	return value, nil
+}
+
+func corpusPublishManifestSources(rows map[string]corpusPublishManifestRow) ([]corpusPublishManifestSource, error) {
+	sourcesByID := make(map[string]corpusPublishManifestSource)
+	for _, row := range rows {
+		source := corpusPublishManifestSource{
+			id:       row.sourceID,
+			sha256:   row.sourceSHA256,
+			url:      row.sourceURL,
+			license:  row.sourceLicense,
+			category: row.sourceCategory,
+			clips:    1,
+		}
+		if existing, ok := sourcesByID[source.id]; ok {
+			if existing.sha256 != source.sha256 ||
+				existing.url != source.url ||
+				existing.license != source.license ||
+				existing.category != source.category {
+				return nil, fmt.Errorf("source_id %q has conflicting provenance", source.id)
+			}
+			existing.clips++
+			sourcesByID[source.id] = existing
+			continue
+		}
+		sourcesByID[source.id] = source
+	}
+	sources := make([]corpusPublishManifestSource, 0, len(sourcesByID))
+	for _, source := range sourcesByID {
+		sources = append(sources, source)
+	}
+	sort.Slice(sources, func(i, j int) bool { return sources[i].id < sources[j].id })
+	return sources, nil
+}
+
+func (manifest *corpusPublishManifest) assignLegacySourceSummary() {
+	if len(manifest.sources) == 0 {
+		return
+	}
+	if len(manifest.sources) == 1 {
+		source := manifest.sources[0]
+		manifest.sourceID = source.id
+		manifest.sourceSHA256 = source.sha256
+		manifest.sourceURL = source.url
+		manifest.sourceLicense = source.license
+		manifest.sourceCategory = source.category
+		return
+	}
+	manifest.sourceID = "multiple"
+	manifest.sourceSHA256 = "multiple"
+	manifest.sourceURL = "multiple"
+	manifest.sourceLicense = "multiple"
+	manifest.sourceCategory = "multiple"
 }
 
 func parseCorpusManifestProfile(raw string) (int, error) {
@@ -2475,6 +2733,43 @@ func validateCorpusPublishLoadedClips(manifest corpusPublishManifest, clips []co
 	return nil
 }
 
+func validateCorpusPublishSourceCoverage(manifest corpusPublishManifest) error {
+	minSources, err := corpusPublishMinimum(envBenchCorpusMinSources, 2)
+	if err != nil {
+		return err
+	}
+	minCategories, err := corpusPublishMinimum(envBenchCorpusMinCategories, 2)
+	if err != nil {
+		return err
+	}
+	if len(manifest.sources) < minSources {
+		return fmt.Errorf("%s: publish corpus has %d source(s), want at least %d; regenerate with GOAV1_BENCH_SOURCES_TSV",
+			manifest.path, len(manifest.sources), minSources)
+	}
+	categoryCount := corpusManifestSourceCategoryCount(manifest.sources)
+	if categoryCount < minCategories {
+		return fmt.Errorf("%s: publish corpus has %d source category/categories, want at least %d; regenerate with GOAV1_BENCH_SOURCES_TSV",
+			manifest.path, categoryCount, minCategories)
+	}
+	if manifest.formatVersion < 2 {
+		return fmt.Errorf("%s: publish corpus uses v%d manifest; regenerate with GOAV1_BENCH_SOURCES_TSV for row-level source provenance",
+			manifest.path, manifest.formatVersion)
+	}
+	return nil
+}
+
+func corpusPublishMinimum(envName string, fallback int) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(envName))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer, got %q", envName, raw)
+	}
+	return value, nil
+}
+
 func loadCorpusBenchmarkManifest(t *testing.T, dir string, publish bool) (corpusPublishManifest, bool) {
 	t.Helper()
 	manifest, err := loadCorpusPublishManifest(dir)
@@ -2564,20 +2859,33 @@ type corpusPublishEnvironment struct {
 }
 
 type corpusPublishReportCorpus struct {
-	Dir              string            `json:"dir"`
-	Manifest         string            `json:"manifest"`
-	ManifestSHA256   string            `json:"manifest_sha256"`
-	SourceID         string            `json:"source_id"`
-	SourceURL        string            `json:"source_url"`
-	SourceLicense    string            `json:"source_license"`
-	SourceCategory   string            `json:"source_category"`
-	ToolVersions     map[string]string `json:"tool_versions,omitempty"`
-	ToolSHA256       map[string]string `json:"tool_sha256,omitempty"`
-	ExpectedClips    int               `json:"expected_clips"`
-	LoadedClips      int               `json:"loaded_clips"`
-	TotalFrames      int               `json:"total_frames"`
-	TimingOrder      string            `json:"timing_order"`
-	RequiredDecoders string            `json:"required_decoders,omitempty"`
+	Dir              string                      `json:"dir"`
+	Manifest         string                      `json:"manifest"`
+	ManifestSHA256   string                      `json:"manifest_sha256"`
+	SourceID         string                      `json:"source_id"`
+	SourceSHA256     string                      `json:"source_sha256"`
+	SourceURL        string                      `json:"source_url"`
+	SourceLicense    string                      `json:"source_license"`
+	SourceCategory   string                      `json:"source_category"`
+	SourceCount      int                         `json:"source_count"`
+	SourceCategories int                         `json:"source_categories"`
+	Sources          []corpusPublishReportSource `json:"sources,omitempty"`
+	ToolVersions     map[string]string           `json:"tool_versions,omitempty"`
+	ToolSHA256       map[string]string           `json:"tool_sha256,omitempty"`
+	ExpectedClips    int                         `json:"expected_clips"`
+	LoadedClips      int                         `json:"loaded_clips"`
+	TotalFrames      int                         `json:"total_frames"`
+	TimingOrder      string                      `json:"timing_order"`
+	RequiredDecoders string                      `json:"required_decoders,omitempty"`
+}
+
+type corpusPublishReportSource struct {
+	ID       string `json:"id"`
+	SHA256   string `json:"sha256"`
+	URL      string `json:"url"`
+	License  string `json:"license"`
+	Category string `json:"category"`
+	Clips    int    `json:"clips"`
 }
 
 type corpusPublishReportTiming struct {
@@ -2600,19 +2908,24 @@ type corpusPublishReportTool struct {
 }
 
 type corpusPublishReportClip struct {
-	Name       string `json:"name"`
-	Path       string `json:"path"`
-	Frames     int    `json:"frames"`
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
-	CQ         int    `json:"cq,omitempty"`
-	BitDepth   uint8  `json:"bit_depth"`
-	Chroma     string `json:"chroma"`
-	Profile    int    `json:"profile"`
-	TileCols   uint8  `json:"tile_cols"`
-	AllIntra   bool   `json:"all_intra"`
-	DAV1DCheck string `json:"dav1d_check,omitempty"`
-	AOMEncArgs string `json:"aomenc_args,omitempty"`
+	Name           string `json:"name"`
+	Path           string `json:"path"`
+	Frames         int    `json:"frames"`
+	Width          int    `json:"width"`
+	Height         int    `json:"height"`
+	CQ             int    `json:"cq,omitempty"`
+	BitDepth       uint8  `json:"bit_depth"`
+	Chroma         string `json:"chroma"`
+	Profile        int    `json:"profile"`
+	TileCols       uint8  `json:"tile_cols"`
+	AllIntra       bool   `json:"all_intra"`
+	SourceID       string `json:"source_id,omitempty"`
+	SourceSHA256   string `json:"source_sha256,omitempty"`
+	SourceURL      string `json:"source_url,omitempty"`
+	SourceLicense  string `json:"source_license,omitempty"`
+	SourceCategory string `json:"source_category,omitempty"`
+	DAV1DCheck     string `json:"dav1d_check,omitempty"`
+	AOMEncArgs     string `json:"aomenc_args,omitempty"`
 }
 
 type corpusPublishReportDecoder struct {
@@ -2903,6 +3216,11 @@ func TestCrossDecoderCorpus(t *testing.T) {
 	t.Logf("cross-corpus: corpus dir = %s", dir)
 
 	manifest, haveManifest := loadCorpusBenchmarkManifest(t, dir, publish)
+	if publish {
+		if err := validateCorpusPublishSourceCoverage(manifest); err != nil {
+			t.Fatalf("cross-corpus publish: %v", err)
+		}
+	}
 
 	clips, failed := loadCorpusClips(t, dir)
 
@@ -3098,9 +3416,13 @@ func writeCorpusPublishReport(path, dir string, manifest corpusPublishManifest, 
 			Manifest:         manifest.path,
 			ManifestSHA256:   manifestSHA,
 			SourceID:         manifest.sourceID,
+			SourceSHA256:     manifest.sourceSHA256,
 			SourceURL:        manifest.sourceURL,
 			SourceLicense:    manifest.sourceLicense,
 			SourceCategory:   manifest.sourceCategory,
+			SourceCount:      len(manifest.sources),
+			SourceCategories: corpusManifestSourceCategoryCount(manifest.sources),
+			Sources:          corpusPublishReportSources(manifest.sources),
 			ToolVersions:     copyCorpusNonEmptyStringMap(manifest.toolVersions),
 			ToolSHA256:       copyCorpusNonEmptyStringMap(manifest.toolSHA256),
 			ExpectedClips:    manifest.expectedClips,
@@ -3437,6 +3759,35 @@ func corpusTotalFrames(clips []corpusClip) int {
 	return total
 }
 
+func corpusManifestSourceCategoryCount(sources []corpusPublishManifestSource) int {
+	if len(sources) == 0 {
+		return 0
+	}
+	categories := make(map[string]bool, len(sources))
+	for _, source := range sources {
+		categories[source.category] = true
+	}
+	return len(categories)
+}
+
+func corpusPublishReportSources(sources []corpusPublishManifestSource) []corpusPublishReportSource {
+	if len(sources) == 0 {
+		return nil
+	}
+	out := make([]corpusPublishReportSource, 0, len(sources))
+	for _, source := range sources {
+		out = append(out, corpusPublishReportSource{
+			ID:       source.id,
+			SHA256:   source.sha256,
+			URL:      source.url,
+			License:  source.license,
+			Category: source.category,
+			Clips:    source.clips,
+		})
+	}
+	return out
+}
+
 func corpusPublishReportTools(timers []corpusTimingDecoder) []corpusPublishReportTool {
 	tools := make([]corpusPublishReportTool, 0, len(timers))
 	for _, timer := range timers {
@@ -3489,26 +3840,37 @@ func corpusPublishReportClips(clips []corpusClip, manifest corpusPublishManifest
 		row, haveRow := manifest.rows[clip.name]
 		cq, profile := 0, 0
 		dav1dCheck, aomencArgs := "", ""
+		sourceID, sourceSHA256, sourceURL, sourceLicense, sourceCategory := "", "", "", "", ""
 		if haveRow {
 			cq = row.cq
 			profile = row.profile
 			dav1dCheck = row.dav1dCheck
 			aomencArgs = row.aomencArgs
+			sourceID = row.sourceID
+			sourceSHA256 = row.sourceSHA256
+			sourceURL = row.sourceURL
+			sourceLicense = row.sourceLicense
+			sourceCategory = row.sourceCategory
 		}
 		out = append(out, corpusPublishReportClip{
-			Name:       clip.name,
-			Path:       clip.ivfPath,
-			Frames:     clip.frames,
-			Width:      clip.width,
-			Height:     clip.height,
-			CQ:         cq,
-			BitDepth:   clip.bitDepth,
-			Chroma:     clip.chroma,
-			Profile:    profile,
-			TileCols:   clip.tileCols,
-			AllIntra:   clip.allIntra,
-			DAV1DCheck: dav1dCheck,
-			AOMEncArgs: aomencArgs,
+			Name:           clip.name,
+			Path:           clip.ivfPath,
+			Frames:         clip.frames,
+			Width:          clip.width,
+			Height:         clip.height,
+			CQ:             cq,
+			BitDepth:       clip.bitDepth,
+			Chroma:         clip.chroma,
+			Profile:        profile,
+			TileCols:       clip.tileCols,
+			AllIntra:       clip.allIntra,
+			SourceID:       sourceID,
+			SourceSHA256:   sourceSHA256,
+			SourceURL:      sourceURL,
+			SourceLicense:  sourceLicense,
+			SourceCategory: sourceCategory,
+			DAV1DCheck:     dav1dCheck,
+			AOMEncArgs:     aomencArgs,
 		})
 	}
 	return out

@@ -465,12 +465,11 @@ decoders are skipped so the target can run on lightweight developer machines.
 For the longer steady-state corpus comparison:
 
 ```sh
-export GOAV1_BENCH_SOURCE=/path/to/source_8bit_420.y4m
-export GOAV1_BENCH_SOURCE_SHA256=$(shasum -a 256 "$GOAV1_BENCH_SOURCE" | awk '{print $1}')
-export GOAV1_BENCH_SOURCE_ID=source-id
-export GOAV1_BENCH_SOURCE_URL=https://example.invalid/source
-export GOAV1_BENCH_SOURCE_LICENSE=license-or-usage-grant
-export GOAV1_BENCH_SOURCE_CATEGORY=content-category
+cat > /tmp/goav1-bench-sources.tsv <<'TSV'
+/path/to/camera_pan_8bit_420.y4m	<sha256>	camera-pan	https://example.invalid/camera-pan	license-or-usage-grant	camera-motion
+/path/to/screen_share_8bit_420.y4m	<sha256>	screen-share	https://example.invalid/screen-share	license-or-usage-grant	screen-content
+TSV
+export GOAV1_BENCH_SOURCES_TSV=/tmp/goav1-bench-sources.tsv
 export AOMENC=/absolute/path/to/aomenc
 export AOMDEC=/absolute/path/to/aomdec
 export DAV1D=/absolute/path/to/dav1d
@@ -496,20 +495,24 @@ BENCH_CORPUS_SVTAV1DECAPP_SHA256=$(shasum -a 256 /absolute/path/to/SvtAv1DecApp 
 make bench-corpus-publish
 ```
 
-The generator requires an explicit source clip plus source SHA-256, pins aomenc
+The generator requires explicit source clips plus source SHA-256, pins aomenc
 `--threads` and `--row-mt`, requires absolute `aomenc`, `aomdec`, `dav1d`, and
 `ffmpeg` tool paths with matching SHA-256 pins before encoding starts, requires
 `dav1d` unless
 `GOAV1_BENCH_CORPUS_ALLOW_MISSING_DAV1D=1` is set for exploratory
 non-publishable runs, and allows unpinned generator tools only with
 `GOAV1_BENCH_CORPUS_ALLOW_UNPINNED_TOOLS=1` for exploratory non-publishable
-corpora. It also requires source ID/URL/license/category metadata, expects 25
-clips, and writes `manifest.tsv` with source, tool version/hash,
-encode-argument, IVF, MD5, and dav1d agreement data next to the local ignored
-corpus. Quality benchmark manifests used for publishable encoder tables must
-also declare raw `pix_fmt=i420`, `bit_depth=8`, `chroma=4:2:0`, per-input
-SHA-256, source/provenance fields, and category labels; declared raw hashes are
-verified before timing starts.
+corpora. Publishable generation uses `GOAV1_BENCH_SOURCES_TSV`, requires at
+least two source clips and at least two source categories, prefixes generated
+clip names by sanitized source ID, and writes a v2 `manifest.tsv` with row-level
+source ID/SHA-256/URL/license/category, stable logical encode arguments, IVF,
+MD5, and dav1d agreement data next to the local ignored corpus. The older
+`GOAV1_BENCH_SOURCE*` single-source environment is still accepted for
+exploratory compatibility, but publish mode rejects v1 single-source manifests.
+Quality benchmark manifests used for publishable encoder tables must also
+declare raw `pix_fmt=i420`, `bit_depth=8`, `chroma=4:2:0`, per-input SHA-256,
+source/provenance fields, and category labels; declared raw hashes are verified
+before timing starts.
 
 `bench-corpus-publish` enables `GOAV1_BENCH_CORPUS_PUBLISH=1`, which requires
 `manifest.tsv` to match the generator schema, expected clip count, IVF and MD5
@@ -517,7 +520,8 @@ sidecar hashes, decoded clip metadata, a machine-readable report path
 (`GOAV1_BENCH_CORPUS_REPORT_JSON`, defaulting through `make` to
 `/tmp/goav1-bench-corpus-report.json`), and every registered reference decoder
 (`aomdec`, `dav1d`, and `SvtAv1DecApp`) before timing starts. Publish mode
-also requires absolute decoder paths and matching SHA-256 pins, plus explicit
+also requires v2 row-level source provenance with at least two sources and two
+categories, absolute decoder paths and matching SHA-256 pins, plus explicit
 `GOMAXPROCS`/`GOGC`, structured CPU affinity, power mode, thermal state,
 frequency policy, and background-load fields, with hidden Go runtime environment
 knobs unset. Use `make bench-corpus` only for exploratory local runs where

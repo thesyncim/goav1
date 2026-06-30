@@ -130,14 +130,15 @@ use the generated corpus lane for steady-state decoder claims.
 | dav1d | 107 | 502.6 | 575.7 | 3.33x |
 
 The generated decoder corpus is the fairer steady-state surface. Current corpus
-generation writes `manifest.tsv` with source, tool, IVF, and MD5 hashes; publish
-decoder rows must cite that manifest and come from `make bench-corpus-publish`
-so missing/stale corpus files, hash drift, or missing `aomdec`, `dav1d`, or
+generation writes a v2 `manifest.tsv` with row-level source provenance, source
+hashes, tool hashes, IVF hashes, and MD5 hashes; publish decoder rows must cite
+that manifest and come from `make bench-corpus-publish` so missing/stale corpus
+files, source-diversity gaps, hash drift, or missing `aomdec`, `dav1d`, or
 `SvtAv1DecApp` binaries fail before timing starts. The benchmark uses a
 deterministic clip-rotated decoder interleave to reduce thermal/load bias
 between columns. The older local snapshot below used 18 clips / 864 frames
 before the strict publish manifest gate and interleaved timing order, so treat
-it as directional until rerun with the 25-clip manifest-backed corpus:
+it as directional until rerun with the multi-source manifest-backed corpus:
 
 | Decoder | Frames | Raw FPS | Adjusted FPS | Raw speed vs goav1 |
 | --- | ---: | ---: | ---: | ---: |

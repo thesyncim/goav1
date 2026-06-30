@@ -25,6 +25,10 @@ Publishable rows must satisfy these controls:
   Linux CPU mask.
 - Use corpus-backed real clips for quality claims and require manifest/source
   hashes, exact frame metric traces, and required metrics/encoders.
+- For generated decoder corpus publish rows, require the v2 manifest produced
+  from `GOAV1_BENCH_SOURCES_TSV`; it carries row-level source provenance and
+  publish mode rejects fewer than two source clips or two content categories by
+  default.
 - Keep timeout, run order, shuffle seed, warmup, measured run count,
   `GOMAXPROCS`, GC, thread/parallelism, bitrate, FPS, scalability, and VMAF
   model settings in metadata.
