@@ -7000,6 +7000,13 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 			rembKbps := publicRTCMatrixControlBitrateKbps(t, mode) + int32(step*29) + 73
 			rembCompound := publicRTCREMBFeedbackCompound(t, uint64(rembKbps)*1000)
 			beforeREMB := enc.Config()
+			wantREMB, err := goav1.EncoderWebRTCApplyReceiverEstimatedMaximumBitrate(
+				beforeREMB,
+				goav1.RTCPReceiverEstimatedMaximumBitrate{BitrateBps: uint64(rembKbps) * 1000},
+			)
+			if err != nil {
+				t.Fatalf("expected REMB config: %v", err)
+			}
 			ok, packets, err := enc.ApplyRTCPReceiverEstimatedMaximumBitrate(
 				rembCompound,
 				make([]goav1.RTCPPacket, 0, 2),
@@ -7011,10 +7018,22 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 			if !ok || len(packets) != 1 {
 				t.Fatalf("REMB apply ok=%v packet len=%d want true,1", ok, len(packets))
 			}
-			if enc.Config().TargetBitrateKbps != rembKbps {
-				t.Fatalf("REMB target=%d want %d", enc.Config().TargetBitrateKbps, rembKbps)
+			afterREMB := enc.Config()
+			assertPublicRTCConfigControls(t, afterREMB, wantREMB)
+			if afterREMB.TargetBitrateKbps != rembKbps {
+				t.Fatalf("REMB target=%d want %d", afterREMB.TargetBitrateKbps, rembKbps)
 			}
-			if publicRTCSetConfigRequiresKey(t, beforeREMB, enc.Config()) {
+			if afterREMB.Scalability != beforeREMB.Scalability ||
+				afterREMB.MaxFramerate != beforeREMB.MaxFramerate ||
+				afterREMB.RateControl != beforeREMB.RateControl ||
+				afterREMB.Quantizer != beforeREMB.Quantizer ||
+				afterREMB.Speed != beforeREMB.Speed ||
+				afterREMB.MaxThreads != beforeREMB.MaxThreads ||
+				afterREMB.KeyFrameInterval != beforeREMB.KeyFrameInterval ||
+				afterREMB.Content != beforeREMB.Content {
+				t.Fatalf("REMB mutated non-bitrate controls before=%+v after=%+v", beforeREMB, afterREMB)
+			}
+			if publicRTCSetConfigRequiresKey(t, beforeREMB, afterREMB) {
 				t.Fatalf("REMB-only config change for %s requires a key picture", mode)
 			}
 			appendPicture("REMB delta", false, false)
