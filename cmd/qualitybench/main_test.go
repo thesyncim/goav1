@@ -1059,19 +1059,80 @@ func TestValidateRequiredSummaries(t *testing.T) {
 		requiredMetrics: []string{"psnr"},
 	}
 	summaries := summarizeBDRate("anchor", rows)
-	if err := validateRequiredSummaries(cfg, rows, summaries); err != nil {
+	if err := validateRequiredSummaries(cfg, rows, []clipSpec{{Name: "clip", Category: "camera"}}, summaries); err != nil {
 		t.Fatalf("valid required summary failed: %v", err)
 	}
 
 	cfg.requiredMetrics = []string{"vmaf"}
-	if err := validateRequiredSummaries(cfg, rows, summaries); err == nil {
+	if err := validateRequiredSummaries(cfg, rows, []clipSpec{{Name: "clip", Category: "camera"}}, summaries); err == nil {
 		t.Fatal("missing required metric summary accepted")
 	}
 
 	cfg.requiredMetrics = []string{"psnr"}
 	cfg.encoders = []string{"anchor"}
-	if err := validateRequiredSummaries(cfg, rows, summaries); err == nil {
+	if err := validateRequiredSummaries(cfg, rows, []clipSpec{{Name: "clip", Category: "camera"}}, summaries); err == nil {
 		t.Fatal("summary without candidate accepted")
+	}
+}
+
+func TestAppendAggregateSummaryRowsEqualWeight(t *testing.T) {
+	cfg := benchConfig{
+		anchorEncoder:   "anchor",
+		encoders:        []string{"anchor", "candidate"},
+		requiredMetrics: []string{"psnr"},
+	}
+	clips := []clipSpec{
+		{Name: "clip-a", Category: "Camera"},
+		{Name: "clip-b", Category: "Screen Content"},
+	}
+	summaries := []summaryRow{
+		{Clip: "clip-a", Anchor: "anchor", Encoder: "candidate", Metric: "psnr_avg", BDRatePct: 10, Status: "ok"},
+		{Clip: "clip-b", Anchor: "anchor", Encoder: "candidate", Metric: "psnr_avg", BDRatePct: 30, Status: "ok"},
+	}
+	got := appendAggregateSummaryRows(cfg, clips, summaries)
+	overall := findSummaryRow(got, "overall", "candidate", "psnr_avg")
+	if overall.Status != "ok" || !overall.Aggregate || overall.AnchorPoints != 2 || overall.EncoderPoints != 2 ||
+		math.Abs(overall.BDRatePct-20) > 1e-9 {
+		t.Fatalf("overall summary=%+v", overall)
+	}
+	camera := findSummaryRow(got, "category:camera", "candidate", "psnr_avg")
+	if camera.Status != "ok" || math.Abs(camera.BDRatePct-10) > 1e-9 {
+		t.Fatalf("category summary=%+v", camera)
+	}
+	screen := findSummaryRow(got, "category:screen content", "candidate", "psnr_avg")
+	if screen.Status != "ok" || math.Abs(screen.BDRatePct-30) > 1e-9 {
+		t.Fatalf("category summary=%+v", screen)
+	}
+}
+
+func TestValidateRequiredSummariesRequiresPublishAggregates(t *testing.T) {
+	rows := []benchRow{
+		{clip: "clip-a", encoder: "anchor", status: "ok"},
+		{clip: "clip-a", encoder: "candidate", status: "ok"},
+		{clip: "clip-b", encoder: "anchor", status: "ok"},
+		{clip: "clip-b", encoder: "candidate", status: "ok"},
+	}
+	clips := []clipSpec{
+		{Name: "clip-a", Category: "camera"},
+		{Name: "clip-b", Category: "screen"},
+	}
+	cfg := benchConfig{
+		anchorEncoder:   "anchor",
+		encoders:        []string{"anchor", "candidate"},
+		requiredMetrics: []string{"psnr"},
+		publish:         true,
+	}
+	summaries := []summaryRow{
+		{Clip: "clip-a", Anchor: "anchor", Encoder: "candidate", Metric: "psnr_avg", BDRatePct: 10, Status: "ok"},
+		{Clip: "clip-b", Anchor: "anchor", Encoder: "candidate", Metric: "psnr_avg", BDRatePct: 30, Status: "ok"},
+	}
+	if err := validateRequiredSummaries(cfg, rows, clips, summaries); err == nil ||
+		!strings.Contains(err.Error(), "aggregate BD-rate summary missing") {
+		t.Fatalf("missing aggregate summary error=%v", err)
+	}
+	summaries = appendAggregateSummaryRows(cfg, clips, summaries)
+	if err := validateRequiredSummaries(cfg, rows, clips, summaries); err != nil {
+		t.Fatalf("valid aggregate summaries failed: %v", err)
 	}
 }
 
@@ -1090,9 +1151,18 @@ func TestValidateRequiredSummariesRejectsErrorRows(t *testing.T) {
 		Status:  "error",
 		ErrText: "need at least 4 points",
 	}}
-	if err := validateRequiredSummaries(cfg, rows, summaries); err == nil {
+	if err := validateRequiredSummaries(cfg, rows, []clipSpec{{Name: "clip", Category: "camera"}}, summaries); err == nil {
 		t.Fatal("error summary row accepted")
 	}
+}
+
+func findSummaryRow(rows []summaryRow, clip, encoder, metric string) summaryRow {
+	for _, row := range rows {
+		if row.Clip == clip && row.Encoder == encoder && row.Metric == metric {
+			return row
+		}
+	}
+	return summaryRow{}
 }
 
 func TestWriteStatsRow(t *testing.T) {

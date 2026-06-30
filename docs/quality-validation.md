@@ -407,10 +407,16 @@ Positive `bd_rate_pct` means the candidate needed more bitrate than the anchor
 over the common metric range; negative means it needed less. Rows with fewer
 than four valid points, missing metrics, duplicate metric values within either
 curve, or no overlapping quality range are reported as explicit errors instead
-of synthesized numbers. When
-`-require-summary` is set, any missing or non-`ok` summary row for a
-`-require-metrics` metric and selected non-anchor encoder makes the command
-exit nonzero after writing the summary CSV.
+of synthesized numbers. The summary CSV also includes deterministic aggregate
+rows: `overall` is the equal-weight arithmetic mean of successful per-clip
+BD-rate percentages, and `category:<name>` is the same equal-weight mean within a
+manifest category. Aggregate rows reuse the `anchor_points` and `encoder_points`
+columns as the number of contributing clip summaries and leave overlap columns
+blank because overlap is a per-clip curve property. When `-require-summary` is
+set, any missing or non-`ok` summary row for a `-require-metrics` metric and
+selected non-anchor encoder makes the command exit nonzero after writing the
+summary CSV; publish mode also requires the matching `overall` and category
+aggregate rows.
 
 References:
 

@@ -307,6 +307,7 @@ type summaryRow struct {
 	BDRatePct     float64
 	Status        string
 	ErrText       string
+	Aggregate     bool
 }
 
 type goAV1FrameStats struct {
@@ -702,6 +703,7 @@ func run() error {
 	var summaries []summaryRow
 	if cfg.summaryCSVPath != "" || cfg.requireSummary {
 		summaries = summarizeBDRate(cfg.anchorEncoder, rows)
+		summaries = appendAggregateSummaryRows(cfg, clips, summaries)
 	}
 	if cfg.summaryCSVPath != "" {
 		if err := writeSummaryCSV(cfg.summaryCSVPath, summaries); err != nil {
@@ -710,7 +712,7 @@ func run() error {
 	}
 	var summaryErr error
 	if cfg.requireSummary {
-		summaryErr = validateRequiredSummaries(cfg, rows, summaries)
+		summaryErr = validateRequiredSummaries(cfg, rows, clips, summaries)
 	}
 	if cfg.metadataPath != "" {
 		if err := writeMetadataJSON(cfg, filters, git, clips, invocations); err != nil {
@@ -3460,8 +3462,10 @@ func writeSummaryCSV(path string, summaries []summaryRow) error {
 	for _, summary := range summaries {
 		overlapMin, overlapMax, bdRate := "", "", ""
 		if summary.Status == "ok" {
-			overlapMin = formatMetric(summary.OverlapMin)
-			overlapMax = formatMetric(summary.OverlapMax)
+			if !summary.Aggregate {
+				overlapMin = formatMetric(summary.OverlapMin)
+				overlapMax = formatMetric(summary.OverlapMax)
+			}
 			bdRate = formatMetric(summary.BDRatePct)
 		}
 		if err := writer.Write([]string{
@@ -3483,9 +3487,9 @@ func writeSummaryCSV(path string, summaries []summaryRow) error {
 	return writer.Error()
 }
 
-func validateRequiredSummaries(cfg benchConfig, rows []benchRow, summaries []summaryRow) error {
-	clips := clipNamesFromRows(rows)
-	if len(clips) == 0 {
+func validateRequiredSummaries(cfg benchConfig, rows []benchRow, clips []clipSpec, summaries []summaryRow) error {
+	clipNames := clipNamesFromRows(rows)
+	if len(clipNames) == 0 {
 		return errors.New("required BD-rate summary unavailable: no benchmark rows")
 	}
 	anchor := canonicalEncoderName(cfg.anchorEncoder)
@@ -3493,7 +3497,7 @@ func validateRequiredSummaries(cfg benchConfig, rows []benchRow, summaries []sum
 	for _, summary := range summaries {
 		byKey[summaryKey(summary.Clip, summary.Encoder, summary.Metric)] = summary
 	}
-	for _, clip := range clips {
+	for _, clip := range clipNames {
 		expected := 0
 		for _, encoder := range cfg.encoders {
 			encoder = canonicalEncoderName(encoder)
@@ -3517,6 +3521,30 @@ func validateRequiredSummaries(cfg benchConfig, rows []benchRow, summaries []sum
 		}
 		if expected == 0 {
 			return fmt.Errorf("%s: required BD-rate summary unavailable: no candidate encoders", clip)
+		}
+	}
+	if cfg.publish {
+		groups := requiredAggregateSummaryGroups(clips)
+		for _, group := range groups {
+			for _, encoder := range cfg.encoders {
+				encoder = canonicalEncoderName(encoder)
+				if encoder == anchor {
+					continue
+				}
+				for _, metric := range cfg.requiredMetrics {
+					metricName := summaryMetricName(metric)
+					summary, ok := byKey[summaryKey(group, encoder, metricName)]
+					if !ok {
+						return fmt.Errorf("%s %s %s: required aggregate BD-rate summary missing", group, encoder, metricName)
+					}
+					if summary.Status != "ok" {
+						if summary.ErrText != "" {
+							return fmt.Errorf("%s %s %s: required aggregate BD-rate summary status %s: %s", group, encoder, metricName, summary.Status, summary.ErrText)
+						}
+						return fmt.Errorf("%s %s %s: required aggregate BD-rate summary status %s", group, encoder, metricName, summary.Status)
+					}
+				}
+			}
 		}
 	}
 	return nil
@@ -3550,6 +3578,174 @@ func summaryMetricName(metric string) string {
 
 func summaryKey(clip, encoder, metric string) string {
 	return clip + "\x00" + canonicalEncoderName(encoder) + "\x00" + metric
+}
+
+func appendAggregateSummaryRows(cfg benchConfig, clips []clipSpec, summaries []summaryRow) []summaryRow {
+	if len(summaries) == 0 || len(clips) == 0 {
+		return summaries
+	}
+	anchor := canonicalEncoderName(cfg.anchorEncoder)
+	groups := aggregateSummaryGroups(clips)
+	encoders := candidateSummaryEncoders(anchor, cfg.encoders, summaries)
+	metrics := candidateSummaryMetrics(cfg.requiredMetrics, summaries)
+	byKey := make(map[string]summaryRow, len(summaries))
+	for _, summary := range summaries {
+		byKey[summaryKey(summary.Clip, summary.Encoder, summary.Metric)] = summary
+	}
+	out := append([]summaryRow(nil), summaries...)
+	for _, group := range groups {
+		for _, encoder := range encoders {
+			for _, metric := range metrics {
+				out = append(out, aggregateSummaryRow(group.Label, group.Clips, anchor, encoder, metric, byKey))
+			}
+		}
+	}
+	return out
+}
+
+type aggregateSummaryGroup struct {
+	Label string
+	Clips []string
+}
+
+func aggregateSummaryGroups(clips []clipSpec) []aggregateSummaryGroup {
+	groups := []aggregateSummaryGroup{{Label: "overall", Clips: clipNamesFromSpecs(clips)}}
+	categoryClips := map[string][]string{}
+	for _, clip := range clips {
+		category := normalizeSummaryCategory(clip.Category)
+		if category == "" {
+			continue
+		}
+		categoryClips[category] = append(categoryClips[category], clip.Name)
+	}
+	categories := make([]string, 0, len(categoryClips))
+	for category := range categoryClips {
+		categories = append(categories, category)
+	}
+	sort.Strings(categories)
+	for _, category := range categories {
+		groups = append(groups, aggregateSummaryGroup{
+			Label: "category:" + category,
+			Clips: categoryClips[category],
+		})
+	}
+	return groups
+}
+
+func requiredAggregateSummaryGroups(clips []clipSpec) []string {
+	groups := aggregateSummaryGroups(clips)
+	out := make([]string, 0, len(groups))
+	for _, group := range groups {
+		out = append(out, group.Label)
+	}
+	return out
+}
+
+func clipNamesFromSpecs(clips []clipSpec) []string {
+	out := make([]string, 0, len(clips))
+	seen := map[string]bool{}
+	for _, clip := range clips {
+		if clip.Name == "" || seen[clip.Name] {
+			continue
+		}
+		seen[clip.Name] = true
+		out = append(out, clip.Name)
+	}
+	return out
+}
+
+func normalizeSummaryCategory(category string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(category)), " "))
+}
+
+func candidateSummaryEncoders(anchor string, configured []string, summaries []summaryRow) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, encoder := range configured {
+		encoder = canonicalEncoderName(encoder)
+		if encoder == "" || encoder == anchor || seen[encoder] {
+			continue
+		}
+		seen[encoder] = true
+		out = append(out, encoder)
+	}
+	if len(out) > 0 {
+		return out
+	}
+	for _, summary := range summaries {
+		encoder := canonicalEncoderName(summary.Encoder)
+		if encoder == "" || encoder == anchor || seen[encoder] {
+			continue
+		}
+		seen[encoder] = true
+		out = append(out, encoder)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func candidateSummaryMetrics(required []string, summaries []summaryRow) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, metric := range required {
+		name := summaryMetricName(metric)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	if len(out) > 0 {
+		return out
+	}
+	for _, summary := range summaries {
+		if summary.Metric == "" || seen[summary.Metric] {
+			continue
+		}
+		seen[summary.Metric] = true
+		out = append(out, summary.Metric)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func aggregateSummaryRow(label string, clips []string, anchor, encoder, metric string, byKey map[string]summaryRow) summaryRow {
+	row := summaryRow{
+		Clip:      label,
+		Anchor:    anchor,
+		Encoder:   encoder,
+		Metric:    metric,
+		Status:    "ok",
+		Aggregate: true,
+	}
+	if len(clips) == 0 {
+		row.Status = "error"
+		row.ErrText = "aggregate summary has no clips"
+		return row
+	}
+	var total float64
+	for _, clip := range clips {
+		summary, ok := byKey[summaryKey(clip, encoder, metric)]
+		if !ok {
+			row.Status = "error"
+			row.ErrText = "missing clip summary for " + clip
+			return row
+		}
+		if summary.Status != "ok" {
+			row.Status = "error"
+			if summary.ErrText != "" {
+				row.ErrText = clip + ": " + summary.ErrText
+			} else {
+				row.ErrText = clip + ": summary status " + summary.Status
+			}
+			return row
+		}
+		total += summary.BDRatePct
+		row.AnchorPoints++
+		row.EncoderPoints++
+	}
+	row.BDRatePct = total / float64(len(clips))
+	return row
 }
 
 func summarizeBDRate(anchor string, rows []benchRow) []summaryRow {
