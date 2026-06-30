@@ -652,6 +652,7 @@ Security reports: [SECURITY.md](SECURITY.md).
   model, and public API surfaces
 - [CONFORMANCE.md](CONFORMANCE.md) - feature inventory, vector coverage, known
   gaps, and reproduction commands
+- [docs/benchmarks.md](docs/benchmarks.md) - publishable benchmark protocol
 - [docs/svc.md](docs/svc.md) - scalable video coding integration guide
 - [docs/dsp.md](docs/dsp.md) - DSP and SIMD dispatch notes
 - [UPSTREAM.md](UPSTREAM.md) - upstream pinning policy
