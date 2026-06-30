@@ -786,6 +786,13 @@ func PredictScaledCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref fram
 			return nil
 		}
 	}
+	if bytesPerSample == 2 && yStep == ScaleSubpelScale {
+		yFilterIdx := int(scaledSubpel(startY) >> ScaleExtraBits)
+		if scaledKernelIsIdentity(yTable[yFilterIdx]) {
+			predictScaledCompoundRefHighBDToConvBufYIdentity(out, ref, int(bitDepth), width, height, startX, xStep, startY, xTable)
+			return nil
+		}
+	}
 	predictScaledCompoundRefToConvBufGeneric(out, ref, bytesPerSample, bitDepth, width, height,
 		startX, xStep, startY, yStep, xTable, yTable, imH, scratch)
 	return nil
@@ -849,6 +856,51 @@ func predictScaledCompoundRef8ToConvBufYIdentity(out []uint16, ref frame.Plane, 
 					k7*int(loadSample8ClampedRow(ref, xInt+7, rowBase))
 			}
 			outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
+			xPos += xStep
+		}
+	}
+}
+
+func predictScaledCompoundRefHighBDToConvBufYIdentity(out []uint16, ref frame.Plane, bitDepth int, width int, height int,
+	startX int64, xStep int64, startY int64, xTable SubpelKernelTable) {
+	round0 := compoundRound0(uint8(bitDepth))
+	offsetBits := bitDepth + 2*filterBits - round0
+	roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
+	foX := filterTaps/2 - 1
+	baseY := int(scaledIntFloor(startY))
+	round0Bias := 1 << (round0 - 1)
+	for y := range height {
+		rowBase := clampInt(baseY+y, 0, ref.Height-1) * ref.Stride
+		xPos := startX
+		outRow := out[y*width:]
+		for x := range width {
+			xInt := int(scaledIntFloor(xPos)) - foX
+			xFilterIdx := int(scaledSubpel(xPos) >> ScaleExtraBits)
+			kernel := xTable[xFilterIdx]
+			k0, k1, k2, k3 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3])
+			k4, k5, k6, k7 := int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
+			sum := 0
+			if xInt >= 0 && xInt+filterTaps <= ref.Width {
+				src := ref.Pix[rowBase+xInt*2 : rowBase+(xInt+filterTaps)*2 : rowBase+(xInt+filterTaps)*2]
+				sum = k0*int(uint16(src[0])|uint16(src[1])<<8) +
+					k1*int(uint16(src[2])|uint16(src[3])<<8) +
+					k2*int(uint16(src[4])|uint16(src[5])<<8) +
+					k3*int(uint16(src[6])|uint16(src[7])<<8) +
+					k4*int(uint16(src[8])|uint16(src[9])<<8) +
+					k5*int(uint16(src[10])|uint16(src[11])<<8) +
+					k6*int(uint16(src[12])|uint16(src[13])<<8) +
+					k7*int(uint16(src[14])|uint16(src[15])<<8)
+			} else {
+				sum = k0*int(loadHighBDSampleClamped(ref, xInt, baseY+y)) +
+					k1*int(loadHighBDSampleClamped(ref, xInt+1, baseY+y)) +
+					k2*int(loadHighBDSampleClamped(ref, xInt+2, baseY+y)) +
+					k3*int(loadHighBDSampleClamped(ref, xInt+3, baseY+y)) +
+					k4*int(loadHighBDSampleClamped(ref, xInt+4, baseY+y)) +
+					k5*int(loadHighBDSampleClamped(ref, xInt+5, baseY+y)) +
+					k6*int(loadHighBDSampleClamped(ref, xInt+6, baseY+y)) +
+					k7*int(loadHighBDSampleClamped(ref, xInt+7, baseY+y))
+			}
+			outRow[x] = uint16(((sum + round0Bias) >> round0) + roundOffset)
 			xPos += xStep
 		}
 	}

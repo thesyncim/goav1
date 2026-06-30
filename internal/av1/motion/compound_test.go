@@ -771,6 +771,79 @@ func TestPredictScaledCompoundRefToConvBufYIdentityMatchesGeneric(t *testing.T) 
 	}
 }
 
+func TestPredictScaledCompoundRefToConvBufHighBDYIdentityMatchesGeneric(t *testing.T) {
+	const (
+		w    = 16
+		h    = 16
+		refW = 48
+		refH = 32
+	)
+	xTable, err := SubpelKernelTableFor(InterpEightTapRegular, w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yTable, err := SubpelKernelTableFor(InterpEightTapRegular, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name           string
+		bitDepth       uint8
+		startX, startY int64
+		xStep          int64
+	}{
+		{
+			name:     "bd10_interior_three_quarter_step",
+			bitDepth: 10,
+			startX:   int64(12)*ScaleSubpelScale + ScaleSubpelScale/4,
+			startY:   int64(8) * ScaleSubpelScale,
+			xStep:    ScaleSubpelScale * 3 / 4,
+		},
+		{
+			name:     "bd10_left_edge_half_step",
+			bitDepth: 10,
+			startX:   -ScaleSubpelScale / 4,
+			startY:   int64(4) * ScaleSubpelScale,
+			xStep:    ScaleSubpelScale / 2,
+		},
+		{
+			name:     "bd12_right_edge_double_step",
+			bitDepth: 12,
+			startX:   int64(refW-w/2) * ScaleSubpelScale,
+			startY:   int64(refH-h) * ScaleSubpelScale,
+			xStep:    2 * ScaleSubpelScale,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ref := highBDPlane(refW, refH, 0x534d+int(tc.bitDepth), int(tc.bitDepth))
+			var got, want CompoundConvBuf
+			var scratch ScaledConvolveScratch
+			if err := PredictScaledCompoundRefToConvBufWithScratch(&got, ref, 2, tc.bitDepth, w, h,
+				tc.startX, tc.xStep, tc.startY, ScaleSubpelScale, xTable, yTable, &scratch); err != nil {
+				t.Fatalf("PredictScaledCompoundRefToConvBufWithScratch: %v", err)
+			}
+			out, ok := compoundConvBufView(&want, w, h)
+			if !ok {
+				t.Fatal("invalid convbuf")
+			}
+			imH, ok := scaledIMHeight(h, tc.startY, ScaleSubpelScale)
+			if !ok {
+				t.Fatal("invalid intermediate height")
+			}
+			predictScaledCompoundRefToConvBufGeneric(out, ref, 2, tc.bitDepth, w, h,
+				tc.startX, tc.xStep, tc.startY, ScaleSubpelScale, xTable, yTable, imH, &scratch)
+			for i := range w * h {
+				if got.Data[i] != want.Data[i] {
+					t.Fatalf("convbuf[%d]=%d want %d", i, got.Data[i], want.Data[i])
+				}
+			}
+		})
+	}
+}
+
 // TestPredictInterCompoundRefToConvBufErrors verifies the parameter guards.
 func TestPredictInterCompoundRefToConvBufErrors(t *testing.T) {
 	ref := frame.Plane{Pix: make([]byte, 64), Stride: 8, Width: 8, Height: 8}
