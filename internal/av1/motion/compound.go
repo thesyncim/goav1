@@ -779,6 +779,13 @@ func PredictScaledCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref fram
 		predictScaledCompoundRefToConvBufIdentityStep(out, ref, bytesPerSample, bitDepth, width, height, startX, startY, xTable, yTable, scratch) {
 		return nil
 	}
+	if bytesPerSample == 1 && yStep == ScaleSubpelScale {
+		yFilterIdx := int(scaledSubpel(startY) >> ScaleExtraBits)
+		if scaledKernelIsIdentity(yTable[yFilterIdx]) {
+			predictScaledCompoundRef8ToConvBufYIdentity(out, ref, width, height, startX, xStep, startY, xTable)
+			return nil
+		}
+	}
 	predictScaledCompoundRefToConvBufGeneric(out, ref, bytesPerSample, bitDepth, width, height,
 		startX, xStep, startY, yStep, xTable, yTable, imH, scratch)
 	return nil
@@ -808,6 +815,35 @@ func predictScaledCompoundRefToConvBufIdentityStep(out []uint16, ref frame.Plane
 	}
 	predictInterCompoundRefHighBDToConvBuf(out, ref, int(bitDepth), refX, refY, width, height, subX, subY, xKernel, yKernel, round0, offsetBits, roundOffset, compoundScratch)
 	return true
+}
+
+func predictScaledCompoundRef8ToConvBufYIdentity(out []uint16, ref frame.Plane, width int, height int,
+	startX int64, xStep int64, startY int64, xTable SubpelKernelTable) {
+	const roundOffset = (1 << (19 - compoundRound1Bits)) + (1 << (19 - compoundRound1Bits - 1))
+	foX := filterTaps/2 - 1
+	baseY := int(scaledIntFloor(startY))
+	for y := range height {
+		rowBase := clampInt(baseY+y, 0, ref.Height-1) * ref.Stride
+		xPos := startX
+		outRow := out[y*width:]
+		for x := range width {
+			xInt := int(scaledIntFloor(xPos)) - foX
+			xFilterIdx := int(scaledSubpel(xPos) >> ScaleExtraBits)
+			kernel := xTable[xFilterIdx]
+			k0, k1, k2, k3 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3])
+			k4, k5, k6, k7 := int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
+			sum := k0*int(loadSample8ClampedRow(ref, xInt, rowBase)) +
+				k1*int(loadSample8ClampedRow(ref, xInt+1, rowBase)) +
+				k2*int(loadSample8ClampedRow(ref, xInt+2, rowBase)) +
+				k3*int(loadSample8ClampedRow(ref, xInt+3, rowBase)) +
+				k4*int(loadSample8ClampedRow(ref, xInt+4, rowBase)) +
+				k5*int(loadSample8ClampedRow(ref, xInt+5, rowBase)) +
+				k6*int(loadSample8ClampedRow(ref, xInt+6, rowBase)) +
+				k7*int(loadSample8ClampedRow(ref, xInt+7, rowBase))
+			outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
+			xPos += xStep
+		}
+	}
 }
 
 func predictScaledCompoundRefToConvBufGeneric(out []uint16, ref frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int,
