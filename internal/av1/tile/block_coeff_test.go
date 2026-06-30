@@ -66,6 +66,70 @@ func TestDecodeBlockCoefficientsRunsTransformThenPlanes(t *testing.T) {
 	}
 }
 
+func TestDecodeBlockCoefficientsControllerPathMatchesVisitorPath(t *testing.T) {
+	req := BlockCoeffRequest{
+		Transform: TransformTreeRequest{
+			Size:          BlockSize16x16,
+			VisibleW4:     4,
+			VisibleH4:     4,
+			Color:         parser.ColorConfig{SubsamplingX: true, SubsamplingY: true},
+			TransformMode: parser.TransformModeLargest,
+			Inter:         true,
+		},
+		LumaType:   transform.TypeDCTDCT,
+		ChromaType: [2]transform.Type{transform.TypeDCTDCT, transform.TypeDCTDCT},
+	}
+	payload := make([]byte, 32)
+
+	transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
+	var visitorState DecodeState
+	if err := visitorState.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var visitorModeCtx BlockModeContext
+	var visitorCoeffCtx CoeffEntropyContext
+	var visitorScratch BlockCoeffScratch
+	var visitorBlocks []BlockCoeffBlock
+	visitorResult, err := visitorState.DecodeBlockCoefficients(BlockCoeffCDFs{
+		Transform: &transformCDFs,
+		Coeff:     &coeffCDFs,
+	}, &visitorModeCtx, &visitorCoeffCtx, &visitorScratch, req, func(block BlockCoeffBlock) error {
+		visitorBlocks = append(visitorBlocks, cloneBlockCoeffBlockForTest(block))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	transformCDFs, coeffCDFs = mustBlockCoeffCDFs(t)
+	var controllerState DecodeState
+	if err := controllerState.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var controllerModeCtx BlockModeContext
+	var controllerCoeffCtx CoeffEntropyContext
+	var controllerScratch BlockCoeffScratch
+	var controllerVisit BlockLoopVisit
+	var controllerBlocks []BlockCoeffBlock
+	controllerResult, err := decodeBlockCoefficientsWithCoeffControllerPtr(&controllerState, BlockCoeffCDFs{
+		Transform: &transformCDFs,
+		Coeff:     &coeffCDFs,
+	}, &controllerModeCtx, &controllerCoeffCtx, &controllerScratch, req, &controllerVisit, blockCoeffTestController{blocks: &controllerBlocks})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if visitorResult != controllerResult {
+		t.Fatalf("controller result=%+v visitor result=%+v", controllerResult, visitorResult)
+	}
+	if len(controllerBlocks) != len(visitorBlocks) {
+		t.Fatalf("controller visits=%d visitor visits=%d", len(controllerBlocks), len(visitorBlocks))
+	}
+	for i := range visitorBlocks {
+		assertBlockCoeffBlockEqual(t, i, controllerBlocks[i], visitorBlocks[i])
+	}
+}
+
 func TestDecodeBlockCoefficientsSkipTransformResetsAllPlaneContexts(t *testing.T) {
 	transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
 	var state DecodeState
@@ -382,4 +446,67 @@ func mustBlockCoeffCDFs(t *testing.T) (TransformCDFs, CoeffCDFs) {
 		t.Fatal(err)
 	}
 	return transformCDFs, coeffCDFs
+}
+
+type blockCoeffTestController struct {
+	blocks *[]BlockCoeffBlock
+}
+
+func (c blockCoeffTestController) BeforeBlockCoefficients(BlockLoopVisit) error {
+	return nil
+}
+
+func (c blockCoeffTestController) BeforeBlockCoefficientsPtr(*BlockLoopVisit) error {
+	return nil
+}
+
+func (c blockCoeffTestController) SelectBlockCoeffRequest(BlockLoopVisit) (BlockCoeffRequest, error) {
+	return BlockCoeffRequest{}, ErrInvalidDecodeState
+}
+
+func (c blockCoeffTestController) SelectBlockCoeffRequestPtr(*BlockLoopVisit) (BlockCoeffRequest, error) {
+	return BlockCoeffRequest{}, ErrInvalidDecodeState
+}
+
+func (c blockCoeffTestController) VisitBlockCoeff(BlockLoopVisit, BlockCoeffBlock) error {
+	return ErrInvalidDecodeState
+}
+
+func (c blockCoeffTestController) VisitBlockCoeffPtr(_ *BlockLoopVisit, block *BlockCoeffBlock) error {
+	*c.blocks = append(*c.blocks, cloneBlockCoeffBlockForTest(*block))
+	return nil
+}
+
+func cloneBlockCoeffBlockForTest(block BlockCoeffBlock) BlockCoeffBlock {
+	out := block
+	if block.Coeffs != nil {
+		out.Coeffs = append([]int16(nil), block.Coeffs...)
+	}
+	if block.Scan != nil {
+		out.Scan = append([]int16(nil), block.Scan...)
+	}
+	return out
+}
+
+func assertBlockCoeffBlockEqual(t *testing.T, index int, got BlockCoeffBlock, want BlockCoeffBlock) {
+	t.Helper()
+	if got.Plane != want.Plane || got.Block != want.Block || got.Transform != want.Transform || got.Result != want.Result {
+		t.Fatalf("visit[%d] got=%+v want=%+v", index, got, want)
+	}
+	if len(got.Coeffs) != len(want.Coeffs) {
+		t.Fatalf("visit[%d] coeff len=%d want %d", index, len(got.Coeffs), len(want.Coeffs))
+	}
+	for i := range got.Coeffs {
+		if got.Coeffs[i] != want.Coeffs[i] {
+			t.Fatalf("visit[%d] coeff[%d]=%d want %d", index, i, got.Coeffs[i], want.Coeffs[i])
+		}
+	}
+	if len(got.Scan) != len(want.Scan) {
+		t.Fatalf("visit[%d] scan len=%d want %d", index, len(got.Scan), len(want.Scan))
+	}
+	for i := range got.Scan {
+		if got.Scan[i] != want.Scan[i] {
+			t.Fatalf("visit[%d] scan[%d]=%d want %d", index, i, got.Scan[i], want.Scan[i])
+		}
+	}
 }

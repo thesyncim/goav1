@@ -321,6 +321,117 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 	return stats, nil
 }
 
+func decodeLumaCoefficientsInWindowWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req LumaCoeffTreeRequest, window coeffUnitWindow, blockScratch *BlockCoeffScratch, loopVisit *BlockLoopVisit, coeffController T) (LumaCoeffStats, error) {
+	var stats LumaCoeffStats
+	if s == nil || cdfs == nil || ctx == nil || scratch == nil || blockScratch == nil || loopVisit == nil || !req.Class.Valid() {
+		return stats, ErrInvalidDecodeState
+	}
+	if _, err := validateTransformTreeRequest(req.TreeRequest); err != nil {
+		return stats, err
+	}
+	if !req.Tree.Y.Valid() {
+		return stats, ErrInvalidDecodeState
+	}
+	if req.TreeRequest.SkipTransform {
+		return stats, nil
+	}
+	eobCtx, err := coeffEOBMultiContext8(req.EOBMultiContext)
+	if err != nil {
+		return stats, err
+	}
+	dims, ok := req.Tree.Y.Dimensions()
+	if !ok {
+		return stats, ErrInvalidDecodeState
+	}
+	blockDims, ok := req.TreeRequest.Size.Dimensions()
+	if !ok {
+		return stats, ErrInvalidDecodeState
+	}
+	reqX4 := int(req.TreeRequest.X4)
+	reqY4 := int(req.TreeRequest.Y4)
+	yStart := maxInt(int(window.Y4Start), reqY4)
+	yEnd := minInt(int(window.Y4End), reqY4+int(req.TreeRequest.VisibleH4))
+	xStart := maxInt(int(window.X4Start), reqX4)
+	xEnd := minInt(int(window.X4End), reqX4+int(req.TreeRequest.VisibleW4))
+
+	if req.Tree.Variable {
+		return s.decodeLumaCoefficientsInWindow(cdfs, ctx, scratch, req, window, func(block LumaCoeffBlock) error {
+			blockScratch.block = BlockCoeffBlock{
+				Plane:     0,
+				Block:     block.Block,
+				Transform: block.Transform,
+				Result:    block.Result,
+				Coeffs:    block.Coeffs,
+				Scan:      block.Scan,
+			}
+			return coeffController.VisitBlockCoeffPtr(loopVisit, &blockScratch.block)
+		})
+	}
+
+	txbReq := TXBDecodeRequest{
+		EOBMultiContext:       eobCtx,
+		SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
+	}
+	for y := yStart; y < yEnd; y += int(dims.H4) {
+		for x := xStart; x < xEnd; x += int(dims.W4) {
+			visibleW := minInt(int(dims.W4), reqX4+int(req.TreeRequest.VisibleW4)-x)
+			visibleH := minInt(int(dims.H4), reqY4+int(req.TreeRequest.VisibleH4)-y)
+			if visibleW <= 0 || visibleH <= 0 {
+				return stats, ErrInvalidDecodeState
+			}
+			block := TransformBlock{
+				X4:        uint8(x),
+				Y4:        uint8(y),
+				Size:      req.Tree.Y,
+				VisibleW4: uint8(visibleW),
+				VisibleH4: uint8(visibleH),
+			}
+			ctxReq := CoeffContextRequest{
+				Plane:      0,
+				PlaneBlock: req.TreeRequest.Size,
+				Size:       block.Size,
+				X4:         block.X4,
+				Y4:         block.Y4,
+				VisibleW4:  block.VisibleW4,
+				VisibleH4:  block.VisibleH4,
+			}
+			typ, result, coeffs, scan, err := s.decodeCoeffTXBWithKnownContext(cdfs, ctx, scratch, ctxReq, txbReq, coeffContextKnown{
+				Plane:    CoeffPlaneY,
+				TXDims:   dims,
+				Block:    blockDims,
+				VisibleW: visibleW,
+				VisibleH: visibleH,
+			}, req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, CoeffTransformRequest{
+				Plane: 0,
+				Block: block,
+			})
+			if err != nil {
+				return stats, fmt.Errorf("decode luma txb block=%+v ctx=%+v: %w", block, ctxReq, err)
+			}
+
+			stats.TXBs++
+			stats.EOBTotal += uint32(result.EOB)
+			if result.AllZero {
+				stats.AllZero++
+			} else {
+				stats.NonZero++
+			}
+			blockScratch.block = BlockCoeffBlock{
+				Plane:     0,
+				Block:     block,
+				Transform: typ,
+				Result:    result,
+				Coeffs:    coeffs,
+				Scan:      scan,
+			}
+			if err := coeffController.VisitBlockCoeffPtr(loopVisit, &blockScratch.block); err != nil {
+				return stats, err
+			}
+		}
+	}
+	return stats, nil
+}
+
 // chromaCoeffPlanePrep holds the per-plane chroma geometry derived once from a
 // ChromaCoeffTreeRequest, shared across all 64x64 unit windows of the block.
 type chromaCoeffPlanePrep struct {
@@ -487,6 +598,96 @@ func (s *DecodeState) decodeChromaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coe
 				Coeffs:    coeffs,
 				Scan:      scan,
 			}); err != nil {
+				return stats, err
+			}
+		}
+	}
+	return stats, nil
+}
+
+func decodeChromaCoefficientsInWindowWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req ChromaCoeffTreeRequest, window coeffUnitWindow, prep chromaCoeffPlanePrep, blockScratch *BlockCoeffScratch, loopVisit *BlockLoopVisit, coeffController T) (LumaCoeffStats, error) {
+	if s == nil || cdfs == nil || ctx == nil || scratch == nil || blockScratch == nil || loopVisit == nil {
+		return LumaCoeffStats{}, ErrInvalidDecodeState
+	}
+	planeBlock := prep.PlaneBlock
+	blockDims, ok := planeBlock.Dimensions()
+	if !ok {
+		return LumaCoeffStats{}, ErrInvalidDecodeState
+	}
+	x4, y4 := int(prep.X4), int(prep.Y4)
+	visibleW4, visibleH4 := int(prep.VisibleW4), int(prep.VisibleH4)
+	uvDims := prep.UVDims
+
+	ssX := int(boolToShift(req.Color.SubsamplingX))
+	ssY := int(boolToShift(req.Color.SubsamplingY))
+
+	reqX4 := int(req.TreeRequest.X4)
+	reqY4 := int(req.TreeRequest.Y4)
+	lumaXStart := maxInt(int(window.X4Start)-reqX4, 0)
+	lumaYStart := maxInt(int(window.Y4Start)-reqY4, 0)
+	lumaXEnd := int(window.X4End) - reqX4
+	lumaYEnd := int(window.Y4End) - reqY4
+
+	cxStart := lumaXStart >> ssX
+	cyStart := lumaYStart >> ssY
+	cxEnd := minInt((lumaXEnd+ssX)>>ssX, visibleW4)
+	cyEnd := minInt((lumaYEnd+ssY)>>ssY, visibleH4)
+
+	var stats LumaCoeffStats
+	eobCtx, err := coeffEOBMultiContext8(req.EOBMultiContext)
+	if err != nil {
+		return stats, err
+	}
+	for y := cyStart; y < cyEnd; y += int(uvDims.H4) {
+		for x := cxStart; x < cxEnd; x += int(uvDims.W4) {
+			block := TransformBlock{
+				X4:        uint8(x4 + x),
+				Y4:        uint8(y4 + y),
+				Size:      req.Tree.UV,
+				VisibleW4: uint8(minInt(int(uvDims.W4), visibleW4-x)),
+				VisibleH4: uint8(minInt(int(uvDims.H4), visibleH4-y)),
+			}
+			ctxReq := CoeffContextRequest{
+				Plane:      req.Plane,
+				PlaneBlock: planeBlock,
+				Size:       block.Size,
+				X4:         block.X4,
+				Y4:         block.Y4,
+				VisibleW4:  block.VisibleW4,
+				VisibleH4:  block.VisibleH4,
+			}
+			typ, result, coeffs, scan, err := s.decodeCoeffTXBWithKnownContext(cdfs, ctx, scratch, ctxReq, TXBDecodeRequest{
+				EOBMultiContext:       eobCtx,
+				SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
+			}, coeffContextKnown{
+				Plane:    CoeffPlaneUV,
+				TXDims:   uvDims,
+				Block:    blockDims,
+				VisibleW: int(block.VisibleW4),
+				VisibleH: int(block.VisibleH4),
+			}, req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, CoeffTransformRequest{
+				Plane: req.Plane,
+				Block: block,
+			})
+			if err != nil {
+				return stats, fmt.Errorf("decode chroma txb plane=%d block=%+v ctx=%+v: %w", req.Plane, block, ctxReq, err)
+			}
+			stats.TXBs++
+			stats.EOBTotal += uint32(result.EOB)
+			if result.AllZero {
+				stats.AllZero++
+			} else {
+				stats.NonZero++
+			}
+			blockScratch.block = BlockCoeffBlock{
+				Plane:     req.Plane,
+				Block:     block,
+				Transform: typ,
+				Result:    result,
+				Coeffs:    coeffs,
+				Scan:      scan,
+			}
+			if err := coeffController.VisitBlockCoeffPtr(loopVisit, &blockScratch.block); err != nil {
 				return stats, err
 			}
 		}

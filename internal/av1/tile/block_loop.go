@@ -1024,12 +1024,10 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 			if err != nil {
 				return nil, fmt.Errorf("select coeff request: %w", err)
 			}
-			coefficients, err := s.decodeBlockCoefficientsPtr(BlockCoeffCDFs{
+			coefficients, err := decodeBlockCoefficientsWithCoeffControllerPtr(s, BlockCoeffCDFs{
 				Transform: cdfs.Transform,
 				Coeff:     cdfs.Coeff,
-			}, ctx, &scratch.CoeffCtx, &scratch.Coeff, coeffReq, func(block *BlockCoeffBlock) error {
-				return coeffController.VisitBlockCoeffPtr(visit, block)
-			})
+			}, ctx, &scratch.CoeffCtx, &scratch.Coeff, coeffReq, visit, coeffController)
 			if err != nil {
 				return nil, fmt.Errorf("decode coefficients: %w", err)
 			}

@@ -222,3 +222,118 @@ func (s *DecodeState) decodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 	}
 	return result, nil
 }
+
+func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs BlockCoeffCDFs, modeCtx *BlockModeContext, coeffCtx *CoeffEntropyContext, scratch *BlockCoeffScratch, req BlockCoeffRequest, loopVisit *BlockLoopVisit, coeffController T) (BlockCoeffResult, error) {
+	if s == nil || cdfs.Transform == nil || cdfs.Coeff == nil ||
+		modeCtx == nil || coeffCtx == nil || scratch == nil || loopVisit == nil {
+		return BlockCoeffResult{}, ErrInvalidDecodeState
+	}
+	lumaClass, err := req.LumaType.Class()
+	if err != nil {
+		return BlockCoeffResult{}, ErrInvalidDecodeState
+	}
+	var chromaClass [2]transform.Class
+	if !req.Transform.Color.MonoChrome {
+		for i, typ := range req.ChromaType {
+			class, err := typ.Class()
+			if err != nil {
+				return BlockCoeffResult{}, ErrInvalidDecodeState
+			}
+			chromaClass[i] = class
+		}
+	}
+
+	tree, err := s.DecodeTransformTree(cdfs.Transform, modeCtx, req.Transform)
+	if err != nil {
+		return BlockCoeffResult{}, fmt.Errorf("decode transform tree req=%+v: %w", req.Transform, err)
+	}
+	result := BlockCoeffResult{Tree: tree}
+
+	lumaReq := LumaCoeffTreeRequest{
+		TreeRequest:           req.Transform,
+		Tree:                  tree,
+		Class:                 lumaClass,
+		TransformType:         req.LumaType,
+		UseTransformType:      true,
+		TransformSelect:       req.TransformSelect,
+		EOBMultiContext:       req.EOBMultiContext[0],
+		SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
+	}
+
+	hasChroma := !req.Transform.Color.MonoChrome && tree.HasUV
+	var chromaReq [2]ChromaCoeffTreeRequest
+	var chromaPrep [2]chromaCoeffPlanePrep
+	if hasChroma {
+		for plane := 1; plane <= 2; plane++ {
+			chromaReq[plane-1] = ChromaCoeffTreeRequest{
+				TreeRequest:           req.Transform,
+				Tree:                  tree,
+				Color:                 req.Transform.Color,
+				Plane:                 uint8(plane),
+				Class:                 chromaClass[plane-1],
+				TransformType:         req.ChromaType[plane-1],
+				UseTransformType:      true,
+				TransformSelect:       req.TransformSelect,
+				EOBMultiContext:       req.EOBMultiContext[plane],
+				SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
+			}
+			prep, err := s.prepareChromaCoefficients(coeffCtx, chromaReq[plane-1])
+			if err != nil {
+				return result, fmt.Errorf("prepare chroma coeffs plane=%d req=%+v tree=%+v: %w", plane, req.Transform, tree, err)
+			}
+			chromaPrep[plane-1] = prep
+		}
+	}
+
+	if req.Transform.SkipTransform {
+		if err := coeffCtx.ResetBlock(0, req.Transform.Size, int(req.Transform.X4), int(req.Transform.Y4)); err != nil {
+			return result, err
+		}
+		return result, nil
+	}
+
+	const maxUnit4 = 16
+	visW := int(req.Transform.VisibleW4)
+	visH := int(req.Transform.VisibleH4)
+	muW := minInt(maxUnit4, visW)
+	muH := minInt(maxUnit4, visH)
+	reqX4 := int(req.Transform.X4)
+	reqY4 := int(req.Transform.Y4)
+	for row := 0; row < visH; row += muH {
+		for col := 0; col < visW; col += muW {
+			window := coeffUnitWindow{
+				X4Start: uint8(reqX4 + col),
+				Y4Start: uint8(reqY4 + row),
+				X4End:   uint8(reqX4 + minInt(col+muW, visW)),
+				Y4End:   uint8(reqY4 + minInt(row+muH, visH)),
+			}
+			lumaStats, err := decodeLumaCoefficientsInWindowWithCoeffControllerPtr(s, cdfs.Coeff, coeffCtx, &scratch.Coeff, lumaReq, window, scratch, loopVisit, coeffController)
+			if err != nil {
+				return result, fmt.Errorf("decode luma coeffs window=%+v req=%+v tree=%+v: %w", window, req.Transform, tree, err)
+			}
+			result.Luma.TXBs += lumaStats.TXBs
+			result.Luma.NonZero += lumaStats.NonZero
+			result.Luma.AllZero += lumaStats.AllZero
+			result.Luma.EOBTotal += lumaStats.EOBTotal
+
+			if !hasChroma {
+				continue
+			}
+			for plane := 1; plane <= 2; plane++ {
+				prep := chromaPrep[plane-1]
+				if !prep.HasChroma {
+					continue
+				}
+				stats, err := decodeChromaCoefficientsInWindowWithCoeffControllerPtr(s, cdfs.Coeff, coeffCtx, &scratch.Coeff, chromaReq[plane-1], window, prep, scratch, loopVisit, coeffController)
+				if err != nil {
+					return result, fmt.Errorf("decode chroma coeffs plane=%d window=%+v req=%+v tree=%+v: %w", plane, window, req.Transform, tree, err)
+				}
+				result.Chroma[plane-1].TXBs += stats.TXBs
+				result.Chroma[plane-1].NonZero += stats.NonZero
+				result.Chroma[plane-1].AllZero += stats.AllZero
+				result.Chroma[plane-1].EOBTotal += stats.EOBTotal
+			}
+		}
+	}
+	return result, nil
+}
