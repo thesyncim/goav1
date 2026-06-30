@@ -64,6 +64,7 @@ go run ./cmd/qualitybench \
   -csv quality.csv -summary-csv quality-summary.csv -require-summary \
   -stats-csv quality-encoder-stats.csv \
   -metadata-json quality-metadata.json \
+  -ffmpeg-av1-decoder libdav1d \
   -environment-notes "fixed power mode; idle machine; cool start" \
   -aom-threads 4 \
   -aom-row-mt 1 \
@@ -78,7 +79,9 @@ non-VMAF run as state-of-the-art visual validation.
 
 The same strict path is available as `make qualitybench-publish`; set
 `QUALITYBENCH_MANIFEST` and `QUALITYBENCH_ENVIRONMENT_NOTES`, then override the
-`QUALITYBENCH_*` variables when sweeping speed, assembly, or bitrate settings.
+`QUALITYBENCH_*` variables when sweeping speed, assembly, bitrate settings, or
+the explicit FFmpeg AV1 decoder (`QUALITYBENCH_FFMPEG_AV1_DECODER`, default
+`libdav1d`).
 
 If `-input` is omitted, `qualitybench` uses the same deterministic synthetic
 scene as `encbench`. That path is for smoke testing the harness, not for quality
@@ -92,11 +95,12 @@ Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`,
 `-run-order shuffle`, explicit `-shuffle-seed`, `-runs >= 3`, and
 `-warmup-runs >= 1`, plus a non-empty `-environment-notes` value. It also
-requires explicit goav1 execution-lane, effort, and scene-cut settings, explicit libaom
-concurrency settings and realtime speed setting when `aomenc` is selected,
-explicit SVT preset, parallelism, and assembly settings when `svt-av1` is
-selected, exact raw I420 input byte counts for every manifest row, and
-manifest-declared
+requires explicit goav1 execution-lane, effort, and scene-cut settings, an
+explicit FFmpeg AV1 decoder when external baselines are selected, explicit
+libaom concurrency settings and realtime speed setting when `aomenc` is
+selected, explicit SVT preset, parallelism, and assembly settings when
+`svt-av1` is selected, exact raw I420 input byte counts for every manifest row,
+and the manifest-declared
 `pix_fmt=i420`, `bit_depth=8`, `chroma=4:2:0`, `sha256`, `source_id`,
 `source_url`, `source_license`, and `category` fields. Declared
 input hashes are verified before timing starts. Publish mode rejects duplicate

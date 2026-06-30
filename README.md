@@ -432,9 +432,11 @@ Current goal order:
   decode benchmarks.
 - **Fair cross-decoder timing.** `make bench-cross` compares the verified
   full-decode path against `aomdec`, `dav1d`, and `SvtAv1DecApp` when present,
-  using single-thread decode and discarded output. The optional corpus lane
-  extends that comparison to longer generated clips so startup overhead does not
-  hide the real goav1/dav1d throughput ratio.
+  using requested single-thread controls where the reference decoder exposes
+  them, discarded output, and explicit startup caveats. SVT reports a
+  parallelism level rather than a thread-count guarantee. The optional corpus
+  lane extends that comparison to longer generated clips so startup overhead
+  does not hide the real goav1/dav1d throughput ratio.
 - **Compiler guardrails.** Escape-analysis, BCE, trace-zero, and hot-struct
   size checks are treated as perf gates because they catch hidden regressions
   before they turn into frame-time noise.
