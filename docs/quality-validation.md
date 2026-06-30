@@ -43,7 +43,9 @@ decode their output, and emit one CSV row per encoder/bitrate.
 Example:
 
 ```sh
-go run ./cmd/qualitybench \
+GO_BIN=/absolute/path/to/go
+GO_SHA256=$(shasum -a 256 "$GO_BIN" | awk '{print $1}')
+"$GO_BIN" run ./cmd/qualitybench \
   -manifest corpus/clips.csv \
   -bitrates 3000000,6000000,9000000,12000000 \
   -encoders goav1,aomenc,svt-av1 \
@@ -52,6 +54,8 @@ go run ./cmd/qualitybench \
   -require-encoders all \
   -require-metrics xpsnr,vmaf \
   -gomaxprocs 4 \
+  -go-bin "$GO_BIN" \
+  -go-sha256 "$GO_SHA256" \
   -gogc off \
   -goav1-max-threads 4 \
   -goav1-effort 0 \
@@ -96,12 +100,14 @@ The same strict path is available as `make qualitybench-publish`; set
 `QUALITYBENCH_CPU_AFFINITY`, `QUALITYBENCH_POWER_MODE`,
 `QUALITYBENCH_THERMAL_STATE`, `QUALITYBENCH_FREQUENCY_POLICY`,
 `QUALITYBENCH_BACKGROUND_LOAD`, `QUALITYBENCH_FFMPEG_BIN`,
-`QUALITYBENCH_FFMPEG_SHA256`, and the matching `QUALITYBENCH_AOMENC_*` /
-`QUALITYBENCH_SVT_*` variables for selected external encoders, then override the
-other `QUALITYBENCH_*` variables when sweeping speed, assembly, bitrate settings,
-the per-command timeout (`QUALITYBENCH_COMMAND_TIMEOUT`, default `30m`), or the
-explicit FFmpeg AV1 decoder (`QUALITYBENCH_FFMPEG_AV1_DECODER`, default
-`libdav1d`) and VMAF model (`QUALITYBENCH_VMAF_MODEL`, default
+`QUALITYBENCH_FFMPEG_SHA256`, `QUALITYBENCH_GO_BIN`,
+`QUALITYBENCH_GO_SHA256`, and the matching `QUALITYBENCH_AOMENC_*` /
+`QUALITYBENCH_SVT_*` variables for selected external encoders, then override
+the other `QUALITYBENCH_*` variables when sweeping speed, assembly, bitrate
+settings, the per-command timeout (`QUALITYBENCH_COMMAND_TIMEOUT`, default
+`30m`), or the explicit FFmpeg AV1 decoder
+(`QUALITYBENCH_FFMPEG_AV1_DECODER`, default `libdav1d`) and VMAF model
+(`QUALITYBENCH_VMAF_MODEL`, default
 `version=vmaf_v0.6.1`). Publish runs that require VMAF must use either
 `version=...` or `path=/absolute/model`; path-based models are SHA-256 hashed
 into the metadata sidecar.
@@ -169,7 +175,8 @@ Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-encoders`, `-workdir`, `-csv`, `-metadata-json`, `-manifest`,
 `-require-corpus`, `-min-clips`, `-require-encoders all`, `-require-metrics`,
 `-summary-csv`, `-frame-metrics-csv`, `-require-summary`, `-gomaxprocs`,
-`-fps`, `-layers`, `-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`,
+absolute pinned `-go-bin` plus matching `-go-sha256`, `-fps`, `-layers`,
+`-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`,
 `-run-order shuffle`, explicit `-shuffle-seed`, `-runs >= 3`,
 `-warmup-runs >= 1`, and explicit `-vmaf-model` when VMAF is required, plus a
 non-empty `-environment-notes` value and explicit non-empty `-cpu-affinity`,
@@ -326,7 +333,8 @@ VMAF JSON is likewise accepted only when it contains exactly the configured
 number of frame entries.
 
 Use `-metadata-json` for claim-supporting runs. The sidecar records the
-goav1 git revision and dirty state, Go runtime, selected configuration,
+goav1 git revision and dirty state, Go runtime, pinned Go executable path and
+SHA-256, selected configuration,
 required corpus settings, metrics, encoders, and summary enforcement,
 metric-filter availability, tool paths/version probes, per-clip source
 geometry, declared raw format, expected raw byte counts, actual input byte

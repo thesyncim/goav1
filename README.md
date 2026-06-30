@@ -478,6 +478,8 @@ export GOAV1_BENCH_AOMENC_SHA256=$(shasum -a 256 "$AOMENC" | awk '{print $1}')
 export GOAV1_BENCH_AOMDEC_SHA256=$(shasum -a 256 "$AOMDEC" | awk '{print $1}')
 export GOAV1_BENCH_DAV1D_SHA256=$(shasum -a 256 "$DAV1D" | awk '{print $1}')
 export GOAV1_BENCH_FFMPEG_SHA256=$(shasum -a 256 "$FFMPEG" | awk '{print $1}')
+export GO_BIN=/absolute/path/to/go
+export GO_SHA256=$(shasum -a 256 "$GO_BIN" | awk '{print $1}')
 export GOAV1_BENCH_CORPUS_ENVIRONMENT_NOTES="fixed power mode; idle machine; cool start"
 export BENCH_CORPUS_ENVIRONMENT_NOTES="$GOAV1_BENCH_CORPUS_ENVIRONMENT_NOTES"
 export BENCH_CORPUS_CPU_AFFINITY=none
@@ -492,6 +494,8 @@ BENCH_CORPUS_DAV1D_BIN=/absolute/path/to/dav1d \
 BENCH_CORPUS_DAV1D_SHA256=$(shasum -a 256 /absolute/path/to/dav1d | awk '{print $1}') \
 BENCH_CORPUS_SVTAV1DECAPP_BIN=/absolute/path/to/SvtAv1DecApp \
 BENCH_CORPUS_SVTAV1DECAPP_SHA256=$(shasum -a 256 /absolute/path/to/SvtAv1DecApp | awk '{print $1}') \
+BENCH_CORPUS_GO_BIN="$GO_BIN" \
+BENCH_CORPUS_GO_SHA256="$GO_SHA256" \
 make bench-corpus-publish
 ```
 
@@ -521,7 +525,8 @@ sidecar hashes, decoded clip metadata, a machine-readable report path
 `/tmp/goav1-bench-corpus-report.json`), and every registered reference decoder
 (`aomdec`, `dav1d`, and `SvtAv1DecApp`) before timing starts. Publish mode
 also requires v2 row-level source provenance with at least two sources and two
-categories, absolute decoder paths and matching SHA-256 pins, plus explicit
+categories, absolute decoder paths and matching SHA-256 pins, an absolute
+pinned Go executable path with matching SHA-256, explicit
 `GOMAXPROCS`/`GOGC`, structured CPU affinity, power mode, thermal state,
 frequency policy, and background-load fields, with hidden Go runtime environment
 knobs unset. Use `make bench-corpus` only for exploratory local runs where

@@ -10,9 +10,10 @@ Publishable rows must satisfy these controls:
 - Use `make bench-go-publish`, `make bench-corpus-publish`, or
   `make qualitybench-publish`; ad hoc `go test -bench`, `make bench`, and local
   smoke runs are not claim-supporting rows.
-- Pin every external tool by absolute path and SHA-256 before timing starts.
-- For Go microbenchmark publish rows, pin the Go executable itself by absolute
-  path and SHA-256, use one concrete package, and use an exact
+- Pin the Go executable and every external tool by absolute path and SHA-256
+  before timing starts; metadata must collect `go env` from that pinned Go
+  executable, not from ambient `PATH`.
+- For Go microbenchmark publish rows, use one concrete package and an exact
   `^BenchmarkName$` selector. Publish mode parses the raw `go test` output and
   rejects zero-row runs, unexpected benchmark rows, CPU-suffix drift, or missing
   repeated samples.

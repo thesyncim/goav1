@@ -13,6 +13,8 @@ BENCH_CORPUS_DAV1D_BIN ?=
 BENCH_CORPUS_DAV1D_SHA256 ?=
 BENCH_CORPUS_SVTAV1DECAPP_BIN ?=
 BENCH_CORPUS_SVTAV1DECAPP_SHA256 ?=
+BENCH_CORPUS_GO_BIN ?= $(shell command -v go 2>/dev/null)
+BENCH_CORPUS_GO_SHA256 ?=
 BENCH_CORPUS_ENVIRONMENT_NOTES ?=
 BENCH_CORPUS_CPU_AFFINITY ?=
 BENCH_CORPUS_POWER_MODE ?=
@@ -51,6 +53,8 @@ QUALITYBENCH_THERMAL_STATE ?=
 QUALITYBENCH_FREQUENCY_POLICY ?=
 QUALITYBENCH_BACKGROUND_LOAD ?=
 QUALITYBENCH_GOGC ?= off
+QUALITYBENCH_GO_BIN ?= $(shell command -v go 2>/dev/null)
+QUALITYBENCH_GO_SHA256 ?=
 QUALITYBENCH_FFMPEG_BIN ?=
 QUALITYBENCH_FFMPEG_SHA256 ?=
 QUALITYBENCH_FFMPEG_AV1_DECODER ?= libdav1d
@@ -129,11 +133,15 @@ bench-corpus-publish:
 	@if [ -z "$(BENCH_CORPUS_THERMAL_STATE)" ]; then echo "set BENCH_CORPUS_THERMAL_STATE='thermal state before run'"; exit 2; fi
 	@if [ -z "$(BENCH_CORPUS_FREQUENCY_POLICY)" ]; then echo "set BENCH_CORPUS_FREQUENCY_POLICY='frequency/governor policy'"; exit 2; fi
 	@if [ -z "$(BENCH_CORPUS_BACKGROUND_LOAD)" ]; then echo "set BENCH_CORPUS_BACKGROUND_LOAD='background-load policy'"; exit 2; fi
+	@if [ -z "$(BENCH_CORPUS_GO_BIN)" ]; then echo "set BENCH_CORPUS_GO_BIN=/absolute/path/to/go"; exit 2; fi
+	@if [ -z "$(BENCH_CORPUS_GO_SHA256)" ]; then echo "set BENCH_CORPUS_GO_SHA256 to the SHA-256 of BENCH_CORPUS_GO_BIN"; exit 2; fi
 	$(PUBLISH_GO_ENV) \
 	GOMAXPROCS=1 \
 	GOGC=off \
 	GOAV1_BENCH_CORPUS=1 \
 	GOAV1_BENCH_CORPUS_PUBLISH=1 \
+	GOAV1_BENCH_CORPUS_GO_BIN="$(BENCH_CORPUS_GO_BIN)" \
+	GOAV1_BENCH_CORPUS_GO_SHA256="$(BENCH_CORPUS_GO_SHA256)" \
 	GOAV1_BENCH_CORPUS_REPORT_JSON="$(BENCH_CORPUS_REPORT_JSON)" \
 	GOAV1_BENCH_CORPUS_ENVIRONMENT_NOTES="$(BENCH_CORPUS_ENVIRONMENT_NOTES)" \
 	GOAV1_BENCH_CORPUS_CPU_AFFINITY="$(BENCH_CORPUS_CPU_AFFINITY)" \
@@ -147,7 +155,7 @@ bench-corpus-publish:
 	GOAV1_BENCH_CORPUS_DAV1D_SHA256="$(BENCH_CORPUS_DAV1D_SHA256)" \
 	GOAV1_BENCH_CORPUS_SVTAV1DECAPP_BIN="$(BENCH_CORPUS_SVTAV1DECAPP_BIN)" \
 	GOAV1_BENCH_CORPUS_SVTAV1DECAPP_SHA256="$(BENCH_CORPUS_SVTAV1DECAPP_SHA256)" \
-	go test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
+	"$(BENCH_CORPUS_GO_BIN)" test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
 
 bench-go-publish:
 	@if [ -z "$(GO_BENCH_PUBLISH_ENVIRONMENT_NOTES)" ]; then echo "set GO_BENCH_PUBLISH_ENVIRONMENT_NOTES='power, thermal, and background-load context'"; exit 2; fi
@@ -189,9 +197,11 @@ qualitybench-publish:
 	@if [ -z "$(QUALITYBENCH_THERMAL_STATE)" ]; then echo "set QUALITYBENCH_THERMAL_STATE='thermal state before run'"; exit 2; fi
 	@if [ -z "$(QUALITYBENCH_FREQUENCY_POLICY)" ]; then echo "set QUALITYBENCH_FREQUENCY_POLICY='frequency/governor policy'"; exit 2; fi
 	@if [ -z "$(QUALITYBENCH_BACKGROUND_LOAD)" ]; then echo "set QUALITYBENCH_BACKGROUND_LOAD='background-load policy'"; exit 2; fi
+	@if [ -z "$(QUALITYBENCH_GO_BIN)" ]; then echo "set QUALITYBENCH_GO_BIN=/absolute/path/to/go"; exit 2; fi
+	@if [ -z "$(QUALITYBENCH_GO_SHA256)" ]; then echo "set QUALITYBENCH_GO_SHA256 to the SHA-256 of QUALITYBENCH_GO_BIN"; exit 2; fi
 	mkdir -p "$(QUALITYBENCH_WORKDIR)"
 	$(PUBLISH_GO_ENV) \
-	go run ./cmd/qualitybench \
+	"$(QUALITYBENCH_GO_BIN)" run ./cmd/qualitybench \
 		-manifest "$(QUALITYBENCH_MANIFEST)" \
 		-bitrates "$(QUALITYBENCH_BITRATES)" \
 		-encoders "$(QUALITYBENCH_ENCODERS)" \
@@ -206,6 +216,8 @@ qualitybench-publish:
 		-require-encoders "$(QUALITYBENCH_REQUIRED_ENCODERS)" \
 		-require-metrics "$(QUALITYBENCH_REQUIRED_METRICS)" \
 		-gomaxprocs "$(QUALITYBENCH_GOMAXPROCS)" \
+		-go-bin "$(QUALITYBENCH_GO_BIN)" \
+		-go-sha256 "$(QUALITYBENCH_GO_SHA256)" \
 		-gogc "$(QUALITYBENCH_GOGC)" \
 		-goav1-max-threads "$(QUALITYBENCH_GOAV1_MAX_THREADS)" \
 		-goav1-effort "$(QUALITYBENCH_GOAV1_EFFORT)" \

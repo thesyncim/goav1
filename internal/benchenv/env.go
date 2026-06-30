@@ -43,7 +43,15 @@ func PublishAmbientGoEnvVars() []string {
 }
 
 func GoEnvForMetadata() map[string]any {
-	out, err := exec.Command("go", "env", "-json").Output()
+	return GoEnvForMetadataWithTool("go")
+}
+
+func GoEnvForMetadataWithTool(goBin string) map[string]any {
+	goBin = strings.TrimSpace(goBin)
+	if goBin == "" {
+		goBin = "go"
+	}
+	out, err := exec.Command(goBin, "env", "-json").Output()
 	if err != nil {
 		return map[string]any{"error": err.Error()}
 	}

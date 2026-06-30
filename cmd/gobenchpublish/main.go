@@ -604,7 +604,7 @@ func buildMetadata(cfg config, git gitMetadata, command []string, status, errTex
 			SIMDTier:             detectedSIMDTier(),
 			SIMDFeatures:         detectedSIMDFeatures(),
 			BuildSettings:        goBuildSettings(),
-			Env:                  benchenv.GoEnvForMetadata(),
+			Env:                  benchenv.GoEnvForMetadataWithTool(cfg.GoBin),
 			ToolPath:             goTool.path,
 			ToolSHA256:           goTool.sha256,
 			ToolExpectedSHA256:   goTool.expectedSHA256,

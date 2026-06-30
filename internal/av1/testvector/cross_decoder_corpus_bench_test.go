@@ -184,6 +184,8 @@ const (
 	envBenchCorpusAllowUnmanifested = "GOAV1_BENCH_CORPUS_ALLOW_UNMANIFESTED"
 	envBenchCorpusRequireDecoders   = "GOAV1_BENCH_CORPUS_REQUIRE_DECODERS"
 	envBenchCorpusReportJSON        = "GOAV1_BENCH_CORPUS_REPORT_JSON"
+	envBenchCorpusGoBin             = "GOAV1_BENCH_CORPUS_GO_BIN"
+	envBenchCorpusGoSHA256          = "GOAV1_BENCH_CORPUS_GO_SHA256"
 	envBenchCorpusMinSources        = "GOAV1_BENCH_CORPUS_MIN_SOURCES"
 	envBenchCorpusMinCategories     = "GOAV1_BENCH_CORPUS_MIN_CATEGORIES"
 	envBenchCorpusEnvironmentNotes  = "GOAV1_BENCH_CORPUS_ENVIRONMENT_NOTES"
@@ -1730,15 +1732,27 @@ func TestValidateCorpusPublishEnvironmentNotes(t *testing.T) {
 }
 
 func TestValidateCorpusPublishEnvironmentRejectsAmbientGoDrift(t *testing.T) {
+	goPath, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	goSHA, _, err := corpusFileSHA256(goPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	valid := corpusPublishEnvironment{
-		GOMAXPROCS:      1,
-		GOMAXPROCSEnv:   "1",
-		GOGC:            "off",
-		CPUAffinity:     "none",
-		PowerMode:       "high power",
-		ThermalState:    "cool start",
-		FrequencyPolicy: "automatic",
-		BackgroundLoad:  "idle machine",
+		GOMAXPROCS:           1,
+		GOMAXPROCSEnv:        "1",
+		GoToolPath:           goPath,
+		GoToolSHA256:         goSHA,
+		GoToolExpectedSHA256: goSHA,
+		GoToolSHA256Verified: true,
+		GOGC:                 "off",
+		CPUAffinity:          "none",
+		PowerMode:            "high power",
+		ThermalState:         "cool start",
+		FrequencyPolicy:      "automatic",
+		BackgroundLoad:       "idle machine",
 	}
 	if err := validateCorpusPublishEnvironment(valid); err != nil {
 		t.Fatalf("valid environment failed: %v", err)
@@ -2828,18 +2842,23 @@ type corpusPublishGit struct {
 }
 
 type corpusPublishEnvironment struct {
-	GoVersion        string            `json:"go_version"`
-	GOOS             string            `json:"goos"`
-	GOARCH           string            `json:"goarch"`
-	GOMAXPROCS       int               `json:"gomaxprocs"`
-	GOMAXPROCSEnv    string            `json:"gomaxprocs_env,omitempty"`
-	NumCPU           int               `json:"num_cpu"`
-	SIMDTier         string            `json:"simd_tier"`
-	SIMDFeatures     []string          `json:"simd_features,omitempty"`
-	BuildSettings    map[string]string `json:"build_settings,omitempty"`
-	GoEnv            map[string]any    `json:"go_env,omitempty"`
-	BlockedGoEnv     map[string]string `json:"blocked_go_env,omitempty"`
-	ObservedCPUState benchenv.CPUState `json:"observed_cpu_state"`
+	GoVersion            string            `json:"go_version"`
+	GOOS                 string            `json:"goos"`
+	GOARCH               string            `json:"goarch"`
+	GOMAXPROCS           int               `json:"gomaxprocs"`
+	GOMAXPROCSEnv        string            `json:"gomaxprocs_env,omitempty"`
+	NumCPU               int               `json:"num_cpu"`
+	SIMDTier             string            `json:"simd_tier"`
+	SIMDFeatures         []string          `json:"simd_features,omitempty"`
+	BuildSettings        map[string]string `json:"build_settings,omitempty"`
+	GoEnv                map[string]any    `json:"go_env,omitempty"`
+	GoToolPath           string            `json:"go_tool_path,omitempty"`
+	GoToolSHA256         string            `json:"go_tool_sha256,omitempty"`
+	GoToolExpectedSHA256 string            `json:"go_tool_expected_sha256,omitempty"`
+	GoToolSHA256Verified bool              `json:"go_tool_sha256_verified,omitempty"`
+	GoToolError          string            `json:"go_tool_error,omitempty"`
+	BlockedGoEnv         map[string]string `json:"blocked_go_env,omitempty"`
+	ObservedCPUState     benchenv.CPUState `json:"observed_cpu_state"`
 
 	CPUModel        string `json:"cpu_model,omitempty"`
 	Hostname        string `json:"hostname,omitempty"`
@@ -3522,6 +3541,22 @@ func validateCorpusPublishEnvironment(env corpusPublishEnvironment) error {
 	if env.GOMAXPROCS != gomaxprocs {
 		return fmt.Errorf("GOMAXPROCS environment value %d does not match runtime GOMAXPROCS %d", gomaxprocs, env.GOMAXPROCS)
 	}
+	if strings.TrimSpace(env.GoToolError) != "" {
+		return fmt.Errorf("corpus publish Go tool pin: %s", env.GoToolError)
+	}
+	if strings.TrimSpace(env.GoToolPath) == "" {
+		return fmt.Errorf("set %s to the absolute Go executable path for corpus publish", envBenchCorpusGoBin)
+	}
+	if !filepath.IsAbs(env.GoToolPath) {
+		return fmt.Errorf("%s must be an absolute path, got %q", envBenchCorpusGoBin, env.GoToolPath)
+	}
+	if strings.TrimSpace(env.GoToolExpectedSHA256) == "" {
+		return fmt.Errorf("set %s to the SHA-256 of %s for corpus publish", envBenchCorpusGoSHA256, envBenchCorpusGoBin)
+	}
+	if !env.GoToolSHA256Verified {
+		return fmt.Errorf("corpus publish Go tool sha256=%s does not match %s=%s",
+			env.GoToolSHA256, envBenchCorpusGoSHA256, env.GoToolExpectedSHA256)
+	}
 	if strings.TrimSpace(env.GOGC) == "" {
 		return errors.New("set GOGC explicitly for corpus publish")
 	}
@@ -3559,36 +3594,68 @@ func validateCorpusPublishEnvironment(env corpusPublishEnvironment) error {
 	return nil
 }
 
+func corpusPublishGoToolMetadata() (path, expectedSHA, actualSHA string, verified bool, errText string) {
+	path = strings.TrimSpace(os.Getenv(envBenchCorpusGoBin))
+	expectedSHA = strings.ToLower(strings.TrimSpace(os.Getenv(envBenchCorpusGoSHA256)))
+	if path == "" {
+		return "", expectedSHA, "", false, fmt.Sprintf("set %s to the absolute Go executable path for corpus publish", envBenchCorpusGoBin)
+	}
+	if !filepath.IsAbs(path) {
+		return path, expectedSHA, "", false, fmt.Sprintf("%s must be an absolute path, got %q", envBenchCorpusGoBin, path)
+	}
+	if err := validateCorpusManifestSHA256(expectedSHA, envBenchCorpusGoSHA256); err != nil {
+		return path, expectedSHA, "", false, err.Error()
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return path, expectedSHA, "", false, fmt.Sprintf("%s %q: %v", envBenchCorpusGoBin, path, err)
+	}
+	if info.IsDir() || info.Mode()&0o111 == 0 {
+		return path, expectedSHA, "", false, fmt.Sprintf("%s %q is not an executable file", envBenchCorpusGoBin, path)
+	}
+	actualSHA, _, err = corpusFileSHA256(path)
+	if err != nil {
+		return path, expectedSHA, "", false, fmt.Sprintf("%s %q sha256: %v", envBenchCorpusGoBin, path, err)
+	}
+	return path, expectedSHA, actualSHA, actualSHA == expectedSHA, ""
+}
+
 func currentCorpusPublishEnvironment() corpusPublishEnvironment {
 	hostname, _ := os.Hostname()
+	goToolPath, goExpectedSHA, goSHA, goVerified, goErr := corpusPublishGoToolMetadata()
 	return corpusPublishEnvironment{
-		GoVersion:        runtime.Version(),
-		GOOS:             runtime.GOOS,
-		GOARCH:           runtime.GOARCH,
-		GOMAXPROCS:       runtime.GOMAXPROCS(0),
-		GOMAXPROCSEnv:    os.Getenv("GOMAXPROCS"),
-		NumCPU:           runtime.NumCPU(),
-		SIMDTier:         corpusSIMDTier(),
-		SIMDFeatures:     corpusSIMDFeatures(),
-		BuildSettings:    corpusGoBuildSettings(),
-		GoEnv:            benchenv.GoEnvForMetadata(),
-		BlockedGoEnv:     corpusBlockedGoEnv(),
-		ObservedCPUState: benchenv.ObserveCPUState(),
-		CPUModel:         detectCorpusCPUModel(),
-		Hostname:         hostname,
-		OSVersion:        detectCorpusOSVersion(),
-		KernelVersion:    detectCorpusKernelVersion(),
-		PATH:             os.Getenv("PATH"),
-		GOFLAGS:          os.Getenv("GOFLAGS"),
-		GOGC:             os.Getenv("GOGC"),
-		GOMEMLIMIT:       os.Getenv("GOMEMLIMIT"),
-		GODEBUG:          os.Getenv("GODEBUG"),
-		CPUAffinity:      strings.TrimSpace(os.Getenv(envBenchCorpusCPUAffinity)),
-		PowerMode:        strings.TrimSpace(os.Getenv(envBenchCorpusPowerMode)),
-		ThermalState:     strings.TrimSpace(os.Getenv(envBenchCorpusThermalState)),
-		FrequencyPolicy:  strings.TrimSpace(os.Getenv(envBenchCorpusFrequencyPolicy)),
-		BackgroundLoad:   strings.TrimSpace(os.Getenv(envBenchCorpusBackgroundLoad)),
-		Notes:            strings.TrimSpace(os.Getenv(envBenchCorpusEnvironmentNotes)),
+		GoVersion:            runtime.Version(),
+		GOOS:                 runtime.GOOS,
+		GOARCH:               runtime.GOARCH,
+		GOMAXPROCS:           runtime.GOMAXPROCS(0),
+		GOMAXPROCSEnv:        os.Getenv("GOMAXPROCS"),
+		NumCPU:               runtime.NumCPU(),
+		SIMDTier:             corpusSIMDTier(),
+		SIMDFeatures:         corpusSIMDFeatures(),
+		BuildSettings:        corpusGoBuildSettings(),
+		GoEnv:                benchenv.GoEnvForMetadataWithTool(goToolPath),
+		GoToolPath:           goToolPath,
+		GoToolSHA256:         goSHA,
+		GoToolExpectedSHA256: goExpectedSHA,
+		GoToolSHA256Verified: goVerified,
+		GoToolError:          goErr,
+		BlockedGoEnv:         corpusBlockedGoEnv(),
+		ObservedCPUState:     benchenv.ObserveCPUState(),
+		CPUModel:             detectCorpusCPUModel(),
+		Hostname:             hostname,
+		OSVersion:            detectCorpusOSVersion(),
+		KernelVersion:        detectCorpusKernelVersion(),
+		PATH:                 os.Getenv("PATH"),
+		GOFLAGS:              os.Getenv("GOFLAGS"),
+		GOGC:                 os.Getenv("GOGC"),
+		GOMEMLIMIT:           os.Getenv("GOMEMLIMIT"),
+		GODEBUG:              os.Getenv("GODEBUG"),
+		CPUAffinity:          strings.TrimSpace(os.Getenv(envBenchCorpusCPUAffinity)),
+		PowerMode:            strings.TrimSpace(os.Getenv(envBenchCorpusPowerMode)),
+		ThermalState:         strings.TrimSpace(os.Getenv(envBenchCorpusThermalState)),
+		FrequencyPolicy:      strings.TrimSpace(os.Getenv(envBenchCorpusFrequencyPolicy)),
+		BackgroundLoad:       strings.TrimSpace(os.Getenv(envBenchCorpusBackgroundLoad)),
+		Notes:                strings.TrimSpace(os.Getenv(envBenchCorpusEnvironmentNotes)),
 	}
 }
 

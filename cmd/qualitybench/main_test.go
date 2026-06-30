@@ -1378,6 +1378,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		CPUOnlineList:       "0-3",
 	})
 	ffmpegBin, ffmpegHash := writeTestExecutableWithSHA256(t, "ffmpeg")
+	goBin, goHash := writeTestExecutableWithSHA256(t, "go")
 	aomencBin, aomencHash := writeTestExecutableWithSHA256(t, "aomenc")
 	svtBin, svtHash := writeTestExecutableWithSHA256(t, "SvtAv1EncApp")
 	vmafModelPath := filepath.Join(t.TempDir(), "vmaf.json")
@@ -1402,6 +1403,8 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		requireSummary:      true,
 		fps:                 60,
 		goMaxProcs:          4,
+		goBin:               goBin,
+		goSHA256:            goHash,
 		goav1MaxThreads:     4,
 		goav1Effort:         0,
 		goav1SceneCut:       false,
@@ -1451,6 +1454,8 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"frame-metrics-csv":  true,
 			"require-summary":    true,
 			"gomaxprocs":         true,
+			"go-bin":             true,
+			"go-sha256":          true,
 			"gogc":               true,
 			"fps":                true,
 			"layers":             true,
@@ -1491,6 +1496,20 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	}
 	if err := validatePublishConfig(cfg, gitMetadata{Commit: "abc"}); err != nil {
 		t.Fatalf("valid publish config failed: %v", err)
+	}
+	missingGoPin := cfg
+	missingGoPin.explicitFlags = copyStringBoolMap(cfg.explicitFlags)
+	delete(missingGoPin.explicitFlags, "go-sha256")
+	if err := validatePublishConfig(missingGoPin, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "go-sha256") {
+		t.Fatalf("missing go-sha256 error=%v", err)
+	}
+	badGoPin := cfg
+	badGoPin.explicitFlags = copyStringBoolMap(cfg.explicitFlags)
+	badGoPin.goSHA256 = strings.Repeat("0", 64)
+	if err := validatePublishConfig(badGoPin, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "go-bin") {
+		t.Fatalf("bad go hash error=%v", err)
 	}
 	oldProbe := observeBenchmarkCPUState
 	observeBenchmarkCPUState = func() benchenv.CPUState {
@@ -2078,6 +2097,14 @@ func TestAttachEncodeRunSummaryUsesMedianWallSample(t *testing.T) {
 	}
 }
 
+func copyStringBoolMap(src map[string]bool) map[string]bool {
+	dst := make(map[string]bool, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
 func TestValidatePublishClipInputsRequiresExactSize(t *testing.T) {
 	dir := t.TempDir()
 	good := filepath.Join(dir, "good.yuv")
@@ -2345,6 +2372,9 @@ func TestWriteMetadataJSON(t *testing.T) {
 	}
 	if doc.Go.SIMDTier == "" {
 		t.Fatalf("missing simd metadata: %+v", doc.Go)
+	}
+	if doc.Go.ToolPath == "" || doc.Go.ToolSHA256 == "" || doc.Tools["go"].SHA256 == "" {
+		t.Fatalf("missing go tool metadata: go=%+v tools=%+v", doc.Go, doc.Tools)
 	}
 	if doc.Environment.GOMAXPROCS <= 0 || doc.Environment.NumCPU <= 0 {
 		t.Fatalf("environment metadata=%+v", doc.Environment)

@@ -97,6 +97,8 @@ type benchConfig struct {
 	goldenInterval      int
 	keyInterval         int
 	goMaxProcs          int
+	goBin               string
+	goSHA256            string
 	goav1MaxThreads     int
 	goav1Effort         int
 	goav1SceneCut       bool
@@ -246,13 +248,17 @@ type qualitybenchMetadata struct {
 }
 
 type runtimeMetadata struct {
-	Version       string            `json:"version"`
-	GOOS          string            `json:"goos"`
-	GOARCH        string            `json:"goarch"`
-	SIMDTier      string            `json:"simd_tier"`
-	SIMDFeatures  []string          `json:"simd_features,omitempty"`
-	BuildSettings map[string]string `json:"build_settings,omitempty"`
-	Env           map[string]any    `json:"env,omitempty"`
+	Version            string            `json:"version"`
+	GOOS               string            `json:"goos"`
+	GOARCH             string            `json:"goarch"`
+	SIMDTier           string            `json:"simd_tier"`
+	SIMDFeatures       []string          `json:"simd_features,omitempty"`
+	BuildSettings      map[string]string `json:"build_settings,omitempty"`
+	Env                map[string]any    `json:"env,omitempty"`
+	ToolPath           string            `json:"tool_path,omitempty"`
+	ToolSHA256         string            `json:"tool_sha256,omitempty"`
+	ToolExpectedSHA256 string            `json:"tool_expected_sha256,omitempty"`
+	ToolSHA256Verified bool              `json:"tool_sha256_verified,omitempty"`
 }
 
 type environmentMetadata struct {
@@ -305,6 +311,8 @@ type metadataConfig struct {
 	GoldenInterval   int      `json:"golden_interval"`
 	KeyInterval      int      `json:"key_interval"`
 	GoMaxProcs       int      `json:"gomaxprocs"`
+	GoBin            string   `json:"go_bin,omitempty"`
+	GoSHA256         string   `json:"go_sha256,omitempty"`
 	GoGC             string   `json:"gogc,omitempty"`
 	GoAV1MaxThreads  int      `json:"goav1_max_threads"`
 	GoAV1Effort      int      `json:"goav1_effort"`
@@ -658,6 +666,8 @@ func parseFlags() (benchConfig, error) {
 	flag.IntVar(&cfg.goldenInterval, "golden", 0, "goav1 golden refresh interval (0 = default, negative = disabled)")
 	flag.IntVar(&cfg.keyInterval, "keyint", 0, "force periodic keyframes every N frames after frame 0 (0 = only initial key)")
 	flag.IntVar(&cfg.goMaxProcs, "gomaxprocs", 0, "set Go GOMAXPROCS for in-process goav1 encodes (0 = keep environment/runtime default)")
+	flag.StringVar(&cfg.goBin, "go-bin", "go", "Go executable used to run qualitybench; publish mode requires an absolute pinned path")
+	flag.StringVar(&cfg.goSHA256, "go-sha256", "", "expected SHA-256 of -go-bin for publish runs")
 	flag.IntVar(&cfg.goav1MaxThreads, "goav1-max-threads", 0, "goav1 MaxThreads execution-lane cap (0 = encoder automatic policy)")
 	flag.IntVar(&cfg.goav1Effort, "goav1-effort", 0, "goav1 WebRTC effort level (-2..4; 0 = default quality/speed balance)")
 	flag.BoolVar(&cfg.goav1SceneCut, "goav1-scene-cut", true, "allow goav1 automatic scene-cut keyframes")
@@ -878,6 +888,8 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"frame-metrics-csv",
 		"require-summary",
 		"gomaxprocs",
+		"go-bin",
+		"go-sha256",
 		"gogc",
 		"fps",
 		"layers",
@@ -936,6 +948,9 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	}
 	if cfg.goMaxProcs <= 0 {
 		return errors.New("publish requires -gomaxprocs > 0")
+	}
+	if err := requirePinnedPublishTool(cfg, "go", "go-bin", cfg.goBin, "go-sha256", cfg.goSHA256); err != nil {
+		return err
 	}
 	if strings.TrimSpace(cfg.goGC) == "" {
 		return errors.New("publish requires explicit non-empty -gogc")
@@ -2289,16 +2304,21 @@ func writeMetadataJSON(cfg benchConfig, filters map[string]bool, git gitMetadata
 	if err != nil {
 		return err
 	}
+	goTool := commandMetadataWithExpected(commandSetting(cfg.goBin, "go"), cfg.goSHA256, []string{"version"})
 	doc := qualitybenchMetadata{
 		GeneratedAtUTC: time.Now().UTC().Format(time.RFC3339Nano),
 		Go: runtimeMetadata{
-			Version:       runtime.Version(),
-			GOOS:          runtime.GOOS,
-			GOARCH:        runtime.GOARCH,
-			SIMDTier:      detectedSIMDTier(),
-			SIMDFeatures:  detectedSIMDFeatures(),
-			BuildSettings: goBuildSettings(),
-			Env:           benchenv.GoEnvForMetadata(),
+			Version:            runtime.Version(),
+			GOOS:               runtime.GOOS,
+			GOARCH:             runtime.GOARCH,
+			SIMDTier:           detectedSIMDTier(),
+			SIMDFeatures:       detectedSIMDFeatures(),
+			BuildSettings:      goBuildSettings(),
+			Env:                benchenv.GoEnvForMetadataWithTool(cfg.goBin),
+			ToolPath:           goTool.Path,
+			ToolSHA256:         goTool.SHA256,
+			ToolExpectedSHA256: goTool.ExpectedSHA256,
+			ToolSHA256Verified: goTool.SHA256Verified,
 		},
 		Environment:   environmentMetadataForRun(cfg),
 		Git:           git,
@@ -2414,6 +2434,8 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		GoldenInterval:   cfg.goldenInterval,
 		KeyInterval:      cfg.keyInterval,
 		GoMaxProcs:       cfg.goMaxProcs,
+		GoBin:            cfg.goBin,
+		GoSHA256:         cfg.goSHA256,
 		GoGC:             cfg.goGC,
 		GoAV1MaxThreads:  cfg.goav1MaxThreads,
 		GoAV1Effort:      cfg.goav1Effort,
@@ -2679,6 +2701,7 @@ func firstCommandLine(name string, args ...string) string {
 
 func toolMetadataForRun(cfg benchConfig) map[string]toolMetadata {
 	return map[string]toolMetadata{
+		"go":           commandMetadataWithExpected(commandSetting(cfg.goBin, "go"), cfg.goSHA256, []string{"version"}),
 		"ffmpeg":       commandMetadataWithExpected(commandSetting(cfg.ffmpegBin, "ffmpeg"), cfg.ffmpegSHA256, []string{"-hide_banner", "-version"}),
 		"aomenc":       commandMetadataWithExpected(commandSetting(cfg.aomencBin, "aomenc"), cfg.aomencSHA256, []string{"--version"}, []string{"--help"}),
 		"SvtAv1EncApp": commandMetadataWithExpected(commandSetting(cfg.svtBin, "SvtAv1EncApp"), cfg.svtSHA256, []string{"--version"}),
