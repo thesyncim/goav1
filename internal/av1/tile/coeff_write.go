@@ -876,6 +876,8 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 			dcValue = int(cv)
 		}
 	}
+	var lowerContexts [maxEOB]int8
+	lowerContextMap := coeffNZMapContexts2DFullArch(levels[:], TransformSize16x16, lowerContexts[:])
 
 	baseEOBCDFs := &cdfs.CoeffBaseEOB[txCtx][CoeffPlaneUV]
 	baseCDFs := &cdfs.CoeffBase[txCtx][CoeffPlaneUV]
@@ -890,10 +892,13 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 		} else {
 			ctx := 0
 			if pos != 0 {
-				pad := p.padded
-				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
-					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				ctx = int(lowerContexts[pos])
+				if !lowerContextMap {
+					pad := p.padded
+					mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
+						clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
+					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				}
 			}
 			if level == 0 {
 				w.WriteCDF4Zero(&baseCDFs[ctx])
@@ -1048,6 +1053,8 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 			dcValue = int(cv)
 		}
 	}
+	var lowerContexts [maxEOB]int8
+	lowerContextMap := coeffNZMapContexts2DFullArch(levels[:], TransformSize16x16, lowerContexts[:])
 
 	baseEOBCDFs := &cdfs.CoeffBaseEOB[txCtx][plane]
 	baseCDFs := &cdfs.CoeffBase[txCtx][plane]
@@ -1062,10 +1069,13 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 		} else {
 			ctx := 0
 			if pos != 0 {
-				pad := p.padded
-				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
-					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				ctx = int(lowerContexts[pos])
+				if !lowerContextMap {
+					pad := p.padded
+					mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
+						clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
+					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				}
 			}
 			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
 		}
@@ -1235,6 +1245,8 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 			dcValue = int(cv)
 		}
 	}
+	var lowerContexts [maxEOB]int8
+	lowerContextMap := coeffNZMapContexts2DFullArch(levels[:], TransformSize32x32, lowerContexts[:])
 
 	baseEOBCDFs := &cdfs.CoeffBaseEOB[txCtx][plane]
 	baseCDFs := &cdfs.CoeffBase[txCtx][plane]
@@ -1249,10 +1261,13 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 		} else {
 			ctx := 0
 			if pos != 0 {
-				pad := p.padded
-				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
-					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				ctx = int(lowerContexts[pos])
+				if !lowerContextMap {
+					pad := p.padded
+					mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
+						clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
+					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				}
 			}
 			if level == 0 {
 				w.WriteCDF4Zero(&baseCDFs[ctx])
@@ -1421,6 +1436,8 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 			dcValue = int(cv)
 		}
 	}
+	var lowerContexts [maxEOB]int8
+	lowerContextMap := coeffNZMapContexts2DFullArch(levels[:], TransformSize32x32, lowerContexts[:])
 
 	baseEOBCDFs := &cdfs.CoeffBaseEOB[txCtx][plane]
 	baseCDFs := &cdfs.CoeffBase[txCtx][plane]
@@ -1445,9 +1462,12 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 		p := &scanHot[c]
 		level := minInt(int(levels[p.padded]), MaxBaseBRRange)
 		pad := p.padded
-		mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
-			clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-		ctx := minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+		ctx := int(lowerContexts[p.pos])
+		if !lowerContextMap {
+			mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
+				clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
+			ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+		}
 		if level == 0 {
 			w.WriteCDF4Zero(&baseCDFs[ctx])
 		} else {
