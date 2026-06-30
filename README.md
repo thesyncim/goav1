@@ -529,8 +529,12 @@ categories, absolute decoder paths and matching SHA-256 pins, an absolute
 pinned Go executable path with matching SHA-256, explicit
 `GOMAXPROCS`/`GOGC`, structured CPU affinity, power mode, thermal state,
 frequency policy, and background-load fields, with hidden Go runtime environment
-knobs unset. Use `make bench-corpus` only for exploratory local runs where
-missing decoder columns or explicitly unpinned generator tools are acceptable.
+knobs unset. Published external decoder timing runs under an allowlisted
+subprocess environment: path/temp/home variables are preserved, locale/timezone
+are forced to `LANG=C`, `LC_ALL=C`, `TZ=UTC`, and OpenMP, malloc, and
+dynamic-loader overrides are filtered and listed in the JSON report. Use
+`make bench-corpus` only for exploratory local runs where missing decoder
+columns or explicitly unpinned generator tools are acceptable.
 Exploratory timing without `manifest.tsv` now requires
 `GOAV1_BENCH_CORPUS_ALLOW_UNMANIFESTED=1`, so stale or partial ignored corpus
 data cannot be used by accident.

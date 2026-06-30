@@ -22,6 +22,9 @@ Publishable rows must satisfy these controls:
   explicit runner flags for intentional controls. Go microbenchmark publish rows
   run the benchmark subprocess under a sanitized command environment and record
   the effective environment plus filtered high-impact ambient variable names.
+- Generated decoder corpus publish rows run external decoders under the same
+  sanitized command environment and record the effective environment plus
+  filtered OpenMP, malloc, and dynamic-loader variable names.
 - Record structured CPU affinity, power mode, thermal state, frequency policy,
   and background-load fields. When the OS exposes CPU affinity/frequency
   probes, metadata records the observed state and publish mode rejects a

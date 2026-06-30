@@ -42,6 +42,118 @@ func PublishAmbientGoEnvVars() []string {
 	return append(out, publishBlockedGoEnvVars...)
 }
 
+const PublishCommandEnvPolicy = "allowlist PATH, HOME, TMPDIR, TEMP, TMP, XDG_RUNTIME_DIR, SystemRoot, WINDIR, ComSpec; force LANG=C, LC_ALL=C, TZ=UTC; apply explicit benchmark overrides"
+
+var publishCommandEnvAllowlist = []string{
+	"PATH",
+	"HOME",
+	"TMPDIR",
+	"TEMP",
+	"TMP",
+	"XDG_RUNTIME_DIR",
+	"SystemRoot",
+	"WINDIR",
+	"ComSpec",
+}
+
+var publishCommandEnvReportedFilters = []string{
+	"LANG",
+	"LC_ALL",
+	"LC_CTYPE",
+	"TZ",
+	"OMP_NUM_THREADS",
+	"OMP_DYNAMIC",
+	"OMP_PROC_BIND",
+	"OMP_PLACES",
+	"GOMP_CPU_AFFINITY",
+	"KMP_AFFINITY",
+	"KMP_HW_SUBSET",
+	"KMP_BLOCKTIME",
+	"KMP_SETTINGS",
+	"MKL_NUM_THREADS",
+	"OPENBLAS_NUM_THREADS",
+	"VECLIB_MAXIMUM_THREADS",
+	"BLIS_NUM_THREADS",
+	"NUMEXPR_NUM_THREADS",
+	"RAYON_NUM_THREADS",
+	"TBB_NUM_THREADS",
+	"LD_PRELOAD",
+	"LD_LIBRARY_PATH",
+	"DYLD_INSERT_LIBRARIES",
+	"DYLD_LIBRARY_PATH",
+	"DYLD_FRAMEWORK_PATH",
+	"DYLD_FALLBACK_LIBRARY_PATH",
+	"MallocNanoZone",
+}
+
+var publishCommandEnvReportedPrefixes = []string{
+	"MALLOC_",
+}
+
+func PublishCommandEnvMap(overrides map[string]string) map[string]string {
+	env := make(map[string]string, len(publishCommandEnvAllowlist)+len(overrides)+3)
+	for _, key := range publishCommandEnvAllowlist {
+		if value, ok := os.LookupEnv(key); ok {
+			env[key] = value
+		}
+	}
+	env["LANG"] = "C"
+	env["LC_ALL"] = "C"
+	env["TZ"] = "UTC"
+	for key, value := range overrides {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if value == "" {
+			delete(env, key)
+			continue
+		}
+		env[key] = value
+	}
+	return env
+}
+
+func PublishCommandEnvList(overrides map[string]string) []string {
+	env := PublishCommandEnvMap(overrides)
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, key+"="+env[key])
+	}
+	return out
+}
+
+func PresentPublishCommandFilteredEnv() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, key := range publishCommandEnvReportedFilters {
+		if value, ok := os.LookupEnv(key); ok && value != "" {
+			seen[key] = true
+			out = append(out, key)
+		}
+	}
+	for _, item := range os.Environ() {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok || value == "" || seen[key] {
+			continue
+		}
+		for _, prefix := range publishCommandEnvReportedPrefixes {
+			if strings.HasPrefix(key, prefix) {
+				seen[key] = true
+				out = append(out, key)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func GoEnvForMetadata() map[string]any {
 	return GoEnvForMetadataWithTool("go")
 }

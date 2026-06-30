@@ -85,6 +85,7 @@ import (
 	"time"
 
 	"github.com/thesyncim/goav1/internal/av1/ivf"
+	"github.com/thesyncim/goav1/internal/benchenv"
 )
 
 // crossBenchRuns is the measured sample count (N>=7 per the methodology). The
@@ -250,12 +251,23 @@ func runExternal(bin string, args []string) error {
 }
 
 func runExternalWithTimeout(timeout time.Duration, bin string, args []string) error {
+	return runExternalWithTimeoutAndEnv(timeout, bin, args, nil)
+}
+
+func runExternalWithEnv(bin string, args []string, env []string) error {
+	return runExternalWithTimeoutAndEnv(externalDecoderCommandTimeout, bin, args, env)
+}
+
+func runExternalWithTimeoutAndEnv(timeout time.Duration, bin string, args []string, env []string) error {
 	if timeout <= 0 {
 		timeout = externalDecoderCommandTimeout
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
+	if env != nil {
+		cmd.Env = append([]string(nil), env...)
+	}
 	var sink boundedExternalOutput
 	cmd.Stdout = &sink
 	cmd.Stderr = &sink
@@ -329,6 +341,33 @@ func TestRunExternalReportsTimeout(t *testing.T) {
 	err := runExternalWithTimeout(10*time.Millisecond, bin, nil)
 	if err == nil || !strings.Contains(err.Error(), "external decoder timed out after 10ms") {
 		t.Fatalf("runExternalWithTimeout error=%v, want timeout", err)
+	}
+}
+
+func TestRunExternalWithEnvSanitizesAmbient(t *testing.T) {
+	t.Setenv("OMP_NUM_THREADS", "99")
+	t.Setenv("DYLD_INSERT_LIBRARIES", "/tmp/not-real.dylib")
+	bin := filepath.Join(t.TempDir(), "env-decoder")
+	script := `#!/bin/sh
+if [ -n "$OMP_NUM_THREADS" ]; then
+  echo "OMP_NUM_THREADS leaked"
+  exit 21
+fi
+if [ -n "$DYLD_INSERT_LIBRARIES" ]; then
+  echo "DYLD_INSERT_LIBRARIES leaked"
+  exit 22
+fi
+if [ "$LANG" != "C" ] || [ "$LC_ALL" != "C" ] || [ "$TZ" != "UTC" ]; then
+  echo "locale/timezone controls missing"
+  exit 23
+fi
+exit 0
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := runExternalWithEnv(bin, nil, benchenv.PublishCommandEnvList(nil)); err != nil {
+		t.Fatalf("runExternalWithEnv: %v", err)
 	}
 }
 

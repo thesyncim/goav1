@@ -149,6 +149,14 @@ func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
 		t.Fatalf("broad package error=%v", err)
 	}
 
+	localCorpus := cfg
+	localCorpus.Pkg = "./internal/av1/encoder"
+	localCorpus.Bench = "^BenchmarkVideoEncoderRealC1080p$"
+	if err := validateConfig(localCorpus, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "/tmp/corpus/realC.yuv") {
+		t.Fatalf("local corpus benchmark error=%v", err)
+	}
+
 	badGoHash := cfg
 	badGoHash.GoSHA256 = strings.Repeat("0", 64)
 	if err := validateConfig(badGoHash, gitMetadata{Commit: "abc"}); err == nil ||

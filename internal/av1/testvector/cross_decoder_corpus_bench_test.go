@@ -1592,6 +1592,8 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 	t.Setenv(envBenchCorpusThermalState, "cool start")
 	t.Setenv(envBenchCorpusFrequencyPolicy, "automatic")
 	t.Setenv(envBenchCorpusBackgroundLoad, "idle machine")
+	t.Setenv("OMP_NUM_THREADS", "99")
+	t.Setenv("DYLD_INSERT_LIBRARIES", "/tmp/not-real.dylib")
 	dir := t.TempDir()
 	md5Hex := "0123456789abcdeffedcba9876543210"
 	md5, err := ParseMD5Hex([]byte(md5Hex))
@@ -1703,6 +1705,14 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 		report.Environment.NumCPU <= 0 || report.Environment.PATH == "" {
 		t.Fatalf("environment=%+v", report.Environment)
 	}
+	if report.Environment.ExternalCommandPolicy == "" ||
+		report.Environment.ExternalCommandEnv["LC_ALL"] != "C" ||
+		report.Environment.ExternalCommandEnv["TZ"] != "UTC" ||
+		report.Environment.ExternalCommandEnv["OMP_NUM_THREADS"] != "" ||
+		!containsString(report.Environment.ExternalFilteredEnv, "OMP_NUM_THREADS") ||
+		!containsString(report.Environment.ExternalFilteredEnv, "DYLD_INSERT_LIBRARIES") {
+		t.Fatalf("external command environment=%+v", report.Environment)
+	}
 	if !strings.Contains(report.Timing.Statistic, "median measured") ||
 		report.Timing.ExternalCommandTimeout != externalDecoderCommandTimeout.String() ||
 		!strings.Contains(report.Timing.GoAV1InputModel, "reads the IVF file") {
@@ -1742,6 +1752,15 @@ func TestValidateCorpusPublishGitClean(t *testing.T) {
 		!strings.Contains(err.Error(), "metadata unavailable") {
 		t.Fatalf("missing git error=%v", err)
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestValidateCorpusPublishEnvironmentNotes(t *testing.T) {
@@ -2865,23 +2884,26 @@ type corpusPublishGit struct {
 }
 
 type corpusPublishEnvironment struct {
-	GoVersion            string            `json:"go_version"`
-	GOOS                 string            `json:"goos"`
-	GOARCH               string            `json:"goarch"`
-	GOMAXPROCS           int               `json:"gomaxprocs"`
-	GOMAXPROCSEnv        string            `json:"gomaxprocs_env,omitempty"`
-	NumCPU               int               `json:"num_cpu"`
-	SIMDTier             string            `json:"simd_tier"`
-	SIMDFeatures         []string          `json:"simd_features,omitempty"`
-	BuildSettings        map[string]string `json:"build_settings,omitempty"`
-	GoEnv                map[string]any    `json:"go_env,omitempty"`
-	GoToolPath           string            `json:"go_tool_path,omitempty"`
-	GoToolSHA256         string            `json:"go_tool_sha256,omitempty"`
-	GoToolExpectedSHA256 string            `json:"go_tool_expected_sha256,omitempty"`
-	GoToolSHA256Verified bool              `json:"go_tool_sha256_verified,omitempty"`
-	GoToolError          string            `json:"go_tool_error,omitempty"`
-	BlockedGoEnv         map[string]string `json:"blocked_go_env,omitempty"`
-	ObservedCPUState     benchenv.CPUState `json:"observed_cpu_state"`
+	GoVersion             string            `json:"go_version"`
+	GOOS                  string            `json:"goos"`
+	GOARCH                string            `json:"goarch"`
+	GOMAXPROCS            int               `json:"gomaxprocs"`
+	GOMAXPROCSEnv         string            `json:"gomaxprocs_env,omitempty"`
+	NumCPU                int               `json:"num_cpu"`
+	SIMDTier              string            `json:"simd_tier"`
+	SIMDFeatures          []string          `json:"simd_features,omitempty"`
+	BuildSettings         map[string]string `json:"build_settings,omitempty"`
+	GoEnv                 map[string]any    `json:"go_env,omitempty"`
+	GoToolPath            string            `json:"go_tool_path,omitempty"`
+	GoToolSHA256          string            `json:"go_tool_sha256,omitempty"`
+	GoToolExpectedSHA256  string            `json:"go_tool_expected_sha256,omitempty"`
+	GoToolSHA256Verified  bool              `json:"go_tool_sha256_verified,omitempty"`
+	GoToolError           string            `json:"go_tool_error,omitempty"`
+	BlockedGoEnv          map[string]string `json:"blocked_go_env,omitempty"`
+	ExternalCommandPolicy string            `json:"external_command_env_policy,omitempty"`
+	ExternalCommandEnv    map[string]string `json:"external_command_env,omitempty"`
+	ExternalFilteredEnv   []string          `json:"external_command_filtered_env,omitempty"`
+	ObservedCPUState      benchenv.CPUState `json:"observed_cpu_state"`
 
 	CPUModel        string `json:"cpu_model,omitempty"`
 	Hostname        string `json:"hostname,omitempty"`
@@ -3342,6 +3364,10 @@ func TestCrossDecoderCorpus(t *testing.T) {
 		inProcess:  true,
 		resultSlot: 0,
 	}}
+	var externalCommandEnv []string
+	if publish {
+		externalCommandEnv = benchenv.PublishCommandEnvList(nil)
+	}
 
 	// External startup baselines are measured before the interleaved decode
 	// pass; the report still prints both raw and startup-adjusted timings.
@@ -3351,7 +3377,7 @@ func TestCrossDecoderCorpus(t *testing.T) {
 		t.Logf("cross-corpus: %s resolved to %s", dec.name, bin)
 
 		startupSamples, err := measureCorpusDurations(1, crossBenchRuns, func() error {
-			_ = runExternal(bin, dec.startupArgs(bin))
+			_ = runExternalWithEnv(bin, dec.startupArgs(bin), externalCommandEnv)
 			return nil
 		})
 		startup := corpusSelectedDuration(startupSamples)
@@ -3400,7 +3426,7 @@ func TestCrossDecoderCorpus(t *testing.T) {
 		} else {
 			dec := timer.external
 			samples, err = measureCorpusDurations(1, crossBenchRuns, func() error {
-				return runExternal(timer.bin, dec.decodeArgs(timer.bin, clip.ivfPath))
+				return runExternalWithEnv(timer.bin, dec.decodeArgs(timer.bin, clip.ivfPath), externalCommandEnv)
 			})
 			if err != nil {
 				if requiredDecoders[dec.name] {
@@ -3652,38 +3678,41 @@ func currentCorpusPublishEnvironment() corpusPublishEnvironment {
 	hostname, _ := os.Hostname()
 	goToolPath, goExpectedSHA, goSHA, goVerified, goErr := corpusPublishGoToolMetadata()
 	return corpusPublishEnvironment{
-		GoVersion:            runtime.Version(),
-		GOOS:                 runtime.GOOS,
-		GOARCH:               runtime.GOARCH,
-		GOMAXPROCS:           runtime.GOMAXPROCS(0),
-		GOMAXPROCSEnv:        os.Getenv("GOMAXPROCS"),
-		NumCPU:               runtime.NumCPU(),
-		SIMDTier:             corpusSIMDTier(),
-		SIMDFeatures:         corpusSIMDFeatures(),
-		BuildSettings:        corpusGoBuildSettings(),
-		GoEnv:                benchenv.GoEnvForMetadataWithTool(goToolPath),
-		GoToolPath:           goToolPath,
-		GoToolSHA256:         goSHA,
-		GoToolExpectedSHA256: goExpectedSHA,
-		GoToolSHA256Verified: goVerified,
-		GoToolError:          goErr,
-		BlockedGoEnv:         corpusBlockedGoEnv(),
-		ObservedCPUState:     benchenv.ObserveCPUState(),
-		CPUModel:             detectCorpusCPUModel(),
-		Hostname:             hostname,
-		OSVersion:            detectCorpusOSVersion(),
-		KernelVersion:        detectCorpusKernelVersion(),
-		PATH:                 os.Getenv("PATH"),
-		GOFLAGS:              os.Getenv("GOFLAGS"),
-		GOGC:                 os.Getenv("GOGC"),
-		GOMEMLIMIT:           os.Getenv("GOMEMLIMIT"),
-		GODEBUG:              os.Getenv("GODEBUG"),
-		CPUAffinity:          strings.TrimSpace(os.Getenv(envBenchCorpusCPUAffinity)),
-		PowerMode:            strings.TrimSpace(os.Getenv(envBenchCorpusPowerMode)),
-		ThermalState:         strings.TrimSpace(os.Getenv(envBenchCorpusThermalState)),
-		FrequencyPolicy:      strings.TrimSpace(os.Getenv(envBenchCorpusFrequencyPolicy)),
-		BackgroundLoad:       strings.TrimSpace(os.Getenv(envBenchCorpusBackgroundLoad)),
-		Notes:                strings.TrimSpace(os.Getenv(envBenchCorpusEnvironmentNotes)),
+		GoVersion:             runtime.Version(),
+		GOOS:                  runtime.GOOS,
+		GOARCH:                runtime.GOARCH,
+		GOMAXPROCS:            runtime.GOMAXPROCS(0),
+		GOMAXPROCSEnv:         os.Getenv("GOMAXPROCS"),
+		NumCPU:                runtime.NumCPU(),
+		SIMDTier:              corpusSIMDTier(),
+		SIMDFeatures:          corpusSIMDFeatures(),
+		BuildSettings:         corpusGoBuildSettings(),
+		GoEnv:                 benchenv.GoEnvForMetadataWithTool(goToolPath),
+		GoToolPath:            goToolPath,
+		GoToolSHA256:          goSHA,
+		GoToolExpectedSHA256:  goExpectedSHA,
+		GoToolSHA256Verified:  goVerified,
+		GoToolError:           goErr,
+		BlockedGoEnv:          corpusBlockedGoEnv(),
+		ExternalCommandPolicy: benchenv.PublishCommandEnvPolicy,
+		ExternalCommandEnv:    benchenv.PublishCommandEnvMap(nil),
+		ExternalFilteredEnv:   benchenv.PresentPublishCommandFilteredEnv(),
+		ObservedCPUState:      benchenv.ObserveCPUState(),
+		CPUModel:              detectCorpusCPUModel(),
+		Hostname:              hostname,
+		OSVersion:             detectCorpusOSVersion(),
+		KernelVersion:         detectCorpusKernelVersion(),
+		PATH:                  os.Getenv("PATH"),
+		GOFLAGS:               os.Getenv("GOFLAGS"),
+		GOGC:                  os.Getenv("GOGC"),
+		GOMEMLIMIT:            os.Getenv("GOMEMLIMIT"),
+		GODEBUG:               os.Getenv("GODEBUG"),
+		CPUAffinity:           strings.TrimSpace(os.Getenv(envBenchCorpusCPUAffinity)),
+		PowerMode:             strings.TrimSpace(os.Getenv(envBenchCorpusPowerMode)),
+		ThermalState:          strings.TrimSpace(os.Getenv(envBenchCorpusThermalState)),
+		FrequencyPolicy:       strings.TrimSpace(os.Getenv(envBenchCorpusFrequencyPolicy)),
+		BackgroundLoad:        strings.TrimSpace(os.Getenv(envBenchCorpusBackgroundLoad)),
+		Notes:                 strings.TrimSpace(os.Getenv(envBenchCorpusEnvironmentNotes)),
 	}
 }
 

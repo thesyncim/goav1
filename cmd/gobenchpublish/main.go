@@ -370,7 +370,34 @@ func validatePublishBenchmarkSelection(cfg config) error {
 	if !isExactBenchmarkRegexp(bench) {
 		return fmt.Errorf("publish requires -bench to select exactly one benchmark function as ^BenchmarkName$; subbenchmark output rows are allowed only below that function, got %q", cfg.Bench)
 	}
+	if reason := unpublishableBenchmarkSelectionReason(pkg, exactBenchmarkName(bench)); reason != "" {
+		return fmt.Errorf("publish benchmark %s in %s is not allowed: %s", exactBenchmarkName(bench), pkg, reason)
+	}
 	return nil
+}
+
+var publishBlockedLocalInputBenchmarks = map[string]string{
+	"BenchmarkVideoEncoderRealC1080p":  "reads /tmp/corpus/realC.yuv without a committed input manifest or SHA-256",
+	"BenchmarkVideoEncoderRealA1080p":  "reads /tmp/corpus/realA.yuv without a committed input manifest or SHA-256",
+	"BenchmarkVideoEncoderScreen1080p": "reads /tmp/corpus/screen.yuv without a committed input manifest or SHA-256",
+}
+
+func unpublishableBenchmarkSelectionReason(pkg, benchmark string) string {
+	if !packageLooksLikeEncoder(pkg) {
+		return ""
+	}
+	if reason, ok := publishBlockedLocalInputBenchmarks[benchmark]; ok {
+		return reason + "; use cmd/qualitybench publish or add a manifest-backed publisher for this corpus"
+	}
+	return ""
+}
+
+func packageLooksLikeEncoder(pkg string) bool {
+	pkg = filepath.ToSlash(strings.TrimSpace(pkg))
+	pkg = strings.TrimSuffix(pkg, "/")
+	return pkg == "./internal/av1/encoder" ||
+		pkg == "internal/av1/encoder" ||
+		strings.HasSuffix(pkg, "/internal/av1/encoder")
 }
 
 func isExactBenchmarkRegexp(bench string) bool {
@@ -586,7 +613,7 @@ func goTestArgs(cfg config) []string {
 
 func commandEnv(cfg config) []string {
 	if cfg.Publish {
-		return envMapToList(publishBenchmarkCommandEnvMap(cfg))
+		return benchenv.PublishCommandEnvList(publishBenchmarkCommandEnvOverrides(cfg))
 	}
 	env := os.Environ()
 	env = setEnv(env, "GOMAXPROCS", strconv.Itoa(cfg.GoMaxProcs))
@@ -596,108 +623,22 @@ func commandEnv(cfg config) []string {
 	return env
 }
 
-const publishBenchmarkCommandEnvPolicy = "allowlist PATH, HOME, TMPDIR, TEMP, TMP, XDG_RUNTIME_DIR, SystemRoot, WINDIR, ComSpec; force LANG=C, LC_ALL=C, TZ=UTC; set GOMAXPROCS and GOGC from explicit flags"
-
-var publishBenchmarkCommandEnvAllowlist = []string{
-	"PATH",
-	"HOME",
-	"TMPDIR",
-	"TEMP",
-	"TMP",
-	"XDG_RUNTIME_DIR",
-	"SystemRoot",
-	"WINDIR",
-	"ComSpec",
-}
-
-var publishBenchmarkCommandEnvReportedFilters = []string{
-	"LANG",
-	"LC_ALL",
-	"LC_CTYPE",
-	"TZ",
-	"OMP_NUM_THREADS",
-	"OMP_DYNAMIC",
-	"OMP_PROC_BIND",
-	"OMP_PLACES",
-	"GOMP_CPU_AFFINITY",
-	"KMP_AFFINITY",
-	"KMP_HW_SUBSET",
-	"KMP_BLOCKTIME",
-	"KMP_SETTINGS",
-	"MKL_NUM_THREADS",
-	"OPENBLAS_NUM_THREADS",
-	"VECLIB_MAXIMUM_THREADS",
-	"BLIS_NUM_THREADS",
-	"NUMEXPR_NUM_THREADS",
-	"RAYON_NUM_THREADS",
-	"TBB_NUM_THREADS",
-	"LD_PRELOAD",
-	"LD_LIBRARY_PATH",
-	"DYLD_INSERT_LIBRARIES",
-	"DYLD_LIBRARY_PATH",
-	"DYLD_FRAMEWORK_PATH",
-	"DYLD_FALLBACK_LIBRARY_PATH",
-	"MallocNanoZone",
-}
-
-var publishBenchmarkCommandEnvReportedPrefixes = []string{
-	"MALLOC_",
-}
+const publishBenchmarkCommandEnvPolicy = benchenv.PublishCommandEnvPolicy
 
 func publishBenchmarkCommandEnvMap(cfg config) map[string]string {
-	env := make(map[string]string, len(publishBenchmarkCommandEnvAllowlist)+5)
-	for _, key := range publishBenchmarkCommandEnvAllowlist {
-		if value, ok := os.LookupEnv(key); ok {
-			env[key] = value
-		}
-	}
-	env["LANG"] = "C"
-	env["LC_ALL"] = "C"
-	env["TZ"] = "UTC"
-	env["GOMAXPROCS"] = strconv.Itoa(cfg.GoMaxProcs)
-	if cfg.GOGC != "" {
-		env["GOGC"] = cfg.GOGC
-	}
-	return env
+	return benchenv.PublishCommandEnvMap(publishBenchmarkCommandEnvOverrides(cfg))
 }
 
-func envMapToList(env map[string]string) []string {
-	keys := make([]string, 0, len(env))
-	for key := range env {
-		keys = append(keys, key)
+func publishBenchmarkCommandEnvOverrides(cfg config) map[string]string {
+	overrides := map[string]string{"GOMAXPROCS": strconv.Itoa(cfg.GoMaxProcs)}
+	if cfg.GOGC != "" {
+		overrides["GOGC"] = cfg.GOGC
 	}
-	sort.Strings(keys)
-	out := make([]string, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, key+"="+env[key])
-	}
-	return out
+	return overrides
 }
 
 func presentPublishBenchmarkCommandFilteredEnv() []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, key := range publishBenchmarkCommandEnvReportedFilters {
-		if value, ok := os.LookupEnv(key); ok && value != "" {
-			seen[key] = true
-			out = append(out, key)
-		}
-	}
-	for _, item := range os.Environ() {
-		key, value, ok := strings.Cut(item, "=")
-		if !ok || value == "" || seen[key] {
-			continue
-		}
-		for _, prefix := range publishBenchmarkCommandEnvReportedPrefixes {
-			if strings.HasPrefix(key, prefix) {
-				seen[key] = true
-				out = append(out, key)
-				break
-			}
-		}
-	}
-	sort.Strings(out)
-	return out
+	return benchenv.PresentPublishCommandFilteredEnv()
 }
 
 func setEnv(env []string, key, value string) []string {

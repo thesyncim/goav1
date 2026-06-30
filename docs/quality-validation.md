@@ -153,7 +153,11 @@ counts, `GOGC`, command line, output SHA-256, and run controls. In publish mode
 the benchmark subprocess runs under an allowlisted environment: path/temp/home
 variables are preserved, locale/timezone are forced to `LANG=C`, `LC_ALL=C`,
 `TZ=UTC`, and metadata records both that effective command environment and
-high-impact ambient variables that were filtered out. Example:
+high-impact ambient variables that were filtered out. Publish mode rejects
+local profiler benchmarks whose inputs come from `/tmp/corpus` without a
+manifest and input SHA-256, such as the 1080p real-content encoder probes; use
+`qualitybench -publish` for claim-supporting encoder comparisons until those
+probes have a manifest-backed publisher. Example:
 
 ```sh
 GO_BIN=$(command -v go)
