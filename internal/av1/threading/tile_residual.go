@@ -298,8 +298,10 @@ type FrameWorkTileResidualScratch struct {
 	// records the in-order predict/reconstruct op stream; reconVisits holds the
 	// block-loop visits referenced by block-begin events; reconBlocks holds the
 	// transform blocks referenced by TXB events; coeffArena holds the deep-copied
-	// coefficients each TXB block references (the live decode reuses one scratch
-	// coefficient slice per TXB, so the buffered slice must not alias it).
+	// coefficients each TXB block references plus, for non-zero TXBs, the compact
+	// dirty-position tail carried in the buffered coefficient slice capacity.
+	// The live decode reuses one scratch coefficient slice per TXB, so buffered
+	// coefficients must not alias it.
 	// paletteArena holds deep-copied palette colour maps for buffered visits
 	// whose prediction is palette-coded: the decoded BlockLoopVisit.Prediction
 	// carries YMap/UVMap pointers into a single per-tile PaletteModeScratch that
@@ -1610,7 +1612,7 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.Blo
 		if recon == nil {
 			recon = c.fusedReconState()
 		}
-		if err := recon.reconstructTXB(visit, block, c.state.CurrentBaseQIdx); err != nil {
+		if err := recon.reconstructTXBWithNonZero(visit, block, c.scratch.Coeff.CoeffDirtyPositions(), c.state.CurrentBaseQIdx); err != nil {
 			return err
 		}
 	}
@@ -1638,9 +1640,15 @@ func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLo
 	if block.Result.AllZero {
 		buffered.Coeffs = nil
 	} else if n := len(block.Coeffs); n > 0 {
+		dirty := c.scratch.Coeff.CoeffDirtyPositions()
+		dirtyLen := len(dirty)
+		if dirtyLen > int(^uint16(0)) {
+			return ErrInvalidBatch
+		}
 		off := len(c.scratch.coeffArena)
 		c.scratch.coeffArena = append(c.scratch.coeffArena, block.Coeffs...)
-		buffered.Coeffs = c.scratch.coeffArena[off : off+n : off+n]
+		c.scratch.coeffArena = append(c.scratch.coeffArena, dirty...)
+		buffered.Coeffs = c.scratch.coeffArena[off : off+n : off+n+dirtyLen]
 	} else {
 		buffered.Coeffs = nil
 	}
@@ -1684,7 +1692,8 @@ func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconE
 			if visit == nil || ev.index < 0 || idx >= len(blocks) {
 				return ErrInvalidBatch
 			}
-			if err := s.reconstructTXB(visit, &blocks[idx], ev.currentQIndex); err != nil {
+			dirty := bufferedCoeffDirtyPositions(&blocks[idx])
+			if err := s.reconstructTXBWithNonZero(visit, &blocks[idx], dirty, ev.currentQIndex); err != nil {
 				return err
 			}
 		default:
@@ -1692,6 +1701,18 @@ func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconE
 		}
 	}
 	return nil
+}
+
+func bufferedCoeffDirtyPositions(block *tile.BlockCoeffBlock) []int16 {
+	// Deferred reconstruction stores the copied dirty-position list directly
+	// after the coefficient payload and keeps Coeffs length at the real
+	// coefficient count. The spare capacity is an internal side channel, not a
+	// public slice growth promise.
+	if block == nil || len(block.Coeffs) == cap(block.Coeffs) {
+		return nil
+	}
+	n := len(block.Coeffs)
+	return block.Coeffs[n:cap(block.Coeffs):cap(block.Coeffs)]
 }
 
 // frameWorkReconSB records one superblock's span of buffered reconstruction
@@ -1922,6 +1943,10 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row i
 // currentQIndex is snapshotted by the caller because the live delta-q state
 // advances past this block before a deferred pass would run.
 func (s *frameWorkReconState) reconstructTXB(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, currentQIndex uint8) error {
+	return s.reconstructTXBWithNonZero(visit, block, nil, currentQIndex)
+}
+
+func (s *frameWorkReconState) reconstructTXBWithNonZero(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, nonzero []int16, currentQIndex uint8) error {
 	if s.predict == nil && s.predictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra && !visit.Prefix.SkipTransform {
 		if block.Plane != 0 && frameWorkVisitUsesCFLPtr(visit) {
 			if err := s.predictDeferredCFLChroma(); err != nil {
@@ -1952,19 +1977,19 @@ func (s *frameWorkReconState) reconstructTXB(visit *tile.BlockLoopVisit, block *
 		if err != nil {
 			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 		}
-		if err := s.batch.reconstructBlockCoeffCoreWithGeometry(geom, block, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
+		if err := s.batch.reconstructBlockCoeffCoreWithGeometryAndNonZero(geom, block, nonzero, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
 			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 		}
 		s.stats.Residuals++
 		return nil
 	}
-	if ok, err := s.batch.reconstructBlockCoeffLumaPrimed(s.index, visit.Block, block, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
+	if ok, err := s.batch.reconstructBlockCoeffLumaPrimed(s.index, visit.Block, block, nonzero, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
 		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 	} else if ok {
 		s.stats.Residuals++
 		return nil
 	}
-	if err := s.batch.reconstructBlockCoeffCoreTrusted(s.index, visit.Block, block, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
+	if err := s.batch.reconstructBlockCoeffCoreTrustedWithNonZero(s.index, visit.Block, block, nonzero, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
 		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 	}
 	s.stats.Residuals++

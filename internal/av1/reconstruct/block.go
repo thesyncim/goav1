@@ -84,7 +84,14 @@ func ReconstructPlaneBlockVisibleTrustedWithGeometryAndScan(dst frame.Plane, byt
 // ReconstructPlaneBlockVisibleTrustedAtWithGeometryAndScan is the trusted
 // decoder hot path when the caller already sliced dst to the block origin.
 func ReconstructPlaneBlockVisibleTrustedAtWithGeometryAndScan(dst []byte, dstStride int, bytesPerSample int, bitDepth uint8, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, scan []int16, scanSize transform.Size, txScale uint8, int32Scratch []int32, residualScratch []int16, cfg Block) error {
-	return reconstructPlaneBlockTrustedAtWithGeometry(dst, dstStride, bytesPerSample, bitDepth, visibleWidth, visibleHeight, quantized, quantizedStride, scan, scanSize, txScale, int32Scratch, residualScratch, cfg)
+	return reconstructPlaneBlockTrustedAtWithGeometry(dst, dstStride, bytesPerSample, bitDepth, visibleWidth, visibleHeight, quantized, quantizedStride, scan, nil, scanSize, txScale, int32Scratch, residualScratch, cfg)
+}
+
+// ReconstructPlaneBlockVisibleTrustedAtWithGeometryScanAndNonZero is the
+// decoder hot path used when coefficient decode already produced a compact
+// non-zero raster-position list.
+func ReconstructPlaneBlockVisibleTrustedAtWithGeometryScanAndNonZero(dst []byte, dstStride int, bytesPerSample int, bitDepth uint8, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, scan []int16, nonzero []int16, scanSize transform.Size, txScale uint8, int32Scratch []int32, residualScratch []int16, cfg Block) error {
+	return reconstructPlaneBlockTrustedAtWithGeometry(dst, dstStride, bytesPerSample, bitDepth, visibleWidth, visibleHeight, quantized, quantizedStride, scan, nonzero, scanSize, txScale, int32Scratch, residualScratch, cfg)
 }
 
 func reconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, int32Scratch []int32, residualScratch []int16, cfg Block) error {
@@ -149,10 +156,10 @@ func reconstructPlaneBlockTrustedWithGeometry(dst frame.Plane, bytesPerSample in
 	dstOffset := y*dst.Stride + x*bytesPerSample
 	rowBytes := visibleWidth * bytesPerSample
 	dstLen := (visibleHeight-1)*dst.Stride + rowBytes
-	return reconstructPlaneBlockTrustedAtWithGeometry(dst.Pix[dstOffset:dstOffset+dstLen:dstOffset+dstLen], dst.Stride, bytesPerSample, bitDepth, visibleWidth, visibleHeight, quantized, quantizedStride, scan, scanSize, txScale, int32Scratch, residualScratch, cfg)
+	return reconstructPlaneBlockTrustedAtWithGeometry(dst.Pix[dstOffset:dstOffset+dstLen:dstOffset+dstLen], dst.Stride, bytesPerSample, bitDepth, visibleWidth, visibleHeight, quantized, quantizedStride, scan, nil, scanSize, txScale, int32Scratch, residualScratch, cfg)
 }
 
-func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytesPerSample int, bitDepth uint8, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, scan []int16, scanSize transform.Size, txScale uint8, int32Scratch []int32, residualScratch []int16, cfg Block) error {
+func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytesPerSample int, bitDepth uint8, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, scan []int16, nonzero []int16, scanSize transform.Size, txScale uint8, int32Scratch []int32, residualScratch []int16, cfg Block) error {
 	width := int(cfg.Size.Width)
 	height := int(cfg.Size.Height)
 	blockLen := width * height
@@ -180,19 +187,26 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 		return nil
 	}
 
-	useSparseDequant := eob > 0 && len(scan) >= eob && eob*sparseDequantWorkFactor <= dequantLen
+	useNonZeroDequant := len(nonzero) > 0 && len(nonzero)*sparseDequantWorkFactor <= dequantLen
+	useSparseDequant := !useNonZeroDequant && eob > 0 && len(scan) >= eob && eob*sparseDequantWorkFactor <= dequantLen
 	activeRows := 0
-	if useSparseDequant {
+	if useNonZeroDequant {
+		activeRows = activeTransformRowsFromPositions(nonzero, scanHeight)
+	} else if useSparseDequant {
 		activeRows = activeTransformRowsFromScan(scan, eob, scanHeight)
 	}
 	if cfg.InverseQMatrix != nil {
-		if useSparseDequant {
+		if useNonZeroDequant {
+			quantize.DequantizeBlockScaledQMatrixBitDepthNonZeroTrusted(dequant, scanHeight, quantized, quantizedStride, nonzero, scanWidth, scanHeight, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth)
+		} else if useSparseDequant {
 			quantize.DequantizeBlockScaledQMatrixBitDepthEOBTrusted(dequant, scanHeight, quantized, quantizedStride, scan, eob, scanWidth, scanHeight, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth)
 		} else if err := quantize.DequantizeBlockScaledQMatrixBitDepth(dequant, scanHeight, quantized, quantizedStride, scanWidth, scanHeight, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth); err != nil {
 			return ErrInvalidBlock
 		}
 	} else {
-		if useSparseDequant {
+		if useNonZeroDequant {
+			quantize.DequantizeBlockScaledBitDepthNonZeroTrusted(dequant, scanHeight, quantized, quantizedStride, nonzero, scanWidth, scanHeight, cfg.Quantizer, txScale, bitDepth)
+		} else if useSparseDequant {
 			quantize.DequantizeBlockScaledBitDepthEOBTrusted(dequant, scanHeight, quantized, quantizedStride, scan, eob, scanWidth, scanHeight, cfg.Quantizer, txScale, bitDepth)
 		} else if err := quantize.DequantizeBlockScaledBitDepth(dequant, scanHeight, quantized, quantizedStride, scanWidth, scanHeight, cfg.Quantizer, txScale, bitDepth); err != nil {
 			return ErrInvalidBlock
@@ -226,6 +240,17 @@ func activeTransformRowsFromScan(scan []int16, eob int, scanHeight int) int {
 	activeRows := 0
 	for i := 0; i < eob; i++ {
 		row := int(scan[i]) % scanHeight
+		if row >= activeRows {
+			activeRows = row + 1
+		}
+	}
+	return activeRows
+}
+
+func activeTransformRowsFromPositions(positions []int16, scanHeight int) int {
+	activeRows := 0
+	for _, raw := range positions {
+		row := int(raw) % scanHeight
 		if row >= activeRows {
 			activeRows = row + 1
 		}

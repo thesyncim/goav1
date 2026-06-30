@@ -147,11 +147,15 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCore(index int, visit tile.BlockVi
 // ownership, so this path can hand exact-cap scratch/window slices to the
 // reconstruction core without re-running the public API guard rails.
 func (b *FrameWorkBatch) reconstructBlockCoeffCoreTrusted(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) error {
+	return b.reconstructBlockCoeffCoreTrustedWithNonZero(index, visit, block, nil, txType, currentQIndex, segmentID, int32Scratch, residualScratch, cache)
+}
+
+func (b *FrameWorkBatch) reconstructBlockCoeffCoreTrustedWithNonZero(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock, nonzero []int16, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) error {
 	geom, err := b.blockCoeffGeometryTrusted(index, visit, block)
 	if err != nil {
 		return err
 	}
-	return b.reconstructBlockCoeffCoreWithGeometry(geom, block, txType, currentQIndex, segmentID, int32Scratch, residualScratch, cache)
+	return b.reconstructBlockCoeffCoreWithGeometryAndNonZero(geom, block, nonzero, txType, currentQIndex, segmentID, int32Scratch, residualScratch, cache)
 }
 
 func frameWorkPrimeLumaReconGeometry(b *FrameWorkBatch, index int) error {
@@ -169,7 +173,7 @@ func frameWorkPrimeLumaReconGeometry(b *FrameWorkBatch, index int) error {
 // primes once per tile job. The public and chroma paths keep the fully checked
 // geometry route; this hot path only skips the per-TXB cache lookup ladder when
 // the already-keyed region and Y plane are present for the current job.
-func (b *FrameWorkBatch) reconstructBlockCoeffLumaPrimed(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) (bool, error) {
+func (b *FrameWorkBatch) reconstructBlockCoeffLumaPrimed(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock, nonzero []int16, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) (bool, error) {
 	if block.Plane != 0 {
 		return false, nil
 	}
@@ -184,10 +188,14 @@ func (b *FrameWorkBatch) reconstructBlockCoeffLumaPrimed(index int, visit tile.B
 	if err != nil {
 		return true, err
 	}
-	return true, b.reconstructBlockCoeffCoreWithGeometry(geom, block, txType, currentQIndex, segmentID, int32Scratch, residualScratch, cache)
+	return true, b.reconstructBlockCoeffCoreWithGeometryAndNonZero(geom, block, nonzero, txType, currentQIndex, segmentID, int32Scratch, residualScratch, cache)
 }
 
 func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometry(geom frameWorkBlockCoeffGeometry, block *tile.BlockCoeffBlock, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) error {
+	return b.reconstructBlockCoeffCoreWithGeometryAndNonZero(geom, block, nil, txType, currentQIndex, segmentID, int32Scratch, residualScratch, cache)
+}
+
+func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometryAndNonZero(geom frameWorkBlockCoeffGeometry, block *tile.BlockCoeffBlock, nonzero []int16, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) error {
 	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
 		return nil
 	}
@@ -223,10 +231,18 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometry(geom frameWorkBlo
 		Lossless:       lossless,
 		EOB:            int16(block.Result.EOB),
 	}
-	if err := reconstruct.ReconstructPlaneBlockVisibleTrustedAtWithGeometryAndScan(dst, dstStride, bytesPerSample, b.Sequence.ColorConfig.BitDepth,
-		visibleWidth, visibleHeight,
-		block.Coeffs, scanStride, block.Scan, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
-		return ErrInvalidBatch
+	if len(nonzero) > 0 {
+		if err := reconstruct.ReconstructPlaneBlockVisibleTrustedAtWithGeometryScanAndNonZero(dst, dstStride, bytesPerSample, b.Sequence.ColorConfig.BitDepth,
+			visibleWidth, visibleHeight,
+			block.Coeffs, scanStride, block.Scan, nonzero, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
+			return ErrInvalidBatch
+		}
+	} else {
+		if err := reconstruct.ReconstructPlaneBlockVisibleTrustedAtWithGeometryAndScan(dst, dstStride, bytesPerSample, b.Sequence.ColorConfig.BitDepth,
+			visibleWidth, visibleHeight,
+			block.Coeffs, scanStride, block.Scan, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
+			return ErrInvalidBatch
+		}
 	}
 	return nil
 }

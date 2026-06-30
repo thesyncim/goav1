@@ -200,6 +200,16 @@ func TestReconstructPlaneBlockVisibleWithGeometryMatchesDefault(t *testing.T) {
 	if !bytes.Equal(gotTrustedSparse.Pix, want.Pix) {
 		t.Fatalf("trusted scan geometry path output differs from default")
 	}
+	gotTrustedNonZero, _ := testPlane(10, 10, 1, 10)
+	fillPlane(gotTrustedNonZero, 1, 100)
+	dst = gotTrustedNonZero.Pix[dstOffset : dstOffset+dstLen : dstOffset+dstLen]
+	nonzero := []int16{9, 8, 1, 0}
+	if err := ReconstructPlaneBlockVisibleTrustedAtWithGeometryScanAndNonZero(dst, gotTrustedNonZero.Stride, 1, 8, 6, 7, quantized, int(scanSize.Height), scan, nonzero, scanSize, txScale, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotTrustedNonZero.Pix, want.Pix) {
+		t.Fatalf("trusted nonzero geometry path output differs from default")
+	}
 }
 
 func TestReconstructPlaneBlockIDTX4x8(t *testing.T) {

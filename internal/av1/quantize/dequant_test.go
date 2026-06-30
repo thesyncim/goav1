@@ -337,6 +337,62 @@ func TestDequantizeBlockScaledQMatrixBitDepthEOBMatchesFull(t *testing.T) {
 	}
 }
 
+func TestDequantizeBlockScaledBitDepthNonZeroTrustedMatchesFull(t *testing.T) {
+	const width, height = 4, 4
+	coeff := make([]int16, width*height)
+	coeff[0] = 3
+	coeff[2] = -4
+	coeff[5] = 7
+	coeff[14] = -2
+	positions := []int16{14, 5, 2, 0}
+	q := Quantizer{DC: 91, AC: 137}
+
+	want := make([]int32, width*height)
+	if err := DequantizeBlockScaledBitDepth(want, height, coeff, height, width, height, q, 1, 10); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]int32, width*height)
+	for i := range got {
+		got[i] = 999
+	}
+	DequantizeBlockScaledBitDepthNonZeroTrusted(got, height, coeff, height, positions, width, height, q, 1, 10)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("dst[%d]=%d want %d", i, got[i], want[i])
+		}
+	}
+}
+
+func TestDequantizeBlockScaledQMatrixBitDepthNonZeroTrustedMatchesFull(t *testing.T) {
+	const width, height = 3, 2
+	coeff := make([]int16, width*height)
+	coeff[0] = 2
+	coeff[1] = -5
+	coeff[3] = -3
+	coeff[4] = 4
+	positions := []int16{4, 3, 1, 0}
+	q := Quantizer{DC: 128, AC: 64}
+	iqMatrix := []uint16{
+		32, 40, 48,
+		56, 64, 72,
+	}
+
+	want := make([]int32, width*height)
+	if err := DequantizeBlockScaledQMatrixBitDepth(want, height, coeff, height, width, height, q, 0, iqMatrix, 8); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]int32, width*height)
+	for i := range got {
+		got[i] = -999
+	}
+	DequantizeBlockScaledQMatrixBitDepthNonZeroTrusted(got, height, coeff, height, positions, width, height, q, 0, iqMatrix, 8)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("dst[%d]=%d want %d", i, got[i], want[i])
+		}
+	}
+}
+
 func TestDequantizeDCCoeffBitDepthTrustedMatchesFull(t *testing.T) {
 	const width, height = 4, 4
 	q := Quantizer{DC: 91, AC: 137}

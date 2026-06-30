@@ -1573,6 +1573,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 			}
 			dcValue = int(signed)
 			coeffs[pos] = signed
+			dirtyArr[i] = int16(pos)
 			i--
 		}
 		for ; i >= 0; i-- {
@@ -1613,6 +1614,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 				signed = -signed
 			}
 			coeffs[pos] = signed
+			dirtyArr[i] = int16(pos)
 		}
 		*dirtyLen = uint16(nonzeroScanLen)
 	} else {

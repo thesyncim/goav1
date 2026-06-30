@@ -70,6 +70,20 @@ func (s *LumaCoeffTreeScratch) clearCoeffDirty() {
 	s.coeffDirtyLen = 0
 }
 
+func (s *LumaCoeffTreeScratch) coeffDirtyPositions() []int16 {
+	if s == nil || s.coeffDirtyLen == 0 {
+		return nil
+	}
+	return s.InverseScan[:s.coeffDirtyLen:s.coeffDirtyLen]
+}
+
+func (s *BlockCoeffScratch) CoeffDirtyPositions() []int16 {
+	if s == nil {
+		return nil
+	}
+	return s.Coeff.coeffDirtyPositions()
+}
+
 type LumaCoeffBlock struct {
 	Block     TransformBlock
 	Transform transform.Type
