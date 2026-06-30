@@ -66,8 +66,8 @@ package testvector
 //     At ~48 frames/clip the startup share is small, so raw and adjusted are
 //     close -- that convergence is the point of the longer clips.
 //
-// Reuses externalDecoder / runExternal / minDuration / fpsOf / truncate /
-// crossBenchRuns from cross_decoder_bench_test.go (same package + build tag).
+// Reuses externalDecoder / runExternal / fpsOf / truncate / crossBenchRuns from
+// cross_decoder_bench_test.go (same package + build tag).
 
 import (
 	"bytes"

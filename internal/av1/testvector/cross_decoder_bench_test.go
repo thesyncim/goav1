@@ -34,9 +34,9 @@ package testvector
 //     level rather than a processor/thread count. All decoders are decode-only
 //     with output DISCARDED
 //     (aomdec --rawvideo -o /dev/null; dav1d --muxer null -o /dev/null). Each
-//     (decoder, vector) is warmed up once, then run best-of-N (crossBenchRuns,
-//     N>=7); we keep the MIN wall-clock, which is the standard way to reject
-//     scheduler/IO noise.
+//     (decoder, vector) is warmed up once, then run N times (crossBenchRuns,
+//     N>=7); we keep the MEDIAN wall-clock and reserve min/IQR reporting for
+//     the corpus publish path.
 //
 //  3. IN-PROCESS vs SUBPROCESS ASYMMETRY (read this — it dominates the numbers
 //     on these tiny clips). goav1 is timed IN-PROCESS: no exec, no process
@@ -46,7 +46,7 @@ package testvector
 //     so that fixed per-process overhead is a LARGE fraction of each external
 //     run and the raw comparison is heavily startup-biased AGAINST the C
 //     decoders. To make this visible and adjustable we MEASURE each external
-//     decoder's process-startup baseline (best-of-N of its --help/--version
+//     decoder's process-startup baseline (median of its --help/--version
 //     fast path) and report BOTH:
 //        - "raw"      : measured wall-clock as-is (includes startup), and
 //        - "adjusted" : wall-clock minus the measured startup baseline,
@@ -87,8 +87,8 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/ivf"
 )
 
-// crossBenchRuns is the best-of-N sample count (N>=7 per the methodology). We
-// keep the MIN wall-clock across runs to reject scheduler/IO noise.
+// crossBenchRuns is the measured sample count (N>=7 per the methodology). The
+// tiny cross-bench and publish corpus paths select the median wall-clock sample.
 const crossBenchRuns = 9
 
 const externalDecoderCommandTimeout = 30 * time.Minute
@@ -242,27 +242,6 @@ func countIVFFrames(data []byte) (int, error) {
 	return n, nil
 }
 
-// minDuration runs fn warmup+N times and returns the minimum observed wall
-// clock, or an error from the first failing run.
-func minDuration(warmup int, runs int, fn func() error) (time.Duration, error) {
-	for i := 0; i < warmup; i++ {
-		if err := fn(); err != nil {
-			return 0, err
-		}
-	}
-	best := time.Duration(1<<63 - 1)
-	for i := 0; i < runs; i++ {
-		start := time.Now()
-		if err := fn(); err != nil {
-			return 0, err
-		}
-		if d := time.Since(start); d < best {
-			best = d
-		}
-	}
-	return best, nil
-}
-
 // runExternal executes one decoder invocation and returns the original process
 // result. Stdout/stderr are bounded-captured on that same invocation so a
 // failed sample cannot be masked by a successful diagnostic rerun.
@@ -365,8 +344,7 @@ type decoderResult struct {
 	startupSamples corpusDurationSamples
 	// totalRaw is the summed selected wall-clock across all vectors (raw,
 	// includes per-invocation startup for external decoders). The tiny
-	// cross-bench selects the minimum; the corpus publish benchmark selects the
-	// median.
+	// cross-bench and corpus publish benchmark both select the median.
 	totalRaw time.Duration
 	// totalFrames is the summed IVF frame count across all decoded vectors.
 	totalFrames int
@@ -398,15 +376,16 @@ func TestCrossDecoderThroughput(t *testing.T) {
 		// runLibaomFrameWorkDryRun verifies every emitted frame's MD5 against
 		// the official libaom digests; if it returns without t.Fatal, the
 		// timed full decode is provably conformance-correct.
-		best, err := minDuration(1, crossBenchRuns, func() error {
+		samples, err := measureCorpusDurations(1, crossBenchRuns, func() error {
 			runLibaomFrameWorkDryRun(t, cv.vector)
 			return nil
 		})
 		if err != nil {
 			t.Fatalf("goav1 decode %s: %v", cv.vector.Name, err)
 		}
-		goav1.perVector[cv.path] = best
-		goav1.totalRaw += best
+		selected := corpusSelectedDuration(samples)
+		goav1.perVector[cv.path] = selected
+		goav1.totalRaw += selected
 		goav1.totalFrames += cv.frames
 	}
 
@@ -422,22 +401,24 @@ func TestCrossDecoderThroughput(t *testing.T) {
 		t.Logf("cross-bench: %s resolved to %s", dec.name, bin)
 
 		// Measure fixed process-startup baseline via the fast no-decode path.
-		startup, err := minDuration(1, crossBenchRuns, func() error {
+		startupSamples, err := measureCorpusDurations(1, crossBenchRuns, func() error {
 			// --help/--version exit non-zero on some builds; ignore the exit
 			// status, we only want the startup wall-clock.
 			_ = runExternal(bin, dec.startupArgs(bin))
 			return nil
 		})
+		startup := corpusSelectedDuration(startupSamples)
 		if err != nil {
 			t.Logf("cross-bench: %s startup probe failed (%v); treating baseline as 0", dec.name, err)
 			startup = 0
+			startupSamples = corpusDurationSamples{}
 		}
 
-		res := decoderResult{name: dec.name, startup: startup, perVector: map[string]time.Duration{}}
+		res := decoderResult{name: dec.name, startup: startup, startupSamples: startupSamples, perVector: map[string]time.Duration{}}
 		usable := true
 		for _, cv := range vectors {
 			cv := cv
-			best, err := minDuration(1, crossBenchRuns, func() error {
+			samples, err := measureCorpusDurations(1, crossBenchRuns, func() error {
 				return runExternal(bin, dec.decodeArgs(bin, cv.path))
 			})
 			if err != nil {
@@ -445,8 +426,9 @@ func TestCrossDecoderThroughput(t *testing.T) {
 				usable = false
 				break
 			}
-			res.perVector[cv.path] = best
-			res.totalRaw += best
+			selected := corpusSelectedDuration(samples)
+			res.perVector[cv.path] = selected
+			res.totalRaw += selected
 			res.totalFrames += cv.frames
 		}
 		if usable {
@@ -466,7 +448,7 @@ func printCrossBenchReport(t *testing.T, vectors []crossBenchVector, results []d
 	fmt.Fprintf(&b, "==================================================================================\n")
 	fmt.Fprintf(&b, " goav1 cross-decoder throughput  (PERF TRACKING ONLY — NOT a conformance gate)\n")
 	fmt.Fprintf(&b, "==================================================================================\n")
-	fmt.Fprintf(&b, " vectors: %d bundled libaom IVF clips   best-of-%d (min wall-clock)   requested single-thread controls\n", len(vectors), crossBenchRuns)
+	fmt.Fprintf(&b, " vectors: %d bundled libaom IVF clips   median-of-%d measured samples   requested single-thread controls\n", len(vectors), crossBenchRuns)
 	fmt.Fprintf(&b, " goav1: IN-PROCESS, full decode + post-filter (LF/CDEF/LR/super-res/film-grain),\n")
 	fmt.Fprintf(&b, "        MD5-verified against official libaom digests (correctness proven by run).\n")
 	fmt.Fprintf(&b, " others: SUBPROCESS, decode-only, output discarded; raw time INCLUDES process\n")
@@ -533,8 +515,8 @@ func printCrossBenchReport(t *testing.T, vectors []crossBenchVector, results []d
 	}
 	fmt.Fprintf(&b, "\n")
 
-	// ---- Per-vector detail (raw best wall-clock, ms) ----
-	fmt.Fprintf(&b, "PER-VECTOR raw best wall-clock (ms)  [startup-inclusive for external decoders]\n")
+	// ---- Per-vector detail (raw median wall-clock, ms) ----
+	fmt.Fprintf(&b, "PER-VECTOR raw median wall-clock (ms)  [startup-inclusive for external decoders]\n")
 	// Sort decoders for stable columns: goav1 first, then by name.
 	cols := append([]decoderResult(nil), results...)
 	sort.SliceStable(cols, func(i, j int) bool {
