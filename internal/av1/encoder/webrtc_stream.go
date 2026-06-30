@@ -1988,7 +1988,13 @@ func scaleSourceFrameMonoNearest(dst *SourceFrameMono, src SourceFrameMono, widt
 	return *dst, nil
 }
 
+var scalePlaneNearestImpl = scalePlaneNearestPureGo
+
 func scalePlaneNearest(dst []byte, dstStride, dstWidth, dstHeight int, src []byte, srcStride, srcWidth, srcHeight int) {
+	scalePlaneNearestImpl(dst, dstStride, dstWidth, dstHeight, src, srcStride, srcWidth, srcHeight)
+}
+
+func scalePlaneNearestPureGo(dst []byte, dstStride, dstWidth, dstHeight int, src []byte, srcStride, srcWidth, srcHeight int) {
 	for y := 0; y < dstHeight; y++ {
 		sy := y * srcHeight / dstHeight
 		drow := dst[y*dstStride : y*dstStride+dstWidth]
