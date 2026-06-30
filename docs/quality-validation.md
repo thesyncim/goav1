@@ -64,6 +64,7 @@ go run ./cmd/qualitybench \
   -svt-lp 0 \
   -csv quality.csv -summary-csv quality-summary.csv -require-summary \
   -stats-csv quality-encoder-stats.csv \
+  -frame-metrics-csv quality-frame-metrics.csv \
   -metadata-json quality-metadata.json \
   -ffmpeg-bin /opt/homebrew/bin/ffmpeg \
   -ffmpeg-sha256 <sha256-of-ffmpeg> \
@@ -153,8 +154,8 @@ Use `-publish` for rows that will be copied into performance or quality tables.
 Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-encoders`, `-workdir`, `-csv`, `-metadata-json`, `-manifest`,
 `-require-corpus`, `-min-clips`, `-require-encoders all`, `-require-metrics`,
-`-summary-csv`, `-require-summary`, `-gomaxprocs`, `-fps`, `-layers`,
-`-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`,
+`-summary-csv`, `-frame-metrics-csv`, `-require-summary`, `-gomaxprocs`,
+`-fps`, `-layers`, `-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`,
 `-run-order shuffle`, explicit `-shuffle-seed`, `-runs >= 3`,
 `-warmup-runs >= 1`, and explicit `-vmaf-model` when VMAF is required, plus a
 non-empty `-environment-notes` value and explicit non-empty `-cpu-affinity`,
@@ -195,11 +196,12 @@ goav1-only local runs without an FFmpeg decoder still replay the persisted
 low-overhead stream through the public decoder, never encoder reconstruction
 buffers. The metadata JSON records command paths, binary SHA-256 hashes, and
 version/help probes for the external tools used by the run. It also records
-`manifest_sha256`, the effective `GOMAXPROCS`, CPU count/model when available,
-hostname, OS/kernel version when available, `PATH`, selected Go runtime
-environment variables (`GOFLAGS`, `GOGC`, `GOMEMLIMIT`, `GODEBUG`), and
-structured CPU-affinity, power-mode, thermal-state, frequency-policy, and
-background-load fields plus free-form environment notes for extra context.
+`manifest_sha256`, the Go runtime build settings exposed by the benchmark
+binary, the effective `GOMAXPROCS`, CPU count/model when available, hostname,
+OS/kernel version when available, `PATH`, selected Go runtime environment
+variables (`GOFLAGS`, `GOGC`, `GOMEMLIMIT`, `GODEBUG`), and structured
+CPU-affinity, power-mode, thermal-state, frequency-policy, and background-load
+fields plus free-form environment notes for extra context.
 It also records `run_order` and `shuffle_seed`. Publish mode requires
 `-run-order shuffle -shuffle-seed N` so claim-supporting rows use a
 deterministic order without always running the same encoder first. For local
@@ -279,7 +281,7 @@ contract:
 | Encoder | Low-delay/rate pins | Speed and parallelism pins | Stream and picture pins |
 | --- | --- | --- | --- |
 | `aomenc` | `--rt`, `--end-usage=cbr`, `--lag-in-frames=0`, `--auto-alt-ref=0`, `--enable-fwd-kf=0`, `--drop-frame=0`, `--buf-sz=1000`, `--buf-initial-sz=500`, `--buf-optimal-sz=600` | `--cpu-used`, `--threads`, and `--row-mt` from `-aom-cpu-used`, `-aom-threads`, and `-aom-row-mt`; `--quiet` is always set | profile 0, 8-bit I420, `--target-bitrate`, `--fps`, `--limit`, `--kf-min-dist`, `--kf-max-dist`, and optional `--tile-columns` |
-| `SvtAv1EncApp` | `--rc 2`, `--lookahead 0`, `--pred-struct 1`, `--rtc 1`, `--scd 0`, `--enable-tf 0`, `--irefresh-type 2` | `--preset`, `--lp`, and optional `--asm` from `-svt-preset`, `-svt-lp`, and `-svt-asm` | profile 0, level 0, 8-bit I420 (`--color-format 1`), `--tbr`, `--fps-num`, `--fps-denom`, `--frames`, `--keyint`, `--progress 0`, and optional `--tile-columns` |
+| `SvtAv1EncApp` | `--rc 2`, `--buf-sz 1000`, `--buf-initial-sz 500`, `--buf-optimal-sz 600`, `--lookahead 0`, `--pred-struct 1`, `--rtc 1`, `--scd 0`, `--enable-tf 0`, `--irefresh-type 2` | `--preset`, `--lp`, and optional `--asm` from `-svt-preset`, `-svt-lp`, and `-svt-asm` | profile 0, level 0, 8-bit I420 (`--color-format 1`), `--tbr`, `--fps-num`, `--fps-denom`, `--frames`, `--keyint`, `--progress 0`, and optional `--tile-columns` |
 
 When `-stats-csv` is set, goav1 rows also include encoder decision counters:
 partition choices, block sizes, skip/coded block counts, references, inter
@@ -298,7 +300,10 @@ Use `-frame-metrics-csv` to align decoded-output PSNR/SSIM traces with
 or mode-decision event becomes visible in decoded quality; it is still
 diagnostic context, while clip-level BD-rate and required perceptual metrics
 remain the claim-supporting result. Frame indexes in both diagnostic CSVs are
-zero-based.
+zero-based. Publish mode requires `-frame-metrics-csv` and rejects PSNR/SSIM
+frame traces whose index set does not exactly match the configured frame count.
+VMAF JSON is likewise accepted only when it contains exactly the configured
+number of frame entries.
 
 Use `-metadata-json` for claim-supporting runs. The sidecar records the
 goav1 git revision and dirty state, Go runtime, selected configuration,

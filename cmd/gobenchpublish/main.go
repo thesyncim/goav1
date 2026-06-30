@@ -17,9 +17,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
+
+	cpufeatures "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
 
 type config struct {
@@ -63,10 +66,14 @@ type metadata struct {
 }
 
 type goMetadata struct {
-	Version string `json:"version"`
-	GOOS    string `json:"goos"`
-	GOARCH  string `json:"goarch"`
-	NumCPU  int    `json:"num_cpu"`
+	Version       string            `json:"version"`
+	GOOS          string            `json:"goos"`
+	GOARCH        string            `json:"goarch"`
+	NumCPU        int               `json:"num_cpu"`
+	SIMDTier      string            `json:"simd_tier"`
+	SIMDFeatures  []string          `json:"simd_features,omitempty"`
+	BuildSettings map[string]string `json:"build_settings,omitempty"`
+	Env           map[string]any    `json:"env,omitempty"`
 }
 
 type metadataConfig struct {
@@ -280,8 +287,35 @@ func validateConfig(cfg config, git gitMetadata) error {
 		if os.Getenv("GODEBUG") != "" {
 			return errors.New("publish requires GODEBUG unset")
 		}
+		for _, name := range publishBlockedGoEnvVars() {
+			if os.Getenv(name) != "" {
+				return fmt.Errorf("publish requires %s unset; use explicit runner flags or record a separate environment", name)
+			}
+		}
 	}
 	return nil
+}
+
+func publishBlockedGoEnvVars() []string {
+	return []string{
+		"GOAMD64",
+		"GOARM64",
+		"GO386",
+		"GOARM",
+		"GOMIPS",
+		"GOMIPS64",
+		"GOPPC64",
+		"GOWASM",
+		"GOTOOLCHAIN",
+		"GOEXPERIMENT",
+		"CGO_ENABLED",
+		"CC",
+		"CXX",
+		"GOCACHE",
+		"GOMODCACHE",
+		"GOPATH",
+		"GOTMPDIR",
+	}
 }
 
 func requireExplicitFlag(cfg config, name string) error {
@@ -370,10 +404,14 @@ func buildMetadata(cfg config, git gitMetadata, command []string, status, errTex
 		GeneratedAtUTC: time.Now().UTC().Format(time.RFC3339),
 		Git:            git,
 		Go: goMetadata{
-			Version: runtime.Version(),
-			GOOS:    runtime.GOOS,
-			GOARCH:  runtime.GOARCH,
-			NumCPU:  runtime.NumCPU(),
+			Version:       runtime.Version(),
+			GOOS:          runtime.GOOS,
+			GOARCH:        runtime.GOARCH,
+			NumCPU:        runtime.NumCPU(),
+			SIMDTier:      detectedSIMDTier(),
+			SIMDFeatures:  detectedSIMDFeatures(),
+			BuildSettings: goBuildSettings(),
+			Env:           goEnvForMetadata(),
 		},
 		Config: metadataConfig{
 			Package:    cfg.Pkg,
@@ -406,6 +444,105 @@ func buildMetadata(cfg config, git gitMetadata, command []string, status, errTex
 		Status: status,
 		Error:  errText,
 	}
+}
+
+func goEnvForMetadata() map[string]any {
+	out, err := exec.Command("go", "env", "-json").Output()
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	var env map[string]any
+	if err := json.Unmarshal(out, &env); err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	return env
+}
+
+func goBuildSettings() map[string]string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || len(info.Settings) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(info.Settings))
+	for _, setting := range info.Settings {
+		if setting.Key != "" {
+			out[setting.Key] = setting.Value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func detectedSIMDTier() string {
+	return simdTierFor(cpufeatures.Detected)
+}
+
+func detectedSIMDFeatures() []string {
+	return simdFeaturesFor(cpufeatures.Detected)
+}
+
+func simdTierFor(f cpufeatures.Features) string {
+	switch {
+	case f.SVE2:
+		return "sve2"
+	case f.SVE:
+		return "sve"
+	case f.I8MM:
+		return "neon_i8mm"
+	case f.DOTPROD:
+		return "neon_dotprod"
+	case f.NEON:
+		return "neon"
+	case f.AVX512:
+		return "avx512"
+	case f.AVX2:
+		return "avx2"
+	case f.SSE42:
+		return "sse4_2"
+	case f.SSE41:
+		return "sse4_1"
+	case f.SSE2:
+		return "sse2"
+	default:
+		return "purego"
+	}
+}
+
+func simdFeaturesFor(f cpufeatures.Features) []string {
+	var out []string
+	if f.SSE2 {
+		out = append(out, "sse2")
+	}
+	if f.SSE41 {
+		out = append(out, "sse4_1")
+	}
+	if f.SSE42 {
+		out = append(out, "sse4_2")
+	}
+	if f.AVX2 {
+		out = append(out, "avx2")
+	}
+	if f.AVX512 {
+		out = append(out, "avx512")
+	}
+	if f.NEON {
+		out = append(out, "neon")
+	}
+	if f.DOTPROD {
+		out = append(out, "neon_dotprod")
+	}
+	if f.I8MM {
+		out = append(out, "neon_i8mm")
+	}
+	if f.SVE {
+		out = append(out, "sve")
+	}
+	if f.SVE2 {
+		out = append(out, "sve2")
+	}
+	return out
 }
 
 func effectiveGOGC(cfg config) string {

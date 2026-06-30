@@ -14,9 +14,7 @@ import (
 )
 
 func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
-	t.Setenv("GOFLAGS", "")
-	t.Setenv("GOMEMLIMIT", "")
-	t.Setenv("GODEBUG", "")
+	clearGobenchPublishGoEnv(t)
 
 	cfg := config{
 		Pkg:              "./internal/av1/tile",
@@ -114,6 +112,7 @@ func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
 }
 
 func TestValidatePublishConfigRejectsHiddenGoEnvironment(t *testing.T) {
+	clearGobenchPublishGoEnv(t)
 	cfg := config{
 		Pkg:              "./internal/av1/tile",
 		Bench:            "^BenchmarkCoeffCulLevel$",
@@ -155,6 +154,20 @@ func TestValidatePublishConfigRejectsHiddenGoEnvironment(t *testing.T) {
 	if err := validateConfig(cfg, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "GODEBUG unset") {
 		t.Fatalf("hidden GODEBUG error=%v", err)
+	}
+
+	t.Setenv("GODEBUG", "")
+	t.Setenv("GOAMD64", "v4")
+	if err := validateConfig(cfg, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "GOAMD64 unset") {
+		t.Fatalf("hidden GOAMD64 error=%v", err)
+	}
+
+	t.Setenv("GOAMD64", "")
+	t.Setenv("GOCACHE", filepath.Join(t.TempDir(), "cache"))
+	if err := validateConfig(cfg, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "GOCACHE unset") {
+		t.Fatalf("hidden GOCACHE error=%v", err)
 	}
 }
 
@@ -226,6 +239,7 @@ func TestMetadataJSONRecordsOutputHash(t *testing.T) {
 	}
 	if got.Output.Bytes == 0 || got.Output.SHA256 == "" || got.Config.Count != 5 ||
 		got.Config.GoMaxProcs != 1 || got.Environment.GOGC != "off" ||
+		got.Go.SIMDTier == "" || len(got.Go.Env) == 0 ||
 		got.Environment.Notes != "idle" ||
 		got.Environment.CPUAffinity != "none" ||
 		got.Environment.PowerMode != "high power" ||
@@ -233,6 +247,13 @@ func TestMetadataJSONRecordsOutputHash(t *testing.T) {
 		got.Environment.FrequencyPolicy != "automatic" ||
 		got.Environment.BackgroundLoad != "idle machine" {
 		t.Fatalf("metadata=%+v", got)
+	}
+}
+
+func clearGobenchPublishGoEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range append([]string{"GOFLAGS", "GOMEMLIMIT", "GODEBUG"}, publishBlockedGoEnvVars()...) {
+		t.Setenv(name, "")
 	}
 }
 

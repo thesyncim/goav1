@@ -74,10 +74,8 @@ package testvector
 // dav1d — a missing decoder is never a hard failure.
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -263,25 +261,71 @@ func minDuration(warmup int, runs int, fn func() error) (time.Duration, error) {
 	return best, nil
 }
 
-// runExternal executes one decoder invocation, discarding stdout/stderr on the
-// timed success path. On failure it reruns once with captured output so normal
-// benchmark timing never pays progress/log buffering overhead.
+// runExternal executes one decoder invocation and returns the original process
+// result. Stdout/stderr are bounded-captured on that same invocation so a
+// failed sample cannot be masked by a successful diagnostic rerun.
 func runExternal(bin string, args []string) error {
 	cmd := exec.Command(bin, args...)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if err := cmd.Run(); err == nil {
-		return nil
-	}
-
-	cmd = exec.Command(bin, args...)
-	var sink bytes.Buffer
+	var sink boundedExternalOutput
 	cmd.Stdout = &sink
 	cmd.Stderr = &sink
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(sink.String()))
+		msg := strings.TrimSpace(sink.String())
+		if msg == "" {
+			return err
+		}
+		return fmt.Errorf("%w: %s", err, msg)
 	}
 	return nil
+}
+
+type boundedExternalOutput struct {
+	buf       [4096]byte
+	n         int
+	truncated bool
+}
+
+func (b *boundedExternalOutput) Write(p []byte) (int, error) {
+	if b.n < len(b.buf) {
+		copied := copy(b.buf[b.n:], p)
+		b.n += copied
+		if copied < len(p) {
+			b.truncated = true
+		}
+	} else if len(p) > 0 {
+		b.truncated = true
+	}
+	return len(p), nil
+}
+
+func (b *boundedExternalOutput) String() string {
+	out := string(b.buf[:b.n])
+	if b.truncated {
+		out += "\n[output truncated]"
+	}
+	return out
+}
+
+func TestRunExternalDoesNotMaskFirstFailure(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "state")
+	bin := filepath.Join(dir, "flaky-decoder")
+	script := `#!/bin/sh
+if [ ! -f "$1" ]; then
+  echo "first invocation failed"
+  : > "$1"
+  exit 17
+fi
+echo "second invocation would succeed"
+exit 0
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := runExternal(bin, []string{state})
+	if err == nil || !strings.Contains(err.Error(), "first invocation failed") {
+		t.Fatalf("runExternal error=%v, want original first failure", err)
+	}
 }
 
 // decoderResult holds aggregated timing for one decoder across all vectors.

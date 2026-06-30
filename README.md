@@ -489,8 +489,10 @@ make bench-corpus-publish
 ```
 
 The generator requires an explicit source clip plus source SHA-256, pins aomenc
-`--threads` and `--row-mt`, requires source ID/URL/license/category metadata,
-expects 25 clips, and writes `manifest.tsv` with source, tool version/hash,
+`--threads` and `--row-mt`, requires `dav1d` unless
+`GOAV1_BENCH_CORPUS_ALLOW_MISSING_DAV1D=1` is set for exploratory
+non-publishable runs, requires source ID/URL/license/category metadata, expects
+25 clips, and writes `manifest.tsv` with source, tool version/hash,
 encode-argument, IVF, MD5, and dav1d agreement data next to the local ignored
 corpus. Quality benchmark manifests used for publishable encoder tables must
 also declare raw `pix_fmt=i420`, `bit_depth=8`, `chroma=4:2:0`, per-input

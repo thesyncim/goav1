@@ -39,6 +39,11 @@
 #   GOAV1_BENCH_SOURCE_URL=<source URL or internal provenance URI>
 #   GOAV1_BENCH_SOURCE_LICENSE=<license or usage grant>
 #   GOAV1_BENCH_SOURCE_CATEGORY=<content category>
+#
+# dav1d is required by default because publishable corpus manifests must record
+# generator-time dav1d MD5 agreement for 8-bit 4:2:0 rows. Set
+# GOAV1_BENCH_CORPUS_ALLOW_MISSING_DAV1D=1 only for exploratory local corpora
+# that will never be used for publishable goav1-vs-dav1d tables.
 
 set -euo pipefail
 
@@ -54,6 +59,11 @@ for tool_var in AOMENC AOMDEC FFMPEG; do
     exit 1
   fi
 done
+if [ -z "$DAV1D" ] && [ "${GOAV1_BENCH_CORPUS_ALLOW_MISSING_DAV1D:-}" != "1" ]; then
+  echo "ERROR: DAV1D not found on PATH" >&2
+  echo "       install dav1d or set GOAV1_BENCH_CORPUS_ALLOW_MISSING_DAV1D=1 for exploratory non-publishable corpus generation" >&2
+  exit 1
+fi
 
 # --- locate source + output dir ---------------------------------------------
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

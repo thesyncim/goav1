@@ -144,6 +144,19 @@ func TestValidateRequiredMetrics(t *testing.T) {
 	}
 }
 
+func TestValidateFrameMetricFilters(t *testing.T) {
+	if err := validateFrameMetricFilters(map[string]bool{"psnr": true}); err != nil {
+		t.Fatalf("psnr frame metric filter failed: %v", err)
+	}
+	if err := validateFrameMetricFilters(map[string]bool{"ssim": true}); err != nil {
+		t.Fatalf("ssim frame metric filter failed: %v", err)
+	}
+	if err := validateFrameMetricFilters(map[string]bool{"xpsnr": true}); err == nil ||
+		!strings.Contains(err.Error(), "psnr or ssim") {
+		t.Fatalf("missing frame metric filters error=%v", err)
+	}
+}
+
 func TestParseFFmpegAV1Decoders(t *testing.T) {
 	raw := []byte(strings.Join([]string{
 		" V..... libdav1d             dav1d AV1 decoder by VideoLAN (codec av1)",
@@ -671,14 +684,18 @@ func TestLoadFramesRequiresExactRawInputSize(t *testing.T) {
 }
 
 func TestParseVMAFMean(t *testing.T) {
-	got, err := parseVMAFMean([]byte(`{"pooled_metrics":{"vmaf":{"mean":91.25}}}`))
+	got, err := parseVMAFMean([]byte(`{"frames":[{},{}],"pooled_metrics":{"vmaf":{"mean":91.25}}}`), 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if math.Abs(got-91.25) > 1e-9 {
 		t.Fatalf("vmaf=%f", got)
 	}
-	if _, err := parseVMAFMean([]byte(`{"pooled_metrics":{}}`)); err == nil {
+	if _, err := parseVMAFMean([]byte(`{"frames":[{}],"pooled_metrics":{"vmaf":{"mean":91.25}}}`), 2); err == nil ||
+		!strings.Contains(err.Error(), "exact frame count") {
+		t.Fatalf("vmaf frame count error=%v", err)
+	}
+	if _, err := parseVMAFMean([]byte(`{"frames":[{}],"pooled_metrics":{}}`), 1); err == nil {
 		t.Fatal("missing vmaf accepted")
 	}
 }
@@ -687,7 +704,7 @@ func TestParseFrameMetricValues(t *testing.T) {
 	raw := []byte(`[Parsed_psnr_0 @ 0x1] n:1 mse_avg:10.0 psnr_avg:38.123456
 [Parsed_psnr_0 @ 0x1] n:2 mse_avg:0.0 psnr_avg:inf
 `)
-	got, err := parseFrameMetricValues(raw, `psnr_avg:([0-9.]+|inf|Inf|INF)`)
+	got, err := parseFrameMetricValues(raw, `psnr_avg:([0-9.]+|inf|Inf|INF)`, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -698,7 +715,7 @@ func TestParseFrameMetricValues(t *testing.T) {
 
 	raw = []byte(`[Parsed_ssim_0 @ 0x1] n:7 Y:0.900000 U:0.950000 V:0.960000 All:0.912345 (10.1)
 `)
-	got, err = parseFrameMetricValues(raw, `All:([0-9.]+|inf|Inf|INF)`)
+	got, err = parseFrameMetricValues(raw, `All:([0-9.]+|inf|Inf|INF)`, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -706,8 +723,35 @@ func TestParseFrameMetricValues(t *testing.T) {
 		t.Fatalf("values=%+v", got)
 	}
 
-	if _, err := parseFrameMetricValues([]byte("summary only"), `All:([0-9.]+)`); err == nil {
+	if _, err := parseFrameMetricValues([]byte("summary only"), `All:([0-9.]+)`, 1); err == nil {
 		t.Fatal("missing frame values accepted")
+	}
+	if _, err := parseFrameMetricValues([]byte(`[Parsed_psnr_0 @ 0x1] n:1 psnr_avg:38.0
+`), `psnr_avg:([0-9.]+)`, 2); err == nil ||
+		!strings.Contains(err.Error(), "exact frame count") {
+		t.Fatalf("short frame metrics error=%v", err)
+	}
+}
+
+func TestParseScalarMetricOutputAcceptsInfinity(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		raw     string
+		pattern string
+	}{
+		{name: "psnr", raw: "n:1 average:inf min:inf max:inf", pattern: `average:([0-9.]+|inf|Inf|INF)`},
+		{name: "ssim", raw: "All:Inf (inf)", pattern: `All:([0-9.]+|inf|Inf|INF)`},
+		{name: "xpsnr", raw: "XPSNR y: INF", pattern: `XPSNR\s+y:\s*([0-9]+(?:\.[0-9]+)?|inf|Inf|INF)`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseScalarMetricOutput([]byte(tc.raw), tc.name, tc.pattern)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !math.IsInf(got, 1) || formatMetric(got) != "inf" {
+				t.Fatalf("metric=%v formatted=%q, want +Inf/inf", got, formatMetric(got))
+			}
+		})
 	}
 }
 
@@ -1325,6 +1369,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		metadataPath:        "/tmp/meta.json",
 		manifestPath:        "/tmp/clips.csv",
 		summaryCSVPath:      "/tmp/summary.csv",
+		frameMetricsCSVPath: "/tmp/frame-metrics.csv",
 		anchorEncoder:       "aomenc",
 		requiredEncodersRaw: "all",
 		encoders:            []string{"goav1", "aomenc", "svt-av1"},
@@ -1380,6 +1425,7 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"require-encoders":   true,
 			"require-metrics":    true,
 			"summary-csv":        true,
+			"frame-metrics-csv":  true,
 			"require-summary":    true,
 			"gomaxprocs":         true,
 			"gogc":               true,
@@ -1501,6 +1547,24 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	if err := validatePublishConfig(missingGoGC, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "-gogc") {
 		t.Fatalf("missing explicit gogc error=%v", err)
+	}
+
+	missingFrameMetrics := cfg
+	missingFrameMetrics.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingFrameMetrics.explicitFlags[k] = v
+	}
+	delete(missingFrameMetrics.explicitFlags, "frame-metrics-csv")
+	if err := validatePublishConfig(missingFrameMetrics, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-frame-metrics-csv") {
+		t.Fatalf("missing frame metrics error=%v", err)
+	}
+
+	emptyFrameMetrics := cfg
+	emptyFrameMetrics.frameMetricsCSVPath = ""
+	if err := validatePublishConfig(emptyFrameMetrics, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-frame-metrics-csv") {
+		t.Fatalf("empty frame metrics error=%v", err)
 	}
 
 	relativeFFmpeg := cfg

@@ -1371,6 +1371,47 @@ func TestResolveCorpusPublishExternalDecodersRequiresPinnedTools(t *testing.T) {
 	})
 }
 
+func TestValidateCorpusPublishDecoderManifestHashes(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "dav1d")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sha, _, err := corpusFileSHA256(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := []resolvedCorpusExternalDecoder{{
+		decoder: externalDecoder{name: "dav1d"},
+		bin:     bin,
+	}}
+	manifest := corpusPublishManifest{
+		path:       filepath.Join(t.TempDir(), corpusManifestFile),
+		toolSHA256: map[string]string{"dav1d": sha},
+	}
+	if err := validateCorpusPublishDecoderManifestHashes(manifest, resolved); err != nil {
+		t.Fatalf("matching decoder hash failed: %v", err)
+	}
+
+	manifest.toolSHA256["dav1d"] = strings.Repeat("0", 64)
+	if err := validateCorpusPublishDecoderManifestHashes(manifest, resolved); err == nil ||
+		!strings.Contains(err.Error(), "does not match manifest dav1d_sha256") {
+		t.Fatalf("mismatched decoder hash error=%v", err)
+	}
+
+	delete(manifest.toolSHA256, "dav1d")
+	if err := validateCorpusPublishDecoderManifestHashes(manifest, resolved); err == nil ||
+		!strings.Contains(err.Error(), "manifest dav1d_sha256") {
+		t.Fatalf("missing decoder hash error=%v", err)
+	}
+
+	if err := validateCorpusPublishDecoderManifestHashes(manifest, []resolvedCorpusExternalDecoder{{
+		decoder: externalDecoder{name: "SvtAv1DecApp"},
+		bin:     bin,
+	}}); err != nil {
+		t.Fatalf("SVT should not require a generator manifest hash today: %v", err)
+	}
+}
+
 func TestCorpusInterleavedTimingJobsRotateDecoders(t *testing.T) {
 	jobs := corpusInterleavedTimingJobs(3, 4)
 	var got []string
@@ -2726,6 +2767,39 @@ func resolveCorpusPublishExternalDecoders(decoders []externalDecoder, required m
 	return resolved, nil
 }
 
+func validateCorpusPublishDecoderManifestHashes(manifest corpusPublishManifest, resolved []resolvedCorpusExternalDecoder) error {
+	for _, decoder := range resolved {
+		tool, ok := corpusManifestDecoderToolName(decoder.decoder.name)
+		if !ok {
+			continue
+		}
+		want := strings.TrimSpace(manifest.toolSHA256[tool])
+		if want == "" {
+			return fmt.Errorf("%s: publish timing decoder %s requires manifest %s_sha256 header", manifest.path, decoder.decoder.name, tool)
+		}
+		got, _, err := corpusFileSHA256(decoder.bin)
+		if err != nil {
+			return fmt.Errorf("%s timing binary %s sha256: %w", decoder.decoder.name, decoder.bin, err)
+		}
+		if !strings.EqualFold(got, want) {
+			return fmt.Errorf("%s: publish timing decoder %s sha256=%s does not match manifest %s_sha256=%s",
+				manifest.path, decoder.decoder.name, got, tool, strings.ToLower(want))
+		}
+	}
+	return nil
+}
+
+func corpusManifestDecoderToolName(decoderName string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(decoderName)) {
+	case "aomdec":
+		return "aomdec", true
+	case "dav1d":
+		return "dav1d", true
+	default:
+		return "", false
+	}
+}
+
 func corpusPublishExternalDecoderPinEnvNames(decoderName string) (binEnv string, shaEnv string) {
 	var suffix strings.Builder
 	for _, r := range decoderName {
@@ -2831,6 +2905,9 @@ func TestCrossDecoderCorpus(t *testing.T) {
 	if publish {
 		resolvedExternal, err = resolveCorpusPublishExternalDecoders(decoders, requiredDecoders)
 		if err != nil {
+			t.Fatalf("cross-corpus publish: %v", err)
+		}
+		if err := validateCorpusPublishDecoderManifestHashes(manifest, resolvedExternal); err != nil {
 			t.Fatalf("cross-corpus publish: %v", err)
 		}
 	} else {

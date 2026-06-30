@@ -39,6 +39,7 @@ QUALITYBENCH_WORKDIR ?= /tmp/goav1-quality
 QUALITYBENCH_CSV ?= $(QUALITYBENCH_WORKDIR)/quality.csv
 QUALITYBENCH_SUMMARY_CSV ?= $(QUALITYBENCH_WORKDIR)/quality-summary.csv
 QUALITYBENCH_STATS_CSV ?= $(QUALITYBENCH_WORKDIR)/quality-encoder-stats.csv
+QUALITYBENCH_FRAME_METRICS_CSV ?= $(QUALITYBENCH_WORKDIR)/quality-frame-metrics.csv
 QUALITYBENCH_METADATA_JSON ?= $(QUALITYBENCH_WORKDIR)/quality-metadata.json
 QUALITYBENCH_ENVIRONMENT_NOTES ?=
 QUALITYBENCH_CPU_AFFINITY ?=
@@ -220,6 +221,7 @@ qualitybench-publish:
 		-summary-csv "$(QUALITYBENCH_SUMMARY_CSV)" \
 		-require-summary \
 		-stats-csv "$(QUALITYBENCH_STATS_CSV)" \
+		-frame-metrics-csv "$(QUALITYBENCH_FRAME_METRICS_CSV)" \
 		-metadata-json "$(QUALITYBENCH_METADATA_JSON)" \
 		-ffmpeg-bin "$(QUALITYBENCH_FFMPEG_BIN)" \
 		-ffmpeg-sha256 "$(QUALITYBENCH_FFMPEG_SHA256)" \

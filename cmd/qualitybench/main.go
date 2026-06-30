@@ -239,11 +239,12 @@ type qualitybenchMetadata struct {
 }
 
 type runtimeMetadata struct {
-	Version      string   `json:"version"`
-	GOOS         string   `json:"goos"`
-	GOARCH       string   `json:"goarch"`
-	SIMDTier     string   `json:"simd_tier"`
-	SIMDFeatures []string `json:"simd_features,omitempty"`
+	Version       string            `json:"version"`
+	GOOS          string            `json:"goos"`
+	GOARCH        string            `json:"goarch"`
+	SIMDTier      string            `json:"simd_tier"`
+	SIMDFeatures  []string          `json:"simd_features,omitempty"`
+	BuildSettings map[string]string `json:"build_settings,omitempty"`
 }
 
 type environmentMetadata struct {
@@ -465,6 +466,11 @@ func run() error {
 	filters := ffmpegFilters(cfg.ffmpegBin)
 	if err := validateRequiredMetrics(filters, cfg.requiredMetrics); err != nil {
 		return err
+	}
+	if cfg.frameMetricsCSVPath != "" {
+		if err := validateFrameMetricFilters(filters); err != nil {
+			return err
+		}
 	}
 	if externalBaselineSelected(cfg) && cfg.ffmpegAV1Decoder != "" {
 		if err := validateFFmpegAV1Decoder(cfg.ffmpegAV1Decoder, ffmpegDecoders(cfg.ffmpegBin)); err != nil {
@@ -853,6 +859,7 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"require-encoders",
 		"require-metrics",
 		"summary-csv",
+		"frame-metrics-csv",
 		"require-summary",
 		"gomaxprocs",
 		"gogc",
@@ -941,8 +948,8 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	if !cfg.requireCorpus || cfg.manifestPath == "" || cfg.minClips < 2 {
 		return errors.New("publish requires -require-corpus with -manifest and -min-clips >= 2")
 	}
-	if cfg.csvPath == "" || cfg.metadataPath == "" || cfg.summaryCSVPath == "" || !cfg.requireSummary {
-		return errors.New("publish requires -csv, -metadata-json, -summary-csv, and -require-summary")
+	if cfg.csvPath == "" || cfg.metadataPath == "" || cfg.summaryCSVPath == "" || cfg.frameMetricsCSVPath == "" || !cfg.requireSummary {
+		return errors.New("publish requires -csv, -metadata-json, -summary-csv, -frame-metrics-csv, and -require-summary")
 	}
 	if err := validateDistinctPublishArtifacts(cfg); err != nil {
 		return err
@@ -1443,6 +1450,13 @@ func validateRequiredMetrics(filters map[string]bool, metrics []string) error {
 		}
 	}
 	return nil
+}
+
+func validateFrameMetricFilters(filters map[string]bool) error {
+	if filters["psnr"] || filters["ssim"] {
+		return nil
+	}
+	return errors.New("frame-metrics-csv requires ffmpeg filter psnr or ssim")
 }
 
 func validateFFmpegAV1Decoder(decoder string, decoders map[string]bool) error {
@@ -2102,7 +2116,7 @@ func writeFrameMetricsHeader(writer *csv.Writer) error {
 
 func writeFrameMetricRows(cfg benchConfig, filters map[string]bool, writer *csv.Writer, clipName, encoderName string, bitrate int, refPath, decodedPath string) error {
 	if filters["psnr"] {
-		values, err := runFrameMetric(cfg, refPath, decodedPath, encoderName, bitrate, "psnr", `psnr_avg:([0-9.]+|inf|Inf|INF)`)
+		values, err := runFrameMetric(cfg, refPath, decodedPath, encoderName, bitrate, "psnr", `psnr_avg:([0-9.]+|inf|Inf|INF)`, cfg.frames)
 		if err != nil {
 			return err
 		}
@@ -2113,7 +2127,7 @@ func writeFrameMetricRows(cfg benchConfig, filters map[string]bool, writer *csv.
 		}
 	}
 	if filters["ssim"] {
-		values, err := runFrameMetric(cfg, refPath, decodedPath, encoderName, bitrate, "ssim", `All:([0-9.]+|inf|Inf|INF)`)
+		values, err := runFrameMetric(cfg, refPath, decodedPath, encoderName, bitrate, "ssim", `All:([0-9.]+|inf|Inf|INF)`, cfg.frames)
 		if err != nil {
 			return err
 		}
@@ -2208,11 +2222,12 @@ func writeMetadataJSON(cfg benchConfig, filters map[string]bool, git gitMetadata
 	doc := qualitybenchMetadata{
 		GeneratedAtUTC: time.Now().UTC().Format(time.RFC3339Nano),
 		Go: runtimeMetadata{
-			Version:      runtime.Version(),
-			GOOS:         runtime.GOOS,
-			GOARCH:       runtime.GOARCH,
-			SIMDTier:     detectedSIMDTier(),
-			SIMDFeatures: detectedSIMDFeatures(),
+			Version:       runtime.Version(),
+			GOOS:          runtime.GOOS,
+			GOARCH:        runtime.GOARCH,
+			SIMDTier:      detectedSIMDTier(),
+			SIMDFeatures:  detectedSIMDFeatures(),
+			BuildSettings: goBuildSettings(),
 		},
 		Environment:   environmentMetadataForRun(cfg),
 		Git:           git,
@@ -2370,6 +2385,23 @@ func detectedSIMDTier() string {
 
 func detectedSIMDFeatures() []string {
 	return simdFeaturesFor(cpufeatures.Detected)
+}
+
+func goBuildSettings() map[string]string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || len(info.Settings) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(info.Settings))
+	for _, setting := range info.Settings {
+		if setting.Key != "" {
+			out[setting.Key] = setting.Value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func simdTierFor(f cpufeatures.Features) string {
@@ -3978,7 +4010,7 @@ func parseFFmpegAV1Decoders(raw []byte) map[string]bool {
 func measureDecoded(cfg benchConfig, filters map[string]bool, required map[string]bool, refPath, decodedPath, encoderName string, bitrate int) (metrics, error) {
 	m := metrics{psnr: "NA", ssim: "NA", xpsnr: "NA", vmaf: "NA"}
 	if filters["psnr"] {
-		if v, err := runScalarMetric(cfg, refPath, decodedPath, "psnr", `average:([0-9.]+)`); err == nil {
+		if v, err := runScalarMetric(cfg, refPath, decodedPath, "psnr", `average:([0-9.]+|inf|Inf|INF)`); err == nil {
 			m.psnr = formatMetric(v)
 		} else if required["psnr"] {
 			return m, fmt.Errorf("required metric psnr: %w", err)
@@ -3987,7 +4019,7 @@ func measureDecoded(cfg benchConfig, filters map[string]bool, required map[strin
 		return m, errors.New("required metric psnr unavailable: ffmpeg filter psnr not found")
 	}
 	if filters["ssim"] {
-		if v, err := runScalarMetric(cfg, refPath, decodedPath, "ssim", `All:([0-9.]+)`); err == nil {
+		if v, err := runScalarMetric(cfg, refPath, decodedPath, "ssim", `All:([0-9.]+|inf|Inf|INF)`); err == nil {
 			m.ssim = formatMetric(v)
 		} else if required["ssim"] {
 			return m, fmt.Errorf("required metric ssim: %w", err)
@@ -3996,7 +4028,7 @@ func measureDecoded(cfg benchConfig, filters map[string]bool, required map[strin
 		return m, errors.New("required metric ssim unavailable: ffmpeg filter ssim not found")
 	}
 	if filters["xpsnr"] {
-		if v, err := runScalarMetric(cfg, refPath, decodedPath, "xpsnr", `XPSNR\s+y:\s*([0-9]+(?:\.[0-9]+)?)`); err == nil {
+		if v, err := runScalarMetric(cfg, refPath, decodedPath, "xpsnr", `XPSNR\s+y:\s*([0-9]+(?:\.[0-9]+)?|inf|Inf|INF)`); err == nil {
 			m.xpsnr = formatMetric(v)
 		} else if required["xpsnr"] {
 			return m, fmt.Errorf("required metric xpsnr: %w", err)
@@ -4023,6 +4055,10 @@ func runScalarMetric(cfg benchConfig, refPath, decodedPath, filterName, pattern 
 	if err != nil {
 		return 0, fmt.Errorf("%s: %s", filterName, trimCommandOutput(err, out))
 	}
+	return parseScalarMetricOutput(out, filterName, pattern)
+}
+
+func parseScalarMetricOutput(out []byte, filterName, pattern string) (float64, error) {
 	re := regexp.MustCompile(pattern)
 	m := re.FindStringSubmatch(string(out))
 	if len(m) < 2 {
@@ -4031,7 +4067,7 @@ func runScalarMetric(cfg benchConfig, refPath, decodedPath, filterName, pattern 
 	return strconv.ParseFloat(m[1], 64)
 }
 
-func runFrameMetric(cfg benchConfig, refPath, decodedPath, encoderName string, bitrate int, filterName, valuePattern string) ([]frameMetricValue, error) {
+func runFrameMetric(cfg benchConfig, refPath, decodedPath, encoderName string, bitrate int, filterName, valuePattern string, expectedFrames int) ([]frameMetricValue, error) {
 	logPath := filepath.Join(cfg.workdir, fmt.Sprintf("%s_%d_%s_frames.log", safeClipDir(encoderName), bitrate, filterName))
 	_ = os.Remove(logPath)
 	filterSpec := fmt.Sprintf("%s=stats_file=%s", filterName, escapeFilterPath(logPath))
@@ -4045,14 +4081,14 @@ func runFrameMetric(cfg benchConfig, refPath, decodedPath, encoderName string, b
 	if err != nil {
 		return nil, fmt.Errorf("%s frame metrics: %w", filterName, err)
 	}
-	values, err := parseFrameMetricValues(raw, valuePattern)
+	values, err := parseFrameMetricValues(raw, valuePattern, expectedFrames)
 	if err != nil {
 		return nil, fmt.Errorf("%s frame metrics: %w", filterName, err)
 	}
 	return values, nil
 }
 
-func parseFrameMetricValues(raw []byte, valuePattern string) ([]frameMetricValue, error) {
+func parseFrameMetricValues(raw []byte, valuePattern string, expectedFrames int) ([]frameMetricValue, error) {
 	lineRe := regexp.MustCompile(`\bn:\s*([0-9]+)`)
 	valueRe := regexp.MustCompile(valuePattern)
 	var values []frameMetricValue
@@ -4081,7 +4117,34 @@ func parseFrameMetricValues(raw []byte, valuePattern string) ([]frameMetricValue
 	if len(values) == 0 {
 		return nil, errors.New("no per-frame values found")
 	}
+	if expectedFrames > 0 {
+		if err := validateFrameMetricValues(values, expectedFrames); err != nil {
+			return nil, err
+		}
+	}
 	return values, nil
+}
+
+func validateFrameMetricValues(values []frameMetricValue, expectedFrames int) error {
+	if len(values) != expectedFrames {
+		return fmt.Errorf("per-frame metric count=%d, want exact frame count %d", len(values), expectedFrames)
+	}
+	seen := make([]bool, expectedFrames)
+	for _, value := range values {
+		if value.FrameIndex < 0 || value.FrameIndex >= expectedFrames {
+			return fmt.Errorf("per-frame metric index=%d outside expected range 0..%d", value.FrameIndex, expectedFrames-1)
+		}
+		if seen[value.FrameIndex] {
+			return fmt.Errorf("duplicate per-frame metric index %d", value.FrameIndex)
+		}
+		seen[value.FrameIndex] = true
+	}
+	for i, ok := range seen {
+		if !ok {
+			return fmt.Errorf("missing per-frame metric index %d", i)
+		}
+	}
+	return nil
 }
 
 func normalizeFrameMetricValue(raw string) (string, error) {
@@ -4128,7 +4191,7 @@ func runVMAF(cfg benchConfig, refPath, decodedPath, encoderName string, bitrate 
 	if err != nil {
 		return 0, err
 	}
-	return parseVMAFMean(raw)
+	return parseVMAFMean(raw, cfg.frames)
 }
 
 func vmafArgs(cfg benchConfig, refPath, decodedPath, logPath string) []string {
@@ -4157,14 +4220,19 @@ func vmafArgs(cfg benchConfig, refPath, decodedPath, logPath string) []string {
 	}
 }
 
-func parseVMAFMean(raw []byte) (float64, error) {
-	var doc map[string]any
+func parseVMAFMean(raw []byte, expectedFrames int) (float64, error) {
+	var doc struct {
+		Frames        []json.RawMessage             `json:"frames"`
+		PooledMetrics map[string]map[string]float64 `json:"pooled_metrics"`
+	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return 0, err
 	}
-	pooled, _ := doc["pooled_metrics"].(map[string]any)
-	vmaf, _ := pooled["vmaf"].(map[string]any)
-	mean, ok := vmaf["mean"].(float64)
+	if expectedFrames > 0 && len(doc.Frames) != expectedFrames {
+		return 0, fmt.Errorf("vmaf frame count=%d, want exact frame count %d", len(doc.Frames), expectedFrames)
+	}
+	vmaf := doc.PooledMetrics["vmaf"]
+	mean, ok := vmaf["mean"]
 	if !ok {
 		return 0, errors.New("vmaf mean not found")
 	}
@@ -4311,7 +4379,10 @@ func escapeFilterValue(value string) string {
 }
 
 func formatMetric(v float64) string {
-	if math.IsNaN(v) || math.IsInf(v, 0) {
+	if math.IsInf(v, 1) {
+		return "inf"
+	}
+	if math.IsNaN(v) || math.IsInf(v, -1) {
 		return "NA"
 	}
 	return strconv.FormatFloat(v, 'f', 4, 64)
