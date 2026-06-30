@@ -329,24 +329,27 @@ type runtimeMetadata struct {
 }
 
 type environmentMetadata struct {
-	GOMAXPROCS       int               `json:"gomaxprocs"`
-	NumCPU           int               `json:"num_cpu"`
-	CPUModel         string            `json:"cpu_model,omitempty"`
-	Hostname         string            `json:"hostname,omitempty"`
-	OSVersion        string            `json:"os_version,omitempty"`
-	KernelVersion    string            `json:"kernel_version,omitempty"`
-	PATH             string            `json:"path,omitempty"`
-	GOFLAGS          string            `json:"goflags,omitempty"`
-	GOGC             string            `json:"gogc,omitempty"`
-	GOMEMLIMIT       string            `json:"gomemlimit,omitempty"`
-	GODEBUG          string            `json:"godebug,omitempty"`
-	CPUAffinity      string            `json:"cpu_affinity,omitempty"`
-	PowerMode        string            `json:"power_mode,omitempty"`
-	ThermalState     string            `json:"thermal_state,omitempty"`
-	FrequencyPolicy  string            `json:"frequency_policy,omitempty"`
-	BackgroundLoad   string            `json:"background_load,omitempty"`
-	Notes            string            `json:"notes,omitempty"`
-	ObservedCPUState benchenv.CPUState `json:"observed_cpu_state"`
+	GOMAXPROCS                 int               `json:"gomaxprocs"`
+	NumCPU                     int               `json:"num_cpu"`
+	CPUModel                   string            `json:"cpu_model,omitempty"`
+	Hostname                   string            `json:"hostname,omitempty"`
+	OSVersion                  string            `json:"os_version,omitempty"`
+	KernelVersion              string            `json:"kernel_version,omitempty"`
+	PATH                       string            `json:"path,omitempty"`
+	GOFLAGS                    string            `json:"goflags,omitempty"`
+	GOGC                       string            `json:"gogc,omitempty"`
+	GOMEMLIMIT                 string            `json:"gomemlimit,omitempty"`
+	GODEBUG                    string            `json:"godebug,omitempty"`
+	ExternalCommandEnvPolicy   string            `json:"external_command_env_policy,omitempty"`
+	ExternalCommandEnv         map[string]string `json:"external_command_env,omitempty"`
+	ExternalCommandFilteredEnv []string          `json:"external_command_filtered_env,omitempty"`
+	CPUAffinity                string            `json:"cpu_affinity,omitempty"`
+	PowerMode                  string            `json:"power_mode,omitempty"`
+	ThermalState               string            `json:"thermal_state,omitempty"`
+	FrequencyPolicy            string            `json:"frequency_policy,omitempty"`
+	BackgroundLoad             string            `json:"background_load,omitempty"`
+	Notes                      string            `json:"notes,omitempty"`
+	ObservedCPUState           benchenv.CPUState `json:"observed_cpu_state"`
 }
 
 type gitMetadata struct {
@@ -2688,25 +2691,107 @@ func metricFilterAvailability(filters map[string]bool) map[string]bool {
 func environmentMetadataForRun(cfg benchConfig) environmentMetadata {
 	hostname, _ := os.Hostname()
 	return environmentMetadata{
-		GOMAXPROCS:       runtime.GOMAXPROCS(0),
-		NumCPU:           runtime.NumCPU(),
-		CPUModel:         detectCPUModel(),
-		Hostname:         hostname,
-		OSVersion:        detectOSVersion(),
-		KernelVersion:    detectKernelVersion(),
-		PATH:             os.Getenv("PATH"),
-		GOFLAGS:          os.Getenv("GOFLAGS"),
-		GOGC:             os.Getenv("GOGC"),
-		GOMEMLIMIT:       os.Getenv("GOMEMLIMIT"),
-		GODEBUG:          os.Getenv("GODEBUG"),
-		CPUAffinity:      strings.TrimSpace(cfg.cpuAffinity),
-		PowerMode:        strings.TrimSpace(cfg.powerMode),
-		ThermalState:     strings.TrimSpace(cfg.thermalState),
-		FrequencyPolicy:  strings.TrimSpace(cfg.frequencyPolicy),
-		BackgroundLoad:   strings.TrimSpace(cfg.backgroundLoad),
-		Notes:            strings.TrimSpace(cfg.environmentNotes),
-		ObservedCPUState: observeBenchmarkCPUState(),
+		GOMAXPROCS:                 runtime.GOMAXPROCS(0),
+		NumCPU:                     runtime.NumCPU(),
+		CPUModel:                   detectCPUModel(),
+		Hostname:                   hostname,
+		OSVersion:                  detectOSVersion(),
+		KernelVersion:              detectKernelVersion(),
+		PATH:                       os.Getenv("PATH"),
+		GOFLAGS:                    os.Getenv("GOFLAGS"),
+		GOGC:                       os.Getenv("GOGC"),
+		GOMEMLIMIT:                 os.Getenv("GOMEMLIMIT"),
+		GODEBUG:                    os.Getenv("GODEBUG"),
+		ExternalCommandEnvPolicy:   externalCommandEnvPolicy,
+		ExternalCommandEnv:         externalCommandEnvMap(),
+		ExternalCommandFilteredEnv: presentExternalCommandFilteredEnv(),
+		CPUAffinity:                strings.TrimSpace(cfg.cpuAffinity),
+		PowerMode:                  strings.TrimSpace(cfg.powerMode),
+		ThermalState:               strings.TrimSpace(cfg.thermalState),
+		FrequencyPolicy:            strings.TrimSpace(cfg.frequencyPolicy),
+		BackgroundLoad:             strings.TrimSpace(cfg.backgroundLoad),
+		Notes:                      strings.TrimSpace(cfg.environmentNotes),
+		ObservedCPUState:           observeBenchmarkCPUState(),
 	}
+}
+
+const externalCommandEnvPolicy = "allowlist PATH, HOME, TMPDIR, TEMP, TMP, XDG_RUNTIME_DIR, SystemRoot, WINDIR, ComSpec; force LANG=C, LC_ALL=C, TZ=UTC"
+
+var externalCommandEnvAllowlist = []string{
+	"PATH",
+	"HOME",
+	"TMPDIR",
+	"TEMP",
+	"TMP",
+	"XDG_RUNTIME_DIR",
+	"SystemRoot",
+	"WINDIR",
+	"ComSpec",
+}
+
+var externalCommandEnvReportedFilters = []string{
+	"OMP_NUM_THREADS",
+	"OMP_DYNAMIC",
+	"OMP_PROC_BIND",
+	"OMP_PLACES",
+	"GOMP_CPU_AFFINITY",
+	"KMP_AFFINITY",
+	"KMP_HW_SUBSET",
+	"KMP_BLOCKTIME",
+	"KMP_SETTINGS",
+	"MKL_NUM_THREADS",
+	"OPENBLAS_NUM_THREADS",
+	"VECLIB_MAXIMUM_THREADS",
+	"BLIS_NUM_THREADS",
+	"NUMEXPR_NUM_THREADS",
+	"RAYON_NUM_THREADS",
+	"TBB_NUM_THREADS",
+	"LD_PRELOAD",
+	"LD_LIBRARY_PATH",
+	"DYLD_INSERT_LIBRARIES",
+	"DYLD_LIBRARY_PATH",
+	"DYLD_FRAMEWORK_PATH",
+	"DYLD_FALLBACK_LIBRARY_PATH",
+	"FFREPORT",
+	"AV_LOG_FORCE_COLOR",
+	"AV_LOG_FORCE_NOCOLOR",
+}
+
+func externalCommandEnv() []string {
+	env := externalCommandEnvMap()
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, key+"="+env[key])
+	}
+	return out
+}
+
+func externalCommandEnvMap() map[string]string {
+	env := make(map[string]string, len(externalCommandEnvAllowlist)+3)
+	for _, key := range externalCommandEnvAllowlist {
+		if value, ok := os.LookupEnv(key); ok {
+			env[key] = value
+		}
+	}
+	env["LANG"] = "C"
+	env["LC_ALL"] = "C"
+	env["TZ"] = "UTC"
+	return env
+}
+
+func presentExternalCommandFilteredEnv() []string {
+	var out []string
+	for _, key := range externalCommandEnvReportedFilters {
+		if value, ok := os.LookupEnv(key); ok && value != "" {
+			out = append(out, key)
+		}
+	}
+	return out
 }
 
 func detectCPUModel() string {
@@ -2798,7 +2883,9 @@ func commandMetadataWithExpected(name, expectedHash string, versionArgSets ...[]
 		meta.SHA256Verified = meta.ExpectedSHA256 != "" && hash == meta.ExpectedSHA256
 	}
 	for _, args := range versionArgSets {
-		out, err := exec.Command(path, args...).CombinedOutput()
+		cmd := exec.Command(path, args...)
+		cmd.Env = externalCommandEnv()
+		out, err := cmd.CombinedOutput()
 		line := firstNonEmptyLine(string(out))
 		if err != nil {
 			meta.VersionError = trimCommandOutput(err, out)
@@ -4010,6 +4097,7 @@ func timeCommand(timeout time.Duration, name string, args []string, result *enco
 	ctx, cancel := context.WithTimeout(context.Background(), effectiveCommandTimeout(timeout))
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = externalCommandEnv()
 	var capture boundedCommandOutput
 	cmd.Stdout = &capture
 	cmd.Stderr = &capture
@@ -4031,6 +4119,7 @@ func combinedOutputWithTimeout(timeout time.Duration, name string, args ...strin
 	ctx, cancel := context.WithTimeout(context.Background(), effectiveCommandTimeout(timeout))
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = externalCommandEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return out, commandTimeoutError(ctx, timeout, err)
@@ -4187,6 +4276,7 @@ func ivfPayloadBytes(path string, width, height, frames int) (int64, error) {
 func ffmpegFilters(ffmpegBin string) map[string]bool {
 	out := map[string]bool{}
 	cmd := exec.Command(commandSetting(ffmpegBin, "ffmpeg"), "-hide_banner", "-filters")
+	cmd.Env = externalCommandEnv()
 	raw, err := cmd.Output()
 	if err != nil {
 		return out
@@ -4202,6 +4292,7 @@ func ffmpegFilters(ffmpegBin string) map[string]bool {
 
 func ffmpegDecoders(ffmpegBin string) map[string]bool {
 	cmd := exec.Command(commandSetting(ffmpegBin, "ffmpeg"), "-hide_banner", "-decoders")
+	cmd.Env = externalCommandEnv()
 	raw, err := cmd.Output()
 	if err != nil {
 		return nil

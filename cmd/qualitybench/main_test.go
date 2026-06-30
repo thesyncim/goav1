@@ -633,17 +633,18 @@ func TestEncodeGoAV1ExternalBaselineMetricsUseFFmpegDecode(t *testing.T) {
 	dir := t.TempDir()
 	ffmpegPath := filepath.Join(dir, "ffmpeg")
 	argsPath := filepath.Join(dir, "ffmpeg.args")
-	script := `#!/bin/sh
-: > "$QUALITYBENCH_FAKE_FFMPEG_ARGS"
+	yuvBytes := expectedRawI420Bytes(64, 64, 2)
+	script := fmt.Sprintf(`#!/bin/sh
+: > %q
 for arg in "$@"; do
-	printf '%s\n' "$arg" >> "$QUALITYBENCH_FAKE_FFMPEG_ARGS"
+	printf '%%s\n' "$arg" >> %q
 done
 out=""
 for arg in "$@"; do
 	out="$arg"
 done
-dd if=/dev/zero of="$out" bs="$QUALITYBENCH_FAKE_YUV_BYTES" count=1 2>/dev/null
-`
+dd if=/dev/zero of="$out" bs=%d count=1 2>/dev/null
+`, argsPath, argsPath, yuvBytes)
 	if err := os.WriteFile(ffmpegPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -659,8 +660,6 @@ dd if=/dev/zero of="$out" bs="$QUALITYBENCH_FAKE_YUV_BYTES" count=1 2>/dev/null
 		ffmpegBin:        ffmpegPath,
 		ffmpegAV1Decoder: "libdav1d",
 	}
-	t.Setenv("QUALITYBENCH_FAKE_FFMPEG_ARGS", argsPath)
-	t.Setenv("QUALITYBENCH_FAKE_YUV_BYTES", strconv.FormatInt(expectedRawI420Bytes(cfg.width, cfg.height, cfg.frames), 10))
 
 	result := encodeGoAV1(cfg, syntheticFrames(cfg.frames, cfg.width, cfg.height), 100000)
 	if result.status != "ok" {
@@ -1463,6 +1462,44 @@ exit 7
 		!strings.Contains(result.errText, "stdout-run-1") ||
 		!strings.Contains(result.errText, "stderr-run-1") {
 		t.Fatalf("result status=%q err=%q", result.status, result.errText)
+	}
+}
+
+func TestExternalCommandEnvSanitizesAmbientControls(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, "env.txt")
+	scriptPath := filepath.Join(dir, "env.sh")
+	script := fmt.Sprintf(`#!/bin/sh
+{
+printf 'omp=%%s\n' "$OMP_NUM_THREADS"
+printf 'dyld=%%s\n' "$DYLD_INSERT_LIBRARIES"
+printf 'lc=%%s\n' "$LC_ALL"
+printf 'tz=%%s\n' "$TZ"
+printf 'path=%%s\n' "$PATH"
+} > %q
+`, envPath)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OMP_NUM_THREADS", "99")
+	t.Setenv("DYLD_INSERT_LIBRARIES", "/tmp/not-real.dylib")
+	t.Setenv("LC_ALL", "fr_FR.UTF-8")
+	t.Setenv("TZ", "Europe/Lisbon")
+
+	var result encodeResult
+	_ = timeCommand(defaultCommandTimeout, scriptPath, nil, &result)
+	if result.status != "" {
+		t.Fatalf("command status=%q err=%q", result.status, result.errText)
+	}
+	raw, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{"omp=\n", "dyld=\n", "lc=C\n", "tz=UTC\n", "path="} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("sanitized env missing %q in:\n%s", want, text)
+		}
 	}
 }
 
@@ -2450,6 +2487,7 @@ func TestWriteMetadataJSON(t *testing.T) {
 		FPS:    30,
 	}}
 	git := gitMetadata{Commit: "snapshot", Dirty: false}
+	t.Setenv("OMP_NUM_THREADS", "99")
 	if err := writeMetadataJSON(cfg, map[string]bool{"psnr": true, "ssim": false}, git, clips, invocations); err != nil {
 		t.Fatal(err)
 	}
@@ -2479,6 +2517,21 @@ func TestWriteMetadataJSON(t *testing.T) {
 	if doc.Environment.ObservedCPUState.AffinityAllowedList != "0-3" ||
 		doc.Environment.ObservedCPUState.CPUOnlineList != "0-3" {
 		t.Fatalf("observed cpu state=%+v", doc.Environment.ObservedCPUState)
+	}
+	if doc.Environment.ExternalCommandEnvPolicy == "" ||
+		doc.Environment.ExternalCommandEnv["LC_ALL"] != "C" ||
+		doc.Environment.ExternalCommandEnv["TZ"] != "UTC" {
+		t.Fatalf("external command env metadata=%+v", doc.Environment)
+	}
+	foundFiltered := false
+	for _, name := range doc.Environment.ExternalCommandFilteredEnv {
+		if name == "OMP_NUM_THREADS" {
+			foundFiltered = true
+			break
+		}
+	}
+	if !foundFiltered {
+		t.Fatalf("filtered external env metadata=%+v", doc.Environment.ExternalCommandFilteredEnv)
 	}
 	if doc.Environment.Notes != "fixed power mode" ||
 		doc.Environment.CPUAffinity != "none" ||
