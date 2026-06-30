@@ -832,14 +832,22 @@ func predictScaledCompoundRef8ToConvBufYIdentity(out []uint16, ref frame.Plane, 
 			kernel := xTable[xFilterIdx]
 			k0, k1, k2, k3 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3])
 			k4, k5, k6, k7 := int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
-			sum := k0*int(loadSample8ClampedRow(ref, xInt, rowBase)) +
-				k1*int(loadSample8ClampedRow(ref, xInt+1, rowBase)) +
-				k2*int(loadSample8ClampedRow(ref, xInt+2, rowBase)) +
-				k3*int(loadSample8ClampedRow(ref, xInt+3, rowBase)) +
-				k4*int(loadSample8ClampedRow(ref, xInt+4, rowBase)) +
-				k5*int(loadSample8ClampedRow(ref, xInt+5, rowBase)) +
-				k6*int(loadSample8ClampedRow(ref, xInt+6, rowBase)) +
-				k7*int(loadSample8ClampedRow(ref, xInt+7, rowBase))
+			sum := 0
+			if xInt >= 0 && xInt+filterTaps <= ref.Width {
+				src := ref.Pix[rowBase+xInt : rowBase+xInt+filterTaps : rowBase+xInt+filterTaps]
+				_ = src[7]
+				sum = k0*int(src[0]) + k1*int(src[1]) + k2*int(src[2]) + k3*int(src[3]) +
+					k4*int(src[4]) + k5*int(src[5]) + k6*int(src[6]) + k7*int(src[7])
+			} else {
+				sum = k0*int(loadSample8ClampedRow(ref, xInt, rowBase)) +
+					k1*int(loadSample8ClampedRow(ref, xInt+1, rowBase)) +
+					k2*int(loadSample8ClampedRow(ref, xInt+2, rowBase)) +
+					k3*int(loadSample8ClampedRow(ref, xInt+3, rowBase)) +
+					k4*int(loadSample8ClampedRow(ref, xInt+4, rowBase)) +
+					k5*int(loadSample8ClampedRow(ref, xInt+5, rowBase)) +
+					k6*int(loadSample8ClampedRow(ref, xInt+6, rowBase)) +
+					k7*int(loadSample8ClampedRow(ref, xInt+7, rowBase))
+			}
 			outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
 			xPos += xStep
 		}
