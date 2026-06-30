@@ -20,6 +20,8 @@
 // Instructions missing from Go's assembler are emitted as WORD:
 //   ld2 {v0.16b, v1.16b}, [x2]             -> 0x4c408040
 //   ld4 {v0.16b, v1.16b, v2.16b, v3.16b}, [x2] -> 0x4c400040
+//   ld2 {v0.8h,  v1.8h},  [x2]             -> 0x4c408440
+//   ld4 {v0.8h,  v1.8h,  v2.8h,  v3.8h},  [x2] -> 0x4c400440
 
 // func scaleNearestRowDown2NEON(ctx *scaleNearestRowCtx)
 TEXT ·scaleNearestRowDown2NEON(SB), NOSPLIT, $0-8
@@ -57,4 +59,42 @@ down4Loop:
 	CBNZ R3, down4Loop
 
 down4Done:
+	RET
+
+// func scaleNearestRow16Down2NEON(ctx *scaleNearestRowCtx)
+TEXT ·scaleNearestRow16Down2NEON(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD SCALE_DST(R0), R1
+	MOVD SCALE_SRC(R0), R2
+	MOVD SCALE_GROUPS(R0), R3
+	CBZ  R3, down2x16Done
+
+down2x16Loop:
+	WORD $0x4c408440 // ld2 {v0.8h, v1.8h}, [x2]
+	WORD $0x3d800020 // str q0, [x1]
+	ADD  $32, R2
+	ADD  $16, R1
+	SUB  $1, R3
+	CBNZ R3, down2x16Loop
+
+down2x16Done:
+	RET
+
+// func scaleNearestRow16Down4NEON(ctx *scaleNearestRowCtx)
+TEXT ·scaleNearestRow16Down4NEON(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD SCALE_DST(R0), R1
+	MOVD SCALE_SRC(R0), R2
+	MOVD SCALE_GROUPS(R0), R3
+	CBZ  R3, down4x16Done
+
+down4x16Loop:
+	WORD $0x4c400440 // ld4 {v0.8h, v1.8h, v2.8h, v3.8h}, [x2]
+	WORD $0x3d800020 // str q0, [x1]
+	ADD  $64, R2
+	ADD  $16, R1
+	SUB  $1, R3
+	CBNZ R3, down4x16Loop
+
+down4x16Done:
 	RET

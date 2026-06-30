@@ -755,7 +755,13 @@ func scaleSourceFrameMono16Nearest(dst *SourceFrameMono16, src SourceFrameMono16
 	return *dst, nil
 }
 
+var scalePlaneNearest16Impl = scalePlaneNearest16PureGo
+
 func scalePlaneNearest16(dst []uint16, dstStride, dstWidth, dstHeight int, src []uint16, srcStride, srcWidth, srcHeight int) {
+	scalePlaneNearest16Impl(dst, dstStride, dstWidth, dstHeight, src, srcStride, srcWidth, srcHeight)
+}
+
+func scalePlaneNearest16PureGo(dst []uint16, dstStride, dstWidth, dstHeight int, src []uint16, srcStride, srcWidth, srcHeight int) {
 	for y := 0; y < dstHeight; y++ {
 		sy := y * srcHeight / dstHeight
 		drow := dst[y*dstStride : y*dstStride+dstWidth]
