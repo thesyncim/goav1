@@ -333,13 +333,29 @@ func TestValidateRequiredCorpus(t *testing.T) {
 		manifestPath:  filepath.Join(dir, "clips.csv"),
 		requireCorpus: true,
 		minClips:      2,
+		minSourceIDs:  2,
+		minCategories: 2,
 	}
 	clips := []clipSpec{
-		{Name: "first", Input: first},
-		{Name: "second", Input: second},
+		{Name: "first", Input: first, SourceID: "camera-a", Category: "talking-head"},
+		{Name: "second", Input: second, SourceID: "camera-b", Category: "screen-content"},
 	}
 	if err := validateRequiredCorpus(cfg, clips); err != nil {
 		t.Fatalf("valid corpus failed: %v", err)
+	}
+
+	sameSource := append([]clipSpec(nil), clips...)
+	sameSource[1].SourceID = "Camera-A"
+	if err := validateRequiredCorpus(cfg, sameSource); err == nil ||
+		!strings.Contains(err.Error(), "source_id") {
+		t.Fatalf("homogeneous source_id error=%v", err)
+	}
+
+	sameCategory := append([]clipSpec(nil), clips...)
+	sameCategory[1].Category = "Talking-Head"
+	if err := validateRequiredCorpus(cfg, sameCategory); err == nil ||
+		!strings.Contains(err.Error(), "category") {
+		t.Fatalf("homogeneous category error=%v", err)
 	}
 
 	cfg.minClips = 3
@@ -1296,6 +1312,8 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		requireSummary:     true,
 		requireCorpus:      true,
 		minClips:           6,
+		minSourceIDs:       2,
+		minCategories:      2,
 		anchorEncoder:      "goav1",
 		goMaxProcs:         4,
 		goGC:               "off",
@@ -1334,6 +1352,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 	if got.Encoders[0] != "goav1" || got.Bitrates[0] != 100000 ||
 		got.RequiredMetrics[0] != "psnr" || got.RequiredEncoders[0] != "goav1" ||
 		!got.RequireSummary || !got.RequireCorpus || got.MinClips != 6 ||
+		got.MinSourceIDs != 2 || got.MinCategories != 2 ||
 		got.GoMaxProcs != 4 || got.GoGC != "off" || got.GoAV1MaxThreads != 4 ||
 		got.GoAV1Effort != int(goav1.EncoderWebRTCMinEffortLevel) ||
 		got.GoAV1SceneCut || !got.GoAV1ProcessTime ||
@@ -1583,6 +1602,8 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		requiredMetrics:     []string{"psnr", "vmaf"},
 		requireCorpus:       true,
 		minClips:            2,
+		minSourceIDs:        2,
+		minCategories:       2,
 		requireSummary:      true,
 		fps:                 60,
 		goMaxProcs:          4,
@@ -1632,6 +1653,8 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"manifest":             true,
 			"require-corpus":       true,
 			"min-clips":            true,
+			"min-source-ids":       true,
+			"min-categories":       true,
 			"require-encoders":     true,
 			"require-metrics":      true,
 			"summary-csv":          true,
@@ -2035,6 +2058,31 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	if err := validatePublishConfig(noWarmup, gitMetadata{Commit: "abc"}); err == nil ||
 		!strings.Contains(err.Error(), "-warmup-runs >= 1") {
 		t.Fatalf("missing warmup error=%v", err)
+	}
+
+	missingMinSourceIDs := cfg
+	missingMinSourceIDs.explicitFlags = map[string]bool{}
+	for k, v := range cfg.explicitFlags {
+		missingMinSourceIDs.explicitFlags[k] = v
+	}
+	delete(missingMinSourceIDs.explicitFlags, "min-source-ids")
+	if err := validatePublishConfig(missingMinSourceIDs, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-min-source-ids") {
+		t.Fatalf("missing min-source-ids error=%v", err)
+	}
+
+	tooFewSourceIDs := cfg
+	tooFewSourceIDs.minSourceIDs = 1
+	if err := validatePublishConfig(tooFewSourceIDs, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-min-source-ids >= 2") {
+		t.Fatalf("too few source ids error=%v", err)
+	}
+
+	tooFewCategories := cfg
+	tooFewCategories.minCategories = 1
+	if err := validatePublishConfig(tooFewCategories, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "-min-categories >= 2") {
+		t.Fatalf("too few categories error=%v", err)
 	}
 
 	dirty := cfg

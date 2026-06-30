@@ -94,6 +94,8 @@ type benchConfig struct {
 	requireSummary      bool
 	requireCorpus       bool
 	minClips            int
+	minSourceIDs        int
+	minCategories       int
 	layers              int
 	tiles               int
 	goldenInterval      int
@@ -392,6 +394,8 @@ type metadataConfig struct {
 	RequireSummary   bool     `json:"require_summary,omitempty"`
 	RequireCorpus    bool     `json:"require_corpus,omitempty"`
 	MinClips         int      `json:"min_clips,omitempty"`
+	MinSourceIDs     int      `json:"min_source_ids,omitempty"`
+	MinCategories    int      `json:"min_categories,omitempty"`
 	Anchor           string   `json:"anchor"`
 	Layers           int      `json:"layers"`
 	Tiles            int      `json:"tiles"`
@@ -802,6 +806,8 @@ func parseFlags() (benchConfig, error) {
 	flag.Int64Var(&cfg.shuffleSeed, "shuffle-seed", 1, "deterministic seed used when -run-order=shuffle")
 	flag.BoolVar(&cfg.requireSummary, "require-summary", false, "fail if required BD-rate summary rows are missing or invalid")
 	flag.BoolVar(&cfg.requireCorpus, "require-corpus", false, "require a manifest-backed real clip corpus before encoding")
+	flag.IntVar(&cfg.minSourceIDs, "min-source-ids", 0, "minimum number of distinct manifest source_id values required before encoding")
+	flag.IntVar(&cfg.minCategories, "min-categories", 0, "minimum number of distinct manifest category values required before encoding")
 	flag.BoolVar(&cfg.publish, "publish", false, "require strict reproducibility controls for published benchmark tables")
 	flag.BoolVar(&cfg.keep, "keep", false, "keep the temporary workdir when -workdir is not set")
 	flag.Parse()
@@ -835,6 +841,12 @@ func parseFlags() (benchConfig, error) {
 	}
 	if cfg.minClips < 0 {
 		return benchConfig{}, fmt.Errorf("invalid minimum clip count %d", cfg.minClips)
+	}
+	if cfg.minSourceIDs < 0 {
+		return benchConfig{}, fmt.Errorf("invalid minimum source_id count %d", cfg.minSourceIDs)
+	}
+	if cfg.minCategories < 0 {
+		return benchConfig{}, fmt.Errorf("invalid minimum category count %d", cfg.minCategories)
 	}
 	if cfg.requireCorpus && cfg.minClips < 2 {
 		return benchConfig{}, errors.New("require-corpus requires -min-clips >= 2")
@@ -976,6 +988,8 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"manifest",
 		"require-corpus",
 		"min-clips",
+		"min-source-ids",
+		"min-categories",
 		"require-encoders",
 		"require-metrics",
 		"summary-csv",
@@ -1074,6 +1088,12 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	}
 	if !cfg.requireCorpus || cfg.manifestPath == "" || cfg.minClips < 2 {
 		return errors.New("publish requires -require-corpus with -manifest and -min-clips >= 2")
+	}
+	if cfg.minSourceIDs < 2 {
+		return errors.New("publish requires -min-source-ids >= 2")
+	}
+	if cfg.minCategories < 2 {
+		return errors.New("publish requires -min-categories >= 2")
 	}
 	if cfg.csvPath == "" || cfg.metadataPath == "" || cfg.summaryCSVPath == "" || cfg.frameMetricsCSVPath == "" || !cfg.requireSummary {
 		return errors.New("publish requires -csv, -metadata-json, -summary-csv, -frame-metrics-csv, and -require-summary")
@@ -1848,6 +1868,16 @@ func validateRequiredCorpus(cfg benchConfig, clips []clipSpec) error {
 	if cfg.minClips > 0 && len(clips) < cfg.minClips {
 		return fmt.Errorf("clip corpus requires at least %d clips, got %d", cfg.minClips, len(clips))
 	}
+	if err := validateCorpusDiversity("source_id", cfg.minSourceIDs, clips, func(clip clipSpec) string {
+		return clip.SourceID
+	}); err != nil {
+		return err
+	}
+	if err := validateCorpusDiversity("category", cfg.minCategories, clips, func(clip clipSpec) string {
+		return clip.Category
+	}); err != nil {
+		return err
+	}
 	if !cfg.requireCorpus {
 		return nil
 	}
@@ -1865,6 +1895,23 @@ func validateRequiredCorpus(cfg benchConfig, clips []clipSpec) error {
 		if info.IsDir() {
 			return fmt.Errorf("%s: required corpus input %s is a directory", clip.Name, clip.Input)
 		}
+	}
+	return nil
+}
+
+func validateCorpusDiversity(name string, minDistinct int, clips []clipSpec, value func(clipSpec) string) error {
+	if minDistinct <= 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(clips))
+	for _, clip := range clips {
+		v := strings.ToLower(strings.TrimSpace(value(clip)))
+		if v != "" {
+			seen[v] = true
+		}
+	}
+	if len(seen) < minDistinct {
+		return fmt.Errorf("clip corpus requires at least %d distinct %s values, got %d", minDistinct, name, len(seen))
 	}
 	return nil
 }
@@ -2528,6 +2575,8 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		RequireSummary:   cfg.requireSummary,
 		RequireCorpus:    cfg.requireCorpus,
 		MinClips:         cfg.minClips,
+		MinSourceIDs:     cfg.minSourceIDs,
+		MinCategories:    cfg.minCategories,
 		Anchor:           cfg.anchorEncoder,
 		Layers:           cfg.layers,
 		Tiles:            cfg.tiles,

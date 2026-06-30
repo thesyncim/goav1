@@ -11,8 +11,9 @@ protocol:
 - Test real clips, not only the deterministic synthetic scene. The corpus must
   include camera motion, talking heads, sports or fast motion, screen content,
   animation, noise or low light, and at least one hard texture/pan sequence.
-  For claim-supporting runs, use `-require-corpus -min-clips N` so synthetic
-  rows, missing input files, and undersized manifests fail before encoding.
+  For claim-supporting runs, use `-require-corpus -min-clips N`,
+  `-min-source-ids N`, and `-min-categories N` so synthetic rows, missing input
+  files, undersized manifests, and homogeneous corpora fail before encoding.
 - Compare against named encoder builds and settings. For realtime WebRTC work,
   baselines must use low-delay CBR settings with no random-access lookahead or
   hidden alt-ref advantage unless goav1 is given the same latency budget.
@@ -50,7 +51,7 @@ GO_SHA256=$(shasum -a 256 "$GO_BIN" | awk '{print $1}')
   -bitrates 3000000,6000000,9000000,12000000 \
   -encoders goav1,aomenc,svt-av1 \
   -anchor aomenc -fps 60 -layers 1 -tiles 0 -golden 0 -keyint 60 \
-  -require-corpus -min-clips 6 \
+  -require-corpus -min-clips 6 -min-source-ids 2 -min-categories 2 \
   -require-encoders all \
   -require-metrics xpsnr,vmaf \
   -gomaxprocs 4 \
@@ -174,11 +175,11 @@ evidence unless the same command controls and metadata are reproduced.
 Use `-publish` for rows that will be copied into performance or quality tables.
 Publish mode requires a clean git worktree, explicit `-bitrates`,
 `-encoders`, `-workdir`, `-csv`, `-metadata-json`, `-manifest`,
-`-require-corpus`, `-min-clips`, `-require-encoders all`, `-require-metrics`,
-`-summary-csv`, `-frame-metrics-csv`, `-require-summary`, `-gomaxprocs`,
-absolute pinned `-go-bin` plus matching `-go-sha256`, `-fps`, `-layers`,
-`-tiles`, `-golden`, `-keyint`, `-anchor`, `-timing-mode e2e`,
-`-goav1-process-timing=true`,
+`-require-corpus`, `-min-clips`, `-min-source-ids`, `-min-categories`,
+`-require-encoders all`, `-require-metrics`, `-summary-csv`,
+`-frame-metrics-csv`, `-require-summary`, `-gomaxprocs`, absolute pinned
+`-go-bin` plus matching `-go-sha256`, `-fps`, `-layers`, `-tiles`, `-golden`,
+`-keyint`, `-anchor`, `-timing-mode e2e`, `-goav1-process-timing=true`,
 `-run-order shuffle`, explicit `-shuffle-seed`, `-runs >= 3`,
 `-warmup-runs >= 1`, and explicit `-vmaf-model` when VMAF is required, plus a
 non-empty `-environment-notes` value and explicit non-empty `-cpu-affinity`,
@@ -373,9 +374,10 @@ Each clip gets its own work subdirectory and its own raw/summary CSV rows.
 
 When `-require-corpus` is set, `qualitybench` requires `-manifest`, requires
 `-min-clips` to be at least 2, rejects manifest rows with an empty `input`, and
-checks that each input path exists before encoding. This gate verifies only the
-machine-checkable corpus contract; clip category coverage still has to be
-curated and documented by the experiment owner.
+checks that each input path exists before encoding. When `-min-source-ids` or
+`-min-categories` is set, the manifest must also contain that many distinct
+case-insensitive `source_id` or `category` values. Publish mode requires both
+thresholds to be at least 2.
 
 When `-summary-csv` is set, `qualitybench` writes BD-rate rows for each
 candidate encoder against `-anchor` (default: the first encoder in `-encoders`).
