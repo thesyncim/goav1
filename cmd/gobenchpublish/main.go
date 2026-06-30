@@ -26,6 +26,8 @@ import (
 	"github.com/thesyncim/goav1/internal/benchenv"
 )
 
+var observeBenchmarkCPUState = benchenv.ObserveCPUState
+
 type config struct {
 	Pkg              string
 	Bench            string
@@ -90,17 +92,18 @@ type metadataConfig struct {
 }
 
 type environmentConfig struct {
-	GOGC             string `json:"gogc,omitempty"`
-	GOFLAGS          string `json:"goflags,omitempty"`
-	GOMEMLIMIT       string `json:"gomemlimit,omitempty"`
-	GODEBUG          string `json:"godebug,omitempty"`
-	CPUAffinity      string `json:"cpu_affinity,omitempty"`
-	PowerMode        string `json:"power_mode,omitempty"`
-	ThermalState     string `json:"thermal_state,omitempty"`
-	FrequencyPolicy  string `json:"frequency_policy,omitempty"`
-	BackgroundLoad   string `json:"background_load,omitempty"`
-	Notes            string `json:"notes,omitempty"`
-	EffectiveCommand string `json:"effective_command"`
+	GOGC             string            `json:"gogc,omitempty"`
+	GOFLAGS          string            `json:"goflags,omitempty"`
+	GOMEMLIMIT       string            `json:"gomemlimit,omitempty"`
+	GODEBUG          string            `json:"godebug,omitempty"`
+	CPUAffinity      string            `json:"cpu_affinity,omitempty"`
+	PowerMode        string            `json:"power_mode,omitempty"`
+	ThermalState     string            `json:"thermal_state,omitempty"`
+	FrequencyPolicy  string            `json:"frequency_policy,omitempty"`
+	BackgroundLoad   string            `json:"background_load,omitempty"`
+	Notes            string            `json:"notes,omitempty"`
+	ObservedCPUState benchenv.CPUState `json:"observed_cpu_state"`
+	EffectiveCommand string            `json:"effective_command"`
 }
 
 type outputMetadata struct {
@@ -263,6 +266,9 @@ func validateConfig(cfg config, git gitMetadata) error {
 				return err
 			}
 		}
+		if err := benchenv.ValidateCPUAffinityClaim(cfg.CPUAffinity, observeBenchmarkCPUState()); err != nil {
+			return err
+		}
 		if cfg.Count < 5 {
 			return errors.New("publish requires -count >= 5")
 		}
@@ -414,6 +420,7 @@ func buildMetadata(cfg config, git gitMetadata, command []string, status, errTex
 			FrequencyPolicy:  strings.TrimSpace(cfg.FrequencyPolicy),
 			BackgroundLoad:   strings.TrimSpace(cfg.BackgroundLoad),
 			Notes:            strings.TrimSpace(cfg.EnvironmentNotes),
+			ObservedCPUState: observeBenchmarkCPUState(),
 			EffectiveCommand: strings.Join(command, " "),
 		},
 		Command: command,

@@ -17,6 +17,12 @@ import (
 
 func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
 	clearGobenchPublishGoEnv(t)
+	stubGobenchPublishCPUState(t, benchenv.CPUState{
+		GOOS:                "test",
+		AffinitySupported:   true,
+		AffinityAllowedList: "0",
+		CPUOnlineList:       "0",
+	})
 
 	cfg := config{
 		Pkg:              "./internal/av1/tile",
@@ -41,6 +47,20 @@ func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
 	if err := validateConfig(cfg, gitMetadata{Commit: "abc"}); err != nil {
 		t.Fatalf("valid publish config failed: %v", err)
 	}
+	oldProbe := observeBenchmarkCPUState
+	observeBenchmarkCPUState = func() benchenv.CPUState {
+		return benchenv.CPUState{
+			GOOS:                "test",
+			AffinitySupported:   true,
+			AffinityAllowedList: "0",
+			CPUOnlineList:       "0-1",
+		}
+	}
+	if err := validateConfig(cfg, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "restricted CPU affinity") {
+		t.Fatalf("restricted CPU affinity error=%v", err)
+	}
+	observeBenchmarkCPUState = oldProbe
 
 	dirty := cfg
 	if err := validateConfig(dirty, gitMetadata{Commit: "abc", Dirty: true}); err == nil ||
@@ -115,6 +135,12 @@ func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
 
 func TestValidatePublishConfigRejectsHiddenGoEnvironment(t *testing.T) {
 	clearGobenchPublishGoEnv(t)
+	stubGobenchPublishCPUState(t, benchenv.CPUState{
+		GOOS:                "test",
+		AffinitySupported:   true,
+		AffinityAllowedList: "0",
+		CPUOnlineList:       "0",
+	})
 	cfg := config{
 		Pkg:              "./internal/av1/tile",
 		Bench:            "^BenchmarkCoeffCulLevel$",
@@ -195,6 +221,12 @@ func TestGoTestArgsArePinned(t *testing.T) {
 }
 
 func TestMetadataJSONRecordsOutputHash(t *testing.T) {
+	stubGobenchPublishCPUState(t, benchenv.CPUState{
+		GOOS:                "test",
+		AffinitySupported:   true,
+		AffinityAllowedList: "0",
+		CPUOnlineList:       "0",
+	})
 	dir := t.TempDir()
 	out := filepath.Join(dir, "bench.txt")
 	metaPath := filepath.Join(dir, "bench.json")
@@ -247,7 +279,8 @@ func TestMetadataJSONRecordsOutputHash(t *testing.T) {
 		got.Environment.PowerMode != "high power" ||
 		got.Environment.ThermalState != "cool start" ||
 		got.Environment.FrequencyPolicy != "automatic" ||
-		got.Environment.BackgroundLoad != "idle machine" {
+		got.Environment.BackgroundLoad != "idle machine" ||
+		got.Environment.ObservedCPUState.AffinityAllowedList != "0" {
 		t.Fatalf("metadata=%+v", got)
 	}
 }
@@ -257,6 +290,13 @@ func clearGobenchPublishGoEnv(t *testing.T) {
 	for _, name := range benchenv.PublishAmbientGoEnvVars() {
 		t.Setenv(name, "")
 	}
+}
+
+func stubGobenchPublishCPUState(t *testing.T, state benchenv.CPUState) {
+	t.Helper()
+	old := observeBenchmarkCPUState
+	observeBenchmarkCPUState = func() benchenv.CPUState { return state }
+	t.Cleanup(func() { observeBenchmarkCPUState = old })
 }
 
 func gobenchPublishExplicitFlags() map[string]bool {
