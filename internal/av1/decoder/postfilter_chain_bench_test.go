@@ -20,6 +20,7 @@ package decoder
 // frame's pixel byte count (Y+U+V) as the throughput denominator.
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -89,7 +90,7 @@ func reportPostFilterMetrics(b *testing.B) {
 //
 // The shared synthetic pattern produces enough sample variance that the
 // per-block CDEF direction search and Wiener filter cannot short-circuit.
-func buildPostFilterChainFixture(b *testing.B) postFilterChainFixture {
+func buildPostFilterChainFixture(b testing.TB) postFilterChainFixture {
 	b.Helper()
 	const width = postFilterBenchWidth
 	const height = postFilterBenchHeight
@@ -203,7 +204,7 @@ func buildPostFilterChainLoopFilterRecords(width int, height int) []threading.Fr
 // buildPostFilterChainCDEFRequest sizes scratch from the context, marks every
 // 64x64 unit as readable, and returns a fully-bound CDEF request ready for
 // repeated ApplyCDEFPostFilter calls.
-func buildPostFilterChainCDEFRequest(b *testing.B, ctx FrameWorkPostFilterContext, event Event) FrameWorkCDEFPostFilterRequest {
+func buildPostFilterChainCDEFRequest(b testing.TB, ctx FrameWorkPostFilterContext, event Event) FrameWorkCDEFPostFilterRequest {
 	b.Helper()
 	batch := threading.FrameWorkBatch{
 		FrameWorkFrameContext: threading.FrameWorkFrameContext{
@@ -238,7 +239,7 @@ func buildPostFilterChainCDEFRequest(b *testing.B, ctx FrameWorkPostFilterContex
 // buildPostFilterChainRestorationRequest pre-builds the records / boundary
 // buffers / scratch for the Wiener restoration pass so ApplyLoopRestoration
 // can run with zero per-iteration allocations.
-func buildPostFilterChainRestorationRequest(b *testing.B, ctx FrameWorkPostFilterContext) FrameWorkRestorationPostFilterRequest {
+func buildPostFilterChainRestorationRequest(b testing.TB, ctx FrameWorkPostFilterContext) FrameWorkRestorationPostFilterRequest {
 	b.Helper()
 	batch := threading.FrameWorkBatch{
 		FrameWorkFrameContext: threading.FrameWorkFrameContext{
@@ -289,6 +290,67 @@ func buildPostFilterChainRestorationRequest(b *testing.B, ctx FrameWorkPostFilte
 	}
 }
 
+func TestApplySupportedPostFiltersBandedMatchesWholeChain(t *testing.T) {
+	whole := buildPostFilterChainFixture(t)
+	banded := buildPostFilterChainFixture(t)
+	whole.loopFilter.TrustedCoverage = true
+	banded.loopFilter.TrustedCoverage = true
+
+	wholeReq := FrameWorkPostFilterRequest{
+		LoopFilter:  whole.loopFilter,
+		CDEF:        whole.cdef,
+		Restoration: whole.rest,
+	}
+	bandedReq := FrameWorkPostFilterRequest{
+		LoopFilter:  banded.loopFilter,
+		CDEF:        banded.cdef,
+		Restoration: banded.rest,
+	}
+
+	wholeNext, wholeResult, err := whole.ctx.ApplySupportedPostFilters(wholeReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bandedNext, bandedResult, err := banded.ctx.ApplySupportedPostFiltersBanded(bandedReq, frameWorkDav1dPostFilterBanding(banded.ctx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCompleted := FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF | FrameWorkPostFilterLoopRestoration
+	if wholeResult.Completed != wantCompleted || bandedResult.Completed != wantCompleted ||
+		wholeNext.RemainingPostFilters() != 0 || bandedNext.RemainingPostFilters() != 0 {
+		t.Fatalf("whole remaining=%b result=%+v banded remaining=%b result=%+v",
+			wholeNext.RemainingPostFilters(), wholeResult, bandedNext.RemainingPostFilters(), bandedResult)
+	}
+	if wholeResult.LoopFilter.Applied != bandedResult.LoopFilter.Applied ||
+		wholeResult.LoopFilter.Edges != bandedResult.LoopFilter.Edges ||
+		wholeResult.LoopFilter.Plan.EdgeCandidates != bandedResult.LoopFilter.Plan.EdgeCandidates ||
+		wholeResult.LoopFilter.Plan.StoredEdges != bandedResult.LoopFilter.Plan.StoredEdges ||
+		wholeResult.CDEF != bandedResult.CDEF {
+		t.Fatalf("whole result=%+v banded result=%+v", wholeResult, bandedResult)
+	}
+	assertPostFilterFramesEqual(t, whole.output, banded.output)
+}
+
+func assertPostFilterFramesEqual(t testing.TB, want *frame.Frame, got *frame.Frame) {
+	t.Helper()
+	if want == nil || got == nil {
+		t.Fatalf("nil frame want=%p got=%p", want, got)
+	}
+	for _, planes := range [][2]frame.Plane{{want.Y, got.Y}, {want.U, got.U}, {want.V, got.V}} {
+		w, g := planes[0], planes[1]
+		if w.Width != g.Width || w.Height != g.Height || w.Stride != g.Stride {
+			t.Fatalf("plane shape want=%dx%d/%d got=%dx%d/%d", w.Width, w.Height, w.Stride, g.Width, g.Height, g.Stride)
+		}
+		for y := 0; y < w.Height; y++ {
+			wRow := w.Pix[y*w.Stride : y*w.Stride+w.Width]
+			gRow := g.Pix[y*g.Stride : y*g.Stride+g.Width]
+			if !bytes.Equal(wRow, gRow) {
+				t.Fatalf("plane differs at row %d", y)
+			}
+		}
+	}
+}
+
 // BenchmarkApplyLoopFilter measures only the deblocking pass on the
 // fully populated 4:2:0 fixture frame. The per-iteration sequence is
 // refill-the-frame -> ApplyLoopFilterEdges. The reported ms/frame and
@@ -316,6 +378,30 @@ func BenchmarkApplyLoopFilter(b *testing.B) {
 	reportPostFilterMetrics(b)
 }
 
+func BenchmarkApplyLoopFilterBanded(b *testing.B) {
+	f := buildPostFilterChainFixture(b)
+	ctx := f.ctx
+	ctx.Event.SequenceHeader.EnableCDEF = false
+	ctx.Event.SequenceHeader.EnableRestoration = false
+	ctx.Event.CDEF = parser.CDEFParams{}
+	ctx.Event.Restoration = parser.RestorationParams{}
+	req := f.loopFilter
+	req.TrustedCoverage = true
+	banding := frameWorkDav1dPostFilterBanding(ctx)
+
+	b.SetBytes(f.frameBytes())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		f.refill()
+		if _, err := ctx.ApplyLoopFilterEdgesBanded(req, banding.LoopFilterMIRows); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	reportPostFilterMetrics(b)
+}
+
 // BenchmarkApplyCDEF measures only the CDEF pass on the same shared frame
 // fixture. The loop-filter and restoration stages are marked inactive so
 // ApplyCDEFPostFilter runs in isolation.
@@ -332,6 +418,27 @@ func BenchmarkApplyCDEF(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		f.refill()
 		if _, err := ctx.ApplyCDEFPostFilter(f.cdef); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	reportPostFilterMetrics(b)
+}
+
+func BenchmarkApplyCDEFBanded(b *testing.B) {
+	f := buildPostFilterChainFixture(b)
+	ctx := f.ctx
+	ctx.Event.LoopFilter = parser.LoopFilterParams{}
+	ctx.Event.SequenceHeader.EnableRestoration = false
+	ctx.Event.Restoration = parser.RestorationParams{}
+	banding := frameWorkDav1dPostFilterBanding(ctx)
+
+	b.SetBytes(f.frameBytes())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		f.refill()
+		if _, err := ctx.ApplyCDEFPostFilterBanded(f.cdef, banding.CDEFUnitRows); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -382,6 +489,31 @@ func BenchmarkApplyFullPostFilter(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		f.refill()
 		if _, _, err := ctx.ApplySupportedPostFilters(req); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	reportPostFilterMetrics(b)
+}
+
+func BenchmarkApplyFullPostFilterBanded(b *testing.B) {
+	f := buildPostFilterChainFixture(b)
+	ctx := f.ctx
+	loopFilter := f.loopFilter
+	loopFilter.TrustedCoverage = true
+	req := FrameWorkPostFilterRequest{
+		LoopFilter:  loopFilter,
+		CDEF:        f.cdef,
+		Restoration: f.rest,
+	}
+	banding := frameWorkDav1dPostFilterBanding(ctx)
+
+	b.SetBytes(f.frameBytes())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		f.refill()
+		if _, _, err := ctx.ApplySupportedPostFiltersBanded(req, banding); err != nil {
 			b.Fatal(err)
 		}
 	}

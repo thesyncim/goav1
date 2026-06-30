@@ -123,6 +123,57 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 	return ctx.applyCDEFPostFilterRows(req, 0, -1, true)
 }
 
+// ApplyCDEFPostFilterBanded applies CDEF in deterministic 64x64 unit-row
+// bands after loading the pre-CDEF frame snapshot once. The output regions for
+// each unit-row band are disjoint, while every band reads the same immutable
+// snapshot. This is the source-shaped split needed by dav1d-style row postfilter
+// scheduling without changing the CDEF decisions or filter kernels.
+func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilterBanded(req FrameWorkCDEFPostFilterRequest, unitRowsPerBand int) (FrameWorkCDEFPostFilterResult, error) {
+	if unitRowsPerBand <= 0 {
+		return ctx.ApplyCDEFPostFilter(req)
+	}
+	remaining := ctx.RemainingPostFilters()
+	if remaining.Has(FrameWorkPostFilterLoopFilter) {
+		return FrameWorkCDEFPostFilterResult{}, ErrUnsupportedPostFilter
+	}
+	if !remaining.Has(FrameWorkPostFilterCDEF) {
+		return FrameWorkCDEFPostFilterResult{}, nil
+	}
+	if ctx.Output == nil {
+		return FrameWorkCDEFPostFilterResult{}, frame.ErrInvalidSlot
+	}
+	if !frameWorkCDEFHasFiltering(ctx.Event.CDEF, ctx.Output.Format.MonoChrome) {
+		return FrameWorkCDEFPostFilterResult{}, nil
+	}
+	if err := ctx.validateCDEFPostFilterRequest(req); err != nil {
+		return FrameWorkCDEFPostFilterResult{}, err
+	}
+	_, rows, err := frameWorkCDEFUnitGrid(ctx.Event.FrameSize)
+	if err != nil {
+		return FrameWorkCDEFPostFilterResult{}, err
+	}
+	if err := ctx.LoadCDEFPostFilterSamples(req); err != nil {
+		return FrameWorkCDEFPostFilterResult{}, err
+	}
+	var result FrameWorkCDEFPostFilterResult
+	for rowStart := 0; rowStart < rows; rowStart += unitRowsPerBand {
+		rowEnd := rowStart + unitRowsPerBand
+		if rowEnd > rows {
+			rowEnd = rows
+		}
+		bandResult, err := ctx.ApplyCDEFPostFilterUnitRows(req, rowStart, rowEnd)
+		if err != nil {
+			return result, err
+		}
+		result.Units += bandResult.Units
+		result.Blocks += bandResult.Blocks
+		if bandResult.Planes > result.Planes {
+			result.Planes = bandResult.Planes
+		}
+	}
+	return result, nil
+}
+
 // LoadCDEFPostFilterSamples snapshots the pre-CDEF output planes into the
 // request's sample scratch. Callers that band the application across unit
 // rows load once and then run ApplyCDEFPostFilterUnitRows per band against

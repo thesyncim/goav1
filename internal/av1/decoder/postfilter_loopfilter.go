@@ -497,6 +497,83 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdges(req FrameWorkLoopFilt
 	return result, nil
 }
 
+// ApplyLoopFilterEdgesBanded plans loop-filter edges in MI-row bands and then
+// applies the concatenated edge list through the same plane/edge scheduler as
+// ApplyLoopFilterEdges. This mirrors dav1d's superblock-row loop-filter split:
+// each band reads the shared frame map for cross-band neighbors, while the
+// final apply preserves the whole-frame plane pass order. Banded planning
+// requires trusted side-data coverage.
+func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdgesBanded(req FrameWorkLoopFilterPostFilterRequest, miRowsPerBand int) (FrameWorkLoopFilterPostFilterApplyResult, error) {
+	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopFilter) {
+		return FrameWorkLoopFilterPostFilterApplyResult{}, nil
+	}
+	if miRowsPerBand <= 0 {
+		return ctx.ApplyLoopFilterEdges(req)
+	}
+	if !req.TrustedCoverage {
+		return FrameWorkLoopFilterPostFilterApplyResult{}, threading.ErrInvalidBatch
+	}
+	cols, rows, err := frameWorkLoopFilterMapGrid(ctx.Event.FrameSize)
+	if err != nil {
+		return FrameWorkLoopFilterPostFilterApplyResult{}, err
+	}
+	plan := FrameWorkLoopFilterPostFilterPlan{
+		Active: true,
+		MICols: uint16(cols),
+		MIRows: uint16(rows),
+	}
+	filterMap := req.Map
+	if frameWorkLoopFilterMapEmpty(filterMap) && ctx.LoopFilterMap != nil {
+		filterMap = *ctx.LoopFilterMap
+	}
+	if frameWorkLoopFilterMapEmpty(filterMap) {
+		return FrameWorkLoopFilterPostFilterApplyResult{Plan: plan, Active: true}, threading.ErrInvalidBatch
+	}
+	if err := frameWorkValidateLoopFilterMap(filterMap, cols, rows); err != nil {
+		return FrameWorkLoopFilterPostFilterApplyResult{Plan: plan, Active: true}, err
+	}
+	planning, err := frameWorkLoopFilterPlanningContextFor(ctx)
+	if err != nil {
+		return FrameWorkLoopFilterPostFilterApplyResult{Plan: plan, Active: true}, err
+	}
+	levelCtx := frameWorkLoopFilterLevelContextFor(&ctx.Event)
+
+	stored := 0
+	for rowStart := 0; rowStart < rows; rowStart += miRowsPerBand {
+		rowEnd := rowStart + miRowsPerBand
+		if rowEnd > rows {
+			rowEnd = rows
+		}
+		bandPlan := FrameWorkLoopFilterPostFilterPlan{
+			Active: true,
+			MICols: uint16(cols),
+			MIRows: uint16(rows),
+		}
+		if stored > len(req.Edges) {
+			return FrameWorkLoopFilterPostFilterApplyResult{Plan: plan, Active: true}, frame.ErrShortBuffer
+		}
+		bandPlan, err = ctx.loopFilterPostFilterPlanTrustedSweep(filterMap, planning, levelCtx, bandPlan, req.Edges[stored:], rowStart, rowEnd)
+		frameWorkMergeLoopFilterPostFilterPlan(&plan, bandPlan)
+		if err != nil {
+			return FrameWorkLoopFilterPostFilterApplyResult{Plan: plan, Active: true}, err
+		}
+		if bandPlan.DroppedEdges != 0 {
+			return FrameWorkLoopFilterPostFilterApplyResult{Plan: plan, Active: true}, frame.ErrShortBuffer
+		}
+		storedEdges, ok := frameWorkLoopFilterCounterLen(bandPlan.StoredEdges)
+		if !ok || storedEdges > len(req.Edges)-stored {
+			return FrameWorkLoopFilterPostFilterApplyResult{Plan: plan, Active: true}, frame.ErrInvalidFormat
+		}
+		stored += storedEdges
+	}
+	if plan.DroppedEdges != 0 || plan.StoredEdges != plan.EdgeCandidates {
+		return FrameWorkLoopFilterPostFilterApplyResult{Plan: plan, Active: true}, frame.ErrShortBuffer
+	}
+	result, err := ctx.ApplyPlannedLoopFilterEdges(req.Edges[:stored], req.Schedule)
+	result.Plan = plan
+	return result, err
+}
+
 // ApplyPlannedLoopFilterEdges applies already-planned edge candidates to
 // ctx.Output without replanning - the entry for callers that planned in
 // parallel bands and concatenated the per-band edges in band order (which
@@ -813,6 +890,31 @@ func frameWorkCountAppliedLoopFilterEdge(result *FrameWorkLoopFilterPostFilterAp
 	}
 	if edge.Level > result.MaxLevel {
 		result.MaxLevel = edge.Level
+	}
+}
+
+func frameWorkMergeLoopFilterPostFilterPlan(dst *FrameWorkLoopFilterPostFilterPlan, src FrameWorkLoopFilterPostFilterPlan) {
+	dst.Active = dst.Active || src.Active
+	dst.Cells += src.Cells
+	dst.Blocks += src.Blocks
+	dst.Missing += src.Missing
+	dst.TransformReadyBlocks += src.TransformReadyBlocks
+	dst.SkipTransformBlocks += src.SkipTransformBlocks
+	dst.LumaTXBs += src.LumaTXBs
+	dst.ChromaTXBs += src.ChromaTXBs
+	dst.StoredEdges += src.StoredEdges
+	dst.EdgeCandidates += src.EdgeCandidates
+	dst.PreviousLevelEdges += src.PreviousLevelEdges
+	dst.DroppedEdges += src.DroppedEdges
+	for plane := range len(dst.Levels) {
+		for edge := range len(dst.Levels[plane]) {
+			dst.Levels[plane][edge].Blocks += src.Levels[plane][edge].Blocks
+			dst.Levels[plane][edge].NonZero += src.Levels[plane][edge].NonZero
+			if src.Levels[plane][edge].MaxLevel > dst.Levels[plane][edge].MaxLevel {
+				dst.Levels[plane][edge].MaxLevel = src.Levels[plane][edge].MaxLevel
+			}
+		}
+		dst.PlaneEdgeCandidates[plane] += src.PlaneEdgeCandidates[plane]
 	}
 }
 

@@ -212,6 +212,28 @@ type FrameWorkPostFilterRequest struct {
 	FilmGrain   FrameWorkFilmGrainPostFilterRequest
 }
 
+// FrameWorkPostFilterBanding selects row-band sizes for the supported
+// postfilter prefix. LoopFilterMIRows is expressed in 4x4 MI rows; CDEFUnitRows
+// is expressed in 64x64 CDEF unit rows. A zero field keeps the whole-frame
+// path for that stage.
+type FrameWorkPostFilterBanding struct {
+	LoopFilterMIRows int
+	CDEFUnitRows     int
+}
+
+func frameWorkDav1dPostFilterBanding(ctx FrameWorkPostFilterContext) FrameWorkPostFilterBanding {
+	if ctx.Event.SequenceHeader.Use128x128Superblock {
+		return FrameWorkPostFilterBanding{
+			LoopFilterMIRows: 32,
+			CDEFUnitRows:     2,
+		}
+	}
+	return FrameWorkPostFilterBanding{
+		LoopFilterMIRows: 16,
+		CDEFUnitRows:     1,
+	}
+}
+
 // FrameWorkPostFilterResult summarizes supported frame-level postfilter work.
 type FrameWorkPostFilterResult struct {
 	Completed   FrameWorkPostFilterStage
@@ -652,6 +674,18 @@ func (ctx FrameWorkPostFilterContext) CallerPostFilterScratchLen(req FrameWorkPo
 // normal AV1 order. It rejects frames requiring unsupported stages before
 // mutating ctx.Output.
 func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPostFilterRequest) (FrameWorkPostFilterContext, FrameWorkPostFilterResult, error) {
+	return ctx.applySupportedPostFilters(req, FrameWorkPostFilterBanding{})
+}
+
+// ApplySupportedPostFiltersBanded runs the supported postfilter chain in AV1
+// order while splitting the loop-filter and CDEF stages into row bands selected
+// by banding. The banded stages preserve the same final plane pass order and
+// restoration boundary-save points as ApplySupportedPostFilters.
+func (ctx FrameWorkPostFilterContext) ApplySupportedPostFiltersBanded(req FrameWorkPostFilterRequest, banding FrameWorkPostFilterBanding) (FrameWorkPostFilterContext, FrameWorkPostFilterResult, error) {
+	return ctx.applySupportedPostFilters(req, banding)
+}
+
+func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPostFilterRequest, banding FrameWorkPostFilterBanding) (FrameWorkPostFilterContext, FrameWorkPostFilterResult, error) {
 	var result FrameWorkPostFilterResult
 	remaining := ctx.RemainingPostFilters()
 	supported, err := ctx.supportedPostFilterStages(remaining)
@@ -677,7 +711,13 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 		}
 	}
 	if remaining.Has(FrameWorkPostFilterLoopFilter) {
-		loopFilterResult, err := ctx.ApplyLoopFilterEdges(req.LoopFilter)
+		var loopFilterResult FrameWorkLoopFilterPostFilterApplyResult
+		var err error
+		if banding.LoopFilterMIRows > 0 {
+			loopFilterResult, err = ctx.ApplyLoopFilterEdgesBanded(req.LoopFilter, banding.LoopFilterMIRows)
+		} else {
+			loopFilterResult, err = ctx.ApplyLoopFilterEdges(req.LoopFilter)
+		}
 		if err != nil {
 			return ctx, result, err
 		}
@@ -695,7 +735,13 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 		}
 	}
 	if remaining.Has(FrameWorkPostFilterCDEF) {
-		cdefResult, err := ctx.ApplyCDEFPostFilter(req.CDEF)
+		var cdefResult FrameWorkCDEFPostFilterResult
+		var err error
+		if banding.CDEFUnitRows > 0 {
+			cdefResult, err = ctx.ApplyCDEFPostFilterBanded(req.CDEF, banding.CDEFUnitRows)
+		} else {
+			cdefResult, err = ctx.ApplyCDEFPostFilter(req.CDEF)
+		}
 		if err != nil {
 			return ctx, result, err
 		}
