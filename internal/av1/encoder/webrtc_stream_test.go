@@ -141,8 +141,8 @@ func TestWebRTCStreamAcceptedScalabilityModesDecode(t *testing.T) {
 
 func TestWebRTCStreamAcceptedScalabilityModesCoverExportedModes(t *testing.T) {
 	modes := acceptedWebRTCStreamPixelModes()
-	if len(modes) != encoder.WebRTCScalabilityModeCount() {
-		t.Fatalf("accepted mode count=%d want exported count=%d", len(modes), encoder.WebRTCScalabilityModeCount())
+	if len(modes) != encoder.WebRTCSVCScalabilityModeCount() {
+		t.Fatalf("accepted mode count=%d want exported SVC count=%d", len(modes), encoder.WebRTCSVCScalabilityModeCount())
 	}
 	seen := make(map[encoder.ScalabilityMode]bool, len(modes))
 	for _, mode := range modes {
@@ -319,7 +319,7 @@ func TestWebRTCStream1080pHotPathAllocs(t *testing.T) {
 }
 
 func acceptedWebRTCStreamPixelModes() []encoder.ScalabilityMode {
-	return encoder.AppendWebRTCScalabilityModes(make([]encoder.ScalabilityMode, 0, encoder.WebRTCScalabilityModeCount()))
+	return encoder.AppendWebRTCSVCScalabilityModes(make([]encoder.ScalabilityMode, 0, encoder.WebRTCSVCScalabilityModeCount()))
 }
 
 func webRTC1080pAllocConfig(mode encoder.ScalabilityMode) encoder.Config {

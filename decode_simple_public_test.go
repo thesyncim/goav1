@@ -1671,11 +1671,11 @@ func TestNewDecoderFromRTPPayloadsMatchesLowOverhead(t *testing.T) {
 	}
 }
 
-func TestHighLevelRTPDecodersWebRTCCatalogue(t *testing.T) {
+func TestHighLevelRTPDecodersWebRTCSVCCatalogue(t *testing.T) {
 	limits := av1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
 	covered := 0
 	sharedCovered := 0
-	for step, mode := range av1.EncoderWebRTCScalabilityModes() {
+	for step, mode := range av1.EncoderWebRTCSVCScalabilityModes() {
 		covered++
 		t.Run(mode.String(), func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, mode)
@@ -1766,7 +1766,7 @@ func TestHighLevelRTPDecodersWebRTCCatalogue(t *testing.T) {
 		})
 	}
 	if covered == 0 {
-		t.Fatal("no high-level RTP-compatible WebRTC modes covered")
+		t.Fatal("no high-level RTP-compatible WebRTC SVC modes covered")
 	}
 	if sharedCovered == 0 {
 		t.Fatal("no shared-reference SVC modes covered")

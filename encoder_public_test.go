@@ -389,7 +389,7 @@ func TestPublicEncoderWebRTCScalabilityModeIDC(t *testing.T) {
 		"S3T3":           {idc: av1.MetadataScalabilityModeS3T3, ok: true},
 		"S3T3h":          {},
 	}
-	for _, mode := range av1.EncoderWebRTCScalabilityModes() {
+	for _, mode := range av1.EncoderWebRTCSVCScalabilityModes() {
 		tc, ok := want[mode.String()]
 		if !ok {
 			t.Fatalf("missing expected IDC entry for %s", mode)
@@ -536,7 +536,7 @@ func TestPublicEncoderWebRTCScalabilityMetadataOBU(t *testing.T) {
 }
 
 func TestPublicEncoderWebRTCActiveDecodeTargetsMask(t *testing.T) {
-	for _, mode := range av1.EncoderWebRTCScalabilityModes() {
+	for _, mode := range av1.EncoderWebRTCSVCScalabilityModes() {
 		t.Run(mode.String(), func(t *testing.T) {
 			spatialLayers, temporalLayers, _, ok := mode.Layers()
 			if !ok {
@@ -597,7 +597,7 @@ func TestPublicEncoderWebRTCActiveDecodeTargetsMask(t *testing.T) {
 }
 
 func TestPublicEncoderWebRTCSpatialDecodeTargetsMask(t *testing.T) {
-	for _, mode := range av1.EncoderWebRTCScalabilityModes() {
+	for _, mode := range av1.EncoderWebRTCSVCScalabilityModes() {
 		t.Run(mode.String(), func(t *testing.T) {
 			spatialLayers, temporalLayers, _, ok := mode.Layers()
 			if !ok {
@@ -2586,7 +2586,7 @@ func TestPublicWebRTCEncoderSetConfigRejectsInvalidControlsWithoutMutation(t *te
 }
 
 func TestPublicWebRTCEncoderSetConfigScalabilityTransitionMatrix(t *testing.T) {
-	modes := av1.EncoderWebRTCScalabilityModes()
+	modes := av1.EncoderWebRTCSVCScalabilityModes()
 	for fromIndex, fromMode := range modes {
 		fromMode := fromMode
 		for toIndex, toMode := range modes {
@@ -2944,7 +2944,7 @@ type publicWebRTCControllerLayer struct {
 }
 
 func publicWebRTCControllerModeNames() []string {
-	modes := av1.EncoderWebRTCScalabilityModes()
+	modes := av1.EncoderWebRTCSVCScalabilityModes()
 	names := make([]string, len(modes))
 	for i, mode := range modes {
 		names[i] = mode.String()
