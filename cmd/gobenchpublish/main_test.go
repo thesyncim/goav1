@@ -24,9 +24,12 @@ func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
 		CPUOnlineList:       "0",
 	})
 
+	goBin, goSHA := stubGobenchPublishGoTool(t)
 	cfg := config{
 		Pkg:              "./internal/av1/tile",
 		Bench:            "^BenchmarkCoeffCulLevel$",
+		GoBin:            goBin,
+		GoSHA256:         goSHA,
 		OutputPath:       "/tmp/bench.txt",
 		MetadataPath:     "/tmp/bench.json",
 		EnvironmentNotes: "fixed power mode, idle machine",
@@ -131,6 +134,27 @@ func TestValidatePublishConfigRequiresStrictControls(t *testing.T) {
 		!strings.Contains(err.Error(), "-gogc") {
 		t.Fatalf("missing gogc error=%v", err)
 	}
+
+	broadBench := cfg
+	broadBench.Bench = "."
+	if err := validateConfig(broadBench, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "exactly one top-level benchmark") {
+		t.Fatalf("broad benchmark error=%v", err)
+	}
+
+	broadPkg := cfg
+	broadPkg.Pkg = "./..."
+	if err := validateConfig(broadPkg, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "one concrete package") {
+		t.Fatalf("broad package error=%v", err)
+	}
+
+	badGoHash := cfg
+	badGoHash.GoSHA256 = strings.Repeat("0", 64)
+	if err := validateConfig(badGoHash, gitMetadata{Commit: "abc"}); err == nil ||
+		!strings.Contains(err.Error(), "go-bin") {
+		t.Fatalf("bad go hash error=%v", err)
+	}
 }
 
 func TestValidatePublishConfigRejectsHiddenGoEnvironment(t *testing.T) {
@@ -141,9 +165,12 @@ func TestValidatePublishConfigRejectsHiddenGoEnvironment(t *testing.T) {
 		AffinityAllowedList: "0",
 		CPUOnlineList:       "0",
 	})
+	goBin, goSHA := stubGobenchPublishGoTool(t)
 	cfg := config{
 		Pkg:              "./internal/av1/tile",
 		Bench:            "^BenchmarkCoeffCulLevel$",
+		GoBin:            goBin,
+		GoSHA256:         goSHA,
 		OutputPath:       "/tmp/bench.txt",
 		MetadataPath:     "/tmp/bench.json",
 		EnvironmentNotes: "fixed power mode, idle machine",
@@ -199,6 +226,73 @@ func TestValidatePublishConfigRejectsHiddenGoEnvironment(t *testing.T) {
 	}
 }
 
+func TestValidateBenchmarkOutputRequiresExactRows(t *testing.T) {
+	cfg := config{
+		Bench: "^BenchmarkFoo$",
+		CPU:   "1",
+		Count: 5,
+	}
+	valid := strings.Join([]string{
+		"goos: test",
+		"goarch: test",
+		"BenchmarkFoo-1 100 10 ns/op 0 B/op 0 allocs/op",
+		"BenchmarkFoo-1 100 11 ns/op 0 B/op 0 allocs/op",
+		"BenchmarkFoo-1 100 12 ns/op 0 B/op 0 allocs/op",
+		"BenchmarkFoo-1 100 13 ns/op 0 B/op 0 allocs/op",
+		"BenchmarkFoo-1 100 14 ns/op 0 B/op 0 allocs/op",
+		"PASS",
+	}, "\n")
+	if err := validateBenchmarkOutput(cfg, []byte(valid)); err != nil {
+		t.Fatalf("valid rows failed: %v", err)
+	}
+
+	noRows := "PASS\nok example 0.001s\n"
+	if err := validateBenchmarkOutput(cfg, []byte(noRows)); err == nil ||
+		!strings.Contains(err.Error(), "at least one benchmark row") {
+		t.Fatalf("no rows error=%v", err)
+	}
+
+	partial := strings.Replace(valid, "BenchmarkFoo-1 100 14 ns/op 0 B/op 0 allocs/op\n", "", 1)
+	if err := validateBenchmarkOutput(cfg, []byte(partial)); err == nil ||
+		!strings.Contains(err.Error(), "has 4 samples") {
+		t.Fatalf("partial rows error=%v", err)
+	}
+
+	unexpected := strings.Replace(valid, "BenchmarkFoo-1", "BenchmarkBar-1", 1)
+	if err := validateBenchmarkOutput(cfg, []byte(unexpected)); err == nil ||
+		!strings.Contains(err.Error(), "unexpected row") {
+		t.Fatalf("unexpected row error=%v", err)
+	}
+
+	wrongCPU := strings.Replace(valid, "BenchmarkFoo-1", "BenchmarkFoo-2", 1)
+	if err := validateBenchmarkOutput(cfg, []byte(wrongCPU)); err == nil ||
+		!strings.Contains(err.Error(), "CPU suffixes") {
+		t.Fatalf("wrong CPU error=%v", err)
+	}
+
+	subRows := strings.ReplaceAll(valid, "BenchmarkFoo-1", "BenchmarkFoo/subcase-1")
+	if err := validateBenchmarkOutput(cfg, []byte(subRows)); err != nil {
+		t.Fatalf("valid subbenchmark rows failed: %v", err)
+	}
+}
+
+func TestParseBenchmarkOutputRows(t *testing.T) {
+	raw := []byte(strings.Join([]string{
+		"BenchmarkFoo-1 100 10 ns/op",
+		"BenchmarkFoo-1 100 11 ns/op",
+		"BenchmarkFoo/sub-2 100 12 ns/op",
+		"PASS",
+	}, "\n"))
+	rows := parseBenchmarkOutputRows(raw)
+	if len(rows) != 2 ||
+		rows[0].Name != "BenchmarkFoo" || rows[0].Samples != 2 ||
+		len(rows[0].CPUs) != 1 || rows[0].CPUs[0] != 1 ||
+		rows[1].Name != "BenchmarkFoo/sub" || rows[1].Samples != 1 ||
+		len(rows[1].CPUs) != 1 || rows[1].CPUs[0] != 2 {
+		t.Fatalf("rows=%+v", rows)
+	}
+}
+
 func TestGoTestArgsArePinned(t *testing.T) {
 	cfg := config{
 		Pkg:       "./internal/av1/tile",
@@ -233,9 +327,12 @@ func TestMetadataJSONRecordsOutputHash(t *testing.T) {
 	if err := os.WriteFile(out, []byte("BenchmarkX-1 1 2 ns/op 0 B/op 0 allocs/op\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	goBin, goSHA := stubGobenchPublishGoTool(t)
 	cfg := config{
 		Pkg:              ".",
 		Bench:            "BenchmarkX",
+		GoBin:            goBin,
+		GoSHA256:         goSHA,
 		OutputPath:       out,
 		MetadataPath:     metaPath,
 		EnvironmentNotes: "idle",
@@ -274,6 +371,7 @@ func TestMetadataJSONRecordsOutputHash(t *testing.T) {
 	if got.Output.Bytes == 0 || got.Output.SHA256 == "" || got.Config.Count != 5 ||
 		got.Config.GoMaxProcs != 1 || got.Environment.GOGC != "off" ||
 		got.Go.SIMDTier == "" || len(got.Go.Env) == 0 ||
+		got.Go.ToolPath != goBin || got.Go.ToolSHA256 != goSHA || !got.Go.ToolSHA256Verified ||
 		got.Environment.Notes != "idle" ||
 		got.Environment.CPUAffinity != "none" ||
 		got.Environment.PowerMode != "high power" ||
@@ -299,10 +397,25 @@ func stubGobenchPublishCPUState(t *testing.T, state benchenv.CPUState) {
 	t.Cleanup(func() { observeBenchmarkCPUState = old })
 }
 
+func stubGobenchPublishGoTool(t *testing.T) (string, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "go")
+	if err := os.WriteFile(path, []byte("go tool fixture"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, hash, err := fileInfoAndSHA256(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path, hash
+}
+
 func gobenchPublishExplicitFlags() map[string]bool {
 	return map[string]bool{
 		"pkg":               true,
 		"bench":             true,
+		"go-bin":            true,
+		"go-sha256":         true,
 		"out":               true,
 		"metadata-json":     true,
 		"environment-notes": true,

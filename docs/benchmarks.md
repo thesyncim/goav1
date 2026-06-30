@@ -11,6 +11,11 @@ Publishable rows must satisfy these controls:
   `make qualitybench-publish`; ad hoc `go test -bench`, `make bench`, and local
   smoke runs are not claim-supporting rows.
 - Pin every external tool by absolute path and SHA-256 before timing starts.
+- For Go microbenchmark publish rows, pin the Go executable itself by absolute
+  path and SHA-256, use one concrete package, and use an exact
+  `^BenchmarkName$` selector. Publish mode parses the raw `go test` output and
+  rejects zero-row runs, unexpected benchmark rows, CPU-suffix drift, or missing
+  repeated samples.
 - Keep ambient Go target, compiler, cache, and runtime env overrides unset; use
   explicit runner flags for intentional controls.
 - Record structured CPU affinity, power mode, thermal state, frequency policy,

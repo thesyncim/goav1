@@ -122,25 +122,31 @@ restricted CPU mask.
 Internal Go microbenchmark rows used to justify SIMD or hot-path changes should
 use `make bench-go-publish`, not the smoke-oriented `make bench` or
 `make bench-all` targets. The publish runner requires a clean tracked worktree,
-explicit structured machine-state controls, `-benchmem`, at least five measured
-runs, fixed `GOMAXPROCS`, a single matching `go test -cpu` value, explicit
-`GOGC`, distinct raw-output and metadata paths, no ambient `GOFLAGS`,
-`GOMEMLIMIT`, `GODEBUG`, Go target/compiler/cache overrides such as `GOAMD64`,
-`GOARM64`, `GOEXPERIMENT`, `CGO_ENABLED`, `CC`, `CXX`, `GOCACHE`,
-`GOMODCACHE`, `GOPATH`, or `GOTMPDIR`, and explicit package/benchmark
-selection. Publish mode rejects
+an absolute Go executable path plus matching SHA-256, explicit structured
+machine-state controls, `-benchmem`, at least five measured runs, fixed
+`GOMAXPROCS`, a single matching `go test -cpu` value, explicit `GOGC`, distinct
+raw-output and metadata paths, no ambient `GOFLAGS`, `GOMEMLIMIT`, `GODEBUG`,
+Go target/compiler/cache overrides such as `GOAMD64`, `GOARM64`,
+`GOEXPERIMENT`, `CGO_ENABLED`, `CC`, `CXX`, `GOCACHE`, `GOMODCACHE`, `GOPATH`,
+or `GOTMPDIR`, one concrete package, and an exact `^BenchmarkName$` selector.
+Publish mode parses the raw output and rejects zero-row runs, unexpected
+benchmark rows, CPU-suffix drift, or rows with fewer/more samples than
+`-count`. Publish mode rejects
 defaulted package, benchmark, count, benchtime, CPU, GOMAXPROCS, GC, output,
-and metadata settings; pass every control explicitly.
+Go tool, and metadata settings; pass every control explicitly.
 It writes the raw `go test` output and a metadata JSON sidecar containing the
-git revision, Go runtime, `GOGC`, command line, output SHA-256, and run
-controls. Example:
+git revision, Go runtime, pinned Go tool path/hash, parsed benchmark row sample
+counts, `GOGC`, command line, output SHA-256, and run controls. Example:
 
 ```sh
+GO_BIN=$(command -v go)
 make bench-go-publish \
   GO_BENCH_PUBLISH_PKG=./internal/av1/tile \
-  GO_BENCH_PUBLISH_BENCH='^BenchmarkCoeffCulLevel$$' \
-  GO_BENCH_PUBLISH_OUT=/tmp/goav1-coeff-cul-level.txt \
-  GO_BENCH_PUBLISH_METADATA_JSON=/tmp/goav1-coeff-cul-level.json \
+  GO_BENCH_PUBLISH_BENCH='^BenchmarkCoeffInitLevels$$' \
+  GO_BENCH_PUBLISH_GO_BIN="$GO_BIN" \
+  GO_BENCH_PUBLISH_GO_SHA256="$(shasum -a 256 "$GO_BIN" | awk '{print $1}')" \
+  GO_BENCH_PUBLISH_OUT=/tmp/goav1-coeff-init-levels.txt \
+  GO_BENCH_PUBLISH_METADATA_JSON=/tmp/goav1-coeff-init-levels.json \
   GO_BENCH_PUBLISH_ENVIRONMENT_NOTES="fixed power mode; idle machine; cool start" \
   GO_BENCH_PUBLISH_CPU_AFFINITY=none \
   GO_BENCH_PUBLISH_POWER_MODE="plugged in; high power mode" \

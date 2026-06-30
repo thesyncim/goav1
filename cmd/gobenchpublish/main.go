@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +33,8 @@ type config struct {
 	Pkg              string
 	Bench            string
 	Tags             string
+	GoBin            string
+	GoSHA256         string
 	OutputPath       string
 	MetadataPath     string
 	EnvironmentNotes string
@@ -69,20 +72,27 @@ type metadata struct {
 }
 
 type goMetadata struct {
-	Version       string            `json:"version"`
-	GOOS          string            `json:"goos"`
-	GOARCH        string            `json:"goarch"`
-	NumCPU        int               `json:"num_cpu"`
-	SIMDTier      string            `json:"simd_tier"`
-	SIMDFeatures  []string          `json:"simd_features,omitempty"`
-	BuildSettings map[string]string `json:"build_settings,omitempty"`
-	Env           map[string]any    `json:"env,omitempty"`
+	Version              string            `json:"version"`
+	GOOS                 string            `json:"goos"`
+	GOARCH               string            `json:"goarch"`
+	NumCPU               int               `json:"num_cpu"`
+	SIMDTier             string            `json:"simd_tier"`
+	SIMDFeatures         []string          `json:"simd_features,omitempty"`
+	BuildSettings        map[string]string `json:"build_settings,omitempty"`
+	Env                  map[string]any    `json:"env,omitempty"`
+	ToolPath             string            `json:"tool_path,omitempty"`
+	ToolSHA256           string            `json:"tool_sha256,omitempty"`
+	ToolExpectedSHA256   string            `json:"tool_expected_sha256,omitempty"`
+	ToolSHA256Verified   bool              `json:"tool_sha256_verified,omitempty"`
+	ToolResolutionError  string            `json:"tool_resolution_error,omitempty"`
+	ToolFingerprintError string            `json:"tool_fingerprint_error,omitempty"`
 }
 
 type metadataConfig struct {
 	Package    string `json:"package"`
 	Benchmark  string `json:"benchmark"`
 	Tags       string `json:"tags,omitempty"`
+	GoBin      string `json:"go_bin"`
 	GoMaxProcs int    `json:"gomaxprocs"`
 	CPU        string `json:"cpu"`
 	Count      int    `json:"count"`
@@ -107,9 +117,25 @@ type environmentConfig struct {
 }
 
 type outputMetadata struct {
-	Path   string `json:"path"`
-	Bytes  int64  `json:"bytes,omitempty"`
-	SHA256 string `json:"sha256,omitempty"`
+	Path          string                 `json:"path"`
+	Bytes         int64                  `json:"bytes,omitempty"`
+	SHA256        string                 `json:"sha256,omitempty"`
+	BenchmarkRows []benchmarkRowMetadata `json:"benchmark_rows,omitempty"`
+}
+
+type benchmarkRowMetadata struct {
+	Name    string `json:"name"`
+	Samples int    `json:"samples"`
+	CPUs    []int  `json:"cpus,omitempty"`
+}
+
+type toolFingerprint struct {
+	path             string
+	sha256           string
+	expectedSHA256   string
+	sha256Verified   bool
+	resolutionError  string
+	fingerprintError string
 }
 
 func main() {
@@ -127,15 +153,18 @@ func run() error {
 	}
 
 	args := goTestArgs(cfg)
-	cmd := exec.Command("go", args...)
+	cmd := exec.Command(cfg.GoBin, args...)
 	cmd.Env = commandEnv(cfg)
 	raw, err := cmd.CombinedOutput()
+	if err == nil && cfg.Publish {
+		err = validateBenchmarkOutput(cfg, raw)
+	}
 
 	if err := writeFileCreatingParents(cfg.OutputPath, raw, 0o644); err != nil {
 		return fmt.Errorf("write benchmark output: %w", err)
 	}
 
-	meta := buildMetadata(cfg, git, append([]string{"go"}, args...), "ok", "")
+	meta := buildMetadata(cfg, git, append([]string{cfg.GoBin}, args...), "ok", "")
 	if err != nil {
 		meta.Status = "error"
 		meta.Error = trimCommandError(err, raw)
@@ -147,6 +176,7 @@ func run() error {
 		meta.Status = "error"
 		meta.Error = statErr.Error()
 	}
+	meta.Output.BenchmarkRows = parseBenchmarkOutputRows(raw)
 	if err := writeJSONCreatingParents(cfg.MetadataPath, meta); err != nil {
 		return fmt.Errorf("write metadata: %w", err)
 	}
@@ -161,6 +191,8 @@ func parseFlags() config {
 	flag.StringVar(&cfg.Pkg, "pkg", "./internal/av1/tile", "single Go package or package pattern to benchmark")
 	flag.StringVar(&cfg.Bench, "bench", ".", "benchmark regexp passed to go test -bench")
 	flag.StringVar(&cfg.Tags, "tags", "", "optional build tags passed to go test -tags")
+	flag.StringVar(&cfg.GoBin, "go-bin", "go", "Go executable used for the benchmark process")
+	flag.StringVar(&cfg.GoSHA256, "go-sha256", "", "expected SHA-256 of -go-bin for publish runs")
 	flag.StringVar(&cfg.OutputPath, "out", "/tmp/goav1-go-bench.txt", "raw go test benchmark output path")
 	flag.StringVar(&cfg.MetadataPath, "metadata-json", "/tmp/goav1-go-bench-metadata.json", "metadata JSON path")
 	flag.StringVar(&cfg.EnvironmentNotes, "environment-notes", "", "power, thermal, and background-load notes")
@@ -178,6 +210,8 @@ func parseFlags() config {
 	flag.BoolVar(&cfg.BenchMem, "benchmem", true, "include go test -benchmem")
 	flag.Parse()
 	cfg.ExplicitFlags = explicitFlagSet()
+	cfg.GoBin = strings.TrimSpace(cfg.GoBin)
+	cfg.GoSHA256 = strings.TrimSpace(cfg.GoSHA256)
 	return cfg
 }
 
@@ -217,9 +251,13 @@ func validateConfig(cfg config, git gitMetadata) error {
 	if strings.TrimSpace(cfg.BenchTime) == "" {
 		return errors.New("missing -benchtime")
 	}
+	if cfg.GoBin == "" || strings.ContainsAny(cfg.GoBin, "\r\n") {
+		return fmt.Errorf("invalid -go-bin %q", cfg.GoBin)
+	}
 	if strings.ContainsAny(cfg.Tags, "\r\n") || strings.ContainsAny(cfg.CPU, "\r\n") ||
 		strings.ContainsAny(cfg.Bench, "\r\n") || strings.ContainsAny(cfg.Pkg, "\r\n") ||
-		strings.ContainsAny(cfg.BenchTime, "\r\n") || strings.ContainsAny(cfg.GOGC, "\r\n") {
+		strings.ContainsAny(cfg.BenchTime, "\r\n") || strings.ContainsAny(cfg.GOGC, "\r\n") ||
+		strings.ContainsAny(cfg.GoSHA256, "\r\n") {
 		return errors.New("benchmark arguments must not contain newlines")
 	}
 	if cfg.Publish {
@@ -229,6 +267,8 @@ func validateConfig(cfg config, git gitMetadata) error {
 		for _, name := range []string{
 			"pkg",
 			"bench",
+			"go-bin",
+			"go-sha256",
 			"out",
 			"metadata-json",
 			"environment-notes",
@@ -247,6 +287,12 @@ func validateConfig(cfg config, git gitMetadata) error {
 			if err := requireExplicitFlag(cfg, name); err != nil {
 				return err
 			}
+		}
+		if err := validatePublishBenchmarkSelection(cfg); err != nil {
+			return err
+		}
+		if err := validatePinnedPublishTool("go", cfg.GoBin, cfg.GoSHA256); err != nil {
+			return err
 		}
 		if git.Dirty {
 			return errors.New("publish requires a clean tracked git worktree")
@@ -299,6 +345,167 @@ func validateConfig(cfg config, git gitMetadata) error {
 				return fmt.Errorf("publish requires %s unset; use explicit runner flags or record a separate environment", name)
 			}
 		}
+	}
+	return nil
+}
+
+func validatePublishBenchmarkSelection(cfg config) error {
+	pkg := strings.TrimSpace(cfg.Pkg)
+	if pkg == "" {
+		return errors.New("publish requires non-empty -pkg")
+	}
+	if strings.Contains(pkg, "...") || strings.ContainsAny(pkg, " \t") || strings.Contains(pkg, ",") {
+		return fmt.Errorf("publish requires -pkg to name one concrete package, got %q", cfg.Pkg)
+	}
+	bench := strings.TrimSpace(cfg.Bench)
+	if !isExactBenchmarkRegexp(bench) {
+		return fmt.Errorf("publish requires -bench to select exactly one top-level benchmark as ^BenchmarkName$, got %q", cfg.Bench)
+	}
+	return nil
+}
+
+func isExactBenchmarkRegexp(bench string) bool {
+	if !strings.HasPrefix(bench, "^Benchmark") || !strings.HasSuffix(bench, "$") {
+		return false
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(bench, "^"), "$")
+	if len(name) <= len("Benchmark") {
+		return false
+	}
+	for _, r := range name[len("Benchmark"):] {
+		if r >= 'A' && r <= 'Z' {
+			continue
+		}
+		if r >= 'a' && r <= 'z' {
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		if r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validateBenchmarkOutput(cfg config, raw []byte) error {
+	rows := parseBenchmarkOutputRows(raw)
+	if len(rows) == 0 {
+		return errors.New("publish requires go test output to contain at least one benchmark row")
+	}
+	expectedName := exactBenchmarkName(cfg.Bench)
+	if expectedName == "" {
+		return fmt.Errorf("publish requires exact benchmark selection, got %q", cfg.Bench)
+	}
+	expectedCPU, err := singlePositiveIntFlag("-cpu", cfg.CPU)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if row.Name != expectedName && !strings.HasPrefix(row.Name, expectedName+"/") {
+			return fmt.Errorf("publish benchmark output contains unexpected row %q for -bench %q", row.Name, cfg.Bench)
+		}
+		if row.Samples != cfg.Count {
+			return fmt.Errorf("publish benchmark row %q has %d samples, want -count %d", row.Name, row.Samples, cfg.Count)
+		}
+		if len(row.CPUs) != 1 || row.CPUs[0] != expectedCPU {
+			return fmt.Errorf("publish benchmark row %q used CPU suffixes %v, want [%d]", row.Name, row.CPUs, expectedCPU)
+		}
+	}
+	return nil
+}
+
+func parseBenchmarkOutputRows(raw []byte) []benchmarkRowMetadata {
+	rowsByName := map[string]*benchmarkRowMetadata{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		name, cpu, ok := parseBenchmarkLineNameCPU(fields[0])
+		if !ok {
+			continue
+		}
+		row := rowsByName[name]
+		if row == nil {
+			row = &benchmarkRowMetadata{Name: name}
+			rowsByName[name] = row
+		}
+		row.Samples++
+		if !containsInt(row.CPUs, cpu) {
+			row.CPUs = append(row.CPUs, cpu)
+		}
+	}
+	rows := make([]benchmarkRowMetadata, 0, len(rowsByName))
+	for _, row := range rowsByName {
+		sort.Ints(row.CPUs)
+		rows = append(rows, *row)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].Name < rows[j].Name
+	})
+	return rows
+}
+
+func parseBenchmarkLineNameCPU(token string) (string, int, bool) {
+	if !strings.HasPrefix(token, "Benchmark") {
+		return "", 0, false
+	}
+	i := strings.LastIndexByte(token, '-')
+	if i <= len("Benchmark") || i == len(token)-1 {
+		return "", 0, false
+	}
+	cpu, err := strconv.Atoi(token[i+1:])
+	if err != nil || cpu <= 0 {
+		return "", 0, false
+	}
+	name := token[:i]
+	if name == "Benchmark" {
+		return "", 0, false
+	}
+	return name, cpu, true
+}
+
+func containsInt(values []int, needle int) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func exactBenchmarkName(bench string) string {
+	bench = strings.TrimSpace(bench)
+	if !isExactBenchmarkRegexp(bench) {
+		return ""
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(bench, "^"), "$")
+}
+
+func validatePinnedPublishTool(name, path, expectedSHA string) error {
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("publish requires -%s-bin to be an absolute path, got %q", name, path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("publish requires -%s-bin %s: %w", name, path, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("publish requires -%s-bin to be a file, got directory %s", name, path)
+	}
+	expected, err := canonicalSHA256(expectedSHA)
+	if err != nil {
+		return fmt.Errorf("publish requires valid -%s-sha256: %w", name, err)
+	}
+	actual, err := sha256File(path)
+	if err != nil {
+		return fmt.Errorf("publish requires -%s-bin %s hash: %w", name, path, err)
+	}
+	if actual != expected {
+		return fmt.Errorf("publish requires -%s-bin %s to match -%s-sha256 %s, got %s", name, path, name, expected, actual)
 	}
 	return nil
 }
@@ -385,23 +592,31 @@ func setEnv(env []string, key, value string) []string {
 }
 
 func buildMetadata(cfg config, git gitMetadata, command []string, status, errText string) metadata {
+	goTool := goToolMetadata(cfg.GoBin, cfg.GoSHA256)
 	return metadata{
 		GeneratedAtUTC: time.Now().UTC().Format(time.RFC3339),
 		Git:            git,
 		Go: goMetadata{
-			Version:       runtime.Version(),
-			GOOS:          runtime.GOOS,
-			GOARCH:        runtime.GOARCH,
-			NumCPU:        runtime.NumCPU(),
-			SIMDTier:      detectedSIMDTier(),
-			SIMDFeatures:  detectedSIMDFeatures(),
-			BuildSettings: goBuildSettings(),
-			Env:           benchenv.GoEnvForMetadata(),
+			Version:              runtime.Version(),
+			GOOS:                 runtime.GOOS,
+			GOARCH:               runtime.GOARCH,
+			NumCPU:               runtime.NumCPU(),
+			SIMDTier:             detectedSIMDTier(),
+			SIMDFeatures:         detectedSIMDFeatures(),
+			BuildSettings:        goBuildSettings(),
+			Env:                  benchenv.GoEnvForMetadata(),
+			ToolPath:             goTool.path,
+			ToolSHA256:           goTool.sha256,
+			ToolExpectedSHA256:   goTool.expectedSHA256,
+			ToolSHA256Verified:   goTool.sha256Verified,
+			ToolResolutionError:  goTool.resolutionError,
+			ToolFingerprintError: goTool.fingerprintError,
 		},
 		Config: metadataConfig{
 			Package:    cfg.Pkg,
 			Benchmark:  cfg.Bench,
 			Tags:       cfg.Tags,
+			GoBin:      cfg.GoBin,
 			GoMaxProcs: cfg.GoMaxProcs,
 			CPU:        cfg.CPU,
 			Count:      cfg.Count,
@@ -564,6 +779,59 @@ func fileInfoAndSHA256(path string) (int64, string, error) {
 	}
 	sum := sha256.Sum256(raw)
 	return int64(len(raw)), hex.EncodeToString(sum[:]), nil
+}
+
+func sha256File(path string) (string, error) {
+	_, hash, err := fileInfoAndSHA256(path)
+	return hash, err
+}
+
+func canonicalSHA256(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if len(value) != sha256.Size*2 {
+		return "", fmt.Errorf("expected 64-hex SHA-256, got %q", value)
+	}
+	for _, r := range value {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return "", fmt.Errorf("expected 64-hex SHA-256, got %q", value)
+	}
+	return value, nil
+}
+
+func goToolMetadata(path, expectedSHA string) toolFingerprint {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = "go"
+	}
+	out := toolFingerprint{path: path}
+	if expectedSHA != "" {
+		expected, err := canonicalSHA256(expectedSHA)
+		if err != nil {
+			out.fingerprintError = err.Error()
+		} else {
+			out.expectedSHA256 = expected
+		}
+	}
+	resolved := path
+	if !filepath.IsAbs(resolved) {
+		var err error
+		resolved, err = exec.LookPath(path)
+		if err != nil {
+			out.resolutionError = err.Error()
+			return out
+		}
+	}
+	out.path = resolved
+	hash, err := sha256File(resolved)
+	if err != nil {
+		out.fingerprintError = err.Error()
+		return out
+	}
+	out.sha256 = hash
+	out.sha256Verified = out.expectedSHA256 != "" && out.sha256 == out.expectedSHA256
+	return out
 }
 
 func trimCommandError(err error, raw []byte) string {

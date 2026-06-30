@@ -20,7 +20,9 @@ BENCH_CORPUS_THERMAL_STATE ?=
 BENCH_CORPUS_FREQUENCY_POLICY ?=
 BENCH_CORPUS_BACKGROUND_LOAD ?=
 GO_BENCH_PUBLISH_PKG ?= ./internal/av1/tile
-GO_BENCH_PUBLISH_BENCH ?= .
+GO_BENCH_PUBLISH_BENCH ?= ^BenchmarkCoeffInitLevels$$
+GO_BENCH_PUBLISH_GO_BIN ?= $(shell command -v go 2>/dev/null)
+GO_BENCH_PUBLISH_GO_SHA256 ?=
 GO_BENCH_PUBLISH_OUT ?= /tmp/goav1-go-bench.txt
 GO_BENCH_PUBLISH_METADATA_JSON ?= /tmp/goav1-go-bench-metadata.json
 GO_BENCH_PUBLISH_ENVIRONMENT_NOTES ?=
@@ -154,10 +156,14 @@ bench-go-publish:
 	@if [ -z "$(GO_BENCH_PUBLISH_THERMAL_STATE)" ]; then echo "set GO_BENCH_PUBLISH_THERMAL_STATE='thermal state before run'"; exit 2; fi
 	@if [ -z "$(GO_BENCH_PUBLISH_FREQUENCY_POLICY)" ]; then echo "set GO_BENCH_PUBLISH_FREQUENCY_POLICY='frequency/governor policy'"; exit 2; fi
 	@if [ -z "$(GO_BENCH_PUBLISH_BACKGROUND_LOAD)" ]; then echo "set GO_BENCH_PUBLISH_BACKGROUND_LOAD='background-load policy'"; exit 2; fi
+	@if [ -z "$(GO_BENCH_PUBLISH_GO_BIN)" ]; then echo "set GO_BENCH_PUBLISH_GO_BIN=/absolute/path/to/go"; exit 2; fi
+	@if [ -z "$(GO_BENCH_PUBLISH_GO_SHA256)" ]; then echo "set GO_BENCH_PUBLISH_GO_SHA256 to the SHA-256 of GO_BENCH_PUBLISH_GO_BIN"; exit 2; fi
 	$(PUBLISH_GO_ENV) \
-	go run ./cmd/gobenchpublish \
+	"$(GO_BENCH_PUBLISH_GO_BIN)" run ./cmd/gobenchpublish \
 		-pkg "$(GO_BENCH_PUBLISH_PKG)" \
 		-bench "$(GO_BENCH_PUBLISH_BENCH)" \
+		-go-bin "$(GO_BENCH_PUBLISH_GO_BIN)" \
+		-go-sha256 "$(GO_BENCH_PUBLISH_GO_SHA256)" \
 		-out "$(GO_BENCH_PUBLISH_OUT)" \
 		-metadata-json "$(GO_BENCH_PUBLISH_METADATA_JSON)" \
 		-environment-notes "$(GO_BENCH_PUBLISH_ENVIRONMENT_NOTES)" \
