@@ -103,6 +103,10 @@ func PredictFilterIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int,
 	if err := validateIntraDirectionalEdges(predWidth, predHeight, max, edges, true); err != nil {
 		return err
 	}
+	if width == predWidth && height == predHeight {
+		predictFilterIntraBlockDirect(block, bytesPerSample, width, height, mode, edges, max)
+		return nil
+	}
 
 	var buffer [33][33]uint16
 	for row := range predHeight {
@@ -139,6 +143,139 @@ func PredictFilterIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int,
 
 	storeFilterIntraBlock(block, bytesPerSample, width, height, &buffer)
 	return nil
+}
+
+func predictFilterIntraBlockDirect(block planeBlock, bytesPerSample int, width int, height int, mode FilterIntraMode, edges IntraEdges, max uint16) {
+	switch bytesPerSample {
+	case 1:
+		predictFilterIntraBlockDirect8(block, width, height, mode, edges, int(max))
+	case 2:
+		predictFilterIntraBlockDirect16(block, width, height, mode, edges, int(max))
+	}
+}
+
+func predictFilterIntraBlockDirect8(block planeBlock, width int, height int, mode FilterIntraMode, edges IntraEdges, max int) {
+	taps := filterIntraTaps[mode]
+	for row := 0; row < height; row += 2 {
+		row0 := block.pix[row*block.stride : row*block.stride+width : row*block.stride+width]
+		row1 := block.pix[(row+1)*block.stride : (row+1)*block.stride+width : (row+1)*block.stride+width]
+		for col := 0; col < width; col += 4 {
+			p0 := int(edges.AboveLeft)
+			if col > 0 {
+				if row == 0 {
+					p0 = int(edges.Above[col-1])
+				} else {
+					p0 = int(block.pix[(row-1)*block.stride+col-1])
+				}
+			} else if row > 0 {
+				p0 = int(edges.Left[row-1])
+			}
+			var p1, p2, p3, p4 int
+			if row == 0 {
+				p1 = int(edges.Above[col+0])
+				p2 = int(edges.Above[col+1])
+				p3 = int(edges.Above[col+2])
+				p4 = int(edges.Above[col+3])
+			} else {
+				top := block.pix[(row-1)*block.stride+col : (row-1)*block.stride+col+4 : (row-1)*block.stride+col+4]
+				p1 = int(top[0])
+				p2 = int(top[1])
+				p3 = int(top[2])
+				p4 = int(top[3])
+			}
+			p5 := int(edges.Left[row])
+			p6 := int(edges.Left[row+1])
+			if col > 0 {
+				p5 = int(row0[col-1])
+				p6 = int(row1[col-1])
+			}
+			for k := range 8 {
+				tap := taps[k]
+				sum := int(tap[0])*p0 + int(tap[1])*p1 + int(tap[2])*p2 +
+					int(tap[3])*p3 + int(tap[4])*p4 + int(tap[5])*p5 +
+					int(tap[6])*p6
+				sample := roundPowerOfTwo(sum, filterIntraScaleBits)
+				if sample < 0 {
+					sample = 0
+				} else if sample > max {
+					sample = max
+				}
+				if k < 4 {
+					row0[col+k] = byte(sample)
+				} else {
+					row1[col+k-4] = byte(sample)
+				}
+			}
+		}
+	}
+}
+
+func predictFilterIntraBlockDirect16(block planeBlock, width int, height int, mode FilterIntraMode, edges IntraEdges, max int) {
+	taps := filterIntraTaps[mode]
+	rowBytes := width << 1
+	for row := 0; row < height; row += 2 {
+		row0 := block.pix[row*block.stride : row*block.stride+rowBytes : row*block.stride+rowBytes]
+		row1 := block.pix[(row+1)*block.stride : (row+1)*block.stride+rowBytes : (row+1)*block.stride+rowBytes]
+		for col := 0; col < width; col += 4 {
+			p0 := int(edges.AboveLeft)
+			if col > 0 {
+				if row == 0 {
+					p0 = int(edges.Above[col-1])
+				} else {
+					p0 = loadFilterIntra16(block.pix[(row-1)*block.stride:], col-1)
+				}
+			} else if row > 0 {
+				p0 = int(edges.Left[row-1])
+			}
+			var p1, p2, p3, p4 int
+			if row == 0 {
+				p1 = int(edges.Above[col+0])
+				p2 = int(edges.Above[col+1])
+				p3 = int(edges.Above[col+2])
+				p4 = int(edges.Above[col+3])
+			} else {
+				top := block.pix[(row-1)*block.stride:]
+				p1 = loadFilterIntra16(top, col+0)
+				p2 = loadFilterIntra16(top, col+1)
+				p3 = loadFilterIntra16(top, col+2)
+				p4 = loadFilterIntra16(top, col+3)
+			}
+			p5 := int(edges.Left[row])
+			p6 := int(edges.Left[row+1])
+			if col > 0 {
+				p5 = loadFilterIntra16(row0, col-1)
+				p6 = loadFilterIntra16(row1, col-1)
+			}
+			for k := range 8 {
+				tap := taps[k]
+				sum := int(tap[0])*p0 + int(tap[1])*p1 + int(tap[2])*p2 +
+					int(tap[3])*p3 + int(tap[4])*p4 + int(tap[5])*p5 +
+					int(tap[6])*p6
+				sample := roundPowerOfTwo(sum, filterIntraScaleBits)
+				if sample < 0 {
+					sample = 0
+				} else if sample > max {
+					sample = max
+				}
+				if k < 4 {
+					storeFilterIntra16(row0, col+k, uint16(sample))
+				} else {
+					storeFilterIntra16(row1, col+k-4, uint16(sample))
+				}
+			}
+		}
+	}
+}
+
+func loadFilterIntra16(row []byte, col int) int {
+	offset := col << 1
+	return int(uint16(row[offset]) | uint16(row[offset+1])<<8)
+}
+
+func storeFilterIntra16(row []byte, col int, value uint16) {
+	offset := col << 1
+	row[offset] = byte(value)
+	row[offset+1] = byte(value >> 8)
 }
 
 func storeFilterIntraBlock(block planeBlock, bytesPerSample int, width int, height int, buffer *[33][33]uint16) {
