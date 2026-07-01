@@ -619,6 +619,87 @@ func CountCoefficientsTXB16x16Y2DTrustedWithTXTypeArray(cdfs *CoeffCDFs, coeff25
 	return countCoefficientsTXB16x16Y2DTrustedArray(cdfs, coeff256, txCDF, txSymbol)
 }
 
+type txb16x16PrepResult struct {
+	nonZeroBits [4]uint64
+	signBits    [4]uint64
+	maxScanLine uint16
+	culLevel    uint8
+}
+
+func prepTXB16x16Y2DTrusted(coeff256 *[256]int16, levels *[400]uint8, absLevels *[256]uint16, eob int) txb16x16PrepResult {
+	if eob > 256 {
+		eob = 256
+	}
+	if coeffInitLevelsArch(coeff256[:], 16, 16, levels[:], 400) {
+		return prepTXB16x16Y2DTrustedSummary(coeff256, absLevels, eob)
+	}
+	var prep txb16x16PrepResult
+	culLevel := 0
+	scanHot := &coeffScanHot16x16Y2D
+	for c := range eob {
+		p := &scanHot[c]
+		pos := int(p.pos)
+		cv := coeff256[pos]
+		if cv == 0 {
+			continue
+		}
+		levels[p.padded] = coeffAbsClamp127(cv)
+		if pos > int(prep.maxScanLine) {
+			prep.maxScanLine = uint16(pos)
+		}
+		level := absInt(int(cv))
+		absLevels[c] = uint16(level)
+		word := c >> 6
+		bit := uint(c & 63)
+		prep.nonZeroBits[word] |= 1 << bit
+		if cv < 0 {
+			prep.signBits[word] |= 1 << bit
+		}
+		culLevel += level
+	}
+	prep.culLevel = txb16x16CulLevel(coeff256, culLevel)
+	return prep
+}
+
+func prepTXB16x16Y2DTrustedSummary(coeff256 *[256]int16, absLevels *[256]uint16, eob int) txb16x16PrepResult {
+	var prep txb16x16PrepResult
+	culLevel := 0
+	scanHot := &coeffScanHot16x16Y2D
+	for c := range eob {
+		pos := int(scanHot[c].pos)
+		cv := coeff256[pos]
+		level := absInt(int(cv))
+		absLevels[c] = uint16(level)
+		if cv == 0 {
+			continue
+		}
+		if pos > int(prep.maxScanLine) {
+			prep.maxScanLine = uint16(pos)
+		}
+		word := c >> 6
+		bit := uint(c & 63)
+		prep.nonZeroBits[word] |= 1 << bit
+		if cv < 0 {
+			prep.signBits[word] |= 1 << bit
+		}
+		culLevel += level
+	}
+	prep.culLevel = txb16x16CulLevel(coeff256, culLevel)
+	return prep
+}
+
+func txb16x16CulLevel(coeff256 *[256]int16, culLevel int) uint8 {
+	if culLevel > CoeffContextMask {
+		culLevel = CoeffContextMask
+	}
+	if coeff256[0] < 0 {
+		culLevel |= 1 << CoeffContextBits
+	} else if coeff256[0] > 0 {
+		culLevel += 2 << CoeffContextBits
+	}
+	return uint8(culLevel)
+}
+
 func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]int16, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
 	const (
 		maxEOB     = 256
@@ -661,35 +742,7 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 
 	var levels [scratchLen]uint8
 	var absLevels [maxEOB]uint16
-	var nonZeroBits [4]uint64
-	var signBits [4]uint64
-	culLevel := 0
-	dcValue := 0
-	maxScanLine := 0
-	for c := range eob {
-		p := &scanHot[c]
-		pos := int(p.pos)
-		cv := coeff256[pos]
-		if cv == 0 {
-			continue
-		}
-		levels[p.padded] = coeffAbsClamp127(cv)
-		if pos > maxScanLine {
-			maxScanLine = pos
-		}
-		level := absInt(int(cv))
-		absLevels[c] = uint16(level)
-		word := c >> 6
-		bit := uint(c & 63)
-		nonZeroBits[word] |= 1 << bit
-		if cv < 0 {
-			signBits[word] |= 1 << bit
-		}
-		culLevel += level
-		if pos == 0 {
-			dcValue = int(cv)
-		}
-	}
+	prep := prepTXB16x16Y2DTrusted(coeff256, &levels, &absLevels, eob)
 	var lowerContexts [maxEOB]int8
 	lowerContextMap := coeffNZMapContexts2DFullArch(levels[:], TransformSize16x16, lowerContexts[:])
 
@@ -767,13 +820,13 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 		}
 	}
 
-	for word, bits64 := range nonZeroBits {
+	for word, bits64 := range prep.nonZeroBits {
 		for nz := bits64; nz != 0; nz &= nz - 1 {
 			c := word*64 + bits.TrailingZeros64(nz)
 			p := &scanHot[c]
 			pos := int(p.pos)
 			level := int(absLevels[c])
-			sign := int((signBits[word] >> uint(c&63)) & 1)
+			sign := int((prep.signBits[word] >> uint(c&63)) & 1)
 			if pos == 0 {
 				w.WriteBinaryCDFTrusted(&cdfs.DCSign[CoeffPlaneY][0], sign)
 			} else {
@@ -784,18 +837,10 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 			}
 		}
 	}
-	if culLevel > CoeffContextMask {
-		culLevel = CoeffContextMask
-	}
-	if dcValue < 0 {
-		culLevel |= 1 << CoeffContextBits
-	} else if dcValue > 0 {
-		culLevel += 2 << CoeffContextBits
-	}
 	return TXBDecodeResult{
 		EOB:         uint16(eob),
-		MaxScanLine: uint16(maxScanLine),
-		CulLevel:    uint8(culLevel),
+		MaxScanLine: prep.maxScanLine,
+		CulLevel:    prep.culLevel,
 	}, w.Tell() - base
 }
 
