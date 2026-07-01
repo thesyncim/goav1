@@ -19,19 +19,48 @@ package dsp
 func addResidual8NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uintptr, max uint32, groups uintptr, height uintptr)
 
 //go:noescape
+func addResidual8x4NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uintptr, max uint32, height uintptr)
+
+//go:noescape
 func addResidual16NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uintptr, max uint32, groups uintptr, height uintptr)
+
+//go:noescape
+func addResidual16x4NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uintptr, max uint32, height uintptr)
 
 //go:noescape
 func addRawTransform8NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, groups uintptr, height uintptr)
 
 //go:noescape
+func addRawTransform8x4NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, height uintptr)
+
+//go:noescape
 func addRawTransform16NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, groups uintptr, height uintptr)
+
+//go:noescape
+func addRawTransform16x4NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, height uintptr)
 
 func addResidualPlaneBlockNEON(block planeBlock, bytesPerSample int, max uint16, width int, residual []int16, residualStride int) {
 	groups := width >> 3
 	if groups == 0 {
-		// Narrow blocks (width < 8) have no vector portion; the reference is
-		// already cheap here.
+		if width == 4 {
+			switch bytesPerSample {
+			case 1:
+				addResidual8x4NEONAsm(
+					&block.pix[0], uintptr(block.stride),
+					&residual[0], uintptr(residualStride*2),
+					uint32(max), uintptr(block.height),
+				)
+				return
+			case 2:
+				addResidual16x4NEONAsm(
+					&block.pix[0], uintptr(block.stride),
+					&residual[0], uintptr(residualStride*2),
+					uint32(max), uintptr(block.height),
+				)
+				return
+			}
+		}
+		// Widths 1..3 and 5..7 have no complete vector-width kernel yet.
 		addResidualPlaneBlockPureGo(block, bytesPerSample, max, width, residual, residualStride)
 		return
 	}
@@ -99,6 +128,24 @@ func addResidualPlaneBlockNEON(block planeBlock, bytesPerSample int, max uint16,
 func addRawTransformPlaneBlockNEON(block planeBlock, bytesPerSample int, max uint16, width int, raw []int32, rawStride int) {
 	groups := width >> 3
 	if groups == 0 {
+		if width == 4 {
+			switch bytesPerSample {
+			case 1:
+				addRawTransform8x4NEONAsm(
+					&block.pix[0], uintptr(block.stride),
+					&raw[0], uintptr(rawStride*4),
+					uint32(max), uintptr(block.height),
+				)
+				return
+			case 2:
+				addRawTransform16x4NEONAsm(
+					&block.pix[0], uintptr(block.stride),
+					&raw[0], uintptr(rawStride*4),
+					uint32(max), uintptr(block.height),
+				)
+				return
+			}
+		}
 		addRawTransformPlaneBlockPureGo(block, bytesPerSample, max, width, raw, rawStride)
 		return
 	}

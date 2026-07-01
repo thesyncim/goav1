@@ -425,6 +425,30 @@ func BenchmarkAddResidualPlaneBlock(b *testing.B) {
 	}
 }
 
+func BenchmarkAddResidualPlaneBlock4x4(b *testing.B) {
+	plane, _ := testPlane(4, 4, 1, 4)
+	residual := make([]int16, 4*4)
+	for i := range residual {
+		residual[i] = int16(i*17) - 128
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = AddResidualPlaneBlock(plane, 1, 8, 0, 0, 4, 4, residual, 4)
+	}
+}
+
+func BenchmarkAddRawTransformPlaneBlock4x4(b *testing.B) {
+	plane, _ := testPlane(4, 4, 1, 4)
+	raw := make([]int32, 4*4)
+	for i := range raw {
+		raw[i] = int32(i*257) - 2048
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		AddRawTransformPlaneBlockTrusted(plane.Pix, plane.Stride, 1, 0xff, 4, 4, raw, 4)
+	}
+}
+
 func testPlane(width int, height int, bytesPerSample int, stride int) (frame.Plane, []byte) {
 	buf := make([]byte, stride*height)
 	return frame.Plane{

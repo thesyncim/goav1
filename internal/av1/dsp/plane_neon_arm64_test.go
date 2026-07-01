@@ -113,3 +113,84 @@ func TestAddResidualPlaneBlockNEONIsZeroAlloc(t *testing.T) {
 		t.Fatalf("AddResidualPlaneBlock allocated: %f", allocs)
 	}
 }
+
+func TestAddRawTransformPlaneBlockNEONMatchesPureGo(t *testing.T) {
+	if !cpu.Detected.NEON {
+		t.Skip("NEON not detected")
+	}
+	type shape struct {
+		bytesPerSample int
+		bitDepth       uint8
+		max            uint16
+	}
+	shapes := []shape{
+		{1, 8, 0xff},
+		{2, 10, 0x3ff},
+		{2, 12, 0xfff},
+	}
+	widths := []int{1, 3, 4, 7, 8, 9, 13, 16, 17, 24, 32, 33, 64}
+	heights := []int{1, 2, 4, 8, 16}
+
+	for _, sh := range shapes {
+		for _, width := range widths {
+			for _, height := range heights {
+				g := addResidualLCG{s: uint64(width*193 + height*29 + int(sh.bitDepth))}
+				stride := (width + 7) * sh.bytesPerSample
+				if stride < width*sh.bytesPerSample {
+					stride = width * sh.bytesPerSample
+				}
+				rawStride := width + 3
+
+				basePix := make([]byte, stride*height)
+				for i := range basePix {
+					basePix[i] = byte(g.next())
+				}
+				raw := make([]int32, rawStride*height)
+				for i := range raw {
+					switch g.next() & 3 {
+					case 0:
+						raw[i] = int32(g.next())
+					case 1:
+						raw[i] = -int32(g.next())
+					default:
+						raw[i] = int32(g.next()%4096) - 2048
+					}
+				}
+
+				gotPix := append([]byte(nil), basePix...)
+				wantPix := append([]byte(nil), basePix...)
+
+				AddRawTransformPlaneBlockTrusted(gotPix, stride, sh.bytesPerSample, sh.max, width, height, raw, rawStride)
+
+				wantBlock, err := planeBlockWindow(frame.Plane{Pix: wantPix, Stride: stride, Width: width, Height: height}, sh.bytesPerSample, 0, 0, width, height)
+				if err != nil {
+					t.Fatalf("reference window err: %v", err)
+				}
+				addRawTransformPlaneBlockPureGo(wantBlock, sh.bytesPerSample, sh.max, width, raw, rawStride)
+
+				for i := range gotPix {
+					if gotPix[i] != wantPix[i] {
+						t.Fatalf("bps=%d w=%d h=%d byte %d: neon=%#02x ref=%#02x", sh.bytesPerSample, width, height, i, gotPix[i], wantPix[i])
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestAddRawTransformPlaneBlockNEONIsZeroAlloc(t *testing.T) {
+	if !cpu.Detected.NEON {
+		t.Skip("NEON not detected")
+	}
+	plane, _ := testPlane(64, 64, 1, 64)
+	raw := make([]int32, 64*64)
+	for i := range raw {
+		raw[i] = int32(i%4096) - 2048
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		AddRawTransformPlaneBlockTrusted(plane.Pix, plane.Stride, 1, 0xff, 64, 64, raw, 64)
+	})
+	if allocs != 0 {
+		t.Fatalf("AddRawTransformPlaneBlockTrusted allocated: %f", allocs)
+	}
+}

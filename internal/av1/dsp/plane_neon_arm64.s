@@ -11,8 +11,10 @@
 // matches the reference, which performs the add and clamp in Go int and so
 // never overflows.
 //
-// Each kernel processes the leading width&^7 columns of every row in groups of
-// eight lanes; the Go wrapper handles the width&7 tail and all validation.
+// The main kernels process the leading width&^7 columns of every row in groups
+// of eight lanes; the Go wrapper handles the width&7 tail and all validation.
+// Separate 4-wide kernels cover the common narrow transform block without
+// reading beyond the four valid samples in a tightly-strided row.
 //
 // Registers v0..v7 only are used (no v8..v15 callee-saved clobber).
 
@@ -76,6 +78,44 @@ rowAdvance8:
 done8:
 	RET
 
+// func addResidual8x4NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uintptr, max uint32, height uintptr)
+//
+// 8-bit destination, exactly four samples per row. Each row loads/stores four
+// bytes but still performs the add/clamp/narrow in four s32 NEON lanes.
+TEXT ·addResidual8x4NEONAsm(SB), NOSPLIT, $0-48
+	MOVD dst+0(FP), R0
+	MOVD dstStride+8(FP), R1
+	MOVD res+16(FP), R2
+	MOVD resStride+24(FP), R3
+	MOVW max+32(FP), R12
+	MOVD height+40(FP), R5
+
+	WORD $0x4f000406 // movi v6.4s, #0
+	WORD $0x4e040d87 // dup v7.4s, w12
+
+rowLoop8x4:
+	CBZ  R5, done8x4
+	MOVWU (R0), R6
+	VMOV R6, V0.S[0]
+	VLD1 (R2), [V1.H4]
+	WORD $0x2f08a400 // uxtl v0.8h, v0.8b
+	WORD $0x0f10a422 // sxtl v2.4s, v1.4h
+	WORD $0x2f10a404 // uxtl v4.4s, v0.4h
+	WORD $0x4ea28484 // add v4.4s, v4.4s, v2.4s
+	WORD $0x4ea66484 // smax v4.4s, v4.4s, v6.4s
+	WORD $0x4ea76c84 // smin v4.4s, v4.4s, v7.4s
+	WORD $0x0e612884 // xtn v4.4h, v4.4s
+	WORD $0x0e212884 // xtn v4.8b, v4.8h
+	VMOV V4.S[0], R6
+	MOVW R6, (R0)
+	ADD  R1, R0, R0
+	ADD  R3, R2, R2
+	SUB  $1, R5, R5
+	B    rowLoop8x4
+
+done8x4:
+	RET
+
 // func addResidual16NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uintptr, max uint32, groups uintptr, height uintptr)
 //
 // High-bit-depth destination: each sample is a little-endian uint16. groups is
@@ -128,6 +168,39 @@ rowAdvance16:
 	B    rowLoop16
 
 done16:
+	RET
+
+// func addResidual16x4NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uintptr, max uint32, height uintptr)
+//
+// High-bit-depth destination, exactly four samples per row.
+TEXT ·addResidual16x4NEONAsm(SB), NOSPLIT, $0-48
+	MOVD dst+0(FP), R0
+	MOVD dstStride+8(FP), R1
+	MOVD res+16(FP), R2
+	MOVD resStride+24(FP), R3
+	MOVW max+32(FP), R12
+	MOVD height+40(FP), R5
+
+	WORD $0x4f000406 // movi v6.4s, #0
+	WORD $0x4e040d87 // dup v7.4s, w12
+
+rowLoop16x4:
+	CBZ  R5, done16x4
+	VLD1 (R0), [V0.H4]
+	VLD1 (R2), [V1.H4]
+	WORD $0x2f10a402 // uxtl v2.4s, v0.4h
+	WORD $0x0f10a424 // sxtl v4.4s, v1.4h
+	WORD $0x4ea48442 // add v2.4s, v2.4s, v4.4s
+	WORD $0x4ea66442 // smax v2.4s, v2.4s, v6.4s
+	WORD $0x4ea76c42 // smin v2.4s, v2.4s, v7.4s
+	WORD $0x0e612842 // xtn v2.4h, v2.4s
+	VST1 [V2.H4], (R0)
+	ADD  R1, R0, R0
+	ADD  R3, R2, R2
+	SUB  $1, R5, R5
+	B    rowLoop16x4
+
+done16x4:
 	RET
 
 // func addRawTransform8NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, groups uintptr, height uintptr)
@@ -195,6 +268,49 @@ rawRowAdvance8:
 rawDone8:
 	RET
 
+// func addRawTransform8x4NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, height uintptr)
+//
+// 8-bit destination with exactly four raw int32 inverse-transform samples per
+// row. This mirrors addRawTransform8NEONAsm's round/saturate/add/clamp sequence
+// while avoiding an 8-byte destination load on a 4-wide row.
+TEXT ·addRawTransform8x4NEONAsm(SB), NOSPLIT, $0-48
+	MOVD dst+0(FP), R0
+	MOVD dstStride+8(FP), R1
+	MOVD raw+16(FP), R2
+	MOVD rawStride+24(FP), R3
+	MOVW max+32(FP), R12
+	MOVD height+40(FP), R5
+
+	WORD $0x4f000505 // movi v5.4s, #8
+	WORD $0x4f000406 // movi v6.4s, #0
+	WORD $0x4e040d87 // dup v7.4s, w12
+
+rawRowLoop8x4:
+	CBZ  R5, rawDone8x4
+	MOVWU (R0), R6
+	VMOV R6, V0.S[0]
+	VLD1 (R2), [V1.S4]
+	WORD $0x4ea58421 // add v1.4s, v1.4s, v5.4s
+	WORD $0x4f3c0421 // sshr v1.4s, v1.4s, #4
+	WORD $0x0e614821 // sqxtn v1.4h, v1.4s
+	WORD $0x2f08a400 // uxtl v0.8h, v0.8b
+	WORD $0x0f10a422 // sxtl v2.4s, v1.4h
+	WORD $0x2f10a404 // uxtl v4.4s, v0.4h
+	WORD $0x4ea28484 // add v4.4s, v4.4s, v2.4s
+	WORD $0x4ea66484 // smax v4.4s, v4.4s, v6.4s
+	WORD $0x4ea76c84 // smin v4.4s, v4.4s, v7.4s
+	WORD $0x0e612884 // xtn v4.4h, v4.4s
+	WORD $0x0e212884 // xtn v4.8b, v4.8h
+	VMOV V4.S[0], R6
+	MOVW R6, (R0)
+	ADD  R1, R0, R0
+	ADD  R3, R2, R2
+	SUB  $1, R5, R5
+	B    rawRowLoop8x4
+
+rawDone8x4:
+	RET
+
 // func addRawTransform16NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, groups uintptr, height uintptr)
 TEXT ·addRawTransform16NEONAsm(SB), NOSPLIT, $0-56
 	MOVD dst+0(FP), R0
@@ -252,4 +368,42 @@ rawRowAdvance16:
 	B    rawRowLoop16
 
 rawDone16:
+	RET
+
+// func addRawTransform16x4NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, height uintptr)
+//
+// High-bit-depth destination with exactly four raw int32 inverse-transform
+// samples per row.
+TEXT ·addRawTransform16x4NEONAsm(SB), NOSPLIT, $0-48
+	MOVD dst+0(FP), R0
+	MOVD dstStride+8(FP), R1
+	MOVD raw+16(FP), R2
+	MOVD rawStride+24(FP), R3
+	MOVW max+32(FP), R12
+	MOVD height+40(FP), R5
+
+	WORD $0x4f000505 // movi v5.4s, #8
+	WORD $0x4f000406 // movi v6.4s, #0
+	WORD $0x4e040d87 // dup v7.4s, w12
+
+rawRowLoop16x4:
+	CBZ  R5, rawDone16x4
+	VLD1 (R0), [V0.H4]
+	VLD1 (R2), [V1.S4]
+	WORD $0x4ea58421 // add v1.4s, v1.4s, v5.4s
+	WORD $0x4f3c0421 // sshr v1.4s, v1.4s, #4
+	WORD $0x0e614821 // sqxtn v1.4h, v1.4s
+	WORD $0x2f10a402 // uxtl v2.4s, v0.4h
+	WORD $0x0f10a424 // sxtl v4.4s, v1.4h
+	WORD $0x4ea48442 // add v2.4s, v2.4s, v4.4s
+	WORD $0x4ea66442 // smax v2.4s, v2.4s, v6.4s
+	WORD $0x4ea76c42 // smin v2.4s, v2.4s, v7.4s
+	WORD $0x0e612842 // xtn v2.4h, v2.4s
+	VST1 [V2.H4], (R0)
+	ADD  R1, R0, R0
+	ADD  R3, R2, R2
+	SUB  $1, R5, R5
+	B    rawRowLoop16x4
+
+rawDone16x4:
 	RET
