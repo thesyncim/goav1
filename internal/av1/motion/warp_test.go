@@ -56,6 +56,73 @@ func TestPredictWarpedPlaneBlockAllocs(t *testing.T) {
 	}
 }
 
+func TestWarpVertical8FullGamma0MatchesGeneric(t *testing.T) {
+	var tmp [warpedIntermediateRows * warpedIntermediateColumns]int32
+	for i := range tmp {
+		tmp[i] = int32((i*97+31)%4096 - 2048)
+	}
+
+	cases := []struct {
+		baseSY int
+		delta  int
+	}{
+		{baseSY: 0, delta: -64},
+		{baseSY: 512, delta: 128},
+		{baseSY: -1 << 20, delta: 0},
+	}
+	for _, tc := range cases {
+		want, _ := testPlane(32, 32, 1, 32)
+		got, _ := testPlane(32, 32, 1, 32)
+		for i := range want.Pix {
+			want.Pix[i] = 0xaa
+			got.Pix[i] = 0xaa
+		}
+
+		warpVertical8Full(want, &tmp, 8, 8, 1, 2, tc.baseSY, 0, tc.delta, round1Bits, 8+2*filterBits-round0Bits)
+		warpVertical8FullGamma0(got, &tmp, 8, 8, 1, 2, tc.baseSY, tc.delta, round1Bits, 8+2*filterBits-round0Bits)
+
+		for i := range want.Pix {
+			if got.Pix[i] != want.Pix[i] {
+				t.Fatalf("baseSY=%d delta=%d pix[%d]=%d want %d", tc.baseSY, tc.delta, i, got.Pix[i], want.Pix[i])
+			}
+		}
+	}
+}
+
+func TestWarpVerticalHighBDFullGamma0MatchesGeneric(t *testing.T) {
+	var tmp [warpedIntermediateRows * warpedIntermediateColumns]int32
+	for i := range tmp {
+		tmp[i] = int32((i*131+17)%8192 - 4096)
+	}
+
+	round0, round1 := highBDRoundBits(10)
+	cases := []struct {
+		baseSY int
+		delta  int
+	}{
+		{baseSY: 0, delta: -64},
+		{baseSY: 512, delta: 128},
+		{baseSY: -1 << 20, delta: 0},
+	}
+	for _, tc := range cases {
+		want, _ := testPlane(32, 32, 2, 64)
+		got, _ := testPlane(32, 32, 2, 64)
+		for i := range want.Pix {
+			want.Pix[i] = 0x5a
+			got.Pix[i] = 0x5a
+		}
+
+		warpVerticalHighBDFull(want, 10, 1023, &tmp, 8, 8, 1, 2, tc.baseSY, 0, tc.delta, round1, 10+2*filterBits-round0)
+		warpVerticalHighBDFullGamma0(got, 10, 1023, &tmp, 8, 8, 1, 2, tc.baseSY, tc.delta, round1, 10+2*filterBits-round0)
+
+		for i := range want.Pix {
+			if got.Pix[i] != want.Pix[i] {
+				t.Fatalf("baseSY=%d delta=%d pix[%d]=%d want %d", tc.baseSY, tc.delta, i, got.Pix[i], want.Pix[i])
+			}
+		}
+	}
+}
+
 func BenchmarkPredictWarpedPlaneBlock8Bit64(b *testing.B) {
 	ref, _ := testPlane(96, 96, 1, 96)
 	dst, _ := testPlane(96, 96, 1, 96)
