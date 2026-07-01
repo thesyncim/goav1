@@ -945,6 +945,57 @@ func TestConvolve2D8I8MMFallbackMatchesNEON(t *testing.T) {
 	}
 }
 
+func TestConvolve2D8ClampedHorizontalEdgeI8MMMatchesPureGo(t *testing.T) {
+	if !cpu.Detected.I8MM {
+		t.Skip("I8MM not detected")
+	}
+	rng := rand.New(rand.NewSource(0x2d8c18))
+	widths := []int{8, 12, 15, 16, 24, 32}
+	heights := []int{4, 8, 16, 32}
+	phasePairs := [][2][filterTaps]int16{
+		{subpelFilters8[3], subpelFilters8[5]},
+		{subpelFilters8Smooth[6], subpelFilters8Smooth[11]},
+		{subpelFilters8Sharp[9], subpelFilters8Sharp[13]},
+		{bilinearFilters[7], bilinearFilters[2]},
+	}
+
+	for _, w := range widths {
+		for _, h := range heights {
+			for _, kernels := range phasePairs {
+				for _, edge := range []string{"left", "right"} {
+					const refW = 96
+					refH := h + 2*filterTaps
+					ref, _ := testPlane(refW, refH, 1, refW)
+					for i := range ref.Pix {
+						ref.Pix[i] = byte(rng.Intn(256))
+					}
+					refX := 1
+					if edge == "right" {
+						refX = refW - w - 3
+					}
+					refY := filterTaps
+					got, _ := testPlane(w, h, 1, w)
+					gotDispatch, _ := testPlane(w, h, 1, w)
+					gotSplit, _ := testPlane(w, h, 1, w)
+					want, _ := testPlane(w, h, 1, w)
+					var scratch ConvolveScratch
+					var dispatchScratch ConvolveScratch
+					var splitScratch ConvolveScratch
+					convolve2D8ClampedI8MMWithScratch(got, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &scratch)
+					convolve2D8ClampedWithScratchImpl(gotDispatch, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &dispatchScratch)
+					if !convolve2D8ClampedEdgeSplitI8MMWithScratch(gotSplit, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &splitScratch) {
+						t.Fatalf("2D8horizontal-edge I8MM split path was not used w=%d h=%d edge=%s", w, h, edge)
+					}
+					convolve2D8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
+					assertBytesEqual(t, got, want, w, h, "2D8horizontal-edge-i8mm", w, h, edge)
+					assertBytesEqual(t, gotDispatch, want, w, h, "2D8horizontal-edge-i8mm-dispatch", w, h, edge)
+					assertBytesEqual(t, gotSplit, want, w, h, "2D8horizontal-edge-i8mm-split", w, h, edge)
+				}
+			}
+		}
+	}
+}
+
 func TestConvolve2D8I8MMZeroAlloc(t *testing.T) {
 	if !cpu.Detected.I8MM {
 		t.Skip("I8MM not detected")
@@ -958,6 +1009,19 @@ func TestConvolve2D8I8MMZeroAlloc(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("convolve 2D I8MM allocated %v times, want 0", allocs)
+	}
+
+	const plane = 64
+	edgeRef, _ := testPlane(plane, plane, 1, plane)
+	fillMotionTestPlane(edgeRef)
+	edgeDst, _ := testPlane(16, 16, 1, 16)
+	edgeX := plane - 13
+	edgeY := 20
+	allocs = testing.AllocsPerRun(50, func() {
+		convolve2D8ClampedI8MMWithScratch(edgeDst, edgeRef, 0, 0, edgeX, edgeY, 16, 16, xKernel, yKernel, &scratch)
+	})
+	if allocs != 0 {
+		t.Fatalf("convolve 2D clamped I8MM allocated %v times, want 0", allocs)
 	}
 }
 
@@ -999,6 +1063,39 @@ func BenchmarkConvolve2D8I8MMWithScratch_32(b *testing.B) {
 	var scratch ConvolveScratch
 	runConvolveBench(b, 32, 32, func() {
 		convolve2D8I8MMWithScratch(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk, yk, &scratch)
+	})
+}
+
+func BenchmarkConvolve2D8ClampedEdgeI8MMWithScratch_16(b *testing.B) {
+	if !cpu.Detected.I8MM {
+		b.Skip("I8MM not detected")
+	}
+	const plane = 64
+	ref, _ := testPlane(plane, plane, 1, plane)
+	fillMotionTestPlane(ref)
+	dst, _ := testPlane(16, 16, 1, 16)
+	xk := subpelFilters8[3]
+	yk := subpelFilters8[5]
+	refX := plane - 13
+	refY := 20
+	var scratch ConvolveScratch
+	runConvolveBench(b, 16, 16, func() {
+		convolve2D8ClampedI8MMWithScratch(dst, ref, 0, 0, refX, refY, 16, 16, xk, yk, &scratch)
+	})
+}
+
+func BenchmarkConvolve2D8ClampedEdgeNEONWithScratch_16(b *testing.B) {
+	const plane = 64
+	ref, _ := testPlane(plane, plane, 1, plane)
+	fillMotionTestPlane(ref)
+	dst, _ := testPlane(16, 16, 1, 16)
+	xk := subpelFilters8[3]
+	yk := subpelFilters8[5]
+	refX := plane - 13
+	refY := 20
+	var scratch ConvolveScratch
+	runConvolveBench(b, 16, 16, func() {
+		convolve2D8ClampedNEONWithScratch(dst, ref, 0, 0, refX, refY, 16, 16, xk, yk, &scratch)
 	})
 }
 

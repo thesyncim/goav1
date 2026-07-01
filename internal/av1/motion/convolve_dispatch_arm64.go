@@ -44,6 +44,9 @@ func init() {
 		convolveY8ClampedImpl = convolveY8ClampedNEON
 		convolve2D8ClampedImpl = convolve2D8ClampedNEON
 		convolve2D8ClampedWithScratchImpl = convolve2D8ClampedNEONWithScratch
+		if cpu.Detected.I8MM {
+			convolve2D8ClampedWithScratchImpl = convolve2D8ClampedI8MMWithScratch
+		}
 
 		// High-bit-depth (10/12-bit). The 1D Y, 1D X and 2D non-clamped kernels
 		// have NEON; the clamped HBD variants reuse the same in-bounds fast-path
