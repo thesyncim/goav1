@@ -2149,6 +2149,9 @@ func (c *Cursor) ReadCDF4HighTokenUnchecked(cdf *CDF) uint8 {
 // ReadCDF4HighTokenUpdateUnchecked decodes a high-token chain and always adapts
 // the CDF row after each symbol.
 func (c *Cursor) ReadCDF4HighTokenUpdateUnchecked(cdf *CDF) uint8 {
+	if cursorCDF4HighTokenUpdateArch {
+		return readCDF4HighTokenUpdateArch(c, &cdf.values)
+	}
 	return c.readCDF4HighTokenUpdateLoop(&cdf.values)
 }
 
