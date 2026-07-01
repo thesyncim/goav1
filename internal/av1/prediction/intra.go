@@ -211,52 +211,73 @@ func planeBlockWindow(plane frame.Plane, bytesPerSample int, x int, y int, width
 func fillBlock(block planeBlock, bytesPerSample int, value uint16) {
 	switch bytesPerSample {
 	case 1:
-		v := byte(value)
 		if block.height == 0 {
 			return
 		}
 		first := block.pix[:block.rowBytes:block.rowBytes]
-		for i := range first {
-			first[i] = v
-		}
+		fillByteLine(first, byte(value))
 		for row := 1; row < block.height; row++ {
 			copy(block.pix[row*block.stride:row*block.stride+block.rowBytes], first)
 		}
 	case 2:
-		lo := byte(value)
-		hi := byte(value >> 8)
 		if block.height == 0 {
 			return
 		}
 		first := block.pix[:block.rowBytes:block.rowBytes]
-		for i := 0; i < len(first); i += 2 {
-			first[i] = lo
-			first[i+1] = hi
-		}
+		fillUint16Line(first, value)
 		for row := 1; row < block.height; row++ {
 			copy(block.pix[row*block.stride:row*block.stride+block.rowBytes], first)
 		}
 	}
 }
 
+func fillByteLine(line []byte, value byte) {
+	if len(line) == 0 {
+		return
+	}
+	line[0] = value
+	for filled := 1; filled < len(line); filled <<= 1 {
+		copy(line[filled:], line[:filled])
+	}
+}
+
+func fillUint16Line(line []byte, value uint16) {
+	if len(line) == 0 {
+		return
+	}
+	line[0] = byte(value)
+	line[1] = byte(value >> 8)
+	for filled := 2; filled < len(line); filled <<= 1 {
+		copy(line[filled:], line[:filled])
+	}
+}
+
 func predictVertical(block planeBlock, bytesPerSample int, above []uint16) {
 	switch bytesPerSample {
 	case 1:
-		for row := 0; row < block.height; row++ {
-			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-			for col := 0; col < block.width; col++ {
-				line[col] = byte(above[col])
-			}
+		if block.height == 0 {
+			return
+		}
+		first := block.pix[:block.rowBytes:block.rowBytes]
+		for col := 0; col < block.width; col++ {
+			first[col] = byte(above[col])
+		}
+		for row := 1; row < block.height; row++ {
+			copy(block.pix[row*block.stride:row*block.stride+block.rowBytes], first)
 		}
 	case 2:
-		for row := 0; row < block.height; row++ {
-			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-			for col := 0; col < block.width; col++ {
-				i := col * 2
-				sample := above[col]
-				line[i] = byte(sample)
-				line[i+1] = byte(sample >> 8)
-			}
+		if block.height == 0 {
+			return
+		}
+		first := block.pix[:block.rowBytes:block.rowBytes]
+		for col := 0; col < block.width; col++ {
+			i := col * 2
+			sample := above[col]
+			first[i] = byte(sample)
+			first[i+1] = byte(sample >> 8)
+		}
+		for row := 1; row < block.height; row++ {
+			copy(block.pix[row*block.stride:row*block.stride+block.rowBytes], first)
 		}
 	}
 }
@@ -266,22 +287,12 @@ func predictHorizontal(block planeBlock, bytesPerSample int, left []uint16) {
 	case 1:
 		for row := 0; row < block.height; row++ {
 			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-			sample := byte(left[row])
-			for col := 0; col < block.width; col++ {
-				line[col] = sample
-			}
+			fillByteLine(line, byte(left[row]))
 		}
 	case 2:
 		for row := 0; row < block.height; row++ {
 			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-			sample := left[row]
-			lo := byte(sample)
-			hi := byte(sample >> 8)
-			for col := 0; col < block.width; col++ {
-				i := col * 2
-				line[i] = lo
-				line[i+1] = hi
-			}
+			fillUint16Line(line, left[row])
 		}
 	}
 }
