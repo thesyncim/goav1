@@ -119,6 +119,16 @@ func sad64x64Composed(src, ref []byte, stride int) int {
 		sad32x32(src[32*stride+32:], ref[32*stride+32:], stride)
 }
 
+// sad64x64DualComposed composes the two-stride 64x64 shape from the active
+// 32x32 dual kernel. Architectures can replace this with one leaf kernel to
+// avoid four call/ctx round trips in the subpel scorer.
+func sad64x64DualComposed(src []byte, srcStride int, ref []byte, refStride int) int {
+	return sad32x32Dual(src, srcStride, ref, refStride) +
+		sad32x32Dual(src[32:], srcStride, ref[32:], refStride) +
+		sad32x32Dual(src[32*srcStride:], srcStride, ref[32*refStride:], refStride) +
+		sad32x32Dual(src[32*srcStride+32:], srcStride, ref[32*refStride+32:], refStride)
+}
+
 // sad64x64x4Step4 composes four horizontal 64x64 candidates from the active
 // 32x32 x4 kernel, matching the full-pel raster search's step-4 candidate
 // grouping without adding a separate assembly surface.
@@ -415,6 +425,22 @@ func sad32x32DualPureGo(src []byte, srcStride int, ref []byte, refStride int) in
 		srow := r * srcStride
 		rrow := r * refStride
 		for c := range 32 {
+			d := int(src[srow+c]) - int(ref[rrow+c])
+			if d < 0 {
+				d = -d
+			}
+			total += d
+		}
+	}
+	return total
+}
+
+func sad64x64DualPureGo(src []byte, srcStride int, ref []byte, refStride int) int {
+	total := 0
+	for r := range 64 {
+		srow := r * srcStride
+		rrow := r * refStride
+		for c := range 64 {
 			d := int(src[srow+c]) - int(ref[rrow+c])
 			if d < 0 {
 				d = -d

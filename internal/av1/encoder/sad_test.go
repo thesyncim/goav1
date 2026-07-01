@@ -412,6 +412,28 @@ func TestSAD32x32DualImplMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestSAD64x64DualMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(4764))
+	const srcStride, refStride = 149, 83
+	src := make([]byte, srcStride*160)
+	ref := make([]byte, refStride*160)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+	}
+	for i := range ref {
+		ref[i] = uint8(rng.Intn(256))
+	}
+	for range 2000 {
+		so := rng.Intn(srcStride*80) + rng.Intn(srcStride-64)
+		ro := rng.Intn(refStride*80) + rng.Intn(refStride-64)
+		want := sad64x64DualPureGo(src[so:], srcStride, ref[ro:], refStride)
+		got := sad64x64Dual(src[so:], srcStride, ref[ro:], refStride)
+		if got != want {
+			t.Fatalf("so %d ro %d: impl %d want %d", so, ro, got, want)
+		}
+	}
+}
+
 // TestSAD8x8CompoundAvgBlockImplMatchesPureGo proves the compound average SAD
 // kernel is bit-exact with the portable rounded-average reference.
 func TestSAD8x8CompoundAvgBlockImplMatchesPureGo(t *testing.T) {
@@ -1217,6 +1239,38 @@ func BenchmarkSAD32x32DualComposed8x8(b *testing.B) {
 			}
 		}
 		_ = sum
+	}
+}
+
+func BenchmarkSAD64x64Dual(b *testing.B) {
+	const srcStride, refStride = 96, 64
+	src := make([]byte, srcStride*96)
+	ref := make([]byte, refStride*96)
+	for i := range src {
+		src[i] = uint8(i * 7)
+	}
+	for i := range ref {
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		sad64x64Dual(src, srcStride, ref, refStride)
+	}
+}
+
+func BenchmarkSAD64x64DualComposed(b *testing.B) {
+	const srcStride, refStride = 96, 64
+	src := make([]byte, srcStride*96)
+	ref := make([]byte, refStride*96)
+	for i := range src {
+		src[i] = uint8(i * 7)
+	}
+	for i := range ref {
+		ref[i] = uint8(i * 13)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		sad64x64DualComposed(src, srcStride, ref, refStride)
 	}
 }
 

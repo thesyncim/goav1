@@ -297,6 +297,9 @@ func sad16x16DualNEONAsm(ctx *sad8x8DualNEONCtx)
 //go:noescape
 func sad32x32DualNEONAsm(ctx *sad8x8DualNEONCtx)
 
+//go:noescape
+func sad64x64DualNEONAsm(ctx *sad8x8DualNEONCtx)
+
 // sad8x8DualNEON is the NEON 8x8 SAD with independent source and reference
 // strides.
 func sad8x8DualNEON(src []byte, srcStride int, ref []byte, refStride int) int {
@@ -333,6 +336,20 @@ func sad32x32DualNEON(src []byte, srcStride int, ref []byte, refStride int) int 
 		RefStride: int64(refStride),
 	}
 	sad32x32DualNEONAsm(&ctx)
+	return int(ctx.Sum)
+}
+
+// sad64x64DualNEON is the NEON 64x64 SAD with independent source and
+// reference strides. It keeps the subpel 64x64 scorer in one assembly leaf
+// instead of composing four 32x32 dual calls.
+func sad64x64DualNEON(src []byte, srcStride int, ref []byte, refStride int) int {
+	ctx := sad8x8DualNEONCtx{
+		Src:       unsafe.Pointer(&src[0]),
+		Ref:       unsafe.Pointer(&ref[0]),
+		SrcStride: int64(srcStride),
+		RefStride: int64(refStride),
+	}
+	sad64x64DualNEONAsm(&ctx)
 	return int(ctx.Sum)
 }
 

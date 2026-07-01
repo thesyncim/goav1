@@ -3165,7 +3165,7 @@ func (st *lossyEncodeState) subpelExact64x64(probe, srcBlock, refPlane []byte, s
 			return -1
 		}
 	}
-	return sadDualBlock(srcBlock, stride, probe, 64, 64)
+	return sad64x64Dual(srcBlock, stride, probe, 64)
 }
 
 func (st *lossyEncodeState) subpelRefineGeneric(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
@@ -3658,10 +3658,7 @@ func sadDualBlock(src []byte, srcStride int, ref []byte, refStride int, n int) i
 	case 32:
 		return sad32x32Dual(src, srcStride, ref, refStride)
 	case 64:
-		return sad32x32Dual(src, srcStride, ref, refStride) +
-			sad32x32Dual(src[32:], srcStride, ref[32:], refStride) +
-			sad32x32Dual(src[32*srcStride:], srcStride, ref[32*refStride:], refStride) +
-			sad32x32Dual(src[32*srcStride+32:], srcStride, ref[32*refStride+32:], refStride)
+		return sad64x64Dual(src, srcStride, ref, refStride)
 	}
 	total := 0
 	for r := range n {

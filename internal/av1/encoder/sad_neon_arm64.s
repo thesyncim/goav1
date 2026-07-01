@@ -1180,6 +1180,99 @@ dloop32:
 	MOVD R5, DSUM(R0)
 	RET
 
+// NEON 64x64 two-stride SAD: same accumulator layout as sad64x64NEONAsm,
+// but source and reference rows advance independently. This is the subpel
+// scorer counterpart to the same-stride 64x64 full-pel kernel.
+// func sad64x64DualNEONAsm(ctx *sad8x8DualNEONCtx)
+TEXT ·sad64x64DualNEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD DSRC(R0), R1
+	MOVD DREF(R0), R2
+	MOVD DSRCSTRIDE(R0), R3
+	MOVD DREFSTRIDE(R0), R6
+
+	VLD1 (R1), [V0.B16]
+	ADD  $16, R1, R7
+	VLD1 (R7), [V4.B16]
+	ADD  $32, R1, R8
+	VLD1 (R8), [V8.B16]
+	ADD  $48, R1, R9
+	VLD1 (R9), [V12.B16]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R10
+	VLD1 (R10), [V5.B16]
+	ADD  $32, R2, R11
+	VLD1 (R11), [V9.B16]
+	ADD  $48, R2, R12
+	VLD1 (R12), [V13.B16]
+	WORD $0x2e217002 // uabdl  v2.8h, v0.8b,  v1.8b
+	WORD $0x6e217003 // uabdl2 v3.8h, v0.16b, v1.16b
+	WORD $0x2e257086 // uabdl  v6.8h, v4.8b,  v5.8b
+	WORD $0x6e257087 // uabdl2 v7.8h, v4.16b, v5.16b
+	WORD $0x2e29710a // uabdl  v10.8h, v8.8b,  v9.8b
+	WORD $0x6e29710b // uabdl2 v11.8h, v8.16b, v9.16b
+	WORD $0x2e2d718e // uabdl  v14.8h, v12.8b, v13.8b
+	WORD $0x6e2d718f // uabdl2 v15.8h, v12.16b, v13.16b
+	ADD  R3, R1
+	ADD  R6, R2
+
+	MOVD $63, R4
+dloop64:
+	VLD1 (R1), [V0.B16]
+	ADD  $16, R1, R7
+	VLD1 (R7), [V4.B16]
+	ADD  $32, R1, R8
+	VLD1 (R8), [V8.B16]
+	ADD  $48, R1, R9
+	VLD1 (R9), [V12.B16]
+	VLD1 (R2), [V1.B16]
+	ADD  $16, R2, R10
+	VLD1 (R10), [V5.B16]
+	ADD  $32, R2, R11
+	VLD1 (R11), [V9.B16]
+	ADD  $48, R2, R12
+	VLD1 (R12), [V13.B16]
+	WORD $0x2e215002 // uabal  v2.8h, v0.8b,  v1.8b
+	WORD $0x6e215003 // uabal2 v3.8h, v0.16b, v1.16b
+	WORD $0x2e255086 // uabal  v6.8h, v4.8b,  v5.8b
+	WORD $0x6e255087 // uabal2 v7.8h, v4.16b, v5.16b
+	WORD $0x2e29510a // uabal  v10.8h, v8.8b,  v9.8b
+	WORD $0x6e29510b // uabal2 v11.8h, v8.16b, v9.16b
+	WORD $0x2e2d518e // uabal  v14.8h, v12.8b, v13.8b
+	WORD $0x6e2d518f // uabal2 v15.8h, v12.16b, v13.16b
+	ADD  R3, R1
+	ADD  R6, R2
+	SUB  $1, R4
+	CBNZ R4, dloop64
+
+	MOVD $0, R5
+	WORD $0x6e703840 // uaddlv s0, v2.8h
+	VMOV V0.S[0], R14
+	ADD  R14, R5
+	WORD $0x6e703860 // uaddlv s0, v3.8h
+	VMOV V0.S[0], R14
+	ADD  R14, R5
+	WORD $0x6e7038c0 // uaddlv s0, v6.8h
+	VMOV V0.S[0], R14
+	ADD  R14, R5
+	WORD $0x6e7038e0 // uaddlv s0, v7.8h
+	VMOV V0.S[0], R14
+	ADD  R14, R5
+	WORD $0x6e703940 // uaddlv s0, v10.8h
+	VMOV V0.S[0], R14
+	ADD  R14, R5
+	WORD $0x6e703960 // uaddlv s0, v11.8h
+	VMOV V0.S[0], R14
+	ADD  R14, R5
+	WORD $0x6e7039c0 // uaddlv s0, v14.8h
+	VMOV V0.S[0], R14
+	ADD  R14, R5
+	WORD $0x6e7039e0 // uaddlv s0, v15.8h
+	VMOV V0.S[0], R14
+	ADD  R14, R5
+	MOVD R5, DSUM(R0)
+	RET
+
 #define CSRC        0
 #define CREF0       8
 #define CREF1       16
