@@ -222,6 +222,48 @@ func (p *LumaSubpelProber) Predict32x32(dst []byte, delta Vector) bool {
 	return true
 }
 
+func (p *LumaSubpelProber) Predict64x64(dst []byte, delta Vector) bool {
+	const n = 64
+	if !p.clampedValid || p.n != n || !lumaSubpelProbeDeltaInRange(delta) {
+		return false
+	}
+	posX := int64(p.ox)*16 + int64(delta.Col)*2
+	posY := int64(p.oy)*16 + int64(delta.Row)*2
+	refX := int(posX >> 4)
+	refY := int(posY >> 4)
+	subX := int(posX & 15)
+	subY := int(posY & 15)
+	dstPlane := frame.Plane{Pix: dst, Stride: n, Width: n, Height: n}
+	clamped := !p.valid
+	switch {
+	case subX != 0 && subY != 0:
+		xKernel := subpelFilters8[subX]
+		yKernel := subpelFilters8[subY]
+		if clamped {
+			convolve2D8ClampedWithScratchImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel, yKernel, &p.scratch)
+			break
+		}
+		convolve2D8WithScratchImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel, yKernel, &p.scratch)
+	case subX != 0:
+		xKernel := subpelFilters8[subX]
+		if clamped {
+			convolveX8ClampedImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel)
+			break
+		}
+		convolveX8Impl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel)
+	case subY != 0:
+		yKernel := subpelFilters8[subY]
+		if clamped {
+			convolveY8ClampedImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, yKernel)
+			break
+		}
+		convolveY8Impl(dstPlane, p.ref, 0, 0, refX, refY, n, n, yKernel)
+	default:
+		return p.Predict(dst, delta)
+	}
+	return true
+}
+
 func regularSubpelKernel(blockSize int, subpelQ4 int) [filterTaps]int16 {
 	if blockSize <= 4 {
 		return subpelFilters4[subpelQ4]

@@ -3042,6 +3042,8 @@ func (st *lossyEncodeState) subpelRefine(src, refPlane []byte, stride, width, he
 		return st.subpelRefine16x16(src, refPlane, stride, width, height, px, py, mv, bestSAD)
 	case 32:
 		return st.subpelRefine32x32(src, refPlane, stride, width, height, px, py, mv, bestSAD)
+	case 64:
+		return st.subpelRefine64x64(src, refPlane, stride, width, height, px, py, mv, bestSAD)
 	}
 	return st.subpelRefineGeneric(src, refPlane, stride, width, height, px, py, n, mv, bestSAD)
 }
@@ -3122,6 +3124,10 @@ func (st *lossyEncodeState) subpelRefine32x32(src, refPlane []byte, stride, widt
 	return st.subpelRefineLibaomTree(src, refPlane, stride, width, height, px, py, 32, mv, bestSAD, realtimeSubpelStopQuarter)
 }
 
+func (st *lossyEncodeState) subpelRefine64x64(src, refPlane []byte, stride, width, height, px, py int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
+	return st.subpelRefineLibaomTree(src, refPlane, stride, width, height, px, py, 64, mv, bestSAD, realtimeSubpelStopQuarter)
+}
+
 func (st *lossyEncodeState) subpelRefineHalf(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
 	return st.subpelRefineLibaomTree(src, refPlane, stride, width, height, px, py, n, mv, bestSAD, realtimeSubpelStopHalf)
 }
@@ -3153,6 +3159,15 @@ func (st *lossyEncodeState) subpelExact32x32(probe, srcBlock, refPlane []byte, s
 	return sad32x32Dual(srcBlock, stride, probe, 32)
 }
 
+func (st *lossyEncodeState) subpelExact64x64(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
+	if !st.prober.Predict64x64(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
+		if err := predictInto(probe, refPlane, stride, width, height, px, py, 64, 64, cand, false, false); err != nil {
+			return -1
+		}
+	}
+	return sadDualBlock(srcBlock, stride, probe, 64, 64)
+}
+
 func (st *lossyEncodeState) subpelRefineGeneric(src, refPlane []byte, stride, width, height, px, py, n int, mv motion.Vector, bestSAD int) (motion.Vector, int) {
 	return st.subpelRefineLibaomTree(src, refPlane, stride, width, height, px, py, n, mv, bestSAD, realtimeSubpelStopQuarter)
 }
@@ -3175,6 +3190,8 @@ func (st *lossyEncodeState) subpelRefineLibaomTree(src, refPlane []byte, stride,
 			return st.subpelExact16x16(probe, srcBlock, refPlane, stride, width, height, px, py, startMV, cand)
 		case 32:
 			return st.subpelExact32x32(probe, srcBlock, refPlane, stride, width, height, px, py, startMV, cand)
+		case 64:
+			return st.subpelExact64x64(probe, srcBlock, refPlane, stride, width, height, px, py, startMV, cand)
 		}
 		if !st.prober.Predict(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
 			if err := predictInto(probe, refPlane, stride, width, height, px, py, n, n, cand, false, false); err != nil {

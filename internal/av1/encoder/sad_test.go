@@ -639,7 +639,7 @@ func TestSubpelRefineMatchesLibaomTreeReference(t *testing.T) {
 		src[i] = uint8(rng.Intn(256))
 		ref[i] = uint8(rng.Intn(256))
 	}
-	for _, n := range []int{8, 16, 32} {
+	for _, n := range []int{8, 16, 32, 64} {
 		for range 200 {
 			px := 16 + rng.Intn((width-n-32)/8+1)*8
 			py := 16 + rng.Intn((height-n-32)/8+1)*8
@@ -1484,12 +1484,20 @@ func BenchmarkFullPelDiamondSearch64(b *testing.B) {
 }
 
 func BenchmarkSubpelRefine8x8(b *testing.B) {
+	benchmarkSubpelRefine(b, 8)
+}
+
+func BenchmarkSubpelRefine64x64(b *testing.B) {
+	benchmarkSubpelRefine(b, 64)
+}
+
+func benchmarkSubpelRefine(b *testing.B, n int) {
 	const (
-		width  = 96
-		height = 80
-		stride = 112
-		px     = 32
-		py     = 24
+		width  = 160
+		height = 144
+		stride = 176
+		px     = 48
+		py     = 40
 	)
 	src := make([]byte, stride*height)
 	ref := make([]byte, stride*height)
@@ -1500,13 +1508,13 @@ func BenchmarkSubpelRefine8x8(b *testing.B) {
 	mv := motion.Vector{Row: 8, Col: -8}
 	base := py*stride + px
 	refBase := (py+int(mv.Row)/8)*stride + px + int(mv.Col)/8
-	bestSAD := sadBlock(src, ref, base, refBase, stride, 8, 1<<30)
+	bestSAD := sadBlock(src, ref, base, refBase, stride, n, 1<<30)
 
 	var st lossyEncodeState
 	b.ReportAllocs()
 	sum := 0
 	for b.Loop() {
-		gotMV, sad := st.subpelRefine8x8(src, ref, stride, width, height, px, py, mv, bestSAD)
+		gotMV, sad := st.subpelRefine(src, ref, stride, width, height, px, py, n, mv, bestSAD)
 		sum += int(gotMV.Row) + int(gotMV.Col) + sad
 	}
 	fullPelDiamondBenchSink = sum
