@@ -181,11 +181,25 @@ func DequantizeBlockScaledBitDepthNonZeroTrusted(dst []int32, dstStride int, coe
 	dequantizeBlockScaledNonZeroTrusted(dst, dstStride, coeff, coeffStride, positions, width, height, q, txScale, nil, bitDepth)
 }
 
+// DequantizeBlockScaledBitDepthNonZeroRowsTrusted is
+// DequantizeBlockScaledBitDepthNonZeroTrusted and returns one past the maximum
+// populated transform row while visiting the compact non-zero list.
+func DequantizeBlockScaledBitDepthNonZeroRowsTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, positions []int16, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) int {
+	return dequantizeBlockScaledNonZeroTrusted(dst, dstStride, coeff, coeffStride, positions, width, height, q, txScale, nil, bitDepth)
+}
+
 // DequantizeBlockScaledQMatrixBitDepthNonZeroTrusted is
 // DequantizeBlockScaledBitDepthNonZeroTrusted with inverse quantization matrix
 // weighting.
 func DequantizeBlockScaledQMatrixBitDepthNonZeroTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, positions []int16, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) {
 	dequantizeBlockScaledNonZeroTrusted(dst, dstStride, coeff, coeffStride, positions, width, height, q, txScale, iqMatrix, bitDepth)
+}
+
+// DequantizeBlockScaledQMatrixBitDepthNonZeroRowsTrusted is
+// DequantizeBlockScaledQMatrixBitDepthNonZeroTrusted and returns one past the
+// maximum populated transform row while visiting the compact non-zero list.
+func DequantizeBlockScaledQMatrixBitDepthNonZeroRowsTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, positions []int16, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) int {
+	return dequantizeBlockScaledNonZeroTrusted(dst, dstStride, coeff, coeffStride, positions, width, height, q, txScale, iqMatrix, bitDepth)
 }
 
 // DequantizeDCCoeffBitDepthTrusted dequantizes only the DC coefficient for the
@@ -359,9 +373,10 @@ func dequantizeBlockScaledEOBTrusted(dst []int32, dstStride int, coeff []int16, 
 	}
 }
 
-func dequantizeBlockScaledNonZeroTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, positions []int16, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) {
+func dequantizeBlockScaledNonZeroTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, positions []int16, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) int {
 	samples := width * height
 	dqMin, dqMax, _ := dqCoeffBounds(bitDepth)
+	activeRows := 0
 	if dstStride == height {
 		clear(dst[:samples])
 	} else {
@@ -372,18 +387,25 @@ func dequantizeBlockScaledNonZeroTrusted(dst []int32, dstStride int, coeff []int
 	if iqMatrix == nil && dstStride == height && coeffStride == height {
 		for _, raw := range positions {
 			pos := int(raw)
+			row := pos % height
+			if row >= activeRows {
+				activeRows = row + 1
+			}
 			scale := q.AC
 			if pos == 0 {
 				scale = q.DC
 			}
 			dst[pos] = dequantScalar(int32(coeff[pos]), scale, txScale, dqMin, dqMax)
 		}
-		return
+		return activeRows
 	}
 	for _, raw := range positions {
 		pos := int(raw)
 		col := pos / height
 		row := pos - col*height
+		if row >= activeRows {
+			activeRows = row + 1
+		}
 		scale := q.AC
 		if pos == 0 {
 			scale = q.DC
@@ -393,6 +415,7 @@ func dequantizeBlockScaledNonZeroTrusted(dst []int32, dstStride int, coeff []int
 		}
 		dst[col*dstStride+row] = dequantScalar(int32(coeff[col*coeffStride+row]), scale, txScale, dqMin, dqMax)
 	}
+	return activeRows
 }
 
 // dequantScalar dequantizes a single coefficient. It is the canonical scalar

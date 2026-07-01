@@ -190,14 +190,12 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 	useNonZeroDequant := len(nonzero) > 0 && len(nonzero)*sparseDequantWorkFactor <= dequantLen
 	useSparseDequant := !useNonZeroDequant && eob > 0 && len(scan) >= eob && eob*sparseDequantWorkFactor <= dequantLen
 	activeRows := 0
-	if useNonZeroDequant {
-		activeRows = activeTransformRowsFromPositions(nonzero, scanHeight)
-	} else if useSparseDequant {
+	if useSparseDequant {
 		activeRows = activeTransformRowsFromScan(scan, eob, scanHeight)
 	}
 	if cfg.InverseQMatrix != nil {
 		if useNonZeroDequant {
-			quantize.DequantizeBlockScaledQMatrixBitDepthNonZeroTrusted(dequant, scanHeight, quantized, quantizedStride, nonzero, scanWidth, scanHeight, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth)
+			activeRows = quantize.DequantizeBlockScaledQMatrixBitDepthNonZeroRowsTrusted(dequant, scanHeight, quantized, quantizedStride, nonzero, scanWidth, scanHeight, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth)
 		} else if useSparseDequant {
 			quantize.DequantizeBlockScaledQMatrixBitDepthEOBTrusted(dequant, scanHeight, quantized, quantizedStride, scan, eob, scanWidth, scanHeight, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth)
 		} else if err := quantize.DequantizeBlockScaledQMatrixBitDepth(dequant, scanHeight, quantized, quantizedStride, scanWidth, scanHeight, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth); err != nil {
@@ -205,7 +203,7 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 		}
 	} else {
 		if useNonZeroDequant {
-			quantize.DequantizeBlockScaledBitDepthNonZeroTrusted(dequant, scanHeight, quantized, quantizedStride, nonzero, scanWidth, scanHeight, cfg.Quantizer, txScale, bitDepth)
+			activeRows = quantize.DequantizeBlockScaledBitDepthNonZeroRowsTrusted(dequant, scanHeight, quantized, quantizedStride, nonzero, scanWidth, scanHeight, cfg.Quantizer, txScale, bitDepth)
 		} else if useSparseDequant {
 			quantize.DequantizeBlockScaledBitDepthEOBTrusted(dequant, scanHeight, quantized, quantizedStride, scan, eob, scanWidth, scanHeight, cfg.Quantizer, txScale, bitDepth)
 		} else if err := quantize.DequantizeBlockScaledBitDepth(dequant, scanHeight, quantized, quantizedStride, scanWidth, scanHeight, cfg.Quantizer, txScale, bitDepth); err != nil {
@@ -240,17 +238,6 @@ func activeTransformRowsFromScan(scan []int16, eob int, scanHeight int) int {
 	activeRows := 0
 	for i := 0; i < eob; i++ {
 		row := int(scan[i]) % scanHeight
-		if row >= activeRows {
-			activeRows = row + 1
-		}
-	}
-	return activeRows
-}
-
-func activeTransformRowsFromPositions(positions []int16, scanHeight int) int {
-	activeRows := 0
-	for _, raw := range positions {
-		row := int(raw) % scanHeight
 		if row >= activeRows {
 			activeRows = row + 1
 		}

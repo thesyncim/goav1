@@ -355,7 +355,10 @@ func TestDequantizeBlockScaledBitDepthNonZeroTrustedMatchesFull(t *testing.T) {
 	for i := range got {
 		got[i] = 999
 	}
-	DequantizeBlockScaledBitDepthNonZeroTrusted(got, height, coeff, height, positions, width, height, q, 1, 10)
+	activeRows := DequantizeBlockScaledBitDepthNonZeroRowsTrusted(got, height, coeff, height, positions, width, height, q, 1, 10)
+	if activeRows != 3 {
+		t.Fatalf("activeRows=%d want 3", activeRows)
+	}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("dst[%d]=%d want %d", i, got[i], want[i])
@@ -385,7 +388,10 @@ func TestDequantizeBlockScaledQMatrixBitDepthNonZeroTrustedMatchesFull(t *testin
 	for i := range got {
 		got[i] = -999
 	}
-	DequantizeBlockScaledQMatrixBitDepthNonZeroTrusted(got, height, coeff, height, positions, width, height, q, 0, iqMatrix, 8)
+	activeRows := DequantizeBlockScaledQMatrixBitDepthNonZeroRowsTrusted(got, height, coeff, height, positions, width, height, q, 0, iqMatrix, 8)
+	if activeRows != 2 {
+		t.Fatalf("activeRows=%d want 2", activeRows)
+	}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("dst[%d]=%d want %d", i, got[i], want[i])
