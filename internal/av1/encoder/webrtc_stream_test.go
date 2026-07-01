@@ -206,6 +206,37 @@ func TestWebRTCStreamControlCombinationMatrixDecode(t *testing.T) {
 			if delta.Keyframe || delta.Frames[0].Info.FrameID != beforeFrameID {
 				t.Fatalf("control change picture=%+v beforeFrameID=%d", delta, beforeFrameID)
 			}
+			assertWebRTCPictureRateControl(t, delta, controlChange.RateControl, controlChange.Quantizer)
+
+			toCQP := stream.Config()
+			toCQP.RateControl = encoder.RateControlCQP
+			toCQP.Quantizer = 37
+			beforeFrameID = delta.Frames[0].Info.FrameID + uint64(delta.FrameNum)
+			if err := stream.SetConfig(toCQP); err != nil {
+				t.Fatalf("SetConfig CQP transition: %v", err)
+			}
+			cqpDelta := encode(2, false)
+			if cqpDelta.Keyframe || cqpDelta.Frames[0].Info.FrameID != beforeFrameID {
+				t.Fatalf("CQP transition picture=%+v beforeFrameID=%d", cqpDelta, beforeFrameID)
+			}
+			assertWebRTCPictureRateControl(t, cqpDelta, encoder.RateControlCQP, toCQP.Quantizer)
+
+			toCBR := stream.Config()
+			toCBR.RateControl = encoder.RateControlCBR
+			toCBR.Quantizer = 0
+			toCBR.MaxFramerate = encoder.Rational{Num: 48, Den: 1}
+			toCBR.MinBitrateKbps += 15
+			toCBR.MaxBitrateKbps += 180
+			toCBR.TargetBitrateKbps = toCBR.MinBitrateKbps + (toCBR.MaxBitrateKbps-toCBR.MinBitrateKbps)/2
+			beforeFrameID = cqpDelta.Frames[0].Info.FrameID + uint64(cqpDelta.FrameNum)
+			if err := stream.SetConfig(toCBR); err != nil {
+				t.Fatalf("SetConfig CBR transition: %v", err)
+			}
+			cbrDelta := encode(3, false)
+			if cbrDelta.Keyframe || cbrDelta.Frames[0].Info.FrameID != beforeFrameID {
+				t.Fatalf("CBR transition picture=%+v beforeFrameID=%d", cbrDelta, beforeFrameID)
+			}
+			assertWebRTCPictureRateControl(t, cbrDelta, encoder.RateControlCBR, 0)
 
 			intervalChange := stream.Config()
 			intervalChange.MaxFramerate = encoder.Rational{Num: 30000, Den: 1001}
@@ -216,10 +247,11 @@ func TestWebRTCStreamControlCombinationMatrixDecode(t *testing.T) {
 			if err := stream.SetConfig(intervalChange); err != nil {
 				t.Fatalf("SetConfig key-interval control change: %v", err)
 			}
-			intervalKey := encode(2, false)
+			intervalKey := encode(4, false)
 			if !intervalKey.Keyframe {
 				t.Fatalf("key interval did not force a key picture: %+v", intervalKey)
 			}
+			assertWebRTCPictureRateControl(t, intervalKey, encoder.RateControlCBR, 0)
 
 			forceConfig := stream.Config()
 			forceConfig.MaxFramerate = encoder.Rational{Num: 15, Den: 1}
@@ -227,13 +259,39 @@ func TestWebRTCStreamControlCombinationMatrixDecode(t *testing.T) {
 			if err := stream.SetConfig(forceConfig); err != nil {
 				t.Fatalf("SetConfig pre-force control change: %v", err)
 			}
-			forced := encode(3, true)
+			forced := encode(5, true)
 			if !forced.Keyframe {
 				t.Fatalf("force key did not produce key picture: %+v", forced)
 			}
+			assertWebRTCPictureRateControl(t, forced, encoder.RateControlCBR, 0)
 
 			decodeCollectedWebRTCPictureTUs(t, stream.Config(), tusInOrder, tusBySpatial, wantBySpatial)
 		})
+	}
+}
+
+func assertWebRTCPictureRateControl(t *testing.T, picture encoder.WebRTCEncodedPicture, want encoder.RateControlMode, wantQuantizer uint8) {
+	t.Helper()
+	for frameIndex := uint8(0); frameIndex < picture.FrameNum; frameIndex++ {
+		var settings encoder.FrameEncodeSettings
+		var ok bool
+		switch {
+		case picture.Unit.Key:
+			if frameIndex < picture.Unit.KeyUnit.FrameNum {
+				settings, ok = picture.Unit.KeyUnit.Frames[frameIndex], true
+			}
+		case picture.Unit.Delta:
+			if frameIndex < picture.Unit.DeltaUnit.FrameNum {
+				settings, ok = picture.Unit.DeltaUnit.Frames[frameIndex], true
+			}
+		}
+		if !ok {
+			t.Fatalf("picture frame %d missing temporal-unit settings: %+v", frameIndex, picture.Unit)
+		}
+		if settings.RateControl != want || settings.Quantizer != wantQuantizer {
+			t.Fatalf("picture frame %d rate control=%d q=%d want %d/%d settings=%+v",
+				frameIndex, settings.RateControl, settings.Quantizer, want, wantQuantizer, settings)
+		}
 	}
 }
 
