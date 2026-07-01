@@ -967,7 +967,7 @@ func (b *FrameWorkBatch) predictBlockInterPlaneWithFiltersPtr(index int, visit *
 		return ErrInvalidBatch
 	}
 	if visit.Prediction.MotionModeValid && visit.Prediction.MotionMode == tile.MotionModeWarp && !visit.Prediction.WarpedMotionInvalid {
-		_, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+		geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
 		if err != nil {
 			return err
 		}
@@ -988,9 +988,9 @@ func (b *FrameWorkBatch) predictBlockInterPlaneWithFiltersPtr(index int, visit *
 			return err
 		}
 		if warpable {
-			return b.predictBlockInterWarpPlaneWithFiltersPtr(index, visit, plane, filters, scratch)
+			return b.predictBlockInterWarpPlaneWithGeometry(visit, plane, filters, scratch, geom)
 		}
-		return b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, visit.Prediction.InterMotion.References.Ref[0], visit.Prediction.InterMotion.MV[0], filters, scratch)
+		return b.predictBlockInterReferencePlaneToOutputWithGeometry(geom, visit.Block, plane, visit.Prediction.InterMotion.References.Ref[0], visit.Prediction.InterMotion.MV[0], filters, scratch)
 	}
 	if visit.Prediction.MotionModeValid && !frameWorkPredictionUsesTranslationPtr(&visit.Prediction) {
 		return ErrInvalidBatch
@@ -1006,7 +1006,7 @@ func (b *FrameWorkBatch) predictBlockInterPlaneWithFiltersPtr(index int, visit *
 	// WARP_PRED through av1_init_warp_params(). The block-level motion_mode
 	// stays SIMPLE_TRANSLATION; the warp uses the frame-level params.
 	if visit.Prediction.GlobalWarpedMotionValid {
-		_, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+		geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
 		if err != nil {
 			return err
 		}
@@ -1021,7 +1021,7 @@ func (b *FrameWorkBatch) predictBlockInterPlaneWithFiltersPtr(index int, visit *
 			return err
 		}
 		if warpable {
-			return b.predictBlockInterGlobalWarpPlaneWithFiltersPtr(index, visit, plane, filters, scratch)
+			return b.predictBlockInterGlobalWarpPlaneWithGeometry(visit, plane, filters, scratch, geom)
 		}
 	}
 	// libaom's build_inter_predictors_sub8x8 splits the chroma block of an
@@ -1145,6 +1145,14 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithFiltersPtr(index in
 	if err != nil || !ok {
 		return err
 	}
+	return b.predictBlockInterGlobalWarpPlaneWithGeometry(visit, plane, filters, scratch, geom)
+}
+
+func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithGeometry(visit *tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch, geom frameWorkPredictionPlaneGeometry) error {
+	if visit == nil || !visit.Prediction.GlobalWarpedMotionValid {
+		return ErrInvalidBatch
+	}
+	motionResult := visit.Prediction.InterMotion
 	reference, ok := frameWorkReferenceFromTile(motionResult.References.Ref[0])
 	if !ok {
 		return ErrInvalidBatch
@@ -1430,6 +1438,14 @@ func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithFiltersPtr(index int, vis
 	if err != nil || !ok {
 		return err
 	}
+	return b.predictBlockInterWarpPlaneWithGeometry(visit, plane, filters, scratch, geom)
+}
+
+func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithGeometry(visit *tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch, geom frameWorkPredictionPlaneGeometry) error {
+	if visit == nil || !visit.Prediction.WarpedMotionValid {
+		return ErrInvalidBatch
+	}
+	motionResult := visit.Prediction.InterMotion
 	reference, ok := frameWorkReferenceFromTile(motionResult.References.Ref[0])
 	if !ok {
 		return ErrInvalidBatch
@@ -1842,6 +1858,10 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, bloc
 	if err != nil || !ok {
 		return err
 	}
+	return b.predictBlockInterReferencePlaneToOutputWithGeometry(geom, block, plane, refFrame, mv, filters, scratch)
+}
+
+func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutputWithGeometry(geom frameWorkPredictionPlaneGeometry, block tile.BlockVisit, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
 	reference, ok := frameWorkReferenceFromTile(refFrame)
 	if !ok {
 		return ErrInvalidBatch
