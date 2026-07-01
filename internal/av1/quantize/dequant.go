@@ -131,6 +131,14 @@ func DequantizeBlockScaledBitDepth(dst []int32, dstStride int, coeff []int16, co
 	return dequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, txScale, nil, bitDepth)
 }
 
+// DequantizeBlockScaledBitDepthFullTrusted is the decoder hot-path variant of
+// DequantizeBlockScaledBitDepth for callers that already validated geometry,
+// scratch capacity, q, txScale, and bitDepth. It handles the common no-qmatrix
+// dense block in one contiguous AC pass when the coefficient planes are flat.
+func DequantizeBlockScaledBitDepthFullTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) {
+	dequantizeBlockScaledFullTrusted(dst, dstStride, coeff, coeffStride, width, height, q, txScale, bitDepth)
+}
+
 // DequantizeBlockScaledQMatrix applies libaom's inverse quantization matrix
 // weighting before the transform-size dequant shift. iqMatrix is indexed by
 // libaom's row-major coefficient position and must cover width*height entries.
@@ -246,26 +254,7 @@ func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 	}
 
 	if iqMatrix == nil {
-		// Common path: no inverse quantization matrix. Each column shares a
-		// single scale (q.AC), except the DC coefficient at (0,0) which uses
-		// q.DC. The per-column inner loop is dispatched to the
-		// architecture-best variant; dequantColumnImpl is bit-exact with
-		// dequantColumnPureGo on every target.
-		for col := range width {
-			dstCol := dst[col*dstStride : col*dstStride+height]
-			coeffCol := coeff[col*coeffStride : col*coeffStride+height]
-			if col == 0 {
-				// DC coefficient uses q.DC; the remaining column entries use
-				// q.AC. Process the DC term with the scalar reference and the
-				// AC tail with the kernel.
-				dstCol[0] = dequantScalar(int32(coeffCol[0]), q.DC, txScale, dqMin, dqMax)
-				if height > 1 {
-					dequantColumnImpl(dstCol[1:], coeffCol[1:], q.AC, txScale, dqMin, dqMax)
-				}
-				continue
-			}
-			dequantColumnImpl(dstCol, coeffCol, q.AC, txScale, dqMin, dqMax)
-		}
+		dequantizeBlockScaledNoQMatrixTrusted(dst, dstStride, coeff, coeffStride, width, height, q, txScale, dqMin, dqMax)
 		return nil
 	}
 
@@ -282,6 +271,34 @@ func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 		}
 	}
 	return nil
+}
+
+func dequantizeBlockScaledFullTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) {
+	dqMin, dqMax, _ := dqCoeffBounds(bitDepth)
+	dequantizeBlockScaledNoQMatrixTrusted(dst, dstStride, coeff, coeffStride, width, height, q, txScale, dqMin, dqMax)
+}
+
+func dequantizeBlockScaledNoQMatrixTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, dqMin int32, dqMax int32) {
+	samples := width * height
+	if dstStride == height && coeffStride == height {
+		dst[0] = dequantScalar(int32(coeff[0]), q.DC, txScale, dqMin, dqMax)
+		if samples > 1 {
+			dequantColumnImpl(dst[1:samples], coeff[1:samples], q.AC, txScale, dqMin, dqMax)
+		}
+		return
+	}
+	for col := range width {
+		dstCol := dst[col*dstStride : col*dstStride+height]
+		coeffCol := coeff[col*coeffStride : col*coeffStride+height]
+		if col == 0 {
+			dstCol[0] = dequantScalar(int32(coeffCol[0]), q.DC, txScale, dqMin, dqMax)
+			if height > 1 {
+				dequantColumnImpl(dstCol[1:], coeffCol[1:], q.AC, txScale, dqMin, dqMax)
+			}
+			continue
+		}
+		dequantColumnImpl(dstCol, coeffCol, q.AC, txScale, dqMin, dqMax)
+	}
 }
 
 func dequantizeBlockScaledEOB(dst []int32, dstStride int, coeff []int16, coeffStride int, scan []int16, eob int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {

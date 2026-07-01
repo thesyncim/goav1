@@ -206,8 +206,8 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 			activeRows = quantize.DequantizeBlockScaledBitDepthNonZeroRowsTrusted(dequant, scanHeight, quantized, quantizedStride, nonzero, scanWidth, scanHeight, cfg.Quantizer, txScale, bitDepth)
 		} else if useSparseDequant {
 			quantize.DequantizeBlockScaledBitDepthEOBTrusted(dequant, scanHeight, quantized, quantizedStride, scan, eob, scanWidth, scanHeight, cfg.Quantizer, txScale, bitDepth)
-		} else if err := quantize.DequantizeBlockScaledBitDepth(dequant, scanHeight, quantized, quantizedStride, scanWidth, scanHeight, cfg.Quantizer, txScale, bitDepth); err != nil {
-			return ErrInvalidBlock
+		} else {
+			quantize.DequantizeBlockScaledBitDepthFullTrusted(dequant, scanHeight, quantized, quantizedStride, scanWidth, scanHeight, cfg.Quantizer, txScale, bitDepth)
 		}
 	}
 	if cfg.Lossless {

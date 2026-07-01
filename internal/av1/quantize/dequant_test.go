@@ -274,6 +274,54 @@ func TestDequantizeBlockScaledQMatrixUsesRowMajorMatrixPosition(t *testing.T) {
 	}
 }
 
+func TestDequantizeBlockScaledBitDepthFullTrustedMatchesFull(t *testing.T) {
+	tests := []struct {
+		name             string
+		width, height    int
+		dstPad, coeffPad int
+		txScale          uint8
+		bitDepth         uint8
+	}{
+		{name: "4x4 contiguous 8 bit", width: 4, height: 4, txScale: 0, bitDepth: 8},
+		{name: "8x4 contiguous 10 bit", width: 8, height: 4, txScale: 0, bitDepth: 10},
+		{name: "4x8 padded 8 bit", width: 4, height: 8, dstPad: 3, coeffPad: 2, txScale: 0, bitDepth: 8},
+		{name: "8x8 contiguous 12 bit", width: 8, height: 8, txScale: 0, bitDepth: 12},
+		{name: "16x16 padded 10 bit", width: 16, height: 16, dstPad: 1, coeffPad: 4, txScale: 0, bitDepth: 10},
+		{name: "32x32 scaled", width: 32, height: 32, txScale: 1, bitDepth: 8},
+		{name: "32x32 adjusted 64 scaled", width: 32, height: 32, txScale: 2, bitDepth: 10},
+	}
+	q := Quantizer{DC: 91, AC: 137}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dstStride := tc.height + tc.dstPad
+			coeffStride := tc.height + tc.coeffPad
+			coeff := make([]int16, tc.width*coeffStride)
+			for col := 0; col < tc.width; col++ {
+				for row := 0; row < tc.height; row++ {
+					v := (col*17 + row*11 + 3) % 41
+					coeff[col*coeffStride+row] = int16(v - 20)
+				}
+			}
+			coeff[0] = 7
+			want := make([]int32, tc.width*dstStride)
+			got := make([]int32, tc.width*dstStride)
+			for i := range want {
+				want[i] = -7777
+				got[i] = -7777
+			}
+			if err := DequantizeBlockScaledBitDepth(want, dstStride, coeff, coeffStride, tc.width, tc.height, q, tc.txScale, tc.bitDepth); err != nil {
+				t.Fatal(err)
+			}
+			DequantizeBlockScaledBitDepthFullTrusted(got, dstStride, coeff, coeffStride, tc.width, tc.height, q, tc.txScale, tc.bitDepth)
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("dst[%d]=%d want %d", i, got[i], want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestDequantizeBlockScaledBitDepthEOBMatchesFull(t *testing.T) {
 	const width, height = 4, 4
 	scan := []int16{0, 1, 4, 5, 2, 8, 6, 9, 3, 7, 10, 12, 11, 13, 14, 15}
