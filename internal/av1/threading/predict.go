@@ -1171,10 +1171,7 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithGeometry(visit *til
 		// mode stays TRANSLATION_PRED and av1_make_inter_predictor()
 		// runs the scaled 8-tap convolver on the block-level MV instead
 		// of the global warp matrix.
-		filterW, filterH, err := frameWorkBlockPlanePredictionExtentPixels(visit.Block, b.Sequence.ColorConfig, plane)
-		if err != nil {
-			return ErrInvalidBatch
-		}
+		filterW, filterH := geom.filterWidth(), geom.filterHeight()
 		return frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
 			geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), filterW, filterH, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters,
 			frameWorkScaledConvolveScratch(scratch))
@@ -1330,10 +1327,7 @@ func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFiltersPtr(index int, vi
 	// weight tables and edge lengths must be selected from the full plane-block
 	// extent while only the visible sub-rectangle is written into the intra
 	// scratch (the blend below combines just that visible extent).
-	predWidth, predHeight, err := frameWorkBlockPlanePredictionExtentPixels(visit.Block, b.Sequence.ColorConfig, plane)
-	if err != nil {
-		return err
-	}
+	predWidth, predHeight := geom.filterWidth(), geom.filterHeight()
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
 	readBoundX, readBoundY := frameWorkWindowEdgeReadBoundAbsolute(geom.Window)
 	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), predWidth, predHeight, readBoundX, readBoundY, edgeBlock, &scratch.Intra, mode != prediction.IntraModeDC)
@@ -1464,10 +1458,7 @@ func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithGeometry(visit *tile.Bloc
 		// mode stays TRANSLATION_PRED and av1_make_inter_predictor()
 		// runs the scaled 8-tap convolver on the block-level MV instead
 		// of the local warp matrix.
-		filterW, filterH, err := frameWorkBlockPlanePredictionExtentPixels(visit.Block, b.Sequence.ColorConfig, plane)
-		if err != nil {
-			return ErrInvalidBatch
-		}
+		filterW, filterH := geom.filterWidth(), geom.filterHeight()
 		return frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
 			geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), filterW, filterH, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters,
 			frameWorkScaledConvolveScratch(scratch))
@@ -1788,6 +1779,8 @@ type frameWorkPredictionPlaneGeometry struct {
 
 	SubsamplingX bool
 	SubsamplingY bool
+
+	FilterExtent uint8
 }
 
 func (g frameWorkPredictionPlaneGeometry) bytesPerSample() int {
@@ -1808,6 +1801,20 @@ func (g frameWorkPredictionPlaneGeometry) writeWidth() int {
 
 func (g frameWorkPredictionPlaneGeometry) writeHeight() int {
 	return int(g.WriteHeight)
+}
+
+func (g frameWorkPredictionPlaneGeometry) filterWidth() int {
+	if g.FilterExtent == 0 {
+		return g.width()
+	}
+	return frameWorkPredictionBlockExtentDecode(g.FilterExtent & 0x0f)
+}
+
+func (g frameWorkPredictionPlaneGeometry) filterHeight() int {
+	if g.FilterExtent == 0 {
+		return g.height()
+	}
+	return frameWorkPredictionBlockExtentDecode(g.FilterExtent >> 4)
 }
 
 func (g frameWorkPredictionPlaneGeometry) codedDimensions() (int, int, bool) {
@@ -1853,6 +1860,56 @@ func frameWorkPredictionBlockExtent(v int) (uint8, bool) {
 	return uint8(v), true
 }
 
+func frameWorkPredictionBlockExtentCode(v int) (uint8, bool) {
+	switch v {
+	case 4:
+		return 1, true
+	case 8:
+		return 2, true
+	case 16:
+		return 3, true
+	case 32:
+		return 4, true
+	case 64:
+		return 5, true
+	case 128:
+		return 6, true
+	default:
+		return 0, false
+	}
+}
+
+func frameWorkPredictionBlockExtentDecode(code uint8) int {
+	switch code {
+	case 1:
+		return 4
+	case 2:
+		return 8
+	case 3:
+		return 16
+	case 4:
+		return 32
+	case 5:
+		return 64
+	case 6:
+		return 128
+	default:
+		return 0
+	}
+}
+
+func frameWorkPredictionFilterExtentPacked(width int, height int) (uint8, bool) {
+	widthCode, ok := frameWorkPredictionBlockExtentCode(width)
+	if !ok {
+		return 0, false
+	}
+	heightCode, ok := frameWorkPredictionBlockExtentCode(height)
+	if !ok {
+		return 0, false
+	}
+	return widthCode | (heightCode << 4), true
+}
+
 func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, block tile.BlockVisit, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
 	geom, ok, err := b.blockPredictionPlaneGeometry(index, block, plane)
 	if err != nil || !ok {
@@ -1875,10 +1932,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutputWithGeometry(geo
 	if err != nil {
 		return err
 	}
-	filterW, filterH, err := frameWorkBlockPlanePredictionExtentPixels(block, b.Sequence.ColorConfig, plane)
-	if err != nil {
-		return ErrInvalidBatch
-	}
+	filterW, filterH := geom.filterWidth(), geom.filterHeight()
 	writeWidth := geom.writeWidth()
 	writeHeight := geom.writeHeight()
 	if writeWidth <= 0 {
@@ -1926,10 +1980,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plan
 	if err != nil {
 		return err
 	}
-	filterW, filterH, err := frameWorkBlockPlanePredictionExtentPixels(block, b.Sequence.ColorConfig, plane)
-	if err != nil {
-		return ErrInvalidBatch
-	}
+	filterW, filterH := geom.filterWidth(), geom.filterHeight()
 	if !sameSize {
 		// libaom: av1_make_inter_predictor() in av1/common/reconinter.c
 		// looks up scale factors via xd->block_ref_scale_factors, which
@@ -2192,6 +2243,10 @@ func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Bloc
 		writeWidth = clippedW
 		writeHeight = clippedH
 	}
+	filterExtent, ok := frameWorkPredictionFilterExtentPacked(fullWidth, fullHeight)
+	if !ok {
+		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
+	}
 	output, outputSubX, outputSubY, ok := frameWorkFramePlane(b.Output, plane)
 	bytesPerSample, bytesPerSampleOK := frameWorkPredictionBytesPerSample(b.Output.Layout.BytesPerSample)
 	if !ok || !bytesPerSampleOK {
@@ -2247,6 +2302,7 @@ func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Bloc
 		SubsamplingX:   subsamplingX,
 		SubsamplingY:   subsamplingY,
 		BytesPerSample: bytesPerSample,
+		FilterExtent:   filterExtent,
 	}, true, nil
 }
 
