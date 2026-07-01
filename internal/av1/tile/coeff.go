@@ -1853,27 +1853,24 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 
 	stride := int(geo.stride)
 	if cdfUpdate {
-		for c := eobPos - 2; c >= 0; c-- {
+		for c := eobPos - 2; c >= 1; c-- {
 			p := scanHotSlice[c]
 			pos := int(p.pos)
 			padded := int(p.padded)
-			ctx := 0
-			if pos != 0 {
-				s1 := padded + stride
-				s1p1 := s1 + 1
-				s2 := s1 + stride
-				p1 := padded + 1
-				p2 := padded + 2
-				_ = levelsScratch[s2]
-				_ = levelsScratch[p2]
-				mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
-					clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
-				ctx = (mag + 1) >> 1
-				if ctx > 4 {
-					ctx = 4
-				}
-				ctx += int(p.lower2DOffset)
+			s1 := padded + stride
+			s1p1 := s1 + 1
+			s2 := s1 + stride
+			p1 := padded + 1
+			p2 := padded + 2
+			_ = levelsScratch[s2]
+			_ = levelsScratch[p2]
+			mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
+				clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
+			ctx := (mag + 1) >> 1
+			if ctx > 4 {
+				ctx = 4
 			}
+			ctx += int(p.lower2DOffset)
 			level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
 			if level == NumBaseLevels+1 {
 				s1 := padded + stride
@@ -1897,27 +1894,24 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 			}
 		}
 	} else {
-		for c := eobPos - 2; c >= 0; c-- {
+		for c := eobPos - 2; c >= 1; c-- {
 			p := scanHotSlice[c]
 			pos := int(p.pos)
 			padded := int(p.padded)
-			ctx := 0
-			if pos != 0 {
-				s1 := padded + stride
-				s1p1 := s1 + 1
-				s2 := s1 + stride
-				p1 := padded + 1
-				p2 := padded + 2
-				_ = levelsScratch[s2]
-				_ = levelsScratch[p2]
-				mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
-					clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
-				ctx = (mag + 1) >> 1
-				if ctx > 4 {
-					ctx = 4
-				}
-				ctx += int(p.lower2DOffset)
+			s1 := padded + stride
+			s1p1 := s1 + 1
+			s2 := s1 + stride
+			p1 := padded + 1
+			p2 := padded + 2
+			_ = levelsScratch[s2]
+			_ = levelsScratch[p2]
+			mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
+				clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
+			ctx := (mag + 1) >> 1
+			if ctx > 4 {
+				ctx = 4
 			}
+			ctx += int(p.lower2DOffset)
 			level := reader.ReadCDF4NoUpdateUnchecked(&baseArr[ctx])
 			if level == NumBaseLevels+1 {
 				s1 := padded + stride
@@ -1940,6 +1934,47 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 				nonzeroScanLen++
 			}
 		}
+	}
+	dcHot := scanHotSlice[0]
+	dcPadded := int(dcHot.padded)
+	var dcLevel int
+	if cdfUpdate {
+		dcLevel = reader.ReadCDF4UpdateUnchecked(&baseArr[0])
+		if dcLevel == NumBaseLevels+1 {
+			s1 := dcPadded + stride
+			s1p1 := s1 + 1
+			p1 := dcPadded + 1
+			_ = levelsScratch[s1p1]
+			mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
+			if mag > 6 {
+				mag = 6
+			}
+			brCtx := mag + int(dcHot.br2DOffset)
+			extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
+			dcLevel += int(extra)
+		}
+	} else {
+		dcLevel = reader.ReadCDF4NoUpdateUnchecked(&baseArr[0])
+		if dcLevel == NumBaseLevels+1 {
+			s1 := dcPadded + stride
+			s1p1 := s1 + 1
+			p1 := dcPadded + 1
+			_ = levelsScratch[s1p1]
+			mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
+			if mag > 6 {
+				mag = 6
+			}
+			brCtx := mag + int(dcHot.br2DOffset)
+			extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
+			dcLevel += int(extra)
+		}
+	}
+	if dcLevel != 0 {
+		levelsScratch[dcPadded] = uint8(dcLevel)
+		levelDirtyArr[levelDirtyNext] = int16(dcPadded)
+		levelDirtyNext++
+		dirtyArr[nonzeroScanLen] = packCoeffDirty(0, dcLevel)
+		nonzeroScanLen++
 	}
 	*levelDirtyLen = uint16(levelDirtyNext)
 
