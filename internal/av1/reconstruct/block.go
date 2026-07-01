@@ -22,6 +22,7 @@ type Block struct {
 }
 
 const sparseDequantWorkFactor = 8
+const nonzeroDequantWorkFactor = 16
 
 // ScratchLen returns the int32 and int16 scratch lengths needed by cfg.
 func ScratchLen(cfg Block) (int32Len int, int16Len int, err error) {
@@ -187,7 +188,7 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 		return nil
 	}
 
-	useNonZeroDequant := len(nonzero) > 0 && len(nonzero)*sparseDequantWorkFactor <= dequantLen
+	useNonZeroDequant := len(nonzero) > 0 && len(nonzero)*nonzeroDequantWorkFactor <= dequantLen
 	useSparseDequant := !useNonZeroDequant && eob > 0 && len(scan) >= eob && eob*sparseDequantWorkFactor <= dequantLen
 	activeRows := 0
 	if useSparseDequant {

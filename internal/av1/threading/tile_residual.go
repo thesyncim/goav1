@@ -1612,7 +1612,10 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.Blo
 		if recon == nil {
 			recon = c.fusedReconState()
 		}
-		if err := recon.reconstructTXBWithNonZero(visit, block, c.scratch.Coeff.CoeffDirtyPositions(), c.state.CurrentBaseQIdx); err != nil {
+		// BlockLoopScratch owns the coefficient decode scratch used by DecodeBlockResidualInto.
+		coeffScratch := &c.scratch.Loop.Coeff
+		dirty := coeffScratch.CoeffDirtyPositions()
+		if err := recon.reconstructTXBWithNonZero(visit, block, dirty, c.state.CurrentBaseQIdx); err != nil {
 			return err
 		}
 	}
@@ -1640,7 +1643,7 @@ func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLo
 	if block.Result.AllZero {
 		buffered.Coeffs = nil
 	} else if n := len(block.Coeffs); n > 0 {
-		dirty := c.scratch.Coeff.CoeffDirtyPositions()
+		dirty := c.scratch.Loop.Coeff.CoeffDirtyPositions()
 		dirtyLen := len(dirty)
 		if dirtyLen > int(^uint16(0)) {
 			return ErrInvalidBatch
