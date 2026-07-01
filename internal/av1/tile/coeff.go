@@ -1583,7 +1583,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 			if pos > maxScanLine {
 				maxScanLine = pos
 			}
-			bit := reader.ReadBitTrusted()
+			bit := reader.ReadBitTrustedInline()
 			negative := bit != 0
 			baseLevel := level
 			golombExtra := 0
@@ -1638,7 +1638,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 			if c == 0 {
 				negative = reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
 			} else {
-				bit := reader.ReadBitTrusted()
+				bit := reader.ReadBitTrustedInline()
 				negative = bit != 0
 			}
 			baseLevel := level
@@ -1994,7 +1994,7 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 		if pos > maxScanLine {
 			maxScanLine = pos
 		}
-		bit := reader.ReadBitTrusted()
+		bit := reader.ReadBitTrustedInline()
 		negative := bit != 0
 		baseLevel := level
 		golombExtra := 0
@@ -2122,7 +2122,7 @@ func readEOBCursorKnown(reader *entropy.Cursor, eobCDF *entropy.CDF, eobSymbols 
 		}
 		if offsetBits > 1 {
 			if offsetBits == 2 {
-				extra += int(reader.ReadBitTrusted())
+				extra += int(reader.ReadBitTrustedInline())
 			} else {
 				extra += int(reader.ReadBitsTrusted(offsetBits - 1))
 			}

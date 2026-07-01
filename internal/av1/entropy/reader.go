@@ -377,6 +377,48 @@ func (c *Cursor) readBitTrustedTrace() uint8 {
 	return bit
 }
 
+// ReadBitTrustedInline decodes one equiprobable bit using the Go cursor core.
+// Hot loops that already keep a Cursor in registers use this to avoid the ARM64
+// helper call overhead while preserving the same range-decoder state updates.
+//
+//go:nosplit
+func (c *Cursor) ReadBitTrustedInline() uint8 {
+	if traceEntropyReads {
+		return c.readBitTrustedTrace()
+	}
+	dif := c.dif
+	rangeValue := uint32(c.rng)
+	cnt := int32(c.cnt)
+	split := (rangeValue >> 8) << 7
+	split += ecMinProb
+	window := split << (ecWindow - 16)
+
+	bit := uint8(1)
+	nextRange := split
+	if dif >= window {
+		dif -= window
+		nextRange = rangeValue - split
+		bit = 0
+	}
+
+	shift := normShift16(nextRange)
+	cnt -= shift
+	dif = ((dif + 1) << uint(shift)) - 1
+	rangeValue = nextRange << uint(shift)
+	if cnt < 0 {
+		pos := int(c.pos)
+		tellOffs := int32(c.tellOffs)
+		src := c.src
+		pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
+		c.pos = uint32(pos)
+		c.tellOffs = int16(tellOffs)
+	}
+	c.cnt = int16(cnt)
+	c.dif = dif
+	c.rng = uint16(rangeValue)
+	return bit
+}
+
 // ReadBitsTrusted decodes n equiprobable bits MSB-first from cursor state.
 //
 //go:nosplit

@@ -349,8 +349,8 @@ func TestCursorTrustedReadsMatchReader(t *testing.T) {
 					t.Fatalf("cdf2[%d]=%d want %d", i, got2Symbol, want2)
 				}
 				wantBit := ref.ReadBitTrusted()
-				if gotBit := got.ReadBitTrusted(); gotBit != wantBit {
-					t.Fatalf("bit[%d]=%d want %d", i, gotBit, wantBit)
+				if gotBit := got.ReadBitTrustedInline(); gotBit != wantBit {
+					t.Fatalf("inline bit[%d]=%d want %d", i, gotBit, wantBit)
 				}
 				wantBits := ref.ReadBitsTrusted(3)
 				if gotBits := got.ReadBitsTrusted(3); gotBits != wantBits {
