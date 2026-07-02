@@ -26,7 +26,7 @@ func encodeSplitOracleSequenceLanes(t *testing.T, frames []SourceFrame420, w, h,
 		t.Fatal(err)
 	}
 	defer enc.Close()
-	enc.fusedPipeline = fused
+	enc.forceSplit = !fused
 	enc.wavefrontLanes = lanes
 	if err := enc.SetTemporalLayers(2); err != nil {
 		t.Fatal(err)

@@ -211,11 +211,13 @@ type pframeCoder struct {
 	decisionStats        EncoderDecisionStats
 	decisionStatsEnabled bool
 
-	// fusedPipeline forces the legacy single-pass coder (search and symbol
-	// writing interleaved per block). The default is the decision/write split
-	// (pframe_split.go, the libaom encode_sb / pack_bs split); the fused path
-	// is retained as the byte-identity oracle for tests.
-	fusedPipeline bool
+	// forceSplit runs the decision/write split pipeline (pframe_split.go) even
+	// when it cannot parallelize, so the byte-identity oracle can compare the
+	// serial split against the fused walk. In production the split is used
+	// ONLY when the SB-row wavefront will actually run (>=2 lanes on the
+	// single-tile coder); serial and multi-tile coders take the fused
+	// single-pass walk, which records nothing and replays nothing.
+	forceSplit bool
 	// splitRowRecs holds one decision record per superblock row so wavefront
 	// lanes fill disjoint records; the serial decision pass uses the same
 	// layout and the write pass replays rows in raster order either way.
@@ -1822,7 +1824,12 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		return partition, err
 	}
 
-	if pc.fusedPipeline {
+	// The split pipeline only earns its record/replay overhead when the
+	// decision pass runs in parallel; a serial or multi-tile coder does strictly
+	// more work for no benefit. Use the fused single-pass walk unless the SB-row
+	// wavefront will actually run (>=2 lanes), or the oracle forces the split.
+	wavefrontActive := pc.wavefront != nil && pc.wavefrontLanes >= 2 && st.decisionStats == nil
+	if !wavefrontActive && !pc.forceSplit {
 		visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 			return st.encodePBlock(src, ref, golden, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, &pc.interpCDFs, referenceMode, walkReq, miCols, miRows)
 		}
