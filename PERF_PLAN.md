@@ -268,15 +268,19 @@ target; we land 1.561M. Investigate the CBR loop's behavior at the q floor
 frames rather than tuning our controller (controller knob experiments are all
 pinned dead: PI terms, step clamps, refinement schedules).
 
-**E8. CPU efficiency program (5.2x single-thread work volume vs SVT).**
-Single-thread realC: goav1 51.7ms CPU/frame vs SVT 9.9ms (measure with
-qualitybench -goav1-max-threads 1 -gomaxprocs 1 -svt-lp 1, same run). pprof
-NOTE: pthread_cond_signal/wait percentages in multithreaded profiles are
-blocked-thread sampling artifacts — rusage cpu_total is identical at 1 and 16
-threads; profile CPU work single-threaded (GOMAXPROCS=1). Real work profile
-(realC): encodePBlock 41% cum (convolve2D8I8MM ~13% = subpel/recon predictions,
-finishInterTXB 8.6%), LF sweep 8.4%. Reduce work via E4/E5/E6 ports first;
-then kernel-level NEON on the residual scalar spots. goav1 wall wins ride on ~5x
+**E8. Wall-time work reduction (NOT a single-thread-parity program).**
+USER DIRECTIVE (2026-07-02): single-thread parity with SVT is a NON-GOAL — a
+realtime encoder deploys with cores, and threading here is CPU-free; wall fps
+at the deployment thread budget is the only speed metric. Note the measured
+"5.2x single-thread CPU vs SVT" is also confounded: goav1 at 1 thread encodes
+single-tile at HIGHER quality (45.29 dB > SVT 44.77), i.e. more work for more
+output. Reduce per-frame work only where it moves WALL time at normal thread
+counts: the E4/E5/E6 SVT ports (depth pruning, ref pruning, lpd1 detector)
+first, then NEON for scalar spots that survive. pprof NOTE: profile encoder
+work at GOMAXPROCS=1 (pthread_cond percentages in MT profiles are
+blocked-thread sampling artifacts), but JUDGE results by idle wall fps at
+deployment threads. Work profile (realC): encodePBlock 41% cum
+(convolve2D8I8MM ~13% subpel/recon, finishInterTXB 8.6%), LF sweep 8.4%. goav1 wall wins ride on ~5x
 parallelism vs SVT's ~1.6x (3x more CPU burned). If wall targets are met,
 reduce CPU: encoder-side NEON for the remaining scalar hot spots (profile
 `BenchmarkVideoEncoderRealC1080p` with `-cpuprofile`), e.g. staging transposes,
