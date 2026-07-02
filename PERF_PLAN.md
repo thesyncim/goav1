@@ -66,6 +66,19 @@ above each clip's frame-rate deadline. SVT keeps the raw-fps crown on realC
 (128 vs 77); closing THAT needs the E1-followup (pipeline entropy-write of
 frame N with decision of N+1 — the ~6.8 ms serial write is the Amdahl bound).
 
+CPU PROFILE (realC, 60 frames, cpu-seconds ≈ energy; commit 99785179 routes
+serial + multi-tile coders back to the FUSED single-pass walk — the split's
+record/replay only pays off with ≥2 wavefront lanes): serial 3.02s@1 core /
+tiles=32 default 3.23s@6.1 cores / wf-lanes=2 3.45s@2.6 cores / wf-lanes=8
+3.66s@4.1 cores. TWO facts for CPU-conscious deployment: (1) total CPU is
+~flat across configs — threading spreads work, it doesn't create it; the
+wavefront is NOT a CPU-usage regression; (2) QUALITY comes from single-tile,
+NOT lane count (wf-lanes=1..8 all ≈45.2 dB), so lanes only buy wall speed —
+dial them to the core budget. Sweet spot for CPU-conscious realtime =
+wf-lanes=2 (45 fps ≫ 30, only 2.6 cores, full +0.55 dB, FEWER cores than the
+6.1-core tiles=32 default). The real absolute-CPU gap vs SVT (~55 ms/frame vs
+~10) is work VOLUME (~5×), independent of threading — that is E8, not E1.
+
 Speed numbers above are MEDIAN-OF-3 SAME-RUN side-by-sides (qualitybench
 `-encoders goav1,svt-av1 -runs 3`, idle). RULE (learned the hard way twice):
 never compare against a stored SVT fps — SVT run-to-run variance exceeds 25%
