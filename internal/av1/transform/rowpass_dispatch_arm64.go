@@ -17,21 +17,26 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 // call.
 //
 // NEON kernels exist (and are proven bit-exact by the dispatch differential
-// test) for DCT4, DCT8, DCT16, DCT32, DCT64, ADST4 and ADST8. DCT8, DCT16,
-// DCT32 and DCT64 are bound here: their butterflies are large enough that
-// two-row vectorisation beats the scalar pure-Go kernels on this host. The
+// test) for DCT4, DCT8, DCT16, DCT32, DCT64, ADST4 and ADST8. DCT8, DCT16 and
+// DCT32 pairs are bound here: their butterflies are large enough that two-row
+// vectorisation beats the scalar pure-Go kernels on this host. The
 // DCT4/ADST4/ADST8 NEON bodies do not amortise the assembly-call and
 // slice-to-pointer overhead over their smaller / clamp-heavy work and measured
 // slower than pure-Go (see the Row2 benchmarks), so those three stay on
-// pure-Go. DCT64 also stays on the pure-Go path for now: a 64x64 DCT fuzz seed
-// can corrupt memory through the paired arm64 assembly dispatch even though the
-// scalar path is stable. The unbound kernels remain available for
-// re-evaluation if the call overhead, kernel shape, or DCT64 assembly changes.
+// pure-Go. DCT32 and DCT64 row quads use the transposed four-row int32-lane
+// kernels (dav1d's hbd itx shape, src/arm/64/itx16.S). The old two-row DCT64
+// kernel remains unbound: its manual ~1.7KB frame below a NOSPLIT $0 Go frame
+// overflows the nosplit stack headroom guarantee and can corrupt memory on
+// shallow goroutine stacks (the historical "64x64 DCT fuzz seed" corruption);
+// the four-row DCT64 kernel keeps its buffers in Go-provided scratch and
+// stays inside the budget, so odd DCT64 row tails take the scalar path.
 func init() {
 	if cpu.Detected.NEON {
 		inverseDCT8Row2Impl = inverseDCT8Row2NEONAdapter
 		inverseDCT16Row2Impl = inverseDCT16Row2NEONAdapter
 		inverseDCT32Row2Impl = inverseDCT32Row2NEONAdapter
+		inverseDCT32Row4Impl = inverseDCT32Row4NEONAdapter
+		inverseDCT64Row4Impl = inverseDCT64Row4NEONAdapter
 	}
 }
 
@@ -108,4 +113,39 @@ func inverseADST8Row2NEONAdapter(r0, r1 []int32, min, max int32) {
 	r0 = r0[:adst8Size]
 	r1 = r1[:adst8Size]
 	inverseADST8Row2NEON(&r0[0], &r1[0], int64(min), int64(max))
+}
+
+// The four-row kernels run the whole butterfly in int32 lanes, which is exact
+// only while the stage clamp bounds stay inside the +/-2^19 envelope (see the
+// .s headers for the range proof); the row pass pre-clamps every staged input
+// to [min, max] before invoking them (hybrid.go staging loops), and the
+// differential tests stage inputs the same way. Out-of-envelope bounds or
+// short rows fall back to the row-pair path.
+
+func inverseDCT32Row4NEONAdapter(r0, r1, r2, r3 []int32, min, max int32) {
+	if len(r0) < dct32Size || len(r1) < dct32Size || len(r2) < dct32Size || len(r3) < dct32Size ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseDCT32Row2NEONAdapter(r0, r1, min, max)
+		inverseDCT32Row2NEONAdapter(r2, r3, min, max)
+		return
+	}
+	r0 = r0[:dct32Size]
+	r1 = r1[:dct32Size]
+	r2 = r2[:dct32Size]
+	r3 = r3[:dct32Size]
+	inverseDCT32Row4NEON(&r0[0], &r1[0], &r2[0], &r3[0], int64(min), int64(max))
+}
+
+func inverseDCT64Row4NEONAdapter(r0, r1, r2, r3 []int32, min, max int32) {
+	if len(r0) < dct64Size || len(r1) < dct64Size || len(r2) < dct64Size || len(r3) < dct64Size ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseDCT64Row4PureGo(r0, r1, r2, r3, min, max)
+		return
+	}
+	r0 = r0[:dct64Size]
+	r1 = r1[:dct64Size]
+	r2 = r2[:dct64Size]
+	r3 = r3[:dct64Size]
+	var scratch [8 * dct64Size]int32
+	inverseDCT64Row4NEON(&r0[0], &r1[0], &r2[0], &r3[0], int64(min), int64(max), &scratch[0])
 }

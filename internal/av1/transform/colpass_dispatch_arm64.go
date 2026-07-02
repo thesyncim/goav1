@@ -11,19 +11,33 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 // init binds the NEON batched column kernels on arm64.
 //
 // As with the row pass, every arm64 chip Go runs on supports NEON, but we gate
-// on cpu.Detected.NEON so a test can force the pure-Go path. The DCT8, DCT16,
-// DCT32 and DCT64 column-pair kernels all beat the scalar pure-Go column path
-// on this host (their wide butterflies amortise the assembly-call overhead), so
-// the 8/16/32-point variants are bound. DCT64 stays on the pure-Go path for
-// now: a 64x64 DCT fuzz seed can corrupt memory through the paired arm64
-// assembly dispatch even though the scalar path is stable.
+// on cpu.Detected.NEON so a test can force the pure-Go path. The DCT8 and
+// DCT16 column-pair kernels beat the scalar pure-Go column path on this host
+// (their wide butterflies amortise the assembly-call overhead). DCT32 and
+// DCT64 use the four-column int32-lane kernels (dav1d's hbd itx shape,
+// src/arm/64/itx16.S), which beat both the scalar path and the older
+// two-column int64-lane DCT32 kernel. The DCT32 column-pair kernel stays
+// bound as the narrow-buffer tail. The old two-column DCT64 kernels remain
+// unbound: their manual ~2KB frames below a NOSPLIT $0 Go frame overflow the
+// nosplit stack headroom guarantee and can corrupt memory on shallow
+// goroutine stacks (the historical "64x64 DCT fuzz seed" corruption); the
+// four-column DCT64 kernel keeps its stage buffer in Go-provided scratch and
+// stays inside the budget.
 func init() {
 	if cpu.Detected.NEON {
 		inverseDCT8Col2Impl = inverseDCT8Col2NEONAdapter
 		inverseDCT16Col2Impl = inverseDCT16Col2NEONAdapter
 		inverseDCT32Col2Impl = inverseDCT32Col2NEONAdapter
+		inverseDCT32Col4Impl = inverseDCT32Col4NEONAdapter
+		inverseDCT64Col4Impl = inverseDCT64Col4NEONAdapter
 	}
 }
+
+// colClampBoundNEON is the stage-range envelope the four-column int32-lane
+// kernels are proven overflow-free for: every supported bit depth's row and
+// column stage bounds satisfy |bound| <= 1<<19 (stageRangeBounds caps at
+// bitDepth 12: rowBits 20). Wider bounds fall back to pure Go.
+const colClampBoundNEON = 1 << 19
 
 // The NEON column kernels take a base element pointer, the row stride in bytes
 // and int64 clamp bounds. The two adjacent columns occupy lanes 0 and 1 of
@@ -62,4 +76,31 @@ func inverseDCT64Col2NEONAdapter(buf []int32, rowStride int, min, max int32) {
 		return
 	}
 	inverseDCT64Col2NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
+}
+
+// The four-column kernels run the whole butterfly in int32 lanes, which is
+// exact only while the stage clamp bounds stay inside the +/-2^19 envelope
+// (see the .s headers for the range proof); the column pass pre-clamps every
+// input to [min, max] before invoking them (hybrid.go clampRoundImpl), and
+// the differential tests stage inputs the same way. Out-of-envelope bounds or
+// short buffers fall back to the column-pair path.
+
+func inverseDCT32Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
+	if rowStride < 4 || len(buf) < (dct32Size-1)*rowStride+4 ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseDCT32Col2NEONAdapter(buf, rowStride, min, max)
+		inverseDCT32Col2NEONAdapter(buf[2:], rowStride, min, max)
+		return
+	}
+	inverseDCT32Col4NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
+}
+
+func inverseDCT64Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
+	if rowStride < 4 || len(buf) < (dct64Size-1)*rowStride+4 ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseDCT64Col4PureGo(buf, rowStride, min, max)
+		return
+	}
+	var scratch [4 * dct64Size]int32
+	inverseDCT64Col4NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max), &scratch[0])
 }

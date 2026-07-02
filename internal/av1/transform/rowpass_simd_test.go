@@ -156,3 +156,65 @@ func TestRowPassDispatchZeroAlloc(t *testing.T) {
 		t.Fatalf("DCT4 batched row kernel allocated %f times per call", allocs)
 	}
 }
+
+// row4TestFunc names one batched four-row kernel under test.
+type row4TestFunc struct {
+	name   string
+	length int
+	impl   func(r0, r1, r2, r3 []int32, min, max int32)
+	ref    func(r0, r1, r2, r3 []int32, min, max int32)
+}
+
+// runRow4 stages four rows of pre-clamped inputs (the four-row kernels'
+// documented precondition, established in the decode path by the hybrid.go
+// staging loops) and asserts impl matches ref bit-for-bit.
+func runRow4(t *testing.T, fn row4TestFunc, rng *rand.Rand, iters int, fill func() int32) {
+	t.Helper()
+	for _, cs := range stageClampSets {
+		min, max := cs[0], cs[1]
+		for iter := 0; iter < iters; iter++ {
+			rows := make([][]int32, 4)
+			refRows := make([][]int32, 4)
+			gotRows := make([][]int32, 4)
+			for r := range rows {
+				rows[r] = make([]int32, fn.length)
+				for i := range rows[r] {
+					rows[r][i] = clipRange(int64(fill()), min, max)
+				}
+				refRows[r] = append([]int32(nil), rows[r]...)
+				gotRows[r] = append([]int32(nil), rows[r]...)
+			}
+			fn.ref(refRows[0], refRows[1], refRows[2], refRows[3], min, max)
+			fn.impl(gotRows[0], gotRows[1], gotRows[2], gotRows[3], min, max)
+			for r := range rows {
+				if !eqInt32(gotRows[r], refRows[r]) {
+					t.Fatalf("%s clamp=[%d,%d] iter=%d row=%d\n in=%v\n got=%v\nwant=%v",
+						fn.name, min, max, iter, r, rows[r], gotRows[r], refRows[r])
+				}
+			}
+		}
+	}
+}
+
+// TestRowPassDispatchRow4MatchesPureGo asserts the four-row kernels are
+// bit-identical to their pure-Go references across random inputs and the full
+// clamp ladder; on arm64 the entries resolve to the NEON kernels.
+func TestRowPassDispatchRow4MatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x40404))
+	for _, fn := range row4TestImpls() {
+		t.Run(fn.name, func(t *testing.T) {
+			runRow4(t, fn, rng, 30000, func() int32 { return int32(int32(rng.Int63()) >> 11) })
+		})
+	}
+}
+
+// TestRowPassDispatchRow4EdgeValues crosses the boundary coefficient values
+// that sit at clamp and rounding cusps.
+func TestRowPassDispatchRow4EdgeValues(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x4ed6e))
+	for _, fn := range row4TestImpls() {
+		t.Run(fn.name, func(t *testing.T) {
+			runRow4(t, fn, rng, 30000, func() int32 { return rowEdgeValues[rng.Intn(len(rowEdgeValues))] })
+		})
+	}
+}

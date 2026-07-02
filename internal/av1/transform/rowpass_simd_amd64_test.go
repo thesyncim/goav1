@@ -21,3 +21,13 @@ func row2TestImpls() []row2TestFunc {
 		{"ADST8", adst8Size, inverseADST8Row2Impl, inverseADST8Row2PureGo},
 	}
 }
+
+// row4TestImpls returns the live four-row dispatch slots; without a four-row
+// NEON kernel they are the pure-Go references and the test degenerates to a
+// self-consistency check.
+func row4TestImpls() []row4TestFunc {
+	return []row4TestFunc{
+		{"DCT32Row4", dct32Size, inverseDCT32Row4Impl, inverseDCT32Row4PureGo},
+		{"DCT64Row4", dct64Size, inverseDCT64Row4Impl, inverseDCT64Row4PureGo},
+	}
+}

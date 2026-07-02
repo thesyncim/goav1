@@ -16,3 +16,13 @@ func colPass2TestFuncs() []col2TestFunc {
 		{"DCT64", dct64Size, inverseDCT64Col2NEONAdapter, inverseDCT64Col2PureGo},
 	}
 }
+
+// colPass4TestFuncs returns the NEON four-column adapters directly so the
+// differential test always exercises the four-column kernels for
+// bit-exactness.
+func colPass4TestFuncs() []col2TestFunc {
+	return []col2TestFunc{
+		{"DCT32Col4", dct32Size, inverseDCT32Col4NEONAdapter, inverseDCT32Col4PureGo},
+		{"DCT64Col4", dct64Size, inverseDCT64Col4NEONAdapter, inverseDCT64Col4PureGo},
+	}
+}

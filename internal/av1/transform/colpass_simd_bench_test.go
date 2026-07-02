@@ -31,3 +31,24 @@ func BenchmarkDCT32Col2Dispatch(b *testing.B) { benchmarkCol2(b, dct32Size, inve
 func BenchmarkDCT32Col2PureGo(b *testing.B)   { benchmarkCol2(b, dct32Size, inverseDCT32Col2PureGo) }
 func BenchmarkDCT64Col2Dispatch(b *testing.B) { benchmarkCol2(b, dct64Size, inverseDCT64Col2Impl) }
 func BenchmarkDCT64Col2PureGo(b *testing.B)   { benchmarkCol2(b, dct64Size, inverseDCT64Col2PureGo) }
+
+// benchmarkCol4 is benchmarkCol2 for the batched four-column kernels; per
+// call it transforms four columns, so compare ns/col against two Col2 calls.
+func benchmarkCol4(b *testing.B, length int, fn func(buf []int32, rowStride int, min, max int32)) {
+	b.Helper()
+	const rowStride = 6
+	buf := make([]int32, (length-1)*rowStride+4)
+	for i := range buf {
+		buf[i] = int32((i*1103 - 4000) & 0x7fff)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		fn(buf, rowStride, minInt16, maxInt16)
+	}
+}
+
+func BenchmarkDCT32Col4Dispatch(b *testing.B) { benchmarkCol4(b, dct32Size, inverseDCT32Col4Impl) }
+func BenchmarkDCT32Col4PureGo(b *testing.B)   { benchmarkCol4(b, dct32Size, inverseDCT32Col4PureGo) }
+func BenchmarkDCT64Col4Dispatch(b *testing.B) { benchmarkCol4(b, dct64Size, inverseDCT64Col4Impl) }
+func BenchmarkDCT64Col4PureGo(b *testing.B)   { benchmarkCol4(b, dct64Size, inverseDCT64Col4PureGo) }

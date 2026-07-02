@@ -36,6 +36,15 @@ var (
 	inverseDCT64Col2Impl = inverseDCT64Col2PureGo
 )
 
+// inverseDCT32Col4 / inverseDCT64Col4 transform four adjacent columns of the
+// scratch buffer in place (dav1d's four-lane column shape, src/arm/64/itx16.S).
+// The result for each column equals the corresponding single-column scalar
+// kernel. Same binding rules as the two-column slots.
+var (
+	inverseDCT32Col4Impl = inverseDCT32Col4PureGo
+	inverseDCT64Col4Impl = inverseDCT64Col4PureGo
+)
+
 // inverse1DCol2 applies the 1D inverse column transform to two adjacent
 // columns (col, col+1) of buf, which is the row-major scratch buffer with the
 // given rowStride (== width). For the DCT lengths that have a batched kernel it
@@ -64,6 +73,26 @@ func inverse1DCol2(buf []int32, rowStride int, length int, typ tx1DType, min int
 	inverse1D(buf[1:], rowStride, length, typ, min, max)
 }
 
+// inverse1DCol4 applies the 1D inverse column transform to four adjacent
+// columns (col..col+3) of buf. For the DCT lengths that have a four-column
+// kernel it routes through the dispatch slot; otherwise it falls back to two
+// batched column pairs. The result is always identical to running inverse1D
+// on each column separately.
+func inverse1DCol4(buf []int32, rowStride int, length int, typ tx1DType, min int32, max int32) {
+	if typ == tx1DDCT {
+		switch length {
+		case dct32Size:
+			inverseDCT32Col4Impl(buf, rowStride, min, max)
+			return
+		case dct64Size:
+			inverseDCT64Col4Impl(buf, rowStride, min, max)
+			return
+		}
+	}
+	inverse1DCol2(buf, rowStride, length, typ, min, max)
+	inverse1DCol2(buf[2:], rowStride, length, typ, min, max)
+}
+
 // --- Pure-Go batched references --------------------------------------------
 //
 // These are the canonical reference implementations every SIMD variant must
@@ -88,4 +117,14 @@ func inverseDCT32Col2PureGo(buf []int32, rowStride int, min int32, max int32) {
 func inverseDCT64Col2PureGo(buf []int32, rowStride int, min int32, max int32) {
 	inverseDCT64(buf, rowStride, min, max)
 	inverseDCT64(buf[1:], rowStride, min, max)
+}
+
+func inverseDCT32Col4PureGo(buf []int32, rowStride int, min int32, max int32) {
+	inverseDCT32Col2PureGo(buf, rowStride, min, max)
+	inverseDCT32Col2PureGo(buf[2:], rowStride, min, max)
+}
+
+func inverseDCT64Col4PureGo(buf []int32, rowStride int, min int32, max int32) {
+	inverseDCT64Col2PureGo(buf, rowStride, min, max)
+	inverseDCT64Col2PureGo(buf[2:], rowStride, min, max)
 }

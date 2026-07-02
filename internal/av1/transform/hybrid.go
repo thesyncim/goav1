@@ -208,11 +208,20 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 		}
 	}
 
-	// Row pass: transform two staged rows per iteration when a batched kernel
-	// exists, falling back to one scalar row at the tail (odd height) or for
-	// lengths without a batched kernel. inverse1DRow2 itself guarantees the
-	// result equals two independent inverse1DRow calls.
+	// Row pass: transform four staged rows per iteration when a batched
+	// kernel exists, then two, falling back to one scalar row at the tail or
+	// for lengths without a batched kernel. inverse1DRow4 / inverse1DRow2
+	// guarantee the result equals independent inverse1DRow calls. The staging
+	// loops above established the four-row kernels' precondition: every input
+	// is clamped to [rowMin, rowMax].
 	row := 0
+	for ; row+3 < rowLimit; row += 4 {
+		r0 := scratch[row*width : row*width+width : row*width+width]
+		r1 := scratch[(row+1)*width : (row+1)*width+width : (row+1)*width+width]
+		r2 := scratch[(row+2)*width : (row+2)*width+width : (row+2)*width+width]
+		r3 := scratch[(row+3)*width : (row+3)*width+width : (row+3)*width+width]
+		inverse1DRow4(r0, r1, r2, r3, width, horizontal, rowMin, rowMax)
+	}
 	for ; row+1 < rowLimit; row += 2 {
 		r0 := scratch[row*width : row*width+width : row*width+width]
 		r1 := scratch[(row+1)*width : (row+1)*width+width : (row+1)*width+width]
@@ -225,11 +234,16 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 
 	clampRoundImpl(scratch, shift, colMin, colMax)
 
-	// Column pass: transform two adjacent columns per iteration when a batched
-	// kernel exists (inverse1DCol2 guarantees the result equals two independent
-	// inverse1D calls), falling back to one scalar column at the tail (odd
-	// width) or for lengths/types without a batched kernel.
+	// Column pass: transform four adjacent columns per iteration when a
+	// batched kernel exists (inverse1DCol4 guarantees the result equals four
+	// independent inverse1D calls), then two, falling back to one scalar
+	// column at the tail or for lengths/types without a batched kernel.
+	// clampRoundImpl above established the four-column kernels' precondition:
+	// every input is clamped to [colMin, colMax].
 	col := 0
+	for ; col+3 < width; col += 4 {
+		inverse1DCol4(scratch[col:], width, height, vertical, colMin, colMax)
+	}
 	for ; col+1 < width; col += 2 {
 		inverse1DCol2(scratch[col:], width, height, vertical, colMin, colMax)
 	}

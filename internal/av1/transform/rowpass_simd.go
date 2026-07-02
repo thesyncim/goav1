@@ -37,6 +37,15 @@ var (
 	inverseADST8Row2Impl = inverseADST8Row2PureGo
 )
 
+// inverseDCT32Row4 / inverseDCT64Row4 transform four adjacent stride-1 rows
+// in place (dav1d's transposed four-lane row shape, src/arm/64/itx16.S). The
+// result for each row equals the corresponding single-row scalar kernel.
+// Same binding rules as the two-row slots.
+var (
+	inverseDCT32Row4Impl = inverseDCT32Row4PureGo
+	inverseDCT64Row4Impl = inverseDCT64Row4PureGo
+)
+
 // inverse1DRow2 applies the 1D inverse row transform to two adjacent
 // contiguous rows r0 and r1 (each stride 1, length len). For the lengths and
 // types that have a batched kernel it routes through the dispatch slot;
@@ -77,6 +86,26 @@ func inverse1DRow2(r0 []int32, r1 []int32, length int, typ tx1DType, min int32, 
 	inverse1DRow(r1, length, typ, min, max)
 }
 
+// inverse1DRow4 applies the 1D inverse row transform to four adjacent
+// contiguous rows. For the DCT lengths that have a four-row kernel it routes
+// through the dispatch slot; otherwise it falls back to two batched row
+// pairs. The result is always identical to running inverse1DRow on each row
+// separately.
+func inverse1DRow4(r0, r1, r2, r3 []int32, length int, typ tx1DType, min int32, max int32) {
+	if typ == tx1DDCT {
+		switch length {
+		case dct32Size:
+			inverseDCT32Row4Impl(r0, r1, r2, r3, min, max)
+			return
+		case dct64Size:
+			inverseDCT64Row4Impl(r0, r1, r2, r3, min, max)
+			return
+		}
+	}
+	inverse1DRow2(r0, r1, length, typ, min, max)
+	inverse1DRow2(r2, r3, length, typ, min, max)
+}
+
 // --- Pure-Go batched references --------------------------------------------
 //
 // These are the canonical reference implementations every SIMD variant must
@@ -106,6 +135,16 @@ func inverseDCT32Row2PureGo(r0 []int32, r1 []int32, min int32, max int32) {
 func inverseDCT64Row2PureGo(r0 []int32, r1 []int32, min int32, max int32) {
 	inverseDCT64Row(r0, min, max)
 	inverseDCT64Row(r1, min, max)
+}
+
+func inverseDCT32Row4PureGo(r0, r1, r2, r3 []int32, min int32, max int32) {
+	inverseDCT32Row2PureGo(r0, r1, min, max)
+	inverseDCT32Row2PureGo(r2, r3, min, max)
+}
+
+func inverseDCT64Row4PureGo(r0, r1, r2, r3 []int32, min int32, max int32) {
+	inverseDCT64Row2PureGo(r0, r1, min, max)
+	inverseDCT64Row2PureGo(r2, r3, min, max)
 }
 
 func inverseADST4Row2PureGo(r0 []int32, r1 []int32, min int32, max int32) {

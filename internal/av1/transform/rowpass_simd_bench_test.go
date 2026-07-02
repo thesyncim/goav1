@@ -37,3 +37,26 @@ func BenchmarkADST4Row2Dispatch(b *testing.B) { benchmarkRow2(b, adst4Size, inve
 func BenchmarkADST4Row2PureGo(b *testing.B)   { benchmarkRow2(b, adst4Size, inverseADST4Row2PureGo) }
 func BenchmarkADST8Row2Dispatch(b *testing.B) { benchmarkRow2(b, adst8Size, inverseADST8Row2Impl) }
 func BenchmarkADST8Row2PureGo(b *testing.B)   { benchmarkRow2(b, adst8Size, inverseADST8Row2PureGo) }
+
+// benchmarkRow4 drives a batched four-row kernel; per call it transforms four
+// rows, so compare ns/row against two Row2 calls.
+func benchmarkRow4(b *testing.B, length int, fn func(r0, r1, r2, r3 []int32, min, max int32)) {
+	b.Helper()
+	rows := make([][]int32, 4)
+	for r := range rows {
+		rows[r] = make([]int32, length)
+		for i := range rows[r] {
+			rows[r][i] = int32((i*1103 - 4000 + r*997) & 0x7fff)
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		fn(rows[0], rows[1], rows[2], rows[3], minInt16, maxInt16)
+	}
+}
+
+func BenchmarkDCT32Row4Dispatch(b *testing.B) { benchmarkRow4(b, dct32Size, inverseDCT32Row4Impl) }
+func BenchmarkDCT32Row4PureGo(b *testing.B)   { benchmarkRow4(b, dct32Size, inverseDCT32Row4PureGo) }
+func BenchmarkDCT64Row4Dispatch(b *testing.B) { benchmarkRow4(b, dct64Size, inverseDCT64Row4Impl) }
+func BenchmarkDCT64Row4PureGo(b *testing.B)   { benchmarkRow4(b, dct64Size, inverseDCT64Row4PureGo) }

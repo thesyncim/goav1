@@ -20,3 +20,12 @@ func row2TestImpls() []row2TestFunc {
 		{"ADST8", adst8Size, inverseADST8Row2NEONAdapter, inverseADST8Row2PureGo},
 	}
 }
+
+// row4TestImpls returns the NEON four-row adapters directly so the
+// differential test always exercises the four-row kernels for bit-exactness.
+func row4TestImpls() []row4TestFunc {
+	return []row4TestFunc{
+		{"DCT32Row4", dct32Size, inverseDCT32Row4NEONAdapter, inverseDCT32Row4PureGo},
+		{"DCT64Row4", dct64Size, inverseDCT64Row4NEONAdapter, inverseDCT64Row4PureGo},
+	}
+}
