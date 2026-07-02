@@ -39,6 +39,10 @@ type compoundIM16 [compoundIMMaxSamples]int16
 type CompoundConvolveScratch struct {
 	im  compoundIM
 	im8 compoundIM16
+	// edge is the dav1d-style emulated-edge window (src/mc_tmpl.c emu_edge_c):
+	// clamped compound references materialize their halo into it once and then
+	// run the plain SIMD kernels over it.
+	edge [emuEdgeStride * emuEdgeRows]byte
 }
 
 // compoundRound0 ports get_conv_params_no_round() round_0 selection for the

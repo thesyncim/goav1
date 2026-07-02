@@ -319,13 +319,13 @@ func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 		if planeRegionFits(ref, 1, refX-foX, refY, width+filterTaps-1, height) {
 			convolveX8Impl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel)
 		} else {
-			convolveX8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel)
+			convolveX8ClampedWithScratchImpl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, scratch)
 		}
 	case subY != 0:
 		if planeRegionFits(ref, 1, refX, refY-foY, width, height+filterTaps-1) {
 			convolveY8Impl(dst, ref, dstX, dstY, refX, refY, width, height, yKernel)
 		} else {
-			convolveY8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, yKernel)
+			convolveY8ClampedWithScratchImpl(dst, ref, dstX, dstY, refX, refY, width, height, yKernel, scratch)
 		}
 	}
 	return nil

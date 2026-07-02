@@ -336,9 +336,20 @@ func predictInterCompoundRef8ToConvBuf2DNEON(out []uint16, ref frame.Plane, refX
 	// The horizontal asm consumes one extra byte in the last width>=8 group
 	// while forming slide vectors, so require that byte to be resident.
 	if offsetBits != 19 ||
-		!(width == 4 || (width >= 8 && width%8 == 0)) ||
-		!planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps, height+filterTaps-1) {
+		!(width == 4 || (width >= 8 && width%8 == 0)) {
 		predictInterCompoundRef8ToConvBuf2DPureGo(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
+		return
+	}
+	if !planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps, height+filterTaps-1) {
+		if scratch == nil {
+			predictInterCompoundRef8ToConvBuf2DPureGo(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
+			return
+		}
+		// dav1d src/recon_tmpl.c mc(): out-of-bounds references materialize
+		// the clamped halo once (emu_edge) and rerun the plain kernel over
+		// the resident window.
+		emu, emuX, emuY := emuEdgeWindow(ref, refX, refY, width, height, &scratch.edge)
+		predictInterCompoundRef8ToConvBuf2DNEON(out, emu, emuX, emuY, width, height, xKernel, yKernel, offsetBits, scratch)
 		return
 	}
 	xk := xKernel

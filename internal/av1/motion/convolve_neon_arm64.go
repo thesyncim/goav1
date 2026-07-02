@@ -217,6 +217,41 @@ func convolveY8ClampedNEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int,
 	convolveY8ClampedPureGo(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 }
 
+// convolveX8ClampedNEONWithScratch is convolveX8ClampedNEON with a dav1d-style
+// emu_edge fast path (src/recon_tmpl.c mc()): when the tap window is not
+// resident, the clamped halo is materialized once into the caller scratch and
+// the plain X kernel runs over it.
+func convolveX8ClampedNEONWithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16, scratch *ConvolveScratch) {
+	fo := filterTaps/2 - 1
+	neonWidth := width == 4 || (width >= 8 && width%8 == 0)
+	if scratch != nil && neonWidth {
+		haloW := width + filterTaps - 1
+		if width == 4 {
+			haloW++
+		}
+		if !planeRegionFits(ref, 1, refX-fo, refY, haloW, height) {
+			emu, emuX, emuY := emuEdgeWindow(ref, refX, refY, width, height, &scratch.edge)
+			convolveX8Impl(dst, emu, dstX, dstY, emuX, emuY, width, height, kernel)
+			return
+		}
+	}
+	convolveX8ClampedNEON(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+}
+
+// convolveY8ClampedNEONWithScratch is convolveY8ClampedNEON with the same
+// emu_edge fast path as convolveX8ClampedNEONWithScratch.
+func convolveY8ClampedNEONWithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16, scratch *ConvolveScratch) {
+	fo := filterTaps/2 - 1
+	neonWidth := width == 4 || (width >= 8 && width%8 == 0)
+	if scratch != nil && neonWidth &&
+		!planeRegionFits(ref, 1, refX, refY-fo, width, height+filterTaps-1) {
+		emu, emuX, emuY := emuEdgeWindow(ref, refX, refY, width, height, &scratch.edge)
+		convolveY8Impl(dst, emu, dstX, dstY, emuX, emuY, width, height, kernel)
+		return
+	}
+	convolveY8ClampedNEON(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+}
+
 func convolveX8HorizontalEdgeNEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) bool {
 	fo := filterTaps/2 - 1
 	if !planeRegionFits(ref, 1, 0, refY, ref.Width, height) {
@@ -302,6 +337,14 @@ func convolve2D8ClampedNEONWithScratch(dst frame.Plane, ref frame.Plane, dstX in
 	if neonWidth &&
 		planeRegionFits(ref, 1, refX-foX, refY-foY, haloW, height+filterTaps-1) {
 		convolve2D8NEONWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
+		return
+	}
+	if neonWidth && scratch != nil {
+		// dav1d src/recon_tmpl.c mc(): out-of-bounds references materialize
+		// the clamped halo once (emu_edge) and run the plain 8tap kernel over
+		// the resident window.
+		emu, emuX, emuY := emuEdgeWindow(ref, refX, refY, width, height, &scratch.edge)
+		convolve2D8NEONWithScratch(dst, emu, dstX, dstY, emuX, emuY, width, height, xKernel, yKernel, scratch)
 		return
 	}
 	if convolve2D8ClampedEdgeSplitNEONWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch) {

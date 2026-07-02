@@ -39,9 +39,13 @@ func init() {
 		}
 
 		// Edge-clamped 8-bit: the wrappers route to the fast NEON path when the
-		// tap window is fully resident and clamp via pure-Go otherwise.
+		// tap window is fully resident and clamp via pure-Go otherwise. The
+		// WithScratch slots additionally run dav1d's emu_edge model
+		// (src/recon_tmpl.c mc()) for non-resident halos.
 		convolveX8ClampedImpl = convolveX8ClampedNEON
 		convolveY8ClampedImpl = convolveY8ClampedNEON
+		convolveX8ClampedWithScratchImpl = convolveX8ClampedNEONWithScratch
+		convolveY8ClampedWithScratchImpl = convolveY8ClampedNEONWithScratch
 		convolve2D8ClampedImpl = convolve2D8ClampedNEON
 		convolve2D8ClampedWithScratchImpl = convolve2D8ClampedNEONWithScratch
 		if cpu.Detected.I8MM {

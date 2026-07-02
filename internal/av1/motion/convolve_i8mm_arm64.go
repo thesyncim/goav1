@@ -289,8 +289,20 @@ func predictInterCompoundRef8ToConvBuf2DI8MM(out []uint16, ref frame.Plane, refX
 	}
 	if width == 4 {
 		xFilter, ok := convolveX4I8MMFilter(xKernel)
-		if !ok || !planeRegionFits(ref, 1, refX-1, refY-foY, 8, height+filterTaps-1) {
+		if !ok {
 			predictInterCompoundRef8ToConvBuf2DNEON(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
+			return
+		}
+		if !planeRegionFits(ref, 1, refX-1, refY-foY, 8, height+filterTaps-1) {
+			if scratch == nil {
+				predictInterCompoundRef8ToConvBuf2DNEON(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
+				return
+			}
+			// dav1d src/recon_tmpl.c mc(): out-of-bounds references
+			// materialize the clamped halo once (emu_edge) and rerun the
+			// plain kernel over the resident window.
+			emu, emuX, emuY := emuEdgeWindow(ref, refX, refY, width, height, &scratch.edge)
+			predictInterCompoundRef8ToConvBuf2DI8MM(out, emu, emuX, emuY, width, height, xKernel, yKernel, offsetBits, scratch)
 			return
 		}
 		yk := yKernel
@@ -303,9 +315,20 @@ func predictInterCompoundRef8ToConvBuf2DI8MM(out []uint16, ref frame.Plane, refX
 		predictInterCompoundRef8ToConvBuf2DI8MMW4WithIMStride(out, ref, refX, refY, height, xFilter, yk, &im[0], w4Stride)
 		return
 	}
-	if width < 8 || width%8 != 0 ||
-		!planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps, height+filterTaps-1) {
+	if width < 8 || width%8 != 0 {
 		predictInterCompoundRef8ToConvBuf2DNEON(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
+		return
+	}
+	if !planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps, height+filterTaps-1) {
+		if scratch == nil {
+			predictInterCompoundRef8ToConvBuf2DNEON(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
+			return
+		}
+		// dav1d src/recon_tmpl.c mc(): out-of-bounds references materialize
+		// the clamped halo once (emu_edge) and rerun the plain kernel over
+		// the resident window.
+		emu, emuX, emuY := emuEdgeWindow(ref, refX, refY, width, height, &scratch.edge)
+		predictInterCompoundRef8ToConvBuf2DI8MM(out, emu, emuX, emuY, width, height, xKernel, yKernel, offsetBits, scratch)
 		return
 	}
 	xFilter, f0, ok := convolveX8I8MMFilter(xKernel)
@@ -474,6 +497,14 @@ func convolve2D8ClampedI8MMWithScratch(dst frame.Plane, ref frame.Plane, dstX in
 	if i8mmWidth &&
 		planeRegionFits(ref, 1, refX-foX, refY-foY, haloW, height+filterTaps-1) {
 		convolve2D8I8MMWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
+		return
+	}
+	if i8mmWidth && scratch != nil {
+		// dav1d src/recon_tmpl.c mc(): out-of-bounds references materialize
+		// the clamped halo once (emu_edge) and run the plain 8tap kernel over
+		// the resident window.
+		emu, emuX, emuY := emuEdgeWindow(ref, refX, refY, width, height, &scratch.edge)
+		convolve2D8I8MMWithScratch(dst, emu, dstX, dstY, emuX, emuY, width, height, xKernel, yKernel, scratch)
 		return
 	}
 	if convolve2D8ClampedEdgeSplitI8MMWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch) {

@@ -25,6 +25,8 @@ type convolve2DFunc func(dst frame.Plane, ref frame.Plane, dstX int, dstY int, r
 
 type convolve2DWithScratchFunc func(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch)
 
+type convolve1DWithScratchFunc func(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16, scratch *ConvolveScratch)
+
 // High-bit-depth variants take the clipping bit depth and precomputed max.
 // convolveYHighBD does not need bitDepth (round bits are fixed for the vertical
 // pass) but the slot carries it for a uniform signature.
@@ -40,6 +42,8 @@ var (
 
 	convolveX8ClampedImpl             convolve1DFunc            = convolveX8ClampedPureGo
 	convolveY8ClampedImpl             convolve1DFunc            = convolveY8ClampedPureGo
+	convolveX8ClampedWithScratchImpl  convolve1DWithScratchFunc = convolveX8ClampedWithScratchDefault
+	convolveY8ClampedWithScratchImpl  convolve1DWithScratchFunc = convolveY8ClampedWithScratchDefault
 	convolve2D8ClampedImpl            convolve2DFunc            = convolve2D8ClampedPureGo
 	convolve2D8ClampedWithScratchImpl convolve2DWithScratchFunc = convolve2D8ClampedWithScratchDefault
 
@@ -54,6 +58,14 @@ var (
 
 func convolve2D8WithScratchDefault(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, _ *ConvolveScratch) {
 	convolve2D8Impl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+}
+
+func convolveX8ClampedWithScratchDefault(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16, _ *ConvolveScratch) {
+	convolveX8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+}
+
+func convolveY8ClampedWithScratchDefault(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16, _ *ConvolveScratch) {
+	convolveY8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 }
 
 func convolve2D8ClampedWithScratchDefault(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
