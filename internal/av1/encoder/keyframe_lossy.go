@@ -541,6 +541,15 @@ type lossyEncodeState struct {
 	trialCDFs                    tile.CoeffCDFs
 	trialReady                   bool
 	trial8x8CDFs                 coeffTrial8x8Snapshot
+	trialIntraSnap               coeffTrial8x8Snapshot
+	// trialBlockLocal keeps the throwaway trial contexts at their frame-start
+	// (armed default) state across blocks: every trial-priced decision reads
+	// the same frozen tables, the shape SVT/libaom use for realtime mode
+	// pricing (md_rate_estimation.c / av1_fill_coeff_costs freeze rate tables
+	// at frame start). Inter tiles set it so decisions are independent of
+	// coding order — required for the SB-row wavefront to be byte-identical
+	// to the serial walk. Keyframe paths leave it false (unchanged behavior).
+	trialBlockLocal bool
 	intraEdgeScratch             threading.FrameWorkIntraPredictionScratch
 	keyMIColEnd, keyMIRowEnd     uint32
 	keyVisW, keyVisH             int
@@ -733,6 +742,7 @@ func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, re
 	// trial TXBs run through WriteCoefficientsTXB against this throwaway
 	// context set, and distortion pairs with rate under the inter coder's
 	// multiplier shape.
+	st.trialBlockLocal = false
 	if err := st.trialCDFs.InitDefault(qIndex); err != nil {
 		return nil, err
 	}
@@ -892,6 +902,7 @@ func (pc *pframeCoder) encodeMonochromeKeyframeTileWithOptions(src SourceFrameMo
 		return nil, err
 	}
 	st.yQuant = q
+	st.trialBlockLocal = false
 	if err := st.trialCDFs.InitDefault(qIndex); err != nil {
 		return nil, err
 	}
@@ -1550,6 +1561,14 @@ func (st *lossyEncodeState) improveIntraModeDirectional(src SourceFrame420, reco
 	}
 	if flatSAD <= n*n*4 {
 		return mode, 0
+	}
+	if st.trialBlockLocal {
+		// Restore the trial contexts after this block's exact-rate pricing so
+		// every block prices against the frame-start tables (see
+		// trialBlockLocal). The within-block adaptation across the 1-3 trials
+		// below is deterministic and kept.
+		st.trialIntraSnap.save(&st.trialCDFs)
+		defer st.trialIntraSnap.restore(&st.trialCDFs)
 	}
 	reconPlane := frame.Plane{Pix: recon.Y, Stride: src.YStride, Width: recon.Width, Height: recon.Height}
 	cand := st.sadScratch[:n*n]

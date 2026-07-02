@@ -1750,8 +1750,12 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	}
 
 	// The mode and partition searches trial-code against throwaway
-	// contexts; they re-arm CDFs lazily on first use each frame.
+	// contexts; they re-arm CDFs lazily on first use each frame. Inter tiles
+	// keep the trial tables frozen at their armed state across blocks so
+	// trial-priced decisions are independent of coding order (wavefront
+	// requirement; see trialBlockLocal).
 	st.trialReady = false
+	st.trialBlockLocal = true
 	st.keyMIColEnd = uint32(miColEnd)
 	st.keyMIRowEnd = uint32(miRows)
 	st.keyVisW, st.keyVisH = src.Width, src.Height
