@@ -52,15 +52,24 @@ Encoder vs SVT-AV1 v4.0.1 preset 12 LD-CBR, matched rates, goav1 `-layers 2`:
 
 | clip | goav1 | SVT | verdict |
 |---|---|---|---|
-| realC 30fps@5M | 44.714 dB @ 5.014M, 105.9 fps | 44.767 @ 4.875M, 100.6 fps | speed ✓, quality **~−0.05 dB rate-adj** — nearly closed |
-| realA 30fps@5M | 46.673 @ 5.169M, 143 fps | 45.321 @ 4.866M, 123 fps | win both |
-| realB 30fps@5M | 46.985 @ 5.174M, 140 fps | (not re-run) | win |
-| screen 60fps@1.33M | 50.767 @ 1.561M, 234 fps | 39.121 @ 1.363M, 105 fps | win big; watch +17% rate overshoot |
+| realC 30fps@5M | 44.714 dB @ 5.014M, 103.5 fps | 44.767 @ 4.875M, **128.2 fps** | quality ~−0.05 dB rate-adj; **SVT ~24% FASTER — the speed gap** |
+| realA 30fps@5M | 46.673 @ 5.169M, 139.9 fps | 45.321 @ 4.866M, 139.2 fps | quality win, speed tie |
+| realB 30fps@5M | 46.985 @ 5.174M, 140 fps | (assume ≈realA) | quality win |
+| screen 60fps@1.33M | 50.767 @ 1.561M, 238 fps | 39.121 @ 1.363M, 147 fps | win big; watch +17% rate overshoot |
+
+Speed numbers above are MEDIAN-OF-3 SAME-RUN side-by-sides (qualitybench
+`-encoders goav1,svt-av1 -runs 3`, idle). RULE (learned the hard way twice):
+never compare against a stored SVT fps — SVT run-to-run variance exceeds 25%
+on this host; every speed claim needs both encoders in the SAME invocation
+with `-runs 3`. An earlier "goav1 faster on realC" claim was a stale-baseline
+artifact. CPU note: goav1 burns ~3.6x SVT's CPU on realC (3.17s vs 0.87s) at
+~5.4x observed parallelism — the realC speed fix is likely CPU efficiency
+(E7), not more threading.
 
 **Definition of done:** decoder — goav1 ≥ dav1d single-thread on the corpus
 aggregate (milestones: 4.0x → 3.0x → 2.0x → 1.0x). Encoder — realC PSNR ≥ SVT
-at matched rate with wall fps ≥ SVT on all four clips (realA/B/screen there;
-realC needs the last ~0.05 dB without losing its ~5% speed margin).
+at matched rate with wall fps ≥ SVT on all four clips. realC needs the last
+~0.05 dB AND ~24% wall speed — the speed gap is now the bigger half.
 
 ## 2. Before you start: environment
 
