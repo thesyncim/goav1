@@ -83,9 +83,14 @@ type pframeSplitRecord struct {
 // coefficient per pixel across all planes (coeff counts never exceed pixel
 // counts; 4:2:0 uses 1.5x luma, other samplings up to 3x).
 func (rec *pframeSplitRecord) reset(tileMI4W, tileMI4H int, color parser.ColorConfig) {
+	// True upper bounds, not content estimates: the record must never grow on
+	// a detailed frame after a black Prewarm frame under-fills it (that growth
+	// would allocate on the first live frame). A 64x64 superblock's partition
+	// walk visits at most 1+4+16+64 = 85 square nodes (down to 4x4), and its
+	// leaves are at most one per 8x8 mode-info quad.
 	maxBlocks := ((tileMI4W + 1) / 2) * ((tileMI4H + 1) / 2)
 	sbs := ((tileMI4W + 15) / 16) * ((tileMI4H + 15) / 16)
-	maxParts := sbs*21 + 8
+	maxParts := sbs*85 + 8
 	lumaPix := tileMI4W * 4 * tileMI4H * 4
 	maxCoeffs := lumaPix
 	if !color.MonoChrome {

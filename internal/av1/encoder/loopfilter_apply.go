@@ -217,6 +217,17 @@ func (a *loopFilterApplier) init(width, height int) error {
 	if err != nil {
 		return err
 	}
+	// Pre-size the per-plane/direction partition buckets to the frame's edge
+	// upper bound so the per-frame append that fills them never grows on the
+	// first detailed frame (a black Prewarm frame plans almost no edges and
+	// would otherwise leave these empty, allocating on the first live frame).
+	for p := range a.dirEdges {
+		for d := range a.dirEdges[p] {
+			if cap(a.dirEdges[p][d]) < size.Edges {
+				a.dirEdges[p][d] = make([]decoder.FrameWorkLoopFilterPostFilterEdge, 0, size.Edges)
+			}
+		}
+	}
 	a.schedule, err = size.BindSchedule(make([]uint32, size.Schedule))
 	if err != nil {
 		return err
