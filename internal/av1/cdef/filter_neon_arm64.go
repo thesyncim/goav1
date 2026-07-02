@@ -6,27 +6,24 @@
 
 package cdef
 
-// NEON-accelerated CDEF block filter. The .s file implements the per-row
-// inner loop for 8-wide blocks (every luma block and the 4:4:4 chroma
-// block); narrower shapes route to the pure-Go reference, keeping the asm a
-// single auditable code path. One CDEF row is eight 16-bit samples in one
-// vector, and all bit depths share the path because the CDEF buffer is
-// 16-bit regardless of source depth.
+// NEON-accelerated CDEF block filter, ported from dav1d's strength-split
+// kernels (src/arm/64/cdef_tmpl.S: cdef_filter{8,4}_{pri,sec,pri_sec}_neon).
+// 8-wide blocks run one row per vector; 4-wide blocks pack two rows into one
+// vector per iteration like dav1d's load_px w=4 path. All bit depths share
+// the path because the CDEF buffer is 16-bit regardless of source depth.
 //
 // Bit-exactness with filterBlockPureGo:
-//   - diff = sample - x is computed in int16 lanes (pixels and the 0x4000
-//     VeryLarge sentinel both fit, and the difference stays within int16).
-//   - constrain() is reproduced lane-wise: ABS, variable logical right shift
-//     (USHL by a negative count), strength minus shifted clamped to
-//     [0, abs] with SMAX/SMIN, then the sign of diff reapplied branchlessly
-//     as (limit ^ sign) - sign with sign = diff >> 15.
-//   - tap weights accumulate through SMLAL/SMLAL2 into int32 lanes.
-//   - the final x + ((8 + sum - (sum<0)) >> 4) folds the negative-sum bias
-//     in as sum + (sum >> 31), then +8, then an arithmetic >>4.
+//   - constrain() is dav1d's handle_pixel: clip = uqsub(threshold,
+//     uabd(p, x) >> shift) followed by smax(smin(p - x, clip), -clip),
+//     algebraically identical to the scalar sign-fold form.
+//   - tap weights accumulate through 16-bit MLA lanes; the worst-case
+//     |sum| = 2*(4+2)*pri_strength + 4*(2+1)*sec_strength = 3648 at 12-bit,
+//     so int16 accumulation never wraps.
+//   - the final x + ((8 + sum - (sum<0)) >> 4) is dav1d's cmlt/add/srshr #4.
 //   - when both strengths are active the result clamps to [min, max] over
-//     the tap neighbourhood; sentinel lanes are replaced by the running min
-//     before the max fold, which skips them exactly like maxClip (the
-//     sentinel exceeds every sample so the plain min fold is unaffected).
+//     the tap neighbourhood; see filter_neon_arm64.s for how the 0x4000
+//     VeryLarge sentinel (dav1d pads with INT16_MIN instead) is skipped in
+//     the max fold via an xor-domain umax.
 type filterBlockNEONCtx struct {
 	dst    *uint16
 	input  *uint16 // pointer to input[inputOrigin]
@@ -74,7 +71,9 @@ func cdefFilterBlock4PrimaryNEON(ctx *filterBlockNEONCtx)
 func cdefFilterBlock4SecondaryNEON(ctx *filterBlockNEONCtx)
 
 func filterBlockNEON(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
-	if w := int(params.Width); w != 8 && w != 4 {
+	if w := int(params.Width); (w != 8 && w != 4) || (w == 4 && params.Height&1 != 0) {
+		// The 4-wide kernels process two rows per iteration (dav1d's
+		// load_px w=4 packing), so odd heights fall back.
 		filterBlockPureGo(dst, dstStride, dstOrigin, input, inputOrigin, params)
 		return
 	}
