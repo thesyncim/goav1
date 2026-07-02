@@ -8,7 +8,8 @@ package cdef
 
 // init binds the NEON CDEF block filter; it is bit-exact with the pure-Go
 // reference (TestFilterBlockNEONMatchesPureGo) and routes narrow shapes
-// back to it internally.
+// back to it internally. The unit-level loop binds statically in
+// filter_neon_arm64.go (TestFilterUnitBlocksNEONMatchesPureGo).
 func init() {
 	filterBlockImpl = filterBlockNEON
 }

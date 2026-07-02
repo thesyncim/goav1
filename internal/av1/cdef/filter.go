@@ -342,43 +342,97 @@ func filterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 		}
 	}
 
+	unitParams := unitFilterParams{
+		primaryStrength:   primaryStrength,
+		secondaryStrength: secondaryStrength,
+		damping:           damping,
+		coeffShift:        coeffShift,
+		bwLog2:            bwLog2,
+		bhLog2:            bhLog2,
+		blockWidth:        blockWidth,
+		blockHeight:       blockHeight,
+		lumaAdjust:        params.Plane == PlaneY,
+	}
+	return filterUnitBlocks(dst, dstStride, input, inputOrigin, blocks, directions, variances, unitParams, trusted)
+}
+
+// unitFilterParams carries the per-filter-unit constants shared by every block
+// of one FilterFrameBlocks call, so tuned unit-level implementations can hoist
+// the per-block filter context out of the block loop.
+type unitFilterParams struct {
+	primaryStrength   int
+	secondaryStrength int
+	damping           int
+	coeffShift        int
+	bwLog2            int
+	bhLog2            int
+	blockWidth        int
+	blockHeight       int
+	lumaAdjust        bool
+}
+
+// filterUnitBlocksPureGo is the canonical per-unit block loop: it derives each
+// block's strength/direction and routes through the per-block dispatch slot.
+func filterUnitBlocksPureGo(dst []uint16, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, u unitFilterParams, trusted bool) error {
 	for _, block := range blocks {
 		by := int(block.BY)
 		bx := int(block.BX)
-		strength := primaryStrength
-		if params.Plane == PlaneY {
-			strength = adjustStrength(primaryStrength, variances[by][bx])
+		strength := u.primaryStrength
+		if u.lumaAdjust {
+			strength = adjustStrength(u.primaryStrength, variances[by][bx])
 		}
 		dir := 0
-		if primaryStrength != 0 {
+		if u.primaryStrength != 0 {
 			dir = int(directions[by][bx])
 		}
-		srcOrigin := inputOrigin + ((by * BStride) << bhLog2) + (bx << bwLog2)
-		dstOrigin := (by<<bhLog2)*dstStride + (bx << bwLog2)
+		srcOrigin := inputOrigin + ((by * BStride) << u.bhLog2) + (bx << u.bwLog2)
+		dstOrigin := (by<<u.bhLog2)*dstStride + (bx << u.bwLog2)
 		if !trusted && (strength > int(^uint8(0)) ||
-			secondaryStrength > int(^uint8(0)) ||
-			damping > int(^uint8(0)) ||
-			blockWidth > int(^uint8(0)) ||
-			blockHeight > int(^uint8(0)) ||
-			!blockFitsAt(len(dst), dstOrigin, dstStride, blockWidth, blockHeight)) {
+			u.secondaryStrength > int(^uint8(0)) ||
+			u.damping > int(^uint8(0)) ||
+			u.blockWidth > int(^uint8(0)) ||
+			u.blockHeight > int(^uint8(0)) ||
+			!blockFitsAt(len(dst), dstOrigin, dstStride, u.blockWidth, u.blockHeight)) {
 			return ErrInvalidCDEF
 		}
 		blockParams := BlockFilterParams{
 			PrimaryStrength:   uint8(strength),
-			SecondaryStrength: uint8(secondaryStrength),
+			SecondaryStrength: uint8(u.secondaryStrength),
 			Direction:         uint8(dir),
-			PrimaryDamping:    uint8(damping),
-			SecondaryDamping:  uint8(damping),
-			CoeffShift:        uint8(params.CoeffShift),
-			Width:             uint8(blockWidth),
-			Height:            uint8(blockHeight),
+			PrimaryDamping:    uint8(u.damping),
+			SecondaryDamping:  uint8(u.damping),
+			CoeffShift:        uint8(u.coeffShift),
+			Width:             uint8(u.blockWidth),
+			Height:            uint8(u.blockHeight),
 		}
 		if !trusted && !cdefInputFits(len(input), srcOrigin, blockParams) {
 			return ErrInvalidCDEF
 		}
+		if strength == 0 && u.secondaryStrength == 0 {
+			// dav1d skips the cdef filter call entirely when the adjusted
+			// primary level and the secondary level are both zero
+			// (src/cdef_apply_tmpl.c, the y_pri_lvl/y_sec_lvl block dispatch);
+			// it filters in place so skipping leaves the pixels untouched.
+			// goav1 filters into a separate unit buffer, so the equivalent of
+			// dav1d's skip is copying the staged source samples: with both
+			// strengths zero the filter output is exactly its input
+			// (sum == 0, no clipping).
+			copyBlockIdentity(dst, dstStride, dstOrigin, input, srcOrigin, u.blockWidth, u.blockHeight)
+			continue
+		}
 		filterBlockUnchecked(dst, dstStride, dstOrigin, input, srcOrigin, blockParams)
 	}
 	return nil
+}
+
+// copyBlockIdentity writes the unfiltered source samples for one block; see
+// the zero-strength skip in filterUnitBlocksPureGo.
+func copyBlockIdentity(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, width int, height int) {
+	for row := range height {
+		dstOff := dstOrigin + row*dstStride
+		srcOff := inputOrigin + row*BStride
+		copy(dst[dstOff:dstOff+width], input[srcOff:srcOff+width])
+	}
 }
 
 func validateBlockFilter(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) error {
