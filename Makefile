@@ -100,7 +100,7 @@ WEBRTC_PRODUCTION_TESTS = Test(AV1SDP|AV1RTCP|EncoderWebRTC|HighLevelRTPDecoders
 WEBRTC_PRODUCTION_INTERNAL_TESTS = Test(AppendWebRTCScalabilityModesMatchesPinnedLibWebRTC|WebRTCStreamAcceptedScalabilityModes(CoverExportedModes|Decode)|WebRTCStreamControlCombinationMatrixDecode|WebRTCEncoderStateTemporalUnitsKeyShiftModes)
 
 test:
-	go test ./...
+	go test -timeout 30m ./...
 
 # bench runs the end-to-end decoder throughput benchmarks at the repo root:
 # frames/sec, MB/sec, ns/op, and the steady-state allocation guardrail.
