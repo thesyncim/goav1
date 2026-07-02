@@ -216,7 +216,15 @@ type pframeCoder struct {
 	// (pframe_split.go, the libaom encode_sb / pack_bs split); the fused path
 	// is retained as the byte-identity oracle for tests.
 	fusedPipeline bool
-	splitRec      pframeSplitRecord
+	// splitRowRecs holds one decision record per superblock row so wavefront
+	// lanes fill disjoint records; the serial decision pass uses the same
+	// layout and the write pass replays rows in raster order either way.
+	splitRowRecs []pframeSplitRecord
+	// wavefront, when non-nil with wavefrontLanes >= 2, runs the decision
+	// pass as an SB-row wavefront (pframe_wavefront.go). Only the single-tile
+	// coder gets one: tile columns already parallelize the multi-tile path.
+	wavefront      *pframeWavefront
+	wavefrontLanes int
 }
 
 const (
@@ -1806,56 +1814,8 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	st.prepareRealtimeSourceContent(src, ref, st.grid64Cols, grid64Rows, miColStart, miColEnd)
 	st.prepareStatic64MEBypass(src, ref, grid64Rows, miColStart, miColEnd)
 	st.prepareRealtimeVarPartitioning(st.grid64Cols, grid64Rows)
-	decideCore := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
-		if level == tile.BlockLevel8x8 {
-			return tile.PartitionNone, nil
-		}
-		if !videoColorIs420(color) {
-			return tile.PartitionSplit, nil
-		}
-		if scaledReference {
-			return tile.PartitionSplit, nil
-		}
-		if !haveRight || !haveBottom {
-			return tile.PartitionSplit, nil
-		}
-		px, py := int(miCol)*4, int(miRow)*4
-		if px+64 > src.Width || py+64 > src.Height {
-			if level == tile.BlockLevel64x64 {
-				return tile.PartitionSplit, nil
-			}
-		}
-		sbPX, sbPY := (px/64)*64, (py/64)*64
-		sb := st.realtimeVarPartitionSB(src, ref, sbPX, sbPY)
-		if sb == nil {
-			return tile.PartitionSplit, nil
-		}
-		switch level {
-		case tile.BlockLevel64x64:
-			if px+64 > src.Width || py+64 > src.Height {
-				return tile.PartitionSplit, nil
-			}
-			return sb.partition64(), nil
-		case tile.BlockLevel32x32:
-			if px+32 > src.Width || py+32 > src.Height {
-				return tile.PartitionSplit, nil
-			}
-			relX, relY := px-sbPX, py-sbPY
-			lvl1 := (relY/32)*2 + relX/32
-			return sb.partition32(lvl1), nil
-		case tile.BlockLevel16x16:
-			if px+16 > src.Width || py+16 > src.Height {
-				return tile.PartitionSplit, nil
-			}
-			relX, relY := px-sbPX, py-sbPY
-			lvl1 := (relY/32)*2 + relX/32
-			lvl2 := ((relY%32)/16)*2 + (relX%32)/16
-			return sb.partition16(lvl1, lvl2), nil
-		}
-		return tile.PartitionSplit, nil
-	}
 	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
-		partition, err := decideCore(level, ctx, miCol, miRow, haveRight, haveBottom)
+		partition, err := st.decideRealtimePartition(src, ref, scaledReference, level, miCol, miRow, haveRight, haveBottom)
 		if err == nil && st.decisionStats != nil {
 			st.decisionStats.notePartition(level, partition)
 		}
@@ -1872,37 +1832,141 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		return pc.writer.Finish()
 	}
 
-	// Split pipeline (PERF_PLAN §6 E1 stage a): decision pass first — search,
-	// prediction, quantize, recon, contexts marked, decisions recorded — then a
-	// serial entropy pass replaying the record through the same writers. The
-	// libaom encode_sb / write_modes split; see pframe_split.go.
-	rec := &pc.splitRec
-	rec.reset(int(miColEnd-miColStart), int(miRows), st.color)
-	decideRecord := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
-		partition, err := decide(level, ctx, miCol, miRow, haveRight, haveBottom)
-		if err == nil {
-			rec.appendPart(partition)
+	// Split pipeline (PERF_PLAN §6 E1): decision pass first — search,
+	// prediction, quantize, recon, contexts marked, decisions recorded per SB
+	// row — then a serial entropy pass replaying the records through the same
+	// writers. The libaom encode_sb / write_modes split; see pframe_split.go.
+	// The decision pass runs as an SB-row wavefront when the coder has lanes
+	// (pframe_wavefront.go), byte-identical to the serial walk by
+	// construction and by the oracle tests.
+	tileMI4W := int(miColEnd - miColStart)
+	rows := (int(miRows) + sbSizeMIB - 1) / sbSizeMIB
+	if cap(pc.splitRowRecs) < rows {
+		next := make([]pframeSplitRecord, rows)
+		copy(next, pc.splitRowRecs)
+		pc.splitRowRecs = next
+	}
+	pc.splitRowRecs = pc.splitRowRecs[:rows]
+	for r := range pc.splitRowRecs {
+		rowMI4H := int(miRows) - r*sbSizeMIB
+		if rowMI4H > sbSizeMIB {
+			rowMI4H = sbSizeMIB
 		}
-		return partition, err
+		pc.splitRowRecs[r].reset(tileMI4W, rowMI4H, st.color)
 	}
-	visitDecide := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
-		return st.decidePBlock(src, ref, golden, recon, block, scratch, referenceMode, walkReq, miCols, miRows, rec)
+	lanes := pc.wavefrontLanes
+	if lanes > rows {
+		lanes = rows
 	}
-	if err := tile.WalkBlockLoopDecide(scratch, carrier, walkReq, sbSizeMIB, decideRecord, visitDecide); err != nil {
-		return nil, err
+	pipelined := pc.wavefront != nil && lanes >= 2 && st.decisionStats == nil
+	if pipelined {
+		// Decision lanes run on parked helpers; this goroutine immediately
+		// starts the serial entropy pass below, consuming each SB row's
+		// records once its decisions complete (SVT's entropy_coding_process
+		// trailing enc_dec_kernel's finished segment rows).
+		pc.wavefront.start(pc, lanes, src, ref, golden, recon, referenceMode, walkReq, miCols, miRows, rows, rootCols, scaledReference)
+	} else {
+		decideRecord := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
+			partition, err := decide(level, ctx, miCol, miRow, haveRight, haveBottom)
+			if err == nil {
+				pc.splitRowRecs[int(miRow)/sbSizeMIB].appendPart(partition)
+			}
+			return partition, err
+		}
+		visitDecide := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
+			return st.decidePBlock(src, ref, golden, recon, block, scratch, referenceMode, walkReq, miCols, miRows, &pc.splitRowRecs[int(block.MIRow)/sbSizeMIB])
+		}
+		if err := tile.WalkBlockLoopDecide(scratch, carrier, walkReq, sbSizeMIB, decideRecord, visitDecide); err != nil {
+			return nil, err
+		}
 	}
 	pc.resetCarrierEdges(rootCols)
-	rec.rewind()
 	decideReplay := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
-		return rec.nextPart()
+		row := int(miRow) / sbSizeMIB
+		if pipelined {
+			if err := pc.wavefront.waitRowDecided(row); err != nil {
+				return 0, err
+			}
+		}
+		return pc.splitRowRecs[row].nextPart()
 	}
 	visitWrite := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
-		return st.writePBlock(block, scratch, &pc.refCDFs, &pc.modeCDFs, &pc.interpCDFs, referenceMode, rec)
+		row := int(block.MIRow) / sbSizeMIB
+		if pipelined {
+			// Forced-split edge superblocks reach their leaves without a
+			// partition read, so the visit gates on the row too.
+			if err := pc.wavefront.waitRowDecided(row); err != nil {
+				return err
+			}
+		}
+		return st.writePBlock(block, scratch, &pc.refCDFs, &pc.modeCDFs, &pc.interpCDFs, referenceMode, &pc.splitRowRecs[row])
 	}
-	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decideReplay, visitWrite); err != nil {
-		return nil, err
+	writeErr := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decideReplay, visitWrite)
+	if pipelined {
+		if writeErr != nil {
+			pc.wavefront.abort()
+		}
+		if err := pc.wavefront.join(pc); err != nil && writeErr == nil {
+			writeErr = err
+		}
+	}
+	if writeErr != nil {
+		return nil, writeErr
 	}
 	return pc.writer.Finish()
+}
+
+// decideRealtimePartition is the content-only partition decision for one tree
+// node (the fused and split paths and every wavefront lane share it): 8x8
+// leaves stop, non-420 and scaled-reference frames force splits down to the
+// leaves, and everything else follows the SB's variance-partition tree.
+func (st *lossyEncodeState) decideRealtimePartition(src, ref SourceFrame420, scaledReference bool, level tile.BlockLevel, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
+	if level == tile.BlockLevel8x8 {
+		return tile.PartitionNone, nil
+	}
+	if !videoColorIs420(st.color) {
+		return tile.PartitionSplit, nil
+	}
+	if scaledReference {
+		return tile.PartitionSplit, nil
+	}
+	if !haveRight || !haveBottom {
+		return tile.PartitionSplit, nil
+	}
+	px, py := int(miCol)*4, int(miRow)*4
+	if px+64 > src.Width || py+64 > src.Height {
+		if level == tile.BlockLevel64x64 {
+			return tile.PartitionSplit, nil
+		}
+	}
+	sbPX, sbPY := (px/64)*64, (py/64)*64
+	sb := st.realtimeVarPartitionSB(src, ref, sbPX, sbPY)
+	if sb == nil {
+		return tile.PartitionSplit, nil
+	}
+	switch level {
+	case tile.BlockLevel64x64:
+		if px+64 > src.Width || py+64 > src.Height {
+			return tile.PartitionSplit, nil
+		}
+		return sb.partition64(), nil
+	case tile.BlockLevel32x32:
+		if px+32 > src.Width || py+32 > src.Height {
+			return tile.PartitionSplit, nil
+		}
+		relX, relY := px-sbPX, py-sbPY
+		lvl1 := (relY/32)*2 + relX/32
+		return sb.partition32(lvl1), nil
+	case tile.BlockLevel16x16:
+		if px+16 > src.Width || py+16 > src.Height {
+			return tile.PartitionSplit, nil
+		}
+		relX, relY := px-sbPX, py-sbPY
+		lvl1 := (relY/32)*2 + relX/32
+		lvl2 := ((relY%32)/16)*2 + (relX%32)/16
+		return sb.partition16(lvl1, lvl2), nil
+	}
+	return tile.PartitionSplit, nil
 }
 
 func (pc *pframeCoder) encodeLosslessIntraInterTile(src SourceFrame420, recon *SourceFrame420, prev *frameCDFs, forceIntegerMV bool, allowScreenContentTools bool, color parser.ColorConfig, miColStart, miColEnd uint16) ([]byte, error) {

@@ -101,22 +101,39 @@ type loopFilterApplier struct {
 	// Persistent band workers: per-frame goroutine spawns allocate their
 	// closures, so the workers park on a job channel for the applier's
 	// lifetime and read their per-frame inputs from these fields.
-	work     chan lfJob
-	done     chan struct{}
-	started  bool
-	jobCtx   decoder.FrameWorkPostFilterContext
-	output   frame.Frame
-	counts   [lfPlanBands]uint32
-	errs     [lfPlanBands]error
-	planeErr [3]error
+	work    chan lfJob
+	done    chan struct{}
+	started bool
+	jobCtx  decoder.FrameWorkPostFilterContext
+	output  frame.Frame
+	counts  [lfPlanBands]uint32
+	errs    [lfPlanBands]error
+	// dirEdges partitions the planned edges by plane and edge direction for
+	// the two-phase banded apply; applyErrs holds one slot per apply job.
+	dirEdges  [3][2][]decoder.FrameWorkLoopFilterPostFilterEdge
+	applyErrs [lfApplyMaxJobs]error
 }
 
-// lfJob is one parked-worker task: an edge-planning band or a plane apply.
+// lfApplyLumaBands is the fan-out of the per-direction luma apply. Bands cut
+// at superblock-row boundaries; same-direction deblock edges never overlap in
+// read or written pixels (the AV1 constraint libaom's row-mt loop filter
+// relies on: filter taps are bounded by the adjacent transform sizes), so the
+// banded application is bit-exact against the sequential pass, with the
+// vertical phase completing frame-wide before the horizontal phase starts.
+const lfApplyLumaBands = 4
+
+// lfApplyMaxJobs bounds one phase's job count: luma bands plus one job per
+// chroma plane.
+const lfApplyMaxJobs = lfApplyLumaBands + 2
+
+// lfJob is one parked-worker task: an edge-planning band or an edge-set apply.
 type lfJob struct {
 	plan   bool
 	band   int
 	r0, r1 int
 	plane  int
+	slot   int
+	edges  []decoder.FrameWorkLoopFilterPostFilterEdge
 }
 
 // startWorkers launches the persistent workers once.
@@ -146,7 +163,7 @@ func (a *loopFilterApplier) startWorkers() {
 						a.counts[j.band] = plan.StoredEdges
 					}
 				} else {
-					_, a.planeErr[j.plane] = a.jobCtx.ApplyPlannedLoopFilterPlaneEdges(a.planeEdges[j.plane], nil, loopfilter.Plane(j.plane))
+					_, a.applyErrs[j.slot] = a.jobCtx.ApplyPlannedLoopFilterPlaneEdges(j.edges, nil, loopfilter.Plane(j.plane))
 				}
 				a.done <- struct{}{}
 			}
@@ -300,40 +317,67 @@ func (a *loopFilterApplier) apply(recon *SourceFrame420, lf parser.LoopFilterPar
 	for range jobs {
 		<-a.done
 	}
-	// Partition the per-band edges by plane, preserving band (row-major)
-	// order within each plane; the three planes touch disjoint surfaces, so
-	// their sequential kernel passes run concurrently.
-	if cap(a.planeEdges[0]) < len(a.edges) {
-		for p := range a.planeEdges {
-			a.planeEdges[p] = make([]decoder.FrameWorkLoopFilterPostFilterEdge, 0, len(a.edges))
+	// Partition the per-band edges by plane and direction, preserving band
+	// (row-major) order within each list. Planes touch disjoint surfaces, and
+	// within one plane the sequential kernel semantics are "every vertical
+	// edge, then every horizontal edge": the two directions run as separate
+	// phases with a frame-wide barrier, and each phase fans out in
+	// superblock-row bands (bit-exact; see lfApplyLumaBands).
+	for p := range a.dirEdges {
+		for d := range a.dirEdges[p] {
+			a.dirEdges[p][d] = a.dirEdges[p][d][:0]
 		}
-	}
-	for p := range a.planeEdges {
-		a.planeEdges[p] = a.planeEdges[p][:0]
 	}
 	for b := range bands {
 		if errs[b] != nil {
 			return errs[b]
 		}
 		for _, e := range a.bandBufs[b][:counts[b]] {
-			a.planeEdges[e.Plane] = append(a.planeEdges[e.Plane], e)
+			a.dirEdges[e.Plane][e.Edge] = append(a.dirEdges[e.Plane][e.Edge], e)
 		}
 	}
-	jobs = 0
-	for p := range a.planeEdges {
-		a.planeErr[p] = nil
-		if len(a.planeEdges[p]) == 0 {
-			continue
+	for dir := range 2 {
+		jobs = 0
+		slot := 0
+		luma := a.dirEdges[0][dir]
+		if len(luma) > 0 {
+			target := (len(luma) + lfApplyLumaBands - 1) / lfApplyLumaBands
+			start := 0
+			for start < len(luma) {
+				end := start + target
+				if end >= len(luma) {
+					end = len(luma)
+				} else {
+					// Extend to the next superblock-row boundary so a band
+					// owns whole SB rows (edge records never span SB rows).
+					cutRow := luma[end-1].Y4 / 16
+					for end < len(luma) && luma[end].Y4/16 == cutRow {
+						end++
+					}
+				}
+				a.applyErrs[slot] = nil
+				a.work <- lfJob{edges: luma[start:end], plane: 0, slot: slot}
+				slot++
+				jobs++
+				start = end
+			}
 		}
-		a.work <- lfJob{plane: p}
-		jobs++
-	}
-	for range jobs {
-		<-a.done
-	}
-	for p := range a.planeErr {
-		if a.planeErr[p] != nil {
-			return a.planeErr[p]
+		for p := 1; p <= 2; p++ {
+			if len(a.dirEdges[p][dir]) == 0 {
+				continue
+			}
+			a.applyErrs[slot] = nil
+			a.work <- lfJob{edges: a.dirEdges[p][dir], plane: p, slot: slot}
+			slot++
+			jobs++
+		}
+		for range jobs {
+			<-a.done
+		}
+		for s := 0; s < slot; s++ {
+			if a.applyErrs[s] != nil {
+				return a.applyErrs[s]
+			}
 		}
 	}
 	return nil

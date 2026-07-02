@@ -57,6 +57,14 @@ type VideoEncoder struct {
 	// split must produce byte-identical bitstreams, and the differential test
 	// uses this switch to encode both ways.
 	fusedPipeline bool
+
+	// wavefront runs the split pipeline's decision pass over SB rows with the
+	// top-right dependency (pframe_wavefront.go) on single-tile inter frames;
+	// wavefrontLanes is its worker budget (0 disables). Only e.pc — the
+	// single-tile coder — is wired to it: multi-tile frames parallelize
+	// across tile columns instead.
+	wavefront      pframeWavefront
+	wavefrontLanes int
 	lf           loopFilterApplier
 	cdefApp      cdefApplier
 	hme          hmeState
@@ -437,6 +445,17 @@ func (e *VideoEncoder) SetMaxThreads(n int) {
 		return
 	}
 	e.setDefaultTileColumns()
+}
+
+// configurePCWavefront wires the single-tile coder to the encoder-owned
+// SB-row wavefront. Single-threaded encoders keep the serial decision walk.
+func (e *VideoEncoder) configurePCWavefront() {
+	lanes := e.wavefrontLanes
+	if e.singleThread {
+		lanes = 0
+	}
+	e.pc.wavefront = &e.wavefront
+	e.pc.wavefrontLanes = lanes
 }
 
 func (e *VideoEncoder) setDefaultTileColumns() {
@@ -884,6 +903,7 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 	e.pc.st.interpSearch = false
 	e.pc.st.interpShadow = false
 	e.pc.fusedPipeline = e.fusedPipeline
+	e.configurePCWavefront()
 	for t := range e.tilePCs {
 		e.tilePCs[t].st.interpSearch = false
 		e.tilePCs[t].st.interpShadow = false
@@ -1369,6 +1389,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		e.pc.st.mds0Level = 1
 	}
 	e.pc.fusedPipeline = e.fusedPipeline
+	e.configurePCWavefront()
 	for t := range e.tilePCs {
 		e.tilePCs[t].st.mds0Level = e.pc.st.mds0Level
 		e.tilePCs[t].fusedPipeline = e.fusedPipeline

@@ -14,6 +14,10 @@ import (
 // tests are the correctness oracle for PERF_PLAN §6 E1 stage (a).
 
 func encodeSplitOracleSequence(t *testing.T, frames []SourceFrame420, w, h, fps, bitrate, tileCols int, fused bool) [][]byte {
+	return encodeSplitOracleSequenceLanes(t, frames, w, h, fps, bitrate, tileCols, fused, 0)
+}
+
+func encodeSplitOracleSequenceLanes(t *testing.T, frames []SourceFrame420, w, h, fps, bitrate, tileCols int, fused bool, lanes int) [][]byte {
 	t.Helper()
 	enc, err := NewVideoEncoderCBR(w, h, RateControlConfig{
 		TargetBitsPerSecond: bitrate, FramesPerSecond: fps, MinQIndex: 20, MaxQIndex: 200,
@@ -23,6 +27,7 @@ func encodeSplitOracleSequence(t *testing.T, frames []SourceFrame420, w, h, fps,
 	}
 	defer enc.Close()
 	enc.fusedPipeline = fused
+	enc.wavefrontLanes = lanes
 	if err := enc.SetTemporalLayers(2); err != nil {
 		t.Fatal(err)
 	}
@@ -56,6 +61,72 @@ func assertSplitMatchesFused(t *testing.T, frames []SourceFrame420, w, h, fps, b
 			}
 		})
 	}
+}
+
+// assertWavefrontMatchesSerial encodes single-tile with the serial decision
+// walk and with 2..n wavefront lanes; every lane count must produce
+// byte-identical bitstreams (the stage-b oracle: the SB-row wavefront reads
+// exactly the serial order's neighbor state).
+func assertWavefrontMatchesSerial(t *testing.T, frames []SourceFrame420, w, h, fps, bitrate int, laneCounts []int) {
+	t.Helper()
+	serial := encodeSplitOracleSequenceLanes(t, frames, w, h, fps, bitrate, 1, false, 0)
+	for _, lanes := range laneCounts {
+		t.Run(fmt.Sprintf("lanes=%d", lanes), func(t *testing.T) {
+			wave := encodeSplitOracleSequenceLanes(t, frames, w, h, fps, bitrate, 1, false, lanes)
+			if len(serial) != len(wave) {
+				t.Fatalf("frame count mismatch: serial=%d wavefront=%d", len(serial), len(wave))
+			}
+			for i := range serial {
+				if !bytes.Equal(serial[i], wave[i]) {
+					t.Fatalf("frame %d: wavefront bitstream differs from serial (serial=%d bytes, wavefront=%d bytes)", i, len(serial[i]), len(wave[i]))
+				}
+			}
+		})
+	}
+}
+
+func TestPFrameWavefrontMatchesSerialSynthetic(t *testing.T) {
+	const w, h = 640, 384
+	frames := syntheticMotionFrames(12, w, h)
+	assertWavefrontMatchesSerial(t, frames, w, h, 30, 1_200_000, []int{2, 3, 6})
+}
+
+func TestPFrameWavefrontMatchesSerialRealC(t *testing.T) {
+	frames, w, h, ok := loadOracleCorpusSegment(t, "/tmp/corpus/realC.yuv", 16)
+	if !ok {
+		return
+	}
+	assertWavefrontMatchesSerial(t, frames, w, h, 30, 5_000_000, []int{2, 4, 8, 16})
+}
+
+// loadOracleCorpusSegment reads up to maxFrames 1080p I420 frames from the
+// local corpus, skipping the test when the corpus is absent.
+func loadOracleCorpusSegment(t *testing.T, path string, maxFrames int) ([]SourceFrame420, int, int, bool) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("local corpus unavailable: %v", err)
+		return nil, 0, 0, false
+	}
+	const w, h = 1920, 1080
+	fl := w * h * 3 / 2
+	nf := len(raw) / fl
+	if nf > maxFrames {
+		nf = maxFrames
+	}
+	if nf < 3 {
+		t.Skipf("%s too short", path)
+		return nil, 0, 0, false
+	}
+	frames := make([]SourceFrame420, nf)
+	for i := 0; i < nf; i++ {
+		base := i * fl
+		frames[i] = SourceFrame420{
+			Y: raw[base : base+w*h], U: raw[base+w*h : base+w*h+w*h/4], V: raw[base+w*h+w*h/4 : base+fl],
+			YStride: w, ChromaStride: w / 2, Width: w, Height: h,
+		}
+	}
+	return frames, w, h, true
 }
 
 // syntheticMotionFrames builds a deterministic moving-texture clip that
