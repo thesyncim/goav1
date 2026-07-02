@@ -1685,6 +1685,11 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	st.forceIntegerMV = forceIntegerMV
 	st.allowScreenContentTools = allowScreenContentTools
 	st.transformMode = parser.TransformModeSwitchable
+	// Freeze the MDS0 mode/DRL rate tables from the frame-start CDF state
+	// (SVT md_rate_estimation.c svt_aom_estimate_syntax_rate).
+	if st.mds0Level != 0 {
+		pc.modeCDFs.EstimateRateTables(&st.mds0Rates)
+	}
 	st.decisionStats = nil
 	if pc.decisionStatsEnabled {
 		pc.decisionStats.Reset()
@@ -2347,72 +2352,38 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if compoundMV[0] == (motion.Vector{}) && compoundMV[1] == (motion.Vector{}) {
 			modeResult.CompoundMode = tile.CompoundInterModeGlobalGlobal
 		}
-	} else {
-		mode := tile.InterModeGlobalMV
-		if mv.Row != 0 || mv.Col != 0 {
-			mode = tile.InterModeNewMV
-			if predRefs, err := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNearestMV}, 0, false, st.forceIntegerMV); err == nil {
-				switch mv {
-				case predRefs.Nearest[0]:
-					mode = tile.InterModeNearestMV
-				case predRefs.Near[0]:
-					mode = tile.InterModeNearMV
-				default:
-					nearest := predRefs.Nearest[0]
-					// Pricing the predictor swap needs a prediction and a SAD;
-					// blocks already in skip territory keep NEWMV without it.
-					if (nearest.Row != 0 || nearest.Col != 0) && fullSAD > bw*bh {
-						dr := int(mv.Row) - int(nearest.Row)
-						if dr < 0 {
-							dr = -dr
-						}
-						dc := int(mv.Col) - int(nearest.Col)
-						if dc < 0 {
-							dc = -dc
-						}
-						if dr <= 16 && dc <= 16 {
-							mvBits := 4 + bits.Len(uint(dr)) + bits.Len(uint(dc))
-							if err := predictInto(st.sadScratch[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, nearest, false, false); err == nil {
-								srcBlock := src.Y[lumaPY*src.YStride+lumaPX:]
-								predBlock := st.sadScratch[:bw*bh]
-								nearSAD := 0
-								switch {
-								case bw == 8 && bh == 8:
-									nearSAD = sad8x8Dual(srcBlock, src.YStride, predBlock, bw)
-								case bw == 16 && bh == 16:
-									nearSAD = sad16x16Dual(srcBlock, src.YStride, predBlock, bw)
-								case bw == 32 && bh == 32:
-									nearSAD = sad32x32Dual(srcBlock, src.YStride, predBlock, bw)
-								case bw == 64 && bh == 64:
-									nearSAD = sadDualBlock(srcBlock, src.YStride, predBlock, bw, bw)
-								case bw == 16 && bh == 8:
-									nearSAD = sad8x8Dual(srcBlock, src.YStride, predBlock, bw) +
-										sad8x8Dual(srcBlock[8:], src.YStride, predBlock[8:], bw)
-								case bw == 8 && bh == 16:
-									nearSAD = sad8x8Dual(srcBlock, src.YStride, predBlock, bw) +
-										sad8x8Dual(srcBlock[8*src.YStride:], src.YStride, predBlock[8*bw:], bw)
-								case bw == 32 && bh == 16:
-									nearSAD = sad16x16Dual(srcBlock, src.YStride, predBlock, bw) +
-										sad16x16Dual(srcBlock[16:], src.YStride, predBlock[16:], bw)
-								case bw == 16 && bh == 32:
-									nearSAD = sad16x16Dual(srcBlock, src.YStride, predBlock, bw) +
-										sad16x16Dual(srcBlock[16*src.YStride:], src.YStride, predBlock[16*bw:], bw)
-								default:
-									nearSAD = sadRectDualBlock(srcBlock, src.YStride, predBlock, bw, bw, bh)
-								}
-								// Two extra cascade symbols pick NEARESTMV.
-								if nearSAD+2*st.sadPerBit < fullSAD+mvBits*st.sadPerBit {
-									mode = tile.InterModeNearestMV
-									mv = nearest
-									fullSAD = nearSAD
-								}
-							}
-						}
-					}
-				}
+	}
+	drlIndex := 0
+	if !refs.Compound {
+		mds0Picked := false
+		// The light-PD1 MDS0 candidate decision (SVT preset 12 shape; see
+		// pframe_mds0.go). Blocks already in certain skip territory keep the
+		// classification below so the stale ME SAD cannot mis-skip a swapped
+		// vector, and static superblocks keep the short path as libaom's
+		// realtime pick cuts its mode loop on zero source SAD
+		// (av1/encoder/nonrd_pickmode.c source-SAD shortcuts). Droppable
+		// leaves cap the loop to the moderate-distortion band: SVT keeps
+		// leaves on the highest lpd1 shortcut level (enc_mode_config.c:
+		// pic_lpd1_lvl = is_base ? 4 : 7, with lpd1_detector_post_pd0
+		// steering by block difficulty), and here the hard leaf blocks keep
+		// the single-candidate NEWMV path so leaf frames hold the realtime
+		// wall budget.
+		mds0Gate := fullSAD*4 > bw*bh
+		if st.mds0Level == 2 {
+			mds0Gate = mds0Gate && fullSAD <= bw*bh*4
+		}
+		if st.mds0Level != 0 && mds0Gate && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height &&
+			st.realtimeContentStateForBlock(lumaPX, lumaPY).sourceSADNonRD != realtimeSourceSADZero {
+			if cand, ok := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {
+				modeResult.Mode = cand.mode
+				mv = cand.mv
+				drlIndex = int(cand.drl)
+				mds0Picked = true
 			}
 		}
-		modeResult.Mode = mode
+		if !mds0Picked {
+			modeResult.Mode = st.classifyInterMode(src, refPlanes, &stack, lumaPX, lumaPY, bw, bh, &mv, &fullSAD)
+		}
 	}
 	// Materialize the three plane predictions with the decoder's convolve so
 	// residual coding and reconstruction agree with the decoder bit for bit.
@@ -2560,12 +2531,12 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	if err != nil {
 		return fmt.Errorf("drl request: %w", err)
 	}
-	if err := tile.WriteDRLIndex(st.w, interModeCDFs, drlReq, 0); err != nil {
+	if err := tile.WriteDRLIndex(st.w, interModeCDFs, drlReq, drlIndex); err != nil {
 		return fmt.Errorf("drl: %w", err)
 	}
 	var mvRefs tile.InterMVReferenceSet
 	if !interModeResultUsesGlobalOnly(modeResult) {
-		mvRefs, err = stack.Stack.ResolveInterMVReferences(modeResult, 0, false, st.forceIntegerMV)
+		mvRefs, err = stack.Stack.ResolveInterMVReferences(modeResult, drlIndex, false, st.forceIntegerMV)
 		if err != nil {
 			return fmt.Errorf("resolve mv references: %w", err)
 		}
@@ -2762,6 +2733,83 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		st.decisionStats.noteInterBlock(block.Size, false, splitTX, refs, modeResult, txType)
 	}
 	return nil
+}
+
+// classifyInterMode is the legacy single-reference mode choice by signaling
+// cost: zero motion keeps the short GLOBALMV cascade; a vector the predictor
+// stack already names codes as NEARESTMV/NEARMV with no motion residual at
+// all; everything else pays for NEWMV plus the joint and component symbols,
+// with one priced NEARESTMV predictor-swap probe. mv and fullSAD update in
+// place when the swap wins.
+func (st *lossyEncodeState) classifyInterMode(src, refPlanes SourceFrame420, stack *tile.ReferenceMVStackResult,
+	lumaPX, lumaPY, bw, bh int, mv *motion.Vector, fullSAD *int) tile.InterMode {
+	mode := tile.InterModeGlobalMV
+	if mv.Row == 0 && mv.Col == 0 {
+		return mode
+	}
+	mode = tile.InterModeNewMV
+	predRefs, err := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNearestMV}, 0, false, st.forceIntegerMV)
+	if err != nil {
+		return mode
+	}
+	switch *mv {
+	case predRefs.Nearest[0]:
+		return tile.InterModeNearestMV
+	case predRefs.Near[0]:
+		return tile.InterModeNearMV
+	}
+	nearest := predRefs.Nearest[0]
+	// Pricing the predictor swap needs a prediction and a SAD;
+	// blocks already in skip territory keep NEWMV without it.
+	if (nearest.Row != 0 || nearest.Col != 0) && *fullSAD > bw*bh {
+		dr := int(mv.Row) - int(nearest.Row)
+		if dr < 0 {
+			dr = -dr
+		}
+		dc := int(mv.Col) - int(nearest.Col)
+		if dc < 0 {
+			dc = -dc
+		}
+		if dr <= 16 && dc <= 16 {
+			mvBits := 4 + bits.Len(uint(dr)) + bits.Len(uint(dc))
+			if err := predictInto(st.sadScratch[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, nearest, false, false); err == nil {
+				srcBlock := src.Y[lumaPY*src.YStride+lumaPX:]
+				predBlock := st.sadScratch[:bw*bh]
+				nearSAD := 0
+				switch {
+				case bw == 8 && bh == 8:
+					nearSAD = sad8x8Dual(srcBlock, src.YStride, predBlock, bw)
+				case bw == 16 && bh == 16:
+					nearSAD = sad16x16Dual(srcBlock, src.YStride, predBlock, bw)
+				case bw == 32 && bh == 32:
+					nearSAD = sad32x32Dual(srcBlock, src.YStride, predBlock, bw)
+				case bw == 64 && bh == 64:
+					nearSAD = sadDualBlock(srcBlock, src.YStride, predBlock, bw, bw)
+				case bw == 16 && bh == 8:
+					nearSAD = sad8x8Dual(srcBlock, src.YStride, predBlock, bw) +
+						sad8x8Dual(srcBlock[8:], src.YStride, predBlock[8:], bw)
+				case bw == 8 && bh == 16:
+					nearSAD = sad8x8Dual(srcBlock, src.YStride, predBlock, bw) +
+						sad8x8Dual(srcBlock[8*src.YStride:], src.YStride, predBlock[8*bw:], bw)
+				case bw == 32 && bh == 16:
+					nearSAD = sad16x16Dual(srcBlock, src.YStride, predBlock, bw) +
+						sad16x16Dual(srcBlock[16:], src.YStride, predBlock[16:], bw)
+				case bw == 16 && bh == 32:
+					nearSAD = sad16x16Dual(srcBlock, src.YStride, predBlock, bw) +
+						sad16x16Dual(srcBlock[16*src.YStride:], src.YStride, predBlock[16*bw:], bw)
+				default:
+					nearSAD = sadRectDualBlock(srcBlock, src.YStride, predBlock, bw, bw, bh)
+				}
+				// Two extra cascade symbols pick NEARESTMV.
+				if nearSAD+2*st.sadPerBit < *fullSAD+mvBits*st.sadPerBit {
+					mode = tile.InterModeNearestMV
+					*mv = nearest
+					*fullSAD = nearSAD
+				}
+			}
+		}
+	}
+	return mode
 }
 
 // encodeIntraPBlock codes one 8x8 intra block inside an inter frame: skip,

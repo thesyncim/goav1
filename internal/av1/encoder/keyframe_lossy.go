@@ -617,6 +617,18 @@ type lossyEncodeState struct {
 	// full-pel refinement windows.
 	hme *hmeState
 
+	// mds0Level arms the light-PD1 MDS0 inter candidate decision, mirroring
+	// SVT-AV1 preset 12's temporal-layer modulation (enc_mode_config.c:
+	// pic_lpd1_lvl = is_base ? 4 : 7): 0 disables it, 1 is the base-layer
+	// (reference frame) setting, 2 is the droppable-leaf setting that caps
+	// the loop to the moderate-distortion band the way SVT's
+	// lpd1_detector_post_pd0 steers leaf SBs by block difficulty.
+	// mds0Rates freezes the mode and DRL symbol costs from the frame-start
+	// CDFs (SVT's md_rate_est_ctx), so the decision cannot feed back into
+	// its own pricing mid-frame.
+	mds0Level uint8
+	mds0Rates tile.InterModeRateTables
+
 	// decisionStats is nil on the production hot path. When diagnostics are
 	// explicitly enabled, it points at the owning tile coder's frame-local
 	// counter buffer.

@@ -1332,6 +1332,18 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			e.tilePCs[t].st.lfMap = nil
 		}
 	}
+	// The light-PD1 MDS0 candidate decision runs on every inter frame, with
+	// droppable leaves on the lighter detector-gated level, mirroring
+	// SVT-AV1 preset 12's temporal-layer modulation (enc_mode_config.c:
+	// pic_lpd1_lvl = is_base ? 4 : 7).
+	if droppable {
+		e.pc.st.mds0Level = 2
+	} else {
+		e.pc.st.mds0Level = 1
+	}
+	for t := range e.tilePCs {
+		e.tilePCs[t].st.mds0Level = e.pc.st.mds0Level
+	}
 	refRecon := e.recon
 	if afterT1 {
 		refRecon = e.t1Recon
