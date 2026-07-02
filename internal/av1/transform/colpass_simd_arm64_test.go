@@ -13,7 +13,6 @@ func colPass2TestFuncs() []col2TestFunc {
 		{"DCT8", dct8Size, inverseDCT8Col2NEONAdapter, inverseDCT8Col2PureGo},
 		{"DCT16", dct16Size, inverseDCT16Col2NEONAdapter, inverseDCT16Col2PureGo},
 		{"DCT32", dct32Size, inverseDCT32Col2NEONAdapter, inverseDCT32Col2PureGo},
-		{"DCT64", dct64Size, inverseDCT64Col2NEONAdapter, inverseDCT64Col2PureGo},
 	}
 }
 

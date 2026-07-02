@@ -85,16 +85,6 @@ func inverseDCT32Row2NEONAdapter(r0, r1 []int32, min, max int32) {
 	inverseDCT32Row2NEON(&r0[0], &r1[0], int64(min), int64(max))
 }
 
-func inverseDCT64Row2NEONAdapter(r0, r1 []int32, min, max int32) {
-	if len(r0) < dct64Size || len(r1) < dct64Size {
-		inverseDCT64Row2PureGo(r0, r1, min, max)
-		return
-	}
-	r0 = r0[:dct64Size]
-	r1 = r1[:dct64Size]
-	inverseDCT64Row2NEON(&r0[0], &r1[0], int64(min), int64(max))
-}
-
 func inverseADST4Row2NEONAdapter(r0, r1 []int32, min, max int32) {
 	if len(r0) < adst4Size || len(r1) < adst4Size {
 		inverseADST4Row2PureGo(r0, r1, min, max)

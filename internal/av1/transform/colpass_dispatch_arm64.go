@@ -70,14 +70,6 @@ func inverseDCT32Col2NEONAdapter(buf []int32, rowStride int, min, max int32) {
 	inverseDCT32Col2NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
 }
 
-func inverseDCT64Col2NEONAdapter(buf []int32, rowStride int, min, max int32) {
-	if rowStride < 2 || len(buf) < (dct64Size-1)*rowStride+2 {
-		inverseDCT64Col2PureGo(buf, rowStride, min, max)
-		return
-	}
-	inverseDCT64Col2NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
-}
-
 // The four-column kernels run the whole butterfly in int32 lanes, which is
 // exact only while the stage clamp bounds stay inside the +/-2^19 envelope
 // (see the .s headers for the range proof); the column pass pre-clamps every
