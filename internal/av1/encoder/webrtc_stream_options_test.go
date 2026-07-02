@@ -122,8 +122,13 @@ func TestWebRTCStreamConfigMaxThreadsControlsTileColumns(t *testing.T) {
 	if err := stream.SetConfig(change); err != nil {
 		t.Fatalf("SetConfig MaxThreads=4: %v", err)
 	}
-	if got := stream.encoders[0].tileColsLog2; got != 2 {
-		t.Fatalf("updated tileColsLog2=%d want 2", got)
+	// MaxThreads>1 now drives the intra-tile SB-row wavefront (single tile
+	// column, N decision lanes) rather than tile-column parallelism.
+	if got := stream.encoders[0].tileColsLog2; got != 0 {
+		t.Fatalf("updated tileColsLog2=%d want 0", got)
+	}
+	if got := stream.encoders[0].wavefrontLanes; got != 4 {
+		t.Fatalf("updated wavefrontLanes=%d want 4", got)
 	}
 	if stream.encoders[0].singleThread {
 		t.Fatal("updated MaxThreads=4 left single-thread mode enabled")
@@ -132,6 +137,8 @@ func TestWebRTCStreamConfigMaxThreadsControlsTileColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("updated EncodePicture: %v", err)
 	}
+	// Keyframes keep tile-column parallelism (no P-frame decision pass to
+	// wavefront), so MaxThreads=4 still emits 4 key tile columns.
 	if got := parseWebRTCTileColumns(t, picture.Frames[0].TU); got != 4 {
 		t.Fatalf("updated encoded tile columns=%d want 4", got)
 	}
@@ -331,8 +338,11 @@ func TestWebRTCStreamConfigMaxThreadsAppliesToPixelEncoders(t *testing.T) {
 				if stream.encoders[0] == nil {
 					t.Fatal("missing i420 encoder")
 				}
-				if got := stream.encoders[0].tileColsLog2; got != 2 {
-					t.Fatalf("i420 encoder tileColsLog2=%d want 2", got)
+				if got := stream.encoders[0].tileColsLog2; got != 0 {
+					t.Fatalf("i420 encoder tileColsLog2=%d want 0", got)
+				}
+				if got := stream.encoders[0].wavefrontLanes; got != 4 {
+					t.Fatalf("i420 encoder wavefrontLanes=%d want 4", got)
 				}
 			},
 			encode: func(t *testing.T, stream *WebRTCStream) WebRTCEncodedPicture {

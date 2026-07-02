@@ -50,7 +50,12 @@ type VideoEncoder struct {
 	// uniform tile columns, each encoded by its own coder (independent CDFs
 	// and entropy stream per AV1 tile semantics) on its own goroutine.
 	tileColsLog2 uint8
-	tilePCs      []pframeCoder
+	// keyframeTileColsLog2 is the keyframe tile-column split. Keyframes have
+	// no P-frame decision pass, so they cannot use the SB-row wavefront and
+	// keep tile-column parallelism even when inter frames run single-tile +
+	// wavefront (SetMaxThreads). SetTileColumns sets both.
+	keyframeTileColsLog2 uint8
+	tilePCs              []pframeCoder
 
 	// fusedPipeline forces the legacy fused (search+write interleaved)
 	// P-frame tile coder instead of the decision/write split. Test-only: the
@@ -214,6 +219,7 @@ func newVideoEncoderWithColor(width, height int, qIndex uint8, color SequenceCol
 		qIndex: qIndex, goldenEvery: 16, sceneCutKeyframes: true,
 	}
 	e.tileColsLog2 = defaultTileColsLog2(codedW)
+	e.keyframeTileColsLog2 = e.tileColsLog2
 	return e, nil
 }
 
@@ -433,6 +439,7 @@ func defaultTileColsLog2(width int) uint8 {
 // time). One column disables tile parallelism.
 func (e *VideoEncoder) SetTileColumns(cols int) {
 	e.tileColsLog2 = tileColumnsLog2(cols)
+	e.keyframeTileColsLog2 = e.tileColsLog2
 }
 
 func (e *VideoEncoder) SetMaxThreads(n int) {
@@ -440,8 +447,22 @@ func (e *VideoEncoder) SetMaxThreads(n int) {
 		return
 	}
 	e.singleThread = n == 1
-	if n > 0 {
-		e.SetTileColumns(n)
+	if n > 1 {
+		// Inter frames prefer the intra-tile SB-row wavefront (single tile
+		// column, n decision lanes) over tile-column parallelism: it keeps one
+		// entropy context per frame, avoiding the ~0.5 dB the per-tile CDF
+		// split costs on complex motion, while still saturating the cores.
+		// Keyframes have no decision pass to wavefront, so they keep n tile
+		// columns for parallelism. Callers wanting tiled inter frames call
+		// SetTileColumns.
+		e.tileColsLog2 = 0
+		e.keyframeTileColsLog2 = tileColumnsLog2(n)
+		e.wavefrontLanes = n
+		return
+	}
+	e.wavefrontLanes = 0
+	if n == 1 {
+		e.SetTileColumns(1)
 		return
 	}
 	e.setDefaultTileColumns()
@@ -461,6 +482,7 @@ func (e *VideoEncoder) configurePCWavefront() {
 func (e *VideoEncoder) setDefaultTileColumns() {
 	if e != nil {
 		e.tileColsLog2 = defaultTileColsLog2(e.width)
+		e.keyframeTileColsLog2 = e.tileColsLog2
 	}
 }
 
@@ -753,8 +775,8 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 	// Periodic keyframes reuse the stream's recon buffer and tile-coder pool,
 	// so a scene cut allocates only its temporal unit.
 	nTiles := 1
-	if e.tileColsLog2 > 0 {
-		nTiles = 1 << e.tileColsLog2
+	if e.keyframeTileColsLog2 > 0 {
+		nTiles = 1 << e.keyframeTileColsLog2
 	}
 	if len(e.tilePCs) < nTiles {
 		e.tilePCs = make([]pframeCoder, nTiles)
@@ -776,7 +798,7 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 	// working point; rate control pays the debt back over the next frames
 	// through the buffer.
 	keyQ := e.keyframeQIndex()
-	tu, recon, err := encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, nil, &e.cdefApp, e.tileColsLog2, keyframeTileOptions{
+	tu, recon, err := encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, nil, &e.cdefApp, e.keyframeTileColsLog2, keyframeTileOptions{
 		payloads:          e.payloads[:nTiles],
 		errs:              e.tileErrs[:nTiles],
 		groupScratch:      &e.tuGroup,
