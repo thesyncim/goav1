@@ -51,6 +51,12 @@ type VideoEncoder struct {
 	// and entropy stream per AV1 tile semantics) on its own goroutine.
 	tileColsLog2 uint8
 	tilePCs      []pframeCoder
+
+	// fusedPipeline forces the legacy fused (search+write interleaved)
+	// P-frame tile coder instead of the decision/write split. Test-only: the
+	// split must produce byte-identical bitstreams, and the differential test
+	// uses this switch to encode both ways.
+	fusedPipeline bool
 	lf           loopFilterApplier
 	cdefApp      cdefApplier
 	hme          hmeState
@@ -877,9 +883,11 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 	// filter state a previous base frame left on the reused coders.
 	e.pc.st.interpSearch = false
 	e.pc.st.interpShadow = false
+	e.pc.fusedPipeline = e.fusedPipeline
 	for t := range e.tilePCs {
 		e.tilePCs[t].st.interpSearch = false
 		e.tilePCs[t].st.interpShadow = false
+		e.tilePCs[t].fusedPipeline = e.fusedPipeline
 	}
 	if nTiles == 1 {
 		data, err := e.pc.encodeTileWithOptionsColor(src, ref, nil, out, effQ, nil, parser.ReferenceModeSingle, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, color, 0, uint16(src.Width/4))
@@ -1360,8 +1368,10 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	} else {
 		e.pc.st.mds0Level = 1
 	}
+	e.pc.fusedPipeline = e.fusedPipeline
 	for t := range e.tilePCs {
 		e.tilePCs[t].st.mds0Level = e.pc.st.mds0Level
+		e.tilePCs[t].fusedPipeline = e.fusedPipeline
 	}
 	refRecon := e.recon
 	if afterT1 {
