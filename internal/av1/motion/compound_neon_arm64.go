@@ -68,6 +68,24 @@ type compound2DHighBDNEONCtx struct {
 	yBias  uintptr
 }
 
+type compoundBlend8NEONCtx struct {
+	dst    *byte
+	src0   *uint16
+	src1   *uint16
+	dstStr uintptr
+	width  uintptr
+	height uintptr
+	fwd    uintptr
+	bck    uintptr
+	bias   uintptr
+}
+
+//go:noescape
+func blendCompoundAvg8NEONAsm(ctx *compoundBlend8NEONCtx)
+
+//go:noescape
+func blendCompoundAvg8NEONAsmW4(ctx *compoundBlend8NEONCtx)
+
 //go:noescape
 func compoundCopy8NEONAsm(ctx *compoundCopy8NEONCtx)
 
@@ -368,8 +386,52 @@ func predictInterCompoundRef8ToConvBuf2DNEONWithIMStride(out []uint16, ref frame
 	compound2D8NEONAsm(&ctx)
 }
 
+// blendCompoundAvg8NEON is the NEON binding for the 8-bit compound average /
+// dist-wtd blend (av1_dist_wtd_convolve_* do_average branch); the kernel is a
+// port of dav1d's avg/w_avg (src/mc_tmpl.c, src/arm/64/mc.S) adapted to
+// libaom's offset CONV_BUF domain. The pure-Go reference computes
+//
+//	res = clip8(round((s0*fwd + s1*bck) >> DIST_PRECISION_BITS - roundOffset, roundBits))
+//
+// For roundBits == 4 (the only value reachable at 8-bit, where round0 == 3)
+// this folds exactly to
+//
+//	res = clip8((s0*fwd + s1*bck - ((roundOffset - 8) << 4)) >> 8)
+//
+// using nested floor-division identities (the >>4 and the rounded >>4 combine
+// into one arithmetic >>8 against a pre-shifted bias), so the asm is
+// bit-identical to the scalar loop.
+func blendCompoundAvg8NEON(dst frame.Plane, src0 []uint16, src1 []uint16, dstX int, dstY int, width int, height int, fwdOffset int, bckOffset int, roundOffset int, roundBits int) {
+	if roundBits != 4 || roundOffset < 8 ||
+		fwdOffset < 0 || fwdOffset > 16 || bckOffset < 0 || bckOffset > 16 ||
+		height <= 0 {
+		blendCompoundAvg8PureGo(dst, src0, src1, dstX, dstY, width, height, fwdOffset, bckOffset, roundOffset, roundBits)
+		return
+	}
+	ctx := compoundBlend8NEONCtx{
+		dst:    &dst.Pix[dstY*dst.Stride+dstX],
+		src0:   &src0[0],
+		src1:   &src1[0],
+		dstStr: uintptr(dst.Stride),
+		width:  uintptr(width),
+		height: uintptr(height),
+		fwd:    uintptr(fwdOffset),
+		bck:    uintptr(bckOffset),
+		bias:   uintptr((roundOffset - 8) << 4),
+	}
+	switch {
+	case width >= 8 && width%8 == 0:
+		blendCompoundAvg8NEONAsm(&ctx)
+	case width == 4 && height%2 == 0:
+		blendCompoundAvg8NEONAsmW4(&ctx)
+	default:
+		blendCompoundAvg8PureGo(dst, src0, src1, dstX, dstY, width, height, fwdOffset, bckOffset, roundOffset, roundBits)
+	}
+}
+
 func init() {
 	if cpu.Detected.NEON {
+		blendCompoundAvg8Impl = blendCompoundAvg8NEON
 		predictInterCompoundRef8ToConvBuf2DImpl = predictInterCompoundRef8ToConvBuf2DNEON
 		predictInterCompoundRef8ToConvBufCopyImpl = predictInterCompoundRef8ToConvBufCopyNEON
 		predictInterCompoundRefHighBDToConvBufCopyResidentImpl = predictInterCompoundRefHighBDToConvBufCopyResidentNEON

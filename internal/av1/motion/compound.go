@@ -1045,7 +1045,7 @@ func BlendCompoundAvg(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConv
 	src0 := buf0.Data[:width*height]
 	src1 := buf1.Data[:width*height]
 	if bytesPerSample == 1 {
-		blendCompoundAvg8(dst, src0, src1, dstX, dstY, width, height, fwdOffset, bckOffset, roundOffset, roundBits)
+		blendCompoundAvg8Impl(dst, src0, src1, dstX, dstY, width, height, fwdOffset, bckOffset, roundOffset, roundBits)
 		return nil
 	}
 	max, _ := highBDMax(bitDepth)
@@ -1135,7 +1135,9 @@ func BuildDiffWtdMaskD16(mask []byte, maskStride int, buf0 *CompoundConvBuf, buf
 	return nil
 }
 
-func blendCompoundAvg8(dst frame.Plane, src0 []uint16, src1 []uint16, dstX int, dstY int, width int, height int, fwdOffset int, bckOffset int, roundOffset int, roundBits int) {
+var blendCompoundAvg8Impl = blendCompoundAvg8PureGo
+
+func blendCompoundAvg8PureGo(dst frame.Plane, src0 []uint16, src1 []uint16, dstX int, dstY int, width int, height int, fwdOffset int, bckOffset int, roundOffset int, roundBits int) {
 	for y := range height {
 		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX:]
 		srcOff := y * width

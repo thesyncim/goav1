@@ -888,6 +888,119 @@ cy4RowLoop:
 cy4Done:
 	RET
 
+#define B_DST    0
+#define B_SRC0   8
+#define B_SRC1   16
+#define B_DSTSTR 24
+#define B_WIDTH  32
+#define B_HEIGHT 40
+#define B_FWD    48
+#define B_BCK    56
+#define B_BIAS   64
+
+// func blendCompoundAvg8NEONAsm(ctx *compoundBlend8NEONCtx)
+//
+// Port of dav1d's avg/w_avg bidir blend (src/mc_tmpl.c avg_c/w_avg_c,
+// src/arm/64/mc.S bidir_fn avg/w_avg) onto libaom's CONV_BUF representation:
+// dav1d keeps its intermediate predictors PREP_BIAS-centered in int16, so its
+// asm can blend in 16-bit lanes with a sqdmulh weight trick; goav1's
+// CompoundConvBuf is libaom's offset uint16 (av1_dist_wtd_convolve_*), which
+// differs by roundOffset+PREP_BIAS per sample, so the weighted combine must
+// widen through umull/umlal to stay bit-identical to the scalar reference.
+// The pipeline shape mirrors dav1d's macro: load both sources, weighted
+// combine, one saturating shift-right-narrow, then a narrowing store.
+//     dst = clip8((s0*fwd + s1*bck - bias) >> 8)
+// with bias = (roundOffset - 8) << 4, which is exactly the scalar
+//     clip8(round(((s0*fwd + s1*bck) >> 4) - roundOffset, 4))
+// (the truncating >>4 and the rounded >>4 fold into one arithmetic >>8).
+// The wrapper only routes width%8 == 0 blocks here; src rows are contiguous
+// (stride == width) so both sources advance linearly.
+TEXT ·blendCompoundAvg8NEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD B_DST(R0), R1
+	MOVD B_SRC0(R0), R2
+	MOVD B_SRC1(R0), R3
+	MOVD B_DSTSTR(R0), R5
+	MOVD B_WIDTH(R0), R6
+	MOVD B_HEIGHT(R0), R7
+	MOVD B_FWD(R0), R11
+	WORD $0x4e020d66 // dup v6.8h, w11      fwdOffset
+	MOVD B_BCK(R0), R11
+	WORD $0x4e020d67 // dup v7.8h, w11      bckOffset
+	MOVD B_BIAS(R0), R11
+	WORD $0x4e040d72 // dup v18.4s, w11     bias
+
+baRowLoop:
+	MOVD R1, R10 // dst row cursor
+	MOVD R6, R8  // remaining columns
+
+baColLoop:
+	WORD $0x4cdf7441 // ld1 {v1.8h}, [x2], #16    s0
+	WORD $0x4cdf7462 // ld1 {v2.8h}, [x3], #16    s1
+	WORD $0x2e66c030 // umull  v16.4s, v1.4h, v6.4h
+	WORD $0x6e66c031 // umull2 v17.4s, v1.8h, v6.8h
+	WORD $0x2e678050 // umlal  v16.4s, v2.4h, v7.4h
+	WORD $0x6e678051 // umlal2 v17.4s, v2.8h, v7.8h
+	WORD $0x6eb28610 // sub v16.4s, v16.4s, v18.4s
+	WORD $0x6eb28631 // sub v17.4s, v17.4s, v18.4s
+	WORD $0x2f188610 // sqshrun  v16.4h, v16.4s, #8
+	WORD $0x6f188630 // sqshrun2 v16.8h, v17.4s, #8
+	WORD $0x2e212a10 // sqxtun v16.8b, v16.8h     clip to [0,255]
+	WORD $0x0c007150 // st1 {v16.8b}, [x10]
+
+	ADD  $8, R10, R10
+	SUB  $8, R8, R8
+	CBNZ R8, baColLoop
+
+	ADD  R5, R1, R1
+	SUB  $1, R7, R7
+	CBNZ R7, baRowLoop
+
+	RET
+
+// func blendCompoundAvg8NEONAsmW4(ctx *compoundBlend8NEONCtx)
+//
+// Width-4 variant of blendCompoundAvg8NEONAsm processing two rows per
+// iteration (the contiguous sources hold both rows in one 8h load), the same
+// two-dst-rows-per-vector store pattern as dav1d's w4 branch in
+// src/arm/64/mc.S bidir_fn (st1 {v.s}[0]/[1] across alternating rows). The
+// wrapper only routes width == 4, even-height blocks here.
+TEXT ·blendCompoundAvg8NEONAsmW4(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD B_DST(R0), R1
+	MOVD B_SRC0(R0), R2
+	MOVD B_SRC1(R0), R3
+	MOVD B_DSTSTR(R0), R5
+	MOVD B_HEIGHT(R0), R7
+	MOVD B_FWD(R0), R11
+	WORD $0x4e020d66 // dup v6.8h, w11      fwdOffset
+	MOVD B_BCK(R0), R11
+	WORD $0x4e020d67 // dup v7.8h, w11      bckOffset
+	MOVD B_BIAS(R0), R11
+	WORD $0x4e040d72 // dup v18.4s, w11     bias
+
+ba4RowLoop:
+	WORD $0x4cdf7441 // ld1 {v1.8h}, [x2], #16    s0 rows y, y+1
+	WORD $0x4cdf7462 // ld1 {v2.8h}, [x3], #16    s1 rows y, y+1
+	WORD $0x2e66c030 // umull  v16.4s, v1.4h, v6.4h
+	WORD $0x6e66c031 // umull2 v17.4s, v1.8h, v6.8h
+	WORD $0x2e678050 // umlal  v16.4s, v2.4h, v7.4h
+	WORD $0x6e678051 // umlal2 v17.4s, v2.8h, v7.8h
+	WORD $0x6eb28610 // sub v16.4s, v16.4s, v18.4s
+	WORD $0x6eb28631 // sub v17.4s, v17.4s, v18.4s
+	WORD $0x2f188610 // sqshrun  v16.4h, v16.4s, #8
+	WORD $0x6f188630 // sqshrun2 v16.8h, v17.4s, #8
+	WORD $0x2e212a10 // sqxtun v16.8b, v16.8h     clip to [0,255]
+	ADD  R5, R1, R11
+	WORD $0x0d008030 // st1 {v16.s}[0], [x1]      row y
+	WORD $0x0d009170 // st1 {v16.s}[1], [x11]     row y+1
+
+	ADD  R5<<1, R1
+	SUB  $2, R7, R7
+	CBNZ R7, ba4RowLoop
+
+	RET
+
 #define D_DST    0
 #define D_REF    8
 #define D_KERNEL 16
