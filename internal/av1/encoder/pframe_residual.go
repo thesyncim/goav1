@@ -203,6 +203,7 @@ type pframeCoder struct {
 	partCDFs             tile.PartitionCDFs
 	refCDFs              tile.InterRefCDFs
 	modeCDFs             tile.InterModeCDFs
+	interpCDFs           tile.InterpFilterCDFs
 	scratch              tile.BlockLoopScratch
 	carrier              tile.BlockLoopContextCarrier
 	writerBuf            []byte
@@ -1461,6 +1462,7 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs, color 
 		pc.partCDFs = prev.Partition
 		pc.refCDFs = prev.InterRef
 		pc.modeCDFs = prev.InterMode
+		pc.interpCDFs = prev.Interp
 		st.modeCDFs = prev.Mode
 		st.intraCDFs = prev.Intra
 		st.coeffCDFs = prev.Coeff
@@ -1475,6 +1477,9 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs, color 
 			return err
 		}
 		if err := pc.modeCDFs.InitDefault(); err != nil {
+			return err
+		}
+		if err := pc.interpCDFs.InitDefault(); err != nil {
 			return err
 		}
 		if err := st.modeCDFs.InitDefault(); err != nil {
@@ -1633,6 +1638,7 @@ func (pc *pframeCoder) exportCDFs(dst *frameCDFs) error {
 	dst.Partition = pc.partCDFs
 	dst.InterRef = pc.refCDFs
 	dst.InterMode = pc.modeCDFs
+	dst.Interp = pc.interpCDFs
 	dst.Mode = pc.st.modeCDFs
 	dst.Intra = pc.st.intraCDFs
 	dst.Coeff = pc.st.coeffCDFs
@@ -1690,6 +1696,12 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	if st.mds0Level != 0 {
 		pc.modeCDFs.EstimateRateTables(&st.mds0Rates)
 	}
+	// Freeze the switchable filter rate tables for the IFS combo loop (SVT
+	// md_rate_estimation.c switchable_interp_fac_bitss).
+	if st.interpSearch || st.interpShadow {
+		pc.interpCDFs.EstimateRateTables(&st.interpRates)
+	}
+	st.interpUsed = [3]uint32{}
 	st.decisionStats = nil
 	if pc.decisionStatsEnabled {
 		pc.decisionStats.Reset()
@@ -1832,7 +1844,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	}
 
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
-		return st.encodePBlock(src, ref, golden, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, referenceMode, walkReq, miCols, miRows)
+		return st.encodePBlock(src, ref, golden, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, &pc.interpCDFs, referenceMode, walkReq, miCols, miRows)
 	}
 	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
 		return nil, err
@@ -2065,7 +2077,7 @@ func copyLosslessTileSourceToRecon(src SourceFrame420, recon *SourceFrame420, co
 // the inter tx_type symbol after txb_skip) and two chroma residuals against
 // the reference reconstruction.
 func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, scratch *tile.BlockLoopScratch,
-	refCDFs *tile.InterRefCDFs, interModeCDFs *tile.InterModeCDFs,
+	refCDFs *tile.InterRefCDFs, interModeCDFs *tile.InterModeCDFs, interpCDFs *tile.InterpFilterCDFs,
 	referenceMode parser.ReferenceMode, walkReq tile.BlockWalkRequest, miCols, miRows uint16) error {
 
 	var bw, bh int
@@ -2385,6 +2397,41 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			modeResult.Mode = st.classifyInterMode(src, refPlanes, &stack, lumaPX, lumaPY, bw, bh, &mv, &fullSAD)
 		}
 	}
+	// Switchable interpolation filter decision, run once the mode and vector
+	// are final like SVT-AV1's last-stage IFS (enc_inter_prediction.c
+	// interpolation_filter_search at interpolation_search_level 4 = IFS_MDS3;
+	// see pframe_ifs.go). ifsReq mirrors the decoder's read_mb_interp_filter
+	// inputs; blocks whose filters the decoder infers (GLOBALMV over the
+	// identity model) and compound blocks keep REGULAR.
+	blockFilters := motion.InterpFilters{}
+	var ifsReq tile.InterpFilterRequest
+	if st.interpSearch || st.interpShadow {
+		ifsReq = tile.InterpFilterRequest{
+			FrameFilter:      parser.InterpolationSwitchable,
+			EnableDualFilter: st.interpDual,
+			Size:             block.Size,
+			References:       refs,
+			Mode:             modeResult,
+			MotionMode:       tile.MotionModeTranslation,
+			X4:               block.X4,
+			Y4:               block.Y4,
+			HaveTop:          block.HaveTop,
+			HaveLeft:         block.HaveLeft,
+		}
+		if !refs.Compound && tile.InterpNeeded(ifsReq) &&
+			refPlanes.Width == src.Width && refPlanes.Height == src.Height {
+			searched := st.interpolationFilterSearch(src, refPlanes.Y, refPlanes.YStride, modeCtx, ifsReq, lumaPX, lumaPY, bw, bh, mv)
+			st.interpUsed[searched.Y]++
+			// Shadow frames only feed the fix_interp_filter statistics;
+			// their fixed EIGHTTAP header keeps every block on REGULAR.
+			if st.interpSearch {
+				blockFilters = searched
+				if st.decisionStats != nil {
+					st.decisionStats.noteInterpFilter(int(searched.Y))
+				}
+			}
+		}
+	}
 	// Materialize the three plane predictions with the decoder's convolve so
 	// residual coding and reconstruction agree with the decoder bit for bit.
 	if refs.Compound {
@@ -2415,14 +2462,14 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 				}
 			}
 		} else {
-			if err := predictInto(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false); err != nil {
+			if err := predictIntoFilters(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, blockFilters); err != nil {
 				return fmt.Errorf("predict luma: %w", err)
 			}
 			if hasChroma {
-				if err := predictInto(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY); err != nil {
+				if err := predictIntoFilters(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters); err != nil {
 					return fmt.Errorf("predict u: %w", err)
 				}
-				if err := predictInto(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY); err != nil {
+				if err := predictIntoFilters(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters); err != nil {
 					return fmt.Errorf("predict v: %w", err)
 				}
 			}
@@ -2566,10 +2613,18 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		return fmt.Errorf("motion vector: %w", err)
 	}
 
+	// The interpolation filter pair follows the motion vector exactly where
+	// the decoder reads it (read_mb_interp_filter, before the motion marks).
+	if st.interpSearch {
+		if _, err := tile.WriteInterpFilters(st.w, interpCDFs, modeCtx, ifsReq, blockFilters); err != nil {
+			return fmt.Errorf("interp filters: %w", err)
+		}
+	}
+
 	if err := modeCtx.MarkInterMotion(block.Size, int(block.X4), int(block.Y4), motionResult, hasChroma); err != nil {
 		return fmt.Errorf("mark inter motion: %w", err)
 	}
-	if err := modeCtx.MarkInterFilters(block.Size, int(block.X4), int(block.Y4), refs, motion.InterpFilters{}); err != nil {
+	if err := modeCtx.MarkInterFilters(block.Size, int(block.X4), int(block.Y4), refs, blockFilters); err != nil {
 		return fmt.Errorf("mark inter filters: %w", err)
 	}
 	if refs.Compound {

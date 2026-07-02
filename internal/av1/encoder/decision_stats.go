@@ -64,6 +64,11 @@ type EncoderDecisionStats struct {
 	LumaTXBs       uint64
 	TXTypes        [EncoderDecisionTransformTypeCount]uint64
 	NonDCTTXBs     uint64
+
+	// InterpFilters counts the switchable interpolation filter pairs the
+	// base-frame filter search coded (REGULAR, SMOOTH, SHARP), indexed by
+	// the AV1 switchable filter symbol.
+	InterpFilters [3]uint64
 }
 
 func (s *EncoderDecisionStats) Reset() {
@@ -110,6 +115,16 @@ func (s *EncoderDecisionStats) add(other EncoderDecisionStats) {
 		s.TXTypes[i] += other.TXTypes[i]
 	}
 	s.NonDCTTXBs += other.NonDCTTXBs
+	for i := range s.InterpFilters {
+		s.InterpFilters[i] += other.InterpFilters[i]
+	}
+}
+
+func (s *EncoderDecisionStats) noteInterpFilter(f int) {
+	if s == nil || f < 0 || f >= len(s.InterpFilters) {
+		return
+	}
+	s.InterpFilters[f]++
 }
 
 func (s *EncoderDecisionStats) notePartition(level tile.BlockLevel, partition tile.Partition) {

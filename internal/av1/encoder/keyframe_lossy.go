@@ -629,6 +629,24 @@ type lossyEncodeState struct {
 	mds0Level uint8
 	mds0Rates tile.InterModeRateTables
 
+	// interpSearch arms the per-block switchable interpolation filter search
+	// on reference frames, mirroring SVT-AV1 preset 12's
+	// interpolation_search_level = 4 for is_base pictures with the frame
+	// header signaling SWITCHABLE (enc_mode_config.c). interpShadow runs the
+	// same search for statistics only on base frames whose header collapsed
+	// to the fixed EIGHTTAP filter (the libaom fix_interp_filter carry, see
+	// video.go); interpDual carries the sequence's enable_dual_filter so
+	// block syntax matches the decoder; interpRates freezes the switchable
+	// filter symbol costs from the frame-start CDFs (SVT's
+	// switchable_interp_fac_bitss); interpUsed counts the search winners the
+	// way libaom's counts->switchable_interp feeds fix_interp_filter
+	// (av1/encoder/encoder_utils.c).
+	interpSearch bool
+	interpShadow bool
+	interpDual   bool
+	interpRates  tile.InterpFilterRateTables
+	interpUsed   [3]uint32
+
 	// decisionStats is nil on the production hot path. When diagnostics are
 	// explicitly enabled, it points at the owning tile coder's frame-local
 	// counter buffer.

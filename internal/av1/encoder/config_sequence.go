@@ -12,13 +12,16 @@ func SequenceHeaderForConfig(config Config) (SequenceHeader, error) {
 	}
 
 	seq := SequenceHeader{
-		Profile:                    config.Profile,
-		OperatingPointsCount:       sequenceOperatingPointsForLayers(config.SpatialLayerCount, config.TemporalLayerCount),
-		MaxFrameWidth:              uint32(config.Resolution.Width),
-		MaxFrameHeight:             uint32(config.Resolution.Height),
-		EnableFilterIntra:          true,
-		EnableIntraEdgeFilter:      true,
-		EnableDualFilter:           true,
+		Profile:               config.Profile,
+		OperatingPointsCount:  sequenceOperatingPointsForLayers(config.SpatialLayerCount, config.TemporalLayerCount),
+		MaxFrameWidth:         uint32(config.Resolution.Width),
+		MaxFrameHeight:        uint32(config.Resolution.Height),
+		EnableFilterIntra:     true,
+		EnableIntraEdgeFilter: true,
+		// Dual filters stay off as SVT-AV1 configures the sequence
+		// (Source/Lib/Codec/sequence_control_set.c enable_dual_filter = 0):
+		// the switchable filter search codes one X = Y pair per block.
+		EnableDualFilter:           false,
 		EnableOrderHint:            true,
 		SeqForceScreenContentTools: SequenceSelectScreenContentTools,
 		SeqForceIntegerMV:          SequenceSelectIntegerMV,

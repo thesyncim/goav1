@@ -863,7 +863,7 @@ func TestEncodePBlockCompoundLastGolden8x8(t *testing.T) {
 		VisibleH4: 2,
 	}
 	walkReq := tile.BlockWalkRequest{MIColEnd: 4, MIRowEnd: 4}
-	if err := st.encodePBlock(src, ref, &golden, &recon, block, &pc.scratch, &pc.refCDFs, &pc.modeCDFs, parser.ReferenceModeSelect, walkReq, 4, 4); err != nil {
+	if err := st.encodePBlock(src, ref, &golden, &recon, block, &pc.scratch, &pc.refCDFs, &pc.modeCDFs, &pc.interpCDFs, parser.ReferenceModeSelect, walkReq, 4, 4); err != nil {
 		t.Fatal(err)
 	}
 
@@ -980,7 +980,7 @@ func TestEncodePBlockGoldenSingleLarge(t *testing.T) {
 				VisibleH4: uint8(miH),
 			}
 			walkReq := tile.BlockWalkRequest{MIColEnd: miW, MIRowEnd: miH}
-			if err := st.encodePBlock(src, ref, &golden, &recon, block, &pc.scratch, &pc.refCDFs, &pc.modeCDFs, parser.ReferenceModeSingle, walkReq, miW, miH); err != nil {
+			if err := st.encodePBlock(src, ref, &golden, &recon, block, &pc.scratch, &pc.refCDFs, &pc.modeCDFs, &pc.interpCDFs, parser.ReferenceModeSingle, walkReq, miW, miH); err != nil {
 				t.Fatal(err)
 			}
 
