@@ -363,28 +363,7 @@ func borderedSamplePlaneFits(plane BorderedSamplePlane) bool {
 func loadSampleRows(dst []uint16, dstStride int, src []byte, srcStride int, width int, height int, bytesPerSample int) {
 	switch bytesPerSample {
 	case 1:
-		srcOff := 0
-		dstOff := 0
-		for y := 0; y < height; y++ {
-			srcLine := src[srcOff : srcOff+width : srcOff+width]
-			dstLine := dst[dstOff : dstOff+width : dstOff+width]
-			x := 0
-			for ; x+8 <= width; x += 8 {
-				dstLine[x+0] = uint16(srcLine[x+0])
-				dstLine[x+1] = uint16(srcLine[x+1])
-				dstLine[x+2] = uint16(srcLine[x+2])
-				dstLine[x+3] = uint16(srcLine[x+3])
-				dstLine[x+4] = uint16(srcLine[x+4])
-				dstLine[x+5] = uint16(srcLine[x+5])
-				dstLine[x+6] = uint16(srcLine[x+6])
-				dstLine[x+7] = uint16(srcLine[x+7])
-			}
-			for ; x < width; x++ {
-				dstLine[x] = uint16(srcLine[x])
-			}
-			srcOff += srcStride
-			dstOff += dstStride
-		}
+		loadSampleRows8(dst, dstStride, src, srcStride, width, height)
 	case 2:
 		srcOff := 0
 		dstOff := 0
@@ -399,6 +378,43 @@ func loadSampleRows(dst []uint16, dstStride int, src []byte, srcStride int, widt
 			srcOff += srcStride
 			dstOff += dstStride
 		}
+	}
+}
+
+// loadSampleRows8PureGo is the bit-exact reference for the 8-bit sample
+// staging widen (u8 -> u16). loadSampleRows8 resolves to it on targets
+// without a tuned variant (samples_widen_generic.go); tuned variants must
+// write exactly dst[y*dstStride+x] = uint16(src[y*srcStride+x]) for x in
+// [0, width), y in [0, height) and leave every other dst element untouched.
+//
+// Unlike most kernels this one dispatches by build tag rather than through a
+// package-level func variable: an indirect call would make the compiler leak
+// dst/src at every Load*SamplePlane entry point and break the decoder's
+// zero-alloc steady-state budget. NEON is architecturally mandatory on arm64
+// (cpu_arm64.go sets Detected.NEON unconditionally), so the static binding
+// loses no runtime detection.
+func loadSampleRows8PureGo(dst []uint16, dstStride int, src []byte, srcStride int, width int, height int) {
+	srcOff := 0
+	dstOff := 0
+	for y := 0; y < height; y++ {
+		srcLine := src[srcOff : srcOff+width : srcOff+width]
+		dstLine := dst[dstOff : dstOff+width : dstOff+width]
+		x := 0
+		for ; x+8 <= width; x += 8 {
+			dstLine[x+0] = uint16(srcLine[x+0])
+			dstLine[x+1] = uint16(srcLine[x+1])
+			dstLine[x+2] = uint16(srcLine[x+2])
+			dstLine[x+3] = uint16(srcLine[x+3])
+			dstLine[x+4] = uint16(srcLine[x+4])
+			dstLine[x+5] = uint16(srcLine[x+5])
+			dstLine[x+6] = uint16(srcLine[x+6])
+			dstLine[x+7] = uint16(srcLine[x+7])
+		}
+		for ; x < width; x++ {
+			dstLine[x] = uint16(srcLine[x])
+		}
+		srcOff += srcStride
+		dstOff += dstStride
 	}
 }
 
