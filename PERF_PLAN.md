@@ -147,9 +147,10 @@ NEON DCT32/DCT64 col+row kernels, dav1d itx16.S shape; DCT64 col went 23.7x,
 e2e single-worker decode ~10-13% on the profile clip. Reusable generator +
 constraints documented in `tools/itxgen/` — use it for the REMAINING transform
 kernels: ADST/flip-ADST columns, identity scaling, and as the template for the
-amd64 AVX2 wave. Also: the OLD DCT64 col2/row2 kernels overflow Go's NOSPLIT
-stack headroom (~2KB manual frames; root cause of the May fuzz corruption) —
-they are unbound but still in-tree; removing/fixing them is a small real fix.
+amd64 AVX2 wave. Also: the OLD DCT64 col2/row2 kernels
+(NOSPLIT stack-headroom overflow, root cause of the May fuzz corruption) were
+REMOVED in 539e1e2a — do not resurrect them; the pure-Go pair path is the
+four-lane kernels' tail fallback.
 
 **D2. Loopfilter (~8% incl. plan sweep — was next after D1; re-profile to
 confirm).** `filter14VertNEON`+`filter14Edge` (4.6% pre-wave-3) process one
