@@ -207,7 +207,29 @@ flat. The IFS rate-table/syntax infrastructure (`tile.InterpFilterRateTables`,
 syntax decisions. (b) MD subpel level 6 measured RED and is PINNED DEAD — see
 the dead-end list below.
 
-**E1. NEAREST_NEAREST compound at MDS0 (new top lever).** SVT p12 light-PD1
+**E1. THREADING MODEL: intra-tile wavefront (the realC endgame — quality AND
+speed).** Measured 2026-07-02 (realC, median-of-3, idle; CPU total ~3.05s at
+EVERY point — threading is CPU-free, tiles are the quality tax):
+tiles=1: 19.3 fps 45.291 dB @5.141M | tiles=4: 63.2 fps 45.217 @5.108M |
+tiles=8: 82.5 fps 45.072 @5.061M | tiles=32 (default): 103.5 fps 44.714
+@5.014M | SVT p12: 128.2 fps 44.767 @4.875M. At ≤8 tiles goav1 BEATS SVT
+quality outright; the 32-column default trades ~0.5 dB for the last ~20 fps.
+Also: single-thread CPU/frame is goav1 51.7ms vs SVT 9.9ms (5.2x work volume
+— see E8). THE FIX: parallelize INSIDE one tile like SVT (pic segments /
+wavefront): SB-row wavefront for search+recon (the DECODER already has this
+machinery — internal/av1/threading wavefront recon, ~3.2x on one tile) plus
+deferred entropy write via a token buffer (libaom's tokenization split:
+av1/encoder/tokenize.c collects per-SB tokens, pack_bs writes serially after;
+SVT equivalent: MD/EC stage split in Source/Lib/Codec — cite whichever is
+ported). Target: tiles=1-2 quality (≥45.2 dB) at ≥100 fps wall. This is a
+multi-slice architecture project; slice it: (a) token-buffer split for the
+P-frame coeff writer so entropy write decouples from search/recon, (b) SB-row
+wavefront over search+recon with the decoder pool, (c) retune tile default to
+1-2 columns. Interim knob available NOW: SetMaxThreads/SetTileColumns —
+qualitybench -goav1-max-threads 8 gives +0.36 dB at 82.5 fps if a deployment
+prefers quality over peak fps.
+
+**E2. NEAREST_NEAREST compound at MDS0.** SVT p12 light-PD1
 DOES inject compound at MDS0: `inject_mvp_candidates_ii_light_pd1`
 (Source/Lib/Codec — the rf[1] != NONE arm) prices NEAREST_NEARESTMV compound
 (syntax-cheap, zero MV bits) against the single-ref set. Extend
@@ -219,7 +241,7 @@ pin is about the OLD golden-gated compound path (`compoundGoldenLikely` never
 arms); MDS0-priced NEAREST_NEAREST is the upstream-grounded replacement and is
 untested. If it lands, consider deleting the dead golden-gated path.
 
-**E2. NSQ (non-square) partition search.** SVT p12 runs `nsq_geom_level=4` /
+**E3. NSQ (non-square) partition search.** SVT p12 runs `nsq_geom_level=4` /
 `nsq_search_level=19` — cheap H/V rectangle candidates inside the MD loop with
 real rate costing. goav1 has rect-32 partitions landed but SAD-gated
 conservatively (measured neutral). Re-drive rect candidates through the MDS0
@@ -227,26 +249,34 @@ machinery (`internal/av1/encoder/pframe_mds0.go` — fully predict + RDCOST, sam
 frozen rate tables). Upstream: `Source/Lib/Codec/` nsq search config in
 `signal_derivation_*` + the md_stage candidate injection for H/V shapes.
 
-**E3. Depth removal / block-based depth refinement.** SVT p12: `depth_removal
+**E4. Depth removal / block-based depth refinement.** SVT p12: `depth_removal
 _level=5`, `block_based_depth_refinement_level=10` — prunes partition depths
 per SB from ME distortions before MD. Port to cut decide()-tree work; spend the
 recovered time on E1 breadth. This is a speed lever that buys quality budget.
 
-**E4. dist_based_ref_pruning (base 3 / leaf 6).** Prunes reference candidates
+**E5. dist_based_ref_pruning (base 3 / leaf 6).** Prunes reference candidates
 by ME distortion ratios. Cheap, upstream-exact, frees cycles on leaves.
 
-**E5. Full lpd1 detector for leaves.** The current leaf cap is the "moderate
+**E6. Full lpd1 detector for leaves.** The current leaf cap is the "moderate
 distortion band" approximation of SVT's `lpd1_detector_post_pd0`. Port the
 real detector (dist/rate/MV-length thresholds per SB) — closes the last
 structural difference in leaf effort steering.
 
-**E6. Screen rate overshoot (+17% over target).** SVT lands 1.363M on a 1.33M
+**E7. Screen rate overshoot (+17% over target).** SVT lands 1.363M on a 1.33M
 target; we land 1.561M. Investigate the CBR loop's behavior at the q floor
 (SVT undershoots when floored). Port SVT's rate-control clamping for floored
 frames rather than tuning our controller (controller knob experiments are all
 pinned dead: PI terms, step clamps, refinement schedules).
 
-**E7. CPU efficiency program (background).** goav1 wall wins ride on ~5x
+**E8. CPU efficiency program (5.2x single-thread work volume vs SVT).**
+Single-thread realC: goav1 51.7ms CPU/frame vs SVT 9.9ms (measure with
+qualitybench -goav1-max-threads 1 -gomaxprocs 1 -svt-lp 1, same run). pprof
+NOTE: pthread_cond_signal/wait percentages in multithreaded profiles are
+blocked-thread sampling artifacts — rusage cpu_total is identical at 1 and 16
+threads; profile CPU work single-threaded (GOMAXPROCS=1). Real work profile
+(realC): encodePBlock 41% cum (convolve2D8I8MM ~13% = subpel/recon predictions,
+finishInterTXB 8.6%), LF sweep 8.4%. Reduce work via E4/E5/E6 ports first;
+then kernel-level NEON on the residual scalar spots. goav1 wall wins ride on ~5x
 parallelism vs SVT's ~1.6x (3x more CPU burned). If wall targets are met,
 reduce CPU: encoder-side NEON for the remaining scalar hot spots (profile
 `BenchmarkVideoEncoderRealC1080p` with `-cpuprofile`), e.g. staging transposes,
