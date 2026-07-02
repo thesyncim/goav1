@@ -36,31 +36,31 @@ mechanically; do not improvise.
 8. A lever that measures red gets **fully reverted** and its numbers recorded in
    the report/memory. Reverted work is not wasted — it is a pin against retries.
 
-## 1. Current standings (measured clean 2026-07-02, HEAD 1820a62e)
+## 1. Current standings (measured clean 2026-07-02 evening, HEAD 2ed2ad47 + plan sync)
 
 Decoder, single-thread, internal corpus (18 clips, 48 frames each):
 
 | decoder | total ms | vs goav1 |
 |---|---|---|
-| goav1 | 2968 | 1.00x |
-| aomdec | 1085 | 2.73x faster |
-| dav1d | 653 | **4.54x faster** ← the gap |
+| goav1 | 2833 | 1.00x |
+| aomdec | 1095 | 2.59x faster |
+| dav1d | 652 | **4.34x faster** ← the gap |
 
-(Session start was 5.12x; waves 1-2 recovered ~11.6% wall.)
+(Session start was 5.12x; waves 1-3 recovered ~15.7% wall.)
 
 Encoder vs SVT-AV1 v4.0.1 preset 12 LD-CBR, matched rates, goav1 `-layers 2`:
 
 | clip | goav1 | SVT | verdict |
 |---|---|---|---|
-| realC 30fps@5M | 44.500 dB @ 5.013M, 109.1 fps | 44.767 @ 4.875M, 100.6 fps | speed ✓, quality −0.27 dB rate-adj ← the gap |
-| realA 30fps@5M | 46.546 @ 5.165M, 143 fps | 45.321 @ 4.866M, 123 fps | win both |
-| realB 30fps@5M | 46.802 @ 5.163M, 145 fps | (not re-run) | win |
-| screen 60fps@1.33M | 50.763 @ 1.561M, 246 fps | 39.121 @ 1.363M, 105 fps | win big; watch +17% rate overshoot |
+| realC 30fps@5M | 44.714 dB @ 5.014M, 105.9 fps | 44.767 @ 4.875M, 100.6 fps | speed ✓, quality **~−0.05 dB rate-adj** — nearly closed |
+| realA 30fps@5M | 46.673 @ 5.169M, 143 fps | 45.321 @ 4.866M, 123 fps | win both |
+| realB 30fps@5M | 46.985 @ 5.174M, 140 fps | (not re-run) | win |
+| screen 60fps@1.33M | 50.767 @ 1.561M, 234 fps | 39.121 @ 1.363M, 105 fps | win big; watch +17% rate overshoot |
 
 **Definition of done:** decoder — goav1 ≥ dav1d single-thread on the corpus
 aggregate (milestones: 4.0x → 3.0x → 2.0x → 1.0x). Encoder — realC PSNR ≥ SVT
-at matched rate with wall fps ≥ SVT on all four clips (realA/B/screen already
-there; realC needs +0.27 dB without losing its 8% speed margin).
+at matched rate with wall fps ≥ SVT on all four clips (realA/B/screen there;
+realC needs the last ~0.05 dB without losing its ~5% speed margin).
 
 ## 2. Before you start: environment
 
@@ -138,26 +138,26 @@ Then idle-machine measurement (§3), then commit (explicit paths), then push.
 
 ## 5. Decoder work queue (priority order)
 
-Profile shares are % of single-worker decode CPU on p720_inter_q32 after wave 2.
+Profile shares are % of single-worker decode CPU on p720_inter_q32 after wave
+2. **Wave 3 landed since — RE-PROFILE FIRST (§3) before picking an item; the
+distribution has shifted.**
 
-**D0. Collect wave-3 in-flight results first.** Two agents were dispatched
-2026-07-02 evening: (a) transform itx columns, (b) encoder IFS/subpel (§6 E0).
-Check `git log` / `.claude/worktrees/` for their commits before starting
-anything below — items D1/D2 may already be done or partially done.
+**D1. ~~Inverse-transform columns~~ DONE (wave 3, commit 2ed2ad47).** Four-lane
+NEON DCT32/DCT64 col+row kernels, dav1d itx16.S shape; DCT64 col went 23.7x,
+e2e single-worker decode ~10-13% on the profile clip. Reusable generator +
+constraints documented in `tools/itxgen/` — use it for the REMAINING transform
+kernels: ADST/flip-ADST columns, identity scaling, and as the template for the
+amd64 AVX2 wave. Also: the OLD DCT64 col2/row2 kernels overflow Go's NOSPLIT
+stack headroom (~2KB manual frames; root cause of the May fuzz corruption) —
+they are unbound but still in-tree; removing/fixing them is a small real fix.
 
-**D1. Inverse-transform columns (~6%).** `inverseDCT32Col2NEON` (3.7%, only 2
-cols/pass) and `inverseDCT64` (scalar, 2.2%). Port dav1d `src/arm/64/itx.S` /
-`src/itx_tmpl.c` column shape: ≥4 columns per vector pass, NEON DCT64. Must
-match goav1's `clipRange`/`roundShift` semantics bit-exactly. Differential
-tests need extremal clamp-triggering coefficients, not just random. [wave-3
-agent may have landed this — see D0]
-
-**D2. Loopfilter (~8% incl. plan sweep).** `filter14VertNEON`+`filter14Edge`
-(4.6%) process one edge per call; dav1d `src/arm/64/loopfilter.S` does 4 edges/
-16 pixels with early-skip masks. Also `frameWorkAppendLoopFilterLumaEdgeSegments`
-(3.5% cum) is scalar segment building — dav1d builds lf masks per superblock
-(`src/lf_mask.c`). Only restructure along dav1d's actual shape. [wave-3 agent
-may have scouted this — see D0]
+**D2. Loopfilter (~8% incl. plan sweep — was next after D1; re-profile to
+confirm).** `filter14VertNEON`+`filter14Edge` (4.6% pre-wave-3) process one
+edge per call; dav1d `src/arm/64/loopfilter.S` does 4 edges/16 pixels with
+early-skip masks. Also `frameWorkAppendLoopFilterLumaEdgeSegments` (3.5% cum)
+is scalar segment building — dav1d builds lf masks per superblock
+(`src/lf_mask.c`). Only restructure along dav1d's actual shape. Wave-3 agent
+did NOT start this — it is a clean target.
 
 **D3. Wiener restoration (~3.9%).** `wienerHorizontalNEONAsm` +
 `wienerVerticalNEONAsm` exist but compare their structure against dav1d
@@ -187,12 +187,29 @@ pool signaling — not actionable.
 
 ## 6. Encoder work queue (priority order)
 
-**E0. Collect wave-3 in-flight results first** (see D0): (a) interpolation-
-filter search (SWITCHABLE) on base frames — SVT p12 keeps
-`interpolation_search_level=4` for `is_base`; (b) MD subpel level 6 on T0
-(quarter-pel max, SUBPEL_TREE_PRUNED, 1 iter, 4-tap, full-pel bias 110).
+**E0. RESOLVED (wave 3).** (a) Interpolation-filter search LANDED (commit
+07f500a9): base frames signal SWITCHABLE and run the 3-combo IFS at MDS3 with
+the Laplacian `model_rd_from_sse` model and frozen `switchable_interp_fac
+_bitss` rates (SVT enc_inter_prediction.c), plus libaom's `fix_interp_filter`
+collapse with one-frame lag; realC +0.21 dB, realA +0.13, realB +0.18, screen
+flat. The IFS rate-table/syntax infrastructure (`tile.InterpFilterRateTables`,
+`tile.WriteInterpFilters`, `pframe_ifs.go`) is reusable for other per-block
+syntax decisions. (b) MD subpel level 6 measured RED and is PINNED DEAD — see
+the dead-end list below.
 
-**E1. NSQ (non-square) partition search.** SVT p12 runs `nsq_geom_level=4` /
+**E1. NEAREST_NEAREST compound at MDS0 (new top lever).** SVT p12 light-PD1
+DOES inject compound at MDS0: `inject_mvp_candidates_ii_light_pd1`
+(Source/Lib/Codec — the rf[1] != NONE arm) prices NEAREST_NEARESTMV compound
+(syntax-cheap, zero MV bits) against the single-ref set. Extend
+`internal/av1/encoder/pframe_mds0.go` to inject and price it with the
+already-frozen rate tables; prediction via the decoder-exact CONV_BUF path
+(`PredictInterCompoundRefToConvBufWithScratch` + `BlendCompoundAvg` — now
+NEON). NOTE this does NOT contradict the "compound dead on realC" pin: that
+pin is about the OLD golden-gated compound path (`compoundGoldenLikely` never
+arms); MDS0-priced NEAREST_NEAREST is the upstream-grounded replacement and is
+untested. If it lands, consider deleting the dead golden-gated path.
+
+**E2. NSQ (non-square) partition search.** SVT p12 runs `nsq_geom_level=4` /
 `nsq_search_level=19` — cheap H/V rectangle candidates inside the MD loop with
 real rate costing. goav1 has rect-32 partitions landed but SAD-gated
 conservatively (measured neutral). Re-drive rect candidates through the MDS0
@@ -200,39 +217,44 @@ machinery (`internal/av1/encoder/pframe_mds0.go` — fully predict + RDCOST, sam
 frozen rate tables). Upstream: `Source/Lib/Codec/` nsq search config in
 `signal_derivation_*` + the md_stage candidate injection for H/V shapes.
 
-**E2. Depth removal / block-based depth refinement.** SVT p12: `depth_removal
+**E3. Depth removal / block-based depth refinement.** SVT p12: `depth_removal
 _level=5`, `block_based_depth_refinement_level=10` — prunes partition depths
 per SB from ME distortions before MD. Port to cut decide()-tree work; spend the
 recovered time on E1 breadth. This is a speed lever that buys quality budget.
 
-**E3. dist_based_ref_pruning (base 3 / leaf 6).** Prunes reference candidates
+**E4. dist_based_ref_pruning (base 3 / leaf 6).** Prunes reference candidates
 by ME distortion ratios. Cheap, upstream-exact, frees cycles on leaves.
 
-**E4. Full lpd1 detector for leaves.** The current leaf cap is the "moderate
+**E5. Full lpd1 detector for leaves.** The current leaf cap is the "moderate
 distortion band" approximation of SVT's `lpd1_detector_post_pd0`. Port the
 real detector (dist/rate/MV-length thresholds per SB) — closes the last
 structural difference in leaf effort steering.
 
-**E5. Screen rate overshoot (+17% over target).** SVT lands 1.363M on a 1.33M
+**E6. Screen rate overshoot (+17% over target).** SVT lands 1.363M on a 1.33M
 target; we land 1.561M. Investigate the CBR loop's behavior at the q floor
 (SVT undershoots when floored). Port SVT's rate-control clamping for floored
 frames rather than tuning our controller (controller knob experiments are all
 pinned dead: PI terms, step clamps, refinement schedules).
 
-**E6. CPU efficiency program (background).** goav1 wall wins ride on ~5x
+**E7. CPU efficiency program (background).** goav1 wall wins ride on ~5x
 parallelism vs SVT's ~1.6x (3x more CPU burned). If wall targets are met,
 reduce CPU: encoder-side NEON for the remaining scalar hot spots (profile
 `BenchmarkVideoEncoderRealC1080p` with `-cpuprofile`), e.g. staging transposes,
 SATD if E-levers introduce it.
 
-**Pinned encoder dead-ends (do not retry):** compound prediction on realC
-(frame gate never arms; libaom RT speed≥9 disables compound too); eighth-pel
-MVs with current subpel; SMOOTH family at 8x8; 32-tier exact-rate merges
-without chroma+CDF calibration; frame-wide SHARP/SMOOTH; PI/step-clamp/tier-
-split controller variants; golden qindex refresh rules (measured red — capture
-bad anchors during post-key convergence); SSE instead of variance distortion in
-MDS0 (realC −0.08); T0-only MDS0 scoping (screen +4.4% rate); wall-clock
-feedback signals (banned, irreproducible).
+**Pinned encoder dead-ends (do not retry):** GOLDEN-GATED compound path on
+realC (`compoundGoldenLikely` never arms; libaom RT speed≥9 disables compound
+too — but see E1: MDS0-priced NEAREST_NEAREST is a different, upstream-
+grounded mechanism and is NOT pinned); SVT pruned-subpel level 6/8 on T0
+(faithful port of `svt_av1_find_best_sub_pixel_tree_pruned` + level-6 controls
+measured realC −0.20 dB rate-adj; even cost-model-only −0.03 — our coarser
+full-pel ME needs the full first+second-level probe schedule; wave-3 numbers
+in memory); eighth-pel MVs with current subpel; SMOOTH family at 8x8; 32-tier
+exact-rate merges without chroma+CDF calibration; frame-wide SHARP/SMOOTH;
+PI/step-clamp/tier-split controller variants; golden qindex refresh rules
+(measured red — capture bad anchors during post-key convergence); SSE instead
+of variance distortion in MDS0 (realC −0.08); T0-only MDS0 scoping (screen
++4.4% rate); wall-clock feedback signals (banned, irreproducible).
 
 ## 7. Reporting and memory
 
