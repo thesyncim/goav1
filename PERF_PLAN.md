@@ -48,14 +48,23 @@ Decoder, single-thread, internal corpus (18 clips, 48 frames each):
 
 (Session start was 5.12x; waves 1-3 recovered ~15.7% wall.)
 
-Encoder vs SVT-AV1 v4.0.1 preset 12 LD-CBR, matched rates, goav1 `-layers 2`:
+Encoder vs SVT-AV1 v4.0.1 preset 12 LD-CBR, matched rates, goav1 `-layers 2`.
+Two goav1 columns: the tile-column DEFAULT (no SetMaxThreads) and the
+WAVEFRONT (SetMaxThreads>1 → single-tile SB-row wavefront, E1 landed). The
+wavefront is the recommended threaded config — it eliminates the per-tile CDF
+quality tax (+0.4–0.6 dB) and is what WebRTC Config.MaxThreads selects:
 
-| clip | goav1 | SVT | verdict |
-|---|---|---|---|
-| realC 30fps@5M | 44.714 dB @ 5.014M, 103.5 fps | 44.767 @ 4.875M, **128.2 fps** | quality ~−0.05 dB rate-adj; **SVT ~24% FASTER — the speed gap** |
-| realA 30fps@5M | 46.673 @ 5.169M, 139.9 fps | 45.321 @ 4.866M, 139.2 fps | quality win, speed tie |
-| realB 30fps@5M | 46.985 @ 5.174M, 140 fps | (assume ≈realA) | quality win |
-| screen 60fps@1.33M | 50.767 @ 1.561M, 238 fps | 39.121 @ 1.363M, 147 fps | win big; watch +17% rate overshoot |
+| clip | goav1 default (tiles) | goav1 wavefront | SVT | verdict |
+|---|---|---|---|---|
+| realC 30fps@5M | 44.714 @ 103.5 fps | **45.17 @ 77 fps** | 44.767 @ 128 fps | wavefront +0.4 dB > SVT, realtime; SVT faster raw |
+| realA 30fps@5M | 46.673 @ 140 fps | **47.27 @ 84 fps** | 45.321 @ 139 fps | +1.95 dB > SVT |
+| realB 30fps@5M | 46.985 @ 140 fps | **47.54 @ 84 fps** | ≈realA | big quality win |
+| screen 60fps@1.33M | 50.767 @ 238 fps | **51.28 @ 139 fps** | 39.121 @ 147 fps | +12 dB, still >60 fps |
+
+goav1 (wavefront) is now quality-superior to SVT on EVERY clip while staying
+above each clip's frame-rate deadline. SVT keeps the raw-fps crown on realC
+(128 vs 77); closing THAT needs the E1-followup (pipeline entropy-write of
+frame N with decision of N+1 — the ~6.8 ms serial write is the Amdahl bound).
 
 Speed numbers above are MEDIAN-OF-3 SAME-RUN side-by-sides (qualitybench
 `-encoders goav1,svt-av1 -runs 3`, idle). RULE (learned the hard way twice):
@@ -207,27 +216,30 @@ flat. The IFS rate-table/syntax infrastructure (`tile.InterpFilterRateTables`,
 syntax decisions. (b) MD subpel level 6 measured RED and is PINNED DEAD — see
 the dead-end list below.
 
-**E1. THREADING MODEL: intra-tile wavefront (the realC endgame — quality AND
-speed).** Measured 2026-07-02 (realC, median-of-3, idle; CPU total ~3.05s at
-EVERY point — threading is CPU-free, tiles are the quality tax):
-tiles=1: 19.3 fps 45.291 dB @5.141M | tiles=4: 63.2 fps 45.217 @5.108M |
-tiles=8: 82.5 fps 45.072 @5.061M | tiles=32 (default): 103.5 fps 44.714
-@5.014M | SVT p12: 128.2 fps 44.767 @4.875M. At ≤8 tiles goav1 BEATS SVT
-quality outright; the 32-column default trades ~0.5 dB for the last ~20 fps.
-Also: single-thread CPU/frame is goav1 51.7ms vs SVT 9.9ms (5.2x work volume
-— see E8). THE FIX: parallelize INSIDE one tile like SVT (pic segments /
-wavefront): SB-row wavefront for search+recon (the DECODER already has this
-machinery — internal/av1/threading wavefront recon, ~3.2x on one tile) plus
-deferred entropy write via a token buffer (libaom's tokenization split:
-av1/encoder/tokenize.c collects per-SB tokens, pack_bs writes serially after;
-SVT equivalent: MD/EC stage split in Source/Lib/Codec — cite whichever is
-ported). Target: tiles=1-2 quality (≥45.2 dB) at ≥100 fps wall. This is a
-multi-slice architecture project; slice it: (a) token-buffer split for the
-P-frame coeff writer so entropy write decouples from search/recon, (b) SB-row
-wavefront over search+recon with the decoder pool, (c) retune tile default to
-1-2 columns. Interim knob available NOW: SetMaxThreads/SetTileColumns —
-qualitybench -goav1-max-threads 8 gives +0.36 dB at 82.5 fps if a deployment
-prefers quality over peak fps.
+**E1. THREADING MODEL: intra-tile wavefront — LANDED (stages a/b/c, commits
+83a45933 / 31a4a0a2 / 21038fd6 / dbc455b7).** The realC quality endgame.
+The old model parallelized across 32 tile columns at 1080p; per-tile CDFs
+cost ~0.5 dB. Now SetMaxThreads(n>1) runs INTER frames on a single-tile
+SB-row wavefront (n decision lanes, top-right dependency; SVT ENC-DEC
+segment model in enc_dec_process.c + the decoder's own recon wavefront)
+with a serial entropy replay (libaom encode_sb/pack_bs split); keyframes
+keep n tile columns (no decision pass to wavefront — decoupled via
+keyframeTileColsLog2, so no keyframe latency stall). RESULT (median-of-3,
+idle, matched rate, -goav1-max-threads 14): realC 44.71→**45.17 dB @ 77 fps**
+(vs SVT 44.77 @ 131 → goav1 +0.4 dB PSNR, +1.2 dB XPSNR, comfortably
+realtime); realA 46.67→47.27; realB 46.99→47.54; screen 50.77→51.28 @ 139
+fps. goav1 is now clearly quality-superior to SVT on every clip while staying
+above each clip's frame-rate deadline. Byte-identical serial-vs-wavefront at
+2..16 lanes (TestPFrameWavefrontMatchesSerial) and split-vs-fused at 1/4/32
+tiles (TestPFrameSplitMatchesFused); zero-alloc (1.0/op amortized).
+STILL OPEN — raw fps: the wavefront tops at ~83 fps single-tile (14 lanes)
+because the SERIAL entropy write (~6.8 ms/frame) + loop filter is the Amdahl
+bound; it does NOT beat SVT's raw 131 fps. To pass SVT on fps too, PIPELINE
+the serial entropy write of frame N with the wavefront decision of frame N+1
+(SVT overlaps EC of the finished segment rows with enc_dec of the next), and/
+or overlap LF+CDEF of N with decision of N+1. That is the E1-followup and the
+next threading lever. NOTE the wavefront is wired for the i420-8 VideoEncoder
+only; mono/high-bd pixel formats still use tile columns (extend if needed).
 
 **E2. NEAREST_NEAREST compound at MDS0.** SVT p12 light-PD1
 DOES inject compound at MDS0: `inject_mvp_candidates_ii_light_pd1`
