@@ -2221,7 +2221,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 
 	// Reference selection: when LAST left a poor match, probe the GOLDEN
 	// anchor; occluded-then-revealed content predicts from the older anchor
-	// when the previous frame cannot. Compound stays limited to 8x8 leaves.
+	// when the previous frame cannot. Compound covers 8x8 and 16x16 leaves,
+	// which get a true golden motion search; larger blocks keep the cheap
+	// zero-motion anchor probe.
 	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
 	refPlanes := ref
 	compound := false
@@ -2235,19 +2237,26 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		lastMV, lastSAD := mv, fullSAD
 		var gmv motion.Vector
 		gsad := 1 << 30
-		if bw == 8 {
-			gdx, gdy, s := fullPelDiamondSearch(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8)
+		compoundCapable := bw == bh && bw <= 16
+		if compoundCapable {
+			gdx, gdy, s := fullPelDiamondSearch(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw)
 			gmv, gsad = motion.Vector{Row: int16(gdy * 8), Col: int16(gdx * 8)}, s
-			if st.allowSubpelRefinement() && gsad > 8*8*2 {
-				gmv, gsad = st.subpelRefineWithStop(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, gmv, gsad, st.realtimeSubpelStopForBlock(src, lumaPX, lumaPY, 8))
+			if st.allowSubpelRefinement() && gsad > bw*bh*2 {
+				gmv, gsad = st.subpelRefineWithStop(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, gmv, gsad, st.realtimeSubpelStopForBlock(src, lumaPX, lumaPY, bw))
 			}
 		} else {
 			base := lumaPY*src.YStride + lumaPX
 			gsad = sadRectBlock(src.Y, golden.Y, base, base, src.YStride, bw, bh, lastSAD)
 		}
-		if bw == 8 && referenceMode == parser.ReferenceModeSelect && gsad+32 >= lastSAD && gsad <= lastSAD+8*8*4 {
-			if err := predictCompoundInto(st.sadScratch[:64], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, 8, 8, lastMV, gmv, false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err == nil {
-				compoundSAD := sad8x8Dual(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, st.sadScratch[:64], 8)
+		if compoundCapable && referenceMode == parser.ReferenceModeSelect && gsad+32 >= lastSAD && gsad <= lastSAD+bw*bh*4 {
+			if err := predictCompoundInto(st.sadScratch[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, lastMV, gmv, false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err == nil {
+				srcBlock := src.Y[lumaPY*src.YStride+lumaPX:]
+				var compoundSAD int
+				if bw == 8 {
+					compoundSAD = sad8x8Dual(srcBlock, src.YStride, st.sadScratch[:64], 8)
+				} else {
+					compoundSAD = sad16x16Dual(srcBlock, src.YStride, st.sadScratch[:256], 16)
+				}
 				compoundBias := 64 + 12*st.sadPerBit
 				if compoundSAD+compoundBias < fullSAD {
 					compound = true
