@@ -597,6 +597,13 @@ type lossyEncodeState struct {
 	rdRcode   int64
 	sadPerBit int
 
+	// cntZeroMV accumulates the MI (4x4) area of inter blocks predicting
+	// from LAST with a sub-pixel-magnitude vector, exactly as libaom's
+	// update_state() counts cnt_zeromv (av1/encoder/encodeframe_utils.c).
+	// Reset per tile, summed across tiles after every inter frame into the
+	// avg_frame_low_motion statistic driving adaptive golden refresh.
+	cntZeroMV int
+
 	// prober hoists the subpel refinement's geometry validation per block;
 	// its convolve scratch is reused across blocks.
 	prober motion.LumaSubpelProber

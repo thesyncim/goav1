@@ -1670,6 +1670,7 @@ func (pc *pframeCoder) encodeMonochromeTileWithOptions(src SourceFrameMono, ref 
 }
 
 func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, qIndex uint8, prev *frameCDFs, referenceMode parser.ReferenceMode, forceIntegerMV bool, allowScreenContentTools bool, color parser.ColorConfig, miColStart, miColEnd uint16) ([]byte, error) {
+	pc.st.cntZeroMV = 0
 	if qIndex == 0 {
 		return pc.encodeLosslessIntraInterTile(src, recon, prev, forceIntegerMV, allowScreenContentTools, color, miColStart, miColEnd)
 	}
@@ -2574,6 +2575,16 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		motionResult.MV = compoundMV
 	} else {
 		motionResult.MV[0] = mv
+	}
+	// Count zero motion exactly as libaom's update_state()
+	// (av1/encoder/encodeframe_utils.c): inter blocks predicting from LAST
+	// whose vector is under one pixel accumulate their MI area, feeding the
+	// avg_frame_low_motion statistic behind adaptive golden refresh.
+	if refs.Ref[0] == tile.ReferenceFrameLast {
+		zmv := motionResult.MV[0]
+		if zmv.Row > -8 && zmv.Row < 8 && zmv.Col > -8 && zmv.Col < 8 {
+			st.cntZeroMV += int(block.VisibleW4) * int(block.VisibleH4)
+		}
 	}
 	if err := tile.WriteInterMotion(st.w, &st.mvCDFs, tile.InterMotionRequest{
 		References:   refs,

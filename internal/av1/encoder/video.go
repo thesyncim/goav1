@@ -122,10 +122,14 @@ type VideoEncoder struct {
 
 	// Golden anchor: slot 1 holds an older high-quality reference refreshed
 	// every goldenEvery base-layer frames (0 disables block-level use). The
-	// encoder keeps its own copy for motion search.
+	// encoder keeps its own copy for motion search. avgFrameLowMotion is
+	// libaom's rc.avg_frame_low_motion (percent of MI units coded as
+	// near-zero-motion LAST blocks, EMA-smoothed); low values pull golden
+	// refreshes forward per the one-pass realtime golden update.
 	golden            SourceFrame420
 	goldenEvery       int
 	sinceGoldenFresh  int
+	avgFrameLowMotion int
 	sceneCutKeyframes bool
 
 	content                 ContentHint
@@ -1148,6 +1152,21 @@ func (e *VideoEncoder) layerQIndex(temporalID uint8) uint8 {
 	return e.qIndex
 }
 
+// Adaptive golden refresh, ported from libaom's one-pass realtime golden
+// update (av1/encoder/ratectrl.c): set_golden_update drops the interval to 16
+// display frames when avg_frame_low_motion < 40, and
+// av1_adjust_gf_refresh_qp_one_pass_rt forces a refresh on sustained high
+// motion (avg_frame_low_motion < 20) once 10 display frames have passed.
+// (The upstream function's companion QP rules — force-refresh when qindex
+// runs below 87% of the average, defer when above it — measured red on the
+// complex-motion corpus clip and are deliberately not ported.) Frame-count
+// constants are libaom's divided by two because the base layer, whose frames
+// sinceGoldenFresh counts, carries every other display frame at L1T2.
+const (
+	goldenIntervalLowMotion      = 8
+	goldenForceRefreshHighMotion = 5
+)
+
 func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]byte, error) {
 	// The previous frame's filters may still be running; they own the
 	// applier state and the reference planes the tiles are about to read.
@@ -1189,7 +1208,15 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		refresh = 0 // leaf-layer frames are never referenced
 	} else if e.goldenEvery > 0 {
 		e.sinceGoldenFresh++
-		if e.sinceGoldenFresh >= e.goldenEvery {
+		// set_golden_update (libaom av1/encoder/ratectrl.c): content whose
+		// avg_frame_low_motion runs under 40 shortens the golden interval to
+		// 16 frames (8 base-layer frames).
+		interval := e.goldenEvery
+		if e.avgFrameLowMotion > 0 && e.avgFrameLowMotion < 40 && interval > goldenIntervalLowMotion {
+			interval = goldenIntervalLowMotion
+		}
+		if e.sinceGoldenFresh >= interval ||
+			(e.avgFrameLowMotion > 0 && e.avgFrameLowMotion < 20 && e.sinceGoldenFresh >= goldenForceRefreshHighMotion) {
 			refresh |= 0x02 // this frame becomes the new golden anchor
 			refreshGolden = true
 		}
@@ -1363,6 +1390,24 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			if errs[t] != nil {
 				return nil, fmt.Errorf("encode tile %d: %w", t, errs[t])
 			}
+		}
+	}
+	// update_motion_stat (libaom av1/encoder/encoder.c): the percentage of
+	// MI units coded as near-zero-motion LAST blocks, smoothed 3:1 into
+	// avg_frame_low_motion (seeded with the first observation).
+	if mi := int(src.Width/4) * int(src.Height/4); mi > 0 {
+		cnt := e.pc.st.cntZeroMV
+		if nTiles > 1 {
+			cnt = 0
+			for t := 0; t < nTiles; t++ {
+				cnt += e.tilePCs[t].st.cntZeroMV
+			}
+		}
+		pct := 100 * cnt / mi
+		if e.avgFrameLowMotion == 0 {
+			e.avgFrameLowMotion = pct
+		} else {
+			e.avgFrameLowMotion = (3*e.avgFrameLowMotion + pct) / 4
 		}
 	}
 	filterCDEF := cdefParserParams(header.CDEF)
