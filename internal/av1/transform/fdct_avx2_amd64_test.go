@@ -52,3 +52,28 @@ func TestForwardDCT4x4AVX2MatchesPureGo(t *testing.T) {
 		}
 	}
 }
+
+// TestForwardDCT16x16AVX2MatchesPureGo proves the 16x16 AVX2 kernel bit-exact
+// with the portable reference across random 8-bit residual ranges and
+// strides, called directly like the 8x8 test so Rosetta hosts (CPUID hides
+// AVX2) still exercise the VEX path.
+func TestForwardDCT16x16AVX2MatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(83))
+	const resStride, coeffStride = 37, 19
+	residual := make([]int16, resStride*32)
+	for trial := range 2000 {
+		for i := range residual {
+			residual[i] = int16(rng.Intn(511)) - 255
+		}
+		want := make([]int32, coeffStride*32)
+		got := make([]int32, coeffStride*32)
+		forwardDCT16x16PureGo(want, coeffStride, residual, resStride)
+		forwardDCT16x16AVX2(got, coeffStride, residual, resStride)
+		for i := range want {
+			if want[i] != got[i] {
+				t.Fatalf("trial %d: coeff[%d] avx2 %d want %d", trial, i, got[i], want[i])
+			}
+		}
+	}
+}
+
