@@ -335,7 +335,9 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 		applyLF := lf.apply
 		applyCDEF := cdefApp.apply
 		if tileOpts.stream != nil && tileOpts.stream.singleThread {
-			applyLF = lf.applySerial
+			// singleThread forces a single keyframe tile (SetTileColumns(1)),
+			// so the whole-frame mask build matches the edge-list pass exactly.
+			applyLF = lf.applySerialMasks
 			applyCDEF = cdefApp.applySerial
 		}
 		if err := applyLF(recon, lfParams); err != nil {

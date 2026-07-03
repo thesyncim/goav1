@@ -382,7 +382,7 @@ func (e *VideoEncoder) applyLeafFilters(out *SourceFrame420, lfLevel uint8, cdef
 		LevelU: lfLevel,
 		LevelV: lfLevel,
 	}
-	if err := e.leafLF.applySerial(out, lf); err != nil {
+	if err := e.leafLF.applySerialMasks(out, lf); err != nil {
 		return fmt.Errorf("leaf loop filter apply: %w", err)
 	}
 	if err := e.leafCdefApp.applySerial(out, cdef, &e.leafLF.filtMap); err != nil {

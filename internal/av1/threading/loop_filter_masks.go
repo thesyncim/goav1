@@ -109,10 +109,14 @@ func (s *frameWorkLoopFilterMaskScratch) resetLeft(hasChroma bool) {
 // superblock size in MI log2 (5 for 128px, 4 for 64px). It builds only edge
 // geometry (a nil level cache); resolved levels are filled by the consumer.
 func (h *FrameWorkLoopFilterMasks) build(s *frameWorkLoopFilterMaskScratch, visit *tile.BlockLoopVisit, sbLog2 int, intra bool) {
-	bx := int(visit.Block.MICol)
-	by := int(visit.Block.MIRow)
-	tree := visit.Coefficients.Tree
+	h.buildBlock(s, int(visit.Block.MICol), int(visit.Block.MIRow), visit.Block.Size,
+		visit.Coefficients.Tree, visit.Prefix.SkipTransform, intra, sbLog2)
+}
 
+// buildBlock is the per-block core shared by the decode-time visit-driven build
+// and the record-map-driven BuildFromMap: it ORs one block's deblocking edges
+// into the frame-level masks and advances the carried above/left tx-context.
+func (h *FrameWorkLoopFilterMasks) buildBlock(s *frameWorkLoopFilterMaskScratch, bx, by int, size tile.BlockSize, tree tile.TransformTreeResult, skipTransform, intra bool, sbLog2 int) {
 	sbRow := by >> sbLog2
 	if !s.started || sbRow != s.sbRow {
 		s.resetLeft(h.HasChroma)
@@ -136,7 +140,7 @@ func (h *FrameWorkLoopFilterMasks) build(s *frameWorkLoopFilterMaskScratch, visi
 		// one chroma sample both write the shared chroma edge, and the second
 		// reads the first's just-written class as its "previous" side instead of
 		// the true neighbour -- OR-ing a spurious wider width class into the mask.
-		dims, _ := visit.Block.Size.Dimensions()
+		dims, _ := size.Dimensions()
 		if (int(dims.W4) > ssHor || bx&1 != 0) && (int(dims.H4) > ssVer || by&1 != 0) {
 			auv = s.aUV[bx>>ssHor:]
 			luv = s.lUV[by4>>ssVer:]
@@ -147,13 +151,63 @@ func (h *FrameWorkLoopFilterMasks) build(s *frameWorkLoopFilterMaskScratch, visi
 	var lc lfmask.LevelCache // nil cells: geometry-only build
 	if intra {
 		s.builder.CreateIntra(m, lc, lfmask.Levels{}, bx, by, h.Cols, h.Rows,
-			visit.Block.Size, tree.Y, tree.UV, h.Layout, ay, ly, auv, luv)
+			size, tree.Y, tree.UV, h.Layout, ay, ly, auv, luv)
 		return
 	}
 	skip := 0
-	if visit.Prefix.SkipTransform {
+	if skipTransform {
 		skip = 1
 	}
 	s.builder.CreateInter(m, lc, lfmask.Levels{}, bx, by, h.Cols, h.Rows, skip,
-		visit.Block.Size, tree.Y, tree.Split, tree.UV, h.Layout, ay, ly, auv, luv)
+		size, tree.Y, tree.Split, tree.UV, h.Layout, ay, ly, auv, luv)
+}
+
+// FrameWorkLoopFilterMaskBuildScratch is reusable per-frame state for building
+// the deblocking edge masks from a completed loop-filter record map, for encoder
+// reconstruction paths that fill the map during coding rather than during a
+// decode block walk. It holds the carried above/left tx-context arrays; reuse
+// one across a stream of same-sized frames to keep the build allocation-free.
+type FrameWorkLoopFilterMaskBuildScratch struct {
+	s frameWorkLoopFilterMaskScratch
+}
+
+// BuildFromMap rebuilds h's deblocking edge masks by walking m's block origins
+// in MI-raster order, carrying the above/left tx-context exactly as the decode
+// block walk does. Raster origin order visits every block's above and left
+// neighbours before the block, and the left context is reset once per 128-region
+// row (each MI row owns an independent lY entry indexed by by&31), so it
+// reproduces the decode Z-order masks bit-for-bit for a single tile spanning the
+// whole frame (see build). sbLog2 is the coded superblock size in MI log2 (4 for
+// the encoder's 64px superblocks). Masks are cleared first; the per-4x4 levels
+// are resolved separately by the apply. It is single-tile only: the walk carries
+// context across the full frame width and does not reset at tile-column
+// boundaries.
+func (h *FrameWorkLoopFilterMasks) BuildFromMap(scratch *FrameWorkLoopFilterMaskBuildScratch, m FrameWorkLoopFilterMap, sbLog2 int) error {
+	if !h.Valid() || scratch == nil {
+		return ErrInvalidBatch
+	}
+	if int(m.Stride) != h.Cols || int(m.Rows) != h.Rows {
+		return ErrInvalidBatch
+	}
+	if len(m.Records) < h.Cols*h.Rows {
+		return ErrInvalidBatch
+	}
+	clear(h.Masks)
+	scratch.s.reset(h)
+	stride := int(m.Stride)
+	for by := 0; by < h.Rows; by++ {
+		base := by * stride
+		for bx := 0; bx < h.Cols; bx++ {
+			r := &m.Records[base+bx]
+			if !r.Valid {
+				continue
+			}
+			// Visit each block once, at its top-left origin cell.
+			if int(r.Block.MICol) != bx || int(r.Block.MIRow) != by {
+				continue
+			}
+			h.buildBlock(&scratch.s, bx, by, r.Block.Size, r.TransformTree, r.SkipTransform, r.Intra, sbLog2)
+		}
+	}
+	return nil
 }

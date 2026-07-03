@@ -15,12 +15,20 @@ import (
 
 	"github.com/thesyncim/goav1/internal/av1/decoder"
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/av1/lfmask"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
+
+// encoderLoopFilterSBLog2 is the coded superblock size in MI log2. The encoder
+// always codes 64px superblocks (16 MI, see keyframe.go sbSizeMIB), so the
+// deblocking mask build resets its carried left context every 16 MI rows,
+// matching what the decoder does when it re-reads the encoder's 64px-superblock
+// bitstream.
+const encoderLoopFilterSBLog2 = 4
 
 // loopFilterMaxArea bounds the frame sizes that run the in-loop deblocking
 // pass. The edge planner walks every MI cell per frame, which costs ~12ms at
@@ -98,6 +106,14 @@ type loopFilterApplier struct {
 	filtMap    threading.FrameWorkLoopFilterMap
 	event      decoder.Event
 	bound      bool
+
+	// Deblocking edge bitmasks (dav1d-style), built once per frame from the
+	// completed record map and consumed by the mask-driven apply. Single-tile
+	// only: the raster mask build carries above/left context across the whole
+	// frame width. masksBound tracks whether init sized the grid this stream.
+	masks       threading.FrameWorkLoopFilterMasks
+	maskScratch threading.FrameWorkLoopFilterMaskBuildScratch
+	masksBound  bool
 
 	// Persistent band workers: per-frame goroutine spawns allocate their
 	// closures, so the workers park on a job channel for the applier's
@@ -193,7 +209,7 @@ func (a *loopFilterApplier) init(width, height int) error {
 			FrameSize: parser.FrameSize{CodedWidth: uint32(width), Height: uint32(height)},
 		},
 	}
-	_, _, length, err := batch.LoopFilterMapShape()
+	cols, rows, length, err := batch.LoopFilterMapShape()
 	if err != nil {
 		return err
 	}
@@ -204,6 +220,26 @@ func (a *loopFilterApplier) init(width, height int) error {
 	if err != nil {
 		return err
 	}
+	// Deblocking edge-mask storage (reused across frames): one FilterMask per
+	// 128x128 region plus the frame-wide per-4x4 resolved-level grid.
+	sb128w, sb128h, maskCount := threading.FrameWorkLoopFilterMaskShape(cols, rows)
+	if cap(a.masks.Masks) < maskCount {
+		a.masks.Masks = make([]lfmask.FilterMask, maskCount)
+	}
+	if cap(a.masks.LevelCache) < length {
+		a.masks.LevelCache = make([][4]uint8, length)
+	}
+	a.masks = threading.FrameWorkLoopFilterMasks{
+		Masks:      a.masks.Masks[:maskCount],
+		LevelCache: a.masks.LevelCache[:length],
+		Cols:       cols,
+		Rows:       rows,
+		SB128W:     sb128w,
+		SB128H:     sb128h,
+		Layout:     lfmask.Layout{SSHor: 1, SSVer: 1},
+		HasChroma:  true,
+	}
+	a.masksBound = true
 	a.event = decoder.Event{
 		SequenceHeader: seq,
 		FrameSize:      parser.FrameSize{CodedWidth: uint32(width), Height: uint32(height)},
@@ -239,7 +275,6 @@ func (a *loopFilterApplier) init(width, height int) error {
 	// Per-band scratch: a band plans the blocks originating in its rows,
 	// whose cells extend at most 8 MI rows (a 32px block) past the band end;
 	// 8 edge candidates per cell bounds each band's storage.
-	rows := int(a.filtMap.Rows)
 	bands := lfPlanBands
 	if rows < bands*4 {
 		bands = 1
@@ -417,5 +452,27 @@ func (a *loopFilterApplier) applySerial(recon *SourceFrame420, lf parser.LoopFil
 	}
 	edges := a.edges[:plan.StoredEdges]
 	_, err = a.jobCtx.ApplyPlannedLoopFilterEdges(edges, a.schedule[:plan.StoredEdges])
+	return err
+}
+
+// applySerialMasks is the mask-driven counterpart of applySerial for single-tile
+// reconstructions: it rebuilds the dav1d-style deblocking edge bitmasks from the
+// frame's completed loop-filter record map (in decode order) and applies them,
+// leaving recon byte-identical to the edge-list applySerial. It is faster than
+// the edge-list planner because the mask scan visits only set 4x4 edges instead
+// of walking every MI cell. Single-tile only (see BuildFromMap); all applySerial
+// callers code a single tile spanning the whole frame width.
+func (a *loopFilterApplier) applySerialMasks(recon *SourceFrame420, lf parser.LoopFilterParams) error {
+	if !a.masksBound {
+		return a.applySerial(recon, lf)
+	}
+	active, err := a.bindApplyContext(recon, lf)
+	if err != nil || !active {
+		return err
+	}
+	if err := a.masks.BuildFromMap(&a.maskScratch, a.filtMap, encoderLoopFilterSBLog2); err != nil {
+		return err
+	}
+	_, err = a.jobCtx.ApplyLoopFilterEdgesFromMasks(&a.masks, a.filtMap)
 	return err
 }

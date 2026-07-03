@@ -1242,7 +1242,10 @@ func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cd
 	applyLF := e.lf.apply
 	applyCDEF := e.cdefApp.apply
 	if e.singleThread {
-		applyLF = e.lf.applySerial
+		// Single-threaded inter frames code a single tile (SetMaxThreads(1)
+		// forces SetTileColumns(1)), so the mask build carries context across
+		// the whole frame width and is byte-identical to the edge-list pass.
+		applyLF = e.lf.applySerialMasks
 		applyCDEF = e.cdefApp.applySerial
 	}
 	if err := applyLF(out, lf); err != nil {
