@@ -260,13 +260,31 @@ run-merging contiguous same-(width,level) cells into one kernel call (per-cell
 was SLOWER than edge-list — the merge is what makes it a win, byte-identical
 since kernels filter each perpendicular line independently). GATED to SINGLE-
 TILE (loopFilterMasksUsable); multi-tile falls back to the byte-exact edge-list.
-FOLLOW-UPS: (a) MULTI-TILE — port dav1d tx_lpf_right_edge (lf_apply_tmpl.c
-313-430): store per-tile right/bottom edge context during the concurrent build,
-apply imin(cur,neighbour) to boundary edges → extends the ~15% to multi-tile
-(common at 1080p). (b) ENCODER PATH — the encoder loop-filter (loopfilter_apply
-.go → decoder post-filter, ~24% of encode) does NOT build masks (build is on the
-decode tile-walk); wiring mask-build into the encoder recon path would give the
-encoder the same win. (c) public SetSideData path uses the edge-list fallback.
+FOLLOW-UPS status:
+(a) ENCODER PATH — LANDED (8e7a93cb): FrameWorkLoopFilterMasks.BuildFromMap
+walks the completed record map in MI-raster order (reproduces decode Z-order
+masks for single-tile), encoder applySerialMasks routes the 3 single-tile
+serial callers (P single-thread, L1T2 leaf, single-thread keyframe) to the mask
+apply. Recon byte-identical, full suite green, 0-alloc. −11.8% single-thread
+encode (37.97→33.49ms/op PFramePan1080pSingleThread), LF share 27%→20%. NOTE:
+BenchmarkVideoEncoderRealC1080p (default multi-tile 32-col) does NOT move —
+only the SetMaxThreads single-tile path. NEXT: the wavefront (SetMaxThreads>1)
+path is single-tile but still uses the PARALLEL banded edge-list apply — route
+it to a parallel mask apply → gives the realtime multithread encoder the LF win.
+(b) MULTI-TILE decode — byte-exact port DONE but HELD (branch wip/lf-multitile,
+f98b66bf): dav1d tx_lpf_right_edge tile-boundary fixup (store per-tile right/
+bottom a[]/l[] context, apply imin(cur,neighbour) at boundaries; lf_apply_tmpl.c
+313-430), dryrun-extended 0-FAIL with gate lifted. NOT merged: the per-cell mask
+apply is −8.2% SLOWER than the edge-list on sparse multi-tile 720p (long uniform
+edges favor the edge-list's run-merge; tile boundaries fragment the runs). To
+land: make the mask apply run-length-batch better on sparse content so it beats
+edge-list, THEN flip the single-tile gate (one-liner: return LoopFilterMasks
+.Valid()). (c) public SetSideData path still edge-list fallback.
+LATENT BUG FOUND (encoder agent): TestWebRTCStreamControlCombinationMatrixDecode
+/L1T2 has a data race on e.singleThread — SetConfig writes it while the parked
+background filter worker reads `if e.singleThread`. Reproduces on clean main
+(pre-existing, unrelated to the mask work). Real fix needed (synchronize the
+singleThread read/write or snapshot it per frame).
 PRIOR STATUS (superseded) — LIBRARY + BUILD-WIRING DONE, APPLY-SWAP REMAINS:
 LANDED ON MAIN: internal/av1/lfmask package (9fe8be8c build core + d50c2a09
 scan core) + 1123cf53 differential test (7 cases). PRESERVED on branch
