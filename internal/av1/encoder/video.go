@@ -1227,13 +1227,17 @@ func (e *VideoEncoder) startFilterWorker() {
 	go func() {
 		for range e.filterWork {
 			p := &e.filterParams
-			e.filterDone <- e.applyInLoopFilters(p.out, p.lfLevel, p.cdef)
+			// The background worker only runs for the multithread branch
+			// (dispatched under !e.singleThread), so it always uses the
+			// parallel apply — never re-read e.singleThread here, which
+			// SetConfig may be mutating concurrently.
+			e.filterDone <- e.applyInLoopFilters(p.out, p.lfLevel, p.cdef, false)
 		}
 	}()
 	e.filterStarted = true
 }
 
-func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cdef parser.CDEFParams) error {
+func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cdef parser.CDEFParams, singleThread bool) error {
 	lf := parser.LoopFilterParams{
 		LevelY: [2]uint8{lfLevel, lfLevel},
 		LevelU: lfLevel,
@@ -1241,7 +1245,7 @@ func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cd
 	}
 	applyLF := e.lf.apply
 	applyCDEF := e.cdefApp.apply
-	if e.singleThread {
+	if singleThread {
 		// Single-threaded inter frames code a single tile (SetMaxThreads(1)
 		// forces SetTileColumns(1)), so the mask build carries context across
 		// the whole frame width and is byte-identical to the edge-list pass.
@@ -1613,7 +1617,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		return nil, err
 	}
 	if lfLevel > 0 && e.singleThread {
-		if err := e.applyInLoopFilters(out, lfLevel, filterCDEF); err != nil {
+		if err := e.applyInLoopFilters(out, lfLevel, filterCDEF, true); err != nil {
 			return nil, err
 		}
 	}
