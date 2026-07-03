@@ -77,12 +77,31 @@ not a missing optimization — pin it. SVT's 122 fps at only 1.82x parallelism =
 (pure-Go vs SIMD-C + heavier search), not unexploited overlap. WITHIN the
 low-delay contract the byte-safe wall levers are: (1) speed the serial entropy
 write (7.3 ms, hard — entropy is tight), (2) reduce serial LF tail (loop-filter
-bitmask, in progress), (3) less per-frame work (E-levers ~exhausted). The ONLY
-structural raw-fps lever is TEMPORAL-LAYER FRAME PIPELINING (L1T2 coding order
-base0,leaf1,base2,leaf3…: leaf1 and base2 both depend only on base0 and are
-mutually independent → encode them concurrently; bytes IDENTICAL) — but it
-costs +1 FRAME LATENCY (Encode() returns a frame late), regressing the low-delay
-realtime contract. That is a PRODUCT decision, not a byte-preserving tweak.
+bitmask, in progress), (3) less per-frame work (E-levers ~exhausted). The structural raw-fps lever is TEMPORAL-LAYER FRAME PIPELINING (L1T2 coding
+order base0,leaf1,base2,leaf3…: leaf1 and base2 both depend only on base0 and
+are mutually independent → encode them concurrently; bytes IDENTICAL) at the
+cost of +1 FRAME LATENCY.
+>>> LANDED opt-in (d215040f + 4a843b3d, user: "do whatever SVT does for
+realtime webrtc, make it optional"): SetThroughputPipelining + EncodeThroughput
+/Drain (default OFF = byte+latency identical to today). When ON, the buffered
+L1T2 leaf runs CONCURRENTLY with the following base on a persistent parked
+worker (own leafPC/leafHME/leafLF/leafWavefront), respecting the filter-join,
+HME-pyramid-handoff, private-CDF-snapshot, recon-double-buffer couplings.
+Byte-IDENTICAL to serial (TestVideoEncoderPipelineByteIdentical green under
+-race across all layer/RC/thread/keyframe configs). Overlap fires ONLY where
+provably safe (golden OFF, L1T2, single-tile inter, 8-bit 420, no scene-cut,
+no render pad); everything else falls back to the serial FIFO. Also fixed a
+latent loopfilter/cdef applier teardown race (present on the normal path too).
+THROUGHPUT (same-process serial vs pipelined, 1080p pan): mt=1 20.9→33.3fps
+(1.60x), mt=2 42.5→59.1 (1.39x), mt=4 57.6→74.5 (1.29x), mt=14 73.6→85.2
+(1.16x, ABOVE the ~83fps wavefront Amdahl ceiling). Default fps UNCHANGED.
+Does NOT beat SVT's raw ~131fps at 14-core saturation, but a decisive win at
+low core counts and a real structural gain everywhere. NEXT increments (tree
+green): (1) golden-enabled overlap needs the base compute/commit split
+(defer golden decision past leaf's avgFrameLowMotion update); (2) pipelined
+WebRTC (lag EncodePicture descriptor/metadata by one to match +1 latency);
+(3) public-API forwarding + qualitybench +1-latency pairing for a same-run
+SVT comparison. This is opt-in throughput; the default stays low-delay.
 
 CPU PROFILE (realC, 60 frames, cpu-seconds ≈ energy; commit 99785179 routes
 serial + multi-tile coders back to the FUSED single-pass walk — the split's
@@ -228,6 +247,33 @@ exactness on all 226 vectors), THEN swap the apply path. A partial in-file
 "phase 1" is NOT separable — without the decode-time context it is pure added
 indirection over the already-run-length-optimized path (no speedup, full
 byte-divergence risk). Not a bounded single-session deliverable.
+PORT STATUS (2026-07-03) — LIBRARY + BUILD-WIRING DONE, APPLY-SWAP REMAINS:
+LANDED ON MAIN: internal/av1/lfmask package (9fe8be8c build core + d50c2a09
+scan core) + 1123cf53 differential test (7 cases). PRESERVED on branch
+wip/lf-bitmask-build (a1a29475, NOT merged — regression alone): decode-time
+mask BUILD wired into the tile-residual walk (FrameWorkLoopFilterMasks, a[]/l[]
+carry in decode Z-order, 0-alloc, dryrun-fast byte-exact since masks unconsumed).
+DO NOT merge a1a29475 alone: building masks nobody reads = pure added decode
+work (~0.9ms/1080p frame) with no offset until the apply swap. THE REMAINING
+WORK (the actual win) + 3 real gotchas the wiring agent found:
+1. The differential test (1123cf53) compares UNORDERED per-4x4 cell maps — it
+   does NOT prove the scan reproduces production's exact ORDERED + run-MERGED
+   FrameWorkLoopFilterPostFilterEdge slice. So "emit the identical list" is
+   real unproven work. BETTER PATH: skip the list entirely — apply the loop
+   filter DIRECTLY from masks (dav1d loopfilter_tmpl.c bit-scan), verify the
+   FILTERED PIXEL OUTPUT byte-exact via dryrun-extended. Output parity is the
+   real requirement; the intermediate edge-list ordering is irrelevant if we
+   stop materializing it.
+2. TILE-BOUNDARY RACE: the build ORs into frame-wide per-128-region FilterMask
+   shared across tiles; for 64px SBs a tile boundary splitting a 128-region
+   lets two tile workers OR the same element. Benign while unconsumed; MUST fix
+   (per-tile mask regions or serialized boundary fixup) before Part 2 consumes.
+3. PUBLIC-PATH ASYMMETRY: BindDecoderFrameWorkSideData/SetSideData bypasses the
+   internal runner → never builds masks. The apply consumer must build on the
+   public path too, or keep the scalar builder as fallback there.
+Each apply-swap step gated by the 20-min dryrun-extended. This is the deep grind
+remaining; resume from wip/lf-bitmask-build, go straight to apply-from-masks
+(skip list reproduction), fix the race first.
 
 **D2. Loopfilter (~8% incl. plan sweep — was next after D1; re-profile to
 confirm).** `filter14VertNEON`+`filter14Edge` (4.6% pre-wave-3) process one
