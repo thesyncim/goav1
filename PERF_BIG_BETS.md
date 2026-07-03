@@ -23,12 +23,23 @@ copied from stale baselines. Commands and raw outputs are cited inline.
 > Phase-2 LANDED (a5733686 + 4947003e): 10 encoder SAD AVX2 kernels — the
 > motion-search core (10 of 13 SAD slots were pure-Go on x86): sad{8,16,32}x4 +
 > x4Step4 fan-out, sad32x32, sad16/32 dual-stride, sad8x8 compound-avg. Byte-
-> exact (GOARCH=amd64 differential, PASS). NEXT amd64 slices: (i) the smaller
-> encoder arm64-only kernels (rdstats, metric, hme_quarter, pframe avg/intpro,
-> scale_nearest) → AVX2 [cleaner batch, do next]; (ii) FORWARD DCT16x16/DCT32x32
-> AVX2 — big standalone kernels (NEON fdct32 ~9871 lines), high bug risk, needs
-> a dedicated fast-differential slice, NOT crammed in; (iii) forward ADST/hybrid;
-> (iv) avx2gen register-residency pass, all validated on NATIVE x86.
+> exact (GOARCH=amd64 differential, PASS).
+> Phase-3 LANDED (016e2c7f + 13ed214d): forward DCT16x16 + DCT32x32 AVX2 —
+> encode residual coding (pure-Go on x86 before). Int32 butterfly via memory-
+> bank ping-pong (>16 live values exceed 16 YMM regs); NOT libaom's int16-madd
+> AVX2 (which isn't bit-exact) — matched goav1's exact int32 pure-Go. Byte-exact
+> (GOARCH=amd64 differential 2000/1000 trials, PASS).
+> >>> MILESTONE: the THREE dominant x86 critical-path gaps are now closed —
+> inverse transform (decode), SAD motion-search (encode), forward transform
+> (encode). Each byte-exact; arm64 conformance unaffected throughout.
+> REMAINING amd64 TAIL (lower value / diminishing): forward ADST/flip-ADST/
+> identity hybrids; rectangular DCT shapes (16x8/8x16/32x16/16x32, forward
+> DCT64); the smaller encoder arm64-only kernels (rdstats/metric/hme_quarter/
+> pframe avg-intpro/scale_nearest); an avx2gen/bank register-residency pass to
+> cut load/store traffic. THE KEY OPEN ITEM: NATIVE-x86 CPU-TIME VALIDATION —
+> all amd64 work is byte-exact parity-verified but perf-unvalidated here
+> (Rosetta emulates VEX); run the corpus decode + encode on real x86 to confirm
+> the expected ~1.5-2.5x amd64 decode gain and the encoder motion-search speedup.
 >
 > MEASUREMENT RULE (user, 2026-07-03): judge by CPU TIME (cpu_total core-seconds),
 > not ns/op wall time — wall hides parallelism (goav1 wins encoder fps by
