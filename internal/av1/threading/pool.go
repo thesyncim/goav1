@@ -232,6 +232,10 @@ type FrameWorkBatch struct {
 	// LoopFilterMap receives block-local loop-filter metadata while tile
 	// residuals run. It is optional; callers can still pass a per-request map.
 	LoopFilterMap *FrameWorkLoopFilterMap
+	// LoopFilterMasks receives dav1d-style per-superblock deblocking edge
+	// bitmasks built in decode order during the tile-residual walk. It is
+	// optional and non-nil only when the frame runs the loop filter.
+	LoopFilterMasks *FrameWorkLoopFilterMasks
 	// RestorationFrameBuffers receives decoded loop-restoration unit records
 	// while tile residuals run. It is optional; callers can still pass a
 	// per-request restoration request.

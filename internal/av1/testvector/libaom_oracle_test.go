@@ -14,6 +14,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/decoder"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/ivf"
+	"github.com/thesyncim/goav1/internal/av1/lfmask"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/reconstruct"
 	"github.com/thesyncim/goav1/internal/av1/threading"
@@ -878,6 +879,8 @@ func libaomFrameWorkSideDataScratch(size decoder.FrameWorkSideDataScratchSize) d
 		CDEFIndex:          make([]uint8, libaomMaxInt(size.CDEF, 0)),
 		CDEFRead:           make([]bool, libaomMaxInt(size.CDEF, 0)),
 		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, libaomMaxInt(size.LoopFilterRecords, 0)),
+		LFMasks:            make([]lfmask.FilterMask, libaomMaxInt(size.LoopFilterMasks, 0)),
+		LFLevelCache:       make([][4]uint8, libaomMaxInt(size.LoopFilterLevels, 0)),
 		RestorationRecords: make([]tile.RestorationUnitRecord, libaomMaxInt(size.RestorationRecords, 0)),
 		RestorationAbove:   make([]uint16, libaomMaxInt(size.RestorationBoundary, 0)),
 		RestorationBelow:   make([]uint16, libaomMaxInt(size.RestorationBoundary, 0)),

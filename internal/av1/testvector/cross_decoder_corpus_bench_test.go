@@ -97,6 +97,7 @@ import (
 	cpufeatures "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/ivf"
+	"github.com/thesyncim/goav1/internal/av1/lfmask"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
@@ -709,6 +710,12 @@ func (r *corpusFrameWorkSideDataRunner) ensure(size decoder.FrameWorkSideDataScr
 	}
 	if len(r.scratch.LoopFilterRecords) < size.LoopFilterRecords {
 		r.scratch.LoopFilterRecords = make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords)
+	}
+	if len(r.scratch.LFMasks) < size.LoopFilterMasks {
+		r.scratch.LFMasks = make([]lfmask.FilterMask, size.LoopFilterMasks)
+	}
+	if len(r.scratch.LFLevelCache) < size.LoopFilterLevels {
+		r.scratch.LFLevelCache = make([][4]uint8, size.LoopFilterLevels)
 	}
 	if len(r.scratch.RestorationRecords) < size.RestorationRecords {
 		r.scratch.RestorationRecords = make([]tile.RestorationUnitRecord, size.RestorationRecords)

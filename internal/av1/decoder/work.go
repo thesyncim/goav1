@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/av1/lfmask"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
@@ -133,12 +134,16 @@ type FrameWorkBoundSideDataRunner struct {
 
 	LoopFilterRecords []threading.FrameWorkLoopFilterBlockRecord
 
+	LFMasks      []lfmask.FilterMask
+	LFLevelCache [][4]uint8
+
 	RestorationRecords []tile.RestorationUnitRecord
 	RestorationAbove   []uint16
 	RestorationBelow   []uint16
 
 	CDEFIndexMap            threading.FrameWorkCDEFIndexMap
 	LoopFilterMap           threading.FrameWorkLoopFilterMap
+	LoopFilterMasks         threading.FrameWorkLoopFilterMasks
 	RestorationFrameBuffers threading.FrameWorkRestorationFrameBuffers
 }
 
@@ -147,6 +152,8 @@ type FrameWorkBoundSideDataRunner struct {
 type FrameWorkSideDataScratchSize struct {
 	CDEF                int
 	LoopFilterRecords   int
+	LoopFilterMasks     int
+	LoopFilterLevels    int
 	RestorationRecords  int
 	RestorationBoundary int
 }
@@ -159,6 +166,9 @@ type FrameWorkSideDataScratch struct {
 
 	LoopFilterRecords []threading.FrameWorkLoopFilterBlockRecord
 
+	LFMasks      []lfmask.FilterMask
+	LFLevelCache [][4]uint8
+
 	RestorationRecords []tile.RestorationUnitRecord
 	RestorationAbove   []uint16
 	RestorationBelow   []uint16
@@ -170,6 +180,8 @@ func (s FrameWorkSideDataScratchSize) Max(other FrameWorkSideDataScratchSize) Fr
 	return FrameWorkSideDataScratchSize{
 		CDEF:                maxInt(s.CDEF, other.CDEF),
 		LoopFilterRecords:   maxInt(s.LoopFilterRecords, other.LoopFilterRecords),
+		LoopFilterMasks:     maxInt(s.LoopFilterMasks, other.LoopFilterMasks),
+		LoopFilterLevels:    maxInt(s.LoopFilterLevels, other.LoopFilterLevels),
 		RestorationRecords:  maxInt(s.RestorationRecords, other.RestorationRecords),
 		RestorationBoundary: maxInt(s.RestorationBoundary, other.RestorationBoundary),
 	}
@@ -232,6 +244,8 @@ type FrameWorkState struct {
 	cdefIndexMapValid            bool
 	loopFilterMap                threading.FrameWorkLoopFilterMap
 	loopFilterMapValid           bool
+	loopFilterMasks              threading.FrameWorkLoopFilterMasks
+	loopFilterMasksValid         bool
 	restorationFrameBuffers      threading.FrameWorkRestorationFrameBuffers
 	restorationFrameBuffersValid bool
 	externalReleaseScratch       [parser.RefFrames + 1]int
@@ -330,6 +344,8 @@ func (s *FrameWorkState) resetActive() {
 	s.cdefIndexMapValid = false
 	s.loopFilterMap = threading.FrameWorkLoopFilterMap{}
 	s.loopFilterMapValid = false
+	s.loopFilterMasks = threading.FrameWorkLoopFilterMasks{}
+	s.loopFilterMasksValid = false
 	s.restorationFrameBuffers = threading.FrameWorkRestorationFrameBuffers{}
 	s.restorationFrameBuffersValid = false
 	s.sideDataBound = false
@@ -411,6 +427,19 @@ func (s *FrameWorkState) SetLoopFilterMap(lfMap threading.FrameWorkLoopFilterMap
 	}
 	s.loopFilterMap = lfMap
 	s.loopFilterMapValid = true
+	return nil
+}
+
+// SetLoopFilterMasks attaches the frame-level dav1d-style deblocking edge-mask
+// storage to active frame work. The caller owns the backing slices; the state
+// passes this handle into tile batches so the block walk can build edge masks
+// in decode order, and drops it when the frame finishes or aborts.
+func (s *FrameWorkState) SetLoopFilterMasks(masks threading.FrameWorkLoopFilterMasks) error {
+	if s == nil || !s.active {
+		return ErrInvalidFrameWorkState
+	}
+	s.loopFilterMasks = masks
+	s.loopFilterMasksValid = true
 	return nil
 }
 
@@ -1010,7 +1039,7 @@ func (s *FrameWorkState) runStepWithPayloadContext(refs *SurfaceReferences, fram
 		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
 	}
 	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
-	executed, err := executeFrameWorkStepWithPayload(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, restorationFrameBuffers, jobs, batches, fn)
+	executed, err := executeFrameWorkStepWithPayload(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, jobs, batches, fn)
 	if err != nil {
 		return FrameWorkStepResult{}, err
 	}
@@ -1056,7 +1085,7 @@ func (s *FrameWorkState) runStepWithPayloadContextRunner(refs *SurfaceReferences
 		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
 	}
 	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
-	executed, err := executeFrameWorkStepWithPayloadRunner(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, restorationFrameBuffers, jobs, batches, runner)
+	executed, err := executeFrameWorkStepWithPayloadRunner(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, jobs, batches, runner)
 	if err != nil {
 		return FrameWorkStepResult{}, err
 	}
@@ -1098,7 +1127,7 @@ func PrepareFrameWorkStepWithPayloadContext(s *FrameWorkState, event Event, step
 		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
 	}
 	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
-	return prepareFrameWorkStepWithPayload(step, output, references, payload, true, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, restorationFrameBuffers, jobs, batches)
+	return prepareFrameWorkStepWithPayload(step, output, references, payload, true, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, jobs, batches)
 }
 
 func CompleteFrameWorkPreparedPayloadStep(s *FrameWorkState, refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, prepared FrameWorkPreparedPayloadStep, output *frame.Frame, releases []int, executed bool, post FrameWorkPostFilterFunc) (FrameWorkStepResult, error) {
@@ -1171,7 +1200,7 @@ func (s *FrameWorkState) runStepWithPayloadContextRunners(refs *SurfaceReference
 		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
 	}
 	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
-	executed, err := executeFrameWorkStepWithPayloadRunner(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, restorationFrameBuffers, jobs, batches, runner)
+	executed, err := executeFrameWorkStepWithPayloadRunner(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, jobs, batches, runner)
 	if err != nil {
 		return FrameWorkStepResult{}, err
 	}
@@ -1379,11 +1408,19 @@ func FrameWorkSideDataScratchLen(b FrameWorkBatch) (FrameWorkSideDataScratchSize
 	// CDEF block-list construction (libaom's is_8x8_block_skip), so bind the
 	// map whenever either LF or CDEF is active.
 	if frameWorkLoopFilterActive(b.LoopFilter) || frameWorkCDEFActive(b.CDEF) {
-		_, _, length, err := b.LoopFilterMapShape()
+		cols, rows, length, err := b.LoopFilterMapShape()
 		if err != nil {
 			return FrameWorkSideDataScratchSize{}, err
 		}
 		size.LoopFilterRecords = length
+		// The dav1d-style deblocking edge bitmasks (and their frame-wide 4x4
+		// level cache) are only consumed by the loop filter, so bind them only
+		// when the loop filter itself is active for this frame.
+		if frameWorkLoopFilterActive(b.LoopFilter) {
+			_, _, masks := threading.FrameWorkLoopFilterMaskShape(cols, rows)
+			size.LoopFilterMasks = masks
+			size.LoopFilterLevels = length
+		}
 	}
 	if frameWorkRestorationActive(b.Restoration) {
 		plan, err := b.RestorationFramePlan()
@@ -1399,9 +1436,12 @@ func FrameWorkSideDataScratchLen(b FrameWorkBatch) (FrameWorkSideDataScratchSize
 // BindRunner validates and slices caller-owned scratch for
 // FrameWorkBoundSideDataRunner.
 func (s FrameWorkSideDataScratchSize) BindRunner(scratch FrameWorkSideDataScratch) (FrameWorkBoundSideDataRunner, error) {
-	if s.CDEF < 0 || s.LoopFilterRecords < 0 || s.RestorationRecords < 0 || s.RestorationBoundary < 0 ||
+	if s.CDEF < 0 || s.LoopFilterRecords < 0 || s.LoopFilterMasks < 0 || s.LoopFilterLevels < 0 ||
+		s.RestorationRecords < 0 || s.RestorationBoundary < 0 ||
 		len(scratch.CDEFIndex) < s.CDEF || len(scratch.CDEFRead) < s.CDEF ||
 		len(scratch.LoopFilterRecords) < s.LoopFilterRecords ||
+		len(scratch.LFMasks) < s.LoopFilterMasks ||
+		len(scratch.LFLevelCache) < s.LoopFilterLevels ||
 		len(scratch.RestorationRecords) < s.RestorationRecords ||
 		len(scratch.RestorationAbove) < s.RestorationBoundary ||
 		len(scratch.RestorationBelow) < s.RestorationBoundary {
@@ -1411,10 +1451,25 @@ func (s FrameWorkSideDataScratchSize) BindRunner(scratch FrameWorkSideDataScratc
 		CDEFIndex:          scratch.CDEFIndex[:s.CDEF],
 		CDEFRead:           scratch.CDEFRead[:s.CDEF],
 		LoopFilterRecords:  scratch.LoopFilterRecords[:s.LoopFilterRecords],
+		LFMasks:            scratch.LFMasks[:s.LoopFilterMasks],
+		LFLevelCache:       scratch.LFLevelCache[:s.LoopFilterLevels],
 		RestorationRecords: scratch.RestorationRecords[:s.RestorationRecords],
 		RestorationAbove:   scratch.RestorationAbove[:s.RestorationBoundary],
 		RestorationBelow:   scratch.RestorationBelow[:s.RestorationBoundary],
 	}, nil
+}
+
+// frameWorkLoopFilterMaskLayout maps a sequence color config to the lfmask
+// chroma-subsampling layout used by the deblocking edge-mask build.
+func frameWorkLoopFilterMaskLayout(color parser.ColorConfig) lfmask.Layout {
+	layout := lfmask.Layout{Mono: color.MonoChrome}
+	if color.SubsamplingX {
+		layout.SSHor = 1
+	}
+	if color.SubsamplingY {
+		layout.SSVer = 1
+	}
+	return layout
 }
 
 // BindFrameWorkSideData binds side-data storage for any active CDEF,
@@ -1464,6 +1519,36 @@ func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, 
 			return err
 		}
 		r.LoopFilterMap = lfMap
+
+		// Bind the dav1d-style deblocking edge-mask storage only when the loop
+		// filter is active this frame (the masks are consumed only by it). The
+		// mask bitmasks and the level cache are reused across frames, so clear
+		// them before the decode block walk ORs this frame's edges in.
+		if frameWorkLoopFilterActive(b.LoopFilter) {
+			sb128w, sb128h, maskCount := threading.FrameWorkLoopFilterMaskShape(cols, rows)
+			if len(r.LFMasks) < maskCount || len(r.LFLevelCache) < length {
+				return threading.ErrInvalidBatch
+			}
+			masks := r.LFMasks[:maskCount]
+			levelCache := r.LFLevelCache[:length]
+			clear(masks)
+			clear(levelCache)
+			color := b.Sequence.ColorConfig
+			handle := threading.FrameWorkLoopFilterMasks{
+				Masks:      masks,
+				LevelCache: levelCache,
+				Cols:       cols,
+				Rows:       rows,
+				SB128W:     sb128w,
+				SB128H:     sb128h,
+				Layout:     frameWorkLoopFilterMaskLayout(color),
+				HasChroma:  !color.MonoChrome,
+			}
+			if err := s.SetLoopFilterMasks(handle); err != nil {
+				return err
+			}
+			r.LoopFilterMasks = handle
+		}
 	}
 	if frameWorkRestorationActive(b.Restoration) {
 		buffers, err := b.BindRestorationFrameBuffers(r.RestorationRecords, r.RestorationAbove, r.RestorationBelow)
@@ -1550,6 +1635,15 @@ func frameWorkStepOutput(pool *frame.Pool, step FrameWorkStep) (*frame.Frame, er
 		return nil, frame.ErrInvalidPool
 	}
 	return pool.Frame(surface)
+}
+
+// loopFilterMasksPtr returns the active frame's deblocking edge-mask handle for
+// batch execution, or nil when the loop filter is not building masks this frame.
+func (s *FrameWorkState) loopFilterMasksPtr() *threading.FrameWorkLoopFilterMasks {
+	if s == nil || !s.loopFilterMasksValid {
+		return nil
+	}
+	return &s.loopFilterMasks
 }
 
 func (s *FrameWorkState) postFilterSideData() (*threading.FrameWorkCDEFIndexMap, *threading.FrameWorkLoopFilterMap, *threading.FrameWorkRestorationFrameBuffers) {
@@ -1642,14 +1736,14 @@ func ExecuteFrameWorkStep(step FrameWorkStep, pool *threading.Pool, jobs []tile.
 // ExecuteFrameWorkStepWithContext dispatches frame-work tile batches while
 // passing the output frame and resolved reference frames to each batch.
 func ExecuteFrameWorkStepWithContext(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
-	return executeFrameWorkStepWithPayload(step, pool, output, references, nil, false, FrameWorkFrameContext{}, false, nil, nil, nil, frameWorkMotionFields{}, nil, nil, nil, jobs, batches, fn)
+	return executeFrameWorkStepWithPayload(step, pool, output, references, nil, false, FrameWorkFrameContext{}, false, nil, nil, nil, frameWorkMotionFields{}, nil, nil, nil, nil, jobs, batches, fn)
 }
 
 // ExecuteFrameWorkStepWithPayload dispatches frame-work tile batches while
 // passing the output frame, tile-group payload, and resolved reference frames
 // to each batch.
 func ExecuteFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
-	return executeFrameWorkStepWithPayload(step, pool, output, references, payload, true, FrameWorkFrameContext{}, false, nil, nil, nil, frameWorkMotionFields{}, nil, nil, nil, jobs, batches, fn)
+	return executeFrameWorkStepWithPayload(step, pool, output, references, payload, true, FrameWorkFrameContext{}, false, nil, nil, nil, frameWorkMotionFields{}, nil, nil, nil, nil, jobs, batches, fn)
 }
 
 // frameWorkMotionFields bundles the optional temporal-MV batch pointers so the
@@ -1681,7 +1775,7 @@ func (s *FrameWorkState) motionFields() frameWorkMotionFields {
 	return fields
 }
 
-func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, frameContext FrameWorkFrameContext, disableCDFUpdate bool, initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFsValid *bool, motion frameWorkMotionFields, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
+func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, frameContext FrameWorkFrameContext, disableCDFUpdate bool, initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFsValid *bool, motion frameWorkMotionFields, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, loopFilterMasks *threading.FrameWorkLoopFilterMasks, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
 	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
 	if err != nil {
 		return false, err
@@ -1723,6 +1817,7 @@ func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, o
 		ReferenceMVs:                  motion.references,
 		CDEFIndexMap:                  cdefIndexMap,
 		LoopFilterMap:                 loopFilterMap,
+		LoopFilterMasks:               loopFilterMasks,
 		RestorationFrameBuffers:       restorationFrameBuffers,
 	}
 	err = pool.ExecuteFrameWork(batches[:plan.BatchCount], jobs[:plan.JobCount], base, fn)
@@ -1732,8 +1827,8 @@ func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, o
 	return true, nil
 }
 
-func executeFrameWorkStepWithPayloadRunner(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, frameContext FrameWorkFrameContext, disableCDFUpdate bool, initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFsValid *bool, motion frameWorkMotionFields, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, jobs []tile.Job, batches []threading.Batch, runner threading.FrameWorkBatchRunner) (bool, error) {
-	prepared, err := prepareFrameWorkStepWithPayload(step, output, references, payload, validatePayload, frameContext, disableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, motion, cdefIndexMap, loopFilterMap, restorationFrameBuffers, jobs, batches)
+func executeFrameWorkStepWithPayloadRunner(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, frameContext FrameWorkFrameContext, disableCDFUpdate bool, initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFsValid *bool, motion frameWorkMotionFields, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, loopFilterMasks *threading.FrameWorkLoopFilterMasks, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, jobs []tile.Job, batches []threading.Batch, runner threading.FrameWorkBatchRunner) (bool, error) {
+	prepared, err := prepareFrameWorkStepWithPayload(step, output, references, payload, validatePayload, frameContext, disableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, motion, cdefIndexMap, loopFilterMap, loopFilterMasks, restorationFrameBuffers, jobs, batches)
 	if err != nil || !prepared.HasTileWork {
 		return false, err
 	}
@@ -1744,7 +1839,7 @@ func executeFrameWorkStepWithPayloadRunner(step FrameWorkStep, pool *threading.P
 	return true, nil
 }
 
-func prepareFrameWorkStepWithPayload(step FrameWorkStep, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, frameContext FrameWorkFrameContext, disableCDFUpdate bool, initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFsValid *bool, motion frameWorkMotionFields, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, jobs []tile.Job, batches []threading.Batch) (FrameWorkPreparedPayloadStep, error) {
+func prepareFrameWorkStepWithPayload(step FrameWorkStep, output *frame.Frame, references []*frame.Frame, payload []byte, validatePayload bool, frameContext FrameWorkFrameContext, disableCDFUpdate bool, initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage, retainedTileResidualCDFsValid *bool, motion frameWorkMotionFields, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, loopFilterMasks *threading.FrameWorkLoopFilterMasks, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, jobs []tile.Job, batches []threading.Batch) (FrameWorkPreparedPayloadStep, error) {
 	plan, referenceCount, hasTile, err := frameWorkStepTilePlan(step)
 	if err != nil {
 		return FrameWorkPreparedPayloadStep{}, err
@@ -1786,6 +1881,7 @@ func prepareFrameWorkStepWithPayload(step FrameWorkStep, output *frame.Frame, re
 		ReferenceMVs:                  motion.references,
 		CDEFIndexMap:                  cdefIndexMap,
 		LoopFilterMap:                 loopFilterMap,
+		LoopFilterMasks:               loopFilterMasks,
 		RestorationFrameBuffers:       restorationFrameBuffers,
 	}
 	return FrameWorkPreparedPayloadStep{

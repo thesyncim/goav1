@@ -293,6 +293,11 @@ type FrameWorkTileResidualScratch struct {
 	stats            FrameWorkTileResidualStats
 	geomCache        frameWorkJobGeometryCache
 
+	// lfMask carries the reusable decode-time loop-filter mask build state
+	// (dav1d decomp_tx scratch + carried above/left tx-context). It is reset
+	// once per job and holds capacity across jobs for zero steady-state allocs.
+	lfMask frameWorkLoopFilterMaskScratch
+
 	// reconEvents, reconVisits, reconBlocks, and coeffArena back the deferred
 	// two-pass reconstruction path (frameWorkDeferReconstruction). reconEvents
 	// records the in-order predict/reconstruct op stream; reconVisits holds the
@@ -672,6 +677,7 @@ type FrameWorkTileResidualRequest struct {
 	PredictionScratch *FrameWorkPredictionScratch
 	CDEFIndexMap      *FrameWorkCDEFIndexMap
 	LoopFilterMap     *FrameWorkLoopFilterMap
+	LoopFilterMasks   *FrameWorkLoopFilterMasks
 	Restoration       *FrameWorkTileRestorationRequest
 	// UseDefaultTransforms derives transform decisions from the frame-work
 	// block mode state when Transforms is nil.
@@ -1096,6 +1102,9 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *t
 	if req.LoopFilterMap == nil {
 		req.LoopFilterMap = b.LoopFilterMap
 	}
+	if req.LoopFilterMasks == nil {
+		req.LoopFilterMasks = b.LoopFilterMasks
+	}
 
 	loopCDFs := cdfs.Loop
 	if loopCDFs.Transform == nil {
@@ -1124,6 +1133,9 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *t
 	// so every c.batch.* call below shares it.
 	scratch.geomCache.reset()
 	scratch.resetDeferredReconBuffers()
+	if req.LoopFilterMasks.Valid() {
+		scratch.lfMask.reset(req.LoopFilterMasks)
+	}
 	b.geomCache = &scratch.geomCache
 	if err := frameWorkPrimeLumaReconGeometry(b, index); err != nil {
 		return FrameWorkTileResidualStats{}, err
@@ -1188,6 +1200,14 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *t
 			if err := req.LoopFilterMap.MarkBlockPtr(visit, state); err != nil {
 				return fmt.Errorf("mark loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
 			}
+		}
+		if req.LoopFilterMasks.Valid() {
+			intra := !visit.Prediction.Valid || visit.Prediction.Intra
+			sbLog2 := 4
+			if b.Sequence.Use128x128Superblock {
+				sbLog2 = 5
+			}
+			req.LoopFilterMasks.build(&scratch.lfMask, visit, sbLog2, intra)
 		}
 		if req.AfterBlock != nil {
 			return req.AfterBlock(*visit)

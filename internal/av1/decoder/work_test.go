@@ -7,6 +7,7 @@ import (
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/av1/lfmask"
 	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
@@ -1833,6 +1834,8 @@ func TestFrameWorkBoundSideDataRunnerBindsActiveMaps(t *testing.T) {
 		CDEFIndex:          make([]uint8, size.CDEF),
 		CDEFRead:           make([]bool, size.CDEF),
 		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords),
+		LFMasks:            make([]lfmask.FilterMask, size.LoopFilterMasks),
+		LFLevelCache:       make([][4]uint8, size.LoopFilterLevels),
 		RestorationRecords: make([]tile.RestorationUnitRecord, size.RestorationRecords),
 		RestorationAbove:   make([]uint16, size.RestorationBoundary),
 		RestorationBelow:   make([]uint16, size.RestorationBoundary),
@@ -1945,6 +1948,8 @@ func TestFrameWorkSideDataScratchSizeBindRunnerAllocs(t *testing.T) {
 		CDEFIndex:          make([]uint8, size.CDEF),
 		CDEFRead:           make([]bool, size.CDEF),
 		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords),
+		LFMasks:            make([]lfmask.FilterMask, size.LoopFilterMasks),
+		LFLevelCache:       make([][4]uint8, size.LoopFilterLevels),
 		RestorationRecords: make([]tile.RestorationUnitRecord, size.RestorationRecords),
 		RestorationAbove:   make([]uint16, size.RestorationBoundary),
 		RestorationBelow:   make([]uint16, size.RestorationBoundary),
@@ -1991,6 +1996,8 @@ func TestFrameWorkSideDataScratchSizeMaxAndBindRunnerErrors(t *testing.T) {
 		CDEFIndex:          make([]uint8, size.CDEF),
 		CDEFRead:           make([]bool, size.CDEF),
 		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords),
+		LFMasks:            make([]lfmask.FilterMask, size.LoopFilterMasks),
+		LFLevelCache:       make([][4]uint8, size.LoopFilterLevels),
 		RestorationRecords: make([]tile.RestorationUnitRecord, size.RestorationRecords),
 		RestorationAbove:   make([]uint16, size.RestorationBoundary),
 		RestorationBelow:   make([]uint16, size.RestorationBoundary),
@@ -2068,6 +2075,8 @@ func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilter(t *testing.T
 	}
 	side := FrameWorkBoundSideDataRunner{
 		LoopFilterRecords: make([]threading.FrameWorkLoopFilterBlockRecord, 256),
+		LFMasks:           make([]lfmask.FilterMask, 16),
+		LFLevelCache:      make([][4]uint8, 256),
 	}
 	post := FrameWorkBoundSupportedPostFilterRunner{
 		Scratch: FrameWorkPostFilterScratch{
@@ -4393,6 +4402,8 @@ func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilterAllocs(t *tes
 	}
 	side := FrameWorkBoundSideDataRunner{
 		LoopFilterRecords: make([]threading.FrameWorkLoopFilterBlockRecord, 256),
+		LFMasks:           make([]lfmask.FilterMask, 16),
+		LFLevelCache:      make([][4]uint8, 256),
 	}
 	post := FrameWorkBoundSupportedPostFilterRunner{
 		Scratch: FrameWorkPostFilterScratch{
@@ -4868,6 +4879,8 @@ func BenchmarkFrameWorkSideDataScratchSizeBindRunner(b *testing.B) {
 		CDEFIndex:          make([]uint8, size.CDEF),
 		CDEFRead:           make([]bool, size.CDEF),
 		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords),
+		LFMasks:            make([]lfmask.FilterMask, size.LoopFilterMasks),
+		LFLevelCache:       make([][4]uint8, size.LoopFilterLevels),
 		RestorationRecords: make([]tile.RestorationUnitRecord, size.RestorationRecords),
 		RestorationAbove:   make([]uint16, size.RestorationBoundary),
 		RestorationBelow:   make([]uint16, size.RestorationBoundary),
@@ -4929,6 +4942,8 @@ func BenchmarkFrameWorkStateRunEventWithResidualSideDataPostFilter(b *testing.B)
 	}
 	side := FrameWorkBoundSideDataRunner{
 		LoopFilterRecords: make([]threading.FrameWorkLoopFilterBlockRecord, 256),
+		LFMasks:           make([]lfmask.FilterMask, 16),
+		LFLevelCache:      make([][4]uint8, 256),
 	}
 	post := FrameWorkBoundSupportedPostFilterRunner{
 		Scratch: FrameWorkPostFilterScratch{

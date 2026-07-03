@@ -39,6 +39,12 @@ func (c LevelCache) at(bx, by int) *[4]uint8 {
 	return &c.Cells[by*c.Stride+bx]
 }
 
+// writesLevels reports whether this cache is populated. A zero LevelCache (nil
+// Cells) is used by the decode-time geometry build, which fills only the edge
+// bitmasks and leaves level resolution to the consumer; the level cells are
+// written separately (in raster order, which is order-independent per block).
+func (c LevelCache) writesLevels() bool { return c.Cells != nil }
+
 // Levels are the four resolved base loop-filter levels for a block: Y vertical,
 // Y horizontal, U, V. dav1d reads these from ts->lflvl[seg][plane][ref][mode].
 type Levels struct {
@@ -66,11 +72,13 @@ func (b *Builder) CreateIntra(m *FilterMask, lc LevelCache, lv Levels, bx, by, i
 	by4 := by & 31
 
 	if bw4 > 0 && bh4 > 0 {
-		for y := 0; y < bh4; y++ {
-			for x := 0; x < bw4; x++ {
-				cell := lc.at(bx+x, by+y)
-				cell[0] = lv.YVert
-				cell[1] = lv.YHorz
+		if lc.writesLevels() {
+			for y := 0; y < bh4; y++ {
+				for x := 0; x < bw4; x++ {
+					cell := lc.at(bx+x, by+y)
+					cell[0] = lv.YVert
+					cell[1] = lv.YHorz
+				}
 			}
 		}
 		maskEdgesIntra(&m.Y, by4, bx4, bw4, bh4, ytx, ay, ly)
@@ -88,11 +96,13 @@ func (b *Builder) CreateIntra(m *FilterMask, lc LevelCache, lv Levels, bx, by, i
 	}
 	cbx4 := bx4 >> ssHor
 	cby4 := by4 >> ssVer
-	for y := 0; y < cbh4; y++ {
-		for x := 0; x < cbw4; x++ {
-			cell := lc.at((bx>>ssHor)+x, (by>>ssVer)+y)
-			cell[2] = lv.U
-			cell[3] = lv.V
+	if lc.writesLevels() {
+		for y := 0; y < cbh4; y++ {
+			for x := 0; x < cbw4; x++ {
+				cell := lc.at((bx>>ssHor)+x, (by>>ssVer)+y)
+				cell[2] = lv.U
+				cell[3] = lv.V
+			}
 		}
 	}
 	maskEdgesChroma(&m.UV, cby4, cbx4, cbw4, cbh4, 0, uvtx, auv, luv, ssHor, ssVer)
@@ -110,11 +120,13 @@ func (b *Builder) CreateInter(m *FilterMask, lc LevelCache, lv Levels, bx, by, i
 	by4 := by & 31
 
 	if bw4 > 0 && bh4 > 0 {
-		for y := 0; y < bh4; y++ {
-			for x := 0; x < bw4; x++ {
-				cell := lc.at(bx+x, by+y)
-				cell[0] = lv.YVert
-				cell[1] = lv.YHorz
+		if lc.writesLevels() {
+			for y := 0; y < bh4; y++ {
+				for x := 0; x < bw4; x++ {
+					cell := lc.at(bx+x, by+y)
+					cell[0] = lv.YVert
+					cell[1] = lv.YHorz
+				}
 			}
 		}
 		maskEdgesInter(&m.Y, by4, bx4, bw4, bh4, skip, maxYtx, txMasks, ay, ly, &b.txa)
@@ -132,11 +144,13 @@ func (b *Builder) CreateInter(m *FilterMask, lc LevelCache, lv Levels, bx, by, i
 	}
 	cbx4 := bx4 >> ssHor
 	cby4 := by4 >> ssVer
-	for y := 0; y < cbh4; y++ {
-		for x := 0; x < cbw4; x++ {
-			cell := lc.at((bx>>ssHor)+x, (by>>ssVer)+y)
-			cell[2] = lv.U
-			cell[3] = lv.V
+	if lc.writesLevels() {
+		for y := 0; y < cbh4; y++ {
+			for x := 0; x < cbw4; x++ {
+				cell := lc.at((bx>>ssHor)+x, (by>>ssVer)+y)
+				cell[2] = lv.U
+				cell[3] = lv.V
+			}
 		}
 	}
 	maskEdgesChroma(&m.UV, cby4, cbx4, cbw4, cbh4, skip, uvtx, auv, luv, ssHor, ssVer)
