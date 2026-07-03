@@ -146,14 +146,25 @@ func convolve2DHighBDNEON(dst frame.Plane, ref frame.Plane, bitDepth uint8, max 
 
 // The HBD *ClampedNEON wrappers mirror the 8-bit clamped wrappers: when the
 // whole tap window is resident the clamp is a no-op and the result is
-// bit-identical to the non-clamped NEON path, otherwise fall back to the
-// per-tap-clamping pure-Go reference.
+// bit-identical to the non-clamped NEON path. When the window overhangs the
+// plane, dav1d's reconstruction (src/recon_tmpl.c mc()) materializes the
+// clamped halo once via emu_edge (src/mc_tmpl.c emu_edge_c) and re-runs the
+// plain resident 8tap kernel over it — still NEON, and bit-identical to the
+// per-tap-clamping pure-Go reference. Only widths the NEON kernels cannot
+// vectorize (width%4 != 0, which does not occur for AV1 luma/chroma inter
+// blocks) fall back to pure-Go.
 
 func convolveXHighBDClampedNEON(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
 	if width >= 4 && width%4 == 0 &&
 		planeRegionFits(ref, 2, refX-fo, refY, width+filterTaps-1, height) {
 		convolveXHighBDNEON(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, kernel)
+		return
+	}
+	if width >= 4 && width%4 == 0 {
+		var edge emuEdge16Buf
+		emu, emuX, emuY := emuEdgeWindow16(ref, refX, refY, width, height, &edge)
+		convolveXHighBDNEON(dst, emu, bitDepth, max, dstX, dstY, emuX, emuY, width, height, kernel)
 		return
 	}
 	convolveXHighBDClampedPureGo(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, kernel)
@@ -166,6 +177,12 @@ func convolveYHighBDClampedNEON(dst frame.Plane, ref frame.Plane, bitDepth uint8
 		convolveYHighBDNEON(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, kernel)
 		return
 	}
+	if width >= 4 && width%4 == 0 {
+		var edge emuEdge16Buf
+		emu, emuX, emuY := emuEdgeWindow16(ref, refX, refY, width, height, &edge)
+		convolveYHighBDNEON(dst, emu, bitDepth, max, dstX, dstY, emuX, emuY, width, height, kernel)
+		return
+	}
 	convolveYHighBDClampedPureGo(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, kernel)
 }
 
@@ -175,6 +192,12 @@ func convolve2DHighBDClampedNEON(dst frame.Plane, ref frame.Plane, bitDepth uint
 	if width >= 4 && width%4 == 0 &&
 		planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
 		convolve2DHighBDNEON(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+		return
+	}
+	if width >= 4 && width%4 == 0 {
+		var edge emuEdge16Buf
+		emu, emuX, emuY := emuEdgeWindow16(ref, refX, refY, width, height, &edge)
+		convolve2DHighBDNEON(dst, emu, bitDepth, max, dstX, dstY, emuX, emuY, width, height, xKernel, yKernel)
 		return
 	}
 	convolve2DHighBDClampedPureGo(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)

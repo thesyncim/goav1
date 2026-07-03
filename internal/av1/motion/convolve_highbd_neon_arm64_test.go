@@ -229,6 +229,139 @@ func TestConvolveClampedNEONMatchesPureGo(t *testing.T) {
 	}
 }
 
+// TestConvolveHighBDClampedEmuEdgeMatchesPureGo drives the HBD edge-clamped
+// NEON wrappers over tap windows that overhang the reference plane on every
+// side (and past both corners), forcing the emu_edge halo materialization
+// (emuEdgeWindow16). Every shape must stay bit-identical to the pure-Go
+// per-tap-clamping reference at bit depths 10 and 12, including the max/zero
+// saturation edge values.
+func TestConvolveHighBDClampedEmuEdgeMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x16bced9e))
+	sizes := []int{4, 8, 12, 16, 32, 64}
+	const refW, refH = 24, 20
+	for _, bd := range []uint8{10, 12} {
+		max, _ := highBDMax(bd)
+		ref, _ := testPlane(refW, refH, 2, refW*2)
+		for y := 0; y < refH; y++ {
+			for x := 0; x < refW; x++ {
+				v := uint16(rng.Intn(int(max) + 1))
+				// Seed the corners with the saturation extremes so the
+				// clamped-replication halo carries 0 and max samples.
+				if (x == 0 || x == refW-1) && (y == 0 || y == refH-1) {
+					if (x+y)&1 == 0 {
+						v = 0
+					} else {
+						v = max
+					}
+				}
+				setSample(ref, 2, x, y, v)
+			}
+		}
+		for _, w := range sizes {
+			for _, h := range sizes {
+				// Offsets that push the tap window past each plane boundary and
+				// diagonally past the corners, plus an interior case.
+				offs := [][2]int{
+					{-w, -h}, {-3, -3}, {2, -5}, {refW - 2, -1},
+					{refW - 1, 5}, {refW, refH}, {5, refH - 2},
+					{-4, refH - 3}, {-6, 4}, {4, 4},
+				}
+				xk := subpelFilters8[6]
+				yk := subpelFilters8[9]
+				for _, o := range offs {
+					rx, ry := o[0], o[1]
+					gx, _ := testPlane(w, h, 2, w*2)
+					ex, _ := testPlane(w, h, 2, w*2)
+					convolveXHighBDClampedNEON(gx, ref, bd, max, 0, 0, rx, ry, w, h, xk)
+					convolveXHighBDClampedPureGo(ex, ref, bd, max, 0, 0, rx, ry, w, h, xk)
+					eqHighBDBlock(t, gx, ex, w, h, "XHBDemu", bd, w, h, o)
+
+					gy, _ := testPlane(w, h, 2, w*2)
+					ey, _ := testPlane(w, h, 2, w*2)
+					convolveYHighBDClampedNEON(gy, ref, bd, max, 0, 0, rx, ry, w, h, yk)
+					convolveYHighBDClampedPureGo(ey, ref, bd, max, 0, 0, rx, ry, w, h, yk)
+					eqHighBDBlock(t, gy, ey, w, h, "YHBDemu", bd, w, h, o)
+
+					g2, _ := testPlane(w, h, 2, w*2)
+					e2, _ := testPlane(w, h, 2, w*2)
+					convolve2DHighBDClampedNEON(g2, ref, bd, max, 0, 0, rx, ry, w, h, xk, yk)
+					convolve2DHighBDClampedPureGo(e2, ref, bd, max, 0, 0, rx, ry, w, h, xk, yk)
+					eqHighBDBlock(t, g2, e2, w, h, "2DHBDemu", bd, w, h, o)
+				}
+			}
+		}
+	}
+}
+
+// TestConvolveHighBDClampedEmuEdgeZeroAlloc proves the emu_edge halo scratch
+// stays on the stack (the func-ptr dispatch slot must not force it to the heap).
+func TestConvolveHighBDClampedEmuEdgeZeroAlloc(t *testing.T) {
+	max, _ := highBDMax(10)
+	ref, _ := testPlane(24, 20, 2, 24*2)
+	for y := 0; y < 20; y++ {
+		for x := 0; x < 24; x++ {
+			setSample(ref, 2, x, y, uint16((x*7+y*3)&int(max)))
+		}
+	}
+	dst, _ := testPlane(64, 64, 2, 64*2)
+	xk := subpelFilters8[6]
+	yk := subpelFilters8[9]
+	check := func(name string, fn func()) {
+		if a := testing.AllocsPerRun(20, fn); a != 0 {
+			t.Fatalf("%s allocated %v times, want 0", name, a)
+		}
+	}
+	check("2DHBDemu", func() {
+		convolve2DHighBDClampedNEON(dst, ref, 10, max, 0, 0, -3, -3, 64, 64, xk, yk)
+	})
+	check("XHBDemu", func() {
+		convolveXHighBDClampedNEON(dst, ref, 10, max, 0, 0, -3, -3, 64, 64, xk)
+	})
+	check("YHBDemu", func() {
+		convolveYHighBDClampedNEON(dst, ref, 10, max, 0, 0, -3, -3, 64, 64, yk)
+	})
+}
+
+// BenchmarkConvolveHighBDClampedEmuEdge measures the edge-overhanging HBD 2D
+// clamped convolve: the NEON emu_edge path against the pure-Go per-tap clamp.
+func BenchmarkConvolveHighBDClampedEmuEdge(b *testing.B) {
+	max, _ := highBDMax(10)
+	ref, _ := testPlane(24, 20, 2, 24*2)
+	for y := 0; y < 20; y++ {
+		for x := 0; x < 24; x++ {
+			setSample(ref, 2, x, y, uint16((x*7+y*3)&int(max)))
+		}
+	}
+	xk := subpelFilters8[6]
+	yk := subpelFilters8[9]
+	for _, w := range []int{8, 16, 32, 64} {
+		dst, _ := testPlane(w, w, 2, w*2)
+		b.Run("neon_"+itoaW(w), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				convolve2DHighBDClampedNEON(dst, ref, 10, max, 0, 0, -3, -3, w, w, xk, yk)
+			}
+		})
+		b.Run("purego_"+itoaW(w), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				convolve2DHighBDClampedPureGo(dst, ref, 10, max, 0, 0, -3, -3, w, w, xk, yk)
+			}
+		})
+	}
+}
+
+func itoaW(w int) string {
+	switch w {
+	case 8:
+		return "8"
+	case 16:
+		return "16"
+	case 32:
+		return "32"
+	default:
+		return "64"
+	}
+}
+
 func TestConvolve1D8ClampedEdgeNEONMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x1d8c1a))
 	xWidths := []int{4, 8, 12, 15, 16, 24, 32}
