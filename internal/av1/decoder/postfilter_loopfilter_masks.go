@@ -58,15 +58,18 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdgesFromMasks(masks *threa
 	if err := frameWorkValidateLoopFilterMap(filterMap, cols, rows); err != nil {
 		return result, err
 	}
+	result.Plan.Active = true
+	result.Plan.MICols = uint16(cols)
+	result.Plan.MIRows = uint16(rows)
 	levelCtx := frameWorkLoopFilterLevelContextFor(&ctx.Event)
-	if err := ctx.populateLoopFilterLevelCacheFromMap(masks, filterMap, levelCtx); err != nil {
+	if err := ctx.populateLoopFilterLevelCacheFromMap(masks, filterMap, levelCtx, &result.Plan); err != nil {
 		return result, err
 	}
 	maxPlane := loopfilter.PlaneV
 	if masks.Layout.Mono || ctx.Output.Format.MonoChrome || !masks.HasChroma {
 		maxPlane = loopfilter.PlaneY
 	}
-	if err := ctx.applyLoopFilterEdgesFromMasksInPlanePassOrder(&result, masks, loopfilter.PlaneY, maxPlane); err != nil {
+	if err := ctx.applyLoopFilterEdgesFromMasksInPlanePassOrder(&result, masks, levelCtx, loopfilter.PlaneY, maxPlane); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -77,7 +80,7 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdgesFromMasks(masks *threa
 // writes dav1d's create_lf_mask_{inter,intra} would perform (lfmask build.go).
 // The level cells are order-independent, so a raster walk over block origins is
 // sufficient.
-func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheFromMap(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap, levelCtx frameWorkLoopFilterLevelContext) error {
+func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheFromMap(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap, levelCtx frameWorkLoopFilterLevelContext, plan *FrameWorkLoopFilterPostFilterPlan) error {
 	cols := masks.Cols
 	rows := masks.Rows
 	if len(masks.LevelCache) < cols*rows {
@@ -93,11 +96,14 @@ func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheFromMap(masks 
 		for col := 0; col < cols; col++ {
 			record := &filterMap.Records[base+col]
 			if !record.Valid {
+				plan.Missing++
 				continue
 			}
+			plan.Cells++
 			if int(record.Block.MICol) != col || int(record.Block.MIRow) != row {
 				continue
 			}
+			plan.Blocks++
 			levels, err := frameWorkResolveLoopFilterRecordLevels(levelCtx, record)
 			if err != nil {
 				return err
@@ -145,11 +151,17 @@ func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheFromMap(masks 
 	return nil
 }
 
-func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksInPlanePassOrder(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, minPlane, maxPlane loopfilter.Plane) error {
+func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksInPlanePassOrder(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, levelCtx frameWorkLoopFilterLevelContext, minPlane, maxPlane loopfilter.Plane) error {
 	bytesPerSample := ctx.Output.Layout.BytesPerSample
 	bitDepth := ctx.Output.Format.BitDepth
 	sharpness := ctx.Event.LoopFilter.Sharpness
 	lc := lfmask.LevelCache{Cells: masks.LevelCache, Stride: masks.Cols}
+	// Match the edge-list chroma gating: AV1 deblocks chroma only when the frame
+	// carries a non-zero luma level, and skips a chroma plane whose frame base
+	// level is zero regardless of per-block segment deltas (postfilter_loopfilter
+	// frameWorkAppendLoopFilterChromaEdges). Luma keeps its per-cell level with
+	// the level-from-previous fallback.
+	chromaGated := levelCtx.lumaZero
 
 	var thresholds [loopfilter.MaxLevel + 1]loopfilter.Thresholds
 	var thresholdReady [loopfilter.MaxLevel + 1]bool
@@ -172,6 +184,11 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksInPlanePassOr
 	}
 
 	for plane := minPlane; plane <= maxPlane && firstErr == nil; plane++ {
+		if plane != loopfilter.PlaneY {
+			if chromaGated || levelCtx.base[plane][loopfilter.EdgeVertical] == 0 {
+				continue
+			}
+		}
 		dst, ok := frameWorkLoopFilterOutputPlane(*ctx.Output, plane)
 		if !ok {
 			if plane == loopfilter.PlaneY {

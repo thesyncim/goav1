@@ -92,8 +92,11 @@ func buildLoopFilterMasksFromRecords(t testing.TB, event Event, size parser.Fram
 		ly := lY[by4:]
 		var auv, luv []uint8
 		if hasChroma && r.rec.TransformTree.HasUV {
-			auv = aUV[bx>>layout.SSHor:]
-			luv = lUV[by4>>layout.SSVer:]
+			dims, _ := r.rec.Block.Size.Dimensions()
+			if (int(dims.W4) > layout.SSHor || bx&1 != 0) && (int(dims.H4) > layout.SSVer || by&1 != 0) {
+				auv = aUV[bx>>layout.SSHor:]
+				luv = lUV[by4>>layout.SSVer:]
+			}
 		}
 		m := &handle.Masks[(by>>5)*sb128w+(bx>>5)]
 		if r.intra {
@@ -114,10 +117,20 @@ func buildLoopFilterMasksFromRecords(t testing.TB, event Event, size parser.Fram
 
 func lfMaskApplyFillPlane(plane frame.Plane, bytesPerSample int, bitDepth uint8, salt int) {
 	maxv := (1 << uint(bitDepth)) - 1
+	base := 1 << uint(bitDepth-1)
 	for y := 0; y < plane.Height; y++ {
 		for x := 0; x < plane.Width; x++ {
-			v := (x*37 + y*53 + (x^y)*17 + salt*101) & 0xffff
-			v &= maxv
+			// Smoothly varying content (small per-sample steps) so the deblock
+			// filter actually engages and filter-width/level differences change
+			// pixels -- large gradients would make every filter a no-op and mask
+			// class bugs invisible.
+			v := base + ((x*3 + y*5 + salt*11) % 13) - 6
+			if v < 0 {
+				v = 0
+			}
+			if v > maxv {
+				v = maxv
+			}
 			off := y*plane.Stride + x*bytesPerSample
 			if bytesPerSample == 1 {
 				plane.Pix[off] = byte(v)
@@ -341,6 +354,76 @@ func TestMaskApplyDiffChromaLarge(t *testing.T) {
 	rec.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize32x32, UV: tile.TransformSize8x8, HasUV: true}
 	format := frame.Format{Width: 32, Height: 32, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
 	runMaskApplyDiff(t, lfMaskApplyEvent(seq, size, lf), size, format, []lfMaskApplyRecord{{rec: rec}}, 4)
+}
+
+func TestMaskApplyDiffChromaSmallNeighbor(t *testing.T) {
+	// Reproduces the chroma block-boundary width divergence: the left block uses
+	// a 4x4 chroma transform (class 0 / width 4) and the right block a larger
+	// chroma transform. The shared vertical chroma boundary must resolve to
+	// min(class(right), class(left)) = class 0 / width 4 via the carried left
+	// chroma context. Frame 24x8 (chroma 12x4) fully tiled; boundary is interior.
+	size := parser.FrameSize{CodedWidth: 24, UpscaledWidth: 24, Height: 8, SuperResDenominator: 8}
+	seq := lfMaskApply420Sequence()
+	lf := parser.LoopFilterParams{LevelY: [2]uint8{20, 20}, LevelU: 24, LevelV: 22, Sharpness: 1}
+	// Left: 8x8 luma at MI(0,0) with 4x4 chroma tx (chroma 4x4 -> class 0).
+	left := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 2, 2)
+	left.Block.Size = tile.BlockSize8x8
+	left.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize8x8, UV: tile.TransformSize4x4, HasUV: true}
+	// Right: 16x8 luma at MI(2,0) with 8x4 chroma tx (chroma 8x4 -> class 1).
+	right := testFrameWorkLoopFilterPostFilterRecordAt(2, 0, 6, 2)
+	right.Block.Size = tile.BlockSize16x8
+	right.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize16x8, UV: tile.TransformSize8x4, HasUV: true}
+	format := frame.Format{Width: 24, Height: 8, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
+	runMaskApplyDiff(t, lfMaskApplyEvent(seq, size, lf), size, format,
+		[]lfMaskApplyRecord{{rec: left}, {rec: right}}, 4)
+}
+
+func TestMaskApplyDiffChromaSharedSubBlock(t *testing.T) {
+	// Two vertically stacked 16x4 luma blocks (1 MI tall each) at rows 0 and 1
+	// share a single chroma row in 4:2:0. Per AV1 (dav1d has_chroma), only the
+	// odd sub-block (row 1) carries the shared chroma; the even one must not emit
+	// a chroma edge nor update the chroma neighbour context. A left 8x8 block
+	// with a 4x4 chroma transform (class 0) sets the shared boundary width, so
+	// the boundary must resolve to width 4 -- not the wider class the even
+	// sub-block would otherwise inject into the mask.
+	size := parser.FrameSize{CodedWidth: 24, UpscaledWidth: 24, Height: 8, SuperResDenominator: 8}
+	seq := lfMaskApply420Sequence()
+	lf := parser.LoopFilterParams{LevelY: [2]uint8{20, 20}, LevelU: 26, LevelV: 24, Sharpness: 1}
+	// Left 8x8 luma at MI(0,0), covers rows 0-1, chroma 4x4 (class 0).
+	left := testFrameWorkLoopFilterPostFilterRecordAt(0, 0, 2, 2)
+	left.Block.Size = tile.BlockSize8x8
+	left.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize8x8, UV: tile.TransformSize4x4, HasUV: true}
+	// Top 16x4 luma at MI(2,0) (even row) and bottom 16x4 at MI(2,1) (odd row),
+	// both with an 8x4 chroma transform (class 1 vertical) and HasUV set.
+	top := testFrameWorkLoopFilterPostFilterRecordAt(2, 0, 6, 1)
+	top.Block.Size = tile.BlockSize16x4
+	top.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize16x4, UV: tile.TransformSize8x4, HasUV: true}
+	bottom := testFrameWorkLoopFilterPostFilterRecordAt(2, 1, 6, 2)
+	bottom.Block.Size = tile.BlockSize16x4
+	bottom.TransformTree = tile.TransformTreeResult{Y: tile.TransformSize16x4, UV: tile.TransformSize8x4, HasUV: true}
+	format := frame.Format{Width: 24, Height: 8, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
+	recs := []lfMaskApplyRecord{{rec: left}, {rec: top}, {rec: bottom}}
+	event := lfMaskApplyEvent(seq, size, lf)
+	runMaskApplyDiff(t, event, size, format, recs, 4)
+
+	// Direct guard on the built mask: the shared vertical chroma boundary at
+	// chroma col 1 (region 0, pos 1) must carry a single strength class. If the
+	// even sub-block also emitted chroma, both the class-0 (min with the left
+	// 4x4 transform) and class-1 lanes would be set and the scan would pick the
+	// wider class -- the exact deblock divergence this fixes.
+	masks := buildLoopFilterMasksFromRecords(t, event, size, recs, 4)
+	region := &masks.Masks[0]
+	var class0, class1 uint16
+	for row := 0; row < 4; row++ {
+		class0 |= region.UV[0][1][0][0] & (1 << uint(row))
+		class1 |= region.UV[0][1][1][0] & (1 << uint(row))
+	}
+	if class1 != 0 {
+		t.Fatalf("shared chroma boundary has class-1 (width-6) bits set: class0=%#x class1=%#x; the even sub-block leaked a chroma edge", class0, class1)
+	}
+	if class0 == 0 {
+		t.Fatalf("shared chroma boundary has no class-0 edge; test setup is degenerate")
+	}
 }
 
 var _ = loopfilter.PlaneY

@@ -471,6 +471,11 @@ func (ctx FrameWorkPostFilterContext) loopFilterPostFilterPlanTrustedSweep(filte
 // is a decoder bridge for the current stored-candidate scheduler; full
 // frame-order integration remains separate work.
 func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdges(req FrameWorkLoopFilterPostFilterRequest) (FrameWorkLoopFilterPostFilterApplyResult, error) {
+	// The mask-driven apply (ApplyLoopFilterEdgesFromMasks) is byte-exact for
+	// luma but the decode-time chroma edge-mask build does not yet reproduce the
+	// edge-list min(cur,prev) chroma filter width at variable-transform block
+	// boundaries, so production stays on the byte-exact edge-list apply until the
+	// chroma mask build reaches parity.
 	plan, err := ctx.LoopFilterPostFilterPlan(req)
 	result := FrameWorkLoopFilterPostFilterApplyResult{Plan: plan}
 	if err != nil {

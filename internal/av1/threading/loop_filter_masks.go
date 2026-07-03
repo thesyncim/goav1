@@ -128,8 +128,19 @@ func (h *FrameWorkLoopFilterMasks) build(s *frameWorkLoopFilterMaskScratch, visi
 	if h.HasChroma && tree.HasUV {
 		ssHor := h.Layout.SSHor
 		ssVer := h.Layout.SSVer
-		auv = s.aUV[bx>>ssHor:]
-		luv = s.lUV[by4>>ssVer:]
+		// Only the sub-block that carries the shared chroma emits chroma edges
+		// and updates the chroma neighbour context, matching dav1d's has_chroma
+		// gate (src/decode.c create_lf_mask_inter/intra: auv/luv passed only when
+		// (bw4 > ss_hor || bx&1) && (bh4 > ss_ver || by&1)). Without this, two
+		// vertically/horizontally adjacent sub-8-pixel luma blocks that map to
+		// one chroma sample both write the shared chroma edge, and the second
+		// reads the first's just-written class as its "previous" side instead of
+		// the true neighbour -- OR-ing a spurious wider width class into the mask.
+		dims, _ := visit.Block.Size.Dimensions()
+		if (int(dims.W4) > ssHor || bx&1 != 0) && (int(dims.H4) > ssVer || by&1 != 0) {
+			auv = s.aUV[bx>>ssHor:]
+			luv = s.lUV[by4>>ssVer:]
+		}
 	}
 
 	m := h.region(bx, by)
