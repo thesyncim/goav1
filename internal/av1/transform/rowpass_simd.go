@@ -46,6 +46,15 @@ var (
 	inverseDCT64Row4Impl = inverseDCT64Row4PureGo
 )
 
+// inverseADST16Row4 / inverseADST16Row4Flip transform four adjacent stride-1
+// rows in place with the (flip-)ADST16 horizontal transform (transposed
+// four-lane row shape). The result for each row equals the corresponding
+// single-row scalar kernel. Same binding rules as the DCT four-row slots.
+var (
+	inverseADST16Row4Impl     = inverseADST16Row4PureGo
+	inverseADST16Row4FlipImpl = inverseADST16Row4FlipPureGo
+)
+
 // inverse1DRow2 applies the 1D inverse row transform to two adjacent
 // contiguous rows r0 and r1 (each stride 1, length len). For the lengths and
 // types that have a batched kernel it routes through the dispatch slot;
@@ -92,13 +101,24 @@ func inverse1DRow2(r0 []int32, r1 []int32, length int, typ tx1DType, min int32, 
 // pairs. The result is always identical to running inverse1DRow on each row
 // separately.
 func inverse1DRow4(r0, r1, r2, r3 []int32, length int, typ tx1DType, min int32, max int32) {
-	if typ == tx1DDCT {
+	switch typ {
+	case tx1DDCT:
 		switch length {
 		case dct32Size:
 			inverseDCT32Row4Impl(r0, r1, r2, r3, min, max)
 			return
 		case dct64Size:
 			inverseDCT64Row4Impl(r0, r1, r2, r3, min, max)
+			return
+		}
+	case tx1DADST:
+		if length == adst16Size {
+			inverseADST16Row4Impl(r0, r1, r2, r3, min, max)
+			return
+		}
+	case tx1DFlipADST:
+		if length == adst16Size {
+			inverseADST16Row4FlipImpl(r0, r1, r2, r3, min, max)
 			return
 		}
 	}
@@ -145,6 +165,20 @@ func inverseDCT32Row4PureGo(r0, r1, r2, r3 []int32, min int32, max int32) {
 func inverseDCT64Row4PureGo(r0, r1, r2, r3 []int32, min int32, max int32) {
 	inverseDCT64Row2PureGo(r0, r1, min, max)
 	inverseDCT64Row2PureGo(r2, r3, min, max)
+}
+
+func inverseADST16Row4PureGo(r0, r1, r2, r3 []int32, min int32, max int32) {
+	inverseADST1D(r0, 1, adst16Size, min, max)
+	inverseADST1D(r1, 1, adst16Size, min, max)
+	inverseADST1D(r2, 1, adst16Size, min, max)
+	inverseADST1D(r3, 1, adst16Size, min, max)
+}
+
+func inverseADST16Row4FlipPureGo(r0, r1, r2, r3 []int32, min int32, max int32) {
+	inverseFlipADST1D(r0, 1, adst16Size, min, max)
+	inverseFlipADST1D(r1, 1, adst16Size, min, max)
+	inverseFlipADST1D(r2, 1, adst16Size, min, max)
+	inverseFlipADST1D(r3, 1, adst16Size, min, max)
 }
 
 func inverseADST4Row2PureGo(r0 []int32, r1 []int32, min int32, max int32) {

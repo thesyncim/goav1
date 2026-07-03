@@ -60,3 +60,6 @@ func BenchmarkDCT32Row4Dispatch(b *testing.B) { benchmarkRow4(b, dct32Size, inve
 func BenchmarkDCT32Row4PureGo(b *testing.B)   { benchmarkRow4(b, dct32Size, inverseDCT32Row4PureGo) }
 func BenchmarkDCT64Row4Dispatch(b *testing.B) { benchmarkRow4(b, dct64Size, inverseDCT64Row4Impl) }
 func BenchmarkDCT64Row4PureGo(b *testing.B)   { benchmarkRow4(b, dct64Size, inverseDCT64Row4PureGo) }
+
+func BenchmarkADST16Row4Dispatch(b *testing.B) { benchmarkRow4(b, adst16Size, inverseADST16Row4Impl) }
+func BenchmarkADST16Row4PureGo(b *testing.B)   { benchmarkRow4(b, adst16Size, inverseADST16Row4PureGo) }

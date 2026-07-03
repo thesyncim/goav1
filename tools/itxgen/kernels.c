@@ -36,6 +36,23 @@ void goav1_idct64_col4(int32_t *base, long strideBytes, long min, long max,
   idct64_mem((char *)base, strideBytes, (int32x4_t *)scratch, mn, mx);
 }
 
+// --- inverse ADST16 (flip handled in the Go adapter by row-reversal) ---
+
+void goav1_iadst16_col4(int32_t *base, long strideBytes, long min, long max) {
+  int32x4_t mn = vdupq_n_s32((int32_t)min);
+  int32x4_t mx = vdupq_n_s32((int32_t)max);
+  int32x4_t v[16];
+  const char *p = (const char *)base;
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 16; i++)
+    v[i] = vld1q_s32((const int32_t *)(p + (long)i * strideBytes));
+  iadst16_core(v, mn, mx);
+  char *q = (char *)base;
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 16; i++)
+    vst1q_s32((int32_t *)(q + (long)i * strideBytes), v[i]);
+}
+
 // --- four-row kernels: transpose 4x4 blocks so four rows ride the lanes ---
 
 static inline void tr4(int32x4_t a, int32x4_t b, int32x4_t c, int32x4_t d,
@@ -61,6 +78,28 @@ void goav1_idct32_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3,
   idct32_core(v, mn, mx);
 #pragma clang loop unroll(full)
   for (int i = 0; i < 8; i++) {
+    int32x4_t a, b, c, d;
+    tr4(v[4 * i], v[4 * i + 1], v[4 * i + 2], v[4 * i + 3], &a, &b, &c, &d);
+    vst1q_s32(r0 + 4 * i, a);
+    vst1q_s32(r1 + 4 * i, b);
+    vst1q_s32(r2 + 4 * i, c);
+    vst1q_s32(r3 + 4 * i, d);
+  }
+}
+
+void goav1_iadst16_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3,
+                        long min, long max) {
+  int32x4_t mn = vdupq_n_s32((int32_t)min);
+  int32x4_t mx = vdupq_n_s32((int32_t)max);
+  int32x4_t v[16];
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 4; i++)
+    tr4(vld1q_s32(r0 + 4 * i), vld1q_s32(r1 + 4 * i),
+        vld1q_s32(r2 + 4 * i), vld1q_s32(r3 + 4 * i),
+        &v[4 * i], &v[4 * i + 1], &v[4 * i + 2], &v[4 * i + 3]);
+  iadst16_core(v, mn, mx);
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 4; i++) {
     int32x4_t a, b, c, d;
     tr4(v[4 * i], v[4 * i + 1], v[4 * i + 2], v[4 * i + 3], &a, &b, &c, &d);
     vst1q_s32(r0 + 4 * i, a);

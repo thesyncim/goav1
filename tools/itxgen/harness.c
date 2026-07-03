@@ -70,6 +70,38 @@ static int run(int n, void (*neon)(int32_t *, long, long, long),
 
 void goav1_idct32_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3, long min, long max);
 void goav1_idct64_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3, long min, long max, int32_t *scratch);
+void goav1_iadst16_col4(int32_t *base, long strideBytes, long min, long max);
+void goav1_iadst16_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3, long min, long max);
+static void iadst16_col4_wrap(int32_t *b, long st, long mn, long mx) { goav1_iadst16_col4(b, st, mn, mx); }
+
+static int run_iadst16_row4(void) {
+  static const int bits[] = {16, 16, 18, 16, 20, 18};
+  for (int ci = 0; ci < 6; ci++) {
+    int64_t mx = (1LL << (bits[ci] - 1)) - 1, mn = -(1LL << (bits[ci] - 1));
+    for (int iter = 0; iter < 30000; iter++) {
+      int32_t rows[4][64], want[4][64];
+      for (int r = 0; r < 4; r++)
+        for (int i = 0; i < 16; i++) {
+          int32_t raw = (iter & 1) ? edges[rnd() % 13] : (int32_t)(rnd()) >> (rnd() % 13);
+          rows[r][i] = clampv(raw, mn, mx);
+        }
+      memcpy(want, rows, sizeof rows);
+      for (int r = 0; r < 4; r++) {
+        int64_t v[64];
+        for (int i = 0; i < 16; i++) v[i] = want[r][i];
+        iadst16_ref(v, mn, mx);
+        for (int i = 0; i < 16; i++) want[r][i] = (int32_t)v[i];
+      }
+      goav1_iadst16_row4(rows[0], rows[1], rows[2], rows[3], mn, mx);
+      if (memcmp(rows, want, sizeof rows)) {
+        printf("IADST16 ROW MISMATCH clamp=%d iter=%d\n", bits[ci], iter);
+        return 1;
+      }
+    }
+  }
+  printf("iadst16 row4 ok\n");
+  return 0;
+}
 
 static int run_row4(int n) {
   static const int bits[] = {16, 16, 18, 16, 20, 18};
@@ -108,5 +140,7 @@ int main(void) {
   if (run(64, idct64_wrap, idct64_ref)) return 1;
   if (run_row4(32)) return 1;
   if (run_row4(64)) return 1;
+  if (run(16, iadst16_col4_wrap, iadst16_ref)) return 1;
+  if (run_iadst16_row4()) return 1;
   return 0;
 }

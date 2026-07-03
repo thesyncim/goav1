@@ -37,6 +37,8 @@ func init() {
 		inverseDCT32Row2Impl = inverseDCT32Row2NEONAdapter
 		inverseDCT32Row4Impl = inverseDCT32Row4NEONAdapter
 		inverseDCT64Row4Impl = inverseDCT64Row4NEONAdapter
+		inverseADST16Row4Impl = inverseADST16Row4NEONAdapter
+		inverseADST16Row4FlipImpl = inverseADST16Row4FlipNEONAdapter
 	}
 }
 
@@ -138,4 +140,46 @@ func inverseDCT64Row4NEONAdapter(r0, r1, r2, r3 []int32, min, max int32) {
 	r3 = r3[:dct64Size]
 	var scratch [8 * dct64Size]int32
 	inverseDCT64Row4NEON(&r0[0], &r1[0], &r2[0], &r3[0], int64(min), int64(max), &scratch[0])
+}
+
+func inverseADST16Row4NEONAdapter(r0, r1, r2, r3 []int32, min, max int32) {
+	if len(r0) < adst16Size || len(r1) < adst16Size || len(r2) < adst16Size || len(r3) < adst16Size ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseADST16Row4PureGo(r0, r1, r2, r3, min, max)
+		return
+	}
+	r0 = r0[:adst16Size]
+	r1 = r1[:adst16Size]
+	r2 = r2[:adst16Size]
+	r3 = r3[:adst16Size]
+	inverseADST16Row4NEON(&r0[0], &r1[0], &r2[0], &r3[0], int64(min), int64(max))
+}
+
+// inverseADST16Row4FlipNEONAdapter runs the natural ADST16 row kernel then
+// reverses each row's 16 elements in place: the flip transform is exactly the
+// horizontal reversal of the natural ADST16 output (inverseFlipADST1D writes
+// natural[i] to position 15-i), so this is bit-for-bit identical to
+// inverseFlipADST1D run on each row. The natural kernel reads every input
+// before storing, so the in-place reversal is safe.
+func inverseADST16Row4FlipNEONAdapter(r0, r1, r2, r3 []int32, min, max int32) {
+	if len(r0) < adst16Size || len(r1) < adst16Size || len(r2) < adst16Size || len(r3) < adst16Size ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseADST16Row4FlipPureGo(r0, r1, r2, r3, min, max)
+		return
+	}
+	r0 = r0[:adst16Size]
+	r1 = r1[:adst16Size]
+	r2 = r2[:adst16Size]
+	r3 = r3[:adst16Size]
+	inverseADST16Row4NEON(&r0[0], &r1[0], &r2[0], &r3[0], int64(min), int64(max))
+	reverseADST16Row(r0)
+	reverseADST16Row(r1)
+	reverseADST16Row(r2)
+	reverseADST16Row(r3)
+}
+
+func reverseADST16Row(r []int32) {
+	for i, j := 0, adst16Size-1; i < j; i, j = i+1, j-1 {
+		r[i], r[j] = r[j], r[i]
+	}
 }

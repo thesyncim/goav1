@@ -12,7 +12,7 @@ match bit-for-bit.
 """
 import ast, re, sys
 
-GO = open("dct.go").read()
+GO = open("dct.go").read() + "\n" + open("adst.go").read()
 
 B = 1 << 19  # max |input| magnitude: stage clamp bounds are within +/-2^19
 INT32_MAX = (1 << 31) - 1
@@ -150,6 +150,16 @@ class Xlate:
     def value(self, node):
         """Translate an expression node to a Val (NEON var + scalar var share name)."""
         node = strip_int64(node)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "clipInt32":
+            # clipInt32 saturates an int64 to int32. Every value it wraps in the
+            # ADST butterflies is a terminal store whose magnitude the range
+            # proof already keeps below 2^31 (a rounded 181-product or a
+            # [min,max]-clamped sum), so in int32 lanes it is a no-op; it only
+            # marks the value store-eligible. clipInt32 results are never fed
+            # back into a multiply, so the wider bound never reaches the rewrite
+            # proof.
+            v = self.value(node.args[0])
+            return Val(v.name, v.bound, True)
         if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "clipRange":
             v = self.value(node.args[0])
             return self.clamp(v)
@@ -486,26 +496,29 @@ def gen_dct64_mem():
 
 # ----------------------------------------------------------------- generate
 
-def gen_kernel(go_func, n):
+def gen_kernel(go_func, cbase):
     em = Emitter()
     x = Xlate(em, {}, "v", "")
     x.run(extract_func(go_func), 1)
     neon = "\n".join(em.lines_neon)
     scal = "\n".join(em.lines_scalar)
     neon_fn = (
-        "static __attribute__((always_inline)) inline void idct%d_core(int32x4_t *v, int32x4_t mn, int32x4_t mx) {\n%s\n}\n"
-        % (n, neon))
+        "static __attribute__((always_inline)) inline void %s_core(int32x4_t *v, int32x4_t mn, int32x4_t mx) {\n%s\n}\n"
+        % (cbase, neon))
     scal_fn = (
-        "static void idct%d_ref(int64_t *v, int64_t min, int64_t max) {\n%s\n}\n"
-        % (n, scal))
+        "static void %s_ref(int64_t *v, int64_t min, int64_t max) {\n%s\n}\n"
+        % (cbase, scal))
     return neon_fn, scal_fn
 
 def main():
     parts_neon, parts_scal = [], []
-    nf, sf = gen_kernel("inverseDCT32", 32)
+    nf, sf = gen_kernel("inverseDCT32", "idct32")
     parts_neon.append(nf)
     parts_scal.append(sf)
     nf, sf = gen_dct64_mem()
+    parts_neon.append(nf)
+    parts_scal.append(sf)
+    nf, sf = gen_kernel("inverseADST16Core", "iadst16")
     parts_neon.append(nf)
     parts_scal.append(sf)
     open("core_neon.h", "w").write(

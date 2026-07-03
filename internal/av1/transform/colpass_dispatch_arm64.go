@@ -30,6 +30,8 @@ func init() {
 		inverseDCT32Col2Impl = inverseDCT32Col2NEONAdapter
 		inverseDCT32Col4Impl = inverseDCT32Col4NEONAdapter
 		inverseDCT64Col4Impl = inverseDCT64Col4NEONAdapter
+		inverseADST16Col4Impl = inverseADST16Col4NEONAdapter
+		inverseADST16Col4FlipImpl = inverseADST16Col4FlipNEONAdapter
 	}
 }
 
@@ -95,4 +97,37 @@ func inverseDCT64Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
 	}
 	var scratch [4 * dct64Size]int32
 	inverseDCT64Col4NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max), &scratch[0])
+}
+
+func inverseADST16Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
+	if rowStride < 4 || len(buf) < (adst16Size-1)*rowStride+4 ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseADST16Col4PureGo(buf, rowStride, min, max)
+		return
+	}
+	inverseADST16Col4NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
+}
+
+// inverseADST16Col4FlipNEONAdapter runs the natural ADST16 kernel then reverses
+// the 16 rows of each of the four columns in place: the flip transform is
+// exactly the vertical reversal of the natural ADST16 output (inverseFlipADST1D
+// writes natural[i] to position 15-i), so this is bit-for-bit identical to
+// inverseFlipADST1D run on each column. The natural kernel reads all 16 inputs
+// before storing, so the in-place reversal is safe.
+func inverseADST16Col4FlipNEONAdapter(buf []int32, rowStride int, min, max int32) {
+	if rowStride < 4 || len(buf) < (adst16Size-1)*rowStride+4 ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseADST16Col4FlipPureGo(buf, rowStride, min, max)
+		return
+	}
+	inverseADST16Col4NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
+	for i := 0; i < adst16Size/2; i++ {
+		top := buf[i*rowStride : i*rowStride+4 : i*rowStride+4]
+		j := (adst16Size - 1 - i) * rowStride
+		bot := buf[j : j+4 : j+4]
+		top[0], bot[0] = bot[0], top[0]
+		top[1], bot[1] = bot[1], top[1]
+		top[2], bot[2] = bot[2], top[2]
+		top[3], bot[3] = bot[3], top[3]
+	}
 }

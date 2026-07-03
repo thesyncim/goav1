@@ -26,5 +26,7 @@ func row4TestImpls() []row4TestFunc {
 	return []row4TestFunc{
 		{"DCT32Row4", dct32Size, inverseDCT32Row4NEONAdapter, inverseDCT32Row4PureGo},
 		{"DCT64Row4", dct64Size, inverseDCT64Row4NEONAdapter, inverseDCT64Row4PureGo},
+		{"ADST16Row4", adst16Size, inverseADST16Row4NEONAdapter, inverseADST16Row4PureGo},
+		{"ADST16Row4Flip", adst16Size, inverseADST16Row4FlipNEONAdapter, inverseADST16Row4FlipPureGo},
 	}
 }
