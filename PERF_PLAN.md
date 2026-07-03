@@ -63,8 +63,26 @@ quality tax (+0.4–0.6 dB) and is what WebRTC Config.MaxThreads selects:
 
 goav1 (wavefront) is now quality-superior to SVT on EVERY clip while staying
 above each clip's frame-rate deadline. SVT keeps the raw-fps crown on realC
-(128 vs 77); closing THAT needs the E1-followup (pipeline entropy-write of
-frame N with decision of N+1 — the ~6.8 ms serial write is the Amdahl bound).
+(122 vs 80). RAW-FPS ANALYSIS (2026-07-03, proven): a realC frame ≈ 13.6 ms =
+decision-wavefront ~7.4 ms (parallel, row-capped: 1080p has only 17 SB-rows) +
+entropy-write ~7.3 ms (SERIAL). The write is HALF the frame and CANNOT overlap
+frame N+1's decision — N+1 prices RD against N's frame-END adapted CDFs
+(e.frameCtx, written only by exportCDFs AFTER N's write; the mds0/interp rate
+tables freeze from it). Traced through goav1 AND SVT source: SVT p12 has the
+IDENTICAL EC(N)→MD(N+1) serialization (frame_context chaining, always-on at
+p12; pic_manager blocks the next referencing frame until packetization writes
+back the adapted CDF). So entropy-write∥decision overlap is a PROVEN DEAD-END,
+not a missing optimization — pin it. SVT's 122 fps at only 1.82x parallelism =
+~4.5 ms CPU/frame vs goav1 ~50 ms over 4.7 cores: the gap is per-frame WORK
+(pure-Go vs SIMD-C + heavier search), not unexploited overlap. WITHIN the
+low-delay contract the byte-safe wall levers are: (1) speed the serial entropy
+write (7.3 ms, hard — entropy is tight), (2) reduce serial LF tail (loop-filter
+bitmask, in progress), (3) less per-frame work (E-levers ~exhausted). The ONLY
+structural raw-fps lever is TEMPORAL-LAYER FRAME PIPELINING (L1T2 coding order
+base0,leaf1,base2,leaf3…: leaf1 and base2 both depend only on base0 and are
+mutually independent → encode them concurrently; bytes IDENTICAL) — but it
+costs +1 FRAME LATENCY (Encode() returns a frame late), regressing the low-delay
+realtime contract. That is a PRODUCT decision, not a byte-preserving tweak.
 
 CPU PROFILE (realC, 60 frames, cpu-seconds ≈ energy; commit 99785179 routes
 serial + multi-tile coders back to the FUSED single-pass walk — the split's
