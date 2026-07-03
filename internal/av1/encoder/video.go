@@ -164,6 +164,19 @@ type VideoEncoder struct {
 
 	decisionStatsEnabled bool
 	decisionStats        EncoderDecisionStats
+
+	// Throughput pipelining (opt-in, default off). See video_pipeline.go: the
+	// EncodeThroughput/Drain surface buffers one source so a droppable leaf can
+	// overlap the following base frame, trading +1 frame of latency for wall
+	// throughput. When pipeline is false the encoder is byte- and
+	// latency-identical to the historical serial path.
+	pipeline    bool
+	pipeHeld    bool
+	pipeHeldKey bool
+	pipeHeldTID uint8
+	pipeHeldSrc SourceFrame420
+	pipeSrcBuf  [2]SourceFrame420
+	pipeSrcIdx  int
 }
 
 type tileWorkRange struct {
@@ -1051,6 +1064,7 @@ func (e *VideoEncoder) Prewarm() error {
 	if err := e.joinFilter(); err != nil {
 		return err
 	}
+	e.prewarmPipeline(src)
 	e.haveKey = false
 	e.haveCtx = false
 	e.interpOnlyRegular = false

@@ -408,6 +408,91 @@ func benchmarkVideoEncoderPFramePan1080p(b *testing.B, maxThreads int, effort in
 	}
 }
 
+// BenchmarkVideoEncoderPipelinePan1080p is the throughput-pipelining
+// allocation canary: the opt-in EncodeThroughput/Drain surface must stay at
+// zero steady-state heap traffic just like the serial Encode path. It codes
+// the camera-like pan under L1T2 with pipelining enabled.
+func BenchmarkVideoEncoderPipelinePan1080p(b *testing.B) {
+	const w, h = 1920, 1080
+	cw, ch := w/2, h/2
+	rng := rand.New(rand.NewSource(15))
+	wide := make([]byte, (w+512)*h)
+	for y := range h {
+		for x := 0; x < w+512; x++ {
+			wide[y*(w+512)+x] = uint8(60 + (x/7+y/9)%70 + rng.Intn(25))
+		}
+	}
+	for y := range h {
+		row := wide[y*(w+512) : (y+1)*(w+512)]
+		for x := 1; x < len(row)-1; x++ {
+			row[x] = uint8((int(row[x-1]) + 2*int(row[x]) + int(row[x+1])) >> 2)
+		}
+	}
+	makeFrame := func(t int) encoder.SourceFrame420 {
+		f := encoder.SourceFrame420{
+			Y:            make([]byte, w*h),
+			U:            make([]byte, cw*ch),
+			V:            make([]byte, cw*ch),
+			YStride:      w,
+			ChromaStride: cw,
+			Width:        w,
+			Height:       h,
+		}
+		off := (t * 4) % 512
+		for y := range h {
+			copy(f.Y[y*w:(y+1)*w], wide[y*(w+512)+off:])
+		}
+		for i := range f.U {
+			f.U[i] = 120
+			f.V[i] = 130
+		}
+		return f
+	}
+	enc, err := encoder.NewVideoEncoderCBR(w, h, encoder.RateControlConfig{
+		TargetBitsPerSecond: 8_000_000, FramesPerSecond: 60, MinQIndex: 20, MaxQIndex: 200,
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := enc.SetTemporalLayers(2); err != nil {
+		b.Fatal(err)
+	}
+	if err := enc.SetThroughputPipelining(true); err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() {
+		b.StopTimer()
+		_, _, _, _ = enc.Drain()
+		_ = enc.Close()
+	})
+	frames := make([]encoder.SourceFrame420, 32)
+	for i := range frames {
+		frames[i] = makeFrame(i)
+	}
+	if err := enc.Prewarm(); err != nil {
+		b.Fatal(err)
+	}
+	// Fill and settle the pipeline so buffers are sized before timing.
+	if _, _, _, err := enc.EncodeThroughput(frames[0], true); err != nil {
+		b.Fatal(err)
+	}
+	for i := 1; i < 5; i++ {
+		if _, _, _, err := enc.EncodeThroughput(frames[i], false); err != nil {
+			b.Fatal(err)
+		}
+	}
+	if err := enc.Flush(); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, _, err := enc.EncodeThroughput(frames[1+i%31], false); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // BenchmarkStreamingKeyframe1080p measures a forced keyframe inside a live
 // stream - the scene-cut path - where the coder pool and reconstruction
 // buffer reuse keep the per-key allocation near zero.
