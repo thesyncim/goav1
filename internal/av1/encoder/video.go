@@ -128,6 +128,10 @@ type VideoEncoder struct {
 		out     *SourceFrame420
 		lfLevel uint8
 		cdef    parser.CDEFParams
+		// parallelMasks is snapshotted on the dispatch goroutine (which is
+		// serialized with config mutation) so the detached filter worker never
+		// reads e.tileColsLog2, which SetConfig may mutate concurrently.
+		parallelMasks bool
 	}
 
 	// frameCtx chains the adapted symbol contexts across the base layer:
@@ -1228,16 +1232,17 @@ func (e *VideoEncoder) startFilterWorker() {
 		for range e.filterWork {
 			p := &e.filterParams
 			// The background worker only runs for the multithread branch
-			// (dispatched under !e.singleThread), so it always uses the
-			// parallel apply — never re-read e.singleThread here, which
-			// SetConfig may be mutating concurrently.
-			e.filterDone <- e.applyInLoopFilters(p.out, p.lfLevel, p.cdef, false)
+			// (dispatched under !e.singleThread), so it always uses a parallel
+			// apply — never re-read e.singleThread or e.tileColsLog2 here, which
+			// SetConfig may be mutating concurrently; the single-tile-vs-multi-tile
+			// choice is snapshotted into filterParams on the dispatch goroutine.
+			e.filterDone <- e.applyInLoopFilters(p.out, p.lfLevel, p.cdef, false, p.parallelMasks)
 		}
 	}()
 	e.filterStarted = true
 }
 
-func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cdef parser.CDEFParams, singleThread bool) error {
+func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cdef parser.CDEFParams, singleThread, parallelMasks bool) error {
 	lf := parser.LoopFilterParams{
 		LevelY: [2]uint8{lfLevel, lfLevel},
 		LevelU: lfLevel,
@@ -1245,12 +1250,24 @@ func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cd
 	}
 	applyLF := e.lf.apply
 	applyCDEF := e.cdefApp.apply
-	if singleThread {
+	switch {
+	case singleThread:
 		// Single-threaded inter frames code a single tile (SetMaxThreads(1)
 		// forces SetTileColumns(1)), so the mask build carries context across
 		// the whole frame width and is byte-identical to the edge-list pass.
 		applyLF = e.lf.applySerialMasks
 		applyCDEF = e.cdefApp.applySerial
+	case parallelMasks:
+		// Multithread single-tile inter frames (the wavefront default:
+		// SetMaxThreads(n>1) forces one tile column) also code a whole-frame-width
+		// tile, so the mask build is byte-identical. Route the loop filter through
+		// the parallel mask apply -- the same dav1d bitmask apply as the
+		// single-thread path, fanned across the applier's band workers -- instead
+		// of the slower parallel edge-list planner+apply. Multi-tile inter frames
+		// (tileColsLog2>0, e.g. SetTileColumns) keep the edge-list apply. The
+		// single-tile decision is snapshotted by the caller (dispatch goroutine)
+		// so this can run on the detached filter worker without racing SetConfig.
+		applyLF = e.lf.applyParallelMasks
 	}
 	if err := applyLF(out, lf); err != nil {
 		return fmt.Errorf("loop filter apply: %w", err)
@@ -1609,6 +1626,11 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		e.filterParams.out = out
 		e.filterParams.lfLevel = lfLevel
 		e.filterParams.cdef = filterCDEF
+		// Snapshot the single-tile decision here (dispatch goroutine, serialized
+		// with config mutation) so the detached filter worker never reads the
+		// mutable tileColsLog2. Single tile column => the whole-frame-width mask
+		// build is byte-identical, so the parallel mask apply is safe.
+		e.filterParams.parallelMasks = e.tileColsLog2 == 0
 		e.filterPending = true
 		e.filterWork <- struct{}{}
 	}
@@ -1617,7 +1639,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		return nil, err
 	}
 	if lfLevel > 0 && e.singleThread {
-		if err := e.applyInLoopFilters(out, lfLevel, filterCDEF, true); err != nil {
+		if err := e.applyInLoopFilters(out, lfLevel, filterCDEF, true, false); err != nil {
 			return nil, err
 		}
 	}

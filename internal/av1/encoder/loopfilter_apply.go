@@ -130,6 +130,11 @@ type loopFilterApplier struct {
 	// the two-phase banded apply; applyErrs holds one slot per apply job.
 	dirEdges  [3][2][]decoder.FrameWorkLoopFilterPostFilterEdge
 	applyErrs [lfApplyMaxJobs]error
+
+	// maskBands is the per-frame shared state for the parallel mask apply
+	// (applyParallelMasks): built once per frame after the mask build, then read
+	// by the band workers via mask-apply jobs.
+	maskBands decoder.FrameWorkLoopFilterMaskBands
 }
 
 // lfApplyLumaBands is the fan-out of the per-direction luma apply. Bands cut
@@ -144,14 +149,19 @@ const lfApplyLumaBands = 4
 // chroma plane.
 const lfApplyMaxJobs = lfApplyLumaBands + 2
 
-// lfJob is one parked-worker task: an edge-planning band or an edge-set apply.
+// lfJob is one parked-worker task: an edge-planning band, an edge-set apply, a
+// mask level-cache populate band (maskPopulate, over MI rows [r0,r1)), or a
+// mask-scan apply band (maskApply, over mask region-rows [r0,r1) for plane/dir).
 type lfJob struct {
-	plan   bool
-	band   int
-	r0, r1 int
-	plane  int
-	slot   int
-	edges  []decoder.FrameWorkLoopFilterPostFilterEdge
+	plan         bool
+	maskPopulate bool
+	maskApply    bool
+	band         int
+	r0, r1       int
+	plane        int
+	dir          int
+	slot         int
+	edges        []decoder.FrameWorkLoopFilterPostFilterEdge
 }
 
 // startWorkers launches the persistent workers once.
@@ -166,7 +176,8 @@ func (a *loopFilterApplier) startWorkers() {
 		go func() {
 			defer a.wg.Done()
 			for j := range a.work {
-				if j.plan {
+				switch {
+				case j.plan:
 					plan, err := a.jobCtx.LoopFilterPostFilterPlan(decoder.FrameWorkLoopFilterPostFilterRequest{
 						Map:             a.filtMap,
 						Edges:           a.bandBufs[j.band],
@@ -182,7 +193,11 @@ func (a *loopFilterApplier) startWorkers() {
 					default:
 						a.counts[j.band] = plan.StoredEdges
 					}
-				} else {
+				case j.maskPopulate:
+					a.errs[j.band] = a.maskBands.PopulateBand(j.r0, j.r1)
+				case j.maskApply:
+					a.applyErrs[j.slot] = a.maskBands.ApplyBand(loopfilter.Plane(j.plane), loopfilter.Edge(j.dir), j.r0, j.r1)
+				default:
 					_, a.applyErrs[j.slot] = a.jobCtx.ApplyPlannedLoopFilterPlaneEdges(j.edges, nil, loopfilter.Plane(j.plane))
 				}
 				a.done <- struct{}{}
@@ -475,4 +490,120 @@ func (a *loopFilterApplier) applySerialMasks(recon *SourceFrame420, lf parser.Lo
 	}
 	_, err = a.jobCtx.ApplyLoopFilterEdgesFromMasks(&a.masks, a.filtMap)
 	return err
+}
+
+// applyParallelMasks is the parallel counterpart of applySerialMasks: it builds
+// the dav1d-style deblocking edge bitmasks once, then fans the level-cache populate
+// and the mask scan+filter out across the persistent band workers, byte-identical
+// to both applySerialMasks and the parallel edge-list apply. Like applySerialMasks
+// it is single-tile only (the raster mask build carries above/left context across
+// the whole frame width); the multithread encoder inter path codes a single tile
+// column, and callers gate this on that (falling back to the edge-list apply for
+// multi-tile frames).
+//
+// Three barrier-separated phases mirror the edge-list parallel apply (banded plan,
+// then vertical apply, then horizontal apply):
+//   - Phase 0: the O(frame) per-4x4 level-cache populate fans out across MI-row
+//     bands. Block coverage partitions the frame, so origin-row bands write disjoint
+//     cells. (This replaces the edge-list's banded planning; leaving it serial made
+//     the mask apply lose to the edge-list on edge-dense frames.)
+//   - Phases 1-2: the vertical then horizontal edge scan+filter. All vertical edges
+//     filter before any horizontal edge (the horizontal filter reads pixels the
+//     vertical pass modified). Within a phase, luma fans out into region-row bands
+//     (each owns whole 128px mask rows; same-direction filter taps never cross a
+//     band boundary) and each active chroma plane runs as one whole-frame job;
+//     distinct planes and disjoint bands write disjoint pixels, so every job of a
+//     phase runs concurrently.
+func (a *loopFilterApplier) applyParallelMasks(recon *SourceFrame420, lf parser.LoopFilterParams) error {
+	if !a.masksBound {
+		return a.apply(recon, lf)
+	}
+	active, err := a.bindApplyContext(recon, lf)
+	if err != nil || !active {
+		return err
+	}
+	if err := a.masks.BuildFromMap(&a.maskScratch, a.filtMap, encoderLoopFilterSBLog2); err != nil {
+		return err
+	}
+	bands, err := a.jobCtx.PrepareLoopFilterMaskBands(&a.masks, a.filtMap)
+	if err != nil {
+		return err
+	}
+	if !bands.Active() {
+		return nil
+	}
+	a.maskBands = bands
+	a.startWorkers()
+
+	// Phase 0: fan the O(frame) level-cache populate out across MI-row bands
+	// (block coverage partitions the frame, so origin-row bands write disjoint
+	// cells), mirroring the edge-list parallel apply's banded planning. A barrier
+	// follows: every ApplyBand reads the level cache.
+	miRows := bands.MIRows()
+	if miRows > 0 {
+		popBands := lfPlanBands
+		if popBands > miRows {
+			popBands = miRows
+		}
+		perPop := (miRows + popBands - 1) / popBands
+		jobs := 0
+		for b := 0; b < popBands; b++ {
+			r0 := b * perPop
+			if r0 >= miRows {
+				break
+			}
+			r1 := min(r0+perPop, miRows)
+			a.errs[b] = nil
+			a.work <- lfJob{maskPopulate: true, band: b, r0: r0, r1: r1}
+			jobs++
+		}
+		for range jobs {
+			<-a.done
+		}
+		for b := 0; b < jobs; b++ {
+			if a.errs[b] != nil {
+				return a.errs[b]
+			}
+		}
+	}
+
+	regionRows := bands.RegionRows()
+	if regionRows <= 0 {
+		return nil
+	}
+	// Partition the region-rows into at most lfApplyLumaBands luma bands.
+	lumaBands := lfApplyLumaBands
+	if lumaBands > regionRows {
+		lumaBands = regionRows
+	}
+	perBand := (regionRows + lumaBands - 1) / lumaBands
+	for _, dir := range [2]loopfilter.Edge{loopfilter.EdgeVertical, loopfilter.EdgeHorizontal} {
+		jobs := 0
+		slot := 0
+		for rr0 := 0; rr0 < regionRows; rr0 += perBand {
+			rr1 := min(rr0+perBand, regionRows)
+			a.applyErrs[slot] = nil
+			a.work <- lfJob{maskApply: true, plane: int(loopfilter.PlaneY), dir: int(dir), r0: rr0, r1: rr1, slot: slot}
+			slot++
+			jobs++
+		}
+		for p := loopfilter.PlaneU; p <= bands.MaxPlane(); p++ {
+			if !bands.PlaneActive(p) {
+				continue
+			}
+			a.applyErrs[slot] = nil
+			a.work <- lfJob{maskApply: true, plane: int(p), dir: int(dir), r0: 0, r1: regionRows, slot: slot}
+			slot++
+			jobs++
+		}
+		for range jobs {
+			<-a.done
+		}
+		for s := 0; s < slot; s++ {
+			if a.applyErrs[s] != nil {
+				return a.applyErrs[s]
+			}
+		}
+	}
+	return nil
 }
