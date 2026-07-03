@@ -191,6 +191,25 @@ A FULL dav1d bitmask port (Av1Filter.filter_y masks in src/lf_mask.c, bit-scan
 consume in loopfilter_tmpl.c) is the bigger win but a high-risk rewrite of
 byte-exact shared code — deferred. Encode LF cost is actually the transform-
 tree replay / chroma path, not this luma loop.
+SCOPING (2026-07-03, after a full dav1d-bitmask investigation — pinned): the
+run-length win (863e26a8) ALREADY cut loopFilterPostFilterPlanTrustedSweep from
+~36% to 10.7% cum decode — most of the tractable in-planner gain is captured.
+The remaining cost is DISTRIBUTED (transform-tree resolution, neighbor-record
+lookups frameWorkTryAppendLoopFilterFixedLumaEdge, edge storage), no single
+hot line. dav1d is fast because it builds masks INCREMENTALLY during the decode
+block-walk, carrying left/above tx-context arrays (a[]/l[]) so min(prev,cur)
+width+level is resolved once and amortized; the deblock pass is then a pure
+bit-scan with ZERO neighbor/tree lookups. goav1's threading.MarkBlockPtr stores
+independent per-block records with NO cross-block edge context, so resolution
+is deferred to deblock time (the 10.7%). The real port = a multi-commit project
+rooted in threading.MarkBlockPtr + the tile block-loop building per-SB
+Av1Filter-style bitmasks + level_cache[4] with a[]/l[] carry at DECODE time
+(couples to the intra-tile wavefront recon), landed BEHIND the existing edge-
+list API first (emit the identical segment list from a bit-scan to prove byte-
+exactness on all 226 vectors), THEN swap the apply path. A partial in-file
+"phase 1" is NOT separable — without the decode-time context it is pure added
+indirection over the already-run-length-optimized path (no speedup, full
+byte-divergence risk). Not a bounded single-session deliverable.
 
 **D2. Loopfilter (~8% incl. plan sweep — was next after D1; re-profile to
 confirm).** `filter14VertNEON`+`filter14Edge` (4.6% pre-wave-3) process one
