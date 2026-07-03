@@ -134,7 +134,8 @@ is NOT an available lever. The CDEF win is the staging model (item 2), not fusio
   dryrun-extended + -race + 0-alloc.
 - **Effort:** Phase-1 = Small (measurement). Arena port = Medium.
 
-### 4. Fused itx column-pass → destination store (recon)
+### 4. [ALREADY DONE — goav1 matches dav1d: InverseBlockBitDepthRaw column-in-place + AddRawTransformPlaneBlockTrusted NEON single-read add, 0.62%; the 3.6% is butterfly math not a removable round-trip]
+### 4-orig. Fused itx column-pass → destination store (recon)
 - **goav1 hotspot:** the recon add path writes the int32 column-pass result into
   `transformScratch` (`transform/hybrid.go:243 inverseSeparableBlockClampedRowsToScratch`,
   3.6% cum intra) and then `dsp.AddRawTransformPlaneBlockTrusted`
