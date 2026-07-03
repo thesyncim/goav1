@@ -6,6 +6,15 @@ Tooling that produced the four-lane NEON DCT32/DCT64 kernels in
 remaining inverse-transform kernels (ADST, smaller DCT widening) and as the
 template for an amd64 AVX2 wave.
 
+The amd64 AVX2 wave lives in a self-contained Go sibling, `avx2gen/`, rather
+than an extension of this Python pipeline: Go's assembler has full VEX mnemonic
+coverage, so no clang/disassemble/WORD-encode round trip is needed. avx2gen
+transliterates the same pure-Go `inverseDCT32`/`inverseDCT64` butterflies into
+YMM int64-lane kernels (four rows/columns per register, VPMULDQ for the exact
+signed 32x32->64 products) and emits
+`internal/av1/transform/dct4lane_avx2_amd64.{s,go}`. Regenerate with
+`go run ./tools/itxgen/avx2gen internal/av1/transform`.
+
 Pipeline:
 
 1. `gen.py` — AST-transliterates the pure-Go butterflies in

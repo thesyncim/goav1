@@ -16,12 +16,13 @@ func colPass2TestFuncs() []col2TestFunc {
 	}
 }
 
-// colPass4TestFuncs returns the live four-column dispatch slots; without a
-// four-column NEON kernel they are the pure-Go references and the test
-// degenerates to a self-consistency check.
+// colPass4TestFuncs returns the AVX2 four-column adapters directly so the
+// differential test always exercises the AVX2 kernels for bit-exactness,
+// independent of whether the dispatcher binds them (Rosetta 2 does not advertise
+// AVX2 but still executes the instructions).
 func colPass4TestFuncs() []col2TestFunc {
 	return []col2TestFunc{
-		{"DCT32Col4", dct32Size, inverseDCT32Col4Impl, inverseDCT32Col4PureGo},
-		{"DCT64Col4", dct64Size, inverseDCT64Col4Impl, inverseDCT64Col4PureGo},
+		{"DCT32Col4", dct32Size, inverseDCT32Col4AVX2Adapter, inverseDCT32Col4PureGo},
+		{"DCT64Col4", dct64Size, inverseDCT64Col4AVX2Adapter, inverseDCT64Col4PureGo},
 	}
 }

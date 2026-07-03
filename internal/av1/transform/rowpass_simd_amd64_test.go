@@ -22,12 +22,13 @@ func row2TestImpls() []row2TestFunc {
 	}
 }
 
-// row4TestImpls returns the live four-row dispatch slots; without a four-row
-// NEON kernel they are the pure-Go references and the test degenerates to a
-// self-consistency check.
+// row4TestImpls returns the AVX2 four-row adapters directly so the differential
+// test always exercises the AVX2 kernels for bit-exactness, independent of
+// whether the dispatcher binds them (Rosetta 2 does not advertise AVX2 but still
+// executes the instructions).
 func row4TestImpls() []row4TestFunc {
 	return []row4TestFunc{
-		{"DCT32Row4", dct32Size, inverseDCT32Row4Impl, inverseDCT32Row4PureGo},
-		{"DCT64Row4", dct64Size, inverseDCT64Row4Impl, inverseDCT64Row4PureGo},
+		{"DCT32Row4", dct32Size, inverseDCT32Row4AVX2Adapter, inverseDCT32Row4PureGo},
+		{"DCT64Row4", dct64Size, inverseDCT64Row4AVX2Adapter, inverseDCT64Row4PureGo},
 	}
 }
