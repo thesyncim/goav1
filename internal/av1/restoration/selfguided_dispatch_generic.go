@@ -2,13 +2,14 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build !arm64 || (arm64 && purego)
+//go:build (!amd64 && !arm64) || (arm64 && purego) || (amd64 && purego)
 
 package restoration
 
 // init binds the pure-Go self-guided kernels on architectures the dispatcher
-// does not special-case, and on the arm64 purego build where the NEON asm is
-// excluded. This file only keeps the dispatch wiring symmetric across builds.
+// does not special-case, and on the arm64/amd64 purego builds where the SIMD
+// asm is excluded. This file only keeps the dispatch wiring symmetric across
+// builds.
 func init() {
 	boxsumImpl = boxsum
 	selfguidedImpl = selfguided
