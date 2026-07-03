@@ -183,6 +183,15 @@ amd64 AVX2 wave. Also: the OLD DCT64 col2/row2 kernels
 REMOVED in 539e1e2a — do not resurrect them; the pure-Go pair path is the
 four-lane kernels' tail fallback.
 
+**D2a. Loopfilter edge-builder run-length — LANDED (863e26a8).** Ported dav1d's
+mask run-scanning idea to the scalar path: the luma previous-cache lookup now
+returns a run length over which width+level are provably constant, so the
+per-4x4-cell loops advance by whole runs. Byte-exact (227/227), ~1.3% decode.
+A FULL dav1d bitmask port (Av1Filter.filter_y masks in src/lf_mask.c, bit-scan
+consume in loopfilter_tmpl.c) is the bigger win but a high-risk rewrite of
+byte-exact shared code — deferred. Encode LF cost is actually the transform-
+tree replay / chroma path, not this luma loop.
+
 **D2. Loopfilter (~8% incl. plan sweep — was next after D1; re-profile to
 confirm).** `filter14VertNEON`+`filter14Edge` (4.6% pre-wave-3) process one
 edge per call; dav1d `src/arm/64/loopfilter.S` does 4 edges/16 pixels with
@@ -274,13 +283,28 @@ machinery (`internal/av1/encoder/pframe_mds0.go` — fully predict + RDCOST, sam
 frozen rate tables). Upstream: `Source/Lib/Codec/` nsq search config in
 `signal_derivation_*` + the md_stage candidate injection for H/V shapes.
 
-**E4. Depth removal / block-based depth refinement.** SVT p12: `depth_removal
-_level=5`, `block_based_depth_refinement_level=10` — prunes partition depths
-per SB from ME distortions before MD. Port to cut decide()-tree work; spend the
-recovered time on E1 breadth. This is a speed lever that buys quality budget.
+**E4. Depth removal — ARCHITECTURE-BLOCKED as SVT formulates it (pinned).**
+SVT's `set_depth_removal_level_controls` (enc_mode_config.c:2935) needs
+INDEPENDENT per-block-size ME distortions (dist_64/32/16/8, each size finding
+its own MV) to compute `dev_16x16_to_8x8`. goav1 partitions with libaom's
+var-based partitioner (realtimeFillVariance8x8AvgAt): all depths share ONE
+SB-level int-pro MV, so the 8x8 residual SSEs sum EXACTLY to the 16x16 SSE →
+SVT's deviation is identically 0. Producing the signal would need an eager
+per-size ME pre-pass — the very work depth-removal saves. THE REAL WORK GAP
+(measured realC): partition mix 44.5% 8x8 / 38.2% 16x16 / 12.3% 32 / 5.0% 64,
+vs SVT near-zero 8x8 at p12/1080p — this 8x8 over-split IS the ~5x. The
+portable lever (IN PROGRESS): SVT `disallow_below_16x16` absolute-cost gate
+(disallow_below_16x16_cost_th) — give the var-partitioner a per-16x16 ME
+distortion reused from the coarse int-pro projection (no new ME pass) and gate
+16->8 splits on it. Decision-changing; quality gate realC >= 44.85 (we're
+45.19, SVT 44.77 — ~0.35 dB to spend).
 
-**E5. dist_based_ref_pruning (base 3 / leaf 6).** Prunes reference candidates
-by ME distortion ratios. Cheap, upstream-exact, frees cycles on leaves.
+**E5. dist_based_ref_pruning — LANDED (0f48c679).** Ported SVT
+`perform_md_reference_pruning` leaf gate (max_dev_to_best[PA_ME]=30): skip
+GOLDEN's subpel+compound when its full-pel ME dist is >30% worse than LAST.
+realC +0.02 dB, others flat. CPU-NEUTRAL though — GOLDEN is only 2.1% of realC
+blocks (golden-off ceiling is just −4.4% CPU). Correct + quality-positive but
+NOT a 5x lever; the 8x8 split (E4) is.
 
 **E6. Full lpd1 detector for leaves.** The current leaf cap is the "moderate
 distortion band" approximation of SVT's `lpd1_detector_post_pd0`. Port the
