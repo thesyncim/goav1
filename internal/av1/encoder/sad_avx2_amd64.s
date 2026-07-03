@@ -377,3 +377,149 @@ loop32x32s4:
 	MOVQ         BX, S4SUM3(AX)
 	VZEROUPPER
 	RET
+
+// --- single-block and dual-stride leaves + compound average ---------------
+
+// sad8x8SSE2Ctx field offsets (Src, Ref, Stride, Sum), reused by sad32x32.
+#define SGSRC    0
+#define SGREF    8
+#define SGSTRIDE 16
+#define SGSUM    24
+
+// sad8x8DualSSE2Ctx field offsets (Src, Ref, SrcStride, RefStride, Sum).
+#define DLSRC       0
+#define DLREF       8
+#define DLSRCSTRIDE 16
+#define DLREFSTRIDE 24
+#define DLSUM       32
+
+// sadCompoundAMD64Ctx field offsets.
+#define CPSRC        0
+#define CPSRCSTRIDE  8
+#define CPREF0       16
+#define CPREF0STRIDE 24
+#define CPREF1       32
+#define CPREF1STRIDE 40
+#define CPSUM        48
+
+// func sad32x32AVX2Asm(ctx *sad8x8SSE2Ctx)
+// One 32x32 SAD: each 32-byte row's VPSADBW yields four partial sums folded to
+// one in the reduction.
+TEXT ·sad32x32AVX2Asm(SB), NOSPLIT, $0-8
+	MOVQ ctx+0(FP), AX
+	MOVQ SGSRC(AX), SI
+	MOVQ SGREF(AX), DI
+	MOVQ SGSTRIDE(AX), DX
+
+	VPXOR Y2, Y2, Y2
+
+	MOVQ $32, CX
+loop32single:
+	VMOVDQU (SI), Y0
+	VMOVDQU (DI), Y1
+	VPSADBW Y0, Y1, Y1
+	VPADDQ  Y1, Y2, Y2
+	ADDQ DX, SI
+	ADDQ DX, DI
+	DECQ CX
+	JNZ  loop32single
+
+	VEXTRACTI128 $1, Y2, X0
+	VPADDQ       X0, X2, X2
+	VPSHUFD      $0xEE, X2, X0
+	VPADDQ       X0, X2, X2
+	VMOVQ        X2, BX
+	MOVQ         BX, SGSUM(AX)
+	VZEROUPPER
+	RET
+
+// func sad16x16DualAVX2Asm(ctx *sad8x8DualSSE2Ctx)
+// One 16x16 SAD with independent source and reference strides.
+TEXT ·sad16x16DualAVX2Asm(SB), NOSPLIT, $0-8
+	MOVQ ctx+0(FP), AX
+	MOVQ DLSRC(AX), SI
+	MOVQ DLREF(AX), DI
+	MOVQ DLSRCSTRIDE(AX), DX
+	MOVQ DLREFSTRIDE(AX), R8
+
+	PXOR X2, X2
+
+	MOVQ $16, CX
+loop16dual:
+	MOVOU  (SI), X0
+	MOVOU  (DI), X1
+	PSADBW X0, X1
+	PADDQ  X1, X2
+	ADDQ DX, SI
+	ADDQ R8, DI
+	DECQ CX
+	JNZ  loop16dual
+
+	PSHUFD $0xEE, X2, X0
+	PADDQ  X0, X2
+	MOVQ   X2, BX
+	MOVQ   BX, DLSUM(AX)
+	RET
+
+// func sad32x32DualAVX2Asm(ctx *sad8x8DualSSE2Ctx)
+// One 32x32 SAD with independent source and reference strides.
+TEXT ·sad32x32DualAVX2Asm(SB), NOSPLIT, $0-8
+	MOVQ ctx+0(FP), AX
+	MOVQ DLSRC(AX), SI
+	MOVQ DLREF(AX), DI
+	MOVQ DLSRCSTRIDE(AX), DX
+	MOVQ DLREFSTRIDE(AX), R8
+
+	VPXOR Y2, Y2, Y2
+
+	MOVQ $32, CX
+loop32dual:
+	VMOVDQU (SI), Y0
+	VMOVDQU (DI), Y1
+	VPSADBW Y0, Y1, Y1
+	VPADDQ  Y1, Y2, Y2
+	ADDQ DX, SI
+	ADDQ R8, DI
+	DECQ CX
+	JNZ  loop32dual
+
+	VEXTRACTI128 $1, Y2, X0
+	VPADDQ       X0, X2, X2
+	VPSHUFD      $0xEE, X2, X0
+	VPADDQ       X0, X2, X2
+	VMOVQ        X2, BX
+	MOVQ         BX, DLSUM(AX)
+	VZEROUPPER
+	RET
+
+// func sad8x8CompoundAvgBlockAVX2Asm(ctx *sadCompoundAMD64Ctx)
+// SAD(src, round((ref0+ref1)/2)) over an 8x8 block; PAVGB forms the byte
+// average (a+b+1)>>1 exactly, matching the portable reference.
+TEXT ·sad8x8CompoundAvgBlockAVX2Asm(SB), NOSPLIT, $0-8
+	MOVQ ctx+0(FP), AX
+	MOVQ CPSRC(AX), SI
+	MOVQ CPSRCSTRIDE(AX), DX
+	MOVQ CPREF0(AX), DI
+	MOVQ CPREF0STRIDE(AX), R8
+	MOVQ CPREF1(AX), R9
+	MOVQ CPREF1STRIDE(AX), R10
+
+	PXOR X3, X3
+
+	MOVQ $8, CX
+loop8compound:
+	MOVQ   (DI), X1
+	MOVQ   (R9), X2
+	PAVGB  X2, X1
+	MOVQ   (SI), X0
+	PSADBW X0, X1
+	PADDQ  X1, X3
+	ADDQ DX, SI
+	ADDQ R8, DI
+	ADDQ R10, R9
+	DECQ CX
+	JNZ  loop8compound
+
+	MOVQ X3, BX
+	MOVQ BX, CPSUM(AX)
+	RET

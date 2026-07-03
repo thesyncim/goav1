@@ -111,6 +111,65 @@ func sad32x32x4Step4AVX2(src, ref []byte, stride int) (int, int, int, int) {
 	return int(ctx.Sum0), int(ctx.Sum1), int(ctx.Sum2), int(ctx.Sum3)
 }
 
+// sadCompoundAMD64Ctx carries the compound-average precheck arguments; the
+// prediction is round((ref0+ref1)/2) formed per byte with (V)PAVGB, which is
+// exactly (a+b+1)>>1 and so bit-exact with the portable reference.
+type sadCompoundAMD64Ctx struct {
+	Src        unsafe.Pointer
+	SrcStride  int64
+	Ref0       unsafe.Pointer
+	Ref0Stride int64
+	Ref1       unsafe.Pointer
+	Ref1Stride int64
+	Sum        int64
+}
+
+//go:noescape
+func sad32x32AVX2Asm(ctx *sad8x8SSE2Ctx)
+
+//go:noescape
+func sad16x16DualAVX2Asm(ctx *sad8x8DualSSE2Ctx)
+
+//go:noescape
+func sad32x32DualAVX2Asm(ctx *sad8x8DualSSE2Ctx)
+
+//go:noescape
+func sad8x8CompoundAvgBlockAVX2Asm(ctx *sadCompoundAMD64Ctx)
+
+func sad32x32AVX2(src, ref []byte, stride int) int {
+	ctx := sad8x8SSE2Ctx{Src: unsafe.Pointer(&src[0]), Ref: unsafe.Pointer(&ref[0]), Stride: int64(stride)}
+	sad32x32AVX2Asm(&ctx)
+	return int(ctx.Sum)
+}
+
+func sad16x16DualAVX2(src []byte, srcStride int, ref []byte, refStride int) int {
+	ctx := sad8x8DualSSE2Ctx{
+		Src: unsafe.Pointer(&src[0]), Ref: unsafe.Pointer(&ref[0]),
+		SrcStride: int64(srcStride), RefStride: int64(refStride),
+	}
+	sad16x16DualAVX2Asm(&ctx)
+	return int(ctx.Sum)
+}
+
+func sad32x32DualAVX2(src []byte, srcStride int, ref []byte, refStride int) int {
+	ctx := sad8x8DualSSE2Ctx{
+		Src: unsafe.Pointer(&src[0]), Ref: unsafe.Pointer(&ref[0]),
+		SrcStride: int64(srcStride), RefStride: int64(refStride),
+	}
+	sad32x32DualAVX2Asm(&ctx)
+	return int(ctx.Sum)
+}
+
+func sad8x8CompoundAvgBlockAVX2(src []byte, srcStride int, ref0 []byte, ref0Stride int, ref1 []byte, ref1Stride int) int {
+	ctx := sadCompoundAMD64Ctx{
+		Src: unsafe.Pointer(&src[0]), SrcStride: int64(srcStride),
+		Ref0: unsafe.Pointer(&ref0[0]), Ref0Stride: int64(ref0Stride),
+		Ref1: unsafe.Pointer(&ref1[0]), Ref1Stride: int64(ref1Stride),
+	}
+	sad8x8CompoundAvgBlockAVX2Asm(&ctx)
+	return int(ctx.Sum)
+}
+
 // initAVX2SAD upgrades the motion-search x4 fan-out slots to AVX2 when the CPU
 // advertises it. The SSE2 init already ran (both files' init run at package
 // load); this overrides only the slots AVX2 improves and leaves the SSE2 8x8/
@@ -125,4 +184,8 @@ func init() {
 	sad8x8x4Step4Impl = sad8x8x4Step4AVX2
 	sad16x16x4Step4Impl = sad16x16x4Step4AVX2
 	sad32x32x4Step4Impl = sad32x32x4Step4AVX2
+	sad32x32Impl = sad32x32AVX2
+	sad16x16DualImpl = sad16x16DualAVX2
+	sad32x32DualImpl = sad32x32DualAVX2
+	sad8x8CompoundAvgBlockImpl = sad8x8CompoundAvgBlockAVX2
 }
