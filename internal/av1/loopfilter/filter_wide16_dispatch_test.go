@@ -2,6 +2,11 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
+// This differential drives the arm64 NEON 10/12-bit wide kernels
+// (filter6/8/14Edge16NEON) directly, so it is constrained to that build. Other
+// architectures cover the two-byte wide dispatch through the pure-Go reference.
+//go:build arm64 && !purego
+
 package loopfilter
 
 import (
