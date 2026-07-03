@@ -279,6 +279,24 @@ func predictInterCompoundRefHighBDToConvBuf2DResidentNEON(out []uint16, ref fram
 	compound2DHighBDNEONAsm(&ctx)
 }
 
+// predictInterCompoundRefHighBDToConvBuf2DClampedNEON handles the
+// edge-overhanging HBD compound 2D convolve. Following dav1d's reconstruction
+// model (src/recon_tmpl.c mc(), src/mc_tmpl.c emu_edge_c), it materializes the
+// clamped tap-window halo once (emuEdgeWindow16) and re-runs the resident NEON
+// joint-convolve over the resident window. Bit-identical to the pure-Go
+// per-tap-clamping reference (predictInterCompoundRefHighBDToConvBuf2DClamped).
+// Only width%4 != 0 shapes, which do not occur for AV1 inter blocks, take
+// pure-Go.
+func predictInterCompoundRefHighBDToConvBuf2DClampedNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, bitDepth int, im *compoundIM) {
+	if width < 4 || width%4 != 0 {
+		predictInterCompoundRefHighBDToConvBuf2DClamped(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, im)
+		return
+	}
+	var edge emuEdge16Buf
+	emu, emuX, emuY := emuEdgeWindow16(ref, refX, refY, width, height, &edge)
+	predictInterCompoundRefHighBDToConvBuf2DResidentNEON(out, emu, emuX, emuY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, im)
+}
+
 func predictInterCompoundRef8ToConvBufXNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, roundOffset int) {
 	fo := filterTaps/2 - 1
 	// The horizontal asm loads one extra byte in the last 8-column group while
@@ -447,6 +465,7 @@ func init() {
 		predictInterCompoundRef8ToConvBufCopyImpl = predictInterCompoundRef8ToConvBufCopyNEON
 		predictInterCompoundRefHighBDToConvBufCopyResidentImpl = predictInterCompoundRefHighBDToConvBufCopyResidentNEON
 		predictInterCompoundRefHighBDToConvBuf2DResidentImpl = predictInterCompoundRefHighBDToConvBuf2DResidentNEON
+		predictInterCompoundRefHighBDToConvBuf2DClampedImpl = predictInterCompoundRefHighBDToConvBuf2DClampedNEON
 		predictInterCompoundRefHighBDToConvBufXResidentImpl = predictInterCompoundRefHighBDToConvBufXResidentNEON
 		predictInterCompoundRefHighBDToConvBufYResidentImpl = predictInterCompoundRefHighBDToConvBufYResidentNEON
 		predictInterCompoundRef8ToConvBufXImpl = predictInterCompoundRef8ToConvBufXNEON

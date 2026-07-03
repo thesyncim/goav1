@@ -138,14 +138,14 @@ func predictInterCompoundRefHighBDToConvBuf(out []uint16, ref frame.Plane, bitDe
 			if planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
 				predictInterCompoundRefHighBDToConvBuf2DResidentImpl(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &scratch.im)
 			} else {
-				predictInterCompoundRefHighBDToConvBuf2DClamped(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &scratch.im)
+				predictInterCompoundRefHighBDToConvBuf2DClampedImpl(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &scratch.im)
 			}
 		} else {
 			var im compoundIM
 			if planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
 				predictInterCompoundRefHighBDToConvBuf2DResidentImpl(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &im)
 			} else {
-				predictInterCompoundRefHighBDToConvBuf2DClamped(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &im)
+				predictInterCompoundRefHighBDToConvBuf2DClampedImpl(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &im)
 			}
 		}
 	case subX != 0:
@@ -411,6 +411,12 @@ func predictInterCompoundRefHighBDToConvBufYClamped(out []uint16, ref frame.Plan
 
 var predictInterCompoundRefHighBDToConvBufCopyResidentImpl = predictInterCompoundRefHighBDToConvBufCopyResidentPureGo
 var predictInterCompoundRefHighBDToConvBuf2DResidentImpl = predictInterCompoundRefHighBDToConvBuf2DResident
+
+// predictInterCompoundRefHighBDToConvBuf2DClampedImpl is the dispatch slot for
+// the non-resident (edge-overhanging) HBD compound 2D convolve. It defaults to
+// the pure-Go per-tap-clamping reference; arm64 rebinds it to an emu_edge NEON
+// path (see compound_neon_arm64.go).
+var predictInterCompoundRefHighBDToConvBuf2DClampedImpl = predictInterCompoundRefHighBDToConvBuf2DClamped
 var predictInterCompoundRefHighBDToConvBufXResidentImpl = predictInterCompoundRefHighBDToConvBufXResident
 var predictInterCompoundRefHighBDToConvBufYResidentImpl = predictInterCompoundRefHighBDToConvBufYResident
 

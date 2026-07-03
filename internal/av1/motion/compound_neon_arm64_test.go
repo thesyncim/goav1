@@ -326,6 +326,102 @@ func TestCompoundHighBD2DNEONFallbackMatchesPureGo(t *testing.T) {
 	}
 }
 
+// TestCompoundHighBD2DClampedEmuEdgeMatchesPureGo drives the HBD compound 2D
+// clamped NEON path over tap windows that overhang the reference plane on every
+// side, forcing the emu_edge halo materialization, and asserts bit-identity
+// with the pure-Go per-tap-clamping reference at bit depths 10 and 12.
+func TestCompoundHighBD2DClampedEmuEdgeMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x2d16bced))
+	const refW, refH = 24, 20
+	sizes := []int{4, 8, 12, 16, 32, 64}
+	for _, bitDepth := range []uint8{10, 12} {
+		max := uint16((1 << int(bitDepth)) - 1)
+		round0 := compoundRound0(bitDepth)
+		offsetBits := int(bitDepth) + 2*filterBits - round0
+		ref := frame.Plane{Pix: make([]byte, refW*2*refH), Stride: refW * 2, Width: refW, Height: refH}
+		for y := 0; y < refH; y++ {
+			for x := 0; x < refW; x++ {
+				v := uint16(rng.Intn(int(max) + 1))
+				if (x == 0 || x == refW-1) && (y == 0 || y == refH-1) {
+					if (x+y)&1 == 0 {
+						v = 0
+					} else {
+						v = max
+					}
+				}
+				storeHighBDSample(ref, x, y, v)
+			}
+		}
+		xKernel := subpelFilters8[6]
+		yKernel := subpelFilters8[9]
+		for _, w := range sizes {
+			for _, h := range sizes {
+				offs := [][2]int{
+					{-w, -h}, {-3, -3}, {2, -5}, {refW - 2, -1},
+					{refW - 1, 5}, {refW, refH}, {5, refH - 2},
+					{-4, refH - 3}, {-6, 4}, {4, 4},
+				}
+				for _, o := range offs {
+					got := make([]uint16, w*h)
+					want := make([]uint16, w*h)
+					var gotIM, wantIM compoundIM
+					predictInterCompoundRefHighBDToConvBuf2DClampedNEON(got, ref, o[0], o[1], w, h, xKernel, yKernel, round0, offsetBits, int(bitDepth), &gotIM)
+					predictInterCompoundRefHighBDToConvBuf2DClamped(want, ref, o[0], o[1], w, h, xKernel, yKernel, round0, offsetBits, int(bitDepth), &wantIM)
+					for i := range want {
+						if got[i] != want[i] {
+							t.Fatalf("bd=%d %dx%d off=%v sample=%d NEON=%d PureGo=%d",
+								bitDepth, w, h, o, i, got[i], want[i])
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestCompoundHighBD2DClampedEmuEdgeZeroAlloc proves the emu_edge halo scratch
+// stays on the stack through the func-ptr dispatch slot.
+func TestCompoundHighBD2DClampedEmuEdgeZeroAlloc(t *testing.T) {
+	const refW, refH = 24, 20
+	ref := frame.Plane{Pix: make([]byte, refW*2*refH), Stride: refW * 2, Width: refW, Height: refH}
+	fillHighBDMotionTestPlane(ref, 0x3ff)
+	round0 := compoundRound0(10)
+	offsetBits := 10 + 2*filterBits - round0
+	xKernel := subpelFilters8[6]
+	yKernel := subpelFilters8[9]
+	out := make([]uint16, 64*64)
+	var im compoundIM
+	if a := testing.AllocsPerRun(20, func() {
+		predictInterCompoundRefHighBDToConvBuf2DClampedNEON(out, ref, -3, -3, 64, 64, xKernel, yKernel, round0, offsetBits, 10, &im)
+	}); a != 0 {
+		t.Fatalf("emu_edge compound 2D clamped allocated %v times, want 0", a)
+	}
+}
+
+func BenchmarkCompoundHighBD2DClampedEmuEdge(b *testing.B) {
+	const refW, refH = 24, 20
+	ref := frame.Plane{Pix: make([]byte, refW*2*refH), Stride: refW * 2, Width: refW, Height: refH}
+	fillHighBDMotionTestPlane(ref, 0x3ff)
+	round0 := compoundRound0(10)
+	offsetBits := 10 + 2*filterBits - round0
+	xKernel := subpelFilters8[6]
+	yKernel := subpelFilters8[9]
+	for _, w := range []int{8, 16, 32, 64} {
+		out := make([]uint16, w*w)
+		var im compoundIM
+		b.Run("neon_"+itoaW(w), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				predictInterCompoundRefHighBDToConvBuf2DClampedNEON(out, ref, -3, -3, w, w, xKernel, yKernel, round0, offsetBits, 10, &im)
+			}
+		})
+		b.Run("purego_"+itoaW(w), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				predictInterCompoundRefHighBDToConvBuf2DClamped(out, ref, -3, -3, w, w, xKernel, yKernel, round0, offsetBits, 10, &im)
+			}
+		})
+	}
+}
+
 func BenchmarkCompoundConvBufXHighBDNEONDirect_32(b *testing.B) {
 	_, ref := benchPlanes(32, 10)
 	out := make([]uint16, 32*32)
