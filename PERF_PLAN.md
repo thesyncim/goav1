@@ -283,7 +283,26 @@ machinery (`internal/av1/encoder/pframe_mds0.go` — fully predict + RDCOST, sam
 frozen rate tables). Upstream: `Source/Lib/Codec/` nsq search config in
 `signal_derivation_*` + the md_stage candidate injection for H/V shapes.
 
-**E4. Depth removal — ARCHITECTURE-BLOCKED as SVT formulates it (pinned).**
+**E4. Partition depth — LANDED + EXHAUSTED (18b20370). RE-FRAME OF THE 5x.**
+The disallow_below_16x16 absolute-cost gate removed 91% of CONTENT-driven 8x8
+on realC (4576→420 splits/60f) at +0.106 dB / −5.2% P-frame work. Forensic
+finding (decideRealtimePartition fate counts): the residual ~40% 8x8 by BLOCK
+COUNT are STRUCTURAL forced-splits — frame edges (!haveRight/!haveBottom) +
+the bottom 56px partial SB row (1080%64=56) — which bypass the var-partitioner
+and MUST split for boundary correctness. They are only ~5% of frame AREA (the
+40% count overstates them: a forced partial region emits many tiny blocks).
+The SVT dev_16x16_to_8x8 DEVIATION arm was fully probed (independent per-16x16
+ME, no double-ME, cacheable) and REJECTED: it moves 8x8 by 0.0–0.4pp / PSNR
+flat — there is nothing left to remove. SEARCH-BREADTH REDUCTION IS EXHAUSTED
+on realC. The remaining single-thread CPU (43 ms/frame) is: ~25% loop-filter
+edge planning (SCALAR, shared decoder code — the one big reducible target, see
+D2/D2a; full dav1d bitmask port is the win, byte-exact-risky) + ~40% MANDATORY
+leaf compute already on NEON (residual/quarter-plane/convolve2D8/quant/rdStats)
+— that part is the pure-Go-vs-SIMD-C structural floor. So "fix the 5x" further
+= (a) the loop-filter bitmask port (dual-benefit with the 4.34x decode gap) or
+(b) E1-followup pipelining for WALL time (search breadth is at its floor).
+
+**E4-OLD. Depth removal — ARCHITECTURE-BLOCKED as SVT formulates it (pinned).**
 SVT's `set_depth_removal_level_controls` (enc_mode_config.c:2935) needs
 INDEPENDENT per-block-size ME distortions (dist_64/32/16/8, each size finding
 its own MV) to compute `dev_16x16_to_8x8`. goav1 partitions with libaom's
