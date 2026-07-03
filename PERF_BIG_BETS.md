@@ -19,9 +19,16 @@ copied from stale baselines. Commands and raw outputs are cited inline.
 > generator (tools/itxgen/avx2gen). Byte-exact (GOARCH=amd64 differential
 > executes AVX2 under Rosetta, PASS; arm64 conformance unaffected). PERF NOT
 > validated here — Rosetta emulates VEX as multiple NEON ops so amd64 ns/op is
-> non-representative; the win is on NATIVE x86 (validate there). NEXT amd64
-> slices: forward DCT32/64 + ADST (encoder), encoder SAD 32/64/4-wide AVX2,
-> then an avx2gen register-residency pass (reduce spills) validated on x86.
+> non-representative; the win is on NATIVE x86 (validate there).
+> Phase-2 LANDED (a5733686 + 4947003e): 10 encoder SAD AVX2 kernels — the
+> motion-search core (10 of 13 SAD slots were pure-Go on x86): sad{8,16,32}x4 +
+> x4Step4 fan-out, sad32x32, sad16/32 dual-stride, sad8x8 compound-avg. Byte-
+> exact (GOARCH=amd64 differential, PASS). NEXT amd64 slices: (i) the smaller
+> encoder arm64-only kernels (rdstats, metric, hme_quarter, pframe avg/intpro,
+> scale_nearest) → AVX2 [cleaner batch, do next]; (ii) FORWARD DCT16x16/DCT32x32
+> AVX2 — big standalone kernels (NEON fdct32 ~9871 lines), high bug risk, needs
+> a dedicated fast-differential slice, NOT crammed in; (iii) forward ADST/hybrid;
+> (iv) avx2gen register-residency pass, all validated on NATIVE x86.
 >
 > MEASUREMENT RULE (user, 2026-07-03): judge by CPU TIME (cpu_total core-seconds),
 > not ns/op wall time — wall hides parallelism (goav1 wins encoder fps by
