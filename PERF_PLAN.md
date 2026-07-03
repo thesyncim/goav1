@@ -247,7 +247,27 @@ exactness on all 226 vectors), THEN swap the apply path. A partial in-file
 "phase 1" is NOT separable — without the decode-time context it is pure added
 indirection over the already-run-length-optimized path (no speedup, full
 byte-divergence risk). Not a bounded single-session deliverable.
-PORT STATUS (2026-07-03) — LIBRARY + BUILD-WIRING DONE, APPLY-SWAP REMAINS:
+APPLY-SWAP LANDED (2026-07-03, dd5345fb + 66a77548 + 78945a50 + 9f2b5f62 +
+dcfa3c1e): the dav1d bitmask loop filter is now the DEFAULT decode apply path.
+Byte-exact (dryrun-extended + profiles + full suite PASS, race-clean, 0 alloc).
+Controlled before/after (benchtime 5x, same machine): p288_inter_q20 −15.4%,
+p360_inter_q20 −15.4%, p360_inter_q32 −15.1%, p720_inter_q32 −9.6% decode wall.
+KEY FIXES the swap needed: (1) chroma has_chroma gate — masks emitted a chroma
+edge+context for EVERY UV-tx block, but in 4:2:0 two sub-8px luma blocks share
+one chroma sample and the 2nd read the 1st's just-written class as "previous"
+(dav1d create_lf_mask_* only emit when (bw4>ss||bx&1)&&(bh4>ss||by&1)); (2)
+run-merging contiguous same-(width,level) cells into one kernel call (per-cell
+was SLOWER than edge-list — the merge is what makes it a win, byte-identical
+since kernels filter each perpendicular line independently). GATED to SINGLE-
+TILE (loopFilterMasksUsable); multi-tile falls back to the byte-exact edge-list.
+FOLLOW-UPS: (a) MULTI-TILE — port dav1d tx_lpf_right_edge (lf_apply_tmpl.c
+313-430): store per-tile right/bottom edge context during the concurrent build,
+apply imin(cur,neighbour) to boundary edges → extends the ~15% to multi-tile
+(common at 1080p). (b) ENCODER PATH — the encoder loop-filter (loopfilter_apply
+.go → decoder post-filter, ~24% of encode) does NOT build masks (build is on the
+decode tile-walk); wiring mask-build into the encoder recon path would give the
+encoder the same win. (c) public SetSideData path uses the edge-list fallback.
+PRIOR STATUS (superseded) — LIBRARY + BUILD-WIRING DONE, APPLY-SWAP REMAINS:
 LANDED ON MAIN: internal/av1/lfmask package (9fe8be8c build core + d50c2a09
 scan core) + 1123cf53 differential test (7 cases). PRESERVED on branch
 wip/lf-bitmask-build (a1a29475, NOT merged — regression alone): decode-time
