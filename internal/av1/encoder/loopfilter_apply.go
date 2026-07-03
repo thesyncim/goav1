@@ -11,6 +11,7 @@ package encoder
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/decoder"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -104,6 +105,7 @@ type loopFilterApplier struct {
 	work    chan lfJob
 	done    chan struct{}
 	started bool
+	wg      sync.WaitGroup
 	jobCtx  decoder.FrameWorkPostFilterContext
 	output  frame.Frame
 	counts  [lfPlanBands]uint32
@@ -143,8 +145,10 @@ func (a *loopFilterApplier) startWorkers() {
 	}
 	a.work = make(chan lfJob, lfPlanBands)
 	a.done = make(chan struct{}, lfPlanBands)
+	a.wg.Add(lfPlanBands)
 	for range lfPlanBands {
 		go func() {
+			defer a.wg.Done()
 			for j := range a.work {
 				if j.plan {
 					plan, err := a.jobCtx.LoopFilterPostFilterPlan(decoder.FrameWorkLoopFilterPostFilterRequest{
@@ -263,6 +267,7 @@ func (a *loopFilterApplier) reset() error {
 func (a *loopFilterApplier) close() {
 	if a.work != nil {
 		close(a.work)
+		a.wg.Wait()
 		a.work = nil
 	}
 	a.done = nil

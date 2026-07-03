@@ -12,6 +12,7 @@ package encoder
 import (
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/decoder"
@@ -109,6 +110,7 @@ type cdefApplier struct {
 	work    chan [2]int
 	done    chan struct{}
 	started bool
+	wg      sync.WaitGroup
 	jobCtx  decoder.FrameWorkPostFilterContext
 	jobReq  decoder.FrameWorkCDEFPostFilterRequest
 	output  frame.Frame
@@ -122,8 +124,10 @@ func (a *cdefApplier) startWorkers() {
 	}
 	a.work = make(chan [2]int, cdefApplyBands)
 	a.done = make(chan struct{}, cdefApplyBands)
+	a.wg.Add(cdefApplyBands)
 	for b := range cdefApplyBands {
 		go func(b int) {
+			defer a.wg.Done()
 			for j := range a.work {
 				band := a.jobReq
 				band.InputScratch = a.bandIn[b]
@@ -250,6 +254,7 @@ func (a *cdefApplier) markFromLoopFilterMap(m *threading.FrameWorkLoopFilterMap)
 func (a *cdefApplier) close() {
 	if a.work != nil {
 		close(a.work)
+		a.wg.Wait()
 		a.work = nil
 	}
 	a.done = nil

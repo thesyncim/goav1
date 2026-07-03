@@ -457,6 +457,10 @@ func BenchmarkVideoEncoderPipelinePan1080p(b *testing.B) {
 	if err := enc.SetTemporalLayers(2); err != nil {
 		b.Fatal(err)
 	}
+	// Overlap-eligible config: golden off, scene-cut off, single-tile inter.
+	enc.SetGoldenInterval(0)
+	enc.SetSceneCutKeyframes(false)
+	enc.SetMaxThreads(4)
 	if err := enc.SetThroughputPipelining(true); err != nil {
 		b.Fatal(err)
 	}
@@ -472,11 +476,13 @@ func BenchmarkVideoEncoderPipelinePan1080p(b *testing.B) {
 	if err := enc.Prewarm(); err != nil {
 		b.Fatal(err)
 	}
-	// Fill and settle the pipeline so buffers are sized before timing.
+	// Fill and settle the pipeline so the leaf coder/HME/filter/wavefront state
+	// and pipeline buffers are all sized (through several overlaps) before
+	// timing.
 	if _, _, _, err := enc.EncodeThroughput(frames[0], true); err != nil {
 		b.Fatal(err)
 	}
-	for i := 1; i < 5; i++ {
+	for i := 1; i < 9; i++ {
 		if _, _, _, err := enc.EncodeThroughput(frames[i], false); err != nil {
 			b.Fatal(err)
 		}

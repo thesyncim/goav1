@@ -168,6 +168,61 @@ func TestVideoEncoderPipelineByteIdentical(t *testing.T) {
 			enc.SetMaxThreads(4)
 			return enc
 		}},
+		{"L1T2-overlap-cbr", nil, func() *encoder.VideoEncoder {
+			// Golden off + scene-cut off + single-tile 8-bit 4:2:0 + no padding:
+			// the concurrent leaf/base overlap path.
+			enc, err := encoder.NewVideoEncoderCBR(w, h, encoder.RateControlConfig{
+				TargetBitsPerSecond: 800_000, FramesPerSecond: 30, MinQIndex: 20, MaxQIndex: 200,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := enc.SetTemporalLayers(2); err != nil {
+				t.Fatal(err)
+			}
+			enc.SetGoldenInterval(0)
+			enc.SetSceneCutKeyframes(false)
+			return enc
+		}},
+		{"L1T2-overlap-cqp", nil, func() *encoder.VideoEncoder {
+			enc, err := encoder.NewVideoEncoder(w, h, 70)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := enc.SetTemporalLayers(2); err != nil {
+				t.Fatal(err)
+			}
+			enc.SetGoldenInterval(0)
+			enc.SetSceneCutKeyframes(false)
+			return enc
+		}},
+		{"L1T2-overlap-mt", nil, func() *encoder.VideoEncoder {
+			enc, err := encoder.NewVideoEncoderCBR(w, h, encoder.RateControlConfig{
+				TargetBitsPerSecond: 800_000, FramesPerSecond: 30, MinQIndex: 20, MaxQIndex: 200,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := enc.SetTemporalLayers(2); err != nil {
+				t.Fatal(err)
+			}
+			enc.SetGoldenInterval(0)
+			enc.SetSceneCutKeyframes(false)
+			enc.SetMaxThreads(4)
+			return enc
+		}},
+		{"L1T2-overlap-keymid", keyMid, func() *encoder.VideoEncoder {
+			enc, err := encoder.NewVideoEncoder(w, h, 70)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := enc.SetTemporalLayers(2); err != nil {
+				t.Fatal(err)
+			}
+			enc.SetGoldenInterval(0)
+			enc.SetSceneCutKeyframes(false)
+			return enc
+		}},
 		{"L1T2-cqp-keymid", keyMid, func() *encoder.VideoEncoder {
 			enc, err := encoder.NewVideoEncoder(w, h, 70)
 			if err != nil {

@@ -70,11 +70,11 @@ type VideoEncoder struct {
 	// across tile columns instead.
 	wavefront      pframeWavefront
 	wavefrontLanes int
-	lf           loopFilterApplier
-	cdefApp      cdefApplier
-	hme          hmeState
-	singleThread bool
-	effortLevel  int8
+	lf             loopFilterApplier
+	cdefApp        cdefApplier
+	hme            hmeState
+	singleThread   bool
+	effortLevel    int8
 
 	temporalLayers int
 	t2Recon        SourceFrame420
@@ -166,8 +166,8 @@ type VideoEncoder struct {
 	decisionStats        EncoderDecisionStats
 
 	// Throughput pipelining (opt-in, default off). See video_pipeline.go: the
-	// EncodeThroughput/Drain surface buffers one source so a droppable leaf can
-	// overlap the following base frame, trading +1 frame of latency for wall
+	// EncodeThroughput/Drain surface buffers one source so a droppable L1T2 leaf
+	// can overlap the following base frame, trading +1 frame of latency for wall
 	// throughput. When pipeline is false the encoder is byte- and
 	// latency-identical to the historical serial path.
 	pipeline    bool
@@ -177,6 +177,39 @@ type VideoEncoder struct {
 	pipeHeldSrc SourceFrame420
 	pipeSrcBuf  [2]SourceFrame420
 	pipeSrcIdx  int
+	// pipeHeldDone marks the held item as a precomputed base result (its state
+	// was already committed at overlap time); emit it and hold the next source.
+	pipeHeldDone  bool
+	pipeHeldTU    []byte
+	pipeHeldRecon SourceFrame420
+	pipeOverlaps  int
+
+	// Leaf-isolated overlap state: the buffered droppable leaf runs on this
+	// dedicated coder/HME/filter set (never the shared e.pc/e.hme/e.lf) so it
+	// can execute concurrently with the following base frame's serial
+	// encodePReusing on the caller goroutine.
+	leafPC           pframeCoder
+	leafWavefront    pframeWavefront
+	leafHME          hmeState
+	leafLF           loopFilterApplier
+	leafCdefApp      cdefApplier
+	leafRefState     parser.ReferenceState
+	leafPrevLFDeltas LoopFilterDeltas
+	leafPayloads     [1]TilePayload
+	leafTuGroup      []byte
+	leafTuScratch    []byte
+	pipeLeafRecon    SourceFrame420
+	pipeLeafCtx      frameCDFs
+	// Persistent leaf worker (parked between frames; no per-frame closures).
+	leafWork    chan struct{}
+	leafDone    chan error
+	leafStarted bool
+	leafJob     struct {
+		src, refRecon SourceFrame420
+		prevCtx       *frameCDFs
+		tu            []byte
+		cntZeroMV     int
+	}
 }
 
 type tileWorkRange struct {
@@ -681,9 +714,17 @@ func (e *VideoEncoder) Close() error {
 		e.filterWork = nil
 		e.filterStarted = false
 	}
+	if e.leafWork != nil {
+		close(e.leafWork)
+		e.leafWork = nil
+		e.leafStarted = false
+	}
 	e.lf.close()
 	e.cdefApp.close()
 	e.hme.close()
+	e.leafLF.close()
+	e.leafCdefApp.close()
+	e.leafHME.close()
 	return err
 }
 
