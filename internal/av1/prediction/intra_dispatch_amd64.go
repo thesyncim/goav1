@@ -24,6 +24,10 @@ func init() {
 		predictSmoothHorizontalImpl = predictSmoothHorizontalAVX2
 		applyCFLImpl = applyCFLAVX2
 		sumSamplesImpl = sumSamplesAVX2
+		subsampleLuma8Impl = subsampleLuma8AVX2
+		dirRowInterp8Impl = dirRowInterp8AVX2
+		dirAboveRun8Impl = dirAboveRun8AVX2
+		dirLeftCol8Impl = dirLeftCol8AVX2
 		return
 	}
 	predictPaethImpl = predictPaethPureGo
