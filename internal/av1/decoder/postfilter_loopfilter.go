@@ -1119,11 +1119,13 @@ func frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx FrameWorkPostFilterC
 	cols := int(plan.MICols)
 	rows := int(plan.MIRows)
 	if currentLevel != 0 {
-		for offset := range length4 {
+		for offset := 0; offset < length4; {
 			// SVT's set_lpf_parameters keeps level at curr_level when it is
 			// non-zero; only previous-side transform width can still split the
-			// edge along this MI-cell run.
-			previousWidth, _, err := previousCache.lookup(levelCtx, filterMap, color, edge, x4, y4, offset, cols, rows, false)
+			// edge along this MI-cell run. The cache returns the run of cells
+			// over which previousWidth is constant so we advance by whole runs
+			// (dav1d-style) instead of probing every 4x4 cell.
+			previousWidth, _, run, err := previousCache.lookup(levelCtx, filterMap, color, edge, x4, y4, offset, cols, rows, false)
 			if err != nil {
 				return err
 			}
@@ -1135,10 +1137,14 @@ func frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx FrameWorkPostFilterC
 				segStart = offset
 				segWidth = width
 			}
+			if offset+run > length4 {
+				run = length4 - offset
+			}
+			offset += run
 		}
 		return frameWorkStoreLoopFilterLumaEdgeSegment(record, plan, edges, bounds, edge, x4, y4, segStart, length4, tx, segWidth, currentLevel, false)
 	}
-	for offset := range length4 {
+	for offset := 0; offset < length4; {
 		// libaom resolves filter level and width per MI cell along the edge
 		// (set_lpf_parameters): the current block's level is constant, but the
 		// previous-side block (and its transform size) can vary cell-by-cell,
@@ -1147,7 +1153,7 @@ func frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx FrameWorkPostFilterC
 		// block's level (level_from_previous); a TX edge bordering an
 		// intra block at one cell and an inter (level-0) block at another must
 		// therefore split on both width and level.
-		previousWidth, previousLevel, err := previousCache.lookup(levelCtx, filterMap, color, edge, x4, y4, offset, cols, rows, needPreviousLevel)
+		previousWidth, previousLevel, run, err := previousCache.lookup(levelCtx, filterMap, color, edge, x4, y4, offset, cols, rows, needPreviousLevel)
 		if err != nil {
 			return err
 		}
@@ -1170,6 +1176,10 @@ func frameWorkAppendLoopFilterLumaEdgeSegmentsWithWidth(ctx FrameWorkPostFilterC
 			segLevel = level
 			segFromPrevious = fromPrevious
 		}
+		if offset+run > length4 {
+			run = length4 - offset
+		}
+		offset += run
 	}
 	return frameWorkStoreLoopFilterLumaEdgeSegment(record, plan, edges, bounds, edge, x4, y4, segStart, length4, tx, segWidth, segLevel, segFromPrevious)
 }
@@ -1376,11 +1386,24 @@ type frameWorkLoopFilterLumaPreviousCache struct {
 	levelValid bool
 }
 
-func (c *frameWorkLoopFilterLumaPreviousCache) lookup(levelCtx frameWorkLoopFilterLevelContext, filterMap FrameWorkLoopFilterMap, color parser.ColorConfig, edge loopfilter.Edge, x4 int, y4 int, offset int, cols int, rows int, needLevel bool) (uint8, uint8, error) {
+// lookup resolves the previous-side luma filter width (and, when needLevel is
+// set, the previous-side level) for the boundary cell at the given offset. It
+// also returns a run length: the number of consecutive cells starting at this
+// offset over which the resolved width and level are provably constant, so the
+// per-cell segment builder can advance by whole runs instead of probing every
+// 4x4 cell. This mirrors dav1d's mask-driven iteration (src/loopfilter_tmpl.c
+// scans filter runs rather than individual 4x4 edges): the previous coding
+// block's level is constant across its whole MI extent, and for a fixed
+// transform the width is constant across that extent too; for a variable
+// transform tree the width is constant across the previous transform block, so
+// the run is clamped to whichever boundary comes first. Evaluating the segment
+// split only at run starts yields byte-identical segments because every point
+// where width or level could change is a run boundary.
+func (c *frameWorkLoopFilterLumaPreviousCache) lookup(levelCtx frameWorkLoopFilterLevelContext, filterMap FrameWorkLoopFilterMap, color parser.ColorConfig, edge loopfilter.Edge, x4 int, y4 int, offset int, cols int, rows int, needLevel bool) (uint8, uint8, int, error) {
 	boundaryX4, boundaryY4 := frameWorkLoopFilterBoundaryOffset(edge, x4, y4, offset)
 	targetX4, targetY4, err := frameWorkLoopFilterPreviousTarget4(edge, boundaryX4, boundaryY4)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	var previous *threading.FrameWorkLoopFilterBlockRecord
 	var ok bool
@@ -1390,24 +1413,24 @@ func (c *frameWorkLoopFilterLumaPreviousCache) lookup(levelCtx frameWorkLoopFilt
 	case loopfilter.EdgeHorizontal:
 		previous, ok, err = frameWorkLoopFilterPreviousHorizontalRecord(filterMap, boundaryX4, boundaryY4, cols, rows)
 	default:
-		return 0, 0, loopfilter.ErrInvalidFilter
+		return 0, 0, 0, loopfilter.ErrInvalidFilter
 	}
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	if !ok {
-		return 0, 0, loopfilter.ErrInvalidFilter
+		return 0, 0, 0, loopfilter.ErrInvalidFilter
 	}
 	if !c.valid || c.miCol != previous.Block.MICol || c.miRow != previous.Block.MIRow {
 		req, err := frameWorkLoopFilterTransformTreeRequest(color, previous)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 		fixed := previous.SkipTransform || !previous.TransformTree.Variable
 		var width uint8
 		if fixed {
 			if !previous.TransformTree.Y.Valid() {
-				return 0, 0, threading.ErrInvalidBatch
+				return 0, 0, 0, threading.ErrInvalidBatch
 			}
 			width = frameWorkLoopFilterWidthTrusted(loopfilter.PlaneY, edge, previous.TransformTree.Y)
 		}
@@ -1428,17 +1451,17 @@ func (c *frameWorkLoopFilterLumaPreviousCache) lookup(levelCtx frameWorkLoopFilt
 	if localX4 < reqX4 || localY4 < reqY4 ||
 		localX4 >= reqX4+int(c.req.VisibleW4) ||
 		localY4 >= reqY4+int(c.req.VisibleH4) {
-		return 0, 0, threading.ErrInvalidBatch
+		return 0, 0, 0, threading.ErrInvalidBatch
 	}
 	width := c.width
 	if !c.fixed {
 		if !c.txValid || !frameWorkLoopFilterTransformBlockContains(c.tx, localX4, localY4) {
 			tx, ok, err := frameWorkLoopFilterFindLumaTransform(c.record.TransformTree, c.req, localX4, localY4)
 			if err != nil {
-				return 0, 0, err
+				return 0, 0, 0, err
 			}
 			if !ok {
-				return 0, 0, threading.ErrInvalidBatch
+				return 0, 0, 0, threading.ErrInvalidBatch
 			}
 			width = frameWorkLoopFilterWidthTrusted(loopfilter.PlaneY, edge, tx.Size)
 			c.tx = tx
@@ -1451,12 +1474,36 @@ func (c *frameWorkLoopFilterLumaPreviousCache) lookup(levelCtx frameWorkLoopFilt
 	if needLevel && !c.levelValid {
 		level, err := frameWorkResolveLoopFilterLevel(levelCtx, &c.record, loopfilter.PlaneY, edge)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 		c.level = level
 		c.levelValid = true
 	}
-	return width, c.level, nil
+	// Run length over which both width and level stay constant: bounded by the
+	// previous coding block's MI extent (level is per-block) and, for variable
+	// transform trees, by the current previous transform block (width is
+	// per-transform). Coordinates advance along the edge direction only.
+	run := 1
+	switch edge {
+	case loopfilter.EdgeVertical:
+		run = int(c.record.Block.MIRowEnd) - boundaryY4
+		if !c.fixed {
+			if txRun := int(c.tx.Y4) + int(c.tx.VisibleH4) - localY4; txRun < run {
+				run = txRun
+			}
+		}
+	case loopfilter.EdgeHorizontal:
+		run = int(c.record.Block.MIColEnd) - boundaryX4
+		if !c.fixed {
+			if txRun := int(c.tx.X4) + int(c.tx.VisibleW4) - localX4; txRun < run {
+				run = txRun
+			}
+		}
+	}
+	if run < 1 {
+		run = 1
+	}
+	return width, c.level, run, nil
 }
 
 // frameWorkLoopFilterPreviousLumaCellLevel resolves the loop-filter level of the
