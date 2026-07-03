@@ -1407,6 +1407,14 @@ func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, s
 				sb.force16[lvl1][lvl2] = realtimePartEvalOnlySplit
 				sb.force32[lvl1] = realtimePartEvalOnlySplit
 				sb.force64 = realtimePartEvalOnlySplit
+				// Depth removal (PERF_PLAN §6 E4): SVT disallow_below_16x16 — a
+				// marginal split (residual only modestly over the split threshold)
+				// does not earn 8x8 leaves. Disallow the sub-16x16 depth but keep
+				// the parent split so the block still codes as 16x16.
+				if depthRemove16VarMultNum != depthRemove16VarMultDen &&
+					int64(val16)*depthRemove16VarMultDen < sb.thresholds[3]*depthRemove16VarMultNum {
+					sb.force16[lvl1][lvl2] = realtimePartEvalOnlyNone
+				}
 			}
 		}
 		realtimeFillVarianceTree32(&sb.tree.split[lvl1])
@@ -4688,6 +4696,29 @@ const (
 // more than 30% worse than LAST it can no longer overtake it — SVT drops its
 // NEW-MV group, so we skip GOLDEN's subpel refinement and compound evaluation.
 const goldenRefPruneMaxDevPct = 30
+
+// depthRemove16VarMultNum/Den port SVT-AV1's disallow_below_16x16 absolute-cost
+// gate (set_depth_removal_level_controls, Source/Lib/Codec/enc_mode_config.c).
+// SVT builds disallow_below_16x16_cost_th = RDCOST(fast_lambda, cost_th_rate,
+// (sb_size>>3)*mult) and disallows every sub-16x16 block in an SB once
+// cost_16x16 = RDCOST(fast_lambda, 0, me_16x16_distortion) falls below it; the
+// partitioner then clamps the depth search so a 16x16 cannot split to 8x8
+// (enc_dec_process.c: e_depth = (sq_size<=16)?0:...). goav1's variance
+// partitioner already applies exactly this absolute-cost shape — it splits a
+// 16x16 to 8x8 only when its motion-compensated residual (val16) exceeds
+// thresholds[3] — so the SVT gate maps to a second, higher residual threshold:
+// a 16x16 whose residual only modestly exceeds the split threshold is a marginal
+// split that does not earn its four 8x8 leaves, so we disallow the sub-16x16
+// depth while keeping the parent split (the block still codes as 16x16). The
+// disallow threshold is thresholds[3]*Num/Den; SVT's deviation arm
+// (dev_16x16_to_8x8) is unavailable here (the variance tree shares one motion
+// vector across depths, making per-size deviation identically zero), so only the
+// absolute-cost arm is ported. Num==Den (ratio 1) disables removal. The operating
+// ratio is selected on this corpus, holding realC >= 44.85 dB.
+const (
+	depthRemove16VarMultNum = 4
+	depthRemove16VarMultDen = 1
+)
 
 // fullPelDiamondSearchSeeded recenters libaom's mesh search on a
 // coarse-search seed (the hierarchical pre-pass vector).
