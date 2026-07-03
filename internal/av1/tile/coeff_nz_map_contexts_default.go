@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
 
-//go:build !arm64 || purego
+//go:build (!arm64 && !amd64) || purego
 
 package tile
 
