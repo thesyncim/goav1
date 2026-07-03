@@ -471,11 +471,30 @@ func (ctx FrameWorkPostFilterContext) loopFilterPostFilterPlanTrustedSweep(filte
 // is a decoder bridge for the current stored-candidate scheduler; full
 // frame-order integration remains separate work.
 func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdges(req FrameWorkLoopFilterPostFilterRequest) (FrameWorkLoopFilterPostFilterApplyResult, error) {
-	// The mask-driven apply (ApplyLoopFilterEdgesFromMasks) is byte-exact for
-	// luma but the decode-time chroma edge-mask build does not yet reproduce the
-	// edge-list min(cur,prev) chroma filter width at variable-transform block
-	// boundaries, so production stays on the byte-exact edge-list apply until the
-	// chroma mask build reaches parity.
+	// Deblock straight from the decode-time bitmasks when the frame built them;
+	// the mask-driven apply is byte-identical to the edge-list planner. The
+	// public SetSideData path never builds masks, so it falls back to the
+	// edge-list apply below.
+	if ctx.loopFilterMasksUsable() {
+		return ctx.ApplyLoopFilterEdgesFromMasks(ctx.LoopFilterMasks, req.Map)
+	}
+	return ctx.applyLoopFilterEdgesList(req)
+}
+
+// loopFilterMasksUsable reports whether the decode-time bitmasks can drive the
+// deblock apply for this frame. The per-tile mask build resets the neighbour
+// transform context at each tile boundary, so tile-boundary edge strengths are
+// not yet fixed up the way dav1d does at loop-filter time (src/lf_apply_tmpl.c
+// tx_lpf_right_edge). Multi-tile frames therefore stay on the byte-exact
+// edge-list apply, which reads the shared frame map across tile boundaries.
+func (ctx FrameWorkPostFilterContext) loopFilterMasksUsable() bool {
+	if !ctx.LoopFilterMasks.Valid() {
+		return false
+	}
+	return ctx.Event.TileInfo.Cols <= 1 && ctx.Event.TileInfo.Rows <= 1
+}
+
+func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesList(req FrameWorkLoopFilterPostFilterRequest) (FrameWorkLoopFilterPostFilterApplyResult, error) {
 	plan, err := ctx.LoopFilterPostFilterPlan(req)
 	result := FrameWorkLoopFilterPostFilterApplyResult{Plan: plan}
 	if err != nil {
@@ -511,6 +530,14 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdges(req FrameWorkLoopFilt
 func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdgesBanded(req FrameWorkLoopFilterPostFilterRequest, miRowsPerBand int) (FrameWorkLoopFilterPostFilterApplyResult, error) {
 	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopFilter) {
 		return FrameWorkLoopFilterPostFilterApplyResult{}, nil
+	}
+	// The decode-time bitmasks already encode the whole-frame edge geometry, so
+	// the row-band planning split (a parallelization of the edge-list planner) is
+	// unnecessary: apply straight from the masks, byte-identical to the banded
+	// edge-list path. Multi-tile frames stay on the edge-list (see
+	// loopFilterMasksUsable).
+	if ctx.loopFilterMasksUsable() {
+		return ctx.ApplyLoopFilterEdgesFromMasks(ctx.LoopFilterMasks, req.Map)
 	}
 	if miRowsPerBand <= 0 {
 		return ctx.ApplyLoopFilterEdges(req)

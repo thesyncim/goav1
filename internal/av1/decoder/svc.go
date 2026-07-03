@@ -467,7 +467,7 @@ func (s *FrameWorkState) runStepExternalRefresh(refs *SurfaceReferences, framePo
 			return FrameWorkStepResult{ExecutedTileWork: executed}, err
 		}
 	}
-	if err := runFrameWorkPostFilterRunner(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, restorationFrameBuffers, post); err != nil {
+	if err := runFrameWorkPostFilterRunner(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, post); err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
 	publishedGlobalSurface, hasPublishedGlobalSurface := frameWorkPostFilterPublishedGlobalSurface(post, postPublisher)
