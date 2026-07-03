@@ -75,7 +75,8 @@ is NOT an available lever. The CDEF win is the staging model (item 2), not fusio
 - **Effort:** Medium (hand-write + verify asm). NOTE: belongs to the SIMD
   sub-program ([[simd-plan]]); listed here because it is the #1 non-LF decode leaf.
 
-### 2. CDEF staging → dav1d in-place 2-line + 2×8 backup
+### 2. [MEASURED DEAD-END on arm64 — byte-exact + 0-alloc but +3.15% CDEF-pass regression; goav1 uint16 CDEF forces per-unit widen the single-pass snapshot avoids. Needs a uint8 CDEF kernel to revisit. See perf-deadends.]
+### 2-orig. CDEF staging → dav1d in-place 2-line + 2×8 backup
 - **goav1 hotspot:** the full-plane bordered CDEF-input copy —
   `decoder.frameWorkStoreCDEFUnit` (1.71%) + `frame.storeSampleRowsTrusted`
   (1.55%) + `decoder.frameWorkFillCDEFInputSentinelRow` (1.06%) +
