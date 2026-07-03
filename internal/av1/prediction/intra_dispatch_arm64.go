@@ -30,6 +30,7 @@ func init() {
 		dirRowInterp8Impl = dirRowInterp8NEON
 		dirAboveRun8Impl = dirAboveRun8NEON
 		dirLeftCol8Impl = dirLeftCol8NEON
+		predictFilterIntra8Impl = predictFilterIntraBlockDirect8NEON
 		return
 	}
 	predictPaethImpl = predictPaethPureGo

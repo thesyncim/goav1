@@ -148,7 +148,7 @@ func PredictFilterIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int,
 func predictFilterIntraBlockDirect(block planeBlock, bytesPerSample int, width int, height int, mode FilterIntraMode, edges IntraEdges, max uint16) {
 	switch bytesPerSample {
 	case 1:
-		predictFilterIntraBlockDirect8(block, width, height, mode, edges, int(max))
+		predictFilterIntra8Impl(block, width, height, mode, edges, int(max))
 	case 2:
 		predictFilterIntraBlockDirect16(block, width, height, mode, edges, int(max))
 	}

@@ -65,6 +65,12 @@ type dirAboveRun8Func func(dst []byte, ref []uint16, shift int, count int)
 // roundPowerOfTwo(ref[i]*(32-shift)+ref[i+1]*shift,5) bit-for-bit.
 type dirLeftCol8Func func(dst []byte, stride int, ref []uint16, shift int, count int)
 
+// predictFilterIntra8Func fills an 8-bit AV1 filter-intra block (see
+// predictFilterIntraBlockDirect8). The predictor is the only intra predictor
+// that lacked a SIMD slot; SIMD variants must reproduce the 7-tap filter,
+// roundPowerOfTwo(sum, 4) rounding and [0,max] clamp sample-for-sample.
+type predictFilterIntra8Func func(block planeBlock, width int, height int, mode FilterIntraMode, edges IntraEdges, max int)
+
 var (
 	predictPaethImpl            predictPaethFunc            = predictPaethPureGo
 	predictSmoothImpl           predictSmoothFunc           = predictSmoothPureGo
@@ -77,4 +83,6 @@ var (
 	dirRowInterp8Impl  dirRowInterp8Func  = dirRowInterp8PureGo
 	dirAboveRun8Impl   dirAboveRun8Func   = dirAboveRun8PureGo
 	dirLeftCol8Impl    dirLeftCol8Func    = dirLeftCol8PureGo
+
+	predictFilterIntra8Impl predictFilterIntra8Func = predictFilterIntraBlockDirect8
 )
