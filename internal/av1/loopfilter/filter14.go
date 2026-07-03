@@ -25,45 +25,59 @@ func Filter14Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge
 		filter14EdgeImpl(pix, q0Base, step, outer, lengthi, scale, params)
 		return nil
 	}
+	filter14Edge16Impl(pix, q0Base, step, outer, lengthi, scale, params)
+	return nil
+}
+
+// filter14Edge16Impl is the dispatch slot for the 10/12-bit (two-byte sample)
+// fourteen-sample deblocking kernel. It is resolved once at package init (see
+// filter_wide_dispatch_*.go); filter14Edge16PureGo is the canonical bit-exact
+// reference every tuned variant must match.
+var filter14Edge16Impl = filter14Edge16PureGo
+
+// filter14Edge16PureGo applies the fourteen-sample filter to length sample
+// positions on a two-byte (10/12-bit) plane. q0Base is the byte offset of the
+// first q0 sample, step is the byte stride between adjacent taps, and outer is
+// the byte stride between successive positions along the edge.
+func filter14Edge16PureGo(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
 	wide := params.widen()
-	for i := range lengthi {
+	for i := 0; i < length; i++ {
 		q0 := q0Base + i*outer
-		p6 := readSample(pix, bytesPerSample, q0-7*step)
-		p5 := readSample(pix, bytesPerSample, q0-6*step)
-		p4 := readSample(pix, bytesPerSample, q0-5*step)
-		p3 := readSample(pix, bytesPerSample, q0-4*step)
-		p2 := readSample(pix, bytesPerSample, q0-3*step)
-		p1 := readSample(pix, bytesPerSample, q0-2*step)
-		p0 := readSample(pix, bytesPerSample, q0-step)
-		q0Sample := readSample(pix, bytesPerSample, q0)
-		q1 := readSample(pix, bytesPerSample, q0+step)
-		q2 := readSample(pix, bytesPerSample, q0+2*step)
-		q3 := readSample(pix, bytesPerSample, q0+3*step)
+		p6 := readSample(pix, 2, q0-7*step)
+		p5 := readSample(pix, 2, q0-6*step)
+		p4 := readSample(pix, 2, q0-5*step)
+		p3 := readSample(pix, 2, q0-4*step)
+		p2 := readSample(pix, 2, q0-3*step)
+		p1 := readSample(pix, 2, q0-2*step)
+		p0 := readSample(pix, 2, q0-step)
+		q0Sample := readSample(pix, 2, q0)
+		q1 := readSample(pix, 2, q0+step)
+		q2 := readSample(pix, 2, q0+2*step)
+		q3 := readSample(pix, 2, q0+3*step)
 		if !needsFilter8(p3, p2, p1, p0, q0Sample, q1, q2, q3, wide) {
 			continue
 		}
-		q4 := readSample(pix, bytesPerSample, q0+4*step)
-		q5 := readSample(pix, bytesPerSample, q0+5*step)
-		q6 := readSample(pix, bytesPerSample, q0+6*step)
+		q4 := readSample(pix, 2, q0+4*step)
+		q5 := readSample(pix, 2, q0+5*step)
+		q6 := readSample(pix, 2, q0+6*step)
 		p5, p4, p3, p2, p1, p0, q0Sample, q1, q2, q3, q4, q5 = filter14Samples(
 			p6, p5, p4, p3, p2, p1, p0,
 			q0Sample, q1, q2, q3, q4, q5, q6,
 			scale, wide,
 		)
-		writeSample(pix, bytesPerSample, q0-6*step, p5)
-		writeSample(pix, bytesPerSample, q0-5*step, p4)
-		writeSample(pix, bytesPerSample, q0-4*step, p3)
-		writeSample(pix, bytesPerSample, q0-3*step, p2)
-		writeSample(pix, bytesPerSample, q0-2*step, p1)
-		writeSample(pix, bytesPerSample, q0-step, p0)
-		writeSample(pix, bytesPerSample, q0, q0Sample)
-		writeSample(pix, bytesPerSample, q0+step, q1)
-		writeSample(pix, bytesPerSample, q0+2*step, q2)
-		writeSample(pix, bytesPerSample, q0+3*step, q3)
-		writeSample(pix, bytesPerSample, q0+4*step, q4)
-		writeSample(pix, bytesPerSample, q0+5*step, q5)
+		writeSample(pix, 2, q0-6*step, p5)
+		writeSample(pix, 2, q0-5*step, p4)
+		writeSample(pix, 2, q0-4*step, p3)
+		writeSample(pix, 2, q0-3*step, p2)
+		writeSample(pix, 2, q0-2*step, p1)
+		writeSample(pix, 2, q0-step, p0)
+		writeSample(pix, 2, q0, q0Sample)
+		writeSample(pix, 2, q0+step, q1)
+		writeSample(pix, 2, q0+2*step, q2)
+		writeSample(pix, 2, q0+3*step, q3)
+		writeSample(pix, 2, q0+4*step, q4)
+		writeSample(pix, 2, q0+5*step, q5)
 	}
-	return nil
 }
 
 // filter14EdgeImpl is the dispatch slot for the 8-bit fourteen-sample

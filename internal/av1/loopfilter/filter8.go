@@ -25,29 +25,43 @@ func Filter8Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 		filter8EdgeImpl(pix, q0Base, step, outer, lengthi, scale, params)
 		return nil
 	}
+	filter8Edge16Impl(pix, q0Base, step, outer, lengthi, scale, params)
+	return nil
+}
+
+// filter8Edge16Impl is the dispatch slot for the 10/12-bit (two-byte sample)
+// eight-sample deblocking kernel. It is resolved once at package init (see
+// filter_wide_dispatch_*.go); filter8Edge16PureGo is the canonical bit-exact
+// reference every tuned variant must match.
+var filter8Edge16Impl = filter8Edge16PureGo
+
+// filter8Edge16PureGo applies the eight-sample filter to length sample
+// positions on a two-byte (10/12-bit) plane. q0Base is the byte offset of the
+// first q0 sample, step is the byte stride between adjacent taps, and outer is
+// the byte stride between successive positions along the edge.
+func filter8Edge16PureGo(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
 	wide := params.widen()
-	for i := range lengthi {
+	for i := 0; i < length; i++ {
 		q0 := q0Base + i*outer
-		p3 := readSample(pix, bytesPerSample, q0-4*step)
-		p2 := readSample(pix, bytesPerSample, q0-3*step)
-		p1 := readSample(pix, bytesPerSample, q0-2*step)
-		p0 := readSample(pix, bytesPerSample, q0-step)
-		q0Sample := readSample(pix, bytesPerSample, q0)
-		q1 := readSample(pix, bytesPerSample, q0+step)
-		q2 := readSample(pix, bytesPerSample, q0+2*step)
-		q3 := readSample(pix, bytesPerSample, q0+3*step)
+		p3 := readSample(pix, 2, q0-4*step)
+		p2 := readSample(pix, 2, q0-3*step)
+		p1 := readSample(pix, 2, q0-2*step)
+		p0 := readSample(pix, 2, q0-step)
+		q0Sample := readSample(pix, 2, q0)
+		q1 := readSample(pix, 2, q0+step)
+		q2 := readSample(pix, 2, q0+2*step)
+		q3 := readSample(pix, 2, q0+3*step)
 		if !needsFilter8(p3, p2, p1, p0, q0Sample, q1, q2, q3, wide) {
 			continue
 		}
 		p2, p1, p0, q0Sample, q1, q2 = filter8Samples(p3, p2, p1, p0, q0Sample, q1, q2, q3, scale, wide)
-		writeSample(pix, bytesPerSample, q0-3*step, p2)
-		writeSample(pix, bytesPerSample, q0-2*step, p1)
-		writeSample(pix, bytesPerSample, q0-step, p0)
-		writeSample(pix, bytesPerSample, q0, q0Sample)
-		writeSample(pix, bytesPerSample, q0+step, q1)
-		writeSample(pix, bytesPerSample, q0+2*step, q2)
+		writeSample(pix, 2, q0-3*step, p2)
+		writeSample(pix, 2, q0-2*step, p1)
+		writeSample(pix, 2, q0-step, p0)
+		writeSample(pix, 2, q0, q0Sample)
+		writeSample(pix, 2, q0+step, q1)
+		writeSample(pix, 2, q0+2*step, q2)
 	}
-	return nil
 }
 
 // filter8EdgeImpl is the dispatch slot for the 8-bit eight-sample deblocking
