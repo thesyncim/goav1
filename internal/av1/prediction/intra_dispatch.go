@@ -71,6 +71,11 @@ type dirLeftCol8Func func(dst []byte, stride int, ref []uint16, shift int, count
 // roundPowerOfTwo(sum, 4) rounding and [0,max] clamp sample-for-sample.
 type predictFilterIntra8Func func(block planeBlock, width int, height int, mode FilterIntraMode, edges IntraEdges, max int)
 
+// predictFilterIntra16Func is the 16-bit (high-bit-depth) counterpart. SIMD
+// variants must reproduce the 7-tap filter, roundPowerOfTwo(sum, 4) rounding and
+// [0,max] clamp sample-for-sample.
+type predictFilterIntra16Func func(block planeBlock, width int, height int, mode FilterIntraMode, edges IntraEdges, max int)
+
 var (
 	predictPaethImpl            predictPaethFunc            = predictPaethPureGo
 	predictSmoothImpl           predictSmoothFunc           = predictSmoothPureGo
@@ -84,5 +89,6 @@ var (
 	dirAboveRun8Impl   dirAboveRun8Func   = dirAboveRun8PureGo
 	dirLeftCol8Impl    dirLeftCol8Func    = dirLeftCol8PureGo
 
-	predictFilterIntra8Impl predictFilterIntra8Func = predictFilterIntraBlockDirect8
+	predictFilterIntra8Impl  predictFilterIntra8Func  = predictFilterIntraBlockDirect8
+	predictFilterIntra16Impl predictFilterIntra16Func = predictFilterIntraBlockDirect16
 )

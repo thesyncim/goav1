@@ -150,7 +150,7 @@ func predictFilterIntraBlockDirect(block planeBlock, bytesPerSample int, width i
 	case 1:
 		predictFilterIntra8Impl(block, width, height, mode, edges, int(max))
 	case 2:
-		predictFilterIntraBlockDirect16(block, width, height, mode, edges, int(max))
+		predictFilterIntra16Impl(block, width, height, mode, edges, int(max))
 	}
 }
 
