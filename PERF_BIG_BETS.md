@@ -14,6 +14,22 @@ copied from stale baselines. Commands and raw outputs are cited inline.
 
 ## 0. Executive summary — the one bet to start now
 
+> STATUS 2026-07-03: BET B STARTED. Phase-1 LANDED (a54b1273): inverse DCT32/64
+> four-lane AVX2 kernels (the biggest amd64 transform gap) + the avx2gen
+> generator (tools/itxgen/avx2gen). Byte-exact (GOARCH=amd64 differential
+> executes AVX2 under Rosetta, PASS; arm64 conformance unaffected). PERF NOT
+> validated here — Rosetta emulates VEX as multiple NEON ops so amd64 ns/op is
+> non-representative; the win is on NATIVE x86 (validate there). NEXT amd64
+> slices: forward DCT32/64 + ADST (encoder), encoder SAD 32/64/4-wide AVX2,
+> then an avx2gen register-residency pass (reduce spills) validated on x86.
+>
+> MEASUREMENT RULE (user, 2026-07-03): judge by CPU TIME (cpu_total core-seconds),
+> not ns/op wall time — wall hides parallelism (goav1 wins encoder fps by
+> burning ~3.6x SVT's cpu) and Rosetta emulation. Example this session: the
+> multithread encoder loop-filter mask apply looked wall-neutral/noisy (70-83
+> fps under load) but is a clean −11% cpu_total (3.59→3.19s realC MT14). See
+> memory cpu-time-not-nsop.
+
 **START: BET B — amd64 (AVX2) critical-path kernel parity.**
 
 **Thesis (data-grounded).** Every headline number in this campaign is measured
