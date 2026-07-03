@@ -95,7 +95,15 @@ is NOT an available lever. The CDEF win is the staging model (item 2), not fusio
 - **Effort:** Medium-High (postfilter pipeline restructure; couples to the SB-row
   wavefront ordering).
 
-### 3. Arena / scratch reuse to kill `runtime.madvise` (GC churn) — **VERIFY FIRST**
+### 3. Arena / scratch reuse to kill `runtime.madvise` (GC churn) — **VERIFIED MIRAGE, DROPPED (2026-07-03)**
+- **VERDICT:** the public-streaming-API decode (`BenchmarkPublicDecodeRTPPayload1080p`,
+  reused decoder) is **0 B/op, 0 allocs/op** steady-state; its `alloc_space` profile
+  roots ALL allocation in one-time SETUP (encoder loopFilterApplier.init, decoder
+  construction newDecoderFromPayloadSourceKind/Arena, the bench's stream encode) —
+  NOT decoder/threading steady-state. The corpus-profile madvise was harness setup
+  churn (bindCorpusFramePool / corpusRunTileWork), not the decoder. NO per-frame
+  decoder alloc to eliminate. DO NOT port an arena. START ITEM 1 (filter-intra).
+- (original analysis retained below)
 - **goav1 hotspot:** `runtime.madvise` **8.6–14.9% flat** across all clips
   (+`memclrNoHeapPointersChunked`, `kevent`). **Attribution is disputed and must be
   resolved before any port.** An `alloc_space` memprofile of the same run shows the
