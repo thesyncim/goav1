@@ -454,17 +454,21 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 		var gmv motion.Vector
 		gsad := 1 << 30
 		compoundCapable := bw == bh && bw <= 16
+		goldenRefPruned := false
 		if compoundCapable {
 			gdx, gdy, s := fullPelDiamondSearch(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw)
 			gmv, gsad = motion.Vector{Row: int16(gdy * 8), Col: int16(gdx * 8)}, s
-			if st.allowSubpelRefinement() && gsad > bw*bh*2 {
+			// dist_based_ref_pruning: drop GOLDEN's subpel + compound MD work once
+			// its full-pel distortion is >30% worse than LAST (perform_md_reference_pruning).
+			goldenRefPruned = int64(gsad)*100 > int64(lastSAD)*(100+goldenRefPruneMaxDevPct)
+			if st.allowSubpelRefinement() && gsad > bw*bh*2 && !goldenRefPruned {
 				gmv, gsad = st.subpelRefineWithStop(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, gmv, gsad, st.realtimeSubpelStopForBlock(src, lumaPX, lumaPY, bw))
 			}
 		} else {
 			base := lumaPY*src.YStride + lumaPX
 			gsad = sadRectBlock(src.Y, golden.Y, base, base, src.YStride, bw, bh, lastSAD)
 		}
-		if compoundCapable && referenceMode == parser.ReferenceModeSelect && gsad+32 >= lastSAD && gsad <= lastSAD+bw*bh*4 {
+		if compoundCapable && !goldenRefPruned && referenceMode == parser.ReferenceModeSelect && gsad+32 >= lastSAD && gsad <= lastSAD+bw*bh*4 {
 			if err := predictCompoundInto(st.sadScratch[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, lastMV, gmv, false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err == nil {
 				srcBlock := src.Y[lumaPY*src.YStride+lumaPX:]
 				var compoundSAD int
