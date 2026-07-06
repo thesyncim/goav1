@@ -608,6 +608,10 @@ type lossyEncodeState struct {
 	rdRcode   int64
 	sadPerBit int
 
+	// lpd1Tx holds the frame's light-PD1 TX shortcut controls (SVT-AV1
+	// set_lpd1_tx_ctrls; see pframe_lpd1_tx.go). Zero value = disabled.
+	lpd1Tx lpd1TxCtrls
+
 	// cntZeroMV accumulates the MI (4x4) area of inter blocks predicting
 	// from LAST with a sub-pixel-magnitude vector, exactly as libaom's
 	// update_state() counts cnt_zeromv (av1/encoder/encodeframe_utils.c).

@@ -328,6 +328,8 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 	// (video.go encodePReusing) so pipelining stays byte-identical.
 	e.leafPC.st.depthRemovalLevel = depthRemovalLevelForFrame(src.Width, src.Height, false)
 	e.leafPC.st.depthRemovalIsRef = false
+	// Droppable-leaf LPD1 TX shortcut controls, matching the serial leaf.
+	e.leafPC.st.setLPD1TxCtrls(true, false)
 	e.leafPC.st.interpSearch = false
 	e.leafPC.st.interpShadow = false
 	e.leafPC.st.interpDual = seq.EnableDualFilter

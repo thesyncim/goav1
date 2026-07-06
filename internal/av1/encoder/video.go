@@ -1500,12 +1500,18 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	// middle layer too (referenced by its trailing T2).
 	e.pc.st.depthRemovalLevel = depthRemovalLevelForFrame(src.Width, src.Height, !droppable)
 	e.pc.st.depthRemovalIsRef = !droppable || isT1
+	// Light-PD1 TX shortcut detectors (SVT set_lpd1_tx_ctrls level 3, the
+	// rtc-forced level; see pframe_lpd1_tx.go). Base pictures keep the
+	// chroma detector armed; droppable leaves add the neighbour-gated
+	// skip-TX arm, mirroring pic_lpd1_lvl = is_base ? 3 : 7.
+	e.pc.st.setLPD1TxCtrls(true, !droppable)
 	e.pc.forceSplit = e.forceSplit
 	e.configurePCWavefront()
 	for t := range e.tilePCs {
 		e.tilePCs[t].st.mds0Level = e.pc.st.mds0Level
 		e.tilePCs[t].st.depthRemovalLevel = e.pc.st.depthRemovalLevel
 		e.tilePCs[t].st.depthRemovalIsRef = e.pc.st.depthRemovalIsRef
+		e.tilePCs[t].st.lpd1Tx = e.pc.st.lpd1Tx
 		e.tilePCs[t].forceSplit = e.forceSplit
 	}
 	refRecon := e.recon

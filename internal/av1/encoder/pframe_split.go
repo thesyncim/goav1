@@ -638,66 +638,13 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 		}
 	}
 
-	// Quantize all planes and take the rate-priced skip decision, identical to
-	// the fused path.
-	skip := fullSAD*4 <= bw*bh
-	splitTX := false
-	var txPlan realtimeInterTXPlan
-	useRealtimeTXPlan := videoColorIs420(st.color)
-	if useRealtimeTXPlan {
-		sse, variance := realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
-		var err error
-		txLevel := realtimeTXSizeLevelBasedOnQstep(src.Width, src.Height, st.effortLevel)
-		txPlan, err = realtimeInterTXPlanForBlock(block.Size, st.qIndex, st.yQuant.AC, txLevel, sse, variance)
-		if err != nil {
-			return err
-		}
-	}
-	dctRdD := int64(0)
-	if !skip {
-		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
-		var lumaZero bool
-		if txPlan.Variable() {
-			lumaZero = true
-			leafArea := txPlan.leafSize * txPlan.leafSize
-			if err := txPlan.ForEachLeaf(func(i, dx, dy int) error {
-				if !st.prepareInterTXB(src.Y, st.predY[dy*bw+dx:], bw, src.YStride, lumaPX+dx, lumaPY+dy, txPlan.leafSize, txPlan.leafSize, st.yQuant, st.lumaQ2[i*leafArea:(i+1)*leafArea]) {
-					lumaZero = false
-				}
-				return nil
-			}); err != nil {
-				return fmt.Errorf("prepare realtime luma tx: %w", err)
-			}
-		} else {
-			lumaZero = st.prepareInterTXB(src.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
-		}
-		if hasChroma {
-			uZero := st.prepareInterTXB(src.U, st.predU[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.uQuant, st.uQ[:cbw*cbh])
-			vZero := st.prepareInterTXB(src.V, st.predV[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.vQuant, st.vQ[:cbw*cbh])
-			skip = lumaZero && uZero && vZero
-		} else {
-			skip = lumaZero
-		}
-		dctRdD = st.rdDcode
-		if !skip {
-			rdCode := ((st.rdRcode*st.rdMult + 256) >> 9) + (st.rdDcode << 7)
-			rdSkip := st.rdDskip << 7
-			if rdSkip <= rdCode {
-				skip = true
-			}
-		}
-		if !skip && txPlan.Variable() {
-			splitTX = true
-		}
-	}
-	if !useRealtimeTXPlan {
-		skip = false
-		splitTX = false
-	}
-
-	txType := transform.TypeDCTDCT
-	if !skip && !splitTX && bw == 8 && bh == 8 && st.qIndex <= 96 && videoColorIs420(st.color) {
-		txType = st.chooseInter8x8TXType(src, lumaPX, lumaPY, dctRdD)
+	// Quantize all planes and take the rate-priced skip decision through the
+	// same shared helper as the fused path, including the light-PD1 TX
+	// shortcut detectors (pframe_lpd1_tx.go).
+	skip, splitTX, txPlan, txType, err := st.decideInterTXBlock(src, refPlanes, mv, block,
+		lumaPX, lumaPY, bw, bh, cbw, cbh, chromaPX, chromaPY, hasChroma, fullSAD)
+	if err != nil {
+		return err
 	}
 
 	// Record the decision: everything the serial write pass consumes, the
