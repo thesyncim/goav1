@@ -32,6 +32,13 @@ ARCH_GAPS_PLAN.md, ENCODER_DEPTH_PLAN.md, PATH_TO_1_4X.md (deleted).
 10. Machine load corrupts wall numbers (~1.5x seen): develop under load
     with interleaved same-run A/B; land/push on idle numbers. Quality/
     bytes are deterministic and load-immune.
+11. ENV VARS ARE SCAFFOLDING, NOT SURFACE (user directive 2026-07-06):
+    kill-switch env vars exist for the landing review + one soak cycle,
+    then get REMOVED (the byte-identity proof at landing is the safety,
+    not a permanent switch). Stats/debug dumps go behind build tags
+    (compile-away pattern like trace_off.go) or get deleted when their
+    program concludes. Sweep-tuning overrides get converted to code
+    constants once the sweep picks a winner. See task H-1.
 
 ## 1. Agent environment setup (worktrees miss gitignored assets)
 
@@ -159,11 +166,19 @@ codegen residue (Go glue vs C+asm in serial paths) that M-D3/M-E3+ attack.
   14MB→24KB; construction 5.24→2.81 ms/op. CDEF staging deliberately
   NOT shrunk (encoder banded workers need the immutable snapshot —
   revisit only with E1-b). (done)
-- [ ] **D1-e memmove hunt** — 2.9% flat unattributed; pprof -peek on the
-  production streaming path, kill the top source if dav1d has none. (S)
-- [ ] **D1-f CDEF native u8-store AVX2 epilogue** — current amd64 wrapper
-  narrows via stack tmp (correct, Rosetta-validated); drop-in native
-  epilogue. Parity-only on this host (Rosetta ns/op meaningless). (S)
+- [x] **D1-e memmove hunt** — CLOSED AS DOCUMENTED NEGATIVE (codex):
+  full attribution table shows memmove already fell to ~1.0% (was 2.9%
+  before today's landings) + memclr ~2.3%. Remaining callers: Frame.
+  ExtendBorders (blocked by D2-d public-API verdict), LR band assembly
+  (dav1d has equivalent staging), CopyPlaneBlock/intra fillBlock
+  (fundamental pixel copies), harness large-alloc zeroing (not decoder),
+  transform scratch clears (M-D3 spine territory). Nothing bounded left
+  to kill. (done)
+- [x] **D1-f CDEF native u8-store AVX2 epilogue** — LANDED d4aba79e
+  (codex, reviewed): dedicated u8 AVX2 kernel .s with VPACKUSDW/
+  VPACKUSWB byte stores replacing the stack-tmp+Go-narrow wrapper;
+  differentials execute directly under Rosetta (PASS not SKIP);
+  parity-only on this host — validate perf on native x86. (done)
 - [ ] **D1-g 12-bit vertical LF transposes** — 12-bit still routes
   pure-Go in filter14Vert16/filter6/8Vert16 (10-bit done 7c4bfac4).
   Only if a 12-bit clip enters the corpus; else skip. (S, LOW PRIO)
@@ -188,10 +203,17 @@ codegen residue (Go glue vs C+asm in serial paths) that M-D3/M-E3+ attack.
   half was built and REVERTED ON REVIEW: e2e +1.1% cpu (nil-check
   branches in every sign-loop iteration ~+5% even unfused, per-coeff
   division, per-TXB clear) — PINNED in §6. (done)
-- [ ] **D2-d ExtendBorders removal audit** — dav1d never border-extends
-  (emu-edge covers it); goav1 runs ExtendBorders per frame
-  (postfilter.go tail) AND has emu-edge. Prove no inter path reads
-  unextended padding, then remove (~0.3-0.5%), or document why not. (M)
+- [x] **D2-d ExtendBorders removal audit** — CLOSED AS DOCUMENTED
+  NEGATIVE (codex, 25-surface audit): every INTERNAL reader is
+  border-independent (motion resident checks + clamped/emu-edge paths
+  key on visible Width/Height, not padding; CDEF/LR/superres/film-grain
+  build their own halos; encoder never reads decoder padding; the old
+  "future inter reads need it" comments are stale). SOLE BLOCKER:
+  public API exposes raw Plane.Pix backing slices and decoded frames
+  currently publish edge-replicated padding — removal changes
+  externally-observable bytes. If padding is ever declared undefined
+  public state, the change is removing postfilter.go:778-780 + stale
+  comments (~0.3-0.5%). USER DECISION required to reopen. (done)
 
 ### M-D3: asm-spine phase 1 (target ~2.2x) — the codegen-residue attack
 Rationale: serial symbol/coeff/mode decode + orchestration = 30-35% of
@@ -287,6 +309,19 @@ were red at hold-quality get re-run against the SVT-matched gate (§2).
   for the up-to-6 candidate predictions. (M)
 
 ### M-E5: endgame — decision doc after M-E3/E4 measure. (S)
+
+### H-1: env-var scaffolding sweep (after in-flight agents land)
+- [ ] **H-1 remove/build-tag experiment env vars** — production code
+  currently reads: GOAV1_LPD1_TX, GOAV1_DEPTH_REMOVAL_DISABLE,
+  GOAV1_DEPTH_REMOVAL_P2_DISABLE, GOAV1_DEPTH_REMOVAL_STATS,
+  GOAV1_TX_WRITE_STATS (2026-07-06 experiment switches — remove after
+  soak; stats to build tags), GOAV1_DEBUG_CDEF_UNIT, GOAV1_DEBUG_WIENER,
+  GOAV1_DEBUG_REFMV, GOAV1_COEFF_TRACE (older debug — build-tag or
+  delete; check the debugRefMV boxing pin before touching),
+  GOAV1_WAVEFRONT_MIN_SBROWS_PER_WORKER, GOAV1_DEFER_RECON (tuning
+  knobs — decide: constant or documented public config). WAIT for the
+  M-E2 agent to land (it owns pframe_depth_removal.go and must itself
+  convert its sweep override to constants per rule 11). (S, codex)
 
 ## 6. PINS — measured dead-ends. Do NOT re-attempt without new economics.
 
