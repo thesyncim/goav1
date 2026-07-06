@@ -1,6 +1,8 @@
 package tile
 
 import (
+	"unsafe"
+
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
@@ -1142,7 +1144,15 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 	if useDirtyScanList && trackLevelDirty && req.Class == transform.Class2D {
 		stride := int(geo.stride)
 		if cdfUpdate {
-			if useScanHot {
+			if useScanHot && coeffBaseLevelsKernel {
+				// M-D3 D3-b arm64 kernel; same walk as the loop below,
+				// including the pos==0 (DC) iteration.
+				appended := reader.CoeffBaseLevels2D(unsafe.Pointer(&scanHotSlice[0]), eobPos-2, 0,
+					&levelsScratch[0], stride, &baseArr[0], &brArr[0],
+					&dirtyArr[nonzeroScanLen], &levelDirtyArr[levelDirtyNext], true)
+				nonzeroScanLen += appended
+				levelDirtyNext += appended
+			} else if useScanHot {
 				for c := eobPos - 2; c >= 0; c-- {
 					p := scanHotSlice[c]
 					pos := int(p.pos)
@@ -1850,7 +1860,17 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 	nonzeroScanLen := 1
 
 	stride := int(geo.stride)
-	if cdfUpdate {
+	if coeffBaseLevelsKernel {
+		// M-D3 D3-b arm64 kernel: the whole base-levels walk, DC included
+		// (scanHot[0].pos == 0 selects ctx 0 and the zero br2DOffset, exactly
+		// the split-out DC block below), with the BR chain inlined. Appends to
+		// the dirty/level-dirty lists in the same order as the Go loops.
+		appended := reader.CoeffBaseLevels2D(unsafe.Pointer(&scanHotSlice[0]), eobPos-2, 0,
+			&levelsScratch[0], stride, &baseArr[0], &brArr[0],
+			&dirtyArr[nonzeroScanLen], &levelDirtyArr[levelDirtyNext], cdfUpdate)
+		nonzeroScanLen += appended
+		levelDirtyNext += appended
+	} else if cdfUpdate {
 		for c := eobPos - 2; c >= 1; c-- {
 			p := scanHotSlice[c]
 			pos := int(p.pos)
@@ -1933,46 +1953,48 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 			}
 		}
 	}
-	dcHot := scanHotSlice[0]
-	dcPadded := int(dcHot.padded)
-	var dcLevel int
-	if cdfUpdate {
-		dcLevel = reader.ReadCDF4UpdateUnchecked(&baseArr[0])
-		if dcLevel == NumBaseLevels+1 {
-			s1 := dcPadded + stride
-			s1p1 := s1 + 1
-			p1 := dcPadded + 1
-			_ = levelsScratch[s1p1]
-			mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
-			if mag > 6 {
-				mag = 6
+	if !coeffBaseLevelsKernel {
+		dcHot := scanHotSlice[0]
+		dcPadded := int(dcHot.padded)
+		var dcLevel int
+		if cdfUpdate {
+			dcLevel = reader.ReadCDF4UpdateUnchecked(&baseArr[0])
+			if dcLevel == NumBaseLevels+1 {
+				s1 := dcPadded + stride
+				s1p1 := s1 + 1
+				p1 := dcPadded + 1
+				_ = levelsScratch[s1p1]
+				mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
+				if mag > 6 {
+					mag = 6
+				}
+				brCtx := mag + int(dcHot.br2DOffset)
+				extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
+				dcLevel += int(extra)
 			}
-			brCtx := mag + int(dcHot.br2DOffset)
-			extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
-			dcLevel += int(extra)
-		}
-	} else {
-		dcLevel = reader.ReadCDF4NoUpdateUnchecked(&baseArr[0])
-		if dcLevel == NumBaseLevels+1 {
-			s1 := dcPadded + stride
-			s1p1 := s1 + 1
-			p1 := dcPadded + 1
-			_ = levelsScratch[s1p1]
-			mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
-			if mag > 6 {
-				mag = 6
+		} else {
+			dcLevel = reader.ReadCDF4NoUpdateUnchecked(&baseArr[0])
+			if dcLevel == NumBaseLevels+1 {
+				s1 := dcPadded + stride
+				s1p1 := s1 + 1
+				p1 := dcPadded + 1
+				_ = levelsScratch[s1p1]
+				mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
+				if mag > 6 {
+					mag = 6
+				}
+				brCtx := mag + int(dcHot.br2DOffset)
+				extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
+				dcLevel += int(extra)
 			}
-			brCtx := mag + int(dcHot.br2DOffset)
-			extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
-			dcLevel += int(extra)
 		}
-	}
-	if dcLevel != 0 {
-		levelsScratch[dcPadded] = uint8(dcLevel)
-		levelDirtyArr[levelDirtyNext] = int16(dcPadded)
-		levelDirtyNext++
-		dirtyArr[nonzeroScanLen] = packCoeffDirty(0, dcLevel)
-		nonzeroScanLen++
+		if dcLevel != 0 {
+			levelsScratch[dcPadded] = uint8(dcLevel)
+			levelDirtyArr[levelDirtyNext] = int16(dcPadded)
+			levelDirtyNext++
+			dirtyArr[nonzeroScanLen] = packCoeffDirty(0, dcLevel)
+			nonzeroScanLen++
+		}
 	}
 	*levelDirtyLen = uint16(levelDirtyNext)
 

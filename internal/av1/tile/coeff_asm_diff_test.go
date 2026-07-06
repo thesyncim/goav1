@@ -29,6 +29,11 @@ const (
 	txbVariantTracked txbDiffVariant = iota
 	txbVariantGeoTrusted
 	txbVariantGeoUntrusted
+	// The *Go variants force the pure-Go loops even when the arm64 kernel is
+	// built in (same mechanism as the GOAV1_DISABLE_COEFF_ASM kill switch), so
+	// the lockstep proves kernel-on and kernel-off byte-identical.
+	txbVariantTrackedGo
+	txbVariantGeoTrustedGo
 )
 
 func (v txbDiffVariant) String() string {
@@ -39,6 +44,10 @@ func (v txbDiffVariant) String() string {
 		return "geoTrusted"
 	case txbVariantGeoUntrusted:
 		return "geoUntrusted"
+	case txbVariantTrackedGo:
+		return "tracked2D-purego"
+	case txbVariantGeoTrustedGo:
+		return "geoTrusted-purego"
 	default:
 		return "unknown"
 	}
@@ -88,6 +97,11 @@ func newTXBDiffState(t *testing.T, payload []byte, size TransformSize, class tra
 // zero the previous nonzero coeffs from the dirty list and reset its length
 // (the level-dirty list is consumed by the decode itself).
 func (s *txbDiffState) decodeOne(v txbDiffVariant, class transform.Class, dcSignCtx uint8, eobCtx uint8) (TXBDecodeResult, error) {
+	if v == txbVariantTrackedGo || v == txbVariantGeoTrustedGo {
+		saved := coeffBaseLevelsKernel
+		coeffBaseLevelsKernel = false
+		defer func() { coeffBaseLevelsKernel = saved }()
+	}
 	for i := 0; i < int(s.dirtyLen); i++ {
 		pos := int(s.dirty[i]) & coeffDirtyPosMask
 		s.coeffs[pos] = 0
@@ -118,7 +132,7 @@ func (s *txbDiffState) decodeOne(v txbDiffVariant, class transform.Class, dcSign
 	}
 	// The production tracked path only serves Class2D with a trusted scan;
 	// everything else goes through the general body.
-	if v == txbVariantTracked {
+	if v == txbVariantTracked || v == txbVariantTrackedGo {
 		return s.state.readCoefficientsTXBTracked2DWithGeo(&s.cdfs, req, s.coeffs, s.scan, s.levels, geo)
 	}
 	return s.state.readCoefficientsTXBWithGeo(&s.cdfs, req, s.coeffs, s.scan, s.levels, geo)
@@ -326,6 +340,7 @@ func TestReadCoefficientsTXBVariantsLockstep(t *testing.T) {
 				variants := []txbDiffVariant{txbVariantGeoTrusted, txbVariantGeoUntrusted}
 				if class == transform.Class2D {
 					variants = append([]txbDiffVariant{txbVariantTracked}, variants...)
+					variants = append(variants, txbVariantTrackedGo, txbVariantGeoTrustedGo)
 				}
 				for stream := 0; stream < streams; stream++ {
 					payload := txbDiffPayload(rng, stream+int(size))

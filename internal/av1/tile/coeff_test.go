@@ -968,6 +968,14 @@ func BenchmarkReadCoefficientsTXB8x8Class2DTracked(b *testing.B) {
 	benchmarkReadCoefficientsTXBTracked(b, TransformSize8x8, transform.Class2D)
 }
 
+func BenchmarkReadCoefficientsTXB16x16Class2DTracked(b *testing.B) {
+	benchmarkReadCoefficientsTXBTracked(b, TransformSize16x16, transform.Class2D)
+}
+
+func BenchmarkReadCoefficientsTXB32x32Class2DTracked(b *testing.B) {
+	benchmarkReadCoefficientsTXBTracked(b, TransformSize32x32, transform.Class2D)
+}
+
 func BenchmarkReadCoeffGolombCursor(b *testing.B) {
 	src := make([]byte, 4096)
 	x := uint32(0x9e3779b9)

@@ -229,8 +229,19 @@ apply (that was SIMD inverse-CDF search; this is scalar asm).
   bodies in lockstep over randomized+adversarial streams/CDF states;
   full decode record compared incl. entropy.Reader.State() snapshot;
   GOAV1_TXB_DIFF_TXBS soak knob). (done)
-- [ ] **D3-b base-levels loop asm** — hottest loop first, Go fallback for
-  the rest; differential over adversarial streams + 226. (L)
+- [x] **D3-b base-levels loop asm** — LANDED: coeffBaseLevels2DARM64
+  (entropy/reader_coeff_base_arm64.s), one NOSPLIT leaf call per TXB
+  covering the whole Class2D base-levels walk incl. the DC iteration
+  and the BR high-token chain inlined; wired into tracked2D + WithGeo
+  scanHot paths behind static bool dispatch with
+  GOAV1_DISABLE_COEFF_ASM kill switch (switch byte-identity proven in
+  the lockstep harness). Differential: ~5M randomized+adversarial TXBs
+  green; dryrun-extended 226/226 0 FAIL with kernel active. Micro:
+  tracked TXB decode -10..-12% (8x8/16x16/32x32, same-binary A/B).
+  e2e idle same-run pairs (30x decode, cpu user): p720_inter_q32
+  7.13s vs 7.22s (-1.2%), p288_inter_q20 3.10s vs 3.15s (-1.5%),
+  kernel wins all 6 pairs. Boundary overhead is NOT eating the win;
+  absolute e2e is bounded by this loop's share — D3-c next. (done)
 - [ ] **D3-c BR + golomb/sign loops asm** (L)
 - [ ] **D3-d integrate full-TXB kernel + measure** — e2e target: coeff
   subtree cum halves. Go/no-go for D3-e. (M)
