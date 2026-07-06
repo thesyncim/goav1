@@ -1,0 +1,408 @@
+// Code generated from direction_neon_arm64.s (local dav1d CDEF direction
+// macro expansion). DO NOT EDIT.
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant and NOTICE for upstream attribution.
+
+//go:build arm64 && !purego
+
+#include "textflag.h"
+
+// func cdefFindDirectionU8NEONAsm(img *byte, stride uintptr, dir *int32, variance *int32)
+//
+// The 8-bit-pixel variant of cdefFindDirectionNEONAsm: dav1d's 8bpc
+// cdef_find_dir (src/arm/64/cdef.S) reads uint8 frame rows directly, so each
+// row load is ld1 {v26.8b} + ushll to halfwords and the coeffShift ushl is
+// gone (bitdepth_min_8 == 0). The stride is in bytes. Everything after the
+// -128 bias -- the eight directional partial sums and the div-table cost
+// reduction -- is instruction-for-instruction the uint16 kernel, so outputs
+// are bit-identical to the widened search. The div/alt-fact tables are the
+// RODATA globals defined in direction_neon_arm64.s.
+TEXT ·cdefFindDirectionU8NEONAsm(SB), NOSPLIT, $32-32
+	MOVD img+0(FP), R0
+	MOVD stride+8(FP), R1
+	MOVD RSP, R24 // cost[8] scratch
+	WORD $0x4f04841f // movi v31.8h, #128
+	WORD $0x4f00e41e // movi v30.16b, #0
+	WORD $0x4f008401 // movi v1.8h, #0
+	WORD $0x4f008403 // movi v3.8h, #0
+	WORD $0x4f008405 // movi v5.8h, #0
+	WORD $0x4f008407 // movi v7.8h, #0
+	WORD $0x4f008411 // movi v17.8h, #0
+	WORD $0x4f008412 // movi v18.8h, #0
+	WORD $0x4f008413 // movi v19.8h, #0
+	WORD $0x4f008415 // movi v21.8h, #0
+	WORD $0x0cc1701a // ld1 {v26.8b}, [x0], x1
+	WORD $0x2f08a75a // ushll v26.8h, v26.8b, #0
+	WORD $0x4f008414 // movi v20.8h, #0
+	WORD $0x6e7f875a // sub v26.8h, v26.8h, v31.8h
+	WORD $0x4e71bb59 // addv h25, v26.8h
+	WORD $0x4e600b5b // rev64 v27.8h, v26.8h
+	WORD $0x4e7ebf5c // addp v28.8h, v26.8h, v30.8h
+	WORD $0x4e7a84a5 // add v5.8h, v5.8h, v26.8h
+	WORD $0x6e1b437b // ext v27.16b, v27.16b, v27.16b, #8
+	WORD $0x0e600b9d // rev64 v29.4h, v28.4h
+	WORD $0x6e020724 // ins v4.h[0], v25.h[0]
+	WORD $0x6e1a53d6 // ext v22.16b, v30.16b, v26.16b, #10
+	WORD $0x6e1e5357 // ext v23.16b, v26.16b, v30.16b, #10
+	WORD $0x4e768652 // add v18.8h, v18.8h, v22.8h
+	WORD $0x0e778673 // add v19.4h, v19.4h, v23.4h
+	WORD $0x4eba1f54 // mov v20.16b, v26.16b
+	WORD $0x4eba1f40 // mov v0.16b, v26.16b
+	WORD $0x0cc1701a // ld1 {v26.8b}, [x0], x1
+	WORD $0x2f08a75a // ushll v26.8h, v26.8b, #0
+	WORD $0x4ebb1f62 // mov v2.16b, v27.16b
+	WORD $0x4ebc1f86 // mov v6.16b, v28.16b
+	WORD $0x6e7f875a // sub v26.8h, v26.8h, v31.8h
+	WORD $0x4ebd1fb0 // mov v16.16b, v29.16b
+	WORD $0x4e71bb59 // addv h25, v26.8h
+	WORD $0x4e600b5b // rev64 v27.8h, v26.8h
+	WORD $0x4e7ebf5c // addp v28.8h, v26.8h, v30.8h
+	WORD $0x4e7a84a5 // add v5.8h, v5.8h, v26.8h
+	WORD $0x6e1b437b // ext v27.16b, v27.16b, v27.16b, #8
+	WORD $0x0e600b9d // rev64 v29.4h, v28.4h
+	WORD $0x6e060724 // ins v4.h[1], v25.h[0]
+	WORD $0x6e1a53d6 // ext v22.16b, v30.16b, v26.16b, #10
+	WORD $0x6e1e5357 // ext v23.16b, v26.16b, v30.16b, #10
+	WORD $0x4e768652 // add v18.8h, v18.8h, v22.8h
+	WORD $0x0e778673 // add v19.4h, v19.4h, v23.4h
+	WORD $0x4e7a8694 // add v20.8h, v20.8h, v26.8h
+	WORD $0x6e1a73d6 // ext v22.16b, v30.16b, v26.16b, #14
+	WORD $0x6e1e7357 // ext v23.16b, v26.16b, v30.16b, #14
+	WORD $0x6e1b73d8 // ext v24.16b, v30.16b, v27.16b, #14
+	WORD $0x6e1e7379 // ext v25.16b, v27.16b, v30.16b, #14
+	WORD $0x0cc1701a // ld1 {v26.8b}, [x0], x1
+	WORD $0x2f08a75a // ushll v26.8h, v26.8b, #0
+	WORD $0x4e768400 // add v0.8h, v0.8h, v22.8h
+	WORD $0x4e778421 // add v1.8h, v1.8h, v23.8h
+	WORD $0x4e788442 // add v2.8h, v2.8h, v24.8h
+	WORD $0x4e798463 // add v3.8h, v3.8h, v25.8h
+	WORD $0x6e1c73d6 // ext v22.16b, v30.16b, v28.16b, #14
+	WORD $0x6e1e7397 // ext v23.16b, v28.16b, v30.16b, #14
+	WORD $0x6e1d73d8 // ext v24.16b, v30.16b, v29.16b, #14
+	WORD $0x6e1e73b9 // ext v25.16b, v29.16b, v30.16b, #14
+	WORD $0x6e7f875a // sub v26.8h, v26.8h, v31.8h
+	WORD $0x4e7684c6 // add v6.8h, v6.8h, v22.8h
+	WORD $0x0e7784e7 // add v7.4h, v7.4h, v23.4h
+	WORD $0x4e788610 // add v16.8h, v16.8h, v24.8h
+	WORD $0x0e798631 // add v17.4h, v17.4h, v25.4h
+	WORD $0x4e71bb59 // addv h25, v26.8h
+	WORD $0x4e600b5b // rev64 v27.8h, v26.8h
+	WORD $0x4e7ebf5c // addp v28.8h, v26.8h, v30.8h
+	WORD $0x4e7a84a5 // add v5.8h, v5.8h, v26.8h
+	WORD $0x6e1b437b // ext v27.16b, v27.16b, v27.16b, #8
+	WORD $0x0e600b9d // rev64 v29.4h, v28.4h
+	WORD $0x6e0a0724 // ins v4.h[2], v25.h[0]
+	WORD $0x6e1a63d6 // ext v22.16b, v30.16b, v26.16b, #12
+	WORD $0x6e1e6357 // ext v23.16b, v26.16b, v30.16b, #12
+	WORD $0x4e768652 // add v18.8h, v18.8h, v22.8h
+	WORD $0x0e778673 // add v19.4h, v19.4h, v23.4h
+	WORD $0x6e1a73d8 // ext v24.16b, v30.16b, v26.16b, #14
+	WORD $0x6e1e7359 // ext v25.16b, v26.16b, v30.16b, #14
+	WORD $0x4e788694 // add v20.8h, v20.8h, v24.8h
+	WORD $0x0e7986b5 // add v21.4h, v21.4h, v25.4h
+	WORD $0x6e1a63d6 // ext v22.16b, v30.16b, v26.16b, #12
+	WORD $0x6e1e6357 // ext v23.16b, v26.16b, v30.16b, #12
+	WORD $0x6e1b63d8 // ext v24.16b, v30.16b, v27.16b, #12
+	WORD $0x6e1e6379 // ext v25.16b, v27.16b, v30.16b, #12
+	WORD $0x0cc1701a // ld1 {v26.8b}, [x0], x1
+	WORD $0x2f08a75a // ushll v26.8h, v26.8b, #0
+	WORD $0x4e768400 // add v0.8h, v0.8h, v22.8h
+	WORD $0x4e778421 // add v1.8h, v1.8h, v23.8h
+	WORD $0x4e788442 // add v2.8h, v2.8h, v24.8h
+	WORD $0x4e798463 // add v3.8h, v3.8h, v25.8h
+	WORD $0x6e1c63d6 // ext v22.16b, v30.16b, v28.16b, #12
+	WORD $0x6e1e6397 // ext v23.16b, v28.16b, v30.16b, #12
+	WORD $0x6e1d63d8 // ext v24.16b, v30.16b, v29.16b, #12
+	WORD $0x6e1e63b9 // ext v25.16b, v29.16b, v30.16b, #12
+	WORD $0x6e7f875a // sub v26.8h, v26.8h, v31.8h
+	WORD $0x4e7684c6 // add v6.8h, v6.8h, v22.8h
+	WORD $0x0e7784e7 // add v7.4h, v7.4h, v23.4h
+	WORD $0x4e788610 // add v16.8h, v16.8h, v24.8h
+	WORD $0x0e798631 // add v17.4h, v17.4h, v25.4h
+	WORD $0x4e71bb59 // addv h25, v26.8h
+	WORD $0x4e600b5b // rev64 v27.8h, v26.8h
+	WORD $0x4e7ebf5c // addp v28.8h, v26.8h, v30.8h
+	WORD $0x4e7a84a5 // add v5.8h, v5.8h, v26.8h
+	WORD $0x6e1b437b // ext v27.16b, v27.16b, v27.16b, #8
+	WORD $0x0e600b9d // rev64 v29.4h, v28.4h
+	WORD $0x6e0e0724 // ins v4.h[3], v25.h[0]
+	WORD $0x6e1a63d6 // ext v22.16b, v30.16b, v26.16b, #12
+	WORD $0x6e1e6357 // ext v23.16b, v26.16b, v30.16b, #12
+	WORD $0x4e768652 // add v18.8h, v18.8h, v22.8h
+	WORD $0x0e778673 // add v19.4h, v19.4h, v23.4h
+	WORD $0x6e1a73d8 // ext v24.16b, v30.16b, v26.16b, #14
+	WORD $0x6e1e7359 // ext v25.16b, v26.16b, v30.16b, #14
+	WORD $0x4e788694 // add v20.8h, v20.8h, v24.8h
+	WORD $0x0e7986b5 // add v21.4h, v21.4h, v25.4h
+	WORD $0x6e1a53d6 // ext v22.16b, v30.16b, v26.16b, #10
+	WORD $0x6e1e5357 // ext v23.16b, v26.16b, v30.16b, #10
+	WORD $0x6e1b53d8 // ext v24.16b, v30.16b, v27.16b, #10
+	WORD $0x6e1e5379 // ext v25.16b, v27.16b, v30.16b, #10
+	WORD $0x0cc1701a // ld1 {v26.8b}, [x0], x1
+	WORD $0x2f08a75a // ushll v26.8h, v26.8b, #0
+	WORD $0x4e768400 // add v0.8h, v0.8h, v22.8h
+	WORD $0x4e778421 // add v1.8h, v1.8h, v23.8h
+	WORD $0x4e788442 // add v2.8h, v2.8h, v24.8h
+	WORD $0x4e798463 // add v3.8h, v3.8h, v25.8h
+	WORD $0x6e1c53d6 // ext v22.16b, v30.16b, v28.16b, #10
+	WORD $0x6e1e5397 // ext v23.16b, v28.16b, v30.16b, #10
+	WORD $0x6e1d53d8 // ext v24.16b, v30.16b, v29.16b, #10
+	WORD $0x6e1e53b9 // ext v25.16b, v29.16b, v30.16b, #10
+	WORD $0x6e7f875a // sub v26.8h, v26.8h, v31.8h
+	WORD $0x4e7684c6 // add v6.8h, v6.8h, v22.8h
+	WORD $0x0e7784e7 // add v7.4h, v7.4h, v23.4h
+	WORD $0x4e788610 // add v16.8h, v16.8h, v24.8h
+	WORD $0x0e798631 // add v17.4h, v17.4h, v25.4h
+	WORD $0x4e71bb59 // addv h25, v26.8h
+	WORD $0x4e600b5b // rev64 v27.8h, v26.8h
+	WORD $0x4e7ebf5c // addp v28.8h, v26.8h, v30.8h
+	WORD $0x4e7a84a5 // add v5.8h, v5.8h, v26.8h
+	WORD $0x6e1b437b // ext v27.16b, v27.16b, v27.16b, #8
+	WORD $0x0e600b9d // rev64 v29.4h, v28.4h
+	WORD $0x6e120724 // ins v4.h[4], v25.h[0]
+	WORD $0x6e1a73d6 // ext v22.16b, v30.16b, v26.16b, #14
+	WORD $0x6e1e7357 // ext v23.16b, v26.16b, v30.16b, #14
+	WORD $0x4e768652 // add v18.8h, v18.8h, v22.8h
+	WORD $0x0e778673 // add v19.4h, v19.4h, v23.4h
+	WORD $0x6e1a63d8 // ext v24.16b, v30.16b, v26.16b, #12
+	WORD $0x6e1e6359 // ext v25.16b, v26.16b, v30.16b, #12
+	WORD $0x4e788694 // add v20.8h, v20.8h, v24.8h
+	WORD $0x0e7986b5 // add v21.4h, v21.4h, v25.4h
+	WORD $0x6e1a43d6 // ext v22.16b, v30.16b, v26.16b, #8
+	WORD $0x6e1e4357 // ext v23.16b, v26.16b, v30.16b, #8
+	WORD $0x6e1b43d8 // ext v24.16b, v30.16b, v27.16b, #8
+	WORD $0x6e1e4379 // ext v25.16b, v27.16b, v30.16b, #8
+	WORD $0x0cc1701a // ld1 {v26.8b}, [x0], x1
+	WORD $0x2f08a75a // ushll v26.8h, v26.8b, #0
+	WORD $0x4e768400 // add v0.8h, v0.8h, v22.8h
+	WORD $0x4e778421 // add v1.8h, v1.8h, v23.8h
+	WORD $0x4e788442 // add v2.8h, v2.8h, v24.8h
+	WORD $0x4e798463 // add v3.8h, v3.8h, v25.8h
+	WORD $0x6e1c43d6 // ext v22.16b, v30.16b, v28.16b, #8
+	WORD $0x6e1e4397 // ext v23.16b, v28.16b, v30.16b, #8
+	WORD $0x6e1d43d8 // ext v24.16b, v30.16b, v29.16b, #8
+	WORD $0x6e1e43b9 // ext v25.16b, v29.16b, v30.16b, #8
+	WORD $0x6e7f875a // sub v26.8h, v26.8h, v31.8h
+	WORD $0x4e7684c6 // add v6.8h, v6.8h, v22.8h
+	WORD $0x0e7784e7 // add v7.4h, v7.4h, v23.4h
+	WORD $0x4e788610 // add v16.8h, v16.8h, v24.8h
+	WORD $0x0e798631 // add v17.4h, v17.4h, v25.4h
+	WORD $0x4e71bb59 // addv h25, v26.8h
+	WORD $0x4e600b5b // rev64 v27.8h, v26.8h
+	WORD $0x4e7ebf5c // addp v28.8h, v26.8h, v30.8h
+	WORD $0x4e7a84a5 // add v5.8h, v5.8h, v26.8h
+	WORD $0x6e1b437b // ext v27.16b, v27.16b, v27.16b, #8
+	WORD $0x0e600b9d // rev64 v29.4h, v28.4h
+	WORD $0x6e160724 // ins v4.h[5], v25.h[0]
+	WORD $0x6e1a73d6 // ext v22.16b, v30.16b, v26.16b, #14
+	WORD $0x6e1e7357 // ext v23.16b, v26.16b, v30.16b, #14
+	WORD $0x4e768652 // add v18.8h, v18.8h, v22.8h
+	WORD $0x0e778673 // add v19.4h, v19.4h, v23.4h
+	WORD $0x6e1a63d8 // ext v24.16b, v30.16b, v26.16b, #12
+	WORD $0x6e1e6359 // ext v25.16b, v26.16b, v30.16b, #12
+	WORD $0x4e788694 // add v20.8h, v20.8h, v24.8h
+	WORD $0x0e7986b5 // add v21.4h, v21.4h, v25.4h
+	WORD $0x6e1a33d6 // ext v22.16b, v30.16b, v26.16b, #6
+	WORD $0x6e1e3357 // ext v23.16b, v26.16b, v30.16b, #6
+	WORD $0x6e1b33d8 // ext v24.16b, v30.16b, v27.16b, #6
+	WORD $0x6e1e3379 // ext v25.16b, v27.16b, v30.16b, #6
+	WORD $0x0cc1701a // ld1 {v26.8b}, [x0], x1
+	WORD $0x2f08a75a // ushll v26.8h, v26.8b, #0
+	WORD $0x4e768400 // add v0.8h, v0.8h, v22.8h
+	WORD $0x4e778421 // add v1.8h, v1.8h, v23.8h
+	WORD $0x4e788442 // add v2.8h, v2.8h, v24.8h
+	WORD $0x4e798463 // add v3.8h, v3.8h, v25.8h
+	WORD $0x6e1c33d6 // ext v22.16b, v30.16b, v28.16b, #6
+	WORD $0x6e1e3397 // ext v23.16b, v28.16b, v30.16b, #6
+	WORD $0x6e1d33d8 // ext v24.16b, v30.16b, v29.16b, #6
+	WORD $0x6e1e33b9 // ext v25.16b, v29.16b, v30.16b, #6
+	WORD $0x6e7f875a // sub v26.8h, v26.8h, v31.8h
+	WORD $0x4e7684c6 // add v6.8h, v6.8h, v22.8h
+	WORD $0x0e7784e7 // add v7.4h, v7.4h, v23.4h
+	WORD $0x4e788610 // add v16.8h, v16.8h, v24.8h
+	WORD $0x0e798631 // add v17.4h, v17.4h, v25.4h
+	WORD $0x4e71bb59 // addv h25, v26.8h
+	WORD $0x4e600b5b // rev64 v27.8h, v26.8h
+	WORD $0x4e7ebf5c // addp v28.8h, v26.8h, v30.8h
+	WORD $0x4e7a84a5 // add v5.8h, v5.8h, v26.8h
+	WORD $0x6e1b437b // ext v27.16b, v27.16b, v27.16b, #8
+	WORD $0x0e600b9d // rev64 v29.4h, v28.4h
+	WORD $0x6e1a0724 // ins v4.h[6], v25.h[0]
+	WORD $0x4e7a8652 // add v18.8h, v18.8h, v26.8h
+	WORD $0x6e1a53d8 // ext v24.16b, v30.16b, v26.16b, #10
+	WORD $0x6e1e5359 // ext v25.16b, v26.16b, v30.16b, #10
+	WORD $0x4e788694 // add v20.8h, v20.8h, v24.8h
+	WORD $0x0e7986b5 // add v21.4h, v21.4h, v25.4h
+	WORD $0x6e1a23d6 // ext v22.16b, v30.16b, v26.16b, #4
+	WORD $0x6e1e2357 // ext v23.16b, v26.16b, v30.16b, #4
+	WORD $0x6e1b23d8 // ext v24.16b, v30.16b, v27.16b, #4
+	WORD $0x6e1e2379 // ext v25.16b, v27.16b, v30.16b, #4
+	WORD $0x0cc1701a // ld1 {v26.8b}, [x0], x1
+	WORD $0x2f08a75a // ushll v26.8h, v26.8b, #0
+	WORD $0x4e768400 // add v0.8h, v0.8h, v22.8h
+	WORD $0x4e778421 // add v1.8h, v1.8h, v23.8h
+	WORD $0x4e788442 // add v2.8h, v2.8h, v24.8h
+	WORD $0x4e798463 // add v3.8h, v3.8h, v25.8h
+	WORD $0x6e1c23d6 // ext v22.16b, v30.16b, v28.16b, #4
+	WORD $0x6e1e2397 // ext v23.16b, v28.16b, v30.16b, #4
+	WORD $0x6e1d23d8 // ext v24.16b, v30.16b, v29.16b, #4
+	WORD $0x6e1e23b9 // ext v25.16b, v29.16b, v30.16b, #4
+	WORD $0x6e7f875a // sub v26.8h, v26.8h, v31.8h
+	WORD $0x4e7684c6 // add v6.8h, v6.8h, v22.8h
+	WORD $0x0e7784e7 // add v7.4h, v7.4h, v23.4h
+	WORD $0x4e788610 // add v16.8h, v16.8h, v24.8h
+	WORD $0x0e798631 // add v17.4h, v17.4h, v25.4h
+	WORD $0x4e71bb59 // addv h25, v26.8h
+	WORD $0x4e600b5b // rev64 v27.8h, v26.8h
+	WORD $0x4e7ebf5c // addp v28.8h, v26.8h, v30.8h
+	WORD $0x4e7a84a5 // add v5.8h, v5.8h, v26.8h
+	WORD $0x6e1b437b // ext v27.16b, v27.16b, v27.16b, #8
+	WORD $0x0e600b9d // rev64 v29.4h, v28.4h
+	WORD $0x6e1e0724 // ins v4.h[7], v25.h[0]
+	WORD $0x4e7a8652 // add v18.8h, v18.8h, v26.8h
+	WORD $0x6e1a53d8 // ext v24.16b, v30.16b, v26.16b, #10
+	WORD $0x6e1e5359 // ext v25.16b, v26.16b, v30.16b, #10
+	WORD $0x4e788694 // add v20.8h, v20.8h, v24.8h
+	WORD $0x0e7986b5 // add v21.4h, v21.4h, v25.4h
+	WORD $0x6e1a13d6 // ext v22.16b, v30.16b, v26.16b, #2
+	WORD $0x6e1e1357 // ext v23.16b, v26.16b, v30.16b, #2
+	WORD $0x6e1b13d8 // ext v24.16b, v30.16b, v27.16b, #2
+	WORD $0x6e1e1379 // ext v25.16b, v27.16b, v30.16b, #2
+	WORD $0x4e768400 // add v0.8h, v0.8h, v22.8h
+	WORD $0x4e778421 // add v1.8h, v1.8h, v23.8h
+	WORD $0x4e788442 // add v2.8h, v2.8h, v24.8h
+	WORD $0x4e798463 // add v3.8h, v3.8h, v25.8h
+	WORD $0x6e1c13d6 // ext v22.16b, v30.16b, v28.16b, #2
+	WORD $0x6e1e1397 // ext v23.16b, v28.16b, v30.16b, #2
+	WORD $0x6e1d13d8 // ext v24.16b, v30.16b, v29.16b, #2
+	WORD $0x6e1e13b9 // ext v25.16b, v29.16b, v30.16b, #2
+	WORD $0x4e7684c6 // add v6.8h, v6.8h, v22.8h
+	WORD $0x0e7784e7 // add v7.4h, v7.4h, v23.4h
+	WORD $0x4e788610 // add v16.8h, v16.8h, v24.8h
+	WORD $0x0e798631 // add v17.4h, v17.4h, v25.4h
+	WORD $0x4f03053f // movi v31.4s, #105
+	WORD $0x0e64c09a // smull v26.4s, v4.4h, v4.4h
+	WORD $0x4e64809a // smlal2 v26.4s, v4.8h, v4.8h
+	WORD $0x0e65c0bb // smull v27.4s, v5.4h, v5.4h
+	WORD $0x4e6580bb // smlal2 v27.4s, v5.8h, v5.8h
+	WORD $0x4ebf9f5a // mul v26.4s, v26.4s, v31.4s
+	WORD $0x4ebf9f7b // mul v27.4s, v27.4s, v31.4s
+	WORD $0x4eb1bb44 // addv s4, v26.4s
+	WORD $0x4eb1bb65 // addv s5, v27.4s
+	WORD $0x4e600821 // rev64 v1.8h, v1.8h
+	WORD $0x4e600863 // rev64 v3.8h, v3.8h
+	WORD $0x6e015021 // ext v1.16b, v1.16b, v1.16b, #10
+	WORD $0x6e035063 // ext v3.16b, v3.16b, v3.16b, #10
+	WORD $0xbd000b04 // str s4, [x24, #8]
+	WORD $0xbd001b05 // str s5, [x24, #24]
+	MOVD $·cdefDirectionDivTableNEON(SB), R4
+	WORD $0x4c40749f // ld1 {v31.8h}, [x4]
+	WORD $0x0e60c016 // smull v22.4s, v0.4h, v0.4h
+	WORD $0x4e60c017 // smull2 v23.4s, v0.8h, v0.8h
+	WORD $0x0e618036 // smlal v22.4s, v1.4h, v1.4h
+	WORD $0x4e618037 // smlal2 v23.4s, v1.8h, v1.8h
+	WORD $0x0e62c058 // smull v24.4s, v2.4h, v2.4h
+	WORD $0x4e62c059 // smull2 v25.4s, v2.8h, v2.8h
+	WORD $0x0e638078 // smlal v24.4s, v3.4h, v3.4h
+	WORD $0x4e638079 // smlal2 v25.4s, v3.8h, v3.8h
+	WORD $0x2f10a7fe // uxtl v30.4s, v31.4h
+	WORD $0x6f10a7ff // uxtl2 v31.4s, v31.8h
+	WORD $0x4ebe9ed6 // mul v22.4s, v22.4s, v30.4s
+	WORD $0x4ebf96f6 // mla v22.4s, v23.4s, v31.4s
+	WORD $0x4ebe9f18 // mul v24.4s, v24.4s, v30.4s
+	WORD $0x4ebf9738 // mla v24.4s, v25.4s, v31.4s
+	WORD $0x4eb1bac0 // addv s0, v22.4s
+	WORD $0x4eb1bb02 // addv s2, v24.4s
+	MOVD $·cdefAltFactNEON(SB), R5
+	WORD $0x0c4074bd // ld1 {v29.4h}, [x5]
+	ADD $8, R5
+	WORD $0x0c4074be // ld1 {v30.4h}, [x5]
+	ADD $8, R5
+	WORD $0x0c4074bf // ld1 {v31.4h}, [x5]
+	WORD $0xbd000300 // str s0, [x24]
+	WORD $0xbd001302 // str s2, [x24, #16]
+	WORD $0x2f10a7bd // uxtl v29.4s, v29.4h
+	WORD $0x2f10a7de // uxtl v30.4s, v30.4h
+	WORD $0x2f10a7ff // uxtl v31.4s, v31.4h
+	WORD $0x0e66c0d6 // smull v22.4s, v6.4h, v6.4h
+	WORD $0x4e66c0d7 // smull2 v23.4s, v6.8h, v6.8h
+	WORD $0x0e67c0f8 // smull v24.4s, v7.4h, v7.4h
+	WORD $0x0e70c219 // smull v25.4s, v16.4h, v16.4h
+	WORD $0x4e70c21a // smull2 v26.4s, v16.8h, v16.8h
+	WORD $0x0e71c23b // smull v27.4s, v17.4h, v17.4h
+	WORD $0x4ebd9ed6 // mul v22.4s, v22.4s, v29.4s
+	WORD $0x4ebe96f6 // mla v22.4s, v23.4s, v30.4s
+	WORD $0x4ebf9716 // mla v22.4s, v24.4s, v31.4s
+	WORD $0x4ebd9f39 // mul v25.4s, v25.4s, v29.4s
+	WORD $0x4ebe9759 // mla v25.4s, v26.4s, v30.4s
+	WORD $0x4ebf9779 // mla v25.4s, v27.4s, v31.4s
+	WORD $0x4eb1bac6 // addv s6, v22.4s
+	WORD $0x4eb1bb30 // addv s16, v25.4s
+	WORD $0x0e72c256 // smull v22.4s, v18.4h, v18.4h
+	WORD $0x4e72c257 // smull2 v23.4s, v18.8h, v18.8h
+	WORD $0x0e73c278 // smull v24.4s, v19.4h, v19.4h
+	WORD $0x0e74c299 // smull v25.4s, v20.4h, v20.4h
+	WORD $0x4e74c29a // smull2 v26.4s, v20.8h, v20.8h
+	WORD $0x0e75c2bb // smull v27.4s, v21.4h, v21.4h
+	WORD $0x4ebd9ed6 // mul v22.4s, v22.4s, v29.4s
+	WORD $0x4ebe96f6 // mla v22.4s, v23.4s, v30.4s
+	WORD $0x4ebf9716 // mla v22.4s, v24.4s, v31.4s
+	WORD $0x4ebd9f39 // mul v25.4s, v25.4s, v29.4s
+	WORD $0x4ebe9759 // mla v25.4s, v26.4s, v30.4s
+	WORD $0x4ebf9779 // mla v25.4s, v27.4s, v31.4s
+	WORD $0x4eb1bad2 // addv s18, v22.4s
+	WORD $0x4eb1bb34 // addv s20, v25.4s
+	WORD $0xbd000706 // str s6, [x24, #4]
+	WORD $0xbd000f10 // str s16, [x24, #12]
+	WORD $0xbd001712 // str s18, [x24, #20]
+	WORD $0xbd001f14 // str s20, [x24, #28]
+	MOVD $0, R0
+	MOVWU 0(R24), R1
+	MOVD $1, R3
+	MOVWU 4(R24), R4
+	CMP R1, R4
+	CSEL GT, R3, R0, R0
+	CSEL GT, R4, R1, R1
+	MOVD $2, R3
+	MOVWU 8(R24), R4
+	CMP R1, R4
+	CSEL GT, R3, R0, R0
+	CSEL GT, R4, R1, R1
+	MOVD $3, R3
+	MOVWU 12(R24), R4
+	CMP R1, R4
+	CSEL GT, R3, R0, R0
+	CSEL GT, R4, R1, R1
+	MOVD $4, R3
+	MOVWU 16(R24), R4
+	CMP R1, R4
+	CSEL GT, R3, R0, R0
+	CSEL GT, R4, R1, R1
+	MOVD $5, R3
+	MOVWU 20(R24), R4
+	CMP R1, R4
+	CSEL GT, R3, R0, R0
+	CSEL GT, R4, R1, R1
+	MOVD $6, R3
+	MOVWU 24(R24), R4
+	CMP R1, R4
+	CSEL GT, R3, R0, R0
+	CSEL GT, R4, R1, R1
+	MOVD $7, R3
+	MOVWU 28(R24), R4
+	CMP R1, R4
+	CSEL GT, R3, R0, R0
+	CSEL GT, R4, R1, R1
+
+	EOR $4, R0, R3
+	LSL $2, R3, R3
+	ADD R3, R24, R3
+	MOVWU 0(R3), R4
+	SUB R4, R1, R1
+	LSR $10, R1, R1
+	MOVD dir+16(FP), R12
+	MOVW R0, 0(R12)
+	MOVD variance+24(FP), R13
+	MOVW R1, 0(R13)
+	RET
