@@ -2,8 +2,6 @@
 //
 // See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
 
-//go:build !arm64 || purego || goav1_trace_rng
-
 package entropy
 
 // ReadBitTrusted decodes one equiprobable bit from cursor state.
@@ -18,7 +16,7 @@ func (c *Cursor) ReadBitTrusted() uint8 {
 	cnt := int32(c.cnt)
 	split := (rangeValue >> 8) << 7
 	split += ecMinProb
-	window := split << (ecWindow - 16)
+	window := uint64(split) << (ecWindow - 16)
 
 	bit := uint8(1)
 	nextRange := split

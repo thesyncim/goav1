@@ -22,21 +22,21 @@ var (
 // traceCDFRead mirrors libaom's GOAV1_TRACE_RNG cdf line so per-symbol entropy
 // state can be diffed against an aomdec trace. Only compiled in when the
 // goav1_trace_rng build tag is set.
-func traceCDFRead(icdf0 uint16, n int, dif uint32, rng uint32, tell int) {
+func traceCDFRead(icdf0 uint16, n int, dif uint64, rng uint32, tell int) {
 	seq := atomic.AddUint64(&traceSeq, 1) - 1
 	frame := atomic.LoadUint32(&traceFrame)
 	fmt.Fprintf(os.Stderr,
-		"GOAV1_RNG seq=%d frame=%d kind=cdf n=%d cdf0=%d dif=%08x rng=%08x tell=%d\n",
+		"GOAV1_RNG seq=%d frame=%d kind=cdf n=%d cdf0=%d dif=%016x rng=%08x tell=%d\n",
 		seq, frame, n, icdf0, dif, rng, tell)
 }
 
 // traceBoolRead mirrors libaom's GOAV1_TRACE_RNG bool line. Only compiled in
 // when the goav1_trace_rng build tag is set.
-func traceBoolRead(f uint16, dif uint32, rng uint32, tell int) {
+func traceBoolRead(f uint16, dif uint64, rng uint32, tell int) {
 	seq := atomic.AddUint64(&traceSeq, 1) - 1
 	frame := atomic.LoadUint32(&traceFrame)
 	fmt.Fprintf(os.Stderr,
-		"GOAV1_RNG seq=%d frame=%d kind=bool f=%d dif=%08x rng=%08x tell=%d\n",
+		"GOAV1_RNG seq=%d frame=%d kind=bool f=%d dif=%016x rng=%08x tell=%d\n",
 		seq, frame, f, dif, rng, tell)
 }
 
