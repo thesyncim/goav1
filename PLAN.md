@@ -220,11 +220,15 @@ Rationale: serial symbol/coeff/mode decode + orchestration = 30-35% of
 decode CPU; per-symbol Go call overhead + codegen vs dav1d's msac.S +
 clang-O3 C is the残 gap. The pinned "entropy NEON dead-end" does NOT
 apply (that was SIMD inverse-CDF search; this is scalar asm).
-- [ ] **D3-a TXB-kernel spec** — register/memory plan for
-  readCoefficientsTXB as NOSPLIT arm64 asm: inputs (reader window, CDF
-  arrays, scan table, levels buffer, geometry), the eob-class entry, the
-  three loops (base-levels, BR, golomb/sign), CDF update shape. Deliver
-  the spec + differential-harness skeleton, NO asm yet. (M)
+- [x] **D3-a TXB-kernel spec** — LANDED: spec doc
+  internal/av1/tile/coeff_asm_arm64_spec.go (register/memory plan;
+  recommended cut = per-loop kernel for the base-levels walk with the
+  BR chain inlined and the DC iteration folded in, one asm call per
+  TXB; whole-TXB and per-symbol cuts rejected with reasoning) +
+  differential harness coeff_asm_diff_test.go (three pure-Go TXB
+  bodies in lockstep over randomized+adversarial streams/CDF states;
+  full decode record compared incl. entropy.Reader.State() snapshot;
+  GOAV1_TXB_DIFF_TXBS soak knob). (done)
 - [ ] **D3-b base-levels loop asm** — hottest loop first, Go fallback for
   the rest; differential over adversarial streams + 226. (L)
 - [ ] **D3-c BR + golomb/sign loops asm** (L)
