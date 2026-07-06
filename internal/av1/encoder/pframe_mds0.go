@@ -67,7 +67,7 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	// syntax churn, so the block keeps the legacy classification. The ME
 	// prediction's distortion is cached for the candidate loop below.
 	meDist := int64(-1)
-	if perr := predictInto(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, false, false); perr == nil {
+	if perr := predictInto(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, false, false, &st.scaledScratch); perr == nil {
 		meSSE, meVar := realtimeInterResidualSSEVariance(src.Y, st.sadScratch[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
 		acThr := (int64(st.yQuant.AC) * int64(st.yQuant.AC) >> 6) * int64(bw*bh) / 256
 		// Upstream narrows the dead-zone test on high-motion HD blocks
@@ -158,7 +158,7 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 			}
 		}
 		if dist < 0 {
-			if perr := predictInto(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, false, false); perr != nil {
+			if perr := predictInto(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, false, false, &st.scaledScratch); perr != nil {
 				dists[i] = -1
 				continue
 			}

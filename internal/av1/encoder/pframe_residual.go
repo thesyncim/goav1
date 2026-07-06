@@ -2598,14 +2598,14 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 				}
 			}
 		} else {
-			if err := predictIntoFilters(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, blockFilters); err != nil {
+			if err := predictIntoFilters(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, blockFilters, st.scaledScratch.Conv()); err != nil {
 				return fmt.Errorf("predict luma: %w", err)
 			}
 			if hasChroma {
-				if err := predictIntoFilters(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters); err != nil {
+				if err := predictIntoFilters(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters, st.scaledScratch.Conv()); err != nil {
 					return fmt.Errorf("predict u: %w", err)
 				}
-				if err := predictIntoFilters(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters); err != nil {
+				if err := predictIntoFilters(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters, st.scaledScratch.Conv()); err != nil {
 					return fmt.Errorf("predict v: %w", err)
 				}
 			}
@@ -2963,7 +2963,7 @@ func (st *lossyEncodeState) classifyInterMode(src, refPlanes SourceFrame420, sta
 		}
 		if dr <= 16 && dc <= 16 {
 			mvBits := 4 + bits.Len(uint(dr)) + bits.Len(uint(dc))
-			if err := predictInto(st.sadScratch[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, nearest, false, false); err == nil {
+			if err := predictInto(st.sadScratch[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, nearest, false, false, &st.scaledScratch); err == nil {
 				srcBlock := src.Y[lumaPY*src.YStride+lumaPX:]
 				predBlock := st.sadScratch[:bw*bh]
 				nearSAD := 0
@@ -3165,8 +3165,8 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 // EIGHTTAP filters) for one bw x bh block of plane at frame position (px, py)
 // with motion vector mv, writing into dst (stride bw). Full-pel vectors reduce
 // to copies inside the kernel, so one path serves both cases bit-exactly.
-func predictInto(dst []byte, refPlane []byte, stride, width, height, px, py, bw, bh int, mv motion.Vector, ssX, ssY bool) error {
-	return predictIntoScaled(dst, refPlane, stride, width, height, width, height, px, py, bw, bh, mv, ssX, ssY, nil)
+func predictInto(dst []byte, refPlane []byte, stride, width, height, px, py, bw, bh int, mv motion.Vector, ssX, ssY bool, scratch *motion.ScaledConvolveScratch) error {
+	return predictIntoScaled(dst, refPlane, stride, width, height, width, height, px, py, bw, bh, mv, ssX, ssY, scratch)
 }
 
 // predictIntoScaled runs the same inter predictor as predictInto, but allows
@@ -3183,7 +3183,7 @@ func predictIntoScaled(dst []byte, refPlane []byte, stride, refWidth, refHeight,
 		if err != nil {
 			return err
 		}
-		return motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dstPlane, ref, 1, 8, 0, 0, refX, refY, bw, bh, subX, subY, filters)
+		return motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSizeScratch(dstPlane, ref, 1, 8, 0, 0, refX, refY, bw, bh, bw, bh, subX, subY, filters, scratch.Conv())
 	}
 	sf, err := motion.NewScaleFactors(refWidth, refHeight, curWidth, curHeight)
 	if err != nil {
@@ -3393,7 +3393,7 @@ func (st *lossyEncodeState) subpelRefineHalf(src, refPlane []byte, stride, width
 
 func (st *lossyEncodeState) subpelExact8x8(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
 	if !st.prober.Predict8x8(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
-		if err := predictInto(probe, refPlane, stride, width, height, px, py, 8, 8, cand, false, false); err != nil {
+		if err := predictInto(probe, refPlane, stride, width, height, px, py, 8, 8, cand, false, false, &st.scaledScratch); err != nil {
 			return -1
 		}
 	}
@@ -3402,7 +3402,7 @@ func (st *lossyEncodeState) subpelExact8x8(probe, srcBlock, refPlane []byte, str
 
 func (st *lossyEncodeState) subpelExact16x16(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
 	if !st.prober.Predict16x16(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
-		if err := predictInto(probe, refPlane, stride, width, height, px, py, 16, 16, cand, false, false); err != nil {
+		if err := predictInto(probe, refPlane, stride, width, height, px, py, 16, 16, cand, false, false, &st.scaledScratch); err != nil {
 			return -1
 		}
 	}
@@ -3411,7 +3411,7 @@ func (st *lossyEncodeState) subpelExact16x16(probe, srcBlock, refPlane []byte, s
 
 func (st *lossyEncodeState) subpelExact32x32(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
 	if !st.prober.Predict32x32(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
-		if err := predictInto(probe, refPlane, stride, width, height, px, py, 32, 32, cand, false, false); err != nil {
+		if err := predictInto(probe, refPlane, stride, width, height, px, py, 32, 32, cand, false, false, &st.scaledScratch); err != nil {
 			return -1
 		}
 	}
@@ -3420,7 +3420,7 @@ func (st *lossyEncodeState) subpelExact32x32(probe, srcBlock, refPlane []byte, s
 
 func (st *lossyEncodeState) subpelExact64x64(probe, srcBlock, refPlane []byte, stride, width, height, px, py int, startMV, cand motion.Vector) int {
 	if !st.prober.Predict64x64(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
-		if err := predictInto(probe, refPlane, stride, width, height, px, py, 64, 64, cand, false, false); err != nil {
+		if err := predictInto(probe, refPlane, stride, width, height, px, py, 64, 64, cand, false, false, &st.scaledScratch); err != nil {
 			return -1
 		}
 	}
@@ -3453,7 +3453,7 @@ func (st *lossyEncodeState) subpelRefineLibaomTree(src, refPlane []byte, stride,
 			return st.subpelExact64x64(probe, srcBlock, refPlane, stride, width, height, px, py, startMV, cand)
 		}
 		if !st.prober.Predict(probe, motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
-			if err := predictInto(probe, refPlane, stride, width, height, px, py, n, n, cand, false, false); err != nil {
+			if err := predictInto(probe, refPlane, stride, width, height, px, py, n, n, cand, false, false, &st.scaledScratch); err != nil {
 				return -1
 			}
 		}
@@ -4562,7 +4562,7 @@ func (st *lossyEncodeState) interHeaderCost() int64 {
 // coder for bits. The prediction lands in sadScratch.
 func (st *lossyEncodeState) trialInterCost8x8(src SourceFrame420, ref SourceFrame420, px, py int, mv motion.Vector) int64 {
 	pred := st.sadScratch[:64]
-	if err := predictInto(pred, ref.Y, src.YStride, src.Width, src.Height, px, py, 8, 8, mv, false, false); err != nil {
+	if err := predictInto(pred, ref.Y, src.YStride, src.Width, src.Height, px, py, 8, 8, mv, false, false, &st.scaledScratch); err != nil {
 		return 1 << 59
 	}
 	st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
@@ -4571,14 +4571,14 @@ func (st *lossyEncodeState) trialInterCost8x8(src SourceFrame420, ref SourceFram
 
 	halfW, halfH := src.Width/2, src.Height/2
 	cpred := st.sadScratch[:16]
-	if err := predictInto(cpred, ref.U, src.ChromaStride, halfW, halfH, px/2, py/2, 4, 4, mv, true, true); err != nil {
+	if err := predictInto(cpred, ref.U, src.ChromaStride, halfW, halfH, px/2, py/2, 4, 4, mv, true, true, &st.scaledScratch); err != nil {
 		return 1 << 59
 	}
 	st.rdDcode = 0
 	st.prepareInterTXB(src.U, cpred, 4, src.ChromaStride, px/2, py/2, 4, 4, st.uQuant, st.uQ[:16])
 	cost += st.trialTXBBitsUV4x4((*[16]int16)(st.uQ[:16])) + st.rdDcode<<7
 
-	if err := predictInto(cpred, ref.V, src.ChromaStride, halfW, halfH, px/2, py/2, 4, 4, mv, true, true); err != nil {
+	if err := predictInto(cpred, ref.V, src.ChromaStride, halfW, halfH, px/2, py/2, 4, 4, mv, true, true, &st.scaledScratch); err != nil {
 		return 1 << 59
 	}
 	st.rdDcode = 0
@@ -4589,7 +4589,7 @@ func (st *lossyEncodeState) trialInterCost8x8(src SourceFrame420, ref SourceFram
 
 func (st *lossyEncodeState) trialInterCost16x16(src SourceFrame420, ref SourceFrame420, px, py int, mv motion.Vector) int64 {
 	pred := st.sadScratch[:256]
-	if err := predictInto(pred, ref.Y, src.YStride, src.Width, src.Height, px, py, 16, 16, mv, false, false); err != nil {
+	if err := predictInto(pred, ref.Y, src.YStride, src.Width, src.Height, px, py, 16, 16, mv, false, false, &st.scaledScratch); err != nil {
 		return 1 << 59
 	}
 	st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
@@ -4598,14 +4598,14 @@ func (st *lossyEncodeState) trialInterCost16x16(src SourceFrame420, ref SourceFr
 
 	halfW, halfH := src.Width/2, src.Height/2
 	cpred := st.sadScratch[:64]
-	if err := predictInto(cpred, ref.U, src.ChromaStride, halfW, halfH, px/2, py/2, 8, 8, mv, true, true); err != nil {
+	if err := predictInto(cpred, ref.U, src.ChromaStride, halfW, halfH, px/2, py/2, 8, 8, mv, true, true, &st.scaledScratch); err != nil {
 		return 1 << 59
 	}
 	st.rdDcode = 0
 	st.prepareInterTXB(src.U, cpred, 8, src.ChromaStride, px/2, py/2, 8, 8, st.uQuant, st.uQ[:64])
 	cost += st.trialTXBBitsUV8x8((*[64]int16)(st.uQ[:64])) + st.rdDcode<<7
 
-	if err := predictInto(cpred, ref.V, src.ChromaStride, halfW, halfH, px/2, py/2, 8, 8, mv, true, true); err != nil {
+	if err := predictInto(cpred, ref.V, src.ChromaStride, halfW, halfH, px/2, py/2, 8, 8, mv, true, true, &st.scaledScratch); err != nil {
 		return 1 << 59
 	}
 	st.rdDcode = 0

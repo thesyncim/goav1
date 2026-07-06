@@ -103,14 +103,14 @@ func modelRDFromSSE(nLog2 uint, acDequantQTX int64, sse int64) (rate int64, dist
 
 // predictIntoFilters is predictInto with a caller-chosen interpolation filter
 // pair; the reference plane must match the current frame dimensions.
-func predictIntoFilters(dst []byte, refPlane []byte, stride, width, height, px, py, bw, bh int, mv motion.Vector, ssX, ssY bool, filters motion.InterpFilters) error {
+func predictIntoFilters(dst []byte, refPlane []byte, stride, width, height, px, py, bw, bh int, mv motion.Vector, ssX, ssY bool, filters motion.InterpFilters, scratch *motion.ConvolveScratch) error {
 	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(px, py, mv, ssX, ssY)
 	if err != nil {
 		return err
 	}
 	dstPlane := frame.Plane{Pix: dst, Stride: bw, Width: bw, Height: bh}
 	ref := frame.Plane{Pix: refPlane, Stride: stride, Width: width, Height: height}
-	return motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dstPlane, ref, 1, 8, 0, 0, refX, refY, bw, bh, subX, subY, filters)
+	return motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSizeScratch(dstPlane, ref, 1, 8, 0, 0, refX, refY, bw, bh, bw, bh, subX, subY, filters, scratch)
 }
 
 // interpolationFilterSearch runs the IFS combo loop for one single-reference
@@ -148,7 +148,7 @@ func (st *lossyEncodeState) interpolationFilterSearch(src SourceFrame420, refPla
 		if isFP {
 			rd = (rs*st.rdMult + 256) >> 9
 		} else {
-			if perr := predictIntoFilters(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, motion.InterpFilters{X: f, Y: f}); perr != nil {
+			if perr := predictIntoFilters(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, motion.InterpFilters{X: f, Y: f}, st.scaledScratch.Conv()); perr != nil {
 				continue
 			}
 			sse, _ := realtimeInterResidualSSEVariance(src.Y, st.sadScratch[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)

@@ -14,6 +14,17 @@ type ScaledConvolveScratch struct {
 	im       scaledIM
 	highBD   scaledHighBDIM
 	compound CompoundConvolveScratch
+	conv     ConvolveScratch
+}
+
+// Conv exposes the embedded translational 2D convolve scratch so callers on
+// the unscaled fast path reuse it instead of zero-filling a fresh stack
+// intermediate block on every call.
+func (s *ScaledConvolveScratch) Conv() *ConvolveScratch {
+	if s == nil {
+		return nil
+	}
+	return &s.conv
 }
 
 var scaledHighBDIMPool = sync.Pool{

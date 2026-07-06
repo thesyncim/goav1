@@ -801,7 +801,7 @@ func (st *lossyEncodeState) subpelRefineReference(src, refPlane []byte, stride, 
 	startMV := mv
 	exact := func(cand motion.Vector) int {
 		if !st.prober.Predict(st.sadScratch[:n*n], motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}) {
-			if err := predictInto(st.sadScratch[:n*n], refPlane, stride, width, height, px, py, n, n, cand, false, false); err != nil {
+			if err := predictInto(st.sadScratch[:n*n], refPlane, stride, width, height, px, py, n, n, cand, false, false, &st.scaledScratch); err != nil {
 				return -1
 			}
 		}
