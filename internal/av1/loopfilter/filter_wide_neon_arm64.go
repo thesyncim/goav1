@@ -13,8 +13,9 @@ package loopfilter
 // positions stride-separated) transpose eight positions per group through
 // per-lane ld4/ld2 so the lane arithmetic is identical, then scatter the
 // modified samples back; filter14's vertical path reuses the horizontal kernel
-// through a stack transpose. Any tail shorter than eight positions and all high
-// bit depth route through the pure-Go reference.
+// through a NEON trn-ladder stack transpose (filter14_vtrn_neon_arm64.s). Any
+// tail shorter than eight positions and all high bit depth route through the
+// pure-Go reference.
 //
 // Bit-exactness with the pure-Go reference:
 //   - all arithmetic runs in signed 16-bit lanes; samples are 0..255 and the
@@ -116,11 +117,38 @@ func filter8EdgeNEONAsm(ctx *filter8NEONCtx)
 //go:noescape
 func filter14EdgeNEONAsm(ctx *filter14NEONCtx)
 
+// wideVertTransposeCtx is the asm calling context for the fourteen-sample
+// vertical-edge transpose kernels (both 8-bit and 16-bit variants share the
+// layout). src points at the lowest tap byte (p6) of the first position,
+// stride is the byte distance between adjacent positions, scratch is the base
+// of the horizontal-layout scratch (row stride 32 bytes at 8-bit, 64 at
+// 16-bit), and count is the number of eight-position groups (1..4). Field
+// order is part of the ABI shared with filter14_vtrn_neon_arm64.s; do not
+// reorder.
+type wideVertTransposeCtx struct {
+	src     *byte
+	stride  uintptr
+	scratch *byte
+	count   uintptr
+}
+
 //go:noescape
 func filter6VertNEONAsm(ctx *wideVertNEONCtx)
 
 //go:noescape
 func filter8VertNEONAsm(ctx *wideVertNEONCtx)
+
+//go:noescape
+func filter14VertGatherNEONAsm(ctx *wideVertTransposeCtx)
+
+//go:noescape
+func filter14VertScatterNEONAsm(ctx *wideVertTransposeCtx)
+
+//go:noescape
+func filter14Vert16GatherNEONAsm(ctx *wideVertTransposeCtx)
+
+//go:noescape
+func filter14Vert16ScatterNEONAsm(ctx *wideVertTransposeCtx)
 
 // filter6VertNEON and filter8VertNEON accelerate the six/eight-sample filters
 // along vertical edges (step == 1, positions stride-separated). Each transposes
@@ -170,43 +198,54 @@ func filter8VertNEON(pix []byte, q0Base int, step int, outer int, length int, sc
 	}
 }
 
+// filter14VertBatchGroups is the number of eight-position groups gathered per
+// scratch fill; the scratch row stride is 8*filter14VertBatchGroups bytes so a
+// single filter14EdgeNEONAsm call (whose tap pointers advance eight bytes per
+// group) processes the whole batch.
+const filter14VertBatchGroups = 4
+
 // filter14VertNEON accelerates the fourteen-sample filter along vertical edges
-// by transposing each group of eight positions into a contiguous scratch buffer,
-// running the validated horizontal filter14 NEON kernel on it (identical
-// arithmetic, no separate vertical asm to audit), then scattering the modified
-// samples back. The fourteen-tap two-pass flat8out logic is intricate enough
-// that reusing the proven horizontal kernel through a transpose is the
-// byte-exact-by-construction choice; the scratch lives on the stack so the path
-// stays allocation-free.
+// by transposing batches of up to four eight-position groups into a contiguous
+// scratch buffer laid out as a horizontal edge, running the validated
+// horizontal filter14 NEON kernel on it (identical arithmetic, no separate
+// vertical filter asm to audit), then scattering the modified samples back.
+// The gather/scatter transposes run in NEON trn1/trn2 ladders
+// (filter14_vtrn_neon_arm64.s, ported from dav1d src/arm/64/loopfilter.S
+// lpf_h_16_16_neon); the scratch lives on the stack so the path stays
+// allocation-free, and byte-exactness follows by construction because the
+// filter kernel consumes exactly the bytes the scalar transpose used to feed
+// it.
 func filter14VertNEON(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
 	groups := length / 8
 	if step != 1 || groups == 0 {
 		filter14EdgePureGo(pix, q0Base, step, outer, length, scale, params)
 		return
 	}
-	// scratch holds 8 positions laid out as a horizontal edge: 14 tap rows of
-	// eight contiguous bytes each (row stride scratchStride), so the horizontal
-	// kernel sees outer == 1 and step == scratchStride.
-	const scratchStride = 8
+	// scratch holds up to filter14VertBatchGroups groups of 8 positions laid
+	// out as a horizontal edge: 14 tap rows of scratchStride contiguous bytes,
+	// group g occupying bytes 8g..8g+7 of every row, so the horizontal kernel
+	// sees outer == 1 and step == scratchStride.
+	const scratchStride = 8 * filter14VertBatchGroups
 	var scratch [14 * scratchStride]byte
-	for g := 0; g < groups; g++ {
+	for g := 0; g < groups; g += filter14VertBatchGroups {
+		n := groups - g
+		if n > filter14VertBatchGroups {
+			n = filter14VertBatchGroups
+		}
 		colBase := q0Base + g*8*outer
-		// Gather: scratch[t*8 + j] = pix[colBase + j*outer + (t-7)]  (t in 0..13)
-		for j := 0; j < 8; j++ {
-			src := colBase + j*outer - 7
-			for t := 0; t < 14; t++ {
-				scratch[t*scratchStride+j] = pix[src+t]
-			}
+		ctx := wideVertTransposeCtx{
+			src:     &pix[colBase-7], // p6 of the first position
+			stride:  uintptr(outer),
+			scratch: &scratch[0],
+			count:   uintptr(n),
 		}
+		// Gather: scratch[t*scratchStride + 8b+j] = pix[colBase + (8b+j)*outer + (t-7)]
+		// for t in 0..13, b in 0..n-1, j in 0..7.
+		filter14VertGatherNEONAsm(&ctx)
 		sq0 := 7 * scratchStride // q0 tap row
-		filter14EdgeNEON(scratch[:], sq0, scratchStride, 1, 8, scale, params)
+		filter14EdgeNEON(scratch[:], sq0, scratchStride, 1, n*8, scale, params)
 		// Scatter back the twelve modifiable samples p5..q5 (tap rows 1..12).
-		for j := 0; j < 8; j++ {
-			dst := colBase + j*outer - 7
-			for t := 1; t <= 12; t++ {
-				pix[dst+t] = scratch[t*scratchStride+j]
-			}
-		}
+		filter14VertScatterNEONAsm(&ctx)
 	}
 	if rem := length - groups*8; rem > 0 {
 		filter14EdgePureGo(pix, q0Base+groups*8*outer, step, outer, rem, scale, params)

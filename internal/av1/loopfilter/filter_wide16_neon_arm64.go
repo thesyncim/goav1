@@ -295,30 +295,37 @@ func filter8Vert16NEON(pix []byte, q0Base int, step int, outer int, length int, 
 	}
 }
 
+// filter14Vert16NEON batches up to filter14VertBatchGroups eight-position
+// groups per scratch fill; the scratch row stride is 16*filter14VertBatchGroups
+// bytes so one filter14Edge16NEONAsm call (tap pointers advancing sixteen bytes
+// per group) processes the whole batch. The gather/scatter transposes run in
+// NEON .8h trn1/trn2 ladders (filter14_vtrn_neon_arm64.s, ported from dav1d
+// src/arm/64/loopfilter16.S lpf_h_16_8_neon + util.S transpose_8x8h) instead
+// of the scalar byte loops the six/eight-sample vertical paths still use.
 func filter14Vert16NEON(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
 	groups := length / 8
-	var scratch [14 * wide16ScratchStride]byte
-	for g := 0; g < groups; g++ {
+	if step != 2 || groups == 0 {
+		filter14Edge16PureGo(pix, q0Base, step, outer, length, scale, params)
+		return
+	}
+	const scratchStride = 16 * filter14VertBatchGroups
+	var scratch [14 * scratchStride]byte
+	for g := 0; g < groups; g += filter14VertBatchGroups {
+		n := groups - g
+		if n > filter14VertBatchGroups {
+			n = filter14VertBatchGroups
+		}
 		colBase := q0Base + g*8*outer
-		for j := 0; j < 8; j++ {
-			src := colBase + j*outer - 7*step // p6 of position j
-			for t := 0; t < 14; t++ {
-				o := src + t*step
-				d := t*wide16ScratchStride + j*2
-				scratch[d] = pix[o]
-				scratch[d+1] = pix[o+1]
-			}
+		ctx := wideVertTransposeCtx{
+			src:     &pix[colBase-7*step], // p6 of the first position
+			stride:  uintptr(outer),
+			scratch: &scratch[0],
+			count:   uintptr(n),
 		}
-		filter14Edge16NEON(scratch[:], 7*wide16ScratchStride, wide16ScratchStride, 2, 8, scale, params)
-		for j := 0; j < 8; j++ {
-			dst := colBase + j*outer - 7*step
-			for t := 1; t <= 12; t++ { // p5..q5
-				o := dst + t*step
-				d := t*wide16ScratchStride + j*2
-				pix[o] = scratch[d]
-				pix[o+1] = scratch[d+1]
-			}
-		}
+		filter14Vert16GatherNEONAsm(&ctx)
+		filter14Edge16NEON(scratch[:], 7*scratchStride, scratchStride, 2, n*8, scale, params)
+		// Scatter back the twelve modifiable samples p5..q5 (tap rows 1..12).
+		filter14Vert16ScatterNEONAsm(&ctx)
 	}
 	if rem := length - groups*8; rem > 0 {
 		filter14Edge16PureGo(pix, q0Base+groups*8*outer, step, outer, rem, scale, params)
