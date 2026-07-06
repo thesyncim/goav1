@@ -104,10 +104,27 @@ func convolveYHighBDAVX2(dst frame.Plane, ref frame.Plane, bitDepth uint8, max u
 const convolve2DHighBDAVX2IMStride = maxBlockSize
 
 func convolve2DHighBDAVX2(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	convolve2DHighBDAVX2WithScratch(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, nil)
+}
+
+// convolve2DHighBDAVX2WithScratch is convolve2DHighBDAVX2 with optional
+// caller-owned scratch for the int32 intermediate block, mirroring the NEON
+// variant: with scratch the per-call zero-fill of the ~69KB stack array
+// disappears; without scratch the stack array keeps the historical behavior.
+func convolve2DHighBDAVX2WithScratch(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
 	if width < 4 || width%4 != 0 {
-		convolve2DHighBDPureGo(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+		convolve2DHighBDPureGoWithScratch(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
 		return
 	}
+	if scratch != nil {
+		convolve2DHighBDAVX2WithIM(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, &scratch.imHBD[0])
+		return
+	}
+	var im [(maxBlockSize + filterTaps - 1) * convolve2DHighBDAVX2IMStride]int32
+	convolve2DHighBDAVX2WithIM(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, &im[0])
+}
+
+func convolve2DHighBDAVX2WithIM(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, im *int32) {
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	round0, round1 := highBDRoundBits(bitDepth)
@@ -119,7 +136,6 @@ func convolve2DHighBDAVX2(dst frame.Plane, ref frame.Plane, bitDepth uint8, max 
 
 	xk := xKernel
 	yk := yKernel
-	var im [(maxBlockSize + filterTaps - 1) * convolve2DHighBDAVX2IMStride]int32
 	ctx := convolveHighBDAVX2Ctx{
 		dst:    &dst.Pix[dstY*dst.Stride+dstX*2],
 		ref:    &ref.Pix[(refY-foY)*ref.Stride+(refX-foX)*2],
@@ -129,7 +145,7 @@ func convolve2DHighBDAVX2(dst frame.Plane, ref frame.Plane, bitDepth uint8, max 
 		refStr: uintptr(ref.Stride),
 		width:  uintptr(width),
 		height: uintptr(height),
-		im:     &im[0],
+		im:     im,
 		imStr:  uintptr(convolve2DHighBDAVX2IMStride),
 		round0: uintptr(round0),
 		round1: uintptr(round1),
@@ -163,12 +179,18 @@ func convolveYHighBDClampedAVX2(dst frame.Plane, ref frame.Plane, bitDepth uint8
 }
 
 func convolve2DHighBDClampedAVX2(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	convolve2DHighBDClampedAVX2WithScratch(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, nil)
+}
+
+// convolve2DHighBDClampedAVX2WithScratch is convolve2DHighBDClampedAVX2 with
+// optional caller-owned scratch for the int32 intermediate block.
+func convolve2DHighBDClampedAVX2WithScratch(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	if width >= 4 && width%4 == 0 &&
 		planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
-		convolve2DHighBDAVX2(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+		convolve2DHighBDAVX2WithScratch(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
 		return
 	}
-	convolve2DHighBDClampedPureGo(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+	convolve2DHighBDClampedPureGoWithScratch(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
 }

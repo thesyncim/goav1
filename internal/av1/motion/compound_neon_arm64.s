@@ -1251,3 +1251,135 @@ c2v4RowLoop:
 
 c2v4Done:
 	RET
+
+#define BH_DST    0
+#define BH_SRC0   8
+#define BH_SRC1   16
+#define BH_DSTSTR 24
+#define BH_WIDTH  32
+#define BH_HEIGHT 40
+#define BH_FWD    48
+#define BH_BCK    56
+#define BH_BIAS   64
+#define BH_SHIFT  72
+#define BH_MAXVAL 80
+
+// func blendCompoundAvgHighBDNEONAsm(ctx *compoundBlendHighBDNEONCtx)
+//
+// Port of dav1d's 16bpc avg/w_avg bidir blend (src/mc16_tmpl.c avg_c/w_avg_c,
+// src/arm/64/mc16.S bidir_fn avg/w_avg) onto libaom's CONV_BUF representation:
+// dav1d keeps its intermediate predictors PREP_BIAS-centered in int16, so its
+// asm can blend in 16-bit lanes; goav1's CompoundConvBuf is libaom's offset
+// uint16 (av1_highbd_dist_wtd_convolve_*), so the weighted combine must widen
+// through umull/umlal to stay bit-identical to the scalar reference, exactly
+// like the 8-bit kernel above. The pipeline mirrors dav1d's macro shape: load
+// both sources, weighted combine, one arithmetic shift, clamp, store.
+//     dst = clipHBD((s0*fwd + s1*bck - bias) >> (4 + roundBits))
+// with bias = (roundOffset - (1 << (roundBits-1))) << 4, which is exactly the
+// scalar
+//     clipHBD(round(((s0*fwd + s1*bck) >> 4) - roundOffset, roundBits))
+// (the truncating >>4 and the rounded >>roundBits fold into one arithmetic
+// shift against a pre-shifted bias). roundBits differs per bit depth (4 at
+// bd <= 10, 2 at bd == 12), so the shift arrives as a negative SSHL lane
+// amount; sqxtun clamps below at 0 and umin(maxVal) clamps above, matching
+// clipPixelHighBD (the pre-narrow value never exceeds 2^14, so the u16
+// narrowing saturation cannot fire below maxVal). The wrapper only routes
+// width%8 == 0 blocks here; src rows are contiguous (stride == width) so both
+// sources advance linearly.
+TEXT ·blendCompoundAvgHighBDNEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD BH_DST(R0), R1
+	MOVD BH_SRC0(R0), R2
+	MOVD BH_SRC1(R0), R3
+	MOVD BH_DSTSTR(R0), R5
+	MOVD BH_WIDTH(R0), R6
+	MOVD BH_HEIGHT(R0), R7
+	MOVD BH_FWD(R0), R11
+	WORD $0x4e020d66 // dup v6.8h, w11      fwdOffset
+	MOVD BH_BCK(R0), R11
+	WORD $0x4e020d67 // dup v7.8h, w11      bckOffset
+	MOVD BH_BIAS(R0), R11
+	WORD $0x4e040d72 // dup v18.4s, w11     bias
+	MOVD BH_SHIFT(R0), R11
+	WORD $0x4e040d73 // dup v19.4s, w11     -(4+roundBits)
+	MOVD BH_MAXVAL(R0), R11
+	WORD $0x4e020d75 // dup v21.8h, w11     maxVal
+
+bhRowLoop:
+	MOVD R1, R10 // dst row cursor
+	MOVD R6, R8  // remaining columns
+
+bhColLoop:
+	WORD $0x4cdf7441 // ld1 {v1.8h}, [x2], #16    s0
+	WORD $0x4cdf7462 // ld1 {v2.8h}, [x3], #16    s1
+	WORD $0x2e66c030 // umull  v16.4s, v1.4h, v6.4h
+	WORD $0x6e66c031 // umull2 v17.4s, v1.8h, v6.8h
+	WORD $0x2e678050 // umlal  v16.4s, v2.4h, v7.4h
+	WORD $0x6e678051 // umlal2 v17.4s, v2.8h, v7.8h
+	WORD $0x6eb28610 // sub v16.4s, v16.4s, v18.4s
+	WORD $0x6eb28631 // sub v17.4s, v17.4s, v18.4s
+	WORD $0x4eb34610 // sshl v16.4s, v16.4s, v19.4s   >> (4+roundBits)
+	WORD $0x4eb34631 // sshl v17.4s, v17.4s, v19.4s
+	WORD $0x2e612a14 // sqxtun  v20.4h, v16.4s        clip >= 0
+	WORD $0x6e612a34 // sqxtun2 v20.8h, v17.4s
+	WORD $0x6e756e94 // umin v20.8h, v20.8h, v21.8h   clip <= max
+	WORD $0x4c007554 // st1 {v20.8h}, [x10]
+
+	ADD  $16, R10, R10
+	SUB  $8, R8, R8
+	CBNZ R8, bhColLoop
+
+	ADD  R5, R1, R1
+	SUB  $1, R7, R7
+	CBNZ R7, bhRowLoop
+
+	RET
+
+// func blendCompoundAvgHighBDNEONAsmW4(ctx *compoundBlendHighBDNEONCtx)
+//
+// Width-4 variant of blendCompoundAvgHighBDNEONAsm processing two rows per
+// iteration (the contiguous sources hold both rows in one 8h load), storing
+// row halves like dav1d's 16bpc w4 branch in src/arm/64/mc16.S bidir_fn
+// (st1 {v.8b}/{v.d}[1] across alternating rows). The wrapper only routes
+// width == 4, even-height blocks here.
+TEXT ·blendCompoundAvgHighBDNEONAsmW4(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD BH_DST(R0), R1
+	MOVD BH_SRC0(R0), R2
+	MOVD BH_SRC1(R0), R3
+	MOVD BH_DSTSTR(R0), R5
+	MOVD BH_HEIGHT(R0), R7
+	MOVD BH_FWD(R0), R11
+	WORD $0x4e020d66 // dup v6.8h, w11      fwdOffset
+	MOVD BH_BCK(R0), R11
+	WORD $0x4e020d67 // dup v7.8h, w11      bckOffset
+	MOVD BH_BIAS(R0), R11
+	WORD $0x4e040d72 // dup v18.4s, w11     bias
+	MOVD BH_SHIFT(R0), R11
+	WORD $0x4e040d73 // dup v19.4s, w11     -(4+roundBits)
+	MOVD BH_MAXVAL(R0), R11
+	WORD $0x4e020d75 // dup v21.8h, w11     maxVal
+
+bh4RowLoop:
+	WORD $0x4cdf7441 // ld1 {v1.8h}, [x2], #16    s0 rows y, y+1
+	WORD $0x4cdf7462 // ld1 {v2.8h}, [x3], #16    s1 rows y, y+1
+	WORD $0x2e66c030 // umull  v16.4s, v1.4h, v6.4h
+	WORD $0x6e66c031 // umull2 v17.4s, v1.8h, v6.8h
+	WORD $0x2e678050 // umlal  v16.4s, v2.4h, v7.4h
+	WORD $0x6e678051 // umlal2 v17.4s, v2.8h, v7.8h
+	WORD $0x6eb28610 // sub v16.4s, v16.4s, v18.4s
+	WORD $0x6eb28631 // sub v17.4s, v17.4s, v18.4s
+	WORD $0x4eb34610 // sshl v16.4s, v16.4s, v19.4s   >> (4+roundBits)
+	WORD $0x4eb34631 // sshl v17.4s, v17.4s, v19.4s
+	WORD $0x2e612a14 // sqxtun  v20.4h, v16.4s        clip >= 0
+	WORD $0x6e612a34 // sqxtun2 v20.8h, v17.4s
+	WORD $0x6e756e94 // umin v20.8h, v20.8h, v21.8h   clip <= max
+	ADD  R5, R1, R11
+	WORD $0x0d008434 // st1 {v20.d}[0], [x1]      row y
+	WORD $0x4d008574 // st1 {v20.d}[1], [x11]     row y+1
+
+	ADD  R5<<1, R1
+	SUB  $2, R7, R7
+	CBNZ R7, bh4RowLoop
+
+	RET

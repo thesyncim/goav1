@@ -262,7 +262,7 @@ func predictInterPlaneBlockFromOriginWithFilterSizeScratch(dst frame.Plane, ref 
 	}
 	if bytesPerSample != 1 {
 		if bytesPerSample == 2 && explicitBitDepth {
-			if err := predictInterPlaneBlockHighBD(dst, ref, bitDepth, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters); err != nil {
+			if err := predictInterPlaneBlockHighBD(dst, ref, bitDepth, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch); err != nil {
 				return ErrInvalidMotion
 			}
 			return nil
@@ -331,7 +331,7 @@ func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	return nil
 }
 
-func predictInterPlaneBlockHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters) error {
+func predictInterPlaneBlockHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters, scratch *ConvolveScratch) error {
 	max, ok := highBDMax(bitDepth)
 	if !ok || width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
@@ -355,9 +355,9 @@ func predictInterPlaneBlockHighBD(dst frame.Plane, ref frame.Plane, bitDepth uin
 	switch {
 	case subX != 0 && subY != 0:
 		if planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
-			convolve2DHighBDImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+			convolve2DHighBDWithScratchImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
 		} else {
-			convolve2DHighBDClampedImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+			convolve2DHighBDClampedWithScratchImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
 		}
 	case subX != 0:
 		if planeRegionFits(ref, 2, refX-foX, refY, width+filterTaps-1, height) {
@@ -1126,8 +1126,23 @@ func convolveYHighBDClampedPureGo(dst frame.Plane, ref frame.Plane, bitDepth uin
 }
 
 func convolve2DHighBDPureGo(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
-	const imStride = maxBlockSize
 	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int32
+	convolve2DHighBDPureGoWithIM(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, &im)
+}
+
+// convolve2DHighBDPureGoWithScratch is convolve2DHighBDPureGo using optional
+// caller-owned scratch for the large int32 intermediate block, so hot decode
+// paths do not zero-fill a ~69KB stack array per call.
+func convolve2DHighBDPureGoWithScratch(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
+	if scratch != nil {
+		convolve2DHighBDPureGoWithIM(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, &scratch.imHBD)
+		return
+	}
+	convolve2DHighBDPureGo(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+}
+
+func convolve2DHighBDPureGoWithIM(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, im *[(maxBlockSize + filterTaps - 1) * maxBlockSize]int32) {
+	const imStride = maxBlockSize
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
@@ -1198,8 +1213,22 @@ func convolve2DHighBDPureGo(dst frame.Plane, ref frame.Plane, bitDepth uint8, ma
 }
 
 func convolve2DHighBDClampedPureGo(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
-	const imStride = maxBlockSize
 	var im [((maxBlockSize + filterTaps - 1) * maxBlockSize)]int32
+	convolve2DHighBDClampedPureGoWithIM(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, &im)
+}
+
+// convolve2DHighBDClampedPureGoWithScratch is convolve2DHighBDClampedPureGo
+// using optional caller-owned scratch for the large int32 intermediate block.
+func convolve2DHighBDClampedPureGoWithScratch(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
+	if scratch != nil {
+		convolve2DHighBDClampedPureGoWithIM(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, &scratch.imHBD)
+		return
+	}
+	convolve2DHighBDClampedPureGo(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+}
+
+func convolve2DHighBDClampedPureGoWithIM(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, im *[(maxBlockSize + filterTaps - 1) * maxBlockSize]int32) {
+	const imStride = maxBlockSize
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1

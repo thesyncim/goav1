@@ -43,6 +43,9 @@ type CompoundConvolveScratch struct {
 	// clamped compound references materialize their halo into it once and then
 	// run the plain SIMD kernels over it.
 	edge [emuEdgeStride * emuEdgeRows]byte
+	// edge16 is the 16bpc sibling of edge for clamped high-bit-depth compound
+	// references; caller-owned so the ~38KB window is not zero-filled per call.
+	edge16 emuEdge16Buf
 }
 
 // compoundRound0 ports get_conv_params_no_round() round_0 selection for the
@@ -138,14 +141,14 @@ func predictInterCompoundRefHighBDToConvBuf(out []uint16, ref frame.Plane, bitDe
 			if planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
 				predictInterCompoundRefHighBDToConvBuf2DResidentImpl(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &scratch.im)
 			} else {
-				predictInterCompoundRefHighBDToConvBuf2DClampedImpl(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &scratch.im)
+				predictInterCompoundRefHighBDToConvBuf2DClampedImpl(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &scratch.im, &scratch.edge16)
 			}
 		} else {
 			var im compoundIM
 			if planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
 				predictInterCompoundRefHighBDToConvBuf2DResidentImpl(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &im)
 			} else {
-				predictInterCompoundRefHighBDToConvBuf2DClampedImpl(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &im)
+				predictInterCompoundRefHighBDToConvBuf2DClampedImpl(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, &im, nil)
 			}
 		}
 	case subX != 0:
@@ -415,8 +418,14 @@ var predictInterCompoundRefHighBDToConvBuf2DResidentImpl = predictInterCompoundR
 // predictInterCompoundRefHighBDToConvBuf2DClampedImpl is the dispatch slot for
 // the non-resident (edge-overhanging) HBD compound 2D convolve. It defaults to
 // the pure-Go per-tap-clamping reference; arm64 rebinds it to an emu_edge NEON
-// path (see compound_neon_arm64.go).
-var predictInterCompoundRefHighBDToConvBuf2DClampedImpl = predictInterCompoundRefHighBDToConvBuf2DClamped
+// path (see compound_neon_arm64.go). The optional edge buffer carries the
+// caller-owned 16bpc emulated-edge window for emu_edge implementations; nil
+// falls back to per-call stack storage.
+var predictInterCompoundRefHighBDToConvBuf2DClampedImpl = predictInterCompoundRefHighBDToConvBuf2DClampedDefault
+
+func predictInterCompoundRefHighBDToConvBuf2DClampedDefault(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, bitDepth int, im *compoundIM, _ *emuEdge16Buf) {
+	predictInterCompoundRefHighBDToConvBuf2DClamped(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, im)
+}
 var predictInterCompoundRefHighBDToConvBufXResidentImpl = predictInterCompoundRefHighBDToConvBufXResident
 var predictInterCompoundRefHighBDToConvBufYResidentImpl = predictInterCompoundRefHighBDToConvBufYResident
 
@@ -1059,7 +1068,7 @@ func BlendCompoundAvg(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConv
 		return nil
 	}
 	max, _ := highBDMax(bitDepth)
-	blendCompoundAvgHighBD(dst, src0, src1, max, dstX, dstY, width, height, fwdOffset, bckOffset, roundOffset, roundBits)
+	blendCompoundAvgHighBDImpl(dst, src0, src1, max, dstX, dstY, width, height, fwdOffset, bckOffset, roundOffset, roundBits)
 	return nil
 }
 
@@ -1146,6 +1155,11 @@ func BuildDiffWtdMaskD16(mask []byte, maskStride int, buf0 *CompoundConvBuf, buf
 }
 
 var blendCompoundAvg8Impl = blendCompoundAvg8PureGo
+
+// blendCompoundAvgHighBDImpl is the dispatch slot for the high-bit-depth
+// compound average / dist-wtd blend. blendCompoundAvgHighBD is the canonical
+// bit-exact reference; SIMD variants must match it sample for sample.
+var blendCompoundAvgHighBDImpl = blendCompoundAvgHighBD
 
 func blendCompoundAvg8PureGo(dst frame.Plane, src0 []uint16, src1 []uint16, dstX int, dstY int, width int, height int, fwdOffset int, bckOffset int, roundOffset int, roundBits int) {
 	for y := range height {

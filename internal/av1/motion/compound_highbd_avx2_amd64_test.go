@@ -172,11 +172,20 @@ func TestCompoundHBD2DClampedAVX2MatchesPureGo(t *testing.T) {
 				got := make([]uint16, sz.w*sz.h)
 				want := make([]uint16, sz.w*sz.h)
 				var imG, imW compoundIM
-				predictInterCompoundRefHighBDToConvBuf2DClampedAVX2(got, ref, org[0], org[1], sz.w, sz.h, xk, yk, round0, offsetBits, int(bd), &imG)
+				var edge emuEdge16Buf
+				for i := range edge {
+					edge[i] = 0xa5
+				}
+				gotEdge := make([]uint16, sz.w*sz.h)
+				predictInterCompoundRefHighBDToConvBuf2DClampedAVX2(got, ref, org[0], org[1], sz.w, sz.h, xk, yk, round0, offsetBits, int(bd), &imG, nil)
+				predictInterCompoundRefHighBDToConvBuf2DClampedAVX2(gotEdge, ref, org[0], org[1], sz.w, sz.h, xk, yk, round0, offsetBits, int(bd), &imG, &edge)
 				predictInterCompoundRefHighBDToConvBuf2DClamped(want, ref, org[0], org[1], sz.w, sz.h, xk, yk, round0, offsetBits, int(bd), &imW)
 				for i := range want {
 					if got[i] != want[i] {
 						t.Fatalf("2D clamped bd=%d %dx%d org=%v sample %d: AVX2=%d PureGo=%d", bd, sz.w, sz.h, org, i, got[i], want[i])
+					}
+					if gotEdge[i] != want[i] {
+						t.Fatalf("2D clamped (edge) bd=%d %dx%d org=%v sample %d: AVX2=%d PureGo=%d", bd, sz.w, sz.h, org, i, gotEdge[i], want[i])
 					}
 				}
 			}

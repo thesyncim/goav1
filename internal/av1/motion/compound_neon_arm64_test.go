@@ -363,14 +363,26 @@ func TestCompoundHighBD2DClampedEmuEdgeMatchesPureGo(t *testing.T) {
 				}
 				for _, o := range offs {
 					got := make([]uint16, w*h)
+					gotEdge := make([]uint16, w*h)
 					want := make([]uint16, w*h)
 					var gotIM, wantIM compoundIM
-					predictInterCompoundRefHighBDToConvBuf2DClampedNEON(got, ref, o[0], o[1], w, h, xKernel, yKernel, round0, offsetBits, int(bitDepth), &gotIM)
+					var edge emuEdge16Buf
+					// Poison the caller-owned edge window to prove every sample
+					// read by the resident kernel was materialized first.
+					for i := range edge {
+						edge[i] = 0xa5
+					}
+					predictInterCompoundRefHighBDToConvBuf2DClampedNEON(got, ref, o[0], o[1], w, h, xKernel, yKernel, round0, offsetBits, int(bitDepth), &gotIM, nil)
+					predictInterCompoundRefHighBDToConvBuf2DClampedNEON(gotEdge, ref, o[0], o[1], w, h, xKernel, yKernel, round0, offsetBits, int(bitDepth), &gotIM, &edge)
 					predictInterCompoundRefHighBDToConvBuf2DClamped(want, ref, o[0], o[1], w, h, xKernel, yKernel, round0, offsetBits, int(bitDepth), &wantIM)
 					for i := range want {
 						if got[i] != want[i] {
 							t.Fatalf("bd=%d %dx%d off=%v sample=%d NEON=%d PureGo=%d",
 								bitDepth, w, h, o, i, got[i], want[i])
+						}
+						if gotEdge[i] != want[i] {
+							t.Fatalf("bd=%d %dx%d off=%v sample=%d NEON(edge)=%d PureGo=%d",
+								bitDepth, w, h, o, i, gotEdge[i], want[i])
 						}
 					}
 				}
@@ -392,9 +404,15 @@ func TestCompoundHighBD2DClampedEmuEdgeZeroAlloc(t *testing.T) {
 	out := make([]uint16, 64*64)
 	var im compoundIM
 	if a := testing.AllocsPerRun(20, func() {
-		predictInterCompoundRefHighBDToConvBuf2DClampedNEON(out, ref, -3, -3, 64, 64, xKernel, yKernel, round0, offsetBits, 10, &im)
+		predictInterCompoundRefHighBDToConvBuf2DClampedNEON(out, ref, -3, -3, 64, 64, xKernel, yKernel, round0, offsetBits, 10, &im, nil)
 	}); a != 0 {
 		t.Fatalf("emu_edge compound 2D clamped allocated %v times, want 0", a)
+	}
+	var edge emuEdge16Buf
+	if a := testing.AllocsPerRun(20, func() {
+		predictInterCompoundRefHighBDToConvBuf2DClampedNEON(out, ref, -3, -3, 64, 64, xKernel, yKernel, round0, offsetBits, 10, &im, &edge)
+	}); a != 0 {
+		t.Fatalf("emu_edge compound 2D clamped (caller edge) allocated %v times, want 0", a)
 	}
 }
 
@@ -411,7 +429,7 @@ func BenchmarkCompoundHighBD2DClampedEmuEdge(b *testing.B) {
 		var im compoundIM
 		b.Run("neon_"+itoaW(w), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				predictInterCompoundRefHighBDToConvBuf2DClampedNEON(out, ref, -3, -3, w, w, xKernel, yKernel, round0, offsetBits, 10, &im)
+				predictInterCompoundRefHighBDToConvBuf2DClampedNEON(out, ref, -3, -3, w, w, xKernel, yKernel, round0, offsetBits, 10, &im, nil)
 			}
 		})
 		b.Run("purego_"+itoaW(w), func(b *testing.B) {

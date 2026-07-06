@@ -137,13 +137,20 @@ func predictInterCompoundRefHighBDToConvBuf2DResidentAVX2(out []uint16, ref fram
 // src/mc_tmpl.c emu_edge_c) and rerun the resident kernel over it. Shapes the
 // asm cannot handle (width%4 != 0) route to the per-tap-clamping pure-Go
 // reference.
-func predictInterCompoundRefHighBDToConvBuf2DClampedAVX2(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, bitDepth int, im *compoundIM) {
+// edge optionally carries the caller-owned halo window so the ~38KB buffer is
+// not zero-filled per call; nil keeps per-call stack storage.
+func predictInterCompoundRefHighBDToConvBuf2DClampedAVX2(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, bitDepth int, im *compoundIM, edge *emuEdge16Buf) {
 	if width < 4 || width%4 != 0 {
 		predictInterCompoundRefHighBDToConvBuf2DClamped(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, im)
 		return
 	}
-	var edge emuEdge16Buf
-	emu, emuX, emuY := emuEdgeWindow16(ref, refX, refY, width, height, &edge)
+	if edge != nil {
+		emu, emuX, emuY := emuEdgeWindow16(ref, refX, refY, width, height, edge)
+		predictInterCompoundRefHighBDToConvBuf2DResidentAVX2(out, emu, emuX, emuY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, im)
+		return
+	}
+	var stackEdge emuEdge16Buf
+	emu, emuX, emuY := emuEdgeWindow16(ref, refX, refY, width, height, &stackEdge)
 	predictInterCompoundRefHighBDToConvBuf2DResidentAVX2(out, emu, emuX, emuY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, im)
 }
 

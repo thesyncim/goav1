@@ -106,10 +106,28 @@ func convolveYHighBDNEON(dst frame.Plane, ref frame.Plane, bitDepth uint8, max u
 const convolve2DHighBDNEONIMStride = maxBlockSize
 
 func convolve2DHighBDNEON(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	convolve2DHighBDNEONWithScratch(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, nil)
+}
+
+// convolve2DHighBDNEONWithScratch is convolve2DHighBDNEON with optional
+// caller-owned scratch for the int32 intermediate block. With scratch the
+// per-call zero-fill of the ~69KB stack array disappears (the asm overwrites
+// every intermediate sample it reads); without scratch the stack array keeps
+// the historical behavior for callers outside the framework decode path.
+func convolve2DHighBDNEONWithScratch(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
 	if width < 4 || width%4 != 0 {
-		convolve2DHighBDPureGo(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+		convolve2DHighBDPureGoWithScratch(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
 		return
 	}
+	if scratch != nil {
+		convolve2DHighBDNEONWithIM(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, &scratch.imHBD[0])
+		return
+	}
+	var im [(maxBlockSize + filterTaps - 1) * convolve2DHighBDNEONIMStride]int32
+	convolve2DHighBDNEONWithIM(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, &im[0])
+}
+
+func convolve2DHighBDNEONWithIM(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, im *int32) {
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	round0, round1 := highBDRoundBits(bitDepth)
@@ -121,7 +139,6 @@ func convolve2DHighBDNEON(dst frame.Plane, ref frame.Plane, bitDepth uint8, max 
 
 	xk := xKernel
 	yk := yKernel
-	var im [(maxBlockSize + filterTaps - 1) * convolve2DHighBDNEONIMStride]int32
 	ctx := convolveHighBDNEONCtx{
 		dst:    &dst.Pix[dstY*dst.Stride+dstX*2],
 		ref:    &ref.Pix[(refY-foY)*ref.Stride+(refX-foX)*2],
@@ -131,7 +148,7 @@ func convolve2DHighBDNEON(dst frame.Plane, ref frame.Plane, bitDepth uint8, max 
 		refStr: uintptr(ref.Stride),
 		width:  uintptr(width),
 		height: uintptr(height),
-		im:     &im[0],
+		im:     im,
 		imStr:  uintptr(convolve2DHighBDNEONIMStride),
 		round0: uintptr(round0),
 		round1: uintptr(round1),
@@ -187,18 +204,30 @@ func convolveYHighBDClampedNEON(dst frame.Plane, ref frame.Plane, bitDepth uint8
 }
 
 func convolve2DHighBDClampedNEON(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
+	convolve2DHighBDClampedNEONWithScratch(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, nil)
+}
+
+// convolve2DHighBDClampedNEONWithScratch is convolve2DHighBDClampedNEON with
+// optional caller-owned scratch for both the int32 intermediate block and the
+// 16bpc emulated-edge window, so hot decode paths zero-fill neither per call.
+func convolve2DHighBDClampedNEONWithScratch(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	if width >= 4 && width%4 == 0 &&
 		planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps-1, height+filterTaps-1) {
-		convolve2DHighBDNEON(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+		convolve2DHighBDNEONWithScratch(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
 		return
 	}
 	if width >= 4 && width%4 == 0 {
+		if scratch != nil {
+			emu, emuX, emuY := emuEdgeWindow16(ref, refX, refY, width, height, &scratch.edge16)
+			convolve2DHighBDNEONWithScratch(dst, emu, bitDepth, max, dstX, dstY, emuX, emuY, width, height, xKernel, yKernel, scratch)
+			return
+		}
 		var edge emuEdge16Buf
 		emu, emuX, emuY := emuEdgeWindow16(ref, refX, refY, width, height, &edge)
 		convolve2DHighBDNEON(dst, emu, bitDepth, max, dstX, dstY, emuX, emuY, width, height, xKernel, yKernel)
 		return
 	}
-	convolve2DHighBDClampedPureGo(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+	convolve2DHighBDClampedPureGoWithScratch(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
 }

@@ -34,6 +34,8 @@ type convolveHighBD1DFunc func(dst frame.Plane, ref frame.Plane, bitDepth uint8,
 
 type convolveHighBD2DFunc func(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16)
 
+type convolveHighBD2DWithScratchFunc func(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch)
+
 var (
 	convolveX8Impl             convolve1DFunc            = convolveX8PureGo
 	convolveY8Impl             convolve1DFunc            = convolveY8PureGo
@@ -54,6 +56,9 @@ var (
 	convolveXHighBDClampedImpl  convolveHighBD1DFunc = convolveXHighBDClampedPureGo
 	convolveYHighBDClampedImpl  convolveHighBD1DFunc = convolveYHighBDClampedPureGo
 	convolve2DHighBDClampedImpl convolveHighBD2DFunc = convolve2DHighBDClampedPureGo
+
+	convolve2DHighBDWithScratchImpl        convolveHighBD2DWithScratchFunc = convolve2DHighBDWithScratchDefault
+	convolve2DHighBDClampedWithScratchImpl convolveHighBD2DWithScratchFunc = convolve2DHighBDClampedWithScratchDefault
 )
 
 func convolve2D8WithScratchDefault(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, _ *ConvolveScratch) {
@@ -76,4 +81,24 @@ func convolve2D8ClampedWithScratchDefault(dst frame.Plane, ref frame.Plane, dstX
 		return
 	}
 	convolve2D8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+}
+
+// convolve2DHighBDWithScratchDefault serves targets without a tuned HBD
+// scratch-aware variant: caller scratch routes to the pure-Go reference with a
+// caller-owned intermediate (no per-call stack zero-fill); otherwise the plain
+// arch slot runs unchanged.
+func convolve2DHighBDWithScratchDefault(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
+	if scratch != nil {
+		convolve2DHighBDPureGoWithIM(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, &scratch.imHBD)
+		return
+	}
+	convolve2DHighBDImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
+}
+
+func convolve2DHighBDClampedWithScratchDefault(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
+	if scratch != nil {
+		convolve2DHighBDClampedPureGoWithIM(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel, &scratch.imHBD)
+		return
+	}
+	convolve2DHighBDClampedImpl(dst, ref, bitDepth, max, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
 }
