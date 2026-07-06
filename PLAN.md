@@ -248,10 +248,12 @@ apply (that was SIMD inverse-CDF search; this is scalar asm).
 ## 5. ENCODER task board (milestones → ~2.9x → ~2.4x → 1.4x)
 
 ### M-E1: mapped work (target ~2.9x)
-- [ ] **E1-a encoder CDEF u8 routing (serial)** — encoder's serial CDEF
-  apply still stages u16; route to the b25108a5 in-place u8 walk (same
-  applier the decoder uses; check applySerialMasks-era plumbing). Recon
-  byte-identical oracle. (M)
+- [x] **E1-a encoder CDEF u8 routing (serial)** — LANDED a5bed2cc
+  (codex, reviewed): serial appliers route through the decoder's u8
+  in-place walk via bindApplyContext(loadSnapshot); banded/wavefront +
+  10/12-bit keep the u16 snapshot. SHA-256 byte-identity on encoded AND
+  decoded output, all four clips; serial apply zero-alloc regression
+  test; realC ST cpu −2..3% all pairs. (done)
 - [ ] **E1-b CDEF u8 on the banded/wavefront path** — the banded apply
   (ApplyCDEFPostFilterUnitRows) needs an immutable snapshot today;
   design per-band backups or keep u16 there with analysis. (M)
