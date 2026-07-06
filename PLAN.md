@@ -152,13 +152,14 @@ codegen residue (Go glue vs C+asm in serial paths) that M-D3/M-E3+ attack.
   + P1 driver 42bcdb3c). This also WEAKENS the D4-b recon-interleave
   premise (same mechanism) — demand a measured prototype before
   investing there.
-- [ ] **D1-c temporal-MV 16-row window** — dav1d refmvs.c:701-742
-  load_tmvs ring (rp_proj_sz=16*n_blocks, ~19KB) vs goav1 whole-frame
-  TemporalMotionField + full Clear (tile/motion_field.go:187-248,
-  threading/ref_mv_frame.go:66). CONFIRMED (D-2 agent): consumed during
-  TILE DECODE before postfilters — needs its own banding of the
-  tile-decode/wavefront driver with per-sbrow clear semantics, NOT the
-  postfilter chain. Standalone task. (M)
+- [x] **D1-c temporal-MV 16-row window** — BUILT byte-exact (226/226,
+  race-clean, single-worker gated) then MEASURED RED-TO-FLAT and HELD
+  per rule 8 (branch codex-d1c): p720 cpu +1.8%, p360 +1.4%, projection
+  share UP — per-SB-row re-projection overhead exceeds the 780KB→19KB
+  footprint win. THIRD instance of the family pin: dav1d cache-locality
+  restructures (in-place-with-u16, sbrow postfilter chain, tmv ring) do
+  NOT pay on Apple Silicon's cache hierarchy — demand a measured
+  prototype before any further one. (done)
 - [x] **D1-d LR arena + construction shrink** — LANDED a08e2e52
   (codex, reviewed): walk scratch sizing extracted to one shared
   function; 8-bit non-optimized LR Data = band+backups only, Dst = 0;
