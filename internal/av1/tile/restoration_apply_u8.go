@@ -10,18 +10,29 @@ import (
 
 // 8-bit-pixel loop-restoration frame walk. dav1d's 8bpc restoration
 // (src/lr_apply_tmpl.c lr_sbrow + src/looprestoration_tmpl.c) filters uint8
-// pixels directly — the source halo comes from backed-up pixel rows and the
-// filter output lands straight in the frame plane. This file wires goav1's
-// existing filtered-only record walk (see applyRestorationFrameToDstFiltered)
-// onto the uint8 kernel family in internal/av1/restoration:
+// pixels IN PLACE on the frame: the walk is strictly top-down/left-to-right,
+// the vertical halo across stripe seams comes from the saved deblock/CDEF
+// boundary line buffers (dav1d's lpf lines), and the horizontal halo into an
+// already-filtered left neighbour comes from a small pre-filter column backup
+// taken before that neighbour was overwritten (dav1d lr_apply_tmpl.c
+// backup4xU + pre_lr_border). This file ports that walk onto goav1's uint8
+// kernel family in internal/av1/restoration:
 //
-//   - The pre-restoration read source is a bordered uint8 snapshot of the
-//     plane (plain byte copies into the caller's uint16 scratch arena viewed
-//     as bytes — no widening), so cross-unit halo reads stay correct while...
-//   - ...filter output is written DIRECTLY into the frame's 8-bit plane. All
-//     reads come from the snapshot and filtered rects are disjoint, so
-//     in-frame writes cannot pollute later units' inputs. This removes both
-//     the uint16 dst scratch and the store-back pass for 8-bit frames.
+//   - goav1's kernels read a contiguous bordered source (libaom shape), and
+//     goav1 frame planes have no left/top border allocation, so each
+//     processing stripe is assembled into a small bordered band buffer (the
+//     role of dav1d's padded tmp in src/looprestoration_tmpl.c: interior rows
+//     from the frame, halo columns from the left-neighbour backup, seam rows
+//     from the boundary buffers, plane edges replicated)...
+//   - ...and filter output is written DIRECTLY into the frame's 8-bit plane.
+//     Filtered rects are disjoint and every cross-unit read is served by the
+//     band, so in-frame writes cannot pollute later units' inputs. No
+//     whole-plane snapshot, no uint16 dst scratch, no store-back pass.
+//
+// The libaom "optimized" boundary mode (optimized_lr, never used by the
+// production decoder) reads actual pre-filter rows above/below each stripe
+// seam from the surface, which top-down in-place filtering destroys; that
+// mode keeps the whole-plane snapshot walk below.
 //
 // 10/12-bit frames keep the uint16 path in restoration_frame_bridge.go
 // unchanged.
@@ -47,7 +58,8 @@ func applyRestorationFrameToFrameU8(plan RestorationFramePlan, frm av1frame.Fram
 		}
 		dataLayout := size.Data[plane]
 		var planeResult RestorationPlaneApplyResult
-		if !restorationRecordsAnyFiltered(records[plane]) {
+		switch {
+		case !restorationRecordsAnyFiltered(records[plane]):
 			// No record filters anything: nothing reads or writes samples
 			// (mirrors applyRestorationFramePlaneToDstFiltered's all-NONE
 			// branch), but the records are still validated and counted.
@@ -60,19 +72,13 @@ func applyRestorationFrameToFrameU8(plan RestorationFramePlan, frm av1frame.Fram
 				}
 				planeResult.Records++
 			}
-		} else {
-			snapshot, ok := restorationByteScratchView(dataScratch[dataOffset:dataOffset+dataLayout.Len], dataLayout.Len)
-			if !ok {
-				return RestorationFrameApplyResult{}, ErrInvalidPlan
-			}
-			dataView, err := av1frame.LoadBorderedBytePlane(snapshot, buffer, RestorationFrameBorder, RestorationFrameBorder, align)
+		case optimized:
+			planeResult, err = applyRestorationPlaneSnapshotU8(grid, records[plane], boundaries[plane], buffer, dataScratch[dataOffset:dataOffset+dataLayout.Len], dataLayout.Len, scratch, optimized, align)
 			if err != nil {
 				return RestorationFrameApplyResult{}, err
 			}
-			if err := extendRestorationFrameU8(dataView.Pix, dataView.Stride, dataView.Origin, int(grid.PlaneWidth), int(grid.PlaneHeight), restorationBorder, restorationBorder); err != nil {
-				return RestorationFrameApplyResult{}, err
-			}
-			planeResult, err = applyRestorationPlaneRecordsFilteredU8(grid, records[plane], boundaries[plane], dataView.Pix, dataView.Stride, dataView.Origin, buffer.Pix, buffer.Stride, 0, scratch, optimized)
+		default:
+			planeResult, err = applyRestorationPlaneRecordsInPlaceU8(grid, records[plane], boundaries[plane], buffer, dataScratch[dataOffset:dataOffset+dataLayout.Len], scratch)
 			if err != nil {
 				return RestorationFrameApplyResult{}, err
 			}
@@ -85,6 +91,28 @@ func applyRestorationFrameToFrameU8(plan RestorationFramePlan, frm av1frame.Fram
 		}
 	}
 	return result, nil
+}
+
+// applyRestorationPlaneSnapshotU8 is the whole-plane bordered-snapshot walk
+// (libaom av1_loop_restoration_filter_frame shape): the pre-restoration read
+// source is a bordered uint8 snapshot of the plane and the kernels write the
+// frame directly. It remains the reference walk for the in-place differential
+// tests and the production walk for the libaom optimized_lr boundary mode,
+// whose stripe-seam context reads actual pre-filter surface rows that the
+// in-place walk overwrites.
+func applyRestorationPlaneSnapshotU8(grid RestorationPlaneGrid, records []RestorationUnitRecord, boundaries RestorationStripeBoundaries, buffer av1frame.Plane, dataSeg []uint16, dataLen int, scratch RestorationUnitRecordBoundaryScratch, optimized bool, align int) (RestorationPlaneApplyResult, error) {
+	snapshot, ok := restorationByteScratchView(dataSeg, dataLen)
+	if !ok {
+		return RestorationPlaneApplyResult{}, ErrInvalidPlan
+	}
+	dataView, err := av1frame.LoadBorderedBytePlane(snapshot, buffer, RestorationFrameBorder, RestorationFrameBorder, align)
+	if err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	if err := extendRestorationFrameU8(dataView.Pix, dataView.Stride, dataView.Origin, int(grid.PlaneWidth), int(grid.PlaneHeight), restorationBorder, restorationBorder); err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	return applyRestorationPlaneRecordsFilteredU8(grid, records, boundaries, dataView.Pix, dataView.Stride, dataView.Origin, buffer.Pix, buffer.Stride, 0, scratch, optimized)
 }
 
 // restorationByteScratchView reinterprets a segment of the uint16 sample
