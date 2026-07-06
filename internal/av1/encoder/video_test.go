@@ -266,6 +266,13 @@ func TestKeyframeEncoder1080pHotPathAllocs(t *testing.T) {
 }
 
 func TestKeyframeEncoder1080pMulticoreMemStatsAllocs(t *testing.T) {
+	if raceDetectorEnabled {
+		// The race runtime allocates on its own schedule (verified: this
+		// guard fails on a clean tree under -race while the plain build is
+		// deterministically 0). The zero-alloc contract is enforced by the
+		// non-race run and scripts/check_allocs.sh.
+		t.Skip("TotalAlloc==0 guard is unreliable under the race detector")
+	}
 	if os.Getenv("GOAV1_ENCODER_1080P_ALLOC_CHILD") != "1" {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestKeyframeEncoder1080pMulticoreMemStatsAllocs$")
 		cmd.Env = append(os.Environ(), "GOAV1_ENCODER_1080P_ALLOC_CHILD=1")

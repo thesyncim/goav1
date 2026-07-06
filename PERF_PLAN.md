@@ -36,17 +36,28 @@ mechanically; do not improvise.
 8. A lever that measures red gets **fully reverted** and its numbers recorded in
    the report/memory. Reverted work is not wasted — it is a pin against retries.
 
-## 1. Current standings (measured clean 2026-07-02 evening, HEAD 2ed2ad47 + plan sync)
+## 1. Current standings (measured 2026-07-06 morning, HEAD 8c69fdf7, moderate background load)
 
 Decoder, single-thread, internal corpus (18 clips, 48 frames each):
 
 | decoder | total ms | vs goav1 |
 |---|---|---|
-| goav1 | 2833 | 1.00x |
-| aomdec | 1095 | 2.59x faster |
-| dav1d | 652 | **4.34x faster** ← the gap |
+| goav1 | 2400 | 1.00x |
+| aomdec | 1021 | 2.35x faster |
+| dav1d | 614 | **3.91x faster** ← the gap |
 
-(Session start was 5.12x; waves 1-3 recovered ~15.7% wall.)
+(2026-07-02 was 4.34x; the bitmask LF + SIMD coverage sweep recovered ~10%.
+Worst clip 10-bit at 0.16x — addressed by the 2026-07-06 HBD wave below;
+re-measure aggregate after it.)
+
+>>> 2026-07-06 DIRECTIVE (user): beat dav1d (decoder) + SVT (encoder) with
+focus on SINGLE-THREAD; cpu_total (core-seconds) is reported alongside wall
+for every before/after — a cpu drop at flat wall is a win.
+Encoder single-thread (rebuilt corpus, same-run, max-threads 1, gomaxprocs 1,
+svt-lp 1, realC@5M): goav1 35.0 ms/frame cpu vs SVT 8.3 = 4.2x (was 5.2x),
+quality +0.53 dB @ +4.6% rate. After the nil-scratch fix (4ab59fed):
+cpu_total 2.099→1.863 s (−11.2%), 29.6 ms/frame → gap ~3.7x, output
+byte-identical. 10-bit decode clip: −20.5% wall / −20.3% cpu (77addf06).
 
 Encoder vs SVT-AV1 v4.0.1 preset 12 LD-CBR, matched rates, goav1 `-layers 2`.
 Two goav1 columns: the tile-column DEFAULT (no SetMaxThreads) and the
@@ -285,6 +296,15 @@ LATENT BUG FOUND (encoder agent): TestWebRTCStreamControlCombinationMatrixDecode
 background filter worker reads `if e.singleThread`. Reproduces on clean main
 (pre-existing, unrelated to the mask work). Real fix needed (synchronize the
 singleThread read/write or snapshot it per frame).
+SECOND LATENT RACE (2026-07-06, full-suite -race, clean main): rare DATA RACE
+in TestVideoEncoderCloseReleasesPersistentWorkers — write hme.go:84 (via
+video.go:728) vs reads hme.go:67/156 (via video.go:544/818/790, overlap-test
+teardown). Did not reproduce in 5 isolated runs; needs full-suite concurrency.
+Same family as the singleThread race (worker teardown vs config write). Also
+2026-07-06: TestKeyframeEncoder1080pMulticoreMemStatsAllocs' TotalAlloc==0
+guard fails on clean main under -race (race runtime allocates); now skipped
+under the race build tag — the zero-alloc contract is enforced by the plain
+run + scripts/check_allocs.sh.
 PRIOR STATUS (superseded) — LIBRARY + BUILD-WIRING DONE, APPLY-SWAP REMAINS:
 LANDED ON MAIN: internal/av1/lfmask package (9fe8be8c build core + d50c2a09
 scan core) + 1123cf53 differential test (7 cases). PRESERVED on branch
@@ -326,12 +346,21 @@ did NOT start this — it is a clean target.
 `src/arm/64/looprestoration.S` (dav1d keeps 16-bit intermediates and fuses
 rows). Port the delta if the shapes differ materially.
 
-**D4. High-bit-depth coverage (worst clip: 10-bit at 0.12x of dav1d).** Wave-1
-left high-BD 2D convolve variants pure-Go (`loadHighBDSample` coordinate helper
-blocked reslicing). Sweep `internal/av1/motion`, `cdef`, `loopfilter`,
-`transform` for `HighBD`/16-bit-pixel paths that still run pure-Go, and port
-dav1d's 16bpc arm64 kernels for the biggest ones. Profile with a 10-bit clip:
-`GOAV1_PROFILE_CLIP=$PWD/testdata/benchcorpus/p360_inter_q32_10bit.ivf`.
+**D4. High-bit-depth coverage — MAJOR SLICE LANDED (77addf06, 2026-07-06):**
+the HBD 2D convolve wrapper zero-filled a ~69KB int32 stack `im` on EVERY call
+(11% flat of 10-bit decode) — scratch now threaded (ConvolveScratch gained
+imHBD + edge16); blendCompoundAvgHighBD got a NEON kernel (dav1d mc16.S
+bidir_fn avg shape, libaom-offset CONV_BUF arithmetic, ~17x); compound HBD
+clamped 2D got emu-edge scratch. p360_inter_q32_10bit: wall −20.5%, cpu
+−20.3%, dryrun-extended 226/0. REMAINING HBD: predictInterCompoundRefHighBD
+ToConvBufXClamped (1.7% flat / 3.6% cum — emu_edge+NEON port is the next
+lever); warpHorizontalHighBDResident ~2-3% is OFF-LIMITS (warp.go).
+LESSON (recurring disease, grep for it): any wrapper with a `var im [big]T`
+nil-scratch fallback zero-fills per call — the ENCODER had the same bug
+(predictInto* passed nil scratch, 15.6% flat of single-thread encode, fixed
+4ab59fed) and the amd64 AVX2 wrappers still do (convolve_avx2_amd64.go:119
+34KB int16 + convolve_highbd_avx2_amd64.go 69KB int32 — now partially
+scratch-capable via 77addf06's dispatch slots; verify native-x86).
 
 **D5. Runtime overhead (~10%: madvise 6.4%, memmove 2.3%, memclr 1.7%).**
 madvise = GC returning pages; find the per-decode-run allocations feeding it
@@ -345,7 +374,15 @@ suppress GC in benchmarks to fake the number.
 alphabets, scalar wins); blanket bounds-check-elimination reslicing (regresses
 on arm64); single-worker pool inline fast path (ALREADY DONE — 71d5f36a);
 remaining `pthread_cond_signal` is Go scheduler `wakep` at GOMAXPROCS>1, not
-pool signaling — not actionable.
+pool signaling — not actionable; **CDEF pri+sec fusion (2026-07-06 agent
+audit): ALREADY the production shape** — cdefFilterBlock{8,4}NEON are fused
+dav1d cdef_filter_pri_sec ports, and the profile's separate Primary/Secondary
+kernels are the deliberate single-strength split (dav1d has the same 3-way
+`_pri`/`_sec`/`_pri_sec` dispatch); forcing fused onto single-strength inputs
+measured 27-54% SLOWER per kernel. The old "dav1d fuses = next CDEF lever"
+note was stale. Next real CDEF lever would be in-place filtering to kill the
+staging copies, which is ITSELF pinned dead until someone rewrites the 8-bit
+kernels to read uint8 directly (see memory perf-deadends).
 
 ## 6. Encoder work queue (priority order)
 
