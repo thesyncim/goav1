@@ -125,22 +125,33 @@ codegen residue (Go glue vs C+asm in serial paths) that M-D3/M-E3+ attack.
 ## 4. DECODER task board (milestones → ~2.8x → ~2.2x → 1.4x)
 
 ### M-D1: in-flight / small (target ~3.2x)
-- [ ] **D1-a merge 64-bit entropy window** — branch d1-ec64-window
-  (779f5d1a + 2b05637a) is DONE + gates green (readCDF4 share halved
-  2.81→1.33%); needs: idle interleaved A/B on p720 + p288_intra, then
-  cherry-pick to main, full gates, push. (S — merge task)
-- [ ] **D1-b sbrow-chained postfilter (D-2)** — agent in flight
-  2026-07-06 evening (worktree agent-a47c0fa663e289d8c): P0 per-band
-  step APIs, P1 chained driver w/ dav1d lag discipline (decode.c:3196,
-  recon_tmpl.c:1987-2110), gated single-tile/8-bit/no-superres. If the
-  agent died: resume from its worktree; the CDEF 8-row lag + prev-mask
-  seam is the hard spot; differential chained-vs-stage-major FIRST. (L,
-  phased — each phase one run)
+- [x] **D1-a 64-bit entropy window** — LANDED (rebased ba1b1996 +
+  48e7ea53): idle A/B p720 dead-flat, p288_intra green all pairs
+  (~0.5%); kernels −1.4..−3.3%, readCDF4 flat share halved. Honest e2e:
+  flat-to-+0.5% (entropy share is only ~4-8% now). Kept because it is
+  byte-exact, never slower, closes the last structural entropy
+  divergence, and M-D3's TXB asm kernel builds on the 64-bit window.
+  tellOffs pin: readerInitTellOffs stays −14 (width-invariant tell;
+  mechanical rescaling would shift every BitsRead by −32). (done)
+- [x] **D1-b sbrow-chained postfilter (D-2)** — BUILT, byte-exact
+  (226/226 + new chained-vs-stage-major differentials), then MEASURED
+  RED and HELD per rule 8: 720p q32 ~flat, q20 +0.4%, and a dedicated
+  1080p A/B (aomenc stream, same-binary kill-switch) chain LOST all 3
+  pairs, +1.0% cpu median. PIN: whole-frame stage-major postfilter is
+  FINE on Apple Silicon — 1.4-3.1MB frames live in L2/SLC, dav1d's
+  per-sbrow chaining pays only on smaller-cache hardware; the band-loop
+  overhead exceeds the locality win here. Branch preserved with all
+  gates green: worktree-agent-a47c0fa663e289d8c (P0 step APIs c1f1c649
+  + P1 driver 42bcdb3c). This also WEAKENS the D4-b recon-interleave
+  premise (same mechanism) — demand a measured prototype before
+  investing there.
 - [ ] **D1-c temporal-MV 16-row window** — dav1d refmvs.c:701-742
   load_tmvs ring (rp_proj_sz=16*n_blocks, ~19KB) vs goav1 whole-frame
   TemporalMotionField + full Clear (tile/motion_field.go:187-248,
-  threading/ref_mv_frame.go:66). NOTE: consumed during TILE DECODE, not
-  postfilter — verify scheduling fits; skip with analysis if not. (M)
+  threading/ref_mv_frame.go:66). CONFIRMED (D-2 agent): consumed during
+  TILE DECODE before postfilters — needs its own banding of the
+  tile-decode/wavefront driver with per-sbrow clear semantics, NOT the
+  postfilter chain. Standalone task. (M)
 - [ ] **D1-d LR/CDEF arena + decoder-construction shrink** — post-
   ddddce3e the u16 Data/Dst arenas are allocated full-plane but 8-bit
   touches ~30KB; construction churn feeds the measured corpus number
@@ -166,10 +177,12 @@ codegen residue (Go glue vs C+asm in serial paths) that M-D3/M-E3+ attack.
   `-gcflags=all=-d=ssa/check_bce` on hot files; ONLY guard-disjunct
   pattern (the additive-induction trick from the coeff-context commit);
   blanket reslicing is PINNED RED (§6). (M)
-- [ ] **D2-c dequant fusion + activeRows prefix-max** — fuse dequant into
-  the coeff sign loop (dav1d recon_tmpl.c:655-724 writes final coef
-  directly); replace the O(eob) activeRows %-loop with dav1d's
-  prefix-max table (scan.c:319-375). Expected <1% combined. (S)
+- [x] **D2-c activeRows prefix-max table** — LANDED 14df1c81 (codex,
+  reviewed): dav1d scan.c init_tbl port, table lookup replaces the
+  O(eob) %-loop; custom scans keep exact fallback. The dequant-fusion
+  half was built and REVERTED ON REVIEW: e2e +1.1% cpu (nil-check
+  branches in every sign-loop iteration ~+5% even unfused, per-coeff
+  division, per-TXB clear) — PINNED in §6. (done)
 - [ ] **D2-d ExtendBorders removal audit** — dav1d never border-extends
   (emu-edge covers it); goav1 runs ExtendBorders per frame
   (postfilter.go tail) AND has emu-edge. Prove no inter path reads
@@ -219,9 +232,15 @@ apply (that was SIMD inverse-CDF search; this is scalar asm).
   single-tile but still uses the parallel banded edge-list; route to a
   parallel mask apply (serial mask apply landed 8e7a93cb, -11.8% ST).
   (M)
-- [ ] **E1-d CDF-init cut** — ~6% of ST cpu in per-frame CDF table
-  setup; audit what must re-init vs memcpy of a prebuilt image
-  (entropy.InitDefault callers, frozen rate tables). (M)
+- [x] **E1-d CDF-init cut** — LANDED 259736b1 (codex, reviewed):
+  non-coefficient default CDF families now assign package-init images
+  (entropy.CDF is a pure value struct — deep copy). BUT the ~6%
+  attribution was STALE: coefficient defaults were already images, and
+  the frozen rate tables depend on adapted frame-start CDFs (NOT
+  cacheable by qIndex without changing decisions — profiled attribution
+  in the task record). realC ST neutral; beneficiaries are keyframe
+  multi-tile setup/trial-arm/prewarm paths. Byte-identical all four
+  clips. (done)
 - [ ] **E1-e entropy-write micro** — Writer hot loop vs od_ec_enc shape;
   small unless combined with M-E4. (S)
 - [ ] **E1-f PGO** — shared with D2-a. (—)
@@ -293,6 +312,15 @@ scope (screen +4.4% rate) · wall-clock feedback signals (banned) ·
 entropy-write∥next-frame-decision overlap (PROVEN serialization both
 goav1 and SVT: MD(N+1) needs N's frame-end CDFs) · compoundGoldenLikely
 path (never arms on realC).
+
+NEW PINS (2026-07-06 evening, codex/agent round): dequant-into-sign-loop
+fusion (e2e +1.1% cpu; hot-loop nil branches tax the unfused path +5%;
+per-coeff division; per-TXB clear — dav1d's fusion is unconditional C) ·
+sbrow-chained postfilter on Apple Silicon (720p q20 +0.4%, 1080p +1.0%
+cpu — frames live in L2/SLC, band-loop overhead beats locality; branch
+worktree-agent-a47c0fa663e289d8c preserved, gates green) · E1-d's "~6%
+CDF-init" was stale attribution (coeff defaults already images; rate
+tables depend on adapted frame-start CDFs, not qIndex-cacheable).
 
 LESSONS THAT KEEP PAYING: grep `var im [` for nil-scratch zero-fill
 wrappers (found 3 today) · force amd64 differentials to EXECUTE under

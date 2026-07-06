@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
 
-//go:build goav1_ec32asm_retired
+//go:build arm64 && !purego && !goav1_trace_rng
 
 package entropy
 

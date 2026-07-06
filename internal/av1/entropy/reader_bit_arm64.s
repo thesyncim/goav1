@@ -2,17 +2,25 @@
 //
 // See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
 
-//go:build goav1_ec32asm_retired
+//go:build arm64 && !purego && !goav1_trace_rng
 
 #include "textflag.h"
 
 #define CURSOR_SRC_PTR       0
 #define CURSOR_SRC_LEN       8
-#define CURSOR_POS          24
-#define CURSOR_DIF          28
-#define CURSOR_RNG          32
-#define CURSOR_CNT          34
-#define CURSOR_TELL_OFFS    36
+#define CURSOR_DIF          24
+#define CURSOR_POS          32
+#define CURSOR_RNG          36
+#define CURSOR_CNT          38
+#define CURSOR_TELL_OFFS    40
+
+// The refill blocks below are the 64-bit-window port of refillState: the fast
+// path mirrors dav1d's single 8-byte refill load (src/arm/64/msac.S L(refill))
+// while keeping goav1's XOR-into-ones window convention, so the leaked partial
+// byte below bit shift&7 must be masked off before the XOR (dav1d's OR of
+// inverted bytes is idempotent and needs no mask; XOR is not). With at least 8
+// bytes remaining the fast path consumes at most 7, so end-of-buffer tell
+// accounting stays on the byte-loop path, exactly as in the Go refillState.
 
 // func readBitTrustedARM64(c *Cursor) uint8
 //
@@ -21,15 +29,15 @@
 // exact refillState semantics for tile tails.
 TEXT ·readBitTrustedARM64(SB), NOSPLIT, $0-9
 	MOVD c+0(FP), R0
-	MOVWU CURSOR_DIF(R0), R7
+	MOVD CURSOR_DIF(R0), R7
 	MOVHU CURSOR_RNG(R0), R8
 
 	LSR   $8, R8, R9
 	LSL   $7, R9, R10
 	ADD   $4, R10, R10
-	LSL   $16, R10, R11
+	LSL   $48, R10, R11
 	MOVD  $1, R15
-	CMPW  R11, R7
+	CMP   R11, R7
 	BCC   bitNoSub
 	SUB   R11, R7, R7
 	SUB   R10, R8, R8
@@ -55,48 +63,32 @@ bitRenorm:
 	MOVD  CURSOR_SRC_LEN(R0), R3
 	MOVWU CURSOR_POS(R0), R6
 	MOVH  CURSOR_TELL_OFFS(R0), R10
-	MOVD  $8, R11
-	SUB   R5, R11, R11 // shift = 8 - cnt
-	SUB   R6, R3, R12 // remaining = len(src) - pos
+	MOVD  $40, R11
+	SUB   R5, R11, R11 // shift = ecWindow-9-(cnt+15) = 40 - cnt
+	SUB   R6, R3, R12  // remaining = len(src) - pos
 
-	CMP $8, R11
-	BLT refillThree
-	CMP $16, R11
-	BGE refillThree
-	CMP $2, R12
+	CMP $55, R11
+	BHI refillSlow // shift > ecWindow-9 (or negative): byte loop
+	CMP $8, R12
 	BLT refillSlow
-	ADD   R2, R6, R13
-	MOVBU (R13), R14
-	LSL   R11, R14, R14
-	EOR   R14, R7, R7
-	MOVBU 1(R13), R14
-	SUB   $8, R11, R13
-	LSL   R13, R14, R14
-	EOR   R14, R7, R7
-	ADD   $2, R6, R6
-	ADD   $16, R5, R5
-	B     refillTailCheck
-
-refillThree:
-	CMP $24, R11
-	BGE refillSlow
-	CMP $3, R12
-	BLT refillSlow
-	ADD   R2, R6, R13
-	MOVBU (R13), R14
-	LSL   R11, R14, R14
-	EOR   R14, R7, R7
-	MOVBU 1(R13), R14
-	SUB   $8, R11, R4
-	LSL   R4, R14, R14
-	EOR   R14, R7, R7
-	MOVBU 2(R13), R14
-	SUB   $16, R11, R4
-	LSL   R4, R14, R14
-	EOR   R14, R7, R7
-	ADD   $3, R6, R6
-	ADD   $24, R5, R5
-	B     refillTailCheck
+	ADD  R2, R6, R13
+	MOVD (R13), R14
+	REV  R14, R14 // u = big-endian 8-byte load
+	MOVD $56, R4
+	SUB  R11, R4, R4
+	LSR  R4, R14, R14 // u >> (56 - shift)
+	AND  $7, R11, R4
+	MOVD $1, R16
+	LSL  R4, R16, R16
+	SUB  $1, R16, R16
+	BIC  R16, R14, R14 // mask the partial-byte leak below shift&7
+	EOR  R14, R7, R7
+	LSR  $3, R11, R4
+	ADD  $1, R4, R4 // n = shift>>3 + 1
+	ADD  R4, R6, R6 // pos += n
+	LSL  $3, R4, R4
+	ADD  R4, R5, R5    // cnt += 8*n
+	B    refillStore   // n <= 7 < remaining: end of buffer unreachable
 
 refillSlow:
 	CMP $0, R11
@@ -125,7 +117,7 @@ refillStore:
 	MOVH R10, CURSOR_TELL_OFFS(R0)
 
 bitStore:
-	MOVW R7, CURSOR_DIF(R0)
+	MOVD R7, CURSOR_DIF(R0)
 	MOVH R8, CURSOR_RNG(R0)
 	MOVH R5, CURSOR_CNT(R0)
 	MOVB R15, ret+8(FP)
@@ -143,7 +135,7 @@ TEXT ·readCDF4HighTokenUpdateArch(SB), NOSPLIT, $0-17
 	MOVD  CURSOR_SRC_PTR(R0), R2
 	MOVD  CURSOR_SRC_LEN(R0), R3
 	MOVWU CURSOR_POS(R0), R6
-	MOVWU CURSOR_DIF(R0), R7
+	MOVD  CURSOR_DIF(R0), R7
 	MOVHU CURSOR_RNG(R0), R8
 	MOVH  CURSOR_CNT(R0), R5
 	MOVH  CURSOR_TELL_OFFS(R0), R10
@@ -156,7 +148,7 @@ TEXT ·readCDF4HighTokenUpdateArch(SB), NOSPLIT, $0-17
 
 hiTokLoop:
 	MOVD R8, R16      // upper = rng
-	LSR  $16, R7, R12 // coded = dif >> 16
+	LSR  $48, R7, R12 // coded = dif >> (ecWindow - 16)
 	LSR  $8, R8, R9   // rngHi = rng >> 8
 
 	LSR  $6, R20, R17
@@ -196,8 +188,8 @@ hiTokSym3:
 	MOVD $0, R17
 
 hiTokDecoded:
-	LSL  $16, R17, R11
-	SUB  R11, R7, R7
+	LSL  $48, R17, R11
+	SUB  R11, R7, R7 // dif -= lower << (ecWindow - 16)
 	SUB  R17, R16, R8
 	ADD  $1, R7, R7
 	UBFX $0, R8, $16, R12
@@ -209,48 +201,32 @@ hiTokDecoded:
 	SUB  R12, R5, R5
 	TBZ  $63, R5, hiTokAfterRefill
 
-	MOVD $8, R11
-	SUB  R5, R11, R11 // shift = 8 - cnt
+	MOVD $40, R11
+	SUB  R5, R11, R11 // shift = ecWindow-9-(cnt+15) = 40 - cnt
 	SUB  R6, R3, R12  // remaining = len(src) - pos
 
-	CMP $8, R11
-	BLT hiTokRefillThree
-	CMP $16, R11
-	BGE hiTokRefillThree
-	CMP $2, R12
+	CMP $55, R11
+	BHI hiTokRefillSlow // shift > ecWindow-9 (or negative): byte loop
+	CMP $8, R12
 	BLT hiTokRefillSlow
-	ADD   R2, R6, R13
-	MOVBU (R13), R14
-	LSL   R11, R14, R14
-	EOR   R14, R7, R7
-	MOVBU 1(R13), R14
-	SUB   $8, R11, R13
-	LSL   R13, R14, R14
-	EOR   R14, R7, R7
-	ADD   $2, R6, R6
-	ADD   $16, R5, R5
-	B     hiTokRefillTailCheck
-
-hiTokRefillThree:
-	CMP $24, R11
-	BGE hiTokRefillSlow
-	CMP $3, R12
-	BLT hiTokRefillSlow
-	ADD   R2, R6, R13
-	MOVBU (R13), R14
-	LSL   R11, R14, R14
-	EOR   R14, R7, R7
-	MOVBU 1(R13), R14
-	SUB   $8, R11, R4
-	LSL   R4, R14, R14
-	EOR   R14, R7, R7
-	MOVBU 2(R13), R14
-	SUB   $16, R11, R4
-	LSL   R4, R14, R14
-	EOR   R14, R7, R7
-	ADD   $3, R6, R6
-	ADD   $24, R5, R5
-	B     hiTokRefillTailCheck
+	ADD  R2, R6, R13
+	MOVD (R13), R14
+	REV  R14, R14 // u = big-endian 8-byte load
+	MOVD $56, R4
+	SUB  R11, R4, R4
+	LSR  R4, R14, R14 // u >> (56 - shift)
+	AND  $7, R11, R4
+	MOVD $1, R17
+	LSL  R4, R17, R17
+	SUB  $1, R17, R17
+	BIC  R17, R14, R14 // mask the partial-byte leak below shift&7
+	EOR  R14, R7, R7
+	LSR  $3, R11, R4
+	ADD  $1, R4, R4          // n = shift>>3 + 1
+	ADD  R4, R6, R6          // pos += n
+	LSL  $3, R4, R4
+	ADD  R4, R5, R5          // cnt += 8*n
+	B    hiTokAfterRefill    // n <= 7 < remaining: end of buffer unreachable
 
 hiTokRefillSlow:
 	CMP $0, R11
@@ -347,7 +323,7 @@ hiTokCountDone:
 
 hiTokDone:
 	MOVW R6, CURSOR_POS(R0)
-	MOVW R7, CURSOR_DIF(R0)
+	MOVD R7, CURSOR_DIF(R0)
 	MOVH R8, CURSOR_RNG(R0)
 	MOVH R5, CURSOR_CNT(R0)
 	MOVH R10, CURSOR_TELL_OFFS(R0)
