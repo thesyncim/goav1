@@ -94,6 +94,54 @@ func FillDefaultScan(scan []int16, inverse []int16, size Size, class Class) erro
 	return FillScanOrder(scan, inverse, scanSize, mode)
 }
 
+// DefaultScan returns the immutable precomputed default scan for size/class.
+// Callers must treat the returned slice as read-only.
+func DefaultScan(size Size, class Class) ([]int16, error) {
+	if !size.Valid() || !class.Valid() {
+		return nil, ErrInvalidTransform
+	}
+	mode, err := DefaultScanMode(size, class)
+	if err != nil {
+		return nil, err
+	}
+	pair := scanTables[sizeIndex(size)][mode]
+	if pair.scan == nil {
+		return nil, ErrInvalidTransform
+	}
+	return pair.scan, nil
+}
+
+// DefaultScanActiveRowsForScan returns one past the maximum row in the default
+// scan prefix [0,eob). It is the Go equivalent of dav1d's
+// dav1d_last_nonzero_col_from_eob table from src/scan.c:319-375, adapted to
+// row counts for goav1's column-major coefficient order.
+//
+// The bool is false when scan is not the immutable default scan slice for the
+// supplied size/class, allowing public callers with custom scan slices to keep
+// their exact fallback behaviour.
+func DefaultScanActiveRowsForScan(size Size, class Class, scan []int16, eob int) (int, bool) {
+	if eob < 0 || !size.Valid() || !class.Valid() {
+		return 0, false
+	}
+	if eob == 0 {
+		return 0, true
+	}
+	mode, err := DefaultScanMode(size, class)
+	if err != nil {
+		return 0, false
+	}
+	idx := sizeIndex(size)
+	pair := scanTables[idx][mode]
+	rows := scanMaxRowTables[idx][mode]
+	if len(pair.scan) < eob || len(rows) < eob || len(scan) < eob {
+		return 0, false
+	}
+	if &scan[0] != &pair.scan[0] {
+		return 0, false
+	}
+	return int(rows[eob-1]) + 1, true
+}
+
 // FillScanOrder writes the scan and inverse-scan order for size and mode into
 // caller-provided buffers. Indices use AV1's coefficient raster order.
 //

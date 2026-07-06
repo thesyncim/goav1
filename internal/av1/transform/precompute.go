@@ -81,6 +81,11 @@ var (
 	// combination is not realised (invalid size); valid entries are filled at
 	// init and never mutated afterwards.
 	scanTables [numSizeSlots][numScanModes]scanPair
+
+	// scanMaxRowTables mirrors dav1d src/scan.c:init_tbl(): for each scan
+	// position it stores the maximum coefficient row seen in the prefix ending
+	// at that position. Callers add one to get the active row count.
+	scanMaxRowTables [numSizeSlots][numScanModes][]uint8
 )
 
 const numScanModes = 5 // ScanModeZigZag..ScanModeRow1D
@@ -140,8 +145,24 @@ func init() {
 			inverse := make([]int16, total)
 			fillScanOrderCompute(scan, inverse, scanSize, ScanMode(mode))
 			scanTables[idx][mode] = scanPair{scan: scan, inverse: inverse}
+			scanMaxRowTables[idx][mode] = buildScanMaxRowTable(scan, int(scanSize.Height))
 		}
 	}
+}
+
+func buildScanMaxRowTable(scan []int16, height int) []uint8 {
+	rows := make([]uint8, len(scan))
+	maxRow := 0
+	mask := height - 1
+	for i, raw := range scan {
+		// dav1d uses rc & (h - 1); AV1 adjusted scan heights are powers of two.
+		row := int(raw) & mask
+		if row > maxRow {
+			maxRow = row
+		}
+		rows[i] = uint8(maxRow)
+	}
+	return rows
 }
 
 // computeAdjustedScanSize mirrors the historical adjustedScanSize switch and is

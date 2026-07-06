@@ -35,6 +35,42 @@ func TestScanOrderDependencyMatchesLibaom(t *testing.T) {
 	}
 }
 
+func TestDefaultScanActiveRowsForScanMatchesPrefixScan(t *testing.T) {
+	for _, size := range libaomScanSizes {
+		scanSize, err := ScanSize(size)
+		if err != nil {
+			t.Fatalf("ScanSize(%+v): %v", size, err)
+		}
+		height := int(scanSize.Height)
+		for class := Class2D; class <= ClassVert; class++ {
+			scan, err := DefaultScan(size, class)
+			if err != nil {
+				t.Fatalf("DefaultScan(%+v,%d): %v", size, class, err)
+			}
+			for eob := 0; eob <= len(scan); eob++ {
+				want := 0
+				for i := 0; i < eob; i++ {
+					row := int(scan[i]) & (height - 1)
+					if row >= want {
+						want = row + 1
+					}
+				}
+				got, ok := DefaultScanActiveRowsForScan(size, class, scan, eob)
+				if !ok {
+					t.Fatalf("DefaultScanActiveRowsForScan(%+v,%d,%d) ok=false", size, class, eob)
+				}
+				if got != want {
+					t.Fatalf("DefaultScanActiveRowsForScan(%+v,%d,%d)=%d want %d", size, class, eob, got, want)
+				}
+			}
+			copied := append([]int16(nil), scan...)
+			if _, ok := DefaultScanActiveRowsForScan(size, class, copied, len(copied)); ok {
+				t.Fatalf("copied scan %+v class %d unexpectedly used default table", size, class)
+			}
+		}
+	}
+}
+
 func TestFillScanOrderKnownTables(t *testing.T) {
 	tests := []struct {
 		name     string

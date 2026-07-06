@@ -340,9 +340,7 @@ func init() {
 		}
 		coeffPosHotTable[size] = hotPositions
 		for class := transform.Class2D; class <= transform.ClassVert; class++ {
-			scan := make([]int16, maxEOB)
-			inverse := make([]int16, maxEOB)
-			if err := transform.FillDefaultScan(scan, inverse, txSize, class); err == nil {
+			if scan, err := transform.DefaultScan(txSize, class); err == nil {
 				coeffScanTable[size][class] = scan
 				if class == transform.Class2D {
 					scanHot := make([]coeffScanHot, maxEOB)

@@ -192,7 +192,7 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 	useSparseDequant := !useNonZeroDequant && eob > 0 && len(scan) >= eob && eob*sparseDequantWorkFactor <= dequantLen
 	activeRows := 0
 	if useSparseDequant {
-		activeRows = activeTransformRowsFromScan(scan, eob, scanHeight)
+		activeRows = activeTransformRowsFromScan(scan, eob, scanHeight, cfg.Size, cfg.Transform)
 	}
 	if cfg.InverseQMatrix != nil {
 		if useNonZeroDequant {
@@ -235,10 +235,16 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 	return nil
 }
 
-func activeTransformRowsFromScan(scan []int16, eob int, scanHeight int) int {
+func activeTransformRowsFromScan(scan []int16, eob int, scanHeight int, size transform.Size, typ transform.Type) int {
+	if class, err := typ.Class(); err == nil {
+		if activeRows, ok := transform.DefaultScanActiveRowsForScan(size, class, scan, eob); ok {
+			return activeRows
+		}
+	}
 	activeRows := 0
 	for i := 0; i < eob; i++ {
-		row := int(scan[i]) % scanHeight
+		pos := int(scan[i])
+		row := pos - (pos/scanHeight)*scanHeight
 		if row >= activeRows {
 			activeRows = row + 1
 		}
