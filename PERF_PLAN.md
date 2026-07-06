@@ -36,19 +36,29 @@ mechanically; do not improvise.
 8. A lever that measures red gets **fully reverted** and its numbers recorded in
    the report/memory. Reverted work is not wasted — it is a pin against retries.
 
-## 1. Current standings (measured 2026-07-06 morning, HEAD 8c69fdf7, moderate background load)
+## 1. Current standings (measured 2026-07-06 midday, HEAD 52367902)
 
 Decoder, single-thread, internal corpus (18 clips, 48 frames each):
 
 | decoder | total ms | vs goav1 |
 |---|---|---|
-| goav1 | 2400 | 1.00x |
-| aomdec | 1021 | 2.35x faster |
-| dav1d | 614 | **3.91x faster** ← the gap |
+| goav1 | 2243 | 1.00x |
+| aomdec | 1001 | 2.24x faster |
+| dav1d | 596 | **3.77x faster** ← the gap |
 
-(2026-07-02 was 4.34x; the bitmask LF + SIMD coverage sweep recovered ~10%.
-Worst clip 10-bit at 0.16x — addressed by the 2026-07-06 HBD wave below;
-re-measure aggregate after it.)
+(Trajectory: 5.12x → 4.34x (07-02) → 3.91x (07-06 morning, bitmask LF +
+coverage sweep) → 3.77x (07-06 wave: HBD completion 77addf06, vertical wd16
+transpose 37538dac, HBD compound emu-edge 52367902) → **3.64x** (07-06
+afternoon, restoration architecture P1-P3: 015fe524 filtered-only
+round-trip, 99114ec1 u8 kernel family, 783c1d10 8-bit pixel-domain wiring —
+no plane widen, no dst scratch, no store-back). 10-bit clip went
+0.16x → 0.22x of dav1d. Per-clip 0.19–0.29x, tightest at p720.)
+
+Encoder single-thread, same-run realC@5M (-goav1-max-threads 1 -gomaxprocs 1
+-svt-lp 1, runs 3): goav1 cpu_total 1.743s (29.0 ms/frame) vs SVT 0.486s
+(8.1 ms/frame) = **3.59x** (was 5.2x on 07-02, 4.2x this morning pre-fix),
+quality +0.53 dB @ +4.6% rate. Nil-scratch fix 4ab59fed = the −11%; decoder
+postfilter wins flow into the encoder loop too.
 
 >>> 2026-07-06 DIRECTIVE (user): beat dav1d (decoder) + SVT (encoder) with
 focus on SINGLE-THREAD; cpu_total (core-seconds) is reported alongside wall
@@ -341,10 +351,34 @@ is scalar segment building — dav1d builds lf masks per superblock
 (`src/lf_mask.c`). Only restructure along dav1d's actual shape. Wave-3 agent
 did NOT start this — it is a clean target.
 
-**D3. Wiener restoration (~3.9%).** `wienerHorizontalNEONAsm` +
-`wienerVerticalNEONAsm` exist but compare their structure against dav1d
-`src/arm/64/looprestoration.S` (dav1d keeps 16-bit intermediates and fuses
-rows). Port the delta if the shapes differ materially.
+**D3. Restoration — AUDITED 2026-07-06; the win is ARCHITECTURAL (user
+directive: "the real divergence is architectural so fix it").** Row-fusion of
+the existing kernels was audited and DECLINED (loop-order only, intermediate
+is L1-resident per unit, big asm rewrite risk for small win — see 52367902
+commit message). The real divergence: goav1 restores via a WHOLE-PLANE
+bordered uint16 round-trip (tile/restoration_frame_bridge.go: Load
+BorderedSamplePlane full-plane u8→u16 widen → applyRestorationFrameToDst →
+StoreBorderedSamplePlaneTrusted full-plane narrow store-back, with NONE units
+hand-copied through), while dav1d (lr_apply_tmpl.c lr_stripe) filters IN
+PLACE on native-depth pixels per 64-row stripe with small boundary backups
+and never touches NONE units. PROGRAM STATUS (2026-07-06 afternoon — P1-P3 LANDED + PUSHED):
+- **P1 LANDED (015fe524):** NONE units never read/copied/written; store-back
+  narrows only filtered record rects; all-NONE planes skip the round-trip.
+  copyRestorationUnit eliminated from the profile. p720 −1.4% cpu.
+- **P2 LANDED (99114ec1):** u8-source Wiener+SGR kernel family (dav1d 8bpc
+  shapes on goav1's pass structure; NEON+AVX2+pure-Go; differentials prove
+  byte-parity vs u16 kernels). Per-kernel ≈parity — the win is structural.
+- **P3 LANDED (783c1d10):** 8-bit LR runs in the pixel domain — bordered u8
+  snapshot (byte view over the u16 arena, half footprint) replaces the plane
+  widen; filters write DIRECTLY into the frame (VisibleRect-clipped — the
+  FilterRect overhang polluted padding, caught by differential); dst scratch
+  + store-back deleted for 8-bit. −1.2-1.3% on every LR-active 8-bit clip;
+  10/12-bit keeps the u16 path.
+- **P4 REMAINING (the last LR memory-traffic win):** kill the u8 snapshot
+  itself via dav1d lr_stripe/backup_lpf row-backup model — filter in place
+  top-down keeping O(rows) backed-up boundary lines as the cross-stripe
+  halo; replaces LoadBorderedBytePlane with line buffers. Needs per-stripe
+  row-backup plumbing in the walk order. Agent-mapped, not yet attempted.
 
 **D4. High-bit-depth coverage — MAJOR SLICE LANDED (77addf06, 2026-07-06):**
 the HBD 2D convolve wrapper zero-filled a ~69KB int32 stack `im` on EVERY call

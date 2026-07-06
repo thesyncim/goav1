@@ -640,6 +640,16 @@ type lossyEncodeState struct {
 	mds0Level uint8
 	mds0Rates tile.InterModeRateTables
 
+	// depthRemovalLevel arms SVT-AV1's depth-removal signal chain for inter
+	// frames (set_depth_removal_level_controls, enc_mode_config.c; see
+	// pframe_depth_removal.go): 0 disables it (standalone tile paths), the
+	// video encoder sets the preset-12 ladder level (is_base ? 9 : 14 at
+	// 1080p) the same way mds0Level is plumbed. depthRemovalIsRef mirrors
+	// me_ctx->is_ref (true when this frame will be referenced) and gates the
+	// sweep's check_00_center arbitration.
+	depthRemovalLevel uint8
+	depthRemovalIsRef bool
+
 	// interpSearch arms the per-block switchable interpolation filter search
 	// on reference frames, mirroring SVT-AV1 preset 12's
 	// interpolation_search_level = 4 for is_base pictures with the frame

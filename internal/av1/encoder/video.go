@@ -979,14 +979,18 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 		header.CDEF = CDEFParams{}
 	}
 	// This path codes a fixed EIGHTTAP frame filter; clear any switchable
-	// filter state a previous base frame left on the reused coders.
+	// filter state a previous base frame left on the reused coders. Depth
+	// removal likewise stays off here (Phase 1 arms only the standard
+	// temporal-layer path in encodePReusing) so no stale level carries over.
 	e.pc.st.interpSearch = false
 	e.pc.st.interpShadow = false
+	e.pc.st.depthRemovalLevel = 0
 	e.pc.forceSplit = e.forceSplit
 	e.configurePCWavefront()
 	for t := range e.tilePCs {
 		e.tilePCs[t].st.interpSearch = false
 		e.tilePCs[t].st.interpShadow = false
+		e.tilePCs[t].st.depthRemovalLevel = 0
 		e.tilePCs[t].forceSplit = e.forceSplit
 	}
 	if nTiles == 1 {
@@ -1489,10 +1493,19 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	} else {
 		e.pc.st.mds0Level = 1
 	}
+	// Depth removal (SVT set_depth_removal_level_controls; see
+	// pframe_depth_removal.go) follows the same is_base modulation as
+	// mds0Level: base frames run level 9, droppable leaves 14 (preset-12
+	// 1080p ladder, enc_mode_config.c:9287-9295). is_ref covers the L1T3
+	// middle layer too (referenced by its trailing T2).
+	e.pc.st.depthRemovalLevel = depthRemovalLevelForFrame(src.Width, src.Height, !droppable)
+	e.pc.st.depthRemovalIsRef = !droppable || isT1
 	e.pc.forceSplit = e.forceSplit
 	e.configurePCWavefront()
 	for t := range e.tilePCs {
 		e.tilePCs[t].st.mds0Level = e.pc.st.mds0Level
+		e.tilePCs[t].st.depthRemovalLevel = e.pc.st.depthRemovalLevel
+		e.tilePCs[t].st.depthRemovalIsRef = e.pc.st.depthRemovalIsRef
 		e.tilePCs[t].forceSplit = e.forceSplit
 	}
 	refRecon := e.recon
@@ -1644,6 +1657,10 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		}
 	}
 	e.collectDecisionStats(false, nTiles, false)
+	if depthRemovalStatsEnabled {
+		// Frame-serial: every tile and wavefront lane has joined by here.
+		dumpDepthRemovalStats(uint64(e.frameIndex))
+	}
 	e.lastRecon = *out
 	if isT1 {
 		// The middle layer's frame-end state is what the decoder saves into

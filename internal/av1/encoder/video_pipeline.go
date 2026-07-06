@@ -324,6 +324,10 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 	e.leafPC.decisionStatsEnabled = e.decisionStatsEnabled
 	e.leafPC.st.hme = &e.leafHME
 	e.leafPC.st.mds0Level = 2
+	// Pipelined leaves mirror the serial droppable-leaf depth-removal config
+	// (video.go encodePReusing) so pipelining stays byte-identical.
+	e.leafPC.st.depthRemovalLevel = depthRemovalLevelForFrame(src.Width, src.Height, false)
+	e.leafPC.st.depthRemovalIsRef = false
 	e.leafPC.st.interpSearch = false
 	e.leafPC.st.interpShadow = false
 	e.leafPC.st.interpDual = seq.EnableDualFilter
