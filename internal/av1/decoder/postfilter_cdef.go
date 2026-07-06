@@ -247,6 +247,16 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFP
 	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
 	coeffShift := int(ctx.Output.Format.BitDepth) - 8
 	skipMap := ctx.LoopFilterMap
+	// 8-bit frames on the serial whole-frame apply take the in-place uint8
+	// walk (postfilter_cdef_u8.go, dav1d cdef_apply_tmpl.c shape): no plane
+	// snapshot, sentinels only at frame edges, kernels write the frame
+	// directly. The banded apply (loadSamples=false; the encoder's parallel
+	// unit-row bands) keeps the snapshot walk below because its concurrent
+	// bands read one immutable snapshot, which the in-place walk's
+	// cross-band pre-filter line backups cannot serve. 10/12-bit frames
+	// always keep the uint16 snapshot walk.
+	useU8 := loadSamples && ctx.Output.Layout.BytesPerSample == 1 && coeffShift == 0 &&
+		rowStart == 0 && rowEnd == rows
 
 	var result FrameWorkCDEFPostFilterResult
 	var directions cdef.DirectionGrid
@@ -270,6 +280,16 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFP
 		// VeryLarge sentinel.
 		xDec0, yDec0 := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
 		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec0, yDec0, ctx.Output.Layout.BytesPerSample)
+		if useU8 {
+			planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRowsU8(ctx.Event.CDEF, indexMap, skipMap, cols, rows, planeFrame, req.SampleScratch[plane], req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, chromaFiltering)
+			if err != nil {
+				return FrameWorkCDEFPostFilterResult{}, err
+			}
+			result.Units += planeUnits
+			result.Blocks += planeBlocks
+			result.Planes++
+			continue
+		}
 		var src frame.SamplePlane
 		if loadSamples {
 			var err error

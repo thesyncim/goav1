@@ -422,6 +422,15 @@ measured 27-54% SLOWER per kernel. The old "dav1d fuses = next CDEF lever"
 note was stale. Next real CDEF lever would be in-place filtering to kill the
 staging copies, which is ITSELF pinned dead until someone rewrites the 8-bit
 kernels to read uint8 directly (see memory perf-deadends).
+>>> RESOLVED (2026-07-06, commits b2890ed7 + aa28a96e): the u8 kernel family
+was built (dav1d 8bpc split: int16 tap math, u8 center-read/dst-store/
+direction-search) and the 8-bit serial decode path now filters CDEF IN PLACE
+(dav1d_cdef_brow port: 2-row line backup ping-pong, 8-column left backup,
+sentinels only at true frame edges) — the old +3.15% in-place regression was
+pure widen economics, exactly as the pin predicted. p720 CDEF pass share
+15.9%→7.7%, whole-decode −4.8% cpu. Banded (encoder-parallel) apply + 10/12
+-bit keep the u16 staging path. Follow-up: native u8-store AVX2 epilogue
+(current amd64 wrapper narrows via stack tmp — correct, Rosetta-validated).
 
 ## 6. Encoder work queue (priority order)
 

@@ -140,6 +140,22 @@ func LoadSamplePlaneFull(dst []uint16, src Plane, bytesPerSample int) (SamplePla
 	return SamplePlane{Pix: samples, Stride: strideSamples, Width: src.Width, Height: src.Height}, loadedWidth, nil
 }
 
+// LoadSampleRows8Trusted widens a strided uint8 sample rectangle into strided
+// uint16 storage: dst[y*dstStride+x] = uint16(src[y*srcStride+x]) for x in
+// [0, width), y in [0, height); all other dst elements are left untouched.
+// It is the exported trusted entry over the loadSampleRows8 kernel (NEON on
+// arm64) for callers such as the CDEF 8-bit frame walk that assemble a padded
+// uint16 tap buffer from uint8 frame regions (dav1d's 8bpc cdef padding(),
+// src/cdef_tmpl.c). Callers own the geometry contract: the last row's
+// [0, width) region must be resident in both buffers (out-of-contract calls
+// panic on the slice bounds).
+func LoadSampleRows8Trusted(dst []uint16, dstStride int, src []byte, srcStride int, width int, height int) {
+	if width <= 0 || height <= 0 {
+		return
+	}
+	loadSampleRows8(dst, dstStride, src, srcStride, width, height)
+}
+
 // LoadBorderedSamplePlane expands an 8-bit or little-endian 16-bit byte plane
 // into caller-owned bordered uint16 sample storage. Border samples are left
 // unchanged for callers such as loop restoration to fill with their normal
