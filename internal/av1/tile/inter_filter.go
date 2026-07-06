@@ -41,8 +41,26 @@ type InterpFilterRequest struct {
 	HaveLeft bool
 }
 
+var defaultInterpFilterCDFs = makeDefaultInterpFilterCDFs()
+
+func makeDefaultInterpFilterCDFs() InterpFilterCDFs {
+	var c InterpFilterCDFs
+	if err := c.initDefault(); err != nil {
+		panic(err)
+	}
+	return c
+}
+
 // InitDefault seeds c with libaom's default_switchable_interp_cdf table.
 func (c *InterpFilterCDFs) InitDefault() error {
+	if c == nil {
+		return entropy.ErrInvalidCDF
+	}
+	*c = defaultInterpFilterCDFs
+	return nil
+}
+
+func (c *InterpFilterCDFs) initDefault() error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}

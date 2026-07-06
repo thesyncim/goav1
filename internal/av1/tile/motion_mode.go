@@ -178,8 +178,26 @@ func (mode MotionMode) Valid() bool {
 	return mode < motionModeCount
 }
 
+var defaultMotionModeCDFs = makeDefaultMotionModeCDFs()
+
+func makeDefaultMotionModeCDFs() MotionModeCDFs {
+	var c MotionModeCDFs
+	if err := c.initDefault(); err != nil {
+		panic(err)
+	}
+	return c
+}
+
 // InitDefault seeds c with dav1d/libaom's default motion-mode CDFs.
 func (c *MotionModeCDFs) InitDefault() error {
+	if c == nil {
+		return entropy.ErrInvalidCDF
+	}
+	*c = defaultMotionModeCDFs
+	return nil
+}
+
+func (c *MotionModeCDFs) initDefault() error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}

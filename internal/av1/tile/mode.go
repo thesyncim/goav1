@@ -232,8 +232,26 @@ type BlockModeResult struct {
 	CDEFIndex        uint8
 }
 
+var defaultBlockModeCDFs = makeDefaultBlockModeCDFs()
+
+func makeDefaultBlockModeCDFs() BlockModeCDFs {
+	var c BlockModeCDFs
+	if err := c.initDefault(); err != nil {
+		panic(err)
+	}
+	return c
+}
+
 // InitDefault seeds c with dav1d/libaom's default block-prefix CDFs.
 func (c *BlockModeCDFs) InitDefault() error {
+	if c == nil {
+		return entropy.ErrInvalidCDF
+	}
+	*c = defaultBlockModeCDFs
+	return nil
+}
+
+func (c *BlockModeCDFs) initDefault() error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}

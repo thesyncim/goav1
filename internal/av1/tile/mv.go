@@ -126,8 +126,37 @@ func (precision MVSubpelPrecision) UsesHighPrecision() bool {
 	return precision > MVSubpelLow
 }
 
+var (
+	defaultMVComponentCDFs = makeDefaultMVComponentCDFs()
+	defaultMVCDFs          = makeDefaultMVCDFs()
+)
+
+func makeDefaultMVCDFs() MVCDFs {
+	var c MVCDFs
+	if err := c.initDefault(); err != nil {
+		panic(err)
+	}
+	return c
+}
+
+func makeDefaultMVComponentCDFs() MVComponentCDFs {
+	var c MVComponentCDFs
+	if err := c.initDefault(); err != nil {
+		panic(err)
+	}
+	return c
+}
+
 // InitDefault seeds c with libaom/dav1d's default nmv_context.
 func (c *MVCDFs) InitDefault() error {
+	if c == nil {
+		return entropy.ErrInvalidCDF
+	}
+	*c = defaultMVCDFs
+	return nil
+}
+
+func (c *MVCDFs) initDefault() error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}
@@ -146,6 +175,14 @@ func (c *MVCDFs) InitDefault() error {
 
 // InitDefault seeds c with libaom/dav1d's default nmv_component.
 func (c *MVComponentCDFs) InitDefault() error {
+	if c == nil {
+		return entropy.ErrInvalidCDF
+	}
+	*c = defaultMVComponentCDFs
+	return nil
+}
+
+func (c *MVComponentCDFs) initDefault() error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}

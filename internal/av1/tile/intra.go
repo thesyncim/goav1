@@ -320,8 +320,26 @@ func (mode ChromaIntraMode) LumaMode() (IntraMode, error) {
 	return IntraMode(mode), nil
 }
 
+var defaultIntraModeCDFs = makeDefaultIntraModeCDFs()
+
+func makeDefaultIntraModeCDFs() IntraModeCDFs {
+	var c IntraModeCDFs
+	if err := c.initDefault(); err != nil {
+		panic(err)
+	}
+	return c
+}
+
 // InitDefault seeds c with dav1d/libaom's default intra-mode CDFs.
 func (c *IntraModeCDFs) InitDefault() error {
+	if c == nil {
+		return entropy.ErrInvalidCDF
+	}
+	*c = defaultIntraModeCDFs
+	return nil
+}
+
+func (c *IntraModeCDFs) initDefault() error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}

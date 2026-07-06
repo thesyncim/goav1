@@ -479,7 +479,25 @@ func IntraChromaTransformType(mode ChromaIntraMode, size TransformSize, reduced 
 	return typ, nil
 }
 
+var defaultTransformTypeCDFs = makeDefaultTransformTypeCDFs()
+
+func makeDefaultTransformTypeCDFs() TransformTypeCDFs {
+	var c TransformTypeCDFs
+	if err := c.initDefault(); err != nil {
+		panic(err)
+	}
+	return c
+}
+
 func (c *TransformTypeCDFs) InitDefault() error {
+	if c == nil {
+		return entropy.ErrInvalidCDF
+	}
+	*c = defaultTransformTypeCDFs
+	return nil
+}
+
+func (c *TransformTypeCDFs) initDefault() error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}

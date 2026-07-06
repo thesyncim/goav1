@@ -246,8 +246,26 @@ func (partition Partition) BlockSizes(level BlockLevel) (BlockSize, BlockSize, b
 	return sizes[0], sizes[1], true
 }
 
+var defaultPartitionCDFs = makeDefaultPartitionCDFs()
+
+func makeDefaultPartitionCDFs() PartitionCDFs {
+	var c PartitionCDFs
+	if err := c.initDefault(); err != nil {
+		panic(err)
+	}
+	return c
+}
+
 // InitDefault seeds c with dav1d/libaom's default partition CDFs.
 func (c *PartitionCDFs) InitDefault() error {
+	if c == nil {
+		return entropy.ErrInvalidCDF
+	}
+	*c = defaultPartitionCDFs
+	return nil
+}
+
+func (c *PartitionCDFs) initDefault() error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}

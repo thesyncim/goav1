@@ -157,8 +157,26 @@ func (typ DiffWtdMaskType) Valid() bool {
 	return typ < diffWtdMaskTypeCount
 }
 
+var defaultCompoundBlendCDFs = makeDefaultCompoundBlendCDFs()
+
+func makeDefaultCompoundBlendCDFs() CompoundBlendCDFs {
+	var c CompoundBlendCDFs
+	if err := c.initDefault(); err != nil {
+		panic(err)
+	}
+	return c
+}
+
 // InitDefault seeds c with dav1d/libaom's default compound-blend CDFs.
 func (c *CompoundBlendCDFs) InitDefault() error {
+	if c == nil {
+		return entropy.ErrInvalidCDF
+	}
+	*c = defaultCompoundBlendCDFs
+	return nil
+}
+
+func (c *CompoundBlendCDFs) initDefault() error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}

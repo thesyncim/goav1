@@ -180,8 +180,26 @@ func MaxTransformSize(block BlockSize, color parser.ColorConfig, plane int) (Tra
 	return size, nil
 }
 
+var defaultTransformCDFs = makeDefaultTransformCDFs()
+
+func makeDefaultTransformCDFs() TransformCDFs {
+	var c TransformCDFs
+	if err := c.initDefault(); err != nil {
+		panic(err)
+	}
+	return c
+}
+
 // InitDefault seeds c with dav1d/libaom's default transform CDFs.
 func (c *TransformCDFs) InitDefault() error {
+	if c == nil {
+		return entropy.ErrInvalidCDF
+	}
+	*c = defaultTransformCDFs
+	return nil
+}
+
+func (c *TransformCDFs) initDefault() error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}

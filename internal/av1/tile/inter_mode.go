@@ -118,8 +118,26 @@ func (mode CompoundInterMode) Components() (CompoundInterModeComponents, error) 
 	return compoundInterModeComponents[mode], nil
 }
 
+var defaultInterModeCDFs = makeDefaultInterModeCDFs()
+
+func makeDefaultInterModeCDFs() InterModeCDFs {
+	var c InterModeCDFs
+	if err := c.initDefault(); err != nil {
+		panic(err)
+	}
+	return c
+}
+
 // InitDefault seeds c with dav1d/libaom's default inter-mode CDFs.
 func (c *InterModeCDFs) InitDefault() error {
+	if c == nil {
+		return entropy.ErrInvalidCDF
+	}
+	*c = defaultInterModeCDFs
+	return nil
+}
+
+func (c *InterModeCDFs) initDefault() error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}

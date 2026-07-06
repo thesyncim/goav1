@@ -75,8 +75,26 @@ func (ref ReferenceFrame) Backward() bool {
 	return ref >= ReferenceFrameBWD && ref <= ReferenceFrameAltref
 }
 
+var defaultInterRefCDFs = makeDefaultInterRefCDFs()
+
+func makeDefaultInterRefCDFs() InterRefCDFs {
+	var c InterRefCDFs
+	if err := c.initDefault(); err != nil {
+		panic(err)
+	}
+	return c
+}
+
 // InitDefault seeds c with dav1d/libaom's default inter-reference CDFs.
 func (c *InterRefCDFs) InitDefault() error {
+	if c == nil {
+		return entropy.ErrInvalidCDF
+	}
+	*c = defaultInterRefCDFs
+	return nil
+}
+
+func (c *InterRefCDFs) initDefault() error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}
