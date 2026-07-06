@@ -3,6 +3,7 @@ package encoder
 import (
 	"fmt"
 	"math/bits"
+	"time"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -1992,7 +1993,15 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		}
 		return st.writePBlock(block, scratch, &pc.refCDFs, &pc.modeCDFs, &pc.interpCDFs, referenceMode, &pc.splitRowRecs[row])
 	}
+	var writeStart time.Time
+	if txWriteStatsEnabled {
+		writeStart = time.Now()
+	}
 	writeErr := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decideReplay, visitWrite)
+	if txWriteStatsEnabled {
+		txWriteStatsNS.Add(time.Since(writeStart).Nanoseconds())
+		txWriteStatsPasses.Add(1)
+	}
 	if pipelined {
 		if writeErr != nil {
 			pc.wavefront.abort()
@@ -2998,6 +3007,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	}
 	if st.decisionStats != nil {
 		st.decisionStats.noteInterBlock(block.Size, false, splitTX, refs, modeResult, txType)
+		st.noteInterTXBSizes(block.Size, splitTX, txPlan, bw, bh)
 	}
 	return nil
 }

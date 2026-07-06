@@ -31,6 +31,10 @@ const (
 	EncoderDecisionTransformDCTADST  = int(transform.TypeDCTADST)
 	EncoderDecisionTransformADSTADST = int(transform.TypeADSTADST)
 	EncoderDecisionTransformIDTX     = int(transform.TypeIDTX)
+
+	// EncoderDecisionTransformSizeCount covers every tile.TransformSize
+	// value (TX_* then RTX_* order; 64x16 is the last).
+	EncoderDecisionTransformSizeCount = int(tile.TransformSize64x16) + 1
 )
 
 // EncoderDecisionStats is an optional encoder-side diagnostic snapshot. It
@@ -64,6 +68,13 @@ type EncoderDecisionStats struct {
 	LumaTXBs       uint64
 	TXTypes        [EncoderDecisionTransformTypeCount]uint64
 	NonDCTTXBs     uint64
+
+	// InterLumaTXBsBySize / InterChromaTXBsBySize count the transform blocks
+	// actually coded by inter blocks (skip blocks code none), indexed by
+	// tile.TransformSize. Unlike LumaTXBs above these use the exact leaf
+	// count of the realtime var-tx plan (a split 64x64 codes 16 leaves).
+	InterLumaTXBsBySize   [EncoderDecisionTransformSizeCount]uint64
+	InterChromaTXBsBySize [EncoderDecisionTransformSizeCount]uint64
 
 	// InterpFilters counts the switchable interpolation filter pairs the
 	// base-frame filter search coded (REGULAR, SMOOTH, SHARP), indexed by
@@ -115,9 +126,52 @@ func (s *EncoderDecisionStats) add(other EncoderDecisionStats) {
 		s.TXTypes[i] += other.TXTypes[i]
 	}
 	s.NonDCTTXBs += other.NonDCTTXBs
+	for i := range s.InterLumaTXBsBySize {
+		s.InterLumaTXBsBySize[i] += other.InterLumaTXBsBySize[i]
+		s.InterChromaTXBsBySize[i] += other.InterChromaTXBsBySize[i]
+	}
 	for i := range s.InterpFilters {
 		s.InterpFilters[i] += other.InterpFilters[i]
 	}
+}
+
+// noteInterTXBs records the exact per-size transform-block counts one coded
+// (non-skip) inter block emits: lumaCount leaves of lumaTX plus chromaCount
+// blocks of chromaTX.
+func (s *EncoderDecisionStats) noteInterTXBs(lumaTX tile.TransformSize, lumaCount int, chromaTX tile.TransformSize, chromaCount int) {
+	if s == nil {
+		return
+	}
+	if int(lumaTX) < len(s.InterLumaTXBsBySize) && lumaCount > 0 {
+		s.InterLumaTXBsBySize[lumaTX] += uint64(lumaCount)
+	}
+	if int(chromaTX) < len(s.InterChromaTXBsBySize) && chromaCount > 0 {
+		s.InterChromaTXBsBySize[chromaTX] += uint64(chromaCount)
+	}
+}
+
+// noteInterTXBSizes feeds the exact TXB-size histogram for one coded
+// (non-skip) inter block; the fused and split decision paths share it.
+func (st *lossyEncodeState) noteInterTXBSizes(blockSize tile.BlockSize, splitTX bool, txPlan realtimeInterTXPlan, bw, bh int) {
+	if st.decisionStats == nil {
+		return
+	}
+	var lumaTX tile.TransformSize
+	lumaCount := 1
+	if splitTX {
+		lumaTX = txPlan.leafTX
+		lumaCount = (bw / txPlan.leafSize) * (bh / txPlan.leafSize)
+	} else {
+		lumaTX, _ = st.interLumaTXAndScan(bw, bh)
+	}
+	chromaTX := tile.TransformSize4x4
+	chromaCount := 0
+	if !st.color.MonoChrome {
+		if tx, err := tile.MaxTransformSize(blockSize, st.color, 1); err == nil {
+			chromaTX, chromaCount = tx, 2
+		}
+	}
+	st.decisionStats.noteInterTXBs(lumaTX, lumaCount, chromaTX, chromaCount)
 }
 
 func (s *EncoderDecisionStats) noteInterpFilter(f int) {

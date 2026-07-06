@@ -816,6 +816,7 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	}
 	if st.decisionStats != nil {
 		st.decisionStats.noteInterBlock(block.Size, false, splitTX, refs, modeResult, txType)
+		st.noteInterTXBSizes(block.Size, splitTX, txPlan, bw, bh)
 	}
 	return nil
 }
