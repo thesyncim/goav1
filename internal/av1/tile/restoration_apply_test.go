@@ -366,6 +366,112 @@ func TestApplyRestorationFrameToFrameMatchesSampleFlow(t *testing.T) {
 	assertFrameMatchesRestorationPlanes(t, frm, manualPlanes, bitDepth)
 }
 
+// TestApplyRestorationFrameToFrameMatchesSampleFlowGarbageScratch re-runs the
+// bridge-vs-sample-flow equivalence at 8 and 12 bit with the data/dst sample
+// scratch pre-filled with garbage. The decoder reuses these buffers across
+// frames, so this proves the filtered-only walk (NONE records untouched, only
+// filtered rects stored back) never lets stale scratch reach the frame.
+func TestApplyRestorationFrameToFrameMatchesSampleFlowGarbageScratch(t *testing.T) {
+	for _, bitDepth := range []uint8{8, 12} {
+		types := [3]parser.RestorationType{parser.RestorationSwitchable, parser.RestorationSGRProj, parser.RestorationWiener}
+		plan := testRestorationFramePlan(t, types, false)
+		planes := makeRestorationFramePlanes(t, types, bitDepth, false)
+		manualPlanes := cloneRestorationFramePlanes(planes)
+		frm := makeRestorationApplyFrame(t, bitDepth, false)
+		fillFrameFromRestorationPlanes(t, frm, planes, bitDepth)
+
+		var records [3][]RestorationUnitRecord
+		var boundaries [3]RestorationStripeBoundaries
+		for plane := range planes {
+			records[plane] = planes[plane].Records
+			boundaries[plane] = planes[plane].Boundaries
+		}
+		sampleSize, err := RestorationFrameSampleScratchLen(plan, frm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		applySize, err := RestorationFrameScratchLen(planes, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := ApplyRestorationFrame(manualPlanes, bitDepth, makeRestorationBoundaryApplyScratch(applySize), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dataScratch := make([]uint16, sampleSize.DataLen)
+		dstScratch := make([]uint16, sampleSize.DstLen)
+		fillUint16(dataScratch, 0xbeef)
+		fillUint16(dstScratch, 0xdead)
+		got, err := ApplyRestorationFrameToFrame(plan, frm, records, boundaries, dataScratch, dstScratch, makeRestorationBoundaryApplyScratch(applySize), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("bd=%d result=%+v want %+v", bitDepth, got, want)
+		}
+		assertFrameMatchesRestorationPlanes(t, frm, manualPlanes, bitDepth)
+	}
+}
+
+// TestApplyRestorationFrameToFrameAllNoneRecords drives active grids whose
+// records are all RESTORATION_NONE: the bridge must leave every frame byte
+// untouched (dav1d never touches unfiltered units), skip the sample round-trip,
+// and still report the sample-flow result.
+func TestApplyRestorationFrameToFrameAllNoneRecords(t *testing.T) {
+	const bitDepth = 10
+	types := [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationSwitchable}
+	plan := testRestorationFramePlan(t, types, false)
+	planes := makeRestorationFramePlanes(t, types, bitDepth, false)
+	for plane := range planes {
+		for i := range planes[plane].Records {
+			planes[plane].Records[i].Unit = RestorationUnit{Type: parser.RestorationNone}
+		}
+	}
+	manualPlanes := cloneRestorationFramePlanes(planes)
+	frm := makeRestorationApplyFrame(t, bitDepth, false)
+	fillFrameFromRestorationPlanes(t, frm, planes, bitDepth)
+	before := append([]byte(nil), frm.Y.Pix...)
+
+	var records [3][]RestorationUnitRecord
+	var boundaries [3]RestorationStripeBoundaries
+	for plane := range planes {
+		records[plane] = planes[plane].Records
+		boundaries[plane] = planes[plane].Boundaries
+	}
+	sampleSize, err := RestorationFrameSampleScratchLen(plan, frm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applySize, err := RestorationFrameScratchLen(planes, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := ApplyRestorationFrame(manualPlanes, bitDepth, makeRestorationBoundaryApplyScratch(applySize), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataScratch := make([]uint16, sampleSize.DataLen)
+	dstScratch := make([]uint16, sampleSize.DstLen)
+	fillUint16(dataScratch, 0xbeef)
+	fillUint16(dstScratch, 0xdead)
+	got, err := ApplyRestorationFrameToFrame(plan, frm, records, boundaries, dataScratch, dstScratch, makeRestorationBoundaryApplyScratch(applySize), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("result=%+v want %+v", got, want)
+	}
+	if want.FilteredRecords != 0 {
+		t.Fatalf("all-none sample flow filtered %d records", want.FilteredRecords)
+	}
+	for i := range before {
+		if frm.Y.Pix[i] != before[i] {
+			t.Fatalf("frame Y byte %d changed %d -> %d", i, before[i], frm.Y.Pix[i])
+		}
+	}
+	assertFrameMatchesRestorationPlanes(t, frm, manualPlanes, bitDepth)
+}
+
 func TestApplyRestorationFrameToFrameRejectsInvalidInputs(t *testing.T) {
 	const bitDepth = 8
 	types := [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationNone, parser.RestorationNone}

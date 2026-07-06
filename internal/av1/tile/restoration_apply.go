@@ -406,6 +406,81 @@ func applyRestorationFramePlaneToDst(grid RestorationPlaneGrid, records []Restor
 	return ApplyRestorationPlaneRecords(grid, records, boundaries, data, dataStride, dataOrigin, dst, dstStride, dstOrigin, bitDepth, scratch, optimized)
 }
 
+// restorationRecordsAnyFiltered reports whether any record carries a filtering
+// unit type.
+func restorationRecordsAnyFiltered(records []RestorationUnitRecord) bool {
+	for i := range records {
+		if records[i].Unit.Type != parser.RestorationNone {
+			return true
+		}
+	}
+	return false
+}
+
+// applyRestorationPlaneRecordsFiltered is the frame-bridge variant of
+// ApplyRestorationPlaneRecords. It ports dav1d's restoration walk
+// (src/lr_apply_tmpl.c lr_sbrow(): restore = lr->type !=
+// DAV1D_RESTORATION_NONE): RESTORATION_NONE records are validated and counted
+// but never touched — no pass-through copy into dst — because the bridge
+// leaves their pixels resident in the frame and stores back only filtered
+// record rects. Result accounting matches ApplyRestorationPlaneRecords.
+func applyRestorationPlaneRecordsFiltered(grid RestorationPlaneGrid, records []RestorationUnitRecord, boundaries RestorationStripeBoundaries, data []uint16, dataStride int, dataOrigin int, dst []uint16, dstStride int, dstOrigin int, bitDepth uint8, scratch RestorationUnitRecordBoundaryScratch, optimized bool) (RestorationPlaneApplyResult, error) {
+	if err := validateRestorationPlaneRecords(grid, records); err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	var result RestorationPlaneApplyResult
+	for i := range records {
+		if records[i].Unit.Type == parser.RestorationNone {
+			if err := validateRestorationUnitRecord(grid, records[i]); err != nil {
+				return RestorationPlaneApplyResult{}, err
+			}
+			result.Records++
+			continue
+		}
+		recordResult, err := ApplyRestorationUnitRecordWithBoundaries(grid, records[i], boundaries, data, dataStride, dataOrigin, dst, dstStride, dstOrigin, bitDepth, scratch, optimized)
+		if err != nil {
+			return RestorationPlaneApplyResult{}, err
+		}
+		result.Records++
+		if recordResult.Filtered {
+			result.FilteredRecords++
+		}
+		result.Stripes += uint32(recordResult.Stripes)
+		result.ProcessingUnits += uint32(recordResult.ProcessingUnits)
+	}
+	return result, nil
+}
+
+// applyRestorationFramePlaneToDstFiltered mirrors applyRestorationFramePlaneToDst
+// with dav1d's touch-only-filtered-stripes shape: all-NONE planes skip the
+// frame extension entirely (nothing reads data), and NONE records inside mixed
+// planes are left untouched.
+func applyRestorationFramePlaneToDstFiltered(grid RestorationPlaneGrid, records []RestorationUnitRecord, boundaries RestorationStripeBoundaries, data []uint16, dataStride int, dataOrigin int, dst []uint16, dstStride int, dstOrigin int, bitDepth uint8, scratch RestorationUnitRecordBoundaryScratch, optimized bool) (RestorationPlaneApplyResult, error) {
+	if grid.Type == parser.RestorationNone {
+		if grid.Plane > 2 {
+			return RestorationPlaneApplyResult{}, ErrInvalidPlan
+		}
+		return RestorationPlaneApplyResult{}, nil
+	}
+	if !restorationRecordsAnyFiltered(records) {
+		if err := validateRestorationPlaneRecords(grid, records); err != nil {
+			return RestorationPlaneApplyResult{}, err
+		}
+		var result RestorationPlaneApplyResult
+		for i := range records {
+			if err := validateRestorationUnitRecord(grid, records[i]); err != nil {
+				return RestorationPlaneApplyResult{}, err
+			}
+			result.Records++
+		}
+		return result, nil
+	}
+	if err := ExtendRestorationFrame(data, dataStride, dataOrigin, int(grid.PlaneWidth), int(grid.PlaneHeight), restorationBorder, restorationBorder); err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	return applyRestorationPlaneRecordsFiltered(grid, records, boundaries, data, dataStride, dataOrigin, dst, dstStride, dstOrigin, bitDepth, scratch, optimized)
+}
+
 func applyRestorationFrameToDst(planes []RestorationFramePlane, bitDepth uint8, scratch RestorationUnitRecordBoundaryScratch, optimized bool) (RestorationFrameApplyResult, error) {
 	if err := validateRestorationFramePlanes(planes); err != nil {
 		return RestorationFrameApplyResult{}, err
@@ -413,6 +488,31 @@ func applyRestorationFrameToDst(planes []RestorationFramePlane, bitDepth uint8, 
 	var result RestorationFrameApplyResult
 	for i := range planes {
 		planeResult, err := applyRestorationFramePlaneToDst(planes[i].Grid, planes[i].Records, planes[i].Boundaries, planes[i].Data, planes[i].DataStride, planes[i].DataOrigin, planes[i].Dst, planes[i].DstStride, planes[i].DstOrigin, bitDepth, scratch, optimized)
+		if err != nil {
+			return RestorationFrameApplyResult{}, err
+		}
+		result.PlaneResults[i] = planeResult
+		if planes[i].Grid.Type == parser.RestorationNone {
+			continue
+		}
+		result.Planes++
+		if err := accumulateRestorationFrameResult(&result, planeResult); err != nil {
+			return RestorationFrameApplyResult{}, err
+		}
+	}
+	return result, nil
+}
+
+// applyRestorationFrameToDstFiltered is applyRestorationFrameToDst with the
+// dav1d-shaped filtered-only plane walk (see
+// applyRestorationFramePlaneToDstFiltered). Result accounting is identical.
+func applyRestorationFrameToDstFiltered(planes []RestorationFramePlane, bitDepth uint8, scratch RestorationUnitRecordBoundaryScratch, optimized bool) (RestorationFrameApplyResult, error) {
+	if err := validateRestorationFramePlanes(planes); err != nil {
+		return RestorationFrameApplyResult{}, err
+	}
+	var result RestorationFrameApplyResult
+	for i := range planes {
+		planeResult, err := applyRestorationFramePlaneToDstFiltered(planes[i].Grid, planes[i].Records, planes[i].Boundaries, planes[i].Data, planes[i].DataStride, planes[i].DataOrigin, planes[i].Dst, planes[i].DstStride, planes[i].DstOrigin, bitDepth, scratch, optimized)
 		if err != nil {
 			return RestorationFrameApplyResult{}, err
 		}

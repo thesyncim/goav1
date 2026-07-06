@@ -227,6 +227,33 @@ func StoreBorderedSamplePlaneTrusted(dst Plane, bytesPerSample int, src Bordered
 	return nil
 }
 
+// StoreBorderedSamplePlaneRectTrusted writes the [x0, x0+width) x [y0, y0+height)
+// sub-rectangle of src's visible region into dst like
+// StoreBorderedSamplePlaneTrusted. Loop restoration uses it to store only
+// filtered restoration-unit rects back to the frame, leaving pass-through
+// (RESTORATION_NONE) pixels resident in the frame the way dav1d's in-place
+// restoration walk does (src/lr_apply_tmpl.c lr_sbrow()).
+func StoreBorderedSamplePlaneRectTrusted(dst Plane, bytesPerSample int, src BorderedSamplePlane, x0 int, y0 int, width int, height int) error {
+	if _, _, err := samplePlaneLayout(dst, bytesPerSample, true); err != nil {
+		return err
+	}
+	if !borderedSamplePlaneFits(src) || src.Width != dst.Width || src.Height != dst.Height {
+		return ErrInvalidPlane
+	}
+	if x0 < 0 || y0 < 0 || width < 0 || height < 0 ||
+		width > dst.Width || height > dst.Height ||
+		x0 > dst.Width-width || y0 > dst.Height-height {
+		return ErrInvalidPlane
+	}
+	if width == 0 || height == 0 {
+		return nil
+	}
+	dstOff := y0*dst.Stride + x0*bytesPerSample
+	srcOff := src.Origin + y0*src.Stride + x0
+	storeSampleRowsTrusted(dst.Pix[dstOff:], dst.Stride, src.Pix[srcOff:], src.Stride, width, height, bytesPerSample)
+	return nil
+}
+
 func samplePlaneLayout(plane Plane, bytesPerSample int, requirePix bool) (int, int, error) {
 	if bytesPerSample != 1 && bytesPerSample != 2 {
 		return 0, 0, ErrInvalidPlane

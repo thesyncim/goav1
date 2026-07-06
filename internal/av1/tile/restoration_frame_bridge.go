@@ -70,8 +70,13 @@ func RestorationFrameSampleScratchLen(plan RestorationFramePlan, frm av1frame.Fr
 
 // ApplyRestorationFrameToFrame applies decoded restoration records to a
 // byte-backed frame. The function loads active planes into caller-owned
-// bordered uint16 scratch, runs ApplyRestorationFrame, and stores restored
-// visible samples back to frm.
+// bordered uint16 scratch, filters into a bordered dst scratch, and stores
+// restored samples back to frm. Following dav1d's restoration walk
+// (src/lr_apply_tmpl.c lr_sbrow(): restore = lr->type !=
+// DAV1D_RESTORATION_NONE), only filtered restoration units are touched:
+// RESTORATION_NONE records are never copied through the sample scratch — their
+// pixels stay resident in the frame — and only filtered record rects are
+// stored back. All-NONE planes skip the load/extend/store round-trip entirely.
 func ApplyRestorationFrameToFrame(plan RestorationFramePlan, frm av1frame.Frame, records [3][]RestorationUnitRecord, boundaries [3]RestorationStripeBoundaries, dataScratch []uint16, dstScratch []uint16, scratch RestorationUnitRecordBoundaryScratch, optimized bool) (RestorationFrameApplyResult, error) {
 	size, err := RestorationFrameSampleScratchLen(plan, frm)
 	if err != nil {
@@ -94,6 +99,7 @@ func ApplyRestorationFrameToFrame(plan RestorationFramePlan, frm av1frame.Frame,
 
 	var planes [3]RestorationFramePlane
 	var dstViews [3]av1frame.BorderedSamplePlane
+	var anyFiltered [3]bool
 	dataOffset := 0
 	dstOffset := 0
 	for plane := 0; plane < int(plan.Planes); plane++ {
@@ -106,13 +112,21 @@ func ApplyRestorationFrameToFrame(plan RestorationFramePlan, frm av1frame.Frame,
 		if grid.Type == parser.RestorationNone {
 			continue
 		}
+		anyFiltered[plane] = restorationRecordsAnyFiltered(records[plane])
 		buffer, err := restorationFramePlaneBuffer(frm, plane)
 		if err != nil {
 			return RestorationFrameApplyResult{}, err
 		}
 		dataLayout := size.Data[plane]
 		dstLayout := size.Dst[plane]
-		dataView, err := av1frame.LoadBorderedSamplePlane(dataScratch[dataOffset:dataOffset+dataLayout.Len], buffer, bytesPerSample, RestorationFrameBorder, RestorationFrameBorder, align)
+		var dataView av1frame.BorderedSamplePlane
+		if anyFiltered[plane] {
+			dataView, err = av1frame.LoadBorderedSamplePlane(dataScratch[dataOffset:dataOffset+dataLayout.Len], buffer, bytesPerSample, RestorationFrameBorder, RestorationFrameBorder, align)
+		} else {
+			// No record filters anything: the plane walk reads no samples,
+			// so bind the scratch without the whole-plane load.
+			dataView, err = av1frame.BindBorderedSamplePlane(dataScratch[dataOffset:dataOffset+dataLayout.Len], buffer, bytesPerSample, RestorationFrameBorder, RestorationFrameBorder, align)
+		}
 		if err != nil {
 			return RestorationFrameApplyResult{}, err
 		}
@@ -131,20 +145,27 @@ func ApplyRestorationFrameToFrame(plan RestorationFramePlan, frm av1frame.Frame,
 		dstOffset += dstLayout.Len
 	}
 
-	result, err := applyRestorationFrameToDst(planes[:int(plan.Planes)], bitDepth, scratch, optimized)
+	result, err := applyRestorationFrameToDstFiltered(planes[:int(plan.Planes)], bitDepth, scratch, optimized)
 	if err != nil {
 		return RestorationFrameApplyResult{}, err
 	}
 	for plane := 0; plane < int(plan.Planes); plane++ {
-		if plan.Grids[plane].Type == parser.RestorationNone {
+		if plan.Grids[plane].Type == parser.RestorationNone || !anyFiltered[plane] {
 			continue
 		}
 		buffer, err := restorationFramePlaneBuffer(frm, plane)
 		if err != nil {
 			return RestorationFrameApplyResult{}, err
 		}
-		if err := av1frame.StoreBorderedSamplePlaneTrusted(buffer, bytesPerSample, dstViews[plane]); err != nil {
-			return RestorationFrameApplyResult{}, err
+		for i := range records[plane] {
+			record := &records[plane][i]
+			if record.Unit.Type == parser.RestorationNone {
+				continue
+			}
+			rect := record.Rect
+			if err := av1frame.StoreBorderedSamplePlaneRectTrusted(buffer, bytesPerSample, dstViews[plane], int(rect.X0), int(rect.Y0), int(rect.Width()), int(rect.Height())); err != nil {
+				return RestorationFrameApplyResult{}, err
+			}
 		}
 	}
 	return result, nil

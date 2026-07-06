@@ -303,6 +303,85 @@ func TestStoreBorderedSamplePlaneTrustedMatchesChecked(t *testing.T) {
 	}
 }
 
+// TestStoreBorderedSamplePlaneRectTrustedMatchesFullStore proves that tiling a
+// plane with rect stores reproduces the full trusted store byte-for-byte, and
+// that a partial rect store leaves every destination byte outside the rect
+// untouched.
+func TestStoreBorderedSamplePlaneRectTrustedMatchesFullStore(t *testing.T) {
+	for _, bytesPerSample := range [...]int{1, 2} {
+		plane := Plane{Pix: make([]byte, 9*bytesPerSample*6), Stride: 9 * bytesPerSample, Width: 7, Height: 6}
+		maxSample := uint16(0xff)
+		if bytesPerSample == 2 {
+			maxSample = 0xfff
+		}
+		for y := 0; y < plane.Height; y++ {
+			for x := 0; x < plane.Width; x++ {
+				setTestPlaneSample(plane, bytesPerSample, x, y, uint16(31*y+7*x)&maxSample)
+			}
+		}
+		layout, err := BorderedSamplePlaneLen(plane, bytesPerSample, 3, 2, 8)
+		if err != nil {
+			t.Fatal(err)
+		}
+		samples, err := LoadBorderedSamplePlane(make([]uint16, layout.Len), plane, bytesPerSample, 3, 2, 8)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		full := Plane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
+		if err := StoreBorderedSamplePlaneTrusted(full, bytesPerSample, samples); err != nil {
+			t.Fatal(err)
+		}
+		tiled := Plane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
+		rects := [][4]int{{0, 0, 4, 3}, {4, 0, 3, 3}, {0, 3, 4, 3}, {4, 3, 3, 3}}
+		for _, r := range rects {
+			if err := StoreBorderedSamplePlaneRectTrusted(tiled, bytesPerSample, samples, r[0], r[1], r[2], r[3]); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if string(tiled.Pix) != string(full.Pix) {
+			t.Fatalf("bytesPerSample=%d tiled=% x full=% x", bytesPerSample, tiled.Pix, full.Pix)
+		}
+
+		partial := Plane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
+		for i := range partial.Pix {
+			partial.Pix[i] = 0xa5
+		}
+		if err := StoreBorderedSamplePlaneRectTrusted(partial, bytesPerSample, samples, 2, 1, 3, 2); err != nil {
+			t.Fatal(err)
+		}
+		for y := 0; y < partial.Height; y++ {
+			for x := 0; x < partial.Width; x++ {
+				inside := x >= 2 && x < 5 && y >= 1 && y < 3
+				got := getTestPlaneSample(partial, bytesPerSample, x, y)
+				if inside {
+					want := getTestPlaneSample(full, bytesPerSample, x, y)
+					if got != want {
+						t.Fatalf("bytesPerSample=%d inside (%d,%d)=%d want %d", bytesPerSample, x, y, got, want)
+					}
+					continue
+				}
+				stale := uint16(0xa5)
+				if bytesPerSample == 2 {
+					stale = 0xa5a5
+				}
+				if got != stale {
+					t.Fatalf("bytesPerSample=%d outside (%d,%d)=%d want stale %d", bytesPerSample, x, y, got, stale)
+				}
+			}
+		}
+
+		if err := StoreBorderedSamplePlaneRectTrusted(partial, bytesPerSample, samples, 0, 0, 0, 0); err != nil {
+			t.Fatalf("empty rect err=%v", err)
+		}
+		for _, bad := range [][4]int{{-1, 0, 2, 2}, {0, -1, 2, 2}, {6, 0, 2, 2}, {0, 5, 2, 2}, {0, 0, 8, 1}, {0, 0, 1, 7}} {
+			if err := StoreBorderedSamplePlaneRectTrusted(partial, bytesPerSample, samples, bad[0], bad[1], bad[2], bad[3]); !errors.Is(err, ErrInvalidPlane) {
+				t.Fatalf("rect %v err=%v want %v", bad, err, ErrInvalidPlane)
+			}
+		}
+	}
+}
+
 func TestStoreBorderedSamplePlaneTrustedRejectsInvalidGeometry(t *testing.T) {
 	src := BorderedSamplePlane{Pix: make([]uint16, 10), Stride: 4, Origin: 3, Width: 2, Height: 1}
 	dst := Plane{Pix: make([]byte, 2), Stride: 2, Width: 2, Height: 1}
