@@ -104,7 +104,7 @@ Gate checklist per commit, in order:
 | gap | 2026-07-02 | 2026-07-06 AM | NOW |
 |---|---|---|---|
 | decoder vs dav1d (corpus ST) | 4.34x | 3.91x | **3.52x** |
-| encoder vs SVT p12 (realC ST cpu) | 5.2x | 4.2x | **~3.4x** (1.72s vs 0.49s) |
+| encoder vs SVT p12 (realC ST cpu) | 5.2x | 4.2x | **~3.3x** (E2-c same-run 1.717 vs 0.516) |
 
 Encoder quality vs SVT: goav1 +0.4-0.5 dB on every clip (this surplus is
 the M-E2 spend budget). Decoder correctness: strict 226/226 + corpus
@@ -275,16 +275,40 @@ apply (that was SIMD inverse-CDF search; this is scalar asm).
 ### M-E2: quality-spend reframe (target ~2.4x) — SVT-MATCHED gate
 We hold +0.4-0.5 dB over SVT; 1.4x is at MATCHED quality. Ladders that
 were red at hold-quality get re-run against the SVT-matched gate (§2).
-- [ ] **E2-a spend harness** — qualitybench flag/mode that runs goav1 +
-  SVT same-run and asserts per-clip goav1 >= SVT (the matched gate);
-  document in this file. (S)
-- [ ] **E2-b depth-arms ladder re-run** — infra landed + kill-switched
-  (fdb6183c/116d8450); step levels above 9/14 against the matched gate.
-  (S — pure measurement)
-- [ ] **E2-c mds0 candidate/dist-band cuts ladder** (M)
-- [ ] **E2-d leaf subpel schedule ladder** — the pinned pruned-subpel
-  port was red at HOLD quality; matched gate may flip it. Re-run the
-  existing pinned variant first, no new code. (S)
+- [x] **E2-a spend harness** — LANDED e6d403a7: scripts/spend_gate.sh
+  runs goav1+SVT same-run (§2 protocol, both ST) over the four clips and
+  emits the verdict table (dPSNR at measured rates, rate delta flagged
+  past +2%, cpu_total/wall both). Baseline at then-defaults: realA +1.98,
+  realB +2.18, realC +0.52, screen +12.12 dB (rates +1.7/+3.8/+4.3/+7.4%
+  vs SVT; cpu 1.29/1.29/1.75/1.19 vs 0.41/0.41/0.52/0.67). (done)
+- [x] **E2-b depth-arms ladder re-run** — MEASURED, NO WIN (2026-07-06,
+  no code change; sweep ran via throwaway env override, removed after,
+  override-at-9,14 proven byte-identical first). Rungs 11,14 / 11,15 /
+  13,15 / 15,15 all GREEN on the matched gate but realA+screen bytes are
+  IDENTICAL across rungs and realB/C move <0.02 dB: the arms fire on
+  ~235 swept SBs/60f (below16 216→231, below64 1→12 across the whole
+  ladder). Max-removal rung 15,15 interleaved realC ST cpu = +0.5%
+  (medians 1.749 vs 1.741) — nothing to harvest; §6 pin (removals only
+  save leaf work that exists) confirmed under the MATCHED gate too. 9/14
+  stays; SVT's own rtc 1080p ladder tops out at 9/14 anyway
+  (enc_mode_config.c:9287-9295). (done)
+- [x] **E2-c mds0 candidate/dist-band cuts ladder** — LANDED (see
+  commit): mds0NearCount 3→1 = SVT parity fix + spend win. Preset-12 rtc
+  operates at cand_reduction_level 5 (any lpd1 level > LPD1_LVL_3,
+  enc_mode_config.c:7251-7259) whose near_count=1; the old 3 mis-cited
+  the level<=2 rows. Interleaved realC ST cpu −2.2% (1.717 vs 1.756, B<A
+  in 5/5 pairs) at realC −0.035 / realA −0.106 dB of surplus, all clips
+  green same-run. Ladder rest: near_count 0 (level-6 stats-pass shape)
+  = ~−2% more cpu but realC margin collapses to +0.14 dB at +3.5% rate —
+  rejected; leaf band-gate 4→3→2 quality-flat AND cpu-flat (band3 stacked
+  on near1: −1.8% vs −2.2% alone, noise) — band stays 4. (done)
+- [x] **E2-d leaf subpel schedule ladder** — SKIPPED: the reverted
+  SUBPEL_TREE_PRUNED port is not recoverable (searched all refs, stashes,
+  156 dangling commits, sibling worktrees; only the pin record 17f4fdf8
+  survives). Re-testing at MATCHED gate requires reimplementing the port
+  — out of this slice per its own scope rule. If re-attempted: worth it
+  only bundled with the E2-c surplus math, realC margin is now +0.49 dB.
+  (skipped)
 - [ ] **E2-e golden/probe breadth ladder** (S)
 - [ ] **E2-f open-loop ME (audit E-B)** — retention plumbing (lastSrcY/
   goldenSrcY + quarter planes, pipelining double-buffer discipline), then
@@ -338,7 +362,11 @@ harness is construction churn, not decode (streaming decode is 0-alloc).
 ENCODER: depth-removal as a CPU lever CLOSED (P3 grid-reuse red in every
 config: mesh budget ~3.5% of cpu vs sweep tax 7-10%; SVT sweep economics
 don't transfer — our ME was already cheap; only a ~4x cheaper NEON sweep
-kernel could reopen) · largest-TX P-frames (-0.66 dB realA/B; libaom's
+kernel could reopen; RE-CONFIRMED under the SVT-MATCHED gate, E2-b
+2026-07-06: level rungs up to 15,15 quality-green but +0.5% cpu — the
+arms fire on ~235 SBs/60f, nothing to remove) · mds0 near_count 0
+(stats-pass shape: −0.29..−0.38 dB, realC margin +0.14 dB at +3.5% rate)
+· mds0 leaf band-gate 3/2 (quality-flat, cpu-flat) · largest-TX P-frames (-0.66 dB realA/B; libaom's
 variance TX-size election is load-bearing; SVT tx_depth-0 needs its
 SATD/RDOQ pipeline; diff preserved in scratchpad p2_largest_tx.diff) ·
 leaf skip-TX arm (realB -0.29 dB; skip cascades through neighbour

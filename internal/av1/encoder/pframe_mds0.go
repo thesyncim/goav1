@@ -12,8 +12,7 @@ import (
 //     inject_new_candidates_light_pd1 (Source/Lib/Codec/mode_decision.c):
 //     NEARESTMV, then up to near_count NEARMV DRL entries, then the ME NEWMV,
 //     deduplicated by vector (mv_is_already_injected). At preset 12 the
-//     candidate reduction level pins near_count to 3
-//     (Source/Lib/Codec/enc_mode_config.c set_cand_reduction_ctrls) and
+//     candidate reduction level pins near_count to 1 (see mds0NearCount) and
 //     choose_best_av1_mv_pred keeps NEWMV on DRL index 0
 //     (approx_inter_rate > 1 path).
 //   - Pricing: fast_loop_core_light_pd1
@@ -38,12 +37,22 @@ import (
 // reference frames buy the fuller decision; droppable leaves run a
 // detector-capped variant (see the gate in encodePBlock).
 
-// mds0NearCount is SVT-AV1's near_count at preset 12 (enc_mode_config.c
-// set_cand_reduction_ctrls, cand_reduction_level 1 for P frames).
-const mds0NearCount = 3
+// mds0NearCount is SVT-AV1's near_count at preset 12's actual light-PD1
+// operating point: pic_lpd1_lvl = is_base ? 4 : 7, and any lpd1 level above
+// LPD1_LVL_3 selects cand_reduction_level 5 (enc_mode_config.c:7251-7259),
+// whose near_count_ctrls.near_count is 1; inject_mvp_candidates_ii_light_pd1
+// caps the NEAR DRL loop with it (mode_decision.c:1400-1404). The previous
+// value 3 mis-cited the cand_reduction_level<=2 rows, which preset 12 never
+// runs on P frames. E2-c ladder (2026-07-06, SVT-MATCHED gate): near_count 1
+// = -2.2% realC single-thread cpu_total (interleaved medians 1.717 vs 1.756)
+// at realC -0.035 dB / realA -0.106 dB of the +0.5..+2.0 dB surplus, every
+// clip green vs SVT same-run; near_count 0 (the cand_reduction_level-6
+// stats-pass shape) buys ~2% more but drops realC to +0.14 dB over SVT at
+// +3.5% rate — not robust at matched rate, rejected.
+const mds0NearCount = 1
 
-// mds0MaxCands bounds NEAREST + 3 NEAR + GLOBAL + NEW.
-const mds0MaxCands = 6
+// mds0MaxCands bounds NEAREST + 1 NEAR + GLOBAL + NEW.
+const mds0MaxCands = 4
 
 type mds0Cand struct {
 	mode tile.InterMode

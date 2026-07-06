@@ -21,9 +21,10 @@
 #   SPEND_GATE_CORPUS  corpus dir (default /tmp/corpus)
 #   SPEND_GATE_CLIPS   space-separated clip subset (default all four)
 #   SPEND_GATE_OUT     dir for the per-clip CSVs (default: mktemp -d)
-# GOAV1_* env (kill-switches, ladder overrides) passes through to the
-# in-process goav1 encoder, so ladder rungs run as:
-#   GOAV1_DEPTH_REMOVAL_LEVELS=11,15 scripts/spend_gate.sh
+# GOAV1_* env (kill-switches, temporary sweep scaffolding) passes through
+# to the in-process goav1 encoder, so ladder rungs run as:
+#   GOAV1_<SWEEP_KNOB>=... scripts/spend_gate.sh
+# (sweep knobs are working-tree scaffolding only; winners land as constants)
 set -u
 
 CORPUS="${SPEND_GATE_CORPUS:-/tmp/corpus}"
