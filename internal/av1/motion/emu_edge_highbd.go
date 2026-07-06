@@ -108,3 +108,43 @@ func emuEdgeWindow16(ref frame.Plane, refX int, refY int, width int, height int,
 	}
 	return emu, foX, foY
 }
+
+// emuEdgeWindow16X materializes only the horizontal halo of a width x height
+// 16bpc block at (refX, refY): dav1d's reconstruction sizes the emu_edge
+// window per filtered direction (src/recon_tmpl.c mc(): bw = w + !!mx * 7,
+// bh = h + !!my * 7), so a horizontal-only convolve copies just height rows.
+// Returns a plane over the window plus the block's x origin inside it (its y
+// origin is 0).
+func emuEdgeWindow16X(ref frame.Plane, refX int, refY int, width int, height int, edge *emuEdge16Buf) (frame.Plane, int) {
+	foX := filterTaps/2 - 1
+	haloW := width + filterTaps
+	const strideBytes = emuEdge16Stride * 2
+	emuEdge16(haloW, height, ref, refX-foX, refY, edge[:], strideBytes)
+	emu := frame.Plane{
+		Pix:    edge[:],
+		Stride: strideBytes,
+		Width:  haloW,
+		Height: height,
+	}
+	return emu, foX
+}
+
+// emuEdgeWindow16Y materializes only the vertical halo of a width x height
+// 16bpc block at (refX, refY): dav1d's reconstruction sizes the emu_edge
+// window per filtered direction (src/recon_tmpl.c mc(): bw = w + !!mx * 7,
+// bh = h + !!my * 7), so a vertical-only convolve copies just width columns.
+// Returns a plane over the window plus the block's y origin inside it (its x
+// origin is 0).
+func emuEdgeWindow16Y(ref frame.Plane, refX int, refY int, width int, height int, edge *emuEdge16Buf) (frame.Plane, int) {
+	foY := filterTaps/2 - 1
+	haloH := height + filterTaps - 1
+	const strideBytes = emuEdge16Stride * 2
+	emuEdge16(width, haloH, ref, refX, refY-foY, edge[:], strideBytes)
+	emu := frame.Plane{
+		Pix:    edge[:],
+		Stride: strideBytes,
+		Width:  width,
+		Height: haloH,
+	}
+	return emu, foY
+}

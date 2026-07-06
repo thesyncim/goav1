@@ -511,16 +511,29 @@ func copyRestorationUnit(src []uint16, srcStride int, srcOrigin int, dst []uint1
 		!restorationSampleBlockFitsAt(len(dst), 0, dstStride, width, height) {
 		return ErrInvalidPlan
 	}
+	// dav1d never copies RESTORATION_NONE units at all (src/lr_apply_tmpl.c
+	// lr_stripe walks only filtered stripes in place); this bordered-scratch
+	// dst pipeline must copy them through, so keep the pass-through a row
+	// memmove. max is always 2^bitDepth-1 (restorationApplyMaxSample), so the
+	// per-sample range validation reduces to an OR-accumulated high-bit test:
+	// sample > max <=> sample&^max != 0.
+	hi := ^max
 	for row := range height {
-		srcRow := srcOrigin + row*srcStride
-		dstRow := row * dstStride
-		for col := range width {
-			sample := src[srcRow+col]
-			if sample > max {
-				return ErrInvalidPlan
-			}
-			dst[dstRow+col] = sample
+		base := srcOrigin + row*srcStride
+		srcRow := src[base : base+width]
+		var acc uint16
+		x := 0
+		for ; x+4 <= width; x += 4 {
+			acc |= srcRow[x] | srcRow[x+1] | srcRow[x+2] | srcRow[x+3]
 		}
+		for ; x < width; x++ {
+			acc |= srcRow[x]
+		}
+		if acc&hi != 0 {
+			return ErrInvalidPlan
+		}
+		dstRow := row * dstStride
+		copy(dst[dstRow:dstRow+width], srcRow)
 	}
 	return nil
 }

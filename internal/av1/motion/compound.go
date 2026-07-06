@@ -154,12 +154,16 @@ func predictInterCompoundRefHighBDToConvBuf(out []uint16, ref frame.Plane, bitDe
 	case subX != 0:
 		if planeRegionFits(ref, 2, refX-foX, refY, width+filterTaps-1, height) {
 			predictInterCompoundRefHighBDToConvBufXResidentImpl(out, ref, refX, refY, width, height, xKernel, round0, roundOffset)
+		} else if scratch != nil {
+			predictInterCompoundRefHighBDToConvBufXEmuEdge(out, ref, refX, refY, width, height, xKernel, round0, roundOffset, &scratch.edge16)
 		} else {
 			predictInterCompoundRefHighBDToConvBufXClamped(out, ref, refX, refY, width, height, xKernel, round0, roundOffset)
 		}
 	case subY != 0:
 		if planeRegionFits(ref, 2, refX, refY-foY, width, height+filterTaps-1) {
 			predictInterCompoundRefHighBDToConvBufYResidentImpl(out, ref, refX, refY, width, height, yKernel, round0, roundOffset)
+		} else if scratch != nil {
+			predictInterCompoundRefHighBDToConvBufYEmuEdge(out, ref, refX, refY, width, height, yKernel, round0, roundOffset, &scratch.edge16)
 		} else {
 			predictInterCompoundRefHighBDToConvBufYClamped(out, ref, refX, refY, width, height, yKernel, round0, roundOffset)
 		}
@@ -336,6 +340,26 @@ func predictInterCompoundRefHighBDToConvBufXClamped(out []uint16, ref frame.Plan
 			outRow[x] = uint16(roundPowerOfTwo(sum, round0)*scale + roundOffset)
 		}
 	}
+}
+
+// predictInterCompoundRefHighBDToConvBufXEmuEdge handles the edge-overhanging
+// HBD compound horizontal-only convolve. Following dav1d's reconstruction model
+// (src/recon_tmpl.c mc(), src/mc_tmpl.c emu_edge_c), it materializes the
+// clamped horizontal tap halo once (emuEdgeWindow16X) and reruns the plain
+// resident kernel over the resident window. The samples the kernel loads are
+// exactly what the per-tap-clamping reference would load, so the result is
+// bit-identical to predictInterCompoundRefHighBDToConvBufXClamped.
+func predictInterCompoundRefHighBDToConvBufXEmuEdge(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int, edge *emuEdge16Buf) {
+	emu, emuX := emuEdgeWindow16X(ref, refX, refY, width, height, edge)
+	predictInterCompoundRefHighBDToConvBufXResidentImpl(out, emu, emuX, 0, width, height, kernel, round0, roundOffset)
+}
+
+// predictInterCompoundRefHighBDToConvBufYEmuEdge is the vertical-only sibling
+// of predictInterCompoundRefHighBDToConvBufXEmuEdge; bit-identical to
+// predictInterCompoundRefHighBDToConvBufYClamped.
+func predictInterCompoundRefHighBDToConvBufYEmuEdge(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int, edge *emuEdge16Buf) {
+	emu, emuY := emuEdgeWindow16Y(ref, refX, refY, width, height, edge)
+	predictInterCompoundRefHighBDToConvBufYResidentImpl(out, emu, 0, emuY, width, height, kernel, round0, roundOffset)
 }
 
 func predictInterCompoundRefHighBDToConvBufYResident(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {

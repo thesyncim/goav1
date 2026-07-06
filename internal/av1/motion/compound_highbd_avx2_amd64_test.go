@@ -193,6 +193,58 @@ func TestCompoundHBD2DClampedAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
+// TestCompoundHBDXYClampedEmuEdgeAVX2MatchesPureGo runs the AVX2 X/Y resident
+// kernels over emu_edge halo windows of edge-overhanging blocks (the compound
+// X/Y clamped fast path) and asserts bit-identity with the pure-Go per-tap
+// clamping references.
+func TestCompoundHBDXYClampedEmuEdgeAVX2MatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0xC0DE07))
+	tables := avx2FilterTables()
+	xk := tables[2][11]
+	yk := tables[0][7]
+	for _, bd := range []uint8{10, 12} {
+		max := uint16((1 << int(bd)) - 1)
+		round0, _, roundOffset := compoundHBDParams(bd)
+		const refW, refH = 40, 24
+		stride := refW * 2
+		ref := frame.Plane{Pix: make([]byte, stride*refH), Stride: stride, Width: refW, Height: refH}
+		for y := range refH {
+			for x := range refW {
+				storeHighBDSample(ref, x, y, uint16(rng.Intn(int(max)+1)))
+			}
+		}
+		for _, sz := range []struct{ w, h int }{{4, 4}, {8, 8}, {16, 8}, {8, 16}, {12, 4}, {64, 32}} {
+			for _, org := range [][2]int{{-3, -2}, {refW - sz.w + 2, 1}, {1, refH - sz.h + 3}, {refW - 4, refH - 4}, {-sz.w, -sz.h}} {
+				gotX := make([]uint16, sz.w*sz.h)
+				gotY := make([]uint16, sz.w*sz.h)
+				wantX := make([]uint16, sz.w*sz.h)
+				wantY := make([]uint16, sz.w*sz.h)
+				var edge emuEdge16Buf
+				for i := range edge {
+					edge[i] = 0xa5
+				}
+				emu, emuX := emuEdgeWindow16X(ref, org[0], org[1], sz.w, sz.h, &edge)
+				predictInterCompoundRefHighBDToConvBufXResidentAVX2(gotX, emu, emuX, 0, sz.w, sz.h, xk, round0, roundOffset)
+				predictInterCompoundRefHighBDToConvBufXClamped(wantX, ref, org[0], org[1], sz.w, sz.h, xk, round0, roundOffset)
+				for i := range edge {
+					edge[i] = 0x5a
+				}
+				emu, emuY := emuEdgeWindow16Y(ref, org[0], org[1], sz.w, sz.h, &edge)
+				predictInterCompoundRefHighBDToConvBufYResidentAVX2(gotY, emu, 0, emuY, sz.w, sz.h, yk, round0, roundOffset)
+				predictInterCompoundRefHighBDToConvBufYClamped(wantY, ref, org[0], org[1], sz.w, sz.h, yk, round0, roundOffset)
+				for i := range wantX {
+					if gotX[i] != wantX[i] {
+						t.Fatalf("X emu bd=%d %dx%d org=%v sample %d: AVX2=%d PureGo=%d", bd, sz.w, sz.h, org, i, gotX[i], wantX[i])
+					}
+					if gotY[i] != wantY[i] {
+						t.Fatalf("Y emu bd=%d %dx%d org=%v sample %d: AVX2=%d PureGo=%d", bd, sz.w, sz.h, org, i, gotY[i], wantY[i])
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestCompoundHBDAVX2ZeroAlloc(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xC0DE06))
 	const pad = filterTaps
