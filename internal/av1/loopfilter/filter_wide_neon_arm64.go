@@ -117,14 +117,15 @@ func filter8EdgeNEONAsm(ctx *filter8NEONCtx)
 //go:noescape
 func filter14EdgeNEONAsm(ctx *filter14NEONCtx)
 
-// wideVertTransposeCtx is the asm calling context for the fourteen-sample
-// vertical-edge transpose kernels (both 8-bit and 16-bit variants share the
-// layout). src points at the lowest tap byte (p6) of the first position,
-// stride is the byte distance between adjacent positions, scratch is the base
-// of the horizontal-layout scratch (row stride 32 bytes at 8-bit, 64 at
-// 16-bit), and count is the number of eight-position groups (1..4). Field
-// order is part of the ABI shared with filter14_vtrn_neon_arm64.s; do not
-// reorder.
+// wideVertTransposeCtx is the asm calling context for the vertical-edge
+// transpose kernels (the 8-bit and 16-bit fourteen-sample variants and the
+// 16-bit six/eight-sample variants all share the layout). src points at the
+// lowest tap byte (p2/p3/p6 respectively) of the first position, stride is
+// the byte distance between adjacent positions, scratch is the base of the
+// horizontal-layout scratch (row stride 32 bytes at 8-bit, 64 at 16-bit), and
+// count is the number of eight-position groups (1..4). Field order is part of
+// the ABI shared with filter14_vtrn_neon_arm64.s and
+// filter_wide16_vtrn_neon_arm64.s; do not reorder.
 type wideVertTransposeCtx struct {
 	src     *byte
 	stride  uintptr
