@@ -374,11 +374,16 @@ and never touches NONE units. PROGRAM STATUS (2026-07-06 afternoon — P1-P3 LAN
   FilterRect overhang polluted padding, caught by differential); dst scratch
   + store-back deleted for 8-bit. −1.2-1.3% on every LR-active 8-bit clip;
   10/12-bit keeps the u16 path.
-- **P4 REMAINING (the last LR memory-traffic win):** kill the u8 snapshot
-  itself via dav1d lr_stripe/backup_lpf row-backup model — filter in place
-  top-down keeping O(rows) backed-up boundary lines as the cross-stripe
-  halo; replaces LoadBorderedBytePlane with line buffers. Needs per-stripe
-  row-backup plumbing in the walk order. Agent-mapped, not yet attempted.
+- **P4 LANDED (ddddce3e) — PROGRAM COMPLETE.** In-place stripe walk (dav1d
+  lr_stripe/backup4xU shape): vertical seam halo always comes from the saved
+  boundary lines, left-neighbor halo from a 4-column pre-overwrite backup,
+  per-stripe ~27KB bordered band assembly, kernels write the frame directly.
+  No parallel gate needed — LR is a single serial whole-frame call with
+  pinned row-major record order. LoadBorderedBytePlane gone; LR scratch
+  traffic 1.4MB→30KB/frame; e2e p720_inter_q32 −1.15% cpu. FOLLOW-UPS: shrink
+  the now-oversized u16 Data/Dst arena size contract (D5 memory, safe);
+  remaining LR cost is the Wiener/SGR kernels themselves (row-fusion was
+  audited + declined — only revisit with new evidence).
 
 **D4. High-bit-depth coverage — MAJOR SLICE LANDED (77addf06, 2026-07-06):**
 the HBD 2D convolve wrapper zero-filled a ~69KB int32 stack `im` on EVERY call

@@ -1380,6 +1380,7 @@ func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, s
 	sb.force64 = realtimePartEvalAll
 
 	var wouldSplit16, proxyFired16 [4][4]bool
+	var pending32 [4]bool
 	splitBelow16Pending := false
 
 	refDX, refDY := 0, 0
@@ -1437,31 +1438,66 @@ func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, s
 				(src.Width*src.Height <= realtimeResolution360P && maxMin16Diff > int(sb.thresholds[2]>>1) && int64(max16) > sb.thresholds[2]) {
 				sb.force32[lvl1] = realtimePartEvalOnlySplit
 				sb.force64 = realtimePartEvalOnlySplit
+			} else {
+				// partition32 returns non-None whenever var32 clears the
+				// threshold ('<' there vs '>' above: the == tie still splits).
+				pending32[lvl1] = int64(var32) >= sb.thresholds[2]
 			}
 		}
+		if sb.force32[lvl1] == realtimePartEvalOnlySplit {
+			pending32[lvl1] = true
+		}
 	}
+	// pending64: the SB's final partition tree would contain at least one
+	// non-None decision absent the depth-removal arms. force64 == OnlySplit
+	// covers every forced lower split (they all propagate up); otherwise all
+	// lower forces are All and only the 64-level variance can still split.
+	pending64 := sb.force64 == realtimePartEvalOnlySplit
 	if sb.force64 == realtimePartEvalAll {
 		realtimeFillVarianceTree64(&sb.tree)
-		realtimeGetVariance(&sb.tree.part.none)
+		if int64(realtimeGetVariance(&sb.tree.part.none)) >= sb.thresholds[1] {
+			pending64 = true
+		}
 	}
 	// SVT depth removal (set_depth_removal_level_controls; see
 	// pframe_depth_removal.go): the shared per-SB multi-size sweep feeds the
-	// TRUE disallow_below_16x16 gate (cost arm + deviation arm), applied
-	// SB-wide (SVT's flag is per-SB, enc_mode_config.c:3236-3240): every
-	// 16x16 codes as PartitionNone while the parents keep the variance tree's
-	// split decisions, matching set_blocks_to_be_tested's min_sq_size clamp
-	// (enc_dec_process.c:1476-1505) where the removed depths are never built.
-	// The landed 18b20370 proxy above stays active alongside (union). The
-	// sweep runs lazily, only where the gate could flip a decision: at least
-	// one 16x16 must still be marked split-below-16 after the proxy
-	// (splitBelow16Pending) — everywhere else disallow_below_16x16 is a
-	// provable no-op and the sweep cost is skipped, byte-identical either
-	// way. (Phase 2's below-32x32/64x64 arms will need their own, wider
-	// trigger.)
+	// TRUE disallow_below_16x16 / _32x32 / _64x64 gates, applied SB-wide
+	// (SVT's flags are per-SB, enc_mode_config.c:3207-3237) by clamping the
+	// force flags to PartitionNone at the removed depth, matching
+	// set_blocks_to_be_tested's min_sq_size clamp (enc_dec_process.c:
+	// 1476-1505) where the removed depths are never built: below-64 collapses
+	// the SB to one 64x64, below-32 leaves the 64-level decision alone but
+	// codes every 32x32 as None, below-16 codes every 16x16 as None. The
+	// landed 18b20370 proxy above stays active alongside (union).
+	//
+	// The sweep keeps Phase 1's lazy trigger: at least one below-16 split
+	// still pending after the proxy. Phase 2 measured the WIDE trigger (any
+	// split pending at any depth, = pending64) and it is pinned RED: unlike
+	// SVT — whose dist_64/32/16/8 are free byproducts of its one real ME —
+	// goav1's sweep is added work on top of the per-leaf meshes, and on realC
+	// (60f, 5M, vs the Phase-1 base) wide@9/14 lost 0.28 dB (the recon-noise
+	// floor in the dev denominators compresses dev_32x32_to_16x16, over-
+	// firing the dev arm on base frames) while laddering down to the first
+	// quality-green point (base 5 / leaf 10) turned the sweep tax into +5.5%
+	// single-thread CPU with near-zero removals. Re-widen only with Phase 3's
+	// grid reuse, when the sweep replaces the leaf full-pel meshes and its
+	// cost amortizes to zero. pending64/pending32 stay computed for the
+	// stats attribution (the comparisons are free — the variance fills
+	// already happened).
 	if st.depthRemovalLevel != 0 && splitBelow16Pending {
 		st.realtimeSBMultiSizeMESweep(&sb.me, src, ref, px, py)
-		depthDec := realtimeDepthRemovalBelow16(st.depthRemovalLevel, st.qIndex, &sb.me)
-		if depthDec.disallow {
+		depthDec := realtimeDepthRemovalDecide(st.depthRemovalLevel, st.qIndex, &sb.me)
+		applied64 := depthDec.below64 && !depthRemovalP2Disabled
+		applied32 := depthDec.below32 && !depthRemovalP2Disabled
+		if applied64 {
+			sb.force64 = realtimePartEvalOnlyNone
+		}
+		if applied32 {
+			for i := range sb.force32 {
+				sb.force32[i] = realtimePartEvalOnlyNone
+			}
+		}
+		if depthDec.below16 {
 			for i := range sb.force16 {
 				for j := range sb.force16[i] {
 					sb.force16[i][j] = realtimePartEvalOnlyNone
@@ -1469,7 +1505,8 @@ func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, s
 			}
 		}
 		if depthRemovalStatsEnabled {
-			noteDepthRemovalSB(depthDec, st.depthRemovalIsRef, &wouldSplit16, &proxyFired16)
+			noteDepthRemovalSB(depthDec, st.depthRemovalIsRef, &wouldSplit16, &proxyFired16,
+				&pending32, pending64, applied32, applied64)
 		}
 	}
 }

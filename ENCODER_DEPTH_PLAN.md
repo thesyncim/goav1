@@ -75,6 +75,27 @@ P4. sb_min_sq_size prev-frame feedback (+20/+15/+5 threshold boosts);
     retire realtimeIntProMotionEstimation64 (feed var tree from sweep
     64x64 argmin); delete trialInterMergeWins; NEON sweep kernels.
 
+>>> PROGRAM CONCLUSION (2026-07-06): P1 LANDED (fdb6183c, quality-positive,
+ST cpu -2.4%). P2 LANDED (32/64 arms on already-paid sweeps; CPU-flat
+default, ST green all four clips; dev-arm removes real splits). P3 (grid
+reuse + wide trigger) MEASURED RED IN EVERY CONFIGURATION and was fully
+reverted - DECISIVE PIN: goav1's full-pel mesh budget is only ~3.5% of
+encode CPU (static bypass + HME seeds + small meshes made ME cheap long
+ago) while the widened sweep costs 7-10%; even a 67% mesh-skip ride rate
+cannot pay the tax. SVT's economics don't transfer: its sweep IS its only
+search. Root-cause chain also pinned: per-32x32 HME seeds vs per-SB sweep
+window -> quadrant poisoning (coverage gate +0.28dB back); untrusted-seed
+4px quantization needs mesh reach-8 (trust gate recovered the rest, but
+then +14.8% CPU). The -5..-12% band is UNREACHABLE by depth removal on
+this encoder. P4's one remaining hope: a NEON sweep kernel making the
+sweep ~4x cheaper could flip the 3.5%-vs-tax arithmetic - evaluate against
+these exact numbers before ANY re-attempt. Open-loop source ME was NOT
+built for this program (it fixes the signals, but the tax is the binding
+constraint) - it remains live for QUALITY per ARCH_GAPS_PLAN.md E-B.
+Encoder CPU work now aims at ARCH_GAPS_PLAN.md E-A (TX path: largest-TX +
+LPD1 shortcuts - finishInterTXB 8.6% cum + the serial entropy write are
+the actual targets).
+
 RISKS (ranked): (1) realC quality from P2 arms - ladder is the dial;
 (2) dev-arm no-op repeat - the old probe computed 8x8 SSEs at the parent
 MV (sum identity forced dev=0), per-8x8 argmin over 24 positions is SVT's

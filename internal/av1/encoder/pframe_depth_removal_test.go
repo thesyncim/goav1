@@ -121,25 +121,27 @@ func TestRealtimeSBMultiSizeMESweepMatchesBruteForce(t *testing.T) {
 // on synthetic distortion profiles.
 func TestRealtimeDepthRemovalBelow16Arms(t *testing.T) {
 	me := realtimeSBMultiSizeME{valid: true}
-	// Near-zero 16x16 cost: the absolute cost arm must fire at level 9.
+	// Near-zero 16x16 cost: the absolute cost arm must fire at level 9. Keep
+	// dist32 large so the Phase-2 arms stay out of the picture.
+	me.dist32 = 1 << 24
 	me.dist16, me.dist8 = 100, 90
 	me.me8x8CostVariance = 1 << 30 // noise guard zeroes the dev threshold
-	dec := realtimeDepthRemovalBelow16(9, 120, &me)
-	if !dec.costArm || !dec.disallow {
+	dec := realtimeDepthRemovalDecide(9, 120, &me)
+	if !dec.cost16Arm || !dec.below16 {
 		t.Fatalf("cost arm should fire on tiny dist16: %+v", dec)
 	}
-	if dec.devArm {
+	if dec.dev16Arm {
 		t.Fatalf("dev arm must be silenced by the high-variance noise guard: %+v", dec)
 	}
 
 	// Large distortion with tight 16->8 deviation: only the dev arm fires.
 	me.dist16, me.dist8 = 900000, 880000 // dev16 = 22
 	me.me8x8CostVariance = 0             // LOW guard: dev th <<= 2
-	dec = realtimeDepthRemovalBelow16(9, 120, &me)
-	if dec.costArm {
+	dec = realtimeDepthRemovalDecide(9, 120, &me)
+	if dec.cost16Arm {
 		t.Fatalf("cost arm must not fire on large dist16: %+v", dec)
 	}
-	if !dec.devArm || !dec.disallow {
+	if !dec.dev16Arm || !dec.below16 {
 		t.Fatalf("dev arm should fire on tight deviation: %+v", dec)
 	}
 	if dec.dev16 != 22 {
@@ -148,15 +150,93 @@ func TestRealtimeDepthRemovalBelow16Arms(t *testing.T) {
 
 	// Wide deviation: nothing fires.
 	me.dist16, me.dist8 = 900000, 200000
-	dec = realtimeDepthRemovalBelow16(9, 120, &me)
-	if dec.disallow {
+	dec = realtimeDepthRemovalDecide(9, 120, &me)
+	if dec.below16 {
 		t.Fatalf("no arm should fire on wide deviation: %+v", dec)
 	}
 
 	// Level 0 disables the gate.
 	me.dist16, me.dist8 = 100, 90
-	dec = realtimeDepthRemovalBelow16(0, 120, &me)
-	if dec.disallow {
+	dec = realtimeDepthRemovalDecide(0, 120, &me)
+	if dec.below16 || dec.below32 || dec.below64 {
 		t.Fatalf("level 0 must disable the gate: %+v", dec)
+	}
+}
+
+// TestRealtimeDepthRemovalBelow32And64Arms exercises the Phase-2 threshold
+// algebra (enc_mode_config.c:3196-3232) on synthetic distortion profiles.
+// At level 9 / qIndex 120: fastLambda = 2664, costTh32 = costTh64 =
+// RDCOST(2664, 8192, 512*8) = 566912, so the cost arms fire below
+// dist ~4429; picture_qp = 30 gives qpFactor = 3, so dev32To16Th = 50*3 =
+// 150 (LOW noise band) and dev32To8Th = 150*5/4 = 187.
+func TestRealtimeDepthRemovalBelow32And64Arms(t *testing.T) {
+	me := realtimeSBMultiSizeME{valid: true}
+
+	// Tiny 32x32 cost: the 32 cost arm fires; wide 32->16 deviation keeps the
+	// dev arm silent (dist16 tiny makes dev32To16 huge).
+	me.dist64 = 1 << 24
+	me.dist32, me.dist16, me.dist8 = 4000, 100, 90
+	me.me8x8CostVariance = 1 << 30 // HIGH noise band zeroes the dev thresholds
+	dec := realtimeDepthRemovalDecide(9, 120, &me)
+	if !dec.cost32Arm || !dec.below32 {
+		t.Fatalf("32 cost arm should fire on tiny dist32: %+v", dec)
+	}
+	if dec.dev32Arm {
+		t.Fatalf("32 dev arm must be silenced by the high-variance noise guard: %+v", dec)
+	}
+	if dec.below64 {
+		t.Fatalf("64 arm must not fire on large dist64: %+v", dec)
+	}
+
+	// Large distortions with tight 32->16 and 32->8 deviations: only the dual
+	// dev arm fires. dev32To16 = 22 < 150, dev32To8 = 46 < 187.
+	me.dist32, me.dist16, me.dist8 = 900000, 880000, 860000
+	me.me8x8CostVariance = 0 // LOW band leaves dev32To16Th untouched
+	dec = realtimeDepthRemovalDecide(9, 120, &me)
+	if dec.cost32Arm {
+		t.Fatalf("32 cost arm must not fire on large dist32: %+v", dec)
+	}
+	if !dec.dev32Arm || !dec.below32 {
+		t.Fatalf("32 dev arm should fire on tight dual deviation: %+v", dec)
+	}
+	if dec.dev32To16 != 22 || dec.dev32To8 != 46 {
+		t.Fatalf("dev32To16 = %d dev32To8 = %d, want 22/46", dec.dev32To16, dec.dev32To8)
+	}
+
+	// The middle noise band halves dev32To16Th (75, 32->8 th 93): still fires
+	// at 22/46. picture_qp 30 divides the raw variance by 23.
+	me.me8x8CostVariance = 30000 * 23 // 30000 after the qp division: middle band
+	dec = realtimeDepthRemovalDecide(9, 120, &me)
+	if !dec.dev32Arm {
+		t.Fatalf("32 dev arm should survive the middle noise band: %+v", dec)
+	}
+
+	// The dual condition: tight 32->16 but wide 32->8 must NOT fire.
+	me.dist32, me.dist16, me.dist8 = 900000, 880000, 200000
+	me.me8x8CostVariance = 0
+	dec = realtimeDepthRemovalDecide(9, 120, &me)
+	if dec.dev32Arm || dec.below32 {
+		t.Fatalf("32 dev arm requires BOTH deviations tight: %+v", dec)
+	}
+
+	// Tiny 64x64 cost: the (cost-only) 64 arm fires.
+	me.dist64 = 4000
+	dec = realtimeDepthRemovalDecide(9, 120, &me)
+	if !dec.below64 {
+		t.Fatalf("64 cost arm should fire on tiny dist64: %+v", dec)
+	}
+
+	// Level 14 (leaf ladder) raises the 32/64 multipliers to 16: a dist that
+	// misses at level 9 (>= 4429) fires at level 14 (th 1091200 ->
+	// dist < 8525).
+	me = realtimeSBMultiSizeME{valid: true}
+	me.dist64 = 1 << 24
+	me.dist32, me.dist16, me.dist8 = 6000, 100, 90
+	me.me8x8CostVariance = 1 << 30
+	if dec = realtimeDepthRemovalDecide(9, 120, &me); dec.cost32Arm {
+		t.Fatalf("32 cost arm must miss at level 9 with dist32=6000: %+v", dec)
+	}
+	if dec = realtimeDepthRemovalDecide(14, 120, &me); !dec.cost32Arm {
+		t.Fatalf("32 cost arm should fire at level 14 with dist32=6000: %+v", dec)
 	}
 }

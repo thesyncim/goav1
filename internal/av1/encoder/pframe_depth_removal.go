@@ -299,9 +299,10 @@ func (st *lossyEncodeState) realtimeSBMultiSizeMESweep(me *realtimeSBMultiSizeME
 }
 
 // depthRemovalCtrls carries the per-level parameters of
-// set_depth_removal_level_controls (enc_mode_config.c:2979-3130). Only the
-// disallow_below_16x16 arms are consumed in Phase 1; the 32x32/64x64
-// multipliers and dev_32x32_to_16x16_th ride along for the Phase 2 arms.
+// set_depth_removal_level_controls (enc_mode_config.c:2979-3130). Phase 1
+// consumes the disallow_below_16x16 arms; Phase 2 the 32x32/64x64 cost
+// multipliers and dev_32x32_to_16x16_th. costMult4x4 (disallow_4x4) still
+// only rides along — goav1's realtime tree never goes below 8x8.
 type depthRemovalCtrls struct {
 	enabled     bool
 	costMult4x4 uint32
@@ -384,22 +385,38 @@ func maxInt64(a, b int64) int64 {
 	return b
 }
 
-// depthRemovalBelow16Decision is one SB's disallow_below_16x16 evaluation.
-type depthRemovalBelow16Decision struct {
-	disallow bool
-	costArm  bool
-	devArm   bool
-	dev16    int64
+// realtimeDepthRemovalDecision is one SB's depth-removal evaluation across
+// the three per-depth flags of set_depth_removal_level_controls
+// (enc_mode_config.c:3207-3232): disallow_below_16x16 (cost + dev arms),
+// disallow_below_32x32 (cost arm + the dual 32->16/32->8 deviation arm) and
+// disallow_below_64x64 (cost arm only, verbatim upstream).
+type realtimeDepthRemovalDecision struct {
+	below16 bool
+	below32 bool
+	below64 bool
+
+	cost16Arm bool
+	dev16Arm  bool
+	cost32Arm bool
+	dev32Arm  bool
+
+	dev16     int64
+	dev32To16 int64
+	dev32To8  int64
 }
 
-// realtimeDepthRemovalBelow16 ports the disallow_below_16x16 decision of
+// realtimeDepthRemovalDecide ports the depth-removal decisions of
 // set_depth_removal_level_controls (enc_mode_config.c:3179-3245): the
 // me_8x8_cost_variance noise guard, the QP threshold scaling, the absolute
-// RD-cost arm and the 16x16-to-8x8 deviation arm. The sb_min_sq_size
-// reference feedback (:3134-3166) is Phase 4; the delta-qp level modulation
+// RD-cost arms and the deviation arms at every depth. SVT's SB-geometry
+// guards ((sb_geom->width % 64) == 0 || > 32 for the 64 arm, the mod-32
+// equivalent for the 32 arm, dimensions_require_8x8 for the 16 arm) are
+// satisfied by construction — the sweep only runs on full 64x64 SBs, so
+// width == height == 64 passes all three. The sb_min_sq_size reference
+// feedback (:3134-3166) is Phase 4; the delta-qp level modulation
 // (:2960-2972) never arms here because goav1 codes frame-uniform q.
-func realtimeDepthRemovalBelow16(level uint8, qIndex uint8, me *realtimeSBMultiSizeME) depthRemovalBelow16Decision {
-	var dec depthRemovalBelow16Decision
+func realtimeDepthRemovalDecide(level uint8, qIndex uint8, me *realtimeSBMultiSizeME) realtimeDepthRemovalDecision {
+	var dec realtimeDepthRemovalDecision
 	if int(level) >= len(depthRemovalLevels) {
 		return dec
 	}
@@ -415,36 +432,62 @@ func realtimeDepthRemovalBelow16(level uint8, qIndex uint8, me *realtimeSBMultiS
 	fastLambda := int64(av1LambdaModeDecision8BitSAD[qIndex])
 
 	dev16Th := ctrls.dev16To8Th
+	dev32To16Th := ctrls.dev32To16Th
 	// dev th = f(me_8x8_cost_variance) — the noise guard, verbatim
-	// (enc_mode_config.c:3179-3189).
+	// (enc_mode_config.c:3181-3191): the low band quadruples the 16 threshold
+	// (32 untouched), the middle band doubles 16 and HALVES 32, the high band
+	// zeroes both.
 	me8x8CostVariance := int64(me.me8x8CostVariance)
 	me8x8CostVariance /= maxInt64(maxInt64(63-(pictureQP+10), 1), 1)
 	if me8x8CostVariance < low8x8DistVarTH {
 		dev16Th <<= 2
 	} else if me8x8CostVariance < high8x8DistVarTH {
 		dev16Th <<= 1
+		dev32To16Th >>= 1
 	} else {
 		dev16Th = 0
+		dev32To16Th = 0
 	}
-	// dev th = f(QP) (enc_mode_config.c:3191-3195).
-	dev16Th *= maxInt64(maxInt64(63-(pictureQP+10), 1)>>4, 1) * ctrls.qpScale
+	// dev th = f(QP) (enc_mode_config.c:3193-3195).
+	qpFactor := maxInt64(maxInt64(63-(pictureQP+10), 1)>>4, 1) * ctrls.qpScale
+	dev16Th *= qpFactor
+	dev32To16Th *= qpFactor
+	// dev_32x32_to_8x8_th = f(dev_32x32_to_16x16_th); a bit higher
+	// (enc_mode_config.c:3196-3197).
+	dev32To8Th := (dev32To16Th * ((1 << 2) + 1)) >> 2
 
 	const costThRate = int64(1) << 13
 	const sbSize = int64(64 * 64)
-	var disallowBelow16CostTh int64
+	var costTh16, costTh32, costTh64 int64
 	if ctrls.costMult16 != 0 {
-		disallowBelow16CostTh = depthRemovalRDCost(fastLambda, costThRate, (sbSize>>3)*int64(ctrls.costMult16))
+		costTh16 = depthRemovalRDCost(fastLambda, costThRate, (sbSize>>3)*int64(ctrls.costMult16))
+	}
+	if ctrls.costMult32 != 0 {
+		costTh32 = depthRemovalRDCost(fastLambda, costThRate, (sbSize>>3)*int64(ctrls.costMult32))
+	}
+	if ctrls.costMult64 != 0 {
+		costTh64 = depthRemovalRDCost(fastLambda, costThRate, (sbSize>>3)*int64(ctrls.costMult64))
 	}
 
+	cost64 := depthRemovalRDCost(fastLambda, 0, int64(me.dist64))
+	cost32 := depthRemovalRDCost(fastLambda, 0, int64(me.dist32))
 	cost16 := depthRemovalRDCost(fastLambda, 0, int64(me.dist16))
 	cost8 := depthRemovalRDCost(fastLambda, 0, int64(me.dist8))
+
+	dec.dev32To16 = ((maxInt64(cost32, 1) - maxInt64(cost16, 1)) * 1000) / maxInt64(cost16, 1)
+	dec.dev32To8 = ((maxInt64(cost32, 1) - maxInt64(cost8, 1)) * 1000) / maxInt64(cost8, 1)
 	dec.dev16 = ((maxInt64(cost16, 1) - maxInt64(cost8, 1)) * 1000) / maxInt64(cost8, 1)
 
-	dec.costArm = ctrls.costMult16 != 0 && cost16 < disallowBelow16CostTh
-	dec.devArm = dec.dev16 < dev16Th
-	// The dimensions_require_8x8 guard is satisfied by construction: the
-	// sweep only runs on full 64x64 SBs.
-	dec.disallow = dec.costArm || dec.devArm
+	// enc_mode_config.c:3223-3226 — the 64 arm is cost-only upstream.
+	dec.below64 = ctrls.costMult64 != 0 && cost64 < costTh64
+	// enc_mode_config.c:3228-3232.
+	dec.cost32Arm = ctrls.costMult32 != 0 && cost32 < costTh32
+	dec.dev32Arm = dec.dev32To16 < dev32To16Th && dec.dev32To8 < dev32To8Th
+	dec.below32 = dec.cost32Arm || dec.dev32Arm
+	// enc_mode_config.c:3234-3237.
+	dec.cost16Arm = ctrls.costMult16 != 0 && cost16 < costTh16
+	dec.dev16Arm = dec.dev16 < dev16Th
+	dec.below16 = dec.cost16Arm || dec.dev16Arm
 	return dec
 }
 
@@ -461,20 +504,35 @@ var depthRemovalStatsEnabled = os.Getenv("GOAV1_DEPTH_REMOVAL_STATS") != ""
 // GOAV1_DEPTH_REMOVAL_DISABLE=1 the level ladder returns 0, which skips the
 // sweep and the TRUE gate entirely — the decision path is then byte-identical
 // to the pre-port encoder (the 18b20370 proxy stays active either way), so
-// one binary serves both sides of an interleaved A/B.
+// one binary serves both sides of an interleaved A/B. This covers the Phase-2
+// arms too (the whole chain hangs off the level).
 var depthRemovalDisabled = os.Getenv("GOAV1_DEPTH_REMOVAL_DISABLE") != ""
+
+// depthRemovalP2Disabled is the Phase-2 kill-switch: with
+// GOAV1_DEPTH_REMOVAL_P2_DISABLE=1 the disallow_below_32x32/_64x64 arms are
+// never applied, so the encoder is byte-identical to the Phase-1 (fdb6183c)
+// behavior (the sweep trigger and the below-16 gate are shared with Phase 1
+// unchanged) — one binary serves both sides of a Phase-2-vs-Phase-1
+// interleaved A/B.
+var depthRemovalP2Disabled = os.Getenv("GOAV1_DEPTH_REMOVAL_P2_DISABLE") != ""
 
 // dev16 histogram bucket upper bounds (exclusive); the last bucket is open.
 var depthRemovalDev16Buckets = [...]int64{5, 10, 25, 50, 100, 250, 500}
 
 type depthRemovalStatsT struct {
 	sbs         atomic.Uint64
-	disallowSBs atomic.Uint64
+	disallowSBs atomic.Uint64 // below16 fired
 	costArmSBs  atomic.Uint64
 	devArmSBs   atomic.Uint64
+	below32SBs  atomic.Uint64
+	cost32SBs   atomic.Uint64
+	dev32SBs    atomic.Uint64
+	below64SBs  atomic.Uint64
 
 	dev16HistBase [len(depthRemovalDev16Buckets) + 1]atomic.Uint64
 	dev16HistLeaf [len(depthRemovalDev16Buckets) + 1]atomic.Uint64
+	dev32HistBase [len(depthRemovalDev16Buckets) + 1]atomic.Uint64
+	dev32HistLeaf [len(depthRemovalDev16Buckets) + 1]atomic.Uint64
 
 	// Per-16x16 removal attribution: a "removed" slot is one the variance
 	// tree wanted to split below 16x16 (val16 > thresholds[3]) that some arm
@@ -484,6 +542,19 @@ type depthRemovalStatsT struct {
 	removed16Dev  atomic.Uint64 // TRUE dev arm only
 	removed16Prox atomic.Uint64 // landed 18b20370 proxy only
 	removed16Mult atomic.Uint64 // more than one arm fired
+
+	// Phase-2 per-depth removal attribution. pend32 counts 32x32 quadrants
+	// whose partition decision would come out non-None absent the new arms;
+	// removed32* attribute the quadrants the below-32 arm clamped (counted
+	// only when the 64 arm did not already remove the whole SB). pend64
+	// counts SBs with any split pending at all; removed64 the SBs the
+	// below-64 (cost-only) arm collapsed to a single 64x64.
+	pend32        atomic.Uint64
+	removed32Cost atomic.Uint64
+	removed32Dev  atomic.Uint64
+	removed32Mult atomic.Uint64
+	pend64        atomic.Uint64
+	removed64     atomic.Uint64
 }
 
 var depthRemovalStats depthRemovalStatsT
@@ -498,24 +569,66 @@ func depthRemovalDev16Bucket(dev16 int64) int {
 }
 
 // noteDepthRemovalSB records one swept SB's gate outcome. wouldSplit and
-// proxyFired describe the 16 16x16 slots in [lvl1][lvl2] order.
-func noteDepthRemovalSB(dec depthRemovalBelow16Decision, isBase bool, wouldSplit, proxyFired *[4][4]bool) {
+// proxyFired describe the 16 16x16 slots in [lvl1][lvl2] order; pending32
+// marks quadrants whose 32-level decision would be non-None absent the new
+// arms, pending64 whether any split is pending at all; applied32/applied64
+// whether the Phase-2 clamps actually landed (false under the P2
+// kill-switch).
+func noteDepthRemovalSB(dec realtimeDepthRemovalDecision, isBase bool, wouldSplit, proxyFired *[4][4]bool,
+	pending32 *[4]bool, pending64, applied32, applied64 bool) {
 	s := &depthRemovalStats
 	s.sbs.Add(1)
-	if dec.disallow {
+	if dec.below16 {
 		s.disallowSBs.Add(1)
 	}
-	if dec.costArm {
+	if dec.cost16Arm {
 		s.costArmSBs.Add(1)
 	}
-	if dec.devArm {
+	if dec.dev16Arm {
 		s.devArmSBs.Add(1)
 	}
+	if dec.below32 {
+		s.below32SBs.Add(1)
+	}
+	if dec.cost32Arm {
+		s.cost32SBs.Add(1)
+	}
+	if dec.dev32Arm {
+		s.dev32SBs.Add(1)
+	}
+	if dec.below64 {
+		s.below64SBs.Add(1)
+	}
 	b := depthRemovalDev16Bucket(dec.dev16)
+	b32 := depthRemovalDev16Bucket(dec.dev32To16)
 	if isBase {
 		s.dev16HistBase[b].Add(1)
+		s.dev32HistBase[b32].Add(1)
 	} else {
 		s.dev16HistLeaf[b].Add(1)
+		s.dev32HistLeaf[b32].Add(1)
+	}
+	if pending64 {
+		s.pend64.Add(1)
+		if applied64 {
+			s.removed64.Add(1)
+		}
+	}
+	for i := range pending32 {
+		if !pending32[i] {
+			continue
+		}
+		s.pend32.Add(1)
+		if applied32 && !applied64 {
+			switch {
+			case dec.cost32Arm && dec.dev32Arm:
+				s.removed32Mult.Add(1)
+			case dec.cost32Arm:
+				s.removed32Cost.Add(1)
+			case dec.dev32Arm:
+				s.removed32Dev.Add(1)
+			}
+		}
 	}
 	for i := range wouldSplit {
 		for j := range wouldSplit[i] {
@@ -524,10 +637,10 @@ func noteDepthRemovalSB(dec depthRemovalBelow16Decision, isBase bool, wouldSplit
 			}
 			s.wouldSplit16.Add(1)
 			arms := 0
-			if dec.costArm {
+			if dec.cost16Arm {
 				arms++
 			}
-			if dec.devArm {
+			if dec.dev16Arm {
 				arms++
 			}
 			if proxyFired[i][j] {
@@ -536,9 +649,9 @@ func noteDepthRemovalSB(dec depthRemovalBelow16Decision, isBase bool, wouldSplit
 			switch {
 			case arms > 1:
 				s.removed16Mult.Add(1)
-			case dec.costArm:
+			case dec.cost16Arm:
 				s.removed16Cost.Add(1)
-			case dec.devArm:
+			case dec.dev16Arm:
 				s.removed16Dev.Add(1)
 			case proxyFired[i][j]:
 				s.removed16Prox.Add(1)
@@ -565,12 +678,20 @@ func dumpDepthRemovalStats(frame uint64) {
 	}
 	base := histSnapshotReset(&s.dev16HistBase)
 	leaf := histSnapshotReset(&s.dev16HistLeaf)
+	base32 := histSnapshotReset(&s.dev32HistBase)
+	leaf32 := histSnapshotReset(&s.dev32HistLeaf)
 	fmt.Fprintf(os.Stderr,
-		"depthrm frame=%d sbs=%d disallow=%d cost=%d dev=%d dev16base=%v dev16leaf=%v wouldsplit16=%d removed(cost=%d dev=%d proxy=%d multi=%d)\n",
+		"depthrm frame=%d sbs=%d below16=%d cost16=%d dev16arm=%d below32=%d cost32=%d dev32arm=%d below64=%d "+
+			"dev16base=%v dev16leaf=%v dev32base=%v dev32leaf=%v "+
+			"wouldsplit16=%d removed16(cost=%d dev=%d proxy=%d multi=%d) "+
+			"pend32=%d removed32(cost=%d dev=%d multi=%d) pend64=%d removed64=%d\n",
 		frame, sbs, s.disallowSBs.Swap(0), s.costArmSBs.Swap(0), s.devArmSBs.Swap(0),
-		base, leaf,
+		s.below32SBs.Swap(0), s.cost32SBs.Swap(0), s.dev32SBs.Swap(0), s.below64SBs.Swap(0),
+		base, leaf, base32, leaf32,
 		s.wouldSplit16.Swap(0), s.removed16Cost.Swap(0), s.removed16Dev.Swap(0),
-		s.removed16Prox.Swap(0), s.removed16Mult.Swap(0))
+		s.removed16Prox.Swap(0), s.removed16Mult.Swap(0),
+		s.pend32.Swap(0), s.removed32Cost.Swap(0), s.removed32Dev.Swap(0), s.removed32Mult.Swap(0),
+		s.pend64.Swap(0), s.removed64.Swap(0))
 }
 
 // av1LambdaModeDecision8BitSAD ports av1_lambda_mode_decision8_bit_sad
