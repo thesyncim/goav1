@@ -152,11 +152,13 @@ codegen residue (Go glue vs C+asm in serial paths) that M-D3/M-E3+ attack.
   TILE DECODE before postfilters — needs its own banding of the
   tile-decode/wavefront driver with per-sbrow clear semantics, NOT the
   postfilter chain. Standalone task. (M)
-- [ ] **D1-d LR/CDEF arena + decoder-construction shrink** — post-
-  ddddce3e the u16 Data/Dst arenas are allocated full-plane but 8-bit
-  touches ~30KB; construction churn feeds the measured corpus number
-  (madvise ~9% in harness; dav1d also constructs, so it's fair game).
-  Shrink the scratch-size contract across the public binder. (M)
+- [x] **D1-d LR arena + construction shrink** — LANDED a08e2e52
+  (codex, reviewed): walk scratch sizing extracted to one shared
+  function; 8-bit non-optimized LR Data = band+backups only, Dst = 0;
+  superres row-borrow sized explicitly via max(). 1080p LR arena
+  14MB→24KB; construction 5.24→2.81 ms/op. CDEF staging deliberately
+  NOT shrunk (encoder banded workers need the immutable snapshot —
+  revisit only with E1-b). (done)
 - [ ] **D1-e memmove hunt** — 2.9% flat unattributed; pprof -peek on the
   production streaming path, kill the top source if dav1d has none. (S)
 - [ ] **D1-f CDEF native u8-store AVX2 epilogue** — current amd64 wrapper

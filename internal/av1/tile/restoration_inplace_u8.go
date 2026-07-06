@@ -47,14 +47,21 @@ type restorationInPlaceU8Layout struct {
 	Backup     [2][]uint8
 }
 
-// bindRestorationInPlaceU8Layout sizes and slices the band and backup buffers
-// for one plane. The band covers the widest unit plus restorationExtraHorz
-// columns on both sides and the tallest processing stripe plus
-// restorationBorder rows above and below; each backup holds
-// restorationExtraHorz pre-filter columns over the tallest unit.
-func bindRestorationInPlaceU8Layout(grid RestorationPlaneGrid, seg []uint16) (restorationInPlaceU8Layout, error) {
+type restorationInPlaceU8ScratchSize struct {
+	BandStride int
+	BandLen    int
+	BackupLen  int
+	ByteLen    int
+}
+
+// restorationInPlaceU8ScratchSizeForGrid sizes the per-plane band and backup
+// buffers for the dav1d-shaped in-place 8-bit walk. The band covers the widest
+// unit plus restorationExtraHorz columns on both sides and the tallest
+// processing stripe plus restorationBorder rows above and below; each backup
+// holds restorationExtraHorz pre-filter columns over the tallest unit.
+func restorationInPlaceU8ScratchSizeForGrid(grid RestorationPlaneGrid) (restorationInPlaceU8ScratchSize, error) {
 	if !grid.validGeometry() {
-		return restorationInPlaceU8Layout{}, ErrInvalidPlan
+		return restorationInPlaceU8ScratchSize{}, ErrInvalidPlan
 	}
 	maxUnitW := int(grid.PlaneWidth)
 	if grid.HorzUnits > 1 {
@@ -68,43 +75,68 @@ func bindRestorationInPlaceU8Layout(grid RestorationPlaneGrid, seg []uint16) (re
 		maxUnitH = maxInt(int(grid.UnitSize), lastH)
 	}
 	if maxUnitW <= 0 || maxUnitH <= 0 {
-		return restorationInPlaceU8Layout{}, ErrInvalidPlan
+		return restorationInPlaceU8ScratchSize{}, ErrInvalidPlan
 	}
 	stripeH := int(av1restoration.ProcUnitSize >> boolToShift(grid.SubsamplingY))
 	if stripeH <= 0 {
-		return restorationInPlaceU8Layout{}, ErrInvalidPlan
+		return restorationInPlaceU8ScratchSize{}, ErrInvalidPlan
 	}
 	bandStride, ok := checkedAddInt(maxUnitW, 2*restorationExtraHorz)
 	if !ok {
-		return restorationInPlaceU8Layout{}, ErrInvalidPlan
+		return restorationInPlaceU8ScratchSize{}, ErrInvalidPlan
 	}
 	bandStride, ok = alignPowerOfTwoInt(bandStride, 4)
 	if !ok {
-		return restorationInPlaceU8Layout{}, ErrInvalidPlan
+		return restorationInPlaceU8ScratchSize{}, ErrInvalidPlan
 	}
 	bandRows := stripeH + 2*restorationBorder
 	bandLen, ok := checkedMulInt(bandStride, bandRows)
 	if !ok {
-		return restorationInPlaceU8Layout{}, ErrInvalidPlan
+		return restorationInPlaceU8ScratchSize{}, ErrInvalidPlan
 	}
 	bakLen, ok := checkedMulInt(maxUnitH, restorationExtraHorz)
 	if !ok {
-		return restorationInPlaceU8Layout{}, ErrInvalidPlan
+		return restorationInPlaceU8ScratchSize{}, ErrInvalidPlan
 	}
 	need, ok := checkedAddInt(bandLen, 2*bakLen)
 	if !ok {
-		return restorationInPlaceU8Layout{}, ErrInvalidPlan
+		return restorationInPlaceU8ScratchSize{}, ErrInvalidPlan
 	}
-	bytes, ok := restorationByteScratchView(seg, need)
+	return restorationInPlaceU8ScratchSize{
+		BandStride: bandStride,
+		BandLen:    bandLen,
+		BackupLen:  bakLen,
+		ByteLen:    need,
+	}, nil
+}
+
+func restorationInPlaceU8SampleScratchLen(grid RestorationPlaneGrid) (int, error) {
+	size, err := restorationInPlaceU8ScratchSizeForGrid(grid)
+	if err != nil {
+		return 0, err
+	}
+	rounded, ok := checkedAddInt(size.ByteLen, 1)
+	if !ok {
+		return 0, ErrInvalidPlan
+	}
+	return rounded / 2, nil
+}
+
+func bindRestorationInPlaceU8Layout(grid RestorationPlaneGrid, seg []uint16) (restorationInPlaceU8Layout, error) {
+	size, err := restorationInPlaceU8ScratchSizeForGrid(grid)
+	if err != nil {
+		return restorationInPlaceU8Layout{}, err
+	}
+	bytes, ok := restorationByteScratchView(seg, size.ByteLen)
 	if !ok {
 		return restorationInPlaceU8Layout{}, ErrInvalidPlan
 	}
 	return restorationInPlaceU8Layout{
-		Band:       bytes[:bandLen],
-		BandStride: bandStride,
+		Band:       bytes[:size.BandLen],
+		BandStride: size.BandStride,
 		Backup: [2][]uint8{
-			bytes[bandLen : bandLen+bakLen],
-			bytes[bandLen+bakLen : bandLen+2*bakLen],
+			bytes[size.BandLen : size.BandLen+size.BackupLen],
+			bytes[size.BandLen+size.BackupLen : size.BandLen+2*size.BackupLen],
 		},
 	}, nil
 }

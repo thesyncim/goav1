@@ -1164,9 +1164,16 @@ func (ctx FrameWorkPostFilterContext) LoopRestorationPostFilterScratchLen(record
 	if ctx.Output == nil {
 		return FrameWorkRestorationPostFilterScratchSize{}, frame.ErrInvalidSlot
 	}
-	samples, err := tile.RestorationFrameSampleScratchLen(plan, *ctx.Output)
+	samples, err := tile.RestorationFrameSampleScratchLen(plan, *ctx.Output, optimized)
 	if err != nil {
 		return FrameWorkRestorationPostFilterScratchSize{}, err
+	}
+	rowScratch, err := ctx.loopRestorationSuperResBoundaryRowScratchLen(plan)
+	if err != nil {
+		return FrameWorkRestorationPostFilterScratchSize{}, err
+	}
+	if rowScratch > samples.DataLen {
+		samples.DataLen = rowScratch
 	}
 	var apply tile.RestorationUnitRecordBoundaryScratchSize
 	for plane := 0; plane < int(plan.Planes); plane++ {
@@ -1191,6 +1198,34 @@ func (ctx FrameWorkPostFilterContext) LoopRestorationPostFilterScratchLen(record
 		Samples: samples,
 		Apply:   apply,
 	}, nil
+}
+
+func (ctx FrameWorkPostFilterContext) loopRestorationSuperResBoundaryRowScratchLen(plan tile.RestorationFramePlan) (int, error) {
+	size := ctx.Event.FrameSize
+	if !size.SuperResEnabled || size.UpscaledWidth <= size.CodedWidth ||
+		size.SuperResDenominator < 9 || size.SuperResDenominator > 16 {
+		return 0, nil
+	}
+	if ctx.Output == nil {
+		return 0, frame.ErrInvalidSlot
+	}
+	codedFormat, err := codedFrameFormatFromHeaders(ctx.Event.SequenceHeader, size, ctx.Output.Format.Align)
+	if err != nil {
+		return 0, err
+	}
+	alignedLumaW := (int(size.CodedWidth) + 7) &^ 7
+	maxAlignedWidth := 0
+	for plane := 0; plane < int(plan.Planes); plane++ {
+		if plan.Grids[plane].Type == parser.RestorationNone {
+			continue
+		}
+		xDec, _ := frameWorkCDEFPlaneDecimation(codedFormat, plane)
+		width := alignedLumaW >> xDec
+		if width > maxAlignedWidth {
+			maxAlignedWidth = width
+		}
+	}
+	return maxAlignedWidth, nil
 }
 
 // ApplyLoopRestorationPostFilter applies loop restoration to ctx.Output. Earlier
@@ -1223,7 +1258,19 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopRestorationPostFilter(req FrameWo
 	if err := ctx.validateLoopRestorationPostFilterRequest(req); err != nil {
 		return tile.RestorationFrameApplyResult{}, err
 	}
-	return tile.ApplyRestorationFrameToFrame(plan, *ctx.Output, req.Records, req.Boundaries, req.DataScratch, req.DstScratch, req.Scratch, req.Optimized)
+	applySamples, err := tile.RestorationFrameSampleScratchLen(plan, *ctx.Output, req.Optimized)
+	if err != nil {
+		return tile.RestorationFrameApplyResult{}, err
+	}
+	dataScratch := req.DataScratch
+	if len(dataScratch) > applySamples.DataLen {
+		dataScratch = dataScratch[:applySamples.DataLen]
+	}
+	dstScratch := req.DstScratch
+	if len(dstScratch) > applySamples.DstLen {
+		dstScratch = dstScratch[:applySamples.DstLen]
+	}
+	return tile.ApplyRestorationFrameToFrame(plan, *ctx.Output, req.Records, req.Boundaries, dataScratch, dstScratch, req.Scratch, req.Optimized)
 }
 
 func (ctx FrameWorkPostFilterContext) validateLoopRestorationPostFilterRequest(req FrameWorkRestorationPostFilterRequest) error {

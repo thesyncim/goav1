@@ -294,7 +294,7 @@ func TestRestorationFrameSampleScratchLenMatchesBorderedLayouts(t *testing.T) {
 	plan := testRestorationFramePlan(t, types, false)
 	frm := makeRestorationApplyFrame(t, bitDepth, false)
 
-	got, err := RestorationFrameSampleScratchLen(plan, frm)
+	got, err := RestorationFrameSampleScratchLen(plan, frm, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,12 +320,49 @@ func TestRestorationFrameSampleScratchLenMatchesBorderedLayouts(t *testing.T) {
 	}
 
 	allNone := testRestorationFramePlan(t, [3]parser.RestorationType{}, false)
-	zero, err := RestorationFrameSampleScratchLen(allNone, frm)
+	zero, err := RestorationFrameSampleScratchLen(allNone, frm, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if zero != (RestorationFrameSampleScratchSize{}) {
 		t.Fatalf("all-none scratch=%+v", zero)
+	}
+}
+
+func TestRestorationFrameSampleScratchLenShrinksU8InPlace(t *testing.T) {
+	const bitDepth = 8
+	types := [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}
+	plan := testRestorationFramePlan(t, types, false)
+	frm := makeRestorationApplyFrame(t, bitDepth, false)
+
+	got, err := RestorationFrameSampleScratchLen(plan, frm, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yNeed, err := restorationInPlaceU8SampleScratchLen(plan.Grids[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	uNeed, err := restorationInPlaceU8SampleScratchLen(plan.Grids[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Data[0].Len != yNeed || got.Data[1].Len != uNeed || got.Data[2].Len != 0 {
+		t.Fatalf("u8 data layouts=%+v want lens %d/%d/0", got.Data, yNeed, uNeed)
+	}
+	if got.Dst != ([3]av1frame.BorderedSamplePlaneLayout{}) || got.DstLen != 0 {
+		t.Fatalf("u8 dst scratch=%+v len=%d want zero", got.Dst, got.DstLen)
+	}
+	if got.DataLen != yNeed+uNeed {
+		t.Fatalf("u8 data len=%d want %d", got.DataLen, yNeed+uNeed)
+	}
+
+	full, err := RestorationFrameSampleScratchLen(plan, frm, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full.DataLen <= got.DataLen || full.DstLen == 0 {
+		t.Fatalf("optimized/full scratch=%+v was not larger than u8 in-place %+v", full, got)
 	}
 }
 
@@ -344,7 +381,7 @@ func TestApplyRestorationFrameToFrameMatchesSampleFlow(t *testing.T) {
 		records[plane] = planes[plane].Records
 		boundaries[plane] = planes[plane].Boundaries
 	}
-	sampleSize, err := RestorationFrameSampleScratchLen(plan, frm)
+	sampleSize, err := RestorationFrameSampleScratchLen(plan, frm, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +423,7 @@ func TestApplyRestorationFrameToFrameMatchesSampleFlowGarbageScratch(t *testing.
 			records[plane] = planes[plane].Records
 			boundaries[plane] = planes[plane].Boundaries
 		}
-		sampleSize, err := RestorationFrameSampleScratchLen(plan, frm)
+		sampleSize, err := RestorationFrameSampleScratchLen(plan, frm, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -438,7 +475,7 @@ func TestApplyRestorationFrameToFrameAllNoneRecords(t *testing.T) {
 		records[plane] = planes[plane].Records
 		boundaries[plane] = planes[plane].Boundaries
 	}
-	sampleSize, err := RestorationFrameSampleScratchLen(plan, frm)
+	sampleSize, err := RestorationFrameSampleScratchLen(plan, frm, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +515,7 @@ func TestApplyRestorationFrameToFrameRejectsInvalidInputs(t *testing.T) {
 	plan := testRestorationFramePlan(t, types, false)
 	frm := makeRestorationApplyFrame(t, bitDepth, false)
 	records := makeRestorationFrameNoneRecords(t, plan)
-	size, err := RestorationFrameSampleScratchLen(plan, frm)
+	size, err := RestorationFrameSampleScratchLen(plan, frm, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,7 +527,7 @@ func TestApplyRestorationFrameToFrameRejectsInvalidInputs(t *testing.T) {
 	}
 	badFrame := frm
 	badFrame.Y.Width--
-	if _, err := RestorationFrameSampleScratchLen(plan, badFrame); !errors.Is(err, ErrInvalidPlan) {
+	if _, err := RestorationFrameSampleScratchLen(plan, badFrame, false); !errors.Is(err, ErrInvalidPlan) {
 		t.Fatalf("bad frame err=%v want %v", err, ErrInvalidPlan)
 	}
 }
@@ -1175,7 +1212,7 @@ func TestApplyRestorationFrameToFrameAllocs(t *testing.T) {
 	frm := makeRestorationApplyFrame(t, bitDepth, false)
 	fillRestorationTestFrame(frm, bitDepth, 0x12345678)
 	records := makeRestorationFrameNoneRecords(t, plan)
-	size, err := RestorationFrameSampleScratchLen(plan, frm)
+	size, err := RestorationFrameSampleScratchLen(plan, frm, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1495,7 +1532,7 @@ func FuzzApplyRestorationFrameToFrame(f *testing.F) {
 			t.Fatalf("BuildRestorationFramePlan err=%v", err)
 		}
 		records := makeRestorationFrameNoneRecords(t, plan)
-		sampleSize, err := RestorationFrameSampleScratchLen(plan, frm)
+		sampleSize, err := RestorationFrameSampleScratchLen(plan, frm, false)
 		if err != nil {
 			t.Fatalf("RestorationFrameSampleScratchLen err=%v", err)
 		}
@@ -1732,7 +1769,7 @@ func BenchmarkApplyRestorationFrameToFrameWienerSGR(b *testing.B) {
 		records[i] = planes[i].Records
 		boundaries[i] = planes[i].Boundaries
 	}
-	sampleSize, err := RestorationFrameSampleScratchLen(plan, frm)
+	sampleSize, err := RestorationFrameSampleScratchLen(plan, frm, false)
 	if err != nil {
 		b.Fatal(err)
 	}

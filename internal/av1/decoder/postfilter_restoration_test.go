@@ -131,7 +131,7 @@ func TestFrameWorkPostFilterContextApplyLoopRestorationPostFilterDefaultsBuffers
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pipelineSize.Restoration.Samples.DataLen == 0 || pipelineSize.Restoration.Samples.DstLen == 0 {
+	if pipelineSize.Restoration.Samples.DataLen == 0 || pipelineSize.Restoration.Samples.DstLen != 0 {
 		t.Fatalf("pipeline scratch=%+v", pipelineSize.Restoration)
 	}
 	size, err := ctx.LoopRestorationPostFilterScratchLen(buffers.Records, false)

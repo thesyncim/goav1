@@ -37,7 +37,11 @@ func TestApplyRestorationFrameToFrameU8MatchesWidePath(t *testing.T) {
 					records[plane] = planes[plane].Records
 					boundaries[plane] = planes[plane].Boundaries
 				}
-				sampleSize, err := RestorationFrameSampleScratchLen(plan, frmWide)
+				refSampleSize, err := RestorationFrameSampleScratchLen(plan, frmWide, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				sampleSize, err := RestorationFrameSampleScratchLen(plan, frmU8, optimized)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -50,7 +54,7 @@ func TestApplyRestorationFrameToFrameU8MatchesWidePath(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				want, err := applyRestorationFrameToFrameWide(plan, frmWide, records, boundaries, make([]uint16, sampleSize.DataLen), make([]uint16, sampleSize.DstLen), makeRestorationBoundaryApplyScratch(applySize), optimized, sampleSize, 1, bitDepth, align)
+				want, err := applyRestorationFrameToFrameWide(plan, frmWide, records, boundaries, make([]uint16, refSampleSize.DataLen), make([]uint16, refSampleSize.DstLen), makeRestorationBoundaryApplyScratch(applySize), optimized, refSampleSize, 1, bitDepth, align)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -102,7 +106,7 @@ func TestApplyRestorationFrameToFrameU8IsZeroAlloc(t *testing.T) {
 		records[plane] = planes[plane].Records
 		boundaries[plane] = planes[plane].Boundaries
 	}
-	sampleSize, err := RestorationFrameSampleScratchLen(plan, frm)
+	sampleSize, err := RestorationFrameSampleScratchLen(plan, frm, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,8 +10,11 @@ import (
 const RestorationFrameBorder = 32
 
 // RestorationFrameSampleScratchSize reports caller-owned uint16 scratch for
-// loading byte-backed frame planes into libaom-style bordered sample buffers.
-// All-none restoration frames report zero lengths.
+// ApplyRestorationFrameToFrame's sample staging. All-none restoration frames
+// report zero lengths. For normal 8-bit restoration, Data holds the small
+// in-place stripe band and left-neighbour backups viewed as bytes and Dst is
+// empty; optimized 8-bit and 10/12-bit restoration keep the full bordered
+// sample layouts.
 type RestorationFrameSampleScratchSize struct {
 	Data [3]av1frame.BorderedSamplePlaneLayout
 	Dst  [3]av1frame.BorderedSamplePlaneLayout
@@ -22,7 +25,7 @@ type RestorationFrameSampleScratchSize struct {
 
 // RestorationFrameSampleScratchLen reports the uint16 frame sample scratch
 // required by ApplyRestorationFrameToFrame.
-func RestorationFrameSampleScratchLen(plan RestorationFramePlan, frm av1frame.Frame) (RestorationFrameSampleScratchSize, error) {
+func RestorationFrameSampleScratchLen(plan RestorationFramePlan, frm av1frame.Frame, optimized bool) (RestorationFrameSampleScratchSize, error) {
 	if err := validateRestorationFramePlan(plan); err != nil {
 		return RestorationFrameSampleScratchSize{}, err
 	}
@@ -50,6 +53,18 @@ func RestorationFrameSampleScratchLen(plan RestorationFramePlan, frm av1frame.Fr
 		}
 		if buffer.Width != int(grid.PlaneWidth) || buffer.Height != int(grid.PlaneHeight) {
 			return RestorationFrameSampleScratchSize{}, ErrInvalidPlan
+		}
+		if bytesPerSample == 1 && !optimized {
+			need, err := restorationInPlaceU8SampleScratchLen(grid)
+			if err != nil {
+				return RestorationFrameSampleScratchSize{}, err
+			}
+			size.Data[plane].Len = need
+			var ok bool
+			if size.DataLen, ok = checkedAddInt(size.DataLen, need); !ok {
+				return RestorationFrameSampleScratchSize{}, ErrInvalidPlan
+			}
+			continue
 		}
 		layout, err := av1frame.BorderedSamplePlaneLen(buffer, bytesPerSample, RestorationFrameBorder, RestorationFrameBorder, align)
 		if err != nil {
@@ -84,7 +99,7 @@ func RestorationFrameSampleScratchLen(plan RestorationFramePlan, frm av1frame.Fr
 // scratch, filter into a bordered dst scratch, and store only filtered record
 // rects back to frm.
 func ApplyRestorationFrameToFrame(plan RestorationFramePlan, frm av1frame.Frame, records [3][]RestorationUnitRecord, boundaries [3]RestorationStripeBoundaries, dataScratch []uint16, dstScratch []uint16, scratch RestorationUnitRecordBoundaryScratch, optimized bool) (RestorationFrameApplyResult, error) {
-	size, err := RestorationFrameSampleScratchLen(plan, frm)
+	size, err := RestorationFrameSampleScratchLen(plan, frm, optimized)
 	if err != nil {
 		return RestorationFrameApplyResult{}, err
 	}

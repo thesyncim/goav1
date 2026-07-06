@@ -165,7 +165,11 @@ func TestApplyRestorationU8InPlaceMatchesSnapshot(t *testing.T) {
 			frmSnapshot := makeRestorationInPlaceTestFrame(t, tc.width, tc.height, tc.mono)
 			copyRestorationTestFrame(t, frmSnapshot, frmInPlace)
 
-			sampleSize, err := RestorationFrameSampleScratchLen(plan, frmInPlace)
+			refSampleSize, err := RestorationFrameSampleScratchLen(plan, frmSnapshot, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sampleSize, err := RestorationFrameSampleScratchLen(plan, frmInPlace, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -180,7 +184,7 @@ func TestApplyRestorationU8InPlaceMatchesSnapshot(t *testing.T) {
 
 			// Reference: the whole-plane pre-restoration snapshot walk.
 			var want RestorationFrameApplyResult
-			refScratch := make([]uint16, sampleSize.DataLen)
+			refScratch := make([]uint16, refSampleSize.DataLen)
 			refApply := makeRestorationBoundaryApplyScratch(applySize)
 			dataOffset := 0
 			for plane := 0; plane < planeCount; plane++ {
@@ -192,7 +196,7 @@ func TestApplyRestorationU8InPlaceMatchesSnapshot(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				dataLayout := sampleSize.Data[plane]
+				dataLayout := refSampleSize.Data[plane]
 				planeResult, err := applyRestorationPlaneSnapshotU8(grid, records[plane], boundaries[plane], buffer, refScratch[dataOffset:dataOffset+dataLayout.Len], dataLayout.Len, refApply, false, align)
 				if err != nil {
 					t.Fatal(err)
