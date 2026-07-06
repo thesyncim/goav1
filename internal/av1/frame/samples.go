@@ -168,6 +168,58 @@ func LoadBorderedSamplePlane(dst []uint16, src Plane, bytesPerSample int, border
 	}, nil
 }
 
+// BorderedBytePlane is caller-owned 8-bit sample storage with an AV1-style
+// visible origin inside border rows and columns. Stride is in samples, which
+// for 8-bit content equals bytes. It is the uint8 counterpart of
+// BorderedSamplePlane for postfilter passes that keep 8-bit planes in the
+// pixel domain (dav1d's 8bpc loop restoration reads uint8 pixels directly and
+// never widens the plane).
+type BorderedBytePlane struct {
+	Pix    []uint8
+	Stride int
+	Origin int
+	Width  int
+	Height int
+
+	BorderHorz int
+	BorderVert int
+}
+
+// LoadBorderedBytePlane copies an 8-bit byte plane into caller-owned bordered
+// byte storage with plain row copies (no widening). The layout is identical to
+// LoadBorderedSamplePlane with bytesPerSample=1, so BorderedSamplePlaneLen
+// sizes both. Border samples are left unchanged for callers such as loop
+// restoration to fill with their normal frame-extension pass.
+func LoadBorderedBytePlane(dst []uint8, src Plane, borderHorz int, borderVert int, align int) (BorderedBytePlane, error) {
+	layout, err := borderedSamplePlaneLayout(src, 1, borderHorz, borderVert, align)
+	if err != nil {
+		return BorderedBytePlane{}, err
+	}
+	if _, _, err := samplePlaneLayout(src, 1, true); err != nil {
+		return BorderedBytePlane{}, err
+	}
+	if len(dst) < layout.Len {
+		return BorderedBytePlane{}, ErrShortBuffer
+	}
+	samples := dst[:layout.Len]
+	srcOff := 0
+	dstOff := layout.Origin
+	for y := 0; y < src.Height; y++ {
+		copy(samples[dstOff:dstOff+src.Width], src.Pix[srcOff:srcOff+src.Width])
+		srcOff += src.Stride
+		dstOff += layout.Stride
+	}
+	return BorderedBytePlane{
+		Pix:        samples,
+		Stride:     layout.Stride,
+		Origin:     layout.Origin,
+		Width:      src.Width,
+		Height:     src.Height,
+		BorderHorz: borderHorz,
+		BorderVert: borderVert,
+	}, nil
+}
+
 // StoreSamplePlane writes visible samples from src into an 8-bit or
 // little-endian 16-bit byte plane.
 func StoreSamplePlane(dst Plane, bytesPerSample int, src SamplePlane) error {

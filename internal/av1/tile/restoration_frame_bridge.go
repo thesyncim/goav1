@@ -69,14 +69,20 @@ func RestorationFrameSampleScratchLen(plan RestorationFramePlan, frm av1frame.Fr
 }
 
 // ApplyRestorationFrameToFrame applies decoded restoration records to a
-// byte-backed frame. The function loads active planes into caller-owned
-// bordered uint16 scratch, filters into a bordered dst scratch, and stores
-// restored samples back to frm. Following dav1d's restoration walk
+// byte-backed frame. Following dav1d's restoration walk
 // (src/lr_apply_tmpl.c lr_sbrow(): restore = lr->type !=
 // DAV1D_RESTORATION_NONE), only filtered restoration units are touched:
 // RESTORATION_NONE records are never copied through the sample scratch — their
-// pixels stay resident in the frame — and only filtered record rects are
-// stored back. All-NONE planes skip the load/extend/store round-trip entirely.
+// pixels stay resident in the frame — and all-NONE planes skip the
+// load/extend/store round-trip entirely.
+//
+// 8-bit frames stay in the pixel domain end to end (dav1d's 8bpc shape): the
+// read source is a bordered uint8 snapshot of the plane (byte copies into the
+// data scratch arena, no widening) and the uint8 kernels write filtered units
+// directly into the frame plane, so there is no dst staging and no store-back.
+// 10/12-bit frames load active planes into caller-owned bordered uint16
+// scratch, filter into a bordered dst scratch, and store only filtered record
+// rects back to frm.
 func ApplyRestorationFrameToFrame(plan RestorationFramePlan, frm av1frame.Frame, records [3][]RestorationUnitRecord, boundaries [3]RestorationStripeBoundaries, dataScratch []uint16, dstScratch []uint16, scratch RestorationUnitRecordBoundaryScratch, optimized bool) (RestorationFrameApplyResult, error) {
 	size, err := RestorationFrameSampleScratchLen(plan, frm)
 	if err != nil {
@@ -96,7 +102,16 @@ func ApplyRestorationFrameToFrame(plan RestorationFramePlan, frm av1frame.Frame,
 	if err != nil {
 		return RestorationFrameApplyResult{}, err
 	}
+	if bytesPerSample == 1 {
+		return applyRestorationFrameToFrameU8(plan, frm, records, boundaries, dataScratch, scratch, optimized, size, align)
+	}
+	return applyRestorationFrameToFrameWide(plan, frm, records, boundaries, dataScratch, dstScratch, scratch, optimized, size, bytesPerSample, bitDepth, align)
+}
 
+// applyRestorationFrameToFrameWide is the uint16 sample-scratch round-trip
+// driver behind ApplyRestorationFrameToFrame, used for 10/12-bit frames (and
+// callable on 8-bit frames by tests as the widened-path reference).
+func applyRestorationFrameToFrameWide(plan RestorationFramePlan, frm av1frame.Frame, records [3][]RestorationUnitRecord, boundaries [3]RestorationStripeBoundaries, dataScratch []uint16, dstScratch []uint16, scratch RestorationUnitRecordBoundaryScratch, optimized bool, size RestorationFrameSampleScratchSize, bytesPerSample int, bitDepth uint8, align int) (RestorationFrameApplyResult, error) {
 	var planes [3]RestorationFramePlane
 	var dstViews [3]av1frame.BorderedSamplePlane
 	var anyFiltered [3]bool
