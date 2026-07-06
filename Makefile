@@ -1,10 +1,15 @@
-.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference webrtc-browser webrtc-production dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
+.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish pgo-regenerate qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference webrtc-browser webrtc-production dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
 FUZZFLAGS = -run '^$$' -fuzztime=$(FUZZTIME) -parallel=$(FUZZPARALLEL)
 BENCHTIME ?= 3s
 GCMETRICS_COUNT ?= 5
+# Go PGO is main-package scoped. cmd/qualitybench/default.pgo is discovered
+# automatically by go build -pgo=auto for that command; test binaries use the
+# explicit flag below because their generated test main has no repo directory.
+GOAV1_PGO_PROFILE ?= cmd/qualitybench/default.pgo
+GOAV1_PGO_FLAGS ?= -pgo=$(GOAV1_PGO_PROFILE)
 PUBLISH_GO_ENV = GOFLAGS= GOMEMLIMIT= GODEBUG= GOAMD64= GOARM64= GO386= GOARM= GOMIPS= GOMIPS64= GOPPC64= GOWASM= GOTOOLCHAIN= GOEXPERIMENT= CGO_ENABLED= CC= CXX= GOCACHE= GOMODCACHE= GOPATH= GOTMPDIR=
 BENCH_CORPUS_REPORT_JSON ?= /tmp/goav1-bench-corpus-report.json
 BENCH_CORPUS_AOMDEC_BIN ?=
@@ -100,23 +105,23 @@ WEBRTC_PRODUCTION_TESTS = Test(AV1SDP|AV1RTCP|EncoderWebRTC|HighLevelRTPDecoders
 WEBRTC_PRODUCTION_INTERNAL_TESTS = Test(AppendWebRTCScalabilityModesMatchesPinnedLibWebRTC|WebRTCStreamAcceptedScalabilityModes(CoverExportedModes|Decode)|WebRTCStreamControlCombinationMatrixDecode|WebRTCEncoderStateTemporalUnitsKeyShiftModes)
 
 test:
-	go test -timeout 30m ./...
+	go test $(GOAV1_PGO_FLAGS) -timeout 30m ./...
 
 # bench runs the end-to-end decoder throughput benchmarks at the repo root:
 # frames/sec, MB/sec, ns/op, and the steady-state allocation guardrail.
 # Pass BENCHTIME=10s (or larger) for stable numbers; the default 3s is
 # enough for smoke testing.
 bench:
-	go test -run '^$$' -bench='^BenchmarkDecode' -benchmem -benchtime=$(BENCHTIME) .
+	go test $(GOAV1_PGO_FLAGS) -run '^$$' -bench='^BenchmarkDecode' -benchmem -benchtime=$(BENCHTIME) .
 
 # bench-all runs every Go testing benchmark in the repository: the
 # end-to-end decoder benchmarks above plus all per-stage micro-benchmarks
 # (transform, cdef, restoration, motion, prediction, public API, etc.).
 bench-all:
-	go test -run '^$$' -bench=. -benchmem -benchtime=$(BENCHTIME) ./...
+	go test $(GOAV1_PGO_FLAGS) -run '^$$' -bench=. -benchmem -benchtime=$(BENCHTIME) ./...
 
 bench-public:
-	go test -run '^$$' -bench='BenchmarkPublic' -benchmem -benchtime=$(BENCHTIME) .
+	go test $(GOAV1_PGO_FLAGS) -run '^$$' -bench='BenchmarkPublic' -benchmem -benchtime=$(BENCHTIME) .
 
 # bench-cross is a PERF-TRACKING tool (not a conformance gate). It times
 # goav1's full decode + post-filter chain (reusing the strict-MD5 oracle
@@ -128,10 +133,23 @@ bench-public:
 # the caveats made impossible to miss. Needs the goav1_oracle build tag so it
 # can reach the oracle decode helper.
 bench-cross:
-	GOAV1_CROSS_BENCH=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle -run TestCrossDecoderThroughput ./internal/av1/testvector -v -count=1 -timeout 600s
+	GOAV1_CROSS_BENCH=1 GOAV1_STRICT_MD5=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle -run TestCrossDecoderThroughput ./internal/av1/testvector -v -count=1 -timeout 600s
 
 bench-corpus:
-	GOAV1_BENCH_CORPUS=1 go test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
+	GOAV1_BENCH_CORPUS=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
+
+pgo-regenerate:
+	# Regenerate cmd/qualitybench/default.pgo for D2-a:
+	# 1. Create internal/av1/testvector/scratch_profile_test.go with the
+	#    goav1_oracle build tag and TestScratchProfileDecode. The test reads
+	#    GOAV1_PROFILE_CLIP, loads that IVF once, and runs 30 iterations of
+	#    decodeCorpusClipDiscard(ivfData).
+	# 2. GOAV1_PROFILE_CLIP=$$PWD/testdata/benchcorpus/p720_inter_q32.ivf go test -tags goav1_oracle -run '^TestScratchProfileDecode$$' ./internal/av1/testvector -count=1 -cpuprofile /tmp/goav1-d2a-dec-p720.out
+	# 3. GOAV1_PROFILE_CLIP=$$PWD/testdata/benchcorpus/p288_inter_q20.ivf go test -tags goav1_oracle -run '^TestScratchProfileDecode$$' ./internal/av1/testvector -count=1 -cpuprofile /tmp/goav1-d2a-dec-p288.out
+	# 4. GOMAXPROCS=1 go test ./internal/av1/encoder -run '^$$' -bench '^BenchmarkVideoEncoderRealC1080p$$' -benchtime=60x -count=1 -cpuprofile /tmp/goav1-d2a-enc-realc.out
+	# 5. go tool pprof -proto -output cmd/qualitybench/default.pgo /tmp/goav1-d2a-dec-p720.out /tmp/goav1-d2a-dec-p288.out /tmp/goav1-d2a-enc-realc.out
+	# 6. Delete internal/av1/testvector/scratch_profile_test.go before committing.
+	@printf '%s\n' 'PGO regeneration recipe is documented in this target.'
 
 bench-corpus-publish:
 	@if [ -z "$(BENCH_CORPUS_ENVIRONMENT_NOTES)" ]; then echo "set BENCH_CORPUS_ENVIRONMENT_NOTES='power, thermal, and background-load context'"; exit 2; fi
@@ -162,7 +180,7 @@ bench-corpus-publish:
 	GOAV1_BENCH_CORPUS_DAV1D_SHA256="$(BENCH_CORPUS_DAV1D_SHA256)" \
 	GOAV1_BENCH_CORPUS_SVTAV1DECAPP_BIN="$(BENCH_CORPUS_SVTAV1DECAPP_BIN)" \
 	GOAV1_BENCH_CORPUS_SVTAV1DECAPP_SHA256="$(BENCH_CORPUS_SVTAV1DECAPP_SHA256)" \
-	"$(BENCH_CORPUS_GO_BIN)" test -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
+	"$(BENCH_CORPUS_GO_BIN)" test $(GOAV1_PGO_FLAGS) -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
 
 bench-go-publish:
 	@if [ -z "$(GO_BENCH_PUBLISH_ENVIRONMENT_NOTES)" ]; then echo "set GO_BENCH_PUBLISH_ENVIRONMENT_NOTES='power, thermal, and background-load context'"; exit 2; fi
@@ -208,7 +226,7 @@ qualitybench-publish:
 	@if [ -z "$(QUALITYBENCH_GO_SHA256)" ]; then echo "set QUALITYBENCH_GO_SHA256 to the SHA-256 of QUALITYBENCH_GO_BIN"; exit 2; fi
 	mkdir -p "$(QUALITYBENCH_WORKDIR)"
 	$(PUBLISH_GO_ENV) \
-	"$(QUALITYBENCH_GO_BIN)" run ./cmd/qualitybench \
+	"$(QUALITYBENCH_GO_BIN)" run $(GOAV1_PGO_FLAGS) ./cmd/qualitybench \
 		-manifest "$(QUALITYBENCH_MANIFEST)" \
 		-bitrates "$(QUALITYBENCH_BITRATES)" \
 		-encoders "$(QUALITYBENCH_ENCODERS)" \
@@ -283,7 +301,7 @@ qualitybench-publish-singlethread:
 		QUALITYBENCH_SVT_LP_SWEEP=false
 
 gc-metrics:
-	GODEBUG=gctrace=1 go test -run '^$$' -bench='BenchmarkDecode.*GCMetrics|BenchmarkDecodeFullVectorAllocs' -benchmem -count=$(GCMETRICS_COUNT) .
+	GODEBUG=gctrace=1 go test $(GOAV1_PGO_FLAGS) -run '^$$' -bench='BenchmarkDecode.*GCMetrics|BenchmarkDecodeFullVectorAllocs' -benchmem -count=$(GCMETRICS_COUNT) .
 
 compiler-reports:
 	./scripts/check_compiler_reports.sh
@@ -428,21 +446,21 @@ fuzz-smoke:
 	go test ./internal/av1/restoration $(FUZZFLAGS) -fuzz=FuzzApplyWienerRestoration
 
 testvectors:
-	go test ./internal/av1/ivf ./internal/av1/obu ./internal/av1/parser ./internal/av1/rtp ./internal/av1/testvector -count=1
-	go test -tags goav1_oracle ./internal/av1/ivf ./internal/av1/obu ./internal/av1/parser ./internal/av1/rtp ./internal/av1/testvector -count=1
+	go test $(GOAV1_PGO_FLAGS) ./internal/av1/ivf ./internal/av1/obu ./internal/av1/parser ./internal/av1/rtp ./internal/av1/testvector -count=1
+	go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle ./internal/av1/ivf ./internal/av1/obu ./internal/av1/parser ./internal/av1/rtp ./internal/av1/testvector -count=1
 
 testvectors-fast:
-	go test ./internal/av1/testvector -count=1
-	go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomQuantizer00|TestFrameMD5|TestOracleEnabled|TestLibaomRemoteManifest' -count=1
+	go test $(GOAV1_PGO_FLAGS) ./internal/av1/testvector -count=1
+	go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomQuantizer00|TestFrameMD5|TestOracleEnabled|TestLibaomRemoteManifest' -count=1
 
 testvectors-full: testvectors
-	GOAV1_FULL_LIBAOM_VECTORS=1 go test -tags goav1_oracle ./internal/av1/testvector -run TestLibaomRemoteSuiteFullDownloads -count=1
+	GOAV1_FULL_LIBAOM_VECTORS=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle ./internal/av1/testvector -run TestLibaomRemoteSuiteFullDownloads -count=1
 
 test-motion-conformance:
-	GOAV1_FULL_LIBAOM_CONVOLVE=1 go test ./internal/av1/motion -run 'TestLibaomConvolve' -count=1
+	GOAV1_FULL_LIBAOM_CONVOLVE=1 go test $(GOAV1_PGO_FLAGS) ./internal/av1/motion -run 'TestLibaomConvolve' -count=1
 
 test-transform-conformance:
-	go test ./internal/av1/transform -run 'TestInverseDCT1DMatchesLibaomReference|TestInverseADST1DRoundTripMatchesLibaomShape|TestInverseFlipADST1DReversesADST|TestInverseDCTBlockSupportedSizes|TestInverseBlockHybridTransforms|TestInverseWHT4x4Block' -count=1
+	go test $(GOAV1_PGO_FLAGS) ./internal/av1/transform -run 'TestInverseDCT1DMatchesLibaomReference|TestInverseADST1DRoundTripMatchesLibaomShape|TestInverseFlipADST1DReversesADST|TestInverseDCTBlockSupportedSizes|TestInverseBlockHybridTransforms|TestInverseWHT4x4Block' -count=1
 
 alloc:
 	./scripts/check_allocs.sh
@@ -512,18 +530,18 @@ webrtc-production:
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPNACKRetransmission -count=1 -timeout 120s -v
 
 dryrun-fast:
-	GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFastFrameWorkDryRun' -count=1 -timeout 600s -v
+	GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFastFrameWorkDryRun' -count=1 -timeout 600s -v
 
 # dryrun-relevant-supported runs the strict-MD5 SuiteLevelRelevant framework
 # dry-run cohort.
 dryrun-relevant-supported:
-	GOAV1_RELEVANT_SUPPORTED_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomRelevantSupportedFrameWorkDryRun' -count=1 -timeout 900s -v
+	GOAV1_RELEVANT_SUPPORTED_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomRelevantSupportedFrameWorkDryRun' -count=1 -timeout 900s -v
 
 # dryrun-full runs every checksum-pinned vector in the committed libaom
 # manifest through the strict-MD5 framework dry-run. It is heavier than
 # dryrun-extended because it also includes the relevant-supported cohort.
 dryrun-full:
-	GOAV1_FULL_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFullFrameWorkDryRun' -count=1 -timeout 2400s -v
+	GOAV1_FULL_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFullFrameWorkDryRun' -count=1 -timeout 2400s -v
 
 # dryrun-profiles decodes the vendored profile-conformance clips (profile-0
 # 4:2:0 S_FRAME, profile-1 4:4:4 8/10-bit, profile-1 4:4:4 palette/CDEF/restoration/edge/tile/super-res,
@@ -534,27 +552,27 @@ dryrun-full:
 # compiles into a separate test binary from the oracle suite and cannot share
 # process state with the fast/extended dry-runs.
 dryrun-profiles:
-	go test -tags goav1_oracle ./internal/av1/testvector/profiles -run 'TestProfileVendoredClips' -count=1 -timeout 600s -v
+	go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle ./internal/av1/testvector/profiles -run 'TestProfileVendoredClips' -count=1 -timeout 600s -v
 
 # dryrun-corpus runs the generated real-content corpus through a single
 # byte-exact stream-MD5 verification pass. Generate the local ignored corpus
 # first with scripts/gen_bench_corpus.sh; this target skips cleanly when no
 # corpus is present.
 dryrun-corpus:
-	GOAV1_CORPUS_CONFORMANCE=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestGeneratedCorpusConformance' -count=1 -timeout 900s -v
+	GOAV1_CORPUS_CONFORMANCE=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle ./internal/av1/testvector -run 'TestGeneratedCorpusConformance' -count=1 -timeout 900s -v
 
 # dryrun-external-corpus recursively scans GOAV1_EXTERNAL_CORPUS_DIR or
 # GOAV1_EXTERNAL_CORPUS_DIRS for local third-party IVF corpora. Each .ivf must
 # have a supported stream-MD5 or per-frame MD5 sidecar.
 dryrun-external-corpus:
-	GOAV1_EXTERNAL_CORPUS=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestExternalCorpusConformance' -count=1 -timeout 2400s -v
+	GOAV1_EXTERNAL_CORPUS=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle ./internal/av1/testvector -run 'TestExternalCorpusConformance' -count=1 -timeout 2400s -v
 
 # dryrun-extended runs the opt-in SuiteLevelExtended framework dry-run cohort
 # under strict per-frame MD5. It downloads multi-quantizer 10-bit, additional
 # SVC, and larger-size libaom vectors. This target is never part of CI or the
 # default test gates; it is a local diagnostic for surfacing latent decoder gaps.
 dryrun-extended:
-	GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomExtendedFrameWorkDryRun' -count=1 -timeout 1800s -v
+	GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomExtendedFrameWorkDryRun' -count=1 -timeout 1800s -v
 
 ci-local: fmt-check vet test alloc compiler-reports trace-zero
 
@@ -568,14 +586,14 @@ CMDBIN ?= bin/aom-go-dec
 # against arbitrary IVF files without polluting the module cache.
 build-cmd:
 	@mkdir -p $(dir $(CMDBIN))
-	go build -o $(CMDBIN) $(CMDDIR)
+	go build $(GOAV1_PGO_FLAGS) -o $(CMDBIN) $(CMDDIR)
 	@echo "built $(CMDBIN)"
 
 # install-cmd installs the aom-go-dec CLI into $GOBIN (or $GOPATH/bin) using
 # the standard `go install` flow so it lands on $PATH for users who have
 # their Go bin directory configured.
 install-cmd:
-	go install $(CMDDIR)
+	go install $(GOAV1_PGO_FLAGS) $(CMDDIR)
 
 help:
 	@echo "Available targets:"
@@ -587,6 +605,7 @@ help:
 	@echo "  bench-corpus               generated corpus goav1 vs reference decoder throughput"
 	@echo "  bench-corpus-publish       strict generated corpus throughput requiring all reference decoders"
 	@echo "  bench-go-publish           strict Go benchmark runner with metadata sidecar"
+	@echo "  pgo-regenerate             print the D2-a PGO regeneration recipe"
 	@echo "  qualitybench-publish       matched-CPU-budget publish encoder comparison"
 	@echo "  qualitybench-publish-singlethread fixed single-thread publish encoder comparison"
 	@echo "  gc-metrics                 decode GC scan/object-count benchmarks"

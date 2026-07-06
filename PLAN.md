@@ -169,12 +169,15 @@ codegen residue (Go glue vs C+asm in serial paths) that M-D3/M-E3+ attack.
   Only if a 12-bit clip enters the corpus; else skip. (S, LOW PRIO)
 
 ### M-D2: toolchain + glue shape (target ~2.8x)
-- [ ] **D2-a Go PGO** — NEVER TRIED. Generate default.pgo from a corpus
-  decode profile (and an encoder profile — one merged profile or
-  per-binary, investigate), `go build -pgo`, measure BOTH codecs idle,
-  gate byte-exactness (output must be identical — still run extended).
-  If green, commit default.pgo + Makefile wiring + regeneration recipe.
-  (M — highest expected ROI per effort in this milestone)
+- [x] **D2-a Go PGO** — LANDED (codex, reviewed): merged corpus profile
+  at cmd/qualitybench/default.pgo (54KB; main-package-scoped — module
+  root does NOT activate, verified via go version -m), GOAV1_PGO_FLAGS
+  wired into every test/bench/dryrun target, pgo-regenerate recipe in
+  Makefile. Decoder p288 −1.5% cpu (4/4 pairs), p720 flat; encoder
+  realC ST −0.84%. Byte-identical everywhere, extended 226/226 with
+  PGO active. NOTE: campaign measurements through Makefile targets now
+  include PGO; raw `go test` invocations need -pgo=<path> to match.
+  (done)
 - [ ] **D2-b targeted BCE pass** — top remaining bounds-check sites via
   `-gcflags=all=-d=ssa/check_bce` on hot files; ONLY guard-disjunct
   pattern (the additive-induction trick from the coeff-context commit);
