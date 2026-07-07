@@ -85,8 +85,11 @@ A4 — Single dequant+transform scratch pass (fold the two int32 buffers).
   Gate: decoder byte-exact + reconstruct unit tests all tx types/sizes.
   Yield ~0.3-0.8%. Risk M. Deps none (diff pkg). ∥ A1/A2/A3, all of B.
 
-A GO/NO-GO: land A1+A2, measure. If A1+A2 < 3% e2e on p720_inter_q32 the
-fused-walk plateau is real → stop A3/A4, reallocate to C.
+A GO/NO-GO RESOLVED 2026-07-07 = STOP. A1 landed (chroma prime, small);
+A2 pivot BYTE-EXACT but FLAT-to-slightly-slower (compiler already hoists
+the geometry leaf); A3 flat-negative. Fused-walk plateau CONFIRMED — the
+earlier structural port already captured it. A2/A4 NOT pursued. Reallocated
+to C (spine asm) + the big bets (F-1b full PREP_BIAS, cross-pkg fusion).
 
 ## PROGRAM B — encoder M2: entropy-Writer spine ASM (mirror of decoder D3)
 

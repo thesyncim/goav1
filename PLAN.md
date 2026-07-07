@@ -110,7 +110,7 @@ preserved) · dequant-into-sign-loop fusion (+1.1%) · CDEF pri+sec re-fusion
 (already fused; split single-strength kernels are deliberate) · Wiener
 row-fusion · multi-tile bitmask LF finish (−8.2% sparse) · ExtendBorders
 removal (public API exposes padding; internal readers don't need it) ·
-madvise-in-harness mirage · A3 inter geometry hoist (byte-exact but +0.09% cpu; per-plane geometry already cached — informs A2 the compiler may hoist that leaf too) · tmv projection NEON (every NEON candidate SLOWER: cheap multiplies dwarfed by strided access + per-entry validity branches — gather/batch machinery costs more; scalar already optimal). Encoder: depth-removal beyond 9/14 (no-win even
+madvise-in-harness mirage · A2 fused-walk pivot (in-place luma walk byte-exact but flat-to-slower; compiler already hoists the geometry — Program-A residual PLATEAU confirmed, stop A2/A4) · A3 inter geometry hoist (byte-exact but +0.09% cpu; per-plane geometry already cached — informs A2 the compiler may hoist that leaf too) · tmv projection NEON (every NEON candidate SLOWER: cheap multiplies dwarfed by strided access + per-entry validity branches — gather/batch machinery costs more; scalar already optimal). Encoder: depth-removal beyond 9/14 (no-win even
 at SPEND gate; ME already cheap — sweep tax unpayable; only ~4x cheaper NEON
 sweep could reopen) · largest-TX (−0.66dB; libaom TX-size election is
 load-bearing) · leaf skip-TX arm (−0.29dB realB) · use_neighbouring_mode cut
