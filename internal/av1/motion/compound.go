@@ -40,8 +40,8 @@ type CompoundConvolveScratch struct {
 	im  compoundIM
 	im8 compoundIM16
 	// edge is the dav1d-style emulated-edge window (src/mc_tmpl.c emu_edge_c):
-	// clamped compound references materialize their halo into it once and then
-	// run the plain SIMD kernels over it.
+	// clamped 8-bit compound references materialize their directional or 2D
+	// halo into it once and then run the plain SIMD kernels over it.
 	edge [emuEdgeStride * emuEdgeRows]byte
 	// edge16 is the 16bpc sibling of edge for clamped high-bit-depth compound
 	// references; caller-owned so the ~38KB window is not zero-filled per call.
@@ -450,6 +450,7 @@ var predictInterCompoundRefHighBDToConvBuf2DClampedImpl = predictInterCompoundRe
 func predictInterCompoundRefHighBDToConvBuf2DClampedDefault(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, bitDepth int, im *compoundIM, _ *emuEdge16Buf) {
 	predictInterCompoundRefHighBDToConvBuf2DClamped(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, im)
 }
+
 var predictInterCompoundRefHighBDToConvBufXResidentImpl = predictInterCompoundRefHighBDToConvBufXResident
 var predictInterCompoundRefHighBDToConvBufYResidentImpl = predictInterCompoundRefHighBDToConvBufYResident
 
@@ -485,12 +486,32 @@ func predictInterCompoundRef8ToConvBuf(out []uint16, ref frame.Plane, refX int, 
 	case subX != 0 && subY != 0:
 		predictInterCompoundRef8ToConvBuf2DImpl(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
 	case subX != 0:
+		if scratch != nil && compound8XWindowOverhangs(ref, refX, refY, width, height) {
+			predictInterCompoundRef8ToConvBufXEmuEdge(out, ref, refX, refY, width, height, xKernel, roundOffset, &scratch.edge)
+			return
+		}
 		predictInterCompoundRef8ToConvBufXImpl(out, ref, refX, refY, width, height, xKernel, roundOffset)
 	case subY != 0:
+		if scratch != nil && compound8YWindowOverhangs(ref, refX, refY, width, height) {
+			predictInterCompoundRef8ToConvBufYEmuEdge(out, ref, refX, refY, width, height, yKernel, round0, roundOffset, &scratch.edge)
+			return
+		}
 		predictInterCompoundRef8ToConvBufYImpl(out, ref, refX, refY, width, height, yKernel, round0, roundOffset)
 	default:
 		predictInterCompoundRef8ToConvBufCopyImpl(out, ref, refX, refY, width, height, round0, roundOffset)
 	}
+}
+
+func compound8XWindowOverhangs(ref frame.Plane, refX int, refY int, width int, height int) bool {
+	fo := filterTaps/2 - 1
+	x := refX - fo
+	return x < 0 || refY < 0 || x+width+filterTaps > ref.Width || refY+height > ref.Height
+}
+
+func compound8YWindowOverhangs(ref frame.Plane, refX int, refY int, width int, height int) bool {
+	fo := filterTaps/2 - 1
+	y := refY - fo
+	return refX < 0 || y < 0 || refX+width > ref.Width || y+height+filterTaps-1 > ref.Height
 }
 
 var predictInterCompoundRef8ToConvBuf2DImpl = predictInterCompoundRef8ToConvBuf2DPureGo
@@ -613,6 +634,18 @@ func predictInterCompoundRef8ToConvBuf2DWithIM(out []uint16, ref frame.Plane, re
 
 var predictInterCompoundRef8ToConvBufXImpl = predictInterCompoundRef8ToConvBufXPureGo
 
+// predictInterCompoundRef8ToConvBufXEmuEdge handles the edge-overhanging
+// 8-bit compound horizontal-only convolve. Following dav1d's reconstruction
+// model (src/recon_tmpl.c mc(), src/mc_tmpl.c emu_edge_c), it materializes the
+// clamped horizontal tap halo once and reruns the plain resident kernel over
+// the resident window. The CONV_BUF output remains libaom's offset uint16
+// domain; the SIMD kernel applies the same roundPowerOfTwo3 + roundOffset as
+// predictInterCompoundRef8ToConvBufXPureGo.
+func predictInterCompoundRef8ToConvBufXEmuEdge(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, roundOffset int, edge *[emuEdgeStride * emuEdgeRows]byte) {
+	emu, emuX := emuEdgeWindow8X(ref, refX, refY, width, height, edge)
+	predictInterCompoundRef8ToConvBufXImpl(out, emu, emuX, 0, width, height, kernel, roundOffset)
+}
+
 func predictInterCompoundRef8ToConvBufXPureGo(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, roundOffset int) {
 	fo := filterTaps/2 - 1
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
@@ -689,6 +722,14 @@ func predictInterCompoundRef8ToConvBufXPureGo(out []uint16, ref frame.Plane, ref
 }
 
 var predictInterCompoundRef8ToConvBufYImpl = predictInterCompoundRef8ToConvBufYPureGo
+
+// predictInterCompoundRef8ToConvBufYEmuEdge is the vertical-only sibling of
+// predictInterCompoundRef8ToConvBufXEmuEdge; bit-identical to the scalar
+// clamped path in predictInterCompoundRef8ToConvBufYPureGo.
+func predictInterCompoundRef8ToConvBufYEmuEdge(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int, edge *[emuEdgeStride * emuEdgeRows]byte) {
+	emu, emuY := emuEdgeWindow8Y(ref, refX, refY, width, height, edge)
+	predictInterCompoundRef8ToConvBufYImpl(out, emu, 0, emuY, width, height, kernel, round0, roundOffset)
+}
 
 func predictInterCompoundRef8ToConvBufYPureGo(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
 	fo := filterTaps/2 - 1
