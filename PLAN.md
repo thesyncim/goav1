@@ -30,6 +30,14 @@ only rules, open work, and pins.
 
 ## Path to 1.4x — findings-calibrated ladder (updated 2026-07-07)
 
+M2/M3 SLICED BACKLOG: see ARCH_BACKLOG.md (agent-executable slices A1-A4 fused
+walk, B0-B3 writer-spine asm, C0-C2 block-loop spine; waves + go/no-go +
+ceilings). KEY: the fused walk already exists at block granularity — A is
+residual cleanup (2-6%); B (writer-spine asm, proven D3 mirror) is the
+highest-confidence lever; C gated on A's profile. None sufficient for 1.4x
+alone — the big bets stay F-1b full PREP_BIAS + E3 cross-pkg transform fusion.
+
+
 WHAT THE CAMPAIGN HAS PROVEN SO FAR (shapes the estimates below):
 kernel-coverage and architecture parity are DONE and bought 4.34x→3.42x /
 5.2x→3.3x; symbol-read asm is a SOLVED chapter (all mode/coeff symbol reads
