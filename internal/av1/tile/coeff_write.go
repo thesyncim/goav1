@@ -302,7 +302,7 @@ func CountCoefficientsTXB8x8Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16, txCDF *e
 func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
 	const (
 		maxEOB = 64
-		stride = uint8(12)
+		stride = uint16(12)
 		txCtx  = 1
 		txBR   = 1
 	)
@@ -449,7 +449,7 @@ func CountCoefficientsTXB8x8UV2DTrusted(cdfs *CoeffCDFs, coeffs []int16) (TXBDec
 func CountCoefficientsTXB8x8UV2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16) (TXBDecodeResult, int) {
 	const (
 		maxEOB = 64
-		stride = uint8(12)
+		stride = uint16(12)
 		txCtx  = 1
 		txBR   = 1
 	)
@@ -1624,7 +1624,7 @@ func WriteCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *Coef
 func writeCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8, afterSkip func() error, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, error) {
 	const (
 		maxEOB = 16
-		stride = uint8(8)
+		stride = uint16(8)
 		txCtx  = 0
 		txBR   = 0
 	)
@@ -1780,7 +1780,7 @@ func CountCoefficientsTXB4x4Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16) (TXBDeco
 func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16) (TXBDecodeResult, int) {
 	const (
 		maxEOB = 16
-		stride = uint8(8)
+		stride = uint16(8)
 		txCtx  = 0
 		txBR   = 0
 	)
@@ -1930,7 +1930,7 @@ func WriteCoefficientsTXB4x4UV2DContextTrusted(w *entropy.Writer, cdfs *CoeffCDF
 func WriteCoefficientsTXB4x4UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
 	const (
 		maxEOB = 16
-		stride = uint8(8)
+		stride = uint16(8)
 		txCtx  = 0
 		txBR   = 0
 	)
@@ -2080,7 +2080,7 @@ func CountCoefficientsTXB4x4UV2DTrusted(cdfs *CoeffCDFs, coeffs []int16) (TXBDec
 func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16) (TXBDecodeResult, int) {
 	const (
 		maxEOB = 16
-		stride = uint8(8)
+		stride = uint16(8)
 		txCtx  = 0
 		txBR   = 0
 	)
@@ -2234,7 +2234,7 @@ func WriteCoefficientsTXB8x8Y2DContextTrustedArray(w *entropy.Writer, cdfs *Coef
 func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeff64 *[64]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int, restoreTXCDF bool) TXBDecodeResult {
 	const (
 		maxEOB = 64
-		stride = uint8(12)
+		stride = uint16(12)
 		txCtx  = 1
 		txBR   = 1
 	)
@@ -2396,7 +2396,7 @@ func WriteCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[64]int16, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
 	const (
 		maxEOB = 64
-		stride = uint8(12)
+		stride = uint16(12)
 		txCtx  = 1
 		txBR   = 1
 	)

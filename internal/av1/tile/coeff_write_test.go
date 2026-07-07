@@ -3,10 +3,42 @@ package tile
 import (
 	"math/rand"
 	"testing"
+	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
+
+func TestCoeffWriterTrustedScanHotUsesCanonicalLayout(t *testing.T) {
+	if unsafe.Sizeof(coeffScanHot4x4Y2D[0]) != unsafe.Sizeof(coeffScanHot{}) ||
+		unsafe.Sizeof(coeffScanHot8x8Y2D[0]) != unsafe.Sizeof(coeffScanHot{}) ||
+		unsafe.Sizeof(coeffScanHot16x16Y2D[0]) != unsafe.Sizeof(coeffScanHot{}) ||
+		unsafe.Sizeof(coeffScanHot32x32Y2D[0]) != unsafe.Sizeof(coeffScanHot{}) {
+		t.Fatalf("trusted writer scan-hot arrays diverged from coeffScanHot layout")
+	}
+
+	tests := []struct {
+		name string
+		size TransformSize
+		got  []coeffScanHot
+	}{
+		{name: "4x4", size: TransformSize4x4, got: coeffScanHot4x4Y2D[:]},
+		{name: "8x8", size: TransformSize8x8, got: coeffScanHot8x8Y2D[:]},
+		{name: "16x16", size: TransformSize16x16, got: coeffScanHot16x16Y2D[:]},
+		{name: "32x32", size: TransformSize32x32, got: coeffScanHot32x32Y2D[:]},
+	}
+	for _, tc := range tests {
+		want := coeffScanHotTable[tc.size][transform.Class2D]
+		if len(want) != len(tc.got) {
+			t.Fatalf("%s len=%d want %d", tc.name, len(tc.got), len(want))
+		}
+		for i := range tc.got {
+			if tc.got[i] != want[i] {
+				t.Fatalf("%s[%d]=%+v want %+v", tc.name, i, tc.got[i], want[i])
+			}
+		}
+	}
+}
 
 // TestWriteCoefficientsTXBRoundTrip is the oracle gate for the coefficient writer:
 // it encodes a sequence of random quantized transform blocks with shared, adapting

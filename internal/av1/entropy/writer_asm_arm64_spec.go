@@ -40,10 +40,15 @@ import "unsafe"
 //   - Exp-Golomb coefficient tails.
 //
 // Go keeps txb_skip/eob token/tx_type ordering, coefficient prep, scan table
-// selection and validation. The kernel consumes the same scan-hot, levels,
-// abs-level and non-zero/sign-bit images used by the 8x8/16x16/32x32 trusted
-// writers. Count-only BitCounter paths stay in Go unless a separate counter
-// kernel is justified by profile data.
+// selection and validation. Phase 1 unified the trusted writer scan-hot tables:
+// every 4x4/8x8/16x16/32x32 Class2D writer now walks tile.coeffScanHot, the same
+// 8-byte entry layout consumed by the decoder coefficient kernels. The B2
+// wrapper can pass that one scanHot pointer plus coeffs and levels for every
+// size; full level/sign/golomb facts come from coeffs[pos], and context facts
+// come from levels[padded] plus the scan-hot offsets. Size-specific handling is
+// limited to scalar constants (eob, stride, CDF family). Count-only BitCounter
+// paths stay in Go unless a separate counter kernel is justified by profile
+// data.
 //
 // 1. Writer memory contract
 //
@@ -154,6 +159,21 @@ import "unsafe"
 //   - all other coefficients write one equiprobable sign bit.
 //   - levels >= MaxBaseBRRange append the AV1 Exp-Golomb tail with the same bit
 //     order as tile.writeGolomb.
+//
+// The scan-hot entry loaded by the kernel is always tile.coeffScanHot:
+//
+//   bits  0-15 pos            raster coefficient position
+//   bits 16-31 padded         levels-scratch offset
+//   bits 32-39 lower2DOffset  signed non-EOB base-context offset
+//   bits 40-47 br2DOffset     signed non-EOB BR-context offset
+//   bits 48-55 lowerEOBCtx    EOB base-context row
+//   bits 56-63 brEOBCtx       EOB BR-context row
+//
+// Dynamic per-coefficient write facts do not need a per-size packed table:
+// coeffs[pos] supplies the full signed level for base/BR range, sign, and
+// golomb trigger; levels[padded] supplies the clamped neighbor/context image.
+// The existing Go absLevels/nonZero/sign-bit side buffers remain pure-Go loop
+// conveniences and are not part of the required B2 asm ABI.
 //
 // 4. Dispatch and kill switch
 //
