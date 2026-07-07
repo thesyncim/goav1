@@ -31,12 +31,8 @@ func minMaxAbsDiff8x8PureGo(a []byte, aStride int, b []byte, bStride int, bytesP
 			bLine := b[row*bStride : row*bStride+8]
 			for col := range 8 {
 				diff := absDiff8(aLine[col], bLine[col])
-				if diff < minDiff {
-					minDiff = diff
-				}
-				if diff > maxDiff {
-					maxDiff = diff
-				}
+				minDiff = min(minDiff, diff)
+				maxDiff = max(maxDiff, diff)
 			}
 		}
 	case 2:
@@ -48,12 +44,8 @@ func minMaxAbsDiff8x8PureGo(a []byte, aStride int, b []byte, bStride int, bytesP
 				av := uint16(aLine[i]) | uint16(aLine[i+1])<<8
 				bv := uint16(bLine[i]) | uint16(bLine[i+1])<<8
 				diff := absDiff16(av, bv)
-				if diff < minDiff {
-					minDiff = diff
-				}
-				if diff > maxDiff {
-					maxDiff = diff
-				}
+				minDiff = min(minDiff, diff)
+				maxDiff = max(maxDiff, diff)
 			}
 		}
 	}

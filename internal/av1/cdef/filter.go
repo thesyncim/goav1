@@ -189,12 +189,7 @@ func constrainShifted(diff int, threshold int, shift int) int {
 		return 0
 	}
 	a := absInt(diff)
-	limit := threshold - (a >> shift)
-	if limit < 0 {
-		limit = 0
-	} else if limit > a {
-		limit = a
-	}
+	limit := min(max(threshold-(a>>shift), 0), a)
 	if diff < 0 {
 		return -limit
 	}
