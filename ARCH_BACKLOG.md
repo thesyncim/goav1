@@ -151,8 +151,14 @@ built but FLAT alone (primitive-asm floor, not landed). B2 BLOCKED: the
 writer coeff hot paths use THREE scan-hot entry layouts (decoder had one),
 so a single write-kernel can't cover them — B2 needs a per-layout kernel
 family OR a packed-layout unification first + a TXB-level write differential.
-Program B is therefore a MULTI-SLICE restructure (unify layouts → per-layout
-kernels), not the clean D3 mirror assumed. Deferred as a real project.
+WRITER-SPINE PROGRAM RESOLVED 2026-07-07: Phase 1 (layout unify a2bac7d2)
+LANDED as a small win (-1.7% realC ST, byte-identical). Phase 2 (the write
+kernel) BUILT + fully validated byte-identical (1M soak, 4-clip SHA-256,
+round-trip oracle) but MEASURED NET-NEGATIVE (~1.4% slower wall, every TXB
+size net-neg/noise) → NOT landed. DECISIVE FINDING: the write side does NOT
+asm-win like the read side — the Go writer (WriteCDF4/WriteBoolQ15) is already
+well-inlined, so a per-TXB write kernel regresses even with the layout unified.
+The highest-confidence remaining lever is a measured negative. Program B closed.
 
 ## PROGRAM C — decoder M3: block-loop spine ASM (gated on A's post-landing profile)
 
