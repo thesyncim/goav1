@@ -243,7 +243,31 @@ apply (that was SIMD inverse-CDF search; this is scalar asm).
   7.13s vs 7.22s (-1.2%), p288_inter_q20 3.10s vs 3.15s (-1.5%),
   kernel wins all 6 pairs. Boundary overhead is NOT eating the win;
   absolute e2e is bounded by this loop's share — D3-c next. (done)
-- [ ] **D3-c BR + golomb/sign loops asm** (L)
+- [x] **D3-c golomb/sign replay asm** (BR chain already landed inside
+  D3-b): coeffSignGolombARM64 (entropy/reader_coeff_sign_arm64.s), one
+  NOSPLIT leaf call per TXB replaying the whole P3 dirty-list pass —
+  DC-sign binary CDF read + updateCDF2, one equiprobable sign bit per
+  other nonzero, Exp-Golomb tails incl. the maxLength unwind (culLevel
+  -1 error protocol, cursor at the exact failure point). KEPT SEPARATE
+  from D3-b per the spec (fuse decision deferred to D3-d); the
+  standalone cut wires into BOTH replay sites (tracked2D + WithGeo, all
+  classes and update modes incl. Horiz/Vert that D3-b never sees). Same
+  kill switch: GOAV1_DISABLE_COEFF_ASM=1 forces pure-Go for BOTH
+  kernels; value "sign" disables only D3-c (incremental A/B hook,
+  scaffolding per rule 11). Differential: golomb-focused lockstep test
+  added (tail-heavy base/BR CDFs force a golomb tail per coefficient;
+  0xff/0x00/random/short-tail streams pin length classes 1, >20-fail
+  and past-end ecLotsBits; dirty lists spread 1..maxEOB); soak
+  GOAV1_TXB_DIFF_TXBS=1000 = 114k streams x <=48 TXBs x 2 tests (~5M+
+  TXBs, 5-variant lockstep) green; extended 226/226 0 FAIL kernel-on.
+  Micro (same-binary "sign" switch A/B, n=8, ±1%): tracked TXB -1.6%
+  (8x8) / -6.5% (16x16) / flat (32x32, its bench payload replays a
+  near-empty dirty list). e2e same-binary interleaved pairs (30x
+  decode, cpu user): p288_inter_q20 3.07 vs 3.10 (-1.0%, 7/8 pairs),
+  p720_inter_q32 flat (7.05 vs 7.02 on the clean pairs; mixed under
+  load) — the replay's share scales with coefficient density (one sign
+  bit per nonzero), q32 has too few nonzeros for the boundary win to
+  clear noise. (done)
 - [ ] **D3-d integrate full-TXB kernel + measure** — e2e target: coeff
   subtree cum halves. Go/no-go for D3-e. (M)
 - [ ] **D3-e mode/MV symbol subtrees** — same method, hottest first
@@ -399,6 +423,10 @@ entropy-write∥next-frame-decision overlap (PROVEN serialization both
 goav1 and SVT: MD(N+1) needs N's frame-end CDFs) · compoundGoldenLikely
 path (never arms on realC).
 
+use_neighbouring_mode MDS0 cut (2026-07-07, codex): quality-green at the
+matched gate but fires on only ~46 realC blocks/60f (0 on other clips) →
++0.13% cpu, below the ≥1% bar — implemented, measured, reverted; do not
+re-attempt without content where intra-bordered inter blocks are common.
 NEW PINS (2026-07-06 evening, codex/agent round): dequant-into-sign-loop
 fusion (e2e +1.1% cpu; hot-loop nil branches tax the unfused path +5%;
 per-coeff division; per-TXB clear — dav1d's fusion is unconditional C) ·

@@ -1542,7 +1542,21 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
-	if useDirtyScanList {
+	if useDirtyScanList && coeffSignGolombKernel && !coeffTraceEnabled {
+		// M-D3 D3-c arm64 kernel: the dirty-scan replay below (DC-sign CDF
+		// read, equiprobable sign bits, Exp-Golomb tails, signed stores) in
+		// one call per TXB. A negative culLevel encodes the pure-Go loop's
+		// validation errors with the reader already at the failure point.
+		cul, dcv, msl := reader.CoeffSignGolomb(&dirtyArr[0], nonzeroScanLen, &coeffs[0], dcSignCDF, cdfUpdate)
+		if cul < 0 {
+			reader.CommitStateTo(&s.Reader)
+			return TXBDecodeResult{}, ErrInvalidDecodeState
+		}
+		culLevel = cul
+		dcValue = dcv
+		maxScanLine = msl
+		*dirtyLen = uint16(nonzeroScanLen)
+	} else if useDirtyScanList {
 		// The dirty-scan list is internal scratch populated above from already
 		// validated scan positions, and only non-zero levels are recorded. Replay
 		// it as trusted token state, like dav1d's compact coefficient links.
@@ -2004,83 +2018,98 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
-	i := nonzeroScanLen - 1
-	if i >= 0 && coeffDirtyPackedPos(dirtyArr[i]) == 0 {
-		pos := 0
-		level := int(uint16(dirtyArr[i]) >> 10)
-		negative := reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
-		baseLevel := level
-		golombExtra := 0
-		if level >= MaxBaseBRRange {
-			tail, err := readCoeffGolombCursor(&reader)
-			if err != nil {
-				reader.CommitStateTo(&s.Reader)
-				return TXBDecodeResult{}, err
-			}
-			golombExtra = tail
-			level += tail
-		}
-		signBit := 0
-		if negative {
-			signBit = 1
-		}
-		if coeffTraceEnabled {
-			c := coeffTraceScanIndex(scan, pos, eobPos)
-			coeffTraceCoeff(c, pos, baseLevel, golombExtra, level, signBit)
-		}
-		culLevel += level
-		if level > int(^uint16(0)>>1) {
+	if coeffSignGolombKernel && !coeffTraceEnabled {
+		// M-D3 D3-c arm64 kernel: the dirty-scan replay below (DC-sign CDF
+		// read, equiprobable sign bits, Exp-Golomb tails, signed stores) in
+		// one call per TXB. A negative culLevel encodes the pure-Go loop's
+		// validation errors with the reader already at the failure point.
+		cul, dcv, msl := reader.CoeffSignGolomb(&dirtyArr[0], nonzeroScanLen, &coeffs[0], dcSignCDF, cdfUpdate)
+		if cul < 0 {
 			reader.CommitStateTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
-		signed := int16(level)
-		if negative {
-			signed = -signed
-		}
-		dcValue = int(signed)
-		coeffs[pos] = signed
-		dirtyArr[i] = int16(pos)
-		i--
-	}
-	for ; i >= 0; i-- {
-		packed := uint16(dirtyArr[i])
-		pos := int(packed) & coeffDirtyPosMask
-		level := int(packed >> 10)
-		if pos > maxScanLine {
-			maxScanLine = pos
-		}
-		bit := reader.ReadBitTrustedInline()
-		negative := bit != 0
-		baseLevel := level
-		golombExtra := 0
-		if level >= MaxBaseBRRange {
-			tail, err := readCoeffGolombCursor(&reader)
-			if err != nil {
-				reader.CommitStateTo(&s.Reader)
-				return TXBDecodeResult{}, err
+		culLevel = cul
+		dcValue = dcv
+		maxScanLine = msl
+	} else {
+		i := nonzeroScanLen - 1
+		if i >= 0 && coeffDirtyPackedPos(dirtyArr[i]) == 0 {
+			pos := 0
+			level := int(uint16(dirtyArr[i]) >> 10)
+			negative := reader.ReadBinaryCDFUnchecked(dcSignCDF) != 0
+			baseLevel := level
+			golombExtra := 0
+			if level >= MaxBaseBRRange {
+				tail, err := readCoeffGolombCursor(&reader)
+				if err != nil {
+					reader.CommitStateTo(&s.Reader)
+					return TXBDecodeResult{}, err
+				}
+				golombExtra = tail
+				level += tail
 			}
-			golombExtra = tail
-			level += tail
+			signBit := 0
+			if negative {
+				signBit = 1
+			}
+			if coeffTraceEnabled {
+				c := coeffTraceScanIndex(scan, pos, eobPos)
+				coeffTraceCoeff(c, pos, baseLevel, golombExtra, level, signBit)
+			}
+			culLevel += level
+			if level > int(^uint16(0)>>1) {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
+			signed := int16(level)
+			if negative {
+				signed = -signed
+			}
+			dcValue = int(signed)
+			coeffs[pos] = signed
+			dirtyArr[i] = int16(pos)
+			i--
 		}
-		signBit := 0
-		if negative {
-			signBit = 1
+		for ; i >= 0; i-- {
+			packed := uint16(dirtyArr[i])
+			pos := int(packed) & coeffDirtyPosMask
+			level := int(packed >> 10)
+			if pos > maxScanLine {
+				maxScanLine = pos
+			}
+			bit := reader.ReadBitTrustedInline()
+			negative := bit != 0
+			baseLevel := level
+			golombExtra := 0
+			if level >= MaxBaseBRRange {
+				tail, err := readCoeffGolombCursor(&reader)
+				if err != nil {
+					reader.CommitStateTo(&s.Reader)
+					return TXBDecodeResult{}, err
+				}
+				golombExtra = tail
+				level += tail
+			}
+			signBit := 0
+			if negative {
+				signBit = 1
+			}
+			if coeffTraceEnabled {
+				c := coeffTraceScanIndex(scan, pos, eobPos)
+				coeffTraceCoeff(c, pos, baseLevel, golombExtra, level, signBit)
+			}
+			culLevel += level
+			if level > int(^uint16(0)>>1) {
+				reader.CommitStateTo(&s.Reader)
+				return TXBDecodeResult{}, ErrInvalidDecodeState
+			}
+			signed := int16(level)
+			if negative {
+				signed = -signed
+			}
+			coeffs[pos] = signed
+			dirtyArr[i] = int16(pos)
 		}
-		if coeffTraceEnabled {
-			c := coeffTraceScanIndex(scan, pos, eobPos)
-			coeffTraceCoeff(c, pos, baseLevel, golombExtra, level, signBit)
-		}
-		culLevel += level
-		if level > int(^uint16(0)>>1) {
-			reader.CommitStateTo(&s.Reader)
-			return TXBDecodeResult{}, ErrInvalidDecodeState
-		}
-		signed := int16(level)
-		if negative {
-			signed = -signed
-		}
-		coeffs[pos] = signed
-		dirtyArr[i] = int16(pos)
 	}
 	*dirtyLen = uint16(nonzeroScanLen)
 

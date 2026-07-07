@@ -235,3 +235,45 @@ package tile
 //
 // The default -count=1 run stays a few seconds; GOAV1_TXB_DIFF_TXBS scales
 // the randomized-TXB volume to the millions for the D3-b landing gate.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. D3-c: the P3 sign/golomb replay kernel — coeffSignGolombARM64
+//
+// func coeffSignGolombARM64(c *Cursor, dirty *int16, n int, coeffs *int16,
+//	dcSign *CDF, update bool) (culLevel, dcValue, maxScanLine int)
+//
+// One NOSPLIT leaf call per TXB replaying the whole dirty-scan list from
+// index n-1 down to 0: the DC entry (pos==0; only ever the last-appended,
+// because every scan places position 0 at scan index 0) reads its sign from
+// the 2-symbol DC-sign row (readBinaryCDFKnown + updateCDF2 when update is
+// set), every other entry reads one equiprobable bit (ReadBitTrustedInline
+// shape), and a level saturated at MaxBaseBRRange appends the Exp-Golomb
+// tail (unary prefix capped at maxLength 20, then length-1 suffix bits).
+// Signed coefficients are stored, entries are unpacked to bare positions,
+// and culLevel/dcValue/maxScanLine come back as scalars. culLevel == -1
+// encodes the Go loop's two validation errors (prefix beyond maxLength,
+// level > math.MaxInt16) with the cursor already at the failure point and
+// the failing entry's stores skipped, so the Go wrapper's CommitStateTo +
+// ErrInvalidDecodeState return is byte-identical to the pure loop.
+//
+// KEPT SEPARATE from the D3-b kernel (not fused) for this landing: §2's
+// roadmap defers the whole-TXB fuse decision to D3-d, and the standalone P3
+// cut serves strictly more call sites than a fuse could — the replay body is
+// identical across Class2D/Horiz/Vert and both update modes, so the kernel
+// wires into BOTH readCoefficientsTXBWithGeo (any class, any update mode,
+// whenever the dirty-scan list is in use) and
+// readCoefficientsTXBTracked2DWithGeo, including the Horiz/Vert and
+// no-update paths that never run the base-levels kernel. The call boundary
+// stays one stack call per TXB, amortized over the nonzero coefficients.
+//
+// Register plan mirrors §3: persistent R1 dirty, R2 coeffs, R4 culLevel,
+// R5 cnt, R6 pos, R7 dif, R8 rng, R10 tellOffs, R19 i, R20 maxScanLine,
+// R21 dcValue, R22 update, R23 level, R24 negative, R25 entry pos, R26 isDC;
+// R14/R15 carry the golomb length/accumulator across bit reads (the refill
+// clobber set {R0, R9, R11, R12, R13, R17} is unchanged, four textual
+// copies). The suffix accumulates as acc = acc<<1|bit from acc = 1, which
+// finishes as (1<<(length-1))|suffix so value = acc-1 without a separate
+// shift register. Dispatch: coeffSignGolombKernel in coeff_asm_dispatch.go,
+// same GOAV1_DISABLE_COEFF_ASM kill switch as D3-b ("1" kills both kernels;
+// the value "sign" kills only this one — the incremental-measurement hook
+// for its landing review, removed with the switch when M-D3 concludes).

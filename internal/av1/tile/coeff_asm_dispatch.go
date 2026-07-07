@@ -7,12 +7,20 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 )
 
-// coeffBaseLevelsKernel gates the arm64 TXB base-levels asm kernel (M-D3
-// D3-b, spec in coeff_asm_arm64_spec.go). Static bool dispatch (no func
-// pointers, per the zero-alloc rules); GOAV1_DISABLE_COEFF_ASM=1 is the
-// same-binary kill switch forcing the pure-Go loops. The differential
-// harness proves both switch positions byte-identical.
-var coeffBaseLevelsKernel = entropy.HasCoeffBaseLevels2D && os.Getenv("GOAV1_DISABLE_COEFF_ASM") == ""
+// coeffBaseLevelsKernel and coeffSignGolombKernel gate the arm64 TXB asm
+// kernels (M-D3 D3-b base-levels walk and D3-c sign/golomb replay, spec in
+// coeff_asm_arm64_spec.go). Static bool dispatch (no func pointers, per the
+// zero-alloc rules); GOAV1_DISABLE_COEFF_ASM is the same-binary kill switch:
+// "1" (any value but "sign") forces the pure-Go loops for BOTH kernels, and
+// the value "sign" disables only the D3-c replay kernel (the incremental
+// measurement hook for its landing review). The differential harness proves
+// every switch position byte-identical.
+var (
+	coeffAsmKillSwitch    = os.Getenv("GOAV1_DISABLE_COEFF_ASM")
+	coeffBaseLevelsKernel = entropy.HasCoeffBaseLevels2D &&
+		(coeffAsmKillSwitch == "" || coeffAsmKillSwitch == "sign")
+	coeffSignGolombKernel = entropy.HasCoeffSignGolomb && coeffAsmKillSwitch == ""
+)
 
 // The kernel reads coeffScanHot entries as packed 8-byte words
 // (pos u16 | padded u16 | lower2DOffset i8 | br2DOffset i8 | eob ctx bytes
