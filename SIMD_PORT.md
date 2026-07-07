@@ -54,7 +54,10 @@ Ordered by decode hotness (port highest first):
 - [ ] `prediction` (4) — intra DC/paeth/smooth/directional.
 - [ ] `motion` blends (part of 5) — compound avg / mask / OBMC.
 - [ ] `quantize` (3) — mul/shift/round (encoder-side, still vectorizable).
-- [ ] `dsp` minmax/blend (2 more), `superres` (1), `frame` (1), `filmgrain`
+- [x] `dsp` blend (blendA64Mask) — PORTED + WIRED. Parity with asm (64×64 776
+      vs 775 ns, 11x over scalar); byte-exact; 8-bit non-subsampled fast path,
+      scalar fallback for subsampled/HBD. conformance green (3 dsp kernels live).
+- [ ] `dsp` minmax, `superres` (1), `frame` (1), `filmgrain`
       noise-add (the LFSR stays scalar).
 
 ### Tier 3 — CAN be SIMD but BLOCKED by missing package ops
@@ -70,7 +73,7 @@ Ordered by decode hotness (port highest first):
 - Foundation verified: whole module builds under gotip and gotip+simd;
   `conformance` green under gotip (asm path) AND with the Go-native SIMD
   residual-add active. Machine + wiring pattern + gates all proven.
-- 2 / ~45 Tier-2 kernels ported (dsp add-family done). Remaining is a per-kernel grind: for each,
+- 3 / ~45 Tier-2 kernels ported (dsp add-family + blend). Remaining is a per-kernel grind: for each,
   mirror the residual-add pair (kernel + dispatch-simd), differential-test to
   byte-exact, gate with `conformance`. Some need API workarounds (int32→int16
   packing lacks a direct reshape; go via the uint bitcast path). Track here.
