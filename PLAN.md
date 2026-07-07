@@ -41,21 +41,24 @@ optimal kernels. Therefore the road is: glue ports → walk fusion → spine-asm
 expansion, each with a go/no-go.
 
 ### DECODER 3.42x → 1.4x
-M1 → ~3.1-3.2x (glue ports, weeks):
-- [x] D3-g refmvs glue LANDED b9b70d71 (share 4.21%->3.11% p720; cpu
-      -0.21% p720 / -1.21% p288). Further headroom = the held ring.
-
-- [ ] F-1b (see below) — old bullet, superseded
-  <!-- - [ ] F-1 fastest-math: PREP_BIAS int16 CONV_BUF prototype in one compound
-      family; migrate-all if ≥1% else pin. (codex)
-- [x] LF level-cache walk-by-block LANDED 2539e1e7 (-1.48% cpu p720).
-GO/NO-GO: if M1 lands <5% combined, re-profile before starting M2.
+M1 glue ports — LANDED this session (byte-exact, each e2e-measured):
+- [x] D3 spine kernels: TXB base-levels+BR (f8aa3904), sign/golomb (e9395e24),
+      MV residual (69c7a787) — symbol-read chapter closed (all ≤~2% now).
+- [x] compound-X 8-bit emu-edge 36d590f0 (-1.17% p720).
+- [x] LF level-cache walk-by-block 2539e1e7 (-1.48% p720).
+- [x] D3-g refmvs glue b9b70d71 (-0.21% p720 / -1.21% p288).
+- [x] inverse-transform clamp-skip 3d289493 (DCT64 -24%, -3.74% p720).
+M1 remaining / open:
+- [ ] F-1b PREP_BIAS FULL migration (deferred): partial is e2e-neg; only an
+      all-families signed-prep migration can pay — large all-or-nothing.
+- [ ] micro-opt sweep (clear/min-max/struct-layout) — Opus subagent IN FLIGHT.
+GO/NO-GO: M1 is thinning (each target yields less) → M2 is the pivot.
 
 M2 → ~2.6-2.8x (walk fusion, multi-week):
-- [~] D4-a phase 1 LANDED (ref-plane view, -0.71%/-1.79% cpu); full fused walk still open. dav1d recon_tmpl.c
-      dispatch shape): collapse the per-block layer hops (blockPrediction
-      PlaneGeometry, JobOutputPlane-style glue, per-plane dispatch) into one
-      resident walk. The single biggest remaining Go-vs-C structure delta.
+- [~] D4-a phase 1 LANDED a5f3c540 (ref-plane view, -0.71%/-1.79% cpu); the
+      full per-SB fused predict→add-residual→recon walk (dav1d recon_tmpl.c
+      dispatch shape — collapse per-block layer hops into one resident walk,
+      the biggest remaining Go-vs-C structure delta) is still OPEN.
 - [ ] D2-b guard-disjunct BCE on whatever M1/M2 profiles show hot.
 GO/NO-GO: M2 is the pivot — if fused-walk prototypes measure <5%, the
 plateau is real and 1.4x needs the M3 spine bet re-scoped before more work.
