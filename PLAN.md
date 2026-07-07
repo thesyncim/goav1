@@ -73,7 +73,7 @@ M1 → ~2.9-3.0x (mapped, weeks):
 - [ ] E3 TXB pipeline fusion: spec + fuse residual→fdct→quant→dequant→invTX
       →recon (~20% cum; buffer round-trips + per-stage call tax).
 - [ ] E1-b banded/wavefront CDEF u8 (per-band backups or documented keep).
-- [ ] E4-b MDS0 candidate prediction batching (shared setup, ≤4 cands).
+- [x] E4-b MDS0 batching — PINNED NEGATIVE: setup-hoist byte-identical but e2e flat/neg (per-cand cost is the mandatory NEON convolve, not dispatch). Lever closed.
 GO/NO-GO: E3 is the load-bearing item; if fusion <5%, jump to M2 asm early.
 
 M2 → ~2.4-2.6x (writer spine): E4-a entropy-Writer asm (symbol write + CDF
