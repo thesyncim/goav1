@@ -1,6 +1,6 @@
 # PLAN — beat dav1d (decode) and SVT p12 (encode), single-thread, to 1.4x
 
-STANDINGS (2026-07-07): decoder 3.42x behind dav1d (corpus MD5-verified vs
+STANDINGS (2026-07-07 pm): decoder 3.33x vs dav1d, 1.99x vs aomdec (corpus 1992ms/434fps, PGO); encoder realC ST 1.58s (~3.1x vs SVT) at +0.5dB. Campaign: 4.34x->3.33x dec, 5.2x->~3.1x enc.
 both refs) · encoder ~3.3x behind SVT ST cpu at +0.5dB quality (spend gate:
 scripts/spend_gate.sh). History/details: git log + memory; this file holds
 only rules, open work, and pins.
