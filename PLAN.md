@@ -42,9 +42,8 @@ expansion, each with a go/no-go.
 
 ### DECODER 3.42x → 1.4x
 M1 → ~3.1-3.2x (glue ports, weeks):
-- [ ] D3-g refmvs glue: dav1d refmvs.c cached row-context shape for
-      BuildReferenceMVStack scans + markGridInterMotion fills (5-7% cum).
-      COMPUTE win (not cache-locality) but prototype-first per pin family.
+- [x] D3-g refmvs glue LANDED b9b70d71 (share 4.21%->3.11% p720; cpu
+      -0.21% p720 / -1.21% p288). Further headroom = the held ring.
 
 - [ ] F-1b (see below) — old bullet, superseded
   <!-- - [ ] F-1 fastest-math: PREP_BIAS int16 CONV_BUF prototype in one compound
