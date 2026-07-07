@@ -1070,7 +1070,7 @@ func TestScanOuterBlockReferenceMVUsesSBLeftHistory(t *testing.T) {
 		HaveTop:    true,
 		HaveLeft:   true,
 	}
-	ctx.scanGridBlockReferenceMV(req, -1, -1, &matches, &newMatches, &stack)
+	ctx.scanGridBlockReferenceMV(&req, -1, -1, &matches, &newMatches, &stack)
 	if matches == 0 {
 		t.Fatalf("expected RowMatches to count the SBLeft cross-SB neighbor, got 0")
 	}
@@ -1107,7 +1107,7 @@ func TestScanOuterBlockReferenceMVSkipsSBLeftWithoutHaveLeft(t *testing.T) {
 		HaveTop:    true,
 		HaveLeft:   false,
 	}
-	ctx.scanGridBlockReferenceMV(req, -1, -1, &matches, &newMatches, &stack)
+	ctx.scanGridBlockReferenceMV(&req, -1, -1, &matches, &newMatches, &stack)
 	if matches != 0 || stack.Count != 0 {
 		t.Fatalf("expected no candidates without HaveLeft, matches=%d stack.Count=%d", matches, stack.Count)
 	}
@@ -1151,7 +1151,7 @@ func TestScanOuterBlockReferenceMVSkipsSBTopAtTileBoundary(t *testing.T) {
 		HaveTop:        true,
 		HaveLeft:       true,
 	}
-	ctx.scanGridBlockReferenceMV(reqTop, -1, -1, &matches, &newMatches, &stack)
+	ctx.scanGridBlockReferenceMV(&reqTop, -1, -1, &matches, &newMatches, &stack)
 	if matches != 0 || stack.Count != 0 {
 		t.Fatalf("expected no candidates across tile boundary, matches=%d stack.Count=%d", matches, stack.Count)
 	}
@@ -1207,7 +1207,7 @@ func TestScanOuterBlockReferenceMVUsesSBTopCorner(t *testing.T) {
 		HaveTop:        true,
 		HaveLeft:       true,
 	}
-	ctx.scanGridBlockReferenceMV(req, -1, -1, &matches, &newMatches, &stack)
+	ctx.scanGridBlockReferenceMV(&req, -1, -1, &matches, &newMatches, &stack)
 	if matches != 1 || stack.Count != 1 {
 		t.Fatalf("expected SBTop corner match, matches=%d stack.Count=%d", matches, stack.Count)
 	}
@@ -1222,7 +1222,7 @@ func TestScanOuterBlockReferenceMVUsesSBTopCorner(t *testing.T) {
 	stack = ReferenceMVStack{}
 	reqNoTop := req
 	reqNoTop.HaveTop = false
-	ctx.scanGridBlockReferenceMV(reqNoTop, -1, -1, &matches, &newMatches, &stack)
+	ctx.scanGridBlockReferenceMV(&reqNoTop, -1, -1, &matches, &newMatches, &stack)
 	if matches != 0 || stack.Count != 0 {
 		t.Fatalf("expected no match without HaveTop, matches=%d stack.Count=%d", matches, stack.Count)
 	}
@@ -1232,7 +1232,7 @@ func TestScanOuterBlockReferenceMVUsesSBTopCorner(t *testing.T) {
 	ctx.SBTopMotionValidGrid[0][1] = 0
 	matches, newMatches = 0, 0
 	stack = ReferenceMVStack{}
-	ctx.scanGridBlockReferenceMV(req, -1, -1, &matches, &newMatches, &stack)
+	ctx.scanGridBlockReferenceMV(&req, -1, -1, &matches, &newMatches, &stack)
 	if matches != 0 || stack.Count != 0 {
 		t.Fatalf("expected no match when SBTopMotionValidGrid empty, matches=%d stack.Count=%d", matches, stack.Count)
 	}
@@ -1278,7 +1278,7 @@ func TestScanOuterBlockReferenceMVUsesSBDiagonalCorner(t *testing.T) {
 		HaveTop:    true,
 		HaveLeft:   true,
 	}
-	ctx.scanGridBlockReferenceMV(req, -1, -1, &matches, &newMatches, &stack)
+	ctx.scanGridBlockReferenceMV(&req, -1, -1, &matches, &newMatches, &stack)
 	if matches != 1 || stack.Count != 1 {
 		t.Fatalf("expected diagonal corner match, matches=%d stack.Count=%d", matches, stack.Count)
 	}
@@ -1292,7 +1292,7 @@ func TestScanOuterBlockReferenceMVUsesSBDiagonalCorner(t *testing.T) {
 	stack = ReferenceMVStack{}
 	reqNoTop := req
 	reqNoTop.HaveTop = false
-	ctx.scanGridBlockReferenceMV(reqNoTop, -1, -1, &matches, &newMatches, &stack)
+	ctx.scanGridBlockReferenceMV(&reqNoTop, -1, -1, &matches, &newMatches, &stack)
 	if matches != 0 || stack.Count != 0 {
 		t.Fatalf("expected no match without HaveTop, matches=%d stack.Count=%d", matches, stack.Count)
 	}
@@ -1301,7 +1301,7 @@ func TestScanOuterBlockReferenceMVUsesSBDiagonalCorner(t *testing.T) {
 	stack = ReferenceMVStack{}
 	reqNoLeft := req
 	reqNoLeft.HaveLeft = false
-	ctx.scanGridBlockReferenceMV(reqNoLeft, -1, -1, &matches, &newMatches, &stack)
+	ctx.scanGridBlockReferenceMV(&reqNoLeft, -1, -1, &matches, &newMatches, &stack)
 	if matches != 0 || stack.Count != 0 {
 		t.Fatalf("expected no match without HaveLeft, matches=%d stack.Count=%d", matches, stack.Count)
 	}
@@ -1311,7 +1311,7 @@ func TestScanOuterBlockReferenceMVUsesSBDiagonalCorner(t *testing.T) {
 	ctx.SBDiagonalMotionValidGrid[0][0] = 0
 	matches, newMatches = 0, 0
 	stack = ReferenceMVStack{}
-	ctx.scanGridBlockReferenceMV(req, -1, -1, &matches, &newMatches, &stack)
+	ctx.scanGridBlockReferenceMV(&req, -1, -1, &matches, &newMatches, &stack)
 	if matches != 0 || stack.Count != 0 {
 		t.Fatalf("expected no match when SBDiagonalMotionValidGrid empty, matches=%d stack.Count=%d", matches, stack.Count)
 	}
@@ -1360,7 +1360,7 @@ func TestScanGridColReferenceMVsUsesSBLeftHistory(t *testing.T) {
 		HaveTop:    true,
 		HaveLeft:   true,
 	}
-	ctx.scanGridColReferenceMVs(req, dims, -5, -6, &processedCols, &matches, &newMatches, &stack)
+	ctx.scanGridColReferenceMVs(&req, dims, -5, -6, &processedCols, &matches, &newMatches, &stack)
 	if stack.Count == 0 {
 		t.Fatalf("expected SBLeft candidate to be added to stack, count=%d", stack.Count)
 	}
@@ -1401,7 +1401,7 @@ func TestScanGridColReferenceMVsSkipsSBLeftWithoutHaveLeft(t *testing.T) {
 		HaveTop:    true,
 		HaveLeft:   false,
 	}
-	ctx.scanGridColReferenceMVs(req, dims, -5, -6, &processedCols, &matches, &newMatches, &stack)
+	ctx.scanGridColReferenceMVs(&req, dims, -5, -6, &processedCols, &matches, &newMatches, &stack)
 	if stack.Count != 0 {
 		t.Fatalf("expected no candidate without HaveLeft, count=%d", stack.Count)
 	}
@@ -1460,7 +1460,7 @@ func TestScanGridColReferenceMVsStepsPastIntraNeighborInPriorSB(t *testing.T) {
 		HaveTop:    true,
 		HaveLeft:   true,
 	}
-	ctx.scanGridColReferenceMVs(req, dims, -5, -6, &processedCols, &matches, &newMatches, &stack)
+	ctx.scanGridColReferenceMVs(&req, dims, -5, -6, &processedCols, &matches, &newMatches, &stack)
 	if stack.Count != 0 {
 		t.Fatalf("expected outer col[-5] scan to step past intra neighbor at y=19 without entering y=20; got stack count=%d", stack.Count)
 	}
@@ -1508,7 +1508,7 @@ func TestScanGridColReferenceMVsAdvancesProcessedColsForIntra(t *testing.T) {
 		HaveTop:    true,
 		HaveLeft:   true,
 	}
-	ctx.scanGridColReferenceMVs(req, dims, -3, -6, &processedCols, &matches, &newMatches, &stack)
+	ctx.scanGridColReferenceMVs(&req, dims, -3, -6, &processedCols, &matches, &newMatches, &stack)
 	if stack.Count != 0 || matches != 0 {
 		t.Fatalf("intra-only scan should not add a candidate: stack=%d matches=%d", stack.Count, matches)
 	}
@@ -1567,7 +1567,7 @@ func TestScanGridRowReferenceMVsUsesSBTopHistory(t *testing.T) {
 		HaveTop:    true,
 		HaveLeft:   true,
 	}
-	ctx.scanGridRowReferenceMVs(req, dims, -3, -6, &processedRows, &matches, &newMatches, &stack)
+	ctx.scanGridRowReferenceMVs(&req, dims, -3, -6, &processedRows, &matches, &newMatches, &stack)
 	if stack.Count == 0 {
 		t.Fatalf("expected SBTop candidate to be added to stack, count=%d", stack.Count)
 	}
@@ -1609,7 +1609,7 @@ func TestScanGridRowReferenceMVsSkipsSBTopWithoutHaveTop(t *testing.T) {
 		HaveTop:    false,
 		HaveLeft:   true,
 	}
-	ctx.scanGridRowReferenceMVs(req, dims, -3, -6, &processedRows, &matches, &newMatches, &stack)
+	ctx.scanGridRowReferenceMVs(&req, dims, -3, -6, &processedRows, &matches, &newMatches, &stack)
 	if stack.Count != 0 {
 		t.Fatalf("expected no candidate without HaveTop, count=%d", stack.Count)
 	}
@@ -1645,7 +1645,7 @@ func TestScanGridRowReferenceMVsAdvancesProcessedRowsForIntra(t *testing.T) {
 		HaveTop:    true,
 		HaveLeft:   true,
 	}
-	ctx.scanGridRowReferenceMVs(req, dims, -3, -6, &processedRows, &matches, &newMatches, &stack)
+	ctx.scanGridRowReferenceMVs(&req, dims, -3, -6, &processedRows, &matches, &newMatches, &stack)
 	if stack.Count != 0 || matches != 0 {
 		t.Fatalf("intra-only scan should not add a candidate: stack=%d matches=%d", stack.Count, matches)
 	}
