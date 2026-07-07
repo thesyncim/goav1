@@ -73,7 +73,7 @@ widest error bars — every earlier milestone tightens them.
 
 ### ENCODER ~3.3x → 1.4x
 M1 → ~2.9-3.0x (mapped, weeks):
-- [~] E3 phase 1 LANDED e85ceaec (invTX+residual-add fusion, -1.22% realC ST); more stage pairs open. residual→fdct→quant→dequant→invTX
+- [~] E3 phase 1 LANDED e85ceaec (invTX+residual-add, -1.22% realC ST). Phase-2 forward fusion STOPPED: residual→fdct→quant already NEON-backed, further fusion needs new transform kernels (cross-pkg project, deferred). residual→fdct→quant→dequant→invTX
       →recon (~20% cum; buffer round-trips + per-stage call tax).
 - [x] E1-b banded CDEF u8 LANDED df734aab (-1.46% wavefront cpu; per-band immutable backups; byte-identical, 16+ clean -race runs).
 - [x] E4-b MDS0 batching — PINNED NEGATIVE: setup-hoist byte-identical but e2e flat/neg (per-cand cost is the mandatory NEON convolve, not dispatch). Lever closed.
