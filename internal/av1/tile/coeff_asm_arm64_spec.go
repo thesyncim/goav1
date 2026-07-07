@@ -277,3 +277,56 @@ package tile
 // same GOAV1_DISABLE_COEFF_ASM kill switch as D3-b ("1" kills both kernels;
 // the value "sign" kills only this one — the incremental-measurement hook
 // for its landing review, removed with the switch when M-D3 concludes).
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. D3-e: the MV residual chain — mvResidualARM64
+//
+// func mvResidualARM64(c *Cursor, mvCDFs unsafe.Pointer, precision int64,
+//	update bool) (joint, comp0, comp1 int64)
+//
+// The D3-c decision gate moved the spine program to the mode/MV symbol
+// subtrees: with both TXB kernels active, the profile puts
+// decodeBlockPredictionModeInto at ~10-11% cum on p720_inter_q32 /
+// p288_inter_q20 — but its weight is glue (BuildReferenceMVStack ~3-4%,
+// MarkInter* grid marking ~1-2%), not symbol reads. The contiguous
+// symbol-read runs rank: ReadInterReferences (~0.5-1.0% cum, but every bit's
+// context re-derives from BlockModeContext neighbour counts between reads —
+// not self-contained), the MV residual chain (~0.3-0.6% cum, fully
+// self-contained: CDF rows + cursor + small outputs), and the inter-mode
+// cascade + DRL bits (~0.3%, contexts precomputed from the stack). The MV
+// chain is the hottest kernelable run and the longest dependent sequence of
+// small reads (joint 4-symbol + per component: sign binary, 11-symbol class,
+// class-0 binary or up to ten binary integer bits, 4-symbol fraction, binary
+// high-precision — up to 28 reads per compound NEWMV block), so it goes
+// first; one NOSPLIT leaf call per ReadMotionVector replaces up to 15
+// per-symbol Cursor helper calls with their dif/rng/cnt memory round-trips.
+//
+// The kernel (entropy/reader_mv_arm64.s) hardcodes the tile.MVCDFs offsets
+// (Joint +0, Components[0/1] +36/+684; within a component Classes +0,
+// Class0FP +36/+72, FP +108, Sign +144, Class0HP +180, HP +216, Class0 +252,
+// Bits[i] +288+36i — pinned at compile time in mv_asm.go) and walks the two
+// components as a loop selected by the joint bits. Register plan follows §3:
+// persistent R1 mvCDFs, R5-R10 cursor window, R19 component index, R20
+// component base, R21 precision, R22 update, R23/R24 packed results, R25
+// joint; body locals R2 sign, R3 class, R4 fraction, R15 bits-index-then-mag,
+// R26 integerPart; R14 row / R16 symbol survive the refills (same clobber
+// set, seven textual copies). Component results return packed (diff int16 |
+// integerPart<<16 | class<<26 | fraction<<30 | hp<<32 | sign<<33); the
+// chain cannot fail (|diff| <= 16384 by construction, all row shapes
+// pre-validated by the Go wrapper via mvCDFsKernelShape, which falls back to
+// the pure chain — and its exact mid-chain error unwind — on any malformed
+// row). Wired into DecodeState.ReadMotionVector for both call sites (NEWMV
+// inter motion and intrabc DVs, which pass precision -1); dispatch:
+// mvResidualKernel in coeff_asm_dispatch.go, same GOAV1_DISABLE_COEFF_ASM
+// switch (any value kills all spine kernels; the value "mv" kills only this
+// one — the incremental-measurement hook for its landing review).
+//
+// Differential: mv_asm_diff_test.go runs the kernel and the pure chain in
+// lockstep (same stream, cloned reader + MVCDFs) over the txbDiffPayload
+// stream shapes, three CDF seeds (defaults, scrambled-with-warmed-counts,
+// tail-heavy joint+class rows that force both components, class 10, the full
+// ten-bit integer loop and the ±16384 magnitude boundary), precisions
+// -1/0/1, update on/off, and extreme refs that steer ref+diff into the
+// clamp error path; compares mv, MVResidualResult, error, the reader state
+// snapshot and the post-read MVCDFs image per read. Same GOAV1_TXB_DIFF_TXBS
+// soak knob as the TXB harnesses.

@@ -302,6 +302,18 @@ func (s *DecodeState) ReadMotionVector(cdfs *MVCDFs, ref motion.Vector, precisio
 		return motion.Vector{}, MVResidualResult{}, entropy.ErrInvalidCDF
 	}
 	reader := s.Reader.Cursor()
+	if mvResidualKernel && mvCDFsKernelShape(cdfs) {
+		result := readMotionVectorKernel(&reader, cdfs, precision)
+		mv, ok := motionVectorFromInt32(
+			int32(ref.Row)+int32(result.Diff.Row),
+			int32(ref.Col)+int32(result.Diff.Col),
+		)
+		reader.CommitStateTo(&s.Reader)
+		if !ok {
+			return motion.Vector{}, MVResidualResult{}, ErrInvalidDecodeState
+		}
+		return mv, result, nil
+	}
 	symbol := reader.ReadCDF4Unchecked(&cdfs.Joint)
 	joint := MVJoint(symbol)
 	if !joint.Valid() {

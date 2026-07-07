@@ -7,19 +7,24 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 )
 
-// coeffBaseLevelsKernel and coeffSignGolombKernel gate the arm64 TXB asm
-// kernels (M-D3 D3-b base-levels walk and D3-c sign/golomb replay, spec in
-// coeff_asm_arm64_spec.go). Static bool dispatch (no func pointers, per the
-// zero-alloc rules); GOAV1_DISABLE_COEFF_ASM is the same-binary kill switch:
-// "1" (any value but "sign") forces the pure-Go loops for BOTH kernels, and
-// the value "sign" disables only the D3-c replay kernel (the incremental
-// measurement hook for its landing review). The differential harness proves
-// every switch position byte-identical.
+// coeffBaseLevelsKernel, coeffSignGolombKernel and mvResidualKernel gate the
+// arm64 asm-spine kernels (M-D3 D3-b base-levels walk, D3-c sign/golomb
+// replay and D3-e MV residual chain, spec in coeff_asm_arm64_spec.go). Static
+// bool dispatch (no func pointers, per the zero-alloc rules);
+// GOAV1_DISABLE_COEFF_ASM is the same-binary kill switch for the whole spine
+// program: "1" (any value but the named ones) forces the pure-Go loops for
+// ALL kernels, while the values "sign" and "mv" disable only the D3-c or
+// D3-e kernel respectively (the incremental measurement hooks for their
+// landing reviews). The differential harnesses prove every switch position
+// byte-identical.
 var (
 	coeffAsmKillSwitch    = os.Getenv("GOAV1_DISABLE_COEFF_ASM")
 	coeffBaseLevelsKernel = entropy.HasCoeffBaseLevels2D &&
+		(coeffAsmKillSwitch == "" || coeffAsmKillSwitch == "sign" || coeffAsmKillSwitch == "mv")
+	coeffSignGolombKernel = entropy.HasCoeffSignGolomb &&
+		(coeffAsmKillSwitch == "" || coeffAsmKillSwitch == "mv")
+	mvResidualKernel = entropy.HasMVResidual &&
 		(coeffAsmKillSwitch == "" || coeffAsmKillSwitch == "sign")
-	coeffSignGolombKernel = entropy.HasCoeffSignGolomb && coeffAsmKillSwitch == ""
 )
 
 // The kernel reads coeffScanHot entries as packed 8-byte words

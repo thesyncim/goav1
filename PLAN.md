@@ -28,30 +28,68 @@ only rules, open work, and pins.
 10. Measure: corpus gap = TestCrossDecoderCorpus (§ Makefile bench-corpus,
     PGO wired); encoder = cmd/qualitybench four-clip commands + ST flags.
 
-## Open work (decoder)
-- [ ] D3-e mode/MV symbol-run asm (IN FLIGHT agent) — decodeBlockPrediction
-      ModeInto ~10% cum; MV component chain first; same spine conventions.
-- [ ] compound-X 8-bit NEON (IN REVIEW codex) — ~1.76% flat pure-Go path.
-- [ ] F-1 fastest-math audit: prototype dav1d PREP_BIAS int16 CONV_BUF in one
-      compound family, measure vs libaom-offset uint16; migrate all if red→
-      green ≥1%; else pin with numbers. Output parity via existing diffs.
-- [ ] D3-f next spine runs (after D3-e measures) → then D4-a per-SB fused
-      predict→residual→recon walk (dav1d recon shape) → D5 endgame re-plan.
-- [ ] tmv projection NEON (compute, ~2.4% flat — distinct from the HELD ring).
-- [ ] D2-b guard-disjunct BCE pass on remaining hot sites (after D3 settles).
-- [ ] D1-g 12-bit LF vert transposes (only if 12-bit enters corpus).
+## Path to 1.4x — findings-calibrated ladder (updated 2026-07-07)
 
-## Open work (encoder)
-- [ ] E1-b CDEF u8 for the banded/wavefront path (needs per-band backups or
-      stays u16 with analysis).
-- [ ] E1-e entropy-Writer micro → grows into E4-a Writer spine asm (mirrors
-      D3; also shrinks the 6.5ms serial wavefront bound → raw fps).
-- [ ] E3 TXB pipeline fusion: spec residual→fdct→quant→dequant→invTX→recon
-      dataflow (~20% cum), fuse hottest pair, iterate.
-- [ ] E4-b MDS0 candidate prediction batching (shared setup for ≤4 cands).
-- [ ] E2-f open-loop ME on retained source refs (quality lever; SVT PA-ref
-      shape) · E2-g cyclic-refresh AQ (rc_aq.c; screen overshoot + post-key).
-- [ ] E5 endgame re-plan after E3/E4 measure.
+WHAT THE CAMPAIGN HAS PROVEN SO FAR (shapes the estimates below):
+kernel-coverage and architecture parity are DONE and bought 4.34x→3.42x /
+5.2x→3.3x; symbol-read asm is a SOLVED chapter (all mode/coeff symbol reads
+now ≤~2% combined); cache-locality restructures are dead on this host; the
+quality-spend surplus is saturated on this corpus. What remains, by fresh
+profile, is GO GLUE (per-block orchestration, neighbor-context scans, grid
+bookkeeping) and the irreducible-until-asm'd call/codegen tax around already-
+optimal kernels. Therefore the road is: glue ports → walk fusion → spine-asm
+expansion, each with a go/no-go.
+
+### DECODER 3.42x → 1.4x
+M1 → ~3.1-3.2x (glue ports, weeks):
+- [ ] D3-g refmvs glue: dav1d refmvs.c cached row-context shape for
+      BuildReferenceMVStack scans + markGridInterMotion fills (5-7% cum).
+      COMPUTE win (not cache-locality) but prototype-first per pin family.
+- [ ] tmv projection NEON kernel (~2.4% flat compute; ring stays held).
+- [ ] F-1 fastest-math: PREP_BIAS int16 CONV_BUF prototype in one compound
+      family; migrate-all if ≥1% else pin. (codex)
+- [ ] populateLoopFilterLevelCacheRange + remaining postfilter glue (~2.4%).
+GO/NO-GO: if M1 lands <5% combined, re-profile before starting M2.
+
+M2 → ~2.6-2.8x (walk fusion, multi-week):
+- [ ] D4-a per-SB fused predict→add-residual→recon walk (dav1d recon_tmpl.c
+      dispatch shape): collapse the per-block layer hops (blockPrediction
+      PlaneGeometry, JobOutputPlane-style glue, per-plane dispatch) into one
+      resident walk. The single biggest remaining Go-vs-C structure delta.
+- [ ] D2-b guard-disjunct BCE on whatever M1/M2 profiles show hot.
+GO/NO-GO: M2 is the pivot — if fused-walk prototypes measure <5%, the
+plateau is real and 1.4x needs the M3 spine bet re-scoped before more work.
+
+M3 → ~2.0-2.2x (spine expansion): block-loop orchestration into asm regions
+(the decodeBlockLoopVisit spine around the landed kernels), eob/context
+derivation folded into the TXB kernels (D3-d revisit WITH the loop),
+remaining Horiz/Vert base variants.
+M4 → 1.4-1.7x (endgame): extend until ~90% of hot cycles are kernel/asm;
+re-plan with data at each 0.2x step. Honest note: M3/M4 estimates carry the
+widest error bars — every earlier milestone tightens them.
+
+### ENCODER ~3.3x → 1.4x
+M1 → ~2.9-3.0x (mapped, weeks):
+- [ ] E3 TXB pipeline fusion: spec + fuse residual→fdct→quant→dequant→invTX
+      →recon (~20% cum; buffer round-trips + per-stage call tax).
+- [ ] E1-b banded/wavefront CDEF u8 (per-band backups or documented keep).
+- [ ] E4-b MDS0 candidate prediction batching (shared setup, ≤4 cands).
+GO/NO-GO: E3 is the load-bearing item; if fusion <5%, jump to M2 asm early.
+
+M2 → ~2.4-2.6x (writer spine): E4-a entropy-Writer asm (symbol write + CDF
+update loops, mirrors decoder D3; also cuts the 6.5ms serial wavefront bound
+→ raw fps); tokenize/pack loop glue.
+M3 → ~2.0x: encode block-loop glue fusion (selectIntraModeN ~6%, prepare/
+finish orchestration), intra-path batching; re-run spend ladders at each new
+operating point (cheaper compute may re-open pinned quality trades).
+M4 → 1.4-1.7x (endgame): same spine-expansion character as decoder M4.
+
+### Cross-cutting
+- [ ] Periodic: re-measure both scoreboards idle at every milestone edge;
+      update STANDINGS line; PGO profile regeneration after big shifts.
+- [ ] D1-g 12-bit LF transposes (only if 12-bit enters the corpus).
+- [ ] E2-f open-loop ME + E2-g cyclic AQ: QUALITY levers, park unless a
+      milestone needs spend budget refilled.
 
 ## Pins (do NOT retry without new economics — details in git/memory)
 Decoder: entropy SIMD symbol search (tiny alphabets) · primitive-only asm
