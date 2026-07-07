@@ -72,7 +72,7 @@ widest error bars — every earlier milestone tightens them.
 M1 → ~2.9-3.0x (mapped, weeks):
 - [ ] E3 TXB pipeline fusion: spec + fuse residual→fdct→quant→dequant→invTX
       →recon (~20% cum; buffer round-trips + per-stage call tax).
-- [ ] E1-b banded/wavefront CDEF u8 (per-band backups or documented keep).
+- [x] E1-b banded CDEF u8 LANDED df734aab (-1.46% wavefront cpu; per-band immutable backups; byte-identical, 16+ clean -race runs).
 - [x] E4-b MDS0 batching — PINNED NEGATIVE: setup-hoist byte-identical but e2e flat/neg (per-cand cost is the mandatory NEON convolve, not dispatch). Lever closed.
 GO/NO-GO: E3 is the load-bearing item; if fusion <5%, jump to M2 asm early.
 
