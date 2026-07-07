@@ -46,7 +46,8 @@ M1 → ~3.1-3.2x (glue ports, weeks):
       BuildReferenceMVStack scans + markGridInterMotion fills (5-7% cum).
       COMPUTE win (not cache-locality) but prototype-first per pin family.
 
-- [ ] F-1 fastest-math: PREP_BIAS int16 CONV_BUF prototype in one compound
+- [ ] F-1b (see below) — old bullet, superseded
+  <!-- - [ ] F-1 fastest-math: PREP_BIAS int16 CONV_BUF prototype in one compound
       family; migrate-all if ≥1% else pin. (codex)
 - [ ] populateLoopFilterLevelCacheRange + remaining postfilter glue (~2.4%).
 GO/NO-GO: if M1 lands <5% combined, re-profile before starting M2.
