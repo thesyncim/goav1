@@ -163,10 +163,7 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 				clear(tmpLine[coeffW:])
 			}
 		}
-		for row := rowsToStage; row < height; row++ {
-			tmpLine := scratch[row*width : row*width+width : row*width+width]
-			clear(tmpLine)
-		}
+		clear(scratch[rowsToStage*width:])
 		rowLimit = rowsToStage
 	} else if coeffW == width && coeffH == height {
 		if rect2 {
@@ -202,10 +199,8 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 				clear(tmpLine[coeffW:])
 			}
 		}
-		for row := coeffH; row < height; row++ {
-			tmpLine := scratch[row*width : row*width+width : row*width+width]
-			clear(tmpLine)
-		}
+		clear(scratch[coeffH*width:])
+		rowLimit = coeffH
 	}
 
 	// Row pass: transform four staged rows per iteration when a batched
@@ -232,14 +227,20 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 		inverse1DRow(tmpLine, width, horizontal, rowMin, rowMax)
 	}
 
-	clampRoundImpl(scratch, shift, colMin, colMax)
+	// Rows beyond rowLimit have already been zeroed; zero is unchanged by the
+	// round/shift and lies inside every supported column clamp range.
+	if rowLimit == height {
+		clampRoundImpl(scratch, shift, colMin, colMax)
+	} else {
+		clampRoundImpl(scratch[:rowLimit*width], shift, colMin, colMax)
+	}
 
 	// Column pass: transform four adjacent columns per iteration when a
 	// batched kernel exists (inverse1DCol4 guarantees the result equals four
 	// independent inverse1D calls), then two, falling back to one scalar
 	// column at the tail or for lengths/types without a batched kernel.
-	// clampRoundImpl above established the four-column kernels' precondition:
-	// every input is clamped to [colMin, colMax].
+	// The clamp/round pass above plus the zeroed tail rows establish the
+	// four-column kernels' precondition: every input is in [colMin, colMax].
 	col := 0
 	for ; col+3 < width; col += 4 {
 		inverse1DCol4(scratch[col:], width, height, vertical, colMin, colMax)

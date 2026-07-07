@@ -202,6 +202,9 @@ func TestInverseBlockBitDepthBoundedRowsMatchesFullInverse(t *testing.T) {
 			got := make([]int16, width*height)
 			fullScratch := make([]int32, width*height)
 			boundedScratch := make([]int32, width*height)
+			for i := range boundedScratch {
+				boundedScratch[i] = 0x123456
+			}
 			if err := InverseBlockBitDepth(want, width, coeff, height, fullScratch, tt.size, tt.typ, tt.bitDepth); err != nil {
 				t.Fatal(err)
 			}
@@ -214,6 +217,39 @@ func TestInverseBlockBitDepthBoundedRowsMatchesFullInverse(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestInverseBlockBitDepthAdjustedScanDirtyScratchMatchesClean(t *testing.T) {
+	size := Size{Width: 64, Height: 64}
+	width := int(size.Width)
+	height := int(size.Height)
+	coeffStride := height
+	coeff := make([]int32, width*height)
+	for col := 0; col < 32; col++ {
+		for row := 0; row < 32; row++ {
+			if (row*5+col*7)%17 == 0 {
+				coeff[col*coeffStride+row] = int32((row+3)*(col+5) - 211)
+			}
+		}
+	}
+	want := make([]int16, width*height)
+	got := make([]int16, width*height)
+	cleanScratch := make([]int32, width*height)
+	dirtyScratch := make([]int32, width*height)
+	for i := range dirtyScratch {
+		dirtyScratch[i] = -0x654321
+	}
+	if err := InverseBlockBitDepth(want, width, coeff, coeffStride, cleanScratch, size, TypeDCTDCT, 8); err != nil {
+		t.Fatal(err)
+	}
+	if err := InverseBlockBitDepth(got, width, coeff, coeffStride, dirtyScratch, size, TypeDCTDCT, 8); err != nil {
+		t.Fatal(err)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("dst[%d]=%d want %d", i, got[i], want[i])
+		}
 	}
 }
 
