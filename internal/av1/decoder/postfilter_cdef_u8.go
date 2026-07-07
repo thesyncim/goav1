@@ -34,11 +34,10 @@ import (
 //
 // This removes the whole-plane u8->u16 snapshot widen, the per-unit
 // uint16->uint16 copy, most sentinel fills, the uint16 unit dst scratch, and
-// the store-back narrowing pass for 8-bit frames. The unit-row-banded
-// parallel apply (ApplyCDEFPostFilterUnitRows, encoder-side) keeps the
-// snapshot walk: its bands filter concurrently against one immutable
-// snapshot, which an in-place walk's cross-band line backups cannot serve.
-// 10/12-bit frames keep the uint16 path unchanged.
+// the store-back narrowing pass for 8-bit frames. Unit-row-banded callers use
+// the same walk with immutable two-row top/bottom boundary backups for every
+// cross-band halo and private line/input scratch for every worker. 10/12-bit
+// frames keep the uint16 path unchanged.
 
 // cdefByteScratchView reinterprets a segment of the uint16 sample scratch
 // arena as byte storage for the pre-filter line backups. The 8-bit walk needs
@@ -54,10 +53,11 @@ func cdefByteScratchView(seg []uint16, n int) ([]byte, bool) {
 // frameWorkApplyCDEFPlaneRowsU8 is the 8-bit in-place counterpart of
 // frameWorkApplyCDEFPlaneRows. dst is the MI-aligned plane view
 // (frameWorkCDEFAlignedPlane) of an 8-bit frame (stride in bytes, one byte
-// per sample); byteScratch is the caller's sample scratch for the plane,
-// reused as the line-backup arena. The walk must cover unit rows
-// [0, rows) in order — in-place filtering owns the row-backup chain.
-func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, dst frame.Plane, byteScratch []uint16, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, forceLumaDirections bool) (uint32, uint32, error) {
+// per sample); byteScratch is the caller's private sample scratch for the
+// plane, reused as the line-backup arena. Whole-frame callers pass
+// rowStart=0,rowEnd=rows and an empty boundary; banded callers pass immutable
+// boundary strips for any cross-band top/bottom halos.
+func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, dst frame.Plane, byteScratch []uint16, boundary FrameWorkCDEFPostFilterU8BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, forceLumaDirections bool) (uint32, uint32, error) {
 	var units uint32
 	var blocksTotal uint32
 	width := dst.Width
@@ -66,6 +66,15 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 	if width <= 0 || height <= 0 || stride < width ||
 		(height-1)*stride+width > len(dst.Pix) {
 		return 0, 0, frame.ErrInvalidPlane
+	}
+	if rowEnd < 0 || rowEnd > rows {
+		rowEnd = rows
+	}
+	if rowStart < 0 || rowStart >= rowEnd {
+		if rowStart == rowEnd {
+			return 0, 0, nil
+		}
+		return 0, 0, threading.ErrInvalidBatch
 	}
 	unitSizeX := cdef.BlockSize >> xDec
 	unitSizeY := cdef.BlockSize >> yDec
@@ -81,13 +90,29 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 	if !ok {
 		return 0, 0, threading.ErrInvalidBatch
 	}
+	if rowStart > 0 {
+		top := boundary.Top[plane]
+		need := cdef.VerticalBorder * width
+		if len(top) < need {
+			return 0, 0, frame.ErrShortBuffer
+		}
+		topSlot := ((rowStart ^ 1) & 1) * cdef.VerticalBorder * width
+		copy(lineBuf[topSlot:topSlot+need], top[:need])
+	}
+	var bottomBoundary []byte
+	if rowEnd < rows {
+		bottomBoundary = boundary.Bottom[plane]
+		if len(bottomBoundary) < cdef.VerticalBorder*width {
+			return 0, 0, frame.ErrShortBuffer
+		}
+	}
 	var leftStorage [cdef.HorizontalBorder * cdef.BlockSize]byte
 
-	for unitRow := 0; unitRow < rows; unitRow++ {
+	for unitRow := rowStart; unitRow < rowEnd; unitRow++ {
 		unitY := (unitRow * cdef.BlockSize) >> yDec
 		// Back up the 2 pre-filter rows the NEXT unit row reads as its top
 		// halo before any unit in this row overwrites them.
-		if unitRow+1 < rows {
+		if unitRow+1 < rowEnd {
 			nextTopY := unitY + unitSizeY
 			save := lineBuf[(unitRow&1)*2*width:]
 			for r := 0; r < cdef.VerticalBorder; r++ {
@@ -99,6 +124,10 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 			}
 		}
 		topBuf := lineBuf[((unitRow^1)&1)*2*width:]
+		bottomBuf := []byte(nil)
+		if unitRow+1 == rowEnd {
+			bottomBuf = bottomBoundary
+		}
 
 		prevFiltered := false
 		for unitCol := range cols {
@@ -159,7 +188,7 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 				prevFiltered = false
 				continue
 			}
-			if err := frameWorkAssembleCDEFInputU8(input, dst, topBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
+			if err := frameWorkAssembleCDEFInputU8(input, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
 				return units, blocksTotal, err
 			}
 			// Back up the pre-filter columns the NEXT unit reads as its left
@@ -203,7 +232,7 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 //     is not yet filtered there;
 //   - sentinels are written only to the ring regions the copies and
 //     extensions leave untouched.
-func frameWorkAssembleCDEFInputU8(input []uint16, dst frame.Plane, topBuf []byte, leftBuf []byte, leftFromBackup bool, unitRow int, unitX int, unitY int, unitW int, unitH int) error {
+func frameWorkAssembleCDEFInputU8(input []uint16, dst frame.Plane, topBuf []byte, bottomBuf []byte, leftBuf []byte, leftFromBackup bool, unitRow int, unitX int, unitY int, unitW int, unitH int) error {
 	width := dst.Width
 	height := dst.Height
 	stride := dst.Stride
@@ -281,7 +310,11 @@ func frameWorkAssembleCDEFInputU8(input []uint16, dst frame.Plane, topBuf []byte
 	// Rows below the unit (not yet filtered).
 	if botRows := srcY1 - (unitY + unitH); botRows > 0 {
 		botOffset := dstOffset + (unitY+unitH-srcY0)*cdef.BStride
-		frame.LoadSampleRows8Trusted(input[botOffset:], cdef.BStride, dst.Pix[(unitY+unitH)*stride+srcX0:], stride, copyW, botRows)
+		if bottomBuf != nil {
+			frame.LoadSampleRows8Trusted(input[botOffset:], cdef.BStride, bottomBuf[srcX0:], width, copyW, botRows)
+		} else {
+			frame.LoadSampleRows8Trusted(input[botOffset:], cdef.BStride, dst.Pix[(unitY+unitH)*stride+srcX0:], stride, copyW, botRows)
+		}
 	}
 
 	// Row/column extensions: identical to frameWorkCopyCDEFInput's replication

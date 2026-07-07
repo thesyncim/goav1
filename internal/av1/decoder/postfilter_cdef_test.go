@@ -1113,3 +1113,126 @@ func TestCDEFPostFilterBandedMatchesWhole(t *testing.T) {
 		}
 	}
 }
+
+func TestCDEFPostFilterBandedU8MatchesSnapshot(t *testing.T) {
+	const width, height = 256, 512
+	seq := testSequence()
+	seq.EnableCDEF = true
+	size := parser.FrameSize{CodedWidth: width, UpscaledWidth: width, Height: height, SuperResDenominator: 8}
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize:      size,
+		CDEF: parser.CDEFParams{
+			Damping:       5,
+			StrengthCount: 2,
+			YStrength:     [parser.MaxCDEFStrengths]uint8{9, 31},
+			UVStrength:    [parser.MaxCDEFStrengths]uint8{5, 17},
+		},
+	}
+	build := func() (*frame.Frame, FrameWorkPostFilterContext, FrameWorkCDEFPostFilterRequest) {
+		output := testFrameWorkCDEFFrame(t, frame.Format{
+			Width: width, Height: height, BitDepth: 8,
+			SubsamplingX: true, SubsamplingY: true, Align: 64,
+		})
+		testFillFrameWorkCDEFPlane(output.Y)
+		testFillFrameWorkCDEFPlane(output.U)
+		testFillFrameWorkCDEFPlane(output.V)
+		ctx := FrameWorkPostFilterContext{Event: event, Output: output}
+		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopFilter)
+		batch := threading.FrameWorkBatch{
+			FrameWorkFrameContext: threading.FrameWorkFrameContext{
+				Sequence:  threading.FrameWorkSequenceContextFromHeader(event.SequenceHeader),
+				FrameSize: event.FrameSize,
+				CDEF:      event.CDEF,
+			},
+		}
+		_, _, length, err := batch.CDEFIndexMapShape()
+		if err != nil {
+			t.Fatal(err)
+		}
+		idx := make([]uint8, length)
+		for i := range idx {
+			idx[i] = uint8(i % 2)
+		}
+		cdefMap, err := batch.BindCDEFIndexMap(idx, make([]bool, length))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range cdefMap.Read {
+			cdefMap.Read[i] = true
+		}
+		scratch, err := ctx.CDEFPostFilterScratchLen()
+		if err != nil {
+			t.Fatal(err)
+		}
+		samples, dst, directionGrid, varianceGrid, input, unitDst := testFrameWorkCDEFScratchStorage(scratch)
+		req, err := scratch.BindRequest(cdefMap, samples, dst, directionGrid, varianceGrid, input, unitDst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return output, ctx, req
+	}
+
+	snapshotOut, snapshotCtx, snapshotReq := build()
+	if err := snapshotCtx.LoadCDEFPostFilterSamples(snapshotReq); err != nil {
+		t.Fatal(err)
+	}
+	_, rows, err := frameWorkCDEFUnitGrid(event.FrameSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for r0 := 0; r0 < rows; r0++ {
+		band := snapshotReq
+		band.InputScratch = make([]uint16, len(snapshotReq.InputScratch))
+		band.UnitDstScratch = make([]uint16, len(snapshotReq.UnitDstScratch))
+		if _, err := snapshotCtx.ApplyCDEFPostFilterUnitRows(band, r0, r0+1); err != nil {
+			t.Fatalf("snapshot band %d: %v", r0, err)
+		}
+	}
+
+	u8Out, u8Ctx, u8Req := build()
+	boundaries := make([]FrameWorkCDEFPostFilterU8BandBoundary, rows)
+	for r0 := 0; r0 < rows; r0++ {
+		boundaries[r0] = testCDEFU8BandBoundary(width)
+		if err := u8Ctx.LoadCDEFPostFilterU8BandBoundary(&boundaries[r0], r0, r0+1); err != nil {
+			t.Fatalf("load u8 boundary %d: %v", r0, err)
+		}
+	}
+	for r0 := 0; r0 < rows; r0++ {
+		band := u8Req
+		band.SampleScratch = testCDEFU8LineScratch(width)
+		band.InputScratch = make([]uint16, len(u8Req.InputScratch))
+		if _, err := u8Ctx.ApplyCDEFPostFilterUnitRowsU8(band, boundaries[r0], r0, r0+1); err != nil {
+			t.Fatalf("u8 band %d: %v", r0, err)
+		}
+	}
+	for _, planes := range [][2]frame.Plane{{snapshotOut.Y, u8Out.Y}, {snapshotOut.U, u8Out.U}, {snapshotOut.V, u8Out.V}} {
+		w, b := planes[0], planes[1]
+		for y := 0; y < w.Height; y++ {
+			for x := 0; x < w.Width; x++ {
+				if w.Pix[y*w.Stride+x] != b.Pix[y*b.Stride+x] {
+					t.Fatalf("u8 banded differs at (%d,%d)", x, y)
+				}
+			}
+		}
+	}
+}
+
+func testCDEFU8BandBoundary(width int) FrameWorkCDEFPostFilterU8BandBoundary {
+	var boundary FrameWorkCDEFPostFilterU8BandBoundary
+	widths := [3]int{width, width / 2, width / 2}
+	for plane, planeWidth := range widths {
+		need := cdef.VerticalBorder * planeWidth
+		boundary.Top[plane] = make([]byte, need)
+		boundary.Bottom[plane] = make([]byte, need)
+	}
+	return boundary
+}
+
+func testCDEFU8LineScratch(width int) [3][]uint16 {
+	return [3][]uint16{
+		make([]uint16, 2*width),
+		make([]uint16, width),
+		make([]uint16, width),
+	}
+}

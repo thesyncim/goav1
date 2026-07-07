@@ -74,6 +74,15 @@ type FrameWorkCDEFPostFilterRequest struct {
 	UnitDstScratch []uint16
 }
 
+// FrameWorkCDEFPostFilterU8BandBoundary holds immutable pre-CDEF boundary rows
+// for an in-place 8-bit unit-row band. Top is the two rows immediately above
+// rowStart; Bottom is the two rows immediately below rowEnd. Edge bands leave the
+// corresponding plane slices nil.
+type FrameWorkCDEFPostFilterU8BandBoundary struct {
+	Top    [3][]byte
+	Bottom [3][]byte
+}
+
 // FrameWorkCDEFPostFilterResult summarizes CDEF frame filtering work.
 type FrameWorkCDEFPostFilterResult struct {
 	Units  uint32
@@ -120,7 +129,7 @@ func (ctx FrameWorkPostFilterContext) CDEFPostFilterScratchLen() (FrameWorkCDEFP
 // ApplyCDEFPostFilter applies CDEF to ctx.Output. Loop filter must already be
 // inactive or marked complete with WithCompletedPostFilters.
 func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostFilterRequest) (FrameWorkCDEFPostFilterResult, error) {
-	return ctx.applyCDEFPostFilterRows(req, 0, -1, true)
+	return ctx.applyCDEFPostFilterRows(req, 0, -1, true, nil)
 }
 
 // ApplyCDEFPostFilterBanded applies CDEF in deterministic 64x64 unit-row
@@ -204,10 +213,114 @@ func (ctx FrameWorkPostFilterContext) LoadCDEFPostFilterSamples(req FrameWorkCDE
 // sample scratch, direction grid, and variance grid are shared; the chroma
 // passes of a band reuse the luma directions of the same band's rows).
 func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilterUnitRows(req FrameWorkCDEFPostFilterRequest, rowStart, rowEnd int) (FrameWorkCDEFPostFilterResult, error) {
-	return ctx.applyCDEFPostFilterRows(req, rowStart, rowEnd, false)
+	return ctx.applyCDEFPostFilterRows(req, rowStart, rowEnd, false, nil)
 }
 
-func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFPostFilterRequest, rowStart, rowEnd int, loadSamples bool) (FrameWorkCDEFPostFilterResult, error) {
+// LoadCDEFPostFilterU8BandBoundary snapshots only the rows an in-place 8-bit
+// unit-row band may otherwise race with neighbouring bands. It must run before
+// any parallel ApplyCDEFPostFilterUnitRowsU8 calls for the frame.
+func (ctx FrameWorkPostFilterContext) LoadCDEFPostFilterU8BandBoundary(boundary *FrameWorkCDEFPostFilterU8BandBoundary, rowStart, rowEnd int) error {
+	if boundary == nil {
+		return frame.ErrShortBuffer
+	}
+	remaining := ctx.RemainingPostFilters()
+	if remaining.Has(FrameWorkPostFilterLoopFilter) {
+		return ErrUnsupportedPostFilter
+	}
+	if !remaining.Has(FrameWorkPostFilterCDEF) {
+		return nil
+	}
+	if ctx.Output == nil {
+		return frame.ErrInvalidSlot
+	}
+	if !frameWorkCDEFHasFiltering(ctx.Event.CDEF, ctx.Output.Format.MonoChrome) {
+		return nil
+	}
+	if ctx.Output.Layout.BytesPerSample != 1 || ctx.Output.Format.BitDepth != 8 {
+		return frame.ErrInvalidFormat
+	}
+	_, rows, err := frameWorkCDEFUnitGrid(ctx.Event.FrameSize)
+	if err != nil {
+		return err
+	}
+	if rowEnd < 0 || rowEnd > rows {
+		rowEnd = rows
+	}
+	if rowStart < 0 || rowStart >= rowEnd {
+		if rowStart == rowEnd {
+			return nil
+		}
+		return threading.ErrInvalidBatch
+	}
+	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
+	for plane := range 3 {
+		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
+		processPlane := frameWorkCDEFPlaneHasFiltering(ctx.Event.CDEF, plane)
+		if plane == 0 && !processPlane {
+			processPlane = chromaFiltering
+		}
+		if !ok || !processPlane {
+			continue
+		}
+		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
+		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec, yDec, ctx.Output.Layout.BytesPerSample)
+		if err := loadCDEFU8BandBoundaryPlane(boundary, plane, planeFrame, rowStart, rowEnd, rows, yDec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ApplyCDEFPostFilterUnitRowsU8 applies an 8-bit unit-row band in place using
+// immutable boundary rows loaded by LoadCDEFPostFilterU8BandBoundary. Unlike
+// ApplyCDEFPostFilterUnitRows, it does not read req.SampleScratch as a full-frame
+// snapshot; each worker must provide private SampleScratch line buffers plus
+// private InputScratch.
+func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilterUnitRowsU8(req FrameWorkCDEFPostFilterRequest, boundary FrameWorkCDEFPostFilterU8BandBoundary, rowStart, rowEnd int) (FrameWorkCDEFPostFilterResult, error) {
+	return ctx.applyCDEFPostFilterRows(req, rowStart, rowEnd, false, &boundary)
+}
+
+func loadCDEFU8BandBoundaryPlane(boundary *FrameWorkCDEFPostFilterU8BandBoundary, plane int, planeFrame frame.Plane, rowStart int, rowEnd int, rows int, yDec int) error {
+	width := planeFrame.Width
+	height := planeFrame.Height
+	stride := planeFrame.Stride
+	if width <= 0 || height <= 0 || stride < width ||
+		(height-1)*stride+width > len(planeFrame.Pix) {
+		return frame.ErrInvalidPlane
+	}
+	need := cdef.VerticalBorder * width
+	if rowStart > 0 {
+		top := boundary.Top[plane]
+		if len(top) < need {
+			return frame.ErrShortBuffer
+		}
+		y0 := (rowStart*cdef.BlockSize)>>yDec - cdef.VerticalBorder
+		for r := 0; r < cdef.VerticalBorder; r++ {
+			y := y0 + r
+			if y < 0 || y >= height {
+				return frame.ErrInvalidPlane
+			}
+			copy(top[r*width:(r+1)*width], planeFrame.Pix[y*stride:y*stride+width])
+		}
+	}
+	if rowEnd < rows {
+		bottom := boundary.Bottom[plane]
+		if len(bottom) < need {
+			return frame.ErrShortBuffer
+		}
+		y0 := (rowEnd * cdef.BlockSize) >> yDec
+		for r := 0; r < cdef.VerticalBorder; r++ {
+			y := y0 + r
+			if y < 0 || y >= height {
+				return frame.ErrInvalidPlane
+			}
+			copy(bottom[r*width:(r+1)*width], planeFrame.Pix[y*stride:y*stride+width])
+		}
+	}
+	return nil
+}
+
+func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFPostFilterRequest, rowStart, rowEnd int, loadSamples bool, u8Boundary *FrameWorkCDEFPostFilterU8BandBoundary) (FrameWorkCDEFPostFilterResult, error) {
 	remaining := ctx.RemainingPostFilters()
 	if remaining.Has(FrameWorkPostFilterLoopFilter) {
 		return FrameWorkCDEFPostFilterResult{}, ErrUnsupportedPostFilter
@@ -221,7 +334,11 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFP
 	if !frameWorkCDEFHasFiltering(ctx.Event.CDEF, ctx.Output.Format.MonoChrome) {
 		return FrameWorkCDEFPostFilterResult{}, nil
 	}
-	if err := ctx.validateCDEFPostFilterRequest(req); err != nil {
+	if u8Boundary != nil {
+		if err := ctx.validateCDEFPostFilterU8BandRequest(req); err != nil {
+			return FrameWorkCDEFPostFilterResult{}, err
+		}
+	} else if err := ctx.validateCDEFPostFilterRequest(req); err != nil {
 		return FrameWorkCDEFPostFilterResult{}, err
 	}
 	cols, rows, err := frameWorkCDEFUnitGrid(ctx.Event.FrameSize)
@@ -247,16 +364,13 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFP
 	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
 	coeffShift := int(ctx.Output.Format.BitDepth) - 8
 	skipMap := ctx.LoopFilterMap
-	// 8-bit frames on the serial whole-frame apply take the in-place uint8
-	// walk (postfilter_cdef_u8.go, dav1d cdef_apply_tmpl.c shape): no plane
-	// snapshot, sentinels only at frame edges, kernels write the frame
-	// directly. The banded apply (loadSamples=false; the encoder's parallel
-	// unit-row bands) keeps the snapshot walk below because its concurrent
-	// bands read one immutable snapshot, which the in-place walk's
-	// cross-band pre-filter line backups cannot serve. 10/12-bit frames
-	// always keep the uint16 snapshot walk.
-	useU8 := loadSamples && ctx.Output.Layout.BytesPerSample == 1 && coeffShift == 0 &&
-		rowStart == 0 && rowEnd == rows
+	// 8-bit frames take the in-place uint8 walk when a caller can provide the
+	// pre-filter samples that in-place filtering would otherwise overwrite:
+	// whole-frame serial apply owns the row walk, while banded apply must pass
+	// immutable two-row boundaries for cross-band top/bottom halos. 10/12-bit
+	// frames keep the uint16 snapshot walk.
+	useU8 := ctx.Output.Layout.BytesPerSample == 1 && coeffShift == 0 &&
+		((loadSamples && rowStart == 0 && rowEnd == rows) || (!loadSamples && u8Boundary != nil))
 
 	var result FrameWorkCDEFPostFilterResult
 	var directions cdef.DirectionGrid
@@ -281,7 +395,11 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFP
 		xDec0, yDec0 := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
 		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec0, yDec0, ctx.Output.Layout.BytesPerSample)
 		if useU8 {
-			planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRowsU8(ctx.Event.CDEF, indexMap, skipMap, cols, rows, planeFrame, req.SampleScratch[plane], req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, chromaFiltering)
+			boundary := FrameWorkCDEFPostFilterU8BandBoundary{}
+			if u8Boundary != nil {
+				boundary = *u8Boundary
+			}
+			planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRowsU8(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane], boundary, req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, chromaFiltering)
 			if err != nil {
 				return FrameWorkCDEFPostFilterResult{}, err
 			}
@@ -365,6 +483,56 @@ func (ctx FrameWorkPostFilterContext) validateCDEFPostFilterRequest(req FrameWor
 			return err
 		}
 		if len(req.SampleScratch[plane]) < need {
+			return frame.ErrShortBuffer
+		}
+	}
+	return nil
+}
+
+func (ctx FrameWorkPostFilterContext) validateCDEFPostFilterU8BandRequest(req FrameWorkCDEFPostFilterRequest) error {
+	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterCDEF) {
+		return nil
+	}
+	if ctx.Output == nil {
+		return frame.ErrInvalidSlot
+	}
+	if !frameWorkCDEFHasFiltering(ctx.Event.CDEF, ctx.Output.Format.MonoChrome) {
+		return nil
+	}
+	if ctx.Output.Layout.BytesPerSample != 1 || ctx.Output.Format.BitDepth != 8 {
+		return frame.ErrInvalidFormat
+	}
+	cols, rows, err := frameWorkCDEFUnitGrid(ctx.Event.FrameSize)
+	if err != nil {
+		return err
+	}
+	indexMap := req.IndexMap
+	if frameWorkCDEFIndexMapEmpty(indexMap) && ctx.CDEFIndexMap != nil {
+		indexMap = *ctx.CDEFIndexMap
+	}
+	if err := frameWorkValidateCDEFIndexMap(indexMap, cols, rows); err != nil {
+		return err
+	}
+	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
+	unitCount := cols * rows
+	if chromaFiltering && (len(req.DirectionGrid) < unitCount || len(req.VarianceGrid) < unitCount) {
+		return frame.ErrShortBuffer
+	}
+	if len(req.InputScratch) < cdef.InputBufferSize {
+		return frame.ErrShortBuffer
+	}
+	for plane := range 3 {
+		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
+		processPlane := frameWorkCDEFPlaneHasFiltering(ctx.Event.CDEF, plane)
+		if plane == 0 && !processPlane {
+			processPlane = chromaFiltering
+		}
+		if !ok || !processPlane {
+			continue
+		}
+		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
+		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec, yDec, ctx.Output.Layout.BytesPerSample)
+		if _, ok := cdefByteScratchView(req.SampleScratch[plane], 4*planeFrame.Width); !ok {
 			return frame.ErrShortBuffer
 		}
 	}

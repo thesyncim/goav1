@@ -86,8 +86,8 @@ func cdefParserParams(p CDEFParams) parser.CDEFParams {
 }
 
 // cdefApplier owns the reusable frame-level CDEF state: the index map
-// (derived from the loop-filter records), the pre-filter sample snapshot,
-// and per-band scratch for the parallel unit-row application.
+// (derived from the loop-filter records), the serial/snapshot sample scratch,
+// and per-band line/boundary scratch for the parallel unit-row application.
 type cdefApplier struct {
 	idxValues []uint8
 	idxRead   []bool
@@ -100,6 +100,8 @@ type cdefApplier struct {
 	varGrid   []cdefVarianceGrid
 	bandIn    [][]uint16
 	bandUnit  [][]uint16
+	bandLine  [cdefApplyBands][3][]uint16
+	bandBound [cdefApplyBands]decoder.FrameWorkCDEFPostFilterU8BandBoundary
 	unitRows  int
 	seqHeader parser.SequenceHeader
 	frameSize parser.FrameSize
@@ -107,7 +109,7 @@ type cdefApplier struct {
 
 	// Persistent band workers reading their per-frame inputs from these
 	// fields, so the apply path spawns no goroutines and allocates nothing.
-	work    chan [2]int
+	work    chan cdefApplyJob
 	done    chan struct{}
 	started bool
 	wg      sync.WaitGroup
@@ -122,7 +124,7 @@ func (a *cdefApplier) startWorkers() {
 	if a.started {
 		return
 	}
-	a.work = make(chan [2]int, cdefApplyBands)
+	a.work = make(chan cdefApplyJob, cdefApplyBands)
 	a.done = make(chan struct{}, cdefApplyBands)
 	a.wg.Add(cdefApplyBands)
 	for b := range cdefApplyBands {
@@ -130,9 +132,10 @@ func (a *cdefApplier) startWorkers() {
 			defer a.wg.Done()
 			for j := range a.work {
 				band := a.jobReq
+				band.SampleScratch = a.bandLine[b]
 				band.InputScratch = a.bandIn[b]
 				band.UnitDstScratch = a.bandUnit[b]
-				_, a.errs[b] = a.jobCtx.ApplyCDEFPostFilterUnitRows(band, j[0], j[1])
+				_, a.errs[j.slot] = a.jobCtx.ApplyCDEFPostFilterUnitRowsU8(band, a.bandBound[j.slot], j.rowStart, j.rowEnd)
 				a.done <- struct{}{}
 			}
 		}(b)
@@ -144,6 +147,12 @@ type cdefDirectionGrid = cdef.DirectionGrid
 type cdefVarianceGrid = cdef.VarianceGrid
 
 const cdefApplyBands = 8
+
+type cdefApplyJob struct {
+	rowStart int
+	rowEnd   int
+	slot     int
+}
 
 // init binds the index map and scratch for the stream's frame geometry.
 func (a *cdefApplier) init(width, height int, cdefParams parser.CDEFParams) error {
@@ -216,12 +225,26 @@ func (a *cdefApplier) init(width, height int, cdefParams parser.CDEFParams) erro
 		a.bandIn = make([][]uint16, cdefApplyBands)
 		a.bandUnit = make([][]uint16, cdefApplyBands)
 	}
+	planeWidths := [3]int{width, width / 2, width / 2}
 	for b := range a.bandIn {
 		if len(a.bandIn[b]) < size.Input {
 			a.bandIn[b] = make([]uint16, size.Input)
 		}
 		if len(a.bandUnit[b]) < size.UnitDst {
 			a.bandUnit[b] = make([]uint16, size.UnitDst)
+		}
+		for plane, planeWidth := range planeWidths {
+			lineNeed := 2 * planeWidth
+			if len(a.bandLine[b][plane]) < lineNeed {
+				a.bandLine[b][plane] = make([]uint16, lineNeed)
+			}
+			boundaryNeed := cdef.VerticalBorder * planeWidth
+			if len(a.bandBound[b].Top[plane]) < boundaryNeed {
+				a.bandBound[b].Top[plane] = make([]byte, boundaryNeed)
+			}
+			if len(a.bandBound[b].Bottom[plane]) < boundaryNeed {
+				a.bandBound[b].Bottom[plane] = make([]byte, boundaryNeed)
+			}
 		}
 	}
 	a.unitRows = rows
@@ -314,7 +337,7 @@ func (a *cdefApplier) bindApplyContext(recon *SourceFrame420, cdefParams parser.
 // frame's signaled parameters, leaving recon equal to the decoder's
 // post-CDEF output.
 func (a *cdefApplier) apply(recon *SourceFrame420, cdefParams parser.CDEFParams, lfMap *threading.FrameWorkLoopFilterMap) error {
-	active, err := a.bindApplyContext(recon, cdefParams, lfMap, true)
+	active, err := a.bindApplyContext(recon, cdefParams, lfMap, false)
 	if err != nil || !active {
 		return err
 	}
@@ -322,7 +345,6 @@ func (a *cdefApplier) apply(recon *SourceFrame420, cdefParams parser.CDEFParams,
 	if a.unitRows < bands {
 		bands = 1
 	}
-	a.startWorkers()
 	for b := range a.errs {
 		a.errs[b] = nil
 	}
@@ -333,7 +355,18 @@ func (a *cdefApplier) apply(recon *SourceFrame420, cdefParams parser.CDEFParams,
 		if r0 >= r1 {
 			continue
 		}
-		a.work <- [2]int{r0, r1}
+		if err := a.jobCtx.LoadCDEFPostFilterU8BandBoundary(&a.bandBound[b], r0, r1); err != nil {
+			return err
+		}
+	}
+	a.startWorkers()
+	for b := 0; b < bands; b++ {
+		r0 := b * a.unitRows / bands
+		r1 := (b + 1) * a.unitRows / bands
+		if r0 >= r1 {
+			continue
+		}
+		a.work <- cdefApplyJob{rowStart: r0, rowEnd: r1, slot: b}
 		jobs++
 	}
 	for range jobs {

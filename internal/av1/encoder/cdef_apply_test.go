@@ -140,6 +140,48 @@ func TestCDEFApplySerialU8InPlaceMatchesSnapshot(t *testing.T) {
 	cdefDiffAssertEqual(t, snapshot, inPlace)
 }
 
+func TestCDEFApplyBandedU8InPlaceMatchesSnapshot(t *testing.T) {
+	const width = 192
+	const height = 640
+	params := parser.CDEFParams{
+		Damping:       5,
+		StrengthCount: 2,
+		YStrength:     [parser.MaxCDEFStrengths]uint8{63, 31},
+		UVStrength:    [parser.MaxCDEFStrengths]uint8{47, 19},
+	}
+
+	var lf loopFilterApplier
+	if err := lf.init(width, height); err != nil {
+		t.Fatalf("loop filter init: %v", err)
+	}
+	defer lf.close()
+	lfDiffFillGrid(lf.filtMap, 4, 4, tile.BlockSize16x16,
+		tile.TransformTreeResult{Y: tile.TransformSize16x16, UV: tile.TransformSize8x8, HasUV: true})
+	cdefDiffMarkSkippedBlocks(lf.filtMap)
+
+	src := cdefDiffFrame(width, height)
+	snapshot := lfDiffCopy(src)
+	inPlace := lfDiffCopy(src)
+
+	var snapshotApply cdefApplier
+	if err := snapshotApply.init(width, height, params); err != nil {
+		t.Fatalf("snapshot cdef init: %v", err)
+	}
+	defer snapshotApply.close()
+	cdefDiffApplySerialSnapshot(t, &snapshotApply, &snapshot, params, &lf.filtMap)
+
+	var inPlaceApply cdefApplier
+	if err := inPlaceApply.init(width, height, params); err != nil {
+		t.Fatalf("in-place cdef init: %v", err)
+	}
+	defer inPlaceApply.close()
+	if err := inPlaceApply.apply(&inPlace, params, &lf.filtMap); err != nil {
+		t.Fatalf("banded in-place route: %v", err)
+	}
+
+	cdefDiffAssertEqual(t, snapshot, inPlace)
+}
+
 func TestCDEFApplySerialIsZeroAlloc(t *testing.T) {
 	const width = 128
 	const height = 128
@@ -174,5 +216,45 @@ func TestCDEFApplySerialIsZeroAlloc(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("serial CDEF apply allocated: %v allocs/op", allocs)
+	}
+}
+
+func TestCDEFApplyBandedIsZeroAlloc(t *testing.T) {
+	const width = 192
+	const height = 512
+	params := parser.CDEFParams{
+		Damping:       5,
+		StrengthCount: 1,
+		YStrength:     [parser.MaxCDEFStrengths]uint8{63},
+		UVStrength:    [parser.MaxCDEFStrengths]uint8{47},
+	}
+
+	var lf loopFilterApplier
+	if err := lf.init(width, height); err != nil {
+		t.Fatalf("loop filter init: %v", err)
+	}
+	defer lf.close()
+	lfDiffFillGrid(lf.filtMap, 4, 4, tile.BlockSize16x16,
+		tile.TransformTreeResult{Y: tile.TransformSize16x16, UV: tile.TransformSize8x8, HasUV: true})
+
+	var a cdefApplier
+	if err := a.init(width, height, params); err != nil {
+		t.Fatalf("cdef init: %v", err)
+	}
+	defer a.close()
+
+	src := cdefDiffFrame(width, height)
+	out := lfDiffCopy(src)
+	if err := a.apply(&out, params, &lf.filtMap); err != nil {
+		t.Fatal(err)
+	}
+	allocs := testing.AllocsPerRun(16, func() {
+		cdefDiffCopyInto(&out, src)
+		if err := a.apply(&out, params, &lf.filtMap); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("banded CDEF apply allocated: %v allocs/op", allocs)
 	}
 }
