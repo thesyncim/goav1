@@ -57,8 +57,12 @@ M1 glue ports — LANDED this session (byte-exact, each e2e-measured):
 - [x] D3-g refmvs glue b9b70d71 (-0.21% p720 / -1.21% p288).
 - [x] inverse-transform clamp-skip 3d289493 (DCT64 -24%, -3.74% p720).
 M1 remaining / open:
-- [ ] F-1b PREP_BIAS FULL migration (deferred): partial is e2e-neg; only an
-      all-families signed-prep migration can pay — large all-or-nothing.
+- [x] F-1b PREP_BIAS migration CLOSED (pin): full all-families migration is
+      correctness-clean (226/226) + microbench geomean -5.52% (big blend
+      wins) but e2e FLAT-TO-NEGATIVE — producer-side bias-subtract regresses
+      the copy/X producers (+10.8%/+9.2%), offsetting blend savings. PREP_BIAS
+      int16 does NOT pay for goav1's kernel mix, PARTIAL or FULL. libaom-offset
+      uint16 is already competitive. Fastest-math/PREP_BIAS chapter closed.
 - [ ] micro-opt sweep (clear/min-max/struct-layout) — Opus subagent IN FLIGHT.
 GO/NO-GO: M1 is thinning (each target yields less) → M2 is the pivot.
 
