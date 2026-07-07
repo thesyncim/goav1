@@ -124,8 +124,8 @@ func (st *lossyEncodeState) lpd1ChromaComplexity(src SourceFrame420, refPlanes S
 	step := 1 << shift
 
 	mvX, mvY := int(mv.Col>>3), int(mv.Row>>3)
-	refX := clampInt(lumaPX+mvX, 0, refPlanes.Width-cbw)
-	refY := clampInt(lumaPY+mvY, 0, refPlanes.Height-(rows-1)*step-1)
+	refX := max(0, min(lumaPX+mvX, refPlanes.Width-cbw))
+	refY := max(0, min(lumaPY+mvY, refPlanes.Height-(rows-1)*step-1))
 	yDist := lpd1SampledSAD(src.Y, refPlanes.Y, lumaPY*src.YStride+lumaPX, refY*refPlanes.YStride+refX,
 		src.YStride, refPlanes.YStride, cbw, rows, step)
 
@@ -133,8 +133,8 @@ func (st *lossyEncodeState) lpd1ChromaComplexity(src SourceFrame420, refPlanes S
 	ch := chromaHeightForColor(refPlanes.Height, st.color)
 	srcCX := chromaXForColor(lumaPX, st.color)
 	srcCY := chromaYForColor(lumaPY, st.color)
-	refCX := clampInt((lumaPX+mvX)>>1, 0, cw-cbw)
-	refCY := clampInt((lumaPY+mvY)>>1, 0, ch-(rows-1)*step-1)
+	refCX := max(0, min((lumaPX+mvX)>>1, cw-cbw))
+	refCY := max(0, min((lumaPY+mvY)>>1, ch-(rows-1)*step-1))
 	cbDist := lpd1SampledSAD(src.U, refPlanes.U, srcCY*src.ChromaStride+srcCX, refCY*refPlanes.ChromaStride+refCX,
 		src.ChromaStride, refPlanes.ChromaStride, cbw, rows, step)
 	crDist := lpd1SampledSAD(src.V, refPlanes.V, srcCY*src.ChromaStride+srcCX, refCY*refPlanes.ChromaStride+refCX,
@@ -169,19 +169,6 @@ func lpd1SampledSAD(src, ref []byte, srcOff, refOff, srcStride, refStride, w, ro
 		}
 	}
 	return total
-}
-
-func clampInt(v, lo, hi int) int {
-	if hi < lo {
-		return lo
-	}
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }
 
 // decideInterTXBlock runs one inter block's transform/quantize preparation

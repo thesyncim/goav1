@@ -843,12 +843,12 @@ type realtimeVarTree64 struct {
 }
 
 type realtimeVarPartSB struct {
-	ready      bool
 	thresholds [5]int64
-	tree       realtimeVarTree64
 	force64    realtimePartEvalStatus
 	force32    [4]realtimePartEvalStatus
 	force16    [4][4]realtimePartEvalStatus
+	ready      bool
+	tree       realtimeVarTree64
 	// me holds the SB's shared multi-size full-pel sweep results (SVT
 	// open_loop_me_fullpel_search_sblock; see pframe_depth_removal.go),
 	// filled lazily by the owning lane when depth removal is armed.
