@@ -49,7 +49,7 @@ M1 → ~3.1-3.2x (glue ports, weeks):
 - [ ] F-1b (see below) — old bullet, superseded
   <!-- - [ ] F-1 fastest-math: PREP_BIAS int16 CONV_BUF prototype in one compound
       family; migrate-all if ≥1% else pin. (codex)
-- [ ] populateLoopFilterLevelCacheRange + remaining postfilter glue (~2.4%).
+- [x] LF level-cache walk-by-block LANDED 2539e1e7 (-1.48% cpu p720).
 GO/NO-GO: if M1 lands <5% combined, re-profile before starting M2.
 
 M2 → ~2.6-2.8x (walk fusion, multi-week):
