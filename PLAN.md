@@ -45,7 +45,7 @@ M1 → ~3.1-3.2x (glue ports, weeks):
 - [ ] D3-g refmvs glue: dav1d refmvs.c cached row-context shape for
       BuildReferenceMVStack scans + markGridInterMotion fills (5-7% cum).
       COMPUTE win (not cache-locality) but prototype-first per pin family.
-- [ ] tmv projection NEON kernel (~2.4% flat compute; ring stays held).
+
 - [ ] F-1 fastest-math: PREP_BIAS int16 CONV_BUF prototype in one compound
       family; migrate-all if ≥1% else pin. (codex)
 - [ ] populateLoopFilterLevelCacheRange + remaining postfilter glue (~2.4%).
@@ -99,7 +99,7 @@ preserved) · dequant-into-sign-loop fusion (+1.1%) · CDEF pri+sec re-fusion
 (already fused; split single-strength kernels are deliberate) · Wiener
 row-fusion · multi-tile bitmask LF finish (−8.2% sparse) · ExtendBorders
 removal (public API exposes padding; internal readers don't need it) ·
-madvise-in-harness mirage. Encoder: depth-removal beyond 9/14 (no-win even
+madvise-in-harness mirage · tmv projection NEON (every NEON candidate SLOWER: cheap multiplies dwarfed by strided access + per-entry validity branches — gather/batch machinery costs more; scalar already optimal). Encoder: depth-removal beyond 9/14 (no-win even
 at SPEND gate; ME already cheap — sweep tax unpayable; only ~4x cheaper NEON
 sweep could reopen) · largest-TX (−0.66dB; libaom TX-size election is
 load-bearing) · leaf skip-TX arm (−0.29dB realB) · use_neighbouring_mode cut
