@@ -117,3 +117,68 @@ func BenchmarkAddResidual64x64_ASM(b *testing.B)    { benchResidual(b, 64, 64, a
 func BenchmarkAddResidual16x16_Scalar(b *testing.B) { benchResidual(b, 16, 16, addResidualPlaneBlockPureGo) }
 func BenchmarkAddResidual16x16_SIMD(b *testing.B)   { benchResidual(b, 16, 16, addResidualPlaneBlockSIMD) }
 func BenchmarkAddResidual16x16_ASM(b *testing.B)    { benchResidual(b, 16, 16, addResidualPlaneBlockImpl) }
+
+// makeRawCase builds a dst block + int32 raw buffer (bounded like real
+// inverse-transform output, with int16-saturation edges of (raw+8)>>4 mixed in).
+func makeRawCase(rng *rand.Rand, width, height, stride int) ([]byte, []int32) {
+	dst := make([]byte, height*stride)
+	for i := range dst {
+		dst[i] = byte(rng.Intn(256))
+	}
+	raw := make([]int32, height*width)
+	edges := []int32{-524296, -524280, -8, -7, 0, 7, 8, 524280, 524296}
+	for i := range raw {
+		if rng.Intn(6) == 0 {
+			raw[i] = edges[rng.Intn(len(edges))]
+		} else {
+			raw[i] = int32(rng.Intn(1<<20) - (1 << 19))
+		}
+	}
+	return dst, raw
+}
+
+func mkRawBlock(pix []byte, stride, width, height int) planeBlock {
+	return planeBlock{pix: pix, stride: stride, width: width, height: height, rowBytes: width}
+}
+
+// TestAddRawTransformSIMDMatchesScalar proves the Go-native-SIMD raw-transform
+// add is byte-identical to the scalar reference.
+func TestAddRawTransformSIMDMatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x2a2a))
+	widths := []int{16, 32, 48, 64}
+	heights := []int{1, 2, 4, 8, 16}
+	for iter := 0; iter < 4000; iter++ {
+		w := widths[rng.Intn(len(widths))]
+		h := heights[rng.Intn(len(heights))]
+		stride := w + rng.Intn(3)*16
+		dstA, raw := makeRawCase(rng, w, h, stride)
+		dstB := make([]byte, len(dstA))
+		copy(dstB, dstA)
+		addRawTransformPlaneBlockPureGo(mkRawBlock(dstA, stride, w, h), 1, 255, w, raw, w)
+		addRawTransformPlaneBlockSIMD(mkRawBlock(dstB, stride, w, h), 1, 255, w, raw, w)
+		for i := range dstA {
+			if dstA[i] != dstB[i] {
+				t.Fatalf("raw mismatch iter=%d w=%d h=%d at %d: scalar=%d simd=%d", iter, w, h, i, dstA[i], dstB[i])
+			}
+		}
+	}
+}
+
+func benchRaw(b *testing.B, w, h int, fn func(planeBlock, int, uint16, int, []int32, int)) {
+	rng := rand.New(rand.NewSource(2))
+	dst, raw := makeRawCase(rng, w, h, w)
+	work := make([]byte, len(dst))
+	b.SetBytes(int64(w * h))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		copy(work, dst)
+		fn(mkRawBlock(work, w, w, h), 1, 255, w, raw, w)
+	}
+}
+
+func BenchmarkAddRaw32x32_Scalar(b *testing.B) { benchRaw(b, 32, 32, addRawTransformPlaneBlockPureGo) }
+func BenchmarkAddRaw32x32_SIMD(b *testing.B)   { benchRaw(b, 32, 32, addRawTransformPlaneBlockSIMD) }
+func BenchmarkAddRaw32x32_ASM(b *testing.B)    { benchRaw(b, 32, 32, addRawTransformPlaneBlockImpl) }
+func BenchmarkAddRaw64x64_Scalar(b *testing.B) { benchRaw(b, 64, 64, addRawTransformPlaneBlockPureGo) }
+func BenchmarkAddRaw64x64_SIMD(b *testing.B)   { benchRaw(b, 64, 64, addRawTransformPlaneBlockSIMD) }
+func BenchmarkAddRaw64x64_ASM(b *testing.B)    { benchRaw(b, 64, 64, addRawTransformPlaneBlockImpl) }

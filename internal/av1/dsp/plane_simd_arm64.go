@@ -65,3 +65,51 @@ func addResidualPlaneBlockSIMD(block planeBlock, bytesPerSample int, max uint16,
 		}
 	}
 }
+
+// packLo4Int16 combines the low 4 int16 lanes of a and the low 4 of b into one
+// Int16x8 [a0,a1,a2,a3,b0,b1,b2,b3], by interleaving their low 64-bit lanes.
+// Used to reassemble two Int32x4->Int16x8 narrows (each valid in its low 4
+// lanes) into a single 8-lane vector. ConvertToUint16/ConvertToInt16 are
+// same-width bit reinterprets here (the surrounding reshapes only move lanes).
+func packLo4Int16(a, b archsimd.Int16x8) archsimd.Int16x8 {
+	au := a.ConvertToUint16().ReshapeToUint64s()
+	bu := b.ConvertToUint16().ReshapeToUint64s()
+	return au.InterleaveLo(bu).ReshapeToUint16s().ConvertToInt16()
+}
+
+// addRawTransformPlaneBlockSIMD is the Go-native-SIMD analogue of
+// addRawTransformPlaneBlockPureGo for the 8-bit path. The raw int32 samples are
+// rounded ((raw+8)>>4) and saturated to int16 — exactly rawTransformResidual —
+// then added to the destination with the same byte-exact AddSaturated+clamp as
+// the residual-add. Widths not a multiple of 16 and the 16-bit path fall back
+// to scalar. Precondition (satisfied by real inverse-transform output): raw
+// values are bounded well within int32, so raw+8 does not overflow.
+func addRawTransformPlaneBlockSIMD(block planeBlock, bytesPerSample int, max uint16, width int, raw []int32, rawStride int) {
+	if bytesPerSample != 1 || width < 16 || width%16 != 0 {
+		addRawTransformPlaneBlockPureGo(block, bytesPerSample, max, width, raw, rawStride)
+		return
+	}
+	zero := archsimd.BroadcastInt16x8(0)
+	hi := archsimd.BroadcastInt16x8(int16(max))
+	eight := archsimd.BroadcastInt32x4(8)
+	for row := 0; row < block.height; row++ {
+		dstRow := block.pix[row*block.stride:]
+		rawRow := raw[row*rawStride:]
+		for x := 0; x < width; x += 16 {
+			dv := archsimd.LoadUint8x16Array((*[16]uint8)(dstRow[x:]))
+			dLo := dv.ExtendLo8ToUint16().ConvertToInt16()
+			dHi := dv.ConcatShiftBytesRight(dv, 8).ExtendLo8ToUint16().ConvertToInt16()
+			// (raw+8)>>4 saturated to int16 == rawTransformResidual, per group of 4.
+			r0 := archsimd.LoadInt32x4Array((*[4]int32)(rawRow[x:])).Add(eight).ShiftAllRight(4).SaturateToInt16()
+			r1 := archsimd.LoadInt32x4Array((*[4]int32)(rawRow[x+4:])).Add(eight).ShiftAllRight(4).SaturateToInt16()
+			r2 := archsimd.LoadInt32x4Array((*[4]int32)(rawRow[x+8:])).Add(eight).ShiftAllRight(4).SaturateToInt16()
+			r3 := archsimd.LoadInt32x4Array((*[4]int32)(rawRow[x+12:])).Add(eight).ShiftAllRight(4).SaturateToInt16()
+			rLo := packLo4Int16(r0, r1)
+			rHi := packLo4Int16(r2, r3)
+			sLo := dLo.AddSaturated(rLo).Max(zero).Min(hi).SaturateToUint8()
+			sHi := dHi.AddSaturated(rHi).Max(zero).Min(hi).SaturateToUint8()
+			packed := sLo.ReshapeToUint64s().InterleaveLo(sHi.ReshapeToUint64s()).ReshapeToUint8s()
+			packed.StoreArray((*[16]uint8)(dstRow[x:]))
+		}
+	}
+}

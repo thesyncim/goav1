@@ -44,6 +44,9 @@ beats** the hand asm (64×64: 394 vs 500 ns) while staying maintainable Go.
 Ordered by decode hotness (port highest first):
 - [x] `dsp` residual-add — PORTED + WIRED. Matches/beats asm (64×64 394 vs 500
       ns); byte-exact; `conformance` green under gotip+simd with it active.
+- [x] `dsp` raw-transform-add — PORTED + WIRED. Dead parity with asm (64×64
+      751 vs 750 ns, 7x over scalar); byte-exact (int32->int16 pack via uint64
+      reshape bridge); conformance green with both dsp kernels active.
 - [ ] `transform` (15) — inverse DCT/ADST/IDTX butterflies (add/sub/mul/shift/clamp).
 - [ ] `loopfilter` (5) — deblock: abs-diff, thresholds, clamps, compare+select.
 - [ ] `cdef` (4) — directional filter: min/max/abs/diff, constant taps.
@@ -67,7 +70,7 @@ Ordered by decode hotness (port highest first):
 - Foundation verified: whole module builds under gotip and gotip+simd;
   `conformance` green under gotip (asm path) AND with the Go-native SIMD
   residual-add active. Machine + wiring pattern + gates all proven.
-- 1 / ~45 Tier-2 kernels ported. Remaining is a per-kernel grind: for each,
+- 2 / ~45 Tier-2 kernels ported (dsp add-family done). Remaining is a per-kernel grind: for each,
   mirror the residual-add pair (kernel + dispatch-simd), differential-test to
   byte-exact, gate with `conformance`. Some need API workarounds (int32→int16
   packing lacks a direct reshape; go via the uint bitcast path). Track here.
