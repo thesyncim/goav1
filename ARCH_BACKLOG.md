@@ -146,8 +146,13 @@ B3 — Tokenize/pack loop glue fusion (Go, no asm).
   Gate: encoder byte-exact. Yield ~0.5-1.5%. Risk M. Deps: merge after B2
     (shared coeff_write.go). ∥ A, C.
 
-B GO/NO-GO: after B2, if write-pass wall share < 2% the writer is call-bound
-below the asm floor → stop B3.
+B STATUS 2026-07-07: B0 harness LANDED (580134ec). B1 normalize primitive
+built but FLAT alone (primitive-asm floor, not landed). B2 BLOCKED: the
+writer coeff hot paths use THREE scan-hot entry layouts (decoder had one),
+so a single write-kernel can't cover them — B2 needs a per-layout kernel
+family OR a packed-layout unification first + a TXB-level write differential.
+Program B is therefore a MULTI-SLICE restructure (unify layouts → per-layout
+kernels), not the clean D3 mirror assumed. Deferred as a real project.
 
 ## PROGRAM C — decoder M3: block-loop spine ASM (gated on A's post-landing profile)
 
