@@ -101,20 +101,30 @@ func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheRange(masks *t
 	if len(masks.LevelCache) < cols*rows {
 		return threading.ErrInvalidBatch
 	}
+	if rowStart < 0 || rowStart > rowEnd || rowEnd > rows {
+		return threading.ErrInvalidBatch
+	}
 	ssHor := masks.Layout.SSHor
 	ssVer := masks.Layout.SSVer
 	hasChroma := masks.HasChroma
 	stride := int(filterMap.Stride)
 	for row := rowStart; row < rowEnd; row++ {
 		base := row * stride
-		for col := 0; col < cols; col++ {
+		for col := 0; col < cols; {
 			record := &filterMap.Records[base+col]
 			if !record.Valid {
 				plan.Missing++
+				col++
 				continue
 			}
-			plan.Cells++
-			if int(record.Block.MICol) != col || int(record.Block.MIRow) != row {
+			block := record.Block
+			nextCol := int(block.MIColEnd)
+			if nextCol <= col || nextCol > cols {
+				return threading.ErrInvalidBatch
+			}
+			plan.Cells += int32(nextCol - col)
+			if int(block.MICol) != col || int(block.MIRow) != row {
+				col = nextCol
 				continue
 			}
 			plan.Blocks++
@@ -141,11 +151,13 @@ func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheRange(masks *t
 				}
 			}
 			if !hasChroma {
+				col = nextCol
 				continue
 			}
 			cbw4 := minInt(((cols+ssHor)>>ssHor)-(bx>>ssHor), (int(dims.W4)+ssHor)>>ssHor)
 			cbh4 := minInt(((rows+ssVer)>>ssVer)-(by>>ssVer), (int(dims.H4)+ssVer)>>ssVer)
 			if cbw4 <= 0 || cbh4 <= 0 {
+				col = nextCol
 				continue
 			}
 			uLevel := levels[loopfilter.PlaneU][loopfilter.EdgeVertical]
@@ -160,6 +172,7 @@ func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheRange(masks *t
 					cell[3] = vLevel
 				}
 			}
+			col = nextCol
 		}
 	}
 	return nil
