@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/bits"
 
+	"github.com/thesyncim/goav1/internal/av1/dsp"
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
@@ -4411,18 +4412,32 @@ func (st *lossyEncodeState) reconInterTXBResult(reconPlane, pred []byte, predStr
 		copyPredToReconBlock(reconPlane, pred, predStride, stride, px, py, w, h)
 		return nil
 	}
-	res := &st.invResidual
 	if txbResult.EOB == 1 && txType == transform.TypeDCTDCT {
 		dc := quantize.DequantizeDCCoeffBitDepthTrusted(qcoeff[0], q, geo.txScale, nil, 8)
-		if err := transform.InverseDCTDCOnlyBlockBitDepth(res[:n], w, dc, st.invScratch[:n], geo.size, 8); err != nil {
+		sample, err := transform.InverseDCTDCOnlySampleBitDepth(dc, st.invScratch[:n], geo.size, 8)
+		if err != nil {
 			return err
 		}
-	} else {
-		dq := &st.dqScratch
-		quantize.DequantizeBlockScaledBitDepthEOBTrusted(dq[:geo.coeffCount], geo.coeffHeight, qcoeff, geo.coeffHeight, scan, int(txbResult.EOB), geo.coeffWidth, geo.coeffHeight, q, geo.txScale, 8)
-		if err := transform.InverseBlock(res[:n], w, dq[:geo.coeffCount], geo.coeffHeight, st.invScratch[:n], geo.size, txType); err != nil {
+		addConstantResidualToPredReconBlock(reconPlane, pred, predStride, stride, px, py, w, h, sample)
+		return nil
+	}
+
+	dq := &st.dqScratch
+	quantize.DequantizeBlockScaledBitDepthEOBTrusted(dq[:geo.coeffCount], geo.coeffHeight, qcoeff, geo.coeffHeight, scan, int(txbResult.EOB), geo.coeffWidth, geo.coeffHeight, q, geo.txScale, 8)
+	if txType != transform.TypeIDTX {
+		raw := st.invScratch[:n]
+		if err := transform.InverseBlockBitDepthRaw(raw, dq[:geo.coeffCount], geo.coeffHeight, geo.size, txType, 8, 0); err != nil {
 			return err
 		}
+		copyPredToReconBlock(reconPlane, pred, predStride, stride, px, py, w, h)
+		dst := reconPlane[py*stride+px:]
+		dsp.AddRawTransformPlaneBlockTrusted(dst, stride, 1, 0xff, w, h, raw, w)
+		return nil
+	}
+
+	res := &st.invResidual
+	if err := transform.InverseBlock(res[:n], w, dq[:geo.coeffCount], geo.coeffHeight, st.invScratch[:n], geo.size, txType); err != nil {
+		return err
 	}
 	for r := range h {
 		row := (py+r)*stride + px
@@ -4438,6 +4453,22 @@ func (st *lossyEncodeState) reconInterTXBResult(reconPlane, pred []byte, predStr
 	}
 	return nil
 
+}
+
+func addConstantResidualToPredReconBlock(reconPlane, pred []byte, predStride, stride, px, py, w, h int, residual int16) {
+	rv := int(residual)
+	for r := range h {
+		row := (py+r)*stride + px
+		for c := range w {
+			v := int(pred[r*predStride+c]) + rv
+			if v < 0 {
+				v = 0
+			} else if v > 255 {
+				v = 255
+			}
+			reconPlane[row+c] = uint8(v)
+		}
+	}
 }
 
 func copyPredToReconBlock(reconPlane, pred []byte, predStride, stride, px, py, w, h int) {
