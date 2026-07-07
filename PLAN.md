@@ -52,7 +52,7 @@ M1 → ~3.1-3.2x (glue ports, weeks):
 GO/NO-GO: if M1 lands <5% combined, re-profile before starting M2.
 
 M2 → ~2.6-2.8x (walk fusion, multi-week):
-- [ ] D4-a per-SB fused predict→add-residual→recon walk (dav1d recon_tmpl.c
+- [~] D4-a phase 1 LANDED (ref-plane view, -0.71%/-1.79% cpu); full fused walk still open. dav1d recon_tmpl.c
       dispatch shape): collapse the per-block layer hops (blockPrediction
       PlaneGeometry, JobOutputPlane-style glue, per-plane dispatch) into one
       resident walk. The single biggest remaining Go-vs-C structure delta.

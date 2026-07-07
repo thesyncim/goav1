@@ -1086,11 +1086,10 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *ti
 		if !refOk {
 			return ErrInvalidBatch
 		}
-		refWindow, err := b.ReferencePlane(reference, plane)
+		ref, err := b.referencePlaneView(reference, plane)
 		if err != nil {
 			return err
 		}
-		ref := frameWorkPlaneFromWindow(refWindow)
 		sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
 		if err != nil {
 			return err
@@ -1157,11 +1156,10 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithGeometry(visit *til
 	if !ok {
 		return ErrInvalidBatch
 	}
-	refWindow, err := b.ReferencePlane(reference, plane)
+	ref, err := b.referencePlaneView(reference, plane)
 	if err != nil {
 		return err
 	}
-	ref := frameWorkPlaneFromWindow(refWindow)
 	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
 	if err != nil {
 		return err
@@ -1444,11 +1442,10 @@ func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithGeometry(visit *tile.Bloc
 	if !ok {
 		return ErrInvalidBatch
 	}
-	refWindow, err := b.ReferencePlane(reference, plane)
+	ref, err := b.referencePlaneView(reference, plane)
 	if err != nil {
 		return err
 	}
-	ref := frameWorkPlaneFromWindow(refWindow)
 	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
 	if err != nil {
 		return err
@@ -1651,11 +1648,10 @@ func (b *FrameWorkBatch) predictBlockInterCompoundRefToConvBuf(buf *motion.Compo
 	if !ok {
 		return ErrInvalidBatch
 	}
-	refWindow, err := b.ReferencePlane(reference, plane)
+	ref, err := b.referencePlaneView(reference, plane)
 	if err != nil {
 		return err
 	}
-	ref := frameWorkPlaneFromWindow(refWindow)
 	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
 	if err != nil {
 		return err
@@ -1918,16 +1914,54 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, bloc
 	return b.predictBlockInterReferencePlaneToOutputWithGeometry(geom, block, plane, refFrame, mv, filters, scratch)
 }
 
+// referencePlaneView is ReferencePlane's hot inter-prediction twin: it returns
+// the same full visible reference-plane view without constructing a
+// FrameWorkPlaneRegion that the caller would immediately convert back.
+func (b *FrameWorkBatch) referencePlaneView(reference FrameWorkReference, plane FrameWorkPlane) (frame.Plane, error) {
+	refFrame, err := b.ReferenceFrame(reference)
+	if err != nil {
+		return frame.Plane{}, err
+	}
+	ref, _, _, ok := frameWorkFramePlane(refFrame, plane)
+	if !ok {
+		return frame.Plane{}, ErrInvalidBatch
+	}
+	bytesPerSample := refFrame.Layout.BytesPerSample
+	if bytesPerSample <= 0 ||
+		bytesPerSample > int(^uint8(0)) ||
+		ref.Stride <= 0 ||
+		uint64(ref.Stride) > uint64(^uint32(0)) ||
+		ref.Width <= 0 ||
+		ref.Height <= 0 ||
+		uint64(ref.Width) > uint64(^uint32(0)) ||
+		uint64(ref.Height) > uint64(^uint32(0)) {
+		return frame.Plane{}, ErrInvalidBatch
+	}
+	rowBytes, ok := frameWorkCheckedMul(ref.Width, bytesPerSample)
+	if !ok || rowBytes <= 0 || rowBytes > ref.Stride {
+		return frame.Plane{}, ErrInvalidBatch
+	}
+	lastRowOffset, ok := frameWorkCheckedMul(ref.Height-1, ref.Stride)
+	if !ok {
+		return frame.Plane{}, ErrInvalidBatch
+	}
+	end, ok := frameWorkCheckedAdd(lastRowOffset, rowBytes)
+	if !ok || end > len(ref.Pix) {
+		return frame.Plane{}, ErrInvalidBatch
+	}
+	ref.Pix = ref.Pix[:end]
+	return ref, nil
+}
+
 func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutputWithGeometry(geom frameWorkPredictionPlaneGeometry, block tile.BlockVisit, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
 	reference, ok := frameWorkReferenceFromTile(refFrame)
 	if !ok {
 		return ErrInvalidBatch
 	}
-	refWindow, err := b.ReferencePlane(reference, plane)
+	ref, err := b.referencePlaneView(reference, plane)
 	if err != nil {
 		return err
 	}
-	ref := frameWorkPlaneFromWindow(refWindow)
 	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
 	if err != nil {
 		return err
@@ -1971,11 +2005,10 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plan
 	if !ok {
 		return ErrInvalidBatch
 	}
-	refWindow, err := b.ReferencePlane(reference, plane)
+	ref, err := b.referencePlaneView(reference, plane)
 	if err != nil {
 		return err
 	}
-	ref := frameWorkPlaneFromWindow(refWindow)
 	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
 	if err != nil {
 		return err
@@ -2021,11 +2054,10 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpToScratch(dst frame.Plane, p
 	if !ok {
 		return ErrInvalidBatch
 	}
-	refWindow, err := b.ReferencePlane(reference, plane)
+	ref, err := b.referencePlaneView(reference, plane)
 	if err != nil {
 		return err
 	}
-	ref := frameWorkPlaneFromWindow(refWindow)
 	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
 	if err != nil {
 		return err
@@ -2159,11 +2191,10 @@ func (b *FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, pla
 	if !ok {
 		return ErrInvalidBatch
 	}
-	refWindow, err := b.ReferencePlane(reference, plane)
+	ref, err := b.referencePlaneView(reference, plane)
 	if err != nil {
 		return err
 	}
-	ref := frameWorkPlaneFromWindow(refWindow)
 	// OBMC / sub-block area predictions may straddle a scaled reference. The
 	// regular same-size convolver below assumes ref.Width / ref.Height equal
 	// geom.Output.Width / geom.Output.Height; for SVC L2T1 spatial=1 the
