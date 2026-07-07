@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego
+//go:build arm64 && !purego && !goexperiment.simd
 
 package dsp
 
