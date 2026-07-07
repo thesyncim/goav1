@@ -165,14 +165,23 @@ func frameWorkPrimeLumaReconGeometry(b *FrameWorkBatch, index int) error {
 	if _, err := b.JobOutputPlane(index, FrameWorkPlaneY); err != nil {
 		return err
 	}
+	if b.Sequence.ColorConfig.MonoChrome {
+		return nil
+	}
+	if _, err := b.JobOutputPlane(index, FrameWorkPlaneU); err != nil {
+		return err
+	}
+	if _, err := b.JobOutputPlane(index, FrameWorkPlaneV); err != nil {
+		return err
+	}
 	return nil
 }
 
 // reconstructBlockCoeffLumaPrimed reconstructs the residual for a luma TXB
 // using the job geometry entries that DecodeAndReconstructJobResidualsPtr
-// primes once per tile job. The public and chroma paths keep the fully checked
-// geometry route; this hot path only skips the per-TXB cache lookup ladder when
-// the already-keyed region and Y plane are present for the current job.
+// primes once per tile job. The public path keeps the fully checked geometry
+// route; this hot path only skips the per-TXB cache lookup ladder when the
+// already-keyed region and Y plane are present for the current job.
 func (b *FrameWorkBatch) reconstructBlockCoeffLumaPrimed(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock, nonzero []int16, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) (bool, error) {
 	if block.Plane != 0 {
 		return false, nil
@@ -639,6 +648,97 @@ func (b *FrameWorkBatch) blockCoeffGeometryLumaKnown(region FrameWorkJobRegion, 
 		visibleHeight: geomVisibleHeight,
 		txScale:       meta.txScale,
 		plane:         FrameWorkPlaneY,
+	}, nil
+}
+
+func (b *FrameWorkBatch) blockCoeffGeometryChromaKnown(region FrameWorkJobRegion, window FrameWorkPlaneRegion, plane FrameWorkPlane, visit tile.BlockVisit, block *tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
+	meta, ok := frameWorkBlockCoeffTransformMeta(block.Block.Size)
+	if !ok {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	color := b.Sequence.ColorConfig
+	if color.MonoChrome {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	if (plane == FrameWorkPlaneU && block.Plane != 1) ||
+		(plane == FrameWorkPlaneV && block.Plane != 2) ||
+		(plane != FrameWorkPlaneU && plane != FrameWorkPlaneV) {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	if visit.MICol < region.MIColStart || visit.MIRow < region.MIRowStart ||
+		visit.MIColEnd > region.MIColEnd || visit.MIRowEnd > region.MIRowEnd ||
+		visit.MIColEnd <= visit.MICol || visit.MIRowEnd <= visit.MIRow {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	rootCol := int64(visit.MICol) - int64(visit.X4)
+	rootRow := int64(visit.MIRow) - int64(visit.Y4)
+	if rootCol < 0 || rootRow < 0 {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	ssX := frameWorkSubsampleShift(color.SubsamplingX)
+	ssY := frameWorkSubsampleShift(color.SubsamplingY)
+	x, ok := frameWorkInt64Mul4((rootCol >> ssX) + int64(block.Block.X4))
+	if !ok {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	y, ok := frameWorkInt64Mul4((rootRow >> ssY) + int64(block.Block.Y4))
+	if !ok {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	geomX, geomY, ok := frameWorkBlockCoeffCoords(x, y)
+	if !ok {
+		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+	}
+	if _, _, err := frameWorkBlockCoeffVisibleSize(block.Block, meta.size); err != nil {
+		return frameWorkBlockCoeffGeometry{}, err
+	}
+	width := int(meta.size.Width)
+	height := int(meta.size.Height)
+	var geomVisibleWidth, geomVisibleHeight uint8
+	clipWidth := window.ClipWidth
+	if clipWidth == 0 {
+		clipWidth = window.Width
+	}
+	clipHeight := window.ClipHeight
+	if clipHeight == 0 {
+		clipHeight = window.Height
+	}
+	if geomX >= window.X && geomY >= window.Y &&
+		uint64(geomX-window.X)+uint64(uint32(width)) <= uint64(clipWidth) &&
+		uint64(geomY-window.Y)+uint64(uint32(height)) <= uint64(clipHeight) {
+		geomVisibleWidth = uint8(width)
+		geomVisibleHeight = uint8(height)
+	} else {
+		visibleWidth, visibleHeight, ok := frameWorkClipVisiblePixelsToWindow(window, x, y, width, height)
+		if !ok {
+			if frameWorkPlaneBlockStartsBeyondOutput(b.Output, plane, x, y) {
+				return frameWorkBlockCoeffGeometry{
+					window:   window,
+					size:     meta.size,
+					scanSize: meta.scanSize,
+					x:        geomX,
+					y:        geomY,
+					txScale:  meta.txScale,
+					plane:    plane,
+				}, nil
+			}
+			return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+		}
+		geomVisibleWidth, geomVisibleHeight, ok = frameWorkBlockCoeffVisiblePixels(visibleWidth, visibleHeight)
+		if !ok {
+			return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
+		}
+	}
+	return frameWorkBlockCoeffGeometry{
+		window:        window,
+		size:          meta.size,
+		scanSize:      meta.scanSize,
+		x:             geomX,
+		y:             geomY,
+		visibleWidth:  geomVisibleWidth,
+		visibleHeight: geomVisibleHeight,
+		txScale:       meta.txScale,
+		plane:         plane,
 	}, nil
 }
 

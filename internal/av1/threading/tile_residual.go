@@ -1312,9 +1312,10 @@ type frameWorkReconState struct {
 	// points at it on the wavefront path so the per-block memoization never
 	// races. localStats accumulates the goroutine's reconstruction counters,
 	// merged into the controller stats after the wavefront joins.
-	geom       frameWorkJobGeometryCache
-	localStats FrameWorkTileResidualStats
-	lumaReady  bool
+	geom        frameWorkJobGeometryCache
+	localStats  FrameWorkTileResidualStats
+	lumaReady   bool
+	chromaReady bool
 
 	pendingCFLPrediction bool
 	cflPredictionDone    bool
@@ -1324,13 +1325,27 @@ type frameWorkReconState struct {
 func (s *frameWorkReconState) bindPrimedLumaReconGeometry() {
 	cacheIndex, ok := frameWorkJobCacheIndex(s.index)
 	c := s.batch.geomCache
+	s.lumaReady = false
+	s.chromaReady = false
 	if c == nil || !ok ||
-		c.validMask&(frameWorkJobGeometryRegionValid|frameWorkJobGeometryPlaneYValid) != frameWorkJobGeometryRegionValid|frameWorkJobGeometryPlaneYValid ||
-		c.regionIndex != cacheIndex || c.planeIndex[FrameWorkPlaneY] != cacheIndex {
+		c.validMask&frameWorkJobGeometryRegionValid == 0 ||
+		c.regionIndex != cacheIndex {
+		return
+	}
+	if c.validMask&frameWorkJobGeometryPlaneYValid == 0 ||
+		c.planeIndex[FrameWorkPlaneY] != cacheIndex {
 		s.lumaReady = false
 		return
 	}
 	s.lumaReady = true
+	if s.batch.Sequence.ColorConfig.MonoChrome {
+		return
+	}
+	if c.validMask&(frameWorkJobGeometryPlaneUValid|frameWorkJobGeometryPlaneVValid) != frameWorkJobGeometryPlaneUValid|frameWorkJobGeometryPlaneVValid ||
+		c.planeIndex[FrameWorkPlaneU] != cacheIndex || c.planeIndex[FrameWorkPlaneV] != cacheIndex {
+		return
+	}
+	s.chromaReady = true
 }
 
 func (c *frameWorkTileResidualLoopController) BeforeSuperblock(visit tile.BlockLoopSuperblockVisit) error {
@@ -1975,6 +1990,24 @@ func (s *frameWorkReconState) reconstructTXBWithNonZero(visit *tile.BlockLoopVis
 	if block.Plane == 0 && s.lumaReady {
 		c := s.batch.geomCache
 		geom, err := s.batch.blockCoeffGeometryLumaKnown(c.region, c.plane[FrameWorkPlaneY], visit.Block, block)
+		if err != nil {
+			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
+		}
+		if err := s.batch.reconstructBlockCoeffCoreWithGeometryAndNonZero(geom, block, nonzero, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
+			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
+		}
+		s.stats.Residuals++
+		return nil
+	}
+	if block.Plane != 0 && s.chromaReady {
+		plane := FrameWorkPlaneU
+		if block.Plane == 2 {
+			plane = FrameWorkPlaneV
+		} else if block.Plane != 1 {
+			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, ErrInvalidBatch)
+		}
+		c := s.batch.geomCache
+		geom, err := s.batch.blockCoeffGeometryChromaKnown(c.region, c.plane[plane], plane, visit.Block, block)
 		if err != nil {
 			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 		}
