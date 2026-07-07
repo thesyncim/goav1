@@ -117,28 +117,3 @@ func BenchmarkAddResidual64x64_ASM(b *testing.B)    { benchResidual(b, 64, 64, a
 func BenchmarkAddResidual16x16_Scalar(b *testing.B) { benchResidual(b, 16, 16, addResidualPlaneBlockPureGo) }
 func BenchmarkAddResidual16x16_SIMD(b *testing.B)   { benchResidual(b, 16, 16, addResidualPlaneBlockSIMD) }
 func BenchmarkAddResidual16x16_ASM(b *testing.B)    { benchResidual(b, 16, 16, addResidualPlaneBlockImpl) }
-
-// _Naive variants use the first un-tuned 8-wide port, to show the tuning delta.
-func BenchmarkAddResidual32x32_Naive(b *testing.B) { benchResidual(b, 32, 32, addResidualPlaneBlockSIMDNaive) }
-func BenchmarkAddResidual64x64_Naive(b *testing.B) { benchResidual(b, 64, 64, addResidualPlaneBlockSIMDNaive) }
-func BenchmarkAddResidual16x16_Naive(b *testing.B) { benchResidual(b, 16, 16, addResidualPlaneBlockSIMDNaive) }
-
-// Also verify the naive port stays byte-exact.
-func TestAddResidualSIMDNaiveMatchesScalar(t *testing.T) {
-	rng := rand.New(rand.NewSource(0xd00d))
-	for iter := 0; iter < 2000; iter++ {
-		w := []int{8, 16, 32, 64}[rng.Intn(4)]
-		h := 1 + rng.Intn(16)
-		stride := w + rng.Intn(2)*8
-		dstA, res := makeResidualCase(rng, w, h, stride, true)
-		dstB := make([]byte, len(dstA))
-		copy(dstB, dstA)
-		addResidualPlaneBlockPureGo(mkBlock(dstA, stride, w, h), 1, 255, w, res, w)
-		addResidualPlaneBlockSIMDNaive(mkBlock(dstB, stride, w, h), 1, 255, w, res, w)
-		for i := range dstA {
-			if dstA[i] != dstB[i] {
-				t.Fatalf("naive mismatch iter=%d w=%d h=%d at %d: %d vs %d", iter, w, h, i, dstA[i], dstB[i])
-			}
-		}
-	}
-}

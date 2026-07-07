@@ -12,6 +12,13 @@
 // baseline and the existing hand-written Plan 9 NEON asm on identical real code,
 // and to prove byte-identity via the differential test in plane_simd_arm64_test.go.
 //
+// All vector loads/stores go through the array-pointer (value-type) variants
+// LoadUint8x16Array(*[16]uint8) / LoadInt16x8Array(*[8]int16) / StoreArray — no
+// slice-header indirection in the hot path, matching goav1's trusted-path
+// convention. Slice regions are converted to fixed-size array pointers once per
+// 16-pixel chunk; the loop bounds (x+16 <= width, validated residual/dst extent)
+// guarantee those conversions never see a short slice.
+//
 // Byte-exactness argument for the 8-bit path: the scalar loop computes
 // clamp(int(dst)+int(res), 0, max) with a 32-bit add. Here we use a signed int16
 // AddSaturated followed by Max(0).Min(max). Saturation only diverges from the
@@ -23,62 +30,38 @@ package dsp
 
 import "simd/archsimd"
 
-// addResidualPlaneBlockSIMD is the Go-native-SIMD analogue of
-// addResidualPlaneBlockPureGo. It handles the 8-bit case for widths that are a
-// multiple of 8 (AV1 transform widths 8/16/32/64); width 4 and the 16-bit path
-// fall back to the scalar reference so the function is always defined for the
-// same inputs as the scalar one.
-//
-// This is the TUNED version: 16 pixels per iteration from one full Uint8x16 load
-// (both halves widened via ExtendLo8ToUint16 + a byte-rotate for the high half),
-// with an 8-pixel remainder for width==8.
+// addResidualPlaneBlockSIMD is the tuned Go-native-SIMD analogue of
+// addResidualPlaneBlockPureGo for the 8-bit path: 16 pixels per iteration, one
+// full Uint8x16 array-pointer load (both halves widened), a two-half narrowing
+// pack, and one 16-byte StoreArray. Widths that are not a multiple of 16 (the
+// AV1 4- and 8-wide transforms) and the 16-bit path fall back to the scalar
+// reference, so the function is defined for the same inputs as the scalar one.
 func addResidualPlaneBlockSIMD(block planeBlock, bytesPerSample int, max uint16, width int, residual []int16, residualStride int) {
-	if bytesPerSample != 1 || width < 8 {
+	if bytesPerSample != 1 || width < 16 || width%16 != 0 {
 		addResidualPlaneBlockPureGo(block, bytesPerSample, max, width, residual, residualStride)
 		return
 	}
 	zero := archsimd.BroadcastInt16x8(0)
 	hi := archsimd.BroadcastInt16x8(int16(max))
 	for row := 0; row < block.height; row++ {
-		line := block.pix[row*block.stride : row*block.stride+width : row*block.stride+width]
-		resLine := residual[row*residualStride : row*residualStride+width : row*residualStride+width]
-		x := 0
-		for ; x+16 <= width; x += 16 {
-			dv := archsimd.LoadUint8x16(line[x:])
+		dstRow := block.pix[row*block.stride:]
+		resRow := residual[row*residualStride:]
+		for x := 0; x < width; x += 16 {
+			// Value-type loads: one 16-byte destination vector, two 8-lane
+			// residual vectors, all from *[N]T (no slice indirection).
+			dv := archsimd.LoadUint8x16Array((*[16]uint8)(dstRow[x:]))
 			dLo := dv.ExtendLo8ToUint16().ConvertToInt16()
 			dHi := dv.ConcatShiftBytesRight(dv, 8).ExtendLo8ToUint16().ConvertToInt16()
-			rLo := archsimd.LoadInt16x8(resLine[x:])
-			rHi := archsimd.LoadInt16x8(resLine[x+8:])
-			dLo.AddSaturated(rLo).Max(zero).Min(hi).SaturateToUint8().StorePart(line[x : x+8])
-			dHi.AddSaturated(rHi).Max(zero).Min(hi).SaturateToUint8().StorePart(line[x+8 : x+16])
-		}
-		for ; x+8 <= width; x += 8 {
-			dv, _ := archsimd.LoadUint8x16Part(line[x:])
-			d16 := dv.ExtendLo8ToUint16().ConvertToInt16()
-			r16, _ := archsimd.LoadInt16x8Part(resLine[x:])
-			d16.AddSaturated(r16).Max(zero).Min(hi).SaturateToUint8().StorePart(line[x : x+8])
-		}
-	}
-}
-
-// addResidualPlaneBlockSIMDNaive is the first, un-tuned 8-wide port (masked
-// partial loads, 8 pixels/iteration), kept so the benchmark can show the tuning
-// delta against the 16-wide version above.
-func addResidualPlaneBlockSIMDNaive(block planeBlock, bytesPerSample int, max uint16, width int, residual []int16, residualStride int) {
-	if bytesPerSample != 1 || width < 8 || width%8 != 0 {
-		addResidualPlaneBlockPureGo(block, bytesPerSample, max, width, residual, residualStride)
-		return
-	}
-	zero := archsimd.BroadcastInt16x8(0)
-	hi := archsimd.BroadcastInt16x8(int16(max))
-	for row := 0; row < block.height; row++ {
-		line := block.pix[row*block.stride : row*block.stride+width : row*block.stride+width]
-		resLine := residual[row*residualStride : row*residualStride+width : row*residualStride+width]
-		for x := 0; x < width; x += 8 {
-			dv, _ := archsimd.LoadUint8x16Part(line[x:])
-			d16 := dv.ExtendLo8ToUint16().ConvertToInt16()
-			r16, _ := archsimd.LoadInt16x8Part(resLine[x:])
-			d16.AddSaturated(r16).Max(zero).Min(hi).SaturateToUint8().StorePart(line[x : x+8])
+			rLo := archsimd.LoadInt16x8Array((*[8]int16)(resRow[x:]))
+			rHi := archsimd.LoadInt16x8Array((*[8]int16)(resRow[x+8:]))
+			// Byte-exact add + clamp (see file header), narrow each half to
+			// uint8 (low 8 bytes valid).
+			sLo := dLo.AddSaturated(rLo).Max(zero).Min(hi).SaturateToUint8()
+			sHi := dHi.AddSaturated(rHi).Max(zero).Min(hi).SaturateToUint8()
+			// Pack the two low-8 halves into one 16-byte vector by interleaving
+			// their low 64-bit lanes, then a single value-type store.
+			packed := sLo.ReshapeToUint64s().InterleaveLo(sHi.ReshapeToUint64s()).ReshapeToUint8s()
+			packed.StoreArray((*[16]uint8)(dstRow[x:]))
 		}
 	}
 }
