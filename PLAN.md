@@ -119,7 +119,7 @@ HOLD) · eighth-pel · SMOOTH@8x8 · 32-tier exact-rate w/o chroma · controller
 variants (PI/step/tier) · golden qindex refresh · SSE-dist MDS0 · T0-only
 MDS0 · wall-clock feedback (banned) · EC(N)∥MD(N+1) overlap (CDF chain,
 proven both codecs). Lessons: grep `var im [` nil-scratch zero-fills ·
-Rosetta differentials must EXECUTE (never skip on cpu.Detected) · fast
+C1 D3-d fold (eob+base into TXB kernel) byte-exact but e2e-FLAT on both clips (independent A/B; codex's +0.77/+1.92% didn't reproduce — confounded) → coeff-read spine at its e2e floor, further folding below the primitive-asm floor · Rosetta differentials must EXECUTE (never skip on cpu.Detected) · fast
 differential before conformance gate · memprofilerate=1 · strip AI trailers
 from codex commits · cwd discipline: use git -C, never bare cd in chains.
 
