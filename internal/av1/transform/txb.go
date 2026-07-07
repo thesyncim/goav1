@@ -50,9 +50,7 @@ func txbInitLevels8x8PureGo(coeffs *[64]int16, levels *[256]uint8) {
 		dst := col * txb8x8LevelStride
 		for row := range 8 {
 			level := txbAbsInt16(coeffs[src+row])
-			if level > 127 {
-				level = 127
-			}
+			level = min(level, 127)
 			levels[dst+row] = uint8(level)
 		}
 	}
@@ -60,9 +58,7 @@ func txbInitLevels8x8PureGo(coeffs *[64]int16, levels *[256]uint8) {
 
 func txbPrep8x8Summary(coeffs *[64]int16, absLevels *[64]uint16, eob int) TXB8x8PrepResult {
 	var result TXB8x8PrepResult
-	if eob > txb8x8PrepCoeffCount {
-		eob = txb8x8PrepCoeffCount
-	}
+	eob = min(eob, txb8x8PrepCoeffCount)
 	if eob <= 0 {
 		return result
 	}
@@ -77,9 +73,7 @@ func txbPrep8x8Summary(coeffs *[64]int16, absLevels *[64]uint16, eob int) TXB8x8
 		if cv < 0 {
 			result.SignBits = 1
 		}
-		if level > txbCoeffContextMask {
-			level = txbCoeffContextMask
-		}
+		level = min(level, txbCoeffContextMask)
 		switch {
 		case cv < 0:
 			level |= txbCoeffContextNegativeDC
@@ -108,9 +102,7 @@ func txbPrep8x8Summary(coeffs *[64]int16, absLevels *[64]uint16, eob int) TXB8x8
 		}
 		culLevel += level
 	}
-	if culLevel > txbCoeffContextMask {
-		culLevel = txbCoeffContextMask
-	}
+	culLevel = min(culLevel, txbCoeffContextMask)
 	switch {
 	case coeffs[0] < 0:
 		culLevel |= txbCoeffContextNegativeDC

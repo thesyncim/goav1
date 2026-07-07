@@ -362,44 +362,46 @@ func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, res
 		return ErrInvalidDecodeState
 	}
 	dims, ok := size.Dimensions()
+	w4 := int(dims.W4)
+	h4 := int(dims.H4)
 	if !ok || x4 < 0 || y4 < 0 ||
-		x4+int(dims.W4) > MaxBlockModeSlots ||
-		y4+int(dims.H4) > MaxBlockModeSlots {
+		x4+w4 > MaxBlockModeSlots ||
+		y4+h4 > MaxBlockModeSlots {
 		return ErrInvalidDecodeState
 	}
-	for i := 0; i < int(dims.W4); i++ {
-		c.AboveIntra[x4+i] = 0
-		c.AboveMode[x4+i] = IntraModeDC
-		if hasChroma {
-			c.AboveChromaIntra[x4+i] = 0
-			c.AboveChromaMode[x4+i] = ChromaIntraModeDC
-		}
+	xEnd := x4 + w4
+	yEnd := y4 + h4
+	clear(c.AboveIntra[x4:xEnd])
+	clear(c.AboveMode[x4:xEnd])
+	clear(c.AboveCompound[x4:xEnd])
+	clear(c.AboveInterpValid[x4:xEnd])
+	clear(c.AbovePaletteY[x4:xEnd])
+	clear(c.AbovePaletteUV[x4:xEnd])
+	clear(c.LeftIntra[y4:yEnd])
+	clear(c.LeftMode[y4:yEnd])
+	clear(c.LeftCompound[y4:yEnd])
+	clear(c.LeftInterpValid[y4:yEnd])
+	clear(c.LeftPaletteY[y4:yEnd])
+	clear(c.LeftPaletteUV[y4:yEnd])
+	if hasChroma {
+		clear(c.AboveChromaIntra[x4:xEnd])
+		clear(c.AboveChromaMode[x4:xEnd])
+		clear(c.LeftChromaIntra[y4:yEnd])
+		clear(c.LeftChromaMode[y4:yEnd])
+	}
+	for i := 0; i < w4; i++ {
 		c.AboveRef[0][x4+i] = ReferenceFrameNone
 		c.AboveRef[1][x4+i] = ReferenceFrameNone
-		c.AboveCompound[x4+i] = 0
 		c.AboveInterMotion[x4+i] = result
 		c.AboveMotionValid[x4+i] = 1
-		c.AboveInterpValid[x4+i] = 0
 		c.AboveBlockSize[x4+i] = size
-		c.AbovePaletteY[x4+i] = paletteContext{}
-		c.AbovePaletteUV[x4+i] = paletteContext{}
 	}
-	for i := 0; i < int(dims.H4); i++ {
-		c.LeftIntra[y4+i] = 0
-		c.LeftMode[y4+i] = IntraModeDC
-		if hasChroma {
-			c.LeftChromaIntra[y4+i] = 0
-			c.LeftChromaMode[y4+i] = ChromaIntraModeDC
-		}
+	for i := 0; i < h4; i++ {
 		c.LeftRef[0][y4+i] = ReferenceFrameNone
 		c.LeftRef[1][y4+i] = ReferenceFrameNone
-		c.LeftCompound[y4+i] = 0
 		c.LeftInterMotion[y4+i] = result
 		c.LeftMotionValid[y4+i] = 1
-		c.LeftInterpValid[y4+i] = 0
 		c.LeftBlockSize[y4+i] = size
-		c.LeftPaletteY[y4+i] = paletteContext{}
-		c.LeftPaletteUV[y4+i] = paletteContext{}
 	}
 	c.markGridInterMotion(size, x4, y4, result, dims)
 	return nil
@@ -435,8 +437,8 @@ func (c *BlockModeContext) clearGridInterMotion(size BlockSize, x4 int, y4 int, 
 	xEnd := x4 + int(dims.W4)
 	yEnd := y4 + int(dims.H4)
 	for y := y4; y < yEnd; y++ {
+		clear(c.GridMotionValid[y][x4:xEnd])
 		for x := x4; x < xEnd; x++ {
-			c.GridMotionValid[y][x] = 0
 			c.GridBlockSize[y][x] = size
 			c.GridBlockSizeVisited[y][x] = 1
 		}

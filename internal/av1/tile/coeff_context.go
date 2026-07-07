@@ -137,13 +137,9 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 		if req.Plane == 0 {
 			if blockDims.W4 != txDims.W4 || blockDims.H4 != txDims.H4 {
 				top &= CoeffContextMask
-				if top > 4 {
-					top = 4
-				}
+				top = min(top, 4)
 				left &= CoeffContextMask
-				if left > 4 {
-					left = 4
-				}
+				left = min(left, 4)
 				txbSkipCtx = coeffSkipContexts[top][left]
 			}
 		} else {
@@ -178,13 +174,9 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 		}
 		if blockDims.W4 != txDims.W4 || blockDims.H4 != txDims.H4 {
 			top := topMag & CoeffContextMask
-			if top > 4 {
-				top = 4
-			}
+			top = min(top, 4)
 			left := leftMag & CoeffContextMask
-			if left > 4 {
-				left = 4
-			}
+			left = min(left, 4)
 			txbSkipCtx = coeffSkipContexts[top][left]
 		}
 	} else {
@@ -249,12 +241,8 @@ func (c *CoeffEntropyContext) ResetBlock(plane int, block BlockSize, x4 int, y4 
 		y4+int(dims.H4) > MaxBlockModeSlots {
 		return ErrInvalidDecodeState
 	}
-	for k := 0; k < int(dims.W4); k++ {
-		c.Above[plane][x4+k] = 0
-	}
-	for k := 0; k < int(dims.H4); k++ {
-		c.Left[plane][y4+k] = 0
-	}
+	clear(c.Above[plane][x4 : x4+int(dims.W4)])
+	clear(c.Left[plane][y4 : y4+int(dims.H4)])
 	return nil
 }
 

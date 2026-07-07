@@ -731,38 +731,39 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 	}
 
 	compound := boolByte(result.Compound)
-	compGroup := uint8(0)
 	compIndex := uint8(1)
-	for i := 0; i < int(dims.W4); i++ {
-		c.AboveIntra[x4+i] = 0
-		if hasChroma {
-			c.AboveChromaIntra[x4+i] = 0
-			c.AboveChromaMode[x4+i] = ChromaIntraModeDC
-		}
+	w4 := int(dims.W4)
+	h4 := int(dims.H4)
+	xEnd := x4 + w4
+	yEnd := y4 + h4
+	clear(c.AboveIntra[x4:xEnd])
+	clear(c.AboveCompGroup[x4:xEnd])
+	clear(c.AboveInterIntra[x4:xEnd])
+	clear(c.AboveMotionValid[x4:xEnd])
+	clear(c.AboveInterpValid[x4:xEnd])
+	clear(c.LeftIntra[y4:yEnd])
+	clear(c.LeftCompGroup[y4:yEnd])
+	clear(c.LeftInterIntra[y4:yEnd])
+	clear(c.LeftMotionValid[y4:yEnd])
+	clear(c.LeftInterpValid[y4:yEnd])
+	if hasChroma {
+		clear(c.AboveChromaIntra[x4:xEnd])
+		clear(c.AboveChromaMode[x4:xEnd])
+		clear(c.LeftChromaIntra[y4:yEnd])
+		clear(c.LeftChromaMode[y4:yEnd])
+	}
+	for i := 0; i < w4; i++ {
 		c.AboveRef[0][x4+i] = result.Ref[0]
 		c.AboveRef[1][x4+i] = result.Ref[1]
 		c.AboveCompound[x4+i] = compound
-		c.AboveCompGroup[x4+i] = compGroup
 		c.AboveCompIndex[x4+i] = compIndex
-		c.AboveInterIntra[x4+i] = 0
-		c.AboveMotionValid[x4+i] = 0
-		c.AboveInterpValid[x4+i] = 0
 		c.AboveBlockSize[x4+i] = size
 	}
-	for i := 0; i < int(dims.H4); i++ {
-		c.LeftIntra[y4+i] = 0
-		if hasChroma {
-			c.LeftChromaIntra[y4+i] = 0
-			c.LeftChromaMode[y4+i] = ChromaIntraModeDC
-		}
+	for i := 0; i < h4; i++ {
 		c.LeftRef[0][y4+i] = result.Ref[0]
 		c.LeftRef[1][y4+i] = result.Ref[1]
 		c.LeftCompound[y4+i] = compound
-		c.LeftCompGroup[y4+i] = compGroup
 		c.LeftCompIndex[y4+i] = compIndex
-		c.LeftInterIntra[y4+i] = 0
-		c.LeftMotionValid[y4+i] = 0
-		c.LeftInterpValid[y4+i] = 0
 		c.LeftBlockSize[y4+i] = size
 	}
 	c.clearGridInterMotion(size, x4, y4, dims)

@@ -1580,9 +1580,7 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 			}
 		}
 	}
-	if culLevel > CoeffContextMask {
-		culLevel = CoeffContextMask
-	}
+	culLevel = min(culLevel, CoeffContextMask)
 	if dcValue < 0 {
 		culLevel |= 1 << CoeffContextBits
 	} else if dcValue > 0 {
