@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-var debugRefMVEnabled = os.Getenv("GOAV1_DEBUG_REFMV") != ""
+const debugRefMVEnabled = true
 
 func debugRefMVPrintf(req ReferenceMVStackRequest, format string, args ...any) {
 	if req.MIRow != 34 || req.MICol != 4 {
@@ -20,7 +20,7 @@ func debugRefMVPrintf(req ReferenceMVStackRequest, format string, args ...any) {
 
 func debugReferenceMVStack(req ReferenceMVStackRequest, result *ReferenceMVStackResult) {
 	debugRefMVPrintf(req, "STACK count=%d row=%d col=%d ctx=%d nearest=%d", result.Stack.Count, result.RowMatches, result.ColumnMatches, result.ModeContext, result.NearestCount)
-	for i := 0; i < result.Stack.Count; i++ {
+	for i := 0; i < int(result.Stack.Count); i++ {
 		debugRefMVPrintf(req, "  stack[%d] this=(%d,%d) w=%d", i, result.Stack.Candidates[i].This.Row, result.Stack.Candidates[i].This.Col, result.Stack.Candidates[i].Weight)
 	}
 }

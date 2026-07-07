@@ -33,20 +33,13 @@ package encoder
 //     shape) moved realA/realB −0.17/−0.2 dB rate-adjusted; TX-size
 //     reduction is the separate flag-gated largest-TX experiment.
 //
-// Kill switch: GOAV1_LPD1_TX=0 disables everything (byte-identical to the
-// pre-port encoder).
-
 import (
 	"fmt"
-	"os"
 
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
-
-// lpd1TxKill is the environment kill switch (GOAV1_LPD1_TX=0).
-var lpd1TxKill = os.Getenv("GOAV1_LPD1_TX") == "0"
 
 // lpd1TxCtrls mirrors the consumed subset of SVT-AV1's Lpd1TxCtrls
 // (md_process.h). The zero value disables every shortcut.
@@ -67,7 +60,7 @@ type lpd1TxCtrls struct {
 // modulation derived from isBase (temporal layer 0 / referenced):
 // chroma_complexity_check level 4 on base pictures, 0 on droppable leaves.
 func (st *lossyEncodeState) setLPD1TxCtrls(enabled bool, isBase bool) {
-	if !enabled || lpd1TxKill {
+	if !enabled {
 		st.lpd1Tx = lpd1TxCtrls{}
 		return
 	}

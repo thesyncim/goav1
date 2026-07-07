@@ -8,9 +8,9 @@ package goav1_test
 // pool, so the wavefront never engages there. These tests drive the same public
 // stream-runner path that production callers use but with workers > 1 on a
 // single-tile clip, which is exactly the configuration that hands the idle
-// lanes to the wavefront. GOAV1_WAVEFRONT_MIN_SBROWS_PER_WORKER=1 forces the
-// wavefront on for the small bundled conformance clips (whose SB-row counts are
-// below the production 2-rows-per-worker threshold).
+// lanes to the wavefront. The threading test hook forces the wavefront on for
+// the small bundled conformance clips (whose SB-row counts are below the
+// production 2-rows-per-worker threshold).
 
 import (
 	"crypto/sha256"
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	av1 "github.com/thesyncim/goav1"
+	"github.com/thesyncim/goav1/internal/av1/threading"
 )
 
 // wavefrontTestVector is a single-tile all-intra clip with enough superblock
@@ -162,7 +163,7 @@ func hashFramePlanes(sum interface{ Write([]byte) (int, error) }, f *av1.Frame) 
 // single-worker fused path. Run it under -race to also prove the wavefront is
 // data-race free.
 func TestWavefrontByteIdenticalToSingleWorker(t *testing.T) {
-	t.Setenv("GOAV1_WAVEFRONT_MIN_SBROWS_PER_WORKER", "1")
+	defer threading.OverrideWavefrontMinSBRowsPerWorkerForTest(1)()
 	want := decodeWavefrontFrames(t, 1)
 	for _, workers := range []int{2, 3, 4} {
 		got := decodeWavefrontFrames(t, workers)
@@ -180,7 +181,7 @@ func TestWavefrontSpeedup(t *testing.T) {
 	if raceEnabled {
 		t.Skip("race detector serializes execution; speedup is not observable")
 	}
-	t.Setenv("GOAV1_WAVEFRONT_MIN_SBROWS_PER_WORKER", "1")
+	defer threading.OverrideWavefrontMinSBRowsPerWorkerForTest(1)()
 
 	measure := func(workers int) time.Duration {
 		best := time.Duration(1<<63 - 1)

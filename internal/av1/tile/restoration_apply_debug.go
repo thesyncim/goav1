@@ -12,9 +12,6 @@ import (
 var wienerDebugCount int
 
 func wienerDebugPreApply(src []uint16, srcStride int, srcOrigin int, width int, height int, info av1restoration.WienerInfo) {
-	if os.Getenv("GOAV1_DEBUG_WIENER") == "" {
-		return
-	}
 	wienerDebugCount++
 	// Only log first few calls
 	if wienerDebugCount > 12 {
@@ -33,9 +30,6 @@ func wienerDebugPreApply(src []uint16, srcStride int, srcOrigin int, width int, 
 }
 
 func wienerDebugPostApply(dst []uint16, dstStride int, width int, height int) {
-	if os.Getenv("GOAV1_DEBUG_WIENER") == "" {
-		return
-	}
 	if wienerDebugCount > 12 {
 		return
 	}

@@ -3,7 +3,6 @@ package encoder
 import (
 	"fmt"
 	"math/bits"
-	"time"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -1488,8 +1487,8 @@ func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, s
 	if st.depthRemovalLevel != 0 && splitBelow16Pending {
 		st.realtimeSBMultiSizeMESweep(&sb.me, src, ref, px, py)
 		depthDec := realtimeDepthRemovalDecide(st.depthRemovalLevel, st.qIndex, &sb.me)
-		applied64 := depthDec.below64 && !depthRemovalP2Disabled
-		applied32 := depthDec.below32 && !depthRemovalP2Disabled
+		applied64 := depthDec.below64
+		applied32 := depthDec.below32
 		if applied64 {
 			sb.force64 = realtimePartEvalOnlyNone
 		}
@@ -1993,14 +1992,13 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		}
 		return st.writePBlock(block, scratch, &pc.refCDFs, &pc.modeCDFs, &pc.interpCDFs, referenceMode, &pc.splitRowRecs[row])
 	}
-	var writeStart time.Time
+	var writeStart txWriteStatsStamp
 	if txWriteStatsEnabled {
-		writeStart = time.Now()
+		writeStart = txWriteStatsStart()
 	}
 	writeErr := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decideReplay, visitWrite)
 	if txWriteStatsEnabled {
-		txWriteStatsNS.Add(time.Since(writeStart).Nanoseconds())
-		txWriteStatsPasses.Add(1)
+		txWriteStatsFinish(writeStart)
 	}
 	if pipelined {
 		if writeErr != nil {

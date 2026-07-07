@@ -377,7 +377,12 @@ were red at hold-quality get re-run against the SVT-matched gate (§2).
 ### M-E5: endgame — decision doc after M-E3/E4 measure. (S)
 
 ### H-1: env-var scaffolding sweep (after in-flight agents land)
-- [ ] **H-1 remove/build-tag experiment env vars** — production code
+- [x] **H-1 remove/build-tag experiment env vars** — LANDED 5d72ef52
+  (codex, reviewed): 3 soaked switches removed, stats behind
+  goav1_encstats tag, debug behind per-package tags (refmv boxing guard
+  preserved), wavefront knob → for-test hook, DEFER_RECON frozen. ONE
+  runtime env var remains: GOAV1_DISABLE_COEFF_ASM (asm-spine soak).
+  Bytes identical all four clips; extended 226/226. — — production code
   currently reads: GOAV1_LPD1_TX, GOAV1_DEPTH_REMOVAL_DISABLE,
   GOAV1_DEPTH_REMOVAL_P2_DISABLE, GOAV1_DEPTH_REMOVAL_STATS,
   GOAV1_TX_WRITE_STATS (2026-07-06 experiment switches — remove after

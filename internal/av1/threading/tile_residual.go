@@ -2,7 +2,6 @@ package threading
 
 import (
 	"fmt"
-	"os"
 	"sync"
 	"sync/atomic"
 
@@ -13,37 +12,18 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
-// frameWorkDeferReconstruction gates a deferred two-pass reconstruction path
-// that splits entropy decode (pass 1) from predict+reconstruct (pass 2). It is
-// read once at package init and serves only as a test harness to prove the
-// deferred path is byte-identical to the fused single-thread path before the
-// wavefront concurrency increment wires real selection. Default off: when off,
-// DecodeAndReconstructJobResiduals runs the existing fused path verbatim.
-var frameWorkDeferReconstruction = os.Getenv("GOAV1_DEFER_RECON") != ""
+// frameWorkDeferReconstruction keeps the serial deferred two-pass
+// reconstruction harness frozen at its production default. The real wavefront
+// path still enables deferred reconstruction when worker lanes are available.
+const frameWorkDeferReconstruction = false
 
 // frameWorkWavefrontMinSBRowsPerWorker is the SB-row count, per available
 // worker, a tile must clear before the deferred SB-row wavefront engages.
 // Below it the fused single-thread path wins (no buffering, no goroutines), so
 // the wavefront stays off. It defaults to 2 (the diagonal must fill before it
-// drains) and is overridable only as a test hook so focused tests can force the
-// wavefront on the small conformance clips.
-var frameWorkWavefrontMinSBRowsPerWorker = frameWorkParseMinSBRows()
-
-func frameWorkParseMinSBRows() int {
-	if v := os.Getenv("GOAV1_WAVEFRONT_MIN_SBROWS_PER_WORKER"); v != "" {
-		n := 0
-		for _, ch := range v {
-			if ch < '0' || ch > '9' {
-				return 2
-			}
-			n = n*10 + int(ch-'0')
-		}
-		if n >= 1 {
-			return n
-		}
-	}
-	return 2
-}
+// drains); focused tests override it through
+// OverrideWavefrontMinSBRowsPerWorkerForTest.
+var frameWorkWavefrontMinSBRowsPerWorker = 2
 
 // frameWorkReconEventKind distinguishes the two deferred reconstruction events:
 // a per-block predict "begin" marker and a per-TXB reconstruction.
@@ -1142,9 +1122,7 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *t
 	}
 	// The deferred wavefront engages only when the pool offered idle lanes
 	// (single-tile frame on a multi-worker pool) and the tile clears the size
-	// threshold. The GOAV1_DEFER_RECON force-on hook keeps the serial deferred
-	// replay available as a byte-identity test harness without spawning
-	// goroutines. When neither is set, the fused single-thread path runs
+	// threshold. When it does not engage, the fused single-thread path runs
 	// verbatim at zero added cost.
 	wavefrontWorkers := uint16(0)
 	if req.Predict == nil && frameWorkWavefrontEligible(*b, index) {

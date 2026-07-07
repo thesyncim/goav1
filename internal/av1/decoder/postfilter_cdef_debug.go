@@ -12,9 +12,6 @@ import (
 )
 
 func cdefDebugLogLRRecords(records [3][]tile.RestorationUnitRecord) {
-	if os.Getenv("GOAV1_DEBUG_CDEF_UNIT") == "" {
-		return
-	}
 	for plane := 0; plane < 3; plane++ {
 		for i, rec := range records[plane] {
 			fmt.Fprintf(os.Stderr, "[LR_REC] plane=%d unit=%d rect=%+v type=%d wiener_v=%v wiener_h=%v\n",
@@ -25,9 +22,6 @@ func cdefDebugLogLRRecords(records [3][]tile.RestorationUnitRecord) {
 
 func cdefDebugLogChromaPreLR(output *frame.Frame) {
 	if output == nil {
-		return
-	}
-	if os.Getenv("GOAV1_DEBUG_CDEF_UNIT") == "" {
 		return
 	}
 	u := output.U
@@ -44,14 +38,14 @@ func cdefDebugLogChromaPreLR(output *frame.Frame) {
 }
 
 func cdefDebugUnit(plane int, unitRow int, unitCol int) bool {
-	return os.Getenv("GOAV1_DEBUG_CDEF_UNIT") != "" && unitRow == 0 && unitCol == 0
+	return unitRow == 0 && unitCol == 0
 }
 
 func cdefDebugLogUnitDst(plane int, unitRow int, unitCol int, unitDst []uint16) {
 	if plane != 1 && plane != 2 {
 		return
 	}
-	if os.Getenv("GOAV1_DEBUG_CDEF_UNIT") == "" || unitRow != 0 || unitCol != 0 {
+	if unitRow != 0 || unitCol != 0 {
 		return
 	}
 	for r := 28; r < 32; r++ {
