@@ -12,8 +12,9 @@ internal/av1/testdata/libaom/
 internal/av1/testdata/dav1d/
 internal/av1/testdata/argon/
 
-# Agent worktrees and local Claude state
-.claude/
+# Agent worktrees and local Claude state (but keep committed skills)
+.claude/*
+!.claude/skills/
 
 # generated benchmark corpus (not committed)
 testdata/benchcorpus/
