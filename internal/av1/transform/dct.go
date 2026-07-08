@@ -39,7 +39,7 @@ func dctLengthSupported(length int) bool {
 	}
 }
 
-func inverseDCT1D(c []int32, stride int, length int, min int32, max int32) {
+func inverseDCT1D[T txElem](c []T, stride int, length int, min int32, max int32) {
 	switch length {
 	case dct4Size:
 		inverseDCT4(c, stride, min, max)

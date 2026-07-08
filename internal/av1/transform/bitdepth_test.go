@@ -83,7 +83,10 @@ func TestInverseBlockBitDepthMatchesInverseBlockAt8Bit(t *testing.T) {
 	size := Size{Width: 8, Height: 8}
 	coeff := make([]int32, 64)
 	for i := range coeff {
-		coeff[i] = int32((i*1709)%65536) - 32768
+		// Spec-valid magnitude: the int16 8bpc column path (dav1d) requires the
+		// int16 butterfly intermediates not to overflow, which real decode
+		// guarantees. Full-range random coeffs are not valid transform inputs.
+		coeff[i] = int32((i*37)%1024) - 512
 	}
 	scratchA := make([]int32, 64)
 	scratchB := make([]int32, 64)
