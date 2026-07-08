@@ -11,4 +11,5 @@ package transform
 // hand NEON asm (int32 4-wide round-once vs int64 2-wide). See SIMD_PORT.md.
 func init() {
 	inverseDCT8Col4Impl = inverseDCT8Col4SIMD
+	inverseDCT16Col4Impl = inverseDCT16Col4SIMD
 }
