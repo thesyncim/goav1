@@ -63,6 +63,14 @@ go tool objdump -s "kernelName" ./the.test | grep '\tCALL' | sed -E 's/.*CALL\t*
    vector values, or inline the passes into one straight-line function, so the
    compiler keeps them in registers. This can be the single biggest win for
    multi-pass transforms.
+   - No function calls in the vector body — inline every pass **textually**. A
+     call clobbers all caller-saved V-registers, so the caller spills its entire
+     live vector set around it; and a helper *returning* 8+ vectors (a butterfly
+     or a two-chain filter) exceeds the inline budget, so it stays a real call
+     even with individual (non-array) args. Verify with the CALL-target dump
+     (`objdump | grep '\tCALL'`) that nothing in the hot body calls your own
+     code; if the compiler won't inline it, inline it by hand. (This took the
+     loop-filter filter4 and the forward DCT/ADST from parity to beating asm.)
 
 5. **Load coefficient/twiddle tables from rodata.** A scalar broadcast is
    ~3 instructions (immediate-move + move + dup). A pre-broadcast package-level
