@@ -42,9 +42,9 @@ func inverseDCT8Col4SIMD(buf []int32, stride int, min int32, max int32) {
 	ld := func(k int) archsimd.Int32x4 { return archsimd.LoadInt32x4Array((*[4]int32)(buf[k*stride:])) }
 	st := func(k int, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(buf[k*stride:])) }
 	clip := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(minV).Min(maxV) }
-	rs8 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r8).ShiftAllRight(8) }
-	rs11 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r11).ShiftAllRight(11) }
-	rs12 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r12).ShiftAllRight(12) }
+	rs8 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r8).ShiftAllRightConst(8) }
+	rs11 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r11).ShiftAllRightConst(11) }
+	rs12 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r12).ShiftAllRightConst(12) }
 
 	c0, c1, c2, c3 := ld(0), ld(1), ld(2), ld(3)
 	c4, c5, c6, c7 := ld(4), ld(5), ld(6), ld(7)
@@ -107,9 +107,9 @@ func inverseDCT16Col4SIMD(buf []int32, stride int, min int32, max int32) {
 	ld := func(k int) archsimd.Int32x4 { return archsimd.LoadInt32x4Array((*[4]int32)(buf[k*stride:])) }
 	st := func(k int, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(buf[k*stride:])) }
 	clip := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(minV).Min(maxV) }
-	rs8 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r8).ShiftAllRight(8) }
-	rs11 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r11).ShiftAllRight(11) }
-	rs12 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r12).ShiftAllRight(12) }
+	rs8 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r8).ShiftAllRightConst(8) }
+	rs11 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r11).ShiftAllRightConst(11) }
+	rs12 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r12).ShiftAllRightConst(12) }
 
 	in1, in3, in5, in7 := ld(1), ld(3), ld(5), ld(7)
 	in9, in11, in13, in15 := ld(9), ld(11), ld(13), ld(15)
