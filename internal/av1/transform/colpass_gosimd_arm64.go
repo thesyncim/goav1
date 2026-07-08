@@ -21,26 +21,25 @@ package transform
 
 import "simd/archsimd"
 
-// Hoisted constant vectors (broadcasting a compile-time constant per butterfly
-// stage otherwise dominates this small kernel).
-var (
-	dctC181  = archsimd.BroadcastInt32x4(181)
-	dctC799  = archsimd.BroadcastInt32x4(799)
-	dctC1567 = archsimd.BroadcastInt32x4(1567)
-	dctC1138 = archsimd.BroadcastInt32x4(1138)
-	dctC1703 = archsimd.BroadcastInt32x4(1703)
-	dctCn312 = archsimd.BroadcastInt32x4(3784 - 4096)
-	dctCn79  = archsimd.BroadcastInt32x4(4017 - 4096)
-	dctR8    = archsimd.BroadcastInt64x2(1 << 7)
-	dctR11   = archsimd.BroadcastInt64x2(1 << 10)
-	dctR12   = archsimd.BroadcastInt64x2(1 << 11)
-)
-
 // inverseDCT8Col2SIMD reproduces inverseDCT8 on the two adjacent columns at
 // buf[k*stride] and buf[k*stride+1], byte-for-byte with inverseDCT8Col2PureGo.
 func inverseDCT8Col2SIMD(buf []int32, stride int, min int32, max int32) {
+	// Broadcast every constant once into a local. These stay register-resident
+	// for the whole function; they must NOT be package globals, which would
+	// force a memory load per use (SIMD vectors belong in registers, not the
+	// data segment / heap).
 	minV := archsimd.BroadcastInt32x4(min)
 	maxV := archsimd.BroadcastInt32x4(max)
+	dctC181 := archsimd.BroadcastInt32x4(181)
+	dctC799 := archsimd.BroadcastInt32x4(799)
+	dctC1567 := archsimd.BroadcastInt32x4(1567)
+	dctC1138 := archsimd.BroadcastInt32x4(1138)
+	dctC1703 := archsimd.BroadcastInt32x4(1703)
+	dctCn312 := archsimd.BroadcastInt32x4(3784 - 4096)
+	dctCn79 := archsimd.BroadcastInt32x4(4017 - 4096)
+	dctR8 := archsimd.BroadcastInt64x2(1 << 7)
+	dctR11 := archsimd.BroadcastInt64x2(1 << 10)
+	dctR12 := archsimd.BroadcastInt64x2(1 << 11)
 	ld := func(k int) archsimd.Int32x4 { return archsimd.LoadInt32x4Array((*[4]int32)(buf[k*stride:])) }
 	st := func(k int, v archsimd.Int32x4) { v.StorePart(buf[k*stride : k*stride+2]) }
 	clip := func(v archsimd.Int64x2) archsimd.Int32x4 { return v.SaturateToInt32().Max(minV).Min(maxV) }
