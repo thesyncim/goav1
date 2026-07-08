@@ -15,6 +15,7 @@ package transform
 // inverseDCT8Col8Impl16 is the batched 8-column int16 DCT8 kernel. The default
 // is a scalar loop; GOEXPERIMENT=simd binds the int16 8-wide SIMD kernel.
 var inverseDCT8Col8Impl16 = inverseDCT8Col8Scalar16
+var inverseDCT16Col8Impl16 = inverseDCT16Col8Scalar16
 
 // int16ColumnFast is set when a SIMD int16 column kernel is bound. Without one
 // the int16 pipeline would be no faster than (and adds conversion over) the
@@ -30,12 +31,18 @@ func hasFastInt16Column(t Type, height int) bool {
 		return false
 	}
 	vertical, _, ok := t.tx1DTypes()
-	return ok && vertical == tx1DDCT && height == dct8Size
+	return ok && vertical == tx1DDCT && (height == dct8Size || height == dct16Size)
 }
 
 func inverseDCT8Col8Scalar16(buf []int16, stride int, min int32, max int32) {
 	for col := 0; col < 8; col++ {
 		inverseDCT8(buf[col:], stride, min, max)
+	}
+}
+
+func inverseDCT16Col8Scalar16(buf []int16, stride int, min int32, max int32) {
+	for col := 0; col < 8; col++ {
+		inverseDCT16(buf[col:], stride, min, max)
 	}
 }
 
@@ -56,13 +63,23 @@ func clampRoundNarrowInt16(src []int32, dst []int16, shift int, lo int32, hi int
 
 // inverseDCTColumnPassInt16 runs the DCT column pass over an int16 scratch.
 func inverseDCTColumnPassInt16(scratch []int16, width int, height int, min int32, max int32) {
-	if height == dct8Size {
+	switch height {
+	case dct8Size:
 		col := 0
 		for ; col+8 <= width; col += 8 {
 			inverseDCT8Col8Impl16(scratch[col:], width, min, max)
 		}
 		for ; col < width; col++ {
 			inverseDCT8(scratch[col:], width, min, max)
+		}
+		return
+	case dct16Size:
+		col := 0
+		for ; col+8 <= width; col += 8 {
+			inverseDCT16Col8Impl16(scratch[col:], width, min, max)
+		}
+		for ; col < width; col++ {
+			inverseDCT16(scratch[col:], width, min, max)
 		}
 		return
 	}

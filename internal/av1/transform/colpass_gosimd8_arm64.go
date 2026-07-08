@@ -175,3 +175,106 @@ func inverseDCT8Col8SIMD16(buf []int16, stride int, min int32, max int32) {
 	st(6, clip(ssub(d2, t6)))
 	st(7, clip(ssub(d0, t7)))
 }
+
+// inverseDCT16Col8SIMD16 is the int16 8-wide DCT16 column pass (dav1d 8bpc):
+// inverseDCT8 on the even rows, then the 16-point odd butterfly, saturating
+// int16 adds throughout. Byte-exact with scalar inverseDCT16[int16].
+func inverseDCT16Col8SIMD16(buf []int16, stride int, min int32, max int32) {
+	inverseDCT8Col8SIMD16(buf, stride<<1, min, max)
+
+	minV := archsimd.BroadcastInt16x8(int16(min))
+	maxV := archsimd.BroadcastInt16x8(int16(max))
+	ld := func(k int) archsimd.Int16x8 { return archsimd.LoadInt16x8Array((*[8]int16)(buf[k*stride:])) }
+	st := func(k int, v archsimd.Int16x8) { v.StoreArray((*[8]int16)(buf[k*stride:])) }
+	clip := func(v archsimd.Int16x8) archsimd.Int16x8 { return v.Max(minV).Min(maxV) }
+	sadd := func(a, b archsimd.Int16x8) archsimd.Int16x8 { return a.AddSaturated(b) }
+	ssub := func(a, b archsimd.Int16x8) archsimd.Int16x8 { return a.SubSaturated(b) }
+	mw := func(a archsimd.Int16x8, c int16) (archsimd.Int32x4, archsimd.Int32x4) {
+		kc := archsimd.BroadcastInt16x8(c)
+		return a.MulWidenLo(kc), a.MulWidenHi(kc)
+	}
+	nr := func(lo, hi archsimd.Int32x4, n uint8) archsimd.Int16x8 {
+		return lo.ShiftRightRoundNarrow(n).ShiftRightRoundNarrowHi(hi, n)
+	}
+	// roundShift(a*ca - b*cb, n) and roundShift(a*ca + b*cb, n) and the negated
+	// two-term; single-term roundShift(a*c, n).
+	rSub := func(a archsimd.Int16x8, ca int16, b archsimd.Int16x8, cb int16, n uint8) archsimd.Int16x8 {
+		al, ah := mw(a, ca)
+		bl, bh := mw(b, cb)
+		return nr(al.Sub(bl), ah.Sub(bh), n)
+	}
+	rAdd := func(a archsimd.Int16x8, ca int16, b archsimd.Int16x8, cb int16, n uint8) archsimd.Int16x8 {
+		al, ah := mw(a, ca)
+		bl, bh := mw(b, cb)
+		return nr(al.Add(bl), ah.Add(bh), n)
+	}
+	rAddNeg := func(a archsimd.Int16x8, ca int16, b archsimd.Int16x8, cb int16, n uint8) archsimd.Int16x8 {
+		al, ah := mw(a, ca)
+		bl, bh := mw(b, cb)
+		return nr(al.Add(bl).Neg(), ah.Add(bh).Neg(), n)
+	}
+	r1 := func(a archsimd.Int16x8, c int16, n uint8) archsimd.Int16x8 {
+		l, h := mw(a, c)
+		return nr(l, h, n)
+	}
+
+	in1, in3, in5, in7 := ld(1), ld(3), ld(5), ld(7)
+	in9, in11, in13, in15 := ld(9), ld(11), ld(13), ld(15)
+
+	t8a := ssub(rSub(in1, 401, in15, 4076-4096, 12), in15)
+	t9a := rSub(in9, 1583, in7, 1299, 11)
+	t10a := ssub(rSub(in5, 1931, in11, 3612-4096, 12), in11)
+	t11a := sadd(rSub(in13, 3920-4096, in3, 1189, 12), in13)
+	t12a := sadd(rAdd(in13, 1189, in3, 3920-4096, 12), in3)
+	t13a := sadd(rAdd(in5, 3612-4096, in11, 1931, 12), in5)
+	t14a := rAdd(in9, 1299, in7, 1583, 11)
+	t15a := sadd(rAdd(in1, 4076-4096, in15, 401, 12), in1)
+
+	t8 := clip(sadd(t8a, t9a))
+	t9 := clip(ssub(t8a, t9a))
+	t10 := clip(ssub(t11a, t10a))
+	t11 := clip(sadd(t11a, t10a))
+	t12 := clip(sadd(t12a, t13a))
+	t13 := clip(ssub(t12a, t13a))
+	t14 := clip(ssub(t15a, t14a))
+	t15 := clip(sadd(t15a, t14a))
+
+	t9a = ssub(rSub(t14, 1567, t9, 3784-4096, 12), t9)
+	t14a = sadd(rAdd(t14, 3784-4096, t9, 1567, 12), t14)
+	t10a = ssub(rAddNeg(t13, 3784-4096, t10, 1567, 12), t13)
+	t13a = ssub(rSub(t13, 1567, t10, 3784-4096, 12), t10)
+
+	t8a2 := clip(sadd(t8, t11))
+	t9b := clip(sadd(t9a, t10a))
+	t10b := clip(ssub(t9a, t10a))
+	t11a2 := clip(ssub(t8, t11))
+	t12a2 := clip(ssub(t15, t12))
+	t13b := clip(ssub(t14a, t13a))
+	t14b := clip(sadd(t14a, t13a))
+	t15a2 := clip(sadd(t15, t12))
+
+	t10c := r1(ssub(t13b, t10b), 181, 8)
+	t13c := r1(sadd(t13b, t10b), 181, 8)
+	t11b := r1(ssub(t12a2, t11a2), 181, 8)
+	t12b := r1(sadd(t12a2, t11a2), 181, 8)
+
+	e0, e1, e2, e3 := ld(0), ld(2), ld(4), ld(6)
+	e4, e5, e6, e7 := ld(8), ld(10), ld(12), ld(14)
+
+	st(0, clip(sadd(e0, t15a2)))
+	st(1, clip(sadd(e1, t14b)))
+	st(2, clip(sadd(e2, t13c)))
+	st(3, clip(sadd(e3, t12b)))
+	st(4, clip(sadd(e4, t11b)))
+	st(5, clip(sadd(e5, t10c)))
+	st(6, clip(sadd(e6, t9b)))
+	st(7, clip(sadd(e7, t8a2)))
+	st(8, clip(ssub(e7, t8a2)))
+	st(9, clip(ssub(e6, t9b)))
+	st(10, clip(ssub(e5, t10c)))
+	st(11, clip(ssub(e4, t11b)))
+	st(12, clip(ssub(e3, t12b)))
+	st(13, clip(ssub(e2, t13c)))
+	st(14, clip(ssub(e1, t14b)))
+	st(15, clip(ssub(e0, t15a2)))
+}
