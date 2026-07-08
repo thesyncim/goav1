@@ -78,12 +78,12 @@ func loadWeightV8(p unsafe.Pointer) archsimd.Int16x8 {
 // immediate VSQRSHRN.
 func store8Smooth(p unsafe.Pointer, lo, hi archsimd.Int32x4, shift uint8) {
 	v := lo.ShiftRightRoundNarrow(shift).ShiftRightRoundNarrowHi(hi, shift).SaturateToUint8()
-	*(*uint64)(p) = v.ReshapeToUint64s().GetElem(0)
+	*(*float64)(p) = v.ReshapeToFloat64x2().GetElem(0)
 }
 
 // store8Int16Pix writes 8 int16 pixels (each in [0,255]) as 8 uint8 at p.
 func store8Int16Pix(p unsafe.Pointer, v archsimd.Int16x8) {
-	*(*uint64)(p) = v.SaturateToUint8().ReshapeToUint64s().GetElem(0)
+	*(*float64)(p) = v.SaturateToUint8().ReshapeToFloat64x2().GetElem(0)
 }
 
 // predictPaethSIMD is the Go-native SIMD form of predictPaethPureGo. Byte
