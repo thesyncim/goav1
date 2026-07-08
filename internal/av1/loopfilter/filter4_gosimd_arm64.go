@@ -115,35 +115,6 @@ var (
 	lf4Four    = [8]int16{4, 4, 4, 4, 4, 4, 4, 4}
 )
 
-// filter4Chain is the narrow four-tap filter for one 8-lane group. All constants
-// are passed in (the caller hoists them once) so the two chains of a 16-wide
-// iteration share them register-resident; 13 vector args / 4 results ride in
-// V-registers with no stack round-trip. Byte-identical to filter4TapVecs gated.
-func filter4Chain(p1, p0, q0, q1, limit, blimit, hevT, center, minV, maxV, one, three16, four archsimd.Int16x8) (np1, np0, nq0, nq1 archsimd.Int16x8) {
-	hev := p1.AbsDiff(p0).Greater(hevT).Or(q1.AbsDiff(q0).Greater(hevT))
-	mask := p1.AbsDiff(p0).LessEqual(limit).
-		And(q1.AbsDiff(q0).LessEqual(limit)).
-		And(p0.AbsDiff(q0).ShiftAllLeftConst(1).Add(p1.AbsDiff(q1).ShiftAllRightConst(1)).LessEqual(blimit))
-	ps1 := p1.Sub(center)
-	ps0 := p0.Sub(center)
-	qs0 := q0.Sub(center)
-	qs1 := q1.Sub(center)
-	f := ps1.Sub(qs1).Max(minV).Min(maxV).Masked(hev)
-	f = f.Add(qs0.Sub(ps0).Mul(three16)).Max(minV).Min(maxV)
-	filter1 := f.Add(four).Max(minV).Min(maxV).ShiftAllRightConst(3)
-	filter2 := f.Add(three16).Max(minV).Min(maxV).ShiftAllRightConst(3)
-	np0 = ps0.Add(filter2).Max(minV).Min(maxV).Add(center)
-	nq0 = qs0.Sub(filter1).Max(minV).Min(maxV).Add(center)
-	ov := filter1.Add(one).ShiftAllRightConst(1)
-	np1 = ps1.Add(ov).Max(minV).Min(maxV).Add(center)
-	nq1 = qs1.Sub(ov).Max(minV).Min(maxV).Add(center)
-	np1 = p1.IfElse(hev, np1).IfElse(mask, p1)
-	nq1 = q1.IfElse(hev, nq1).IfElse(mask, q1)
-	np0 = np0.IfElse(mask, p0)
-	nq0 = nq0.IfElse(mask, q0)
-	return
-}
-
 // lf16StoreP2 packs two 8-lane results (low half a, high half b) to 16 bytes
 // with one SQXTUN+SQXTUN2 and a single 16-byte store.
 func lf16StoreP2(p unsafe.Pointer, a, b archsimd.Int16x8) {
@@ -266,27 +237,72 @@ func filter4EdgeSIMD(pix []byte, q0Base int, step int, outer int, length int, pa
 		rp0 := archsimd.LoadUint8x16Array((*[16]uint8)(pP0))
 		rq0 := archsimd.LoadUint8x16Array((*[16]uint8)(base))
 		rq1 := archsimd.LoadUint8x16Array((*[16]uint8)(pQ1))
-		np1, np0, nq0, nq1 := filter4Chain(
-			rp1.ExtendLo8ToUint16().ConvertToInt16(), rp0.ExtendLo8ToUint16().ConvertToInt16(),
-			rq0.ExtendLo8ToUint16().ConvertToInt16(), rq1.ExtendLo8ToUint16().ConvertToInt16(),
-			limit, blimit, hevT, center, minV, maxV, one, three16, four)
-		mp1, mp0, mq0, mq1 := filter4Chain(
-			rp1.ExtendHi8ToUint16().ConvertToInt16(), rp0.ExtendHi8ToUint16().ConvertToInt16(),
-			rq0.ExtendHi8ToUint16().ConvertToInt16(), rq1.ExtendHi8ToUint16().ConvertToInt16(),
-			limit, blimit, hevT, center, minV, maxV, one, three16, four)
-		lf16StoreP2(pP1, np1, mp1)
-		lf16StoreP2(pP0, np0, mp0)
-		lf16StoreP2(base, nq0, mq0)
-		lf16StoreP2(pQ1, nq1, mq1)
+		// Chain A (low 8) and chain B (high 8) inlined so both run with the
+		// constants register-resident and no call ABI (which spilled the live set
+		// across every call). The two chains interleave/pipeline in the scheduler.
+		ap1 := rp1.ExtendLo8ToUint16().ConvertToInt16()
+		ap0 := rp0.ExtendLo8ToUint16().ConvertToInt16()
+		aq0 := rq0.ExtendLo8ToUint16().ConvertToInt16()
+		aq1 := rq1.ExtendLo8ToUint16().ConvertToInt16()
+		aHev := ap1.AbsDiff(ap0).Greater(hevT).Or(aq1.AbsDiff(aq0).Greater(hevT))
+		aMask := ap1.AbsDiff(ap0).LessEqual(limit).And(aq1.AbsDiff(aq0).LessEqual(limit)).
+			And(ap0.AbsDiff(aq0).ShiftAllLeftConst(1).Add(ap1.AbsDiff(aq1).ShiftAllRightConst(1)).LessEqual(blimit))
+		aps1, aps0, aqs0, aqs1 := ap1.Sub(center), ap0.Sub(center), aq0.Sub(center), aq1.Sub(center)
+		af := aps1.Sub(aqs1).Max(minV).Min(maxV).Masked(aHev)
+		af = af.Add(aqs0.Sub(aps0).Mul(three16)).Max(minV).Min(maxV)
+		af1 := af.Add(four).Max(minV).Min(maxV).ShiftAllRightConst(3)
+		af2 := af.Add(three16).Max(minV).Min(maxV).ShiftAllRightConst(3)
+		anp0 := aps0.Add(af2).Max(minV).Min(maxV).Add(center).IfElse(aMask, ap0)
+		anq0 := aqs0.Sub(af1).Max(minV).Min(maxV).Add(center).IfElse(aMask, aq0)
+		aov := af1.Add(one).ShiftAllRightConst(1)
+		anp1 := ap1.IfElse(aHev, aps1.Add(aov).Max(minV).Min(maxV).Add(center)).IfElse(aMask, ap1)
+		anq1 := aq1.IfElse(aHev, aqs1.Sub(aov).Max(minV).Min(maxV).Add(center)).IfElse(aMask, aq1)
+
+		bp1 := rp1.ExtendHi8ToUint16().ConvertToInt16()
+		bp0 := rp0.ExtendHi8ToUint16().ConvertToInt16()
+		bq0 := rq0.ExtendHi8ToUint16().ConvertToInt16()
+		bq1 := rq1.ExtendHi8ToUint16().ConvertToInt16()
+		bHev := bp1.AbsDiff(bp0).Greater(hevT).Or(bq1.AbsDiff(bq0).Greater(hevT))
+		bMask := bp1.AbsDiff(bp0).LessEqual(limit).And(bq1.AbsDiff(bq0).LessEqual(limit)).
+			And(bp0.AbsDiff(bq0).ShiftAllLeftConst(1).Add(bp1.AbsDiff(bq1).ShiftAllRightConst(1)).LessEqual(blimit))
+		bps1, bps0, bqs0, bqs1 := bp1.Sub(center), bp0.Sub(center), bq0.Sub(center), bq1.Sub(center)
+		bf := bps1.Sub(bqs1).Max(minV).Min(maxV).Masked(bHev)
+		bf = bf.Add(bqs0.Sub(bps0).Mul(three16)).Max(minV).Min(maxV)
+		bf1 := bf.Add(four).Max(minV).Min(maxV).ShiftAllRightConst(3)
+		bf2 := bf.Add(three16).Max(minV).Min(maxV).ShiftAllRightConst(3)
+		bnp0 := bps0.Add(bf2).Max(minV).Min(maxV).Add(center).IfElse(bMask, bp0)
+		bnq0 := bqs0.Sub(bf1).Max(minV).Min(maxV).Add(center).IfElse(bMask, bq0)
+		bov := bf1.Add(one).ShiftAllRightConst(1)
+		bnp1 := bp1.IfElse(bHev, bps1.Add(bov).Max(minV).Min(maxV).Add(center)).IfElse(bMask, bp1)
+		bnq1 := bq1.IfElse(bHev, bqs1.Sub(bov).Max(minV).Min(maxV).Add(center)).IfElse(bMask, bq1)
+
+		lf16StoreP2(pP1, anp1, bnp1)
+		lf16StoreP2(pP0, anp0, bnp0)
+		lf16StoreP2(base, anq0, bnq0)
+		lf16StoreP2(pQ1, anq1, bnq1)
 	}
 	for ; i+8 <= length; i += 8 {
 		base := unsafe.Add(q0p, i)
 		pP1 := unsafe.Add(base, -2*step)
 		pP0 := unsafe.Add(base, -step)
 		pQ1 := unsafe.Add(base, step)
-		np1, np0, nq0, nq1 := filter4Chain(
-			lf8LoadP(pP1), lf8LoadP(pP0), lf8LoadP(base), lf8LoadP(pQ1),
-			limit, blimit, hevT, center, minV, maxV, one, three16, four)
+		p1 := lf8LoadP(pP1)
+		p0 := lf8LoadP(pP0)
+		q0 := lf8LoadP(base)
+		q1 := lf8LoadP(pQ1)
+		hev := p1.AbsDiff(p0).Greater(hevT).Or(q1.AbsDiff(q0).Greater(hevT))
+		mask := p1.AbsDiff(p0).LessEqual(limit).And(q1.AbsDiff(q0).LessEqual(limit)).
+			And(p0.AbsDiff(q0).ShiftAllLeftConst(1).Add(p1.AbsDiff(q1).ShiftAllRightConst(1)).LessEqual(blimit))
+		ps1, ps0, qs0, qs1 := p1.Sub(center), p0.Sub(center), q0.Sub(center), q1.Sub(center)
+		f := ps1.Sub(qs1).Max(minV).Min(maxV).Masked(hev)
+		f = f.Add(qs0.Sub(ps0).Mul(three16)).Max(minV).Min(maxV)
+		f1 := f.Add(four).Max(minV).Min(maxV).ShiftAllRightConst(3)
+		f2 := f.Add(three16).Max(minV).Min(maxV).ShiftAllRightConst(3)
+		np0 := ps0.Add(f2).Max(minV).Min(maxV).Add(center).IfElse(mask, p0)
+		nq0 := qs0.Sub(f1).Max(minV).Min(maxV).Add(center).IfElse(mask, q0)
+		ov := f1.Add(one).ShiftAllRightConst(1)
+		np1 := p1.IfElse(hev, ps1.Add(ov).Max(minV).Min(maxV).Add(center)).IfElse(mask, p1)
+		nq1 := q1.IfElse(hev, qs1.Sub(ov).Max(minV).Min(maxV).Add(center)).IfElse(mask, q1)
 		lf8StoreP(pP1, np1)
 		lf8StoreP(pP0, np0)
 		lf8StoreP(base, nq0)
