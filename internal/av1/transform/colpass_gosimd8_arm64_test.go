@@ -222,3 +222,46 @@ func TestInverseDCT64Col8SIMD16MatchesScalar(t *testing.T) {
 		}
 	}
 }
+
+func benchDCTx8Int16(b *testing.B, n int, fn func([]int16, int, int32, int32)) {
+	rng := rand.New(rand.NewSource(9))
+	stride := 8
+	buf := make([]int16, n*stride+8)
+	for i := range buf {
+		buf[i] = int16(rng.Intn(1<<12) - (1 << 11))
+	}
+	work := make([]int16, len(buf))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		copy(work, buf)
+		fn(work, stride, -(1 << 12), (1<<12)-1)
+	}
+}
+func BenchmarkDCT32x8_Int16Buf(b *testing.B) { benchDCTx8Int16(b, 32, inverseDCT32Col8SIMD16) }
+func BenchmarkDCT64x8_Int16Buf(b *testing.B) { benchDCTx8Int16(b, 64, inverseDCT64Col8SIMD16) }
+func benchDCTx8ASM(b *testing.B, n int, fn func([]int32, int, int32, int32)) {
+	rng := rand.New(rand.NewSource(9))
+	stride := 8
+	buf := make([]int32, n*stride+8)
+	for i := range buf {
+		buf[i] = int32(rng.Intn(1<<12) - (1 << 11))
+	}
+	work := make([]int32, len(buf))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		copy(work, buf)
+		fn(work, stride, -(1 << 12), (1<<12)-1)
+	}
+}
+func BenchmarkDCT32x8_ASM(b *testing.B) {
+	benchDCTx8ASM(b, 32, func(buf []int32, s int, mn, mx int32) {
+		inverseDCT32Col4NEONAdapter(buf, s, mn, mx)
+		inverseDCT32Col4NEONAdapter(buf[4:], s, mn, mx)
+	})
+}
+func BenchmarkDCT64x8_ASM(b *testing.B) {
+	benchDCTx8ASM(b, 64, func(buf []int32, s int, mn, mx int32) {
+		inverseDCT64Col4NEONAdapter(buf, s, mn, mx)
+		inverseDCT64Col4NEONAdapter(buf[4:], s, mn, mx)
+	})
+}
