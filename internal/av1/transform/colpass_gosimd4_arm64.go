@@ -40,7 +40,7 @@ func inverseDCT8Col4SIMD(buf []int32, stride int, min int32, max int32) {
 	k1138 := archsimd.BroadcastInt32x4(1138)
 
 	ld := func(k int) archsimd.Int32x4 { return archsimd.LoadInt32x4Array((*[4]int32)(buf[k*stride:])) }
-	st := func(k int, v archsimd.Int32x4) { v.StorePart(buf[k*stride : k*stride+4]) }
+	st := func(k int, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(buf[k*stride:])) }
 	clip := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(minV).Min(maxV) }
 	rs8 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r8).ShiftAllRight(8) }
 	rs11 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r11).ShiftAllRight(11) }
@@ -105,7 +105,7 @@ func inverseDCT16Col4SIMD(buf []int32, stride int, min int32, max int32) {
 	k1567, k312, k181 := kc(1567), kc(3784-4096), kc(181)
 
 	ld := func(k int) archsimd.Int32x4 { return archsimd.LoadInt32x4Array((*[4]int32)(buf[k*stride:])) }
-	st := func(k int, v archsimd.Int32x4) { v.StorePart(buf[k*stride : k*stride+4]) }
+	st := func(k int, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(buf[k*stride:])) }
 	clip := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(minV).Min(maxV) }
 	rs8 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r8).ShiftAllRight(8) }
 	rs11 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r11).ShiftAllRight(11) }
