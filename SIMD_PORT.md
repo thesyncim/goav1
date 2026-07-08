@@ -78,6 +78,28 @@ Ordered by decode hotness (port highest first):
   structured permutes (InterleaveLo/Hi, ConcatShiftBytesRight, ConcatEven/Odd).
 - Action: keep these on asm; upstream a request for SDOT/UDOT/TBL on arm64.
 
+## Perf-at-width finding (2026-07-08) — decides which kernels are worth porting
+
+The Go-native SIMD port is byte-exact for EVERY kernel shape tested (element-wise,
+reduction, int32-pack, int64 butterfly). But the perf WIN is width-dependent:
+
+- **WIDE / element-wise (dsp): Go-SIMD BEATS/MATCHES asm.** 16-wide uint8/uint16
+  lanes amortize overhead. dsp package ported + wired (residual-add beats asm).
+- **int64-precision transforms: Go-SIMD LOSES to asm ~25-33%.** All AV1 inverse
+  transforms need int64 intermediates (12-bit coeff*const overflows int32), which
+  caps SIMD at 2 lanes (Int64x2). Col4 = 2xCol2 batched; Row4 = 4 rows / 2 per
+  vector — every tiling is inherently 2-wide. The asm schedules the 2-wide int64
+  butterfly better than Go's compiler (register allocation on ~10 live constants),
+  so wiring transform SIMD REGRESSES decode. DCT8Col2 proven byte-exact but NOT
+  wired for this reason. Possible future win: a bit-depth-conditional int32 4-wide
+  path for 8-bit content (products fit int32) — more complex, not yet attempted.
+
+STRATEGY REFINEMENT: "port everything" -> "port what WINS". Port the wide/
+element-wise kernels; keep asm for the int64-transform butterflies (byte-exact Go
+SIMD exists as a maintainable fallback but costs perf). Next: assess loopfilter /
+cdef / restoration / prediction — are they wide-element-wise (port) or int64-narrow
+(skip for perf)?
+
 ## Progress
 
 - Foundation verified: whole module builds under gotip and gotip+simd;
