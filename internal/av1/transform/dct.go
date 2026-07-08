@@ -54,7 +54,7 @@ func inverseDCT1D(c []int32, stride int, length int, min int32, max int32) {
 	}
 }
 
-func inverseDCT4(c []int32, stride int, min int32, max int32) {
+func inverseDCT4[T txElem](c []T, stride int, min int32, max int32) {
 	in0 := int64(c[0*stride])
 	in1 := int64(c[1*stride])
 	in2 := int64(c[2*stride])
@@ -65,13 +65,13 @@ func inverseDCT4(c []int32, stride int, min int32, max int32) {
 	t2 := roundShift(in1*1567-in3*(3784-4096), 12) - in3
 	t3 := roundShift(in1*(3784-4096)+in3*1567, 12) + in1
 
-	c[0*stride] = clipRange(t0+t3, min, max)
-	c[1*stride] = clipRange(t1+t2, min, max)
-	c[2*stride] = clipRange(t1-t2, min, max)
-	c[3*stride] = clipRange(t0-t3, min, max)
+	c[0*stride] = clipRangeT[T](t0+t3, min, max)
+	c[1*stride] = clipRangeT[T](t1+t2, min, max)
+	c[2*stride] = clipRangeT[T](t1-t2, min, max)
+	c[3*stride] = clipRangeT[T](t0-t3, min, max)
 }
 
-func inverseDCT8(c []int32, stride int, min int32, max int32) {
+func inverseDCT8[T txElem](c []T, stride int, min int32, max int32) {
 	inverseDCT4(c, stride<<1, min, max)
 
 	in1 := int64(c[1*stride])
@@ -84,10 +84,10 @@ func inverseDCT8(c []int32, stride int, min int32, max int32) {
 	t6a := roundShift(in5*1138+in3*1703, 11)
 	t7a := roundShift(in1*(4017-4096)+in7*799, 12) + in1
 
-	t4 := int64(clipRange(t4a+t5a, min, max))
-	t5a = int64(clipRange(t4a-t5a, min, max))
-	t7 := int64(clipRange(t7a+t6a, min, max))
-	t6a = int64(clipRange(t7a-t6a, min, max))
+	t4 := int64(clipRangeT[T](t4a+t5a, min, max))
+	t5a = int64(clipRangeT[T](t4a-t5a, min, max))
+	t7 := int64(clipRangeT[T](t7a+t6a, min, max))
+	t6a = int64(clipRangeT[T](t7a-t6a, min, max))
 
 	t5 := roundShift((t6a-t5a)*181, 8)
 	t6 := roundShift((t6a+t5a)*181, 8)
@@ -97,17 +97,17 @@ func inverseDCT8(c []int32, stride int, min int32, max int32) {
 	t2 := int64(c[4*stride])
 	t3 := int64(c[6*stride])
 
-	c[0*stride] = clipRange(t0+t7, min, max)
-	c[1*stride] = clipRange(t1+t6, min, max)
-	c[2*stride] = clipRange(t2+t5, min, max)
-	c[3*stride] = clipRange(t3+t4, min, max)
-	c[4*stride] = clipRange(t3-t4, min, max)
-	c[5*stride] = clipRange(t2-t5, min, max)
-	c[6*stride] = clipRange(t1-t6, min, max)
-	c[7*stride] = clipRange(t0-t7, min, max)
+	c[0*stride] = clipRangeT[T](t0+t7, min, max)
+	c[1*stride] = clipRangeT[T](t1+t6, min, max)
+	c[2*stride] = clipRangeT[T](t2+t5, min, max)
+	c[3*stride] = clipRangeT[T](t3+t4, min, max)
+	c[4*stride] = clipRangeT[T](t3-t4, min, max)
+	c[5*stride] = clipRangeT[T](t2-t5, min, max)
+	c[6*stride] = clipRangeT[T](t1-t6, min, max)
+	c[7*stride] = clipRangeT[T](t0-t7, min, max)
 }
 
-func inverseDCT16(c []int32, stride int, min int32, max int32) {
+func inverseDCT16[T txElem](c []T, stride int, min int32, max int32) {
 	inverseDCT8(c, stride<<1, min, max)
 
 	in1 := int64(c[1*stride])
@@ -128,28 +128,28 @@ func inverseDCT16(c []int32, stride int, min int32, max int32) {
 	t14a := roundShift(in9*1299+in7*1583, 11)
 	t15a := roundShift(in1*(4076-4096)+in15*401, 12) + in1
 
-	t8 := int64(clipRange(t8a+t9a, min, max))
-	t9 := int64(clipRange(t8a-t9a, min, max))
-	t10 := int64(clipRange(t11a-t10a, min, max))
-	t11 := int64(clipRange(t11a+t10a, min, max))
-	t12 := int64(clipRange(t12a+t13a, min, max))
-	t13 := int64(clipRange(t12a-t13a, min, max))
-	t14 := int64(clipRange(t15a-t14a, min, max))
-	t15 := int64(clipRange(t15a+t14a, min, max))
+	t8 := int64(clipRangeT[T](t8a+t9a, min, max))
+	t9 := int64(clipRangeT[T](t8a-t9a, min, max))
+	t10 := int64(clipRangeT[T](t11a-t10a, min, max))
+	t11 := int64(clipRangeT[T](t11a+t10a, min, max))
+	t12 := int64(clipRangeT[T](t12a+t13a, min, max))
+	t13 := int64(clipRangeT[T](t12a-t13a, min, max))
+	t14 := int64(clipRangeT[T](t15a-t14a, min, max))
+	t15 := int64(clipRangeT[T](t15a+t14a, min, max))
 
 	t9a = roundShift(t14*1567-t9*(3784-4096), 12) - t9
 	t14a = roundShift(t14*(3784-4096)+t9*1567, 12) + t14
 	t10a = roundShift(-(t13*(3784-4096)+t10*1567), 12) - t13
 	t13a = roundShift(t13*1567-t10*(3784-4096), 12) - t10
 
-	t8a = int64(clipRange(t8+t11, min, max))
-	t9 = int64(clipRange(t9a+t10a, min, max))
-	t10 = int64(clipRange(t9a-t10a, min, max))
-	t11a = int64(clipRange(t8-t11, min, max))
-	t12a = int64(clipRange(t15-t12, min, max))
-	t13 = int64(clipRange(t14a-t13a, min, max))
-	t14 = int64(clipRange(t14a+t13a, min, max))
-	t15a = int64(clipRange(t15+t12, min, max))
+	t8a = int64(clipRangeT[T](t8+t11, min, max))
+	t9 = int64(clipRangeT[T](t9a+t10a, min, max))
+	t10 = int64(clipRangeT[T](t9a-t10a, min, max))
+	t11a = int64(clipRangeT[T](t8-t11, min, max))
+	t12a = int64(clipRangeT[T](t15-t12, min, max))
+	t13 = int64(clipRangeT[T](t14a-t13a, min, max))
+	t14 = int64(clipRangeT[T](t14a+t13a, min, max))
+	t15a = int64(clipRangeT[T](t15+t12, min, max))
 
 	t10a = roundShift((t13-t10)*181, 8)
 	t13a = roundShift((t13+t10)*181, 8)
@@ -165,25 +165,25 @@ func inverseDCT16(c []int32, stride int, min int32, max int32) {
 	t6 := int64(c[12*stride])
 	t7 := int64(c[14*stride])
 
-	c[0*stride] = clipRange(t0+t15a, min, max)
-	c[1*stride] = clipRange(t1+t14, min, max)
-	c[2*stride] = clipRange(t2+t13a, min, max)
-	c[3*stride] = clipRange(t3+t12, min, max)
-	c[4*stride] = clipRange(t4+t11, min, max)
-	c[5*stride] = clipRange(t5+t10a, min, max)
-	c[6*stride] = clipRange(t6+t9, min, max)
-	c[7*stride] = clipRange(t7+t8a, min, max)
-	c[8*stride] = clipRange(t7-t8a, min, max)
-	c[9*stride] = clipRange(t6-t9, min, max)
-	c[10*stride] = clipRange(t5-t10a, min, max)
-	c[11*stride] = clipRange(t4-t11, min, max)
-	c[12*stride] = clipRange(t3-t12, min, max)
-	c[13*stride] = clipRange(t2-t13a, min, max)
-	c[14*stride] = clipRange(t1-t14, min, max)
-	c[15*stride] = clipRange(t0-t15a, min, max)
+	c[0*stride] = clipRangeT[T](t0+t15a, min, max)
+	c[1*stride] = clipRangeT[T](t1+t14, min, max)
+	c[2*stride] = clipRangeT[T](t2+t13a, min, max)
+	c[3*stride] = clipRangeT[T](t3+t12, min, max)
+	c[4*stride] = clipRangeT[T](t4+t11, min, max)
+	c[5*stride] = clipRangeT[T](t5+t10a, min, max)
+	c[6*stride] = clipRangeT[T](t6+t9, min, max)
+	c[7*stride] = clipRangeT[T](t7+t8a, min, max)
+	c[8*stride] = clipRangeT[T](t7-t8a, min, max)
+	c[9*stride] = clipRangeT[T](t6-t9, min, max)
+	c[10*stride] = clipRangeT[T](t5-t10a, min, max)
+	c[11*stride] = clipRangeT[T](t4-t11, min, max)
+	c[12*stride] = clipRangeT[T](t3-t12, min, max)
+	c[13*stride] = clipRangeT[T](t2-t13a, min, max)
+	c[14*stride] = clipRangeT[T](t1-t14, min, max)
+	c[15*stride] = clipRangeT[T](t0-t15a, min, max)
 }
 
-func inverseDCT32(c []int32, stride int, min int32, max int32) {
+func inverseDCT32[T txElem](c []T, stride int, min int32, max int32) {
 	inverseDCT16(c, stride<<1, min, max)
 
 	in1 := int64(c[1*stride])
@@ -220,22 +220,22 @@ func inverseDCT32(c []int32, stride int, min int32, max int32) {
 	t30a := roundShift(in17*2751+in15*(3035-4096), 12) + in15
 	t31a := roundShift(in1*(4091-4096)+in31*201, 12) + in1
 
-	t16 := int64(clipRange(t16a+t17a, min, max))
-	t17 := int64(clipRange(t16a-t17a, min, max))
-	t18 := int64(clipRange(t19a-t18a, min, max))
-	t19 := int64(clipRange(t19a+t18a, min, max))
-	t20 := int64(clipRange(t20a+t21a, min, max))
-	t21 := int64(clipRange(t20a-t21a, min, max))
-	t22 := int64(clipRange(t23a-t22a, min, max))
-	t23 := int64(clipRange(t23a+t22a, min, max))
-	t24 := int64(clipRange(t24a+t25a, min, max))
-	t25 := int64(clipRange(t24a-t25a, min, max))
-	t26 := int64(clipRange(t27a-t26a, min, max))
-	t27 := int64(clipRange(t27a+t26a, min, max))
-	t28 := int64(clipRange(t28a+t29a, min, max))
-	t29 := int64(clipRange(t28a-t29a, min, max))
-	t30 := int64(clipRange(t31a-t30a, min, max))
-	t31 := int64(clipRange(t31a+t30a, min, max))
+	t16 := int64(clipRangeT[T](t16a+t17a, min, max))
+	t17 := int64(clipRangeT[T](t16a-t17a, min, max))
+	t18 := int64(clipRangeT[T](t19a-t18a, min, max))
+	t19 := int64(clipRangeT[T](t19a+t18a, min, max))
+	t20 := int64(clipRangeT[T](t20a+t21a, min, max))
+	t21 := int64(clipRangeT[T](t20a-t21a, min, max))
+	t22 := int64(clipRangeT[T](t23a-t22a, min, max))
+	t23 := int64(clipRangeT[T](t23a+t22a, min, max))
+	t24 := int64(clipRangeT[T](t24a+t25a, min, max))
+	t25 := int64(clipRangeT[T](t24a-t25a, min, max))
+	t26 := int64(clipRangeT[T](t27a-t26a, min, max))
+	t27 := int64(clipRangeT[T](t27a+t26a, min, max))
+	t28 := int64(clipRangeT[T](t28a+t29a, min, max))
+	t29 := int64(clipRangeT[T](t28a-t29a, min, max))
+	t30 := int64(clipRangeT[T](t31a-t30a, min, max))
+	t31 := int64(clipRangeT[T](t31a+t30a, min, max))
 
 	t17a = roundShift(t30*799-t17*(4017-4096), 12) - t17
 	t30a = roundShift(t30*(4017-4096)+t17*799, 12) + t30
@@ -246,22 +246,22 @@ func inverseDCT32(c []int32, stride int, min int32, max int32) {
 	t22a = roundShift(-(t25*1138 + t22*1703), 11)
 	t25a = roundShift(t25*1703-t22*1138, 11)
 
-	t16a = int64(clipRange(t16+t19, min, max))
-	t17 = int64(clipRange(t17a+t18a, min, max))
-	t18 = int64(clipRange(t17a-t18a, min, max))
-	t19a = int64(clipRange(t16-t19, min, max))
-	t20a = int64(clipRange(t23-t20, min, max))
-	t21 = int64(clipRange(t22a-t21a, min, max))
-	t22 = int64(clipRange(t22a+t21a, min, max))
-	t23a = int64(clipRange(t23+t20, min, max))
-	t24a = int64(clipRange(t24+t27, min, max))
-	t25 = int64(clipRange(t25a+t26a, min, max))
-	t26 = int64(clipRange(t25a-t26a, min, max))
-	t27a = int64(clipRange(t24-t27, min, max))
-	t28a = int64(clipRange(t31-t28, min, max))
-	t29 = int64(clipRange(t30a-t29a, min, max))
-	t30 = int64(clipRange(t30a+t29a, min, max))
-	t31a = int64(clipRange(t31+t28, min, max))
+	t16a = int64(clipRangeT[T](t16+t19, min, max))
+	t17 = int64(clipRangeT[T](t17a+t18a, min, max))
+	t18 = int64(clipRangeT[T](t17a-t18a, min, max))
+	t19a = int64(clipRangeT[T](t16-t19, min, max))
+	t20a = int64(clipRangeT[T](t23-t20, min, max))
+	t21 = int64(clipRangeT[T](t22a-t21a, min, max))
+	t22 = int64(clipRangeT[T](t22a+t21a, min, max))
+	t23a = int64(clipRangeT[T](t23+t20, min, max))
+	t24a = int64(clipRangeT[T](t24+t27, min, max))
+	t25 = int64(clipRangeT[T](t25a+t26a, min, max))
+	t26 = int64(clipRangeT[T](t25a-t26a, min, max))
+	t27a = int64(clipRangeT[T](t24-t27, min, max))
+	t28a = int64(clipRangeT[T](t31-t28, min, max))
+	t29 = int64(clipRangeT[T](t30a-t29a, min, max))
+	t30 = int64(clipRangeT[T](t30a+t29a, min, max))
+	t31a = int64(clipRangeT[T](t31+t28, min, max))
 
 	t18a = roundShift(t29*1567-t18*(3784-4096), 12) - t18
 	t29a = roundShift(t29*(3784-4096)+t18*1567, 12) + t29
@@ -272,22 +272,22 @@ func inverseDCT32(c []int32, stride int, min int32, max int32) {
 	t21a = roundShift(-(t26*(3784-4096)+t21*1567), 12) - t26
 	t26a = roundShift(t26*1567-t21*(3784-4096), 12) - t21
 
-	t16 = int64(clipRange(t16a+t23a, min, max))
-	t17a = int64(clipRange(t17+t22, min, max))
-	t18 = int64(clipRange(t18a+t21a, min, max))
-	t19a = int64(clipRange(t19+t20, min, max))
-	t20a = int64(clipRange(t19-t20, min, max))
-	t21 = int64(clipRange(t18a-t21a, min, max))
-	t22a = int64(clipRange(t17-t22, min, max))
-	t23 = int64(clipRange(t16a-t23a, min, max))
-	t24 = int64(clipRange(t31a-t24a, min, max))
-	t25a = int64(clipRange(t30-t25, min, max))
-	t26 = int64(clipRange(t29a-t26a, min, max))
-	t27a = int64(clipRange(t28-t27, min, max))
-	t28a = int64(clipRange(t28+t27, min, max))
-	t29 = int64(clipRange(t29a+t26a, min, max))
-	t30a = int64(clipRange(t30+t25, min, max))
-	t31 = int64(clipRange(t31a+t24a, min, max))
+	t16 = int64(clipRangeT[T](t16a+t23a, min, max))
+	t17a = int64(clipRangeT[T](t17+t22, min, max))
+	t18 = int64(clipRangeT[T](t18a+t21a, min, max))
+	t19a = int64(clipRangeT[T](t19+t20, min, max))
+	t20a = int64(clipRangeT[T](t19-t20, min, max))
+	t21 = int64(clipRangeT[T](t18a-t21a, min, max))
+	t22a = int64(clipRangeT[T](t17-t22, min, max))
+	t23 = int64(clipRangeT[T](t16a-t23a, min, max))
+	t24 = int64(clipRangeT[T](t31a-t24a, min, max))
+	t25a = int64(clipRangeT[T](t30-t25, min, max))
+	t26 = int64(clipRangeT[T](t29a-t26a, min, max))
+	t27a = int64(clipRangeT[T](t28-t27, min, max))
+	t28a = int64(clipRangeT[T](t28+t27, min, max))
+	t29 = int64(clipRangeT[T](t29a+t26a, min, max))
+	t30a = int64(clipRangeT[T](t30+t25, min, max))
+	t31 = int64(clipRangeT[T](t31a+t24a, min, max))
 
 	t20 = roundShift((t27a-t20a)*181, 8)
 	t27 = roundShift((t27a+t20a)*181, 8)
@@ -315,38 +315,38 @@ func inverseDCT32(c []int32, stride int, min int32, max int32) {
 	t14 := int64(c[28*stride])
 	t15 := int64(c[30*stride])
 
-	c[0*stride] = clipRange(t0+t31, min, max)
-	c[1*stride] = clipRange(t1+t30a, min, max)
-	c[2*stride] = clipRange(t2+t29, min, max)
-	c[3*stride] = clipRange(t3+t28a, min, max)
-	c[4*stride] = clipRange(t4+t27, min, max)
-	c[5*stride] = clipRange(t5+t26a, min, max)
-	c[6*stride] = clipRange(t6+t25, min, max)
-	c[7*stride] = clipRange(t7+t24a, min, max)
-	c[8*stride] = clipRange(t8+t23a, min, max)
-	c[9*stride] = clipRange(t9+t22, min, max)
-	c[10*stride] = clipRange(t10+t21a, min, max)
-	c[11*stride] = clipRange(t11+t20, min, max)
-	c[12*stride] = clipRange(t12+t19a, min, max)
-	c[13*stride] = clipRange(t13+t18, min, max)
-	c[14*stride] = clipRange(t14+t17a, min, max)
-	c[15*stride] = clipRange(t15+t16, min, max)
-	c[16*stride] = clipRange(t15-t16, min, max)
-	c[17*stride] = clipRange(t14-t17a, min, max)
-	c[18*stride] = clipRange(t13-t18, min, max)
-	c[19*stride] = clipRange(t12-t19a, min, max)
-	c[20*stride] = clipRange(t11-t20, min, max)
-	c[21*stride] = clipRange(t10-t21a, min, max)
-	c[22*stride] = clipRange(t9-t22, min, max)
-	c[23*stride] = clipRange(t8-t23a, min, max)
-	c[24*stride] = clipRange(t7-t24a, min, max)
-	c[25*stride] = clipRange(t6-t25, min, max)
-	c[26*stride] = clipRange(t5-t26a, min, max)
-	c[27*stride] = clipRange(t4-t27, min, max)
-	c[28*stride] = clipRange(t3-t28a, min, max)
-	c[29*stride] = clipRange(t2-t29, min, max)
-	c[30*stride] = clipRange(t1-t30a, min, max)
-	c[31*stride] = clipRange(t0-t31, min, max)
+	c[0*stride] = clipRangeT[T](t0+t31, min, max)
+	c[1*stride] = clipRangeT[T](t1+t30a, min, max)
+	c[2*stride] = clipRangeT[T](t2+t29, min, max)
+	c[3*stride] = clipRangeT[T](t3+t28a, min, max)
+	c[4*stride] = clipRangeT[T](t4+t27, min, max)
+	c[5*stride] = clipRangeT[T](t5+t26a, min, max)
+	c[6*stride] = clipRangeT[T](t6+t25, min, max)
+	c[7*stride] = clipRangeT[T](t7+t24a, min, max)
+	c[8*stride] = clipRangeT[T](t8+t23a, min, max)
+	c[9*stride] = clipRangeT[T](t9+t22, min, max)
+	c[10*stride] = clipRangeT[T](t10+t21a, min, max)
+	c[11*stride] = clipRangeT[T](t11+t20, min, max)
+	c[12*stride] = clipRangeT[T](t12+t19a, min, max)
+	c[13*stride] = clipRangeT[T](t13+t18, min, max)
+	c[14*stride] = clipRangeT[T](t14+t17a, min, max)
+	c[15*stride] = clipRangeT[T](t15+t16, min, max)
+	c[16*stride] = clipRangeT[T](t15-t16, min, max)
+	c[17*stride] = clipRangeT[T](t14-t17a, min, max)
+	c[18*stride] = clipRangeT[T](t13-t18, min, max)
+	c[19*stride] = clipRangeT[T](t12-t19a, min, max)
+	c[20*stride] = clipRangeT[T](t11-t20, min, max)
+	c[21*stride] = clipRangeT[T](t10-t21a, min, max)
+	c[22*stride] = clipRangeT[T](t9-t22, min, max)
+	c[23*stride] = clipRangeT[T](t8-t23a, min, max)
+	c[24*stride] = clipRangeT[T](t7-t24a, min, max)
+	c[25*stride] = clipRangeT[T](t6-t25, min, max)
+	c[26*stride] = clipRangeT[T](t5-t26a, min, max)
+	c[27*stride] = clipRangeT[T](t4-t27, min, max)
+	c[28*stride] = clipRangeT[T](t3-t28a, min, max)
+	c[29*stride] = clipRangeT[T](t2-t29, min, max)
+	c[30*stride] = clipRangeT[T](t1-t30a, min, max)
+	c[31*stride] = clipRangeT[T](t0-t31, min, max)
 }
 
 // inverseDCT64 is a libaom-faithful port of av1_idct64
@@ -358,8 +358,8 @@ func inverseDCT32(c []int32, stride int, min int32, max int32) {
 // positions 33, 35, ..., 63 are zero. (The prior reduced-input form was
 // only correct when the input was the "reduced 32-coeff" 64x64 row pass;
 // it produced growing-with-column residual error on the column pass.)
-func inverseDCT64(c []int32, stride int, min int32, max int32) {
-	clamp := func(v int64) int32 { return clipRange(v, min, max) }
+func inverseDCT64[T txElem](c []T, stride int, min int32, max int32) {
+	clamp := func(v int64) T { return clipRangeT[T](v, min, max) }
 	hbtf := func(w0, in0, w1, in1 int64) int64 {
 		return roundShift(w0*in0+w1*in1, 12)
 	}
@@ -1008,6 +1008,17 @@ func inverseDCT64(c []int32, stride int, min int32, max int32) {
 	c[61*stride] = clamp(bf0[2] - bf0[61])
 	c[62*stride] = clamp(bf0[1] - bf0[62])
 	c[63*stride] = clamp(bf0[0] - bf0[63])
+}
+
+// txElem is the transform scratch element type. The int16 column pipeline
+// (8/10-bit, dav1d-style) reuses the exact same scalar kernels as the int32
+// pipeline; only the storage width changes. Intermediate math stays int64
+// (reference-equivalent), and every stored value is clamped into T's range.
+type txElem interface{ ~int16 | ~int32 }
+
+// clipRangeT clamps v to [min,max] and narrows to the element type T.
+func clipRangeT[T txElem](v int64, lo int32, hi int32) T {
+	return T(min(max(v, int64(lo)), int64(hi)))
 }
 
 func clipRange(v int64, min int32, max int32) int32 {
