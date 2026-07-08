@@ -10,11 +10,12 @@
 // Byte-identical to filterBlockPureGo. Widths not a multiple of 8 (4x4 chroma)
 // fall back to the scalar reference.
 //
-// This is a Go-native SIMD reference kernel: it is byte-exact and ~7x over the
-// scalar path, but ~18% behind the specialized NEON asm (filterBlockNEON),
-// which is what the arm64 dispatch uses. The gap is Go register-allocation
-// overhead on this constant/shuffle-heavy kernel, not the algorithm. Kept for
-// the pure-Go-SIMD build and as a portable fallback; not wired ahead of the asm.
+// Byte-exact with the scalar/NEON references and now FASTER than the NEON asm
+// (8x8: ~84 vs ~98 ns). The earlier ~18% gap was not register churn per se — it
+// was ShiftAllRight(const) and the per-call damping ShiftAllRight rebuilding a
+// shift-amount vector (VDUP+VMOV+NEG+CSEL) every use. Hoisting the damping shift
+// and using immediate SSHR/SHL constant shifts cut it (VMOV 80->21, VDUP 36->8,
+// VSSHL 30->12). Bound as the dispatch kernel under goexperiment.simd.
 //
 // The tap sum and min/max use two independent accumulators each so the 12
 // per-pixel accumulations pipeline instead of forming one long dependency
@@ -44,11 +45,14 @@ func cdefLoad16(input []uint16, i int) archsimd.Int16x8 {
 
 // cdefConstrain is constrainShifted 8-wide:
 // copysign(clamp(str-(|n-x|>>shift), 0, |n-x|), n-x).
-func cdefConstrain(n, x, strV, zeroV archsimd.Int16x8, shift uint64) archsimd.Int16x8 {
+// shiftV is the (negative) damping right-shift amount, hoisted by the caller so
+// the per-call VSSHL doesn't rebuild it; a is non-negative so Shift is a plain
+// logical/arith right shift. The sign shift is a compile-time SSHR #15.
+func cdefConstrain(n, x, strV, zeroV, shiftV archsimd.Int16x8) archsimd.Int16x8 {
 	diff := n.Sub(x)
 	a := n.AbsDiff(x)
-	lim := strV.Sub(a.ShiftAllRight(shift)).Max(zeroV).Min(a)
-	sign := diff.ShiftAllRight(15)
+	lim := strV.Sub(a.Shift(shiftV)).Max(zeroV).Min(a)
+	sign := diff.ShiftAllRightConst(15)
 	return lim.Xor(sign).Sub(sign)
 }
 
@@ -86,6 +90,10 @@ func filterBlockSIMD16(dst []uint16, dstStride int, dstOrigin int, input []uint1
 	priTap1V := archsimd.BroadcastInt16x8(int16(priTaps[1]))
 	eight := archsimd.BroadcastInt16x8(8)
 	zeroV := archsimd.BroadcastInt16x8(0)
+	// Hoist the damping right-shift amounts (negative = right) so cdefConstrain's
+	// per-call shift is a single VSSHL, not a rebuilt VDUP+VMOV+NEG+CSEL each time.
+	priShiftV := archsimd.BroadcastInt16x8(-int16(priShift))
+	secShiftV := archsimd.BroadcastInt16x8(-int16(secShift))
 
 	for row := 0; row < height; row++ {
 		rowBase := inputOrigin + row*BStride
@@ -100,47 +108,47 @@ func filterBlockSIMD16(dst []uint16, dstStride int, dstOrigin int, input []uint1
 			if enablePrimary {
 				a := cdefLoad16(input, base+pri0)
 				b := cdefLoad16(input, base-pri0)
-				s0 = s0.Add(cdefConstrain(a, x, priStrV, zeroV, priShift).Mul(priTap0V))
-				s1 = s1.Add(cdefConstrain(b, x, priStrV, zeroV, priShift).Mul(priTap0V))
+				s0 = s0.Add(cdefConstrain(a, x, priStrV, zeroV, priShiftV).Mul(priTap0V))
+				s1 = s1.Add(cdefConstrain(b, x, priStrV, zeroV, priShiftV).Mul(priTap0V))
 				mx0, mx1 = mx0.Max(a), mx1.Max(b)
 				mn0, mn1 = mn0.Min(a), mn1.Min(b)
 				a = cdefLoad16(input, base+pri1)
 				b = cdefLoad16(input, base-pri1)
-				s0 = s0.Add(cdefConstrain(a, x, priStrV, zeroV, priShift).Mul(priTap1V))
-				s1 = s1.Add(cdefConstrain(b, x, priStrV, zeroV, priShift).Mul(priTap1V))
+				s0 = s0.Add(cdefConstrain(a, x, priStrV, zeroV, priShiftV).Mul(priTap1V))
+				s1 = s1.Add(cdefConstrain(b, x, priStrV, zeroV, priShiftV).Mul(priTap1V))
 				mx0, mx1 = mx0.Max(a), mx1.Max(b)
 				mn0, mn1 = mn0.Min(a), mn1.Min(b)
 			}
 			if enableSecondary {
 				a := cdefLoad16(input, base+sec0a)
 				b := cdefLoad16(input, base-sec0a)
-				s0 = s0.Add(cdefConstrain(a, x, secStrV, zeroV, secShift).ShiftAllLeft(1))
-				s1 = s1.Add(cdefConstrain(b, x, secStrV, zeroV, secShift).ShiftAllLeft(1))
+				s0 = s0.Add(cdefConstrain(a, x, secStrV, zeroV, secShiftV).ShiftAllLeftConst(1))
+				s1 = s1.Add(cdefConstrain(b, x, secStrV, zeroV, secShiftV).ShiftAllLeftConst(1))
 				mx0, mx1 = mx0.Max(a), mx1.Max(b)
 				mn0, mn1 = mn0.Min(a), mn1.Min(b)
 				a = cdefLoad16(input, base+sec1a)
 				b = cdefLoad16(input, base-sec1a)
-				s0 = s0.Add(cdefConstrain(a, x, secStrV, zeroV, secShift).ShiftAllLeft(1))
-				s1 = s1.Add(cdefConstrain(b, x, secStrV, zeroV, secShift).ShiftAllLeft(1))
+				s0 = s0.Add(cdefConstrain(a, x, secStrV, zeroV, secShiftV).ShiftAllLeftConst(1))
+				s1 = s1.Add(cdefConstrain(b, x, secStrV, zeroV, secShiftV).ShiftAllLeftConst(1))
 				mx0, mx1 = mx0.Max(a), mx1.Max(b)
 				mn0, mn1 = mn0.Min(a), mn1.Min(b)
 				a = cdefLoad16(input, base+sec0b)
 				b = cdefLoad16(input, base-sec0b)
-				s0 = s0.Add(cdefConstrain(a, x, secStrV, zeroV, secShift))
-				s1 = s1.Add(cdefConstrain(b, x, secStrV, zeroV, secShift))
+				s0 = s0.Add(cdefConstrain(a, x, secStrV, zeroV, secShiftV))
+				s1 = s1.Add(cdefConstrain(b, x, secStrV, zeroV, secShiftV))
 				mx0, mx1 = mx0.Max(a), mx1.Max(b)
 				mn0, mn1 = mn0.Min(a), mn1.Min(b)
 				a = cdefLoad16(input, base+sec1b)
 				b = cdefLoad16(input, base-sec1b)
-				s0 = s0.Add(cdefConstrain(a, x, secStrV, zeroV, secShift))
-				s1 = s1.Add(cdefConstrain(b, x, secStrV, zeroV, secShift))
+				s0 = s0.Add(cdefConstrain(a, x, secStrV, zeroV, secShiftV))
+				s1 = s1.Add(cdefConstrain(b, x, secStrV, zeroV, secShiftV))
 				mx0, mx1 = mx0.Max(a), mx1.Max(b)
 				mn0, mn1 = mn0.Min(a), mn1.Min(b)
 			}
 			sum := s0.Add(s1)
 			// y = x + ((8 + sum - (sum<0)) >> 4)
-			neg := sum.ShiftAllRight(15)
-			y := x.Add(eight.Add(sum).Add(neg).ShiftAllRight(4))
+			neg := sum.ShiftAllRightConst(15)
+			y := x.Add(eight.Add(sum).Add(neg).ShiftAllRightConst(4))
 			if clippingRequired {
 				y = y.Max(mn0.Min(mn1)).Min(mx0.Max(mx1))
 			}
