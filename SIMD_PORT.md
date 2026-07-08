@@ -76,7 +76,19 @@ Ordered by decode hotness (port highest first):
   add fallback works but likely loses to the current DOTPROD asm.
 - Any kernel needing arbitrary byte-shuffle (**TBL**) — package has only
   structured permutes (InterleaveLo/Hi, ConcatShiftBytesRight, ConcatEven/Odd).
-- Action: keep these on asm; upstream a request for SDOT/UDOT/TBL on arm64.
+- **Missing ops that block "everything at asm speed" (verified absent from the
+  380-op arm64 package):**
+  1. `SQRDMULH`/`SQDMULH` (rounding doubling multiply-high) — THE transform op.
+     Enables in-lane fixed-point round((v*cospi)>>shift) at 8-wide (int16) / 4-wide
+     (int32). Its absence forces MulWidenLo->int64->shift->narrow (2-wide, ~5 ops),
+     = the transform's 25-33% loss + width cap. HIGHEST LEVERAGE: unlocks all 15
+     transforms + row passes (biggest decode cost). base NEON (ARMv7+).
+  2. `SDOT`/`UDOT` (dot product, ARMv8.2) — convolve (hottest kernel).
+  3. `USMMLA`/`USDOT` (int8 matrix, ARMv8.6 I8MM) — fastest convolve variants.
+  4. `TBL`/`TBX` (table lookup, base NEON) — shuffle/gather-heavy kernels.
+- Action: keep these classes on asm; upstream a request for SQRDMULH (first),
+  SDOT/UDOT, USMMLA, TBL on arm64. dsp proves the port hits asm speed where the
+  ops exist; these 4 are the whole gap to porting everything at asm speed.
 
 ## Perf-at-width finding (2026-07-08) — decides which kernels are worth porting
 
