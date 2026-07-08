@@ -75,12 +75,6 @@ func benchDCT8x4(b *testing.B, fn func([]int32, int, int32, int32)) {
 
 // int32 4-wide (round-once) vs int64 2-wide (x2 for 4 cols) vs NEON asm (x2).
 func BenchmarkDCT8x4_Int32(b *testing.B) { benchDCT8x4(b, inverseDCT8Col4SIMD) }
-func BenchmarkDCT8x4_Int64(b *testing.B) {
-	benchDCT8x4(b, func(buf []int32, s int, mn, mx int32) {
-		inverseDCT8Col2SIMD(buf, s, mn, mx)
-		inverseDCT8Col2SIMD(buf[2:], s, mn, mx)
-	})
-}
 func BenchmarkDCT8x4_ASM(b *testing.B) {
 	benchDCT8x4(b, func(buf []int32, s int, mn, mx int32) {
 		inverseDCT8Col2NEONAdapter(buf, s, mn, mx)
