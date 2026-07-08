@@ -124,10 +124,8 @@ func InverseBlockBitDepth(dst []int16, dstStride int, coeff []int32, coeffStride
 	// dav1d 8bpc int16 column pipeline: for bitDepth==8 blocks whose vertical
 	// (column) transform is a DCT, run the column pass in int16 with no boundary
 	// narrowing. 10/12-bit stay on the int32 pipeline (dav1d 16bpc).
-	if bitDepth == 8 {
-		if vertical, _, ok := t.tx1DTypes(); ok && vertical == tx1DDCT {
-			return inverseSeparableBlockInt16(dst, dstStride, coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax)
-		}
+	if bitDepth == 8 && hasFastInt16Column(t, int(size.Height)) {
+		return inverseSeparableBlockInt16(dst, dstStride, coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax)
 	}
 	return inverseSeparableBlockClamped(dst, dstStride, coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax)
 }

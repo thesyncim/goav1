@@ -16,6 +16,23 @@ package transform
 // is a scalar loop; GOEXPERIMENT=simd binds the int16 8-wide SIMD kernel.
 var inverseDCT8Col8Impl16 = inverseDCT8Col8Scalar16
 
+// int16ColumnFast is set when a SIMD int16 column kernel is bound. Without one
+// the int16 pipeline would be no faster than (and adds conversion over) the
+// int32 SIMD/asm path, so hasFastInt16Column stays false and the int32 pipeline
+// is used. GOEXPERIMENT=simd flips it on.
+var int16ColumnFast = false
+
+// hasFastInt16Column reports whether the int16 column pipeline has a SIMD kernel
+// for the given block's vertical (column) transform and column length. Only DCT
+// column lengths with a wired int16 8-wide kernel qualify (DCT8 today).
+func hasFastInt16Column(t Type, height int) bool {
+	if !int16ColumnFast {
+		return false
+	}
+	vertical, _, ok := t.tx1DTypes()
+	return ok && vertical == tx1DDCT && height == dct8Size
+}
+
 func inverseDCT8Col8Scalar16(buf []int16, stride int, min int32, max int32) {
 	for col := 0; col < 8; col++ {
 		inverseDCT8(buf[col:], stride, min, max)

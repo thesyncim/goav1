@@ -10,4 +10,5 @@ package transform
 // byte-exact and ~3.8x faster than the NEON asm (no boundary narrowing).
 func init() {
 	inverseDCT8Col8Impl16 = inverseDCT8Col8SIMD16
+	int16ColumnFast = true
 }
