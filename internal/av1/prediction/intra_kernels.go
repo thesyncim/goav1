@@ -68,6 +68,66 @@ func subsampleLuma8PureGo(outputQ3 []uint16, input []uint8, inputStride int, wid
 	}
 }
 
+// subsampleLuma16PureGo subsamples a high-bit-depth luma block to Q3 and keeps
+// the scalar range checks from SubsampleLuma16ToQ3.
+func subsampleLuma16PureGo(outputQ3 []uint16, input []uint16, inputStride int, width int, height int, outW int, outH int, subX bool, subY bool, max uint16) error {
+	switch {
+	case subX && subY:
+		for row := 0; row < height; row += 2 {
+			outRow := row >> 1
+			for col := 0; col < width; col += 2 {
+				p0 := input[row*inputStride+col]
+				p1 := input[row*inputStride+col+1]
+				p2 := input[(row+1)*inputStride+col]
+				p3 := input[(row+1)*inputStride+col+1]
+				if p0 > max || p1 > max || p2 > max || p3 > max {
+					return ErrInvalidPrediction
+				}
+				outputQ3[outRow*CFLBufLine+(col>>1)] = (p0 + p1 + p2 + p3) << 1
+			}
+		}
+	case subX:
+		for row := 0; row < outH; row++ {
+			for col := 0; col < width; col += 2 {
+				p0 := input[row*inputStride+col]
+				p1 := input[row*inputStride+col+1]
+				if p0 > max || p1 > max {
+					return ErrInvalidPrediction
+				}
+				outputQ3[row*CFLBufLine+(col>>1)] = (p0 + p1) << 2
+			}
+		}
+	default:
+		for row := 0; row < outH; row++ {
+			for col := 0; col < outW; col++ {
+				p := input[row*inputStride+col]
+				if p > max {
+					return ErrInvalidPrediction
+				}
+				outputQ3[row*CFLBufLine+col] = p << 3
+			}
+		}
+	}
+	return nil
+}
+
+// subtractCFLAveragePureGo subtracts the rounded block average from Q3 luma
+// samples. Buffers use CFLBufLine stride and are already size-validated.
+func subtractCFLAveragePureGo(srcQ3 []uint16, dstQ3 []int16, width int, height int, numPelLog2 int) {
+	sum := (width * height) >> 1
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			sum += int(srcQ3[row*CFLBufLine+col])
+		}
+	}
+	avg := sum >> numPelLog2
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			dstQ3[row*CFLBufLine+col] = int16(int(srcQ3[row*CFLBufLine+col]) - avg)
+		}
+	}
+}
+
 // dirRowInterp8PureGo fills one 8-bit destination row of the Z1/Z3 directional
 // predictor with the non-upsampled (baseInc==1) per-column interpolation. base
 // advances by one per column; once base reaches maxBase the remaining columns

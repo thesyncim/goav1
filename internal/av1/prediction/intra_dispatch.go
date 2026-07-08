@@ -41,6 +41,15 @@ type applyCFLFunc func(block planeBlock, bytesPerSample int, visibleWidth int, v
 // variants must match the pure-Go reductions and shifts exactly.
 type subsampleLuma8Func func(outputQ3 []uint16, input []uint8, inputStride int, width int, height int, outW int, outH int, subX bool, subY bool)
 
+// subsampleLuma16Func is the high-bit-depth counterpart. It also preserves the
+// scalar range check against max and returns ErrInvalidPrediction on overflow.
+type subsampleLuma16Func func(outputQ3 []uint16, input []uint16, inputStride int, width int, height int, outW int, outH int, subX bool, subY bool, max uint16) error
+
+// subtractCFLAverageFunc subtracts the rounded block average from Q3 luma
+// samples. numPelLog2 is log2(width*height), computed by the validated public
+// wrapper.
+type subtractCFLAverageFunc func(srcQ3 []uint16, dstQ3 []int16, width int, height int, numPelLog2 int)
+
 // dirRowInterp8Func fills a single 8-bit destination row for the directional
 // Z1/Z3 interpolation. above is the edge pointer at the libaom origin; base is
 // the starting reference index, advancing by 1 per column (the non-upsampled
@@ -82,12 +91,14 @@ var (
 	predictSmoothVerticalImpl   predictSmoothVerticalFunc   = predictSmoothVerticalPureGo
 	predictSmoothHorizontalImpl predictSmoothHorizontalFunc = predictSmoothHorizontalPureGo
 
-	sumSamplesImpl     sumSamplesFunc     = sumSamplesPureGo
-	applyCFLImpl       applyCFLFunc       = applyCFLPureGo
-	subsampleLuma8Impl subsampleLuma8Func = subsampleLuma8PureGo
-	dirRowInterp8Impl  dirRowInterp8Func  = dirRowInterp8PureGo
-	dirAboveRun8Impl   dirAboveRun8Func   = dirAboveRun8PureGo
-	dirLeftCol8Impl    dirLeftCol8Func    = dirLeftCol8PureGo
+	sumSamplesImpl         sumSamplesFunc         = sumSamplesPureGo
+	applyCFLImpl           applyCFLFunc           = applyCFLPureGo
+	subsampleLuma8Impl     subsampleLuma8Func     = subsampleLuma8PureGo
+	subsampleLuma16Impl    subsampleLuma16Func    = subsampleLuma16PureGo
+	subtractCFLAverageImpl subtractCFLAverageFunc = subtractCFLAveragePureGo
+	dirRowInterp8Impl      dirRowInterp8Func      = dirRowInterp8PureGo
+	dirAboveRun8Impl       dirAboveRun8Func       = dirAboveRun8PureGo
+	dirLeftCol8Impl        dirLeftCol8Func        = dirLeftCol8PureGo
 
 	predictFilterIntra8Impl  predictFilterIntra8Func  = predictFilterIntraBlockDirect8
 	predictFilterIntra16Impl predictFilterIntra16Func = predictFilterIntraBlockDirect16

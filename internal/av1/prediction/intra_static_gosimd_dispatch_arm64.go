@@ -26,6 +26,8 @@ func init() {
 		sumSamplesImpl = sumSamplesPureGo
 		applyCFLImpl = applyCFLPureGo
 		subsampleLuma8Impl = subsampleLuma8PureGo
+		subsampleLuma16Impl = subsampleLuma16PureGo
+		subtractCFLAverageImpl = subtractCFLAveragePureGo
 		dirRowInterp8Impl = dirRowInterp8PureGo
 		dirAboveRun8Impl = dirAboveRun8PureGo
 		dirLeftCol8Impl = dirLeftCol8PureGo
@@ -36,10 +38,13 @@ func init() {
 	predictSmoothImpl = predictSmoothSIMD
 	predictSmoothVerticalImpl = predictSmoothVerticalSIMD
 	predictSmoothHorizontalImpl = predictSmoothHorizontalSIMD
+	// CfL (chroma-from-luma): Go-native SIMD (beats the NEON asm on subsample).
+	applyCFLImpl = applyCFLSIMD
+	subsampleLuma8Impl = subsampleLuma8SIMD
+	subsampleLuma16Impl = subsampleLuma16SIMD
+	subtractCFLAverageImpl = subtractCFLAverageSIMD
 	// Every other dispatched kernel: keep the NEON asm (no regression).
 	sumSamplesImpl = sumSamplesNEON
-	applyCFLImpl = applyCFLNEON
-	subsampleLuma8Impl = subsampleLuma8NEON
 	dirRowInterp8Impl = dirRowInterp8NEON
 	dirAboveRun8Impl = dirAboveRun8NEON
 	dirLeftCol8Impl = dirLeftCol8NEON
