@@ -73,3 +73,45 @@ func BenchmarkDCT8x8_ASM(b *testing.B) {
 		inverseDCT8Col2NEONAdapter(buf[6:], s, mn, mx)
 	})
 }
+
+func TestInverseDCT8Col8SIMD16MatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x16b))
+	// int16 butterfly sums must not overflow int16 (as in dav1d); valid decode
+	// intermediates stay well within this, and conformance is the full check.
+	min, max := int32(-(1 << 12)), int32((1<<12)-1)
+	for iter := 0; iter < 40000; iter++ {
+		stride := 8 + rng.Intn(3)
+		a := make([]int16, 8*stride)
+		for k := 0; k < 8; k++ {
+			for col := 0; col < 8; col++ {
+				a[k*stride+col] = int16(min + int32(rng.Int63n(int64(max)-int64(min)+1)))
+			}
+		}
+		b := make([]int16, len(a))
+		copy(b, a)
+		for col := 0; col < 8; col++ {
+			inverseDCT8(a[col:], stride, min, max) // T=int16 via inference
+		}
+		inverseDCT8Col8SIMD16(b, stride, min, max)
+		for i := range a {
+			if a[i] != b[i] {
+				t.Fatalf("iter=%d at %d: scalar=%d simd=%d", iter, i, a[i], b[i])
+			}
+		}
+	}
+}
+
+func BenchmarkDCT8x8_Int16Buf(b *testing.B) {
+	rng := rand.New(rand.NewSource(9))
+	const stride = 8
+	buf := make([]int16, 8*stride+8)
+	for i := range buf {
+		buf[i] = int16(rng.Intn(1<<12) - (1 << 11))
+	}
+	work := make([]int16, len(buf))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		copy(work, buf)
+		inverseDCT8Col8SIMD16(work, stride, -(1 << 12), (1<<12)-1)
+	}
+}
