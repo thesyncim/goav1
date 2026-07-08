@@ -104,6 +104,52 @@ type filter4SIMDConst struct {
 	four    archsimd.Int16x8
 }
 
+// Fixed 8-bit filter4 constants held in rodata: one VLD1 loads a whole Int16x8,
+// vs MOVH+VMOV+VDUP per scalar Broadcast. center/min/max are the scale-1 values.
+var (
+	lf4Center8 = [8]int16{128, 128, 128, 128, 128, 128, 128, 128}
+	lf4Min8    = [8]int16{-128, -128, -128, -128, -128, -128, -128, -128}
+	lf4Max8    = [8]int16{127, 127, 127, 127, 127, 127, 127, 127}
+	lf4One     = [8]int16{1, 1, 1, 1, 1, 1, 1, 1}
+	lf4Three   = [8]int16{3, 3, 3, 3, 3, 3, 3, 3}
+	lf4Four    = [8]int16{4, 4, 4, 4, 4, 4, 4, 4}
+)
+
+// filter4Chain is the narrow four-tap filter for one 8-lane group. All constants
+// are passed in (the caller hoists them once) so the two chains of a 16-wide
+// iteration share them register-resident; 13 vector args / 4 results ride in
+// V-registers with no stack round-trip. Byte-identical to filter4TapVecs gated.
+func filter4Chain(p1, p0, q0, q1, limit, blimit, hevT, center, minV, maxV, one, three16, four archsimd.Int16x8) (np1, np0, nq0, nq1 archsimd.Int16x8) {
+	hev := p1.AbsDiff(p0).Greater(hevT).Or(q1.AbsDiff(q0).Greater(hevT))
+	mask := p1.AbsDiff(p0).LessEqual(limit).
+		And(q1.AbsDiff(q0).LessEqual(limit)).
+		And(p0.AbsDiff(q0).ShiftAllLeftConst(1).Add(p1.AbsDiff(q1).ShiftAllRightConst(1)).LessEqual(blimit))
+	ps1 := p1.Sub(center)
+	ps0 := p0.Sub(center)
+	qs0 := q0.Sub(center)
+	qs1 := q1.Sub(center)
+	f := ps1.Sub(qs1).Max(minV).Min(maxV).Masked(hev)
+	f = f.Add(qs0.Sub(ps0).Mul(three16)).Max(minV).Min(maxV)
+	filter1 := f.Add(four).Max(minV).Min(maxV).ShiftAllRightConst(3)
+	filter2 := f.Add(three16).Max(minV).Min(maxV).ShiftAllRightConst(3)
+	np0 = ps0.Add(filter2).Max(minV).Min(maxV).Add(center)
+	nq0 = qs0.Sub(filter1).Max(minV).Min(maxV).Add(center)
+	ov := filter1.Add(one).ShiftAllRightConst(1)
+	np1 = ps1.Add(ov).Max(minV).Min(maxV).Add(center)
+	nq1 = qs1.Sub(ov).Max(minV).Min(maxV).Add(center)
+	np1 = p1.IfElse(hev, np1).IfElse(mask, p1)
+	nq1 = q1.IfElse(hev, nq1).IfElse(mask, q1)
+	np0 = np0.IfElse(mask, p0)
+	nq0 = nq0.IfElse(mask, q0)
+	return
+}
+
+// lf16StoreP2 packs two 8-lane results (low half a, high half b) to 16 bytes
+// with one SQXTUN+SQXTUN2 and a single 16-byte store.
+func lf16StoreP2(p unsafe.Pointer, a, b archsimd.Int16x8) {
+	a.SaturateToUint8().SaturateToUint8Hi(b).StoreArray((*[16]uint8)(p))
+}
+
 func makeFilter4SIMDConst(params filter4Params) filter4SIMDConst {
 	return filter4SIMDConst{
 		limit:   archsimd.BroadcastInt16x8(params.limit),
@@ -187,63 +233,67 @@ func needsFilter4Mask(p1, p0, q0, q1 archsimd.Int16x8, cst filter4SIMDConst) arc
 // the canonical form.
 func filter4EdgeSIMD(pix []byte, q0Base int, step int, outer int, length int, params filter4Params) {
 	groups := length / 8
-	if outer != 1 || groups == 0 {
+	// center==128 (min/max==-128/127) is the 8-bit scale-1 invariant this kernel
+	// assumes for its rodata constants; anything else routes to the asm.
+	if outer != 1 || groups == 0 || params.center != 128 {
 		filter4EdgeNEON(pix, q0Base, step, outer, length, params)
 		return
 	}
-	// Constants as locals (not a returned struct): they stay in registers across
-	// the group loop instead of round-tripping through the stack ABI every group.
+	// Runtime thresholds broadcast from params; the fixed 8-bit constants
+	// (center/min/max are 128/-128/127 at scale 1, plus the 1/3/4 literals) load
+	// from rodata as one VLD1 each instead of MOVH+VMOV+VDUP per scalar broadcast.
 	limit := archsimd.BroadcastInt16x8(params.limit)
 	blimit := archsimd.BroadcastInt16x8(params.blimit)
 	hevT := archsimd.BroadcastInt16x8(params.hev)
-	center := archsimd.BroadcastInt16x8(params.center)
-	minV := archsimd.BroadcastInt16x8(params.min)
-	maxV := archsimd.BroadcastInt16x8(params.max)
-	one := archsimd.BroadcastInt16x8(1)
-	three16 := archsimd.BroadcastInt16x8(3)
-	four := archsimd.BroadcastInt16x8(4)
+	center := archsimd.LoadInt16x8Array(&lf4Center8)
+	minV := archsimd.LoadInt16x8Array(&lf4Min8)
+	maxV := archsimd.LoadInt16x8Array(&lf4Max8)
+	one := archsimd.LoadInt16x8Array(&lf4One)
+	three16 := archsimd.LoadInt16x8Array(&lf4Three)
+	four := archsimd.LoadInt16x8Array(&lf4Four)
 	q0p := unsafe.Pointer(&pix[q0Base])
-	for g := 0; g < groups; g++ {
-		base := unsafe.Add(q0p, g*8)
+	i := 0
+	// 16 positions per iteration: one 128-bit load per tap drives two independent
+	// filter chains (low half via ExtendLo8, high via ExtendHi8) that pipeline.
+	// The 8-wide form loaded the same 16 bytes but used only the low half, so this
+	// halves loads, stores and loop overhead.
+	for ; i+16 <= length; i += 16 {
+		base := unsafe.Add(q0p, i)
 		pP1 := unsafe.Add(base, -2*step)
 		pP0 := unsafe.Add(base, -step)
 		pQ1 := unsafe.Add(base, step)
-		p1 := lf8LoadP(pP1)
-		p0 := lf8LoadP(pP0)
-		q0 := lf8LoadP(base)
-		q1 := lf8LoadP(pQ1)
-
-		// --- filter4TapVecs, inlined; clamp is x.Max(minV).Min(maxV) inlined ---
-		hev := p1.AbsDiff(p0).Greater(hevT).Or(q1.AbsDiff(q0).Greater(hevT))
-		mask := p1.AbsDiff(p0).LessEqual(limit).
-			And(q1.AbsDiff(q0).LessEqual(limit)).
-			And(p0.AbsDiff(q0).ShiftAllLeftConst(1).Add(p1.AbsDiff(q1).ShiftAllRightConst(1)).LessEqual(blimit))
-		ps1 := p1.Sub(center)
-		ps0 := p0.Sub(center)
-		qs0 := q0.Sub(center)
-		qs1 := q1.Sub(center)
-		f := ps1.Sub(qs1).Max(minV).Min(maxV).Masked(hev)
-		f = f.Add(qs0.Sub(ps0).Mul(three16)).Max(minV).Min(maxV)
-		filter1 := f.Add(four).Max(minV).Min(maxV).ShiftAllRightConst(3)
-		filter2 := f.Add(three16).Max(minV).Min(maxV).ShiftAllRightConst(3)
-		np0 := ps0.Add(filter2).Max(minV).Min(maxV).Add(center)
-		nq0 := qs0.Sub(filter1).Max(minV).Min(maxV).Add(center)
-		ov := filter1.Add(one).ShiftAllRightConst(1)
-		np1 := ps1.Add(ov).Max(minV).Min(maxV).Add(center)
-		nq1 := qs1.Sub(ov).Max(minV).Min(maxV).Add(center)
-		np1 = p1.IfElse(hev, np1).IfElse(mask, p1)
-		nq1 = q1.IfElse(hev, nq1).IfElse(mask, q1)
-		np0 = np0.IfElse(mask, p0)
-		nq0 = nq0.IfElse(mask, q0)
-		// --- end ---
-
+		rp1 := archsimd.LoadUint8x16Array((*[16]uint8)(pP1))
+		rp0 := archsimd.LoadUint8x16Array((*[16]uint8)(pP0))
+		rq0 := archsimd.LoadUint8x16Array((*[16]uint8)(base))
+		rq1 := archsimd.LoadUint8x16Array((*[16]uint8)(pQ1))
+		np1, np0, nq0, nq1 := filter4Chain(
+			rp1.ExtendLo8ToUint16().ConvertToInt16(), rp0.ExtendLo8ToUint16().ConvertToInt16(),
+			rq0.ExtendLo8ToUint16().ConvertToInt16(), rq1.ExtendLo8ToUint16().ConvertToInt16(),
+			limit, blimit, hevT, center, minV, maxV, one, three16, four)
+		mp1, mp0, mq0, mq1 := filter4Chain(
+			rp1.ExtendHi8ToUint16().ConvertToInt16(), rp0.ExtendHi8ToUint16().ConvertToInt16(),
+			rq0.ExtendHi8ToUint16().ConvertToInt16(), rq1.ExtendHi8ToUint16().ConvertToInt16(),
+			limit, blimit, hevT, center, minV, maxV, one, three16, four)
+		lf16StoreP2(pP1, np1, mp1)
+		lf16StoreP2(pP0, np0, mp0)
+		lf16StoreP2(base, nq0, mq0)
+		lf16StoreP2(pQ1, nq1, mq1)
+	}
+	for ; i+8 <= length; i += 8 {
+		base := unsafe.Add(q0p, i)
+		pP1 := unsafe.Add(base, -2*step)
+		pP0 := unsafe.Add(base, -step)
+		pQ1 := unsafe.Add(base, step)
+		np1, np0, nq0, nq1 := filter4Chain(
+			lf8LoadP(pP1), lf8LoadP(pP0), lf8LoadP(base), lf8LoadP(pQ1),
+			limit, blimit, hevT, center, minV, maxV, one, three16, four)
 		lf8StoreP(pP1, np1)
 		lf8StoreP(pP0, np0)
 		lf8StoreP(base, nq0)
 		lf8StoreP(pQ1, nq1)
 	}
-	if rem := length - groups*8; rem > 0 {
-		filter4EdgePureGo(pix, q0Base+groups*8, step, outer, rem, params)
+	if rem := length - i; rem > 0 {
+		filter4EdgePureGo(pix, q0Base+i, step, outer, rem, params)
 	}
 }
 
