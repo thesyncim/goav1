@@ -55,89 +55,82 @@ func convStore8U8(p unsafe.Pointer, v archsimd.Uint8x16) {
 	*(*float64)(p) = v.ReshapeToFloat64x2().GetElem(0)
 }
 
-// convXDotPerm0/1/2 are the three USDOT sample-permute index vectors (SVT
-// svt_kDotProdPermuteTbl). Each 4-byte lane group holds four consecutive
-// samples; perm0 serves outputs 0..3 taps 0..3, perm1 serves outputs 0..3 taps
-// 4..7 AND outputs 4..7 taps 0..3, perm2 serves outputs 4..7 taps 4..7.
-var convXDotPerm0 = [16]uint8{0, 1, 2, 3, 1, 2, 3, 4, 2, 3, 4, 5, 3, 4, 5, 6}
-var convXDotPerm1 = [16]uint8{4, 5, 6, 7, 5, 6, 7, 8, 6, 7, 8, 9, 7, 8, 9, 10}
-var convXDotPerm2 = [16]uint8{8, 9, 10, 11, 9, 10, 11, 12, 10, 11, 12, 13, 11, 12, 13, 14}
-
-// convXDotFilter packs the eight filter taps halved into two int8x16 vectors,
-// taps 0..3 broadcast four times into lo and taps 4..7 into hi, for USDOT's
-// full-16-byte second operand. It requires even taps whose halves fit int8. All
-// AV1 subpel filters satisfy this; anything that does not returns ok=false so
-// the caller falls back to the scalar reference.
-func convXDotFilter(kernel [filterTaps]int16) (lo, hi [16]int8, ok bool) {
-	for i := range kernel {
-		if kernel[i]%2 != 0 {
-			return lo, hi, false
-		}
-		v := int(kernel[i]) >> 1
-		if v < -128 || v > 127 {
-			return lo, hi, false
-		}
-	}
-	for g := 0; g < 4; g++ {
-		lo[g*4+0] = int8(kernel[0] >> 1)
-		lo[g*4+1] = int8(kernel[1] >> 1)
-		lo[g*4+2] = int8(kernel[2] >> 1)
-		lo[g*4+3] = int8(kernel[3] >> 1)
-		hi[g*4+0] = int8(kernel[4] >> 1)
-		hi[g*4+1] = int8(kernel[5] >> 1)
-		hi[g*4+2] = int8(kernel[6] >> 1)
-		hi[g*4+3] = int8(kernel[7] >> 1)
-	}
-	return lo, hi, true
-}
+// convXPermuteLo / convXPermuteHi are the two USMMLA sample-permute index
+// vectors (SVT svt_kMatMul8PermuteTbl), loaded once from convolveX8I8MMPermute.
+// permLo builds the two 8-byte USMMLA rows for output columns 0..3 (row0 =
+// samples[1..8] -> out0, row1 = samples[3..10] -> out2; the staggered filter
+// column then yields out1/out3), permHi does the same for output columns 4..7.
+var convXPermuteLoArr = *(*[16]uint8)(convolveX8I8MMPermute[0:16])
+var convXPermuteHiArr = *(*[16]uint8)(convolveX8I8MMPermute[16:32])
 
 // convolveX8GoSIMD is the Go-native SIMD form of convolveX8PureGo using the
-// I8MM unsigned-signed dot product (USDOT via Int32x4.DotProdUS), the same
-// SDOT/USDOT structure as SVT's dist_wtd_convolve_x_neon_dotprod. For each
-// 8-column group it loads 16 reference bytes, permutes them into three 4-byte
-// window layouts (TBL via LookupOrZero), and runs four USDOT: two accumulate the
-// eight halved taps for outputs 0..3 (perm0*filterLo + perm1*filterHi) and two
-// for outputs 4..7 (perm1*filterLo + perm2*filterHi). The two int32x4 partial
-// sums (= sum/2 per output) are narrowed to one int16x8 (XTN/XTN2), the round
-// shim is added, then an arithmetic shift by 6 and [0,255] clamp (SQXTUN)
-// finish, byte-identically to the reference. Because samples stay unsigned there
-// is no -128 bias and no separate tap-0 handling. Kernels whose halved taps do
-// not fit int8 and widths that are not a positive multiple of 8 fall back to the
-// scalar reference.
+// I8MM matrix-multiply-accumulate (USMMLA via Int32x4.MatMulUS), the same
+// algorithm as convolveX8I8MMAsm. For each 8-column group it loads 16 reference
+// bytes, permutes them into the two USMMLA operand layouts (TBL via
+// LookupOrZero), runs two USMMLA (each producing four staggered 8-tap partial
+// sums = outputs 0..3 and 4..7 with the col-shifted filter), narrows to int16
+// (XTN/XTN2), folds in tap-0 via a widening multiply-subtract (UMULL+SUB,
+// reproducing the asm's UMLSL), adds the round shim, arithmetic-shifts by 6 and
+// clamps to [0,255] (SQXTUN). Byte-identical to the reference; kernels whose
+// taps do not fit the halved-even / non-positive-tap0 packing, and widths that
+// are not a positive multiple of 8, fall back to the scalar reference.
 func convolveX8GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
-	filterLo, filterHi, ok := convXDotFilter(kernel)
+	filter, f0, ok := convolveX8I8MMFilter(kernel)
 	if !ok || !(width >= 8 && width%8 == 0) {
 		convolveX8PureGo(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 		return
 	}
 	fo := filterTaps/2 - 1
 
-	fLo := archsimd.LoadInt8x16Array(&filterLo)
-	fHi := archsimd.LoadInt8x16Array(&filterHi)
-	p0 := archsimd.LoadUint8x16Array(&convXDotPerm0)
-	p1 := archsimd.LoadUint8x16Array(&convXDotPerm1)
-	p2 := archsimd.LoadUint8x16Array(&convXDotPerm2)
-	// Round shim folded into the int16 domain: (sum/2 + 2 + 32) >> 6.
+	filterV := archsimd.LoadInt8x16Array((*[16]int8)(unsafe.Pointer(&filter[0])))
+	permLo := archsimd.LoadUint8x16Array(&convXPermuteLoArr)
+	permHi := archsimd.LoadUint8x16Array(&convXPermuteHiArr)
+	f0V := archsimd.BroadcastUint8x16(f0)
+	// Round shim folded into the int16 domain: the asm adds 2 then sqrshrun #6
+	// (which adds 1<<5). Fold both: (sum/2 + 34) >> 6.
 	const xShim = 2 + (1 << 5)
 	shimV := archsimd.BroadcastInt16x8(xShim)
 	zero := archsimd.BroadcastInt32x4(0)
 
 	rbase := unsafe.Pointer(&ref.Pix[refY*ref.Stride+refX-fo])
 	dbase := unsafe.Pointer(&dst.Pix[dstY*dst.Stride+dstX])
+	// f0 == 0 (every regular/smooth filter phase; only the multi-tap-sharp family
+	// has a nonzero end tap) drops the tap-0 UMULL+SUB from the hot loop.
+	if f0 == 0 {
+		for y := 0; y < height; y++ {
+			sp := unsafe.Add(rbase, y*ref.Stride)
+			dp := unsafe.Add(dbase, y*dst.Stride)
+			for col := 0; col < width; col += 8 {
+				raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
+				r0 := raw.LookupOrZero(permLo)
+				r1 := raw.LookupOrZero(permHi)
+				acc0 := zero.MatMulUS(r0, filterV) // outputs 0..3
+				acc1 := zero.MatMulUS(r1, filterV) // outputs 4..7
+				sumHalf := acc0.TruncToInt16().TruncToInt16Hi(acc1)
+				out := sumHalf.Add(shimV).ShiftAllRightConst(6).SaturateToUint8()
+				convStore8U8(dp, out)
+
+				sp = unsafe.Add(sp, 8)
+				dp = unsafe.Add(dp, 8)
+			}
+		}
+		return
+	}
 	for y := 0; y < height; y++ {
 		sp := unsafe.Add(rbase, y*ref.Stride)
 		dp := unsafe.Add(dbase, y*dst.Stride)
 		for col := 0; col < width; col += 8 {
 			raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
-			w0 := raw.LookupOrZero(p0)
-			w1 := raw.LookupOrZero(p1)
-			w2 := raw.LookupOrZero(p2)
-			// outputs 0..3: taps 0..3 over window0, taps 4..7 over window1.
-			acc03 := zero.DotProdUS(w0, fLo).DotProdUS(w1, fHi)
-			// outputs 4..7: taps 0..3 over window1, taps 4..7 over window2.
-			acc47 := zero.DotProdUS(w1, fLo).DotProdUS(w2, fHi)
-			sumHalf := acc03.TruncToInt16().TruncToInt16Hi(acc47)
-			out := sumHalf.Add(shimV).ShiftAllRightConst(6).SaturateToUint8()
+			r0 := raw.LookupOrZero(permLo)
+			r1 := raw.LookupOrZero(permHi)
+			acc0 := zero.MatMulUS(r0, filterV) // outputs 0..3
+			acc1 := zero.MatMulUS(r1, filterV) // outputs 4..7
+			// Narrow the two int32x4 accumulators into one int16x8 (XTN/XTN2).
+			sumHalf := acc0.TruncToInt16().TruncToInt16Hi(acc1)
+			// tap-0 fold: += (k0>>1)*s0 == -(f0*s0). UMULL of the low 8 raw bytes
+			// with the broadcast f0, reinterpreted as int16, subtracted.
+			tap0 := raw.MulWidenLo(f0V).ConvertToInt16()
+			out := sumHalf.Sub(tap0).Add(shimV).ShiftAllRightConst(6).SaturateToUint8()
 			convStore8U8(dp, out)
 
 			sp = unsafe.Add(sp, 8)
@@ -153,8 +146,8 @@ func convIMLoad8(p unsafe.Pointer) archsimd.Int16x8 {
 }
 
 // convolve2D8GoSIMD is the Go-native SIMD form of convolve2D8PureGo (both axes
-// fractional) for width>=8, multiple of 8. The horizontal pass reuses the USDOT
-// dot-product structure of convolveX8GoSIMD to produce the int16 intermediate
+// fractional) for width>=8, multiple of 8. The horizontal pass reuses the USMMLA
+// matrix-multiply structure of convolveX8GoSIMD to produce the int16 intermediate
 // (rounded by round0Bits with the folded xBias), and the vertical pass is a pure
 // int16 widening SMLAL column MAC over that intermediate -- the Wiener-shaped
 // pattern -- with the staged round1 shift, roundOffset subtraction and [0,255]
@@ -166,8 +159,8 @@ func convolve2D8GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dstY int, ref
 
 func convolve2D8GoSIMDScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, scratch *ConvolveScratch) {
 	// Width check first (before the filter pack) so the narrow shapes skip the
-	// convXDotFilter work entirely. Route width-4 and non-multiple-of-8 to the
-	// best asm tier: the I8MM-with-scratch path (fast width-4 4-tap tier + its own
+	// filter-pack work entirely. Route width-4 and non-multiple-of-8 to the best
+	// asm tier: the I8MM-with-scratch path (fast width-4 4-tap tier + its own
 	// NEON/pure-Go fallbacks) when I8MM is present, else NEON.
 	if !(width >= 8 && width%8 == 0) {
 		if cpu.Detected.I8MM {
@@ -177,7 +170,7 @@ func convolve2D8GoSIMDScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY i
 		}
 		return
 	}
-	filterLo, filterHi, ok := convXDotFilter(xKernel)
+	filter, f0, ok := convolveX8I8MMFilter(xKernel)
 	if !ok {
 		if cpu.Detected.I8MM {
 			convolve2D8I8MMWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
@@ -188,24 +181,23 @@ func convolve2D8GoSIMDScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY i
 	}
 	const imStride = maxBlockSize
 	if scratch != nil {
-		convolve2D8GoSIMDIM(dst, ref, dstX, dstY, refX, refY, width, height, filterLo, filterHi, yKernel, &scratch.im, imStride)
+		convolve2D8GoSIMDIM(dst, ref, dstX, dstY, refX, refY, width, height, filter, f0, yKernel, &scratch.im, imStride)
 		return
 	}
 	var im [(maxBlockSize + filterTaps - 1) * maxBlockSize]int16
-	convolve2D8GoSIMDIM(dst, ref, dstX, dstY, refX, refY, width, height, filterLo, filterHi, yKernel, &im, imStride)
+	convolve2D8GoSIMDIM(dst, ref, dstX, dstY, refX, refY, width, height, filter, f0, yKernel, &im, imStride)
 }
 
-func convolve2D8GoSIMDIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, filterLo, filterHi [16]int8, yKernel [filterTaps]int16, im *[(maxBlockSize + filterTaps - 1) * maxBlockSize]int16, imStride int) {
+func convolve2D8GoSIMDIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, filter [16]byte, f0 uint8, yKernel [filterTaps]int16, im *[(maxBlockSize + filterTaps - 1) * maxBlockSize]int16, imStride int) {
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
 
-	// ---- Horizontal pass: byte ref -> int16 im (USDOT, halved taps). ----
-	fLo := archsimd.LoadInt8x16Array(&filterLo)
-	fHi := archsimd.LoadInt8x16Array(&filterHi)
-	p0 := archsimd.LoadUint8x16Array(&convXDotPerm0)
-	p1 := archsimd.LoadUint8x16Array(&convXDotPerm1)
-	p2 := archsimd.LoadUint8x16Array(&convXDotPerm2)
+	// ---- Horizontal pass: byte ref -> int16 im (USMMLA, halved taps). ----
+	filterV := archsimd.LoadInt8x16Array((*[16]int8)(unsafe.Pointer(&filter[0])))
+	permLo := archsimd.LoadUint8x16Array(&convXPermuteLoArr)
+	permHi := archsimd.LoadUint8x16Array(&convXPermuteHiArr)
+	f0V := archsimd.BroadcastUint8x16(f0)
 	// im = (sum/2 + xShim2D) >> 2, xShim2D = (1<<(8+FILTER_BITS-2)) + (1<<((ROUND0_BITS-1)-1)) = 8194.
 	const xShim2D = (1 << (8 + filterBits - 2)) + (1 << ((round0Bits - 1) - 1))
 	shimHV := archsimd.BroadcastInt16x8(xShim2D)
@@ -214,24 +206,46 @@ func convolve2D8GoSIMDIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, r
 	rbase := unsafe.Pointer(&ref.Pix[(refY-foY)*ref.Stride+refX-foX])
 	ibase := unsafe.Pointer(&im[0])
 	const imElem = 2
-	for y := 0; y < imH; y++ {
-		sp := unsafe.Add(rbase, y*ref.Stride)
-		ip := unsafe.Add(ibase, y*imStride*imElem)
-		for col := 0; col < width; col += 8 {
-			raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
-			w0 := raw.LookupOrZero(p0)
-			w1 := raw.LookupOrZero(p1)
-			w2 := raw.LookupOrZero(p2)
-			acc03 := zero.DotProdUS(w0, fLo).DotProdUS(w1, fHi)
-			acc47 := zero.DotProdUS(w1, fLo).DotProdUS(w2, fHi)
-			sumHalf := acc03.TruncToInt16().TruncToInt16Hi(acc47)
-			// ushr #2 is logical; the value is non-negative after the xBias fold,
-			// so an arithmetic shift is bit-identical.
-			outIM := sumHalf.Add(shimHV).ShiftAllRightConst(2)
-			outIM.StoreArray((*[8]int16)(ip))
+	// f0 == 0 (regular/smooth phases) drops the tap-0 UMULL+SUB from the hot loop.
+	if f0 == 0 {
+		for y := 0; y < imH; y++ {
+			sp := unsafe.Add(rbase, y*ref.Stride)
+			ip := unsafe.Add(ibase, y*imStride*imElem)
+			for col := 0; col < width; col += 8 {
+				raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
+				r0 := raw.LookupOrZero(permLo)
+				r1 := raw.LookupOrZero(permHi)
+				acc0 := zero.MatMulUS(r0, filterV) // outputs 0..3
+				acc1 := zero.MatMulUS(r1, filterV) // outputs 4..7
+				sumHalf := acc0.TruncToInt16().TruncToInt16Hi(acc1)
+				outIM := sumHalf.Add(shimHV).ShiftAllRightConst(2)
+				outIM.StoreArray((*[8]int16)(ip))
 
-			sp = unsafe.Add(sp, 8)
-			ip = unsafe.Add(ip, 8*imElem)
+				sp = unsafe.Add(sp, 8)
+				ip = unsafe.Add(ip, 8*imElem)
+			}
+		}
+	} else {
+		for y := 0; y < imH; y++ {
+			sp := unsafe.Add(rbase, y*ref.Stride)
+			ip := unsafe.Add(ibase, y*imStride*imElem)
+			for col := 0; col < width; col += 8 {
+				raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
+				r0 := raw.LookupOrZero(permLo)
+				r1 := raw.LookupOrZero(permHi)
+				acc0 := zero.MatMulUS(r0, filterV) // outputs 0..3
+				acc1 := zero.MatMulUS(r1, filterV) // outputs 4..7
+				sumHalf := acc0.TruncToInt16().TruncToInt16Hi(acc1)
+				// tap-0 fold (UMULL+SUB == asm's UMLSL), then round shim; ushr #2 is
+				// logical but the value is non-negative after the xBias fold, so an
+				// arithmetic shift is bit-identical.
+				tap0 := raw.MulWidenLo(f0V).ConvertToInt16()
+				outIM := sumHalf.Sub(tap0).Add(shimHV).ShiftAllRightConst(2)
+				outIM.StoreArray((*[8]int16)(ip))
+
+				sp = unsafe.Add(sp, 8)
+				ip = unsafe.Add(ip, 8*imElem)
+			}
 		}
 	}
 
