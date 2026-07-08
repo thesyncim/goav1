@@ -90,6 +90,22 @@ Ordered by decode hotness (port highest first):
   SDOT/UDOT, USMMLA, TBL on arm64. dsp proves the port hits asm speed where the
   ops exist; these 4 are the whole gap to porting everything at asm speed.
 
+## BREAKTHROUGH (2026-07-08): transforms BEAT asm, byte-exact — approach corrected
+
+The earlier "transforms lose at int64 2-wide" conclusion was WRONG. The fix:
+process 4 columns per Int32x4 and round each rotation's combined product-sum
+ONCE in int32 (matching scalar roundShift). int32 suffices for transform
+precision on int16-range inputs, so it runs 4-wide where asm runs int64 2-wide.
+- DCT8 column pass (x4 cols, M4): int64 2-wide 26.4ns / **int32 4-wide 12.6ns**
+  / asm 18.9ns -> **1.5x faster than asm**, byte-exact (40k cases + conformance).
+- WIRED + LIVE: inverseDCT8Col4Impl bound to the SIMD kernel under
+  goexperiment.simd; `conformance` GREEN with it active. FIRST decode kernel
+  fully replaced by faster-than-asm byte-exact Go SIMD.
+- Pattern for ALL transforms: int32 4-wide, round-once, Mul/Add/ShiftAllRight/
+  Max/Min (existing ops). RSHRN would fuse round+narrow (perf, optional).
+- The 6 added ops (SQRDMULH/SDOT/USDOT/USMMLA/SABD) remain for convolve (SDOT/
+  USMMLA), cdef+loopfilter (AbsDiff); SQRDMULH useful for single-term rotations.
+
 ## Perf-at-width finding (2026-07-08) — decides which kernels are worth porting
 
 The Go-native SIMD port is byte-exact for EVERY kernel shape tested (element-wise,
