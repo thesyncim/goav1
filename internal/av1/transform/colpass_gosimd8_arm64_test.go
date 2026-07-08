@@ -172,3 +172,53 @@ func BenchmarkDCT16x8_ASM(b *testing.B) {
 		inverseDCT16Col2NEONAdapter(work[6:], stride, -(1<<12), (1<<12)-1)
 	}
 }
+
+func TestInverseDCT32Col8SIMD16MatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x3232))
+	min, max := int32(-(1 << 12)), int32((1<<12)-1)
+	for iter := 0; iter < 40000; iter++ {
+		stride := 8 + rng.Intn(3)
+		a := make([]int16, 32*stride)
+		for k := 0; k < 32; k++ {
+			for col := 0; col < 8; col++ {
+				a[k*stride+col] = int16(min + int32(rng.Int63n(int64(max)-int64(min)+1)))
+			}
+		}
+		b := make([]int16, len(a))
+		copy(b, a)
+		for col := 0; col < 8; col++ {
+			inverseDCT32(a[col:], stride, min, max)
+		}
+		inverseDCT32Col8SIMD16(b, stride, min, max)
+		for i := range a {
+			if a[i] != b[i] {
+				t.Fatalf("iter=%d at %d: scalar=%d simd=%d", iter, i, a[i], b[i])
+			}
+		}
+	}
+}
+
+func TestInverseDCT64Col8SIMD16MatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x6464))
+	min, max := int32(-(1 << 12)), int32((1<<12)-1)
+	for iter := 0; iter < 40000; iter++ {
+		stride := 8 + rng.Intn(3)
+		a := make([]int16, 64*stride)
+		for k := 0; k < 64; k++ {
+			for col := 0; col < 8; col++ {
+				a[k*stride+col] = int16(min + int32(rng.Int63n(int64(max)-int64(min)+1)))
+			}
+		}
+		b := make([]int16, len(a))
+		copy(b, a)
+		for col := 0; col < 8; col++ {
+			inverseDCT64(a[col:], stride, min, max)
+		}
+		inverseDCT64Col8SIMD16(b, stride, min, max)
+		for i := range a {
+			if a[i] != b[i] {
+				t.Fatalf("iter=%d at %d: scalar=%d simd=%d", iter, i, a[i], b[i])
+			}
+		}
+	}
+}

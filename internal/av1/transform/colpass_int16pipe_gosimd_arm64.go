@@ -11,5 +11,7 @@ package transform
 func init() {
 	inverseDCT8Col8Impl16 = inverseDCT8Col8SIMD16
 	inverseDCT16Col8Impl16 = inverseDCT16Col8SIMD16
+	inverseDCT32Col8Impl16 = inverseDCT32Col8SIMD16
+	inverseDCT64Col8Impl16 = inverseDCT64Col8SIMD16
 	int16ColumnFast = true
 }

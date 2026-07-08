@@ -33,7 +33,14 @@ func hasFastInt16Column(t Type, height int) bool {
 		return false
 	}
 	vertical, _, ok := t.tx1DTypes()
-	return ok && vertical == tx1DDCT && (height == dct8Size || height == dct16Size)
+	if !ok || vertical != tx1DDCT {
+		return false
+	}
+	switch height {
+	case dct8Size, dct16Size, dct32Size, dct64Size:
+		return true
+	}
+	return false
 }
 
 func inverseDCT8Col8Scalar16(buf []int16, stride int, min int32, max int32) {
