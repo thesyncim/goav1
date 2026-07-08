@@ -36,6 +36,16 @@ var (
 	inverseDCT64Col2Impl = inverseDCT64Col2PureGo
 )
 
+// inverseDCT8Col4Impl transforms four adjacent columns for the 8-point DCT.
+// The default replicates the historical behaviour (two batched column pairs);
+// GOEXPERIMENT=simd binds the byte-exact int32 4-wide kernel (colpass_gosimd4).
+var inverseDCT8Col4Impl = inverseDCT8Col4Default
+
+func inverseDCT8Col4Default(buf []int32, rowStride int, min int32, max int32) {
+	inverseDCT8Col2Impl(buf, rowStride, min, max)
+	inverseDCT8Col2Impl(buf[2:], rowStride, min, max)
+}
+
 // inverseDCT32Col4 / inverseDCT64Col4 transform four adjacent columns of the
 // scratch buffer in place (dav1d's four-lane column shape, src/arm/64/itx16.S).
 // The result for each column equals the corresponding single-column scalar
@@ -92,6 +102,9 @@ func inverse1DCol4(buf []int32, rowStride int, length int, typ tx1DType, min int
 	switch typ {
 	case tx1DDCT:
 		switch length {
+		case dct8Size:
+			inverseDCT8Col4Impl(buf, rowStride, min, max)
+			return
 		case dct32Size:
 			inverseDCT32Col4Impl(buf, rowStride, min, max)
 			return
