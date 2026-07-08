@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego
+//go:build arm64 && !purego && !goexperiment.simd
 
 package restoration
 
@@ -13,6 +13,10 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 // through the hand-written NEON asm; otherwise they keep the pure-Go reference.
 // The assignment happens once, before any decoder goroutine starts, so the
 // steady-state cost is a single indirect call.
+//
+// Under the goexperiment.simd build the Go-native SIMD vertical kernel binds
+// instead (wiener_gosimd_arm64.go); this file is excluded there so the two
+// dispatch inits never fight over the same slots.
 //
 // The NEON wrappers fall back to pure-Go for widths below the 8-lane vector
 // (and for non-multiple-of-8 tails) so the asm only handles full 8-wide column

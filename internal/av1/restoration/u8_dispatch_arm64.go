@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego
+//go:build arm64 && !purego && !goexperiment.simd
 
 package restoration
 
@@ -15,6 +15,11 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 // otherwise they keep the pure-Go references. The assignment happens once,
 // before any decoder goroutine starts, so the steady-state cost is a single
 // indirect call.
+//
+// Under the goexperiment.simd build this file is excluded and the Go-native
+// SIMD kernels bind instead (selfguided_blend_gosimd_arm64.go), which also
+// re-binds the Wiener u8 passes to their NEON asm (not yet ported to
+// archsimd).
 func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {

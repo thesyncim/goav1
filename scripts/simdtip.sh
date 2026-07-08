@@ -15,7 +15,7 @@
 #
 set -euo pipefail
 
-GOTIP_ROOT="${GOTIP_ROOT:-$HOME/sdk/gotip}"
+GOTIP_ROOT="${GOTIP_ROOT:-$HOME/sdk/tsgo}"
 if [[ ! -x "$GOTIP_ROOT/bin/go" ]]; then
 	echo "gotip not found at $GOTIP_ROOT. Install: go install golang.org/dl/gotip@latest && gotip download" >&2
 	exit 1
