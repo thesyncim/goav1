@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant.
+
+//go:build goexperiment.simd && arm64 && !purego
+
+package transform
+
+import (
+	"math/rand"
+	"testing"
+)
+
+func TestInverseDCT8Col8SIMDMatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(0xd8c8))
+	ranges := [][2]int32{{-(1 << 11), (1 << 11) - 1}, {-(1 << 12), (1 << 12) - 1}}
+	for iter := 0; iter < 40000; iter++ {
+		r := ranges[rng.Intn(len(ranges))]
+		min, max := r[0], r[1]
+		stride := 8 + rng.Intn(3)
+		a := make([]int32, 8*stride)
+		for k := 0; k < 8; k++ {
+			for col := 0; col < 8; col++ {
+				a[k*stride+col] = min + int32(rng.Int63n(int64(max)-int64(min)+1))
+			}
+		}
+		b := make([]int32, len(a))
+		copy(b, a)
+		for col := 0; col < 8; col++ {
+			inverseDCT8(a[col:], stride, min, max)
+		}
+		inverseDCT8Col8SIMD(b, stride, min, max)
+		for k := 0; k < 8; k++ {
+			for col := 0; col < 8; col++ {
+				i := k*stride + col
+				if a[i] != b[i] {
+					t.Fatalf("iter=%d range=[%d,%d] stride=%d row=%d col=%d: scalar=%d simd=%d",
+						iter, min, max, stride, k, col, a[i], b[i])
+				}
+			}
+		}
+	}
+}
+
+func benchDCT8x8(b *testing.B, fn func([]int32, int, int32, int32)) {
+	rng := rand.New(rand.NewSource(9))
+	const stride = 8
+	buf := make([]int32, 8*stride+8)
+	for i := range buf {
+		buf[i] = int32(rng.Intn(1<<12) - (1 << 11))
+	}
+	work := make([]int32, len(buf))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		copy(work, buf)
+		fn(work, stride, -(1 << 12), (1<<12)-1)
+	}
+}
+
+// int16 8-wide vs int32 4-wide (x2 for 8 cols) vs NEON asm (x4 Col2).
+func BenchmarkDCT8x8_Int16(b *testing.B) { benchDCT8x8(b, inverseDCT8Col8SIMD) }
+func BenchmarkDCT8x8_Int32(b *testing.B) {
+	benchDCT8x8(b, func(buf []int32, s int, mn, mx int32) {
+		inverseDCT8Col4SIMD(buf, s, mn, mx)
+		inverseDCT8Col4SIMD(buf[4:], s, mn, mx)
+	})
+}
+func BenchmarkDCT8x8_ASM(b *testing.B) {
+	benchDCT8x8(b, func(buf []int32, s int, mn, mx int32) {
+		inverseDCT8Col2NEONAdapter(buf, s, mn, mx)
+		inverseDCT8Col2NEONAdapter(buf[2:], s, mn, mx)
+		inverseDCT8Col2NEONAdapter(buf[4:], s, mn, mx)
+		inverseDCT8Col2NEONAdapter(buf[6:], s, mn, mx)
+	})
+}
