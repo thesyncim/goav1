@@ -9,10 +9,10 @@ package cdef
 //go:noescape
 func cdefFindDirectionNEONAsm(img *uint16, stride uintptr, coeffShift uintptr, dir *int32, variance *int32)
 
-func init() {
-	findDirectionImpl = findDirectionNEON
-	findDirectionDualImpl = findDirectionDualNEON
-}
+// The dispatch binding lives in direction_dispatch_arm64.go so it is excluded
+// under goexperiment.simd (where the Go-native SIMD kernel binds instead); the
+// NEON wrapper below stays compiled in both builds for the differential test and
+// the head-to-head benchmark.
 
 func findDirectionNEON(img []uint16, stride int, coeffShift int) (int, int32) {
 	var dir, variance int32

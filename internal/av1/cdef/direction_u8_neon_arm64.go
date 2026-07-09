@@ -9,10 +9,8 @@ package cdef
 //go:noescape
 func cdefFindDirectionU8NEONAsm(img *byte, stride uintptr, dir *int32, variance *int32)
 
-func init() {
-	findDirectionU8Impl = findDirectionU8NEON
-	findDirectionDualU8Impl = findDirectionDualU8NEON
-}
+// The dispatch binding lives in direction_dispatch_arm64.go (excluded under
+// goexperiment.simd); the wrapper below stays compiled in both builds.
 
 func findDirectionU8NEON(img []byte, stride int) (int, int32) {
 	var dir, variance int32
