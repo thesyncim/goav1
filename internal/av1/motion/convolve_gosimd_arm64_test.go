@@ -146,21 +146,10 @@ func BenchmarkConvolveX8GoSIMD_32(b *testing.B) {
 	})
 }
 
-func BenchmarkConvolveY8GoSIMD_32(b *testing.B) {
-	dst, ref := benchPlanes(32, 8)
-	yk := subpelFilters8[5]
-	runConvolveBench(b, 32, 32, func() {
-		convolveY8GoSIMD(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, yk)
-	})
-}
-
-// TestConvolveY8GoSIMDMatchesPureGo checks the Go-native SIMD vertical convolve
-// is byte-identical to the pure-Go reference over every subpel phase and a range
-// of block shapes, including hardened extreme-input planes.
-func TestConvolveY8GoSIMDMatchesPureGo(t *testing.T) {
+func TestConvolveY8GoSIMDUSDOTMatchesPureGo(t *testing.T) {
 	tables := [][16][filterTaps]int16{subpelFilters8, subpelFilters8Sharp, subpelFilters8Smooth, subpelFilters4, subpelFilters4Smooth, bilinearFilters}
 	sizes := []struct{ w, h int }{
-		{8, 8}, {8, 4}, {16, 16}, {16, 8}, {24, 32}, {32, 32}, {32, 16}, {64, 64}, {40, 8}, {8, 1}, {8, 2},
+		{8, 8}, {8, 4}, {16, 16}, {16, 8}, {24, 32}, {32, 32}, {32, 16}, {64, 64}, {40, 8}, {8, 12}, {8, 2}, {8, 6},
 	}
 	for ti, table := range tables {
 		for _, size := range sizes {
@@ -174,7 +163,7 @@ func TestConvolveY8GoSIMDMatchesPureGo(t *testing.T) {
 				want, _ := testPlane(size.w, size.h, 1, size.w)
 				got, _ := testPlane(size.w, size.h, 1, size.w)
 				convolveY8PureGo(want, ref, 0, 0, pad, pad, size.w, size.h, kernel)
-				convolveY8GoSIMD(got, ref, 0, 0, pad, pad, size.w, size.h, kernel)
+				convolveY8GoSIMDUSDOT(got, ref, 0, 0, pad, pad, size.w, size.h, kernel)
 				for i := range want.Pix {
 					if want.Pix[i] != got.Pix[i] {
 						t.Fatalf("table %d size %dx%d subY %d: mismatch at %d: got %d want %d", ti, size.w, size.h, subY, i, got.Pix[i], want.Pix[i])
@@ -182,5 +171,18 @@ func TestConvolveY8GoSIMDMatchesPureGo(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func BenchmarkConvolveY8GoSIMDUSDOT_32(b *testing.B) {
+	kernel := subpelFilters8[8]
+	pad := filterTaps
+	refSide := 32 + 2*pad
+	ref, _ := testPlane(refSide, refSide, 1, refSide)
+	fillMotionTestPlane(ref)
+	dst, _ := testPlane(32, 32, 1, 32)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		convolveY8GoSIMDUSDOT(dst, ref, 0, 0, pad, pad, 32, 32, kernel)
 	}
 }

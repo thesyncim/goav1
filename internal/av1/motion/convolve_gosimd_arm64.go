@@ -8,17 +8,18 @@
 // #2 decode hotspot (inter prediction) and are byte-identical to the pure-Go
 // reference in vector.go, which every variant must match sample for sample.
 //
-// The vertical (Y) pass is a pure strided-column widening MAC, the same shape
-// as the Wiener vertical restoration pass that already beats its hand-written
-// NEON asm: eight output columns are processed per iteration, the eight taps
-// are fused widening multiply-accumulated (SMLAL / SMLAL2 via
-// Int32x4.MulWidenLoAdd / MulWidenHiAdd) into two int32 lane groups, then the
-// pair of accumulators is round-shifted-and-narrowed to int16 (SQRSHRN /
-// SQRSHRN2 via ShiftRightRoundNarrow / ShiftRightRoundNarrowHi) and clamped to
-// [0,255] (SQXTUN via SaturateToUint8). No transpose is needed: the vertical
-// convolve reads eight consecutive bytes per row across eight rows, so every
-// load is a register-direct byte load and the accumulate chain is straight-line
-// register-resident work.
+// The horizontal (X) pass (convolveX8GoSIMD) beats the I8MM asm via USMMLA plus
+// the fused SQRSHRUN round-narrow tail and is wired as the dispatch kernel.
+//
+// The vertical (Y) pass (convolveY8GoSIMDUSDOT) ports SVT's transposed-USDOT
+// algorithm: the tap rows are byte-transposed with ZIP so each output column's
+// taps land as four contiguous bytes, then two USDOT per lane group accumulate
+// the (all-halved) int8 filter's dot products and SQRSHRUN #6 rounds+narrows the
+// int16 half-sum. It is ~2x faster than the naive strided widening MAC and
+// byte-exact, but still ~1.26x behind the hand-scheduled I8MM asm -- Go's
+// instruction scheduler on the transpose-heavy body is the wall -- so Y8 keeps
+// the asm tier dispatched and this kernel is retained as the fastest pure-Go
+// vertical form.
 
 package motion
 
@@ -29,16 +30,6 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
-
-// convYLoad8 widens 8 consecutive reference bytes at p to an Int16x8. Pixels are
-// 0..255, so the zero-extended value is a non-negative int16 whose bit pattern
-// reproduces int(byte) exactly; int16*int16->int32 (SMLAL) therefore matches the
-// reference's k[i]*int(s[i]) product. p is a walking pointer advanced 8 bytes per
-// column iteration, so this lowers to a register-direct 8-byte load with no slice
-// bounds check.
-func convYLoad8(p unsafe.Pointer) archsimd.Int16x8 {
-	return archsimd.LoadUint8x16Array((*[16]uint8)(p)).ExtendLo8ToUint16().ConvertToInt16()
-}
 
 // convStore8 narrows the low 8 int16 lanes of v to bytes (SQXTUN) and writes
 // them contiguously at raw pointer p as a single 8-byte store. Only the low 8
@@ -341,80 +332,170 @@ func convolve2D8GoSIMDIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, r
 	}
 }
 
-// convolveY8GoSIMD is the Go-native SIMD form of convolveY8PureGo for width>=8
-// (multiple of 8). Byte-identical to the scalar reference; other widths fall
-// back to it. It always runs the full 8-tap MAC; 4-tap kernels merely zero the
-// end taps so their contribution vanishes, keeping the result bit-exact.
-func convolveY8GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
-	if !(width >= 8 && width%8 == 0) {
-		convolveY8PureGo(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+// convYLoadRow8 loads 8 reference bytes at p into the low 8 lanes of a Uint8x16
+// (a 16-byte register-direct load; only the low 8 are used by the ZIP transpose,
+// the high 8 are the next columns and are discarded). p indexes into the resident
+// tap window, so the load never bounds-faults.
+func convYLoadRow8(p unsafe.Pointer) archsimd.Uint8x16 {
+	return archsimd.LoadUint8x16Array((*[16]uint8)(p))
+}
+
+// convolveY8GoSIMDUSDOT is the Go-native SIMD form of the vertical 8-tap convolve
+// using the transposed-USDOT algorithm of SVT's convolve_y_sr_8tap_neon_i8mm (the
+// same one convolveY8I8MMAsm implements): the eight tap rows are byte-transposed
+// with ZIP so each output column's taps become four contiguous bytes, then two
+// USDOT per lane-group dot them against the (even+odd all halved) int8 filter, and
+// the int16 half-sum is round-shifted+narrowed+clamped in one SQRSHRUN #6. Four
+// output rows are produced per iteration from eleven input rows, reusing the
+// shared ZIP stages. It replaces the naive strided SMLAL MAC, which loses ~2.6x to
+// the asm because it issues 16 widening MACs per 8 outputs where USDOT needs four.
+// Byte-identical to convolveY8PureGo; shapes it does not cover fall back to asm.
+//
+// Filter math: every AV1 tap is even, so filter[i] = kernel[i]>>1 fits int8 and
+// USDOT accumulates sum(sample*kernel/2) = half the true convolution; SQRSHRUN #6
+// then yields round(sum*kernel >> 7) saturated to [0,255] with no tap-0 fixup.
+func convolveY8GoSIMDUSDOT(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+	filter, taps, ok := convolveY8I8MMFilter(kernel)
+	if !ok || taps != 8 || !(width >= 8 && width%8 == 0) || height%4 != 0 {
+		convolveY8I8MM(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 		return
 	}
-	fo := filterTaps/2 - 1
-	stride := ref.Stride
-
-	// Broadcast the eight taps once, hoisting the DUPs out of the hot loop.
-	k0 := archsimd.BroadcastInt16x8(kernel[0])
-	k1 := archsimd.BroadcastInt16x8(kernel[1])
-	k2 := archsimd.BroadcastInt16x8(kernel[2])
-	k3 := archsimd.BroadcastInt16x8(kernel[3])
-	k4 := archsimd.BroadcastInt16x8(kernel[4])
-	k5 := archsimd.BroadcastInt16x8(kernel[5])
-	k6 := archsimd.BroadcastInt16x8(kernel[6])
-	k7 := archsimd.BroadcastInt16x8(kernel[7])
+	// fLo / fHi: the low four taps and high four taps, each 4-byte group replicated
+	// across all four USDOT lane groups so the plain (non-indexed) USDOT applies the
+	// same four taps to every column, matching the asm's usdot ..., v0.4b[0/1].
+	var fLoArr, fHiArr [16]int8
+	for g := 0; g < 4; g++ {
+		fLoArr[g*4+0] = int8(filter[0])
+		fLoArr[g*4+1] = int8(filter[1])
+		fLoArr[g*4+2] = int8(filter[2])
+		fLoArr[g*4+3] = int8(filter[3])
+		fHiArr[g*4+0] = int8(filter[4])
+		fHiArr[g*4+1] = int8(filter[5])
+		fHiArr[g*4+2] = int8(filter[6])
+		fHiArr[g*4+3] = int8(filter[7])
+	}
+	fLo := archsimd.LoadInt8x16Array(&fLoArr)
+	fHi := archsimd.LoadInt8x16Array(&fHiArr)
 	zero := archsimd.BroadcastInt32x4(0)
 
-	// Base pointer of the top tap row / first output column. Row walks advance by
-	// the plane strides; column walks advance 8 bytes per 8-wide group. Every
-	// access is in range (the dispatch guarantees the tap window is resident), so
-	// there are no per-load bounds checks.
+	fo := filterTaps/2 - 1 // 3
+	stride := ref.Stride
+	dstStride := dst.Stride
 	rbase := unsafe.Pointer(&ref.Pix[(refY-fo)*stride+refX])
-	dbase := unsafe.Pointer(&dst.Pix[dstY*dst.Stride+dstX])
-	for y := 0; y < height; y++ {
-		p0 := unsafe.Add(rbase, y*stride)
-		p1 := unsafe.Add(p0, stride)
-		p2 := unsafe.Add(p1, stride)
-		p3 := unsafe.Add(p2, stride)
-		p4 := unsafe.Add(p3, stride)
-		p5 := unsafe.Add(p4, stride)
-		p6 := unsafe.Add(p5, stride)
-		p7 := unsafe.Add(p6, stride)
-		dp := unsafe.Add(dbase, y*dst.Stride)
-		for col := 0; col < width; col += 8 {
-			c0 := convYLoad8(p0)
-			c1 := convYLoad8(p1)
-			c2 := convYLoad8(p2)
-			c3 := convYLoad8(p3)
-			c4 := convYLoad8(p4)
-			c5 := convYLoad8(p5)
-			c6 := convYLoad8(p6)
-			c7 := convYLoad8(p7)
-
-			// Columns 0..3 (SMLAL) and 4..7 (SMLAL2), one fused widening MAC per
-			// tap into each int32 lane group: 16 SMLAL total.
-			lo := zero.MulWidenLoAdd(c0, k0).MulWidenLoAdd(c1, k1).
-				MulWidenLoAdd(c2, k2).MulWidenLoAdd(c3, k3).
-				MulWidenLoAdd(c4, k4).MulWidenLoAdd(c5, k5).
-				MulWidenLoAdd(c6, k6).MulWidenLoAdd(c7, k7)
-			hi := zero.MulWidenHiAdd(c0, k0).MulWidenHiAdd(c1, k1).
-				MulWidenHiAdd(c2, k2).MulWidenHiAdd(c3, k3).
-				MulWidenHiAdd(c4, k4).MulWidenHiAdd(c5, k5).
-				MulWidenHiAdd(c6, k6).MulWidenHiAdd(c7, k7)
-
-			// roundPowerOfTwo(sum, filterBits) with signed saturating narrow to
-			// int16 (SQRSHRN/SQRSHRN2), then [0,255] clamp (SQXTUN).
-			narrow := lo.ShiftRightRoundNarrow(filterBits).ShiftRightRoundNarrowHi(hi, filterBits)
-			convStore8(dp, narrow)
-
-			p0 = unsafe.Add(p0, 8)
-			p1 = unsafe.Add(p1, 8)
-			p2 = unsafe.Add(p2, 8)
-			p3 = unsafe.Add(p3, 8)
-			p4 = unsafe.Add(p4, 8)
-			p5 = unsafe.Add(p5, 8)
-			p6 = unsafe.Add(p6, 8)
-			p7 = unsafe.Add(p7, 8)
-			dp = unsafe.Add(dp, 8)
+	dbase := unsafe.Pointer(&dst.Pix[dstY*dstStride+dstX])
+	for col := 0; col < width; col += 8 {
+		rc := unsafe.Add(rbase, col)
+		dp := unsafe.Add(dbase, col)
+		y := 0
+		// Eight output rows per block from fifteen input rows: transpose all
+		// thirteen zRow(j) = zip1(row j, row j+2) once, then emit d0..d7. The block
+		// is self-contained (no loop-carried z state), which trades the four-row
+		// sliding window's per-iteration PHI-copy shuffle for a couple extra ZIPs and
+		// a little z-spill -- a net win (118ns -> 112ns) since the prime amortizes
+		// over eight rows and there is no loop-back-edge register shuffle.
+		for ; y+8 <= height; y += 8 {
+			p := unsafe.Add(rc, y*stride)
+			s0 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s1 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s2 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s3 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s4 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s5 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s6 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s7 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s8 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s9 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s10 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s11 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s12 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s13 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s14 := convYLoadRow8(p)
+			z0 := s0.InterleaveLo(s2)
+			z1 := s1.InterleaveLo(s3)
+			z2 := s2.InterleaveLo(s4)
+			z3 := s3.InterleaveLo(s5)
+			z4 := s4.InterleaveLo(s6)
+			z5 := s5.InterleaveLo(s7)
+			z6 := s6.InterleaveLo(s8)
+			z7 := s7.InterleaveLo(s9)
+			z8 := s8.InterleaveLo(s10)
+			z9 := s9.InterleaveLo(s11)
+			z10 := s10.InterleaveLo(s12)
+			z11 := s11.InterleaveLo(s13)
+			z12 := s12.InterleaveLo(s14)
+			convY8Emit(dp, zero, z0, z1, z4, z5, fLo, fHi)
+			convY8Emit(unsafe.Add(dp, dstStride), zero, z1, z2, z5, z6, fLo, fHi)
+			convY8Emit(unsafe.Add(dp, 2*dstStride), zero, z2, z3, z6, z7, fLo, fHi)
+			convY8Emit(unsafe.Add(dp, 3*dstStride), zero, z3, z4, z7, z8, fLo, fHi)
+			convY8Emit(unsafe.Add(dp, 4*dstStride), zero, z4, z5, z8, z9, fLo, fHi)
+			convY8Emit(unsafe.Add(dp, 5*dstStride), zero, z5, z6, z9, z10, fLo, fHi)
+			convY8Emit(unsafe.Add(dp, 6*dstStride), zero, z6, z7, z10, z11, fLo, fHi)
+			convY8Emit(unsafe.Add(dp, 7*dstStride), zero, z7, z8, z11, z12, fLo, fHi)
+			dp = unsafe.Add(dp, 8*dstStride)
+		}
+		// Four-row tail (height % 8 == 4): eleven input rows -> nine zRow, emit d0..d3.
+		if y < height {
+			p := unsafe.Add(rc, y*stride)
+			s0 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s1 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s2 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s3 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s4 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s5 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s6 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s7 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s8 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s9 := convYLoadRow8(p)
+			p = unsafe.Add(p, stride)
+			s10 := convYLoadRow8(p)
+			z0 := s0.InterleaveLo(s2)
+			z1 := s1.InterleaveLo(s3)
+			z2 := s2.InterleaveLo(s4)
+			z3 := s3.InterleaveLo(s5)
+			z4 := s4.InterleaveLo(s6)
+			z5 := s5.InterleaveLo(s7)
+			z6 := s6.InterleaveLo(s8)
+			z7 := s7.InterleaveLo(s9)
+			z8 := s8.InterleaveLo(s10)
+			convY8Emit(dp, zero, z0, z1, z4, z5, fLo, fHi)
+			convY8Emit(unsafe.Add(dp, dstStride), zero, z1, z2, z5, z6, fLo, fHi)
+			convY8Emit(unsafe.Add(dp, 2*dstStride), zero, z2, z3, z6, z7, fLo, fHi)
+			convY8Emit(unsafe.Add(dp, 3*dstStride), zero, z3, z4, z7, z8, fLo, fHi)
 		}
 	}
+}
+
+// convY8Emit computes one 8-column vertical-convolve output row and stores it.
+// za/zb are the low-tap (0..3) window's zRow pair, zc/zd the high-tap (4..7)
+// window's; InterleaveLo -> columns 0..3, InterleaveHi -> columns 4..7. Two USDOT
+// per lane group accumulate the halved-tap dot products (int16 half-sum), then
+// SQRSHRUN #6 rounds+narrows+clamps. Kept tiny so it inlines (no CALL in the hot
+// body); verified via the CALL-target dump.
+func convY8Emit(dstp unsafe.Pointer, zero archsimd.Int32x4, za, zb, zc, zd archsimd.Uint8x16, fLo, fHi archsimd.Int8x16) {
+	lo := zero.DotProdUS(za.InterleaveLo(zb), fLo).DotProdUS(zc.InterleaveLo(zd), fHi)
+	hi := zero.DotProdUS(za.InterleaveHi(zb), fLo).DotProdUS(zc.InterleaveHi(zd), fHi)
+	convStore8U8(dstp, lo.TruncToInt16().TruncToInt16Hi(hi).ShiftRightRoundNarrowUint8(6))
 }
