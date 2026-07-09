@@ -10,13 +10,16 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 
 // init binds the compound predictors under the goexperiment.simd build. It mirrors
 // compound_dispatch_arm64.go (the !goexperiment.simd sibling) -- every predictor
-// keeps its proven NEON/I8MM asm tier -- except the 8-bit horizontal CONV_BUF pass,
-// which routes through the Go-native SIMD kernel (USMMLA + int16 round-narrow tail).
-// compoundX8GoSIMD itself falls back to the asm tier for width-4, edge-overhanging,
-// odd-tap and nonzero-end-tap shapes, so every case stays accelerated and byte-exact.
+// keeps its proven NEON/I8MM asm tier -- except two passes routed through Go-native
+// SIMD kernels: the 8-bit horizontal CONV_BUF pass (USMMLA + int16 round-narrow
+// tail) and the 8-bit compound average/distance blend (16-wide UMULL/UMLAL +
+// SQSHRUN fuse). Both fall back to the asm tier for the shapes they do not cover
+// (width-4, edge-overhang, odd taps for X; roundBits!=4 and width<8 for the blend),
+// so every case stays accelerated and byte-exact.
 func init() {
 	compoundNEONBind()
 	if cpu.Detected.NEON {
 		predictInterCompoundRef8ToConvBufXImpl = compoundX8GoSIMD
+		blendCompoundAvg8Impl = blendCompoundAvg8GoSIMD
 	}
 }
