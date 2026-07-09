@@ -22,7 +22,11 @@ func init() {
 		convolveX8Impl = convolveX8NEON
 		convolveY8Impl = convolveY8NEON
 		if cpu.Detected.I8MM {
-			convolveX8Impl = convolveX8I8MM
+			// Horizontal-8: the Go-native SIMD kernel beats the I8MM asm on the
+			// wide (multiple-of-8) shapes via the fused SQRSHRUN round-narrow
+			// tail; the dispatch wrapper routes width-4/unsupported taps back to
+			// the I8MM asm tier so every shape stays accelerated and byte-exact.
+			convolveX8Impl = convolveX8GoSIMDDispatch
 			convolveY8Impl = convolveY8I8MM
 		}
 

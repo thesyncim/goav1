@@ -86,9 +86,10 @@ func convolveX8GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX
 	permLo := archsimd.LoadUint8x16Array(&convXPermuteLoArr)
 	permHi := archsimd.LoadUint8x16Array(&convXPermuteHiArr)
 	f0V := archsimd.BroadcastUint8x16(f0)
-	// Round shim folded into the int16 domain: the asm adds 2 then sqrshrun #6
-	// (which adds 1<<5). Fold both: (sum/2 + 34) >> 6.
-	const xShim = 2 + (1 << 5)
+	// Horizontal bias only: the asm adds 2 then sqrshrun #6. SQRSHRUN performs
+	// the rounding (its internal +1<<5) and the [0,255] clamp itself, so the
+	// shim carries just the +2 and the tail is a single fused round-narrow.
+	const xShim = 2
 	shimV := archsimd.BroadcastInt16x8(xShim)
 	zero := archsimd.BroadcastInt32x4(0)
 
@@ -107,7 +108,9 @@ func convolveX8GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX
 				acc0 := zero.MatMulUS(r0, filterV) // outputs 0..3
 				acc1 := zero.MatMulUS(r1, filterV) // outputs 4..7
 				sumHalf := acc0.TruncToInt16().TruncToInt16Hi(acc1)
-				out := sumHalf.Add(shimV).ShiftAllRightConst(6).SaturateToUint8()
+				// Fused round-shift-narrow-clamp: sqrshrun #6 == round(+1<<5),
+				// arith-shift #6, saturate to [0,255]. Replaces asr #6 + sqxtun.
+				out := sumHalf.Add(shimV).ShiftRightRoundNarrowUint8(6)
 				convStore8U8(dp, out)
 
 				sp = unsafe.Add(sp, 8)
@@ -130,12 +133,32 @@ func convolveX8GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX
 			// tap-0 fold: += (k0>>1)*s0 == -(f0*s0). UMULL of the low 8 raw bytes
 			// with the broadcast f0, reinterpreted as int16, subtracted.
 			tap0 := raw.MulWidenLo(f0V).ConvertToInt16()
-			out := sumHalf.Sub(tap0).Add(shimV).ShiftAllRightConst(6).SaturateToUint8()
+			out := sumHalf.Sub(tap0).Add(shimV).ShiftRightRoundNarrowUint8(6)
 			convStore8U8(dp, out)
 
 			sp = unsafe.Add(sp, 8)
 			dp = unsafe.Add(dp, 8)
 		}
+	}
+}
+
+// convolveX8GoSIMDDispatch routes the horizontal-8 convolve to the Go-native
+// SIMD kernel (which beats the I8MM asm via the fused SQRSHRUN round-narrow tail
+// -- one instruction for round-shift+narrow+[0,255]-clamp) for width>=8
+// multiple-of-8 blocks whose taps fit the USMMLA packing, and to the best asm
+// tier (I8MM's fast width-4 4-tap path, else NEON) for the narrow and
+// unsupported shapes. Byte-identical on every shape.
+func convolveX8GoSIMDDispatch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+	if width >= 8 && width%8 == 0 {
+		if _, _, ok := convolveX8I8MMFilter(kernel); ok {
+			convolveX8GoSIMD(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+			return
+		}
+	}
+	if cpu.Detected.I8MM {
+		convolveX8I8MM(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
+	} else {
+		convolveX8NEON(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 	}
 }
 
