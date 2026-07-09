@@ -1645,11 +1645,14 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		e.filterParams.out = out
 		e.filterParams.lfLevel = lfLevel
 		e.filterParams.cdef = filterCDEF
-		// Snapshot the single-tile decision here (dispatch goroutine, serialized
-		// with config mutation) so the detached filter worker never reads the
-		// mutable tileColsLog2. Single tile column => the whole-frame-width mask
-		// build is byte-identical, so the parallel mask apply is safe.
-		e.filterParams.parallelMasks = e.tileColsLog2 == 0
+		// The dav1d-style deblocking bitmask apply is byte-identical to the
+		// edge-list sweep for BOTH single- and multi-tile frames: BuildFromMap
+		// derives each block's left/above tx-context directly from the shared
+		// record map (the same neighbour the sweep reads), so it reproduces the
+		// sweep's per-edge width across superblock AND tile-column boundaries.
+		// Always route through the parallel mask apply (much faster than the
+		// edge-list planner on edge-dense frames).
+		e.filterParams.parallelMasks = true
 		e.filterPending = true
 		e.filterWork <- struct{}{}
 	}
