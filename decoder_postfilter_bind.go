@@ -228,6 +228,12 @@ type DecoderFrameWorkSupportedPostFilterScratchRunner struct {
 	RestorationOptimized bool
 	FilmGrainOutput      Frame
 
+	// Parallel, when non-nil with more than one worker, fans the supported
+	// post-filter chain's independent row bands out across goroutines. It is
+	// caller-owned and reused across frames; decoded output is byte-identical to
+	// the serial path.
+	Parallel *DecoderFrameWorkPostFilterParallel
+
 	Size    DecoderFrameWorkPostFilterScratchSize
 	Request DecoderFrameWorkPostFilterRequest
 	Context DecoderFrameWorkPostFilterContext
@@ -345,6 +351,7 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) applyWithScratchSize(
 		return err
 	}
 	req.FilmGrain.OutputView = &r.FilmGrainOutput
+	ctx.Parallel = r.Parallel
 	next, output, result, err := ctx.ApplySupportedPostFiltersForPublication(req)
 	if err != nil {
 		return err
@@ -396,6 +403,12 @@ type DecoderFrameWorkReusableSupportedPostFilterRunner struct {
 	// RestorationOptimized selects the optimized loop-restoration apply path.
 	RestorationOptimized bool
 
+	// Parallel, when non-nil with more than one worker, fans the supported
+	// post-filter chain's independent row bands out across goroutines. Set it
+	// once (e.g. from the decoder worker count); it is reused across frames and
+	// keeps decoded output byte-identical to the serial path.
+	Parallel *DecoderFrameWorkPostFilterParallel
+
 	runner DecoderFrameWorkSupportedPostFilterScratchRunner
 	size   DecoderFrameWorkPostFilterRequestScratchSize
 }
@@ -419,6 +432,7 @@ func (r *DecoderFrameWorkReusableSupportedPostFilterRunner) Apply(ctx DecoderFra
 		return ErrDecoderInvalidFrameWorkState
 	}
 	r.runner.RestorationOptimized = r.RestorationOptimized
+	r.runner.Parallel = r.Parallel
 	exact, err := r.runner.reusableScratchLen(ctx)
 	if err != nil {
 		return err

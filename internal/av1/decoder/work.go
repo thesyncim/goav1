@@ -96,6 +96,15 @@ type FrameWorkPostFilterContext struct {
 	LoopFilterMasks         *threading.FrameWorkLoopFilterMasks
 	RestorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers
 
+	// Parallel, when non-nil and reporting more than one worker, lets the
+	// supported post-filter chain fan its already-independent row bands out
+	// across worker goroutines instead of running the serial band loops. It is
+	// caller-owned and reused across frames so the parallel path stays
+	// allocation-free after warm-up. It never changes decoded output: each band
+	// reads the previous stage's complete output through the same boundary
+	// snapshots the serial banded path uses.
+	Parallel *FrameWorkPostFilterParallel
+
 	completedPostFilters     FrameWorkPostFilterStage
 	detachedPostFilterOutput bool
 }

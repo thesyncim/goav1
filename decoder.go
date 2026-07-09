@@ -139,6 +139,12 @@ type DecoderFrameWorkEventResult = internaldecoder.FrameWorkEventResult
 // DecoderFrameWorkPostFilterFunc when a frame finishes.
 type DecoderFrameWorkPostFilterContext = internaldecoder.FrameWorkPostFilterContext
 
+// DecoderFrameWorkPostFilterParallel is caller-owned, reusable scratch that
+// lets the supported post-filter chain fan its independent row bands out across
+// worker goroutines. Installing it on a post-filter runner is a pure scheduling
+// change; decoded output stays byte-identical.
+type DecoderFrameWorkPostFilterParallel = internaldecoder.FrameWorkPostFilterParallel
+
 // DecoderFrameWorkPostFilterFunc is the per-frame callback invoked after
 // the final tile-group of a frame to apply loop-filter, CDEF, super-res,
 // loop-restoration, and film-grain stages.
