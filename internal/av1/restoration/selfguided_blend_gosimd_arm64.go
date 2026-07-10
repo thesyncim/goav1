@@ -59,8 +59,8 @@ import (
 func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {
-		wienerHorizontalU8Impl = wienerHorizontalU8NEON
-		wienerVerticalU8Impl = wienerVerticalU8NEON
+		wienerHorizontalU8Impl = wienerHorizontalU8NEON // sliding-window FIR: stays asm
+		wienerVerticalU8Impl = wienerVerticalU8SIMD     // column MAC: Go-SIMD beats asm
 	}
 	sgrWeightedRowU8Impl = sgrWeightedRowU8SIMD
 	sgrWeightedRowImpl = sgrWeightedRowSIMD
@@ -81,8 +81,8 @@ func init() {
 // then one arithmetic >>11 — no separate shift for <<7 and no separate add for
 // the bias, matching the NEON asm's MLA + rounding-shift structure.
 type sgrConsts struct {
-	xq0V, xq1V, bias   archsimd.Int32x4
-	k128, shRst, shRnd archsimd.Int32x4
+	xq0V, xq1V, bias  archsimd.Int32x4
+	cuV, shRst, shRnd archsimd.Int32x4
 }
 
 func newSGRConsts(xq0, xq1 int32) sgrConsts {
@@ -90,7 +90,7 @@ func newSGRConsts(xq0, xq1 int32) sgrConsts {
 		xq0V:  archsimd.BroadcastInt32x4(xq0),
 		xq1V:  archsimd.BroadcastInt32x4(xq1),
 		bias:  archsimd.BroadcastInt32x4(1 << (SGRProjPrjBits + SGRProjRstBits - 1)),
-		k128:  archsimd.BroadcastInt32x4(1 << SGRProjPrjBits),
+		cuV:   archsimd.BroadcastInt32x4((1 << SGRProjPrjBits) - xq0 - xq1),
 		shRst: archsimd.BroadcastInt32x4(SGRProjRstBits),
 		shRnd: archsimd.BroadcastInt32x4(-(SGRProjPrjBits + SGRProjRstBits)),
 	}
@@ -107,9 +107,12 @@ func newSGRConsts(xq0, xq1 int32) sgrConsts {
 // u<<7 + xq0*(f0-u) + xq1*(f1-u) + bias == v + bias, and u*128 == u<<7 in the
 // low 32 bits. Each MulAdd is one VMLA, the same fused op the asm uses.
 func sgrProjectHalf(u, f0, f1 archsimd.Int32x4, c sgrConsts) archsimd.Int32x4 {
-	v := f0.Sub(u).MulAdd(c.xq0V, c.bias)
-	v = f1.Sub(u).MulAdd(c.xq1V, v)
-	v = u.MulAdd(c.k128, v)
+	// Algebraic factor: u<<7 + xq0*(f0-u) + xq1*(f1-u) == u*(128-xq0-xq1) +
+	// xq0*f0 + xq1*f1 -- drops both f-u subtracts (6 ops/group -> 4). The round
+	// bias seeds the first MulAdd; c.shRnd then arithmetic-shifts right by 11.
+	v := c.xq0V.MulAdd(f0, c.bias) // xq0*f0 + bias
+	v = c.xq1V.MulAdd(f1, v)       // xq1*f1 + v
+	v = c.cuV.MulAdd(u, v)         // (128-xq0-xq1)*u + v
 	return v.Shift(c.shRnd)
 }
 
