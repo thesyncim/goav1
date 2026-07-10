@@ -1262,14 +1262,18 @@ func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cd
 		applyLF = e.lf.applySerialMasks
 		applyCDEF = e.cdefApp.applySerial
 	case parallelMasks:
-		// Multithread single-tile inter frames (the wavefront default:
-		// SetMaxThreads(n>1) forces one tile column) also code a whole-frame-width
-		// tile, so the mask build is byte-identical. Route the loop filter through
-		// the parallel mask apply -- the same dav1d bitmask apply as the
-		// single-thread path, fanned across the applier's band workers -- instead
-		// of the slower parallel edge-list planner+apply. Multi-tile inter frames
-		// (tileColsLog2>0, e.g. SetTileColumns) keep the edge-list apply. The
-		// single-tile decision is snapshotted by the caller (dispatch goroutine)
+		// All multithread inter frames route here, INCLUDING the multi-tile
+		// default (defaultTileColsLog2(1920)=5, ~30 tile columns). The dav1d
+		// bitmask apply is byte-identical to the edge-list sweep across tile
+		// columns because BuildFromMap derives each block's left/above tx-context
+		// directly from the shared record map -- the same neighbour the sweep
+		// reads -- instead of carrying it forward, so it reproduces the sweep's
+		// per-edge width at superblock AND tile-column boundaries (gated by
+		// TestRealCMaskDefaultMultiTile: encode realC, decode, assert recon ==
+		// decode byte-for-byte at 30 tile columns). This is the same apply as the
+		// single-thread path, fanned across the applier's band workers, and is
+		// much faster than the parallel edge-list planner+apply on edge-dense
+		// frames. The decision is snapshotted by the caller (dispatch goroutine)
 		// so this can run on the detached filter worker without racing SetConfig.
 		applyLF = e.lf.applyParallelMasks
 	}
