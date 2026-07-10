@@ -34,9 +34,21 @@ package goav1
 
 import (
 	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internallfmask "github.com/thesyncim/goav1/internal/av1/lfmask"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 )
+
+// DecoderFrameWorkLoopFilterMasks is the frame-level dav1d-style deblocking
+// edge-mask handle: the tile block walk ORs each block's edges into it during
+// decode, and the supported post-filter applies them (byte-identical to the
+// edge-list sweep, and faster). It is caller-owned, reused across frames.
+type DecoderFrameWorkLoopFilterMasks = internalthreading.FrameWorkLoopFilterMasks
+
+// DecoderFrameWorkLoopFilterFilterMask is one 128x128 mask region's edge
+// bitmask storage; a frame's masks are a []DecoderFrameWorkLoopFilterFilterMask
+// sized by FrameWorkLoopFilterMaskShape.
+type DecoderFrameWorkLoopFilterFilterMask = internallfmask.FilterMask
 
 // DecoderStream wires an OBU/temporal-unit byte source to a decoder pipeline
 // and yields parsed DecoderEvent values to the caller, who drives frame work

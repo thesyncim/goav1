@@ -713,9 +713,17 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 	if remaining.Has(FrameWorkPostFilterLoopFilter) {
 		var loopFilterResult FrameWorkLoopFilterPostFilterApplyResult
 		var err error
-		if banding.LoopFilterMIRows > 0 {
+		switch {
+		case ctx.loopFilterMasksUsable():
+			// Prefer the dav1d-style bitmask apply whenever the decode built
+			// single-tile edge masks: byte-identical to the edge-list sweep
+			// (lfmask_apply_diff_test + strict-MD5 oracle) and faster (no per-frame
+			// edge-list planning). The public decoder now builds masks too, so this
+			// replaces the ~16%-of-decode sweep on single-tile frames.
+			loopFilterResult, err = ctx.ApplyLoopFilterEdgesFromMasks(ctx.LoopFilterMasks, req.LoopFilter.Map)
+		case banding.LoopFilterMIRows > 0:
 			loopFilterResult, err = ctx.ApplyLoopFilterEdgesBanded(req.LoopFilter, banding.LoopFilterMIRows)
-		} else {
+		default:
 			loopFilterResult, err = ctx.ApplyLoopFilterEdges(req.LoopFilter)
 		}
 		if err != nil {

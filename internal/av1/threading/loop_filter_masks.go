@@ -44,6 +44,44 @@ func (h *FrameWorkLoopFilterMasks) Valid() bool {
 	return h != nil && h.Masks != nil && h.SB128W > 0
 }
 
+// BindLoopFilterMasks validates and slices caller-owned storage into this
+// frame's deblocking edge-mask handle, mirroring BindLoopFilterMap. masks holds
+// one FilterMask per 128x128 region (len >= FrameWorkLoopFilterMaskShape masks)
+// and levelCache one [4]uint8 per MI cell (len >= LoopFilterMapShape length).
+// The returned handle is cleared so the decode block walk can OR this frame's
+// edges into reused storage; the loop filter applies them at post-filter time.
+func (b *FrameWorkBatch) BindLoopFilterMasks(masks []lfmask.FilterMask, levelCache [][4]uint8) (FrameWorkLoopFilterMasks, error) {
+	cols, rows, length, err := b.LoopFilterMapShape()
+	if err != nil {
+		return FrameWorkLoopFilterMasks{}, err
+	}
+	sb128w, sb128h, maskCount := FrameWorkLoopFilterMaskShape(cols, rows)
+	if len(masks) < maskCount || len(levelCache) < length {
+		return FrameWorkLoopFilterMasks{}, ErrInvalidBatch
+	}
+	color := b.Sequence.ColorConfig
+	layout := lfmask.Layout{Mono: color.MonoChrome}
+	if color.SubsamplingX {
+		layout.SSHor = 1
+	}
+	if color.SubsamplingY {
+		layout.SSVer = 1
+	}
+	out := FrameWorkLoopFilterMasks{
+		Masks:      masks[:maskCount],
+		LevelCache: levelCache[:length],
+		Cols:       cols,
+		Rows:       rows,
+		SB128W:     sb128w,
+		SB128H:     sb128h,
+		Layout:     layout,
+		HasChroma:  !color.MonoChrome,
+	}
+	clear(out.Masks)
+	clear(out.LevelCache)
+	return out, nil
+}
+
 // region returns the FilterMask covering the 128x128 superblock region that MI
 // cell (bx, by) falls in.
 func (h *FrameWorkLoopFilterMasks) region(bx, by int) *lfmask.FilterMask {
