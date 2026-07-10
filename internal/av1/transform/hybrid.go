@@ -94,6 +94,29 @@ func inverseSeparableBlockClampedRows(dst []int16, dstStride int, coeff []int32,
 	return nil
 }
 
+// stageTransposeClampScalar stages the rows x cols rectangle of the
+// column-major coefficient block into row-major scratch lines of length
+// width, clamping every value to [lo, hi]; rect2 applies the rectangular-
+// transform sqrt2 scale before the clamp. Only the rectangle is written —
+// line tails and trailing lines are the caller's to clear.
+func stageTransposeClampScalar(scratch []int32, width int, coeff []int32, coeffStride int, rows int, cols int, rect2 bool, lo int32, hi int32) {
+	if rect2 {
+		for row := 0; row < rows; row++ {
+			tmpLine := scratch[row*width : row*width+cols : row*width+cols]
+			for col := range tmpLine {
+				tmpLine[col] = clipRange(int64(rect2Scale(coeff[col*coeffStride+row])), lo, hi)
+			}
+		}
+	} else {
+		for row := 0; row < rows; row++ {
+			tmpLine := scratch[row*width : row*width+cols : row*width+cols]
+			for col := range tmpLine {
+				tmpLine[col] = clipRange(int64(coeff[col*coeffStride+row]), lo, hi)
+			}
+		}
+	}
+}
+
 func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, scratch []int32, size Size, typ Type, rowMin int32, rowMax int32, colMin int32, colMax int32, activeRows int, col16 []int16) error {
 	// Resolve every per-size datum from a single compact index instead of
 	// re-deriving it through size.shift(), adjustedScanSize() and IsRect2(),
@@ -141,62 +164,28 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 	// Stage the row inputs into scratch, then run the row pass. The input
 	// staging is kept separate from the transform so the transform can batch
 	// two already-staged rows through the SIMD-accelerated inverse1DRow2.
+	// stageTransposeClamp writes only the rows x cols rectangle, so each
+	// branch clears its line tails and trailing lines exactly as before.
 	if rowLimit < height {
 		rowsToStage := rowLimit
 		if rowsToStage > coeffH {
 			rowsToStage = coeffH
 		}
-		if rect2 {
+		stageTransposeClamp(scratch, width, coeff, coeffStride, rowsToStage, coeffW, rect2, rowMin, rowMax)
+		if coeffW < width {
 			for row := 0; row < rowsToStage; row++ {
-				tmpLine := scratch[row*width : row*width+width : row*width+width]
-				for col := 0; col < coeffW; col++ {
-					tmpLine[col] = clipRange(int64(rect2Scale(coeff[col*coeffStride+row])), rowMin, rowMax)
-				}
-				clear(tmpLine[coeffW:])
-			}
-		} else {
-			for row := 0; row < rowsToStage; row++ {
-				tmpLine := scratch[row*width : row*width+width : row*width+width]
-				for col := 0; col < coeffW; col++ {
-					tmpLine[col] = clipRange(int64(coeff[col*coeffStride+row]), rowMin, rowMax)
-				}
-				clear(tmpLine[coeffW:])
+				clear(scratch[row*width+coeffW : (row+1)*width])
 			}
 		}
 		clear(scratch[rowsToStage*width:])
 		rowLimit = rowsToStage
 	} else if coeffW == width && coeffH == height {
-		if rect2 {
-			for row := range height {
-				tmpLine := scratch[row*width : row*width+width : row*width+width]
-				for col := range tmpLine {
-					tmpLine[col] = clipRange(int64(rect2Scale(coeff[col*coeffStride+row])), rowMin, rowMax)
-				}
-			}
-		} else {
-			for row := range height {
-				tmpLine := scratch[row*width : row*width+width : row*width+width]
-				for col := range tmpLine {
-					tmpLine[col] = clipRange(int64(coeff[col*coeffStride+row]), rowMin, rowMax)
-				}
-			}
-		}
+		stageTransposeClamp(scratch, width, coeff, coeffStride, height, width, rect2, rowMin, rowMax)
 	} else {
-		if rect2 {
+		stageTransposeClamp(scratch, width, coeff, coeffStride, coeffH, coeffW, rect2, rowMin, rowMax)
+		if coeffW < width {
 			for row := 0; row < coeffH; row++ {
-				tmpLine := scratch[row*width : row*width+width : row*width+width]
-				for col := 0; col < coeffW; col++ {
-					tmpLine[col] = clipRange(int64(rect2Scale(coeff[col*coeffStride+row])), rowMin, rowMax)
-				}
-				clear(tmpLine[coeffW:])
-			}
-		} else {
-			for row := 0; row < coeffH; row++ {
-				tmpLine := scratch[row*width : row*width+width : row*width+width]
-				for col := 0; col < coeffW; col++ {
-					tmpLine[col] = clipRange(int64(coeff[col*coeffStride+row]), rowMin, rowMax)
-				}
-				clear(tmpLine[coeffW:])
+				clear(scratch[row*width+coeffW : (row+1)*width])
 			}
 		}
 		clear(scratch[coeffH*width:])
