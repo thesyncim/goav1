@@ -719,8 +719,18 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 			// single-tile edge masks: byte-identical to the edge-list sweep
 			// (lfmask_apply_diff_test + strict-MD5 oracle) and faster (no per-frame
 			// edge-list planning). The public decoder now builds masks too, so this
-			// replaces the ~16%-of-decode sweep on single-tile frames.
-			loopFilterResult, err = ctx.ApplyLoopFilterEdgesFromMasks(ctx.LoopFilterMasks, req.LoopFilter.Map)
+			// replaces the ~16%-of-decode sweep on single-tile frames. When a
+			// parallel worker set is installed, fan the mask apply out across
+			// goroutines (vertical row-bands, then horizontal column-bands, over the
+			// now-immutable cache/masks) -- byte-identical and race-free; falls back
+			// to the single-shot apply when the parallel path declines.
+			handled := false
+			if ctx.Parallel.workers() > 0 {
+				loopFilterResult, handled, err = ctx.applyLoopFilterMaskBandsParallel(req.LoopFilter.Map)
+			}
+			if err == nil && !handled {
+				loopFilterResult, err = ctx.ApplyLoopFilterEdgesFromMasks(ctx.LoopFilterMasks, req.LoopFilter.Map)
+			}
 		case banding.LoopFilterMIRows > 0:
 			loopFilterResult, err = ctx.ApplyLoopFilterEdgesBanded(req.LoopFilter, banding.LoopFilterMIRows)
 		default:

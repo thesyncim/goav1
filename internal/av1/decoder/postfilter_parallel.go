@@ -6,25 +6,27 @@ import (
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 )
 
 // FrameWorkPostFilterParallel is caller-owned, reusable scratch that lets the
-// CDEF post-filter stage fan its independent 64x64 unit-row bands out across
-// worker goroutines. It carries the worker count plus per-worker private scratch
-// so the fan-out is allocation-free once warmed up.
+// supported post-filter stages fan their independent bands out across worker
+// goroutines. It carries the worker count plus per-worker private scratch so the
+// fan-out is allocation-free once warmed up.
 //
-// Byte-exactness: the parallel path is a pure scheduling change. The loop filter
-// fully completes before CDEF starts (stage barrier). Within CDEF, every band
-// reads immutable pre-CDEF inputs — a shared read-only whole-frame snapshot on
-// the uint16 path, or per-band two-row top/bottom boundary snapshots on the
-// 8-bit in-place path — and writes disjoint output rows, exactly as the serial
-// banded CDEF apply does. Band order therefore never changes any pixel.
+// Byte-exactness: the parallel path is a pure scheduling change. Stages run in
+// sequence (loop filter fully completes before CDEF), so cross-stage order is
+// unchanged. Within CDEF, every band reads immutable pre-CDEF inputs — a shared
+// read-only whole-frame snapshot on the uint16 path, or per-band two-row
+// top/bottom boundary snapshots on the 8-bit in-place path — and writes disjoint
+// output rows. Within the mask loop filter (applyLoopFilterMaskBandsParallel),
+// vertical edges are region-ROW banded (write disjoint rows) and horizontal
+// edges region-COLUMN banded (write disjoint columns), with a barrier between the
+// two directions and even-aligned populate bands for the chroma level cache.
+// Band order therefore never changes any pixel.
 //
-// Only CDEF is fanned out here. The loop filter's mask-based apply has a
-// horizontal-edge write that straddles 128-pixel region-row seams (and a
-// chroma-subsampled level-cache populate that shares cells across seams), so
-// row-banding it is not race-free without extra per-band snapshots; restoration
-// lacks a row-range apply entry point in the tile package. Both were left serial.
+// Restoration is still applied serially (it lacks a row-range apply entry point
+// in the tile package).
 type FrameWorkPostFilterParallel struct {
 	// Workers is the number of goroutines available to the post-filter fan-out.
 	// One or zero keeps the serial path.
@@ -344,3 +346,109 @@ func (p *FrameWorkPostFilterParallel) mergeCDEFResults(workers int) FrameWorkCDE
 	return out
 }
 
+
+// applyLoopFilterMaskBandsParallel runs the mask-driven loop filter across the
+// parallel worker set. It reproduces ApplyLoopFilterEdgesFromMasks byte-for-byte:
+// PrepareLoopFilterMaskBands clears the shared per-4x4 level cache, PopulateBand
+// jobs refill it across disjoint MI-row bands (barrier), then two ApplyBand
+// phases -- every (plane, region-row) VERTICAL-edge job, a barrier, then every
+// (plane, region-COLUMN) HORIZONTAL-edge job.
+//
+// Why it stays byte-exact and race-free: after Prepare the level cache and masks
+// are read-only, and planes are independent surfaces. A vertical-edge filter
+// modifies pixels left/right of the edge within its own rows, so region-ROW
+// bands write disjoint rows; a horizontal-edge filter modifies pixels above/below
+// the edge within its own columns, so region-COLUMN bands write disjoint columns
+// (row-banding horizontal would straddle the 128px seam -- verified: -race +
+// strict-MD5 both fail). The vertical->horizontal barrier preserves the
+// single-shot's per-plane "vertical scan then horizontal scan" dependency. The
+// populate bands are EVEN-aligned so a 4:2:0 chroma level-cache cell (shared by
+// luma rows 2k/2k+1) is never split across two bands (a cell[2]/cell[3] race).
+// Returns (result, true, nil) when it handled the stage, or (_, false, nil) when
+// the caller should fall back to the serial apply.
+func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskBandsParallel(filterMap FrameWorkLoopFilterMap) (FrameWorkLoopFilterPostFilterApplyResult, bool, error) {
+	workers := ctx.Parallel.workers()
+	if workers <= 0 {
+		return FrameWorkLoopFilterPostFilterApplyResult{}, false, nil
+	}
+	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopFilter) {
+		return FrameWorkLoopFilterPostFilterApplyResult{}, true, nil
+	}
+	if !ctx.loopFilterMasksUsable() {
+		return FrameWorkLoopFilterPostFilterApplyResult{}, false, nil
+	}
+	masks := ctx.LoopFilterMasks
+	bands, err := ctx.PrepareLoopFilterMaskBands(masks, filterMap)
+	if err != nil {
+		return FrameWorkLoopFilterPostFilterApplyResult{}, false, err
+	}
+	if !bands.Active() {
+		return FrameWorkLoopFilterPostFilterApplyResult{}, true, nil
+	}
+
+	result := FrameWorkLoopFilterPostFilterApplyResult{Active: true}
+	result.Plan.Active = true
+	result.Plan.MICols = uint16(masks.Cols)
+	result.Plan.MIRows = uint16(bands.MIRows())
+
+	// Phase 0 (barrier): refill the per-4x4 level cache. Luma cells partition by
+	// block coverage, but a vertically-subsampled (4:2:0) chroma cell is shared by
+	// luma rows 2k and 2k+1, so a band boundary BETWEEN them would let two bands
+	// write cell[2]/cell[3] (a race, and it breaks last-writer-wins). Align band
+	// boundaries to even MI rows so each shared chroma cell's two luma rows fall
+	// in one band.
+	miRows := bands.MIRows()
+	populateRows := (frameWorkParallelBandRows(miRows, workers) + 1) &^ 1
+	populateBands := (miRows + populateRows - 1) / populateRows
+	if err := frameWorkParallelRun(workers, populateBands, func(worker, band int) error {
+		rowStart := band * populateRows
+		rowEnd := rowStart + populateRows
+		if rowEnd > miRows {
+			rowEnd = miRows
+		}
+		return bands.PopulateBand(rowStart, rowEnd)
+	}); err != nil {
+		return FrameWorkLoopFilterPostFilterApplyResult{}, false, err
+	}
+
+	regionRows := bands.RegionRows()
+	regionCols := bands.RegionCols()
+	if regionRows <= 0 || regionCols <= 0 {
+		return result, true, nil
+	}
+	nPlanes := int(bands.MaxPlane()) + 1
+
+	// Phase 1 (barrier): vertical edges, one (plane, region-row) job each.
+	vJobs := nPlanes * regionRows
+	if err := frameWorkParallelRun(workers, vJobs, func(worker, job int) error {
+		plane := loopfilter.Plane(job / regionRows)
+		rr := job % regionRows
+		return bands.ApplyBand(plane, loopfilter.EdgeVertical, rr, rr+1)
+	}); err != nil {
+		return FrameWorkLoopFilterPostFilterApplyResult{}, false, err
+	}
+
+	// Phase 2 (barrier): horizontal edges, one (plane, region-COLUMN) job each.
+	hJobs := nPlanes * regionCols
+	if err := frameWorkParallelRun(workers, hJobs, func(worker, job int) error {
+		plane := loopfilter.Plane(job / regionCols)
+		rc := job % regionCols
+		return bands.ApplyBandCols(plane, loopfilter.EdgeHorizontal, rc, rc+1)
+	}); err != nil {
+		return FrameWorkLoopFilterPostFilterApplyResult{}, false, err
+	}
+	return result, true, nil
+}
+
+// frameWorkParallelBandRows picks a row-band height giving the worker set several
+// bands to steal from (~4 per worker) without over-fragmenting, at least one row.
+func frameWorkParallelBandRows(rows, workers int) int {
+	if rows <= 0 || workers <= 0 {
+		return 1
+	}
+	perBand := (rows + workers*4 - 1) / (workers * 4)
+	if perBand < 1 {
+		perBand = 1
+	}
+	return perBand
+}
