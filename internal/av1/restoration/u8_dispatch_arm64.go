@@ -17,9 +17,9 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 // indirect call.
 //
 // Under the goexperiment.simd build this file is excluded and the Go-native
-// SIMD kernels bind instead (selfguided_blend_gosimd_arm64.go), which also
-// re-binds the Wiener u8 passes to their NEON asm (not yet ported to
-// archsimd).
+// SIMD kernels bind instead (selfguided_blend_gosimd_arm64.go), including both
+// Wiener u8 passes (wiener_horizontal_gosimd_arm64.go /
+// wiener_vertical_gosimd_arm64.go).
 func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {

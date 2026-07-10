@@ -52,14 +52,13 @@ import (
 
 // init binds the Go-native SIMD SGR blend kernels under the goexperiment.simd
 // build (the NEON binding in u8_dispatch_arm64.go is excluded there via
-// !goexperiment.simd). The Wiener u8 passes are not yet ported to archsimd, so
-// they are re-bound to their NEON asm here to avoid regressing them; the box
-// sums and the A/B stencil keep their NEON bindings from
+// !goexperiment.simd). Both Wiener u8 passes are Go-SIMD here: the box sums
+// and the A/B stencil keep their NEON bindings from
 // selfguided_dispatch_arm64.go, which is not gated out of the simd build.
 func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {
-		wienerHorizontalU8Impl = wienerHorizontalU8NEON // sliding-window FIR: stays asm
+		wienerHorizontalU8Impl = wienerHorizontalU8SIMD // symmetric-pair FIR: Go-SIMD beats asm
 		wienerVerticalU8Impl = wienerVerticalU8SIMD     // column MAC: Go-SIMD beats asm
 	}
 	sgrWeightedRowU8Impl = sgrWeightedRowU8SIMD
