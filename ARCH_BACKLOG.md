@@ -29,6 +29,62 @@ decodeBlockLoopVisitWithCoeffControllerPtr interleaves decode→predict→per-TX
 recon in one pass — block_loop.go:899,1016-1033). Program A is the RESIDUAL
 gap only: per-TXB/plane geometry recompute + one buffer round-trip.
 
+## PROGRAM FP — decoder M4: frame-parallel decode (dav1d frame threading)
+
+MOTIVE (measured 2026-07-10): single-thread corpus gap 3.26x vs dav1d, but at
+8 threads the gap WIDENS to 6.1x (p720_inter_q20 min-of-5: goav1 307ms vs
+dav1d 50ms) — goav1 scales 1.18x from 1→8 workers (serial-CABAC ceiling,
+~1.15 cores), dav1d 2.3x via frame threading. Frame-parallel is THE remaining
+big decode lever; single-thread is at its floor (see pins).
+
+DESIGN (from dav1d src/thread_task.c + src/decode.c dav1d_submit_frame):
+parse(N+1) depends only on parse outputs of N — adapted CDFs (signaled after
+the update-tile's ENTROPY pass, thread_task.c:784-792), MV_REF grid, ref-slot
+table. Pixels are only a RECON dependency (per-sbrow lowest_px waits on ref
+progress[1], thread_task.c:387-433). So parses chain serially frame-to-frame
+while recon/post-filter of earlier frames overlaps on the pool. Throughput
+ceiling = serial parse rate (~2.5x at p720).
+
+KEY DE-RISK (2026-07-10, both probes green): goav1 ALREADY HAS the pass-1/
+pass-2 split — the deferred-recon path (threading/tile_residual.go
+deferReconstruction, whole-tile reconEvents+coeffArena buffering, predict/MC
+at REPLAY not parse). Forcing it globally (frameWorkDeferReconstruction=true)
+passes dryrun-fast 8/8 + dryrun-extended 226/226 byte-exact, at ~1.4%
+single-thread cost (p720 351.5→356.4ms) — the split is fully general.
+
+SLICES:
+FP-0 — PublishParseOutputs seam (internal/av1/decoder/work.go): move CDF save
+  (finishTileResidualCDFs, :719-750) + MV publish (publishTemporalMotionFrame,
+  :680-717) + ref-slot updates (FinishFrameSurface slot half, surface_pool.go
+  :105-126) from Finish() to end-of-tile-work in every runStep* variant; pool
+  RELEASES stay deferred to Finish (pending list on FrameWorkState, size
+  RefFrames, zero-alloc). Serial-mode byte-identical; error paths documented.
+FP-1 — decoderFrameContext grouping (root package): group per-frame state
+  (state/sideData/batch/scratch/postFilter*/ref arrays) into one struct,
+  fctx[1] ring for now, runner binding context-aware. Pure refactor. Then
+  ring-of-2 + coordinator goroutine + surface refcounts (slot overwrite must
+  not release pixels an in-flight frame reads) + input read-ahead + in-order
+  output; frames still strictly serial. Public knob: WithMaxFrameDelay
+  (dav1d s->max_frame_delay analog), default 1 until FP-2 soaks.
+FP-2 — the overlap: after parse(N) publishes (FP-0 seam), launch parse(N+1)
+  (deferred mode FORCED, even 1 recon worker) on a goroutine while replay(N)
+  + post-filter(N) run on the pool. Replay(N+1) admitted only after N fully
+  filtered (full-frame barrier v1). AUDIT FIRST: no ref-frame PIXEL access
+  reachable from pass-1 (poison-References test). Gates + cross-worker MD5
+  identity + -race soak; measure p720 @4/8 workers.
+FP-3 — per-row progress: atomic filtered-rows progress per surface (dav1d
+  progress[1]), signaled as post-filter bands complete; replay(N+1) computes
+  lowest needed ref row per SB-row (mc/affine/obmc lowest_px, decode.c:1959-
+  2050) and waits on ref progress instead of the barrier.
+FP-4 — depth: 2→3-4 contexts (fc_lut ceil(sqrt(threads))), error propagation
+  to dependents, memory caps; re-run bench-corpus + threaded A/B vs dav1d.
+
+CEILING (honest): parse share ~35-40% single-thread → pipeline throughput
+~2-2.5x wall at ≥4 workers on single-tile content; p720 8-worker 307ms →
+~130-150ms projected vs dav1d 50ms (gap 6.1x → ~2.6-3x). FP-3 needed when
+recon+filter (not parse) paces at low worker counts. Frame-parallel also
+UNBLOCKS multi-tile: per-tile CABAC already parallelizes within a frame.
+
 ## PROGRAM A — decoder M2: collapse residual layer hops
 
 A1 — Prime CHROMA job-geometry (skip per-TXB U/V lookup ladder).
