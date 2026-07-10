@@ -120,56 +120,40 @@ func wienerVerticalSIMD(temp []uint16, tempStride int, dst []uint16, dstStride i
 	// post-indexed loads. All accesses are in range: temp holds
 	// (height+2*WienerHalfwin)*tempStride uint16 and dst holds at least
 	// height*dstStride, both guaranteed by the caller/dispatch validation.
-	const elem = 2  // sizeof(uint16)
-	const step = 16 // 8 uint16 per column iteration
+	const elem = 2 // sizeof(uint16)
 	tbase := unsafe.Pointer(&temp[0])
 	dbase := unsafe.Pointer(&dst[0])
-	for row := 0; row < height; row++ {
-		p0 := unsafe.Add(tbase, (row+0)*tempStride*elem)
-		p1 := unsafe.Add(tbase, (row+1)*tempStride*elem)
-		p2 := unsafe.Add(tbase, (row+2)*tempStride*elem)
-		p3 := unsafe.Add(tbase, (row+3)*tempStride*elem)
-		p4 := unsafe.Add(tbase, (row+4)*tempStride*elem)
-		p5 := unsafe.Add(tbase, (row+5)*tempStride*elem)
-		p6 := unsafe.Add(tbase, (row+6)*tempStride*elem)
-		dp := unsafe.Add(dbase, row*dstStride*elem)
-		for col := 0; col < width; col += 8 {
-			c0 := wienerLoadV(p0)
-			c1 := wienerLoadV(p1)
-			c2 := wienerLoadV(p2)
-			c3 := wienerLoadV(p3)
-			c4 := wienerLoadV(p4)
-			c5 := wienerLoadV(p5)
-			c6 := wienerLoadV(p6)
-
-			// Columns 0..3 (SMLAL) and 4..7 (SMLAL2). Seed both accumulators
-			// with the folded -offset+bias term, then fuse each of the 7 taps
-			// into a single widening multiply-accumulate: 14 SMLAL total,
-			// matching the NEON asm's fused-MAC op count.
-			lo := seedV.MulWidenLoAdd(c0, f0V).MulWidenLoAdd(c1, f1V).
-				MulWidenLoAdd(c2, f2V).MulWidenLoAdd(c3, f3V).
-				MulWidenLoAdd(c4, f4V).MulWidenLoAdd(c5, f5V).
-				MulWidenLoAdd(c6, f6V)
-			hi := seedV.MulWidenHiAdd(c0, f0V).MulWidenHiAdd(c1, f1V).
-				MulWidenHiAdd(c2, f2V).MulWidenHiAdd(c3, f3V).
-				MulWidenHiAdd(c4, f4V).MulWidenHiAdd(c5, f5V).
-				MulWidenHiAdd(c6, f6V)
-
-			// Arithmetic round-shift; the [0,max] clamp is folded into the
-			// narrow+Min in wienerStoreV (matching the NEON asm).
+	// Column-strip walk with a SLIDING 7-row register window: each temp row is
+	// loaded once and reused across the 7 output rows that read it (the hand asm's
+	// trick), instead of reloading all 7 rows per output row. Go renames the slide
+	// cleanly. Seed folds -offset + round bias into the SMLAL accumulator init (no
+	// trailing add on the critical path).
+	for col := 0; col < width; col += 8 {
+		cp := unsafe.Add(tbase, col*elem)
+		r0 := wienerLoadV(cp)
+		r1 := wienerLoadV(unsafe.Add(cp, 1*tempStride*elem))
+		r2 := wienerLoadV(unsafe.Add(cp, 2*tempStride*elem))
+		r3 := wienerLoadV(unsafe.Add(cp, 3*tempStride*elem))
+		r4 := wienerLoadV(unsafe.Add(cp, 4*tempStride*elem))
+		r5 := wienerLoadV(unsafe.Add(cp, 5*tempStride*elem))
+		nextp := unsafe.Add(cp, 6*tempStride*elem)
+		dp := unsafe.Add(dbase, col*elem)
+		for row := 0; row < height; row++ {
+			r6 := wienerLoadV(nextp)
+			lo := seedV.MulWidenLoAdd(r0, f0V).MulWidenLoAdd(r1, f1V).
+				MulWidenLoAdd(r2, f2V).MulWidenLoAdd(r3, f3V).
+				MulWidenLoAdd(r4, f4V).MulWidenLoAdd(r5, f5V).
+				MulWidenLoAdd(r6, f6V)
+			hi := seedV.MulWidenHiAdd(r0, f0V).MulWidenHiAdd(r1, f1V).
+				MulWidenHiAdd(r2, f2V).MulWidenHiAdd(r3, f3V).
+				MulWidenHiAdd(r4, f4V).MulWidenHiAdd(r5, f5V).
+				MulWidenHiAdd(r6, f6V)
 			lo = lo.Shift(negShiftV)
 			hi = hi.Shift(negShiftV)
-
 			wienerStoreV(dp, lo, hi, maxV)
-
-			p0 = unsafe.Add(p0, step)
-			p1 = unsafe.Add(p1, step)
-			p2 = unsafe.Add(p2, step)
-			p3 = unsafe.Add(p3, step)
-			p4 = unsafe.Add(p4, step)
-			p5 = unsafe.Add(p5, step)
-			p6 = unsafe.Add(p6, step)
-			dp = unsafe.Add(dp, step)
+			r0, r1, r2, r3, r4, r5 = r1, r2, r3, r4, r5, r6
+			nextp = unsafe.Add(nextp, tempStride*elem)
+			dp = unsafe.Add(dp, dstStride*elem)
 		}
 	}
 }
