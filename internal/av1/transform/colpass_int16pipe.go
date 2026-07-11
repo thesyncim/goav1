@@ -67,10 +67,13 @@ func inverseDCT64Col8Scalar16(buf []int16, stride int, min int32, max int32) {
 	}
 }
 
-// clampRoundNarrowInt16 is the mid-pass round+clamp that also narrows the int32
-// row-pass output into the int16 column scratch. Equivalent to clampRoundImpl
-// followed by an int16 narrow, but done in a single sweep.
-func clampRoundNarrowInt16(src []int32, dst []int16, shift int, lo int32, hi int32) {
+// clampRoundNarrowInt16Impl is the mid-pass round+clamp that also narrows the
+// int32 row-pass output into the int16 column scratch. Equivalent to
+// clampRoundImpl followed by an int16 narrow, but done in a single sweep. The
+// SIMD build binds the fused SQRSHRN form (colpass_int16pipe_gosimd_arm64.go).
+var clampRoundNarrowInt16Impl = clampRoundNarrowInt16Scalar
+
+func clampRoundNarrowInt16Scalar(src []int32, dst []int16, shift int, lo int32, hi int32) {
 	if shift > 0 {
 		for i := range src {
 			dst[i] = clipRangeT[int16](roundShift(int64(src[i]), shift), lo, hi)

@@ -223,9 +223,9 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 	if col16 != nil {
 		total := width * height
 		if rowLimit == height {
-			clampRoundNarrowInt16(scratch, col16, shift, colMin, colMax)
+			clampRoundNarrowInt16Impl(scratch, col16, shift, colMin, colMax)
 		} else {
-			clampRoundNarrowInt16(scratch[:rowLimit*width], col16[:rowLimit*width], shift, colMin, colMax)
+			clampRoundNarrowInt16Impl(scratch[:rowLimit*width], col16[:rowLimit*width], shift, colMin, colMax)
 			for i := rowLimit * width; i < total; i++ {
 				col16[i] = 0
 			}

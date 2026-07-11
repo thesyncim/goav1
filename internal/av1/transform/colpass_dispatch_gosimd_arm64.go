@@ -12,4 +12,10 @@ package transform
 func init() {
 	inverseDCT8Col4Impl = inverseDCT8Col4SIMD
 	inverseDCT16Col4Impl = inverseDCT16Col4SIMD
+	// inverseDCT32Col4SIMD (colpass_gosimd32_arm64.go) measured ~2.5% behind
+	// inverseDCT32Col4NEON after every optimize-go-simd pattern (raw pointers,
+	// rodata constants via an opaque base, bias-seeded MLA chains, full even-
+	// part textual inline; 0 spills, 0 calls, exact multiply/clip parity). The
+	// asm is clang -O2 output of the identical algebra, so the residual is the
+	// documented LLVM scheduling gap; the binding stays on the asm.
 }
