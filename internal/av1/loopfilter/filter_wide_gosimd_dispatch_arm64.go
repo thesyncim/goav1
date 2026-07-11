@@ -11,11 +11,9 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 // init binds the wide deblocking kernels under the goexperiment.simd build (the
 // NEON binding in filter_wide_dispatch_arm64.go is excluded there via
 // !goexperiment.simd). The eight- and fourteen-sample 8-bit kernels route
-// through the Go-native SIMD implementations (filter6/8/14_gosimd_arm64.go);
-// the 16-bit six/fourteen-sample kernels keep the hand-written NEON asm, which
-// is still compiled in this build (filter_wide16_neon_arm64.go is tagged
-// arm64 && !purego), so they do not regress. Every binding is byte-identical
-// to the pure-Go reference.
+// through the Go-native SIMD implementations (filter6/8/14_gosimd_arm64.go),
+// in both the 8-bit and 16-bit (10/12-bit sample) forms. Every binding is
+// byte-identical to the pure-Go reference.
 func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {
@@ -27,9 +25,9 @@ func init() {
 		filter6EdgeImpl = filter6EdgeSIMD
 		filter8EdgeImpl = filter8EdgeSIMD
 		filter14EdgeImpl = filter14EdgeSIMD
-		filter6Edge16Impl = filter6Edge16NEON
+		filter6Edge16Impl = filter6Edge16SIMD
 		filter8Edge16Impl = filter8Edge16SIMD
-		filter14Edge16Impl = filter14Edge16NEON
+		filter14Edge16Impl = filter14Edge16SIMD
 		return
 	}
 	filter4EdgeImpl = filter4EdgePureGo

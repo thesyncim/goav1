@@ -90,9 +90,8 @@ func TestFilterKernelSIMDCanonical(t *testing.T) {
 }
 
 // TestFilterSIMDDispatchBound is the FuncForPC probe: under the goexperiment.simd
-// build the narrow and the 8-bit six/eight/fourteen-sample dispatch slots must
-// resolve to the Go-native SIMD kernels, while the 16-bit six/fourteen-sample
-// slots keep the NEON asm (re-bound so they do not regress).
+// build every narrow and wide dispatch slot (8-bit and 16-bit) must resolve to
+// the Go-native SIMD kernels.
 func TestFilterSIMDDispatchBound(t *testing.T) {
 	nameOf := func(v interface{}) string {
 		return runtime.FuncForPC(reflect.ValueOf(v).Pointer()).Name()
@@ -106,9 +105,9 @@ func TestFilterSIMDDispatchBound(t *testing.T) {
 		{"filter8EdgeImpl", filter8EdgeImpl, filter8EdgeSIMD},
 		{"filter8Edge16Impl", filter8Edge16Impl, filter8Edge16SIMD},
 		{"filter6EdgeImpl", filter6EdgeImpl, filter6EdgeSIMD},
-		{"filter6Edge16Impl", filter6Edge16Impl, filter6Edge16NEON},
+		{"filter6Edge16Impl", filter6Edge16Impl, filter6Edge16SIMD},
 		{"filter14EdgeImpl", filter14EdgeImpl, filter14EdgeSIMD},
-		{"filter14Edge16Impl", filter14Edge16Impl, filter14Edge16NEON},
+		{"filter14Edge16Impl", filter14Edge16Impl, filter14Edge16SIMD},
 	}
 	for _, c := range checks {
 		if got, want := nameOf(c.got), nameOf(c.want); got != want {
@@ -567,6 +566,131 @@ func TestFilter14SIMDExtremePixels(t *testing.T) {
 	}
 }
 
+// --- wide 16-bit (filter6/filter14) SIMD differential -------------------------
+
+func runFilterWide16SIMD(t *testing.T, name string, vertical bool, seed int64, length int, c wide16Case,
+	ref, simd, neon func([]byte, int, int, int, int, int, filter4Params)) {
+	t.Helper()
+	rng := rand.New(rand.NewSource(seed))
+	maxVal := (1 << c.bitDepth) - 1
+	scale, params := wide16Params(c.bitDepth, c.limit, c.blimit, c.hev)
+	var strideBytes, rows, step, outer, q0Base int
+	if vertical {
+		strideBytes, rows = 128, 96
+		step, outer = 2, strideBytes
+		q0Base = 16 * 2
+	} else {
+		strideBytes, rows = 256, 32
+		step, outer = strideBytes, 2
+		q0Base = 16*strideBytes + 16*2
+	}
+	base := make([]byte, strideBytes*rows)
+	fillWide16Content(base, rng, int(seed)%5, maxVal)
+	want := append([]byte(nil), base...)
+	got := append([]byte(nil), base...)
+	asm := append([]byte(nil), base...)
+	ref(want, q0Base, step, outer, length, scale, params)
+	simd(got, q0Base, step, outer, length, scale, params)
+	neon(asm, q0Base, step, outer, length, scale, params)
+	dir := "H"
+	if vertical {
+		dir = "V"
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s-16 %s %s seed=%d len=%d idx=%d got=%d want=%d", name, dir, c.name, seed, length, i, got[i], want[i])
+		}
+		if asm[i] != want[i] {
+			t.Fatalf("%s-16 %s asm %s seed=%d len=%d idx=%d asm=%d want=%d", name, dir, c.name, seed, length, i, asm[i], want[i])
+		}
+	}
+}
+
+func TestFilter14Edge16SIMDMatchesPureGo(t *testing.T) {
+	lengths := []int{1, 3, 7, 8, 9, 15, 16, 17, 24, 31, 32, 48, 64}
+	var seed int64 = 4000
+	for _, c := range wide16Corpus() {
+		for _, length := range lengths {
+			for rep := 0; rep < 3; rep++ {
+				runFilterWide16SIMD(t, "filter14", false, seed, length, c,
+					filter14Edge16PureGo, filter14Edge16SIMD, filter14Edge16NEON)
+				runFilterWide16SIMD(t, "filter14", true, seed+700000, length, c,
+					filter14Edge16PureGo, filter14Edge16SIMD, filter14Edge16NEON)
+				seed++
+			}
+		}
+	}
+}
+
+func TestFilter6Edge16SIMDMatchesPureGo(t *testing.T) {
+	lengths := []int{1, 3, 7, 8, 9, 15, 16, 17, 24, 31, 32, 48, 64}
+	var seed int64 = 5000
+	for _, c := range wide16Corpus() {
+		for _, length := range lengths {
+			for rep := 0; rep < 3; rep++ {
+				runFilterWide16SIMD(t, "filter6", false, seed, length, c,
+					filter6Edge16PureGo, filter6Edge16SIMD, filter6Edge16NEON)
+				runFilterWide16SIMD(t, "filter6", true, seed+800000, length, c,
+					filter6Edge16PureGo, filter6Edge16SIMD, filter6Edge16NEON)
+				seed++
+			}
+		}
+	}
+}
+
+// TestFilterWide16SIMDExtremePixels drives min/max 10/12-bit samples with
+// maximal thresholds: the all-max 12-bit pattern pushes the fourteen-tap sum
+// to its 65528 ceiling, the exact case the -32768 accumulator offset exists
+// for (and the case the NEON asm refuses).
+func TestFilterWide16SIMDExtremePixels(t *testing.T) {
+	const strideBytes = 256
+	const rows = 32
+	writeS := func(buf []byte, off, v int) {
+		buf[off] = byte(v)
+		buf[off+1] = byte(v >> 8)
+	}
+	for _, bd := range []uint8{10, 12} {
+		maxVal := (1 << bd) - 1
+		patterns := []func(row, col int) int{
+			func(row, col int) int { return maxVal },
+			func(row, col int) int { return 0 },
+			func(row, col int) int { return (col % 2) * maxVal },
+			func(row, col int) int { return (row % 2) * maxVal },
+			func(row, col int) int { return ((col / 8) % 2) * maxVal },
+		}
+		for _, thr := range [][3]int{{255, 510, 255}, {255, 510, 0}, {0, 0, 0}} {
+			scale, params := wide16Params(bd, thr[0], thr[1], thr[2])
+			for pi, fill := range patterns {
+				base := make([]byte, strideBytes*rows)
+				for row := 0; row < rows; row++ {
+					for col := 0; col < strideBytes/2; col++ {
+						writeS(base, row*strideBytes+col*2, fill(row, col))
+					}
+				}
+				q0Base := 16 * strideBytes
+				for _, k := range []struct {
+					name string
+					ref  func([]byte, int, int, int, int, int, filter4Params)
+					simd func([]byte, int, int, int, int, int, filter4Params)
+				}{
+					{"filter14", filter14Edge16PureGo, filter14Edge16SIMD},
+					{"filter6", filter6Edge16PureGo, filter6Edge16SIMD},
+				} {
+					want := append([]byte(nil), base...)
+					got := append([]byte(nil), base...)
+					k.ref(want, q0Base, strideBytes, 2, 64, scale, params)
+					k.simd(got, q0Base, strideBytes, 2, 64, scale, params)
+					for i := range want {
+						if got[i] != want[i] {
+							t.Fatalf("%s-16 extreme bd=%d thr=%v pattern=%d idx=%d got=%d want=%d", k.name, bd, thr, pi, i, got[i], want[i])
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 // --- zero-alloc guard -------------------------------------------------------
 
 // TestFilterSIMDZeroAlloc confirms the SIMD kernels do not heap-allocate on the
@@ -597,6 +721,9 @@ func TestFilterSIMDZeroAlloc(t *testing.T) {
 		{"filter14EdgeSIMD_V", func() { filter14EdgeSIMD(pix, 16, 1, stride, 8, 1, params) }},
 		{"filter4Edge16SIMD", func() { filter4Edge16SIMD(pix16, 8*stride*2+32, stride*2, 2, 64, params16) }},
 		{"filter8Edge16SIMD", func() { filter8Edge16SIMD(pix16, 8*stride*2+32, stride*2, 2, 64, 4, params16) }},
+		{"filter6Edge16SIMD", func() { filter6Edge16SIMD(pix16, 8*stride*2+32, stride*2, 2, 64, 4, params16) }},
+		{"filter14Edge16SIMD", func() { filter14Edge16SIMD(pix16, 8*stride*2+32, stride*2, 2, 64, 4, params16) }},
+		{"filter14Edge16SIMD_V", func() { filter14Edge16SIMD(pix16, 16*2, 2, stride*2, 8, 4, params16) }},
 	}
 	for _, c := range cases {
 		if a := testing.AllocsPerRun(50, c.fn); a != 0 {
