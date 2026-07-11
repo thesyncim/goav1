@@ -61,29 +61,10 @@ func cdefFilterBlock4PrimaryU8NEON(ctx *filterBlockU8NEONCtx)
 func cdefFilterBlock4SecondaryU8NEON(ctx *filterBlockU8NEONCtx)
 
 // dispatchFilterBlockU8NEON routes a prepared ctx to the width- and
-// strength-specialized kernel, mirroring dispatchFilterBlockNEON (dav1d's
-// pri/sec/pri_sec split of src/arm/64/cdef.S).
-func dispatchFilterBlockU8NEON(ctx *filterBlockU8NEONCtx, width int, primaryStrength int, secondaryStrength int) {
-	if width == 8 {
-		switch {
-		case primaryStrength != 0 && secondaryStrength == 0:
-			cdefFilterBlock8PrimaryU8NEON(ctx)
-		case primaryStrength == 0 && secondaryStrength != 0:
-			cdefFilterBlock8SecondaryU8NEON(ctx)
-		default:
-			cdefFilterBlock8U8NEON(ctx)
-		}
-		return
-	}
-	switch {
-	case primaryStrength != 0 && secondaryStrength == 0:
-		cdefFilterBlock4PrimaryU8NEON(ctx)
-	case primaryStrength == 0 && secondaryStrength != 0:
-		cdefFilterBlock4SecondaryU8NEON(ctx)
-	default:
-		cdefFilterBlock4U8NEON(ctx)
-	}
-}
+// strength-specialized kernel. It is build-tag split: the stock arm64 build
+// (filter_u8_route_arm64.go) routes every case to the NEON asm, while the
+// goexperiment.simd build (filter_u8_gosimd_arm64.go) routes the
+// secondary-only cases to the Go-native SIMD kernels.
 
 // filterUnitBlocksU8 binds the NEON 8-bit unit-level loop on arm64. See
 // filter_u8_dispatch.go for why this is a build-tag binding.
