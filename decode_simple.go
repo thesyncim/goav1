@@ -51,6 +51,11 @@ type Decoder struct {
 	postFilter DecoderFrameWorkReusableSupportedPostFilterRunner
 	external   decoderExternalPostFilterRunner
 
+	// postFilterParallel fans the post-filter chain's independent row bands out
+	// across the same worker count as tile decode. It is reused across frames so
+	// the parallel path stays allocation-free after warm-up.
+	postFilterParallel DecoderFrameWorkPostFilterParallel
+
 	payloadKind   decoderPayloadKind
 	payloadSource decoderPayloadSource
 	payloadBuf    []byte
@@ -291,6 +296,12 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		d.postFilter.size = postArena
 		d.postFilter.runner.Scratch = decoderPostFilterScratchFromArena(postArena, &arena)
 	}
+	// Let the post-filter chain fan its independent row bands across the tile
+	// worker count. This is a byte-exact scheduling change (each band reads the
+	// previous stage's complete output via boundary snapshots and writes disjoint
+	// rows), so it never alters decoded output.
+	d.postFilterParallel.Workers = d.workerPool.WorkerCount()
+	d.postFilter.Parallel = &d.postFilterParallel
 
 	runtime := DecoderFrameWorkResidualEventRuntime{
 		State:             &d.state,
@@ -774,6 +785,8 @@ func newDecoderSideDataScratch(size DecoderFrameWorkSideDataScratchSize, arena *
 		CDEFIndexMap:             arena.takeUint8s(size.CDEFIndexMap),
 		CDEFReadMap:              arena.takeBools(size.CDEFReadMap),
 		LoopFilterMap:            make([]DecoderFrameWorkLoopFilterBlockRecord, size.LoopFilterMap),
+		LoopFilterMasks:          make([]DecoderFrameWorkLoopFilterFilterMask, size.LoopFilterMasks),
+		LoopFilterLevelCache:     make([][4]uint8, size.LoopFilterLevelCache),
 		RestorationRecords:       make([]TileRestorationUnitRecord, size.RestorationRecords),
 		RestorationBoundaryAbove: arena.takeUint16s(size.RestorationBoundaryAbove),
 		RestorationBoundaryBelow: arena.takeUint16s(size.RestorationBoundaryBelow),

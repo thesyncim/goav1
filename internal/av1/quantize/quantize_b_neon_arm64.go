@@ -24,10 +24,6 @@ type quantizeBNEONCtx struct {
 //go:noescape
 func quantizeBNEONAsm(ctx *quantizeBNEONCtx)
 
-func init() {
-	quantizeBBlockImpl = quantizeBBlockNEON
-}
-
 // quantizeBBlockNEON quantizes a contiguous square block with the zbin rule,
 // four coefficients at a time; the DC coefficient is redone with the scalar
 // rule and DC constants. The widening multiply keeps the 32x16 product

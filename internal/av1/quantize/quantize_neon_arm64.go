@@ -23,10 +23,6 @@ type quantizeFPNEONCtx struct {
 //go:noescape
 func quantizeFPNEONAsm(ctx *quantizeFPNEONCtx)
 
-func init() {
-	quantizeFPBlockImpl = quantizeFPBlockNEON
-}
-
 // quantizeFPBlockNEON quantizes a contiguous square block with the fp rule,
 // vectorized four coefficients at a time; the DC coefficient is re-done by
 // the scalar rule afterwards with the DC constants. The int32 lane math is

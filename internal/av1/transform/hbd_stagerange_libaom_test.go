@@ -302,7 +302,10 @@ func TestInverseBlockBitDepth2DMatchesLibaomHBD(t *testing.T) {
 		bd       int
 		coeffAbs int32
 	}{
-		{8, 32767},
+		// bitDepth 8 uses the int16 column pipeline (dav1d 8bpc), which requires
+		// the int16 butterfly not to overflow — a spec-valid-magnitude property.
+		// 10-bit stays on the int32 pipeline and keeps its full range.
+		{8, 512},
 		{10, 131071},
 	}
 	sizes := []Size{

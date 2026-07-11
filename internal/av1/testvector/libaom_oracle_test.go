@@ -22,6 +22,30 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
+// libaomPostFilterParallel, when set via GOAV1_POSTFILTER_PARALLEL=<N>, drives
+// the oracle dry-run's supported post-filter chain through the parallel band
+// fan-out with N workers. It lets the strict-MD5 gate prove the parallel path
+// matches libaom byte-for-byte on the whole corpus. It is a single shared,
+// reused instance (the dry-run decodes frames serially), so it stays
+// allocation-free after warm-up just like the production decoder.
+var libaomPostFilterParallel = func() *decoder.FrameWorkPostFilterParallel {
+	v := os.Getenv("GOAV1_POSTFILTER_PARALLEL")
+	if v == "" {
+		return nil
+	}
+	n := 0
+	for _, c := range v {
+		if c < '0' || c > '9' {
+			return nil
+		}
+		n = n*10 + int(c-'0')
+	}
+	if n <= 1 {
+		return nil
+	}
+	return &decoder.FrameWorkPostFilterParallel{Workers: n}
+}()
+
 func TestLibaomQuantizer00OfficialMD5Manifest(t *testing.T) {
 	vector := mustLibaomRemoteVector(t, TagDecoderLibaomQuantizer00)
 	md5Data := readLibaomRemoteFile(t, vector.MD5)
@@ -447,6 +471,12 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 					return fmt.Errorf("supported postfilter scratch: %w", err)
 				}
 				post.Scratch = libaomPostFilterScratchStorage(size)
+				// When exercising the parallel post-filter path (GOAV1_POSTFILTER_PARALLEL),
+				// fan the independent row bands across goroutines. The strict-MD5 gate then
+				// proves the parallel path matches libaom on the whole corpus.
+				if libaomPostFilterParallel != nil {
+					ctx.Parallel = libaomPostFilterParallel
+				}
 				if err := post.Apply(ctx); err != nil {
 					t.Logf("postfilter event=%s active=%v supported_size=%+v has_cdef=%v has_lf=%v has_restoration=%v",
 						vector.Name, ctx.ActivePostFilters(), size, ctx.CDEFIndexMap != nil, ctx.LoopFilterMap != nil, ctx.RestorationFrameBuffers != nil)

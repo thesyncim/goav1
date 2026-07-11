@@ -2,6 +2,11 @@ package quantize
 
 import "math/bits"
 
+const (
+	minInt32 = -1 << 31
+	maxInt32 = 1<<31 - 1
+)
+
 // quantize.go is the encoder's forward quantizer, the inverse of this
 // package's dequantization path. QuantizeBlockScaled is plain truncation
 // toward zero (|q| = (|c| << txScale) / scale, inverting dequantScalar to
@@ -27,6 +32,11 @@ func QuantizeBlockScaled(qcoeff []int16, qStride int, coeff []int32, coeffStride
 	if !coeffBlockFits(len(qcoeff), qStride, width, height) ||
 		!coeffBlockFits(len(coeff), coeffStride, width, height) {
 		return ErrInvalidQuantizer
+	}
+	// Contiguous square blocks take the vector kernel when available.
+	if width == height && qStride == height && coeffStride == height &&
+		quantizeBlockImpl != nil && quantizeBlockImpl(qcoeff[:width*height], coeff[:width*height], width, q, txScale) {
+		return nil
 	}
 	for col := range width {
 		qCol := qcoeff[col*qStride : col*qStride+height]
@@ -62,6 +72,12 @@ func quantizeScalar(coeff int32, scale int32, txScale uint8) int16 {
 	}
 	return int16(level)
 }
+
+// quantizeBlockImpl, when non-nil, quantizes one contiguous square block
+// with the truncating rule and reports whether it handled the input;
+// architectures without a kernel leave it nil. Implementations must be
+// bit-exact with quantizeScalar for every coefficient.
+var quantizeBlockImpl func(qcoeff []int16, coeff []int32, n int, q Quantizer, txScale uint8) bool
 
 // QuantizeBlockScaledFP quantizes with libaom's realtime rounding, the port
 // of av1_quantize_fp_no_qmatrix (av1/encoder/av1_quantize.c) minus the

@@ -8,6 +8,8 @@
 
 package transform
 
+import "unsafe"
+
 // Type identifies the AV1 inverse transform kind for a residual block.
 type Type uint8
 
@@ -119,7 +121,34 @@ func InverseBlockBitDepth(dst []int16, dstStride int, coeff []int32, coeffStride
 	if !t.Supported(size) {
 		return ErrInvalidTransform
 	}
+	// dav1d 8bpc int16 column pipeline: for bitDepth==8 blocks whose vertical
+	// (column) transform is a DCT, run the column pass in int16 with no boundary
+	// narrowing. 10/12-bit stay on the int32 pipeline (dav1d 16bpc).
+	if bitDepth == 8 && hasFastInt16Column(t, int(size.Height)) {
+		return inverseSeparableBlockInt16(dst, dstStride, coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax)
+	}
 	return inverseSeparableBlockClamped(dst, dstStride, coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax)
+}
+
+// inverseSeparableBlockInt16 runs the row pass in int32, narrows into an int16
+// column scratch (reusing the int32 scratch's backing store in place), runs the
+// int16 DCT column pass, then writes the residual. Byte-identical to the int32
+// path for bitDepth==8.
+func inverseSeparableBlockInt16(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size, t Type, rowMin int32, rowMax int32, colMin int32, colMax int32) error {
+	width := int(size.Width)
+	height := int(size.Height)
+	if dstStride < width || !blockFits(len(dst), dstStride, width, height) || len(scratch) < width*height {
+		return ErrInvalidTransform
+	}
+	// The int16 column scratch aliases the front of the int32 scratch: after the
+	// mid-pass narrow, scratch[i] (4 bytes) is consumed before col16[i] (2 bytes)
+	// can reach it, so the in-place narrow never clobbers an unread element.
+	col16 := unsafe.Slice((*int16)(unsafe.Pointer(&scratch[0])), width*height)
+	if err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax, 0, col16); err != nil {
+		return err
+	}
+	narrowStoreFromInt16(dst, dstStride, col16, width, height)
+	return nil
 }
 
 // InverseBlockBitDepthBoundedRows is InverseBlockBitDepth with the dav1d-style
@@ -158,7 +187,7 @@ func InverseBlockBitDepthRaw(dst []int32, coeff []int32, coeffStride int, size S
 	if len(dst) < width*height {
 		return ErrInvalidTransform
 	}
-	return inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, dst, size, t, rowMin, rowMax, colMin, colMax, activeRows)
+	return inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, dst, size, t, rowMin, rowMax, colMin, colMax, activeRows, nil)
 }
 
 // InverseDCTDCOnlyBlockBitDepth writes the residual for a DCT_DCT block whose

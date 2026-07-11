@@ -1,6 +1,11 @@
-//go:build arm64 && !purego
+//go:build arm64 && !purego && !goexperiment.simd
 
 package encoder
+
+// init binds the SAD dispatch vars to the NEON asm kernels. Under
+// GOEXPERIMENT=simd this file is excluded and sad_dispatch_simd_arm64.go binds
+// the ported shapes to Go-native SIMD instead (re-binding the rest to NEON).
+func init() { bindNEONSAD() }
 
 func sad8x8(src, ref []byte, stride int, limit int) int {
 	return sad8x8NEON(src, ref, stride, limit)

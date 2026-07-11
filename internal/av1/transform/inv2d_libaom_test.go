@@ -246,9 +246,12 @@ func TestInverseBlockBitDepth2DMatchesLibaom2D(t *testing.T) {
 				coeffSize := adjustedScanSize(sz)
 				coeffStride := int(coeffSize.Height)
 				coeff := make([]int32, int(coeffSize.Width)*coeffStride)
-				// 8-bit dq_coeff is up to ±(1<<15) per libaom decodetxb clamp.
+				// Spec-valid magnitude: at bitDepth 8 the int16 column pipeline
+				// (dav1d 8bpc) requires the int16 butterfly not to overflow, which
+				// real decode guarantees. Dense full-range random coeffs are not
+				// valid transform inputs and would overflow the int16 stages.
 				for i := range coeff {
-					coeff[i] = int32(rng.Intn(1<<15) - (1 << 14))
+					coeff[i] = int32(rng.Intn(1<<10) - (1 << 9))
 				}
 				wantResid := libaomInverseResidual(coeff, coeffStride, sz, typ, 8)
 

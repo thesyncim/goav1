@@ -1,4 +1,4 @@
-//go:build purego || !arm64
+//go:build purego || !arm64 || (goexperiment.simd && arm64 && !purego)
 
 package encoder
 

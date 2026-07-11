@@ -277,7 +277,12 @@ func hadamard32x32NEON(src []int16, srcStride int, coeff []int32) {
 	hadamard32x32CombineNEONAsm(unsafe.Pointer(&coeff[0]))
 }
 
-func init() {
+// bindPixelStatsNEON binds every pixel-domain statistics kernel to its NEON
+// (or DOTPROD, when detected) implementation. It is shared by the NEON-only
+// dispatch init and the goexperiment.simd dispatch init: the SATD/Hadamard
+// kernels get a Go-native SIMD binding under goexperiment.simd, but the
+// pixelStats kernels stay on the hand-written NEON assembly in both builds.
+func bindPixelStatsNEON() {
 	pixelStats8x8Impl = pixelStats8x8NEON
 	pixelStats4x4Impl = pixelStats4x4NEON
 	pixelStats8x4Impl = pixelStats8x4NEON
@@ -311,9 +316,4 @@ func init() {
 		pixelStats64x32Impl = pixelStats64x32DotProd
 		pixelStats32x64Impl = pixelStats32x64DotProd
 	}
-	satdCoeffsImpl = satdCoeffsNEON
-	hadamard4x4Impl = hadamard4x4NEON
-	hadamard8x8Impl = hadamard8x8NEON
-	hadamard16x16Impl = hadamard16x16NEON
-	hadamard32x32Impl = hadamard32x32NEON
 }

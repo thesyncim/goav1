@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego
+//go:build arm64 && !purego && !goexperiment.simd
 
 package prediction
 
@@ -17,6 +17,11 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 // The NEON wrappers fall back to pure-Go for non-8-bit samples and widths that
 // are not a multiple of 8, so the asm only handles the common shapes that
 // dominate intra decode time.
+//
+// Under the goexperiment.simd build the Go-native SIMD PAETH/SMOOTH kernels bind
+// instead (intra_static_gosimd_arm64.go), which re-binds every other kernel in
+// this dispatch to its NEON asm; this file is excluded there so the two inits
+// never fight over the same slots.
 func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {

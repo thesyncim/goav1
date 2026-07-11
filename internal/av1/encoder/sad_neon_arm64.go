@@ -381,7 +381,12 @@ func sad8x8CompoundAvgBlockNEON(src []byte, srcStride int, ref0 []byte, ref0Stri
 	return int(ctx.Sum)
 }
 
-func init() {
+// bindNEONSAD binds every SAD dispatch var to its NEON asm implementation. It
+// is invoked from the non-simd arm64 init (sad_dispatch_arm64.go) and, under
+// GOEXPERIMENT=simd, from the SIMD init (sad_dispatch_simd_arm64.go) to re-bind
+// the shapes that are NOT ported to Go-native SIMD, so they keep their asm
+// speed instead of falling back to the portable scalar reference.
+func bindNEONSAD() {
 	sad8x8Impl = sad8x8NEON
 	sad16x16Impl = sad16x16NEON
 	sad32x32Impl = sad32x32NEON

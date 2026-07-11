@@ -153,7 +153,10 @@ func TestInverseBlockBitDepth64x64DCTDCTRandom(t *testing.T) {
 		coeff := make([]int32, int(coeffSize.Width)*coeffStride)
 		for i := range coeff {
 			if rng.Intn(10) == 0 {
-				coeff[i] = int32(rng.Intn(1<<15) - (1 << 14))
+				// Spec-valid magnitude: the int16 8bpc DCT64 column path (dav1d)
+				// requires the int16 butterfly not to overflow — real decode
+				// guarantees this; dense large random coeffs do not.
+				coeff[i] = int32(rng.Intn(1<<10) - (1 << 9))
 			}
 		}
 		wantResid := libaomInverseResidual64x64(coeff, coeffStride, 8)
