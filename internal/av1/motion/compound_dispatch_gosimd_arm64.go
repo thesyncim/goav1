@@ -20,6 +20,7 @@ func init() {
 	compoundNEONBind()
 	if cpu.Detected.NEON {
 		predictInterCompoundRef8ToConvBufXImpl = compoundX8GoSIMD
+		predictInterCompoundRef8ToConvBuf2DImpl = compound2D8GoSIMD
 		blendCompoundAvg8Impl = blendCompoundAvg8GoSIMD
 	}
 }
