@@ -32,9 +32,11 @@ type BlockModeCDFs struct {
 	SegmentID   [BlockModeContexts]entropy.CDF
 }
 
-// BlockModeContext is the caller-owned top/left block context for one
-// superblock. Slots are addressed in 4x4 units, matching dav1d's bx4/by4.
-type BlockModeContext struct {
+// blockModeNeighborContext is the compact per-root state that must be reset
+// and restored from the top/left carriers before each superblock walk. Keeping
+// it separate from the validity-guarded grid payload lets the hot root reset
+// invalidate those grids without rewriting every stale payload byte.
+type blockModeNeighborContext struct {
 	AboveSkip        [MaxBlockModeSlots]uint8
 	LeftSkip         [MaxBlockModeSlots]uint8
 	AboveSkipMode    [MaxBlockModeSlots]uint8
@@ -172,6 +174,12 @@ type BlockModeContext struct {
 	LeftPaletteY             [MaxBlockModeSlots]paletteContext
 	AbovePaletteUV           [MaxBlockModeSlots]paletteContext
 	LeftPaletteUV            [MaxBlockModeSlots]paletteContext
+}
+
+// BlockModeContext is the caller-owned top/left block context for one
+// superblock. Slots are addressed in 4x4 units, matching dav1d's bx4/by4.
+type BlockModeContext struct {
+	blockModeNeighborContext
 
 	GridInterMotion [MaxBlockModeSlots][MaxBlockModeSlots]InterMotionResult
 	GridMotionValid [MaxBlockModeSlots][MaxBlockModeSlots]uint8

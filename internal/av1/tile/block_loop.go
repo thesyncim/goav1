@@ -490,7 +490,7 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 
 func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8) error {
 	scratch.Partition = PartitionContext{}
-	scratch.Mode = BlockModeContext{}
+	scratch.Mode.resetRoot()
 	scratch.CDEF.Reset()
 	scratch.CoeffCtx = CoeffEntropyContext{}
 	if carrier == nil {
@@ -582,6 +582,19 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.SBDiagonalBlockSizeVisitedGrid = carrier.Diagonal[rootColIndex].BlockSizeVisited
 	}
 	return nil
+}
+
+// resetRoot clears the compact neighbor/snapshot state and invalidates every
+// grid cell. Grid payloads are deliberately retained: every motion, block-size,
+// and interpolation read is gated by the corresponding validity/visited map,
+// so rewriting the much larger payload arrays at every superblock boundary is
+// unnecessary. A standalone BlockModeContext keeps ordinary zero-value and
+// whole-value assignment semantics; this reset is only for scratch reuse.
+func (c *BlockModeContext) resetRoot() {
+	c.blockModeNeighborContext = blockModeNeighborContext{}
+	c.GridMotionValid = [MaxBlockModeSlots][MaxBlockModeSlots]uint8{}
+	c.GridInterpValid = [MaxBlockModeSlots][MaxBlockModeSlots]uint8{}
+	c.GridBlockSizeVisited = [MaxBlockModeSlots][MaxBlockModeSlots]uint8{}
 }
 
 func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, sbSizeMIB uint8) error {

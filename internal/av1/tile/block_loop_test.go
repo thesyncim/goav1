@@ -225,6 +225,38 @@ func TestBlockLoopContextCarrierRoundTripsRootEdges(t *testing.T) {
 	}
 }
 
+func TestBlockModeContextResetRootInvalidatesRetainedGridPayload(t *testing.T) {
+	var ctx BlockModeContext
+	mv := InterMotionResult{MV: [2]motion.Vector{{Row: 7, Col: -11}}}
+	filters := motion.InterpFilters{X: motion.InterpEightTapSmooth, Y: motion.InterpMultiTapSharp}
+	ctx.AboveSkip[0] = 1
+	ctx.TxNeighborValid = true
+	ctx.GridInterMotion[3][5] = mv
+	ctx.GridBlockSize[3][5] = BlockSize16x16
+	ctx.GridInterp[3][5] = filters
+	ctx.GridMotionValid[3][5] = 1
+	ctx.GridBlockSizeVisited[3][5] = 1
+	ctx.GridInterpValid[3][5] = 1
+
+	ctx.resetRoot()
+
+	if ctx.AboveSkip[0] != 0 || ctx.TxNeighborValid {
+		t.Fatalf("neighbor state survived reset: skip=%d tx=%v", ctx.AboveSkip[0], ctx.TxNeighborValid)
+	}
+	if ctx.GridMotionValid[3][5] != 0 || ctx.GridBlockSizeVisited[3][5] != 0 || ctx.GridInterpValid[3][5] != 0 {
+		t.Fatalf("grid validity survived reset: motion=%d size=%d interp=%d", ctx.GridMotionValid[3][5], ctx.GridBlockSizeVisited[3][5], ctx.GridInterpValid[3][5])
+	}
+	if _, _, ok := ctx.gridInterMotion(5, 3); ok {
+		t.Fatal("retained motion payload remained visible")
+	}
+	if _, ok := ctx.gridNeighborBlockSize(5, 3); ok {
+		t.Fatal("retained block-size payload remained visible")
+	}
+	if ctx.GridInterMotion[3][5] != mv || ctx.GridBlockSize[3][5] != BlockSize16x16 || ctx.GridInterp[3][5] != filters {
+		t.Fatal("reset rewrote validity-guarded payload")
+	}
+}
+
 // TestBlockLoopLoadFirstRootIndependentOfCarrierLength locks the boundary
 // load (haveTop=false, haveLeft=false) at the first root column to produce
 // scratch state independent of (a) the carrier Above slice length and (b)
