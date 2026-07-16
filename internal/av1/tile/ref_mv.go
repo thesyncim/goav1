@@ -335,24 +335,52 @@ func (c *BlockModeContext) MarkInterMotion(size BlockSize, x4 int, y4 int, resul
 	if err := validateInterMotion(result); err != nil {
 		return err
 	}
-	if err := c.MarkInter(size, x4, y4, result.References, hasChroma); err != nil {
+	dims, err := c.markInterContext(size, x4, y4, result.References, hasChroma, false)
+	if err != nil {
 		return err
-	}
-	dims, ok := size.Dimensions()
-	if !ok {
-		return ErrInvalidDecodeState
 	}
 	for i := 0; i < int(dims.W4); i++ {
 		c.AboveInterMotion[x4+i] = result
 		c.AboveMotionValid[x4+i] = 1
-		c.AboveBlockSize[x4+i] = size
 	}
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftInterMotion[y4+i] = result
 		c.LeftMotionValid[y4+i] = 1
-		c.LeftBlockSize[y4+i] = size
 	}
 	c.markGridInterMotion(size, x4, y4, result, dims)
+	return nil
+}
+
+// markInterMotionAndFilters is the decoded-inter fast path. Motion and
+// interpolation filters become available together, so install their top/left
+// and per-MI state in one pass instead of invalidating the grid and traversing
+// it twice more through MarkInterMotion followed by MarkInterFilters.
+func (c *BlockModeContext) markInterMotionAndFilters(size BlockSize, x4 int, y4 int, result InterMotionResult, hasChroma bool, filters motion.InterpFilters) error {
+	if err := validateInterMotion(result); err != nil {
+		return err
+	}
+	if !filters.X.Valid() || !filters.Y.Valid() {
+		return ErrInvalidDecodeState
+	}
+	dims, err := c.markInterContext(size, x4, y4, result.References, hasChroma, false)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < int(dims.W4); i++ {
+		slot := x4 + i
+		c.AboveInterMotion[slot] = result
+		c.AboveMotionValid[slot] = 1
+		c.AboveInterp[slot] = filters
+		c.AboveInterpValid[slot] = 1
+	}
+	for i := 0; i < int(dims.H4); i++ {
+		slot := y4 + i
+		c.LeftInterMotion[slot] = result
+		c.LeftMotionValid[slot] = 1
+		c.LeftInterp[slot] = filters
+		c.LeftInterpValid[slot] = 1
+	}
+	c.markGridInterMotionAndFilters(size, x4, y4, result, filters, dims)
 	return nil
 }
 
@@ -416,6 +444,21 @@ func (c *BlockModeContext) markGridInterMotion(size BlockSize, x4 int, y4 int, r
 			c.GridMotionValid[y][x] = 1
 			c.GridBlockSize[y][x] = size
 			c.GridBlockSizeVisited[y][x] = 1
+		}
+	}
+}
+
+func (c *BlockModeContext) markGridInterMotionAndFilters(size BlockSize, x4 int, y4 int, result InterMotionResult, filters motion.InterpFilters, dims BlockDimensions) {
+	xEnd := x4 + int(dims.W4)
+	yEnd := y4 + int(dims.H4)
+	for y := y4; y < yEnd; y++ {
+		for x := x4; x < xEnd; x++ {
+			c.GridInterMotion[y][x] = result
+			c.GridMotionValid[y][x] = 1
+			c.GridBlockSize[y][x] = size
+			c.GridBlockSizeVisited[y][x] = 1
+			c.GridInterp[y][x] = filters
+			c.GridInterpValid[y][x] = 1
 		}
 	}
 }
