@@ -957,6 +957,14 @@ type FrameWorkBatchRunner interface {
 	Run(FrameWorkBatch) error
 }
 
+// LaneRunner processes one lane in the reusable worker pool. It is used by
+// frame stages that have already completed tile work but still have independent
+// bands to fan out, so they can reuse the live pool instead of creating
+// short-lived goroutines for every frame.
+type LaneRunner interface {
+	RunLane(lane int) error
+}
+
 // Pool is a reusable bounded worker pool for frame/tile work.
 type Pool struct {
 	mu      sync.Mutex
@@ -973,9 +981,53 @@ type poolTask struct {
 	fn          BatchFunc
 	frameFn     FrameWorkBatchFunc
 	frameRunner FrameWorkBatchRunner
+	laneRunner  LaneRunner
+	lane        int
 	frameBatch  FrameWorkBatch
 	batch       Batch
 	jobs        []tile.Job
+}
+
+// ExecuteLanes dispatches one task to each of the first lanes workers and waits
+// for all of them. The pool must be idle, as with Execute and ExecuteFrameWork.
+// No allocation is required after pool construction when runner is reusable.
+func (p *Pool) ExecuteLanes(lanes int, runner LaneRunner) error {
+	if p == nil || len(p.workers) == 0 {
+		return ErrInvalidWorkerCount
+	}
+	if runner == nil {
+		return ErrInvalidCallback
+	}
+	if lanes <= 0 || lanes > len(p.workers) {
+		return ErrInvalidWorkerCount
+	}
+	if lanes == 1 {
+		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return ErrPoolClosed
+		}
+		p.mu.Unlock()
+		return runner.RunLane(0)
+	}
+
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return ErrPoolClosed
+	}
+	for lane := 0; lane < lanes; lane++ {
+		p.workers[lane].tasks <- poolTask{laneRunner: runner, lane: lane}
+	}
+	var firstErr error
+	for range lanes {
+		result := <-p.done
+		if firstErr == nil && result.err != nil {
+			firstErr = result.err
+		}
+	}
+	p.mu.Unlock()
+	return firstErr
 }
 
 type workerResult struct {
@@ -1322,6 +1374,10 @@ func validateBatches(batches []Batch, jobs []tile.Job, workers int) error {
 
 func poolWorkerLoop(tasks <-chan poolTask, done chan<- workerResult) {
 	for task := range tasks {
+		if task.laneRunner != nil {
+			done <- workerResult{err: task.laneRunner.RunLane(task.lane)}
+			continue
+		}
 		if task.frameFn != nil {
 			ctx := task.frameBatch
 			ctx.Batch = task.batch

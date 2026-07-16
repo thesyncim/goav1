@@ -3,6 +3,8 @@ package goav1
 import (
 	"errors"
 	"fmt"
+
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 )
 
 // Decoder is an ergonomic, high-level wrapper around the byte-exact public
@@ -301,6 +303,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	// previous stage's complete output via boundary snapshots and writes disjoint
 	// rows), so it never alters decoded output.
 	d.postFilterParallel.Workers = d.workerPool.WorkerCount()
+	internaldecoder.BindFrameWorkPostFilterParallelPool(&d.postFilterParallel, d.workerPool)
 	d.postFilter.Parallel = &d.postFilterParallel
 
 	runtime := DecoderFrameWorkResidualEventRuntime{

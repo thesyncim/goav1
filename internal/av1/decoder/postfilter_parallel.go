@@ -7,6 +7,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
+	"github.com/thesyncim/goav1/internal/av1/threading"
 )
 
 // FrameWorkPostFilterParallel is caller-owned, reusable scratch that lets the
@@ -34,6 +35,17 @@ type FrameWorkPostFilterParallel struct {
 
 	cdef   []frameWorkParallelCDEFScratch
 	cdefU8 []FrameWorkCDEFPostFilterU8BandBoundary
+	pool   *threading.Pool
+	runner frameWorkParallelPoolRunner
+}
+
+// BindFrameWorkPostFilterParallelPool lets a high-level decoder reuse its
+// already-live tile worker lanes for postfilter bands. Tile execution has
+// completed before the postfilter callback runs, so the pool is idle here.
+func BindFrameWorkPostFilterParallelPool(p *FrameWorkPostFilterParallel, pool *threading.Pool) {
+	if p != nil {
+		p.pool = pool
+	}
 }
 
 // frameWorkParallelCDEFScratch is one worker's private CDEF band scratch. It
@@ -120,14 +132,10 @@ func (b *FrameWorkCDEFPostFilterU8BandBoundary) ensure(lumaWidth, chromaWidth in
 	}
 }
 
-// frameWorkParallelRun runs fn(worker, band) for band in [0, count) across up to
-// workers goroutines and returns the first error. Each goroutine owns a fixed
-// worker id in [0, workers) for the whole run, so fn can index per-worker
-// scratch by that id with no sharing between concurrently running bands. It
-// mirrors the reconstruction wavefront's direct-goroutine fan-out (the pool's
-// task channels are reserved for tile batches); goroutines are short-lived per
-// stage.
-func frameWorkParallelRun(workers, count int, fn func(worker, band int) error) error {
+// frameWorkParallelRun is the fallback for callers that did not bind a reusable
+// worker pool. The concrete runner keeps the large postfilter context out of a
+// goroutine closure; only the small runner pointer and lane id are captured.
+func frameWorkParallelRun(workers, count int, runner *frameWorkParallelPoolRunner) error {
 	if count <= 0 {
 		return nil
 	}
@@ -135,32 +143,19 @@ func frameWorkParallelRun(workers, count int, fn func(worker, band int) error) e
 		workers = count
 	}
 	if workers <= 1 {
-		for band := 0; band < count; band++ {
-			if err := fn(0, band); err != nil {
-				return err
-			}
-		}
-		return nil
+		return runner.RunLane(0)
 	}
-	var next atomic.Int64
 	var firstErr atomic.Pointer[frameWorkParallelError]
 	var wg sync.WaitGroup
 	wg.Add(workers)
 	for w := 0; w < workers; w++ {
 		go func(worker int) {
 			defer wg.Done()
-			for {
-				band := int(next.Add(1)) - 1
-				if band >= count {
-					return
-				}
-				if firstErr.Load() != nil {
-					return
-				}
-				if err := fn(worker, band); err != nil {
-					firstErr.CompareAndSwap(nil, &frameWorkParallelError{err: err})
-					return
-				}
+			if firstErr.Load() != nil {
+				return
+			}
+			if err := runner.RunLane(worker); err != nil {
+				firstErr.CompareAndSwap(nil, &frameWorkParallelError{err: err})
 			}
 		}(w)
 	}
@@ -172,6 +167,164 @@ func frameWorkParallelRun(workers, count int, fn func(worker, band int) error) e
 }
 
 type frameWorkParallelError struct{ err error }
+
+type frameWorkParallelPoolJob uint8
+
+const (
+	frameWorkParallelPoolNone frameWorkParallelPoolJob = iota
+	frameWorkParallelPoolCDEFSnapshot
+	frameWorkParallelPoolCDEFU8
+	frameWorkParallelPoolLFPopulate
+	frameWorkParallelPoolLFVertical
+	frameWorkParallelPoolLFHorizontal
+)
+
+// frameWorkParallelPoolRunner is reused across stages and frames. Keeping the
+// concrete job state here avoids an escaping closure (and its large copied
+// FrameWorkPostFilterContext) on every frame.
+type frameWorkParallelPoolRunner struct {
+	job         frameWorkParallelPoolJob
+	count       int
+	parallel    *FrameWorkPostFilterParallel
+	ctx         FrameWorkPostFilterContext
+	cdefReq     FrameWorkCDEFPostFilterRequest
+	unitRows    int
+	rows        int
+	loopBands   FrameWorkLoopFilterMaskBands
+	loopJobSpan int
+	next        atomic.Int64
+	failed      atomic.Bool
+}
+
+func (r *frameWorkParallelPoolRunner) resetCommon(job frameWorkParallelPoolJob, count int, parallel *FrameWorkPostFilterParallel) {
+	r.job = job
+	r.count = count
+	r.parallel = parallel
+	r.next.Store(0)
+	r.failed.Store(false)
+}
+
+func (r *frameWorkParallelPoolRunner) clear() {
+	r.job = frameWorkParallelPoolNone
+	r.count = 0
+	r.parallel = nil
+	r.ctx = FrameWorkPostFilterContext{}
+	r.cdefReq = FrameWorkCDEFPostFilterRequest{}
+	r.unitRows = 0
+	r.rows = 0
+	r.loopBands = FrameWorkLoopFilterMaskBands{}
+	r.loopJobSpan = 0
+}
+
+func (r *frameWorkParallelPoolRunner) RunLane(worker int) error {
+	for {
+		band := int(r.next.Add(1)) - 1
+		if band >= r.count || r.failed.Load() {
+			return nil
+		}
+		var err error
+		switch r.job {
+		case frameWorkParallelPoolCDEFSnapshot:
+			err = frameWorkRunCDEFBand(r.parallel, &r.ctx, &r.cdefReq, r.unitRows, r.rows, worker, band, false)
+		case frameWorkParallelPoolCDEFU8:
+			err = frameWorkRunCDEFBand(r.parallel, &r.ctx, &r.cdefReq, r.unitRows, r.rows, worker, band, true)
+		case frameWorkParallelPoolLFPopulate, frameWorkParallelPoolLFVertical, frameWorkParallelPoolLFHorizontal:
+			err = frameWorkRunLoopFilterBand(&r.loopBands, r.job, r.loopJobSpan, band)
+		default:
+			return nil
+		}
+		if err != nil {
+			r.failed.Store(true)
+			return err
+		}
+	}
+}
+
+func (p *FrameWorkPostFilterParallel) pooledLanes(workers, count int) int {
+	if p == nil || p.pool == nil || count <= 0 {
+		return 0
+	}
+	if workers > count {
+		workers = count
+	}
+	if workers <= 1 || p.pool.WorkerCount() < workers {
+		return 0
+	}
+	return workers
+}
+
+func (p *FrameWorkPostFilterParallel) runCDEFBands(ctx FrameWorkPostFilterContext, req FrameWorkCDEFPostFilterRequest, unitRows, rows, count, workers int, useU8 bool) error {
+	job := frameWorkParallelPoolCDEFSnapshot
+	if useU8 {
+		job = frameWorkParallelPoolCDEFU8
+	}
+	p.runner.resetCommon(job, count, p)
+	p.runner.ctx = ctx
+	p.runner.cdefReq = req
+	p.runner.unitRows = unitRows
+	p.runner.rows = rows
+	var err error
+	if lanes := p.pooledLanes(workers, count); lanes > 0 {
+		err = p.pool.ExecuteLanes(lanes, &p.runner)
+	} else {
+		err = frameWorkParallelRun(workers, count, &p.runner)
+	}
+	p.runner.clear()
+	return err
+}
+
+func frameWorkRunCDEFBand(parallel *FrameWorkPostFilterParallel, ctx *FrameWorkPostFilterContext, req *FrameWorkCDEFPostFilterRequest, unitRows, rows, worker, band int, useU8 bool) error {
+	rowStart := band * unitRows
+	rowEnd := min(rowStart+unitRows, rows)
+	bandReq := *req
+	bandReq.InputScratch = parallel.cdef[worker].input
+	if useU8 {
+		bandReq.SampleScratch = parallel.cdef[worker].line
+		r, err := ctx.ApplyCDEFPostFilterUnitRowsU8(bandReq, parallel.cdefU8[band], rowStart, rowEnd)
+		if err == nil {
+			parallel.accumulateCDEFResult(worker, r)
+		}
+		return err
+	}
+	bandReq.UnitDstScratch = parallel.cdef[worker].unitDst
+	r, err := ctx.ApplyCDEFPostFilterUnitRows(bandReq, rowStart, rowEnd)
+	if err == nil {
+		parallel.accumulateCDEFResult(worker, r)
+	}
+	return err
+}
+
+func (p *FrameWorkPostFilterParallel) runLoopFilterBands(bands FrameWorkLoopFilterMaskBands, workers, count int, job frameWorkParallelPoolJob, span int) error {
+	p.runner.resetCommon(job, count, p)
+	p.runner.loopBands = bands
+	p.runner.loopJobSpan = span
+	var err error
+	if lanes := p.pooledLanes(workers, count); lanes > 0 {
+		err = p.pool.ExecuteLanes(lanes, &p.runner)
+	} else {
+		err = frameWorkParallelRun(workers, count, &p.runner)
+	}
+	p.runner.clear()
+	return err
+}
+
+func frameWorkRunLoopFilterBand(bands *FrameWorkLoopFilterMaskBands, job frameWorkParallelPoolJob, span, band int) error {
+	switch job {
+	case frameWorkParallelPoolLFPopulate:
+		rowStart := band * span
+		return bands.PopulateBand(rowStart, min(rowStart+span, bands.MIRows()))
+	case frameWorkParallelPoolLFVertical:
+		plane := loopfilter.Plane(band / span)
+		rr := band % span
+		return bands.ApplyBand(plane, loopfilter.EdgeVertical, rr, rr+1)
+	case frameWorkParallelPoolLFHorizontal:
+		plane := loopfilter.Plane(band / span)
+		rc := band % span
+		return bands.ApplyBandCols(plane, loopfilter.EdgeHorizontal, rc, rc+1)
+	default:
+		return nil
+	}
+}
 
 // applyCDEFPostFilterParallel runs CDEF in 64x64 unit-row bands across the
 // parallel worker set. It reproduces ApplyCDEFPostFilterBanded byte-for-byte:
@@ -254,22 +407,7 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterParallelSnapshot(req Fr
 		return FrameWorkCDEFPostFilterResult{}, false, err
 	}
 	ctx.Parallel.resetCDEFResults(workers)
-	err := frameWorkParallelRun(workers, bandCount, func(worker, band int) error {
-		rowStart := band * unitRowsPerBand
-		rowEnd := rowStart + unitRowsPerBand
-		if rowEnd > rows {
-			rowEnd = rows
-		}
-		bandReq := req
-		bandReq.InputScratch = ctx.Parallel.cdef[worker].input
-		bandReq.UnitDstScratch = ctx.Parallel.cdef[worker].unitDst
-		r, err := ctx.ApplyCDEFPostFilterUnitRows(bandReq, rowStart, rowEnd)
-		if err != nil {
-			return err
-		}
-		ctx.Parallel.accumulateCDEFResult(worker, r)
-		return nil
-	})
+	err := ctx.Parallel.runCDEFBands(ctx, req, unitRowsPerBand, rows, bandCount, workers, false)
 	if err != nil {
 		return FrameWorkCDEFPostFilterResult{}, false, err
 	}
@@ -293,22 +431,7 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterParallelU8(req FrameWor
 		}
 	}
 	ctx.Parallel.resetCDEFResults(workers)
-	err := frameWorkParallelRun(workers, bandCount, func(worker, band int) error {
-		rowStart := band * unitRowsPerBand
-		rowEnd := rowStart + unitRowsPerBand
-		if rowEnd > rows {
-			rowEnd = rows
-		}
-		bandReq := req
-		bandReq.SampleScratch = ctx.Parallel.cdef[worker].line
-		bandReq.InputScratch = ctx.Parallel.cdef[worker].input
-		r, err := ctx.ApplyCDEFPostFilterUnitRowsU8(bandReq, ctx.Parallel.cdefU8[band], rowStart, rowEnd)
-		if err != nil {
-			return err
-		}
-		ctx.Parallel.accumulateCDEFResult(worker, r)
-		return nil
-	})
+	err := ctx.Parallel.runCDEFBands(ctx, req, unitRowsPerBand, rows, bandCount, workers, true)
 	if err != nil {
 		return FrameWorkCDEFPostFilterResult{}, false, err
 	}
@@ -399,14 +522,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskBandsParallel(filterMap
 	miRows := bands.MIRows()
 	populateRows := (frameWorkParallelBandRows(miRows, workers) + 1) &^ 1
 	populateBands := (miRows + populateRows - 1) / populateRows
-	if err := frameWorkParallelRun(workers, populateBands, func(worker, band int) error {
-		rowStart := band * populateRows
-		rowEnd := rowStart + populateRows
-		if rowEnd > miRows {
-			rowEnd = miRows
-		}
-		return bands.PopulateBand(rowStart, rowEnd)
-	}); err != nil {
+	if err := ctx.Parallel.runLoopFilterBands(bands, workers, populateBands, frameWorkParallelPoolLFPopulate, populateRows); err != nil {
 		return FrameWorkLoopFilterPostFilterApplyResult{}, false, err
 	}
 
@@ -419,21 +535,13 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskBandsParallel(filterMap
 
 	// Phase 1 (barrier): vertical edges, one (plane, region-row) job each.
 	vJobs := nPlanes * regionRows
-	if err := frameWorkParallelRun(workers, vJobs, func(worker, job int) error {
-		plane := loopfilter.Plane(job / regionRows)
-		rr := job % regionRows
-		return bands.ApplyBand(plane, loopfilter.EdgeVertical, rr, rr+1)
-	}); err != nil {
+	if err := ctx.Parallel.runLoopFilterBands(bands, workers, vJobs, frameWorkParallelPoolLFVertical, regionRows); err != nil {
 		return FrameWorkLoopFilterPostFilterApplyResult{}, false, err
 	}
 
 	// Phase 2 (barrier): horizontal edges, one (plane, region-COLUMN) job each.
 	hJobs := nPlanes * regionCols
-	if err := frameWorkParallelRun(workers, hJobs, func(worker, job int) error {
-		plane := loopfilter.Plane(job / regionCols)
-		rc := job % regionCols
-		return bands.ApplyBandCols(plane, loopfilter.EdgeHorizontal, rc, rc+1)
-	}); err != nil {
+	if err := ctx.Parallel.runLoopFilterBands(bands, workers, hJobs, frameWorkParallelPoolLFHorizontal, regionCols); err != nil {
 		return FrameWorkLoopFilterPostFilterApplyResult{}, false, err
 	}
 	return result, true, nil
