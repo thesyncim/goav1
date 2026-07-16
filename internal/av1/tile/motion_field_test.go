@@ -2,6 +2,8 @@ package tile
 
 import (
 	"errors"
+	"math/rand"
+	"reflect"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/motion"
@@ -158,6 +160,103 @@ func TestTemporalMotionFieldProjectReferenceFrameFiltersLikeLibaom(t *testing.T)
 	}); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad order hint bits err=%v want %v", err, ErrInvalidDecodeState)
 	}
+}
+
+func TestTemporalMotionFieldProjectReferenceFrameRunsMatchScalar(t *testing.T) {
+	const (
+		miRows = 34
+		miCols = 38
+	)
+	start := newReferenceMVFrameForTest(t, miRows, miCols)
+	rnd := rand.New(rand.NewSource(0x5eed))
+	refs := [...]ReferenceFrame{ReferenceFrameLast, ReferenceFrameGolden, ReferenceFrameBWD}
+	for row := 0; row < int(start.Rows); row++ {
+		line := start.Entries[row*int(start.Stride) : row*int(start.Stride)+int(start.Cols)]
+		for col := 0; col < len(line); {
+			runEnd := min(len(line), col+1+rnd.Intn(12))
+			entry := ReferenceMVEntry{Ref: ReferenceFrameNone}
+			if rnd.Intn(4) != 0 {
+				entry = ReferenceMVEntry{
+					Ref:   refs[rnd.Intn(len(refs))],
+					MV:    motion.Vector{Row: int16(rnd.Intn(4096) - 2048), Col: int16(rnd.Intn(4096) - 2048)},
+					Valid: true,
+				}
+			}
+			for i := col; i < runEnd; i++ {
+				line[i] = entry
+			}
+			col = runEnd
+		}
+	}
+
+	for _, backward := range []bool{false, true} {
+		got := newTemporalMotionFieldForTest(t, miRows, miCols)
+		want := newTemporalMotionFieldForTest(t, miRows, miCols)
+		for i := range got.Entries {
+			stale := TemporalMotionEntry{MV: motion.Vector{Row: int16(i), Col: -int16(i)}, RefFrameOffset: 1, Valid: i%3 == 0}
+			got.Entries[i] = stale
+			want.Entries[i] = stale
+		}
+		req := TemporalMotionProjectionRequest{
+			StartFrame:       start,
+			OrderHintBits:    5,
+			CurrentOrderHint: 24,
+			StartOrderHint:   20,
+			StartRefOrderHints: [referenceFrameCount]uint8{
+				ReferenceFrameLast:   10,
+				ReferenceFrameGolden: 16,
+				ReferenceFrameBWD:    22,
+			},
+			Backward: backward,
+		}
+		applied, err := got.ProjectReferenceFrame(req)
+		if err != nil {
+			t.Fatalf("backward=%v optimized: %v", backward, err)
+		}
+		wantApplied, err := projectReferenceFrameScalar(want, req)
+		if err != nil {
+			t.Fatalf("backward=%v scalar: %v", backward, err)
+		}
+		if applied != wantApplied || !reflect.DeepEqual(got, want) {
+			t.Fatalf("backward=%v run projection differs from scalar", backward)
+		}
+	}
+}
+
+func projectReferenceFrameScalar(f *TemporalMotionField, req TemporalMotionProjectionRequest) (bool, error) {
+	startToCurrent, err := motionFieldRelativeOrderHint(req.OrderHintBits, req.StartOrderHint, req.CurrentOrderHint)
+	if err != nil {
+		return false, err
+	}
+	if req.Backward {
+		startToCurrent = -startToCurrent
+	}
+	refOffsets, err := motionFieldRefOffsets(req.OrderHintBits, req.StartOrderHint, req.StartRefOrderHints)
+	if err != nil {
+		return false, err
+	}
+	start := req.StartFrame
+	for row := 0; row < int(start.Rows); row++ {
+		for col := 0; col < int(start.Cols); col++ {
+			mvRef := start.Entries[row*int(start.Stride)+col]
+			if !mvRef.Valid || !mvRef.Ref.Valid() {
+				continue
+			}
+			refOffset := refOffsets[mvRef.Ref]
+			if absInt(refOffset) > motionFieldMaxFrameDistance || refOffset <= 0 || absInt(startToCurrent) > motionFieldMaxFrameDistance {
+				continue
+			}
+			projected, err := motionFieldProjectMV(mvRef.MV, startToCurrent, refOffset)
+			if err != nil {
+				return false, err
+			}
+			dstRow, dstCol, ok := motionFieldBlockPosition(int(f.Rows), int(f.Cols), row, col, projected, req.Backward)
+			if ok {
+				f.Entries[dstRow*int(f.Stride)+dstCol] = TemporalMotionEntry{MV: mvRef.MV, RefFrameOffset: uint8(refOffset), Valid: true}
+			}
+		}
+	}
+	return true, nil
 }
 
 func TestTemporalMotionFieldSetupMatchesLibaomOverlayAndLast2(t *testing.T) {
