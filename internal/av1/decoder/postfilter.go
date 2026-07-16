@@ -737,7 +737,29 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 	if remaining.Has(FrameWorkPostFilterCDEF) {
 		var cdefResult FrameWorkCDEFPostFilterResult
 		var err error
-		if banding.CDEFUnitRows > 0 {
+		// When a parallel worker set is installed, fan the CDEF unit-row bands
+		// out across goroutines. The bands are already independent (each reads
+		// immutable pre-CDEF inputs and writes disjoint output rows), so this is
+		// a pure scheduling change that stays byte-exact. Fall back to the serial
+		// banded / whole-frame apply when the parallel path declines (too few
+		// bands, unsupported layout, or no parallel workers).
+		unitRowsPerBand := banding.CDEFUnitRows
+		if ctx.Parallel.workers() > 0 && unitRowsPerBand <= 0 {
+			unitRowsPerBand = frameWorkDav1dPostFilterBanding(ctx).CDEFUnitRows
+		}
+		if handled := false; ctx.Parallel.workers() > 0 {
+			cdefResult, handled, err = ctx.applyCDEFPostFilterParallel(req.CDEF, unitRowsPerBand)
+			if err != nil {
+				return ctx, result, err
+			}
+			if !handled {
+				if banding.CDEFUnitRows > 0 {
+					cdefResult, err = ctx.ApplyCDEFPostFilterBanded(req.CDEF, banding.CDEFUnitRows)
+				} else {
+					cdefResult, err = ctx.ApplyCDEFPostFilter(req.CDEF)
+				}
+			}
+		} else if banding.CDEFUnitRows > 0 {
 			cdefResult, err = ctx.ApplyCDEFPostFilterBanded(req.CDEF, banding.CDEFUnitRows)
 		} else {
 			cdefResult, err = ctx.ApplyCDEFPostFilter(req.CDEF)

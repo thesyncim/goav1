@@ -70,10 +70,10 @@ type FrameWorkEventResult struct {
 }
 
 type FrameWorkPreparedPayloadStep struct {
-	Base           FrameWorkBatch
-	JobCount       int
-	BatchCount     int
-	ReferenceCount uint8
+	Base            FrameWorkBatch
+	JobCount        int
+	BatchCount      int
+	ReferenceCount  uint8
 	HasTileWork     bool
 	CDEFIndexMap    *threading.FrameWorkCDEFIndexMap
 	LoopFilterMap   *threading.FrameWorkLoopFilterMap
@@ -95,6 +95,15 @@ type FrameWorkPostFilterContext struct {
 	LoopFilterMap           *threading.FrameWorkLoopFilterMap
 	LoopFilterMasks         *threading.FrameWorkLoopFilterMasks
 	RestorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers
+
+	// Parallel, when non-nil and reporting more than one worker, lets the
+	// supported post-filter chain fan its already-independent row bands out
+	// across worker goroutines instead of running the serial band loops. It is
+	// caller-owned and reused across frames so the parallel path stays
+	// allocation-free after warm-up. It never changes decoded output: each band
+	// reads the previous stage's complete output through the same boundary
+	// snapshots the serial banded path uses.
+	Parallel *FrameWorkPostFilterParallel
 
 	completedPostFilters     FrameWorkPostFilterStage
 	detachedPostFilterOutput bool
@@ -1890,10 +1899,10 @@ func prepareFrameWorkStepWithPayload(step FrameWorkStep, output *frame.Frame, re
 		RestorationFrameBuffers:       restorationFrameBuffers,
 	}
 	return FrameWorkPreparedPayloadStep{
-		Base:           base,
-		JobCount:       plan.JobCount,
-		BatchCount:     plan.BatchCount,
-		ReferenceCount: referenceCount,
+		Base:            base,
+		JobCount:        plan.JobCount,
+		BatchCount:      plan.BatchCount,
+		ReferenceCount:  referenceCount,
 		HasTileWork:     true,
 		CDEFIndexMap:    cdefIndexMap,
 		LoopFilterMap:   loopFilterMap,
