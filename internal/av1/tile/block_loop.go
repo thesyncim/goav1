@@ -1163,6 +1163,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 		globalMVs := blockReferenceGlobalMVsForBlock(refs, req.GlobalMVs, req.GlobalMotion, req.AllowHighPrecisionMV, req.ForceIntegerMV, block)
 		globalMotionTypes := blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes)
 		if req.DecodeInterModes {
+			haveTopRight := blockHasTopRight(req.SBSizeMIB, block)
 			stackReq := referenceMVStackRequestRegion(req, block)
 			stackReq.Size = block.Size
 			stackReq.References = refs
@@ -1170,7 +1171,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 			stackReq.Y4 = block.Y4
 			stackReq.HaveTop = block.HaveTop
 			stackReq.HaveLeft = block.HaveLeft
-			stackReq.HaveTopRight = blockHasTopRight(req.SBSizeMIB, block)
+			stackReq.HaveTopRight = haveTopRight
 			stackReq.GlobalMVs = globalMVs
 			stackReq.GlobalMotionType = globalMotionTypes
 			stackReq.RefSignBias = req.RefSignBias
@@ -1261,7 +1262,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 						VisibleH4:    block.VisibleH4,
 						HaveTop:      block.HaveTop,
 						HaveLeft:     block.HaveLeft,
-						HaveTopRight: blockHasTopRight(req.SBSizeMIB, block),
+						HaveTopRight: haveTopRight,
 					})
 					if err != nil {
 						return fmt.Errorf("collect overlappable neighbors: %w", err)
@@ -1279,7 +1280,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 					// warpSampleGrid -> crossSBInterGridInterMotion), matching
 					// libaom's frame-wide av1_findSamples scan, so no separate
 					// SB-diagonal corner augmentation is needed here.
-					numProjRef, err := ctx.WarpSampleCountWithContext(block, refs.Ref[0], req.SBSizeMIB)
+					numProjRef, err := ctx.warpSampleCountWithTopRight(block, refs.Ref[0], haveTopRight)
 					if err != nil {
 						return fmt.Errorf("count warp samples: %w", err)
 					}
@@ -1303,7 +1304,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 					result.MotionMode = motionMode
 					result.MotionModeValid = true
 					if motionMode == MotionModeWarp {
-						model, invalid, err := ctx.WarpProjectionWithContext(block, refs.Ref[0], motionResult.Motion.MV[0], req.SBSizeMIB)
+						model, invalid, err := ctx.warpProjectionWithTopRight(block, refs.Ref[0], motionResult.Motion.MV[0], haveTopRight)
 						if err != nil {
 							return fmt.Errorf("project warped motion: %w", err)
 						}
