@@ -1,6 +1,8 @@
 package decoder
 
 import (
+	"math/bits"
+
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/lfmask"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
@@ -189,6 +191,146 @@ const (
 	maskDirBoth       = maskDirVertical | maskDirHorizontal
 )
 
+type frameWorkLoopFilterMaskRun struct {
+	active bool
+	edge   loopfilter.Edge
+	x4, y4 int
+	len4   int
+	width  uint8
+	th     loopfilter.Thresholds
+}
+
+// frameWorkLoopFilterMaskApplyState is the concrete trusted mask consumer.
+// Keeping the run builder and threshold cache behind direct method calls lets
+// the scan loops avoid allocating closures or calling through EdgeVisitor
+// function values for every filtered cell.
+type frameWorkLoopFilterMaskApplyState struct {
+	plane     loopfilter.Plane
+	bounds    frameWorkLoopFilterBounds
+	sharpness uint8
+
+	thresholds     [loopfilter.MaxLevel + 1]loopfilter.Thresholds
+	thresholdReady [loopfilter.MaxLevel + 1]bool
+	firstErr       error
+	run            frameWorkLoopFilterMaskRun
+}
+
+func (s *frameWorkLoopFilterMaskApplyState) thresholdFor(level uint8) (loopfilter.Thresholds, bool) {
+	if level == 0 || level > loopfilter.MaxLevel {
+		s.firstErr = loopfilter.ErrInvalidFilter
+		return loopfilter.Thresholds{}, false
+	}
+	if !s.thresholdReady[level] {
+		th, err := loopfilter.ThresholdsForLevel(level, s.sharpness)
+		if err != nil {
+			s.firstErr = err
+			return loopfilter.Thresholds{}, false
+		}
+		s.thresholds[level] = th
+		s.thresholdReady[level] = true
+	}
+	return s.thresholds[level], true
+}
+
+func frameWorkFlushLoopFilterMaskRun(s *frameWorkLoopFilterMaskApplyState, dst frame.Plane, bytesPerSample int, bitDepth uint8) {
+	if !s.run.active {
+		return
+	}
+	s.run.active = false
+	if s.firstErr != nil {
+		return
+	}
+	x := int32(s.run.x4) * 4
+	y := int32(s.run.y4) * 4
+	length := int32(s.run.len4) * 4
+	var err error
+	switch s.run.width {
+	case 4:
+		err = loopfilter.Filter4Edge(dst, bytesPerSample, bitDepth, s.run.edge, x, y, length, s.run.th)
+	case 6:
+		err = loopfilter.Filter6Edge(dst, bytesPerSample, bitDepth, s.run.edge, x, y, length, s.run.th)
+	case 8:
+		err = loopfilter.Filter8Edge(dst, bytesPerSample, bitDepth, s.run.edge, x, y, length, s.run.th)
+	case 14:
+		err = loopfilter.Filter14Edge(dst, bytesPerSample, bitDepth, s.run.edge, x, y, length, s.run.th)
+	default:
+		s.firstErr = loopfilter.ErrInvalidFilter
+		return
+	}
+	if err != nil {
+		s.firstErr = err
+	}
+}
+
+// frameWorkLoopFilterMaskCellWidth resolves one trusted mask cell's effective
+// filter width. Mask coordinates are non-negative 4x4 positions and every call
+// covers exactly one cell, so the general edge-list bounds path's overflow and
+// arbitrary-length checks reduce to the two crop bounds plus the perpendicular
+// tap radius. The backing buffer covers at least the MI-aligned crop extent, so
+// a crop-valid four-sample run always fits along the edge.
+func frameWorkLoopFilterMaskCellWidth(bounds frameWorkLoopFilterBounds, edge loopfilter.Edge, x4, y4 int, width uint8) (uint8, bool) {
+	x := int32(x4) << 2
+	y := int32(y4) << 2
+	if x >= bounds.posWidth || y >= bounds.posHeight {
+		return 0, false
+	}
+	var position, limit int32
+	if edge == loopfilter.EdgeVertical {
+		position = x
+		limit = bounds.bufWidth
+	} else {
+		position = y
+		limit = bounds.bufHeight
+	}
+	for width != 0 {
+		radius := int32(width) >> 1
+		if position >= radius && position+radius-1 < limit {
+			return width, true
+		}
+		width = frameWorkLoopFilterDowngradeWidth(width)
+	}
+	return 0, false
+}
+
+func (s *frameWorkLoopFilterMaskApplyState) addCell(result *FrameWorkLoopFilterPostFilterApplyResult, dst frame.Plane, bytesPerSample int, bitDepth uint8, edge loopfilter.Edge, x4, y4 int, level, width uint8) {
+	if s.firstErr != nil {
+		return
+	}
+	w, ok := frameWorkLoopFilterMaskCellWidth(s.bounds, edge, x4, y4, width)
+	if !ok {
+		return
+	}
+	th, ok := s.thresholdFor(level)
+	if !ok {
+		return
+	}
+	frameWorkCountAppliedLoopFilterMaskEdge(result, s.plane, level)
+	if s.run.active && s.run.edge == edge && s.run.width == w && s.run.th == th {
+		if edge == loopfilter.EdgeVertical {
+			if x4 == s.run.x4 && y4 == s.run.y4+s.run.len4 {
+				s.run.len4++
+				return
+			}
+		} else if y4 == s.run.y4 && x4 == s.run.x4+s.run.len4 {
+			s.run.len4++
+			return
+		}
+	}
+	frameWorkFlushLoopFilterMaskRun(s, dst, bytesPerSample, bitDepth)
+	if s.firstErr != nil {
+		return
+	}
+	s.run = frameWorkLoopFilterMaskRun{
+		active: true,
+		edge:   edge,
+		x4:     x4,
+		y4:     y4,
+		len4:   1,
+		width:  w,
+		th:     th,
+	}
+}
+
 func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksInPlanePassOrder(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, levelCtx frameWorkLoopFilterLevelContext, minPlane, maxPlane loopfilter.Plane) error {
 	sharpness := ctx.Event.LoopFilter.Sharpness
 	lc := lfmask.LevelCache{Cells: masks.LevelCache, Stride: masks.Cols}
@@ -239,27 +381,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRange(result *Fram
 		return err
 	}
 
-	var thresholds [loopfilter.MaxLevel + 1]loopfilter.Thresholds
-	var thresholdReady [loopfilter.MaxLevel + 1]bool
-	var firstErr error
-	thresholdFor := func(level uint8) (loopfilter.Thresholds, bool) {
-		if level == 0 || level > loopfilter.MaxLevel {
-			firstErr = loopfilter.ErrInvalidFilter
-			return loopfilter.Thresholds{}, false
-		}
-		if !thresholdReady[level] {
-			th, err := loopfilter.ThresholdsForLevel(level, sharpness)
-			if err != nil {
-				firstErr = err
-				return loopfilter.Thresholds{}, false
-			}
-			thresholds[level] = th
-			thresholdReady[level] = true
-		}
-		return thresholds[level], true
-	}
-
-	// Run batcher. The per-4x4 scan emits one applyCell per set edge cell, but the
+	// Run batcher. The per-4x4 scan emits one addCell per set edge cell, but the
 	// deblock kernels only reach their NEON fast path when handed a run of >= 8
 	// sample positions (two 4x4 cells) along the edge; a lone cell (length 4)
 	// always falls back to scalar. Merging geometrically contiguous cells that
@@ -269,130 +391,43 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRange(result *Fram
 	// independently -- while letting NEON process the run. The scan visits cells
 	// in increasing position order along the merge axis (rows for a vertical edge,
 	// columns for a horizontal edge), so an extending cell is always the immediate
-	// successor of the pending run. run state stays in locals so the closures stay
-	// stack-allocated (no per-frame allocation).
-	var run struct {
-		active bool
-		edge   loopfilter.Edge
-		x4, y4 int // run start (4x4 coords)
-		len4   int // number of merged cells
-		width  uint8
-		th     loopfilter.Thresholds
-	}
-	flushRun := func() {
-		if !run.active {
-			return
-		}
-		run.active = false
-		if firstErr != nil {
-			return
-		}
-		x := int32(run.x4) * 4
-		y := int32(run.y4) * 4
-		length := int32(run.len4) * 4
-		var err error
-		switch run.width {
-		case 4:
-			err = loopfilter.Filter4Edge(dst, bytesPerSample, bitDepth, run.edge, x, y, length, run.th)
-		case 6:
-			err = loopfilter.Filter6Edge(dst, bytesPerSample, bitDepth, run.edge, x, y, length, run.th)
-		case 8:
-			err = loopfilter.Filter8Edge(dst, bytesPerSample, bitDepth, run.edge, x, y, length, run.th)
-		case 14:
-			err = loopfilter.Filter14Edge(dst, bytesPerSample, bitDepth, run.edge, x, y, length, run.th)
-		default:
-			firstErr = loopfilter.ErrInvalidFilter
-			return
-		}
-		if err != nil {
-			firstErr = err
-		}
-	}
-
-	applyCell := func(edge loopfilter.Edge, x4, y4 int, level, width uint8) {
-		if firstErr != nil {
-			return
-		}
-		clamped, err := frameWorkLoopFilterClampEdgeLengthInBounds(bounds, edge, x4, y4, 1)
-		if err != nil {
-			firstErr = err
-			return
-		}
-		if clamped <= 0 {
-			return
-		}
-		w, ok, err := frameWorkLoopFilterScheduledWidthInBounds(bounds, edge, x4, y4, 1, width)
-		if err != nil {
-			firstErr = err
-			return
-		}
-		if !ok {
-			return
-		}
-		th, ok := thresholdFor(level)
-		if !ok {
-			return
-		}
-		// Count every filtered cell (the scan already gated level != 0), matching
-		// the per-4x4 accounting the unbatched apply produced.
-		frameWorkCountAppliedLoopFilterMaskEdge(result, plane, level)
-		// Extend the pending run when this cell is its contiguous successor and
-		// shares the exact filter (same edge, width, and thresholds). The merge
-		// axis is rows for a vertical edge (fixed x4) and columns for a horizontal
-		// edge (fixed y4).
-		if run.active && run.edge == edge && run.width == w && run.th == th {
-			if edge == loopfilter.EdgeVertical {
-				if x4 == run.x4 && y4 == run.y4+run.len4 {
-					run.len4++
-					return
-				}
-			} else if y4 == run.y4 && x4 == run.x4+run.len4 {
-				run.len4++
-				return
-			}
-		}
-		flushRun()
-		if firstErr != nil {
-			return
-		}
-		run.active = true
-		run.edge = edge
-		run.x4 = x4
-		run.y4 = y4
-		run.len4 = 1
-		run.width = w
-		run.th = th
+	// successor of the pending run. State stays concrete and stack-owned so the
+	// scan calls addCell directly without a closure or function-value dispatch.
+	state := frameWorkLoopFilterMaskApplyState{
+		plane:     plane,
+		bounds:    bounds,
+		sharpness: sharpness,
 	}
 
 	if plane == loopfilter.PlaneY {
 		if dirMask&maskDirVertical != 0 {
-			ctx.scanLoopFilterMaskLumaBand(masks, lc, loopfilter.EdgeVertical, rRow0, rRow1, rCol0, rCol1, applyCell)
-			flushRun()
+			ctx.scanLoopFilterMaskLumaBand(masks, lc, loopfilter.EdgeVertical, rRow0, rRow1, rCol0, rCol1, &state, result, dst, bytesPerSample, bitDepth)
+			frameWorkFlushLoopFilterMaskRun(&state, dst, bytesPerSample, bitDepth)
 		}
-		if firstErr == nil && dirMask&maskDirHorizontal != 0 {
-			ctx.scanLoopFilterMaskLumaBand(masks, lc, loopfilter.EdgeHorizontal, rRow0, rRow1, rCol0, rCol1, applyCell)
-			flushRun()
+		if state.firstErr == nil && dirMask&maskDirHorizontal != 0 {
+			ctx.scanLoopFilterMaskLumaBand(masks, lc, loopfilter.EdgeHorizontal, rRow0, rRow1, rCol0, rCol1, &state, result, dst, bytesPerSample, bitDepth)
+			frameWorkFlushLoopFilterMaskRun(&state, dst, bytesPerSample, bitDepth)
 		}
 	} else {
 		if dirMask&maskDirVertical != 0 {
-			ctx.scanLoopFilterMaskChromaBand(masks, lc, plane, loopfilter.EdgeVertical, rRow0, rRow1, rCol0, rCol1, applyCell)
-			flushRun()
+			ctx.scanLoopFilterMaskChromaBand(masks, lc, plane, loopfilter.EdgeVertical, rRow0, rRow1, rCol0, rCol1, &state, result, dst, bytesPerSample, bitDepth)
+			frameWorkFlushLoopFilterMaskRun(&state, dst, bytesPerSample, bitDepth)
 		}
-		if firstErr == nil && dirMask&maskDirHorizontal != 0 {
-			ctx.scanLoopFilterMaskChromaBand(masks, lc, plane, loopfilter.EdgeHorizontal, rRow0, rRow1, rCol0, rCol1, applyCell)
-			flushRun()
+		if state.firstErr == nil && dirMask&maskDirHorizontal != 0 {
+			ctx.scanLoopFilterMaskChromaBand(masks, lc, plane, loopfilter.EdgeHorizontal, rRow0, rRow1, rCol0, rCol1, &state, result, dst, bytesPerSample, bitDepth)
+			frameWorkFlushLoopFilterMaskRun(&state, dst, bytesPerSample, bitDepth)
 		}
 	}
-	return firstErr
+	return state.firstErr
 }
 
 // scanLoopFilterMaskLumaBand scans the luma bitmasks for one edge direction over
 // the 128x128 region-row range [rRow0,rRow1) and dispatches each set 4x4 edge
-// through applyCell. The frame-left column (x4==0) and frame-top row (y4==0) are
+// through the concrete apply state. The frame-left column (x4==0) and frame-top row (y4==0) are
 // skipped to match the edge-list apply's have_left / have_top boundary skip.
 // Passing rRow0=0, rRow1=SB128H reproduces the whole-frame scan; a sub-range is
 // one band of the parallel apply.
-func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, dir loopfilter.Edge, rRow0, rRow1, rCol0, rCol1 int, applyCell func(edge loopfilter.Edge, x4, y4 int, level, width uint8)) {
+func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, dir loopfilter.Edge, rRow0, rRow1, rCol0, rCol1 int, state *frameWorkLoopFilterMaskApplyState, result *FrameWorkLoopFilterPostFilterApplyResult, dst frame.Plane, bytesPerSample int, bitDepth uint8) {
 	cols := masks.Cols
 	rows := masks.Rows
 	if dir == loopfilter.EdgeVertical {
@@ -415,17 +450,26 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadin
 					if col == 0 {
 						continue
 					}
-					lfmask.ScanLuma(&region.Y[0][pos], 0, extentRows, func(off, widthClass int) {
+					m0, m1, m2 := lfmask.LumaMaskWords(&region.Y[0][pos], 0, extentRows)
+					for vm := m0 | m1 | m2; vm != 0; vm &= vm - 1 {
+						off := bits.TrailingZeros32(vm)
+						bit := uint32(1) << off
+						widthClass := 0
+						if m2&bit != 0 {
+							widthClass = 2
+						} else if m1&bit != 0 {
+							widthClass = 1
+						}
 						y4 := baseRow + off
 						level := lc.Cells[y4*cols+col][loopfilter.EdgeVertical]
 						if level == 0 {
 							level = lc.Cells[y4*cols+col-1][loopfilter.EdgeVertical]
 						}
 						if level == 0 {
-							return
+							continue
 						}
-						applyCell(loopfilter.EdgeVertical, col, y4, level, frameWorkLoopFilterMaskLumaWidth[widthClass])
-					})
+						state.addCell(result, dst, bytesPerSample, bitDepth, loopfilter.EdgeVertical, col, y4, level, frameWorkLoopFilterMaskLumaWidth[widthClass])
+					}
 				}
 			}
 		}
@@ -450,17 +494,26 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadin
 				if row == 0 {
 					continue
 				}
-				lfmask.ScanLuma(&region.Y[1][pos], 0, extentCols, func(off, widthClass int) {
+				m0, m1, m2 := lfmask.LumaMaskWords(&region.Y[1][pos], 0, extentCols)
+				for vm := m0 | m1 | m2; vm != 0; vm &= vm - 1 {
+					off := bits.TrailingZeros32(vm)
+					bit := uint32(1) << off
+					widthClass := 0
+					if m2&bit != 0 {
+						widthClass = 2
+					} else if m1&bit != 0 {
+						widthClass = 1
+					}
 					x4 := baseCol + off
 					level := lc.Cells[row*cols+x4][loopfilter.EdgeHorizontal]
 					if level == 0 {
 						level = lc.Cells[(row-1)*cols+x4][loopfilter.EdgeHorizontal]
 					}
 					if level == 0 {
-						return
+						continue
 					}
-					applyCell(loopfilter.EdgeHorizontal, x4, row, level, frameWorkLoopFilterMaskLumaWidth[widthClass])
-				})
+					state.addCell(result, dst, bytesPerSample, bitDepth, loopfilter.EdgeHorizontal, x4, row, level, frameWorkLoopFilterMaskLumaWidth[widthClass])
+				}
 			}
 		}
 	}
@@ -468,9 +521,9 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadin
 
 // scanLoopFilterMaskChromaBand scans the chroma bitmasks for one chroma plane
 // (U or V) and one edge direction over the 128x128 region-row range [rRow0,rRow1),
-// dispatching each set 4x4 chroma edge through applyCell in chroma-plane 4x4
+// dispatching each set 4x4 chroma edge through the concrete apply state in chroma-plane 4x4
 // coordinates. Passing rRow0=0, rRow1=SB128H reproduces the whole-frame scan.
-func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, plane loopfilter.Plane, dir loopfilter.Edge, rRow0, rRow1, rCol0, rCol1 int, applyCell func(edge loopfilter.Edge, x4, y4 int, level, width uint8)) {
+func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, plane loopfilter.Plane, dir loopfilter.Edge, rRow0, rRow1, rCol0, rCol1 int, state *frameWorkLoopFilterMaskApplyState, result *FrameWorkLoopFilterPostFilterApplyResult, dst frame.Plane, bytesPerSample int, bitDepth uint8) {
 	cols := masks.Cols
 	rows := masks.Rows
 	ssHor := masks.Layout.SSHor
@@ -505,17 +558,24 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *thread
 					if ccol == 0 {
 						continue
 					}
-					lfmask.ScanChroma(&region.UV[0][pos], 0, extentCRows, laneBitsV, func(off, widthClass int) {
+					m0, m1 := lfmask.ChromaMaskWords(&region.UV[0][pos], 0, extentCRows, laneBitsV)
+					for vm := m0 | m1; vm != 0; vm &= vm - 1 {
+						off := bits.TrailingZeros32(vm)
+						bit := uint32(1) << off
+						widthClass := 0
+						if m1&bit != 0 {
+							widthClass = 1
+						}
 						crow := baseCRow + off
 						level := lc.Cells[crow*cols+ccol][levelIdx]
 						if level == 0 {
 							level = lc.Cells[crow*cols+ccol-1][levelIdx]
 						}
 						if level == 0 {
-							return
+							continue
 						}
-						applyCell(loopfilter.EdgeVertical, ccol, crow, level, frameWorkLoopFilterMaskChromaWidth[widthClass])
-					})
+						state.addCell(result, dst, bytesPerSample, bitDepth, loopfilter.EdgeVertical, ccol, crow, level, frameWorkLoopFilterMaskChromaWidth[widthClass])
+					}
 				}
 			}
 		}
@@ -540,17 +600,24 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *thread
 				if crow == 0 {
 					continue
 				}
-				lfmask.ScanChroma(&region.UV[1][pos], 0, extentCCols, laneBitsH, func(off, widthClass int) {
+				m0, m1 := lfmask.ChromaMaskWords(&region.UV[1][pos], 0, extentCCols, laneBitsH)
+				for vm := m0 | m1; vm != 0; vm &= vm - 1 {
+					off := bits.TrailingZeros32(vm)
+					bit := uint32(1) << off
+					widthClass := 0
+					if m1&bit != 0 {
+						widthClass = 1
+					}
 					ccol := baseCCol + off
 					level := lc.Cells[crow*cols+ccol][levelIdx]
 					if level == 0 {
 						level = lc.Cells[(crow-1)*cols+ccol][levelIdx]
 					}
 					if level == 0 {
-						return
+						continue
 					}
-					applyCell(loopfilter.EdgeHorizontal, ccol, crow, level, frameWorkLoopFilterMaskChromaWidth[widthClass])
-				})
+					state.addCell(result, dst, bytesPerSample, bitDepth, loopfilter.EdgeHorizontal, ccol, crow, level, frameWorkLoopFilterMaskChromaWidth[widthClass])
+				}
 			}
 		}
 	}
