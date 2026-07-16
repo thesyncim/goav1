@@ -132,7 +132,7 @@ func InverseBlockBitDepthBoundedRows(dst []int16, dstStride int, coeff []int32, 
 		return ErrInvalidTransform
 	}
 	if t == TypeIDTX {
-		return inverseIdentityBlockClamped(dst, dstStride, coeff, coeffStride, size, rowMin, rowMax, colMin, colMax)
+		return inverseIdentityBlockClampedRows(dst, dstStride, coeff, coeffStride, size, rowMin, rowMax, colMin, colMax, activeRows)
 	}
 	if !t.Supported(size) {
 		return ErrInvalidTransform

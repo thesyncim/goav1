@@ -134,6 +134,14 @@ func InverseIdentityBlock(dst []int16, dstStride int, coeff []int32, coeffStride
 // av1/common/av1_inv_txfm2d.c, which the IDTX path also passes through (it
 // shares inv_txfm2d_add_c with the other inverse transforms).
 func inverseIdentityBlockClamped(dst []int16, dstStride int, coeff []int32, coeffStride int, size Size, rowMin int32, rowMax int32, colMin int32, colMax int32) error {
+	return inverseIdentityBlockClampedRows(dst, dstStride, coeff, coeffStride, size, rowMin, rowMax, colMin, colMax, 0)
+}
+
+// inverseIdentityBlockClampedRows is the sparse-row IDTX path. activeRows is
+// the exact coefficient-row extent, or zero when it is unknown. IDTX does not
+// mix positions, so rows beyond that extent are known-zero output rows and can
+// be cleared without evaluating either identity scale.
+func inverseIdentityBlockClampedRows(dst []int16, dstStride int, coeff []int32, coeffStride int, size Size, rowMin int32, rowMax int32, colMin int32, colMax int32, activeRows int) error {
 	// Resolve shift and coeffSize from one compact index instead of calling
 	// size.shift() and adjustedScanSize() separately (each recomputes sizeIndex).
 	idx := sizeIndex(size)
@@ -150,6 +158,7 @@ func inverseIdentityBlockClamped(dst []int16, dstStride int, coeff []int32, coef
 	coeffHeight := int(coeffSize.Height)
 	if !ok ||
 		!identityBlockSupported(size) ||
+		activeRows < 0 || activeRows > height ||
 		dstStride < width ||
 		coeffStride < coeffHeight ||
 		!blockFits(len(dst), dstStride, width, height) ||
@@ -158,7 +167,11 @@ func inverseIdentityBlockClamped(dst []int16, dstStride int, coeff []int32, coef
 	}
 
 	rect2 := size.IsRect2()
-	for row := range height {
+	rowLimit := height
+	if activeRows > 0 {
+		rowLimit = activeRows
+	}
+	for row := range rowLimit {
 		dstLine := dst[row*dstStride : row*dstStride+width : row*dstStride+width]
 		for col := range dstLine {
 			v := coeff[col*coeffStride+row]
@@ -177,6 +190,9 @@ func inverseIdentityBlockClamped(dst []int16, dstStride int, coeff []int32, coef
 			// cast directly and clamp once to int16 (matches libaom clip_pixel).
 			dstLine[col] = clipInt16(int32(roundShift(int64(v), 4)))
 		}
+	}
+	for row := rowLimit; row < height; row++ {
+		clear(dst[row*dstStride : row*dstStride+width])
 	}
 	return nil
 }

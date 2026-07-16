@@ -220,7 +220,7 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 		return nil
 	}
 	if cfg.Transform == transform.TypeIDTX {
-		if err := transform.InverseBlockBitDepth(residual, width, dequant, scanHeight, transformScratch, cfg.Size, cfg.Transform, bitDepth); err != nil {
+		if err := transform.InverseBlockBitDepthBoundedRows(residual, width, dequant, scanHeight, transformScratch, cfg.Size, cfg.Transform, bitDepth, activeRows); err != nil {
 			return ErrInvalidBlock
 		}
 		max := uint16((1 << bitDepth) - 1)
@@ -288,6 +288,10 @@ func reconstructPlaneBlockWithGeometry(dst frame.Plane, bytesPerSample int, bitD
 
 	eob := int(cfg.EOB)
 	useSparseDequant := eob > 0 && len(scan) >= eob && eob*sparseDequantWorkFactor <= dequantLen
+	activeRows := 0
+	if useSparseDequant {
+		activeRows = activeTransformRowsFromScan(scan, eob, scanHeight, cfg.Size, cfg.Transform)
+	}
 	if cfg.InverseQMatrix != nil {
 		if useSparseDequant {
 			if err := quantize.DequantizeBlockScaledQMatrixBitDepthEOB(dequant, scanHeight, quantized, quantizedStride, scan, eob, scanWidth, scanHeight, cfg.Quantizer, txScale, cfg.InverseQMatrix, bitDepth); err != nil {
@@ -311,6 +315,10 @@ func reconstructPlaneBlockWithGeometry(dst frame.Plane, bytesPerSample int, bitD
 		}
 	} else if cfg.Transform == transform.TypeDCTDCT && eob == 1 {
 		if err := transform.InverseDCTDCOnlyBlockBitDepth(residual, width, dequant[0], transformScratch, cfg.Size, bitDepth); err != nil {
+			return ErrInvalidBlock
+		}
+	} else if cfg.Transform == transform.TypeIDTX && activeRows > 0 {
+		if err := transform.InverseBlockBitDepthBoundedRows(residual, width, dequant, scanHeight, transformScratch, cfg.Size, cfg.Transform, bitDepth, activeRows); err != nil {
 			return ErrInvalidBlock
 		}
 	} else if err := transform.InverseBlockBitDepth(residual, width, dequant, scanHeight, transformScratch, cfg.Size, cfg.Transform, bitDepth); err != nil {

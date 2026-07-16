@@ -185,6 +185,8 @@ func TestInverseBlockBitDepthBoundedRowsMatchesFullInverse(t *testing.T) {
 		{name: "adst dct 8x8 three rows", size: Size{Width: 8, Height: 8}, typ: TypeADSTDCT, bitDepth: 8, activeRows: 3},
 		{name: "rect dct 16x8 one row", size: Size{Width: 16, Height: 8}, typ: TypeDCTDCT, bitDepth: 10, activeRows: 1},
 		{name: "dct 16x16 five rows", size: Size{Width: 16, Height: 16}, typ: TypeDCTDCT, bitDepth: 10, activeRows: 5},
+		{name: "idtx 8x8 two rows", size: Size{Width: 8, Height: 8}, typ: TypeIDTX, bitDepth: 8, activeRows: 2},
+		{name: "rect idtx 16x8 three rows", size: Size{Width: 16, Height: 8}, typ: TypeIDTX, bitDepth: 10, activeRows: 3},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -200,6 +202,9 @@ func TestInverseBlockBitDepthBoundedRowsMatchesFullInverse(t *testing.T) {
 			}
 			want := make([]int16, width*height)
 			got := make([]int16, width*height)
+			for i := range got {
+				got[i] = 1234
+			}
 			fullScratch := make([]int32, width*height)
 			boundedScratch := make([]int32, width*height)
 			for i := range boundedScratch {
@@ -258,11 +263,13 @@ func TestInverseBlockBitDepthBoundedRowsRejectsInvalidBounds(t *testing.T) {
 	coeff := make([]int32, 8*8)
 	dst := make([]int16, 8*8)
 	scratch := make([]int32, 8*8)
-	if err := InverseBlockBitDepthBoundedRows(dst, 8, coeff, 8, scratch, size, TypeDCTDCT, 8, -1); !errors.Is(err, ErrInvalidTransform) {
-		t.Fatalf("negative activeRows err=%v want %v", err, ErrInvalidTransform)
-	}
-	if err := InverseBlockBitDepthBoundedRows(dst, 8, coeff, 8, scratch, size, TypeDCTDCT, 8, 9); !errors.Is(err, ErrInvalidTransform) {
-		t.Fatalf("oversized activeRows err=%v want %v", err, ErrInvalidTransform)
+	for _, typ := range []Type{TypeDCTDCT, TypeIDTX} {
+		if err := InverseBlockBitDepthBoundedRows(dst, 8, coeff, 8, scratch, size, typ, 8, -1); !errors.Is(err, ErrInvalidTransform) {
+			t.Fatalf("type=%d negative activeRows err=%v want %v", typ, err, ErrInvalidTransform)
+		}
+		if err := InverseBlockBitDepthBoundedRows(dst, 8, coeff, 8, scratch, size, typ, 8, 9); !errors.Is(err, ErrInvalidTransform) {
+			t.Fatalf("type=%d oversized activeRows err=%v want %v", typ, err, ErrInvalidTransform)
+		}
 	}
 }
 
