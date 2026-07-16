@@ -219,12 +219,14 @@ const (
 )
 
 type frameWorkLoopFilterMaskRun struct {
-	active bool
-	edge   loopfilter.Edge
-	x4, y4 int
-	len4   int
-	width  uint8
-	th     loopfilter.Thresholds
+	active   bool
+	edge     loopfilter.Edge
+	x4, y4   int
+	len4     int
+	width    uint8
+	level    uint8
+	maxLevel uint8
+	th       loopfilter.Thresholds
 }
 
 // frameWorkLoopFilterMaskApplyState is the concrete trusted mask consumer.
@@ -259,11 +261,12 @@ func (s *frameWorkLoopFilterMaskApplyState) thresholdFor(level uint8) (loopfilte
 	return s.thresholds[level], true
 }
 
-func frameWorkFlushLoopFilterMaskRun(s *frameWorkLoopFilterMaskApplyState, dst frame.Plane, bytesPerSample int, bitDepth uint8) {
+func frameWorkFlushLoopFilterMaskRun(s *frameWorkLoopFilterMaskApplyState, result *FrameWorkLoopFilterPostFilterApplyResult, dst frame.Plane, bytesPerSample int, bitDepth uint8) {
 	if !s.run.active {
 		return
 	}
 	s.run.active = false
+	frameWorkCountAppliedLoopFilterMaskRun(result, s.plane, s.run.maxLevel, uint32(s.run.len4))
 	if s.firstErr != nil {
 		return
 	}
@@ -331,34 +334,44 @@ func (s *frameWorkLoopFilterMaskApplyState) addCell(result *FrameWorkLoopFilterP
 	if int32(x4)<<2 >= s.bounds.posWidth || int32(y4)<<2 >= s.bounds.posHeight {
 		return
 	}
-	th, ok := s.thresholdFor(level)
-	if !ok {
-		return
-	}
-	frameWorkCountAppliedLoopFilterMaskEdge(result, s.plane, level)
-	if s.run.active && s.run.edge == edge && s.run.width == width && s.run.th == th {
+	contiguous := false
+	if s.run.active && s.run.edge == edge && s.run.width == width {
 		if edge == loopfilter.EdgeVertical {
-			if x4 == s.run.x4 && y4 == s.run.y4+s.run.len4 {
-				s.run.len4++
-				return
-			}
+			contiguous = x4 == s.run.x4 && y4 == s.run.y4+s.run.len4
 		} else if y4 == s.run.y4 && x4 == s.run.x4+s.run.len4 {
+			contiguous = true
+		}
+		if contiguous && s.run.level == level {
 			s.run.len4++
 			return
 		}
 	}
-	frameWorkFlushLoopFilterMaskRun(s, dst, bytesPerSample, bitDepth)
+	th, ok := s.thresholdFor(level)
+	if !ok {
+		return
+	}
+	if contiguous && s.run.th == th {
+		s.run.len4++
+		s.run.level = level
+		if level > s.run.maxLevel {
+			s.run.maxLevel = level
+		}
+		return
+	}
+	frameWorkFlushLoopFilterMaskRun(s, result, dst, bytesPerSample, bitDepth)
 	if s.firstErr != nil {
 		return
 	}
 	s.run = frameWorkLoopFilterMaskRun{
-		active: true,
-		edge:   edge,
-		x4:     x4,
-		y4:     y4,
-		len4:   1,
-		width:  width,
-		th:     th,
+		active:   true,
+		edge:     edge,
+		x4:       x4,
+		y4:       y4,
+		len4:     1,
+		width:    width,
+		level:    level,
+		maxLevel: level,
+		th:       th,
 	}
 }
 
@@ -432,20 +445,20 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRange(result *Fram
 	if plane == loopfilter.PlaneY {
 		if dirMask&maskDirVertical != 0 {
 			ctx.scanLoopFilterMaskLumaBand(masks, loopfilter.EdgeVertical, rRow0, rRow1, rCol0, rCol1, &state, result, dst, bytesPerSample, bitDepth)
-			frameWorkFlushLoopFilterMaskRun(&state, dst, bytesPerSample, bitDepth)
+			frameWorkFlushLoopFilterMaskRun(&state, result, dst, bytesPerSample, bitDepth)
 		}
 		if state.firstErr == nil && dirMask&maskDirHorizontal != 0 {
 			ctx.scanLoopFilterMaskLumaBand(masks, loopfilter.EdgeHorizontal, rRow0, rRow1, rCol0, rCol1, &state, result, dst, bytesPerSample, bitDepth)
-			frameWorkFlushLoopFilterMaskRun(&state, dst, bytesPerSample, bitDepth)
+			frameWorkFlushLoopFilterMaskRun(&state, result, dst, bytesPerSample, bitDepth)
 		}
 	} else {
 		if dirMask&maskDirVertical != 0 {
 			ctx.scanLoopFilterMaskChromaBand(masks, plane, loopfilter.EdgeVertical, rRow0, rRow1, rCol0, rCol1, &state, result, dst, bytesPerSample, bitDepth)
-			frameWorkFlushLoopFilterMaskRun(&state, dst, bytesPerSample, bitDepth)
+			frameWorkFlushLoopFilterMaskRun(&state, result, dst, bytesPerSample, bitDepth)
 		}
 		if state.firstErr == nil && dirMask&maskDirHorizontal != 0 {
 			ctx.scanLoopFilterMaskChromaBand(masks, plane, loopfilter.EdgeHorizontal, rRow0, rRow1, rCol0, rCol1, &state, result, dst, bytesPerSample, bitDepth)
-			frameWorkFlushLoopFilterMaskRun(&state, dst, bytesPerSample, bitDepth)
+			frameWorkFlushLoopFilterMaskRun(&state, result, dst, bytesPerSample, bitDepth)
 		}
 	}
 	return state.firstErr
@@ -854,18 +867,18 @@ func (b FrameWorkLoopFilterMaskBands) applyBandRange(plane loopfilter.Plane, dir
 	return b.ctx.applyLoopFilterMaskPlaneRange(&result, b.masks, b.sharpness, plane, dirMask, rRow0, rRow1, rCol0, rCol1)
 }
 
-func frameWorkCountAppliedLoopFilterMaskEdge(result *FrameWorkLoopFilterPostFilterApplyResult, plane loopfilter.Plane, level uint8) {
-	result.Edges++
-	result.PlaneEdges[plane]++
-	if level == 0 {
+func frameWorkCountAppliedLoopFilterMaskRun(result *FrameWorkLoopFilterPostFilterApplyResult, plane loopfilter.Plane, maxLevel uint8, count uint32) {
+	result.Edges += count
+	result.PlaneEdges[plane] += count
+	if maxLevel == 0 {
 		return
 	}
-	result.Applied++
-	result.PlaneApplied[plane]++
-	if level > result.PlaneMaxLevel[plane] {
-		result.PlaneMaxLevel[plane] = level
+	result.Applied += count
+	result.PlaneApplied[plane] += count
+	if maxLevel > result.PlaneMaxLevel[plane] {
+		result.PlaneMaxLevel[plane] = maxLevel
 	}
-	if level > result.MaxLevel {
-		result.MaxLevel = level
+	if maxLevel > result.MaxLevel {
+		result.MaxLevel = maxLevel
 	}
 }
