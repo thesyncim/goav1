@@ -108,6 +108,49 @@ func (b *Builder) CreateIntra(m *FilterMask, lc LevelCache, lv Levels, bx, by, i
 	maskEdgesChroma(&m.UV, cby4, cbx4, cbw4, cbh4, 0, uvtx, auv, luv, ssHor, ssVer)
 }
 
+// InterEdgeContext decomposes an inter block's variable transform tree and
+// writes, into right and bottom, the clamped log2 tx-context dav1d would carry
+// out of the block on its right column (l[y] = txa[0][0][y][w4-1], one per luma
+// 4x4 row, len bh4) and bottom row (a[x] = txa[1][0][h4-1][x], one per luma 4x4
+// col, len bw4). These are exactly the neighbour context a block to the right or
+// below reads for its left/top block edge. It reuses the Builder's decomposition
+// scratch. bw4/bh4 are the block's luma 4x4 extent (already clamped to the frame
+// if partial). right and bottom must have len >= bh4 and bw4 respectively.
+func (b *Builder) InterEdgeContext(bw4, bh4 int, maxYtx tile.TransformSize, txMasks [2]uint16, right, bottom []uint8) {
+	td, _ := maxYtx.Dimensions()
+	yOff := 0
+	for y := 0; y < bh4; y += int(td.H4) {
+		xOff := 0
+		for x := 0; x < bw4; x += int(td.W4) {
+			decompTx(&b.txa, y, x, maxYtx, 0, yOff, xOff, txMasks)
+			xOff++
+		}
+		yOff++
+	}
+	for y := 0; y < bh4; y++ {
+		right[y] = b.txa[0][0][y][bw4-1]
+	}
+	for x := 0; x < bw4; x++ {
+		bottom[x] = b.txa[1][0][bh4-1][x]
+	}
+}
+
+// IntraEdgeContext writes the right-column / bottom-row tx-context an intra block
+// carries out. dav1d fills a[]/l[] with the block's uniform clamped log2W/log2H
+// (mask_edges_intra: a[x]=thl4c, l[y]=twl4c), so every right cell is imin(2,
+// log2W(tx)) and every bottom cell is imin(2, log2H(tx)).
+func (b *Builder) IntraEdgeContext(bw4, bh4 int, ytx tile.TransformSize, right, bottom []uint8) {
+	td, _ := ytx.Dimensions()
+	twl4c := imin(2, int(td.Log2W))
+	thl4c := imin(2, int(td.Log2H))
+	for y := 0; y < bh4; y++ {
+		right[y] = uint8(twl4c)
+	}
+	for x := 0; x < bw4; x++ {
+		bottom[x] = uint8(thl4c)
+	}
+}
+
 // CreateInter builds the luma (and optional chroma) edge masks for one inter
 // block and writes its resolved levels into the level cache. It mirrors
 // dav1d_create_lf_mask_inter (src/lf_mask.c:321). txMasks carries the variable
