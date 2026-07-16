@@ -286,6 +286,10 @@ type DecoderFrameWorkBatchResidualRunnerScratchSize struct {
 	Int32Scratch        int
 	ResidualScratch     int
 	LoopContextAbove    int
+	// LoopFilterMaskCols is the frame's MI-column count, used to pre-size each
+	// worker's loop-filter mask-build above-context (aY/aUV) at bind time so the
+	// first decode of a fresh decoder does not allocate them.
+	LoopFilterMaskCols int
 }
 
 // DecoderFrameWorkBatchResidualRunnerScratch carries caller-owned storage for
@@ -312,6 +316,7 @@ func (s DecoderFrameWorkBatchResidualRunnerScratchSize) Max(other DecoderFrameWo
 		Int32Scratch:        max(s.Int32Scratch, other.Int32Scratch),
 		ResidualScratch:     max(s.ResidualScratch, other.ResidualScratch),
 		LoopContextAbove:    max(s.LoopContextAbove, other.LoopContextAbove),
+		LoopFilterMaskCols:  max(s.LoopFilterMaskCols, other.LoopFilterMaskCols),
 	}
 }
 
@@ -340,6 +345,7 @@ type DecoderFrameWorkBatchResidualRunner struct {
 
 	CDEFIndexMap              DecoderFrameWorkCDEFIndexMap
 	LoopFilterMap             DecoderFrameWorkLoopFilterMap
+	LoopFilterMasks           DecoderFrameWorkLoopFilterMasks
 	sideDataValid             bool
 	sideDataRestorationActive bool
 }
@@ -423,6 +429,10 @@ func DecoderFrameWorkBatchResidualRunnerScratchLen(batch DecoderFrameWorkBatch, 
 	if !ok {
 		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, ErrFrameShortBuffer
 	}
+	maskCols, _, _, err := batch.LoopFilterMapShape()
+	if err != nil {
+		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, err
+	}
 	return DecoderFrameWorkBatchResidualRunnerScratchSize{
 		Workers:             workers,
 		Batch:               batchSize,
@@ -430,6 +440,7 @@ func DecoderFrameWorkBatchResidualRunnerScratchLen(batch DecoderFrameWorkBatch, 
 		Int32Scratch:        int32Len,
 		ResidualScratch:     residualLen,
 		LoopContextAbove:    loopContextLen,
+		LoopFilterMaskCols:  maskCols,
 	}, nil
 }
 
@@ -476,6 +487,7 @@ func BindDecoderFrameWorkBatchResidualRunner(size DecoderFrameWorkBatchResidualR
 	for i := range predictionScratch {
 		predictionScratch[i].Inter = &interScratch[i]
 		tileScratch[i].PreallocCallbackScratch()
+		tileScratch[i].PreallocLoopFilterMaskScratch(size.LoopFilterMaskCols)
 		internaltile.PreallocBlockLoopContextCarrierScratch(&tileScratch[i].LoopContext, size.Batch.LoopContextAbove)
 	}
 	return DecoderFrameWorkBatchResidualRunner{
@@ -593,6 +605,7 @@ func (r *DecoderFrameWorkBatchResidualRunner) SetSideData(side DecoderFrameWorkS
 	}
 	r.CDEFIndexMap = side.CDEFIndexMap
 	r.LoopFilterMap = side.LoopFilterMap
+	r.LoopFilterMasks = side.LoopFilterMasks
 	r.sideDataValid = true
 	r.sideDataRestorationActive = side.RestorationFrameBuffers.Plan.Active
 	return nil
@@ -779,6 +792,7 @@ func (r *DecoderFrameWorkBatchResidualRunner) workerRequest(worker int) (Decoder
 	if r.sideDataValid {
 		req.Tile.CDEFIndexMap = &r.CDEFIndexMap
 		req.Tile.LoopFilterMap = &r.LoopFilterMap
+		req.Tile.LoopFilterMasks = &r.LoopFilterMasks
 		if r.sideDataRestorationActive {
 			if worker >= len(r.RestorationRequests) {
 				return DecoderFrameWorkBatchResidualRequest{}, ErrFrameShortBuffer
