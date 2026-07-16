@@ -23,15 +23,15 @@
 #define CDF_C2   6
 #define CDF_CNT 10
 
-// func coeffBaseLevels2DARM64(c *Cursor, scanHot unsafe.Pointer, cHi, cLo int,
+// func coeffBaseLevelsARM64(c *Cursor, scanHot unsafe.Pointer, cHi, cLo int,
 //	levels *uint8, stride int, base *CDF, br *CDF,
-//	dirty *int16, levelDirty *int16, update bool) int
+//	dirty *int16, levelDirty *int16, class int, update bool) int
 //
 // M-D3 D3-b kernel (spec: internal/av1/tile/coeff_asm_arm64_spec.go §3).
-// Scalar source-shaped port of the Class2D base-levels loop of
-// tile.readCoefficientsTXBTracked2DWithGeo with the BR high-token chain
-// (dav1d msac_decode_hi_tok shape, already proven as readCDF4HighTokenUpdateArch)
-// inlined, over goav1's 64-bit XOR-into-ones window. The refill blocks are
+// Scalar source-shaped port of the 2D/horizontal/vertical base-levels loops
+// with the BR high-token chain (dav1d msac_decode_hi_tok shape, already proven
+// as readCDF4HighTokenUpdateArch) inlined, over goav1's 64-bit XOR-into-ones
+// window. The refill blocks are
 // verbatim copies of the established reader_bit_arm64.s refill; src ptr/len
 // and the cursor pointer are reloaded from the stack args inside them so the
 // loop keeps three more persistent registers.
@@ -39,10 +39,10 @@
 // Register plan (see spec §3): persistent R1 base, R2 br, R3 scanHot,
 // R4 levels, R5 cnt, R6 pos, R7 dif, R8 rng, R10 tellOffs, R19 c, R20 cLo,
 // R21 stride, R22 dirty cursor, R23 levelDirty cursor, R24 update flag,
-// R25 appended, R15 level, R26 scanHot entry / BR extra accumulator.
+// R25 appended, R15 level, R26 scanHot entry / BR extra accumulator, R27 class.
 // Iteration scratch R0, R9, R11-R14, R16, R17; refill clobbers only
-// {R0, R9, R11, R12, R13, R17}. V8-V15, R18, R27-R30 untouched.
-TEXT ·coeffBaseLevels2DARM64(SB), NOSPLIT, $0-96
+// {R0, R9, R11, R12, R13, R17}. V8-V15, R18, R28-R30 untouched.
+TEXT ·coeffBaseLevelsARM64(SB), NOSPLIT, $0-104
 	MOVD  c+0(FP), R0
 	MOVD  CURSOR_DIF(R0), R7
 	MOVHU CURSOR_RNG(R0), R8
@@ -58,13 +58,15 @@ TEXT ·coeffBaseLevels2DARM64(SB), NOSPLIT, $0-96
 	MOVD  br+56(FP), R2
 	MOVD  dirty+64(FP), R22
 	MOVD  levelDirty+72(FP), R23
-	MOVBU update+80(FP), R24
+	MOVD  class+80(FP), R27
+	MOVBU update+88(FP), R24
 	MOVD  $0, R25
 	CMP   R20, R19
 	BLT   done
 
 loop:
 	MOVD (R3)(R19<<3), R26 // scanHot[c]: pos | padded<<16 | lower2D<<32 | br2D<<40
+	CBNZ R27, ctx1D
 
 	// Base context: 0 for the DC position, else
 	// min((Σ clip3(neighbour)+1)>>1, 4) + lower2DOffset. clip3 is computed as
@@ -108,6 +110,67 @@ loop:
 
 ctxZero:
 	MOVD $0, R16
+	B    ctxDone
+
+ctx1D:
+	// Horizontal transforms use {s1,p1,s2,s3,s4}; vertical transforms use
+	// {s1,p1,p2,p3,p4}. The scan table stores the corresponding 1D class
+	// offset in the same byte used by lower2DOffset.
+	UBFX  $16, R26, $16, R13 // padded
+	ADD   R13, R21, R14      // s1
+	MOVBU (R4)(R14), R11
+	SUB   $3, R11, R11
+	AND   R11->63, R11, R16
+	ADD   $1, R13, R15       // p1
+	MOVBU (R4)(R15), R11
+	SUB   $3, R11, R11
+	AND   R11->63, R11, R11
+	ADD   R11, R16, R16
+	CMP   $1, R27
+	BNE   ctxVertTail
+
+	ADD   R14, R21, R15 // s2
+	MOVBU (R4)(R15), R11
+	SUB   $3, R11, R11
+	AND   R11->63, R11, R11
+	ADD   R11, R16, R16
+	ADD   R15, R21, R15 // s3
+	MOVBU (R4)(R15), R11
+	SUB   $3, R11, R11
+	AND   R11->63, R11, R11
+	ADD   R11, R16, R16
+	ADD   R15, R21, R15 // s4
+	MOVBU (R4)(R15), R11
+	SUB   $3, R11, R11
+	AND   R11->63, R11, R11
+	ADD   R11, R16, R16
+	B     ctx1DReduce
+
+ctxVertTail:
+	ADD   $2, R13, R15 // p2
+	MOVBU (R4)(R15), R11
+	SUB   $3, R11, R11
+	AND   R11->63, R11, R11
+	ADD   R11, R16, R16
+	ADD   $3, R13, R15 // p3
+	MOVBU (R4)(R15), R11
+	SUB   $3, R11, R11
+	AND   R11->63, R11, R11
+	ADD   R11, R16, R16
+	ADD   $4, R13, R15 // p4
+	MOVBU (R4)(R15), R11
+	SUB   $3, R11, R11
+	AND   R11->63, R11, R11
+	ADD   R11, R16, R16
+
+ctx1DReduce:
+	ADD   $16, R16, R16
+	LSR   $1, R16, R16
+	MOVD  $4, R11
+	CMP   R11, R16
+	CSEL  LO, R16, R11, R16
+	SBFX  $32, R26, $8, R11
+	ADD   R11, R16, R16
 
 ctxDone:
 	ADD R16<<3, R16, R11 // 9*ctx
@@ -315,6 +378,7 @@ baseAdaptDone:
 	// four chained reads of the same row, extra += symbol, stop when
 	// symbol < 3. extra == 3k after k saturating reads, so extra < 12 is
 	// exactly the reads < 4 bound and no chain counter is needed.
+	CBNZ  R27, brCtx1D
 	UBFX  $16, R26, $16, R13 // padded
 	ADD   R13, R21, R14      // s1
 	MOVBU (R4)(R14), R16     // levels[s1]
@@ -329,7 +393,37 @@ baseAdaptDone:
 	MOVD  $6, R11
 	CMP   R11, R16
 	CSEL  LO, R16, R11, R16 // min(mag, 6)
-	SBFX  $40, R26, $8, R11 // br2DOffset
+	B     brCtxOffset
+
+brCtx1D:
+	UBFX  $16, R26, $16, R13 // padded
+	ADD   R13, R21, R14      // s1
+	MOVBU (R4)(R14), R16
+	ADD   $1, R13, R11       // p1
+	MOVBU (R4)(R11), R12
+	ADD   R12, R16, R16
+	CMP   $1, R27
+	BNE   brCtxVert
+	ADD   R14, R21, R11 // s2
+	MOVBU (R4)(R11), R12
+	B     brCtx1DLast
+
+brCtxVert:
+	ADD   $2, R13, R11 // p2
+	MOVBU (R4)(R11), R12
+
+brCtx1DLast:
+	ADD   R12, R16, R16
+
+brCtxReduce:
+	ADD   $1, R16, R16
+	LSR   $1, R16, R16
+	MOVD  $6, R11
+	CMP   R11, R16
+	CSEL  LO, R16, R11, R16
+
+brCtxOffset:
+	SBFX  $40, R26, $8, R11 // class-specific BR context offset
 	ADD   R11, R16, R16     // brCtx
 	ADD   R16<<3, R16, R11
 	ADD   R11<<2, R2, R14   // row = br + 36*brCtx
@@ -557,5 +651,5 @@ done:
 	MOVH R8, CURSOR_RNG(R0)
 	MOVH R5, CURSOR_CNT(R0)
 	MOVH R10, CURSOR_TELL_OFFS(R0)
-	MOVD R25, ret+88(FP)
+	MOVD R25, ret+96(FP)
 	RET

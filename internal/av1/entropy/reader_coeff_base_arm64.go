@@ -8,9 +8,9 @@ package entropy
 
 import "unsafe"
 
-// HasCoeffBaseLevels2D reports that the arm64 TXB base-levels kernel is built
-// in (see internal/av1/tile/coeff_asm_arm64_spec.go for the M-D3 plan).
-const HasCoeffBaseLevels2D = true
+// HasCoeffBaseLevels reports that the arm64 TXB base-levels kernel is built in
+// (see internal/av1/tile/coeff_asm_arm64_spec.go for the M-D3 plan).
+const HasCoeffBaseLevels = true
 
 // The kernel hardcodes Cursor and CDF field offsets; pin them at compile time
 // so any layout change breaks the build instead of the decode.
@@ -33,13 +33,14 @@ var (
 )
 
 //go:noescape
-func coeffBaseLevels2DARM64(c *Cursor, scanHot unsafe.Pointer, cHi, cLo int, levels *uint8, stride int, base *CDF, br *CDF, dirty *int16, levelDirty *int16, update bool) int
+func coeffBaseLevelsARM64(c *Cursor, scanHot unsafe.Pointer, cHi, cLo int, levels *uint8, stride int, base *CDF, br *CDF, dirty *int16, levelDirty *int16, class int, update bool) int
 
-// CoeffBaseLevels2D runs the AV1 coefficient base-levels walk (base 4-symbol
-// reads with the BR high-token chain inlined) for scan indices cHi down to
-// cLo over a Class2D scan-hot table, entirely in scalar arm64 assembly. It is
-// the M-D3 D3-b kernel: the range-decoder window stays in registers for the
-// whole loop instead of round-tripping through the Cursor per symbol.
+// CoeffBaseLevels runs the AV1 coefficient base-levels walk (base 4-symbol
+// reads with the BR high-token chain inlined) for scan indices cHi down to cLo
+// over a scan-hot table, entirely in scalar arm64 assembly. It is the M-D3
+// D3-b kernel: the range-decoder window stays in registers for the whole loop
+// instead of round-tripping through the Cursor per symbol. class is the AV1
+// transform class: 0=2D, 1=horizontal, 2=vertical.
 //
 // scanHot points at entry 0 of the caller's packed scan table; each entry is
 // 8 bytes: pos u16 | padded u16 | lower2DOffset i8 | br2DOffset i8 | 2 bytes
@@ -53,6 +54,6 @@ func coeffBaseLevels2DARM64(c *Cursor, scanHot unsafe.Pointer, cHi, cLo int, lev
 // loops it replaces prove via bounds-check hints. update selects the exact
 // updateCDFWindow adaptation after every read (the no-update variant leaves
 // CDF memory untouched).
-func (c *Cursor) CoeffBaseLevels2D(scanHot unsafe.Pointer, cHi, cLo int, levels *uint8, stride int, base *CDF, br *CDF, dirty *int16, levelDirty *int16, update bool) int {
-	return coeffBaseLevels2DARM64(c, scanHot, cHi, cLo, levels, stride, base, br, dirty, levelDirty, update)
+func (c *Cursor) CoeffBaseLevels(scanHot unsafe.Pointer, cHi, cLo int, levels *uint8, stride int, base *CDF, br *CDF, dirty *int16, levelDirty *int16, class int, update bool) int {
+	return coeffBaseLevelsARM64(c, scanHot, cHi, cLo, levels, stride, base, br, dirty, levelDirty, class, update)
 }

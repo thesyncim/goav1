@@ -19,7 +19,7 @@ import (
 // byte-identical.
 var (
 	coeffAsmKillSwitch    = os.Getenv("GOAV1_DISABLE_COEFF_ASM")
-	coeffBaseLevelsKernel = entropy.HasCoeffBaseLevels2D &&
+	coeffBaseLevelsKernel = entropy.HasCoeffBaseLevels &&
 		(coeffAsmKillSwitch == "" || coeffAsmKillSwitch == "sign" || coeffAsmKillSwitch == "mv")
 	coeffSignGolombKernel = entropy.HasCoeffSignGolomb &&
 		(coeffAsmKillSwitch == "" || coeffAsmKillSwitch == "mv")
@@ -28,8 +28,8 @@ var (
 )
 
 // The kernel reads coeffScanHot entries as packed 8-byte words
-// (pos u16 | padded u16 | lower2DOffset i8 | br2DOffset i8 | eob ctx bytes
-// ignored); pin the layout at compile time.
+// (pos u16 | padded u16 | class-specific lower offset i8 | class-specific BR
+// offset i8 | eob ctx bytes ignored); pin the layout at compile time.
 var (
 	_ [unsafe.Sizeof(coeffScanHot{}) - 8]byte
 	_ [8 - unsafe.Sizeof(coeffScanHot{})]byte
