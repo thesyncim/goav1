@@ -6,6 +6,22 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 )
 
+func TestFrameWorkFillLoopFilterPackedLevelsPreservesAdjacentCells(t *testing.T) {
+	cache := [][4]uint8{{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}}
+	frameWorkFillLoopFilterPackedLevels(cache, 1, 4, 21, 22)
+	var got [6][2]uint8
+	for i := range got {
+		got[i] = [2]uint8{
+			frameWorkLoopFilterPackedLevel(cache, i, 0),
+			frameWorkLoopFilterPackedLevel(cache, i, 1),
+		}
+	}
+	want := [6][2]uint8{{1, 2}, {21, 22}, {21, 22}, {21, 22}, {21, 22}, {11, 12}}
+	if got != want {
+		t.Fatalf("packed levels=%v, want %v", got, want)
+	}
+}
+
 func TestFrameWorkLoopFilterMaskCellWidthMatchesCheckedBounds(t *testing.T) {
 	widths := [...]uint8{4, 6, 8, 14}
 	for posWidth := int32(4); posWidth <= 68; posWidth += 4 {

@@ -9,7 +9,7 @@ import (
 // dav1d-style per-superblock deblocking edge bitmasks (internal/av1/lfmask). It
 // mirrors dav1d's f->lf.mask + f->lf.level: one FilterMask per 128x128
 // superblock region (sb128w * sb128h of them) holds the compact per-4x4 edge
-// bitmasks, and LevelCache is the frame-wide per-4x4 resolved level grid.
+// bitmasks, and LevelCache is the packed frame-wide resolved-level grid.
 //
 // The edge bitmasks are built during the tile-residual block walk in decode
 // (Z) order (dav1d src/decode.c dav1d_create_lf_mask_{inter,intra}); the
@@ -39,6 +39,56 @@ func FrameWorkLoopFilterMaskShape(cols, rows int) (sb128w, sb128h, masks int) {
 	return sb128w, sb128h, sb128w * sb128h
 }
 
+// FrameWorkLoopFilterLevelCacheShape returns the packed level-cache geometry.
+// Each logical cell contains two levels: Y vertical/horizontal for every luma
+// MI cell, followed by U/V for every chroma MI cell. Two logical cells share
+// one [4]uint8 backing entry, avoiding unused chroma slots in subsampled frames.
+func FrameWorkLoopFilterLevelCacheShape(cols, rows int, layout lfmask.Layout, hasChroma bool) (uvCols, uvRows, length int, err error) {
+	if cols <= 0 || rows <= 0 || layout.SSHor < 0 || layout.SSHor > 1 || layout.SSVer < 0 || layout.SSVer > 1 {
+		return 0, 0, 0, ErrInvalidBatch
+	}
+	maxUint64 := ^uint64(0)
+	cols64 := uint64(cols)
+	rows64 := uint64(rows)
+	if cols64 > maxUint64/rows64 {
+		return 0, 0, 0, ErrInvalidBatch
+	}
+	lumaCells := cols64 * rows64
+	logicalCells := lumaCells
+	if hasChroma && !layout.Mono {
+		uvCols = (cols >> layout.SSHor) + (cols & layout.SSHor)
+		uvRows = (rows >> layout.SSVer) + (rows & layout.SSVer)
+		uvCols64 := uint64(uvCols)
+		uvRows64 := uint64(uvRows)
+		if uvCols64 > maxUint64/uvRows64 {
+			return 0, 0, 0, ErrInvalidBatch
+		}
+		uvCells := uvCols64 * uvRows64
+		if logicalCells > maxUint64-uvCells {
+			return 0, 0, 0, ErrInvalidBatch
+		}
+		logicalCells += uvCells
+	}
+	maxInt := uint64(^uint(0) >> 1)
+	if logicalCells > maxInt*2 {
+		return 0, 0, 0, ErrInvalidBatch
+	}
+	packed := (logicalCells + 1) >> 1
+	if packed > maxInt {
+		return 0, 0, 0, ErrInvalidBatch
+	}
+	return uvCols, uvRows, int(packed), nil
+}
+
+// LevelCacheShape returns this handle's chroma geometry and packed backing
+// length. Chroma logical cells begin after Cols*Rows luma logical cells.
+func (h *FrameWorkLoopFilterMasks) LevelCacheShape() (uvCols, uvRows, length int, err error) {
+	if h == nil {
+		return 0, 0, 0, ErrInvalidBatch
+	}
+	return FrameWorkLoopFilterLevelCacheShape(h.Cols, h.Rows, h.Layout, h.HasChroma)
+}
+
 // Valid reports whether the handle carries a bound mask grid.
 func (h *FrameWorkLoopFilterMasks) Valid() bool {
 	return h != nil && h.Masks != nil && h.SB128W > 0
@@ -47,16 +97,17 @@ func (h *FrameWorkLoopFilterMasks) Valid() bool {
 // BindLoopFilterMasks validates and slices caller-owned storage into this
 // frame's deblocking edge-mask handle, mirroring BindLoopFilterMap. masks holds
 // one FilterMask per 128x128 region (len >= FrameWorkLoopFilterMaskShape masks)
-// and levelCache one [4]uint8 per MI cell (len >= LoopFilterMapShape length).
+// and levelCache packs two two-level logical cells per [4]uint8 entry (luma
+// cells followed by the subsampled chroma cells).
 // The returned handle is cleared so the decode block walk can OR this frame's
 // edges into reused storage; the loop filter applies them at post-filter time.
 func (b *FrameWorkBatch) BindLoopFilterMasks(masks []lfmask.FilterMask, levelCache [][4]uint8) (FrameWorkLoopFilterMasks, error) {
-	cols, rows, length, err := b.LoopFilterMapShape()
+	cols, rows, _, err := b.LoopFilterMapShape()
 	if err != nil {
 		return FrameWorkLoopFilterMasks{}, err
 	}
 	sb128w, sb128h, maskCount := FrameWorkLoopFilterMaskShape(cols, rows)
-	if len(masks) < maskCount || len(levelCache) < length {
+	if len(masks) < maskCount {
 		return FrameWorkLoopFilterMasks{}, ErrInvalidBatch
 	}
 	color := b.Sequence.ColorConfig
@@ -67,9 +118,13 @@ func (b *FrameWorkBatch) BindLoopFilterMasks(masks []lfmask.FilterMask, levelCac
 	if color.SubsamplingY {
 		layout.SSVer = 1
 	}
+	_, _, levelLength, err := FrameWorkLoopFilterLevelCacheShape(cols, rows, layout, !color.MonoChrome)
+	if err != nil || len(levelCache) < levelLength {
+		return FrameWorkLoopFilterMasks{}, ErrInvalidBatch
+	}
 	out := FrameWorkLoopFilterMasks{
 		Masks:      masks[:maskCount],
-		LevelCache: levelCache[:length],
+		LevelCache: levelCache[:levelLength],
 		Cols:       cols,
 		Rows:       rows,
 		SB128W:     sb128w,

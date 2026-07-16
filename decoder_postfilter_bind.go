@@ -22,7 +22,10 @@ package goav1
 // CDEF, super-res, restoration, film grain) so callers can scan the file
 // for the stage they want.
 
-import internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+import (
+	internallfmask "github.com/thesyncim/goav1/internal/av1/lfmask"
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+)
 
 // DecoderFrameWorkCDEFIndexMapShape reports the column count, row count, and
 // total entry count required to back the CDEF index map for (sequence, size).
@@ -57,8 +60,9 @@ func BindDecoderFrameWorkLoopFilterMap(sequence SequenceHeader, size FrameSize, 
 // BindDecoderFrameWorkLoopFilterMasks wires caller-owned edge-mask + level-cache
 // storage into a DecoderFrameWorkLoopFilterMasks handle sized for (sequence,
 // size). masks length must be >= the FrameWorkLoopFilterMaskShape mask count and
-// levelCache >= the loop-filter map length. The handle is cleared; attach it via
-// the side-data so the tile block walk builds it during decode.
+// levelCache must satisfy the packed luma/chroma cache shape. The handle is
+// cleared; attach it via the side-data so the tile block walk builds it during
+// decode.
 func BindDecoderFrameWorkLoopFilterMasks(sequence SequenceHeader, size FrameSize, masks []DecoderFrameWorkLoopFilterFilterMask, levelCache [][4]uint8) (DecoderFrameWorkLoopFilterMasks, error) {
 	batch := decoderFrameWorkFrameBatch(sequence, size)
 	return batch.BindLoopFilterMasks(masks, levelCache)
@@ -718,12 +722,24 @@ func DecoderFrameWorkSideDataScratchLen(sequence SequenceHeader, size FrameSize,
 	if err != nil {
 		return DecoderFrameWorkSideDataScratchSize{}, err
 	}
-	// The deblocking edge bitmasks are sized per 128x128 region; the per-4x4
-	// level cache matches the loop-filter map length. Sized unconditionally (by
-	// frame geometry) since the build gate is per-frame LoopFilter activity,
+	// The deblocking edge bitmasks are sized per 128x128 region; the level cache
+	// packs two luma or chroma level pairs per backing entry. It is sized
+	// unconditionally by frame geometry since the build gate is per-frame LoopFilter activity,
 	// which the scratch sizing does not see -- the masks stay unbuilt/unused on
 	// loop-filter-inactive frames.
 	_, _, maskCount := internalthreading.FrameWorkLoopFilterMaskShape(lfCols, lfRows)
+	color := sequence.ColorConfig
+	layout := internallfmask.Layout{Mono: color.MonoChrome}
+	if color.SubsamplingX {
+		layout.SSHor = 1
+	}
+	if color.SubsamplingY {
+		layout.SSVer = 1
+	}
+	_, _, loopFilterLevelLength, err := internalthreading.FrameWorkLoopFilterLevelCacheShape(lfCols, lfRows, layout, !color.MonoChrome)
+	if err != nil {
+		return DecoderFrameWorkSideDataScratchSize{}, err
+	}
 	restorationPlan, err := DecoderFrameWorkRestorationFramePlan(sequence, size, restoration)
 	if err != nil {
 		return DecoderFrameWorkSideDataScratchSize{}, err
@@ -734,7 +750,7 @@ func DecoderFrameWorkSideDataScratchLen(sequence SequenceHeader, size FrameSize,
 		CDEFReadMap:              cdefLength,
 		LoopFilterMap:            loopFilterLength,
 		LoopFilterMasks:          maskCount,
-		LoopFilterLevelCache:     loopFilterLength,
+		LoopFilterLevelCache:     loopFilterLevelLength,
 		RestorationRecords:       restorationPlan.UnitRecordLen(),
 		RestorationBoundaryAbove: boundaryLength,
 		RestorationBoundaryBelow: boundaryLength,

@@ -1499,13 +1499,18 @@ func FrameWorkSideDataScratchLen(b FrameWorkBatch) (FrameWorkSideDataScratchSize
 			return FrameWorkSideDataScratchSize{}, err
 		}
 		size.LoopFilterRecords = length
-		// The dav1d-style deblocking edge bitmasks (and their frame-wide 4x4
+		// The dav1d-style deblocking edge bitmasks (and their packed frame-wide
 		// level cache) are only consumed by the loop filter, so bind them only
 		// when the loop filter itself is active for this frame.
 		if frameWorkLoopFilterActive(b.LoopFilter) {
 			_, _, masks := threading.FrameWorkLoopFilterMaskShape(cols, rows)
+			color := b.Sequence.ColorConfig
+			_, _, levels, err := threading.FrameWorkLoopFilterLevelCacheShape(cols, rows, frameWorkLoopFilterMaskLayout(color), !color.MonoChrome)
+			if err != nil {
+				return FrameWorkSideDataScratchSize{}, err
+			}
 			size.LoopFilterMasks = masks
-			size.LoopFilterLevels = length
+			size.LoopFilterLevels = levels
 		}
 	}
 	if frameWorkRestorationActive(b.Restoration) {
@@ -1612,14 +1617,16 @@ func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, 
 		// them before the decode block walk ORs this frame's edges in.
 		if frameWorkLoopFilterActive(b.LoopFilter) {
 			sb128w, sb128h, maskCount := threading.FrameWorkLoopFilterMaskShape(cols, rows)
-			if len(r.LFMasks) < maskCount || len(r.LFLevelCache) < length {
+			color := b.Sequence.ColorConfig
+			layout := frameWorkLoopFilterMaskLayout(color)
+			_, _, levelLength, err := threading.FrameWorkLoopFilterLevelCacheShape(cols, rows, layout, !color.MonoChrome)
+			if err != nil || len(r.LFMasks) < maskCount || len(r.LFLevelCache) < levelLength {
 				return threading.ErrInvalidBatch
 			}
 			masks := r.LFMasks[:maskCount]
-			levelCache := r.LFLevelCache[:length]
+			levelCache := r.LFLevelCache[:levelLength]
 			clear(masks)
 			clear(levelCache)
-			color := b.Sequence.ColorConfig
 			handle := threading.FrameWorkLoopFilterMasks{
 				Masks:      masks,
 				LevelCache: levelCache,
@@ -1627,7 +1634,7 @@ func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, 
 				Rows:       rows,
 				SB128W:     sb128w,
 				SB128H:     sb128h,
-				Layout:     frameWorkLoopFilterMaskLayout(color),
+				Layout:     layout,
 				HasChroma:  !color.MonoChrome,
 			}
 			if err := s.SetLoopFilterMasks(handle); err != nil {

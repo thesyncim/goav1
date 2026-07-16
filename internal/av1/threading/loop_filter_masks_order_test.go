@@ -20,6 +20,34 @@ type orderTestBlock struct {
 	intra            bool
 }
 
+func TestFrameWorkLoopFilterLevelCacheShape(t *testing.T) {
+	tests := []struct {
+		name             string
+		cols, rows       int
+		layout           lfmask.Layout
+		hasChroma        bool
+		uvCols, uvRows   int
+		packedLevelCells int
+	}{
+		{"720p-420", 320, 180, lfmask.Layout{SSHor: 1, SSVer: 1}, true, 160, 90, 36000},
+		{"720p-422", 320, 180, lfmask.Layout{SSHor: 1}, true, 160, 180, 43200},
+		{"720p-444", 320, 180, lfmask.Layout{}, true, 320, 180, 57600},
+		{"720p-mono", 320, 180, lfmask.Layout{Mono: true}, false, 0, 0, 28800},
+		{"odd-420", 3, 5, lfmask.Layout{SSHor: 1, SSVer: 1}, true, 2, 3, 11},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			uvCols, uvRows, length, err := FrameWorkLoopFilterLevelCacheShape(tt.cols, tt.rows, tt.layout, tt.hasChroma)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if uvCols != tt.uvCols || uvRows != tt.uvRows || length != tt.packedLevelCells {
+				t.Fatalf("shape=(%d,%d,%d), want (%d,%d,%d)", uvCols, uvRows, length, tt.uvCols, tt.uvRows, tt.packedLevelCells)
+			}
+		})
+	}
+}
+
 func newOrderTestMasks(t *testing.T, cols, rows int) (*FrameWorkLoopFilterMasks, FrameWorkLoopFilterMap) {
 	t.Helper()
 	sb128w, sb128h, maskCount := FrameWorkLoopFilterMaskShape(cols, rows)

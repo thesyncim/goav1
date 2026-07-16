@@ -236,22 +236,27 @@ func (a *loopFilterApplier) init(width, height int) error {
 		return err
 	}
 	// Deblocking edge-mask storage (reused across frames): one FilterMask per
-	// 128x128 region plus the frame-wide per-4x4 resolved-level grid.
+	// 128x128 region plus the packed frame-wide resolved-level grid.
 	sb128w, sb128h, maskCount := threading.FrameWorkLoopFilterMaskShape(cols, rows)
+	layout := lfmask.Layout{SSHor: 1, SSVer: 1}
+	_, _, levelLength, err := threading.FrameWorkLoopFilterLevelCacheShape(cols, rows, layout, true)
+	if err != nil {
+		return err
+	}
 	if cap(a.masks.Masks) < maskCount {
 		a.masks.Masks = make([]lfmask.FilterMask, maskCount)
 	}
-	if cap(a.masks.LevelCache) < length {
-		a.masks.LevelCache = make([][4]uint8, length)
+	if cap(a.masks.LevelCache) < levelLength {
+		a.masks.LevelCache = make([][4]uint8, levelLength)
 	}
 	a.masks = threading.FrameWorkLoopFilterMasks{
 		Masks:      a.masks.Masks[:maskCount],
-		LevelCache: a.masks.LevelCache[:length],
+		LevelCache: a.masks.LevelCache[:levelLength],
 		Cols:       cols,
 		Rows:       rows,
 		SB128W:     sb128w,
 		SB128H:     sb128h,
-		Layout:     lfmask.Layout{SSHor: 1, SSVer: 1},
+		Layout:     layout,
 		HasChroma:  true,
 	}
 	a.masksBound = true
