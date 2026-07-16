@@ -808,6 +808,9 @@ func (c *BlockModeContext) MarkInterIntra(size BlockSize, x4 int, y4 int) error 
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftInterIntra[y4+i] = 1
 	}
+	if record, ok := c.gridRecordAt(x4, y4); ok && record.Flags&gridRecordMotionValid != 0 {
+		record.Motion.InterIntra = true
+	}
 	return nil
 }
 

@@ -25,9 +25,9 @@ func TestMarkInterMotionAndFiltersMatchesSeparateUpdates(t *testing.T) {
 		var separate BlockModeContext
 		separate.AboveIntra[x4] = 1
 		separate.LeftIntra[y4] = 1
-		separate.GridMotionValid[y4][x4] = 1
-		separate.GridInterpValid[y4][x4] = 1
-		separate.GridBlockSizeVisited[y4][x4] = 1
+		setGridRecordCellForTest(&separate, x4, y4, blockModeGridRecord{
+			Flags: gridRecordMotionValid | gridRecordInterpValid | gridRecordSizeVisited,
+		})
 		fused := separate
 
 		if err := separate.MarkInterMotion(size, x4, y4, result, true); err != nil {

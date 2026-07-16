@@ -54,11 +54,13 @@ func TestCollectSubChromaInterCellsRequiresAllNeighborsInter(t *testing.T) {
 	// MarkInterMotion. Then seed only two of the three neighbors and
 	// confirm the helper aborts.
 	seedInter := func(x, y int) {
-		ctx.GridMotionValid[y][x] = 1
-		ctx.GridInterMotion[y][x] = InterMotionResult{
-			References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
-			MV:         [2]motion.Vector{{Row: 1, Col: 2}},
-		}
+		setGridRecordCellForTest(ctx, x, y, blockModeGridRecord{
+			Motion: InterMotionResult{
+				References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+				MV:         [2]motion.Vector{{Row: 1, Col: 2}},
+			},
+			Flags: gridRecordMotionValid,
+		})
 	}
 	seedInter(3, 3) // NW for block at (4, 4)
 	seedInter(4, 3) // N
@@ -85,11 +87,13 @@ func TestCollectSubChromaInterCellsRequiresAllNeighborsInter(t *testing.T) {
 func TestCollectSubChromaInterCellsBlockSize4x4Quadrant(t *testing.T) {
 	ctx := &BlockModeContext{}
 	for _, p := range [][2]int{{3, 3}, {4, 3}, {3, 4}} {
-		ctx.GridMotionValid[p[1]][p[0]] = 1
-		ctx.GridInterMotion[p[1]][p[0]] = InterMotionResult{
-			References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
-			MV:         [2]motion.Vector{{Row: int16(p[0]), Col: int16(p[1])}},
-		}
+		setGridRecordCellForTest(ctx, p[0], p[1], blockModeGridRecord{
+			Motion: InterMotionResult{
+				References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+				MV:         [2]motion.Vector{{Row: int16(p[0]), Col: int16(p[1])}},
+			},
+			Flags: gridRecordMotionValid,
+		})
 	}
 	got, ok := ctx.CollectSubChromaInterCells(BlockSize4x4, 4, 4, true, true, motion.RegularFilters)
 	if !ok || got.Count != 4 {
@@ -125,11 +129,13 @@ func TestCollectSubChromaInterCellsBlockSize4x4Quadrant(t *testing.T) {
 // samples each.
 func TestCollectSubChromaInterCellsBlockSize4x8Pair(t *testing.T) {
 	ctx := &BlockModeContext{}
-	ctx.GridMotionValid[4][3] = 1
-	ctx.GridInterMotion[4][3] = InterMotionResult{
-		References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
-		MV:         [2]motion.Vector{{Row: 10, Col: -7}},
-	}
+	setGridRecordCellForTest(ctx, 3, 4, blockModeGridRecord{
+		Motion: InterMotionResult{
+			References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+			MV:         [2]motion.Vector{{Row: 10, Col: -7}},
+		},
+		Flags: gridRecordMotionValid,
+	})
 	got, ok := ctx.CollectSubChromaInterCells(BlockSize4x8, 4, 4, true, true, motion.RegularFilters)
 	if !ok || got.Count != 2 {
 		t.Fatalf("BlockSize4x8 should emit 2 cells, got ok=%v count=%d", ok, got.Count)
@@ -154,11 +160,13 @@ func TestCollectSubChromaInterCellsBlockSize4x8Pair(t *testing.T) {
 // samples each.
 func TestCollectSubChromaInterCellsBlockSize8x4Pair(t *testing.T) {
 	ctx := &BlockModeContext{}
-	ctx.GridMotionValid[3][4] = 1
-	ctx.GridInterMotion[3][4] = InterMotionResult{
-		References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
-		MV:         [2]motion.Vector{{Row: -1, Col: 28}},
-	}
+	setGridRecordCellForTest(ctx, 4, 3, blockModeGridRecord{
+		Motion: InterMotionResult{
+			References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+			MV:         [2]motion.Vector{{Row: -1, Col: 28}},
+		},
+		Flags: gridRecordMotionValid,
+	})
 	got, ok := ctx.CollectSubChromaInterCells(BlockSize8x4, 4, 4, true, true, motion.RegularFilters)
 	if !ok || got.Count != 2 {
 		t.Fatalf("BlockSize8x4 should emit 2 cells, got ok=%v count=%d", ok, got.Count)

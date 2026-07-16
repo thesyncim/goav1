@@ -104,10 +104,11 @@ func (c *BlockModeContext) CollectSubChromaInterCells(size BlockSize, x4 int, y4
 				result.Count++
 				continue
 			}
-			if c.GridMotionValid[ny][nx] == 0 {
+			record, ok := c.gridRecordAt(nx, ny)
+			if !ok || record.Flags&gridRecordMotionValid == 0 {
 				return SubChromaInterResult{}, false
 			}
-			cell := c.GridInterMotion[ny][nx]
+			cell := record.Motion
 			if !cell.References.Ref[0].Valid() {
 				return SubChromaInterResult{}, false
 			}
@@ -121,8 +122,8 @@ func (c *BlockModeContext) CollectSubChromaInterCells(size BlockSize, x4 int, y4
 			// with a specific 2D neighbor). Fall back to the anchor filters
 			// only when the grid slot was never recorded.
 			cellFilters := filters
-			if c.GridInterpValid[ny][nx] != 0 {
-				cellFilters = c.GridInterp[ny][nx]
+			if record.Flags&gridRecordInterpValid != 0 {
+				cellFilters = record.Filters
 			}
 			result.Cells[result.Count] = SubChromaInterCell{
 				OffsetX:       uint8((col - colStart) * cellW),

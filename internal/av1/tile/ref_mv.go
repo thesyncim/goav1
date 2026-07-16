@@ -436,35 +436,80 @@ func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, res
 }
 
 func (c *BlockModeContext) markGridInterMotion(size BlockSize, x4 int, y4 int, result InterMotionResult, dims BlockDimensions) {
-	xEnd := x4 + int(dims.W4)
-	yEnd := y4 + int(dims.H4)
-	for y := y4; y < yEnd; y++ {
-		for x := x4; x < xEnd; x++ {
-			c.GridInterMotion[y][x] = result
-			c.GridMotionValid[y][x] = 1
-			c.GridBlockSize[y][x] = size
-			c.GridBlockSizeVisited[y][x] = 1
-		}
-	}
+	record := &c.gridRecords[y4][x4]
+	record.Motion = result
+	record.Size = size
+	record.Flags = gridRecordMotionValid | gridRecordSizeVisited
+	c.installGridOwners(x4, y4, dims)
 }
 
 func (c *BlockModeContext) markGridInterMotionAndFilters(size BlockSize, x4 int, y4 int, result InterMotionResult, filters motion.InterpFilters, dims BlockDimensions) {
+	c.installGridRecord(x4, y4, dims, blockModeGridRecord{
+		Motion:  result,
+		Filters: filters,
+		Size:    size,
+		Flags:   gridRecordMotionValid | gridRecordInterpValid | gridRecordSizeVisited,
+	})
+}
+
+func gridRecordOwner(x4, y4 int) uint16 {
+	return uint16(y4*MaxBlockModeSlots + x4 + 1)
+}
+
+func (c *BlockModeContext) installGridRecord(x4, y4 int, dims BlockDimensions, record blockModeGridRecord) {
+	c.gridRecords[y4][x4] = record
+	c.installGridOwners(x4, y4, dims)
+}
+
+func (c *BlockModeContext) installGridOwners(x4, y4 int, dims BlockDimensions) {
+	owner := gridRecordOwner(x4, y4)
 	xEnd := x4 + int(dims.W4)
 	yEnd := y4 + int(dims.H4)
-	for y := y4; y < yEnd; y++ {
-		for x := x4; x < xEnd; x++ {
-			c.GridInterMotion[y][x] = result
-			c.GridMotionValid[y][x] = 1
-			c.GridBlockSize[y][x] = size
-			c.GridBlockSizeVisited[y][x] = 1
-			c.GridInterp[y][x] = filters
-			c.GridInterpValid[y][x] = 1
+	if dims.W4 <= 2 {
+		for y := y4; y < yEnd; y++ {
+			for x := x4; x < xEnd; x++ {
+				c.gridOwners[y][x] = owner
+			}
 		}
+		return
+	}
+	first := c.gridOwners[y4][x4:xEnd]
+	for x := range first {
+		first[x] = owner
+	}
+	for y := y4 + 1; y < yEnd; y++ {
+		copy(c.gridOwners[y][x4:xEnd], first)
 	}
 }
 
+func (c *BlockModeContext) gridRecordAt(x4, y4 int) (*blockModeGridRecord, bool) {
+	if c == nil || x4 < 0 || y4 < 0 || x4 >= MaxBlockModeSlots || y4 >= MaxBlockModeSlots {
+		return nil, false
+	}
+	owner := c.gridOwners[y4][x4]
+	if owner == 0 {
+		return nil, false
+	}
+	index := int(owner - 1)
+	return &c.gridRecords[index/MaxBlockModeSlots][index%MaxBlockModeSlots], true
+}
+
+func (c *BlockModeContext) markGridInterFilters(_ BlockSize, x4, y4 int, filters motion.InterpFilters, dims BlockDimensions) {
+	owner := gridRecordOwner(x4, y4)
+	if c.gridOwners[y4][x4] == owner {
+		record := &c.gridRecords[y4][x4]
+		record.Filters = filters
+		record.Flags |= gridRecordInterpValid
+		return
+	}
+	record := &c.gridRecords[y4][x4]
+	record.Filters = filters
+	record.Flags = gridRecordInterpValid
+	c.installGridOwners(x4, y4, dims)
+}
+
 // clearGridInterMotion marks the block's grid cells as having no motion
-// candidate (MotionValid=0) while preserving the block size so outer ref-MV
+// candidate while preserving the block size so outer ref-MV
 // scans can still advance by the candidate's mi_size step. libaom's
 // scan_row_mbmi / scan_col_mbmi advance i += len = AOMMIN(xd->size,
 // mi_size_*[candidate->bsize]) regardless of whether the candidate is inter
@@ -472,20 +517,13 @@ func (c *BlockModeContext) markGridInterMotionAndFilters(size BlockSize, x4 int,
 // blocks deeper in the column/row are skipped. Zeroing GridBlockSize would
 // collapse the step to 1 (4x4) and let goav1's outer scan oversample cells
 // libaom never visits, producing a spurious column/row match.
-// The stale motion payload is intentionally left untouched: every consumer
-// must gate GridInterMotion on GridMotionValid, matching libaom's valid mbmi
-// state and avoiding a full InterMotionResult store for intra/reference-only
-// blocks.
+// Only the block's root record is written; covered cells repeat its compact
+// owner ID rather than its payload.
 func (c *BlockModeContext) clearGridInterMotion(size BlockSize, x4 int, y4 int, dims BlockDimensions) {
-	xEnd := x4 + int(dims.W4)
-	yEnd := y4 + int(dims.H4)
-	for y := y4; y < yEnd; y++ {
-		clear(c.GridMotionValid[y][x4:xEnd])
-		for x := x4; x < xEnd; x++ {
-			c.GridBlockSize[y][x] = size
-			c.GridBlockSizeVisited[y][x] = 1
-		}
-	}
+	record := &c.gridRecords[y4][x4]
+	record.Size = size
+	record.Flags = gridRecordSizeVisited
+	c.installGridOwners(x4, y4, dims)
 }
 
 // BuildReferenceMVStack ports the spatial part of libaom's setup_ref_mv_list()
@@ -1468,30 +1506,29 @@ func (c *BlockModeContext) scanGridBlockIntrabcDV(req *ReferenceMVStackRequest, 
 }
 
 func (c *BlockModeContext) gridInterMotion(x4 int, y4 int) (InterMotionResult, BlockSize, bool) {
-	if x4 < 0 || y4 < 0 || x4 >= MaxBlockModeSlots || y4 >= MaxBlockModeSlots ||
-		c.GridMotionValid[y4][x4] == 0 {
+	record, ok := c.gridRecordAt(x4, y4)
+	if !ok || record.Flags&gridRecordMotionValid == 0 {
 		return InterMotionResult{}, 0, false
 	}
-	return c.GridInterMotion[y4][x4], c.GridBlockSize[y4][x4], true
+	return record.Motion, record.Size, true
 }
 
 // gridNeighborBlockSize returns the block size recorded at (x4, y4)
 // regardless of whether the cell carries a usable motion candidate.
-// MarkIntra records the intra block's size in GridBlockSize while clearing
-// GridMotionValid so outer ref-MV scans can advance by libaom's
+// MarkIntra records the intra block's size while withholding a motion-valid
+// flag so outer ref-MV scans can advance by libaom's
 // `i += mi_size_*[candidate->bsize]` stride past intra neighbors without
 // oversampling cells the candidate already covers. Returns (size, true) when
 // a Mark*() recorded a size at the slot, (0, false) when the slot is out of
-// range. The "size present" signal is the gridBlockSizeVisited bitmap, which
-// flips only when markGridInterMotion / clearGridInterMotion writes the slot.
+// range. The "size present" signal is the owning record's size-visited flag,
+// which flips only when markGridInterMotion / clearGridInterMotion writes the
+// block.
 func (c *BlockModeContext) gridNeighborBlockSize(x4 int, y4 int) (BlockSize, bool) {
-	if x4 < 0 || y4 < 0 || x4 >= MaxBlockModeSlots || y4 >= MaxBlockModeSlots {
+	record, ok := c.gridRecordAt(x4, y4)
+	if !ok || record.Flags&gridRecordSizeVisited == 0 {
 		return 0, false
 	}
-	if c.GridBlockSizeVisited[y4][x4] == 0 {
-		return 0, false
-	}
-	return c.GridBlockSize[y4][x4], true
+	return record.Size, true
 }
 
 func (c *BlockModeContext) crossSBGridNeighbor(req *ReferenceMVStackRequest, x4, y4 int) (InterMotionResult, BlockSize, bool, bool) {
@@ -1546,15 +1583,14 @@ func (c *BlockModeContext) crossSBGridNeighbor(req *ReferenceMVStackRequest, x4,
 		}
 		return c.SBLeftInterMotionGrid[depth][y4], size, true, true
 	}
-	if x4 >= MaxBlockModeSlots || y4 >= MaxBlockModeSlots ||
-		c.GridBlockSizeVisited[y4][x4] == 0 {
+	record, ok := c.gridRecordAt(x4, y4)
+	if !ok || record.Flags&gridRecordSizeVisited == 0 {
 		return InterMotionResult{}, 0, false, false
 	}
-	size := c.GridBlockSize[y4][x4]
-	if c.GridMotionValid[y4][x4] == 0 {
-		return InterMotionResult{}, size, true, false
+	if record.Flags&gridRecordMotionValid == 0 {
+		return InterMotionResult{}, record.Size, true, false
 	}
-	return c.GridInterMotion[y4][x4], size, true, true
+	return record.Motion, record.Size, true, true
 }
 
 // crossSBGridNeighborBlockSize mirrors gridNeighborBlockSize but transparently

@@ -231,20 +231,21 @@ func TestBlockModeContextResetRootInvalidatesRetainedGridPayload(t *testing.T) {
 	filters := motion.InterpFilters{X: motion.InterpEightTapSmooth, Y: motion.InterpMultiTapSharp}
 	ctx.AboveSkip[0] = 1
 	ctx.TxNeighborValid = true
-	ctx.GridInterMotion[3][5] = mv
-	ctx.GridBlockSize[3][5] = BlockSize16x16
-	ctx.GridInterp[3][5] = filters
-	ctx.GridMotionValid[3][5] = 1
-	ctx.GridBlockSizeVisited[3][5] = 1
-	ctx.GridInterpValid[3][5] = 1
+	setGridRecordCellForTest(&ctx, 5, 3, blockModeGridRecord{
+		Motion:  mv,
+		Filters: filters,
+		Size:    BlockSize16x16,
+		Flags:   gridRecordMotionValid | gridRecordSizeVisited | gridRecordInterpValid,
+	})
+	retained := ctx.gridRecords[3][5]
 
 	ctx.resetRoot()
 
 	if ctx.AboveSkip[0] != 0 || ctx.TxNeighborValid {
 		t.Fatalf("neighbor state survived reset: skip=%d tx=%v", ctx.AboveSkip[0], ctx.TxNeighborValid)
 	}
-	if ctx.GridMotionValid[3][5] != 0 || ctx.GridBlockSizeVisited[3][5] != 0 || ctx.GridInterpValid[3][5] != 0 {
-		t.Fatalf("grid validity survived reset: motion=%d size=%d interp=%d", ctx.GridMotionValid[3][5], ctx.GridBlockSizeVisited[3][5], ctx.GridInterpValid[3][5])
+	if ctx.gridOwners[3][5] != 0 {
+		t.Fatalf("grid owner survived reset: %d", ctx.gridOwners[3][5])
 	}
 	if _, _, ok := ctx.gridInterMotion(5, 3); ok {
 		t.Fatal("retained motion payload remained visible")
@@ -252,7 +253,7 @@ func TestBlockModeContextResetRootInvalidatesRetainedGridPayload(t *testing.T) {
 	if _, ok := ctx.gridNeighborBlockSize(5, 3); ok {
 		t.Fatal("retained block-size payload remained visible")
 	}
-	if ctx.GridInterMotion[3][5] != mv || ctx.GridBlockSize[3][5] != BlockSize16x16 || ctx.GridInterp[3][5] != filters {
+	if ctx.gridRecords[3][5] != retained {
 		t.Fatal("reset rewrote validity-guarded payload")
 	}
 }

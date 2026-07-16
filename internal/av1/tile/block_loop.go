@@ -585,16 +585,11 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 }
 
 // resetRoot clears the compact neighbor/snapshot state and invalidates every
-// grid cell. Grid payloads are deliberately retained: every motion, block-size,
-// and interpolation read is gated by the corresponding validity/visited map,
-// so rewriting the much larger payload arrays at every superblock boundary is
-// unnecessary. A standalone BlockModeContext keeps ordinary zero-value and
-// whole-value assignment semantics; this reset is only for scratch reuse.
+// grid cell. Block records are deliberately retained: clearing the 2-byte
+// owner map makes every stale payload unreachable without rewriting it.
 func (c *BlockModeContext) resetRoot() {
 	c.blockModeNeighborContext = blockModeNeighborContext{}
-	c.GridMotionValid = [MaxBlockModeSlots][MaxBlockModeSlots]uint8{}
-	c.GridInterpValid = [MaxBlockModeSlots][MaxBlockModeSlots]uint8{}
-	c.GridBlockSizeVisited = [MaxBlockModeSlots][MaxBlockModeSlots]uint8{}
+	c.gridOwners = [MaxBlockModeSlots][MaxBlockModeSlots]uint16{}
 }
 
 func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, sbSizeMIB uint8) error {
@@ -740,10 +735,14 @@ func captureDiagonalCornerToPending(carrier *BlockLoopContextCarrier, nextColInd
 			if col < 0 {
 				break
 			}
-			dst.InterMotion[d][e] = mode.GridInterMotion[row][col]
-			dst.MotionValid[d][e] = mode.GridMotionValid[row][col]
-			dst.BlockSize[d][e] = mode.GridBlockSize[row][col]
-			dst.BlockSizeVisited[d][e] = mode.GridBlockSizeVisited[row][col]
+			record, ok := mode.gridRecordAt(col, row)
+			if !ok {
+				continue
+			}
+			dst.InterMotion[d][e] = record.Motion
+			dst.MotionValid[d][e] = boolByte(record.Flags&gridRecordMotionValid != 0)
+			dst.BlockSize[d][e] = record.Size
+			dst.BlockSizeVisited[d][e] = boolByte(record.Flags&gridRecordSizeVisited != 0)
 		}
 	}
 }
@@ -856,10 +855,16 @@ func captureAboveCrossSBHistory(dst *blockModeAboveContext, mode *BlockModeConte
 		if row < 0 {
 			break
 		}
-		dst.InterMotionHistory[d] = mode.GridInterMotion[row]
-		dst.MotionValidHistory[d] = mode.GridMotionValid[row]
-		dst.BlockSizeHistory[d] = mode.GridBlockSize[row]
-		dst.BlockSizeVisitedHistory[d] = mode.GridBlockSizeVisited[row]
+		for col := range MaxBlockModeSlots {
+			record, ok := mode.gridRecordAt(col, row)
+			if !ok {
+				continue
+			}
+			dst.InterMotionHistory[d][col] = record.Motion
+			dst.MotionValidHistory[d][col] = boolByte(record.Flags&gridRecordMotionValid != 0)
+			dst.BlockSizeHistory[d][col] = record.Size
+			dst.BlockSizeVisitedHistory[d][col] = boolByte(record.Flags&gridRecordSizeVisited != 0)
+		}
 	}
 }
 
@@ -893,10 +898,14 @@ func captureLeftCrossSBHistory(dst *blockModeLeftContext, mode *BlockModeContext
 			break
 		}
 		for y := range MaxBlockModeSlots {
-			dst.InterMotionHistory[d][y] = mode.GridInterMotion[y][col]
-			dst.MotionValidHistory[d][y] = mode.GridMotionValid[y][col]
-			dst.BlockSizeHistory[d][y] = mode.GridBlockSize[y][col]
-			dst.BlockSizeVisitedHistory[d][y] = mode.GridBlockSizeVisited[y][col]
+			record, ok := mode.gridRecordAt(col, y)
+			if !ok {
+				continue
+			}
+			dst.InterMotionHistory[d][y] = record.Motion
+			dst.MotionValidHistory[d][y] = boolByte(record.Flags&gridRecordMotionValid != 0)
+			dst.BlockSizeHistory[d][y] = record.Size
+			dst.BlockSizeVisitedHistory[d][y] = boolByte(record.Flags&gridRecordSizeVisited != 0)
 		}
 	}
 }

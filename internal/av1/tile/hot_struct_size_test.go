@@ -56,6 +56,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "OverlappableNeighborSet", size: unsafe.Sizeof(OverlappableNeighborSet{}), max: 248},
 		{name: "PaletteModeRequest", size: unsafe.Sizeof(PaletteModeRequest{}), max: 24},
 		{name: "InterMotionResult", size: unsafe.Sizeof(InterMotionResult{}), max: 16},
+		{name: "blockModeGridRecord", size: unsafe.Sizeof(blockModeGridRecord{}), max: 20},
 		{name: "DRLRequest", size: unsafe.Sizeof(DRLRequest{}), max: 7},
 		{name: "MVComponentResult", size: unsafe.Sizeof(MVComponentResult{}), max: 10},
 		{name: "MVResidualResult", size: unsafe.Sizeof(MVResidualResult{}), max: 28},
