@@ -167,6 +167,45 @@ func TestWideFilterDispatchVerticalMatchesPureGo(t *testing.T) {
 	}
 }
 
+// TestFilter14DispatchMixedLanes makes each eight-position vector straddle
+// rejected, wide-flat, filter8-flat, and clamp-edge content. This exercises
+// both branch-ladder reductions and per-lane fallback blends in one call;
+// whole-plane content modes alone tend to send every lane down the same path.
+func TestFilter14DispatchMixedLanes(t *testing.T) {
+	const stride = 128
+	const rows = 16
+	rng := rand.New(rand.NewSource(77))
+	for _, params := range wideFilterParamsCorpus() {
+		base := make([]byte, stride*rows)
+		for col := 0; col < stride; col++ {
+			regime := (col / 4) % 5 // split every vector into two regimes
+			for row := 0; row < rows; row++ {
+				switch regime {
+				case 0:
+					base[row*stride+col] = byte(rng.Intn(256))
+				case 1:
+					base[row*stride+col] = byte(127 + rng.Intn(3))
+				case 2:
+					base[row*stride+col] = byte(120 + rng.Intn(16))
+				case 3:
+					base[row*stride+col] = byte(rng.Intn(4))
+				default:
+					base[row*stride+col] = byte(252 + rng.Intn(4))
+				}
+			}
+		}
+		want := append([]byte(nil), base...)
+		got := append([]byte(nil), base...)
+		filter14EdgePureGo(want, 8*stride, stride, 1, 128, 1, params)
+		filter14EdgeImpl(got, 8*stride, stride, 1, 128, 1, params)
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("params=%+v idx=%d got=%d want=%d", params, i, got[i], want[i])
+			}
+		}
+	}
+}
+
 // TestWideFilterDispatchForcedPureGo confirms the differential holds when the
 // dispatcher is forced onto the pure-Go branch, so the test still has meaning
 // on a NEON host where the slot would otherwise always pick the asm.
