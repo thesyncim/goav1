@@ -54,7 +54,6 @@ type wienerU8NEONVertCtx struct {
 	rows   uintptr // output rows (== height)
 	taps   *int16  // 8 lanes: 7 adjusted taps (tap3 += 128) + 1 pad
 	seed   int32   // accumulator seed: -offset + (1<<(round1-1))
-	shift  int32   // -round1
 }
 
 //go:noescape
@@ -87,7 +86,8 @@ func wienerHorizontalU8NEON(src []uint8, srcStride int, srcOrigin int, width int
 }
 
 func wienerVerticalU8NEON(temp []uint16, tempStride int, dst []uint8, dstStride int, width int, height int, filter WienerFilter, round1 int) {
-	if width < 8 || width%8 != 0 {
+	if width < 8 || width%8 != 0 || round1 != 2*WienerFilterBits-WienerRound0Bits ||
+		filter[0] != filter[6] || filter[1] != filter[5] || filter[2] != filter[4] {
 		wienerVerticalU8(temp, tempStride, dst, dstStride, width, height, filter, round1)
 		return
 	}
@@ -103,7 +103,6 @@ func wienerVerticalU8NEON(temp []uint16, tempStride int, dst []uint8, dstStride 
 		rows:   uintptr(height),
 		taps:   &taps[0],
 		seed:   -offset + roundBias(round1),
-		shift:  int32(-round1),
 	}
 	wienerVerticalU8NEONAsm(&ctx)
 }
