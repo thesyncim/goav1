@@ -2,8 +2,11 @@ package threading
 
 import (
 	"github.com/thesyncim/goav1/internal/av1/lfmask"
+	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
+
+const loopFilterCDEFSkipFlag = uint8(1 << 7)
 
 // FrameWorkLoopFilterMasks is caller-owned, reused frame-level storage for the
 // dav1d-style per-superblock deblocking edge bitmasks (internal/av1/lfmask). It
@@ -27,6 +30,13 @@ type FrameWorkLoopFilterMasks struct {
 
 	Layout    lfmask.Layout
 	HasChroma bool
+
+	// LevelsFromDecode selects the single-tile production fast path: block
+	// decode resolves and splats LevelCache beside mask construction, so the
+	// postfilter need not materialize or rescan the per-MI record map. It stays
+	// false for multi-tile frames and standalone/public mask handles, whose
+	// boundary handling continues to use the checked map path.
+	LevelsFromDecode bool
 }
 
 // FrameWorkLoopFilterMaskShape returns the 128x128 region grid dimensions for a
@@ -204,6 +214,133 @@ func (s *frameWorkLoopFilterMaskScratch) resetLeft(hasChroma bool) {
 func (h *FrameWorkLoopFilterMasks) build(s *frameWorkLoopFilterMaskScratch, visit *tile.BlockLoopVisit, sbLog2 int, intra bool) {
 	h.buildBlock(s, int(visit.Block.MICol), int(visit.Block.MIRow), visit.Block.Size,
 		visit.Coefficients.Tree, visit.Prefix.SkipTransform, intra, sbLog2)
+}
+
+// fillBlockLevels resolves and splats the complete loop-filter level tuple
+// while the decoded block state is hot. Block coverage partitions a
+// single-tile frame, so every logical cache cell is written exactly once.
+func (h *FrameWorkLoopFilterMasks) fillBlockLevels(frameCtx *FrameWorkFrameContext, visit *tile.BlockLoopVisit, state *tile.DecodeState) error {
+	if h == nil || !h.LevelsFromDecode || frameCtx == nil || visit == nil || state == nil {
+		return ErrInvalidBatch
+	}
+	block, err := FrameWorkLoopFilterBlockFromVisit(visit.Block)
+	if err != nil || int(block.MIColEnd) > h.Cols || int(block.MIRowEnd) > h.Rows {
+		return ErrInvalidBatch
+	}
+	refFrame, mode, err := frameWorkLoopFilterRefModePtr(visit)
+	if err != nil || refFrame < 0 {
+		return ErrInvalidBatch
+	}
+	levels, err := loopfilter.ResolveBlockLevels(
+		frameCtx.LoopFilter,
+		frameCtx.Segmentation,
+		frameCtx.Delta,
+		loopfilter.DeltaState{FromBase: state.DeltaLFFromBase, Multi: state.DeltaLF},
+		loopfilter.BlockLevelRequest{SegmentID: visit.SegmentID, RefFrame: uint8(refFrame), Mode: mode},
+		frameCtx.Sequence.ColorConfig.MonoChrome,
+	)
+	if err != nil {
+		return err
+	}
+	return h.fillResolvedBlockLevels(block, levels, visit.Prefix.SkipTransform)
+}
+
+func (h *FrameWorkLoopFilterMasks) fillResolvedBlockLevels(block FrameWorkLoopFilterBlock, levels [3][2]uint8, skipTransform bool) error {
+	uvCols, _, levelLength, err := h.LevelCacheShape()
+	if err != nil || len(h.LevelCache) < levelLength {
+		return ErrInvalidBatch
+	}
+	dims, ok := block.Size.Dimensions()
+	if !ok {
+		return ErrInvalidBatch
+	}
+	bx := int(block.MICol)
+	by := int(block.MIRow)
+	bw4 := min(h.Cols-bx, int(dims.W4))
+	bh4 := min(h.Rows-by, int(dims.H4))
+	if bw4 <= 0 || bh4 <= 0 {
+		return ErrInvalidBatch
+	}
+	yVertical := levels[loopfilter.PlaneY][loopfilter.EdgeVertical]
+	if skipTransform {
+		yVertical |= loopFilterCDEFSkipFlag
+	}
+	for y := 0; y < bh4; y++ {
+		fillLoopFilterPackedLevels(h.LevelCache, (by+y)*h.Cols+bx, bw4,
+			yVertical, levels[loopfilter.PlaneY][loopfilter.EdgeHorizontal])
+	}
+	if !h.HasChroma {
+		return nil
+	}
+	ssHor := h.Layout.SSHor
+	ssVer := h.Layout.SSVer
+	cbx := bx >> ssHor
+	cby := by >> ssVer
+	cbw4 := min(((h.Cols+ssHor)>>ssHor)-cbx, (int(dims.W4)+ssHor)>>ssHor)
+	cbh4 := min(((h.Rows+ssVer)>>ssVer)-cby, (int(dims.H4)+ssVer)>>ssVer)
+	if cbw4 <= 0 || cbh4 <= 0 {
+		return nil
+	}
+	levelBase := h.Cols * h.Rows
+	for y := 0; y < cbh4; y++ {
+		fillLoopFilterPackedLevels(h.LevelCache, levelBase+(cby+y)*uvCols+cbx, cbw4,
+			levels[loopfilter.PlaneU][loopfilter.EdgeVertical], levels[loopfilter.PlaneV][loopfilter.EdgeVertical])
+	}
+	return nil
+}
+
+// CDEFBlockAllSkipped reports whether all four luma MI cells of one 8x8 CDEF
+// block were decoded with skip_txfm. The single-tile fast path stores that bit
+// in the otherwise-unused high bit of each luma vertical-level byte, keeping
+// CDEF's skip lookup compact without a second per-MI record grid.
+func (h *FrameWorkLoopFilterMasks) CDEFBlockAllSkipped(unitRow, unitCol, by, bx int) bool {
+	if h == nil || !h.LevelsFromDecode {
+		return false
+	}
+	const miPerUnit = 16
+	const miPerBlock = 2
+	miCol := unitCol*miPerUnit + bx*miPerBlock
+	miRow := unitRow*miPerUnit + by*miPerBlock
+	if miCol < 0 || miRow < 0 || miCol+miPerBlock > h.Cols || miRow+miPerBlock > h.Rows {
+		return false
+	}
+	top := miRow*h.Cols + miCol
+	bottom := top + h.Cols
+	return loopFilterPackedComponent(h.LevelCache, top, 0)&loopFilterCDEFSkipFlag != 0 &&
+		loopFilterPackedComponent(h.LevelCache, top+1, 0)&loopFilterCDEFSkipFlag != 0 &&
+		loopFilterPackedComponent(h.LevelCache, bottom, 0)&loopFilterCDEFSkipFlag != 0 &&
+		loopFilterPackedComponent(h.LevelCache, bottom+1, 0)&loopFilterCDEFSkipFlag != 0
+}
+
+func loopFilterPackedComponent(cache [][4]uint8, index, component int) uint8 {
+	return cache[index>>1][((index&1)<<1)+component]
+}
+
+// fillLoopFilterPackedLevels fills a contiguous logical-cell run in the
+// two-cells-per-entry level cache. It matches the postfilter fallback's packed
+// layout while keeping aligned block rows on whole-entry assignments.
+func fillLoopFilterPackedLevels(cache [][4]uint8, start, count int, level0, level1 uint8) {
+	if count <= 0 {
+		return
+	}
+	if start&1 != 0 {
+		cell := &cache[start>>1]
+		cell[2] = level0
+		cell[3] = level1
+		start++
+		count--
+	}
+	packed := [4]uint8{level0, level1, level0, level1}
+	for count >= 2 {
+		cache[start>>1] = packed
+		start += 2
+		count -= 2
+	}
+	if count != 0 {
+		cell := &cache[start>>1]
+		cell[0] = level0
+		cell[1] = level1
+	}
 }
 
 // OrderedBlock is one block for BuildFromOrderedBlocks (test-only): the record

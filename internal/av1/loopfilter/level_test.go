@@ -209,6 +209,120 @@ func TestResolveLevelRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestResolveBlockLevelsMatchesIndividual(t *testing.T) {
+	tests := []struct {
+		name       string
+		params     parser.LoopFilterParams
+		seg        parser.SegmentationParams
+		delta      parser.DeltaParams
+		state      DeltaState
+		req        BlockLevelRequest
+		monoChrome bool
+	}{
+		{
+			name: "all adjustments",
+			params: parser.LoopFilterParams{
+				LevelY:              [2]uint8{33, 29},
+				LevelU:              17,
+				LevelV:              23,
+				ModeRefDeltaEnabled: true,
+				Deltas: parser.LoopFilterDeltas{
+					Ref:  [parser.RefFrames]int8{1, -2, 3, -4, 5, -6, 7, -8},
+					Mode: [parser.LoopFilterModeDeltas]int8{-3, 4},
+				},
+			},
+			seg: func() parser.SegmentationParams {
+				seg := parser.SegmentationParams{Enabled: true}
+				seg.Data.Segments[5] = parser.SegmentData{
+					DeltaLFYV: -7,
+					DeltaLFYH: 9,
+					DeltaLFU:  -11,
+					DeltaLFV:  13,
+				}
+				return seg
+			}(),
+			delta: parser.DeltaParams{DeltaLFPresent: true, DeltaLFMulti: true},
+			state: DeltaState{FromBase: -12, Multi: [DeltaCount]int8{-9, 7, -5, 3}},
+			req:   BlockLevelRequest{SegmentID: 5, RefFrame: 6, Mode: ModeDeltaClassMotion},
+		},
+		{
+			name: "single carried delta clamps",
+			params: parser.LoopFilterParams{
+				LevelY:              [2]uint8{3, 61},
+				LevelU:              2,
+				LevelV:              62,
+				ModeRefDeltaEnabled: true,
+				Deltas: parser.LoopFilterDeltas{
+					Ref:  [parser.RefFrames]int8{-8, 7},
+					Mode: [parser.LoopFilterModeDeltas]int8{0, 6},
+				},
+			},
+			delta: parser.DeltaParams{DeltaLFPresent: true},
+			state: DeltaState{FromBase: 12},
+			req:   BlockLevelRequest{RefFrame: 1, Mode: ModeDeltaClassMotion},
+		},
+		{
+			name: "disabled fast path",
+			params: parser.LoopFilterParams{
+				LevelY: [2]uint8{19, 27},
+				LevelU: 8,
+				LevelV: 14,
+			},
+			req: BlockLevelRequest{RefFrame: 3, Mode: ModeDeltaClassZero},
+		},
+		{
+			name: "monochrome",
+			params: parser.LoopFilterParams{
+				LevelY: [2]uint8{31, 32},
+				LevelU: 63,
+				LevelV: 63,
+			},
+			delta:      parser.DeltaParams{DeltaLFPresent: true, DeltaLFMulti: true},
+			state:      DeltaState{Multi: [DeltaCount]int8{2, -2, 17, -17}},
+			req:        BlockLevelRequest{RefFrame: 2, Mode: ModeDeltaClassZero},
+			monoChrome: true,
+		},
+		{
+			name: "zero luma gate",
+			params: parser.LoopFilterParams{
+				LevelU: 51,
+				LevelV: 47,
+			},
+			delta: parser.DeltaParams{DeltaLFPresent: true},
+			state: DeltaState{FromBase: 12},
+			req:   BlockLevelRequest{RefFrame: 4, Mode: ModeDeltaClassMotion},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ResolveBlockLevels(tt.params, tt.seg, tt.delta, tt.state, tt.req, tt.monoChrome)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for plane := PlaneY; plane <= PlaneV; plane++ {
+				for edge := EdgeVertical; edge <= EdgeHorizontal; edge++ {
+					var want uint8
+					if !tt.monoChrome || plane == PlaneY {
+						want, err = ResolveBlockLevel(tt.params, tt.seg, tt.delta, tt.state, LevelRequest{
+							Plane: plane, Edge: edge,
+							SegmentID: tt.req.SegmentID,
+							RefFrame:  tt.req.RefFrame,
+							Mode:      tt.req.Mode,
+						})
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+					if got[plane][edge] != want {
+						t.Fatalf("plane=%d edge=%d got=%d want=%d", plane, edge, got[plane][edge], want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestThresholdsForLevel(t *testing.T) {
 	tests := []struct {
 		level     uint8
@@ -260,6 +374,13 @@ func TestLevelHelpersAllocs(t *testing.T) {
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		if _, err := ResolveLevel(params, seg, req); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ResolveBlockLevels(params, seg, parser.DeltaParams{DeltaLFPresent: true}, DeltaState{FromBase: req.DeltaLF}, BlockLevelRequest{
+			SegmentID: req.SegmentID,
+			RefFrame:  req.RefFrame,
+			Mode:      req.Mode,
+		}, false); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := ThresholdsForLevel(32, params.Sharpness); err != nil {

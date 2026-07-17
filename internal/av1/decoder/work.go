@@ -245,10 +245,10 @@ type FrameWorkState struct {
 	// InitTileResidualCDFStorage). tileResidualRetainedCDF is the fresh pool
 	// entry the context_update_tile_id job captures the adapted frame context
 	// into. Both carry a frame hold released by resetActive.
-	tileResidualCurrentCDF          int8
-	tileResidualCurrentCDFsValid    bool
-	tileResidualRetainedCDF         int8
-	tileResidualRetainedCDFsValid   bool
+	tileResidualCurrentCDF        int8
+	tileResidualCurrentCDFsValid  bool
+	tileResidualRetainedCDF       int8
+	tileResidualRetainedCDFsValid bool
 
 	// Temporal motion-vector (ref_frame_mvs / MFMV) state for the single-pool
 	// decode path. AV1 inter frames with use_ref_frame_mvs project a temporal
@@ -1628,14 +1628,15 @@ func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, 
 			clear(masks)
 			clear(levelCache)
 			handle := threading.FrameWorkLoopFilterMasks{
-				Masks:      masks,
-				LevelCache: levelCache,
-				Cols:       cols,
-				Rows:       rows,
-				SB128W:     sb128w,
-				SB128H:     sb128h,
-				Layout:     layout,
-				HasChroma:  !color.MonoChrome,
+				Masks:            masks,
+				LevelCache:       levelCache,
+				Cols:             cols,
+				Rows:             rows,
+				SB128W:           sb128w,
+				SB128H:           sb128h,
+				Layout:           layout,
+				HasChroma:        !color.MonoChrome,
+				LevelsFromDecode: b.TileInfo.Cols <= 1 && b.TileInfo.Rows <= 1,
 			}
 			if err := s.SetLoopFilterMasks(handle); err != nil {
 				return err

@@ -32,7 +32,7 @@ var frameWorkLoopFilterMaskChromaWidth = [2]uint8{4, 6}
 // frameWorkLoopFilterPackedLevel returns one component from a logical two-byte
 // level cell. Two adjacent logical cells share one [4]uint8 backing entry.
 func frameWorkLoopFilterPackedLevel(cache [][4]uint8, index, component int) uint8 {
-	return cache[index>>1][((index&1)<<1)+component]
+	return cache[index>>1][((index&1)<<1)+component] & loopfilter.MaxLevel
 }
 
 // frameWorkFillLoopFilterPackedLevels fills one contiguous logical-cell run.
@@ -84,21 +84,27 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdgesFromMasks(masks *threa
 	if cols != masks.Cols || rows != masks.Rows {
 		return result, threading.ErrInvalidBatch
 	}
-	if frameWorkLoopFilterMapEmpty(filterMap) && ctx.LoopFilterMap != nil {
-		filterMap = *ctx.LoopFilterMap
-	}
-	if frameWorkLoopFilterMapEmpty(filterMap) {
-		return result, threading.ErrInvalidBatch
-	}
-	if err := frameWorkValidateLoopFilterMap(filterMap, cols, rows); err != nil {
-		return result, err
-	}
 	result.Plan.Active = true
 	result.Plan.MICols = uint16(cols)
 	result.Plan.MIRows = uint16(rows)
+	if masks.LevelsFromDecode {
+		result.Plan.Cells = int32(cols * rows)
+	} else {
+		if frameWorkLoopFilterMapEmpty(filterMap) && ctx.LoopFilterMap != nil {
+			filterMap = *ctx.LoopFilterMap
+		}
+		if frameWorkLoopFilterMapEmpty(filterMap) {
+			return result, threading.ErrInvalidBatch
+		}
+		if err := frameWorkValidateLoopFilterMap(filterMap, cols, rows); err != nil {
+			return result, err
+		}
+	}
 	levelCtx := frameWorkLoopFilterLevelContextFor(&ctx.Event)
-	if err := ctx.populateLoopFilterLevelCacheFromMap(masks, filterMap, levelCtx, &result.Plan); err != nil {
-		return result, err
+	if !masks.LevelsFromDecode {
+		if err := ctx.populateLoopFilterLevelCacheFromMap(masks, filterMap, levelCtx, &result.Plan); err != nil {
+			return result, err
+		}
 	}
 	maxPlane := loopfilter.PlaneV
 	if masks.Layout.Mono || ctx.Output.Format.MonoChrome || !masks.HasChroma {
@@ -808,20 +814,24 @@ func (ctx FrameWorkPostFilterContext) PrepareLoopFilterMaskBands(masks *threadin
 	if cols != masks.Cols || rows != masks.Rows {
 		return FrameWorkLoopFilterMaskBands{}, threading.ErrInvalidBatch
 	}
-	if frameWorkLoopFilterMapEmpty(filterMap) && ctx.LoopFilterMap != nil {
-		filterMap = *ctx.LoopFilterMap
-	}
-	if frameWorkLoopFilterMapEmpty(filterMap) {
-		return FrameWorkLoopFilterMaskBands{}, threading.ErrInvalidBatch
-	}
-	if err := frameWorkValidateLoopFilterMap(filterMap, cols, rows); err != nil {
-		return FrameWorkLoopFilterMaskBands{}, err
+	if !masks.LevelsFromDecode {
+		if frameWorkLoopFilterMapEmpty(filterMap) && ctx.LoopFilterMap != nil {
+			filterMap = *ctx.LoopFilterMap
+		}
+		if frameWorkLoopFilterMapEmpty(filterMap) {
+			return FrameWorkLoopFilterMaskBands{}, threading.ErrInvalidBatch
+		}
+		if err := frameWorkValidateLoopFilterMap(filterMap, cols, rows); err != nil {
+			return FrameWorkLoopFilterMaskBands{}, err
+		}
 	}
 	_, _, levelLength, err := masks.LevelCacheShape()
 	if err != nil || len(masks.LevelCache) < levelLength {
 		return FrameWorkLoopFilterMaskBands{}, threading.ErrInvalidBatch
 	}
-	clear(masks.LevelCache[:levelLength])
+	if !masks.LevelsFromDecode {
+		clear(masks.LevelCache[:levelLength])
+	}
 	levelCtx := frameWorkLoopFilterLevelContextFor(&ctx.Event)
 	maxPlane := loopfilter.PlaneV
 	if masks.Layout.Mono || ctx.Output.Format.MonoChrome || !masks.HasChroma {
@@ -856,6 +866,9 @@ func (ctx FrameWorkPostFilterContext) PrepareLoopFilterMaskBands(masks *threadin
 // which reads the level cache.
 func (b FrameWorkLoopFilterMaskBands) PopulateBand(rowStart, rowEnd int) error {
 	if !b.active {
+		return nil
+	}
+	if b.masks.LevelsFromDecode {
 		return nil
 	}
 	// Recompute the level context locally (it holds pointers into b.ctx.Event);

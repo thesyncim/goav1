@@ -519,11 +519,13 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskBandsParallel(filterMap
 	// write cell[2]/cell[3] (a race, and it breaks last-writer-wins). Align band
 	// boundaries to even MI rows so each shared chroma cell's two luma rows fall
 	// in one band.
-	miRows := bands.MIRows()
-	populateRows := (frameWorkParallelBandRows(miRows, workers) + 1) &^ 1
-	populateBands := (miRows + populateRows - 1) / populateRows
-	if err := ctx.Parallel.runLoopFilterBands(bands, workers, populateBands, frameWorkParallelPoolLFPopulate, populateRows); err != nil {
-		return FrameWorkLoopFilterPostFilterApplyResult{}, false, err
+	if !masks.LevelsFromDecode {
+		miRows := bands.MIRows()
+		populateRows := (frameWorkParallelBandRows(miRows, workers) + 1) &^ 1
+		populateBands := (miRows + populateRows - 1) / populateRows
+		if err := ctx.Parallel.runLoopFilterBands(bands, workers, populateBands, frameWorkParallelPoolLFPopulate, populateRows); err != nil {
+			return FrameWorkLoopFilterPostFilterApplyResult{}, false, err
+		}
 	}
 
 	regionRows := bands.RegionRows()

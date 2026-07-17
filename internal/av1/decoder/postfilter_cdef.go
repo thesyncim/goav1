@@ -364,6 +364,11 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFP
 	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
 	coeffShift := int(ctx.Output.Format.BitDepth) - 8
 	skipMap := ctx.LoopFilterMap
+	var skipLevels *threading.FrameWorkLoopFilterMasks
+	if ctx.LoopFilterMasks != nil && ctx.LoopFilterMasks.LevelsFromDecode {
+		skipMap = nil
+		skipLevels = ctx.LoopFilterMasks
+	}
 	// 8-bit frames take the in-place uint8 walk when a caller can provide the
 	// pre-filter samples that in-place filtering would otherwise overwrite:
 	// whole-frame serial apply owns the row walk, while banded apply must pass
@@ -399,7 +404,7 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFP
 			if u8Boundary != nil {
 				boundary = *u8Boundary
 			}
-			planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRowsU8(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane], boundary, req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, chromaFiltering)
+			planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRowsU8(ctx.Event.CDEF, indexMap, skipMap, skipLevels, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane], boundary, req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, chromaFiltering)
 			if err != nil {
 				return FrameWorkCDEFPostFilterResult{}, err
 			}
@@ -423,7 +428,7 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFP
 			}
 		}
 		xDec, yDec := xDec0, yDec0
-		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRows(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, src, planeFrame, ctx.Output.Layout.BytesPerSample, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering)
+		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRows(ctx.Event.CDEF, indexMap, skipMap, skipLevels, cols, rows, rowStart, rowEnd, src, planeFrame, ctx.Output.Layout.BytesPerSample, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering)
 		if err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
@@ -544,11 +549,11 @@ func frameWorkCDEFIndexMapEmpty(indexMap FrameWorkCDEFIndexMap) bool {
 		len(indexMap.Index) == 0 && len(indexMap.Read) == 0
 }
 
-func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (uint32, uint32, error) {
-	return frameWorkApplyCDEFPlaneRows(params, indexMap, skipMap, cols, rows, 0, rows, src, dst, bytesPerSample, input, unitDst, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, coeffShift, forceLumaDirections)
+func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, skipLevels *threading.FrameWorkLoopFilterMasks, cols int, rows int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (uint32, uint32, error) {
+	return frameWorkApplyCDEFPlaneRows(params, indexMap, skipMap, skipLevels, cols, rows, 0, rows, src, dst, bytesPerSample, input, unitDst, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, coeffShift, forceLumaDirections)
 }
 
-func frameWorkApplyCDEFPlaneRows(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (uint32, uint32, error) {
+func frameWorkApplyCDEFPlaneRows(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, skipLevels *threading.FrameWorkLoopFilterMasks, cols int, rows int, rowStart int, rowEnd int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (uint32, uint32, error) {
 	var units uint32
 	var blocksTotal uint32
 	unitSizeX := cdef.BlockSize >> xDec
@@ -592,7 +597,7 @@ func frameWorkApplyCDEFPlaneRows(params parser.CDEFParams, indexMap FrameWorkCDE
 			var blocks []cdef.BlockPosition
 			if plane == 0 {
 				frameWorkCDEFMarkDirectionsUnavailable(unitDirections, unitW, unitH, blockWidth, blockHeight)
-				blocks = frameWorkCDEFBlockPositionsFiltered(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, unitRow, unitCol)
+				blocks = frameWorkCDEFBlockPositionsFilteredSources(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, skipLevels, unitRow, unitCol)
 			} else {
 				blocks = frameWorkCDEFBlockPositionsFromDirections(blockStorage, unitW, unitH, blockWidth, blockHeight, unitDirections)
 			}
@@ -894,6 +899,24 @@ func frameWorkCDEFBlockPositionsFromDirections(storage []cdef.BlockPosition, uni
 // indices reused across planes, so the skip lookup is in luma MI coordinates
 // regardless of plane subsampling. When skipMap is nil every block is kept,
 // matching the previous behaviour.
+func frameWorkCDEFBlockPositionsFilteredSources(storage []cdef.BlockPosition, unitW int, unitH int, blockW int, blockH int, skipMap *FrameWorkLoopFilterMap, skipLevels *threading.FrameWorkLoopFilterMasks, unitRow int, unitCol int) []cdef.BlockPosition {
+	if skipLevels == nil {
+		return frameWorkCDEFBlockPositionsFiltered(storage, unitW, unitH, blockW, blockH, skipMap, unitRow, unitCol)
+	}
+	cols := (unitW + blockW - 1) / blockW
+	rows := (unitH + blockH - 1) / blockH
+	out := storage[:0]
+	for by := range rows {
+		for bx := range cols {
+			if skipLevels.CDEFBlockAllSkipped(unitRow, unitCol, by, bx) {
+				continue
+			}
+			out = append(out, cdef.BlockPosition{BY: uint8(by), BX: uint8(bx)})
+		}
+	}
+	return out
+}
+
 func frameWorkCDEFBlockPositionsFiltered(storage []cdef.BlockPosition, unitW int, unitH int, blockW int, blockH int, skipMap *FrameWorkLoopFilterMap, unitRow int, unitCol int) []cdef.BlockPosition {
 	cols := (unitW + blockW - 1) / blockW
 	rows := (unitH + blockH - 1) / blockH

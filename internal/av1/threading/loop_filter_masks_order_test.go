@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/lfmask"
+	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
@@ -45,6 +46,70 @@ func TestFrameWorkLoopFilterLevelCacheShape(t *testing.T) {
 				t.Fatalf("shape=(%d,%d,%d), want (%d,%d,%d)", uvCols, uvRows, length, tt.uvCols, tt.uvRows, tt.packedLevelCells)
 			}
 		})
+	}
+}
+
+func TestFrameWorkLoopFilterDecodeLevelsCarryCDEFSkip(t *testing.T) {
+	const cols, rows = 4, 2
+	_, _, levelLength, err := FrameWorkLoopFilterLevelCacheShape(cols, rows, lfmask.Layout{SSHor: 1, SSVer: 1}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := FrameWorkLoopFilterMasks{
+		LevelCache:       make([][4]uint8, levelLength),
+		Cols:             cols,
+		Rows:             rows,
+		Layout:           lfmask.Layout{SSHor: 1, SSVer: 1},
+		HasChroma:        true,
+		LevelsFromDecode: true,
+	}
+	levels := [3][2]uint8{
+		{37, 38},
+		{21, 21},
+		{22, 22},
+	}
+	left := FrameWorkLoopFilterBlock{MICol: 0, MIRow: 0, MIColEnd: 2, MIRowEnd: 2, Size: tile.BlockSize8x8}
+	if err := h.fillResolvedBlockLevels(left, levels, true); err != nil {
+		t.Fatal(err)
+	}
+	if !h.CDEFBlockAllSkipped(0, 0, 0, 0) {
+		t.Fatal("skipped 8x8 block was not retained for CDEF")
+	}
+	for row := 0; row < 2; row++ {
+		for col := 0; col < 2; col++ {
+			index := row*cols + col
+			vertical := loopFilterPackedComponent(h.LevelCache, index, 0)
+			horizontal := loopFilterPackedComponent(h.LevelCache, index, 1)
+			if vertical&loopfilter.MaxLevel != levels[loopfilter.PlaneY][loopfilter.EdgeVertical] || vertical&loopFilterCDEFSkipFlag == 0 {
+				t.Fatalf("luma cell (%d,%d) vertical=%#x", col, row, vertical)
+			}
+			if horizontal != levels[loopfilter.PlaneY][loopfilter.EdgeHorizontal] {
+				t.Fatalf("luma cell (%d,%d) horizontal=%d want %d", col, row, horizontal, levels[loopfilter.PlaneY][loopfilter.EdgeHorizontal])
+			}
+		}
+	}
+
+	right := FrameWorkLoopFilterBlock{MICol: 2, MIRow: 0, MIColEnd: 4, MIRowEnd: 2, Size: tile.BlockSize8x8}
+	if err := h.fillResolvedBlockLevels(right, levels, false); err != nil {
+		t.Fatal(err)
+	}
+	if h.CDEFBlockAllSkipped(0, 0, 0, 1) {
+		t.Fatal("non-skipped 8x8 block was marked skipped for CDEF")
+	}
+	if h.CDEFBlockAllSkipped(0, 0, 0, 2) {
+		t.Fatal("out-of-bounds CDEF lookup reported skipped")
+	}
+
+	levelBase := cols * rows
+	uvCols := cols >> 1
+	for col := 0; col < uvCols; col++ {
+		index := levelBase + col
+		if got := loopFilterPackedComponent(h.LevelCache, index, 0); got != levels[loopfilter.PlaneU][loopfilter.EdgeVertical] {
+			t.Fatalf("chroma U cell %d=%d want %d", col, got, levels[loopfilter.PlaneU][loopfilter.EdgeVertical])
+		}
+		if got := loopFilterPackedComponent(h.LevelCache, index, 1); got != levels[loopfilter.PlaneV][loopfilter.EdgeVertical] {
+			t.Fatalf("chroma V cell %d=%d want %d", col, got, levels[loopfilter.PlaneV][loopfilter.EdgeVertical])
+		}
 	}
 }
 
