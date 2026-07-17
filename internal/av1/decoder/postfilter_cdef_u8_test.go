@@ -53,6 +53,8 @@ func cdefU8WalkCases() []cdefU8WalkCase {
 			params: mk(4, [2]uint8{0, 5<<2 | 2}, [2]uint8{0, 3 << 2}), readProb: 100},
 		{name: "secondary_only_luma_and_chroma", lumaW: 192, lumaH: 128, xDecC: 1, yDecC: 1,
 			params: mk(4, [2]uint8{2, 1}, [2]uint8{1, 3}), readProb: 100, withSkip: true},
+		{name: "secondary_only_interior_420", lumaW: 256, lumaH: 192, xDecC: 1, yDecC: 1,
+			params: mk(5, [2]uint8{2, 1}, [2]uint8{4, 3}), readProb: 100, withSkip: true},
 		{name: "luma_only", lumaW: 128, lumaH: 128, xDecC: 1, yDecC: 1,
 			params: mk(6, [2]uint8{9<<2 | 3, 0}), readProb: 80, withSkip: true},
 		{name: "chroma_422", lumaW: 192, lumaH: 128, xDecC: 1, yDecC: 0,
