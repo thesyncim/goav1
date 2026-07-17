@@ -30,6 +30,22 @@ func TestCoeffQContextMatchesLibaom(t *testing.T) {
 	}
 }
 
+func TestPackCoeffContextLevel(t *testing.T) {
+	for level := 0; level <= MaxBaseBRRange; level++ {
+		packed := packCoeffContextLevel(level)
+		if got := int(packed & 0xf); got != level {
+			t.Fatalf("level %d: raw nibble = %d", level, got)
+		}
+		wantClipped := level
+		if wantClipped > 3 {
+			wantClipped = 3
+		}
+		if got := int(packed >> 4); got != wantClipped {
+			t.Fatalf("level %d: clipped nibble = %d, want %d", level, got, wantClipped)
+		}
+	}
+}
+
 func TestCoeffCDFsInitDefaultMatchesLibaom(t *testing.T) {
 	var cdfs CoeffCDFs
 	if err := cdfs.InitDefault(0); err != nil {

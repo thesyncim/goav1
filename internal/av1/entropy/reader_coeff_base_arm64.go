@@ -46,8 +46,10 @@ func coeffBaseLevelsARM64(c *Cursor, scanHot unsafe.Pointer, cHi, cLo int, level
 // 8 bytes: pos u16 | padded u16 | lower2DOffset i8 | br2DOffset i8 | 2 bytes
 // ignored (the tile package pins this layout with compile-time assertions).
 // base and br are the first rows of the CoeffBase/CoeffBR context arrays;
-// levels is the padded level scratch with the given column stride. Decoded
-// nonzero levels are written to levels[padded] and appended in lockstep as
+// levels is the padded level scratch with the given column stride. While the
+// kernel owns the scratch window, each nonzero byte stores raw level in its
+// low nibble and min(level,3) in its high nibble; the next sparse clear treats
+// the byte as opaque. Decoded nonzero levels are appended in lockstep as
 // packed level<<10|pos to dirty and padded to levelDirty; the appended pair
 // count is returned. The caller must guarantee list capacity (eob-bounded)
 // and levels capacity (padded+2*stride+2 in range), exactly as the pure-Go

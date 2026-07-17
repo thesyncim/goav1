@@ -89,7 +89,10 @@ package tile
 // scanHeight+4; capacity (scanWidth+4)*stride proven by the Go prologue, so
 // every 2D or 1D neighbour read (through padded+4 or padded+4*stride) is in
 // bounds by construction — the asm carries no bounds checks, exactly like the
-// Go BCE hints it replaces.
+// Go BCE hints it replaces. While this kernel owns the window, each nonzero
+// byte packs the raw 0..15 level in bits 0..3 and min(level,3) in bits 4..5.
+// P1 consumes the cached high nibble, P2 masks the raw low nibble, and the
+// next-TXB sparse clear treats the byte as opaque.
 //
 // Outputs (append-only, capacity 1024 each, proven by eob <= maxEOB <= 1024):
 //
@@ -165,9 +168,8 @@ package tile
 //
 //	load  R26 = MOVD (scanHot)(c<<3)
 //	ctx:  five class-specific MOVBU neighbour loads (2D keeps its pos==0
-//	      special case), clip3 via the
-//	      branchless (x-3)&((x-3)>>63) identity folded to Σt+15, (mag+1)>>1,
-//	      CSEL-min 4, + SBFX lowerOffset
+//	      special case), LSR the cached min(level,3) high nibble, sum,
+//	      (mag+1)>>1, CSEL-min 4, + SBFX lowerOffset
 //	read: 4-symbol inverse-CDF search (three MUL/CMP steps, early-out BCS),
 //	      renormalize (CLZ on rng low 16), refill iff cnt<0
 //	adapt: skipped when update==0; else rate = 5 + count>>4, the symbol-indexed
@@ -175,15 +177,16 @@ package tile
 //	      down: v -= v>>rate) and stores count+1 while count < 32 — the exact
 //	      updateCDFWindow shape for symbols==4 (rate bias +1 applies because
 //	      symbols > 3; 5 = 4+1 is precomputed)
-//	BR:   if symbol==3: brCtx from three unclipped neighbour levels
+//	BR:   if symbol==3: brCtx from three low-nibble raw neighbour levels
 //	      ((mag+1)>>1 CSEL-min 6 + SBFX brOffset), then the chained reads on
 //	      row br+36*brCtx: extra += symbol, loop while symbol==3 && extra<12
 //	      (extra==3k counts the reads, so no separate chain counter register),
 //	      adapt-per-read iff update — bit-identical to both
 //	      readCDF4HighTokenUpdateLoop and readCDF4HighTokenKnown because the
 //	      no-update variant re-reads the unmodified row from memory
-//	store: level==0 -> next; else MOVB level -> levels[padded], MOVH padded ->
-//	      levelDirty++, MOVH (level<<10|pos) -> dirty++, appended++
+//	store: level==0 -> next; else pack level|min(level,3)<<4 -> levels[padded],
+//	      MOVH padded -> levelDirty++, MOVH (level<<10|pos) -> dirty++,
+//	      appended++
 //	next: c--; loop while c >= cLo
 //
 // ─────────────────────────────────────────────────────────────────────────────

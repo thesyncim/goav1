@@ -69,37 +69,32 @@ loop:
 	CBNZ R27, ctx1D
 
 	// Base context: 0 for the DC position, else
-	// min((Σ clip3(neighbour)+1)>>1, 4) + lower2DOffset. clip3 is computed as
-	// 3 + ((x-3)&((x-3)>>63)); the +3 terms are folded into the final +16
-	// (= 5*3 + the AV1 (mag+1) rounding).
+	// min((Σ clip3(neighbour)+1)>>1, 4) + lower2DOffset. Each nonzero levels
+	// byte packs the raw 0..15 level in its low nibble and clip3(level) in its
+	// high nibble, avoiding five dependent min operations per token.
 	UBFX  $0, R26, $16, R12 // pos
 	CBZ   R12, ctxZero
 	UBFX  $16, R26, $16, R13 // padded
 	ADD   R13, R21, R14      // s1 = padded + stride
 	MOVBU (R4)(R14), R11     // levels[s1]
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R16
+	LSR   $4, R11, R16
 	ADD   $1, R13, R15
 	MOVBU (R4)(R15), R11 // levels[padded+1]
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
+	LSR   $4, R11, R11
 	ADD   R11, R16, R16
 	ADD   $1, R14, R15
 	MOVBU (R4)(R15), R11 // levels[s1+1]
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
+	LSR   $4, R11, R11
 	ADD   R11, R16, R16
 	ADD   R21, R14, R15
 	MOVBU (R4)(R15), R11 // levels[padded+2*stride]
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
+	LSR   $4, R11, R11
 	ADD   R11, R16, R16
 	ADD   $2, R13, R15
 	MOVBU (R4)(R15), R11 // levels[padded+2]
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
+	LSR   $4, R11, R11
 	ADD   R11, R16, R16
-	ADD   $16, R16, R16 // mag+1
+	ADD   $1, R16, R16 // mag+1
 	LSR   $1, R16, R16  // (mag+1)>>1
 	MOVD  $4, R11
 	CMP   R11, R16
@@ -119,52 +114,44 @@ ctx1D:
 	UBFX  $16, R26, $16, R13 // padded
 	ADD   R13, R21, R14      // s1
 	MOVBU (R4)(R14), R11
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R16
+	LSR   $4, R11, R16
 	ADD   $1, R13, R15       // p1
 	MOVBU (R4)(R15), R11
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
+	LSR   $4, R11, R11
 	ADD   R11, R16, R16
 	CMP   $1, R27
 	BNE   ctxVertTail
 
 	ADD   R14, R21, R15 // s2
 	MOVBU (R4)(R15), R11
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
+	LSR   $4, R11, R11
 	ADD   R11, R16, R16
 	ADD   R15, R21, R15 // s3
 	MOVBU (R4)(R15), R11
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
+	LSR   $4, R11, R11
 	ADD   R11, R16, R16
 	ADD   R15, R21, R15 // s4
 	MOVBU (R4)(R15), R11
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
+	LSR   $4, R11, R11
 	ADD   R11, R16, R16
 	B     ctx1DReduce
 
 ctxVertTail:
 	ADD   $2, R13, R15 // p2
 	MOVBU (R4)(R15), R11
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
+	LSR   $4, R11, R11
 	ADD   R11, R16, R16
 	ADD   $3, R13, R15 // p3
 	MOVBU (R4)(R15), R11
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
+	LSR   $4, R11, R11
 	ADD   R11, R16, R16
 	ADD   $4, R13, R15 // p4
 	MOVBU (R4)(R15), R11
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
+	LSR   $4, R11, R11
 	ADD   R11, R16, R16
 
 ctx1DReduce:
-	ADD   $16, R16, R16
+	ADD   $1, R16, R16
 	LSR   $1, R16, R16
 	MOVD  $4, R11
 	CMP   R11, R16
@@ -382,11 +369,14 @@ baseAdaptDone:
 	UBFX  $16, R26, $16, R13 // padded
 	ADD   R13, R21, R14      // s1
 	MOVBU (R4)(R14), R16     // levels[s1]
+	AND   $15, R16, R16
 	ADD   $1, R13, R11
 	MOVBU (R4)(R11), R12 // levels[padded+1]
+	AND   $15, R12, R12
 	ADD   R12, R16, R16
 	ADD   $1, R14, R11
 	MOVBU (R4)(R11), R12 // levels[s1+1]
+	AND   $15, R12, R12
 	ADD   R12, R16, R16
 	ADD   $1, R16, R16
 	LSR   $1, R16, R16
@@ -399,8 +389,10 @@ brCtx1D:
 	UBFX  $16, R26, $16, R13 // padded
 	ADD   R13, R21, R14      // s1
 	MOVBU (R4)(R14), R16
+	AND   $15, R16, R16
 	ADD   $1, R13, R11       // p1
 	MOVBU (R4)(R11), R12
+	AND   $15, R12, R12
 	ADD   R12, R16, R16
 	CMP   $1, R27
 	BNE   brCtxVert
@@ -413,6 +405,7 @@ brCtxVert:
 	MOVBU (R4)(R11), R12
 
 brCtx1DLast:
+	AND   $15, R12, R12
 	ADD   R12, R16, R16
 
 brCtxReduce:
@@ -630,7 +623,14 @@ store:
 	CBZ  R15, next
 	UBFX $16, R26, $16, R13 // padded
 	ADD  R4, R13, R11
-	MOVB R15, (R11)         // levels[padded] = level
+	CMP  $3, R15
+	BLS  storeLevelLow
+	ORR  $0x30, R15, R12
+	B    storeLevelPacked
+storeLevelLow:
+	ADD  R15<<4, R15, R12
+storeLevelPacked:
+	MOVB R12, (R11)         // levels[padded] = level | min(level,3)<<4
 	MOVH R13, (R23)         // levelDirty append: padded
 	ADD  $2, R23, R23
 	UBFX $0, R26, $16, R12  // pos

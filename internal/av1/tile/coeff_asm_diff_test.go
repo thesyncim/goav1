@@ -4,7 +4,9 @@
 // independent implementation of the coefficient spine and asserts the full
 // decode record — TXBDecodeResult, coeffs, dirty/level-dirty lists, the
 // range-decoder state snapshot, and the post-TXB adapted CDF images — is
-// identical between them. Today that cross-checks the three pure-Go bodies
+// identical between them. Level scratch compares its semantic low nibble;
+// the assembly base walk caches min(level,3) in the otherwise-unused high
+// nibble until the next sparse clear. Today this cross-checks the pure-Go bodies
 // (tracked2D, WithGeo trusted scan-hot, WithGeo untrusted); the D3-b/D3-c
 // arm64 kernels join the same lockstep as further variants so they can be
 // diffed bit-for-bit. It extends (does not duplicate) the per-read entropy
@@ -188,7 +190,7 @@ func compareTXBDiffStates(t *testing.T, tag string, txb int, va, vb txbDiffVaria
 		}
 	}
 	for i := range a.levels {
-		if a.levels[i] != b.levels[i] {
+		if a.levels[i]&15 != b.levels[i]&15 {
 			fail("levels", i, []uint8{a.levels[i], b.levels[i]})
 		}
 	}

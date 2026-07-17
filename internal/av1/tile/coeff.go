@@ -32,6 +32,14 @@ func packCoeffDirty(pos int, level int) int16 {
 	return int16((level << 10) | pos)
 }
 
+func packCoeffContextLevel(level int) uint8 {
+	clipped := level
+	if clipped > 3 {
+		clipped = 3
+	}
+	return uint8(level | clipped<<4)
+}
+
 func coeffDirtyPackedPos(pos int16) int {
 	return int(pos) & coeffDirtyPosMask
 }
@@ -1103,8 +1111,11 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 
 	if useDirtyScanList && trackLevelDirty && useScanHot && coeffBaseLevelsKernel {
 		// Keep the range decoder resident for the complete base-level walk. The
-		// packed scan row carries the class-specific context offsets, so the same
-		// kernel covers 2D, horizontal, and vertical transform classes.
+		// packed scan row carries the class-specific context offsets, and the
+		// levels scratch carries raw level in its low nibble plus min(level,3) in
+		// its high nibble. The same kernel covers 2D, horizontal, and vertical
+		// transform classes without recomputing five clipped neighbours per token.
+		levelsScratch[lastPadded] = packCoeffContextLevel(lastLevel)
 		stride := int(geo.stride)
 		appended := reader.CoeffBaseLevels(unsafe.Pointer(&scanHotSlice[0]), eobPos-2, 0,
 			&levelsScratch[0], stride, &baseArr[0], &brArr[0],
@@ -1840,7 +1851,9 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 		// M-D3 D3-b arm64 kernel: the whole base-levels walk, DC included
 		// (scanHot[0].pos == 0 selects ctx 0 and the zero br2DOffset, exactly
 		// the split-out DC block below), with the BR chain inlined. Appends to
-		// the dirty/level-dirty lists in the same order as the Go loops.
+		// the dirty/level-dirty lists in the same order as the Go loops. Pack the
+		// EOB level into the kernel's raw-low/clipped-high scratch representation.
+		levelsScratch[lastPadded] = packCoeffContextLevel(lastLevel)
 		appended := reader.CoeffBaseLevels(unsafe.Pointer(&scanHotSlice[0]), eobPos-2, 0,
 			&levelsScratch[0], stride, &baseArr[0], &brArr[0],
 			&dirtyArr[nonzeroScanLen], &levelDirtyArr[levelDirtyNext], int(req.Class), cdfUpdate)
