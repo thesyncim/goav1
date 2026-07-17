@@ -674,6 +674,11 @@ type temporalReferenceMVResult struct {
 	GlobalMVDifferent bool
 }
 
+type temporalMVProjectionOffsets struct {
+	values [2]int
+	valid  uint8
+}
+
 func (req *ReferenceMVStackRequest) temporalReferenceMVs(dims BlockDimensions, stack *ReferenceMVStack) (temporalReferenceMVResult, error) {
 	tmv := req.TemporalMVs
 	if tmv == nil {
@@ -696,9 +701,10 @@ func (req *ReferenceMVStackRequest) temporalReferenceMVs(dims BlockDimensions, s
 	}
 
 	var result temporalReferenceMVResult
+	var projectionOffsets temporalMVProjectionOffsets
 	for blkRow := 0; blkRow < blkRowEnd; blkRow += stepH {
 		for blkCol := 0; blkCol < blkColEnd; blkCol += stepW {
-			added, different, err := req.addTemporalReferenceMV(blkRow, blkCol, stack)
+			added, different, err := req.addTemporalReferenceMV(blkRow, blkCol, stack, &projectionOffsets)
 			if err != nil {
 				return temporalReferenceMVResult{}, err
 			}
@@ -742,7 +748,7 @@ func (req *ReferenceMVStackRequest) temporalReferenceMVs(dims BlockDimensions, s
 				sbCol+pos[1] < 0 || sbCol+pos[1] >= sbMISize {
 				continue
 			}
-			if _, _, err := req.addTemporalReferenceMV(pos[0], pos[1], stack); err != nil {
+			if _, _, err := req.addTemporalReferenceMV(pos[0], pos[1], stack, &projectionOffsets); err != nil {
 				return temporalReferenceMVResult{}, err
 			}
 		}
@@ -750,7 +756,7 @@ func (req *ReferenceMVStackRequest) temporalReferenceMVs(dims BlockDimensions, s
 	return result, nil
 }
 
-func (req *ReferenceMVStackRequest) addTemporalReferenceMV(blkRow int, blkCol int, stack *ReferenceMVStack) (bool, bool, error) {
+func (req *ReferenceMVStackRequest) addTemporalReferenceMV(blkRow int, blkCol int, stack *ReferenceMVStack, projectionOffsets *temporalMVProjectionOffsets) (bool, bool, error) {
 	rowOffset := blkRow
 	if req.MIRow&1 == 0 {
 		rowOffset++
@@ -780,7 +786,7 @@ func (req *ReferenceMVStackRequest) addTemporalReferenceMV(blkRow int, blkCol in
 		return false, false, nil
 	}
 
-	first, err := req.temporalProjectedMV(sample, 0)
+	first, err := req.temporalProjectedMV(sample, 0, projectionOffsets)
 	if err != nil {
 		return false, false, err
 	}
@@ -788,7 +794,7 @@ func (req *ReferenceMVStackRequest) addTemporalReferenceMV(blkRow int, blkCol in
 	second := motion.Vector{}
 	if req.References.Compound {
 		var err error
-		second, err = req.temporalProjectedMV(sample, 1)
+		second, err = req.temporalProjectedMV(sample, 1, projectionOffsets)
 		if err != nil {
 			return false, false, err
 		}
@@ -798,14 +804,21 @@ func (req *ReferenceMVStackRequest) addTemporalReferenceMV(blkRow int, blkCol in
 	return true, different, nil
 }
 
-func (req *ReferenceMVStackRequest) temporalProjectedMV(sample TemporalMotionEntry, refIndex int) (motion.Vector, error) {
-	ref := req.References.Ref[refIndex]
-	if !ref.Valid() {
-		return motion.Vector{}, ErrInvalidDecodeState
-	}
-	currentOffset, err := motionFieldRelativeOrderHint(req.OrderHintBits, req.CurrentOrderHint, req.ReferenceOrderHints[ref])
-	if err != nil {
-		return motion.Vector{}, err
+func (req *ReferenceMVStackRequest) temporalProjectedMV(sample TemporalMotionEntry, refIndex int, projectionOffsets *temporalMVProjectionOffsets) (motion.Vector, error) {
+	mask := uint8(1 << refIndex)
+	currentOffset := projectionOffsets.values[refIndex]
+	if projectionOffsets.valid&mask == 0 {
+		ref := req.References.Ref[refIndex]
+		if !ref.Valid() {
+			return motion.Vector{}, ErrInvalidDecodeState
+		}
+		var err error
+		currentOffset, err = motionFieldRelativeOrderHint(req.OrderHintBits, req.CurrentOrderHint, req.ReferenceOrderHints[ref])
+		if err != nil {
+			return motion.Vector{}, err
+		}
+		projectionOffsets.values[refIndex] = currentOffset
+		projectionOffsets.valid |= mask
 	}
 	projected, err := motionFieldProjectMV(sample.MV, currentOffset, int(sample.RefFrameOffset))
 	if err != nil {

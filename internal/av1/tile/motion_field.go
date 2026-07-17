@@ -222,8 +222,19 @@ func (f *TemporalMotionField) ProjectReferenceFrame(req TemporalMotionProjection
 		for blkCol := 0; blkCol < startCols; {
 			mvRef := startRow[blkCol]
 			runEnd := blkCol + 1
-			for runEnd < startCols && startRow[runEnd] == mvRef {
-				runEnd++
+			if start.runsValid {
+				run := int(referenceMVEntryRun(&startRow[blkCol]))
+				if run == 0 {
+					run = 1
+				}
+				if run > startCols-blkCol {
+					return false, ErrInvalidDecodeState
+				}
+				runEnd = blkCol + run
+			} else {
+				for runEnd < startCols && startRow[runEnd] == mvRef {
+					runEnd++
+				}
 			}
 			if !mvRef.Valid || !mvRef.Ref.Valid() {
 				blkCol = runEnd

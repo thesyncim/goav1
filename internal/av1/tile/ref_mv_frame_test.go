@@ -193,6 +193,54 @@ func TestReferenceMVFrameMarkBlockInterFiltersSideAndLimitLikeLibaom(t *testing.
 	})
 }
 
+func BenchmarkReferenceMVFrameMarkBlock720p(b *testing.B) {
+	const (
+		miRows = 180
+		miCols = 320
+	)
+	need, err := ReferenceMVFrameEntries(miRows, miCols)
+	if err != nil {
+		b.Fatal(err)
+	}
+	prediction := BlockPredictionModeResult{
+		Valid:            true,
+		InterMotionValid: true,
+		InterMotion: InterMotionResult{
+			References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+			MV:         [2]motion.Vector{{Row: 7, Col: -11}},
+		},
+	}
+	for _, tracked := range []bool{false, true} {
+		name := "untracked"
+		if tracked {
+			name = "tracked"
+		}
+		b.Run(name, func(b *testing.B) {
+			entries := make([]ReferenceMVEntry, need)
+			var frame ReferenceMVFrame
+			if tracked {
+				err = frame.InitTracked(miRows, miCols, entries)
+			} else {
+				err = frame.Init(miRows, miCols, entries)
+			}
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				for row := uint16(0); row < miRows; row += 4 {
+					for col := uint16(0); col < miCols; col += 4 {
+						if err := frame.MarkBlockPtr(col, row, 4, min(uint8(4), uint8(miRows-row)), &prediction, [referenceFrameCount]int8{}); err != nil {
+							b.Fatal(err)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
 func newReferenceMVFrameForTest(t *testing.T, miRows uint32, miCols uint32) *ReferenceMVFrame {
 	t.Helper()
 	need, err := ReferenceMVFrameEntries(miRows, miCols)

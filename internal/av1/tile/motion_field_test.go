@@ -185,9 +185,21 @@ func TestTemporalMotionFieldProjectReferenceFrameRunsMatchScalar(t *testing.T) {
 			for i := col; i < runEnd; i++ {
 				line[i] = entry
 			}
+			setReferenceMVEntryRun(&line[col], uint8(runEnd-col))
 			col = runEnd
 		}
 	}
+	start.runsValid = true
+	copiedEntries := make([]ReferenceMVEntry, len(start.Entries))
+	copy(copiedEntries, start.Entries)
+	for i := range copiedEntries {
+		if got, want := referenceMVEntryRun(&copiedEntries[i]), referenceMVEntryRun(&start.Entries[i]); got != want {
+			t.Fatalf("copied run metadata entry %d=%d want %d", i, got, want)
+		}
+	}
+	copiedStart := *start
+	copiedStart.Entries = copiedEntries
+	start = &copiedStart
 
 	for _, backward := range []bool{false, true} {
 		got := newTemporalMotionFieldForTest(t, miRows, miCols)
@@ -449,6 +461,54 @@ func TestTemporalMotionFieldProjectReferenceFrameAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("motion field projection allocated: %f", allocs)
+	}
+}
+
+func BenchmarkTemporalMotionFieldProjectReferenceFrame720p(b *testing.B) {
+	const miRows = 180
+	const miCols = 320
+	need, err := ReferenceMVFrameEntries(miRows, miCols)
+	if err != nil {
+		b.Fatal(err)
+	}
+	entries := make([]ReferenceMVEntry, need)
+	var start ReferenceMVFrame
+	if err := start.InitTracked(miRows, miCols, entries); err != nil {
+		b.Fatal(err)
+	}
+	for row := uint16(0); row < miRows; row += 4 {
+		for col := uint16(0); col < miCols; col += 4 {
+			prediction := BlockPredictionModeResult{
+				Valid:            true,
+				InterMotionValid: true,
+				InterMotion: InterMotionResult{
+					MV:         [2]motion.Vector{{Row: int16(row&31) - 16, Col: int16(col&31) - 16}},
+					References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+				},
+			}
+			if err := start.MarkBlockPtr(col, row, 4, min(uint8(4), uint8(miRows-row)), &prediction, [referenceFrameCount]int8{}); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	fieldEntries := make([]TemporalMotionEntry, need)
+	var field TemporalMotionField
+	if err := field.Init(miRows, miCols, fieldEntries); err != nil {
+		b.Fatal(err)
+	}
+	req := TemporalMotionProjectionRequest{
+		StartFrame:         &start,
+		OrderHintBits:      5,
+		CurrentOrderHint:   8,
+		StartOrderHint:     4,
+		StartRefOrderHints: [referenceFrameCount]uint8{ReferenceFrameLast: 0},
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if _, err := field.ProjectReferenceFrame(req); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

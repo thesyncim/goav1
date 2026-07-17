@@ -423,6 +423,60 @@ func TestBuildReferenceMVStackTemporalCompoundProjectsBothRefs(t *testing.T) {
 	}
 }
 
+func BenchmarkBuildReferenceMVStackTemporal64x64(b *testing.B) {
+	for _, compound := range []bool{false, true} {
+		name := "single"
+		refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+		if compound {
+			name = "compound"
+			refs = InterReferencesResult{
+				Ref:      [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameBWD},
+				Compound: true,
+			}
+		}
+		b.Run(name, func(b *testing.B) {
+			entries := make([]TemporalMotionEntry, 32*32)
+			for i := range entries {
+				entries[i] = TemporalMotionEntry{
+					MV: motion.Vector{
+						Row: int16((i*14)&255) - 128,
+						Col: int16((i*22)&255) - 128,
+					},
+					RefFrameOffset: 4,
+					Valid:          true,
+				}
+			}
+			field := TemporalMotionField{Rows: 32, Cols: 32, Stride: 32, Entries: entries}
+			req := ReferenceMVStackRequest{
+				Size:             BlockSize64x64,
+				References:       refs,
+				MICol:            8,
+				MIRow:            8,
+				TileMIColEnd:     64,
+				TileMIRowEnd:     64,
+				FrameMICols:      64,
+				FrameMIRows:      64,
+				TemporalMVs:      &field,
+				OrderHintBits:    5,
+				CurrentOrderHint: 8,
+				ReferenceOrderHints: [referenceFrameCount]uint8{
+					ReferenceFrameLast: 4,
+					ReferenceFrameBWD:  12,
+				},
+				UseRefFrameMVS: true,
+			}
+			var ctx BlockModeContext
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				if _, err := ctx.BuildReferenceMVStack(req); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func TestBuildReferenceMVStackTemporalUnavailableSetsGlobalContext(t *testing.T) {
 	var ctx BlockModeContext
 	req := ReferenceMVStackRequest{

@@ -718,7 +718,7 @@ func (s *FrameWorkState) prepareTemporalMotionField(event Event) error {
 	if cap(s.currentMVFrameBack) < need {
 		s.currentMVFrameBack = make([]tile.ReferenceMVEntry, need)
 	}
-	if err := s.currentMVFrame.Init(miRows, miCols, s.currentMVFrameBack[:need]); err != nil {
+	if err := s.currentMVFrame.InitTracked(miRows, miCols, s.currentMVFrameBack[:need]); err != nil {
 		return err
 	}
 	s.currentMVFrameValid = true
@@ -801,12 +801,8 @@ func (s *FrameWorkState) publishTemporalMotionFrame(event Event) {
 		}
 		dst := s.mvFrameStoreBacking[i][:need]
 		copy(dst, s.currentMVFrame.Entries)
-		s.mvFrameStore[i] = tile.ReferenceMVFrame{
-			Rows:    s.currentMVFrame.Rows,
-			Cols:    s.currentMVFrame.Cols,
-			Stride:  s.currentMVFrame.Stride,
-			Entries: dst,
-		}
+		s.mvFrameStore[i] = s.currentMVFrame
+		s.mvFrameStore[i].Entries = dst
 		s.mvFrameStoreMeta[i] = meta
 	}
 }
