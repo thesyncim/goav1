@@ -293,18 +293,16 @@ baseAdapt:
 	B     baseUpdCount
 
 baseUpd0:
-	MOVHU CDF_C0(R14), R12
-	LSR   R11, R12, R9
-	SUB   R9, R12, R12
-	MOVH  R12, CDF_C0(R14)
-	MOVHU CDF_C1(R14), R12
-	LSR   R11, R12, R9
-	SUB   R9, R12, R12
-	MOVH  R12, CDF_C1(R14)
-	MOVHU CDF_C2(R14), R12
-	LSR   R11, R12, R9
-	SUB   R9, R12, R12
-	MOVH  R12, CDF_C2(R14)
+	// Symbol zero moves c0/c1/c2 toward zero by the same runtime rate.
+	// values[3] is the invariant zero terminator, so a single 4H update is
+	// exact and replaces three independent scalar load/shift/sub/store chains.
+	ADD   $CDF_C0, R14, R12
+	VLD1  (R12), [V0.H4]
+	NEG   R11, R9
+	WORD  $0x4e020d21 // dup v1.8h, w9
+	WORD  $0x6e614402 // ushl v2.8h, v0.8h, v1.8h
+	WORD  $0x6e628400 // sub v0.8h, v0.8h, v2.8h
+	VST1  [V0.H4], (R12)
 	B     baseUpdCount
 
 baseUpd1:
@@ -545,18 +543,13 @@ brAdapt:
 	B     brUpdCount
 
 brUpd0:
-	MOVHU CDF_C0(R14), R12
-	LSR   R11, R12, R9
-	SUB   R9, R12, R12
-	MOVH  R12, CDF_C0(R14)
-	MOVHU CDF_C1(R14), R12
-	LSR   R11, R12, R9
-	SUB   R9, R12, R12
-	MOVH  R12, CDF_C1(R14)
-	MOVHU CDF_C2(R14), R12
-	LSR   R11, R12, R9
-	SUB   R9, R12, R12
-	MOVH  R12, CDF_C2(R14)
+	ADD   $CDF_C0, R14, R12
+	VLD1  (R12), [V0.H4]
+	NEG   R11, R9
+	WORD  $0x4e020d21 // dup v1.8h, w9
+	WORD  $0x6e614402 // ushl v2.8h, v0.8h, v1.8h
+	WORD  $0x6e628400 // sub v0.8h, v0.8h, v2.8h
+	VST1  [V0.H4], (R12)
 	B     brUpdCount
 
 brUpd1:
