@@ -167,28 +167,7 @@ ctxDone:
 	ADD   $12, R17, R17 // lower0 (+3*ecMinProb)
 	MOVD  $0, R16
 	CMP   R17, R12
-	BCS   baseRenorm
-	MOVD  $1, R16
-	MOVD  R17, R13
-	MOVHU CDF_C1(R14), R11
-	LSR   $6, R11, R17
-	MUL   R9, R17, R17
-	LSR   $1, R17, R17
-	ADD   $8, R17, R17 // lower1 (+2*ecMinProb)
-	CMP   R17, R12
-	BCS   baseRenorm
-	MOVD  $2, R16
-	MOVD  R17, R13
-	MOVHU CDF_C2(R14), R11
-	LSR   $6, R11, R17
-	MUL   R9, R17, R17
-	LSR   $1, R17, R17
-	ADD   $4, R17, R17 // lower2 (+ecMinProb)
-	CMP   R17, R12
-	BCS   baseRenorm
-	MOVD  $3, R16
-	MOVD  R17, R13
-	MOVD  $0, R17
+	BCC   baseNonZeroThreshold
 
 baseRenorm:
 	LSL  $48, R17, R11
@@ -638,3 +617,30 @@ done:
 	MOVH R10, CURSOR_TELL_OFFS(R0)
 	MOVD R25, ret+96(FP)
 	RET
+
+// Symbols 1..3 are substantially colder than symbol zero on production AV1.
+// Keep their extra threshold chain out of the common loop layout; they rejoin
+// the shared range update at baseRenorm with the same upper/lower state.
+baseNonZeroThreshold:
+	MOVD  $1, R16
+	MOVD  R17, R13
+	MOVHU CDF_C1(R14), R11
+	LSR   $6, R11, R17
+	MUL   R9, R17, R17
+	LSR   $1, R17, R17
+	ADD   $8, R17, R17 // lower1 (+2*ecMinProb)
+	CMP   R17, R12
+	BCS   baseRenorm
+	MOVD  $2, R16
+	MOVD  R17, R13
+	MOVHU CDF_C2(R14), R11
+	LSR   $6, R11, R17
+	MUL   R9, R17, R17
+	LSR   $1, R17, R17
+	ADD   $4, R17, R17 // lower2 (+ecMinProb)
+	CMP   R17, R12
+	BCS   baseRenorm
+	MOVD  $3, R16
+	MOVD  R17, R13
+	MOVD  $0, R17
+	B     baseRenorm
