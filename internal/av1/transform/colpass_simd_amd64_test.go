@@ -24,5 +24,9 @@ func colPass4TestFuncs() []col2TestFunc {
 	return []col2TestFunc{
 		{"DCT32Col4", dct32Size, inverseDCT32Col4AVX2Adapter, inverseDCT32Col4PureGo},
 		{"DCT64Col4", dct64Size, inverseDCT64Col4AVX2Adapter, inverseDCT64Col4PureGo},
+		{"Identity4Col4", 4, inverseIdentity4Col4Impl, inverseIdentity4Col4PureGo},
+		{"Identity8Col4", 8, inverseIdentity8Col4Impl, inverseIdentity8Col4PureGo},
+		{"Identity16Col4", 16, inverseIdentity16Col4Impl, inverseIdentity16Col4PureGo},
+		{"Identity32Col4", 32, inverseIdentity32Col4Impl, inverseIdentity32Col4PureGo},
 	}
 }

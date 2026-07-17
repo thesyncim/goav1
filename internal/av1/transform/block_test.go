@@ -477,3 +477,28 @@ func BenchmarkInverseBlockIDTX16x16(b *testing.B) {
 		_ = InverseBlock(dst, 16, coeff, 16, nil, Size{Width: 16, Height: 16}, TypeIDTX)
 	}
 }
+
+func BenchmarkInverseBlockHDCT8x8IdentityDispatch(b *testing.B) {
+	benchmarkInverseBlockHDCT8x8(b, inverseIdentity8Col4Impl)
+}
+
+func BenchmarkInverseBlockHDCT8x8IdentityPureGo(b *testing.B) {
+	benchmarkInverseBlockHDCT8x8(b, inverseIdentity8Col4PureGo)
+}
+
+func benchmarkInverseBlockHDCT8x8(b *testing.B, identity func([]int32, int, int32, int32)) {
+	old := inverseIdentity8Col4Impl
+	inverseIdentity8Col4Impl = identity
+	b.Cleanup(func() { inverseIdentity8Col4Impl = old })
+	coeff := make([]int32, 8*8)
+	for i := range coeff {
+		coeff[i] = int32((i*29)%511 - 255)
+	}
+	dst := make([]int16, 8*8)
+	scratch := make([]int32, 8*8)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		_ = InverseBlock(dst, 8, coeff, 8, scratch, Size{Width: 8, Height: 8}, TypeHDCT)
+	}
+}

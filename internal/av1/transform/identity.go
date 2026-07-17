@@ -6,6 +6,11 @@
 
 package transform
 
+// inverseIdentity16Rows4Impl is installed by architectures with an exact
+// four-row 16x16 IDTX kernel. It consumes rowGroups groups of four coefficient
+// rows from column-major coeff and writes row-major residual rows to dst.
+var inverseIdentity16Rows4Impl func(dst []int16, dstStride int, coeff []int32, coeffStride int, rowGroups int, rowMin int32, rowMax int32, colMin int32, colMax int32)
+
 // Size identifies an AV1 transform block shape in pixels.
 type Size struct {
 	Width  uint8
@@ -171,7 +176,16 @@ func inverseIdentityBlockClampedRows(dst []int16, dstStride int, coeff []int32, 
 	if activeRows > 0 {
 		rowLimit = activeRows
 	}
-	for row := range rowLimit {
+	rowStart := 0
+	if width == 16 && height == 16 && !rect2 && rowLimit > 0 && inverseIdentity16Rows4Impl != nil {
+		// The last group may read and temporarily write up to three rows past
+		// the exact sparse extent. Both buffers cover the full 16-row block and
+		// the clear below overwrites those output rows, avoiding a scalar tail.
+		rowGroups := (rowLimit + 3) >> 2
+		inverseIdentity16Rows4Impl(dst, dstStride, coeff, coeffStride, rowGroups, rowMin, rowMax, colMin, colMax)
+		rowStart = rowLimit
+	}
+	for row := rowStart; row < rowLimit; row++ {
 		dstLine := dst[row*dstStride : row*dstStride+width : row*dstStride+width]
 		for col := range dstLine {
 			v := coeff[col*coeffStride+row]

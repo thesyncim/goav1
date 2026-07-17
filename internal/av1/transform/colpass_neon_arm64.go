@@ -20,3 +20,9 @@ func inverseDCT8Col2NEON(base *int32, rowStrideBytes, min, max int64)
 
 //go:noescape
 func inverseDCT16Col2NEON(base *int32, rowStrideBytes, min, max int64)
+
+// inverseIdentityCol4NEON applies one AV1 identity scale to four adjacent
+// columns. Inputs are already clamped to the decoder's stage-range envelope.
+//
+//go:noescape
+func inverseIdentityCol4NEON(base *int32, rowStrideBytes, length int64)

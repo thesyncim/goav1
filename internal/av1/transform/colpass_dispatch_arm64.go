@@ -32,6 +32,10 @@ func init() {
 		inverseDCT64Col4Impl = inverseDCT64Col4NEONAdapter
 		inverseADST16Col4Impl = inverseADST16Col4NEONAdapter
 		inverseADST16Col4FlipImpl = inverseADST16Col4FlipNEONAdapter
+		inverseIdentity4Col4Impl = inverseIdentity4Col4NEONAdapter
+		inverseIdentity8Col4Impl = inverseIdentity8Col4NEONAdapter
+		inverseIdentity16Col4Impl = inverseIdentity16Col4NEONAdapter
+		inverseIdentity32Col4Impl = inverseIdentity32Col4NEONAdapter
 	}
 }
 
@@ -130,4 +134,29 @@ func inverseADST16Col4FlipNEONAdapter(buf []int32, rowStride int, min, max int32
 		top[2], bot[2] = bot[2], top[2]
 		top[3], bot[3] = bot[3], top[3]
 	}
+}
+
+func inverseIdentity4Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
+	inverseIdentityCol4NEONAdapter(buf, rowStride, 4, min, max, inverseIdentity4Col4PureGo)
+}
+
+func inverseIdentity8Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
+	inverseIdentityCol4NEONAdapter(buf, rowStride, 8, min, max, inverseIdentity8Col4PureGo)
+}
+
+func inverseIdentity16Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
+	inverseIdentityCol4NEONAdapter(buf, rowStride, 16, min, max, inverseIdentity16Col4PureGo)
+}
+
+func inverseIdentity32Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
+	inverseIdentityCol4NEONAdapter(buf, rowStride, 32, min, max, inverseIdentity32Col4PureGo)
+}
+
+func inverseIdentityCol4NEONAdapter(buf []int32, rowStride int, length int, min, max int32, fallback func([]int32, int, int32, int32)) {
+	if rowStride < 4 || len(buf) < (length-1)*rowStride+4 ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		fallback(buf, rowStride, min, max)
+		return
+	}
+	inverseIdentityCol4NEON(&buf[0], int64(rowStride)*4, int64(length))
 }

@@ -53,6 +53,10 @@ var (
 var (
 	inverseADST16Col4Impl     = inverseADST16Col4PureGo
 	inverseADST16Col4FlipImpl = inverseADST16Col4FlipPureGo
+	inverseIdentity4Col4Impl  = inverseIdentity4Col4PureGo
+	inverseIdentity8Col4Impl  = inverseIdentity8Col4PureGo
+	inverseIdentity16Col4Impl = inverseIdentity16Col4PureGo
+	inverseIdentity32Col4Impl = inverseIdentity32Col4PureGo
 )
 
 // inverse1DCol2 applies the 1D inverse column transform to two adjacent
@@ -109,6 +113,21 @@ func inverse1DCol4(buf []int32, rowStride int, length int, typ tx1DType, min int
 			inverseADST16Col4FlipImpl(buf, rowStride, min, max)
 			return
 		}
+	case tx1DIdentity:
+		switch length {
+		case 4:
+			inverseIdentity4Col4Impl(buf, rowStride, min, max)
+			return
+		case 8:
+			inverseIdentity8Col4Impl(buf, rowStride, min, max)
+			return
+		case 16:
+			inverseIdentity16Col4Impl(buf, rowStride, min, max)
+			return
+		case 32:
+			inverseIdentity32Col4Impl(buf, rowStride, min, max)
+			return
+		}
 	}
 	inverse1DCol2(buf, rowStride, length, typ, min, max)
 	inverse1DCol2(buf[2:], rowStride, length, typ, min, max)
@@ -162,4 +181,27 @@ func inverseADST16Col4FlipPureGo(buf []int32, rowStride int, min int32, max int3
 	inverseFlipADST1D(buf[1:], rowStride, adst16Size, min, max)
 	inverseFlipADST1D(buf[2:], rowStride, adst16Size, min, max)
 	inverseFlipADST1D(buf[3:], rowStride, adst16Size, min, max)
+}
+
+func inverseIdentity4Col4PureGo(buf []int32, rowStride int, _, _ int32) {
+	inverseIdentityCol4PureGo(buf, rowStride, 4)
+}
+
+func inverseIdentity8Col4PureGo(buf []int32, rowStride int, _, _ int32) {
+	inverseIdentityCol4PureGo(buf, rowStride, 8)
+}
+
+func inverseIdentity16Col4PureGo(buf []int32, rowStride int, _, _ int32) {
+	inverseIdentityCol4PureGo(buf, rowStride, 16)
+}
+
+func inverseIdentity32Col4PureGo(buf []int32, rowStride int, _, _ int32) {
+	inverseIdentityCol4PureGo(buf, rowStride, 32)
+}
+
+func inverseIdentityCol4PureGo(buf []int32, rowStride int, length int) {
+	inverseIdentity1D(buf, rowStride, length)
+	inverseIdentity1D(buf[1:], rowStride, length)
+	inverseIdentity1D(buf[2:], rowStride, length)
+	inverseIdentity1D(buf[3:], rowStride, length)
 }
