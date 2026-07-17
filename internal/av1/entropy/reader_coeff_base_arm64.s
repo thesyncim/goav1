@@ -275,6 +275,18 @@ baseUpd0:
 	// Symbol zero moves c0/c1/c2 toward zero by the same runtime rate.
 	// values[3] is the invariant zero terminator, so a single 4H update is
 	// exact and replaces three independent scalar load/shift/sub/store chains.
+	// Once the adaptation count saturates, the rate is fixed at seven. Update
+	// all three 16-bit lanes as one packed word; masking after the shift removes
+	// cross-lane bits, and no lane can borrow because v-(v>>7) is nonnegative.
+	CMP   $32, R13
+	BNE   baseUpd0Dynamic
+	MOVD  CDF_C0(R14), R12
+	LSR   $7, R12, R9
+	AND   $0x01ff01ff01ff01ff, R9, R9
+	SUB   R9, R12, R12
+	MOVD  R12, CDF_C0(R14)
+	B     baseAdaptDone
+baseUpd0Dynamic:
 	ADD   $CDF_C0, R14, R12
 	VLD1  (R12), [V0.H4]
 	NEG   R11, R9
@@ -522,6 +534,18 @@ brAdapt:
 	B     brUpdCount
 
 brUpd0:
+	// The saturated symbol-zero update has the same fixed-rate packed form as
+	// the base CDF path above. BR rows are frequently revisited by a high-token
+	// chain, so keep their steady-state update scalar and branch-free as well.
+	CMP   $32, R13
+	BNE   brUpd0Dynamic
+	MOVD  CDF_C0(R14), R12
+	LSR   $7, R12, R9
+	AND   $0x01ff01ff01ff01ff, R9, R9
+	SUB   R9, R12, R12
+	MOVD  R12, CDF_C0(R14)
+	B     brAdaptDone
+brUpd0Dynamic:
 	ADD   $CDF_C0, R14, R12
 	VLD1  (R12), [V0.H4]
 	NEG   R11, R9
