@@ -144,10 +144,6 @@ TEXT ·cdefFilterBlock8SecondaryU8NEON(SB), NOSPLIT, $0-8
 
 u8sec8_row:
 	VLD1 (R2), [V0.H8] // px
-	WORD $0x6e211c21 // eor v1.16b, v1.16b, v1.16b
-	WORD $0x6e221c42 // eor v2.16b, v2.16b, v2.16b
-	WORD $0x6e231c63 // eor v3.16b, v3.16b, v3.16b
-	WORD $0x6e261cc6 // eor v6.16b, v6.16b, v6.16b
 
 	// sec taps k=0, off2 (dir + 2)
 	ADD  R8, R2, R16
@@ -166,10 +162,8 @@ u8sec8_row:
 	WORD $0x6e60bab4 // neg v20.8h, v21.8h
 	WORD $0x4e716e52 // smin v18.8h, v18.8h, v17.8h
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
-	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
-	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e728421 // add v1.8h, v1.8h, v18.8h
-	WORD $0x4e768442 // add v2.8h, v2.8h, v22.8h
+	WORD $0x4e706641 // smax v1.8h, v18.8h, v16.8h (seed tap-0 accumulators)
+	WORD $0x4e7466c2 // smax v2.8h, v22.8h, v20.8h
 
 	// sec taps k=0, off3 (dir - 2)
 	ADD  R9, R2, R16
@@ -210,10 +204,8 @@ u8sec8_row:
 	WORD $0x6e60bab4 // neg v20.8h, v21.8h
 	WORD $0x4e716e52 // smin v18.8h, v18.8h, v17.8h
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
-	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
-	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e728463 // add v3.8h, v3.8h, v18.8h
-	WORD $0x4e7684c6 // add v6.8h, v6.8h, v22.8h
+	WORD $0x4e706643 // smax v3.8h, v18.8h, v16.8h (seed tap-1 accumulators)
+	WORD $0x4e7466c6 // smax v6.8h, v22.8h, v20.8h
 
 	// sec taps k=1, off3 (dir - 2)
 	ADD  R11, R2, R16
@@ -375,10 +367,6 @@ u8sec4_row:
 	ADD  $288, R2, R16
 	VLD1 (R2), [V0.H4]
 	WORD $0x4d408600 // ld1 {v0.d}[1], [x16]
-	WORD $0x6e211c21 // eor v1.16b, v1.16b, v1.16b
-	WORD $0x6e221c42 // eor v2.16b, v2.16b, v2.16b
-	WORD $0x6e231c63 // eor v3.16b, v3.16b, v3.16b
-	WORD $0x6e261cc6 // eor v6.16b, v6.16b, v6.16b
 
 	// sec taps k=0, off2 (dir + 2)
 	ADD  R8, R2, R16
@@ -401,10 +389,8 @@ u8sec4_row:
 	WORD $0x6e60bab4 // neg v20.8h, v21.8h
 	WORD $0x4e716e52 // smin v18.8h, v18.8h, v17.8h
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
-	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
-	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e728421 // add v1.8h, v1.8h, v18.8h
-	WORD $0x4e768442 // add v2.8h, v2.8h, v22.8h
+	WORD $0x4e706641 // smax v1.8h, v18.8h, v16.8h (seed tap-0 accumulators)
+	WORD $0x4e7466c2 // smax v2.8h, v22.8h, v20.8h
 
 	// sec taps k=0, off3 (dir - 2)
 	ADD  R9, R2, R16
@@ -453,10 +439,8 @@ u8sec4_row:
 	WORD $0x6e60bab4 // neg v20.8h, v21.8h
 	WORD $0x4e716e52 // smin v18.8h, v18.8h, v17.8h
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
-	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
-	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e728463 // add v3.8h, v3.8h, v18.8h
-	WORD $0x4e7684c6 // add v6.8h, v6.8h, v22.8h
+	WORD $0x4e706643 // smax v3.8h, v18.8h, v16.8h (seed tap-1 accumulators)
+	WORD $0x4e7466c6 // smax v6.8h, v22.8h, v20.8h
 
 	// sec taps k=1, off3 (dir - 2)
 	ADD  R11, R2, R16
