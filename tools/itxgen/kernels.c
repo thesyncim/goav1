@@ -65,6 +65,50 @@ static inline void tr4(int32x4_t a, int32x4_t b, int32x4_t c, int32x4_t d,
   *o3 = vcombine_s32(vget_high_s32(p0.val[1]), vget_high_s32(p1.val[1]));
 }
 
+void goav1_idct8_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3,
+                      long min, long max) {
+  int32x4_t mn = vdupq_n_s32((int32_t)min);
+  int32x4_t mx = vdupq_n_s32((int32_t)max);
+  int32x4_t v[8];
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 2; i++)
+    tr4(vld1q_s32(r0 + 4 * i), vld1q_s32(r1 + 4 * i),
+        vld1q_s32(r2 + 4 * i), vld1q_s32(r3 + 4 * i),
+        &v[4 * i], &v[4 * i + 1], &v[4 * i + 2], &v[4 * i + 3]);
+  idct8_core(v, mn, mx);
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 2; i++) {
+    int32x4_t a, b, c, d;
+    tr4(v[4 * i], v[4 * i + 1], v[4 * i + 2], v[4 * i + 3], &a, &b, &c, &d);
+    vst1q_s32(r0 + 4 * i, a);
+    vst1q_s32(r1 + 4 * i, b);
+    vst1q_s32(r2 + 4 * i, c);
+    vst1q_s32(r3 + 4 * i, d);
+  }
+}
+
+void goav1_idct16_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3,
+                       long min, long max) {
+  int32x4_t mn = vdupq_n_s32((int32_t)min);
+  int32x4_t mx = vdupq_n_s32((int32_t)max);
+  int32x4_t v[16];
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 4; i++)
+    tr4(vld1q_s32(r0 + 4 * i), vld1q_s32(r1 + 4 * i),
+        vld1q_s32(r2 + 4 * i), vld1q_s32(r3 + 4 * i),
+        &v[4 * i], &v[4 * i + 1], &v[4 * i + 2], &v[4 * i + 3]);
+  idct16_core(v, mn, mx);
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 4; i++) {
+    int32x4_t a, b, c, d;
+    tr4(v[4 * i], v[4 * i + 1], v[4 * i + 2], v[4 * i + 3], &a, &b, &c, &d);
+    vst1q_s32(r0 + 4 * i, a);
+    vst1q_s32(r1 + 4 * i, b);
+    vst1q_s32(r2 + 4 * i, c);
+    vst1q_s32(r3 + 4 * i, d);
+  }
+}
+
 void goav1_idct32_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3,
                        long min, long max) {
   int32x4_t mn = vdupq_n_s32((int32_t)min);

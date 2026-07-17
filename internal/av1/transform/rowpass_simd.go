@@ -37,11 +37,13 @@ var (
 	inverseADST8Row2Impl = inverseADST8Row2PureGo
 )
 
-// inverseDCT32Row4 / inverseDCT64Row4 transform four adjacent stride-1 rows
-// in place (dav1d's transposed four-lane row shape, src/arm/64/itx16.S). The
-// result for each row equals the corresponding single-row scalar kernel.
-// Same binding rules as the two-row slots.
+// inverseDCT8Row4 through inverseDCT64Row4 transform four adjacent stride-1
+// rows in place (dav1d's transposed four-lane row shape,
+// src/arm/64/itx16.S). The result for each row equals the corresponding
+// single-row scalar kernel. Same binding rules as the two-row slots.
 var (
+	inverseDCT8Row4Impl  = inverseDCT8Row4ViaRow2
+	inverseDCT16Row4Impl = inverseDCT16Row4ViaRow2
 	inverseDCT32Row4Impl = inverseDCT32Row4PureGo
 	inverseDCT64Row4Impl = inverseDCT64Row4PureGo
 )
@@ -104,6 +106,12 @@ func inverse1DRow4(r0, r1, r2, r3 []int32, length int, typ tx1DType, min int32, 
 	switch typ {
 	case tx1DDCT:
 		switch length {
+		case dct8Size:
+			inverseDCT8Row4Impl(r0, r1, r2, r3, min, max)
+			return
+		case dct16Size:
+			inverseDCT16Row4Impl(r0, r1, r2, r3, min, max)
+			return
 		case dct32Size:
 			inverseDCT32Row4Impl(r0, r1, r2, r3, min, max)
 			return
@@ -160,6 +168,29 @@ func inverseDCT64Row2PureGo(r0 []int32, r1 []int32, min int32, max int32) {
 func inverseDCT32Row4PureGo(r0, r1, r2, r3 []int32, min int32, max int32) {
 	inverseDCT32Row2PureGo(r0, r1, min, max)
 	inverseDCT32Row2PureGo(r2, r3, min, max)
+}
+
+func inverseDCT8Row4PureGo(r0, r1, r2, r3 []int32, min int32, max int32) {
+	inverseDCT8Row2PureGo(r0, r1, min, max)
+	inverseDCT8Row2PureGo(r2, r3, min, max)
+}
+
+func inverseDCT16Row4PureGo(r0, r1, r2, r3 []int32, min int32, max int32) {
+	inverseDCT16Row2PureGo(r0, r1, min, max)
+	inverseDCT16Row2PureGo(r2, r3, min, max)
+}
+
+// The default DCT8/DCT16 four-row route preserves the best architecture's
+// two-row dispatch (notably AVX2 on amd64). ARM64 replaces these slots with
+// native four-lane kernels during package initialization.
+func inverseDCT8Row4ViaRow2(r0, r1, r2, r3 []int32, min int32, max int32) {
+	inverseDCT8Row2Impl(r0, r1, min, max)
+	inverseDCT8Row2Impl(r2, r3, min, max)
+}
+
+func inverseDCT16Row4ViaRow2(r0, r1, r2, r3 []int32, min int32, max int32) {
+	inverseDCT16Row2Impl(r0, r1, min, max)
+	inverseDCT16Row2Impl(r2, r3, min, max)
 }
 
 func inverseDCT64Row4PureGo(r0, r1, r2, r3 []int32, min int32, max int32) {

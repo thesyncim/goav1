@@ -1,10 +1,9 @@
 # itxgen — inverse-transform NEON kernel generator
 
-Tooling that produced the four-lane NEON DCT32/DCT64 kernels in
-`internal/av1/transform/dct{32,64}_{col4,row4}_neon_arm64.s` (commit
-"transform: add four-lane neon dct32/dct64 kernels"). Reuse it for the
-remaining inverse-transform kernels (ADST, smaller DCT widening) and as the
-template for an amd64 AVX2 wave.
+Tooling that produced the four-lane NEON DCT32/DCT64 column and row kernels,
+the DCT8/DCT16 row kernels, and the ADST16 column/row kernels in
+`internal/av1/transform`. Reuse it for the remaining inverse-transform kernels
+and as the template for an amd64 AVX2 wave.
 
 The amd64 AVX2 wave lives in a self-contained Go sibling, `avx2gen/`, rather
 than an extension of this Python pipeline: Go's assembler has full VEX mnemonic

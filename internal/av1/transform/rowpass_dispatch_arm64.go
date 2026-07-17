@@ -35,6 +35,8 @@ func init() {
 		inverseDCT8Row2Impl = inverseDCT8Row2NEONAdapter
 		inverseDCT16Row2Impl = inverseDCT16Row2NEONAdapter
 		inverseDCT32Row2Impl = inverseDCT32Row2NEONAdapter
+		inverseDCT8Row4Impl = inverseDCT8Row4NEONAdapter
+		inverseDCT16Row4Impl = inverseDCT16Row4NEONAdapter
 		inverseDCT32Row4Impl = inverseDCT32Row4NEONAdapter
 		inverseDCT64Row4Impl = inverseDCT64Row4NEONAdapter
 		inverseADST16Row4Impl = inverseADST16Row4NEONAdapter
@@ -113,6 +115,34 @@ func inverseADST8Row2NEONAdapter(r0, r1 []int32, min, max int32) {
 // to [min, max] before invoking them (hybrid.go staging loops), and the
 // differential tests stage inputs the same way. Out-of-envelope bounds or
 // short rows fall back to the row-pair path.
+
+func inverseDCT8Row4NEONAdapter(r0, r1, r2, r3 []int32, min, max int32) {
+	if len(r0) < dct8Size || len(r1) < dct8Size || len(r2) < dct8Size || len(r3) < dct8Size ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseDCT8Row2NEONAdapter(r0, r1, min, max)
+		inverseDCT8Row2NEONAdapter(r2, r3, min, max)
+		return
+	}
+	r0 = r0[:dct8Size]
+	r1 = r1[:dct8Size]
+	r2 = r2[:dct8Size]
+	r3 = r3[:dct8Size]
+	inverseDCT8Row4NEON(&r0[0], &r1[0], &r2[0], &r3[0], int64(min), int64(max))
+}
+
+func inverseDCT16Row4NEONAdapter(r0, r1, r2, r3 []int32, min, max int32) {
+	if len(r0) < dct16Size || len(r1) < dct16Size || len(r2) < dct16Size || len(r3) < dct16Size ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseDCT16Row2NEONAdapter(r0, r1, min, max)
+		inverseDCT16Row2NEONAdapter(r2, r3, min, max)
+		return
+	}
+	r0 = r0[:dct16Size]
+	r1 = r1[:dct16Size]
+	r2 = r2[:dct16Size]
+	r3 = r3[:dct16Size]
+	inverseDCT16Row4NEON(&r0[0], &r1[0], &r2[0], &r3[0], int64(min), int64(max))
+}
 
 func inverseDCT32Row4NEONAdapter(r0, r1, r2, r3 []int32, min, max int32) {
 	if len(r0) < dct32Size || len(r1) < dct32Size || len(r2) < dct32Size || len(r3) < dct32Size ||

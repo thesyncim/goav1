@@ -24,6 +24,8 @@ func row2TestImpls() []row2TestFunc {
 // differential test always exercises the four-row kernels for bit-exactness.
 func row4TestImpls() []row4TestFunc {
 	return []row4TestFunc{
+		{"DCT8Row4", dct8Size, inverseDCT8Row4NEONAdapter, inverseDCT8Row4PureGo},
+		{"DCT16Row4", dct16Size, inverseDCT16Row4NEONAdapter, inverseDCT16Row4PureGo},
 		{"DCT32Row4", dct32Size, inverseDCT32Row4NEONAdapter, inverseDCT32Row4PureGo},
 		{"DCT64Row4", dct64Size, inverseDCT64Row4NEONAdapter, inverseDCT64Row4PureGo},
 		{"ADST16Row4", adst16Size, inverseADST16Row4NEONAdapter, inverseADST16Row4PureGo},

@@ -68,6 +68,8 @@ static int run(int n, void (*neon)(int32_t *, long, long, long),
 
 
 
+void goav1_idct8_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3, long min, long max);
+void goav1_idct16_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3, long min, long max);
 void goav1_idct32_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3, long min, long max);
 void goav1_idct64_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3, long min, long max, int32_t *scratch);
 void goav1_iadst16_col4(int32_t *base, long strideBytes, long min, long max);
@@ -118,10 +120,17 @@ static int run_row4(int n) {
       for (int r = 0; r < 4; r++) {
         int64_t v[64];
         for (int i = 0; i < n; i++) v[i] = want[r][i];
-        if (n == 32) idct32_ref(v, mn, mx); else idct64_ref(v, mn, mx);
+        if (n == 8) idct8_ref(v, mn, mx);
+        else if (n == 16) idct16_ref(v, mn, mx);
+        else if (n == 32) idct32_ref(v, mn, mx);
+        else idct64_ref(v, mn, mx);
         for (int i = 0; i < n; i++) want[r][i] = (int32_t)v[i];
       }
-      if (n == 32)
+      if (n == 8)
+        goav1_idct8_row4(rows[0], rows[1], rows[2], rows[3], mn, mx);
+      else if (n == 16)
+        goav1_idct16_row4(rows[0], rows[1], rows[2], rows[3], mn, mx);
+      else if (n == 32)
         goav1_idct32_row4(rows[0], rows[1], rows[2], rows[3], mn, mx);
       else
         goav1_idct64_row4(rows[0], rows[1], rows[2], rows[3], mn, mx, g_scratch);
@@ -138,6 +147,8 @@ static int run_row4(int n) {
 int main(void) {
   if (run(32, idct32_wrap, idct32_ref)) return 1;
   if (run(64, idct64_wrap, idct64_ref)) return 1;
+  if (run_row4(8)) return 1;
+  if (run_row4(16)) return 1;
   if (run_row4(32)) return 1;
   if (run_row4(64)) return 1;
   if (run(16, iadst16_col4_wrap, iadst16_ref)) return 1;
