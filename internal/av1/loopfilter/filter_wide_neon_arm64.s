@@ -508,14 +508,15 @@ done8:
 
 // func filter14EdgeNEONAsm(ctx *filter14NEONCtx)
 // Bit-exact with filter14EdgePureGo. Per 8-position group, the filter8
-// narrow/flat result is materialized once in a 48-byte stack scratch while the
-// original inner taps remain in registers. Groups with no need&&flat lane stop
-// there. Otherwise the six outer taps are loaded and flat8out is evaluated
-// once; groups without a wide lane copy the filter8 result directly. Wide
-// groups use one biased running sum for all twelve fourteen-tap averages,
-// blending each inner output with its exact filter8/filter4 scratch fallback.
+// narrow/flat result stays in v8..v13 while the original inner taps remain in
+// registers. Groups with no need&&flat lane store only p1..q1 and stop there.
+// Otherwise the six fallbacks are written to their final destinations before
+// the six outer taps reuse those registers and flat8out is evaluated once.
+// Groups without a wide lane are already complete. Wide groups use one biased
+// running sum for all twelve averages, loading mixed-lane fallbacks from the
+// destination bytes they are about to overwrite.
 // Keeping every flat decision on pristine samples is essential for exactness.
-TEXT ·filter14EdgeNEONAsm(SB), NOSPLIT, $64-8
+TEXT ·filter14EdgeNEONAsm(SB), NOSPLIT, $0-8
 	MOVD ctx+0(FP), R0
 	MOVD F14_P6(R0), R1
 	MOVD F14_P5(R0), R2
@@ -532,7 +533,6 @@ TEXT ·filter14EdgeNEONAsm(SB), NOSPLIT, $64-8
 	MOVD F14_Q5(R0), R13
 	MOVD F14_Q6(R0), R14
 	MOVD F14_COUNT(R0), R15
-	MOVD RSP, R23           // scratch base for pass-1 filter8 results
 
 	MOVD F14_LIMIT(R0), R16
 	WORD $0x4e020e00 // dup v0.8h, w16
@@ -662,9 +662,7 @@ loop14:
 	WORD $0x6e711ffe // bsl v30.16b, v31.16b, v17.16b
 	WORD $0x4eb81f1d // mov v29.16b, v24.16b
 	WORD $0x6e711fdd // bsl v29.16b, v30.16b, v17.16b
-	WORD $0x0e212bbd // xtn v29.8b, v29.8h
-	ADD $0, R23, R22   // scratch slot for x5
-	WORD $0x0c0072dd // st1 {v29.8b}, [x22]
+	WORD $0x0e212ba8 // xtn v8.8b, v29.8h  (pass-1 x5 fallback)
 	WORD $0x4f1f277e // srshr v30.8h, v27.8h, #1
 	WORD $0x6e64865d // sub v29.8h, v18.8h, v4.8h
 	WORD $0x4e7e87bd // add v29.8h, v29.8h, v30.8h
@@ -685,9 +683,7 @@ loop14:
 	WORD $0x6e7e1ffd // bsl v29.16b, v31.16b, v30.16b
 	WORD $0x4eb81f1e // mov v30.16b, v24.16b
 	WORD $0x6e721fbe // bsl v30.16b, v29.16b, v18.16b
-	WORD $0x0e212bde // xtn v30.8b, v30.8h
-	ADD $8, R23, R22   // scratch slot for x6
-	WORD $0x0c0072de // st1 {v30.8b}, [x22]
+	WORD $0x0e212bc9 // xtn v9.8b, v30.8h  (pass-1 x6 fallback)
 	WORD $0x6e64867d // sub v29.8h, v19.8h, v4.8h
 	WORD $0x4e7c87bd // add v29.8h, v29.8h, v28.8h
 	WORD $0x4e666fbd // smin v29.8h, v29.8h, v6.8h
@@ -706,9 +702,7 @@ loop14:
 	WORD $0x6e7e1ffd // bsl v29.16b, v31.16b, v30.16b
 	WORD $0x4eb81f1e // mov v30.16b, v24.16b
 	WORD $0x6e731fbe // bsl v30.16b, v29.16b, v19.16b
-	WORD $0x0e212bde // xtn v30.8b, v30.8h
-	ADD $16, R23, R22   // scratch slot for x7
-	WORD $0x0c0072de // st1 {v30.8b}, [x22]
+	WORD $0x0e212bca // xtn v10.8b, v30.8h  (pass-1 x7 fallback)
 	WORD $0x6e64869d // sub v29.8h, v20.8h, v4.8h
 	WORD $0x6e7b87bd // sub v29.8h, v29.8h, v27.8h
 	WORD $0x4e666fbd // smin v29.8h, v29.8h, v6.8h
@@ -727,9 +721,7 @@ loop14:
 	WORD $0x6e7e1ffd // bsl v29.16b, v31.16b, v30.16b
 	WORD $0x4eb81f1e // mov v30.16b, v24.16b
 	WORD $0x6e741fbe // bsl v30.16b, v29.16b, v20.16b
-	WORD $0x0e212bde // xtn v30.8b, v30.8h
-	ADD $24, R23, R22   // scratch slot for x8
-	WORD $0x0c0072de // st1 {v30.8b}, [x22]
+	WORD $0x0e212bcb // xtn v11.8b, v30.8h  (pass-1 x8 fallback)
 	WORD $0x4f1f277e // srshr v30.8h, v27.8h, #1
 	WORD $0x6e6486bd // sub v29.8h, v21.8h, v4.8h
 	WORD $0x6e7e87bd // sub v29.8h, v29.8h, v30.8h
@@ -750,9 +742,7 @@ loop14:
 	WORD $0x6e7e1ffd // bsl v29.16b, v31.16b, v30.16b
 	WORD $0x4eb81f1e // mov v30.16b, v24.16b
 	WORD $0x6e751fbe // bsl v30.16b, v29.16b, v21.16b
-	WORD $0x0e212bde // xtn v30.8b, v30.8h
-	ADD $32, R23, R22   // scratch slot for x9
-	WORD $0x0c0072de // st1 {v30.8b}, [x22]
+	WORD $0x0e212bcc // xtn v12.8b, v30.8h  (pass-1 x9 fallback)
 	WORD $0x4e74867f // add v31.8h, v19.8h, v20.8h
 	WORD $0x4e7587ff // add v31.8h, v31.8h, v21.8h
 	WORD $0x4f1156dd // shl v29.8h, v22.8h, #1
@@ -764,9 +754,7 @@ loop14:
 	WORD $0x6e761ffe // bsl v30.16b, v31.16b, v22.16b
 	WORD $0x4eb81f1d // mov v29.16b, v24.16b
 	WORD $0x6e761fdd // bsl v29.16b, v30.16b, v22.16b
-	WORD $0x0e212bbd // xtn v29.8b, v29.8h
-	ADD $40, R23, R22   // scratch slot for x10
-	WORD $0x0c0072dd // st1 {v29.8b}, [x22]
+	WORD $0x0e212bad // xtn v13.8b, v29.8h  (pass-1 x10 fallback)
 	// Most real edges are not flat enough to enter either wide branch.  The
 	// pass-1 result is already complete for those groups, so reduce need&flat
 	// once and avoid reloading fourteen taps, recomputing both masks, and
@@ -775,25 +763,23 @@ loop14:
 	WORD $0x6e70abbd // umaxv h29, v29.8h
 	WORD $0x0e023fb6 // umov w22, v29.h[0]
 	CBNZ R22, flat14Fast
-	ADD $8, R23, R22   // pass-1 p1
-	WORD $0x0c4072dd // ld1 {v29.8b}, [x22]
-	WORD $0x0c0070dd // st1 {v29.8b}, [x6]
-	ADD $16, R23, R22  // pass-1 p0
-	WORD $0x0c4072dd // ld1 {v29.8b}, [x22]
-	WORD $0x0c0070fd // st1 {v29.8b}, [x7]
-	ADD $24, R23, R22  // pass-1 q0
-	WORD $0x0c4072dd // ld1 {v29.8b}, [x22]
-	WORD $0x0c00711d // st1 {v29.8b}, [x8]
-	ADD $32, R23, R22  // pass-1 q1
-	WORD $0x0c4072dd // ld1 {v29.8b}, [x22]
-	WORD $0x0c00713d // st1 {v29.8b}, [x9]
+	WORD $0x0c0070c9 // st1 {v9.8b}, [x6]   pass-1 p1
+	WORD $0x0c0070ea // st1 {v10.8b}, [x7]  pass-1 p0
+	WORD $0x0c00710b // st1 {v11.8b}, [x8]  pass-1 q0
+	WORD $0x0c00712c // st1 {v12.8b}, [x9]  pass-1 q1
 	B advance14
 
 flat14Fast:
 	// Pass 1 preserved the original inner taps and materialized the exact
-	// filter8/filter4 fallback in scratch.  Load only the six outer taps,
-	// compute flat8out once, then slide one biased sixteen-sample sum across
-	// the twelve wide outputs.  Each inner blend falls back to pass 1.
+	// filter8/filter4 fallback in v8..v13. Commit those six results directly;
+	// the wide path below can load a mixed lane back from its destination before
+	// overwriting it, and the no-wide path needs no copy-back at all.
+	WORD $0x0c0070a8 // st1 {v8.8b}, [x5]   pass-1 p2
+	WORD $0x0c0070c9 // st1 {v9.8b}, [x6]   pass-1 p1
+	WORD $0x0c0070ea // st1 {v10.8b}, [x7]  pass-1 p0
+	WORD $0x0c00710b // st1 {v11.8b}, [x8]  pass-1 q0
+	WORD $0x0c00712c // st1 {v12.8b}, [x9]  pass-1 q1
+	WORD $0x0c00714d // st1 {v13.8b}, [x10] pass-1 q2
 	WORD $0x0c407028 // ld1.8b { v8 }, [x1]
 	WORD $0x0c407049 // ld1.8b { v9 }, [x2]
 	WORD $0x0c40706a // ld1.8b { v10 }, [x3]
@@ -874,8 +860,7 @@ flat14Fast:
 	WORD $0x4e6a851b // add.8h v27, v8, v10
 	WORD $0x6e7b875a // sub.8h v26, v26, v27
 	WORD $0x4f1c075d // sshr.8h v29, v26, #0x4
-	ADD $0, R23, R22 // pass-1 fallback
-	WORD $0x0c4072de // ld1.8b { v30 }, [x22]
+	WORD $0x0c4070be // ld1.8b { v30 }, [x5]  pass-1 fallback
 	WORD $0x2f08a7de // ushll.8h v30, v30, #0x0
 	WORD $0x4eae1ddc // mov.16b v28, v14
 	WORD $0x6e7e1fbc // bsl.16b v28, v29, v30
@@ -886,8 +871,7 @@ flat14Fast:
 	WORD $0x4e70851b // add.8h v27, v8, v16
 	WORD $0x6e7b875a // sub.8h v26, v26, v27
 	WORD $0x4f1c075d // sshr.8h v29, v26, #0x4
-	ADD $8, R23, R22 // pass-1 fallback
-	WORD $0x0c4072de // ld1.8b { v30 }, [x22]
+	WORD $0x0c4070de // ld1.8b { v30 }, [x6]  pass-1 fallback
 	WORD $0x2f08a7de // ushll.8h v30, v30, #0x0
 	WORD $0x4eae1ddc // mov.16b v28, v14
 	WORD $0x6e7e1fbc // bsl.16b v28, v29, v30
@@ -898,8 +882,7 @@ flat14Fast:
 	WORD $0x4e71851b // add.8h v27, v8, v17
 	WORD $0x6e7b875a // sub.8h v26, v26, v27
 	WORD $0x4f1c075d // sshr.8h v29, v26, #0x4
-	ADD $16, R23, R22 // pass-1 fallback
-	WORD $0x0c4072de // ld1.8b { v30 }, [x22]
+	WORD $0x0c4070fe // ld1.8b { v30 }, [x7]  pass-1 fallback
 	WORD $0x2f08a7de // ushll.8h v30, v30, #0x0
 	WORD $0x4eae1ddc // mov.16b v28, v14
 	WORD $0x6e7e1fbc // bsl.16b v28, v29, v30
@@ -910,8 +893,7 @@ flat14Fast:
 	WORD $0x4e72851b // add.8h v27, v8, v18
 	WORD $0x6e7b875a // sub.8h v26, v26, v27
 	WORD $0x4f1c075d // sshr.8h v29, v26, #0x4
-	ADD $24, R23, R22 // pass-1 fallback
-	WORD $0x0c4072de // ld1.8b { v30 }, [x22]
+	WORD $0x0c40711e // ld1.8b { v30 }, [x8]  pass-1 fallback
 	WORD $0x2f08a7de // ushll.8h v30, v30, #0x0
 	WORD $0x4eae1ddc // mov.16b v28, v14
 	WORD $0x6e7e1fbc // bsl.16b v28, v29, v30
@@ -922,8 +904,7 @@ flat14Fast:
 	WORD $0x4e73853b // add.8h v27, v9, v19
 	WORD $0x6e7b875a // sub.8h v26, v26, v27
 	WORD $0x4f1c075d // sshr.8h v29, v26, #0x4
-	ADD $32, R23, R22 // pass-1 fallback
-	WORD $0x0c4072de // ld1.8b { v30 }, [x22]
+	WORD $0x0c40713e // ld1.8b { v30 }, [x9]  pass-1 fallback
 	WORD $0x2f08a7de // ushll.8h v30, v30, #0x0
 	WORD $0x4eae1ddc // mov.16b v28, v14
 	WORD $0x6e7e1fbc // bsl.16b v28, v29, v30
@@ -934,8 +915,7 @@ flat14Fast:
 	WORD $0x4e74855b // add.8h v27, v10, v20
 	WORD $0x6e7b875a // sub.8h v26, v26, v27
 	WORD $0x4f1c075d // sshr.8h v29, v26, #0x4
-	ADD $40, R23, R22 // pass-1 fallback
-	WORD $0x0c4072de // ld1.8b { v30 }, [x22]
+	WORD $0x0c40715e // ld1.8b { v30 }, [x10] pass-1 fallback
 	WORD $0x2f08a7de // ushll.8h v30, v30, #0x0
 	WORD $0x4eae1ddc // mov.16b v28, v14
 	WORD $0x6e7e1fbc // bsl.16b v28, v29, v30
@@ -971,24 +951,6 @@ flat14Fast:
 	B advance14
 
 filter8Only14:
-	ADD $0, R23, R22
-	WORD $0x0c4072de // ld1 {v30.8b}, [x22]
-	WORD $0x0c0070be // st1 {v30.8b}, [x5]
-	ADD $8, R23, R22
-	WORD $0x0c4072de // ld1 {v30.8b}, [x22]
-	WORD $0x0c0070de // st1 {v30.8b}, [x6]
-	ADD $16, R23, R22
-	WORD $0x0c4072de // ld1 {v30.8b}, [x22]
-	WORD $0x0c0070fe // st1 {v30.8b}, [x7]
-	ADD $24, R23, R22
-	WORD $0x0c4072de // ld1 {v30.8b}, [x22]
-	WORD $0x0c00711e // st1 {v30.8b}, [x8]
-	ADD $32, R23, R22
-	WORD $0x0c4072de // ld1 {v30.8b}, [x22]
-	WORD $0x0c00713e // st1 {v30.8b}, [x9]
-	ADD $40, R23, R22
-	WORD $0x0c4072de // ld1 {v30.8b}, [x22]
-	WORD $0x0c00715e // st1 {v30.8b}, [x10]
 	B advance14
 
 

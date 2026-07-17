@@ -310,6 +310,21 @@ func BenchmarkFilter14EdgeHorizontal(b *testing.B) {
 	}
 }
 
+func BenchmarkFilter14EdgeHorizontalNarrow(b *testing.B) {
+	plane := testPlane(64, 64, 1, 64)
+	for i := range plane.Pix {
+		plane.Pix[i] = byte(i * 73)
+	}
+	// The alternating edge exceeds the zero thresholds in every lane. This
+	// pins the production-common no-wide-filter path independently from the
+	// all-flat benchmark above.
+	thresholds := Thresholds{}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = Filter14Edge(plane, 1, 8, EdgeHorizontal, 0, 32, 64, thresholds)
+	}
+}
+
 func BenchmarkFilter14EdgeVertical(b *testing.B) {
 	plane := testPlane(64, 64, 1, 64)
 	thresholds := Thresholds{Limit: 20, BlockLimit: 25, HighEdgeVariance: 10}
