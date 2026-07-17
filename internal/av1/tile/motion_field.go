@@ -412,10 +412,13 @@ func motionFieldBlockOffset(v int16) int {
 }
 
 func roundPowerOfTwoSigned(value int64, bits uint) int64 {
-	if value < 0 {
-		return -((-value + (1 << (bits - 1))) >> bits)
-	}
-	return (value + (1 << (bits - 1))) >> bits
+	// Projection inputs have mixed signs, so avoid a data-dependent branch for
+	// each vector component. sign is either 0 or -1; the two xor/sub pairs map
+	// to and from the unsigned magnitude without changing tie rounding.
+	sign := value >> 63
+	magnitude := uint64((value ^ sign) - sign)
+	rounded := int64((magnitude + (1 << (bits - 1))) >> bits)
+	return (rounded ^ sign) - sign
 }
 
 func clampInt64(v int64, lo int64, hi int64) int64 {
