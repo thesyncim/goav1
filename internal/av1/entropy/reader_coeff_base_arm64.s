@@ -285,7 +285,7 @@ baseUpd0:
 	AND   $0x01ff01ff01ff01ff, R9, R9
 	SUB   R9, R12, R12
 	MOVD  R12, CDF_C0(R14)
-	B     baseAdaptDone
+	B     next
 baseUpd0Dynamic:
 	ADD   $CDF_C0, R14, R12
 	VLD1  (R12), [V0.H4]
@@ -294,7 +294,12 @@ baseUpd0Dynamic:
 	WORD  $0x6e614402 // ushl v2.8h, v0.8h, v1.8h
 	WORD  $0x6e628400 // sub v0.8h, v0.8h, v2.8h
 	VST1  [V0.H4], (R12)
-	B     baseUpdCount
+	// The branch above proved count < 32. Finish the zero update here and
+	// jump straight to the next coefficient instead of crossing the generic
+	// count and store dispatches.
+	ADD   $1, R13, R13
+	MOVH  R13, CDF_CNT(R14)
+	B     next
 
 baseUpd1:
 	MOVHU CDF_C0(R14), R12
@@ -338,6 +343,9 @@ baseUpdCount:
 	MOVH R13, CDF_CNT(R14)
 
 baseAdaptDone:
+	// Zero is the dominant base symbol and has no scratch/list side effect.
+	// Bypass both the BR test and the later store guard in one branch.
+	CBZ  R16, next
 	MOVD R16, R15 // level = symbol
 	CMP  $3, R16
 	BNE  store
@@ -608,7 +616,6 @@ brDone:
 	MOVD (R3)(R19<<3), R26 // reload scanHot[c]
 
 store:
-	CBZ  R15, next
 	UBFX $16, R26, $16, R13 // padded
 	ADD  R4, R13, R11
 	CMP  $3, R15
