@@ -48,11 +48,13 @@ var (
 	inverseDCT64Row4Impl = inverseDCT64Row4PureGo
 )
 
-// inverseADST16Row4 / inverseADST16Row4Flip transform four adjacent stride-1
-// rows in place with the (flip-)ADST16 horizontal transform (transposed
+// inverseADST8/16Row4 and their flip variants transform four adjacent
+// stride-1 rows in place with the (flip-)ADST horizontal transform (transposed
 // four-lane row shape). The result for each row equals the corresponding
 // single-row scalar kernel. Same binding rules as the DCT four-row slots.
 var (
+	inverseADST8Row4Impl      = inverseADST8Row4PureGo
+	inverseADST8Row4FlipImpl  = inverseADST8Row4FlipPureGo
 	inverseADST16Row4Impl     = inverseADST16Row4PureGo
 	inverseADST16Row4FlipImpl = inverseADST16Row4FlipPureGo
 )
@@ -120,12 +122,20 @@ func inverse1DRow4(r0, r1, r2, r3 []int32, length int, typ tx1DType, min int32, 
 			return
 		}
 	case tx1DADST:
-		if length == adst16Size {
+		switch length {
+		case adst8Size:
+			inverseADST8Row4Impl(r0, r1, r2, r3, min, max)
+			return
+		case adst16Size:
 			inverseADST16Row4Impl(r0, r1, r2, r3, min, max)
 			return
 		}
 	case tx1DFlipADST:
-		if length == adst16Size {
+		switch length {
+		case adst8Size:
+			inverseADST8Row4FlipImpl(r0, r1, r2, r3, min, max)
+			return
+		case adst16Size:
 			inverseADST16Row4FlipImpl(r0, r1, r2, r3, min, max)
 			return
 		}
@@ -203,6 +213,20 @@ func inverseADST16Row4PureGo(r0, r1, r2, r3 []int32, min int32, max int32) {
 	inverseADST1D(r1, 1, adst16Size, min, max)
 	inverseADST1D(r2, 1, adst16Size, min, max)
 	inverseADST1D(r3, 1, adst16Size, min, max)
+}
+
+func inverseADST8Row4PureGo(r0, r1, r2, r3 []int32, min int32, max int32) {
+	inverseADST8(r0, 1, min, max)
+	inverseADST8(r1, 1, min, max)
+	inverseADST8(r2, 1, min, max)
+	inverseADST8(r3, 1, min, max)
+}
+
+func inverseADST8Row4FlipPureGo(r0, r1, r2, r3 []int32, min int32, max int32) {
+	inverseFlipADST1D(r0, 1, adst8Size, min, max)
+	inverseFlipADST1D(r1, 1, adst8Size, min, max)
+	inverseFlipADST1D(r2, 1, adst8Size, min, max)
+	inverseFlipADST1D(r3, 1, adst8Size, min, max)
 }
 
 func inverseADST16Row4FlipPureGo(r0, r1, r2, r3 []int32, min int32, max int32) {

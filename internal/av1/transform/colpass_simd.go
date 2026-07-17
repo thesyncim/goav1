@@ -36,21 +36,25 @@ var (
 	inverseDCT64Col2Impl = inverseDCT64Col2PureGo
 )
 
-// inverseDCT32Col4 / inverseDCT64Col4 transform four adjacent columns of the
+// inverseDCT8Col4 through inverseDCT64Col4 transform four adjacent columns of the
 // scratch buffer in place (dav1d's four-lane column shape, src/arm/64/itx16.S).
 // The result for each column equals the corresponding single-column scalar
 // kernel. Same binding rules as the two-column slots.
 var (
+	inverseDCT8Col4Impl  = inverseDCT8Col4ViaCol2
+	inverseDCT16Col4Impl = inverseDCT16Col4ViaCol2
 	inverseDCT32Col4Impl = inverseDCT32Col4PureGo
 	inverseDCT64Col4Impl = inverseDCT64Col4PureGo
 )
 
-// inverseADST16Col4 / inverseADST16Col4Flip transform four adjacent columns of
-// the scratch buffer in place with the (flip-)ADST16 vertical transform (four
+// inverseADSTCol4 slots transform four adjacent columns of the scratch buffer
+// in place with the (flip-)ADST vertical transform (four
 // columns per int32 lane group, dav1d's inv_adst_4s_x16_neon shape). The
 // result for each column equals the corresponding single-column scalar kernel.
 // Same binding rules as the DCT four-column slots.
 var (
+	inverseADST8Col4Impl      = inverseADST8Col4PureGo
+	inverseADST8Col4FlipImpl  = inverseADST8Col4FlipPureGo
 	inverseADST16Col4Impl     = inverseADST16Col4PureGo
 	inverseADST16Col4FlipImpl = inverseADST16Col4FlipPureGo
 	inverseIdentity4Col4Impl  = inverseIdentity4Col4PureGo
@@ -96,6 +100,12 @@ func inverse1DCol4(buf []int32, rowStride int, length int, typ tx1DType, min int
 	switch typ {
 	case tx1DDCT:
 		switch length {
+		case dct8Size:
+			inverseDCT8Col4Impl(buf, rowStride, min, max)
+			return
+		case dct16Size:
+			inverseDCT16Col4Impl(buf, rowStride, min, max)
+			return
 		case dct32Size:
 			inverseDCT32Col4Impl(buf, rowStride, min, max)
 			return
@@ -104,11 +114,19 @@ func inverse1DCol4(buf []int32, rowStride int, length int, typ tx1DType, min int
 			return
 		}
 	case tx1DADST:
+		if length == adst8Size {
+			inverseADST8Col4Impl(buf, rowStride, min, max)
+			return
+		}
 		if length == adst16Size {
 			inverseADST16Col4Impl(buf, rowStride, min, max)
 			return
 		}
 	case tx1DFlipADST:
+		if length == adst8Size {
+			inverseADST8Col4FlipImpl(buf, rowStride, min, max)
+			return
+		}
 		if length == adst16Size {
 			inverseADST16Col4FlipImpl(buf, rowStride, min, max)
 			return
@@ -159,6 +177,26 @@ func inverseDCT64Col2PureGo(buf []int32, rowStride int, min int32, max int32) {
 	inverseDCT64(buf[1:], rowStride, min, max)
 }
 
+func inverseDCT8Col4ViaCol2(buf []int32, rowStride int, min int32, max int32) {
+	inverseDCT8Col2Impl(buf, rowStride, min, max)
+	inverseDCT8Col2Impl(buf[2:], rowStride, min, max)
+}
+
+func inverseDCT16Col4ViaCol2(buf []int32, rowStride int, min int32, max int32) {
+	inverseDCT16Col2Impl(buf, rowStride, min, max)
+	inverseDCT16Col2Impl(buf[2:], rowStride, min, max)
+}
+
+func inverseDCT8Col4PureGo(buf []int32, rowStride int, min int32, max int32) {
+	inverseDCT8Col2PureGo(buf, rowStride, min, max)
+	inverseDCT8Col2PureGo(buf[2:], rowStride, min, max)
+}
+
+func inverseDCT16Col4PureGo(buf []int32, rowStride int, min int32, max int32) {
+	inverseDCT16Col2PureGo(buf, rowStride, min, max)
+	inverseDCT16Col2PureGo(buf[2:], rowStride, min, max)
+}
+
 func inverseDCT32Col4PureGo(buf []int32, rowStride int, min int32, max int32) {
 	inverseDCT32Col2PureGo(buf, rowStride, min, max)
 	inverseDCT32Col2PureGo(buf[2:], rowStride, min, max)
@@ -167,6 +205,20 @@ func inverseDCT32Col4PureGo(buf []int32, rowStride int, min int32, max int32) {
 func inverseDCT64Col4PureGo(buf []int32, rowStride int, min int32, max int32) {
 	inverseDCT64Col2PureGo(buf, rowStride, min, max)
 	inverseDCT64Col2PureGo(buf[2:], rowStride, min, max)
+}
+
+func inverseADST8Col4PureGo(buf []int32, rowStride int, min int32, max int32) {
+	inverseADST8(buf, rowStride, min, max)
+	inverseADST8(buf[1:], rowStride, min, max)
+	inverseADST8(buf[2:], rowStride, min, max)
+	inverseADST8(buf[3:], rowStride, min, max)
+}
+
+func inverseADST8Col4FlipPureGo(buf []int32, rowStride int, min int32, max int32) {
+	inverseFlipADST1D(buf, rowStride, adst8Size, min, max)
+	inverseFlipADST1D(buf[1:], rowStride, adst8Size, min, max)
+	inverseFlipADST1D(buf[2:], rowStride, adst8Size, min, max)
+	inverseFlipADST1D(buf[3:], rowStride, adst8Size, min, max)
 }
 
 func inverseADST16Col4PureGo(buf []int32, rowStride int, min int32, max int32) {

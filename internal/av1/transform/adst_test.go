@@ -228,11 +228,19 @@ func FuzzInverseADSTBlock(f *testing.F) {
 	})
 }
 
-// TestInverseADST16CoreMatchesTo asserts the codegen source inverseADST16Core
-// is bit-for-bit identical to the canonical inverseADST16 over random and
-// extremal inputs across every supported column-stage clamp bound. This pins
-// the pure-Go mirror the itxgen NEON kernel is transliterated from.
-func TestInverseADST16CoreMatchesTo(t *testing.T) {
+// TestInverseADSTCoreMatchesTo asserts the codegen sources are bit-for-bit
+// identical to their canonical transforms over random and extremal inputs
+// across every supported column-stage clamp bound.
+func TestInverseADSTCoreMatchesTo(t *testing.T) {
+	cases := []struct {
+		name   string
+		length int
+		want   func([]int32, int, int32, int32)
+		core   func([]int32, int, int32, int32)
+	}{
+		{name: "ADST8", length: 8, want: inverseADST8, core: inverseADST8Core},
+		{name: "ADST16", length: 16, want: inverseADST16, core: inverseADST16Core},
+	}
 	edges := []int32{0, 1, -1, 7, -7, -32768, 32767, -131072, 131071, -524288, 524287}
 	bounds := []int32{1 << 15, 1 << 16, 1 << 17, 1 << 18, 1 << 19}
 	rng := uint64(0x9e3779b97f4a7c15)
@@ -242,35 +250,39 @@ func TestInverseADST16CoreMatchesTo(t *testing.T) {
 		rng ^= rng << 17
 		return int32(rng)
 	}
-	for _, b := range bounds {
-		min, max := -b, b-1
-		clamp := func(v int32) int32 {
-			if v < min {
-				return min
-			}
-			if v > max {
-				return max
-			}
-			return v
-		}
-		for iter := 0; iter < 20000; iter++ {
-			var in [16]int32
-			for i := range in {
-				var raw int32
-				if iter&1 == 0 {
-					raw = edges[int(uint32(next()))%len(edges)]
-				} else {
-					raw = next() >> (uint(next()) % 13)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, b := range bounds {
+				min, max := -b, b-1
+				clamp := func(v int32) int32 {
+					if v < min {
+						return min
+					}
+					if v > max {
+						return max
+					}
+					return v
 				}
-				in[i] = clamp(raw)
+				for iter := 0; iter < 20000; iter++ {
+					var in [16]int32
+					for i := 0; i < tc.length; i++ {
+						var raw int32
+						if iter&1 == 0 {
+							raw = edges[int(uint32(next()))%len(edges)]
+						} else {
+							raw = next() >> (uint(next()) % 13)
+						}
+						in[i] = clamp(raw)
+					}
+					want := in
+					got := in
+					tc.want(want[:tc.length], 1, min, max)
+					tc.core(got[:tc.length], 1, min, max)
+					if want != got {
+						t.Fatalf("bound=%d iter=%d\n in=%v\nwant=%v\n got=%v", b, iter, in, want, got)
+					}
+				}
 			}
-			want := in
-			got := in
-			inverseADST16(want[:], 1, min, max)
-			inverseADST16Core(got[:], 1, min, max)
-			if want != got {
-				t.Fatalf("bound=%d iter=%d\n in=%v\nwant=%v\n got=%v", b, iter, in, want, got)
-			}
-		}
+		})
 	}
 }

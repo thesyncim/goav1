@@ -53,6 +53,21 @@ func BenchmarkDCT32Col4PureGo(b *testing.B)   { benchmarkCol4(b, dct32Size, inve
 func BenchmarkDCT64Col4Dispatch(b *testing.B) { benchmarkCol4(b, dct64Size, inverseDCT64Col4Impl) }
 func BenchmarkDCT64Col4PureGo(b *testing.B)   { benchmarkCol4(b, dct64Size, inverseDCT64Col4PureGo) }
 
+func BenchmarkDCT8Col4Dispatch(b *testing.B) { benchmarkCol4(b, dct8Size, inverseDCT8Col4Impl) }
+func BenchmarkDCT8Col4ViaCol2(b *testing.B)  { benchmarkCol4(b, dct8Size, inverseDCT8Col4ViaCol2) }
+func BenchmarkDCT8Col4PureGo(b *testing.B)   { benchmarkCol4(b, dct8Size, inverseDCT8Col4PureGo) }
+func BenchmarkDCT16Col4Dispatch(b *testing.B) {
+	benchmarkCol4(b, dct16Size, inverseDCT16Col4Impl)
+}
+func BenchmarkDCT16Col4ViaCol2(b *testing.B) {
+	benchmarkCol4(b, dct16Size, inverseDCT16Col4ViaCol2)
+}
+func BenchmarkDCT16Col4PureGo(b *testing.B) {
+	benchmarkCol4(b, dct16Size, inverseDCT16Col4PureGo)
+}
+
+func BenchmarkADST8Col4Dispatch(b *testing.B)  { benchmarkCol4(b, adst8Size, inverseADST8Col4Impl) }
+func BenchmarkADST8Col4PureGo(b *testing.B)    { benchmarkCol4(b, adst8Size, inverseADST8Col4PureGo) }
 func BenchmarkADST16Col4Dispatch(b *testing.B) { benchmarkCol4(b, adst16Size, inverseADST16Col4Impl) }
 func BenchmarkADST16Col4PureGo(b *testing.B)   { benchmarkCol4(b, adst16Size, inverseADST16Col4PureGo) }
 

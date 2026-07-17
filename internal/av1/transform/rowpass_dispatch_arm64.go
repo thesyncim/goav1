@@ -39,6 +39,8 @@ func init() {
 		inverseDCT16Row4Impl = inverseDCT16Row4NEONAdapter
 		inverseDCT32Row4Impl = inverseDCT32Row4NEONAdapter
 		inverseDCT64Row4Impl = inverseDCT64Row4NEONAdapter
+		inverseADST8Row4Impl = inverseADST8Row4NEONAdapter
+		inverseADST8Row4FlipImpl = inverseADST8Row4FlipNEONAdapter
 		inverseADST16Row4Impl = inverseADST16Row4NEONAdapter
 		inverseADST16Row4FlipImpl = inverseADST16Row4FlipNEONAdapter
 	}
@@ -183,6 +185,42 @@ func inverseADST16Row4NEONAdapter(r0, r1, r2, r3 []int32, min, max int32) {
 	r2 = r2[:adst16Size]
 	r3 = r3[:adst16Size]
 	inverseADST16Row4NEON(&r0[0], &r1[0], &r2[0], &r3[0], int64(min), int64(max))
+}
+
+func inverseADST8Row4NEONAdapter(r0, r1, r2, r3 []int32, min, max int32) {
+	if len(r0) < adst8Size || len(r1) < adst8Size || len(r2) < adst8Size || len(r3) < adst8Size ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseADST8Row4PureGo(r0, r1, r2, r3, min, max)
+		return
+	}
+	r0 = r0[:adst8Size]
+	r1 = r1[:adst8Size]
+	r2 = r2[:adst8Size]
+	r3 = r3[:adst8Size]
+	inverseADST8Row4NEON(&r0[0], &r1[0], &r2[0], &r3[0], int64(min), int64(max))
+}
+
+func inverseADST8Row4FlipNEONAdapter(r0, r1, r2, r3 []int32, min, max int32) {
+	if len(r0) < adst8Size || len(r1) < adst8Size || len(r2) < adst8Size || len(r3) < adst8Size ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseADST8Row4FlipPureGo(r0, r1, r2, r3, min, max)
+		return
+	}
+	r0 = r0[:adst8Size]
+	r1 = r1[:adst8Size]
+	r2 = r2[:adst8Size]
+	r3 = r3[:adst8Size]
+	inverseADST8Row4NEON(&r0[0], &r1[0], &r2[0], &r3[0], int64(min), int64(max))
+	reverseADST8Row(r0)
+	reverseADST8Row(r1)
+	reverseADST8Row(r2)
+	reverseADST8Row(r3)
+}
+
+func reverseADST8Row(r []int32) {
+	for i, j := 0, adst8Size-1; i < j; i, j = i+1, j-1 {
+		r[i], r[j] = r[j], r[i]
+	}
 }
 
 // inverseADST16Row4FlipNEONAdapter runs the natural ADST16 row kernel then

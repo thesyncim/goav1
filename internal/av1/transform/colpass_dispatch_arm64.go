@@ -28,8 +28,12 @@ func init() {
 		inverseDCT8Col2Impl = inverseDCT8Col2NEONAdapter
 		inverseDCT16Col2Impl = inverseDCT16Col2NEONAdapter
 		inverseDCT32Col2Impl = inverseDCT32Col2NEONAdapter
+		inverseDCT8Col4Impl = inverseDCT8Col4NEONAdapter
+		inverseDCT16Col4Impl = inverseDCT16Col4NEONAdapter
 		inverseDCT32Col4Impl = inverseDCT32Col4NEONAdapter
 		inverseDCT64Col4Impl = inverseDCT64Col4NEONAdapter
+		inverseADST8Col4Impl = inverseADST8Col4NEONAdapter
+		inverseADST8Col4FlipImpl = inverseADST8Col4FlipNEONAdapter
 		inverseADST16Col4Impl = inverseADST16Col4NEONAdapter
 		inverseADST16Col4FlipImpl = inverseADST16Col4FlipNEONAdapter
 		inverseIdentity4Col4Impl = inverseIdentity4Col4NEONAdapter
@@ -83,6 +87,30 @@ func inverseDCT32Col2NEONAdapter(buf []int32, rowStride int, min, max int32) {
 // the differential tests stage inputs the same way. Out-of-envelope bounds or
 // short buffers fall back to the column-pair path.
 
+func inverseDCT8Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
+	if rowStride < 4 || len(buf) < (dct8Size-1)*rowStride+4 {
+		inverseDCT8Col4PureGo(buf, rowStride, min, max)
+		return
+	}
+	if min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseDCT8Col4ViaCol2(buf, rowStride, min, max)
+		return
+	}
+	inverseDCT8Col4NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
+}
+
+func inverseDCT16Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
+	if rowStride < 4 || len(buf) < (dct16Size-1)*rowStride+4 {
+		inverseDCT16Col4PureGo(buf, rowStride, min, max)
+		return
+	}
+	if min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseDCT16Col4ViaCol2(buf, rowStride, min, max)
+		return
+	}
+	inverseDCT16Col4NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
+}
+
 func inverseDCT32Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
 	if rowStride < 4 || len(buf) < (dct32Size-1)*rowStride+4 ||
 		min < -colClampBoundNEON || max >= colClampBoundNEON {
@@ -101,6 +129,25 @@ func inverseDCT64Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
 	}
 	var scratch [4 * dct64Size]int32
 	inverseDCT64Col4NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max), &scratch[0])
+}
+
+func inverseADST8Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
+	if rowStride < 4 || len(buf) < (adst8Size-1)*rowStride+4 ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseADST8Col4PureGo(buf, rowStride, min, max)
+		return
+	}
+	inverseADST8Col4NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
+}
+
+func inverseADST8Col4FlipNEONAdapter(buf []int32, rowStride int, min, max int32) {
+	if rowStride < 4 || len(buf) < (adst8Size-1)*rowStride+4 ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseADST8Col4FlipPureGo(buf, rowStride, min, max)
+		return
+	}
+	inverseADST8Col4NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
+	reverseADSTCol4(buf, rowStride, adst8Size)
 }
 
 func inverseADST16Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
@@ -125,9 +172,13 @@ func inverseADST16Col4FlipNEONAdapter(buf []int32, rowStride int, min, max int32
 		return
 	}
 	inverseADST16Col4NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
-	for i := 0; i < adst16Size/2; i++ {
+	reverseADSTCol4(buf, rowStride, adst16Size)
+}
+
+func reverseADSTCol4(buf []int32, rowStride int, length int) {
+	for i := 0; i < length/2; i++ {
 		top := buf[i*rowStride : i*rowStride+4 : i*rowStride+4]
-		j := (adst16Size - 1 - i) * rowStride
+		j := (length - 1 - i) * rowStride
 		bot := buf[j : j+4 : j+4]
 		top[0], bot[0] = bot[0], top[0]
 		top[1], bot[1] = bot[1], top[1]

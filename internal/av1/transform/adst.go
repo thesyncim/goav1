@@ -63,6 +63,57 @@ func inverseADST8(c []int32, stride int, min int32, max int32) {
 	inverseADST8To(c, stride, c, 0, stride, min, max)
 }
 
+// inverseADST8Core is the natural-order, single-buffer codegen source for the
+// four-lane ADST8 kernels. Keep it a mechanical mirror of inverseADST8To with
+// in==out==c, inStride==outStride==stride, and outOffset==0.
+func inverseADST8Core(c []int32, stride int, min int32, max int32) {
+	in0 := int64(c[0*stride])
+	in1 := int64(c[1*stride])
+	in2 := int64(c[2*stride])
+	in3 := int64(c[3*stride])
+	in4 := int64(c[4*stride])
+	in5 := int64(c[5*stride])
+	in6 := int64(c[6*stride])
+	in7 := int64(c[7*stride])
+
+	t0a := roundShift((4076-4096)*in7+401*in0, 12) + in7
+	t1a := roundShift(401*in7-(4076-4096)*in0, 12) - in0
+	t2a := roundShift((3612-4096)*in5+1931*in2, 12) + in5
+	t3a := roundShift(1931*in5-(3612-4096)*in2, 12) - in2
+	t4a := roundShift(1299*in3+1583*in4, 11)
+	t5a := roundShift(1583*in3-1299*in4, 11)
+	t6a := roundShift(1189*in1+(3920-4096)*in6, 12) + in6
+	t7a := roundShift((3920-4096)*in1-1189*in6, 12) + in1
+
+	t0 := int64(clipRange(t0a+t4a, min, max))
+	t1 := int64(clipRange(t1a+t5a, min, max))
+	t2 := int64(clipRange(t2a+t6a, min, max))
+	t3 := int64(clipRange(t3a+t7a, min, max))
+	t4 := int64(clipRange(t0a-t4a, min, max))
+	t5 := int64(clipRange(t1a-t5a, min, max))
+	t6 := int64(clipRange(t2a-t6a, min, max))
+	t7 := int64(clipRange(t3a-t7a, min, max))
+
+	t4a = roundShift((3784-4096)*t4+1567*t5, 12) + t4
+	t5a = roundShift(1567*t4-(3784-4096)*t5, 12) - t5
+	t6a = roundShift((3784-4096)*t7-1567*t6, 12) + t7
+	t7a = roundShift(1567*t7+(3784-4096)*t6, 12) + t6
+
+	c[0*stride] = clipRange(t0+t2, min, max)
+	c[7*stride] = clipInt32(-int64(clipRange(t1+t3, min, max)))
+	t2 = int64(clipRange(t0-t2, min, max))
+	t3 = int64(clipRange(t1-t3, min, max))
+	c[1*stride] = clipInt32(-int64(clipRange(t4a+t6a, min, max)))
+	c[6*stride] = clipRange(t5a+t7a, min, max)
+	t6 = int64(clipRange(t4a-t6a, min, max))
+	t7 = int64(clipRange(t5a-t7a, min, max))
+
+	c[3*stride] = clipInt32(-roundShift((t2+t3)*181, 8))
+	c[4*stride] = clipInt32(roundShift((t2-t3)*181, 8))
+	c[2*stride] = clipInt32(roundShift((t6+t7)*181, 8))
+	c[5*stride] = clipInt32(-roundShift((t6-t7)*181, 8))
+}
+
 func inverseADST8To(in []int32, inStride int, out []int32, outOffset int, outStride int, min int32, max int32) {
 	in0 := int64(in[0*inStride])
 	in1 := int64(in[1*inStride])

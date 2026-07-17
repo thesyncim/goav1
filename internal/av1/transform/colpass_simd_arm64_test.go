@@ -21,8 +21,12 @@ func colPass2TestFuncs() []col2TestFunc {
 // bit-exactness.
 func colPass4TestFuncs() []col2TestFunc {
 	return []col2TestFunc{
+		{"DCT8Col4", dct8Size, inverseDCT8Col4NEONAdapter, inverseDCT8Col4PureGo},
+		{"DCT16Col4", dct16Size, inverseDCT16Col4NEONAdapter, inverseDCT16Col4PureGo},
 		{"DCT32Col4", dct32Size, inverseDCT32Col4NEONAdapter, inverseDCT32Col4PureGo},
 		{"DCT64Col4", dct64Size, inverseDCT64Col4NEONAdapter, inverseDCT64Col4PureGo},
+		{"ADST8Col4", adst8Size, inverseADST8Col4NEONAdapter, inverseADST8Col4PureGo},
+		{"ADST8Col4Flip", adst8Size, inverseADST8Col4FlipNEONAdapter, inverseADST8Col4FlipPureGo},
 		{"ADST16Col4", adst16Size, inverseADST16Col4NEONAdapter, inverseADST16Col4PureGo},
 		{"ADST16Col4Flip", adst16Size, inverseADST16Col4FlipNEONAdapter, inverseADST16Col4FlipPureGo},
 		{"Identity4Col4", 4, inverseIdentity4Col4NEONAdapter, inverseIdentity4Col4PureGo},

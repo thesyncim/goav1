@@ -7,6 +7,8 @@
 #include <string.h>
 #include "core_ref.h"
 
+void goav1_idct8_col4(int32_t *base, long strideBytes, long min, long max);
+void goav1_idct16_col4(int32_t *base, long strideBytes, long min, long max);
 void goav1_idct32_col4(int32_t *base, long strideBytes, long min, long max);
 void goav1_idct64_col4(int32_t *base, long strideBytes, long min, long max, int32_t *scratch);
 
@@ -25,6 +27,8 @@ static const int32_t edges[] = {0, 1, -1, 7, -7, -32768, 32767, -131072, 131071,
 
 static int32_t g_scratch[512 + 64];
 
+static void idct8_wrap(int32_t *b, long st, long mn, long mx) { goav1_idct8_col4(b, st, mn, mx); }
+static void idct16_wrap(int32_t *b, long st, long mn, long mx) { goav1_idct16_col4(b, st, mn, mx); }
 static void idct32_wrap(int32_t *b, long st, long mn, long mx) { goav1_idct32_col4(b, st, mn, mx); }
 static void idct64_wrap(int32_t *b, long st, long mn, long mx) { goav1_idct64_col4(b, st, mn, mx, g_scratch + (rnd() % 64)); }
 
@@ -73,8 +77,11 @@ void goav1_idct16_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3, long 
 void goav1_idct32_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3, long min, long max);
 void goav1_idct64_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3, long min, long max, int32_t *scratch);
 void goav1_iadst16_col4(int32_t *base, long strideBytes, long min, long max);
+void goav1_iadst8_col4(int32_t *base, long strideBytes, long min, long max);
+void goav1_iadst8_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3, long min, long max);
 void goav1_iadst16_row4(int32_t *r0, int32_t *r1, int32_t *r2, int32_t *r3, long min, long max);
 static void iadst16_col4_wrap(int32_t *b, long st, long mn, long mx) { goav1_iadst16_col4(b, st, mn, mx); }
+static void iadst8_col4_wrap(int32_t *b, long st, long mn, long mx) { goav1_iadst8_col4(b, st, mn, mx); }
 
 static int run_iadst16_row4(void) {
   static const int bits[] = {16, 16, 18, 16, 20, 18};
@@ -102,6 +109,35 @@ static int run_iadst16_row4(void) {
     }
   }
   printf("iadst16 row4 ok\n");
+  return 0;
+}
+
+static int run_iadst8_row4(void) {
+  static const int bits[] = {16, 16, 18, 16, 20, 18};
+  for (int ci = 0; ci < 6; ci++) {
+    int64_t mx = (1LL << (bits[ci] - 1)) - 1, mn = -(1LL << (bits[ci] - 1));
+    for (int iter = 0; iter < 30000; iter++) {
+      int32_t rows[4][8], want[4][8];
+      for (int r = 0; r < 4; r++)
+        for (int i = 0; i < 8; i++) {
+          int32_t raw = (iter & 1) ? edges[rnd() % 13] : (int32_t)(rnd()) >> (rnd() % 13);
+          rows[r][i] = clampv(raw, mn, mx);
+        }
+      memcpy(want, rows, sizeof rows);
+      for (int r = 0; r < 4; r++) {
+        int64_t v[8];
+        for (int i = 0; i < 8; i++) v[i] = want[r][i];
+        iadst8_ref(v, mn, mx);
+        for (int i = 0; i < 8; i++) want[r][i] = (int32_t)v[i];
+      }
+      goav1_iadst8_row4(rows[0], rows[1], rows[2], rows[3], mn, mx);
+      if (memcmp(rows, want, sizeof rows)) {
+        printf("IADST8 ROW MISMATCH clamp=%d iter=%d\n", bits[ci], iter);
+        return 1;
+      }
+    }
+  }
+  printf("iadst8 row4 ok\n");
   return 0;
 }
 
@@ -145,13 +181,17 @@ static int run_row4(int n) {
 }
 
 int main(void) {
+  if (run(8, idct8_wrap, idct8_ref)) return 1;
+  if (run(16, idct16_wrap, idct16_ref)) return 1;
   if (run(32, idct32_wrap, idct32_ref)) return 1;
   if (run(64, idct64_wrap, idct64_ref)) return 1;
   if (run_row4(8)) return 1;
   if (run_row4(16)) return 1;
   if (run_row4(32)) return 1;
   if (run_row4(64)) return 1;
+  if (run(8, iadst8_col4_wrap, iadst8_ref)) return 1;
   if (run(16, iadst16_col4_wrap, iadst16_ref)) return 1;
+  if (run_iadst8_row4()) return 1;
   if (run_iadst16_row4()) return 1;
   return 0;
 }

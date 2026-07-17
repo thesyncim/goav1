@@ -7,15 +7,21 @@ import re, subprocess, sys
 OBJ = "kernels.o"
 
 def functions():
+    nm = subprocess.run(["nm", "-g", OBJ], capture_output=True, text=True).stdout
+    symbols = {}
+    for line in nm.splitlines():
+        m = re.match(r"^([0-9a-f]+)\s+T\s+_?(.+)$", line)
+        if m:
+            symbols[int(m.group(1), 16)] = m.group(2)
     out = subprocess.run(["objdump", "-d", OBJ], capture_output=True, text=True).stdout
     funcs = {}
     cur = None
     for line in out.splitlines():
-        m = re.match(r"^[0-9a-f]+ <_?(.+)>:$", line)
+        m = re.match(r"^([0-9a-f]+) <_?(.+)>:$", line)
         if m:
-            cur = m.group(1)
-            if cur == "ltmp0":
-                cur = "goav1_idct32_col4"  # first function label quirk
+            addr, cur = int(m.group(1), 16), m.group(2)
+            if cur.startswith("ltmp"):
+                cur = symbols[addr]
             funcs[cur] = []
             continue
         m = re.match(r"^\s*[0-9a-f]+: ([0-9a-f]{8})\s+(\S+)\s*(.*)$", line)
