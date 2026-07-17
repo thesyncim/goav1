@@ -2,6 +2,7 @@ package threading
 
 import (
 	"errors"
+	"reflect"
 	"runtime"
 	"slices"
 	"testing"
@@ -12,6 +13,92 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/prediction"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
+
+var benchmarkPredictionGeometrySink int
+
+func TestBlockPredictionPlaneGeometryCacheMatchesUncached(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{
+		Width:        64,
+		Height:       64,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	})
+	uncached := testIntraPredictionBatch(output)
+	cached := uncached
+	var cache frameWorkJobGeometryCache
+	cached.geomCache = &cache
+	blocks := [...]tile.BlockVisit{
+		{MICol: 0, MIRow: 0, MIColEnd: 8, MIRowEnd: 8, X4: 0, Y4: 0, Size: tile.BlockSize32x32, VisibleW4: 8, VisibleH4: 8},
+		{MICol: 8, MIRow: 0, MIColEnd: 16, MIRowEnd: 8, X4: 8, Y4: 0, Size: tile.BlockSize32x32, VisibleW4: 8, VisibleH4: 8},
+	}
+	steps := [...]struct {
+		block int
+		plane FrameWorkPlane
+	}{
+		{0, FrameWorkPlaneY}, {0, FrameWorkPlaneY},
+		{0, FrameWorkPlaneU}, {0, FrameWorkPlaneU},
+		{0, FrameWorkPlaneV}, {0, FrameWorkPlaneV},
+		{1, FrameWorkPlaneY}, {0, FrameWorkPlaneY},
+	}
+	for i, step := range steps {
+		want, wantPresent, wantErr := uncached.blockPredictionPlaneGeometry(0, blocks[step.block], step.plane)
+		got, gotPresent, gotErr := cached.blockPredictionPlaneGeometry(0, blocks[step.block], step.plane)
+		if !errors.Is(gotErr, wantErr) || gotPresent != wantPresent || !reflect.DeepEqual(got, want) {
+			t.Fatalf("step %d block=%d plane=%d: got present=%v err=%v geom=%+v; want present=%v err=%v geom=%+v",
+				i, step.block, step.plane, gotPresent, gotErr, got, wantPresent, wantErr, want)
+		}
+	}
+}
+
+func BenchmarkBlockPredictionPlaneGeometryRepeated(b *testing.B) {
+	output := testBatchFrame(b, frame.Format{
+		Width:        64,
+		Height:       64,
+		BitDepth:     8,
+		SubsamplingX: true,
+		SubsamplingY: true,
+		Align:        64,
+	})
+	ctx := testIntraPredictionBatch(output)
+	var cache frameWorkJobGeometryCache
+	ctx.geomCache = &cache
+	if err := frameWorkPrimeLumaReconGeometry(&ctx, 0); err != nil {
+		b.Fatal(err)
+	}
+	blocks := [...]tile.BlockVisit{
+		{MICol: 0, MIRow: 0, MIColEnd: 8, MIRowEnd: 8, X4: 0, Y4: 0, Size: tile.BlockSize32x32, VisibleW4: 8, VisibleH4: 8},
+		{MICol: 8, MIRow: 0, MIColEnd: 16, MIRowEnd: 8, X4: 8, Y4: 0, Size: tile.BlockSize32x32, VisibleW4: 8, VisibleH4: 8},
+	}
+	for _, tc := range []struct {
+		name    string
+		planes  []FrameWorkPlane
+		repeats int
+	}{
+		{name: "luma_8tx", planes: []FrameWorkPlane{FrameWorkPlaneY}, repeats: 8},
+		{name: "chroma_4tx", planes: []FrameWorkPlane{FrameWorkPlaneU, FrameWorkPlaneV}, repeats: 4},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			sum := 0
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := range b.N {
+				block := blocks[i&1]
+				for _, plane := range tc.planes {
+					for range tc.repeats {
+						geom, present, err := ctx.blockPredictionPlaneGeometry(0, block, plane)
+						if err != nil || !present {
+							b.Fatalf("geometry plane=%d present=%v err=%v", plane, present, err)
+						}
+						sum += geom.X + geom.Y + geom.width() + geom.height()
+					}
+				}
+			}
+			benchmarkPredictionGeometrySink = sum
+		})
+	}
+}
 
 func TestFrameWorkBatchPredictBlockLumaIntraDC(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})

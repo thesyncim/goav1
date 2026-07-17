@@ -2238,6 +2238,9 @@ func (b *FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, pla
 }
 
 func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.BlockVisit, plane FrameWorkPlane) (frameWorkPredictionPlaneGeometry, bool, error) {
+	if geom, present, ok := b.cachedBlockPredictionPlaneGeometry(index, block, plane); ok {
+		return geom, present, nil
+	}
 	var (
 		x, y                       int
 		width, height              int
@@ -2271,6 +2274,9 @@ func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Bloc
 			if err == nil && plane == FrameWorkPlaneU {
 				b.cachePredictionChromaShape(index, block, frameWorkPredictionPlaneShape{}, false)
 			}
+			if err == nil {
+				b.cacheBlockPredictionPlaneGeometry(index, block, plane, frameWorkPredictionPlaneGeometry{}, false)
+			}
 			return frameWorkPredictionPlaneGeometry{}, present, err
 		}
 	}
@@ -2295,6 +2301,7 @@ func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Bloc
 	// rejecting the block). Treat that case as a silently-skipped prediction;
 	// genuinely malformed callers still hit the !ok path below.
 	if x >= 0 && y >= 0 && (x >= base.allocationWidth || y >= base.allocationHeight) {
+		b.cacheBlockPredictionPlaneGeometry(index, block, plane, frameWorkPredictionPlaneGeometry{}, false)
 		return frameWorkPredictionPlaneGeometry{}, false, nil
 	}
 	rawWidth, rawHeight := width, height
@@ -2358,7 +2365,7 @@ func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Bloc
 			}
 		}
 	}
-	return frameWorkPredictionPlaneGeometry{
+	geom := frameWorkPredictionPlaneGeometry{
 		Output:         base.output,
 		Window:         window,
 		X:              x,
@@ -2373,7 +2380,33 @@ func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Bloc
 		SubsamplingY:   subsamplingY,
 		BytesPerSample: base.bytesPerSample,
 		FilterExtent:   filterExtent,
-	}, true, nil
+	}
+	b.cacheBlockPredictionPlaneGeometry(index, block, plane, geom, true)
+	return geom, true, nil
+}
+
+func (b *FrameWorkBatch) cachedBlockPredictionPlaneGeometry(index int, block tile.BlockVisit, plane FrameWorkPlane) (frameWorkPredictionPlaneGeometry, bool, bool) {
+	cacheIndex, ok := frameWorkJobCacheIndex(index)
+	c := b.geomCache
+	if c == nil || !ok || !c.predictionGeometryValid ||
+		c.predictionGeometryIndex != cacheIndex || c.predictionGeometryPlane != plane || c.predictionGeometryBlock != block {
+		return frameWorkPredictionPlaneGeometry{}, false, false
+	}
+	return c.predictionGeometry, c.predictionGeometryPresent, true
+}
+
+func (b *FrameWorkBatch) cacheBlockPredictionPlaneGeometry(index int, block tile.BlockVisit, plane FrameWorkPlane, geom frameWorkPredictionPlaneGeometry, present bool) {
+	cacheIndex, ok := frameWorkJobCacheIndex(index)
+	c := b.geomCache
+	if c == nil || !ok {
+		return
+	}
+	c.predictionGeometry = geom
+	c.predictionGeometryBlock = block
+	c.predictionGeometryIndex = cacheIndex
+	c.predictionGeometryPlane = plane
+	c.predictionGeometryPresent = present
+	c.predictionGeometryValid = true
 }
 
 func (b *FrameWorkBatch) cachedPredictionPlaneBase(index int, plane FrameWorkPlane) (frameWorkPredictionPlaneBase, bool) {

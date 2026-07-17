@@ -304,6 +304,16 @@ type frameWorkJobGeometryCache struct {
 	chromaShapeIndex   uint16
 	chromaShapeBlock   tile.BlockVisit
 	chromaShape        frameWorkPredictionPlaneShape
+
+	// Intra prediction may visit several transform blocks from the same AV1
+	// block and plane consecutively. Retain the complete checked result so
+	// those TXBs do not repeat block positioning, clipping, and extent work.
+	predictionGeometryValid   bool
+	predictionGeometryPresent bool
+	predictionGeometryPlane   FrameWorkPlane
+	predictionGeometryIndex   uint16
+	predictionGeometryBlock   tile.BlockVisit
+	predictionGeometry        frameWorkPredictionPlaneGeometry
 }
 
 type frameWorkPredictionPlaneBase struct {
@@ -351,6 +361,7 @@ func (c *frameWorkJobGeometryCache) reset() {
 	c.validMask = 0
 	c.predictionBaseValid = 0
 	c.chromaShapeValid = false
+	c.predictionGeometryValid = false
 }
 
 // Surface returns the frame-pool surface that this batch reconstructs into.
@@ -423,6 +434,7 @@ func (b *FrameWorkBatch) JobRegion(index int) (FrameWorkJobRegion, error) {
 			c.validMask &^= frameWorkJobGeometryPlanesValid
 			c.predictionBaseValid = 0
 			c.chromaShapeValid = false
+			c.predictionGeometryValid = false
 		}
 		c.region = region
 		c.regionIndex = cacheIndex
