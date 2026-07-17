@@ -247,7 +247,7 @@ func (f *TemporalMotionField) ProjectReferenceFrame(req TemporalMotionProjection
 				blkCol = runEnd
 				continue
 			}
-			projected, err := motionFieldProjectMV(mvRef.MV, startToCurrent, refFrameOffset)
+			projected, err := motionFieldProjectMVInRange(mvRef.MV, startToCurrent, refFrameOffset)
 			if err != nil {
 				return false, err
 			}
