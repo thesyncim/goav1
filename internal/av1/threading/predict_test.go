@@ -87,7 +87,7 @@ func BenchmarkBlockPredictionPlaneGeometryRepeated(b *testing.B) {
 				block := blocks[i&1]
 				for _, plane := range tc.planes {
 					for range tc.repeats {
-						geom, present, err := ctx.blockPredictionPlaneGeometry(0, block, plane)
+						geom, present, err := ctx.blockPredictionPlaneGeometryPtr(0, block, plane)
 						if err != nil || !present {
 							b.Fatalf("geometry plane=%d present=%v err=%v", plane, present, err)
 						}
@@ -2955,7 +2955,7 @@ func TestFrameWorkBatchPredictBlockInterWarpFallsBackToScaledTranslation(t *test
 		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
 	}
 	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
-	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.bytesPerSample(), want.Format.BitDepth,
+	if err := frameWorkPredictScaledReferencePlane(&geom, refPlane, geom.bytesPerSample(), want.Format.BitDepth,
 		geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), mv, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
 		t.Fatalf("frameWorkPredictScaledReferencePlane err=%v", err)
 	}
@@ -3008,7 +3008,7 @@ func TestFrameWorkBatchPredictBlockInterGlobalWarpFallsBackToScaledTranslation(t
 		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
 	}
 	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
-	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.bytesPerSample(), want.Format.BitDepth,
+	if err := frameWorkPredictScaledReferencePlane(&geom, refPlane, geom.bytesPerSample(), want.Format.BitDepth,
 		geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), mv, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
 		t.Fatalf("frameWorkPredictScaledReferencePlane err=%v", err)
 	}
@@ -3087,11 +3087,11 @@ func TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledCon
 		t.Fatalf("plane geometry err=%v ok=%v", err, ok)
 	}
 	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
-	if err := frameWorkPredictScaledReferencePlane(geom, refPlane, geom.bytesPerSample(), want.Format.BitDepth,
+	if err := frameWorkPredictScaledReferencePlane(&geom, refPlane, geom.bytesPerSample(), want.Format.BitDepth,
 		geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), baseMV, geom.SubsamplingX, geom.SubsamplingY, filters); err != nil {
 		t.Fatalf("base scaled-ref err=%v", err)
 	}
-	overlap, err := frameWorkOBMCLeftWidth(visit.Block.Size, geom)
+	overlap, err := frameWorkOBMCLeftWidth(visit.Block.Size, &geom)
 	if err != nil {
 		t.Fatalf("OBMC left width err=%v", err)
 	}
@@ -3240,11 +3240,11 @@ func TestFrameWorkBatchPredictBlockInterIntraScaledMatchesScaledTranslation(t *t
 		t.Fatalf("intra scratch err=%v", err)
 	}
 	refPlane := frame.Plane{Pix: reference.Y.Pix, Stride: reference.Y.Stride, Width: reference.Y.Width, Height: reference.Y.Height}
-	if err := frameWorkPredictScaledReferencePlaneToBuffer(inter, refPlane, geom, want.Format.BitDepth,
+	if err := frameWorkPredictScaledReferencePlaneToBuffer(inter, refPlane, &geom, want.Format.BitDepth,
 		0, 0, geom.X, geom.Y, mv, filters); err != nil {
 		t.Fatalf("scaled-ref to buffer err=%v", err)
 	}
-	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
+	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, &geom)
 	var intraScratch FrameWorkIntraPredictionScratch
 	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.bytesPerSample(), want.Format.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), edgeBlock, &intraScratch, true)
 	if err != nil {

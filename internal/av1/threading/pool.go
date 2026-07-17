@@ -302,7 +302,7 @@ type frameWorkJobGeometryCache struct {
 	chromaShapeValid   bool
 	chromaShapePresent bool
 	chromaShapeIndex   uint16
-	chromaShapeBlock   tile.BlockVisit
+	chromaShapeBlock   frameWorkPredictionBlockKey
 	chromaShape        frameWorkPredictionPlaneShape
 
 	// Intra prediction may visit several transform blocks from the same AV1
@@ -312,7 +312,7 @@ type frameWorkJobGeometryCache struct {
 	predictionGeometryPresent bool
 	predictionGeometryPlane   FrameWorkPlane
 	predictionGeometryIndex   uint16
-	predictionGeometryBlock   tile.BlockVisit
+	predictionGeometryBlock   frameWorkPredictionBlockKey
 	predictionGeometry        frameWorkPredictionPlaneGeometry
 }
 
@@ -327,6 +327,29 @@ type frameWorkPredictionPlaneBase struct {
 	bytesPerSample uint8
 	subsamplingX   bool
 	subsamplingY   bool
+}
+
+// frameWorkPredictionBlockKey retains exactly the BlockVisit fields consumed
+// by prediction geometry. Keeping the key in two machine words avoids making
+// every cache hit compare mode, partition, and neighbor fields that cannot
+// affect plane position or extent.
+type frameWorkPredictionBlockKey struct {
+	position uint64
+	shape    uint64
+}
+
+func frameWorkPredictionBlockCacheKey(block tile.BlockVisit) frameWorkPredictionBlockKey {
+	return frameWorkPredictionBlockKey{
+		position: uint64(block.MICol) |
+			uint64(block.MIRow)<<16 |
+			uint64(block.MIColEnd)<<32 |
+			uint64(block.MIRowEnd)<<48,
+		shape: uint64(block.X4) |
+			uint64(block.Y4)<<8 |
+			uint64(block.Size)<<16 |
+			uint64(block.VisibleW4)<<24 |
+			uint64(block.VisibleH4)<<32,
+	}
 }
 
 type frameWorkPredictionPlaneShape struct {
