@@ -19,7 +19,9 @@ func TestLoadSampleRows8NEONMatchesPureGo(t *testing.T) {
 	}{
 		{1, 3}, {4, 4}, {7, 2}, // pure-Go fallback widths
 		{8, 1}, {8, 5}, {9, 3}, {15, 4}, {16, 2}, {17, 7},
-		{23, 3}, {24, 4}, {31, 2}, {33, 5}, {160, 9}, {1289, 3},
+		{23, 3}, {24, 4}, {31, 2}, {33, 5},
+		{40, 7}, {48, 3}, {72, 9}, {80, 5},
+		{160, 9}, {1289, 3},
 	} {
 		srcStride := tc.width + rng.Intn(24)
 		dstStride := tc.width + rng.Intn(16)
@@ -77,6 +79,32 @@ func benchLoadSampleRows8(b *testing.B, fn func(dst []uint16, dstStride int, src
 
 func BenchmarkLoadSampleRows8NEON_720p(b *testing.B) {
 	benchLoadSampleRows8(b, loadSampleRows8NEON)
+}
+
+func BenchmarkLoadSampleRows8NEON_CDEF(b *testing.B) {
+	for _, tc := range []struct {
+		name          string
+		width, height int
+	}{
+		{"8x64", 8, 64},
+		{"36x32", 36, 32},
+		{"40x2", 40, 2},
+		{"48x2", 48, 2},
+		{"72x64", 72, 64},
+		{"80x2", 80, 2},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			const stride = 144
+			src := make([]byte, tc.height*stride)
+			dst := make([]uint16, tc.height*stride)
+			b.SetBytes(int64(tc.width * tc.height))
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				loadSampleRows8NEON(dst, stride, src, stride, tc.width, tc.height)
+			}
+		})
+	}
 }
 
 func BenchmarkLoadSampleRows8PureGo_720p(b *testing.B) {

@@ -13,6 +13,17 @@
 #define L_WIDTH  32
 #define L_HEIGHT 40
 
+#define WIDEN16 \
+	WORD $0x4cdf7040 \
+	WORD $0x2f08a401 \
+	WORD $0x6f08a402 \
+	WORD $0x4c9fa421
+
+#define WIDEN8 \
+	WORD $0x0cdf7040 \
+	WORD $0x2f08a401 \
+	WORD $0x4c9f7421
+
 // func loadSampleRows8NEONAsm(ctx *loadSampleRows8NEONCtx)
 //
 // Widening row copy u8 -> u16 for postfilter sample staging:
@@ -30,6 +41,16 @@ TEXT ·loadSampleRows8NEONAsm(SB), NOSPLIT, $0-8
 	MOVD L_WIDTH(R0), R6
 	MOVD L_HEIGHT(R0), R7
 	LSL  $1, R3, R3 // dst stride in bytes
+	CMP  $8, R6
+	BEQ  lsrRows8
+	CMP  $40, R6
+	BEQ  lsrRows40
+	CMP  $48, R6
+	BEQ  lsrRows48
+	CMP  $72, R6
+	BEQ  lsrRows72
+	CMP  $80, R6
+	BEQ  lsrRows80
 
 lsrRowLoop:
 	MOVD R2, R8  // src row cursor
@@ -71,4 +92,75 @@ lsrNextRow:
 	SUB  $1, R7, R7
 	CBNZ R7, lsrRowLoop
 
+	RET
+
+// The CDEF unit assembler overwhelmingly copies 8-wide left halos, 40/72-wide
+// chroma/luma bodies, and 48/80-wide top/bottom halos. Keep those row widths
+// on fixed straight-line paths: the generic column loop otherwise spends as
+// many scalar compare/branch instructions as it does vector work.
+lsrRows8:
+	SUB $8, R5, R8
+	SUB $16, R3, R9
+lsrRows8Loop:
+	WIDEN8
+	ADD R8, R2
+	ADD R9, R1
+	SUB $1, R7
+	CBNZ R7, lsrRows8Loop
+	RET
+
+lsrRows40:
+	SUB $40, R5, R8
+	SUB $80, R3, R9
+lsrRows40Loop:
+	WIDEN16
+	WIDEN16
+	WIDEN8
+	ADD R8, R2
+	ADD R9, R1
+	SUB $1, R7
+	CBNZ R7, lsrRows40Loop
+	RET
+
+lsrRows48:
+	SUB $48, R5, R8
+	SUB $96, R3, R9
+lsrRows48Loop:
+	WIDEN16
+	WIDEN16
+	WIDEN16
+	ADD R8, R2
+	ADD R9, R1
+	SUB $1, R7
+	CBNZ R7, lsrRows48Loop
+	RET
+
+lsrRows72:
+	SUB $72, R5, R8
+	SUB $144, R3, R9
+lsrRows72Loop:
+	WIDEN16
+	WIDEN16
+	WIDEN16
+	WIDEN16
+	WIDEN8
+	ADD R8, R2
+	ADD R9, R1
+	SUB $1, R7
+	CBNZ R7, lsrRows72Loop
+	RET
+
+lsrRows80:
+	SUB $80, R5, R8
+	SUB $160, R3, R9
+lsrRows80Loop:
+	WIDEN16
+	WIDEN16
+	WIDEN16
+	WIDEN16
+	WIDEN16
+	ADD R8, R2
+	ADD R9, R1
+	SUB $1, R7
+	CBNZ R7, lsrRows80Loop
 	RET
