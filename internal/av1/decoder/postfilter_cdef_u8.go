@@ -157,17 +157,23 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 				prevFiltered = false
 				continue
 			}
-			blocks := frameWorkCDEFBlockPositionsFiltered(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, unitRow, unitCol)
-			if len(blocks) == 0 {
-				prevFiltered = false
-				continue
-			}
 			unitIndex := unitRow*cols + unitCol
 			unitDirections := directions
 			unitVariances := variances
 			if unitIndex < len(directionGrid) && unitIndex < len(varianceGrid) {
 				unitDirections = &directionGrid[unitIndex]
 				unitVariances = &varianceGrid[unitIndex]
+			}
+			var blocks []cdef.BlockPosition
+			if plane == 0 {
+				frameWorkCDEFMarkDirectionsUnavailable(unitDirections, unitW, unitH, blockWidth, blockHeight)
+				blocks = frameWorkCDEFBlockPositionsFiltered(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, unitRow, unitCol)
+			} else {
+				blocks = frameWorkCDEFBlockPositionsFromDirections(blockStorage, unitW, unitH, blockWidth, blockHeight, unitDirections)
+			}
+			if len(blocks) == 0 {
+				prevFiltered = false
+				continue
 			}
 			cdefPlane := cdef.PlaneY
 			if plane == 1 {

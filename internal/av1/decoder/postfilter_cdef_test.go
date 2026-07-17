@@ -1326,3 +1326,21 @@ func TestFrameWorkCDEFBlockAllSkippedFastAndSplitCoverage(t *testing.T) {
 		t.Fatal("split coverage with one invalid cell was skipped")
 	}
 }
+
+func TestFrameWorkCDEFBlockPositionsReuseLumaDirections(t *testing.T) {
+	var directions cdef.DirectionGrid
+	frameWorkCDEFMarkDirectionsUnavailable(&directions, cdef.BlockSize, cdef.BlockSize, 8, 8)
+	directions[0][1] = 3
+	directions[7][6] = 7
+	storage := make([]cdef.BlockPosition, cdef.NBlocks*cdef.NBlocks)
+	positions := frameWorkCDEFBlockPositionsFromDirections(storage, cdef.BlockSize, cdef.BlockSize, 8, 8, &directions)
+	want := []cdef.BlockPosition{{BY: 0, BX: 1}, {BY: 7, BX: 6}}
+	if len(positions) != len(want) {
+		t.Fatalf("positions=%v want %v", positions, want)
+	}
+	for i := range want {
+		if positions[i] != want[i] {
+			t.Fatalf("positions[%d]=%v want %v", i, positions[i], want[i])
+		}
+	}
+}
