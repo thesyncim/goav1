@@ -28,17 +28,15 @@
 #define H_ROWS   32
 #define H_TAPS   40
 #define H_SEED   48
-#define H_SHIFT  52
-#define H_MAXCL  56
+#define H_MAXCL  52
 
 // func wienerHorizontalU8NEONAsm(ctx *wienerU8NEONHorizCtx)
 //
-// Horizontal 7-tap Wiener pass over uint8 source samples. Identical to
-// wienerHorizontalNEONAsm except the window load: 16 u8 samples are loaded and
-// zero-extended to the v2/v3 u16 window pair with UXTL/UXTL2 (so the EXT tap
-// windows and widening MACs see the exact lanes the u16 kernel loads), the
-// source cursor advances 8 bytes per group, and the stride is already in
-// bytes. The temp output remains the 16-bit intermediate.
+// Horizontal 7-tap Wiener pass over uint8 source samples. Symmetric taps are
+// factored into f0*(s0+s6) + f1*(s1+s5) + f2*(s2+s4) + f3*s3, shortening each
+// accumulator from seven widening MACs to four. The wrapper guarantees the
+// symmetry and fixed 8-bit round0, allowing SQSHRUN to fuse the final shift and
+// lower clamp. The temp output remains the 16-bit intermediate.
 TEXT ·wienerHorizontalU8NEONAsm(SB), NOSPLIT, $0-8
 	MOVD ctx+0(FP), R0
 	MOVD H_DST(R0), R1      // temp output base
@@ -48,12 +46,10 @@ TEXT ·wienerHorizontalU8NEONAsm(SB), NOSPLIT, $0-8
 	MOVD H_ROWS(R0), R7     // rows = height + 2*WienerHalfwin
 	MOVD H_TAPS(R0), R3     // taps ptr (8 int16)
 	MOVW H_SEED(R0), R11    // accumulator seed (s32)
-	MOVW H_SHIFT(R0), R12   // -round0 (s32)
 	MOVHU H_MAXCL(R0), R13  // maxClamp (u16)
 
 	WORD $0x4c407460       // ld1 {v0.8h}, [x3]    load 8 taps
 	WORD $0x4e040d72       // dup v18.4s, w11      seed broadcast (s32 lanes)
-	WORD $0x4e040d93       // dup v19.4s, w12      shift broadcast (s32 lanes)
 	WORD $0x4e020db5       // dup v21.8h, w13      maxClamp broadcast (u16 lanes)
 
 	LSL  $1, R6, R14       // dst row stride in bytes (= width * 2)
@@ -71,31 +67,26 @@ hColLoop:
 	WORD $0x2f08a422       // uxtl  v2.8h, v1.8b    lanes 0..7  -> u16
 	WORD $0x6f08a423       // uxtl2 v3.8h, v1.16b   lanes 8..15 -> u16
 
-	WORD $0x0f402050       // smlal  v16.4s, v2.4h, v0.h[0]
-	WORD $0x4f402051       // smlal2 v17.4s, v2.8h, v0.h[0]
-	WORD $0x6e031044       // ext v4.16b, v2.16b, v3.16b, #2
+	WORD $0x6e036044       // ext v4.16b, v2.16b, v3.16b, #12  s6..s13
+	WORD $0x4e628484       // add v4.8h, v4.8h, v2.8h            s0+s6
+	WORD $0x0f402090       // smlal  v16.4s, v4.4h, v0.h[0]
+	WORD $0x4f402091       // smlal2 v17.4s, v4.8h, v0.h[0]
+	WORD $0x6e031044       // ext v4.16b, v2.16b, v3.16b, #2   s1..s8
+	WORD $0x6e035045       // ext v5.16b, v2.16b, v3.16b, #10  s5..s12
+	WORD $0x4e658484       // add v4.8h, v4.8h, v5.8h            s1+s5
 	WORD $0x0f502090       // smlal  v16.4s, v4.4h, v0.h[1]
 	WORD $0x4f502091       // smlal2 v17.4s, v4.8h, v0.h[1]
-	WORD $0x6e032044       // ext v4.16b, v2.16b, v3.16b, #4
+	WORD $0x6e032044       // ext v4.16b, v2.16b, v3.16b, #4   s2..s9
+	WORD $0x6e034045       // ext v5.16b, v2.16b, v3.16b, #8   s4..s11
+	WORD $0x4e658484       // add v4.8h, v4.8h, v5.8h            s2+s4
 	WORD $0x0f602090       // smlal  v16.4s, v4.4h, v0.h[2]
 	WORD $0x4f602091       // smlal2 v17.4s, v4.8h, v0.h[2]
 	WORD $0x6e033044       // ext v4.16b, v2.16b, v3.16b, #6
 	WORD $0x0f702090       // smlal  v16.4s, v4.4h, v0.h[3]
 	WORD $0x4f702091       // smlal2 v17.4s, v4.8h, v0.h[3]
-	WORD $0x6e034044       // ext v4.16b, v2.16b, v3.16b, #8
-	WORD $0x0f402890       // smlal  v16.4s, v4.4h, v0.h[4]
-	WORD $0x4f402891       // smlal2 v17.4s, v4.8h, v0.h[4]
-	WORD $0x6e035044       // ext v4.16b, v2.16b, v3.16b, #10
-	WORD $0x0f502890       // smlal  v16.4s, v4.4h, v0.h[5]
-	WORD $0x4f502891       // smlal2 v17.4s, v4.8h, v0.h[5]
-	WORD $0x6e036044       // ext v4.16b, v2.16b, v3.16b, #12
-	WORD $0x0f602890       // smlal  v16.4s, v4.4h, v0.h[6]
-	WORD $0x4f602891       // smlal2 v17.4s, v4.8h, v0.h[6]
 
-	WORD $0x4eb34610       // sshl v16.4s, v16.4s, v19.4s  arith >> round0
-	WORD $0x4eb34631       // sshl v17.4s, v17.4s, v19.4s
-	WORD $0x2e612a14       // sqxtun  v20.4h, v16.4s       s32 -> u16, clamp lo 0
-	WORD $0x6e612a34       // sqxtun2 v20.8h, v17.4s
+	WORD $0x2f1d8614       // sqshrun  v20.4h, v16.4s, #3  round0 + clamp lo 0
+	WORD $0x6f1d8634       // sqshrun2 v20.8h, v17.4s, #3
 	WORD $0x6e756e94       // umin v20.8h, v20.8h, v21.8h  clamp hi maxClamp
 	WORD $0x4c007554       // st1 {v20.8h}, [x10]
 

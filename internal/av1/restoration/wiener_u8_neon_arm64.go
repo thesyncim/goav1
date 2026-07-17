@@ -38,7 +38,6 @@ type wienerU8NEONHorizCtx struct {
 	rows   uintptr // number of rows: height + 2*WienerHalfwin
 	taps   *int16  // 8 lanes: 7 adjusted taps (tap3 += 128) + 1 pad
 	seed   int32   // accumulator seed: offset + (1<<(round0-1))
-	shift  int32   // -round0 (negative => arithmetic right shift)
 	maxCl  uint16  // upper clamp (maxClamp = limit-1)
 }
 
@@ -65,7 +64,8 @@ func wienerHorizontalU8NEONAsm(ctx *wienerU8NEONHorizCtx)
 func wienerVerticalU8NEONAsm(ctx *wienerU8NEONVertCtx)
 
 func wienerHorizontalU8NEON(src []uint8, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, round0 int, temp []uint16) {
-	if width < 8 || width%8 != 0 {
+	if width < 8 || width%8 != 0 || round0 != WienerRound0Bits ||
+		filter[0] != filter[6] || filter[1] != filter[5] || filter[2] != filter[4] {
 		wienerHorizontalU8(src, srcStride, srcOrigin, width, height, filter, round0, temp)
 		return
 	}
@@ -81,7 +81,6 @@ func wienerHorizontalU8NEON(src []uint8, srcStride int, srcOrigin int, width int
 		rows:   uintptr(height + 2*WienerHalfwin),
 		taps:   &taps[0],
 		seed:   offset + roundBias(round0),
-		shift:  int32(-round0),
 		maxCl:  uint16(limit - 1),
 	}
 	wienerHorizontalU8NEONAsm(&ctx)
