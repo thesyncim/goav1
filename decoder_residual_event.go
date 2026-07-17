@@ -697,6 +697,7 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	}
 	if hasTile && req.SideData != nil {
 		if tile.JobCount != 0 {
+			setDecoderFrameWorkDirectLoopFilterLevels(req.SideData, event)
 			if err := SetDecoderFrameWorkBatchResidualRunnerSideData(req.Runner, *req.SideData); err != nil {
 				return DecoderFrameWorkEventResult{}, err
 			}
@@ -1098,16 +1099,24 @@ type decoderFrameWorkResidualSideDataRunner struct {
 	BatchRunner *DecoderFrameWorkBatchResidualRunner
 }
 
-func (r decoderFrameWorkResidualSideDataRunner) BindFrameWorkSideData(state *DecoderFrameWorkState, _ DecoderFrameWorkBatch) error {
+func (r decoderFrameWorkResidualSideDataRunner) BindFrameWorkSideData(state *DecoderFrameWorkState, batch DecoderFrameWorkBatch) error {
 	if r.SideData == nil {
 		return nil
 	}
+	setDecoderFrameWorkDirectLoopFilterLevels(r.SideData, DecoderEvent{TileInfo: batch.TileInfo})
 	if r.BatchRunner != nil {
 		if err := SetDecoderFrameWorkBatchResidualRunnerSideData(r.BatchRunner, *r.SideData); err != nil {
 			return err
 		}
 	}
 	return SetDecoderFrameWorkSideData(state, *r.SideData)
+}
+
+func setDecoderFrameWorkDirectLoopFilterLevels(side *DecoderFrameWorkSideData, event DecoderEvent) {
+	if side == nil || !side.LoopFilterMasks.Valid() {
+		return
+	}
+	side.LoopFilterMasks.LevelsFromDecode = event.TileInfo.Cols <= 1 && event.TileInfo.Rows <= 1
 }
 
 func decoderFrameWorkResidualRunnerStats(runner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkTileResidualStats, error) {
