@@ -1027,8 +1027,8 @@ done14:
 // the eight taps p3..q3 are contiguous bytes within a row and positions step by
 // stride. Per group the kernel transposes through ld4 (gathering p3..q3 into
 // lane vectors v16..v23), runs the exact filter8 lane arithmetic shared with
-// filter8EdgeNEONAsm, and scatters the six modified samples (p2..q2) back with
-// per-lane single-byte stores. Bit-exact with filter8EdgePureGo.
+// filter8EdgeNEONAsm, transposes the six modified samples (p2..q2), and writes
+// one 32-bit plus one 16-bit word per row. Bit-exact with filter8EdgePureGo.
 TEXT ·filter8VertNEONAsm(SB), NOSPLIT, $0-8
 	MOVD ctx+0(FP), R0
 	MOVD WV_BASE(R0), R1
@@ -1185,23 +1185,7 @@ loop8v:
 	WORD $0x6e711ffe // bsl v30.16b, v31.16b, v17.16b
 	WORD $0x4eb81f1d // mov v29.16b, v24.16b
 	WORD $0x6e711fdd // bsl v29.16b, v30.16b, v17.16b
-	WORD $0x0e212bbd // xtn v29.8b, v29.8h
-	ADD $1, R1, R11   // scatter base for x10
-	WORD $0x0d00017d // st1 {v29.b}[0], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00057d // st1 {v29.b}[1], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00097d // st1 {v29.b}[2], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d000d7d // st1 {v29.b}[3], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00117d // st1 {v29.b}[4], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00157d // st1 {v29.b}[5], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00197d // st1 {v29.b}[6], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d001d7d // st1 {v29.b}[7], [x11]
+	WORD $0x0e212ba8 // xtn v8.8b, v29.8h (p2 rows 0..7)
 	WORD $0x4f1f277e // srshr v30.8h, v27.8h, #1
 	WORD $0x6e64865d // sub v29.8h, v18.8h, v4.8h
 	WORD $0x4e7e87bd // add v29.8h, v29.8h, v30.8h
@@ -1222,23 +1206,7 @@ loop8v:
 	WORD $0x6e7e1ffd // bsl v29.16b, v31.16b, v30.16b
 	WORD $0x4eb81f1e // mov v30.16b, v24.16b
 	WORD $0x6e721fbe // bsl v30.16b, v29.16b, v18.16b
-	WORD $0x0e212bde // xtn v30.8b, v30.8h
-	ADD $2, R1, R11   // scatter base for x11
-	WORD $0x0d00017e // st1 {v30.b}[0], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00057e // st1 {v30.b}[1], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00097e // st1 {v30.b}[2], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d000d7e // st1 {v30.b}[3], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00117e // st1 {v30.b}[4], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00157e // st1 {v30.b}[5], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00197e // st1 {v30.b}[6], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d001d7e // st1 {v30.b}[7], [x11]
+	WORD $0x0e212bc9 // xtn v9.8b, v30.8h (p1 rows 0..7)
 	WORD $0x6e64867d // sub v29.8h, v19.8h, v4.8h
 	WORD $0x4e7c87bd // add v29.8h, v29.8h, v28.8h
 	WORD $0x4e666fbd // smin v29.8h, v29.8h, v6.8h
@@ -1257,23 +1225,7 @@ loop8v:
 	WORD $0x6e7e1ffd // bsl v29.16b, v31.16b, v30.16b
 	WORD $0x4eb81f1e // mov v30.16b, v24.16b
 	WORD $0x6e731fbe // bsl v30.16b, v29.16b, v19.16b
-	WORD $0x0e212bde // xtn v30.8b, v30.8h
-	ADD $3, R1, R11   // scatter base for x12
-	WORD $0x0d00017e // st1 {v30.b}[0], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00057e // st1 {v30.b}[1], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00097e // st1 {v30.b}[2], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d000d7e // st1 {v30.b}[3], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00117e // st1 {v30.b}[4], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00157e // st1 {v30.b}[5], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00197e // st1 {v30.b}[6], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d001d7e // st1 {v30.b}[7], [x11]
+	WORD $0x0e212bca // xtn v10.8b, v30.8h (p0 rows 0..7)
 	WORD $0x6e64869d // sub v29.8h, v20.8h, v4.8h
 	WORD $0x6e7b87bd // sub v29.8h, v29.8h, v27.8h
 	WORD $0x4e666fbd // smin v29.8h, v29.8h, v6.8h
@@ -1292,23 +1244,7 @@ loop8v:
 	WORD $0x6e7e1ffd // bsl v29.16b, v31.16b, v30.16b
 	WORD $0x4eb81f1e // mov v30.16b, v24.16b
 	WORD $0x6e741fbe // bsl v30.16b, v29.16b, v20.16b
-	WORD $0x0e212bde // xtn v30.8b, v30.8h
-	ADD $4, R1, R11   // scatter base for x13
-	WORD $0x0d00017e // st1 {v30.b}[0], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00057e // st1 {v30.b}[1], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00097e // st1 {v30.b}[2], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d000d7e // st1 {v30.b}[3], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00117e // st1 {v30.b}[4], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00157e // st1 {v30.b}[5], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00197e // st1 {v30.b}[6], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d001d7e // st1 {v30.b}[7], [x11]
+	WORD $0x0e212bcb // xtn v11.8b, v30.8h (q0 rows 0..7)
 	WORD $0x4f1f277e // srshr v30.8h, v27.8h, #1
 	WORD $0x6e6486bd // sub v29.8h, v21.8h, v4.8h
 	WORD $0x6e7e87bd // sub v29.8h, v29.8h, v30.8h
@@ -1329,23 +1265,7 @@ loop8v:
 	WORD $0x6e7e1ffd // bsl v29.16b, v31.16b, v30.16b
 	WORD $0x4eb81f1e // mov v30.16b, v24.16b
 	WORD $0x6e751fbe // bsl v30.16b, v29.16b, v21.16b
-	WORD $0x0e212bde // xtn v30.8b, v30.8h
-	ADD $5, R1, R11   // scatter base for x14
-	WORD $0x0d00017e // st1 {v30.b}[0], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00057e // st1 {v30.b}[1], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00097e // st1 {v30.b}[2], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d000d7e // st1 {v30.b}[3], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00117e // st1 {v30.b}[4], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00157e // st1 {v30.b}[5], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00197e // st1 {v30.b}[6], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d001d7e // st1 {v30.b}[7], [x11]
+	WORD $0x0e212bcc // xtn v12.8b, v30.8h (q1 rows 0..7)
 	WORD $0x4e74867f // add v31.8h, v19.8h, v20.8h
 	WORD $0x4e7587ff // add v31.8h, v31.8h, v21.8h
 	WORD $0x4f1156dd // shl v29.8h, v22.8h, #1
@@ -1357,23 +1277,27 @@ loop8v:
 	WORD $0x6e761ffe // bsl v30.16b, v31.16b, v22.16b
 	WORD $0x4eb81f1d // mov v29.16b, v24.16b
 	WORD $0x6e761fdd // bsl v29.16b, v30.16b, v22.16b
-	WORD $0x0e212bbd // xtn v29.8b, v29.8h
-	ADD $6, R1, R11   // scatter base for x15
-	WORD $0x0d00017d // st1 {v29.b}[0], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00057d // st1 {v29.b}[1], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00097d // st1 {v29.b}[2], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d000d7d // st1 {v29.b}[3], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00117d // st1 {v29.b}[4], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00157d // st1 {v29.b}[5], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d00197d // st1 {v29.b}[6], [x11]
-	ADD R2, R11, R11
-	WORD $0x0d001d7d // st1 {v29.b}[7], [x11]
+	WORD $0x0e212bad // xtn v13.8b, v29.8h (q2 rows 0..7)
+
+	// Interleaved lane stores write p2..q0 and q1..q2 contiguously per row.
+	ADD $1, R1, R11
+	ADD $5, R1, R12
+	WORD $0x0da22168 // st4 {v8.b-v11.b}[0], [x11], x2
+	WORD $0x0da2018c // st2 {v12.b-v13.b}[0], [x12], x2
+	WORD $0x0da22568 // st4 {v8.b-v11.b}[1], [x11], x2
+	WORD $0x0da2058c // st2 {v12.b-v13.b}[1], [x12], x2
+	WORD $0x0da22968 // st4 {v8.b-v11.b}[2], [x11], x2
+	WORD $0x0da2098c // st2 {v12.b-v13.b}[2], [x12], x2
+	WORD $0x0da22d68 // st4 {v8.b-v11.b}[3], [x11], x2
+	WORD $0x0da20d8c // st2 {v12.b-v13.b}[3], [x12], x2
+	WORD $0x0da23168 // st4 {v8.b-v11.b}[4], [x11], x2
+	WORD $0x0da2118c // st2 {v12.b-v13.b}[4], [x12], x2
+	WORD $0x0da23568 // st4 {v8.b-v11.b}[5], [x11], x2
+	WORD $0x0da2158c // st2 {v12.b-v13.b}[5], [x12], x2
+	WORD $0x0da23968 // st4 {v8.b-v11.b}[6], [x11], x2
+	WORD $0x0da2198c // st2 {v12.b-v13.b}[6], [x12], x2
+	WORD $0x0da23d68 // st4 {v8.b-v11.b}[7], [x11], x2
+	WORD $0x0da21d8c // st2 {v12.b-v13.b}[7], [x12], x2
 	LSL $3, R2, R12   // 8*stride
 	ADD R12, R1, R1
 	SUB $1, R3, R3
