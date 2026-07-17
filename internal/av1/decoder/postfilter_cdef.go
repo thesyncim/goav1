@@ -887,19 +887,33 @@ func frameWorkCDEFBlockAllSkipped(skipMap *FrameWorkLoopFilterMap, unitRow int, 
 		return false
 	}
 	stride := int(skipMap.Stride)
-	for dy := range miPerBlock {
-		row := (miRowStart + dy) * stride
-		for dx := range miPerBlock {
-			record := skipMap.Records[row+miColStart+dx]
-			if !record.Valid {
-				return false
-			}
-			if !record.SkipTransform {
-				return false
-			}
-		}
+	base := miRowStart*stride + miColStart
+	records := skipMap.Records
+	first := &records[base]
+	if !first.Valid || !first.SkipTransform {
+		return false
 	}
-	return true
+
+	// MarkBlockPtr replicates one record across every MI cell covered by a
+	// coding block. When the first record's block covers this whole 2x2 MI
+	// area, its skip flag therefore decides the CDEF block without reading
+	// the other three records. Inter frames commonly use coding blocks at
+	// least 8x8, making this the dominant all-skipped case.
+	block := &first.Block
+	if int(block.MICol) <= miColStart && int(block.MIRow) <= miRowStart &&
+		int(block.MIColEnd) >= miColStart+miPerBlock && int(block.MIRowEnd) >= miRowStart+miPerBlock {
+		return true
+	}
+
+	// A CDEF block split across 4x4 coding blocks still needs all four MI
+	// records. Keep this fixed-size fallback unrolled so the bounds proof and
+	// field loads are shared across the three remaining cells.
+	topRight := &records[base+1]
+	bottomLeft := &records[base+stride]
+	bottomRight := &records[base+stride+1]
+	return topRight.Valid && topRight.SkipTransform &&
+		bottomLeft.Valid && bottomLeft.SkipTransform &&
+		bottomRight.Valid && bottomRight.SkipTransform
 }
 
 func frameWorkCDEFUnitGrid(size parser.FrameSize) (int, int, error) {

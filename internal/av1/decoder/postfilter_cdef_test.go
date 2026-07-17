@@ -1236,3 +1236,93 @@ func testCDEFU8LineScratch(width int) [3][]uint16 {
 		make([]uint16, width),
 	}
 }
+
+func BenchmarkFrameWorkCDEFBlockPositionsFilteredAllSkipped16x16(b *testing.B) {
+	const miPerUnit = 16
+	const miPerCodingBlock = 4
+	records := make([]threading.FrameWorkLoopFilterBlockRecord, miPerUnit*miPerUnit)
+	for miRow := 0; miRow < miPerUnit; miRow += miPerCodingBlock {
+		for miCol := 0; miCol < miPerUnit; miCol += miPerCodingBlock {
+			record := threading.FrameWorkLoopFilterBlockRecord{
+				Block: threading.FrameWorkLoopFilterBlock{
+					MICol:    uint16(miCol),
+					MIRow:    uint16(miRow),
+					MIColEnd: uint16(miCol + miPerCodingBlock),
+					MIRowEnd: uint16(miRow + miPerCodingBlock),
+				},
+				Valid:         true,
+				SkipTransform: true,
+			}
+			for row := miRow; row < miRow+miPerCodingBlock; row++ {
+				for col := miCol; col < miCol+miPerCodingBlock; col++ {
+					records[row*miPerUnit+col] = record
+				}
+			}
+		}
+	}
+	skipMap := FrameWorkLoopFilterMap{
+		Records: records,
+		Stride:  miPerUnit,
+		Rows:    miPerUnit,
+	}
+	storage := make([]cdef.BlockPosition, cdef.NBlocks*cdef.NBlocks)
+	var positions []cdef.BlockPosition
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		positions = frameWorkCDEFBlockPositionsFiltered(storage, cdef.BlockSize, cdef.BlockSize, 8, 8, &skipMap, 0, 0)
+	}
+	if len(positions) != 0 {
+		b.Fatalf("positions=%d want 0", len(positions))
+	}
+}
+
+func TestFrameWorkCDEFBlockAllSkippedFastAndSplitCoverage(t *testing.T) {
+	const stride = 4
+	makeRecord := func(col, row, colEnd, rowEnd int, skip bool) threading.FrameWorkLoopFilterBlockRecord {
+		return threading.FrameWorkLoopFilterBlockRecord{
+			Block: threading.FrameWorkLoopFilterBlock{
+				MICol:    uint16(col),
+				MIRow:    uint16(row),
+				MIColEnd: uint16(colEnd),
+				MIRowEnd: uint16(rowEnd),
+			},
+			Valid:         true,
+			SkipTransform: skip,
+		}
+	}
+	mapWith := func(records []threading.FrameWorkLoopFilterBlockRecord) FrameWorkLoopFilterMap {
+		return FrameWorkLoopFilterMap{Records: records, Stride: stride, Rows: stride}
+	}
+
+	largeRecords := make([]threading.FrameWorkLoopFilterBlockRecord, stride*stride)
+	large := makeRecord(0, 0, 2, 2, true)
+	largeRecords[0] = large
+	largeRecords[1] = large
+	largeRecords[stride] = large
+	largeRecords[stride+1] = large
+	largeMap := mapWith(largeRecords)
+	if !frameWorkCDEFBlockAllSkipped(&largeMap, 0, 0, 0, 0) {
+		t.Fatal("large skipped coding block was not skipped")
+	}
+
+	splitRecords := make([]threading.FrameWorkLoopFilterBlockRecord, stride*stride)
+	for row := range 2 {
+		for col := range 2 {
+			splitRecords[row*stride+col] = makeRecord(col, row, col+1, row+1, true)
+		}
+	}
+	splitMap := mapWith(splitRecords)
+	if !frameWorkCDEFBlockAllSkipped(&splitMap, 0, 0, 0, 0) {
+		t.Fatal("four skipped 4x4 coding blocks were not skipped")
+	}
+	splitMap.Records[stride+1].SkipTransform = false
+	if frameWorkCDEFBlockAllSkipped(&splitMap, 0, 0, 0, 0) {
+		t.Fatal("split coverage with one non-skipped cell was skipped")
+	}
+	splitMap.Records[stride+1].SkipTransform = true
+	splitMap.Records[stride+1].Valid = false
+	if frameWorkCDEFBlockAllSkipped(&splitMap, 0, 0, 0, 0) {
+		t.Fatal("split coverage with one invalid cell was skipped")
+	}
+}
