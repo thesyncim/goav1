@@ -167,11 +167,14 @@ package tile
 // Per-iteration flow:
 //
 //	load  R26 = MOVD (scanHot)(c<<3)
-//	ctx:  five class-specific MOVBU neighbour loads (2D keeps its pos==0
-//	      special case), LSR the cached min(level,3) high nibble, sum,
+//	ctx:  load the five cached min(level,3) high nibbles (2D folds its two
+//	      adjacent pairs into MOVHU loads; vertical folds p1..p4 into one
+//	      MOVWU; horizontal keeps its strided MOVBU loads), sum,
 //	      (mag+1)>>1, CSEL-min 4, + SBFX lowerOffset
 //	read: 4-symbol inverse-CDF search (three MUL/CMP steps, early-out BCS),
-//	      renormalize (CLZ on rng low 16), refill iff cnt<0
+//	      renormalize (rng is already zero-extended in 1..65535, so direct
+//	      64-bit CLZ minus 48 is CLZ16 without a masking dependency), refill
+//	      iff cnt<0
 //	adapt: skipped when update==0; else rate = 5 + count>>4, the symbol-indexed
 //	      4-way branch updates c0..c2 in memory (up: v += (32768-v)>>rate,
 //	      down: v -= v>>rate) and stores count+1 while count < 32 — the exact

@@ -99,8 +99,9 @@ dcSym1:
 
 dcRenorm:
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	// R8 stays zero-extended in 1..65535, so direct 64-bit CLZ yields the
+	// AV1 16-bit normalization shift after subtracting 48.
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -211,8 +212,7 @@ sbSplit:
 
 sbRenorm:
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -306,8 +306,7 @@ gpSplit:
 
 gpRenorm:
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -394,8 +393,7 @@ gsSplit:
 
 gsRenorm:
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7

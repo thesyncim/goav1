@@ -76,22 +76,18 @@ loop:
 	CBZ   R12, ctxZero
 	UBFX  $16, R26, $16, R13 // padded
 	ADD   R13, R21, R14      // s1 = padded + stride
-	MOVBU (R4)(R14), R11     // levels[s1]
-	LSR   $4, R11, R16
+	MOVHU (R4)(R14), R11     // levels[s1], levels[s1+1]
+	LSR   $4, R11, R11
+	ADD   R11>>8, R11, R16
+	AND   $15, R16, R16
 	ADD   $1, R13, R15
-	MOVBU (R4)(R15), R11 // levels[padded+1]
+	MOVHU (R4)(R15), R11 // levels[padded+1], levels[padded+2]
 	LSR   $4, R11, R11
-	ADD   R11, R16, R16
-	ADD   $1, R14, R15
-	MOVBU (R4)(R15), R11 // levels[s1+1]
-	LSR   $4, R11, R11
+	ADD   R11>>8, R11, R11
+	AND   $15, R11, R11
 	ADD   R11, R16, R16
 	ADD   R21, R14, R15
 	MOVBU (R4)(R15), R11 // levels[padded+2*stride]
-	LSR   $4, R11, R11
-	ADD   R11, R16, R16
-	ADD   $2, R13, R15
-	MOVBU (R4)(R15), R11 // levels[padded+2]
 	LSR   $4, R11, R11
 	ADD   R11, R16, R16
 	ADD   $1, R16, R16 // mag+1
@@ -115,12 +111,12 @@ ctx1D:
 	ADD   R13, R21, R14      // s1
 	MOVBU (R4)(R14), R11
 	LSR   $4, R11, R16
+	CMP   $1, R27
+	BNE   ctxVertTail
 	ADD   $1, R13, R15       // p1
 	MOVBU (R4)(R15), R11
 	LSR   $4, R11, R11
 	ADD   R11, R16, R16
-	CMP   $1, R27
-	BNE   ctxVertTail
 
 	ADD   R14, R21, R15 // s2
 	MOVBU (R4)(R15), R11
@@ -137,17 +133,13 @@ ctx1D:
 	B     ctx1DReduce
 
 ctxVertTail:
-	ADD   $2, R13, R15 // p2
-	MOVBU (R4)(R15), R11
+	ADD   $1, R13, R15 // p1..p4 are contiguous
+	MOVWU (R4)(R15), R11
 	LSR   $4, R11, R11
-	ADD   R11, R16, R16
-	ADD   $3, R13, R15 // p3
-	MOVBU (R4)(R15), R11
-	LSR   $4, R11, R11
-	ADD   R11, R16, R16
-	ADD   $4, R13, R15 // p4
-	MOVBU (R4)(R15), R11
-	LSR   $4, R11, R11
+	AND   $0x0f0f0f0f0f0f0f0f, R11, R11
+	ADD   R11>>16, R11, R11
+	ADD   R11>>8, R11, R11
+	AND   $15, R11, R11
 	ADD   R11, R16, R16
 
 ctx1DReduce:
@@ -203,8 +195,9 @@ baseRenorm:
 	SUB  R11, R7, R7  // dif -= lower << (ecWindow-16)
 	SUB  R17, R13, R8 // rng = upper - lower
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	// R8 stays zero-extended in 1..65535; direct CLZ avoids a redundant
+	// low-16 extraction on the symbol dependency chain.
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -461,8 +454,7 @@ brRenorm:
 	SUB  R11, R7, R7
 	SUB  R17, R13, R8
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
