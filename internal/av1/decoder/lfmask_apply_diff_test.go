@@ -426,4 +426,43 @@ func TestMaskApplyDiffChromaSharedSubBlock(t *testing.T) {
 	}
 }
 
+func BenchmarkApplyLoopFilterEdgesFromMasks(b *testing.B) {
+	const width = 128
+	const height = 128
+	size := parser.FrameSize{CodedWidth: width, UpscaledWidth: width, Height: height, SuperResDenominator: 8}
+	seq := lfMaskApply420Sequence()
+	lf := parser.LoopFilterParams{LevelY: [2]uint8{32, 28}, LevelU: 24, LevelV: 20, Sharpness: 1}
+	event := lfMaskApplyEvent(seq, size, lf)
+	var records []lfMaskApplyRecord
+	for row := 0; row < height/4; row += 4 {
+		for col := 0; col < width/4; col += 4 {
+			records = append(records, lfMaskApplyRecord{rec: testFrameWorkLoopFilterPostFilterRecordAt(col, row, col+4, row+4)})
+		}
+	}
+	mapRecords := make([]threading.FrameWorkLoopFilterBlockRecord, len(records))
+	for i := range records {
+		mapRecords[i] = records[i].rec
+	}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(b, size, mapRecords...)
+	masks := buildLoopFilterMasksFromRecords(b, event, size, records, 5)
+	output := testFrameWorkCDEFFrame(b, frame.Format{
+		Width: width, Height: height, BitDepth: 8,
+		SubsamplingX: true, SubsamplingY: true, Align: 64,
+	})
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output, LoopFilterMap: &filterMap}
+	b.SetBytes(width * height * 3 / 2)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		lfMaskApplyFillFrame(output)
+		result, err := ctx.ApplyLoopFilterEdgesFromMasks(masks, filterMap)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if result.Applied == 0 {
+			b.Fatal("mask apply filtered no edges")
+		}
+	}
+}
+
 var _ = loopfilter.PlaneY

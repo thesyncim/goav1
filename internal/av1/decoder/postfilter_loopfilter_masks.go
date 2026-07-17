@@ -375,6 +375,32 @@ func (s *frameWorkLoopFilterMaskApplyState) addCell(result *FrameWorkLoopFilterP
 	}
 }
 
+// extendVerticalRun and extendHorizontalRun keep the overwhelmingly common
+// same-level extension small enough to inline into the mask scans. Run starts,
+// threshold changes, and flushes stay in addCell. Padded masks can carry edge
+// bits beyond the visible crop, so the fast path retains the position checks.
+// Each direction is flushed before the next pass, so the active run already has
+// the caller's edge direction.
+func (s *frameWorkLoopFilterMaskApplyState) extendVerticalRun(x4, y4 int, level, width uint8) bool {
+	run := &s.run
+	if s.firstErr != nil || int32(x4)<<2 >= s.bounds.posWidth || int32(y4)<<2 >= s.bounds.posHeight ||
+		!run.active || run.width != width || run.level != level || x4 != run.x4 || y4 != run.y4+run.len4 {
+		return false
+	}
+	run.len4++
+	return true
+}
+
+func (s *frameWorkLoopFilterMaskApplyState) extendHorizontalRun(x4, y4 int, level, width uint8) bool {
+	run := &s.run
+	if s.firstErr != nil || int32(x4)<<2 >= s.bounds.posWidth || int32(y4)<<2 >= s.bounds.posHeight ||
+		!run.active || run.width != width || run.level != level || y4 != run.y4 || x4 != run.x4+run.len4 {
+		return false
+	}
+	run.len4++
+	return true
+}
+
 func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksInPlanePassOrder(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, levelCtx frameWorkLoopFilterLevelContext, minPlane, maxPlane loopfilter.Plane) error {
 	sharpness := ctx.Event.LoopFilter.Sharpness
 	// Match the edge-list chroma gating: AV1 deblocks chroma only when the frame
@@ -516,7 +542,10 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadin
 						if level == 0 {
 							continue
 						}
-						state.addCell(result, dst, bytesPerSample, bitDepth, loopfilter.EdgeVertical, col, y4, level, widths[widthClass])
+						width := widths[widthClass]
+						if !state.extendVerticalRun(col, y4, level, width) {
+							state.addCell(result, dst, bytesPerSample, bitDepth, loopfilter.EdgeVertical, col, y4, level, width)
+						}
 					}
 				}
 			}
@@ -565,7 +594,10 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadin
 					if level == 0 {
 						continue
 					}
-					state.addCell(result, dst, bytesPerSample, bitDepth, loopfilter.EdgeHorizontal, x4, row, level, widths[widthClass])
+					width := widths[widthClass]
+					if !state.extendHorizontalRun(x4, row, level, width) {
+						state.addCell(result, dst, bytesPerSample, bitDepth, loopfilter.EdgeHorizontal, x4, row, level, width)
+					}
 				}
 			}
 		}
@@ -633,7 +665,10 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *thread
 						if level == 0 {
 							continue
 						}
-						state.addCell(result, dst, bytesPerSample, bitDepth, loopfilter.EdgeVertical, ccol, crow, level, widths[widthClass])
+						width := widths[widthClass]
+						if !state.extendVerticalRun(ccol, crow, level, width) {
+							state.addCell(result, dst, bytesPerSample, bitDepth, loopfilter.EdgeVertical, ccol, crow, level, width)
+						}
 					}
 				}
 			}
@@ -680,7 +715,10 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *thread
 					if level == 0 {
 						continue
 					}
-					state.addCell(result, dst, bytesPerSample, bitDepth, loopfilter.EdgeHorizontal, ccol, crow, level, widths[widthClass])
+					width := widths[widthClass]
+					if !state.extendHorizontalRun(ccol, crow, level, width) {
+						state.addCell(result, dst, bytesPerSample, bitDepth, loopfilter.EdgeHorizontal, ccol, crow, level, width)
+					}
 				}
 			}
 		}
