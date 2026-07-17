@@ -340,6 +340,65 @@ func TestFilterFrameBlocksU8RejectsHighBitDepth(t *testing.T) {
 	}
 }
 
+func TestFilterFrameBlocksU8NoDirectionMatchesSecondaryOnly(t *testing.T) {
+	rnd := newCDEFRandom(cdefDeterministicSeed ^ 0x4e4f_4449)
+	const stride = 32
+	want := make([]byte, stride*16)
+	for i := range want {
+		want[i] = byte(rnd.generate(256))
+	}
+	got := append([]byte(nil), want...)
+	input := make([]uint16, InputBufferSize)
+	for i := range input {
+		input[i] = uint16(rnd.generate(256))
+	}
+	blocks := []BlockPosition{{BY: 0, BX: 0}, {BY: 0, BX: 1}, {BY: 1, BX: 0}}
+	var wantDirs, gotDirs DirectionGrid
+	var wantVars, gotVars VarianceGrid
+	for by := range gotDirs {
+		for bx := range gotDirs[by] {
+			wantDirs[by][bx] = 0xff
+			gotDirs[by][bx] = 0xff
+			wantVars[by][bx] = -1
+			gotVars[by][bx] = -1
+		}
+	}
+	params := FrameFilterParams{Plane: PlaneY, SecondaryStrength: 2, Damping: 5}
+	if err := FilterFrameBlocksU8Trusted(want, stride, input, cdefBlockOrigin(), blocks, &wantDirs, &wantVars, params); err != nil {
+		t.Fatal(err)
+	}
+	if err := FilterFrameBlocksU8TrustedNoDirection(got, stride, input, cdefBlockOrigin(), blocks, &gotDirs, &gotVars, params); err != nil {
+		t.Fatal(err)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("pixel %d: no-direction=%d searched=%d", i, got[i], want[i])
+		}
+	}
+	for _, block := range blocks {
+		if gotDirs[block.BY][block.BX] != 0 || gotVars[block.BY][block.BX] != 0 {
+			t.Fatalf("block %+v was not marked available with zero direction and variance", block)
+		}
+	}
+	if gotDirs[7][7] != 0xff || gotVars[7][7] != -1 {
+		t.Fatal("no-direction path modified an unlisted grid cell")
+	}
+	if err := FilterFrameBlocksU8TrustedNoDirection(got, stride, input, cdefBlockOrigin(), blocks, &gotDirs, &gotVars, FrameFilterParams{Plane: PlaneY, Level: 1, Damping: 5}); err != ErrInvalidCDEF {
+		t.Fatalf("nonzero primary strength error = %v, want %v", err, ErrInvalidCDEF)
+	}
+	if err := FilterFrameBlocksU8TrustedNoDirection(got, stride, input, cdefBlockOrigin(), blocks, &gotDirs, &gotVars, FrameFilterParams{Plane: PlaneU, Damping: 5}); err != ErrInvalidCDEF {
+		t.Fatalf("chroma plane error = %v, want %v", err, ErrInvalidCDEF)
+	}
+	allocs := testing.AllocsPerRun(32, func() {
+		if err := FilterFrameBlocksU8TrustedNoDirection(got, stride, input, cdefBlockOrigin(), blocks, &gotDirs, &gotVars, params); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("FilterFrameBlocksU8TrustedNoDirection allocates: %v allocs/op", allocs)
+	}
+}
+
 // TestFilterFrameBlocksU8IsZeroAlloc protects the hot-path contract.
 func TestFilterFrameBlocksU8IsZeroAlloc(t *testing.T) {
 	rnd := newCDEFRandom(cdefDeterministicSeed ^ 0x414c_4c38)

@@ -151,6 +151,19 @@ func TestFindDirectionU8NEONMatchesScalar(t *testing.T) {
 	}
 }
 
+func BenchmarkFindDirectionU8NEON(b *testing.B) {
+	img := make([]byte, 8*8)
+	rnd := newCDEFRandom(cdefDeterministicSeed ^ 0x4e384e38)
+	for i := range img {
+		img[i] = byte(rnd.generate(256))
+	}
+	var dir, variance int32
+	b.ReportAllocs()
+	for b.Loop() {
+		cdefFindDirectionU8NEONAsm(&img[0], 8, &dir, &variance)
+	}
+}
+
 func benchmarkSecondaryU8NEON(b *testing.B, width, height int) {
 	input := makeCDEFBlockInput(newCDEFRandom(cdefDeterministicSeed), 8, 0, 0)
 	dst := make([]byte, 64)

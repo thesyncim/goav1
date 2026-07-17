@@ -175,6 +175,7 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 				prevFiltered = false
 				continue
 			}
+			skipDirectionSearch := plane == 0 && packed>>2 == 0 && (!forceLumaDirections || params.UVStrength[index]>>2 == 0)
 			cdefPlane := cdef.PlaneY
 			if plane == 1 {
 				cdefPlane = cdef.PlaneU
@@ -187,8 +188,16 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 			}
 			unitOrigin := unitY*stride + unitX
 			if directionOnly {
-				// Directions come from the uint8 frame; no tap buffer needed.
-				if err := cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, input[:0], 0, blocks, unitDirections, unitVariances, filterParams); err != nil {
+				// A needed direction comes from the uint8 frame; when both
+				// primary strengths are zero, canonical grid zeroes suffice.
+				// Neither shape needs a tap buffer.
+				var err error
+				if skipDirectionSearch {
+					err = cdef.FilterFrameBlocksU8TrustedNoDirection(dst.Pix[unitOrigin:], stride, input[:0], 0, blocks, unitDirections, unitVariances, filterParams)
+				} else {
+					err = cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, input[:0], 0, blocks, unitDirections, unitVariances, filterParams)
+				}
+				if err != nil {
 					return units, blocksTotal, err
 				}
 				prevFiltered = false
@@ -212,8 +221,14 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 			if cdefDebugUnit(plane, unitRow, unitCol) {
 				cdefDebugLogUnit(plane, unitRow, unitCol, packed, filterParams, *unitDirections, *unitVariances, input, len(blocks))
 			}
-			if err := cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams); err != nil {
-				return units, blocksTotal, err
+			var filterErr error
+			if skipDirectionSearch {
+				filterErr = cdef.FilterFrameBlocksU8TrustedNoDirection(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+			} else {
+				filterErr = cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+			}
+			if filterErr != nil {
+				return units, blocksTotal, filterErr
 			}
 			prevFiltered = true
 			units++
