@@ -242,9 +242,9 @@ baseAdapt:
 	// bias is baked into the 5); adapt in memory, count saturates at 32.
 	CBZ   R24, baseAdaptDone
 	MOVHU CDF_CNT(R14), R13
+	CBZ   R16, baseUpd0
 	LSR   $4, R13, R11
 	ADD   $5, R11, R11 // rate
-	CBZ   R16, baseUpd0
 	CMP   $1, R16
 	BEQ   baseUpd1
 	CMP   $2, R16
@@ -287,6 +287,8 @@ baseUpd0:
 	MOVD  R12, CDF_C0(R14)
 	B     next
 baseUpd0Dynamic:
+	LSR   $4, R13, R11
+	ADD   $5, R11, R11 // rate
 	ADD   $CDF_C0, R14, R12
 	VLD1  (R12), [V0.H4]
 	NEG   R11, R9
@@ -513,9 +515,9 @@ brRefillTail:
 brAdapt:
 	CBZ   R24, brAdaptDone
 	MOVHU CDF_CNT(R14), R13
+	CBZ   R16, brUpd0
 	LSR   $4, R13, R11
 	ADD   $5, R11, R11
-	CBZ   R16, brUpd0
 	CMP   $1, R16
 	BEQ   brUpd1
 	CMP   $2, R16
@@ -554,6 +556,8 @@ brUpd0:
 	MOVD  R12, CDF_C0(R14)
 	B     brAdaptDone
 brUpd0Dynamic:
+	LSR   $4, R13, R11
+	ADD   $5, R11, R11
 	ADD   $CDF_C0, R14, R12
 	VLD1  (R12), [V0.H4]
 	NEG   R11, R9
