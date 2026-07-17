@@ -150,3 +150,85 @@ func TestFindDirectionU8NEONMatchesScalar(t *testing.T) {
 		}
 	}
 }
+
+func benchmarkSecondaryU8NEON(b *testing.B, width, height int) {
+	input := makeCDEFBlockInput(newCDEFRandom(cdefDeterministicSeed), 8, 0, 0)
+	dst := make([]byte, 64)
+	const dstStride = 8
+	const direction = 4
+	const strength = 4
+	const damping = 5
+	ctx := filterBlockU8NEONCtx{
+		dst:         &dst[0],
+		input:       &input[cdefBlockOrigin()],
+		dstStr:      dstStride,
+		height:      int64(height),
+		sec0:        int64(cdefDirections[direction+4][0]),
+		sec1:        int64(cdefDirections[direction][0]),
+		sec2:        int64(cdefDirections[direction+4][1]),
+		sec3:        int64(cdefDirections[direction][1]),
+		secTap0:     int64(cdefSecondaryTaps[0]),
+		secTap1:     int64(cdefSecondaryTaps[1]),
+		secStrength: strength,
+		secShift:    int64(constrainShift(strength, damping)),
+	}
+	b.ReportAllocs()
+	if width == 8 {
+		for b.Loop() {
+			cdefFilterBlock8SecondaryU8NEON(&ctx)
+		}
+		return
+	}
+	for b.Loop() {
+		cdefFilterBlock4SecondaryU8NEON(&ctx)
+	}
+}
+
+func BenchmarkCDEFSecondaryU8NEON8x8(b *testing.B) {
+	benchmarkSecondaryU8NEON(b, 8, 8)
+}
+
+func BenchmarkCDEFSecondaryU8NEON4x8(b *testing.B) {
+	benchmarkSecondaryU8NEON(b, 4, 8)
+}
+
+
+func benchmarkPrimaryU8NEON(b *testing.B, width, height int) {
+	input := makeCDEFBlockInput(newCDEFRandom(cdefDeterministicSeed), 8, 0, 0)
+	dst := make([]byte, 64)
+	const dstStride = 8
+	const direction = 4
+	const strength = 15
+	const damping = 5
+	priTaps := cdefPrimaryTaps[strength&1]
+	ctx := filterBlockU8NEONCtx{
+		dst:         &dst[0],
+		input:       &input[cdefBlockOrigin()],
+		dstStr:      dstStride,
+		height:      int64(height),
+		pri0:        int64(cdefDirections[direction+2][0]),
+		pri1:        int64(cdefDirections[direction+2][1]),
+		priTap0:     int64(priTaps[0]),
+		priTap1:     int64(priTaps[1]),
+		priStrength: strength,
+		priShift:    int64(constrainShift(strength, damping)),
+	}
+	b.ReportAllocs()
+	if width == 8 {
+		for b.Loop() {
+			cdefFilterBlock8PrimaryU8NEON(&ctx)
+		}
+		return
+	}
+	for b.Loop() {
+		cdefFilterBlock4PrimaryU8NEON(&ctx)
+	}
+}
+
+func BenchmarkCDEFPrimaryU8NEON8x8(b *testing.B) {
+	benchmarkPrimaryU8NEON(b, 8, 8)
+}
+
+func BenchmarkCDEFPrimaryU8NEON4x8(b *testing.B) {
+	benchmarkPrimaryU8NEON(b, 4, 8)
+}

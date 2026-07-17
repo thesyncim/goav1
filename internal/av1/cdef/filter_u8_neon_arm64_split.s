@@ -12,7 +12,11 @@
 // epilogue (src/arm/64/cdef.S: xtn to bytes, st1 {v0.8b} / st1 {v0.s}[lane]).
 // Tap loads still read the uint16 CDEF input buffer; dst is the frame's uint8
 // plane with a byte stride. See filter_u8_neon_arm64.s and filter_u8.go for
-// the narrowing bit-exactness argument.
+// the narrowing bit-exactness argument. Primary-only kernels add each tap
+// pair before applying its runtime weight, avoiding four serial MLAs.
+// Secondary-only kernels accumulate the four +/- chains independently and
+// fold the fixed {2,1} weights after the constraints, shortening the critical
+// dependency path without changing the integer result.
 
 #define C_DST 0
 #define C_INPUT 8
@@ -57,7 +61,6 @@ TEXT ·cdefFilterBlock8PrimaryU8NEON(SB), NOSPLIT, $0-8
 
 u8pri8_row:
 	VLD1 (R2), [V0.H8] // px
-	WORD $0x6e211c21 // eor v1.16b, v1.16b, v1.16b
 
 	// pri taps k=0
 	ADD  R6, R2, R16
@@ -78,8 +81,8 @@ u8pri8_row:
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
 	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
 	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e7c9641 // mla v1.8h, v18.8h, v28.8h
-	WORD $0x4e7c96c1 // mla v1.8h, v22.8h, v28.8h
+	WORD $0x4e768641 // add v1.8h, v18.8h, v22.8h
+	WORD $0x4e7c9c21 // mul v1.8h, v1.8h, v28.8h
 
 	// pri taps k=1
 	ADD  R7, R2, R16
@@ -100,8 +103,9 @@ u8pri8_row:
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
 	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
 	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e7d9641 // mla v1.8h, v18.8h, v29.8h
-	WORD $0x4e7d96c1 // mla v1.8h, v22.8h, v29.8h
+	WORD $0x4e768642 // add v2.8h, v18.8h, v22.8h
+	WORD $0x4e7d9c42 // mul v2.8h, v2.8h, v29.8h
+	WORD $0x4e628421 // add v1.8h, v1.8h, v2.8h
 
 	// finalize: px + ((8 + sum - (sum < 0)) >> 4)
 	WORD $0x4e60a830 // cmlt v16.8h, v1.8h, #0
@@ -129,10 +133,6 @@ TEXT ·cdefFilterBlock8SecondaryU8NEON(SB), NOSPLIT, $0-8
 	MOVD C_SECSHIFT(R0), R5
 	NEG  R5, R5
 	WORD $0x4e020cba // dup v26.8h, w5
-	MOVD C_SECTAP0(R0), R5
-	WORD $0x4e020cbe // dup v30.8h, w5
-	MOVD C_SECTAP1(R0), R5
-	WORD $0x4e020cbf // dup v31.8h, w5
 	MOVD C_SEC0(R0), R8
 	LSL  $1, R8
 	MOVD C_SEC1(R0), R9
@@ -145,6 +145,9 @@ TEXT ·cdefFilterBlock8SecondaryU8NEON(SB), NOSPLIT, $0-8
 u8sec8_row:
 	VLD1 (R2), [V0.H8] // px
 	WORD $0x6e211c21 // eor v1.16b, v1.16b, v1.16b
+	WORD $0x6e221c42 // eor v2.16b, v2.16b, v2.16b
+	WORD $0x6e231c63 // eor v3.16b, v3.16b, v3.16b
+	WORD $0x6e261cc6 // eor v6.16b, v6.16b, v6.16b
 
 	// sec taps k=0, off2 (dir + 2)
 	ADD  R8, R2, R16
@@ -165,8 +168,8 @@ u8sec8_row:
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
 	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
 	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e7e9641 // mla v1.8h, v18.8h, v30.8h
-	WORD $0x4e7e96c1 // mla v1.8h, v22.8h, v30.8h
+	WORD $0x4e728421 // add v1.8h, v1.8h, v18.8h
+	WORD $0x4e768442 // add v2.8h, v2.8h, v22.8h
 
 	// sec taps k=0, off3 (dir - 2)
 	ADD  R9, R2, R16
@@ -187,8 +190,8 @@ u8sec8_row:
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
 	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
 	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e7e9641 // mla v1.8h, v18.8h, v30.8h
-	WORD $0x4e7e96c1 // mla v1.8h, v22.8h, v30.8h
+	WORD $0x4e728421 // add v1.8h, v1.8h, v18.8h
+	WORD $0x4e768442 // add v2.8h, v2.8h, v22.8h
 
 	// sec taps k=1, off2 (dir + 2)
 	ADD  R10, R2, R16
@@ -209,8 +212,8 @@ u8sec8_row:
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
 	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
 	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e7f9641 // mla v1.8h, v18.8h, v31.8h
-	WORD $0x4e7f96c1 // mla v1.8h, v22.8h, v31.8h
+	WORD $0x4e728463 // add v3.8h, v3.8h, v18.8h
+	WORD $0x4e7684c6 // add v6.8h, v6.8h, v22.8h
 
 	// sec taps k=1, off3 (dir - 2)
 	ADD  R11, R2, R16
@@ -231,10 +234,14 @@ u8sec8_row:
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
 	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
 	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e7f9641 // mla v1.8h, v18.8h, v31.8h
-	WORD $0x4e7f96c1 // mla v1.8h, v22.8h, v31.8h
+	WORD $0x4e728463 // add v3.8h, v3.8h, v18.8h
+	WORD $0x4e7684c6 // add v6.8h, v6.8h, v22.8h
 
 	// finalize
+	WORD $0x4e628421 // add v1.8h, v1.8h, v2.8h
+	WORD $0x4f115421 // shl v1.8h, v1.8h, #1
+	WORD $0x4e668463 // add v3.8h, v3.8h, v6.8h
+	WORD $0x4e638421 // add v1.8h, v1.8h, v3.8h
 	WORD $0x4e60a830 // cmlt v16.8h, v1.8h, #0
 	WORD $0x4e708421 // add v1.8h, v1.8h, v16.8h
 	WORD $0x4f1c2421 // srshr v1.8h, v1.8h, #4
@@ -273,7 +280,6 @@ u8pri4_row:
 	ADD  $288, R2, R16
 	VLD1 (R2), [V0.H4]
 	WORD $0x4d408600 // ld1 {v0.d}[1], [x16]
-	WORD $0x6e211c21 // eor v1.16b, v1.16b, v1.16b
 
 	// pri taps k=0
 	ADD  R6, R2, R16
@@ -298,8 +304,8 @@ u8pri4_row:
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
 	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
 	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e7c9641 // mla v1.8h, v18.8h, v28.8h
-	WORD $0x4e7c96c1 // mla v1.8h, v22.8h, v28.8h
+	WORD $0x4e768641 // add v1.8h, v18.8h, v22.8h
+	WORD $0x4e7c9c21 // mul v1.8h, v1.8h, v28.8h
 
 	// pri taps k=1
 	ADD  R7, R2, R16
@@ -324,8 +330,9 @@ u8pri4_row:
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
 	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
 	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e7d9641 // mla v1.8h, v18.8h, v29.8h
-	WORD $0x4e7d96c1 // mla v1.8h, v22.8h, v29.8h
+	WORD $0x4e768642 // add v2.8h, v18.8h, v22.8h
+	WORD $0x4e7d9c42 // mul v2.8h, v2.8h, v29.8h
+	WORD $0x4e628421 // add v1.8h, v1.8h, v2.8h
 
 	// finalize
 	WORD $0x4e60a830 // cmlt v16.8h, v1.8h, #0
@@ -355,10 +362,6 @@ TEXT ·cdefFilterBlock4SecondaryU8NEON(SB), NOSPLIT, $0-8
 	MOVD C_SECSHIFT(R0), R5
 	NEG  R5, R5
 	WORD $0x4e020cba // dup v26.8h, w5
-	MOVD C_SECTAP0(R0), R5
-	WORD $0x4e020cbe // dup v30.8h, w5
-	MOVD C_SECTAP1(R0), R5
-	WORD $0x4e020cbf // dup v31.8h, w5
 	MOVD C_SEC0(R0), R8
 	LSL  $1, R8
 	MOVD C_SEC1(R0), R9
@@ -373,6 +376,9 @@ u8sec4_row:
 	VLD1 (R2), [V0.H4]
 	WORD $0x4d408600 // ld1 {v0.d}[1], [x16]
 	WORD $0x6e211c21 // eor v1.16b, v1.16b, v1.16b
+	WORD $0x6e221c42 // eor v2.16b, v2.16b, v2.16b
+	WORD $0x6e231c63 // eor v3.16b, v3.16b, v3.16b
+	WORD $0x6e261cc6 // eor v6.16b, v6.16b, v6.16b
 
 	// sec taps k=0, off2 (dir + 2)
 	ADD  R8, R2, R16
@@ -397,8 +403,8 @@ u8sec4_row:
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
 	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
 	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e7e9641 // mla v1.8h, v18.8h, v30.8h
-	WORD $0x4e7e96c1 // mla v1.8h, v22.8h, v30.8h
+	WORD $0x4e728421 // add v1.8h, v1.8h, v18.8h
+	WORD $0x4e768442 // add v2.8h, v2.8h, v22.8h
 
 	// sec taps k=0, off3 (dir - 2)
 	ADD  R9, R2, R16
@@ -423,8 +429,8 @@ u8sec4_row:
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
 	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
 	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e7e9641 // mla v1.8h, v18.8h, v30.8h
-	WORD $0x4e7e96c1 // mla v1.8h, v22.8h, v30.8h
+	WORD $0x4e728421 // add v1.8h, v1.8h, v18.8h
+	WORD $0x4e768442 // add v2.8h, v2.8h, v22.8h
 
 	// sec taps k=1, off2 (dir + 2)
 	ADD  R10, R2, R16
@@ -449,8 +455,8 @@ u8sec4_row:
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
 	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
 	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e7f9641 // mla v1.8h, v18.8h, v31.8h
-	WORD $0x4e7f96c1 // mla v1.8h, v22.8h, v31.8h
+	WORD $0x4e728463 // add v3.8h, v3.8h, v18.8h
+	WORD $0x4e7684c6 // add v6.8h, v6.8h, v22.8h
 
 	// sec taps k=1, off3 (dir - 2)
 	ADD  R11, R2, R16
@@ -475,10 +481,14 @@ u8sec4_row:
 	WORD $0x4e756ed6 // smin v22.8h, v22.8h, v21.8h
 	WORD $0x4e706652 // smax v18.8h, v18.8h, v16.8h
 	WORD $0x4e7466d6 // smax v22.8h, v22.8h, v20.8h
-	WORD $0x4e7f9641 // mla v1.8h, v18.8h, v31.8h
-	WORD $0x4e7f96c1 // mla v1.8h, v22.8h, v31.8h
+	WORD $0x4e728463 // add v3.8h, v3.8h, v18.8h
+	WORD $0x4e7684c6 // add v6.8h, v6.8h, v22.8h
 
 	// finalize
+	WORD $0x4e628421 // add v1.8h, v1.8h, v2.8h
+	WORD $0x4f115421 // shl v1.8h, v1.8h, #1
+	WORD $0x4e668463 // add v3.8h, v3.8h, v6.8h
+	WORD $0x4e638421 // add v1.8h, v1.8h, v3.8h
 	WORD $0x4e60a830 // cmlt v16.8h, v1.8h, #0
 	WORD $0x4e708421 // add v1.8h, v1.8h, v16.8h
 	WORD $0x4f1c2421 // srshr v1.8h, v1.8h, #4
