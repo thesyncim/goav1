@@ -276,25 +276,20 @@ func frameWorkFlushLoopFilterMaskRun(s *frameWorkLoopFilterMaskApplyState, resul
 	if s.firstErr != nil {
 		return
 	}
-	x := int32(s.run.x4) * 4
-	y := int32(s.run.y4) * 4
-	length := int32(s.run.len4) * 4
-	var err error
+	x := s.run.x4 * 4
+	y := s.run.y4 * 4
+	length := s.run.len4 * 4
 	switch s.run.width {
 	case 4:
-		err = loopfilter.Filter4Edge(dst, bytesPerSample, bitDepth, s.run.edge, x, y, length, s.run.th)
+		loopfilter.Filter4EdgeTrusted(dst, bytesPerSample, bitDepth, s.run.edge, x, y, length, s.run.th)
 	case 6:
-		err = loopfilter.Filter6Edge(dst, bytesPerSample, bitDepth, s.run.edge, x, y, length, s.run.th)
+		loopfilter.Filter6EdgeTrusted(dst, bytesPerSample, bitDepth, s.run.edge, x, y, length, s.run.th)
 	case 8:
-		err = loopfilter.Filter8Edge(dst, bytesPerSample, bitDepth, s.run.edge, x, y, length, s.run.th)
+		loopfilter.Filter8EdgeTrusted(dst, bytesPerSample, bitDepth, s.run.edge, x, y, length, s.run.th)
 	case 14:
-		err = loopfilter.Filter14Edge(dst, bytesPerSample, bitDepth, s.run.edge, x, y, length, s.run.th)
+		loopfilter.Filter14EdgeTrusted(dst, bytesPerSample, bitDepth, s.run.edge, x, y, length, s.run.th)
 	default:
 		s.firstErr = loopfilter.ErrInvalidFilter
-		return
-	}
-	if err != nil {
-		s.firstErr = err
 	}
 }
 
