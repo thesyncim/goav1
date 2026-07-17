@@ -2,6 +2,7 @@ package dsp
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -413,6 +414,19 @@ func BenchmarkCopyPlaneBlock(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		_ = CopyPlaneBlock(dst, src, 1, 0, 0, 0, 0, 64, 64)
+	}
+}
+
+func BenchmarkCopyPlaneBlockDisjointTrustedShapes(b *testing.B) {
+	for _, size := range []int{2, 4, 8, 16, 32, 64, 128, 256} {
+		b.Run(fmt.Sprintf("%dx%d", size, size), func(b *testing.B) {
+			dst := make([]byte, size*size)
+			src := make([]byte, size*size)
+			b.ReportAllocs()
+			for b.Loop() {
+				CopyPlaneBlockDisjointTrusted(dst, size, src, size, size, size)
+			}
+		})
 	}
 }
 

@@ -9,6 +9,8 @@
 package motion
 
 import (
+	"unsafe"
+
 	"github.com/thesyncim/goav1/internal/av1/dsp"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
@@ -247,6 +249,19 @@ func predictInterPlaneBlockFromOriginWithFilterSizeScratch(dst frame.Plane, ref 
 	}
 	if subX == 0 && subY == 0 {
 		if planeRegionFits(ref, bytesPerSample, refX, refY, width, height) {
+			if dsp.HasAcceleratedDisjointPlaneCopy &&
+				planeRegionFits(dst, bytesPerSample, dstX, dstY, width, height) &&
+				byteSlicesDisjoint(dst.Pix, ref.Pix) {
+				dstOffset := dstY*dst.Stride + dstX*bytesPerSample
+				srcOffset := refY*ref.Stride + refX*bytesPerSample
+				rowBytes := width * bytesPerSample
+				dsp.CopyPlaneBlockDisjointTrusted(
+					dst.Pix[dstOffset:], dst.Stride,
+					ref.Pix[srcOffset:], ref.Stride,
+					rowBytes, height,
+				)
+				return nil
+			}
 			if err := dsp.CopyPlaneBlock(dst, ref, bytesPerSample, dstX, dstY, refX, refY, width, height); err != nil {
 				return ErrInvalidMotion
 			}
@@ -273,6 +288,21 @@ func predictInterPlaneBlockFromOriginWithFilterSizeScratch(dst frame.Plane, ref 
 		return ErrInvalidMotion
 	}
 	return nil
+}
+
+// byteSlicesDisjoint conservatively checks the complete visible slice ranges,
+// rather than only comparing their first elements. Public motion callers may
+// construct two Plane values from shifted windows of the same backing store;
+// those must retain CopyPlaneBlock's overlap-safe row-copy semantics.
+func byteSlicesDisjoint(a []byte, b []byte) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return true
+	}
+	aStart := uintptr(unsafe.Pointer(unsafe.SliceData(a)))
+	bStart := uintptr(unsafe.Pointer(unsafe.SliceData(b)))
+	aEnd := aStart + uintptr(len(a))
+	bEnd := bStart + uintptr(len(b))
+	return aEnd <= bStart || bEnd <= aStart
 }
 
 func referenceOrigin(dstX int, dstY int, mv Vector) (refX int, refY int, subX int, subY int, err error) {
@@ -391,10 +421,10 @@ func copyPlaneBlockClamped(dst frame.Plane, ref frame.Plane, bytesPerSample int,
 	// bulk in-bounds span and drops the per-pixel horizontal clamp entirely;
 	// only the vertical source row still clamps per row.
 	bps := bytesPerSample
-	leftW := clampInt(-refX, 0, width)              // x < leftW  => sx = 0
+	leftW := clampInt(-refX, 0, width)               // x < leftW  => sx = 0
 	rightStart := clampInt(ref.Width-refX, 0, width) // x >= rightStart => sx = W-1
 	midW := rightStart - leftW                       // >= 0; middle sx = refX+x
-	srcStartX := refX + leftW                         // in [0, ref.Width) when midW>0
+	srcStartX := refX + leftW                        // in [0, ref.Width) when midW>0
 	for y := range height {
 		sy := clampInt(refY+y, 0, ref.Height-1)
 		refBase := sy * ref.Stride

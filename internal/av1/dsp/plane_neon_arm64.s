@@ -407,3 +407,173 @@ rawRowLoop16x4:
 
 rawDone16x4:
 	RET
+
+// func copyPlaneBlockNEONAsm(dst *byte, dstStride uintptr, src *byte, srcStride uintptr, rowBytes uintptr, height uintptr)
+//
+// Copy one non-overlapping strided rectangle per call. AV1's 2..256-byte
+// power-of-two rows use fixed, fully unrolled scalar/NEON loops; uncommon
+// clipped widths use a 16-byte loop with an 8/4/2/1-byte scalar tail. Keeping
+// the row loop here avoids one runtime memmove call per prediction row.
+TEXT ·copyPlaneBlockNEONAsm(SB), NOSPLIT, $0-48
+	MOVD dst+0(FP), R0
+	MOVD dstStride+8(FP), R1
+	MOVD src+16(FP), R2
+	MOVD srcStride+24(FP), R3
+	MOVD rowBytes+32(FP), R4
+	MOVD height+40(FP), R5
+
+	CMP  $2, R4
+	BEQ  copyPlaneRows2
+	CMP  $4, R4
+	BEQ  copyPlaneRows4
+	CMP  $8, R4
+	BEQ  copyPlaneRows8
+	CMP  $16, R4
+	BEQ  copyPlaneRows16
+	CMP  $32, R4
+	BEQ  copyPlaneRows32
+	CMP  $64, R4
+	BEQ  copyPlaneRows64
+	CMP  $128, R4
+	BEQ  copyPlaneRows128
+	CMP  $256, R4
+	BEQ  copyPlaneRows256
+
+copyPlaneRow:
+	CBZ  R5, copyPlaneDone
+	MOVD R0, R6
+	MOVD R2, R7
+	MOVD R4, R8
+
+copyPlaneVec:
+	CMP  $16, R8
+	BLT  copyPlaneTail8
+	VLD1.P 16(R7), [V0.B16]
+	VST1.P [V0.B16], 16(R6)
+	SUB  $16, R8, R8
+	B    copyPlaneVec
+
+copyPlaneTail8:
+	CMP  $8, R8
+	BLT  copyPlaneTail4
+	MOVD (R7), R9
+	MOVD R9, (R6)
+	ADD  $8, R7, R7
+	ADD  $8, R6, R6
+	SUB  $8, R8, R8
+
+copyPlaneTail4:
+	CMP  $4, R8
+	BLT  copyPlaneTail2
+	MOVWU (R7), R9
+	MOVW R9, (R6)
+	ADD  $4, R7, R7
+	ADD  $4, R6, R6
+	SUB  $4, R8, R8
+
+copyPlaneTail2:
+	CMP  $2, R8
+	BLT  copyPlaneTail1
+	MOVHU (R7), R9
+	MOVH R9, (R6)
+	ADD  $2, R7, R7
+	ADD  $2, R6, R6
+	SUB  $2, R8, R8
+
+copyPlaneTail1:
+	CBZ  R8, copyPlaneNextRow
+	MOVBU (R7), R9
+	MOVB R9, (R6)
+
+copyPlaneNextRow:
+	ADD  R1, R0, R0
+	ADD  R3, R2, R2
+	SUB  $1, R5, R5
+	B    copyPlaneRow
+
+copyPlaneDone:
+	RET
+
+copyPlaneRows2:
+	CBZ   R5, copyPlaneDone
+	MOVHU (R2), R6
+	MOVH  R6, (R0)
+	ADD   R1, R0, R0
+	ADD   R3, R2, R2
+	SUB   $1, R5, R5
+	B     copyPlaneRows2
+
+copyPlaneRows4:
+	CBZ   R5, copyPlaneDone
+	MOVWU (R2), R6
+	MOVW  R6, (R0)
+	ADD   R1, R0, R0
+	ADD   R3, R2, R2
+	SUB   $1, R5, R5
+	B     copyPlaneRows4
+
+copyPlaneRows8:
+	CBZ  R5, copyPlaneDone
+	MOVD (R2), R6
+	MOVD R6, (R0)
+	ADD  R1, R0, R0
+	ADD  R3, R2, R2
+	SUB  $1, R5, R5
+	B    copyPlaneRows8
+
+copyPlaneRows16:
+	CBZ  R5, copyPlaneDone
+	VLD1 (R2), [V0.B16]
+	VST1 [V0.B16], (R0)
+	ADD  R1, R0, R0
+	ADD  R3, R2, R2
+	SUB  $1, R5, R5
+	B    copyPlaneRows16
+
+copyPlaneRows32:
+	CBZ  R5, copyPlaneDone
+	VLD1 (R2), [V0.B16, V1.B16]
+	VST1 [V0.B16, V1.B16], (R0)
+	ADD  R1, R0, R0
+	ADD  R3, R2, R2
+	SUB  $1, R5, R5
+	B    copyPlaneRows32
+
+copyPlaneRows64:
+	CBZ  R5, copyPlaneDone
+	VLD1 (R2), [V0.B16, V1.B16, V2.B16, V3.B16]
+	VST1 [V0.B16, V1.B16, V2.B16, V3.B16], (R0)
+	ADD  R1, R0, R0
+	ADD  R3, R2, R2
+	SUB  $1, R5, R5
+	B    copyPlaneRows64
+
+copyPlaneRows128:
+	CBZ  R5, copyPlaneDone
+	MOVD R2, R6
+	MOVD R0, R7
+	VLD1.P 64(R6), [V0.B16, V1.B16, V2.B16, V3.B16]
+	VLD1 (R6), [V4.B16, V5.B16, V6.B16, V7.B16]
+	VST1.P [V0.B16, V1.B16, V2.B16, V3.B16], 64(R7)
+	VST1 [V4.B16, V5.B16, V6.B16, V7.B16], (R7)
+	ADD  R1, R0, R0
+	ADD  R3, R2, R2
+	SUB  $1, R5, R5
+	B    copyPlaneRows128
+
+copyPlaneRows256:
+	CBZ  R5, copyPlaneDone
+	MOVD R2, R6
+	MOVD R0, R7
+	VLD1.P 64(R6), [V0.B16, V1.B16, V2.B16, V3.B16]
+	VST1.P [V0.B16, V1.B16, V2.B16, V3.B16], 64(R7)
+	VLD1.P 64(R6), [V0.B16, V1.B16, V2.B16, V3.B16]
+	VST1.P [V0.B16, V1.B16, V2.B16, V3.B16], 64(R7)
+	VLD1.P 64(R6), [V0.B16, V1.B16, V2.B16, V3.B16]
+	VST1.P [V0.B16, V1.B16, V2.B16, V3.B16], 64(R7)
+	VLD1 (R6), [V0.B16, V1.B16, V2.B16, V3.B16]
+	VST1 [V0.B16, V1.B16, V2.B16, V3.B16], (R7)
+	ADD  R1, R0, R0
+	ADD  R3, R2, R2
+	SUB  $1, R5, R5
+	B    copyPlaneRows256

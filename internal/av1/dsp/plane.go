@@ -52,12 +52,30 @@ func CopyPlaneBlock(dst frame.Plane, src frame.Plane, bytesPerSample int, dstX i
 	if err != nil {
 		return err
 	}
-	for row := 0; row < dstBlock.height; row++ {
-		dstLine := dstBlock.pix[row*dstBlock.stride : row*dstBlock.stride+dstBlock.rowBytes]
-		srcLine := srcBlock.pix[row*srcBlock.stride : row*srcBlock.stride+srcBlock.rowBytes]
+	copyPlaneBlockDisjointTrustedPureGo(dstBlock.pix, dstBlock.stride, srcBlock.pix, srcBlock.stride, dstBlock.rowBytes, dstBlock.height)
+	return nil
+}
+
+// copyPlaneBlockDisjointTrustedImpl copies an already-validated, non-overlapping
+// rectangle. Architecture dispatch replaces the portable row-copy loop when a
+// whole-rectangle strided kernel is available.
+var copyPlaneBlockDisjointTrustedImpl = copyPlaneBlockDisjointTrustedPureGo
+
+// CopyPlaneBlockDisjointTrusted copies a rectangular byte window after the
+// caller has validated both extents and established that src and dst do not
+// overlap. Each slice starts at its block origin and contains the last row
+// through rowBytes. The decoder's full-pixel inter path uses this seam because
+// its reference and output surfaces are distinct frame-pool slots.
+func CopyPlaneBlockDisjointTrusted(dst []byte, dstStride int, src []byte, srcStride int, rowBytes int, height int) {
+	copyPlaneBlockDisjointTrustedImpl(dst, dstStride, src, srcStride, rowBytes, height)
+}
+
+func copyPlaneBlockDisjointTrustedPureGo(dst []byte, dstStride int, src []byte, srcStride int, rowBytes int, height int) {
+	for row := 0; row < height; row++ {
+		dstLine := dst[row*dstStride : row*dstStride+rowBytes : row*dstStride+rowBytes]
+		srcLine := src[row*srcStride : row*srcStride+rowBytes : row*srcStride+rowBytes]
 		copy(dstLine, srcLine)
 	}
-	return nil
 }
 
 // addResidualPlaneBlockImpl is the dispatch slot for the AddResidualPlaneBlock

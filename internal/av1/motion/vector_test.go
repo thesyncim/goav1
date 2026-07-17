@@ -357,6 +357,29 @@ func TestPredictInterPlaneBlockFullpelExtendsReferenceEdges(t *testing.T) {
 	}
 }
 
+func TestByteSlicesDisjointDetectsShiftedAliases(t *testing.T) {
+	buf := make([]byte, 64)
+	tests := []struct {
+		name string
+		a    []byte
+		b    []byte
+		want bool
+	}{
+		{name: "same", a: buf[:16], b: buf[:16], want: false},
+		{name: "shifted overlap", a: buf[:16], b: buf[8:24], want: false},
+		{name: "touching", a: buf[:16], b: buf[16:32], want: true},
+		{name: "separate", a: make([]byte, 16), b: make([]byte, 16), want: true},
+		{name: "empty", a: nil, b: buf, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := byteSlicesDisjoint(tt.a, tt.b); got != tt.want {
+				t.Fatalf("byteSlicesDisjoint=%v want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPredictInterPlaneBlockFractionalExtendsReferenceEdges8Bit(t *testing.T) {
 	src, _ := testPlane(8, 8, 1, 8)
 	got, _ := testPlane(4, 4, 1, 4)
