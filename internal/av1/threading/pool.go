@@ -286,6 +286,50 @@ type frameWorkJobGeometryCache struct {
 
 	planeIndex [3]uint16
 	plane      [3]FrameWorkPlaneRegion
+
+	// Prediction output layout is invariant for every block in one job/plane.
+	// Keep its checked, clip-extended plane view beside the existing window so
+	// the inter-prediction loop does not rediscover frame layout three times per
+	// block. The cache remains goroutine-private on the wavefront path.
+	predictionBaseValid uint8
+	predictionBaseIndex [3]uint16
+	predictionBase      [3]frameWorkPredictionPlaneBase
+
+	// U and V share the same subsampled block position and dimensions. The
+	// normal all-plane dispatch visits U immediately before V, so retain U's
+	// checked block shape and let V redo only its genuinely plane-specific
+	// output/window validation.
+	chromaShapeValid   bool
+	chromaShapePresent bool
+	chromaShapeIndex   uint16
+	chromaShapeBlock   tile.BlockVisit
+	chromaShape        frameWorkPredictionPlaneShape
+}
+
+type frameWorkPredictionPlaneBase struct {
+	output frame.Plane
+
+	codedWidth       uint32
+	codedHeight      uint32
+	allocationWidth  int
+	allocationHeight int
+
+	bytesPerSample uint8
+	subsamplingX   bool
+	subsamplingY   bool
+}
+
+type frameWorkPredictionPlaneShape struct {
+	x          int
+	y          int
+	width      uint8
+	height     uint8
+	fullWidth  uint8
+	fullHeight uint8
+
+	filterExtent uint8
+	subsamplingX bool
+	subsamplingY bool
 }
 
 const (
@@ -305,6 +349,8 @@ const (
 // job runs so a reused cache never serves stale geometry for a new index.
 func (c *frameWorkJobGeometryCache) reset() {
 	c.validMask = 0
+	c.predictionBaseValid = 0
+	c.chromaShapeValid = false
 }
 
 // Surface returns the frame-pool surface that this batch reconstructs into.
@@ -375,6 +421,8 @@ func (b *FrameWorkBatch) JobRegion(index int) (FrameWorkJobRegion, error) {
 		// A new index invalidates any plane windows cached for the old one.
 		if c.validMask&frameWorkJobGeometryRegionValid == 0 || c.regionIndex != cacheIndex {
 			c.validMask &^= frameWorkJobGeometryPlanesValid
+			c.predictionBaseValid = 0
+			c.chromaShapeValid = false
 		}
 		c.region = region
 		c.regionIndex = cacheIndex

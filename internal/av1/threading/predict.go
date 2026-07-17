@@ -1496,7 +1496,7 @@ func (b *FrameWorkBatch) predictBlockInterOBMCPlaneWithFiltersPtr(index int, vis
 	if err != nil || !ok {
 		return err
 	}
-	if err := b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters, scratch); err != nil {
+	if err := b.predictBlockInterReferencePlaneToOutputWithGeometry(geom, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters, scratch); err != nil {
 		return err
 	}
 	tmp, err := frameWorkInterScratchPlane(scratch.First[:], geom.bytesPerSample(), geom.width(), geom.height())
@@ -2238,68 +2238,87 @@ func (b *FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, pla
 }
 
 func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.BlockVisit, plane FrameWorkPlane) (frameWorkPredictionPlaneGeometry, bool, error) {
-	x, y, width, height, subsamplingX, subsamplingY, ok, err := frameWorkBlockPlanePosition(block, b.Sequence.ColorConfig, plane)
-	if err != nil || !ok {
-		return frameWorkPredictionPlaneGeometry{}, ok, err
+	var (
+		x, y                       int
+		width, height              int
+		fullWidth, fullHeight      int
+		subsamplingX, subsamplingY bool
+		filterExtent               uint8
+		shapeCached                bool
+		err                        error
+	)
+	if plane == FrameWorkPlaneV {
+		if shape, present, ok := b.cachedPredictionChromaShape(index, block); ok {
+			if !present {
+				return frameWorkPredictionPlaneGeometry{}, false, nil
+			}
+			x = shape.x
+			y = shape.y
+			width = int(shape.width)
+			height = int(shape.height)
+			fullWidth = int(shape.fullWidth)
+			fullHeight = int(shape.fullHeight)
+			subsamplingX = shape.subsamplingX
+			subsamplingY = shape.subsamplingY
+			filterExtent = shape.filterExtent
+			shapeCached = true
+		}
+	}
+	if !shapeCached {
+		var present bool
+		x, y, width, height, subsamplingX, subsamplingY, present, err = frameWorkBlockPlanePosition(block, b.Sequence.ColorConfig, plane)
+		if err != nil || !present {
+			if err == nil && plane == FrameWorkPlaneU {
+				b.cachePredictionChromaShape(index, block, frameWorkPredictionPlaneShape{}, false)
+			}
+			return frameWorkPredictionPlaneGeometry{}, present, err
+		}
 	}
 	window, windowOK := b.cachedJobOutputPlaneTrusted(index, plane)
 	if !windowOK {
+		var err error
 		window, err = b.JobOutputPlane(index, plane)
 		if err != nil {
 			return frameWorkPredictionPlaneGeometry{}, false, err
 		}
 	}
-	if b.Output == nil {
-		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
+	base, baseOK := b.cachedPredictionPlaneBase(index, plane)
+	if !baseOK {
+		base, err = b.computePredictionPlaneBase(index, plane, window)
+		if err != nil {
+			return frameWorkPredictionPlaneGeometry{}, false, err
+		}
 	}
 	// A block can land entirely beyond the visible output plane when the
 	// bitstream's MI grid was rounded up past the coded frame dimensions
 	// (libaom clips prediction writes to the visible area rather than
 	// rejecting the block). Treat that case as a silently-skipped prediction;
 	// genuinely malformed callers still hit the !ok path below.
-	if frameWorkPlaneBlockStartsBeyondOutput(b.Output, plane, x, y) {
+	if x >= 0 && y >= 0 && (x >= base.allocationWidth || y >= base.allocationHeight) {
 		return frameWorkPredictionPlaneGeometry{}, false, nil
 	}
-	width, height, ok = frameWorkClipVisiblePixelsToWindow(window, x, y, width, height)
+	rawWidth, rawHeight := width, height
+	width, height, ok := frameWorkClipVisiblePixelsToWindow(window, x, y, width, height)
 	if !ok {
 		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
 	}
 	writeWidth := width
 	writeHeight := height
-	fullWidth, fullHeight, err := frameWorkBlockPlanePredictionExtentPixels(block, b.Sequence.ColorConfig, plane)
-	if err != nil {
-		return frameWorkPredictionPlaneGeometry{}, false, err
+	if !shapeCached {
+		fullWidth, fullHeight, err = frameWorkBlockPlanePredictionExtentPixels(block, b.Sequence.ColorConfig, plane)
+		if err != nil {
+			return frameWorkPredictionPlaneGeometry{}, false, err
+		}
+		filterExtent, ok = frameWorkPredictionFilterExtentPacked(fullWidth, fullHeight)
+		if !ok {
+			return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
+		}
 	}
 	if clippedW, clippedH, ok := frameWorkClipVisiblePixelsToWindow(window, x, y, fullWidth, fullHeight); ok {
 		writeWidth = clippedW
 		writeHeight = clippedH
 	}
-	filterExtent, ok := frameWorkPredictionFilterExtentPacked(fullWidth, fullHeight)
-	if !ok {
-		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
-	}
-	output, outputSubX, outputSubY, ok := frameWorkFramePlane(b.Output, plane)
-	bytesPerSample, bytesPerSampleOK := frameWorkPredictionBytesPerSample(b.Output.Layout.BytesPerSample)
-	if !ok || !bytesPerSampleOK {
-		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
-	}
-	if outputSubX != subsamplingX || outputSubY != subsamplingY {
-		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
-	}
-	// Extend the predictor's plane bound to the MI-aligned writable extent so
-	// prediction writes past the visible edge land in the underlying buffer's
-	// past-visible stride padding instead of failing the planeBlockWindow
-	// bounds check (libaom writes whole transform blocks regardless of where
-	// the visible boundary lands; later blocks read those samples as
-	// predictor neighbors).
-	codedWidth := output.Width
-	codedHeight := output.Height
-	codedWidth32, ok := frameWorkPredictionIntToUint32(codedWidth)
-	if !ok {
-		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
-	}
-	codedHeight32, ok := frameWorkPredictionIntToUint32(codedHeight)
-	if !ok {
+	if base.subsamplingX != subsamplingX || base.subsamplingY != subsamplingY {
 		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
 	}
 	width8, ok := frameWorkPredictionBlockExtent(width)
@@ -2318,9 +2337,29 @@ func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Bloc
 	if !ok {
 		return frameWorkPredictionPlaneGeometry{}, false, ErrInvalidBatch
 	}
-	output = frameWorkExtendPlaneToClip(output, window, int(bytesPerSample))
+	if plane == FrameWorkPlaneU && !shapeCached {
+		if rawWidth8, rawWidthOK := frameWorkPredictionBlockExtent(rawWidth); rawWidthOK {
+			if rawHeight8, rawHeightOK := frameWorkPredictionBlockExtent(rawHeight); rawHeightOK {
+				fullWidth8, fullWidthOK := frameWorkPredictionBlockExtent(fullWidth)
+				fullHeight8, fullHeightOK := frameWorkPredictionBlockExtent(fullHeight)
+				if fullWidthOK && fullHeightOK {
+					b.cachePredictionChromaShape(index, block, frameWorkPredictionPlaneShape{
+						x:            x,
+						y:            y,
+						width:        rawWidth8,
+						height:       rawHeight8,
+						fullWidth:    fullWidth8,
+						fullHeight:   fullHeight8,
+						filterExtent: filterExtent,
+						subsamplingX: subsamplingX,
+						subsamplingY: subsamplingY,
+					}, true)
+				}
+			}
+		}
+	}
 	return frameWorkPredictionPlaneGeometry{
-		Output:         output,
+		Output:         base.output,
 		Window:         window,
 		X:              x,
 		Y:              y,
@@ -2328,13 +2367,97 @@ func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Bloc
 		Height:         height8,
 		WriteWidth:     writeWidth8,
 		WriteHeight:    writeHeight8,
-		CodedWidth:     codedWidth32,
-		CodedHeight:    codedHeight32,
+		CodedWidth:     base.codedWidth,
+		CodedHeight:    base.codedHeight,
 		SubsamplingX:   subsamplingX,
 		SubsamplingY:   subsamplingY,
-		BytesPerSample: bytesPerSample,
+		BytesPerSample: base.bytesPerSample,
 		FilterExtent:   filterExtent,
 	}, true, nil
+}
+
+func (b *FrameWorkBatch) cachedPredictionPlaneBase(index int, plane FrameWorkPlane) (frameWorkPredictionPlaneBase, bool) {
+	cacheIndex, cacheIndexOK := frameWorkJobCacheIndex(index)
+	c := b.geomCache
+	if c == nil || !cacheIndexOK || plane > FrameWorkPlaneV {
+		return frameWorkPredictionPlaneBase{}, false
+	}
+	mask := uint8(1) << uint8(plane)
+	if c.predictionBaseValid&mask == 0 || c.predictionBaseIndex[plane] != cacheIndex {
+		return frameWorkPredictionPlaneBase{}, false
+	}
+	return c.predictionBase[plane], true
+}
+
+func (b *FrameWorkBatch) computePredictionPlaneBase(index int, plane FrameWorkPlane, window FrameWorkPlaneRegion) (frameWorkPredictionPlaneBase, error) {
+	cacheIndex, cacheIndexOK := frameWorkJobCacheIndex(index)
+	if b.Output == nil {
+		return frameWorkPredictionPlaneBase{}, ErrInvalidBatch
+	}
+	output, subsamplingX, subsamplingY, ok := frameWorkFramePlane(b.Output, plane)
+	bytesPerSample, bytesPerSampleOK := frameWorkPredictionBytesPerSample(b.Output.Layout.BytesPerSample)
+	if !ok || !bytesPerSampleOK {
+		return frameWorkPredictionPlaneBase{}, ErrInvalidBatch
+	}
+	codedWidth, ok := frameWorkPredictionIntToUint32(output.Width)
+	if !ok {
+		return frameWorkPredictionPlaneBase{}, ErrInvalidBatch
+	}
+	codedHeight, ok := frameWorkPredictionIntToUint32(output.Height)
+	if !ok {
+		return frameWorkPredictionPlaneBase{}, ErrInvalidBatch
+	}
+	allocationWidth := output.Width
+	allocationHeight := output.Height
+	if output.Stride > 0 {
+		if width := output.Stride / int(bytesPerSample); width > allocationWidth {
+			allocationWidth = width
+		}
+		if height := len(output.Pix) / output.Stride; height > allocationHeight {
+			allocationHeight = height
+		}
+	}
+	// Extend the predictor's plane bound to the MI-aligned writable extent so
+	// whole-block writes at the cropped edge land in the frame padding.
+	base := frameWorkPredictionPlaneBase{
+		output:           frameWorkExtendPlaneToClip(output, window, int(bytesPerSample)),
+		codedWidth:       codedWidth,
+		codedHeight:      codedHeight,
+		allocationWidth:  allocationWidth,
+		allocationHeight: allocationHeight,
+		bytesPerSample:   bytesPerSample,
+		subsamplingX:     subsamplingX,
+		subsamplingY:     subsamplingY,
+	}
+	if c := b.geomCache; c != nil && cacheIndexOK && plane <= FrameWorkPlaneV {
+		mask := uint8(1) << uint8(plane)
+		c.predictionBase[plane] = base
+		c.predictionBaseIndex[plane] = cacheIndex
+		c.predictionBaseValid |= mask
+	}
+	return base, nil
+}
+
+func (b *FrameWorkBatch) cachedPredictionChromaShape(index int, block tile.BlockVisit) (frameWorkPredictionPlaneShape, bool, bool) {
+	cacheIndex, ok := frameWorkJobCacheIndex(index)
+	c := b.geomCache
+	if c == nil || !ok || !c.chromaShapeValid || c.chromaShapeIndex != cacheIndex || c.chromaShapeBlock != block {
+		return frameWorkPredictionPlaneShape{}, false, false
+	}
+	return c.chromaShape, c.chromaShapePresent, true
+}
+
+func (b *FrameWorkBatch) cachePredictionChromaShape(index int, block tile.BlockVisit, shape frameWorkPredictionPlaneShape, present bool) {
+	cacheIndex, ok := frameWorkJobCacheIndex(index)
+	c := b.geomCache
+	if c == nil || !ok {
+		return
+	}
+	c.chromaShape = shape
+	c.chromaShapeBlock = block
+	c.chromaShapeIndex = cacheIndex
+	c.chromaShapePresent = present
+	c.chromaShapeValid = true
 }
 
 // frameWorkExtendPlaneToClip returns a frame.Plane view whose Width/Height
