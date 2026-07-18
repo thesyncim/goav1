@@ -6,19 +6,14 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 )
 
-func TestFrameWorkFillLoopFilterPackedLevelsPreservesAdjacentCells(t *testing.T) {
-	cache := [][4]uint8{{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}}
-	frameWorkFillLoopFilterPackedLevels(cache, 1, 4, 21, 22)
-	var got [6][2]uint8
-	for i := range got {
-		got[i] = [2]uint8{
-			frameWorkLoopFilterPackedLevel(cache, i, 0),
-			frameWorkLoopFilterPackedLevel(cache, i, 1),
+func TestFrameWorkFillLoopFilterLevelsPreservesOtherComponents(t *testing.T) {
+	cache := [][4]uint8{{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}, {13, 14, 15, 16}}
+	frameWorkFillLoopFilterLevels(cache, 1, 2, 0, 1, 21, 22)
+	want := [][4]uint8{{1, 2, 3, 4}, {21, 22, 7, 8}, {21, 22, 11, 12}, {13, 14, 15, 16}}
+	for i := range want {
+		if cache[i] != want[i] {
+			t.Fatalf("cell %d=%v, want %v", i, cache[i], want[i])
 		}
-	}
-	want := [6][2]uint8{{1, 2}, {21, 22}, {21, 22}, {21, 22}, {21, 22}, {11, 12}}
-	if got != want {
-		t.Fatalf("packed levels=%v, want %v", got, want)
 	}
 }
 

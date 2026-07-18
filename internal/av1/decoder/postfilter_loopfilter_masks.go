@@ -29,36 +29,19 @@ var frameWorkLoopFilterMaskLumaWidth = [3]uint8{4, 8, 14}
 // the production chroma pixel filter width (4/6).
 var frameWorkLoopFilterMaskChromaWidth = [2]uint8{4, 6}
 
-// frameWorkLoopFilterPackedLevel returns one component from a logical two-byte
-// level cell. Two adjacent logical cells share one [4]uint8 backing entry.
-func frameWorkLoopFilterPackedLevel(cache [][4]uint8, index, component int) uint8 {
-	return cache[index>>1][((index&1)<<1)+component] & loopfilter.MaxLevel
+// frameWorkLoopFilterLevel returns one component from a dav1d-compatible
+// [Y vertical,Y horizontal,U,V] level tuple.
+func frameWorkLoopFilterLevel(cache [][4]uint8, index, component int) uint8 {
+	return cache[index][component] & loopfilter.MaxLevel
 }
 
-// frameWorkFillLoopFilterPackedLevels fills one contiguous logical-cell run.
-// Aligned pairs use one four-byte assignment, which keeps the common even-size
-// block path branch-free in the inner loop.
-func frameWorkFillLoopFilterPackedLevels(cache [][4]uint8, start, count int, level0, level1 uint8) {
-	if count <= 0 {
-		return
-	}
-	if start&1 != 0 {
-		cell := &cache[start>>1]
-		cell[2] = level0
-		cell[3] = level1
-		start++
-		count--
-	}
-	packed := [4]uint8{level0, level1, level0, level1}
-	for count >= 2 {
-		cache[start>>1] = packed
-		start += 2
-		count -= 2
-	}
-	if count != 0 {
-		cell := &cache[start>>1]
-		cell[0] = level0
-		cell[1] = level1
+// frameWorkFillLoopFilterLevels fills two components of a contiguous tuple
+// run while preserving the other pair in the overlapping luma/chroma grid.
+func frameWorkFillLoopFilterLevels(cache [][4]uint8, start, count, component0, component1 int, level0, level1 uint8) {
+	for i := 0; i < count; i++ {
+		cell := &cache[start+i]
+		cell[component0] = level0
+		cell[component1] = level1
 	}
 }
 
@@ -116,7 +99,7 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdgesFromMasks(masks *threa
 	return result, nil
 }
 
-// populateLoopFilterLevelCacheFromMap fills the packed frame-wide level grid
+// populateLoopFilterLevelCacheFromMap fills the frame-wide level tuple grid
 // from the decoded loop-filter map, mirroring the level
 // writes dav1d's create_lf_mask_{inter,intra} would perform (lfmask build.go).
 // The level cells are order-independent, so a raster walk over block origins is
@@ -140,7 +123,7 @@ func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheFromMap(masks 
 func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheRange(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap, levelCtx frameWorkLoopFilterLevelContext, plan *FrameWorkLoopFilterPostFilterPlan, rowStart, rowEnd int) error {
 	cols := masks.Cols
 	rows := masks.Rows
-	uvCols, _, levelLength, err := masks.LevelCacheShape()
+	_, _, levelLength, err := masks.LevelCacheShape()
 	if err != nil || len(masks.LevelCache) < levelLength {
 		return threading.ErrInvalidBatch
 	}
@@ -187,7 +170,7 @@ func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheRange(masks *t
 			yHorz := levels[loopfilter.PlaneY][loopfilter.EdgeHorizontal]
 			for y := 0; y < bh4; y++ {
 				rowBase := (by + y) * cols
-				frameWorkFillLoopFilterPackedLevels(masks.LevelCache, rowBase+bx, bw4, yVert, yHorz)
+				frameWorkFillLoopFilterLevels(masks.LevelCache, rowBase+bx, bw4, 0, 1, yVert, yHorz)
 			}
 			if !hasChroma {
 				col = nextCol
@@ -204,8 +187,8 @@ func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheRange(masks *t
 			cbx := bx >> ssHor
 			cby := by >> ssVer
 			for y := 0; y < cbh4; y++ {
-				logicalStart := cols*rows + (cby+y)*uvCols + cbx
-				frameWorkFillLoopFilterPackedLevels(masks.LevelCache, logicalStart, cbw4, uLevel, vLevel)
+				logicalStart := (cby+y)*cols + cbx
+				frameWorkFillLoopFilterLevels(masks.LevelCache, logicalStart, cbw4, 2, 3, uLevel, vLevel)
 			}
 			col = nextCol
 		}
@@ -243,11 +226,85 @@ type frameWorkLoopFilterMaskApplyState struct {
 	plane     loopfilter.Plane
 	bounds    frameWorkLoopFilterBounds
 	sharpness uint8
+	fastMask  bool
+	lut       lfmask.FilterLUT
 
 	thresholds     [loopfilter.MaxLevel + 1]loopfilter.Thresholds
 	thresholdReady [loopfilter.MaxLevel + 1]bool
 	firstErr       error
 	run            frameWorkLoopFilterMaskRun
+}
+
+func frameWorkLoopFilterMaskLineWidthFits(position, limit int32, luma bool, class int) bool {
+	radius := int32(2)
+	if luma {
+		if class == 1 {
+			radius = 4
+		} else if class == 2 {
+			// dav1d's wd16 kernel reads eight samples on each side while
+			// updating the inner fourteen. Keep the outermost frame band on
+			// the checked scalar path when that read window is unavailable.
+			radius = 8
+		}
+	} else if class == 1 {
+		radius = 3
+	}
+	return position >= radius && position+radius-1 < limit
+}
+
+func frameWorkLoopFilterMaskLowBits(count int) uint32 {
+	if count >= 32 {
+		return ^uint32(0)
+	}
+	return uint32(1)<<count - 1
+}
+
+func frameWorkCountLumaMaskLine(result *FrameWorkLoopFilterPostFilterApplyResult, plane loopfilter.Plane, mask *[3][2]uint16, extent int, levels [][4]uint8, levelIndex, step, fallback, component int) {
+	m0, m1, m2 := lfmask.LumaMaskWords(mask, 0, extent)
+	validBits := frameWorkLoopFilterMaskLowBits(extent)
+	m0, m1, m2 = m0&validBits, m1&validBits, m2&validBits
+	count := uint32(0)
+	maxLevel := uint8(0)
+	for vm := m0 | m1 | m2; vm != 0; vm &= vm - 1 {
+		off := bits.TrailingZeros32(vm)
+		idx := levelIndex + off*step
+		level := frameWorkLoopFilterLevel(levels, idx, component)
+		if level == 0 {
+			level = frameWorkLoopFilterLevel(levels, idx+fallback, component)
+		}
+		if level == 0 {
+			continue
+		}
+		count++
+		if level > maxLevel {
+			maxLevel = level
+		}
+	}
+	frameWorkCountAppliedLoopFilterMaskRun(result, plane, maxLevel, count)
+}
+
+func frameWorkCountChromaMaskLine(result *FrameWorkLoopFilterPostFilterApplyResult, plane loopfilter.Plane, mask *[2][2]uint16, extent, laneBits int, levels [][4]uint8, levelIndex, step, fallback, component int) {
+	m0, m1 := lfmask.ChromaMaskWords(mask, 0, extent, laneBits)
+	validBits := frameWorkLoopFilterMaskLowBits(extent)
+	m0, m1 = m0&validBits, m1&validBits
+	count := uint32(0)
+	maxLevel := uint8(0)
+	for vm := m0 | m1; vm != 0; vm &= vm - 1 {
+		off := bits.TrailingZeros32(vm)
+		idx := levelIndex + off*step
+		level := frameWorkLoopFilterLevel(levels, idx, component)
+		if level == 0 {
+			level = frameWorkLoopFilterLevel(levels, idx+fallback, component)
+		}
+		if level == 0 {
+			continue
+		}
+		count++
+		if level > maxLevel {
+			maxLevel = level
+		}
+	}
+	frameWorkCountAppliedLoopFilterMaskRun(result, plane, maxLevel, count)
 }
 
 func (s *frameWorkLoopFilterMaskApplyState) thresholdFor(level uint8) (loopfilter.Thresholds, bool) {
@@ -467,6 +524,10 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRange(result *Fram
 		plane:     plane,
 		bounds:    bounds,
 		sharpness: sharpness,
+		fastMask:  bytesPerSample == 1 && bitDepth == 8 && filterMaskLine8Available(),
+	}
+	if state.fastMask {
+		state.lut = lfmask.CalcEIH(int(sharpness))
 	}
 
 	if plane == loopfilter.PlaneY {
@@ -522,10 +583,36 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadin
 					}
 					widths := frameWorkLoopFilterMaskLumaWidth
 					position := int32(col) << 2
+					if position >= state.bounds.posWidth {
+						continue
+					}
 					for i := range widths {
 						widths[i] = frameWorkLoopFilterMaskWidthAt(position, state.bounds.bufWidth, widths[i])
 					}
-					m0, m1, m2 := lfmask.LumaMaskWords(&region.Y[0][pos], 0, extentRows)
+					lineMask := &region.Y[0][pos]
+					scanRows := minInt(extentRows, int((state.bounds.posHeight+3)>>2)-baseRow)
+					if scanRows <= 0 {
+						continue
+					}
+					m0, m1, m2 := lfmask.LumaMaskWords(lineMask, 0, scanRows)
+					validBits := frameWorkLoopFilterMaskLowBits(scanRows)
+					m0, m1, m2 = m0&validBits, m1&validBits, m2&validBits
+					anyMask := m0|m1|m2 != 0
+					maxClass := 0
+					if m2 != 0 {
+						maxClass = 2
+					} else if m1 != 0 {
+						maxClass = 1
+					}
+					if state.fastMask && state.firstErr == nil && anyMask && extentRows&3 == 0 && frameWorkLoopFilterMaskLineWidthFits(position, state.bounds.bufWidth, true, maxClass) {
+						frameWorkFlushLoopFilterMaskRun(state, result, dst, bytesPerSample, bitDepth)
+						levelIndex := baseRow*cols + col
+						q0Base := baseRow*4*dst.Stride + col*4
+						packedMask := [3]uint32{m0, m1, m2}
+						filterLumaMaskLine8Trusted(dst, q0Base, &packedMask, masks.LevelCache, levelIndex, 0, cols, loopfilter.EdgeVertical, &state.lut)
+						frameWorkCountLumaMaskLine(result, state.plane, lineMask, scanRows, masks.LevelCache, levelIndex, cols, -1, 0)
+						continue
+					}
 					for vm := m0 | m1 | m2; vm != 0; vm &= vm - 1 {
 						off := bits.TrailingZeros32(vm)
 						bit := uint32(1) << off
@@ -536,9 +623,9 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadin
 							widthClass = 1
 						}
 						y4 := baseRow + off
-						level := frameWorkLoopFilterPackedLevel(masks.LevelCache, y4*cols+col, int(loopfilter.EdgeVertical))
+						level := frameWorkLoopFilterLevel(masks.LevelCache, y4*cols+col, int(loopfilter.EdgeVertical))
 						if level == 0 {
-							level = frameWorkLoopFilterPackedLevel(masks.LevelCache, y4*cols+col-1, int(loopfilter.EdgeVertical))
+							level = frameWorkLoopFilterLevel(masks.LevelCache, y4*cols+col-1, int(loopfilter.EdgeVertical))
 						}
 						if level == 0 {
 							continue
@@ -574,10 +661,36 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadin
 				}
 				widths := frameWorkLoopFilterMaskLumaWidth
 				position := int32(row) << 2
+				if position >= state.bounds.posHeight {
+					continue
+				}
 				for i := range widths {
 					widths[i] = frameWorkLoopFilterMaskWidthAt(position, state.bounds.bufHeight, widths[i])
 				}
-				m0, m1, m2 := lfmask.LumaMaskWords(&region.Y[1][pos], 0, extentCols)
+				lineMask := &region.Y[1][pos]
+				scanCols := minInt(extentCols, int((state.bounds.posWidth+3)>>2)-baseCol)
+				if scanCols <= 0 {
+					continue
+				}
+				m0, m1, m2 := lfmask.LumaMaskWords(lineMask, 0, scanCols)
+				validBits := frameWorkLoopFilterMaskLowBits(scanCols)
+				m0, m1, m2 = m0&validBits, m1&validBits, m2&validBits
+				anyMask := m0|m1|m2 != 0
+				maxClass := 0
+				if m2 != 0 {
+					maxClass = 2
+				} else if m1 != 0 {
+					maxClass = 1
+				}
+				if state.fastMask && state.firstErr == nil && anyMask && extentCols&3 == 0 && frameWorkLoopFilterMaskLineWidthFits(position, state.bounds.bufHeight, true, maxClass) {
+					frameWorkFlushLoopFilterMaskRun(state, result, dst, bytesPerSample, bitDepth)
+					levelIndex := row*cols + baseCol
+					q0Base := row*4*dst.Stride + baseCol*4
+					packedMask := [3]uint32{m0, m1, m2}
+					filterLumaMaskLine8Trusted(dst, q0Base, &packedMask, masks.LevelCache, levelIndex, 1, cols, loopfilter.EdgeHorizontal, &state.lut)
+					frameWorkCountLumaMaskLine(result, state.plane, lineMask, scanCols, masks.LevelCache, levelIndex, 1, -cols, 1)
+					continue
+				}
 				for vm := m0 | m1 | m2; vm != 0; vm &= vm - 1 {
 					off := bits.TrailingZeros32(vm)
 					bit := uint32(1) << off
@@ -588,9 +701,9 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadin
 						widthClass = 1
 					}
 					x4 := baseCol + off
-					level := frameWorkLoopFilterPackedLevel(masks.LevelCache, row*cols+x4, int(loopfilter.EdgeHorizontal))
+					level := frameWorkLoopFilterLevel(masks.LevelCache, row*cols+x4, int(loopfilter.EdgeHorizontal))
 					if level == 0 {
-						level = frameWorkLoopFilterPackedLevel(masks.LevelCache, (row-1)*cols+x4, int(loopfilter.EdgeHorizontal))
+						level = frameWorkLoopFilterLevel(masks.LevelCache, (row-1)*cols+x4, int(loopfilter.EdgeHorizontal))
 					}
 					if level == 0 {
 						continue
@@ -620,11 +733,10 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *thread
 	regionCH := 32 >> ssVer
 	laneBitsV := 16 >> ssVer
 	laneBitsH := 16 >> ssHor
-	levelComponent := 0
+	levelComponent := 2
 	if plane == loopfilter.PlaneV {
-		levelComponent = 1
+		levelComponent = 3
 	}
-	levelBase := cols * rows
 	if dir == loopfilter.EdgeVertical {
 		// Vertical edges (dir 0): position = chroma column, scanned bits = chroma rows.
 		for rRow := rRow0; rRow < rRow1; rRow++ {
@@ -647,10 +759,34 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *thread
 					}
 					widths := frameWorkLoopFilterMaskChromaWidth
 					position := int32(ccol) << 2
+					if position >= state.bounds.posWidth {
+						continue
+					}
 					for i := range widths {
 						widths[i] = frameWorkLoopFilterMaskWidthAt(position, state.bounds.bufWidth, widths[i])
 					}
-					m0, m1 := lfmask.ChromaMaskWords(&region.UV[0][pos], 0, extentCRows, laneBitsV)
+					lineMask := &region.UV[0][pos]
+					scanRows := minInt(extentCRows, int((state.bounds.posHeight+3)>>2)-baseCRow)
+					if scanRows <= 0 {
+						continue
+					}
+					m0, m1 := lfmask.ChromaMaskWords(lineMask, 0, scanRows, laneBitsV)
+					validBits := frameWorkLoopFilterMaskLowBits(scanRows)
+					m0, m1 = m0&validBits, m1&validBits
+					anyMask := m0|m1 != 0
+					maxClass := 0
+					if m1 != 0 {
+						maxClass = 1
+					}
+					if state.fastMask && state.firstErr == nil && anyMask && extentCRows&3 == 0 && frameWorkLoopFilterMaskLineWidthFits(position, state.bounds.bufWidth, false, maxClass) {
+						frameWorkFlushLoopFilterMaskRun(state, result, dst, bytesPerSample, bitDepth)
+						levelIndex := baseCRow*cols + ccol
+						q0Base := baseCRow*4*dst.Stride + ccol*4
+						packedMask := [2]uint32{m0, m1}
+						filterChromaMaskLine8Trusted(dst, q0Base, &packedMask, masks.LevelCache, levelIndex, levelComponent, cols, loopfilter.EdgeVertical, &state.lut)
+						frameWorkCountChromaMaskLine(result, state.plane, lineMask, scanRows, laneBitsV, masks.LevelCache, levelIndex, cols, -1, levelComponent)
+						continue
+					}
 					for vm := m0 | m1; vm != 0; vm &= vm - 1 {
 						off := bits.TrailingZeros32(vm)
 						bit := uint32(1) << off
@@ -659,9 +795,9 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *thread
 							widthClass = 1
 						}
 						crow := baseCRow + off
-						level := frameWorkLoopFilterPackedLevel(masks.LevelCache, levelBase+crow*ccols+ccol, levelComponent)
+						level := frameWorkLoopFilterLevel(masks.LevelCache, crow*cols+ccol, levelComponent)
 						if level == 0 {
-							level = frameWorkLoopFilterPackedLevel(masks.LevelCache, levelBase+crow*ccols+ccol-1, levelComponent)
+							level = frameWorkLoopFilterLevel(masks.LevelCache, crow*cols+ccol-1, levelComponent)
 						}
 						if level == 0 {
 							continue
@@ -697,10 +833,34 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *thread
 				}
 				widths := frameWorkLoopFilterMaskChromaWidth
 				position := int32(crow) << 2
+				if position >= state.bounds.posHeight {
+					continue
+				}
 				for i := range widths {
 					widths[i] = frameWorkLoopFilterMaskWidthAt(position, state.bounds.bufHeight, widths[i])
 				}
-				m0, m1 := lfmask.ChromaMaskWords(&region.UV[1][pos], 0, extentCCols, laneBitsH)
+				lineMask := &region.UV[1][pos]
+				scanCols := minInt(extentCCols, int((state.bounds.posWidth+3)>>2)-baseCCol)
+				if scanCols <= 0 {
+					continue
+				}
+				m0, m1 := lfmask.ChromaMaskWords(lineMask, 0, scanCols, laneBitsH)
+				validBits := frameWorkLoopFilterMaskLowBits(scanCols)
+				m0, m1 = m0&validBits, m1&validBits
+				anyMask := m0|m1 != 0
+				maxClass := 0
+				if m1 != 0 {
+					maxClass = 1
+				}
+				if state.fastMask && state.firstErr == nil && anyMask && extentCCols&3 == 0 && frameWorkLoopFilterMaskLineWidthFits(position, state.bounds.bufHeight, false, maxClass) {
+					frameWorkFlushLoopFilterMaskRun(state, result, dst, bytesPerSample, bitDepth)
+					levelIndex := crow*cols + baseCCol
+					q0Base := crow*4*dst.Stride + baseCCol*4
+					packedMask := [2]uint32{m0, m1}
+					filterChromaMaskLine8Trusted(dst, q0Base, &packedMask, masks.LevelCache, levelIndex, levelComponent, cols, loopfilter.EdgeHorizontal, &state.lut)
+					frameWorkCountChromaMaskLine(result, state.plane, lineMask, scanCols, laneBitsH, masks.LevelCache, levelIndex, 1, -cols, levelComponent)
+					continue
+				}
 				for vm := m0 | m1; vm != 0; vm &= vm - 1 {
 					off := bits.TrailingZeros32(vm)
 					bit := uint32(1) << off
@@ -709,9 +869,9 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *thread
 						widthClass = 1
 					}
 					ccol := baseCCol + off
-					level := frameWorkLoopFilterPackedLevel(masks.LevelCache, levelBase+crow*ccols+ccol, levelComponent)
+					level := frameWorkLoopFilterLevel(masks.LevelCache, crow*cols+ccol, levelComponent)
 					if level == 0 {
-						level = frameWorkLoopFilterPackedLevel(masks.LevelCache, levelBase+(crow-1)*ccols+ccol, levelComponent)
+						level = frameWorkLoopFilterLevel(masks.LevelCache, (crow-1)*cols+ccol, levelComponent)
 					}
 					if level == 0 {
 						continue

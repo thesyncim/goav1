@@ -23,18 +23,18 @@ type orderTestBlock struct {
 
 func TestFrameWorkLoopFilterLevelCacheShape(t *testing.T) {
 	tests := []struct {
-		name             string
-		cols, rows       int
-		layout           lfmask.Layout
-		hasChroma        bool
-		uvCols, uvRows   int
-		packedLevelCells int
+		name           string
+		cols, rows     int
+		layout         lfmask.Layout
+		hasChroma      bool
+		uvCols, uvRows int
+		levelCells     int
 	}{
-		{"720p-420", 320, 180, lfmask.Layout{SSHor: 1, SSVer: 1}, true, 160, 90, 36000},
-		{"720p-422", 320, 180, lfmask.Layout{SSHor: 1}, true, 160, 180, 43200},
+		{"720p-420", 320, 180, lfmask.Layout{SSHor: 1, SSVer: 1}, true, 160, 90, 57600},
+		{"720p-422", 320, 180, lfmask.Layout{SSHor: 1}, true, 160, 180, 57600},
 		{"720p-444", 320, 180, lfmask.Layout{}, true, 320, 180, 57600},
-		{"720p-mono", 320, 180, lfmask.Layout{Mono: true}, false, 0, 0, 28800},
-		{"odd-420", 3, 5, lfmask.Layout{SSHor: 1, SSVer: 1}, true, 2, 3, 11},
+		{"720p-mono", 320, 180, lfmask.Layout{Mono: true}, false, 0, 0, 57600},
+		{"odd-420", 3, 5, lfmask.Layout{SSHor: 1, SSVer: 1}, true, 2, 3, 15},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -42,8 +42,8 @@ func TestFrameWorkLoopFilterLevelCacheShape(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if uvCols != tt.uvCols || uvRows != tt.uvRows || length != tt.packedLevelCells {
-				t.Fatalf("shape=(%d,%d,%d), want (%d,%d,%d)", uvCols, uvRows, length, tt.uvCols, tt.uvRows, tt.packedLevelCells)
+			if uvCols != tt.uvCols || uvRows != tt.uvRows || length != tt.levelCells {
+				t.Fatalf("shape=(%d,%d,%d), want (%d,%d,%d)", uvCols, uvRows, length, tt.uvCols, tt.uvRows, tt.levelCells)
 			}
 		})
 	}
@@ -78,8 +78,8 @@ func TestFrameWorkLoopFilterDecodeLevelsCarryCDEFSkip(t *testing.T) {
 	for row := 0; row < 2; row++ {
 		for col := 0; col < 2; col++ {
 			index := row*cols + col
-			vertical := loopFilterPackedComponent(h.LevelCache, index, 0)
-			horizontal := loopFilterPackedComponent(h.LevelCache, index, 1)
+			vertical := h.LevelCache[index][0]
+			horizontal := h.LevelCache[index][1]
 			if vertical&loopfilter.MaxLevel != levels[loopfilter.PlaneY][loopfilter.EdgeVertical] || vertical&loopFilterCDEFSkipFlag == 0 {
 				t.Fatalf("luma cell (%d,%d) vertical=%#x", col, row, vertical)
 			}
@@ -100,14 +100,13 @@ func TestFrameWorkLoopFilterDecodeLevelsCarryCDEFSkip(t *testing.T) {
 		t.Fatal("out-of-bounds CDEF lookup reported skipped")
 	}
 
-	levelBase := cols * rows
 	uvCols := cols >> 1
 	for col := 0; col < uvCols; col++ {
-		index := levelBase + col
-		if got := loopFilterPackedComponent(h.LevelCache, index, 0); got != levels[loopfilter.PlaneU][loopfilter.EdgeVertical] {
+		index := col
+		if got := h.LevelCache[index][2]; got != levels[loopfilter.PlaneU][loopfilter.EdgeVertical] {
 			t.Fatalf("chroma U cell %d=%d want %d", col, got, levels[loopfilter.PlaneU][loopfilter.EdgeVertical])
 		}
-		if got := loopFilterPackedComponent(h.LevelCache, index, 1); got != levels[loopfilter.PlaneV][loopfilter.EdgeVertical] {
+		if got := h.LevelCache[index][3]; got != levels[loopfilter.PlaneV][loopfilter.EdgeVertical] {
 			t.Fatalf("chroma V cell %d=%d want %d", col, got, levels[loopfilter.PlaneV][loopfilter.EdgeVertical])
 		}
 	}

@@ -12,7 +12,7 @@ const loopFilterCDEFSkipFlag = uint8(1 << 7)
 // dav1d-style per-superblock deblocking edge bitmasks (internal/av1/lfmask). It
 // mirrors dav1d's f->lf.mask + f->lf.level: one FilterMask per 128x128
 // superblock region (sb128w * sb128h of them) holds the compact per-4x4 edge
-// bitmasks, and LevelCache is the packed frame-wide resolved-level grid.
+// bitmasks, and LevelCache is the frame-wide [Yv,Yh,U,V] level grid.
 //
 // The edge bitmasks are built during the tile-residual block walk in decode
 // (Z) order (dav1d src/decode.c dav1d_create_lf_mask_{inter,intra}); the
@@ -49,10 +49,11 @@ func FrameWorkLoopFilterMaskShape(cols, rows int) (sb128w, sb128h, masks int) {
 	return sb128w, sb128h, sb128w * sb128h
 }
 
-// FrameWorkLoopFilterLevelCacheShape returns the packed level-cache geometry.
-// Each logical cell contains two levels: Y vertical/horizontal for every luma
-// MI cell, followed by U/V for every chroma MI cell. Two logical cells share
-// one [4]uint8 backing entry, avoiding unused chroma slots in subsampled frames.
+// FrameWorkLoopFilterLevelCacheShape returns the dav1d-compatible level-cache
+// geometry. Every luma MI cell owns one [Y vertical,Y horizontal,U,V] tuple;
+// subsampled chroma uses the upper-left uvCols x uvRows prefix with the same
+// luma stride. This slightly larger layout lets the whole-mask SIMD consumer
+// load four adjacent level tuples directly without unpacking scratch first.
 func FrameWorkLoopFilterLevelCacheShape(cols, rows int, layout lfmask.Layout, hasChroma bool) (uvCols, uvRows, length int, err error) {
 	if cols <= 0 || rows <= 0 || layout.SSHor < 0 || layout.SSHor > 1 || layout.SSVer < 0 || layout.SSVer > 1 {
 		return 0, 0, 0, ErrInvalidBatch
@@ -64,34 +65,18 @@ func FrameWorkLoopFilterLevelCacheShape(cols, rows int, layout lfmask.Layout, ha
 		return 0, 0, 0, ErrInvalidBatch
 	}
 	lumaCells := cols64 * rows64
-	logicalCells := lumaCells
 	if hasChroma && !layout.Mono {
 		uvCols = (cols >> layout.SSHor) + (cols & layout.SSHor)
 		uvRows = (rows >> layout.SSVer) + (rows & layout.SSVer)
-		uvCols64 := uint64(uvCols)
-		uvRows64 := uint64(uvRows)
-		if uvCols64 > maxUint64/uvRows64 {
-			return 0, 0, 0, ErrInvalidBatch
-		}
-		uvCells := uvCols64 * uvRows64
-		if logicalCells > maxUint64-uvCells {
-			return 0, 0, 0, ErrInvalidBatch
-		}
-		logicalCells += uvCells
 	}
 	maxInt := uint64(^uint(0) >> 1)
-	if logicalCells > maxInt*2 {
+	if lumaCells > maxInt {
 		return 0, 0, 0, ErrInvalidBatch
 	}
-	packed := (logicalCells + 1) >> 1
-	if packed > maxInt {
-		return 0, 0, 0, ErrInvalidBatch
-	}
-	return uvCols, uvRows, int(packed), nil
+	return uvCols, uvRows, int(lumaCells), nil
 }
 
-// LevelCacheShape returns this handle's chroma geometry and packed backing
-// length. Chroma logical cells begin after Cols*Rows luma logical cells.
+// LevelCacheShape returns this handle's chroma geometry and tuple-grid length.
 func (h *FrameWorkLoopFilterMasks) LevelCacheShape() (uvCols, uvRows, length int, err error) {
 	if h == nil {
 		return 0, 0, 0, ErrInvalidBatch
@@ -107,8 +92,7 @@ func (h *FrameWorkLoopFilterMasks) Valid() bool {
 // BindLoopFilterMasks validates and slices caller-owned storage into this
 // frame's deblocking edge-mask handle, mirroring BindLoopFilterMap. masks holds
 // one FilterMask per 128x128 region (len >= FrameWorkLoopFilterMaskShape masks)
-// and levelCache packs two two-level logical cells per [4]uint8 entry (luma
-// cells followed by the subsampled chroma cells).
+// and levelCache holds one [Yv,Yh,U,V] tuple per luma MI cell.
 // The returned handle is cleared so the decode block walk can OR this frame's
 // edges into reused storage; the loop filter applies them at post-filter time.
 func (b *FrameWorkBatch) BindLoopFilterMasks(masks []lfmask.FilterMask, levelCache [][4]uint8) (FrameWorkLoopFilterMasks, error) {
@@ -246,7 +230,7 @@ func (h *FrameWorkLoopFilterMasks) fillBlockLevels(frameCtx *FrameWorkFrameConte
 }
 
 func (h *FrameWorkLoopFilterMasks) fillResolvedBlockLevels(block FrameWorkLoopFilterBlock, levels [3][2]uint8, skipTransform bool) error {
-	uvCols, _, levelLength, err := h.LevelCacheShape()
+	_, _, levelLength, err := h.LevelCacheShape()
 	if err != nil || len(h.LevelCache) < levelLength {
 		return ErrInvalidBatch
 	}
@@ -266,7 +250,7 @@ func (h *FrameWorkLoopFilterMasks) fillResolvedBlockLevels(block FrameWorkLoopFi
 		yVertical |= loopFilterCDEFSkipFlag
 	}
 	for y := 0; y < bh4; y++ {
-		fillLoopFilterPackedLevels(h.LevelCache, (by+y)*h.Cols+bx, bw4,
+		fillLoopFilterLevels(h.LevelCache, (by+y)*h.Cols+bx, bw4, 0, 1,
 			yVertical, levels[loopfilter.PlaneY][loopfilter.EdgeHorizontal])
 	}
 	if !h.HasChroma {
@@ -281,9 +265,8 @@ func (h *FrameWorkLoopFilterMasks) fillResolvedBlockLevels(block FrameWorkLoopFi
 	if cbw4 <= 0 || cbh4 <= 0 {
 		return nil
 	}
-	levelBase := h.Cols * h.Rows
 	for y := 0; y < cbh4; y++ {
-		fillLoopFilterPackedLevels(h.LevelCache, levelBase+(cby+y)*uvCols+cbx, cbw4,
+		fillLoopFilterLevels(h.LevelCache, (cby+y)*h.Cols+cbx, cbw4, 2, 3,
 			levels[loopfilter.PlaneU][loopfilter.EdgeVertical], levels[loopfilter.PlaneV][loopfilter.EdgeVertical])
 	}
 	return nil
@@ -306,40 +289,20 @@ func (h *FrameWorkLoopFilterMasks) CDEFBlockAllSkipped(unitRow, unitCol, by, bx 
 	}
 	top := miRow*h.Cols + miCol
 	bottom := top + h.Cols
-	return loopFilterPackedComponent(h.LevelCache, top, 0)&loopFilterCDEFSkipFlag != 0 &&
-		loopFilterPackedComponent(h.LevelCache, top+1, 0)&loopFilterCDEFSkipFlag != 0 &&
-		loopFilterPackedComponent(h.LevelCache, bottom, 0)&loopFilterCDEFSkipFlag != 0 &&
-		loopFilterPackedComponent(h.LevelCache, bottom+1, 0)&loopFilterCDEFSkipFlag != 0
+	return h.LevelCache[top][0]&loopFilterCDEFSkipFlag != 0 &&
+		h.LevelCache[top+1][0]&loopFilterCDEFSkipFlag != 0 &&
+		h.LevelCache[bottom][0]&loopFilterCDEFSkipFlag != 0 &&
+		h.LevelCache[bottom+1][0]&loopFilterCDEFSkipFlag != 0
 }
 
-func loopFilterPackedComponent(cache [][4]uint8, index, component int) uint8 {
-	return cache[index>>1][((index&1)<<1)+component]
-}
-
-// fillLoopFilterPackedLevels fills a contiguous logical-cell run in the
-// two-cells-per-entry level cache. It matches the postfilter fallback's packed
-// layout while keeping aligned block rows on whole-entry assignments.
-func fillLoopFilterPackedLevels(cache [][4]uint8, start, count int, level0, level1 uint8) {
-	if count <= 0 {
-		return
-	}
-	if start&1 != 0 {
-		cell := &cache[start>>1]
-		cell[2] = level0
-		cell[3] = level1
-		start++
-		count--
-	}
-	packed := [4]uint8{level0, level1, level0, level1}
-	for count >= 2 {
-		cache[start>>1] = packed
-		start += 2
-		count -= 2
-	}
-	if count != 0 {
-		cell := &cache[start>>1]
-		cell[0] = level0
-		cell[1] = level1
+// fillLoopFilterLevels fills two components of a contiguous tuple run. It
+// preserves the other pair because the subsampled U/V prefix overlaps luma
+// cells and decode order does not guarantee which plane pair is written last.
+func fillLoopFilterLevels(cache [][4]uint8, start, count, component0, component1 int, level0, level1 uint8) {
+	for i := 0; i < count; i++ {
+		cell := &cache[start+i]
+		cell[component0] = level0
+		cell[component1] = level1
 	}
 }
 
