@@ -81,6 +81,14 @@ func wienerHorizontalNEON(src []uint16, srcStride int, srcOrigin int, width int,
 	if width < 8 || width%8 != 0 {
 		return wienerHorizontal(src, srcStride, srcOrigin, width, height, filter, bitDepth, round0, max, temp)
 	}
+	// The asm window load (ld1 {v2.8h,v3.8h}) pulls 16 u16 for the last 8-column
+	// group, reaching 2 u16 (4 bytes) past the width+2*WienerHalfwin reslice the
+	// scalar reference validates. Those trailing lanes never feed a stored result,
+	// but they must be resident: require the 2-u16 trailing pad (a borderedBlockFits
+	// check with a width widened by 2) before dispatching; otherwise run scalar.
+	if !borderedBlockFits(len(src), srcStride, srcOrigin, width+2, height, WienerHalfwin, WienerHalfwin) {
+		return wienerHorizontal(src, srcStride, srcOrigin, width, height, filter, bitDepth, round0, max, temp)
+	}
 	// Replicate the pure-Go validity check: every sample touched by the inner
 	// window must be <= max. The window for row r spans columns [col-3..col+3]
 	// for col in [0,width), i.e. the full reslice src[srcStart : srcStart+width+6].
@@ -114,6 +122,13 @@ func wienerHorizontalNEON(src []uint16, srcStride int, srcOrigin int, width int,
 
 func wienerHorizontalNEONTrusted(src []uint16, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, bitDepth int, round0 int, max uint16, temp []uint16) {
 	if width < 8 || width%8 != 0 {
+		wienerHorizontalTrusted(src, srcStride, srcOrigin, width, height, filter, bitDepth, round0, max, temp)
+		return
+	}
+	// The asm window load reaches 2 u16 past the width+2*WienerHalfwin reslice
+	// (see wienerHorizontalNEON); require that trailing pad resident before
+	// dispatching, else run the scalar reference.
+	if !borderedBlockFits(len(src), srcStride, srcOrigin, width+2, height, WienerHalfwin, WienerHalfwin) {
 		wienerHorizontalTrusted(src, srcStride, srcOrigin, width, height, filter, bitDepth, round0, max, temp)
 		return
 	}

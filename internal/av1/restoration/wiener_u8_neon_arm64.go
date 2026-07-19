@@ -69,6 +69,15 @@ func wienerHorizontalU8NEON(src []uint8, srcStride int, srcOrigin int, width int
 		wienerHorizontalU8(src, srcStride, srcOrigin, width, height, filter, round0, temp)
 		return
 	}
+	// The u8 window load (ld1 {v1.16b}) pulls 16 u8 for the last 8-column group,
+	// reaching 2 samples past the width+2*WienerHalfwin reslice the scalar
+	// reference validates. Those trailing lanes never feed a stored result, but
+	// they must be resident: require the 2-sample trailing pad (a borderedBlockFits
+	// check with a width widened by 2) before dispatching; otherwise run scalar.
+	if !borderedBlockFits(len(src), srcStride, srcOrigin, width+2, height, WienerHalfwin, WienerHalfwin) {
+		wienerHorizontalU8(src, srcStride, srcOrigin, width, height, filter, round0, temp)
+		return
+	}
 	const bitDepth = 8
 	limit := int32(1 << (bitDepth + 1 + WienerFilterBits - round0))
 	offset := int32(1 << (bitDepth + WienerFilterBits - 1))

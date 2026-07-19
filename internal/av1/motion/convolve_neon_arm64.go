@@ -187,13 +187,12 @@ func convolve2D8NEONWithIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int,
 func convolveX8ClampedNEON(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
 	neonWidth := width == 4 || (width >= 8 && width%8 == 0)
-	// The width-4 horizontal kernel reads one byte past the resident tap window
-	// (it loads bytes 8..11 to fill the slide register), so widen the fit check
-	// by 1 sample for width 4 to keep that load resident.
-	haloW := width + filterTaps - 1
-	if width == 4 {
-		haloW++
-	}
+	// Both the width>=8 and width-4 horizontal kernels physically load one sample
+	// past the consumed tap window: the width>=8 loop does a 16-byte ld1 for its
+	// last 8-column group, and the width-4 kernel loads bytes 8..11 to fill the
+	// slide register. That trailing sample never feeds an output, but it must be
+	// resident, so reserve width+filterTaps samples in the fit check.
+	haloW := width + filterTaps
 	if neonWidth && planeRegionFits(ref, 1, refX-fo, refY, haloW, height) {
 		convolveX8NEON(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 		return
@@ -225,10 +224,10 @@ func convolveX8ClampedNEONWithScratch(dst frame.Plane, ref frame.Plane, dstX int
 	fo := filterTaps/2 - 1
 	neonWidth := width == 4 || (width >= 8 && width%8 == 0)
 	if scratch != nil && neonWidth {
-		haloW := width + filterTaps - 1
-		if width == 4 {
-			haloW++
-		}
+		// The horizontal kernels load one sample past the consumed tap window
+		// (16-byte ld1 for width>=8; bytes 8..11 for width-4); reserve
+		// width+filterTaps so that trailing sample stays resident.
+		haloW := width + filterTaps
 		if !planeRegionFits(ref, 1, refX-fo, refY, haloW, height) {
 			emu, emuX, emuY := emuEdgeWindow(ref, refX, refY, width, height, &scratch.edge)
 			convolveX8Impl(dst, emu, dstX, dstY, emuX, emuY, width, height, kernel)
@@ -270,6 +269,17 @@ func convolveX8HorizontalEdgeNEON(dst frame.Plane, ref frame.Plane, dstX int, ds
 		remaining := xHi - start
 		if remaining >= 8 {
 			chunk := remaining &^ 7
+			// clampedXInterior only guarantees the consumed taps are resident;
+			// the last 8-column group's 16-byte load reaches one sample further
+			// (chunk+filterTaps in total). Shrink the NEON span by whole groups
+			// until that physical reach is in-bounds so the asm never over-reads;
+			// any dropped columns fall to the scalar tail below.
+			for chunk >= 8 && !planeRegionFits(ref, 1, refX+start-fo, refY, chunk+filterTaps, height) {
+				chunk -= 8
+			}
+			if chunk < 8 {
+				break
+			}
 			convolveX8NEON(dst, ref, dstX+start, dstY, refX+start, refY, chunk, height, kernel)
 			start += chunk
 			didNEON = true
@@ -328,12 +338,10 @@ func convolve2D8ClampedNEONWithScratch(dst frame.Plane, ref frame.Plane, dstX in
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	neonWidth := width == 4 || (width >= 8 && width%8 == 0)
-	// The width-4 horizontal pass reads one byte past the resident window; widen
-	// the column halo by 1 sample for width 4 so that load stays resident.
-	haloW := width + filterTaps - 1
-	if width == 4 {
-		haloW++
-	}
+	// The horizontal pass loads one sample past the consumed tap window (16-byte
+	// ld1 for width>=8; bytes 8..11 for width-4); reserve width+filterTaps
+	// columns so that trailing sample stays resident.
+	haloW := width + filterTaps
 	if neonWidth &&
 		planeRegionFits(ref, 1, refX-foX, refY-foY, haloW, height+filterTaps-1) {
 		convolve2D8NEONWithScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, scratch)
@@ -369,6 +377,17 @@ func convolve2D8ClampedEdgeSplitNEONWithScratch(dst frame.Plane, ref frame.Plane
 		remaining := xHi - start
 		if remaining >= 8 {
 			chunk := remaining &^ 7
+			// The 2D horizontal pass loads 16 bytes for its last 8-column group,
+			// reaching chunk+filterTaps source samples across the midH+filterTaps-1
+			// halo rows. Shrink by whole groups until that physical reach is
+			// resident so the asm never over-reads; dropped columns go to the
+			// scalar tail below.
+			for chunk >= 8 && !planeRegionFits(ref, 1, refX+start-foX, refY+yLo-foY, chunk+filterTaps, yHi-yLo+filterTaps-1) {
+				chunk -= 8
+			}
+			if chunk < 8 {
+				break
+			}
 			starts[n], widths[n] = start, chunk
 			n++
 			start += chunk
