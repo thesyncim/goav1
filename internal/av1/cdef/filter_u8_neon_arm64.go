@@ -113,6 +113,17 @@ func filterUnitBlocksU8NEON(dst []byte, dstStride int, input []uint16, inputOrig
 	if secondaryStrength != 0 {
 		ctx.enableSecondary = 1
 	}
+	// Route the whole unit through the interior .16b kernels when its tap
+	// footprint is free of the VeryLarge sentinel (dav1d's edges == 0xf fast
+	// path) and the block height matches the kernel's row packing. Otherwise
+	// the .8h path handles the sentinel border. The predicate is proven once
+	// per unit and reused for every block below.
+	useInterior := cdefUnitInteriorU8(input, inputOrigin, blocks, u.bwLog2, u.bhLog2)
+	if u.blockWidth == 8 {
+		useInterior = useInterior && u.blockHeight%2 == 0
+	} else {
+		useInterior = useInterior && u.blockHeight%4 == 0
+	}
 	strength := u.primaryStrength
 	if !u.lumaAdjust {
 		setFilterBlockU8NEONCtxPrimary(&ctx, strength, secondaryStrength, u.damping, u.coeffShift)
@@ -141,7 +152,11 @@ func filterUnitBlocksU8NEON(dst []byte, dstStride int, input []uint16, inputOrig
 		ctx.sec3 = int64(cdefDirections[dir][1])
 		ctx.dst = &dst[dstOrigin]
 		ctx.input = &input[srcOrigin]
-		dispatchFilterBlockU8NEON(&ctx, u.blockWidth, strength, secondaryStrength)
+		if useInterior {
+			dispatchFilterBlockU8InteriorNEON(&ctx, u.blockWidth, strength, secondaryStrength)
+		} else {
+			dispatchFilterBlockU8NEON(&ctx, u.blockWidth, strength, secondaryStrength)
+		}
 	}
 	return nil
 }
