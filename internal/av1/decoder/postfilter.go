@@ -740,7 +740,10 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 		if banding.CDEFUnitRows > 0 {
 			cdefResult, err = ctx.ApplyCDEFPostFilterBanded(req.CDEF, banding.CDEFUnitRows)
 		} else {
-			cdefResult, err = ctx.ApplyCDEFPostFilter(req.CDEF)
+			// applyCDEFPostFilterMaybePooled fans CDEF unit rows across the idle
+			// worker lanes when a multi-lane pool was threaded in, and otherwise
+			// runs the byte-identical serial whole-frame apply.
+			cdefResult, err = ctx.applyCDEFPostFilterMaybePooled(req.CDEF)
 		}
 		if err != nil {
 			return ctx, result, err

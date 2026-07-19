@@ -1236,3 +1236,103 @@ func testCDEFU8LineScratch(width int) [3][]uint16 {
 		make([]uint16, width),
 	}
 }
+
+// TestCDEFPostFilterPooledMatchesSerial proves the pooled row-band CDEF apply
+// (applyCDEFPostFilterMaybePooled with a multi-lane pool) is byte-identical to
+// the serial whole-frame apply, for several worker counts. The frame is tall
+// enough (8 CDEF unit rows) that the min-rows-per-band gate lets the pooled path
+// engage. This is the worker-count-invariance guarantee the postfilter pool
+// rests on.
+func TestCDEFPostFilterPooledMatchesSerial(t *testing.T) {
+	const width, height = 256, 512 // 4x8 CDEF unit grid
+	seq := testSequence()
+	seq.EnableCDEF = true
+	size := parser.FrameSize{CodedWidth: width, UpscaledWidth: width, Height: height, SuperResDenominator: 8}
+	event := Event{
+		SequenceHeader: seq,
+		FrameSize:      size,
+		CDEF: parser.CDEFParams{
+			Damping:       5,
+			StrengthCount: 2,
+			YStrength:     [parser.MaxCDEFStrengths]uint8{9, 31},
+			UVStrength:    [parser.MaxCDEFStrengths]uint8{5, 17},
+		},
+	}
+	build := func(pool *threading.Pool) (*frame.Frame, FrameWorkPostFilterContext, FrameWorkCDEFPostFilterRequest) {
+		output := testFrameWorkCDEFFrame(t, frame.Format{
+			Width: width, Height: height, BitDepth: 8,
+			SubsamplingX: true, SubsamplingY: true, Align: 64,
+		})
+		testFillFrameWorkCDEFPlane(output.Y)
+		testFillFrameWorkCDEFPlane(output.U)
+		testFillFrameWorkCDEFPlane(output.V)
+		ctx := FrameWorkPostFilterContext{Event: event, Output: output, pool: pool}
+		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopFilter)
+		batch := threading.FrameWorkBatch{
+			FrameWorkFrameContext: threading.FrameWorkFrameContext{
+				Sequence:  threading.FrameWorkSequenceContextFromHeader(event.SequenceHeader),
+				FrameSize: event.FrameSize,
+				CDEF:      event.CDEF,
+			},
+		}
+		_, _, length, err := batch.CDEFIndexMapShape()
+		if err != nil {
+			t.Fatal(err)
+		}
+		idx := make([]uint8, length)
+		for i := range idx {
+			idx[i] = uint8(i % 2)
+		}
+		cdefMap, err := batch.BindCDEFIndexMap(idx, make([]bool, length))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range cdefMap.Read {
+			cdefMap.Read[i] = true
+		}
+		scratch, err := ctx.CDEFPostFilterScratchLen()
+		if err != nil {
+			t.Fatal(err)
+		}
+		samples, dst, dg, vg, input, unitDst := testFrameWorkCDEFScratchStorage(scratch)
+		req, err := scratch.BindRequest(cdefMap, samples, dst, dg, vg, input, unitDst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return output, ctx, req
+	}
+
+	serialPool, err := threading.NewPool(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serialPool.Close()
+	serialOut, serialCtx, serialReq := build(serialPool)
+	if _, err := serialCtx.applyCDEFPostFilterMaybePooled(serialReq); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, workers := range []int{2, 3, 4, 8} {
+		pool, err := threading.NewPool(workers)
+		if err != nil {
+			t.Fatalf("workers=%d: %v", workers, err)
+		}
+		pooledOut, pooledCtx, pooledReq := build(pool)
+		if _, err := pooledCtx.applyCDEFPostFilterMaybePooled(pooledReq); err != nil {
+			pool.Close()
+			t.Fatalf("workers=%d apply: %v", workers, err)
+		}
+		for _, planes := range [][2]frame.Plane{{serialOut.Y, pooledOut.Y}, {serialOut.U, pooledOut.U}, {serialOut.V, pooledOut.V}} {
+			s, p := planes[0], planes[1]
+			for y := 0; y < s.Height; y++ {
+				for x := 0; x < s.Width; x++ {
+					if s.Pix[y*s.Stride+x] != p.Pix[y*p.Stride+x] {
+						pool.Close()
+						t.Fatalf("workers=%d pooled differs at (%d,%d): serial=%d pooled=%d", workers, x, y, s.Pix[y*s.Stride+x], p.Pix[y*p.Stride+x])
+					}
+				}
+			}
+		}
+		pool.Close()
+	}
+}

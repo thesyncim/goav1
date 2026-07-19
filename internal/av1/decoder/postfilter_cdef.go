@@ -1,6 +1,8 @@
 package decoder
 
 import (
+	"sync/atomic"
+
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -9,6 +11,13 @@ import (
 
 // FrameWorkCDEFIndexMap is the decoded frame-level CDEF unit index map.
 type FrameWorkCDEFIndexMap = threading.FrameWorkCDEFIndexMap
+
+// cdefMinUnitRowsPerBand is the minimum number of 64x64 CDEF unit rows a pooled
+// band must own before applyCDEFPostFilterMaybePooled fans CDEF out across the
+// worker lanes. Below it the serial whole-frame apply wins (no snapshot copy, no
+// dispatch, no per-frame goroutine escape), matching the SB-row reconstruction
+// wavefront's minimum-rows-per-worker gate.
+const cdefMinUnitRowsPerBand = 2
 
 // FrameWorkCDEFPostFilterScratchSize reports caller-owned scratch needed by
 // ApplyCDEFPostFilter.
@@ -121,8 +130,16 @@ func (ctx FrameWorkPostFilterContext) CDEFPostFilterScratchLen() (FrameWorkCDEFP
 		size.DirectionGrid = cols * rows
 		size.VarianceGrid = cols * rows
 	}
-	size.Input = cdef.InputBufferSize
-	size.UnitDst = cdef.InputBufferSize
+	// The pooled row-band apply gives each of the W worker lanes its own
+	// InputBufferSize-sized Input and UnitDst scratch (they cannot share the
+	// per-unit filter scratch while filtering different unit rows concurrently),
+	// so size the two buffers for W bands. W is 1 on the serial path, which keeps
+	// the single-band scratch and the whole-frame apply byte-for-byte unchanged.
+	// SampleScratch stays a single full-frame snapshot: every band reads it
+	// read-only, so it is not per-lane.
+	workers := ctx.postFilterWorkerCount()
+	size.Input = cdef.InputBufferSize * workers
+	size.UnitDst = cdef.InputBufferSize * workers
 	return size, nil
 }
 
@@ -181,6 +198,107 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilterBanded(req FrameWorkCDE
 		}
 	}
 	return result, nil
+}
+
+// applyCDEFPostFilterMaybePooled runs CDEF across the frame's worker lanes when
+// the postfilter was handed a multi-lane pool, and otherwise runs the serial
+// whole-frame apply. The pooled path snapshots the pre-CDEF planes once and fans
+// the 64x64 CDEF unit rows out as deterministic contiguous bands: every band
+// reads the same immutable snapshot and writes disjoint output rows, so the
+// result is bit-identical to the serial apply regardless of lane count (dav1d
+// cdef_brow processes independent superblock rows the same way). Each band binds
+// its own InputBufferSize-sized Input and UnitDst scratch out of the arena that
+// CDEFPostFilterScratchLen sized to W bands; the snapshot, direction grid, and
+// variance grid are shared (bands touch disjoint unit rows). The result counters
+// sum the same per-unit work the serial apply would report.
+func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterMaybePooled(req FrameWorkCDEFPostFilterRequest) (FrameWorkCDEFPostFilterResult, error) {
+	pool := ctx.pool
+	workers := ctx.postFilterWorkerCount()
+	if pool == nil || workers <= 1 {
+		return ctx.ApplyCDEFPostFilter(req)
+	}
+	remaining := ctx.RemainingPostFilters()
+	if remaining.Has(FrameWorkPostFilterLoopFilter) {
+		return FrameWorkCDEFPostFilterResult{}, ErrUnsupportedPostFilter
+	}
+	if !remaining.Has(FrameWorkPostFilterCDEF) {
+		return FrameWorkCDEFPostFilterResult{}, nil
+	}
+	if ctx.Output == nil {
+		return FrameWorkCDEFPostFilterResult{}, frame.ErrInvalidSlot
+	}
+	if !frameWorkCDEFHasFiltering(ctx.Event.CDEF, ctx.Output.Format.MonoChrome) {
+		return FrameWorkCDEFPostFilterResult{}, nil
+	}
+	if err := ctx.validateCDEFPostFilterRequest(req); err != nil {
+		return FrameWorkCDEFPostFilterResult{}, err
+	}
+	_, rows, err := frameWorkCDEFUnitGrid(ctx.Event.FrameSize)
+	if err != nil {
+		return FrameWorkCDEFPostFilterResult{}, err
+	}
+	// Keep at least cdefMinUnitRowsPerBand 64x64 unit rows per band so the
+	// snapshot-load and dispatch overhead is amortized, mirroring the SB-row
+	// reconstruction wavefront's minimum-rows-per-worker gate. Small frames (few
+	// CDEF unit rows) fall through to the serial whole-frame apply, which keeps
+	// the reusable-decoder hot path allocation-free the way the serial recon path
+	// is; only frames with enough unit rows to win pay the per-frame dispatch.
+	maxBands := rows / cdefMinUnitRowsPerBand
+	bands := workers
+	if bands > maxBands {
+		bands = maxBands
+	}
+	ibs := cdef.InputBufferSize
+	// Fall back to the serial whole-frame apply when there is only one band or the
+	// caller did not size the per-band Input/UnitDst scratch. The serial apply uses
+	// only the first InputBufferSize chunk, so a larger arena is harmless. The
+	// pooled dispatch lives in applyCDEFPostFilterPooledBands, a separate function,
+	// so its band closure (which escapes to the worker goroutines) never lands in
+	// this function's frame — the serial fall-through path stays allocation-free.
+	if bands <= 1 || len(req.InputScratch) < bands*ibs || len(req.UnitDstScratch) < bands*ibs {
+		return ctx.ApplyCDEFPostFilter(req)
+	}
+	return ctx.applyCDEFPostFilterPooledBands(req, pool, rows, bands, ibs)
+}
+
+// applyCDEFPostFilterPooledBands snapshots the pre-CDEF planes once and fans the
+// [0, rows) CDEF unit rows across bands worker lanes. Each band binds its own
+// InputBufferSize-sized Input/UnitDst chunk (band ordinal w owns [w*ibs,(w+1)*ibs))
+// and reconstructs disjoint output rows from the shared read-only snapshot, so
+// the result is bit-identical to the serial apply. It is deliberately a distinct
+// function: its band closure escapes to the goroutines, so keeping it out of the
+// maybe-pooled entry point lets the serial fall-through stay allocation-free.
+func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterPooledBands(req FrameWorkCDEFPostFilterRequest, pool *threading.Pool, rows int, bands int, ibs int) (FrameWorkCDEFPostFilterResult, error) {
+	if err := ctx.LoadCDEFPostFilterSamples(req); err != nil {
+		return FrameWorkCDEFPostFilterResult{}, err
+	}
+	var units, blocks, planes atomic.Uint32
+	runErr := pool.RunRanges(rows, bands, func(band, lo, hi int) error {
+		bandReq := req
+		bandReq.InputScratch = req.InputScratch[band*ibs : (band+1)*ibs]
+		bandReq.UnitDstScratch = req.UnitDstScratch[band*ibs : (band+1)*ibs]
+		bandResult, err := ctx.ApplyCDEFPostFilterUnitRows(bandReq, lo, hi)
+		if err != nil {
+			return err
+		}
+		units.Add(bandResult.Units)
+		blocks.Add(bandResult.Blocks)
+		for {
+			old := planes.Load()
+			if uint32(bandResult.Planes) <= old || planes.CompareAndSwap(old, uint32(bandResult.Planes)) {
+				break
+			}
+		}
+		return nil
+	})
+	if runErr != nil {
+		return FrameWorkCDEFPostFilterResult{}, runErr
+	}
+	return FrameWorkCDEFPostFilterResult{
+		Units:  units.Load(),
+		Blocks: blocks.Load(),
+		Planes: uint8(planes.Load()),
+	}, nil
 }
 
 // LoadCDEFPostFilterSamples snapshots the pre-CDEF output planes into the

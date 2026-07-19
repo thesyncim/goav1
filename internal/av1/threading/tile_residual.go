@@ -1223,6 +1223,19 @@ func frameWorkWavefrontEligible(b FrameWorkBatch, index int) bool {
 	if workers <= 1 {
 		return false
 	}
+	// Intra block copy frames reconstruct blocks by copying from an earlier
+	// already-reconstructed region of the SAME frame via a block displacement
+	// vector. Unlike intra edge prediction (which reaches at most the upper-right
+	// superblock, the halo the wavefront's done[R-1] >= C+2 gate covers), an
+	// intrabc DV can point an arbitrary distance up and left, so the referenced
+	// samples may still be unreconstructed when a lane reaches the copying block.
+	// The SB-row wavefront cannot honour that dependency, so intrabc frames stay
+	// on the fused serial reconstruction (byte-exact, worker-count invariant).
+	// intrabc frames disable CDEF, loop filter, and loop restoration, so this is
+	// the only within-frame parallelism they can take.
+	if b.FrameSize.AllowIntrabc {
+		return false
+	}
 	region, err := b.JobRegion(index)
 	if err != nil {
 		return false
