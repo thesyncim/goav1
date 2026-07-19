@@ -34,7 +34,40 @@ func (s FrameWorkPostFilterStage) Has(stage FrameWorkPostFilterStage) bool {
 type FrameWorkRestorationPostFilterScratchSize struct {
 	Samples tile.RestorationFrameSampleScratchSize
 	Apply   tile.RestorationUnitRecordBoundaryScratchSize
+	Pool    FrameWorkRestorationPoolScratchSize
 }
+
+// FrameWorkRestorationPoolScratchSize sizes the band-private arena the pooled
+// 8-bit in-place restoration apply needs: Bands independent slots, each holding
+// one worker's dav1d lr_sbrow band buffer (BandData uint16s) plus its per-unit
+// Wiener/SGRProj filter scratch. It is zero unless a multi-lane pool is threaded
+// into the sizing context and the frame is 8-bit non-optimized (the only walk
+// that bands cleanly); the serial apply ignores it.
+type FrameWorkRestorationPoolScratchSize struct {
+	Bands      int
+	BandData   int
+	BandWiener int
+	BandSGR    int
+}
+
+// Max returns the per-field maximum pool scratch size.
+func (s FrameWorkRestorationPoolScratchSize) Max(other FrameWorkRestorationPoolScratchSize) FrameWorkRestorationPoolScratchSize {
+	return FrameWorkRestorationPoolScratchSize{
+		Bands:      maxInt(s.Bands, other.Bands),
+		BandData:   maxInt(s.BandData, other.BandData),
+		BandWiener: maxInt(s.BandWiener, other.BandWiener),
+		BandSGR:    maxInt(s.BandSGR, other.BandSGR),
+	}
+}
+
+// TotalData reports the uint16 length of the pooled band-data arena.
+func (s FrameWorkRestorationPoolScratchSize) TotalData() int { return s.Bands * s.BandData }
+
+// TotalWiener reports the uint16 length of the pooled band Wiener arena.
+func (s FrameWorkRestorationPoolScratchSize) TotalWiener() int { return s.Bands * s.BandWiener }
+
+// TotalSGR reports the int32 length of the pooled band SGRProj arena.
+func (s FrameWorkRestorationPoolScratchSize) TotalSGR() int { return s.Bands * s.BandSGR }
 
 // FrameWorkPostFilterScratchSize reports caller-owned scratch needed by the
 // supported frame-level postfilter pipeline.
@@ -87,6 +120,11 @@ type FrameWorkPostFilterScratch struct {
 	RestorationAbove  []uint16
 	RestorationBelow  []uint16
 
+	// Band-private arena for the pooled 8-bit in-place restoration apply.
+	RestorationPoolData   []uint16
+	RestorationPoolWiener []uint16
+	RestorationPoolSGR    []int32
+
 	FilmGrainOutputFrame   []byte
 	FilmGrainLumaGrain     []int16
 	FilmGrainChromaGrain   [2][]int16
@@ -113,7 +151,7 @@ func (s FrameWorkPostFilterScratchSize) BindRequest(options FrameWorkPostFilterB
 	if err != nil {
 		return FrameWorkPostFilterRequest{}, err
 	}
-	restorationReq, err := s.Restoration.BindRequest(options.RestorationRecords, options.RestorationBoundaries, scratch.RestorationData, scratch.RestorationDst, scratch.RestorationWiener, scratch.RestorationSGR, scratch.RestorationAbove, scratch.RestorationBelow, options.RestorationOptimized)
+	restorationReq, err := s.Restoration.BindRequest(options.RestorationRecords, options.RestorationBoundaries, scratch.RestorationData, scratch.RestorationDst, scratch.RestorationWiener, scratch.RestorationSGR, scratch.RestorationAbove, scratch.RestorationBelow, scratch.RestorationPoolData, scratch.RestorationPoolWiener, scratch.RestorationPoolSGR, options.RestorationOptimized)
 	if err != nil {
 		return FrameWorkPostFilterRequest{}, err
 	}
@@ -153,14 +191,16 @@ func (s FrameWorkRestorationPostFilterScratchSize) Max(other FrameWorkRestoratio
 	return FrameWorkRestorationPostFilterScratchSize{
 		Samples: frameWorkRestorationFrameSampleScratchSizeMax(s.Samples, other.Samples),
 		Apply:   frameWorkRestorationUnitRecordBoundaryScratchSizeMax(s.Apply, other.Apply),
+		Pool:    s.Pool.Max(other.Pool),
 	}
 }
 
 // BindRequest validates and slices caller-owned scratch for loop restoration.
-func (s FrameWorkRestorationPostFilterScratchSize) BindRequest(records [3][]tile.RestorationUnitRecord, boundaries [3]tile.RestorationStripeBoundaries, dataScratch []uint16, dstScratch []uint16, wienerScratch []uint16, sgrprojScratch []int32, aboveScratch []uint16, belowScratch []uint16, optimized bool) (FrameWorkRestorationPostFilterRequest, error) {
+func (s FrameWorkRestorationPostFilterScratchSize) BindRequest(records [3][]tile.RestorationUnitRecord, boundaries [3]tile.RestorationStripeBoundaries, dataScratch []uint16, dstScratch []uint16, wienerScratch []uint16, sgrprojScratch []int32, aboveScratch []uint16, belowScratch []uint16, poolData []uint16, poolWiener []uint16, poolSGR []int32, optimized bool) (FrameWorkRestorationPostFilterRequest, error) {
 	if s.Samples.DataLen < 0 || s.Samples.DstLen < 0 ||
 		s.Apply.Unit.Wiener < 0 || s.Apply.Unit.SGRProj < 0 ||
-		s.Apply.Boundary.Above < 0 || s.Apply.Boundary.Below < 0 {
+		s.Apply.Boundary.Above < 0 || s.Apply.Boundary.Below < 0 ||
+		s.Pool.Bands < 0 || s.Pool.BandData < 0 || s.Pool.BandWiener < 0 || s.Pool.BandSGR < 0 {
 		return FrameWorkRestorationPostFilterRequest{}, tile.ErrInvalidPlan
 	}
 	if len(dataScratch) < s.Samples.DataLen || len(dstScratch) < s.Samples.DstLen {
@@ -168,6 +208,9 @@ func (s FrameWorkRestorationPostFilterScratchSize) BindRequest(records [3][]tile
 	}
 	if len(wienerScratch) < s.Apply.Unit.Wiener || len(sgrprojScratch) < s.Apply.Unit.SGRProj ||
 		len(aboveScratch) < s.Apply.Boundary.Above || len(belowScratch) < s.Apply.Boundary.Below {
+		return FrameWorkRestorationPostFilterRequest{}, tile.ErrInvalidPlan
+	}
+	if len(poolData) < s.Pool.TotalData() || len(poolWiener) < s.Pool.TotalWiener() || len(poolSGR) < s.Pool.TotalSGR() {
 		return FrameWorkRestorationPostFilterRequest{}, tile.ErrInvalidPlan
 	}
 	return FrameWorkRestorationPostFilterRequest{
@@ -185,6 +228,12 @@ func (s FrameWorkRestorationPostFilterScratchSize) BindRequest(records [3][]tile
 				Below: belowScratch[:s.Apply.Boundary.Below],
 			},
 		},
+		Pool: FrameWorkRestorationPoolScratch{
+			Bands:      s.Pool.Bands,
+			BandData:   poolData[:s.Pool.TotalData()],
+			BandWiener: poolWiener[:s.Pool.TotalWiener()],
+			BandSGR:    poolSGR[:s.Pool.TotalSGR()],
+		},
 		Optimized: optimized,
 	}, nil
 }
@@ -199,7 +248,22 @@ type FrameWorkRestorationPostFilterRequest struct {
 	DstScratch  []uint16
 	Scratch     tile.RestorationUnitRecordBoundaryScratch
 
+	// Pool carries the band-private arena for the pooled 8-bit in-place apply. It
+	// is empty (Bands==0) unless the sizing context saw a multi-lane pool, in which
+	// case applyLoopRestorationPostFilterMaybePooled fans RU-row bands across it.
+	Pool FrameWorkRestorationPoolScratch
+
 	Optimized bool
+}
+
+// FrameWorkRestorationPoolScratch is the caller-owned band-private arena backing
+// the pooled 8-bit in-place restoration apply: Bands equal-length slots carved
+// from each slice, band w owning slot w.
+type FrameWorkRestorationPoolScratch struct {
+	Bands      int
+	BandData   []uint16
+	BandWiener []uint16
+	BandSGR    []int32
 }
 
 // FrameWorkPostFilterRequest carries caller-owned scratch and side data for the
@@ -716,7 +780,10 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 		if banding.LoopFilterMIRows > 0 {
 			loopFilterResult, err = ctx.ApplyLoopFilterEdgesBanded(req.LoopFilter, banding.LoopFilterMIRows)
 		} else {
-			loopFilterResult, err = ctx.ApplyLoopFilterEdges(req.LoopFilter)
+			// applyLoopFilterEdgesMaybePooled fans the mask-driven deblock across the
+			// idle worker lanes when a multi-lane pool was threaded in (single-tile
+			// frames), and otherwise runs the byte-identical serial apply.
+			loopFilterResult, err = ctx.applyLoopFilterEdgesMaybePooled(req.LoopFilter)
 		}
 		if err != nil {
 			return ctx, result, err
@@ -762,7 +829,10 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 	if ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopRestoration) {
 		cdefDebugLogChromaPreLR(ctx.Output)
 		cdefDebugLogLRRecords(req.Restoration.Records)
-		restorationResult, err := ctx.ApplyLoopRestorationPostFilter(req.Restoration)
+		// applyLoopRestorationPostFilterMaybePooled fans the 8-bit in-place
+		// restoration-unit rows across the idle worker lanes when a multi-lane pool
+		// was threaded in, and otherwise runs the byte-identical serial apply.
+		restorationResult, err := ctx.applyLoopRestorationPostFilterMaybePooled(req.Restoration)
 		if err != nil {
 			return ctx, result, err
 		}
@@ -1197,9 +1267,50 @@ func (ctx FrameWorkPostFilterContext) LoopRestorationPostFilterScratchLen(record
 			apply.Boundary.Below = planeSize.Boundary.Below
 		}
 	}
+	pool, err := ctx.loopRestorationPoolScratchLen(plan, optimized, apply)
+	if err != nil {
+		return FrameWorkRestorationPostFilterScratchSize{}, err
+	}
 	return FrameWorkRestorationPostFilterScratchSize{
 		Samples: samples,
 		Apply:   apply,
+		Pool:    pool,
+	}, nil
+}
+
+// loopRestorationPoolScratchLen sizes the band-private arena for the pooled 8-bit
+// in-place apply. It is non-zero only when a multi-lane pool is threaded in and
+// the frame is 8-bit non-optimized (the only walk that bands cleanly over RU
+// rows). Each of the W band slots holds the widest active plane's in-place band
+// buffer plus one unit's Wiener/SGRProj scratch, so any band of any plane fits.
+func (ctx FrameWorkPostFilterContext) loopRestorationPoolScratchLen(plan tile.RestorationFramePlan, optimized bool, apply tile.RestorationUnitRecordBoundaryScratchSize) (FrameWorkRestorationPoolScratchSize, error) {
+	workers := ctx.postFilterWorkerCount()
+	if workers <= 1 || optimized || ctx.Output == nil ||
+		ctx.Output.Layout.BytesPerSample != 1 || ctx.Output.Format.BitDepth != 8 {
+		return FrameWorkRestorationPoolScratchSize{}, nil
+	}
+	maxSeg := 0
+	for plane := 0; plane < int(plan.Planes); plane++ {
+		grid := plan.Grids[plane]
+		if grid.Type == parser.RestorationNone {
+			continue
+		}
+		seg, err := tile.RestorationFramePlaneInPlaceU8ScratchLen(grid)
+		if err != nil {
+			return FrameWorkRestorationPoolScratchSize{}, err
+		}
+		if seg > maxSeg {
+			maxSeg = seg
+		}
+	}
+	if maxSeg == 0 {
+		return FrameWorkRestorationPoolScratchSize{}, nil
+	}
+	return FrameWorkRestorationPoolScratchSize{
+		Bands:      workers,
+		BandData:   maxSeg,
+		BandWiener: apply.Unit.Wiener,
+		BandSGR:    apply.Unit.SGRProj,
 	}, nil
 }
 

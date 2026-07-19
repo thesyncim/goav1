@@ -122,6 +122,17 @@ func restorationInPlaceU8SampleScratchLen(grid RestorationPlaneGrid) (int, error
 	return rounded / 2, nil
 }
 
+// RestorationFramePlaneInPlaceU8ScratchLen reports the band-private uint16
+// data-scratch length one worker needs to filter a band of grid's 8-bit plane
+// with ApplyRestorationFramePlaneInPlaceU8Rows. It equals the whole-plane in-place
+// segment: the band buffer plus the two left-halo backups are sized for the
+// widest unit and tallest stripe, independent of how many RU rows the band owns,
+// so every band binds one such segment. Callers that fan W bands across the pool
+// size the pooled arena at W times the max of this over the frame's active planes.
+func RestorationFramePlaneInPlaceU8ScratchLen(grid RestorationPlaneGrid) (int, error) {
+	return restorationInPlaceU8SampleScratchLen(grid)
+}
+
 func bindRestorationInPlaceU8Layout(grid RestorationPlaneGrid, seg []uint16) (restorationInPlaceU8Layout, error) {
 	size, err := restorationInPlaceU8ScratchSizeForGrid(grid)
 	if err != nil {
@@ -162,13 +173,54 @@ func applyRestorationPlaneRecordsInPlaceU8(grid RestorationPlaneGrid, records []
 	if err != nil {
 		return RestorationPlaneApplyResult{}, err
 	}
+	return walkRestorationPlaneRecordsInPlaceU8(grid, records, boundaries, buffer, layout, scratch, 0, len(records))
+}
 
+// ApplyRestorationFramePlaneInPlaceU8Rows filters the restoration-unit ROWS
+// [rowStart,rowEnd) of one 8-bit plane in place, a band of the dav1d lr_sbrow
+// walk (src/lr_apply_tmpl.c). The record set is validated whole (records are
+// row-major with Index==i), but only the requested RU rows are filtered, so the
+// frame-level restoration can fan disjoint RU-row bands across worker lanes: a
+// band writes only its own units' rects (adjacent RU rows tile disjoint plane
+// rows) and every cross-unit read is served by the band buffer, the
+// left-neighbour column backup, or the pre-saved stripe boundary lines -- never
+// another band's surface -- so the banded output is bit-identical to the
+// whole-plane walk regardless of band count. dataSeg/scratch must be band-private
+// (they are mutated in place); boundaries and the frame surface outside the band's
+// rows are read-only. The left-neighbour backup ping-pong resets at each row's
+// Col==0, so a band starting at a fresh RU row is self-contained.
+func ApplyRestorationFramePlaneInPlaceU8Rows(grid RestorationPlaneGrid, records []RestorationUnitRecord, boundaries RestorationStripeBoundaries, buffer av1frame.Plane, dataSeg []uint16, scratch RestorationUnitRecordBoundaryScratch, rowStart, rowEnd int) (RestorationPlaneApplyResult, error) {
+	if err := validateRestorationPlaneRecords(grid, records); err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	if err := validateRestorationStripeBoundaries(grid, boundaries); err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	if buffer.Stride <= 0 || buffer.Width != int(grid.PlaneWidth) || buffer.Height != int(grid.PlaneHeight) {
+		return RestorationPlaneApplyResult{}, ErrInvalidPlan
+	}
+	if rowStart < 0 || rowEnd > int(grid.VertUnits) || rowStart >= rowEnd {
+		return RestorationPlaneApplyResult{}, ErrInvalidPlan
+	}
+	layout, err := bindRestorationInPlaceU8Layout(grid, dataSeg)
+	if err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	horz := int(grid.HorzUnits)
+	return walkRestorationPlaneRecordsInPlaceU8(grid, records, boundaries, buffer, layout, scratch, rowStart*horz, rowEnd*horz)
+}
+
+// walkRestorationPlaneRecordsInPlaceU8 is the shared in-place lr_sbrow record
+// loop over records[iStart:iEnd]. iStart must fall on a row boundary (Col==0) so
+// the left-neighbour backup ping-pong begins in its reset state. Callers own the
+// prior validation and the band-private layout/scratch.
+func walkRestorationPlaneRecordsInPlaceU8(grid RestorationPlaneGrid, records []RestorationUnitRecord, boundaries RestorationStripeBoundaries, buffer av1frame.Plane, layout restorationInPlaceU8Layout, scratch RestorationUnitRecordBoundaryScratch, iStart, iEnd int) (RestorationPlaneApplyResult, error) {
 	var result RestorationPlaneApplyResult
 	// pre_lr_border ping-pong: prev holds the filtered left neighbour's
 	// pre-filter right-edge columns, cur receives the current unit's.
 	prevBak, curBak := layout.Backup[0], layout.Backup[1]
 	leftFiltered := false
-	for i := range records {
+	for i := iStart; i < iEnd; i++ {
 		record := &records[i]
 		if record.Col == 0 {
 			leftFiltered = false

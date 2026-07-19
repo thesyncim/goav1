@@ -414,7 +414,7 @@ func TestFrameWorkRestorationPostFilterScratchSizeBindRequest(t *testing.T) {
 	records := [3][]tile.RestorationUnitRecord{{{Index: 1}}}
 	boundaries := [3]tile.RestorationStripeBoundaries{{Stride: 16}}
 	data, dst, wiener, sgr, above, below := testFrameWorkRestorationPostFilterScratchStorage(size)
-	req, err := size.BindRequest(records, boundaries, data, dst, wiener, sgr, above, below, true)
+	req, err := size.BindRequest(records, boundaries, data, dst, wiener, sgr, above, below, nil, nil, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,7 +463,7 @@ func TestFrameWorkRestorationPostFilterScratchSizeBindRequestRejectsShortBuffers
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := tt.size.BindRequest([3][]tile.RestorationUnitRecord{}, [3]tile.RestorationStripeBoundaries{}, tt.data, tt.dst, tt.wiener, tt.sgr, tt.above, tt.below, false)
+			_, err := tt.size.BindRequest([3][]tile.RestorationUnitRecord{}, [3]tile.RestorationStripeBoundaries{}, tt.data, tt.dst, tt.wiener, tt.sgr, tt.above, tt.below, nil, nil, nil, false)
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("BindRequest err=%v want %v", err, tt.want)
 			}
@@ -484,7 +484,7 @@ func TestFrameWorkRestorationPostFilterScratchSizeBindRequestAllocs(t *testing.T
 	}
 	data, dst, wiener, sgr, above, below := testFrameWorkRestorationPostFilterScratchStorage(size)
 	allocs := testing.AllocsPerRun(1000, func() {
-		if _, err := size.BindRequest([3][]tile.RestorationUnitRecord{}, [3]tile.RestorationStripeBoundaries{}, data, dst, wiener, sgr, above, below, false); err != nil {
+		if _, err := size.BindRequest([3][]tile.RestorationUnitRecord{}, [3]tile.RestorationStripeBoundaries{}, data, dst, wiener, sgr, above, below, nil, nil, nil, false); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -508,7 +508,7 @@ func BenchmarkFrameWorkRestorationPostFilterScratchSizeBindRequest(b *testing.B)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := size.BindRequest([3][]tile.RestorationUnitRecord{}, [3]tile.RestorationStripeBoundaries{}, data, dst, wiener, sgr, above, below, false); err != nil {
+		if _, err := size.BindRequest([3][]tile.RestorationUnitRecord{}, [3]tile.RestorationStripeBoundaries{}, data, dst, wiener, sgr, above, below, nil, nil, nil, false); err != nil {
 			b.Fatal(err)
 		}
 	}

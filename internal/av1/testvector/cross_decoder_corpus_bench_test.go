@@ -756,6 +756,10 @@ func (s *corpusPostFilterScratch) bind(size decoder.FrameWorkPostFilterScratchSi
 		RestorationAbove:  s.scratch.RestorationAbove[:libaomMaxInt(size.Restoration.Apply.Boundary.Above, 0)],
 		RestorationBelow:  s.scratch.RestorationBelow[:libaomMaxInt(size.Restoration.Apply.Boundary.Below, 0)],
 
+		RestorationPoolData:   s.scratch.RestorationPoolData[:libaomMaxInt(size.Restoration.Pool.TotalData(), 0)],
+		RestorationPoolWiener: s.scratch.RestorationPoolWiener[:libaomMaxInt(size.Restoration.Pool.TotalWiener(), 0)],
+		RestorationPoolSGR:    s.scratch.RestorationPoolSGR[:libaomMaxInt(size.Restoration.Pool.TotalSGR(), 0)],
+
 		FilmGrainOutputFrame:   s.scratch.FilmGrainOutputFrame[:libaomMaxInt(size.FilmGrain.OutputFrame, 0)],
 		FilmGrainLumaGrain:     s.scratch.FilmGrainLumaGrain[:libaomMaxInt(size.FilmGrain.LumaGrain, 0)],
 		FilmGrainChromaGrain:   corpusInt16ChromaScratch(s.scratch.FilmGrainChromaGrain, size.FilmGrain.ChromaGrain),
@@ -817,6 +821,15 @@ func (s *corpusPostFilterScratch) ensure(size decoder.FrameWorkPostFilterScratch
 	}
 	if len(s.scratch.RestorationBelow) < size.Restoration.Apply.Boundary.Below {
 		s.scratch.RestorationBelow = make([]uint16, size.Restoration.Apply.Boundary.Below)
+	}
+	if len(s.scratch.RestorationPoolData) < size.Restoration.Pool.TotalData() {
+		s.scratch.RestorationPoolData = make([]uint16, size.Restoration.Pool.TotalData())
+	}
+	if len(s.scratch.RestorationPoolWiener) < size.Restoration.Pool.TotalWiener() {
+		s.scratch.RestorationPoolWiener = make([]uint16, size.Restoration.Pool.TotalWiener())
+	}
+	if len(s.scratch.RestorationPoolSGR) < size.Restoration.Pool.TotalSGR() {
+		s.scratch.RestorationPoolSGR = make([]int32, size.Restoration.Pool.TotalSGR())
 	}
 	if len(s.scratch.FilmGrainOutputFrame) < size.FilmGrain.OutputFrame {
 		s.scratch.FilmGrainOutputFrame = make([]byte, size.FilmGrain.OutputFrame)

@@ -939,6 +939,10 @@ func libaomPostFilterScratchStorage(size decoder.FrameWorkPostFilterScratchSize)
 		RestorationAbove:  make([]uint16, libaomMaxInt(size.Restoration.Apply.Boundary.Above, 0)),
 		RestorationBelow:  make([]uint16, libaomMaxInt(size.Restoration.Apply.Boundary.Below, 0)),
 
+		RestorationPoolData:   make([]uint16, libaomMaxInt(size.Restoration.Pool.TotalData(), 0)),
+		RestorationPoolWiener: make([]uint16, libaomMaxInt(size.Restoration.Pool.TotalWiener(), 0)),
+		RestorationPoolSGR:    make([]int32, libaomMaxInt(size.Restoration.Pool.TotalSGR(), 0)),
+
 		FilmGrainOutputFrame: make([]byte, libaomMaxInt(size.FilmGrain.OutputFrame, 0)),
 		FilmGrainLumaGrain:   make([]int16, libaomMaxInt(size.FilmGrain.LumaGrain, 0)),
 		FilmGrainLumaSamples: make([]uint16, libaomMaxInt(size.FilmGrain.LumaSamples, 0)),
