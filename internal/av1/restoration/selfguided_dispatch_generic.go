@@ -11,7 +11,10 @@ package restoration
 // asm is excluded. This file only keeps the dispatch wiring symmetric across
 // builds.
 func init() {
-	boxsumImpl = boxsum
+	// boxsumSeparable (libaom's separable boxsum1/boxsum2 running sum) replaces
+	// the O((2r+1)^2) brute-force boxsum: it is byte-identical and O(1)-amortized
+	// per output, a clear win on the scalar path.
+	boxsumImpl = boxsumSeparable
 	selfguidedImpl = selfguided
 	selfguidedFastImpl = selfguidedFast
 }
