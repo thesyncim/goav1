@@ -71,26 +71,30 @@ hColLoop:
 	WORD $0x2f08a422       // uxtl  v2.8h, v1.8b    lanes 0..7  -> u16
 	WORD $0x6f08a423       // uxtl2 v3.8h, v1.16b   lanes 8..15 -> u16
 
-	WORD $0x0f402050       // smlal  v16.4s, v2.4h, v0.h[0]
-	WORD $0x4f402051       // smlal2 v17.4s, v2.8h, v0.h[0]
-	WORD $0x6e031044       // ext v4.16b, v2.16b, v3.16b, #2
-	WORD $0x0f502090       // smlal  v16.4s, v4.4h, v0.h[1]
-	WORD $0x4f502091       // smlal2 v17.4s, v4.8h, v0.h[1]
-	WORD $0x6e032044       // ext v4.16b, v2.16b, v3.16b, #4
-	WORD $0x0f602090       // smlal  v16.4s, v4.4h, v0.h[2]
-	WORD $0x4f602091       // smlal2 v17.4s, v4.8h, v0.h[2]
-	WORD $0x6e033044       // ext v4.16b, v2.16b, v3.16b, #6
-	WORD $0x0f702090       // smlal  v16.4s, v4.4h, v0.h[3]
-	WORD $0x4f702091       // smlal2 v17.4s, v4.8h, v0.h[3]
-	WORD $0x6e034044       // ext v4.16b, v2.16b, v3.16b, #8
-	WORD $0x0f402890       // smlal  v16.4s, v4.4h, v0.h[4]
-	WORD $0x4f402891       // smlal2 v17.4s, v4.8h, v0.h[4]
-	WORD $0x6e035044       // ext v4.16b, v2.16b, v3.16b, #10
-	WORD $0x0f502890       // smlal  v16.4s, v4.4h, v0.h[5]
-	WORD $0x4f502891       // smlal2 v17.4s, v4.8h, v0.h[5]
-	WORD $0x6e036044       // ext v4.16b, v2.16b, v3.16b, #12
-	WORD $0x0f602890       // smlal  v16.4s, v4.4h, v0.h[6]
-	WORD $0x4f602891       // smlal2 v17.4s, v4.8h, v0.h[6]
+	// AV1 Wiener symmetry (dav1d looprestoration.S wiener_filter7_h): mirrored
+	// taps (f0==f6, f1==f5, f2==f4) let the three symmetric sample pairs be
+	// summed in 16-bit lanes first, then MAC'd once by their shared tap -> 4
+	// widening MACs (center + 3 pair-sums) instead of 7. Bit-identical because
+	// (a+b)*f == a*f + b*f and each u8 sample keeps the pair-sum (<=510) inside
+	// the positive int16 lane SMLAL widens.
+	WORD $0x6e033041       // ext v1.16b, v2.16b, v3.16b, #6   center col+0
+	WORD $0x6e036044       // ext v4.16b, v2.16b, v3.16b, #12  col+3
+	WORD $0x4e648444       // add v4.8h, v2.8h, v4.8h          pair f0: (col-3)+(col+3)
+	WORD $0x6e031045       // ext v5.16b, v2.16b, v3.16b, #2   col-2
+	WORD $0x6e035046       // ext v6.16b, v2.16b, v3.16b, #10  col+2
+	WORD $0x4e6684a5       // add v5.8h, v5.8h, v6.8h          pair f1: (col-2)+(col+2)
+	WORD $0x6e032046       // ext v6.16b, v2.16b, v3.16b, #4   col-1
+	WORD $0x6e034047       // ext v7.16b, v2.16b, v3.16b, #8   col+1
+	WORD $0x4e6784c6       // add v6.8h, v6.8h, v7.8h          pair f2: (col-1)+(col+1)
+
+	WORD $0x0f402090       // smlal  v16.4s, v4.4h, v0.h[0]   pair f0
+	WORD $0x4f402091       // smlal2 v17.4s, v4.8h, v0.h[0]
+	WORD $0x0f5020b0       // smlal  v16.4s, v5.4h, v0.h[1]   pair f1
+	WORD $0x4f5020b1       // smlal2 v17.4s, v5.8h, v0.h[1]
+	WORD $0x0f6020d0       // smlal  v16.4s, v6.4h, v0.h[2]   pair f2
+	WORD $0x4f6020d1       // smlal2 v17.4s, v6.8h, v0.h[2]
+	WORD $0x0f702030       // smlal  v16.4s, v1.4h, v0.h[3]   center f3 (1<<7 folded)
+	WORD $0x4f702031       // smlal2 v17.4s, v1.8h, v0.h[3]
 
 	WORD $0x4eb34610       // sshl v16.4s, v16.4s, v19.4s  arith >> round0
 	WORD $0x4eb34631       // sshl v17.4s, v17.4s, v19.4s
@@ -126,10 +130,12 @@ hDone:
 // func wienerVerticalU8NEONAsm(ctx *wienerU8NEONVertCtx)
 //
 // Vertical 7-tap Wiener pass over the u16 temp buffer, writing uint8 output.
-// Identical to wienerVerticalNEONAsm except the store: the [0,255] clamp and
-// u8 narrow are fused into SQXTUN (s32 -> u16, lower clamp 0) + UQXTN
-// (u16 -> u8, upper clamp 255), which equals clampInt32(x, 0, 255)
-// bit-for-bit, and the dst stride is already in bytes.
+// Two differences from wienerVerticalNEONAsm: (1) the store fuses the [0,255]
+// clamp and u8 narrow into SQXTUN (s32 -> u16, lower clamp 0) + UQXTN
+// (u16 -> u8, upper clamp 255), which equals clampInt32(x, 0, 255) bit-for-bit,
+// and the dst stride is already in bytes; (2) it applies the Wiener
+// symmetric-pair MAC reduction (safe here because 8-bit temp values are clamped
+// to [0,8191], so 16-bit pair-sums cannot overflow -- see wiener_u8_neon_arm64.go).
 TEXT ·wienerVerticalU8NEONAsm(SB), NOSPLIT, $0-8
 	MOVD ctx+0(FP), R0
 	MOVD V_DST(R0), R1      // dst row base
@@ -158,27 +164,34 @@ vColLoop:
 	WORD $0x4eb21e50       // mov v16.16b, v18.16b  seed lanes 0..3
 	WORD $0x4eb21e51       // mov v17.16b, v18.16b  seed lanes 4..7
 
-	WORD $0x4cc57521       // ld1 {v1.8h}, [x9], x5
-	WORD $0x0f402030       // smlal  v16.4s, v1.4h, v0.h[0]
-	WORD $0x4f402031       // smlal2 v17.4s, v1.8h, v0.h[0]
-	WORD $0x4cc57521       // ld1 {v1.8h}, [x9], x5
-	WORD $0x0f502030       // smlal  v16.4s, v1.4h, v0.h[1]
-	WORD $0x4f502031       // smlal2 v17.4s, v1.8h, v0.h[1]
-	WORD $0x4cc57521       // ld1 {v1.8h}, [x9], x5
-	WORD $0x0f602030       // smlal  v16.4s, v1.4h, v0.h[2]
-	WORD $0x4f602031       // smlal2 v17.4s, v1.8h, v0.h[2]
-	WORD $0x4cc57521       // ld1 {v1.8h}, [x9], x5
-	WORD $0x0f702030       // smlal  v16.4s, v1.4h, v0.h[3]
-	WORD $0x4f702031       // smlal2 v17.4s, v1.8h, v0.h[3]
-	WORD $0x4cc57521       // ld1 {v1.8h}, [x9], x5
-	WORD $0x0f402830       // smlal  v16.4s, v1.4h, v0.h[4]
-	WORD $0x4f402831       // smlal2 v17.4s, v1.8h, v0.h[4]
-	WORD $0x4cc57521       // ld1 {v1.8h}, [x9], x5
-	WORD $0x0f502830       // smlal  v16.4s, v1.4h, v0.h[5]
-	WORD $0x4f502831       // smlal2 v17.4s, v1.8h, v0.h[5]
-	WORD $0x4cc57521       // ld1 {v1.8h}, [x9], x5
-	WORD $0x0f602830       // smlal  v16.4s, v1.4h, v0.h[6]
-	WORD $0x4f602831       // smlal2 v17.4s, v1.8h, v0.h[6]
+	// Load the seven stacked tap rows (row3 is the center); post-index by the
+	// temp row stride in R5.
+	WORD $0x4cc57522       // ld1 {v2.8h}, [x9], x5   row0
+	WORD $0x4cc57523       // ld1 {v3.8h}, [x9], x5   row1
+	WORD $0x4cc57524       // ld1 {v4.8h}, [x9], x5   row2
+	WORD $0x4cc57525       // ld1 {v5.8h}, [x9], x5   row3 (center)
+	WORD $0x4cc57526       // ld1 {v6.8h}, [x9], x5   row4
+	WORD $0x4cc57527       // ld1 {v7.8h}, [x9], x5   row5
+	WORD $0x4cc57521       // ld1 {v1.8h}, [x9], x5   row6
+
+	// AV1 Wiener symmetry (dav1d looprestoration.S wiener_filter7_v): mirrored
+	// taps (f0==f6, f1==f5, f2==f4) let the symmetric row pairs be summed in
+	// 16-bit lanes first, then MAC'd once by their shared tap -> 4 widening MACs
+	// (center + 3 pair-sums) instead of 7. Bit-identical because (a+b)*f ==
+	// a*f + b*f; the temp values are 8-bit horizontal outputs clamped to
+	// [0,8191], so each pair-sum (<=16382) stays in the positive int16 lane.
+	WORD $0x4e618442       // add v2.8h, v2.8h, v1.8h   pair f0: row0+row6
+	WORD $0x4e678463       // add v3.8h, v3.8h, v7.8h   pair f1: row1+row5
+	WORD $0x4e668484       // add v4.8h, v4.8h, v6.8h   pair f2: row2+row4
+
+	WORD $0x0f7020b0       // smlal  v16.4s, v5.4h, v0.h[3]   center f3
+	WORD $0x4f7020b1       // smlal2 v17.4s, v5.8h, v0.h[3]
+	WORD $0x0f602090       // smlal  v16.4s, v4.4h, v0.h[2]   pair f2
+	WORD $0x4f602091       // smlal2 v17.4s, v4.8h, v0.h[2]
+	WORD $0x0f502070       // smlal  v16.4s, v3.4h, v0.h[1]   pair f1
+	WORD $0x4f502071       // smlal2 v17.4s, v3.8h, v0.h[1]
+	WORD $0x0f402050       // smlal  v16.4s, v2.4h, v0.h[0]   pair f0
+	WORD $0x4f402051       // smlal2 v17.4s, v2.8h, v0.h[0]
 
 	WORD $0x4eb34610       // sshl v16.4s, v16.4s, v19.4s  arith >> round1
 	WORD $0x4eb34631       // sshl v17.4s, v17.4s, v19.4s

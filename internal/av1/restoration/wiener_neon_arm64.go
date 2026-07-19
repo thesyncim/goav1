@@ -16,8 +16,14 @@ package restoration
 //   - Samples are 8/10/12-bit (<= 4095), so they fit in a positive int16 lane
 //     and the signed widening MAC (smlal/smlal2) reproduces s_i*f_i exactly.
 //   - The libaom "center reapplication" term s3<<7 is folded into the center tap
-//     (tap3 += 1<<WienerFilterBits) by the wrappers, so the asm runs a plain
-//     7-tap MAC.
+//     (tap3 += 1<<WienerFilterBits) by the wrappers. The horizontal pass then
+//     exploits the Wiener tap symmetry (f0==f6, f1==f5, f2==f4; see
+//     wiener_neon_arm64.s / dav1d looprestoration.S) to sum the three symmetric
+//     sample pairs in 16-bit lanes before widening, so it runs 4 MACs (center +
+//     3 pair-sums) instead of 7 -- bit-identical since (a+b)*f == a*f + b*f and
+//     samples (<=4095) keep the pair-sum (<=8190) inside the positive int16 lane.
+//     The u16 vertical pass keeps the plain 7-tap MAC: its temp inputs reach
+//     32767 for 10/12-bit, so a 16-bit pair-sum would overflow.
 //   - The rounding bias 1<<(round-1) is folded into the accumulator seed
 //     (offset for the horizontal pass, -offset for the vertical pass), then the
 //     accumulator is arithmetically shifted right by `round` with a per-lane

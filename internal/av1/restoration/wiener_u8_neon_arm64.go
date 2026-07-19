@@ -10,10 +10,15 @@ package restoration
 // 8bpc kernels (src/arm/64/looprestoration.S wiener_filter7: the horizontal
 // pass loads uint8 pixels and widens with UXTL inside the kernel; the vertical
 // pass narrows the int32 accumulator straight to uint8 with saturating
-// narrows) mapped onto goav1's existing two-pass kernel structure: everything
-// except the sample loads/stores is instruction-for-instruction the u16
-// kernels in wiener_neon_arm64.s, so bit-exactness with the pure-Go u8
-// reference follows from the same argument (see wiener_neon_arm64.go), plus:
+// narrows) mapped onto goav1's existing two-pass kernel structure. The
+// horizontal pass is instruction-for-instruction the u16 horizontal kernel in
+// wiener_neon_arm64.s (both apply the Wiener symmetric-pair MAC reduction),
+// apart from the uint8 load + UXTL widening. The vertical pass ALSO applies the
+// symmetric-pair reduction (unlike the general u16 vertical): its temp inputs
+// are 8-bit horizontal outputs clamped to [0,8191], so the 16-bit pair-sums
+// (<=16382) cannot overflow the positive int16 lane. Bit-exactness with the
+// pure-Go u8 reference follows from the same argument (see
+// wiener_neon_arm64.go), plus:
 //   - UXTL/UXTL2 zero-extend uint8 samples to the same positive int16 lanes
 //     the u16 kernel loads directly, so the widening MACs see identical
 //     inputs.
