@@ -153,7 +153,10 @@ func ApplyChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16, sc
 func applyLumaBlock(dst []uint16, src []uint16, grain []int16, scaling []uint8, params LumaRowParams, offsets [2][2]uint8, blockX int, blockWidth int, xStart int, yStart int) {
 	minValue, maxValue := lumaClipBounds(params)
 	var scaleBuf [LumaBlockSize]uint16
+	var blendBuf [LumaBlockSize]int16
 	bitDepth := params.BitDepth
+	grainMin := -(1 << (bitDepth - 1))
+	grainMax := (1 << (bitDepth - 1)) - 1
 	for y := yStart; y < params.Height; y++ {
 		// Non-overlap interior: dst, src and the grain run are all
 		// contiguous in x, so gather the scaling-LUT values once and let the
@@ -165,28 +168,7 @@ func applyLumaBlock(dst []uint16, src []uint16, grain []int16, scaling []uint8, 
 			gbase := lumaGrainSampleIndex(offsets[0][0], 0, 0, xStart, y)
 			grainRow := grain[gbase : gbase+n]
 			scale := scaleBuf[:n]
-			switch bitDepth {
-			case 8:
-				// 8-bit is a direct lut[index] gather with no interpolation;
-				// the scalar load beats a NEON per-lane gather (measured), so
-				// it stays scalar. The 10-bit interpolate is vectorized below.
-				for x := 0; x < n; x++ {
-					scale[x] = uint16(scaleLUT8(scaling, int(srcRow[x])))
-				}
-			case 10:
-				// Vectorized scaling-LUT gather+interpolate
-				// (build_scale_dispatch_*.go); bit-exact with the scaleLUT10
-				// per-pixel loop.
-				buildScaleRow10(scale, srcRow, scaling)
-			case 12:
-				for x := 0; x < n; x++ {
-					scale[x] = uint16(scaleLUT12(scaling, int(srcRow[x])))
-				}
-			default:
-				for x := 0; x < n; x++ {
-					scale[x] = uint16(scaleLUT(scaling, int(srcRow[x]), bitDepth))
-				}
-			}
+			gatherLumaScaleRow(scale, srcRow, scaling, bitDepth)
 			applyGrainSegment(dstRow, srcRow, scale, grainRow, int(params.ScalingShift), minValue, maxValue)
 		}
 		for x := range xStart {
@@ -198,11 +180,29 @@ func applyLumaBlock(dst []uint16, src []uint16, grain []int16, scaling []uint8, 
 	}
 
 	for y := range yStart {
-		for x := xStart; x < blockWidth; x++ {
-			current := lumaGrainSample(grain, offsets[0][0], 0, 0, x, y)
-			top := lumaGrainSample(grain, offsets[0][1], 0, 1, x, y)
-			g := blendLumaOverlap(top, current, y, params.BitDepth)
-			applyLumaRowSample(dst, src, scaling, params, blockX+x, y, g)
+		// Top overlap: the vertical blend weight is fixed by the overlap row y,
+		// so the whole [xStart,blockWidth) run blends two contiguous grain rows
+		// (top, current) with one weight pair, then takes the interior
+		// gather+apply path. This fuses the blend into the scaling gather+add as
+		// dav1d's fgy_32x32xn does (filmgrain.S). The left seam / corner columns
+		// (<=2 wide) stay scalar below.
+		if n := blockWidth - xStart; n > 0 {
+			base := y*params.Stride + blockX + xStart
+			dstRow := dst[base : base+n]
+			srcRow := src[base : base+n]
+			curBase := lumaGrainSampleIndex(offsets[0][0], 0, 0, xStart, y)
+			topBase := lumaGrainSampleIndex(offsets[0][1], 0, 1, xStart, y)
+			// blendLumaOverlap(top, current, y): previous=top gets 27, current
+			// 17, swapped when the overlap offset is 1.
+			prevWeight, curWeight := 27, 17
+			if y == 1 {
+				prevWeight, curWeight = 17, 27
+			}
+			blended := blendBuf[:n]
+			blendGrainRow(blended, grain[topBase:topBase+n], grain[curBase:curBase+n], prevWeight, curWeight, grainMin, grainMax)
+			scale := scaleBuf[:n]
+			gatherLumaScaleRow(scale, srcRow, scaling, bitDepth)
+			applyGrainSegment(dstRow, srcRow, scale, blended, int(params.ScalingShift), minValue, maxValue)
 		}
 		for x := range xStart {
 			top := lumaGrainSample(grain, offsets[0][1], 0, 1, x, y)
@@ -227,7 +227,10 @@ func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, 
 	// gather+interpolate can run through the vectorized buildScaleRow10 kernel.
 	// Both stay on the stack (the apply path is zero-alloc).
 	var idxBuf [LumaBlockSize]uint16
+	var blendBuf [LumaBlockSize]int16
 	bitDepth := params.BitDepth
+	grainMin := -(1 << (bitDepth - 1))
+	grainMax := (1 << (bitDepth - 1)) - 1
 	for y := yStart; y < params.Height; y++ {
 		// Non-overlap interior: dst, src and the grain run are contiguous in
 		// x. The scaling index still depends on the (possibly subsampled)
@@ -240,83 +243,7 @@ func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, 
 			gbase := chromaGrainSampleIndex(offsets[0][0], shiftX, shiftY, 0, 0, xStart, y)
 			grainRow := grain[gbase : gbase+n]
 			scale := scaleBuf[:n]
-			if params.ChromaScalingFromLuma {
-				lumaY := y << shiftY
-				lumaBase := lumaY*params.LumaStride + ((blockX + xStart) << shiftX)
-				switch bitDepth {
-				case 8:
-					if shiftX != 0 {
-						for x := 0; x < n; x++ {
-							idx := lumaBase + (x << 1)
-							avg := (int(luma[idx]) + int(luma[idx+1]) + 1) >> 1
-							scale[x] = uint16(scaleLUT8(scaling, avg))
-						}
-					} else {
-						for x := 0; x < n; x++ {
-							scale[x] = uint16(scaleLUT8(scaling, int(luma[lumaBase+x])))
-						}
-					}
-				case 10:
-					if shiftX != 0 {
-						idx := idxBuf[:n]
-						for x := 0; x < n; x++ {
-							li := lumaBase + (x << 1)
-							idx[x] = uint16((int(luma[li]) + int(luma[li+1]) + 1) >> 1)
-						}
-						buildScaleRow10(scale, idx, scaling)
-					} else {
-						buildScaleRow10(scale, luma[lumaBase:lumaBase+n], scaling)
-					}
-				case 12:
-					if shiftX != 0 {
-						for x := 0; x < n; x++ {
-							idx := lumaBase + (x << 1)
-							avg := (int(luma[idx]) + int(luma[idx+1]) + 1) >> 1
-							scale[x] = uint16(scaleLUT12(scaling, avg))
-						}
-					} else {
-						for x := 0; x < n; x++ {
-							scale[x] = uint16(scaleLUT12(scaling, int(luma[lumaBase+x])))
-						}
-					}
-				default:
-					if shiftX != 0 {
-						for x := 0; x < n; x++ {
-							idx := lumaBase + (x << 1)
-							avg := (int(luma[idx]) + int(luma[idx+1]) + 1) >> 1
-							scale[x] = uint16(scaleLUT(scaling, avg, bitDepth))
-						}
-					} else {
-						for x := 0; x < n; x++ {
-							scale[x] = uint16(scaleLUT(scaling, int(luma[lumaBase+x]), bitDepth))
-						}
-					}
-				}
-			} else {
-				switch bitDepth {
-				case 8:
-					for x := 0; x < n; x++ {
-						idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
-						scale[x] = uint16(scaleLUT8(scaling, idx))
-					}
-				case 10:
-					idx := idxBuf[:n]
-					for x := 0; x < n; x++ {
-						idx[x] = uint16(chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y))
-					}
-					buildScaleRow10(scale, idx, scaling)
-				case 12:
-					for x := 0; x < n; x++ {
-						idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
-						scale[x] = uint16(scaleLUT12(scaling, idx))
-					}
-				default:
-					for x := 0; x < n; x++ {
-						idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
-						scale[x] = uint16(scaleLUT(scaling, idx, bitDepth))
-					}
-				}
-			}
+			gatherChromaScaleRow(scale, idxBuf[:n], srcRow, luma, scaling, params, shiftX, shiftY, blockX+xStart, y)
 			applyGrainSegment(dstRow, srcRow, scale, grainRow, int(params.ScalingShift), minValue, maxValue)
 		}
 		for x := range xStart {
@@ -328,11 +255,24 @@ func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, 
 	}
 
 	for y := range yStart {
-		for x := xStart; x < blockWidth; x++ {
-			current := chromaGrainSample(grain, offsets[0][0], shiftX, shiftY, 0, 0, x, y)
-			top := chromaGrainSample(grain, offsets[0][1], shiftX, shiftY, 0, 1, x, y)
-			g := blendChromaOverlap(top, current, y, shiftY, params.BitDepth)
-			applyChromaRowSample(dst, src, luma, scaling, params, shiftX, blockX+x, y, g)
+		// Top overlap: the vertical blend weight is fixed by the overlap row y
+		// and the vertical subsampling, so the [xStart,blockWidth) run blends two
+		// contiguous grain rows (top, current) with one weight pair and then
+		// takes the interior scaling gather+add path — the same fusion dav1d's
+		// fguv applies (filmgrain16.S). The left seam / corner (<=1-2 wide) stay
+		// scalar below.
+		if n := blockWidth - xStart; n > 0 {
+			base := y*params.Stride + blockX + xStart
+			dstRow := dst[base : base+n]
+			srcRow := src[base : base+n]
+			curBase := chromaGrainSampleIndex(offsets[0][0], shiftX, shiftY, 0, 0, xStart, y)
+			topBase := chromaGrainSampleIndex(offsets[0][1], shiftX, shiftY, 0, 1, xStart, y)
+			prevWeight, curWeight := chromaOverlapWeights(y, shiftY)
+			blended := blendBuf[:n]
+			blendGrainRow(blended, grain[topBase:topBase+n], grain[curBase:curBase+n], prevWeight, curWeight, grainMin, grainMax)
+			scale := scaleBuf[:n]
+			gatherChromaScaleRow(scale, idxBuf[:n], srcRow, luma, scaling, params, shiftX, shiftY, blockX+xStart, y)
+			applyGrainSegment(dstRow, srcRow, scale, blended, int(params.ScalingShift), minValue, maxValue)
 		}
 		for x := range xStart {
 			top := chromaGrainSample(grain, offsets[0][1], shiftX, shiftY, 0, 1, x, y)
@@ -347,6 +287,133 @@ func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, 
 			applyChromaRowSample(dst, src, luma, scaling, params, shiftX, blockX+x, y, g)
 		}
 	}
+}
+
+// gatherLumaScaleRow fills scale[i] with the luma scaling-LUT value for
+// srcRow[i], matching applyLumaSample's scaleLUT lookup for every bit depth. It
+// is shared by the non-overlap interior and the top-overlap seam so both take
+// the vectorized 10-bit gather (build_scale_dispatch_*.go); 8/12-bit stay
+// scalar (a bare or coarse lut gather does not amortize a NEON per-lane load).
+func gatherLumaScaleRow(scale []uint16, srcRow []uint16, scaling []uint8, bitDepth uint8) {
+	n := len(scale)
+	switch bitDepth {
+	case 8:
+		for x := 0; x < n; x++ {
+			scale[x] = uint16(scaleLUT8(scaling, int(srcRow[x])))
+		}
+	case 10:
+		buildScaleRow10(scale, srcRow, scaling)
+	case 12:
+		for x := 0; x < n; x++ {
+			scale[x] = uint16(scaleLUT12(scaling, int(srcRow[x])))
+		}
+	default:
+		for x := 0; x < n; x++ {
+			scale[x] = uint16(scaleLUT(scaling, int(srcRow[x]), bitDepth))
+		}
+	}
+}
+
+// gatherChromaScaleRow fills scale[i] with the chroma scaling-LUT value for the
+// pixel at (xBase+i, y), matching applyChromaRowSample/chromaScalingIndex for
+// every bit depth and both the chroma-from-luma and cross-plane paths. idxBuf is
+// caller-owned scratch (len == len(scale)) used to stage the 10-bit indices for
+// the vectorized buildScaleRow10 gather. It is shared by the non-overlap
+// interior and the top-overlap seam.
+func gatherChromaScaleRow(scale []uint16, idxBuf []uint16, srcRow []uint16, luma []uint16, scaling []uint8, params ChromaRowParams, shiftX int, shiftY int, xBase int, y int) {
+	n := len(scale)
+	bitDepth := params.BitDepth
+	if params.ChromaScalingFromLuma {
+		lumaY := y << shiftY
+		lumaBase := lumaY*params.LumaStride + (xBase << shiftX)
+		switch bitDepth {
+		case 8:
+			if shiftX != 0 {
+				for x := 0; x < n; x++ {
+					idx := lumaBase + (x << 1)
+					avg := (int(luma[idx]) + int(luma[idx+1]) + 1) >> 1
+					scale[x] = uint16(scaleLUT8(scaling, avg))
+				}
+			} else {
+				for x := 0; x < n; x++ {
+					scale[x] = uint16(scaleLUT8(scaling, int(luma[lumaBase+x])))
+				}
+			}
+		case 10:
+			if shiftX != 0 {
+				idx := idxBuf[:n]
+				for x := 0; x < n; x++ {
+					li := lumaBase + (x << 1)
+					idx[x] = uint16((int(luma[li]) + int(luma[li+1]) + 1) >> 1)
+				}
+				buildScaleRow10(scale, idx, scaling)
+			} else {
+				buildScaleRow10(scale, luma[lumaBase:lumaBase+n], scaling)
+			}
+		case 12:
+			if shiftX != 0 {
+				for x := 0; x < n; x++ {
+					idx := lumaBase + (x << 1)
+					avg := (int(luma[idx]) + int(luma[idx+1]) + 1) >> 1
+					scale[x] = uint16(scaleLUT12(scaling, avg))
+				}
+			} else {
+				for x := 0; x < n; x++ {
+					scale[x] = uint16(scaleLUT12(scaling, int(luma[lumaBase+x])))
+				}
+			}
+		default:
+			if shiftX != 0 {
+				for x := 0; x < n; x++ {
+					idx := lumaBase + (x << 1)
+					avg := (int(luma[idx]) + int(luma[idx+1]) + 1) >> 1
+					scale[x] = uint16(scaleLUT(scaling, avg, bitDepth))
+				}
+			} else {
+				for x := 0; x < n; x++ {
+					scale[x] = uint16(scaleLUT(scaling, int(luma[lumaBase+x]), bitDepth))
+				}
+			}
+		}
+		return
+	}
+	switch bitDepth {
+	case 8:
+		for x := 0; x < n; x++ {
+			idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, xBase+x, y)
+			scale[x] = uint16(scaleLUT8(scaling, idx))
+		}
+	case 10:
+		idx := idxBuf[:n]
+		for x := 0; x < n; x++ {
+			idx[x] = uint16(chromaScalingIndex(srcRow[x], luma, params, shiftX, xBase+x, y))
+		}
+		buildScaleRow10(scale, idx, scaling)
+	case 12:
+		for x := 0; x < n; x++ {
+			idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, xBase+x, y)
+			scale[x] = uint16(scaleLUT12(scaling, idx))
+		}
+	default:
+		for x := 0; x < n; x++ {
+			idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, xBase+x, y)
+			scale[x] = uint16(scaleLUT(scaling, idx, bitDepth))
+		}
+	}
+}
+
+// chromaOverlapWeights returns the (previous, current) weight pair for the
+// chroma top-overlap blend, mirroring blendChromaOverlap: vertically subsampled
+// chroma uses the 23/22 split for every row; otherwise it follows
+// blendLumaOverlap's 27/17 pair (swapped when the overlap offset is 1).
+func chromaOverlapWeights(offset int, shiftY int) (int, int) {
+	if shiftY != 0 {
+		return 23, 22
+	}
+	if offset == 1 {
+		return 17, 27
+	}
+	return 27, 17
 }
 
 func applyLumaRowSample(dst []uint16, src []uint16, scaling []uint8, params LumaRowParams, x int, y int, grain int16) {
