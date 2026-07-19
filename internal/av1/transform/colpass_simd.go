@@ -36,12 +36,14 @@ var (
 	inverseDCT64Col2Impl = inverseDCT64Col2PureGo
 )
 
-// inverseDCT16Col4 / inverseDCT32Col4 / inverseDCT64Col4 transform four
-// adjacent columns of the scratch buffer in place (dav1d's four-lane column
-// shape, src/arm/64/itx16.S). The result for each column equals the
-// corresponding single-column scalar kernel. Same binding rules as the
-// two-column slots.
+// inverseDCT8Col4 / inverseDCT16Col4 / inverseDCT32Col4 / inverseDCT64Col4
+// transform four adjacent columns of the scratch buffer in place (dav1d's
+// four-lane column shape, src/arm/64/itx16.S). The result for each column
+// equals the corresponding single-column scalar kernel. Same binding rules as
+// the two-column slots.
 var (
+	inverseDCT4Col4Impl  = inverseDCT4Col4PureGo
+	inverseDCT8Col4Impl  = inverseDCT8Col4PureGo
 	inverseDCT16Col4Impl = inverseDCT16Col4PureGo
 	inverseDCT32Col4Impl = inverseDCT32Col4PureGo
 	inverseDCT64Col4Impl = inverseDCT64Col4PureGo
@@ -94,6 +96,12 @@ func inverse1DCol4(buf []int32, rowStride int, length int, typ tx1DType, min int
 	switch typ {
 	case tx1DDCT:
 		switch length {
+		case dct4Size:
+			inverseDCT4Col4Impl(buf, rowStride, min, max)
+			return
+		case dct8Size:
+			inverseDCT8Col4Impl(buf, rowStride, min, max)
+			return
 		case dct16Size:
 			inverseDCT16Col4Impl(buf, rowStride, min, max)
 			return
@@ -143,6 +151,18 @@ func inverseDCT32Col2PureGo(buf []int32, rowStride int, min int32, max int32) {
 func inverseDCT64Col2PureGo(buf []int32, rowStride int, min int32, max int32) {
 	inverseDCT64(buf, rowStride, min, max)
 	inverseDCT64(buf[1:], rowStride, min, max)
+}
+
+func inverseDCT4Col4PureGo(buf []int32, rowStride int, min int32, max int32) {
+	inverseDCT4(buf, rowStride, min, max)
+	inverseDCT4(buf[1:], rowStride, min, max)
+	inverseDCT4(buf[2:], rowStride, min, max)
+	inverseDCT4(buf[3:], rowStride, min, max)
+}
+
+func inverseDCT8Col4PureGo(buf []int32, rowStride int, min int32, max int32) {
+	inverseDCT8Col2PureGo(buf, rowStride, min, max)
+	inverseDCT8Col2PureGo(buf[2:], rowStride, min, max)
 }
 
 func inverseDCT16Col4PureGo(buf []int32, rowStride int, min int32, max int32) {

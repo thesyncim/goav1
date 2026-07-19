@@ -28,6 +28,8 @@ func init() {
 		inverseDCT8Col2Impl = inverseDCT8Col2NEONAdapter
 		inverseDCT16Col2Impl = inverseDCT16Col2NEONAdapter
 		inverseDCT32Col2Impl = inverseDCT32Col2NEONAdapter
+		inverseDCT4Col4Impl = inverseDCT4Col4NEONAdapter
+		inverseDCT8Col4Impl = inverseDCT8Col4NEONAdapter
 		inverseDCT16Col4Impl = inverseDCT16Col4NEONAdapter
 		inverseDCT32Col4Impl = inverseDCT32Col4NEONAdapter
 		inverseDCT64Col4Impl = inverseDCT64Col4NEONAdapter
@@ -79,6 +81,25 @@ func inverseDCT32Col2NEONAdapter(buf []int32, rowStride int, min, max int32) {
 // input to [min, max] before invoking them (hybrid.go clampRoundImpl), and
 // the differential tests stage inputs the same way. Out-of-envelope bounds or
 // short buffers fall back to the column-pair path.
+
+func inverseDCT4Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
+	if rowStride < 4 || len(buf) < (dct4Size-1)*rowStride+4 ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseDCT4Col4PureGo(buf, rowStride, min, max)
+		return
+	}
+	inverseDCT4Col4NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
+}
+
+func inverseDCT8Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
+	if rowStride < 4 || len(buf) < (dct8Size-1)*rowStride+4 ||
+		min < -colClampBoundNEON || max >= colClampBoundNEON {
+		inverseDCT8Col2NEONAdapter(buf, rowStride, min, max)
+		inverseDCT8Col2NEONAdapter(buf[2:], rowStride, min, max)
+		return
+	}
+	inverseDCT8Col4NEON(&buf[0], int64(rowStride)*4, int64(min), int64(max))
+}
 
 func inverseDCT16Col4NEONAdapter(buf []int32, rowStride int, min, max int32) {
 	if rowStride < 4 || len(buf) < (dct16Size-1)*rowStride+4 ||

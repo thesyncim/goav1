@@ -45,6 +45,44 @@ void goav1_idct16_col4(int32_t *base, long strideBytes, long min, long max) {
     vst1q_s32((int32_t *)(q + (long)i * strideBytes), v[i]);
 }
 
+// DCT4 four-column kernel: mirrors the pure-Go inverseDCT4 column butterfly
+// (libaom-exact round_shift, four adjacent columns per .4s register). Not
+// first-defined, so objdump labels it by name; transcribe with
+// "goav1_idct4_col4". The compiled body is frameless straight-line leaf code.
+void goav1_idct4_col4(int32_t *base, long strideBytes, long min, long max) {
+  int32x4_t mn = vdupq_n_s32((int32_t)min);
+  int32x4_t mx = vdupq_n_s32((int32_t)max);
+  int32x4_t v[4];
+  const char *p = (const char *)base;
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 4; i++)
+    v[i] = vld1q_s32((const int32_t *)(p + (long)i * strideBytes));
+  idct4_core(v, mn, mx);
+  char *q = (char *)base;
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 4; i++)
+    vst1q_s32((int32_t *)(q + (long)i * strideBytes), v[i]);
+}
+
+// DCT8 four-column kernel: mirrors the pure-Go inverseDCT8 column butterfly
+// (dav1d src/arm/64/itx16.S inv_dct_4s_x8_neon shape, libaom-exact round_shift).
+// Not first-defined, so objdump labels it by name; transcribe with
+// "goav1_idct8_col4". The compiled body is frameless straight-line leaf code.
+void goav1_idct8_col4(int32_t *base, long strideBytes, long min, long max) {
+  int32x4_t mn = vdupq_n_s32((int32_t)min);
+  int32x4_t mx = vdupq_n_s32((int32_t)max);
+  int32x4_t v[8];
+  const char *p = (const char *)base;
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 8; i++)
+    v[i] = vld1q_s32((const int32_t *)(p + (long)i * strideBytes));
+  idct8_core(v, mn, mx);
+  char *q = (char *)base;
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 8; i++)
+    vst1q_s32((int32_t *)(q + (long)i * strideBytes), v[i]);
+}
+
 // The 64-point kernel keeps its stage buffer in caller-provided memory (bf,
 // 64 int32x4_t) and runs each stage as independent 2-slot butterfly groups,
 // so the compiled stack frame stays within Go's NOSPLIT budget. dav1d's

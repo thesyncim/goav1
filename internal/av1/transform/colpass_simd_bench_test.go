@@ -60,6 +60,23 @@ func BenchmarkDCT16Col4Col2(b *testing.B) {
 	})
 }
 
+// DCT4 four-column vs the scalar column path it replaces (DCT4 had no batched
+// column kernel; the column pass ran four scalar inverseDCT4 calls).
+func BenchmarkDCT4Col4Dispatch(b *testing.B) { benchmarkCol4(b, dct4Size, inverseDCT4Col4Impl) }
+func BenchmarkDCT4Col4PureGo(b *testing.B)   { benchmarkCol4(b, dct4Size, inverseDCT4Col4PureGo) }
+
+// DCT8 four-column vs the older two-column pair: the four-lane int32 kernel
+// transforms four columns per instruction, replacing two int64-lane
+// inverseDCT8Col2 calls for each group of four columns.
+func BenchmarkDCT8Col4Dispatch(b *testing.B) { benchmarkCol4(b, dct8Size, inverseDCT8Col4Impl) }
+func BenchmarkDCT8Col4PureGo(b *testing.B)   { benchmarkCol4(b, dct8Size, inverseDCT8Col4PureGo) }
+func BenchmarkDCT8Col4Col2(b *testing.B) {
+	benchmarkCol4(b, dct8Size, func(buf []int32, rowStride int, min, max int32) {
+		inverseDCT8Col2Impl(buf, rowStride, min, max)
+		inverseDCT8Col2Impl(buf[2:], rowStride, min, max)
+	})
+}
+
 func BenchmarkDCT32Col4Dispatch(b *testing.B) { benchmarkCol4(b, dct32Size, inverseDCT32Col4Impl) }
 func BenchmarkDCT32Col4PureGo(b *testing.B)   { benchmarkCol4(b, dct32Size, inverseDCT32Col4PureGo) }
 func BenchmarkDCT64Col4Dispatch(b *testing.B) { benchmarkCol4(b, dct64Size, inverseDCT64Col4Impl) }
