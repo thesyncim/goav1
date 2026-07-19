@@ -48,6 +48,18 @@ func benchmarkCol4(b *testing.B, length int, fn func(buf []int32, rowStride int,
 	}
 }
 
+// DCT16 four-column vs the older two-column pair: the four-lane int32 kernel
+// multiplies four columns per instruction and halves the loads/stores/srshr
+// relative to two inverseDCT16Col2 calls.
+func BenchmarkDCT16Col4Dispatch(b *testing.B) { benchmarkCol4(b, dct16Size, inverseDCT16Col4Impl) }
+func BenchmarkDCT16Col4PureGo(b *testing.B)   { benchmarkCol4(b, dct16Size, inverseDCT16Col4PureGo) }
+func BenchmarkDCT16Col4Col2(b *testing.B) {
+	benchmarkCol4(b, dct16Size, func(buf []int32, rowStride int, min, max int32) {
+		inverseDCT16Col2Impl(buf, rowStride, min, max)
+		inverseDCT16Col2Impl(buf[2:], rowStride, min, max)
+	})
+}
+
 func BenchmarkDCT32Col4Dispatch(b *testing.B) { benchmarkCol4(b, dct32Size, inverseDCT32Col4Impl) }
 func BenchmarkDCT32Col4PureGo(b *testing.B)   { benchmarkCol4(b, dct32Size, inverseDCT32Col4PureGo) }
 func BenchmarkDCT64Col4Dispatch(b *testing.B) { benchmarkCol4(b, dct64Size, inverseDCT64Col4Impl) }

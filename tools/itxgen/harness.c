@@ -7,6 +7,7 @@
 #include <string.h>
 #include "core_ref.h"
 
+void goav1_idct16_col4(int32_t *base, long strideBytes, long min, long max);
 void goav1_idct32_col4(int32_t *base, long strideBytes, long min, long max);
 void goav1_idct64_col4(int32_t *base, long strideBytes, long min, long max, int32_t *scratch);
 
@@ -25,6 +26,7 @@ static const int32_t edges[] = {0, 1, -1, 7, -7, -32768, 32767, -131072, 131071,
 
 static int32_t g_scratch[512 + 64];
 
+static void idct16_wrap(int32_t *b, long st, long mn, long mx) { goav1_idct16_col4(b, st, mn, mx); }
 static void idct32_wrap(int32_t *b, long st, long mn, long mx) { goav1_idct32_col4(b, st, mn, mx); }
 static void idct64_wrap(int32_t *b, long st, long mn, long mx) { goav1_idct64_col4(b, st, mn, mx, g_scratch + (rnd() % 64)); }
 
@@ -136,6 +138,7 @@ static int run_row4(int n) {
 }
 
 int main(void) {
+  if (run(16, idct16_wrap, idct16_ref)) return 1;
   if (run(32, idct32_wrap, idct32_ref)) return 1;
   if (run(64, idct64_wrap, idct64_ref)) return 1;
   if (run_row4(32)) return 1;

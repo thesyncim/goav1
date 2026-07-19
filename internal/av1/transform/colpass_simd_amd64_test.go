@@ -22,6 +22,7 @@ func colPass2TestFuncs() []col2TestFunc {
 // AVX2 but still executes the instructions).
 func colPass4TestFuncs() []col2TestFunc {
 	return []col2TestFunc{
+		{"DCT16Col4", dct16Size, inverseDCT16Col4AVX2Adapter, inverseDCT16Col4PureGo},
 		{"DCT32Col4", dct32Size, inverseDCT32Col4AVX2Adapter, inverseDCT32Col4PureGo},
 		{"DCT64Col4", dct64Size, inverseDCT64Col4AVX2Adapter, inverseDCT64Col4PureGo},
 	}

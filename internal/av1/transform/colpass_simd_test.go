@@ -135,6 +135,12 @@ func TestColPassDispatchZeroAlloc(t *testing.T) {
 		buf4[i] = int32(i*131 - 400)
 	}
 	allocs = testing.AllocsPerRun(1000, func() {
+		inverseDCT16Col4Impl(buf4, rowStride, minInt16, maxInt16)
+	})
+	if allocs != 0 {
+		t.Fatalf("DCT16 batched four-column kernel allocated %f times per call", allocs)
+	}
+	allocs = testing.AllocsPerRun(1000, func() {
 		inverseDCT32Col4Impl(buf4, rowStride, minInt16, maxInt16)
 	})
 	if allocs != 0 {

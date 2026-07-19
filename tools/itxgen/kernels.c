@@ -25,6 +25,26 @@ void goav1_idct32_col4(int32_t *base, long strideBytes, long min, long max) {
     vst1q_s32((int32_t *)(q + (long)i * strideBytes), v[i]);
 }
 
+// DCT16 four-column kernel: the even-half inner stage of goav1_idct32_col4,
+// mirroring the pure-Go inverseDCT16 column butterfly (dav1d src/arm/64/itx16.S
+// inv_dct_4s_x16_neon shape). Kept after goav1_idct32_col4 so the latter stays
+// the first-defined function (the objdump "ltmp0" label quirk transcribe.py
+// remaps).
+void goav1_idct16_col4(int32_t *base, long strideBytes, long min, long max) {
+  int32x4_t mn = vdupq_n_s32((int32_t)min);
+  int32x4_t mx = vdupq_n_s32((int32_t)max);
+  int32x4_t v[16];
+  const char *p = (const char *)base;
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 16; i++)
+    v[i] = vld1q_s32((const int32_t *)(p + (long)i * strideBytes));
+  idct16_core(v, mn, mx);
+  char *q = (char *)base;
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 16; i++)
+    vst1q_s32((int32_t *)(q + (long)i * strideBytes), v[i]);
+}
+
 // The 64-point kernel keeps its stage buffer in caller-provided memory (bf,
 // 64 int32x4_t) and runs each stage as independent 2-slot butterfly groups,
 // so the compiled stack frame stays within Go's NOSPLIT budget. dav1d's

@@ -512,6 +512,9 @@ def gen_kernel(go_func, cbase):
 
 def main():
     parts_neon, parts_scal = [], []
+    nf, sf = gen_kernel("inverseDCT16", "idct16")
+    parts_neon.append(nf)
+    parts_scal.append(sf)
     nf, sf = gen_kernel("inverseDCT32", "idct32")
     parts_neon.append(nf)
     parts_scal.append(sf)
