@@ -214,9 +214,14 @@ func predictDirectionalZ2(block planeBlock, bytesPerSample int, edges Directiona
 	// extent (the off-edge rows/cols would never reference samples the visible
 	// region does not already touch for zone 2's wedge of angles, but validate
 	// the full extent for safety/parity).
-	_, _, err := directionalZ2Ranges(predWidth, predHeight, upsampleAbove, upsampleLeft, dx, dy)
-	if err != nil {
-		return err
+	// The full-extent validation only differs from the visible-region range when
+	// predWidth/predHeight exceed the block dims (partial/edge blocks). For the
+	// common full-block path (predWidth==block.width && predHeight==block.height)
+	// the two calls are identical, so skip the redundant full-extent pass.
+	if predWidth != block.width || predHeight != block.height {
+		if _, _, err := directionalZ2Ranges(predWidth, predHeight, upsampleAbove, upsampleLeft, dx, dy); err != nil {
+			return err
+		}
 	}
 	aboveRange, leftRange, err := directionalZ2Ranges(block.width, block.height, upsampleAbove, upsampleLeft, dx, dy)
 	if err != nil {
