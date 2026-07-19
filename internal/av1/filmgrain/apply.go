@@ -167,13 +167,17 @@ func applyLumaBlock(dst []uint16, src []uint16, grain []int16, scaling []uint8, 
 			scale := scaleBuf[:n]
 			switch bitDepth {
 			case 8:
+				// 8-bit is a direct lut[index] gather with no interpolation;
+				// the scalar load beats a NEON per-lane gather (measured), so
+				// it stays scalar. The 10-bit interpolate is vectorized below.
 				for x := 0; x < n; x++ {
 					scale[x] = uint16(scaleLUT8(scaling, int(srcRow[x])))
 				}
 			case 10:
-				for x := 0; x < n; x++ {
-					scale[x] = uint16(scaleLUT10(scaling, int(srcRow[x])))
-				}
+				// Vectorized scaling-LUT gather+interpolate
+				// (build_scale_dispatch_*.go); bit-exact with the scaleLUT10
+				// per-pixel loop.
+				buildScaleRow10(scale, srcRow, scaling)
 			case 12:
 				for x := 0; x < n; x++ {
 					scale[x] = uint16(scaleLUT12(scaling, int(srcRow[x])))
@@ -218,6 +222,11 @@ func applyLumaBlock(dst []uint16, src []uint16, grain []int16, scaling []uint8, 
 func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, scaling []uint8, params ChromaRowParams, shiftX int, shiftY int, offsets [2][2]uint8, blockX int, blockWidth int, xStart int, yStart int) {
 	minValue, maxValue := chromaClipBounds(params)
 	var scaleBuf [LumaBlockSize]uint16
+	// idxBuf collects the per-pixel chroma scaling indices (subsampled-luma
+	// average, or the cross-plane chromaScalingIndex) so the 10-bit scaling-LUT
+	// gather+interpolate can run through the vectorized buildScaleRow10 kernel.
+	// Both stay on the stack (the apply path is zero-alloc).
+	var idxBuf [LumaBlockSize]uint16
 	bitDepth := params.BitDepth
 	for y := yStart; y < params.Height; y++ {
 		// Non-overlap interior: dst, src and the grain run are contiguous in
@@ -249,15 +258,14 @@ func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, 
 					}
 				case 10:
 					if shiftX != 0 {
+						idx := idxBuf[:n]
 						for x := 0; x < n; x++ {
-							idx := lumaBase + (x << 1)
-							avg := (int(luma[idx]) + int(luma[idx+1]) + 1) >> 1
-							scale[x] = uint16(scaleLUT10(scaling, avg))
+							li := lumaBase + (x << 1)
+							idx[x] = uint16((int(luma[li]) + int(luma[li+1]) + 1) >> 1)
 						}
+						buildScaleRow10(scale, idx, scaling)
 					} else {
-						for x := 0; x < n; x++ {
-							scale[x] = uint16(scaleLUT10(scaling, int(luma[lumaBase+x])))
-						}
+						buildScaleRow10(scale, luma[lumaBase:lumaBase+n], scaling)
 					}
 				case 12:
 					if shiftX != 0 {
@@ -292,10 +300,11 @@ func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, 
 						scale[x] = uint16(scaleLUT8(scaling, idx))
 					}
 				case 10:
+					idx := idxBuf[:n]
 					for x := 0; x < n; x++ {
-						idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
-						scale[x] = uint16(scaleLUT10(scaling, idx))
+						idx[x] = uint16(chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y))
 					}
+					buildScaleRow10(scale, idx, scaling)
 				case 12:
 					for x := 0; x < n; x++ {
 						idx := chromaScalingIndex(srcRow[x], luma, params, shiftX, blockX+xStart+x, y)
