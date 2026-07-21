@@ -2466,7 +2466,7 @@ func testBatchTileInfo() parser.TileInfo {
 	return tiles
 }
 
-func testBatchFrame(t *testing.T, format frame.Format) *frame.Frame {
+func testBatchFrame(t testing.TB, format frame.Format) *frame.Frame {
 	t.Helper()
 	layout, err := frame.RequiredSize(format)
 	if err != nil {

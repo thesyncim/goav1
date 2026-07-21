@@ -42,7 +42,7 @@ func frameWorkScaledRefEnabled() bool {
 // Returns (true, nil) if the reference is same-size; (false, nil) if a
 // non-identity scaling is acceptable for the scaled convolver; or an error if
 // the reference dimensions are unusable.
-func frameWorkSameOrScaledReferencePlane(geom frameWorkPredictionPlaneGeometry, ref frame.Plane) (bool, error) {
+func frameWorkSameOrScaledReferencePlane(geom *frameWorkPredictionPlaneGeometry, ref frame.Plane) (bool, error) {
 	// Compare against the current frame's CODED (cropped) plane dimensions, not
 	// geom.Output.Width/Height: the predictor's output plane is extended to the
 	// MI-aligned write extent (frameWorkExtendPlaneToClip), which can exceed the
@@ -80,21 +80,21 @@ func frameWorkSameOrScaledReferencePlane(geom frameWorkPredictionPlaneGeometry, 
 // layer) and walk the vertical reference taps off by a growing per-row offset.
 // Callers staging into a block-sized scratch buffer (inter-intra, masked
 // compound) must use frameWorkPredictScaledReferencePlaneToBuffer.
-func frameWorkPredictScaledReferencePlane(geom frameWorkPredictionPlaneGeometry, ref frame.Plane, bytesPerSample int, bitDepth uint8,
+func frameWorkPredictScaledReferencePlane(geom *frameWorkPredictionPlaneGeometry, ref frame.Plane, bytesPerSample int, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, width int, height int, mv motion.Vector,
 	subsamplingX bool, subsamplingY bool, filters motion.InterpFilters) error {
 	return frameWorkPredictScaledReferencePlaneWithFilterSize(geom, ref, bytesPerSample, bitDepth,
 		dstX, dstY, blockX, blockY, width, height, width, height, mv, subsamplingX, subsamplingY, filters)
 }
 
-func frameWorkPredictScaledReferencePlaneWithFilterSize(geom frameWorkPredictionPlaneGeometry, ref frame.Plane, bytesPerSample int, bitDepth uint8,
+func frameWorkPredictScaledReferencePlaneWithFilterSize(geom *frameWorkPredictionPlaneGeometry, ref frame.Plane, bytesPerSample int, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, width int, height int, filterWidth int, filterHeight int, mv motion.Vector,
 	subsamplingX bool, subsamplingY bool, filters motion.InterpFilters) error {
 	return frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom, ref, bytesPerSample, bitDepth,
 		dstX, dstY, blockX, blockY, width, height, filterWidth, filterHeight, mv, subsamplingX, subsamplingY, filters, nil)
 }
 
-func frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom frameWorkPredictionPlaneGeometry, ref frame.Plane, bytesPerSample int, bitDepth uint8,
+func frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom *frameWorkPredictionPlaneGeometry, ref frame.Plane, bytesPerSample int, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, width int, height int, filterWidth int, filterHeight int, mv motion.Vector,
 	subsamplingX bool, subsamplingY bool, filters motion.InterpFilters, scratch *motion.ScaledConvolveScratch) error {
 	curWidth, curHeight, ok := frameWorkScaledReferenceCurrentDims(geom)
@@ -111,7 +111,7 @@ func frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom frameWorkPre
 // not recorded. It mirrors frameWorkSameOrScaledReferencePlane's curWidth /
 // curHeight selection so the same-size / scaled decision and the scale-factor
 // computation stay consistent.
-func frameWorkScaledReferenceCurrentDims(geom frameWorkPredictionPlaneGeometry) (int, int, bool) {
+func frameWorkScaledReferenceCurrentDims(geom *frameWorkPredictionPlaneGeometry) (int, int, bool) {
 	return geom.codedDimensions()
 }
 
@@ -126,21 +126,21 @@ func frameWorkScaledReferenceCurrentDims(geom frameWorkPredictionPlaneGeometry) 
 // by av1_setup_scale_factors_for_frame() from the output frame dimensions —
 // independent of whatever buffer the inter prediction is staged into.
 func frameWorkPredictScaledReferencePlaneToBuffer(dst frame.Plane, ref frame.Plane,
-	geom frameWorkPredictionPlaneGeometry, bitDepth uint8,
+	geom *frameWorkPredictionPlaneGeometry, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, mv motion.Vector, filters motion.InterpFilters) error {
 	return frameWorkPredictScaledReferencePlaneToBufferWithFilterSize(dst, ref, geom, bitDepth,
 		dstX, dstY, blockX, blockY, geom.width(), geom.height(), mv, filters)
 }
 
 func frameWorkPredictScaledReferencePlaneToBufferWithFilterSize(dst frame.Plane, ref frame.Plane,
-	geom frameWorkPredictionPlaneGeometry, bitDepth uint8,
+	geom *frameWorkPredictionPlaneGeometry, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, filterWidth int, filterHeight int, mv motion.Vector, filters motion.InterpFilters) error {
 	return frameWorkPredictScaledReferencePlaneToBufferWithFilterSizeScratch(dst, ref, geom, bitDepth,
 		dstX, dstY, blockX, blockY, filterWidth, filterHeight, mv, filters, nil)
 }
 
 func frameWorkPredictScaledReferencePlaneToBufferWithFilterSizeScratch(dst frame.Plane, ref frame.Plane,
-	geom frameWorkPredictionPlaneGeometry, bitDepth uint8,
+	geom *frameWorkPredictionPlaneGeometry, bitDepth uint8,
 	dstX int, dstY int, blockX int, blockY int, filterWidth int, filterHeight int, mv motion.Vector, filters motion.InterpFilters,
 	scratch *motion.ScaledConvolveScratch) error {
 	curWidth, curHeight, ok := frameWorkScaledReferenceCurrentDims(geom)
@@ -153,12 +153,12 @@ func frameWorkPredictScaledReferencePlaneToBufferWithFilterSizeScratch(dst frame
 }
 
 func frameWorkPredictScaledReferencePlaneToConvBuf(buf *motion.CompoundConvBuf, ref frame.Plane,
-	geom frameWorkPredictionPlaneGeometry, bitDepth uint8, mv motion.Vector, filters motion.InterpFilters) error {
+	geom *frameWorkPredictionPlaneGeometry, bitDepth uint8, mv motion.Vector, filters motion.InterpFilters) error {
 	return frameWorkPredictScaledReferencePlaneToConvBufScratch(buf, ref, geom, bitDepth, mv, filters, nil)
 }
 
 func frameWorkPredictScaledReferencePlaneToConvBufScratch(buf *motion.CompoundConvBuf, ref frame.Plane,
-	geom frameWorkPredictionPlaneGeometry, bitDepth uint8, mv motion.Vector, filters motion.InterpFilters,
+	geom *frameWorkPredictionPlaneGeometry, bitDepth uint8, mv motion.Vector, filters motion.InterpFilters,
 	scratch *motion.ScaledConvolveScratch) error {
 	curWidth, curHeight, ok := frameWorkScaledReferenceCurrentDims(geom)
 	if !ok {

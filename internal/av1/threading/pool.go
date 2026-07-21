@@ -286,6 +286,83 @@ type frameWorkJobGeometryCache struct {
 
 	planeIndex [3]uint16
 	plane      [3]FrameWorkPlaneRegion
+
+	// Prediction output layout is invariant for every block in one job/plane.
+	// Keep its checked, clip-extended plane view beside the existing window so
+	// the inter-prediction loop does not rediscover frame layout three times per
+	// block. The cache remains goroutine-private on the wavefront path.
+	predictionBaseValid uint8
+	predictionBaseIndex [3]uint16
+	predictionBase      [3]frameWorkPredictionPlaneBase
+
+	// U and V share the same subsampled block position and dimensions. The
+	// normal all-plane dispatch visits U immediately before V, so retain U's
+	// checked block shape and let V redo only its genuinely plane-specific
+	// output/window validation.
+	chromaShapeValid   bool
+	chromaShapePresent bool
+	chromaShapeIndex   uint16
+	chromaShapeBlock   frameWorkPredictionBlockKey
+	chromaShape        frameWorkPredictionPlaneShape
+
+	// Intra prediction may visit several transform blocks from the same AV1
+	// block and plane consecutively. Retain the complete checked result so
+	// those TXBs do not repeat block positioning, clipping, and extent work.
+	predictionGeometryValid   bool
+	predictionGeometryPresent bool
+	predictionGeometryPlane   FrameWorkPlane
+	predictionGeometryIndex   uint16
+	predictionGeometryBlock   frameWorkPredictionBlockKey
+	predictionGeometry        frameWorkPredictionPlaneGeometry
+}
+
+type frameWorkPredictionPlaneBase struct {
+	output frame.Plane
+
+	codedWidth       uint32
+	codedHeight      uint32
+	allocationWidth  int
+	allocationHeight int
+
+	bytesPerSample uint8
+	subsamplingX   bool
+	subsamplingY   bool
+}
+
+// frameWorkPredictionBlockKey retains exactly the BlockVisit fields consumed
+// by prediction geometry. Keeping the key in two machine words avoids making
+// every cache hit compare mode, partition, and neighbor fields that cannot
+// affect plane position or extent.
+type frameWorkPredictionBlockKey struct {
+	position uint64
+	shape    uint64
+}
+
+func frameWorkPredictionBlockCacheKey(block tile.BlockVisit) frameWorkPredictionBlockKey {
+	return frameWorkPredictionBlockKey{
+		position: uint64(block.MICol) |
+			uint64(block.MIRow)<<16 |
+			uint64(block.MIColEnd)<<32 |
+			uint64(block.MIRowEnd)<<48,
+		shape: uint64(block.X4) |
+			uint64(block.Y4)<<8 |
+			uint64(block.Size)<<16 |
+			uint64(block.VisibleW4)<<24 |
+			uint64(block.VisibleH4)<<32,
+	}
+}
+
+type frameWorkPredictionPlaneShape struct {
+	x          int
+	y          int
+	width      uint8
+	height     uint8
+	fullWidth  uint8
+	fullHeight uint8
+
+	filterExtent uint8
+	subsamplingX bool
+	subsamplingY bool
 }
 
 const (
@@ -305,6 +382,9 @@ const (
 // job runs so a reused cache never serves stale geometry for a new index.
 func (c *frameWorkJobGeometryCache) reset() {
 	c.validMask = 0
+	c.predictionBaseValid = 0
+	c.chromaShapeValid = false
+	c.predictionGeometryValid = false
 }
 
 // Surface returns the frame-pool surface that this batch reconstructs into.
