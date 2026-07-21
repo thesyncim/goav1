@@ -1566,14 +1566,15 @@ func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, 
 			clear(levelCache)
 			color := b.Sequence.ColorConfig
 			handle := threading.FrameWorkLoopFilterMasks{
-				Masks:      masks,
-				LevelCache: levelCache,
-				Cols:       cols,
-				Rows:       rows,
-				SB128W:     sb128w,
-				SB128H:     sb128h,
-				Layout:     frameWorkLoopFilterMaskLayout(color),
-				HasChroma:  !color.MonoChrome,
+				Masks:            masks,
+				LevelCache:       levelCache,
+				Cols:             cols,
+				Rows:             rows,
+				SB128W:           sb128w,
+				SB128H:           sb128h,
+				Layout:           frameWorkLoopFilterMaskLayout(color),
+				HasChroma:        !color.MonoChrome,
+				LevelsFromDecode: b.TileInfo.Cols <= 1 && b.TileInfo.Rows <= 1,
 			}
 			if err := s.SetLoopFilterMasks(handle); err != nil {
 				return err

@@ -57,7 +57,7 @@ func cdefByteScratchView(seg []uint16, n int) ([]byte, bool) {
 // plane, reused as the line-backup arena. Whole-frame callers pass
 // rowStart=0,rowEnd=rows and an empty boundary; banded callers pass immutable
 // boundary strips for any cross-band top/bottom halos.
-func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, dst frame.Plane, byteScratch []uint16, boundary FrameWorkCDEFPostFilterU8BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, forceLumaDirections bool) (uint32, uint32, error) {
+func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, skipLevels *threading.FrameWorkLoopFilterMasks, cols int, rows int, rowStart int, rowEnd int, dst frame.Plane, byteScratch []uint16, boundary FrameWorkCDEFPostFilterU8BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, forceLumaDirections bool) (uint32, uint32, error) {
 	var units uint32
 	var blocksTotal uint32
 	width := dst.Width
@@ -157,7 +157,7 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 				prevFiltered = false
 				continue
 			}
-			blocks := frameWorkCDEFBlockPositionsFiltered(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, unitRow, unitCol)
+			blocks := frameWorkCDEFBlockPositionsFilteredSources(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, skipLevels, unitRow, unitCol)
 			if len(blocks) == 0 {
 				prevFiltered = false
 				continue

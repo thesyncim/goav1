@@ -8,6 +8,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/lfmask"
+	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
@@ -2104,12 +2105,23 @@ func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilter(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if coverage.Blocks == 0 || coverage.Missing != 0 {
+	if side.LoopFilterMasks.LevelsFromDecode {
+		if coverage.Blocks != 0 {
+			t.Fatalf("single-tile fast path materialized loop-filter map: %+v", coverage)
+		}
+		levelFound := false
+		for _, tuple := range side.LoopFilterMasks.LevelCache {
+			levelFound = levelFound || tuple[0]&loopfilter.MaxLevel != 0 || tuple[2]&loopfilter.MaxLevel != 0
+		}
+		if !levelFound {
+			t.Fatal("single-tile fast path did not populate loop-filter levels")
+		}
+	} else if coverage.Blocks == 0 || coverage.Missing != 0 {
 		t.Fatalf("loop-filter coverage=%+v", coverage)
 	}
 	if post.Result.Completed != FrameWorkPostFilterLoopFilter ||
 		!post.Result.LoopFilter.Active ||
-		post.Result.LoopFilter.Plan.Blocks == 0 ||
+		(!side.LoopFilterMasks.LevelsFromDecode && post.Result.LoopFilter.Plan.Blocks == 0) ||
 		post.Context.RemainingPostFilters() != 0 {
 		t.Fatalf("postfilter result=%+v size=%+v remaining=%v", post.Result, post.Size, post.Context.RemainingPostFilters())
 	}

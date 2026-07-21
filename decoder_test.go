@@ -52,6 +52,55 @@ func TestDecoderDecodeNextReusesVisibleSlice(t *testing.T) {
 	}
 }
 
+func TestDecoderSelectsDirectLoopFilterLevelsByTileLayout(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		file   string
+		direct bool
+	}{
+		{
+			name:   "single_tile",
+			file:   "internal/av1/testvector/testdata/profiles/profile1-444-8bit-cdef-restoration-160x128.ivf",
+			direct: true,
+		},
+		{
+			name:   "multi_tile",
+			file:   "internal/av1/testvector/testdata/profiles/profile1-444-8bit-multitile-2x1-256x256.ivf",
+			direct: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ivf, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dec, err := NewDecoderFromIVF(ivf, WithWorkers(1))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer dec.Close()
+			if _, ok, err := dec.DecodeNext(); err != nil || !ok {
+				t.Fatalf("DecodeNext ok=%v err=%v", ok, err)
+			}
+			if got := dec.sideData.LoopFilterMasks.LevelsFromDecode; got != tc.direct {
+				t.Fatalf("LevelsFromDecode=%v want %v", got, tc.direct)
+			}
+			validRecords := 0
+			for i := range dec.sideData.LoopFilterMap.Records {
+				if dec.sideData.LoopFilterMap.Records[i].Valid {
+					validRecords++
+				}
+			}
+			if tc.direct && validRecords != 0 {
+				t.Fatalf("direct path materialized %d loop-filter records", validRecords)
+			}
+			if !tc.direct && validRecords == 0 {
+				t.Fatal("fallback path did not materialize loop-filter records")
+			}
+		})
+	}
+}
+
 func TestDecoderFinishFrameSurface(t *testing.T) {
 	format := FrameFormat{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
 	layout, err := FrameRequiredSize(format)

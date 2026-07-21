@@ -160,7 +160,7 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 		if err != nil {
 			t.Fatalf("snapshot load: %v", err)
 		}
-		wu, wb, err := frameWorkApplyCDEFPlaneRows(tc.params, indexMap, skipMap, cols, rows, 0, rows, src, wantPlane, 1, input, unitDst, blockStorage[:], &wantDirs, &wantVars, wantDirGrid, wantVarGrid, plane, xDec, yDec, 0, chromaFiltering)
+		wu, wb, err := frameWorkApplyCDEFPlaneRows(tc.params, indexMap, skipMap, nil, cols, rows, 0, rows, src, wantPlane, 1, input, unitDst, blockStorage[:], &wantDirs, &wantVars, wantDirGrid, wantVarGrid, plane, xDec, yDec, 0, chromaFiltering)
 		if err != nil {
 			t.Fatalf("u16 walk: %v", err)
 		}
@@ -169,7 +169,7 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 
 		gotPlane := frame.Plane{Pix: append([]byte(nil), pix...), Stride: stride, Width: width, Height: height}
 		byteScratch := make([]uint16, stride*height)
-		gu, gb, err := frameWorkApplyCDEFPlaneRowsU8(tc.params, indexMap, skipMap, cols, rows, 0, rows, gotPlane, byteScratch, FrameWorkCDEFPostFilterU8BandBoundary{}, input, blockStorage[:], &gotDirs, &gotVars, gotDirGrid, gotVarGrid, plane, xDec, yDec, chromaFiltering)
+		gu, gb, err := frameWorkApplyCDEFPlaneRowsU8(tc.params, indexMap, skipMap, nil, cols, rows, 0, rows, gotPlane, byteScratch, FrameWorkCDEFPostFilterU8BandBoundary{}, input, blockStorage[:], &gotDirs, &gotVars, gotDirGrid, gotVarGrid, plane, xDec, yDec, chromaFiltering)
 		if err != nil {
 			t.Fatalf("u8 walk: %v", err)
 		}
@@ -228,7 +228,7 @@ func TestCDEFPlaneWalkU8IsZeroAlloc(t *testing.T) {
 	var vars cdef.VarianceGrid
 	var blockStorage [cdef.NBlocks * cdef.NBlocks]cdef.BlockPosition
 	allocs := testing.AllocsPerRun(8, func() {
-		if _, _, err := frameWorkApplyCDEFPlaneRowsU8(tc.params, indexMap, nil, cols, rows, 0, rows, plane, byteScratch, FrameWorkCDEFPostFilterU8BandBoundary{}, input, blockStorage[:], &dirs, &vars, dirGrid, varGrid, 0, 0, 0, true); err != nil {
+		if _, _, err := frameWorkApplyCDEFPlaneRowsU8(tc.params, indexMap, nil, nil, cols, rows, 0, rows, plane, byteScratch, FrameWorkCDEFPostFilterU8BandBoundary{}, input, blockStorage[:], &dirs, &vars, dirGrid, varGrid, 0, 0, 0, true); err != nil {
 			t.Fatal(err)
 		}
 	})

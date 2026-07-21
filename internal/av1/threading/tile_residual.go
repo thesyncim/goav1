@@ -1188,7 +1188,12 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *t
 			return ErrInvalidBatch
 		}
 		frameWorkAccumulateResidualStats(&scratch.stats, visit.Coefficients.TotalStats())
-		if req.LoopFilterMap != nil {
+		directLoopFilterLevels := req.LoopFilterMasks.Valid() && req.LoopFilterMasks.LevelsFromDecode
+		if directLoopFilterLevels {
+			if err := req.LoopFilterMasks.fillBlockLevels(&b.FrameWorkFrameContext, visit, state); err != nil {
+				return fmt.Errorf("fill loop filter levels block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
+			}
+		} else if req.LoopFilterMap != nil {
 			if err := req.LoopFilterMap.MarkBlockPtr(visit, state); err != nil {
 				return fmt.Errorf("mark loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
 			}
