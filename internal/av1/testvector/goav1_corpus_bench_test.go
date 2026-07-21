@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	av1 "github.com/thesyncim/goav1"
 )
 
 var corpusBenchmarkFramesSink int
@@ -71,6 +73,81 @@ func BenchmarkGoav1CorpusDecode(b *testing.B) {
 			b.StopTimer()
 			corpusBenchmarkFramesSink = frames
 			b.ReportMetric(float64(warm.frames), "frames/op")
+			if elapsed := b.Elapsed().Seconds(); elapsed > 0 {
+				b.ReportMetric(float64(frames)/elapsed, "frames/s")
+			}
+		})
+	}
+}
+
+// BenchmarkGoav1CorpusDecodeSteadyState measures the reusable public decoder
+// over the same long clips. It excludes construction and teardown but includes
+// Reset plus every DecodeNext call, making single-thread hot-path changes and
+// the zero-allocation contract visible without conflating them with pool churn.
+func BenchmarkGoav1CorpusDecodeSteadyState(b *testing.B) {
+	dir := os.Getenv(envCorpusBenchmarkDir)
+	if dir == "" {
+		_, filename, _, ok := runtime.Caller(0)
+		if !ok {
+			b.Fatal("resolve corpus benchmark source")
+		}
+		dir = filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "..", "testdata", "benchcorpus"))
+	}
+	clips, err := filepath.Glob(filepath.Join(dir, "*.ivf"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	if len(clips) == 0 {
+		b.Skipf("no corpus clips in %s", dir)
+	}
+	for _, path := range clips {
+		name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		b.Run(name, func(b *testing.B) {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				b.Fatal(err)
+			}
+			dec, err := av1.NewDecoderFromIVF(data, av1.WithWorkers(1))
+			if err != nil {
+				b.Fatal(err)
+			}
+			defer dec.Close()
+
+			run := func() int {
+				if err := dec.Reset(); err != nil {
+					b.Fatal(err)
+				}
+				frames := 0
+				for {
+					decoded, ok, err := dec.DecodeNext()
+					if err != nil {
+						b.Fatal(err)
+					}
+					if !ok {
+						return frames
+					}
+					frames += len(decoded)
+				}
+			}
+			wantFrames := run()
+			if wantFrames == 0 {
+				b.Fatal("decoded no visible frames")
+			}
+
+			b.SetBytes(int64(len(data)))
+			b.ReportAllocs()
+			b.ResetTimer()
+			frames := 0
+			for i := 0; i < b.N; i++ {
+				decoded := run()
+				if decoded != wantFrames {
+					b.Fatalf("decoded %d visible frames, want %d", decoded, wantFrames)
+				}
+				frames += decoded
+			}
+			b.StopTimer()
+			corpusBenchmarkFramesSink = frames
+			b.ReportMetric(float64(wantFrames), "frames/op")
 			if elapsed := b.Elapsed().Seconds(); elapsed > 0 {
 				b.ReportMetric(float64(frames)/elapsed, "frames/s")
 			}
