@@ -34,21 +34,7 @@ type EdgeVisitor func(offset4 int, widthClass int)
 // owns each bit (the mask builder writes each edge into exactly one lane, so the
 // highest set lane is that edge's class).
 func ScanLuma(mask *[3][2]uint16, starty4, endy4 int, visit EdgeVisitor) {
-	var m0, m1, m2 uint32
-	if starty4 == 0 {
-		m0 = uint32(mask[0][0])
-		m1 = uint32(mask[1][0])
-		m2 = uint32(mask[2][0])
-		if endy4 > 16 {
-			m0 |= uint32(mask[0][1]) << 16
-			m1 |= uint32(mask[1][1]) << 16
-			m2 |= uint32(mask[2][1]) << 16
-		}
-	} else {
-		m0 = uint32(mask[0][1])
-		m1 = uint32(mask[1][1])
-		m2 = uint32(mask[2][1])
-	}
+	m0, m1, m2 := LumaMaskWords(mask, starty4, endy4)
 	vm := m0 | m1 | m2
 	y := uint32(1)
 	for offset := 0; vm&^(y-1) != 0; offset, y = offset+1, y<<1 {
@@ -65,6 +51,27 @@ func ScanLuma(mask *[3][2]uint16, starty4, endy4 int, visit EdgeVisitor) {
 	}
 }
 
+// LumaMaskWords assembles the three luma width-class lanes into the 32-bit
+// words consumed by the trusted decoder apply path. It exposes the same
+// source-shaped lane selection as ScanLuma without requiring a callback.
+func LumaMaskWords(mask *[3][2]uint16, starty4, endy4 int) (m0, m1, m2 uint32) {
+	if starty4 == 0 {
+		m0 = uint32(mask[0][0])
+		m1 = uint32(mask[1][0])
+		m2 = uint32(mask[2][0])
+		if endy4 > 16 {
+			m0 |= uint32(mask[0][1]) << 16
+			m1 |= uint32(mask[1][1]) << 16
+			m2 |= uint32(mask[2][1]) << 16
+		}
+	} else {
+		m0 = uint32(mask[0][1])
+		m1 = uint32(mask[1][1])
+		m2 = uint32(mask[2][1])
+	}
+	return m0, m1, m2
+}
+
 // ScanChroma is the two-strength-lane counterpart for one chroma 4x4 position
 // (one entry of filter_uv[dir][pos]). widthClass is 0/1 selecting chroma filter
 // widths 4/6. laneBits is the lo/hi split (dav1d 16 >> ss for the scanned
@@ -72,18 +79,7 @@ func ScanLuma(mask *[3][2]uint16, starty4, endy4 int, visit EdgeVisitor) {
 // the window extends past it. laneStart is the window's 4x4 start position within
 // the chroma region (starty4 >> ss for the scanned direction).
 func ScanChroma(mask *[2][2]uint16, laneStart, laneEnd, laneBits int, visit EdgeVisitor) {
-	var m0, m1 uint32
-	if laneStart < laneBits {
-		m0 = uint32(mask[0][0])
-		m1 = uint32(mask[1][0])
-		if laneEnd > laneBits {
-			m0 |= uint32(mask[0][1]) << uint(laneBits)
-			m1 |= uint32(mask[1][1]) << uint(laneBits)
-		}
-	} else {
-		m0 = uint32(mask[0][1])
-		m1 = uint32(mask[1][1])
-	}
+	m0, m1 := ChromaMaskWords(mask, laneStart, laneEnd, laneBits)
 	vm := m0 | m1
 	y := uint32(1)
 	for offset := 0; vm&^(y-1) != 0; offset, y = offset+1, y<<1 {
@@ -96,4 +92,21 @@ func ScanChroma(mask *[2][2]uint16, laneStart, laneEnd, laneBits int, visit Edge
 		}
 		visit(offset, widthClass)
 	}
+}
+
+// ChromaMaskWords is the callback-free lane assembly used by the trusted
+// decoder apply path. ScanChroma remains the checked visitor facade.
+func ChromaMaskWords(mask *[2][2]uint16, laneStart, laneEnd, laneBits int) (m0, m1 uint32) {
+	if laneStart < laneBits {
+		m0 = uint32(mask[0][0])
+		m1 = uint32(mask[1][0])
+		if laneEnd > laneBits {
+			m0 |= uint32(mask[0][1]) << uint(laneBits)
+			m1 |= uint32(mask[1][1]) << uint(laneBits)
+		}
+	} else {
+		m0 = uint32(mask[0][1])
+		m1 = uint32(mask[1][1])
+	}
+	return m0, m1
 }

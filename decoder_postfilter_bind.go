@@ -22,7 +22,10 @@ package goav1
 // CDEF, super-res, restoration, film grain) so callers can scan the file
 // for the stage they want.
 
-import internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+import (
+	internallfmask "github.com/thesyncim/goav1/internal/av1/lfmask"
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+)
 
 // DecoderFrameWorkCDEFIndexMapShape reports the column count, row count, and
 // total entry count required to back the CDEF index map for (sequence, size).
@@ -52,6 +55,13 @@ func BindDecoderFrameWorkCDEFIndexMap(sequence SequenceHeader, size FrameSize, c
 func BindDecoderFrameWorkLoopFilterMap(sequence SequenceHeader, size FrameSize, records []DecoderFrameWorkLoopFilterBlockRecord) (DecoderFrameWorkLoopFilterMap, error) {
 	batch := decoderFrameWorkFrameBatch(sequence, size)
 	return batch.BindLoopFilterMap(records)
+}
+
+// BindDecoderFrameWorkLoopFilterMasks wires caller-owned edge-mask and level
+// storage into the handle built during tile decode. Both slices are cleared.
+func BindDecoderFrameWorkLoopFilterMasks(sequence SequenceHeader, size FrameSize, masks []DecoderFrameWorkLoopFilterFilterMask, levelCache [][4]uint8) (DecoderFrameWorkLoopFilterMasks, error) {
+	batch := decoderFrameWorkFrameBatch(sequence, size)
+	return batch.BindLoopFilterMasks(masks, levelCache)
 }
 
 // ResetDecoderFrameWorkCDEFIndexMap clears indexMap so it can be reused
@@ -180,7 +190,9 @@ type DecoderFrameWorkSideDataScratchSize struct {
 	CDEFIndexMap int
 	CDEFReadMap  int
 
-	LoopFilterMap int
+	LoopFilterMap        int
+	LoopFilterMasks      int
+	LoopFilterLevelCache int
 
 	RestorationRecords       int
 	RestorationBoundaryAbove int
@@ -193,7 +205,9 @@ type DecoderFrameWorkSideDataScratch struct {
 	CDEFIndexMap []uint8
 	CDEFReadMap  []bool
 
-	LoopFilterMap []DecoderFrameWorkLoopFilterBlockRecord
+	LoopFilterMap        []DecoderFrameWorkLoopFilterBlockRecord
+	LoopFilterMasks      []DecoderFrameWorkLoopFilterFilterMask
+	LoopFilterLevelCache [][4]uint8
 
 	RestorationRecords       []TileRestorationUnitRecord
 	RestorationBoundaryAbove []uint16
@@ -206,6 +220,8 @@ func (s DecoderFrameWorkSideDataScratchSize) Max(other DecoderFrameWorkSideDataS
 		CDEFIndexMap:             max(s.CDEFIndexMap, other.CDEFIndexMap),
 		CDEFReadMap:              max(s.CDEFReadMap, other.CDEFReadMap),
 		LoopFilterMap:            max(s.LoopFilterMap, other.LoopFilterMap),
+		LoopFilterMasks:          max(s.LoopFilterMasks, other.LoopFilterMasks),
+		LoopFilterLevelCache:     max(s.LoopFilterLevelCache, other.LoopFilterLevelCache),
 		RestorationRecords:       max(s.RestorationRecords, other.RestorationRecords),
 		RestorationBoundaryAbove: max(s.RestorationBoundaryAbove, other.RestorationBoundaryAbove),
 		RestorationBoundaryBelow: max(s.RestorationBoundaryBelow, other.RestorationBoundaryBelow),
@@ -217,6 +233,7 @@ func (s DecoderFrameWorkSideDataScratchSize) Max(other DecoderFrameWorkSideDataS
 type DecoderFrameWorkSideData struct {
 	CDEFIndexMap            DecoderFrameWorkCDEFIndexMap
 	LoopFilterMap           DecoderFrameWorkLoopFilterMap
+	LoopFilterMasks         DecoderFrameWorkLoopFilterMasks
 	RestorationFrameBuffers DecoderFrameWorkRestorationFrameBuffers
 }
 
@@ -683,7 +700,20 @@ func DecoderFrameWorkSideDataScratchLen(sequence SequenceHeader, size FrameSize,
 	if err != nil {
 		return DecoderFrameWorkSideDataScratchSize{}, err
 	}
-	_, _, loopFilterLength, err := DecoderFrameWorkLoopFilterMapShape(sequence, size)
+	lfCols, lfRows, loopFilterLength, err := DecoderFrameWorkLoopFilterMapShape(sequence, size)
+	if err != nil {
+		return DecoderFrameWorkSideDataScratchSize{}, err
+	}
+	_, _, maskCount := internalthreading.FrameWorkLoopFilterMaskShape(lfCols, lfRows)
+	color := sequence.ColorConfig
+	layout := internallfmask.Layout{Mono: color.MonoChrome}
+	if color.SubsamplingX {
+		layout.SSHor = 1
+	}
+	if color.SubsamplingY {
+		layout.SSVer = 1
+	}
+	_, _, loopFilterLevelLength, err := internalthreading.FrameWorkLoopFilterLevelCacheShape(lfCols, lfRows, layout, !color.MonoChrome)
 	if err != nil {
 		return DecoderFrameWorkSideDataScratchSize{}, err
 	}
@@ -696,6 +726,8 @@ func DecoderFrameWorkSideDataScratchLen(sequence SequenceHeader, size FrameSize,
 		CDEFIndexMap:             cdefLength,
 		CDEFReadMap:              cdefLength,
 		LoopFilterMap:            loopFilterLength,
+		LoopFilterMasks:          maskCount,
+		LoopFilterLevelCache:     loopFilterLevelLength,
 		RestorationRecords:       restorationPlan.UnitRecordLen(),
 		RestorationBoundaryAbove: boundaryLength,
 		RestorationBoundaryBelow: boundaryLength,
@@ -720,6 +752,10 @@ func BindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef 
 		decoderFrameWorkPostFilterScratchTooShort(scratch.RestorationBoundaryBelow, scratchSize.RestorationBoundaryBelow) {
 		return DecoderFrameWorkSideData{}, ErrFrameShortBuffer
 	}
+	// Mask scratch remains optional for low-level callers. The high-level
+	// decoder provisions both slices and therefore takes the faster mask path.
+	buildMasks := !decoderFrameWorkPostFilterScratchTooShort(scratch.LoopFilterMasks, scratchSize.LoopFilterMasks) &&
+		!decoderFrameWorkPostFilterScratchTooShort(scratch.LoopFilterLevelCache, scratchSize.LoopFilterLevelCache)
 	// Clear the CDEF index/read scratch before binding. The scratch is reused
 	// across frames, so it may still hold the previous frame's decoded cdef_idx
 	// values. BindDecoderFrameWorkCDEFIndexMap validates each marked entry
@@ -745,6 +781,18 @@ func BindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef 
 	if err != nil {
 		return DecoderFrameWorkSideData{}, err
 	}
+	var loopFilterMasks DecoderFrameWorkLoopFilterMasks
+	if buildMasks {
+		loopFilterMasks, err = BindDecoderFrameWorkLoopFilterMasks(
+			sequence,
+			size,
+			scratch.LoopFilterMasks[:scratchSize.LoopFilterMasks],
+			scratch.LoopFilterLevelCache[:scratchSize.LoopFilterLevelCache],
+		)
+		if err != nil {
+			return DecoderFrameWorkSideData{}, err
+		}
+	}
 	restorationBuffers, err := BindDecoderFrameWorkRestorationFrameBuffers(
 		sequence,
 		size,
@@ -762,6 +810,7 @@ func BindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef 
 	return DecoderFrameWorkSideData{
 		CDEFIndexMap:            cdefMap,
 		LoopFilterMap:           loopFilterMap,
+		LoopFilterMasks:         loopFilterMasks,
 		RestorationFrameBuffers: restorationBuffers,
 	}, nil
 }
@@ -800,7 +849,10 @@ func DecoderFrameWorkPostFilterRequestSideDataFromContext(ctx DecoderFrameWorkPo
 // SetDecoderFrameWorkSideData attaches all bound frame-level side data to an
 // active frame-work state as a single validated update.
 func SetDecoderFrameWorkSideData(state *DecoderFrameWorkState, side DecoderFrameWorkSideData) error {
-	return state.SetSideData(side.CDEFIndexMap, side.LoopFilterMap, side.RestorationFrameBuffers)
+	if err := state.SetSideData(side.CDEFIndexMap, side.LoopFilterMap, side.RestorationFrameBuffers); err != nil {
+		return err
+	}
+	return state.SetLoopFilterMasks(side.LoopFilterMasks)
 }
 
 // BindDecoderFrameWorkPostFilterRequestBuffersFromScratch slices flat typed

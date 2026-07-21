@@ -15,6 +15,38 @@ import (
 var corpusBenchmarkFramesSink int
 
 const envCorpusBenchmarkDir = "GOAV1_BENCH_CORPUS_DIR"
+const envCorpusBenchmarkClip = "GOAV1_BENCH_CORPUS_CLIP"
+
+// TestGoav1CorpusBenchmarkClip is the narrow correctness gate for experiments
+// measured by the long-corpus benchmarks below. It decodes only the selected
+// clip and checks every visible output byte against its committed MD5 sidecar.
+func TestGoav1CorpusBenchmarkClip(t *testing.T) {
+	name := strings.TrimSuffix(strings.TrimSpace(os.Getenv(envCorpusBenchmarkClip)), ".ivf")
+	if name == "" {
+		t.Skipf("set %s to a corpus clip name", envCorpusBenchmarkClip)
+	}
+	if filepath.Base(name) != name {
+		t.Fatalf("%s must be a clip name, got %q", envCorpusBenchmarkClip, name)
+	}
+	dir, ok := corpusDir(t)
+	if !ok {
+		t.Fatalf("no corpus clips in %s", dir)
+	}
+	clips, failed := loadCorpusClipCandidates(t, []corpusClipCandidate{{
+		name:    name,
+		ivfPath: filepath.Join(dir, name+".ivf"),
+	}})
+	for _, failure := range failed {
+		t.Errorf("%s: %s", failure.name, failure.reason)
+	}
+	if len(failed) != 0 {
+		t.FailNow()
+	}
+	if len(clips) != 1 {
+		t.Fatalf("loaded %d clips, want 1", len(clips))
+	}
+	t.Logf("%s: %d frames %dx%d %s", clips[0].name, clips[0].frames, clips[0].width, clips[0].height, corpusClipOracleLog(clips[0]))
+}
 
 // BenchmarkGoav1CorpusDecode measures a complete single-worker decode over
 // each long corpus clip. A sub-benchmark can be selected by name, for example:

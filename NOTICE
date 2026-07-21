@@ -61,9 +61,11 @@ Copyright notice (verbatim from dav1d COPYING):
 
 dav1d is consulted as a reference for decoder architecture, OBU
 parsing layout, tile/decode pipeline shape, and DSP organization.
-No source code is copied verbatim from dav1d into this repository,
-but several internal Go packages are structurally inspired by its
-layout and that influence is acknowledged here.
+Several internal Go packages are structurally inspired by its layout.
+The raw ARM64 instructions in
+internal/av1/decoder/loop_filter_sb_neon_arm64.s are adapted from
+src/arm/64/loopfilter.S; that file retains the upstream copyright and
+BSD-2-Clause identifier.
 
 -------------------------------------------------------------------------------
 3. libwebrtc (Chromium WebRTC AV1 RTP behavior)

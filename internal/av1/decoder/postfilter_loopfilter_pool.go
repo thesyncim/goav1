@@ -3,7 +3,6 @@ package decoder
 import (
 	"sync/atomic"
 
-	"github.com/thesyncim/goav1/internal/av1/lfmask"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 )
@@ -94,9 +93,9 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksPooledBands(p
 	if regionRows <= 0 {
 		return result, nil
 	}
-	lc := lfmask.LevelCache{Cells: bands.masks.LevelCache, Stride: bands.masks.Cols}
 	sharpness := bands.sharpness
 	minPlane, maxPlane := bands.minPlane, bands.maxPlane
+	regionCols := bands.RegionCols()
 
 	var edges, applied atomic.Uint32
 	var planeEdges, planeApplied [3]atomic.Uint32
@@ -128,7 +127,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksPooledBands(p
 			if !bands.PlaneActive(plane) {
 				continue
 			}
-			if err := ctx.applyLoopFilterMaskPlaneRange(&local, bands.masks, lc, sharpness, plane, maskDirVertical, lo, hi); err != nil {
+			if err := ctx.applyLoopFilterMaskPlaneRange(&local, bands.masks, sharpness, plane, maskDirVertical, lo, hi, 0, regionCols); err != nil {
 				return err
 			}
 		}
@@ -151,7 +150,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksPooledBands(p
 			if !bands.PlaneActive(plane) {
 				continue
 			}
-			if err := ctx.applyLoopFilterMaskPlaneRange(&local, bands.masks, lc, sharpness, plane, maskDirHorizontal, 0, regionRows); err != nil {
+			if err := ctx.applyLoopFilterMaskPlaneRange(&local, bands.masks, sharpness, plane, maskDirHorizontal, 0, regionRows, 0, regionCols); err != nil {
 				return err
 			}
 		}

@@ -321,6 +321,20 @@ func (s *FrameWorkTileResidualScratch) PreallocCallbackScratch() {
 	s.beforeSuperblock = s.controller.BeforeSuperblock
 }
 
+// PreallocLoopFilterMaskScratch reserves the per-worker edge-context columns
+// used while building loop-filter masks, keeping first-frame setup off-heap.
+func (s *FrameWorkTileResidualScratch) PreallocLoopFilterMaskScratch(cols int) {
+	if s == nil || cols <= 0 {
+		return
+	}
+	if cap(s.lfMask.aY) < cols {
+		s.lfMask.aY = make([]uint8, cols)
+	}
+	if cap(s.lfMask.aUV) < cols {
+		s.lfMask.aUV = make([]uint8, cols)
+	}
+}
+
 // frameWorkReconWavefront owns the reusable per-tile SB-row bucketing and
 // wavefront scheduling state. rowStart partitions the flat reconEvents list
 // into per-SB-row spans ([rowStart[r], rowStart[r+1])); done[r] counts the SBs

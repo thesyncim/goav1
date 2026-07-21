@@ -16,17 +16,24 @@ func Filter6Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 	if err := validateFilter6Edge(dst, bytesPerSample, bitDepth, edge, xi, yi, lengthi); err != nil {
 		return err
 	}
+	Filter6EdgeTrusted(dst, bytesPerSample, bitDepth, edge, xi, yi, lengthi, thresholds)
+	return nil
+}
+
+// Filter6EdgeTrusted applies the six-sample filter after the caller has
+// validated the plane layout, edge radius, run extent, sample width, and bit
+// depth. It is the zero-validation seam used by the decoder's mask scanner.
+func Filter6EdgeTrusted(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge, x int, y int, length int, thresholds Thresholds) {
 	scale, params := filter4ParamsFor(bitDepth, thresholds)
 
-	q0Base, step := filter4SampleOffset(dst, bytesPerSample, edge, xi, yi, 0)
+	q0Base, step := filter4SampleOffset(dst, bytesPerSample, edge, x, y, 0)
 	outer := edgeOuterStride(dst, bytesPerSample, edge)
 	pix := dst.Pix
 	if bytesPerSample == 1 {
-		filter6EdgeImpl(pix, q0Base, step, outer, lengthi, scale, params)
-		return nil
+		filter6EdgeImpl(pix, q0Base, step, outer, length, scale, params)
+		return
 	}
-	filter6Edge16Impl(pix, q0Base, step, outer, lengthi, scale, params)
-	return nil
+	filter6Edge16Impl(pix, q0Base, step, outer, length, scale, params)
 }
 
 // filter6Edge16Impl is the dispatch slot for the 10/12-bit (two-byte sample)

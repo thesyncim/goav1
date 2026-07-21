@@ -52,6 +52,16 @@ type LevelRequest struct {
 	DeltaLF int8
 }
 
+// BlockLevelRequest identifies the block-local syntax shared by all six
+// plane/direction loop-filter levels. ResolveBlockLevels combines it with the
+// carried delta state once per decoded block, avoiding six independent setup
+// calls when a mask consumer needs the complete level tuple.
+type BlockLevelRequest struct {
+	SegmentID uint8
+	RefFrame  uint8
+	Mode      ModeDeltaClass
+}
+
 // ClampLevel clamps v to AV1's legal loop-filter level range.
 func ClampLevel(v int) uint8 {
 	return uint8(clampLevelInt(v))
@@ -173,6 +183,65 @@ func ResolveLevel(params parser.LoopFilterParams, seg parser.SegmentationParams,
 		level = clampLevelInt(level + delta*scale)
 	}
 	return uint8(level), nil
+}
+
+// ResolveBlockLevels resolves the luma vertical/horizontal and U/V level
+// tuple for one block. The result is indexed by [plane][edge]. It is the bulk
+// counterpart of ResolveBlockLevel and follows the same intermediate-clamp,
+// segmentation, and mode/ref-delta order.
+func ResolveBlockLevels(params parser.LoopFilterParams, seg parser.SegmentationParams, delta parser.DeltaParams, state DeltaState, req BlockLevelRequest, monoChrome bool) ([3][2]uint8, error) {
+	var levels [3][2]uint8
+	if req.SegmentID >= parser.MaxSegments || req.RefFrame >= parser.RefFrames || !validMode(req.Mode) {
+		return levels, ErrInvalidFilter
+	}
+	if params.LevelY[0] == 0 && params.LevelY[1] == 0 {
+		return levels, nil
+	}
+	levels = [3][2]uint8{
+		{ClampLevel(int(params.LevelY[0])), ClampLevel(int(params.LevelY[1]))},
+		{ClampLevel(int(params.LevelU)), ClampLevel(int(params.LevelU))},
+		{ClampLevel(int(params.LevelV)), ClampLevel(int(params.LevelV))},
+	}
+	if monoChrome {
+		levels[PlaneU] = [2]uint8{}
+		levels[PlaneV] = [2]uint8{}
+	}
+	if !delta.DeltaLFPresent && !seg.Enabled && !params.ModeRefDeltaEnabled {
+		return levels, nil
+	}
+
+	planeCount := 3
+	if monoChrome {
+		planeCount = 1
+	}
+	for plane := 0; plane < planeCount; plane++ {
+		for edge := 0; edge < 2; edge++ {
+			base := levels[plane][edge]
+			if plane != int(PlaneY) && base == 0 {
+				continue
+			}
+			deltaLF, err := SelectDelta(delta, state.FromBase, state.Multi, Plane(plane), Edge(edge))
+			if err != nil {
+				return [3][2]uint8{}, err
+			}
+			segDelta, err := SegmentDelta(seg, req.SegmentID, Plane(plane), Edge(edge))
+			if err != nil {
+				return [3][2]uint8{}, err
+			}
+			level := clampLevelInt(int(base) + int(deltaLF))
+			level = clampLevelInt(level + int(segDelta))
+			if params.ModeRefDeltaEnabled {
+				scale := 1 << (level >> 5)
+				refModeDelta := int(params.Deltas.Ref[req.RefFrame])
+				if req.RefFrame > 0 {
+					refModeDelta += int(params.Deltas.Mode[req.Mode])
+				}
+				level = clampLevelInt(level + refModeDelta*scale)
+			}
+			levels[plane][edge] = uint8(level)
+		}
+	}
+	return levels, nil
 }
 
 func validEdge(edge Edge) bool {

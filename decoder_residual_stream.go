@@ -227,6 +227,8 @@ func BindDecoderFrameWorkResidualStreamRunner(size DecoderFrameWorkResidualStrea
 			CDEFIndexMap:             scratch.SideData.CDEFIndexMap[:size.Event.SideData.CDEFIndexMap],
 			CDEFReadMap:              scratch.SideData.CDEFReadMap[:size.Event.SideData.CDEFReadMap],
 			LoopFilterMap:            scratch.SideData.LoopFilterMap[:size.Event.SideData.LoopFilterMap],
+			LoopFilterMasks:          decoderFrameWorkResliceOrNil(scratch.SideData.LoopFilterMasks, size.Event.SideData.LoopFilterMasks),
+			LoopFilterLevelCache:     decoderFrameWorkResliceOrNil(scratch.SideData.LoopFilterLevelCache, size.Event.SideData.LoopFilterLevelCache),
 			RestorationRecords:       scratch.SideData.RestorationRecords[:size.Event.SideData.RestorationRecords],
 			RestorationBoundaryAbove: scratch.SideData.RestorationBoundaryAbove[:size.Event.SideData.RestorationBoundaryAbove],
 			RestorationBoundaryBelow: scratch.SideData.RestorationBoundaryBelow[:size.Event.SideData.RestorationBoundaryBelow],
@@ -817,4 +819,11 @@ func decoderFrameWorkResidualStreamSideDataScratchTooShort(scratch DecoderFrameW
 		decoderFrameWorkPostFilterScratchTooShort(scratch.RestorationRecords, size.RestorationRecords) ||
 		decoderFrameWorkPostFilterScratchTooShort(scratch.RestorationBoundaryAbove, size.RestorationBoundaryAbove) ||
 		decoderFrameWorkPostFilterScratchTooShort(scratch.RestorationBoundaryBelow, size.RestorationBoundaryBelow)
+}
+
+func decoderFrameWorkResliceOrNil[T any](s []T, n int) []T {
+	if n <= 0 || len(s) < n {
+		return nil
+	}
+	return s[:n]
 }

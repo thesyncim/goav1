@@ -16,17 +16,24 @@ func Filter8Edge(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge,
 	if err := validateFilter8Edge(dst, bytesPerSample, bitDepth, edge, xi, yi, lengthi); err != nil {
 		return err
 	}
+	Filter8EdgeTrusted(dst, bytesPerSample, bitDepth, edge, xi, yi, lengthi, thresholds)
+	return nil
+}
+
+// Filter8EdgeTrusted applies the eight-sample filter after the caller has
+// validated the plane layout, edge radius, run extent, sample width, and bit
+// depth. It is the zero-validation seam used by the decoder's mask scanner.
+func Filter8EdgeTrusted(dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge, x int, y int, length int, thresholds Thresholds) {
 	scale, params := filter4ParamsFor(bitDepth, thresholds)
 
-	q0Base, step := filter4SampleOffset(dst, bytesPerSample, edge, xi, yi, 0)
+	q0Base, step := filter4SampleOffset(dst, bytesPerSample, edge, x, y, 0)
 	outer := edgeOuterStride(dst, bytesPerSample, edge)
 	pix := dst.Pix
 	if bytesPerSample == 1 {
-		filter8EdgeImpl(pix, q0Base, step, outer, lengthi, scale, params)
-		return nil
+		filter8EdgeImpl(pix, q0Base, step, outer, length, scale, params)
+		return
 	}
-	filter8Edge16Impl(pix, q0Base, step, outer, lengthi, scale, params)
-	return nil
+	filter8Edge16Impl(pix, q0Base, step, outer, length, scale, params)
 }
 
 // filter8Edge16Impl is the dispatch slot for the 10/12-bit (two-byte sample)
