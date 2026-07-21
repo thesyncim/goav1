@@ -157,11 +157,6 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 				prevFiltered = false
 				continue
 			}
-			blocks := frameWorkCDEFBlockPositionsFilteredSources(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, skipLevels, unitRow, unitCol)
-			if len(blocks) == 0 {
-				prevFiltered = false
-				continue
-			}
 			unitIndex := unitRow*cols + unitCol
 			unitDirections := directions
 			unitVariances := variances
@@ -169,6 +164,18 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 				unitDirections = &directionGrid[unitIndex]
 				unitVariances = &varianceGrid[unitIndex]
 			}
+			var blocks []cdef.BlockPosition
+			if plane == 0 {
+				frameWorkCDEFMarkDirectionsUnavailable(unitDirections, unitW, unitH, blockWidth, blockHeight)
+				blocks = frameWorkCDEFBlockPositionsFilteredSources(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, skipLevels, unitRow, unitCol)
+			} else {
+				blocks = frameWorkCDEFBlockPositionsFromDirections(blockStorage, unitW, unitH, blockWidth, blockHeight, unitDirections)
+			}
+			if len(blocks) == 0 {
+				prevFiltered = false
+				continue
+			}
+			skipDirectionSearch := plane == 0 && packed>>2 == 0 && (!forceLumaDirections || params.UVStrength[index]>>2 == 0)
 			cdefPlane := cdef.PlaneY
 			if plane == 1 {
 				cdefPlane = cdef.PlaneU
@@ -181,14 +188,37 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 			}
 			unitOrigin := unitY*stride + unitX
 			if directionOnly {
-				// Directions come from the uint8 frame; no tap buffer needed.
-				if err := cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, input[:0], 0, blocks, unitDirections, unitVariances, filterParams); err != nil {
+				// A needed direction comes from the uint8 frame; when both
+				// primary strengths are zero, canonical grid zeroes suffice.
+				// Neither shape needs a tap buffer.
+				var err error
+				if skipDirectionSearch {
+					err = cdef.FilterFrameBlocksU8TrustedNoDirection(dst.Pix[unitOrigin:], stride, input[:0], 0, blocks, unitDirections, unitVariances, filterParams)
+				} else {
+					err = cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, input[:0], 0, blocks, unitDirections, unitVariances, filterParams)
+				}
+				if err != nil {
 					return units, blocksTotal, err
 				}
 				prevFiltered = false
 				continue
 			}
-			if err := frameWorkAssembleCDEFInputU8(input, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
+			debugUnit := cdefDebugUnit(plane, unitRow, unitCol)
+			useByteInput := cdef.U8ByteInputEnabled && plane == 0 && xDec == 0 && yDec == 0 && !debugUnit &&
+				unitX >= cdef.HorizontalBorder && unitY >= cdef.VerticalBorder &&
+				unitX+unitW+cdef.HorizontalBorder <= width &&
+				unitY+unitH+cdef.VerticalBorder <= height
+			var byteInput []byte
+			if useByteInput {
+				var ok bool
+				byteInput, ok = cdefByteScratchView(input, cdef.InputBufferSize)
+				if !ok {
+					return units, blocksTotal, threading.ErrInvalidBatch
+				}
+				if err := frameWorkAssembleCDEFInputU8InteriorBytes(byteInput, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
+					return units, blocksTotal, err
+				}
+			} else if err := frameWorkAssembleCDEFInputU8(input, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
 				return units, blocksTotal, err
 			}
 			// Back up the pre-filter columns the NEXT unit reads as its left
@@ -203,11 +233,21 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 					copy(leftStorage[r*cdef.HorizontalBorder:(r+1)*cdef.HorizontalBorder], dst.Pix[rowOff:rowOff+cdef.HorizontalBorder])
 				}
 			}
-			if cdefDebugUnit(plane, unitRow, unitCol) {
+			if debugUnit {
 				cdefDebugLogUnit(plane, unitRow, unitCol, packed, filterParams, *unitDirections, *unitVariances, input, len(blocks))
 			}
-			if err := cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams); err != nil {
-				return units, blocksTotal, err
+			var filterErr error
+			if useByteInput && skipDirectionSearch {
+				filterErr = cdef.FilterFrameBlocksU8ByteTrustedNoDirection(dst.Pix[unitOrigin:], stride, byteInput, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+			} else if useByteInput {
+				filterErr = cdef.FilterFrameBlocksU8ByteTrusted(dst.Pix[unitOrigin:], stride, byteInput, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+			} else if skipDirectionSearch {
+				filterErr = cdef.FilterFrameBlocksU8TrustedNoDirection(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+			} else {
+				filterErr = cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+			}
+			if filterErr != nil {
+				return units, blocksTotal, filterErr
 			}
 			prevFiltered = true
 			units++
@@ -215,6 +255,53 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 		}
 	}
 	return units, blocksTotal, nil
+}
+
+// frameWorkAssembleCDEFInputU8InteriorBytes builds the real-pixel tap window
+// used by the interior luma byte-kernel family. The caller selects this path
+// only when the complete 8x2 halo lies inside the frame, so no VeryLarge
+// sentinels are required. The top and left regions still come from pre-filter
+// backups when neighbouring units have already been overwritten.
+func frameWorkAssembleCDEFInputU8InteriorBytes(input []byte, dst frame.Plane, topBuf []byte, bottomBuf []byte, leftBuf []byte, leftFromBackup bool, unitRow int, unitX int, unitY int, unitW int, unitH int) error {
+	width := dst.Width
+	height := dst.Height
+	stride := dst.Stride
+	fillW := unitW + 2*cdef.HorizontalBorder
+	fillH := unitH + 2*cdef.VerticalBorder
+	if unitRow <= 0 || unitX < cdef.HorizontalBorder || unitY < cdef.VerticalBorder ||
+		unitX+unitW+cdef.HorizontalBorder > width || unitY+unitH+cdef.VerticalBorder > height ||
+		fillW > cdef.BStride || fillH*cdef.BStride > len(input) ||
+		len(topBuf) < cdef.VerticalBorder*width || len(leftBuf) < cdef.HorizontalBorder*unitH {
+		return threading.ErrInvalidBatch
+	}
+	srcX := unitX - cdef.HorizontalBorder
+	for row := 0; row < cdef.VerticalBorder; row++ {
+		copy(input[row*cdef.BStride:row*cdef.BStride+fillW], topBuf[row*width+srcX:row*width+srcX+fillW])
+	}
+	for row := 0; row < unitH; row++ {
+		dstRow := input[(row+cdef.VerticalBorder)*cdef.BStride:]
+		if leftFromBackup {
+			copy(dstRow[:cdef.HorizontalBorder], leftBuf[row*cdef.HorizontalBorder:(row+1)*cdef.HorizontalBorder])
+		} else {
+			src := (unitY+row)*stride + srcX
+			copy(dstRow[:cdef.HorizontalBorder], dst.Pix[src:src+cdef.HorizontalBorder])
+		}
+		src := (unitY+row)*stride + unitX
+		copy(dstRow[cdef.HorizontalBorder:fillW], dst.Pix[src:src+unitW+cdef.HorizontalBorder])
+	}
+	for row := 0; row < cdef.VerticalBorder; row++ {
+		dstRow := input[(unitH+cdef.VerticalBorder+row)*cdef.BStride:]
+		if bottomBuf != nil {
+			if len(bottomBuf) < cdef.VerticalBorder*width {
+				return frame.ErrShortBuffer
+			}
+			copy(dstRow[:fillW], bottomBuf[row*width+srcX:row*width+srcX+fillW])
+		} else {
+			src := (unitY+unitH+row)*stride + srcX
+			copy(dstRow[:fillW], dst.Pix[src:src+fillW])
+		}
+	}
+	return nil
 }
 
 // frameWorkAssembleCDEFInputU8 builds the unit's padded uint16 tap buffer

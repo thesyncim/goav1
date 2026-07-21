@@ -705,7 +705,20 @@ func frameWorkApplyCDEFPlaneRows(params parser.CDEFParams, indexMap FrameWorkCDE
 			if unitW <= 0 || unitH <= 0 {
 				continue
 			}
-			blocks := frameWorkCDEFBlockPositionsFilteredSources(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, skipLevels, unitRow, unitCol)
+			unitIndex := unitRow*cols + unitCol
+			unitDirections := directions
+			unitVariances := variances
+			if unitIndex < len(directionGrid) && unitIndex < len(varianceGrid) {
+				unitDirections = &directionGrid[unitIndex]
+				unitVariances = &varianceGrid[unitIndex]
+			}
+			var blocks []cdef.BlockPosition
+			if plane == 0 {
+				frameWorkCDEFMarkDirectionsUnavailable(unitDirections, unitW, unitH, blockWidth, blockHeight)
+				blocks = frameWorkCDEFBlockPositionsFilteredSources(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, skipLevels, unitRow, unitCol)
+			} else {
+				blocks = frameWorkCDEFBlockPositionsFromDirections(blockStorage, unitW, unitH, blockWidth, blockHeight, unitDirections)
+			}
 			if len(blocks) == 0 {
 				continue
 			}
@@ -714,13 +727,6 @@ func frameWorkApplyCDEFPlaneRows(params parser.CDEFParams, indexMap FrameWorkCDE
 			}
 			if err := frameWorkCopyCDEFInput(input, src, unitX, unitY, unitW, unitH); err != nil {
 				return units, blocksTotal, err
-			}
-			unitIndex := unitRow*cols + unitCol
-			unitDirections := directions
-			unitVariances := variances
-			if unitIndex < len(directionGrid) && unitIndex < len(varianceGrid) {
-				unitDirections = &directionGrid[unitIndex]
-				unitVariances = &varianceGrid[unitIndex]
 			}
 			cdefPlane := cdef.PlaneY
 			if plane == 1 {
@@ -968,6 +974,41 @@ func frameWorkCopyCDEFInput(input []uint16, src frame.SamplePlane, unitX int, un
 		}
 	}
 	return nil
+}
+
+const frameWorkCDEFDirectionUnavailable = uint8(0xff)
+
+// frameWorkCDEFMarkDirectionsUnavailable resets the luma direction cells for
+// one unit before direction search. FilterFrameBlocks overwrites every live
+// block with a direction in [0,7], leaving skipped positions at 0xff; the
+// later chroma passes can therefore reuse luma's compact availability result
+// without walking the loop-filter map again.
+func frameWorkCDEFMarkDirectionsUnavailable(directions *cdef.DirectionGrid, unitW int, unitH int, blockW int, blockH int) {
+	cols := (unitW + blockW - 1) / blockW
+	rows := (unitH + blockH - 1) / blockH
+	for by := range rows {
+		for bx := range cols {
+			directions[by][bx] = frameWorkCDEFDirectionUnavailable
+		}
+	}
+}
+
+// frameWorkCDEFBlockPositionsFromDirections rebuilds the live block list for
+// chroma from luma's direction grid. Valid directions identify precisely the
+// non-skipped blocks that luma already selected for this unit.
+func frameWorkCDEFBlockPositionsFromDirections(storage []cdef.BlockPosition, unitW int, unitH int, blockW int, blockH int, directions *cdef.DirectionGrid) []cdef.BlockPosition {
+	cols := (unitW + blockW - 1) / blockW
+	rows := (unitH + blockH - 1) / blockH
+	out := storage[:0]
+	for by := range rows {
+		for bx := range cols {
+			if directions[by][bx] > 7 {
+				continue
+			}
+			out = append(out, cdef.BlockPosition{BY: uint8(by), BX: uint8(bx)})
+		}
+	}
+	return out
 }
 
 // frameWorkCDEFBlockPositionsFiltered enumerates 8x8 CDEF blocks inside the

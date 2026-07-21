@@ -211,6 +211,43 @@ func FilterFrameBlocksU8Trusted(dst []byte, dstStride int, input []uint16, input
 	return filterUnitBlocksU8(dst, dstStride, input, inputOrigin, blocks, directions, variances, unitParams)
 }
 
+// FilterFrameBlocksU8TrustedNoDirection handles luma units whose luma and
+// chroma primary strengths are both zero. Direction and variance cannot affect
+// secondary-only filtering in that shape, but zeroes are still written for
+// every listed block so the direction grid continues to carry block
+// availability into the chroma plane walks. As with FilterFrameBlocksU8Trusted,
+// the caller owns the trusted parameter and geometry contract.
+func FilterFrameBlocksU8TrustedNoDirection(dst []byte, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams) error {
+	if len(blocks) == 0 {
+		return nil
+	}
+	if params.Plane != PlaneY || params.Level != 0 || params.CoeffShift != 0 {
+		return ErrInvalidCDEF
+	}
+	for _, block := range blocks {
+		by := int(block.BY)
+		bx := int(block.BX)
+		directions[by][bx] = 0
+		variances[by][bx] = 0
+	}
+	secondaryStrength := int(params.SecondaryStrength)
+	if secondaryStrength == 0 {
+		return nil
+	}
+	xDec := int(params.XDec)
+	yDec := int(params.YDec)
+	bwLog2 := 3 - xDec
+	bhLog2 := 3 - yDec
+	return filterUnitBlocksU8(dst, dstStride, input, inputOrigin, blocks, directions, variances, unitFilterParams{
+		secondaryStrength: secondaryStrength,
+		damping:           int(params.Damping),
+		bwLog2:            bwLog2,
+		bhLog2:            bhLog2,
+		blockWidth:        1 << bwLog2,
+		blockHeight:       1 << bhLog2,
+	})
+}
+
 // filterUnitBlocksU8PureGo is the canonical 8-bit-dst per-unit block loop:
 // filterUnitBlocksPureGo with in-place skip semantics (a block whose adjusted
 // primary strength and secondary strength are both zero keeps its frame

@@ -14,8 +14,10 @@ import (
 // strengths, frameWorkApplyCDEFPlaneRowsU8 must leave every frame byte
 // identical to the uint16 snapshot walk (frameWorkApplyCDEFPlaneRows over a
 // LoadSamplePlaneFull snapshot plus storeCDEFUnit), with identical
-// direction/variance grids and unit/block counts, across full/partial units,
-// skip patterns, direction-only luma passes, and chroma geometries.
+// direction/variance grids wherever a primary strength consumes them (and
+// identical availability with canonical zeroes otherwise), plus identical
+// unit/block counts across full/partial units, skip patterns, direction-only
+// luma passes, secondary-only passes, and chroma geometries.
 
 type cdefU8WalkCase struct {
 	name     string
@@ -49,6 +51,10 @@ func cdefU8WalkCases() []cdefU8WalkCase {
 			params: mk(3, [2]uint8{12 << 2, 6<<2 | 3}, [2]uint8{2<<2 | 2, 0}), readProb: 45, withSkip: true},
 		{name: "direction_only_luma", lumaW: 192, lumaH: 128, xDecC: 1, yDecC: 1,
 			params: mk(4, [2]uint8{0, 5<<2 | 2}, [2]uint8{0, 3 << 2}), readProb: 100},
+		{name: "secondary_only_luma_and_chroma", lumaW: 192, lumaH: 128, xDecC: 1, yDecC: 1,
+			params: mk(4, [2]uint8{2, 1}, [2]uint8{1, 3}), readProb: 100, withSkip: true},
+		{name: "secondary_only_interior_420", lumaW: 256, lumaH: 192, xDecC: 1, yDecC: 1,
+			params: mk(5, [2]uint8{2, 1}, [2]uint8{4, 3}), readProb: 100, withSkip: true},
 		{name: "luma_only", lumaW: 128, lumaH: 128, xDecC: 1, yDecC: 1,
 			params: mk(6, [2]uint8{9<<2 | 3, 0}), readProb: 80, withSkip: true},
 		{name: "chroma_422", lumaW: 192, lumaH: 128, xDecC: 1, yDecC: 0,
@@ -187,11 +193,28 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 		t.Fatalf("count mismatch: got units=%d blocks=%d want units=%d blocks=%d", gotUnits, gotBlocks, wantUnits, wantBlocks)
 	}
 	for i := range wantDirGrid {
-		if gotDirGrid[i] != wantDirGrid[i] {
-			t.Fatalf("direction grid %d differs", i)
+		strengthIndex := int(indexMap.Index[i])
+		needsDirection := tc.params.YStrength[strengthIndex]>>2 != 0 || tc.params.UVStrength[strengthIndex]>>2 != 0
+		if needsDirection {
+			if gotDirGrid[i] != wantDirGrid[i] {
+				t.Fatalf("direction grid %d differs", i)
+			}
+			if gotVarGrid[i] != wantVarGrid[i] {
+				t.Fatalf("variance grid %d differs", i)
+			}
+			continue
 		}
-		if gotVarGrid[i] != wantVarGrid[i] {
-			t.Fatalf("variance grid %d differs", i)
+		for by := range gotDirGrid[i] {
+			for bx := range gotDirGrid[i][by] {
+				gotAvailable := gotDirGrid[i][by][bx] != frameWorkCDEFDirectionUnavailable
+				wantAvailable := wantDirGrid[i][by][bx] != frameWorkCDEFDirectionUnavailable
+				if gotAvailable != wantAvailable {
+					t.Fatalf("direction grid %d block (%d,%d) availability differs", i, by, bx)
+				}
+				if gotAvailable && (gotDirGrid[i][by][bx] != 0 || gotVarGrid[i][by][bx] != 0) {
+					t.Fatalf("direction grid %d block (%d,%d) unused direction/variance = (%d,%d), want canonical zeroes", i, by, bx, gotDirGrid[i][by][bx], gotVarGrid[i][by][bx])
+				}
+			}
 		}
 	}
 }
