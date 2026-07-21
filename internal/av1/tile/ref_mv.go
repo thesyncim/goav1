@@ -674,12 +674,17 @@ type temporalReferenceMVResult struct {
 	GlobalMVDifferent bool
 }
 
-type temporalMVProjectionOffsets struct {
+type temporalMVProjectionCache struct {
 	values     [2]int
 	scale      [2]int32
 	scaleDen   [2]uint8
 	valid      uint8
 	scaleValid uint8
+
+	sample           TemporalMotionEntry
+	projected        [2]motion.Vector
+	projectedDiffers bool
+	sampleValid      bool
 }
 
 func (req *ReferenceMVStackRequest) temporalReferenceMVs(dims BlockDimensions, stack *ReferenceMVStack) (temporalReferenceMVResult, error) {
@@ -704,10 +709,10 @@ func (req *ReferenceMVStackRequest) temporalReferenceMVs(dims BlockDimensions, s
 	}
 
 	var result temporalReferenceMVResult
-	var projectionOffsets temporalMVProjectionOffsets
+	var projectionCache temporalMVProjectionCache
 	for blkRow := 0; blkRow < blkRowEnd; blkRow += stepH {
 		for blkCol := 0; blkCol < blkColEnd; blkCol += stepW {
-			added, different, err := req.addTemporalReferenceMV(blkRow, blkCol, stack, &projectionOffsets)
+			added, different, err := req.addTemporalReferenceMV(blkRow, blkCol, stack, &projectionCache)
 			if err != nil {
 				return temporalReferenceMVResult{}, err
 			}
@@ -751,7 +756,7 @@ func (req *ReferenceMVStackRequest) temporalReferenceMVs(dims BlockDimensions, s
 				sbCol+pos[1] < 0 || sbCol+pos[1] >= sbMISize {
 				continue
 			}
-			if _, _, err := req.addTemporalReferenceMV(pos[0], pos[1], stack, &projectionOffsets); err != nil {
+			if _, _, err := req.addTemporalReferenceMV(pos[0], pos[1], stack, &projectionCache); err != nil {
 				return temporalReferenceMVResult{}, err
 			}
 		}
@@ -759,7 +764,7 @@ func (req *ReferenceMVStackRequest) temporalReferenceMVs(dims BlockDimensions, s
 	return result, nil
 }
 
-func (req *ReferenceMVStackRequest) addTemporalReferenceMV(blkRow int, blkCol int, stack *ReferenceMVStack, projectionOffsets *temporalMVProjectionOffsets) (bool, bool, error) {
+func (req *ReferenceMVStackRequest) addTemporalReferenceMV(blkRow int, blkCol int, stack *ReferenceMVStack, projectionCache *temporalMVProjectionCache) (bool, bool, error) {
 	rowOffset := blkRow
 	if req.MIRow&1 == 0 {
 		rowOffset++
@@ -788,8 +793,12 @@ func (req *ReferenceMVStackRequest) addTemporalReferenceMV(blkRow int, blkCol in
 	if !sample.Valid {
 		return false, false, nil
 	}
+	if projectionCache.sampleValid && projectionCache.sample == sample {
+		stack.addOrWeightMVs(projectionCache.projected[0], projectionCache.projected[1], 2)
+		return true, projectionCache.projectedDiffers, nil
+	}
 
-	first, err := req.temporalProjectedMV(sample, 0, projectionOffsets)
+	first, err := req.temporalProjectedMV(sample, 0, projectionCache)
 	if err != nil {
 		return false, false, err
 	}
@@ -797,20 +806,25 @@ func (req *ReferenceMVStackRequest) addTemporalReferenceMV(blkRow int, blkCol in
 	second := motion.Vector{}
 	if req.References.Compound {
 		var err error
-		second, err = req.temporalProjectedMV(sample, 1, projectionOffsets)
+		second, err = req.temporalProjectedMV(sample, 1, projectionCache)
 		if err != nil {
 			return false, false, err
 		}
 		different = different || temporalMVDifferent(second, req.GlobalMVs[1])
 	}
+	projectionCache.sample = sample
+	projectionCache.projected[0] = first
+	projectionCache.projected[1] = second
+	projectionCache.projectedDiffers = different
+	projectionCache.sampleValid = true
 	stack.addOrWeightMVs(first, second, 2)
 	return true, different, nil
 }
 
-func (req *ReferenceMVStackRequest) temporalProjectedMV(sample TemporalMotionEntry, refIndex int, projectionOffsets *temporalMVProjectionOffsets) (motion.Vector, error) {
+func (req *ReferenceMVStackRequest) temporalProjectedMV(sample TemporalMotionEntry, refIndex int, projectionCache *temporalMVProjectionCache) (motion.Vector, error) {
 	mask := uint8(1 << refIndex)
-	currentOffset := projectionOffsets.values[refIndex]
-	if projectionOffsets.valid&mask == 0 {
+	currentOffset := projectionCache.values[refIndex]
+	if projectionCache.valid&mask == 0 {
 		ref := req.References.Ref[refIndex]
 		if !ref.Valid() {
 			return motion.Vector{}, ErrInvalidDecodeState
@@ -820,8 +834,8 @@ func (req *ReferenceMVStackRequest) temporalProjectedMV(sample TemporalMotionEnt
 		if err != nil {
 			return motion.Vector{}, err
 		}
-		projectionOffsets.values[refIndex] = currentOffset
-		projectionOffsets.valid |= mask
+		projectionCache.values[refIndex] = currentOffset
+		projectionCache.valid |= mask
 	}
 	den := int(sample.RefFrameOffset)
 	if den <= 0 {
@@ -830,18 +844,18 @@ func (req *ReferenceMVStackRequest) temporalProjectedMV(sample TemporalMotionEnt
 	if den > motionFieldMaxFrameDistance {
 		den = motionFieldMaxFrameDistance
 	}
-	if projectionOffsets.scaleValid&mask == 0 || projectionOffsets.scaleDen[refIndex] != uint8(den) {
+	if projectionCache.scaleValid&mask == 0 || projectionCache.scaleDen[refIndex] != uint8(den) {
 		num := currentOffset
 		if num > motionFieldMaxFrameDistance {
 			num = motionFieldMaxFrameDistance
 		} else if num < -motionFieldMaxFrameDistance {
 			num = -motionFieldMaxFrameDistance
 		}
-		projectionOffsets.scale[refIndex] = int32(num) * int32(motionFieldDivMult[den])
-		projectionOffsets.scaleDen[refIndex] = uint8(den)
-		projectionOffsets.scaleValid |= mask
+		projectionCache.scale[refIndex] = int32(num) * int32(motionFieldDivMult[den])
+		projectionCache.scaleDen[refIndex] = uint8(den)
+		projectionCache.scaleValid |= mask
 	}
-	projected := motionFieldProjectMVWithScale(sample.MV, projectionOffsets.scale[refIndex])
+	projected := motionFieldProjectMVWithScale(sample.MV, projectionCache.scale[refIndex])
 	return motion.LowerPrecision(projected, req.AllowHighPrecisionMV, req.ForceIntegerMV), nil
 }
 
