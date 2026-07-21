@@ -39,6 +39,13 @@ func addRawTransform16NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStrid
 //go:noescape
 func addRawTransform16x4NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, height uintptr)
 
+//go:noescape
+func copyPlaneBlockNEONAsm(dst *byte, dstStride uintptr, src *byte, srcStride uintptr, rowBytes uintptr, height uintptr)
+
+func copyPlaneBlockDisjointTrustedNEON(dst []byte, dstStride int, src []byte, srcStride int, rowBytes int, height int) {
+	copyPlaneBlockNEONAsm(&dst[0], uintptr(dstStride), &src[0], uintptr(srcStride), uintptr(rowBytes), uintptr(height))
+}
+
 func addResidualPlaneBlockNEON(block planeBlock, bytesPerSample int, max uint16, width int, residual []int16, residualStride int) {
 	groups := width >> 3
 	if groups == 0 {

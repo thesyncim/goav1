@@ -7,6 +7,8 @@
 package dsp
 
 import (
+	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
@@ -192,5 +194,68 @@ func TestAddRawTransformPlaneBlockNEONIsZeroAlloc(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("AddRawTransformPlaneBlockTrusted allocated: %f", allocs)
+	}
+}
+
+func TestCopyPlaneBlockDisjointTrustedNEONMatchesPureGo(t *testing.T) {
+	if !cpu.Detected.NEON {
+		t.Skip("NEON not detected")
+	}
+	widths := []int{1, 2, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 255, 256}
+	heights := []int{1, 2, 4, 8, 16, 32, 64}
+	for _, rowBytes := range widths {
+		for _, height := range heights {
+			dstStride := rowBytes + 13
+			srcStride := rowBytes + 19
+			dstLen := (height-1)*dstStride + rowBytes
+			srcLen := (height-1)*srcStride + rowBytes
+			got := make([]byte, dstLen)
+			want := make([]byte, dstLen)
+			src := make([]byte, srcLen)
+			for i := range src {
+				src[i] = byte(i*37 + rowBytes*11 + height)
+			}
+			for i := range got {
+				got[i] = byte(i*23 + 7)
+				want[i] = got[i]
+			}
+			copyPlaneBlockDisjointTrustedNEON(got, dstStride, src, srcStride, rowBytes, height)
+			copyPlaneBlockDisjointTrustedPureGo(want, dstStride, src, srcStride, rowBytes, height)
+			if !bytes.Equal(got, want) {
+				t.Fatalf("rowBytes=%d height=%d mismatch", rowBytes, height)
+			}
+		}
+	}
+}
+
+func TestCopyPlaneBlockDisjointTrustedNEONIsZeroAlloc(t *testing.T) {
+	if !cpu.Detected.NEON {
+		t.Skip("NEON not detected")
+	}
+	dst := make([]byte, 64*64)
+	src := make([]byte, 64*64)
+	allocs := testing.AllocsPerRun(1000, func() {
+		CopyPlaneBlockDisjointTrusted(dst, 64, src, 64, 64, 64)
+	})
+	if allocs != 0 {
+		t.Fatalf("CopyPlaneBlockDisjointTrusted allocated: %f", allocs)
+	}
+}
+
+func BenchmarkCopyPlaneBlockDisjointTrustedImplementations(b *testing.B) {
+	for _, size := range []int{2, 4, 8, 16, 32, 64, 128, 256} {
+		dst := make([]byte, size*size)
+		src := make([]byte, size*size)
+		name := fmt.Sprintf("%dx%d", size, size)
+		b.Run("purego/"+name, func(b *testing.B) {
+			for b.Loop() {
+				copyPlaneBlockDisjointTrustedPureGo(dst, size, src, size, size, size)
+			}
+		})
+		b.Run("neon/"+name, func(b *testing.B) {
+			for b.Loop() {
+				copyPlaneBlockDisjointTrustedNEON(dst, size, src, size, size, size)
+			}
+		})
 	}
 }

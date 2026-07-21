@@ -9,6 +9,8 @@
 package motion
 
 import (
+	"unsafe"
+
 	"github.com/thesyncim/goav1/internal/av1/dsp"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
@@ -247,6 +249,19 @@ func predictInterPlaneBlockFromOriginWithFilterSizeScratch(dst frame.Plane, ref 
 	}
 	if subX == 0 && subY == 0 {
 		if planeRegionFits(ref, bytesPerSample, refX, refY, width, height) {
+			if dsp.HasAcceleratedDisjointPlaneCopy &&
+				planeRegionFits(dst, bytesPerSample, dstX, dstY, width, height) &&
+				byteSlicesDisjoint(dst.Pix, ref.Pix) {
+				dstOffset := dstY*dst.Stride + dstX*bytesPerSample
+				srcOffset := refY*ref.Stride + refX*bytesPerSample
+				rowBytes := width * bytesPerSample
+				dsp.CopyPlaneBlockDisjointTrusted(
+					dst.Pix[dstOffset:], dst.Stride,
+					ref.Pix[srcOffset:], ref.Stride,
+					rowBytes, height,
+				)
+				return nil
+			}
 			if err := dsp.CopyPlaneBlock(dst, ref, bytesPerSample, dstX, dstY, refX, refY, width, height); err != nil {
 				return ErrInvalidMotion
 			}
@@ -273,6 +288,21 @@ func predictInterPlaneBlockFromOriginWithFilterSizeScratch(dst frame.Plane, ref 
 		return ErrInvalidMotion
 	}
 	return nil
+}
+
+// byteSlicesDisjoint conservatively checks the complete visible slice ranges,
+// rather than only comparing their first elements. Public motion callers may
+// construct two Plane values from shifted windows of the same backing store;
+// those must retain CopyPlaneBlock's overlap-safe row-copy semantics.
+func byteSlicesDisjoint(a []byte, b []byte) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return true
+	}
+	aStart := uintptr(unsafe.Pointer(unsafe.SliceData(a)))
+	bStart := uintptr(unsafe.Pointer(unsafe.SliceData(b)))
+	aEnd := aStart + uintptr(len(a))
+	bEnd := bStart + uintptr(len(b))
+	return aEnd <= bStart || bEnd <= aStart
 }
 
 func referenceOrigin(dstX int, dstY int, mv Vector) (refX int, refY int, subX int, subY int, err error) {
@@ -380,20 +410,62 @@ func copyPlaneBlockClamped(dst frame.Plane, ref frame.Plane, bytesPerSample int,
 		!planeRegionFits(ref, bytesPerSample, 0, 0, ref.Width, ref.Height) {
 		return ErrInvalidMotion
 	}
+	if bytesPerSample != 1 && bytesPerSample != 2 {
+		return ErrInvalidMotion
+	}
+	// emu_edge (dav1d mc.c): the horizontal source clamp splits each row into
+	// three row-invariant regions -- a left pad reading ref column 0, an
+	// in-bounds middle that maps 1:1 to a contiguous ref span, and a right pad
+	// reading ref column W-1. Deriving the region geometry once (refX/width are
+	// the same on every row) turns the inner loop into a single memmove for the
+	// bulk in-bounds span and drops the per-pixel horizontal clamp entirely;
+	// only the vertical source row still clamps per row.
+	bps := bytesPerSample
+	leftW := clampInt(-refX, 0, width)               // x < leftW  => sx = 0
+	rightStart := clampInt(ref.Width-refX, 0, width) // x >= rightStart => sx = W-1
+	midW := rightStart - leftW                       // >= 0; middle sx = refX+x
+	srcStartX := refX + leftW                        // in [0, ref.Width) when midW>0
 	for y := range height {
 		sy := clampInt(refY+y, 0, ref.Height-1)
-		for x := range width {
-			sx := clampInt(refX+x, 0, ref.Width-1)
-			switch bytesPerSample {
-			case 1:
-				dst.Pix[(dstY+y)*dst.Stride+dstX+x] = ref.Pix[sy*ref.Stride+sx]
-			case 2:
-				dstOffset := (dstY+y)*dst.Stride + (dstX+x)*2
-				refOffset := sy*ref.Stride + sx*2
-				dst.Pix[dstOffset] = ref.Pix[refOffset]
-				dst.Pix[dstOffset+1] = ref.Pix[refOffset+1]
-			default:
-				return ErrInvalidMotion
+		refBase := sy * ref.Stride
+		dstBase := (dstY+y)*dst.Stride + dstX*bps
+		if bps == 1 {
+			dstRow := dst.Pix[dstBase : dstBase+width]
+			if midW > 0 {
+				copy(dstRow[leftW:rightStart], ref.Pix[refBase+srcStartX:refBase+srcStartX+midW])
+			}
+			if leftW > 0 {
+				lv := ref.Pix[refBase]
+				for x := range leftW {
+					dstRow[x] = lv
+				}
+			}
+			if rightStart < width {
+				rv := ref.Pix[refBase+ref.Width-1]
+				for x := rightStart; x < width; x++ {
+					dstRow[x] = rv
+				}
+			}
+			continue
+		}
+		// bps == 2
+		dstRow := dst.Pix[dstBase : dstBase+width*2]
+		if midW > 0 {
+			copy(dstRow[leftW*2:rightStart*2], ref.Pix[refBase+srcStartX*2:refBase+(srcStartX+midW)*2])
+		}
+		if leftW > 0 {
+			l0, l1 := ref.Pix[refBase], ref.Pix[refBase+1]
+			for x := range leftW {
+				dstRow[x*2] = l0
+				dstRow[x*2+1] = l1
+			}
+		}
+		if rightStart < width {
+			ro := refBase + (ref.Width-1)*2
+			r0, r1 := ref.Pix[ro], ref.Pix[ro+1]
+			for x := rightStart; x < width; x++ {
+				dstRow[x*2] = r0
+				dstRow[x*2+1] = r1
 			}
 		}
 	}
