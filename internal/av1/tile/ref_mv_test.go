@@ -423,6 +423,60 @@ func TestBuildReferenceMVStackTemporalCompoundProjectsBothRefs(t *testing.T) {
 	}
 }
 
+func BenchmarkBuildReferenceMVStackTemporal64x64(b *testing.B) {
+	for _, compound := range []bool{false, true} {
+		name := "single"
+		refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+		if compound {
+			name = "compound"
+			refs = InterReferencesResult{
+				Ref:      [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameBWD},
+				Compound: true,
+			}
+		}
+		b.Run(name, func(b *testing.B) {
+			entries := make([]TemporalMotionEntry, 32*32)
+			for i := range entries {
+				entries[i] = TemporalMotionEntry{
+					MV: motion.Vector{
+						Row: int16((i*14)&255) - 128,
+						Col: int16((i*22)&255) - 128,
+					},
+					RefFrameOffset: 4,
+					Valid:          true,
+				}
+			}
+			field := TemporalMotionField{Rows: 32, Cols: 32, Stride: 32, Entries: entries}
+			req := ReferenceMVStackRequest{
+				Size:             BlockSize64x64,
+				References:       refs,
+				MICol:            8,
+				MIRow:            8,
+				TileMIColEnd:     64,
+				TileMIRowEnd:     64,
+				FrameMICols:      64,
+				FrameMIRows:      64,
+				TemporalMVs:      &field,
+				OrderHintBits:    5,
+				CurrentOrderHint: 8,
+				ReferenceOrderHints: [referenceFrameCount]uint8{
+					ReferenceFrameLast: 4,
+					ReferenceFrameBWD:  12,
+				},
+				UseRefFrameMVS: true,
+			}
+			var ctx BlockModeContext
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				if _, err := ctx.BuildReferenceMVStack(req); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func TestBuildReferenceMVStackTemporalUnavailableSetsGlobalContext(t *testing.T) {
 	var ctx BlockModeContext
 	req := ReferenceMVStackRequest{
@@ -500,7 +554,8 @@ func TestBlockModeContextMarkInterClearsStaleMotion(t *testing.T) {
 	if err := ctx.MarkInterMotion(BlockSize8x8, 0, 0, motionResult, true); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.AboveMotionValid[0] == 0 || ctx.LeftMotionValid[0] == 0 || ctx.GridMotionValid[0][0] == 0 {
+	_, _, gridValid := ctx.gridInterMotion(0, 0)
+	if ctx.AboveMotionValid[0] == 0 || ctx.LeftMotionValid[0] == 0 || !gridValid {
 		t.Fatal("motion was not marked valid")
 	}
 	if err := ctx.MarkInter(BlockSize8x8, 0, 0, motionResult.References, true); err != nil {
@@ -509,7 +564,7 @@ func TestBlockModeContextMarkInterClearsStaleMotion(t *testing.T) {
 	if ctx.AboveMotionValid[0] != 0 || ctx.LeftMotionValid[0] != 0 {
 		t.Fatal("inter reference mark left stale motion valid")
 	}
-	if ctx.GridMotionValid[0][0] != 0 {
+	if _, _, ok := ctx.gridInterMotion(0, 0); ok {
 		t.Fatal("inter reference mark left stale grid motion valid")
 	}
 	if err := ctx.MarkInterMotion(BlockSize8x8, 0, 0, motionResult, true); err != nil {
@@ -521,7 +576,7 @@ func TestBlockModeContextMarkInterClearsStaleMotion(t *testing.T) {
 	if ctx.AboveMotionValid[0] != 0 || ctx.LeftMotionValid[0] != 0 {
 		t.Fatal("intra mark left stale motion valid")
 	}
-	if ctx.GridMotionValid[0][0] != 0 {
+	if _, _, ok := ctx.gridInterMotion(0, 0); ok {
 		t.Fatal("intra mark left stale grid motion valid")
 	}
 }
@@ -538,15 +593,18 @@ func TestBlockModeContextMarkInterMotionFillsGrid(t *testing.T) {
 	}
 	for y := 6; y < 8; y++ {
 		for x := 4; x < 6; x++ {
-			if ctx.GridMotionValid[y][x] == 0 {
+			gotMotion, gotSize, ok := ctx.gridInterMotion(x, y)
+			if !ok {
 				t.Fatalf("grid valid[%d][%d]=0", y, x)
 			}
-			if ctx.GridInterMotion[y][x] != motionResult || ctx.GridBlockSize[y][x] != BlockSize8x8 {
-				t.Fatalf("grid[%d][%d] motion=%+v size=%v", y, x, ctx.GridInterMotion[y][x], ctx.GridBlockSize[y][x])
+			if gotMotion != motionResult || gotSize != BlockSize8x8 {
+				t.Fatalf("grid[%d][%d] motion=%+v size=%v", y, x, gotMotion, gotSize)
 			}
 		}
 	}
-	if ctx.GridMotionValid[5][4] != 0 || ctx.GridMotionValid[6][3] != 0 {
+	_, _, above := ctx.gridInterMotion(4, 5)
+	_, _, left := ctx.gridInterMotion(3, 6)
+	if above || left {
 		t.Fatal("grid fill leaked outside the block")
 	}
 }
@@ -1487,9 +1545,10 @@ func TestScanGridColReferenceMVsAdvancesProcessedColsForIntra(t *testing.T) {
 	// at X4=6 + colOffset=-3, Y4=2 + rowOffset=1 + i=0. MotionValid=0
 	// (intra) but BlockSize recorded so the scan honors libaom's mi_size
 	// stride.
-	ctx.GridBlockSize[3][3] = BlockSize16x16
-	ctx.GridBlockSizeVisited[3][3] = 1
-	ctx.GridMotionValid[3][3] = 0
+	setGridRecordCellForTest(&ctx, 3, 3, blockModeGridRecord{
+		Size:  BlockSize16x16,
+		Flags: gridRecordSizeVisited,
+	})
 
 	processedCols := 2
 	var matches, newMatches uint8
@@ -1624,9 +1683,10 @@ func TestScanGridRowReferenceMVsAdvancesProcessedRowsForIntra(t *testing.T) {
 	// Seed an intra neighbor at (x=3, y=3) within the current SB: the cell
 	// at X4=2 + colOffset=1 + i=0, Y4=6 + rowOffset=-3. MotionValid=0 (intra)
 	// but BlockSize recorded so the scan honors libaom's mi_size stride.
-	ctx.GridBlockSize[3][3] = BlockSize16x16
-	ctx.GridBlockSizeVisited[3][3] = 1
-	ctx.GridMotionValid[3][3] = 0
+	setGridRecordCellForTest(&ctx, 3, 3, blockModeGridRecord{
+		Size:  BlockSize16x16,
+		Flags: gridRecordSizeVisited,
+	})
 
 	processedRows := 2
 	var matches, newMatches uint8
@@ -1721,16 +1781,19 @@ func TestBuildReferenceMVStackSingleRefMVsReflectFinalSort(t *testing.T) {
 		{x: 3, y: 11, mr: gm, size: BlockSize8x16},
 		{x: 1, y: 11, mr: merge, size: BlockSize8x16},
 	} {
-		ctx.GridInterMotion[cell.y][cell.x] = cell.mr
-		ctx.GridMotionValid[cell.y][cell.x] = 1
-		ctx.GridBlockSize[cell.y][cell.x] = cell.size
-		ctx.GridBlockSizeVisited[cell.y][cell.x] = 1
+		setGridRecordCellForTest(&ctx, cell.x, cell.y, blockModeGridRecord{
+			Motion: cell.mr,
+			Size:   cell.size,
+			Flags:  gridRecordMotionValid | gridRecordSizeVisited,
+		})
 	}
 	for i := range 8 {
 		ctx.AboveBlockSize[i+6] = BlockSize8x8
 		ctx.AboveIntra[i+6] = 1
-		ctx.GridBlockSizeVisited[9][i+6] = 1
-		ctx.GridBlockSize[9][i+6] = BlockSize8x8
+		setGridRecordCellForTest(&ctx, i+6, 9, blockModeGridRecord{
+			Size:  BlockSize8x8,
+			Flags: gridRecordSizeVisited,
+		})
 		ctx.LeftBlockSize[i+10] = BlockSize8x8
 		ctx.LeftIntra[i+10] = 1
 	}

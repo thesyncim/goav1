@@ -707,27 +707,36 @@ func uniCompRefContext(ctx *BlockModeContext, req InterReferenceRequest, bit int
 // SMOOTH_V) flips get_intra_edge_filter_type and corrupts directional chroma
 // prediction (av1-1-b8-00-quantizer-00 frame 1 mi(15,82) D135 chroma).
 func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result InterReferencesResult, hasChroma bool) error {
+	_, err := c.markInterContext(size, x4, y4, result, hasChroma, true)
+	return err
+}
+
+// markInterContext updates the shared top/left inter state. Motion callers set
+// clearGrid=false because they immediately install a valid motion record over
+// the same block; avoiding the invalidate-then-overwrite pass keeps the common
+// decoded-inter path to one grid walk.
+func (c *BlockModeContext) markInterContext(size BlockSize, x4 int, y4 int, result InterReferencesResult, hasChroma, clearGrid bool) (BlockDimensions, error) {
 	if c == nil {
-		return ErrInvalidDecodeState
+		return BlockDimensions{}, ErrInvalidDecodeState
 	}
 	dims, ok := size.Dimensions()
 	if !ok {
-		return ErrInvalidDecodeState
+		return BlockDimensions{}, ErrInvalidDecodeState
 	}
 	if x4 < 0 || y4 < 0 ||
 		x4+int(dims.W4) > MaxBlockModeSlots ||
 		y4+int(dims.H4) > MaxBlockModeSlots {
-		return ErrInvalidDecodeState
+		return BlockDimensions{}, ErrInvalidDecodeState
 	}
 	if !result.Ref[0].Valid() {
-		return ErrInvalidDecodeState
+		return BlockDimensions{}, ErrInvalidDecodeState
 	}
 	if result.Compound {
 		if !result.Ref[1].Valid() {
-			return ErrInvalidDecodeState
+			return BlockDimensions{}, ErrInvalidDecodeState
 		}
 	} else if result.Ref[1] != ReferenceFrameNone {
-		return ErrInvalidDecodeState
+		return BlockDimensions{}, ErrInvalidDecodeState
 	}
 
 	compound := boolByte(result.Compound)
@@ -766,8 +775,10 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 		c.LeftCompIndex[y4+i] = compIndex
 		c.LeftBlockSize[y4+i] = size
 	}
-	c.clearGridInterMotion(size, x4, y4, dims)
-	return nil
+	if clearGrid {
+		c.clearGridInterMotion(size, x4, y4, dims)
+	}
+	return dims, nil
 }
 
 // MarkInterIntra records that the block at (x4, y4) of `size` is an
@@ -796,6 +807,9 @@ func (c *BlockModeContext) MarkInterIntra(size BlockSize, x4 int, y4 int) error 
 	}
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftInterIntra[y4+i] = 1
+	}
+	if record, ok := c.gridRecordAt(x4, y4); ok && record.Flags&gridRecordMotionValid != 0 {
+		record.Motion.InterIntra = true
 	}
 	return nil
 }

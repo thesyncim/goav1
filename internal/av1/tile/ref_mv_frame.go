@@ -1,16 +1,21 @@
 package tile
 
-import "github.com/thesyncim/goav1/internal/av1/motion"
+import (
+	"unsafe"
+
+	"github.com/thesyncim/goav1/internal/av1/motion"
+)
 
 const refMVSLimit = (1 << 12) - 1
 
 // ReferenceMVFrame stores the current frame's ref-frame-MVS side data at the
 // half-MI granularity used by libaom's MV_REF array. Entries is caller-owned.
 type ReferenceMVFrame struct {
-	Rows    uint16
-	Cols    uint16
-	Stride  uint16
-	Entries []ReferenceMVEntry
+	Rows      uint16
+	Cols      uint16
+	Stride    uint16
+	runsValid bool
+	Entries   []ReferenceMVEntry
 }
 
 // ReferenceMVEntry mirrors libaom's MV_REF payload.
@@ -18,6 +23,27 @@ type ReferenceMVEntry struct {
 	Ref   ReferenceFrame
 	MV    motion.Vector
 	Valid bool
+}
+
+// ReferenceMVEntry has one trailing padding byte on every supported target.
+// Decoder-owned frames use it for horizontal run length metadata. Keeping the
+// metadata out of the Go fields preserves ReferenceMVEntry's public value and
+// equality semantics while retaining its existing eight-byte footprint.
+const referenceMVEntryRunOffset = 7
+
+var (
+	_ [unsafe.Sizeof(ReferenceMVEntry{}) - 8]byte
+	_ [8 - unsafe.Sizeof(ReferenceMVEntry{})]byte
+	_ [unsafe.Offsetof(ReferenceMVEntry{}.Valid) - 6]byte
+	_ [6 - unsafe.Offsetof(ReferenceMVEntry{}.Valid)]byte
+)
+
+func referenceMVEntryRun(entry *ReferenceMVEntry) uint8 {
+	return *(*uint8)(unsafe.Add(unsafe.Pointer(entry), referenceMVEntryRunOffset))
+}
+
+func setReferenceMVEntryRun(entry *ReferenceMVEntry, run uint8) {
+	*(*uint8)(unsafe.Add(unsafe.Pointer(entry), referenceMVEntryRunOffset)) = run
 }
 
 // ReferenceMVFrameBlockRequest describes one decoded block to copy into the
@@ -59,6 +85,17 @@ func referenceMVHalfMIGridShape(miRows uint32, miCols uint32) (uint16, uint16, i
 // Init attaches caller-owned storage and clears it to NONE, matching libaom's
 // per-frame MV_REF side data initialization.
 func (f *ReferenceMVFrame) Init(miRows uint32, miCols uint32, entries []ReferenceMVEntry) error {
+	return f.init(miRows, miCols, entries, false)
+}
+
+// InitTracked initializes the frame with per-block run metadata. Decoder-owned
+// frames use this form so temporal projection can advance once per decoded
+// block instead of rediscovering equal horizontal entries cell by cell.
+func (f *ReferenceMVFrame) InitTracked(miRows uint32, miCols uint32, entries []ReferenceMVEntry) error {
+	return f.init(miRows, miCols, entries, true)
+}
+
+func (f *ReferenceMVFrame) init(miRows uint32, miCols uint32, entries []ReferenceMVEntry, trackRuns bool) error {
 	if f == nil {
 		return ErrInvalidDecodeState
 	}
@@ -72,9 +109,14 @@ func (f *ReferenceMVFrame) Init(miRows uint32, miCols uint32, entries []Referenc
 	f.Rows = rows
 	f.Cols = cols
 	f.Stride = cols
+	f.runsValid = trackRuns
 	f.Entries = entries[:need]
+	entry := ReferenceMVEntry{Ref: ReferenceFrameNone}
 	for i := range f.Entries {
-		f.Entries[i] = ReferenceMVEntry{Ref: ReferenceFrameNone}
+		f.Entries[i] = entry
+		if trackRuns {
+			setReferenceMVEntryRun(&f.Entries[i], 0)
+		}
 	}
 	return nil
 }
@@ -112,6 +154,13 @@ func (f *ReferenceMVFrame) MarkBlockPtr(miCol uint16, miRow uint16, visibleW4 ui
 		line := f.Entries[(row+y)*stride+col : (row+y)*stride+col+w]
 		for x := range line {
 			line[x] = entry
+		}
+		if f.runsValid {
+			// InitTracked clears every padding byte. AV1 partitions never let a
+			// later wide block cover an earlier block; the only half-MI alias is
+			// between sub-8x8 blocks, whose run is exactly one. Therefore only
+			// the start byte changes after initialization.
+			setReferenceMVEntryRun(&line[0], uint8(w))
 		}
 	}
 	return nil

@@ -32,9 +32,11 @@ type BlockModeCDFs struct {
 	SegmentID   [BlockModeContexts]entropy.CDF
 }
 
-// BlockModeContext is the caller-owned top/left block context for one
-// superblock. Slots are addressed in 4x4 units, matching dav1d's bx4/by4.
-type BlockModeContext struct {
+// blockModeNeighborContext is the compact per-root state that must be reset
+// and restored from the top/left carriers before each superblock walk. Keeping
+// it separate from the validity-guarded grid payload lets the hot root reset
+// invalidate those grids without rewriting every stale payload byte.
+type blockModeNeighborContext struct {
 	AboveSkip        [MaxBlockModeSlots]uint8
 	LeftSkip         [MaxBlockModeSlots]uint8
 	AboveSkipMode    [MaxBlockModeSlots]uint8
@@ -172,33 +174,39 @@ type BlockModeContext struct {
 	LeftPaletteY             [MaxBlockModeSlots]paletteContext
 	AbovePaletteUV           [MaxBlockModeSlots]paletteContext
 	LeftPaletteUV            [MaxBlockModeSlots]paletteContext
+}
 
-	GridInterMotion [MaxBlockModeSlots][MaxBlockModeSlots]InterMotionResult
-	GridMotionValid [MaxBlockModeSlots][MaxBlockModeSlots]uint8
-	GridBlockSize   [MaxBlockModeSlots][MaxBlockModeSlots]BlockSize
+// BlockModeContext is the caller-owned top/left block context for one
+// superblock. Slots are addressed in 4x4 units, matching dav1d's bx4/by4.
+type BlockModeContext struct {
+	blockModeNeighborContext
 
-	// GridInterp records each inter block's decoded interpolation filter
-	// pair per MI cell, mirroring libaom's per-MB this_mbmi->interp_filters.
-	// The sub8x8 chroma predictor (build_inter_predictors_sub8x8) reads each
-	// covered luma sub-block's own filters, so it consults this grid for the
-	// neighbor cells rather than the collapsed 1D Above/Left filter contexts
-	// (which only retain the last block written to a row/column slot and can
-	// therefore report a different neighbor's filter). Written by
-	// MarkInterFilters alongside GridInterMotion; read under the same
-	// GridMotionValid guard.
-	GridInterp      [MaxBlockModeSlots][MaxBlockModeSlots]motion.InterpFilters
-	GridInterpValid [MaxBlockModeSlots][MaxBlockModeSlots]uint8
+	// gridOwners maps each covered MI cell to its block's single record. AV1
+	// leaf blocks never overlap inside a superblock, so repeating a 16-byte
+	// motion result (plus size, filters, and three validity bytes) in every
+	// covered cell is redundant. A 1-based uint16 owner identifies any of the
+	// 1024 possible block roots; zero means the cell is untouched in this root.
+	// Keeping the same total storage as the former split grids turns the hot
+	// block update into one record store plus a compact 2-byte rectangle fill.
+	gridOwners  [MaxBlockModeSlots][MaxBlockModeSlots]uint16
+	gridRecords [MaxBlockModeSlots][MaxBlockModeSlots]blockModeGridRecord
+}
 
-	// GridBlockSizeVisited mirrors GridBlockSize but signals whether the
-	// containing slot was ever recorded by markGridInterMotion or
-	// clearGridInterMotion. Outer ref-MV scans use it to distinguish "slot
-	// was a real intra/inter neighbor of known size" (advance by mi_size
-	// of GridBlockSize, matching libaom's scan_row/col stride) from "slot
-	// is past the decoded region" (skip cell-by-cell). Without this flag a
-	// zeroed GridBlockSize (BlockSize128x128) collides with unvisited cells
-	// and forces the scan to fall back to a 4x4 stride past intra neighbors,
-	// oversampling deeper cells libaom never visits.
-	GridBlockSizeVisited [MaxBlockModeSlots][MaxBlockModeSlots]uint8
+const (
+	gridRecordMotionValid uint8 = 1 << iota
+	gridRecordInterpValid
+	gridRecordSizeVisited
+)
+
+// blockModeGridRecord is the canonical state for every MI cell owned by one
+// decoded leaf block. Its 20-byte layout plus the 2-byte owner map occupies
+// exactly the same 22 bytes/cell as the former six structure-of-arrays grids,
+// while eliminating repeated payload stores for blocks larger than 4x4.
+type blockModeGridRecord struct {
+	Motion  InterMotionResult
+	Filters motion.InterpFilters
+	Size    BlockSize
+	Flags   uint8
 }
 
 // CDEFIndexContext caches the cdef_idx values already read for the 64x64 CDEF

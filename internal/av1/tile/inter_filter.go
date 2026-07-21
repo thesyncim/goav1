@@ -277,16 +277,9 @@ func (c *BlockModeContext) MarkInterFilters(size BlockSize, x4 int, y4 int, refs
 		c.LeftInterp[y4+i] = filters
 		c.LeftInterpValid[y4+i] = 1
 	}
-	// Record the per-MI filter pair so the sub8x8 chroma predictor can read
-	// each covered luma sub-block's own filters (libaom's this_mbmi->
-	// interp_filters), mirroring the GridInterMotion grid written by
-	// MarkInterMotion.
-	for r := 0; r < int(dims.H4); r++ {
-		for col := 0; col < int(dims.W4); col++ {
-			c.GridInterp[y4+r][x4+col] = filters
-			c.GridInterpValid[y4+r][x4+col] = 1
-		}
-	}
+	// The per-MI owner map already identifies every covered luma sub-block,
+	// so install the filter pair once in the owning block record.
+	c.markGridInterFilters(size, x4, y4, filters, dims)
 	return nil
 }
 

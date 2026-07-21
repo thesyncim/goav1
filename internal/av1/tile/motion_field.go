@@ -218,29 +218,71 @@ func (f *TemporalMotionField) ProjectReferenceFrame(req TemporalMotionProjection
 	cols := int(f.Cols)
 	stride := int(f.Stride)
 	for blkRow := 0; blkRow < startRows; blkRow++ {
-		for blkCol := 0; blkCol < startCols; blkCol++ {
-			mvRef := start.Entries[blkRow*startStride+blkCol]
+		startRow := start.Entries[blkRow*startStride : blkRow*startStride+startCols]
+		for blkCol := 0; blkCol < startCols; {
+			mvRef := startRow[blkCol]
+			runEnd := blkCol + 1
+			if start.runsValid {
+				run := int(referenceMVEntryRun(&startRow[blkCol]))
+				if run == 0 {
+					run = 1
+				}
+				if run > startCols-blkCol {
+					return false, ErrInvalidDecodeState
+				}
+				runEnd = blkCol + run
+			} else {
+				for runEnd < startCols && startRow[runEnd] == mvRef {
+					runEnd++
+				}
+			}
 			if !mvRef.Valid || !mvRef.Ref.Valid() {
+				blkCol = runEnd
 				continue
 			}
 			refFrameOffset := refOffsets[mvRef.Ref]
 			if absInt(refFrameOffset) > motionFieldMaxFrameDistance ||
 				refFrameOffset <= 0 ||
 				absInt(startToCurrent) > motionFieldMaxFrameDistance {
+				blkCol = runEnd
 				continue
 			}
 			projected, err := motionFieldProjectMV(mvRef.MV, startToCurrent, refFrameOffset)
 			if err != nil {
 				return false, err
 			}
-			row, col, ok := motionFieldBlockPosition(rows, cols, blkRow, blkCol, projected, req.Backward)
-			if !ok {
+			rowOffset := motionFieldBlockOffset(projected.Row)
+			colOffset := motionFieldBlockOffset(projected.Col)
+			if req.Backward {
+				rowOffset = -rowOffset
+				colOffset = -colOffset
+			}
+			row := blkRow + rowOffset
+			baseBlkRow := (blkRow >> 3) << 3
+			if row < 0 || row >= rows ||
+				row < baseBlkRow-(motionFieldMaxOffsetHeight>>3) ||
+				row >= baseBlkRow+8+(motionFieldMaxOffsetHeight>>3) {
+				blkCol = runEnd
 				continue
 			}
-			f.Entries[row*stride+col] = TemporalMotionEntry{
+			entry := TemporalMotionEntry{
 				MV:             mvRef.MV,
 				RefFrameOffset: uint8(refFrameOffset),
 				Valid:          true,
+			}
+			for blkCol < runEnd {
+				baseBlkCol := (blkCol >> 3) << 3
+				segmentEnd := min(runEnd, baseBlkCol+8)
+				first := max(blkCol, -colOffset, baseBlkCol-(motionFieldMaxOffsetWidth>>3)-colOffset)
+				last := min(segmentEnd, cols-colOffset, baseBlkCol+8+(motionFieldMaxOffsetWidth>>3)-colOffset)
+				if first < last {
+					dstStart := row*stride + first + colOffset
+					dstEnd := dstStart + last - first
+					for i := dstStart; i < dstEnd; i++ {
+						f.Entries[i] = entry
+					}
+				}
+				blkCol = segmentEnd
 			}
 		}
 	}

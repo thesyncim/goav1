@@ -490,7 +490,7 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 
 func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8) error {
 	scratch.Partition = PartitionContext{}
-	scratch.Mode = BlockModeContext{}
+	scratch.Mode.resetRoot()
 	scratch.CDEF.Reset()
 	scratch.CoeffCtx = CoeffEntropyContext{}
 	if carrier == nil {
@@ -582,6 +582,14 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.SBDiagonalBlockSizeVisitedGrid = carrier.Diagonal[rootColIndex].BlockSizeVisited
 	}
 	return nil
+}
+
+// resetRoot clears the compact neighbor/snapshot state and invalidates every
+// grid cell. Block records are deliberately retained: clearing the 2-byte
+// owner map makes every stale payload unreachable without rewriting it.
+func (c *BlockModeContext) resetRoot() {
+	c.blockModeNeighborContext = blockModeNeighborContext{}
+	c.gridOwners = [MaxBlockModeSlots][MaxBlockModeSlots]uint16{}
 }
 
 func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, sbSizeMIB uint8) error {
@@ -727,10 +735,14 @@ func captureDiagonalCornerToPending(carrier *BlockLoopContextCarrier, nextColInd
 			if col < 0 {
 				break
 			}
-			dst.InterMotion[d][e] = mode.GridInterMotion[row][col]
-			dst.MotionValid[d][e] = mode.GridMotionValid[row][col]
-			dst.BlockSize[d][e] = mode.GridBlockSize[row][col]
-			dst.BlockSizeVisited[d][e] = mode.GridBlockSizeVisited[row][col]
+			record, ok := mode.gridRecordAt(col, row)
+			if !ok {
+				continue
+			}
+			dst.InterMotion[d][e] = record.Motion
+			dst.MotionValid[d][e] = boolByte(record.Flags&gridRecordMotionValid != 0)
+			dst.BlockSize[d][e] = record.Size
+			dst.BlockSizeVisited[d][e] = boolByte(record.Flags&gridRecordSizeVisited != 0)
 		}
 	}
 }
@@ -843,10 +855,16 @@ func captureAboveCrossSBHistory(dst *blockModeAboveContext, mode *BlockModeConte
 		if row < 0 {
 			break
 		}
-		dst.InterMotionHistory[d] = mode.GridInterMotion[row]
-		dst.MotionValidHistory[d] = mode.GridMotionValid[row]
-		dst.BlockSizeHistory[d] = mode.GridBlockSize[row]
-		dst.BlockSizeVisitedHistory[d] = mode.GridBlockSizeVisited[row]
+		for col := range MaxBlockModeSlots {
+			record, ok := mode.gridRecordAt(col, row)
+			if !ok {
+				continue
+			}
+			dst.InterMotionHistory[d][col] = record.Motion
+			dst.MotionValidHistory[d][col] = boolByte(record.Flags&gridRecordMotionValid != 0)
+			dst.BlockSizeHistory[d][col] = record.Size
+			dst.BlockSizeVisitedHistory[d][col] = boolByte(record.Flags&gridRecordSizeVisited != 0)
+		}
 	}
 }
 
@@ -880,10 +898,14 @@ func captureLeftCrossSBHistory(dst *blockModeLeftContext, mode *BlockModeContext
 			break
 		}
 		for y := range MaxBlockModeSlots {
-			dst.InterMotionHistory[d][y] = mode.GridInterMotion[y][col]
-			dst.MotionValidHistory[d][y] = mode.GridMotionValid[y][col]
-			dst.BlockSizeHistory[d][y] = mode.GridBlockSize[y][col]
-			dst.BlockSizeVisitedHistory[d][y] = mode.GridBlockSizeVisited[y][col]
+			record, ok := mode.gridRecordAt(col, y)
+			if !ok {
+				continue
+			}
+			dst.InterMotionHistory[d][y] = record.Motion
+			dst.MotionValidHistory[d][y] = boolByte(record.Flags&gridRecordMotionValid != 0)
+			dst.BlockSizeHistory[d][y] = record.Size
+			dst.BlockSizeVisitedHistory[d][y] = boolByte(record.Flags&gridRecordSizeVisited != 0)
 		}
 	}
 }
@@ -1142,6 +1164,7 @@ func (s *DecodeState) decodeBlockPredictionModeIntoZeroed(cdfs BlockLoopCDFs, ct
 		globalMVs := blockReferenceGlobalMVsForBlock(refs, req.GlobalMVs, req.GlobalMotion, req.AllowHighPrecisionMV, req.ForceIntegerMV, block)
 		globalMotionTypes := blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes)
 		if req.DecodeInterModes {
+			haveTopRight := blockHasTopRight(req.SBSizeMIB, block)
 			stackReq := referenceMVStackRequestRegion(req, block)
 			stackReq.Size = block.Size
 			stackReq.References = refs
@@ -1149,7 +1172,7 @@ func (s *DecodeState) decodeBlockPredictionModeIntoZeroed(cdfs BlockLoopCDFs, ct
 			stackReq.Y4 = block.Y4
 			stackReq.HaveTop = block.HaveTop
 			stackReq.HaveLeft = block.HaveLeft
-			stackReq.HaveTopRight = blockHasTopRight(req.SBSizeMIB, block)
+			stackReq.HaveTopRight = haveTopRight
 			stackReq.GlobalMVs = globalMVs
 			stackReq.GlobalMotionType = globalMotionTypes
 			stackReq.RefSignBias = req.RefSignBias
@@ -1240,7 +1263,7 @@ func (s *DecodeState) decodeBlockPredictionModeIntoZeroed(cdfs BlockLoopCDFs, ct
 						VisibleH4:    block.VisibleH4,
 						HaveTop:      block.HaveTop,
 						HaveLeft:     block.HaveLeft,
-						HaveTopRight: blockHasTopRight(req.SBSizeMIB, block),
+						HaveTopRight: haveTopRight,
 					})
 					if err != nil {
 						return fmt.Errorf("collect overlappable neighbors: %w", err)
@@ -1258,7 +1281,7 @@ func (s *DecodeState) decodeBlockPredictionModeIntoZeroed(cdfs BlockLoopCDFs, ct
 					// warpSampleGrid -> crossSBInterGridInterMotion), matching
 					// libaom's frame-wide av1_findSamples scan, so no separate
 					// SB-diagonal corner augmentation is needed here.
-					numProjRef, err := ctx.WarpSampleCountWithContext(block, refs.Ref[0], req.SBSizeMIB)
+					numProjRef, err := ctx.warpSampleCountWithTopRight(block, refs.Ref[0], haveTopRight)
 					if err != nil {
 						return fmt.Errorf("count warp samples: %w", err)
 					}
@@ -1282,7 +1305,7 @@ func (s *DecodeState) decodeBlockPredictionModeIntoZeroed(cdfs BlockLoopCDFs, ct
 					result.MotionMode = motionMode
 					result.MotionModeValid = true
 					if motionMode == MotionModeWarp {
-						model, invalid, err := ctx.WarpProjectionWithContext(block, refs.Ref[0], motionResult.Motion.MV[0], req.SBSizeMIB)
+						model, invalid, err := ctx.warpProjectionWithTopRight(block, refs.Ref[0], motionResult.Motion.MV[0], haveTopRight)
 						if err != nil {
 							return fmt.Errorf("project warped motion: %w", err)
 						}
@@ -1398,11 +1421,8 @@ func (s *DecodeState) decodeBlockPredictionModeIntoZeroed(cdfs BlockLoopCDFs, ct
 						result.SubChromaInterValid = true
 					}
 				}
-				if err := ctx.MarkInterMotion(block.Size, blockX4, blockY4, result.InterMotion, hasChroma); err != nil {
-					return fmt.Errorf("mark inter motion: %w", err)
-				}
-				if err := ctx.MarkInterFilters(block.Size, blockX4, blockY4, refs, filters); err != nil {
-					return fmt.Errorf("mark inter filters: %w", err)
+				if err := ctx.markInterMotionAndFilters(block.Size, blockX4, blockY4, result.InterMotion, hasChroma, filters); err != nil {
+					return fmt.Errorf("mark inter motion and filters: %w", err)
 				}
 				if result.InterIntraValid && result.InterIntra.Enabled {
 					// MarkInterMotion -> MarkInter clears AboveInterIntra /

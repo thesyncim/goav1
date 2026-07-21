@@ -34,7 +34,7 @@ func (b *FrameWorkBatch) BindReferenceMVFrame(entries []tile.ReferenceMVEntry) (
 		return tile.ReferenceMVFrame{}, ErrInvalidBatch
 	}
 	var frame tile.ReferenceMVFrame
-	if err := frame.Init(miRows, miCols, entries); err != nil {
+	if err := frame.InitTracked(miRows, miCols, entries); err != nil {
 		return tile.ReferenceMVFrame{}, ErrInvalidBatch
 	}
 	return frame, nil
