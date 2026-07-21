@@ -76,20 +76,23 @@ package tile
 //
 // Row addressing is two ALU ops: r9 = ctx + ctx<<3 (9*ctx); row = arr + r9<<2.
 //
-// Scan table (coeffScanHotTable[size][Class2D], 8 bytes per coefficient,
+// Scan table (coeffScanHotTable[size][class], 8 bytes per coefficient,
 // loaded with a single MOVD per iteration and cracked with UBFX/SBFX):
 //
 //	bits  0-15 pos            raster position (col*height+row), <= 1023
 //	bits 16-31 padded         levels-scratch offset col*stride+row
-//	bits 32-39 lower2DOffset  signed base-context class offset {0,1,6,11,16,21}
-//	bits 40-47 br2DOffset     signed BR-context offset {0,7,14}
+//	bits 32-39 lowerOffset    base-context class offset (2D or 1D)
+//	bits 40-47 brOffset       BR-context class offset {0,7,14}
 //	bits 48-63 lowerEOBCtx/brEOBCtx (P0 only; ignored by the P1 kernel)
 //
 // Levels scratch (*uint8): padded column-major level buffer, stride =
 // scanHeight+4; capacity (scanWidth+4)*stride proven by the Go prologue, so
-// every neighbour read (padded+1, +2, +stride, +stride+1, +2*stride) is in
+// every 2D or 1D neighbour read (through padded+4 or padded+4*stride) is in
 // bounds by construction — the asm carries no bounds checks, exactly like the
-// `_ = levelsScratch[s2]` BCE hints it replaces.
+// Go BCE hints it replaces. While this kernel owns the window, each nonzero
+// byte packs the raw 0..15 level in bits 0..3 and min(level,3) in bits 4..5.
+// P1 consumes the cached high nibble, P2 masks the raw low nibble, and the
+// next-TXB sparse clear treats the byte as opaque.
 //
 // Outputs (append-only, capacity 1024 each, proven by eob <= maxEOB <= 1024):
 //
@@ -97,7 +100,7 @@ package tile
 //	levelDirtyArr *[1024]int16  padded offsets for the next-TXB sparse clear
 //
 // Geometry constants passed as scalars: cHi (= eob-2), cLo (0 for the fused
-// loop+DC form), stride, update flag. Return value: number of appended
+// loop+DC form), stride, class, update flag. Return value: number of appended
 // (dirty, levelDirty) pairs — the two lists always grow in lockstep.
 //
 // ─────────────────────────────────────────────────────────────────────────────
@@ -131,11 +134,11 @@ package tile
 //     fusing P0+P1+P3 into a whole-TXB kernel still pays.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. Register plan for the P1(+P2) kernel — coeffBaseLevels2DARM64
+// 3. Register plan for the P1(+P2) kernel — coeffBaseLevelsARM64
 //
-// func coeffBaseLevels2DARM64(c *Cursor, scanHot unsafe.Pointer, cHi, cLo int64,
+// func coeffBaseLevelsARM64(c *Cursor, scanHot unsafe.Pointer, cHi, cLo int64,
 //	levels *uint8, stride int64, base *CDF, br *CDF,
-//	dirty *int16, levelDirty *int16, update int64) int64
+//	dirty *int16, levelDirty *int16, class int64, update int64) int64
 //
 // Loop-resident (live across iterations):
 //
@@ -144,7 +147,7 @@ package tile
 //	R10 tellOffs(sx16) R19 c             R20 cLo            R21 stride
 //	R22 dirty cursor   R23 levelDirty cursor                R24 update flag
 //	R25 appended count R26 scanHot[c] raw / BR extra accumulator
-//	R15 level accumulator for the current coefficient
+//	R27 transform class; R15 level accumulator for the current coefficient
 //
 // Iteration-scratch: R0, R9, R11-R14, R16, R17.
 //	R14 holds the current CDF row pointer and survives refill; R16 holds the
@@ -157,32 +160,36 @@ package tile
 // reloaded from the stack args inside the block (refill is rare), freeing
 // three otherwise-persistent registers for the loop.
 //
-// Not touched: V8-V15 (no vector code at all), R18 (platform), R27 (asm
-// temp), R28 (g), R29/R30 (FP/LR). NOSPLIT, frame $0, args 96 bytes — leaf
+// Not touched: V8-V15 (no vector code at all), R18 (platform), R28 (g),
+// R29/R30 (FP/LR). NOSPLIT, frame $0, args 104 bytes — leaf
 // with zero locals, far inside the <800B nosplit headroom rule.
 //
 // Per-iteration flow:
 //
 //	load  R26 = MOVD (scanHot)(c<<3)
-//	ctx:  pos==0 -> 0; else five MOVBU neighbour loads, clip3 via the
-//	      branchless (x-3)&((x-3)>>63) identity folded to Σt+15, (mag+1)>>1,
-//	      CSEL-min 4, + SBFX lower2DOffset
+//	ctx:  load the five cached min(level,3) high nibbles (2D folds its two
+//	      adjacent pairs into MOVHU loads; vertical folds p1..p4 into one
+//	      MOVWU; horizontal keeps its strided MOVBU loads), sum,
+//	      (mag+1)>>1, CSEL-min 4, + SBFX lowerOffset
 //	read: 4-symbol inverse-CDF search (three MUL/CMP steps, early-out BCS),
-//	      renormalize (CLZ on rng low 16), refill iff cnt<0
+//	      renormalize (rng is already zero-extended in 1..65535, so direct
+//	      64-bit CLZ minus 48 is CLZ16 without a masking dependency), refill
+//	      iff cnt<0
 //	adapt: skipped when update==0; else rate = 5 + count>>4, the symbol-indexed
 //	      4-way branch updates c0..c2 in memory (up: v += (32768-v)>>rate,
 //	      down: v -= v>>rate) and stores count+1 while count < 32 — the exact
 //	      updateCDFWindow shape for symbols==4 (rate bias +1 applies because
 //	      symbols > 3; 5 = 4+1 is precomputed)
-//	BR:   if symbol==3: brCtx from three unclipped neighbour levels
-//	      ((mag+1)>>1 CSEL-min 6 + SBFX br2DOffset), then the chained reads on
+//	BR:   if symbol==3: brCtx from three low-nibble raw neighbour levels
+//	      ((mag+1)>>1 CSEL-min 6 + SBFX brOffset), then the chained reads on
 //	      row br+36*brCtx: extra += symbol, loop while symbol==3 && extra<12
 //	      (extra==3k counts the reads, so no separate chain counter register),
 //	      adapt-per-read iff update — bit-identical to both
 //	      readCDF4HighTokenUpdateLoop and readCDF4HighTokenKnown because the
 //	      no-update variant re-reads the unmodified row from memory
-//	store: level==0 -> next; else MOVB level -> levels[padded], MOVH padded ->
-//	      levelDirty++, MOVH (level<<10|pos) -> dirty++, appended++
+//	store: level==0 -> next; else pack level|min(level,3)<<4 -> levels[padded],
+//	      MOVH padded -> levelDirty++, MOVH (level<<10|pos) -> dirty++,
+//	      appended++
 //	next: c--; loop while c >= cLo
 //
 // ─────────────────────────────────────────────────────────────────────────────
@@ -193,14 +200,15 @@ package tile
 //	readCoefficientsTXBTracked2DWithGeo: both cdfUpdate variants of the
 //	  c=eob-2..1 loop plus the separate DC block (kernel cLo=0 covers DC:
 //	  scanHot[0].pos==0 -> ctx 0, br2DOffset 0, identical order of appends).
-//	readCoefficientsTXBWithGeo: the useScanHot cdfUpdate loop (c=eob-2..0).
+//	readCoefficientsTXBWithGeo: trusted scan-hot loops in either update mode
+//	  (c=eob-2..0).
 //
-// The Horiz/Vert and untrusted-scan loops stay in Go (different context
-// derivation; D3-c decides whether they are worth their own kernels — they
-// are a small share of coefficients).
+// The same trusted scan-hot cut covers Class2D, ClassHoriz, and ClassVert;
+// their packed rows carry the appropriate neighbour-context offsets. Only
+// untrusted-scan and public no-scratch fallbacks stay in Go.
 //
 // Dispatch is a package-level bool (static branch, no func pointers per the
-// zero-alloc rules): entropy.HasCoeffBaseLevels2D (build-tag constant,
+// zero-alloc rules): entropy.HasCoeffBaseLevels (build-tag constant,
 // arm64 && !purego && !goav1_trace_rng) && GOAV1_DISABLE_COEFF_ASM unset.
 // The env var is the kill switch; the differential harness proves the two
 // sides of the switch byte-identical.

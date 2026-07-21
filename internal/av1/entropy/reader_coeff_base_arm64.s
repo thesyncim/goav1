@@ -23,15 +23,15 @@
 #define CDF_C2   6
 #define CDF_CNT 10
 
-// func coeffBaseLevels2DARM64(c *Cursor, scanHot unsafe.Pointer, cHi, cLo int,
+// func coeffBaseLevelsARM64(c *Cursor, scanHot unsafe.Pointer, cHi, cLo int,
 //	levels *uint8, stride int, base *CDF, br *CDF,
-//	dirty *int16, levelDirty *int16, update bool) int
+//	dirty *int16, levelDirty *int16, class int, update bool) int
 //
 // M-D3 D3-b kernel (spec: internal/av1/tile/coeff_asm_arm64_spec.go §3).
-// Scalar source-shaped port of the Class2D base-levels loop of
-// tile.readCoefficientsTXBTracked2DWithGeo with the BR high-token chain
-// (dav1d msac_decode_hi_tok shape, already proven as readCDF4HighTokenUpdateArch)
-// inlined, over goav1's 64-bit XOR-into-ones window. The refill blocks are
+// Scalar source-shaped port of the 2D/horizontal/vertical base-levels loops
+// with the BR high-token chain (dav1d msac_decode_hi_tok shape, already proven
+// as readCDF4HighTokenUpdateArch) inlined, over goav1's 64-bit XOR-into-ones
+// window. The refill blocks are
 // verbatim copies of the established reader_bit_arm64.s refill; src ptr/len
 // and the cursor pointer are reloaded from the stack args inside them so the
 // loop keeps three more persistent registers.
@@ -39,10 +39,10 @@
 // Register plan (see spec §3): persistent R1 base, R2 br, R3 scanHot,
 // R4 levels, R5 cnt, R6 pos, R7 dif, R8 rng, R10 tellOffs, R19 c, R20 cLo,
 // R21 stride, R22 dirty cursor, R23 levelDirty cursor, R24 update flag,
-// R25 appended, R15 level, R26 scanHot entry / BR extra accumulator.
+// R25 appended, R15 level, R26 scanHot entry / BR extra accumulator, R27 class.
 // Iteration scratch R0, R9, R11-R14, R16, R17; refill clobbers only
-// {R0, R9, R11, R12, R13, R17}. V8-V15, R18, R27-R30 untouched.
-TEXT ·coeffBaseLevels2DARM64(SB), NOSPLIT, $0-96
+// {R0, R9, R11, R12, R13, R17}. V8-V15, R18, R28-R30 untouched.
+TEXT ·coeffBaseLevelsARM64(SB), NOSPLIT, $0-104
 	MOVD  c+0(FP), R0
 	MOVD  CURSOR_DIF(R0), R7
 	MOVHU CURSOR_RNG(R0), R8
@@ -58,46 +58,39 @@ TEXT ·coeffBaseLevels2DARM64(SB), NOSPLIT, $0-96
 	MOVD  br+56(FP), R2
 	MOVD  dirty+64(FP), R22
 	MOVD  levelDirty+72(FP), R23
-	MOVBU update+80(FP), R24
+	MOVD  class+80(FP), R27
+	MOVBU update+88(FP), R24
 	MOVD  $0, R25
 	CMP   R20, R19
 	BLT   done
 
 loop:
 	MOVD (R3)(R19<<3), R26 // scanHot[c]: pos | padded<<16 | lower2D<<32 | br2D<<40
+	CBNZ R27, ctx1D
 
 	// Base context: 0 for the DC position, else
-	// min((Σ clip3(neighbour)+1)>>1, 4) + lower2DOffset. clip3 is computed as
-	// 3 + ((x-3)&((x-3)>>63)); the +3 terms are folded into the final +16
-	// (= 5*3 + the AV1 (mag+1) rounding).
+	// min((Σ clip3(neighbour)+1)>>1, 4) + lower2DOffset. Each nonzero levels
+	// byte packs the raw 0..15 level in its low nibble and clip3(level) in its
+	// high nibble, avoiding five dependent min operations per token.
 	UBFX  $0, R26, $16, R12 // pos
 	CBZ   R12, ctxZero
 	UBFX  $16, R26, $16, R13 // padded
 	ADD   R13, R21, R14      // s1 = padded + stride
-	MOVBU (R4)(R14), R11     // levels[s1]
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R16
+	MOVHU (R4)(R14), R11     // levels[s1], levels[s1+1]
+	LSR   $4, R11, R11
+	ADD   R11>>8, R11, R16
+	AND   $15, R16, R16
 	ADD   $1, R13, R15
-	MOVBU (R4)(R15), R11 // levels[padded+1]
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
-	ADD   R11, R16, R16
-	ADD   $1, R14, R15
-	MOVBU (R4)(R15), R11 // levels[s1+1]
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
+	MOVHU (R4)(R15), R11 // levels[padded+1], levels[padded+2]
+	LSR   $4, R11, R11
+	ADD   R11>>8, R11, R11
+	AND   $15, R11, R11
 	ADD   R11, R16, R16
 	ADD   R21, R14, R15
 	MOVBU (R4)(R15), R11 // levels[padded+2*stride]
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
+	LSR   $4, R11, R11
 	ADD   R11, R16, R16
-	ADD   $2, R13, R15
-	MOVBU (R4)(R15), R11 // levels[padded+2]
-	SUB   $3, R11, R11
-	AND   R11->63, R11, R11
-	ADD   R11, R16, R16
-	ADD   $16, R16, R16 // mag+1
+	ADD   $1, R16, R16 // mag+1
 	LSR   $1, R16, R16  // (mag+1)>>1
 	MOVD  $4, R11
 	CMP   R11, R16
@@ -108,6 +101,55 @@ loop:
 
 ctxZero:
 	MOVD $0, R16
+	B    ctxDone
+
+ctx1D:
+	// Horizontal transforms use {s1,p1,s2,s3,s4}; vertical transforms use
+	// {s1,p1,p2,p3,p4}. The scan table stores the corresponding 1D class
+	// offset in the same byte used by lower2DOffset.
+	UBFX  $16, R26, $16, R13 // padded
+	ADD   R13, R21, R14      // s1
+	MOVBU (R4)(R14), R11
+	LSR   $4, R11, R16
+	CMP   $1, R27
+	BNE   ctxVertTail
+	ADD   $1, R13, R15       // p1
+	MOVBU (R4)(R15), R11
+	LSR   $4, R11, R11
+	ADD   R11, R16, R16
+
+	ADD   R14, R21, R15 // s2
+	MOVBU (R4)(R15), R11
+	LSR   $4, R11, R11
+	ADD   R11, R16, R16
+	ADD   R15, R21, R15 // s3
+	MOVBU (R4)(R15), R11
+	LSR   $4, R11, R11
+	ADD   R11, R16, R16
+	ADD   R15, R21, R15 // s4
+	MOVBU (R4)(R15), R11
+	LSR   $4, R11, R11
+	ADD   R11, R16, R16
+	B     ctx1DReduce
+
+ctxVertTail:
+	ADD   $1, R13, R15 // p1..p4 are contiguous
+	MOVWU (R4)(R15), R11
+	LSR   $4, R11, R11
+	AND   $0x0f0f0f0f0f0f0f0f, R11, R11
+	ADD   R11>>16, R11, R11
+	ADD   R11>>8, R11, R11
+	AND   $15, R11, R11
+	ADD   R11, R16, R16
+
+ctx1DReduce:
+	ADD   $1, R16, R16
+	LSR   $1, R16, R16
+	MOVD  $4, R11
+	CMP   R11, R16
+	CSEL  LO, R16, R11, R16
+	SBFX  $32, R26, $8, R11
+	ADD   R11, R16, R16
 
 ctxDone:
 	ADD R16<<3, R16, R11 // 9*ctx
@@ -125,36 +167,16 @@ ctxDone:
 	ADD   $12, R17, R17 // lower0 (+3*ecMinProb)
 	MOVD  $0, R16
 	CMP   R17, R12
-	BCS   baseRenorm
-	MOVD  $1, R16
-	MOVD  R17, R13
-	MOVHU CDF_C1(R14), R11
-	LSR   $6, R11, R17
-	MUL   R9, R17, R17
-	LSR   $1, R17, R17
-	ADD   $8, R17, R17 // lower1 (+2*ecMinProb)
-	CMP   R17, R12
-	BCS   baseRenorm
-	MOVD  $2, R16
-	MOVD  R17, R13
-	MOVHU CDF_C2(R14), R11
-	LSR   $6, R11, R17
-	MUL   R9, R17, R17
-	LSR   $1, R17, R17
-	ADD   $4, R17, R17 // lower2 (+ecMinProb)
-	CMP   R17, R12
-	BCS   baseRenorm
-	MOVD  $3, R16
-	MOVD  R17, R13
-	MOVD  $0, R17
+	BCC   baseNonZeroThreshold
 
 baseRenorm:
 	LSL  $48, R17, R11
 	SUB  R11, R7, R7  // dif -= lower << (ecWindow-16)
 	SUB  R17, R13, R8 // rng = upper - lower
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	// R8 stays zero-extended in 1..65535; direct CLZ avoids a redundant
+	// low-16 extraction on the symbol dependency chain.
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -220,9 +242,9 @@ baseAdapt:
 	// bias is baked into the 5); adapt in memory, count saturates at 32.
 	CBZ   R24, baseAdaptDone
 	MOVHU CDF_CNT(R14), R13
+	CBZ   R16, baseUpd0
 	LSR   $4, R13, R11
 	ADD   $5, R11, R11 // rate
-	CBZ   R16, baseUpd0
 	CMP   $1, R16
 	BEQ   baseUpd1
 	CMP   $2, R16
@@ -250,19 +272,36 @@ baseAdapt:
 	B     baseUpdCount
 
 baseUpd0:
-	MOVHU CDF_C0(R14), R12
-	LSR   R11, R12, R9
+	// Symbol zero moves c0/c1/c2 toward zero by the same runtime rate.
+	// values[3] is the invariant zero terminator, so a single 4H update is
+	// exact and replaces three independent scalar load/shift/sub/store chains.
+	// Once the adaptation count saturates, the rate is fixed at seven. Update
+	// all three 16-bit lanes as one packed word; masking after the shift removes
+	// cross-lane bits, and no lane can borrow because v-(v>>7) is nonnegative.
+	CMP   $32, R13
+	BNE   baseUpd0Dynamic
+	MOVD  CDF_C0(R14), R12
+	LSR   $7, R12, R9
+	AND   $0x01ff01ff01ff01ff, R9, R9
 	SUB   R9, R12, R12
-	MOVH  R12, CDF_C0(R14)
-	MOVHU CDF_C1(R14), R12
-	LSR   R11, R12, R9
-	SUB   R9, R12, R12
-	MOVH  R12, CDF_C1(R14)
-	MOVHU CDF_C2(R14), R12
-	LSR   R11, R12, R9
-	SUB   R9, R12, R12
-	MOVH  R12, CDF_C2(R14)
-	B     baseUpdCount
+	MOVD  R12, CDF_C0(R14)
+	B     next
+baseUpd0Dynamic:
+	LSR   $4, R13, R11
+	ADD   $5, R11, R11 // rate
+	ADD   $CDF_C0, R14, R12
+	VLD1  (R12), [V0.H4]
+	NEG   R11, R9
+	WORD  $0x4e020d21 // dup v1.8h, w9
+	WORD  $0x6e614402 // ushl v2.8h, v0.8h, v1.8h
+	WORD  $0x6e628400 // sub v0.8h, v0.8h, v2.8h
+	VST1  [V0.H4], (R12)
+	// The branch above proved count < 32. Finish the zero update here and
+	// jump straight to the next coefficient instead of crossing the generic
+	// count and store dispatches.
+	ADD   $1, R13, R13
+	MOVH  R13, CDF_CNT(R14)
+	B     next
 
 baseUpd1:
 	MOVHU CDF_C0(R14), R12
@@ -306,6 +345,9 @@ baseUpdCount:
 	MOVH R13, CDF_CNT(R14)
 
 baseAdaptDone:
+	// Zero is the dominant base symbol and has no scratch/list side effect.
+	// Bypass both the BR test and the later store guard in one branch.
+	CBZ  R16, next
 	MOVD R16, R15 // level = symbol
 	CMP  $3, R16
 	BNE  store
@@ -315,21 +357,58 @@ baseAdaptDone:
 	// four chained reads of the same row, extra += symbol, stop when
 	// symbol < 3. extra == 3k after k saturating reads, so extra < 12 is
 	// exactly the reads < 4 bound and no chain counter is needed.
+	CBNZ  R27, brCtx1D
 	UBFX  $16, R26, $16, R13 // padded
 	ADD   R13, R21, R14      // s1
 	MOVBU (R4)(R14), R16     // levels[s1]
+	AND   $15, R16, R16
 	ADD   $1, R13, R11
 	MOVBU (R4)(R11), R12 // levels[padded+1]
+	AND   $15, R12, R12
 	ADD   R12, R16, R16
 	ADD   $1, R14, R11
 	MOVBU (R4)(R11), R12 // levels[s1+1]
+	AND   $15, R12, R12
 	ADD   R12, R16, R16
 	ADD   $1, R16, R16
 	LSR   $1, R16, R16
 	MOVD  $6, R11
 	CMP   R11, R16
 	CSEL  LO, R16, R11, R16 // min(mag, 6)
-	SBFX  $40, R26, $8, R11 // br2DOffset
+	B     brCtxOffset
+
+brCtx1D:
+	UBFX  $16, R26, $16, R13 // padded
+	ADD   R13, R21, R14      // s1
+	MOVBU (R4)(R14), R16
+	AND   $15, R16, R16
+	ADD   $1, R13, R11       // p1
+	MOVBU (R4)(R11), R12
+	AND   $15, R12, R12
+	ADD   R12, R16, R16
+	CMP   $1, R27
+	BNE   brCtxVert
+	ADD   R14, R21, R11 // s2
+	MOVBU (R4)(R11), R12
+	B     brCtx1DLast
+
+brCtxVert:
+	ADD   $2, R13, R11 // p2
+	MOVBU (R4)(R11), R12
+
+brCtx1DLast:
+	AND   $15, R12, R12
+	ADD   R12, R16, R16
+
+brCtxReduce:
+	ADD   $1, R16, R16
+	LSR   $1, R16, R16
+	MOVD  $6, R11
+	CMP   R11, R16
+	CSEL  LO, R16, R11, R16
+
+brCtxOffset:
+	SBFX  $40, R26, $8, R11 // class-specific BR context offset
 	ADD   R11, R16, R16     // brCtx
 	ADD   R16<<3, R16, R11
 	ADD   R11<<2, R2, R14   // row = br + 36*brCtx
@@ -374,8 +453,7 @@ brRenorm:
 	SUB  R11, R7, R7
 	SUB  R17, R13, R8
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -437,9 +515,9 @@ brRefillTail:
 brAdapt:
 	CBZ   R24, brAdaptDone
 	MOVHU CDF_CNT(R14), R13
+	CBZ   R16, brUpd0
 	LSR   $4, R13, R11
 	ADD   $5, R11, R11
-	CBZ   R16, brUpd0
 	CMP   $1, R16
 	BEQ   brUpd1
 	CMP   $2, R16
@@ -466,18 +544,27 @@ brAdapt:
 	B     brUpdCount
 
 brUpd0:
-	MOVHU CDF_C0(R14), R12
-	LSR   R11, R12, R9
+	// The saturated symbol-zero update has the same fixed-rate packed form as
+	// the base CDF path above. BR rows are frequently revisited by a high-token
+	// chain, so keep their steady-state update scalar and branch-free as well.
+	CMP   $32, R13
+	BNE   brUpd0Dynamic
+	MOVD  CDF_C0(R14), R12
+	LSR   $7, R12, R9
+	AND   $0x01ff01ff01ff01ff, R9, R9
 	SUB   R9, R12, R12
-	MOVH  R12, CDF_C0(R14)
-	MOVHU CDF_C1(R14), R12
-	LSR   R11, R12, R9
-	SUB   R9, R12, R12
-	MOVH  R12, CDF_C1(R14)
-	MOVHU CDF_C2(R14), R12
-	LSR   R11, R12, R9
-	SUB   R9, R12, R12
-	MOVH  R12, CDF_C2(R14)
+	MOVD  R12, CDF_C0(R14)
+	B     brAdaptDone
+brUpd0Dynamic:
+	LSR   $4, R13, R11
+	ADD   $5, R11, R11
+	ADD   $CDF_C0, R14, R12
+	VLD1  (R12), [V0.H4]
+	NEG   R11, R9
+	WORD  $0x4e020d21 // dup v1.8h, w9
+	WORD  $0x6e614402 // ushl v2.8h, v0.8h, v1.8h
+	WORD  $0x6e628400 // sub v0.8h, v0.8h, v2.8h
+	VST1  [V0.H4], (R12)
 	B     brUpdCount
 
 brUpd1:
@@ -533,10 +620,16 @@ brDone:
 	MOVD (R3)(R19<<3), R26 // reload scanHot[c]
 
 store:
-	CBZ  R15, next
 	UBFX $16, R26, $16, R13 // padded
 	ADD  R4, R13, R11
-	MOVB R15, (R11)         // levels[padded] = level
+	CMP  $3, R15
+	BLS  storeLevelLow
+	ORR  $0x30, R15, R12
+	B    storeLevelPacked
+storeLevelLow:
+	ADD  R15<<4, R15, R12
+storeLevelPacked:
+	MOVB R12, (R11)         // levels[padded] = level | min(level,3)<<4
 	MOVH R13, (R23)         // levelDirty append: padded
 	ADD  $2, R23, R23
 	UBFX $0, R26, $16, R12  // pos
@@ -557,5 +650,32 @@ done:
 	MOVH R8, CURSOR_RNG(R0)
 	MOVH R5, CURSOR_CNT(R0)
 	MOVH R10, CURSOR_TELL_OFFS(R0)
-	MOVD R25, ret+88(FP)
+	MOVD R25, ret+96(FP)
 	RET
+
+// Symbols 1..3 are substantially colder than symbol zero on production AV1.
+// Keep their extra threshold chain out of the common loop layout; they rejoin
+// the shared range update at baseRenorm with the same upper/lower state.
+baseNonZeroThreshold:
+	MOVD  $1, R16
+	MOVD  R17, R13
+	MOVHU CDF_C1(R14), R11
+	LSR   $6, R11, R17
+	MUL   R9, R17, R17
+	LSR   $1, R17, R17
+	ADD   $8, R17, R17 // lower1 (+2*ecMinProb)
+	CMP   R17, R12
+	BCS   baseRenorm
+	MOVD  $2, R16
+	MOVD  R17, R13
+	MOVHU CDF_C2(R14), R11
+	LSR   $6, R11, R17
+	MUL   R9, R17, R17
+	LSR   $1, R17, R17
+	ADD   $4, R17, R17 // lower2 (+ecMinProb)
+	CMP   R17, R12
+	BCS   baseRenorm
+	MOVD  $3, R16
+	MOVD  R17, R13
+	MOVD  $0, R17
+	B     baseRenorm

@@ -30,6 +30,22 @@ func TestCoeffQContextMatchesLibaom(t *testing.T) {
 	}
 }
 
+func TestPackCoeffContextLevel(t *testing.T) {
+	for level := 0; level <= MaxBaseBRRange; level++ {
+		packed := packCoeffContextLevel(level)
+		if got := int(packed & 0xf); got != level {
+			t.Fatalf("level %d: raw nibble = %d", level, got)
+		}
+		wantClipped := level
+		if wantClipped > 3 {
+			wantClipped = 3
+		}
+		if got := int(packed >> 4); got != wantClipped {
+			t.Fatalf("level %d: clipped nibble = %d, want %d", level, got, wantClipped)
+		}
+	}
+}
+
 func TestCoeffCDFsInitDefaultMatchesLibaom(t *testing.T) {
 	var cdfs CoeffCDFs
 	if err := cdfs.InitDefault(0); err != nil {
@@ -458,6 +474,38 @@ func TestCoeffLevelContextsMatchLibaom(t *testing.T) {
 				t.Fatalf("CoeffLowerLevelsContext=%d want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCoeffScanHotClassOffsets(t *testing.T) {
+	for size := range transformSizeCount {
+		positions := coeffPosTable[size]
+		for class := transform.Class2D; class <= transform.ClassVert; class++ {
+			scan := coeffScanTable[size][class]
+			hot := coeffScanHotTable[size][class]
+			if len(hot) != len(scan) {
+				t.Fatalf("size=%d class=%d hot len=%d scan len=%d", size, class, len(hot), len(scan))
+			}
+			for c, rawPos := range scan {
+				pos := int(rawPos)
+				p := positions[pos]
+				wantLower := p.lower2DOffset
+				switch class {
+				case transform.ClassHoriz:
+					wantLower = int8(coeff1DContextOffset(int(p.col)))
+				case transform.ClassVert:
+					wantLower = int8(coeff1DContextOffset(int(p.row)))
+				}
+				wantBR := int8(coeffBRContextEOBFast(p, class, pos))
+				got := hot[c]
+				if got.pos != uint16(pos) || got.padded != p.padded ||
+					got.lower2DOffset != wantLower || got.br2DOffset != wantBR {
+					t.Fatalf("size=%d class=%d scan=%d got={pos:%d padded:%d lower:%d br:%d} want={pos:%d padded:%d lower:%d br:%d}",
+						size, class, c, got.pos, got.padded, got.lower2DOffset, got.br2DOffset,
+						pos, p.padded, wantLower, wantBR)
+				}
+			}
+		}
 	}
 }
 

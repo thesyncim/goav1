@@ -32,6 +32,14 @@ func packCoeffDirty(pos int, level int) int16 {
 	return int16((level << 10) | pos)
 }
 
+func packCoeffContextLevel(level int) uint8 {
+	clipped := level
+	if clipped > 3 {
+		clipped = 3
+	}
+	return uint8(level | clipped<<4)
+}
+
 func coeffDirtyPackedPos(pos int16) int {
 	return int(pos) & coeffDirtyPosMask
 }
@@ -323,21 +331,29 @@ func init() {
 		for class := transform.Class2D; class <= transform.ClassVert; class++ {
 			if scan, err := transform.DefaultScan(txSize, class); err == nil {
 				coeffScanTable[size][class] = scan
-				if class == transform.Class2D {
-					scanHot := make([]coeffScanHot, maxEOB)
-					for c, rawPos := range scan {
-						pos := int(rawPos)
-						p := hotPositions[pos]
-						scanHot[c] = coeffScanHot{
-							pos:           uint16(pos),
-							padded:        p.padded,
-							lower2DOffset: p.lower2DOffset,
-							br2DOffset:    p.br2DOffset,
-							lowerEOBCtx:   coeffLowerLevelsCtxEOBFast(maxEOB, c),
-							brEOBCtx:      coeffBRContextEOBFast(positions[pos], class, pos),
-						}
+				scanHot := make([]coeffScanHot, maxEOB)
+				for c, rawPos := range scan {
+					pos := int(rawPos)
+					p := hotPositions[pos]
+					position := positions[pos]
+					lowerOffset := p.lower2DOffset
+					switch class {
+					case transform.ClassHoriz:
+						lowerOffset = int8(coeff1DContextOffset(int(position.col)))
+					case transform.ClassVert:
+						lowerOffset = int8(coeff1DContextOffset(int(position.row)))
 					}
-					coeffScanHotTable[size][class] = scanHot
+					scanHot[c] = coeffScanHot{
+						pos:           uint16(pos),
+						padded:        p.padded,
+						lower2DOffset: lowerOffset,
+						br2DOffset:    int8(coeffBRContextEOBFast(position, class, pos)),
+						lowerEOBCtx:   coeffLowerLevelsCtxEOBFast(maxEOB, c),
+						brEOBCtx:      coeffBRContextEOBFast(position, class, pos),
+					}
+				}
+				coeffScanHotTable[size][class] = scanHot
+				if class == transform.Class2D {
 					if size == TransformSize4x4 {
 						copy(coeffScanHot4x4Y2D[:], scanHot)
 					}
@@ -926,7 +942,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 	trustedScan := req.trustedScan
 	useScanHot := false
 	var scanHotSlice []coeffScanHot
-	if trustedScan && req.Class == transform.Class2D {
+	if trustedScan {
 		scanHotSlice = coeffScanHotTable[req.Size][req.Class]
 		if len(scanHotSlice) >= maxEOB {
 			scanHotSlice = scanHotSlice[:maxEOB]
@@ -1093,18 +1109,23 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 		coeffs[lastPos] = 0
 	}
 
-	if useDirtyScanList && trackLevelDirty && req.Class == transform.Class2D {
+	if useDirtyScanList && trackLevelDirty && useScanHot && coeffBaseLevelsKernel {
+		// Keep the range decoder resident for the complete base-level walk. The
+		// packed scan row carries the class-specific context offsets, and the
+		// levels scratch carries raw level in its low nibble plus min(level,3) in
+		// its high nibble. The same kernel covers 2D, horizontal, and vertical
+		// transform classes without recomputing five clipped neighbours per token.
+		levelsScratch[lastPadded] = packCoeffContextLevel(lastLevel)
+		stride := int(geo.stride)
+		appended := reader.CoeffBaseLevels(unsafe.Pointer(&scanHotSlice[0]), eobPos-2, 0,
+			&levelsScratch[0], stride, &baseArr[0], &brArr[0],
+			&dirtyArr[nonzeroScanLen], &levelDirtyArr[levelDirtyNext], int(req.Class), cdfUpdate)
+		nonzeroScanLen += appended
+		levelDirtyNext += appended
+	} else if useDirtyScanList && trackLevelDirty && req.Class == transform.Class2D {
 		stride := int(geo.stride)
 		if cdfUpdate {
-			if useScanHot && coeffBaseLevelsKernel {
-				// M-D3 D3-b arm64 kernel; same walk as the loop below,
-				// including the pos==0 (DC) iteration.
-				appended := reader.CoeffBaseLevels2D(unsafe.Pointer(&scanHotSlice[0]), eobPos-2, 0,
-					&levelsScratch[0], stride, &baseArr[0], &brArr[0],
-					&dirtyArr[nonzeroScanLen], &levelDirtyArr[levelDirtyNext], true)
-				nonzeroScanLen += appended
-				levelDirtyNext += appended
-			} else if useScanHot {
+			if useScanHot {
 				for c := eobPos - 2; c >= 0; c-- {
 					p := scanHotSlice[c]
 					pos := int(p.pos)
@@ -1830,10 +1851,12 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 		// M-D3 D3-b arm64 kernel: the whole base-levels walk, DC included
 		// (scanHot[0].pos == 0 selects ctx 0 and the zero br2DOffset, exactly
 		// the split-out DC block below), with the BR chain inlined. Appends to
-		// the dirty/level-dirty lists in the same order as the Go loops.
-		appended := reader.CoeffBaseLevels2D(unsafe.Pointer(&scanHotSlice[0]), eobPos-2, 0,
+		// the dirty/level-dirty lists in the same order as the Go loops. Pack the
+		// EOB level into the kernel's raw-low/clipped-high scratch representation.
+		levelsScratch[lastPadded] = packCoeffContextLevel(lastLevel)
+		appended := reader.CoeffBaseLevels(unsafe.Pointer(&scanHotSlice[0]), eobPos-2, 0,
 			&levelsScratch[0], stride, &baseArr[0], &brArr[0],
-			&dirtyArr[nonzeroScanLen], &levelDirtyArr[levelDirtyNext], cdfUpdate)
+			&dirtyArr[nonzeroScanLen], &levelDirtyArr[levelDirtyNext], int(req.Class), cdfUpdate)
 		nonzeroScanLen += appended
 		levelDirtyNext += appended
 	} else if cdfUpdate {

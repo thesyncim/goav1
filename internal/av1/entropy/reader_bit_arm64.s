@@ -50,8 +50,9 @@ bitNoSub:
 bitRenorm:
 	MOVH CURSOR_CNT(R0), R5
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	// R8 is zero-extended from uint16 and remains in 1..65535, so its
+	// 64-bit CLZ is exactly 48 plus the AV1 16-bit normalization shift.
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -192,8 +193,7 @@ hiTokDecoded:
 	SUB  R11, R7, R7 // dif -= lower << (ecWindow - 16)
 	SUB  R17, R16, R8
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7

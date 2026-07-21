@@ -121,8 +121,9 @@ jrRenorm:
 	SUB  R11, R7, R7  // dif -= lower << (ecWindow-16)
 	SUB  R17, R13, R8 // rng = upper - lower
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	// R8 stays zero-extended in 1..65535, so direct 64-bit CLZ yields the
+	// AV1 16-bit normalization shift after subtracting 48.
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -316,8 +317,7 @@ sgSym1:
 
 sgRenorm:
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -434,8 +434,7 @@ clRenorm:
 	SUB  R11, R7, R7
 	SUB  R17, R13, R8
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -566,8 +565,7 @@ c0Sym1:
 
 c0Renorm:
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -683,8 +681,7 @@ blSym1:
 
 blRenorm:
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -832,8 +829,7 @@ frRenorm:
 	SUB  R11, R7, R7
 	SUB  R17, R13, R8
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -1014,8 +1010,7 @@ hpSym1:
 
 hpRenorm:
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7

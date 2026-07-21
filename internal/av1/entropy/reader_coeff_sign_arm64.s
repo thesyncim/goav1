@@ -99,8 +99,9 @@ dcSym1:
 
 dcRenorm:
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	// R8 stays zero-extended in 1..65535, so direct 64-bit CLZ yields the
+	// AV1 16-bit normalization shift after subtracting 48.
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -198,21 +199,19 @@ signRead:
 	LSL  $7, R11, R11
 	ADD  $4, R11, R11  // split
 	LSL  $48, R11, R12 // window = split << (ecWindow-16)
+	SUB  R12, R7, R13  // candidate dif when bit == 0
+	SUB  R11, R8, R9   // candidate rng when bit == 0
+	// Sign bits are close to equiprobable, so selecting both range states is
+	// cheaper than mispredicting the coded-window branch for every coefficient.
 	MOVD $1, R16
 	CMP  R12, R7
-	BCC  sbSplit
-	SUB  R12, R7, R7 // dif -= window
-	SUB  R11, R8, R8 // rng -= split
-	MOVD $0, R16
-	B    sbRenorm
-
-sbSplit:
-	MOVD R11, R8 // rng = split
+	CSEL LO, R7, R13, R7  // bit 1: keep dif; bit 0: dif -= window
+	CSEL LO, R11, R9, R8  // bit 1: rng = split; bit 0: rng -= split
+	CSEL LO, R16, ZR, R16 // bit = dif < window
 
 sbRenorm:
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -306,8 +305,7 @@ gpSplit:
 
 gpRenorm:
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
@@ -394,8 +392,7 @@ gsSplit:
 
 gsRenorm:
 	ADD  $1, R7, R7
-	UBFX $0, R8, $16, R12
-	CLZ  R12, R12
+	CLZ  R8, R12
 	SUB  $48, R12, R12
 	LSL  R12, R7, R7
 	SUB  $1, R7, R7
