@@ -675,8 +675,11 @@ type temporalReferenceMVResult struct {
 }
 
 type temporalMVProjectionOffsets struct {
-	values [2]int
-	valid  uint8
+	values     [2]int
+	scale      [2]int32
+	scaleDen   [2]uint8
+	valid      uint8
+	scaleValid uint8
 }
 
 func (req *ReferenceMVStackRequest) temporalReferenceMVs(dims BlockDimensions, stack *ReferenceMVStack) (temporalReferenceMVResult, error) {
@@ -820,10 +823,25 @@ func (req *ReferenceMVStackRequest) temporalProjectedMV(sample TemporalMotionEnt
 		projectionOffsets.values[refIndex] = currentOffset
 		projectionOffsets.valid |= mask
 	}
-	projected, err := motionFieldProjectMV(sample.MV, currentOffset, int(sample.RefFrameOffset))
-	if err != nil {
-		return motion.Vector{}, err
+	den := int(sample.RefFrameOffset)
+	if den <= 0 {
+		return motion.Vector{}, ErrInvalidDecodeState
 	}
+	if den > motionFieldMaxFrameDistance {
+		den = motionFieldMaxFrameDistance
+	}
+	if projectionOffsets.scaleValid&mask == 0 || projectionOffsets.scaleDen[refIndex] != uint8(den) {
+		num := currentOffset
+		if num > motionFieldMaxFrameDistance {
+			num = motionFieldMaxFrameDistance
+		} else if num < -motionFieldMaxFrameDistance {
+			num = -motionFieldMaxFrameDistance
+		}
+		projectionOffsets.scale[refIndex] = int32(num) * int32(motionFieldDivMult[den])
+		projectionOffsets.scaleDen[refIndex] = uint8(den)
+		projectionOffsets.scaleValid |= mask
+	}
+	projected := motionFieldProjectMVWithScale(sample.MV, projectionOffsets.scale[refIndex])
 	return motion.LowerPrecision(projected, req.AllowHighPrecisionMV, req.ForceIntegerMV), nil
 }
 

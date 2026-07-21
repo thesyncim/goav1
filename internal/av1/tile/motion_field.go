@@ -371,12 +371,20 @@ func motionFieldProjectMV(ref motion.Vector, num int, den int) (motion.Vector, e
 	} else if num < -motionFieldMaxFrameDistance {
 		num = -motionFieldMaxFrameDistance
 	}
-	row := roundPowerOfTwoSigned(int64(ref.Row)*int64(num)*int64(motionFieldDivMult[den]), 14)
-	col := roundPowerOfTwoSigned(int64(ref.Col)*int64(num)*int64(motionFieldDivMult[den]), 14)
+	scale := int32(num) * int32(motionFieldDivMult[den])
+	return motionFieldProjectMVWithScale(ref, scale), nil
+}
+
+// motionFieldProjectMVWithScale applies a validated, clamped
+// num*div_mult[den] scale. Temporal ref-MV scans cache this scale because
+// adjacent samples overwhelmingly share the same reference-frame offset.
+func motionFieldProjectMVWithScale(ref motion.Vector, scale int32) motion.Vector {
+	row := roundPowerOfTwoSigned(int64(ref.Row)*int64(scale), 14)
+	col := roundPowerOfTwoSigned(int64(ref.Col)*int64(scale), 14)
 	return motion.Vector{
 		Row: int16(clampInt64(row, motionFieldMVLower+1, motionFieldMVUpper-1)),
 		Col: int16(clampInt64(col, motionFieldMVLower+1, motionFieldMVUpper-1)),
-	}, nil
+	}
 }
 
 func motionFieldBlockPosition(rows int, cols int, blkRow int, blkCol int, mv motion.Vector, backward bool) (int, int, bool) {
