@@ -43,6 +43,15 @@ func cdefFilterBlock8SecondaryGeneralByteU8NEON(ctx *filterBlockU8ByteNEONCtx)
 //go:noescape
 func cdefFilterBlock8FusedByteU8NEON(ctx *filterBlockU8ByteNEONCtx)
 
+//go:noescape
+func cdefFilterBlock4PrimaryByteU8NEON(ctx *filterBlockU8ByteNEONCtx)
+
+//go:noescape
+func cdefFilterBlock4SecondaryByteU8NEON(ctx *filterBlockU8ByteNEONCtx)
+
+//go:noescape
+func cdefFilterBlock4FusedByteU8NEON(ctx *filterBlockU8ByteNEONCtx)
+
 type filterBlockU8SecondaryByteNEONCtx struct {
 	dst         *byte
 	input       *byte
@@ -55,9 +64,15 @@ type filterBlockU8SecondaryByteNEONCtx struct {
 func cdefFilterBlock8SecondaryByteU8NEON(ctx *filterBlockU8SecondaryByteNEONCtx)
 
 func filterUnitBlocksU8Byte(dst []byte, dstStride int, input []byte, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, u unitFilterParams) error {
+	if u.blockWidth != 8 && u.blockWidth != 4 {
+		return filterUnitBlocksU8BytePureGo(dst, dstStride, input, inputOrigin, blocks, directions, variances, u)
+	}
+	if (u.blockWidth == 8 && u.blockHeight%2 != 0) || (u.blockWidth == 4 && u.blockHeight%4 != 0) {
+		return filterUnitBlocksU8BytePureGo(dst, dstStride, input, inputOrigin, blocks, directions, variances, u)
+	}
 	ctx := filterBlockU8ByteNEONCtx{
 		dstStr:      int64(dstStride),
-		height:      8,
+		height:      int64(u.blockHeight),
 		secTap0:     int64(cdefSecondaryTaps[0]),
 		secTap1:     int64(cdefSecondaryTaps[1]),
 		secStrength: int64(u.secondaryStrength),
@@ -78,8 +93,8 @@ func filterUnitBlocksU8Byte(dst []byte, dstStride int, input []byte, inputOrigin
 			direction = int(directions[by][bx])
 		}
 		priTaps := cdefPrimaryTaps[strength&1]
-		ctx.dst = &dst[by*8*dstStride+bx*8]
-		ctx.input = &input[inputOrigin+by*8*BStride+bx*8]
+		ctx.dst = &dst[(by<<u.bhLog2)*dstStride+(bx<<u.bwLog2)]
+		ctx.input = &input[inputOrigin+((by*BStride)<<u.bhLog2)+(bx<<u.bwLog2)]
 		ctx.pri0 = int64(cdefDirections[direction+2][0])
 		ctx.pri1 = int64(cdefDirections[direction+2][1])
 		ctx.sec0 = int64(cdefDirections[direction+4][0])
@@ -90,24 +105,35 @@ func filterUnitBlocksU8Byte(dst []byte, dstStride int, input []byte, inputOrigin
 		ctx.priTap1 = int64(priTaps[1])
 		ctx.priStrength = int64(strength)
 		ctx.priShift = int64(constrainShift(strength, u.damping))
-		switch {
-		case strength != 0 && u.secondaryStrength == 0:
-			cdefFilterBlock8PrimaryByteU8NEON(&ctx)
-		case strength == 0 && u.secondaryStrength != 0:
-			if direction == 0 {
-				fixed := filterBlockU8SecondaryByteNEONCtx{
-					dst:         ctx.dst,
-					input:       ctx.input,
-					dstStr:      ctx.dstStr,
-					secStrength: ctx.secStrength,
-					secShift:    ctx.secShift,
+		if u.blockWidth == 8 {
+			switch {
+			case strength != 0 && u.secondaryStrength == 0:
+				cdefFilterBlock8PrimaryByteU8NEON(&ctx)
+			case strength == 0 && u.secondaryStrength != 0:
+				if direction == 0 && u.blockHeight == 8 {
+					fixed := filterBlockU8SecondaryByteNEONCtx{
+						dst:         ctx.dst,
+						input:       ctx.input,
+						dstStr:      ctx.dstStr,
+						secStrength: ctx.secStrength,
+						secShift:    ctx.secShift,
+					}
+					cdefFilterBlock8SecondaryByteU8NEON(&fixed)
+				} else {
+					cdefFilterBlock8SecondaryGeneralByteU8NEON(&ctx)
 				}
-				cdefFilterBlock8SecondaryByteU8NEON(&fixed)
-			} else {
-				cdefFilterBlock8SecondaryGeneralByteU8NEON(&ctx)
+			default:
+				cdefFilterBlock8FusedByteU8NEON(&ctx)
 			}
-		default:
-			cdefFilterBlock8FusedByteU8NEON(&ctx)
+		} else {
+			switch {
+			case strength != 0 && u.secondaryStrength == 0:
+				cdefFilterBlock4PrimaryByteU8NEON(&ctx)
+			case strength == 0 && u.secondaryStrength != 0:
+				cdefFilterBlock4SecondaryByteU8NEON(&ctx)
+			default:
+				cdefFilterBlock4FusedByteU8NEON(&ctx)
+			}
 		}
 	}
 	return nil

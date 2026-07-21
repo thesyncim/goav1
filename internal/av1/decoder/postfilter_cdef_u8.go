@@ -204,7 +204,7 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 				continue
 			}
 			debugUnit := cdefDebugUnit(plane, unitRow, unitCol)
-			useByteInput := cdef.U8ByteInputEnabled && plane == 0 && xDec == 0 && yDec == 0 && !debugUnit &&
+			useByteInput := cdef.U8ByteInputEnabled && !debugUnit &&
 				unitX >= cdef.HorizontalBorder && unitY >= cdef.VerticalBorder &&
 				unitX+unitW+cdef.HorizontalBorder <= width &&
 				unitY+unitH+cdef.VerticalBorder <= height
@@ -258,7 +258,7 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 }
 
 // frameWorkAssembleCDEFInputU8InteriorBytes builds the real-pixel tap window
-// used by the interior luma byte-kernel family. The caller selects this path
+// used by the interior byte-kernel family. The caller selects this path
 // only when the complete 8x2 halo lies inside the frame, so no VeryLarge
 // sentinels are required. The top and left regions still come from pre-filter
 // backups when neighbouring units have already been overwritten.

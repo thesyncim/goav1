@@ -60,3 +60,43 @@ func BenchmarkFilterBlockU8_4x8_Interior16b(b *testing.B) {
 		cdefFilterBlock4InteriorU8NEON(&ctx)
 	}
 }
+
+func BenchmarkFilterBlockU8_4x4_Interior16b(b *testing.B) {
+	_, _, ctx := benchU8InteriorCtx(4, 4)
+	b.ReportAllocs()
+	for b.Loop() {
+		cdefFilterBlock4InteriorU8NEON(&ctx)
+	}
+}
+
+func BenchmarkFilterBlockU8_4x4_InteriorByte(b *testing.B) {
+	dst, input16, wide := benchU8InteriorCtx(4, 4)
+	input8 := make([]byte, len(input16))
+	for i := range input16 {
+		input8[i] = byte(input16[i])
+	}
+	ctx := filterBlockU8ByteNEONCtx{
+		dst:         &dst[0],
+		input:       &input8[cdefBlockOrigin()],
+		dstStr:      wide.dstStr,
+		height:      4,
+		pri0:        wide.pri0,
+		pri1:        wide.pri1,
+		sec0:        wide.sec0,
+		sec1:        wide.sec1,
+		sec2:        wide.sec2,
+		sec3:        wide.sec3,
+		priTap0:     wide.priTap0,
+		priTap1:     wide.priTap1,
+		secTap0:     wide.secTap0,
+		secTap1:     wide.secTap1,
+		priStrength: wide.priStrength,
+		secStrength: wide.secStrength,
+		priShift:    wide.priShift,
+		secShift:    wide.secShift,
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		cdefFilterBlock4FusedByteU8NEON(&ctx)
+	}
+}

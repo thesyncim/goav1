@@ -189,6 +189,14 @@ u8byte_sec8_rows2:
 #define G_FINAL_CLIP WORD $0x6e246c00; WORD $0x6e236400
 #define G_STORE FMOVD F0, (R1); ADD R3, R1, R1; WORD $0x4d008420; ADD R3, R1, R1; ADD $288, R2, R2; SUB $2, R4, R4
 
+// Four width-4 rows fill the same 16 byte lanes as two width-8 rows. Keeping
+// the arithmetic layout identical lets the width-4 family share all of the
+// constrain/accumulate/finalize macros above; only gathering and scattering
+// differ. Each input row is BStride (144 bytes) apart.
+#define G4_LOAD_CENTER VLD1 (R2), [V7.B8]; ADD $144, R2, R12; WORD $0x4d408587; ADD $144, R12, R12; VLD1 (R12), [V8.B8]; ADD $144, R12, R12; WORD $0x4d408588; VUZP1 V8.S4, V7.S4, V0.S4
+#define G4_LOAD_PAIR(off) ADD off, R2, R12; SUB off, R2, R13; VLD1 (R12), [V7.B8]; VLD1 (R13), [V9.B8]; ADD $144, R12, R12; ADD $144, R13, R13; WORD $0x4d408587; WORD $0x4d4085a9; ADD $144, R12, R12; ADD $144, R13, R13; VLD1 (R12), [V8.B8]; VLD1 (R13), [V10.B8]; ADD $144, R12, R12; ADD $144, R13, R13; WORD $0x4d408588; WORD $0x4d4085aa; VUZP1 V8.S4, V7.S4, V5.S4; VUZP1 V10.S4, V9.S4, V6.S4
+#define G4_STORE WORD $0x0d008020; ADD R3, R1, R1; WORD $0x0d009020; ADD R3, R1, R1; WORD $0x4d008020; ADD R3, R1, R1; WORD $0x4d009020; ADD R3, R1, R1; ADD $576, R2, R2; SUB $4, R4, R4
+
 // func cdefFilterBlock8PrimaryByteU8NEON(ctx *filterBlockU8ByteNEONCtx)
 TEXT ·cdefFilterBlock8PrimaryByteU8NEON(SB), NOSPLIT, $0-8
 	MOVD ctx+0(FP), R0
@@ -323,4 +331,140 @@ u8byte_fused8_rows2:
 	G_FINAL_CLIP
 	G_STORE
 	CBNZ R4, u8byte_fused8_rows2
+	RET
+
+// func cdefFilterBlock4PrimaryByteU8NEON(ctx *filterBlockU8ByteNEONCtx)
+TEXT ·cdefFilterBlock4PrimaryByteU8NEON(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD G_DST(R0), R1
+	MOVD G_INPUT(R0), R2
+	MOVD G_DSTSTR(R0), R3
+	MOVD G_HEIGHT(R0), R4
+	MOVD G_PRISTR(R0), R5
+	WORD $0x4e010cbb       // dup v27.16b, w5
+	MOVD G_PRISH(R0), R5
+	NEG  R5, R5
+	WORD $0x4e010cba       // dup v26.16b, w5
+	MOVD G_PRITAP0(R0), R5
+	WORD $0x4e010cbc       // dup v28.16b, w5
+	MOVD G_PRITAP1(R0), R5
+	WORD $0x4e010cbd       // dup v29.16b, w5
+	MOVD G_PRI0(R0), R6
+	MOVD G_PRI1(R0), R7
+
+u8byte_pri4_rows4:
+	G4_LOAD_CENTER
+	G_INIT_SUM
+	G4_LOAD_PAIR(R6)
+	G_CONSTRAIN
+	G_ACC28
+	G4_LOAD_PAIR(R7)
+	G_CONSTRAIN
+	G_ACC29
+	G_FINAL
+	G4_STORE
+	CBNZ R4, u8byte_pri4_rows4
+	RET
+
+// func cdefFilterBlock4SecondaryByteU8NEON(ctx *filterBlockU8ByteNEONCtx)
+TEXT ·cdefFilterBlock4SecondaryByteU8NEON(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD G_DST(R0), R1
+	MOVD G_INPUT(R0), R2
+	MOVD G_DSTSTR(R0), R3
+	MOVD G_HEIGHT(R0), R4
+	MOVD G_SECSTR(R0), R5
+	WORD $0x4e010cbb       // dup v27.16b, w5
+	MOVD G_SECSH(R0), R5
+	NEG  R5, R5
+	WORD $0x4e010cba       // dup v26.16b, w5
+	WORD $0x4f00e45e       // movi v30.16b, #2
+	WORD $0x4f00e43f       // movi v31.16b, #1
+	MOVD G_SEC0(R0), R6
+	MOVD G_SEC1(R0), R7
+	MOVD G_SEC2(R0), R8
+	MOVD G_SEC3(R0), R9
+
+u8byte_sec4_rows4:
+	G4_LOAD_CENTER
+	G_INIT_SUM
+	G4_LOAD_PAIR(R6)
+	G_CONSTRAIN
+	G_ACC30
+	G4_LOAD_PAIR(R7)
+	G_CONSTRAIN
+	G_ACC30
+	G4_LOAD_PAIR(R8)
+	G_CONSTRAIN
+	G_ACC31
+	G4_LOAD_PAIR(R9)
+	G_CONSTRAIN
+	G_ACC31
+	G_FINAL
+	G4_STORE
+	CBNZ R4, u8byte_sec4_rows4
+	RET
+
+// func cdefFilterBlock4FusedByteU8NEON(ctx *filterBlockU8ByteNEONCtx)
+TEXT ·cdefFilterBlock4FusedByteU8NEON(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD G_DST(R0), R1
+	MOVD G_INPUT(R0), R2
+	MOVD G_DSTSTR(R0), R3
+	MOVD G_HEIGHT(R0), R4
+	MOVD G_PRISTR(R0), R5
+	WORD $0x4e010cb9       // dup v25.16b, w5
+	MOVD G_PRISH(R0), R5
+	NEG  R5, R5
+	WORD $0x4e010cb8       // dup v24.16b, w5
+	MOVD G_SECSTR(R0), R5
+	WORD $0x4e010cbb       // dup v27.16b, w5
+	MOVD G_SECSH(R0), R5
+	NEG  R5, R5
+	WORD $0x4e010cba       // dup v26.16b, w5
+	MOVD G_PRITAP0(R0), R5
+	WORD $0x4e010cbc       // dup v28.16b, w5
+	MOVD G_PRITAP1(R0), R5
+	WORD $0x4e010cbd       // dup v29.16b, w5
+	WORD $0x4f00e45e       // movi v30.16b, #2
+	WORD $0x4f00e43f       // movi v31.16b, #1
+
+u8byte_fused4_rows4:
+	G4_LOAD_CENTER
+	G_INIT_SUM
+	G_INIT_CLIP
+	MOVD G_PRI0(R0), R6
+	G4_LOAD_PAIR(R6)
+	G_CLIP_PAIR
+	G_CONSTRAIN_PRI
+	G_ACC28
+	MOVD G_PRI1(R0), R6
+	G4_LOAD_PAIR(R6)
+	G_CLIP_PAIR
+	G_CONSTRAIN_PRI
+	G_ACC29
+	MOVD G_SEC0(R0), R6
+	G4_LOAD_PAIR(R6)
+	G_CLIP_PAIR
+	G_CONSTRAIN
+	G_ACC30
+	MOVD G_SEC1(R0), R6
+	G4_LOAD_PAIR(R6)
+	G_CLIP_PAIR
+	G_CONSTRAIN
+	G_ACC30
+	MOVD G_SEC2(R0), R6
+	G4_LOAD_PAIR(R6)
+	G_CLIP_PAIR
+	G_CONSTRAIN
+	G_ACC31
+	MOVD G_SEC3(R0), R6
+	G4_LOAD_PAIR(R6)
+	G_CLIP_PAIR
+	G_CONSTRAIN
+	G_ACC31
+	G_FINAL
+	G_FINAL_CLIP
+	G4_STORE
+	CBNZ R4, u8byte_fused4_rows4
 	RET

@@ -13,30 +13,48 @@ func FilterFrameBlocksU8ByteTrusted(dst []byte, dstStride int, input []byte, inp
 	if len(blocks) == 0 {
 		return nil
 	}
-	if params.Plane != PlaneY || params.CoeffShift != 0 || params.XDec != 0 || params.YDec != 0 {
+	if params.CoeffShift != 0 {
 		return ErrInvalidCDEF
 	}
 	primaryStrength := int(params.Level)
 	secondaryStrength := int(params.SecondaryStrength)
 	damping := int(params.Damping)
-	for i := 0; i < len(blocks); {
-		block := blocks[i]
-		by := int(block.BY)
-		bx := int(block.BX)
-		srcOrigin := by*8*dstStride + bx*8
-		if i+1 < len(blocks) && blocks[i+1].BY == block.BY && blocks[i+1].BX == block.BX+1 {
-			dir1, variance1, dir2, variance2 := findDirectionDualU8Unchecked(dst[srcOrigin:], dst[srcOrigin+8:], dstStride)
-			directions[by][bx] = uint8(dir1)
-			variances[by][bx] = variance1
-			directions[by][bx+1] = uint8(dir2)
-			variances[by][bx+1] = variance2
-			i += 2
-			continue
+	if params.Plane != PlaneY {
+		damping--
+	}
+	if damping < 0 {
+		return ErrInvalidCDEF
+	}
+	xDec := int(params.XDec)
+	yDec := int(params.YDec)
+	bwLog2 := 3 - xDec
+	bhLog2 := 3 - yDec
+
+	if params.Plane == PlaneY {
+		for i := 0; i < len(blocks); {
+			block := blocks[i]
+			by := int(block.BY)
+			bx := int(block.BX)
+			srcOrigin := ((by * dstStride) << bhLog2) + (bx << bwLog2)
+			if bwLog2 == 3 && i+1 < len(blocks) && blocks[i+1].BY == block.BY && blocks[i+1].BX == block.BX+1 {
+				dir1, variance1, dir2, variance2 := findDirectionDualU8Unchecked(dst[srcOrigin:], dst[srcOrigin+8:], dstStride)
+				directions[by][bx] = uint8(dir1)
+				variances[by][bx] = variance1
+				directions[by][bx+1] = uint8(dir2)
+				variances[by][bx+1] = variance2
+				i += 2
+				continue
+			}
+			dir, variance := findDirectionU8Unchecked(dst[srcOrigin:], dstStride)
+			directions[by][bx] = uint8(dir)
+			variances[by][bx] = variance
+			i++
 		}
-		dir, variance := findDirectionU8Unchecked(dst[srcOrigin:], dstStride)
-		directions[by][bx] = uint8(dir)
-		variances[by][bx] = variance
-		i++
+	}
+	if params.Plane == PlaneU && params.XDec != params.YDec {
+		if !convertChromaDirections(blocks, directions, xDec) {
+			return ErrInvalidCDEF
+		}
 	}
 	if primaryStrength == 0 && secondaryStrength == 0 {
 		return nil
@@ -45,11 +63,11 @@ func FilterFrameBlocksU8ByteTrusted(dst []byte, dstStride int, input []byte, inp
 		primaryStrength:   primaryStrength,
 		secondaryStrength: secondaryStrength,
 		damping:           damping,
-		bwLog2:            3,
-		bhLog2:            3,
-		blockWidth:        8,
-		blockHeight:       8,
-		lumaAdjust:        true,
+		bwLog2:            bwLog2,
+		bhLog2:            bhLog2,
+		blockWidth:        1 << bwLog2,
+		blockHeight:       1 << bhLog2,
+		lumaAdjust:        params.Plane == PlaneY,
 	})
 }
 
@@ -179,14 +197,14 @@ func filterUnitBlocksU8BytePureGo(dst []byte, dstStride int, input []byte, input
 		if u.primaryStrength != 0 {
 			direction = int(directions[by][bx])
 		}
-		filterBlockU8BytePureGo(dst, dstStride, by*8*dstStride+bx*8, input, inputOrigin+by*8*BStride+bx*8, BlockFilterParams{
+		filterBlockU8BytePureGo(dst, dstStride, (by<<u.bhLog2)*dstStride+(bx<<u.bwLog2), input, inputOrigin+((by*BStride)<<u.bhLog2)+(bx<<u.bwLog2), BlockFilterParams{
 			PrimaryStrength:   uint8(strength),
 			SecondaryStrength: uint8(u.secondaryStrength),
 			Direction:         uint8(direction),
 			PrimaryDamping:    uint8(u.damping),
 			SecondaryDamping:  uint8(u.damping),
-			Width:             8,
-			Height:            8,
+			Width:             uint8(u.blockWidth),
+			Height:            uint8(u.blockHeight),
 		})
 	}
 	return nil
