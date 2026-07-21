@@ -544,8 +544,11 @@ cy4I8W4RowLoop:
 // Resident width>=8 lowbd compound 2D convolve. The horizontal pass mirrors
 // SVT's dist_wtd_convolve_2d_horiz_8tap_neon_i8mm and the local
 // convolve2D8I8MMAsm pass: halve the even AV1 taps, use USMMLA, subtract tap 0
-// separately, add the ROUND0 shim, then shift by ROUND0_BITS-1 into int16.
-// The vertical pass writes CONV_BUF precision:
+// separately when it is nonzero, add the ROUND0 shim, then shift by
+// ROUND0_BITS-1 into int16. Regular and smooth filters take a zero-tap path
+// that omits that multiply. The vertical pass writes four adjacent rows from
+// one 11-row sliding window, then handles any defensive tail, at CONV_BUF
+// precision:
 //     dst = round((1 << offsetBits) + vertical_sum, COMPOUND_ROUND1_BITS)
 TEXT ·compound2D8I8MMAsm(SB), NOSPLIT, $0-8
 	MOVD ctx+0(FP), R0
@@ -568,18 +571,52 @@ TEXT ·compound2D8I8MMAsm(SB), NOSPLIT, $0-8
 	VLD1   (R12), [V29.B16]
 	MOVD   $8194, R3
 	WORD   $0x4e020c79 // dup v25.8h, w3
-	WORD   $0x0e010dfa // dup v26.8b, w15
+	CBNZ   R15, ct2dHNonZeroStart
 
 	MOVD R2, R16
 	MOVD R13, R17
 
-ct2dHRowLoop:
-	CBZ  R11, ct2dHDone
+ct2dHZeroRowLoop:
 	MOVD R16, R9
 	MOVD R17, R10
 	MOVD R6, R8
 
-ct2dHColLoop:
+ct2dHZeroColLoop:
+	VLD1 (R9), [V1.B16]
+	WORD $0x4e1c0025 // tbl v5.16b, {v1.16b}, v28.16b
+	WORD $0x4e1d0026 // tbl v6.16b, {v1.16b}, v29.16b
+	WORD $0x4f000410 // movi v16.4s, #0
+	WORD $0x4f000411 // movi v17.4s, #0
+	WORD $0x4e80acb0 // usmmla v16.4s, v5.16b, v0.16b
+	WORD $0x4e80acd1 // usmmla v17.4s, v6.16b, v0.16b
+	WORD $0x0e612a10 // xtn  v16.4h, v16.4s
+	WORD $0x4e612a30 // xtn2 v16.8h, v17.4s
+	WORD $0x4e798610 // add  v16.8h, v16.8h, v25.8h
+	WORD $0x6f1e0610 // ushr v16.8h, v16.8h, #2
+	WORD $0x4c007550 // st1  {v16.8h}, [x10]
+
+	ADD  $8, R9, R9
+	ADD  $16, R10, R10
+	SUB  $8, R8, R8
+	CBNZ R8, ct2dHZeroColLoop
+
+	ADD  R5, R16, R16
+	ADD  R14, R17, R17
+	SUB  $1, R11, R11
+	CBNZ R11, ct2dHZeroRowLoop
+	B    ct2dHDone
+
+ct2dHNonZeroStart:
+	WORD $0x0e010dfa // dup v26.8b, w15
+	MOVD R2, R16
+	MOVD R13, R17
+
+ct2dHNonZeroRowLoop:
+	MOVD R16, R9
+	MOVD R17, R10
+	MOVD R6, R8
+
+ct2dHNonZeroColLoop:
 	VLD1 (R9), [V1.B16]
 	WORD $0x4e1c0025 // tbl v5.16b, {v1.16b}, v28.16b
 	WORD $0x4e1d0026 // tbl v6.16b, {v1.16b}, v29.16b
@@ -597,12 +634,12 @@ ct2dHColLoop:
 	ADD  $8, R9, R9
 	ADD  $16, R10, R10
 	SUB  $8, R8, R8
-	CBNZ R8, ct2dHColLoop
+	CBNZ R8, ct2dHNonZeroColLoop
 
 	ADD  R5, R16, R16
 	ADD  R14, R17, R17
 	SUB  $1, R11, R11
-	CBNZ R11, ct2dHRowLoop
+	CBNZ R11, ct2dHNonZeroRowLoop
 
 ct2dHDone:
 	MOVD C2DI8_YKERNEL(R0), R3
@@ -611,14 +648,150 @@ ct2dHDone:
 	WORD $0x4e040d72 // dup v18.4s, w11
 
 	MOVD R13, R17
+	CMP  $4, R7
+	BLT  ct2dVTail
 
-ct2dVRowLoop:
-	CBZ  R7, ct2dVDone
+ct2dVRow4Loop:
 	MOVD R1, R10
 	MOVD R17, R11
 	MOVD R6, R8
 
-ct2dVColLoop:
+ct2dVCol4Loop:
+	MOVD R11, R9
+	WORD $0x4eb21e50 // mov v16.16b, v18.16b
+	WORD $0x4eb21e51 // mov v17.16b, v18.16b
+	WORD $0x4eb21e53 // mov v19.16b, v18.16b
+	WORD $0x4eb21e54 // mov v20.16b, v18.16b
+	WORD $0x4eb21e55 // mov v21.16b, v18.16b
+	WORD $0x4eb21e56 // mov v22.16b, v18.16b
+	WORD $0x4eb21e57 // mov v23.16b, v18.16b
+	WORD $0x4eb21e58 // mov v24.16b, v18.16b
+
+	WORD $0x4cce7521 // ld1 {v1.8h}, [x9], x14
+	WORD $0x4cce7522 // ld1 {v2.8h}, [x9], x14
+	WORD $0x4cce7523 // ld1 {v3.8h}, [x9], x14
+	WORD $0x4cce7524 // ld1 {v4.8h}, [x9], x14
+	WORD $0x4cce7525 // ld1 {v5.8h}, [x9], x14
+	WORD $0x4cce7526 // ld1 {v6.8h}, [x9], x14
+	WORD $0x4cce7527 // ld1 {v7.8h}, [x9], x14
+	WORD $0x4cce7528 // ld1 {v8.8h}, [x9], x14
+	WORD $0x4cce7529 // ld1 {v9.8h}, [x9], x14
+	WORD $0x4cce752a // ld1 {v10.8h}, [x9], x14
+	WORD $0x4cce752b // ld1 {v11.8h}, [x9], x14
+
+	// Four adjacent outputs share this 11-row window. Schedule each tap
+	// across eight independent accumulators before returning to an output.
+	WORD $0x0f402030 // smlal  v16.4s, v1.4h, v0.h[0]
+	WORD $0x0f402053 // smlal  v19.4s, v2.4h, v0.h[0]
+	WORD $0x0f402075 // smlal  v21.4s, v3.4h, v0.h[0]
+	WORD $0x0f402097 // smlal  v23.4s, v4.4h, v0.h[0]
+	WORD $0x4f402031 // smlal2 v17.4s, v1.8h, v0.h[0]
+	WORD $0x4f402054 // smlal2 v20.4s, v2.8h, v0.h[0]
+	WORD $0x4f402076 // smlal2 v22.4s, v3.8h, v0.h[0]
+	WORD $0x4f402098 // smlal2 v24.4s, v4.8h, v0.h[0]
+	WORD $0x0f502050 // smlal  v16.4s, v2.4h, v0.h[1]
+	WORD $0x0f502073 // smlal  v19.4s, v3.4h, v0.h[1]
+	WORD $0x0f502095 // smlal  v21.4s, v4.4h, v0.h[1]
+	WORD $0x0f5020b7 // smlal  v23.4s, v5.4h, v0.h[1]
+	WORD $0x4f502051 // smlal2 v17.4s, v2.8h, v0.h[1]
+	WORD $0x4f502074 // smlal2 v20.4s, v3.8h, v0.h[1]
+	WORD $0x4f502096 // smlal2 v22.4s, v4.8h, v0.h[1]
+	WORD $0x4f5020b8 // smlal2 v24.4s, v5.8h, v0.h[1]
+	WORD $0x0f602070 // smlal  v16.4s, v3.4h, v0.h[2]
+	WORD $0x0f602093 // smlal  v19.4s, v4.4h, v0.h[2]
+	WORD $0x0f6020b5 // smlal  v21.4s, v5.4h, v0.h[2]
+	WORD $0x0f6020d7 // smlal  v23.4s, v6.4h, v0.h[2]
+	WORD $0x4f602071 // smlal2 v17.4s, v3.8h, v0.h[2]
+	WORD $0x4f602094 // smlal2 v20.4s, v4.8h, v0.h[2]
+	WORD $0x4f6020b6 // smlal2 v22.4s, v5.8h, v0.h[2]
+	WORD $0x4f6020d8 // smlal2 v24.4s, v6.8h, v0.h[2]
+	WORD $0x0f702090 // smlal  v16.4s, v4.4h, v0.h[3]
+	WORD $0x0f7020b3 // smlal  v19.4s, v5.4h, v0.h[3]
+	WORD $0x0f7020d5 // smlal  v21.4s, v6.4h, v0.h[3]
+	WORD $0x0f7020f7 // smlal  v23.4s, v7.4h, v0.h[3]
+	WORD $0x4f702091 // smlal2 v17.4s, v4.8h, v0.h[3]
+	WORD $0x4f7020b4 // smlal2 v20.4s, v5.8h, v0.h[3]
+	WORD $0x4f7020d6 // smlal2 v22.4s, v6.8h, v0.h[3]
+	WORD $0x4f7020f8 // smlal2 v24.4s, v7.8h, v0.h[3]
+	WORD $0x0f4028b0 // smlal  v16.4s, v5.4h, v0.h[4]
+	WORD $0x0f4028d3 // smlal  v19.4s, v6.4h, v0.h[4]
+	WORD $0x0f4028f5 // smlal  v21.4s, v7.4h, v0.h[4]
+	WORD $0x0f402917 // smlal  v23.4s, v8.4h, v0.h[4]
+	WORD $0x4f4028b1 // smlal2 v17.4s, v5.8h, v0.h[4]
+	WORD $0x4f4028d4 // smlal2 v20.4s, v6.8h, v0.h[4]
+	WORD $0x4f4028f6 // smlal2 v22.4s, v7.8h, v0.h[4]
+	WORD $0x4f402918 // smlal2 v24.4s, v8.8h, v0.h[4]
+	WORD $0x0f5028d0 // smlal  v16.4s, v6.4h, v0.h[5]
+	WORD $0x0f5028f3 // smlal  v19.4s, v7.4h, v0.h[5]
+	WORD $0x0f502915 // smlal  v21.4s, v8.4h, v0.h[5]
+	WORD $0x0f502937 // smlal  v23.4s, v9.4h, v0.h[5]
+	WORD $0x4f5028d1 // smlal2 v17.4s, v6.8h, v0.h[5]
+	WORD $0x4f5028f4 // smlal2 v20.4s, v7.8h, v0.h[5]
+	WORD $0x4f502916 // smlal2 v22.4s, v8.8h, v0.h[5]
+	WORD $0x4f502938 // smlal2 v24.4s, v9.8h, v0.h[5]
+	WORD $0x0f6028f0 // smlal  v16.4s, v7.4h, v0.h[6]
+	WORD $0x0f602913 // smlal  v19.4s, v8.4h, v0.h[6]
+	WORD $0x0f602935 // smlal  v21.4s, v9.4h, v0.h[6]
+	WORD $0x0f602957 // smlal  v23.4s, v10.4h, v0.h[6]
+	WORD $0x4f6028f1 // smlal2 v17.4s, v7.8h, v0.h[6]
+	WORD $0x4f602914 // smlal2 v20.4s, v8.8h, v0.h[6]
+	WORD $0x4f602936 // smlal2 v22.4s, v9.8h, v0.h[6]
+	WORD $0x4f602958 // smlal2 v24.4s, v10.8h, v0.h[6]
+	WORD $0x0f702910 // smlal  v16.4s, v8.4h, v0.h[7]
+	WORD $0x0f702933 // smlal  v19.4s, v9.4h, v0.h[7]
+	WORD $0x0f702955 // smlal  v21.4s, v10.4h, v0.h[7]
+	WORD $0x0f702977 // smlal  v23.4s, v11.4h, v0.h[7]
+	WORD $0x4f702911 // smlal2 v17.4s, v8.8h, v0.h[7]
+	WORD $0x4f702934 // smlal2 v20.4s, v9.8h, v0.h[7]
+	WORD $0x4f702956 // smlal2 v22.4s, v10.8h, v0.h[7]
+	WORD $0x4f702978 // smlal2 v24.4s, v11.8h, v0.h[7]
+
+	WORD $0x4f392610 // srshr v16.4s, v16.4s, #7
+	WORD $0x4f392631 // srshr v17.4s, v17.4s, #7
+	WORD $0x4f392673 // srshr v19.4s, v19.4s, #7
+	WORD $0x4f392694 // srshr v20.4s, v20.4s, #7
+	WORD $0x4f3926b5 // srshr v21.4s, v21.4s, #7
+	WORD $0x4f3926d6 // srshr v22.4s, v22.4s, #7
+	WORD $0x4f3926f7 // srshr v23.4s, v23.4s, #7
+	WORD $0x4f392718 // srshr v24.4s, v24.4s, #7
+	WORD $0x0e614a10 // sqxtn  v16.4h, v16.4s
+	WORD $0x4e614a30 // sqxtn2 v16.8h, v17.4s
+	WORD $0x0e614a73 // sqxtn  v19.4h, v19.4s
+	WORD $0x4e614a93 // sqxtn2 v19.8h, v20.4s
+	WORD $0x0e614ab5 // sqxtn  v21.4h, v21.4s
+	WORD $0x4e614ad5 // sqxtn2 v21.8h, v22.4s
+	WORD $0x0e614af7 // sqxtn  v23.4h, v23.4s
+	WORD $0x4e614b17 // sqxtn2 v23.8h, v24.4s
+
+	MOVD R10, R9
+	WORD $0x4c007530 // st1 {v16.8h}, [x9]
+	ADD  R6<<1, R9, R9
+	WORD $0x4c007533 // st1 {v19.8h}, [x9]
+	ADD  R6<<1, R9, R9
+	WORD $0x4c007535 // st1 {v21.8h}, [x9]
+	ADD  R6<<1, R9, R9
+	WORD $0x4c007537 // st1 {v23.8h}, [x9]
+
+	ADD  $16, R10, R10
+	ADD  $16, R11, R11
+	SUB  $8, R8, R8
+	CBNZ R8, ct2dVCol4Loop
+
+	ADD R6<<3, R1, R1
+	ADD R14<<2, R17, R17
+	SUB $4, R7, R7
+	CMP $4, R7
+	BGE ct2dVRow4Loop
+
+ct2dVTail:
+	CBZ R7, ct2dVDone
+
+ct2dVTailRowLoop:
+	MOVD R1, R10
+	MOVD R17, R11
+	MOVD R6, R8
+
+ct2dVTailColLoop:
 	MOVD R11, R9
 	WORD $0x4eb21e50 // mov v16.16b, v18.16b
 	WORD $0x4eb21e51 // mov v17.16b, v18.16b
@@ -657,12 +830,12 @@ ct2dVColLoop:
 	ADD  $16, R10, R10
 	ADD  $16, R11, R11
 	SUB  $8, R8, R8
-	CBNZ R8, ct2dVColLoop
+	CBNZ R8, ct2dVTailColLoop
 
 	ADD  R6<<1, R1
 	ADD  R14, R17, R17
 	SUB  $1, R7, R7
-	CBNZ R7, ct2dVRowLoop
+	CBNZ R7, ct2dVTailRowLoop
 
 ct2dVDone:
 	RET
@@ -1318,9 +1491,11 @@ t2dV4I8Done:
 //
 // Resident width>=8 lowbd 2D convolve. The horizontal pass mirrors SVT's
 // convolve_2d_sr_horiz_8tap_neon_i8mm: halve the even AV1 taps, stagger f1..f7
-// for USMMLA, subtract tap 0 separately, add the ROUND0 shim, then shift by
-// ROUND0_BITS-1 into the int16 intermediate. The vertical pass is the same
-// proven NEON int16->uint8 path used by convolve2D8NEONAsm.
+// for USMMLA, subtract tap 0 separately when nonzero, add the ROUND0 shim,
+// then shift by ROUND0_BITS-1 into the int16 intermediate. Regular and smooth
+// phases take a zero-tap specialization that omits the multiply. The vertical
+// pass shares an 11-row window across four outputs and folds its integer output
+// offset into the accumulator seed.
 TEXT ·convolve2D8I8MMAsm(SB), NOSPLIT, $0-8
 	MOVD ctx+0(FP), R0
 	MOVD T2D_DST(R0), R1      // dst row base
@@ -1345,18 +1520,52 @@ TEXT ·convolve2D8I8MMAsm(SB), NOSPLIT, $0-8
 	VLD1   (R12), [V29.B16]
 	MOVD   $8194, R3        // (1 << (8+FILTER_BITS-2)) + (1 << ((ROUND0_BITS-1)-1))
 	WORD   $0x4e020c79     // dup v25.8h, w3
-	WORD   $0x0e010dfa     // dup v26.8b, w15
+	CBNZ   R15, t2dHNonZeroStart
 
 	MOVD R2, R16           // ref row cursor
 	MOVD R13, R17          // im row cursor
 
-t2dHRowLoop:
-	CBZ  R11, t2dHDone
+t2dHZeroRowLoop:
 	MOVD R16, R9           // ref column cursor
 	MOVD R17, R10          // im column cursor
 	MOVD R6, R8            // remaining columns
 
-t2dHColLoop:
+t2dHZeroColLoop:
+	VLD1 (R9), [V1.B16]
+	WORD $0x4e1c0025       // tbl v5.16b, {v1.16b}, v28.16b
+	WORD $0x4e1d0026       // tbl v6.16b, {v1.16b}, v29.16b
+	WORD $0x4f000410       // movi v16.4s, #0
+	WORD $0x4f000411       // movi v17.4s, #0
+	WORD $0x4e80acb0       // usmmla v16.4s, v5.16b, v0.16b
+	WORD $0x4e80acd1       // usmmla v17.4s, v6.16b, v0.16b
+	WORD $0x0e612a10       // xtn  v16.4h, v16.4s
+	WORD $0x4e612a30       // xtn2 v16.8h, v17.4s
+	WORD $0x4e798610       // add  v16.8h, v16.8h, v25.8h
+	WORD $0x6f1e0610       // ushr v16.8h, v16.8h, #2
+	WORD $0x4c007550       // st1  {v16.8h}, [x10]
+
+	ADD  $8, R9, R9
+	ADD  $16, R10, R10
+	SUB  $8, R8, R8
+	CBNZ R8, t2dHZeroColLoop
+
+	ADD  R5, R16, R16
+	ADD  R14, R17, R17
+	SUB  $1, R11, R11
+	CBNZ R11, t2dHZeroRowLoop
+	B    t2dHDone
+
+t2dHNonZeroStart:
+	WORD $0x0e010dfa // dup v26.8b, w15
+	MOVD R2, R16
+	MOVD R13, R17
+
+t2dHNonZeroRowLoop:
+	MOVD R16, R9
+	MOVD R17, R10
+	MOVD R6, R8
+
+t2dHNonZeroColLoop:
 	VLD1 (R9), [V1.B16]
 	WORD $0x4e1c0025       // tbl v5.16b, {v1.16b}, v28.16b
 	WORD $0x4e1d0026       // tbl v6.16b, {v1.16b}, v29.16b
@@ -1374,78 +1583,202 @@ t2dHColLoop:
 	ADD  $8, R9, R9
 	ADD  $16, R10, R10
 	SUB  $8, R8, R8
-	CBNZ R8, t2dHColLoop
+	CBNZ R8, t2dHNonZeroColLoop
 
 	ADD  R5, R16, R16
 	ADD  R14, R17, R17
 	SUB  $1, R11, R11
-	CBNZ R11, t2dHRowLoop
+	CBNZ R11, t2dHNonZeroRowLoop
 
 t2dHDone:
 	// Vertical pass setup.
 	MOVD T2D_YKERNEL(R0), R3
 	WORD $0x4c407460       // ld1 {v0.8h}, [x3]  load 8 vertical taps
-	MOVD $524288, R11      // yBias = 1 << offsetBits (offsetBits = 19)
-	WORD $0x4e040d72       // dup v18.4s, w11    yBias broadcast
-	MOVD $384, R11         // roundOffset = (1<<8) + (1<<7)
-	WORD $0x4e040d73       // dup v19.4s, w11    roundOffset broadcast
+	// Fold the integer round-offset subtraction into the accumulator seed:
+	// yBias - (roundOffset << ROUND1_BITS) = 524288 - (384 << 11).
+	MOVD $-262144, R11
+	WORD $0x4e040d72       // dup v18.4s, w11
 
 	MOVD R13, R17          // im row-window base for output row 0
+	CMP  $4, R7
+	BLT  t2dVTail
 
-t2dVRowLoop:
-	CBZ  R7, t2dVDone
+t2dVRow4Loop:
 	MOVD R1, R10           // dst column cursor
 	MOVD R17, R11          // im row-window base for this output row
 	MOVD R6, R8            // remaining columns
 
-t2dVColLoop:
-	MOVD R11, R9           // R9 walks the 8 tap rows; post-index by imStride bytes
-	WORD $0x4eb21e50       // mov v16.16b, v18.16b   init acc to yBias
+t2dVCol4Loop:
+	MOVD R11, R9           // R9 walks the 11 shared rows; post-index by imStride
+	WORD $0x4eb21e50       // mov v16.16b, v18.16b   init acc to folded seed
 	WORD $0x4eb21e51       // mov v17.16b, v18.16b
+	WORD $0x4eb21e53       // mov v19.16b, v18.16b
+	WORD $0x4eb21e54       // mov v20.16b, v18.16b
+	WORD $0x4eb21e55       // mov v21.16b, v18.16b
+	WORD $0x4eb21e56       // mov v22.16b, v18.16b
+	WORD $0x4eb21e57       // mov v23.16b, v18.16b
+	WORD $0x4eb21e58       // mov v24.16b, v18.16b
 
+	WORD $0x4cce7521       // ld1 {v1.8h}, [x9], x14
+	WORD $0x4cce7522       // ld1 {v2.8h}, [x9], x14
+	WORD $0x4cce7523       // ld1 {v3.8h}, [x9], x14
+	WORD $0x4cce7524       // ld1 {v4.8h}, [x9], x14
+	WORD $0x4cce7525       // ld1 {v5.8h}, [x9], x14
+	WORD $0x4cce7526       // ld1 {v6.8h}, [x9], x14
+	WORD $0x4cce7527       // ld1 {v7.8h}, [x9], x14
+	WORD $0x4cce7539       // ld1 {v25.8h}, [x9], x14
+	WORD $0x4cce753a       // ld1 {v26.8h}, [x9], x14
+	WORD $0x4cce753b       // ld1 {v27.8h}, [x9], x14
+	WORD $0x4cce753c       // ld1 {v28.8h}, [x9], x14
+
+	WORD $0x0f402030       // smlal  v16.4s, v1.4h, v0.h[0]
+	WORD $0x0f402053       // smlal  v19.4s, v2.4h, v0.h[0]
+	WORD $0x0f402075       // smlal  v21.4s, v3.4h, v0.h[0]
+	WORD $0x0f402097       // smlal  v23.4s, v4.4h, v0.h[0]
+	WORD $0x4f402031       // smlal2 v17.4s, v1.8h, v0.h[0]
+	WORD $0x4f402054       // smlal2 v20.4s, v2.8h, v0.h[0]
+	WORD $0x4f402076       // smlal2 v22.4s, v3.8h, v0.h[0]
+	WORD $0x4f402098       // smlal2 v24.4s, v4.8h, v0.h[0]
+	WORD $0x0f502050       // smlal  v16.4s, v2.4h, v0.h[1]
+	WORD $0x0f502073       // smlal  v19.4s, v3.4h, v0.h[1]
+	WORD $0x0f502095       // smlal  v21.4s, v4.4h, v0.h[1]
+	WORD $0x0f5020b7       // smlal  v23.4s, v5.4h, v0.h[1]
+	WORD $0x4f502051       // smlal2 v17.4s, v2.8h, v0.h[1]
+	WORD $0x4f502074       // smlal2 v20.4s, v3.8h, v0.h[1]
+	WORD $0x4f502096       // smlal2 v22.4s, v4.8h, v0.h[1]
+	WORD $0x4f5020b8       // smlal2 v24.4s, v5.8h, v0.h[1]
+	WORD $0x0f602070       // smlal  v16.4s, v3.4h, v0.h[2]
+	WORD $0x0f602093       // smlal  v19.4s, v4.4h, v0.h[2]
+	WORD $0x0f6020b5       // smlal  v21.4s, v5.4h, v0.h[2]
+	WORD $0x0f6020d7       // smlal  v23.4s, v6.4h, v0.h[2]
+	WORD $0x4f602071       // smlal2 v17.4s, v3.8h, v0.h[2]
+	WORD $0x4f602094       // smlal2 v20.4s, v4.8h, v0.h[2]
+	WORD $0x4f6020b6       // smlal2 v22.4s, v5.8h, v0.h[2]
+	WORD $0x4f6020d8       // smlal2 v24.4s, v6.8h, v0.h[2]
+	WORD $0x0f702090       // smlal  v16.4s, v4.4h, v0.h[3]
+	WORD $0x0f7020b3       // smlal  v19.4s, v5.4h, v0.h[3]
+	WORD $0x0f7020d5       // smlal  v21.4s, v6.4h, v0.h[3]
+	WORD $0x0f7020f7       // smlal  v23.4s, v7.4h, v0.h[3]
+	WORD $0x4f702091       // smlal2 v17.4s, v4.8h, v0.h[3]
+	WORD $0x4f7020b4       // smlal2 v20.4s, v5.8h, v0.h[3]
+	WORD $0x4f7020d6       // smlal2 v22.4s, v6.8h, v0.h[3]
+	WORD $0x4f7020f8       // smlal2 v24.4s, v7.8h, v0.h[3]
+	WORD $0x0f4028b0       // smlal  v16.4s, v5.4h, v0.h[4]
+	WORD $0x0f4028d3       // smlal  v19.4s, v6.4h, v0.h[4]
+	WORD $0x0f4028f5       // smlal  v21.4s, v7.4h, v0.h[4]
+	WORD $0x0f402b37       // smlal  v23.4s, v25.4h, v0.h[4]
+	WORD $0x4f4028b1       // smlal2 v17.4s, v5.8h, v0.h[4]
+	WORD $0x4f4028d4       // smlal2 v20.4s, v6.8h, v0.h[4]
+	WORD $0x4f4028f6       // smlal2 v22.4s, v7.8h, v0.h[4]
+	WORD $0x4f402b38       // smlal2 v24.4s, v25.8h, v0.h[4]
+	WORD $0x0f5028d0       // smlal  v16.4s, v6.4h, v0.h[5]
+	WORD $0x0f5028f3       // smlal  v19.4s, v7.4h, v0.h[5]
+	WORD $0x0f502b35       // smlal  v21.4s, v25.4h, v0.h[5]
+	WORD $0x0f502b57       // smlal  v23.4s, v26.4h, v0.h[5]
+	WORD $0x4f5028d1       // smlal2 v17.4s, v6.8h, v0.h[5]
+	WORD $0x4f5028f4       // smlal2 v20.4s, v7.8h, v0.h[5]
+	WORD $0x4f502b36       // smlal2 v22.4s, v25.8h, v0.h[5]
+	WORD $0x4f502b58       // smlal2 v24.4s, v26.8h, v0.h[5]
+	WORD $0x0f6028f0       // smlal  v16.4s, v7.4h, v0.h[6]
+	WORD $0x0f602b33       // smlal  v19.4s, v25.4h, v0.h[6]
+	WORD $0x0f602b55       // smlal  v21.4s, v26.4h, v0.h[6]
+	WORD $0x0f602b77       // smlal  v23.4s, v27.4h, v0.h[6]
+	WORD $0x4f6028f1       // smlal2 v17.4s, v7.8h, v0.h[6]
+	WORD $0x4f602b34       // smlal2 v20.4s, v25.8h, v0.h[6]
+	WORD $0x4f602b56       // smlal2 v22.4s, v26.8h, v0.h[6]
+	WORD $0x4f602b78       // smlal2 v24.4s, v27.8h, v0.h[6]
+	WORD $0x0f702b30       // smlal  v16.4s, v25.4h, v0.h[7]
+	WORD $0x0f702b53       // smlal  v19.4s, v26.4h, v0.h[7]
+	WORD $0x0f702b75       // smlal  v21.4s, v27.4h, v0.h[7]
+	WORD $0x0f702b97       // smlal  v23.4s, v28.4h, v0.h[7]
+	WORD $0x4f702b31       // smlal2 v17.4s, v25.8h, v0.h[7]
+	WORD $0x4f702b54       // smlal2 v20.4s, v26.8h, v0.h[7]
+	WORD $0x4f702b76       // smlal2 v22.4s, v27.8h, v0.h[7]
+	WORD $0x4f702b98       // smlal2 v24.4s, v28.8h, v0.h[7]
+
+	WORD $0x0f159e10       // sqrshrn  v16.4h, v16.4s, #11
+	WORD $0x4f159e30       // sqrshrn2 v16.8h, v17.4s, #11
+	WORD $0x2e212a10       // sqxtun v16.8b, v16.8h
+	WORD $0x0f159e73       // sqrshrn  v19.4h, v19.4s, #11
+	WORD $0x4f159e93       // sqrshrn2 v19.8h, v20.4s, #11
+	WORD $0x2e212a73       // sqxtun v19.8b, v19.8h
+	WORD $0x0f159eb5       // sqrshrn  v21.4h, v21.4s, #11
+	WORD $0x4f159ed5       // sqrshrn2 v21.8h, v22.4s, #11
+	WORD $0x2e212ab5       // sqxtun v21.8b, v21.8h
+	WORD $0x0f159ef7       // sqrshrn  v23.4h, v23.4s, #11
+	WORD $0x4f159f17       // sqrshrn2 v23.8h, v24.4s, #11
+	WORD $0x2e212af7       // sqxtun v23.8b, v23.8h
+
+	MOVD R10, R9
+	WORD $0x0c007130       // st1 {v16.8b}, [x9]
+	ADD  R4, R9, R9
+	WORD $0x0c007133       // st1 {v19.8b}, [x9]
+	ADD  R4, R9, R9
+	WORD $0x0c007135       // st1 {v21.8b}, [x9]
+	ADD  R4, R9, R9
+	WORD $0x0c007137       // st1 {v23.8b}, [x9]
+
+	ADD  $8, R10, R10
+	ADD  $16, R11, R11
+	SUB  $8, R8, R8
+	CBNZ R8, t2dVCol4Loop
+
+	ADD R4<<2, R1, R1
+	ADD R14<<2, R17, R17
+	SUB $4, R7, R7
+	CMP $4, R7
+	BGE t2dVRow4Loop
+
+t2dVTail:
+	CBZ R7, t2dVDone
+
+t2dVTailRowLoop:
+	MOVD R1, R10
+	MOVD R17, R11
+	MOVD R6, R8
+
+t2dVTailColLoop:
+	MOVD R11, R9
+	WORD $0x4eb21e50       // mov v16.16b, v18.16b
+	WORD $0x4eb21e51       // mov v17.16b, v18.16b
 	WORD $0x4cce7521       // ld1 {v1.8h}, [x9], x14
 	WORD $0x0f402030       // smlal  v16.4s, v1.4h, v0.h[0]
 	WORD $0x4f402031       // smlal2 v17.4s, v1.8h, v0.h[0]
-	WORD $0x4cce7521       // ld1 {v1.8h}, [x9], x14
-	WORD $0x0f502030       // smlal  v16.4s, v1.4h, v0.h[1]
-	WORD $0x4f502031       // smlal2 v17.4s, v1.8h, v0.h[1]
-	WORD $0x4cce7521       // ld1 {v1.8h}, [x9], x14
-	WORD $0x0f602030       // smlal  v16.4s, v1.4h, v0.h[2]
-	WORD $0x4f602031       // smlal2 v17.4s, v1.8h, v0.h[2]
-	WORD $0x4cce7521       // ld1 {v1.8h}, [x9], x14
-	WORD $0x0f702030       // smlal  v16.4s, v1.4h, v0.h[3]
-	WORD $0x4f702031       // smlal2 v17.4s, v1.8h, v0.h[3]
-	WORD $0x4cce7521       // ld1 {v1.8h}, [x9], x14
-	WORD $0x0f402830       // smlal  v16.4s, v1.4h, v0.h[4]
-	WORD $0x4f402831       // smlal2 v17.4s, v1.8h, v0.h[4]
-	WORD $0x4cce7521       // ld1 {v1.8h}, [x9], x14
-	WORD $0x0f502830       // smlal  v16.4s, v1.4h, v0.h[5]
-	WORD $0x4f502831       // smlal2 v17.4s, v1.8h, v0.h[5]
-	WORD $0x4cce7521       // ld1 {v1.8h}, [x9], x14
-	WORD $0x0f602830       // smlal  v16.4s, v1.4h, v0.h[6]
-	WORD $0x4f602831       // smlal2 v17.4s, v1.8h, v0.h[6]
-	WORD $0x4cce7521       // ld1 {v1.8h}, [x9], x14
-	WORD $0x0f702830       // smlal  v16.4s, v1.4h, v0.h[7]
-	WORD $0x4f702831       // smlal2 v17.4s, v1.8h, v0.h[7]
-
-	WORD $0x4f352610       // srshr v16.4s, v16.4s, #11
-	WORD $0x4f352631       // srshr v17.4s, v17.4s, #11
-	WORD $0x6eb38610       // sub v16.4s, v16.4s, v19.4s
-	WORD $0x6eb38631       // sub v17.4s, v17.4s, v19.4s
-	WORD $0x0e614a10       // sqxtn  v16.4h, v16.4s
-	WORD $0x4e614a30       // sqxtn2 v16.8h, v17.4s
+	WORD $0x4cce7521
+	WORD $0x0f502030
+	WORD $0x4f502031
+	WORD $0x4cce7521
+	WORD $0x0f602030
+	WORD $0x4f602031
+	WORD $0x4cce7521
+	WORD $0x0f702030
+	WORD $0x4f702031
+	WORD $0x4cce7521
+	WORD $0x0f402830
+	WORD $0x4f402831
+	WORD $0x4cce7521
+	WORD $0x0f502830
+	WORD $0x4f502831
+	WORD $0x4cce7521
+	WORD $0x0f602830
+	WORD $0x4f602831
+	WORD $0x4cce7521
+	WORD $0x0f702830
+	WORD $0x4f702831
+	WORD $0x0f159e10       // sqrshrn  v16.4h, v16.4s, #11
+	WORD $0x4f159e30       // sqrshrn2 v16.8h, v17.4s, #11
 	WORD $0x2e212a10       // sqxtun v16.8b, v16.8h
 	WORD $0x0c007150       // st1 {v16.8b}, [x10]
 
 	ADD  $8, R10, R10
 	ADD  $16, R11, R11
 	SUB  $8, R8, R8
-	CBNZ R8, t2dVColLoop
+	CBNZ R8, t2dVTailColLoop
 
 	ADD  R4, R1, R1
 	ADD  R14, R17, R17
 	SUB  $1, R7, R7
-	CBNZ R7, t2dVRowLoop
+	CBNZ R7, t2dVTailRowLoop
 
 t2dVDone:
 	RET
