@@ -1004,7 +1004,7 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 	visit.Delta = delta
 
 	if req.DecodePredictionModes {
-		if err := s.decodeBlockPredictionModeInto(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.Palette, &visit.Prediction); err != nil {
+		if err := s.decodeBlockPredictionModeIntoZeroed(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.Palette, &visit.Prediction); err != nil {
 			return nil, fmt.Errorf("decode prediction: %w", err)
 		}
 	}
@@ -1063,17 +1063,20 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 
 func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch) (BlockPredictionModeResult, error) {
 	var result BlockPredictionModeResult
-	if err := s.decodeBlockPredictionModeInto(cdfs, ctx, req, block, prefix, segmentID, segment, paletteMap, &result); err != nil {
+	if err := s.decodeBlockPredictionModeIntoZeroed(cdfs, ctx, req, block, prefix, segmentID, segment, paletteMap, &result); err != nil {
 		return BlockPredictionModeResult{}, err
 	}
 	return result, nil
 }
 
-func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch, result *BlockPredictionModeResult) error {
+// decodeBlockPredictionModeIntoZeroed fills a caller-cleared result. Both
+// block-loop call sites own fresh or explicitly reset storage; retaining that
+// ownership boundary avoids clearing the 784-byte aggregate again here before
+// immediately populating one of its mutually exclusive intra/inter shapes.
+func (s *DecodeState) decodeBlockPredictionModeIntoZeroed(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch, result *BlockPredictionModeResult) error {
 	if result == nil {
 		return ErrInvalidDecodeState
 	}
-	*result = BlockPredictionModeResult{}
 	blockX4 := int(block.X4)
 	blockY4 := int(block.Y4)
 	intraFlag, err := s.ReadIntraFlagResult(cdfs.Intra, ctx, IntraFlagRequest{
@@ -1091,13 +1094,11 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 		return err
 	}
 
-	*result = BlockPredictionModeResult{
-		Valid:        true,
-		Intra:        intraFlag.Intra,
-		Intrabc:      intraFlag.Intrabc,
-		IntrabcValid: intraFlag.IntrabcValid,
-		LumaMode:     IntraModeDC,
-	}
+	result.Valid = true
+	result.Intra = intraFlag.Intra
+	result.Intrabc = intraFlag.Intrabc
+	result.IntrabcValid = intraFlag.IntrabcValid
+	result.LumaMode = IntraModeDC
 	if intraFlag.Intrabc {
 		result.ChromaMode = ChromaIntraModeDC
 		result.ChromaModeValid = true
