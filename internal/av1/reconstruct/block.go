@@ -193,6 +193,15 @@ func reconstructPlaneBlockTrustedAtWithGeometry(dst []byte, dstStride int, bytes
 	activeRows := 0
 	if useSparseDequant {
 		activeRows = activeTransformRowsFromScan(scan, eob, scanHeight, cfg.Size, cfg.Transform)
+	} else if !useNonZeroDequant && !cfg.Lossless && cfg.Transform != transform.TypeIDTX && eob > 0 {
+		// Trusted decoder coefficients are zero outside the decoded EOB prefix.
+		// Reuse the exact O(1) row bound only for the immutable default scan;
+		// copied or custom scans retain the full-row fallback.
+		if class, err := cfg.Transform.Class(); err == nil {
+			if rows, ok := transform.DefaultScanActiveRowsForScan(cfg.Size, class, scan, eob); ok && rows > 0 {
+				activeRows = rows
+			}
+		}
 	}
 	if cfg.InverseQMatrix != nil {
 		if useNonZeroDequant {
