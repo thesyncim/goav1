@@ -210,6 +210,7 @@ func (f *TemporalMotionField) ProjectReferenceFrame(req TemporalMotionProjection
 	if err != nil {
 		return false, err
 	}
+	projectionRefs := motionFieldProjectionReferences(startToCurrent, refOffsets)
 
 	startRows := int(start.Rows)
 	startCols := int(start.Cols)
@@ -218,28 +219,57 @@ func (f *TemporalMotionField) ProjectReferenceFrame(req TemporalMotionProjection
 	cols := int(f.Cols)
 	stride := int(f.Stride)
 	for blkRow := 0; blkRow < startRows; blkRow++ {
-		for blkCol := 0; blkCol < startCols; blkCol++ {
-			mvRef := start.Entries[blkRow*startStride+blkCol]
+		baseBlkRow := (blkRow >> 3) << 3
+		rowMin := max(0, baseBlkRow-(motionFieldMaxOffsetHeight>>3))
+		rowMax := min(rows, baseBlkRow+8+(motionFieldMaxOffsetHeight>>3))
+		sourceRowBase := blkRow * startStride
+		sourceRow := start.Entries[sourceRowBase : sourceRowBase+startCols]
+		destinationOriginRow := blkRow * stride
+		for blkCol, mvRef := range sourceRow {
 			if !mvRef.Valid || !mvRef.Ref.Valid() {
 				continue
 			}
-			refFrameOffset := refOffsets[mvRef.Ref]
-			if absInt(refFrameOffset) > motionFieldMaxFrameDistance ||
-				refFrameOffset <= 0 ||
-				absInt(startToCurrent) > motionFieldMaxFrameDistance {
+			projection := projectionRefs[mvRef.Ref]
+			if !projection.valid {
 				continue
 			}
-			projected, err := motionFieldProjectMV(mvRef.MV, startToCurrent, refFrameOffset)
-			if err != nil {
-				return false, err
-			}
-			row, col, ok := motionFieldBlockPosition(rows, cols, blkRow, blkCol, projected, req.Backward)
-			if !ok {
+			if mvRef.MV.Row == 0 && mvRef.MV.Col == 0 {
+				// With matching grids, the source position is always admissible.
+				// A zero vector projects back to that origin for every valid scale.
+				f.Entries[destinationOriginRow+blkCol] = TemporalMotionEntry{
+					MV:             mvRef.MV,
+					RefFrameOffset: projection.refFrameOffset,
+					Valid:          true,
+				}
 				continue
 			}
+
+			projectedRow := motionFieldProjectComponent(mvRef.MV.Row, projection.scale)
+			rowOffset := motionFieldBlockOffset(projectedRow)
+			row := blkRow + rowOffset
+			if req.Backward {
+				row = blkRow - rowOffset
+			}
+			if row < rowMin || row >= rowMax {
+				continue
+			}
+
+			projectedCol := motionFieldProjectComponent(mvRef.MV.Col, projection.scale)
+			colOffset := motionFieldBlockOffset(projectedCol)
+			baseBlkCol := (blkCol >> 3) << 3
+			colMin := max(0, baseBlkCol-(motionFieldMaxOffsetWidth>>3))
+			colMax := min(cols, baseBlkCol+8+(motionFieldMaxOffsetWidth>>3))
+			col := blkCol + colOffset
+			if req.Backward {
+				col = blkCol - colOffset
+			}
+			if col < colMin || col >= colMax {
+				continue
+			}
+
 			f.Entries[row*stride+col] = TemporalMotionEntry{
 				MV:             mvRef.MV,
-				RefFrameOffset: uint8(refFrameOffset),
+				RefFrameOffset: projection.refFrameOffset,
 				Valid:          true,
 			}
 		}
@@ -302,6 +332,31 @@ func motionFieldRefOffsets(bits uint8, start uint8, refs [referenceFrameCount]ui
 	return offsets, nil
 }
 
+type motionFieldProjectionReference struct {
+	scale          int64
+	refFrameOffset uint8
+	valid          bool
+}
+
+func motionFieldProjectionReferences(startToCurrent int, refOffsets [referenceFrameCount]int) [referenceFrameCount]motionFieldProjectionReference {
+	var refs [referenceFrameCount]motionFieldProjectionReference
+	if absInt(startToCurrent) > motionFieldMaxFrameDistance {
+		return refs
+	}
+	for ref := range referenceFrameCount {
+		offset := refOffsets[ref]
+		if offset <= 0 || offset > motionFieldMaxFrameDistance {
+			continue
+		}
+		refs[ref] = motionFieldProjectionReference{
+			scale:          int64(startToCurrent) * int64(motionFieldDivMult[offset]),
+			refFrameOffset: uint8(offset),
+			valid:          true,
+		}
+	}
+	return refs
+}
+
 func motionFieldRelativeOrderHint(bits uint8, a uint8, b uint8) (int, error) {
 	if bits == 0 || bits > 8 {
 		return 0, ErrInvalidDecodeState
@@ -329,12 +384,20 @@ func motionFieldProjectMV(ref motion.Vector, num int, den int) (motion.Vector, e
 	} else if num < -motionFieldMaxFrameDistance {
 		num = -motionFieldMaxFrameDistance
 	}
-	row := roundPowerOfTwoSigned(int64(ref.Row)*int64(num)*int64(motionFieldDivMult[den]), 14)
-	col := roundPowerOfTwoSigned(int64(ref.Col)*int64(num)*int64(motionFieldDivMult[den]), 14)
+	scale := int64(num) * int64(motionFieldDivMult[den])
+	return motionFieldProjectMVScale(ref, scale), nil
+}
+
+func motionFieldProjectMVScale(ref motion.Vector, scale int64) motion.Vector {
 	return motion.Vector{
-		Row: int16(clampInt64(row, motionFieldMVLower+1, motionFieldMVUpper-1)),
-		Col: int16(clampInt64(col, motionFieldMVLower+1, motionFieldMVUpper-1)),
-	}, nil
+		Row: motionFieldProjectComponent(ref.Row, scale),
+		Col: motionFieldProjectComponent(ref.Col, scale),
+	}
+}
+
+func motionFieldProjectComponent(v int16, scale int64) int16 {
+	projected := roundPowerOfTwoSigned(int64(v)*scale, 14)
+	return int16(clampInt64(projected, motionFieldMVLower+1, motionFieldMVUpper-1))
 }
 
 func motionFieldBlockPosition(rows int, cols int, blkRow int, blkCol int, mv motion.Vector, backward bool) (int, int, bool) {
