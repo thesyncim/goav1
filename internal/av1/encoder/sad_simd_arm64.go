@@ -26,10 +26,10 @@ func load16(p unsafe.Pointer) archsimd.Uint8x16 {
 }
 
 // absDiffU8x16 computes unsigned byte absolute differences using only the
-// public archsimd API. The two saturating differences are mutually exclusive
-// per lane, so OR combines them into the exact absolute difference.
+// public archsimd API. The maximum is never below the minimum, so subtraction
+// is exact without saturation.
 func absDiffU8x16(a, b archsimd.Uint8x16) archsimd.Uint8x16 {
-	return a.SubSaturated(b).Or(b.SubSaturated(a))
+	return a.Max(b).Sub(a.Min(b))
 }
 
 // widen16 widens one 16-byte abs-diff vector to a Uint16x8 by adding its low
@@ -47,17 +47,17 @@ func absAcc16(acc archsimd.Uint16x8, s, r archsimd.Uint8x16) archsimd.Uint16x8 {
 }
 
 // sumU16 returns the exact sum of the eight lanes of acc. The lanes are widened
-// to 32 bits before the horizontal add so the total cannot wrap.
+// to 32 bits after pairwise addition so the total cannot wrap. Each lane is at
+// most 2*32*255 for the largest caller, so a pair fits in uint16.
 func sumU16(acc archsimd.Uint16x8) int {
-	return int(acc.ExtendLo4ToUint32().Add(acc.HiToLo().ExtendLo4ToUint32()).ReduceSum())
+	return int(acc.ConcatAddPairs(acc).ExtendLo4ToUint32().ReduceSum())
 }
 
 // pack2Rows loads two 8-byte rows (at base p and base+stride) into one
 // 16-byte vector: lanes 0..7 are the first row and lanes 8..15 are the second.
 func pack2Rows(p unsafe.Pointer, stride int) archsimd.Uint8x16 {
-	lo := *(*uint64)(p)
-	hi := *(*uint64)(step(p, stride))
-	return archsimd.BroadcastUint64x2(lo).SetElem(1, hi).ReshapeToUint8s()
+	rows := [2]uint64{*(*uint64)(p), *(*uint64)(step(p, stride))}
+	return archsimd.LoadUint64x2Array(&rows).ReshapeToUint8s()
 }
 
 // sad8x8Ptr is the 8x8 SAD with independent strides. A candidate's maximum
@@ -117,6 +117,14 @@ func sad16ColsDualPtr(sp unsafe.Pointer, srcStride int, rp unsafe.Pointer, refSt
 		even = absAcc16(even, load16(step(sp, row*srcStride)), load16(step(rp, row*refStride)))
 		odd = absAcc16(odd, load16(step(sp, (row+1)*srcStride)), load16(step(rp, (row+1)*refStride)))
 	}
+	if h == 16 {
+		// 16*16*255 = 65,280, so the horizontal uint16 sum is exact.
+		return int(even.Add(odd).ReduceSum())
+	}
+	if h == 32 {
+		// Each accumulator holds 16 rows and fits independently in uint16.
+		return int(even.ReduceSum()) + int(odd.ReduceSum())
+	}
 	return sumU16(even) + sumU16(odd)
 }
 
@@ -134,6 +142,9 @@ func sad16ColsX4Ptr(sp, p0, p1, p2, p3 unsafe.Pointer, stride int, h int) (int, 
 		a1 = absAcc16(a1, s, load16(step(p1, o)))
 		a2 = absAcc16(a2, s, load16(step(p2, o)))
 		a3 = absAcc16(a3, s, load16(step(p3, o)))
+	}
+	if h == 16 {
+		return int(a0.ReduceSum()), int(a1.ReduceSum()), int(a2.ReduceSum()), int(a3.ReduceSum())
 	}
 	return sumU16(a0), sumU16(a1), sumU16(a2), sumU16(a3)
 }

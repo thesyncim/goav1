@@ -80,6 +80,54 @@ func TestSAD8x8x4SIMDExactMinimumSlice(t *testing.T) {
 	}
 }
 
+// TestSAD8x8SIMDPackedRowsExactWindows covers every entry point that packs two
+// 8-byte rows through a local array. The allocation ends at the last legal
+// byte, including for overlapping rows and misaligned window starts.
+func TestSAD8x8SIMDPackedRowsExactWindows(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x5ad8))
+	for _, srcStride := range []int{1, 2, 7, 8, 17, 79} {
+		for _, refStride := range []int{1, 8, 19} {
+			for _, offset := range []int{0, 1, 7} {
+				src := sadWindow(rng, 7*srcStride+8, offset, sadFillRandom)
+				ref0 := sadWindow(rng, 7*refStride+8, offset, sadFillBinary)
+				ref1 := sadWindow(rng, 7*refStride+8, offset, sadFillMax)
+				if got, want := sad8x8SIMD(src, srcStride, ref0, refStride),
+					sad8x8DualPureGo(src, srcStride, ref0, refStride); got != want {
+					t.Fatalf("dual strides %d/%d offset %d: got %d want %d", srcStride, refStride, offset, got, want)
+				}
+				if got, want := sad8x8CompoundAvgSIMD(src, srcStride, ref0, refStride, ref1, refStride),
+					sad8x8CompoundAvgBlockPureGo(src, srcStride, ref0, refStride, ref1, refStride); got != want {
+					t.Fatalf("compound strides %d/%d offset %d: got %d want %d", srcStride, refStride, offset, got, want)
+				}
+			}
+		}
+	}
+	for _, stride := range []int{1, 2, 7, 8, 17, 79} {
+		for _, offset := range []int{0, 1, 7} {
+			src := sadWindow(rng, 7*stride+8, offset, sadFillRandom)
+			refs := [4][]byte{
+				sadWindow(rng, 7*stride+8, offset, sadFillRandom),
+				sadWindow(rng, 7*stride+8, offset, sadFillZero),
+				sadWindow(rng, 7*stride+8, offset, sadFillMax),
+				sadWindow(rng, 7*stride+8, offset, sadFillBinary),
+			}
+			g0, g1, g2, g3 := sad8x8x4SIMD(src, refs[0], refs[1], refs[2], refs[3], stride)
+			w0, w1, w2, w3 := sad8x8x4PureGo(src, refs[0], refs[1], refs[2], refs[3], stride)
+			if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+				t.Fatalf("x4 stride %d offset %d: got (%d,%d,%d,%d) want (%d,%d,%d,%d)", stride, offset,
+					g0, g1, g2, g3, w0, w1, w2, w3)
+			}
+			ref := sadWindow(rng, 7*stride+20, offset, sadFillRandom)
+			g0, g1, g2, g3 = sad8x8x4Step4SIMD(src, ref, stride)
+			w0, w1, w2, w3 = sad8x8x4Step4PureGo(src, ref, stride)
+			if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+				t.Fatalf("step4 stride %d offset %d: got (%d,%d,%d,%d) want (%d,%d,%d,%d)", stride, offset,
+					g0, g1, g2, g3, w0, w1, w2, w3)
+			}
+		}
+	}
+}
+
 func TestSAD8x8x4SIMDExtremes(t *testing.T) {
 	const stride = 32
 	src := make([]byte, stride*32)
