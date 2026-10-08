@@ -38,4 +38,3 @@ func blendA64MaskSIMD(a blendA64MaskArgs) bool {
 	}
 	return blendA64NoSubSIMD(a, groups)
 }
-

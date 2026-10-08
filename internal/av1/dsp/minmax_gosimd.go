@@ -21,8 +21,8 @@ package dsp
 
 import (
 	"encoding/binary"
-	"unsafe"
 	"simd/archsimd"
+	"unsafe"
 )
 
 // minMaxAbsDiff8x8SIMD is the Go SIMD variant selected by the SIMD dispatchers.
