@@ -20,6 +20,18 @@ func init() {
 // is part of the arm64 baseline, so the binding is unconditional.
 func invGlueSIMDAvailable() bool { return true }
 
+// invGlueNegShift[s] holds -s in every lane: the variable-shift count that
+// shifts right by s. Loading it from a table costs one vector load, where a
+// broadcast per call is a lane insert plus a dup.
+var invGlueNegShift = func() (t [32][4]int32) {
+	for s := range t {
+		for l := range t[s] {
+			t[s][l] = -int32(s)
+		}
+	}
+	return t
+}()
+
 // invGlueRoundVec returns roundShift(x, s) for each lane of v, for s >= 1.
 // With y = x>>(s-1) (negS1 = -(s-1) broadcast), roundShift(x, s) == (y+1)>>1:
 // the rounded halving add of y and zero (SRHADD) computes that without the
@@ -48,8 +60,8 @@ func clampRoundSIMD(scratch []int32, shift int, min, max int32) {
 			b.StoreArray((*[4]int32)(blk[4:8]))
 		}
 	} else {
-		negS1 := archsimd.BroadcastInt32x4(-int32(shift - 1))
-		zero := archsimd.BroadcastInt32x4(0)
+		negS1 := archsimd.LoadInt32x4Array(&invGlueNegShift[shift-1])
+		var zero archsimd.Int32x4
 		for i := 0; i < n; i += 8 {
 			blk := scratch[i : i+8 : i+8]
 			a := invGlueRoundVec(archsimd.LoadInt32x4Array((*[4]int32)(blk[0:4])), negS1, zero)
@@ -71,8 +83,8 @@ func narrowStoreSIMD(dst []int16, dstStride int, scratch []int32, width, height 
 		narrowStorePureGo(dst, dstStride, scratch, width, height)
 		return
 	}
-	neg3 := archsimd.BroadcastInt32x4(-3)
-	zero := archsimd.BroadcastInt32x4(0)
+	neg3 := archsimd.LoadInt32x4Array(&invGlueNegShift[3])
+	var zero archsimd.Int32x4
 	for row := range height {
 		dstLine := dst[row*dstStride : row*dstStride+width : row*dstStride+width]
 		srcLine := scratch[row*width : row*width+width : row*width+width]

@@ -6,6 +6,8 @@
 
 package transform
 
+import "simd/archsimd"
+
 // init binds the Go SIMD batched inverse kernels that replaced the arm64 NEON
 // assembly. The column kernels run four (or two) columns in int32 lanes and the
 // row kernels run rows through a 4x4 transpose; the adapters keep the same
@@ -23,6 +25,10 @@ func init() {
 	inverseDCT16Row2Impl = inverseDCT16Row2SIMDAdapter
 	inverseADST16Row4Impl = inverseADST16Row4SIMDAdapter
 	inverseADST16Row4FlipImpl = inverseADST16Row4FlipSIMDAdapter
+	inverseDCT32Col2Impl = inverseDCT32Col2SIMDAdapter
+	inverseDCT32Col4Impl = inverseDCT32Col4SIMDAdapter
+	inverseDCT32Row2Impl = inverseDCT32Row2SIMDAdapter
+	inverseDCT32Row4Impl = inverseDCT32Row4SIMDAdapter
 }
 
 // simdInEnvelope reports whether every value lies inside the +/-2^19 stage
@@ -30,8 +36,21 @@ func init() {
 // coefficients, so they check their inputs; column kernels rely on the staged
 // [min, max] pre-clamp exactly as the assembly kernels did.
 func simdInEnvelope(v []int32) bool {
-	for _, x := range v {
-		if x < -colClampBoundNEON || x >= colClampBoundNEON {
+	mn := archsimd.BroadcastInt32x4(1<<31 - 1)
+	mx := archsimd.BroadcastInt32x4(-1 << 31)
+	i := 0
+	for ; i+4 <= len(v); i += 4 {
+		x := archsimd.LoadInt32x4Array((*[4]int32)(v[i:]))
+		mn = mn.Min(x)
+		mx = mx.Max(x)
+	}
+	for j := uint8(0); j < 4; j++ {
+		if mn.GetElem(j) < -colClampBoundNEON || mx.GetElem(j) >= colClampBoundNEON {
+			return false
+		}
+	}
+	for ; i < len(v); i++ {
+		if v[i] < -colClampBoundNEON || v[i] >= colClampBoundNEON {
 			return false
 		}
 	}
@@ -136,4 +155,40 @@ func inverseADST16Row4FlipSIMDAdapter(r0, r1, r2, r3 []int32, min, max int32) {
 		return
 	}
 	inverseADST16Row4FlipSIMD(r0[:adst16Size], r1[:adst16Size], r2[:adst16Size], r3[:adst16Size], min, max)
+}
+
+func inverseDCT32Col2SIMDAdapter(buf []int32, rowStride int, min, max int32) {
+	if rowStride < 2 || len(buf) < (dct32Size-1)*rowStride+2 || !simdColEnvelope(min, max) {
+		inverseDCT32Col2PureGo(buf, rowStride, min, max)
+		return
+	}
+	inverseDCT32Col2SIMD(buf, rowStride, min, max)
+}
+
+func inverseDCT32Col4SIMDAdapter(buf []int32, rowStride int, min, max int32) {
+	if rowStride < 4 || len(buf) < (dct32Size-1)*rowStride+4 || !simdColEnvelope(min, max) {
+		inverseDCT32Col2SIMDAdapter(buf, rowStride, min, max)
+		inverseDCT32Col2SIMDAdapter(buf[2:], rowStride, min, max)
+		return
+	}
+	inverseDCT32Col4SIMD(buf, rowStride, min, max)
+}
+
+func inverseDCT32Row2SIMDAdapter(r0, r1 []int32, min, max int32) {
+	if len(r0) < dct32Size || len(r1) < dct32Size || !simdColEnvelope(min, max) ||
+		!simdInEnvelope(r0[:dct32Size]) || !simdInEnvelope(r1[:dct32Size]) {
+		inverseDCT32Row2PureGo(r0, r1, min, max)
+		return
+	}
+	inverseDCT32Row2SIMD(r0[:dct32Size], r1[:dct32Size], min, max)
+}
+
+func inverseDCT32Row4SIMDAdapter(r0, r1, r2, r3 []int32, min, max int32) {
+	if len(r0) < dct32Size || len(r1) < dct32Size || len(r2) < dct32Size || len(r3) < dct32Size ||
+		!simdColEnvelope(min, max) || !simdInEnvelope(r0[:dct32Size]) || !simdInEnvelope(r1[:dct32Size]) ||
+		!simdInEnvelope(r2[:dct32Size]) || !simdInEnvelope(r3[:dct32Size]) {
+		inverseDCT32Row4PureGo(r0, r1, r2, r3, min, max)
+		return
+	}
+	inverseDCT32Row4SIMD(r0[:dct32Size], r1[:dct32Size], r2[:dct32Size], r3[:dct32Size], min, max)
 }

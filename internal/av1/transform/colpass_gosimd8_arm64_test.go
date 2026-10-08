@@ -395,8 +395,8 @@ func benchDCTx8ASM(b *testing.B, n int, fn func([]int32, int, int32, int32)) {
 }
 func BenchmarkDCT32x8_ASM(b *testing.B) {
 	benchDCTx8ASM(b, 32, func(buf []int32, s int, mn, mx int32) {
-		inverseDCT32Col4NEONAdapter(buf, s, mn, mx)
-		inverseDCT32Col4NEONAdapter(buf[4:], s, mn, mx)
+		inverseDCT32Col4SIMDAdapter(buf, s, mn, mx)
+		inverseDCT32Col4SIMDAdapter(buf[4:], s, mn, mx)
 	})
 }
 func BenchmarkDCT64x8_ASM(b *testing.B) {
