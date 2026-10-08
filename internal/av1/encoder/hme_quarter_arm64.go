@@ -17,11 +17,38 @@ func buildQuarterPlaneArch(dst []byte, src []byte, stride, qw, qh int) {
 		_ = src[(qh*4-1)*stride+neonCols*4-1]
 		dp := unsafe.Pointer(&dst[0])
 		sp := unsafe.Pointer(&src[0])
+		zero := archsimd.BroadcastUint8x16(0).ReshapeToUint16s()
+		eight := archsimd.BroadcastUint8x16(8).ExtendLo8ToUint16()
+		scale := archsimd.BroadcastUint8x16(255).ExtendLo8ToUint16()
+		roundShift := archsimd.BroadcastInt16x8(-4)
 		for qy := 0; qy < qh; qy++ {
 			srow := step(sp, qy*4*stride)
 			drow := step(dp, qy*qw)
 			for x := 0; x < neonCols; x += 16 {
-				quarterBlock16(step(srow, x*4), stride, step(drow, x))
+				blockSrc := step(srow, x*4)
+				blockDst := step(drow, x)
+				s0, h0 := zero, zero
+				s1, h1 := zero, zero
+				s2, h2 := zero, zero
+				s3, h3 := zero, zero
+				for r := 0; r < 4; r++ {
+					row := step(blockSrc, r*stride)
+					v0 := load16(row)
+					v1 := load16(step(row, 16))
+					v2 := load16(step(row, 32))
+					v3 := load16(step(row, 48))
+					s0, h0 = quarterAcc(s0, h0, v0)
+					s1, h1 = quarterAcc(s1, h1, v1)
+					s2, h2 = quarterAcc(s2, h2, v2)
+					s3, h3 = quarterAcc(s3, h3, v3)
+				}
+				q0 := s0.ConcatAddPairs(s1).Sub(h0.ConcatAddPairs(h1).Mul(scale))
+				q1 := s2.ConcatAddPairs(s3).Sub(h2.ConcatAddPairs(h3).Mul(scale))
+				ra := q0.Add(eight).Shift(roundShift).ReshapeToUint8s()
+				rb := q1.Add(eight).Shift(roundShift).ReshapeToUint8s()
+				// Each result lane is at most 255, so its low byte is the value and the
+				// even bytes of ra then rb are the 16 outputs in order.
+				ra.ConcatEven(rb).StoreArray((*[16]uint8)(blockDst))
 			}
 		}
 	}
@@ -38,48 +65,6 @@ func buildQuarterPlaneArch(dst []byte, src []byte, stride, qw, qh int) {
 	}
 }
 
-// quarterBlock16 writes 16 box averages from the 4-row, 64-byte source block at
-// sp. The four source rows are summed per byte column first, so the widened
-// sums need only 16 bits (at most 4*255 per column). Adjacent-lane sums then
-// fold column pairs and quads with ConcatEven/ConcatOdd, and the result is
-// rounded with (sum+8)>>4 and narrowed to bytes.
-func quarterBlock16(sp unsafe.Pointer, stride int, dp unsafe.Pointer) {
-	// c[m] holds byte columns 8m..8m+7 summed over the four rows.
-	c0 := archsimd.BroadcastUint16x8(0)
-	c1 := archsimd.BroadcastUint16x8(0)
-	c2 := archsimd.BroadcastUint16x8(0)
-	c3 := archsimd.BroadcastUint16x8(0)
-	c4 := archsimd.BroadcastUint16x8(0)
-	c5 := archsimd.BroadcastUint16x8(0)
-	c6 := archsimd.BroadcastUint16x8(0)
-	c7 := archsimd.BroadcastUint16x8(0)
-	for r := 0; r < 4; r++ {
-		row := step(sp, r*stride)
-		v0 := load16(row)
-		v1 := load16(step(row, 16))
-		v2 := load16(step(row, 32))
-		v3 := load16(step(row, 48))
-		c0 = c0.Add(v0.ExtendLo8ToUint16())
-		c1 = c1.Add(v0.HiToLo().ExtendLo8ToUint16())
-		c2 = c2.Add(v1.ExtendLo8ToUint16())
-		c3 = c3.Add(v1.HiToLo().ExtendLo8ToUint16())
-		c4 = c4.Add(v2.ExtendLo8ToUint16())
-		c5 = c5.Add(v2.HiToLo().ExtendLo8ToUint16())
-		c6 = c6.Add(v3.ExtendLo8ToUint16())
-		c7 = c7.Add(v3.HiToLo().ExtendLo8ToUint16())
-	}
-	// Pair sums: lane j of p is column 2j plus column 2j+1 of the 16-column run.
-	p0 := c0.ConcatEven(c1).Add(c0.ConcatOdd(c1))
-	p1 := c2.ConcatEven(c3).Add(c2.ConcatOdd(c3))
-	p2 := c4.ConcatEven(c5).Add(c4.ConcatOdd(c5))
-	p3 := c6.ConcatEven(c7).Add(c6.ConcatOdd(c7))
-	// Quad sums: lane x of q is the 4-column sum for output column x.
-	q0 := p0.ConcatEven(p1).Add(p0.ConcatOdd(p1))
-	q1 := p2.ConcatEven(p3).Add(p2.ConcatOdd(p3))
-	eight := archsimd.BroadcastUint16x8(8)
-	ra := q0.Add(eight).ShiftAllRight(4).ReshapeToUint8s()
-	rb := q1.Add(eight).ShiftAllRight(4).ReshapeToUint8s()
-	// Each result lane is at most 255, so its low byte is the value and the
-	// even bytes of ra then rb are the 16 outputs in order.
-	ra.ConcatEven(rb).StoreArray((*[16]uint8)(dp))
+func quarterAcc(sum, high archsimd.Uint16x8, v archsimd.Uint8x16) (archsimd.Uint16x8, archsimd.Uint16x8) {
+	return sum.Add(v.ReshapeToUint16s()), high.Add(v.ConcatOdd(v).ExtendLo8ToUint16())
 }
