@@ -82,4 +82,25 @@ func BenchmarkMotion8ABMatrix(b *testing.B) {
 			}
 		})
 	}
+	warpRef := frame.Plane{Pix: make([]byte, 96*96), Stride: 96, Width: 96, Height: 96}
+	warpDst := frame.Plane{Pix: make([]byte, 96*96), Stride: 96, Width: 96, Height: 96}
+	for y := 0; y < 96; y++ {
+		for x := 0; x < 96; x++ {
+			warpRef.Pix[y*96+x] = byte((x*17 + y*29 + x*y) & 255)
+		}
+	}
+	warpMatrix := [6]int32{42805, -7571, 65230, -57, 0, 65509}
+	for _, tc := range [...]struct {
+		name  string
+		gamma int16
+	}{{"gamma0", 0}, {"gamma96", 96}} {
+		b.Run("Warp/"+tc.name+"/64x64", func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if err := PredictWarpedPlaneBlockBitDepth(warpDst, warpRef, 1, 8, 16, 16, 64, 64, warpMatrix, -320, -64, tc.gamma, -64, false, false); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
 }

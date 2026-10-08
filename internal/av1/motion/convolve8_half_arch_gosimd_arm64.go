@@ -17,7 +17,7 @@ func u8HalfSaturate(x archsimd.Int16x8) archsimd.Uint8x16 {
 }
 
 func u8WideMAC8(lo, hi archsimd.Int32x4, samples, coefficient archsimd.Int16x8) (archsimd.Int32x4, archsimd.Int32x4) {
-	return lo.Add(samples.MulWidenLo(coefficient)), hi.Add(samples.HiToLo().MulWidenLo(coefficient))
+	return lo.Add(samples.MulWidenLo(coefficient)), hi.Add(samples.HiToLo().MulWidenLo(coefficient.HiToLo()))
 }
 
 func u8PackClipped32(lo, hi archsimd.Int32x4) archsimd.Uint8x16 {

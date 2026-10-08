@@ -19,14 +19,91 @@ import (
 func TestWarpedFilterI8Exact(t *testing.T) {
 	for i := range warpedFilter {
 		sum := 0
+		minDot, maxDot := 0, 0
 		for j := range warpedFilter[i] {
 			if int16(warpedFilterI8[i][j]) != warpedFilter[i][j] {
 				t.Fatalf("warpedFilterI8[%d][%d]=%d lossy vs %d", i, j, warpedFilterI8[i][j], warpedFilter[i][j])
 			}
 			sum += int(warpedFilter[i][j])
+			v := int(warpedFilter[i][j])
+			if v >= 0 {
+				minDot -= 128 * v
+				maxDot += 127 * v
+			} else {
+				minDot += 127 * v
+				maxDot -= 128 * v
+			}
 		}
 		if sum != 128 {
 			t.Fatalf("warpedFilter[%d] sums to %d, want 128", i, sum)
+		}
+		if minDot < -32768 || maxDot+4 > 32767 {
+			t.Fatalf("warpedFilter[%d] centred dot exceeds int16: [%d,%d]", i, minDot, maxDot+4)
+		}
+	}
+}
+
+func TestWarpHorizontal8AllPhasesAndMinimumWindow(t *testing.T) {
+	ref := frame.Plane{Pix: make([]byte, 16*15), Stride: 16, Width: 16, Height: 15}
+	for phase := range warpedFilter {
+		for pattern := 0; pattern < 3; pattern++ {
+			for y := 0; y < ref.Height; y++ {
+				for x := 0; x < ref.Width; x++ {
+					switch pattern {
+					case 0:
+						ref.Pix[y*16+x] = 0
+					case 1:
+						ref.Pix[y*16+x] = 255
+					default:
+						ref.Pix[y*16+x] = byte(((x + y) & 1) * 255)
+					}
+				}
+			}
+			sx := (phase - warpedPixelPrecShifts) << warpedDiffPrecBits
+			var want, got warpTmp
+			warpHorizontal8Resident(&want, ref, 8, sx, 7, 0, 0, 0, round0Bits, 8+filterBits-1)
+			warpHorizontal8ResidentGoSIMD(&got, ref, 8, sx, 7, 0, 0, 0, round0Bits, 8+filterBits-1)
+			if got != want {
+				t.Fatalf("phase=%d pattern=%d mismatch", phase, pattern)
+			}
+		}
+	}
+}
+
+func TestWarpVertical8AllPhasesAndExtremes(t *testing.T) {
+	for phase := range warpedFilter {
+		baseSY := (phase - warpedPixelPrecShifts) << warpedDiffPrecBits
+		for pattern := 0; pattern < 3; pattern++ {
+			var tmp warpTmp
+			for k := range tmp {
+				switch pattern {
+				case 0:
+					tmp[k] = 0
+				case 1:
+					tmp[k] = (1 << 14) - 1
+				default:
+					tmp[k] = int32((k & 1) * ((1 << 14) - 1))
+				}
+			}
+			for _, gamma := range [...]int{0, 64} {
+				if !warpVertFullOffsInRange(baseSY, gamma, 0) {
+					continue
+				}
+				want := frame.Plane{Pix: make([]byte, 64), Stride: 8, Width: 8, Height: 8}
+				got := frame.Plane{Pix: make([]byte, 64), Stride: 8, Width: 8, Height: 8}
+				if gamma == 0 {
+					warpVertical8FullGamma0(want, &tmp, 0, 0, 0, 0, baseSY, 0, round1Bits, 8+2*filterBits-round0Bits)
+					warpVertical8FullGamma0GoSIMD(got, &tmp, 0, 0, 0, 0, baseSY, 0, round1Bits, 8+2*filterBits-round0Bits)
+				} else {
+					warpVertical8Full(want, &tmp, 0, 0, 0, 0, baseSY, gamma, 0, round1Bits, 8+2*filterBits-round0Bits)
+					warpVertical8FullGoSIMD(got, &tmp, 0, 0, 0, 0, baseSY, gamma, 0, round1Bits, 8+2*filterBits-round0Bits)
+				}
+				for k := range want.Pix {
+					if got.Pix[k] != want.Pix[k] {
+						t.Fatalf("phase=%d gamma=%d pattern=%d pixel=%d got=%d want=%d", phase, gamma, pattern, k, got.Pix[k], want.Pix[k])
+					}
+				}
+			}
 		}
 	}
 }
