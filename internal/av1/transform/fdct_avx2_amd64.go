@@ -18,9 +18,6 @@ type fdctAMD64Ctx struct {
 }
 
 //go:noescape
-func fdct8x8AVX2Asm(ctx *fdctAMD64Ctx)
-
-//go:noescape
 func fdct4x4AVX2Asm(ctx *fdctAMD64Ctx)
 
 // fdct4Pass is the shared av1_fdct4 vector pass used by fdct4x4AVX2Asm; it
@@ -45,32 +42,12 @@ func forwardDCT4x4AVX2Raw(coeff []int32, coeffStride int, residual []int16, resi
 	fdct4x4AVX2Asm(&ctx)
 }
 
-func forwardDCT8x8AVX2(coeff []int32, coeffStride int, residual []int16, residualStride int) {
-	if !residualFitsMagnitude(residual, residualStride, 8, 8, 255) {
-		forwardDCT8x8PureGo(coeff, coeffStride, residual, residualStride)
-		return
-	}
-	forwardDCT8x8AVX2Raw(coeff, coeffStride, residual, residualStride)
-}
-
-func forwardDCT8x8AVX2Raw(coeff []int32, coeffStride int, residual []int16, residualStride int) {
-	ctx := fdctAMD64Ctx{
-		In:        unsafe.Pointer(&residual[0]),
-		InStride:  int64(residualStride),
-		Out:       unsafe.Pointer(&coeff[0]),
-		OutStride: int64(coeffStride),
-	}
-	fdct8x8AVX2Asm(&ctx)
-}
-
-// init routes the 4x4 and 8x8 forward DCT through AVX2 when available. These
-// kernels are exact for 8-bit residuals; their wrappers preserve full-int16
-// behavior by falling back to the portable implementation outside that range.
+// init routes the 4x4 forward DCT through AVX2 when available. The kernel is
+// exact for 8-bit residuals; its wrapper preserves full-int16 behavior by
+// falling back to the portable implementation outside that range.
 func init() {
 	if cpu.Detected.AVX2 {
-		forwardDCT8x8Impl = forwardDCT8x8AVX2
 		forwardDCT4x4Impl = forwardDCT4x4AVX2
-		forwardDCT8x8Trusted8BitImpl = forwardDCT8x8AVX2Raw
 		forwardDCT4x4Trusted8BitImpl = forwardDCT4x4AVX2Raw
 	}
 }

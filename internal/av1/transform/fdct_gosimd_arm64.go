@@ -11,36 +11,6 @@ import (
 	"unsafe"
 )
 
-// fdct8x8NEONCtx carries the kernel arguments; offsets are mirrored by
-// #define in fdct_neon_arm64.s. Strides are in elements.
-type fdct8x8NEONCtx struct {
-	In        unsafe.Pointer
-	InStride  int64
-	Out       unsafe.Pointer
-	OutStride int64
-}
-
-//go:noescape
-func fdct8x8NEONAsm(ctx *fdct8x8NEONCtx)
-
-func forwardDCT8x8NEON(coeff []int32, coeffStride int, residual []int16, residualStride int) {
-	ctx := fdct8x8NEONCtx{
-		In:        unsafe.Pointer(&residual[0]),
-		InStride:  int64(residualStride),
-		Out:       unsafe.Pointer(&coeff[0]),
-		OutStride: int64(coeffStride),
-	}
-	fdct8x8NEONAsm(&ctx)
-}
-
-func forwardDCT8x8NEONGuarded(coeff []int32, coeffStride int, residual []int16, residualStride int) {
-	if !residualFitsMagnitude(residual, residualStride, 8, 8, 255) {
-		forwardDCT8x8PureGo(coeff, coeffStride, residual, residualStride)
-		return
-	}
-	forwardDCT8x8NEON(coeff, coeffStride, residual, residualStride)
-}
-
 // fdct16NEONCtx carries the kernel arguments; offsets are mirrored by
 // #define in fdct16_neon_arm64.s. Buf points at caller-owned 16x16 int32
 // scratch for the column-pass output.
@@ -113,14 +83,14 @@ func forwardDCT32x32NEONRaw(coeff []int32, coeffStride int, residual []int16, re
 	fdct32x32NEONAsm(&ctx)
 }
 
-// The measured Go SIMD win is limited to 4x4. The 8x8 and 16x16 dispatch
-// slots keep the guarded NEON kernels; 32x32 retains its guarded NEON kernel.
+// The 4x4 and 8x8 dispatch slots are Go SIMD; 16x16 and 32x32 keep their
+// guarded NEON kernels until they are ported.
 var forwardDCT4x4Impl = forwardDCT4x4SIMD
-var forwardDCT8x8Impl = forwardDCT8x8NEONGuarded
+var forwardDCT8x8Impl = forwardDCT8x8SIMDGuarded
 var forwardDCT16x16Impl = forwardDCT16x16NEONGuarded
 var forwardDCT32x32Impl = forwardDCT32x32NEON
 var forwardDCT4x4Trusted8BitImpl = forwardDCT4x4SIMDCore
-var forwardDCT8x8Trusted8BitImpl = forwardDCT8x8NEON
+var forwardDCT8x8Trusted8BitImpl = forwardDCT8x8SIMD
 var forwardDCT16x16Trusted8BitImpl = forwardDCT16x16NEON
 var forwardDCT32x32Trusted8BitImpl = forwardDCT32x32NEONRaw
 

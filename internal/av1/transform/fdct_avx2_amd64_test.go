@@ -7,30 +7,6 @@ import (
 	"testing"
 )
 
-// TestForwardDCT8x8AVX2MatchesPureGo proves the AVX2 kernel bit-exact with
-// the portable reference across random 8-bit residual ranges and strides,
-// calling the kernel directly so hosts whose CPUID hides AVX2 (Rosetta)
-// still exercise it.
-func TestForwardDCT8x8AVX2MatchesPureGo(t *testing.T) {
-	rng := rand.New(rand.NewSource(67))
-	const resStride, coeffStride = 23, 17
-	residual := make([]int16, resStride*16)
-	for trial := range 3000 {
-		for i := range residual {
-			residual[i] = int16(rng.Intn(511)) - 255
-		}
-		want := make([]int32, coeffStride*16)
-		got := make([]int32, coeffStride*16)
-		forwardDCT8x8PureGo(want, coeffStride, residual, resStride)
-		forwardDCT8x8AVX2(got, coeffStride, residual, resStride)
-		for i := range want {
-			if want[i] != got[i] {
-				t.Fatalf("trial %d: coeff[%d] avx2 %d want %d", trial, i, got[i], want[i])
-			}
-		}
-	}
-}
-
 // TestForwardDCT4x4AVX2MatchesPureGo proves the 4x4 kernel bit-exact with
 // the portable reference, called directly like the 8x8 test.
 func TestForwardDCT4x4AVX2MatchesPureGo(t *testing.T) {

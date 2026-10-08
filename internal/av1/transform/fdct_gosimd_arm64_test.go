@@ -26,7 +26,7 @@ func TestForwardDCTSIMDBindings(t *testing.T) {
 		}
 	}
 	check("4x4", forwardDCT4x4Impl, "forwardDCT4x4SIMD")
-	check("8x8", forwardDCT8x8Impl, "forwardDCT8x8NEONGuarded")
+	check("8x8", forwardDCT8x8Impl, "forwardDCT8x8SIMDGuarded")
 	check("16x16", forwardDCT16x16Impl, "forwardDCT16x16NEONGuarded")
 	check("32x32", forwardDCT32x32Impl, "forwardDCT32x32NEON")
 }
@@ -108,7 +108,7 @@ func BenchmarkForwardDCT8x8Kernels(b *testing.B) {
 		name string
 		fn   func([]int32, int, []int16, int)
 	}{
-		{name: "neon", fn: benchmarkForwardDCTGuardedNEON(forwardDCT8x8NEON, forwardDCT8x8PureGo, 8)},
+		{name: "simd", fn: benchmarkForwardDCTGuardedNEON(forwardDCT8x8SIMD, forwardDCT8x8PureGo, 8)},
 		{name: "purego", fn: forwardDCT8x8PureGo},
 	})
 }

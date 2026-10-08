@@ -11,21 +11,21 @@ import (
 	"unsafe"
 )
 
-// The measured IDTX Go SIMD kernel replaces its NEON assembly counterpart.
-// The three hybrid ADST combinations keep their faster guarded NEON kernels.
-var forwardBlock8x8ADSTDCTImpl = forwardBlock8x8ADSTDCTNEONGuarded
-var forwardBlock8x8DCTADSTImpl = forwardBlock8x8DCTADSTNEONGuarded
-var forwardBlock8x8ADSTADSTImpl = forwardBlock8x8ADSTADSTNEONGuarded
+// The 8x8 hybrid kernels and the IDTX kernel are Go SIMD (fhybrid_idtx and
+// fdct_gosimd_net.go).
+var forwardBlock8x8ADSTDCTImpl = forwardBlock8x8ADSTDCTSIMDGuarded
+var forwardBlock8x8DCTADSTImpl = forwardBlock8x8DCTADSTSIMDGuarded
+var forwardBlock8x8ADSTADSTImpl = forwardBlock8x8ADSTADSTSIMDGuarded
 var forwardBlock8x8IDTXImpl = forwardBlock8x8IDTXSIMD
 
 func forwardBlock8x8Hybrid8BitResidualTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, typ Type) bool {
 	switch typ {
 	case TypeADSTDCT:
-		forwardBlock8x8ADSTDCTNEON(coeff, coeffStride, residual, residualStride, scratch)
+		forwardBlock8x8ADSTDCTSIMD(coeff, coeffStride, residual, residualStride, scratch)
 	case TypeDCTADST:
-		forwardBlock8x8DCTADSTNEON(coeff, coeffStride, residual, residualStride, scratch)
+		forwardBlock8x8DCTADSTSIMD(coeff, coeffStride, residual, residualStride, scratch)
 	case TypeADSTADST:
-		forwardBlock8x8ADSTADSTNEON(coeff, coeffStride, residual, residualStride, scratch)
+		forwardBlock8x8ADSTADSTSIMD(coeff, coeffStride, residual, residualStride, scratch)
 	case TypeIDTX:
 		forwardBlock8x8IDTXSIMD(coeff, coeffStride, residual, residualStride, scratch)
 	default:
