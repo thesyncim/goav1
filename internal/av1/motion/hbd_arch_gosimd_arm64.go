@@ -43,6 +43,10 @@ func hbdShiftRight(v, amount archsimd.Int32x4, _ int) archsimd.Int32x4 {
 	return v.Shift(amount)
 }
 
+func hbdShiftRightU16(v archsimd.Uint16x8, amount archsimd.Int16x8, _ int) archsimd.Uint16x8 {
+	return v.Shift(amount)
+}
+
 // hbdWidenU16 zero-extends eight uint16 lanes to two int32 vectors (lanes 0..3
 // and 4..7).
 func hbdWidenU16(u archsimd.Uint16x8) (lo, hi archsimd.Int32x4) {

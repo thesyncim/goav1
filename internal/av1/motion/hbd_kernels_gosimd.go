@@ -576,6 +576,9 @@ func compoundXHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 	n := int(ctx.taps)
 	taps := hbdBroadcastTaps16(&ctx.kernel)
 	rndOff := archsimd.BroadcastInt32x4(int32(ctx.roundOffset))
+	zero := archsimd.BroadcastInt32x4(0)
+	roundBias := archsimd.BroadcastInt32x4(int32(1) << (int(ctx.round0) - 1))
+	roundShift := archsimd.BroadcastInt32x4(int32(-ctx.round0))
 	round0 := int(ctx.round0)
 	width, height := int(ctx.width), int(ctx.height)
 	for y := range height {
@@ -583,16 +586,38 @@ func compoundXHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 		out := ctx.out[y*width:]
 		x := 0
 		for ; x+8 <= width; x += 8 {
-			lo, hi := hbdSumRowX(src[x*2:], &taps, n)
-			lo = hbdRound(lo, round0).Add(rndOff)
-			hi = hbdRound(hi, round0).Add(rndOff)
+			var lo, hi archsimd.Int32x4
+			if x*2+31 < len(src) {
+				a := archsimd.LoadUint8x16(src[x*2 : x*2+16])
+				b := archsimd.LoadUint8x16(src[x*2+16 : x*2+32])
+				lo = zero
+				hi = zero
+				lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(a), taps[0])
+				lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 2)), taps[1])
+				if n > 2 {
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 4)), taps[2])
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 6)), taps[3])
+				}
+				if n > 4 {
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 8)), taps[4])
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 10)), taps[5])
+				}
+				if n > 6 {
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 12)), taps[6])
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 14)), taps[7])
+				}
+			} else {
+				lo, hi = hbdSumRowX(src[x*2:], &taps, n)
+			}
+			lo = hbdRoundShift(lo, roundBias, roundShift, round0).Add(rndOff)
+			hi = hbdRoundShift(hi, roundBias, roundShift, round0).Add(rndOff)
 			hbdStoreU16x8(out[x:], lo, hi)
 		}
 		if x < width {
 			var win [32]byte
 			copy(win[:2*(n+3)], src[x*2:x*2+2*(n+3)])
 			lo, _ := hbdSumRowX(win[:], &taps, n)
-			lo = hbdRound(lo, round0).Add(rndOff)
+			lo = hbdRoundShift(lo, roundBias, roundShift, round0).Add(rndOff)
 			hbdStoreU16x4(out[x:], lo)
 		}
 	}
@@ -602,8 +627,14 @@ func compoundXHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 // roundPowerOfTwo7(sum << (7 - round0)) plus the offset.
 func compoundYHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 	n := int(ctx.taps)
+	if ctx.taps == 6 && ctx.width >= 8 && ctx.width%8 == 0 {
+		compoundYHighBD6TapSliding(ctx)
+		return
+	}
 	taps := hbdBroadcastTaps16(&ctx.kernel)
-	scale := archsimd.BroadcastInt32x4(int32(1) << (filterBits - int(ctx.round0)))
+	round0 := int(ctx.round0)
+	roundBias := archsimd.BroadcastInt32x4(int32(1) << (round0 - 1))
+	roundShift := archsimd.BroadcastInt32x4(int32(-round0))
 	rndOff := archsimd.BroadcastInt32x4(int32(ctx.roundOffset))
 	width, height := int(ctx.width), int(ctx.height)
 	for y := range height {
@@ -612,8 +643,8 @@ func compoundYHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 		x := 0
 		for ; x+8 <= width; x += 8 {
 			lo, hi := hbdSum8(src[x*2:], ctx.refStr, &taps, n)
-			lo = hbdRound(lo.Mul(scale), filterBits).Add(rndOff)
-			hi = hbdRound(hi.Mul(scale), filterBits).Add(rndOff)
+			lo = hbdRoundShift(lo, roundBias, roundShift, round0).Add(rndOff)
+			hi = hbdRoundShift(hi, roundBias, roundShift, round0).Add(rndOff)
 			hbdStoreU16x8(out[x:], lo, hi)
 		}
 		if x < width {
@@ -622,8 +653,61 @@ func compoundYHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 				copy(win[k*16:k*16+8], src[k*ctx.refStr+x*2:k*ctx.refStr+x*2+8])
 			}
 			lo, _ := hbdSum8(win[:], 16, &taps, n)
-			lo = hbdRound(lo.Mul(scale), filterBits).Add(rndOff)
+			lo = hbdRoundShift(lo, roundBias, roundShift, round0).Add(rndOff)
 			hbdStoreU16x4(out[x:], lo)
+		}
+	}
+}
+
+// compoundYHighBD6TapSliding reuses widened rows across output rows.
+func compoundYHighBD6TapSliding(ctx *compoundFilterGoSIMDCtx) {
+	width, height := ctx.width, ctx.height
+	round0 := ctx.round0
+	roundBias := archsimd.BroadcastInt32x4(int32(1) << (round0 - 1))
+	roundShift := archsimd.BroadcastInt32x4(int32(-round0))
+	rndOff := archsimd.BroadcastInt32x4(ctx.roundOffset)
+
+	// Keep the six input rows in registers as the output advances. Only
+	// the newly entering row needs to be loaded and widened each time.
+	ref, out := ctx.ref, ctx.out
+	refStr := ctx.refStr
+	_ = ref[(height+4)*refStr+width*2-1]
+	_ = out[height*width-1]
+	coeff := hbdBroadcastTaps32(&ctx.kernel)
+	c0, c1, c2, c3, c4, c5 := coeff[0], coeff[1], coeff[2], coeff[3], coeff[4], coeff[5]
+	for x := 0; x < width; x += 8 {
+		p := x * 2
+		r0l, r0h := hbdWidenU16(archsimd.LoadUint8x16(ref[p : p+16]).ReshapeToUint16s())
+		r1l, r1h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+refStr : p+refStr+16]).ReshapeToUint16s())
+		r2l, r2h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+2*refStr : p+2*refStr+16]).ReshapeToUint16s())
+		r3l, r3h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+3*refStr : p+3*refStr+16]).ReshapeToUint16s())
+		r4l, r4h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+4*refStr : p+4*refStr+16]).ReshapeToUint16s())
+		r5l, r5h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+5*refStr : p+5*refStr+16]).ReshapeToUint16s())
+		for y := 0; y < height; y++ {
+			lo := hbdMulAdd32(r0l, c0, roundBias)
+			hi := hbdMulAdd32(r0h, c0, roundBias)
+			lo = hbdMulAdd32(r1l, c1, lo)
+			hi = hbdMulAdd32(r1h, c1, hi)
+			lo = hbdMulAdd32(r2l, c2, lo)
+			hi = hbdMulAdd32(r2h, c2, hi)
+			lo = hbdMulAdd32(r3l, c3, lo)
+			hi = hbdMulAdd32(r3h, c3, hi)
+			lo = hbdMulAdd32(r4l, c4, lo)
+			hi = hbdMulAdd32(r4h, c4, hi)
+			lo = hbdMulAdd32(r5l, c5, lo)
+			hi = hbdMulAdd32(r5h, c5, hi)
+			lo = hbdShiftRight(lo, roundShift, round0).Add(rndOff)
+			hi = hbdShiftRight(hi, roundShift, round0).Add(rndOff)
+			hbdStoreU16x8(out[y*width+x:], lo, hi)
+			if y+1 < height {
+				r0l, r0h = r1l, r1h
+				r1l, r1h = r2l, r2h
+				r2l, r2h = r3l, r3h
+				r3l, r3h = r4l, r4h
+				r4l, r4h = r5l, r5h
+				p += refStr
+				r5l, r5h = hbdWidenU16(archsimd.LoadUint8x16(ref[p+5*refStr : p+5*refStr+16]).ReshapeToUint16s())
+			}
 		}
 	}
 }
@@ -635,6 +719,38 @@ func compoundYHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 // weights: clip(roundPowerOfTwo(((s0*fwd + s1*bck) >> 4) - roundOffset, bits)).
 // The wrapper guarantees width%4 == 0.
 func blendCompoundAvgHighBDKernel(ctx *compoundBlendGoSIMDCtx, roundOffset, roundBits int) {
+	roundBiasScalar := 1 << (roundBits - 1)
+	if ctx.fwd == 8 && ctx.bck == 8 && roundOffset >= roundBiasScalar && roundOffset-roundBiasScalar <= 65535 {
+		// For equal distance weights, ((a*8 + b*8) >> 4) is the
+		// floor-average. Saturating subtraction folds the zero clip and
+		// rounding bias into a single uint16 operation.
+		threshold := archsimd.BroadcastUint16x8(uint16(roundOffset - roundBiasScalar))
+		maxV := archsimd.BroadcastUint16x8(uint16(ctx.maxVal))
+		shiftAmount := archsimd.BroadcastInt16x8(int16(-roundBits))
+		width, height := int(ctx.width), int(ctx.height)
+		for y := range height {
+			s0 := ctx.src0[y*width:]
+			s1 := ctx.src1[y*width:]
+			dst := ctx.dst[y*ctx.dstStr:]
+			x := 0
+			for ; x+8 <= width; x += 8 {
+				a := archsimd.LoadUint16x8(s0[x : x+8])
+				b := archsimd.LoadUint16x8(s1[x : x+8])
+				pix := hbdShiftRightU16(hbdAverageU16(a, b).SubSaturated(threshold), shiftAmount, roundBits).Min(maxV)
+				pix.ReshapeToUint8s().Store(dst[x*2 : x*2+16])
+			}
+			if x < width {
+				var a, b [8]uint16
+				copy(a[:4], s0[x:x+4])
+				copy(b[:4], s1[x:x+4])
+				pix := hbdShiftRightU16(hbdAverageU16(archsimd.LoadUint16x8(a[:]), archsimd.LoadUint16x8(b[:])).SubSaturated(threshold), shiftAmount, roundBits).Min(maxV)
+				var bytes [16]byte
+				pix.ReshapeToUint8s().Store(bytes[:])
+				copy(dst[x*2:x*2+8], bytes[:8])
+			}
+		}
+		return
+	}
 	fwd := archsimd.BroadcastInt32x4(int32(ctx.fwd))
 	bck := archsimd.BroadcastInt32x4(int32(ctx.bck))
 	roundOff := archsimd.BroadcastInt32x4(int32(roundOffset))
@@ -660,6 +776,10 @@ func blendCompoundAvgHighBDKernel(ctx *compoundBlendGoSIMDCtx, roundOffset, roun
 			hbdStorePix4(dst[x*2:], lo)
 		}
 	}
+}
+
+func hbdAverageU16(a, b archsimd.Uint16x8) archsimd.Uint16x8 {
+	return a.And(b).Add(a.Xor(b).ShiftAllRight(1))
 }
 
 // hbdBlendHalf blends eight CONV_BUF pairs (lo = first four, hi = last four).
