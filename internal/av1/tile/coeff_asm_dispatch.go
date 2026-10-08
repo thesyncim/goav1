@@ -23,8 +23,6 @@ var (
 		(coeffAsmKillSwitch == "" || coeffAsmKillSwitch == "sign" || coeffAsmKillSwitch == "mv")
 	coeffSignGolombKernel = entropy.HasCoeffSignGolomb &&
 		(coeffAsmKillSwitch == "" || coeffAsmKillSwitch == "mv")
-	mvResidualKernel = entropy.HasMVResidual &&
-		(coeffAsmKillSwitch == "" || coeffAsmKillSwitch == "sign")
 )
 
 // The kernel reads coeffScanHot entries as packed 8-byte words
