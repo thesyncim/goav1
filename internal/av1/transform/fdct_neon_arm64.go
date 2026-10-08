@@ -16,9 +16,17 @@ type fdct8x8NEONCtx struct {
 //go:noescape
 func fdct8x8NEONAsm(ctx *fdct8x8NEONCtx)
 
-// forwardDCT8x8Impl dispatches the 8x8 forward DCT; the NEON kernel is
-// bit-exact with the portable reference for 8-bit residual ranges.
-var forwardDCT8x8Impl = forwardDCT8x8NEON
+// The NEON 8x8 kernel uses narrow intermediates. Keep the public int16 input
+// contract by routing wider residuals to the int64 scalar reference.
+var forwardDCT8x8Impl = forwardDCT8x8NEONGuarded
+
+func forwardDCT8x8NEONGuarded(coeff []int32, coeffStride int, residual []int16, residualStride int) {
+	if !residualFitsMagnitude(residual, residualStride, 8, 8, 255) {
+		forwardDCT8x8PureGo(coeff, coeffStride, residual, residualStride)
+		return
+	}
+	forwardDCT8x8NEON(coeff, coeffStride, residual, residualStride)
+}
 
 func forwardDCT8x8NEON(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	ctx := fdct8x8NEONCtx{
@@ -33,9 +41,17 @@ func forwardDCT8x8NEON(coeff []int32, coeffStride int, residual []int16, residua
 //go:noescape
 func fdct4x4NEONAsm(ctx *fdct8x8NEONCtx)
 
-// forwardDCT4x4Impl dispatches the 4x4 forward DCT; the NEON kernel is
-// bit-exact with the portable reference for 8-bit residual ranges.
-var forwardDCT4x4Impl = forwardDCT4x4NEON
+// The NEON 4x4 kernel is bit-exact in the 8-bit residual range; larger values
+// use the portable int64 implementation.
+var forwardDCT4x4Impl = forwardDCT4x4NEONGuarded
+
+func forwardDCT4x4NEONGuarded(coeff []int32, coeffStride int, residual []int16, residualStride int) {
+	if !residualFitsMagnitude(residual, residualStride, 4, 4, 255) {
+		forwardDCT4x4PureGo(coeff, coeffStride, residual, residualStride)
+		return
+	}
+	forwardDCT4x4NEON(coeff, coeffStride, residual, residualStride)
+}
 
 func forwardDCT4x4NEON(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	ctx := fdct8x8NEONCtx{

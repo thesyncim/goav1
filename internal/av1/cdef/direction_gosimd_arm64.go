@@ -287,7 +287,7 @@ var cdefP3RevHiTbl = [8][16]uint8{
 
 // cdefStraightCostFromVec = (sum of squares of the 8 int16 lanes)*105.
 func cdefStraightCostFromVec(v archsimd.Int16x8) int32 {
-	sq := v.MulWidenLo(v).Add(v.MulWidenHi(v))
+	sq := v.MulWidenLo(v).Add(v.HiToLo().MulWidenLo(v.HiToLo()))
 	return sq.ReduceSum() * 105
 }
 
@@ -303,15 +303,15 @@ func cdefDiagCostVec(lo, hi archsimd.Int16x8) int32 {
 	// squares is costly; instead compute widened squares of lo and of a reversed
 	// combination. Do it in int32 to match the scalar exactly.
 	// Widen p[0..7] to two Int32x4 (lo0..3, lo4..7).
-	f0 := lo.MulWidenLo(lo) // p0^2..p3^2
-	f1 := lo.MulWidenHi(lo) // p4^2..p7^2
+	f0 := lo.MulWidenLo(lo)                   // p0^2..p3^2
+	f1 := lo.HiToLo().MulWidenLo(lo.HiToLo()) // p4^2..p7^2
 	// rev vector r = [p14,p13,p12,p11,p10,p9,p8,p7]; then r squared aligns
 	// r[k]=p[14-k], so (f[k]+rSq[k]) = p[k]^2+p[14-k]^2 for k=0..7. For k=7 that
 	// is p7^2+p7^2; the scalar wants only p7^2*div8, so we halve-correct by using
 	// rev's lane7 = 0 instead of p7.
 	rev := cdefBuildDiagRev(hi, lo) // [p14..p8, p7-slot=0]
 	g0 := rev.MulWidenLo(rev)
-	g1 := rev.MulWidenHi(rev)
+	g1 := rev.HiToLo().MulWidenLo(rev.HiToLo())
 	sqLo := f0.Add(g0) // (p0^2+p14^2 ... p3^2+p11^2)
 	sqHi := f1.Add(g1) // (p4^2+p10^2 ... p7^2+0)
 	wLo := archsimd.LoadInt32x4Array(&cdefDivDiagLo)
@@ -339,8 +339,8 @@ var cdefDiagRevTbl = [16]uint8{12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1, 255
 //
 // lo lanes 0..7 = p[0..7]; hi lanes 0..2 = p[8..10].
 func cdefOddCostVec(lo, hi archsimd.Int16x8) int32 {
-	loSq0 := lo.MulWidenLo(lo) // p0^2..p3^2
-	loSq1 := lo.MulWidenHi(lo) // p4^2..p7^2
+	loSq0 := lo.MulWidenLo(lo)                   // p0^2..p3^2
+	loSq1 := lo.HiToLo().MulWidenLo(lo.HiToLo()) // p4^2..p7^2
 	// center = (p3^2+p4^2+p5^2+p6^2+p7^2)*105.
 	// p3^2 is loSq0 lane3; p4..7 sq is loSq1 lanes0..3.
 	center := (int32(loSq0.GetElem(3)) + loSq1.ReduceSum()) * 105
@@ -381,7 +381,7 @@ func cdefDirLoadRowU8(p unsafe.Pointer) archsimd.Int16x8 {
 // direction search runs on luma only, but monochrome frames end the backing
 // buffer right after the Y plane).
 func cdefDirLoadRowU8Hi(p unsafe.Pointer) archsimd.Int16x8 {
-	return archsimd.LoadUint8x16Array((*[16]uint8)(p)).ExtendHi8ToUint16().ConvertToInt16()
+	return archsimd.LoadUint8x16Array((*[16]uint8)(p)).HiToLo().ExtendLo8ToUint16().ConvertToInt16()
 }
 
 // findDirectionU8SIMD is findDirectionSIMD reading the 8-bit frame plane

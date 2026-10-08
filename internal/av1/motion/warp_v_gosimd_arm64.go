@@ -16,11 +16,9 @@ import (
 // warpVertical8FullSIMD / warpVertical8FullGamma0SIMD are the Go-native SIMD
 // forms of the 8-bit warped-motion vertical pass. Eight destination columns are
 // produced per row as one Int16x8; the 8-tap vertical MAC runs in int32 lanes
-// (SMULL/SMLAL via MulWidenLo/Hi), a single bias fold collapses the +offsetBits
-// pre-bias, the -128-256 output shift, and the round1 rounding into one add, and
-// a rounding narrow (SQRSHRN, ShiftRightRoundNarrow) plus a saturating u8 narrow
-// (SQXTUN, SaturateToUint8) fuse the >>reduceBitsVert round with the clipPixel
-// clamp to [0,255].
+// with widening multiplies. A single bias fold combines the +offsetBits
+// pre-bias and -128-256 output shift. The result is rounded and saturated to
+// int16, then saturated to uint8, matching the scalar round and clip stages.
 //
 // tmp holds the horizontal-pass output. Its magnitude is bounded well inside
 // int16 (|tmp| < 2^15: reduce_bits_horiz=3 leaves at most ~6128), so the rows
@@ -37,8 +35,8 @@ import (
 // Because 128+256==384 is subtracted AFTER the arithmetic shift, and
 // 384<<reduceBitsVert is an exact multiple of 1<<reduceBitsVert, it folds into
 // the pre-shift value: (X>>n) - k == (X - k*2^n)>>n. The rounding term
-// (1<<(reduceBitsVert-1)) is supplied by ShiftRightRoundNarrow itself, so it is
-// NOT included here.
+// (1<<(reduceBitsVert-1)) is supplied by simdRoundShiftNarrowInt32Pair, so it
+// is NOT included here.
 func biasVert(reduceBitsVert, offsetBitsVert int) int32 {
 	return int32((1 << offsetBitsVert) - ((1 << 7) + (1 << 8)) << uint(reduceBitsVert))
 }
@@ -77,25 +75,25 @@ func warpVertical8FullGamma0SIMD(dst frame.Plane, tmp *[warpedIntermediateRows *
 		t6 := archsimd.BroadcastInt16x8(c[6])
 		t7 := archsimd.BroadcastInt16x8(c[7])
 		lo := s[base+0].MulWidenLo(t0)
-		hi := s[base+0].MulWidenHi(t0)
-		lo = lo.MulWidenLoAdd(s[base+1], t1)
-		hi = hi.MulWidenHiAdd(s[base+1], t1)
-		lo = lo.MulWidenLoAdd(s[base+2], t2)
-		hi = hi.MulWidenHiAdd(s[base+2], t2)
-		lo = lo.MulWidenLoAdd(s[base+3], t3)
-		hi = hi.MulWidenHiAdd(s[base+3], t3)
-		lo = lo.MulWidenLoAdd(s[base+4], t4)
-		hi = hi.MulWidenHiAdd(s[base+4], t4)
-		lo = lo.MulWidenLoAdd(s[base+5], t5)
-		hi = hi.MulWidenHiAdd(s[base+5], t5)
-		lo = lo.MulWidenLoAdd(s[base+6], t6)
-		hi = hi.MulWidenHiAdd(s[base+6], t6)
-		lo = lo.MulWidenLoAdd(s[base+7], t7)
-		hi = hi.MulWidenHiAdd(s[base+7], t7)
+		hi := s[base+0].HiToLo().MulWidenLo(t0.HiToLo())
+		lo = lo.Add(s[base+1].MulWidenLo(t1))
+		hi = hi.Add(s[base+1].HiToLo().MulWidenLo(t1.HiToLo()))
+		lo = lo.Add(s[base+2].MulWidenLo(t2))
+		hi = hi.Add(s[base+2].HiToLo().MulWidenLo(t2.HiToLo()))
+		lo = lo.Add(s[base+3].MulWidenLo(t3))
+		hi = hi.Add(s[base+3].HiToLo().MulWidenLo(t3.HiToLo()))
+		lo = lo.Add(s[base+4].MulWidenLo(t4))
+		hi = hi.Add(s[base+4].HiToLo().MulWidenLo(t4.HiToLo()))
+		lo = lo.Add(s[base+5].MulWidenLo(t5))
+		hi = hi.Add(s[base+5].HiToLo().MulWidenLo(t5.HiToLo()))
+		lo = lo.Add(s[base+6].MulWidenLo(t6))
+		hi = hi.Add(s[base+6].HiToLo().MulWidenLo(t6.HiToLo()))
+		lo = lo.Add(s[base+7].MulWidenLo(t7))
+		hi = hi.Add(s[base+7].HiToLo().MulWidenLo(t7.HiToLo()))
 
 		lo = lo.Add(bias)
 		hi = hi.Add(bias)
-		out := lo.ShiftRightRoundNarrow(rb).ShiftRightRoundNarrowHi(hi, rb)
+		out := simdRoundShiftNarrowInt32Pair(lo, hi, uint64(rb))
 		dstRow := (i+rowShift+k+4)*dst.Stride + j + colShift
 		convStore8(unsafe.Pointer(&dst.Pix[dstRow]), out)
 	}
@@ -161,25 +159,25 @@ func warpVertical8FullSIMD(dst frame.Plane, tmp *[warpedIntermediateRows * warpe
 		f6 := archsimd.LoadInt16x8Array(&ftap[6])
 		f7 := archsimd.LoadInt16x8Array(&ftap[7])
 		lo := s[base+0].MulWidenLo(f0)
-		hi := s[base+0].MulWidenHi(f0)
-		lo = lo.MulWidenLoAdd(s[base+1], f1)
-		hi = hi.MulWidenHiAdd(s[base+1], f1)
-		lo = lo.MulWidenLoAdd(s[base+2], f2)
-		hi = hi.MulWidenHiAdd(s[base+2], f2)
-		lo = lo.MulWidenLoAdd(s[base+3], f3)
-		hi = hi.MulWidenHiAdd(s[base+3], f3)
-		lo = lo.MulWidenLoAdd(s[base+4], f4)
-		hi = hi.MulWidenHiAdd(s[base+4], f4)
-		lo = lo.MulWidenLoAdd(s[base+5], f5)
-		hi = hi.MulWidenHiAdd(s[base+5], f5)
-		lo = lo.MulWidenLoAdd(s[base+6], f6)
-		hi = hi.MulWidenHiAdd(s[base+6], f6)
-		lo = lo.MulWidenLoAdd(s[base+7], f7)
-		hi = hi.MulWidenHiAdd(s[base+7], f7)
+		hi := s[base+0].HiToLo().MulWidenLo(f0.HiToLo())
+		lo = lo.Add(s[base+1].MulWidenLo(f1))
+		hi = hi.Add(s[base+1].HiToLo().MulWidenLo(f1.HiToLo()))
+		lo = lo.Add(s[base+2].MulWidenLo(f2))
+		hi = hi.Add(s[base+2].HiToLo().MulWidenLo(f2.HiToLo()))
+		lo = lo.Add(s[base+3].MulWidenLo(f3))
+		hi = hi.Add(s[base+3].HiToLo().MulWidenLo(f3.HiToLo()))
+		lo = lo.Add(s[base+4].MulWidenLo(f4))
+		hi = hi.Add(s[base+4].HiToLo().MulWidenLo(f4.HiToLo()))
+		lo = lo.Add(s[base+5].MulWidenLo(f5))
+		hi = hi.Add(s[base+5].HiToLo().MulWidenLo(f5.HiToLo()))
+		lo = lo.Add(s[base+6].MulWidenLo(f6))
+		hi = hi.Add(s[base+6].HiToLo().MulWidenLo(f6.HiToLo()))
+		lo = lo.Add(s[base+7].MulWidenLo(f7))
+		hi = hi.Add(s[base+7].HiToLo().MulWidenLo(f7.HiToLo()))
 
 		lo = lo.Add(bias)
 		hi = hi.Add(bias)
-		out := lo.ShiftRightRoundNarrow(rb).ShiftRightRoundNarrowHi(hi, rb)
+		out := simdRoundShiftNarrowInt32Pair(lo, hi, uint64(rb))
 		dstRow := (i+rowShift+k+4)*dst.Stride + j + colShift
 		convStore8(unsafe.Pointer(&dst.Pix[dstRow]), out)
 	}
@@ -217,5 +215,5 @@ func warpVertical8FullRowScalar(dst frame.Plane, tmp *[warpedIntermediateRows * 
 func loadTmpRow16(tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, m int) archsimd.Int16x8 {
 	lo := archsimd.LoadInt32x4Array((*[4]int32)(tmp[m*warpedIntermediateColumns:]))
 	hi := archsimd.LoadInt32x4Array((*[4]int32)(tmp[m*warpedIntermediateColumns+4:]))
-	return lo.TruncToInt16().TruncToInt16Hi(hi)
+	return simdConcatInt16x8(lo.TruncToInt16(), hi.TruncToInt16())
 }

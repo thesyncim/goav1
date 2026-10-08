@@ -17,6 +17,37 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
+// blendMulAddU16Lo computes two unsigned 16x16 products in 32-bit lanes and
+// adds them. The input weights are the AV1 distance weights and sum to 16, so
+// the largest result is below 2^20 and does not wrap the Uint32 lanes.
+func blendMulAddU16Lo(x, xWeight, y, yWeight archsimd.Uint16x8) archsimd.Uint32x4 {
+	return x.MulWidenLo(xWeight).Add(y.MulWidenLo(yWeight))
+}
+
+// blendMulAddU16Hi does the same for the high four lanes. The public API only
+// exposes low-half widening multiply, so move those high lanes down first.
+func blendMulAddU16Hi(x, xWeight, y, yWeight archsimd.Uint16x8) archsimd.Uint32x4 {
+	return x.HiToLo().MulWidenLo(xWeight.HiToLo()).Add(y.HiToLo().MulWidenLo(yWeight.HiToLo()))
+}
+
+// blendShiftNarrowU16 applies the arithmetic >>8 and unsigned-saturating
+// int32-to-uint16 conversion used by SQSHRUN. Narrowing keeps its four results
+// in the low 64 bits and clears the upper half.
+func blendShiftNarrowU16(x archsimd.Int32x4) archsimd.Uint16x8 {
+	return x.ShiftAllRight(8).SaturateToUint16()
+}
+
+// blendJoinLowU16 places four low uint16 lanes from each narrowing result into
+// one vector. InterleaveLo on the uint64 views joins the two low 64-bit halves.
+func blendJoinLowU16(lo, hi archsimd.Uint16x8) archsimd.Uint16x8 {
+	return lo.ReshapeToUint64s().InterleaveLo(hi.ReshapeToUint64s()).ReshapeToUint16s()
+}
+
+// blendJoinLowU8 joins the low eight bytes from each narrowing result.
+func blendJoinLowU8(lo, hi archsimd.Uint8x16) archsimd.Uint8x16 {
+	return lo.ReshapeToUint64s().InterleaveLo(hi.ReshapeToUint64s()).ReshapeToUint8s()
+}
+
 // blendCompoundAvg8GoSIMD is the Go-native SIMD form of blendCompoundAvg8PureGo.
 // Per pixel: tmp = src0*fwd + src1*bck; tmp >>= 4 (DIST_PRECISION_BITS);
 // tmp -= roundOffset; dst = clip[0,255](roundPowerOfTwo(tmp, roundBits)).
@@ -62,36 +93,39 @@ func blendCompoundAvg8GoSIMD(dst frame.Plane, src0 []uint16, src1 []uint16, dstX
 			s1a := archsimd.LoadUint16x8Array((*[8]uint16)(s1p))
 			s1b := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(s1p, 8*u16)))
 
-			accLoA := s0a.MulWidenLo(fwdV).MulWidenLoAdd(s1a, bckV) // cols 0..3
-			accHiA := s0a.MulWidenHi(fwdV).MulWidenHiAdd(s1a, bckV) // cols 4..7
-			accLoB := s0b.MulWidenLo(fwdV).MulWidenLoAdd(s1b, bckV) // cols 8..11
-			accHiB := s0b.MulWidenHi(fwdV).MulWidenHiAdd(s1b, bckV) // cols 12..15
+			accLoA := blendMulAddU16Lo(s0a, fwdV, s1a, bckV) // cols 0..3
+			accHiA := blendMulAddU16Hi(s0a, fwdV, s1a, bckV) // cols 4..7
+			accLoB := blendMulAddU16Lo(s0b, fwdV, s1b, bckV) // cols 8..11
+			accHiB := blendMulAddU16Hi(s0b, fwdV, s1b, bckV) // cols 12..15
 
-			rLoA := accLoA.AsInt32x4().Add(biasV)
-			rHiA := accHiA.AsInt32x4().Add(biasV)
-			rLoB := accLoB.AsInt32x4().Add(biasV)
-			rHiB := accHiB.AsInt32x4().Add(biasV)
+			rLoA := accLoA.BitsToInt32().Add(biasV)
+			rHiA := accHiA.BitsToInt32().Add(biasV)
+			rLoB := accLoB.BitsToInt32().Add(biasV)
+			rHiB := accHiB.BitsToInt32().Add(biasV)
 
-			pa := rLoA.ShiftRightSatUnsignedNarrow(8).ShiftRightSatUnsignedNarrowHi(rHiA, 8) // px 0..7
-			pb := rLoB.ShiftRightSatUnsignedNarrow(8).ShiftRightSatUnsignedNarrowHi(rHiB, 8) // px 8..15
-			// uint16->uint8 clamp[0,255] for both halves, packed into one 16-byte store.
-			// pb reinterpreted signed is safe: lanes are already clamped to [0,65535]
-			// and the true values are <=255, so SQXTUN2 sees non-negative inputs.
-			out := pa.SaturateToUint8().SaturateToUint8Hi(pb.AsInt16x8())
+			pa := blendJoinLowU16(blendShiftNarrowU16(rLoA), blendShiftNarrowU16(rHiA)) // px 0..7
+			pb := blendJoinLowU16(blendShiftNarrowU16(rLoB), blendShiftNarrowU16(rHiB)) // px 8..15
+			// Clamp both groups to [0,255] and join their low eight bytes.
+			out := blendJoinLowU8(pa.SaturateToUint8(), pb.SaturateToUint8())
 			out.StoreArray((*[16]uint8)(dp))
 
-			s0p = unsafe.Add(s0p, 16*u16)
-			s1p = unsafe.Add(s1p, 16*u16)
-			dp = unsafe.Add(dp, 16)
+			// Do not form a one-past pointer after the final vector group: checkptr
+			// rejects that arithmetic even though the pointer is not dereferenced.
+			if x+16 < w16 || width&8 != 0 {
+				s0p = unsafe.Add(s0p, 16*u16)
+				s1p = unsafe.Add(s1p, 16*u16)
+				dp = unsafe.Add(dp, 16)
+			}
 		}
 		if width&8 != 0 { // trailing 8-column group (only width==8 mod 16).
 			s0 := archsimd.LoadUint16x8Array((*[8]uint16)(s0p))
 			s1 := archsimd.LoadUint16x8Array((*[8]uint16)(s1p))
-			accLo := s0.MulWidenLo(fwdV).MulWidenLoAdd(s1, bckV)
-			accHi := s0.MulWidenHi(fwdV).MulWidenHiAdd(s1, bckV)
-			rLo := accLo.AsInt32x4().Add(biasV)
-			rHi := accHi.AsInt32x4().Add(biasV)
-			out := rLo.ShiftRightSatUnsignedNarrow(8).ShiftRightSatUnsignedNarrowHi(rHi, 8).SaturateToUint8()
+			accLo := blendMulAddU16Lo(s0, fwdV, s1, bckV)
+			accHi := blendMulAddU16Hi(s0, fwdV, s1, bckV)
+			rLo := accLo.BitsToInt32().Add(biasV)
+			rHi := accHi.BitsToInt32().Add(biasV)
+			narrowed := blendJoinLowU16(blendShiftNarrowU16(rLo), blendShiftNarrowU16(rHi))
+			out := narrowed.SaturateToUint8()
 			convStore8U8(dp, out)
 		}
 	}

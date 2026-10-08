@@ -50,9 +50,9 @@ func cdefLoad16(input []uint16, i int) archsimd.Int16x8 {
 // logical/arith right shift. The sign shift is a compile-time SSHR #15.
 func cdefConstrain(n, x, strV, zeroV, shiftV archsimd.Int16x8) archsimd.Int16x8 {
 	diff := n.Sub(x)
-	a := n.AbsDiff(x)
+	a := cdefAbsDiffInt16x8(n, x)
 	lim := strV.Sub(a.Shift(shiftV)).Max(zeroV).Min(a)
-	sign := diff.ShiftAllRightConst(15)
+	sign := diff.ShiftAllRight(15)
 	return lim.Xor(sign).Sub(sign)
 }
 
@@ -122,14 +122,14 @@ func filterBlockSIMD16(dst []uint16, dstStride int, dstOrigin int, input []uint1
 			if enableSecondary {
 				a := cdefLoad16(input, base+sec0a)
 				b := cdefLoad16(input, base-sec0a)
-				s0 = s0.Add(cdefConstrain(a, x, secStrV, zeroV, secShiftV).ShiftAllLeftConst(1))
-				s1 = s1.Add(cdefConstrain(b, x, secStrV, zeroV, secShiftV).ShiftAllLeftConst(1))
+				s0 = s0.Add(cdefConstrain(a, x, secStrV, zeroV, secShiftV).ShiftAllLeft(1))
+				s1 = s1.Add(cdefConstrain(b, x, secStrV, zeroV, secShiftV).ShiftAllLeft(1))
 				mx0, mx1 = mx0.Max(a), mx1.Max(b)
 				mn0, mn1 = mn0.Min(a), mn1.Min(b)
 				a = cdefLoad16(input, base+sec1a)
 				b = cdefLoad16(input, base-sec1a)
-				s0 = s0.Add(cdefConstrain(a, x, secStrV, zeroV, secShiftV).ShiftAllLeftConst(1))
-				s1 = s1.Add(cdefConstrain(b, x, secStrV, zeroV, secShiftV).ShiftAllLeftConst(1))
+				s0 = s0.Add(cdefConstrain(a, x, secStrV, zeroV, secShiftV).ShiftAllLeft(1))
+				s1 = s1.Add(cdefConstrain(b, x, secStrV, zeroV, secShiftV).ShiftAllLeft(1))
 				mx0, mx1 = mx0.Max(a), mx1.Max(b)
 				mn0, mn1 = mn0.Min(a), mn1.Min(b)
 				a = cdefLoad16(input, base+sec0b)
@@ -147,8 +147,8 @@ func filterBlockSIMD16(dst []uint16, dstStride int, dstOrigin int, input []uint1
 			}
 			sum := s0.Add(s1)
 			// y = x + ((8 + sum - (sum<0)) >> 4)
-			neg := sum.ShiftAllRightConst(15)
-			y := x.Add(eight.Add(sum).Add(neg).ShiftAllRightConst(4))
+			neg := sum.ShiftAllRight(15)
+			y := x.Add(eight.Add(sum).Add(neg).ShiftAllRight(4))
 			if clippingRequired {
 				y = y.Max(mn0.Min(mn1)).Min(mx0.Max(mx1))
 			}

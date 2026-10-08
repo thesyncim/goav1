@@ -58,6 +58,7 @@ func TestQuantizeFPBlockSIMDMatchesScalar(t *testing.T) {
 				}
 				want := make([]int16, n*n)
 				got := make([]int16, n*n)
+				asm := make([]int16, n*n)
 				quantDC := int64(1<<16) / int64(q.DC)
 				roundDC := roundPowerOfTwo((64*q.DC)>>7, ts)
 				quantAC := int64(1<<16) / int64(q.AC)
@@ -72,10 +73,17 @@ func TestQuantizeFPBlockSIMDMatchesScalar(t *testing.T) {
 				if !quantizeFPBlockSIMD(got, coeff, n, q, ts) {
 					t.Fatalf("n=%d ts=%d: kernel refused", n, ts)
 				}
+				if !quantizeFPBlockNEON(asm, coeff, n, q, ts) {
+					t.Fatalf("n=%d ts=%d: NEON kernel refused", n, ts)
+				}
 				for i := range want {
 					if want[i] != got[i] {
 						t.Fatalf("n=%d ts=%d trial=%d q[%d] simd %d want %d coeff=%d dc=%v q=%+v",
 							n, ts, trial, i, got[i], want[i], coeff[i], i == 0, q)
+					}
+					if want[i] != asm[i] {
+						t.Fatalf("n=%d ts=%d trial=%d q[%d] NEON %d want %d coeff=%d dc=%v q=%+v",
+							n, ts, trial, i, asm[i], want[i], coeff[i], i == 0, q)
 					}
 				}
 			}

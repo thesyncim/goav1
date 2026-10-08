@@ -29,13 +29,9 @@ func init() {
 		return
 	}
 	bindNEONSAD()
-	// Wire the shapes where Go-native SIMD BEATS the NEON asm. 16x16 and 32x32
-	// single-block, and the 8x8x4 / 16x16x4 / 32x32x4 four-reference kernels
-	// (the motion-search hot path) all beat the asm — the x4 kernels because the
-	// loaded/packed src row is reused across all four refs, amortizing its cost.
-	// Only 8x8 SINGLE-block stays on asm (left bound to NEON by bindNEONSAD): with
-	// no 4x reuse, the 8-byte-row register pack (VDUP+VMOV) costs more than the
-	// asm's single VLD1 .8b.
+	// Keep the selected Go-SIMD shapes explicit here. Performance decisions for
+	// these wrappers must be checked with the official toolchain; historical
+	// numbers from the forked SIMD API do not establish current performance.
 	sad16x16Impl = sad16x16SIMD
 	sad32x32Impl = sad32x32SIMD
 	sad8x8x4Impl = sad8x8x4SIMD
@@ -45,8 +41,7 @@ func init() {
 
 // --- lowercase wrappers (the hot-path dispatch surface) ---------------------
 
-// sad8x8 stays on NEON: the 8-wide Go-SIMD kernel loses to the asm (row-pack
-// cost at 8-byte rows). sad8x8SIMD remains available + differential-tested.
+// sad8x8 stays on NEON; sad8x8SIMD remains available and differential-tested.
 func sad8x8(src, ref []byte, stride int, limit int) int {
 	return sad8x8NEON(src, ref, stride, limit)
 }
@@ -68,8 +63,7 @@ func sad8x8x4Step4(src, ref []byte, stride int) (int, int, int, int) {
 	return sad8x8x4Step4NEON(src, ref, stride)
 }
 
-// sad8x8x4 routes to SIMD: reusing the packed src row across the four refs
-// amortizes the 8-wide pack cost, so it beats the asm (8.6 vs 10.2 ns).
+// sad8x8x4 routes to SIMD so the shared source row can be reused across refs.
 func sad8x8x4(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int, int) {
 	return sad8x8x4SIMD(src, ref0, ref1, ref2, ref3, stride)
 }

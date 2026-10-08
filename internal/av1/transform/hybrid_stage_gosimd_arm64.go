@@ -53,10 +53,10 @@ func stageTransposeClamp(scratch []int32, width int, coeff []int32, coeffStride 
 				v1 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base+coeffStride:]))
 				v2 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base+2*coeffStride:]))
 				v3 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base+3*coeffStride:]))
-				v0 = v0.Max(preLo).Min(preHi).MulAdd(k181, r128).ShiftAllRightConst(8).Max(loV).Min(hiV)
-				v1 = v1.Max(preLo).Min(preHi).MulAdd(k181, r128).ShiftAllRightConst(8).Max(loV).Min(hiV)
-				v2 = v2.Max(preLo).Min(preHi).MulAdd(k181, r128).ShiftAllRightConst(8).Max(loV).Min(hiV)
-				v3 = v3.Max(preLo).Min(preHi).MulAdd(k181, r128).ShiftAllRightConst(8).Max(loV).Min(hiV)
+				v0 = v0.Max(preLo).Min(preHi).MulAdd(k181, r128).ShiftAllRight(8).Max(loV).Min(hiV)
+				v1 = v1.Max(preLo).Min(preHi).MulAdd(k181, r128).ShiftAllRight(8).Max(loV).Min(hiV)
+				v2 = v2.Max(preLo).Min(preHi).MulAdd(k181, r128).ShiftAllRight(8).Max(loV).Min(hiV)
+				v3 = v3.Max(preLo).Min(preHi).MulAdd(k181, r128).ShiftAllRight(8).Max(loV).Min(hiV)
 				// In-register 4x4 int32 transpose: vN holds column c+N rows
 				// r..r+3; tN holds row r+N cols c..c+3.
 				e0 := v0.InterleaveLo(v1)

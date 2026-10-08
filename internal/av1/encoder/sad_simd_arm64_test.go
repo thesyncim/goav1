@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"simd/archsimd"
 )
 
 // funcName returns the fully-qualified name of a function value.
@@ -25,16 +27,16 @@ func funcName(f any) string {
 // design, so we assert those are NOT SIMD.
 func TestSADDispatchBoundToSIMD(t *testing.T) {
 	cases := []struct {
-		name    string
-		fn      any
+		name     string
+		fn       any
 		wantSIMD bool
 	}{
 		{"sad16x16Impl", sad16x16Impl, true},
 		{"sad32x32Impl", sad32x32Impl, true},
 		{"sad16x16x4Impl", sad16x16x4Impl, true},
 		{"sad32x32x4Impl", sad32x32x4Impl, true},
-		{"sad8x8x4Impl", sad8x8x4Impl, true},  // x4 reuse amortizes the pack -> beats asm
-		{"sad8x8Impl", sad8x8Impl, false},     // single-block kept on NEON (pack tax, no reuse)
+		{"sad8x8x4Impl", sad8x8x4Impl, true}, // source pack is reused across references
+		{"sad8x8Impl", sad8x8Impl, false},    // single-block stays on NEON
 	}
 	for _, c := range cases {
 		n := funcName(c.fn)
@@ -224,17 +226,38 @@ func TestSAD8x8SIMDExtremes(t *testing.T) {
 	if got, want := sad32x32SIMD(src, ref, stride), sad32x32PureGo(src, ref, stride); got != want {
 		t.Fatalf("32x32 extreme: SIMD %d want %d (SIMD=%d, expected 32*32*255=%d)", got, want, got, 32*32*255)
 	}
+	got0, got1, got2, got3 := sad8x8x4SIMD(src, ref, ref, ref, ref, stride)
+	want0, want1, want2, want3 := sad8x8x4PureGo(src, ref, ref, ref, ref, stride)
+	if got0 != want0 || got1 != want1 || got2 != want2 || got3 != want3 {
+		t.Fatalf("8x8x4 extreme: (%d,%d,%d,%d) want (%d,%d,%d,%d)", got0, got1, got2, got3, want0, want1, want2, want3)
+	}
 }
 
-// TestSADSIMDWidenFallbackByteExact forces the non-DOTPROD widen accumulate
-// path (used on ARM cores without the dot-product extension) and proves it is
-// byte-identical to the scalar reference. On DOTPROD hardware the default tests
-// only exercise the UDOT path, so this guards the fallback's overflow handling.
-func TestSADSIMDWidenFallbackByteExact(t *testing.T) {
-	saved := useDotProdSADSIMD
-	useDotProdSADSIMD = false
-	defer func() { useDotProdSADSIMD = saved }()
+// TestSADSIMDAbsDiffUnsignedEdges checks both operand orders at the byte
+// extremes, including 0 versus 255, so the max/min/sub composition cannot
+// accidentally use signed byte ordering or wrap an unsigned difference.
+func TestSADSIMDAbsDiffUnsignedEdges(t *testing.T) {
+	var a, b, got [16]uint8
+	for i := range a {
+		a[i] = uint8(i * 17)
+		b[i] = 255 - a[i]
+	}
+	absd := absDiffU8x16(archsimd.LoadUint8x16Array(&a), archsimd.LoadUint8x16Array(&b))
+	absd.StoreArray(&got)
+	for i := range got {
+		want := int(a[i]) - int(b[i])
+		if want < 0 {
+			want = -want
+		}
+		if int(got[i]) != want {
+			t.Fatalf("lane %d: absdiff(%d,%d)=%d, want %d", i, a[i], b[i], got[i], want)
+		}
+	}
+}
 
+// TestSADSIMDWidenPathByteExact proves the standard-API widen and bounded
+// accumulation path is exact across random data, odd strides, and extremes.
+func TestSADSIMDWidenPathByteExact(t *testing.T) {
 	for _, stride := range []int{16, 33, 64, 96, 128} {
 		src, ref := makeSADPlane(int64(stride)*31+17, stride*192)
 		rng := rand.New(rand.NewSource(int64(stride) + 700))

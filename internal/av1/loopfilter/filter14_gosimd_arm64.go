@@ -25,7 +25,7 @@
 //     weighted sum plus the rounding bias, and each next output costs two pair
 //     adds and two accumulator ops instead of an 11..13-term re-summation.
 //     With the bias folded into the accumulator, roundPowerOfTwo(sum, n) is a
-//     single arithmetic ShiftAllRightConst(n) (sums are non-negative and at
+//     single arithmetic ShiftAllRight(n) (sums are non-negative and at
 //     most 255*16+8, inside int16).
 //
 // Byte-exactness with filter14EdgePureGo:
@@ -96,35 +96,35 @@ func filter14EdgeSIMD(pix []byte, q0Base int, step int, outer int, length int, s
 		q3 := lf8LoadP(pQ3)
 
 		// needsFilter8 (inlined)
-		need := p3.AbsDiff(p2).LessEqual(limit).
-			And(p2.AbsDiff(p1).LessEqual(limit)).
-			And(p1.AbsDiff(p0).LessEqual(limit)).
-			And(q1.AbsDiff(q0).LessEqual(limit)).
-			And(q2.AbsDiff(q1).LessEqual(limit)).
-			And(q3.AbsDiff(q2).LessEqual(limit)).
-			And(p0.AbsDiff(q0).ShiftAllLeftConst(1).
-				Add(p1.AbsDiff(q1).ShiftAllRightConst(1)).
+		need := lfAbsDiffInt16x8(p3, p2).LessEqual(limit).
+			And(lfAbsDiffInt16x8(p2, p1).LessEqual(limit)).
+			And(lfAbsDiffInt16x8(p1, p0).LessEqual(limit)).
+			And(lfAbsDiffInt16x8(q1, q0).LessEqual(limit)).
+			And(lfAbsDiffInt16x8(q2, q1).LessEqual(limit)).
+			And(lfAbsDiffInt16x8(q3, q2).LessEqual(limit)).
+			And(lfAbsDiffInt16x8(p0, q0).ShiftAllLeft(1).
+				Add(lfAbsDiffInt16x8(p1, q1).ShiftAllRight(1)).
 				LessEqual(blimit))
 		// flat8in mask (flatMask4 over p3..q3, inlined)
-		flat := p1.AbsDiff(p0).LessEqual(flatThr).
-			And(q1.AbsDiff(q0).LessEqual(flatThr)).
-			And(p2.AbsDiff(p0).LessEqual(flatThr)).
-			And(q2.AbsDiff(q0).LessEqual(flatThr)).
-			And(p3.AbsDiff(p0).LessEqual(flatThr)).
-			And(q3.AbsDiff(q0).LessEqual(flatThr))
+		flat := lfAbsDiffInt16x8(p1, p0).LessEqual(flatThr).
+			And(lfAbsDiffInt16x8(q1, q0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(p2, p0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(q2, q0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(p3, p0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(q3, q0).LessEqual(flatThr))
 		// narrow four-tap (inlined filter4TapNoGate), needed on every path
-		hev := p1.AbsDiff(p0).Greater(hevT).Or(q1.AbsDiff(q0).Greater(hevT))
+		hev := lfAbsDiffInt16x8(p1, p0).Greater(hevT).Or(lfAbsDiffInt16x8(q1, q0).Greater(hevT))
 		ps1 := p1.Sub(center)
 		ps0 := p0.Sub(center)
 		qs0 := q0.Sub(center)
 		qs1 := q1.Sub(center)
 		f := ps1.Sub(qs1).Max(minV).Min(maxV).Masked(hev)
 		f = f.Add(qs0.Sub(ps0).Mul(three16)).Max(minV).Min(maxV)
-		filter1 := f.Add(four).Max(minV).Min(maxV).ShiftAllRightConst(3)
-		filter2 := f.Add(three16).Max(minV).Min(maxV).ShiftAllRightConst(3)
+		filter1 := f.Add(four).Max(minV).Min(maxV).ShiftAllRight(3)
+		filter2 := f.Add(three16).Max(minV).Min(maxV).ShiftAllRight(3)
 		np0 := ps0.Add(filter2).Max(minV).Min(maxV).Add(center)
 		nq0 := qs0.Sub(filter1).Max(minV).Min(maxV).Add(center)
-		ov := filter1.Add(one).ShiftAllRightConst(1)
+		ov := filter1.Add(one).ShiftAllRight(1)
 		np1 := p1.IfElse(hev, ps1.Add(ov).Max(minV).Min(maxV).Add(center))
 		nq1 := q1.IfElse(hev, qs1.Sub(ov).Max(minV).Min(maxV).Add(center))
 
@@ -151,39 +151,39 @@ func filter14EdgeSIMD(pix []byte, q0Base int, step int, outer int, length int, s
 		q5 := lf8LoadP(pQ5)
 		q6 := lf8LoadP(unsafe.Add(base, 6*step))
 		// flat8out mask (flatMask4 over p6,p5,p4,p0,q0,q4,q5,q6, inlined)
-		flat2 := p4.AbsDiff(p0).LessEqual(flatThr).
-			And(q4.AbsDiff(q0).LessEqual(flatThr)).
-			And(p5.AbsDiff(p0).LessEqual(flatThr)).
-			And(q5.AbsDiff(q0).LessEqual(flatThr)).
-			And(p6.AbsDiff(p0).LessEqual(flatThr)).
-			And(q6.AbsDiff(q0).LessEqual(flatThr))
+		flat2 := lfAbsDiffInt16x8(p4, p0).LessEqual(flatThr).
+			And(lfAbsDiffInt16x8(q4, q0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(p5, p0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(q5, q0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(p6, p0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(q6, q0).LessEqual(flatThr))
 		wideM := gateNF.And(flat2)
 
 		// filter8 six-output flat branch as a running box sum:
 		//   accB = 3*p3 + 2*p2 + p1 + p0 + q0 + 4, then per output
 		//   accB += (incoming pair) - (outgoing pair); out = accB >> 3.
-		accB := p3.ShiftAllLeftConst(1).Add(p3).
-			Add(p2.ShiftAllLeftConst(1)).
+		accB := p3.ShiftAllLeft(1).Add(p3).
+			Add(p2.ShiftAllLeft(1)).
 			Add(p1).Add(p0).Add(q0).Add(four)
 
 		if wideM.ToInt16x8().ToBits().ReduceSum() == 0 {
 			// flat lanes but no wide lane: exact filter8 store pattern.
-			f8p2 := accB.ShiftAllRightConst(3)
+			f8p2 := accB.ShiftAllRight(3)
 			lf8StoreP(pP2, f8p2.IfElse(flat, p2).IfElse(need, p2))
 			accB = accB.Add(p1.Add(q1)).Sub(p3.Add(p2))
-			f8p1 := accB.ShiftAllRightConst(3)
+			f8p1 := accB.ShiftAllRight(3)
 			lf8StoreP(pP1, f8p1.IfElse(flat, np1).IfElse(need, p1))
 			accB = accB.Add(p0.Add(q2)).Sub(p3.Add(p1))
-			f8p0 := accB.ShiftAllRightConst(3)
+			f8p0 := accB.ShiftAllRight(3)
 			lf8StoreP(pP0, f8p0.IfElse(flat, np0).IfElse(need, p0))
 			accB = accB.Add(q0.Add(q3)).Sub(p3.Add(p0))
-			f8q0 := accB.ShiftAllRightConst(3)
+			f8q0 := accB.ShiftAllRight(3)
 			lf8StoreP(base, f8q0.IfElse(flat, nq0).IfElse(need, q0))
 			accB = accB.Add(q1.Add(q3)).Sub(p2.Add(q0))
-			f8q1 := accB.ShiftAllRightConst(3)
+			f8q1 := accB.ShiftAllRight(3)
 			lf8StoreP(pQ1, f8q1.IfElse(flat, nq1).IfElse(need, q1))
 			accB = accB.Add(q2.Add(q3)).Sub(p1.Add(q1))
-			f8q2 := accB.ShiftAllRightConst(3)
+			f8q2 := accB.ShiftAllRight(3)
 			lf8StoreP(pQ2, f8q2.IfElse(flat, q2).IfElse(need, q2))
 			continue
 		}
@@ -193,45 +193,45 @@ func filter14EdgeSIMD(pix []byte, q0Base int, step int, outer int, length int, s
 		// stepped by add(incoming pair)/sub(outgoing pair); out = accW >> 4.
 		// The six inner outputs interleave the filter8 accumulator so each f8
 		// value is blended and dead before the next is formed.
-		accW := p6.ShiftAllLeftConst(3).Sub(p6).
-			Add(p5.Add(p4).ShiftAllLeftConst(1)).
+		accW := p6.ShiftAllLeft(3).Sub(p6).
+			Add(p5.Add(p4).ShiftAllLeft(1)).
 			Add(p3.Add(p2)).
 			Add(p1.Add(p0)).
 			Add(q0).Add(eight)
-		lf8StoreP(pP5, accW.ShiftAllRightConst(4).IfElse(wideM, p5))
-		accW = accW.Add(p3.Add(q1)).Sub(p6.ShiftAllLeftConst(1))
-		lf8StoreP(pP4, accW.ShiftAllRightConst(4).IfElse(wideM, p4))
+		lf8StoreP(pP5, accW.ShiftAllRight(4).IfElse(wideM, p5))
+		accW = accW.Add(p3.Add(q1)).Sub(p6.ShiftAllLeft(1))
+		lf8StoreP(pP4, accW.ShiftAllRight(4).IfElse(wideM, p4))
 		accW = accW.Add(p2.Add(q2)).Sub(p6.Add(p5))
-		lf8StoreP(pP3, accW.ShiftAllRightConst(4).IfElse(wideM, p3))
+		lf8StoreP(pP3, accW.ShiftAllRight(4).IfElse(wideM, p3))
 		accW = accW.Add(p1.Add(q3)).Sub(p6.Add(p4))
-		f8p2 := accB.ShiftAllRightConst(3)
-		lf8StoreP(pP2, accW.ShiftAllRightConst(4).IfElse(flat2, f8p2).IfElse(flat, p2).IfElse(need, p2))
+		f8p2 := accB.ShiftAllRight(3)
+		lf8StoreP(pP2, accW.ShiftAllRight(4).IfElse(flat2, f8p2).IfElse(flat, p2).IfElse(need, p2))
 		accW = accW.Add(p0.Add(q4)).Sub(p6.Add(p3))
 		accB = accB.Add(p1.Add(q1)).Sub(p3.Add(p2))
-		f8p1 := accB.ShiftAllRightConst(3)
-		lf8StoreP(pP1, accW.ShiftAllRightConst(4).IfElse(flat2, f8p1).IfElse(flat, np1).IfElse(need, p1))
+		f8p1 := accB.ShiftAllRight(3)
+		lf8StoreP(pP1, accW.ShiftAllRight(4).IfElse(flat2, f8p1).IfElse(flat, np1).IfElse(need, p1))
 		accW = accW.Add(q0.Add(q5)).Sub(p6.Add(p2))
 		accB = accB.Add(p0.Add(q2)).Sub(p3.Add(p1))
-		f8p0 := accB.ShiftAllRightConst(3)
-		lf8StoreP(pP0, accW.ShiftAllRightConst(4).IfElse(flat2, f8p0).IfElse(flat, np0).IfElse(need, p0))
+		f8p0 := accB.ShiftAllRight(3)
+		lf8StoreP(pP0, accW.ShiftAllRight(4).IfElse(flat2, f8p0).IfElse(flat, np0).IfElse(need, p0))
 		accW = accW.Add(q1.Add(q6)).Sub(p6.Add(p1))
 		accB = accB.Add(q0.Add(q3)).Sub(p3.Add(p0))
-		f8q0 := accB.ShiftAllRightConst(3)
-		lf8StoreP(base, accW.ShiftAllRightConst(4).IfElse(flat2, f8q0).IfElse(flat, nq0).IfElse(need, q0))
+		f8q0 := accB.ShiftAllRight(3)
+		lf8StoreP(base, accW.ShiftAllRight(4).IfElse(flat2, f8q0).IfElse(flat, nq0).IfElse(need, q0))
 		accW = accW.Add(q2.Add(q6)).Sub(p5.Add(p0))
 		accB = accB.Add(q1.Add(q3)).Sub(p2.Add(q0))
-		f8q1 := accB.ShiftAllRightConst(3)
-		lf8StoreP(pQ1, accW.ShiftAllRightConst(4).IfElse(flat2, f8q1).IfElse(flat, nq1).IfElse(need, q1))
+		f8q1 := accB.ShiftAllRight(3)
+		lf8StoreP(pQ1, accW.ShiftAllRight(4).IfElse(flat2, f8q1).IfElse(flat, nq1).IfElse(need, q1))
 		accW = accW.Add(q3.Add(q6)).Sub(p4.Add(q0))
 		accB = accB.Add(q2.Add(q3)).Sub(p1.Add(q1))
-		f8q2 := accB.ShiftAllRightConst(3)
-		lf8StoreP(pQ2, accW.ShiftAllRightConst(4).IfElse(flat2, f8q2).IfElse(flat, q2).IfElse(need, q2))
+		f8q2 := accB.ShiftAllRight(3)
+		lf8StoreP(pQ2, accW.ShiftAllRight(4).IfElse(flat2, f8q2).IfElse(flat, q2).IfElse(need, q2))
 		accW = accW.Add(q4.Add(q6)).Sub(p3.Add(q1))
-		lf8StoreP(pQ3, accW.ShiftAllRightConst(4).IfElse(wideM, q3))
+		lf8StoreP(pQ3, accW.ShiftAllRight(4).IfElse(wideM, q3))
 		accW = accW.Add(q5.Add(q6)).Sub(p2.Add(q2))
-		lf8StoreP(pQ4, accW.ShiftAllRightConst(4).IfElse(wideM, q4))
-		accW = accW.Add(q6.ShiftAllLeftConst(1)).Sub(p1.Add(q3))
-		lf8StoreP(pQ5, accW.ShiftAllRightConst(4).IfElse(wideM, q5))
+		lf8StoreP(pQ4, accW.ShiftAllRight(4).IfElse(wideM, q4))
+		accW = accW.Add(q6.ShiftAllLeft(1)).Sub(p1.Add(q3))
+		lf8StoreP(pQ5, accW.ShiftAllRight(4).IfElse(wideM, q5))
 	}
 	if rem := length - groups*8; rem > 0 {
 		filter14EdgePureGo(pix, q0Base+groups*8, step, outer, rem, scale, params)
@@ -281,7 +281,7 @@ func filter14VertSIMD(pix []byte, q0Base int, step int, outer int, length int, s
 // 12-bit entirely (filter14Edge16NEON routes it to pure-Go). Here the wide
 // accumulator instead carries a -32768 offset (T = sum + 8 - 32768 is always
 // in [-32760, 32760], exactly representable), so every output is one
-// arithmetic ShiftAllRightConst(4) plus an Add(2048) — immediate shifts, pure
+// arithmetic ShiftAllRight(4) plus an Add(2048) — immediate shifts, pure
 // int16 lanes, and one code path for both bit depths. Intermediate wrap-around
 // during the add/subtract stepping is exact mod 2^16, and the true value fits
 // int16 at every shift point. The six filter8 sums peak at 4095*8+4 = 32764
@@ -330,33 +330,33 @@ func filter14Edge16SIMD(pix []byte, q0Base int, step int, outer int, length int,
 		q2 := lf16LoadP(pQ2)
 		q3 := lf16LoadP(pQ3)
 
-		need := p3.AbsDiff(p2).LessEqual(limit).
-			And(p2.AbsDiff(p1).LessEqual(limit)).
-			And(p1.AbsDiff(p0).LessEqual(limit)).
-			And(q1.AbsDiff(q0).LessEqual(limit)).
-			And(q2.AbsDiff(q1).LessEqual(limit)).
-			And(q3.AbsDiff(q2).LessEqual(limit)).
-			And(p0.AbsDiff(q0).ShiftAllLeftConst(1).
-				Add(p1.AbsDiff(q1).ShiftAllRightConst(1)).
+		need := lfAbsDiffInt16x8(p3, p2).LessEqual(limit).
+			And(lfAbsDiffInt16x8(p2, p1).LessEqual(limit)).
+			And(lfAbsDiffInt16x8(p1, p0).LessEqual(limit)).
+			And(lfAbsDiffInt16x8(q1, q0).LessEqual(limit)).
+			And(lfAbsDiffInt16x8(q2, q1).LessEqual(limit)).
+			And(lfAbsDiffInt16x8(q3, q2).LessEqual(limit)).
+			And(lfAbsDiffInt16x8(p0, q0).ShiftAllLeft(1).
+				Add(lfAbsDiffInt16x8(p1, q1).ShiftAllRight(1)).
 				LessEqual(blimit))
-		flat := p1.AbsDiff(p0).LessEqual(flatThr).
-			And(q1.AbsDiff(q0).LessEqual(flatThr)).
-			And(p2.AbsDiff(p0).LessEqual(flatThr)).
-			And(q2.AbsDiff(q0).LessEqual(flatThr)).
-			And(p3.AbsDiff(p0).LessEqual(flatThr)).
-			And(q3.AbsDiff(q0).LessEqual(flatThr))
-		hev := p1.AbsDiff(p0).Greater(hevT).Or(q1.AbsDiff(q0).Greater(hevT))
+		flat := lfAbsDiffInt16x8(p1, p0).LessEqual(flatThr).
+			And(lfAbsDiffInt16x8(q1, q0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(p2, p0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(q2, q0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(p3, p0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(q3, q0).LessEqual(flatThr))
+		hev := lfAbsDiffInt16x8(p1, p0).Greater(hevT).Or(lfAbsDiffInt16x8(q1, q0).Greater(hevT))
 		ps1 := p1.Sub(center)
 		ps0 := p0.Sub(center)
 		qs0 := q0.Sub(center)
 		qs1 := q1.Sub(center)
 		f := ps1.Sub(qs1).Max(minV).Min(maxV).Masked(hev)
 		f = f.Add(qs0.Sub(ps0).Mul(three16)).Max(minV).Min(maxV)
-		filter1 := f.Add(four).Max(minV).Min(maxV).ShiftAllRightConst(3)
-		filter2 := f.Add(three16).Max(minV).Min(maxV).ShiftAllRightConst(3)
+		filter1 := f.Add(four).Max(minV).Min(maxV).ShiftAllRight(3)
+		filter2 := f.Add(three16).Max(minV).Min(maxV).ShiftAllRight(3)
 		np0 := ps0.Add(filter2).Max(minV).Min(maxV).Add(center)
 		nq0 := qs0.Sub(filter1).Max(minV).Min(maxV).Add(center)
-		ov := filter1.Add(one).ShiftAllRightConst(1)
+		ov := filter1.Add(one).ShiftAllRight(1)
 		np1 := p1.IfElse(hev, ps1.Add(ov).Max(minV).Min(maxV).Add(center))
 		nq1 := q1.IfElse(hev, qs1.Sub(ov).Max(minV).Min(maxV).Add(center))
 
@@ -379,78 +379,78 @@ func filter14Edge16SIMD(pix []byte, q0Base int, step int, outer int, length int,
 		q4 := lf16LoadP(pQ4)
 		q5 := lf16LoadP(pQ5)
 		q6 := lf16LoadP(unsafe.Add(base, 6*step))
-		flat2 := p4.AbsDiff(p0).LessEqual(flatThr).
-			And(q4.AbsDiff(q0).LessEqual(flatThr)).
-			And(p5.AbsDiff(p0).LessEqual(flatThr)).
-			And(q5.AbsDiff(q0).LessEqual(flatThr)).
-			And(p6.AbsDiff(p0).LessEqual(flatThr)).
-			And(q6.AbsDiff(q0).LessEqual(flatThr))
+		flat2 := lfAbsDiffInt16x8(p4, p0).LessEqual(flatThr).
+			And(lfAbsDiffInt16x8(q4, q0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(p5, p0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(q5, q0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(p6, p0).LessEqual(flatThr)).
+			And(lfAbsDiffInt16x8(q6, q0).LessEqual(flatThr))
 		wideM := gateNF.And(flat2)
 
-		accB := p3.ShiftAllLeftConst(1).Add(p3).
-			Add(p2.ShiftAllLeftConst(1)).
+		accB := p3.ShiftAllLeft(1).Add(p3).
+			Add(p2.ShiftAllLeft(1)).
 			Add(p1).Add(p0).Add(q0).Add(four)
 
 		if wideM.ToInt16x8().ToBits().ReduceSum() == 0 {
-			f8p2 := accB.ShiftAllRightConst(3)
+			f8p2 := accB.ShiftAllRight(3)
 			lf16StoreP(pP2, f8p2.IfElse(flat, p2).IfElse(need, p2))
 			accB = accB.Add(p1.Add(q1)).Sub(p3.Add(p2))
-			f8p1 := accB.ShiftAllRightConst(3)
+			f8p1 := accB.ShiftAllRight(3)
 			lf16StoreP(pP1, f8p1.IfElse(flat, np1).IfElse(need, p1))
 			accB = accB.Add(p0.Add(q2)).Sub(p3.Add(p1))
-			f8p0 := accB.ShiftAllRightConst(3)
+			f8p0 := accB.ShiftAllRight(3)
 			lf16StoreP(pP0, f8p0.IfElse(flat, np0).IfElse(need, p0))
 			accB = accB.Add(q0.Add(q3)).Sub(p3.Add(p0))
-			f8q0 := accB.ShiftAllRightConst(3)
+			f8q0 := accB.ShiftAllRight(3)
 			lf16StoreP(base, f8q0.IfElse(flat, nq0).IfElse(need, q0))
 			accB = accB.Add(q1.Add(q3)).Sub(p2.Add(q0))
-			f8q1 := accB.ShiftAllRightConst(3)
+			f8q1 := accB.ShiftAllRight(3)
 			lf16StoreP(pQ1, f8q1.IfElse(flat, nq1).IfElse(need, q1))
 			accB = accB.Add(q2.Add(q3)).Sub(p1.Add(q1))
-			f8q2 := accB.ShiftAllRightConst(3)
+			f8q2 := accB.ShiftAllRight(3)
 			lf16StoreP(pQ2, f8q2.IfElse(flat, q2).IfElse(need, q2))
 			continue
 		}
 
-		accW := p6.ShiftAllLeftConst(3).Sub(p6).
-			Add(p5.Add(p4).ShiftAllLeftConst(1)).
+		accW := p6.ShiftAllLeft(3).Sub(p6).
+			Add(p5.Add(p4).ShiftAllLeft(1)).
 			Add(p3.Add(p2)).
 			Add(p1.Add(p0)).
 			Add(q0).Add(biasW)
-		lf16StoreP(pP5, accW.ShiftAllRightConst(4).Add(half).IfElse(wideM, p5))
-		accW = accW.Add(p3.Add(q1)).Sub(p6.ShiftAllLeftConst(1))
-		lf16StoreP(pP4, accW.ShiftAllRightConst(4).Add(half).IfElse(wideM, p4))
+		lf16StoreP(pP5, accW.ShiftAllRight(4).Add(half).IfElse(wideM, p5))
+		accW = accW.Add(p3.Add(q1)).Sub(p6.ShiftAllLeft(1))
+		lf16StoreP(pP4, accW.ShiftAllRight(4).Add(half).IfElse(wideM, p4))
 		accW = accW.Add(p2.Add(q2)).Sub(p6.Add(p5))
-		lf16StoreP(pP3, accW.ShiftAllRightConst(4).Add(half).IfElse(wideM, p3))
+		lf16StoreP(pP3, accW.ShiftAllRight(4).Add(half).IfElse(wideM, p3))
 		accW = accW.Add(p1.Add(q3)).Sub(p6.Add(p4))
-		f8p2 := accB.ShiftAllRightConst(3)
-		lf16StoreP(pP2, accW.ShiftAllRightConst(4).Add(half).IfElse(flat2, f8p2).IfElse(flat, p2).IfElse(need, p2))
+		f8p2 := accB.ShiftAllRight(3)
+		lf16StoreP(pP2, accW.ShiftAllRight(4).Add(half).IfElse(flat2, f8p2).IfElse(flat, p2).IfElse(need, p2))
 		accW = accW.Add(p0.Add(q4)).Sub(p6.Add(p3))
 		accB = accB.Add(p1.Add(q1)).Sub(p3.Add(p2))
-		f8p1 := accB.ShiftAllRightConst(3)
-		lf16StoreP(pP1, accW.ShiftAllRightConst(4).Add(half).IfElse(flat2, f8p1).IfElse(flat, np1).IfElse(need, p1))
+		f8p1 := accB.ShiftAllRight(3)
+		lf16StoreP(pP1, accW.ShiftAllRight(4).Add(half).IfElse(flat2, f8p1).IfElse(flat, np1).IfElse(need, p1))
 		accW = accW.Add(q0.Add(q5)).Sub(p6.Add(p2))
 		accB = accB.Add(p0.Add(q2)).Sub(p3.Add(p1))
-		f8p0 := accB.ShiftAllRightConst(3)
-		lf16StoreP(pP0, accW.ShiftAllRightConst(4).Add(half).IfElse(flat2, f8p0).IfElse(flat, np0).IfElse(need, p0))
+		f8p0 := accB.ShiftAllRight(3)
+		lf16StoreP(pP0, accW.ShiftAllRight(4).Add(half).IfElse(flat2, f8p0).IfElse(flat, np0).IfElse(need, p0))
 		accW = accW.Add(q1.Add(q6)).Sub(p6.Add(p1))
 		accB = accB.Add(q0.Add(q3)).Sub(p3.Add(p0))
-		f8q0 := accB.ShiftAllRightConst(3)
-		lf16StoreP(base, accW.ShiftAllRightConst(4).Add(half).IfElse(flat2, f8q0).IfElse(flat, nq0).IfElse(need, q0))
+		f8q0 := accB.ShiftAllRight(3)
+		lf16StoreP(base, accW.ShiftAllRight(4).Add(half).IfElse(flat2, f8q0).IfElse(flat, nq0).IfElse(need, q0))
 		accW = accW.Add(q2.Add(q6)).Sub(p5.Add(p0))
 		accB = accB.Add(q1.Add(q3)).Sub(p2.Add(q0))
-		f8q1 := accB.ShiftAllRightConst(3)
-		lf16StoreP(pQ1, accW.ShiftAllRightConst(4).Add(half).IfElse(flat2, f8q1).IfElse(flat, nq1).IfElse(need, q1))
+		f8q1 := accB.ShiftAllRight(3)
+		lf16StoreP(pQ1, accW.ShiftAllRight(4).Add(half).IfElse(flat2, f8q1).IfElse(flat, nq1).IfElse(need, q1))
 		accW = accW.Add(q3.Add(q6)).Sub(p4.Add(q0))
 		accB = accB.Add(q2.Add(q3)).Sub(p1.Add(q1))
-		f8q2 := accB.ShiftAllRightConst(3)
-		lf16StoreP(pQ2, accW.ShiftAllRightConst(4).Add(half).IfElse(flat2, f8q2).IfElse(flat, q2).IfElse(need, q2))
+		f8q2 := accB.ShiftAllRight(3)
+		lf16StoreP(pQ2, accW.ShiftAllRight(4).Add(half).IfElse(flat2, f8q2).IfElse(flat, q2).IfElse(need, q2))
 		accW = accW.Add(q4.Add(q6)).Sub(p3.Add(q1))
-		lf16StoreP(pQ3, accW.ShiftAllRightConst(4).Add(half).IfElse(wideM, q3))
+		lf16StoreP(pQ3, accW.ShiftAllRight(4).Add(half).IfElse(wideM, q3))
 		accW = accW.Add(q5.Add(q6)).Sub(p2.Add(q2))
-		lf16StoreP(pQ4, accW.ShiftAllRightConst(4).Add(half).IfElse(wideM, q4))
-		accW = accW.Add(q6.ShiftAllLeftConst(1)).Sub(p1.Add(q3))
-		lf16StoreP(pQ5, accW.ShiftAllRightConst(4).Add(half).IfElse(wideM, q5))
+		lf16StoreP(pQ4, accW.ShiftAllRight(4).Add(half).IfElse(wideM, q4))
+		accW = accW.Add(q6.ShiftAllLeft(1)).Sub(p1.Add(q3))
+		lf16StoreP(pQ5, accW.ShiftAllRight(4).Add(half).IfElse(wideM, q5))
 	}
 	if rem := length - groups*8; rem > 0 {
 		filter14Edge16PureGo(pix, q0Base+groups*8*outer, step, outer, rem, scale, params)

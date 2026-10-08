@@ -8,9 +8,9 @@
 // vector around it (a wall of FMOVQ/STP to RSP), so only tiny leaf helpers that
 // actually inline (one half-butterfly, the reinterpret casts, the round-shift-1)
 // stay as functions. Twiddles are loaded into per-pass locals so each rodata
-// load emits once (not an ADRP+FMOVQ per half-butterfly), and the round-narrow
-// shift bakes its amount as a compile-time constant. Measured to beat the NEON
-// asm by 15-21% on the 8x8 hybrid benchmarks.
+// load emits once (not an ADRP+FMOVQ per half-butterfly), and each rounding
+// shift gets a constant amount. Measured to beat the NEON asm by 15-21% on the
+// 8x8 hybrid benchmarks.
 
 //go:build goexperiment.simd && arm64 && !purego
 
@@ -25,9 +25,9 @@ import (
 // dispatch slots for the 8x8 hybrid transforms under GOEXPERIMENT=simd,
 // replacing the hand-written NEON asm. The math runs in int16 lanes (eight
 // columns per Int16x8): the half-butterfly widens int16*int16 to int32 for the
-// product and narrows back with a rounding shift (ShiftRightRoundNarrow ==
-// srshr #13); adds saturate but never clamp in the 8-bit residual domain, so the
-// result is byte-identical to the int32 scalar reference (verified by the
+// product, applies an overflow-free rounding shift, then saturates and packs
+// back to int16. Adds saturate but never clamp in the 8-bit residual domain, so
+// the result is byte-identical to the int32 scalar reference (verified by the
 // differential test).
 var forwardBlock8x8ADSTDCTImpl = forwardBlock8x8ADSTDCTSIMD
 var forwardBlock8x8DCTADSTImpl = forwardBlock8x8DCTADSTSIMD
@@ -77,16 +77,16 @@ var (
 // adstHalfBtf16 is half_btf at cos_bit 13, int16 I/O with an int32 accumulator
 // and a rounding narrow shift; twiddles passed pre-loaded. Tiny; inlines.
 func adstHalfBtf16(k0, in0, k1, in1 archsimd.Int16x8) archsimd.Int16x8 {
-	lo := in0.MulWidenLo(k0).MulWidenLoAdd(in1, k1)
-	hi := in0.MulWidenHi(k0).MulWidenHiAdd(in1, k1)
-	return lo.ShiftRightRoundNarrow(13).ShiftRightRoundNarrowHi(hi, 13)
+	lo := in0.MulWidenLo(k0).Add(in1.MulWidenLo(k1))
+	hi := in0.HiToLo().MulWidenLo(k0.HiToLo()).Add(in1.HiToLo().MulWidenLo(k1.HiToLo()))
+	return roundShiftNarrowInt32x4ToInt16x8(lo, hi, 13)
 }
 
 // adstRoundShift1Int16 is fwdRoundShift1Value per int16 lane: (v+1+(v>>15))>>1.
 // The +1 folds into a VMOVI-immediate ADD (no live broadcast register).
 func adstRoundShift1Int16(v archsimd.Int16x8) archsimd.Int16x8 {
-	sign := v.ShiftAllRightConst(15)
-	return v.Add(archsimd.BroadcastInt16x8(1)).Add(sign).ShiftAllRightConst(1)
+	sign := v.ShiftAllRight(15)
+	return v.Add(archsimd.BroadcastInt16x8(1)).Add(sign).ShiftAllRight(1)
 }
 
 func adstInt16AsInt32(v archsimd.Int16x8) archsimd.Int32x4 {
@@ -104,17 +104,25 @@ func adstInt64AsInt16(v archsimd.Int64x2) archsimd.Int16x8 {
 
 // forwardBlock8x8ADSTADSTSIMD: ADST column, common shift, transpose, ADST row.
 func forwardBlock8x8ADSTADSTSIMD(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+	if !residualFitsMagnitude(residual, residualStride, 8, 8, 255) {
+		forwardBlock8x8ADSTADSTPureGo(coeff, coeffStride, residual, residualStride, scratch)
+		return
+	}
+	forwardBlock8x8ADSTADSTSIMDFast(coeff, coeffStride, residual, residualStride, scratch)
+}
+
+func forwardBlock8x8ADSTADSTSIMDFast(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
 	_ = scratch[63]
 	rbase := unsafe.Pointer(unsafe.SliceData(residual))
 	rstep := uintptr(residualStride) * 2
-	l0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase)).ShiftAllLeftConst(2)
-	l1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*1))).ShiftAllLeftConst(2)
-	l2 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*2))).ShiftAllLeftConst(2)
-	l3 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*3))).ShiftAllLeftConst(2)
-	l4 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*4))).ShiftAllLeftConst(2)
-	l5 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*5))).ShiftAllLeftConst(2)
-	l6 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*6))).ShiftAllLeftConst(2)
-	l7 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*7))).ShiftAllLeftConst(2)
+	l0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase)).ShiftAllLeft(2)
+	l1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*1))).ShiftAllLeft(2)
+	l2 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*2))).ShiftAllLeft(2)
+	l3 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*3))).ShiftAllLeft(2)
+	l4 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*4))).ShiftAllLeft(2)
+	l5 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*5))).ShiftAllLeft(2)
+	l6 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*6))).ShiftAllLeft(2)
+	l7 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*7))).ShiftAllLeft(2)
 
 	// --- Column pass ---
 	var c0, c1, c2, c3, c4, c5, c6, c7 archsimd.Int16x8
@@ -271,69 +279,46 @@ func forwardBlock8x8ADSTADSTSIMD(coeff []int32, coeffStride int, residual []int1
 	// --- Store (int16 -> int32 coeff layout) ---
 	obase := unsafe.Pointer(unsafe.SliceData(coeff))
 	ostep := uintptr(coeffStride) * 4
-	{
-		lo := o0.ExtendLo4ToInt32()
-		hi := o0.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(obase))
-		hi.StoreArray((*[4]int32)(unsafe.Add(obase, 16)))
-	}
-	{
-		lo := o1.ExtendLo4ToInt32()
-		hi := o1.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*1)))
-		hi.StoreArray((*[4]int32)(unsafe.Add(unsafe.Add(obase, ostep*1), 16)))
-	}
-	{
-		lo := o2.ExtendLo4ToInt32()
-		hi := o2.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*2)))
-		hi.StoreArray((*[4]int32)(unsafe.Add(unsafe.Add(obase, ostep*2), 16)))
-	}
-	{
-		lo := o3.ExtendLo4ToInt32()
-		hi := o3.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*3)))
-		hi.StoreArray((*[4]int32)(unsafe.Add(unsafe.Add(obase, ostep*3), 16)))
-	}
-	{
-		lo := o4.ExtendLo4ToInt32()
-		hi := o4.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*4)))
-		hi.StoreArray((*[4]int32)(unsafe.Add(unsafe.Add(obase, ostep*4), 16)))
-	}
-	{
-		lo := o5.ExtendLo4ToInt32()
-		hi := o5.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*5)))
-		hi.StoreArray((*[4]int32)(unsafe.Add(unsafe.Add(obase, ostep*5), 16)))
-	}
-	{
-		lo := o6.ExtendLo4ToInt32()
-		hi := o6.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*6)))
-		hi.StoreArray((*[4]int32)(unsafe.Add(unsafe.Add(obase, ostep*6), 16)))
-	}
-	{
-		lo := o7.ExtendLo4ToInt32()
-		hi := o7.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*7)))
-		hi.StoreArray((*[4]int32)(unsafe.Add(unsafe.Add(obase, ostep*7), 16)))
-	}
+	fdctStoreInt16x8ToInt32(obase, o0)
+	fdctStoreInt16x8ToInt32(unsafe.Add(obase, ostep*1), o1)
+	fdctStoreInt16x8ToInt32(unsafe.Add(obase, ostep*2), o2)
+	fdctStoreInt16x8ToInt32(unsafe.Add(obase, ostep*3), o3)
+	fdctStoreInt16x8ToInt32(unsafe.Add(obase, ostep*4), o4)
+	fdctStoreInt16x8ToInt32(unsafe.Add(obase, ostep*5), o5)
+	fdctStoreInt16x8ToInt32(unsafe.Add(obase, ostep*6), o6)
+	fdctStoreInt16x8ToInt32(unsafe.Add(obase, ostep*7), o7)
+}
+
+func idtxStoreInt16x8ToInt32(base unsafe.Pointer, v archsimd.Int16x8) {
+	// Scale after sign extension so every int16 residual preserves its full
+	// public value range before being promoted to the coefficient type.
+	lo := v.ExtendLo4ToInt32().ShiftAllLeft(3)
+	hi := v.HiToLo().ExtendLo4ToInt32().ShiftAllLeft(3)
+	lo.StoreArray((*[4]int32)(base))
+	hi.StoreArray((*[4]int32)(unsafe.Add(base, 16)))
 }
 
 // forwardBlock8x8ADSTDCTSIMD: ADST column, common shift, transpose, DCT row.
 func forwardBlock8x8ADSTDCTSIMD(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+	if !residualFitsMagnitude(residual, residualStride, 8, 8, 255) {
+		forwardBlock8x8ADSTDCTPureGo(coeff, coeffStride, residual, residualStride, scratch)
+		return
+	}
+	forwardBlock8x8ADSTDCTSIMDFast(coeff, coeffStride, residual, residualStride, scratch)
+}
+
+func forwardBlock8x8ADSTDCTSIMDFast(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
 	_ = scratch[63]
 	rbase := unsafe.Pointer(unsafe.SliceData(residual))
 	rstep := uintptr(residualStride) * 2
-	l0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase)).ShiftAllLeftConst(2)
-	l1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*1))).ShiftAllLeftConst(2)
-	l2 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*2))).ShiftAllLeftConst(2)
-	l3 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*3))).ShiftAllLeftConst(2)
-	l4 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*4))).ShiftAllLeftConst(2)
-	l5 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*5))).ShiftAllLeftConst(2)
-	l6 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*6))).ShiftAllLeftConst(2)
-	l7 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*7))).ShiftAllLeftConst(2)
+	l0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase)).ShiftAllLeft(2)
+	l1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*1))).ShiftAllLeft(2)
+	l2 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*2))).ShiftAllLeft(2)
+	l3 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*3))).ShiftAllLeft(2)
+	l4 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*4))).ShiftAllLeft(2)
+	l5 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*5))).ShiftAllLeft(2)
+	l6 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*6))).ShiftAllLeft(2)
+	l7 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*7))).ShiftAllLeft(2)
 
 	// --- Column pass ---
 	var c0, c1, c2, c3, c4, c5, c6, c7 archsimd.Int16x8
@@ -530,17 +515,25 @@ func forwardBlock8x8ADSTDCTSIMD(coeff []int32, coeffStride int, residual []int16
 
 // forwardBlock8x8DCTADSTSIMD: DCT column, common shift, transpose, ADST row.
 func forwardBlock8x8DCTADSTSIMD(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+	if !residualFitsMagnitude(residual, residualStride, 8, 8, 255) {
+		forwardBlock8x8DCTADSTPureGo(coeff, coeffStride, residual, residualStride, scratch)
+		return
+	}
+	forwardBlock8x8DCTADSTSIMDFast(coeff, coeffStride, residual, residualStride, scratch)
+}
+
+func forwardBlock8x8DCTADSTSIMDFast(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
 	_ = scratch[63]
 	rbase := unsafe.Pointer(unsafe.SliceData(residual))
 	rstep := uintptr(residualStride) * 2
-	l0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase)).ShiftAllLeftConst(2)
-	l1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*1))).ShiftAllLeftConst(2)
-	l2 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*2))).ShiftAllLeftConst(2)
-	l3 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*3))).ShiftAllLeftConst(2)
-	l4 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*4))).ShiftAllLeftConst(2)
-	l5 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*5))).ShiftAllLeftConst(2)
-	l6 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*6))).ShiftAllLeftConst(2)
-	l7 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*7))).ShiftAllLeftConst(2)
+	l0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase)).ShiftAllLeft(2)
+	l1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*1))).ShiftAllLeft(2)
+	l2 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*2))).ShiftAllLeft(2)
+	l3 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*3))).ShiftAllLeft(2)
+	l4 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*4))).ShiftAllLeft(2)
+	l5 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*5))).ShiftAllLeft(2)
+	l6 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*6))).ShiftAllLeft(2)
+	l7 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*7))).ShiftAllLeft(2)
 
 	// --- Column pass ---
 	var c0, c1, c2, c3, c4, c5, c6, c7 archsimd.Int16x8
@@ -740,16 +733,16 @@ func forwardBlock8x8IDTXSIMD(coeff []int32, coeffStride int, residual []int16, r
 	_ = scratch[63]
 	rbase := unsafe.Pointer(unsafe.SliceData(residual))
 	rstep := uintptr(residualStride) * 2
-	l0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase)).ShiftAllLeftConst(3)
-	l1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*1))).ShiftAllLeftConst(3)
-	l2 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*2))).ShiftAllLeftConst(3)
-	l3 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*3))).ShiftAllLeftConst(3)
-	l4 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*4))).ShiftAllLeftConst(3)
-	l5 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*5))).ShiftAllLeftConst(3)
-	l6 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*6))).ShiftAllLeftConst(3)
-	l7 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*7))).ShiftAllLeftConst(3)
+	l0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase))
+	l1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*1)))
+	l2 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*2)))
+	l3 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*3)))
+	l4 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*4)))
+	l5 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*5)))
+	l6 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*6)))
+	l7 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*7)))
 
-	// Transpose the scaled residual and store in coeff layout.
+	// Transpose the residual and widen the result to coeff layout on store.
 	a0 := l0.InterleaveLo(l1)
 	a1 := l0.InterleaveHi(l1)
 	a2 := l2.InterleaveLo(l3)
@@ -777,52 +770,12 @@ func forwardBlock8x8IDTXSIMD(coeff []int32, coeffStride int, residual []int16, r
 
 	obase := unsafe.Pointer(unsafe.SliceData(coeff))
 	ostep := uintptr(coeffStride) * 4
-	{
-		lo := o0.ExtendLo4ToInt32()
-		hi := o0.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(obase))
-		hi.StoreArray((*[4]int32)(unsafe.Add(obase, 16)))
-	}
-	{
-		lo := o1.ExtendLo4ToInt32()
-		hi := o1.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*1)))
-		hi.StoreArray((*[4]int32)(unsafe.Add(unsafe.Add(obase, ostep*1), 16)))
-	}
-	{
-		lo := o2.ExtendLo4ToInt32()
-		hi := o2.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*2)))
-		hi.StoreArray((*[4]int32)(unsafe.Add(unsafe.Add(obase, ostep*2), 16)))
-	}
-	{
-		lo := o3.ExtendLo4ToInt32()
-		hi := o3.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*3)))
-		hi.StoreArray((*[4]int32)(unsafe.Add(unsafe.Add(obase, ostep*3), 16)))
-	}
-	{
-		lo := o4.ExtendLo4ToInt32()
-		hi := o4.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*4)))
-		hi.StoreArray((*[4]int32)(unsafe.Add(unsafe.Add(obase, ostep*4), 16)))
-	}
-	{
-		lo := o5.ExtendLo4ToInt32()
-		hi := o5.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*5)))
-		hi.StoreArray((*[4]int32)(unsafe.Add(unsafe.Add(obase, ostep*5), 16)))
-	}
-	{
-		lo := o6.ExtendLo4ToInt32()
-		hi := o6.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*6)))
-		hi.StoreArray((*[4]int32)(unsafe.Add(unsafe.Add(obase, ostep*6), 16)))
-	}
-	{
-		lo := o7.ExtendLo4ToInt32()
-		hi := o7.HiToLo().ExtendLo4ToInt32()
-		lo.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*7)))
-		hi.StoreArray((*[4]int32)(unsafe.Add(unsafe.Add(obase, ostep*7), 16)))
-	}
+	idtxStoreInt16x8ToInt32(obase, o0)
+	idtxStoreInt16x8ToInt32(unsafe.Add(obase, ostep*1), o1)
+	idtxStoreInt16x8ToInt32(unsafe.Add(obase, ostep*2), o2)
+	idtxStoreInt16x8ToInt32(unsafe.Add(obase, ostep*3), o3)
+	idtxStoreInt16x8ToInt32(unsafe.Add(obase, ostep*4), o4)
+	idtxStoreInt16x8ToInt32(unsafe.Add(obase, ostep*5), o5)
+	idtxStoreInt16x8ToInt32(unsafe.Add(obase, ostep*6), o6)
+	idtxStoreInt16x8ToInt32(unsafe.Add(obase, ostep*7), o7)
 }

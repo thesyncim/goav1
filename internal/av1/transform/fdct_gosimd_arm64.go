@@ -145,18 +145,29 @@ var (
 	fdct8Kn40 = bcast16(-fwdCospi13[40])
 )
 
-
 func forwardDCT4x4SIMD(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	// One straight-line pass: load 4 rows of int16 residual widened to int32
 	// (<<2), fdct4 column butterfly, in-register 4x4 int32 transpose, fdct4 row
 	// butterfly, raw-pointer store. shift[1]=shift[2]=0 for 4x4 so there is no
 	// inter-pass round-shift; everything stays in Int32x4 registers.
-	rbase := unsafe.Pointer(unsafe.SliceData(residual))
-	rstep := uintptr(residualStride) * 2
-	r0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase)).ExtendLo4ToInt32().ShiftAllLeftConst(2)
-	r1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*1))).ExtendLo4ToInt32().ShiftAllLeftConst(2)
-	r2 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*2))).ExtendLo4ToInt32().ShiftAllLeftConst(2)
-	r3 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*3))).ExtendLo4ToInt32().ShiftAllLeftConst(2)
+	// The first-pass output magnitude is at most 46341 and the largest
+	// second-pass accumulator at most 2147446036 for |residual| <= 2048. Larger
+	// public int16 inputs use the scalar path, whose multiply-accumulates are
+	// int64.
+	if !residualFitsMagnitude(residual, residualStride, 4, 4, 2048) {
+		forwardDCT4x4PureGo(coeff, coeffStride, residual, residualStride)
+		return
+	}
+	loadRow := func(row int) archsimd.Int32x4 {
+		// Load only the four samples used by this kernel. A full Int16x8 load
+		// from the final row reads past an exact 4x4 residual buffer.
+		v, _ := archsimd.LoadInt16x8Part(residual[row*residualStride : row*residualStride+4])
+		return v.ExtendLo4ToInt32().ShiftAllLeft(2)
+	}
+	r0 := loadRow(0)
+	r1 := loadRow(1)
+	r2 := loadRow(2)
+	r3 := loadRow(3)
 
 	// Load the pre-broadcast fdct4 twiddles (single VLD1/FMOVQ each, straight
 	// from rodata; shared by both passes). This is far cheaper than
@@ -179,10 +190,10 @@ func forwardDCT4x4SIMD(coeff []int32, coeffStride int, residual []int16, residua
 		s1 := r1.Add(r2)
 		s2 := r1.Sub(r2)
 		s3 := r0.Sub(r3)
-		c0 = s1.MulAdd(w32, s0.MulAdd(w32, round)).ShiftAllRightConst(13)
-		c2 = s0.MulAdd(w32, s1.MulAdd(wn32, round)).ShiftAllRightConst(13)
-		c1 = s3.MulAdd(w16, s2.MulAdd(w48, round)).ShiftAllRightConst(13)
-		c3 = s2.MulAdd(wn16, s3.MulAdd(w48, round)).ShiftAllRightConst(13)
+		c0 = s1.MulAdd(w32, s0.MulAdd(w32, round)).ShiftAllRight(13)
+		c2 = s0.MulAdd(w32, s1.MulAdd(wn32, round)).ShiftAllRight(13)
+		c1 = s3.MulAdd(w16, s2.MulAdd(w48, round)).ShiftAllRight(13)
+		c3 = s2.MulAdd(wn16, s3.MulAdd(w48, round)).ShiftAllRight(13)
 	}
 
 	// In-register 4x4 int32 transpose.
@@ -202,10 +213,10 @@ func forwardDCT4x4SIMD(coeff []int32, coeffStride int, residual []int16, residua
 		s1 := t1.Add(t2)
 		s2 := t1.Sub(t2)
 		s3 := t0.Sub(t3)
-		o0 = s1.MulAdd(w32, s0.MulAdd(w32, round)).ShiftAllRightConst(13)
-		o2 = s0.MulAdd(w32, s1.MulAdd(wn32, round)).ShiftAllRightConst(13)
-		o1 = s3.MulAdd(w16, s2.MulAdd(w48, round)).ShiftAllRightConst(13)
-		o3 = s2.MulAdd(wn16, s3.MulAdd(w48, round)).ShiftAllRightConst(13)
+		o0 = s1.MulAdd(w32, s0.MulAdd(w32, round)).ShiftAllRight(13)
+		o2 = s0.MulAdd(w32, s1.MulAdd(wn32, round)).ShiftAllRight(13)
+		o1 = s3.MulAdd(w16, s2.MulAdd(w48, round)).ShiftAllRight(13)
+		o3 = s2.MulAdd(wn16, s3.MulAdd(w48, round)).ShiftAllRight(13)
 	}
 
 	obase := unsafe.Pointer(unsafe.SliceData(coeff))
@@ -230,16 +241,23 @@ func forwardDCT8x8SIMD(coeff []int32, coeffStride int, residual []int16, residua
 	// intermediate Int16x8 values stay register-resident with no stack arrays
 	// and no per-pass CALL/ABI spill. Raw unsafe pointers walk the input/output
 	// so there is no per-row bounds check.
+	// The narrow butterfly intermediates are used for 8-bit residuals. Preserve
+	// the public API's full int16 behavior with the scalar path outside that
+	// proven range.
+	if !residualFitsMagnitude(residual, residualStride, 8, 8, 255) {
+		forwardDCT8x8PureGo(coeff, coeffStride, residual, residualStride)
+		return
+	}
 	rbase := unsafe.Pointer(unsafe.SliceData(residual))
 	rstep := uintptr(residualStride) * 2
-	l0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase)).ShiftAllLeftConst(2)
-	l1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep))).ShiftAllLeftConst(2)
-	l2 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*2))).ShiftAllLeftConst(2)
-	l3 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*3))).ShiftAllLeftConst(2)
-	l4 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*4))).ShiftAllLeftConst(2)
-	l5 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*5))).ShiftAllLeftConst(2)
-	l6 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*6))).ShiftAllLeftConst(2)
-	l7 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*7))).ShiftAllLeftConst(2)
+	l0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase)).ShiftAllLeft(2)
+	l1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep))).ShiftAllLeft(2)
+	l2 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*2))).ShiftAllLeft(2)
+	l3 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*3))).ShiftAllLeft(2)
+	l4 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*4))).ShiftAllLeft(2)
+	l5 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*5))).ShiftAllLeft(2)
+	l6 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*6))).ShiftAllLeft(2)
+	l7 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*7))).ShiftAllLeft(2)
 
 	// Load loop-invariant twiddle vectors from rodata (single VLD1 each; used by
 	// both passes) instead of re-broadcasting scalars.
@@ -355,11 +373,10 @@ func forwardDCT8x8SIMD(coeff []int32, coeffStride int, residual []int16, residua
 // fdctHalfBtf16Vec is the widening butterfly with pre-broadcast twiddle
 // vectors; kept tiny so it inlines everywhere.
 func fdctHalfBtf16Vec(k0 archsimd.Int16x8, in0 archsimd.Int16x8, k1 archsimd.Int16x8, in1 archsimd.Int16x8, cosBit uint8) archsimd.Int16x8 {
-	lo := in0.MulWidenLo(k0).MulWidenLoAdd(in1, k1)
-	hi := in0.MulWidenHi(k0).MulWidenHiAdd(in1, k1)
-	return lo.ShiftRightRoundNarrow(cosBit).ShiftRightRoundNarrowHi(hi, cosBit)
+	lo := in0.MulWidenLo(k0).Add(in1.MulWidenLo(k1))
+	hi := in0.HiToLo().MulWidenLo(k0.HiToLo()).Add(in1.HiToLo().MulWidenLo(k1.HiToLo()))
+	return roundShiftNarrowInt32x4ToInt16x8(lo, hi, cosBit)
 }
-
 
 func forwardDCT16x16SIMD(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	// rowsLo/rowsHi hold the column-pass output (32 Int16x8 = the whole 16x16
@@ -367,6 +384,13 @@ func forwardDCT16x16SIMD(coeff []int32, coeffStride int, residual []int16, resid
 	// all 16 rows live for a column group, and 32 vectors exceed the 32 V-regs,
 	// so the NEON kernel likewise spills its column output to a buf. Everything
 	// else threads through registers via value-returning helpers.
+	// The narrow butterfly intermediates are used for 8-bit residuals. Preserve
+	// the public API's full int16 behavior with the scalar path outside that
+	// proven range.
+	if !residualFitsMagnitude(residual, residualStride, 16, 16, 255) {
+		forwardDCT16x16PureGo(coeff, coeffStride, residual, residualStride)
+		return
+	}
 	var rowsLo, rowsHi [16]archsimd.Int16x8
 	fdct16ColumnPass8SIMD16(&rowsLo, 0, residual, residualStride)
 	fdct16ColumnPass8SIMD16(&rowsHi, 8, residual, residualStride)
@@ -465,22 +489,22 @@ func fdctTranspose8x8Int16(r0, r1, r2, r3, r4, r5, r6, r7 archsimd.Int16x8) (
 func fdct16ColumnPass8SIMD16(output *[16]archsimd.Int16x8, col int, residual []int16, residualStride int) {
 	rbase := unsafe.Add(unsafe.Pointer(unsafe.SliceData(residual)), uintptr(col)*2)
 	rstep := uintptr(residualStride) * 2
-	l0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase)).ShiftAllLeftConst(2)
-	l1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*1))).ShiftAllLeftConst(2)
-	l2 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*2))).ShiftAllLeftConst(2)
-	l3 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*3))).ShiftAllLeftConst(2)
-	l4 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*4))).ShiftAllLeftConst(2)
-	l5 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*5))).ShiftAllLeftConst(2)
-	l6 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*6))).ShiftAllLeftConst(2)
-	l7 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*7))).ShiftAllLeftConst(2)
-	l8 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*8))).ShiftAllLeftConst(2)
-	l9 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*9))).ShiftAllLeftConst(2)
-	l10 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*10))).ShiftAllLeftConst(2)
-	l11 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*11))).ShiftAllLeftConst(2)
-	l12 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*12))).ShiftAllLeftConst(2)
-	l13 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*13))).ShiftAllLeftConst(2)
-	l14 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*14))).ShiftAllLeftConst(2)
-	l15 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*15))).ShiftAllLeftConst(2)
+	l0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase)).ShiftAllLeft(2)
+	l1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*1))).ShiftAllLeft(2)
+	l2 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*2))).ShiftAllLeft(2)
+	l3 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*3))).ShiftAllLeft(2)
+	l4 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*4))).ShiftAllLeft(2)
+	l5 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*5))).ShiftAllLeft(2)
+	l6 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*6))).ShiftAllLeft(2)
+	l7 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*7))).ShiftAllLeft(2)
+	l8 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*8))).ShiftAllLeft(2)
+	l9 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*9))).ShiftAllLeft(2)
+	l10 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*10))).ShiftAllLeft(2)
+	l11 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*11))).ShiftAllLeft(2)
+	l12 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*12))).ShiftAllLeft(2)
+	l13 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*13))).ShiftAllLeft(2)
+	l14 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*14))).ShiftAllLeft(2)
+	l15 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*15))).ShiftAllLeft(2)
 
 	o0, o1, o2, o3, o4, o5, o6, o7, o8, o9, o10, o11, o12, o13, o14, o15 := fdct16Butterfly13(
 		l0, l1, l2, l3, l4, l5, l6, l7, l8, l9, l10, l11, l12, l13, l14, l15)
@@ -513,8 +537,8 @@ func fdctSub16(a, b archsimd.Int16x8) archsimd.Int16x8 {
 
 // Per-index pre-broadcast twiddle tables for the fdct16 butterflies.
 var fdct16Pos13 = [64][8]int16{
-	4: bcast16(fwdCospi13[4]),
-	8: bcast16(fwdCospi13[8]),
+	4:  bcast16(fwdCospi13[4]),
+	8:  bcast16(fwdCospi13[8]),
 	12: bcast16(fwdCospi13[12]),
 	16: bcast16(fwdCospi13[16]),
 	20: bcast16(fwdCospi13[20]),
@@ -530,8 +554,8 @@ var fdct16Pos13 = [64][8]int16{
 	60: bcast16(fwdCospi13[60]),
 }
 var fdct16Neg13 = [64][8]int16{
-	4: bcast16(-fwdCospi13[4]),
-	8: bcast16(-fwdCospi13[8]),
+	4:  bcast16(-fwdCospi13[4]),
+	8:  bcast16(-fwdCospi13[8]),
 	12: bcast16(-fwdCospi13[12]),
 	16: bcast16(-fwdCospi13[16]),
 	20: bcast16(-fwdCospi13[20]),
@@ -547,8 +571,8 @@ var fdct16Neg13 = [64][8]int16{
 	60: bcast16(-fwdCospi13[60]),
 }
 var fdct16Pos12 = [64][8]int16{
-	4: bcast16(fwdCospi12[4]),
-	8: bcast16(fwdCospi12[8]),
+	4:  bcast16(fwdCospi12[4]),
+	8:  bcast16(fwdCospi12[8]),
 	12: bcast16(fwdCospi12[12]),
 	16: bcast16(fwdCospi12[16]),
 	20: bcast16(fwdCospi12[20]),
@@ -564,8 +588,8 @@ var fdct16Pos12 = [64][8]int16{
 	60: bcast16(fwdCospi12[60]),
 }
 var fdct16Neg12 = [64][8]int16{
-	4: bcast16(-fwdCospi12[4]),
-	8: bcast16(-fwdCospi12[8]),
+	4:  bcast16(-fwdCospi12[4]),
+	8:  bcast16(-fwdCospi12[8]),
 	12: bcast16(-fwdCospi12[12]),
 	16: bcast16(-fwdCospi12[16]),
 	20: bcast16(-fwdCospi12[20]),
@@ -584,9 +608,9 @@ var fdct16Neg12 = [64][8]int16{
 // fdctHalfBtf16V is fdctHalfBtf16 with pre-broadcast twiddle vectors (loaded
 // from rodata) instead of scalar weights, so no VMOV+VDUP per call.
 func fdctHalfBtf16V(k0 archsimd.Int16x8, in0 archsimd.Int16x8, k1 archsimd.Int16x8, in1 archsimd.Int16x8, cosBit uint8) archsimd.Int16x8 {
-	lo := in0.MulWidenLo(k0).MulWidenLoAdd(in1, k1)
-	hi := in0.MulWidenHi(k0).MulWidenHiAdd(in1, k1)
-	return lo.ShiftRightRoundNarrow(cosBit).ShiftRightRoundNarrowHi(hi, cosBit)
+	lo := in0.MulWidenLo(k0).Add(in1.MulWidenLo(k1))
+	hi := in0.HiToLo().MulWidenLo(k0.HiToLo()).Add(in1.HiToLo().MulWidenLo(k1.HiToLo()))
+	return roundShiftNarrowInt32x4ToInt16x8(lo, hi, cosBit)
 }
 
 // fdctRoundShift1Int16Native computes ROUND_POWER_OF_TWO_SIGNED(v, 1) =
@@ -598,8 +622,8 @@ func fdctHalfBtf16V(k0 archsimd.Int16x8, in0 archsimd.Int16x8, k1 archsimd.Int16
 // column pass; each lane is one SSHR (sign) + ADD + ADD + SSHR.
 func fdctRoundShift1Int16Native(v archsimd.Int16x8) archsimd.Int16x8 {
 	// (v + 1) folds a VMOVI immediate; the sign term is v>>15 (-1 if negative).
-	sign := v.ShiftAllRightConst(15)
-	return v.Add(archsimd.BroadcastInt16x8(1)).Add(sign).ShiftAllRightConst(1)
+	sign := v.ShiftAllRight(15)
+	return v.Add(archsimd.BroadcastInt16x8(1)).Add(sign).ShiftAllRight(1)
 }
 
 // fdctRoundShift2Int16Native computes round_shift(v, 2) = (v + 2) >> 2 in int16
@@ -607,7 +631,7 @@ func fdctRoundShift1Int16Native(v archsimd.Int16x8) archsimd.Int16x8 {
 // column pass actually produces (well inside int16, so v+2 does not overflow);
 // it removes the widen->int32->narrow round trip.
 func fdctRoundShift2Int16Native(v archsimd.Int16x8) archsimd.Int16x8 {
-	return v.Add(archsimd.BroadcastInt16x8(2)).ShiftAllRightConst(2)
+	return v.Add(archsimd.BroadcastInt16x8(2)).ShiftAllRight(2)
 }
 
 // fdct16Butterfly13/12 are av1_fdct16 with the cosBit shift baked in as a
@@ -726,7 +750,6 @@ func fdct16Butterfly13(
 	return e0, f8, e4, f12, e2, f10, e6, f14, e1, f9, e5, f13, e3, f11, e7, f15
 }
 
-
 func fdct16Butterfly12(
 	i0, i1, i2, i3, i4, i5, i6, i7, i8, i9, i10, i11, i12, i13, i14, i15 archsimd.Int16x8,
 ) (
@@ -838,4 +861,3 @@ func fdct16Butterfly12(
 	// Output permutation
 	return e0, f8, e4, f12, e2, f10, e6, f14, e1, f9, e5, f13, e3, f11, e7, f15
 }
-

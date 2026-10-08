@@ -36,7 +36,9 @@ func minMaxAbsDiff8x8SIMD(a []byte, aStride int, b []byte, bStride int, bytesPer
 			arow[i] = a[ao+i]
 			brow[i] = b[bo+i]
 		}
-		absd := archsimd.LoadUint8x16Array(&arow).AbsDiff(archsimd.LoadUint8x16Array(&brow))
+		a := archsimd.LoadUint8x16Array(&arow)
+		b := archsimd.LoadUint8x16Array(&brow)
+		absd := a.Max(b).Sub(a.Min(b))
 		minV = minV.Min(absd)
 		maxV = maxV.Max(absd)
 	}

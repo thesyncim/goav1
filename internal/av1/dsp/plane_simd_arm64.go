@@ -6,9 +6,9 @@
 
 // This file is a SPIKE: it reimplements the 8-bit residual-add inner loop using
 // Go's native arm64 SIMD intrinsics (the simd/archsimd package, Go 1.27+ with
-// GOEXPERIMENT=simd). It is compiled ONLY under GOEXPERIMENT=simd, so the normal
-// Go 1.26 production build never sees it — the standard scalar/NEON-asm dispatch
-// is unaffected. Its purpose is to measure Go-native SIMD against the scalar
+// GOEXPERIMENT=simd). It is compiled only under GOEXPERIMENT=simd, so a normal
+// build without the experiment uses the standard scalar/NEON-asm dispatch.
+// Its purpose is to measure Go-native SIMD against the scalar
 // baseline and the existing hand-written Plan 9 NEON asm on identical real code,
 // and to prove byte-identity via the differential test in plane_simd_arm64_test.go.
 //
@@ -77,13 +77,18 @@ func packLo4Int16(a, b archsimd.Int16x8) archsimd.Int16x8 {
 	return au.InterleaveLo(bu).ReshapeToUint16s().ConvertToInt16()
 }
 
+// roundRawTransformResidualSIMD matches ((raw+8)>>4) without the intermediate
+// addition, which could overflow for arbitrary int32 input.
+func roundRawTransformResidualSIMD(raw archsimd.Int32x4) archsimd.Int32x4 {
+	return raw.ShiftAllRight(4).Add(raw.ShiftAllRight(3).And(archsimd.BroadcastInt32x4(1)))
+}
+
 // addRawTransformPlaneBlockSIMD is the Go-native-SIMD analogue of
 // addRawTransformPlaneBlockPureGo for the 8-bit path. The raw int32 samples are
-// rounded ((raw+8)>>4) and saturated to int16 — exactly rawTransformResidual —
-// then added to the destination with the same byte-exact AddSaturated+clamp as
-// the residual-add. Widths not a multiple of 16 and the 16-bit path fall back
-// to scalar. Precondition (satisfied by real inverse-transform output): raw
-// values are bounded well within int32, so raw+8 does not overflow.
+// rounded and saturated to int16 — exactly rawTransformResidual — then added
+// to the destination with the same byte-exact AddSaturated+clamp as the
+// residual-add. Widths not a multiple of 16 and the 16-bit path fall back to
+// scalar.
 func addRawTransformPlaneBlockSIMD(block planeBlock, bytesPerSample int, max uint16, width int, raw []int32, rawStride int) {
 	if bytesPerSample != 1 || width < 16 || width%16 != 0 {
 		addRawTransformPlaneBlockPureGo(block, bytesPerSample, max, width, raw, rawStride)
@@ -91,7 +96,6 @@ func addRawTransformPlaneBlockSIMD(block planeBlock, bytesPerSample int, max uin
 	}
 	zero := archsimd.BroadcastInt16x8(0)
 	hi := archsimd.BroadcastInt16x8(int16(max))
-	eight := archsimd.BroadcastInt32x4(8)
 	for row := 0; row < block.height; row++ {
 		dstRow := block.pix[row*block.stride:]
 		rawRow := raw[row*rawStride:]
@@ -99,11 +103,11 @@ func addRawTransformPlaneBlockSIMD(block planeBlock, bytesPerSample int, max uin
 			dv := archsimd.LoadUint8x16Array((*[16]uint8)(dstRow[x:]))
 			dLo := dv.ExtendLo8ToUint16().ConvertToInt16()
 			dHi := dv.ConcatShiftBytesRight(dv, 8).ExtendLo8ToUint16().ConvertToInt16()
-			// (raw+8)>>4 saturated to int16 == rawTransformResidual, per group of 4.
-			r0 := archsimd.LoadInt32x4Array((*[4]int32)(rawRow[x:])).Add(eight).ShiftAllRight(4).SaturateToInt16()
-			r1 := archsimd.LoadInt32x4Array((*[4]int32)(rawRow[x+4:])).Add(eight).ShiftAllRight(4).SaturateToInt16()
-			r2 := archsimd.LoadInt32x4Array((*[4]int32)(rawRow[x+8:])).Add(eight).ShiftAllRight(4).SaturateToInt16()
-			r3 := archsimd.LoadInt32x4Array((*[4]int32)(rawRow[x+12:])).Add(eight).ShiftAllRight(4).SaturateToInt16()
+			// Equivalent to ((raw+8)>>4), with no overflowing raw+8.
+			r0 := roundRawTransformResidualSIMD(archsimd.LoadInt32x4Array((*[4]int32)(rawRow[x:]))).SaturateToInt16()
+			r1 := roundRawTransformResidualSIMD(archsimd.LoadInt32x4Array((*[4]int32)(rawRow[x+4:]))).SaturateToInt16()
+			r2 := roundRawTransformResidualSIMD(archsimd.LoadInt32x4Array((*[4]int32)(rawRow[x+8:]))).SaturateToInt16()
+			r3 := roundRawTransformResidualSIMD(archsimd.LoadInt32x4Array((*[4]int32)(rawRow[x+12:]))).SaturateToInt16()
 			rLo := packLo4Int16(r0, r1)
 			rHi := packLo4Int16(r2, r3)
 			sLo := dLo.AddSaturated(rLo).Max(zero).Min(hi).SaturateToUint8()

@@ -38,12 +38,52 @@ func TestQuantizeBlockImplMatchesScalar(t *testing.T) {
 					want[i] = quantizeScalar(coeff[i], scale, ts)
 				}
 				if !quantizeBlockImpl(got, coeff, n, q, ts) {
-					t.Fatalf("n=%d ts=%d trial=%d q=%+v coeff0=%d coeff1=%d: kernel refused", n, ts, trial, q, coeff[0], coeff[1])
+					if err := QuantizeBlockScaled(got, n, coeff, n, n, n, q, ts); err != nil {
+						t.Fatalf("n=%d ts=%d trial=%d scalar fallback: %v", n, ts, trial, err)
+					}
 				}
 				for i := range want {
 					if want[i] != got[i] {
 						t.Fatalf("n=%d ts=%d trial=%d q[%d] impl %d want %d coeff=%d dc=%v q=%+v",
 							n, ts, trial, i, got[i], want[i], coeff[i], i == 0, q)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestQuantizeBlockImplOverflowMatchesScalarFallback(t *testing.T) {
+	if quantizeBlockImpl == nil {
+		t.Skip("no vector kernel on this architecture")
+	}
+	for _, ac := range []int32{1, 2, 3} {
+		for _, txScale := range []uint8{1, 2} {
+			maxSafe := ((int64(maxInt32)+1)*int64(ac) - 1) >> txScale
+			values := []int32{minInt32, maxInt32}
+			if maxSafe < int64(maxInt32) {
+				boundary := int32(maxSafe)
+				values = append(values, boundary, boundary+1, -boundary, -boundary-1)
+			}
+			for _, value := range values {
+				q := Quantizer{DC: 1, AC: ac}
+				coeff := make([]int32, 16)
+				coeff[1] = value
+				got := make([]int16, 16)
+				want := make([]int16, 16)
+				for i := range coeff {
+					scale := ac
+					if i == 0 {
+						scale = q.DC
+					}
+					want[i] = quantizeScalar(coeff[i], scale, txScale)
+				}
+				if err := QuantizeBlockScaled(got, 4, coeff, 4, 4, 4, q, txScale); err != nil {
+					t.Fatalf("AC=%d txScale=%d coeff=%d: %v", ac, txScale, value, err)
+				}
+				for i := range want {
+					if got[i] != want[i] {
+						t.Fatalf("AC=%d txScale=%d coeff=%d q[%d]=%d want %d", ac, txScale, value, i, got[i], want[i])
 					}
 				}
 			}

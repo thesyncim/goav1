@@ -233,8 +233,8 @@ rawColLoop8:
 	WORD $0x4c4078e1 // ld1 {v1.4s}, [x7]
 	ADD  $16, R7, R9
 	WORD $0x4c407922 // ld1 {v2.4s}, [x9]
-	WORD $0x4ea58421 // add v1.4s, v1.4s, v5.4s
-	WORD $0x4ea58442 // add v2.4s, v2.4s, v5.4s
+	WORD $0x4ea50c21 // sqadd v1.4s, v1.4s, v5.4s (avoid MaxInt32 overflow)
+	WORD $0x4ea50c42 // sqadd v2.4s, v2.4s, v5.4s
 	WORD $0x4f3c0421 // sshr v1.4s, v1.4s, #4
 	WORD $0x4f3c0442 // sshr v2.4s, v2.4s, #4
 	WORD $0x0e614821 // sqxtn v1.4h, v1.4s
@@ -290,7 +290,7 @@ rawRowLoop8x4:
 	MOVWU (R0), R6
 	VMOV R6, V0.S[0]
 	VLD1 (R2), [V1.S4]
-	WORD $0x4ea58421 // add v1.4s, v1.4s, v5.4s
+	WORD $0x4ea50c21 // sqadd v1.4s, v1.4s, v5.4s (avoid MaxInt32 overflow)
 	WORD $0x4f3c0421 // sshr v1.4s, v1.4s, #4
 	WORD $0x0e614821 // sqxtn v1.4h, v1.4s
 	WORD $0x2f08a400 // uxtl v0.8h, v0.8b
@@ -337,8 +337,8 @@ rawColLoop16:
 	WORD $0x4c4078e1 // ld1 {v1.4s}, [x7]
 	ADD  $16, R7, R9
 	WORD $0x4c407922 // ld1 {v2.4s}, [x9]
-	WORD $0x4ea58421 // add v1.4s, v1.4s, v5.4s
-	WORD $0x4ea58442 // add v2.4s, v2.4s, v5.4s
+	WORD $0x4ea50c21 // sqadd v1.4s, v1.4s, v5.4s (avoid MaxInt32 overflow)
+	WORD $0x4ea50c42 // sqadd v2.4s, v2.4s, v5.4s
 	WORD $0x4f3c0421 // sshr v1.4s, v1.4s, #4
 	WORD $0x4f3c0442 // sshr v2.4s, v2.4s, #4
 	WORD $0x0e614821 // sqxtn v1.4h, v1.4s
@@ -390,7 +390,7 @@ rawRowLoop16x4:
 	CBZ  R5, rawDone16x4
 	VLD1 (R0), [V0.H4]
 	VLD1 (R2), [V1.S4]
-	WORD $0x4ea58421 // add v1.4s, v1.4s, v5.4s
+	WORD $0x4ea50c21 // sqadd v1.4s, v1.4s, v5.4s (avoid MaxInt32 overflow)
 	WORD $0x4f3c0421 // sshr v1.4s, v1.4s, #4
 	WORD $0x0e614821 // sqxtn v1.4h, v1.4s
 	WORD $0x2f10a402 // uxtl v2.4s, v0.4h

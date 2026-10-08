@@ -93,30 +93,46 @@ func TestAddResidualSIMDExhaustivePixel(t *testing.T) {
 	}
 }
 
-// Three-way benchmark: scalar reference vs Go-native SIMD vs the production NEON
-// asm (addResidualPlaneBlockImpl resolves to the hand-written kernel on arm64).
+// Three-way benchmark: scalar reference vs Go-native SIMD vs the named NEON
+// wrapper, which calls the hand-written kernel on arm64.
+var planeBenchmarkOutput byte
+
 func benchResidual(b *testing.B, w, h int, fn func(planeBlock, int, uint16, int, []int16, int)) {
 	rng := rand.New(rand.NewSource(1))
 	stride := w
 	dst, res := makeResidualCase(rng, w, h, stride, false)
 	work := make([]byte, len(dst))
 	b.SetBytes(int64(w * h))
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		copy(work, dst)
 		fn(mkBlock(work, stride, w, h), 1, 255, w, res, w)
 	}
+	planeBenchmarkOutput = work[0]
 }
 
-func BenchmarkAddResidual32x32_Scalar(b *testing.B) { benchResidual(b, 32, 32, addResidualPlaneBlockPureGo) }
-func BenchmarkAddResidual32x32_SIMD(b *testing.B)   { benchResidual(b, 32, 32, addResidualPlaneBlockSIMD) }
-func BenchmarkAddResidual32x32_ASM(b *testing.B)    { benchResidual(b, 32, 32, addResidualPlaneBlockImpl) }
-func BenchmarkAddResidual64x64_Scalar(b *testing.B) { benchResidual(b, 64, 64, addResidualPlaneBlockPureGo) }
-func BenchmarkAddResidual64x64_SIMD(b *testing.B)   { benchResidual(b, 64, 64, addResidualPlaneBlockSIMD) }
-func BenchmarkAddResidual64x64_ASM(b *testing.B)    { benchResidual(b, 64, 64, addResidualPlaneBlockImpl) }
-func BenchmarkAddResidual16x16_Scalar(b *testing.B) { benchResidual(b, 16, 16, addResidualPlaneBlockPureGo) }
-func BenchmarkAddResidual16x16_SIMD(b *testing.B)   { benchResidual(b, 16, 16, addResidualPlaneBlockSIMD) }
-func BenchmarkAddResidual16x16_ASM(b *testing.B)    { benchResidual(b, 16, 16, addResidualPlaneBlockImpl) }
+func BenchmarkAddResidual32x32_Scalar(b *testing.B) {
+	benchResidual(b, 32, 32, addResidualPlaneBlockPureGo)
+}
+func BenchmarkAddResidual32x32_SIMD(b *testing.B) {
+	benchResidual(b, 32, 32, addResidualPlaneBlockSIMD)
+}
+func BenchmarkAddResidual32x32_ASM(b *testing.B) { benchResidual(b, 32, 32, addResidualPlaneBlockNEON) }
+func BenchmarkAddResidual64x64_Scalar(b *testing.B) {
+	benchResidual(b, 64, 64, addResidualPlaneBlockPureGo)
+}
+func BenchmarkAddResidual64x64_SIMD(b *testing.B) {
+	benchResidual(b, 64, 64, addResidualPlaneBlockSIMD)
+}
+func BenchmarkAddResidual64x64_ASM(b *testing.B) { benchResidual(b, 64, 64, addResidualPlaneBlockNEON) }
+func BenchmarkAddResidual16x16_Scalar(b *testing.B) {
+	benchResidual(b, 16, 16, addResidualPlaneBlockPureGo)
+}
+func BenchmarkAddResidual16x16_SIMD(b *testing.B) {
+	benchResidual(b, 16, 16, addResidualPlaneBlockSIMD)
+}
+func BenchmarkAddResidual16x16_ASM(b *testing.B) { benchResidual(b, 16, 16, addResidualPlaneBlockNEON) }
 
 // makeRawCase builds a dst block + int32 raw buffer (bounded like real
 // inverse-transform output, with int16-saturation edges of (raw+8)>>4 mixed in).
@@ -164,21 +180,49 @@ func TestAddRawTransformSIMDMatchesScalar(t *testing.T) {
 	}
 }
 
+func TestAddRawTransformSIMDSignedExtremaMatchesScalar(t *testing.T) {
+	const width, height, stride, rawStride = 16, 2, 19, 18
+	const minInt32 = int32(-1 << 31)
+	const maxInt32 = int32(1<<31 - 1)
+	values := []int32{
+		minInt32, maxInt32, minInt32 + 8, maxInt32 - 8,
+		-524297, -524296, -9, -8, -7, -1, 0, 7, 8, 9, 524295, 524296,
+	}
+	raw := make([]int32, rawStride*height)
+	for row := 0; row < height; row++ {
+		copy(raw[row*rawStride:row*rawStride+width], values)
+	}
+	dstScalar := make([]byte, stride*height)
+	for i := range dstScalar {
+		dstScalar[i] = byte(19 + i*29)
+	}
+	dstSIMD := append([]byte(nil), dstScalar...)
+	addRawTransformPlaneBlockPureGo(mkRawBlock(dstScalar, stride, width, height), 1, 255, width, raw, rawStride)
+	addRawTransformPlaneBlockSIMD(mkRawBlock(dstSIMD, stride, width, height), 1, 255, width, raw, rawStride)
+	for i := range dstScalar {
+		if dstSIMD[i] != dstScalar[i] {
+			t.Fatalf("byte %d=%d want %d", i, dstSIMD[i], dstScalar[i])
+		}
+	}
+}
+
 func benchRaw(b *testing.B, w, h int, fn func(planeBlock, int, uint16, int, []int32, int)) {
 	rng := rand.New(rand.NewSource(2))
 	dst, raw := makeRawCase(rng, w, h, w)
 	work := make([]byte, len(dst))
 	b.SetBytes(int64(w * h))
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		copy(work, dst)
 		fn(mkRawBlock(work, w, w, h), 1, 255, w, raw, w)
 	}
+	planeBenchmarkOutput = work[0]
 }
 
 func BenchmarkAddRaw32x32_Scalar(b *testing.B) { benchRaw(b, 32, 32, addRawTransformPlaneBlockPureGo) }
 func BenchmarkAddRaw32x32_SIMD(b *testing.B)   { benchRaw(b, 32, 32, addRawTransformPlaneBlockSIMD) }
-func BenchmarkAddRaw32x32_ASM(b *testing.B)    { benchRaw(b, 32, 32, addRawTransformPlaneBlockImpl) }
+func BenchmarkAddRaw32x32_ASM(b *testing.B)    { benchRaw(b, 32, 32, addRawTransformPlaneBlockNEON) }
 func BenchmarkAddRaw64x64_Scalar(b *testing.B) { benchRaw(b, 64, 64, addRawTransformPlaneBlockPureGo) }
 func BenchmarkAddRaw64x64_SIMD(b *testing.B)   { benchRaw(b, 64, 64, addRawTransformPlaneBlockSIMD) }
-func BenchmarkAddRaw64x64_ASM(b *testing.B)    { benchRaw(b, 64, 64, addRawTransformPlaneBlockImpl) }
+func BenchmarkAddRaw64x64_ASM(b *testing.B)    { benchRaw(b, 64, 64, addRawTransformPlaneBlockNEON) }

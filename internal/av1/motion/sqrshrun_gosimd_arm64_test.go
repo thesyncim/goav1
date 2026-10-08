@@ -1,4 +1,4 @@
-//go:build goexperiment.simd
+//go:build goexperiment.simd && arm64 && !purego
 
 package motion
 
@@ -38,15 +38,15 @@ func TestShiftRightRoundNarrowUint8ByteExact(t *testing.T) {
 			var got [16]uint8
 			switch sh {
 			case 1:
-				v.ShiftRightRoundNarrowUint8(1).StoreArray(&got)
+				simdRoundShiftNarrowUint8(v, 1).StoreArray(&got)
 			case 2:
-				v.ShiftRightRoundNarrowUint8(2).StoreArray(&got)
+				simdRoundShiftNarrowUint8(v, 2).StoreArray(&got)
 			case 4:
-				v.ShiftRightRoundNarrowUint8(4).StoreArray(&got)
+				simdRoundShiftNarrowUint8(v, 4).StoreArray(&got)
 			case 6:
-				v.ShiftRightRoundNarrowUint8(6).StoreArray(&got)
+				simdRoundShiftNarrowUint8(v, 6).StoreArray(&got)
 			case 8:
-				v.ShiftRightRoundNarrowUint8(8).StoreArray(&got)
+				simdRoundShiftNarrowUint8(v, 8).StoreArray(&got)
 			}
 			for i := 0; i < 8; i++ {
 				want := refSqrshrun(in[i], sh)

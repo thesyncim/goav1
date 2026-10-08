@@ -57,19 +57,109 @@ func TestBlendA64MaskSIMDMatchesScalar(t *testing.T) {
 	}
 }
 
+func TestBlendA64MaskSIMDRejectsOutOfRangeWithScalarPartialWrites(t *testing.T) {
+	tests := []struct {
+		name  string
+		width int
+		index int
+		bad   string
+		alias string
+	}{
+		{name: "src0_first_sample", width: 16, index: 0, bad: "src0"},
+		{name: "src1_first_sample", width: 16, index: 0, bad: "src1"},
+		{name: "mask_first_sample", width: 16, index: 0, bad: "mask"},
+		{name: "src0_inside_chunk_in_place", width: 32, index: 5, bad: "src0", alias: "src0"},
+		{name: "src1_later_chunk_in_place", width: 32, index: 21, bad: "src1", alias: "src1"},
+		{name: "mask_later_chunk_in_place", width: 32, index: 21, bad: "mask", alias: "src0"},
+	}
+	makeArgs := func(tt struct {
+		name  string
+		width int
+		index int
+		bad   string
+		alias string
+	}) blendA64MaskArgs {
+		s0 := make([]uint16, tt.width)
+		s1 := make([]uint16, tt.width)
+		mask := make([]uint8, tt.width)
+		for i := range s0 {
+			s0[i] = uint16(80 + i%120)
+			s1[i] = uint16(20 + i%70)
+			mask[i] = 32
+		}
+		switch tt.bad {
+		case "src0":
+			s0[tt.index] = 256
+		case "src1":
+			s1[tt.index] = 256
+		case "mask":
+			mask[tt.index] = 65
+		}
+		dst := make([]uint16, tt.width)
+		for i := range dst {
+			dst[i] = 0xaaaa
+		}
+		if tt.alias == "src0" {
+			dst = s0
+		} else if tt.alias == "src1" {
+			dst = s1
+		}
+		return blendArgs(dst, s0, s1, mask, tt.width, 1)
+	}
+	assertSame := func(t *testing.T, got, want []uint16) {
+		t.Helper()
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("dst[%d]=%d want %d", i, got[i], want[i])
+			}
+		}
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scalar := makeArgs(tt)
+			if blendA64MaskPureGo(scalar) {
+				t.Fatal("scalar accepted out-of-range input")
+			}
+			want := append([]uint16(nil), scalar.dst...)
+
+			simd := makeArgs(tt)
+			if blendA64MaskSIMD(simd) {
+				t.Fatal("SIMD accepted out-of-range input")
+			}
+			assertSame(t, simd.dst, want)
+
+			public := makeArgs(tt)
+			err := BlendA64Mask(public.dst, public.dstStride, public.src0, public.src0Stride,
+				public.src1, public.src1Stride, public.mask, public.maskStride,
+				public.width, public.height, public.subX, public.subY, 8)
+			if err != ErrInvalidBlock {
+				t.Fatalf("BlendA64Mask error=%v want %v", err, ErrInvalidBlock)
+			}
+			assertSame(t, public.dst, want)
+		})
+	}
+}
+
+var blendBenchmarkResult bool
+
 func benchBlend(b *testing.B, w, h int, fn func(blendA64MaskArgs) bool) {
 	rng := rand.New(rand.NewSource(3))
 	dst, s0, s1, mask := makeBlendCase(rng, w, h)
 	b.SetBytes(int64(w * h))
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		fn(blendArgs(dst, s0, s1, mask, w, h))
+	for b.Loop() {
+		blendBenchmarkResult = fn(blendArgs(dst, s0, s1, mask, w, h))
+	}
+	if !blendBenchmarkResult {
+		b.Fatal("blend kernel rejected valid benchmark input")
 	}
 }
 
 func BenchmarkBlend32x32_Scalar(b *testing.B) { benchBlend(b, 32, 32, blendA64MaskPureGo) }
 func BenchmarkBlend32x32_SIMD(b *testing.B)   { benchBlend(b, 32, 32, blendA64MaskSIMD) }
-func BenchmarkBlend32x32_ASM(b *testing.B)    { benchBlend(b, 32, 32, blendA64MaskImpl) }
+func BenchmarkBlend32x32_ASM(b *testing.B)    { benchBlend(b, 32, 32, blendA64MaskNEON) }
 func BenchmarkBlend64x64_Scalar(b *testing.B) { benchBlend(b, 64, 64, blendA64MaskPureGo) }
 func BenchmarkBlend64x64_SIMD(b *testing.B)   { benchBlend(b, 64, 64, blendA64MaskSIMD) }
-func BenchmarkBlend64x64_ASM(b *testing.B)    { benchBlend(b, 64, 64, blendA64MaskImpl) }
+func BenchmarkBlend64x64_ASM(b *testing.B)    { benchBlend(b, 64, 64, blendA64MaskNEON) }

@@ -11,16 +11,13 @@
 // (columns 0..3 and 4..7), then the accumulator is round-shifted, clamped to
 // [0,max] and narrowed back to uint16.
 //
-// Fused widening MAC (SMLAL / SMLAL2 via Int32x4.MulWidenLoAdd/HiAdd): every
-// temp sample is the horizontal pass's output, clamped to [0,maxClamp] with
+// Widening multiplication plus int32 addition accumulates each tap. Every temp
+// sample is the horizontal pass's output, clamped to [0,maxClamp] with
 // maxClamp <= 32767 for all bit depths (8-bit: 8191, 10/12-bit: 32767). A value
-// in [0,32767] has the same bit pattern reinterpreted as a non-negative int16,
-// so int16*int16->int32 reproduces the reference's uint16-widened
-// int32 product exactly, and the 7-tap int32 sum never overflows. This is the
-// identical sample-range invariant the hand-written NEON asm relies on, so the
-// kernel is byte-identical to wienerVertical (TestWienerVerticalSIMDMatchesPureGo).
-// The two accumulators are seeded so each tap is one SMLAL/SMLAL2 (14 total),
-// matching the NEON asm's fused-MAC op count.
+// in that range reinterprets as non-negative int16, so int16 widening
+// multiplication reproduces the reference's uint16 product exactly, and the
+// 7-tap int32 sum never overflows. This is the sample-range invariant the
+// hand-written NEON asm also relies on.
 //
 // Two folds make the inner loop a plain 7-tap MAC (shared with the NEON asm
 // wrapper): the libaom center reapplication s3<<WienerFilterBits is folded into
@@ -71,17 +68,15 @@ func wienerLoadV(p unsafe.Pointer) archsimd.Int16x8 {
 
 // wienerStoreV completes the [0,max] clamp and narrow for the two round-shifted
 // Int32x4 accumulators, then stores 8 uint16 (lanes 0..3 from lo, 4..7 from hi)
-// at the walking dst pointer p. This is the NEON asm's exact tail:
-// SaturateToUint16 (SQXTUN) narrows lo into the low 4 lanes and folds the lower
-// bound (negatives -> 0), SaturateToUint16Hi (SQXTUN2) narrows hi into the high 4
-// lanes in place (no shuffle/zip), then a single Uint16x8.Min (UMIN) applies the
-// upper bound to all 8 lanes.
+// at the walking dst pointer p. SaturateToUint16 narrows each half and an
+// InterleaveLo combines the low 64-bit halves in lane order. Uint16x8.Min then
+// applies the upper bound.
 //
 // Byte-exact with clampInt32(x,0,max) by clamp order-independence (0 <= max):
 // SQXTUN maps x<0 -> 0 and saturates x>65535 -> 65535 (>= max), so
 // Min(SQXTUN(x), max) == median(x,0,max) == clampInt32(x,0,max) for every case.
 func wienerStoreV(p unsafe.Pointer, lo, hi archsimd.Int32x4, maxV archsimd.Uint16x8) {
-	out := lo.SaturateToUint16().SaturateToUint16Hi(hi).Min(maxV)
+	out := restorationSaturateInt32PairToUint16(lo, hi).Min(maxV)
 	out.StoreArray((*[8]uint16)(p))
 }
 
@@ -112,6 +107,10 @@ func wienerVerticalSIMD(temp []uint16, tempStride int, dst []uint16, dstStride i
 	f4V := archsimd.BroadcastInt16x8(filter[4])
 	f5V := archsimd.BroadcastInt16x8(filter[5])
 	f6V := archsimd.BroadcastInt16x8(filter[6])
+	hf0V, hf1V := f0V.HiToLo(), f1V.HiToLo()
+	hf2V, hf3V := f2V.HiToLo(), f3V.HiToLo()
+	hf4V, hf5V := f4V.HiToLo(), f5V.HiToLo()
+	hf6V := f6V.HiToLo()
 
 	// Base pointers taken once; each row seeds seven walking tap pointers plus a
 	// dst pointer that advance 16 bytes (8 uint16) per column iteration. This
@@ -140,20 +139,22 @@ func wienerVerticalSIMD(temp []uint16, tempStride int, dst []uint16, dstStride i
 		dp := unsafe.Add(dbase, col*elem)
 		for row := 0; row < height; row++ {
 			r6 := wienerLoadV(nextp)
-			lo := seedV.MulWidenLoAdd(r0, f0V).MulWidenLoAdd(r1, f1V).
-				MulWidenLoAdd(r2, f2V).MulWidenLoAdd(r3, f3V).
-				MulWidenLoAdd(r4, f4V).MulWidenLoAdd(r5, f5V).
-				MulWidenLoAdd(r6, f6V)
-			hi := seedV.MulWidenHiAdd(r0, f0V).MulWidenHiAdd(r1, f1V).
-				MulWidenHiAdd(r2, f2V).MulWidenHiAdd(r3, f3V).
-				MulWidenHiAdd(r4, f4V).MulWidenHiAdd(r5, f5V).
-				MulWidenHiAdd(r6, f6V)
+			lo := seedV.Add(r0.MulWidenLo(f0V)).Add(r1.MulWidenLo(f1V)).
+				Add(r2.MulWidenLo(f2V)).Add(r3.MulWidenLo(f3V)).
+				Add(r4.MulWidenLo(f4V)).Add(r5.MulWidenLo(f5V)).
+				Add(r6.MulWidenLo(f6V))
+			hi := seedV.Add(r0.HiToLo().MulWidenLo(hf0V)).Add(r1.HiToLo().MulWidenLo(hf1V)).
+				Add(r2.HiToLo().MulWidenLo(hf2V)).Add(r3.HiToLo().MulWidenLo(hf3V)).
+				Add(r4.HiToLo().MulWidenLo(hf4V)).Add(r5.HiToLo().MulWidenLo(hf5V)).
+				Add(r6.HiToLo().MulWidenLo(hf6V))
 			lo = lo.Shift(negShiftV)
 			hi = hi.Shift(negShiftV)
 			wienerStoreV(dp, lo, hi, maxV)
-			r0, r1, r2, r3, r4, r5 = r1, r2, r3, r4, r5, r6
-			nextp = unsafe.Add(nextp, tempStride*elem)
-			dp = unsafe.Add(dp, dstStride*elem)
+			if row+1 < height {
+				r0, r1, r2, r3, r4, r5 = r1, r2, r3, r4, r5, r6
+				nextp = unsafe.Add(nextp, tempStride*elem)
+				dp = unsafe.Add(dp, dstStride*elem)
+			}
 		}
 	}
 }

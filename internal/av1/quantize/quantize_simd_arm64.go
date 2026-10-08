@@ -27,15 +27,16 @@ func quantizeBlockSIMD(qcoeff []int16, coeff []int32, n int, q Quantizer, txScal
 	for ; i+8 <= count; i += 8 {
 		c0 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Pointer(&coeff[i])))
 		c1 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Pointer(&coeff[i+4])))
-		if quantizeSIMDHasMinInt32(c0) || quantizeSIMDHasMinInt32(c1) {
+		if quantizeSIMDHasMinInt32(c0) || quantizeSIMDHasMinInt32(c1) ||
+			quantizeSIMDHasTruncOverflow(c0, q.AC, txScale) || quantizeSIMDHasTruncOverflow(c1, q.AC, txScale) {
 			return false
 		}
 		q0 := quantizeTrunc4SIMD(c0, q.AC, recip, satAbs, txScale)
 		q1 := quantizeTrunc4SIMD(c1, q.AC, recip, satAbs, txScale)
-		q0.TruncToInt16().TruncToInt16Hi(q1).StoreArray((*[8]int16)(unsafe.Pointer(&qcoeff[i])))
+		quantizePackInt16x8SIMD(q0, q1).StoreArray((*[8]int16)(unsafe.Pointer(&qcoeff[i])))
 	}
 	for ; i < count; i++ {
-		if coeff[i] == minInt32 {
+		if quantizeScalarTruncOverflow(coeff[i], q.AC, txScale) {
 			return false
 		}
 		qcoeff[i] = quantizeScalar(coeff[i], q.AC, txScale)
@@ -85,9 +86,11 @@ func quantizeFPBlockSIMD(qcoeff []int16, coeff []int32, n int, q Quantizer, txSc
 		keep1 := raw1.Shift(lshV).GreaterEqual(dequantV)
 		m1 := raw1.Add(roundV).Min(maxV).Mul(quantV).Shift(rshV).Masked(keep1)
 		q1 := quantizeApplySignSIMD(m1, c1)
-		q0.TruncToInt16().TruncToInt16Hi(q1).StoreArray((*[8]int16)(qp))
-		cp = unsafe.Add(cp, 32)
-		qp = unsafe.Add(qp, 16)
+		quantizePackInt16x8SIMD(q0, q1).StoreArray((*[8]int16)(qp))
+		if i+16 <= count {
+			cp = unsafe.Add(cp, 32)
+			qp = unsafe.Add(qp, 16)
+		}
 	}
 	for ; i < count; i++ {
 		if coeff[i] == minInt32 || quantizeScalarFPUnsafeShift(coeff[i], txScale) {
@@ -159,8 +162,8 @@ func quantizeTrunc4SIMD(c archsimd.Int32x4, scale int32, recip int32, satAbs int
 
 func quantizeDiv32SIMD(num archsimd.Int32x4, scale int32, recip int32) archsimd.Int32x4 {
 	recipV := archsimd.BroadcastInt32x4(recip)
-	lo := num.MulWidenLo(recipV).ShiftAllRightConst(31).TruncToInt32()
-	hi := num.HiToLo().MulWidenLo(recipV).ShiftAllRightConst(31).TruncToInt32()
+	lo := num.MulWidenLo(recipV).ShiftAllRight(31).TruncToInt32()
+	hi := num.HiToLo().MulWidenLo(recipV).ShiftAllRight(31).TruncToInt32()
 	q := quantizePackLo2Int32(lo, hi)
 	scaleV := archsimd.BroadcastInt32x4(scale)
 	rem := num.Sub(q.Mul(scaleV))
@@ -198,8 +201,14 @@ func quantizeApplySignSIMD(mag archsimd.Int32x4, src archsimd.Int32x4) archsimd.
 	// Branchless conditional negate: signMask is all-ones where src<0, so
 	// mag^signMask - signMask is -mag there and mag elsewhere. No zero broadcast,
 	// no select — shorter dependency chain than 0.Sub(mag).IfElse(src<0, mag).
-	signMask := src.ShiftAllRightConst(31)
+	signMask := src.ShiftAllRight(31)
 	return mag.Xor(signMask).Sub(signMask)
+}
+
+func quantizePackInt16x8SIMD(lo, hi archsimd.Int32x4) archsimd.Int16x8 {
+	lo16 := lo.TruncToInt16()
+	hi16 := hi.TruncToInt16()
+	return lo16.ToBits().ReshapeToUint64s().InterleaveLo(hi16.ToBits().ReshapeToUint64s()).ReshapeToUint16s().BitsToInt16()
 }
 
 func quantizePackLo2Int32(lo archsimd.Int32x4, hi archsimd.Int32x4) archsimd.Int32x4 {
@@ -208,6 +217,32 @@ func quantizePackLo2Int32(lo archsimd.Int32x4, hi archsimd.Int32x4) archsimd.Int
 
 func quantizeSIMDHasMinInt32(v archsimd.Int32x4) bool {
 	return v.ReduceMin() == minInt32
+}
+
+func quantizeSIMDHasTruncOverflow(v archsimd.Int32x4, scale int32, txScale uint8) bool {
+	maxSafe := quantizeTruncMaxSafeAbs(scale, txScale)
+	if maxSafe >= int64(maxInt32) {
+		return false
+	}
+	return v.Abs().ReduceMax() > int32(maxSafe)
+}
+
+func quantizeScalarTruncOverflow(coeff int32, scale int32, txScale uint8) bool {
+	if coeff == minInt32 {
+		return true
+	}
+	abs := int64(coeff)
+	if abs < 0 {
+		abs = -abs
+	}
+	return abs > quantizeTruncMaxSafeAbs(scale, txScale)
+}
+
+func quantizeTruncMaxSafeAbs(scale int32, txScale uint8) int64 {
+	// quantizeScalar first converts the positive quotient back to int32. Keep
+	// SIMD only where that quotient stays representable; the scalar fallback
+	// preserves its wrap-then-int16-clamp behavior for larger values.
+	return ((int64(maxInt32)+1)*int64(scale) - 1) >> txScale
 }
 
 func quantizeSIMDHasFPUnsafeShift(v archsimd.Int32x4, txScale uint8) bool {

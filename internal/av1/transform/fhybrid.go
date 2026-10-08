@@ -49,22 +49,22 @@ func ForwardBlock8x8HybridTrusted(coeff []int32, coeffStride int, residual []int
 
 // ForwardBlock8x8ADSTDCTTrusted computes the trusted 8x8 ADST_DCT transform.
 func ForwardBlock8x8ADSTDCTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8ADSTDCTImpl(coeff, coeffStride, residual, residualStride, scratch)
+	forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, TypeADSTDCT)
 }
 
 // ForwardBlock8x8DCTADSTTrusted computes the trusted 8x8 DCT_ADST transform.
 func ForwardBlock8x8DCTADSTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8DCTADSTImpl(coeff, coeffStride, residual, residualStride, scratch)
+	forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, TypeDCTADST)
 }
 
 // ForwardBlock8x8ADSTADSTTrusted computes the trusted 8x8 ADST_ADST transform.
 func ForwardBlock8x8ADSTADSTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8ADSTADSTImpl(coeff, coeffStride, residual, residualStride, scratch)
+	forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, TypeADSTADST)
 }
 
 // ForwardBlock8x8IDTXTrusted computes the trusted 8x8 IDTX transform.
 func ForwardBlock8x8IDTXTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8IDTXImpl(coeff, coeffStride, residual, residualStride, scratch)
+	forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, TypeIDTX)
 }
 
 func forwardBlock8x8HybridSupported(typ Type) bool {
@@ -86,6 +86,22 @@ func forwardBlock8x8HybridTyped(coeff []int32, coeffStride int, residual []int16
 		forwardBlock8x8ADSTADSTImpl(coeff, coeffStride, residual, residualStride, scratch)
 	case TypeIDTX:
 		forwardBlock8x8IDTXImpl(coeff, coeffStride, residual, residualStride, scratch)
+	default:
+		return false
+	}
+	return true
+}
+
+func forwardBlock8x8HybridPureGo(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, typ Type) bool {
+	switch typ {
+	case TypeADSTDCT:
+		forwardBlock8x8ADSTDCTPureGo(coeff, coeffStride, residual, residualStride, scratch)
+	case TypeDCTADST:
+		forwardBlock8x8DCTADSTPureGo(coeff, coeffStride, residual, residualStride, scratch)
+	case TypeADSTADST:
+		forwardBlock8x8ADSTADSTPureGo(coeff, coeffStride, residual, residualStride, scratch)
+	case TypeIDTX:
+		forwardBlock8x8IDTXPureGo(coeff, coeffStride, residual, residualStride, scratch)
 	default:
 		return false
 	}

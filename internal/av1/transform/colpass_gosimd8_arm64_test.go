@@ -9,7 +9,40 @@ package transform
 import (
 	"math/rand"
 	"testing"
+
+	"simd/archsimd"
 )
+
+func TestRoundShiftNarrowInt32x4ToInt16x8MatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x51f7))
+	values := []int32{
+		-1 << 31, -1<<31 + 1, -1 << 30, -32769, -32768, -3, -2, -1,
+		0, 1, 2, 3, 32767, 32768, 1<<30 - 1, 1<<31 - 1,
+	}
+	for range 1024 {
+		values = append(values, int32(rng.Uint32()))
+	}
+	for _, shift := range []uint8{1, 2, 8, 11, 12, 13, 31} {
+		for start := 0; start < len(values); start += 8 {
+			var lanes [8]int32
+			for i := range lanes {
+				if start+i < len(values) {
+					lanes[i] = values[start+i]
+				}
+			}
+			lo := archsimd.LoadInt32x4Array((*[4]int32)(lanes[:4]))
+			hi := archsimd.LoadInt32x4Array((*[4]int32)(lanes[4:]))
+			var got [8]int16
+			roundShiftNarrowInt32x4ToInt16x8(lo, hi, shift).StoreArray(&got)
+			for i, value := range lanes {
+				want := clipInt16(int32(roundShift(int64(value), int(shift))))
+				if got[i] != want {
+					t.Fatalf("shift=%d value=%d SIMD=%d scalar=%d", shift, value, got[i], want)
+				}
+			}
+		}
+	}
+}
 
 func TestInverseDCT8Col8SIMDMatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xd8c8))
@@ -25,17 +58,26 @@ func TestInverseDCT8Col8SIMDMatchesScalar(t *testing.T) {
 			}
 		}
 		b := make([]int32, len(a))
+		asm := make([]int32, len(a))
 		copy(b, a)
+		copy(asm, a)
 		for col := 0; col < 8; col++ {
 			inverseDCT8(a[col:], stride, min, max)
 		}
 		inverseDCT8Col8SIMD(b, stride, min, max)
+		for col := 0; col < 8; col += 2 {
+			inverseDCT8Col2NEONAdapter(asm[col:], stride, min, max)
+		}
 		for k := 0; k < 8; k++ {
 			for col := 0; col < 8; col++ {
 				i := k*stride + col
 				if a[i] != b[i] {
 					t.Fatalf("iter=%d range=[%d,%d] stride=%d row=%d col=%d: scalar=%d simd=%d",
 						iter, min, max, stride, k, col, a[i], b[i])
+				}
+				if a[i] != asm[i] {
+					t.Fatalf("iter=%d range=[%d,%d] stride=%d row=%d col=%d: scalar=%d neon=%d",
+						iter, min, max, stride, k, col, a[i], asm[i])
 				}
 			}
 		}
@@ -166,10 +208,10 @@ func BenchmarkDCT16x8_ASM(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		copy(work, buf)
-		inverseDCT16Col2NEONAdapter(work, stride, -(1<<12), (1<<12)-1)
-		inverseDCT16Col2NEONAdapter(work[2:], stride, -(1<<12), (1<<12)-1)
-		inverseDCT16Col2NEONAdapter(work[4:], stride, -(1<<12), (1<<12)-1)
-		inverseDCT16Col2NEONAdapter(work[6:], stride, -(1<<12), (1<<12)-1)
+		inverseDCT16Col2NEONAdapter(work, stride, -(1 << 12), (1<<12)-1)
+		inverseDCT16Col2NEONAdapter(work[2:], stride, -(1 << 12), (1<<12)-1)
+		inverseDCT16Col2NEONAdapter(work[4:], stride, -(1 << 12), (1<<12)-1)
+		inverseDCT16Col2NEONAdapter(work[6:], stride, -(1 << 12), (1<<12)-1)
 	}
 }
 

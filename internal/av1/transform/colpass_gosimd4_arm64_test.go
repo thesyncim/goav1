@@ -73,9 +73,12 @@ func benchDCT8x4(b *testing.B, fn func([]int32, int, int32, int32)) {
 	}
 }
 
-// int32 4-wide (round-once) vs int64 2-wide (x2 for 4 cols) vs NEON asm (x2).
+// int32 4-wide (round-once) vs the merged 4-column NEON adapter. The paired
+// 2-column benchmark remains available to show the cost of invoking that
+// older adapter twice for the same four columns.
 func BenchmarkDCT8x4_Int32(b *testing.B) { benchDCT8x4(b, inverseDCT8Col4SIMD) }
-func BenchmarkDCT8x4_ASM(b *testing.B) {
+func BenchmarkDCT8x4_ASMCol4(b *testing.B) { benchDCT8x4(b, inverseDCT8Col4NEONAdapter) }
+func BenchmarkDCT8x4_ASMCol2(b *testing.B) {
 	benchDCT8x4(b, func(buf []int32, s int, mn, mx int32) {
 		inverseDCT8Col2NEONAdapter(buf, s, mn, mx)
 		inverseDCT8Col2NEONAdapter(buf[2:], s, mn, mx)
@@ -124,7 +127,8 @@ func benchDCT16x4(b *testing.B, fn func([]int32, int, int32, int32)) {
 	}
 }
 func BenchmarkDCT16x4_Int32(b *testing.B) { benchDCT16x4(b, inverseDCT16Col4SIMD) }
-func BenchmarkDCT16x4_ASM(b *testing.B) {
+func BenchmarkDCT16x4_ASMCol4(b *testing.B) { benchDCT16x4(b, inverseDCT16Col4NEONAdapter) }
+func BenchmarkDCT16x4_ASMCol2(b *testing.B) {
 	benchDCT16x4(b, func(buf []int32, s int, mn, mx int32) {
 		inverseDCT16Col2NEONAdapter(buf, s, mn, mx)
 		inverseDCT16Col2NEONAdapter(buf[2:], s, mn, mx)

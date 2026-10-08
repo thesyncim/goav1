@@ -27,8 +27,8 @@ import (
 // where seed = offset + 1<<(round0-1) also folds the rounding bias, so the
 // trailing shift is a plain arithmetic >>round0. The u8 tap pairs sum to at
 // most 510, which fits a non-negative int16 lane, so each term is ONE
-// SMLAL/SMLAL2 pair: 8 widening MACs per 8 outputs instead of the asm's 14,
-// and a 4-deep accumulator dependency chain instead of 7-deep. Exactness: all
+// widening product plus add pair: the same 8 products per 8 outputs instead
+// of the asm's 14, and a 4-deep accumulator dependency chain instead of 7-deep. Exactness: all
 // arithmetic is int32 with |sum| far below 2^31, and int32 add/mul commute, so
 // the regrouped sum equals the reference's term-by-term sum bit-for-bit.
 //
@@ -39,10 +39,9 @@ import (
 // row reaches up to 2 samples past the 3-pixel border (the extra lanes never
 // contribute to any output).
 //
-// The store tail is one SQSHRUN/SQSHRUN2 pair (ShiftRightSatUnsignedNarrow:
-// arithmetic >>round0 + int32->uint16 unsigned-saturating narrow, folding the
-// lower clamp) plus one UMIN for the upper clamp — the asm spends four ops
-// (2 SSHL + 2 SQXTUN) on the same dataflow. round0 is always WienerRound0Bits
+// The store tail uses an arithmetic shift, max-with-zero, unsigned-saturating
+// narrow, and UMIN for the upper clamp — the asm combines the first three
+// operations in SQSHRUN/SQSHRUN2. round0 is always WienerRound0Bits
 // (=3) for 8-bit input (wienerRounds), kept as a literal so SQSHRUN lowers to
 // its immediate form; any other value falls back (defensive, unreachable from
 // the public entry).
@@ -69,6 +68,8 @@ func wienerHorizontalU8SIMD(src []uint8, srcStride int, srcOrigin int, width int
 	g2 := archsimd.BroadcastInt16x8(filter[2])
 	// The center tap absorbs the s3<<WienerFilterBits center reapplication.
 	g3 := archsimd.BroadcastInt16x8(filter[3] + (1 << WienerFilterBits))
+	hg0, hg1 := g0.HiToLo(), g1.HiToLo()
+	hg2, hg3 := g2.HiToLo(), g3.HiToLo()
 
 	rows := height + 2*WienerHalfwin
 	w16 := width &^ 15
@@ -84,8 +85,8 @@ func wienerHorizontalU8SIMD(src []uint8, srcStride int, srcOrigin int, width int
 			v0 := archsimd.LoadUint8x16Array((*[16]uint8)(s))                // s0..s15
 			v1 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(s, 8))) // s8..s23
 			l0 := v0.ExtendLo8ToUint16()                                     // s0..s7  (u16)
-			m0 := v0.ExtendHi8ToUint16()                                     // s8..s15 (u16)
-			h1 := v1.ExtendHi8ToUint16()                                     // s16..s23 (u16)
+			m0 := v0.HiToLo().ExtendLo8ToUint16()                            // s8..s15 (u16)
+			h1 := v1.HiToLo().ExtendLo8ToUint16()                            // s16..s23 (u16)
 			lb := l0.ReshapeToUint8s()
 			mb := m0.ReshapeToUint8s()
 			hb := h1.ReshapeToUint8s()
@@ -97,16 +98,15 @@ func wienerHorizontalU8SIMD(src []uint8, srcStride int, srcOrigin int, width int
 			w4a := mb.ConcatShiftBytesRight(lb, 8).ReshapeToUint16s()  // s4..s11
 			w5a := mb.ConcatShiftBytesRight(lb, 10).ReshapeToUint16s() // s5..s12
 			w6a := mb.ConcatShiftBytesRight(lb, 12).ReshapeToUint16s() // s6..s13
-			aA := l0.Add(w6a).AsInt16x8()                              // s_j + s_{j+6} <= 510
-			bA := w1a.Add(w5a).AsInt16x8()
-			cA := w2a.Add(w4a).AsInt16x8()
-			dA := w3a.AsInt16x8()
-			loA := seedV.MulWidenLoAdd(aA, g0).MulWidenLoAdd(bA, g1).
-				MulWidenLoAdd(cA, g2).MulWidenLoAdd(dA, g3)
-			hiA := seedV.MulWidenHiAdd(aA, g0).MulWidenHiAdd(bA, g1).
-				MulWidenHiAdd(cA, g2).MulWidenHiAdd(dA, g3)
-			outA := loA.ShiftRightSatUnsignedNarrow(WienerRound0Bits).
-				ShiftRightSatUnsignedNarrowHi(hiA, WienerRound0Bits).Min(maxV)
+			aA := l0.Add(w6a).BitsToInt16()                            // s_j + s_{j+6} <= 510
+			bA := w1a.Add(w5a).BitsToInt16()
+			cA := w2a.Add(w4a).BitsToInt16()
+			dA := w3a.BitsToInt16()
+			loA := seedV.Add(aA.MulWidenLo(g0)).Add(bA.MulWidenLo(g1)).
+				Add(cA.MulWidenLo(g2)).Add(dA.MulWidenLo(g3))
+			hiA := seedV.Add(aA.HiToLo().MulWidenLo(hg0)).Add(bA.HiToLo().MulWidenLo(hg1)).
+				Add(cA.HiToLo().MulWidenLo(hg2)).Add(dA.HiToLo().MulWidenLo(hg3))
+			outA := restorationShiftRightSaturateInt32PairToUint16(loA, hiA, WienerRound0Bits).Min(maxV)
 			outA.StoreArray((*[8]uint16)(d))
 
 			// Group B: outputs col+8..col+15, windows over s8..s21.
@@ -116,25 +116,26 @@ func wienerHorizontalU8SIMD(src []uint8, srcStride int, srcOrigin int, width int
 			w4b := hb.ConcatShiftBytesRight(mb, 8).ReshapeToUint16s()  // s12..s19
 			w5b := hb.ConcatShiftBytesRight(mb, 10).ReshapeToUint16s() // s13..s20
 			w6b := hb.ConcatShiftBytesRight(mb, 12).ReshapeToUint16s() // s14..s21
-			aB := m0.Add(w6b).AsInt16x8()
-			bB := w1b.Add(w5b).AsInt16x8()
-			cB := w2b.Add(w4b).AsInt16x8()
-			dB := w3b.AsInt16x8()
-			loB := seedV.MulWidenLoAdd(aB, g0).MulWidenLoAdd(bB, g1).
-				MulWidenLoAdd(cB, g2).MulWidenLoAdd(dB, g3)
-			hiB := seedV.MulWidenHiAdd(aB, g0).MulWidenHiAdd(bB, g1).
-				MulWidenHiAdd(cB, g2).MulWidenHiAdd(dB, g3)
-			outB := loB.ShiftRightSatUnsignedNarrow(WienerRound0Bits).
-				ShiftRightSatUnsignedNarrowHi(hiB, WienerRound0Bits).Min(maxV)
+			aB := m0.Add(w6b).BitsToInt16()
+			bB := w1b.Add(w5b).BitsToInt16()
+			cB := w2b.Add(w4b).BitsToInt16()
+			dB := w3b.BitsToInt16()
+			loB := seedV.Add(aB.MulWidenLo(g0)).Add(bB.MulWidenLo(g1)).
+				Add(cB.MulWidenLo(g2)).Add(dB.MulWidenLo(g3))
+			hiB := seedV.Add(aB.HiToLo().MulWidenLo(hg0)).Add(bB.HiToLo().MulWidenLo(hg1)).
+				Add(cB.HiToLo().MulWidenLo(hg2)).Add(dB.HiToLo().MulWidenLo(hg3))
+			outB := restorationShiftRightSaturateInt32PairToUint16(loB, hiB, WienerRound0Bits).Min(maxV)
 			outB.StoreArray((*[8]uint16)(unsafe.Add(d, 16)))
 
-			s = unsafe.Add(s, 16)
-			d = unsafe.Add(d, 32)
+			if col+16 < width {
+				s = unsafe.Add(s, 16)
+				d = unsafe.Add(d, 32)
+			}
 		}
 		if w16 != width { // trailing width%16 == 8 group
 			v0 := archsimd.LoadUint8x16Array((*[16]uint8)(s)) // s0..s15 (needs s0..s13)
 			l0 := v0.ExtendLo8ToUint16()
-			m0 := v0.ExtendHi8ToUint16()
+			m0 := v0.HiToLo().ExtendLo8ToUint16()
 			lb := l0.ReshapeToUint8s()
 			mb := m0.ReshapeToUint8s()
 			w1 := mb.ConcatShiftBytesRight(lb, 2).ReshapeToUint16s()
@@ -143,19 +144,20 @@ func wienerHorizontalU8SIMD(src []uint8, srcStride int, srcOrigin int, width int
 			w4 := mb.ConcatShiftBytesRight(lb, 8).ReshapeToUint16s()
 			w5 := mb.ConcatShiftBytesRight(lb, 10).ReshapeToUint16s()
 			w6 := mb.ConcatShiftBytesRight(lb, 12).ReshapeToUint16s()
-			a := l0.Add(w6).AsInt16x8()
-			b := w1.Add(w5).AsInt16x8()
-			c := w2.Add(w4).AsInt16x8()
-			dd := w3.AsInt16x8()
-			lo := seedV.MulWidenLoAdd(a, g0).MulWidenLoAdd(b, g1).
-				MulWidenLoAdd(c, g2).MulWidenLoAdd(dd, g3)
-			hi := seedV.MulWidenHiAdd(a, g0).MulWidenHiAdd(b, g1).
-				MulWidenHiAdd(c, g2).MulWidenHiAdd(dd, g3)
-			out := lo.ShiftRightSatUnsignedNarrow(WienerRound0Bits).
-				ShiftRightSatUnsignedNarrowHi(hi, WienerRound0Bits).Min(maxV)
+			a := l0.Add(w6).BitsToInt16()
+			b := w1.Add(w5).BitsToInt16()
+			c := w2.Add(w4).BitsToInt16()
+			dd := w3.BitsToInt16()
+			lo := seedV.Add(a.MulWidenLo(g0)).Add(b.MulWidenLo(g1)).
+				Add(c.MulWidenLo(g2)).Add(dd.MulWidenLo(g3))
+			hi := seedV.Add(a.HiToLo().MulWidenLo(hg0)).Add(b.HiToLo().MulWidenLo(hg1)).
+				Add(c.HiToLo().MulWidenLo(hg2)).Add(dd.HiToLo().MulWidenLo(hg3))
+			out := restorationShiftRightSaturateInt32PairToUint16(lo, hi, WienerRound0Bits).Min(maxV)
 			out.StoreArray((*[8]uint16)(d))
 		}
-		srow = unsafe.Add(srow, srcStride)
-		drow = unsafe.Add(drow, width*2)
+		if row+1 < rows {
+			srow = unsafe.Add(srow, srcStride)
+			drow = unsafe.Add(drow, width*2)
+		}
 	}
 }

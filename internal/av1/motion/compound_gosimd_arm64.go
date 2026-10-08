@@ -6,12 +6,9 @@
 
 // Go-native SIMD 8-bit compound (bidirectional) inter-prediction convolve. These
 // fill a 16-bit CONV_BUF predictor (un-rounded to COMPOUND_ROUND1_BITS precision)
-// that the compound blend later averages/masks. The horizontal (X) pass reuses
-// the USMMLA matrix-multiply structure of convolveX8GoSIMD -- the eight taps are
-// contiguous in memory, so it beats the I8MM asm the same way the single-
-// prediction X pass does -- and only the tail differs: instead of the SQRSHRUN
-// round-to-uint8, the int32 half-sum is shim-added, arithmetic-shifted by
-// round0-1 and narrowed to int16 CONV_BUF.
+// that the compound blend later averages/masks. The horizontal (X) pass uses the
+// same official widening operations as convolveX8GoSIMD, then applies the
+// reference's rounding and narrows to int16 CONV_BUF.
 
 package motion
 
@@ -29,13 +26,12 @@ import (
 // falls back). Byte-identical to the pure-Go reference; other shapes route to the
 // best asm tier.
 //
-// The halved-tap USMMLA gives halfsum = fullsum/2 exactly (even taps), and the asm
-// folds the CONV_BUF round offset into a shim so that (halfsum + roundShim) >>
-// (round0-1) == roundPowerOfTwo3(fullsum) + roundOffset -- the exact uint16 the
-// reference stores. roundShim = (roundOffset << (round0-1)) + (1 << (round0-2)).
+// AV1's even taps allow computing the half-sum exactly. The reference's
+// roundPowerOfTwo3 and CONV_BUF offset are applied in separate int32 lanes
+// before narrowing, preserving the exact uint16 output.
 func compoundX8GoSIMD(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, roundOffset int) {
 	fo := filterTaps/2 - 1
-	filter, f0, ok := convolveX8I8MMFilter(kernel)
+	_, f0, ok := convolveX8I8MMFilter(kernel)
 	if !ok || f0 != 0 || width < 8 || width%8 != 0 ||
 		!planeRegionFits(ref, 1, refX-fo, refY, width+filterTaps, height) {
 		// Not the SIMD-covered shape: route to the fast asm tier (which has its
@@ -48,18 +44,11 @@ func compoundX8GoSIMD(out []uint16, ref frame.Plane, refX int, refY int, width i
 		return
 	}
 
-	filterV := archsimd.LoadInt8x16Array((*[16]int8)(unsafe.Pointer(&filter[0])))
-	permLo := archsimd.LoadUint8x16Array(&convXPermuteLoArr)
-	permHi := archsimd.LoadUint8x16Array(&convXPermuteHiArr)
 	const round0 = compoundRound0Bits
-	// The halved-tap sum fits int16, so the whole CONV_BUF tail runs in the int16
-	// domain (as in convolveX8GoSIMD): round(halfsum >> round0-1) then + roundOffset.
-	// The +1<<(round0-2) rounding bias is folded into the USMMLA accumulator seed
-	// (MatMulUS accumulates, so seeding with the bias instead of 0 is free), leaving
-	// a two-op int16 tail (arith shift + add offset); the offset add stays separate
-	// so no int16 intermediate overflows (halfsum + roundOffset<<2 would).
-	seedV := archsimd.BroadcastInt32x4(1 << (round0 - 2))
-	roundOffV := archsimd.BroadcastInt16x8(int16(roundOffset))
+	// The official Go SIMD API has no USMMLA primitive. Compute the full-tap sum
+	// with widening NEON multiplies, then apply roundPowerOfTwo3 and the CONV_BUF
+	// offset in int32 lanes.
+	roundOffV := archsimd.BroadcastInt32x4(int32(roundOffset))
 
 	rbase := unsafe.Pointer(&ref.Pix[refY*ref.Stride+refX-fo])
 	dbase := unsafe.Pointer(&out[0])
@@ -68,32 +57,32 @@ func compoundX8GoSIMD(out []uint16, ref frame.Plane, refX int, refY int, width i
 		dp := unsafe.Add(dbase, y*width*2) // uint16 = 2 bytes
 		for col := 0; col < width; col += 8 {
 			raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
-			r0 := raw.LookupOrZero(permLo)
-			r1 := raw.LookupOrZero(permHi)
-			acc0 := seedV.MatMulUS(r0, filterV) // int32 (halfsum + rounding bias), cols 0..3
-			acc1 := seedV.MatMulUS(r1, filterV) // cols 4..7
-			sumHalf := acc0.TruncToInt16().TruncToInt16Hi(acc1)
-			// round(halfsum >> round0-1) + roundOffset, all int16.
-			out16 := sumHalf.ShiftAllRightConst(round0 - 1).Add(roundOffV)
-			out16.StoreArray((*[8]int16)(dp))
+			lo, hi := simdHorizontalConvAcc(raw, kernel, 0)
+			lo = simdRoundShiftInt32(lo, round0).Add(roundOffV)
+			hi = simdRoundShiftInt32(hi, round0).Add(roundOffV)
+			out16 := simdConcatInt16x8(lo.TruncToInt16(), hi.TruncToInt16()).ConvertToUint16()
+			out16.StoreArray((*[8]uint16)(dp))
 
-			sp = unsafe.Add(sp, 8)
-			dp = unsafe.Add(dp, 8*2)
+			// Keep the current vector pointers within their backing slices on
+			// the final group. Advancing to a one-past pointer is rejected by
+			// checkptr even though the next iteration would not dereference it.
+			if col+8 < width {
+				sp = unsafe.Add(sp, 8)
+				dp = unsafe.Add(dp, 8*2)
+			}
 		}
 	}
 }
 
 // compound2D8GoSIMD is the Go-native SIMD form of the 8-bit compound
 // both-axes-fractional CONV_BUF convolve (predictInterCompoundRef8ToConvBuf2D).
-// The horizontal pass is textually the H pass of convolve2D8GoSIMDIM — the
-// intermediate domain (xBias fold, halved-tap USMMLA, round0) is identical for
-// single and compound prediction — and the vertical pass is the SMLAL column
-// MAC over the sequential int16 intermediate with the compound tail: the
-// accumulator seeds with 1<<offsetBits (libaom's CONV_BUF offset domain, not
-// dav1d's PREP_BIAS), and one SQRSHRN #COMPOUND_ROUND1_BITS rounds and narrows
-// straight to the uint16 CONV_BUF value (no clamp, no offset subtraction —
-// the blend consumes the offset domain). The un-rounded sum is non-negative
-// and < 2^21, so the saturating narrow is exact. Shapes not covered (width<8,
+// The horizontal pass uses official widening multiplies to produce the
+// intermediate in the same xBias and round0 domain as single prediction. The
+// vertical pass uses int16 widening multiplies with an accumulator seed of
+// 1<<offsetBits (libaom's CONV_BUF offset domain, not dav1d's PREP_BIAS), then
+// rounds and narrows directly to uint16 CONV_BUF. It does not clamp or subtract
+// the offset because the blend consumes the offset domain. The un-rounded sum
+// is non-negative and < 2^21, so the saturating narrow is exact. Shapes not covered (width<8,
 // non-multiple-of-8, edge-overhanging windows, packed-filter misses,
 // offsetBits != 19) route to the I8MM/NEON front doors, which own the W4 tier
 // and the emu-edge halo.
@@ -132,59 +121,32 @@ func compound2D8GoSIMDIM(out []uint16, ref frame.Plane, refX int, refY int, widt
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
 
-	// ---- Horizontal pass: byte ref -> int16 im (USMMLA, halved taps). ----
-	// Identical to convolve2D8GoSIMDIM's H pass; see there for the shim math.
-	filterV := archsimd.LoadInt8x16Array((*[16]int8)(unsafe.Pointer(&filter[0])))
-	permLo := archsimd.LoadUint8x16Array(&convXPermuteLoArr)
-	permHi := archsimd.LoadUint8x16Array(&convXPermuteHiArr)
-	f0V := archsimd.BroadcastUint8x16(f0)
-	const xShim2D = (1 << (8 + filterBits - 2)) + (1 << ((round0Bits - 1) - 1))
-	shimHV := archsimd.BroadcastInt16x8(xShim2D)
-	zero := archsimd.BroadcastInt32x4(0)
+	// ---- Horizontal pass: byte ref -> int16 im. ----
+	// Reconstruct the even filter from its I8MM packing and apply the reference
+	// bias and rounding stages with official NEON widening operations.
+	kernel := simdKernelFromI8MMFilter(filter, f0)
+	const xBias = 1 << (8 + filterBits - 1)
 
 	rbase := unsafe.Pointer(&ref.Pix[(refY-foY)*ref.Stride+refX-foX])
 	ibase := unsafe.Pointer(&im[0])
 	const e = 2 // bytes per int16 im element
-	if f0 == 0 {
-		for y := 0; y < imH; y++ {
-			sp := unsafe.Add(rbase, y*ref.Stride)
-			ip := unsafe.Add(ibase, y*imStride2D*e)
-			for col := 0; col < width; col += 8 {
-				raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
-				r0 := raw.LookupOrZero(permLo)
-				r1 := raw.LookupOrZero(permHi)
-				acc0 := zero.MatMulUS(r0, filterV)
-				acc1 := zero.MatMulUS(r1, filterV)
-				sumHalf := acc0.TruncToInt16().TruncToInt16Hi(acc1)
-				outIM := sumHalf.Add(shimHV).ShiftAllRightConst(2)
-				outIM.StoreArray((*[8]int16)(ip))
+	for y := 0; y < imH; y++ {
+		sp := unsafe.Add(rbase, y*ref.Stride)
+		ip := unsafe.Add(ibase, y*imStride2D*e)
+		for col := 0; col < width; col += 8 {
+			raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
+			lo, hi := simdHorizontalConvAcc(raw, kernel, xBias)
+			outIM := simdRoundShiftNarrowInt32Pair(lo, hi, round0Bits)
+			outIM.StoreArray((*[8]int16)(ip))
 
-				sp = unsafe.Add(sp, 8)
-				ip = unsafe.Add(ip, 8*e)
-			}
-		}
-	} else {
-		for y := 0; y < imH; y++ {
-			sp := unsafe.Add(rbase, y*ref.Stride)
-			ip := unsafe.Add(ibase, y*imStride2D*e)
-			for col := 0; col < width; col += 8 {
-				raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
-				r0 := raw.LookupOrZero(permLo)
-				r1 := raw.LookupOrZero(permHi)
-				acc0 := zero.MatMulUS(r0, filterV)
-				acc1 := zero.MatMulUS(r1, filterV)
-				sumHalf := acc0.TruncToInt16().TruncToInt16Hi(acc1)
-				tap0 := raw.MulWidenLo(f0V).ConvertToInt16()
-				outIM := sumHalf.Sub(tap0).Add(shimHV).ShiftAllRightConst(2)
-				outIM.StoreArray((*[8]int16)(ip))
-
+			if col+8 < width {
 				sp = unsafe.Add(sp, 8)
 				ip = unsafe.Add(ip, 8*e)
 			}
 		}
 	}
 
-	// ---- Vertical pass: int16 im -> uint16 CONV_BUF (SMLAL column MAC). ----
+	// ---- Vertical pass: int16 im -> uint16 CONV_BUF. ----
 	yk0 := archsimd.BroadcastInt16x8(yKernel[0])
 	yk1 := archsimd.BroadcastInt16x8(yKernel[1])
 	yk2 := archsimd.BroadcastInt16x8(yKernel[2])
@@ -231,48 +193,24 @@ func compound2D8GoSIMDIM(out []uint16, ref frame.Plane, refX int, refY int, widt
 			cp = unsafe.Add(cp, imStride2D*e)
 			c10 := convIMLoad8(cp)
 
-			lo := seedV.MulWidenLoAdd(c0, yk0).MulWidenLoAdd(c1, yk1).
-				MulWidenLoAdd(c2, yk2).MulWidenLoAdd(c3, yk3).
-				MulWidenLoAdd(c4, yk4).MulWidenLoAdd(c5, yk5).
-				MulWidenLoAdd(c6, yk6).MulWidenLoAdd(c7, yk7)
-			hi := seedV.MulWidenHiAdd(c0, yk0).MulWidenHiAdd(c1, yk1).
-				MulWidenHiAdd(c2, yk2).MulWidenHiAdd(c3, yk3).
-				MulWidenHiAdd(c4, yk4).MulWidenHiAdd(c5, yk5).
-				MulWidenHiAdd(c6, yk6).MulWidenHiAdd(c7, yk7)
-			lo.ShiftRightRoundNarrow(compoundRound1Bits).ShiftRightRoundNarrowHi(hi, compoundRound1Bits).
+			lo := seedV.Add(c0.MulWidenLo(yk0)).Add(c1.MulWidenLo(yk1)).Add(c2.MulWidenLo(yk2)).Add(c3.MulWidenLo(yk3)).Add(c4.MulWidenLo(yk4)).Add(c5.MulWidenLo(yk5)).Add(c6.MulWidenLo(yk6)).Add(c7.MulWidenLo(yk7))
+			hi := seedV.Add(c0.HiToLo().MulWidenLo(yk0.HiToLo())).Add(c1.HiToLo().MulWidenLo(yk1.HiToLo())).Add(c2.HiToLo().MulWidenLo(yk2.HiToLo())).Add(c3.HiToLo().MulWidenLo(yk3.HiToLo())).Add(c4.HiToLo().MulWidenLo(yk4.HiToLo())).Add(c5.HiToLo().MulWidenLo(yk5.HiToLo())).Add(c6.HiToLo().MulWidenLo(yk6.HiToLo())).Add(c7.HiToLo().MulWidenLo(yk7.HiToLo()))
+			simdRoundShiftNarrowInt32Pair(lo, hi, compoundRound1Bits).
 				StoreArray((*[8]int16)(unsafe.Add(dp, col*2)))
 
-			lo = seedV.MulWidenLoAdd(c1, yk0).MulWidenLoAdd(c2, yk1).
-				MulWidenLoAdd(c3, yk2).MulWidenLoAdd(c4, yk3).
-				MulWidenLoAdd(c5, yk4).MulWidenLoAdd(c6, yk5).
-				MulWidenLoAdd(c7, yk6).MulWidenLoAdd(c8, yk7)
-			hi = seedV.MulWidenHiAdd(c1, yk0).MulWidenHiAdd(c2, yk1).
-				MulWidenHiAdd(c3, yk2).MulWidenHiAdd(c4, yk3).
-				MulWidenHiAdd(c5, yk4).MulWidenHiAdd(c6, yk5).
-				MulWidenHiAdd(c7, yk6).MulWidenHiAdd(c8, yk7)
-			lo.ShiftRightRoundNarrow(compoundRound1Bits).ShiftRightRoundNarrowHi(hi, compoundRound1Bits).
+			lo = seedV.Add(c1.MulWidenLo(yk0)).Add(c2.MulWidenLo(yk1)).Add(c3.MulWidenLo(yk2)).Add(c4.MulWidenLo(yk3)).Add(c5.MulWidenLo(yk4)).Add(c6.MulWidenLo(yk5)).Add(c7.MulWidenLo(yk6)).Add(c8.MulWidenLo(yk7))
+			hi = seedV.Add(c1.HiToLo().MulWidenLo(yk0.HiToLo())).Add(c2.HiToLo().MulWidenLo(yk1.HiToLo())).Add(c3.HiToLo().MulWidenLo(yk2.HiToLo())).Add(c4.HiToLo().MulWidenLo(yk3.HiToLo())).Add(c5.HiToLo().MulWidenLo(yk4.HiToLo())).Add(c6.HiToLo().MulWidenLo(yk5.HiToLo())).Add(c7.HiToLo().MulWidenLo(yk6.HiToLo())).Add(c8.HiToLo().MulWidenLo(yk7.HiToLo()))
+			simdRoundShiftNarrowInt32Pair(lo, hi, compoundRound1Bits).
 				StoreArray((*[8]int16)(unsafe.Add(dp, (width+col)*2)))
 
-			lo = seedV.MulWidenLoAdd(c2, yk0).MulWidenLoAdd(c3, yk1).
-				MulWidenLoAdd(c4, yk2).MulWidenLoAdd(c5, yk3).
-				MulWidenLoAdd(c6, yk4).MulWidenLoAdd(c7, yk5).
-				MulWidenLoAdd(c8, yk6).MulWidenLoAdd(c9, yk7)
-			hi = seedV.MulWidenHiAdd(c2, yk0).MulWidenHiAdd(c3, yk1).
-				MulWidenHiAdd(c4, yk2).MulWidenHiAdd(c5, yk3).
-				MulWidenHiAdd(c6, yk4).MulWidenHiAdd(c7, yk5).
-				MulWidenHiAdd(c8, yk6).MulWidenHiAdd(c9, yk7)
-			lo.ShiftRightRoundNarrow(compoundRound1Bits).ShiftRightRoundNarrowHi(hi, compoundRound1Bits).
+			lo = seedV.Add(c2.MulWidenLo(yk0)).Add(c3.MulWidenLo(yk1)).Add(c4.MulWidenLo(yk2)).Add(c5.MulWidenLo(yk3)).Add(c6.MulWidenLo(yk4)).Add(c7.MulWidenLo(yk5)).Add(c8.MulWidenLo(yk6)).Add(c9.MulWidenLo(yk7))
+			hi = seedV.Add(c2.HiToLo().MulWidenLo(yk0.HiToLo())).Add(c3.HiToLo().MulWidenLo(yk1.HiToLo())).Add(c4.HiToLo().MulWidenLo(yk2.HiToLo())).Add(c5.HiToLo().MulWidenLo(yk3.HiToLo())).Add(c6.HiToLo().MulWidenLo(yk4.HiToLo())).Add(c7.HiToLo().MulWidenLo(yk5.HiToLo())).Add(c8.HiToLo().MulWidenLo(yk6.HiToLo())).Add(c9.HiToLo().MulWidenLo(yk7.HiToLo()))
+			simdRoundShiftNarrowInt32Pair(lo, hi, compoundRound1Bits).
 				StoreArray((*[8]int16)(unsafe.Add(dp, (2*width+col)*2)))
 
-			lo = seedV.MulWidenLoAdd(c3, yk0).MulWidenLoAdd(c4, yk1).
-				MulWidenLoAdd(c5, yk2).MulWidenLoAdd(c6, yk3).
-				MulWidenLoAdd(c7, yk4).MulWidenLoAdd(c8, yk5).
-				MulWidenLoAdd(c9, yk6).MulWidenLoAdd(c10, yk7)
-			hi = seedV.MulWidenHiAdd(c3, yk0).MulWidenHiAdd(c4, yk1).
-				MulWidenHiAdd(c5, yk2).MulWidenHiAdd(c6, yk3).
-				MulWidenHiAdd(c7, yk4).MulWidenHiAdd(c8, yk5).
-				MulWidenHiAdd(c9, yk6).MulWidenHiAdd(c10, yk7)
-			lo.ShiftRightRoundNarrow(compoundRound1Bits).ShiftRightRoundNarrowHi(hi, compoundRound1Bits).
+			lo = seedV.Add(c3.MulWidenLo(yk0)).Add(c4.MulWidenLo(yk1)).Add(c5.MulWidenLo(yk2)).Add(c6.MulWidenLo(yk3)).Add(c7.MulWidenLo(yk4)).Add(c8.MulWidenLo(yk5)).Add(c9.MulWidenLo(yk6)).Add(c10.MulWidenLo(yk7))
+			hi = seedV.Add(c3.HiToLo().MulWidenLo(yk0.HiToLo())).Add(c4.HiToLo().MulWidenLo(yk1.HiToLo())).Add(c5.HiToLo().MulWidenLo(yk2.HiToLo())).Add(c6.HiToLo().MulWidenLo(yk3.HiToLo())).Add(c7.HiToLo().MulWidenLo(yk4.HiToLo())).Add(c8.HiToLo().MulWidenLo(yk5.HiToLo())).Add(c9.HiToLo().MulWidenLo(yk6.HiToLo())).Add(c10.HiToLo().MulWidenLo(yk7.HiToLo()))
+			simdRoundShiftNarrowInt32Pair(lo, hi, compoundRound1Bits).
 				StoreArray((*[8]int16)(unsafe.Add(dp, (3*width+col)*2)))
 		}
 	}
@@ -289,15 +227,9 @@ func compound2D8GoSIMDIM(out []uint16, ref frame.Plane, refX int, refY int, widt
 			c5 := convIMLoad8(unsafe.Add(cp, 5*imStride2D*e))
 			c6 := convIMLoad8(unsafe.Add(cp, 6*imStride2D*e))
 			c7 := convIMLoad8(unsafe.Add(cp, 7*imStride2D*e))
-			lo := seedV.MulWidenLoAdd(c0, yk0).MulWidenLoAdd(c1, yk1).
-				MulWidenLoAdd(c2, yk2).MulWidenLoAdd(c3, yk3).
-				MulWidenLoAdd(c4, yk4).MulWidenLoAdd(c5, yk5).
-				MulWidenLoAdd(c6, yk6).MulWidenLoAdd(c7, yk7)
-			hi := seedV.MulWidenHiAdd(c0, yk0).MulWidenHiAdd(c1, yk1).
-				MulWidenHiAdd(c2, yk2).MulWidenHiAdd(c3, yk3).
-				MulWidenHiAdd(c4, yk4).MulWidenHiAdd(c5, yk5).
-				MulWidenHiAdd(c6, yk6).MulWidenHiAdd(c7, yk7)
-			lo.ShiftRightRoundNarrow(compoundRound1Bits).ShiftRightRoundNarrowHi(hi, compoundRound1Bits).
+			lo := seedV.Add(c0.MulWidenLo(yk0)).Add(c1.MulWidenLo(yk1)).Add(c2.MulWidenLo(yk2)).Add(c3.MulWidenLo(yk3)).Add(c4.MulWidenLo(yk4)).Add(c5.MulWidenLo(yk5)).Add(c6.MulWidenLo(yk6)).Add(c7.MulWidenLo(yk7))
+			hi := seedV.Add(c0.HiToLo().MulWidenLo(yk0.HiToLo())).Add(c1.HiToLo().MulWidenLo(yk1.HiToLo())).Add(c2.HiToLo().MulWidenLo(yk2.HiToLo())).Add(c3.HiToLo().MulWidenLo(yk3.HiToLo())).Add(c4.HiToLo().MulWidenLo(yk4.HiToLo())).Add(c5.HiToLo().MulWidenLo(yk5.HiToLo())).Add(c6.HiToLo().MulWidenLo(yk6.HiToLo())).Add(c7.HiToLo().MulWidenLo(yk7.HiToLo()))
+			simdRoundShiftNarrowInt32Pair(lo, hi, compoundRound1Bits).
 				StoreArray((*[8]int16)(unsafe.Add(dp, col*2)))
 		}
 	}

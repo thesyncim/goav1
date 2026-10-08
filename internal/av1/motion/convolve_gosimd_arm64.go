@@ -4,22 +4,12 @@
 
 //go:build goexperiment.simd && arm64 && !purego
 
-// Go-native SIMD 8-bit motion-compensation convolve kernels. These target the
-// #2 decode hotspot (inter prediction) and are byte-identical to the pure-Go
-// reference in vector.go, which every variant must match sample for sample.
-//
-// The horizontal (X) pass (convolveX8GoSIMD) beats the I8MM asm via USMMLA plus
-// the fused SQRSHRUN round-narrow tail and is wired as the dispatch kernel.
-//
-// The vertical (Y) pass (convolveY8GoSIMDUSDOT) ports SVT's transposed-USDOT
-// algorithm: the tap rows are byte-transposed with ZIP so each output column's
-// taps land as four contiguous bytes, then two USDOT per lane group accumulate
-// the (all-halved) int8 filter's dot products and SQRSHRUN #6 rounds+narrows the
-// int16 half-sum. It is ~2x faster than the naive strided widening MAC and
-// byte-exact, but still ~1.26x behind the hand-scheduled I8MM asm -- Go's
-// instruction scheduler on the transpose-heavy body is the wall -- so Y8 keeps
-// the asm tier dispatched and this kernel is retained as the fastest pure-Go
-// vertical form.
+// Go-native SIMD 8-bit motion-compensation convolve kernels. They use the
+// official Go 1.27 archsimd API and must match the pure-Go reference sample for
+// sample. The horizontal and two-dimensional paths use widening multiplies;
+// the vertical path retains the transposed dot-product layout and composes its
+// dot products from official vector operations. Dispatch and performance are
+// measured separately from these correctness kernels.
 
 package motion
 
@@ -37,108 +27,54 @@ import (
 // vector's low 64 bits are extracted and stored directly (no slice bounds check,
 // no panic path). Mirrors the loopfilter lf8StoreP idiom.
 func convStore8(p unsafe.Pointer, v archsimd.Int16x8) {
-	*(*float64)(p) = v.SaturateToUint8().ReshapeToFloat64x2().GetElem(0)
+	*(*uint64)(p) = v.SaturateToUint8().ReshapeToUint64s().GetElem(0)
 }
 
 // convStore8U8 writes the low 8 bytes of an already-narrowed Uint8x16 at raw
 // pointer p as a single 8-byte store.
 func convStore8U8(p unsafe.Pointer, v archsimd.Uint8x16) {
-	*(*float64)(p) = v.ReshapeToFloat64x2().GetElem(0)
+	*(*uint64)(p) = v.ReshapeToUint64s().GetElem(0)
 }
 
-// convXPermuteLo / convXPermuteHi are the two USMMLA sample-permute index
-// vectors (SVT svt_kMatMul8PermuteTbl), loaded once from convolveX8I8MMPermute.
-// permLo builds the two 8-byte USMMLA rows for output columns 0..3 (row0 =
-// samples[1..8] -> out0, row1 = samples[3..10] -> out2; the staggered filter
-// column then yields out1/out3), permHi does the same for output columns 4..7.
-var convXPermuteLoArr = *(*[16]uint8)(convolveX8I8MMPermute[0:16])
-var convXPermuteHiArr = *(*[16]uint8)(convolveX8I8MMPermute[16:32])
-
-// convolveX8GoSIMD is the Go-native SIMD form of convolveX8PureGo using the
-// I8MM matrix-multiply-accumulate (USMMLA via Int32x4.MatMulUS), the same
-// algorithm as convolveX8I8MMAsm. For each 8-column group it loads 16 reference
-// bytes, permutes them into the two USMMLA operand layouts (TBL via
-// LookupOrZero), runs two USMMLA (each producing four staggered 8-tap partial
-// sums = outputs 0..3 and 4..7 with the col-shifted filter), narrows to int16
-// (XTN/XTN2), folds in tap-0 via a widening multiply-subtract (UMULL+SUB,
-// reproducing the asm's UMLSL), adds the round shim, arithmetic-shifts by 6 and
-// clamps to [0,255] (SQXTUN). Byte-identical to the reference; kernels whose
-// taps do not fit the halved-even / non-positive-tap0 packing, and widths that
-// are not a positive multiple of 8, fall back to the scalar reference.
+// convolveX8GoSIMD is the Go-native SIMD form of convolveX8PureGo. It uses
+// official widening vector multiplies for each 8-column group, then preserves
+// the reference's intermediate narrowing, rounding, and byte saturation stages.
+// Kernels outside the existing packed-filter set and widths that are not a
+// positive multiple of 8 fall back to the scalar reference.
 func convolveX8GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
-	filter, f0, ok := convolveX8I8MMFilter(kernel)
+	_, _, ok := convolveX8I8MMFilter(kernel)
 	if !ok || !(width >= 8 && width%8 == 0) {
 		convolveX8PureGo(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 		return
 	}
 	fo := filterTaps/2 - 1
 
-	filterV := archsimd.LoadInt8x16Array((*[16]int8)(unsafe.Pointer(&filter[0])))
-	permLo := archsimd.LoadUint8x16Array(&convXPermuteLoArr)
-	permHi := archsimd.LoadUint8x16Array(&convXPermuteHiArr)
-	f0V := archsimd.BroadcastUint8x16(f0)
-	// Horizontal bias only: the asm adds 2 then sqrshrun #6. SQRSHRUN performs
-	// the rounding (its internal +1<<5) and the [0,255] clamp itself, so the
-	// shim carries just the +2 and the tail is a single fused round-narrow.
-	const xShim = 2
-	shimV := archsimd.BroadcastInt16x8(xShim)
-	zero := archsimd.BroadcastInt32x4(0)
-
 	rbase := unsafe.Pointer(&ref.Pix[refY*ref.Stride+refX-fo])
 	dbase := unsafe.Pointer(&dst.Pix[dstY*dst.Stride+dstX])
-	// f0 == 0 (every regular/smooth filter phase; only the multi-tap-sharp family
-	// has a nonzero end tap) drops the tap-0 UMULL+SUB from the hot loop.
-	if f0 == 0 {
-		for y := 0; y < height; y++ {
-			sp := unsafe.Add(rbase, y*ref.Stride)
-			dp := unsafe.Add(dbase, y*dst.Stride)
-			for col := 0; col < width; col += 8 {
-				raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
-				r0 := raw.LookupOrZero(permLo)
-				r1 := raw.LookupOrZero(permHi)
-				acc0 := zero.MatMulUS(r0, filterV) // outputs 0..3
-				acc1 := zero.MatMulUS(r1, filterV) // outputs 4..7
-				sumHalf := acc0.TruncToInt16().TruncToInt16Hi(acc1)
-				// Fused round-shift-narrow-clamp: sqrshrun #6 == round(+1<<5),
-				// arith-shift #6, saturate to [0,255]. Replaces asr #6 + sqxtun.
-				out := sumHalf.Add(shimV).ShiftRightRoundNarrowUint8(6)
-				convStore8U8(dp, out)
-
-				sp = unsafe.Add(sp, 8)
-				dp = unsafe.Add(dp, 8)
-			}
-		}
-		return
-	}
 	for y := 0; y < height; y++ {
 		sp := unsafe.Add(rbase, y*ref.Stride)
 		dp := unsafe.Add(dbase, y*dst.Stride)
 		for col := 0; col < width; col += 8 {
 			raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
-			r0 := raw.LookupOrZero(permLo)
-			r1 := raw.LookupOrZero(permHi)
-			acc0 := zero.MatMulUS(r0, filterV) // outputs 0..3
-			acc1 := zero.MatMulUS(r1, filterV) // outputs 4..7
-			// Narrow the two int32x4 accumulators into one int16x8 (XTN/XTN2).
-			sumHalf := acc0.TruncToInt16().TruncToInt16Hi(acc1)
-			// tap-0 fold: += (k0>>1)*s0 == -(f0*s0). UMULL of the low 8 raw bytes
-			// with the broadcast f0, reinterpreted as int16, subtracted.
-			tap0 := raw.MulWidenLo(f0V).ConvertToInt16()
-			out := sumHalf.Sub(tap0).Add(shimV).ShiftRightRoundNarrowUint8(6)
+			lo, hi := simdHorizontalConvAcc(raw, kernel, 0)
+			// Preserve the reference's two separately rounded shifts. The first
+			// narrows the intermediate to int16; the second applies the remaining
+			// filter shift and clamps to the output byte range.
+			stage1 := simdRoundShiftNarrowInt32Pair(lo, hi, round0Bits)
+			out := simdRoundShiftNarrowUint8(stage1, filterBits-round0Bits)
 			convStore8U8(dp, out)
 
-			sp = unsafe.Add(sp, 8)
-			dp = unsafe.Add(dp, 8)
+			if col+8 < width {
+				sp = unsafe.Add(sp, 8)
+				dp = unsafe.Add(dp, 8)
+			}
 		}
 	}
 }
 
-// convolveX8GoSIMDDispatch routes the horizontal-8 convolve to the Go-native
-// SIMD kernel (which beats the I8MM asm via the fused SQRSHRUN round-narrow tail
-// -- one instruction for round-shift+narrow+[0,255]-clamp) for width>=8
-// multiple-of-8 blocks whose taps fit the USMMLA packing, and to the best asm
-// tier (I8MM's fast width-4 4-tap path, else NEON) for the narrow and
-// unsupported shapes. Byte-identical on every shape.
+// convolveX8GoSIMDDispatch routes supported width>=8 blocks to the Go-native
+// SIMD kernel and other shapes to the best asm tier (I8MM's width-4 path when
+// available, otherwise NEON). Both paths are byte-identical to the reference.
 func convolveX8GoSIMDDispatch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	if width >= 8 && width%8 == 0 {
 		if _, _, ok := convolveX8I8MMFilter(kernel); ok {
@@ -159,14 +95,12 @@ func convIMLoad8(p unsafe.Pointer) archsimd.Int16x8 {
 	return archsimd.LoadInt16x8Array((*[8]int16)(p))
 }
 
-// convolve2D8GoSIMD is the Go-native SIMD form of convolve2D8PureGo (both axes
-// fractional) for width>=8, multiple of 8. The horizontal pass reuses the USMMLA
-// matrix-multiply structure of convolveX8GoSIMD to produce the int16 intermediate
-// (rounded by round0Bits with the folded xBias), and the vertical pass is a pure
-// int16 widening SMLAL column MAC over that intermediate -- the Wiener-shaped
-// pattern -- with the staged round1 shift, roundOffset subtraction and [0,255]
-// clip. It is byte-identical to the reference. The intermediate is caller-owned
-// scratch when provided (the hot decode path) or a stack array otherwise.
+// convolve2D8GoSIMD is the Go-native SIMD form of convolve2D8PureGo for widths
+// that are positive multiples of 8. The horizontal pass produces the int16
+// intermediate with the reference's xBias and round0Bits stages. The vertical
+// pass uses int16 widening multiplies followed by the staged round1 shift,
+// roundOffset subtraction, and [0,255] clip. The intermediate is caller-owned
+// scratch when provided or a stack array otherwise.
 func convolve2D8GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16) {
 	convolve2D8GoSIMDScratch(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel, nil)
 }
@@ -207,63 +141,33 @@ func convolve2D8GoSIMDIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, r
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
 
-	// ---- Horizontal pass: byte ref -> int16 im (USMMLA, halved taps). ----
-	filterV := archsimd.LoadInt8x16Array((*[16]int8)(unsafe.Pointer(&filter[0])))
-	permLo := archsimd.LoadUint8x16Array(&convXPermuteLoArr)
-	permHi := archsimd.LoadUint8x16Array(&convXPermuteHiArr)
-	f0V := archsimd.BroadcastUint8x16(f0)
-	// im = (sum/2 + xShim2D) >> 2, xShim2D = (1<<(8+FILTER_BITS-2)) + (1<<((ROUND0_BITS-1)-1)) = 8194.
-	const xShim2D = (1 << (8 + filterBits - 2)) + (1 << ((round0Bits - 1) - 1))
-	shimHV := archsimd.BroadcastInt16x8(xShim2D)
-	zero := archsimd.BroadcastInt32x4(0)
+	// ---- Horizontal pass: byte ref -> int16 im. The original even-tap
+	// I8MM packing can be reconstructed without loss, but the official Go SIMD
+	// API has no USMMLA operation. Use NEON widening multiplies and preserve the
+	// scalar reference's bias and rounding stage directly.
+	kernel := simdKernelFromI8MMFilter(filter, f0)
+	const xBias = 1 << (8 + filterBits - 1)
 
 	rbase := unsafe.Pointer(&ref.Pix[(refY-foY)*ref.Stride+refX-foX])
 	ibase := unsafe.Pointer(&im[0])
 	const imElem = 2
-	// f0 == 0 (regular/smooth phases) drops the tap-0 UMULL+SUB from the hot loop.
-	if f0 == 0 {
-		for y := 0; y < imH; y++ {
-			sp := unsafe.Add(rbase, y*ref.Stride)
-			ip := unsafe.Add(ibase, y*imStride*imElem)
-			for col := 0; col < width; col += 8 {
-				raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
-				r0 := raw.LookupOrZero(permLo)
-				r1 := raw.LookupOrZero(permHi)
-				acc0 := zero.MatMulUS(r0, filterV) // outputs 0..3
-				acc1 := zero.MatMulUS(r1, filterV) // outputs 4..7
-				sumHalf := acc0.TruncToInt16().TruncToInt16Hi(acc1)
-				outIM := sumHalf.Add(shimHV).ShiftAllRightConst(2)
-				outIM.StoreArray((*[8]int16)(ip))
+	for y := 0; y < imH; y++ {
+		sp := unsafe.Add(rbase, y*ref.Stride)
+		ip := unsafe.Add(ibase, y*imStride*imElem)
+		for col := 0; col < width; col += 8 {
+			raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
+			lo, hi := simdHorizontalConvAcc(raw, kernel, xBias)
+			outIM := simdRoundShiftNarrowInt32Pair(lo, hi, round0Bits)
+			outIM.StoreArray((*[8]int16)(ip))
 
-				sp = unsafe.Add(sp, 8)
-				ip = unsafe.Add(ip, 8*imElem)
-			}
-		}
-	} else {
-		for y := 0; y < imH; y++ {
-			sp := unsafe.Add(rbase, y*ref.Stride)
-			ip := unsafe.Add(ibase, y*imStride*imElem)
-			for col := 0; col < width; col += 8 {
-				raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
-				r0 := raw.LookupOrZero(permLo)
-				r1 := raw.LookupOrZero(permHi)
-				acc0 := zero.MatMulUS(r0, filterV) // outputs 0..3
-				acc1 := zero.MatMulUS(r1, filterV) // outputs 4..7
-				sumHalf := acc0.TruncToInt16().TruncToInt16Hi(acc1)
-				// tap-0 fold (UMULL+SUB == asm's UMLSL), then round shim; ushr #2 is
-				// logical but the value is non-negative after the xBias fold, so an
-				// arithmetic shift is bit-identical.
-				tap0 := raw.MulWidenLo(f0V).ConvertToInt16()
-				outIM := sumHalf.Sub(tap0).Add(shimHV).ShiftAllRightConst(2)
-				outIM.StoreArray((*[8]int16)(ip))
-
+			if col+8 < width {
 				sp = unsafe.Add(sp, 8)
 				ip = unsafe.Add(ip, 8*imElem)
 			}
 		}
 	}
 
-	// ---- Vertical pass: int16 im -> uint8 dst (SMLAL column MAC). ----
+	// ---- Vertical pass: int16 im -> uint8 dst using widening MACs. ----
 	yk0 := archsimd.BroadcastInt16x8(yKernel[0])
 	yk1 := archsimd.BroadcastInt16x8(yKernel[1])
 	yk2 := archsimd.BroadcastInt16x8(yKernel[2])
@@ -277,10 +181,9 @@ func convolve2D8GoSIMDIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, r
 	const yBias = 1 << offsetBits
 	const roundOffset = (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
 	// Fold -roundOffset into the seed: since roundOffset*(1<<round1Bits) is a
-	// multiple of 1<<round1Bits, srshr(sum - roundOffset<<round1Bits, round1Bits)
-	// == srshr(sum, round1Bits) - roundOffset. This keeps the subtraction in the
-	// wide int32 domain (matching the asm) so the final SQRSHRN+SQXTUN tail is a
-	// plain rounding-narrow + uint8 clamp with no int16 underflow hazard.
+	// multiple of 1<<round1Bits, the rounded shift of (sum - roundOffset<<n)
+	// equals the rounded shift of sum minus roundOffset. Keeping the subtraction
+	// in int32 avoids int16 underflow before the rounding shift and final byte clamp.
 	const ySeed = yBias - (roundOffset << round1Bits)
 	seedV := archsimd.BroadcastInt32x4(ySeed)
 
@@ -305,29 +208,31 @@ func convolve2D8GoSIMDIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, r
 			c6 := convIMLoad8(c6p)
 			c7 := convIMLoad8(c7p)
 
-			lo := seedV.MulWidenLoAdd(c0, yk0).MulWidenLoAdd(c1, yk1).
-				MulWidenLoAdd(c2, yk2).MulWidenLoAdd(c3, yk3).
-				MulWidenLoAdd(c4, yk4).MulWidenLoAdd(c5, yk5).
-				MulWidenLoAdd(c6, yk6).MulWidenLoAdd(c7, yk7)
-			hi := seedV.MulWidenHiAdd(c0, yk0).MulWidenHiAdd(c1, yk1).
-				MulWidenHiAdd(c2, yk2).MulWidenHiAdd(c3, yk3).
-				MulWidenHiAdd(c4, yk4).MulWidenHiAdd(c5, yk5).
-				MulWidenHiAdd(c6, yk6).MulWidenHiAdd(c7, yk7)
+			lo := seedV.Add(c0.MulWidenLo(yk0)).Add(c1.MulWidenLo(yk1)).
+				Add(c2.MulWidenLo(yk2)).Add(c3.MulWidenLo(yk3)).
+				Add(c4.MulWidenLo(yk4)).Add(c5.MulWidenLo(yk5)).
+				Add(c6.MulWidenLo(yk6)).Add(c7.MulWidenLo(yk7))
+			hi := seedV.Add(c0.HiToLo().MulWidenLo(yk0.HiToLo())).Add(c1.HiToLo().MulWidenLo(yk1.HiToLo())).
+				Add(c2.HiToLo().MulWidenLo(yk2.HiToLo())).Add(c3.HiToLo().MulWidenLo(yk3.HiToLo())).
+				Add(c4.HiToLo().MulWidenLo(yk4.HiToLo())).Add(c5.HiToLo().MulWidenLo(yk5.HiToLo())).
+				Add(c6.HiToLo().MulWidenLo(yk6.HiToLo())).Add(c7.HiToLo().MulWidenLo(yk7.HiToLo()))
 
-			// srshr #round1Bits with saturating narrow to int16 (SQRSHRN/SQRSHRN2),
-			// then [0,255] clamp (SQXTUN). The -roundOffset is folded into the seed.
-			narrow := lo.ShiftRightRoundNarrow(round1Bits).ShiftRightRoundNarrowHi(hi, round1Bits)
+			// Rounded shift with saturating int16 narrow, then [0,255] clamp. The
+			// -roundOffset is folded into the seed.
+			narrow := simdRoundShiftNarrowInt32Pair(lo, hi, round1Bits)
 			convStore8(dp, narrow)
 
-			c0p = unsafe.Add(c0p, 8*imElem)
-			c1p = unsafe.Add(c1p, 8*imElem)
-			c2p = unsafe.Add(c2p, 8*imElem)
-			c3p = unsafe.Add(c3p, 8*imElem)
-			c4p = unsafe.Add(c4p, 8*imElem)
-			c5p = unsafe.Add(c5p, 8*imElem)
-			c6p = unsafe.Add(c6p, 8*imElem)
-			c7p = unsafe.Add(c7p, 8*imElem)
-			dp = unsafe.Add(dp, 8)
+			if col+8 < width {
+				c0p = unsafe.Add(c0p, 8*imElem)
+				c1p = unsafe.Add(c1p, 8*imElem)
+				c2p = unsafe.Add(c2p, 8*imElem)
+				c3p = unsafe.Add(c3p, 8*imElem)
+				c4p = unsafe.Add(c4p, 8*imElem)
+				c5p = unsafe.Add(c5p, 8*imElem)
+				c6p = unsafe.Add(c6p, 8*imElem)
+				c7p = unsafe.Add(c7p, 8*imElem)
+				dp = unsafe.Add(dp, 8)
+			}
 		}
 	}
 }
@@ -340,20 +245,15 @@ func convYLoadRow8(p unsafe.Pointer) archsimd.Uint8x16 {
 	return archsimd.LoadUint8x16Array((*[16]uint8)(p))
 }
 
-// convolveY8GoSIMDUSDOT is the Go-native SIMD form of the vertical 8-tap convolve
-// using the transposed-USDOT algorithm of SVT's convolve_y_sr_8tap_neon_i8mm (the
-// same one convolveY8I8MMAsm implements): the eight tap rows are byte-transposed
-// with ZIP so each output column's taps become four contiguous bytes, then two
-// USDOT per lane-group dot them against the (even+odd all halved) int8 filter, and
-// the int16 half-sum is round-shifted+narrowed+clamped in one SQRSHRUN #6. Four
-// output rows are produced per iteration from eleven input rows, reusing the
-// shared ZIP stages. It replaces the naive strided SMLAL MAC, which loses ~2.6x to
-// the asm because it issues 16 widening MACs per 8 outputs where USDOT needs four.
-// Byte-identical to convolveY8PureGo; shapes it does not cover fall back to asm.
+// convolveY8GoSIMDUSDOT follows the transposed dot-product layout used by the
+// ARM I8MM kernel: tap rows are interleaved so each output column's taps become
+// contiguous, and simdDotProdUS computes the dot products from official Go SIMD
+// operations. It produces four output rows per iteration and preserves the
+// reference's rounding and byte saturation. Unsupported widths, heights, or
+// filters fall back to the I8MM/NEON implementation.
 //
-// Filter math: every AV1 tap is even, so filter[i] = kernel[i]>>1 fits int8 and
-// USDOT accumulates sum(sample*kernel/2) = half the true convolution; SQRSHRUN #6
-// then yields round(sum*kernel >> 7) saturated to [0,255] with no tap-0 fixup.
+// Every AV1 tap is even, so kernel[i]>>1 fits int8 and each dot product is half
+// the full convolution. The final rounding shift accounts for that scale.
 func convolveY8GoSIMDUSDOT(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	filter, taps, ok := convolveY8I8MMFilter(kernel)
 	if !ok || taps != 8 || !(width >= 8 && width%8 == 0) || height%4 != 0 {
@@ -361,8 +261,7 @@ func convolveY8GoSIMDUSDOT(dst frame.Plane, ref frame.Plane, dstX int, dstY int,
 		return
 	}
 	// fLo / fHi: the low four taps and high four taps, each 4-byte group replicated
-	// across all four USDOT lane groups so the plain (non-indexed) USDOT applies the
-	// same four taps to every column, matching the asm's usdot ..., v0.4b[0/1].
+	// across the vector lanes so simdDotProdUS applies the same taps to each column.
 	var fLoArr, fHiArr [16]int8
 	for g := 0; g < 4; g++ {
 		fLoArr[g*4+0] = int8(filter[0])
@@ -445,7 +344,9 @@ func convolveY8GoSIMDUSDOT(dst frame.Plane, ref frame.Plane, dstX int, dstY int,
 			convY8Emit(unsafe.Add(dp, 5*dstStride), zero, z5, z6, z9, z10, fLo, fHi)
 			convY8Emit(unsafe.Add(dp, 6*dstStride), zero, z6, z7, z10, z11, fLo, fHi)
 			convY8Emit(unsafe.Add(dp, 7*dstStride), zero, z7, z8, z11, z12, fLo, fHi)
-			dp = unsafe.Add(dp, 8*dstStride)
+			if y+8 < height {
+				dp = unsafe.Add(dp, 8*dstStride)
+			}
 		}
 		// Four-row tail (height % 8 == 4): eleven input rows -> nine zRow, emit d0..d3.
 		if y < height {
@@ -490,12 +391,12 @@ func convolveY8GoSIMDUSDOT(dst frame.Plane, ref frame.Plane, dstX int, dstY int,
 
 // convY8Emit computes one 8-column vertical-convolve output row and stores it.
 // za/zb are the low-tap (0..3) window's zRow pair, zc/zd the high-tap (4..7)
-// window's; InterleaveLo -> columns 0..3, InterleaveHi -> columns 4..7. Two USDOT
-// per lane group accumulate the halved-tap dot products (int16 half-sum), then
-// SQRSHRUN #6 rounds+narrows+clamps. Kept tiny so it inlines (no CALL in the hot
-// body); verified via the CALL-target dump.
+// window's; InterleaveLo -> columns 0..3, InterleaveHi -> columns 4..7. The
+// helper composes each halved-tap dot product, then the result is rounded,
+// narrowed, and clamped to bytes. Keep it small enough to inline in the hot loop.
 func convY8Emit(dstp unsafe.Pointer, zero archsimd.Int32x4, za, zb, zc, zd archsimd.Uint8x16, fLo, fHi archsimd.Int8x16) {
-	lo := zero.DotProdUS(za.InterleaveLo(zb), fLo).DotProdUS(zc.InterleaveLo(zd), fHi)
-	hi := zero.DotProdUS(za.InterleaveHi(zb), fLo).DotProdUS(zc.InterleaveHi(zd), fHi)
-	convStore8U8(dstp, lo.TruncToInt16().TruncToInt16Hi(hi).ShiftRightRoundNarrowUint8(6))
+	lo := simdDotProdUS(simdDotProdUS(zero, za.InterleaveLo(zb), fLo), zc.InterleaveLo(zd), fHi)
+	hi := simdDotProdUS(simdDotProdUS(zero, za.InterleaveHi(zb), fLo), zc.InterleaveHi(zd), fHi)
+	packed := simdConcatInt16x8(lo.TruncToInt16(), hi.TruncToInt16())
+	convStore8U8(dstp, simdRoundShiftNarrowUint8(packed, 6))
 }

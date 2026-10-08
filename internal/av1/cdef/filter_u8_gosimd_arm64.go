@@ -21,7 +21,7 @@
 //     (a ~8x mla-latency dependency chain per row); here the eight constrain
 //     results land in four independent Add accumulators, two per tap weight,
 //     and the {2,1} secondary tap weights (cdefSecondaryTaps, compile-time
-//     constants) fold into one ShiftAllLeftConst(1)+Add at the end instead of
+//     constants) fold into one ShiftAllLeft(1)+Add at the end instead of
 //     eight MLAs;
 //   - the 4-wide kernel processes two rows per vector (the two 4-lane rows
 //     zip1'd on 64-bit lanes), like the asm's d-register pairs.
@@ -29,7 +29,7 @@
 // Byte-exactness with filterBlockU8PureGo: constrainShifted is reproduced
 // lane-wise (identical to the asm's arithmetic, proven by the existing
 // differential corpus); the finalize is x + ((8 + sum - (sum<0)) >> 4) with
-// the (sum<0) term via an arithmetic ShiftAllRightConst(15). The secondary-
+// the (sum<0) term via an arithmetic ShiftAllRight(15). The secondary-
 // only split never clips, so no min/max tracking exists. VeryLarge (0x4000)
 // halo sentinels produce |diff| large enough that the uqsub saturates the
 // limit to zero, exactly as in the reference.
@@ -75,7 +75,9 @@ func cdefLoadU16P(p unsafe.Pointer) archsimd.Int16x8 {
 // cdefFilterBlock8SecondaryU8SIMD is the 8-wide secondary-only kernel.
 // The eight tap chains are pasted inline so everything stays
 // register-resident; each chain is
-//   lim = uqsub(str, |t-x| >> shift);  c = clamp(t-x, -lim, +lim)
+//
+//	lim = uqsub(str, |t-x| >> shift);  c = clamp(t-x, -lim, +lim)
+//
 // and the four weight-2 results / four weight-1 results accumulate into
 // independent pairs.
 func cdefFilterBlock8SecondaryU8SIMD(ctx *filterBlockU8NEONCtx) {
@@ -102,32 +104,34 @@ func cdefFilterBlock8SecondaryU8SIMD(ctx *filterBlockU8NEONCtx) {
 		t6 := cdefLoadU16P(unsafe.Add(src, o3))
 		t7 := cdefLoadU16P(unsafe.Add(src, -o3))
 
-		l0 := strU.SubSaturated(t0.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l0 := strU.SubSaturated(cdefAbsDiffInt16x8(t0, x).ToBits().Shift(shV)).BitsToInt16()
 		a20 := t0.Sub(x).Min(l0).Max(l0.Neg())
-		l1 := strU.SubSaturated(t1.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l1 := strU.SubSaturated(cdefAbsDiffInt16x8(t1, x).ToBits().Shift(shV)).BitsToInt16()
 		a21 := t1.Sub(x).Min(l1).Max(l1.Neg())
-		l2 := strU.SubSaturated(t2.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l2 := strU.SubSaturated(cdefAbsDiffInt16x8(t2, x).ToBits().Shift(shV)).BitsToInt16()
 		a20 = a20.Add(t2.Sub(x).Min(l2).Max(l2.Neg()))
-		l3 := strU.SubSaturated(t3.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l3 := strU.SubSaturated(cdefAbsDiffInt16x8(t3, x).ToBits().Shift(shV)).BitsToInt16()
 		a21 = a21.Add(t3.Sub(x).Min(l3).Max(l3.Neg()))
-		l4 := strU.SubSaturated(t4.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l4 := strU.SubSaturated(cdefAbsDiffInt16x8(t4, x).ToBits().Shift(shV)).BitsToInt16()
 		a10 := t4.Sub(x).Min(l4).Max(l4.Neg())
-		l5 := strU.SubSaturated(t5.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l5 := strU.SubSaturated(cdefAbsDiffInt16x8(t5, x).ToBits().Shift(shV)).BitsToInt16()
 		a11 := t5.Sub(x).Min(l5).Max(l5.Neg())
-		l6 := strU.SubSaturated(t6.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l6 := strU.SubSaturated(cdefAbsDiffInt16x8(t6, x).ToBits().Shift(shV)).BitsToInt16()
 		a10 = a10.Add(t6.Sub(x).Min(l6).Max(l6.Neg()))
-		l7 := strU.SubSaturated(t7.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l7 := strU.SubSaturated(cdefAbsDiffInt16x8(t7, x).ToBits().Shift(shV)).BitsToInt16()
 		a11 = a11.Add(t7.Sub(x).Min(l7).Max(l7.Neg()))
 
 		// sum = 2*(weight-2 taps) + (weight-1 taps); cdefSecondaryTaps is {2,1}.
-		sum := a20.Add(a21).ShiftAllLeftConst(1).Add(a10.Add(a11))
+		sum := a20.Add(a21).ShiftAllLeft(1).Add(a10.Add(a11))
 		// y = x + ((8 + sum - (sum<0)) >> 4)
-		neg := sum.ShiftAllRightConst(15)
-		y := x.Add(sum.Add(neg).Add(eight).ShiftAllRightConst(4))
-		*(*float64)(dst) = y.SaturateToUint8().ReshapeToFloat64x2().GetElem(0)
+		neg := sum.ShiftAllRight(15)
+		y := x.Add(sum.Add(neg).Add(eight).ShiftAllRight(4))
+		*(*uint64)(dst) = y.SaturateToUint8().ReshapeToUint64s().GetElem(0)
 
-		src = unsafe.Add(src, BStride*2)
-		dst = unsafe.Add(dst, dstStr)
+		if h > 1 {
+			src = unsafe.Add(src, BStride*2)
+			dst = unsafe.Add(dst, dstStr)
+		}
 	}
 }
 
@@ -170,32 +174,34 @@ func cdefFilterBlock4SecondaryU8SIMD(ctx *filterBlockU8NEONCtx) {
 		t6 := cdefLoadPairU16P(unsafe.Add(src, o3), unsafe.Add(src2, o3))
 		t7 := cdefLoadPairU16P(unsafe.Add(src, -o3), unsafe.Add(src2, -o3))
 
-		l0 := strU.SubSaturated(t0.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l0 := strU.SubSaturated(cdefAbsDiffInt16x8(t0, x).ToBits().Shift(shV)).BitsToInt16()
 		a20 := t0.Sub(x).Min(l0).Max(l0.Neg())
-		l1 := strU.SubSaturated(t1.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l1 := strU.SubSaturated(cdefAbsDiffInt16x8(t1, x).ToBits().Shift(shV)).BitsToInt16()
 		a21 := t1.Sub(x).Min(l1).Max(l1.Neg())
-		l2 := strU.SubSaturated(t2.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l2 := strU.SubSaturated(cdefAbsDiffInt16x8(t2, x).ToBits().Shift(shV)).BitsToInt16()
 		a20 = a20.Add(t2.Sub(x).Min(l2).Max(l2.Neg()))
-		l3 := strU.SubSaturated(t3.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l3 := strU.SubSaturated(cdefAbsDiffInt16x8(t3, x).ToBits().Shift(shV)).BitsToInt16()
 		a21 = a21.Add(t3.Sub(x).Min(l3).Max(l3.Neg()))
-		l4 := strU.SubSaturated(t4.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l4 := strU.SubSaturated(cdefAbsDiffInt16x8(t4, x).ToBits().Shift(shV)).BitsToInt16()
 		a10 := t4.Sub(x).Min(l4).Max(l4.Neg())
-		l5 := strU.SubSaturated(t5.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l5 := strU.SubSaturated(cdefAbsDiffInt16x8(t5, x).ToBits().Shift(shV)).BitsToInt16()
 		a11 := t5.Sub(x).Min(l5).Max(l5.Neg())
-		l6 := strU.SubSaturated(t6.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l6 := strU.SubSaturated(cdefAbsDiffInt16x8(t6, x).ToBits().Shift(shV)).BitsToInt16()
 		a10 = a10.Add(t6.Sub(x).Min(l6).Max(l6.Neg()))
-		l7 := strU.SubSaturated(t7.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l7 := strU.SubSaturated(cdefAbsDiffInt16x8(t7, x).ToBits().Shift(shV)).BitsToInt16()
 		a11 = a11.Add(t7.Sub(x).Min(l7).Max(l7.Neg()))
 
-		sum := a20.Add(a21).ShiftAllLeftConst(1).Add(a10.Add(a11))
-		neg := sum.ShiftAllRightConst(15)
-		y := x.Add(sum.Add(neg).Add(eight).ShiftAllRightConst(4))
+		sum := a20.Add(a21).ShiftAllLeft(1).Add(a10.Add(a11))
+		neg := sum.ShiftAllRight(15)
+		y := x.Add(sum.Add(neg).Add(eight).ShiftAllRight(4))
 		out := y.SaturateToUint8().ReshapeToUint32s()
 		*(*uint32)(dst) = out.GetElem(0)
 		*(*uint32)(unsafe.Add(dst, dstStr)) = out.GetElem(1)
 
-		src = unsafe.Add(src, 2*BStride*2)
-		dst = unsafe.Add(dst, 2*dstStr)
+		if h > 2 {
+			src = unsafe.Add(src, 2*BStride*2)
+			dst = unsafe.Add(dst, 2*dstStr)
+		}
 	}
 }
 
@@ -224,22 +230,24 @@ func cdefFilterBlock8PrimaryU8SIMD(ctx *filterBlockU8NEONCtx) {
 		t2 := cdefLoadU16P(unsafe.Add(src, o1))
 		t3 := cdefLoadU16P(unsafe.Add(src, -o1))
 
-		l0 := strU.SubSaturated(t0.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l0 := strU.SubSaturated(cdefAbsDiffInt16x8(t0, x).ToBits().Shift(shV)).BitsToInt16()
 		a0 := t0.Sub(x).Min(l0).Max(l0.Neg())
-		l1 := strU.SubSaturated(t1.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l1 := strU.SubSaturated(cdefAbsDiffInt16x8(t1, x).ToBits().Shift(shV)).BitsToInt16()
 		a1 := t1.Sub(x).Min(l1).Max(l1.Neg())
-		l2 := strU.SubSaturated(t2.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l2 := strU.SubSaturated(cdefAbsDiffInt16x8(t2, x).ToBits().Shift(shV)).BitsToInt16()
 		b0 := t2.Sub(x).Min(l2).Max(l2.Neg())
-		l3 := strU.SubSaturated(t3.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l3 := strU.SubSaturated(cdefAbsDiffInt16x8(t3, x).ToBits().Shift(shV)).BitsToInt16()
 		b1 := t3.Sub(x).Min(l3).Max(l3.Neg())
 
 		sum := a0.Add(a1).Mul(tap0V).Add(b0.Add(b1).Mul(tap1V))
-		neg := sum.ShiftAllRightConst(15)
-		y := x.Add(sum.Add(neg).Add(eight).ShiftAllRightConst(4))
-		*(*float64)(dst) = y.SaturateToUint8().ReshapeToFloat64x2().GetElem(0)
+		neg := sum.ShiftAllRight(15)
+		y := x.Add(sum.Add(neg).Add(eight).ShiftAllRight(4))
+		*(*uint64)(dst) = y.SaturateToUint8().ReshapeToUint64s().GetElem(0)
 
-		src = unsafe.Add(src, BStride*2)
-		dst = unsafe.Add(dst, dstStr)
+		if h > 1 {
+			src = unsafe.Add(src, BStride*2)
+			dst = unsafe.Add(dst, dstStr)
+		}
 	}
 }
 
@@ -264,24 +272,26 @@ func cdefFilterBlock4PrimaryU8SIMD(ctx *filterBlockU8NEONCtx) {
 		t2 := cdefLoadPairU16P(unsafe.Add(src, o1), unsafe.Add(src2, o1))
 		t3 := cdefLoadPairU16P(unsafe.Add(src, -o1), unsafe.Add(src2, -o1))
 
-		l0 := strU.SubSaturated(t0.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l0 := strU.SubSaturated(cdefAbsDiffInt16x8(t0, x).ToBits().Shift(shV)).BitsToInt16()
 		a0 := t0.Sub(x).Min(l0).Max(l0.Neg())
-		l1 := strU.SubSaturated(t1.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l1 := strU.SubSaturated(cdefAbsDiffInt16x8(t1, x).ToBits().Shift(shV)).BitsToInt16()
 		a1 := t1.Sub(x).Min(l1).Max(l1.Neg())
-		l2 := strU.SubSaturated(t2.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l2 := strU.SubSaturated(cdefAbsDiffInt16x8(t2, x).ToBits().Shift(shV)).BitsToInt16()
 		b0 := t2.Sub(x).Min(l2).Max(l2.Neg())
-		l3 := strU.SubSaturated(t3.AbsDiff(x).ToBits().Shift(shV)).BitsToInt16()
+		l3 := strU.SubSaturated(cdefAbsDiffInt16x8(t3, x).ToBits().Shift(shV)).BitsToInt16()
 		b1 := t3.Sub(x).Min(l3).Max(l3.Neg())
 
 		sum := a0.Add(a1).Mul(tap0V).Add(b0.Add(b1).Mul(tap1V))
-		neg := sum.ShiftAllRightConst(15)
-		y := x.Add(sum.Add(neg).Add(eight).ShiftAllRightConst(4))
+		neg := sum.ShiftAllRight(15)
+		y := x.Add(sum.Add(neg).Add(eight).ShiftAllRight(4))
 		out := y.SaturateToUint8().ReshapeToUint32s()
 		*(*uint32)(dst) = out.GetElem(0)
 		*(*uint32)(unsafe.Add(dst, dstStr)) = out.GetElem(1)
 
-		src = unsafe.Add(src, 2*BStride*2)
-		dst = unsafe.Add(dst, 2*dstStr)
+		if h > 2 {
+			src = unsafe.Add(src, 2*BStride*2)
+			dst = unsafe.Add(dst, 2*dstStr)
+		}
 	}
 }
 
@@ -328,13 +338,13 @@ func cdefFilterBlock8U8SIMD(ctx *filterBlockU8NEONCtx) {
 		mx0 := t0.ToBits().Xor(vlU).Max(t1.ToBits().Xor(vlU))
 		mx1 := t2.ToBits().Xor(vlU).Max(t3.ToBits().Xor(vlU))
 		mn0 = mn0.Min(t3.ToBits())
-		l0 := priStrU.SubSaturated(t0.AbsDiff(x).ToBits().Shift(priShV)).BitsToInt16()
+		l0 := priStrU.SubSaturated(cdefAbsDiffInt16x8(t0, x).ToBits().Shift(priShV)).BitsToInt16()
 		pa := t0.Sub(x).Min(l0).Max(l0.Neg())
-		l1 := priStrU.SubSaturated(t1.AbsDiff(x).ToBits().Shift(priShV)).BitsToInt16()
+		l1 := priStrU.SubSaturated(cdefAbsDiffInt16x8(t1, x).ToBits().Shift(priShV)).BitsToInt16()
 		pa = pa.Add(t1.Sub(x).Min(l1).Max(l1.Neg()))
-		l2 := priStrU.SubSaturated(t2.AbsDiff(x).ToBits().Shift(priShV)).BitsToInt16()
+		l2 := priStrU.SubSaturated(cdefAbsDiffInt16x8(t2, x).ToBits().Shift(priShV)).BitsToInt16()
 		pb := t2.Sub(x).Min(l2).Max(l2.Neg())
-		l3 := priStrU.SubSaturated(t3.AbsDiff(x).ToBits().Shift(priShV)).BitsToInt16()
+		l3 := priStrU.SubSaturated(cdefAbsDiffInt16x8(t3, x).ToBits().Shift(priShV)).BitsToInt16()
 		pb = pb.Add(t3.Sub(x).Min(l3).Max(l3.Neg()))
 
 		// secondary taps
@@ -351,35 +361,37 @@ func cdefFilterBlock8U8SIMD(ctx *filterBlockU8NEONCtx) {
 		mx0 = mx0.Max(s0.ToBits().Xor(vlU)).Max(s2.ToBits().Xor(vlU)).Max(s4.ToBits().Xor(vlU)).Max(s6.ToBits().Xor(vlU))
 		mx1 = mx1.Max(s1.ToBits().Xor(vlU)).Max(s3.ToBits().Xor(vlU)).Max(s5.ToBits().Xor(vlU)).Max(s7.ToBits().Xor(vlU))
 
-		k0 := secStrU.SubSaturated(s0.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k0 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s0, x).ToBits().Shift(secShV)).BitsToInt16()
 		a20 := s0.Sub(x).Min(k0).Max(k0.Neg())
-		k1 := secStrU.SubSaturated(s1.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k1 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s1, x).ToBits().Shift(secShV)).BitsToInt16()
 		a21 := s1.Sub(x).Min(k1).Max(k1.Neg())
-		k2 := secStrU.SubSaturated(s2.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k2 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s2, x).ToBits().Shift(secShV)).BitsToInt16()
 		a20 = a20.Add(s2.Sub(x).Min(k2).Max(k2.Neg()))
-		k3 := secStrU.SubSaturated(s3.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k3 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s3, x).ToBits().Shift(secShV)).BitsToInt16()
 		a21 = a21.Add(s3.Sub(x).Min(k3).Max(k3.Neg()))
-		k4 := secStrU.SubSaturated(s4.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k4 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s4, x).ToBits().Shift(secShV)).BitsToInt16()
 		a10 := s4.Sub(x).Min(k4).Max(k4.Neg())
-		k5 := secStrU.SubSaturated(s5.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k5 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s5, x).ToBits().Shift(secShV)).BitsToInt16()
 		a11 := s5.Sub(x).Min(k5).Max(k5.Neg())
-		k6 := secStrU.SubSaturated(s6.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k6 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s6, x).ToBits().Shift(secShV)).BitsToInt16()
 		a10 = a10.Add(s6.Sub(x).Min(k6).Max(k6.Neg()))
-		k7 := secStrU.SubSaturated(s7.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k7 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s7, x).ToBits().Shift(secShV)).BitsToInt16()
 		a11 = a11.Add(s7.Sub(x).Min(k7).Max(k7.Neg()))
 
 		sum := pa.Mul(tap0V).Add(pb.Mul(tap1V)).
-			Add(a20.Add(a21).ShiftAllLeftConst(1)).
+			Add(a20.Add(a21).ShiftAllLeft(1)).
 			Add(a10.Add(a11))
-		neg := sum.ShiftAllRightConst(15)
+		neg := sum.ShiftAllRight(15)
 		mxReal := mx0.Max(mx1).Xor(vlU).Max(x.ToBits()).BitsToInt16()
 		mnReal := mn0.Min(mn1).BitsToInt16()
-		y := x.Add(sum.Add(neg).Add(eight).ShiftAllRightConst(4)).
+		y := x.Add(sum.Add(neg).Add(eight).ShiftAllRight(4)).
 			Min(mxReal).Max(mnReal)
-		*(*float64)(dst) = y.SaturateToUint8().ReshapeToFloat64x2().GetElem(0)
+		*(*uint64)(dst) = y.SaturateToUint8().ReshapeToUint64s().GetElem(0)
 
-		src = unsafe.Add(src, BStride*2)
-		dst = unsafe.Add(dst, dstStr)
+		if h > 1 {
+			src = unsafe.Add(src, BStride*2)
+			dst = unsafe.Add(dst, dstStr)
+		}
 	}
 }
 
@@ -416,13 +428,13 @@ func cdefFilterBlock4U8SIMD(ctx *filterBlockU8NEONCtx) {
 		mx0 := t0.ToBits().Xor(vlU).Max(t1.ToBits().Xor(vlU))
 		mx1 := t2.ToBits().Xor(vlU).Max(t3.ToBits().Xor(vlU))
 		mn0 = mn0.Min(t3.ToBits())
-		l0 := priStrU.SubSaturated(t0.AbsDiff(x).ToBits().Shift(priShV)).BitsToInt16()
+		l0 := priStrU.SubSaturated(cdefAbsDiffInt16x8(t0, x).ToBits().Shift(priShV)).BitsToInt16()
 		pa := t0.Sub(x).Min(l0).Max(l0.Neg())
-		l1 := priStrU.SubSaturated(t1.AbsDiff(x).ToBits().Shift(priShV)).BitsToInt16()
+		l1 := priStrU.SubSaturated(cdefAbsDiffInt16x8(t1, x).ToBits().Shift(priShV)).BitsToInt16()
 		pa = pa.Add(t1.Sub(x).Min(l1).Max(l1.Neg()))
-		l2 := priStrU.SubSaturated(t2.AbsDiff(x).ToBits().Shift(priShV)).BitsToInt16()
+		l2 := priStrU.SubSaturated(cdefAbsDiffInt16x8(t2, x).ToBits().Shift(priShV)).BitsToInt16()
 		pb := t2.Sub(x).Min(l2).Max(l2.Neg())
-		l3 := priStrU.SubSaturated(t3.AbsDiff(x).ToBits().Shift(priShV)).BitsToInt16()
+		l3 := priStrU.SubSaturated(cdefAbsDiffInt16x8(t3, x).ToBits().Shift(priShV)).BitsToInt16()
 		pb = pb.Add(t3.Sub(x).Min(l3).Max(l3.Neg()))
 
 		s0 := cdefLoadPairU16P(unsafe.Add(src, o0), unsafe.Add(src2, o0))
@@ -438,36 +450,38 @@ func cdefFilterBlock4U8SIMD(ctx *filterBlockU8NEONCtx) {
 		mx0 = mx0.Max(s0.ToBits().Xor(vlU)).Max(s2.ToBits().Xor(vlU)).Max(s4.ToBits().Xor(vlU)).Max(s6.ToBits().Xor(vlU))
 		mx1 = mx1.Max(s1.ToBits().Xor(vlU)).Max(s3.ToBits().Xor(vlU)).Max(s5.ToBits().Xor(vlU)).Max(s7.ToBits().Xor(vlU))
 
-		k0 := secStrU.SubSaturated(s0.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k0 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s0, x).ToBits().Shift(secShV)).BitsToInt16()
 		a20 := s0.Sub(x).Min(k0).Max(k0.Neg())
-		k1 := secStrU.SubSaturated(s1.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k1 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s1, x).ToBits().Shift(secShV)).BitsToInt16()
 		a21 := s1.Sub(x).Min(k1).Max(k1.Neg())
-		k2 := secStrU.SubSaturated(s2.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k2 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s2, x).ToBits().Shift(secShV)).BitsToInt16()
 		a20 = a20.Add(s2.Sub(x).Min(k2).Max(k2.Neg()))
-		k3 := secStrU.SubSaturated(s3.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k3 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s3, x).ToBits().Shift(secShV)).BitsToInt16()
 		a21 = a21.Add(s3.Sub(x).Min(k3).Max(k3.Neg()))
-		k4 := secStrU.SubSaturated(s4.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k4 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s4, x).ToBits().Shift(secShV)).BitsToInt16()
 		a10 := s4.Sub(x).Min(k4).Max(k4.Neg())
-		k5 := secStrU.SubSaturated(s5.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k5 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s5, x).ToBits().Shift(secShV)).BitsToInt16()
 		a11 := s5.Sub(x).Min(k5).Max(k5.Neg())
-		k6 := secStrU.SubSaturated(s6.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k6 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s6, x).ToBits().Shift(secShV)).BitsToInt16()
 		a10 = a10.Add(s6.Sub(x).Min(k6).Max(k6.Neg()))
-		k7 := secStrU.SubSaturated(s7.AbsDiff(x).ToBits().Shift(secShV)).BitsToInt16()
+		k7 := secStrU.SubSaturated(cdefAbsDiffInt16x8(s7, x).ToBits().Shift(secShV)).BitsToInt16()
 		a11 = a11.Add(s7.Sub(x).Min(k7).Max(k7.Neg()))
 
 		sum := pa.Mul(tap0V).Add(pb.Mul(tap1V)).
-			Add(a20.Add(a21).ShiftAllLeftConst(1)).
+			Add(a20.Add(a21).ShiftAllLeft(1)).
 			Add(a10.Add(a11))
-		neg := sum.ShiftAllRightConst(15)
+		neg := sum.ShiftAllRight(15)
 		mxReal := mx0.Max(mx1).Xor(vlU).Max(x.ToBits()).BitsToInt16()
 		mnReal := mn0.Min(mn1).BitsToInt16()
-		y := x.Add(sum.Add(neg).Add(eight).ShiftAllRightConst(4)).
+		y := x.Add(sum.Add(neg).Add(eight).ShiftAllRight(4)).
 			Min(mxReal).Max(mnReal)
 		out := y.SaturateToUint8().ReshapeToUint32s()
 		*(*uint32)(dst) = out.GetElem(0)
 		*(*uint32)(unsafe.Add(dst, dstStr)) = out.GetElem(1)
 
-		src = unsafe.Add(src, 2*BStride*2)
-		dst = unsafe.Add(dst, 2*dstStr)
+		if h > 2 {
+			src = unsafe.Add(src, 2*BStride*2)
+			dst = unsafe.Add(dst, 2*dstStr)
+		}
 	}
 }

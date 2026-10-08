@@ -25,20 +25,15 @@
 // SMOOTH (predictSmoothSIMD and the two 1D variants): the weighted blend
 //   pred = wH*above + (256-wH)*below + wW*left + (256-wW)*right
 // is a fused widening multiply-accumulate of int16 pixels by int16 weights into
-// int32 lanes (SMLAL / SMLAL2 via Int32x4.MulWidenLoAdd/HiAdd). All products fit
+// int32 lanes (SMLAL / SMLAL2 via widened multiplies and int32 adds). All products fit
 // (255*255=65025) and the 4-term sum <= 130560 for real pixels, so it never
 // overflows int32 and matches divideRound(pred, 9). The full predictor round-
 // shifts by 1+smoothWeightLog2Scale (9); the 1D variants drop the unused term
 // pair and shift by smoothWeightLog2Scale (8).
 //
-// The divideRound + narrow is fused into ShiftRightRoundNarrow / ...Hi
-// (VSQRSHRN / VSQRSHRN2): each int32 lane is rounded right by the constant shift
-// (the +1<<(shift-1) bias is applied internally, so no bias seed is needed) and
-// narrowed to int16 with saturation, packing both int32x4 halves into one
-// int16x8 with two immediate-shift instructions. pred is non-negative so the
-// arithmetic round-shift equals divideRound, and the results (<=255) never
-// saturate, so this is byte-identical to divideRound; the int16 lanes are then
-// saturated to uint8 (also exact, in range) and the low 64 bits written with a
+// The divideRound + narrow rounds each int32 lane with the equivalent
+// shift/add/low-bit sequence, then packs the two halves. pred is non-negative,
+// the results (<=255) do not saturate, and the low 64 bits are written with a
 // single FMOV+STR. No slices in the hot loop: every load/store is an array
 // pointer, so there are no bounds checks and nothing escapes to the heap.
 
@@ -77,13 +72,26 @@ func loadWeightV8(p unsafe.Pointer) archsimd.Int16x8 {
 // clips. shift must be a compile-time constant so the shift lowers to an
 // immediate VSQRSHRN.
 func store8Smooth(p unsafe.Pointer, lo, hi archsimd.Int32x4, shift uint8) {
-	v := lo.ShiftRightRoundNarrow(shift).ShiftRightRoundNarrowHi(hi, shift).SaturateToUint8()
-	*(*float64)(p) = v.ReshapeToFloat64x2().GetElem(0)
+	loRound := smoothRoundShiftInt32x4(lo, shift)
+	hiRound := smoothRoundShiftInt32x4(hi, shift)
+	v := cflTruncateInt32PairToInt16(loRound, hiRound).SaturateToUint8()
+	*(*float64)(p) = v.ReshapeToUint64s().BitsToFloat64().GetElem(0)
+}
+
+// smoothRoundShiftInt32x4 computes the rounded arithmetic shift without adding
+// a rounding bias to the accumulator, which could overflow at the int32 limit.
+func smoothRoundShiftInt32x4(v archsimd.Int32x4, shift uint8) archsimd.Int32x4 {
+	if shift == 0 {
+		return v
+	}
+	s := uint64(shift)
+	roundBit := v.ShiftAllRight(s - 1).And(archsimd.BroadcastInt32x4(1))
+	return v.ShiftAllRight(s).Add(roundBit)
 }
 
 // store8Int16Pix writes 8 int16 pixels (each in [0,255]) as 8 uint8 at p.
 func store8Int16Pix(p unsafe.Pointer, v archsimd.Int16x8) {
-	*(*float64)(p) = v.SaturateToUint8().ReshapeToFloat64x2().GetElem(0)
+	*(*float64)(p) = v.SaturateToUint8().ReshapeToUint64s().BitsToFloat64().GetElem(0)
 }
 
 // predictPaethSIMD is the Go-native SIMD form of predictPaethPureGo. Byte
@@ -103,21 +111,23 @@ func predictPaethSIMD(block planeBlock, bytesPerSample int, above []uint16, left
 	abase := unsafe.Pointer(&above[0])
 	for row := 0; row < height; row++ {
 		lV := archsimd.BroadcastInt16x8(int16(left[row]))
-		pTop := lV.AbsDiff(tlV)      // |left - aboveLeft|, constant across the row
+		pTop := lV.Sub(tlV).Abs()    // |left - aboveLeft|, constant across the row
 		leftMinus2tl := lV.Sub(tl2V) // left - 2*aboveLeft
 		dp := unsafe.Add(dbase, row*block.stride)
 		ap := abase
 		for col := 0; col < width; col += 8 {
 			aV := loadPixV8(ap)
-			pLeft := aV.AbsDiff(tlV)               // |above - aboveLeft|
+			pLeft := aV.Sub(tlV).Abs()             // |above - aboveLeft|
 			pTopLeft := aV.Add(leftMinus2tl).Abs() // |above + left - 2*aboveLeft|
 			out := tlV                             // default: topLeft
 			out = aV.IfElse(pTop.LessEqual(pTopLeft), out)
 			leftMask := pLeft.LessEqual(pTop).And(pLeft.LessEqual(pTopLeft))
 			out = lV.IfElse(leftMask, out)
 			store8Int16Pix(dp, out)
-			ap = unsafe.Add(ap, 8*elem)
-			dp = unsafe.Add(dp, 8)
+			if col+8 < width {
+				ap = unsafe.Add(ap, 8*elem)
+				dp = unsafe.Add(dp, 8)
+			}
 		}
 	}
 }
@@ -134,7 +144,6 @@ func predictSmoothSIMD(block planeBlock, bytesPerSample int, weightsW []uint16, 
 
 	belowV := archsimd.BroadcastInt16x8(int16(belowPred))
 	rightV := archsimd.BroadcastInt16x8(int16(rightPred))
-	zeroV := archsimd.BroadcastInt32x4(0)
 	scaleV := archsimd.BroadcastInt16x8(smoothScale)
 
 	dbase := unsafe.Pointer(&block.pix[0])
@@ -154,14 +163,20 @@ func predictSmoothSIMD(block planeBlock, bytesPerSample int, weightsW []uint16, 
 			wWV := loadWeightV8(wp)
 			wWcV := scaleV.Sub(wWV)
 			// lo/hi accumulate columns 0..3 / 4..7 with SMLAL / SMLAL2.
-			lo := zeroV.MulWidenLoAdd(aV, wHV).MulWidenLoAdd(belowV, wHcV).
-				MulWidenLoAdd(leftV, wWV).MulWidenLoAdd(rightV, wWcV)
-			hi := zeroV.MulWidenHiAdd(aV, wHV).MulWidenHiAdd(belowV, wHcV).
-				MulWidenHiAdd(leftV, wWV).MulWidenHiAdd(rightV, wWcV)
+			lo := aV.MulWidenLo(wHV).Add(belowV.MulWidenLo(wHcV)).
+				Add(leftV.MulWidenLo(wWV)).Add(rightV.MulWidenLo(wWcV))
+			ahi, whi := aV.HiToLo(), wHV.HiToLo()
+			bhi, wchi := belowV.HiToLo(), wHcV.HiToLo()
+			lhi, wwhi := leftV.HiToLo(), wWV.HiToLo()
+			rhi, wwchi := rightV.HiToLo(), wWcV.HiToLo()
+			hi := ahi.MulWidenLo(whi).Add(bhi.MulWidenLo(wchi)).
+				Add(lhi.MulWidenLo(wwhi)).Add(rhi.MulWidenLo(wwchi))
 			store8Smooth(dp, lo, hi, smoothShiftFull)
-			ap = unsafe.Add(ap, 8*elem)
-			wp = unsafe.Add(wp, 8*elem)
-			dp = unsafe.Add(dp, 8)
+			if col+8 < width {
+				ap = unsafe.Add(ap, 8*elem)
+				wp = unsafe.Add(wp, 8*elem)
+				dp = unsafe.Add(dp, 8)
+			}
 		}
 	}
 }
@@ -178,7 +193,6 @@ func predictSmoothVerticalSIMD(block planeBlock, bytesPerSample int, weights []u
 	const elem = 2
 
 	belowV := archsimd.BroadcastInt16x8(int16(belowPred))
-	zeroV := archsimd.BroadcastInt32x4(0)
 
 	dbase := unsafe.Pointer(&block.pix[0])
 	abase := unsafe.Pointer(&above[0])
@@ -190,11 +204,13 @@ func predictSmoothVerticalSIMD(block planeBlock, bytesPerSample int, weights []u
 		ap := abase
 		for col := 0; col < width; col += 8 {
 			aV := loadPixV8(ap)
-			lo := zeroV.MulWidenLoAdd(aV, wV).MulWidenLoAdd(belowV, wcV)
-			hi := zeroV.MulWidenHiAdd(aV, wV).MulWidenHiAdd(belowV, wcV)
+			lo := aV.MulWidenLo(wV).Add(belowV.MulWidenLo(wcV))
+			hi := aV.HiToLo().MulWidenLo(wV.HiToLo()).Add(belowV.HiToLo().MulWidenLo(wcV.HiToLo()))
 			store8Smooth(dp, lo, hi, smoothShift1D)
-			ap = unsafe.Add(ap, 8*elem)
-			dp = unsafe.Add(dp, 8)
+			if col+8 < width {
+				ap = unsafe.Add(ap, 8*elem)
+				dp = unsafe.Add(dp, 8)
+			}
 		}
 	}
 }
@@ -212,7 +228,6 @@ func predictSmoothHorizontalSIMD(block planeBlock, bytesPerSample int, weights [
 	const elem = 2
 
 	rightV := archsimd.BroadcastInt16x8(int16(rightPred))
-	zeroV := archsimd.BroadcastInt32x4(0)
 	scaleV := archsimd.BroadcastInt16x8(smoothScale)
 
 	dbase := unsafe.Pointer(&block.pix[0])
@@ -224,11 +239,13 @@ func predictSmoothHorizontalSIMD(block planeBlock, bytesPerSample int, weights [
 		for col := 0; col < width; col += 8 {
 			wV := loadWeightV8(wp)
 			wcV := scaleV.Sub(wV)
-			lo := zeroV.MulWidenLoAdd(leftV, wV).MulWidenLoAdd(rightV, wcV)
-			hi := zeroV.MulWidenHiAdd(leftV, wV).MulWidenHiAdd(rightV, wcV)
+			lo := leftV.MulWidenLo(wV).Add(rightV.MulWidenLo(wcV))
+			hi := leftV.HiToLo().MulWidenLo(wV.HiToLo()).Add(rightV.HiToLo().MulWidenLo(wcV.HiToLo()))
 			store8Smooth(dp, lo, hi, smoothShift1D)
-			wp = unsafe.Add(wp, 8*elem)
-			dp = unsafe.Add(dp, 8)
+			if col+8 < width {
+				wp = unsafe.Add(wp, 8*elem)
+				dp = unsafe.Add(dp, 8)
+			}
 		}
 	}
 }

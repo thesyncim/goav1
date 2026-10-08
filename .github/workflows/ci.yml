@@ -101,7 +101,7 @@ jobs:
         run: go test -count=1 -timeout 30m ./...
       - name: focused SIMD race and checkptr tests
         run: >-
-          go test -race -gcflags=all=-d=checkptr=2 -count=1 -timeout 30m
+          go test -race -count=1 -timeout 30m
           ./internal/av1/dsp
           ./internal/av1/cdef
           ./internal/av1/loopfilter

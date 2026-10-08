@@ -76,7 +76,7 @@ func lf8LoadP(p unsafe.Pointer) archsimd.Int16x8 {
 // no 8-byte narrow store in archsimd, so the narrow lands in a stack array and
 // its low half is copied out (the copy is 8 bytes, stays in registers).
 func lf8StoreP(p unsafe.Pointer, v archsimd.Int16x8) {
-	*(*float64)(p) = v.SaturateToUint8().ReshapeToFloat64x2().GetElem(0)
+	*(*uint64)(p) = v.SaturateToUint8().ReshapeToUint64s().GetElem(0)
 }
 
 // lf16LoadP loads 8 contiguous uint16 samples at raw pointer p as an Int16x8.
@@ -118,7 +118,9 @@ var (
 // lf16StoreP2 packs two 8-lane results (low half a, high half b) to 16 bytes
 // with one SQXTUN+SQXTUN2 and a single 16-byte store.
 func lf16StoreP2(p unsafe.Pointer, a, b archsimd.Int16x8) {
-	a.SaturateToUint8().SaturateToUint8Hi(b).StoreArray((*[16]uint8)(p))
+	packed := a.SaturateToUint8().ReshapeToUint64s().
+		InterleaveLo(b.SaturateToUint8().ReshapeToUint64s()).ReshapeToUint8s()
+	packed.StoreArray((*[16]uint8)(p))
 }
 
 func makeFilter4SIMDConst(params filter4Params) filter4SIMDConst {
@@ -165,18 +167,18 @@ func filter4TapVecs(p1, p0, q0, q1 archsimd.Int16x8, cst filter4SIMDConst) (arch
 // filter4TapNoGate is the unconditional narrow tap update (hev blend applied to
 // p1/q1, no needsFilter4 gate) — filter4Samples lane-wise.
 func filter4TapNoGate(p1, p0, q0, q1 archsimd.Int16x8, cst filter4SIMDConst) (archsimd.Int16x8, archsimd.Int16x8, archsimd.Int16x8, archsimd.Int16x8) {
-	hev := p1.AbsDiff(p0).Greater(cst.hev).Or(q1.AbsDiff(q0).Greater(cst.hev))
+	hev := lfAbsDiffInt16x8(p1, p0).Greater(cst.hev).Or(lfAbsDiffInt16x8(q1, q0).Greater(cst.hev))
 	ps1 := p1.Sub(cst.center)
 	ps0 := p0.Sub(cst.center)
 	qs0 := q0.Sub(cst.center)
 	qs1 := q1.Sub(cst.center)
 	f := clampSIMD(ps1.Sub(qs1), cst).Masked(hev)
 	f = clampSIMD(f.Add(qs0.Sub(ps0).Mul(cst.three16)), cst)
-	filter1 := clampSIMD(f.Add(cst.four), cst).ShiftAllRightConst(3)
-	filter2 := clampSIMD(f.Add(cst.three16), cst).ShiftAllRightConst(3)
+	filter1 := clampSIMD(f.Add(cst.four), cst).ShiftAllRight(3)
+	filter2 := clampSIMD(f.Add(cst.three16), cst).ShiftAllRight(3)
 	newP0 := clampSIMD(ps0.Add(filter2), cst).Add(cst.center)
 	newQ0 := clampSIMD(qs0.Sub(filter1), cst).Add(cst.center)
-	outer := filter1.Add(cst.one).ShiftAllRightConst(1)
+	outer := filter1.Add(cst.one).ShiftAllRight(1)
 	newP1 := clampSIMD(ps1.Add(outer), cst).Add(cst.center)
 	newQ1 := clampSIMD(qs1.Sub(outer), cst).Add(cst.center)
 	newP1 = p1.IfElse(hev, newP1)
@@ -186,10 +188,10 @@ func filter4TapNoGate(p1, p0, q0, q1 archsimd.Int16x8, cst filter4SIMDConst) (ar
 
 // needsFilter4Mask reproduces needsFilter4 lane-wise.
 func needsFilter4Mask(p1, p0, q0, q1 archsimd.Int16x8, cst filter4SIMDConst) archsimd.Mask16x8 {
-	return p1.AbsDiff(p0).LessEqual(cst.limit).
-		And(q1.AbsDiff(q0).LessEqual(cst.limit)).
-		And(p0.AbsDiff(q0).ShiftAllLeftConst(1).
-			Add(p1.AbsDiff(q1).ShiftAllRightConst(1)).
+	return lfAbsDiffInt16x8(p1, p0).LessEqual(cst.limit).
+		And(lfAbsDiffInt16x8(q1, q0).LessEqual(cst.limit)).
+		And(lfAbsDiffInt16x8(p0, q0).ShiftAllLeft(1).
+			Add(lfAbsDiffInt16x8(p1, q1).ShiftAllRight(1)).
 			LessEqual(cst.blimit))
 }
 
@@ -244,35 +246,35 @@ func filter4EdgeSIMD(pix []byte, q0Base int, step int, outer int, length int, pa
 		ap0 := rp0.ExtendLo8ToUint16().ConvertToInt16()
 		aq0 := rq0.ExtendLo8ToUint16().ConvertToInt16()
 		aq1 := rq1.ExtendLo8ToUint16().ConvertToInt16()
-		aHev := ap1.AbsDiff(ap0).Greater(hevT).Or(aq1.AbsDiff(aq0).Greater(hevT))
-		aMask := ap1.AbsDiff(ap0).LessEqual(limit).And(aq1.AbsDiff(aq0).LessEqual(limit)).
-			And(ap0.AbsDiff(aq0).ShiftAllLeftConst(1).Add(ap1.AbsDiff(aq1).ShiftAllRightConst(1)).LessEqual(blimit))
+		aHev := lfAbsDiffInt16x8(ap1, ap0).Greater(hevT).Or(lfAbsDiffInt16x8(aq1, aq0).Greater(hevT))
+		aMask := lfAbsDiffInt16x8(ap1, ap0).LessEqual(limit).And(lfAbsDiffInt16x8(aq1, aq0).LessEqual(limit)).
+			And(lfAbsDiffInt16x8(ap0, aq0).ShiftAllLeft(1).Add(lfAbsDiffInt16x8(ap1, aq1).ShiftAllRight(1)).LessEqual(blimit))
 		aps1, aps0, aqs0, aqs1 := ap1.Sub(center), ap0.Sub(center), aq0.Sub(center), aq1.Sub(center)
 		af := aps1.Sub(aqs1).Max(minV).Min(maxV).Masked(aHev)
 		af = af.Add(aqs0.Sub(aps0).Mul(three16)).Max(minV).Min(maxV)
-		af1 := af.Add(four).Max(minV).Min(maxV).ShiftAllRightConst(3)
-		af2 := af.Add(three16).Max(minV).Min(maxV).ShiftAllRightConst(3)
+		af1 := af.Add(four).Max(minV).Min(maxV).ShiftAllRight(3)
+		af2 := af.Add(three16).Max(minV).Min(maxV).ShiftAllRight(3)
 		anp0 := aps0.Add(af2).Max(minV).Min(maxV).Add(center).IfElse(aMask, ap0)
 		anq0 := aqs0.Sub(af1).Max(minV).Min(maxV).Add(center).IfElse(aMask, aq0)
-		aov := af1.Add(one).ShiftAllRightConst(1)
+		aov := af1.Add(one).ShiftAllRight(1)
 		anp1 := ap1.IfElse(aHev, aps1.Add(aov).Max(minV).Min(maxV).Add(center)).IfElse(aMask, ap1)
 		anq1 := aq1.IfElse(aHev, aqs1.Sub(aov).Max(minV).Min(maxV).Add(center)).IfElse(aMask, aq1)
 
-		bp1 := rp1.ExtendHi8ToUint16().ConvertToInt16()
-		bp0 := rp0.ExtendHi8ToUint16().ConvertToInt16()
-		bq0 := rq0.ExtendHi8ToUint16().ConvertToInt16()
-		bq1 := rq1.ExtendHi8ToUint16().ConvertToInt16()
-		bHev := bp1.AbsDiff(bp0).Greater(hevT).Or(bq1.AbsDiff(bq0).Greater(hevT))
-		bMask := bp1.AbsDiff(bp0).LessEqual(limit).And(bq1.AbsDiff(bq0).LessEqual(limit)).
-			And(bp0.AbsDiff(bq0).ShiftAllLeftConst(1).Add(bp1.AbsDiff(bq1).ShiftAllRightConst(1)).LessEqual(blimit))
+		bp1 := rp1.HiToLo().ExtendLo8ToUint16().ConvertToInt16()
+		bp0 := rp0.HiToLo().ExtendLo8ToUint16().ConvertToInt16()
+		bq0 := rq0.HiToLo().ExtendLo8ToUint16().ConvertToInt16()
+		bq1 := rq1.HiToLo().ExtendLo8ToUint16().ConvertToInt16()
+		bHev := lfAbsDiffInt16x8(bp1, bp0).Greater(hevT).Or(lfAbsDiffInt16x8(bq1, bq0).Greater(hevT))
+		bMask := lfAbsDiffInt16x8(bp1, bp0).LessEqual(limit).And(lfAbsDiffInt16x8(bq1, bq0).LessEqual(limit)).
+			And(lfAbsDiffInt16x8(bp0, bq0).ShiftAllLeft(1).Add(lfAbsDiffInt16x8(bp1, bq1).ShiftAllRight(1)).LessEqual(blimit))
 		bps1, bps0, bqs0, bqs1 := bp1.Sub(center), bp0.Sub(center), bq0.Sub(center), bq1.Sub(center)
 		bf := bps1.Sub(bqs1).Max(minV).Min(maxV).Masked(bHev)
 		bf = bf.Add(bqs0.Sub(bps0).Mul(three16)).Max(minV).Min(maxV)
-		bf1 := bf.Add(four).Max(minV).Min(maxV).ShiftAllRightConst(3)
-		bf2 := bf.Add(three16).Max(minV).Min(maxV).ShiftAllRightConst(3)
+		bf1 := bf.Add(four).Max(minV).Min(maxV).ShiftAllRight(3)
+		bf2 := bf.Add(three16).Max(minV).Min(maxV).ShiftAllRight(3)
 		bnp0 := bps0.Add(bf2).Max(minV).Min(maxV).Add(center).IfElse(bMask, bp0)
 		bnq0 := bqs0.Sub(bf1).Max(minV).Min(maxV).Add(center).IfElse(bMask, bq0)
-		bov := bf1.Add(one).ShiftAllRightConst(1)
+		bov := bf1.Add(one).ShiftAllRight(1)
 		bnp1 := bp1.IfElse(bHev, bps1.Add(bov).Max(minV).Min(maxV).Add(center)).IfElse(bMask, bp1)
 		bnq1 := bq1.IfElse(bHev, bqs1.Sub(bov).Max(minV).Min(maxV).Add(center)).IfElse(bMask, bq1)
 
@@ -290,17 +292,17 @@ func filter4EdgeSIMD(pix []byte, q0Base int, step int, outer int, length int, pa
 		p0 := lf8LoadP(pP0)
 		q0 := lf8LoadP(base)
 		q1 := lf8LoadP(pQ1)
-		hev := p1.AbsDiff(p0).Greater(hevT).Or(q1.AbsDiff(q0).Greater(hevT))
-		mask := p1.AbsDiff(p0).LessEqual(limit).And(q1.AbsDiff(q0).LessEqual(limit)).
-			And(p0.AbsDiff(q0).ShiftAllLeftConst(1).Add(p1.AbsDiff(q1).ShiftAllRightConst(1)).LessEqual(blimit))
+		hev := lfAbsDiffInt16x8(p1, p0).Greater(hevT).Or(lfAbsDiffInt16x8(q1, q0).Greater(hevT))
+		mask := lfAbsDiffInt16x8(p1, p0).LessEqual(limit).And(lfAbsDiffInt16x8(q1, q0).LessEqual(limit)).
+			And(lfAbsDiffInt16x8(p0, q0).ShiftAllLeft(1).Add(lfAbsDiffInt16x8(p1, q1).ShiftAllRight(1)).LessEqual(blimit))
 		ps1, ps0, qs0, qs1 := p1.Sub(center), p0.Sub(center), q0.Sub(center), q1.Sub(center)
 		f := ps1.Sub(qs1).Max(minV).Min(maxV).Masked(hev)
 		f = f.Add(qs0.Sub(ps0).Mul(three16)).Max(minV).Min(maxV)
-		f1 := f.Add(four).Max(minV).Min(maxV).ShiftAllRightConst(3)
-		f2 := f.Add(three16).Max(minV).Min(maxV).ShiftAllRightConst(3)
+		f1 := f.Add(four).Max(minV).Min(maxV).ShiftAllRight(3)
+		f2 := f.Add(three16).Max(minV).Min(maxV).ShiftAllRight(3)
 		np0 := ps0.Add(f2).Max(minV).Min(maxV).Add(center).IfElse(mask, p0)
 		nq0 := qs0.Sub(f1).Max(minV).Min(maxV).Add(center).IfElse(mask, q0)
-		ov := f1.Add(one).ShiftAllRightConst(1)
+		ov := f1.Add(one).ShiftAllRight(1)
 		np1 := p1.IfElse(hev, ps1.Add(ov).Max(minV).Min(maxV).Add(center)).IfElse(mask, p1)
 		nq1 := q1.IfElse(hev, qs1.Sub(ov).Max(minV).Min(maxV).Add(center)).IfElse(mask, q1)
 		lf8StoreP(pP1, np1)
@@ -336,21 +338,21 @@ func filter4Edge16SIMD(pix []byte, q0Base int, step int, outer int, length int, 
 		q0 := lf16LoadP(base)
 		q1 := lf16LoadP(pQ1)
 
-		hev := p1.AbsDiff(p0).Greater(cst.hev).Or(q1.AbsDiff(q0).Greater(cst.hev))
-		mask := p1.AbsDiff(p0).LessEqual(cst.limit).
-			And(q1.AbsDiff(q0).LessEqual(cst.limit)).
-			And(p0.AbsDiff(q0).ShiftAllLeftConst(1).Add(p1.AbsDiff(q1).ShiftAllRightConst(1)).LessEqual(cst.blimit))
+		hev := lfAbsDiffInt16x8(p1, p0).Greater(cst.hev).Or(lfAbsDiffInt16x8(q1, q0).Greater(cst.hev))
+		mask := lfAbsDiffInt16x8(p1, p0).LessEqual(cst.limit).
+			And(lfAbsDiffInt16x8(q1, q0).LessEqual(cst.limit)).
+			And(lfAbsDiffInt16x8(p0, q0).ShiftAllLeft(1).Add(lfAbsDiffInt16x8(p1, q1).ShiftAllRight(1)).LessEqual(cst.blimit))
 		ps1 := p1.Sub(cst.center)
 		ps0 := p0.Sub(cst.center)
 		qs0 := q0.Sub(cst.center)
 		qs1 := q1.Sub(cst.center)
 		f := clampSIMD(ps1.Sub(qs1), cst).Masked(hev)
 		f = clampSIMD(f.Add(qs0.Sub(ps0).Mul(cst.three16)), cst)
-		filter1 := clampSIMD(f.Add(cst.four), cst).ShiftAllRightConst(3)
-		filter2 := clampSIMD(f.Add(cst.three16), cst).ShiftAllRightConst(3)
+		filter1 := clampSIMD(f.Add(cst.four), cst).ShiftAllRight(3)
+		filter2 := clampSIMD(f.Add(cst.three16), cst).ShiftAllRight(3)
 		np0 := clampSIMD(ps0.Add(filter2), cst).Add(cst.center)
 		nq0 := clampSIMD(qs0.Sub(filter1), cst).Add(cst.center)
-		ov := filter1.Add(cst.one).ShiftAllRightConst(1)
+		ov := filter1.Add(cst.one).ShiftAllRight(1)
 		np1 := clampSIMD(ps1.Add(ov), cst).Add(cst.center)
 		nq1 := clampSIMD(qs1.Sub(ov), cst).Add(cst.center)
 		np1 = p1.IfElse(hev, np1).IfElse(mask, p1)

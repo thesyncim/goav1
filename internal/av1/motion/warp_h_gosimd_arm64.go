@@ -13,8 +13,8 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
-// warpHPerm{01,23,45,67} permute the 16 loaded source bytes into the four USDOT
-// sample-pair layouts in one VTBL each: pair 2c holds col-2c's window
+// warpHPerm{01,23,45,67} permute the 16 loaded source bytes into four paired
+// sample-window layouts: pair 2c holds col-2c's window
 // (raw[2c..2c+7]) in bytes 0..7 and col-(2c+1)'s window (raw[2c+1..2c+8]) in
 // bytes 8..15. Every index is in [0,14] so the TBL never zeroes. Replaces the
 // EXT + UZP1 shuffle chain (11 ops) with four table lookups.
@@ -57,15 +57,14 @@ var warpedFilterI8x8 = func() [len(warpedFilter)]int64 {
 // with the 8 windows read from overlapping 1-pixel-shifted slices of the same
 // row (col n reads ref[base + n .. base + n + 7], base = row + ix4 - 7). The
 // eight per-column filters are gathered scalar-side (there is no SIMD gather),
-// packed as four int8x16 tap-pairs (each pair = col2c taps || col2c+1 taps), the
-// 16 source bytes are permuted into the four sample-pair layouts with one VTBL
-// each, and USDOT dots them. The USDOT seed carries the horizontal bias plus the
-// round0 rounding constant in its even lanes only (odd lanes zero) so the
-// pairwise ConcatAddPairs that collapses the two half-sums does not double-count
-// it; an arithmetic right shift by reduceBitsHoriz then yields the exact
+// packed as four int8x16 tap-pairs (each pair = col2c taps || col2c+1 taps), and
+// the 16 source bytes are permuted into four sample-pair layouts. simdDotProdUS
+// composes the unsigned-byte dot products from official Go SIMD operations. Its
+// seed carries the horizontal bias plus the round0 rounding constant in even
+// lanes only (odd lanes zero) so pairwise addition does not double-count it; an
+// arithmetic right shift by reduceBitsHoriz then yields the exact
 // roundPowerOfTwo(sum, reduceBitsHoriz) int32 result (sum is non-negative for
-// every resident phase so the shift is bit-identical). Four USDOT + two ADDP +
-// one shift replace 64 scalar MACs per row.
+// every resident phase so the shift is bit-identical).
 func warpHorizontal8ResidentSIMD(tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, ref frame.Plane, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz int) int {
 	// Even-lane bias = (1<<offsetBitsHoriz) + round const (1<<(reduceBitsHoriz-1)),
 	// odd lanes zero: after ConcatAddPairs collapses each column's two 4-tap
@@ -152,18 +151,20 @@ func warpHorizontal8ResidentSIMD(tmp *[warpedIntermediateRows * warpedIntermedia
 		// (ix4-7>=0, ix4+7<W) keeps all 16 bytes in-bounds. One VTBL per pair builds
 		// the two 1-pixel-shifted 8-byte sample windows.
 		raw := archsimd.LoadUint8x16Array((*[16]uint8)(rowp))
-		m01 := seed.DotProdUS(raw.LookupOrZero(perm01), fv01)
-		m23 := seed.DotProdUS(raw.LookupOrZero(perm23), fv23)
-		m45 := seed.DotProdUS(raw.LookupOrZero(perm45), fv45)
-		m67 := seed.DotProdUS(raw.LookupOrZero(perm67), fv67)
+		m01 := simdDotProdUS(seed, raw.LookupOrZero(perm01), fv01)
+		m23 := simdDotProdUS(seed, raw.LookupOrZero(perm23), fv23)
+		m45 := simdDotProdUS(seed, raw.LookupOrZero(perm45), fv45)
+		m67 := simdDotProdUS(seed, raw.LookupOrZero(perm67), fv67)
 
 		// ConcatAddPairs collapses each column's two 4-tap half-sums; ShiftAllRight
 		// finishes roundPowerOfTwo. Cols 0..3 then 4..7.
 		m01.ConcatAddPairs(m23).ShiftAllRight(shift).StoreArray((*[4]int32)(dp))
 		m45.ConcatAddPairs(m67).ShiftAllRight(shift).StoreArray((*[4]int32)(unsafe.Add(dp, 16)))
 
-		rowp = unsafe.Add(rowp, rowStride)
-		dp = unsafe.Add(dp, warpedIntermediateColumns*4)
+		if k+1 < 8 {
+			rowp = unsafe.Add(rowp, rowStride)
+			dp = unsafe.Add(dp, warpedIntermediateColumns*4)
+		}
 	}
 	return sy4
 }

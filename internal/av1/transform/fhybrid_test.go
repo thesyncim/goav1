@@ -361,6 +361,38 @@ func TestForwardBlock8x8IDTXImplMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestForwardBlock8x8HybridFullInt16MatchesPureGo(t *testing.T) {
+	types := []Type{TypeADSTDCT, TypeDCTADST, TypeADSTADST, TypeIDTX}
+	rng := rand.New(rand.NewSource(404))
+	for _, typ := range types {
+		t.Run(typeName(typ), func(t *testing.T) {
+			var residual [64]int16
+			var want, got [64]int32
+			var wantScratch, gotScratch [64]int32
+			for trial := range 100 {
+				for i := range residual {
+					residual[i] = int16(rng.Intn(1<<16) - (1 << 15))
+				}
+				clear(want[:])
+				clear(got[:])
+				clear(wantScratch[:])
+				clear(gotScratch[:])
+				if !forwardBlock8x8HybridPureGo(want[:], 8, residual[:], 8, wantScratch[:], typ) {
+					t.Fatalf("unsupported type %s", typeName(typ))
+				}
+				if err := ForwardBlock(got[:], 8, residual[:], 8, gotScratch[:], Size{Width: 8, Height: 8}, typ); err != nil {
+					t.Fatalf("trial %d: %v", trial, err)
+				}
+				for i := range want {
+					if got[i] != want[i] {
+						t.Fatalf("trial %d coeff[%d]=%d want %d", trial, i, got[i], want[i])
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestFwdDCT8ValuesMatchesPointerCore(t *testing.T) {
 	rng := rand.New(rand.NewSource(14))
 	cases := [][8]int32{

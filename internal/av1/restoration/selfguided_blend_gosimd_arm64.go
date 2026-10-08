@@ -23,7 +23,7 @@
 // directly (int32 wraps mod 2^32 exactly like Go int32, and the three addends
 // commute, so the projection is regrouped to fold the u<<7 and the rounding
 // bias into the multiply-accumulate chain — see sgrProjectHalf):
-//   - u = s<<RstBits: the u8 path folds it into the USHLL widen; u16 keeps a
+//   - u = s<<RstBits: the u8 path folds it into the widen and shift; u16 keeps a
 //     register VSSHL after the widen.
 //   - roundPowerOfTwo is + bias then arithmetic >>11 (VSSHL by a negative
 //     count); the bias seeds the accumulator so no separate add is emitted.
@@ -127,15 +127,12 @@ func loadI32x4(p []int32, i int) archsimd.Int32x4 {
 // group and the <8 tail keep the scalar path. Byte-identical to
 // sgrWeightedRowU8.
 //
-// The widen folds the u = s<<RstBits shift into a single USHLL/USHLL2
-// (ExtendLo8ShlToUint16/ExtendHi8ShlToUint16 with amount RstBits): u comes
-// straight out of the widen with no separate shift (s<<4 <= 4080 fits uint16).
-// The two int32->int16 packs use TruncToInt16 + TruncToInt16Hi (XTN/XTN2), and
-// the int16->uint8 narrow uses SaturateToUint8 + SaturateToUint8Hi
-// (SQXTUN/SQXTUN2). TruncToInt16 is libaom's wrapping int16 cast, and SQXTUN's
-// signed->unsigned saturation is exactly clampInt32(int16(rounded), 0, 255), so
-// the explicit [0,255] clamp is folded into the narrow — the same instruction
-// sequence as the NEON asm.
+// The uint8 widen uses ExtendLo8ToUint16 and HiToLo+ExtendLo8ToUint16 followed
+// by the Q3 left shift. Pair truncation and saturation use the official narrow
+// operations, then InterleaveLo on the low 64-bit halves to restore lane order.
+// TruncToInt16 is libaom's wrapping int16 cast, and unsigned saturation is
+// exactly clampInt32(int16(rounded), 0, 255), so the explicit clip folds into
+// the narrow as in the NEON reference.
 func sgrWeightedRowU8SIMD(dst []uint8, src []uint8, f0 []int32, f1 []int32, xq0 int32, xq1 int32) {
 	width := len(dst)
 	// Reslice to width so the compiler can prove the i+16<=width loads in bounds
@@ -147,15 +144,15 @@ func sgrWeightedRowU8SIMD(dst []uint8, src []uint8, f0 []int32, f1 []int32, xq0 
 	i := 0
 	for ; i+16 <= width; i += 16 {
 		sv := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Pointer(&src[i])))
-		lo16 := sv.ExtendLo8ShlToUint16(SGRProjRstBits) // (s0..s7)<<4   (USHLL #4)
-		hi16 := sv.ExtendHi8ShlToUint16(SGRProjRstBits) // (s8..s15)<<4  (USHLL2 #4)
+		lo16 := sv.ExtendLo8ToUint16().ShiftAllLeft(SGRProjRstBits)          // (s0..s7)<<4
+		hi16 := sv.HiToLo().ExtendLo8ToUint16().ShiftAllLeft(SGRProjRstBits) // (s8..s15)<<4
 		r0 := sgrProjectHalf(lo16.ExtendLo4ToUint32().ConvertToInt32(), loadI32x4(f0, i), loadI32x4(f1, i), c)
-		r1 := sgrProjectHalf(lo16.ExtendHi4ToUint32().ConvertToInt32(), loadI32x4(f0, i+4), loadI32x4(f1, i+4), c)
+		r1 := sgrProjectHalf(lo16.HiToLo().ExtendLo4ToUint32().ConvertToInt32(), loadI32x4(f0, i+4), loadI32x4(f1, i+4), c)
 		r2 := sgrProjectHalf(hi16.ExtendLo4ToUint32().ConvertToInt32(), loadI32x4(f0, i+8), loadI32x4(f1, i+8), c)
-		r3 := sgrProjectHalf(hi16.ExtendHi4ToUint32().ConvertToInt32(), loadI32x4(f0, i+12), loadI32x4(f1, i+12), c)
-		lo := r0.TruncToInt16().TruncToInt16Hi(r1) // w0..w7
-		hi := r2.TruncToInt16().TruncToInt16Hi(r3) // w8..w15
-		lo.SaturateToUint8().SaturateToUint8Hi(hi).StoreArray((*[16]uint8)(unsafe.Pointer(&dst[i])))
+		r3 := sgrProjectHalf(hi16.HiToLo().ExtendLo4ToUint32().ConvertToInt32(), loadI32x4(f0, i+12), loadI32x4(f1, i+12), c)
+		lo := restorationTruncateInt32PairToInt16(r0, r1) // w0..w7
+		hi := restorationTruncateInt32PairToInt16(r2, r3) // w8..w15
+		restorationSaturateInt16PairToUint8(lo, hi).StoreArray((*[16]uint8)(unsafe.Pointer(&dst[i])))
 	}
 	if i+8 <= width {
 		// uint8 lacks an 8-byte archsimd load/store, so stage 8 bytes through a
@@ -164,10 +161,10 @@ func sgrWeightedRowU8SIMD(dst []uint8, src []uint8, f0 []int32, f1 []int32, xq0 
 		var sbuf, obuf [16]uint8
 		sbuf[0], sbuf[1], sbuf[2], sbuf[3] = src[i], src[i+1], src[i+2], src[i+3]
 		sbuf[4], sbuf[5], sbuf[6], sbuf[7] = src[i+4], src[i+5], src[i+6], src[i+7]
-		lo16 := archsimd.LoadUint8x16Array(&sbuf).ExtendLo8ShlToUint16(SGRProjRstBits)
+		lo16 := archsimd.LoadUint8x16Array(&sbuf).ExtendLo8ToUint16().ShiftAllLeft(SGRProjRstBits)
 		rLo := sgrProjectHalf(lo16.ExtendLo4ToUint32().ConvertToInt32(), loadI32x4(f0, i), loadI32x4(f1, i), c)
-		rHi := sgrProjectHalf(lo16.ExtendHi4ToUint32().ConvertToInt32(), loadI32x4(f0, i+4), loadI32x4(f1, i+4), c)
-		rLo.TruncToInt16().TruncToInt16Hi(rHi).SaturateToUint8().StoreArray(&obuf)
+		rHi := sgrProjectHalf(lo16.HiToLo().ExtendLo4ToUint32().ConvertToInt32(), loadI32x4(f0, i+4), loadI32x4(f1, i+4), c)
+		restorationTruncateInt32PairToInt16(rLo, rHi).SaturateToUint8().StoreArray(&obuf)
 		dst[i], dst[i+1], dst[i+2], dst[i+3] = obuf[0], obuf[1], obuf[2], obuf[3]
 		dst[i+4], dst[i+5], dst[i+6], dst[i+7] = obuf[4], obuf[5], obuf[6], obuf[7]
 		i += 8
@@ -182,8 +179,8 @@ func sgrWeightedRowU8SIMD(dst []uint8, src []uint8, f0 []int32, f1 []int32, xq0 
 // four Int32x4 projections, two 16-byte stores); a trailing 8-wide group and
 // the <8 tail keep the scalar path. Byte-identical to sgrWeightedRow.
 //
-// The widen uses ExtendLo4/ExtendHi4ToUint32 (UXTL/UXTL2) and the int32->int16
-// pack uses TruncToInt16 + TruncToInt16Hi (XTN/XTN2) — no lane shuffles. Unlike
+// The widen uses ExtendLo4ToUint32 and HiToLo+ExtendLo4ToUint32. The int32->int16
+// pack uses TruncToInt16 and InterleaveLo. Unlike
 // the u8 path the [0,maxI] clamp cannot fold into the narrow (maxI < 65535, so
 // SQXTUN's full-range saturation is too wide), so it stays as Max/Min in the
 // int16 domain before the uint16 reinterpret.
@@ -196,7 +193,7 @@ func sgrWeightedRowSIMD(dst []uint16, src []uint16, f0 []int32, f1 []int32, xq0 
 	zero16 := archsimd.BroadcastInt16x8(0)
 	max16 := archsimd.BroadcastInt16x8(int16(maxI))
 	narrow := func(a, b archsimd.Int32x4) archsimd.Uint16x8 {
-		return a.TruncToInt16().TruncToInt16Hi(b).Max(zero16).Min(max16).ConvertToUint16()
+		return restorationTruncateInt32PairToInt16(a, b).Max(zero16).Min(max16).ConvertToUint16()
 	}
 	// u16 has no widen-with-shift op, so u = s<<RstBits is a register VSSHL after
 	// the UXTL/UXTL2 widen (uSh applies c.shRst).
@@ -206,16 +203,16 @@ func sgrWeightedRowSIMD(dst []uint16, src []uint16, f0 []int32, f1 []int32, xq0 
 		sv0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&src[i])))
 		sv1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&src[i+8])))
 		r0 := sgrProjectHalf(uSh(sv0.ExtendLo4ToUint32()), loadI32x4(f0, i), loadI32x4(f1, i), c)
-		r1 := sgrProjectHalf(uSh(sv0.ExtendHi4ToUint32()), loadI32x4(f0, i+4), loadI32x4(f1, i+4), c)
+		r1 := sgrProjectHalf(uSh(sv0.HiToLo().ExtendLo4ToUint32()), loadI32x4(f0, i+4), loadI32x4(f1, i+4), c)
 		r2 := sgrProjectHalf(uSh(sv1.ExtendLo4ToUint32()), loadI32x4(f0, i+8), loadI32x4(f1, i+8), c)
-		r3 := sgrProjectHalf(uSh(sv1.ExtendHi4ToUint32()), loadI32x4(f0, i+12), loadI32x4(f1, i+12), c)
+		r3 := sgrProjectHalf(uSh(sv1.HiToLo().ExtendLo4ToUint32()), loadI32x4(f0, i+12), loadI32x4(f1, i+12), c)
 		narrow(r0, r1).StoreArray((*[8]uint16)(unsafe.Pointer(&dst[i])))
 		narrow(r2, r3).StoreArray((*[8]uint16)(unsafe.Pointer(&dst[i+8])))
 	}
 	if i+8 <= width {
 		sv := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&src[i])))
 		rLo := sgrProjectHalf(uSh(sv.ExtendLo4ToUint32()), loadI32x4(f0, i), loadI32x4(f1, i), c)
-		rHi := sgrProjectHalf(uSh(sv.ExtendHi4ToUint32()), loadI32x4(f0, i+4), loadI32x4(f1, i+4), c)
+		rHi := sgrProjectHalf(uSh(sv.HiToLo().ExtendLo4ToUint32()), loadI32x4(f0, i+4), loadI32x4(f1, i+4), c)
 		narrow(rLo, rHi).StoreArray((*[8]uint16)(unsafe.Pointer(&dst[i])))
 		i += 8
 	}

@@ -22,7 +22,6 @@ func init() {
 	int16ColumnFast = true
 }
 
-
 // clampRoundNarrowInt16SIMD is the fused mid-pass round+clamp+narrow: at
 // bitDepth 8 the column clamp bounds are exactly the int16 range, so
 // roundShift + clip + narrow is one saturating rounding narrow (SQRSHRN) per
@@ -39,14 +38,14 @@ func clampRoundNarrowInt16SIMD(src []int32, dst []int16, shift int, lo int32, hi
 		for ; i+8 <= n; i += 8 {
 			v0 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Pointer(&src[i])))
 			v1 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Pointer(&src[i+4])))
-			v0.ShiftRightRoundNarrow(1).ShiftRightRoundNarrowHi(v1, 1).
+			roundShiftNarrowInt32x4ToInt16x8(v0, v1, 1).
 				StoreArray((*[8]int16)(unsafe.Pointer(&dst[i])))
 		}
 	} else {
 		for ; i+8 <= n; i += 8 {
 			v0 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Pointer(&src[i])))
 			v1 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Pointer(&src[i+4])))
-			v0.ShiftRightRoundNarrow(2).ShiftRightRoundNarrowHi(v1, 2).
+			roundShiftNarrowInt32x4ToInt16x8(v0, v1, 2).
 				StoreArray((*[8]int16)(unsafe.Pointer(&dst[i])))
 		}
 	}

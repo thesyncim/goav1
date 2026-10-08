@@ -8,32 +8,25 @@ package motion
 
 import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 
-// init binds the architecture-best convolve variants under the
-// goexperiment.simd build. It mirrors convolve_dispatch_arm64.go (the
-// !goexperiment.simd sibling) exactly, except the both-axes-fractional 8-bit 2D
-// kernels route through the Go-native SIMD implementation (convolve2D8GoSIMD /
-// convolve2D8GoSIMDScratch), which beats the hand-written I8MM asm on the
-// dominant decode hotspot. Every other slot keeps the proven asm tier; the 2D
-// GoSIMD itself falls back to the asm tier for width-4 and any tap packing it
-// does not cover, so all shapes stay accelerated and byte-exact.
+// init binds the convolve variants under the goexperiment.simd build. It mirrors
+// convolve_dispatch_arm64.go except that selected 8-bit paths use official
+// Go-native SIMD implementations. Unsupported shapes continue through the asm
+// tiers, so all paths retain the same scalar-reference output.
 func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {
 		convolveX8Impl = convolveX8NEON
 		convolveY8Impl = convolveY8NEON
 		if cpu.Detected.I8MM {
-			// Horizontal-8: the Go-native SIMD kernel beats the I8MM asm on the
-			// wide (multiple-of-8) shapes via the fused SQRSHRUN round-narrow
-			// tail; the dispatch wrapper routes width-4/unsupported taps back to
-			// the I8MM asm tier so every shape stays accelerated and byte-exact.
+			// Route supported wide horizontal blocks through the official SIMD
+			// implementation; width-4 and unsupported filters use the I8MM asm.
 			convolveX8Impl = convolveX8GoSIMDDispatch
 			convolveY8Impl = convolveY8I8MM
 		}
 
 		// Both-axes-fractional 2D: the caller-scratch path is the decode hotspot
-		// (predictInterPlaneBlock8), and the Go-native SIMD kernel (USDOT
-		// horizontal + SMLAL vertical) beats the I8MM asm there. Width-4 and
-		// unsupported tap packings fall back to the asm tier inside the wrapper.
+		// (predictInterPlaneBlock8). Unsupported widths and tap packings fall back
+		// to the asm tier inside the wrapper.
 		// The no-scratch slot keeps the asm tier: it is a cold path (scaled
 		// references) whose per-call stack intermediate makes the GoSIMD's extra
 		// horizontal work a net loss on small blocks.

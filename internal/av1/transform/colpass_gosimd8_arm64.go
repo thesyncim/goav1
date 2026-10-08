@@ -6,20 +6,32 @@
 
 // int16 8-wide Go-native SIMD inverse DCT8 column pass (dav1d technique).
 // Eight columns are processed per Int16x8. Two-term rotations accumulate both
-// products in int32 via MulWidenLo/MulWidenHi (SMULL/SMULL2), then round ONCE
-// and narrow back to int16 with SQRSHRN/SQRSHRN2 (ShiftRightRoundNarrow[Hi]).
-// This is byte-identical to the scalar roundShift and processes twice the
-// columns of the int32 4-wide path.
+// products in int32 with MulWidenLo; upper lanes are moved to the low half
+// before widening. The result is rounded once with an overflow-free rounding
+// bit, then saturated and packed back to int16. This is byte-identical to the
+// scalar roundShift and processes twice the columns of the int32 4-wide path.
 
 package transform
 
 import "simd/archsimd"
 
+// roundShiftNarrowInt32x4ToInt16x8 matches signed round-to-nearest with ties
+// toward positive infinity, followed by signed saturation. shift must be
+// positive. Splitting the rounding bit from the shifted value avoids overflow
+// in x + (1 << (n-1)).
+func roundShiftNarrowInt32x4ToInt16x8(lo, hi archsimd.Int32x4, shift uint8) archsimd.Int16x8 {
+	shift64 := uint64(shift)
+	one := archsimd.BroadcastInt32x4(1)
+	lo16 := lo.ShiftAllRight(shift64).Add(lo.ShiftAllRight(shift64 - 1).And(one)).SaturateToInt16()
+	hi16 := hi.ShiftAllRight(shift64).Add(hi.ShiftAllRight(shift64 - 1).And(one)).SaturateToInt16()
+	return lo16.ToBits().ReshapeToUint64s().InterleaveLo(hi16.ToBits().ReshapeToUint64s()).ReshapeToUint16s().BitsToInt16()
+}
+
 // inverseDCT8Col8SIMD applies inverseDCT8 to eight adjacent columns
 // buf[k*stride+0..7], byte-for-byte with scalar inverseDCT8, for the int16
 // (8-bit) clamp range. Falls back to scalar per column otherwise.
 func inverseDCT8Col8SIMD(buf []int32, stride int, min int32, max int32) {
-	if min < -(1<<15) || max >= (1 << 15) {
+	if min < -(1<<15) || max >= (1<<15) {
 		for col := 0; col < 8; col++ {
 			inverseDCT8(buf[col:], stride, min, max)
 		}
@@ -47,11 +59,11 @@ func inverseDCT8Col8SIMD(buf []int32, stride int, min int32, max int32) {
 	// mw widens a*c into (lo,hi) int32 accumulators (8 lanes total).
 	mw := func(a archsimd.Int16x8, c int16) (archsimd.Int32x4, archsimd.Int32x4) {
 		kc := archsimd.BroadcastInt16x8(c)
-		return a.MulWidenLo(kc), a.MulWidenHi(kc)
+		return a.MulWidenLo(kc), a.HiToLo().MulWidenLo(kc)
 	}
 	// nr rounds two int32 accumulators once by n and narrows to int16 (8 lanes).
 	nr := func(lo, hi archsimd.Int32x4, n uint8) archsimd.Int16x8 {
-		return lo.ShiftRightRoundNarrow(n).ShiftRightRoundNarrowHi(hi, n)
+		return roundShiftNarrowInt32x4ToInt16x8(lo, hi, n)
 	}
 
 	c0, c1, c2, c3 := ld(0), ld(1), ld(2), ld(3)
@@ -117,10 +129,10 @@ func inverseDCT8Col8SIMD16(buf []int16, stride int, min int32, max int32) {
 	clip := func(v archsimd.Int16x8) archsimd.Int16x8 { return v.Max(minV).Min(maxV) }
 	mw := func(a archsimd.Int16x8, c int16) (archsimd.Int32x4, archsimd.Int32x4) {
 		kc := archsimd.BroadcastInt16x8(c)
-		return a.MulWidenLo(kc), a.MulWidenHi(kc)
+		return a.MulWidenLo(kc), a.HiToLo().MulWidenLo(kc)
 	}
 	nr := func(lo, hi archsimd.Int32x4, n uint8) archsimd.Int16x8 {
-		return lo.ShiftRightRoundNarrow(n).ShiftRightRoundNarrowHi(hi, n)
+		return roundShiftNarrowInt32x4ToInt16x8(lo, hi, n)
 	}
 	// int16 butterfly adds saturate, matching dav1d's sqadd/sqsub (byte-exact
 	// with the non-saturating scalar when no overflow occurs, i.e. valid decode).
@@ -191,10 +203,10 @@ func inverseDCT16Col8SIMD16(buf []int16, stride int, min int32, max int32) {
 	ssub := func(a, b archsimd.Int16x8) archsimd.Int16x8 { return a.SubSaturated(b) }
 	mw := func(a archsimd.Int16x8, c int16) (archsimd.Int32x4, archsimd.Int32x4) {
 		kc := archsimd.BroadcastInt16x8(c)
-		return a.MulWidenLo(kc), a.MulWidenHi(kc)
+		return a.MulWidenLo(kc), a.HiToLo().MulWidenLo(kc)
 	}
 	nr := func(lo, hi archsimd.Int32x4, n uint8) archsimd.Int16x8 {
-		return lo.ShiftRightRoundNarrow(n).ShiftRightRoundNarrowHi(hi, n)
+		return roundShiftNarrowInt32x4ToInt16x8(lo, hi, n)
 	}
 	// roundShift(a*ca - b*cb, n) and roundShift(a*ca + b*cb, n) and the negated
 	// two-term; single-term roundShift(a*c, n).
@@ -291,10 +303,10 @@ func inverseDCT32Col8SIMD16(buf []int16, stride int, min int32, max int32) {
 	ssub := func(a, b archsimd.Int16x8) archsimd.Int16x8 { return a.SubSaturated(b) }
 	mw := func(a archsimd.Int16x8, c int16) (archsimd.Int32x4, archsimd.Int32x4) {
 		kc := archsimd.BroadcastInt16x8(c)
-		return a.MulWidenLo(kc), a.MulWidenHi(kc)
+		return a.MulWidenLo(kc), a.HiToLo().MulWidenLo(kc)
 	}
 	nr := func(lo, hi archsimd.Int32x4, n uint8) archsimd.Int16x8 {
-		return lo.ShiftRightRoundNarrow(n).ShiftRightRoundNarrowHi(hi, n)
+		return roundShiftNarrowInt32x4ToInt16x8(lo, hi, n)
 	}
 	rSub := func(a archsimd.Int16x8, ca int16, b archsimd.Int16x8, cb int16, n uint8) archsimd.Int16x8 {
 		al, ah := mw(a, ca)
@@ -467,10 +479,10 @@ func inverseDCT64Col8SIMD16(buf []int16, stride int, min int32, max int32) {
 	ssub := func(a, b archsimd.Int16x8) archsimd.Int16x8 { return a.SubSaturated(b) }
 	mw := func(a archsimd.Int16x8, c int16) (archsimd.Int32x4, archsimd.Int32x4) {
 		kc := archsimd.BroadcastInt16x8(c)
-		return a.MulWidenLo(kc), a.MulWidenHi(kc)
+		return a.MulWidenLo(kc), a.HiToLo().MulWidenLo(kc)
 	}
 	nr := func(lo, hi archsimd.Int32x4, n uint8) archsimd.Int16x8 {
-		return lo.ShiftRightRoundNarrow(n).ShiftRightRoundNarrowHi(hi, n)
+		return roundShiftNarrowInt32x4ToInt16x8(lo, hi, n)
 	}
 	rSub := func(a archsimd.Int16x8, ca int16, b archsimd.Int16x8, cb int16, n uint8) archsimd.Int16x8 {
 		al, ah := mw(a, ca)

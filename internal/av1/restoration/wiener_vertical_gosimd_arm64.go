@@ -20,9 +20,9 @@ import (
 // Column-strip walk with a SLIDING 7-row register window: each temp row is loaded
 // once and reused across the 7 output rows that read it (the hand asm's trick),
 // instead of reloading all 7 rows per output row. temp is bounded to [0,8191]
-// (< 2^15), so its uint16 cells reinterpret losslessly as int16 for SMLAL; the
-// int32 accumulator's SQRSHRN (rounding narrow) then SQXTUN (uint8 saturate)
-// reproduce clamp(roundPowerOfTwo(sum,round1),0,255) byte-for-byte.
+// (< 2^15), so its uint16 cells reinterpret losslessly as int16 for widening
+// multiplication; the int32 accumulator's overflow-safe rounded shift and
+// uint8 saturation reproduce clamp(roundPowerOfTwo(sum,round1),0,255) exactly.
 func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride int, width int, height int, filter WienerFilter, round1 int) {
 	if width < 8 || round1 < 1 || round1 > 16 {
 		wienerVerticalU8(temp, tempStride, dst, dstStride, width, height, filter, round1)
@@ -37,6 +37,10 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 	f4 := archsimd.BroadcastInt16x8(filter[4])
 	f5 := archsimd.BroadcastInt16x8(filter[5])
 	f6 := archsimd.BroadcastInt16x8(filter[6])
+	hf0, hf1 := f0.HiToLo(), f1.HiToLo()
+	hf2, hf3 := f2.HiToLo(), f3.HiToLo()
+	hf4, hf5 := f4.HiToLo(), f5.HiToLo()
+	hf6 := f6.HiToLo()
 	rb := uint8(round1)
 
 	const u16 = 2
@@ -67,22 +71,24 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 		for row := 0; row < height; row++ {
 			r6a := archsimd.LoadInt16x8Array((*[8]int16)(nexta))
 			r6b := archsimd.LoadInt16x8Array((*[8]int16)(nextb))
-			loA := biasV.MulWidenLoAdd(r0a, f0).MulWidenLoAdd(r1a, f1).MulWidenLoAdd(r2a, f2).
-				MulWidenLoAdd(r3a, f3).MulWidenLoAdd(r4a, f4).MulWidenLoAdd(r5a, f5).MulWidenLoAdd(r6a, f6)
-			hiA := biasV.MulWidenHiAdd(r0a, f0).MulWidenHiAdd(r1a, f1).MulWidenHiAdd(r2a, f2).
-				MulWidenHiAdd(r3a, f3).MulWidenHiAdd(r4a, f4).MulWidenHiAdd(r5a, f5).MulWidenHiAdd(r6a, f6)
-			pa := loA.ShiftRightRoundNarrow(rb).ShiftRightRoundNarrowHi(hiA, rb)
-			loB := biasV.MulWidenLoAdd(r0b, f0).MulWidenLoAdd(r1b, f1).MulWidenLoAdd(r2b, f2).
-				MulWidenLoAdd(r3b, f3).MulWidenLoAdd(r4b, f4).MulWidenLoAdd(r5b, f5).MulWidenLoAdd(r6b, f6)
-			hiB := biasV.MulWidenHiAdd(r0b, f0).MulWidenHiAdd(r1b, f1).MulWidenHiAdd(r2b, f2).
-				MulWidenHiAdd(r3b, f3).MulWidenHiAdd(r4b, f4).MulWidenHiAdd(r5b, f5).MulWidenHiAdd(r6b, f6)
-			pb := loB.ShiftRightRoundNarrow(rb).ShiftRightRoundNarrowHi(hiB, rb)
-			out := pa.SaturateToUint8().SaturateToUint8Hi(pb)
+			loA := biasV.Add(r0a.MulWidenLo(f0)).Add(r1a.MulWidenLo(f1)).Add(r2a.MulWidenLo(f2)).
+				Add(r3a.MulWidenLo(f3)).Add(r4a.MulWidenLo(f4)).Add(r5a.MulWidenLo(f5)).Add(r6a.MulWidenLo(f6))
+			hiA := biasV.Add(r0a.HiToLo().MulWidenLo(hf0)).Add(r1a.HiToLo().MulWidenLo(hf1)).Add(r2a.HiToLo().MulWidenLo(hf2)).
+				Add(r3a.HiToLo().MulWidenLo(hf3)).Add(r4a.HiToLo().MulWidenLo(hf4)).Add(r5a.HiToLo().MulWidenLo(hf5)).Add(r6a.HiToLo().MulWidenLo(hf6))
+			pa := restorationRoundShiftNarrowInt32Pair(loA, hiA, rb)
+			loB := biasV.Add(r0b.MulWidenLo(f0)).Add(r1b.MulWidenLo(f1)).Add(r2b.MulWidenLo(f2)).
+				Add(r3b.MulWidenLo(f3)).Add(r4b.MulWidenLo(f4)).Add(r5b.MulWidenLo(f5)).Add(r6b.MulWidenLo(f6))
+			hiB := biasV.Add(r0b.HiToLo().MulWidenLo(hf0)).Add(r1b.HiToLo().MulWidenLo(hf1)).Add(r2b.HiToLo().MulWidenLo(hf2)).
+				Add(r3b.HiToLo().MulWidenLo(hf3)).Add(r4b.HiToLo().MulWidenLo(hf4)).Add(r5b.HiToLo().MulWidenLo(hf5)).Add(r6b.HiToLo().MulWidenLo(hf6))
+			pb := restorationRoundShiftNarrowInt32Pair(loB, hiB, rb)
+			out := restorationSaturateInt16PairToUint8(pa, pb)
 			out.StoreArray((*[16]uint8)(unsafe.Add(drow, row*dstStride)))
-			r0a, r1a, r2a, r3a, r4a, r5a = r1a, r2a, r3a, r4a, r5a, r6a
-			r0b, r1b, r2b, r3b, r4b, r5b = r1b, r2b, r3b, r4b, r5b, r6b
-			nexta = unsafe.Add(nexta, tempStride*u16)
-			nextb = unsafe.Add(nextb, tempStride*u16)
+			if row+1 < height {
+				r0a, r1a, r2a, r3a, r4a, r5a = r1a, r2a, r3a, r4a, r5a, r6a
+				r0b, r1b, r2b, r3b, r4b, r5b = r1b, r2b, r3b, r4b, r5b, r6b
+				nexta = unsafe.Add(nexta, tempStride*u16)
+				nextb = unsafe.Add(nextb, tempStride*u16)
+			}
 		}
 	}
 	// 8-wide sliding tail for a trailing width%16 == 8 strip.
@@ -99,15 +105,17 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 		drow := unsafe.Add(dp, col)
 		for row := 0; row < height; row++ {
 			r6 := archsimd.LoadInt16x8Array((*[8]int16)(nextp))
-			lo := r0.MulWidenLo(f0).MulWidenLoAdd(r1, f1).MulWidenLoAdd(r2, f2).
-				MulWidenLoAdd(r3, f3).MulWidenLoAdd(r4, f4).MulWidenLoAdd(r5, f5).MulWidenLoAdd(r6, f6).Add(biasV)
-			hi := r0.MulWidenHi(f0).MulWidenHiAdd(r1, f1).MulWidenHiAdd(r2, f2).
-				MulWidenHiAdd(r3, f3).MulWidenHiAdd(r4, f4).MulWidenHiAdd(r5, f5).MulWidenHiAdd(r6, f6).Add(biasV)
-			out := lo.ShiftRightRoundNarrow(rb).ShiftRightRoundNarrowHi(hi, rb).SaturateToUint8()
-			*(*float64)(unsafe.Add(drow, row*dstStride)) = out.ReshapeToFloat64x2().GetElem(0)
+			lo := r0.MulWidenLo(f0).Add(r1.MulWidenLo(f1)).Add(r2.MulWidenLo(f2)).
+				Add(r3.MulWidenLo(f3)).Add(r4.MulWidenLo(f4)).Add(r5.MulWidenLo(f5)).Add(r6.MulWidenLo(f6)).Add(biasV)
+			hi := r0.HiToLo().MulWidenLo(hf0).Add(r1.HiToLo().MulWidenLo(hf1)).Add(r2.HiToLo().MulWidenLo(hf2)).
+				Add(r3.HiToLo().MulWidenLo(hf3)).Add(r4.HiToLo().MulWidenLo(hf4)).Add(r5.HiToLo().MulWidenLo(hf5)).Add(r6.HiToLo().MulWidenLo(hf6)).Add(biasV)
+			out := restorationRoundShiftNarrowInt32Pair(lo, hi, rb).SaturateToUint8()
+			*(*float64)(unsafe.Add(drow, row*dstStride)) = out.ReshapeToUint64s().BitsToFloat64().GetElem(0)
 			// Slide the window: drop r0, shift up, r6 becomes the new r5 side.
-			r0, r1, r2, r3, r4, r5 = r1, r2, r3, r4, r5, r6
-			nextp = unsafe.Add(nextp, tempStride*u16)
+			if row+1 < height {
+				r0, r1, r2, r3, r4, r5 = r1, r2, r3, r4, r5, r6
+				nextp = unsafe.Add(nextp, tempStride*u16)
+			}
 		}
 	}
 	// scalar remainder for the trailing width%8 columns.

@@ -58,6 +58,8 @@ func TestMinMaxAbsDiff8x8SIMDMatchesScalar(t *testing.T) {
 	}
 }
 
+var minMaxBenchmarkMin, minMaxBenchmarkMax uint16
+
 func benchMinMax(b *testing.B, fn func([]byte, int, []byte, int, int) (uint16, uint16, error)) {
 	rng := rand.New(rand.NewSource(4))
 	a := make([]byte, 8*8)
@@ -66,12 +68,17 @@ func benchMinMax(b *testing.B, fn func([]byte, int, []byte, int, int) (uint16, u
 		a[i] = byte(rng.Intn(256))
 		bb[i] = byte(rng.Intn(256))
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		fn(a, 8, bb, 8, 1)
+	for b.Loop() {
+		min, max, err := fn(a, 8, bb, 8, 1)
+		if err != nil {
+			b.Fatal(err)
+		}
+		minMaxBenchmarkMin, minMaxBenchmarkMax = min, max
 	}
 }
 
 func BenchmarkMinMax8x8_Scalar(b *testing.B) { benchMinMax(b, minMaxAbsDiff8x8PureGo) }
 func BenchmarkMinMax8x8_SIMD(b *testing.B)   { benchMinMax(b, minMaxAbsDiff8x8SIMD) }
-func BenchmarkMinMax8x8_ASM(b *testing.B)    { benchMinMax(b, minMaxAbsDiff8x8Impl) }
+func BenchmarkMinMax8x8_ASM(b *testing.B)    { benchMinMax(b, minMaxAbsDiff8x8NEON) }

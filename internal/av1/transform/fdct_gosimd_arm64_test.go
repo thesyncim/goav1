@@ -37,11 +37,12 @@ func TestForwardDCTSIMDDirectMatchesPureGo(t *testing.T) {
 		w, h int
 		simd func([]int32, int, []int16, int)
 		pure func([]int32, int, []int16, int)
+		neon func([]int32, int, []int16, int)
 	}
 	kernels := []kernel{
-		{name: "4x4", w: 4, h: 4, simd: forwardDCT4x4SIMD, pure: forwardDCT4x4PureGo},
-		{name: "8x8", w: 8, h: 8, simd: forwardDCT8x8SIMD, pure: forwardDCT8x8PureGo},
-		{name: "16x16", w: 16, h: 16, simd: forwardDCT16x16SIMD, pure: forwardDCT16x16PureGo},
+		{name: "4x4", w: 4, h: 4, simd: forwardDCT4x4SIMD, pure: forwardDCT4x4PureGo, neon: forwardDCT4x4NEON},
+		{name: "8x8", w: 8, h: 8, simd: forwardDCT8x8SIMD, pure: forwardDCT8x8PureGo, neon: forwardDCT8x8NEON},
+		{name: "16x16", w: 16, h: 16, simd: forwardDCT16x16SIMD, pure: forwardDCT16x16PureGo, neon: forwardDCT16x16NEON},
 	}
 	rng := rand.New(rand.NewSource(917))
 	for _, k := range kernels {
@@ -51,14 +52,96 @@ func TestForwardDCTSIMDDirectMatchesPureGo(t *testing.T) {
 			residual := make([]int16, resStride*k.h)
 			want := make([]int32, coeffStride*k.w)
 			got := make([]int32, coeffStride*k.w)
+			asm := make([]int32, coeffStride*k.w)
 			for trial := range 1000 {
 				for i := range residual {
 					residual[i] = int16(rng.Intn(511) - 255)
 				}
 				clear(want)
 				clear(got)
+				clear(asm)
 				k.pure(want, coeffStride, residual, resStride)
 				k.simd(got, coeffStride, residual, resStride)
+				k.neon(asm, coeffStride, residual, resStride)
+				for i := range want {
+					if got[i] != want[i] {
+						t.Fatalf("trial %d coeff[%d]=%d want %d", trial, i, got[i], want[i])
+					}
+					if asm[i] != want[i] {
+						t.Fatalf("trial %d coeff[%d] NEON=%d want %d", trial, i, asm[i], want[i])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestForwardDCT4x4SIMDExactResidualLength(t *testing.T) {
+	var residual [16]int16
+	var want, got [16]int32
+	rng := rand.New(rand.NewSource(401))
+	for trial := range 1000 {
+		for i := range residual {
+			residual[i] = int16(rng.Intn(1<<16) - (1 << 15))
+		}
+		clear(want[:])
+		clear(got[:])
+		forwardDCT4x4PureGo(want[:], 4, residual[:], 4)
+		forwardDCT4x4SIMD(got[:], 4, residual[:], 4)
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("trial %d coeff[%d] SIMD=%d want %d", trial, i, got[i], want[i])
+			}
+		}
+	}
+}
+
+func TestForwardDCT4x4SIMDProvenInt32Range(t *testing.T) {
+	var residual [16]int16
+	var want, got [16]int32
+	rng := rand.New(rand.NewSource(405))
+	for trial := range 1000 {
+		for i := range residual {
+			residual[i] = int16(rng.Intn(4097) - 2048)
+		}
+		clear(want[:])
+		clear(got[:])
+		forwardDCT4x4PureGo(want[:], 4, residual[:], 4)
+		forwardDCT4x4SIMD(got[:], 4, residual[:], 4)
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("trial %d coeff[%d] SIMD=%d want %d", trial, i, got[i], want[i])
+			}
+		}
+	}
+}
+
+func TestForwardDCTSIMDFullInt16MatchesPureGo(t *testing.T) {
+	type kernel struct {
+		name string
+		side int
+		simd func([]int32, int, []int16, int)
+		pure func([]int32, int, []int16, int)
+	}
+	kernels := []kernel{
+		{name: "4x4", side: 4, simd: forwardDCT4x4SIMD, pure: forwardDCT4x4PureGo},
+		{name: "8x8", side: 8, simd: forwardDCT8x8SIMD, pure: forwardDCT8x8PureGo},
+		{name: "16x16", side: 16, simd: forwardDCT16x16SIMD, pure: forwardDCT16x16PureGo},
+	}
+	rng := rand.New(rand.NewSource(402))
+	for _, k := range kernels {
+		t.Run(k.name, func(t *testing.T) {
+			residual := make([]int16, k.side*k.side)
+			want := make([]int32, k.side*k.side)
+			got := make([]int32, k.side*k.side)
+			for trial := range 100 {
+				for i := range residual {
+					residual[i] = int16(rng.Intn(1<<16) - (1 << 15))
+				}
+				clear(want)
+				clear(got)
+				k.pure(want, k.side, residual, k.side)
+				k.simd(got, k.side, residual, k.side)
 				for i := range want {
 					if got[i] != want[i] {
 						t.Fatalf("trial %d coeff[%d]=%d want %d", trial, i, got[i], want[i])
