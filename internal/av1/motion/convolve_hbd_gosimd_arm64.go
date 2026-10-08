@@ -43,7 +43,8 @@ func hbdSIMDShape(width, height int) bool {
 func hbdSIMDMAC8(lo, hi archsimd.Int32x4, p unsafe.Pointer, coeff archsimd.Int16x8) (archsimd.Int32x4, archsimd.Int32x4) {
 	samples := archsimd.LoadUint16x8Array((*[8]uint16)(p)).BitsToInt16()
 	lo = lo.Add(samples.MulWidenLo(coeff))
-	hi = hi.Add(samples.HiToLo().MulWidenLo(coeff))
+	// Go 1.27 lowers this pair of HiToLo operands directly to SMULL2.
+	hi = hi.Add(samples.HiToLo().MulWidenLo(coeff.HiToLo()))
 	return lo, hi
 }
 
