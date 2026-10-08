@@ -2,14 +2,14 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build goexperiment.simd && (arm64 || amd64) && !purego
+//go:build goexperiment.simd && amd64 && !purego
 
 package dsp
 
 // Go-native SIMD (simd/archsimd) AddResidualPlaneBlock and AddRawTransform-
-// PlaneBlock kernels shared by arm64 and amd64. The architecture files provide
-// the three operations whose instruction forms differ: the signed 32-to-16 pack
-// of the raw path, and the two unsigned narrowings that store 8-bit samples.
+// PlaneBlock kernels for amd64 (AVX2). plane_gosimd_amd64.go provides the
+// signed 32-to-16 pack of the raw path and the two unsigned narrowings that
+// store 8-bit samples. arm64 has its own kernels in plane_gosimd_arm64.go.
 //
 // Shapes: blocks whose width is a multiple of eight run eight samples per
 // vector (sixteen for 8-bit residuals with width a multiple of sixteen), and
