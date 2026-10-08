@@ -18,8 +18,17 @@ func TestQuantizeSIMDDispatchBindingsAMD64(t *testing.T) {
 	if !quantizeSIMDSupported() {
 		t.Skip("AVX2 not available")
 	}
-	name := runtime.FuncForPC(reflect.ValueOf(quantizeFPBlockImpl).Pointer()).Name()
-	if !strings.Contains(name, "quantizeFPBlockSIMD") {
-		t.Fatalf("quantizeFPBlockImpl bound to %s, want quantizeFPBlockSIMD", name)
+	for _, b := range []struct {
+		name string
+		fn   any
+		want string
+	}{
+		{"quantizeFPBlockImpl", quantizeFPBlockImpl, "quantizeFPBlockSIMD"},
+		{"quantizeBBlockImpl", quantizeBBlockImpl, "quantizeBBlockSIMD"},
+	} {
+		got := runtime.FuncForPC(reflect.ValueOf(b.fn).Pointer()).Name()
+		if !strings.Contains(got, b.want) {
+			t.Fatalf("%s bound to %s, want %s", b.name, got, b.want)
+		}
 	}
 }

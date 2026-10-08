@@ -4,14 +4,12 @@ package quantize
 
 import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 
-// init binds Go-native SIMD quantizers under GOEXPERIMENT=simd. Quantize-b is
-// still served by the existing NEON asm kernel so enabling the experiment does
-// not regress that path.
+// init binds Go-native SIMD quantizers under GOEXPERIMENT=simd.
 func init() {
 	if cpu.Detected.NEON {
 		quantizeBlockImpl = quantizeBlockSIMD
 		quantizeFPBlockImpl = quantizeFPBlockSIMD
-		quantizeBBlockImpl = quantizeBBlockNEON
+		quantizeBBlockImpl = quantizeBBlockSIMD
 		quantizeFPNoQMatrixImpl = quantizeFPNoQMatrixSIMD
 	}
 }

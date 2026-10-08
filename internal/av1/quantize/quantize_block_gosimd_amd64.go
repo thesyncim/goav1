@@ -46,3 +46,32 @@ func quantizeApplySignAVX2(mag archsimd.Int32x8, src archsimd.Int32x8) archsimd.
 	signMask := src.ShiftAllRight(31)
 	return mag.Xor(signMask).Sub(signMask)
 }
+
+// quantizeBVectors applies the aom_quantize_b lane rule to coeff, writing
+// qcoeff, eight coefficients per iteration in one Int32x8 register (AVX2). The
+// lane rule and its exactness argument are shared with the arm64 kernel (see
+// quantize_block_gosimd_arm64.go). len(coeff) must be a multiple of 8.
+func quantizeBVectors(qcoeff []int16, coeff []int32, quant int32, round int32, zbin int32, shift uint64) {
+	n := len(coeff)
+	if n == 0 {
+		return
+	}
+	_ = qcoeff[n-1]
+	quantV := archsimd.BroadcastInt32x8(quant)
+	roundV := archsimd.BroadcastInt32x8(round)
+	zbinU := archsimd.BroadcastInt32x8(zbin).ToBits()
+	maxV := archsimd.BroadcastInt32x8(maxInt16)
+	maxU := maxV.ToBits()
+	cp := unsafe.Pointer(&coeff[0])
+	qp := unsafe.Pointer(&qcoeff[0])
+	for i := 0; i < n; i += 8 {
+		c := archsimd.LoadInt32x8Array((*[8]int32)(unsafe.Add(cp, 4*i)))
+		absU := c.Abs().ToBits()
+		keep := absU.GreaterEqual(zbinU)
+		tmp := absU.Min(maxU).BitsToInt32().Add(roundV).Min(maxV)
+		t := tmp.Mul(quantV).ShiftAllRight(16)
+		level := t.Add(tmp).ShiftAllRight(shift).Min(maxV)
+		level = quantizeApplySignAVX2(level, c).Masked(keep)
+		level.GetLo().SaturateToInt16Concat(level.GetHi()).StoreArray((*[8]int16)(unsafe.Add(qp, 2*i)))
+	}
+}

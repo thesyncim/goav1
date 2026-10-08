@@ -18,7 +18,7 @@ func TestQuantizeSIMDDispatchBindings(t *testing.T) {
 	}
 	requireQuantizeBinding(t, "quantizeBlockImpl", quantizeBlockImpl, "quantizeBlockSIMD")
 	requireQuantizeBinding(t, "quantizeFPBlockImpl", quantizeFPBlockImpl, "quantizeFPBlockSIMD")
-	requireQuantizeBinding(t, "quantizeBBlockImpl", quantizeBBlockImpl, "quantizeBBlockNEON")
+	requireQuantizeBinding(t, "quantizeBBlockImpl", quantizeBBlockImpl, "quantizeBBlockSIMD")
 	requireQuantizeBinding(t, "quantizeFPNoQMatrixImpl", quantizeFPNoQMatrixImpl, "quantizeFPNoQMatrixSIMD")
 }
 
@@ -106,6 +106,13 @@ func quantizeFPBlockScalarBench(qcoeff []int16, coeff []int32, n int, q Quantize
 func BenchmarkQuantizeFPBlock16x16_Scalar(b *testing.B) {
 	benchQuantizeFPBlock(b, 16, quantizeFPBlockScalarBench)
 }
+func BenchmarkQuantizeBBlock16x16_SIMD(b *testing.B) {
+	benchQuantizeFPBlock(b, 16, quantizeBBlockSIMD)
+}
+func BenchmarkQuantizeBBlock32x32_SIMD(b *testing.B) {
+	benchQuantizeFPBlock(b, 32, quantizeBBlockSIMD)
+}
+
 func BenchmarkQuantizeFPBlock16x16_SIMD(b *testing.B) {
 	benchQuantizeFPBlock(b, 16, quantizeFPBlockSIMD)
 }
