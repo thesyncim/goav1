@@ -31,7 +31,8 @@ package filmgrain
 // a separate scratch as dst.
 //
 // The architecture-specific entry point blendGrainRow (see
-// blend_overlap_dispatch_*.go) is a concrete function — not a func-pointer
+// blend_overlap_gosimd_arm64.go and blend_overlap_dispatch_generic.go) is a
+// concrete function — not a func-pointer
 // indirection — so escape analysis can see through it and the caller's blend
 // scratch buffer stays on the stack (the apply path is zero-alloc).
 func blendGrainRowPureGo(dst []int16, prev []int16, cur []int16, prevWeight int, curWeight int, grainMin int, grainMax int) {

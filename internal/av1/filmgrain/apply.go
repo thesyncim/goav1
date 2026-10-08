@@ -224,7 +224,7 @@ func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, 
 	var scaleBuf [LumaBlockSize]uint16
 	// idxBuf collects the per-pixel chroma scaling indices (subsampled-luma
 	// average, or the cross-plane chromaScalingIndex) so the 10-bit scaling-LUT
-	// gather+interpolate can run through the vectorized buildScaleRow10 kernel.
+	// gather+interpolate can run through buildScaleRow10.
 	// Both stay on the stack (the apply path is zero-alloc).
 	var idxBuf [LumaBlockSize]uint16
 	var blendBuf [LumaBlockSize]int16
@@ -292,8 +292,8 @@ func applyChromaBlock(dst []uint16, src []uint16, luma []uint16, grain []int16, 
 // gatherLumaScaleRow fills scale[i] with the luma scaling-LUT value for
 // srcRow[i], matching applyLumaSample's scaleLUT lookup for every bit depth. It
 // is shared by the non-overlap interior and the top-overlap seam so both take
-// the vectorized 10-bit gather (build_scale_dispatch_*.go); 8/12-bit stay
-// scalar (a bare or coarse lut gather does not amortize a NEON per-lane load).
+// the 10-bit gather (buildScaleRow10); 8/12-bit stay scalar (a bare or coarse
+// lut gather has no interpolation to amortize the per-sample lookup).
 func gatherLumaScaleRow(scale []uint16, srcRow []uint16, scaling []uint8, bitDepth uint8) {
 	n := len(scale)
 	switch bitDepth {
@@ -318,7 +318,7 @@ func gatherLumaScaleRow(scale []uint16, srcRow []uint16, scaling []uint8, bitDep
 // pixel at (xBase+i, y), matching applyChromaRowSample/chromaScalingIndex for
 // every bit depth and both the chroma-from-luma and cross-plane paths. idxBuf is
 // caller-owned scratch (len == len(scale)) used to stage the 10-bit indices for
-// the vectorized buildScaleRow10 gather. It is shared by the non-overlap
+// the buildScaleRow10 gather. It is shared by the non-overlap
 // interior and the top-overlap seam.
 func gatherChromaScaleRow(scale []uint16, idxBuf []uint16, srcRow []uint16, luma []uint16, scaling []uint8, params ChromaRowParams, shiftX int, shiftY int, xBase int, y int) {
 	n := len(scale)

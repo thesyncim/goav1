@@ -2,21 +2,12 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego
-
 package filmgrain
 
 import (
 	"math/rand"
 	"testing"
-	"unsafe"
 )
-
-func TestBuildScaleNEONCtxSize(t *testing.T) {
-	if size := unsafe.Sizeof(buildScaleNEONCtx{}); size != 32 {
-		t.Fatalf("buildScaleNEONCtx size=%d want 32", size)
-	}
-}
 
 // fuzzScaleLUT returns a 256-entry scaling LUT. Beyond fully random tables it
 // injects structured shapes (flat, ramps, saturated) so the interpolation and
@@ -74,10 +65,7 @@ func fuzzScaleSrc(rng *rand.Rand, n int, bitDepth uint8) []uint16 {
 	return src
 }
 
-func TestBuildScaleRow10NEONMatchesScalar(t *testing.T) {
-	if !buildScaleUseNEON {
-		t.Skip("NEON scale kernel not active on this CPU")
-	}
+func TestBuildScaleRow10MatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x5CA1E10))
 	lengths := []int{1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64, 100}
 	for shape := 0; shape < 5; shape++ {
@@ -90,10 +78,10 @@ func TestBuildScaleRow10NEONMatchesScalar(t *testing.T) {
 				for i := 0; i < n; i++ {
 					ref[i] = uint16(scaleLUT10(lut, int(src[i])))
 				}
-				buildScaleRow10NEON(got, src, lut)
+				buildScaleRow10(got, src, lut)
 				for i := 0; i < n; i++ {
 					if got[i] != ref[i] {
-						t.Fatalf("10-bit shape=%d n=%d i=%d src=%d: NEON=%d scalar=%d",
+						t.Fatalf("10-bit shape=%d n=%d i=%d src=%d: row=%d scalar=%d",
 							shape, n, i, src[i], got[i], ref[i])
 					}
 				}
@@ -102,13 +90,10 @@ func TestBuildScaleRow10NEONMatchesScalar(t *testing.T) {
 	}
 }
 
-// TestBuildScaleRow10NEONExhaustiveIndex checks every legal 10-bit sample index
+// TestBuildScaleRow10ExhaustiveIndex checks every legal 10-bit sample index
 // against the scalar, so the x==255 boundary (idx in [1020,1023]) and every
 // interpolation weight are covered without relying on random draws.
-func TestBuildScaleRow10NEONExhaustiveIndex(t *testing.T) {
-	if !buildScaleUseNEON {
-		t.Skip("NEON scale kernel not active on this CPU")
-	}
+func TestBuildScaleRow10ExhaustiveIndex(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xEECE))
 	src := make([]uint16, 1024)
 	for i := range src {
@@ -121,36 +106,30 @@ func TestBuildScaleRow10NEONExhaustiveIndex(t *testing.T) {
 		for i := range src {
 			ref[i] = uint16(scaleLUT10(lut, int(src[i])))
 		}
-		buildScaleRow10NEON(got, src, lut)
+		buildScaleRow10(got, src, lut)
 		for i := range src {
 			if got[i] != ref[i] {
-				t.Fatalf("10-bit exhaustive shape=%d idx=%d: NEON=%d scalar=%d",
+				t.Fatalf("10-bit exhaustive shape=%d idx=%d: row=%d scalar=%d",
 					shape, i, got[i], ref[i])
 			}
 		}
 	}
 }
 
-func TestBuildScaleRowNEONZeroAlloc(t *testing.T) {
-	if !buildScaleUseNEON {
-		t.Skip("NEON scale kernel not active on this CPU")
-	}
+func TestBuildScaleRow10ZeroAlloc(t *testing.T) {
 	const n = 64
 	rng := rand.New(rand.NewSource(1))
 	lut := fuzzScaleLUT(rng, 0)
 	src := fuzzScaleSrc(rng, n, 10)
 	scale := make([]uint16, n)
 	if a := testing.AllocsPerRun(1000, func() {
-		buildScaleRow10NEON(scale, src, lut)
+		buildScaleRow10(scale, src, lut)
 	}); a != 0 {
-		t.Fatalf("buildScaleRowNEON allocated: %f", a)
+		t.Fatalf("buildScaleRow10 allocated: %f", a)
 	}
 }
 
-func BenchmarkBuildScaleRow10NEON(b *testing.B) {
-	if !buildScaleUseNEON {
-		b.Skip("NEON scale kernel not active on this CPU")
-	}
+func BenchmarkBuildScaleRow10(b *testing.B) {
 	const n = 32
 	rng := rand.New(rand.NewSource(7))
 	lut := fuzzScaleLUT(rng, 1)
@@ -158,18 +137,6 @@ func BenchmarkBuildScaleRow10NEON(b *testing.B) {
 	scale := make([]uint16, n)
 	b.ReportAllocs()
 	for b.Loop() {
-		buildScaleRow10NEON(scale, src, lut)
-	}
-}
-
-func BenchmarkBuildScaleRow10PureGo(b *testing.B) {
-	const n = 32
-	rng := rand.New(rand.NewSource(7))
-	lut := fuzzScaleLUT(rng, 1)
-	src := fuzzScaleSrc(rng, n, 10)
-	scale := make([]uint16, n)
-	b.ReportAllocs()
-	for b.Loop() {
-		buildScaleRow10PureGo(scale, src, lut)
+		buildScaleRow10(scale, src, lut)
 	}
 }
