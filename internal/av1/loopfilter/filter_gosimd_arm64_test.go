@@ -21,8 +21,8 @@ func TestFilterSIMDDispatchBound(t *testing.T) {
 		name      string
 		got, want interface{}
 	}{
-		{"filter4EdgeImpl", filter4EdgeImpl, filter4EdgeNEON},
-		{"filter4Edge16Impl", filter4Edge16Impl, filter4Edge16NEON},
+		{"filter4EdgeImpl", filter4EdgeImpl, filter4EdgeSIMD},
+		{"filter4Edge16Impl", filter4Edge16Impl, filter4Edge16SIMD},
 		{"filter6EdgeImpl", filter6EdgeImpl, filter6EdgeNEON},
 		{"filter6Edge16Impl", filter6Edge16Impl, filter6Edge16SIMD},
 		{"filter8EdgeImpl", filter8EdgeImpl, filter8EdgeNEON},

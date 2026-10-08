@@ -23,8 +23,6 @@ func TestFilterNEONDispatchBound(t *testing.T) {
 		name      string
 		got, want interface{}
 	}{
-		{"filter4EdgeImpl", filter4EdgeImpl, filter4EdgeNEON},
-		{"filter4Edge16Impl", filter4Edge16Impl, filter4Edge16NEON},
 		{"filter6EdgeImpl", filter6EdgeImpl, filter6EdgeNEON},
 		{"filter8EdgeImpl", filter8EdgeImpl, filter8EdgeNEON},
 		{"filter14EdgeImpl", filter14EdgeImpl, filter14EdgeNEON},

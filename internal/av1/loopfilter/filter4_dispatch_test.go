@@ -14,10 +14,10 @@ import (
 // filter4DispatchParamsCorpus returns a spread of threshold configurations that
 // exercise every branch of needsFilter4 and the hev split, including the all-
 // pass and all-reject extremes for 8/10/12-bit (the scale only enters through
-// the centre/clamp constants, which the NEON path fixes at the 8-bit values; we
+// the centre/clamp constants, which the SIMD path fixes at the 8-bit values; we
 // therefore also assert the 8-bit kernel directly).
 func filter4DispatchParamsCorpus() []filter4Params {
-	const scale = 1 // NEON path is 8-bit only.
+	const scale = 1 // the SIMD path is 8-bit only here.
 	mk := func(limit, blimit, hev int) filter4Params {
 		return filter4Params{
 			limit:  int16(limit * scale),
@@ -76,7 +76,7 @@ func runFilter4Kernel(t *testing.T, seed int64, length int, params filter4Params
 
 // TestFilter4DispatchMatchesPureGo is the bit-exactness guard for the dispatched
 // narrow deblocking kernel. It drives the resolved dispatch slot (which routes
-// through the NEON asm on arm64) against the canonical pure-Go reference over a
+// through the Go SIMD kernel) against the canonical pure-Go reference over a
 // spread of edge lengths — including non-multiples of eight to exercise the
 // scalar tail — and threshold configurations. Every output byte must match.
 func TestFilter4DispatchMatchesPureGo(t *testing.T) {
@@ -95,7 +95,7 @@ func TestFilter4DispatchMatchesPureGo(t *testing.T) {
 // runFilter4KernelVertical materialises a flat 8-bit buffer and runs both the
 // reference and the dispatched kernel along a vertical edge: the four taps are
 // one byte apart (step == 1) and successive positions advance by the row stride
-// (outer == stride). This exercises the transposing ld4/st4 vertical NEON path.
+// (outer == stride). This exercises the gather/scatter vertical SIMD path.
 func runFilter4KernelVertical(t *testing.T, seed int64, length int, params filter4Params) {
 	t.Helper()
 	const stride = 64
@@ -125,7 +125,7 @@ func runFilter4KernelVertical(t *testing.T, seed int64, length int, params filte
 }
 
 // TestFilter4DispatchVerticalMatchesPureGo is the bit-exactness guard for the
-// vertical-edge narrow kernel (transposing ld4/st4 NEON on arm64) against the
+// vertical-edge narrow kernel (gather/scatter SIMD) against the
 // pure-Go reference over a spread of edge lengths and threshold configurations.
 func TestFilter4DispatchVerticalMatchesPureGo(t *testing.T) {
 	lengths := []int{1, 3, 7, 8, 9, 15, 16, 17, 24, 31, 32, 48, 63}
@@ -142,7 +142,7 @@ func TestFilter4DispatchVerticalMatchesPureGo(t *testing.T) {
 
 // TestFilter4DispatchMatchesPureGoForcedPureGo confirms the differential holds
 // when the dispatcher is forced onto the pure-Go branch (CPU override), so the
-// test still has meaning on a NEON host where the slot would otherwise always
+// test still has meaning on a SIMD host where the slot would otherwise always
 // pick the asm. It re-binds the slot for the duration of the check.
 func TestFilter4DispatchMatchesPureGoForcedPureGo(t *testing.T) {
 	restore := cpu.OverrideForTest(cpu.Features{})
@@ -223,7 +223,7 @@ func runFilter4Kernel16(t *testing.T, seed int64, length int, params filter4Para
 }
 
 // TestFilter4Dispatch16MatchesPureGo is the bit-exactness guard for the
-// dispatched 10/12-bit narrow kernel (NEON asm on arm64) against the pure-Go
+// dispatched 10/12-bit narrow kernel (Go SIMD) against the pure-Go
 // reference over a spread of edge lengths and scaled threshold configurations.
 func TestFilter4Dispatch16MatchesPureGo(t *testing.T) {
 	lengths := []int{1, 3, 7, 8, 9, 15, 16, 17, 24, 31, 32, 48, 63}

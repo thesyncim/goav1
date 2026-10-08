@@ -14,8 +14,8 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {
-		filter4EdgeImpl = filter4EdgeNEON
-		filter4Edge16Impl = filter4Edge16NEON
+		filter4EdgeImpl = filter4EdgeSIMD
+		filter4Edge16Impl = filter4Edge16SIMD
 		filter6EdgeImpl = filter6EdgeNEON
 		filter8EdgeImpl = filter8EdgeNEON
 		filter14EdgeImpl = filter14EdgeNEON

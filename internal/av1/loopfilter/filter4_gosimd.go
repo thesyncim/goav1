@@ -1,0 +1,77 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant.
+
+//go:build goexperiment.simd && (arm64 || amd64) && !purego
+
+// Go-native SIMD narrow (four-sample) deblocking kernel, shared by the 8-bit and
+// 10/12-bit paths.
+
+package loopfilter
+
+import (
+	"simd/archsimd"
+)
+
+// filter4EdgeSIMD is the Go-native SIMD form of filter4EdgePureGo for 8-bit
+// edges. It is bit-exact with the reference over the full input domain: every
+// lane runs in signed 16-bit arithmetic on centred samples (-128..127) and the
+// clamps reproduce signedClamp exactly.
+func filter4EdgeSIMD(pix []byte, q0Base int, step int, outer int, length int, params filter4Params) {
+	lfEdge[uint8](lfKind4, pix, q0Base, step, outer, length, 1, params)
+}
+
+// filter4Edge16SIMD is the 10/12-bit form of filter4EdgeSIMD over two-byte
+// samples. The centred values reach +-4095, and the widest intermediate
+// (3*(qs0-ps0)+filter) stays inside int16.
+func filter4Edge16SIMD(pix []byte, q0Base int, step int, outer int, length int, params filter4Params) {
+	lfEdge[uint16](lfKind4, pix, q0Base, step, outer, length, 1, params)
+}
+
+// lfFilter4Core runs the narrow filter over length positions (a multiple of
+// eight) of horizontal taps. The positions are contiguous samples of type S.
+func lfFilter4Core[S lfSample](pix []byte, q0Base int, step int, length int, _ int, params filter4Params) {
+	sz := lfSize[S]()
+	limit := archsimd.BroadcastInt16x8(params.limit)
+	blimit := archsimd.BroadcastInt16x8(params.blimit)
+	hevT := archsimd.BroadcastInt16x8(params.hev)
+	center := archsimd.BroadcastInt16x8(params.center)
+	minV := archsimd.BroadcastInt16x8(params.min)
+	maxV := archsimd.BroadcastInt16x8(params.max)
+	one := archsimd.BroadcastInt16x8(1)
+	three := archsimd.BroadcastInt16x8(3)
+	four := archsimd.BroadcastInt16x8(4)
+	for g := 0; g < length/8; g++ {
+		base := q0Base + g*8*sz
+		p1 := lfLoad[S](pix, base-2*step)
+		p0 := lfLoad[S](pix, base-step)
+		q0 := lfLoad[S](pix, base)
+		q1 := lfLoad[S](pix, base+step)
+
+		d0q0 := lfAbsDiffInt16x8(p0, q0)
+		need := lfAbsDiffInt16x8(p1, p0).LessEqual(limit).
+			And(lfAbsDiffInt16x8(q1, q0).LessEqual(limit)).
+			And(d0q0.Add(d0q0).
+				Add(lfAbsDiffInt16x8(p1, q1).ShiftAllRight(1)).
+				LessEqual(blimit))
+		hev := lfAbsDiffInt16x8(p1, p0).Greater(hevT).Or(lfAbsDiffInt16x8(q1, q0).Greater(hevT))
+		ps1 := p1.Sub(center)
+		ps0 := p0.Sub(center)
+		qs0 := q0.Sub(center)
+		qs1 := q1.Sub(center)
+		f := ps1.Sub(qs1).Max(minV).Min(maxV).Masked(hev)
+		f = f.Add(qs0.Sub(ps0).Mul(three)).Max(minV).Min(maxV)
+		filter1 := f.Add(four).Max(minV).Min(maxV).ShiftAllRight(3)
+		filter2 := f.Add(three).Max(minV).Min(maxV).ShiftAllRight(3)
+		np0 := ps0.Add(filter2).Max(minV).Min(maxV).Add(center)
+		nq0 := qs0.Sub(filter1).Max(minV).Min(maxV).Add(center)
+		ov := filter1.Add(one).ShiftAllRight(1)
+		np1 := p1.IfElse(hev, ps1.Add(ov).Max(minV).Min(maxV).Add(center))
+		nq1 := q1.IfElse(hev, qs1.Sub(ov).Max(minV).Min(maxV).Add(center))
+
+		lfStore[S](pix, base-2*step, np1.IfElse(need, p1))
+		lfStore[S](pix, base-step, np0.IfElse(need, p0))
+		lfStore[S](pix, base, nq0.IfElse(need, q0))
+		lfStore[S](pix, base+step, nq1.IfElse(need, q1))
+	}
+}
