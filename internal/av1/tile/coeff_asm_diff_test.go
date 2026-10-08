@@ -103,12 +103,9 @@ func newTXBDiffState(t *testing.T, payload []byte, size TransformSize, class tra
 func (s *txbDiffState) decodeOne(v txbDiffVariant, class transform.Class, dcSignCtx uint8, eobCtx uint8) (TXBDecodeResult, error) {
 	if v == txbVariantTrackedGo || v == txbVariantGeoTrustedGo {
 		savedBase := coeffBaseLevelsKernel
-		savedSign := coeffSignGolombKernel
 		coeffBaseLevelsKernel = false
-		coeffSignGolombKernel = false
 		defer func() {
 			coeffBaseLevelsKernel = savedBase
-			coeffSignGolombKernel = savedSign
 		}()
 	}
 	for i := 0; i < int(s.dirtyLen); i++ {
