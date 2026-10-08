@@ -1317,18 +1317,31 @@ func validatePublishVMAFModel(model string) error {
 }
 
 func vmafModelPath(model string) (string, bool, error) {
-	for _, field := range strings.Split(model, ":") {
+	fields := strings.Split(model, ":")
+	for i := 0; i < len(fields); i++ {
+		field := fields[i]
 		key, value, ok := strings.Cut(field, "=")
 		if !ok || key != "path" {
 			continue
 		}
 		value = strings.TrimSpace(value)
+		// A Windows drive letter also contains a colon. Keep it with the path
+		// field before parsing the colon-separated FFmpeg option list.
+		if len(value) == 1 && isASCIIDriveLetter(value[0]) && i+1 < len(fields) &&
+			(strings.HasPrefix(fields[i+1], `\`) || strings.HasPrefix(fields[i+1], "/")) {
+			value += ":" + fields[i+1]
+			i++
+		}
 		if value == "" {
 			return "", false, errors.New("VMAF model path is empty")
 		}
 		return value, true, nil
 	}
 	return "", false, nil
+}
+
+func isASCIIDriveLetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
 func requirePinnedPublishTool(cfg benchConfig, toolName, binFlag, binPath, hashFlag, expectedHash string) error {
@@ -1352,7 +1365,7 @@ func requirePinnedPublishTool(cfg benchConfig, toolName, binFlag, binPath, hashF
 	if info.IsDir() {
 		return fmt.Errorf("publish requires -%s %s to be an executable file, got directory", binFlag, binPath)
 	}
-	if info.Mode().Perm()&0o111 == 0 {
+	if !isExecutableFile(binPath, info) {
 		return fmt.Errorf("publish requires -%s %s to be executable", binFlag, binPath)
 	}
 	actual, err := sha256File(binPath)
@@ -1820,12 +1833,40 @@ func resolveCommandPath(setting, fallback string, lookPath func(string) (string,
 		if info.IsDir() {
 			return "", fmt.Errorf("%s is a directory", name)
 		}
-		if info.Mode().Perm()&0o111 == 0 {
+		if !isExecutableFile(name, info) {
 			return "", fmt.Errorf("%s is not executable", name)
 		}
 		return name, nil
 	}
-	return lookPath(name)
+	path, err := lookPath(name)
+	if err != nil {
+		return "", err
+	}
+	if runtime.GOOS == "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", err
+		}
+		if !isExecutableFile(path, info) {
+			return "", fmt.Errorf("%s is not executable", path)
+		}
+	}
+	return path, nil
+}
+
+func isExecutableFile(path string, info os.FileInfo) bool {
+	if !info.Mode().IsRegular() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".com", ".exe":
+			return true
+		default:
+			return false
+		}
+	}
+	return info.Mode().Perm()&0o111 != 0
 }
 
 func commandSetting(setting, fallback string) string {
@@ -5128,7 +5169,7 @@ func timeCommand(timeout time.Duration, name string, args []string, result *enco
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), effectiveCommandTimeout(timeout))
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := commandContextWithWaitDelay(ctx, name, args...)
 	cmd.Env = externalCommandEnv()
 	var capture boundedCommandOutput
 	cmd.Stdout = &capture
@@ -5150,13 +5191,23 @@ func timeCommand(timeout time.Duration, name string, args []string, result *enco
 func combinedOutputWithTimeout(timeout time.Duration, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), effectiveCommandTimeout(timeout))
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := commandContextWithWaitDelay(ctx, name, args...)
 	cmd.Env = externalCommandEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return out, commandTimeoutError(ctx, timeout, err)
 	}
 	return out, nil
+}
+
+// commandWaitDelay bounds cleanup when a child process keeps command pipes open.
+const commandWaitDelay = 250 * time.Millisecond
+
+func commandContextWithWaitDelay(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = commandWaitDelay
+	configureCommandProcessGroup(cmd)
+	return cmd
 }
 
 func effectiveCommandTimeout(timeout time.Duration) time.Duration {

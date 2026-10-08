@@ -65,7 +65,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
       - name: go test
-        run: go test -count=1 ./...
+        run: go test -count=1 -timeout 30m ./...
 
   simd-arm64:
     name: SIMD (linux/arm64, Go 1.27.x)
@@ -98,7 +98,19 @@ jobs:
       - name: build with native SIMD
         run: go build ./...
       - name: test with native SIMD
-        run: go test -count=1 ./...
+        run: go test -count=1 -timeout 30m ./...
+      - name: focused SIMD race and checkptr tests
+        run: >-
+          go test -race -gcflags=all=-d=checkptr=2 -count=1 -timeout 30m
+          ./internal/av1/dsp
+          ./internal/av1/cdef
+          ./internal/av1/loopfilter
+          ./internal/av1/prediction
+          ./internal/av1/restoration
+          ./internal/av1/motion
+          ./internal/av1/transform
+          ./internal/av1/quantize
+          ./internal/av1/decoder
       - name: strict fast decoder parity with native SIMD
         run: make dryrun-fast
       - name: strict profile decoder parity with native SIMD
@@ -152,7 +164,7 @@ jobs:
       - name: fetch example fixture
         run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
       - name: go test -race
-        run: go test -race -count=1 ./...
+        run: go test -race -count=1 -timeout 45m ./...
 
   alloc:
     name: alloc regression
