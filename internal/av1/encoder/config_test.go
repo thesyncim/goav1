@@ -269,8 +269,7 @@ func TestAppendWebRTCSVCScalabilityModesIncludesW3CKeyShiftModes(t *testing.T) {
 
 func pinnedLibWebRTCScalabilityModes(t *testing.T) []ScalabilityMode {
 	t.Helper()
-	root := repoRootFromTestWD(t)
-	path := filepath.Join(root, "third_party", "upstream", "webrtc", "api", "video_codecs", "scalability_mode.h")
+	path := filepath.Join("testdata", "webrtc", "scalability_mode.h")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read pinned libwebrtc scalability mode source: %v", err)
@@ -309,24 +308,6 @@ func pinnedLibWebRTCScalabilityModes(t *testing.T) []ScalabilityMode {
 		t.Fatalf("no pinned libwebrtc scalability modes found in %s", path)
 	}
 	return modes
-}
-
-func repoRootFromTestWD(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get test working directory: %v", err)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("could not find repo root from %s", dir)
-		}
-		dir = parent
-	}
 }
 
 func TestValidateWebRTCActiveScalabilityModes(t *testing.T) {
