@@ -95,15 +95,5 @@ func cdefUnitInteriorU8(input []uint16, inputOrigin int, blocks []BlockPosition,
 	if end > len(input) {
 		return false
 	}
-	var acc uint16
-	for r := 0; r < nRows; r++ {
-		row := input[scanStart+r*BStride:]
-		for c := 0; c < nCols; c++ {
-			acc |= row[c]
-		}
-		if acc > 0xFF {
-			return false
-		}
-	}
-	return acc <= 0xFF
+	return cdefScanU16RowsAtMost255(input, scanStart, nRows, nCols)
 }

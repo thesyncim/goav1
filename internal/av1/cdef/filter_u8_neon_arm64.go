@@ -80,17 +80,15 @@ func filterUnitBlocksU8NEON(dst []byte, dstStride int, input []uint16, inputOrig
 	if secondaryStrength != 0 {
 		ctx.enableSecondary = 1
 	}
-	// Route the whole unit through the interior .16b kernels when its tap
-	// footprint is free of the VeryLarge sentinel (dav1d's edges == 0xf fast
-	// path) and the block height matches the kernel's row packing. Otherwise
-	// the .8h path handles the sentinel border. The predicate is proven once
-	// per unit and reused for every block below.
-	useInterior := cdefUnitInteriorU8(input, inputOrigin, blocks, u.bwLog2, u.bhLog2)
-	if u.blockWidth == 8 {
-		useInterior = useInterior && u.blockHeight%2 == 0
-	} else {
-		useInterior = useInterior && u.blockHeight%4 == 0
-	}
+	// The interior .16b path is used only when both strengths are active and
+	// the row packing matches the kernel. Check the sentinel-free unit footprint
+	// lazily at the first block whose adjusted primary strength is nonzero: a
+	// zero strength on either side cannot use the interior kernel, and flat luma
+	// blocks often adjust the primary strength to zero. The predicate is then
+	// proven once and reused for the remaining blocks.
+	interiorEligible := (u.blockWidth == 8 && u.blockHeight%2 == 0) || (u.blockWidth == 4 && u.blockHeight%4 == 0)
+	interiorChecked := false
+	useInterior := false
 	strength := u.primaryStrength
 	if !u.lumaAdjust {
 		setFilterBlockU8NEONCtxPrimary(&ctx, strength, secondaryStrength, u.damping, u.coeffShift)
@@ -101,6 +99,10 @@ func filterUnitBlocksU8NEON(dst []byte, dstStride int, input []uint16, inputOrig
 		if u.lumaAdjust {
 			strength = adjustStrength(u.primaryStrength, variances[by][bx])
 			setFilterBlockU8NEONCtxPrimary(&ctx, strength, secondaryStrength, u.damping, u.coeffShift)
+		}
+		if !interiorChecked && interiorEligible && strength != 0 && secondaryStrength != 0 {
+			interiorChecked = true
+			useInterior = cdefUnitInteriorU8(input, inputOrigin, blocks, u.bwLog2, u.bhLog2)
 		}
 		if strength == 0 && secondaryStrength == 0 {
 			continue
