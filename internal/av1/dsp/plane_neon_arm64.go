@@ -6,9 +6,9 @@
 
 package dsp
 
-// NEON-accelerated AddResidualPlaneBlock inner loop. The .s file processes the
-// leading width&^7 columns of every row eight lanes at a time; this wrapper
-// runs the width&7 tail in pure Go, identical to addResidualPlaneBlockPureGo.
+// NEON-accelerated AddResidualPlaneBlock fallback. The 8-bit assembly kernel
+// remains for shapes the Go SIMD kernel does not cover; high-bit-depth blocks
+// also retain their measured NEON implementation.
 //
 // The kernel is bit-exact with the reference: prediction and residual are
 // widened to s32, added, clamped to [0, max] with smax(0)/smin(max), and
@@ -17,6 +17,9 @@ package dsp
 
 //go:noescape
 func addResidual8NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uintptr, max uint32, groups uintptr, height uintptr)
+
+//go:noescape
+func addResidual8x8NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uintptr, max uint32, height uintptr)
 
 //go:noescape
 func addResidual8x4NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uintptr, max uint32, height uintptr)
@@ -40,17 +43,58 @@ func addRawTransform16NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStrid
 func addRawTransform16x4NEONAsm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, height uintptr)
 
 func addResidualPlaneBlockNEON(block planeBlock, bytesPerSample int, max uint16, width int, residual []int16, residualStride int) {
+	if bytesPerSample == 1 {
+		switch width {
+		case 4:
+			addResidual8x4NEONAsm(
+				&block.pix[0], uintptr(block.stride),
+				&residual[0], uintptr(residualStride*2),
+				uint32(max), uintptr(block.height),
+			)
+		case 8:
+			addResidual8x8NEONAsm(
+				&block.pix[0], uintptr(block.stride),
+				&residual[0], uintptr(residualStride*2),
+				uint32(max), uintptr(block.height),
+			)
+		default:
+			groups := width >> 3
+			if groups == 0 {
+				addResidualPlaneBlockPureGo(block, bytesPerSample, max, width, residual, residualStride)
+				return
+			}
+			addResidual8NEONAsm(
+				&block.pix[0], uintptr(block.stride),
+				&residual[0], uintptr(residualStride*2),
+				uint32(max), uintptr(groups), uintptr(block.height),
+			)
+			vecCols := groups << 3
+			if vecCols < width {
+				maxInt := int(max)
+				tail := width - vecCols
+				for row := 0; row < block.height; row++ {
+					base := row*block.stride + vecCols
+					resBase := row*residualStride + vecCols
+					line := block.pix[base : base+tail : base+tail]
+					resLine := residual[resBase : resBase+tail : resBase+tail]
+					for col, r := range resLine {
+						v := int(line[col]) + int(r)
+						if v < 0 {
+							v = 0
+						} else if v > maxInt {
+							v = maxInt
+						}
+						line[col] = byte(v)
+					}
+				}
+			}
+		}
+		return
+	}
 	groups := width >> 3
 	if groups == 0 {
 		if width == 4 {
 			switch bytesPerSample {
-			case 1:
-				addResidual8x4NEONAsm(
-					&block.pix[0], uintptr(block.stride),
-					&residual[0], uintptr(residualStride*2),
-					uint32(max), uintptr(block.height),
-				)
-				return
 			case 2:
 				addResidual16x4NEONAsm(
 					&block.pix[0], uintptr(block.stride),
@@ -68,32 +112,6 @@ func addResidualPlaneBlockNEON(block planeBlock, bytesPerSample int, max uint16,
 	maxInt := int(max)
 
 	switch bytesPerSample {
-	case 1:
-		addResidual8NEONAsm(
-			&block.pix[0], uintptr(block.stride),
-			&residual[0], uintptr(residualStride*2),
-			uint32(max), uintptr(groups), uintptr(block.height),
-		)
-		if vecCols == width {
-			return
-		}
-		tail := width - vecCols
-		for row := 0; row < block.height; row++ {
-			base := row*block.stride + vecCols
-			resBase := row*residualStride + vecCols
-			line := block.pix[base : base+tail : base+tail]
-			resLine := residual[resBase : resBase+tail : resBase+tail]
-			line = line[:len(resLine)]
-			for col, r := range resLine {
-				v := int(line[col]) + int(r)
-				if v < 0 {
-					v = 0
-				} else if v > maxInt {
-					v = maxInt
-				}
-				line[col] = byte(v)
-			}
-		}
 	case 2:
 		addResidual16NEONAsm(
 			&block.pix[0], uintptr(block.stride),
@@ -122,6 +140,8 @@ func addResidualPlaneBlockNEON(block planeBlock, bytesPerSample int, max uint16,
 				pair[1] = byte(v >> 8)
 			}
 		}
+	default:
+		addResidualPlaneBlockPureGo(block, bytesPerSample, max, width, residual, residualStride)
 	}
 }
 

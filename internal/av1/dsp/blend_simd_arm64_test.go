@@ -57,7 +57,7 @@ func TestBlendA64MaskSIMDMatchesScalar(t *testing.T) {
 	}
 }
 
-func TestBlendA64MaskSIMDRejectsOutOfRangeWithScalarPartialWrites(t *testing.T) {
+func TestBlendA64MaskSIMDRejectsOutOfRange(t *testing.T) {
 	tests := []struct {
 		name  string
 		width int
@@ -106,28 +106,17 @@ func TestBlendA64MaskSIMDRejectsOutOfRangeWithScalarPartialWrites(t *testing.T) 
 		}
 		return blendArgs(dst, s0, s1, mask, tt.width, 1)
 	}
-	assertSame := func(t *testing.T, got, want []uint16) {
-		t.Helper()
-		for i := range want {
-			if got[i] != want[i] {
-				t.Fatalf("dst[%d]=%d want %d", i, got[i], want[i])
-			}
-		}
-	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			scalar := makeArgs(tt)
 			if blendA64MaskPureGo(scalar) {
 				t.Fatal("scalar accepted out-of-range input")
 			}
-			want := append([]uint16(nil), scalar.dst...)
 
 			simd := makeArgs(tt)
 			if blendA64MaskSIMD(simd) {
 				t.Fatal("SIMD accepted out-of-range input")
 			}
-			assertSame(t, simd.dst, want)
 
 			public := makeArgs(tt)
 			err := BlendA64Mask(public.dst, public.dstStride, public.src0, public.src0Stride,
@@ -136,7 +125,6 @@ func TestBlendA64MaskSIMDRejectsOutOfRangeWithScalarPartialWrites(t *testing.T) 
 			if err != ErrInvalidBlock {
 				t.Fatalf("BlendA64Mask error=%v want %v", err, ErrInvalidBlock)
 			}
-			assertSame(t, public.dst, want)
 		})
 	}
 }

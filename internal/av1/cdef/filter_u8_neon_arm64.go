@@ -6,11 +6,11 @@
 
 package cdef
 
-// NEON 8-bit-dst CDEF block filters, the dav1d 8bpc epilogue
+// NEON 8-bit-dst fused CDEF block filters, the dav1d 8bpc epilogue
 // (src/arm/64/cdef.S cdef_filter{8,4}_8bpc_neon: xtn to bytes + st1 {v0.8b} /
-// st1 {v0.s}[lane]) applied to goav1's strength-split kernels. The tap math
-// is byte-for-byte the uint16 kernels in filter_neon_arm64.s /
-// filter_neon_arm64_split.s — same loads from the uint16 CDEF input buffer,
+// st1 {v0.s}[lane]) applied to goav1's fused filter kernel. The tap math is
+// byte-for-byte the uint16 kernel in filter_neon_arm64.s: it uses the same
+// loads from the uint16 CDEF input buffer,
 // same constrain/accumulate/finalize, same 0x4000 VeryLarge handling — only
 // the final store narrows the int16 result to uint8 (lossless under the
 // 8-bit contract documented in filter_u8.go) and the dst stride is in bytes.
@@ -46,25 +46,11 @@ type filterBlockU8NEONCtx struct {
 func cdefFilterBlock8U8NEON(ctx *filterBlockU8NEONCtx)
 
 //go:noescape
-func cdefFilterBlock8PrimaryU8NEON(ctx *filterBlockU8NEONCtx)
-
-//go:noescape
-func cdefFilterBlock8SecondaryU8NEON(ctx *filterBlockU8NEONCtx)
-
-//go:noescape
 func cdefFilterBlock4U8NEON(ctx *filterBlockU8NEONCtx)
 
-//go:noescape
-func cdefFilterBlock4PrimaryU8NEON(ctx *filterBlockU8NEONCtx)
-
-//go:noescape
-func cdefFilterBlock4SecondaryU8NEON(ctx *filterBlockU8NEONCtx)
-
-// dispatchFilterBlockU8NEON routes a prepared ctx to the width- and
-// strength-specialized kernel. It is build-tag split: the stock arm64 build
-// (filter_u8_route_arm64.go) routes every case to the NEON asm, while the
-// goexperiment.simd build (filter_u8_gosimd_arm64.go) routes the
-// secondary-only cases to the Go-native SIMD kernels.
+// dispatchFilterBlockU8NEON routes a prepared ctx to fused NEON or promoted
+// primary-only/secondary-only Go SIMD kernels. The ordinary build routes split
+// blocks through the scalar reference before constructing this context.
 
 // filterUnitBlocksU8 binds the NEON 8-bit unit-level loop on arm64. See
 // filter_u8_dispatch.go for why this is a build-tag binding.
@@ -125,6 +111,20 @@ func filterUnitBlocksU8NEON(dst []byte, dstStride int, input []uint16, inputOrig
 		if u.primaryStrength != 0 {
 			dir = int(directions[by][bx])
 		}
+		if !filterBlockU8SplitSIMDEnabled && (strength == 0 || secondaryStrength == 0) {
+			params := BlockFilterParams{
+				PrimaryStrength:   uint8(strength),
+				SecondaryStrength: uint8(secondaryStrength),
+				Direction:         uint8(dir),
+				PrimaryDamping:    uint8(u.damping),
+				SecondaryDamping:  uint8(u.damping),
+				CoeffShift:        0,
+				Width:             uint8(u.blockWidth),
+				Height:            uint8(u.blockHeight),
+			}
+			filterBlockU8PureGo(dst, dstStride, dstOrigin, input, srcOrigin, params)
+			continue
+		}
 		ctx.pri0 = int64(cdefDirections[dir+2][0])
 		ctx.pri1 = int64(cdefDirections[dir+2][1])
 		ctx.sec0 = int64(cdefDirections[dir+4][0])
@@ -160,9 +160,9 @@ func setFilterBlockU8NEONCtxPrimary(ctx *filterBlockU8NEONCtx, primaryStrength i
 	}
 }
 
-// filterBlockU8NEON is the single-block NEON entry backing the
-// filterBlockU8Impl dispatch slot on arm64; narrow shapes fall back to the
-// pure-Go reference exactly like filterBlockNEON.
+// filterBlockU8NEON is the single-block entry backing filterBlockU8Impl on
+// arm64. Experiment builds route primary-only and secondary-only blocks to Go
+// SIMD; ordinary builds use the scalar reference for those split shapes.
 func filterBlockU8NEON(dst []byte, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
 	if w := int(params.Width); (w != 8 && w != 4) || (w == 4 && params.Height&1 != 0) {
 		filterBlockU8PureGo(dst, dstStride, dstOrigin, input, inputOrigin, params)
@@ -170,6 +170,10 @@ func filterBlockU8NEON(dst []byte, dstStride int, dstOrigin int, input []uint16,
 	}
 	primaryStrength := int(params.PrimaryStrength)
 	secondaryStrength := int(params.SecondaryStrength)
+	if !filterBlockU8SplitSIMDEnabled && (primaryStrength == 0 || secondaryStrength == 0) {
+		filterBlockU8PureGo(dst, dstStride, dstOrigin, input, inputOrigin, params)
+		return
+	}
 	direction := int(params.Direction)
 	coeffShift := int(params.CoeffShift)
 	priTaps := cdefPrimaryTaps[(primaryStrength>>coeffShift)&1]

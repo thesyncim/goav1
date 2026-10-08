@@ -24,9 +24,9 @@
 
 // func addResidual8NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uintptr, max uint32, groups uintptr, height uintptr)
 //
-// 8-bit destination: each sample is one byte. groups is the number of 8-lane
-// vector groups per row (width>>3). dstStride/resStride are in bytes; res
-// advances by 16 bytes (8 int16) per group, dst by 8 bytes per group.
+// 8-bit destination: groups is the number of 8-lane vector groups per row.
+// This leaf remains for widths the Go SIMD kernel does not cover; the wrapper
+// handles any scalar tail after the complete groups.
 TEXT ·addResidual8NEONAsm(SB), NOSPLIT, $0-56
 	MOVD dst+0(FP), R0
 	MOVD dstStride+8(FP), R1
@@ -41,9 +41,9 @@ TEXT ·addResidual8NEONAsm(SB), NOSPLIT, $0-56
 
 rowLoop8:
 	CBZ  R5, done8
-	MOVD R0, R6 // dst row cursor (predicted pixels, in place)
-	MOVD R2, R7 // res row cursor
-	MOVD R4, R8 // groups remaining
+	MOVD R0, R6
+	MOVD R2, R7
+	MOVD R4, R8
 
 colLoop8:
 	CBZ  R8, rowAdvance8
@@ -76,6 +76,50 @@ rowAdvance8:
 	B    rowLoop8
 
 done8:
+	RET
+
+// func addResidual8x8NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uintptr, max uint32, height uintptr)
+//
+// 8-bit destination, exactly eight samples per row. The wide 8-bit assembly
+// loop was replaced by Go SIMD; keep this leaf for the unported narrow block.
+TEXT ·addResidual8x8NEONAsm(SB), NOSPLIT, $0-48
+	MOVD dst+0(FP), R0
+	MOVD dstStride+8(FP), R1
+	MOVD res+16(FP), R2
+	MOVD resStride+24(FP), R3
+	MOVW max+32(FP), R12
+	MOVD height+40(FP), R5
+
+	WORD $0x4f000406 // movi v6.4s, #0
+	WORD $0x4e040d87 // dup v7.4s, w12
+
+rowLoop8x8:
+	CBZ  R5, done8x8
+	MOVD R0, R6
+	MOVD R2, R7
+	WORD $0x0c4070c0 // ld1 {v0.8b}, [x6]
+	WORD $0x4c4074e1 // ld1 {v1.8h}, [x7]
+	WORD $0x2f08a400 // uxtl v0.8h, v0.8b
+	WORD $0x0f10a422 // sxtl v2.4s, v1.4h
+	WORD $0x4f10a423 // sxtl2 v3.4s, v1.8h
+	WORD $0x2f10a404 // uxtl v4.4s, v0.4h
+	WORD $0x6f10a405 // uxtl2 v5.4s, v0.8h
+	WORD $0x4ea28484 // add v4.4s, v4.4s, v2.4s
+	WORD $0x4ea384a5 // add v5.4s, v5.4s, v3.4s
+	WORD $0x4ea66484 // smax v4.4s, v4.4s, v6.4s
+	WORD $0x4ea664a5 // smax v5.4s, v5.4s, v6.4s
+	WORD $0x4ea76c84 // smin v4.4s, v4.4s, v7.4s
+	WORD $0x4ea76ca5 // smin v5.4s, v5.4s, v7.4s
+	WORD $0x0e612884 // xtn v4.4h, v4.4s
+	WORD $0x4e6128a4 // xtn2 v4.8h, v5.4s
+	WORD $0x0e212884 // xtn v4.8b, v4.8h
+	WORD $0x0c0070c4 // st1 {v4.8b}, [x6]
+	ADD  R1, R0, R0
+	ADD  R3, R2, R2
+	SUB  $1, R5, R5
+	B    rowLoop8x8
+
+done8x8:
 	RET
 
 // func addResidual8x4NEONAsm(dst *byte, dstStride uintptr, res *int16, resStride uintptr, max uint32, height uintptr)

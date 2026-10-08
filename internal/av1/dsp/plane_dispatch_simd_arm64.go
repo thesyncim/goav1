@@ -8,17 +8,24 @@ package dsp
 
 import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 
-// init binds the Go-native SIMD kernels under GOEXPERIMENT=simd (Go 1.27+),
-// replacing the hand-written NEON asm bindings from plane_dispatch_arm64.go
-// (which is excluded by !goexperiment.simd). Kernels not yet ported to
-// Go-native SIMD fall back to the NEON asm binding, which still compiles under
-// tip. See SIMD_PORT.md.
+// init binds the Go-native SIMD residual-add kernel for 8-bit blocks while
+// leaving measured-loser kernels on their NEON implementations.
 func init() {
 	if cpu.Detected.NEON {
-		addResidualPlaneBlockImpl = addResidualPlaneBlockSIMD
+		addResidualPlaneBlockImpl = addResidualPlaneBlockSIMDDispatch
 		addRawTransformPlaneBlockImpl = addRawTransformPlaneBlockSIMD
 		return
 	}
 	addResidualPlaneBlockImpl = addResidualPlaneBlockPureGo
 	addRawTransformPlaneBlockImpl = addRawTransformPlaneBlockPureGo
+}
+
+// addResidualPlaneBlockSIMDDispatch selects the promoted 8-bit kernel and
+// keeps high-bit-depth blocks on the existing NEON implementation.
+func addResidualPlaneBlockSIMDDispatch(block planeBlock, bytesPerSample int, max uint16, width int, residual []int16, residualStride int) {
+	if bytesPerSample == 1 && width >= 16 && width%16 == 0 {
+		addResidualPlaneBlockSIMD(block, bytesPerSample, max, width, residual, residualStride)
+		return
+	}
+	addResidualPlaneBlockNEON(block, bytesPerSample, max, width, residual, residualStride)
 }

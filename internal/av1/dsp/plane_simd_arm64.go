@@ -4,13 +4,9 @@
 
 //go:build goexperiment.simd && arm64 && !purego
 
-// This file is a SPIKE: it reimplements the 8-bit residual-add inner loop using
-// Go's native arm64 SIMD intrinsics (the simd/archsimd package, Go 1.27+ with
-// GOEXPERIMENT=simd). It is compiled only under GOEXPERIMENT=simd, so a normal
-// build without the experiment uses the standard scalar/NEON-asm dispatch.
-// Its purpose is to measure Go-native SIMD against the scalar
-// baseline and the existing hand-written Plan 9 NEON asm on identical real code,
-// and to prove byte-identity via the differential test in plane_simd_arm64_test.go.
+// Go-native SIMD implementation of the 8-bit residual-add inner loop. It is
+// selected under GOEXPERIMENT=simd; normal builds use the scalar reference.
+// High-bit-depth blocks retain their NEON implementation.
 //
 // All vector loads/stores go through the array-pointer (value-type) variants
 // LoadUint8x16Array(*[16]uint8) / LoadInt16x8Array(*[8]int16) / StoreArray — no
@@ -80,7 +76,7 @@ func packLo4Int16(a, b archsimd.Int16x8) archsimd.Int16x8 {
 // roundRawTransformResidualSIMD matches ((raw+8)>>4) without the intermediate
 // addition, which could overflow for arbitrary int32 input.
 func roundRawTransformResidualSIMD(raw archsimd.Int32x4) archsimd.Int32x4 {
-	return raw.ShiftAllRight(4).Add(raw.ShiftAllRight(3).And(archsimd.BroadcastInt32x4(1)))
+	return raw.AddSaturated(archsimd.BroadcastInt32x4(8)).ShiftAllRight(4)
 }
 
 // addRawTransformPlaneBlockSIMD is the Go-native-SIMD analogue of

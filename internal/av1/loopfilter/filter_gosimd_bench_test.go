@@ -129,52 +129,54 @@ func benchWideEdgeFlat(edgeLen int) ([]byte, int, int, int, filter4Params) {
 	return buf, q0Base, stride, edgeLen, params
 }
 
+var filter14BenchmarkSink byte
+
+type filter14BenchmarkFn func([]byte, int, int, int, int, int, filter4Params)
+
+// benchFilter14Reset restores the same input before each iteration and feeds
+// both competing kernels through identical copy cost. Several filter cases
+// mutate their edge block, so repeatedly timing one buffer would benchmark a
+// different branch pattern after the first iteration.
+func benchFilter14Reset(b *testing.B, initial []byte, q0Base, step, outer, length, scale int, params filter4Params, fn filter14BenchmarkFn) {
+	work := make([]byte, len(initial))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		copy(work, initial)
+		fn(work, q0Base, step, outer, length, scale, params)
+	}
+	b.StopTimer()
+	filter14BenchmarkSink = work[q0Base]
+}
+
 func BenchmarkFilter14EdgePureGo_H(b *testing.B) {
 	buf, q0, step, n, p := benchWideEdge(64)
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14EdgePureGo(buf, q0, step, 1, n, 1, p)
-	}
+	benchFilter14Reset(b, buf, q0, step, 1, n, 1, p, filter14EdgePureGo)
 }
 
 func BenchmarkFilter14EdgeNEON_H(b *testing.B) {
 	buf, q0, step, n, p := benchWideEdge(64)
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14EdgeNEON(buf, q0, step, 1, n, 1, p)
-	}
+	benchFilter14Reset(b, buf, q0, step, 1, n, 1, p, filter14EdgeNEON)
 }
 
 func BenchmarkFilter14EdgeSIMD_H(b *testing.B) {
 	buf, q0, step, n, p := benchWideEdge(64)
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14EdgeSIMD(buf, q0, step, 1, n, 1, p)
-	}
+	benchFilter14Reset(b, buf, q0, step, 1, n, 1, p, filter14EdgeSIMD)
 }
 
 func BenchmarkFilter14EdgePureGo_HFlat(b *testing.B) {
 	buf, q0, step, n, p := benchWideEdgeFlat(64)
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14EdgePureGo(buf, q0, step, 1, n, 1, p)
-	}
+	benchFilter14Reset(b, buf, q0, step, 1, n, 1, p, filter14EdgePureGo)
 }
 
 func BenchmarkFilter14EdgeNEON_HFlat(b *testing.B) {
 	buf, q0, step, n, p := benchWideEdgeFlat(64)
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14EdgeNEON(buf, q0, step, 1, n, 1, p)
-	}
+	benchFilter14Reset(b, buf, q0, step, 1, n, 1, p, filter14EdgeNEON)
 }
 
 func BenchmarkFilter14EdgeSIMD_HFlat(b *testing.B) {
 	buf, q0, step, n, p := benchWideEdgeFlat(64)
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14EdgeSIMD(buf, q0, step, 1, n, 1, p)
-	}
+	benchFilter14Reset(b, buf, q0, step, 1, n, 1, p, filter14EdgeSIMD)
 }
 
 // benchWideEdgeVertFlat sets up a vertical-edge buffer (taps contiguous within
@@ -193,18 +195,12 @@ func benchWideEdgeVertFlat() ([]byte, filter4Params) {
 
 func BenchmarkFilter14EdgeNEON_VFlat(b *testing.B) {
 	buf, p := benchWideEdgeVertFlat()
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14VertNEON(buf, 16, 1, 96, 64, 1, p)
-	}
+	benchFilter14Reset(b, buf, 16, 1, 96, 64, 1, p, filter14VertNEON)
 }
 
 func BenchmarkFilter14EdgeSIMD_VFlat(b *testing.B) {
 	buf, p := benchWideEdgeVertFlat()
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14VertSIMD(buf, 16, 1, 96, 64, 1, p)
-	}
+	benchFilter14Reset(b, buf, 16, 1, 96, 64, 1, p, filter14VertSIMD)
 }
 
 // benchWide16Edge sets up a 10/12-bit horizontal-edge buffer. Flat content
@@ -236,60 +232,39 @@ func benchWide16Edge(bitDepth uint8, flat bool) ([]byte, int, int, int, filter4P
 
 func BenchmarkFilter14Edge16PureGo_H10Flat(b *testing.B) {
 	buf, q0, step, n, p := benchWide16Edge(10, true)
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14Edge16PureGo(buf, q0, step, 2, n, 4, p)
-	}
+	benchFilter14Reset(b, buf, q0, step, 2, n, 4, p, filter14Edge16PureGo)
 }
 
 func BenchmarkFilter14Edge16NEON_H10Flat(b *testing.B) {
 	buf, q0, step, n, p := benchWide16Edge(10, true)
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14Edge16NEON(buf, q0, step, 2, n, 4, p)
-	}
+	benchFilter14Reset(b, buf, q0, step, 2, n, 4, p, filter14Edge16NEON)
 }
 
 func BenchmarkFilter14Edge16SIMD_H10Flat(b *testing.B) {
 	buf, q0, step, n, p := benchWide16Edge(10, true)
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14Edge16SIMD(buf, q0, step, 2, n, 4, p)
-	}
+	benchFilter14Reset(b, buf, q0, step, 2, n, 4, p, filter14Edge16SIMD)
 }
 
 func BenchmarkFilter14Edge16NEON_H10Mixed(b *testing.B) {
 	buf, q0, step, n, p := benchWide16Edge(10, false)
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14Edge16NEON(buf, q0, step, 2, n, 4, p)
-	}
+	benchFilter14Reset(b, buf, q0, step, 2, n, 4, p, filter14Edge16NEON)
 }
 
 func BenchmarkFilter14Edge16SIMD_H10Mixed(b *testing.B) {
 	buf, q0, step, n, p := benchWide16Edge(10, false)
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14Edge16SIMD(buf, q0, step, 2, n, 4, p)
-	}
+	benchFilter14Reset(b, buf, q0, step, 2, n, 4, p, filter14Edge16SIMD)
 }
 
 // 12-bit: the NEON wrapper refuses (center != 512) and runs pure-Go, so this
 // pair measures the SIMD kernel against today's actual 12-bit dispatch.
 func BenchmarkFilter14Edge16NEON_H12Flat(b *testing.B) {
 	buf, q0, step, n, p := benchWide16Edge(12, true)
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14Edge16NEON(buf, q0, step, 2, n, 16, p)
-	}
+	benchFilter14Reset(b, buf, q0, step, 2, n, 16, p, filter14Edge16NEON)
 }
 
 func BenchmarkFilter14Edge16SIMD_H12Flat(b *testing.B) {
 	buf, q0, step, n, p := benchWide16Edge(12, true)
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14Edge16SIMD(buf, q0, step, 2, n, 16, p)
-	}
+	benchFilter14Reset(b, buf, q0, step, 2, n, 16, p, filter14Edge16SIMD)
 }
 
 func BenchmarkFilter6Edge16NEON_H10Flat(b *testing.B) {
@@ -340,16 +315,10 @@ func benchWide16Vert() ([]byte, filter4Params) {
 
 func BenchmarkFilter14Edge16NEON_V10Flat(b *testing.B) {
 	buf, p := benchWide16Vert()
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14Vert16NEON(buf, 16*2, 2, 192, 64, 4, p)
-	}
+	benchFilter14Reset(b, buf, 16, 2, 192, 64, 4, p, filter14Vert16NEON)
 }
 
 func BenchmarkFilter14Edge16SIMD_V10Flat(b *testing.B) {
 	buf, p := benchWide16Vert()
-	b.ReportAllocs()
-	for b.Loop() {
-		filter14Vert16SIMD(buf, 16*2, 2, 192, 64, 4, p)
-	}
+	benchFilter14Reset(b, buf, 16, 2, 192, 64, 4, p, filter14Vert16SIMD)
 }

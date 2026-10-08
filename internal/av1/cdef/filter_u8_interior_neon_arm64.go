@@ -22,19 +22,7 @@ package cdef
 func cdefFilterBlock8InteriorU8NEON(ctx *filterBlockU8NEONCtx)
 
 //go:noescape
-func cdefFilterBlock8PrimaryInteriorU8NEON(ctx *filterBlockU8NEONCtx)
-
-//go:noescape
-func cdefFilterBlock8SecondaryInteriorU8NEON(ctx *filterBlockU8NEONCtx)
-
-//go:noescape
 func cdefFilterBlock4InteriorU8NEON(ctx *filterBlockU8NEONCtx)
-
-//go:noescape
-func cdefFilterBlock4PrimaryInteriorU8NEON(ctx *filterBlockU8NEONCtx)
-
-//go:noescape
-func cdefFilterBlock4SecondaryInteriorU8NEON(ctx *filterBlockU8NEONCtx)
 
 // dispatchFilterBlockU8InteriorNEON is the interior counterpart of
 // dispatchFilterBlockU8NEON: it routes a prepared ctx to the width- and
@@ -43,25 +31,15 @@ func cdefFilterBlock4SecondaryInteriorU8NEON(ctx *filterBlockU8NEONCtx)
 // footprint) and that the height matches the kernel's row packing (even for
 // w=8, a multiple of four for w=4).
 func dispatchFilterBlockU8InteriorNEON(ctx *filterBlockU8NEONCtx, width int, primaryStrength int, secondaryStrength int) {
-	if width == 8 {
-		switch {
-		case primaryStrength != 0 && secondaryStrength == 0:
-			cdefFilterBlock8PrimaryInteriorU8NEON(ctx)
-		case primaryStrength == 0 && secondaryStrength != 0:
-			cdefFilterBlock8SecondaryInteriorU8NEON(ctx)
-		default:
-			cdefFilterBlock8InteriorU8NEON(ctx)
-		}
+	if primaryStrength == 0 || secondaryStrength == 0 {
+		dispatchFilterBlockU8NEON(ctx, width, primaryStrength, secondaryStrength)
 		return
 	}
-	switch {
-	case primaryStrength != 0 && secondaryStrength == 0:
-		cdefFilterBlock4PrimaryInteriorU8NEON(ctx)
-	case primaryStrength == 0 && secondaryStrength != 0:
-		cdefFilterBlock4SecondaryInteriorU8NEON(ctx)
-	default:
-		cdefFilterBlock4InteriorU8NEON(ctx)
+	if width == 8 {
+		cdefFilterBlock8InteriorU8NEON(ctx)
+		return
 	}
+	cdefFilterBlock4InteriorU8NEON(ctx)
 }
 
 // cdefTapReach is the maximum |offset|, in samples, that any CDEF tap reads
@@ -106,7 +84,7 @@ func cdefUnitInteriorU8(input []uint16, inputOrigin int, blocks []BlockPosition,
 	// inputOrigin addresses the unit's first interior sample (buffer row
 	// VerticalBorder, column HorizontalBorder). Walk out cdefTapReach on each
 	// side of the block bounding box.
-	topLeft := inputOrigin + ((minBY*BStride)<<bhLog2) + (minBX << bwLog2)
+	topLeft := inputOrigin + ((minBY * BStride) << bhLog2) + (minBX << bwLog2)
 	scanStart := topLeft - cdefTapReach*BStride - cdefTapReach
 	nRows := (maxBY-minBY+1)*blockHeight + 2*cdefTapReach
 	nCols := (maxBX-minBX+1)*blockWidth + 2*cdefTapReach

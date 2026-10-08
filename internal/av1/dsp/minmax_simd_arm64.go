@@ -6,7 +6,10 @@
 
 package dsp
 
-import "simd/archsimd"
+import (
+	"simd/archsimd"
+	"unsafe"
+)
 
 // minMaxAbsDiff8x8SIMD is the Go-native-SIMD analogue of minMaxAbsDiff8x8PureGo
 // for the 8-bit path: the per-pixel absolute difference |a-b| is Max(a,b)-
@@ -29,31 +32,44 @@ func minMaxAbsDiff8x8SIMD(a []byte, aStride int, b []byte, bStride int, bytesPer
 	}
 	minV := archsimd.BroadcastUint8x16(255)
 	maxV := archsimd.BroadcastUint8x16(0)
-	var arow, brow [16]uint8
+	var aTail, bTail [16]uint8
+	aTailOffset, bTailOffset := 7*aStride, 7*bStride
+	aLastHas16 := len(a)-aTailOffset >= 16
+	bLastHas16 := len(b)-bTailOffset >= 16
+	ap := unsafe.Pointer(&a[0])
+	bp := unsafe.Pointer(&b[0])
 	for row := 0; row < 8; row++ {
-		ao, bo := row*aStride, row*bStride
-		for i := 0; i < 8; i++ {
-			arow[i] = a[ao+i]
-			brow[i] = b[bo+i]
+		var av, bv archsimd.Uint8x16
+		if row == 7 && !aLastHas16 {
+			// The final row may have only eight to fifteen accessible bytes.
+			// byteBlockFits guarantees the low eight; the zeroed high half is
+			// discarded by InterleaveLo below.
+			copy(aTail[:8], a[aTailOffset:aTailOffset+8])
+			av = archsimd.LoadUint8x16Array(&aTail)
+		} else {
+			// For rows 0..6, the validated 8x8 extent plus stride >= 8 leaves at
+			// least 16 bytes in the slice. Row 7 takes this path only after the
+			// explicit remaining-length check above. InterleaveLo discards bytes
+			// 8..15, even when they are from the next row.
+			av = archsimd.LoadUint8x16Array((*[16]uint8)(ap))
 		}
-		a := archsimd.LoadUint8x16Array(&arow)
-		b := archsimd.LoadUint8x16Array(&brow)
+		if row == 7 && !bLastHas16 {
+			copy(bTail[:8], b[bTailOffset:bTailOffset+8])
+			bv = archsimd.LoadUint8x16Array(&bTail)
+		} else {
+			bv = archsimd.LoadUint8x16Array((*[16]uint8)(bp))
+		}
+		// Duplicate the first eight loaded bytes so every lane participates in
+		// the official 16-lane reductions without changing the 8x8 result.
+		a := av.InterleaveLo(av)
+		b := bv.InterleaveLo(bv)
 		absd := a.Max(b).Sub(a.Min(b))
 		minV = minV.Min(absd)
 		maxV = maxV.Max(absd)
-	}
-	var minArr, maxArr [16]uint8
-	minV.StoreArray(&minArr)
-	maxV.StoreArray(&maxArr)
-	minDiff := uint16(255)
-	var maxDiff uint16
-	for i := 0; i < 8; i++ {
-		if d := uint16(minArr[i]); d < minDiff {
-			minDiff = d
-		}
-		if d := uint16(maxArr[i]); d > maxDiff {
-			maxDiff = d
+		if row < 7 {
+			ap = unsafe.Add(ap, aStride)
+			bp = unsafe.Add(bp, bStride)
 		}
 	}
-	return minDiff, maxDiff, nil
+	return uint16(minV.ReduceMin()), uint16(maxV.ReduceMax()), nil
 }

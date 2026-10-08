@@ -118,21 +118,18 @@ func BenchmarkAddResidual32x32_Scalar(b *testing.B) {
 func BenchmarkAddResidual32x32_SIMD(b *testing.B) {
 	benchResidual(b, 32, 32, addResidualPlaneBlockSIMD)
 }
-func BenchmarkAddResidual32x32_ASM(b *testing.B) { benchResidual(b, 32, 32, addResidualPlaneBlockNEON) }
 func BenchmarkAddResidual64x64_Scalar(b *testing.B) {
 	benchResidual(b, 64, 64, addResidualPlaneBlockPureGo)
 }
 func BenchmarkAddResidual64x64_SIMD(b *testing.B) {
 	benchResidual(b, 64, 64, addResidualPlaneBlockSIMD)
 }
-func BenchmarkAddResidual64x64_ASM(b *testing.B) { benchResidual(b, 64, 64, addResidualPlaneBlockNEON) }
 func BenchmarkAddResidual16x16_Scalar(b *testing.B) {
 	benchResidual(b, 16, 16, addResidualPlaneBlockPureGo)
 }
 func BenchmarkAddResidual16x16_SIMD(b *testing.B) {
 	benchResidual(b, 16, 16, addResidualPlaneBlockSIMD)
 }
-func BenchmarkAddResidual16x16_ASM(b *testing.B) { benchResidual(b, 16, 16, addResidualPlaneBlockNEON) }
 
 // makeRawCase builds a dst block + int32 raw buffer (bounded like real
 // inverse-transform output, with int16-saturation edges of (raw+8)>>4 mixed in).

@@ -10,9 +10,6 @@ package cdef
 // reference (TestFilterBlockNEONMatchesPureGo) and routes narrow shapes
 // back to it internally. The unit-level loop binds statically in
 // filter_neon_arm64.go (TestFilterUnitBlocksNEONMatchesPureGo).
-//
-// Under the goexperiment.simd build the Go-native SIMD kernel binds instead
-// (filter_gosimd_arm64.go); this file is excluded there.
 func init() {
 	filterBlockImpl = filterBlockNEON
 }
