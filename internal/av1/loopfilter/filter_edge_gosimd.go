@@ -152,6 +152,15 @@ func lfVertGather[S lfSample](scratch []byte, pix []byte, src int, outer int, ta
 			}
 			return
 		}
+		// When the backing row has two spare bytes, a whole-word load is
+		// cheaper than assembling four or six bytes. The extra tap rows are
+		// discarded; exact-width slices retain the short-load path.
+		if src+(n-1)*outer+8 <= len(pix) {
+			for g := 0; g < n/8; g++ {
+				lfTranspose8x8U8(pix, src+g*8*outer, outer, scratch, g*8, row)
+			}
+			return
+		}
 		for g := 0; g < n/8; g++ {
 			lfTranspose8x8U8Short(pix, src+g*8*outer, outer, scratch, g*8, row, taps, 8)
 		}
@@ -165,6 +174,12 @@ func lfVertGather[S lfSample](scratch []byte, pix []byte, src int, outer int, ta
 			if taps == 14 {
 				lfTranspose8x8U16(pix, in+12, outer, scratch, out+6*row, row)
 			}
+		}
+		return
+	}
+	if src+(n-1)*outer+16 <= len(pix) {
+		for g := 0; g < n/8; g++ {
+			lfTranspose8x8U16(pix, src+g*8*outer, outer, scratch, g*16, row)
 		}
 		return
 	}
