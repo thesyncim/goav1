@@ -12,10 +12,9 @@ import (
 	"testing"
 )
 
-// TestFilterNEONDispatchBound is the FuncForPC probe for the non-SIMD build: with
-// the goexperiment.simd tag off, the narrow and wide dispatch slots must resolve
-// to the hand-written NEON asm (the Go-native SIMD kernels are not compiled in
-// this build). Its SIMD-build counterpart is TestFilterSIMDDispatchBound.
+// TestFilterNEONDispatchBound verifies that non-SIMD dispatch uses NEON for the
+// retained kernels and scalar Go for the promoted HBD6/HBD14 SIMD kernels,
+// whose replaced horizontal assembly bodies are no longer present.
 func TestFilterNEONDispatchBound(t *testing.T) {
 	nameOf := func(v interface{}) string {
 		return runtime.FuncForPC(reflect.ValueOf(v).Pointer()).Name()
@@ -29,9 +28,9 @@ func TestFilterNEONDispatchBound(t *testing.T) {
 		{"filter6EdgeImpl", filter6EdgeImpl, filter6EdgeNEON},
 		{"filter8EdgeImpl", filter8EdgeImpl, filter8EdgeNEON},
 		{"filter14EdgeImpl", filter14EdgeImpl, filter14EdgeNEON},
-		{"filter6Edge16Impl", filter6Edge16Impl, filter6Edge16NEON},
+		{"filter6Edge16Impl", filter6Edge16Impl, filter6Edge16PureGo},
 		{"filter8Edge16Impl", filter8Edge16Impl, filter8Edge16NEON},
-		{"filter14Edge16Impl", filter14Edge16Impl, filter14Edge16NEON},
+		{"filter14Edge16Impl", filter14Edge16Impl, filter14Edge16PureGoFallback},
 	}
 	for _, c := range checks {
 		if got, want := nameOf(c.got), nameOf(c.want); got != want {

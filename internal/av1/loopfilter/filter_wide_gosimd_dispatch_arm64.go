@@ -8,25 +8,19 @@ package loopfilter
 
 import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 
-// init binds the wide deblocking kernels under the goexperiment.simd build (the
-// NEON binding in filter_wide_dispatch_arm64.go is excluded there via
-// !goexperiment.simd). The eight- and fourteen-sample 8-bit kernels route
-// through the Go-native SIMD implementations (filter6/8/14_gosimd_arm64.go),
-// in both the 8-bit and 16-bit (10/12-bit sample) forms. Every binding is
-// byte-identical to the pure-Go reference.
+// init keeps measured SIMD winners live and routes losing 8-bit kernels to
+// NEON. HBD six- and fourteen-tap SIMD kernels remain selected; HBD eight-tap
+// stays on NEON after its paired comparison.
 func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {
-		// filter4_dispatch_arm64.go (the NEON narrow binding) is excluded in this
-		// build via !goexperiment.simd, so bind the narrow kernels here too — both
-		// the 8-bit and 16-bit Go-native SIMD forms.
-		filter4EdgeImpl = filter4EdgeSIMD
-		filter4Edge16Impl = filter4Edge16SIMD
-		filter6EdgeImpl = filter6EdgeSIMD
-		filter8EdgeImpl = filter8EdgeSIMD
-		filter14EdgeImpl = filter14EdgeSIMD
+		filter4EdgeImpl = filter4EdgeNEON
+		filter4Edge16Impl = filter4Edge16NEON
+		filter6EdgeImpl = filter6EdgeNEON
+		filter8EdgeImpl = filter8EdgeNEON
+		filter14EdgeImpl = filter14EdgeNEON
 		filter6Edge16Impl = filter6Edge16SIMD
-		filter8Edge16Impl = filter8Edge16SIMD
+		filter8Edge16Impl = filter8Edge16NEON
 		filter14Edge16Impl = filter14Edge16SIMD
 		return
 	}

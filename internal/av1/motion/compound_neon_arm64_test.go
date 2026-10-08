@@ -624,3 +624,28 @@ func BenchmarkBlendCompoundAvg8NEONDirect_4x8(b *testing.B) {
 func BenchmarkBlendCompoundAvg8PureGoDirect_4x8(b *testing.B) {
 	benchBlendCompoundAvg8(b, 4, 8, blendCompoundAvg8PureGo)
 }
+
+func benchBlendCompoundAvg8Fair(b *testing.B, fn func(dst frame.Plane, src0, src1 []uint16, dstX, dstY, w, h, fwd, bck, roundOffset, roundBits int)) {
+	const roundOffset, roundBits = 6144, 4
+	const width, height = 32, 32
+	src0 := make([]uint16, width*height)
+	src1 := make([]uint16, width*height)
+	for i := range src0 {
+		src0[i] = uint16(3000 + i%5000)
+		src1[i] = uint16(4000 + (i*7)%5000)
+	}
+	dst, _ := testPlane(width, height, 1, width)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		fn(dst, src0, src1, 0, 0, width, height, 8, 8, roundOffset, roundBits)
+	}
+}
+
+func BenchmarkBlendCompoundAvg8NEON_32(b *testing.B) {
+	benchBlendCompoundAvg8Fair(b, blendCompoundAvg8NEON)
+}
+
+func BenchmarkBlendCompoundAvg8Scalar_32(b *testing.B) {
+	benchBlendCompoundAvg8Fair(b, blendCompoundAvg8PureGo)
+}

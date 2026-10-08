@@ -6,42 +6,15 @@
 
 package loopfilter
 
-// NEON-accelerated 10-bit (two-byte sample) wide deblocking kernels (six-,
-// eight- and fourteen-sample). These mirror the 8-bit wide NEON kernels
-// (filter_wide_neon_arm64.s / .go): the 8-bit kernels already run every step in
-// signed 16-bit lanes after widening the byte loads, so the 10-bit variants are
-// the same instruction stream with contiguous .8h loads/stores and the
-// center/min/max clamp bounds taken from the context. Horizontal edges (taps
-// row-separated, positions two bytes apart) load eight positions per vector as a
-// contiguous sixteen-byte load; vertical edges (taps two bytes apart, positions
-// stride-separated) transpose eight positions into a contiguous stack scratch,
-// run the proven horizontal kernel, and scatter the modified samples back.
+// NEON-accelerated 10-bit (two-byte sample) eight-tap horizontal filtering and
+// six/eight-tap vertical transpose helpers. Vertical edges transpose eight
+// positions into stack scratch with shared NEON gather/scatter routines. The
+// HBD6 horizontal assembly core has been replaced by Go SIMD.
 //
-// Only 10-bit is routed here: at 10-bit every partial sum stays inside int16
-// (max coefficient weight 16 for filter14 times max sample 1023 = 16368 <
-// 32767), so the 8-bit lane layout is reused verbatim and is byte-exact with the
-// pure-Go reference. 12-bit (whose fourteen-tap sums overflow int16) and any
-// tail shorter than eight positions route through the pure-Go reference.
-
-// filter6Edge16NEONCtx is the asm calling context for the 10-bit six-sample
-// kernel. Field order and sizes are part of the ABI shared with
-// filter_wide16_neon_arm64.s; do not reorder.
-type filter6Edge16NEONCtx struct {
-	p2     *byte
-	p1     *byte
-	p0     *byte
-	q0     *byte
-	q1     *byte
-	q2     *byte
-	count  uintptr
-	limit  int64
-	blimit int64
-	hev    int64
-	thr    int64
-	center int64
-	min    int64
-	max    int64
-}
+// The remaining HBD8 horizontal kernel is limited to 10-bit because its
+// partial sums must fit in int16. HBD6 and HBD14 horizontal filtering use Go
+// SIMD when enabled and scalar Go otherwise; vertical SIMD shares the NEON
+// gather/scatter routines. Short tails use the scalar reference.
 
 // filter8Edge16NEONCtx is the asm calling context for the 10-bit eight-sample
 // kernel. Field order and sizes are part of the ABI shared with
@@ -65,83 +38,13 @@ type filter8Edge16NEONCtx struct {
 	max    int64
 }
 
-// filter14Edge16NEONCtx is the asm calling context for the 10-bit
-// fourteen-sample kernel. Field order and sizes are part of the ABI shared with
-// filter_wide16_neon_arm64.s; do not reorder.
-type filter14Edge16NEONCtx struct {
-	p6     *byte
-	p5     *byte
-	p4     *byte
-	p3     *byte
-	p2     *byte
-	p1     *byte
-	p0     *byte
-	q0     *byte
-	q1     *byte
-	q2     *byte
-	q3     *byte
-	q4     *byte
-	q5     *byte
-	q6     *byte
-	count  uintptr
-	limit  int64
-	blimit int64
-	hev    int64
-	thr    int64
-	center int64
-	min    int64
-	max    int64
-}
-
-//go:noescape
-func filter6Edge16NEONAsm(ctx *filter6Edge16NEONCtx)
-
 //go:noescape
 func filter8Edge16NEONAsm(ctx *filter8Edge16NEONCtx)
-
-//go:noescape
-func filter14Edge16NEONAsm(ctx *filter14Edge16NEONCtx)
 
 // highbdNEONCenter10 is the centre offset for 10-bit samples (1<<9). The 10-bit
 // path is the only high bit depth accelerated by NEON; params.center identifies
 // it without threading a separate bit-depth argument through the dispatch slot.
 const highbdNEONCenter10 = 512
-
-func filter6Edge16NEON(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
-	groups := length / 8
-	if int(params.center) != highbdNEONCenter10 || groups == 0 {
-		filter6Edge16PureGo(pix, q0Base, step, outer, length, scale, params)
-		return
-	}
-	if outer != 2 {
-		if step == 2 {
-			filter6Vert16NEON(pix, q0Base, step, outer, length, scale, params)
-			return
-		}
-		filter6Edge16PureGo(pix, q0Base, step, outer, length, scale, params)
-		return
-	}
-	ctx := filter6Edge16NEONCtx{
-		p2:     &pix[q0Base-3*step],
-		p1:     &pix[q0Base-2*step],
-		p0:     &pix[q0Base-step],
-		q0:     &pix[q0Base],
-		q1:     &pix[q0Base+step],
-		q2:     &pix[q0Base+2*step],
-		count:  uintptr(groups),
-		limit:  int64(params.limit),
-		blimit: int64(params.blimit),
-		hev:    int64(params.hev),
-		thr:    int64(scale),
-		center: int64(params.center),
-		min:    int64(params.min),
-		max:    int64(params.max),
-	}
-	filter6Edge16NEONAsm(&ctx)
-	if rem := length - groups*8; rem > 0 {
-		filter6Edge16PureGo(pix, q0Base+groups*8*outer, step, outer, rem, scale, params)
-	}
-}
 
 func filter8Edge16NEON(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
 	groups := length / 8
@@ -181,56 +84,16 @@ func filter8Edge16NEON(pix []byte, q0Base int, step int, outer int, length int, 
 	}
 }
 
-func filter14Edge16NEON(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
-	groups := length / 8
-	if int(params.center) != highbdNEONCenter10 || groups == 0 {
-		filter14Edge16PureGo(pix, q0Base, step, outer, length, scale, params)
-		return
-	}
-	if outer != 2 {
-		if step == 2 {
-			filter14Vert16NEON(pix, q0Base, step, outer, length, scale, params)
-			return
-		}
-		filter14Edge16PureGo(pix, q0Base, step, outer, length, scale, params)
-		return
-	}
-	ctx := filter14Edge16NEONCtx{
-		p6:     &pix[q0Base-7*step],
-		p5:     &pix[q0Base-6*step],
-		p4:     &pix[q0Base-5*step],
-		p3:     &pix[q0Base-4*step],
-		p2:     &pix[q0Base-3*step],
-		p1:     &pix[q0Base-2*step],
-		p0:     &pix[q0Base-step],
-		q0:     &pix[q0Base],
-		q1:     &pix[q0Base+step],
-		q2:     &pix[q0Base+2*step],
-		q3:     &pix[q0Base+3*step],
-		q4:     &pix[q0Base+4*step],
-		q5:     &pix[q0Base+5*step],
-		q6:     &pix[q0Base+6*step],
-		count:  uintptr(groups),
-		limit:  int64(params.limit),
-		blimit: int64(params.blimit),
-		hev:    int64(params.hev),
-		thr:    int64(scale),
-		center: int64(params.center),
-		min:    int64(params.min),
-		max:    int64(params.max),
-	}
-	filter14Edge16NEONAsm(&ctx)
-	if rem := length - groups*8; rem > 0 {
-		filter14Edge16PureGo(pix, q0Base+groups*8*outer, step, outer, rem, scale, params)
-	}
+func filter14Edge16PureGoFallback(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
+	filter14Edge16PureGo(pix, q0Base, step, outer, length, scale, params)
 }
 
 // Vertical-edge kernels: taps are two bytes apart (step == 2) while positions
 // advance by the row stride (outer). Each gathers batches of up to
 // filter14VertBatchGroups eight-position groups into a contiguous 16-bit
 // scratch laid out as a horizontal edge (tap rows wide16VertScratchStride
-// bytes apart, positions two bytes apart), runs the proven horizontal kernel
-// on the whole batch (tap pointers advance sixteen bytes per group), then
+// bytes apart, positions two bytes apart), runs the pure-Go horizontal
+// reference on the whole batch, then
 // scatters the modifiable samples back. The gather/scatter transposes run in
 // NEON .8h/.4s/.2d trn1/trn2 ladders (filter_wide16_vtrn_neon_arm64.s, ported
 // from dav1d src/arm/64/loopfilter16.S lpf_h_8_8_neon / lpf_h_6_8_neon +
@@ -276,7 +139,7 @@ func filter6Vert16NEON(pix []byte, q0Base int, step int, outer int, length int, 
 			count:   uintptr(n),
 		}
 		filter6Vert16GatherNEONAsm(&ctx)
-		filter6Edge16NEON(scratch[:], 3*wide16VertScratchStride, wide16VertScratchStride, 2, n*8, scale, params)
+		filter6Edge16PureGo(scratch[:], 3*wide16VertScratchStride, wide16VertScratchStride, 2, n*8, scale, params)
 		// Scatter back the four modifiable samples p1..q1 (tap rows 1..4).
 		filter6Vert16ScatterNEONAsm(&ctx)
 	}
@@ -316,8 +179,7 @@ func filter8Vert16NEON(pix []byte, q0Base int, step int, outer int, length int, 
 
 // filter14Vert16NEON batches up to filter14VertBatchGroups eight-position
 // groups per scratch fill; the scratch row stride is 16*filter14VertBatchGroups
-// bytes so one filter14Edge16NEONAsm call (tap pointers advancing sixteen bytes
-// per group) processes the whole batch. The gather/scatter transposes run in
+// bytes then the pure-Go horizontal reference processes each gathered batch. The gather/scatter transposes run in
 // NEON .8h trn1/trn2 ladders (filter14_vtrn_neon_arm64.s, ported from dav1d
 // src/arm/64/loopfilter16.S lpf_h_16_8_neon + util.S transpose_8x8h), the
 // same shape the six/eight-sample vertical paths above use.
@@ -342,7 +204,7 @@ func filter14Vert16NEON(pix []byte, q0Base int, step int, outer int, length int,
 			count:   uintptr(n),
 		}
 		filter14Vert16GatherNEONAsm(&ctx)
-		filter14Edge16NEON(scratch[:], 7*scratchStride, scratchStride, 2, n*8, scale, params)
+		filter14Edge16PureGoFallback(scratch[:], 7*scratchStride, scratchStride, 2, n*8, scale, params)
 		// Scatter back the twelve modifiable samples p5..q5 (tap rows 1..12).
 		filter14Vert16ScatterNEONAsm(&ctx)
 	}

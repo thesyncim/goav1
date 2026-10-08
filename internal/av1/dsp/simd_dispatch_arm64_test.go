@@ -11,24 +11,30 @@ import (
 	"testing"
 )
 
-func TestSIMDDispatchTargetsAreDistinctFromNEONBenchmarks(t *testing.T) {
+func TestSIMDDispatchKeepsMeasuredNEONKernels(t *testing.T) {
 	cases := []struct {
-		name                   string
-		dispatch, wantDispatch any
-		neon                   any
+		name string
+		got  any
+		want any
 	}{
-		{"blend", blendA64MaskImpl, blendA64MaskSIMD, blendA64MaskNEON},
-		{"residual add", addResidualPlaneBlockImpl, addResidualPlaneBlockSIMDDispatch, addResidualPlaneBlockNEON},
-		{"raw add", addRawTransformPlaneBlockImpl, addRawTransformPlaneBlockSIMD, addRawTransformPlaneBlockNEON},
-		{"minmax", minMaxAbsDiff8x8Impl, minMaxAbsDiff8x8SIMD, minMaxAbsDiff8x8NEON},
+		{"blend", blendA64MaskImpl, blendA64MaskNEON},
+		{"raw add", addRawTransformPlaneBlockImpl, addRawTransformPlaneBlockNEON},
+		{"minmax", minMaxAbsDiff8x8Impl, minMaxAbsDiff8x8NEON},
 	}
 	for _, tc := range cases {
-		dispatchPC := reflect.ValueOf(tc.dispatch).Pointer()
-		if wantPC := reflect.ValueOf(tc.wantDispatch).Pointer(); dispatchPC != wantPC {
-			t.Errorf("%s dispatch points to %#x, want selected target %#x", tc.name, dispatchPC, wantPC)
+		if got, want := reflect.ValueOf(tc.got).Pointer(), reflect.ValueOf(tc.want).Pointer(); got != want {
+			t.Errorf("%s dispatch points to %#x, want NEON target %#x", tc.name, got, want)
 		}
-		if neonPC := reflect.ValueOf(tc.neon).Pointer(); dispatchPC == neonPC {
-			t.Errorf("%s dispatch points to NEON benchmark target %#x", tc.name, neonPC)
-		}
+	}
+}
+
+func TestResidualSIMDDispatchUsesWrapper(t *testing.T) {
+	got := reflect.ValueOf(addResidualPlaneBlockImpl).Pointer()
+	want := reflect.ValueOf(addResidualPlaneBlockSIMDDispatch).Pointer()
+	if got != want {
+		t.Fatalf("residual dispatch points to %#x, want SIMD width selector %#x", got, want)
+	}
+	if got == reflect.ValueOf(addResidualPlaneBlockNEON).Pointer() {
+		t.Fatalf("residual dispatch bypasses SIMD width selector")
 	}
 }

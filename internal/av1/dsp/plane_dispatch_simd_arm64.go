@@ -13,7 +13,7 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 func init() {
 	if cpu.Detected.NEON {
 		addResidualPlaneBlockImpl = addResidualPlaneBlockSIMDDispatch
-		addRawTransformPlaneBlockImpl = addRawTransformPlaneBlockSIMD
+		addRawTransformPlaneBlockImpl = addRawTransformPlaneBlockNEON
 		return
 	}
 	addResidualPlaneBlockImpl = addResidualPlaneBlockPureGo

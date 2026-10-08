@@ -8,13 +8,10 @@ package dsp
 
 import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 
-// init binds the Go-native SIMD BlendA64Mask kernel under GOEXPERIMENT=simd,
-// replacing the NEON asm binding (blend_dispatch_arm64.go is excluded by
-// !goexperiment.simd). The SIMD kernel handles the 8-bit non-subsampled fast
-// path and defers everything else to the scalar reference. See SIMD_PORT.md.
+// init keeps BlendA64Mask on the measured NEON implementation in SIMD builds.
 func init() {
 	if cpu.Detected.NEON {
-		blendA64MaskImpl = blendA64MaskSIMD
+		blendA64MaskImpl = blendA64MaskNEON
 		return
 	}
 	blendA64MaskImpl = blendA64MaskPureGo

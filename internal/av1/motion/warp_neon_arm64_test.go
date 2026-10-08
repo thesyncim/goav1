@@ -201,6 +201,15 @@ func BenchmarkWarpVertical8FullScalarNEONOracle(b *testing.B) {
 	}
 }
 
+func BenchmarkWarpVertical8FullGamma0Scalar(b *testing.B) {
+	tmp, dst := benchWarpVerticalInputs()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		warpVertical8FullGamma0(dst, &tmp, 8, 8, 0, 0, 32768, -64, round1Bits, 8+2*filterBits-round0Bits)
+	}
+}
+
 func BenchmarkWarpVertical8FullNEON(b *testing.B) {
 	tmp, dst := benchWarpVerticalInputs()
 	if !warpVertFullOffsInRange(32768, 96, -64) {

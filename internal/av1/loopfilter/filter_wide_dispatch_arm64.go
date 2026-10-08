@@ -20,9 +20,9 @@ func init() {
 		filter6EdgeImpl = filter6EdgeNEON
 		filter8EdgeImpl = filter8EdgeNEON
 		filter14EdgeImpl = filter14EdgeNEON
-		filter6Edge16Impl = filter6Edge16NEON
+		filter6Edge16Impl = filter6Edge16PureGo
 		filter8Edge16Impl = filter8Edge16NEON
-		filter14Edge16Impl = filter14Edge16NEON
+		filter14Edge16Impl = filter14Edge16PureGoFallback
 		return
 	}
 	filter6EdgeImpl = filter6EdgePureGo
