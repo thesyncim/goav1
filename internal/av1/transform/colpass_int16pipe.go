@@ -73,6 +73,55 @@ func inverseDCT64Col8Scalar16(buf []int16, stride int, min int32, max int32) {
 // SIMD build binds the fused SQRSHRN form (colpass_int16pipe_gosimd_arm64.go).
 var clampRoundNarrowInt16Impl = clampRoundNarrowInt16Scalar
 
+// int16ColumnSIMDInputBound returns a conservative input-magnitude bound for
+// which the 8-wide int16 SIMD DCT kernels are bit-identical to the int64 scalar
+// kernels under the production int16 stage clamp. The SIMD kernels use
+// saturating int16 operations for some unclipped rotation intermediates, so
+// the full int16 clamp alone is not a sufficient precondition. These bounds
+// come from inclusive integer-interval propagation through every SIMD stage
+// and recursive even transform; every intermediate then stays in int16.
+// Broaden them only after repeating that analysis and extending the parity tests.
+func int16ColumnSIMDInputBound(height int) int32 {
+	switch height {
+	case dct8Size:
+		return 4095
+	case dct16Size:
+		return 1023
+	case dct32Size:
+		return 511
+	case dct64Size:
+		return 255
+	default:
+		return 0
+	}
+}
+
+// int16ColumnSIMDInputSafe checks the values after mid-pass round/clamp and
+// before the SIMD column kernel mutates them. Widths below eight only use the
+// scalar int16 DCT implementation and need no SIMD-specific range guard.
+func int16ColumnSIMDInputSafe(buf []int16, width int, height int, min int32, max int32) bool {
+	if width < 8 {
+		return true
+	}
+	if min > 0 || max < 0 || min < minInt16 || max > maxInt16 {
+		return false
+	}
+	if width <= 0 || height <= 0 || len(buf) < width*height {
+		return false
+	}
+	limit := int16ColumnSIMDInputBound(height)
+	if limit == 0 {
+		return false
+	}
+	for _, value := range buf[:width*height] {
+		v := int32(value)
+		if v < -limit || v > limit {
+			return false
+		}
+	}
+	return true
+}
+
 func clampRoundNarrowInt16Scalar(src []int32, dst []int16, shift int, lo int32, hi int32) {
 	if shift > 0 {
 		for i := range src {

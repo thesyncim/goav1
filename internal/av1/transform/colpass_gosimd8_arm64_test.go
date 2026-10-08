@@ -46,7 +46,7 @@ func TestRoundShiftNarrowInt32x4ToInt16x8MatchesScalar(t *testing.T) {
 
 func TestInverseDCT8Col8SIMDMatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xd8c8))
-	ranges := [][2]int32{{-(1 << 11), (1 << 11) - 1}, {-(1 << 12), (1 << 12) - 1}}
+	ranges := [][2]int32{{-(1 << 11), (1 << 11) - 1}, {-4095, 4095}}
 	for iter := 0; iter < 40000; iter++ {
 		r := ranges[rng.Intn(len(ranges))]
 		min, max := r[0], r[1]
@@ -118,9 +118,9 @@ func BenchmarkDCT8x8_ASMCol2(b *testing.B) {
 
 func TestInverseDCT8Col8SIMD16MatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x16b))
-	// int16 butterfly sums must not overflow int16 (as in dav1d); valid decode
-	// intermediates stay well within this, and conformance is the full check.
-	min, max := int32(-(1 << 12)), int32((1<<12)-1)
+	// The production dispatcher only enters this SIMD kernel when every
+	// pre-column value is within the interval-certified DCT8 bound.
+	min, max := -int16ColumnSIMDInputBound(8), int16ColumnSIMDInputBound(8)
 	for iter := 0; iter < 40000; iter++ {
 		stride := 8 + rng.Intn(3)
 		a := make([]int16, 8*stride)
@@ -160,7 +160,7 @@ func BenchmarkDCT8x8_Int16Buf(b *testing.B) {
 
 func TestInverseDCT16Col8SIMD16MatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x1616))
-	min, max := int32(-(1 << 12)), int32((1<<12)-1)
+	min, max := -int16ColumnSIMDInputBound(16), int16ColumnSIMDInputBound(16)
 	for iter := 0; iter < 40000; iter++ {
 		stride := 8 + rng.Intn(3)
 		a := make([]int16, 16*stride)
@@ -214,7 +214,7 @@ func BenchmarkDCT16x8_ASMCol2(b *testing.B) {
 
 func TestInverseDCT32Col8SIMD16MatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x3232))
-	min, max := int32(-(1 << 12)), int32((1<<12)-1)
+	min, max := -int16ColumnSIMDInputBound(32), int16ColumnSIMDInputBound(32)
 	for iter := 0; iter < 40000; iter++ {
 		stride := 8 + rng.Intn(3)
 		a := make([]int16, 32*stride)
@@ -239,7 +239,7 @@ func TestInverseDCT32Col8SIMD16MatchesScalar(t *testing.T) {
 
 func TestInverseDCT64Col8SIMD16MatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x6464))
-	min, max := int32(-(1 << 12)), int32((1<<12)-1)
+	min, max := -int16ColumnSIMDInputBound(64), int16ColumnSIMDInputBound(64)
 	for iter := 0; iter < 40000; iter++ {
 		stride := 8 + rng.Intn(3)
 		a := make([]int16, 64*stride)

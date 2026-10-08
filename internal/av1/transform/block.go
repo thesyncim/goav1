@@ -144,10 +144,15 @@ func inverseSeparableBlockInt16(dst []int16, dstStride int, coeff []int32, coeff
 	// mid-pass narrow, scratch[i] (4 bytes) is consumed before col16[i] (2 bytes)
 	// can reach it, so the in-place narrow never clobbers an unread element.
 	col16 := unsafe.Slice((*int16)(unsafe.Pointer(&scratch[0])), width*height)
-	if err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax, 0, col16); err != nil {
+	usedInt16, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax, 0, col16, true)
+	if err != nil {
 		return err
 	}
-	narrowStoreFromInt16(dst, dstStride, col16, width, height)
+	if usedInt16 {
+		narrowStoreFromInt16(dst, dstStride, col16, width, height)
+	} else {
+		narrowStoreImpl(dst, dstStride, scratch, width, height)
+	}
 	return nil
 }
 
@@ -187,7 +192,8 @@ func InverseBlockBitDepthRaw(dst []int32, coeff []int32, coeffStride int, size S
 	if len(dst) < width*height {
 		return ErrInvalidTransform
 	}
-	return inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, dst, size, t, rowMin, rowMax, colMin, colMax, activeRows, nil)
+	_, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, dst, size, t, rowMin, rowMax, colMin, colMax, activeRows, nil, false)
+	return err
 }
 
 // InverseDCTDCOnlyBlockBitDepth writes the residual for a DCT_DCT block whose
