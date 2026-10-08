@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build !arm64 || purego
+//go:build !(goexperiment.simd && arm64 && !purego)
 
 package motion
 

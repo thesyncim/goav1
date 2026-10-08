@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego
+//go:build goexperiment.simd && arm64 && !purego
 
 package motion
 
@@ -65,7 +65,7 @@ func TestWarpHorizontal8ResidentNEONMatchesScalar(t *testing.T) {
 
 		var want, got warpTmp
 		wantSY := warpHorizontal8Resident(&want, ref, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz)
-		gotSY := warpHorizontal8ResidentNEON(&got, ref, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz)
+		gotSY := warpHorizontal8ResidentGoSIMD(&got, ref, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz)
 
 		if gotSY != wantSY {
 			t.Fatalf("draw %d: sy4 got %d want %d", draw, gotSY, wantSY)
@@ -128,11 +128,11 @@ func TestWarpVertical8FullNEONMatchesScalar(t *testing.T) {
 
 		if gamma0 {
 			warpVertical8FullGamma0(want, &tmp, 8, 8, 0, 0, baseSY, delta, reduceBitsVert, offsetBitsVert)
-			warpVertical8FullGamma0NEON(got, &tmp, 8, 8, 0, 0, baseSY, delta, reduceBitsVert, offsetBitsVert)
+			warpVertical8FullGamma0GoSIMD(got, &tmp, 8, 8, 0, 0, baseSY, delta, reduceBitsVert, offsetBitsVert)
 			testedGamma0++
 		} else {
 			warpVertical8Full(want, &tmp, 8, 8, 0, 0, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert)
-			warpVertical8FullNEON(got, &tmp, 8, 8, 0, 0, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert)
+			warpVertical8FullGoSIMD(got, &tmp, 8, 8, 0, 0, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert)
 			testedFull++
 		}
 
@@ -174,7 +174,7 @@ func BenchmarkWarpHorizontal8ResidentNEON(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		warpHorizontal8ResidentNEON(&tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, round0Bits, 8+filterBits-1)
+		warpHorizontal8ResidentGoSIMD(&tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, round0Bits, 8+filterBits-1)
 	}
 }
 
@@ -218,7 +218,7 @@ func BenchmarkWarpVertical8FullNEON(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		warpVertical8FullNEON(dst, &tmp, 8, 8, 0, 0, 32768, 96, -64, round1Bits, 8+2*filterBits-round0Bits)
+		warpVertical8FullGoSIMD(dst, &tmp, 8, 8, 0, 0, 32768, 96, -64, round1Bits, 8+2*filterBits-round0Bits)
 	}
 }
 
@@ -230,6 +230,6 @@ func BenchmarkWarpVertical8FullGamma0NEON(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		warpVertical8FullGamma0NEON(dst, &tmp, 8, 8, 0, 0, 32768, -64, round1Bits, 8+2*filterBits-round0Bits)
+		warpVertical8FullGamma0GoSIMD(dst, &tmp, 8, 8, 0, 0, 32768, -64, round1Bits, 8+2*filterBits-round0Bits)
 	}
 }
