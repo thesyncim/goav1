@@ -28,7 +28,7 @@ func filter8Edge16SIMD(pix []byte, q0Base int, step int, outer int, length int, 
 // eight) of horizontal taps. The flat outputs follow the running window sum of
 // filter8Samples: each output adds its incoming tap pair and drops the outgoing
 // pair, so the six results cost five updates and one shift each.
-func lfFilter8Core[S lfSample](pix []byte, q0Base int, step int, length int, scale int, params filter4Params) {
+func lfFilter8Core[S lfSample](pix []byte, q0Base int, step int, length int, scale int, params filter4Params) uint {
 	sz := lfSize[S]()
 	limit := archsimd.BroadcastInt16x8(params.limit)
 	blimit := archsimd.BroadcastInt16x8(params.blimit)
@@ -40,6 +40,7 @@ func lfFilter8Core[S lfSample](pix []byte, q0Base int, step int, length int, sca
 	three := archsimd.BroadcastInt16x8(3)
 	four := archsimd.BroadcastInt16x8(4)
 	flatThr := archsimd.BroadcastInt16x8(int16(scale))
+	var changed uint
 	for g := 0; g < length/8; g++ {
 		base := q0Base + g*8*sz
 		p3 := lfLoad[S](pix, base-4*step)
@@ -51,23 +52,42 @@ func lfFilter8Core[S lfSample](pix []byte, q0Base int, step int, length int, sca
 		q2 := lfLoad[S](pix, base+2*step)
 		q3 := lfLoad[S](pix, base+3*step)
 
-		d0q0 := lfAbsDiffInt16x8(p0, q0)
-		need := lfAbsDiffInt16x8(p3, p2).LessEqual(limit).
-			And(lfAbsDiffInt16x8(p2, p1).LessEqual(limit)).
-			And(lfAbsDiffInt16x8(p1, p0).LessEqual(limit)).
-			And(lfAbsDiffInt16x8(q1, q0).LessEqual(limit)).
-			And(lfAbsDiffInt16x8(q2, q1).LessEqual(limit)).
-			And(lfAbsDiffInt16x8(q3, q2).LessEqual(limit)).
+		d0q0 := lfAbsDiff[S](p0, q0)
+		need := lfAbsDiff[S](p3, p2).LessEqual(limit).
+			And(lfAbsDiff[S](p2, p1).LessEqual(limit)).
+			And(lfAbsDiff[S](p1, p0).LessEqual(limit)).
+			And(lfAbsDiff[S](q1, q0).LessEqual(limit)).
+			And(lfAbsDiff[S](q2, q1).LessEqual(limit)).
+			And(lfAbsDiff[S](q3, q2).LessEqual(limit)).
 			And(d0q0.Add(d0q0).
-				Add(lfAbsDiffInt16x8(p1, q1).ShiftAllRight(1)).
+				Add(lfAbsDiff[S](p1, q1).ShiftAllRight(1)).
 				LessEqual(blimit))
-		flat := lfAbsDiffInt16x8(p1, p0).LessEqual(flatThr).
-			And(lfAbsDiffInt16x8(q1, q0).LessEqual(flatThr)).
-			And(lfAbsDiffInt16x8(p2, p0).LessEqual(flatThr)).
-			And(lfAbsDiffInt16x8(q2, q0).LessEqual(flatThr)).
-			And(lfAbsDiffInt16x8(p3, p0).LessEqual(flatThr)).
-			And(lfAbsDiffInt16x8(q3, q0).LessEqual(flatThr))
-		hev := lfAbsDiffInt16x8(p1, p0).Greater(hevT).Or(lfAbsDiffInt16x8(q1, q0).Greater(hevT))
+		if !lfAny(need) {
+			continue
+		}
+		changed |= 1 << uint(g)
+		flat := lfAbsDiff[S](p1, p0).LessEqual(flatThr).
+			And(lfAbsDiff[S](q1, q0).LessEqual(flatThr)).
+			And(lfAbsDiff[S](p2, p0).LessEqual(flatThr)).
+			And(lfAbsDiff[S](q2, q0).LessEqual(flatThr)).
+			And(lfAbsDiff[S](p3, p0).LessEqual(flatThr)).
+			And(lfAbsDiff[S](q3, q0).LessEqual(flatThr))
+		if lfAll(need.And(flat)) {
+			acc := p3.Add(p3).Add(p3).Add(p2.Add(p2)).Add(p1).Add(p0).Add(q0).Add(four)
+			lfStore[S](pix, base-3*step, acc.ShiftAllRight(3))
+			acc = acc.Add(p1.Add(q1)).Sub(p3.Add(p2))
+			lfStore[S](pix, base-2*step, acc.ShiftAllRight(3))
+			acc = acc.Add(p0.Add(q2)).Sub(p3.Add(p1))
+			lfStore[S](pix, base-step, acc.ShiftAllRight(3))
+			acc = acc.Add(q0.Add(q3)).Sub(p3.Add(p0))
+			lfStore[S](pix, base, acc.ShiftAllRight(3))
+			acc = acc.Add(q1.Add(q3)).Sub(p2.Add(q0))
+			lfStore[S](pix, base+step, acc.ShiftAllRight(3))
+			acc = acc.Add(q2.Add(q3)).Sub(p1.Add(q1))
+			lfStore[S](pix, base+2*step, acc.ShiftAllRight(3))
+			continue
+		}
+		hev := lfAbsDiff[S](p1, p0).Greater(hevT).Or(lfAbsDiff[S](q1, q0).Greater(hevT))
 		ps1 := p1.Sub(center)
 		ps0 := p0.Sub(center)
 		qs0 := q0.Sub(center)
@@ -112,4 +132,5 @@ func lfFilter8Core[S lfSample](pix []byte, q0Base int, step int, length int, sca
 		f8q2 := accB.ShiftAllRight(3)
 		lfStore[S](pix, base+2*step, f8q2.IfElse(gate, q2))
 	}
+	return changed
 }

@@ -40,3 +40,9 @@ func lfAny(m archsimd.Mask16x8) bool {
 	m.ToInt16x8().StoreArray(&lanes)
 	return lanes[0]|lanes[1]|lanes[2]|lanes[3]|lanes[4]|lanes[5]|lanes[6]|lanes[7] != 0
 }
+
+func lfAll(m archsimd.Mask16x8) bool {
+	var lanes [8]int16
+	m.ToInt16x8().StoreArray(&lanes)
+	return lanes[0]&lanes[1]&lanes[2]&lanes[3]&lanes[4]&lanes[5]&lanes[6]&lanes[7] == -1
+}

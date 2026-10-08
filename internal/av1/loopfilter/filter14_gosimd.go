@@ -31,7 +31,7 @@ func filter14Edge16SIMD(pix []byte, q0Base int, step int, outer int, length int,
 
 // lfFilter14Core runs the fourteen-tap filter over length positions (a multiple
 // of eight) of horizontal taps. The positions are contiguous samples of type S.
-func lfFilter14Core[S lfSample](pix []byte, q0Base int, step int, length int, scale int, params filter4Params) {
+func lfFilter14Core[S lfSample](pix []byte, q0Base int, step int, length int, scale int, params filter4Params) uint {
 	sz := lfSize[S]()
 	limit := archsimd.BroadcastInt16x8(params.limit)
 	blimit := archsimd.BroadcastInt16x8(params.blimit)
@@ -45,6 +45,7 @@ func lfFilter14Core[S lfSample](pix []byte, q0Base int, step int, length int, sc
 	biasW := archsimd.BroadcastInt16x8(8 - 32768) // wide rounding bias with the -32768 offset folded in
 	half := archsimd.BroadcastInt16x8(2048)       // 32768 >> 4, restored after each wide shift
 	flatThr := archsimd.BroadcastInt16x8(int16(scale))
+	var changed uint
 	for g := 0; g < length/8; g++ {
 		base := q0Base + g*8*sz
 		p3 := lfLoad[S](pix, base-4*step)
@@ -56,23 +57,71 @@ func lfFilter14Core[S lfSample](pix []byte, q0Base int, step int, length int, sc
 		q2 := lfLoad[S](pix, base+2*step)
 		q3 := lfLoad[S](pix, base+3*step)
 
-		d0q0 := lfAbsDiffInt16x8(p0, q0)
-		need := lfAbsDiffInt16x8(p3, p2).LessEqual(limit).
-			And(lfAbsDiffInt16x8(p2, p1).LessEqual(limit)).
-			And(lfAbsDiffInt16x8(p1, p0).LessEqual(limit)).
-			And(lfAbsDiffInt16x8(q1, q0).LessEqual(limit)).
-			And(lfAbsDiffInt16x8(q2, q1).LessEqual(limit)).
-			And(lfAbsDiffInt16x8(q3, q2).LessEqual(limit)).
+		d0q0 := lfAbsDiff[S](p0, q0)
+		need := lfAbsDiff[S](p3, p2).LessEqual(limit).
+			And(lfAbsDiff[S](p2, p1).LessEqual(limit)).
+			And(lfAbsDiff[S](p1, p0).LessEqual(limit)).
+			And(lfAbsDiff[S](q1, q0).LessEqual(limit)).
+			And(lfAbsDiff[S](q2, q1).LessEqual(limit)).
+			And(lfAbsDiff[S](q3, q2).LessEqual(limit)).
 			And(d0q0.Add(d0q0).
-				Add(lfAbsDiffInt16x8(p1, q1).ShiftAllRight(1)).
+				Add(lfAbsDiff[S](p1, q1).ShiftAllRight(1)).
 				LessEqual(blimit))
-		flat := lfAbsDiffInt16x8(p1, p0).LessEqual(flatThr).
-			And(lfAbsDiffInt16x8(q1, q0).LessEqual(flatThr)).
-			And(lfAbsDiffInt16x8(p2, p0).LessEqual(flatThr)).
-			And(lfAbsDiffInt16x8(q2, q0).LessEqual(flatThr)).
-			And(lfAbsDiffInt16x8(p3, p0).LessEqual(flatThr)).
-			And(lfAbsDiffInt16x8(q3, q0).LessEqual(flatThr))
-		hev := lfAbsDiffInt16x8(p1, p0).Greater(hevT).Or(lfAbsDiffInt16x8(q1, q0).Greater(hevT))
+		if !lfAny(need) {
+			continue
+		}
+		changed |= 1 << uint(g)
+		flat := lfAbsDiff[S](p1, p0).LessEqual(flatThr).
+			And(lfAbsDiff[S](q1, q0).LessEqual(flatThr)).
+			And(lfAbsDiff[S](p2, p0).LessEqual(flatThr)).
+			And(lfAbsDiff[S](q2, q0).LessEqual(flatThr)).
+			And(lfAbsDiff[S](p3, p0).LessEqual(flatThr)).
+			And(lfAbsDiff[S](q3, q0).LessEqual(flatThr))
+		if lfAll(need.And(flat)) {
+			p6w := lfLoad[S](pix, base-7*step)
+			p5w := lfLoad[S](pix, base-6*step)
+			p4w := lfLoad[S](pix, base-5*step)
+			q4w := lfLoad[S](pix, base+4*step)
+			q5w := lfLoad[S](pix, base+5*step)
+			q6w := lfLoad[S](pix, base+6*step)
+			flat2w := lfAbsDiff[S](p4w, p0).LessEqual(flatThr).
+				And(lfAbsDiff[S](q4w, q0).LessEqual(flatThr)).
+				And(lfAbsDiff[S](p5w, p0).LessEqual(flatThr)).
+				And(lfAbsDiff[S](q5w, q0).LessEqual(flatThr)).
+				And(lfAbsDiff[S](p6w, p0).LessEqual(flatThr)).
+				And(lfAbsDiff[S](q6w, q0).LessEqual(flatThr))
+			if lfAll(flat2w) {
+				p6x2 := p6w.Add(p6w)
+				p6x7 := p6x2.Add(p6x2).Add(p6x2).Add(p6w)
+				acc := p6x7.Add(p5w.Add(p4w).Add(p5w.Add(p4w))).
+					Add(p3.Add(p2)).Add(p1.Add(p0)).Add(q0).Add(biasW)
+				lfStore[S](pix, base-6*step, acc.ShiftAllRight(4).Add(half))
+				acc = acc.Add(p3.Add(q1)).Sub(p6x2)
+				lfStore[S](pix, base-5*step, acc.ShiftAllRight(4).Add(half))
+				acc = acc.Add(p2.Add(q2)).Sub(p6w.Add(p5w))
+				lfStore[S](pix, base-4*step, acc.ShiftAllRight(4).Add(half))
+				acc = acc.Add(p1.Add(q3)).Sub(p6w.Add(p4w))
+				lfStore[S](pix, base-3*step, acc.ShiftAllRight(4).Add(half))
+				acc = acc.Add(p0.Add(q4w)).Sub(p6w.Add(p3))
+				lfStore[S](pix, base-2*step, acc.ShiftAllRight(4).Add(half))
+				acc = acc.Add(q0.Add(q5w)).Sub(p6w.Add(p2))
+				lfStore[S](pix, base-step, acc.ShiftAllRight(4).Add(half))
+				acc = acc.Add(q1.Add(q6w)).Sub(p6w.Add(p1))
+				lfStore[S](pix, base, acc.ShiftAllRight(4).Add(half))
+				acc = acc.Add(q2.Add(q6w)).Sub(p5w.Add(p0))
+				lfStore[S](pix, base+step, acc.ShiftAllRight(4).Add(half))
+				acc = acc.Add(q3.Add(q6w)).Sub(p4w.Add(q0))
+				lfStore[S](pix, base+2*step, acc.ShiftAllRight(4).Add(half))
+				acc = acc.Add(q4w.Add(q6w)).Sub(p3.Add(q1))
+				lfStore[S](pix, base+3*step, acc.ShiftAllRight(4).Add(half))
+				acc = acc.Add(q5w.Add(q6w)).Sub(p2.Add(q2))
+				lfStore[S](pix, base+4*step, acc.ShiftAllRight(4).Add(half))
+				acc = acc.Add(q6w.Add(q6w)).Sub(p1.Add(q3))
+				lfStore[S](pix, base+5*step, acc.ShiftAllRight(4).Add(half))
+				continue
+			}
+		}
+		hev := lfAbsDiff[S](p1, p0).Greater(hevT).Or(lfAbsDiff[S](q1, q0).Greater(hevT))
 		ps1 := p1.Sub(center)
 		ps0 := p0.Sub(center)
 		qs0 := q0.Sub(center)
@@ -102,12 +151,12 @@ func lfFilter14Core[S lfSample](pix []byte, q0Base int, step int, length int, sc
 		q4 := lfLoad[S](pix, base+4*step)
 		q5 := lfLoad[S](pix, base+5*step)
 		q6 := lfLoad[S](pix, base+6*step)
-		flat2 := lfAbsDiffInt16x8(p4, p0).LessEqual(flatThr).
-			And(lfAbsDiffInt16x8(q4, q0).LessEqual(flatThr)).
-			And(lfAbsDiffInt16x8(p5, p0).LessEqual(flatThr)).
-			And(lfAbsDiffInt16x8(q5, q0).LessEqual(flatThr)).
-			And(lfAbsDiffInt16x8(p6, p0).LessEqual(flatThr)).
-			And(lfAbsDiffInt16x8(q6, q0).LessEqual(flatThr))
+		flat2 := lfAbsDiff[S](p4, p0).LessEqual(flatThr).
+			And(lfAbsDiff[S](q4, q0).LessEqual(flatThr)).
+			And(lfAbsDiff[S](p5, p0).LessEqual(flatThr)).
+			And(lfAbsDiff[S](q5, q0).LessEqual(flatThr)).
+			And(lfAbsDiff[S](p6, p0).LessEqual(flatThr)).
+			And(lfAbsDiff[S](q6, q0).LessEqual(flatThr))
 		wideM := gateNF.And(flat2)
 
 		accB := p3.Add(p3).Add(p3).
@@ -170,4 +219,5 @@ func lfFilter14Core[S lfSample](pix []byte, q0Base int, step int, length int, sc
 		accW = accW.Add(q6.Add(q6)).Sub(p1.Add(q3))
 		lfStore[S](pix, base+5*step, accW.ShiftAllRight(4).Add(half).IfElse(wideM, q5))
 	}
+	return changed
 }

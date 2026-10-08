@@ -43,16 +43,16 @@ func lfSpec(k lfKind) (before, taps, t0, t1 int) {
 // lfCore runs the horizontal Go-native SIMD kernel of family k over length
 // positions (a multiple of eight). Positions are contiguous samples of type S
 // and step is the byte distance between adjacent taps.
-func lfCore[S lfSample](k lfKind, pix []byte, q0Base int, step int, length int, scale int, params filter4Params) {
+func lfCore[S lfSample](k lfKind, pix []byte, q0Base int, step int, length int, scale int, params filter4Params) uint {
 	switch k {
 	case lfKind4:
-		lfFilter4Core[S](pix, q0Base, step, length, scale, params)
+		return lfFilter4Core[S](pix, q0Base, step, length, scale, params)
 	case lfKind6:
-		lfFilter6Core[S](pix, q0Base, step, length, scale, params)
+		return lfFilter6Core[S](pix, q0Base, step, length, scale, params)
 	case lfKind8:
-		lfFilter8Core[S](pix, q0Base, step, length, scale, params)
+		return lfFilter8Core[S](pix, q0Base, step, length, scale, params)
 	default:
-		lfFilter14Core[S](pix, q0Base, step, length, scale, params)
+		return lfFilter14Core[S](pix, q0Base, step, length, scale, params)
 	}
 }
 
@@ -88,16 +88,15 @@ func lfPure[S lfSample](k lfKind, pix []byte, q0Base int, step int, outer int, l
 //
 // A horizontal edge has contiguous positions (outer == sample size) and its taps
 // are whole rows apart, so the kernel reads the window in place. A vertical edge
-// has contiguous taps (step == sample size) and positions one row apart, so
-// batches of up to lfBatchGroups groups are gathered into a stack scratch laid
-// out as a horizontal edge, the kernel runs on the scratch, and the rows the
-// kernel may modify are scattered back. Sub-group tails and other layouts take
-// the scalar reference.
+// has contiguous taps (step == sample size) and positions one row apart. Batches
+// of up to lfBatchGroups groups are transposed into stack scratch, filtered, and
+// transposed back only for groups with an active filter lane. Sub-group tails
+// and other layouts take the scalar reference.
 func lfEdge[S lfSample](k lfKind, pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
 	sz := lfSize[S]()
 	groups := length / 8
 	if outer == sz && groups > 0 {
-		lfCore[S](k, pix, q0Base, step, groups*8, scale, params)
+		_ = lfCore[S](k, pix, q0Base, step, groups*8, scale, params)
 		if rem := length - groups*8; rem > 0 {
 			lfPure[S](k, pix, q0Base+groups*8*outer, step, outer, rem, scale, params)
 		}
@@ -117,8 +116,19 @@ func lfEdge[S lfSample](k lfKind, pix []byte, q0Base int, step int, outer int, l
 		}
 		src := q0Base + g*8*outer - before*step
 		lfVertGather[S](scratch[:], pix, src, outer, taps, n*8, row)
-		lfCore[S](k, scratch[:], before*row, row, n*8, scale, params)
-		lfVertScatter[S](pix, scratch[:], src, outer, t0, t1, n*8, row)
+		var changed uint
+		if k == lfKind4 && sz == 1 && n >= 2 && params.center == 128 && params.min == -128 && params.max == 127 && params.blimit >= 0 && params.blimit < 255 && params.limit >= 0 && params.limit <= 255 && params.hev >= 0 && params.hev <= 255 {
+			done := (n * 8) &^ 15
+			lfFilter4U8Wide(scratch[:], before*row, row, done, params, &changed)
+			if done < n*8 {
+				changed |= lfFilter4Core[uint8](scratch[:], before*row+done, row, n*8-done, 1, params) << uint(done/8)
+			}
+		} else {
+			changed = lfCore[S](k, scratch[:], before*row, row, n*8, scale, params)
+		}
+		if changed != 0 {
+			lfVertScatter[S](pix, scratch[:], src, outer, t0, t1, n*8, row, changed)
+		}
 	}
 	if rem := length - groups*8; rem > 0 {
 		lfPure[S](k, pix, q0Base+groups*8*outer, step, outer, rem, scale, params)
@@ -131,42 +141,94 @@ func lfEdge[S lfSample](k lfKind, pix []byte, q0Base int, step int, outer int, l
 // horizontal kernel reads it as a contiguous row.
 func lfVertGather[S lfSample](scratch []byte, pix []byte, src int, outer int, taps int, n int, row int) {
 	if lfSize[S]() == 1 {
-		for k := 0; k < n; k++ {
-			r := pix[src+k*outer:][:taps]
-			for t, v := range r {
-				scratch[t*row+k] = v
+		if taps >= 8 {
+			for g := 0; g < n/8; g++ {
+				in := src + g*8*outer
+				out := g * 8
+				lfTranspose8x8U8(pix, in, outer, scratch, out, row)
+				if taps == 14 {
+					lfTranspose8x8U8(pix, in+6, outer, scratch, out+6*row, row)
+				}
+			}
+			return
+		}
+		for g := 0; g < n/8; g++ {
+			lfTranspose8x8U8Short(pix, src+g*8*outer, outer, scratch, g*8, row, taps, 8)
+		}
+		return
+	}
+	if taps >= 8 {
+		for g := 0; g < n/8; g++ {
+			in := src + g*8*outer
+			out := g * 16
+			lfTranspose8x8U16(pix, in, outer, scratch, out, row)
+			if taps == 14 {
+				lfTranspose8x8U16(pix, in+12, outer, scratch, out+6*row, row)
 			}
 		}
 		return
 	}
-	for k := 0; k < n; k++ {
-		r := pix[src+k*outer:][:2*taps]
-		for t := 0; t < taps; t++ {
-			d := t*row + 2*k
-			scratch[d] = r[2*t]
-			scratch[d+1] = r[2*t+1]
-		}
+	for g := 0; g < n/8; g++ {
+		lfTranspose8x8U16Short(pix, src+g*8*outer, outer, scratch, g*16, row, taps, 8)
 	}
 }
 
 // lfVertScatter writes scratch tap rows [t0, t1) of n positions back to pix,
 // the inverse of lfVertGather.
-func lfVertScatter[S lfSample](pix []byte, scratch []byte, src int, outer int, t0 int, t1 int, n int, row int) {
+func lfVertScatter[S lfSample](pix []byte, scratch []byte, src int, outer int, t0 int, t1 int, n int, row int, changed uint) {
 	if lfSize[S]() == 1 {
-		for k := 0; k < n; k++ {
-			r := pix[src+k*outer:]
-			for t := t0; t < t1; t++ {
-				r[t] = scratch[t*row+k]
+		if t1-t0 >= 6 {
+			for g := 0; g < n/8; g++ {
+				if changed&(1<<uint(g)) == 0 {
+					continue
+				}
+				in := g * 8
+				out := src + g*8*outer
+				if t1 == 7 { // eight-tap: unchanged outer taps are in scratch too
+					lfTranspose8x8U8(scratch, in, row, pix, out, outer)
+				} else { // fourteen-tap: only rows 1..12 may change
+					lfTranspose8x8U8(scratch, in+row, row, pix, out+1, outer)
+					lfTranspose8x8U8(scratch, in+5*row, row, pix, out+5, outer)
+				}
+			}
+			return
+		}
+		width := 6
+		if t1 == 4 {
+			width = 4
+		}
+		for g := 0; g < n/8; g++ {
+			if changed&(1<<uint(g)) == 0 {
+				continue
+			}
+			lfTranspose8x8U8Short(scratch, g*8, row, pix, src+g*8*outer, outer, 8, width)
+		}
+		return
+	}
+	if t1-t0 >= 6 {
+		for g := 0; g < n/8; g++ {
+			if changed&(1<<uint(g)) == 0 {
+				continue
+			}
+			in := g * 16
+			out := src + g*8*outer
+			if t1 == 7 {
+				lfTranspose8x8U16(scratch, in, row, pix, out, outer)
+			} else {
+				lfTranspose8x8U16(scratch, in+row, row, pix, out+2, outer)
+				lfTranspose8x8U16(scratch, in+5*row, row, pix, out+10, outer)
 			}
 		}
 		return
 	}
-	for k := 0; k < n; k++ {
-		r := pix[src+k*outer:]
-		for t := t0; t < t1; t++ {
-			s := t*row + 2*k
-			r[2*t] = scratch[s]
-			r[2*t+1] = scratch[s+1]
+	width := 6
+	if t1 == 4 {
+		width = 4
+	}
+	for g := 0; g < n/8; g++ {
+		if changed&(1<<uint(g)) == 0 {
+			continue
 		}
+		lfTranspose8x8U16Short(scratch, g*16, row, pix, src+g*8*outer, outer, 8, width)
 	}
 }

@@ -26,7 +26,7 @@ func filter6Edge16SIMD(pix []byte, q0Base int, step int, outer int, length int, 
 
 // lfFilter6Core runs the six-tap filter over length positions (a multiple of
 // eight) of horizontal taps. The positions are contiguous samples of type S.
-func lfFilter6Core[S lfSample](pix []byte, q0Base int, step int, length int, scale int, params filter4Params) {
+func lfFilter6Core[S lfSample](pix []byte, q0Base int, step int, length int, scale int, params filter4Params) uint {
 	sz := lfSize[S]()
 	limit := archsimd.BroadcastInt16x8(params.limit)
 	blimit := archsimd.BroadcastInt16x8(params.blimit)
@@ -38,6 +38,7 @@ func lfFilter6Core[S lfSample](pix []byte, q0Base int, step int, length int, sca
 	three := archsimd.BroadcastInt16x8(3)
 	four := archsimd.BroadcastInt16x8(4)
 	flatThr := archsimd.BroadcastInt16x8(int16(scale))
+	var changed uint
 	for g := 0; g < length/8; g++ {
 		base := q0Base + g*8*sz
 		p2 := lfLoad[S](pix, base-3*step)
@@ -47,19 +48,36 @@ func lfFilter6Core[S lfSample](pix []byte, q0Base int, step int, length int, sca
 		q1 := lfLoad[S](pix, base+step)
 		q2 := lfLoad[S](pix, base+2*step)
 
-		d0q0 := lfAbsDiffInt16x8(p0, q0)
-		need := lfAbsDiffInt16x8(p2, p1).LessEqual(limit).
-			And(lfAbsDiffInt16x8(p1, p0).LessEqual(limit)).
-			And(lfAbsDiffInt16x8(q1, q0).LessEqual(limit)).
-			And(lfAbsDiffInt16x8(q2, q1).LessEqual(limit)).
+		d0q0 := lfAbsDiff[S](p0, q0)
+		need := lfAbsDiff[S](p2, p1).LessEqual(limit).
+			And(lfAbsDiff[S](p1, p0).LessEqual(limit)).
+			And(lfAbsDiff[S](q1, q0).LessEqual(limit)).
+			And(lfAbsDiff[S](q2, q1).LessEqual(limit)).
 			And(d0q0.Add(d0q0).
-				Add(lfAbsDiffInt16x8(p1, q1).ShiftAllRight(1)).
+				Add(lfAbsDiff[S](p1, q1).ShiftAllRight(1)).
 				LessEqual(blimit))
-		flat := lfAbsDiffInt16x8(p1, p0).LessEqual(flatThr).
-			And(lfAbsDiffInt16x8(q1, q0).LessEqual(flatThr)).
-			And(lfAbsDiffInt16x8(p2, p0).LessEqual(flatThr)).
-			And(lfAbsDiffInt16x8(q2, q0).LessEqual(flatThr))
-		hev := lfAbsDiffInt16x8(p1, p0).Greater(hevT).Or(lfAbsDiffInt16x8(q1, q0).Greater(hevT))
+		if !lfAny(need) {
+			continue
+		}
+		changed |= 1 << uint(g)
+		flat := lfAbsDiff[S](p1, p0).LessEqual(flatThr).
+			And(lfAbsDiff[S](q1, q0).LessEqual(flatThr)).
+			And(lfAbsDiff[S](p2, p0).LessEqual(flatThr)).
+			And(lfAbsDiff[S](q2, q0).LessEqual(flatThr))
+		if lfAll(need.And(flat)) {
+			acc := p2.Add(p2).Add(p2).
+				Add(p1.Add(p0).Add(p1.Add(p0))).
+				Add(q0).Add(four)
+			lfStore[S](pix, base-2*step, acc.ShiftAllRight(3))
+			acc = acc.Add(q0.Add(q1)).Sub(p2.Add(p2))
+			lfStore[S](pix, base-step, acc.ShiftAllRight(3))
+			acc = acc.Add(q1.Add(q2)).Sub(p2.Add(p1))
+			lfStore[S](pix, base, acc.ShiftAllRight(3))
+			acc = acc.Add(q2.Add(q2)).Sub(p1.Add(p0))
+			lfStore[S](pix, base+step, acc.ShiftAllRight(3))
+			continue
+		}
+		hev := lfAbsDiff[S](p1, p0).Greater(hevT).Or(lfAbsDiff[S](q1, q0).Greater(hevT))
 		ps1 := p1.Sub(center)
 		ps0 := p0.Sub(center)
 		qs0 := q0.Sub(center)
@@ -93,4 +111,5 @@ func lfFilter6Core[S lfSample](pix []byte, q0Base int, step int, length int, sca
 		acc = acc.Add(q2.Add(q2)).Sub(p1.Add(p0))
 		lfStore[S](pix, base+step, acc.ShiftAllRight(3).IfElse(flat, nq1).IfElse(need, q1))
 	}
+	return changed
 }

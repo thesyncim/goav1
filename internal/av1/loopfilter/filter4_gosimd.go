@@ -18,6 +18,14 @@ import (
 // lane runs in signed 16-bit arithmetic on centred samples (-128..127) and the
 // clamps reproduce signedClamp exactly.
 func filter4EdgeSIMD(pix []byte, q0Base int, step int, outer int, length int, params filter4Params) {
+	if outer == 1 && length >= 16 && params.center == 128 && params.min == -128 && params.max == 127 && params.blimit >= 0 && params.blimit < 255 && params.limit >= 0 && params.limit <= 255 && params.hev >= 0 && params.hev <= 255 {
+		done := length &^ 15
+		lfFilter4U8Wide(pix, q0Base, step, done, params, nil)
+		if done < length {
+			lfEdge[uint8](lfKind4, pix, q0Base+done, step, outer, length-done, 1, params)
+		}
+		return
+	}
 	lfEdge[uint8](lfKind4, pix, q0Base, step, outer, length, 1, params)
 }
 
@@ -30,7 +38,7 @@ func filter4Edge16SIMD(pix []byte, q0Base int, step int, outer int, length int, 
 
 // lfFilter4Core runs the narrow filter over length positions (a multiple of
 // eight) of horizontal taps. The positions are contiguous samples of type S.
-func lfFilter4Core[S lfSample](pix []byte, q0Base int, step int, length int, _ int, params filter4Params) {
+func lfFilter4Core[S lfSample](pix []byte, q0Base int, step int, length int, _ int, params filter4Params) uint {
 	sz := lfSize[S]()
 	limit := archsimd.BroadcastInt16x8(params.limit)
 	blimit := archsimd.BroadcastInt16x8(params.blimit)
@@ -41,6 +49,7 @@ func lfFilter4Core[S lfSample](pix []byte, q0Base int, step int, length int, _ i
 	one := archsimd.BroadcastInt16x8(1)
 	three := archsimd.BroadcastInt16x8(3)
 	four := archsimd.BroadcastInt16x8(4)
+	var changed uint
 	for g := 0; g < length/8; g++ {
 		base := q0Base + g*8*sz
 		p1 := lfLoad[S](pix, base-2*step)
@@ -48,13 +57,17 @@ func lfFilter4Core[S lfSample](pix []byte, q0Base int, step int, length int, _ i
 		q0 := lfLoad[S](pix, base)
 		q1 := lfLoad[S](pix, base+step)
 
-		d0q0 := lfAbsDiffInt16x8(p0, q0)
-		need := lfAbsDiffInt16x8(p1, p0).LessEqual(limit).
-			And(lfAbsDiffInt16x8(q1, q0).LessEqual(limit)).
+		d0q0 := lfAbsDiff[S](p0, q0)
+		need := lfAbsDiff[S](p1, p0).LessEqual(limit).
+			And(lfAbsDiff[S](q1, q0).LessEqual(limit)).
 			And(d0q0.Add(d0q0).
-				Add(lfAbsDiffInt16x8(p1, q1).ShiftAllRight(1)).
+				Add(lfAbsDiff[S](p1, q1).ShiftAllRight(1)).
 				LessEqual(blimit))
-		hev := lfAbsDiffInt16x8(p1, p0).Greater(hevT).Or(lfAbsDiffInt16x8(q1, q0).Greater(hevT))
+		if !lfAny(need) {
+			continue
+		}
+		changed |= 1 << uint(g)
+		hev := lfAbsDiff[S](p1, p0).Greater(hevT).Or(lfAbsDiff[S](q1, q0).Greater(hevT))
 		ps1 := p1.Sub(center)
 		ps0 := p0.Sub(center)
 		qs0 := q0.Sub(center)
@@ -74,4 +87,5 @@ func lfFilter4Core[S lfSample](pix []byte, q0Base int, step int, length int, _ i
 		lfStore[S](pix, base, nq0.IfElse(need, q0))
 		lfStore[S](pix, base+step, nq1.IfElse(need, q1))
 	}
+	return changed
 }
