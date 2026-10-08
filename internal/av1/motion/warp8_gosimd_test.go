@@ -13,7 +13,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
-// TestWarpedFilterI8Exact guards the two properties the NEON warp math depends
+// TestWarpedFilterI8Exact guards the two properties the GoSIMD warp math depends
 // on: the int8 narrow of warpedFilter is lossless, and every row still sums to
 // 128 (the identity behind the horizontal SMULL bias fold).
 func TestWarpedFilterI8Exact(t *testing.T) {
@@ -43,7 +43,7 @@ func residentRefPlane(rng *rand.Rand) frame.Plane {
 	return frame.Plane{Pix: pix, Stride: stride, Width: w, Height: h}
 }
 
-func TestWarpHorizontal8ResidentNEONMatchesScalar(t *testing.T) {
+func TestWarpHorizontal8ResidentGoSIMDMatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x5A1D0FF))
 	const reduceBitsHoriz = round0Bits
 	const offsetBitsHoriz = 8 + filterBits - 1
@@ -80,12 +80,12 @@ func TestWarpHorizontal8ResidentNEONMatchesScalar(t *testing.T) {
 		}
 	}
 	if tested == 0 {
-		t.Fatal("no in-range horizontal cases exercised the NEON path")
+		t.Fatal("no in-range horizontal cases exercised the GoSIMD path")
 	}
 	t.Logf("compared %d in-range resident horizontal blocks", tested)
 }
 
-func TestWarpVertical8FullNEONMatchesScalar(t *testing.T) {
+func TestWarpVertical8FullGoSIMDMatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xBEEF77))
 	const reduceBitsHoriz = round0Bits
 	const offsetBitsHoriz = 8 + filterBits - 1
@@ -155,7 +155,7 @@ func benchWarpHorizInputs() (frame.Plane, int, int, int, int, int, int) {
 	return ref, 40, 40, 32768, 0, 96, -64
 }
 
-func BenchmarkWarpHorizontal8ResidentScalarNEONOracle(b *testing.B) {
+func BenchmarkWarpHorizontal8ResidentScalarGoSIMDOracle(b *testing.B) {
 	ref, ix4, iy4, sx4, sy4, alpha, beta := benchWarpHorizInputs()
 	var tmp warpTmp
 	b.ReportAllocs()
@@ -165,7 +165,7 @@ func BenchmarkWarpHorizontal8ResidentScalarNEONOracle(b *testing.B) {
 	}
 }
 
-func BenchmarkWarpHorizontal8ResidentNEON(b *testing.B) {
+func BenchmarkWarpHorizontal8ResidentGoSIMD(b *testing.B) {
 	ref, ix4, iy4, sx4, sy4, alpha, beta := benchWarpHorizInputs()
 	if !warpHorizResidentOffsInRange(sx4, alpha, beta) {
 		b.Skip("bench inputs out of range")
@@ -192,7 +192,7 @@ func benchWarpVerticalInputs() (warpTmp, frame.Plane) {
 	return tmp, dst
 }
 
-func BenchmarkWarpVertical8FullScalarNEONOracle(b *testing.B) {
+func BenchmarkWarpVertical8FullScalarGoSIMDOracle(b *testing.B) {
 	tmp, dst := benchWarpVerticalInputs()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -210,7 +210,7 @@ func BenchmarkWarpVertical8FullGamma0Scalar(b *testing.B) {
 	}
 }
 
-func BenchmarkWarpVertical8FullNEON(b *testing.B) {
+func BenchmarkWarpVertical8FullGoSIMD(b *testing.B) {
 	tmp, dst := benchWarpVerticalInputs()
 	if !warpVertFullOffsInRange(32768, 96, -64) {
 		b.Skip("bench inputs out of range")
@@ -222,7 +222,7 @@ func BenchmarkWarpVertical8FullNEON(b *testing.B) {
 	}
 }
 
-func BenchmarkWarpVertical8FullGamma0NEON(b *testing.B) {
+func BenchmarkWarpVertical8FullGamma0GoSIMD(b *testing.B) {
 	tmp, dst := benchWarpVerticalInputs()
 	if !warpVertFullOffsInRange(32768, 0, -64) {
 		b.Skip("bench inputs out of range")

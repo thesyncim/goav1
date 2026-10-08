@@ -57,7 +57,7 @@ func TestBlendCompoundAvg8GoSIMDMatchesPureGo(t *testing.T) {
 				blendCompoundAvg8PureGo(want, src0, src1, dstOff[0], dstOff[1], sz.width, sz.height, w[0], w[1], roundOffset, roundBits)
 				for i := range got.Pix {
 					if got.Pix[i] != want.Pix[i] {
-						t.Fatalf("w=%v %dx%d dst=(%d,%d) byte %d: NEON=%d PureGo=%d",
+						t.Fatalf("w=%v %dx%d dst=(%d,%d) byte %d: GoSIMD=%d PureGo=%d",
 							w, sz.width, sz.height, dstOff[0], dstOff[1], i, got.Pix[i], want.Pix[i])
 					}
 				}
@@ -100,7 +100,7 @@ func benchBlendCompoundAvg8(b *testing.B, width, height int, fn func(dst frame.P
 	})
 }
 
-func BenchmarkBlendCompoundAvg8NEONDirect_32(b *testing.B) {
+func BenchmarkBlendCompoundAvg8GoSIMDDirect_32(b *testing.B) {
 	benchBlendCompoundAvg8(b, 32, 32, blendCompoundAvg8GoSIMD)
 }
 
@@ -108,7 +108,7 @@ func BenchmarkBlendCompoundAvg8PureGoDirect_32(b *testing.B) {
 	benchBlendCompoundAvg8(b, 32, 32, blendCompoundAvg8PureGo)
 }
 
-func BenchmarkBlendCompoundAvg8NEONDirect_8(b *testing.B) {
+func BenchmarkBlendCompoundAvg8GoSIMDDirect_8(b *testing.B) {
 	benchBlendCompoundAvg8(b, 8, 8, blendCompoundAvg8GoSIMD)
 }
 
@@ -116,7 +116,7 @@ func BenchmarkBlendCompoundAvg8PureGoDirect_8(b *testing.B) {
 	benchBlendCompoundAvg8(b, 8, 8, blendCompoundAvg8PureGo)
 }
 
-func BenchmarkBlendCompoundAvg8NEONDirect_4x8(b *testing.B) {
+func BenchmarkBlendCompoundAvg8GoSIMDDirect_4x8(b *testing.B) {
 	benchBlendCompoundAvg8(b, 4, 8, blendCompoundAvg8GoSIMD)
 }
 
@@ -141,7 +141,7 @@ func benchBlendCompoundAvg8Fair(b *testing.B, fn func(dst frame.Plane, src0, src
 	}
 }
 
-func BenchmarkBlendCompoundAvg8NEON_32(b *testing.B) {
+func BenchmarkBlendCompoundAvg8GoSIMD_32(b *testing.B) {
 	benchBlendCompoundAvg8Fair(b, blendCompoundAvg8GoSIMD)
 }
 

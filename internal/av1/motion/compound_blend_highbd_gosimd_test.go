@@ -22,7 +22,7 @@ func blendHighBDRoundParams(bitDepth uint8) (roundOffset int, roundBits int) {
 	return roundOffset, roundBits
 }
 
-// TestBlendCompoundAvgHighBDGoSIMDMatchesPureGo asserts the HBD NEON compound
+// TestBlendCompoundAvgHighBDGoSIMDMatchesPureGo asserts the HBD GoSIMD compound
 // average / dist-wtd blend is bit-identical to the pure-Go reference for every
 // AV1 block width (including the width-4 two-rows-per-iteration variant and
 // the odd-height fallback), every dist-wtd weight pair, at bit depths 10 and
@@ -58,7 +58,7 @@ func TestBlendCompoundAvgHighBDGoSIMDMatchesPureGo(t *testing.T) {
 								g := getSample(got, 2, dstX+x, dstY+y)
 								e := getSample(want, 2, dstX+x, dstY+y)
 								if g != e {
-									t.Fatalf("bd=%d %dx%d wt=%v org=%v (%d,%d): NEON=%d PureGo=%d",
+									t.Fatalf("bd=%d %dx%d wt=%v org=%v (%d,%d): GoSIMD=%d PureGo=%d",
 										bd, w, h, wt, org, x, y, g, e)
 								}
 							}
@@ -70,7 +70,7 @@ func TestBlendCompoundAvgHighBDGoSIMDMatchesPureGo(t *testing.T) {
 	}
 }
 
-// TestBlendCompoundAvgHighBDGoSIMDZeroAlloc asserts the HBD blend NEON wrapper
+// TestBlendCompoundAvgHighBDGoSIMDZeroAlloc asserts the HBD blend GoSIMD wrapper
 // allocates nothing on either asm path.
 func TestBlendCompoundAvgHighBDGoSIMDZeroAlloc(t *testing.T) {
 	max, _ := highBDMax(10)
@@ -101,7 +101,7 @@ func TestBlendCompoundAvgHighBDGoSIMDZeroAlloc(t *testing.T) {
 }
 
 // TestConvolve2DHighBDGoSIMDWithScratchMatchesPureGo asserts the scratch-carrying
-// HBD 2D NEON convolve (resident and edge-clamped emu_edge shapes) stays
+// HBD 2D GoSIMD convolve (resident and edge-clamped emu_edge shapes) stays
 // bit-identical to the pure-Go references with a deliberately poisoned scratch,
 // proving every intermediate sample read is written first.
 func TestConvolve2DHighBDGoSIMDWithScratchMatchesPureGo(t *testing.T) {

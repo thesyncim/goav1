@@ -223,9 +223,9 @@ func convolve2D8GoSIMDWithScratch(dst frame.Plane, ref frame.Plane, dstX int, ds
 // The *ClampedGoSIMD wrappers handle the edge-block convolves. When the whole tap
 // window happens to lie inside the reference plane the clamp is a no-op and the
 // result is bit-identical to the non-clamped fast path, so we route to the GoSIMD
-// asm. Otherwise (a tap coordinate genuinely falls off the frame) we fall back
+// kernel. Otherwise (a tap coordinate genuinely falls off the frame) we fall back
 // to the pure-Go clamped reference, which clamps each tap coordinate. This keeps
-// the asm free of per-tap coordinate clamping while still accelerating the
+// the kernel free of per-tap coordinate clamping while still accelerating the
 // common case where an "edge" block's halo is actually resident.
 
 func convolveX8ClampedGoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
@@ -316,7 +316,7 @@ func convolveX8HorizontalEdgeGoSIMD(dst frame.Plane, ref frame.Plane, dstX int, 
 			// clampedXInterior only guarantees the consumed taps are resident;
 			// the last 8-column group's 16-byte load reaches one sample further
 			// (chunk+filterTaps in total). Shrink the GoSIMD span by whole groups
-			// until that physical reach is in-bounds so the asm never over-reads;
+			// until that physical reach is in-bounds so the kernel never over-reads;
 			// any dropped columns fall to the scalar tail below.
 			for chunk >= 8 && !planeRegionFits(ref, 1, refX+start-fo, refY, chunk+filterTaps, height) {
 				chunk -= 8
@@ -424,7 +424,7 @@ func convolve2D8ClampedEdgeSplitGoSIMDWithScratch(dst frame.Plane, ref frame.Pla
 			// The 2D horizontal pass loads 16 bytes for its last 8-column group,
 			// reaching chunk+filterTaps source samples across the midH+filterTaps-1
 			// halo rows. Shrink by whole groups until that physical reach is
-			// resident so the asm never over-reads; dropped columns go to the
+			// resident so the kernel never over-reads; dropped columns go to the
 			// scalar tail below.
 			for chunk >= 8 && !planeRegionFits(ref, 1, refX+start-foX, refY+yLo-foY, chunk+filterTaps, yHi-yLo+filterTaps-1) {
 				chunk -= 8
@@ -493,8 +493,4 @@ func init() {
 	convolve2D8ClampedWithScratchImpl = convolve2D8ClampedGoSIMDWithScratch
 	convolveX8ClampedWithScratchImpl = convolveX8ClampedGoSIMDWithScratch
 	convolveY8ClampedWithScratchImpl = convolveY8ClampedGoSIMDWithScratch
-}
-
-func isFourTap(k [filterTaps]int16) bool {
-	return k[0] == 0 && k[1] == 0 && k[6] == 0 && k[7] == 0
 }

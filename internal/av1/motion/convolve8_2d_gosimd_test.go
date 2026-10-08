@@ -16,11 +16,11 @@ import (
 // convolve2DKernelPhases returns every 8-tap subpel kernel phase across the four
 // filter types so the differential test exercises all 16 x/y phases per type.
 
-// TestConvolve2D8NEONMatchesPureGo asserts the NEON 2D convolve is bit-identical
+// TestConvolve2D8GoSIMDMatchesPureGo asserts the GoSIMD 2D convolve is bit-identical
 // to convolve2D8PureGo for every width/height in 4..64, all 16 x and 16 y subpel
 // phases of each filter type, over both deterministic and random reference
-// pixels. It also asserts the NEON path allocates nothing.
-func TestConvolve2D8NEONMatchesPureGo(t *testing.T) {
+// pixels. It also asserts the GoSIMD path allocates nothing.
+func TestConvolve2D8GoSIMDMatchesPureGo(t *testing.T) {
 	tables := convolve2DKernelTables()
 	rng := rand.New(rand.NewSource(0x2d20feed))
 
@@ -62,7 +62,7 @@ func TestConvolve2D8NEONMatchesPureGo(t *testing.T) {
 				gs := gotScratch.Pix[y*gotScratch.Stride+x]
 				e := want.Pix[y*want.Stride+x]
 				if g != e || gs != e {
-					t.Fatalf("w=%d h=%d (%d,%d): NEON=%d NEON-scratch=%d PureGo=%d xk=%v yk=%v", w, h, x, y, g, gs, e, xk, yk)
+					t.Fatalf("w=%d h=%d (%d,%d): GoSIMD=%d GoSIMD-scratch=%d PureGo=%d xk=%v yk=%v", w, h, x, y, g, gs, e, xk, yk)
 				}
 			}
 		}
@@ -91,7 +91,7 @@ func TestConvolve2D8NEONMatchesPureGo(t *testing.T) {
 		}
 	}
 
-	// Zero-alloc assertion on the NEON path (width%8==0, 8-tap -> asm).
+	// Zero-alloc assertion on the GoSIMD path (width%8==0, 8-tap -> asm).
 	ref := makeRef(32, true)
 	dst, _ := testPlane(32, 32, 1, 32)
 	xk := subpelFilters8[3]

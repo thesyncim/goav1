@@ -99,18 +99,18 @@ func TestCompoundConvBuf2DEmuEdgeMatchesPureGo(t *testing.T) {
 				for _, at := range emuEdgeTestGeometries(rng, refW, refH, w, h) {
 					refX, refY := at[0], at[1]
 					gotDispatch := make([]uint16, w*h)
-					gotNEON := make([]uint16, w*h)
+					gotGoSIMD := make([]uint16, w*h)
 					want := make([]uint16, w*h)
 					var scratchA, scratchB CompoundConvolveScratch
 					predictInterCompoundRef8ToConvBuf2DImpl(gotDispatch, ref, refX, refY, w, h, kernels[0], kernels[1], offsetBits, &scratchA)
-					predictInterCompoundRef8ToConvBuf2DImpl(gotNEON, ref, refX, refY, w, h, kernels[0], kernels[1], offsetBits, &scratchB)
+					predictInterCompoundRef8ToConvBuf2DImpl(gotGoSIMD, ref, refX, refY, w, h, kernels[0], kernels[1], offsetBits, &scratchB)
 					predictInterCompoundRef8ToConvBuf2DPureGo(want, ref, refX, refY, w, h, kernels[0], kernels[1], offsetBits, nil)
 					for i := range want {
 						if gotDispatch[i] != want[i] {
 							t.Fatalf("i8mm %dx%d ref=(%d,%d) sample=%d got=%d want=%d", w, h, refX, refY, i, gotDispatch[i], want[i])
 						}
-						if gotNEON[i] != want[i] {
-							t.Fatalf("neon %dx%d ref=(%d,%d) sample=%d got=%d want=%d", w, h, refX, refY, i, gotNEON[i], want[i])
+						if gotGoSIMD[i] != want[i] {
+							t.Fatalf("neon %dx%d ref=(%d,%d) sample=%d got=%d want=%d", w, h, refX, refY, i, gotGoSIMD[i], want[i])
 						}
 					}
 				}

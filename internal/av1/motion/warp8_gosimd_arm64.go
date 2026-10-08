@@ -61,8 +61,8 @@ func warp8FilterIndex(sx int) int {
 	return offs
 }
 
-// warpHorizontal8ResidentGoSIMD is warpHorizontal8ResidentNEON's replacement:
-// the resident 15x8 intermediate with the same routing as the asm wrapper.
+// warpHorizontal8ResidentGoSIMD computes the resident 15x8 intermediate.
+// Its routing matches the scalar warpHorizontal8Resident preconditions.
 func warpHorizontal8ResidentGoSIMD(tmp *warpTmp, ref frame.Plane, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz int) int {
 	if reduceBitsHoriz != round0Bits || offsetBitsHoriz != 8+filterBits-1 ||
 		!warpHorizResidentOffsInRange(sx4, alpha, beta) {
@@ -80,7 +80,7 @@ func warpHorizontal8ResidentGoSIMD(tmp *warpTmp, ref frame.Plane, ix4, sx4, iy4,
 				phase := sx
 				sx += alpha
 				offs := warp8FilterIndex(phase)
-				xByte := rowByte + (ix4-7+group+lane)
+				xByte := rowByte + (ix4 - 7 + group + lane)
 				s[lane] = u8Samples8(ref.Pix[xByte:])
 				c[lane] = archsimd.LoadInt16x8(warpedFilter[offs][:])
 			}
@@ -102,7 +102,7 @@ func warpHorizontal8ResidentGoSIMD(tmp *warpTmp, ref frame.Plane, ix4, sx4, iy4,
 	return sy4
 }
 
-// warpVertical8FullGoSIMD is warpVertical8FullNEON's replacement with the same
+// warpVertical8FullGoSIMD computes the vertical block with the same
 // routing; the eight output columns of each row are two vectors of four.
 func warpVertical8FullGoSIMD(dst frame.Plane, tmp *warpTmp, i, j, rowShift, colShift, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert int) {
 	if reduceBitsVert != round1Bits || offsetBitsVert != 8+2*filterBits-round0Bits ||

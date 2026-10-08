@@ -13,15 +13,15 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
-// These differential tests assert the AVX2 convolve kernels are bit-identical to
+// These differential tests assert the GoSIMD convolve kernels are bit-identical to
 // the pure-Go references for every width/height and every subpel phase of each
-// filter type. They call the AVX2 wrappers directly rather than through the
+// filter type. They call the GoSIMD wrappers directly rather than through the
 // dispatch slots, so they validate the asm even on hosts whose CPUID does not
-// advertise AVX2 (e.g. amd64 under Rosetta 2, which translates AVX2 anyway). On
-// a true non-AVX2 amd64 host these would fault; the harness that runs them is
-// expected to be AVX2-capable (real CI) or AVX2-translating (Rosetta).
+// advertise GoSIMD (e.g. amd64 under Rosetta 2, which translates GoSIMD anyway). On
+// a true non-GoSIMD amd64 host these would fault; the harness that runs them is
+// expected to be GoSIMD-capable (real CI) or GoSIMD-translating (Rosetta).
 
-func TestConvolveX8AVX2MatchesPureGo(t *testing.T) {
+func TestConvolveX8GoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xA1A2B3C4))
 	const pad = filterTaps
 	sizes := []int{8, 16, 24, 32, 48, 64}
@@ -46,7 +46,7 @@ func TestConvolveX8AVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestConvolveY8AVX2MatchesPureGo(t *testing.T) {
+func TestConvolveY8GoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xB1B2C3D4))
 	const pad = filterTaps
 	sizes := []int{8, 16, 24, 32, 48, 64}
@@ -71,7 +71,7 @@ func TestConvolveY8AVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestConvolve1D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
+func TestConvolve1D8ClampedEdgeSplitGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x1d8a11e))
 	widths := []int{16, 24, 32}
 	heights := []int{4, 8, 16, 32}
@@ -81,7 +81,7 @@ func TestConvolve1D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
 	}
 	for _, k := range kernels {
 		if isFourTap(k) {
-			t.Fatalf("test kernel unexpectedly uses AVX2 four-tap fallback: %v", k)
+			t.Fatalf("test kernel unexpectedly uses GoSIMD four-tap fallback: %v", k)
 		}
 	}
 	if !isFourTap(bilinearFilters[7]) {
@@ -106,7 +106,7 @@ func TestConvolve1D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
 					got, _ := testPlane(w, h, 1, w)
 					want, _ := testPlane(w, h, 1, w)
 					if !convolveX8HorizontalEdgeGoSIMD(got, ref, 0, 0, refX, refY, w, h, k) {
-						t.Fatalf("X8horizontal-edge AVX2 split path was not used w=%d h=%d edge=%s", w, h, edge)
+						t.Fatalf("X8horizontal-edge GoSIMD split path was not used w=%d h=%d edge=%s", w, h, edge)
 					}
 					convolveX8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, k)
 					diffPlanes8(t, got, want, w, h, "Xclamped-edge", k, k)
@@ -126,7 +126,7 @@ func TestConvolve1D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
 					got, _ := testPlane(w, h, 1, w)
 					want, _ := testPlane(w, h, 1, w)
 					if !convolveY8VerticalEdgeGoSIMD(got, ref, 0, 0, refX, refY, w, h, k) {
-						t.Fatalf("Y8vertical-edge AVX2 split path was not used w=%d h=%d edge=%s", w, h, edge)
+						t.Fatalf("Y8vertical-edge GoSIMD split path was not used w=%d h=%d edge=%s", w, h, edge)
 					}
 					convolveY8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, k)
 					diffPlanes8(t, got, want, w, h, "Yclamped-edge", k, k)
@@ -135,7 +135,7 @@ func TestConvolve1D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
 		}
 	}
 
-	// The Go SIMD edge paths accept four-tap kernels (the AVX2 asm they replace
+	// The Go SIMD edge paths accept four-tap kernels (the GoSIMD asm they replace
 	// rejected them). Whenever a path reports that it ran, it must match the
 	// per-tap clamped reference.
 	ref, _ := testPlane(64, 64, 1, 64)
@@ -151,7 +151,7 @@ func TestConvolve1D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestConvolve2D8AVX2MatchesPureGo(t *testing.T) {
+func TestConvolve2D8GoSIMDSweepMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x2d20feed))
 	const pad = filterTaps
 	sizes := []int{8, 16, 24, 32, 48, 64}
@@ -192,7 +192,7 @@ func TestConvolve2D8AVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestConvolve2D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
+func TestConvolve2D8ClampedEdgeSplitGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x2d8a11e))
 	widths := []int{16, 24, 32}
 	heights := []int{4, 8, 16, 32}
@@ -223,10 +223,10 @@ func TestConvolve2D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
 					want, _ := testPlane(w, h, 1, w)
 					var scratch ConvolveScratch
 					if !convolve2D8ClampedEdgeSplitGoSIMDWithScratch(got, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], nil) {
-						t.Fatalf("2D8horizontal-edge AVX2 split path was not used w=%d h=%d edge=%s", w, h, edge)
+						t.Fatalf("2D8horizontal-edge GoSIMD split path was not used w=%d h=%d edge=%s", w, h, edge)
 					}
 					if !convolve2D8ClampedEdgeSplitGoSIMDWithScratch(gotScratch, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &scratch) {
-						t.Fatalf("2D8horizontal-edge AVX2 scratch split path was not used w=%d h=%d edge=%s", w, h, edge)
+						t.Fatalf("2D8horizontal-edge GoSIMD scratch split path was not used w=%d h=%d edge=%s", w, h, edge)
 					}
 					convolve2D8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
 					diffPlanes8(t, got, want, w, h, "2Dclamped-edge", kernels[0], kernels[1])
@@ -237,7 +237,7 @@ func TestConvolve2D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestConvolveAVX2ZeroAlloc(t *testing.T) {
+func TestConvolveGoSIMDZeroAlloc(t *testing.T) {
 	const pad = filterTaps
 	rng := rand.New(rand.NewSource(1))
 	ref := randPlane(rng, 32+2*pad, 1)
@@ -256,7 +256,6 @@ func TestConvolveAVX2ZeroAlloc(t *testing.T) {
 	}
 }
 
-
 func diffPlanes8(t *testing.T, got, want frame.Plane, w, h int, tag string, xk, yk [filterTaps]int16) {
 	t.Helper()
 	for y := 0; y < h; y++ {
@@ -264,8 +263,12 @@ func diffPlanes8(t *testing.T, got, want frame.Plane, w, h int, tag string, xk, 
 			g := got.Pix[y*got.Stride+x]
 			e := want.Pix[y*want.Stride+x]
 			if g != e {
-				t.Fatalf("%s w=%d h=%d (%d,%d): AVX2=%d PureGo=%d xk=%v yk=%v", tag, w, h, x, y, g, e, xk, yk)
+				t.Fatalf("%s w=%d h=%d (%d,%d): GoSIMD=%d PureGo=%d xk=%v yk=%v", tag, w, h, x, y, g, e, xk, yk)
 			}
 		}
 	}
+}
+
+func isFourTap(k [filterTaps]int16) bool {
+	return k[0] == 0 && k[1] == 0 && k[6] == 0 && k[7] == 0
 }

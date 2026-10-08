@@ -290,7 +290,7 @@ func hbdSIMDBenchFilters() []hbdSIMDBenchFilter {
 }
 
 // BenchmarkMotionHBD6TapConvolve compares the resident six-slot Go SIMD kernel
-// and its production dispatch wrapper with NEON across common filter families
+// and its production dispatch wrapper with GoSIMD across common filter families
 // and block shapes. The direct variant isolates kernel cost; the dispatched
 // variant includes shape and endpoint checks.
 func BenchmarkMotionHBD6TapConvolve(b *testing.B) {

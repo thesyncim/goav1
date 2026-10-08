@@ -13,7 +13,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
-// These tests assert the width-4 NEON convolve kernels (X, Y, 2D, plus their
+// These tests assert the width-4 GoSIMD convolve kernels (X, Y, 2D, plus their
 // clamped wrappers) are bit-identical to the pure-Go reference. Width 4 is the
 // most common inter shape: every 4:2:0 chroma block of an 8x8 luma block is 4x4
 // and 4xN luma blocks are frequent, so a byte-exact 4-lane kernel is what closes
@@ -28,10 +28,10 @@ func w4FilterTables() (eight [][16][filterTaps]int16, four [][16][filterTaps]int
 	return eight, four
 }
 
-// TestConvolveW4NEONMatchesPureGo sweeps the non-clamped width-4 X / Y / 2D NEON
+// TestConvolveW4GoSIMDMatchesPureGo sweeps the non-clamped width-4 X / Y / 2D GoSIMD
 // kernels across heights 4/8/16, all 16 subpel phases, 8-tap and 4-tap kernels,
 // over deterministic and random reference pixels.
-func TestConvolveW4NEONMatchesPureGo(t *testing.T) {
+func TestConvolveW4GoSIMDMatchesPureGo(t *testing.T) {
 	const pad = filterTaps
 	const w = 4
 	heights := []int{4, 8, 16}
@@ -113,10 +113,10 @@ func TestConvolveW4NEONMatchesPureGo(t *testing.T) {
 	}
 }
 
-// TestConvolveW4ClampedNEONMatchesPureGo asserts the width-4 *ClampedNEON
+// TestConvolveW4ClampedGoSIMDMatchesPureGo asserts the width-4 *ClampedGoSIMD
 // wrappers match the clamped pure-Go reference for interior (resident halo) and
 // genuine edge placements (where the tap window falls off the frame).
-func TestConvolveW4ClampedNEONMatchesPureGo(t *testing.T) {
+func TestConvolveW4ClampedGoSIMDMatchesPureGo(t *testing.T) {
 	const planeW, planeH = 48, 48
 	ref, _ := testPlane(planeW, planeH, 1, planeW)
 	fillMotionTestPlane(ref)
@@ -133,7 +133,7 @@ func TestConvolveW4ClampedNEONMatchesPureGo(t *testing.T) {
 		four       bool
 	}
 	cases := []wcase{
-		// Interior: full tap window resident, clamp is a no-op -> hits the NEON
+		// Interior: full tap window resident, clamp is a no-op -> hits the GoSIMD
 		// resident fast path.
 		{"interior_4x4_8tap", 20, 20, 4, false},
 		{"interior_4x8_8tap", 20, 16, 8, false},

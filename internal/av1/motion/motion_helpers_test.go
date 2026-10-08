@@ -45,7 +45,7 @@ func diffPlanesHBD(t *testing.T, got, want frame.Plane, w, h int, tag string, bd
 			ow := y*want.Stride + x*2
 			e := uint16(want.Pix[ow]) | uint16(want.Pix[ow+1])<<8
 			if g != e {
-				t.Fatalf("%s bd=%d w=%d h=%d (%d,%d): AVX2=%d PureGo=%d", tag, bd, w, h, x, y, g, e)
+				t.Fatalf("%s bd=%d w=%d h=%d (%d,%d): GoSIMD=%d PureGo=%d", tag, bd, w, h, x, y, g, e)
 			}
 		}
 	}
@@ -67,12 +67,6 @@ func avx2FilterTables() [][16][filterTaps]int16 {
 		subpelFilters8Sharp,
 		bilinearFilters,
 	}
-}
-
-func compoundRoundOffset8() int {
-	round0 := compoundRound0(8)
-	offsetBits := 8 + 2*filterBits - round0
-	return (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
 }
 
 func randPlane(rng *rand.Rand, side, bps int) frame.Plane {

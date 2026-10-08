@@ -12,7 +12,7 @@ import (
 )
 
 // TestConvolve2DHighBDGoSIMDScratchSweepMatchesPureGo asserts the scratch-carrying
-// HBD 2D AVX2 convolve stays bit-identical to the pure-Go reference with a
+// HBD 2D GoSIMD convolve stays bit-identical to the pure-Go reference with a
 // deliberately poisoned scratch, proving every intermediate sample read is
 // written first. Kernels are called directly (never gated on cpu.Detected) so
 // the sweep runs under Rosetta too.

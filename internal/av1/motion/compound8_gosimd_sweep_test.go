@@ -13,14 +13,14 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
-// These differential tests assert the AVX2 8-bit compound kernels are
+// These differential tests assert the GoSIMD 8-bit compound kernels are
 // bit-identical to the pure-Go references for every width/height and every
-// subpel phase of each filter type. They call the AVX2 wrappers directly rather
+// subpel phase of each filter type. They call the GoSIMD wrappers directly rather
 // than through the dispatch slots, so they validate the asm even on hosts whose
-// CPUID does not advertise AVX2 (e.g. amd64 under Rosetta 2, which translates
-// AVX2 anyway).
+// CPUID does not advertise GoSIMD (e.g. amd64 under Rosetta 2, which translates
+// GoSIMD anyway).
 
-func compoundAVX2Sizes() []struct{ w, h int } {
+func compoundGoSIMDSizes() []struct{ w, h int } {
 	return []struct{ w, h int }{
 		{8, 1}, {8, 8}, {16, 7}, {16, 16}, {24, 3}, {32, 11}, {48, 5}, {64, 16},
 	}
@@ -38,7 +38,7 @@ func TestBlendCompoundAvg8GoSIMDSweepMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xB1E0D))
 	_, _, roundOffset, roundBits := compoundRoundParams8()
 	weights := [][2]int{{8, 8}, {9, 7}, {13, 3}, {4, 12}, {16, 0}, {0, 16}}
-	for _, sz := range compoundAVX2Sizes() {
+	for _, sz := range compoundGoSIMDSizes() {
 		src0 := make([]uint16, sz.w*sz.h)
 		src1 := make([]uint16, sz.w*sz.h)
 		for i := range src0 {
@@ -53,7 +53,7 @@ func TestBlendCompoundAvg8GoSIMDSweepMatchesPureGo(t *testing.T) {
 			blendCompoundAvg8PureGo(want, src0, src1, 2, 1, sz.w, sz.h, w[0], w[1], roundOffset, roundBits)
 			for i := range got.Pix {
 				if got.Pix[i] != want.Pix[i] {
-					t.Fatalf("blend %dx%d w=%v byte %d: AVX2=%d PureGo=%d", sz.w, sz.h, w, i, got.Pix[i], want.Pix[i])
+					t.Fatalf("blend %dx%d w=%v byte %d: GoSIMD=%d PureGo=%d", sz.w, sz.h, w, i, got.Pix[i], want.Pix[i])
 				}
 			}
 		}
@@ -64,7 +64,7 @@ func TestCompound8CopyGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xC0FFEE))
 	round0, _, roundOffset, _ := compoundRoundParams8()
 	const pad = filterTaps
-	for _, sz := range compoundAVX2Sizes() {
+	for _, sz := range compoundGoSIMDSizes() {
 		side := sz.w
 		if sz.h > side {
 			side = sz.h
@@ -76,7 +76,7 @@ func TestCompound8CopyGoSIMDMatchesPureGo(t *testing.T) {
 		predictInterCompoundRef8ToConvBufCopyPureGo(want, ref, pad, pad, sz.w, sz.h, round0, roundOffset)
 		for i := range want {
 			if got[i] != want[i] {
-				t.Fatalf("copy %dx%d sample %d: AVX2=%d PureGo=%d", sz.w, sz.h, i, got[i], want[i])
+				t.Fatalf("copy %dx%d sample %d: GoSIMD=%d PureGo=%d", sz.w, sz.h, i, got[i], want[i])
 			}
 		}
 	}
@@ -89,7 +89,7 @@ func TestCompound8XGoSIMDMatchesPureGo(t *testing.T) {
 	for _, tbl := range avx2FilterTables() {
 		for ph := 1; ph < 16; ph++ {
 			k := tbl[ph]
-			for _, sz := range compoundAVX2Sizes() {
+			for _, sz := range compoundGoSIMDSizes() {
 				side := sz.w
 				if sz.h > side {
 					side = sz.h
@@ -101,7 +101,7 @@ func TestCompound8XGoSIMDMatchesPureGo(t *testing.T) {
 				predictInterCompoundRef8ToConvBufXPureGo(want, ref, pad, pad, sz.w, sz.h, k, roundOffset)
 				for i := range want {
 					if got[i] != want[i] {
-						t.Fatalf("X %dx%d ph=%d sample %d: AVX2=%d PureGo=%d", sz.w, sz.h, ph, i, got[i], want[i])
+						t.Fatalf("X %dx%d ph=%d sample %d: GoSIMD=%d PureGo=%d", sz.w, sz.h, ph, i, got[i], want[i])
 					}
 				}
 			}
@@ -116,7 +116,7 @@ func TestCompound8YGoSIMDMatchesPureGo(t *testing.T) {
 	for _, tbl := range avx2FilterTables() {
 		for ph := 1; ph < 16; ph++ {
 			k := tbl[ph]
-			for _, sz := range compoundAVX2Sizes() {
+			for _, sz := range compoundGoSIMDSizes() {
 				side := sz.w
 				if sz.h > side {
 					side = sz.h
@@ -128,7 +128,7 @@ func TestCompound8YGoSIMDMatchesPureGo(t *testing.T) {
 				predictInterCompoundRef8ToConvBufYPureGo(want, ref, pad, pad, sz.w, sz.h, k, round0, roundOffset)
 				for i := range want {
 					if got[i] != want[i] {
-						t.Fatalf("Y %dx%d ph=%d sample %d: AVX2=%d PureGo=%d", sz.w, sz.h, ph, i, got[i], want[i])
+						t.Fatalf("Y %dx%d ph=%d sample %d: GoSIMD=%d PureGo=%d", sz.w, sz.h, ph, i, got[i], want[i])
 					}
 				}
 			}
@@ -147,7 +147,7 @@ func TestCompound82DGoSIMDMatchesPureGo(t *testing.T) {
 			ytbl := tables[(xi+1)%len(tables)]
 			for _, yph := range []int{1, 5, 9, 15} {
 				yk := ytbl[yph]
-				for _, sz := range compoundAVX2Sizes() {
+				for _, sz := range compoundGoSIMDSizes() {
 					side := sz.w
 					if sz.h > side {
 						side = sz.h
@@ -159,7 +159,7 @@ func TestCompound82DGoSIMDMatchesPureGo(t *testing.T) {
 					predictInterCompoundRef8ToConvBuf2DPureGo(want, ref, pad, pad, sz.w, sz.h, xk, yk, offsetBits, nil)
 					for i := range want {
 						if got[i] != want[i] {
-							t.Fatalf("2D %dx%d xph=%d yph=%d sample %d: AVX2=%d PureGo=%d", sz.w, sz.h, xph, yph, i, got[i], want[i])
+							t.Fatalf("2D %dx%d xph=%d yph=%d sample %d: GoSIMD=%d PureGo=%d", sz.w, sz.h, xph, yph, i, got[i], want[i])
 						}
 					}
 				}
@@ -191,7 +191,7 @@ func TestCompound82DGoSIMDEdgeMatchesPureGo(t *testing.T) {
 			predictInterCompoundRef8ToConvBuf2DPureGo(want, ref, org[0], org[1], sz.w, sz.h, xk, yk, offsetBits, &scWant)
 			for i := range want {
 				if got[i] != want[i] {
-					t.Fatalf("2D edge %dx%d org=%v sample %d: AVX2=%d PureGo=%d", sz.w, sz.h, org, i, got[i], want[i])
+					t.Fatalf("2D edge %dx%d org=%v sample %d: GoSIMD=%d PureGo=%d", sz.w, sz.h, org, i, got[i], want[i])
 				}
 			}
 		}
@@ -217,6 +217,6 @@ func TestCompound8GoSIMDZeroAlloc(t *testing.T) {
 		predictInterCompoundRef8ToConvBufYGoSIMD(out, ref, pad, pad, w, h, k, round0, roundOffset)
 		predictInterCompoundRef8ToConvBuf2DGoSIMD(out, ref, pad, pad, w, h, k, k, offsetBits, &scratch)
 	}); a != 0 {
-		t.Fatalf("8-bit compound AVX2 allocates: %v allocs/run", a)
+		t.Fatalf("8-bit compound GoSIMD allocates: %v allocs/run", a)
 	}
 }

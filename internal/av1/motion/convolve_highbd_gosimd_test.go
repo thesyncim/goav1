@@ -35,13 +35,13 @@ func eqHighBDBlock(t *testing.T, got, want frame.Plane, w, h int, tag string, ct
 			g := getSample(got, 2, x, y)
 			e := getSample(want, 2, x, y)
 			if g != e {
-				t.Fatalf("%s (%d,%d): NEON=%d PureGo=%d ctx=%v", tag, x, y, g, e, ctx)
+				t.Fatalf("%s (%d,%d): GoSIMD=%d PureGo=%d ctx=%v", tag, x, y, g, e, ctx)
 			}
 		}
 	}
 }
 
-// TestConvolveHighBDGoSIMDMatchesPureGo asserts the high-bit-depth NEON X/Y/2D
+// TestConvolveHighBDGoSIMDMatchesPureGo asserts the high-bit-depth GoSIMD X/Y/2D
 // convolves are bit-identical to their pure-Go references for every width/height
 // in 4..64, every subpel phase of each filter type, at bit depths 10 and 12,
 // over deterministic and random reference pixels.
@@ -116,7 +116,7 @@ func TestConvolveHighBDGoSIMDMatchesPureGo(t *testing.T) {
 	}
 }
 
-// TestConvolveHighBDGoSIMDZeroAlloc asserts the HBD NEON wrappers allocate nothing
+// TestConvolveHighBDGoSIMDZeroAlloc asserts the HBD GoSIMD wrappers allocate nothing
 // on the fast (asm) path.
 func TestConvolveHighBDGoSIMDZeroAlloc(t *testing.T) {
 	const pad = filterTaps
@@ -136,15 +136,15 @@ func TestConvolveHighBDGoSIMDZeroAlloc(t *testing.T) {
 	}
 	for _, c := range cases {
 		if allocs := testing.AllocsPerRun(20, c.fn); allocs != 0 {
-			t.Errorf("%s HBD NEON allocated %v times, want 0", c.name, allocs)
+			t.Errorf("%s HBD GoSIMD allocated %v times, want 0", c.name, allocs)
 		}
 	}
 }
 
-// TestConvolveClampedNEONMatchesPureGo asserts the edge-clamped NEON wrappers
+// TestConvolveClampedGoSIMDMatchesPureGo asserts the edge-clamped GoSIMD wrappers
 // (8-bit and high-bit-depth) stay bit-identical to the pure-Go clamped
 // references at genuine frame edges, where the tap window falls off the plane.
-// It also covers the in-bounds case where the wrapper routes to the fast NEON
+// It also covers the in-bounds case where the wrapper routes to the fast GoSIMD
 // kernel.
 func TestConvolveClampedHighBDGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xc1a))
@@ -191,7 +191,7 @@ func TestConvolveClampedHighBDGoSIMDMatchesPureGo(t *testing.T) {
 }
 
 // TestConvolveHighBDClampedEmuEdgeMatchesPureGo drives the HBD edge-clamped
-// NEON wrappers over tap windows that overhang the reference plane on every
+// GoSIMD wrappers over tap windows that overhang the reference plane on every
 // side (and past both corners), forcing the emu_edge halo materialization
 // (emuEdgeWindow16). Every shape must stay bit-identical to the pure-Go
 // per-tap-clamping reference at bit depths 10 and 12, including the max/zero
@@ -284,7 +284,7 @@ func TestConvolveHighBDClampedEmuEdgeZeroAlloc(t *testing.T) {
 }
 
 // BenchmarkConvolveHighBDClampedEmuEdge measures the edge-overhanging HBD 2D
-// clamped convolve: the NEON emu_edge path against the pure-Go per-tap clamp.
+// clamped convolve: the GoSIMD emu_edge path against the pure-Go per-tap clamp.
 func BenchmarkConvolveHighBDClampedEmuEdge(b *testing.B) {
 	max, _ := highBDMax(10)
 	ref, _ := testPlane(24, 20, 2, 24*2)
@@ -387,4 +387,4 @@ func TestConvolve2DHighBDGoSIMDSweepMatchesPureGo(t *testing.T) {
 	}
 }
 
-// TestConvolveAVX2ZeroAlloc asserts the AVX2 fast paths allocate nothing.
+// TestConvolveGoSIMDZeroAlloc asserts the GoSIMD fast paths allocate nothing.

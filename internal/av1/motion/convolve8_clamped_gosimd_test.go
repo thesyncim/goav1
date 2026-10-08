@@ -15,7 +15,7 @@ import (
 
 // makeHighBDRef builds a (side+2*pad)-square high-bit-depth reference plane
 // whose samples are valid for the given bit depth.
-func TestConvolveClampedNEONMatchesPureGo(t *testing.T) {
+func TestConvolveClampedGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xc1a))
 	sizes := []int{4, 8, 12, 16, 32}
 
@@ -57,7 +57,7 @@ func TestConvolveClampedNEONMatchesPureGo(t *testing.T) {
 
 }
 
-func TestConvolve1D8ClampedEdgeNEONMatchesPureGo(t *testing.T) {
+func TestConvolve1D8ClampedEdgeGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x1d8c1a))
 	xWidths := []int{4, 8, 12, 15, 16, 24, 32}
 	yWidths := []int{4, 8, 16, 24, 32}
@@ -120,7 +120,7 @@ func TestConvolve1D8ClampedEdgeNEONMatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestConvolve2D8ClampedHorizontalEdgeNEONMatchesPureGo(t *testing.T) {
+func TestConvolve2D8ClampedHorizontalEdgeGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x2d8c1a))
 	widths := []int{8, 12, 15, 16, 24, 32}
 	heights := []int{4, 8, 16, 32}
@@ -190,7 +190,7 @@ func assertBytesEqual(t *testing.T, got, want frame.Plane, w, h int, tag string,
 			g := got.Pix[y*got.Stride+x]
 			e := want.Pix[y*want.Stride+x]
 			if g != e {
-				t.Fatalf("%s (%d,%d): NEON=%d PureGo=%d ctx=%v", tag, x, y, g, e, ctx)
+				t.Fatalf("%s (%d,%d): GoSIMD=%d PureGo=%d ctx=%v", tag, x, y, g, e, ctx)
 			}
 		}
 	}

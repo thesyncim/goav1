@@ -441,7 +441,7 @@ var predictInterCompoundRefHighBDToConvBuf2DResidentImpl = predictInterCompoundR
 
 // predictInterCompoundRefHighBDToConvBuf2DClampedImpl is the dispatch slot for
 // the non-resident (edge-overhanging) HBD compound 2D convolve. It defaults to
-// the pure-Go per-tap-clamping reference; arm64 rebinds it to an emu_edge NEON
+// the pure-Go per-tap-clamping reference; the Go SIMD build rebinds it to an emu_edge
 // path (see compound_neon_arm64.go). The optional edge buffer carries the
 // caller-owned 16bpc emulated-edge window for emu_edge implementations; nil
 // falls back to per-call stack storage.

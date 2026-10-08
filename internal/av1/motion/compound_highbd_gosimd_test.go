@@ -46,7 +46,7 @@ func TestCompoundHighBDCopyGoSIMDMatchesPureGo(t *testing.T) {
 			predictInterCompoundRefHighBDToConvBufCopyResidentPureGo(want, ref, refX, refY, tc.width, tc.height, round0, roundOffset)
 			for i := range got {
 				if got[i] != want[i] {
-					t.Fatalf("bd=%d %dx%d sample %d: NEON=%d PureGo=%d", bitDepth, tc.width, tc.height, i, got[i], want[i])
+					t.Fatalf("bd=%d %dx%d sample %d: GoSIMD=%d PureGo=%d", bitDepth, tc.width, tc.height, i, got[i], want[i])
 				}
 			}
 		}
@@ -102,7 +102,7 @@ func TestCompoundHighBDXGoSIMDMatchesPureGo(t *testing.T) {
 					predictInterCompoundRefHighBDToConvBufXResident(want, ref, pad, pad, size.width, size.height, kernel, round0, roundOffset)
 					for i := range want {
 						if got[i] != want[i] {
-							t.Fatalf("bd=%d filter=%d size=%dx%d subX=%d sample=%d NEON=%d PureGo=%d",
+							t.Fatalf("bd=%d filter=%d size=%dx%d subX=%d sample=%d GoSIMD=%d PureGo=%d",
 								bitDepth, filter, size.width, size.height, subX, i, got[i], want[i])
 						}
 					}
@@ -141,7 +141,7 @@ func TestCompoundHighBDXGoSIMDFallbackMatchesPureGo(t *testing.T) {
 			predictInterCompoundRefHighBDToConvBufXResident(want, ref, refX, refY, tc.width, tc.height, tc.kernel, round0, roundOffset)
 			for i := range want {
 				if got[i] != want[i] {
-					t.Fatalf("%s sample=%d NEON wrapper=%d PureGo=%d", tc.name, i, got[i], want[i])
+					t.Fatalf("%s sample=%d GoSIMD wrapper=%d PureGo=%d", tc.name, i, got[i], want[i])
 				}
 			}
 		})
@@ -195,7 +195,7 @@ func TestCompoundHighBDYGoSIMDMatchesPureGo(t *testing.T) {
 					predictInterCompoundRefHighBDToConvBufYResident(want, ref, pad, pad, size.width, size.height, kernel, round0, roundOffset)
 					for i := range want {
 						if got[i] != want[i] {
-							t.Fatalf("bd=%d filter=%d size=%dx%d subY=%d sample=%d NEON=%d PureGo=%d",
+							t.Fatalf("bd=%d filter=%d size=%dx%d subY=%d sample=%d GoSIMD=%d PureGo=%d",
 								bitDepth, filter, size.width, size.height, subY, i, got[i], want[i])
 						}
 					}
@@ -225,7 +225,7 @@ func TestCompoundHighBDYGoSIMDFallbackMatchesPureGo(t *testing.T) {
 	predictInterCompoundRefHighBDToConvBufYResident(want, ref, refX, refY, 12, 8, kernel, round0, roundOffset)
 	for i := range want {
 		if got[i] != want[i] {
-			t.Fatalf("odd_width sample=%d NEON wrapper=%d PureGo=%d", i, got[i], want[i])
+			t.Fatalf("odd_width sample=%d GoSIMD wrapper=%d PureGo=%d", i, got[i], want[i])
 		}
 	}
 }
@@ -284,7 +284,7 @@ func TestCompoundHighBD2DGoSIMDMatchesPureGo(t *testing.T) {
 							predictInterCompoundRefHighBDToConvBuf2DResident(want, ref, pad, pad, size.width, size.height, xKernel, yKernel, round0, offsetBits, int(bitDepth), &wantIM)
 							for i := range want {
 								if got[i] != want[i] {
-									t.Fatalf("bd=%d filters=%d/%d size=%dx%d sub=%d/%d sample=%d NEON=%d PureGo=%d",
+									t.Fatalf("bd=%d filters=%d/%d size=%dx%d sub=%d/%d sample=%d GoSIMD=%d PureGo=%d",
 										bitDepth, xFilter, yFilter, size.width, size.height, subX, subY, i, got[i], want[i])
 								}
 							}
@@ -321,13 +321,13 @@ func TestCompoundHighBD2DGoSIMDFallbackMatchesPureGo(t *testing.T) {
 	predictInterCompoundRefHighBDToConvBuf2DResident(want, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, 10, &wantIM)
 	for i := range want {
 		if got[i] != want[i] {
-			t.Fatalf("right_edge_fallback sample=%d NEON wrapper=%d PureGo=%d", i, got[i], want[i])
+			t.Fatalf("right_edge_fallback sample=%d GoSIMD wrapper=%d PureGo=%d", i, got[i], want[i])
 		}
 	}
 }
 
 // TestCompoundHighBD2DClampedEmuEdgeMatchesPureGo drives the HBD compound 2D
-// clamped NEON path over tap windows that overhang the reference plane on every
+// clamped GoSIMD path over tap windows that overhang the reference plane on every
 // side, forcing the emu_edge halo materialization, and asserts bit-identity
 // with the pure-Go per-tap-clamping reference at bit depths 10 and 12.
 func TestCompoundHighBD2DClampedEmuEdgeMatchesPureGo(t *testing.T) {
@@ -377,11 +377,11 @@ func TestCompoundHighBD2DClampedEmuEdgeMatchesPureGo(t *testing.T) {
 					predictInterCompoundRefHighBDToConvBuf2DClamped(want, ref, o[0], o[1], w, h, xKernel, yKernel, round0, offsetBits, int(bitDepth), &wantIM)
 					for i := range want {
 						if got[i] != want[i] {
-							t.Fatalf("bd=%d %dx%d off=%v sample=%d NEON=%d PureGo=%d",
+							t.Fatalf("bd=%d %dx%d off=%v sample=%d GoSIMD=%d PureGo=%d",
 								bitDepth, w, h, o, i, got[i], want[i])
 						}
 						if gotEdge[i] != want[i] {
-							t.Fatalf("bd=%d %dx%d off=%v sample=%d NEON(edge)=%d PureGo=%d",
+							t.Fatalf("bd=%d %dx%d off=%v sample=%d GoSIMD(edge)=%d PureGo=%d",
 								bitDepth, w, h, o, i, gotEdge[i], want[i])
 						}
 					}

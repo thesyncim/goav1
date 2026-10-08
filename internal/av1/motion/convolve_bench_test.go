@@ -565,7 +565,7 @@ func BenchmarkConvolve2D8ClampedEdge_16WithScratch(b *testing.B) {
 	})
 }
 
-// Clamped 2D width-4 edge block (the small inter block that the NEON path
+// Clamped 2D width-4 edge block (the small inter block that the GoSIMD path
 // always routes to pure-Go).
 func BenchmarkConvolve2D8ClampedEdge_4x4(b *testing.B) {
 	const plane = 64

@@ -13,8 +13,8 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
-// Differential tests for the AVX2 high-bit-depth compound kernels. They call
-// the AVX2 wrappers directly so the asm executes (not skips) under GOARCH=amd64
+// Differential tests for the GoSIMD high-bit-depth compound kernels. They call
+// the GoSIMD wrappers directly so the asm executes (not skips) under GOARCH=amd64
 // on a Rosetta host.
 
 func compoundHBDParams(bitDepth uint8) (round0, offsetBits, roundOffset int) {
@@ -48,7 +48,7 @@ func TestCompoundHBDCopyGoSIMDMatchesPureGo(t *testing.T) {
 			predictInterCompoundRefHighBDToConvBufCopyResidentPureGo(want, ref, pad, pad, sz.w, sz.h, round0, roundOffset)
 			for i := range want {
 				if got[i] != want[i] {
-					t.Fatalf("copy bd=%d %dx%d sample %d: AVX2=%d PureGo=%d", bd, sz.w, sz.h, i, got[i], want[i])
+					t.Fatalf("copy bd=%d %dx%d sample %d: GoSIMD=%d PureGo=%d", bd, sz.w, sz.h, i, got[i], want[i])
 				}
 			}
 		}
@@ -76,7 +76,7 @@ func TestCompoundHBDXGoSIMDMatchesPureGo(t *testing.T) {
 					predictInterCompoundRefHighBDToConvBufXResident(want, ref, pad, pad, sz.w, sz.h, k, round0, roundOffset)
 					for i := range want {
 						if got[i] != want[i] {
-							t.Fatalf("X bd=%d %dx%d ph=%d sample %d: AVX2=%d PureGo=%d", bd, sz.w, sz.h, ph, i, got[i], want[i])
+							t.Fatalf("X bd=%d %dx%d ph=%d sample %d: GoSIMD=%d PureGo=%d", bd, sz.w, sz.h, ph, i, got[i], want[i])
 						}
 					}
 				}
@@ -106,7 +106,7 @@ func TestCompoundHBDYGoSIMDMatchesPureGo(t *testing.T) {
 					predictInterCompoundRefHighBDToConvBufYResident(want, ref, pad, pad, sz.w, sz.h, k, round0, roundOffset)
 					for i := range want {
 						if got[i] != want[i] {
-							t.Fatalf("Y bd=%d %dx%d ph=%d sample %d: AVX2=%d PureGo=%d", bd, sz.w, sz.h, ph, i, got[i], want[i])
+							t.Fatalf("Y bd=%d %dx%d ph=%d sample %d: GoSIMD=%d PureGo=%d", bd, sz.w, sz.h, ph, i, got[i], want[i])
 						}
 					}
 				}
@@ -141,7 +141,7 @@ func TestCompoundHBD2DGoSIMDMatchesPureGo(t *testing.T) {
 						predictInterCompoundRefHighBDToConvBuf2DResident(want, ref, pad, pad, sz.w, sz.h, xk, yk, round0, offsetBits, int(bd), &imW)
 						for i := range want {
 							if got[i] != want[i] {
-								t.Fatalf("2D bd=%d %dx%d xph=%d yph=%d sample %d: AVX2=%d PureGo=%d", bd, sz.w, sz.h, xph, yph, i, got[i], want[i])
+								t.Fatalf("2D bd=%d %dx%d xph=%d yph=%d sample %d: GoSIMD=%d PureGo=%d", bd, sz.w, sz.h, xph, yph, i, got[i], want[i])
 							}
 						}
 					}
@@ -182,10 +182,10 @@ func TestCompoundHBD2DClampedGoSIMDMatchesPureGo(t *testing.T) {
 				predictInterCompoundRefHighBDToConvBuf2DClamped(want, ref, org[0], org[1], sz.w, sz.h, xk, yk, round0, offsetBits, int(bd), &imW)
 				for i := range want {
 					if got[i] != want[i] {
-						t.Fatalf("2D clamped bd=%d %dx%d org=%v sample %d: AVX2=%d PureGo=%d", bd, sz.w, sz.h, org, i, got[i], want[i])
+						t.Fatalf("2D clamped bd=%d %dx%d org=%v sample %d: GoSIMD=%d PureGo=%d", bd, sz.w, sz.h, org, i, got[i], want[i])
 					}
 					if gotEdge[i] != want[i] {
-						t.Fatalf("2D clamped (edge) bd=%d %dx%d org=%v sample %d: AVX2=%d PureGo=%d", bd, sz.w, sz.h, org, i, gotEdge[i], want[i])
+						t.Fatalf("2D clamped (edge) bd=%d %dx%d org=%v sample %d: GoSIMD=%d PureGo=%d", bd, sz.w, sz.h, org, i, gotEdge[i], want[i])
 					}
 				}
 			}
@@ -193,7 +193,7 @@ func TestCompoundHBD2DClampedGoSIMDMatchesPureGo(t *testing.T) {
 	}
 }
 
-// TestCompoundHBDXYClampedEmuEdgeGoSIMDMatchesPureGo runs the AVX2 X/Y resident
+// TestCompoundHBDXYClampedEmuEdgeGoSIMDMatchesPureGo runs the GoSIMD X/Y resident
 // kernels over emu_edge halo windows of edge-overhanging blocks (the compound
 // X/Y clamped fast path) and asserts bit-identity with the pure-Go per-tap
 // clamping references.
@@ -234,10 +234,10 @@ func TestCompoundHBDXYClampedEmuEdgeGoSIMDMatchesPureGo(t *testing.T) {
 				predictInterCompoundRefHighBDToConvBufYClamped(wantY, ref, org[0], org[1], sz.w, sz.h, yk, round0, roundOffset)
 				for i := range wantX {
 					if gotX[i] != wantX[i] {
-						t.Fatalf("X emu bd=%d %dx%d org=%v sample %d: AVX2=%d PureGo=%d", bd, sz.w, sz.h, org, i, gotX[i], wantX[i])
+						t.Fatalf("X emu bd=%d %dx%d org=%v sample %d: GoSIMD=%d PureGo=%d", bd, sz.w, sz.h, org, i, gotX[i], wantX[i])
 					}
 					if gotY[i] != wantY[i] {
-						t.Fatalf("Y emu bd=%d %dx%d org=%v sample %d: AVX2=%d PureGo=%d", bd, sz.w, sz.h, org, i, gotY[i], wantY[i])
+						t.Fatalf("Y emu bd=%d %dx%d org=%v sample %d: GoSIMD=%d PureGo=%d", bd, sz.w, sz.h, org, i, gotY[i], wantY[i])
 					}
 				}
 			}
@@ -260,6 +260,6 @@ func TestCompoundHBDGoSIMDZeroAlloc(t *testing.T) {
 		predictInterCompoundRefHighBDToConvBufYResidentGoSIMD(out, ref, pad, pad, w, h, k, round0, roundOffset)
 		predictInterCompoundRefHighBDToConvBuf2DResidentGoSIMD(out, ref, pad, pad, w, h, k, k, round0, offsetBits, 12, &im)
 	}); a != 0 {
-		t.Fatalf("HBD compound AVX2 allocates: %v allocs/run", a)
+		t.Fatalf("HBD compound GoSIMD allocates: %v allocs/run", a)
 	}
 }
