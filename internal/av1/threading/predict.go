@@ -1090,7 +1090,7 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *ti
 		if err != nil {
 			return err
 		}
-		sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+		sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 		if err != nil {
 			return err
 		}
@@ -1160,7 +1160,7 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithGeometry(visit *til
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 	if err != nil {
 		return err
 	}
@@ -1446,7 +1446,7 @@ func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithGeometry(visit *tile.Bloc
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 	if err != nil {
 		return err
 	}
@@ -1652,7 +1652,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundRefToConvBuf(buf *motion.Compo
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 	if err != nil {
 		return err
 	}
@@ -1962,7 +1962,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutputWithGeometry(geo
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 	if err != nil {
 		return err
 	}
@@ -2009,7 +2009,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plan
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 	if err != nil {
 		return err
 	}
@@ -2058,7 +2058,7 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpToScratch(dst frame.Plane, p
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 	if err != nil {
 		return err
 	}
@@ -2202,7 +2202,7 @@ func (b *FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, pla
 	// area must run through the scaled 8-tap convolver instead. libaom
 	// mirror: av1_make_inter_predictor() routes through
 	// av1_convolve_2d_scale_c whenever av1_is_scaled(sf).
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 	if err != nil {
 		return err
 	}

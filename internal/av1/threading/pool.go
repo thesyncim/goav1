@@ -39,6 +39,10 @@ type FrameWorkSequenceContext struct {
 	EnableRestoration          bool
 	ColorConfig                parser.ColorConfig
 	FilmGrainParamsPresent     bool
+	// ScaledReferencePredictionDisabled carries the decoder's captured
+	// GOAV1_SCALED_PRED policy into block prediction. Keeping the policy in the
+	// frame context avoids consulting the process environment for every block.
+	ScaledReferencePredictionDisabled bool
 }
 
 // FrameWorkSequenceContextFromHeader derives worker-facing sequence context

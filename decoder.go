@@ -650,9 +650,12 @@ func NewTileWorkerPool(workers int) (*TileWorkerPool, error) {
 
 // DecoderFrameWorkSequenceContextFromHeader builds a
 // DecoderFrameWorkSequenceContext from sequence so it can be threaded into
-// the frame-work helpers without re-parsing.
+// the frame-work helpers without re-parsing. It also captures the current
+// GOAV1_SCALED_PRED setting in the returned context.
 func DecoderFrameWorkSequenceContextFromHeader(sequence SequenceHeader) DecoderFrameWorkSequenceContext {
-	return internalthreading.FrameWorkSequenceContextFromHeader(sequence)
+	context := internalthreading.FrameWorkSequenceContextFromHeader(sequence)
+	context.ScaledReferencePredictionDisabled = !internalthreading.ScaledReferencePredictionEnabled()
+	return context
 }
 
 // DecoderAcquireFrameSurface acquires a Frame from pool sized for (sequence,

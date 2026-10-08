@@ -70,10 +70,10 @@ type FrameWorkEventResult struct {
 }
 
 type FrameWorkPreparedPayloadStep struct {
-	Base           FrameWorkBatch
-	JobCount       int
-	BatchCount     int
-	ReferenceCount uint8
+	Base            FrameWorkBatch
+	JobCount        int
+	BatchCount      int
+	ReferenceCount  uint8
 	HasTileWork     bool
 	CDEFIndexMap    *threading.FrameWorkCDEFIndexMap
 	LoopFilterMap   *threading.FrameWorkLoopFilterMap
@@ -231,6 +231,12 @@ type FrameWorkState struct {
 	ReferenceCount uint8
 	Sequence       threading.FrameWorkSequenceContext
 
+	// Scaled-reference policy is captured once per state. High-level decoder
+	// constructors set it; low-level callers that leave it unset capture the
+	// environment when the first frame begins.
+	scaledRefPolicySet     bool
+	scaledRefPolicyEnabled bool
+
 	// Saved entropy (CDF) frame contexts are kept in a fixed pool of storages
 	// referenced by per-slot handles instead of one 56KB value per slot, so
 	// saving a frame context under N refresh_frame_flags slots is N handle
@@ -270,10 +276,10 @@ type FrameWorkState struct {
 	// InitTileResidualCDFStorage). tileResidualRetainedCDF is the fresh pool
 	// entry the context_update_tile_id job captures the adapted frame context
 	// into. Both carry a frame hold released by resetActive.
-	tileResidualCurrentCDF          int8
-	tileResidualCurrentCDFsValid    bool
-	tileResidualRetainedCDF         int8
-	tileResidualRetainedCDFsValid   bool
+	tileResidualCurrentCDF        int8
+	tileResidualCurrentCDFsValid  bool
+	tileResidualRetainedCDF       int8
+	tileResidualRetainedCDFsValid bool
 
 	// Temporal motion-vector (ref_frame_mvs / MFMV) state for the single-pool
 	// decode path. AV1 inter frames with use_ref_frame_mvs project a temporal
@@ -367,16 +373,32 @@ func (s *FrameWorkState) Reset() {
 	if s == nil {
 		return
 	}
+	scaledRefPolicySet := s.scaledRefPolicySet
+	scaledRefPolicyEnabled := s.scaledRefPolicyEnabled
 	currentBack := s.currentMVFrameBack[:0]
 	temporalBack := s.temporalMVsBack[:0]
 	var storeBack [parser.RefFrames][]tile.ReferenceMVEntry
 	for i := range s.mvFrameStoreBacking {
 		storeBack[i] = s.mvFrameStoreBacking[i][:0]
 	}
-	*s = FrameWorkState{}
+	*s = FrameWorkState{
+		scaledRefPolicySet:     scaledRefPolicySet,
+		scaledRefPolicyEnabled: scaledRefPolicyEnabled,
+	}
 	s.currentMVFrameBack = currentBack
 	s.temporalMVsBack = temporalBack
 	s.mvFrameStoreBacking = storeBack
+}
+
+// SetScaledReferencePredictionEnabled captures whether this state may decode
+// references whose coded dimensions differ from the current frame. High-level
+// decoder constructors use this to snapshot GOAV1_SCALED_PRED once per decoder.
+func (s *FrameWorkState) SetScaledReferencePredictionEnabled(enabled bool) {
+	if s == nil {
+		return
+	}
+	s.scaledRefPolicySet = true
+	s.scaledRefPolicyEnabled = enabled
 }
 
 // acquireTileResidualCDFEntry claims a free pool entry with one frame hold.
@@ -593,6 +615,9 @@ func (s *FrameWorkState) Begin(refs *SurfaceReferences, pool *frame.Pool, sequen
 	if s == nil || s.active {
 		return FrameWorkPlan{}, nil, ErrInvalidFrameWorkState
 	}
+	if !s.scaledRefPolicySet {
+		s.SetScaledReferencePredictionEnabled(threading.ScaledReferencePredictionEnabled())
+	}
 	currentCDF, err := s.acquireInitialTileResidualCDFs(event)
 	if err != nil {
 		return FrameWorkPlan{}, nil, err
@@ -611,6 +636,7 @@ func (s *FrameWorkState) Begin(refs *SurfaceReferences, pool *frame.Pool, sequen
 	s.Surface = plan.Surface
 	s.ReferenceCount = plan.ReferenceCount
 	s.Sequence = threading.FrameWorkSequenceContextFromHeader(sequence)
+	s.Sequence.ScaledReferencePredictionDisabled = !s.scaledRefPolicyEnabled
 	s.tileResidualCurrentCDF = currentCDF
 	s.tileResidualCurrentCDFsValid = true
 	s.tileResidualRetainedCDF = retainedCDF
@@ -2003,10 +2029,10 @@ func prepareFrameWorkStepWithPayload(step FrameWorkStep, output *frame.Frame, re
 		RestorationFrameBuffers:       restorationFrameBuffers,
 	}
 	return FrameWorkPreparedPayloadStep{
-		Base:           base,
-		JobCount:       plan.JobCount,
-		BatchCount:     plan.BatchCount,
-		ReferenceCount: referenceCount,
+		Base:            base,
+		JobCount:        plan.JobCount,
+		BatchCount:      plan.BatchCount,
+		ReferenceCount:  referenceCount,
 		HasTileWork:     true,
 		CDEFIndexMap:    cdefIndexMap,
 		LoopFilterMap:   loopFilterMap,
@@ -2019,6 +2045,8 @@ func frameWorkFrameContext(event Event, fallback threading.FrameWorkSequenceCont
 	sequence := threading.FrameWorkSequenceContextFromHeader(event.SequenceHeader)
 	if !sequence.Valid() {
 		sequence = fallback
+	} else {
+		sequence.ScaledReferencePredictionDisabled = fallback.ScaledReferencePredictionDisabled
 	}
 	return FrameWorkFrameContext{
 		Sequence:            sequence,

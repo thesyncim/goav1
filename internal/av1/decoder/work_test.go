@@ -362,8 +362,10 @@ func TestFrameWorkStateLifecycle(t *testing.T) {
 	if output == nil || !state.Active() || state.Surface != plan.Surface || state.ReferenceCount != plan.ReferenceCount {
 		t.Fatalf("state=%+v active=%v plan=%+v output=%p", state, state.Active(), plan, output)
 	}
-	if state.Sequence != threading.FrameWorkSequenceContextFromHeader(events[0].SequenceHeader) {
-		t.Fatalf("state sequence=%+v want %+v", state.Sequence, threading.FrameWorkSequenceContextFromHeader(events[0].SequenceHeader))
+	wantSequence := threading.FrameWorkSequenceContextFromHeader(events[0].SequenceHeader)
+	wantSequence.ScaledReferencePredictionDisabled = !threading.ScaledReferencePredictionEnabled()
+	if state.Sequence != wantSequence {
+		t.Fatalf("state sequence=%+v want %+v", state.Sequence, wantSequence)
 	}
 	if pool.Available() != 0 {
 		t.Fatalf("available after begin=%d want 0", pool.Available())
@@ -395,6 +397,33 @@ func TestFrameWorkStateLifecycle(t *testing.T) {
 	slot, ok := refs.ReferenceSlot(0)
 	if !ok || slot != plan.Surface {
 		t.Fatalf("slot=%d ok=%v want %d", slot, ok, plan.Surface)
+	}
+}
+
+func TestFrameWorkStateScaledReferencePolicySurvivesReset(t *testing.T) {
+	t.Setenv("GOAV1_SCALED_PRED", "0")
+	var state FrameWorkState
+	state.SetScaledReferencePredictionEnabled(threading.ScaledReferencePredictionEnabled())
+	t.Setenv("GOAV1_SCALED_PRED", "1")
+
+	pool := testFramePool(t, 1)
+	var refs SurfaceReferences
+	event := Event{
+		Kind:        EventFrameHeader,
+		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
+		FrameSize:   testFrameSize(16, 16),
+	}
+	if _, _, err := state.Begin(&refs, &pool, testSequence(), event, 32, nil, 1, nil, nil, nil); err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	context := frameWorkFrameContext(event, state.sequenceContext())
+	if !context.Sequence.ScaledReferencePredictionDisabled {
+		t.Fatal("frame context did not retain the decoder's captured disabled policy")
+	}
+
+	state.Reset()
+	if !state.scaledRefPolicySet || state.scaledRefPolicyEnabled {
+		t.Fatalf("scaled-reference policy after Reset: set=%v enabled=%v", state.scaledRefPolicySet, state.scaledRefPolicyEnabled)
 	}
 }
 

@@ -3,6 +3,8 @@ package goav1
 import (
 	"errors"
 	"fmt"
+
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 )
 
 // Decoder is an ergonomic, high-level wrapper around the byte-exact public
@@ -29,7 +31,9 @@ import (
 //
 // A Decoder is not safe for concurrent use; serialize calls. The worker count
 // (see WithWorkers) controls intra-frame tile parallelism inside the runner,
-// not concurrent use of the Decoder itself.
+// not concurrent use of the Decoder itself. GOAV1_SCALED_PRED is read when the
+// Decoder is constructed, so changing it later does not change this decoder's
+// prediction policy.
 type Decoder struct {
 	pool       FramePool
 	outputPool FramePool
@@ -274,6 +278,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		format:        format,
 		useExternal:   useExternal,
 	}
+	d.state.SetScaledReferencePredictionEnabled(internalthreading.ScaledReferencePredictionEnabled())
 	if d.useExternal {
 		d.external.outputPool = &d.outputPool
 	}

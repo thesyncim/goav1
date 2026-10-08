@@ -3,6 +3,8 @@ package goav1
 import (
 	"errors"
 	"fmt"
+
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 )
 
 const layeredDecoderMaxFrameFormats = EncoderWebRTCMaxSpatialLayers + 1
@@ -19,6 +21,8 @@ const layeredDecoderMaxFrameFormats = EncoderWebRTCMaxSpatialLayers + 1
 // reference map still retains the surface internally.
 //
 // A LayeredDecoder is not safe for concurrent use; serialize calls.
+// GOAV1_SCALED_PRED is read when the decoder is constructed and remains fixed
+// for its lifetime.
 type LayeredDecoder struct {
 	workerPool *TileWorkerPool
 
@@ -199,6 +203,10 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 		payloadKind:   kind,
 		payloadSource: source,
 		payloadBuf:    arena.takeBytes(source.payloadBufferLen()),
+	}
+	scaledReferencePredictionEnabled := internalthreading.ScaledReferencePredictionEnabled()
+	for i := range d.states {
+		d.states[i].SetScaledReferencePredictionEnabled(scaledReferencePredictionEnabled)
 	}
 	d.scratch = newDecoderStreamScratch(plan.Size, &arena)
 	if cap(d.scratch.Outputs) > 0 {
