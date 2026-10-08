@@ -8,27 +8,24 @@ package prediction
 
 import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 
-// init binds the architecture-best intra static predictors on arm64. When NEON
-// is available (mandatory on every arm64 chip Go runs on) the PAETH and SMOOTH
-// fill loops route through the hand-written NEON asm; otherwise they keep the
-// pure-Go reference. The assignment happens once, before any decoder goroutine
-// starts, so the steady-state cost is a single indirect call.
+// init binds the architecture-best intra kernels on arm64. When NEON is
+// available (mandatory on every arm64 chip Go runs on) the DC sum, CfL apply and
+// the directional interpolation route through the hand-written NEON asm;
+// otherwise they keep the pure-Go reference. The PAETH and SMOOTH predictors have
+// no asm in this build and always use the pure-Go reference. The assignment
+// happens once, before any decoder goroutine starts, so the steady-state cost is
+// a single indirect call.
 //
 // The NEON wrappers fall back to pure-Go for non-8-bit samples and widths that
 // are not a multiple of 8, so the asm only handles the common shapes that
 // dominate intra decode time.
 //
-// Under the goexperiment.simd build the Go-native SIMD PAETH/SMOOTH kernels bind
-// instead (intra_static_gosimd_arm64.go), which re-binds every other kernel in
-// this dispatch to its NEON asm; this file is excluded there so the two inits
-// never fight over the same slots.
+// Under the goexperiment.simd build the Go-native SIMD kernels bind instead
+// (intra_static_gosimd_dispatch_arm64.go); this file is excluded there so the
+// two inits never fight over the same slots.
 func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {
-		predictPaethImpl = predictPaethNEON
-		predictSmoothImpl = predictSmoothNEON
-		predictSmoothVerticalImpl = predictSmoothVerticalNEON
-		predictSmoothHorizontalImpl = predictSmoothHorizontalNEON
 		sumSamplesImpl = sumSamplesNEON
 		applyCFLImpl = applyCFLNEON
 		subsampleLuma8Impl = subsampleLuma8NEON
@@ -37,10 +34,6 @@ func init() {
 		dirLeftCol8Impl = dirLeftCol8NEON
 		return
 	}
-	predictPaethImpl = predictPaethPureGo
-	predictSmoothImpl = predictSmoothPureGo
-	predictSmoothVerticalImpl = predictSmoothVerticalPureGo
-	predictSmoothHorizontalImpl = predictSmoothHorizontalPureGo
 	sumSamplesImpl = sumSamplesPureGo
 	applyCFLImpl = applyCFLPureGo
 	subsampleLuma8Impl = subsampleLuma8PureGo

@@ -20,3 +20,9 @@ var filterIntraEvenBytes = archsimd.LoadInt8x16Array(&[16]int8{0, 2, 4, 6, 8, 10
 func filterIntraPackBytes(out archsimd.Int16x8) archsimd.Uint8x16 {
 	return out.AsUint8x16().PermuteOrZero(filterIntraEvenBytes)
 }
+
+// filterIntraShift4 arithmetic-shifts each int16 lane right by filterIntraScaleBits
+// (VPSRAW with an immediate).
+func filterIntraShift4(v archsimd.Int16x8) archsimd.Int16x8 {
+	return v.ShiftAllRight(filterIntraScaleBits)
+}

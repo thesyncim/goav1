@@ -77,8 +77,8 @@ func predictFilterIntraBlockDirect16SIMD(block planeBlock, width int, height int
 				Add(h3.MulWidenLo(p3)).Add(h4.MulWidenLo(p4)).Add(roundV)
 			lo = lo.Add(t5.MulWidenLo(p5)).Add(t6.MulWidenLo(p6))
 			hi = hi.Add(h5.MulWidenLo(p5)).Add(h6.MulWidenLo(p6))
-			loOut := lo.ShiftAllRight(filterIntraScaleBits).Max(zeroV).Min(maxV)
-			hiOut := hi.ShiftAllRight(filterIntraScaleBits).Max(zeroV).Min(maxV)
+			loOut := lo.Shift(filterIntraShr4I32).Max(zeroV).Min(maxV)
+			hiOut := hi.Shift(filterIntraShr4I32).Max(zeroV).Min(maxV)
 			out := cflTruncateInt32PairToInt16(loOut, hiOut)
 			packed := out.ToBits().ReshapeToUint64s()
 			binary.LittleEndian.PutUint64(row0[col<<1:], packed.GetElem(0))
@@ -88,3 +88,6 @@ func predictFilterIntraBlockDirect16SIMD(block planeBlock, width int, height int
 		}
 	}
 }
+
+// filterIntraShr4I32 is the 32-bit rounding shift as a per-lane shift vector.
+var filterIntraShr4I32 = archsimd.BroadcastInt32x4(-filterIntraScaleBits)

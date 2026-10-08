@@ -13,3 +13,13 @@ import "simd/archsimd"
 func filterIntraPackBytes(out archsimd.Int16x8) archsimd.Uint8x16 {
 	return out.ConvertToUint16().SaturateToUint8()
 }
+
+// filterIntraShr4 is the rounding shift (by filterIntraScaleBits) as a per-lane
+// shift vector: the arm64 ShiftAllRight lowering re-broadcasts the amount for
+// every use, whereas a per-lane Shift against a hoisted vector is one VSSHL.
+var filterIntraShr4 = archsimd.BroadcastInt16x8(-filterIntraScaleBits)
+
+// filterIntraShift4 arithmetic-shifts each int16 lane right by filterIntraScaleBits.
+func filterIntraShift4(v archsimd.Int16x8) archsimd.Int16x8 {
+	return v.Shift(filterIntraShr4)
+}

@@ -22,10 +22,10 @@ func TestGoSIMDDispatchProbe(t *testing.T) {
 	assertDispatchTarget(t, "subsampleLuma16Impl", subsampleLuma16Impl, "subsampleLuma16SIMD")
 	assertDispatchTarget(t, "subtractCFLAverageImpl", subtractCFLAverageImpl, "subtractCFLAverageSIMD")
 
-	assertDispatchTarget(t, "predictPaethImpl", predictPaethImpl, "predictPaethNEON")
-	assertDispatchTarget(t, "predictSmoothImpl", predictSmoothImpl, "predictSmoothNEON")
-	assertDispatchTarget(t, "predictSmoothVerticalImpl", predictSmoothVerticalImpl, "predictSmoothVerticalNEON")
-	assertDispatchTarget(t, "predictSmoothHorizontalImpl", predictSmoothHorizontalImpl, "predictSmoothHorizontalNEON")
+	assertDispatchTarget(t, "predictPaethImpl", predictPaethImpl, "predictPaethSIMD")
+	assertDispatchTarget(t, "predictSmoothImpl", predictSmoothImpl, "predictSmoothSIMD")
+	assertDispatchTarget(t, "predictSmoothVerticalImpl", predictSmoothVerticalImpl, "predictSmoothVerticalSIMD")
+	assertDispatchTarget(t, "predictSmoothHorizontalImpl", predictSmoothHorizontalImpl, "predictSmoothHorizontalSIMD")
 	assertDispatchTarget(t, "sumSamplesImpl", sumSamplesImpl, "sumSamplesNEON")
 	assertDispatchTarget(t, "dirRowInterp8Impl", dirRowInterp8Impl, "dirRowInterp8NEON")
 }

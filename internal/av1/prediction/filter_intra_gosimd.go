@@ -86,7 +86,7 @@ func predictFilterIntraBlockDirect8SIMD(block planeBlock, width int, height int,
 				Add(t3.Mul(archsimd.BroadcastInt16x8(int16(a[3])))).
 				Add(t4.Mul(archsimd.BroadcastInt16x8(int16(a[4])))).
 				Add(roundV)
-			out := base.Add(t5.Mul(p5)).Add(t6.Mul(p6)).ShiftAllRight(filterIntraScaleBits).Max(zeroV).Min(maxV)
+			out := filterIntraShift4(base.Add(t5.Mul(p5)).Add(t6.Mul(p6))).Max(zeroV).Min(maxV)
 			packed := filterIntraPackBytes(out).ReshapeToUint32s()
 			binary.LittleEndian.PutUint32(row0[col:], packed.GetElem(0))
 			binary.LittleEndian.PutUint32(row1[col:], packed.GetElem(1))

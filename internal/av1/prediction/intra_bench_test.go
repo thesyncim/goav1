@@ -29,7 +29,7 @@ func BenchmarkPaeth(b *testing.B) {
 		for _, v := range []struct {
 			name string
 			fn   predictPaethFunc
-		}{{"NEON", predictPaethImpl}, {"PureGo", predictPaethPureGo}} {
+		}{{"Dispatch", predictPaethImpl}, {"PureGo", predictPaethPureGo}} {
 			b.Run(fmt.Sprintf("%dx%d/%s", w, h, v.name), func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					v.fn(block, 1, above, left, 123)
@@ -47,7 +47,7 @@ func BenchmarkSmooth(b *testing.B) {
 		for _, v := range []struct {
 			name string
 			fn   predictSmoothFunc
-		}{{"NEON", predictSmoothImpl}, {"PureGo", predictSmoothPureGo}} {
+		}{{"Dispatch", predictSmoothImpl}, {"PureGo", predictSmoothPureGo}} {
 			b.Run(fmt.Sprintf("%dx%d/%s", w, h, v.name), func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					v.fn(block, 1, weightsW, weightsH, above, left, left[h-1], above[w-1])
@@ -65,7 +65,7 @@ func BenchmarkSmoothVertical(b *testing.B) {
 		for _, v := range []struct {
 			name string
 			fn   predictSmoothVerticalFunc
-		}{{"NEON", predictSmoothVerticalImpl}, {"PureGo", predictSmoothVerticalPureGo}} {
+		}{{"Dispatch", predictSmoothVerticalImpl}, {"PureGo", predictSmoothVerticalPureGo}} {
 			b.Run(fmt.Sprintf("%dx%d/%s", w, h, v.name), func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					v.fn(block, 1, weightsH, above, left[h-1])
@@ -145,7 +145,7 @@ func BenchmarkSmoothHorizontal(b *testing.B) {
 		for _, v := range []struct {
 			name string
 			fn   predictSmoothHorizontalFunc
-		}{{"NEON", predictSmoothHorizontalImpl}, {"PureGo", predictSmoothHorizontalPureGo}} {
+		}{{"Dispatch", predictSmoothHorizontalImpl}, {"PureGo", predictSmoothHorizontalPureGo}} {
 			b.Run(fmt.Sprintf("%dx%d/%s", w, h, v.name), func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					v.fn(block, 1, weightsW, left, above[w-1])
