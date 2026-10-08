@@ -646,6 +646,7 @@ func (d *Decoder) Close() {
 		d.workerPool.Close()
 		d.workerPool = nil
 	}
+	d.postFilterParallel.Close()
 }
 
 // DecodeIVF is a one-shot convenience helper: it demuxes an in-memory IVF

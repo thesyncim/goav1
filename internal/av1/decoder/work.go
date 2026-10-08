@@ -102,7 +102,9 @@ type FrameWorkPostFilterContext struct {
 	// caller-owned and reused across frames so the parallel path stays
 	// allocation-free after warm-up. It never changes decoded output: each band
 	// reads the previous stage's complete output through the same boundary
-	// snapshots the serial banded path uses.
+	// snapshots the serial banded path uses. Direct callers should call
+	// Parallel.Close when finished; a frame-work context's pool is borrowed and
+	// remains owned by its decoder or caller.
 	Parallel *FrameWorkPostFilterParallel
 
 	// pool is the tile worker pool, offered to the postfilter so a row-banded

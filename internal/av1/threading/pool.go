@@ -985,10 +985,11 @@ type poolTask struct {
 	// (mirroring dav1d thread_task.c's row-banded postfilter split); rangeBand is
 	// the band ordinal used to select band-private scratch, and [rangeLo, rangeHi)
 	// is the deterministic contiguous half-open row range the band owns.
-	rangeFn   RangeFunc
-	rangeBand int
-	rangeLo   int
-	rangeHi   int
+	rangeFn     RangeFunc
+	rangeRunner RangeRunner
+	rangeBand   int
+	rangeLo     int
+	rangeHi     int
 }
 
 type workerResult struct {
@@ -1103,6 +1104,14 @@ func (p *Pool) Execute(batches []Batch, jobs []tile.Job, fn BatchFunc) error {
 // the result is bit-identical regardless of band count.
 type RangeFunc func(band int, lo int, hi int) error
 
+// RangeRunner processes one deterministic contiguous range without requiring
+// RunRangesRunner to construct a callback adapter. The runner must keep its
+// state stable until RunRangesRunner returns; each call joins every dispatched
+// range before returning, including when a range reports an error.
+type RangeRunner interface {
+	RunRange(band int, lo int, hi int) error
+}
+
 // RunRanges partitions [0, n) into deterministic contiguous bands and runs fn on
 // each band across the pool's worker lanes, waiting for all to finish. The band
 // count is min(WorkerCount, maxBands, n); maxBands<=0 means WorkerCount. It is
@@ -1164,6 +1173,70 @@ func (p *Pool) RunRanges(n int, maxBands int, fn RangeFunc) error {
 			rangeBand: band,
 			rangeLo:   lo,
 			rangeHi:   hi,
+		}
+		lo = hi
+	}
+
+	var firstErr error
+	for band := 0; band < bands; band++ {
+		result := <-p.done
+		if firstErr == nil && result.err != nil {
+			firstErr = result.err
+		}
+	}
+	p.mu.Unlock()
+	return firstErr
+}
+
+// RunRangesRunner partitions [0, n) into deterministic contiguous bands and
+// invokes runner on each band across the pool's worker lanes. It follows the
+// same synchronization and error-draining rules as RunRanges without requiring
+// a per-call closure.
+func (p *Pool) RunRangesRunner(n int, maxBands int, runner RangeRunner) error {
+	if p == nil || len(p.workers) == 0 {
+		return ErrInvalidWorkerCount
+	}
+	if runner == nil {
+		return ErrInvalidCallback
+	}
+	if n <= 0 {
+		return nil
+	}
+
+	bands := min(len(p.workers), n)
+	if maxBands > 0 && maxBands < bands {
+		bands = maxBands
+	}
+	if bands == 1 {
+		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return ErrPoolClosed
+		}
+		p.mu.Unlock()
+		return runner.RunRange(0, 0, n)
+	}
+
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return ErrPoolClosed
+	}
+
+	base := n / bands
+	extra := n % bands
+	lo := 0
+	for band := 0; band < bands; band++ {
+		count := base
+		if band < extra {
+			count++
+		}
+		hi := lo + count
+		p.workers[band].tasks <- poolTask{
+			rangeRunner: runner,
+			rangeBand:   band,
+			rangeLo:     lo,
+			rangeHi:     hi,
 		}
 		lo = hi
 	}
@@ -1418,6 +1491,10 @@ func validateBatches(batches []Batch, jobs []tile.Job, workers int) error {
 
 func poolWorkerLoop(tasks <-chan poolTask, done chan<- workerResult) {
 	for task := range tasks {
+		if task.rangeRunner != nil {
+			done <- workerResult{err: task.rangeRunner.RunRange(task.rangeBand, task.rangeLo, task.rangeHi)}
+			continue
+		}
 		if task.rangeFn != nil {
 			done <- workerResult{err: task.rangeFn(task.rangeBand, task.rangeLo, task.rangeHi)}
 			continue

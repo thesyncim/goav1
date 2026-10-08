@@ -153,8 +153,10 @@ type DecoderFrameWorkPostFilterContext = internaldecoder.FrameWorkPostFilterCont
 
 // DecoderFrameWorkPostFilterParallel is caller-owned, reusable scratch that
 // lets the supported post-filter chain fan its independent row bands out across
-// worker goroutines. Installing it on a post-filter runner is a pure scheduling
-// change; decoded output stays byte-identical.
+// worker goroutines. It is caller-owned; call Close when finished to release
+// any pool it created for direct use. A frame-work context's pool is borrowed.
+// Installing it on a post-filter runner is a pure scheduling change; decoded
+// output stays byte-identical.
 type DecoderFrameWorkPostFilterParallel = internaldecoder.FrameWorkPostFilterParallel
 
 // DecoderFrameWorkPostFilterFunc is the per-frame callback invoked after
