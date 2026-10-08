@@ -17,7 +17,7 @@ func TestSIMDDispatchKeepsMeasuredNEONKernels(t *testing.T) {
 		got  any
 		want any
 	}{
-		{"blend", blendA64MaskImpl, blendA64MaskNEON},
+		{"blend", blendA64MaskImpl, blendA64MaskSIMD},
 		{"raw add", addRawTransformPlaneBlockImpl, addRawTransformPlaneBlockNEON},
 		{"minmax", minMaxAbsDiff8x8Impl, minMaxAbsDiff8x8NEON},
 	}
