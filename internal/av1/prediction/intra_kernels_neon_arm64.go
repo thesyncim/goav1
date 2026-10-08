@@ -36,6 +36,12 @@ func subsampleLuma8NEONAsm(out *uint16, top *uint8, bot *uint8, mode uintptr, n 
 func applyCFLRowNEONAsm(dst *byte, ac *int16, alpha uintptr, n uintptr)
 
 //go:noescape
+func applyCFLRow16NEONAsm(dst *byte, ac *int16, alpha uintptr, max uintptr)
+
+//go:noescape
+func applyCFL4NEONAsm(dst *byte, dstStride uintptr, ac *int16, alpha uintptr, height uintptr)
+
+//go:noescape
 func dirRowInterp8NEONAsm(dst *byte, above *uint16, weight32 uintptr, weightShift uintptr, n uintptr)
 
 //go:noescape
@@ -109,16 +115,30 @@ func subsampleLuma8NEON(outputQ3 []uint16, input []uint8, inputStride int, width
 }
 
 func applyCFLNEON(block planeBlock, bytesPerSample int, visibleWidth int, visibleHeight int, acQ3 []int16, alphaQ3 int, max uint16) {
-	if bytesPerSample != 1 || visibleWidth%8 != 0 || max != 0xff {
-		applyCFLPureGo(block, bytesPerSample, visibleWidth, visibleHeight, acQ3, alphaQ3, max)
-		return
-	}
-	for row := 0; row < visibleHeight; row++ {
-		line := block.pix[row*block.stride:]
-		ac := acQ3[row*CFLBufLine:]
-		for col := 0; col < visibleWidth; col += 8 {
-			applyCFLRowNEONAsm(&line[col], &ac[col], uintptr(int16(alphaQ3)), 0)
+	alpha := uintptr(int16(alphaQ3))
+	switch {
+	case bytesPerSample == 1 && visibleWidth%8 == 0 && max == 0xff:
+		for row := 0; row < visibleHeight; row++ {
+			line := block.pix[row*block.stride:]
+			ac := acQ3[row*CFLBufLine:]
+			for col := 0; col < visibleWidth; col += 8 {
+				applyCFLRowNEONAsm(&line[col], &ac[col], alpha, 0)
+			}
 		}
+	case bytesPerSample == 2 && visibleWidth%8 == 0:
+		// High-bit-depth: same scaled residual, uint16 store and [0,max] clamp.
+		for row := 0; row < visibleHeight; row++ {
+			line := block.pix[row*block.stride:]
+			ac := acQ3[row*CFLBufLine:]
+			for col := 0; col < visibleWidth; col += 8 {
+				applyCFLRow16NEONAsm(&line[col*2], &ac[col], alpha, uintptr(max))
+			}
+		}
+	case bytesPerSample == 1 && visibleWidth == 4 && visibleHeight%2 == 0 && max == 0xff:
+		// TX_4X4 / 4xN chroma: whole block in one call, two rows per vector.
+		applyCFL4NEONAsm(&block.pix[0], uintptr(block.stride), &acQ3[0], alpha, uintptr(visibleHeight))
+	default:
+		applyCFLPureGo(block, bytesPerSample, visibleWidth, visibleHeight, acQ3, alphaQ3, max)
 	}
 }
 

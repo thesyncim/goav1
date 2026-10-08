@@ -460,19 +460,9 @@ func loadSampleRows(dst []uint16, dstStride int, src []byte, srcStride int, widt
 	case 1:
 		loadSampleRows8(dst, dstStride, src, srcStride, width, height)
 	case 2:
-		srcOff := 0
-		dstOff := 0
-		rowBytes := width * 2
-		for y := 0; y < height; y++ {
-			srcLine := src[srcOff : srcOff+rowBytes : srcOff+rowBytes]
-			dstLine := dst[dstOff : dstOff+width : dstOff+width]
-			for x := 0; x < width; x++ {
-				off := x * 2
-				dstLine[x] = uint16(srcLine[off]) | uint16(srcLine[off+1])<<8
-			}
-			srcOff += srcStride
-			dstOff += dstStride
-		}
+		// 16-bit sample rows are a per-row byte copy on little-endian hosts and
+		// the scalar OR/shift reference elsewhere (samples_le.go / samples_generic.go).
+		loadSampleRows16(dst, dstStride, src, srcStride, width, height)
 	}
 }
 
@@ -554,20 +544,9 @@ func storeSampleRows(dst []byte, dstStride int, src []uint16, srcStride int, wid
 			srcOff += srcStride
 		}
 	case 2:
-		dstOff := 0
-		srcOff := 0
-		rowBytes := width * 2
-		for y := 0; y < height; y++ {
-			dstLine := dst[dstOff : dstOff+rowBytes : dstOff+rowBytes]
-			srcLine := src[srcOff : srcOff+width : srcOff+width]
-			for x, sample := range srcLine {
-				off := x * 2
-				dstLine[off] = byte(sample)
-				dstLine[off+1] = byte(sample >> 8)
-			}
-			dstOff += dstStride
-			srcOff += srcStride
-		}
+		// 16-bit samples always fit the destination depth, so the untrusted
+		// store shares the trusted per-row copy (samples_le.go / samples_generic.go).
+		storeSampleRows16(dst, dstStride, src, srcStride, width, height)
 	}
 	return true
 }
@@ -598,19 +577,6 @@ func storeSampleRowsTrusted(dst []byte, dstStride int, src []uint16, srcStride i
 			srcOff += srcStride
 		}
 	case 2:
-		dstOff := 0
-		srcOff := 0
-		rowBytes := width * 2
-		for y := 0; y < height; y++ {
-			dstLine := dst[dstOff : dstOff+rowBytes : dstOff+rowBytes]
-			srcLine := src[srcOff : srcOff+width : srcOff+width]
-			for x, sample := range srcLine {
-				off := x * 2
-				dstLine[off] = byte(sample)
-				dstLine[off+1] = byte(sample >> 8)
-			}
-			dstOff += dstStride
-			srcOff += srcStride
-		}
+		storeSampleRows16(dst, dstStride, src, srcStride, width, height)
 	}
 }

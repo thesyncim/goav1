@@ -101,6 +101,7 @@ QUALITYBENCH_SVT_ASM ?= neon
 QUALITYBENCH_SVT_BIN ?=
 QUALITYBENCH_SVT_SHA256 ?=
 WEBRTC_REFERENCE_TESTS = Test.*ReferenceDecoders$$
+WEBRTC_ENCODER_REFERENCE_TESTS = ^TestEncoded.*ReferenceDecoders$$
 WEBRTC_PRODUCTION_TESTS = Test(AV1SDP|AV1RTCP|EncoderWebRTC|HighLevelRTPDecodersWebRTCSVCCatalogue|NewDecoderFromRTPPayloads|ParseRTPPacketDependencyDescriptor|PublicDecoderFrameWorkResidual(EventRunner.*TileList|StreamRunnerRTP)|PublicDecoderRTP(Packet|PayloadRunner)|PublicEncodeI(400|420)|PublicEncoderWebRTC|PublicLayeredDecoderRTP|PublicParseTileListOBU|PublicPlanDecoderTileList|PublicResolveDecoderTileList|PublicRTC|PublicRTP|PublicTileList|PublicWebRTCEncoder|RTCP|SimpleDecoderTileListIVFPlayback)
 WEBRTC_PRODUCTION_INTERNAL_TESTS = Test(AppendWebRTCScalabilityModesMatchesPinnedLibWebRTC|WebRTCStreamAcceptedScalabilityModes(CoverExportedModes|Decode)|WebRTCStreamControlCombinationMatrixDecode|WebRTCEncoderStateTemporalUnitsKeyShiftModes)
 
@@ -503,6 +504,7 @@ tidy-check:
 	exit $$rc
 
 webrtc-reference:
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test ./internal/av1/encoder -run '$(WEBRTC_ENCODER_REFERENCE_TESTS)' -count=1 -timeout 900s -v
 	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_REFERENCE_TESTS)' -count=1 -timeout 900s -v
 
 webrtc-browser:
@@ -517,7 +519,7 @@ webrtc-browser:
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPNACKRetransmission -count=1 -timeout 120s -v
 
 webrtc-production:
-	go test ./internal/av1/encoder -run '$(WEBRTC_PRODUCTION_INTERNAL_TESTS)' -count=1 -timeout 300s -v
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test ./internal/av1/encoder -run '($(WEBRTC_PRODUCTION_INTERNAL_TESTS)|$(WEBRTC_ENCODER_REFERENCE_TESTS))' -count=1 -timeout 900s -v
 	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '($(WEBRTC_PRODUCTION_TESTS)|$(WEBRTC_REFERENCE_TESTS))' -count=1 -timeout 1200s -v
 	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go -C examples/browser-push test . -run TestEndToEndAV1OverRTP -count=1 -timeout 180s -v
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveAV1PlaybackStats -count=1 -timeout 120s -v
@@ -616,7 +618,7 @@ help:
 	@echo "  fmt-check                  report any files gofmt would reformat (non-blocking)"
 	@echo "  fmt-check-strict           fail if gofmt would reformat anything"
 	@echo "  tidy-check                 fail if go.mod/go.sum is not tidy"
-	@echo "  webrtc-reference           require aomdec+dav1d for all public encoder/WebRTC reference-decode rows"
+	@echo "  webrtc-reference           require aomdec+dav1d for internal and public encoder/WebRTC reference-decode rows"
 	@echo "  webrtc-browser             require aomdec+dav1d for the browser-push WebRTC example"
 	@echo "  webrtc-production          strict WebRTC encoder/decoder/RTP/RTCP/browser gate with reference decoders"
 	@echo "  fuzz-smoke                 short fuzz sweep across packages"

@@ -155,6 +155,104 @@ loop:
 done:
 	RET
 
+// func filter4Edge16WideNEONAsm(ctx *filter4NEONCtx)
+// Sixteen-position-per-iteration 8-bit narrow filter for horizontal edges,
+// ported from dav1d src/arm/64/loopfilter.S (lpf_16_wd4). Unlike the eight-wide
+// kernel above (which centres into signed 16-bit lanes), this variant runs the
+// whole update in the byte domain: unsigned absolute differences (uabd) and
+// saturating byte arithmetic (sqsub/sqadd/sqxtn/usqadd) reproduce the exact
+// clamps in filter4Samples, so sixteen positions fit one .16b register with no
+// widen except the single *3 term. Bit-exact with filter4EdgePureGo; the Go
+// wrapper restricts it to 8-bit horizontal edges in full groups of sixteen.
+TEXT ·filter4Edge16WideNEONAsm(SB), NOSPLIT, $0-8
+	MOVD ctx+0(FP), R0
+	MOVD P1(R0), R9
+	MOVD P0(R0), R10
+	MOVD Q0(R0), R11
+	MOVD Q1(R0), R12
+	MOVD COUNT(R0), R13
+
+	MOVD LIMIT(R0), R6
+	MOVD BLIMIT(R0), R7
+	MOVD HEV(R0), R8
+	WORD $0x4e010cea // dup v10.16b, w7   (blimit / E)
+	WORD $0x4e010ccb // dup v11.16b, w6   (limit / I)
+	WORD $0x4e010d0c // dup v12.16b, w8   (hev / H)
+	WORD $0x4f04e40d // movi v13.16b, #128
+	WORD $0x4f00e48e // movi v14.16b, #4
+	WORD $0x4f00e46f // movi v15.16b, #3
+	WORD $0x4f008469 // movi v9.8h, #3
+
+loopw16:
+	CBZ R13, donew16
+
+	WORD $0x4c407136 // ld1 {v22.16b}, [x9]   (p1)
+	WORD $0x4c407157 // ld1 {v23.16b}, [x10]  (p0)
+	WORD $0x4c407178 // ld1 {v24.16b}, [x11]  (q0)
+	WORD $0x4c407199 // ld1 {v25.16b}, [x12]  (q1)
+
+	WORD $0x6e3776c0 // uabd v0.16b, v22.16b, v23.16b  (|p1-p0|)
+	WORD $0x6e387721 // uabd v1.16b, v25.16b, v24.16b  (|q1-q0|)
+	WORD $0x6e3876e2 // uabd v2.16b, v23.16b, v24.16b  (|p0-q0|)
+	WORD $0x6e3976c3 // uabd v3.16b, v22.16b, v25.16b  (|p1-q1|)
+	WORD $0x6e220c42 // uqadd v2.16b, v2.16b, v2.16b   (|p0-q0|*2)
+	WORD $0x6f0f0463 // ushr v3.16b, v3.16b, #1        (|p1-q1|/2)
+	WORD $0x6e216400 // umax v0.16b, v0.16b, v1.16b    (max(|p1-p0|,|q1-q0|))
+	WORD $0x6e230c42 // uqadd v2.16b, v2.16b, v3.16b   (sum)
+	WORD $0x6e203d61 // cmhs v1.16b, v11.16b, v0.16b   (I>=max)
+	WORD $0x6e223d42 // cmhs v2.16b, v10.16b, v2.16b   (E>=sum)
+	WORD $0x4e221c21 // and v1.16b, v1.16b, v2.16b     (needMask)
+
+	WORD $0x6e2c3400 // cmhi v0.16b, v0.16b, v12.16b   (hevMask)
+
+	WORD $0x6e2d1ec2 // eor v2.16b, v22.16b, v13.16b   (ps1 = p1-128)
+	WORD $0x6e2d1f23 // eor v3.16b, v25.16b, v13.16b   (qs1 = q1-128)
+	WORD $0x4e232c42 // sqsub v2.16b, v2.16b, v3.16b   (clip(ps1-qs1))
+	WORD $0x4e201c44 // and v4.16b, v2.16b, v0.16b     (hev?clip:0)
+	WORD $0x4e601c20 // bic v0.16b, v1.16b, v0.16b     (need & ~hev)
+	WORD $0x2e372302 // usubl v2.8h, v24.8b, v23.8b    (q0-p0 lo)
+	WORD $0x6e372303 // usubl2 v3.8h, v24.16b, v23.16b (q0-p0 hi)
+	WORD $0x4e699c42 // mul v2.8h, v2.8h, v9.8h        (*3 lo)
+	WORD $0x4e699c63 // mul v3.8h, v3.8h, v9.8h        (*3 hi)
+	WORD $0x0e241042 // saddw v2.8h, v2.8h, v4.8b      (+f_hev lo)
+	WORD $0x4e241063 // saddw2 v3.8h, v3.8h, v4.16b    (+f_hev hi)
+	WORD $0x0e214842 // sqxtn v2.8b, v2.8h             (filter lo)
+	WORD $0x4e214862 // sqxtn2 v2.16b, v3.8h           (filter hi)
+	WORD $0x4e220dc4 // sqadd v4.16b, v14.16b, v2.16b  (clip(f+4))
+	WORD $0x4e220de5 // sqadd v5.16b, v15.16b, v2.16b  (clip(f+3))
+	WORD $0x4f0d0484 // sshr v4.16b, v4.16b, #3        (filter1)
+	WORD $0x4f0d04a5 // sshr v5.16b, v5.16b, #3        (filter2)
+	WORD $0x4eb71ee2 // mov v2.16b, v23.16b            (p0)
+	WORD $0x4eb81f03 // mov v3.16b, v24.16b            (q0)
+	WORD $0x6e20b886 // neg v6.16b, v4.16b             (-filter1)
+	WORD $0x4f0f2484 // srshr v4.16b, v4.16b, #1       (outer=(f1+1)>>1)
+	WORD $0x6e2038a2 // usqadd v2.16b, v5.16b          (p0+filter2)
+	WORD $0x6e2038c3 // usqadd v3.16b, v6.16b          (q0-filter1)
+	WORD $0x6e20b886 // neg v6.16b, v4.16b             (-outer)
+	WORD $0x6ea11c57 // bit v23.16b, v2.16b, v1.16b    (need?p0':p0)
+	WORD $0x6ea11c78 // bit v24.16b, v3.16b, v1.16b    (need?q0':q0)
+	WORD $0x4eb61ec2 // mov v2.16b, v22.16b            (p1)
+	WORD $0x4eb91f23 // mov v3.16b, v25.16b            (q1)
+	WORD $0x6e203882 // usqadd v2.16b, v4.16b          (p1+outer)
+	WORD $0x6e2038c3 // usqadd v3.16b, v6.16b          (q1-outer)
+	WORD $0x6ea01c56 // bit v22.16b, v2.16b, v0.16b    (nh?p1':p1)
+	WORD $0x6ea01c79 // bit v25.16b, v3.16b, v0.16b    (nh?q1':q1)
+
+	WORD $0x4c007136 // st1 {v22.16b}, [x9]
+	WORD $0x4c007157 // st1 {v23.16b}, [x10]
+	WORD $0x4c007178 // st1 {v24.16b}, [x11]
+	WORD $0x4c007199 // st1 {v25.16b}, [x12]
+
+	ADD $16, R9, R9
+	ADD $16, R10, R10
+	ADD $16, R11, R11
+	ADD $16, R12, R12
+	SUB $1, R13, R13
+	B   loopw16
+
+donew16:
+	RET
+
 // ---- filter4 16-bit (10/12-bit) context offsets ----
 #define F16_P1 0
 #define F16_P0 8

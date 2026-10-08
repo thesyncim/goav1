@@ -11,15 +11,6 @@ import (
 	"testing"
 )
 
-// withPureGoSGRAVX2 temporarily forces the SGR dispatch slots to the pure-Go
-// reference, runs fn, then restores the previous bindings.
-func withPureGoSGRAVX2(fn func()) {
-	pb, ps, pf := boxsumImpl, selfguidedImpl, selfguidedFastImpl
-	boxsumImpl, selfguidedImpl, selfguidedFastImpl = boxsum, selfguided, selfguidedFast
-	defer func() { boxsumImpl, selfguidedImpl, selfguidedFastImpl = pb, ps, pf }()
-	fn()
-}
-
 // withAVX2SGR temporarily forces the SGR dispatch slots to the AVX2 kernels
 // (independent of cpu.Detected, so the SIMD is exercised even when
 // auto-dispatch falls back under Rosetta), runs fn, then restores.
@@ -63,7 +54,7 @@ func TestSGRBlendAVX2MatchesPureGo(t *testing.T) {
 
 				wantDst := make([]uint16, sz.w*sz.h)
 				wantScratch := make([]int32, scratchLen)
-				withPureGoSGRAVX2(func() {
+				withPureGoSGR(func() {
 					if err := ApplySelfguidedRestoration(src, stride, origin, wantDst, sz.w, sz.w, sz.h, eps, xqd, bitDepth, wantScratch); err != nil {
 						t.Fatalf("purego bd=%d sz=%dx%d eps=%d: %v", bitDepth, sz.w, sz.h, eps, err)
 					}

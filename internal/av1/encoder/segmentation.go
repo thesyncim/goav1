@@ -57,6 +57,16 @@ func AppendSegmentationParamsPayload(dst []byte, prefix FrameHeaderPrefix, seg S
 }
 
 func writeSegmentationParamsPayload(w *bitWriter, prefix FrameHeaderPrefix, seg SegmentationParams) error {
+	// When the per-segment feature data is not emitted (segmentation disabled or
+	// carried over without an update), the encoder's inactive state is the
+	// SEG_LVL_REF_FRAME disabled sentinel (RefFrame == -1), not the raw Go
+	// zero value. Normalising the default here lets a zero-value SegmentationData
+	// stand in for a disabled segmentation while segmentationDataNonZero treats
+	// any enabled ref (RefFrame >= 0) as active. Data is never written in this
+	// branch, so the produced bitstream is unchanged.
+	if !seg.Enabled || !seg.UpdateData {
+		disableInactiveSegmentRefFrames(&seg.Data)
+	}
 	if err := validateSegmentationParams(prefix, seg); err != nil {
 		return err
 	}
@@ -193,12 +203,25 @@ func validateSignedFeature(value int16, bits uint8) error {
 	return nil
 }
 
+// disableInactiveSegmentRefFrames rewrites the Go zero-value RefFrame (0) to the
+// SEG_LVL_REF_FRAME disabled sentinel (-1). Callers use it only on segment data
+// that will not be written, so a default (all-zero) SegmentationData reads as a
+// disabled segmentation rather than one selecting reference index 0. An already
+// selected ref (>= 1) or an explicit sentinel (-1) is left untouched.
+func disableInactiveSegmentRefFrames(data *SegmentationData) {
+	for i := range data.Segments {
+		if data.Segments[i].RefFrame == 0 {
+			data.Segments[i].RefFrame = -1
+		}
+	}
+}
+
 func segmentationDataNonZero(data SegmentationData) bool {
 	for i := uint8(0); i < MaxSegments; i++ {
 		seg := data.Segments[i]
 		if seg.DeltaQ != 0 || seg.DeltaLFYV != 0 || seg.DeltaLFYH != 0 ||
 			seg.DeltaLFU != 0 || seg.DeltaLFV != 0 ||
-			seg.RefFrame != 0 || seg.Skip || seg.GlobalMV {
+			seg.RefFrame >= 0 || seg.Skip || seg.GlobalMV {
 			return true
 		}
 	}

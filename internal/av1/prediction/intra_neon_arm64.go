@@ -6,12 +6,14 @@
 
 package prediction
 
-// NEON-accelerated intra static predictors. The .s file implements the per-row
-// inner loops for the common 8-bit path with width a multiple of 8 (every AV1
-// intra block width >= 8). The Go wrappers below resolve base pointers and route
-// narrow (width 4) or high-bit-depth blocks to the pure-Go reference, which
-// keeps the asm to a single code path and the byte-exactness contract easy to
-// audit.
+// NEON-accelerated intra static predictors. intra_neon_arm64.s implements the
+// per-row inner loops for the 8-bit path with width a multiple of 8;
+// intra_static16_neon_arm64.s adds the high-bit-depth (bytesPerSample==2)
+// counterparts (identical arithmetic, uint16 stores); intra_static_w4_neon_arm64.s
+// adds the width-4 kernels (two rows packed per vector). The Go wrappers below
+// resolve base pointers and pick the kernel for the block shape, falling back to
+// the pure-Go reference for the shapes none of the kernels cover (high-bit-depth
+// width 4, and the odd-height width-4 frame-edge remainder).
 //
 // Bit-exactness with the *PureGo references:
 //   - PAETH computes base = top + left - topLeft in int16 lanes (values fit:
@@ -75,7 +77,13 @@ func predictSmoothVerticalNEONAsm(ctx *smooth1DNEONCtx)
 func predictSmoothHorizontalNEONAsm(ctx *smooth1DNEONCtx)
 
 func predictPaethNEON(block planeBlock, bytesPerSample int, above []uint16, left []uint16, aboveLeft uint16) {
-	if bytesPerSample != 1 || block.width%8 != 0 {
+	// AV1 block widths are one of {4,8,16,32,64}, so width%8==0 selects the
+	// 8-wide kernels and width==4 the packed two-rows-per-iteration kernels.
+	switch {
+	case bytesPerSample == 1 && block.width%8 == 0:
+	case bytesPerSample == 2 && block.width%8 == 0:
+	case bytesPerSample == 1 && block.width == 4 && block.height%2 == 0:
+	default:
 		predictPaethPureGo(block, bytesPerSample, above, left, aboveLeft)
 		return
 	}
@@ -88,11 +96,22 @@ func predictPaethNEON(block planeBlock, bytesPerSample int, above []uint16, left
 		height:    uintptr(block.height),
 		aboveLeft: uintptr(aboveLeft),
 	}
-	predictPaethNEONAsm(&ctx)
+	switch {
+	case bytesPerSample == 2:
+		predictPaeth16NEONAsm(&ctx)
+	case block.width == 4:
+		predictPaethW4NEONAsm(&ctx)
+	default:
+		predictPaethNEONAsm(&ctx)
+	}
 }
 
 func predictSmoothNEON(block planeBlock, bytesPerSample int, weightsW []uint16, weightsH []uint16, above []uint16, left []uint16, belowPred uint16, rightPred uint16) {
-	if bytesPerSample != 1 || block.width%8 != 0 {
+	switch {
+	case bytesPerSample == 1 && block.width%8 == 0:
+	case bytesPerSample == 2 && block.width%8 == 0:
+	case bytesPerSample == 1 && block.width == 4 && block.height%2 == 0:
+	default:
 		predictSmoothPureGo(block, bytesPerSample, weightsW, weightsH, above, left, belowPred, rightPred)
 		return
 	}
@@ -108,11 +127,22 @@ func predictSmoothNEON(block planeBlock, bytesPerSample int, weightsW []uint16, 
 		belowPred: uintptr(belowPred),
 		rightPred: uintptr(rightPred),
 	}
-	predictSmoothNEONAsm(&ctx)
+	switch {
+	case bytesPerSample == 2:
+		predictSmooth16NEONAsm(&ctx)
+	case block.width == 4:
+		predictSmoothW4NEONAsm(&ctx)
+	default:
+		predictSmoothNEONAsm(&ctx)
+	}
 }
 
 func predictSmoothVerticalNEON(block planeBlock, bytesPerSample int, weights []uint16, above []uint16, belowPred uint16) {
-	if bytesPerSample != 1 || block.width%8 != 0 {
+	switch {
+	case bytesPerSample == 1 && block.width%8 == 0:
+	case bytesPerSample == 2 && block.width%8 == 0:
+	case bytesPerSample == 1 && block.width == 4 && block.height%2 == 0:
+	default:
 		predictSmoothVerticalPureGo(block, bytesPerSample, weights, above, belowPred)
 		return
 	}
@@ -125,11 +155,22 @@ func predictSmoothVerticalNEON(block planeBlock, bytesPerSample int, weights []u
 		height:    uintptr(block.height),
 		secondary: uintptr(belowPred),
 	}
-	predictSmoothVerticalNEONAsm(&ctx)
+	switch {
+	case bytesPerSample == 2:
+		predictSmoothVertical16NEONAsm(&ctx)
+	case block.width == 4:
+		predictSmoothVerticalW4NEONAsm(&ctx)
+	default:
+		predictSmoothVerticalNEONAsm(&ctx)
+	}
 }
 
 func predictSmoothHorizontalNEON(block planeBlock, bytesPerSample int, weights []uint16, left []uint16, rightPred uint16) {
-	if bytesPerSample != 1 || block.width%8 != 0 {
+	switch {
+	case bytesPerSample == 1 && block.width%8 == 0:
+	case bytesPerSample == 2 && block.width%8 == 0:
+	case bytesPerSample == 1 && block.width == 4 && block.height%2 == 0:
+	default:
 		predictSmoothHorizontalPureGo(block, bytesPerSample, weights, left, rightPred)
 		return
 	}
@@ -142,5 +183,12 @@ func predictSmoothHorizontalNEON(block planeBlock, bytesPerSample int, weights [
 		height:    uintptr(block.height),
 		secondary: uintptr(rightPred),
 	}
-	predictSmoothHorizontalNEONAsm(&ctx)
+	switch {
+	case bytesPerSample == 2:
+		predictSmoothHorizontal16NEONAsm(&ctx)
+	case block.width == 4:
+		predictSmoothHorizontalW4NEONAsm(&ctx)
+	default:
+		predictSmoothHorizontalNEONAsm(&ctx)
+	}
 }

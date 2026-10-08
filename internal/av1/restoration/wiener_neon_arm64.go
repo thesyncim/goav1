@@ -16,8 +16,14 @@ package restoration
 //   - Samples are 8/10/12-bit (<= 4095), so they fit in a positive int16 lane
 //     and the signed widening MAC (smlal/smlal2) reproduces s_i*f_i exactly.
 //   - The libaom "center reapplication" term s3<<7 is folded into the center tap
-//     (tap3 += 1<<WienerFilterBits) by the wrappers, so the asm runs a plain
-//     7-tap MAC.
+//     (tap3 += 1<<WienerFilterBits) by the wrappers. The horizontal pass then
+//     exploits the Wiener tap symmetry (f0==f6, f1==f5, f2==f4; see
+//     wiener_neon_arm64.s / dav1d looprestoration.S) to sum the three symmetric
+//     sample pairs in 16-bit lanes before widening, so it runs 4 MACs (center +
+//     3 pair-sums) instead of 7 -- bit-identical since (a+b)*f == a*f + b*f and
+//     samples (<=4095) keep the pair-sum (<=8190) inside the positive int16 lane.
+//     The u16 vertical pass keeps the plain 7-tap MAC: its temp inputs reach
+//     32767 for 10/12-bit, so a 16-bit pair-sum would overflow.
 //   - The rounding bias 1<<(round-1) is folded into the accumulator seed
 //     (offset for the horizontal pass, -offset for the vertical pass), then the
 //     accumulator is arithmetically shifted right by `round` with a per-lane
@@ -81,6 +87,14 @@ func wienerHorizontalNEON(src []uint16, srcStride int, srcOrigin int, width int,
 	if width < 8 || width%8 != 0 {
 		return wienerHorizontal(src, srcStride, srcOrigin, width, height, filter, bitDepth, round0, max, temp)
 	}
+	// The asm window load (ld1 {v2.8h,v3.8h}) pulls 16 u16 for the last 8-column
+	// group, reaching 2 u16 (4 bytes) past the width+2*WienerHalfwin reslice the
+	// scalar reference validates. Those trailing lanes never feed a stored result,
+	// but they must be resident: require the 2-u16 trailing pad (a borderedBlockFits
+	// check with a width widened by 2) before dispatching; otherwise run scalar.
+	if !borderedBlockFits(len(src), srcStride, srcOrigin, width+2, height, WienerHalfwin, WienerHalfwin) {
+		return wienerHorizontal(src, srcStride, srcOrigin, width, height, filter, bitDepth, round0, max, temp)
+	}
 	// Replicate the pure-Go validity check: every sample touched by the inner
 	// window must be <= max. The window for row r spans columns [col-3..col+3]
 	// for col in [0,width), i.e. the full reslice src[srcStart : srcStart+width+6].
@@ -114,6 +128,13 @@ func wienerHorizontalNEON(src []uint16, srcStride int, srcOrigin int, width int,
 
 func wienerHorizontalNEONTrusted(src []uint16, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, bitDepth int, round0 int, max uint16, temp []uint16) {
 	if width < 8 || width%8 != 0 {
+		wienerHorizontalTrusted(src, srcStride, srcOrigin, width, height, filter, bitDepth, round0, max, temp)
+		return
+	}
+	// The asm window load reaches 2 u16 past the width+2*WienerHalfwin reslice
+	// (see wienerHorizontalNEON); require that trailing pad resident before
+	// dispatching, else run the scalar reference.
+	if !borderedBlockFits(len(src), srcStride, srcOrigin, width+2, height, WienerHalfwin, WienerHalfwin) {
 		wienerHorizontalTrusted(src, srcStride, srcOrigin, width, height, filter, bitDepth, round0, max, temp)
 		return
 	}

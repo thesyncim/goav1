@@ -105,8 +105,33 @@ type FrameWorkPostFilterContext struct {
 	// snapshots the serial banded path uses.
 	Parallel *FrameWorkPostFilterParallel
 
+	// pool is the tile worker pool, offered to the postfilter so a row-banded
+	// stage (currently CDEF) can fan out across the same lanes the tile decode
+	// used. At postfilter time those lanes are idle (the tile Execute has already
+	// joined). It is nil on the single-worker fast path and whenever no pool is
+	// threaded down, in which case the postfilter runs the serial whole-frame
+	// path. The worker count is fixed for the pool's lifetime, so per-frame
+	// scratch sizing derived from it stays stable.
+	pool *threading.Pool
+
 	completedPostFilters     FrameWorkPostFilterStage
 	detachedPostFilterOutput bool
+}
+
+// postFilterWorkerCount reports how many worker lanes the postfilter may use to
+// parallelize a row-banded stage. It is 1 (serial) unless a multi-lane pool was
+// threaded into the context. Scratch sizing scales with this count, so it must
+// be stable across a frame's sizing and apply passes (it is: the pool is fixed
+// for the decoder's lifetime).
+func (ctx FrameWorkPostFilterContext) postFilterWorkerCount() int {
+	if ctx.pool == nil {
+		return 1
+	}
+	workers := ctx.pool.WorkerCount()
+	if workers < 1 {
+		return 1
+	}
+	return workers
 }
 
 // FrameWorkPostFilterFunc applies final frame postfilters before reference
@@ -1079,7 +1104,7 @@ func (s *FrameWorkState) RunStepWithPostFilter(refs *SurfaceReferences, framePoo
 		return FrameWorkStepResult{}, err
 	}
 	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
-	if err := runFrameWorkPostFilter(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, post); err != nil {
+	if err := runFrameWorkPostFilter(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, workerPool, post); err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
 	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
@@ -1156,7 +1181,7 @@ func (s *FrameWorkState) runStepWithPayloadContext(refs *SurfaceReferences, fram
 			return FrameWorkStepResult{ExecutedTileWork: executed}, err
 		}
 	}
-	if err := runFrameWorkPostFilter(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, post); err != nil {
+	if err := runFrameWorkPostFilter(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, workerPool, post); err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
 	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
@@ -1195,7 +1220,7 @@ func (s *FrameWorkState) runStepWithPayloadContextRunner(refs *SurfaceReferences
 			return FrameWorkStepResult{ExecutedTileWork: executed}, err
 		}
 	}
-	if err := runFrameWorkPostFilter(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, post); err != nil {
+	if err := runFrameWorkPostFilter(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, workerPool, post); err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
 	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
@@ -1231,7 +1256,10 @@ func CompleteFrameWorkPreparedPayloadStep(s *FrameWorkState, refs *SurfaceRefere
 			return FrameWorkStepResult{ExecutedTileWork: executed}, err
 		}
 	}
-	if err := runFrameWorkPostFilter(event, step, output, prepared.ReferenceCount, executed, prepared.CDEFIndexMap, prepared.LoopFilterMap, prepared.LoopFilterMasks, prepared.Restoration, post); err != nil {
+	// The prepared-payload completion helpers are the single-worker fast path
+	// (WorkerCount()==1), so no pool is threaded here: nil keeps the postfilter on
+	// its serial whole-frame path, which is what a lone lane would run anyway.
+	if err := runFrameWorkPostFilter(event, step, output, prepared.ReferenceCount, executed, prepared.CDEFIndexMap, prepared.LoopFilterMap, prepared.LoopFilterMasks, prepared.Restoration, nil, post); err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
 	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
@@ -1257,7 +1285,7 @@ func CompleteFrameWorkPreparedPayloadStepRunner(s *FrameWorkState, refs *Surface
 			return FrameWorkStepResult{ExecutedTileWork: executed}, err
 		}
 	}
-	if err := runFrameWorkPostFilterRunner(event, step, output, prepared.ReferenceCount, executed, prepared.CDEFIndexMap, prepared.LoopFilterMap, prepared.LoopFilterMasks, prepared.Restoration, post); err != nil {
+	if err := runFrameWorkPostFilterRunner(event, step, output, prepared.ReferenceCount, executed, prepared.CDEFIndexMap, prepared.LoopFilterMap, prepared.LoopFilterMasks, prepared.Restoration, nil, post); err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
 	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
@@ -1296,7 +1324,7 @@ func (s *FrameWorkState) runStepWithPayloadContextRunners(refs *SurfaceReference
 			return FrameWorkStepResult{ExecutedTileWork: executed}, err
 		}
 	}
-	if err := runFrameWorkPostFilterRunner(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, post); err != nil {
+	if err := runFrameWorkPostFilterRunner(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, workerPool, post); err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
 	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
@@ -1751,7 +1779,7 @@ func (s *FrameWorkState) postFilterSideData() (*threading.FrameWorkCDEFIndexMap,
 	return cdefIndexMap, loopFilterMap, restorationFrameBuffers
 }
 
-func runFrameWorkPostFilter(event Event, step FrameWorkStep, output *frame.Frame, referenceCount uint8, executed bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, loopFilterMasks *threading.FrameWorkLoopFilterMasks, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, post FrameWorkPostFilterFunc) error {
+func runFrameWorkPostFilter(event Event, step FrameWorkStep, output *frame.Frame, referenceCount uint8, executed bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, loopFilterMasks *threading.FrameWorkLoopFilterMasks, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, workerPool *threading.Pool, post FrameWorkPostFilterFunc) error {
 	if post == nil || !EventCompletesFrameWork(event) {
 		return nil
 	}
@@ -1768,10 +1796,11 @@ func runFrameWorkPostFilter(event Event, step FrameWorkStep, output *frame.Frame
 		LoopFilterMap:           loopFilterMap,
 		LoopFilterMasks:         loopFilterMasks,
 		RestorationFrameBuffers: restorationFrameBuffers,
+		pool:                    workerPool,
 	})
 }
 
-func runFrameWorkPostFilterRunner(event Event, step FrameWorkStep, output *frame.Frame, referenceCount uint8, executed bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, loopFilterMasks *threading.FrameWorkLoopFilterMasks, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, post FrameWorkPostFilterRunner) error {
+func runFrameWorkPostFilterRunner(event Event, step FrameWorkStep, output *frame.Frame, referenceCount uint8, executed bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, loopFilterMasks *threading.FrameWorkLoopFilterMasks, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, workerPool *threading.Pool, post FrameWorkPostFilterRunner) error {
 	if post == nil || !EventCompletesFrameWork(event) {
 		return nil
 	}
@@ -1788,6 +1817,7 @@ func runFrameWorkPostFilterRunner(event Event, step FrameWorkStep, output *frame
 		LoopFilterMap:           loopFilterMap,
 		LoopFilterMasks:         loopFilterMasks,
 		RestorationFrameBuffers: restorationFrameBuffers,
+		pool:                    workerPool,
 	})
 }
 

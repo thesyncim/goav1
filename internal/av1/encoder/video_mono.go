@@ -388,10 +388,10 @@ func (e *MonochromeVideoEncoder) validateRenderSource(src SourceFrameMono) error
 	if src.YStride < src.Width {
 		return fmt.Errorf("encoder: monochrome Y stride %d is smaller than width %d", src.YStride, src.Width)
 	}
-	if src.Height > 0 && src.YStride > (int(^uint(0)>>1)-(src.Width-1))/(src.Height-1) {
+	need, ok := checkedPlaneLength(src.Width, src.Height, src.YStride)
+	if !ok {
 		return fmt.Errorf("encoder: monochrome Y plane dimensions overflow int")
 	}
-	need := (src.Height-1)*src.YStride + src.Width
 	if len(src.Y) < need {
 		return fmt.Errorf("encoder: monochrome Y plane is too short: got %d bytes, need %d", len(src.Y), need)
 	}

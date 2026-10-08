@@ -976,6 +976,15 @@ type poolTask struct {
 	frameBatch  FrameWorkBatch
 	batch       Batch
 	jobs        []tile.Job
+
+	// rangeFn is the postfilter row-band worker. It is set for RunRanges tasks
+	// (mirroring dav1d thread_task.c's row-banded postfilter split); rangeBand is
+	// the band ordinal used to select band-private scratch, and [rangeLo, rangeHi)
+	// is the deterministic contiguous half-open row range the band owns.
+	rangeFn   RangeFunc
+	rangeBand int
+	rangeLo   int
+	rangeHi   int
 }
 
 type workerResult struct {
@@ -1074,6 +1083,89 @@ func (p *Pool) Execute(batches []Batch, jobs []tile.Job, fn BatchFunc) error {
 
 	var firstErr error
 	for range batches {
+		result := <-p.done
+		if firstErr == nil && result.err != nil {
+			firstErr = result.err
+		}
+	}
+	p.mu.Unlock()
+	return firstErr
+}
+
+// RangeFunc processes one deterministic contiguous row band [lo, hi) of a
+// parallel postfilter stage. band is the band ordinal in [0, bands); callers use
+// it to index band-private scratch. Bands are dispatched to distinct worker
+// lanes and read a shared read-only snapshot while writing disjoint output, so
+// the result is bit-identical regardless of band count.
+type RangeFunc func(band int, lo int, hi int) error
+
+// RunRanges partitions [0, n) into deterministic contiguous bands and runs fn on
+// each band across the pool's worker lanes, waiting for all to finish. The band
+// count is min(WorkerCount, maxBands, n); maxBands<=0 means WorkerCount. It is
+// the postfilter analogue of Execute: at postfilter time every lane is idle (tile
+// Execute has already joined), so the whole pool is available to fan a row-banded
+// stage (CDEF unit rows) out the way dav1d's frame threading splits cdef_brow
+// across tasks. Band ordinal w owns the w-th contiguous range and selects
+// band-private scratch; the split never changes which output pixel a row
+// produces, so worker-count invariance is preserved. A single band (or n<=1) runs
+// fn(0, 0, n) inline with no handoff. maxBands lets callers keep a minimum amount
+// of work per band so tiny inputs stay on the inline path.
+func (p *Pool) RunRanges(n int, maxBands int, fn RangeFunc) error {
+	if p == nil || len(p.workers) == 0 {
+		return ErrInvalidWorkerCount
+	}
+	if fn == nil {
+		return ErrInvalidCallback
+	}
+	if n <= 0 {
+		return nil
+	}
+
+	bands := min(len(p.workers), n)
+	if maxBands > 0 && maxBands < bands {
+		bands = maxBands
+	}
+
+	// Single-band fast path: run inline on the calling goroutine to avoid the
+	// channel/condvar handoff, matching Execute's single-worker shortcut. This is
+	// the path the 1-worker decode and the whole-frame serial postfilter take, so
+	// it must stay allocation-free and byte-identical to a lone worker lane.
+	if bands == 1 {
+		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return ErrPoolClosed
+		}
+		p.mu.Unlock()
+		return fn(0, 0, n)
+	}
+
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return ErrPoolClosed
+	}
+
+	base := n / bands
+	extra := n % bands
+	lo := 0
+	for band := 0; band < bands; band++ {
+		count := base
+		if band < extra {
+			count++
+		}
+		hi := lo + count
+		p.workers[band].tasks <- poolTask{
+			rangeFn:   fn,
+			rangeBand: band,
+			rangeLo:   lo,
+			rangeHi:   hi,
+		}
+		lo = hi
+	}
+
+	var firstErr error
+	for band := 0; band < bands; band++ {
 		result := <-p.done
 		if firstErr == nil && result.err != nil {
 			firstErr = result.err
@@ -1322,6 +1414,10 @@ func validateBatches(batches []Batch, jobs []tile.Job, workers int) error {
 
 func poolWorkerLoop(tasks <-chan poolTask, done chan<- workerResult) {
 	for task := range tasks {
+		if task.rangeFn != nil {
+			done <- workerResult{err: task.rangeFn(task.rangeBand, task.rangeLo, task.rangeHi)}
+			continue
+		}
 		if task.frameFn != nil {
 			ctx := task.frameBatch
 			ctx.Batch = task.batch

@@ -24,7 +24,10 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "FrameWorkLoopFilterBlockRecord", size: unsafe.Sizeof(FrameWorkLoopFilterBlockRecord{}), max: 34},
 		{name: "FrameWorkLoopFilterMapStats", size: unsafe.Sizeof(FrameWorkLoopFilterMapStats{}), max: 12},
 		{name: "FrameWorkTileResidualStats", size: unsafe.Sizeof(FrameWorkTileResidualStats{}), max: 136},
-		{name: "poolTask", size: unsafe.Sizeof(poolTask{}), max: 1688},
+		// poolTask carries the range-dispatch variant (rangeFn + band/lo/hi) used
+		// by RunRanges for the row-banded postfilter split alongside the tile-batch
+		// variants; the extra 32 bytes ride an already frameBatch-dominated struct.
+		{name: "poolTask", size: unsafe.Sizeof(poolTask{}), max: 1720},
 		{name: "frameWorkReconEvent", size: unsafe.Sizeof(frameWorkReconEvent{}), max: 8},
 		{name: "frameWorkReconPaletteBinding", size: unsafe.Sizeof(frameWorkReconPaletteBinding{}), max: 12},
 		{name: "frameWorkReconSB", size: unsafe.Sizeof(frameWorkReconSB{}), max: 12},

@@ -102,15 +102,6 @@ func TestSGRBlendNEONMatchesPureGo(t *testing.T) {
 	}
 }
 
-// withPureGoSGR temporarily forces the SGR dispatch slots to the pure-Go
-// reference, runs fn, then restores the previous bindings.
-func withPureGoSGR(fn func()) {
-	pb, ps, pf := boxsumImpl, selfguidedImpl, selfguidedFastImpl
-	boxsumImpl, selfguidedImpl, selfguidedFastImpl = boxsum, selfguided, selfguidedFast
-	defer func() { boxsumImpl, selfguidedImpl, selfguidedFastImpl = pb, ps, pf }()
-	fn()
-}
-
 func BenchmarkApplySelfguidedRestorationPureGo(b *testing.B) {
 	scratchLen, _ := SelfguidedScratchLen(64, 64)
 	scratch := make([]int32, scratchLen)

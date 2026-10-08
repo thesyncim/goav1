@@ -16,6 +16,7 @@ func init() {
 	if cpu.Detected.AVX2 {
 		inverseDCT8Col2Impl = inverseDCT8Col2AVX2Adapter
 		inverseDCT16Col2Impl = inverseDCT16Col2AVX2Adapter
+		inverseDCT16Col4Impl = inverseDCT16Col4AVX2Adapter
 		inverseDCT32Col4Impl = inverseDCT32Col4AVX2Adapter
 		inverseDCT64Col4Impl = inverseDCT64Col4AVX2Adapter
 	}
@@ -28,6 +29,17 @@ func init() {
 // within it (stageRangeBounds caps at bitDepth 12: rowBits 20). Wider bounds or
 // short buffers fall back to the pure-Go four-column reference.
 const colClampBoundAVX2 = 1 << 19
+
+// inverseDCT16Col4AVX2Adapter transforms four adjacent DCT16 columns as two
+// AVX2 two-column passes. There is no dedicated four-lane AVX2 DCT16 kernel, so
+// this preserves the pre-existing amd64 behaviour (before the four-column
+// dct16Size dispatch case, DCT16 column groups reached the AVX2 two-column
+// kernel via the col2 fallback) while the arm64 build gets a native four-lane
+// kernel. Bit-identical to inverseDCT16Col4PureGo.
+func inverseDCT16Col4AVX2Adapter(buf []int32, rowStride int, min, max int32) {
+	inverseDCT16Col2AVX2Adapter(buf, rowStride, min, max)
+	inverseDCT16Col2AVX2Adapter(buf[2:], rowStride, min, max)
+}
 
 func inverseDCT32Col4AVX2Adapter(buf []int32, rowStride int, min, max int32) {
 	if rowStride < 4 || len(buf) < (dct32Size-1)*rowStride+4 ||

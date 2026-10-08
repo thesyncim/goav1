@@ -22,8 +22,13 @@ func realtimeIntProRowNEONAsm(ctx *realtimeIntProNEONCtx)
 func realtimeIntProColNEONAsm(ctx *realtimeIntProNEONCtx)
 
 func realtimeIntProRowInBoundsArch(dst []int16, ref []byte, stride, projWidth, projHeight, normFactor int) {
+	// The row kernel sums projHeight source bytes per column into 16-bit lanes;
+	// the u16 lane overflows once projHeight*255 exceeds 65535, i.e. past
+	// projHeight == 257. Beyond that the lane accumulator diverges from the
+	// pure-Go int reference, so fall back to pure-Go.
 	if projWidth == 0 || projHeight == 0 ||
-		projWidth&15 != 0 || projHeight&3 != 0 || normFactor != 5 {
+		projWidth&15 != 0 || projHeight&3 != 0 || normFactor != 5 ||
+		projHeight > 257 {
 		realtimeIntProRowInBoundsPureGo(dst, ref, stride, projWidth, projHeight, normFactor)
 		return
 	}
@@ -40,8 +45,13 @@ func realtimeIntProRowInBoundsArch(dst []int16, ref []byte, stride, projWidth, p
 }
 
 func realtimeIntProColInBoundsArch(dst []int16, ref []byte, stride, projWidth, projHeight, normFactor int) {
+	// The column kernel accumulates projWidth/16 pairwise byte sums per 16-bit
+	// lane; the u16 lane overflows once (projWidth/16)*510 exceeds 65535, i.e.
+	// past projWidth == 2048. Beyond that the lane accumulator diverges from the
+	// pure-Go int reference, so fall back to pure-Go.
 	if projWidth == 0 || projHeight == 0 ||
-		projWidth&15 != 0 || projHeight&3 != 0 || normFactor != 5 {
+		projWidth&15 != 0 || projHeight&3 != 0 || normFactor != 5 ||
+		projWidth > 2056 {
 		realtimeIntProColInBoundsPureGo(dst, ref, stride, projWidth, projHeight, normFactor)
 		return
 	}

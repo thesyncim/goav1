@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
@@ -252,9 +253,27 @@ func TestLibaomFastFrameWorkDryRun(t *testing.T) {
 //	vector=NAME temporal_units=N md5_matches=M first_mismatch=F
 //
 // where first_mismatch is -1 if every emitted output matched.
+// libaomDryRunWorkers reports the worker-lane count for the framework dry-run.
+// It defaults to 1 (the historical single-lane behaviour, byte-for-byte) and can
+// be raised via GOAV1_DRYRUN_WORKERS to exercise worker-count invariance of the
+// parallel postfilter/reconstruction at the same strict per-frame MD5 gate.
+func libaomDryRunWorkers(t *testing.T) int {
+	t.Helper()
+	raw := os.Getenv("GOAV1_DRYRUN_WORKERS")
+	if raw == "" {
+		return 1
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		t.Fatalf("GOAV1_DRYRUN_WORKERS=%q: want a positive integer", raw)
+	}
+	return n
+}
+
 func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 	t.Helper()
 	strictMD5 := os.Getenv("GOAV1_STRICT_MD5") == "1"
+	workers := libaomDryRunWorkers(t)
 	ivfData := readLibaomRemoteFile(t, vector.Stream)
 	md5Data := readLibaomRemoteFile(t, vector.MD5)
 	digests := parseLibaomMD5Digests(t, vector.Tag, md5Data)
@@ -263,7 +282,7 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 	if err != nil {
 		t.Fatalf("NewIterator: %v", err)
 	}
-	workerPool, err := threading.NewPool(1)
+	workerPool, err := threading.NewPool(workers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +352,7 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 			)
 			spatialID := event.SpatialID
 			globalSurface := func(local int) int { return libaomGlobalSurfaceID(spatialID, local) }
-			result, err := layer.state.RunEventWithContextAndExternalReferences(&layers.sharedRefs, &layer.pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, layers, globalSurface, layers, &layers.sharedFrameContexts, libaomFrameWorkSideDataRunner{}, libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
+			result, err := layer.state.RunEventWithContextAndExternalReferences(&layers.sharedRefs, &layer.pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], workers, spans[:], jobs[:], batches[:], releases[:], workerPool, layers, globalSurface, layers, &layers.sharedFrameContexts, libaomFrameWorkSideDataRunner{}, libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
 				surface, err := ctx.Surface()
 				if err != nil {
 					return err
@@ -949,6 +968,10 @@ func libaomPostFilterScratchStorage(size decoder.FrameWorkPostFilterScratchSize)
 		RestorationSGR:    make([]int32, libaomMaxInt(size.Restoration.Apply.Unit.SGRProj, 0)),
 		RestorationAbove:  make([]uint16, libaomMaxInt(size.Restoration.Apply.Boundary.Above, 0)),
 		RestorationBelow:  make([]uint16, libaomMaxInt(size.Restoration.Apply.Boundary.Below, 0)),
+
+		RestorationPoolData:   make([]uint16, libaomMaxInt(size.Restoration.Pool.TotalData(), 0)),
+		RestorationPoolWiener: make([]uint16, libaomMaxInt(size.Restoration.Pool.TotalWiener(), 0)),
+		RestorationPoolSGR:    make([]int32, libaomMaxInt(size.Restoration.Pool.TotalSGR(), 0)),
 
 		FilmGrainOutputFrame: make([]byte, libaomMaxInt(size.FilmGrain.OutputFrame, 0)),
 		FilmGrainLumaGrain:   make([]int16, libaomMaxInt(size.FilmGrain.LumaGrain, 0)),

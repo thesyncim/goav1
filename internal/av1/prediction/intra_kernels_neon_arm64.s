@@ -221,3 +221,104 @@ lcRow:
 	SUB  $8, R12, R12
 	CBNZ R12, lcRow
 	RET
+
+// func applyCFLRow16NEONAsm(dst *byte, ac *int16, alpha uintptr, max uintptr)
+//
+// High-bit-depth counterpart of applyCFLRowNEONAsm. Applies 8 chroma-from-luma
+// samples in place over a uint16 destination:
+//   scaled = sign(ac*alpha) * ((|ac*alpha| + 32) >> 6)
+//   dst    = clamp(dst + scaled, 0, max)
+// The scaled residual is computed exactly like the 8-bit kernel (and matches
+// roundPowerOfTwoSigned(alpha*ac, 6)) and kept in s32 lanes; the DC is widened
+// u16->u32 so the add and the [0,max] clamp (SMAX 0 / SMIN max) run in s32 and
+// stay bit-exact for any DC value, then narrowed back to u16. alpha is the
+// signed Q3 alpha in the low 16 bits; max = (1<<bitDepth)-1.
+TEXT ·applyCFLRow16NEONAsm(SB), NOSPLIT, $0-32
+	MOVD dst+0(FP), R1
+	MOVD ac+8(FP), R2
+	MOVD alpha+16(FP), R7
+	MOVD max+24(FP), R8
+
+	WORD $0x4e020ce0 // dup v0.8h, w7   (alpha broadcast, s16)
+	WORD $0x4e040d14 // dup v20.4s, w8  (max broadcast, s32)
+	WORD $0x4f00041f // movi v31.4s, #0
+	WORD $0x4c407441 // ld1 {v1.8h}, [x2]   (8 ac, s16)
+	WORD $0x0e60c022 // smull  v2.4s, v1.4h, v0.4h
+	WORD $0x4e60c023 // smull2 v3.4s, v1.8h, v0.8h
+	WORD $0x4ea0a852 // cmlt v18.4s, v2.4s, #0
+	WORD $0x4ea0a873 // cmlt v19.4s, v3.4s, #0
+	WORD $0x4ea0b844 // abs v4.4s, v2.4s
+	WORD $0x4ea0b865 // abs v5.4s, v3.4s
+	WORD $0x6f3a2484 // urshr v4.4s, v4.4s, #6
+	WORD $0x6f3a24a5 // urshr v5.4s, v5.4s, #6
+	WORD $0x6ea0b886 // neg v6.4s, v4.4s
+	WORD $0x6ea0b8b0 // neg v16.4s, v5.4s
+	WORD $0x6e641cd2 // bsl v18.16b, v6.16b, v4.16b   (scaled lo, s32)
+	WORD $0x6e651e13 // bsl v19.16b, v16.16b, v5.16b  (scaled hi, s32)
+	WORD $0x4c407428 // ld1 {v8.8h}, [x1]    (8 chroma DC, u16)
+	WORD $0x2f10a509 // uxtl  v9.4s, v8.4h    (dc lo -> u32)
+	WORD $0x6f10a50c // uxtl2 v12.4s, v8.8h   (dc hi -> u32)
+	WORD $0x4eb2852a // add v10.4s, v9.4s, v18.4s
+	WORD $0x4eb3858b // add v11.4s, v12.4s, v19.4s
+	WORD $0x4ebf654a // smax v10.4s, v10.4s, v31.4s   (>= 0)
+	WORD $0x4ebf656b // smax v11.4s, v11.4s, v31.4s
+	WORD $0x4eb46d4a // smin v10.4s, v10.4s, v20.4s   (<= max)
+	WORD $0x4eb46d6b // smin v11.4s, v11.4s, v20.4s
+	WORD $0x0e61294a // xtn  v10.4h, v10.4s
+	WORD $0x4e61296a // xtn2 v10.8h, v11.4s
+	WORD $0x4c00742a // st1 {v10.8h}, [x1]
+	RET
+
+// func applyCFL4NEONAsm(dst *byte, dstStride uintptr, ac *int16, alpha uintptr, height uintptr)
+//
+// Width-4 (8-bit) whole-block chroma-from-luma. Like the width-4 static kernels,
+// two rows (4 columns each) are packed per 8-lane vector: ac[row][0..3] fill the
+// low half and ac[row+1][0..3] the high half (ac uses the CFLBufLine==32 stride,
+// i.e. 64 bytes/row). scaled is the same as applyCFLRowNEONAsm and the [0,255]
+// clamp reuses SQXTUN. height is even (the wrapper keeps the odd frame-edge
+// remainder on the pure-Go reference).
+TEXT ·applyCFL4NEONAsm(SB), NOSPLIT, $0-40
+	MOVD dst+0(FP), R1
+	MOVD dstStride+8(FP), R4
+	MOVD ac+16(FP), R2
+	MOVD alpha+24(FP), R7
+	MOVD height+32(FP), R6
+
+	WORD $0x4e020ce0 // dup v0.8h, w7   (alpha broadcast, s16)
+	MOVD ZR, R8 // row index
+cfl4Row:
+	CMP  R6, R8
+	BGE  cfl4Done
+	MOVD R1, R10     // dst_r
+	ADD  R4, R1, R11 // dst_r1 = dst_r + stride
+	ADD  $64, R2, R3 // ac_r1 = ac_r + CFLBufLine*2 bytes
+	WORD $0x0c407441 // ld1 {v1.4h}, [x2]    (ac row r: 4 samples)
+	WORD $0x0c407472 // ld1 {v18.4h}, [x3]   (ac row r+1)
+	WORD $0x6e180641 // mov v1.d[1], v18.d[0]  (ac pair {r,r1})
+	WORD $0x0e60c022 // smull  v2.4s, v1.4h, v0.4h
+	WORD $0x4e60c023 // smull2 v3.4s, v1.8h, v0.8h
+	WORD $0x4ea0a852 // cmlt v18.4s, v2.4s, #0
+	WORD $0x4ea0a873 // cmlt v19.4s, v3.4s, #0
+	WORD $0x4ea0b844 // abs v4.4s, v2.4s
+	WORD $0x4ea0b865 // abs v5.4s, v3.4s
+	WORD $0x6f3a2484 // urshr v4.4s, v4.4s, #6
+	WORD $0x6f3a24a5 // urshr v5.4s, v5.4s, #6
+	WORD $0x6ea0b886 // neg v6.4s, v4.4s
+	WORD $0x6ea0b8b0 // neg v16.4s, v5.4s
+	WORD $0x6e641cd2 // bsl v18.16b, v6.16b, v4.16b
+	WORD $0x6e651e13 // bsl v19.16b, v16.16b, v5.16b
+	WORD $0x0e612a47 // xtn  v7.4h, v18.4s
+	WORD $0x4e612a67 // xtn2 v7.8h, v19.4s   (scaled pair, s16)
+	WORD $0x0d408148 // ld1 {v8.s}[0], [x10]  (dc row r: 4 bytes)
+	WORD $0x0d409168 // ld1 {v8.s}[1], [x11]  (dc row r+1)
+	WORD $0x2f08a509 // uxtl v9.8h, v8.8b
+	WORD $0x4e67852a // add v10.8h, v9.8h, v7.8h
+	WORD $0x2e21294b // sqxtun v11.8b, v10.8h   (clamp to [0,255])
+	WORD $0x0d00814b // st1 {v11.s}[0], [x10]   (row r)
+	WORD $0x0d00916b // st1 {v11.s}[1], [x11]   (row r+1)
+	ADD  R4, R11, R1  // dst += 2*stride
+	ADD  $128, R2, R2 // ac += 2 rows (2*CFLBufLine*2 bytes)
+	ADD  $2, R8, R8
+	B    cfl4Row
+cfl4Done:
+	RET

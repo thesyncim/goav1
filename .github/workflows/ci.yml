@@ -12,6 +12,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  GOTOOLCHAIN: local
+
 jobs:
   build:
     name: build (${{ matrix.os }}, go${{ matrix.go }})
@@ -19,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.25.x', '1.26.x']
+        go: ['1.26.x']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +45,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.25.x', '1.26.x']
+        go: ['1.26.x']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +66,33 @@ jobs:
         run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
       - name: go test
         run: go test -count=1 ./...
+
+  linux-386-bounds:
+    name: linux/386 bounds and parser regressions
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GOARCH: '386'
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: true
+      - name: go build (linux/386)
+        run: go build ./...
+      - name: IVF and public plane-bound regressions
+        run: >-
+          go test -count=1 -timeout 180s
+          -run '^(TestReaderAtDecoderPayloadSource.*|FuzzReaderAtDecoderPayloadSourceMatchesSliceIterator|FuzzPublicSimpleDecoderIVF|TestPublicEncodeRejectsStrideWhosePlaneLengthOverflows|TestPublicEncodeAcceptsMinimalAndPaddedStrides)$'
+          .
+      - name: encoder plane-length boundaries
+        run: >-
+          go test -count=1 -timeout 180s
+          -run '^(TestCheckedPlaneLengthBoundaries|TestMonochromeRenderValidatorsRejectOverflowingStride|TestMonochromeRenderValidatorsAcceptSingleRow|TestColor16ValidatorChecksChromaPlaneLength|TestColor16RenderValidatorAcceptsSingleRowSubsampledGeometry)$'
+          ./internal/av1/encoder
 
   race:
     name: race (ubuntu)

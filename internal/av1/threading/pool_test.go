@@ -2,6 +2,8 @@ package threading
 
 import (
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -397,5 +399,76 @@ func TestFrameWorkPlaneRangeAdjacentJobsNoChromaOverlap(t *testing.T) {
 		if aEnd != bStart {
 			t.Fatalf("boundary luma=%d chroma aEnd=%d bStart=%d (gap or overlap)", boundary, aEnd, bStart)
 		}
+	}
+}
+
+// TestPoolRunRanges verifies the row-band postfilter dispatch: bands tile the
+// whole [0, n) range with no gap or overlap, the band count honours the
+// WorkerCount/maxBands/n cap, every band index is unique, and worker errors
+// propagate. This is the safety net under the pooled CDEF postfilter split.
+func TestPoolRunRanges(t *testing.T) {
+	for _, workers := range []int{1, 2, 3, 8} {
+		pool, err := NewPool(workers)
+		if err != nil {
+			t.Fatalf("workers=%d: %v", workers, err)
+		}
+		for _, tc := range []struct {
+			n        int
+			maxBands int
+		}{{0, 0}, {1, 0}, {5, 0}, {17, 0}, {17, 4}, {3, 8}, {64, 8}} {
+			covered := make([]int32, tc.n)
+			bandSeen := make([]int32, workers+1)
+			var mu sync.Mutex
+			bands := 0
+			err := pool.RunRanges(tc.n, tc.maxBands, func(band, lo, hi int) error {
+				if lo < 0 || hi > tc.n || lo > hi {
+					return errors.New("bad range")
+				}
+				for i := lo; i < hi; i++ {
+					atomic.AddInt32(&covered[i], 1)
+				}
+				mu.Lock()
+				if band >= 0 && band < len(bandSeen) {
+					bandSeen[band]++
+				}
+				bands++
+				mu.Unlock()
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("workers=%d n=%d maxBands=%d: %v", workers, tc.n, tc.maxBands, err)
+			}
+			for i := range covered {
+				if covered[i] != 1 {
+					t.Fatalf("workers=%d n=%d maxBands=%d: index %d covered %d times", workers, tc.n, tc.maxBands, i, covered[i])
+				}
+			}
+			if tc.n > 0 {
+				wantMax := min(workers, tc.n)
+				if tc.maxBands > 0 && tc.maxBands < wantMax {
+					wantMax = tc.maxBands
+				}
+				if bands != wantMax {
+					t.Fatalf("workers=%d n=%d maxBands=%d: bands=%d want %d", workers, tc.n, tc.maxBands, bands, wantMax)
+				}
+			}
+			for b, c := range bandSeen {
+				if c > 1 {
+					t.Fatalf("workers=%d n=%d maxBands=%d: band %d ran %d times", workers, tc.n, tc.maxBands, b, c)
+				}
+			}
+		}
+
+		sentinel := errors.New("boom")
+		err = pool.RunRanges(16, 0, func(band, lo, hi int) error {
+			if band == 0 {
+				return sentinel
+			}
+			return nil
+		})
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("workers=%d: RunRanges error=%v want %v", workers, err, sentinel)
+		}
+		pool.Close()
 	}
 }

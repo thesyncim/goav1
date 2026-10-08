@@ -111,11 +111,32 @@ type wideVertNEONCtx struct {
 //go:noescape
 func filter6EdgeNEONAsm(ctx *filter6NEONCtx)
 
+// filter6Edge16WideNEONAsm processes sixteen horizontal edge positions per
+// iteration (byte-domain kernel ported from dav1d loopfilter.S lpf_16_wd6); it
+// shares the filter6NEONCtx layout with the eight-wide kernel above.
+//
+//go:noescape
+func filter6Edge16WideNEONAsm(ctx *filter6NEONCtx)
+
 //go:noescape
 func filter8EdgeNEONAsm(ctx *filter8NEONCtx)
 
+// filter8Edge16WideNEONAsm processes sixteen horizontal edge positions per
+// iteration (byte-domain kernel ported from dav1d loopfilter.S lpf_16_wd8); it
+// shares the filter8NEONCtx layout with the eight-wide kernel above.
+//
+//go:noescape
+func filter8Edge16WideNEONAsm(ctx *filter8NEONCtx)
+
 //go:noescape
 func filter14EdgeNEONAsm(ctx *filter14NEONCtx)
+
+// filter14Edge16WideNEONAsm processes sixteen horizontal edge positions per
+// iteration (byte-domain kernel ported from dav1d loopfilter.S lpf_16_wd16); it
+// shares the filter14NEONCtx layout with the eight-wide kernel above.
+//
+//go:noescape
+func filter14Edge16WideNEONAsm(ctx *filter14NEONCtx)
 
 // wideVertTransposeCtx is the asm calling context for the vertical-edge
 // transpose kernels (the 8-bit and 16-bit fourteen-sample variants and the
@@ -254,8 +275,7 @@ func filter14VertNEON(pix []byte, q0Base int, step int, outer int, length int, s
 }
 
 func filter6EdgeNEON(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
-	groups := length / 8
-	if outer != 1 || groups == 0 {
+	if outer != 1 || length < 8 {
 		if step == 1 {
 			filter6VertNEON(pix, q0Base, step, outer, length, scale, params)
 			return
@@ -263,28 +283,52 @@ func filter6EdgeNEON(pix []byte, q0Base int, step int, outer int, length int, sc
 		filter6EdgePureGo(pix, q0Base, step, outer, length, scale, params)
 		return
 	}
-	ctx := filter6NEONCtx{
-		p2:     &pix[q0Base-3*step],
-		p1:     &pix[q0Base-2*step],
-		p0:     &pix[q0Base-step],
-		q0:     &pix[q0Base],
-		q1:     &pix[q0Base+step],
-		q2:     &pix[q0Base+2*step],
-		count:  uintptr(groups),
-		limit:  int64(params.limit),
-		blimit: int64(params.blimit),
-		hev:    int64(params.hev),
-		thr:    int64(scale),
+	// Byte-domain sixteen-wide kernel for the bulk (see filter4EdgeNEON for the
+	// block-limit domain note), then the eight-wide kernel for a residual group
+	// of eight, then the pure-Go reference for the sub-eight tail.
+	done := 0
+	if groups16 := length / 16; params.blimit < 255 && groups16 > 0 {
+		ctx := filter6NEONCtx{
+			p2:     &pix[q0Base-3*step],
+			p1:     &pix[q0Base-2*step],
+			p0:     &pix[q0Base-step],
+			q0:     &pix[q0Base],
+			q1:     &pix[q0Base+step],
+			q2:     &pix[q0Base+2*step],
+			count:  uintptr(groups16),
+			limit:  int64(params.limit),
+			blimit: int64(params.blimit),
+			hev:    int64(params.hev),
+			thr:    int64(scale),
+		}
+		filter6Edge16WideNEONAsm(&ctx)
+		done = groups16 * 16
 	}
-	filter6EdgeNEONAsm(&ctx)
-	if rem := length - groups*8; rem > 0 {
-		filter6EdgePureGo(pix, q0Base+groups*8*outer, step, outer, rem, scale, params)
+	if rem := length - done; rem >= 8 {
+		base := q0Base + done*outer
+		ctx := filter6NEONCtx{
+			p2:     &pix[base-3*step],
+			p1:     &pix[base-2*step],
+			p0:     &pix[base-step],
+			q0:     &pix[base],
+			q1:     &pix[base+step],
+			q2:     &pix[base+2*step],
+			count:  uintptr(rem / 8),
+			limit:  int64(params.limit),
+			blimit: int64(params.blimit),
+			hev:    int64(params.hev),
+			thr:    int64(scale),
+		}
+		filter6EdgeNEONAsm(&ctx)
+		done += (rem / 8) * 8
+	}
+	if rem := length - done; rem > 0 {
+		filter6EdgePureGo(pix, q0Base+done*outer, step, outer, rem, scale, params)
 	}
 }
 
 func filter8EdgeNEON(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
-	groups := length / 8
-	if outer != 1 || groups == 0 {
+	if outer != 1 || length < 8 {
 		if step == 1 {
 			filter8VertNEON(pix, q0Base, step, outer, length, scale, params)
 			return
@@ -292,30 +336,44 @@ func filter8EdgeNEON(pix []byte, q0Base int, step int, outer int, length int, sc
 		filter8EdgePureGo(pix, q0Base, step, outer, length, scale, params)
 		return
 	}
-	ctx := filter8NEONCtx{
-		p3:     &pix[q0Base-4*step],
-		p2:     &pix[q0Base-3*step],
-		p1:     &pix[q0Base-2*step],
-		p0:     &pix[q0Base-step],
-		q0:     &pix[q0Base],
-		q1:     &pix[q0Base+step],
-		q2:     &pix[q0Base+2*step],
-		q3:     &pix[q0Base+3*step],
-		count:  uintptr(groups),
-		limit:  int64(params.limit),
-		blimit: int64(params.blimit),
-		hev:    int64(params.hev),
-		thr:    int64(scale),
+	// Byte-domain sixteen-wide kernel for the bulk (see filter4EdgeNEON for the
+	// block-limit domain note), then the eight-wide kernel for a residual group
+	// of eight, then the pure-Go reference for the sub-eight tail.
+	newCtx := func(base int, count int) filter8NEONCtx {
+		return filter8NEONCtx{
+			p3:     &pix[base-4*step],
+			p2:     &pix[base-3*step],
+			p1:     &pix[base-2*step],
+			p0:     &pix[base-step],
+			q0:     &pix[base],
+			q1:     &pix[base+step],
+			q2:     &pix[base+2*step],
+			q3:     &pix[base+3*step],
+			count:  uintptr(count),
+			limit:  int64(params.limit),
+			blimit: int64(params.blimit),
+			hev:    int64(params.hev),
+			thr:    int64(scale),
+		}
 	}
-	filter8EdgeNEONAsm(&ctx)
-	if rem := length - groups*8; rem > 0 {
-		filter8EdgePureGo(pix, q0Base+groups*8*outer, step, outer, rem, scale, params)
+	done := 0
+	if groups16 := length / 16; params.blimit < 255 && groups16 > 0 {
+		ctx := newCtx(q0Base, groups16)
+		filter8Edge16WideNEONAsm(&ctx)
+		done = groups16 * 16
+	}
+	if rem := length - done; rem >= 8 {
+		ctx := newCtx(q0Base+done*outer, rem/8)
+		filter8EdgeNEONAsm(&ctx)
+		done += (rem / 8) * 8
+	}
+	if rem := length - done; rem > 0 {
+		filter8EdgePureGo(pix, q0Base+done*outer, step, outer, rem, scale, params)
 	}
 }
 
 func filter14EdgeNEON(pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
-	groups := length / 8
-	if outer != 1 || groups == 0 {
+	if outer != 1 || length < 8 {
 		if step == 1 {
 			filter14VertNEON(pix, q0Base, step, outer, length, scale, params)
 			return
@@ -323,29 +381,44 @@ func filter14EdgeNEON(pix []byte, q0Base int, step int, outer int, length int, s
 		filter14EdgePureGo(pix, q0Base, step, outer, length, scale, params)
 		return
 	}
-	ctx := filter14NEONCtx{
-		p6:     &pix[q0Base-7*step],
-		p5:     &pix[q0Base-6*step],
-		p4:     &pix[q0Base-5*step],
-		p3:     &pix[q0Base-4*step],
-		p2:     &pix[q0Base-3*step],
-		p1:     &pix[q0Base-2*step],
-		p0:     &pix[q0Base-step],
-		q0:     &pix[q0Base],
-		q1:     &pix[q0Base+step],
-		q2:     &pix[q0Base+2*step],
-		q3:     &pix[q0Base+3*step],
-		q4:     &pix[q0Base+4*step],
-		q5:     &pix[q0Base+5*step],
-		q6:     &pix[q0Base+6*step],
-		count:  uintptr(groups),
-		limit:  int64(params.limit),
-		blimit: int64(params.blimit),
-		hev:    int64(params.hev),
-		thr:    int64(scale),
+	// Byte-domain sixteen-wide kernel for the bulk (see filter4EdgeNEON for the
+	// block-limit domain note), then the eight-wide kernel for a residual group
+	// of eight, then the pure-Go reference for the sub-eight tail.
+	newCtx := func(base int, count int) filter14NEONCtx {
+		return filter14NEONCtx{
+			p6:     &pix[base-7*step],
+			p5:     &pix[base-6*step],
+			p4:     &pix[base-5*step],
+			p3:     &pix[base-4*step],
+			p2:     &pix[base-3*step],
+			p1:     &pix[base-2*step],
+			p0:     &pix[base-step],
+			q0:     &pix[base],
+			q1:     &pix[base+step],
+			q2:     &pix[base+2*step],
+			q3:     &pix[base+3*step],
+			q4:     &pix[base+4*step],
+			q5:     &pix[base+5*step],
+			q6:     &pix[base+6*step],
+			count:  uintptr(count),
+			limit:  int64(params.limit),
+			blimit: int64(params.blimit),
+			hev:    int64(params.hev),
+			thr:    int64(scale),
+		}
 	}
-	filter14EdgeNEONAsm(&ctx)
-	if rem := length - groups*8; rem > 0 {
-		filter14EdgePureGo(pix, q0Base+groups*8*outer, step, outer, rem, scale, params)
+	done := 0
+	if groups16 := length / 16; params.blimit < 255 && groups16 > 0 {
+		ctx := newCtx(q0Base, groups16)
+		filter14Edge16WideNEONAsm(&ctx)
+		done = groups16 * 16
+	}
+	if rem := length - done; rem >= 8 {
+		ctx := newCtx(q0Base+done*outer, rem/8)
+		filter14EdgeNEONAsm(&ctx)
+		done += (rem / 8) * 8
+	}
+	if rem := length - done; rem > 0 {
+		filter14EdgePureGo(pix, q0Base+done*outer, step, outer, rem, scale, params)
 	}
 }

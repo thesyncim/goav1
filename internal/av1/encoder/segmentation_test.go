@@ -19,6 +19,23 @@ func TestAppendSegmentationParamsPayloadDisabled(t *testing.T) {
 	}
 }
 
+func TestAppendSegmentationParamsPayloadDisabledInactiveSentinel(t *testing.T) {
+	// A caller bridging decoder SegmentationData carries the SEG_LVL_REF_FRAME
+	// disabled sentinel (RefFrame == -1) on inactive segments. With segmentation
+	// disabled the feature data is never written, so this must encode to the same
+	// single 'false' bit as a zero-value SegmentationParams rather than being
+	// rejected as active data.
+	prefix := FrameHeaderPrefix{PrimaryRefFrame: EncoderPrimaryRefNone}
+	seg := SegmentationParams{Data: inactiveEncoderSegmentationData()}
+	payload, parsed := appendAndParseSegmentationParams(t, prefix, parser.FrameHeaderPrefix{PrimaryRefFrame: parser.PrimaryRefNone}, seg, nil)
+	if len(payload) != 1 {
+		t.Fatalf("payload len=%d want 1", len(payload))
+	}
+	if parsed.Enabled {
+		t.Fatalf("parsed segmentation=%+v", parsed)
+	}
+}
+
 func TestAppendSegmentationParamsPayloadPrimaryRefNoneUpdateData(t *testing.T) {
 	data := inactiveEncoderSegmentationData()
 	data.Segments[0].DeltaQ = -8
@@ -57,6 +74,7 @@ func TestAppendSegmentationParamsPayloadCopiesPreviousData(t *testing.T) {
 		Enabled:    true,
 		UpdateMap:  false,
 		UpdateData: false,
+		Data:       inactiveEncoderSegmentationData(),
 	}
 	prefix := FrameHeaderPrefix{PrimaryRefFrame: 0}
 	parsedPrefix := parser.FrameHeaderPrefix{PrimaryRefFrame: 0}

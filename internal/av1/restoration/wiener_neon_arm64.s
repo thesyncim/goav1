@@ -77,26 +77,30 @@ hColLoop:
 	WORD $0x4eb21e51       // mov v17.16b, v18.16b  seed lanes 4..7
 	WORD $0x4c40a522       // ld1 {v2.8h, v3.8h}, [x9]  16 source u16
 
-	WORD $0x0f402050       // smlal  v16.4s, v2.4h, v0.h[0]
-	WORD $0x4f402051       // smlal2 v17.4s, v2.8h, v0.h[0]
-	WORD $0x6e031044       // ext v4.16b, v2.16b, v3.16b, #2
-	WORD $0x0f502090       // smlal  v16.4s, v4.4h, v0.h[1]
-	WORD $0x4f502091       // smlal2 v17.4s, v4.8h, v0.h[1]
-	WORD $0x6e032044       // ext v4.16b, v2.16b, v3.16b, #4
-	WORD $0x0f602090       // smlal  v16.4s, v4.4h, v0.h[2]
-	WORD $0x4f602091       // smlal2 v17.4s, v4.8h, v0.h[2]
-	WORD $0x6e033044       // ext v4.16b, v2.16b, v3.16b, #6
-	WORD $0x0f702090       // smlal  v16.4s, v4.4h, v0.h[3]
-	WORD $0x4f702091       // smlal2 v17.4s, v4.8h, v0.h[3]
-	WORD $0x6e034044       // ext v4.16b, v2.16b, v3.16b, #8
-	WORD $0x0f402890       // smlal  v16.4s, v4.4h, v0.h[4]
-	WORD $0x4f402891       // smlal2 v17.4s, v4.8h, v0.h[4]
-	WORD $0x6e035044       // ext v4.16b, v2.16b, v3.16b, #10
-	WORD $0x0f502890       // smlal  v16.4s, v4.4h, v0.h[5]
-	WORD $0x4f502891       // smlal2 v17.4s, v4.8h, v0.h[5]
-	WORD $0x6e036044       // ext v4.16b, v2.16b, v3.16b, #12
-	WORD $0x0f602890       // smlal  v16.4s, v4.4h, v0.h[6]
-	WORD $0x4f602891       // smlal2 v17.4s, v4.8h, v0.h[6]
+	// AV1 Wiener symmetry (dav1d looprestoration.S wiener_filter7_h): the seven
+	// taps are mirrored (f0==f6, f1==f5, f2==f4), so add the three symmetric
+	// sample pairs in 16-bit lanes first, then MAC each pair-sum once by its
+	// shared tap. This is 4 widening MACs (center + 3 pair-sums) in place of 7,
+	// bit-identical because (a+b)*f == a*f + b*f and every source sample (<=4095)
+	// keeps the pair-sum (<=8190) inside the positive int16 lane SMLAL widens.
+	WORD $0x6e033041       // ext v1.16b, v2.16b, v3.16b, #6   center col+0
+	WORD $0x6e036044       // ext v4.16b, v2.16b, v3.16b, #12  col+3
+	WORD $0x4e648444       // add v4.8h, v2.8h, v4.8h          pair f0: (col-3)+(col+3)
+	WORD $0x6e031045       // ext v5.16b, v2.16b, v3.16b, #2   col-2
+	WORD $0x6e035046       // ext v6.16b, v2.16b, v3.16b, #10  col+2
+	WORD $0x4e6684a5       // add v5.8h, v5.8h, v6.8h          pair f1: (col-2)+(col+2)
+	WORD $0x6e032046       // ext v6.16b, v2.16b, v3.16b, #4   col-1
+	WORD $0x6e034047       // ext v7.16b, v2.16b, v3.16b, #8   col+1
+	WORD $0x4e6784c6       // add v6.8h, v6.8h, v7.8h          pair f2: (col-1)+(col+1)
+
+	WORD $0x0f402090       // smlal  v16.4s, v4.4h, v0.h[0]   pair f0
+	WORD $0x4f402091       // smlal2 v17.4s, v4.8h, v0.h[0]
+	WORD $0x0f5020b0       // smlal  v16.4s, v5.4h, v0.h[1]   pair f1
+	WORD $0x4f5020b1       // smlal2 v17.4s, v5.8h, v0.h[1]
+	WORD $0x0f6020d0       // smlal  v16.4s, v6.4h, v0.h[2]   pair f2
+	WORD $0x4f6020d1       // smlal2 v17.4s, v6.8h, v0.h[2]
+	WORD $0x0f702030       // smlal  v16.4s, v1.4h, v0.h[3]   center f3 (1<<7 folded)
+	WORD $0x4f702031       // smlal2 v17.4s, v1.8h, v0.h[3]
 
 	WORD $0x4eb34610       // sshl v16.4s, v16.4s, v19.4s  arith >> round0
 	WORD $0x4eb34631       // sshl v17.4s, v17.4s, v19.4s

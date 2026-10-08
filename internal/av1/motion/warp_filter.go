@@ -111,3 +111,21 @@ var warpedFilter = [warpedPixelPrecShifts*3 + 1][filterTaps]int16{
 	// Dummy row replicates row index 191.
 	{0, 0, 0, 0, 2, 127, -1, 0},
 }
+
+// warpedFilterI8 is the byte-narrowed twin of warpedFilter. Every AV1 warp
+// coefficient lies in [-128, 127] (libaom stores the same table as int8_t;
+// dav1d_mc_warp_filter is int8_t), so the narrow is lossless. The SIMD warp
+// kernels multiply these int8 coefficients against 128-centred int8 samples via
+// SMULL, which keeps the horizontal accumulator inside int16 (see
+// warp_neon_arm64.s). Deriving it from warpedFilter at init makes drift
+// impossible; warp_neon_arm64_test.go asserts the narrow is exact and that
+// every row still sums to 128 (the identity the SMULL bias-fold relies on).
+var warpedFilterI8 = func() [warpedPixelPrecShifts*3 + 1][filterTaps]int8 {
+	var t [warpedPixelPrecShifts*3 + 1][filterTaps]int8
+	for i := range warpedFilter {
+		for j := range warpedFilter[i] {
+			t[i][j] = int8(warpedFilter[i][j])
+		}
+	}
+	return t
+}()
