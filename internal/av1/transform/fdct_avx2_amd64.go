@@ -28,6 +28,10 @@ func fdct4x4AVX2Asm(ctx *fdctAMD64Ctx)
 func fdct4Pass()
 
 func forwardDCT4x4AVX2(coeff []int32, coeffStride int, residual []int16, residualStride int) {
+	if !residualFitsMagnitude(residual, residualStride, 4, 4, 255) {
+		forwardDCT4x4PureGo(coeff, coeffStride, residual, residualStride)
+		return
+	}
 	ctx := fdctAMD64Ctx{
 		In:        unsafe.Pointer(&residual[0]),
 		InStride:  int64(residualStride),
@@ -38,6 +42,10 @@ func forwardDCT4x4AVX2(coeff []int32, coeffStride int, residual []int16, residua
 }
 
 func forwardDCT8x8AVX2(coeff []int32, coeffStride int, residual []int16, residualStride int) {
+	if !residualFitsMagnitude(residual, residualStride, 8, 8, 255) {
+		forwardDCT8x8PureGo(coeff, coeffStride, residual, residualStride)
+		return
+	}
 	ctx := fdctAMD64Ctx{
 		In:        unsafe.Pointer(&residual[0]),
 		InStride:  int64(residualStride),
@@ -47,11 +55,9 @@ func forwardDCT8x8AVX2(coeff []int32, coeffStride int, residual []int16, residua
 	fdct8x8AVX2Asm(&ctx)
 }
 
-// init routes the 8x8 forward DCT through the AVX2 kernel when the CPU
-// advertises it; otherwise the dispatch keeps the portable reference. The
-// kernel is bit-exact with the reference for 8-bit residual ranges
-// (TestForwardDCT8x8AVX2MatchesPureGo calls it directly regardless of the
-// CPUID report, so Rosetta hosts still verify it).
+// init routes the 4x4 and 8x8 forward DCT through AVX2 when available. These
+// kernels are exact for 8-bit residuals; their wrappers preserve full-int16
+// behavior by falling back to the portable implementation outside that range.
 func init() {
 	if cpu.Detected.AVX2 {
 		forwardDCT8x8Impl = forwardDCT8x8AVX2

@@ -29,6 +29,10 @@ func fdct16x16AVX2Asm(ctx *fdctBigAMD64Ctx)
 func fdct32x32AVX2Asm(ctx *fdctBigAMD64Ctx)
 
 func forwardDCT16x16AVX2(coeff []int32, coeffStride int, residual []int16, residualStride int) {
+	if !residualFitsMagnitude(residual, residualStride, 16, 16, 255) {
+		forwardDCT16x16PureGo(coeff, coeffStride, residual, residualStride)
+		return
+	}
 	var buf [256]int32  // 16x16 inter-pass
 	var bank [256]int32 // two 16-vector butterfly banks (2*16*8)
 	ctx := fdctBigAMD64Ctx{
@@ -43,6 +47,10 @@ func forwardDCT16x16AVX2(coeff []int32, coeffStride int, residual []int16, resid
 }
 
 func forwardDCT32x32AVX2(coeff []int32, coeffStride int, residual []int16, residualStride int) {
+	if !residualFitsMagnitude(residual, residualStride, 32, 32, 255) {
+		forwardDCT32x32PureGo(coeff, coeffStride, residual, residualStride)
+		return
+	}
 	var buf [1024]int32 // 32x32 inter-pass
 	var bank [512]int32 // two 32-vector butterfly banks (2*32*8)
 	ctx := fdctBigAMD64Ctx{
@@ -56,12 +64,10 @@ func forwardDCT32x32AVX2(coeff []int32, coeffStride int, residual []int16, resid
 	fdct32x32AVX2Asm(&ctx)
 }
 
-// init routes the 16x16 and 32x32 forward DCT through the AVX2 kernels when
-// the CPU advertises it; otherwise the dispatch keeps the portable reference.
-// The kernels are bit-exact with the reference for 8-bit residual ranges
-// (TestForwardDCT16x16AVX2MatchesPureGo / TestForwardDCT32x32AVX2MatchesPureGo
-// call them directly regardless of the CPUID report, so Rosetta hosts still
-// verify them).
+// init routes the 16x16 and 32x32 forward DCT through AVX2 when available.
+// These kernels are exact for 8-bit residuals; their wrappers preserve
+// full-int16 behavior by falling back to the portable implementation outside
+// that range.
 func init() {
 	if cpu.Detected.AVX2 {
 		forwardDCT16x16Impl = forwardDCT16x16AVX2

@@ -121,20 +121,16 @@ done16:
 	RET
 
 // AVX2 AddRawTransformPlaneBlock kernels. They fuse the inverse-transform
-// column-pass output into an already-predicted block, bit-exact with
-// addRawTransformPlaneBlockPureGo (see plane.go) and with the NEON
-// addRawTransform*NEONAsm kernels: each raw int32 sample is rounded by four
-// with a 32-bit add of 8 (VPADDD) and an arithmetic shift (VPSRAD $4), saturated
-// to the int16 range with VPMINSD(32767)/VPMAXSD(-32768) — matching NEON's
-// add/sshr/sqxtn and rawTransformResidual's (v+8)>>4 then int16 clamp — then
-// added to the predicted pixel and clamped to [0, max] with VPMAXSD(0)/VPMINSD.
-// The 32-bit add of 8 mirrors NEON's 32-bit add exactly; the raw values a
-// decode/encode reconstruction produces are far below the int32 overflow
-// boundary, so this is equal to the pure-Go int64 round for every real input.
+// column-pass output into an already-predicted block and match
+// addRawTransformPlaneBlockPureGo plus the NEON kernels. Each raw int32 sample
+// is first clamped to [-524281, 524264], then rounded with a 32-bit +8 and
+// arithmetic >>4. Every value outside that interval already rounds to an int16
+// saturation endpoint, and the clamp makes +8 overflow-safe even for signed
+// int32 extrema. The rounded result is added to the predicted pixel and
+// clamped to [0, max].
 //
 // Each kernel processes the leading width&^7 columns of every row in groups of
 // eight lanes; the Go wrapper handles the width&7 tail and all validation.
-
 // func addRawTransform8AVX2Asm(dst *byte, dstStride uintptr, raw *int32, rawStride uintptr, max uint32, groups uintptr, height uintptr)
 //
 // 8-bit destination with raw int32 inverse-transform samples. dstStride/rawStride
@@ -154,12 +150,12 @@ TEXT ·addRawTransform8AVX2Asm(SB), NOSPLIT, $0-56
 	MOVL         $8, R14
 	MOVL         R14, X4
 	VPBROADCASTD X4, Y4     // rounding add of 8
-	MOVL         $32767, R14
+	MOVL         $524264, R14
 	MOVL         R14, X5
-	VPBROADCASTD X5, Y5     // int16 max
-	MOVL         $-32768, R14
+	VPBROADCASTD X5, Y5     // largest raw value before int16 saturation
+	MOVL         $-524281, R14
 	MOVL         R14, X6
-	VPBROADCASTD X6, Y6     // int16 min
+	VPBROADCASTD X6, Y6     // smallest raw value before int16 saturation
 
 rawRowLoop8:
 	TESTQ R10, R10
@@ -172,10 +168,10 @@ rawColLoop8:
 	TESTQ        R13, R13
 	JZ           rawRowAdvance8
 	VMOVDQU      (R12), Y1  // 8 raw int32
-	VPADDD       Y4, Y1, Y1 // + 8
-	VPSRAD       $4, Y1, Y1 // >> 4 (arithmetic)
-	VPMINSD      Y5, Y1, Y1 // clamp <= 32767
-	VPMAXSD      Y6, Y1, Y1 // clamp >= -32768 -> int16 residual as s32
+	VPMINSD      Y5, Y1, Y1 // clamp raw before rounding to avoid +8 overflow
+	VPMAXSD      Y6, Y1, Y1
+	VPADDD       Y4, Y1, Y1 // + 8 is now overflow-safe
+	VPSRAD       $4, Y1, Y1 // >> 4; result is already within int16 range
 	VPMOVZXBD    (R11), Y0  // 8 predicted bytes -> 8 s32
 	VPADDD       Y1, Y0, Y0
 	VPMAXSD      Y2, Y0, Y0
@@ -218,10 +214,10 @@ TEXT ·addRawTransform16AVX2Asm(SB), NOSPLIT, $0-56
 	MOVL         $8, R14
 	MOVL         R14, X4
 	VPBROADCASTD X4, Y4
-	MOVL         $32767, R14
+	MOVL         $524264, R14
 	MOVL         R14, X5
 	VPBROADCASTD X5, Y5
-	MOVL         $-32768, R14
+	MOVL         $-524281, R14
 	MOVL         R14, X6
 	VPBROADCASTD X6, Y6
 
@@ -236,10 +232,10 @@ rawColLoop16:
 	TESTQ        R13, R13
 	JZ           rawRowAdvance16
 	VMOVDQU      (R12), Y1
-	VPADDD       Y4, Y1, Y1
-	VPSRAD       $4, Y1, Y1
 	VPMINSD      Y5, Y1, Y1
 	VPMAXSD      Y6, Y1, Y1
+	VPADDD       Y4, Y1, Y1
+	VPSRAD       $4, Y1, Y1
 	VPMOVZXWD    (R11), Y0  // 8 predicted u16 -> 8 s32
 	VPADDD       Y1, Y0, Y0
 	VPMAXSD      Y2, Y0, Y0

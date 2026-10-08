@@ -205,11 +205,12 @@ func TestRequiredEncoderError(t *testing.T) {
 
 func TestValidateRequiredEncoderTools(t *testing.T) {
 	cfg := benchConfig{requiredEncoders: []string{"goav1", "aomenc"}}
+	aomencBin, _ := writeTestExecutableWithSHA256(t, qualitybenchTestHelper(t), "aomenc")
 	if err := validateRequiredEncoderTools(cfg, func(name string) (string, error) {
 		if name != "aomenc" {
 			t.Fatalf("unexpected tool lookup %q", name)
 		}
-		return "/bin/aomenc", nil
+		return aomencBin, nil
 	}); err != nil {
 		t.Fatalf("valid tools failed: %v", err)
 	}
