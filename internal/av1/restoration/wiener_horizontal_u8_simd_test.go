@@ -38,7 +38,7 @@ func TestWienerHorizontalU8SIMDLoadBounds(t *testing.T) {
 		wienerHorizontalU8(src, stride, origin, width, height, filter, round0, want)
 		wienerHorizontalU8SIMDChecked(src, stride, origin, width, height, filter, round0, got)
 		if !slices.Equal(got, want) {
-			t.Fatalf("%s: NEON wrapper differs from scalar fallback", fixture.name)
+			t.Fatalf("%s: SIMD wrapper differs from scalar fallback", fixture.name)
 		}
 	}
 }
@@ -56,7 +56,7 @@ func benchWienerHorizontalU8SIMD(b *testing.B, fn func([]uint8, int, int, int, i
 	temp := make([]uint16, width*(height+2*WienerHalfwin))
 	filter := DefaultWienerInfo().HFilter
 	if !wienerHorizontalU8SIMDCanRun(len(src), stride, origin, width, height) {
-		b.Fatal("benchmark fixture does not enable the NEON vector kernel")
+		b.Fatal("benchmark fixture does not enable the SIMD vector kernel")
 	}
 	b.ReportAllocs()
 	for b.Loop() {

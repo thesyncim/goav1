@@ -56,11 +56,11 @@ func TestSGRWeightedRowSIMDMatchesReference(t *testing.T) {
 	}
 }
 
-// TestSGRBlendDispatchBindsExpectedKernels confirms the measured-losing u8
-// candidate stays on NEON while the high-bit-depth blend uses Go SIMD.
+// TestSGRBlendDispatchBindsExpectedKernels confirms that the 8-bit and the
+// high-bit-depth final projections both bind their Go-native SIMD kernels.
 func TestSGRBlendDispatchBindsExpectedKernels(t *testing.T) {
-	if reflect.ValueOf(sgrWeightedRowU8Impl).Pointer() != reflect.ValueOf(sgrWeightedRowU8NEON).Pointer() {
-		t.Fatal("sgrWeightedRowU8Impl not bound to the NEON kernel under goexperiment.simd")
+	if reflect.ValueOf(sgrWeightedRowU8Impl).Pointer() != reflect.ValueOf(sgrWeightedRowU8SIMD).Pointer() {
+		t.Fatal("sgrWeightedRowU8Impl not bound to the SIMD kernel under goexperiment.simd")
 	}
 	if reflect.ValueOf(sgrWeightedRowImpl).Pointer() != reflect.ValueOf(sgrWeightedRowSIMD).Pointer() {
 		t.Fatal("sgrWeightedRowImpl not bound to the SIMD kernel under goexperiment.simd")
@@ -105,7 +105,7 @@ func benchU8Blend(b *testing.B, fn func([]uint8, []uint8, []int32, []int32, int3
 	}
 }
 
-func BenchmarkSGRWeightedRowU8_NEON(b *testing.B)   { benchU8Blend(b, sgrWeightedRowU8NEON) }
+func BenchmarkSGRWeightedRowU8_SIMD(b *testing.B)   { benchU8Blend(b, sgrWeightedRowU8SIMD) }
 func BenchmarkSGRWeightedRowU8_PureGo(b *testing.B) { benchU8Blend(b, sgrWeightedRowU8) }
 
 func benchU16Blend(b *testing.B, fn func([]uint16, []uint16, []int32, []int32, int32, int32, int32)) {

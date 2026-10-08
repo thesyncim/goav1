@@ -35,7 +35,7 @@ func TestWienerHorizontalU8SIMDShortBorderDoesNotReadPastAllocation(t *testing.T
 		src[i] = uint8((i*53 + i/stride*7) & 0xff)
 	}
 	if wienerHorizontalU8SIMDCanRun(len(src), stride, origin, width, height) {
-		t.Fatal("NEON vector guard accepted a row with only the scalar border")
+		t.Fatal("SIMD vector guard accepted a row with only the scalar border")
 	}
 	round0, _ := wienerRounds(8)
 	filter := DefaultWienerInfo().HFilter
@@ -44,6 +44,6 @@ func TestWienerHorizontalU8SIMDShortBorderDoesNotReadPastAllocation(t *testing.T
 	wienerHorizontalU8(src, stride, origin, width, height, filter, round0, want)
 	wienerHorizontalU8SIMDChecked(src, stride, origin, width, height, filter, round0, got)
 	if !slices.Equal(got, want) {
-		t.Fatal("NEON wrapper differs from scalar output for the minimal-border allocation")
+		t.Fatal("SIMD wrapper differs from scalar output for the minimal-border allocation")
 	}
 }

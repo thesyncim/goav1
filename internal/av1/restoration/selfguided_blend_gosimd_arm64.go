@@ -150,3 +150,62 @@ func sgrWeightedRowSIMD(dst []uint16, src []uint16, f0 []int32, f1 []int32, xq0 
 		sgrWeightedRow(dst[i:], src[i:], f0[i:], f1[i:], xq0, xq1, maxI)
 	}
 }
+
+// sgrBlendLanes is the number of int32 columns the blend processes per vector
+// (one Int32x4). The composed self-guided driver rounds its SIMD column span down
+// to this multiple and runs the scalar reference on the tail.
+const sgrBlendLanes = 4
+
+// sgrBlendRowSIMD computes one blended self-guided output row for cols columns
+// (a multiple of sgrBlendLanes). It evaluates
+//
+//	dst[c] = roundPowerOfTwo(a[c]*dgd[c] + b[c], shift)
+//
+// where a and b are the nine-tap weighted 3x3 stencils over the A/B rows:
+//
+//	w[0] w[1] w[2]   (previous row: left, center, right)
+//	w[3] w[4] w[5]   (current  row)
+//	w[6] w[7] w[8]   (next     row)
+//
+// Every slice is indexed from the column one to the left of the first output
+// column, so the three stencil taps of output c are at index c, c+1, c+2. The
+// products and sums are int32 and wrap exactly like the scalar reference.
+//
+// The nine weights are scalar locals broadcast once, and each stencil row is
+// resliced once per group so every lane load has a constant, in-range index.
+func sgrBlendRowSIMD(dst []int32, dgd []int32, aPrev []int32, aCur []int32, aNext []int32, bPrev []int32, bCur []int32, bNext []int32, w *[9]int32, shift int, cols int) {
+	w0 := archsimd.BroadcastInt32x4(w[0])
+	w1 := archsimd.BroadcastInt32x4(w[1])
+	w2 := archsimd.BroadcastInt32x4(w[2])
+	w3 := archsimd.BroadcastInt32x4(w[3])
+	w4 := archsimd.BroadcastInt32x4(w[4])
+	w5 := archsimd.BroadcastInt32x4(w[5])
+	w6 := archsimd.BroadcastInt32x4(w[6])
+	w7 := archsimd.BroadcastInt32x4(w[7])
+	w8 := archsimd.BroadcastInt32x4(w[8])
+	biasV := archsimd.BroadcastInt32x4(int32(1) << (shift - 1))
+	shV := archsimd.BroadcastInt32x4(-int32(shift))
+	for c := 0; c < cols; c += sgrBlendLanes {
+		ap := aPrev[c : c+6 : c+6]
+		ac := aCur[c : c+6 : c+6]
+		an := aNext[c : c+6 : c+6]
+		bp := bPrev[c : c+6 : c+6]
+		bc := bCur[c : c+6 : c+6]
+		bn := bNext[c : c+6 : c+6]
+		a := w0.MulAdd(sgrLane4(ap, 0), w1.MulAdd(sgrLane4(ap, 1), w2.MulAdd(sgrLane4(ap, 2),
+			w3.MulAdd(sgrLane4(ac, 0), w4.MulAdd(sgrLane4(ac, 1), w5.MulAdd(sgrLane4(ac, 2),
+				w6.MulAdd(sgrLane4(an, 0), w7.MulAdd(sgrLane4(an, 1), w8.Mul(sgrLane4(an, 2))))))))))
+		b := w0.MulAdd(sgrLane4(bp, 0), w1.MulAdd(sgrLane4(bp, 1), w2.MulAdd(sgrLane4(bp, 2),
+			w3.MulAdd(sgrLane4(bc, 0), w4.MulAdd(sgrLane4(bc, 1), w5.MulAdd(sgrLane4(bc, 2),
+				w6.MulAdd(sgrLane4(bn, 0), w7.MulAdd(sgrLane4(bn, 1), w8.Mul(sgrLane4(bn, 2))))))))))
+		d := sgrLane4(dgd[c:c+4:c+4], 0)
+		r := a.MulAdd(d, b).Add(biasV).Shift(shV)
+		r.Store(dst[c : c+4 : c+4])
+	}
+}
+
+// sgrLane4 loads the four int32 values starting at p[k]. The caller reslices p to
+// the exact window, so with a constant k the index is provably in range.
+func sgrLane4(p []int32, k int) archsimd.Int32x4 {
+	return archsimd.LoadInt32x4Array((*[4]int32)(p[k : k+4]))
+}
