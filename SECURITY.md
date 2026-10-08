@@ -267,7 +267,7 @@ The decoder is **pure Go with no third-party module dependencies**.
 ```
 module github.com/thesyncim/goav1
 
-go 1.26
+go 1.27.0
 ```
 
 There is no `go.sum` file because the module has no external
