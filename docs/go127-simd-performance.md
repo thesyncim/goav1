@@ -1,13 +1,14 @@
-# Go 1.27 SIMD kernel measurements
+# Go 1.27 SIMD performance evidence
 
 These arm64 kernel measurements used the official Go 1.27.1 toolchain with
 `GOEXPERIMENT=simd` on an Apple M4 Max. The source baseline was `35c0602a`; the
-final selected implementation is `c45e106e`. Each result is the median of five
+kernel-selection checkpoint was `c45e106e`. Kernel results are medians of five
 200 ms samples at `GOMAXPROCS=1`; all reported `0 B/op` and `0 allocs/op`.
 
-The values below describe specific kernels and shapes. They do not quantify
-whole-codec throughput or encoder quality, and they are not comparisons against
-a C codec.
+The kernel measurements describe specific operations and shapes. They do not
+quantify whole-codec throughput, encoder quality, or performance against a C
+codec. The exploratory public-path samples later in this note have separate
+limits.
 
 ## Selected kernel results
 
@@ -27,10 +28,14 @@ measured cases. The ratio is comparator time divided by Go SIMD time.
 | SAD 8×8 ×4 | 11.59 ns | 13.63 ns | 1.18× |
 
 Forward DCT 4×4 measured 11.46 ns versus 12.04 ns for NEON and 35.44 ns for
-pure Go; IDTX 8×8 measured 5.895 ns. The SIMD-enabled inverse DCT int16 pipeline
-beat the assembly fallback at each measured block size:
+pure Go; IDTX 8×8 measured 5.895 ns. The historical `InverseDCTBlock` and
+`InverseBlock` measurements below came from the int32 transform path at the
+pre-guard checkpoint `c45e106e`. They do not measure the bitdepth-8 int16
+pipeline or the public raw-block path. Bounds guards added at `28678` protect
+extreme values, so treat this as an archival pre-guard comparison; the latest
+exact wide8 measurement is pending.
 
-| Block | SIMD | Assembly fallback | Ratio |
+| Inverse int32 block | SIMD | Assembly fallback | Ratio |
 | --- | ---: | ---: | ---: |
 | 8×8 | 106.9 ns | 135.2 ns | 1.26× |
 | 16×16 | 452.6 ns | 538.0 ns | 1.19× |
@@ -60,9 +65,50 @@ to 7 but remained slower than NEON (64.37 vs 45.76 ns). Corrected Wiener
 measurements found the SIMD variants slower than assembly; an earlier result is
 excluded because its NEON comparator fell back to scalar code.
 
-The exploratory cross-decoder report used an internal oracle pipeline, not the
-public decoder API. Its corpus lacks a manifest and provenance, so it does not
-support a public decode-performance claim; a public-path comparison is pending.
+An earlier internal-oracle comparison reported `aomdec` and `dav1d` as 1.98×
+and 3.05× faster than goav1; those ratios are not public API results and lack
+corpus provenance.
+
+## Public API and C API comparison
+
+This matched API sample used the same 18 clips, each 48 frames, for 864 visible
+frames total. Every Go and C decoder matched its clip's MD5 sidecar before
+timing. The corpus has no source manifest, so the results are exploratory and
+do not establish corpus provenance. Each path used one thread, one warmup, and
+nine whole-clip samples; the table sums each clip's median. File reads and MD5
+verification are outside the timed intervals. Go used official Go 1.27.1 with
+`GOEXPERIMENT=simd`. The C backends are libaom 3.14.0 and dav1d 1.5.3 through
+their APIs, so these results exclude CLI process startup.
+
+| Decoder path | goav1 | libaom C API | dav1d C API |
+| --- | ---: | ---: | ---: |
+| Cold from IVF | 1758.601 ms | 851.404 ms | 542.140 ms |
+| Cold from pre-parsed payloads | 1754.702 ms | — | — |
+| Warm `Reset` and decode | 1709.010 ms | — | — |
+
+The cold pre-parsed path parses and copies payloads before timing; its timed
+scope is `NewDecoder(payloads)`, all `DecodeNext` calls, and `Close`. It is
+3.899 ms (0.22%) lower than the cold-IVF aggregate. `NewDecoderFromIVF` instead
+does IVF parsing and payload copies during decoder construction. The C helper
+reuses preloaded file bytes and views packet payloads without copying, while it
+parses IVF packet records during each timed decode. These boundaries are close
+but not identical. The Go/libaom and Go/dav1d ratios are 2.07× and 3.24× for
+cold IVF, and 2.06× and 3.24× for cold pre-parsed payloads. The warm Go path
+reuses a decoder; no matching warm-reset C path was measured.
+
+These ratios describe this corpus and these API paths. Both C libraries use
+architecture-specific optimized code, so the comparison does not isolate Go
+SIMD or language speed. The helpers also do not independently verify C binary
+build provenance. For the sample protocol and commands, see the [C API sampler
+README](../tools/c_api_decode_bench/README.md).
+
+To collect the Go values, set the corpus directory and run:
+
+~~~sh
+export GOAV1_PUBLIC_FULLCLIP_SAMPLES=1 GOAV1_BENCH_CORPUS_DIR=/path/to/benchcorpus
+export GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 GOTOOLCHAIN=local
+scripts/simdtip.sh test -run '^TestPublicDecoderFullClipCorpusSamples$' -count=1 -v .
+~~~
 
 ## Reproducing the kernel results
 
@@ -75,7 +121,7 @@ medians; use the listed benchmark selectors at those checkpoints.
 | Results | Checkpoint | Package and benchmark selectors |
 | --- | --- | --- |
 | Encoder metrics | `60c0a67a` | `encoder`: SATDCoeffs 16/64/256/1024, Hadamard 4×4/8×8/16×16/32×32, SAD 8×8×4 |
-| Transforms | `60c0a67a` | `transform`: ForwardDCT4x4Kernels, ForwardBlock8x8IDTXImpl, InverseDCTBlock 8×8–64×64 |
+| Transforms | `60c0a67a` | `transform`: ForwardDCT4x4Kernels, ForwardBlock8x8IDTXImpl, InverseDCTBlock/InverseBlock int32 8×8–64×64 |
 | Motion | `3298f798` | `motion`: ConvolveX8 Go SIMD, I8MM, and NEON comparators |
 | Smooth and CFL | `d0344a30` | `prediction`: Smooth and CFL subsampling comparisons |
 | DSP and CDEF | `ce77788f` | `dsp`: MinMax8x8; `cdef`: FindDirection SIMD and assembly comparisons |

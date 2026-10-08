@@ -64,8 +64,9 @@ func TestPublicDecoderFullClipCorpusMD5(t *testing.T) {
 
 // TestPublicDecoderFullClipCorpusSamples is an opt-in full-clip sampling
 // harness. It verifies every sidecar first, then collects one warmup and nine
-// whole-clip samples for each cold fresh-decoder and warm Reset+DecodeNext
-// path. Input file reads and MD5 verification are outside the timed sections.
+// whole-clip samples for each cold IVF, cold pre-parsed payload, and warm
+// Reset+DecodeNext path. Input reads, IVF payload extraction, and MD5
+// verification are outside the timed sections.
 func TestPublicDecoderFullClipCorpusSamples(t *testing.T) {
 	if os.Getenv("GOAV1_PUBLIC_FULLCLIP_SAMPLES") != "1" {
 		t.Skip("set GOAV1_PUBLIC_FULLCLIP_SAMPLES=1 to sample full-clip public decoding")
@@ -76,7 +77,7 @@ func TestPublicDecoderFullClipCorpusSamples(t *testing.T) {
 		t.Fatalf("public corpus produced %d frames, want %d", totalFrames, publicFullClipExpectedFrames)
 	}
 	t.Logf("public decoder MD5 preflight passed: clips=%d frames=%d workers=1", len(clips), totalFrames)
-	t.Logf("sample protocol: workers=1 warmups=%d samples=%d; cold=fresh NewDecoderFromIVF+DecodeNext+Close; warm=Reset+DecodeNext", publicFullClipWarmups, publicFullClipSamples)
+	t.Logf("sample protocol: workers=1 warmups=%d samples=%d; cold_ivf=NewDecoderFromIVF+DecodeNext+Close; cold_payload=NewDecoder(payloads)+DecodeNext+Close (IVF parse/copy excluded); warm=Reset+DecodeNext; MD5 preflight excluded", publicFullClipWarmups, publicFullClipSamples)
 
 	for _, clip := range clips {
 		sinkBefore := publicFullClipSampleSink
@@ -84,19 +85,28 @@ func TestPublicDecoderFullClipCorpusSamples(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s cold samples: %v", clip.name, err)
 		}
+		coldPayload, err := samplePublicFullClipColdPayload(clip)
+		if err != nil {
+			t.Fatalf("%s cold pre-parsed payload samples: %v", clip.name, err)
+		}
+		if coldPayload.frames != cold.frames {
+			t.Fatalf("%s NewDecoder(payloads) emitted %d frames, cold IVF path emitted %d", clip.name, coldPayload.frames, cold.frames)
+		}
 		warm, err := samplePublicFullClipWarm(clip)
 		if err != nil {
 			t.Fatalf("%s warm samples: %v", clip.name, err)
 		}
-		t.Logf("public_fullclip clip=%s frames=%d cold_fresh_decoder_median=%s cold_samples=%s warm_reset_decode_median=%s warm_samples=%s sink=%d",
+		t.Logf("public_fullclip clip=%s frames=%d cold_fresh_decoder_median=%s cold_samples=%s cold_payload_decoder_median=%s cold_payload_samples=%s warm_reset_decode_median=%s warm_samples=%s sink=%d",
 			clip.name, cold.frames, medianPublicFullClipDuration(cold.samples), formatPublicFullClipDurations(cold.samples),
+			medianPublicFullClipDuration(coldPayload.samples), formatPublicFullClipDurations(coldPayload.samples),
 			medianPublicFullClipDuration(warm.samples), formatPublicFullClipDurations(warm.samples), publicFullClipSampleSink-sinkBefore)
 	}
 }
 
-// BenchmarkPublicDecoderFullClip exposes one cold and one warm sub-benchmark
-// for each corpus clip. Select a single clip/path with -bench, for example
-// `-bench 'BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder'`.
+// BenchmarkPublicDecoderFullClip exposes cold-IVF, cold-preparsed-payload, and
+// warm sub-benchmarks for each corpus clip. Select a single clip/path with
+// -bench, for example
+// `-bench 'BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_preparsed_payload_decoder'`.
 // Run TestPublicDecoderFullClipCorpusMD5 separately first to keep MD5 work out
 // of CPU profiles and benchmark timing.
 func BenchmarkPublicDecoderFullClip(b *testing.B) {
@@ -147,6 +157,33 @@ func BenchmarkPublicDecoderFullClip(b *testing.B) {
 					result, err := decodePublicFullClipAfterReset(dec)
 					if err != nil {
 						b.Fatalf("Reset+DecodeNext: %v", err)
+					}
+					if result.frames != wantFrames {
+						b.Fatalf("decoded %d frames, want %d", result.frames, wantFrames)
+					}
+					publicFullClipSampleSink += result.observed
+				}
+				b.ReportMetric(float64(wantFrames), "frames/op")
+			})
+			b.Run("cold_preparsed_payload_decoder", func(b *testing.B) {
+				payloads, err := publicFullClipPayloads(clip.data)
+				if err != nil {
+					b.Fatalf("parse IVF payloads: %v", err)
+				}
+				warmup, err := decodePublicFullClipPayloads(payloads, false)
+				if err != nil {
+					b.Fatalf("warmup NewDecoder(payloads): %v", err)
+				}
+				if warmup.frames == 0 {
+					b.Fatal("warmup produced no visible frames")
+				}
+				wantFrames := warmup.frames
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					result, err := decodePublicFullClipPayloads(payloads, false)
+					if err != nil {
+						b.Fatalf("NewDecoder(payloads): %v", err)
 					}
 					if result.frames != wantFrames {
 						b.Fatalf("decoded %d frames, want %d", result.frames, wantFrames)
@@ -273,6 +310,24 @@ func verifyPublicFullClipCorpus(t *testing.T, clips []publicFullClip) int {
 			t.Fatalf("%s sidecar %s: %v", clip.name, clip.oracle.path, err)
 		}
 		t.Logf("public MD5 verified: clip=%s frames=%d digest=%x", clip.name, result.frames, result.streamMD5)
+
+		payloads, err := publicFullClipPayloads(clip.data)
+		if err != nil {
+			t.Fatalf("%s IVF payload parse: %v", clip.name, err)
+		}
+		payloadResult, err := decodePublicFullClipPayloads(payloads, true)
+		if err != nil {
+			t.Fatalf("%s NewDecoder payload preflight: %v", clip.name, err)
+		}
+		if payloadResult.frames != result.frames {
+			t.Fatalf("%s NewDecoder(payloads) emitted %d frames, NewDecoderFromIVF emitted %d",
+				clip.name, payloadResult.frames, result.frames)
+		}
+		if err := comparePublicFullClipOracle(payloadResult, clip.oracle); err != nil {
+			t.Fatalf("%s NewDecoder(payloads) sidecar %s: %v", clip.name, clip.oracle.path, err)
+		}
+		t.Logf("public payload constructor MD5 verified: clip=%s frames=%d digest=%x",
+			clip.name, payloadResult.frames, payloadResult.streamMD5)
 		totalFrames += result.frames
 	}
 	return totalFrames
@@ -304,6 +359,53 @@ func decodePublicFullClipFresh(data []byte, hashFrames bool) (publicFullClipResu
 	result, decodeErr := decodePublicFullClip(dec, hashFrames)
 	dec.Close()
 	return result, decodeErr
+}
+
+// publicFullClipPayloads copies each IVF frame payload before a timed
+// NewDecoder(payloads) run. NewIVFIterator returns views into the IVF bytes.
+func publicFullClipPayloads(ivfBytes []byte) ([][]byte, error) {
+	it, err := av1.NewIVFIterator(ivfBytes)
+	if err != nil {
+		return nil, fmt.Errorf("NewIVFIterator: %w", err)
+	}
+	payloads := make([][]byte, 0)
+	for {
+		frame, ok, err := it.Next()
+		if err != nil {
+			return nil, fmt.Errorf("IVFIterator.Next: %w", err)
+		}
+		if !ok {
+			break
+		}
+		payloads = append(payloads, append([]byte(nil), frame.Payload...))
+	}
+	if len(payloads) == 0 {
+		return nil, errors.New("IVF stream produced no frame payloads")
+	}
+	return payloads, nil
+}
+
+func TestPublicFullClipPayloadsRejectsInvalidIVF(t *testing.T) {
+	_, err := publicFullClipPayloads([]byte("DKIF"))
+	if !errors.Is(err, av1.ErrIVFShortHeader) {
+		t.Fatalf("publicFullClipPayloads error=%v, want %v", err, av1.ErrIVFShortHeader)
+	}
+}
+
+func TestDecodePublicFullClipPayloadsPropagatesInvalidPayload(t *testing.T) {
+	_, err := decodePublicFullClipPayloads([][]byte{{0xff}}, false)
+	if err == nil {
+		t.Fatal("decodePublicFullClipPayloads accepted an invalid AV1 payload")
+	}
+}
+
+func decodePublicFullClipPayloads(payloads [][]byte, hashFrames bool) (publicFullClipResult, error) {
+	dec, err := av1.NewDecoder(payloads, av1.WithWorkers(1))
+	if err != nil {
+		return publicFullClipResult{}, fmt.Errorf("NewDecoder: %w", err)
+	}
+	defer dec.Close()
+	return decodePublicFullClip(dec, hashFrames)
 }
 
 func decodePublicFullClip(dec *av1.Decoder, hashFrames bool) (publicFullClipResult, error) {
@@ -502,6 +604,45 @@ func samplePublicFullClipWarm(clip publicFullClip) (publicFullClipTiming, error)
 		elapsed := time.Since(start)
 		if err != nil {
 			return publicFullClipTiming{}, err
+		}
+		if result.frames == 0 {
+			return publicFullClipTiming{}, errors.New("sample produced no visible frames")
+		}
+		if timing.frames == -1 {
+			timing.frames = result.frames
+		} else if timing.frames != result.frames {
+			return publicFullClipTiming{}, fmt.Errorf("sample produced %d frames, earlier sample produced %d", result.frames, timing.frames)
+		}
+		publicFullClipSampleSink += result.observed
+		timing.samples = append(timing.samples, elapsed)
+	}
+	return timing, nil
+}
+
+// samplePublicFullClipColdPayload parses and copies the IVF payloads before
+// timing. Each timed sample includes NewDecoder, all DecodeNext calls, and
+// Close, but excludes IVF parsing/copying and sidecar verification.
+func samplePublicFullClipColdPayload(clip publicFullClip) (publicFullClipTiming, error) {
+	payloads, err := publicFullClipPayloads(clip.data)
+	if err != nil {
+		return publicFullClipTiming{}, err
+	}
+	warmup, err := decodePublicFullClipPayloads(payloads, false)
+	if err != nil {
+		return publicFullClipTiming{}, fmt.Errorf("warmup NewDecoder(payloads): %w", err)
+	}
+	if warmup.frames == 0 {
+		return publicFullClipTiming{}, errors.New("warmup produced no visible frames")
+	}
+	publicFullClipSampleSink += warmup.observed
+
+	timing := publicFullClipTiming{frames: -1, samples: make([]time.Duration, 0, publicFullClipSamples)}
+	for i := 0; i < publicFullClipSamples; i++ {
+		start := time.Now()
+		result, err := decodePublicFullClipPayloads(payloads, false)
+		elapsed := time.Since(start)
+		if err != nil {
+			return publicFullClipTiming{}, fmt.Errorf("NewDecoder(payloads) sample %d: %w", i, err)
 		}
 		if result.frames == 0 {
 			return publicFullClipTiming{}, errors.New("sample produced no visible frames")
