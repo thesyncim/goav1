@@ -10,7 +10,7 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 func init() {
 	if cpu.Detected.NEON {
 		quantizeBlockImpl = quantizeBlockSIMD
-		quantizeFPBlockImpl = quantizeFPBlockNEON
+		quantizeFPBlockImpl = quantizeFPBlockSIMD
 		quantizeBBlockImpl = quantizeBBlockNEON
 		quantizeFPNoQMatrixImpl = quantizeFPNoQMatrixSIMD
 	}

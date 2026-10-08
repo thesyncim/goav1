@@ -63,53 +63,11 @@ func quantizeBBlockAVX2(qcoeff []int16, coeff []int32, n int, q Quantizer, txSca
 	return true
 }
 
-// quantizeFPAVX2Ctx carries the fp-rule kernel arguments. ShiftL is
-// 1+txScale and ShiftR is 16-txScale.
-type quantizeFPAVX2Ctx struct {
-	Coeff  unsafe.Pointer
-	Out    unsafe.Pointer
-	Count  int64
-	Quant  int64
-	Round  int64
-	Deq    int64
-	ShiftL int64
-	ShiftR int64
-}
-
-//go:noescape
-func quantizeFPAVX2Asm(ctx *quantizeFPAVX2Ctx)
-
-// quantizeFPBlockAVX2 mirrors quantizeFPBlockNEON, with the same guard that
-// keeps (32767 + round) * quant inside int32.
-func quantizeFPBlockAVX2(qcoeff []int16, coeff []int32, n int, q Quantizer, txScale uint8) bool {
-	count := n * n
-	if count%16 != 0 || int64(1<<16)/int64(q.AC) > 1<<14 || int64(1<<16)/int64(q.DC) > 1<<14 {
-		return false
-	}
-	roundAC := roundPowerOfTwo((64*int32(q.AC))>>7, txScale)
-	ctx := quantizeFPAVX2Ctx{
-		Coeff:  unsafe.Pointer(&coeff[0]),
-		Out:    unsafe.Pointer(&qcoeff[0]),
-		Count:  int64(count),
-		Quant:  int64(1<<16) / int64(q.AC),
-		Round:  int64(roundAC),
-		Deq:    int64(q.AC),
-		ShiftL: int64(1 + txScale),
-		ShiftR: int64(16 - int(txScale)),
-	}
-	quantizeFPAVX2Asm(&ctx)
-	quantDC := int64(1<<16) / int64(q.DC)
-	roundDC := roundPowerOfTwo((64*int32(q.DC))>>7, txScale)
-	qcoeff[0] = quantizeScalarFP(coeff[0], q.DC, quantDC, roundDC, txScale)
-	return true
-}
-
-// init binds the quantizer dispatch slots when the CPU advertises AVX2; the
-// direct-call parity tests verify both kernels regardless of the CPUID
-// report (Rosetta hides AVX2 there).
+// init binds the quantize-b dispatch slot when the CPU advertises AVX2; the
+// direct-call parity tests verify the kernel regardless of the CPUID report
+// (Rosetta hides AVX2 there).
 func init() {
 	if cpu.Detected.AVX2 {
 		quantizeBBlockImpl = quantizeBBlockAVX2
-		quantizeFPBlockImpl = quantizeFPBlockAVX2
 	}
 }

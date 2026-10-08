@@ -57,38 +57,3 @@ func TestQuantizeBBlockAVX2MatchesScalar(t *testing.T) {
 		}
 	}
 }
-
-// TestQuantizeFPBlockAVX2MatchesScalar proves the AVX2 fp kernel bit-exact
-// with the scalar rule.
-func TestQuantizeFPBlockAVX2MatchesScalar(t *testing.T) {
-	rng := rand.New(rand.NewSource(79))
-	for _, n := range []int{4, 8, 16, 32} {
-		for _, ts := range []uint8{0, 1} {
-			for trial := 0; trial < 300; trial++ {
-				q := Quantizer{DC: int32(rng.Intn(6900) + 4), AC: int32(rng.Intn(6900) + 4)}
-				coeff := make([]int32, n*n)
-				for i := range coeff {
-					coeff[i] = int32(rng.Intn(1<<22)) - 1<<21
-				}
-				got := make([]int16, n*n)
-				if !quantizeFPBlockAVX2(got, coeff, n, q, ts) {
-					continue
-				}
-				want := make([]int16, n*n)
-				for i := range coeff {
-					step, round := q.AC, roundPowerOfTwo((64*int32(q.AC))>>7, ts)
-					if i == 0 {
-						step, round = q.DC, roundPowerOfTwo((64*int32(q.DC))>>7, ts)
-					}
-					want[i] = quantizeScalarFP(coeff[i], step, int64(1<<16)/int64(step), round, ts)
-				}
-				for i := range want {
-					if got[i] != want[i] {
-						t.Fatalf("n=%d ts=%d q=%+v trial %d: qcoeff[%d] avx2 %d want %d (coeff %d)",
-							n, ts, q, trial, i, got[i], want[i], coeff[i])
-					}
-				}
-			}
-		}
-	}
-}

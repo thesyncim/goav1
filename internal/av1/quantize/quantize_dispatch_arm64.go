@@ -9,7 +9,6 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 // kernels without dropping the NEON ones that have not been ported.
 func init() {
 	if cpu.Detected.NEON {
-		quantizeFPBlockImpl = quantizeFPBlockNEON
 		quantizeBBlockImpl = quantizeBBlockNEON
 	}
 }

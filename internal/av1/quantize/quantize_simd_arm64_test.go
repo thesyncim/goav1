@@ -17,7 +17,7 @@ func TestQuantizeSIMDDispatchBindings(t *testing.T) {
 		t.Skip("NEON not detected")
 	}
 	requireQuantizeBinding(t, "quantizeBlockImpl", quantizeBlockImpl, "quantizeBlockSIMD")
-	requireQuantizeBinding(t, "quantizeFPBlockImpl", quantizeFPBlockImpl, "quantizeFPBlockNEON")
+	requireQuantizeBinding(t, "quantizeFPBlockImpl", quantizeFPBlockImpl, "quantizeFPBlockSIMD")
 	requireQuantizeBinding(t, "quantizeBBlockImpl", quantizeBBlockImpl, "quantizeBBlockNEON")
 	requireQuantizeBinding(t, "quantizeFPNoQMatrixImpl", quantizeFPNoQMatrixImpl, "quantizeFPNoQMatrixSIMD")
 }
@@ -106,14 +106,14 @@ func quantizeFPBlockScalarBench(qcoeff []int16, coeff []int32, n int, q Quantize
 func BenchmarkQuantizeFPBlock16x16_Scalar(b *testing.B) {
 	benchQuantizeFPBlock(b, 16, quantizeFPBlockScalarBench)
 }
-func BenchmarkQuantizeFPBlock16x16_ASM(b *testing.B) {
-	benchQuantizeFPBlock(b, 16, quantizeFPBlockNEON)
+func BenchmarkQuantizeFPBlock16x16_SIMD(b *testing.B) {
+	benchQuantizeFPBlock(b, 16, quantizeFPBlockSIMD)
 }
 func BenchmarkQuantizeFPBlock32x32_Scalar(b *testing.B) {
 	benchQuantizeFPBlock(b, 32, quantizeFPBlockScalarBench)
 }
-func BenchmarkQuantizeFPBlock32x32_ASM(b *testing.B) {
-	benchQuantizeFPBlock(b, 32, quantizeFPBlockNEON)
+func BenchmarkQuantizeFPBlock32x32_SIMD(b *testing.B) {
+	benchQuantizeFPBlock(b, 32, quantizeFPBlockSIMD)
 }
 
 func benchQuantizeFPNoQMatrix(b *testing.B, count int, fn func([]int32, []int32, []int32, []int16, FPQuantizer) (int, bool)) {
