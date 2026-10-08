@@ -8,6 +8,7 @@ package motion
 
 import (
 	"simd/archsimd"
+	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
@@ -48,9 +49,175 @@ const (
 	convolve8Bits        = 2*filterBits - round0Bits - round1Bits
 )
 
+// u8HalfTaps keeps the byte filter in signed 16-bit lanes. Every AV1 subpel
+// coefficient is even. For a coefficient vector outside that domain, or one
+// whose extreme sample sum could overflow int16, use the original wide path.
+func u8HalfTaps(k *[filterTaps]int16, bias int) (t hbdTaps16, ok bool) {
+	minSum, maxSum := bias, bias
+	for i, v := range k {
+		if v&1 != 0 {
+			return t, false
+		}
+		h := int(v) / 2
+		if h < 0 {
+			minSum += 255 * h
+		} else {
+			maxSum += 255 * h
+		}
+		t[i] = archsimd.BroadcastInt16x8(int16(h))
+	}
+	return t, minSum-bias >= -32768 && minSum >= -32768 && maxSum <= 32767
+}
+
+// u8SumColHalf evaluates eight independent columns with one 16-bit MLA per
+// tap. The caller has already proved that no partial or final sum wraps.
+func u8SumColHalf(pix []byte, step int, t *hbdTaps16, n int) archsimd.Int16x8 {
+	sum := archsimd.BroadcastInt16x8(0)
+	for k := range n {
+		sum = u8HalfMAC(u8Samples8(pix[k*step:]), t[k], sum)
+	}
+	return sum
+}
+
+func u8StoreHalf8(dst []byte, v archsimd.Int16x8) {
+	var tmp [16]byte
+	u8HalfSaturate(v).Store(tmp[:])
+	copy(dst[:8], tmp[:8])
+}
+
+func convolveX8HalfKernel(ctx *convolve8GoSIMDCtx, taps *hbdTaps16) {
+	need := (ctx.height-1)*ctx.refStr + ctx.width + 8
+	if ctx.width%8 == 0 && ctx.refStr > 0 && need >= 0 && len(ctx.ref) >= need {
+		convolveX8HalfResident(ctx)
+		return
+	}
+	round3 := archsimd.BroadcastInt16x8(2)
+	round4 := archsimd.BroadcastInt16x8(8)
+	for y := range ctx.height {
+		src := ctx.ref[y*ctx.refStr:]
+		dst := ctx.dst[y*ctx.dstStr:]
+		x := 0
+		for ; x+8 <= ctx.width; x += 8 {
+			sum := u8SumRowHalf(src[x:], taps, ctx.tapsX)
+			u8StoreHalf8(dst[x:], sum.Add(round3).ShiftAllRight(2).Add(round4).ShiftAllRight(4))
+		}
+		if x < ctx.width {
+			var win [32]byte
+			copy(win[:], src[x:])
+			sum := u8SumRowHalf(win[:], taps, ctx.tapsX)
+			var tmp [16]byte
+			u8HalfSaturate(sum.Add(round3).ShiftAllRight(2).Add(round4).ShiftAllRight(4)).Store(tmp[:])
+			copy(dst[x:x+4], tmp[:4])
+		}
+	}
+}
+
+func convolveX8HalfResident(ctx *convolve8GoSIMDCtx) {
+	c0 := archsimd.BroadcastInt16x8(ctx.kernel[0] / 2)
+	c1 := archsimd.BroadcastInt16x8(ctx.kernel[1] / 2)
+	c2 := archsimd.BroadcastInt16x8(ctx.kernel[2] / 2)
+	c3 := archsimd.BroadcastInt16x8(ctx.kernel[3] / 2)
+	c4 := archsimd.BroadcastInt16x8(ctx.kernel[4] / 2)
+	c5 := archsimd.BroadcastInt16x8(ctx.kernel[5] / 2)
+	c6 := archsimd.BroadcastInt16x8(ctx.kernel[6] / 2)
+	c7 := archsimd.BroadcastInt16x8(ctx.kernel[7] / 2)
+	round3 := archsimd.BroadcastInt16x8(2)
+	round4 := archsimd.BroadcastInt16x8(8)
+	base := unsafe.Pointer(unsafe.SliceData(ctx.ref))
+	for y := range ctx.height {
+		dst := ctx.dst[y*ctx.dstStr:]
+		for x := 0; x < ctx.width; x += 8 {
+			a := archsimd.LoadUint8x16((*[16]byte)(unsafe.Add(base, y*ctx.refStr+x))[:])
+			sum := u8HalfMAC(a.ExtendLo8ToUint16().BitsToInt16(), c0, round3)
+			sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 1).ExtendLo8ToUint16().BitsToInt16(), c1, sum)
+			sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 2).ExtendLo8ToUint16().BitsToInt16(), c2, sum)
+			sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 3).ExtendLo8ToUint16().BitsToInt16(), c3, sum)
+			if ctx.tapsX > 4 {
+				sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 4).ExtendLo8ToUint16().BitsToInt16(), c4, sum)
+				sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 5).ExtendLo8ToUint16().BitsToInt16(), c5, sum)
+			}
+			if ctx.tapsX > 6 {
+				sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 6).ExtendLo8ToUint16().BitsToInt16(), c6, sum)
+				sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 7).ExtendLo8ToUint16().BitsToInt16(), c7, sum)
+			}
+			u8StoreHalf8(dst[x:], sum.ShiftAllRight(2).Add(round4).ShiftAllRight(4))
+		}
+	}
+}
+
+func convolveY8HalfKernel(ctx *convolve8GoSIMDCtx, taps *hbdTaps16) {
+	// The resident fast path loads 16 bytes for each eight output columns.
+	// Its final load is checked once here; exact-minimum slices use the safe
+	// staged-load path below.
+	need := (ctx.height+ctx.tapsY-2)*ctx.refStr + ctx.width + 8
+	if ctx.width%8 == 0 && ctx.refStr > 0 && need >= 0 && len(ctx.ref) >= need {
+		convolveY8HalfResident(ctx)
+		return
+	}
+	round := archsimd.BroadcastInt16x8(32)
+	for y := range ctx.height {
+		src := ctx.ref[y*ctx.refStr:]
+		dst := ctx.dst[y*ctx.dstStr:]
+		x := 0
+		for ; x+8 <= ctx.width; x += 8 {
+			sum := u8SumColHalf(src[x:], ctx.refStr, taps, ctx.tapsY)
+			u8StoreHalf8(dst[x:], sum.Add(round).ShiftAllRight(6))
+		}
+		if x < ctx.width {
+			var win [8 * 16]byte
+			for k := range ctx.tapsY {
+				copy(win[k*16:k*16+4], src[k*ctx.refStr+x:])
+			}
+			var tmp [16]byte
+			u8HalfSaturate(u8SumColHalf(win[:], 16, taps, ctx.tapsY).Add(round).ShiftAllRight(6)).Store(tmp[:])
+			copy(dst[x:x+4], tmp[:4])
+		}
+	}
+}
+
+func convolveY8HalfResident(ctx *convolve8GoSIMDCtx) {
+	c0 := archsimd.BroadcastInt16x8(ctx.kernel[0] / 2)
+	c1 := archsimd.BroadcastInt16x8(ctx.kernel[1] / 2)
+	c2 := archsimd.BroadcastInt16x8(ctx.kernel[2] / 2)
+	c3 := archsimd.BroadcastInt16x8(ctx.kernel[3] / 2)
+	c4 := archsimd.BroadcastInt16x8(ctx.kernel[4] / 2)
+	c5 := archsimd.BroadcastInt16x8(ctx.kernel[5] / 2)
+	c6 := archsimd.BroadcastInt16x8(ctx.kernel[6] / 2)
+	c7 := archsimd.BroadcastInt16x8(ctx.kernel[7] / 2)
+	round := archsimd.BroadcastInt16x8(32)
+	base := unsafe.Pointer(unsafe.SliceData(ctx.ref))
+	step := ctx.refStr
+	load := func(off int) archsimd.Int16x8 {
+		return archsimd.LoadUint8x16((*[16]byte)(unsafe.Add(base, off))[:]).ExtendLo8ToUint16().BitsToInt16()
+	}
+	for y := range ctx.height {
+		dst := ctx.dst[y*ctx.dstStr:]
+		for x := 0; x < ctx.width; x += 8 {
+			off := y*step + x
+			sum := u8HalfMAC(load(off), c0, round)
+			sum = u8HalfMAC(load(off+step), c1, sum)
+			sum = u8HalfMAC(load(off+2*step), c2, sum)
+			sum = u8HalfMAC(load(off+3*step), c3, sum)
+			if ctx.tapsY > 4 {
+				sum = u8HalfMAC(load(off+4*step), c4, sum)
+				sum = u8HalfMAC(load(off+5*step), c5, sum)
+			}
+			if ctx.tapsY > 6 {
+				sum = u8HalfMAC(load(off+6*step), c6, sum)
+				sum = u8HalfMAC(load(off+7*step), c7, sum)
+			}
+			u8StoreHalf8(dst[x:], sum.ShiftAllRight(6))
+		}
+	}
+}
+
 // convolveX8Kernel is the 1D horizontal 8-bit convolve: clip(round4(round3(sum))).
 func convolveX8Kernel(ctx *convolve8GoSIMDCtx) {
 	n := ctx.tapsX
+	if half, ok := u8HalfTaps(&ctx.kernel, 10); ok {
+		convolveX8HalfKernel(ctx, &half)
+		return
+	}
 	taps := hbdBroadcastTaps16(&ctx.kernel)
 	zero := archsimd.BroadcastInt32x4(0)
 	maxV := archsimd.BroadcastInt32x4(255)
@@ -78,6 +245,10 @@ func convolveX8Kernel(ctx *convolve8GoSIMDCtx) {
 // convolveY8Kernel is the 1D vertical 8-bit convolve: clip(round7(sum)).
 func convolveY8Kernel(ctx *convolve8GoSIMDCtx) {
 	n := ctx.tapsY
+	if half, ok := u8HalfTaps(&ctx.kernel, 32); ok {
+		convolveY8HalfKernel(ctx, &half)
+		return
+	}
 	taps := hbdBroadcastTaps16(&ctx.kernel)
 	zero := archsimd.BroadcastInt32x4(0)
 	maxV := archsimd.BroadcastInt32x4(255)
@@ -133,6 +304,120 @@ func convolve2D8Kernel(ctx *convolve8GoSIMDCtx) {
 			lo := hbdSum4Int32(col[x:], ctx.imStr, &yTaps, ny)
 			lo = hbdFinish2D(lo.Add(yBias), convolve8Round1Bits, rndOff, convolve8Bits, zero, maxV)
 			hbdStoreU8x4(dst[x:], lo)
+		}
+	}
+}
+
+// convolve2D8HalfKernel keeps the horizontal intermediate in signed 16-bit
+// storage. The vertical products still widen to 32 bits as required by AV1.
+// The wrapper supplies at least height+roundedTapCount-1 rows of 128 samples.
+// Every 8-sample vertical load stays within that buffer, including width 4.
+//
+//go:nocheckptr
+func convolve2D8HalfKernel(ctx *convolve8GoSIMDCtx, im []int16, xTaps *hbdTaps16) {
+	c0 := archsimd.BroadcastInt16x8(ctx.kernel[0])
+	c1 := archsimd.BroadcastInt16x8(ctx.kernel[1])
+	c2 := archsimd.BroadcastInt16x8(ctx.kernel[2])
+	c3 := archsimd.BroadcastInt16x8(ctx.kernel[3])
+	c4 := archsimd.BroadcastInt16x8(ctx.kernel[4])
+	c5 := archsimd.BroadcastInt16x8(ctx.kernel[5])
+	c6 := archsimd.BroadcastInt16x8(ctx.kernel[6])
+	c7 := archsimd.BroadcastInt16x8(ctx.kernel[7])
+	xRound := archsimd.BroadcastInt16x8(8194) // half of 16384 plus round3 bias
+	yRound := archsimd.BroadcastInt32x4(convolve8YBias + (1 << (round1Bits - 1)))
+	rndOff := archsimd.BroadcastInt32x4(convolve8RoundOffset)
+	zero := archsimd.BroadcastInt32x4(0)
+	maxV := archsimd.BroadcastInt32x4(255)
+	rows := ctx.height + ctx.tapsY - 1
+	need := (rows-1)*ctx.refStr + ctx.width + 8
+	if ctx.width%8 == 0 && ctx.refStr > 0 && need >= 0 && len(ctx.ref) >= need {
+		u8HorizontalHalfIMResident(ctx, im)
+	} else {
+		for y := 0; y < rows; y++ {
+			src := ctx.ref[y*ctx.refStr:]
+			row := im[y*maxBlockSize:]
+			x := 0
+			for ; x+8 <= ctx.width; x += 8 {
+				u8SumRowHalf(src[x:], xTaps, ctx.tapsX).Add(xRound).ShiftAllRight(2).Store(row[x : x+8])
+			}
+			if x < ctx.width {
+				var win [16]byte
+				copy(win[:], src[x:])
+				var out [8]int16
+				u8SumRowHalf(win[:], xTaps, ctx.tapsX).Add(xRound).ShiftAllRight(2).Store(out[:])
+				copy(row[x:x+4], out[:4])
+			}
+		}
+	}
+	imBase := unsafe.Pointer(unsafe.SliceData(im))
+	load := func(y, x int) archsimd.Int16x8 {
+		return archsimd.LoadInt16x8((*[8]int16)(unsafe.Add(imBase, (y*maxBlockSize+x)*2))[:])
+	}
+	for y := range ctx.height {
+		dst := ctx.dst[y*ctx.dstStr:]
+		for x := 0; x < ctx.width; x += 8 {
+			v := load(y, x)
+			lo, hi := u8WideMAC8(zero, zero, v, c0)
+			v = load(y+1, x)
+			lo, hi = u8WideMAC8(lo, hi, v, c1)
+			v = load(y+2, x)
+			lo, hi = u8WideMAC8(lo, hi, v, c2)
+			v = load(y+3, x)
+			lo, hi = u8WideMAC8(lo, hi, v, c3)
+			if ctx.tapsY > 4 {
+				v = load(y+4, x)
+				lo, hi = u8WideMAC8(lo, hi, v, c4)
+				v = load(y+5, x)
+				lo, hi = u8WideMAC8(lo, hi, v, c5)
+			}
+			if ctx.tapsY > 6 {
+				v = load(y+6, x)
+				lo, hi = u8WideMAC8(lo, hi, v, c6)
+				v = load(y+7, x)
+				lo, hi = u8WideMAC8(lo, hi, v, c7)
+			}
+			lo = lo.Add(yRound).ShiftAllRight(round1Bits).Sub(rndOff).Max(zero).Min(maxV)
+			hi = hi.Add(yRound).ShiftAllRight(round1Bits).Sub(rndOff).Max(zero).Min(maxV)
+			packed := u8PackClipped32(lo, hi)
+			var tmp [16]byte
+			packed.Store(tmp[:])
+			if x+8 <= ctx.width {
+				copy(dst[x:x+8], tmp[:8])
+			} else {
+				copy(dst[x:ctx.width], tmp[:ctx.width-x])
+			}
+		}
+	}
+}
+
+func u8HorizontalHalfIMResident(ctx *convolve8GoSIMDCtx, im []int16) {
+	c0 := archsimd.BroadcastInt16x8(ctx.xKern[0] / 2)
+	c1 := archsimd.BroadcastInt16x8(ctx.xKern[1] / 2)
+	c2 := archsimd.BroadcastInt16x8(ctx.xKern[2] / 2)
+	c3 := archsimd.BroadcastInt16x8(ctx.xKern[3] / 2)
+	c4 := archsimd.BroadcastInt16x8(ctx.xKern[4] / 2)
+	c5 := archsimd.BroadcastInt16x8(ctx.xKern[5] / 2)
+	c6 := archsimd.BroadcastInt16x8(ctx.xKern[6] / 2)
+	c7 := archsimd.BroadcastInt16x8(ctx.xKern[7] / 2)
+	xRound := archsimd.BroadcastInt16x8(8194)
+	base := unsafe.Pointer(unsafe.SliceData(ctx.ref))
+	for y := 0; y < ctx.height+ctx.tapsY-1; y++ {
+		row := im[y*maxBlockSize:]
+		for x := 0; x < ctx.width; x += 8 {
+			a := archsimd.LoadUint8x16((*[16]byte)(unsafe.Add(base, y*ctx.refStr+x))[:])
+			sum := u8HalfMAC(a.ExtendLo8ToUint16().BitsToInt16(), c0, xRound)
+			sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 1).ExtendLo8ToUint16().BitsToInt16(), c1, sum)
+			sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 2).ExtendLo8ToUint16().BitsToInt16(), c2, sum)
+			sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 3).ExtendLo8ToUint16().BitsToInt16(), c3, sum)
+			if ctx.tapsX > 4 {
+				sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 4).ExtendLo8ToUint16().BitsToInt16(), c4, sum)
+				sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 5).ExtendLo8ToUint16().BitsToInt16(), c5, sum)
+			}
+			if ctx.tapsX > 6 {
+				sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 6).ExtendLo8ToUint16().BitsToInt16(), c6, sum)
+				sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 7).ExtendLo8ToUint16().BitsToInt16(), c7, sum)
+			}
+			sum.ShiftAllRight(2).Store(row[x : x+8])
 		}
 	}
 }
@@ -196,6 +481,39 @@ func convolve2D8GoSIMDWithScratch(dst frame.Plane, ref frame.Plane, dstX int, ds
 	foY := filterTaps/2 - 1
 	loX, nX := hbdTapSpan(&xKernel)
 	loY, nY := hbdTapSpan(&yKernel)
+	trimX := hbdTrimTaps(&xKernel, loX, nX)
+	trimY := hbdTrimTaps(&yKernel, loY, nY)
+	if half, ok := u8HalfTaps(&trimX, 8194); ok {
+		ctx := convolve8GoSIMDCtx{
+			dst:    dst.Pix[dstY*dst.Stride+dstX:],
+			ref:    ref.Pix[(refY-foY+loY)*ref.Stride+(refX-foX+loX):],
+			kernel: trimY, xKern: trimX, dstStr: dst.Stride, refStr: ref.Stride,
+			width: width, height: height, tapsX: nX, tapsY: nY,
+		}
+		if scratch != nil {
+			convolve2D8HalfKernel(&ctx, scratch.im[:], &half)
+		} else {
+			loadTaps := nY
+			if loadTaps < 4 {
+				loadTaps = 4
+			} else if loadTaps&1 != 0 {
+				loadTaps++
+			}
+			needRows := height + loadTaps - 1
+			switch {
+			case needRows <= 8:
+				var local [8 * maxBlockSize]int16
+				convolve2D8HalfKernel(&ctx, local[:], &half)
+			case needRows <= 32:
+				var local [32 * maxBlockSize]int16
+				convolve2D8HalfKernel(&ctx, local[:], &half)
+			default:
+				var local [(maxBlockSize + filterTaps - 1) * maxBlockSize]int16
+				convolve2D8HalfKernel(&ctx, local[:], &half)
+			}
+		}
+		return
+	}
 	var im []int32
 	if scratch != nil {
 		im = scratch.imHBD[:]
@@ -206,8 +524,8 @@ func convolve2D8GoSIMDWithScratch(dst frame.Plane, ref frame.Plane, dstX int, ds
 	ctx := convolve8GoSIMDCtx{
 		dst:    dst.Pix[dstY*dst.Stride+dstX:],
 		ref:    ref.Pix[(refY-foY+loY)*ref.Stride+(refX-foX+loX):],
-		kernel: hbdTrimTaps(&yKernel, loY, nY),
-		xKern:  hbdTrimTaps(&xKernel, loX, nX),
+		kernel: trimY,
+		xKern:  trimX,
 		dstStr: dst.Stride,
 		refStr: ref.Stride,
 		width:  width,

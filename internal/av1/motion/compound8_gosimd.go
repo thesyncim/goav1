@@ -47,6 +47,27 @@ func u8Samples8(pix []byte) archsimd.Int16x8 {
 	return u8Bytes16(pix).ExtendLo8ToUint16().BitsToInt16()
 }
 
+// u8SumRowHalf reads the full 8-output tap window once. The caller proves the
+// halved filter sum fits signed 16-bit lanes. A padded load handles exact
+// minimum-length windows at the last row without touching the next row.
+func u8SumRowHalf(pix []byte, t *hbdTaps16, n int) archsimd.Int16x8 {
+	a := u8Bytes16(pix)
+	z := archsimd.BroadcastInt16x8(0)
+	s := u8HalfMAC(a.ExtendLo8ToUint16().BitsToInt16(), t[0], z)
+	s = u8HalfMAC(a.ConcatShiftBytesRight(a, 1).ExtendLo8ToUint16().BitsToInt16(), t[1], s)
+	s = u8HalfMAC(a.ConcatShiftBytesRight(a, 2).ExtendLo8ToUint16().BitsToInt16(), t[2], s)
+	s = u8HalfMAC(a.ConcatShiftBytesRight(a, 3).ExtendLo8ToUint16().BitsToInt16(), t[3], s)
+	if n > 4 {
+		s = u8HalfMAC(a.ConcatShiftBytesRight(a, 4).ExtendLo8ToUint16().BitsToInt16(), t[4], s)
+		s = u8HalfMAC(a.ConcatShiftBytesRight(a, 5).ExtendLo8ToUint16().BitsToInt16(), t[5], s)
+	}
+	if n > 6 {
+		s = u8HalfMAC(a.ConcatShiftBytesRight(a, 6).ExtendLo8ToUint16().BitsToInt16(), t[6], s)
+		s = u8HalfMAC(a.ConcatShiftBytesRight(a, 7).ExtendLo8ToUint16().BitsToInt16(), t[7], s)
+	}
+	return s
+}
+
 // u8SumRowX is the eight-lane horizontal tap sum over n taps for byte samples.
 // It loads two 16-byte vectors once and forms each tap's sample vector with a
 // constant byte shift. The taps past n are zero, so the result is the n-tap sum.
