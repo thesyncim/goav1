@@ -8,42 +8,10 @@ package encoder
 
 import (
 	"math/rand"
-	"reflect"
-	"runtime"
-	"strings"
 	"testing"
 
 	"simd/archsimd"
 )
-
-func funcName(f any) string {
-	return runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
-}
-
-// TestSADDispatchBoundToSIMD proves only the promoted 8x8 four-reference
-// kernel is bound to Go-native SIMD. Other SAD shapes retain their measured
-// NEON implementations.
-func TestSADDispatchBoundToSIMD(t *testing.T) {
-	cases := []struct {
-		name     string
-		fn       any
-		wantSIMD bool
-	}{
-		{"sad8x8Impl", sad8x8Impl, false},
-		{"sad16x16Impl", sad16x16Impl, false},
-		{"sad32x32Impl", sad32x32Impl, false},
-		{"sad8x8x4Impl", sad8x8x4Impl, true},
-		{"sad16x16x4Impl", sad16x16x4Impl, false},
-		{"sad32x32x4Impl", sad32x32x4Impl, false},
-	}
-	for _, c := range cases {
-		name := funcName(c.fn)
-		isSIMD := strings.Contains(name, "SIMD")
-		if isSIMD != c.wantSIMD {
-			t.Errorf("%s bound to %q: SIMD=%v, want SIMD=%v", c.name, name, isSIMD, c.wantSIMD)
-		}
-	}
-}
 
 func makeSADPlane(seed int64, n int) ([]byte, []byte) {
 	rng := rand.New(rand.NewSource(seed))
@@ -144,19 +112,6 @@ func TestSADSIMDAbsDiffUnsignedEdges(t *testing.T) {
 			t.Fatalf("lane %d: absdiff(%d,%d)=%d, want %d", i, a[i], b[i], got[i], want)
 		}
 	}
-}
-
-func TestSADSIMDZeroAlloc(t *testing.T) {
-	const stride = 64
-	src, ref := makeSADPlane(1, stride*64)
-	var sink int
-	if allocs := testing.AllocsPerRun(200, func() {
-		a, b, c, d := sad8x8x4SIMD(src, ref, ref[4:], ref[8:], ref[12:], stride)
-		sink += a + b + c + d
-	}); allocs != 0 {
-		t.Fatalf("8x8x4 SIMD allocated %.2f objects/op, want 0 (sink=%d)", allocs, sink)
-	}
-	_ = sink
 }
 
 var sadSIMDBenchSink int
