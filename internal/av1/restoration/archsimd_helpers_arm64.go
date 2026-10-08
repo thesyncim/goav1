@@ -24,16 +24,6 @@ func restorationSaturateInt32PairToUint16(lo, hi archsimd.Int32x4) archsimd.Uint
 	return lo64.InterleaveLo(hi64).ReshapeToUint16s()
 }
 
-// restorationShiftRightSaturateInt32PairToUint16 arithmetic-shifts two int32
-// halves, clamps negatives to zero, then packs with unsigned saturation. It
-// replaces SQSHRUN/SQSHRUN2 with the equivalent official vector operations.
-func restorationShiftRightSaturateInt32PairToUint16(lo, hi archsimd.Int32x4, shift uint8) archsimd.Uint16x8 {
-	zero := archsimd.BroadcastInt32x4(0)
-	lo = lo.ShiftAllRight(uint64(shift)).Max(zero)
-	hi = hi.ShiftAllRight(uint64(shift)).Max(zero)
-	return restorationSaturateInt32PairToUint16(lo, hi)
-}
-
 // restorationRoundShiftNarrowInt32Pair rounds and signed-saturates two int32
 // halves to int16. The two shift vectors and one mask are broadcast once by the
 // caller, outside the row loop.
