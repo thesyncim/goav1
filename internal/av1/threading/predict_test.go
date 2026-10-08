@@ -2,6 +2,7 @@ package threading
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/prediction"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
+
+var benchmarkCFLPredictionSink int
 
 func TestFrameWorkBatchPredictBlockLumaIntraDC(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
@@ -2312,6 +2315,333 @@ func TestFrameWorkBatchPredictBlockChromaCFLMatchesPrimitives(t *testing.T) {
 	testPredictFrameWorkCFLWant(t, want, visit, FrameWorkPlaneV)
 	assertFrameWorkPlaneBlockEqual(t, output.U, want.U, output.Layout.BytesPerSample, 8, 8, 8, 8)
 	assertFrameWorkPlaneBlockEqual(t, output.V, want.V, output.Layout.BytesPerSample, 8, 8, 8, 8)
+}
+
+func TestFrameWorkBatchPredictBlockChromaCFLMatchesPerPlaneOracle(t *testing.T) {
+	tests := []struct {
+		name   string
+		format frame.Format
+		pad    bool
+		zero   bool
+	}{
+		{name: "420-10", format: frame.Format{Width: 64, Height: 64, BitDepth: 10, SubsamplingX: true, SubsamplingY: true, Align: 128}},
+		{name: "420-12-padding-alpha-zero", format: frame.Format{Width: 34, Height: 34, BitDepth: 12, SubsamplingX: true, SubsamplingY: true, Align: 128}, pad: true, zero: true},
+		{name: "422-10", format: frame.Format{Width: 64, Height: 64, BitDepth: 10, SubsamplingX: true, Align: 128}},
+		{name: "422-12", format: frame.Format{Width: 64, Height: 64, BitDepth: 12, SubsamplingX: true, Align: 128}},
+		{name: "444-10", format: frame.Format{Width: 64, Height: 64, BitDepth: 10, Align: 128}},
+		{name: "444-12", format: frame.Format{Width: 64, Height: 64, BitDepth: 12, Align: 128}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := testBatchFrame(t, tt.format)
+			want := testBatchFrame(t, tt.format)
+			testFillCFLFrame(got)
+			testFillCFLFrame(want)
+			visit := testCFLPredictionVisit()
+			if tt.pad {
+				visit.Block.MICol, visit.Block.MIRow = 6, 6
+				visit.Block.MIColEnd, visit.Block.MIRowEnd = 10, 10
+				visit.Block.X4, visit.Block.Y4 = 6, 6
+			}
+			if tt.zero {
+				visit.Prediction.CFLAlpha.JointSign = 0
+			}
+			gotCtx := testIntraPredictionBatch(got)
+			wantCtx := testIntraPredictionBatch(want)
+			var gotScratch, wantScratch FrameWorkCFLPredictionScratch
+			if err := gotCtx.PredictBlockChromaCFL(0, visit, &gotScratch); err != nil {
+				t.Fatal(err)
+			}
+			if err := wantCtx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneU, &wantScratch); err != nil {
+				t.Fatal(err)
+			}
+			if err := wantCtx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneV, &wantScratch); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got.U.Pix, want.U.Pix) || !slices.Equal(got.V.Pix, want.V.Pix) {
+				t.Fatal("shared CfL output differs from the former per-plane path")
+			}
+		})
+	}
+}
+
+func TestFrameWorkBatchPredictBlockChromaCFLPreservesAliasAndErrorOrder(t *testing.T) {
+	t.Run("overlapping-luma-and-chroma", func(t *testing.T) {
+		format := frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64}
+		got, want := testBatchFrame(t, format), testBatchFrame(t, format)
+		gotShared, wantShared := make([]byte, 64*64), make([]byte, 64*64)
+		got.Y.Pix, got.U.Pix = gotShared, gotShared
+		want.Y.Pix, want.U.Pix = wantShared, wantShared
+		got.Y.Stride, got.U.Stride = 64, 64
+		want.Y.Stride, want.U.Stride = 64, 64
+		got.Format.SubsamplingX, got.Format.SubsamplingY = false, false
+		want.Format = got.Format
+		gotCtx, wantCtx := testIntraPredictionBatch(got), testIntraPredictionBatch(want)
+		testFillCFLFrame(got)
+		testFillCFLFrame(want)
+		if !frameWorkCFLYMayAliasChroma(got) {
+			t.Fatal("overlapping plane storage was not detected")
+		}
+		visit := testCFLPredictionVisit()
+		var gotScratch, wantScratch FrameWorkCFLPredictionScratch
+		if err := gotCtx.PredictBlockChromaCFL(0, visit, &gotScratch); err != nil {
+			t.Fatal(err)
+		}
+		if err := wantCtx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneU, &wantScratch); err != nil {
+			t.Fatal(err)
+		}
+		if err := wantCtx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneV, &wantScratch); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(gotShared, wantShared) || !slices.Equal(got.V.Pix, want.V.Pix) {
+			t.Fatal("aliased output differs from the former per-plane path")
+		}
+	})
+
+	t.Run("v-geometry-error-after-u-write", func(t *testing.T) {
+		format := frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
+		got, want := testBatchFrame(t, format), testBatchFrame(t, format)
+		testFillCFLFrame(got)
+		testFillCFLFrame(want)
+		got.V.Stride, want.V.Stride = 0, 0
+		gotCtx, wantCtx := testIntraPredictionBatch(got), testIntraPredictionBatch(want)
+		visit := testCFLPredictionVisit()
+		var gotScratch, wantScratch FrameWorkCFLPredictionScratch
+		gotErr := gotCtx.PredictBlockChromaCFL(0, visit, &gotScratch)
+		if !errors.Is(gotErr, ErrInvalidBatch) {
+			t.Fatalf("shared error=%v want %v", gotErr, ErrInvalidBatch)
+		}
+		if err := wantCtx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneU, &wantScratch); err != nil {
+			t.Fatal(err)
+		}
+		wantErr := wantCtx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneV, &wantScratch)
+		if !errors.Is(wantErr, ErrInvalidBatch) {
+			t.Fatalf("legacy error=%v want %v", wantErr, ErrInvalidBatch)
+		}
+		if !slices.Equal(got.U.Pix, want.U.Pix) || !slices.Equal(got.V.Pix, want.V.Pix) {
+			t.Fatal("partial output before V error differs from the former per-plane path")
+		}
+	})
+}
+
+func TestFrameWorkSubsampleLumaCFLQ3HBDUnalignedFallbackAndMaxValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		bitDepth uint8
+		subX     bool
+		subY     bool
+	}{
+		{name: "420-10", bitDepth: 10, subX: true, subY: true},
+		{name: "422-12", bitDepth: 12, subX: true},
+		{name: "444-10", bitDepth: 10},
+	} {
+		for _, layout := range []struct {
+			name   string
+			stride int
+			base   int
+		}{{name: "odd-stride-odd-base", stride: 65, base: 1}, {name: "even-stride-odd-base", stride: 66, base: 1}} {
+			t.Run(tt.name+"/"+layout.name, func(t *testing.T) {
+				const width, height = 16, 16
+				stride := layout.stride
+				backing := make([]byte, layout.base+stride*height)
+				plane := frame.Plane{Pix: backing[layout.base:], Stride: stride, Width: 32, Height: 16}
+				max := uint16((1 << tt.bitDepth) - 1)
+				for row := 0; row < height; row++ {
+					for col := 0; col < 32; col++ {
+						value := (uint16(row*37+col*23+5) & max)
+						offset := row*stride + col*2
+						plane.Pix[offset], plane.Pix[offset+1] = byte(value), byte(value>>8)
+					}
+				}
+				var got, want [prediction.CFLBufSquare]uint16
+				if err := frameWorkSubsampleLumaCFLQ3(got[:], plane, 2, tt.bitDepth, 2, 0, width, height, tt.subX, tt.subY); err != nil {
+					t.Fatal(err)
+				}
+				outW, outH := width, height
+				if tt.subX {
+					outW /= 2
+				}
+				if tt.subY {
+					outH /= 2
+				}
+				read := func(row, col int) uint16 {
+					offset := row*stride + (2+col)*2
+					return uint16(plane.Pix[offset]) | uint16(plane.Pix[offset+1])<<8
+				}
+				for row := 0; row < outH; row++ {
+					for col := 0; col < outW; col++ {
+						var value uint16
+						switch {
+						case tt.subX && tt.subY:
+							top, bot := row*2, row*2+1
+							left := col * 2
+							value = (read(top, left) + read(top, left+1) + read(bot, left) + read(bot, left+1)) << 1
+						case tt.subX:
+							left := col * 2
+							value = (read(row, left) + read(row, left+1)) << 2
+						default:
+							value = read(row, col) << 3
+						}
+						want[row*prediction.CFLBufLine+col] = value
+					}
+				}
+				if !slices.Equal(got[:], want[:]) {
+					t.Fatal("unaligned HBD fallback differs from scalar byte reference")
+				}
+				badOffset := 5*stride + (2+7)*2
+				plane.Pix[badOffset], plane.Pix[badOffset+1] = byte(max+1), byte((max+1)>>8)
+				if err := frameWorkSubsampleLumaCFLQ3(got[:], plane, 2, tt.bitDepth, 2, 0, width, height, tt.subX, tt.subY); !errors.Is(err, ErrInvalidBatch) {
+					t.Fatalf("sample above bit-depth maximum err=%v want %v", err, ErrInvalidBatch)
+				}
+			})
+		}
+	}
+}
+
+func TestFrameWorkSubsampleLumaCFLQ3HBDAlignedMaxValidation(t *testing.T) {
+	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, SubsamplingX: true, SubsamplingY: true, Align: 128})
+	if !frameWorkNativeLittleEndian || output.Y.Stride&1 != 0 {
+		t.Skip("requires the native-endian aligned HBD view")
+	}
+	const x, y, width, height = 16, 16, 16, 16
+	offset := y*output.Y.Stride + x*output.Layout.BytesPerSample
+	output.Y.Pix[offset], output.Y.Pix[offset+1] = 0, 0x04 // 1024 is outside the 10-bit range.
+	var got [prediction.CFLBufSquare]uint16
+	if err := frameWorkSubsampleLumaCFLQ3(got[:], output.Y, output.Layout.BytesPerSample, 10, x, y, width, height, true, true); !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("aligned SIMD-route sample above maximum err=%v want %v", err, ErrInvalidBatch)
+	}
+}
+
+// BenchmarkFrameWorkPredictBlockChromaCFLWarm isolates duplicate per-plane
+// preparation versus shared preparation; both paths use the current HBD
+// subsampler, so this is a block-level hoisting comparison, not a full prechange
+// baseline.
+func BenchmarkFrameWorkPredictBlockChromaCFLWarm(b *testing.B) {
+	blockCases := []struct {
+		name string
+		size tile.BlockSize
+	}{
+		{name: "8x8", size: tile.BlockSize8x8},
+		{name: "16x16", size: tile.BlockSize16x16},
+		{name: "32x32", size: tile.BlockSize32x32},
+	}
+	for _, bitDepth := range []uint8{10, 12} {
+		for _, chroma := range []struct {
+			name string
+			x, y bool
+		}{{name: "420", x: true, y: true}, {name: "444"}} {
+			for _, block := range blockCases {
+				name := fmt.Sprintf("bd%d-%s-%s", bitDepth, chroma.name, block.name)
+				b.Run(name, func(b *testing.B) {
+					for _, method := range []string{"sequential-per-plane", "shared"} {
+						b.Run(method, func(b *testing.B) {
+							format := frame.Format{Width: 64, Height: 64, BitDepth: bitDepth, SubsamplingX: chroma.x, SubsamplingY: chroma.y, Align: 128}
+							output := benchmarkCFLFrame(b, format)
+							testFillCFLFrame(output)
+							ctx := testIntraPredictionBatch(output)
+							visit := testCFLPredictionVisit()
+							visit.Block.Size = block.size
+							dims, ok := block.size.Dimensions()
+							if !ok {
+								b.Fatalf("missing dimensions for %s", block.name)
+							}
+							visit.Block.MIColEnd = visit.Block.MICol + uint16(dims.W4)
+							visit.Block.MIRowEnd = visit.Block.MIRow + uint16(dims.H4)
+							visit.Block.VisibleW4, visit.Block.VisibleH4 = dims.W4, dims.H4
+							chromaX, chromaY := 16, 16
+							if chroma.x {
+								chromaX >>= 1
+							}
+							if chroma.y {
+								chromaY >>= 1
+							}
+							sinkIndex := chromaY*output.U.Stride + chromaX*output.Layout.BytesPerSample
+							var scratch FrameWorkCFLPredictionScratch
+							// Y is read-only here, and the repeated U/V writes do not touch
+							// the current block's above/left DC edges, so setup remains
+							// stable across warm iterations without frame resets.
+							predict := func() {
+								var err error
+								if method == "shared" {
+									err = ctx.PredictBlockChromaCFL(0, visit, &scratch)
+								} else if err = ctx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneU, &scratch); err == nil {
+									err = ctx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneV, &scratch)
+								}
+								if err != nil {
+									b.Fatalf("CfL prediction: %v", err)
+								}
+								benchmarkCFLPredictionSink += int(output.U.Pix[sinkIndex]) + int(output.V.Pix[sinkIndex])
+							}
+							if allocs := testing.AllocsPerRun(100, predict); allocs != 0 {
+								b.Fatalf("warm CfL path allocated: %f", allocs)
+							}
+							b.ReportAllocs()
+							b.ResetTimer()
+							for b.Loop() {
+								predict()
+							}
+						})
+					}
+				})
+			}
+		}
+	}
+}
+
+func benchmarkCFLFrame(b *testing.B, format frame.Format) *frame.Frame {
+	b.Helper()
+	layout, err := frame.RequiredSize(format)
+	if err != nil {
+		b.Fatal(err)
+	}
+	buffer := make([]byte, layout.Size)
+	output, err := frame.Bind(buffer, format)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return &output
+}
+
+func TestFrameWorkBatchPredictBlockChromaCFLHBDNoAllocs(t *testing.T) {
+	for _, bitDepth := range []uint8{10, 12} {
+		for _, chroma := range []struct {
+			name string
+			x, y bool
+		}{{name: "420", x: true, y: true}, {name: "444"}} {
+			t.Run(fmt.Sprintf("bd%d-%s", bitDepth, chroma.name), func(t *testing.T) {
+				output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: bitDepth, SubsamplingX: chroma.x, SubsamplingY: chroma.y, Align: 128})
+				testFillCFLFrame(output)
+				ctx := testIntraPredictionBatch(output)
+				visit := testCFLPredictionVisit()
+				var scratch FrameWorkCFLPredictionScratch
+				allocs := testing.AllocsPerRun(100, func() {
+					if err := ctx.PredictBlockChromaCFL(0, visit, &scratch); err != nil {
+						t.Fatal(err)
+					}
+				})
+				if allocs != 0 {
+					t.Fatalf("HBD CfL path allocated: %f", allocs)
+				}
+			})
+		}
+	}
+}
+
+func testFillCFLFrame(output *frame.Frame) {
+	bytesPerSample := output.Layout.BytesPerSample
+	max := uint16((1 << output.Format.BitDepth) - 1)
+	for planeIndex, plane := range []*frame.Plane{&output.Y, &output.U, &output.V} {
+		if plane.Stride <= 0 {
+			continue
+		}
+		for offset := 0; offset+bytesPerSample <= len(plane.Pix); offset += bytesPerSample {
+			value := uint16((offset*17 + (planeIndex+1)*113) % (int(max) + 1))
+			plane.Pix[offset] = byte(value)
+			if bytesPerSample == 2 {
+				plane.Pix[offset+1] = byte(value >> 8)
+			}
+		}
+	}
 }
 
 func TestFrameWorkSubsampleLumaCFLQ3MatchesPrimitives(t *testing.T) {

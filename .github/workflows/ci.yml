@@ -151,7 +151,10 @@ jobs:
       max-parallel: 4
       matrix:
         shard:
-          - public
+          - public-0
+          - public-1
+          - public-2
+          - public-3
           - encoder
           - testvector
           - decode
@@ -178,6 +181,9 @@ jobs:
         run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
       - name: audit race shard coverage
         run: bash .github/scripts/race-ci.sh audit
+      - name: audit public race test coverage
+        if: ${{ matrix.shard == 'public-0' }}
+        run: bash .github/scripts/race-ci.sh audit-public
       - name: go test -race
         run: bash .github/scripts/race-ci.sh run "${{ matrix.shard }}"
 

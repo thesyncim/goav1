@@ -69,6 +69,46 @@ CFL subsampling improved against NEON for 8-bit inputs and against pure Go for
 16-bit inputs. The larger CFL apply case did not beat NEON, so that path keeps
 its existing implementation.
 
+## Removing repeated prediction work
+
+The resident high-bit-depth warp horizontal pass now evaluates four dot products
+with Go SIMD pairwise reductions and rounds/stores them as one vector. It reads
+the same 15-by-15 source footprint as the scalar implementation. XOR-centering
+and a filter-sum correction preserve the full uint16 input domain; unaligned
+sources and odd strides retain the scalar path.
+
+On the same M4 Max and official Go 1.27.1 SIMD build, five 300 ms samples measured
+371.8 ns for the scalar 15-by-8 intermediate tile and 104.3 ns for the selected
+SIMD kernel (72.0% less time), with zero allocations. The intermediate variant
+using scalar reductions and vector rounding measured 111.6 ns. These are kernel
+measurements, not a whole-decoder speedup claim.
+
+CfL now prepares the common luma subsampling and AC buffer once for U and V.
+The live HBD path also reaches the existing SIMD subsampling primitive through
+a checked little-endian uint16 view. Aliasing planes, odd byte strides, unaligned
+inputs, and unsupported native byte order retain the appropriate fallback;
+U still writes before V geometry errors are reported.
+
+A three-sample, 200 ms CfL block benchmark over 10/12-bit 4:2:0 and 4:4:4
+8/16/32-sized blocks measured 14.9–19.4% less time for shared preparation, with
+zero allocations. Both sides of this particular comparison already use the
+new HBD loader: it isolates preparation reuse rather than measuring the entire
+change against the previous decoder.
+
+Against `855b80f4`, six alternating baseline/candidate public warm-reset runs
+measured the two changes together on the same M4 Max (one thread, 1 s per
+sample). Median time for the 48-frame `p360_inter_q32_10bit` clip decreased
+from 101.334 ms to 98.417 ms (2.88%). The two 720p 8-bit clips changed by
+−0.35% and −0.96%, too small for a strong improvement claim on this host.
+All 18 clips / 864 reconstructed frames match their reference MD5s. The full
+Go test suite, focused race/checkptr tests, default and purego fallbacks passed.
+
+A request/CDF pointer experiment removed 792 bytes of repeated block arguments,
+but its initial improvement did not survive an ablation in the combined decoder.
+It was discarded. A per-cell motion-projection cache similarly removed arithmetic
+but increased routine time by 22–25% versus the actual previous implementation;
+it was discarded in favor of testing whole-run processing separately.
+
 ## High-bit-depth interpolation follow-up
 
 At `71aa5963`, the ARM64 SIMD dispatch uses six coefficient slots for 2D
