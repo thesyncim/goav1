@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build (darwin || linux) && arm64 && !purego
+//go:build (darwin || linux) && goexperiment.simd && (arm64 || amd64) && !purego
 
 package restoration
 
@@ -11,14 +11,9 @@ import (
 	"slices"
 	"syscall"
 	"testing"
-
-	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
 
-func TestWienerHorizontalU8NEONShortBorderDoesNotReadPastAllocation(t *testing.T) {
-	if !cpu.Detected.NEON {
-		t.Skip("arm64 NEON not detected")
-	}
+func TestWienerHorizontalU8SIMDShortBorderDoesNotReadPastAllocation(t *testing.T) {
 	const width, height = 16, 5
 	stride := width + 2*WienerHalfwin
 	srcLen := stride * (height + 2*WienerHalfwin)
@@ -39,7 +34,7 @@ func TestWienerHorizontalU8NEONShortBorderDoesNotReadPastAllocation(t *testing.T
 	for i := range src {
 		src[i] = uint8((i*53 + i/stride*7) & 0xff)
 	}
-	if wienerHorizontalU8NEONCanRun(len(src), stride, origin, width, height) {
+	if wienerHorizontalU8SIMDCanRun(len(src), stride, origin, width, height) {
 		t.Fatal("NEON vector guard accepted a row with only the scalar border")
 	}
 	round0, _ := wienerRounds(8)
@@ -47,7 +42,7 @@ func TestWienerHorizontalU8NEONShortBorderDoesNotReadPastAllocation(t *testing.T
 	want := make([]uint16, width*(height+2*WienerHalfwin))
 	got := make([]uint16, len(want))
 	wienerHorizontalU8(src, stride, origin, width, height, filter, round0, want)
-	wienerHorizontalU8NEON(src, stride, origin, width, height, filter, round0, got)
+	wienerHorizontalU8SIMDChecked(src, stride, origin, width, height, filter, round0, got)
 	if !slices.Equal(got, want) {
 		t.Fatal("NEON wrapper differs from scalar output for the minimal-border allocation")
 	}

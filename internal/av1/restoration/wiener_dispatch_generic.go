@@ -2,15 +2,17 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build (!amd64 && !arm64) || (arm64 && purego) || (amd64 && purego)
+//go:build !(goexperiment.simd && (amd64 || arm64) && !purego)
 
 package restoration
 
-// init binds the pure-Go Wiener passes on architectures the dispatcher does not
-// special-case, and on the arm64/amd64 purego builds where the SIMD asm is
-// excluded. This file only keeps the dispatch wiring symmetric across builds.
+// init binds the pure-Go Wiener passes on every build without the Go-native SIMD
+// kernels: architectures the dispatcher does not special-case, the purego
+// builds, and the default (non-goexperiment.simd) amd64/arm64 builds.
 func init() {
 	wienerHorizontalImpl = wienerHorizontal
 	wienerHorizontalTrustedImpl = wienerHorizontalTrusted
 	wienerVerticalImpl = wienerVertical
+	wienerHorizontalU8Impl = wienerHorizontalU8
+	wienerVerticalU8Impl = wienerVerticalU8
 }

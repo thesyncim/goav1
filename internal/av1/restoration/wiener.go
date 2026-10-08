@@ -262,3 +262,19 @@ func validWienerFilter(filter WienerFilter) bool {
 	}
 	return sum == 0
 }
+
+// roundBias returns the rounding term 1<<(bits-1) folded into an accumulator
+// seed so an arithmetic right shift by bits reproduces roundPowerOfTwo.
+func roundBias(bits int) int32 {
+	if bits <= 0 {
+		return 0
+	}
+	return 1 << (bits - 1)
+}
+
+// wienerFilterSymmetric reports whether the outer and inner tap pairs match, the
+// property the symmetric-pair Go-SIMD horizontal kernels rely on. Filters that
+// pass validWienerInfo always satisfy it; other filters take the scalar path.
+func wienerFilterSymmetric(filter WienerFilter) bool {
+	return filter[0] == filter[6] && filter[1] == filter[5] && filter[2] == filter[4]
+}

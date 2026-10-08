@@ -8,25 +8,16 @@ package restoration
 
 import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 
-// init binds the architecture-best 8-bit-pixel restoration kernels on arm64,
-// exactly like the u16 dispatchers in wiener_dispatch_arm64.go /
-// selfguided_dispatch_arm64.go. When NEON is available (mandatory on every
-// arm64 chip Go runs on) the kernels route through the hand-written NEON asm;
-// otherwise they keep the pure-Go references. The assignment happens once,
-// before any decoder goroutine starts, so the steady-state cost is a single
-// indirect call.
-//
-// Measured Go-SIMD candidates for these 8-bit kernels did not beat the NEON
-// implementations, so this dispatcher is shared by ordinary and simd builds.
+// init binds the architecture-best 8-bit-pixel self-guided projection on arm64,
+// exactly like the u16 dispatcher in selfguided_dispatch_arm64.go. The 8-bit
+// Wiener passes are bound in wiener_dispatch_*.go. When NEON is available
+// (mandatory on every arm64 chip Go runs on) the projection routes through the
+// hand-written NEON asm; otherwise it keeps the pure-Go reference.
 func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {
-		wienerHorizontalU8Impl = wienerHorizontalU8NEON
-		wienerVerticalU8Impl = wienerVerticalU8NEON
 		sgrWeightedRowU8Impl = sgrWeightedRowU8NEON
 		return
 	}
-	wienerHorizontalU8Impl = wienerHorizontalU8
-	wienerVerticalU8Impl = wienerVerticalU8
 	sgrWeightedRowU8Impl = sgrWeightedRowU8
 }
