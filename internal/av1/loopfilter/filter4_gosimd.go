@@ -49,6 +49,8 @@ func lfFilter4Core[S lfSample](pix []byte, q0Base int, step int, length int, _ i
 	one := archsimd.BroadcastInt16x8(1)
 	three := archsimd.BroadcastInt16x8(3)
 	four := archsimd.BroadcastInt16x8(4)
+	shift1 := archsimd.BroadcastInt16x8(-1)
+	shift3 := archsimd.BroadcastInt16x8(-3)
 	var changed uint
 	for g := 0; g < length/8; g++ {
 		base := q0Base + g*8*sz
@@ -61,7 +63,7 @@ func lfFilter4Core[S lfSample](pix []byte, q0Base int, step int, length int, _ i
 		need := lfAbsDiff[S](p1, p0).LessEqual(limit).
 			And(lfAbsDiff[S](q1, q0).LessEqual(limit)).
 			And(d0q0.Add(d0q0).
-				Add(lfAbsDiff[S](p1, q1).ShiftAllRight(1)).
+				Add(lfShift1(lfAbsDiff[S](p1, q1), shift1)).
 				LessEqual(blimit))
 		if !lfAny(need) {
 			continue
@@ -74,11 +76,11 @@ func lfFilter4Core[S lfSample](pix []byte, q0Base int, step int, length int, _ i
 		qs1 := q1.Sub(center)
 		f := ps1.Sub(qs1).Max(minV).Min(maxV).Masked(hev)
 		f = f.Add(qs0.Sub(ps0).Mul(three)).Max(minV).Min(maxV)
-		filter1 := f.Add(four).Max(minV).Min(maxV).ShiftAllRight(3)
-		filter2 := f.Add(three).Max(minV).Min(maxV).ShiftAllRight(3)
+		filter1 := lfShift3(f.Add(four).Max(minV).Min(maxV), shift3)
+		filter2 := lfShift3(f.Add(three).Max(minV).Min(maxV), shift3)
 		np0 := ps0.Add(filter2).Max(minV).Min(maxV).Add(center)
 		nq0 := qs0.Sub(filter1).Max(minV).Min(maxV).Add(center)
-		ov := filter1.Add(one).ShiftAllRight(1)
+		ov := lfShift1(filter1.Add(one), shift1)
 		np1 := p1.IfElse(hev, ps1.Add(ov).Max(minV).Min(maxV).Add(center))
 		nq1 := q1.IfElse(hev, qs1.Sub(ov).Max(minV).Min(maxV).Add(center))
 

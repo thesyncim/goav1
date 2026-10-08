@@ -25,6 +25,8 @@ func lfFilter4U8Wide(pix []byte, q0Base, step, length int, params filter4Params,
 	three8 := archsimd.BroadcastInt8x16(3)
 	four8 := archsimd.BroadcastInt8x16(4)
 	one8 := archsimd.BroadcastInt8x16(1)
+	shift1 := archsimd.BroadcastInt8x16(-1)
+	shift3 := archsimd.BroadcastInt8x16(-3)
 	p := unsafe.Pointer(unsafe.SliceData(pix))
 	for x := 0; x < length; x += 16 {
 		base := q0Base + x
@@ -41,7 +43,7 @@ func lfFilter4U8Wide(pix []byte, q0Base, step, length int, params filter4Params,
 		d2 := q1.Max(q0).Sub(q1.Min(q0))
 		d0 := p0.Max(q0).Sub(p0.Min(q0))
 		d3 := p1.Max(q1).Sub(p1.Min(q1))
-		threshold := d0.AddSaturated(d0).AddSaturated(d3.ShiftAllRight(1))
+		threshold := d0.AddSaturated(d0).AddSaturated(d3.Shift(shift1))
 		need := limit.GreaterEqual(d1.Max(d2)).And(blimit.GreaterEqual(threshold))
 		mask := need.ToInt8x16().ToBits().ReshapeToUint64s()
 		lo, hi := mask.GetElem(0), mask.GetElem(1)
@@ -69,9 +71,9 @@ func lfFilter4U8Wide(pix []byte, q0Base, step, length int, params filter4Params,
 		fHi := deltaHi.Mul(three16).Add(outerF.HiToLo().ExtendLo8ToInt16()).SaturateToInt8()
 		fHiBits := fHi.ToBits()
 		f := fLo.ToBits().Or(fHiBits.ConcatShiftBytesRight(fHiBits, 8)).BitsToInt8()
-		filter1 := f.AddSaturated(four8).ShiftAllRight(3)
-		filter2 := f.AddSaturated(three8).ShiftAllRight(3)
-		outer := filter1.Add(one8).ShiftAllRight(1)
+		filter1 := f.AddSaturated(four8).Shift(shift3)
+		filter2 := f.AddSaturated(three8).Shift(shift3)
+		outer := filter1.Add(one8).Shift(shift1)
 
 		np0 := p0c.AddSaturated(filter2).ToBits().Xor(bias).IfElse(need, p0)
 		nq0 := q0c.SubSaturated(filter1).ToBits().Xor(bias).IfElse(need, q0)

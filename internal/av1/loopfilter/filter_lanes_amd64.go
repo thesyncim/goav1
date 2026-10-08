@@ -46,3 +46,18 @@ func lfAll(m archsimd.Mask16x8) bool {
 	m.ToInt16x8().StoreArray(&lanes)
 	return lanes[0]&lanes[1]&lanes[2]&lanes[3]&lanes[4]&lanes[5]&lanes[6]&lanes[7] == -1
 }
+
+// lfShift1 shifts by a reusable vector on arm64.
+func lfShift1(v, by archsimd.Int16x8) archsimd.Int16x8 {
+	return v.ShiftAllRight(1)
+}
+
+// lfShift3 shifts by a reusable vector on arm64.
+func lfShift3(v, by archsimd.Int16x8) archsimd.Int16x8 {
+	return v.ShiftAllRight(3)
+}
+
+// lfShift4 shifts by a reusable vector on arm64.
+func lfShift4(v, by archsimd.Int16x8) archsimd.Int16x8 {
+	return v.ShiftAllRight(4)
+}

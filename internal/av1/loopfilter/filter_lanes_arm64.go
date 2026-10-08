@@ -35,3 +35,18 @@ func lfAny(m archsimd.Mask16x8) bool {
 func lfAll(m archsimd.Mask16x8) bool {
 	return m.ToInt16x8().ToBits().ReduceSum() == 65528
 }
+
+// lfShift1 shifts by a reusable vector on arm64.
+func lfShift1(v, by archsimd.Int16x8) archsimd.Int16x8 {
+	return v.Shift(by)
+}
+
+// lfShift3 shifts by a reusable vector on arm64.
+func lfShift3(v, by archsimd.Int16x8) archsimd.Int16x8 {
+	return v.Shift(by)
+}
+
+// lfShift4 shifts by a reusable vector on arm64.
+func lfShift4(v, by archsimd.Int16x8) archsimd.Int16x8 {
+	return v.Shift(by)
+}
