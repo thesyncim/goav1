@@ -16,5 +16,15 @@ func init() {
 	if !archsimd.X86.AVX2() {
 		return
 	}
+	predictPaethImpl = predictPaethSIMD
+	predictSmoothImpl = predictSmoothSIMD
+	predictSmoothVerticalImpl = predictSmoothVerticalSIMD
+	predictSmoothHorizontalImpl = predictSmoothHorizontalSIMD
+	sumSamplesImpl = sumSamplesSIMD
+	applyCFLImpl = applyCFLSIMD
+	subsampleLuma8Impl = subsampleLuma8SIMD
+	dirRowInterp8Impl = dirRowInterp8SIMD
+	dirAboveRun8Impl = dirAboveRun8SIMD
+	dirLeftCol8Impl = dirLeftCol8SIMD
 	predictFilterIntra8Impl = predictFilterIntraBlockDirect8SIMD
 }

@@ -2,11 +2,13 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build goexperiment.simd && arm64 && !purego
+//go:build goexperiment.simd && (arm64 || amd64) && !purego
 
 package prediction
 
 import (
+	"runtime"
+	"simd/archsimd"
 	"testing"
 )
 
@@ -183,6 +185,9 @@ func TestStaticSIMDEdgePatterns(t *testing.T) {
 // predictors to the dispatch slots, so the tests above exercise the production
 // targets.
 func TestStaticSIMDBinding(t *testing.T) {
+	if runtime.GOARCH == "amd64" && !archsimd.X86.AVX2() {
+		t.Skip("AVX2 not available; the SIMD kernels are not bound")
+	}
 	assertDispatchTarget(t, "predictPaethImpl", predictPaethImpl, "predictPaethSIMD")
 	assertDispatchTarget(t, "predictSmoothImpl", predictSmoothImpl, "predictSmoothSIMD")
 	assertDispatchTarget(t, "predictSmoothVerticalImpl", predictSmoothVerticalImpl, "predictSmoothVerticalSIMD")

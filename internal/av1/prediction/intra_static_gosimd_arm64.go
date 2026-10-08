@@ -32,61 +32,11 @@ import (
 	"simd/archsimd"
 )
 
-const (
-	// smoothScale is the fixed-point weight scale (256).
-	smoothScale = 1 << smoothWeightLog2Scale
-	// smoothShift1D is the divideRound bit count for SMOOTH_V/H (8).
-	smoothShift1D = smoothWeightLog2Scale
-	// smoothShiftFull is the divideRound bit count for 2D SMOOTH (9).
-	smoothShiftFull = 1 + smoothWeightLog2Scale
-)
-
-// storeU8x8 narrows eight uint16 lanes (each already in [0,255]) into the eight
-// bytes at dst[0:8].
-func storeU8x8(dst []byte, v archsimd.Uint16x8) {
-	binary.LittleEndian.PutUint64(dst, v.SaturateToUint8().ReshapeToUint64s().GetElem(0))
-}
-
 // storeU16x8 writes the eight uint16 lanes of v to dst[0:16], little-endian.
 func storeU16x8(dst []byte, v archsimd.Int16x8) {
 	r := v.ToBits().ReshapeToUint64s()
 	binary.LittleEndian.PutUint64(dst, r.GetElem(0))
 	binary.LittleEndian.PutUint64(dst[8:], r.GetElem(1))
-}
-
-// loadU16x8 loads eight uint16 samples at s[0:8] as an Int16x8. Samples are at
-// most 12 bits so the bit pattern is a non-negative int16.
-func loadU16x8(s []uint16) archsimd.Int16x8 {
-	return archsimd.LoadUint16x8Array((*[8]uint16)(s)).ConvertToInt16()
-}
-
-// paethInt16 computes PAETH for one 8-lane vector of above samples aV against
-// the per-row left value lV and the block's aboveLeft constants (tlV = tl,
-// lmtV = left-2*tl). The three distances and the left/top/topLeft tie order are the
-// same as paethPredictorSingle.
-func paethInt16(aV, lV, tlV, lmtV, pTop archsimd.Int16x8) archsimd.Int16x8 {
-	pLeft := aV.Sub(tlV).Abs()
-	pTopLeft := aV.Add(lmtV).Abs()
-	out := tlV
-	out = aV.IfElse(pTop.LessEqual(pTopLeft), out)
-	leftMask := pLeft.LessEqual(pTop).And(pLeft.LessEqual(pTopLeft))
-	return lV.IfElse(leftMask, out)
-}
-
-// paeth8SIMD is the 8-bit kernel for width a multiple of 8.
-func paeth8SIMD(block planeBlock, above []uint16, left []uint16, aboveLeft uint16) {
-	width, height := block.width, block.height
-	tlV := archsimd.BroadcastInt16x8(int16(aboveLeft))
-	for row := 0; row < height; row++ {
-		lV := archsimd.BroadcastInt16x8(int16(left[row]))
-		pTop := archsimd.BroadcastInt16x8(absDiffInt16(left[row], aboveLeft))
-		lmtV := archsimd.BroadcastInt16x8(int16(left[row]) - int16(aboveLeft)*2)
-		dst := block.pix[row*block.stride:][:width]
-		for col := 0; col < width; col += 8 {
-			out := paethInt16(loadU16x8(above[col:]), lV, tlV, lmtV, pTop)
-			storeU8x8(dst[col:], out.ConvertToUint16())
-		}
-	}
 }
 
 // paethW4SIMD is the 8-bit kernel for width 4 and even height. Lanes 0..3 hold
@@ -107,84 +57,6 @@ func paethW4SIMD(block planeBlock, above []uint16, left []uint16, aboveLeft uint
 		stride := block.stride
 		putU32(block.pix, row*stride, packed.GetElem(0))
 		putU32(block.pix, (row+1)*stride, packed.GetElem(1))
-	}
-}
-
-// putU32 stores v little-endian at pix[off:off+4].
-func putU32(pix []byte, off int, v uint32) {
-	binary.LittleEndian.PutUint32(pix[off:], v)
-}
-
-// smooth8Cols holds the per-column constants of the 8-bit 2D SMOOTH predictor for
-// each 8-column block: the horizontal weights and (256-wW)*rightPred.
-type smooth8Cols struct {
-	wW  [8]archsimd.Uint16x8
-	cwR [8]archsimd.Uint16x8
-}
-
-// smooth8SIMD is the 8-bit 2D SMOOTH kernel for width a multiple of 8.
-func smooth8SIMD(block planeBlock, weightsW []uint16, weightsH []uint16, above []uint16, left []uint16, belowPred uint16, rightPred uint16) {
-	width, height := block.width, block.height
-	blocks := width / 8
-	rightV := archsimd.BroadcastUint16x8(rightPred)
-	scaleV := archsimd.BroadcastUint16x8(smoothScale)
-	oneV := archsimd.BroadcastUint16x8(1)
-	roundV := archsimd.BroadcastUint16x8(1 << (smoothShift1D - 1))
-	var cols smooth8Cols
-	for b := 0; b < blocks; b++ {
-		w := archsimd.LoadUint16x8Array((*[8]uint16)(weightsW[b*8:]))
-		cols.wW[b] = w
-		cols.cwR[b] = scaleV.Sub(w).Mul(rightV)
-	}
-	for row := 0; row < height; row++ {
-		wH := weightsH[row]
-		wHV := archsimd.BroadcastUint16x8(wH)
-		cbH := archsimd.BroadcastUint16x8(smoothComplement(wH, belowPred))
-		lV := archsimd.BroadcastUint16x8(left[row])
-		dst := block.pix[row*block.stride:][:width]
-		for b := 0; b < blocks; b++ {
-			aV := archsimd.LoadUint16x8Array((*[8]uint16)(above[b*8:]))
-			v := wHV.Mul(aV).Add(cbH)
-			h := cols.wW[b].Mul(lV).Add(cols.cwR[b])
-			half := v.Shift(shr1U16).Add(h.Shift(shr1U16)).Add(v.And(h).And(oneV))
-			storeU8x8(dst[b*8:], half.Add(roundV).Shift(shr8U16))
-		}
-	}
-}
-
-// smoothVertical8SIMD is the 8-bit SMOOTH_V kernel for width a multiple of 8.
-func smoothVertical8SIMD(block planeBlock, weights []uint16, above []uint16, belowPred uint16) {
-	width, height := block.width, block.height
-	for row := 0; row < height; row++ {
-		w := weights[row]
-		wV := archsimd.BroadcastUint16x8(w)
-		cb := archsimd.BroadcastUint16x8(smoothComplement(w, belowPred) + 1<<(smoothShift1D-1))
-		dst := block.pix[row*block.stride:][:width]
-		for col := 0; col < width; col += 8 {
-			aV := archsimd.LoadUint16x8Array((*[8]uint16)(above[col:]))
-			storeU8x8(dst[col:], wV.Mul(aV).Add(cb).Shift(shr8U16))
-		}
-	}
-}
-
-// smoothHorizontal8SIMD is the 8-bit SMOOTH_H kernel for width a multiple of 8.
-func smoothHorizontal8SIMD(block planeBlock, weights []uint16, left []uint16, rightPred uint16) {
-	width, height := block.width, block.height
-	blocks := width / 8
-	rightV := archsimd.BroadcastUint16x8(rightPred)
-	roundV := archsimd.BroadcastUint16x8(1 << (smoothShift1D - 1))
-	var wW, cwR [8]archsimd.Uint16x8
-	for b := 0; b < blocks; b++ {
-		w := archsimd.LoadUint16x8Array((*[8]uint16)(weights[b*8:]))
-		wW[b] = w
-		cwR[b] = archsimd.BroadcastUint16x8(smoothScale).Sub(w).Mul(rightV).Add(roundV)
-	}
-	for row := 0; row < height; row++ {
-		lV := archsimd.BroadcastUint16x8(left[row])
-		dst := block.pix[row*block.stride:][:width]
-		for b := 0; b < blocks; b++ {
-			storeU8x8(dst[b*8:], wW[b].Mul(lV).Add(cwR[b]).Shift(shr8U16))
-		}
 	}
 }
 
@@ -412,31 +284,4 @@ func predictSmoothHorizontalSIMD(block planeBlock, bytesPerSample int, weights [
 	default:
 		predictSmoothHorizontalPureGo(block, bytesPerSample, weights, left, rightPred)
 	}
-}
-
-// Right-shift amounts are hoisted to package-level vectors. The arm64 toolchain
-// lowers ShiftAllRight(const) to a per-use DUP of the negated amount, whereas a
-// per-lane Shift against a shift vector is a single VUSHL/VSSHL.
-var (
-	shr1U16 = archsimd.BroadcastInt16x8(-1)
-	shr8U16 = archsimd.BroadcastInt16x8(-smoothShift1D)
-	shr8I32 = archsimd.BroadcastInt32x4(-smoothShift1D)
-	shr9I32 = archsimd.BroadcastInt32x4(-smoothShiftFull)
-)
-
-// absDiffInt16 returns |a-b| for two 12-bit samples as an int16 scalar; the
-// per-row PAETH distance |left - aboveLeft| is computed here once per row.
-func absDiffInt16(a, b uint16) int16 {
-	d := int16(a) - int16(b)
-	if d < 0 {
-		return -d
-	}
-	return d
-}
-
-// smoothComplement returns (256-w)*edge, the per-row (or per-column) product of
-// the complementary SMOOTH weight with the edge sample. The caller adds any
-// rounding bias; the product is at most 256*255 and fits uint16.
-func smoothComplement(w uint16, edge uint16) uint16 {
-	return uint16((smoothScale - uint32(w)) * uint32(edge))
 }
