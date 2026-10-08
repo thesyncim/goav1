@@ -221,7 +221,13 @@ jobs:
           - shard: 3
             name: public remainder
           - shard: 4
-            name: internal and browser
+            name: internal and browser controls
+          - shard: 5
+            name: direct, two-layer SVC, and S2 playback
+          - shard: 6
+            name: three-layer SVC playback
+          - shard: 7
+            name: three-layer SVC and S3 playback
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

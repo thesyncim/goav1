@@ -981,13 +981,12 @@ type poolTask struct {
 	batch       Batch
 	jobs        []tile.Job
 
-	// rangeFn is the postfilter row-band worker. It is set for RunRanges tasks
-	// (mirroring dav1d thread_task.c's row-banded postfilter split); rangeBand is
-	// the band ordinal used to select band-private scratch, and [rangeLo, rangeHi)
-	// is the deterministic contiguous half-open row range the band owns.
-	rangeFn     RangeFunc
+	// rangeRunner is the postfilter row-band worker. RunRanges wraps its
+	// function callback in a small RangeRunner value; RunRangesRunner stores the
+	// caller's reusable runner directly. The band ordinal is kept in batch.Worker
+	// (the rest of Batch is unused by range tasks), and [rangeLo, rangeHi) is the
+	// deterministic contiguous half-open row range the band owns.
 	rangeRunner RangeRunner
-	rangeBand   int
 	rangeLo     int
 	rangeHi     int
 }
@@ -1112,6 +1111,12 @@ type RangeRunner interface {
 	RunRange(band int, lo int, hi int) error
 }
 
+type rangeFuncRunner RangeFunc
+
+func (runner rangeFuncRunner) RunRange(band int, lo int, hi int) error {
+	return RangeFunc(runner)(band, lo, hi)
+}
+
 // RunRanges partitions [0, n) into deterministic contiguous bands and runs fn on
 // each band across the pool's worker lanes, waiting for all to finish. The band
 // count is min(WorkerCount, maxBands, n); maxBands<=0 means WorkerCount. It is
@@ -1169,10 +1174,10 @@ func (p *Pool) RunRanges(n int, maxBands int, fn RangeFunc) error {
 		}
 		hi := lo + count
 		p.workers[band].tasks <- poolTask{
-			rangeFn:   fn,
-			rangeBand: band,
-			rangeLo:   lo,
-			rangeHi:   hi,
+			batch:       Batch{Worker: uint16(band)},
+			rangeRunner: rangeFuncRunner(fn),
+			rangeLo:     lo,
+			rangeHi:     hi,
 		}
 		lo = hi
 	}
@@ -1233,8 +1238,8 @@ func (p *Pool) RunRangesRunner(n int, maxBands int, runner RangeRunner) error {
 		}
 		hi := lo + count
 		p.workers[band].tasks <- poolTask{
+			batch:       Batch{Worker: uint16(band)},
 			rangeRunner: runner,
-			rangeBand:   band,
 			rangeLo:     lo,
 			rangeHi:     hi,
 		}
@@ -1492,11 +1497,7 @@ func validateBatches(batches []Batch, jobs []tile.Job, workers int) error {
 func poolWorkerLoop(tasks <-chan poolTask, done chan<- workerResult) {
 	for task := range tasks {
 		if task.rangeRunner != nil {
-			done <- workerResult{err: task.rangeRunner.RunRange(task.rangeBand, task.rangeLo, task.rangeHi)}
-			continue
-		}
-		if task.rangeFn != nil {
-			done <- workerResult{err: task.rangeFn(task.rangeBand, task.rangeLo, task.rangeHi)}
+			done <- workerResult{err: task.rangeRunner.RunRange(int(task.batch.Worker), task.rangeLo, task.rangeHi)}
 			continue
 		}
 		if task.frameFn != nil {

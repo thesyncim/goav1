@@ -473,6 +473,37 @@ func TestPoolRunRanges(t *testing.T) {
 	}
 }
 
+func TestPoolRunRangesNoWarmAllocs(t *testing.T) {
+	pool, err := NewPool(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	var work atomic.Int64
+	callback := RangeFunc(func(_, lo, hi int) error {
+		work.Add(int64(hi - lo))
+		return nil
+	})
+	for range 3 {
+		if err := pool.RunRanges(64, 2, callback); err != nil {
+			t.Fatalf("warm RunRanges: %v", err)
+		}
+	}
+	const runs = 25
+	allocs := testing.AllocsPerRun(runs, func() {
+		if err := pool.RunRanges(64, 2, callback); err != nil {
+			t.Fatalf("RunRanges: %v", err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("warm two-band RunRanges allocations/run=%g, want 0", allocs)
+	}
+	if got, want := work.Load(), int64(64*(3+runs+1)); got != want {
+		t.Fatalf("callback work=%d, want %d", got, want)
+	}
+}
+
 type rangeRunnerCoverage struct {
 	covered []atomic.Int32
 	bands   atomic.Int32
