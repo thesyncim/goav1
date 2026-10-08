@@ -38,6 +38,11 @@ func hbdMulAdd32(x, y, z archsimd.Int32x4) archsimd.Int32x4 {
 	return x.MulAdd(y, z)
 }
 
+// hbdShiftRight uses arm64's signed per-lane shift with a hoisted amount.
+func hbdShiftRight(v, amount archsimd.Int32x4, _ int) archsimd.Int32x4 {
+	return v.Shift(amount)
+}
+
 // hbdWidenU16 zero-extends eight uint16 lanes to two int32 vectors (lanes 0..3
 // and 4..7).
 func hbdWidenU16(u archsimd.Uint16x8) (lo, hi archsimd.Int32x4) {

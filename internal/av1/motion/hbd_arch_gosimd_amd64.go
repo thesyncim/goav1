@@ -46,6 +46,12 @@ func hbdMulAdd32(x, y, z archsimd.Int32x4) archsimd.Int32x4 {
 	return x.Mul(y).Add(z)
 }
 
+// amd64 archsimd has no signed per-lane Shift operation. The scalar amount is
+// invariant for this kernel and retains the same arithmetic right shift.
+func hbdShiftRight(v, _ archsimd.Int32x4, n int) archsimd.Int32x4 {
+	return v.ShiftAllRight(uint64(n))
+}
+
 // hbdWidenU16 zero-extends eight uint16 lanes to two int32 vectors (lanes 0..3
 // and 4..7) by interleaving with zero.
 func hbdWidenU16(u archsimd.Uint16x8) (lo, hi archsimd.Int32x4) {

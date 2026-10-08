@@ -345,6 +345,38 @@ func TestConvolveHighBDGoSIMDXYMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestConvolveYHighBDGoSIMDSixTapSlidingExactWindow(t *testing.T) {
+	// Phase three has six nonzero taps. The last row contains only the
+	// requested samples, while both strides are odd byte counts.
+	for _, bd := range []uint8{10, 12} {
+		max := uint16((1 << bd) - 1)
+		for _, w := range []int{8, 16} {
+			for _, h := range []int{1, 4, 16} {
+				refW, refH := w+6, h+7
+				refStr := refW*2 + 1
+				ref := frame.Plane{Pix: make([]byte, (refH-1)*refStr+refW*2), Stride: refStr, Width: refW, Height: refH}
+				for y := 0; y < refH; y++ {
+					for x := 0; x < refW; x++ {
+						value := uint16((x*173 + y*911) & int(max))
+						if (x+y)%5 == 0 {
+							value = max
+						} else if (x+y)%7 == 0 {
+							value = 0
+						}
+						storeHighBDSample(ref, x, y, value)
+					}
+				}
+				dstStr := w*2 + 1
+				got := frame.Plane{Pix: make([]byte, (h-1)*dstStr+w*2), Stride: dstStr, Width: w, Height: h}
+				want := frame.Plane{Pix: make([]byte, len(got.Pix)), Stride: dstStr, Width: w, Height: h}
+				convolveYHighBDGoSIMD(got, ref, bd, max, 0, 0, 3, 3, w, h, subpelFilters8[3])
+				convolveYHighBDPureGo(want, ref, bd, max, 0, 0, 3, 3, w, h, subpelFilters8[3])
+				diffPlanesHBD(t, got, want, w, h, "six-tap exact window", bd)
+			}
+		}
+	}
+}
+
 func TestConvolve2DHighBDGoSIMDSweepMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x123abc))
 	const pad = filterTaps

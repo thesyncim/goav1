@@ -11,12 +11,11 @@ package motion
 // the scalar Go formula of its pure-Go reference (convolve*HighBDPureGo and
 // predictInterCompoundRefHighBD*), so output is byte-identical.
 //
-// Every kernel works on slices, not raw pointers. Sample vectors are loaded
-// from the little-endian byte planes with LoadUint8x16 and reshaped to uint16
-// lanes; intermediates are []int32 and compound buffers are []uint16. This keeps
-// the kernels free of unsafe pointer arithmetic, so no local window, filter or
-// intermediate buffer is forced onto the heap when the race or checkptr
-// instrumentation is enabled.
+// Sample vectors are loaded from the little-endian byte planes and reshaped to
+// uint16 lanes; intermediates are []int32 and compound buffers are []uint16.
+// Sliding vertical loops widen each source row once and reuse it for the next
+// output rows. The scalar tails stage exact-width windows so a vector load
+// cannot cross the slice end.
 //
 // The wrappers trim every filter to its nonzero tap span (hbdTapSpan) and start
 // the sample slice at the span's first tap. Zero taps contribute nothing, so
@@ -124,6 +123,12 @@ func hbdRound(v archsimd.Int32x4, n int) archsimd.Int32x4 {
 	return v.Add(rnd).ShiftAllRight(uint64(n))
 }
 
+// hbdRoundShift uses a rounding bias and signed shift amount prepared before
+// the pixel loop. A negative amount in Shift is an arithmetic right shift.
+func hbdRoundShift(v, bias, shift archsimd.Int32x4, n int) archsimd.Int32x4 {
+	return hbdShiftRight(v.Add(bias), shift, n)
+}
+
 // hbdClip clamps to [0, max] (clipPixelHighBD).
 func hbdClip(v, zero, maxV archsimd.Int32x4) archsimd.Int32x4 {
 	return v.Max(zero).Min(maxV)
@@ -175,22 +180,48 @@ func convolveXHighBDKernel(ctx *convolveHighBDGoSIMDCtx) {
 	zero := archsimd.BroadcastInt32x4(0)
 	maxV := archsimd.BroadcastInt32x4(ctx.maxVal)
 	round0, bits := int(ctx.round0), int(ctx.round1)
+	round0Bias := archsimd.BroadcastInt32x4(int32(1) << (round0 - 1))
+	round0Shift := archsimd.BroadcastInt32x4(int32(-round0))
+	bitsBias := archsimd.BroadcastInt32x4(int32(1) << (bits - 1))
+	bitsShift := archsimd.BroadcastInt32x4(int32(-bits))
 	width, height := int(ctx.width), int(ctx.height)
 	for y := range height {
 		src := ctx.ref[y*ctx.refStr:]
 		dst := ctx.dst[y*ctx.dstStr:]
 		x := 0
 		for ; x+8 <= width; x += 8 {
-			lo, hi := hbdSumRowX(src[x*2:], &taps, n)
-			lo = hbdClip(hbdRound(hbdRound(lo, round0), bits), zero, maxV)
-			hi = hbdClip(hbdRound(hbdRound(hi, round0), bits), zero, maxV)
+			var lo, hi archsimd.Int32x4
+			if x*2+31 < len(src) {
+				a := archsimd.LoadUint8x16(src[x*2 : x*2+16])
+				b := archsimd.LoadUint8x16(src[x*2+16 : x*2+32])
+				lo = zero
+				hi = zero
+				lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(a), taps[0])
+				lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 2)), taps[1])
+				if n > 2 {
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 4)), taps[2])
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 6)), taps[3])
+				}
+				if n > 4 {
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 8)), taps[4])
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 10)), taps[5])
+				}
+				if n > 6 {
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 12)), taps[6])
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 14)), taps[7])
+				}
+			} else {
+				lo, hi = hbdSumRowX(src[x*2:], &taps, n)
+			}
+			lo = hbdClip(hbdRoundShift(hbdRoundShift(lo, round0Bias, round0Shift, round0), bitsBias, bitsShift, bits), zero, maxV)
+			hi = hbdClip(hbdRoundShift(hbdRoundShift(hi, round0Bias, round0Shift, round0), bitsBias, bitsShift, bits), zero, maxV)
 			hbdStorePix8(dst[x*2:], lo, hi)
 		}
 		if x < width {
 			var win [32]byte
 			copy(win[:2*(n+3)], src[x*2:x*2+2*(n+3)])
 			lo, _ := hbdSumRowX(win[:], &taps, n)
-			lo = hbdClip(hbdRound(hbdRound(lo, round0), bits), zero, maxV)
+			lo = hbdClip(hbdRoundShift(hbdRoundShift(lo, round0Bias, round0Shift, round0), bitsBias, bitsShift, bits), zero, maxV)
 			hbdStorePix4(dst[x*2:], lo)
 		}
 	}
@@ -200,19 +231,71 @@ func convolveXHighBDKernel(ctx *convolveHighBDGoSIMDCtx) {
 // convolveYHighBDGoSIMD: one FILTER_BITS rounding, then clip.
 func convolveYHighBDKernel(ctx *convolveHighBDGoSIMDCtx) {
 	n := int(ctx.tapsY)
-	taps := hbdBroadcastTaps16(&ctx.kernel)
 	zero := archsimd.BroadcastInt32x4(0)
 	maxV := archsimd.BroadcastInt32x4(ctx.maxVal)
 	round0 := int(ctx.round0)
+	roundBias := archsimd.BroadcastInt32x4(int32(1) << (round0 - 1))
+	roundShift := archsimd.BroadcastInt32x4(int32(-round0))
 	width, height := int(ctx.width), int(ctx.height)
+	if n == 8 && width >= 8 && width%8 == 0 {
+		convolveYHighBD8TapSliding(ctx, roundBias, roundShift, zero, maxV)
+		return
+	}
+	if n == 6 && width >= 8 && width%8 == 0 {
+		// Keep the six input rows in registers as the output advances. Only
+		// the newly entering row needs to be loaded and widened each time.
+		ref, dst := ctx.ref, ctx.dst
+		refStr, dstStr := ctx.refStr, ctx.dstStr
+		_ = ref[(height+n-2)*refStr+width*2-1]
+		_ = dst[(height-1)*dstStr+width*2-1]
+		coeff := hbdBroadcastTaps32(&ctx.kernel)
+		c0, c1, c2, c3, c4, c5 := coeff[0], coeff[1], coeff[2], coeff[3], coeff[4], coeff[5]
+		for x := 0; x < width; x += 8 {
+			p := x * 2
+			r0l, r0h := hbdWidenU16(archsimd.LoadUint8x16(ref[p : p+16]).ReshapeToUint16s())
+			r1l, r1h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+refStr : p+refStr+16]).ReshapeToUint16s())
+			r2l, r2h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+2*refStr : p+2*refStr+16]).ReshapeToUint16s())
+			r3l, r3h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+3*refStr : p+3*refStr+16]).ReshapeToUint16s())
+			r4l, r4h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+4*refStr : p+4*refStr+16]).ReshapeToUint16s())
+			r5l, r5h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+5*refStr : p+5*refStr+16]).ReshapeToUint16s())
+			for y := 0; y < height; y++ {
+				lo := hbdMulAdd32(r0l, c0, roundBias)
+				hi := hbdMulAdd32(r0h, c0, roundBias)
+				lo = hbdMulAdd32(r1l, c1, lo)
+				hi = hbdMulAdd32(r1h, c1, hi)
+				lo = hbdMulAdd32(r2l, c2, lo)
+				hi = hbdMulAdd32(r2h, c2, hi)
+				lo = hbdMulAdd32(r3l, c3, lo)
+				hi = hbdMulAdd32(r3h, c3, hi)
+				lo = hbdMulAdd32(r4l, c4, lo)
+				hi = hbdMulAdd32(r4h, c4, hi)
+				lo = hbdMulAdd32(r5l, c5, lo)
+				hi = hbdMulAdd32(r5h, c5, hi)
+				lo = hbdClip(hbdShiftRight(lo, roundShift, round0), zero, maxV)
+				hi = hbdClip(hbdShiftRight(hi, roundShift, round0), zero, maxV)
+				hbdStorePix8(dst[y*dstStr+x*2:], lo, hi)
+				if y+1 < height {
+					r0l, r0h = r1l, r1h
+					r1l, r1h = r2l, r2h
+					r2l, r2h = r3l, r3h
+					r3l, r3h = r4l, r4h
+					r4l, r4h = r5l, r5h
+					p += refStr
+					r5l, r5h = hbdWidenU16(archsimd.LoadUint8x16(ref[p+5*refStr : p+5*refStr+16]).ReshapeToUint16s())
+				}
+			}
+		}
+		return
+	}
+	taps := hbdBroadcastTaps16(&ctx.kernel)
 	for y := range height {
 		src := ctx.ref[y*ctx.refStr:]
 		dst := ctx.dst[y*ctx.dstStr:]
 		x := 0
 		for ; x+8 <= width; x += 8 {
 			lo, hi := hbdSum8(src[x*2:], ctx.refStr, &taps, n)
-			lo = hbdClip(hbdRound(lo, round0), zero, maxV)
-			hi = hbdClip(hbdRound(hi, round0), zero, maxV)
+			lo = hbdClip(hbdRoundShift(lo, roundBias, roundShift, round0), zero, maxV)
+			hi = hbdClip(hbdRoundShift(hi, roundBias, roundShift, round0), zero, maxV)
 			hbdStorePix8(dst[x*2:], lo, hi)
 		}
 		if x < width {
@@ -221,8 +304,64 @@ func convolveYHighBDKernel(ctx *convolveHighBDGoSIMDCtx) {
 				copy(win[k*16:k*16+8], src[k*ctx.refStr+x*2:k*ctx.refStr+x*2+8])
 			}
 			lo, _ := hbdSum8(win[:], 16, &taps, n)
-			lo = hbdClip(hbdRound(lo, round0), zero, maxV)
+			lo = hbdClip(hbdRoundShift(lo, roundBias, roundShift, round0), zero, maxV)
 			hbdStorePix4(dst[x*2:], lo)
+		}
+	}
+}
+
+// convolveYHighBD8TapSliding is the full eight-tap counterpart of the
+// register-resident six-tap path above. Sharp filters use every tap.
+func convolveYHighBD8TapSliding(ctx *convolveHighBDGoSIMDCtx, roundBias, roundShift, zero, maxV archsimd.Int32x4) {
+	width, height := ctx.width, ctx.height
+	ref, dst := ctx.ref, ctx.dst
+	refStr, dstStr := ctx.refStr, ctx.dstStr
+	_ = ref[(height+6)*refStr+width*2-1]
+	_ = dst[(height-1)*dstStr+width*2-1]
+	coeff := hbdBroadcastTaps32(&ctx.kernel)
+	c0, c1, c2, c3 := coeff[0], coeff[1], coeff[2], coeff[3]
+	c4, c5, c6, c7 := coeff[4], coeff[5], coeff[6], coeff[7]
+	for x := 0; x < width; x += 8 {
+		p := x * 2
+		r0l, r0h := hbdWidenU16(archsimd.LoadUint8x16(ref[p : p+16]).ReshapeToUint16s())
+		r1l, r1h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+refStr : p+refStr+16]).ReshapeToUint16s())
+		r2l, r2h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+2*refStr : p+2*refStr+16]).ReshapeToUint16s())
+		r3l, r3h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+3*refStr : p+3*refStr+16]).ReshapeToUint16s())
+		r4l, r4h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+4*refStr : p+4*refStr+16]).ReshapeToUint16s())
+		r5l, r5h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+5*refStr : p+5*refStr+16]).ReshapeToUint16s())
+		r6l, r6h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+6*refStr : p+6*refStr+16]).ReshapeToUint16s())
+		r7l, r7h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+7*refStr : p+7*refStr+16]).ReshapeToUint16s())
+		for y := 0; y < height; y++ {
+			lo := hbdMulAdd32(r0l, c0, roundBias)
+			hi := hbdMulAdd32(r0h, c0, roundBias)
+			lo = hbdMulAdd32(r1l, c1, lo)
+			hi = hbdMulAdd32(r1h, c1, hi)
+			lo = hbdMulAdd32(r2l, c2, lo)
+			hi = hbdMulAdd32(r2h, c2, hi)
+			lo = hbdMulAdd32(r3l, c3, lo)
+			hi = hbdMulAdd32(r3h, c3, hi)
+			lo = hbdMulAdd32(r4l, c4, lo)
+			hi = hbdMulAdd32(r4h, c4, hi)
+			lo = hbdMulAdd32(r5l, c5, lo)
+			hi = hbdMulAdd32(r5h, c5, hi)
+			lo = hbdMulAdd32(r6l, c6, lo)
+			hi = hbdMulAdd32(r6h, c6, hi)
+			lo = hbdMulAdd32(r7l, c7, lo)
+			hi = hbdMulAdd32(r7h, c7, hi)
+			lo = hbdClip(hbdShiftRight(lo, roundShift, int(ctx.round0)), zero, maxV)
+			hi = hbdClip(hbdShiftRight(hi, roundShift, int(ctx.round0)), zero, maxV)
+			hbdStorePix8(dst[y*dstStr+x*2:], lo, hi)
+			if y+1 < height {
+				r0l, r0h = r1l, r1h
+				r1l, r1h = r2l, r2h
+				r2l, r2h = r3l, r3h
+				r3l, r3h = r4l, r4h
+				r4l, r4h = r5l, r5h
+				r5l, r5h = r6l, r6h
+				r6l, r6h = r7l, r7h
+				p += refStr
+				r7l, r7h = hbdWidenU16(archsimd.LoadUint8x16(ref[p+7*refStr : p+7*refStr+16]).ReshapeToUint16s())
+			}
 		}
 	}
 }
@@ -231,14 +370,38 @@ func convolveYHighBDKernel(ctx *convolveHighBDGoSIMDCtx) {
 // convolves: rows reference rows, each becoming round0(bias + sum) int32
 // intermediate samples at row stride imStr elements.
 func hbdHorizontalIM(ref []byte, refStr int, im []int32, imStr int, width, rows int, taps *hbdTaps16, n int, bias archsimd.Int32x4, round0 int) {
+	roundBias := bias.Add(archsimd.BroadcastInt32x4(int32(1) << (round0 - 1)))
+	roundShift := archsimd.BroadcastInt32x4(int32(-round0))
 	for y := range rows {
 		src := ref[y*refStr:]
 		row := im[y*imStr:]
 		x := 0
 		for ; x+8 <= width; x += 8 {
-			lo, hi := hbdSumRowX(src[x*2:], taps, n)
-			lo = hbdRound(lo.Add(bias), round0)
-			hi = hbdRound(hi.Add(bias), round0)
+			var lo, hi archsimd.Int32x4
+			if x*2+31 < len(src) {
+				a := archsimd.LoadUint8x16(src[x*2 : x*2+16])
+				b := archsimd.LoadUint8x16(src[x*2+16 : x*2+32])
+				lo = archsimd.BroadcastInt32x4(0)
+				hi = lo
+				lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(a), taps[0])
+				lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 2)), taps[1])
+				if n > 2 {
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 4)), taps[2])
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 6)), taps[3])
+				}
+				if n > 4 {
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 8)), taps[4])
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 10)), taps[5])
+				}
+				if n > 6 {
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 12)), taps[6])
+					lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 14)), taps[7])
+				}
+			} else {
+				lo, hi = hbdSumRowX(src[x*2:], taps, n)
+			}
+			lo = hbdShiftRight(lo.Add(roundBias), roundShift, round0)
+			hi = hbdShiftRight(hi.Add(roundBias), roundShift, round0)
 			lo.Store(row[x : x+4])
 			hi.Store(row[x+4 : x+8])
 		}
@@ -246,7 +409,7 @@ func hbdHorizontalIM(ref []byte, refStr int, im []int32, imStr int, width, rows 
 			var win [32]byte
 			copy(win[:2*(n+3)], src[x*2:x*2+2*(n+3)])
 			lo, _ := hbdSumRowX(win[:], taps, n)
-			lo = hbdRound(lo.Add(bias), round0)
+			lo = hbdShiftRight(lo.Add(roundBias), roundShift, round0)
 			lo.Store(row[x : x+4])
 		}
 	}
@@ -261,28 +424,89 @@ func convolve2DHighBDKernel(ctx *convolveHighBDGoSIMDCtx) {
 	yTaps := hbdBroadcastTaps32(&ctx.kernel)
 	zero := archsimd.BroadcastInt32x4(0)
 	maxV := archsimd.BroadcastInt32x4(ctx.maxVal)
-	round0, round1, bits := int(ctx.round0), int(ctx.round1), int(ctx.bits)
+	round0, round1 := int(ctx.round0), int(ctx.round1)
 	xBias := archsimd.BroadcastInt32x4(ctx.xBias)
 	yBias := archsimd.BroadcastInt32x4(ctx.yBias)
 	rndOff := archsimd.BroadcastInt32x4(ctx.rndOff)
+	verticalBias := yBias.Add(archsimd.BroadcastInt32x4(int32(1) << (round1 - 1)))
+	verticalShift := archsimd.BroadcastInt32x4(int32(-round1))
 	width, height := int(ctx.width), int(ctx.height)
 	imStr := ctx.imStr
 
 	hbdHorizontalIM(ctx.ref, ctx.refStr, ctx.im, imStr, width, height+ny-1, &xTaps, nx, xBias, round0)
 
+	if ny == 6 && width >= 8 && width%8 == 0 {
+		// Unroll the six intermediate-row MACs and fold the rounding bias
+		// into the first accumulator, keeping both four-lane chains live.
+		im, dst := ctx.im, ctx.dst
+		dstStr := ctx.dstStr
+		c0, c1, c2, c3, c4, c5 := yTaps[0], yTaps[1], yTaps[2], yTaps[3], yTaps[4], yTaps[5]
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x += 8 {
+				base := y*imStr + x
+				lo := hbdMulAdd32(archsimd.LoadInt32x4(im[base:base+4]), c0, verticalBias)
+				hi := hbdMulAdd32(archsimd.LoadInt32x4(im[base+4:base+4+4]), c0, verticalBias)
+				lo = hbdMulAdd32(archsimd.LoadInt32x4(im[base+1*imStr:base+1*imStr+4]), c1, lo)
+				hi = hbdMulAdd32(archsimd.LoadInt32x4(im[base+1*imStr+4:base+1*imStr+4+4]), c1, hi)
+				lo = hbdMulAdd32(archsimd.LoadInt32x4(im[base+2*imStr:base+2*imStr+4]), c2, lo)
+				hi = hbdMulAdd32(archsimd.LoadInt32x4(im[base+2*imStr+4:base+2*imStr+4+4]), c2, hi)
+				lo = hbdMulAdd32(archsimd.LoadInt32x4(im[base+3*imStr:base+3*imStr+4]), c3, lo)
+				hi = hbdMulAdd32(archsimd.LoadInt32x4(im[base+3*imStr+4:base+3*imStr+4+4]), c3, hi)
+				lo = hbdMulAdd32(archsimd.LoadInt32x4(im[base+4*imStr:base+4*imStr+4]), c4, lo)
+				hi = hbdMulAdd32(archsimd.LoadInt32x4(im[base+4*imStr+4:base+4*imStr+4+4]), c4, hi)
+				lo = hbdMulAdd32(archsimd.LoadInt32x4(im[base+5*imStr:base+5*imStr+4]), c5, lo)
+				hi = hbdMulAdd32(archsimd.LoadInt32x4(im[base+5*imStr+4:base+5*imStr+4+4]), c5, hi)
+				lo = hbdClip(hbdShiftRight(lo, verticalShift, round1).Sub(rndOff), zero, maxV)
+				hi = hbdClip(hbdShiftRight(hi, verticalShift, round1).Sub(rndOff), zero, maxV)
+				hbdStorePix8(dst[y*dstStr+x*2:], lo, hi)
+			}
+		}
+		return
+	}
+	if ny == 8 && width >= 8 && width%8 == 0 {
+		im, dst := ctx.im, ctx.dst
+		dstStr := ctx.dstStr
+		c0, c1, c2, c3 := yTaps[0], yTaps[1], yTaps[2], yTaps[3]
+		c4, c5, c6, c7 := yTaps[4], yTaps[5], yTaps[6], yTaps[7]
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x += 8 {
+				base := y*imStr + x
+				lo := hbdMulAdd32(archsimd.LoadInt32x4(im[base:base+4]), c0, verticalBias)
+				hi := hbdMulAdd32(archsimd.LoadInt32x4(im[base+4:base+4+4]), c0, verticalBias)
+				lo = hbdMulAdd32(archsimd.LoadInt32x4(im[base+1*imStr:base+1*imStr+4]), c1, lo)
+				hi = hbdMulAdd32(archsimd.LoadInt32x4(im[base+1*imStr+4:base+1*imStr+4+4]), c1, hi)
+				lo = hbdMulAdd32(archsimd.LoadInt32x4(im[base+2*imStr:base+2*imStr+4]), c2, lo)
+				hi = hbdMulAdd32(archsimd.LoadInt32x4(im[base+2*imStr+4:base+2*imStr+4+4]), c2, hi)
+				lo = hbdMulAdd32(archsimd.LoadInt32x4(im[base+3*imStr:base+3*imStr+4]), c3, lo)
+				hi = hbdMulAdd32(archsimd.LoadInt32x4(im[base+3*imStr+4:base+3*imStr+4+4]), c3, hi)
+				lo = hbdMulAdd32(archsimd.LoadInt32x4(im[base+4*imStr:base+4*imStr+4]), c4, lo)
+				hi = hbdMulAdd32(archsimd.LoadInt32x4(im[base+4*imStr+4:base+4*imStr+4+4]), c4, hi)
+				lo = hbdMulAdd32(archsimd.LoadInt32x4(im[base+5*imStr:base+5*imStr+4]), c5, lo)
+				hi = hbdMulAdd32(archsimd.LoadInt32x4(im[base+5*imStr+4:base+5*imStr+4+4]), c5, hi)
+				lo = hbdMulAdd32(archsimd.LoadInt32x4(im[base+6*imStr:base+6*imStr+4]), c6, lo)
+				hi = hbdMulAdd32(archsimd.LoadInt32x4(im[base+6*imStr+4:base+6*imStr+4+4]), c6, hi)
+				lo = hbdMulAdd32(archsimd.LoadInt32x4(im[base+7*imStr:base+7*imStr+4]), c7, lo)
+				hi = hbdMulAdd32(archsimd.LoadInt32x4(im[base+7*imStr+4:base+7*imStr+4+4]), c7, hi)
+				lo = hbdClip(hbdShiftRight(lo, verticalShift, round1).Sub(rndOff), zero, maxV)
+				hi = hbdClip(hbdShiftRight(hi, verticalShift, round1).Sub(rndOff), zero, maxV)
+				hbdStorePix8(dst[y*dstStr+x*2:], lo, hi)
+			}
+		}
+		return
+	}
 	for y := range height {
 		dst := ctx.dst[y*ctx.dstStr:]
 		col := ctx.im[y*imStr:]
 		x := 0
 		for ; x+8 <= width; x += 8 {
 			lo, hi := hbdSum8Int32(col[x:], imStr, &yTaps, ny)
-			lo = hbdFinish2D(lo.Add(yBias), round1, rndOff, bits, zero, maxV)
-			hi = hbdFinish2D(hi.Add(yBias), round1, rndOff, bits, zero, maxV)
+			lo = hbdClip(hbdShiftRight(lo.Add(verticalBias), verticalShift, round1).Sub(rndOff), zero, maxV)
+			hi = hbdClip(hbdShiftRight(hi.Add(verticalBias), verticalShift, round1).Sub(rndOff), zero, maxV)
 			hbdStorePix8(dst[x*2:], lo, hi)
 		}
 		if x < width {
 			lo := hbdSum4Int32(col[x:], imStr, &yTaps, ny)
-			lo = hbdFinish2D(lo.Add(yBias), round1, rndOff, bits, zero, maxV)
+			lo = hbdClip(hbdShiftRight(lo.Add(verticalBias), verticalShift, round1).Sub(rndOff), zero, maxV)
 			hbdStorePix4(dst[x*2:], lo)
 		}
 	}
@@ -327,10 +551,19 @@ func hbdSumRowX(pix []byte, t *hbdTaps16, n int) (lo, hi archsimd.Int32x4) {
 	hi = lo
 	lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(a), t[0])
 	lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 2)), t[1])
+	if n <= 2 {
+		return lo, hi
+	}
 	lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 4)), t[2])
 	lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 6)), t[3])
+	if n <= 4 {
+		return lo, hi
+	}
 	lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 8)), t[4])
 	lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 10)), t[5])
+	if n <= 6 {
+		return lo, hi
+	}
 	lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 12)), t[6])
 	lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(b.ConcatShiftBytesRight(a, 14)), t[7])
 	return lo, hi
