@@ -25,6 +25,8 @@ func TestSIMDDispatchBindsAVX2Kernels(t *testing.T) {
 	}{
 		{"blend", blendA64MaskImpl, blendA64MaskSIMD},
 		{"minmax", minMaxAbsDiff8x8Impl, minMaxAbsDiff8x8SIMD},
+		{"raw add", addRawTransformPlaneBlockImpl, addRawTransformPlaneBlockSIMD},
+		{"residual add", addResidualPlaneBlockImpl, addResidualPlaneBlockSIMD},
 	}
 	for _, tc := range cases {
 		if got, want := reflect.ValueOf(tc.got).Pointer(), reflect.ValueOf(tc.want).Pointer(); got != want {
