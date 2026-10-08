@@ -52,7 +52,35 @@ func TestForwardDCTSIMDBindingsAMD64(t *testing.T) {
 			t.Fatalf("%s forward DCT bound to %v, want %s", name, fn, want)
 		}
 	}
+	check("4x4", forwardDCT4x4Impl, "forwardDCT4x4SIMD")
 	check("8x8", forwardDCT8x8Impl, "forwardDCT8x8SIMDGuarded")
 	check("16x16", forwardDCT16x16Impl, "forwardDCT16x16SIMDGuarded")
 	check("32x32", forwardDCT32x32Impl, "forwardDCT32x32SIMDGuarded")
+}
+
+// TestForwardDCT4x4SIMDMatchesPureGo proves the AVX2 4x4 kernel bit-exact with
+// the portable reference over random residuals across the guard range and
+// beyond it (the guarded entry routes out-of-range inputs to the scalar path).
+func TestForwardDCT4x4SIMDMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(71))
+	const resStride, coeffStride = 13, 9
+	residual := make([]int16, resStride*4)
+	for trial := range 3000 {
+		span := 511
+		if trial%2 == 1 {
+			span = 4097
+		}
+		for i := range residual {
+			residual[i] = int16(rng.Intn(span) - span/2)
+		}
+		want := make([]int32, coeffStride*4)
+		got := make([]int32, coeffStride*4)
+		forwardDCT4x4PureGo(want, coeffStride, residual, resStride)
+		forwardDCT4x4SIMD(got, coeffStride, residual, resStride)
+		for i := range want {
+			if want[i] != got[i] {
+				t.Fatalf("trial %d: coeff[%d] simd %d want %d", trial, i, got[i], want[i])
+			}
+		}
+	}
 }

@@ -8,10 +8,12 @@ package transform
 
 import "simd/archsimd"
 
-// The 8x8, 16x16 and 32x32 forward DCTs are Go SIMD on AVX2 hosts. Without
+// The 4x4, 8x8, 16x16 and 32x32 forward DCTs are Go SIMD on AVX2 hosts. Without
 // AVX2 the portable bindings from fdct_neon_off.go stay in place.
 func init() {
 	if archsimd.X86.AVX2() {
+		forwardDCT4x4Impl = forwardDCT4x4SIMD
+		forwardDCT4x4Trusted8BitImpl = forwardDCT4x4SIMDCore
 		forwardDCT8x8Impl = forwardDCT8x8SIMDGuarded
 		forwardDCT8x8Trusted8BitImpl = forwardDCT8x8SIMD
 		forwardDCT16x16Impl = forwardDCT16x16SIMDGuarded
