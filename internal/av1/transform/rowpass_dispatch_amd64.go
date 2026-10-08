@@ -16,12 +16,10 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 // reports it via CPUID; notably Rosetta 2 does not advertise AVX2) the slots
 // keep their pure-Go defaults, so the decoder stays bit-exact and correct.
 //
-// AVX2 kernels exist (and are proven bit-exact by the dispatch differential
-// test) for DCT8 and DCT16; their wide butterflies amortise the call overhead.
+// The DCT32 and DCT64 four-row slots remain assembly-backed until their Go SIMD
+// replacements are selected in the experiment build.
 func init() {
 	if cpu.Detected.AVX2 {
-		inverseDCT8Row2Impl = inverseDCT8Row2AVX2Adapter
-		inverseDCT16Row2Impl = inverseDCT16Row2AVX2Adapter
 		inverseDCT32Row4Impl = inverseDCT32Row4AVX2Adapter
 		inverseDCT64Row4Impl = inverseDCT64Row4AVX2Adapter
 	}
@@ -53,29 +51,4 @@ func inverseDCT64Row4AVX2Adapter(r0, r1, r2, r3 []int32, min, max int32) {
 	r0, r1, r2, r3 = r0[:dct64Size], r1[:dct64Size], r2[:dct64Size], r3[:dct64Size]
 	var scratch [avx2Scratch4Ints]int32
 	inverseDCT64Row4AVX2(&r0[0], &r1[0], &r2[0], &r3[0], int64(min), int64(max), &scratch[0])
-}
-
-// The AVX2 kernels take element pointers and int64 clamp bounds; these adapters
-// present the dispatch-slot signature (slices + int32 bounds) and reslice to
-// the exact transform length so the assembly can index without re-checking
-// bounds. Short inputs fall back to the pure-Go reference.
-
-func inverseDCT8Row2AVX2Adapter(r0, r1 []int32, min, max int32) {
-	if len(r0) < dct8Size || len(r1) < dct8Size {
-		inverseDCT8Row2PureGo(r0, r1, min, max)
-		return
-	}
-	r0 = r0[:dct8Size]
-	r1 = r1[:dct8Size]
-	inverseDCT8Row2AVX2(&r0[0], &r1[0], int64(min), int64(max))
-}
-
-func inverseDCT16Row2AVX2Adapter(r0, r1 []int32, min, max int32) {
-	if len(r0) < dct16Size || len(r1) < dct16Size {
-		inverseDCT16Row2PureGo(r0, r1, min, max)
-		return
-	}
-	r0 = r0[:dct16Size]
-	r1 = r1[:dct16Size]
-	inverseDCT16Row2AVX2(&r0[0], &r1[0], int64(min), int64(max))
 }

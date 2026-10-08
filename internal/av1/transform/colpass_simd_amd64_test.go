@@ -6,13 +6,12 @@
 
 package transform
 
-// colPass2TestFuncs returns the AVX2 column adapters directly so the
-// differential test always exercises the AVX2 column kernels for bit-exactness,
-// independent of whether the dispatcher binds them.
+// colPass2TestFuncs uses the live dispatch slots for DCT8/16; the Go SIMD
+// dispatch binding is checked separately in dct2lane_gosimd_amd64_test.go.
 func colPass2TestFuncs() []col2TestFunc {
 	return []col2TestFunc{
-		{"DCT8", dct8Size, inverseDCT8Col2AVX2Adapter, inverseDCT8Col2PureGo},
-		{"DCT16", dct16Size, inverseDCT16Col2AVX2Adapter, inverseDCT16Col2PureGo},
+		{"DCT8", dct8Size, inverseDCT8Col2Impl, inverseDCT8Col2PureGo},
+		{"DCT16", dct16Size, inverseDCT16Col2Impl, inverseDCT16Col2PureGo},
 	}
 }
 
@@ -22,7 +21,7 @@ func colPass2TestFuncs() []col2TestFunc {
 // AVX2 but still executes the instructions).
 func colPass4TestFuncs() []col2TestFunc {
 	return []col2TestFunc{
-		{"DCT16Col4", dct16Size, inverseDCT16Col4AVX2Adapter, inverseDCT16Col4PureGo},
+		{"DCT16Col4", dct16Size, inverseDCT16Col4Impl, inverseDCT16Col4PureGo},
 		{"DCT32Col4", dct32Size, inverseDCT32Col4AVX2Adapter, inverseDCT32Col4PureGo},
 		{"DCT64Col4", dct64Size, inverseDCT64Col4AVX2Adapter, inverseDCT64Col4PureGo},
 	}
