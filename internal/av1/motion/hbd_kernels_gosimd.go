@@ -27,6 +27,7 @@ package motion
 // is only sliced, so an eight-lane load never reads past the footprint.
 
 import (
+	"encoding/binary"
 	"simd/archsimd"
 )
 
@@ -78,6 +79,13 @@ func hbdBroadcastTaps32(k *[filterTaps]int16) hbdTaps32 {
 // is a non-negative int16.
 func hbdLoad8(pix []byte) archsimd.Int16x8 {
 	return archsimd.LoadUint8x16(pix[:16]).ReshapeToUint16s().BitsToInt16()
+}
+
+// hbdLoad4Int32 reads exactly four uint16 samples, including at the end of a
+// minimum-size row. The 64-bit broadcast supplies the low four lanes for one
+// widening instruction without staging a 16-byte temporary window.
+func hbdLoad4Int32(pix []byte) archsimd.Int32x4 {
+	return archsimd.BroadcastUint64x2(binary.LittleEndian.Uint64(pix[:8])).ReshapeToUint16s().ExtendLo4ToUint32().BitsToInt32()
 }
 
 // hbdSum8 returns the eight-lane tap sum over n taps: lanes 0..3 in lo, lanes
@@ -237,6 +245,10 @@ func convolveYHighBDKernel(ctx *convolveHighBDGoSIMDCtx) {
 	roundBias := archsimd.BroadcastInt32x4(int32(1) << (round0 - 1))
 	roundShift := archsimd.BroadcastInt32x4(int32(-round0))
 	width, height := int(ctx.width), int(ctx.height)
+	if width == 4 && (n == 4 || n == 6) {
+		convolveYHighBDW4Sliding(ctx, n, roundBias, roundShift, zero, maxV)
+		return
+	}
 	if n == 8 && width >= 8 && width%8 == 0 {
 		convolveYHighBD8TapSliding(ctx, roundBias, roundShift, zero, maxV)
 		return
@@ -362,6 +374,65 @@ func convolveYHighBD8TapSliding(ctx *convolveHighBDGoSIMDCtx, roundBias, roundSh
 				p += refStr
 				r7l, r7h = hbdWidenU16(archsimd.LoadUint8x16(ref[p+7*refStr : p+7*refStr+16]).ReshapeToUint16s())
 			}
+		}
+	}
+}
+
+// convolveYHighBDW4Sliding dispatches the narrow, exact-window row reuse.
+func convolveYHighBDW4Sliding(ctx *convolveHighBDGoSIMDCtx, n int, bias, shift, zero, maxV archsimd.Int32x4) {
+	if n == 4 {
+		convolveYHighBDW4Sliding4(ctx, bias, shift, zero, maxV)
+	} else {
+		convolveYHighBDW4Sliding6(ctx, bias, shift, zero, maxV)
+	}
+}
+
+func convolveYHighBDW4Sliding4(ctx *convolveHighBDGoSIMDCtx, bias, shift, zero, maxV archsimd.Int32x4) {
+	height, refStr, dstStr := ctx.height, ctx.refStr, ctx.dstStr
+	ref, dst := ctx.ref, ctx.dst
+	_ = ref[(height+2)*refStr+7]
+	_ = dst[(height-1)*dstStr+7]
+	c := hbdBroadcastTaps32(&ctx.kernel)
+	c0, c1, c2, c3 := c[0], c[1], c[2], c[3]
+	r0, r1, r2, r3 := hbdLoad4Int32(ref), hbdLoad4Int32(ref[1*refStr:]), hbdLoad4Int32(ref[2*refStr:]), hbdLoad4Int32(ref[3*refStr:])
+	p := 0
+	for y := 0; y < height; y++ {
+		sum := hbdMulAdd32(r0, c0, bias)
+		sum = hbdMulAdd32(r1, c1, sum)
+		sum = hbdMulAdd32(r2, c2, sum)
+		sum = hbdMulAdd32(r3, c3, sum)
+		sum = hbdClip(hbdShiftRight(sum, shift, int(ctx.round0)), zero, maxV)
+		hbdStorePix4(dst[y*dstStr:], sum)
+		if y+1 < height {
+			r0, r1, r2 = r1, r2, r3
+			p += refStr
+			r3 = hbdLoad4Int32(ref[p+3*refStr:])
+		}
+	}
+}
+
+func convolveYHighBDW4Sliding6(ctx *convolveHighBDGoSIMDCtx, bias, shift, zero, maxV archsimd.Int32x4) {
+	height, refStr, dstStr := ctx.height, ctx.refStr, ctx.dstStr
+	ref, dst := ctx.ref, ctx.dst
+	_ = ref[(height+4)*refStr+7]
+	_ = dst[(height-1)*dstStr+7]
+	c := hbdBroadcastTaps32(&ctx.kernel)
+	c0, c1, c2, c3, c4, c5 := c[0], c[1], c[2], c[3], c[4], c[5]
+	r0, r1, r2, r3, r4, r5 := hbdLoad4Int32(ref), hbdLoad4Int32(ref[1*refStr:]), hbdLoad4Int32(ref[2*refStr:]), hbdLoad4Int32(ref[3*refStr:]), hbdLoad4Int32(ref[4*refStr:]), hbdLoad4Int32(ref[5*refStr:])
+	p := 0
+	for y := 0; y < height; y++ {
+		sum := hbdMulAdd32(r0, c0, bias)
+		sum = hbdMulAdd32(r1, c1, sum)
+		sum = hbdMulAdd32(r2, c2, sum)
+		sum = hbdMulAdd32(r3, c3, sum)
+		sum = hbdMulAdd32(r4, c4, sum)
+		sum = hbdMulAdd32(r5, c5, sum)
+		sum = hbdClip(hbdShiftRight(sum, shift, int(ctx.round0)), zero, maxV)
+		hbdStorePix4(dst[y*dstStr:], sum)
+		if y+1 < height {
+			r0, r1, r2, r3, r4 = r1, r2, r3, r4, r5
+			p += refStr
+			r5 = hbdLoad4Int32(ref[p+5*refStr:])
 		}
 	}
 }
@@ -627,6 +698,14 @@ func compoundXHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 // roundPowerOfTwo7(sum << (7 - round0)) plus the offset.
 func compoundYHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 	n := int(ctx.taps)
+	if ctx.taps == 4 && ctx.width == 4 {
+		compoundYHighBD4TapW4Sliding(ctx)
+		return
+	}
+	if ctx.taps == 6 && ctx.width == 4 {
+		compoundYHighBD6TapW4Sliding(ctx)
+		return
+	}
 	if ctx.taps == 6 && ctx.width >= 8 && ctx.width%8 == 0 {
 		compoundYHighBD6TapSliding(ctx)
 		return
@@ -655,6 +734,73 @@ func compoundYHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 			lo, _ := hbdSum8(win[:], 16, &taps, n)
 			lo = hbdRoundShift(lo, roundBias, roundShift, round0).Add(rndOff)
 			hbdStoreU16x4(out[x:], lo)
+		}
+	}
+}
+
+func compoundYHighBD4TapW4Sliding(ctx *compoundFilterGoSIMDCtx) {
+	height, refStr := ctx.height, ctx.refStr
+	ref, out := ctx.ref, ctx.out
+	_ = ref[(height+2)*refStr+7]
+	_ = out[height*4-1]
+	c := hbdBroadcastTaps32(&ctx.kernel)
+	c0, c1, c2, c3 := c[0], c[1], c[2], c[3]
+	round0 := int(ctx.round0)
+	bias := archsimd.BroadcastInt32x4(int32(1) << (round0 - 1))
+	shift := archsimd.BroadcastInt32x4(int32(-round0))
+	off := archsimd.BroadcastInt32x4(ctx.roundOffset)
+	r0 := hbdLoad4Int32(ref)
+	r1 := hbdLoad4Int32(ref[refStr:])
+	r2 := hbdLoad4Int32(ref[2*refStr:])
+	r3 := hbdLoad4Int32(ref[3*refStr:])
+	p := 0
+	for y := 0; y < height; y++ {
+		sum := hbdMulAdd32(r0, c0, bias)
+		sum = hbdMulAdd32(r1, c1, sum)
+		sum = hbdMulAdd32(r2, c2, sum)
+		sum = hbdMulAdd32(r3, c3, sum)
+		hbdStoreU16x4(out[y*4:], hbdShiftRight(sum, shift, round0).Add(off))
+		if y+1 < height {
+			r0, r1, r2 = r1, r2, r3
+			p += refStr
+			r3 = hbdLoad4Int32(ref[p+3*refStr:])
+		}
+	}
+}
+
+// compoundYHighBD6TapW4Sliding loads exactly four samples per input row and
+// retains the widened rows across outputs. Narrow blocks otherwise spent most
+// of their time copying each row into a 16-byte staging window repeatedly.
+func compoundYHighBD6TapW4Sliding(ctx *compoundFilterGoSIMDCtx) {
+	height, refStr := ctx.height, ctx.refStr
+	ref, out := ctx.ref, ctx.out
+	_ = ref[(height+4)*refStr+7]
+	_ = out[height*4-1]
+	c := hbdBroadcastTaps32(&ctx.kernel)
+	c0, c1, c2, c3, c4, c5 := c[0], c[1], c[2], c[3], c[4], c[5]
+	round0 := int(ctx.round0)
+	bias := archsimd.BroadcastInt32x4(int32(1) << (round0 - 1))
+	shift := archsimd.BroadcastInt32x4(int32(-round0))
+	off := archsimd.BroadcastInt32x4(ctx.roundOffset)
+	r0 := hbdLoad4Int32(ref)
+	r1 := hbdLoad4Int32(ref[refStr:])
+	r2 := hbdLoad4Int32(ref[2*refStr:])
+	r3 := hbdLoad4Int32(ref[3*refStr:])
+	r4 := hbdLoad4Int32(ref[4*refStr:])
+	r5 := hbdLoad4Int32(ref[5*refStr:])
+	p := 0
+	for y := 0; y < height; y++ {
+		sum := hbdMulAdd32(r0, c0, bias)
+		sum = hbdMulAdd32(r1, c1, sum)
+		sum = hbdMulAdd32(r2, c2, sum)
+		sum = hbdMulAdd32(r3, c3, sum)
+		sum = hbdMulAdd32(r4, c4, sum)
+		sum = hbdMulAdd32(r5, c5, sum)
+		hbdStoreU16x4(out[y*4:], hbdShiftRight(sum, shift, round0).Add(off))
+		if y+1 < height {
+			r0, r1, r2, r3, r4 = r1, r2, r3, r4, r5
+			p += refStr
+			r5 = hbdLoad4Int32(ref[p+5*refStr:])
 		}
 	}
 }
@@ -804,6 +950,10 @@ func compound2DHighBDKernel(ctx *compound2DGoSIMDCtx) {
 	yBias := archsimd.BroadcastInt32x4(int32(ctx.yBias))
 
 	hbdHorizontalIM(ctx.ref, ctx.refStr, ctx.im, ctx.imStr, width, height+ny-1, &xTaps, nx, xBias, int(ctx.round0))
+	if width == 4 && (ny == 4 || ny == 6) {
+		compoundVerticalIMHighBDW4(ctx.out, height, ctx.im, ctx.imStr, &yTaps, ny, yBias)
+		return
+	}
 	if ny == 6 && width >= 8 && width%8 == 0 {
 		compoundVerticalIMHighBD6(ctx.out, width, height, ctx.im, ctx.imStr, &yTaps, yBias)
 		return
@@ -813,6 +963,61 @@ func compound2DHighBDKernel(ctx *compound2DGoSIMDCtx) {
 		return
 	}
 	compoundVerticalIM(ctx.out, width, height, ctx.im, ctx.imStr, &yTaps, ny, yBias)
+}
+
+// compoundVerticalIMHighBDW4 reuses the intermediate rows of narrow blocks.
+func compoundVerticalIMHighBDW4(out []uint16, height int, im []int32, imStr int, taps *hbdTaps32, n int, yBias archsimd.Int32x4) {
+	if n == 4 {
+		compoundVerticalIMHighBDW4x4(out, height, im, imStr, taps, yBias)
+	} else {
+		compoundVerticalIMHighBDW4x6(out, height, im, imStr, taps, yBias)
+	}
+}
+
+func compoundVerticalIMHighBDW4x4(out []uint16, height int, im []int32, imStr int, taps *hbdTaps32, yBias archsimd.Int32x4) {
+	_ = im[(height+2)*imStr+3]
+	_ = out[height*4-1]
+	c0, c1, c2, c3 := taps[0], taps[1], taps[2], taps[3]
+	bias := yBias.Add(archsimd.BroadcastInt32x4(1 << (filterBits - 1)))
+	shift := archsimd.BroadcastInt32x4(-filterBits)
+	r0, r1, r2, r3 := archsimd.LoadInt32x4(im[:4]), archsimd.LoadInt32x4(im[1*imStr:1*imStr+4]), archsimd.LoadInt32x4(im[2*imStr:2*imStr+4]), archsimd.LoadInt32x4(im[3*imStr:3*imStr+4])
+	p := 0
+	for y := 0; y < height; y++ {
+		sum := hbdMulAdd32(r0, c0, bias)
+		sum = hbdMulAdd32(r1, c1, sum)
+		sum = hbdMulAdd32(r2, c2, sum)
+		sum = hbdMulAdd32(r3, c3, sum)
+		hbdStoreU16x4(out[y*4:], hbdShiftRight(sum, shift, filterBits))
+		if y+1 < height {
+			r0, r1, r2 = r1, r2, r3
+			p += imStr
+			r3 = archsimd.LoadInt32x4(im[p+3*imStr : p+3*imStr+4])
+		}
+	}
+}
+
+func compoundVerticalIMHighBDW4x6(out []uint16, height int, im []int32, imStr int, taps *hbdTaps32, yBias archsimd.Int32x4) {
+	_ = im[(height+4)*imStr+3]
+	_ = out[height*4-1]
+	c0, c1, c2, c3, c4, c5 := taps[0], taps[1], taps[2], taps[3], taps[4], taps[5]
+	bias := yBias.Add(archsimd.BroadcastInt32x4(1 << (filterBits - 1)))
+	shift := archsimd.BroadcastInt32x4(-filterBits)
+	r0, r1, r2, r3, r4, r5 := archsimd.LoadInt32x4(im[:4]), archsimd.LoadInt32x4(im[1*imStr:1*imStr+4]), archsimd.LoadInt32x4(im[2*imStr:2*imStr+4]), archsimd.LoadInt32x4(im[3*imStr:3*imStr+4]), archsimd.LoadInt32x4(im[4*imStr:4*imStr+4]), archsimd.LoadInt32x4(im[5*imStr:5*imStr+4])
+	p := 0
+	for y := 0; y < height; y++ {
+		sum := hbdMulAdd32(r0, c0, bias)
+		sum = hbdMulAdd32(r1, c1, sum)
+		sum = hbdMulAdd32(r2, c2, sum)
+		sum = hbdMulAdd32(r3, c3, sum)
+		sum = hbdMulAdd32(r4, c4, sum)
+		sum = hbdMulAdd32(r5, c5, sum)
+		hbdStoreU16x4(out[y*4:], hbdShiftRight(sum, shift, filterBits))
+		if y+1 < height {
+			r0, r1, r2, r3, r4 = r1, r2, r3, r4, r5
+			p += imStr
+			r5 = archsimd.LoadInt32x4(im[p+5*imStr : p+5*imStr+4])
+		}
+	}
 }
 
 // compoundVerticalIMHighBD6 keeps the six vertical coefficients in registers
