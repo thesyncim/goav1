@@ -21,38 +21,33 @@ var (
 	fwdRound12 = fwdBcast(1 << 11)
 )
 
-// fwdHalfBtf13V is half_btf at cos_bit 13 per lane: (w0*a + w1*b + 1<<12) >> 13.
-func fwdHalfBtf13V(w0, a, w1, b fwdVec) fwdVec {
-	return fwdShr(a.Mul(w0).Add(b.Mul(w1)).Add(fwdRound13), 13)
-}
-
 // fwdRoundShift1V is fwdRoundShift1Value per lane: (v + 1 + (v>>31)) >> 1.
 func fwdRoundShift1V(v fwdVec) fwdVec {
-	return fwdShr(v.Add(fwdBcast(1)).Add(fwdShr(v, 31)), 1)
+	return fwdShr(v.Add(fwdConst1).Add(fwdShr(v, 31)), 1)
 }
 
 // fwdColDCT8 runs the DCT8 column pass for the fwdLanes columns starting at g
 // and stores the shift[1]=-1 rounded outputs into buf (row-major, stride 8).
 func fwdColDCT8(buf []int32, g int, residual []int16, rs int) {
-	x0 := fwdLoadRes(residual[0*rs+g&^7:], g)
-	x1 := fwdLoadRes(residual[1*rs+g&^7:], g)
-	x2 := fwdLoadRes(residual[2*rs+g&^7:], g)
-	x3 := fwdLoadRes(residual[3*rs+g&^7:], g)
-	x4 := fwdLoadRes(residual[4*rs+g&^7:], g)
-	x5 := fwdLoadRes(residual[5*rs+g&^7:], g)
-	x6 := fwdLoadRes(residual[6*rs+g&^7:], g)
-	x7 := fwdLoadRes(residual[7*rs+g&^7:], g)
-	c8 := fwdBcast(8035)
-	c16 := fwdBcast(7568)
-	c24 := fwdBcast(6811)
-	c32 := fwdBcast(5793)
-	nc32 := fwdBcast(-5793)
-	c40 := fwdBcast(4551)
-	c48 := fwdBcast(3135)
-	c56 := fwdBcast(1598)
-	nc8 := fwdBcast(-8035)
-	nc16 := fwdBcast(-7568)
-	nc40 := fwdBcast(-4551)
+	x0 := fwdLoadResAt(residual, 0*rs+g&^7, g)
+	x1 := fwdLoadResAt(residual, 1*rs+g&^7, g)
+	x2 := fwdLoadResAt(residual, 2*rs+g&^7, g)
+	x3 := fwdLoadResAt(residual, 3*rs+g&^7, g)
+	x4 := fwdLoadResAt(residual, 4*rs+g&^7, g)
+	x5 := fwdLoadResAt(residual, 5*rs+g&^7, g)
+	x6 := fwdLoadResAt(residual, 6*rs+g&^7, g)
+	x7 := fwdLoadResAt(residual, 7*rs+g&^7, g)
+	c8 := fwdConst8035
+	c16 := fwdConst7568
+	c24 := fwdConst6811
+	c32 := fwdConst5793
+	nc32 := fwdConstN5793
+	c40 := fwdConst4551
+	c48 := fwdConst3135
+	c56 := fwdConst1598
+	nc8 := fwdConstN8035
+	nc16 := fwdConstN7568
+	nc40 := fwdConstN4551
 
 	b0 := x0.Add(x7)
 	b1 := x1.Add(x6)
@@ -89,44 +84,44 @@ func fwdColDCT8(buf []int32, g int, residual []int16, rs int) {
 	s5 = fwdHalfBtf13V(c24, b5, c40, b6)
 	s6 = fwdHalfBtf13V(c24, b6, nc40, b5)
 	s7 = fwdHalfBtf13V(c56, b7, nc8, b4)
-	fwdStoreI32(buf[0*8+g:], fwdRoundShift1V(s0))
-	fwdStoreI32(buf[1*8+g:], fwdRoundShift1V(s4))
-	fwdStoreI32(buf[2*8+g:], fwdRoundShift1V(s2))
-	fwdStoreI32(buf[3*8+g:], fwdRoundShift1V(s6))
-	fwdStoreI32(buf[4*8+g:], fwdRoundShift1V(s1))
-	fwdStoreI32(buf[5*8+g:], fwdRoundShift1V(s5))
-	fwdStoreI32(buf[6*8+g:], fwdRoundShift1V(s3))
-	fwdStoreI32(buf[7*8+g:], fwdRoundShift1V(s7))
+	fwdStoreI32At(buf, 0*8+g, fwdRoundShift1V(s0))
+	fwdStoreI32At(buf, 1*8+g, fwdRoundShift1V(s4))
+	fwdStoreI32At(buf, 2*8+g, fwdRoundShift1V(s2))
+	fwdStoreI32At(buf, 3*8+g, fwdRoundShift1V(s6))
+	fwdStoreI32At(buf, 4*8+g, fwdRoundShift1V(s1))
+	fwdStoreI32At(buf, 5*8+g, fwdRoundShift1V(s5))
+	fwdStoreI32At(buf, 6*8+g, fwdRoundShift1V(s3))
+	fwdStoreI32At(buf, 7*8+g, fwdRoundShift1V(s7))
 }
 
 // fwdColADST8 is fwdColDCT8 with the ADST8 column transform.
 func fwdColADST8(buf []int32, g int, residual []int16, rs int) {
-	x0 := fwdLoadRes(residual[0*rs+g&^7:], g)
-	x1 := fwdLoadRes(residual[1*rs+g&^7:], g)
-	x2 := fwdLoadRes(residual[2*rs+g&^7:], g)
-	x3 := fwdLoadRes(residual[3*rs+g&^7:], g)
-	x4 := fwdLoadRes(residual[4*rs+g&^7:], g)
-	x5 := fwdLoadRes(residual[5*rs+g&^7:], g)
-	x6 := fwdLoadRes(residual[6*rs+g&^7:], g)
-	x7 := fwdLoadRes(residual[7*rs+g&^7:], g)
-	c4 := fwdBcast(8153)
-	c12 := fwdBcast(7839)
-	c16 := fwdBcast(7568)
-	c20 := fwdBcast(7225)
-	c28 := fwdBcast(6333)
-	c32 := fwdBcast(5793)
-	nc32 := fwdBcast(-5793)
-	c36 := fwdBcast(5197)
-	c44 := fwdBcast(3862)
-	c48 := fwdBcast(3135)
-	nc48 := fwdBcast(-3135)
-	c52 := fwdBcast(2378)
-	c60 := fwdBcast(803)
-	nc4 := fwdBcast(-8153)
-	nc20 := fwdBcast(-7225)
-	nc16 := fwdBcast(-7568)
-	nc36 := fwdBcast(-5197)
-	nc52 := fwdBcast(-2378)
+	x0 := fwdLoadResAt(residual, 0*rs+g&^7, g)
+	x1 := fwdLoadResAt(residual, 1*rs+g&^7, g)
+	x2 := fwdLoadResAt(residual, 2*rs+g&^7, g)
+	x3 := fwdLoadResAt(residual, 3*rs+g&^7, g)
+	x4 := fwdLoadResAt(residual, 4*rs+g&^7, g)
+	x5 := fwdLoadResAt(residual, 5*rs+g&^7, g)
+	x6 := fwdLoadResAt(residual, 6*rs+g&^7, g)
+	x7 := fwdLoadResAt(residual, 7*rs+g&^7, g)
+	c4 := fwdConst8153
+	c12 := fwdConst7839
+	c16 := fwdConst7568
+	c20 := fwdConst7225
+	c28 := fwdConst6333
+	c32 := fwdConst5793
+	nc32 := fwdConstN5793
+	c36 := fwdConst5197
+	c44 := fwdConst3862
+	c48 := fwdConst3135
+	nc48 := fwdConstN3135
+	c52 := fwdConst2378
+	c60 := fwdConst803
+	nc4 := fwdConstN8153
+	nc20 := fwdConstN7225
+	nc16 := fwdConstN7568
+	nc36 := fwdConstN5197
+	nc52 := fwdConstN2378
 
 	nx3 := x3.Neg()
 	nx7 := x7.Neg()
@@ -173,38 +168,38 @@ func fwdColADST8(buf []int32, g int, residual []int16, rs int) {
 	s5 = fwdHalfBtf13V(c28, t4, nc36, t5)
 	s6 = fwdHalfBtf13V(c52, t6, c12, t7)
 	s7 = fwdHalfBtf13V(c12, t6, nc52, t7)
-	fwdStoreI32(buf[0*8+g:], fwdRoundShift1V(s1))
-	fwdStoreI32(buf[1*8+g:], fwdRoundShift1V(s6))
-	fwdStoreI32(buf[2*8+g:], fwdRoundShift1V(s3))
-	fwdStoreI32(buf[3*8+g:], fwdRoundShift1V(s4))
-	fwdStoreI32(buf[4*8+g:], fwdRoundShift1V(s5))
-	fwdStoreI32(buf[5*8+g:], fwdRoundShift1V(s2))
-	fwdStoreI32(buf[6*8+g:], fwdRoundShift1V(s7))
-	fwdStoreI32(buf[7*8+g:], fwdRoundShift1V(s0))
+	fwdStoreI32At(buf, 0*8+g, fwdRoundShift1V(s1))
+	fwdStoreI32At(buf, 1*8+g, fwdRoundShift1V(s6))
+	fwdStoreI32At(buf, 2*8+g, fwdRoundShift1V(s3))
+	fwdStoreI32At(buf, 3*8+g, fwdRoundShift1V(s4))
+	fwdStoreI32At(buf, 4*8+g, fwdRoundShift1V(s5))
+	fwdStoreI32At(buf, 5*8+g, fwdRoundShift1V(s2))
+	fwdStoreI32At(buf, 6*8+g, fwdRoundShift1V(s7))
+	fwdStoreI32At(buf, 7*8+g, fwdRoundShift1V(s0))
 }
 
 // fwdRowDCT8 runs the DCT8 row pass for the fwdLanes rows starting at h. bufT
 // is the transposed column-pass output: bufT[c*8+k] is the value for row k.
 func fwdRowDCT8(coeff []int32, coeffStride int, bufT []int32, h int) {
-	x0 := fwdLoadI32(bufT[0*8+h:])
-	x1 := fwdLoadI32(bufT[1*8+h:])
-	x2 := fwdLoadI32(bufT[2*8+h:])
-	x3 := fwdLoadI32(bufT[3*8+h:])
-	x4 := fwdLoadI32(bufT[4*8+h:])
-	x5 := fwdLoadI32(bufT[5*8+h:])
-	x6 := fwdLoadI32(bufT[6*8+h:])
-	x7 := fwdLoadI32(bufT[7*8+h:])
-	c8 := fwdBcast(8035)
-	c16 := fwdBcast(7568)
-	c24 := fwdBcast(6811)
-	c32 := fwdBcast(5793)
-	nc32 := fwdBcast(-5793)
-	c40 := fwdBcast(4551)
-	c48 := fwdBcast(3135)
-	c56 := fwdBcast(1598)
-	nc8 := fwdBcast(-8035)
-	nc16 := fwdBcast(-7568)
-	nc40 := fwdBcast(-4551)
+	x0 := fwdLoadI32At(bufT, 0*8+h)
+	x1 := fwdLoadI32At(bufT, 1*8+h)
+	x2 := fwdLoadI32At(bufT, 2*8+h)
+	x3 := fwdLoadI32At(bufT, 3*8+h)
+	x4 := fwdLoadI32At(bufT, 4*8+h)
+	x5 := fwdLoadI32At(bufT, 5*8+h)
+	x6 := fwdLoadI32At(bufT, 6*8+h)
+	x7 := fwdLoadI32At(bufT, 7*8+h)
+	c8 := fwdConst8035
+	c16 := fwdConst7568
+	c24 := fwdConst6811
+	c32 := fwdConst5793
+	nc32 := fwdConstN5793
+	c40 := fwdConst4551
+	c48 := fwdConst3135
+	c56 := fwdConst1598
+	nc8 := fwdConstN8035
+	nc16 := fwdConstN7568
+	nc40 := fwdConstN4551
 
 	b0 := x0.Add(x7)
 	b1 := x1.Add(x6)
@@ -241,44 +236,44 @@ func fwdRowDCT8(coeff []int32, coeffStride int, bufT []int32, h int) {
 	s5 = fwdHalfBtf13V(c24, b5, c40, b6)
 	s6 = fwdHalfBtf13V(c24, b6, nc40, b5)
 	s7 = fwdHalfBtf13V(c56, b7, nc8, b4)
-	fwdStoreI32(coeff[0*coeffStride+h:], s0)
-	fwdStoreI32(coeff[1*coeffStride+h:], s4)
-	fwdStoreI32(coeff[2*coeffStride+h:], s2)
-	fwdStoreI32(coeff[3*coeffStride+h:], s6)
-	fwdStoreI32(coeff[4*coeffStride+h:], s1)
-	fwdStoreI32(coeff[5*coeffStride+h:], s5)
-	fwdStoreI32(coeff[6*coeffStride+h:], s3)
-	fwdStoreI32(coeff[7*coeffStride+h:], s7)
+	fwdStoreI32At(coeff, 0*coeffStride+h, s0)
+	fwdStoreI32At(coeff, 1*coeffStride+h, s4)
+	fwdStoreI32At(coeff, 2*coeffStride+h, s2)
+	fwdStoreI32At(coeff, 3*coeffStride+h, s6)
+	fwdStoreI32At(coeff, 4*coeffStride+h, s1)
+	fwdStoreI32At(coeff, 5*coeffStride+h, s5)
+	fwdStoreI32At(coeff, 6*coeffStride+h, s3)
+	fwdStoreI32At(coeff, 7*coeffStride+h, s7)
 }
 
 // fwdRowADST8 is fwdRowDCT8 with the ADST8 row transform.
 func fwdRowADST8(coeff []int32, coeffStride int, bufT []int32, h int) {
-	x0 := fwdLoadI32(bufT[0*8+h:])
-	x1 := fwdLoadI32(bufT[1*8+h:])
-	x2 := fwdLoadI32(bufT[2*8+h:])
-	x3 := fwdLoadI32(bufT[3*8+h:])
-	x4 := fwdLoadI32(bufT[4*8+h:])
-	x5 := fwdLoadI32(bufT[5*8+h:])
-	x6 := fwdLoadI32(bufT[6*8+h:])
-	x7 := fwdLoadI32(bufT[7*8+h:])
-	c4 := fwdBcast(8153)
-	c12 := fwdBcast(7839)
-	c16 := fwdBcast(7568)
-	c20 := fwdBcast(7225)
-	c28 := fwdBcast(6333)
-	c32 := fwdBcast(5793)
-	nc32 := fwdBcast(-5793)
-	c36 := fwdBcast(5197)
-	c44 := fwdBcast(3862)
-	c48 := fwdBcast(3135)
-	nc48 := fwdBcast(-3135)
-	c52 := fwdBcast(2378)
-	c60 := fwdBcast(803)
-	nc4 := fwdBcast(-8153)
-	nc20 := fwdBcast(-7225)
-	nc16 := fwdBcast(-7568)
-	nc36 := fwdBcast(-5197)
-	nc52 := fwdBcast(-2378)
+	x0 := fwdLoadI32At(bufT, 0*8+h)
+	x1 := fwdLoadI32At(bufT, 1*8+h)
+	x2 := fwdLoadI32At(bufT, 2*8+h)
+	x3 := fwdLoadI32At(bufT, 3*8+h)
+	x4 := fwdLoadI32At(bufT, 4*8+h)
+	x5 := fwdLoadI32At(bufT, 5*8+h)
+	x6 := fwdLoadI32At(bufT, 6*8+h)
+	x7 := fwdLoadI32At(bufT, 7*8+h)
+	c4 := fwdConst8153
+	c12 := fwdConst7839
+	c16 := fwdConst7568
+	c20 := fwdConst7225
+	c28 := fwdConst6333
+	c32 := fwdConst5793
+	nc32 := fwdConstN5793
+	c36 := fwdConst5197
+	c44 := fwdConst3862
+	c48 := fwdConst3135
+	nc48 := fwdConstN3135
+	c52 := fwdConst2378
+	c60 := fwdConst803
+	nc4 := fwdConstN8153
+	nc20 := fwdConstN7225
+	nc16 := fwdConstN7568
+	nc36 := fwdConstN5197
+	nc52 := fwdConstN2378
 
 	nx3 := x3.Neg()
 	nx7 := x7.Neg()
@@ -325,27 +320,20 @@ func fwdRowADST8(coeff []int32, coeffStride int, bufT []int32, h int) {
 	s5 = fwdHalfBtf13V(c28, t4, nc36, t5)
 	s6 = fwdHalfBtf13V(c52, t6, c12, t7)
 	s7 = fwdHalfBtf13V(c12, t6, nc52, t7)
-	fwdStoreI32(coeff[0*coeffStride+h:], s1)
-	fwdStoreI32(coeff[1*coeffStride+h:], s6)
-	fwdStoreI32(coeff[2*coeffStride+h:], s3)
-	fwdStoreI32(coeff[3*coeffStride+h:], s4)
-	fwdStoreI32(coeff[4*coeffStride+h:], s5)
-	fwdStoreI32(coeff[5*coeffStride+h:], s2)
-	fwdStoreI32(coeff[6*coeffStride+h:], s7)
-	fwdStoreI32(coeff[7*coeffStride+h:], s0)
+	fwdStoreI32At(coeff, 0*coeffStride+h, s1)
+	fwdStoreI32At(coeff, 1*coeffStride+h, s6)
+	fwdStoreI32At(coeff, 2*coeffStride+h, s3)
+	fwdStoreI32At(coeff, 3*coeffStride+h, s4)
+	fwdStoreI32At(coeff, 4*coeffStride+h, s5)
+	fwdStoreI32At(coeff, 5*coeffStride+h, s2)
+	fwdStoreI32At(coeff, 6*coeffStride+h, s7)
+	fwdStoreI32At(coeff, 7*coeffStride+h, s0)
 }
 
 // forwardDCT8x8SIMD is the 8x8 DCT_DCT kernel (forwardDCT8x8PureGo). It
 // assumes the residual is within the 8-bit range checked by the guarded binding.
 func forwardDCT8x8SIMD(coeff []int32, coeffStride int, residual []int16, residualStride int) {
-	var buf, bufT [64]int32
-	for g := 0; g < 8; g += fwdLanes {
-		fwdColDCT8(buf[:], g, residual, residualStride)
-	}
-	fwdTranspose(bufT[:], buf[:], 8)
-	for h := 0; h < 8; h += fwdLanes {
-		fwdRowDCT8(coeff, coeffStride, bufT[:], h)
-	}
+	fwd8DCTCore(coeff, coeffStride, residual, residualStride)
 }
 
 // forwardDCT8x8SIMDGuarded routes residuals outside the 8-bit range to the

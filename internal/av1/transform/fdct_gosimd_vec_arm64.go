@@ -6,7 +6,10 @@
 
 package transform
 
-import "simd/archsimd"
+import (
+	"simd/archsimd"
+	"unsafe"
+)
 
 // fwdVec is one 128-bit lane group of the forward-transform networks: four
 // independent 1-D lines per vector (fdct_gosimd_net.go).
@@ -118,4 +121,41 @@ func fwdI32AsI64(v fwdVec) archsimd.Int64x2 {
 
 func fwdI64AsI32(v archsimd.Int64x2) fwdVec {
 	return v.ToBits().ReshapeToUint32s().BitsToInt32()
+}
+
+// The network drivers have already validated their buffers. Addressing through
+// a base pointer keeps per-row bounds checks out of the vector butterflies.
+func fwdLoadI32At(s []int32, i int) fwdVec {
+	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*4)
+	return archsimd.LoadInt32x4Array((*[4]int32)(p))
+}
+
+func fwdStoreI32At(s []int32, i int, v fwdVec) {
+	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*4)
+	v.StoreArray((*[4]int32)(p))
+}
+
+func fwdLoadResAt(s []int16, i, g int) fwdVec {
+	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*2)
+	w := archsimd.LoadInt16x8Array((*[8]int16)(p))
+	if g&4 == 0 {
+		return fwdShl(w.ExtendLo4ToInt32(), 2)
+	}
+	return fwdShl(w.HiToLo().ExtendLo4ToInt32(), 2)
+}
+
+// fwdMulAdd computes a*w + acc. The arm64 intrinsic maps to MLA; AVX2
+// has no integer multiply-add instruction, so its port uses two operations.
+func fwdMulAdd(a, w, acc fwdVec) fwdVec {
+	return a.MulAdd(w, acc)
+}
+
+// fwdHalfBtf13V computes the rounded Q13 forward butterfly.
+func fwdHalfBtf13V(w0, a, w1, b fwdVec) fwdVec {
+	return fwdShr(b.MulAdd(w1, a.MulAdd(w0, fwdRound13)), 13)
+}
+
+// fwdHalfBtf12V computes the rounded Q12 forward butterfly.
+func fwdHalfBtf12V(w0, a, w1, b fwdVec) fwdVec {
+	return fwdShr(b.MulAdd(w1, a.MulAdd(w0, fwdRound12)), 12)
 }

@@ -15,46 +15,46 @@ package transform
 // fwdColDCT16 is the 16-point column pass of forwardDCT16x16PureGo over
 // fwdLanes columns from g: fwdDCT16 at cos_bit 13, then the shift[1]=-2 round.
 func fwdColDCT16(buf []int32, g int, residual []int16, rs int) {
-	k803 := fwdBcast(803)
-	k1598 := fwdBcast(1598)
-	k2378 := fwdBcast(2378)
-	k3135 := fwdBcast(3135)
-	k3862 := fwdBcast(3862)
-	k4551 := fwdBcast(4551)
-	k5197 := fwdBcast(5197)
-	k5793 := fwdBcast(5793)
-	k6333 := fwdBcast(6333)
-	k6811 := fwdBcast(6811)
-	k7225 := fwdBcast(7225)
-	k7568 := fwdBcast(7568)
-	k7839 := fwdBcast(7839)
-	k8035 := fwdBcast(8035)
-	k8153 := fwdBcast(8153)
-	kn2378 := fwdBcast(-2378)
-	kn3135 := fwdBcast(-3135)
-	kn4551 := fwdBcast(-4551)
-	kn5197 := fwdBcast(-5197)
-	kn5793 := fwdBcast(-5793)
-	kn7225 := fwdBcast(-7225)
-	kn7568 := fwdBcast(-7568)
-	kn8035 := fwdBcast(-8035)
-	kn8153 := fwdBcast(-8153)
-	x0 := fwdLoadRes(residual[0*rs+g&^7:], g)
-	x1 := fwdLoadRes(residual[1*rs+g&^7:], g)
-	x2 := fwdLoadRes(residual[2*rs+g&^7:], g)
-	x3 := fwdLoadRes(residual[3*rs+g&^7:], g)
-	x4 := fwdLoadRes(residual[4*rs+g&^7:], g)
-	x5 := fwdLoadRes(residual[5*rs+g&^7:], g)
-	x6 := fwdLoadRes(residual[6*rs+g&^7:], g)
-	x7 := fwdLoadRes(residual[7*rs+g&^7:], g)
-	x8 := fwdLoadRes(residual[8*rs+g&^7:], g)
-	x9 := fwdLoadRes(residual[9*rs+g&^7:], g)
-	x10 := fwdLoadRes(residual[10*rs+g&^7:], g)
-	x11 := fwdLoadRes(residual[11*rs+g&^7:], g)
-	x12 := fwdLoadRes(residual[12*rs+g&^7:], g)
-	x13 := fwdLoadRes(residual[13*rs+g&^7:], g)
-	x14 := fwdLoadRes(residual[14*rs+g&^7:], g)
-	x15 := fwdLoadRes(residual[15*rs+g&^7:], g)
+	k803 := fwdConst803
+	k1598 := fwdConst1598
+	k2378 := fwdConst2378
+	k3135 := fwdConst3135
+	k3862 := fwdConst3862
+	k4551 := fwdConst4551
+	k5197 := fwdConst5197
+	k5793 := fwdConst5793
+	k6333 := fwdConst6333
+	k6811 := fwdConst6811
+	k7225 := fwdConst7225
+	k7568 := fwdConst7568
+	k7839 := fwdConst7839
+	k8035 := fwdConst8035
+	k8153 := fwdConst8153
+	kn2378 := fwdConstN2378
+	kn3135 := fwdConstN3135
+	kn4551 := fwdConstN4551
+	kn5197 := fwdConstN5197
+	kn5793 := fwdConstN5793
+	kn7225 := fwdConstN7225
+	kn7568 := fwdConstN7568
+	kn8035 := fwdConstN8035
+	kn8153 := fwdConstN8153
+	x0 := fwdLoadResAt(residual, 0*rs+g&^7, g)
+	x1 := fwdLoadResAt(residual, 1*rs+g&^7, g)
+	x2 := fwdLoadResAt(residual, 2*rs+g&^7, g)
+	x3 := fwdLoadResAt(residual, 3*rs+g&^7, g)
+	x4 := fwdLoadResAt(residual, 4*rs+g&^7, g)
+	x5 := fwdLoadResAt(residual, 5*rs+g&^7, g)
+	x6 := fwdLoadResAt(residual, 6*rs+g&^7, g)
+	x7 := fwdLoadResAt(residual, 7*rs+g&^7, g)
+	x8 := fwdLoadResAt(residual, 8*rs+g&^7, g)
+	x9 := fwdLoadResAt(residual, 9*rs+g&^7, g)
+	x10 := fwdLoadResAt(residual, 10*rs+g&^7, g)
+	x11 := fwdLoadResAt(residual, 11*rs+g&^7, g)
+	x12 := fwdLoadResAt(residual, 12*rs+g&^7, g)
+	x13 := fwdLoadResAt(residual, 13*rs+g&^7, g)
+	x14 := fwdLoadResAt(residual, 14*rs+g&^7, g)
+	x15 := fwdLoadResAt(residual, 15*rs+g&^7, g)
 	v3 := x0.Add(x15)
 	v6 := x7.Sub(x8)
 	v9 := x1.Add(x14)
@@ -129,67 +129,67 @@ func fwdColDCT16(buf []int32, g int, residual []int16, rs int) {
 	v88 := fwdHalfBtf13V(k3862, v80, kn7225, v77)
 	v89 := fwdHalfBtf13V(k6333, v81, kn5197, v76)
 	v90 := fwdHalfBtf13V(k803, v82, kn8153, v75)
-	fwdStoreI32(buf[0*16+g:], fwdRoundShift2V(v59))
-	fwdStoreI32(buf[1*16+g:], fwdRoundShift2V(v83))
-	fwdStoreI32(buf[2*16+g:], fwdRoundShift2V(v71))
-	fwdStoreI32(buf[3*16+g:], fwdRoundShift2V(v87))
-	fwdStoreI32(buf[4*16+g:], fwdRoundShift2V(v61))
-	fwdStoreI32(buf[5*16+g:], fwdRoundShift2V(v85))
-	fwdStoreI32(buf[6*16+g:], fwdRoundShift2V(v73))
-	fwdStoreI32(buf[7*16+g:], fwdRoundShift2V(v89))
-	fwdStoreI32(buf[8*16+g:], fwdRoundShift2V(v60))
-	fwdStoreI32(buf[9*16+g:], fwdRoundShift2V(v84))
-	fwdStoreI32(buf[10*16+g:], fwdRoundShift2V(v72))
-	fwdStoreI32(buf[11*16+g:], fwdRoundShift2V(v88))
-	fwdStoreI32(buf[12*16+g:], fwdRoundShift2V(v62))
-	fwdStoreI32(buf[13*16+g:], fwdRoundShift2V(v86))
-	fwdStoreI32(buf[14*16+g:], fwdRoundShift2V(v74))
-	fwdStoreI32(buf[15*16+g:], fwdRoundShift2V(v90))
+	fwdStoreI32At(buf, 0*16+g, fwdRoundShift2V(v59))
+	fwdStoreI32At(buf, 1*16+g, fwdRoundShift2V(v83))
+	fwdStoreI32At(buf, 2*16+g, fwdRoundShift2V(v71))
+	fwdStoreI32At(buf, 3*16+g, fwdRoundShift2V(v87))
+	fwdStoreI32At(buf, 4*16+g, fwdRoundShift2V(v61))
+	fwdStoreI32At(buf, 5*16+g, fwdRoundShift2V(v85))
+	fwdStoreI32At(buf, 6*16+g, fwdRoundShift2V(v73))
+	fwdStoreI32At(buf, 7*16+g, fwdRoundShift2V(v89))
+	fwdStoreI32At(buf, 8*16+g, fwdRoundShift2V(v60))
+	fwdStoreI32At(buf, 9*16+g, fwdRoundShift2V(v84))
+	fwdStoreI32At(buf, 10*16+g, fwdRoundShift2V(v72))
+	fwdStoreI32At(buf, 11*16+g, fwdRoundShift2V(v88))
+	fwdStoreI32At(buf, 12*16+g, fwdRoundShift2V(v62))
+	fwdStoreI32At(buf, 13*16+g, fwdRoundShift2V(v86))
+	fwdStoreI32At(buf, 14*16+g, fwdRoundShift2V(v74))
+	fwdStoreI32At(buf, 15*16+g, fwdRoundShift2V(v90))
 }
 
 // fwdRowDCT16 is the 16-point row pass of forwardDCT16x16PureGo over fwdLanes
 // rows from h: fwdDCT16 at cos_bit 12, written to coeff[k*coeffStride+h].
 func fwdRowDCT16(coeff []int32, coeffStride int, bufT []int32, h int) {
-	k401 := fwdBcast(401)
-	k799 := fwdBcast(799)
-	k1189 := fwdBcast(1189)
-	k1567 := fwdBcast(1567)
-	k1931 := fwdBcast(1931)
-	k2276 := fwdBcast(2276)
-	k2598 := fwdBcast(2598)
-	k2896 := fwdBcast(2896)
-	k3166 := fwdBcast(3166)
-	k3406 := fwdBcast(3406)
-	k3612 := fwdBcast(3612)
-	k3784 := fwdBcast(3784)
-	k3920 := fwdBcast(3920)
-	k4017 := fwdBcast(4017)
-	k4076 := fwdBcast(4076)
-	kn1189 := fwdBcast(-1189)
-	kn1567 := fwdBcast(-1567)
-	kn2276 := fwdBcast(-2276)
-	kn2598 := fwdBcast(-2598)
-	kn2896 := fwdBcast(-2896)
-	kn3612 := fwdBcast(-3612)
-	kn3784 := fwdBcast(-3784)
-	kn4017 := fwdBcast(-4017)
-	kn4076 := fwdBcast(-4076)
-	x0 := fwdLoadI32(bufT[0*16+h:])
-	x1 := fwdLoadI32(bufT[1*16+h:])
-	x2 := fwdLoadI32(bufT[2*16+h:])
-	x3 := fwdLoadI32(bufT[3*16+h:])
-	x4 := fwdLoadI32(bufT[4*16+h:])
-	x5 := fwdLoadI32(bufT[5*16+h:])
-	x6 := fwdLoadI32(bufT[6*16+h:])
-	x7 := fwdLoadI32(bufT[7*16+h:])
-	x8 := fwdLoadI32(bufT[8*16+h:])
-	x9 := fwdLoadI32(bufT[9*16+h:])
-	x10 := fwdLoadI32(bufT[10*16+h:])
-	x11 := fwdLoadI32(bufT[11*16+h:])
-	x12 := fwdLoadI32(bufT[12*16+h:])
-	x13 := fwdLoadI32(bufT[13*16+h:])
-	x14 := fwdLoadI32(bufT[14*16+h:])
-	x15 := fwdLoadI32(bufT[15*16+h:])
+	k401 := fwdConst401
+	k799 := fwdConst799
+	k1189 := fwdConst1189
+	k1567 := fwdConst1567
+	k1931 := fwdConst1931
+	k2276 := fwdConst2276
+	k2598 := fwdConst2598
+	k2896 := fwdConst2896
+	k3166 := fwdConst3166
+	k3406 := fwdConst3406
+	k3612 := fwdConst3612
+	k3784 := fwdConst3784
+	k3920 := fwdConst3920
+	k4017 := fwdConst4017
+	k4076 := fwdConst4076
+	kn1189 := fwdConstN1189
+	kn1567 := fwdConstN1567
+	kn2276 := fwdConstN2276
+	kn2598 := fwdConstN2598
+	kn2896 := fwdConstN2896
+	kn3612 := fwdConstN3612
+	kn3784 := fwdConstN3784
+	kn4017 := fwdConstN4017
+	kn4076 := fwdConstN4076
+	x0 := fwdLoadI32At(bufT, 0*16+h)
+	x1 := fwdLoadI32At(bufT, 1*16+h)
+	x2 := fwdLoadI32At(bufT, 2*16+h)
+	x3 := fwdLoadI32At(bufT, 3*16+h)
+	x4 := fwdLoadI32At(bufT, 4*16+h)
+	x5 := fwdLoadI32At(bufT, 5*16+h)
+	x6 := fwdLoadI32At(bufT, 6*16+h)
+	x7 := fwdLoadI32At(bufT, 7*16+h)
+	x8 := fwdLoadI32At(bufT, 8*16+h)
+	x9 := fwdLoadI32At(bufT, 9*16+h)
+	x10 := fwdLoadI32At(bufT, 10*16+h)
+	x11 := fwdLoadI32At(bufT, 11*16+h)
+	x12 := fwdLoadI32At(bufT, 12*16+h)
+	x13 := fwdLoadI32At(bufT, 13*16+h)
+	x14 := fwdLoadI32At(bufT, 14*16+h)
+	x15 := fwdLoadI32At(bufT, 15*16+h)
 	v3 := x0.Add(x15)
 	v6 := x7.Sub(x8)
 	v9 := x1.Add(x14)
@@ -264,109 +264,109 @@ func fwdRowDCT16(coeff []int32, coeffStride int, bufT []int32, h int) {
 	v88 := fwdHalfBtf12V(k1931, v80, kn3612, v77)
 	v89 := fwdHalfBtf12V(k3166, v81, kn2598, v76)
 	v90 := fwdHalfBtf12V(k401, v82, kn4076, v75)
-	fwdStoreI32(coeff[0*coeffStride+h:], v59)
-	fwdStoreI32(coeff[1*coeffStride+h:], v83)
-	fwdStoreI32(coeff[2*coeffStride+h:], v71)
-	fwdStoreI32(coeff[3*coeffStride+h:], v87)
-	fwdStoreI32(coeff[4*coeffStride+h:], v61)
-	fwdStoreI32(coeff[5*coeffStride+h:], v85)
-	fwdStoreI32(coeff[6*coeffStride+h:], v73)
-	fwdStoreI32(coeff[7*coeffStride+h:], v89)
-	fwdStoreI32(coeff[8*coeffStride+h:], v60)
-	fwdStoreI32(coeff[9*coeffStride+h:], v84)
-	fwdStoreI32(coeff[10*coeffStride+h:], v72)
-	fwdStoreI32(coeff[11*coeffStride+h:], v88)
-	fwdStoreI32(coeff[12*coeffStride+h:], v62)
-	fwdStoreI32(coeff[13*coeffStride+h:], v86)
-	fwdStoreI32(coeff[14*coeffStride+h:], v74)
-	fwdStoreI32(coeff[15*coeffStride+h:], v90)
+	fwdStoreI32At(coeff, 0*coeffStride+h, v59)
+	fwdStoreI32At(coeff, 1*coeffStride+h, v83)
+	fwdStoreI32At(coeff, 2*coeffStride+h, v71)
+	fwdStoreI32At(coeff, 3*coeffStride+h, v87)
+	fwdStoreI32At(coeff, 4*coeffStride+h, v61)
+	fwdStoreI32At(coeff, 5*coeffStride+h, v85)
+	fwdStoreI32At(coeff, 6*coeffStride+h, v73)
+	fwdStoreI32At(coeff, 7*coeffStride+h, v89)
+	fwdStoreI32At(coeff, 8*coeffStride+h, v60)
+	fwdStoreI32At(coeff, 9*coeffStride+h, v84)
+	fwdStoreI32At(coeff, 10*coeffStride+h, v72)
+	fwdStoreI32At(coeff, 11*coeffStride+h, v88)
+	fwdStoreI32At(coeff, 12*coeffStride+h, v62)
+	fwdStoreI32At(coeff, 13*coeffStride+h, v86)
+	fwdStoreI32At(coeff, 14*coeffStride+h, v74)
+	fwdStoreI32At(coeff, 15*coeffStride+h, v90)
 }
 
 // fwdColDCT32 is the 32-point column pass of forwardDCT32x32PureGo over
 // fwdLanes columns from g: fwdDCT32 at cos_bit 12, then the shift[1]=-4 round.
 func fwdColDCT32(buf []int32, g int, residual []int16, rs int) {
-	k201 := fwdBcast(201)
-	k401 := fwdBcast(401)
-	k601 := fwdBcast(601)
-	k799 := fwdBcast(799)
-	k995 := fwdBcast(995)
-	k1189 := fwdBcast(1189)
-	k1380 := fwdBcast(1380)
-	k1567 := fwdBcast(1567)
-	k1751 := fwdBcast(1751)
-	k1931 := fwdBcast(1931)
-	k2106 := fwdBcast(2106)
-	k2276 := fwdBcast(2276)
-	k2440 := fwdBcast(2440)
-	k2598 := fwdBcast(2598)
-	k2751 := fwdBcast(2751)
-	k2896 := fwdBcast(2896)
-	k3035 := fwdBcast(3035)
-	k3166 := fwdBcast(3166)
-	k3290 := fwdBcast(3290)
-	k3406 := fwdBcast(3406)
-	k3513 := fwdBcast(3513)
-	k3612 := fwdBcast(3612)
-	k3703 := fwdBcast(3703)
-	k3784 := fwdBcast(3784)
-	k3857 := fwdBcast(3857)
-	k3920 := fwdBcast(3920)
-	k3973 := fwdBcast(3973)
-	k4017 := fwdBcast(4017)
-	k4052 := fwdBcast(4052)
-	k4076 := fwdBcast(4076)
-	k4091 := fwdBcast(4091)
-	kn601 := fwdBcast(-601)
-	kn799 := fwdBcast(-799)
-	kn1189 := fwdBcast(-1189)
-	kn1380 := fwdBcast(-1380)
-	kn1567 := fwdBcast(-1567)
-	kn2106 := fwdBcast(-2106)
-	kn2276 := fwdBcast(-2276)
-	kn2598 := fwdBcast(-2598)
-	kn2751 := fwdBcast(-2751)
-	kn2896 := fwdBcast(-2896)
-	kn3290 := fwdBcast(-3290)
-	kn3406 := fwdBcast(-3406)
-	kn3612 := fwdBcast(-3612)
-	kn3703 := fwdBcast(-3703)
-	kn3784 := fwdBcast(-3784)
-	kn3973 := fwdBcast(-3973)
-	kn4017 := fwdBcast(-4017)
-	kn4076 := fwdBcast(-4076)
-	kn4091 := fwdBcast(-4091)
-	x0 := fwdLoadRes(residual[0*rs+g&^7:], g)
-	x1 := fwdLoadRes(residual[1*rs+g&^7:], g)
-	x2 := fwdLoadRes(residual[2*rs+g&^7:], g)
-	x3 := fwdLoadRes(residual[3*rs+g&^7:], g)
-	x4 := fwdLoadRes(residual[4*rs+g&^7:], g)
-	x5 := fwdLoadRes(residual[5*rs+g&^7:], g)
-	x6 := fwdLoadRes(residual[6*rs+g&^7:], g)
-	x7 := fwdLoadRes(residual[7*rs+g&^7:], g)
-	x8 := fwdLoadRes(residual[8*rs+g&^7:], g)
-	x9 := fwdLoadRes(residual[9*rs+g&^7:], g)
-	x10 := fwdLoadRes(residual[10*rs+g&^7:], g)
-	x11 := fwdLoadRes(residual[11*rs+g&^7:], g)
-	x12 := fwdLoadRes(residual[12*rs+g&^7:], g)
-	x13 := fwdLoadRes(residual[13*rs+g&^7:], g)
-	x14 := fwdLoadRes(residual[14*rs+g&^7:], g)
-	x15 := fwdLoadRes(residual[15*rs+g&^7:], g)
-	x16 := fwdLoadRes(residual[16*rs+g&^7:], g)
-	x17 := fwdLoadRes(residual[17*rs+g&^7:], g)
-	x18 := fwdLoadRes(residual[18*rs+g&^7:], g)
-	x19 := fwdLoadRes(residual[19*rs+g&^7:], g)
-	x20 := fwdLoadRes(residual[20*rs+g&^7:], g)
-	x21 := fwdLoadRes(residual[21*rs+g&^7:], g)
-	x22 := fwdLoadRes(residual[22*rs+g&^7:], g)
-	x23 := fwdLoadRes(residual[23*rs+g&^7:], g)
-	x24 := fwdLoadRes(residual[24*rs+g&^7:], g)
-	x25 := fwdLoadRes(residual[25*rs+g&^7:], g)
-	x26 := fwdLoadRes(residual[26*rs+g&^7:], g)
-	x27 := fwdLoadRes(residual[27*rs+g&^7:], g)
-	x28 := fwdLoadRes(residual[28*rs+g&^7:], g)
-	x29 := fwdLoadRes(residual[29*rs+g&^7:], g)
-	x30 := fwdLoadRes(residual[30*rs+g&^7:], g)
-	x31 := fwdLoadRes(residual[31*rs+g&^7:], g)
+	k201 := fwdConst201
+	k401 := fwdConst401
+	k601 := fwdConst601
+	k799 := fwdConst799
+	k995 := fwdConst995
+	k1189 := fwdConst1189
+	k1380 := fwdConst1380
+	k1567 := fwdConst1567
+	k1751 := fwdConst1751
+	k1931 := fwdConst1931
+	k2106 := fwdConst2106
+	k2276 := fwdConst2276
+	k2440 := fwdConst2440
+	k2598 := fwdConst2598
+	k2751 := fwdConst2751
+	k2896 := fwdConst2896
+	k3035 := fwdConst3035
+	k3166 := fwdConst3166
+	k3290 := fwdConst3290
+	k3406 := fwdConst3406
+	k3513 := fwdConst3513
+	k3612 := fwdConst3612
+	k3703 := fwdConst3703
+	k3784 := fwdConst3784
+	k3857 := fwdConst3857
+	k3920 := fwdConst3920
+	k3973 := fwdConst3973
+	k4017 := fwdConst4017
+	k4052 := fwdConst4052
+	k4076 := fwdConst4076
+	k4091 := fwdConst4091
+	kn601 := fwdConstN601
+	kn799 := fwdConstN799
+	kn1189 := fwdConstN1189
+	kn1380 := fwdConstN1380
+	kn1567 := fwdConstN1567
+	kn2106 := fwdConstN2106
+	kn2276 := fwdConstN2276
+	kn2598 := fwdConstN2598
+	kn2751 := fwdConstN2751
+	kn2896 := fwdConstN2896
+	kn3290 := fwdConstN3290
+	kn3406 := fwdConstN3406
+	kn3612 := fwdConstN3612
+	kn3703 := fwdConstN3703
+	kn3784 := fwdConstN3784
+	kn3973 := fwdConstN3973
+	kn4017 := fwdConstN4017
+	kn4076 := fwdConstN4076
+	kn4091 := fwdConstN4091
+	x0 := fwdLoadResAt(residual, 0*rs+g&^7, g)
+	x1 := fwdLoadResAt(residual, 1*rs+g&^7, g)
+	x2 := fwdLoadResAt(residual, 2*rs+g&^7, g)
+	x3 := fwdLoadResAt(residual, 3*rs+g&^7, g)
+	x4 := fwdLoadResAt(residual, 4*rs+g&^7, g)
+	x5 := fwdLoadResAt(residual, 5*rs+g&^7, g)
+	x6 := fwdLoadResAt(residual, 6*rs+g&^7, g)
+	x7 := fwdLoadResAt(residual, 7*rs+g&^7, g)
+	x8 := fwdLoadResAt(residual, 8*rs+g&^7, g)
+	x9 := fwdLoadResAt(residual, 9*rs+g&^7, g)
+	x10 := fwdLoadResAt(residual, 10*rs+g&^7, g)
+	x11 := fwdLoadResAt(residual, 11*rs+g&^7, g)
+	x12 := fwdLoadResAt(residual, 12*rs+g&^7, g)
+	x13 := fwdLoadResAt(residual, 13*rs+g&^7, g)
+	x14 := fwdLoadResAt(residual, 14*rs+g&^7, g)
+	x15 := fwdLoadResAt(residual, 15*rs+g&^7, g)
+	x16 := fwdLoadResAt(residual, 16*rs+g&^7, g)
+	x17 := fwdLoadResAt(residual, 17*rs+g&^7, g)
+	x18 := fwdLoadResAt(residual, 18*rs+g&^7, g)
+	x19 := fwdLoadResAt(residual, 19*rs+g&^7, g)
+	x20 := fwdLoadResAt(residual, 20*rs+g&^7, g)
+	x21 := fwdLoadResAt(residual, 21*rs+g&^7, g)
+	x22 := fwdLoadResAt(residual, 22*rs+g&^7, g)
+	x23 := fwdLoadResAt(residual, 23*rs+g&^7, g)
+	x24 := fwdLoadResAt(residual, 24*rs+g&^7, g)
+	x25 := fwdLoadResAt(residual, 25*rs+g&^7, g)
+	x26 := fwdLoadResAt(residual, 26*rs+g&^7, g)
+	x27 := fwdLoadResAt(residual, 27*rs+g&^7, g)
+	x28 := fwdLoadResAt(residual, 28*rs+g&^7, g)
+	x29 := fwdLoadResAt(residual, 29*rs+g&^7, g)
+	x30 := fwdLoadResAt(residual, 30*rs+g&^7, g)
+	x31 := fwdLoadResAt(residual, 31*rs+g&^7, g)
 	v3 := x0.Add(x31)
 	v6 := x1.Add(x30)
 	v9 := x2.Add(x29)
@@ -561,125 +561,125 @@ func fwdColDCT32(buf []int32, g int, residual []int16, rs int) {
 	v224 := fwdHalfBtf12V(k1751, v208, kn3703, v197)
 	v225 := fwdHalfBtf12V(k3035, v209, kn2751, v196)
 	v226 := fwdHalfBtf12V(k201, v210, kn4091, v195)
-	fwdStoreI32(buf[0*32+g:], fwdRoundShift4V(v139))
-	fwdStoreI32(buf[1*32+g:], fwdRoundShift4V(v211))
-	fwdStoreI32(buf[2*32+g:], fwdRoundShift4V(v187))
-	fwdStoreI32(buf[3*32+g:], fwdRoundShift4V(v219))
-	fwdStoreI32(buf[4*32+g:], fwdRoundShift4V(v167))
-	fwdStoreI32(buf[5*32+g:], fwdRoundShift4V(v215))
-	fwdStoreI32(buf[6*32+g:], fwdRoundShift4V(v191))
-	fwdStoreI32(buf[7*32+g:], fwdRoundShift4V(v223))
-	fwdStoreI32(buf[8*32+g:], fwdRoundShift4V(v141))
-	fwdStoreI32(buf[9*32+g:], fwdRoundShift4V(v213))
-	fwdStoreI32(buf[10*32+g:], fwdRoundShift4V(v189))
-	fwdStoreI32(buf[11*32+g:], fwdRoundShift4V(v221))
-	fwdStoreI32(buf[12*32+g:], fwdRoundShift4V(v169))
-	fwdStoreI32(buf[13*32+g:], fwdRoundShift4V(v217))
-	fwdStoreI32(buf[14*32+g:], fwdRoundShift4V(v193))
-	fwdStoreI32(buf[15*32+g:], fwdRoundShift4V(v225))
-	fwdStoreI32(buf[16*32+g:], fwdRoundShift4V(v140))
-	fwdStoreI32(buf[17*32+g:], fwdRoundShift4V(v212))
-	fwdStoreI32(buf[18*32+g:], fwdRoundShift4V(v188))
-	fwdStoreI32(buf[19*32+g:], fwdRoundShift4V(v220))
-	fwdStoreI32(buf[20*32+g:], fwdRoundShift4V(v168))
-	fwdStoreI32(buf[21*32+g:], fwdRoundShift4V(v216))
-	fwdStoreI32(buf[22*32+g:], fwdRoundShift4V(v192))
-	fwdStoreI32(buf[23*32+g:], fwdRoundShift4V(v224))
-	fwdStoreI32(buf[24*32+g:], fwdRoundShift4V(v142))
-	fwdStoreI32(buf[25*32+g:], fwdRoundShift4V(v214))
-	fwdStoreI32(buf[26*32+g:], fwdRoundShift4V(v190))
-	fwdStoreI32(buf[27*32+g:], fwdRoundShift4V(v222))
-	fwdStoreI32(buf[28*32+g:], fwdRoundShift4V(v170))
-	fwdStoreI32(buf[29*32+g:], fwdRoundShift4V(v218))
-	fwdStoreI32(buf[30*32+g:], fwdRoundShift4V(v194))
-	fwdStoreI32(buf[31*32+g:], fwdRoundShift4V(v226))
+	fwdStoreI32At(buf, 0*32+g, fwdRoundShift4V(v139))
+	fwdStoreI32At(buf, 1*32+g, fwdRoundShift4V(v211))
+	fwdStoreI32At(buf, 2*32+g, fwdRoundShift4V(v187))
+	fwdStoreI32At(buf, 3*32+g, fwdRoundShift4V(v219))
+	fwdStoreI32At(buf, 4*32+g, fwdRoundShift4V(v167))
+	fwdStoreI32At(buf, 5*32+g, fwdRoundShift4V(v215))
+	fwdStoreI32At(buf, 6*32+g, fwdRoundShift4V(v191))
+	fwdStoreI32At(buf, 7*32+g, fwdRoundShift4V(v223))
+	fwdStoreI32At(buf, 8*32+g, fwdRoundShift4V(v141))
+	fwdStoreI32At(buf, 9*32+g, fwdRoundShift4V(v213))
+	fwdStoreI32At(buf, 10*32+g, fwdRoundShift4V(v189))
+	fwdStoreI32At(buf, 11*32+g, fwdRoundShift4V(v221))
+	fwdStoreI32At(buf, 12*32+g, fwdRoundShift4V(v169))
+	fwdStoreI32At(buf, 13*32+g, fwdRoundShift4V(v217))
+	fwdStoreI32At(buf, 14*32+g, fwdRoundShift4V(v193))
+	fwdStoreI32At(buf, 15*32+g, fwdRoundShift4V(v225))
+	fwdStoreI32At(buf, 16*32+g, fwdRoundShift4V(v140))
+	fwdStoreI32At(buf, 17*32+g, fwdRoundShift4V(v212))
+	fwdStoreI32At(buf, 18*32+g, fwdRoundShift4V(v188))
+	fwdStoreI32At(buf, 19*32+g, fwdRoundShift4V(v220))
+	fwdStoreI32At(buf, 20*32+g, fwdRoundShift4V(v168))
+	fwdStoreI32At(buf, 21*32+g, fwdRoundShift4V(v216))
+	fwdStoreI32At(buf, 22*32+g, fwdRoundShift4V(v192))
+	fwdStoreI32At(buf, 23*32+g, fwdRoundShift4V(v224))
+	fwdStoreI32At(buf, 24*32+g, fwdRoundShift4V(v142))
+	fwdStoreI32At(buf, 25*32+g, fwdRoundShift4V(v214))
+	fwdStoreI32At(buf, 26*32+g, fwdRoundShift4V(v190))
+	fwdStoreI32At(buf, 27*32+g, fwdRoundShift4V(v222))
+	fwdStoreI32At(buf, 28*32+g, fwdRoundShift4V(v170))
+	fwdStoreI32At(buf, 29*32+g, fwdRoundShift4V(v218))
+	fwdStoreI32At(buf, 30*32+g, fwdRoundShift4V(v194))
+	fwdStoreI32At(buf, 31*32+g, fwdRoundShift4V(v226))
 }
 
 // fwdRowDCT32 is the 32-point row pass of forwardDCT32x32PureGo over fwdLanes
 // rows from h: fwdDCT32 at cos_bit 12, written to coeff[k*coeffStride+h].
 func fwdRowDCT32(coeff []int32, coeffStride int, bufT []int32, h int) {
-	k201 := fwdBcast(201)
-	k401 := fwdBcast(401)
-	k601 := fwdBcast(601)
-	k799 := fwdBcast(799)
-	k995 := fwdBcast(995)
-	k1189 := fwdBcast(1189)
-	k1380 := fwdBcast(1380)
-	k1567 := fwdBcast(1567)
-	k1751 := fwdBcast(1751)
-	k1931 := fwdBcast(1931)
-	k2106 := fwdBcast(2106)
-	k2276 := fwdBcast(2276)
-	k2440 := fwdBcast(2440)
-	k2598 := fwdBcast(2598)
-	k2751 := fwdBcast(2751)
-	k2896 := fwdBcast(2896)
-	k3035 := fwdBcast(3035)
-	k3166 := fwdBcast(3166)
-	k3290 := fwdBcast(3290)
-	k3406 := fwdBcast(3406)
-	k3513 := fwdBcast(3513)
-	k3612 := fwdBcast(3612)
-	k3703 := fwdBcast(3703)
-	k3784 := fwdBcast(3784)
-	k3857 := fwdBcast(3857)
-	k3920 := fwdBcast(3920)
-	k3973 := fwdBcast(3973)
-	k4017 := fwdBcast(4017)
-	k4052 := fwdBcast(4052)
-	k4076 := fwdBcast(4076)
-	k4091 := fwdBcast(4091)
-	kn601 := fwdBcast(-601)
-	kn799 := fwdBcast(-799)
-	kn1189 := fwdBcast(-1189)
-	kn1380 := fwdBcast(-1380)
-	kn1567 := fwdBcast(-1567)
-	kn2106 := fwdBcast(-2106)
-	kn2276 := fwdBcast(-2276)
-	kn2598 := fwdBcast(-2598)
-	kn2751 := fwdBcast(-2751)
-	kn2896 := fwdBcast(-2896)
-	kn3290 := fwdBcast(-3290)
-	kn3406 := fwdBcast(-3406)
-	kn3612 := fwdBcast(-3612)
-	kn3703 := fwdBcast(-3703)
-	kn3784 := fwdBcast(-3784)
-	kn3973 := fwdBcast(-3973)
-	kn4017 := fwdBcast(-4017)
-	kn4076 := fwdBcast(-4076)
-	kn4091 := fwdBcast(-4091)
-	x0 := fwdLoadI32(bufT[0*32+h:])
-	x1 := fwdLoadI32(bufT[1*32+h:])
-	x2 := fwdLoadI32(bufT[2*32+h:])
-	x3 := fwdLoadI32(bufT[3*32+h:])
-	x4 := fwdLoadI32(bufT[4*32+h:])
-	x5 := fwdLoadI32(bufT[5*32+h:])
-	x6 := fwdLoadI32(bufT[6*32+h:])
-	x7 := fwdLoadI32(bufT[7*32+h:])
-	x8 := fwdLoadI32(bufT[8*32+h:])
-	x9 := fwdLoadI32(bufT[9*32+h:])
-	x10 := fwdLoadI32(bufT[10*32+h:])
-	x11 := fwdLoadI32(bufT[11*32+h:])
-	x12 := fwdLoadI32(bufT[12*32+h:])
-	x13 := fwdLoadI32(bufT[13*32+h:])
-	x14 := fwdLoadI32(bufT[14*32+h:])
-	x15 := fwdLoadI32(bufT[15*32+h:])
-	x16 := fwdLoadI32(bufT[16*32+h:])
-	x17 := fwdLoadI32(bufT[17*32+h:])
-	x18 := fwdLoadI32(bufT[18*32+h:])
-	x19 := fwdLoadI32(bufT[19*32+h:])
-	x20 := fwdLoadI32(bufT[20*32+h:])
-	x21 := fwdLoadI32(bufT[21*32+h:])
-	x22 := fwdLoadI32(bufT[22*32+h:])
-	x23 := fwdLoadI32(bufT[23*32+h:])
-	x24 := fwdLoadI32(bufT[24*32+h:])
-	x25 := fwdLoadI32(bufT[25*32+h:])
-	x26 := fwdLoadI32(bufT[26*32+h:])
-	x27 := fwdLoadI32(bufT[27*32+h:])
-	x28 := fwdLoadI32(bufT[28*32+h:])
-	x29 := fwdLoadI32(bufT[29*32+h:])
-	x30 := fwdLoadI32(bufT[30*32+h:])
-	x31 := fwdLoadI32(bufT[31*32+h:])
+	k201 := fwdConst201
+	k401 := fwdConst401
+	k601 := fwdConst601
+	k799 := fwdConst799
+	k995 := fwdConst995
+	k1189 := fwdConst1189
+	k1380 := fwdConst1380
+	k1567 := fwdConst1567
+	k1751 := fwdConst1751
+	k1931 := fwdConst1931
+	k2106 := fwdConst2106
+	k2276 := fwdConst2276
+	k2440 := fwdConst2440
+	k2598 := fwdConst2598
+	k2751 := fwdConst2751
+	k2896 := fwdConst2896
+	k3035 := fwdConst3035
+	k3166 := fwdConst3166
+	k3290 := fwdConst3290
+	k3406 := fwdConst3406
+	k3513 := fwdConst3513
+	k3612 := fwdConst3612
+	k3703 := fwdConst3703
+	k3784 := fwdConst3784
+	k3857 := fwdConst3857
+	k3920 := fwdConst3920
+	k3973 := fwdConst3973
+	k4017 := fwdConst4017
+	k4052 := fwdConst4052
+	k4076 := fwdConst4076
+	k4091 := fwdConst4091
+	kn601 := fwdConstN601
+	kn799 := fwdConstN799
+	kn1189 := fwdConstN1189
+	kn1380 := fwdConstN1380
+	kn1567 := fwdConstN1567
+	kn2106 := fwdConstN2106
+	kn2276 := fwdConstN2276
+	kn2598 := fwdConstN2598
+	kn2751 := fwdConstN2751
+	kn2896 := fwdConstN2896
+	kn3290 := fwdConstN3290
+	kn3406 := fwdConstN3406
+	kn3612 := fwdConstN3612
+	kn3703 := fwdConstN3703
+	kn3784 := fwdConstN3784
+	kn3973 := fwdConstN3973
+	kn4017 := fwdConstN4017
+	kn4076 := fwdConstN4076
+	kn4091 := fwdConstN4091
+	x0 := fwdLoadI32At(bufT, 0*32+h)
+	x1 := fwdLoadI32At(bufT, 1*32+h)
+	x2 := fwdLoadI32At(bufT, 2*32+h)
+	x3 := fwdLoadI32At(bufT, 3*32+h)
+	x4 := fwdLoadI32At(bufT, 4*32+h)
+	x5 := fwdLoadI32At(bufT, 5*32+h)
+	x6 := fwdLoadI32At(bufT, 6*32+h)
+	x7 := fwdLoadI32At(bufT, 7*32+h)
+	x8 := fwdLoadI32At(bufT, 8*32+h)
+	x9 := fwdLoadI32At(bufT, 9*32+h)
+	x10 := fwdLoadI32At(bufT, 10*32+h)
+	x11 := fwdLoadI32At(bufT, 11*32+h)
+	x12 := fwdLoadI32At(bufT, 12*32+h)
+	x13 := fwdLoadI32At(bufT, 13*32+h)
+	x14 := fwdLoadI32At(bufT, 14*32+h)
+	x15 := fwdLoadI32At(bufT, 15*32+h)
+	x16 := fwdLoadI32At(bufT, 16*32+h)
+	x17 := fwdLoadI32At(bufT, 17*32+h)
+	x18 := fwdLoadI32At(bufT, 18*32+h)
+	x19 := fwdLoadI32At(bufT, 19*32+h)
+	x20 := fwdLoadI32At(bufT, 20*32+h)
+	x21 := fwdLoadI32At(bufT, 21*32+h)
+	x22 := fwdLoadI32At(bufT, 22*32+h)
+	x23 := fwdLoadI32At(bufT, 23*32+h)
+	x24 := fwdLoadI32At(bufT, 24*32+h)
+	x25 := fwdLoadI32At(bufT, 25*32+h)
+	x26 := fwdLoadI32At(bufT, 26*32+h)
+	x27 := fwdLoadI32At(bufT, 27*32+h)
+	x28 := fwdLoadI32At(bufT, 28*32+h)
+	x29 := fwdLoadI32At(bufT, 29*32+h)
+	x30 := fwdLoadI32At(bufT, 30*32+h)
+	x31 := fwdLoadI32At(bufT, 31*32+h)
 	v3 := x0.Add(x31)
 	v6 := x1.Add(x30)
 	v9 := x2.Add(x29)
@@ -874,53 +874,49 @@ func fwdRowDCT32(coeff []int32, coeffStride int, bufT []int32, h int) {
 	v224 := fwdHalfBtf12V(k1751, v208, kn3703, v197)
 	v225 := fwdHalfBtf12V(k3035, v209, kn2751, v196)
 	v226 := fwdHalfBtf12V(k201, v210, kn4091, v195)
-	fwdStoreI32(coeff[0*coeffStride+h:], v139)
-	fwdStoreI32(coeff[1*coeffStride+h:], v211)
-	fwdStoreI32(coeff[2*coeffStride+h:], v187)
-	fwdStoreI32(coeff[3*coeffStride+h:], v219)
-	fwdStoreI32(coeff[4*coeffStride+h:], v167)
-	fwdStoreI32(coeff[5*coeffStride+h:], v215)
-	fwdStoreI32(coeff[6*coeffStride+h:], v191)
-	fwdStoreI32(coeff[7*coeffStride+h:], v223)
-	fwdStoreI32(coeff[8*coeffStride+h:], v141)
-	fwdStoreI32(coeff[9*coeffStride+h:], v213)
-	fwdStoreI32(coeff[10*coeffStride+h:], v189)
-	fwdStoreI32(coeff[11*coeffStride+h:], v221)
-	fwdStoreI32(coeff[12*coeffStride+h:], v169)
-	fwdStoreI32(coeff[13*coeffStride+h:], v217)
-	fwdStoreI32(coeff[14*coeffStride+h:], v193)
-	fwdStoreI32(coeff[15*coeffStride+h:], v225)
-	fwdStoreI32(coeff[16*coeffStride+h:], v140)
-	fwdStoreI32(coeff[17*coeffStride+h:], v212)
-	fwdStoreI32(coeff[18*coeffStride+h:], v188)
-	fwdStoreI32(coeff[19*coeffStride+h:], v220)
-	fwdStoreI32(coeff[20*coeffStride+h:], v168)
-	fwdStoreI32(coeff[21*coeffStride+h:], v216)
-	fwdStoreI32(coeff[22*coeffStride+h:], v192)
-	fwdStoreI32(coeff[23*coeffStride+h:], v224)
-	fwdStoreI32(coeff[24*coeffStride+h:], v142)
-	fwdStoreI32(coeff[25*coeffStride+h:], v214)
-	fwdStoreI32(coeff[26*coeffStride+h:], v190)
-	fwdStoreI32(coeff[27*coeffStride+h:], v222)
-	fwdStoreI32(coeff[28*coeffStride+h:], v170)
-	fwdStoreI32(coeff[29*coeffStride+h:], v218)
-	fwdStoreI32(coeff[30*coeffStride+h:], v194)
-	fwdStoreI32(coeff[31*coeffStride+h:], v226)
+	fwdStoreI32At(coeff, 0*coeffStride+h, v139)
+	fwdStoreI32At(coeff, 1*coeffStride+h, v211)
+	fwdStoreI32At(coeff, 2*coeffStride+h, v187)
+	fwdStoreI32At(coeff, 3*coeffStride+h, v219)
+	fwdStoreI32At(coeff, 4*coeffStride+h, v167)
+	fwdStoreI32At(coeff, 5*coeffStride+h, v215)
+	fwdStoreI32At(coeff, 6*coeffStride+h, v191)
+	fwdStoreI32At(coeff, 7*coeffStride+h, v223)
+	fwdStoreI32At(coeff, 8*coeffStride+h, v141)
+	fwdStoreI32At(coeff, 9*coeffStride+h, v213)
+	fwdStoreI32At(coeff, 10*coeffStride+h, v189)
+	fwdStoreI32At(coeff, 11*coeffStride+h, v221)
+	fwdStoreI32At(coeff, 12*coeffStride+h, v169)
+	fwdStoreI32At(coeff, 13*coeffStride+h, v217)
+	fwdStoreI32At(coeff, 14*coeffStride+h, v193)
+	fwdStoreI32At(coeff, 15*coeffStride+h, v225)
+	fwdStoreI32At(coeff, 16*coeffStride+h, v140)
+	fwdStoreI32At(coeff, 17*coeffStride+h, v212)
+	fwdStoreI32At(coeff, 18*coeffStride+h, v188)
+	fwdStoreI32At(coeff, 19*coeffStride+h, v220)
+	fwdStoreI32At(coeff, 20*coeffStride+h, v168)
+	fwdStoreI32At(coeff, 21*coeffStride+h, v216)
+	fwdStoreI32At(coeff, 22*coeffStride+h, v192)
+	fwdStoreI32At(coeff, 23*coeffStride+h, v224)
+	fwdStoreI32At(coeff, 24*coeffStride+h, v142)
+	fwdStoreI32At(coeff, 25*coeffStride+h, v214)
+	fwdStoreI32At(coeff, 26*coeffStride+h, v190)
+	fwdStoreI32At(coeff, 27*coeffStride+h, v222)
+	fwdStoreI32At(coeff, 28*coeffStride+h, v170)
+	fwdStoreI32At(coeff, 29*coeffStride+h, v218)
+	fwdStoreI32At(coeff, 30*coeffStride+h, v194)
+	fwdStoreI32At(coeff, 31*coeffStride+h, v226)
 }
 
 // fwdHalfBtf12V is half_btf at cos_bit 12 per lane: (w0*a + w1*b + 1<<11) >> 12.
-func fwdHalfBtf12V(w0, a, w1, b fwdVec) fwdVec {
-	return fwdShr(a.Mul(w0).Add(b.Mul(w1)).Add(fwdRound12), 12)
-}
-
 // fwdRoundShift2V is fwdRoundShift2 per lane: (v + 2) >> 2 (16x16 shift[1]).
 func fwdRoundShift2V(v fwdVec) fwdVec {
-	return fwdShr(v.Add(fwdBcast(2)), 2)
+	return fwdShr(v.Add(fwdConst2), 2)
 }
 
 // fwdRoundShift4V is fwdRoundShift4 per lane: (v + 8) >> 4 (32x32 shift[1]).
 func fwdRoundShift4V(v fwdVec) fwdVec {
-	return fwdShr(v.Add(fwdBcast(8)), 4)
+	return fwdShr(v.Add(fwdConst8), 4)
 }
 
 // forwardDCT16x16SIMD is the 16x16 DCT_DCT kernel (forwardDCT16x16PureGo).
