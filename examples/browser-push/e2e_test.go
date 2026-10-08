@@ -211,7 +211,19 @@ func TestEndToEndAV1OverRTPRTCEncoderControlChurn(t *testing.T) {
 	}()
 	startPictureLossFeedback(t, receiver, trackSSRC, doneFeedback)
 
-	tus := collectTemporalUnits(t, decoded, 70)
+	tus, err := collectTemporalUnitsWithBudget(
+		decoded, 70, rtcTemporalUnitCollectionTimeout, rtcTemporalUnitNoProgressTimeout)
+	if err != nil {
+		select {
+		case streamErr := <-streamErr:
+			if streamErr != nil {
+				t.Fatalf("RTCEncoder RTP control-churn stream failed while collecting temporal units: %v; collection: %v", streamErr, err)
+			}
+			t.Fatalf("RTCEncoder RTP control-churn stream stopped before all temporal units arrived; collection: %v", err)
+		default:
+			t.Fatalf("RTCEncoder RTP control-churn temporal-unit collection failed: %v", err)
+		}
+	}
 	if sequenceHeaders := countSequenceHeaderTemporalUnits(tus); sequenceHeaders < 3 {
 		t.Fatalf("sequence headers after control churn/loss=%d want at least 3", sequenceHeaders)
 	}
@@ -323,7 +335,19 @@ func TestEndToEndAV1OverRTPRTCEncoderREMBBitrateControl(t *testing.T) {
 	}()
 	startReceiverEstimatedMaximumBitrateFeedback(t, receiver, trackSSRC, rembBitrateBps, doneFeedback)
 
-	tus := collectTemporalUnits(t, decoded, 70)
+	tus, err := collectTemporalUnitsWithBudget(
+		decoded, 70, rtcTemporalUnitCollectionTimeout, rtcTemporalUnitNoProgressTimeout)
+	if err != nil {
+		select {
+		case streamErr := <-streamErr:
+			if streamErr != nil {
+				t.Fatalf("REMB RTP stream failed while collecting temporal units: %v; collection: %v", streamErr, err)
+			}
+			t.Fatalf("REMB RTP stream stopped before all temporal units arrived; collection: %v", err)
+		default:
+			t.Fatalf("REMB temporal-unit collection failed: %v", err)
+		}
+	}
 	if feedback.ReceiverEstimatedMaximumBitrate.Load() == 0 {
 		t.Fatal("sender received no REMB feedback")
 	}
@@ -925,8 +949,11 @@ func rtcFrameRTPPacketsWithoutHeaderExtensions(
 }
 
 const (
-	rtcTemporalUnitCollectionTimeout = 45 * time.Second
-	rtcTemporalUnitNoProgressTimeout = 15 * time.Second
+	// CI received 46/60 temporal units just before the old 45-second limit.
+	// Preserve the exact count and allow a slower start, while still failing a
+	// stalled stream after a bounded idle interval.
+	rtcTemporalUnitCollectionTimeout = 120 * time.Second
+	rtcTemporalUnitNoProgressTimeout = 30 * time.Second
 )
 
 func collectTemporalUnits(t *testing.T, decoded <-chan receivedTemporalUnit, want int) [][]byte {

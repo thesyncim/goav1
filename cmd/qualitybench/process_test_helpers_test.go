@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -68,11 +70,16 @@ func qualitybenchExecutableName(name string) string {
 
 func qualitybenchTestHelperPID(t *testing.T, pidPath string) int {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		raw, err := os.ReadFile(pidPath)
 		if err == nil {
-			pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+			value := strings.TrimSpace(string(raw))
+			if value == "" {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			pid, err := strconv.Atoi(value)
 			if err != nil || pid < 1 {
 				t.Fatalf("invalid helper child pid %q: %v", raw, err)
 			}
@@ -87,48 +94,96 @@ func qualitybenchTestHelperPID(t *testing.T, pidPath string) int {
 	return 0
 }
 
-func killQualitybenchTestHelperChild(pidPath string) {
+func killQualitybenchTestHelperChild(pidPath string) error {
 	raw, err := os.ReadFile(pidPath)
 	if err != nil {
-		return
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read helper child pid: %w", err)
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil || pid < 1 {
-		return
+	if err != nil {
+		return fmt.Errorf("invalid helper child pid %q: %w", raw, err)
+	}
+	if pid < 1 {
+		return fmt.Errorf("invalid helper child pid %q: pid must be positive", raw)
 	}
 	process, err := os.FindProcess(pid)
-	if err == nil {
-		_ = process.Kill()
+	if err != nil {
+		return fmt.Errorf("find helper child %d: %w", pid, err)
 	}
+	if err := process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return fmt.Errorf("kill helper child %d: %w", pid, err)
+	}
+	// On Windows, the executable remains locked until its process handle is
+	// waited and released. The child is not our direct child there, but Wait
+	// still observes its exit through the process handle returned by FindProcess.
+	if runtime.GOOS == "windows" {
+		if _, err := process.Wait(); err != nil {
+			return fmt.Errorf("wait for helper child %d to exit: %w", pid, err)
+		}
+	}
+	if err := os.Remove(pidPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove helper child pid file: %w", err)
+	}
+	return nil
 }
 
-func waitForQualitybenchCommand(t *testing.T, pidPath string, run func()) {
-	t.Helper()
-	done := make(chan struct{})
-	go func() {
-		run()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return
-	case <-time.After(1500 * time.Millisecond):
-		killQualitybenchTestHelperChild(pidPath)
-		select {
-		case <-done:
-		case <-time.After(time.Second):
-			t.Fatalf("timed command did not return after killing inherited-pipe child")
+func TestCommandWaitDelayWithInheritedPipes(t *testing.T) {
+	bin := qualitybenchTestHelper(t)
+	pidPath := filepath.Join(t.TempDir(), "wait-delay-child.pid")
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := commandContextWithWaitDelay(ctx, bin, qualitybenchHelperArgs("hold-pipes", pidPath)...)
+	if cmd.WaitDelay != commandWaitDelay {
+		cancel()
+		t.Fatalf("command wait delay=%s, want %s", cmd.WaitDelay, commandWaitDelay)
+	}
+	cmd.Env = externalCommandEnv()
+	var output boundedCommandOutput
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		cancel()
+		t.Fatalf("start command with inherited-pipe child: %v", err)
+	}
+	waited := false
+	t.Cleanup(func() {
+		cancel()
+		if !waited {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
 		}
-		t.Fatalf("timed command did not return promptly while a child held stdout and stderr")
+		if err := killQualitybenchTestHelperChild(pidPath); err != nil {
+			t.Errorf("clean up inherited-pipe helper child: %v", err)
+		}
+	})
+
+	qualitybenchTestHelperPID(t, pidPath)
+	cancelledAt := time.Now()
+	cancel()
+	err := cmd.Wait()
+	waited = true
+	if err == nil {
+		t.Fatal("cancelled command returned without an error")
+	}
+	if elapsed := time.Since(cancelledAt); elapsed > commandWaitDelay+time.Second {
+		t.Fatalf("command wait after cancellation=%s, want at most %s plus scheduling margin",
+			elapsed, commandWaitDelay)
+	}
+	if err := killQualitybenchTestHelperChild(pidPath); err != nil {
+		t.Fatalf("kill and reap inherited-pipe helper child: %v", err)
 	}
 }
 
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if qualitybenchHelperDir != "" {
-		if err := os.RemoveAll(qualitybenchHelperDir); err != nil && code == 0 {
+		if err := os.RemoveAll(qualitybenchHelperDir); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "remove qualitybench test helper: %v\n", err)
-			code = 1
+			if code == 0 {
+				code = 1
+			}
 		}
 	}
 	os.Exit(code)

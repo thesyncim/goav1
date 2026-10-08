@@ -31,7 +31,13 @@ const (
 	browserExecutableEnv          = "GOAV1_BROWSER_EXECUTABLE"
 	browserProbeTotalTimeout      = 60 * time.Second
 	browserProbeNoProgressTimeout = 15 * time.Second
-	browserProbeContextTimeout    = 75 * time.Second
+	browserWSURLReadTimeout       = 45 * time.Second
+	browserProbeContextTimeout    = browserProbeTotalTimeout + browserWSURLReadTimeout + 5*time.Second
+	// CI software decode reached 27/45 frames by 60 seconds while still
+	// making progress, so direct-playback probes need a longer bounded window.
+	browserDirectRTPProbeTimeout = 110 * time.Second
+	browserDirectRTPNoProgress   = 30 * time.Second
+	browserDirectRTPContext      = browserDirectRTPProbeTimeout + browserWSURLReadTimeout + 5*time.Second
 )
 
 func TestBrowserLiveAV1PlaybackStats(t *testing.T) {
@@ -74,7 +80,7 @@ func TestBrowserLiveAV1PlaybackStats(t *testing.T) {
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 130*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	browserCtx, closeBrowser := newBrowserE2EContext(t, ctx, browserPath)
 	defer closeBrowser()
@@ -107,8 +113,9 @@ func TestBrowserLiveRTCEncoderDirectRTPPlaybackStats(t *testing.T) {
 	for _, scenario := range browserRTCEncoderDirectRTPPlaybackScenarios(t) {
 		scenario := scenario
 		t.Run(scenario.name, func(t *testing.T) {
-			got := runBrowserLiveRTCEncoderDirectRTPPlaybackStats(
-				t, browserPath, scenario.name, scenario.query, scenario.options, scenario.wantWidth, scenario.wantHeight)
+			got := runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithBudgets(
+				t, browserPath, scenario.name, scenario.query, scenario.options, scenario.wantWidth, scenario.wantHeight,
+				rtcSenderFeedbackOptions{}, 45, browserDirectRTPProbeTimeout, browserDirectRTPNoProgress, browserDirectRTPContext)
 			if got.KeyFramesDecoded < scenario.minKeyFrames {
 				t.Fatalf("%s browser keyframes=%d want at least %d after forced refresh",
 					scenario.name, got.KeyFramesDecoded, scenario.minKeyFrames)
@@ -683,6 +690,16 @@ func runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedbackFrames(
 	t *testing.T, browserPath string, label string, query string, options rtcEncoderRTPStreamOptions,
 	wantWidth int, wantHeight int, feedback rtcSenderFeedbackOptions, minFrames int,
 ) browserPlaybackEvidence {
+	return runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithBudgets(
+		t, browserPath, label, query, options, wantWidth, wantHeight,
+		feedback, minFrames, browserProbeTotalTimeout, browserProbeNoProgressTimeout, browserProbeContextTimeout)
+}
+
+func runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithBudgets(
+	t *testing.T, browserPath string, label string, query string, options rtcEncoderRTPStreamOptions,
+	wantWidth int, wantHeight int, feedback rtcSenderFeedbackOptions, minFrames int,
+	probeTimeout time.Duration, noProgressTimeout time.Duration, contextTimeout time.Duration,
+) browserPlaybackEvidence {
 	t.Helper()
 	var mu sync.Mutex
 	var peers []*webrtc.PeerConnection
@@ -712,7 +729,7 @@ func runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedbackFrames(
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), browserProbeContextTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), contextTimeout)
 	defer cancel()
 	browserCtx, closeBrowser := newBrowserE2EContext(t, ctx, browserPath)
 	defer closeBrowser()
@@ -720,7 +737,7 @@ func runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedbackFrames(
 	got := browserPlaybackEvidence{}
 	if err := chromedp.Run(browserCtx,
 		chromedp.Navigate(server.URL+"?"+query),
-		chromedp.Evaluate(browserPlaybackProbeJS(minFrames), &got, evalAwaitPromise),
+		chromedp.Evaluate(browserPlaybackProbeJSWithBudgets(minFrames, probeTimeout, noProgressTimeout), &got, evalAwaitPromise),
 	); err != nil {
 		t.Fatalf("%s browser AV1 playback probe: %v", label, err)
 	}
@@ -1068,6 +1085,10 @@ func assertBrowserPlaybackEvidenceWithSize(t *testing.T, label string, got brows
 }
 
 func browserPlaybackProbeJS(minFrames int) string {
+	return browserPlaybackProbeJSWithBudgets(minFrames, browserProbeTotalTimeout, browserProbeNoProgressTimeout)
+}
+
+func browserPlaybackProbeJSWithBudgets(minFrames int, probeTimeout time.Duration, noProgressTimeout time.Duration) string {
 	return fmt.Sprintf(`(async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   let last = {};
@@ -1156,7 +1177,7 @@ func browserPlaybackProbeJS(minFrames int) string {
     await sleep(250);
   }
   return Object.assign(last, { error: 'overall timeout waiting for live AV1 frames decoded by browser' });
-})()`, browserProbeTotalTimeout.Milliseconds(), minFrames, browserProbeNoProgressTimeout.Milliseconds())
+})()`, probeTimeout.Milliseconds(), minFrames, noProgressTimeout.Milliseconds())
 }
 
 func evalAwaitPromise(p *cdpruntime.EvaluateParams) *cdpruntime.EvaluateParams {
@@ -1375,6 +1396,9 @@ func newBrowserE2EContext(t *testing.T, parent context.Context, browserPath stri
 	options := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
 	options = append(options,
 		chromedp.ExecPath(browserPath),
+		// CI has exceeded chromedp's 20-second default while Chrome was still
+		// starting; the test context continues to bound startup and playback.
+		chromedp.WSURLReadTimeout(browserWSURLReadTimeout),
 		chromedp.Flag("headless", "new"),
 		chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
 		chromedp.Flag("disable-background-timer-throttling", true),

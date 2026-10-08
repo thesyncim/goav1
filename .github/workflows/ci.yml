@@ -285,7 +285,31 @@ jobs:
           - shard: 27
             name: simulcast browser control churn
           - shard: 28
-            name: browser feedback controls
+            name: browser feedback controls A
+          - shard: 29
+            name: direct L1T3 playback
+          - shard: 30
+            name: shared SVC L2T1 key playback
+          - shard: 31
+            name: shared SVC L2T2 key playback
+          - shard: 32
+            name: simulcast S2T2 playback
+          - shard: 33
+            name: shared SVC L2T3 key playback
+          - shard: 34
+            name: shared SVC L3T1 key playback
+          - shard: 35
+            name: shared SVC L3T2 key playback
+          - shard: 36
+            name: shared SVC L3T3 key playback
+          - shard: 37
+            name: simulcast S3T2 playback
+          - shard: 38
+            name: RTP base and offer endpoint
+          - shard: 39
+            name: RTP control and REMB
+          - shard: 40
+            name: browser feedback controls B
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -295,7 +319,7 @@ jobs:
           check-latest: true
           cache: true
       - name: install reference decoders
-        if: ${{ matrix.shard <= 4 || (matrix.shard >= 8 && matrix.shard <= 12) }}
+        if: ${{ matrix.shard <= 4 || (matrix.shard >= 8 && matrix.shard <= 12) || (matrix.shard >= 38 && matrix.shard <= 39) }}
         run: |
           sudo apt-get update
           sudo apt-get install -y aom-tools dav1d

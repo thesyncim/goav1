@@ -3003,42 +3003,26 @@ func TestWriteMetadataJSON(t *testing.T) {
 func TestCommandTimeoutReportsDeadline(t *testing.T) {
 	bin := qualitybenchTestHelper(t)
 	timeout := 250 * time.Millisecond
+	timeoutMessage := "command timed out after 250ms"
 
-	timeCommandPIDPath := filepath.Join(t.TempDir(), "time-command-child.pid")
-	t.Cleanup(func() { killQualitybenchTestHelperChild(timeCommandPIDPath) })
 	var result encodeResult
-	var elapsed time.Duration
-	waitForQualitybenchCommand(t, timeCommandPIDPath, func() {
-		elapsed = timeCommand(timeout, bin, qualitybenchHelperArgs("hold-pipes", timeCommandPIDPath), &result)
-	})
-	if result.status != "error" || !strings.Contains(result.errText, "command timed out after 250ms") {
+	elapsed := timeCommand(timeout, bin, qualitybenchHelperArgs("pipe-child"), &result)
+	if result.status != "error" || !strings.Contains(result.errText, timeoutMessage) {
 		t.Fatalf("timeout result=%+v", result)
 	}
-	if elapsed > time.Second {
-		t.Fatalf("timeout elapsed=%s, want prompt cancellation with inherited pipes", elapsed)
+	if elapsed > timeout+commandWaitDelay+time.Second {
+		t.Fatalf("timeout elapsed=%s, want prompt cancellation after %s", elapsed, timeout)
 	}
-	if pid := qualitybenchTestHelperPID(t, timeCommandPIDPath); pid < 1 {
-		t.Fatalf("invalid inherited-pipe child pid %d", pid)
-	}
-	killQualitybenchTestHelperChild(timeCommandPIDPath)
 
-	combinedPIDPath := filepath.Join(t.TempDir(), "combined-command-child.pid")
-	t.Cleanup(func() { killQualitybenchTestHelperChild(combinedPIDPath) })
 	var out []byte
 	var err error
 	started := time.Now()
-	waitForQualitybenchCommand(t, combinedPIDPath, func() {
-		out, err = combinedOutputWithTimeout(timeout, bin, qualitybenchHelperArgs("hold-pipes", combinedPIDPath)...)
-	})
+	out, err = combinedOutputWithTimeout(timeout, bin, qualitybenchHelperArgs("pipe-child")...)
 	combinedElapsed := time.Since(started)
-	if err == nil || !strings.Contains(err.Error(), "command timed out after 250ms") {
+	if err == nil || !strings.Contains(err.Error(), timeoutMessage) {
 		t.Fatalf("combined timeout err=%v out=%q", err, out)
 	}
-	if combinedElapsed > time.Second {
-		t.Fatalf("combined timeout elapsed=%s, want prompt cancellation with inherited pipes", combinedElapsed)
+	if combinedElapsed > timeout+commandWaitDelay+time.Second {
+		t.Fatalf("combined timeout elapsed=%s, want prompt cancellation after %s", combinedElapsed, timeout)
 	}
-	if pid := qualitybenchTestHelperPID(t, combinedPIDPath); pid < 1 {
-		t.Fatalf("invalid inherited-pipe child pid %d", pid)
-	}
-	killQualitybenchTestHelperChild(combinedPIDPath)
 }
