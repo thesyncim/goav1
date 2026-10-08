@@ -804,7 +804,81 @@ func compound2DHighBDKernel(ctx *compound2DGoSIMDCtx) {
 	yBias := archsimd.BroadcastInt32x4(int32(ctx.yBias))
 
 	hbdHorizontalIM(ctx.ref, ctx.refStr, ctx.im, ctx.imStr, width, height+ny-1, &xTaps, nx, xBias, int(ctx.round0))
+	if ny == 6 && width >= 8 && width%8 == 0 {
+		compoundVerticalIMHighBD6(ctx.out, width, height, ctx.im, ctx.imStr, &yTaps, yBias)
+		return
+	}
+	if ny == 8 && width >= 8 && width%8 == 0 {
+		compoundVerticalIMHighBD8(ctx.out, width, height, ctx.im, ctx.imStr, &yTaps, yBias)
+		return
+	}
 	compoundVerticalIM(ctx.out, width, height, ctx.im, ctx.imStr, &yTaps, ny, yBias)
+}
+
+// compoundVerticalIMHighBD6 keeps the six vertical coefficients in registers
+// and folds the final rounding bias into the first multiply-accumulate. The
+// four-lane chains for the two halves of a block can advance independently.
+func compoundVerticalIMHighBD6(out []uint16, width, height int, im []int32, imStr int, taps *hbdTaps32, yBias archsimd.Int32x4) {
+	_ = im[(height+4)*imStr+width-1]
+	_ = out[height*width-1]
+	c0, c1, c2 := taps[0], taps[1], taps[2]
+	c3, c4, c5 := taps[3], taps[4], taps[5]
+	bias := yBias.Add(archsimd.BroadcastInt32x4(1 << (filterBits - 1)))
+	shift := archsimd.BroadcastInt32x4(-filterBits)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x += 8 {
+			p := y*imStr + x
+			lo := hbdMulAdd32(archsimd.LoadInt32x4(im[p:p+4]), c0, bias)
+			hi := hbdMulAdd32(archsimd.LoadInt32x4(im[p+4:p+8]), c0, bias)
+			lo = hbdMulAdd32(archsimd.LoadInt32x4(im[p+imStr:p+imStr+4]), c1, lo)
+			hi = hbdMulAdd32(archsimd.LoadInt32x4(im[p+imStr+4:p+imStr+8]), c1, hi)
+			lo = hbdMulAdd32(archsimd.LoadInt32x4(im[p+2*imStr:p+2*imStr+4]), c2, lo)
+			hi = hbdMulAdd32(archsimd.LoadInt32x4(im[p+2*imStr+4:p+2*imStr+8]), c2, hi)
+			lo = hbdMulAdd32(archsimd.LoadInt32x4(im[p+3*imStr:p+3*imStr+4]), c3, lo)
+			hi = hbdMulAdd32(archsimd.LoadInt32x4(im[p+3*imStr+4:p+3*imStr+8]), c3, hi)
+			lo = hbdMulAdd32(archsimd.LoadInt32x4(im[p+4*imStr:p+4*imStr+4]), c4, lo)
+			hi = hbdMulAdd32(archsimd.LoadInt32x4(im[p+4*imStr+4:p+4*imStr+8]), c4, hi)
+			lo = hbdMulAdd32(archsimd.LoadInt32x4(im[p+5*imStr:p+5*imStr+4]), c5, lo)
+			hi = hbdMulAdd32(archsimd.LoadInt32x4(im[p+5*imStr+4:p+5*imStr+8]), c5, hi)
+			lo = hbdShiftRight(lo, shift, filterBits)
+			hi = hbdShiftRight(hi, shift, filterBits)
+			hbdStoreU16x8(out[y*width+x:], lo, hi)
+		}
+	}
+}
+
+// compoundVerticalIMHighBD8 keeps the eight sharp-filter taps in registers.
+func compoundVerticalIMHighBD8(out []uint16, width, height int, im []int32, imStr int, taps *hbdTaps32, yBias archsimd.Int32x4) {
+	_ = im[(height+6)*imStr+width-1]
+	_ = out[height*width-1]
+	c0, c1, c2, c3 := taps[0], taps[1], taps[2], taps[3]
+	c4, c5, c6, c7 := taps[4], taps[5], taps[6], taps[7]
+	bias := yBias.Add(archsimd.BroadcastInt32x4(1 << (filterBits - 1)))
+	shift := archsimd.BroadcastInt32x4(-filterBits)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x += 8 {
+			p := y*imStr + x
+			lo := hbdMulAdd32(archsimd.LoadInt32x4(im[p:p+4]), c0, bias)
+			hi := hbdMulAdd32(archsimd.LoadInt32x4(im[p+4:p+8]), c0, bias)
+			lo = hbdMulAdd32(archsimd.LoadInt32x4(im[p+1*imStr:p+1*imStr+4]), c1, lo)
+			hi = hbdMulAdd32(archsimd.LoadInt32x4(im[p+1*imStr+4:p+1*imStr+8]), c1, hi)
+			lo = hbdMulAdd32(archsimd.LoadInt32x4(im[p+2*imStr:p+2*imStr+4]), c2, lo)
+			hi = hbdMulAdd32(archsimd.LoadInt32x4(im[p+2*imStr+4:p+2*imStr+8]), c2, hi)
+			lo = hbdMulAdd32(archsimd.LoadInt32x4(im[p+3*imStr:p+3*imStr+4]), c3, lo)
+			hi = hbdMulAdd32(archsimd.LoadInt32x4(im[p+3*imStr+4:p+3*imStr+8]), c3, hi)
+			lo = hbdMulAdd32(archsimd.LoadInt32x4(im[p+4*imStr:p+4*imStr+4]), c4, lo)
+			hi = hbdMulAdd32(archsimd.LoadInt32x4(im[p+4*imStr+4:p+4*imStr+8]), c4, hi)
+			lo = hbdMulAdd32(archsimd.LoadInt32x4(im[p+5*imStr:p+5*imStr+4]), c5, lo)
+			hi = hbdMulAdd32(archsimd.LoadInt32x4(im[p+5*imStr+4:p+5*imStr+8]), c5, hi)
+			lo = hbdMulAdd32(archsimd.LoadInt32x4(im[p+6*imStr:p+6*imStr+4]), c6, lo)
+			hi = hbdMulAdd32(archsimd.LoadInt32x4(im[p+6*imStr+4:p+6*imStr+8]), c6, hi)
+			lo = hbdMulAdd32(archsimd.LoadInt32x4(im[p+7*imStr:p+7*imStr+4]), c7, lo)
+			hi = hbdMulAdd32(archsimd.LoadInt32x4(im[p+7*imStr+4:p+7*imStr+8]), c7, hi)
+			lo = hbdShiftRight(lo, shift, filterBits)
+			hi = hbdShiftRight(hi, shift, filterBits)
+			hbdStoreU16x8(out[y*width+x:], lo, hi)
+		}
+	}
 }
 
 // compoundVerticalIM is the vertical stage shared by the 2D compound
