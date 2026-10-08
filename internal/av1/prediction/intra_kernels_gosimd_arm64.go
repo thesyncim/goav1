@@ -24,7 +24,7 @@ func subsampleLuma8SIMD(outputQ3 []uint16, input []uint8, inputStride int, width
 	switch {
 	case subX && subY:
 		if outW < 8 || outW%8 != 0 {
-			subsampleLuma8NEON(outputQ3, input, inputStride, width, height, outW, outH, subX, subY)
+			subsampleLuma8PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY)
 			return
 		}
 		for row := 0; row < height; row += 2 {
@@ -41,7 +41,7 @@ func subsampleLuma8SIMD(outputQ3 []uint16, input []uint8, inputStride int, width
 		}
 	case subX:
 		if outW < 8 || outW%8 != 0 {
-			subsampleLuma8NEON(outputQ3, input, inputStride, width, height, outW, outH, subX, subY)
+			subsampleLuma8PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY)
 			return
 		}
 		for row := 0; row < outH; row++ {
@@ -56,7 +56,7 @@ func subsampleLuma8SIMD(outputQ3 []uint16, input []uint8, inputStride int, width
 		}
 	default:
 		if outW < 16 || outW%16 != 0 {
-			subsampleLuma8NEON(outputQ3, input, inputStride, width, height, outW, outH, subX, subY)
+			subsampleLuma8PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY)
 			return
 		}
 		for row := 0; row < outH; row++ {

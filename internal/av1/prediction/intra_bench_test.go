@@ -87,7 +87,7 @@ func BenchmarkDirZ2(b *testing.B) {
 		for _, v := range []struct {
 			name   string
 			pureGo bool
-		}{{"NEON", false}, {"PureGo", true}} {
+		}{{"Dispatch", false}, {"PureGo", true}} {
 			b.Run(benchName(w, h, v.name), func(b *testing.B) {
 				run := func() {
 					for i := 0; i < b.N; i++ {
@@ -116,7 +116,7 @@ func BenchmarkDirZ3(b *testing.B) {
 		for _, v := range []struct {
 			name   string
 			pureGo bool
-		}{{"NEON", false}, {"PureGo", true}} {
+		}{{"Dispatch", false}, {"PureGo", true}} {
 			b.Run(benchName(w, h, v.name), func(b *testing.B) {
 				run := func() {
 					for i := 0; i < b.N; i++ {

@@ -17,7 +17,7 @@ func TestGoSIMDDispatchProbe(t *testing.T) {
 	if !cpu.Detected.NEON {
 		t.Skip("arm64 NEON not detected")
 	}
-	assertDispatchTarget(t, "applyCFLImpl", applyCFLImpl, "applyCFLNEON")
+	assertDispatchTarget(t, "applyCFLImpl", applyCFLImpl, "applyCFLSIMD")
 	assertDispatchTarget(t, "subsampleLuma8Impl", subsampleLuma8Impl, "subsampleLuma8SIMD")
 	assertDispatchTarget(t, "subsampleLuma16Impl", subsampleLuma16Impl, "subsampleLuma16SIMD")
 	assertDispatchTarget(t, "subtractCFLAverageImpl", subtractCFLAverageImpl, "subtractCFLAverageSIMD")
@@ -26,8 +26,10 @@ func TestGoSIMDDispatchProbe(t *testing.T) {
 	assertDispatchTarget(t, "predictSmoothImpl", predictSmoothImpl, "predictSmoothSIMD")
 	assertDispatchTarget(t, "predictSmoothVerticalImpl", predictSmoothVerticalImpl, "predictSmoothVerticalSIMD")
 	assertDispatchTarget(t, "predictSmoothHorizontalImpl", predictSmoothHorizontalImpl, "predictSmoothHorizontalSIMD")
-	assertDispatchTarget(t, "sumSamplesImpl", sumSamplesImpl, "sumSamplesNEON")
-	assertDispatchTarget(t, "dirRowInterp8Impl", dirRowInterp8Impl, "dirRowInterp8NEON")
+	assertDispatchTarget(t, "sumSamplesImpl", sumSamplesImpl, "sumSamplesSIMD")
+	assertDispatchTarget(t, "dirRowInterp8Impl", dirRowInterp8Impl, "dirRowInterp8SIMD")
+	assertDispatchTarget(t, "dirAboveRun8Impl", dirAboveRun8Impl, "dirAboveRun8SIMD")
+	assertDispatchTarget(t, "dirLeftCol8Impl", dirLeftCol8Impl, "dirLeftCol8SIMD")
 }
 
 func BenchmarkCFLSubsample8Arm64(b *testing.B) {
@@ -51,7 +53,6 @@ func BenchmarkCFLSubsample8Arm64(b *testing.B) {
 			fn   subsampleLuma8Func
 		}{
 			{"SIMD", subsampleLuma8SIMD},
-			{"NEON", subsampleLuma8NEON},
 			{"PureGo", subsampleLuma8PureGo},
 		} {
 			b.Run(fmt.Sprintf("%s/%s", mode.name, v.name), func(b *testing.B) {
