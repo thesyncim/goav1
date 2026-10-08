@@ -125,7 +125,7 @@ func TestInverseDCT8Col8SIMDMatchesScalar(t *testing.T) {
 		}
 		inverseDCT8Col8SIMD(b, stride, min, max)
 		for col := 0; col < 8; col += 2 {
-			inverseDCT8Col2NEONAdapter(asm[col:], stride, min, max)
+			inverseDCT8Col2SIMDAdapter(asm[col:], stride, min, max)
 		}
 		for k := 0; k < 8; k++ {
 			for col := 0; col < 8; col++ {
@@ -162,16 +162,16 @@ func benchDCT8x8(b *testing.B, fn func([]int32, int, int32, int32)) {
 func BenchmarkDCT8x8_Int16(b *testing.B) { benchDCT8x8(b, inverseDCT8Col8SIMD) }
 func BenchmarkDCT8x8_ASMCol4(b *testing.B) {
 	benchDCT8x8(b, func(buf []int32, s int, mn, mx int32) {
-		inverseDCT8Col4NEONAdapter(buf, s, mn, mx)
-		inverseDCT8Col4NEONAdapter(buf[4:], s, mn, mx)
+		inverseDCT8Col4SIMDAdapter(buf, s, mn, mx)
+		inverseDCT8Col4SIMDAdapter(buf[4:], s, mn, mx)
 	})
 }
 func BenchmarkDCT8x8_ASMCol2(b *testing.B) {
 	benchDCT8x8(b, func(buf []int32, s int, mn, mx int32) {
-		inverseDCT8Col2NEONAdapter(buf, s, mn, mx)
-		inverseDCT8Col2NEONAdapter(buf[2:], s, mn, mx)
-		inverseDCT8Col2NEONAdapter(buf[4:], s, mn, mx)
-		inverseDCT8Col2NEONAdapter(buf[6:], s, mn, mx)
+		inverseDCT8Col2SIMDAdapter(buf, s, mn, mx)
+		inverseDCT8Col2SIMDAdapter(buf[2:], s, mn, mx)
+		inverseDCT8Col2SIMDAdapter(buf[4:], s, mn, mx)
+		inverseDCT8Col2SIMDAdapter(buf[6:], s, mn, mx)
 	})
 }
 
@@ -300,16 +300,16 @@ func BenchmarkDCT16x8_Int16Buf(b *testing.B) {
 }
 func BenchmarkDCT16x8_ASMCol4(b *testing.B) {
 	benchDCTx8ASM(b, 16, func(buf []int32, s int, mn, mx int32) {
-		inverseDCT16Col4NEONAdapter(buf, s, mn, mx)
-		inverseDCT16Col4NEONAdapter(buf[4:], s, mn, mx)
+		inverseDCT16Col4SIMDAdapter(buf, s, mn, mx)
+		inverseDCT16Col4SIMDAdapter(buf[4:], s, mn, mx)
 	})
 }
 func BenchmarkDCT16x8_ASMCol2(b *testing.B) {
 	benchDCTx8ASM(b, 16, func(buf []int32, s int, mn, mx int32) {
-		inverseDCT16Col2NEONAdapter(buf, s, mn, mx)
-		inverseDCT16Col2NEONAdapter(buf[2:], s, mn, mx)
-		inverseDCT16Col2NEONAdapter(buf[4:], s, mn, mx)
-		inverseDCT16Col2NEONAdapter(buf[6:], s, mn, mx)
+		inverseDCT16Col2SIMDAdapter(buf, s, mn, mx)
+		inverseDCT16Col2SIMDAdapter(buf[2:], s, mn, mx)
+		inverseDCT16Col2SIMDAdapter(buf[4:], s, mn, mx)
+		inverseDCT16Col2SIMDAdapter(buf[6:], s, mn, mx)
 	})
 }
 

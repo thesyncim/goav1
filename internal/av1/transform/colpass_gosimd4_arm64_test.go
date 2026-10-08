@@ -27,13 +27,13 @@ func benchDCT8x4(b *testing.B, fn func([]int32, int, int32, int32)) {
 }
 
 func BenchmarkDCT8x4_ASMCol4(b *testing.B) {
-	benchDCT8x4(b, inverseDCT8Col4NEONAdapter)
+	benchDCT8x4(b, inverseDCT8Col4SIMDAdapter)
 }
 
 func BenchmarkDCT8x4_ASMCol2(b *testing.B) {
 	benchDCT8x4(b, func(buf []int32, s int, mn, mx int32) {
-		inverseDCT8Col2NEONAdapter(buf, s, mn, mx)
-		inverseDCT8Col2NEONAdapter(buf[2:], s, mn, mx)
+		inverseDCT8Col2SIMDAdapter(buf, s, mn, mx)
+		inverseDCT8Col2SIMDAdapter(buf[2:], s, mn, mx)
 	})
 }
 
@@ -53,12 +53,12 @@ func benchDCT16x4(b *testing.B, fn func([]int32, int, int32, int32)) {
 }
 
 func BenchmarkDCT16x4_ASMCol4(b *testing.B) {
-	benchDCT16x4(b, inverseDCT16Col4NEONAdapter)
+	benchDCT16x4(b, inverseDCT16Col4SIMDAdapter)
 }
 
 func BenchmarkDCT16x4_ASMCol2(b *testing.B) {
 	benchDCT16x4(b, func(buf []int32, s int, mn, mx int32) {
-		inverseDCT16Col2NEONAdapter(buf, s, mn, mx)
-		inverseDCT16Col2NEONAdapter(buf[2:], s, mn, mx)
+		inverseDCT16Col2SIMDAdapter(buf, s, mn, mx)
+		inverseDCT16Col2SIMDAdapter(buf[2:], s, mn, mx)
 	})
 }
