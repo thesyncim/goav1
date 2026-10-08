@@ -155,7 +155,7 @@ func benchWarpHorizInputs() (frame.Plane, int, int, int, int, int, int) {
 	return ref, 40, 40, 32768, 0, 96, -64
 }
 
-func BenchmarkWarpHorizontal8ResidentScalarNEONOracle(b *testing.B) {
+func BenchmarkWarpHorizontal8ResidentScalar(b *testing.B) {
 	ref, ix4, iy4, sx4, sy4, alpha, beta := benchWarpHorizInputs()
 	var tmp warpTmp
 	b.ReportAllocs()
@@ -186,7 +186,7 @@ func benchWarpVertTmp() warpTmp {
 	return tmp
 }
 
-func BenchmarkWarpVertical8FullScalarNEONOracle(b *testing.B) {
+func BenchmarkWarpVertical8FullScalar(b *testing.B) {
 	tmp := benchWarpVertTmp()
 	dst, _ := testPlane(32, 32, 1, 32)
 	b.ReportAllocs()
