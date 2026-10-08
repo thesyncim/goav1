@@ -1,6 +1,7 @@
 package encoder
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/bits"
 
@@ -901,8 +902,46 @@ func realtimeFillVarianceTree64(vt *realtimeVarTree64) {
 	realtimeSum2Variances(&vt.part.vert[0], &vt.part.vert[1], &vt.part.none)
 }
 
-var realtimeAvg8x8Impl = realtimeAvg8x8PureGo
-var realtimeAvg8x8QuadImpl = realtimeAvg8x8QuadPureGo
+var realtimeAvg8x8Impl = realtimeAvg8x8Wide
+var realtimeAvg8x8QuadImpl = realtimeAvg8x8QuadWide
+
+// realtimeAvg8x8Wide sums the 64 samples of an 8x8 block with SWAR: each row
+// is one little-endian uint64, its even and odd bytes are split into 16-bit
+// lanes, and the lanes accumulate over the eight rows. A lane holds at most
+// 8*510 = 4080, so no carry crosses lanes and the sum is exact.
+func realtimeAvg8x8Wide(src []byte, stride int) int {
+	const lowBytes = 0x00ff00ff00ff00ff
+	_ = src[7*stride+7]
+	r1 := src[stride:]
+	r2 := src[2*stride:]
+	r3 := src[3*stride:]
+	r4 := src[4*stride:]
+	r5 := src[5*stride:]
+	r6 := src[6*stride:]
+	r7 := src[7*stride:]
+	acc := rowPairSum(binary.LittleEndian.Uint64(src), lowBytes) +
+		rowPairSum(binary.LittleEndian.Uint64(r1), lowBytes) +
+		rowPairSum(binary.LittleEndian.Uint64(r2), lowBytes) +
+		rowPairSum(binary.LittleEndian.Uint64(r3), lowBytes) +
+		rowPairSum(binary.LittleEndian.Uint64(r4), lowBytes) +
+		rowPairSum(binary.LittleEndian.Uint64(r5), lowBytes) +
+		rowPairSum(binary.LittleEndian.Uint64(r6), lowBytes) +
+		rowPairSum(binary.LittleEndian.Uint64(r7), lowBytes)
+	sum := acc&0xffff + (acc>>16)&0xffff + (acc>>32)&0xffff + acc>>48
+	return int(sum+32) >> 6
+}
+
+// rowPairSum returns the four 16-bit lanes of w's even and odd byte pairs.
+func rowPairSum(w, lowBytes uint64) uint64 {
+	return (w & lowBytes) + ((w >> 8) & lowBytes)
+}
+
+func realtimeAvg8x8QuadWide(src []byte, stride int) (int, int, int, int) {
+	return realtimeAvg8x8Wide(src, stride),
+		realtimeAvg8x8Wide(src[8:], stride),
+		realtimeAvg8x8Wide(src[8*stride:], stride),
+		realtimeAvg8x8Wide(src[8*stride+8:], stride)
+}
 
 func realtimeAvg8x8(src []byte, stride int) int {
 	return realtimeAvg8x8Impl(src, stride)
