@@ -145,7 +145,8 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 			if plane != 0 {
 				packed = params.UVStrength[index]
 			}
-			directionOnly := plane == 0 && forceLumaDirections && packed == 0 && params.UVStrength[index] != 0
+			needPrimaryDirection := frameWorkCDEFPlaneNeedsPrimaryDirection(params, index, plane, forceLumaDirections)
+			directionOnly := plane == 0 && forceLumaDirections && packed == 0 && params.UVStrength[index]>>2 != 0
 			if packed == 0 && !directionOnly {
 				prevFiltered = false
 				continue
@@ -206,8 +207,14 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 			if cdefDebugUnit(plane, unitRow, unitCol) {
 				cdefDebugLogUnit(plane, unitRow, unitCol, packed, filterParams, *unitDirections, *unitVariances, input, len(blocks))
 			}
-			if err := cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams); err != nil {
-				return units, blocksTotal, err
+			var filterErr error
+			if needPrimaryDirection {
+				filterErr = cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+			} else {
+				filterErr = cdef.FilterFrameBlocksU8TrustedNoPrimaryDirection(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+			}
+			if filterErr != nil {
+				return units, blocksTotal, filterErr
 			}
 			prevFiltered = true
 			units++

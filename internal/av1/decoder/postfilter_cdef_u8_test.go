@@ -18,15 +18,16 @@ import (
 // skip patterns, direction-only luma passes, and chroma geometries.
 
 type cdefU8WalkCase struct {
-	name     string
-	lumaW    int // MI-aligned luma extent (multiple of 8)
-	lumaH    int
-	xDecC    int // chroma decimation (420: 1,1; 422: 1,0; 444: 0,0)
-	yDecC    int
-	mono     bool
-	params   parser.CDEFParams
-	readProb uint32 // percent of units with Read=true
-	withSkip bool   // attach a skip map with random SkipTransform blocks
+	name      string
+	lumaW     int // MI-aligned luma extent (multiple of 8)
+	lumaH     int
+	xDecC     int // chroma decimation (420: 1,1; 422: 1,0; 444: 0,0)
+	yDecC     int
+	mono      bool
+	params    parser.CDEFParams
+	readProb  uint32 // percent of units with Read=true
+	withSkip  bool   // attach a skip map with random SkipTransform blocks
+	noPrimary bool   // all entries use secondary-only strengths; direction grids must stay untouched
 }
 
 func cdefU8WalkCases() []cdefU8WalkCase {
@@ -49,6 +50,10 @@ func cdefU8WalkCases() []cdefU8WalkCase {
 			params: mk(3, [2]uint8{12 << 2, 6<<2 | 3}, [2]uint8{2<<2 | 2, 0}), readProb: 45, withSkip: true},
 		{name: "direction_only_luma", lumaW: 192, lumaH: 128, xDecC: 1, yDecC: 1,
 			params: mk(4, [2]uint8{0, 5<<2 | 2}, [2]uint8{0, 3 << 2}), readProb: 100},
+		{name: "secondary_only_no_direction_420", lumaW: 192, lumaH: 128, xDecC: 1, yDecC: 1,
+			params: mk(4, [2]uint8{2, 2}, [2]uint8{0, 0}), readProb: 100, noPrimary: true},
+		{name: "secondary_only_no_luma_direction_422", lumaW: 192, lumaH: 128, xDecC: 1, yDecC: 0,
+			params: mk(4, [2]uint8{0, 2}, [2]uint8{0, 2}), readProb: 100, noPrimary: true},
 		{name: "luma_only", lumaW: 128, lumaH: 128, xDecC: 1, yDecC: 1,
 			params: mk(6, [2]uint8{9<<2 | 3, 0}), readProb: 80, withSkip: true},
 		{name: "chroma_422", lumaW: 192, lumaH: 128, xDecC: 1, yDecC: 0,
@@ -131,6 +136,24 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 	var blockStorage [cdef.NBlocks * cdef.NBlocks]cdef.BlockPosition
 	input := make([]uint16, cdef.InputBufferSize)
 	unitDst := make([]uint16, cdef.InputBufferSize)
+	for by := range cdef.NBlocks {
+		for bx := range cdef.NBlocks {
+			wantDirs[by][bx] = 5
+			gotDirs[by][bx] = 5
+			wantVars[by][bx] = 0x12345
+			gotVars[by][bx] = 0x12345
+		}
+	}
+	for i := range unitCount {
+		for by := range cdef.NBlocks {
+			for bx := range cdef.NBlocks {
+				wantDirGrid[i][by][bx] = 5
+				gotDirGrid[i][by][bx] = 5
+				wantVarGrid[i][by][bx] = 0x12345
+				gotVarGrid[i][by][bx] = 0x12345
+			}
+		}
+	}
 
 	var wantUnits, gotUnits uint32
 	var wantBlocks, gotBlocks uint32
@@ -192,6 +215,24 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 		}
 		if gotVarGrid[i] != wantVarGrid[i] {
 			t.Fatalf("variance grid %d differs", i)
+		}
+	}
+	if tc.noPrimary {
+		for by := range cdef.NBlocks {
+			for bx := range cdef.NBlocks {
+				if gotDirs[by][bx] != 5 || gotVars[by][bx] != 0x12345 {
+					t.Fatalf("primary-zero luma changed standalone grids at (%d,%d): dir=%d variance=%d", bx, by, gotDirs[by][bx], gotVars[by][bx])
+				}
+			}
+		}
+		for i := range unitCount {
+			for by := range cdef.NBlocks {
+				for bx := range cdef.NBlocks {
+					if gotDirGrid[i][by][bx] != 5 || gotVarGrid[i][by][bx] != 0x12345 {
+						t.Fatalf("primary-zero unit %d changed grids at (%d,%d): dir=%d variance=%d", i, bx, by, gotDirGrid[i][by][bx], gotVarGrid[i][by][bx])
+					}
+				}
+			}
 		}
 	}
 }

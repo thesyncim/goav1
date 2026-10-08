@@ -1,6 +1,7 @@
 package decoder
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -209,6 +210,7 @@ func runMaskApplyDiff(t *testing.T, event Event, size parser.FrameSize, format f
 	// (b) mask-driven apply into frameB.
 	masks := buildLoopFilterMasksFromRecords(t, event, size, records, sbLog2)
 	ctxB := FrameWorkPostFilterContext{Event: event, Output: frameB, LoopFilterMap: &filterMap}
+	wantCounts := lfMaskApplyCountPerCell(t, ctxB, masks, filterMap)
 	resB, err := ctxB.ApplyLoopFilterEdgesFromMasks(masks, filterMap)
 	if err != nil {
 		t.Fatalf("mask apply: %v", err)
@@ -222,7 +224,78 @@ func runMaskApplyDiff(t *testing.T, event Event, size parser.FrameSize, format f
 	if resB.Applied == 0 {
 		t.Fatalf("degenerate: mask apply filtered no edges")
 	}
+	lfMaskApplyAssertCountsEqual(t, resB, wantCounts)
 	lfMaskApplyAssertFramesEqual(t, frameA, frameB)
+}
+
+// lfMaskApplyCountPerCell visits every decoded mask cell independently, so
+// result counters remain per-cell even when production dispatch merges a run.
+func lfMaskApplyCountPerCell(t *testing.T, ctx FrameWorkPostFilterContext, masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap) FrameWorkLoopFilterPostFilterApplyResult {
+	t.Helper()
+	levelCtx := frameWorkLoopFilterLevelContextFor(&ctx.Event)
+	var want FrameWorkLoopFilterPostFilterApplyResult
+	if err := ctx.populateLoopFilterLevelCacheFromMap(masks, filterMap, levelCtx, &want.Plan); err != nil {
+		t.Fatalf("count oracle level cache: %v", err)
+	}
+	lc := lfmask.LevelCache{Cells: masks.LevelCache, Stride: masks.Cols}
+	maxPlane := loopfilter.PlaneV
+	if masks.Layout.Mono || ctx.Output.Format.MonoChrome || !masks.HasChroma {
+		maxPlane = loopfilter.PlaneY
+	}
+	chromaGated := levelCtx.lumaZero
+	var firstErr error
+	for plane := loopfilter.PlaneY; plane <= maxPlane; plane++ {
+		if plane != loopfilter.PlaneY && (chromaGated || levelCtx.base[plane][loopfilter.EdgeVertical] == 0) {
+			continue
+		}
+		bounds, err := frameWorkLoopFilterPlaneBounds(ctx, plane)
+		if err != nil {
+			t.Fatalf("count oracle bounds: %v", err)
+		}
+		countCell := func(edge loopfilter.Edge, x4, y4 int, level, width uint8) {
+			if firstErr != nil {
+				return
+			}
+			clamped, err := frameWorkLoopFilterClampEdgeLengthInBounds(bounds, edge, x4, y4, 1)
+			if err != nil {
+				firstErr = err
+				return
+			}
+			if clamped <= 0 {
+				return
+			}
+			if _, ok, err := frameWorkLoopFilterScheduledWidthInBounds(bounds, edge, x4, y4, 1, width); err != nil {
+				firstErr = err
+			} else if ok {
+				if _, err := loopfilter.ThresholdsForLevel(level, ctx.Event.LoopFilter.Sharpness); err != nil {
+					firstErr = err
+					return
+				}
+				frameWorkCountAppliedLoopFilterMaskEdge(&want, plane, level)
+			}
+		}
+		if plane == loopfilter.PlaneY {
+			ctx.scanLoopFilterMaskLumaBand(masks, lc, loopfilter.EdgeVertical, 0, masks.SB128H, 0, masks.SB128W, countCell)
+			ctx.scanLoopFilterMaskLumaBand(masks, lc, loopfilter.EdgeHorizontal, 0, masks.SB128H, 0, masks.SB128W, countCell)
+		} else {
+			ctx.scanLoopFilterMaskChromaBand(masks, lc, plane, loopfilter.EdgeVertical, 0, masks.SB128H, 0, masks.SB128W, countCell)
+			ctx.scanLoopFilterMaskChromaBand(masks, lc, plane, loopfilter.EdgeHorizontal, 0, masks.SB128H, 0, masks.SB128W, countCell)
+		}
+		if firstErr != nil {
+			t.Fatalf("count oracle scan: %v", firstErr)
+		}
+	}
+	return want
+}
+
+func lfMaskApplyAssertCountsEqual(t *testing.T, got, want FrameWorkLoopFilterPostFilterApplyResult) {
+	t.Helper()
+	if got.Edges != want.Edges || got.Applied != want.Applied || got.PlaneEdges != want.PlaneEdges ||
+		got.PlaneApplied != want.PlaneApplied || got.PlaneMaxLevel != want.PlaneMaxLevel || got.MaxLevel != want.MaxLevel {
+		t.Fatalf("mask apply counts = edges:%d applied:%d planeEdges:%v planeApplied:%v planeMax:%v max:%d; want edges:%d applied:%d planeEdges:%v planeApplied:%v planeMax:%v max:%d",
+			got.Edges, got.Applied, got.PlaneEdges, got.PlaneApplied, got.PlaneMaxLevel, got.MaxLevel,
+			want.Edges, want.Applied, want.PlaneEdges, want.PlaneApplied, want.PlaneMaxLevel, want.MaxLevel)
+	}
 }
 
 func lfMaskApplyEvent(seq parser.SequenceHeader, size parser.FrameSize, lf parser.LoopFilterParams) Event {
@@ -341,6 +414,108 @@ func TestMaskApplyDiffHighBitDepth10(t *testing.T) {
 	}
 	format := frame.Format{Width: 32, Height: 32, BitDepth: 10, SubsamplingX: true, SubsamplingY: true, Align: 64}
 	runMaskApplyDiff(t, lfMaskApplyEvent(seq, size, lf), size, format, recs, 4)
+}
+
+func TestMaskApplyDiffOddCropRunsAcrossFormats(t *testing.T) {
+	// Odd crops leave MI(4)-aligned pixels and MI(8)-aligned allocation padding
+	// around the final deblock edges. Exercise every supported bit depth against
+	// each chroma layout to check both ordinary and padded edge lines.
+	size := parser.FrameSize{CodedWidth: 34, UpscaledWidth: 34, Height: 34, SuperResDenominator: 8}
+	for _, bitDepth := range []uint8{8, 10, 12} {
+		for _, subsampling := range []struct {
+			name string
+			x, y bool
+		}{
+			{name: "420", x: true, y: true},
+			{name: "422", x: true},
+			{name: "444"},
+		} {
+			t.Run(fmt.Sprintf("%dbit/%s", bitDepth, subsampling.name), func(t *testing.T) {
+				seq := testSequence()
+				seq.ColorConfig.BitDepth = bitDepth
+				seq.ColorConfig.SubsamplingX = subsampling.x
+				seq.ColorConfig.SubsamplingY = subsampling.y
+				lf := parser.LoopFilterParams{LevelY: [2]uint8{30, 24}, LevelU: 26, LevelV: 22, Sharpness: 2}
+				cols, rows, err := frameWorkLoopFilterMapGrid(size)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var recs []lfMaskApplyRecord
+				for row := 0; row < rows; row += 4 {
+					for col := 0; col < cols; col += 4 {
+						recs = append(recs, lfMaskApplyRecord{rec: testFrameWorkLoopFilterPostFilterRecordAt(
+							col, row, minInt(cols, col+4), minInt(rows, row+4),
+						)})
+					}
+				}
+				format := frame.Format{
+					Width: 34, Height: 34, BitDepth: bitDepth,
+					SubsamplingX: subsampling.x, SubsamplingY: subsampling.y, Align: 64,
+				}
+				runMaskApplyDiff(t, lfMaskApplyEvent(seq, size, lf), size, format, recs, 4)
+			})
+		}
+	}
+}
+
+func TestMaskApplyDiffOddCropAcrossMaskRegions(t *testing.T) {
+	// 226 is both a near-MI(8)-boundary crop and wider than one 128x128 mask
+	// region. The final width-14 edge at x=224 uses allocated padding, while the
+	// scan also crosses the mask-region boundary at x=128.
+	size := parser.FrameSize{CodedWidth: 226, UpscaledWidth: 226, Height: 226, SuperResDenominator: 8}
+	seq := lfMaskApply420Sequence()
+	seq.ColorConfig.BitDepth = 12
+	lf := parser.LoopFilterParams{LevelY: [2]uint8{30, 24}, LevelU: 26, LevelV: 22, Sharpness: 2}
+	cols, rows, err := frameWorkLoopFilterMapGrid(size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recs []lfMaskApplyRecord
+	for row := 0; row < rows; row += 4 {
+		for col := 0; col < cols; col += 4 {
+			recs = append(recs, lfMaskApplyRecord{rec: testFrameWorkLoopFilterPostFilterRecordAt(
+				col, row, minInt(cols, col+4), minInt(rows, row+4),
+			)})
+		}
+	}
+	format := frame.Format{Width: 226, Height: 226, BitDepth: 12, SubsamplingX: true, SubsamplingY: true, Align: 64}
+	runMaskApplyDiff(t, lfMaskApplyEvent(seq, size, lf), size, format, recs, 4)
+}
+
+func TestMaskApplyFromMasksAllocs(t *testing.T) {
+	size := parser.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
+	seq := lfMaskApply420Sequence()
+	event := lfMaskApplyEvent(seq, size, parser.LoopFilterParams{LevelY: [2]uint8{24, 24}, LevelU: 20, LevelV: 20})
+	var recs []lfMaskApplyRecord
+	for row := 0; row < 16; row += 4 {
+		for col := 0; col < 16; col += 4 {
+			recs = append(recs, lfMaskApplyRecord{rec: testFrameWorkLoopFilterPostFilterRecordAt(col, row, col+4, row+4)})
+		}
+	}
+	records := make([]threading.FrameWorkLoopFilterBlockRecord, len(recs))
+	for i := range recs {
+		records[i] = recs[i].rec
+	}
+	filterMap := testFrameWorkLoopFilterPostFilterMap(t, size, records...)
+	masks := buildLoopFilterMasksFromRecords(t, event, size, recs, 4)
+	output := testFrameWorkCDEFFrame(t, frame.Format{
+		Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64,
+	})
+	lfMaskApplyFillFrame(output)
+	ctx := FrameWorkPostFilterContext{Event: event, Output: output, LoopFilterMap: &filterMap}
+	if _, err := ctx.ApplyLoopFilterEdgesFromMasks(masks, filterMap); err != nil {
+		t.Fatalf("warm apply: %v", err)
+	}
+	var applyErr error
+	allocs := testing.AllocsPerRun(100, func() {
+		_, applyErr = ctx.ApplyLoopFilterEdgesFromMasks(masks, filterMap)
+	})
+	if applyErr != nil {
+		t.Fatalf("apply: %v", applyErr)
+	}
+	if allocs != 0 {
+		t.Fatalf("warm mask apply allocs/run = %v, want 0", allocs)
+	}
 }
 
 func TestMaskApplyDiffChromaLarge(t *testing.T) {

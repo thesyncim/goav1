@@ -142,6 +142,19 @@ func filterBlockU8PureGo(dst []byte, dstStride int, dstOrigin int, input []uint1
 // bit-identical to running FilterFrameBlocksTrusted on the widened unit and
 // narrowing the written blocks back to uint8.
 func FilterFrameBlocksU8Trusted(dst []byte, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams) error {
+	return filterFrameBlocksU8Trusted(dst, dstStride, input, inputOrigin, blocks, directions, variances, params, true)
+}
+
+// FilterFrameBlocksU8TrustedNoPrimaryDirection filters a decoder-owned unit
+// when the caller has proved that this plane's primary strength is zero and
+// no shared luma direction is needed. Secondary-only filtering uses direction
+// 0, and the direction and variance grids remain untouched. The regular
+// trusted entry point retains its direction-grid side effects.
+func FilterFrameBlocksU8TrustedNoPrimaryDirection(dst []byte, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams) error {
+	return filterFrameBlocksU8Trusted(dst, dstStride, input, inputOrigin, blocks, directions, variances, params, false)
+}
+
+func filterFrameBlocksU8Trusted(dst []byte, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams, deriveDirections bool) error {
 	if len(blocks) == 0 {
 		return nil
 	}
@@ -162,7 +175,7 @@ func FilterFrameBlocksU8Trusted(dst []byte, dstStride int, input []uint16, input
 	bwLog2 := 3 - xDec
 	bhLog2 := 3 - yDec
 
-	if params.Plane == PlaneY {
+	if params.Plane == PlaneY && deriveDirections {
 		// The direction pass runs for every block before any in-place write:
 		// block interiors are disjoint from other blocks' filtered output, so
 		// the values seen here are the pre-CDEF pixels either way.
@@ -186,7 +199,7 @@ func FilterFrameBlocksU8Trusted(dst []byte, dstStride int, input []uint16, input
 			i++
 		}
 	}
-	if params.Plane == PlaneU && params.XDec != params.YDec {
+	if deriveDirections && params.Plane == PlaneU && params.XDec != params.YDec {
 		if !convertChromaDirections(blocks, directions, xDec) {
 			return ErrInvalidCDEF
 		}
@@ -201,7 +214,7 @@ func FilterFrameBlocksU8Trusted(dst []byte, dstStride int, input []uint16, input
 		bhLog2:            bhLog2,
 		blockWidth:        1 << bwLog2,
 		blockHeight:       1 << bhLog2,
-		lumaAdjust:        params.Plane == PlaneY,
+		lumaAdjust:        params.Plane == PlaneY && (deriveDirections || primaryStrength != 0),
 	}
 	if unitParams.primaryStrength == 0 && unitParams.secondaryStrength == 0 {
 		// Direction-only pass: dav1d never calls the filter with both levels

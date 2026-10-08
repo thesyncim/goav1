@@ -238,7 +238,7 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 	if err := validateFrameFilter(dst, dstStride, input, inputOrigin, directions, variances, params); err != nil {
 		return err
 	}
-	return filterFrameBlocks(dst, dstStride, input, inputOrigin, blocks, directions, variances, params, false)
+	return filterFrameBlocks(dst, dstStride, input, inputOrigin, blocks, directions, variances, params, false, true)
 }
 
 // FilterFrameBlocksTrusted runs FilterFrameBlocks for decoder-owned CDEF unit
@@ -246,10 +246,20 @@ func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 // validated by the caller. It preserves the same filter math but skips repeated
 // exported-entry validation and uses unchecked direction search helpers.
 func FilterFrameBlocksTrusted(dst []uint16, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams) error {
-	return filterFrameBlocks(dst, dstStride, input, inputOrigin, blocks, directions, variances, params, true)
+	return filterFrameBlocks(dst, dstStride, input, inputOrigin, blocks, directions, variances, params, true, true)
 }
 
-func filterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams, trusted bool) error {
+// FilterFrameBlocksTrustedNoPrimaryDirection filters a decoder-owned unit when
+// the caller has proved that this plane's primary strength is zero and no
+// shared luma direction is needed. Secondary-only filtering uses direction 0;
+// the direction and variance grids are left untouched. This entry point is
+// intentionally separate from FilterFrameBlocksTrusted because the ordinary
+// API preserves its direction-grid side effects.
+func FilterFrameBlocksTrustedNoPrimaryDirection(dst []uint16, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams) error {
+	return filterFrameBlocks(dst, dstStride, input, inputOrigin, blocks, directions, variances, params, true, false)
+}
+
+func filterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams, trusted bool, deriveDirections bool) error {
 	if len(blocks) == 0 {
 		return nil
 	}
@@ -285,7 +295,7 @@ func filterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 			}
 		}
 	}
-	if params.Plane == PlaneY {
+	if params.Plane == PlaneY && deriveDirections {
 		for i := 0; i < len(blocks); {
 			block := blocks[i]
 			by := int(block.BY)
@@ -331,7 +341,7 @@ func filterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 			i++
 		}
 	}
-	if params.Plane == PlaneU && params.XDec != params.YDec {
+	if deriveDirections && params.Plane == PlaneU && params.XDec != params.YDec {
 		if !convertChromaDirections(blocks, directions, xDec) {
 			return ErrInvalidCDEF
 		}
@@ -346,7 +356,7 @@ func filterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 		bhLog2:            bhLog2,
 		blockWidth:        blockWidth,
 		blockHeight:       blockHeight,
-		lumaAdjust:        params.Plane == PlaneY,
+		lumaAdjust:        params.Plane == PlaneY && (deriveDirections || primaryStrength != 0),
 	}
 	return filterUnitBlocks(dst, dstStride, input, inputOrigin, blocks, directions, variances, unitParams, trusted)
 }
