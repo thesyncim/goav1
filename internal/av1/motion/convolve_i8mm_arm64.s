@@ -61,6 +61,7 @@
 #define C2DI8_IM      64
 #define C2DI8_IMSTR   72
 #define C2DI8_F0      80
+#define C2DI8_VTAPS   88
 
 #define T2D_DST      0
 #define T2D_REF      8
@@ -74,6 +75,7 @@
 #define T2D_IM       72
 #define T2D_IMSTR    80
 #define T2D_F0       88
+#define T2D_VTAPS    96
 
 // func compoundX8I8MMAsm(ctx *compoundX8I8MMCtx)
 TEXT ·compoundX8I8MMAsm(SB), NOSPLIT, $0-8
@@ -562,6 +564,11 @@ TEXT ·compound2D8I8MMAsm(SB), NOSPLIT, $0-8
 	LSL  $1, R14, R14
 
 	ADD  $7, R7, R11
+	MOVD C2DI8_VTAPS(R0), R8
+	CMP  $6, R8
+	BNE  ct2dHRowsReady
+	SUB  $2, R11, R11
+ct2dHRowsReady:
 
 	VLD1   (R3), [V0.B16]
 	VLD1.P 16(R12), [V28.B16]
@@ -611,6 +618,9 @@ ct2dHDone:
 	WORD $0x4e040d72 // dup v18.4s, w11
 
 	MOVD R13, R17
+	MOVD C2DI8_VTAPS(R0), R8
+	CMP  $6, R8
+	BEQ  ct2dV6RowLoop
 
 ct2dVRowLoop:
 	CBZ  R7, ct2dVDone
@@ -663,6 +673,53 @@ ct2dVColLoop:
 	ADD  R14, R17, R17
 	SUB  $1, R7, R7
 	CBNZ R7, ct2dVRowLoop
+	B    ct2dVDone
+
+ct2dV6RowLoop:
+	CBZ  R7, ct2dVDone
+	MOVD R1, R10
+	MOVD R17, R11
+	MOVD R6, R8
+
+ct2dV6ColLoop:
+	MOVD R11, R9
+	WORD $0x4eb21e50 // mov v16.16b, v18.16b
+	WORD $0x4eb21e51 // mov v17.16b, v18.16b
+
+	WORD $0x4cce7521 // ld1 {v1.8h}, [x9], x14
+	WORD $0x0f502030 // smlal  v16.4s, v1.4h, v0.h[1]
+	WORD $0x4f502031 // smlal2 v17.4s, v1.8h, v0.h[1]
+	WORD $0x4cce7521
+	WORD $0x0f602030
+	WORD $0x4f602031
+	WORD $0x4cce7521
+	WORD $0x0f702030
+	WORD $0x4f702031
+	WORD $0x4cce7521
+	WORD $0x0f402830
+	WORD $0x4f402831
+	WORD $0x4cce7521
+	WORD $0x0f502830
+	WORD $0x4f502831
+	WORD $0x4cce7521
+	WORD $0x0f602830
+	WORD $0x4f602831
+
+	WORD $0x4f392610 // srshr v16.4s, v16.4s, #7
+	WORD $0x4f392631 // srshr v17.4s, v17.4s, #7
+	WORD $0x0e614a10 // sqxtn  v16.4h, v16.4s
+	WORD $0x4e614a30 // sqxtn2 v16.8h, v17.4s
+	WORD $0x4c007550 // st1 {v16.8h}, [x10]
+
+	ADD  $16, R10, R10
+	ADD  $16, R11, R11
+	SUB  $8, R8, R8
+	CBNZ R8, ct2dV6ColLoop
+
+	ADD  R6<<1, R1
+	ADD  R14, R17, R17
+	SUB  $1, R7, R7
+	CBNZ R7, ct2dV6RowLoop
 
 ct2dVDone:
 	RET
@@ -1338,6 +1395,11 @@ TEXT ·convolve2D8I8MMAsm(SB), NOSPLIT, $0-8
 
 	// imH = height + filterTaps - 1 = height + 7
 	ADD  $7, R7, R11
+	MOVD T2D_VTAPS(R0), R8
+	CMP  $6, R8
+	BNE  t2dHRowsReady
+	SUB  $2, R11, R11
+t2dHRowsReady:
 
 	// Horizontal pass setup.
 	VLD1   (R3), [V0.B16]
@@ -1391,6 +1453,9 @@ t2dHDone:
 	WORD $0x4e040d73       // dup v19.4s, w11    roundOffset broadcast
 
 	MOVD R13, R17          // im row-window base for output row 0
+	MOVD T2D_VTAPS(R0), R8
+	CMP  $6, R8
+	BEQ  t2dV6RowLoop
 
 t2dVRowLoop:
 	CBZ  R7, t2dVDone
@@ -1446,6 +1511,56 @@ t2dVColLoop:
 	ADD  R14, R17, R17
 	SUB  $1, R7, R7
 	CBNZ R7, t2dVRowLoop
+	B    t2dVDone
+
+t2dV6RowLoop:
+	CBZ  R7, t2dVDone
+	MOVD R1, R10
+	MOVD R17, R11
+	MOVD R6, R8
+
+t2dV6ColLoop:
+	MOVD R11, R9
+	WORD $0x4eb21e50       // mov v16.16b, v18.16b
+	WORD $0x4eb21e51       // mov v17.16b, v18.16b
+
+	WORD $0x4cce7521       // ld1 {v1.8h}, [x9], x14
+	WORD $0x0f502030       // smlal  v16.4s, v1.4h, v0.h[1]
+	WORD $0x4f502031       // smlal2 v17.4s, v1.8h, v0.h[1]
+	WORD $0x4cce7521
+	WORD $0x0f602030
+	WORD $0x4f602031
+	WORD $0x4cce7521
+	WORD $0x0f702030
+	WORD $0x4f702031
+	WORD $0x4cce7521
+	WORD $0x0f402830
+	WORD $0x4f402831
+	WORD $0x4cce7521
+	WORD $0x0f502830
+	WORD $0x4f502831
+	WORD $0x4cce7521
+	WORD $0x0f602830
+	WORD $0x4f602831
+
+	WORD $0x4f352610       // srshr v16.4s, v16.4s, #11
+	WORD $0x4f352631       // srshr v17.4s, v17.4s, #11
+	WORD $0x6eb38610       // sub v16.4s, v16.4s, v19.4s
+	WORD $0x6eb38631       // sub v17.4s, v17.4s, v19.4s
+	WORD $0x0e614a10       // sqxtn  v16.4h, v16.4s
+	WORD $0x4e614a30       // sqxtn2 v16.8h, v17.8h
+	WORD $0x2e212a10       // sqxtun v16.8b, v16.8h
+	WORD $0x0c007150       // st1 {v16.8b}, [x10]
+
+	ADD  $8, R10, R10
+	ADD  $16, R11, R11
+	SUB  $8, R8, R8
+	CBNZ R8, t2dV6ColLoop
+
+	ADD  R4, R1, R1
+	ADD  R14, R17, R17
+	SUB  $1, R7, R7
+	CBNZ R7, t2dV6RowLoop
 
 t2dVDone:
 	RET

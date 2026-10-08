@@ -50,6 +50,39 @@ for project-level checks. The current arm64 kernel results, reproduction
 commands, and claim limits are in the
 [Go 1.27 SIMD measurement note](docs/go127-simd-performance.md).
 
+## Remaining assembly (2026-10-08 snapshot)
+
+The replacement is partial. This tree contains 109 assembly source files:
+67 ARM64 and 42 AMD64, with 303 `TEXT` symbols across both architectures.
+These are source counts, not runtime shares: a shared file can contain both
+replaced kernels and live fallback kernels. Relative to `origin/main` at
+`024942ea`, four assembly files have been removed entirely; additional replaced
+bodies were removed from shared files. AMD64 remains primarily assembly-backed.
+
+| Area | Assembly files | Main work still remaining |
+| --- | ---: | --- |
+| Transforms | 23 | Remaining forward transforms, fused transform/reconstruction glue, shapes and numeric-range fallbacks |
+| Encoder | 14 | SAD shapes other than selected 8×8×4, motion-search helpers, RD statistics, residual preparation and resizing |
+| Motion compensation | 10 | 8-bit I8MM/dot-product convolution, 8-bit warp, remaining compound and high-bit-depth fallback shapes |
+| Intra prediction | 9 | Remaining directional, filter-intra and static predictor kernels |
+| Restoration | 9 | Wiener and most self-guided filtering; the HBD final projection has a Go SIMD implementation |
+| Loop filters | 8 | 8-bit filters and HBD 4/8-tap paths; HBD 6/14-tap Go SIMD is selected |
+| CDEF | 7 | Remaining filtering variants; direction search and selected filtering paths use Go SIMD |
+| Other DSP, entropy, quantization, frame/tile helpers, film grain and super-resolution | 29 | Includes serial entropy routines, so SIMD is not a direct substitute for every assembly function |
+
+The current Go 1.27.2 ARM64 SIMD API lacks the I8MM matrix-multiply operations
+used by the 8-bit motion kernels. Widening multiply/add implementations are
+possible, but the tested versions have not matched that specialized assembly.
+The six-tap I8MM improvement removes zero-tap work in retained assembly; it is
+not an assembly replacement. The quantize-b encoder path also still selects
+NEON assembly, as do measured-losing SAD and loop-filter shapes.
+
+Do not delete an entire assembly file merely because one SIMD dispatch replaces
+one of its symbols. Check default builds, experiment builds, other architectures,
+assembly-to-assembly calls, and numeric/shape fallbacks. Remove replaced bodies
+once those production references are gone, retaining an independent correctness
+oracle without keeping otherwise-dead production code.
+
 ## Porting guidelines
 
 - Keep architecture and experiment build constraints explicit. Standard builds

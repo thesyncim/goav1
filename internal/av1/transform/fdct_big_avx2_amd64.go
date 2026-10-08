@@ -33,6 +33,10 @@ func forwardDCT16x16AVX2(coeff []int32, coeffStride int, residual []int16, resid
 		forwardDCT16x16PureGo(coeff, coeffStride, residual, residualStride)
 		return
 	}
+	forwardDCT16x16AVX2Raw(coeff, coeffStride, residual, residualStride)
+}
+
+func forwardDCT16x16AVX2Raw(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	var buf [256]int32  // 16x16 inter-pass
 	var bank [256]int32 // two 16-vector butterfly banks (2*16*8)
 	ctx := fdctBigAMD64Ctx{
@@ -51,6 +55,10 @@ func forwardDCT32x32AVX2(coeff []int32, coeffStride int, residual []int16, resid
 		forwardDCT32x32PureGo(coeff, coeffStride, residual, residualStride)
 		return
 	}
+	forwardDCT32x32AVX2Raw(coeff, coeffStride, residual, residualStride)
+}
+
+func forwardDCT32x32AVX2Raw(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	var buf [1024]int32 // 32x32 inter-pass
 	var bank [512]int32 // two 32-vector butterfly banks (2*32*8)
 	ctx := fdctBigAMD64Ctx{
@@ -72,5 +80,7 @@ func init() {
 	if cpu.Detected.AVX2 {
 		forwardDCT16x16Impl = forwardDCT16x16AVX2
 		forwardDCT32x32Impl = forwardDCT32x32AVX2
+		forwardDCT16x16Trusted8BitImpl = forwardDCT16x16AVX2Raw
+		forwardDCT32x32Trusted8BitImpl = forwardDCT32x32AVX2Raw
 	}
 }

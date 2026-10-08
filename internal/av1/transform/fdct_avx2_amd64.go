@@ -32,6 +32,10 @@ func forwardDCT4x4AVX2(coeff []int32, coeffStride int, residual []int16, residua
 		forwardDCT4x4PureGo(coeff, coeffStride, residual, residualStride)
 		return
 	}
+	forwardDCT4x4AVX2Raw(coeff, coeffStride, residual, residualStride)
+}
+
+func forwardDCT4x4AVX2Raw(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	ctx := fdctAMD64Ctx{
 		In:        unsafe.Pointer(&residual[0]),
 		InStride:  int64(residualStride),
@@ -46,6 +50,10 @@ func forwardDCT8x8AVX2(coeff []int32, coeffStride int, residual []int16, residua
 		forwardDCT8x8PureGo(coeff, coeffStride, residual, residualStride)
 		return
 	}
+	forwardDCT8x8AVX2Raw(coeff, coeffStride, residual, residualStride)
+}
+
+func forwardDCT8x8AVX2Raw(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	ctx := fdctAMD64Ctx{
 		In:        unsafe.Pointer(&residual[0]),
 		InStride:  int64(residualStride),
@@ -62,5 +70,7 @@ func init() {
 	if cpu.Detected.AVX2 {
 		forwardDCT8x8Impl = forwardDCT8x8AVX2
 		forwardDCT4x4Impl = forwardDCT4x4AVX2
+		forwardDCT8x8Trusted8BitImpl = forwardDCT8x8AVX2Raw
+		forwardDCT4x4Trusted8BitImpl = forwardDCT4x4AVX2Raw
 	}
 }

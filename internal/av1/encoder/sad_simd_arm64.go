@@ -54,14 +54,15 @@ func sad8x8x4SIMD(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int
 	c2 := archsimd.BroadcastUint16x8(0)
 	c3 := archsimd.BroadcastUint16x8(0)
 	stride2 := 2 * stride
-	for row := 0; row < 8; row += 2 {
-		s := pack2Rows(sp, stride)
-		c0 = c0.Add(widen16(absDiffU8x16(s, pack2Rows(p0, stride))))
-		c1 = c1.Add(widen16(absDiffU8x16(s, pack2Rows(p1, stride))))
-		c2 = c2.Add(widen16(absDiffU8x16(s, pack2Rows(p2, stride))))
-		c3 = c3.Add(widen16(absDiffU8x16(s, pack2Rows(p3, stride))))
-		sp = step(sp, stride2)
-		p0, p1, p2, p3 = step(p0, stride2), step(p1, stride2), step(p2, stride2), step(p3, stride2)
+	for row, rowOffset := 0, 0; row < 8; row, rowOffset = row+2, rowOffset+stride2 {
+		// Derive each row-pair pointer from its original slice base. Advancing
+		// the raw pointers after the last pair would form an out-of-bounds
+		// pointer for an exact 7*stride+8-byte input, even though it is unused.
+		s := pack2Rows(step(sp, rowOffset), stride)
+		c0 = c0.Add(widen16(absDiffU8x16(s, pack2Rows(step(p0, rowOffset), stride))))
+		c1 = c1.Add(widen16(absDiffU8x16(s, pack2Rows(step(p1, rowOffset), stride))))
+		c2 = c2.Add(widen16(absDiffU8x16(s, pack2Rows(step(p2, rowOffset), stride))))
+		c3 = c3.Add(widen16(absDiffU8x16(s, pack2Rows(step(p3, rowOffset), stride))))
 	}
 	return int(c0.ReduceSum()), int(c1.ReduceSum()), int(c2.ReduceSum()), int(c3.ReduceSum())
 }

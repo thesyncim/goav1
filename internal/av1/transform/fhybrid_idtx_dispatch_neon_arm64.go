@@ -13,3 +13,19 @@ var forwardBlock8x8ADSTDCTImpl = forwardBlock8x8ADSTDCTNEONGuarded
 var forwardBlock8x8DCTADSTImpl = forwardBlock8x8DCTADSTNEONGuarded
 var forwardBlock8x8ADSTADSTImpl = forwardBlock8x8ADSTADSTNEONGuarded
 var forwardBlock8x8IDTXImpl = forwardBlock8x8IDTXPureGo
+
+func forwardBlock8x8Hybrid8BitResidualTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, typ Type) bool {
+	switch typ {
+	case TypeADSTDCT:
+		forwardBlock8x8ADSTDCTNEON(coeff, coeffStride, residual, residualStride, scratch)
+	case TypeDCTADST:
+		forwardBlock8x8DCTADSTNEON(coeff, coeffStride, residual, residualStride, scratch)
+	case TypeADSTADST:
+		forwardBlock8x8ADSTADSTNEON(coeff, coeffStride, residual, residualStride, scratch)
+	case TypeIDTX:
+		forwardBlock8x8IDTXPureGo(coeff, coeffStride, residual, residualStride, scratch)
+	default:
+		return false
+	}
+	return true
+}

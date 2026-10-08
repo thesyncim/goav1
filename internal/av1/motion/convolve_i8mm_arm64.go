@@ -53,6 +53,7 @@ type compound2D8I8MMCtx struct {
 	im      *int16
 	imStr   uintptr
 	f0      uintptr
+	vTaps   uintptr
 }
 
 //go:noescape
@@ -121,6 +122,7 @@ type convolve2D8I8MMCtx struct {
 	im      *int16
 	imStr   uintptr
 	f0      uintptr
+	vTaps   uintptr
 }
 
 //go:noescape
@@ -347,10 +349,10 @@ func predictInterCompoundRef8ToConvBuf2DI8MM(out []uint16, ref frame.Plane, refX
 
 func predictInterCompoundRef8ToConvBuf2DI8MMWithIM(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xFilter [16]byte, f0 uint8, yk [filterTaps]int16, im *compoundIM16) {
 	foX := filterTaps/2 - 1
-	foY := filterTaps/2 - 1
+	refYStart, vTaps := i8mm2DVerticalWindow(refY, yk)
 	ctx := compound2D8I8MMCtx{
 		dst:     &out[0],
-		ref:     &ref.Pix[(refY-foY)*ref.Stride+refX-foX],
+		ref:     &ref.Pix[refYStart*ref.Stride+refX-foX],
 		xFilter: &xFilter[0],
 		permute: &convolveX8I8MMPermute[0],
 		yKernel: &yk[0],
@@ -360,8 +362,22 @@ func predictInterCompoundRef8ToConvBuf2DI8MMWithIM(out []uint16, ref frame.Plane
 		im:      &im[0],
 		imStr:   uintptr(maxBlockSize),
 		f0:      uintptr(f0),
+		vTaps:   vTaps,
 	}
 	compound2D8I8MMAsm(&ctx)
+}
+
+// i8mm2DVerticalWindow returns the first source row and active tap count for
+// the resident 2D kernels. AV1's regular and smooth vertical filters have zero
+// outer coefficients, so their active yKernel[1:7] window starts one row below
+// the eight-tap anchor and needs height+5 intermediate rows. Sharp filters
+// with nonzero endpoints retain the full height+7 window.
+func i8mm2DVerticalWindow(refY int, yk [filterTaps]int16) (int, uintptr) {
+	start := refY - (filterTaps/2 - 1)
+	if yk[0] == 0 && yk[filterTaps-1] == 0 {
+		return start + 1, 6
+	}
+	return start, uintptr(filterTaps)
 }
 
 func predictInterCompoundRef8ToConvBuf2DI8MMW4WithIMStride(out []uint16, ref frame.Plane, refX int, refY int, height int, xFilter [16]byte, yk [filterTaps]int16, im *int16, imStride int) {
@@ -578,10 +594,10 @@ func convolve2D8ClampedEdgeSplitI8MMWithScratch(dst frame.Plane, ref frame.Plane
 
 func convolve2D8I8MMWithIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xFilter [16]byte, f0 uint8, yk [filterTaps]int16, im *int16, imStride int) {
 	foX := filterTaps/2 - 1
-	foY := filterTaps/2 - 1
+	refYStart, vTaps := i8mm2DVerticalWindow(refY, yk)
 	ctx := convolve2D8I8MMCtx{
 		dst:     &dst.Pix[dstY*dst.Stride+dstX],
-		ref:     &ref.Pix[(refY-foY)*ref.Stride+refX-foX],
+		ref:     &ref.Pix[refYStart*ref.Stride+refX-foX],
 		xFilter: &xFilter[0],
 		permute: &convolveX8I8MMPermute[0],
 		yKernel: &yk[0],
@@ -592,6 +608,7 @@ func convolve2D8I8MMWithIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int,
 		im:      im,
 		imStr:   uintptr(imStride),
 		f0:      uintptr(f0),
+		vTaps:   vTaps,
 	}
 	convolve2D8I8MMAsm(&ctx)
 }

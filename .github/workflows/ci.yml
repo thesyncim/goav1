@@ -111,6 +111,12 @@ jobs:
           ./internal/av1/transform
           ./internal/av1/quantize
           ./internal/av1/decoder
+          ./internal/av1/encoder
+      - name: exact-window SIMD pointer regressions
+        run: >-
+          go test -race -count=1 -gcflags=all=-d=checkptr=2
+          -run '^TestSAD8x8x4SIMD(ExactMinimumSlice|ByteExact|Extremes)$'
+          ./internal/av1/encoder
       - name: strict fast decoder parity with native SIMD
         run: make dryrun-fast
       - name: strict profile decoder parity with native SIMD

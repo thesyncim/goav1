@@ -21,6 +21,7 @@ func fdct16x16NEONAsm(ctx *fdct16NEONCtx)
 // The NEON 16x16 kernel uses narrow intermediates. Keep the public int16 input
 // contract by routing wider residuals to the int64 scalar reference.
 var forwardDCT16x16Impl = forwardDCT16x16NEONGuarded
+var forwardDCT16x16Trusted8BitImpl = forwardDCT16x16NEON
 
 func forwardDCT16x16NEONGuarded(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	if !residualFitsMagnitude(residual, residualStride, 16, 16, 255) {

@@ -1,0 +1,128 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//go:build goexperiment.simd && arm64 && !purego
+
+// This test is compiled only through a temporary Go overlay by
+// prepare_fixtures.sh. The same benchmark declarations provide matched Go
+// kernel timings when invoked with -bench.
+package motion
+
+import (
+	"encoding/binary"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
+	"github.com/thesyncim/goav1/internal/av1/frame"
+)
+
+const u8MotionBenchSide = 144
+const u8MotionBenchPad = 8
+
+var u8MotionBenchSink byte
+
+func u8MotionBenchRef() frame.Plane {
+	ref, _ := testPlane(u8MotionBenchSide, u8MotionBenchSide, 1, u8MotionBenchSide)
+	fillMotionTestPlane(ref)
+	return ref
+}
+
+func u8MotionBenchKernels() ([filterTaps]int16, [filterTaps]int16) {
+	return subpelFilters8[6], subpelFilters8Smooth[9]
+}
+
+func TestU8MotionBenchExportFixtures(t *testing.T) {
+	root := os.Getenv("GOAV1_U8_FIXTURE_DIR")
+	if root == "" {
+		t.Skip("GOAV1_U8_FIXTURE_DIR is empty")
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ref := u8MotionBenchRef()
+	xKernel, yKernel := u8MotionBenchKernels()
+	write := func(name string, b []byte) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("ref_144x144_u8.bin", ref.Pix)
+
+	for _, side := range []int{8, 16, 32, 64, 128} {
+		put, _ := testPlane(side, side, 1, side)
+		convolve2D8PureGo(put, ref, 0, 0, u8MotionBenchPad, u8MotionBenchPad,
+			side, side, xKernel, yKernel)
+		write("put_expected_"+u8MotionBenchItoa(side)+"x"+u8MotionBenchItoa(side)+".bin", put.Pix)
+
+		compound := make([]uint16, side*side)
+		predictInterCompoundRef8ToConvBuf2DPureGo(compound, ref,
+			u8MotionBenchPad, u8MotionBenchPad, side, side,
+			xKernel, yKernel, 19, nil)
+		encoded := make([]byte, len(compound)*2)
+		for i, sample := range compound {
+			binary.LittleEndian.PutUint16(encoded[i*2:], sample)
+		}
+		write("prep_expected_"+u8MotionBenchItoa(side)+"x"+u8MotionBenchItoa(side)+"_u16le.bin", encoded)
+	}
+}
+
+func u8MotionBenchItoa(v int) string {
+	if v == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	for v > 0 {
+		i--
+		buf[i] = byte('0' + v%10)
+		v /= 10
+	}
+	return string(buf[i:])
+}
+
+func BenchmarkU8MotionI8MMConvolve(b *testing.B) {
+	if !cpu.Detected.I8MM {
+		b.Skip("I8MM not detected")
+	}
+	ref := u8MotionBenchRef()
+	xKernel, yKernel := u8MotionBenchKernels()
+	for _, side := range []int{8, 16, 32, 64, 128} {
+		b.Run("W"+u8MotionBenchItoa(side)+"H"+u8MotionBenchItoa(side), func(b *testing.B) {
+			dst, _ := testPlane(side, side, 1, side)
+			var scratch ConvolveScratch
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				convolve2D8I8MMWithScratch(dst, ref, 0, 0,
+					u8MotionBenchPad, u8MotionBenchPad, side, side,
+					xKernel, yKernel, &scratch)
+			}
+			b.StopTimer()
+			u8MotionBenchSink ^= dst.Pix[len(dst.Pix)-1]
+		})
+	}
+}
+
+func BenchmarkU8MotionI8MMCompound(b *testing.B) {
+	if !cpu.Detected.I8MM {
+		b.Skip("I8MM not detected")
+	}
+	ref := u8MotionBenchRef()
+	xKernel, yKernel := u8MotionBenchKernels()
+	for _, side := range []int{8, 16, 32, 64, 128} {
+		b.Run("W"+u8MotionBenchItoa(side)+"H"+u8MotionBenchItoa(side), func(b *testing.B) {
+			out := make([]uint16, side*side)
+			var scratch CompoundConvolveScratch
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				predictInterCompoundRef8ToConvBuf2DI8MM(out, ref,
+					u8MotionBenchPad, u8MotionBenchPad, side, side,
+					xKernel, yKernel, 19, &scratch)
+			}
+			b.StopTimer()
+			u8MotionBenchSink ^= byte(out[len(out)-1])
+		})
+	}
+}

@@ -19,6 +19,7 @@ func fdct8x8NEONAsm(ctx *fdct8x8NEONCtx)
 // The NEON 8x8 kernel uses narrow intermediates. Keep the public int16 input
 // contract by routing wider residuals to the int64 scalar reference.
 var forwardDCT8x8Impl = forwardDCT8x8NEONGuarded
+var forwardDCT8x8Trusted8BitImpl = forwardDCT8x8NEON
 
 func forwardDCT8x8NEONGuarded(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	if !residualFitsMagnitude(residual, residualStride, 8, 8, 255) {
@@ -40,3 +41,4 @@ func forwardDCT8x8NEON(coeff []int32, coeffStride int, residual []int16, residua
 
 // The default build has no Go SIMD backend; use the scalar reference here.
 var forwardDCT4x4Impl = forwardDCT4x4PureGo
+var forwardDCT4x4Trusted8BitImpl = forwardDCT4x4PureGo

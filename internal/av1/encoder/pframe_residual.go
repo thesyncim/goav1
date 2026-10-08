@@ -2586,6 +2586,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 	}
 	drlIndex := 0
+	mds0PredRetained := false
 	if !refs.Compound {
 		mds0Picked := false
 		// The light-PD1 MDS0 candidate decision (SVT preset 12 shape; see
@@ -2606,11 +2607,12 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 		if st.mds0Level != 0 && mds0Gate && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height &&
 			st.realtimeContentStateForBlock(lumaPX, lumaPY).sourceSADNonRD != realtimeSourceSADZero {
-			if cand, ok := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {
+			if cand, ok, retained := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {
 				modeResult.Mode = cand.mode
 				mv = cand.mv
 				drlIndex = int(cand.drl)
 				mds0Picked = true
+				mds0PredRetained = retained
 			}
 		}
 		if !mds0Picked {
@@ -2682,8 +2684,10 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 				}
 			}
 		} else {
-			if err := predictIntoFilters(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, blockFilters, st.scaledScratch.Conv()); err != nil {
-				return fmt.Errorf("predict luma: %w", err)
+			if !mds0PredictorMatchesCodedFilters(mds0PredRetained, mv, blockFilters) {
+				if err := predictIntoFilters(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, blockFilters, st.scaledScratch.Conv()); err != nil {
+					return fmt.Errorf("predict luma: %w", err)
+				}
 			}
 			if hasChroma {
 				if err := predictIntoFilters(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters, st.scaledScratch.Conv()); err != nil {
@@ -4024,7 +4028,7 @@ func (st *lossyEncodeState) prepareInterTXBTyped(srcPlane, pred []byte, predStri
 	n := geo.sampleCount
 	cn := geo.coeffCount
 	tran := &st.tranScratch
-	if err := forwardTransformBlock(tran[:cn], residual[:n], st.dqScratch[:n], w, h, txType); err != nil {
+	if err := forwardTransformBlock8BitResidualTrusted(tran[:cn], residual[:n], st.dqScratch[:n], w, h, txType); err != nil {
 		return false
 	}
 	if len(qcoeff) < cn {
@@ -4591,6 +4595,17 @@ func forwardTransformBlock(tran []int32, residual []int16, scratch []int32, w, h
 		return nil
 	}
 	return transform.ForwardBlock(tran, h, residual, w, scratch, transform.Size{Width: uint8(w), Height: uint8(h)}, typ)
+}
+
+// forwardTransformBlock8BitResidualTrusted is used only after residuals have
+// been formed from 8-bit source and prediction planes. The residual values are
+// therefore bounded to [-255, 255], allowing narrow transform kernels to skip
+// their defensive full-block range scan.
+func forwardTransformBlock8BitResidualTrusted(tran []int32, residual []int16, scratch []int32, w, h int, typ transform.Type) error {
+	return transform.ForwardBlock8BitResidualTrusted(
+		tran, h, residual, w, scratch,
+		transform.Size{Width: uint8(w), Height: uint8(h)}, typ,
+	)
 }
 
 // forwardDCTBlock dispatches the forward DCT_DCT for every coded transform

@@ -8,6 +8,7 @@ package motion
 
 import (
 	"math/rand"
+	"strconv"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
@@ -1158,4 +1159,98 @@ func BenchmarkConvolve2D8NEONDirect_32(b *testing.B) {
 	runConvolveBench(b, 32, 32, func() {
 		convolve2D8NEON(dst, ref, 0, 0, filterTaps, filterTaps, 32, 32, xk, yk)
 	})
+}
+
+type i8mmVerticalTapCase struct {
+	name       string
+	ker        [filterTaps]int16
+	taps       uintptr
+	startDelta int
+}
+
+func i8mmVerticalTapCases() []i8mmVerticalTapCase {
+	mixedFirstZero := subpelFilters8Sharp[9]
+	mixedFirstZero[0] = 0
+	mixedLastZero := subpelFilters8Sharp[9]
+	mixedLastZero[filterTaps-1] = 0
+	return []i8mmVerticalTapCase{
+		{name: "regular", ker: subpelFilters8[6], taps: 6, startDelta: -2},
+		{name: "smooth", ker: subpelFilters8Smooth[9], taps: 6, startDelta: -2},
+		{name: "four-interior-coefficients", ker: subpelFilters4[6], taps: 6, startDelta: -2},
+		{name: "sharp", ker: subpelFilters8Sharp[9], taps: 8, startDelta: -3},
+		{name: "first-outer-zero", ker: mixedFirstZero, taps: 8, startDelta: -3},
+		{name: "last-outer-zero", ker: mixedLastZero, taps: 8, startDelta: -3},
+	}
+}
+
+func TestI8MM2DVerticalWindow(t *testing.T) {
+	for _, tc := range i8mmVerticalTapCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			start, taps := i8mm2DVerticalWindow(filterTaps+5, tc.ker)
+			if want := filterTaps + 5 + tc.startDelta; start != want || taps != tc.taps {
+				t.Fatalf("window=(%d,%d), want=(%d,%d)", start, taps, want, tc.taps)
+			}
+		})
+	}
+}
+
+func TestConvolve2D8I8MMVerticalWindowTinyAndOddParity(t *testing.T) {
+	if !cpu.Detected.I8MM {
+		t.Skip("I8MM not detected")
+	}
+	ref, _ := testPlane(160, 128, 1, 160)
+	fillMotionTestPlane(ref)
+	xKernel := subpelFilters8[6]
+	refX, refY := 16, 16
+	sizes := []struct {
+		width  int
+		height int
+		stride int
+	}{
+		{width: 8, height: 1, stride: 13},
+		{width: 8, height: 3, stride: 13},
+		{width: 8, height: 9, stride: 13},
+		{width: 16, height: 1, stride: 21},
+		{width: 16, height: 5, stride: 21},
+	}
+	for _, tc := range i8mmVerticalTapCases() {
+		for _, size := range sizes {
+			t.Run(tc.name+"/"+strconv.Itoa(size.width)+"x"+strconv.Itoa(size.height), func(t *testing.T) {
+				got, _ := testPlane(size.width, size.height, 1, size.stride)
+				gotScratch, _ := testPlane(size.width, size.height, 1, size.stride)
+				want, _ := testPlane(size.width, size.height, 1, size.stride)
+				for i := range got.Pix {
+					got.Pix[i], gotScratch.Pix[i], want.Pix[i] = 0xa5, 0xa5, 0xa5
+				}
+				var scratch ConvolveScratch
+				convolve2D8I8MM(got, ref, 0, 0, refX, refY, size.width, size.height, xKernel, tc.ker)
+				convolve2D8I8MMWithScratch(gotScratch, ref, 0, 0, refX, refY, size.width, size.height, xKernel, tc.ker, &scratch)
+				convolve2D8PureGo(want, ref, 0, 0, refX, refY, size.width, size.height, xKernel, tc.ker)
+				for i := range want.Pix {
+					if got.Pix[i] != want.Pix[i] || gotScratch.Pix[i] != want.Pix[i] {
+						t.Fatalf("convolve byte=%d no-scratch=%d scratch=%d PureGo=%d", i, got.Pix[i], gotScratch.Pix[i], want.Pix[i])
+					}
+				}
+
+				gotCompound := make([]uint16, size.width*size.height)
+				gotCompoundScratch := make([]uint16, size.width*size.height)
+				wantCompound := make([]uint16, size.width*size.height)
+				for i := range gotCompound {
+					gotCompound[i], gotCompoundScratch[i], wantCompound[i] = 0xa5a5, 0xa5a5, 0xa5a5
+				}
+				var compoundScratch CompoundConvolveScratch
+				predictInterCompoundRef8ToConvBuf2DI8MM(gotCompound, ref, refX, refY,
+					size.width, size.height, xKernel, tc.ker, 19, nil)
+				predictInterCompoundRef8ToConvBuf2DI8MM(gotCompoundScratch, ref, refX, refY,
+					size.width, size.height, xKernel, tc.ker, 19, &compoundScratch)
+				predictInterCompoundRef8ToConvBuf2DPureGo(wantCompound, ref, refX, refY,
+					size.width, size.height, xKernel, tc.ker, 19, nil)
+				for i := range wantCompound {
+					if gotCompound[i] != wantCompound[i] || gotCompoundScratch[i] != wantCompound[i] {
+						t.Fatalf("compound sample=%d no-scratch=%d scratch=%d PureGo=%d", i, gotCompound[i], gotCompoundScratch[i], wantCompound[i])
+					}
+				}
+			})
+		}
+	}
 }

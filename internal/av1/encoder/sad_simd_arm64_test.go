@@ -77,6 +77,41 @@ func TestSAD8x8x4SIMDByteExact(t *testing.T) {
 	}
 }
 
+// TestSAD8x8x4SIMDExactMinimumSlice checks the smallest legal block windows
+// with both aligned and offset slice starts. In particular, it ensures the
+// raw-pointer loop does not advance past the allocation after the final row
+// pair; run this test with checkptr=2 as well as ordinary SIMD tests.
+func TestSAD8x8x4SIMDExactMinimumSlice(t *testing.T) {
+	for _, stride := range []int{17, 32, 79} {
+		const rowCount = 8
+		windowLen := (rowCount-1)*stride + 8
+		for _, offset := range []int{0, 1, 7} {
+			makeWindow := func(seed int64) []byte {
+				rng := rand.New(rand.NewSource(seed))
+				backing := make([]byte, windowLen+offset)
+				for i := range backing {
+					backing[i] = uint8(rng.Intn(256))
+				}
+				return backing[offset:]
+			}
+
+			src := makeWindow(int64(stride*100 + offset))
+			refs := [4][]byte{
+				makeWindow(int64(stride*200 + offset)),
+				makeWindow(int64(stride*300 + offset)),
+				makeWindow(int64(stride*400 + offset)),
+				makeWindow(int64(stride*500 + offset)),
+			}
+			w0, w1, w2, w3 := sad8x8x4PureGo(src, refs[0], refs[1], refs[2], refs[3], stride)
+			g0, g1, g2, g3 := sad8x8x4SIMD(src, refs[0], refs[1], refs[2], refs[3], stride)
+			if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+				t.Fatalf("stride=%d offset=%d: SIMD (%d,%d,%d,%d), want (%d,%d,%d,%d)",
+					stride, offset, g0, g1, g2, g3, w0, w1, w2, w3)
+			}
+		}
+	}
+}
+
 func TestSAD8x8x4SIMDExtremes(t *testing.T) {
 	const stride = 32
 	src := make([]byte, stride*32)

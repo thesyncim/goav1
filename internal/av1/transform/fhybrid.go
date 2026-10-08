@@ -36,6 +36,68 @@ func ForwardBlock(coeff []int32, coeffStride int, residual []int16, residualStri
 	return forwardGenericBlock(coeff, coeffStride, residual, residualStride, scratch, size, typ)
 }
 
+// ForwardBlock8BitResidualTrusted computes the forward transform for a
+// residual block whose samples are differences of two 8-bit pixel values, so
+// every residual is in [-255, 255]. It validates the addressed coefficient,
+// residual, and scratch regions, but skips the range scan used to protect
+// narrow architecture kernels. Callers must uphold the residual-range
+// precondition; use ForwardBlock for arbitrary int16 residuals.
+func ForwardBlock8BitResidualTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, size Size, typ Type) error {
+	if typ == TypeDCTDCT {
+		return forwardDCTBySize8BitResidualTrusted(coeff, coeffStride, residual, residualStride, size)
+	}
+	if size == (Size{Width: 8, Height: 8}) && forwardBlock8x8HybridSupported(typ) {
+		if coeffStride < 8 || residualStride < 8 ||
+			!blockFits(len(residual), residualStride, 8, 8) ||
+			!coeffBlockFits(len(coeff), coeffStride, 8, 8) ||
+			len(scratch) < 64 {
+			return ErrInvalidTransform
+		}
+		if !forwardBlock8x8Hybrid8BitResidualTrusted(coeff, coeffStride, residual, residualStride, scratch, typ) {
+			return ErrInvalidTransform
+		}
+		return nil
+	}
+	return ForwardBlock(coeff, coeffStride, residual, residualStride, scratch, size, typ)
+}
+
+func forwardDCTBySize8BitResidualTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, size Size) error {
+	switch size {
+	case Size{Width: 4, Height: 4}:
+		if coeffStride < 4 || residualStride < 4 ||
+			!blockFits(len(residual), residualStride, 4, 4) ||
+			!coeffBlockFits(len(coeff), coeffStride, 4, 4) {
+			return ErrInvalidTransform
+		}
+		forwardDCT4x4Trusted8BitImpl(coeff, coeffStride, residual, residualStride)
+	case Size{Width: 8, Height: 8}:
+		if coeffStride < 8 || residualStride < 8 ||
+			!blockFits(len(residual), residualStride, 8, 8) ||
+			!coeffBlockFits(len(coeff), coeffStride, 8, 8) {
+			return ErrInvalidTransform
+		}
+		forwardDCT8x8Trusted8BitImpl(coeff, coeffStride, residual, residualStride)
+	case Size{Width: 16, Height: 16}:
+		if coeffStride < 16 || residualStride < 16 ||
+			!blockFits(len(residual), residualStride, 16, 16) ||
+			!coeffBlockFits(len(coeff), coeffStride, 16, 16) {
+			return ErrInvalidTransform
+		}
+		forwardDCT16x16Trusted8BitImpl(coeff, coeffStride, residual, residualStride)
+	case Size{Width: 32, Height: 32}:
+		if coeffStride < 32 || residualStride < 32 ||
+			!blockFits(len(residual), residualStride, 32, 32) ||
+			!coeffBlockFits(len(coeff), coeffStride, 32, 32) {
+			return ErrInvalidTransform
+		}
+		forwardDCT32x32Trusted8BitImpl(coeff, coeffStride, residual, residualStride)
+	default:
+		// Other DCT dimensions use range-independent scalar kernels today.
+		return forwardDCTBySize(coeff, coeffStride, residual, residualStride, size)
+	}
+	return nil
+}
+
 // ForwardBlock8x8HybridTrusted computes the 8x8 non-DCT_DCT forward transform
 // for callers that already proved the block shape and scratch sizes. The
 // coefficient and residual strides must be at least 8, and coeff/residual/scratch

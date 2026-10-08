@@ -1,5 +1,10 @@
 # Go 1.27 SIMD performance evidence
 
+The final validation for the October 8 follow-up uses official Go 1.27.2.
+Earlier measurements below retain their original Go 1.27.1 labels; compiler
+versions are not mixed within a before/after comparison. The module minimum
+remains 1.27.0 and CI tracks 1.27.x without a toolchain directive.
+
 These arm64 kernel measurements used the official Go 1.27.1 toolchain with
 `GOEXPERIMENT=simd` on an Apple M4 Max. The source baseline was `35c0602a`; the
 kernel-selection checkpoint was `c45e106e`. Kernel results are medians of five
@@ -108,6 +113,41 @@ but its initial improvement did not survive an ablation in the combined decoder.
 It was discarded. A per-cell motion-projection cache similarly removed arithmetic
 but increased routine time by 22–25% versus the actual previous implementation;
 it was discarded in favor of testing whole-run processing separately.
+
+The whole-run motion-field prototype was also discarded: it halved the
+repeated-run microbenchmark but regressed alternating-reference inputs and
+showed no convincing public decode gain. A typed scratch reset reduced clearing
+from 35,458 to 16,002 bytes per root and measured 560.8 to 167.9 ns. Its initial
+standalone result did not translate reliably into the combined decoder; the
+manual field-clearing implementation and stale-payload contract were not kept.
+
+## Remaining 8-bit motion work
+
+The retained I8MM single-reference and compound kernels now use six vertical
+taps and height+5 intermediate rows when both endpoint coefficients are zero.
+Sharp/mixed-endpoint filters retain eight taps; width-four and edge fallbacks
+remain unchanged. This optimizes existing assembly rather than replacing it:
+the Go 1.27 ARM64 SIMD API does not expose I8MM matrix multiplication.
+
+Five 200 ms samples on the M4 Max with Go 1.27.1 measured 11–15% less time for
+single-reference filtering and 14–16% for compound filtering across 8×8 through
+128×128 blocks, with zero allocations. A twelve-pair public follow-up against
+`855b80f4` measured 230.332 to 227.699 ms for `p720_inter_q20` (1.14% less time)
+and 185.468 to 184.247 ms for `p720_inter_q32` (0.66%). An earlier six-pair run
+had the same direction; whole-decoder gains remain much smaller than kernel gains.
+
+| Shape | Go single | dav1d put | Go compound | dav1d prep |
+| --- | ---: | ---: | ---: | ---: |
+| 8×8 | 37.74 ns | 14.98 ns | 35.58 ns | 14.97 ns |
+| 32×32 | 283.3 ns | 191.6 ns | 256.0 ns | 191.3 ns |
+| 128×128 | 4079 ns | 2925 ns | 3658 ns | 2925 ns |
+
+The Go measurements include resident wrapper checks and coefficient preparation;
+the C measurements call specialized symbols directly. Both use matching pixels,
+filter phases, source layout and output checks. The remaining structural gap is
+that Go writes/rereads a full horizontal intermediate tile while dav1d keeps a
+rolling row window in registers. See the [reproducible I8MM harness](../tools/u8_motion_bench/README.md)
+for the pinned dav1d revision, archive hashes, exact timing boundary and commands.
 
 ## High-bit-depth interpolation follow-up
 
@@ -266,3 +306,10 @@ These measurements cover one M4 Max and selected kernel shapes. They do not
 establish codec speedups, cross-machine results, or superiority to optimized C
 codecs. Recheck correctness, dispatch, allocations, and public end-to-end
 workloads before making those claims.
+
+## Encoder versus SVT-AV1
+
+The [encoder comparison](encoder-svt-performance.md) records the Go 1.27.2
+process-inclusive results against SVT-AV1 4.0.1 preset 13, quality metrics,
+source hashes, removed prediction/range-scan work, and the diagnostic corpus
+limits. Go remains slower in that comparison.

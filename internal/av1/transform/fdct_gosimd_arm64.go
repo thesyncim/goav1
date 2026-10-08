@@ -96,6 +96,10 @@ func forwardDCT32x32NEON(coeff []int32, coeffStride int, residual []int16, resid
 		forwardDCT32x32PureGo(coeff, coeffStride, residual, residualStride)
 		return
 	}
+	forwardDCT32x32NEONRaw(coeff, coeffStride, residual, residualStride)
+}
+
+func forwardDCT32x32NEONRaw(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	var buf [1024]int32
 	var spill [64]int32
 	ctx := fdct32NEONCtx{
@@ -115,6 +119,10 @@ var forwardDCT4x4Impl = forwardDCT4x4SIMD
 var forwardDCT8x8Impl = forwardDCT8x8NEONGuarded
 var forwardDCT16x16Impl = forwardDCT16x16NEONGuarded
 var forwardDCT32x32Impl = forwardDCT32x32NEON
+var forwardDCT4x4Trusted8BitImpl = forwardDCT4x4SIMDCore
+var forwardDCT8x8Trusted8BitImpl = forwardDCT8x8NEON
+var forwardDCT16x16Trusted8BitImpl = forwardDCT16x16NEON
+var forwardDCT32x32Trusted8BitImpl = forwardDCT32x32NEONRaw
 
 // Pre-broadcast fdct4 twiddle vectors, kept as package-level (rodata) arrays so
 // each loads with a single instruction instead of a per-call stack fill. This
@@ -142,6 +150,10 @@ func forwardDCT4x4SIMD(coeff []int32, coeffStride int, residual []int16, residua
 		forwardDCT4x4PureGo(coeff, coeffStride, residual, residualStride)
 		return
 	}
+	forwardDCT4x4SIMDCore(coeff, coeffStride, residual, residualStride)
+}
+
+func forwardDCT4x4SIMDCore(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	loadRow := func(row int) archsimd.Int32x4 {
 		// Load only the four samples used by this kernel. A full Int16x8 load
 		// from the final row reads past an exact 4x4 residual buffer.
