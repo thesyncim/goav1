@@ -109,6 +109,7 @@ func TestForwardDCTDispatchFullInt16MatchesPureGo(t *testing.T) {
 		{name: "4x4", side: 4, run: ForwardDCT4x4, pure: forwardDCT4x4PureGo},
 		{name: "8x8", side: 8, run: ForwardDCT8x8, pure: forwardDCT8x8PureGo},
 		{name: "16x16", side: 16, run: ForwardDCT16x16, pure: forwardDCT16x16PureGo},
+		{name: "32x32", side: 32, run: ForwardDCT32x32, pure: forwardDCT32x32PureGo},
 	}
 	rng := rand.New(rand.NewSource(403))
 	for _, k := range kernels {
@@ -116,7 +117,11 @@ func TestForwardDCTDispatchFullInt16MatchesPureGo(t *testing.T) {
 			residual := make([]int16, k.side*k.side)
 			want := make([]int32, k.side*k.side)
 			got := make([]int32, k.side*k.side)
-			for trial := range 100 {
+			trials := 100
+			if k.side == 32 {
+				trials = 8
+			}
+			for trial := range trials {
 				for i := range residual {
 					residual[i] = int16(rng.Intn(1<<16) - (1 << 15))
 				}

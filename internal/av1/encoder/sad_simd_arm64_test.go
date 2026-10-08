@@ -23,8 +23,8 @@ func funcName(f any) string {
 
 // TestSADDispatchBoundToSIMD proves that under GOEXPERIMENT=simd the ported
 // dispatch vars point at the Go-native SIMD kernels (not the NEON asm) — the
-// FuncForPC probe the wiring plan calls for. The 8-wide shapes stay on NEON by
-// design, so we assert those are NOT SIMD.
+// FuncForPC probe the wiring plan calls for. The single-block 8x8 kernel stays
+// on NEON, while the x4 kernel uses SIMD to reuse the packed source rows.
 func TestSADDispatchBoundToSIMD(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -234,8 +234,8 @@ func TestSAD8x8SIMDExtremes(t *testing.T) {
 }
 
 // TestSADSIMDAbsDiffUnsignedEdges checks both operand orders at the byte
-// extremes, including 0 versus 255, so the max/min/sub composition cannot
-// accidentally use signed byte ordering or wrap an unsigned difference.
+// extremes, including 0 versus 255, so the saturated-subtraction composition
+// cannot accidentally use signed byte ordering or wrap an unsigned difference.
 func TestSADSIMDAbsDiffUnsignedEdges(t *testing.T) {
 	var a, b, got [16]uint8
 	for i := range a {
@@ -274,8 +274,8 @@ func TestSADSIMDWidenPathByteExact(t *testing.T) {
 			}
 		}
 	}
-	// x4 widen path, incl. the all-255 corner that stresses the periodic
-	// uint16->uint32 flush.
+// x4 widen path, including the all-255 corner that exercises the final
+// uint16-to-uint32 reduction for totals larger than uint16.
 	const stride = 128
 	src := make([]byte, stride*64)
 	ref := make([]byte, stride*64)
@@ -301,10 +301,12 @@ func TestSADSIMDZeroAlloc(t *testing.T) {
 	src, ref := makeSADPlane(1, stride*64)
 	var sink int
 	if a := testing.AllocsPerRun(200, func() {
-		sink += sad8x8SIMD(src, ref, stride, 1<<30)
-		sink += sad16x16SIMD(src, ref, stride)
-		sink += sad32x32SIMD(src, ref, stride)
-		a, b, c, d := sad16x16x4SIMD(src, ref, ref[4:], ref[8:], ref[12:], stride)
+			sink += sad8x8SIMD(src, ref, stride, 1<<30)
+			sink += sad16x16SIMD(src, ref, stride)
+			sink += sad32x32SIMD(src, ref, stride)
+			a0, a1, a2, a3 := sad8x8x4SIMD(src, ref, ref[4:], ref[8:], ref[12:], stride)
+			sink += a0 + a1 + a2 + a3
+			a, b, c, d := sad16x16x4SIMD(src, ref, ref[4:], ref[8:], ref[12:], stride)
 		sink += a + b + c + d
 		e, f, g, h := sad32x32x4SIMD(src, ref, ref[4:], ref[8:], ref[12:], stride)
 		sink += e + f + g + h
@@ -315,6 +317,8 @@ func TestSADSIMDZeroAlloc(t *testing.T) {
 }
 
 // --- benchmarks: scalar reference vs Go-native SIMD vs NEON asm --------------
+
+var sadSIMDBenchSink int
 
 func benchPlane() ([]byte, []byte) {
 	src := make([]byte, 128*128)
@@ -328,153 +332,313 @@ func benchPlane() ([]byte, []byte) {
 
 func BenchmarkSAD16x16_Scalar(b *testing.B) {
 	src, ref := benchPlane()
+	sum := 0
 	b.ReportAllocs()
 	for b.Loop() {
-		sad16x16PureGo(src, ref, 128)
+		sum += sad16x16PureGo(src, ref, 128)
+	}
+	sadSIMDBenchSink = sum
+	if sum == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD16x16_SIMD(b *testing.B) {
 	src, ref := benchPlane()
+	sum := 0
 	b.ReportAllocs()
 	for b.Loop() {
-		sad16x16SIMD(src, ref, 128)
+		sum += sad16x16SIMD(src, ref, 128)
+	}
+	sadSIMDBenchSink = sum
+	if sum == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD16x16_NEON(b *testing.B) {
 	src, ref := benchPlane()
+	sum := 0
 	b.ReportAllocs()
 	for b.Loop() {
-		sad16x16NEON(src, ref, 128)
+		sum += sad16x16NEON(src, ref, 128)
+	}
+	sadSIMDBenchSink = sum
+	if sum == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 
 func BenchmarkSAD32x32_Scalar(b *testing.B) {
 	src, ref := benchPlane()
+	sum := 0
 	b.ReportAllocs()
 	for b.Loop() {
-		sad32x32PureGo(src, ref, 128)
+		sum += sad32x32PureGo(src, ref, 128)
+	}
+	sadSIMDBenchSink = sum
+	if sum == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD32x32_SIMD(b *testing.B) {
 	src, ref := benchPlane()
+	sum := 0
 	b.ReportAllocs()
 	for b.Loop() {
-		sad32x32SIMD(src, ref, 128)
+		sum += sad32x32SIMD(src, ref, 128)
+	}
+	sadSIMDBenchSink = sum
+	if sum == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD32x32_NEON(b *testing.B) {
 	src, ref := benchPlane()
+	sum := 0
 	b.ReportAllocs()
 	for b.Loop() {
-		sad32x32NEON(src, ref, 128)
+		sum += sad32x32NEON(src, ref, 128)
+	}
+	sadSIMDBenchSink = sum
+	if sum == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD32x32_DotProdNEON(b *testing.B) {
 	src, ref := benchPlane()
+	sum := 0
 	b.ReportAllocs()
 	for b.Loop() {
-		sad32x32DotProd(src, ref, 128)
+		sum += sad32x32DotProd(src, ref, 128)
+	}
+	sadSIMDBenchSink = sum
+	if sum == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 
 func BenchmarkSAD8x8_Scalar(b *testing.B) {
 	src, ref := benchPlane()
+	sum := 0
 	b.ReportAllocs()
 	for b.Loop() {
-		sad8x8PureGo(src, ref, 128, 1<<30)
+		sum += sad8x8PureGo(src, ref, 128, 1<<30)
+	}
+	sadSIMDBenchSink = sum
+	if sum == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD8x8_SIMD(b *testing.B) {
 	src, ref := benchPlane()
+	sum := 0
 	b.ReportAllocs()
 	for b.Loop() {
-		sad8x8SIMD(src, ref, 128, 1<<30)
+		sum += sad8x8SIMD(src, ref, 128, 1<<30)
+	}
+	sadSIMDBenchSink = sum
+	if sum == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD8x8_NEON(b *testing.B) {
 	src, ref := benchPlane()
+	sum := 0
 	b.ReportAllocs()
 	for b.Loop() {
-		sad8x8NEON(src, ref, 128, 1<<30)
+		sum += sad8x8NEON(src, ref, 128, 1<<30)
+	}
+	sadSIMDBenchSink = sum
+	if sum == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 
 func BenchmarkSAD16x16x4_Scalar(b *testing.B) {
 	src, ref := benchPlane()
+	r0, r1, r2, r3 := ref, ref[4:], ref[8:], ref[12:]
+	var sums [4]int
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _, _, _ = sad16x16x4PureGo(src, ref, ref[4:], ref[8:], ref[12:], 128)
+		s0, s1, s2, s3 := sad16x16x4PureGo(src, r0, r1, r2, r3, 128)
+		sums[0] += s0
+		sums[1] += s1
+		sums[2] += s2
+		sums[3] += s3
+	}
+	sadSIMDBenchSink = sums[0] + sums[1] + sums[2] + sums[3]
+	if sadSIMDBenchSink == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD16x16x4_SIMD(b *testing.B) {
 	src, ref := benchPlane()
+	r0, r1, r2, r3 := ref, ref[4:], ref[8:], ref[12:]
+	var sums [4]int
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _, _, _ = sad16x16x4SIMD(src, ref, ref[4:], ref[8:], ref[12:], 128)
+		s0, s1, s2, s3 := sad16x16x4SIMD(src, r0, r1, r2, r3, 128)
+		sums[0] += s0
+		sums[1] += s1
+		sums[2] += s2
+		sums[3] += s3
+	}
+	sadSIMDBenchSink = sums[0] + sums[1] + sums[2] + sums[3]
+	if sadSIMDBenchSink == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD16x16x4_NEON(b *testing.B) {
 	src, ref := benchPlane()
+	r0, r1, r2, r3 := ref, ref[4:], ref[8:], ref[12:]
+	var sums [4]int
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _, _, _ = sad16x16x4NEON(src, ref, ref[4:], ref[8:], ref[12:], 128)
+		s0, s1, s2, s3 := sad16x16x4NEON(src, r0, r1, r2, r3, 128)
+		sums[0] += s0
+		sums[1] += s1
+		sums[2] += s2
+		sums[3] += s3
+	}
+	sadSIMDBenchSink = sums[0] + sums[1] + sums[2] + sums[3]
+	if sadSIMDBenchSink == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD16x16x4_DotProdNEON(b *testing.B) {
 	src, ref := benchPlane()
+	r0, r1, r2, r3 := ref, ref[4:], ref[8:], ref[12:]
+	var sums [4]int
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _, _, _ = sad16x16x4DotProd(src, ref, ref[4:], ref[8:], ref[12:], 128)
+		s0, s1, s2, s3 := sad16x16x4DotProd(src, r0, r1, r2, r3, 128)
+		sums[0] += s0
+		sums[1] += s1
+		sums[2] += s2
+		sums[3] += s3
+	}
+	sadSIMDBenchSink = sums[0] + sums[1] + sums[2] + sums[3]
+	if sadSIMDBenchSink == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 
 func BenchmarkSAD32x32x4_Scalar(b *testing.B) {
 	src, ref := benchPlane()
+	r0, r1, r2, r3 := ref, ref[4:], ref[8:], ref[12:]
+	var sums [4]int
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _, _, _ = sad32x32x4PureGo(src, ref, ref[4:], ref[8:], ref[12:], 128)
+		s0, s1, s2, s3 := sad32x32x4PureGo(src, r0, r1, r2, r3, 128)
+		sums[0] += s0
+		sums[1] += s1
+		sums[2] += s2
+		sums[3] += s3
+	}
+	sadSIMDBenchSink = sums[0] + sums[1] + sums[2] + sums[3]
+	if sadSIMDBenchSink == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD32x32x4_SIMD(b *testing.B) {
 	src, ref := benchPlane()
+	r0, r1, r2, r3 := ref, ref[4:], ref[8:], ref[12:]
+	var sums [4]int
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _, _, _ = sad32x32x4SIMD(src, ref, ref[4:], ref[8:], ref[12:], 128)
+		s0, s1, s2, s3 := sad32x32x4SIMD(src, r0, r1, r2, r3, 128)
+		sums[0] += s0
+		sums[1] += s1
+		sums[2] += s2
+		sums[3] += s3
+	}
+	sadSIMDBenchSink = sums[0] + sums[1] + sums[2] + sums[3]
+	if sadSIMDBenchSink == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD32x32x4_NEON(b *testing.B) {
 	src, ref := benchPlane()
+	r0, r1, r2, r3 := ref, ref[4:], ref[8:], ref[12:]
+	var sums [4]int
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _, _, _ = sad32x32x4NEON(src, ref, ref[4:], ref[8:], ref[12:], 128)
+		s0, s1, s2, s3 := sad32x32x4NEON(src, r0, r1, r2, r3, 128)
+		sums[0] += s0
+		sums[1] += s1
+		sums[2] += s2
+		sums[3] += s3
+	}
+	sadSIMDBenchSink = sums[0] + sums[1] + sums[2] + sums[3]
+	if sadSIMDBenchSink == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD32x32x4_DotProdNEON(b *testing.B) {
 	src, ref := benchPlane()
+	r0, r1, r2, r3 := ref, ref[4:], ref[8:], ref[12:]
+	var sums [4]int
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _, _, _ = sad32x32x4DotProd(src, ref, ref[4:], ref[8:], ref[12:], 128)
+		s0, s1, s2, s3 := sad32x32x4DotProd(src, r0, r1, r2, r3, 128)
+		sums[0] += s0
+		sums[1] += s1
+		sums[2] += s2
+		sums[3] += s3
+	}
+	sadSIMDBenchSink = sums[0] + sums[1] + sums[2] + sums[3]
+	if sadSIMDBenchSink == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 
 func BenchmarkSAD8x8x4_Scalar(b *testing.B) {
 	src, ref := benchPlane()
+	r0, r1, r2, r3 := ref, ref[4:], ref[8:], ref[12:]
+	var sums [4]int
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _, _, _ = sad8x8x4PureGo(src, ref, ref[4:], ref[8:], ref[12:], 128)
+		s0, s1, s2, s3 := sad8x8x4PureGo(src, r0, r1, r2, r3, 128)
+		sums[0] += s0
+		sums[1] += s1
+		sums[2] += s2
+		sums[3] += s3
+	}
+	sadSIMDBenchSink = sums[0] + sums[1] + sums[2] + sums[3]
+	if sadSIMDBenchSink == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD8x8x4_SIMD(b *testing.B) {
 	src, ref := benchPlane()
+	r0, r1, r2, r3 := ref, ref[4:], ref[8:], ref[12:]
+	var sums [4]int
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _, _, _ = sad8x8x4SIMD(src, ref, ref[4:], ref[8:], ref[12:], 128)
+		s0, s1, s2, s3 := sad8x8x4SIMD(src, r0, r1, r2, r3, 128)
+		sums[0] += s0
+		sums[1] += s1
+		sums[2] += s2
+		sums[3] += s3
+	}
+	sadSIMDBenchSink = sums[0] + sums[1] + sums[2] + sums[3]
+	if sadSIMDBenchSink == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }
 func BenchmarkSAD8x8x4_NEON(b *testing.B) {
 	src, ref := benchPlane()
+	r0, r1, r2, r3 := ref, ref[4:], ref[8:], ref[12:]
+	var sums [4]int
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _, _, _ = sad8x8x4NEON(src, ref, ref[4:], ref[8:], ref[12:], 128)
+		s0, s1, s2, s3 := sad8x8x4NEON(src, r0, r1, r2, r3, 128)
+		sums[0] += s0
+		sums[1] += s1
+		sums[2] += s2
+		sums[3] += s3
+	}
+	sadSIMDBenchSink = sums[0] + sums[1] + sums[2] + sums[3]
+	if sadSIMDBenchSink == 0 {
+		b.Fatal("unexpected zero SAD")
 	}
 }

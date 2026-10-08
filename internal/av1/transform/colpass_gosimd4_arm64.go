@@ -15,12 +15,21 @@
 
 package transform
 
-import "simd/archsimd"
+import (
+	"simd/archsimd"
+	"unsafe"
+)
 
 // inverseDCT8Col4SIMD applies inverseDCT8 to four adjacent columns
 // buf[k*stride+0..3], byte-for-byte with running inverseDCT8 on each column.
 func inverseDCT8Col4SIMD(buf []int32, stride int, min int32, max int32) {
 	if min < -(1<<15) || max >= (1<<15) {
+		for col := 0; col < 4; col++ {
+			inverseDCT8(buf[col:], stride, min, max)
+		}
+		return
+	}
+	if !blockFits(len(buf), stride, 4, 8) {
 		for col := 0; col < 4; col++ {
 			inverseDCT8(buf[col:], stride, min, max)
 		}
@@ -39,8 +48,13 @@ func inverseDCT8Col4SIMD(buf []int32, stride int, min int32, max int32) {
 	k1703 := archsimd.BroadcastInt32x4(1703)
 	k1138 := archsimd.BroadcastInt32x4(1138)
 
-	ld := func(k int) archsimd.Int32x4 { return archsimd.LoadInt32x4Array((*[4]int32)(buf[k*stride:])) }
-	st := func(k int, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(buf[k*stride:])) }
+	base := unsafe.Pointer(unsafe.SliceData(buf))
+	ld := func(k int) archsimd.Int32x4 {
+		return archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(base, uintptr(k*stride)*4)))
+	}
+	st := func(k int, v archsimd.Int32x4) {
+		v.StoreArray((*[4]int32)(unsafe.Add(base, uintptr(k*stride)*4)))
+	}
 	clip := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(minV).Min(maxV) }
 	rs8 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r8).ShiftAllRight(8) }
 	rs11 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r11).ShiftAllRight(11) }
@@ -91,6 +105,12 @@ func inverseDCT16Col4SIMD(buf []int32, stride int, min int32, max int32) {
 		}
 		return
 	}
+	if !blockFits(len(buf), stride, 4, 16) {
+		for col := 0; col < 4; col++ {
+			inverseDCT16(buf[col:], stride, min, max)
+		}
+		return
+	}
 	// Even part: 8-point DCT on rows 0,2,..,14 (stride*2).
 	inverseDCT8Col4SIMD(buf, stride<<1, min, max)
 
@@ -104,8 +124,13 @@ func inverseDCT16Col4SIMD(buf []int32, stride int, min int32, max int32) {
 	k1931, k484, k176, k1189 := kc(1931), kc(3612-4096), kc(3920-4096), kc(1189)
 	k1567, k312, k181 := kc(1567), kc(3784-4096), kc(181)
 
-	ld := func(k int) archsimd.Int32x4 { return archsimd.LoadInt32x4Array((*[4]int32)(buf[k*stride:])) }
-	st := func(k int, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(buf[k*stride:])) }
+	base := unsafe.Pointer(unsafe.SliceData(buf))
+	ld := func(k int) archsimd.Int32x4 {
+		return archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(base, uintptr(k*stride)*4)))
+	}
+	st := func(k int, v archsimd.Int32x4) {
+		v.StoreArray((*[4]int32)(unsafe.Add(base, uintptr(k*stride)*4)))
+	}
 	clip := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(minV).Min(maxV) }
 	rs8 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r8).ShiftAllRight(8) }
 	rs11 := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Add(r11).ShiftAllRight(11) }

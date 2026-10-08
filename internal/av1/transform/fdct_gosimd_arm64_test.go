@@ -178,7 +178,7 @@ func BenchmarkForwardDCT4x4Kernels(b *testing.B) {
 		fn   func([]int32, int, []int16, int)
 	}{
 		{name: "simd", fn: forwardDCT4x4SIMD},
-		{name: "neon", fn: forwardDCT4x4NEON},
+		{name: "neon", fn: benchmarkForwardDCTGuardedNEON(forwardDCT4x4NEON, forwardDCT4x4PureGo, 4)},
 		{name: "purego", fn: forwardDCT4x4PureGo},
 	})
 }
@@ -193,7 +193,7 @@ func BenchmarkForwardDCT8x8Kernels(b *testing.B) {
 		fn   func([]int32, int, []int16, int)
 	}{
 		{name: "simd", fn: forwardDCT8x8SIMD},
-		{name: "neon", fn: forwardDCT8x8NEON},
+		{name: "neon", fn: benchmarkForwardDCTGuardedNEON(forwardDCT8x8NEON, forwardDCT8x8PureGo, 8)},
 		{name: "purego", fn: forwardDCT8x8PureGo},
 	})
 }
@@ -208,9 +208,22 @@ func BenchmarkForwardDCT16x16Kernels(b *testing.B) {
 		fn   func([]int32, int, []int16, int)
 	}{
 		{name: "simd", fn: forwardDCT16x16SIMD},
-		{name: "neon", fn: forwardDCT16x16NEON},
+		{name: "neon", fn: benchmarkForwardDCTGuardedNEON(forwardDCT16x16NEON, forwardDCT16x16PureGo, 16)},
 		{name: "purego", fn: forwardDCT16x16PureGo},
 	})
+}
+
+// benchmarkForwardDCTGuardedNEON models the production dispatch validation
+// and scalar fallback around the direct assembly kernel. This keeps its
+// measured validation cost equal to the guarded Go SIMD candidate.
+func benchmarkForwardDCTGuardedNEON(neon, pure func([]int32, int, []int16, int), side int) func([]int32, int, []int16, int) {
+	return func(coeff []int32, coeffStride int, residual []int16, residualStride int) {
+		if !residualFitsMagnitude(residual, residualStride, side, side, 255) {
+			pure(coeff, coeffStride, residual, residualStride)
+			return
+		}
+		neon(coeff, coeffStride, residual, residualStride)
+	}
 }
 
 func benchmarkForwardDCTKernel(b *testing.B, side int, residual []int16, residualStride int, kernels []struct {

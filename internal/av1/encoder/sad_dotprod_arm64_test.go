@@ -96,6 +96,9 @@ func BenchmarkSADDotProd(b *testing.B) {
 				sum += tc.fn(src, ref, 96)
 			}
 			sadDotProdBenchSink = sum
+			if sum == 0 {
+				b.Fatal("unexpected zero SAD")
+			}
 		})
 	}
 }
@@ -129,6 +132,9 @@ func BenchmarkSADX4Step4DotProd(b *testing.B) {
 				sum += s0 + s1 + s2 + s3
 			}
 			sadDotProdBenchSink = sum
+			if sum == 0 {
+				b.Fatal("unexpected zero SAD")
+			}
 		})
 	}
 }
@@ -146,6 +152,7 @@ func BenchmarkSADX4DotProd(b *testing.B) {
 		ref[i] = uint8(i*13 + 5)
 	}
 	off := 32*stride + 32
+	r0, r1, r2, r3 := ref[off+2:], ref[off-2:], ref[off+2*stride:], ref[off-2*stride:]
 
 	for _, tc := range []struct {
 		name string
@@ -160,10 +167,13 @@ func BenchmarkSADX4DotProd(b *testing.B) {
 			b.ReportAllocs()
 			sum := 0
 			for b.Loop() {
-				s0, s1, s2, s3 := tc.fn(src[off:], ref[off+2:], ref[off-2:], ref[off+2*stride:], ref[off-2*stride:], stride)
+				s0, s1, s2, s3 := tc.fn(src[off:], r0, r1, r2, r3, stride)
 				sum += s0 + s1 + s2 + s3
 			}
 			sadDotProdBenchSink = sum
+			if sum == 0 {
+				b.Fatal("unexpected zero SAD")
+			}
 		})
 	}
 }

@@ -89,6 +89,10 @@ type fdct32NEONCtx struct {
 func fdct32x32NEONAsm(ctx *fdct32NEONCtx)
 
 func forwardDCT32x32NEON(coeff []int32, coeffStride int, residual []int16, residualStride int) {
+	if !residualFitsMagnitude(residual, residualStride, 32, 32, 255) {
+		forwardDCT32x32PureGo(coeff, coeffStride, residual, residualStride)
+		return
+	}
 	var buf [1024]int32
 	var spill [64]int32
 	ctx := fdct32NEONCtx{
@@ -259,23 +263,24 @@ func forwardDCT8x8SIMD(coeff []int32, coeffStride int, residual []int16, residua
 	l6 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*6))).ShiftAllLeft(2)
 	l7 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*7))).ShiftAllLeft(2)
 
-	// Load loop-invariant twiddle vectors from rodata (single VLD1 each; used by
-	// both passes) instead of re-broadcasting scalars.
-	k32 := archsimd.LoadInt16x8Array(&fdct8K32)
-	kn32 := archsimd.LoadInt16x8Array(&fdct8Kn32)
-	k48 := archsimd.LoadInt16x8Array(&fdct8K48)
-	k16 := archsimd.LoadInt16x8Array(&fdct8K16)
-	kn16 := archsimd.LoadInt16x8Array(&fdct8Kn16)
-	k56 := archsimd.LoadInt16x8Array(&fdct8K56)
-	k8 := archsimd.LoadInt16x8Array(&fdct8K8)
-	kn8 := archsimd.LoadInt16x8Array(&fdct8Kn8)
-	k24 := archsimd.LoadInt16x8Array(&fdct8K24)
-	k40 := archsimd.LoadInt16x8Array(&fdct8K40)
-	kn40 := archsimd.LoadInt16x8Array(&fdct8Kn40)
-
 	// --- Column pass (fully inlined butterfly) ---
 	var c0, c1, c2, c3, c4, c5, c6, c7 archsimd.Int16x8
 	{
+		// Keep the twiddle vectors local to this pass. Holding them across the
+		// out-of-line transpose forces the compiler to spill them around its ABI
+		// call; reloading the constants for the row pass is cheaper.
+		k32 := archsimd.LoadInt16x8Array(&fdct8K32)
+		kn32 := archsimd.LoadInt16x8Array(&fdct8Kn32)
+		k48 := archsimd.LoadInt16x8Array(&fdct8K48)
+		k16 := archsimd.LoadInt16x8Array(&fdct8K16)
+		kn16 := archsimd.LoadInt16x8Array(&fdct8Kn16)
+		k56 := archsimd.LoadInt16x8Array(&fdct8K56)
+		k8 := archsimd.LoadInt16x8Array(&fdct8K8)
+		kn8 := archsimd.LoadInt16x8Array(&fdct8Kn8)
+		k24 := archsimd.LoadInt16x8Array(&fdct8K24)
+		k40 := archsimd.LoadInt16x8Array(&fdct8K40)
+		kn40 := archsimd.LoadInt16x8Array(&fdct8Kn40)
+
 		b0 := l0.AddSaturated(l7)
 		b1 := l1.AddSaturated(l6)
 		b2 := l2.AddSaturated(l5)
@@ -320,6 +325,18 @@ func forwardDCT8x8SIMD(coeff []int32, coeffStride int, residual []int16, residua
 	// --- Row pass (fully inlined butterfly) ---
 	var o0, o1, o2, o3, o4, o5, o6, o7 archsimd.Int16x8
 	{
+		k32 := archsimd.LoadInt16x8Array(&fdct8K32)
+		kn32 := archsimd.LoadInt16x8Array(&fdct8Kn32)
+		k48 := archsimd.LoadInt16x8Array(&fdct8K48)
+		k16 := archsimd.LoadInt16x8Array(&fdct8K16)
+		kn16 := archsimd.LoadInt16x8Array(&fdct8Kn16)
+		k56 := archsimd.LoadInt16x8Array(&fdct8K56)
+		k8 := archsimd.LoadInt16x8Array(&fdct8K8)
+		kn8 := archsimd.LoadInt16x8Array(&fdct8Kn8)
+		k24 := archsimd.LoadInt16x8Array(&fdct8K24)
+		k40 := archsimd.LoadInt16x8Array(&fdct8K40)
+		kn40 := archsimd.LoadInt16x8Array(&fdct8Kn40)
+
 		b0 := t0.AddSaturated(t7)
 		b1 := t1.AddSaturated(t6)
 		b2 := t2.AddSaturated(t5)

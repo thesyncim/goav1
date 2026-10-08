@@ -25,6 +25,10 @@ func fdct32x32NEONAsm(ctx *fdct32NEONCtx)
 var forwardDCT32x32Impl = forwardDCT32x32NEON
 
 func forwardDCT32x32NEON(coeff []int32, coeffStride int, residual []int16, residualStride int) {
+	if !residualFitsMagnitude(residual, residualStride, 32, 32, 255) {
+		forwardDCT32x32PureGo(coeff, coeffStride, residual, residualStride)
+		return
+	}
 	var buf [1024]int32
 	var spill [64]int32
 	ctx := fdct32NEONCtx{

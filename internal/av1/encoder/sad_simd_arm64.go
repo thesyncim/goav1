@@ -14,16 +14,15 @@
 // scalar reference (sad*PureGo) — proven by the differential test in
 // sad_simd_arm64_test.go.
 //
-// Accumulation strategy. The standard Go 1.27 archsimd API does not expose
-// unsigned byte absolute-difference or unsigned byte dot-product intrinsics,
-// so compute the absolute difference as max(a,b)-min(a,b), widen to uint16,
-// and accumulate.
-// The largest uint16 lane total before a flush or final reduction is 32*255
-// (=8160): four differences per row for eight rows in the 32x32 kernels, or
-// two differences per row for all sixteen rows in the 16x16 kernels. The 32-row
-// kernels periodically flush to uint32 before overflow. The SIMD path uses only
-// baseline NEON operations available on arm64; it does not require the optional
-// DOTPROD extension.
+// Difference and accumulation strategy. The standard Go 1.27 archsimd API
+// does not expose unsigned byte absolute difference, so each byte difference
+// is the OR of both saturated subtraction orders. One order is nonzero per
+// lane. The result is widened to uint16 and accumulated in independent vectors.
+// For 8x8 and 16x16 blocks, the complete result fits in uint16 (at most 16,320
+// and 65,280). Each uint16 lane in a 32x32 accumulator is bounded by 32,640;
+// the final reduction widens before summing those lanes. The SIMD path uses
+// only baseline NEON operations available on arm64; it does not require the
+// optional DOTPROD extension.
 //
 // Hot-loop pointer discipline: the row base is advanced with unsafe.Add(p,
 // stride) each row and read through a *[16]uint8 array pointer. This keeps the
@@ -48,10 +47,10 @@ func load16(p unsafe.Pointer) archsimd.Uint8x16 {
 func step(p unsafe.Pointer, n int) unsafe.Pointer { return unsafe.Add(p, n) }
 
 // absDiffU8x16 computes unsigned byte absolute differences using only the
-// public archsimd API. Unsigned max/min followed by wrapping subtraction is
-// exact because max(a,b) is always at least min(a,b) in every lane.
+// public archsimd API. The two saturating differences are mutually exclusive
+// per lane, so OR combines them into the exact absolute difference.
 func absDiffU8x16(a, b archsimd.Uint8x16) archsimd.Uint8x16 {
-	return a.Max(b).Sub(a.Min(b))
+	return a.SubSaturated(b).Or(b.SubSaturated(a))
 }
 
 // widen16 widens one 16-byte abs-diff vector to a Uint16x8 (lo+hi halves added).
@@ -87,47 +86,82 @@ func pack2Rows(p unsafe.Pointer, stride int) archsimd.Uint8x16 {
 func sad8x8SIMD(src, ref []byte, stride int, _ int) int {
 	sp := unsafe.Pointer(&src[0])
 	rp := unsafe.Pointer(&ref[0])
-	acc := archsimd.BroadcastUint16x8(0)
-	for row := 0; row < 8; row += 2 {
-		absd := absDiffU8x16(pack2Rows(sp, stride), pack2Rows(rp, stride))
-		acc = acc.Add(widen16(absd))
-		sp, rp = step(sp, 2*stride), step(rp, 2*stride)
+	acc0 := archsimd.BroadcastUint16x8(0)
+	acc1 := archsimd.BroadcastUint16x8(0)
+	stride4 := 4 * stride
+	for pair := 0; pair < 8; pair += 4 {
+		abs0 := absDiffU8x16(pack2Rows(sp, stride), pack2Rows(rp, stride))
+		sp2, rp2 := step(sp, 2*stride), step(rp, 2*stride)
+		abs1 := absDiffU8x16(pack2Rows(sp2, stride), pack2Rows(rp2, stride))
+		acc0 = acc0.Add(widen16(abs0))
+		acc1 = acc1.Add(widen16(abs1))
+		sp, rp = step(sp, stride4), step(rp, stride4)
 	}
-	// 8x8 max per uint16 lane: 8 rows * 255 = 2040 < 65535, safe.
-	return reduceU16(acc)
+	// The complete 8x8 total is at most 64*255 = 16320, so the horizontal
+	// uint16 reduction cannot wrap.
+	return int(acc0.Add(acc1).ReduceSum())
 }
 
 // sad16x16SIMD computes the full 16x16 SAD: one 16-byte difference per row.
 func sad16x16SIMD(src, ref []byte, stride int) int {
 	sp := unsafe.Pointer(&src[0])
 	rp := unsafe.Pointer(&ref[0])
-	// Each lane sums two differences per row: 16*2*255 = 8160, safe.
-	acc := archsimd.BroadcastUint16x8(0)
-	for row := 0; row < 16; row++ {
-		acc = acc.Add(widen16(absDiffU8x16(load16(sp), load16(rp))))
-		sp, rp = step(sp, stride), step(rp, stride)
+	// Four independent accumulators shorten the row-sum dependency chain. Each
+	// accumulator receives four rows, and their final lane-wise sum is at most
+	// 16*2*255 = 8160.
+	acc0 := archsimd.BroadcastUint16x8(0)
+	acc1 := archsimd.BroadcastUint16x8(0)
+	acc2 := archsimd.BroadcastUint16x8(0)
+	acc3 := archsimd.BroadcastUint16x8(0)
+	s0, s1 := sp, step(sp, stride)
+	s2, s3 := step(sp, 2*stride), step(sp, 3*stride)
+	r0, r1 := rp, step(rp, stride)
+	r2, r3 := step(rp, 2*stride), step(rp, 3*stride)
+	stride4 := 4 * stride
+	for group := 0; group < 4; group++ {
+		acc0 = acc0.Add(widen16(absDiffU8x16(load16(s0), load16(r0))))
+		acc1 = acc1.Add(widen16(absDiffU8x16(load16(s1), load16(r1))))
+		acc2 = acc2.Add(widen16(absDiffU8x16(load16(s2), load16(r2))))
+		acc3 = acc3.Add(widen16(absDiffU8x16(load16(s3), load16(r3))))
+		s0, s1 = step(s0, stride4), step(s1, stride4)
+		s2, s3 = step(s2, stride4), step(s3, stride4)
+		r0, r1 = step(r0, stride4), step(r1, stride4)
+		r2, r3 = step(r2, stride4), step(r3, stride4)
 	}
-	return reduceU16(acc)
+	// The complete 16x16 total is at most 256*255 = 65280, so reducing directly
+	// from uint16 is exact.
+	return int(acc0.Add(acc1).Add(acc2).Add(acc3).ReduceSum())
 }
 
 // sad32x32SIMD computes the full 32x32 SAD: two 16-byte differences per row.
 func sad32x32SIMD(src, ref []byte, stride int) int {
 	sp := unsafe.Pointer(&src[0])
 	rp := unsafe.Pointer(&ref[0])
-	// Flush every 8 rows: each lane sums four differences per row across the two
-	// chunks, so 8*4*255 = 8160 remains within uint16.
-	total := archsimd.BroadcastUint32x4(0)
-	acc := archsimd.BroadcastUint16x8(0)
-	for row := 0; row < 32; row++ {
-		acc = acc.Add(widen16(absDiffU8x16(load16(sp), load16(rp)))).
-			Add(widen16(absDiffU8x16(load16(step(sp, 16)), load16(step(rp, 16)))))
-		if row&7 == 7 {
-			total = total.Add(acc.ExtendLo4ToUint32()).Add(acc.HiToLo().ExtendLo4ToUint32())
-			acc = archsimd.BroadcastUint16x8(0)
-		}
-		sp, rp = step(sp, stride), step(rp, stride)
+	// Each of four independent accumulators receives eight rows. A lane sums
+	// four differences per row across the two chunks, so each partial is at most
+	// 8*4*255 = 8160 and the final 32-row sum is at most 32640.
+	acc0 := archsimd.BroadcastUint16x8(0)
+	acc1 := archsimd.BroadcastUint16x8(0)
+	acc2 := archsimd.BroadcastUint16x8(0)
+	acc3 := archsimd.BroadcastUint16x8(0)
+	s0, s1 := sp, step(sp, stride)
+	s2, s3 := step(sp, 2*stride), step(sp, 3*stride)
+	r0, r1 := rp, step(rp, stride)
+	r2, r3 := step(rp, 2*stride), step(rp, 3*stride)
+	stride4 := 4 * stride
+	for group := 0; group < 8; group++ {
+		d0 := widen16(absDiffU8x16(load16(s0), load16(r0))).Add(widen16(absDiffU8x16(load16(step(s0, 16)), load16(step(r0, 16)))))
+		d1 := widen16(absDiffU8x16(load16(s1), load16(r1))).Add(widen16(absDiffU8x16(load16(step(s1, 16)), load16(step(r1, 16)))))
+		d2 := widen16(absDiffU8x16(load16(s2), load16(r2))).Add(widen16(absDiffU8x16(load16(step(s2, 16)), load16(step(r2, 16)))))
+		d3 := widen16(absDiffU8x16(load16(s3), load16(r3))).Add(widen16(absDiffU8x16(load16(step(s3, 16)), load16(step(r3, 16)))))
+		acc0, acc1 = acc0.Add(d0), acc1.Add(d1)
+		acc2, acc3 = acc2.Add(d2), acc3.Add(d3)
+		s0, s1 = step(s0, stride4), step(s1, stride4)
+		s2, s3 = step(s2, stride4), step(s3, stride4)
+		r0, r1 = step(r0, stride4), step(r1, stride4)
+		r2, r3 = step(r2, stride4), step(r3, stride4)
 	}
-	return int(total.ReduceSum())
+	return reduceU16(acc0.Add(acc1).Add(acc2).Add(acc3))
 }
 
 // --- 4-reference search variants (the motion-search hot path) ----------------
@@ -156,7 +190,9 @@ func sad8x8x4SIMD(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int
 		sp = step(sp, s2)
 		p0, p1, p2, p3 = step(p0, s2), step(p1, s2), step(p2, s2), step(p3, s2)
 	}
-	return reduceU16(c0), reduceU16(c1), reduceU16(c2), reduceU16(c3)
+	// Each complete 8x8 result is at most 64*255 = 16320, so direct uint16
+	// reductions are exact.
+	return int(c0.ReduceSum()), int(c1.ReduceSum()), int(c2.ReduceSum()), int(c3.ReduceSum())
 }
 
 // sad16x16x4SIMD computes four 16x16 SADs of one src block against four
@@ -168,20 +204,32 @@ func sad16x16x4SIMD(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, i
 	p1 := unsafe.Pointer(&ref1[0])
 	p2 := unsafe.Pointer(&ref2[0])
 	p3 := unsafe.Pointer(&ref3[0])
-	c0 := archsimd.BroadcastUint16x8(0)
-	c1 := archsimd.BroadcastUint16x8(0)
-	c2 := archsimd.BroadcastUint16x8(0)
-	c3 := archsimd.BroadcastUint16x8(0)
-	for row := 0; row < 16; row++ {
-		s := load16(sp)
-		c0 = c0.Add(widen16(absDiffU8x16(s, load16(p0))))
-		c1 = c1.Add(widen16(absDiffU8x16(s, load16(p1))))
-		c2 = c2.Add(widen16(absDiffU8x16(s, load16(p2))))
-		c3 = c3.Add(widen16(absDiffU8x16(s, load16(p3))))
-		sp = step(sp, stride)
-		p0, p1, p2, p3 = step(p0, stride), step(p1, stride), step(p2, stride), step(p3, stride)
+	// Even and odd rows use independent accumulators for each candidate. Each
+	// lane sums at most 16*2*255 = 8160 across the two partial vectors.
+	c00, c01 := archsimd.BroadcastUint16x8(0), archsimd.BroadcastUint16x8(0)
+	c10, c11 := archsimd.BroadcastUint16x8(0), archsimd.BroadcastUint16x8(0)
+	c20, c21 := archsimd.BroadcastUint16x8(0), archsimd.BroadcastUint16x8(0)
+	c30, c31 := archsimd.BroadcastUint16x8(0), archsimd.BroadcastUint16x8(0)
+	stride2 := 2 * stride
+	for row := 0; row < 16; row += 2 {
+		s0, s1 := load16(sp), load16(step(sp, stride))
+		c00 = c00.Add(widen16(absDiffU8x16(s0, load16(p0))))
+		c01 = c01.Add(widen16(absDiffU8x16(s1, load16(step(p0, stride)))))
+		c10 = c10.Add(widen16(absDiffU8x16(s0, load16(p1))))
+		c11 = c11.Add(widen16(absDiffU8x16(s1, load16(step(p1, stride)))))
+		c20 = c20.Add(widen16(absDiffU8x16(s0, load16(p2))))
+		c21 = c21.Add(widen16(absDiffU8x16(s1, load16(step(p2, stride)))))
+		c30 = c30.Add(widen16(absDiffU8x16(s0, load16(p3))))
+		c31 = c31.Add(widen16(absDiffU8x16(s1, load16(step(p3, stride)))))
+		sp = step(sp, stride2)
+		p0, p1 = step(p0, stride2), step(p1, stride2)
+		p2, p3 = step(p2, stride2), step(p3, stride2)
 	}
-	return reduceU16(c0), reduceU16(c1), reduceU16(c2), reduceU16(c3)
+	v0, v1 := c00.Add(c01), c10.Add(c11)
+	v2, v3 := c20.Add(c21), c30.Add(c31)
+	// Each complete 16x16 result is at most 256*255 = 65280, so direct uint16
+	// reductions are exact.
+	return int(v0.ReduceSum()), int(v1.ReduceSum()), int(v2.ReduceSum()), int(v3.ReduceSum())
 }
 
 // sad32x32x4SIMD computes four 32x32 SADs of one src block against four
@@ -192,33 +240,30 @@ func sad32x32x4SIMD(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, i
 	p1 := unsafe.Pointer(&ref1[0])
 	p2 := unsafe.Pointer(&ref2[0])
 	p3 := unsafe.Pointer(&ref3[0])
-	t0 := archsimd.BroadcastUint32x4(0)
-	t1 := archsimd.BroadcastUint32x4(0)
-	t2 := archsimd.BroadcastUint32x4(0)
-	t3 := archsimd.BroadcastUint32x4(0)
-	c0 := archsimd.BroadcastUint16x8(0)
-	c1 := archsimd.BroadcastUint16x8(0)
-	c2 := archsimd.BroadcastUint16x8(0)
-	c3 := archsimd.BroadcastUint16x8(0)
-	flush := func(c archsimd.Uint16x8, t archsimd.Uint32x4) archsimd.Uint32x4 {
-		return t.Add(c.ExtendLo4ToUint32()).Add(c.HiToLo().ExtendLo4ToUint32())
+	// Even and odd rows accumulate separately for each candidate. Each partial
+	// sums 16 rows; the final 32-row lane sum is bounded by 32640.
+	c00, c01 := archsimd.BroadcastUint16x8(0), archsimd.BroadcastUint16x8(0)
+	c10, c11 := archsimd.BroadcastUint16x8(0), archsimd.BroadcastUint16x8(0)
+	c20, c21 := archsimd.BroadcastUint16x8(0), archsimd.BroadcastUint16x8(0)
+	c30, c31 := archsimd.BroadcastUint16x8(0), archsimd.BroadcastUint16x8(0)
+	stride2 := 2 * stride
+	for row := 0; row < 32; row += 2 {
+		s0Lo, s0Hi := load16(sp), load16(step(sp, 16))
+		s1 := step(sp, stride)
+		s1Lo, s1Hi := load16(s1), load16(step(s1, 16))
+		c00 = c00.Add(widen16(absDiffU8x16(s0Lo, load16(p0)))).Add(widen16(absDiffU8x16(s0Hi, load16(step(p0, 16)))))
+		c01 = c01.Add(widen16(absDiffU8x16(s1Lo, load16(step(p0, stride))))).Add(widen16(absDiffU8x16(s1Hi, load16(step(step(p0, stride), 16)))))
+		c10 = c10.Add(widen16(absDiffU8x16(s0Lo, load16(p1)))).Add(widen16(absDiffU8x16(s0Hi, load16(step(p1, 16)))))
+		c11 = c11.Add(widen16(absDiffU8x16(s1Lo, load16(step(p1, stride))))).Add(widen16(absDiffU8x16(s1Hi, load16(step(step(p1, stride), 16)))))
+		c20 = c20.Add(widen16(absDiffU8x16(s0Lo, load16(p2)))).Add(widen16(absDiffU8x16(s0Hi, load16(step(p2, 16)))))
+		c21 = c21.Add(widen16(absDiffU8x16(s1Lo, load16(step(p2, stride))))).Add(widen16(absDiffU8x16(s1Hi, load16(step(step(p2, stride), 16)))))
+		c30 = c30.Add(widen16(absDiffU8x16(s0Lo, load16(p3)))).Add(widen16(absDiffU8x16(s0Hi, load16(step(p3, 16)))))
+		c31 = c31.Add(widen16(absDiffU8x16(s1Lo, load16(step(p3, stride))))).Add(widen16(absDiffU8x16(s1Hi, load16(step(step(p3, stride), 16)))))
+		sp = step(sp, stride2)
+		p0, p1 = step(p0, stride2), step(p1, stride2)
+		p2, p3 = step(p2, stride2), step(p3, stride2)
 	}
-	for row := 0; row < 32; row++ {
-		sLo := load16(sp)
-		sHi := load16(step(sp, 16))
-		c0 = c0.Add(widen16(absDiffU8x16(sLo, load16(p0)))).Add(widen16(absDiffU8x16(sHi, load16(step(p0, 16)))))
-		c1 = c1.Add(widen16(absDiffU8x16(sLo, load16(p1)))).Add(widen16(absDiffU8x16(sHi, load16(step(p1, 16)))))
-		c2 = c2.Add(widen16(absDiffU8x16(sLo, load16(p2)))).Add(widen16(absDiffU8x16(sHi, load16(step(p2, 16)))))
-		c3 = c3.Add(widen16(absDiffU8x16(sLo, load16(p3)))).Add(widen16(absDiffU8x16(sHi, load16(step(p3, 16)))))
-		if row&7 == 7 {
-			t0, t1, t2, t3 = flush(c0, t0), flush(c1, t1), flush(c2, t2), flush(c3, t3)
-			c0 = archsimd.BroadcastUint16x8(0)
-			c1 = archsimd.BroadcastUint16x8(0)
-			c2 = archsimd.BroadcastUint16x8(0)
-			c3 = archsimd.BroadcastUint16x8(0)
-		}
-		sp = step(sp, stride)
-		p0, p1, p2, p3 = step(p0, stride), step(p1, stride), step(p2, stride), step(p3, stride)
-	}
-	return int(t0.ReduceSum()), int(t1.ReduceSum()), int(t2.ReduceSum()), int(t3.ReduceSum())
+	v0, v1 := c00.Add(c01), c10.Add(c11)
+	v2, v3 := c20.Add(c21), c30.Add(c31)
+	return reduceU16(v0), reduceU16(v1), reduceU16(v2), reduceU16(v3)
 }

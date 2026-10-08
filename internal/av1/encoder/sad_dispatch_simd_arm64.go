@@ -7,17 +7,15 @@
 package encoder
 
 // This file replaces sad_dispatch_arm64.go under GOEXPERIMENT=simd. It routes
-// the ported single-block and 4-reference SAD shapes through the Go-native
-// SIMD kernels (sad_simd_arm64.go) and keeps every other shape on the NEON asm
-// kernels (which remain compiled — only sad_dispatch_arm64.go's init is
-// excluded). See SIMD_PORT.md.
+// the 16x16 and 32x32 single-block kernels and the 8x8, 16x16, and 32x32
+// four-reference kernels through Go-native SIMD. Other shapes remain on the
+// NEON asm kernels (which remain compiled — only sad_dispatch_arm64.go's init
+// is excluded). See SIMD_PORT.md.
 //
 // The lowercase sadNxN wrappers are the surface the motion-search hot path
 // (pframe_residual.go) actually calls, so they must be defined here (the asm
 // dispatch file that defined them is excluded by !goexperiment.simd). The
-// x4/step4/dual/compound shapes stay on the asm bodies for now: they are
-// byte-exact and already fast, and this port targets the core single-block +
-// x4 shapes named in the task.
+// step4, dual, compound, and other unported shapes stay on the asm bodies.
 
 import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 
