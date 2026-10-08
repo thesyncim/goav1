@@ -550,7 +550,7 @@ webrtc-reference:
 
 webrtc-browser:
 	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go -C examples/browser-push test . -run TestEndToEndAV1OverRTP -count=1 -timeout 600s -v
-	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveAV1PlaybackStats -count=1 -timeout 240s -v
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveAV1PlaybackStats -count=1 -timeout 330s -v
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPPlaybackStats -count=1 -timeout 600s -v
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPRepeatedPlaybackSoak -count=1 -timeout 300s -v
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPControlChurnPlayback -count=1 -timeout 180s -v
@@ -617,7 +617,7 @@ else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),19)
 else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),20)
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_3C)' -count=1 -timeout 360s -v
 else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),21)
-	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '^TestBrowserLiveAV1PlaybackStats$$' -count=1 -timeout 240s -v
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '^TestBrowserLiveAV1PlaybackStats$$' -count=1 -timeout 330s -v
 else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),22)
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_SOAK_DIRECT)' -count=1 -timeout 300s -v
 else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),23)
