@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego && !goexperiment.simd
+//go:build arm64 && !purego
 
 package restoration
 
@@ -14,18 +14,26 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
 
-// TestWienerVerticalNEONIsBound guards that outside the goexperiment.simd build
-// the vertical dispatch slot keeps resolving to the hand-written NEON asm (on any
-// arm64 chip Go runs on, where NEON is mandatory). The mirror-image check for the
-// SIMD build lives in wiener_gosimd_arm64_test.go.
-func TestWienerVerticalNEONIsBound(t *testing.T) {
+func TestArm64WienerDispatchUsesNEON(t *testing.T) {
 	if !cpu.Detected.NEON {
-		t.Skip("NEON not detected")
+		t.Skip("arm64 NEON not detected")
 	}
 	nameOf := func(v any) string {
 		return runtime.FuncForPC(reflect.ValueOf(v).Pointer()).Name()
 	}
-	if got := nameOf(wienerVerticalImpl); got != nameOf(wienerVerticalNEON) {
-		t.Fatalf("wienerVerticalImpl = %s, want wienerVerticalNEON", got)
+	for _, slot := range []struct {
+		name string
+		got  any
+		want any
+	}{
+		{"wienerHorizontalImpl", wienerHorizontalImpl, wienerHorizontalNEON},
+		{"wienerHorizontalTrustedImpl", wienerHorizontalTrustedImpl, wienerHorizontalNEONTrusted},
+		{"wienerVerticalImpl", wienerVerticalImpl, wienerVerticalNEON},
+		{"wienerHorizontalU8Impl", wienerHorizontalU8Impl, wienerHorizontalU8NEON},
+		{"wienerVerticalU8Impl", wienerVerticalU8Impl, wienerVerticalU8NEON},
+	} {
+		if got, want := nameOf(slot.got), nameOf(slot.want); got != want {
+			t.Errorf("%s = %s, want %s", slot.name, got, want)
+		}
 	}
 }

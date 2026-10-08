@@ -19,9 +19,6 @@ import (
 //     the same Q3 reductions in uint16 lanes.
 //   - subtractCFLAverageSIMD computes the rounded average in uint32 lanes and
 //     truncates the final signed difference exactly like int16(int(src)-avg).
-//   - applyCFLSIMD uses the same abs-round-conditional-negate signed rounding as
-//     the hand NEON asm, then clamps through SQXTUN for 8-bit and min/max for
-//     high bit depth.
 
 func subsampleLuma8SIMD(outputQ3 []uint16, input []uint8, inputStride int, width int, height int, outW int, outH int, subX bool, subY bool) {
 	switch {
@@ -163,53 +160,6 @@ func subtractCFLAverageSIMD(srcQ3 []uint16, dstQ3 []int16, width int, height int
 	}
 }
 
-func applyCFLSIMD(block planeBlock, bytesPerSample int, visibleWidth int, visibleHeight int, acQ3 []int16, alphaQ3 int, max uint16) {
-	switch {
-	case bytesPerSample == 1 && max == 0xff && visibleWidth >= 16 && visibleWidth%16 == 0:
-		alpha := archsimd.BroadcastInt16x8(int16(alphaQ3))
-		round := archsimd.BroadcastInt32x4(32)
-		for row := 0; row < visibleHeight; row++ {
-			dstBase := row * block.stride
-			acBase := row * CFLBufLine
-			for col := 0; col < visibleWidth; col += 16 {
-				dv := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Pointer(&block.pix[dstBase+col])))
-				dLo := dv.ExtendLo8ToUint16().ConvertToInt16()
-				dHi := dv.HiToLo().ExtendLo8ToUint16().ConvertToInt16()
-				acLo := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Pointer(&acQ3[acBase+col])))
-				acHi := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Pointer(&acQ3[acBase+col+8])))
-				outLo := dLo.AddSaturated(cflScaleQ3SIMD(acLo, alpha, round))
-				outHi := dHi.AddSaturated(cflScaleQ3SIMD(acHi, alpha, round))
-				cflSaturateInt16PairToUint8(outLo, outHi).StoreArray((*[16]uint8)(unsafe.Pointer(&block.pix[dstBase+col])))
-			}
-		}
-	case bytesPerSample == 2 && visibleWidth >= 8 && visibleWidth%8 == 0:
-		alpha := archsimd.BroadcastInt16x8(int16(alphaQ3))
-		round := archsimd.BroadcastInt32x4(32)
-		zero := archsimd.BroadcastInt32x4(0)
-		maxV := archsimd.BroadcastInt32x4(int32(max))
-		for row := 0; row < visibleHeight; row++ {
-			dstBase := row * block.stride
-			acBase := row * CFLBufLine
-			for col := 0; col < visibleWidth; col += 8 {
-				dstOff := dstBase + col*2
-				dv := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&block.pix[dstOff])))
-				ac := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Pointer(&acQ3[acBase+col])))
-				scaled := cflScaleQ3SIMD(ac, alpha, round)
-				outLo := dv.ExtendLo4ToUint32().ConvertToInt32().Add(scaled.ExtendLo4ToInt32()).Max(zero).Min(maxV)
-				outHi := dv.HiToLo().ExtendLo4ToUint32().ConvertToInt32().Add(scaled.HiToLo().ExtendLo4ToInt32()).Max(zero).Min(maxV)
-				out := cflSaturateInt32PairToUint16(outLo, outHi)
-				out.StoreArray((*[8]uint16)(unsafe.Pointer(&block.pix[dstOff])))
-			}
-		}
-	default:
-		if bytesPerSample == 1 && max == 0xff {
-			applyCFLNEON(block, bytesPerSample, visibleWidth, visibleHeight, acQ3, alphaQ3, max)
-			return
-		}
-		applyCFLPureGo(block, bytesPerSample, visibleWidth, visibleHeight, acQ3, alphaQ3, max)
-	}
-}
-
 func cflPairSumUint8x16(v archsimd.Uint8x16) archsimd.Uint16x8 {
 	return v.ConcatEven(v).ExtendLo8ToUint16().Add(v.ConcatOdd(v).ExtendLo8ToUint16())
 }
@@ -220,12 +170,6 @@ func cflPairSumUint16x16(lo, hi archsimd.Uint16x8) archsimd.Uint16x8 {
 
 func cflUint16AnyAbove(v archsimd.Uint16x8, max archsimd.Uint16x8) bool {
 	return v.Greater(max).ToInt16x8().ReduceSum() != 0
-}
-
-func cflScaleQ3SIMD(ac archsimd.Int16x8, alpha archsimd.Int16x8, round archsimd.Int32x4) archsimd.Int16x8 {
-	lo := cflRoundPowerOfTwoSignedInt32SIMD(ac.MulWidenLo(alpha), round)
-	hi := cflRoundPowerOfTwoSignedInt32SIMD(ac.HiToLo().MulWidenLo(alpha.HiToLo()), round)
-	return cflTruncateInt32PairToInt16(lo, hi)
 }
 
 // cflTruncateInt32PairToInt16 packs the low four lanes of lo followed by the
@@ -239,22 +183,3 @@ func cflTruncateInt32PairToInt16(lo, hi archsimd.Int32x4) archsimd.Int16x8 {
 
 // cflSaturateInt16PairToUint8 packs two groups of eight signed pixels into one
 // 16-byte vector, preserving the order expected by the pixel store.
-func cflSaturateInt16PairToUint8(lo, hi archsimd.Int16x8) archsimd.Uint8x16 {
-	lo64 := lo.SaturateToUint8().ReshapeToUint64s()
-	hi64 := hi.SaturateToUint8().ReshapeToUint64s()
-	return lo64.InterleaveLo(hi64).ReshapeToUint8s()
-}
-
-// cflSaturateInt32PairToUint16 packs two groups of four high-bit-depth pixels
-// into one eight-lane vector.
-func cflSaturateInt32PairToUint16(lo, hi archsimd.Int32x4) archsimd.Uint16x8 {
-	lo64 := lo.SaturateToUint16().ReshapeToUint64s()
-	hi64 := hi.SaturateToUint16().ReshapeToUint64s()
-	return lo64.InterleaveLo(hi64).ReshapeToUint16s()
-}
-
-func cflRoundPowerOfTwoSignedInt32SIMD(v archsimd.Int32x4, round archsimd.Int32x4) archsimd.Int32x4 {
-	sign := v.ShiftAllRight(31)
-	mag := v.Xor(sign).Sub(sign).Add(round).ShiftAllRight(6)
-	return mag.Xor(sign).Sub(sign)
-}

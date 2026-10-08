@@ -70,16 +70,7 @@ func wienerHorizontalU8NEONAsm(ctx *wienerU8NEONHorizCtx)
 func wienerVerticalU8NEONAsm(ctx *wienerU8NEONVertCtx)
 
 func wienerHorizontalU8NEON(src []uint8, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, round0 int, temp []uint16) {
-	if width < 8 || width%8 != 0 {
-		wienerHorizontalU8(src, srcStride, srcOrigin, width, height, filter, round0, temp)
-		return
-	}
-	// The u8 window load (ld1 {v1.16b}) pulls 16 u8 for the last 8-column group,
-	// reaching 2 samples past the width+2*WienerHalfwin reslice the scalar
-	// reference validates. Those trailing lanes never feed a stored result, but
-	// they must be resident: require the 2-sample trailing pad (a borderedBlockFits
-	// check with a width widened by 2) before dispatching; otherwise run scalar.
-	if !borderedBlockFits(len(src), srcStride, srcOrigin, width+2, height, WienerHalfwin, WienerHalfwin) {
+	if !wienerHorizontalU8NEONCanRun(len(src), srcStride, srcOrigin, width, height) {
 		wienerHorizontalU8(src, srcStride, srcOrigin, width, height, filter, round0, temp)
 		return
 	}
@@ -99,6 +90,18 @@ func wienerHorizontalU8NEON(src []uint8, srcStride int, srcOrigin int, width int
 		maxCl:  uint16(limit - 1),
 	}
 	wienerHorizontalU8NEONAsm(&ctx)
+}
+
+// wienerHorizontalU8NEONCanRun includes the two trailing samples read by the
+// 16-byte NEON window load in the final 8-column vector. The scalar kernel only
+// needs the three-sample Wiener border, so check the wider vector footprint
+// before entering assembly.
+func wienerHorizontalU8NEONCanRun(srcLen int, srcStride int, srcOrigin int, width int, height int) bool {
+	if width < 8 || width%8 != 0 {
+		return false
+	}
+	loadWidth, ok := checkedAdd(width, 2)
+	return ok && borderedBlockFits(srcLen, srcStride, srcOrigin, loadWidth, height, WienerHalfwin, WienerHalfwin)
 }
 
 func wienerVerticalU8NEON(temp []uint16, tempStride int, dst []uint8, dstStride int, width int, height int, filter WienerFilter, round1 int) {

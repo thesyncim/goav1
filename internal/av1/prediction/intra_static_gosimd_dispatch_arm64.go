@@ -8,14 +8,10 @@ package prediction
 
 import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 
-// init binds the Go-native SIMD PAETH and SMOOTH predictors as the dispatch
-// kernels under the goexperiment.simd build (the NEON asm binding in
-// intra_dispatch_arm64.go is excluded there via !goexperiment.simd). Every other
-// intra kernel in the dispatch keeps its hand-written NEON asm, which is still
-// compiled in this build (intra_neon_arm64.go / intra_kernels_neon_arm64.go are
-// tagged arm64 && !purego); this init re-binds them so nothing regresses to the
-// scalar reference. When NEON is somehow unavailable the pure-Go references stay.
-// Every binding is byte-identical to the *PureGo references.
+// init uses Go-native SIMD for measured CfL subsampling and average subtraction
+// under the goexperiment.simd build. Paeth, Smooth, and CfL apply retain their
+// NEON kernels because the current Go-SIMD candidates are slower on representative
+// blocks. Every binding remains byte-identical to its pure-Go reference.
 func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if !cpu.Detected.NEON {
@@ -33,13 +29,13 @@ func init() {
 		dirLeftCol8Impl = dirLeftCol8PureGo
 		return
 	}
-	// PAETH and the three SMOOTH variants: Go-native SIMD.
-	predictPaethImpl = predictPaethSIMD
-	predictSmoothImpl = predictSmoothSIMD
-	predictSmoothVerticalImpl = predictSmoothVerticalSIMD
-	predictSmoothHorizontalImpl = predictSmoothHorizontalSIMD
-	// CfL (chroma-from-luma): Go-native SIMD (beats the NEON asm on subsample).
-	applyCFLImpl = applyCFLSIMD
+	// Keep the measured-losing static predictors and CfL apply on NEON.
+	predictPaethImpl = predictPaethNEON
+	predictSmoothImpl = predictSmoothNEON
+	predictSmoothVerticalImpl = predictSmoothVerticalNEON
+	predictSmoothHorizontalImpl = predictSmoothHorizontalNEON
+	applyCFLImpl = applyCFLNEON
+	// CfL subsampling and average subtraction use Go-native SIMD.
 	subsampleLuma8Impl = subsampleLuma8SIMD
 	subsampleLuma16Impl = subsampleLuma16SIMD
 	subtractCFLAverageImpl = subtractCFLAverageSIMD

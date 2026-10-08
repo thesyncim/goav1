@@ -5,63 +5,46 @@
 //go:build goexperiment.simd && arm64 && !purego
 
 // Go-native SIMD (simd/archsimd, Go 1.27+ GOEXPERIMENT=simd) port of the SGR
-// self-guided final projection ("blend"), for both the 8-bit-pixel path
-// (sgrWeightedRowU8) and the high-bit-depth uint16 path (sgrWeightedRow). This
-// is compute-bound per-pixel int32 arithmetic with no data dependency and no
+// self-guided final projection ("blend") for the high-bit-depth uint16 path.
+// It is compute-bound per-pixel int32 arithmetic with no data dependency and no
 // transpose — the ideal SIMD target: eight pixels are projected per iteration.
 //
 // Per pixel the scalar reference computes
 //
-//	u  = int32(s) << SGRProjRstBits          (s widened from uint8/uint16)
+//	u  = int32(s) << SGRProjRstBits          (s widened from uint16)
 //	v  = u << SGRProjPrjBits + xq0*(f0-u) + xq1*(f1-u)
 //	r  = roundPowerOfTwo(v, SGRProjPrjBits+SGRProjRstBits)   // (v + 1<<10) >> 11
 //	w  = int32(int16(r))                     // libaom's wrapping int16 cast
-//	d  = clampInt32(w, 0, max)               // -> uint8 / uint16
+//	d  = clampInt32(w, 0, max)               // -> uint16
 //
 // The SIMD kernel processes 16 columns per iteration as four Int32x4 halves.
 // Every op maps to the exact scalar integer op, so byte-identity follows
 // directly (int32 wraps mod 2^32 exactly like Go int32, and the three addends
 // commute, so the projection is regrouped to fold the u<<7 and the rounding
 // bias into the multiply-accumulate chain — see sgrProjectHalf):
-//   - u = s<<RstBits: the u8 path folds it into the widen and shift; u16 keeps a
-//     register VSSHL after the widen.
+//   - u = s<<RstBits: u16 keeps a register VSSHL after the widen.
 //   - roundPowerOfTwo is + bias then arithmetic >>11 (VSSHL by a negative
 //     count); the bias seeds the accumulator so no separate add is emitted.
 //   - the wrapping int16 cast is TruncToInt16 (VXTN keeps the low 16 bits =
-//     exactly Go's int16(r)); for u8 SaturateToUint8 (SQXTUN) folds the
-//     [0,255] clip into the narrow, for u16 the [0,maxI] clip runs as Max/Min
-//     in the int16 domain (maxI < 65535) before the uint16 reinterpret.
+//     exactly Go's int16(r)); the [0,maxI] clip runs as Max/Min in the int16
+//     domain (maxI < 65535) before the uint16 reinterpret.
 //
 // The int32 flt loads and the uint16 dst store are natural array-pointer
 // accesses (f0/f1/dst always hold >= 8 elements from column i in a full
-// 8-group). The uint8 source and destination lack an 8-byte archsimd
-// load/store (arm64 exposes only 128-bit vectors), so 8 bytes are staged
-// through a function-local [16]uint8 exactly as minMaxAbsDiff8x8SIMD does; this
-// also matches the NEON asm, which never over-reads past the 8-pixel group.
-// Columns beyond width&^7 fall back to the scalar reference.
+// 8-group). Columns beyond width&^7 fall back to the scalar reference.
 
 package restoration
 
 import (
 	"unsafe"
 
-	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
-
 	"simd/archsimd"
 )
 
-// init binds the Go-native SIMD SGR blend kernels under the goexperiment.simd
-// build (the NEON binding in u8_dispatch_arm64.go is excluded there via
-// !goexperiment.simd). Both Wiener u8 passes are Go-SIMD here: the box sums
-// and the A/B stencil keep their NEON bindings from
-// selfguided_dispatch_arm64.go, which is not gated out of the simd build.
+// init binds the winning Go-native SIMD high-bit-depth SGR blend under the
+// goexperiment.simd build. Measured-losing Wiener and 8-bit SGR candidates
+// remain on their NEON dispatchers.
 func init() {
-	_ = cpu.Detected // ensure cpu package init runs before this point
-	if cpu.Detected.NEON {
-		wienerHorizontalU8Impl = wienerHorizontalU8SIMD // symmetric-pair FIR: Go-SIMD beats asm
-		wienerVerticalU8Impl = wienerVerticalU8SIMD     // column MAC: Go-SIMD beats asm
-	}
-	sgrWeightedRowU8Impl = sgrWeightedRowU8SIMD
 	sgrWeightedRowImpl = sgrWeightedRowSIMD
 }
 
@@ -71,8 +54,8 @@ func init() {
 // a single register VSSHL: archsimd's ShiftAll{Left,Right} always lower to
 // variable VSSHL and would otherwise re-materialise the constant with VMOV+VDUP
 // on every use inside the loop (a negative Shift count is an arithmetic right
-// shift, byte-identical to ShiftAllRight). shRst (=RstBits) is only used by the
-// u16 widen; the u8 path folds <<RstBits into its USHLL widen instead.
+// shift, byte-identical to ShiftAllRight). shRst (=RstBits) is used by the u16
+// widen.
 //
 // bias (the rounding 1<<10) seeds the multiply-accumulate chain and k128
 // (=1<<PrjBits) turns u<<PrjBits into a fused u*128 MulAdd, so the projection is
@@ -121,59 +104,6 @@ func loadI32x4(p []int32, i int) archsimd.Int32x4 {
 	return archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Pointer(&p[i])))
 }
 
-// sgrWeightedRowU8SIMD is the Go-native-SIMD 8-bit final projection row. The
-// bulk runs 16 pixels per iteration through one 16-byte load, four Int32x4
-// projections, and one 16-byte store (no per-pixel staging); a trailing 8-wide
-// group and the <8 tail keep the scalar path. Byte-identical to
-// sgrWeightedRowU8.
-//
-// The uint8 widen uses ExtendLo8ToUint16 and HiToLo+ExtendLo8ToUint16 followed
-// by the Q3 left shift. Pair truncation and saturation use the official narrow
-// operations, then InterleaveLo on the low 64-bit halves to restore lane order.
-// TruncToInt16 is libaom's wrapping int16 cast, and unsigned saturation is
-// exactly clampInt32(int16(rounded), 0, 255), so the explicit clip folds into
-// the narrow as in the NEON reference.
-func sgrWeightedRowU8SIMD(dst []uint8, src []uint8, f0 []int32, f1 []int32, xq0 int32, xq1 int32) {
-	width := len(dst)
-	// Reslice to width so the compiler can prove the i+16<=width loads in bounds
-	// and drop the per-load bounds checks (the loop only reads indices < width).
-	src = src[:width]
-	f0 = f0[:width]
-	f1 = f1[:width]
-	c := newSGRConsts(xq0, xq1)
-	i := 0
-	for ; i+16 <= width; i += 16 {
-		sv := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Pointer(&src[i])))
-		lo16 := sv.ExtendLo8ToUint16().ShiftAllLeft(SGRProjRstBits)          // (s0..s7)<<4
-		hi16 := sv.HiToLo().ExtendLo8ToUint16().ShiftAllLeft(SGRProjRstBits) // (s8..s15)<<4
-		r0 := sgrProjectHalf(lo16.ExtendLo4ToUint32().ConvertToInt32(), loadI32x4(f0, i), loadI32x4(f1, i), c)
-		r1 := sgrProjectHalf(lo16.HiToLo().ExtendLo4ToUint32().ConvertToInt32(), loadI32x4(f0, i+4), loadI32x4(f1, i+4), c)
-		r2 := sgrProjectHalf(hi16.ExtendLo4ToUint32().ConvertToInt32(), loadI32x4(f0, i+8), loadI32x4(f1, i+8), c)
-		r3 := sgrProjectHalf(hi16.HiToLo().ExtendLo4ToUint32().ConvertToInt32(), loadI32x4(f0, i+12), loadI32x4(f1, i+12), c)
-		lo := restorationTruncateInt32PairToInt16(r0, r1) // w0..w7
-		hi := restorationTruncateInt32PairToInt16(r2, r3) // w8..w15
-		restorationSaturateInt16PairToUint8(lo, hi).StoreArray((*[16]uint8)(unsafe.Pointer(&dst[i])))
-	}
-	if i+8 <= width {
-		// uint8 lacks an 8-byte archsimd load/store, so stage 8 bytes through a
-		// function-local array (never over-reading past the group), matching the
-		// NEON asm's 8-pixel load width.
-		var sbuf, obuf [16]uint8
-		sbuf[0], sbuf[1], sbuf[2], sbuf[3] = src[i], src[i+1], src[i+2], src[i+3]
-		sbuf[4], sbuf[5], sbuf[6], sbuf[7] = src[i+4], src[i+5], src[i+6], src[i+7]
-		lo16 := archsimd.LoadUint8x16Array(&sbuf).ExtendLo8ToUint16().ShiftAllLeft(SGRProjRstBits)
-		rLo := sgrProjectHalf(lo16.ExtendLo4ToUint32().ConvertToInt32(), loadI32x4(f0, i), loadI32x4(f1, i), c)
-		rHi := sgrProjectHalf(lo16.HiToLo().ExtendLo4ToUint32().ConvertToInt32(), loadI32x4(f0, i+4), loadI32x4(f1, i+4), c)
-		restorationTruncateInt32PairToInt16(rLo, rHi).SaturateToUint8().StoreArray(&obuf)
-		dst[i], dst[i+1], dst[i+2], dst[i+3] = obuf[0], obuf[1], obuf[2], obuf[3]
-		dst[i+4], dst[i+5], dst[i+6], dst[i+7] = obuf[4], obuf[5], obuf[6], obuf[7]
-		i += 8
-	}
-	if i < width {
-		sgrWeightedRowU8(dst[i:], src[i:], f0[i:], f1[i:], xq0, xq1)
-	}
-}
-
 // sgrWeightedRowSIMD is the Go-native-SIMD high-bit-depth (uint16) final
 // projection row. The bulk runs 16 pixels per iteration (two 16-byte loads,
 // four Int32x4 projections, two 16-byte stores); a trailing 8-wide group and
@@ -181,7 +111,7 @@ func sgrWeightedRowU8SIMD(dst []uint8, src []uint8, f0 []int32, f1 []int32, xq0 
 //
 // The widen uses ExtendLo4ToUint32 and HiToLo+ExtendLo4ToUint32. The int32->int16
 // pack uses TruncToInt16 and InterleaveLo. Unlike
-// the u8 path the [0,maxI] clamp cannot fold into the narrow (maxI < 65535, so
+// the [0,maxI] clamp cannot fold into the narrow (maxI < 65535, so
 // SQXTUN's full-range saturation is too wide), so it stays as Max/Min in the
 // int16 domain before the uint16 reinterpret.
 func sgrWeightedRowSIMD(dst []uint16, src []uint16, f0 []int32, f1 []int32, xq0 int32, xq1 int32, maxI int32) {

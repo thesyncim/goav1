@@ -43,7 +43,7 @@ func TestFindDirectionSIMDEdges(t *testing.T) {
 	patterns := []func(row, col int) uint16{
 		func(row, col int) uint16 { return 128 },                            // flat -> dir 0, var 0
 		func(row, col int) uint16 { return 0 },                              // min flat
-		func(row, col int) uint16 { return 255 },                           // max flat (shift 0)
+		func(row, col int) uint16 { return 255 },                            // max flat (shift 0)
 		func(row, col int) uint16 { return uint16((row + col) * 16) },       // diag 0
 		func(row, col int) uint16 { return uint16((2*row + col) * 8) },      // dir 1
 		func(row, col int) uint16 { return uint16(row * 32) },               // horizontal 2
@@ -148,23 +148,9 @@ func BenchmarkFindDirectionSIMD8(b *testing.B) {
 	}
 }
 
-// BenchmarkFindDirectionNEONAsm benches the hand NEON asm kernel directly for a
-// like-for-like comparison against BenchmarkFindDirectionSIMD.
-func BenchmarkFindDirectionNEONAsm(b *testing.B) {
-	img := make([]uint16, 64)
-	for i := range img {
-		img[i] = uint16((i * 41) & 0xfff)
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		_, _ = findDirectionNEON(img, 8, 4)
-	}
-}
-
-// TestFindDirectionU8SIMDMatchesScalar is the 3-way u8 differential: the
-// Go-native SIMD u8 direction search and the NEON asm must both match the
-// scalar reference (direction + variance) across strides and content regimes,
-// including flat, near-max and full-random blocks.
+// TestFindDirectionU8SIMDMatchesScalar checks the Go-native SIMD u8 kernel
+// against the independent scalar reference (direction + variance) across
+// strides and content regimes, including flat, near-max and full-random blocks.
 func TestFindDirectionU8SIMDMatchesScalar(t *testing.T) {
 	rnd := newCDEFRandom(cdefDeterministicSeed ^ 0x11223344)
 	for _, stride := range []int{8, 17, 160, 640} {
@@ -186,12 +172,8 @@ func TestFindDirectionU8SIMDMatchesScalar(t *testing.T) {
 			}
 			wantDir, wantVar := findDirectionU8Scalar(img, stride)
 			gotDir, gotVar := findDirectionU8SIMD(img, stride)
-			asmDir, asmVar := findDirectionU8NEON(img, stride)
 			if gotDir != wantDir || gotVar != wantVar {
 				t.Fatalf("SIMD stride=%d iter=%d got=(%d,%d) want=(%d,%d)", stride, iter, gotDir, gotVar, wantDir, wantVar)
-			}
-			if asmDir != wantDir || asmVar != wantVar {
-				t.Fatalf("NEON stride=%d iter=%d got=(%d,%d) want=(%d,%d)", stride, iter, asmDir, asmVar, wantDir, wantVar)
 			}
 		}
 	}
@@ -217,15 +199,62 @@ func TestFindDirectionU8SIMDTightTail(t *testing.T) {
 	}
 }
 
-func TestFindDirectionU8SIMDDispatchBound(t *testing.T) {
+func TestFindDirectionSIMDDispatchBound(t *testing.T) {
 	nameOf := func(v interface{}) string {
 		return runtime.FuncForPC(reflect.ValueOf(v).Pointer()).Name()
+	}
+	if got, want := nameOf(findDirectionImpl), nameOf(findDirectionSIMD); got != want {
+		t.Errorf("findDirectionImpl = %s, want %s", got, want)
+	}
+	if got, want := nameOf(findDirectionDualImpl), nameOf(findDirectionDualSIMD); got != want {
+		t.Errorf("findDirectionDualImpl = %s, want %s", got, want)
 	}
 	if got, want := nameOf(findDirectionU8Impl), nameOf(findDirectionU8SIMD); got != want {
 		t.Errorf("findDirectionU8Impl = %s, want %s", got, want)
 	}
 	if got, want := nameOf(findDirectionDualU8Impl), nameOf(findDirectionDualU8SIMD); got != want {
 		t.Errorf("findDirectionDualU8Impl = %s, want %s", got, want)
+	}
+}
+
+func TestFindDirectionDualSIMDMatchesScalar(t *testing.T) {
+	rnd := newCDEFRandom(cdefDeterministicSeed ^ 0x4455414c)
+	for coeffShift := range 5 {
+		max := uint16((1 << (8 + coeffShift)) - 1)
+		for _, stride := range []int{16, 19, 32} {
+			for iter := range 64 {
+				img := make([]uint16, stride*8)
+				for i := range img {
+					img[i] = uint16(rnd.pseudoUniform(int(max) + 1))
+				}
+				want1, wantVar1, want2, wantVar2 := findDirectionDualScalar(img, img[8:], stride, coeffShift)
+				got1, gotVar1, got2, gotVar2 := findDirectionDualSIMD(img, img[8:], stride, coeffShift)
+				if got1 != want1 || gotVar1 != wantVar1 || got2 != want2 || gotVar2 != wantVar2 {
+					t.Fatalf("coeffShift=%d stride=%d iter=%d got=(%d,%d),(%d,%d) want=(%d,%d),(%d,%d)",
+						coeffShift, stride, iter, got1, gotVar1, got2, gotVar2,
+						want1, wantVar1, want2, wantVar2)
+				}
+			}
+		}
+	}
+}
+
+func TestFindDirectionDualU8SIMDMatchesScalar(t *testing.T) {
+	rnd := newCDEFRandom(cdefDeterministicSeed ^ 0x55445541)
+	for _, stride := range []int{16, 19, 32} {
+		for iter := range 64 {
+			img := make([]byte, stride*8)
+			for i := range img {
+				img[i] = byte(rnd.generate(256))
+			}
+			want1, wantVar1, want2, wantVar2 := findDirectionDualU8Scalar(img, img[8:], stride)
+			got1, gotVar1, got2, gotVar2 := findDirectionDualU8SIMD(img, img[8:], stride)
+			if got1 != want1 || gotVar1 != wantVar1 || got2 != want2 || gotVar2 != wantVar2 {
+				t.Fatalf("stride=%d iter=%d got=(%d,%d),(%d,%d) want=(%d,%d),(%d,%d)",
+					stride, iter, got1, gotVar1, got2, gotVar2,
+					want1, wantVar1, want2, wantVar2)
+			}
+		}
 	}
 }
 
@@ -237,18 +266,6 @@ func TestFindDirectionU8SIMDZeroAlloc(t *testing.T) {
 	}
 	if a := testing.AllocsPerRun(50, func() { findDirectionU8SIMD(img, 640) }); a != 0 {
 		t.Errorf("findDirectionU8SIMD allocated %.1f objects/run, want 0", a)
-	}
-}
-
-func BenchmarkFindDirectionU8NEON(b *testing.B) {
-	img := make([]byte, 640*8+8)
-	rnd := newCDEFRandom(2)
-	for i := range img {
-		img[i] = byte(rnd.generate(256))
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		findDirectionU8NEON(img, 640)
 	}
 }
 

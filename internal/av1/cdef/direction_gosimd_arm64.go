@@ -6,7 +6,7 @@
 
 // Go-native SIMD CDEF direction search (simd/archsimd, GOEXPERIMENT=simd).
 //
-// Byte-exact twin of findDirectionScalar / cdefFindDirectionNEONAsm. The 8x8
+// Byte-exact twin of findDirectionScalar. The 8x8
 // block is loaded as eight Int16x8 rows (one SIMD load per row), shifted right by
 // coeffShift and biased by -128 in-register (matching int32(img>>shift)-128).
 //
@@ -125,9 +125,9 @@ func findDirectionSIMD(img []uint16, stride int, coeffShift int) (int, int32) {
 	shiftV := archsimd.BroadcastInt16x8(-int16(coeffShift)) // negative = right (VSSHL)
 	zero := archsimd.BroadcastInt16x8(0)
 
-	// Walk a raw pointer by stride*2 bytes per row; the callers guarantee the 8x8
-	// block fits (blockFits + stride check in FindDirection), the same contract
-	// the NEON asm relies on. This avoids a per-row slice bounds check.
+	// Walk a raw pointer by stride*2 bytes per row; the public entry point has
+	// already verified that the 8x8 block fits. This avoids per-row slice bounds
+	// checks in the hot path.
 	p := unsafe.Pointer(&img[0])
 	sb := uintptr(stride) * 2
 	r0 := cdefDirLoadRowPtr(p).Shift(shiftV).Sub(bias)

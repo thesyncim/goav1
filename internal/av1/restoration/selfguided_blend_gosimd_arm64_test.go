@@ -22,36 +22,6 @@ var blendDiffXQ = [][2]int32{
 	{0, 128}, {31, 0}, {-96, 256}, {56, 72}, {128, -64}, {-128, 255}, {96, -96}, {0, 0},
 }
 
-// TestSGRWeightedRowU8SIMDMatchesReference is the byte-exactness gate for the
-// 8-bit blend: the archsimd kernel must equal sgrWeightedRowU8 sample for
-// sample, including the int16 wrap and [0,255] clamp edges.
-func TestSGRWeightedRowU8SIMDMatchesReference(t *testing.T) {
-	rnd := newRestorationRandom(restorationDeterministicSeed ^ 0x5117)
-	for iter := 0; iter < 40; iter++ {
-		for _, width := range blendDiffWidths {
-			for _, xq := range blendDiffXQ {
-				src := randomU8Plane(rnd, width, 1)
-				f0 := make([]int32, width)
-				f1 := make([]int32, width)
-				for i := range f0 {
-					// Wide magnitudes so xq*(f-u) drives rounded past int16.
-					f0[i] = int32(rnd.pseudoUniform(1<<22)) - (1 << 21)
-					f1[i] = int32(rnd.pseudoUniform(1<<22)) - (1 << 21)
-				}
-				want := make([]uint8, width)
-				got := make([]uint8, width)
-				sgrWeightedRowU8(want, src, f0, f1, xq[0], xq[1])
-				sgrWeightedRowU8SIMD(got, src, f0, f1, xq[0], xq[1])
-				for i := range want {
-					if got[i] != want[i] {
-						t.Fatalf("u8 width=%d xq=%v dst[%d]=%d want %d", width, xq, i, got[i], want[i])
-					}
-				}
-			}
-		}
-	}
-}
-
 // TestSGRWeightedRowSIMDMatchesReference is the byte-exactness gate for the
 // high-bit-depth blend across 8/10/12-bit maxima.
 func TestSGRWeightedRowSIMDMatchesReference(t *testing.T) {
@@ -86,11 +56,11 @@ func TestSGRWeightedRowSIMDMatchesReference(t *testing.T) {
 	}
 }
 
-// TestSGRBlendDispatchBindsSIMD confirms the goexperiment.simd build routes the
-// dispatch slots through the archsimd kernels (not the NEON asm / pure-Go).
-func TestSGRBlendDispatchBindsSIMD(t *testing.T) {
-	if reflect.ValueOf(sgrWeightedRowU8Impl).Pointer() != reflect.ValueOf(sgrWeightedRowU8SIMD).Pointer() {
-		t.Fatal("sgrWeightedRowU8Impl not bound to the SIMD kernel under goexperiment.simd")
+// TestSGRBlendDispatchBindsExpectedKernels confirms the measured-losing u8
+// candidate stays on NEON while the high-bit-depth blend uses Go SIMD.
+func TestSGRBlendDispatchBindsExpectedKernels(t *testing.T) {
+	if reflect.ValueOf(sgrWeightedRowU8Impl).Pointer() != reflect.ValueOf(sgrWeightedRowU8NEON).Pointer() {
+		t.Fatal("sgrWeightedRowU8Impl not bound to the NEON kernel under goexperiment.simd")
 	}
 	if reflect.ValueOf(sgrWeightedRowImpl).Pointer() != reflect.ValueOf(sgrWeightedRowSIMD).Pointer() {
 		t.Fatal("sgrWeightedRowImpl not bound to the SIMD kernel under goexperiment.simd")
@@ -102,9 +72,7 @@ func TestSGRBlendDispatchBindsSIMD(t *testing.T) {
 func TestSGRBlendSIMDIsZeroAlloc(t *testing.T) {
 	rnd := newRestorationRandom(restorationDeterministicSeed ^ 0x5317)
 	const width = 64
-	src8 := randomU8Plane(rnd, width, 1)
 	src16 := make([]uint16, width)
-	dst8 := make([]uint8, width)
 	dst16 := make([]uint16, width)
 	f0 := make([]int32, width)
 	f1 := make([]int32, width)
@@ -114,7 +82,6 @@ func TestSGRBlendSIMDIsZeroAlloc(t *testing.T) {
 		f1[i] = int32(rnd.pseudoUniform(1<<21)) - (1 << 20)
 	}
 	if allocs := testing.AllocsPerRun(200, func() {
-		sgrWeightedRowU8SIMD(dst8, src8, f0, f1, 12, 116)
 		sgrWeightedRowSIMD(dst16, src16, f0, f1, 12, 116, 1023)
 	}); allocs != 0 {
 		t.Fatalf("SGR blend SIMD kernels allocated %f times per call", allocs)
@@ -138,7 +105,6 @@ func benchU8Blend(b *testing.B, fn func([]uint8, []uint8, []int32, []int32, int3
 	}
 }
 
-func BenchmarkSGRWeightedRowU8_SIMD(b *testing.B)   { benchU8Blend(b, sgrWeightedRowU8SIMD) }
 func BenchmarkSGRWeightedRowU8_NEON(b *testing.B)   { benchU8Blend(b, sgrWeightedRowU8NEON) }
 func BenchmarkSGRWeightedRowU8_PureGo(b *testing.B) { benchU8Blend(b, sgrWeightedRowU8) }
 

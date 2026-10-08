@@ -124,29 +124,3 @@ func TestFilterUnitBlocksU8NEONMatchesPureGo(t *testing.T) {
 		}
 	}
 }
-
-// TestFindDirectionU8NEONMatchesScalar pins the 8-bit NEON direction kernel
-// against the scalar uint8 reference.
-func TestFindDirectionU8NEONMatchesScalar(t *testing.T) {
-	rnd := newCDEFRandom(cdefDeterministicSeed ^ 0x4e384e38)
-	for _, stride := range []int{8, 17, 160, 640} {
-		for iter := range 256 {
-			img := make([]byte, stride*8+8)
-			for i := range img {
-				switch iter % 3 {
-				case 0:
-					img[i] = byte(rnd.generate(256))
-				case 1:
-					img[i] = byte(rnd.generate(6))
-				default:
-					img[i] = byte(250 + rnd.generate(6))
-				}
-			}
-			wantDir, wantVar := findDirectionU8Scalar(img, stride)
-			gotDir, gotVar := findDirectionU8NEON(img, stride)
-			if gotDir != wantDir || gotVar != wantVar {
-				t.Fatalf("stride=%d iter=%d got=(%d,%d) want=(%d,%d)", stride, iter, gotDir, gotVar, wantDir, wantVar)
-			}
-		}
-	}
-}
