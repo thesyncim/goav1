@@ -13,14 +13,12 @@ import (
 )
 
 // TestEncodedStreamDecodesInReferenceDecoders is the independent oracle: the
-// encoder's output must decode in libaom's aomdec (and dav1d when present) to
-// exactly the encoder reconstruction. This closes the residual risk of a
-// blind spot shared between the goav1 encoder and decoder.
+// encoder's output must decode in libaom's aomdec and dav1d to exactly the
+// encoder reconstruction. Ordinary test runs keep the reference decoders
+// optional; the WebRTC parity gates require both.
 func TestEncodedStreamDecodesInReferenceDecoders(t *testing.T) {
-	aomdec, err := exec.LookPath("aomdec")
-	if err != nil {
-		t.Skip("aomdec not on PATH")
-	}
+	decoders := referenceDecodersForTest(t)
+	aomdec := decoders.aomdec
 	const w, h = 192, 128
 	cw, ch := w/2, h/2
 	rng := rand.New(rand.NewSource(11))
@@ -101,16 +99,14 @@ func TestEncodedStreamDecodesInReferenceDecoders(t *testing.T) {
 	}
 
 	check("aomdec", aomdec, "--rawvideo", "-o", filepath.Join(dir, "aomdec.yuv"))
-	if dav1d, err := exec.LookPath("dav1d"); err == nil {
+	if dav1d := decoders.dav1d; dav1d != "" {
 		check("dav1d", dav1d, "--muxer", "yuv", "-o", filepath.Join(dir, "dav1d.yuv"), "-i")
 	}
 }
 
 func TestEncodedLosslessPFrameDecodesInReferenceDecoders(t *testing.T) {
-	aomdec, err := exec.LookPath("aomdec")
-	if err != nil {
-		t.Skip("aomdec not on PATH")
-	}
+	decoders := referenceDecodersForTest(t)
+	aomdec := decoders.aomdec
 	const w, h = 96, 64
 	cw, ch := w/2, h/2
 	makeFrame := func(seed int) encoder.SourceFrame420 {
@@ -186,16 +182,14 @@ func TestEncodedLosslessPFrameDecodesInReferenceDecoders(t *testing.T) {
 		t.Logf("%s: qindex-0 P-frame stream bit-exact", name)
 	}
 	check("aomdec", aomdec, "--rawvideo", "-o", filepath.Join(dir, "aomdec.yuv"))
-	if dav1d, err := exec.LookPath("dav1d"); err == nil {
+	if dav1d := decoders.dav1d; dav1d != "" {
 		check("dav1d", dav1d, "--muxer", "yuv", "-o", filepath.Join(dir, "dav1d.yuv"), "-i")
 	}
 }
 
 func TestEncodedScaledReferenceLosslessPFrameDecodesInReferenceDecoders(t *testing.T) {
-	aomdec, err := exec.LookPath("aomdec")
-	if err != nil {
-		t.Skip("aomdec not on PATH")
-	}
+	decoders := referenceDecodersForTest(t)
+	aomdec := decoders.aomdec
 	const (
 		baseW, baseH = 64, 48
 		topW, topH   = 128, 96
@@ -245,7 +239,7 @@ func TestEncodedScaledReferenceLosslessPFrameDecodesInReferenceDecoders(t *testi
 		t.Logf("%s: scaled-reference qindex-0 P-frame stream bit-exact", name)
 	}
 	check("aomdec", aomdec, "--rawvideo", "-o", filepath.Join(dir, "aomdec.yuv"))
-	if dav1d, err := exec.LookPath("dav1d"); err == nil {
+	if dav1d := decoders.dav1d; dav1d != "" {
 		check("dav1d", dav1d, "--muxer", "yuv", "-o", filepath.Join(dir, "dav1d.yuv"), "-i")
 	}
 }
@@ -265,10 +259,8 @@ func append420(dst []byte, f encoder.SourceFrame420) []byte {
 }
 
 func TestEncodedMonochromeKeyframeDecodesInReferenceDecoders(t *testing.T) {
-	aomdec, err := exec.LookPath("aomdec")
-	if err != nil {
-		t.Skip("aomdec not on PATH")
-	}
+	decoders := referenceDecodersForTest(t)
+	aomdec := decoders.aomdec
 	const w, h = 128, 96
 	rng := rand.New(rand.NewSource(0x51ed))
 	src := encoder.SourceFrameMono{
@@ -322,16 +314,14 @@ func TestEncodedMonochromeKeyframeDecodesInReferenceDecoders(t *testing.T) {
 	}
 
 	check("aomdec", aomdec, "--rawvideo", "-o", filepath.Join(dir, "aomdec.yuv"))
-	if dav1d, err := exec.LookPath("dav1d"); err == nil {
+	if dav1d := decoders.dav1d; dav1d != "" {
 		check("dav1d", dav1d, "--muxer", "yuv", "-o", filepath.Join(dir, "dav1d.yuv"), "-i")
 	}
 }
 
 func TestEncodedMonochromeLossyKeyframeDecodesInReferenceDecoders(t *testing.T) {
-	aomdec, err := exec.LookPath("aomdec")
-	if err != nil {
-		t.Skip("aomdec not on PATH")
-	}
+	decoders := referenceDecodersForTest(t)
+	aomdec := decoders.aomdec
 	const w, h = 160, 96
 	rng := rand.New(rand.NewSource(0x1a55))
 	src := encoder.SourceFrameMono{
@@ -385,16 +375,14 @@ func TestEncodedMonochromeLossyKeyframeDecodesInReferenceDecoders(t *testing.T) 
 	}
 
 	check("aomdec", aomdec, "--rawvideo", "-o", filepath.Join(dir, "aomdec.yuv"))
-	if dav1d, err := exec.LookPath("dav1d"); err == nil {
+	if dav1d := decoders.dav1d; dav1d != "" {
 		check("dav1d", dav1d, "--muxer", "yuv", "-o", filepath.Join(dir, "dav1d.yuv"), "-i")
 	}
 }
 
 func TestEncodedMonochromePFrameDecodesInReferenceDecoders(t *testing.T) {
-	aomdec, err := exec.LookPath("aomdec")
-	if err != nil {
-		t.Skip("aomdec not on PATH")
-	}
+	decoders := referenceDecodersForTest(t)
+	aomdec := decoders.aomdec
 	const w, h = 128, 96
 	src1 := encoder.SourceFrameMono{
 		Y:       make([]byte, w*h),
@@ -494,7 +482,7 @@ func TestEncodedMonochromePFrameDecodesInReferenceDecoders(t *testing.T) {
 			}
 
 			check("aomdec", aomdec, "--rawvideo", "-o", filepath.Join(dir, "aomdec.yuv"))
-			if dav1d, err := exec.LookPath("dav1d"); err == nil {
+			if dav1d := decoders.dav1d; dav1d != "" {
 				check("dav1d", dav1d, "--muxer", "yuv", "-o", filepath.Join(dir, "dav1d.yuv"), "-i")
 			}
 		})

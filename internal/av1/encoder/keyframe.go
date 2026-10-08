@@ -254,10 +254,10 @@ func validateSourceFrameMono(src SourceFrameMono) error {
 	if src.YStride < src.Width {
 		return fmt.Errorf("encoder: monochrome Y stride %d is smaller than width %d", src.YStride, src.Width)
 	}
-	if src.Height > 0 && src.YStride > (int(^uint(0)>>1)-(src.Width-1))/(src.Height-1) {
+	need, ok := checkedPlaneLength(src.Width, src.Height, src.YStride)
+	if !ok {
 		return fmt.Errorf("encoder: monochrome Y plane dimensions overflow int")
 	}
-	need := (src.Height-1)*src.YStride + src.Width
 	if len(src.Y) < need {
 		return fmt.Errorf("encoder: monochrome Y plane is too short: got %d bytes, need %d", len(src.Y), need)
 	}
@@ -274,10 +274,10 @@ func validateSourceFrameMono16(src SourceFrameMono16) error {
 	if src.YStride < src.Width {
 		return fmt.Errorf("encoder: monochrome Y stride %d is smaller than width %d", src.YStride, src.Width)
 	}
-	if src.Height > 0 && src.YStride > (int(^uint(0)>>1)-(src.Width-1))/(src.Height-1) {
+	need, ok := checkedPlaneLength(src.Width, src.Height, src.YStride)
+	if !ok {
 		return fmt.Errorf("encoder: monochrome Y plane dimensions overflow int")
 	}
-	need := (src.Height-1)*src.YStride + src.Width
 	if len(src.Y) < need {
 		return fmt.Errorf("encoder: monochrome Y plane is too short: got %d samples, need %d", len(src.Y), need)
 	}
@@ -326,15 +326,14 @@ func validateSourceFrameColor16WithGeometry(src SourceFrame42016, color parser.C
 	if src.ChromaStride < chromaWidth {
 		return fmt.Errorf("encoder: %s chroma stride %d is smaller than chroma width %d", label, src.ChromaStride, chromaWidth)
 	}
-	maxInt := int(^uint(0) >> 1)
-	if src.Height > 0 && src.YStride > (maxInt-(src.Width-1))/(src.Height-1) {
+	yNeed, ok := checkedPlaneLength(src.Width, src.Height, src.YStride)
+	if !ok {
 		return fmt.Errorf("encoder: %s Y plane dimensions overflow int", label)
 	}
-	if chromaHeight > 0 && src.ChromaStride > (maxInt-(chromaWidth-1))/(chromaHeight-1) {
+	chromaNeed, ok := checkedPlaneLength(chromaWidth, chromaHeight, src.ChromaStride)
+	if !ok {
 		return fmt.Errorf("encoder: %s chroma plane dimensions overflow int", label)
 	}
-	yNeed := (src.Height-1)*src.YStride + src.Width
-	chromaNeed := (chromaHeight-1)*src.ChromaStride + chromaWidth
 	if len(src.Y) < yNeed {
 		return fmt.Errorf("encoder: %s Y plane is too short: got %d samples, need %d", label, len(src.Y), yNeed)
 	}
@@ -352,6 +351,23 @@ func validateSourceFrameColor16WithGeometry(src SourceFrame42016, color parser.C
 		return err
 	}
 	return validateSourcePlaneColor16Samples(label, "V", src.V, src.ChromaStride, chromaWidth, chromaHeight, maxSample, src.BitDepth)
+}
+
+// checkedPlaneLength returns the number of samples needed to address every
+// visible row of a plane. The last row contributes width samples, so the
+// largest valid stride is bounded by (maxInt-width)/(height-1).
+func checkedPlaneLength(width, height, stride int) (int, bool) {
+	if width <= 0 || height <= 0 || stride < width {
+		return 0, false
+	}
+	if height == 1 {
+		return width, true
+	}
+	maxInt := int(^uint(0) >> 1)
+	if stride > (maxInt-width)/(height-1) {
+		return 0, false
+	}
+	return (height-1)*stride + width, true
 }
 
 func validateSourcePlane42016Samples(name string, samples []uint16, stride, width, height int, maxSample uint16, bitDepth uint8) error {
