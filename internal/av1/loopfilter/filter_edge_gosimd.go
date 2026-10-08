@@ -44,17 +44,44 @@ func lfSpec(k lfKind) (before, taps, t0, t1 int) {
 // positions (a multiple of eight). Positions are contiguous samples of type S
 // and step is the byte distance between adjacent taps.
 func lfCore[S lfSample](k lfKind, pix []byte, q0Base int, step int, length int, scale int, params filter4Params) {
-	lfFilter4Core[S](pix, q0Base, step, length, scale, params)
+	switch k {
+	case lfKind4:
+		lfFilter4Core[S](pix, q0Base, step, length, scale, params)
+	case lfKind6:
+		lfFilter6Core[S](pix, q0Base, step, length, scale, params)
+	case lfKind8:
+		lfFilter8Core[S](pix, q0Base, step, length, scale, params)
+	default:
+		lfFilter14Core[S](pix, q0Base, step, length, scale, params)
+	}
 }
 
 // lfPure is the scalar reference of family k for the sub-group tail and for
 // layouts the SIMD path does not cover. S selects the 8-bit or 10/12-bit form.
 func lfPure[S lfSample](k lfKind, pix []byte, q0Base int, step int, outer int, length int, scale int, params filter4Params) {
 	if lfSize[S]() == 1 {
-		filter4EdgePureGo(pix, q0Base, step, outer, length, params)
+		switch k {
+		case lfKind4:
+			filter4EdgePureGo(pix, q0Base, step, outer, length, params)
+		case lfKind6:
+			filter6EdgePureGo(pix, q0Base, step, outer, length, scale, params)
+		case lfKind8:
+			filter8EdgePureGo(pix, q0Base, step, outer, length, scale, params)
+		default:
+			filter14EdgePureGo(pix, q0Base, step, outer, length, scale, params)
+		}
 		return
 	}
-	filter4Edge16PureGo(pix, q0Base, step, outer, length, params)
+	switch k {
+	case lfKind4:
+		filter4Edge16PureGo(pix, q0Base, step, outer, length, params)
+	case lfKind6:
+		filter6Edge16PureGo(pix, q0Base, step, outer, length, scale, params)
+	case lfKind8:
+		filter8Edge16PureGo(pix, q0Base, step, outer, length, scale, params)
+	default:
+		filter14Edge16PureGo(pix, q0Base, step, outer, length, scale, params)
+	}
 }
 
 // lfEdge runs one deblocking edge of family k through the Go-native SIMD kernel.

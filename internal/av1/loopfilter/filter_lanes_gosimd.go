@@ -7,6 +7,7 @@
 package loopfilter
 
 import (
+	"encoding/binary"
 	"simd/archsimd"
 	"unsafe"
 )
@@ -26,12 +27,13 @@ func lfSize[S lfSample]() int {
 // lfLoad loads eight consecutive samples starting at byte offset off as signed
 // 16-bit lanes. Loopfilter samples are at most 4095, so the sign bit stays clear.
 // The 8-bit form reads exactly eight bytes, so it never touches memory past the
-// tap window.
+// tap window. The 16-bit form lives in its own function so that the 8-bit
+// instantiation carries no unsafe pointer conversions.
 func lfLoad[S lfSample](pix []byte, off int) archsimd.Int16x8 {
 	if lfSize[S]() == 1 {
 		return lfLoad8(pix, off)
 	}
-	return archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Pointer(&pix[off])))
+	return lfLoad16(pix, off)
 }
 
 // lfStore writes eight filtered samples back starting at byte offset off. Lane
@@ -41,18 +43,27 @@ func lfStore[S lfSample](pix []byte, off int, v archsimd.Int16x8) {
 		lfStore8(pix, off, v)
 		return
 	}
-	v.StoreArray((*[8]int16)(unsafe.Pointer(&pix[off])))
+	lfStore16(pix, off, v)
 }
 
-// lf16LoadP loads eight contiguous uint16 samples as signed 16-bit lanes.
-// Loopfilter samples are at most 4095, so the sign bit stays clear.
-func lf16LoadP(p unsafe.Pointer) archsimd.Int16x8 {
-	return archsimd.LoadInt16x8Array((*[8]int16)(p))
+// lfLoad16 loads eight 16-bit samples from pix[off:off+16] as signed lanes. The
+// bytes are staged through a stack array as two 64-bit words, so the kernels
+// carry no unsafe pointer conversions (checkptr would make the vertical scratch
+// escape).
+func lfLoad16(pix []byte, off int) archsimd.Int16x8 {
+	var tmp [16]uint8
+	binary.LittleEndian.PutUint64(tmp[:8], binary.LittleEndian.Uint64(pix[off:off+8]))
+	binary.LittleEndian.PutUint64(tmp[8:], binary.LittleEndian.Uint64(pix[off+8:off+16]))
+	return archsimd.LoadUint8x16Array(&tmp).ReshapeToUint16s().BitsToInt16()
 }
 
-// lf16StoreP writes eight filtered 16-bit samples back to a contiguous row.
-func lf16StoreP(p unsafe.Pointer, v archsimd.Int16x8) {
-	v.StoreArray((*[8]int16)(p))
+// lfStore16 writes eight 16-bit lanes to pix[off:off+16] as contiguous samples,
+// staged through a stack array like lfLoad16.
+func lfStore16(pix []byte, off int, v archsimd.Int16x8) {
+	var tmp [16]uint8
+	v.ToBits().ReshapeToUint8s().StoreArray(&tmp)
+	binary.LittleEndian.PutUint64(pix[off:off+8], binary.LittleEndian.Uint64(tmp[:8]))
+	binary.LittleEndian.PutUint64(pix[off+8:off+16], binary.LittleEndian.Uint64(tmp[8:]))
 }
 
 // lfAbsDiffInt16x8 computes signed absolute difference in each 16-bit lane,

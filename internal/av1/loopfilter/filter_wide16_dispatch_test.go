@@ -115,8 +115,8 @@ type wide16Kernel struct {
 func wide16Kernels() []wide16Kernel {
 	return []wide16Kernel{
 		{"filter6", filter6Edge16PureGo, filter6Edge16PureGo},
-		{"filter8", filter8Edge16PureGo, filter8Edge16NEON},
-		{"filter14", filter14Edge16PureGo, filter14Edge16PureGoFallback},
+		{"filter8", filter8Edge16PureGo, filter8Edge16PureGo},
+		{"filter14", filter14Edge16PureGo, filter14Edge16PureGo},
 	}
 }
 
@@ -168,11 +168,11 @@ func runWide16Vertical(t *testing.T, k wide16Kernel, seed int64, length int, c w
 	}
 }
 
-// TestWide16FilterNEONMatchesPureGo drives the 10/12-bit wide NEON kernels
+// TestWide16FilterDispatchMatchesPureGo drives the 10/12-bit wide dispatch kernels
 // (executed directly) against the pure-Go reference across all widths, levels,
 // thresholds, and both 10- and 12-bit sample ranges, for horizontal and
 // vertical edges. Every output byte must match.
-func TestWide16FilterNEONMatchesPureGo(t *testing.T) {
+func TestWide16FilterDispatchMatchesPureGo(t *testing.T) {
 	lengths := []int{1, 3, 7, 8, 9, 15, 16, 17, 24, 31, 32, 48, 64}
 	for _, k := range wide16Kernels() {
 		var seed int64 = 100000
@@ -188,9 +188,9 @@ func TestWide16FilterNEONMatchesPureGo(t *testing.T) {
 	}
 }
 
-// TestWide16FilterNEONZeroAlloc guards that the accelerated 10-bit paths
+// TestWide16FilterDispatchZeroAlloc guards that the accelerated 10-bit paths
 // (horizontal direct and vertical repack) allocate nothing per call.
-func TestWide16FilterNEONZeroAlloc(t *testing.T) {
+func TestWide16FilterDispatchZeroAlloc(t *testing.T) {
 	const strideBytes = 256
 	const rows = 96
 	base := make([]byte, strideBytes*rows)

@@ -23,11 +23,11 @@ func TestFilterSIMDDispatchBound(t *testing.T) {
 	}{
 		{"filter4EdgeImpl", filter4EdgeImpl, filter4EdgeSIMD},
 		{"filter4Edge16Impl", filter4Edge16Impl, filter4Edge16SIMD},
-		{"filter6EdgeImpl", filter6EdgeImpl, filter6EdgeNEON},
+		{"filter6EdgeImpl", filter6EdgeImpl, filter6EdgeSIMD},
 		{"filter6Edge16Impl", filter6Edge16Impl, filter6Edge16SIMD},
-		{"filter8EdgeImpl", filter8EdgeImpl, filter8EdgeNEON},
-		{"filter8Edge16Impl", filter8Edge16Impl, filter8Edge16NEON},
-		{"filter14EdgeImpl", filter14EdgeImpl, filter14EdgeNEON},
+		{"filter8EdgeImpl", filter8EdgeImpl, filter8EdgeSIMD},
+		{"filter8Edge16Impl", filter8Edge16Impl, filter8Edge16SIMD},
+		{"filter14EdgeImpl", filter14EdgeImpl, filter14EdgeSIMD},
 		{"filter14Edge16Impl", filter14Edge16Impl, filter14Edge16SIMD},
 	}
 	for _, c := range checks {
@@ -82,9 +82,9 @@ func TestFilter14Edge16SIMDMatchesPureGo(t *testing.T) {
 		for _, length := range lengths {
 			for rep := 0; rep < 3; rep++ {
 				runFilterWide16SIMD(t, "filter14", false, seed, length, c,
-					filter14Edge16PureGo, filter14Edge16SIMD, filter14Edge16PureGoFallback)
+					filter14Edge16PureGo, filter14Edge16SIMD, filter14Edge16PureGo)
 				runFilterWide16SIMD(t, "filter14", true, seed+700000, length, c,
-					filter14Edge16PureGo, filter14Edge16SIMD, filter14Edge16PureGoFallback)
+					filter14Edge16PureGo, filter14Edge16SIMD, filter14Edge16PureGo)
 				seed++
 			}
 		}

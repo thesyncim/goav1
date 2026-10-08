@@ -30,3 +30,8 @@ func lfLoad8(pix []byte, off int) archsimd.Int16x8 {
 	binary.LittleEndian.PutUint64(tmp[:8], binary.LittleEndian.Uint64(pix[off:off+8]))
 	return archsimd.LoadUint8x16Array(&tmp).ExtendLo8ToUint16().BitsToInt16()
 }
+
+// lfAny reports whether any lane of the mask is set.
+func lfAny(m archsimd.Mask16x8) bool {
+	return m.ToInt16x8().ToBits().ReduceSum() != 0
+}

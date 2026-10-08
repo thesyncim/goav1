@@ -143,7 +143,7 @@ func TestFilter4DispatchVerticalMatchesPureGo(t *testing.T) {
 // TestFilter4DispatchMatchesPureGoForcedPureGo confirms the differential holds
 // when the dispatcher is forced onto the pure-Go branch (CPU override), so the
 // test still has meaning on a SIMD host where the slot would otherwise always
-// pick the asm. It re-binds the slot for the duration of the check.
+// pick the SIMD kernel. It re-binds the slot for the duration of the check.
 func TestFilter4DispatchMatchesPureGoForcedPureGo(t *testing.T) {
 	restore := cpu.OverrideForTest(cpu.Features{})
 	defer restore()

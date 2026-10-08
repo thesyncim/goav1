@@ -102,7 +102,7 @@ func runWideKernel(t *testing.T, k wideKernel, seed int64, length int, params fi
 
 // runWideKernelVertical mirrors runWideKernel for a vertical edge: the taps are
 // one byte apart (step == 1) and successive positions advance by the row stride
-// (outer == stride). This exercises the transposing ld4/ld2 vertical NEON path.
+// (outer == stride). This exercises the gather/scatter vertical path.
 func runWideKernelVertical(t *testing.T, k wideKernel, seed int64, length int, params filter4Params) {
 	t.Helper()
 	const stride = 96
@@ -130,7 +130,7 @@ func runWideKernelVertical(t *testing.T, k wideKernel, seed int64, length int, p
 
 // TestWideFilterDispatchMatchesPureGo is the bit-exactness guard for the
 // dispatched six/eight/fourteen-sample kernels. It drives the resolved dispatch
-// slot (NEON asm on arm64) against the pure-Go reference over a spread of edge
+// slot (Go SIMD where enabled) against the pure-Go reference over a spread of edge
 // lengths (including non-multiples of eight to exercise the scalar tail) and
 // threshold configurations. Every output byte must match.
 func TestWideFilterDispatchMatchesPureGo(t *testing.T) {
@@ -149,7 +149,7 @@ func TestWideFilterDispatchMatchesPureGo(t *testing.T) {
 }
 
 // TestWideFilterDispatchVerticalMatchesPureGo is the bit-exactness guard for the
-// vertical-edge six/eight/fourteen-sample kernels (transposing ld4/ld2 NEON on
+// vertical-edge six/eight/fourteen-sample kernels (gather/scatter SIMD on
 // arm64) against the pure-Go reference over the same length and threshold
 // spread. Every output byte must match.
 func TestWideFilterDispatchVerticalMatchesPureGo(t *testing.T) {
@@ -169,7 +169,7 @@ func TestWideFilterDispatchVerticalMatchesPureGo(t *testing.T) {
 
 // TestWideFilterDispatchForcedPureGo confirms the differential holds when the
 // dispatcher is forced onto the pure-Go branch, so the test still has meaning
-// on a NEON host where the slot would otherwise always pick the asm.
+// on a SIMD host where the slot would otherwise always pick the kernel.
 func TestWideFilterDispatchForcedPureGo(t *testing.T) {
 	restore := cpu.OverrideForTest(cpu.Features{})
 	defer restore()
