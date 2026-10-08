@@ -8,10 +8,12 @@ package dsp
 
 import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 
-// init keeps MinMaxAbsDiff8x8 on the measured NEON implementation in SIMD builds.
+// init binds the Go-native SIMD MinMaxAbsDiff8x8 on arm64 SIMD builds. NEON is
+// mandatory on every arm64 target Go supports; the pure-Go reference is the
+// fallback.
 func init() {
 	if cpu.Detected.NEON {
-		minMaxAbsDiff8x8Impl = minMaxAbsDiff8x8NEON
+		minMaxAbsDiff8x8Impl = minMaxAbsDiff8x8SIMD
 		return
 	}
 	minMaxAbsDiff8x8Impl = minMaxAbsDiff8x8PureGo

@@ -19,7 +19,7 @@ func TestSIMDDispatchKeepsMeasuredNEONKernels(t *testing.T) {
 	}{
 		{"blend", blendA64MaskImpl, blendA64MaskSIMD},
 		{"raw add", addRawTransformPlaneBlockImpl, addRawTransformPlaneBlockNEON},
-		{"minmax", minMaxAbsDiff8x8Impl, minMaxAbsDiff8x8NEON},
+		{"minmax", minMaxAbsDiff8x8Impl, minMaxAbsDiff8x8SIMD},
 	}
 	for _, tc := range cases {
 		if got, want := reflect.ValueOf(tc.got).Pointer(), reflect.ValueOf(tc.want).Pointer(); got != want {
