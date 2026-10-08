@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build amd64 && !purego
+//go:build amd64 && !purego && !goexperiment.simd
 
 package prediction
 
@@ -28,7 +28,6 @@ func init() {
 		dirRowInterp8Impl = dirRowInterp8AVX2
 		dirAboveRun8Impl = dirAboveRun8AVX2
 		dirLeftCol8Impl = dirLeftCol8AVX2
-		predictFilterIntra8Impl = predictFilterIntraBlockDirect8AVX2
 		return
 	}
 	predictPaethImpl = predictPaethPureGo

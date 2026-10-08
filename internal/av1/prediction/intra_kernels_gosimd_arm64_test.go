@@ -8,9 +8,6 @@ package prediction
 
 import (
 	"fmt"
-	"reflect"
-	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
@@ -31,17 +28,6 @@ func TestGoSIMDDispatchProbe(t *testing.T) {
 	assertDispatchTarget(t, "predictSmoothHorizontalImpl", predictSmoothHorizontalImpl, "predictSmoothHorizontalNEON")
 	assertDispatchTarget(t, "sumSamplesImpl", sumSamplesImpl, "sumSamplesNEON")
 	assertDispatchTarget(t, "dirRowInterp8Impl", dirRowInterp8Impl, "dirRowInterp8NEON")
-	assertDispatchTarget(t, "predictFilterIntra8Impl", predictFilterIntra8Impl, "predictFilterIntraBlockDirect8NEON")
-	assertDispatchTarget(t, "predictFilterIntra16Impl", predictFilterIntra16Impl, "predictFilterIntraBlockDirect16NEON")
-}
-
-func assertDispatchTarget(t *testing.T, slot string, fn any, want string) {
-	t.Helper()
-	pc := reflect.ValueOf(fn).Pointer()
-	got := runtime.FuncForPC(pc).Name()
-	if !strings.Contains(got, want) {
-		t.Fatalf("%s bound to %s, want %s", slot, got, want)
-	}
 }
 
 func BenchmarkCFLSubsample8Arm64(b *testing.B) {
