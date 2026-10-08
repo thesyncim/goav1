@@ -47,7 +47,7 @@ samples.
 
 ## Matched API sample
 
-One matched run covered the full corpus: 18 clips of 48 frames each, 864 visible
+A matched run at Go checkpoint `61731bb4` covered the full corpus: 18 clips of 48 frames each, 864 visible
 frames total. Go, libaom, and dav1d each matched every clip's MD5 sidecar before
 timing. Each path used one thread, one warmup, and nine whole-clip samples; the
 reported aggregate is the sum of per-clip medians. File reads and MD5 checks
@@ -55,24 +55,26 @@ were outside the timed interval.
 
 | Decoder path | Aggregate median sum |
 | --- | ---: |
-| Go cold `NewDecoderFromIVF` | 1758.601 ms |
-| Go cold `NewDecoder(payloads)` | 1754.702 ms |
-| Go warm `Reset` and decode | 1709.010 ms |
-| libaom 3.14.0 C API | 851.404 ms |
-| dav1d 1.5.3 C API | 542.140 ms |
+| Go cold `NewDecoderFromIVF` | 1681.637 ms |
+| Go cold `NewDecoder(payloads)` | 1683.201 ms |
+| Go warm `Reset` and decode | 1630.585 ms |
+| libaom 3.14.0 C API | 834.506 ms |
+| dav1d 1.5.3 C API | 528.357 ms |
 
 The cold Go payload path extracts and copies IVF payloads before timing, then
-times decoder construction, all `DecodeNext` calls, and `Close`; this was 0.22%
-below the cold-IVF total, where constructor parsing and payload copies are
+times decoder construction, all `DecodeNext` calls, and `Close`; this was 0.09%
+above the cold-IVF total, where constructor parsing and payload copies are
 timed. The C helper times a fresh API decoder and packet parsing over preloaded
 input bytes while viewing packet payloads without copying. Its cold boundary is
 therefore similar but not identical to either Go path. These Go/C ratios were
-2.07×/3.24× for cold IVF and 2.06×/3.24× for cold payloads against libaom and
+2.02×/3.18× for cold IVF and 2.02×/3.19× for cold payloads against libaom and
 dav1d respectively (above 1 means Go took longer). The warm Go path has no
 matching warm-reset C measurement. The comparison excludes CLI startup and
 does not isolate language or SIMD speed; both C libraries use architecture-
 specific optimized code. The corpus remains exploratory because it has no
-source manifest or provenance.
+source manifest or provenance. The dav1d sample uses an optimized local static
+build from the pinned reference commit; see the [build and measurement
+notes](../../docs/go127-simd-performance.md).
 
 The helper verifies every C decode's visible-frame stream MD5 against its
 existing sidecar before it times any clip. Full-corpus mode also requires 18
