@@ -350,14 +350,7 @@ func forwardDCT8x8SIMDGuarded(coeff []int32, coeffStride int, residual []int16, 
 // on the rows (forwardBlock8x8ADSTDCTPureGo).
 func forwardBlock8x8ADSTDCTSIMD(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
 	_ = scratch[63]
-	var buf, bufT [64]int32
-	for g := 0; g < 8; g += fwdLanes {
-		fwdColADST8(buf[:], g, residual, residualStride)
-	}
-	fwdTranspose(bufT[:], buf[:], 8)
-	for h := 0; h < 8; h += fwdLanes {
-		fwdRowDCT8(coeff, coeffStride, bufT[:], h)
-	}
+	fwd8ADSTDCTCore(coeff, coeffStride, residual, residualStride, scratch)
 }
 
 // forwardBlock8x8DCTADSTSIMD is the DCT_ADST kernel: DCT on the columns, ADST
