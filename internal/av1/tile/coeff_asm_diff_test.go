@@ -1,19 +1,15 @@
-// M-D3 differential harness (see coeff_asm_arm64_spec.go).
+// Coefficient-spine differential harness.
 //
-// It drives randomized and adversarial TXB decode streams through every
-// independent implementation of the coefficient spine and asserts the full
-// decode record — TXBDecodeResult, coeffs, dirty/level-dirty lists, the
-// range-decoder state snapshot, and the post-TXB adapted CDF images — is
-// identical between them. Today that cross-checks the three pure-Go bodies
-// (tracked2D, WithGeo trusted scan-hot, WithGeo untrusted); the D3-b/D3-c
-// arm64 kernels join the same lockstep as further variants so they can be
-// diffed bit-for-bit. It extends (does not duplicate) the per-read entropy
-// kernel differential in internal/av1/entropy/reader_arch_diff_test.go: that
-// test pins single symbol reads; this one pins whole-TXB sequences with
-// chained CDF adaptation, refill boundaries, and past-end ecLotsBits
-// accounting. GOAV1_TXB_DIFF_TXBS scales the stream volume of BOTH lockstep
-// tests below for soak runs (the value is streams per (size, class, update)
-// combination; each stream decodes up to 48 back-to-back TXBs per variant).
+// It drives randomized and adversarial TXB decode streams through the
+// independent implementations of the coefficient spine (tracked2D, WithGeo
+// trusted scan-hot, WithGeo untrusted) and asserts the full decode record —
+// TXBDecodeResult, coeffs, dirty/level-dirty lists, the range-decoder state
+// snapshot, and the post-TXB adapted CDF images — is identical between them.
+// It pins whole-TXB sequences with chained CDF adaptation, refill boundaries,
+// and past-end ecLotsBits accounting. GOAV1_TXB_DIFF_TXBS scales the stream
+// volume of the lockstep tests below for soak runs (the value is streams per
+// (size, class, update) combination; each stream decodes up to 48
+// back-to-back TXBs per variant).
 package tile
 
 import (
@@ -32,12 +28,6 @@ const (
 	txbVariantTracked txbDiffVariant = iota
 	txbVariantGeoTrusted
 	txbVariantGeoUntrusted
-	// The *Go variants force the pure-Go loops even when the arm64 kernels
-	// (D3-b base-levels and D3-c sign/golomb) are built in — the same
-	// mechanism as the GOAV1_DISABLE_COEFF_ASM kill switch — so the lockstep
-	// proves kernels-on and kernels-off byte-identical.
-	txbVariantTrackedGo
-	txbVariantGeoTrustedGo
 )
 
 func (v txbDiffVariant) String() string {
@@ -48,10 +38,6 @@ func (v txbDiffVariant) String() string {
 		return "geoTrusted"
 	case txbVariantGeoUntrusted:
 		return "geoUntrusted"
-	case txbVariantTrackedGo:
-		return "tracked2D-purego"
-	case txbVariantGeoTrustedGo:
-		return "geoTrusted-purego"
 	default:
 		return "unknown"
 	}
@@ -101,13 +87,6 @@ func newTXBDiffState(t *testing.T, payload []byte, size TransformSize, class tra
 // zero the previous nonzero coeffs from the dirty list and reset its length
 // (the level-dirty list is consumed by the decode itself).
 func (s *txbDiffState) decodeOne(v txbDiffVariant, class transform.Class, dcSignCtx uint8, eobCtx uint8) (TXBDecodeResult, error) {
-	if v == txbVariantTrackedGo || v == txbVariantGeoTrustedGo {
-		savedBase := coeffBaseLevelsKernel
-		coeffBaseLevelsKernel = false
-		defer func() {
-			coeffBaseLevelsKernel = savedBase
-		}()
-	}
 	for i := 0; i < int(s.dirtyLen); i++ {
 		pos := int(s.dirty[i]) & coeffDirtyPosMask
 		s.coeffs[pos] = 0
@@ -138,7 +117,7 @@ func (s *txbDiffState) decodeOne(v txbDiffVariant, class transform.Class, dcSign
 	}
 	// The production tracked path only serves Class2D with a trusted scan;
 	// everything else goes through the general body.
-	if v == txbVariantTracked || v == txbVariantTrackedGo {
+	if v == txbVariantTracked {
 		return s.state.readCoefficientsTXBTracked2DWithGeo(&s.cdfs, req, s.coeffs, s.scan, s.levels, geo)
 	}
 	return s.state.readCoefficientsTXBWithGeo(&s.cdfs, req, s.coeffs, s.scan, s.levels, geo)
@@ -413,7 +392,6 @@ func TestReadCoefficientsTXBVariantsLockstep(t *testing.T) {
 				variants := []txbDiffVariant{txbVariantGeoTrusted, txbVariantGeoUntrusted}
 				if class == transform.Class2D {
 					variants = append([]txbDiffVariant{txbVariantTracked}, variants...)
-					variants = append(variants, txbVariantTrackedGo, txbVariantGeoTrustedGo)
 				}
 				for stream := 0; stream < streams; stream++ {
 					payload := txbDiffPayload(rng, stream+int(size))
@@ -477,7 +455,6 @@ func TestReadCoefficientsTXBSignGolombLockstep(t *testing.T) {
 				variants := []txbDiffVariant{txbVariantGeoTrusted, txbVariantGeoUntrusted}
 				if class == transform.Class2D {
 					variants = append([]txbDiffVariant{txbVariantTracked}, variants...)
-					variants = append(variants, txbVariantTrackedGo, txbVariantGeoTrustedGo)
 				}
 				for stream := 0; stream < streams; stream++ {
 					payload := txbDiffPayload(rng, stream+int(size))
