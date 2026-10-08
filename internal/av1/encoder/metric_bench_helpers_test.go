@@ -38,127 +38,73 @@ func BenchmarkPixelStats8x8Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats8x8PureGo)
 }
 
-
 func BenchmarkPixelStats4x4Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats4x4PureGo)
 }
-
 
 func BenchmarkPixelStats8x4Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats8x4PureGo)
 }
 
-
 func BenchmarkPixelStats4x8Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats4x8PureGo)
 }
-
 
 func BenchmarkPixelStats16x8Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats16x8PureGo)
 }
 
-
 func BenchmarkPixelStats8x16Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats8x16PureGo)
 }
-
 
 func BenchmarkPixelStats16x4Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats16x4PureGo)
 }
 
-
 func BenchmarkPixelStats4x16Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats4x16PureGo)
 }
-
 
 func BenchmarkPixelStats16x16Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats16x16PureGo)
 }
 
-
 func BenchmarkPixelStats32x8Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats32x8PureGo)
 }
-
 
 func BenchmarkPixelStats8x32Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats8x32PureGo)
 }
 
-
 func BenchmarkPixelStats32x16Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats32x16PureGo)
 }
-
 
 func BenchmarkPixelStats16x32Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats16x32PureGo)
 }
 
-
 func BenchmarkPixelStats32x32Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats32x32PureGo)
 }
-
 
 func BenchmarkPixelStats64x16Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats64x16PureGo)
 }
 
-
 func BenchmarkPixelStats16x64Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats16x64PureGo)
 }
-
 
 func BenchmarkPixelStats64x32Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats64x32PureGo)
 }
 
-
 func BenchmarkPixelStats32x64Scalar(b *testing.B) {
 	benchPixelStats(b, pixelStats32x64PureGo)
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 func BenchmarkSATDCoeffs16Scalar(b *testing.B) {
 	benchSATDCoeffs(b, satdCoeffsPureGo, 16)

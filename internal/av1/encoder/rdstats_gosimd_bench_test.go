@@ -51,12 +51,12 @@ func benchBlockErrorDispatch(b *testing.B, n int) {
 	}
 }
 
-func BenchmarkResidualDispatch32x32(b *testing.B) { benchResidualDispatch(b, 32, 32) }
-func BenchmarkResidualDispatch16x16(b *testing.B) { benchResidualDispatch(b, 16, 16) }
-func BenchmarkResidualDispatch8x8(b *testing.B)   { benchResidualDispatch(b, 8, 8) }
-func BenchmarkRDStatsDispatch1024(b *testing.B)   { benchRDStatsDispatch(b, 1024) }
-func BenchmarkRDStatsDispatch256(b *testing.B)    { benchRDStatsDispatch(b, 256) }
-func BenchmarkRDStatsDispatch64(b *testing.B)     { benchRDStatsDispatch(b, 64) }
+func BenchmarkResidualDispatch32x32(b *testing.B)  { benchResidualDispatch(b, 32, 32) }
+func BenchmarkResidualDispatch16x16(b *testing.B)  { benchResidualDispatch(b, 16, 16) }
+func BenchmarkResidualDispatch8x8(b *testing.B)    { benchResidualDispatch(b, 8, 8) }
+func BenchmarkRDStatsDispatch1024(b *testing.B)    { benchRDStatsDispatch(b, 1024) }
+func BenchmarkRDStatsDispatch256(b *testing.B)     { benchRDStatsDispatch(b, 256) }
+func BenchmarkRDStatsDispatch64(b *testing.B)      { benchRDStatsDispatch(b, 64) }
 func BenchmarkBlockErrorDispatch1024(b *testing.B) { benchBlockErrorDispatch(b, 1024) }
 func BenchmarkBlockErrorDispatch256(b *testing.B)  { benchBlockErrorDispatch(b, 256) }
 func BenchmarkBlockErrorDispatch64(b *testing.B)   { benchBlockErrorDispatch(b, 64) }
