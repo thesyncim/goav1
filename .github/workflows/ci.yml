@@ -219,7 +219,7 @@ jobs:
           - shard: 2
             name: scalability catalogue
           - shard: 3
-            name: public remainder
+            name: encoder format reference tests
           - shard: 4
             name: internal and browser controls
           - shard: 5
@@ -228,6 +228,16 @@ jobs:
             name: three-layer SVC playback
           - shard: 7
             name: three-layer SVC and S3 playback
+          - shard: 8
+            name: encoder control reference tests
+          - shard: 9
+            name: encoder non-reference tests
+          - shard: 10
+            name: shared-reference SVC L2 modes
+          - shard: 11
+            name: shared-reference SVC L3 modes
+          - shard: 12
+            name: public remainder
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
