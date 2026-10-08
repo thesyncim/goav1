@@ -1,6 +1,6 @@
-//go:build goexperiment.simd && arm64 && !purego
+//go:build goexperiment.simd && (arm64 || amd64) && !purego
 
-// metric_simd_arm64.go hosts Go-native SIMD (simd/archsimd) implementations of
+// metric_gosimd.go hosts Go-native SIMD (simd/archsimd) implementations of
 // the encoder SATD metric kernels. They preserve the scalar oracle's numeric
 // behavior and AV1 coefficient layout while leaving register allocation and
 // instruction scheduling to the compiler.
@@ -20,10 +20,9 @@ import (
 	"unsafe"
 )
 
-// init binds SATD and Hadamard to Go-native SIMD. Pixel statistics remain on
-// their hand-written NEON implementations.
+// init binds SATD and Hadamard to Go-native SIMD.
+// pixelstats_gosimd.go binds the pixel statistics.
 func init() {
-	bindPixelStatsNEON()
 	satdCoeffsImpl = satdCoeffsSIMD
 	hadamard4x4Impl = hadamard4x4SIMD
 	hadamard8x8Impl = hadamard8x8SIMD
@@ -73,7 +72,7 @@ func satdCoeffsSIMD(coeff []int32, count int) int {
 	// Widen the four int32 lanes to int64 before summing, matching the pure-Go
 	// 64-bit accumulator (no int32-lane overflow for the coefficient ranges used).
 	lo := acc.ExtendLo2ToInt64()
-	hi := acc.HiToLo().ExtendLo2ToInt64()
+	hi := hiInt32(acc).ExtendLo2ToInt64()
 	wide := lo.Add(hi)
 	total := int(wide.GetElem(0)) + int(wide.GetElem(1))
 
@@ -143,24 +142,24 @@ func hadamardButterfly8(v0, v1, v2, v3, v4, v5, v6, v7 archsimd.Int16x8) (o0, o1
 // svt_aom_hadamard_8x8_neon.
 func transpose8x8(v0, v1, v2, v3, v4, v5, v6, v7 archsimd.Int16x8) (r0, r1, r2, r3, r4, r5, r6, r7 archsimd.Int16x8) {
 	// 16-bit interleave (TRN1/TRN2 .8h).
-	t0 := v0.InterleaveEven(v1)
-	t1 := v0.InterleaveOdd(v1)
-	t2 := v2.InterleaveEven(v3)
-	t3 := v2.InterleaveOdd(v3)
-	t4 := v4.InterleaveEven(v5)
-	t5 := v4.InterleaveOdd(v5)
-	t6 := v6.InterleaveEven(v7)
-	t7 := v6.InterleaveOdd(v7)
+	t0 := interleaveEven16(v0, v1)
+	t1 := interleaveOdd16(v0, v1)
+	t2 := interleaveEven16(v2, v3)
+	t3 := interleaveOdd16(v2, v3)
+	t4 := interleaveEven16(v4, v5)
+	t5 := interleaveOdd16(v4, v5)
+	t6 := interleaveEven16(v6, v7)
+	t7 := interleaveOdd16(v6, v7)
 
 	// 32-bit interleave (TRN1/TRN2 .4s).
-	u0 := as32(t0).InterleaveEven(as32(t2))
-	u1 := as32(t0).InterleaveOdd(as32(t2))
-	u2 := as32(t1).InterleaveEven(as32(t3))
-	u3 := as32(t1).InterleaveOdd(as32(t3))
-	u4 := as32(t4).InterleaveEven(as32(t6))
-	u5 := as32(t4).InterleaveOdd(as32(t6))
-	u6 := as32(t5).InterleaveEven(as32(t7))
-	u7 := as32(t5).InterleaveOdd(as32(t7))
+	u0 := interleaveEven32(as32(t0), as32(t2))
+	u1 := interleaveOdd32(as32(t0), as32(t2))
+	u2 := interleaveEven32(as32(t1), as32(t3))
+	u3 := interleaveOdd32(as32(t1), as32(t3))
+	u4 := interleaveEven32(as32(t4), as32(t6))
+	u5 := interleaveOdd32(as32(t4), as32(t6))
+	u6 := interleaveEven32(as32(t5), as32(t7))
+	u7 := interleaveOdd32(as32(t5), as32(t7))
 
 	// 64-bit interleave (ZIP1/ZIP2 .2d).
 	r0 = as16From64(as64(u0).InterleaveLo(as64(u4)))
@@ -178,7 +177,7 @@ func transpose8x8(v0, v1, v2, v3, v4, v5, v6, v7 archsimd.Int16x8) (r0, r1, r2, 
 // coefficients (NEON's sshll/sshll2 pair) at coeff[base:base+8].
 func storeCoeff8(base unsafe.Pointer, row archsimd.Int16x8) {
 	lo := row.ExtendLo4ToInt32()
-	hi := row.HiToLo().ExtendLo4ToInt32()
+	hi := hiInt16(row).ExtendLo4ToInt32()
 	lo.StoreArray((*[4]int32)(base))
 	hi.StoreArray((*[4]int32)(unsafe.Add(base, 4*4)))
 }
@@ -267,10 +266,10 @@ func load4Row(p unsafe.Pointer) archsimd.Int16x8 {
 // the low 4 lanes of four int16 row vectors, matching hadamardCol4. rsh1 is a
 // broadcast -1 used as the arithmetic-shift-right-by-1 amount for VSSHL.
 func hadamardButterfly4(v0, v1, v2, v3, rsh1 archsimd.Int16x8) (o0, o1, o2, o3 archsimd.Int16x8) {
-	b0 := v0.Add(v1).Shift(rsh1)
-	b1 := v0.Sub(v1).Shift(rsh1)
-	b2 := v2.Add(v3).Shift(rsh1)
-	b3 := v2.Sub(v3).Shift(rsh1)
+	b0 := shiftRight16(v0.Add(v1), rsh1)
+	b1 := shiftRight16(v0.Sub(v1), rsh1)
+	b2 := shiftRight16(v2.Add(v3), rsh1)
+	b3 := shiftRight16(v2.Sub(v3), rsh1)
 	o0 = b0.Add(b2)
 	o1 = b1.Add(b3)
 	o2 = b0.Sub(b2)
@@ -281,15 +280,15 @@ func hadamardButterfly4(v0, v1, v2, v3, rsh1 archsimd.Int16x8) (o0, o1, o2, o3 a
 // transpose4x4 transposes the 4x4 int16 matrix held in the low 4 lanes of four
 // row vectors (trn1/trn2 .4h → trn1/trn2 .2s), matching the 4x4 NEON ladder.
 func transpose4x4(v0, v1, v2, v3 archsimd.Int16x8) (r0, r1, r2, r3 archsimd.Int16x8) {
-	t0 := v0.InterleaveEven(v1) // trn1 .4h
-	t1 := v0.InterleaveOdd(v1)  // trn2 .4h
-	t2 := v2.InterleaveEven(v3)
-	t3 := v2.InterleaveOdd(v3)
+	t0 := interleaveEven16(v0, v1) // trn1 .4h
+	t1 := interleaveOdd16(v0, v1)  // trn2 .4h
+	t2 := interleaveEven16(v2, v3)
+	t3 := interleaveOdd16(v2, v3)
 	// trn1/trn2 .2s over the low 2 int32 lanes.
-	r0 = as16From32(as32(t0).InterleaveEven(as32(t2)))
-	r2 = as16From32(as32(t0).InterleaveOdd(as32(t2)))
-	r1 = as16From32(as32(t1).InterleaveEven(as32(t3)))
-	r3 = as16From32(as32(t1).InterleaveOdd(as32(t3)))
+	r0 = as16From32(interleaveEven32(as32(t0), as32(t2)))
+	r2 = as16From32(interleaveOdd32(as32(t0), as32(t2)))
+	r1 = as16From32(interleaveEven32(as32(t1), as32(t3)))
+	r3 = as16From32(interleaveOdd32(as32(t1), as32(t3)))
 	return
 }
 
@@ -371,10 +370,10 @@ func combine4(p0, p1, p2, p3 *[4]int32, rsh archsimd.Int32x4) (o0, o1, o2, o3 ar
 	a1 := archsimd.LoadInt32x4Array(p1)
 	a2 := archsimd.LoadInt32x4Array(p2)
 	a3 := archsimd.LoadInt32x4Array(p3)
-	b0 := a0.Add(a1).Shift(rsh)
-	b1 := a0.Sub(a1).Shift(rsh)
-	b2 := a2.Add(a3).Shift(rsh)
-	b3 := a2.Sub(a3).Shift(rsh)
+	b0 := shiftRight32(a0.Add(a1), rsh)
+	b1 := shiftRight32(a0.Sub(a1), rsh)
+	b2 := shiftRight32(a2.Add(a3), rsh)
+	b3 := shiftRight32(a2.Sub(a3), rsh)
 	return b0.Add(b2), b1.Add(b3), b0.Sub(b2), b1.Sub(b3)
 }
 
@@ -411,10 +410,10 @@ func hadamard32x32CombineSIMD(coeff []int32) {
 		a1 := archsimd.LoadInt32x4Array(p1)
 		a2 := archsimd.LoadInt32x4Array(p2)
 		a3 := archsimd.LoadInt32x4Array(p3)
-		b0 := a0.Add(a1).Shift(rsh2)
-		b1 := a0.Sub(a1).Shift(rsh2)
-		b2 := a2.Add(a3).Shift(rsh2)
-		b3 := a2.Sub(a3).Shift(rsh2)
+		b0 := shiftRight32(a0.Add(a1), rsh2)
+		b1 := shiftRight32(a0.Sub(a1), rsh2)
+		b2 := shiftRight32(a2.Add(a3), rsh2)
+		b3 := shiftRight32(a2.Sub(a3), rsh2)
 		b0.Add(b2).StoreArray(p0)
 		b1.Add(b3).StoreArray(p1)
 		b0.Sub(b2).StoreArray(p2)

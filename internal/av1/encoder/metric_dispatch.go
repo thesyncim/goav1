@@ -1,5 +1,3 @@
-//go:build purego || !arm64 || (goexperiment.simd && arm64 && !purego)
-
 package encoder
 
 func pixelStats8x8(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {

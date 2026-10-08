@@ -1,4 +1,4 @@
-//go:build goexperiment.simd && arm64 && !purego
+//go:build goexperiment.simd && (arm64 || amd64) && !purego
 
 package encoder
 
@@ -11,9 +11,12 @@ import (
 )
 
 // TestMetricSIMDBinding confirms the goexperiment.simd init bound the SATD and
-// Hadamard dispatch vars to the archsimd ports (not the NEON asm or pure-Go),
-// while the pixelStats kernels stay on NEON.
+// Hadamard dispatch vars to the archsimd ports (not pure-Go),
+// and the pixelStats dispatch to the pixelStatsSIMD wrappers.
 func TestMetricSIMDBinding(t *testing.T) {
+	if !gosimdKernelsSupported() {
+		t.Skip("Go SIMD kernels unsupported on this CPU")
+	}
 	cases := []struct {
 		name string
 		fn   any
@@ -32,10 +35,10 @@ func TestMetricSIMDBinding(t *testing.T) {
 			t.Errorf("%s bound to %q, want a %q function", tc.name, name, tc.want)
 		}
 	}
-	// pixelStats stays on NEON (or DOTPROD) under the simd build.
+	// pixelStats binds to the Go SIMD wrappers under the simd build.
 	psName := runtime.FuncForPC(reflect.ValueOf(pixelStats8x8Impl).Pointer()).Name()
-	if !strings.Contains(psName, "NEON") && !strings.Contains(psName, "DotProd") {
-		t.Errorf("pixelStats8x8Impl bound to %q, want NEON/DotProd", psName)
+	if !strings.Contains(psName, "pixelStats8x8SIMD") {
+		t.Errorf("pixelStats8x8Impl bound to %q, want pixelStats8x8SIMD", psName)
 	}
 }
 
