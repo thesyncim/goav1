@@ -537,7 +537,9 @@ func blendCompoundAvgHighBDNEON(dst frame.Plane, src0 []uint16, src1 []uint16, m
 }
 
 // compoundNEONBind wires every compound predictor to its NEON/I8MM/DOTPROD asm
-// implementation. It is invoked from the dispatch init in compound_dispatch_arm64.go.
+// implementation. It is invoked from the dispatch init in compound_dispatch_arm64.go
+// (non-simd) and compound_dispatch_gosimd_arm64.go (simd, which then overrides the
+// 8-bit X pass with the Go-native SIMD kernel).
 func compoundNEONBind() {
 	if cpu.Detected.NEON {
 		blendCompoundAvg8Impl = blendCompoundAvg8NEON
