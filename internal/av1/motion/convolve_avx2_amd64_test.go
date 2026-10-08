@@ -250,13 +250,6 @@ func TestConvolveAVX2ZeroAlloc(t *testing.T) {
 	}
 }
 
-func randPlane(rng *rand.Rand, side, bps int) frame.Plane {
-	p, _ := testPlane(side, side, bps, side*bps)
-	for i := range p.Pix {
-		p.Pix[i] = byte(rng.Intn(256))
-	}
-	return p
-}
 
 func diffPlanes8(t *testing.T, got, want frame.Plane, w, h int, tag string, xk, yk [filterTaps]int16) {
 	t.Helper()

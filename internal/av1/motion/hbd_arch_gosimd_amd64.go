@@ -52,3 +52,17 @@ func hbdWidenU16(u archsimd.Uint16x8) (lo, hi archsimd.Int32x4) {
 	zero := archsimd.BroadcastUint16x8(0)
 	return u.InterleaveLo(zero).ReshapeToUint32s().BitsToInt32(), u.InterleaveHi(zero).ReshapeToUint32s().BitsToInt32()
 }
+
+// narrowU8x8 packs the eight int32 lanes of lo and hi (already clipped to
+// [0, 255]) into the low eight bytes of the result. The narrowing is scalar for
+// the same reason as hbdJoinU16.
+func narrowU8x8(lo, hi archsimd.Int32x4) archsimd.Uint8x16 {
+	var a [8]int32
+	lo.Store(a[:4])
+	hi.Store(a[4:])
+	var b [16]byte
+	for i := range a {
+		b[i] = byte(a[i])
+	}
+	return archsimd.LoadUint8x16(b[:])
+}

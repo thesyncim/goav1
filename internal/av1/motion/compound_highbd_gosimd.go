@@ -23,9 +23,9 @@ func init() {
 	predictInterCompoundRefHighBDToConvBufYResidentImpl = predictInterCompoundRefHighBDToConvBufYResidentGoSIMD
 }
 
-// compoundCopyHighBDGoSIMDCtx is the calling context of the unfiltered HBD
+// compoundCopyGoSIMDCtx is the calling context of the unfiltered HBD
 // compound copy. ref starts at the first sample and out is the CONV_BUF.
-type compoundCopyHighBDGoSIMDCtx struct {
+type compoundCopyGoSIMDCtx struct {
 	out         []uint16
 	ref         []byte
 	refStr      int
@@ -34,10 +34,10 @@ type compoundCopyHighBDGoSIMDCtx struct {
 	roundOffset int32
 }
 
-// compoundFilterHighBDGoSIMDCtx is the calling context of the one-dimensional
+// compoundFilterGoSIMDCtx is the calling context of the one-dimensional
 // HBD compound kernels. ref starts at the first sample of the trimmed tap span
 // and kernel holds the taps zero-padded to filterTaps; taps counts the span.
-type compoundFilterHighBDGoSIMDCtx struct {
+type compoundFilterGoSIMDCtx struct {
 	out         []uint16
 	ref         []byte
 	kernel      [filterTaps]int16
@@ -49,10 +49,10 @@ type compoundFilterHighBDGoSIMDCtx struct {
 	taps        int
 }
 
-// compound2DHighBDGoSIMDCtx is the calling context of the separable 2D HBD
+// compound2DGoSIMDCtx is the calling context of the separable 2D HBD
 // compound kernel. ref starts at the first sample of the trimmed X span and the
 // kernels hold their trimmed taps zero-padded to filterTaps.
-type compound2DHighBDGoSIMDCtx struct {
+type compound2DGoSIMDCtx struct {
 	out    []uint16
 	ref    []byte
 	kernel [filterTaps]int16
@@ -69,9 +69,9 @@ type compound2DHighBDGoSIMDCtx struct {
 	tapsY  int
 }
 
-// compoundBlendHighBDGoSIMDCtx is the calling context of the HBD distance
+// compoundBlendGoSIMDCtx is the calling context of the HBD distance
 // weighted blend.
-type compoundBlendHighBDGoSIMDCtx struct {
+type compoundBlendGoSIMDCtx struct {
 	dst    []byte // first destination sample (2 bytes/sample)
 	src0   []uint16
 	src1   []uint16
@@ -90,7 +90,7 @@ func predictInterCompoundRefHighBDToConvBufCopyResidentGoSIMD(out []uint16, ref 
 		predictInterCompoundRefHighBDToConvBufCopyResidentPureGo(out, ref, refX, refY, width, height, round0, roundOffset)
 		return
 	}
-	ctx := compoundCopyHighBDGoSIMDCtx{
+	ctx := compoundCopyGoSIMDCtx{
 		out:         out,
 		ref:         ref.Pix[refY*ref.Stride+refX*2:],
 		refStr:      ref.Stride,
@@ -108,7 +108,7 @@ func predictInterCompoundRefHighBDToConvBufXResidentGoSIMD(out []uint16, ref fra
 		return
 	}
 	lo, n := hbdTapSpan(&kernel)
-	ctx := compoundFilterHighBDGoSIMDCtx{
+	ctx := compoundFilterGoSIMDCtx{
 		out:         out,
 		ref:         ref.Pix[refY*ref.Stride+(refX-fo+lo)*2:],
 		kernel:      hbdTrimTaps(&kernel, lo, n),
@@ -129,7 +129,7 @@ func predictInterCompoundRefHighBDToConvBufYResidentGoSIMD(out []uint16, ref fra
 		return
 	}
 	lo, n := hbdTapSpan(&kernel)
-	ctx := compoundFilterHighBDGoSIMDCtx{
+	ctx := compoundFilterGoSIMDCtx{
 		out:         out,
 		ref:         ref.Pix[(refY-fo+lo)*ref.Stride+refX*2:],
 		kernel:      hbdTrimTaps(&kernel, lo, n),
@@ -154,7 +154,7 @@ func predictInterCompoundRefHighBDToConvBuf2DResidentGoSIMD(out []uint16, ref fr
 	}
 	loX, nX := hbdTapSpan(&xKernel)
 	loY, nY := hbdTapSpan(&yKernel)
-	ctx := compound2DHighBDGoSIMDCtx{
+	ctx := compound2DGoSIMDCtx{
 		out:    out,
 		ref:    ref.Pix[(refY-foY+loY)*ref.Stride+(refX-foX+loX)*2:],
 		kernel: hbdTrimTaps(&yKernel, loY, nY),
@@ -206,7 +206,7 @@ func blendCompoundAvgHighBDGoSIMD(dst frame.Plane, src0 []uint16, src1 []uint16,
 		blendCompoundAvgHighBD(dst, src0, src1, max, dstX, dstY, width, height, fwdOffset, bckOffset, roundOffset, roundBits)
 		return
 	}
-	ctx := compoundBlendHighBDGoSIMDCtx{
+	ctx := compoundBlendGoSIMDCtx{
 		dst:    dst.Pix[dstY*dst.Stride+dstX*2:],
 		src0:   src0,
 		src1:   src1,

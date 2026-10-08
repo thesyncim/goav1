@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build amd64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package motion
 
@@ -34,7 +34,7 @@ func compoundRoundParams8() (round0, offsetBits, roundOffset, roundBits int) {
 	return
 }
 
-func TestBlendCompoundAvg8AVX2MatchesPureGo(t *testing.T) {
+func TestBlendCompoundAvg8GoSIMDSweepMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xB1E0D))
 	_, _, roundOffset, roundBits := compoundRoundParams8()
 	weights := [][2]int{{8, 8}, {9, 7}, {13, 3}, {4, 12}, {16, 0}, {0, 16}}
@@ -49,7 +49,7 @@ func TestBlendCompoundAvg8AVX2MatchesPureGo(t *testing.T) {
 			const stride = 96
 			got := frame.Plane{Pix: make([]byte, stride*(sz.h+2)), Stride: stride, Width: sz.w + 4, Height: sz.h + 2}
 			want := frame.Plane{Pix: make([]byte, stride*(sz.h+2)), Stride: stride, Width: sz.w + 4, Height: sz.h + 2}
-			blendCompoundAvg8AVX2(got, src0, src1, 2, 1, sz.w, sz.h, w[0], w[1], roundOffset, roundBits)
+			blendCompoundAvg8GoSIMD(got, src0, src1, 2, 1, sz.w, sz.h, w[0], w[1], roundOffset, roundBits)
 			blendCompoundAvg8PureGo(want, src0, src1, 2, 1, sz.w, sz.h, w[0], w[1], roundOffset, roundBits)
 			for i := range got.Pix {
 				if got.Pix[i] != want.Pix[i] {
@@ -60,7 +60,7 @@ func TestBlendCompoundAvg8AVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestCompound8CopyAVX2MatchesPureGo(t *testing.T) {
+func TestCompound8CopyGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xC0FFEE))
 	round0, _, roundOffset, _ := compoundRoundParams8()
 	const pad = filterTaps
@@ -72,7 +72,7 @@ func TestCompound8CopyAVX2MatchesPureGo(t *testing.T) {
 		ref := randPlane(rng, side+2*pad, 1)
 		got := make([]uint16, sz.w*sz.h)
 		want := make([]uint16, sz.w*sz.h)
-		predictInterCompoundRef8ToConvBufCopyAVX2(got, ref, pad, pad, sz.w, sz.h, round0, roundOffset)
+		predictInterCompoundRef8ToConvBufCopyGoSIMD(got, ref, pad, pad, sz.w, sz.h, round0, roundOffset)
 		predictInterCompoundRef8ToConvBufCopyPureGo(want, ref, pad, pad, sz.w, sz.h, round0, roundOffset)
 		for i := range want {
 			if got[i] != want[i] {
@@ -82,7 +82,7 @@ func TestCompound8CopyAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestCompound8XAVX2MatchesPureGo(t *testing.T) {
+func TestCompound8XGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xA11CE))
 	_, _, roundOffset, _ := compoundRoundParams8()
 	const pad = filterTaps
@@ -97,7 +97,7 @@ func TestCompound8XAVX2MatchesPureGo(t *testing.T) {
 				ref := randPlane(rng, side+2*pad, 1)
 				got := make([]uint16, sz.w*sz.h)
 				want := make([]uint16, sz.w*sz.h)
-				predictInterCompoundRef8ToConvBufXAVX2(got, ref, pad, pad, sz.w, sz.h, k, roundOffset)
+				predictInterCompoundRef8ToConvBufXGoSIMD(got, ref, pad, pad, sz.w, sz.h, k, roundOffset)
 				predictInterCompoundRef8ToConvBufXPureGo(want, ref, pad, pad, sz.w, sz.h, k, roundOffset)
 				for i := range want {
 					if got[i] != want[i] {
@@ -109,7 +109,7 @@ func TestCompound8XAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestCompound8YAVX2MatchesPureGo(t *testing.T) {
+func TestCompound8YGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xB0B))
 	round0, _, roundOffset, _ := compoundRoundParams8()
 	const pad = filterTaps
@@ -124,7 +124,7 @@ func TestCompound8YAVX2MatchesPureGo(t *testing.T) {
 				ref := randPlane(rng, side+2*pad, 1)
 				got := make([]uint16, sz.w*sz.h)
 				want := make([]uint16, sz.w*sz.h)
-				predictInterCompoundRef8ToConvBufYAVX2(got, ref, pad, pad, sz.w, sz.h, k, round0, roundOffset)
+				predictInterCompoundRef8ToConvBufYGoSIMD(got, ref, pad, pad, sz.w, sz.h, k, round0, roundOffset)
 				predictInterCompoundRef8ToConvBufYPureGo(want, ref, pad, pad, sz.w, sz.h, k, round0, roundOffset)
 				for i := range want {
 					if got[i] != want[i] {
@@ -136,7 +136,7 @@ func TestCompound8YAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestCompound82DAVX2MatchesPureGo(t *testing.T) {
+func TestCompound82DGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x2D2D))
 	_, offsetBits, _, _ := compoundRoundParams8()
 	const pad = filterTaps
@@ -155,7 +155,7 @@ func TestCompound82DAVX2MatchesPureGo(t *testing.T) {
 					ref := randPlane(rng, side+2*pad, 1)
 					got := make([]uint16, sz.w*sz.h)
 					want := make([]uint16, sz.w*sz.h)
-					predictInterCompoundRef8ToConvBuf2DAVX2(got, ref, pad, pad, sz.w, sz.h, xk, yk, offsetBits, nil)
+					predictInterCompoundRef8ToConvBuf2DGoSIMD(got, ref, pad, pad, sz.w, sz.h, xk, yk, offsetBits, nil)
 					predictInterCompoundRef8ToConvBuf2DPureGo(want, ref, pad, pad, sz.w, sz.h, xk, yk, offsetBits, nil)
 					for i := range want {
 						if got[i] != want[i] {
@@ -171,7 +171,7 @@ func TestCompound82DAVX2MatchesPureGo(t *testing.T) {
 // The clamped (edge-overhanging) 2D path materializes a halo via emu_edge and
 // reruns the resident kernel; assert it stays bit-identical to the per-tap
 // clamping pure-Go reference at every block edge.
-func TestCompound82DAVX2EdgeMatchesPureGo(t *testing.T) {
+func TestCompound82DGoSIMDEdgeMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xED9E))
 	_, offsetBits, _, _ := compoundRoundParams8()
 	tables := avx2FilterTables()
@@ -187,7 +187,7 @@ func TestCompound82DAVX2EdgeMatchesPureGo(t *testing.T) {
 		for _, org := range [][2]int{{-3, -2}, {refW - sz.w + 2, 1}, {1, refH - sz.h + 3}, {refW - 4, refH - 4}} {
 			got := make([]uint16, sz.w*sz.h)
 			want := make([]uint16, sz.w*sz.h)
-			predictInterCompoundRef8ToConvBuf2DAVX2(got, ref, org[0], org[1], sz.w, sz.h, xk, yk, offsetBits, &scGot)
+			predictInterCompoundRef8ToConvBuf2DGoSIMD(got, ref, org[0], org[1], sz.w, sz.h, xk, yk, offsetBits, &scGot)
 			predictInterCompoundRef8ToConvBuf2DPureGo(want, ref, org[0], org[1], sz.w, sz.h, xk, yk, offsetBits, &scWant)
 			for i := range want {
 				if got[i] != want[i] {
@@ -198,7 +198,7 @@ func TestCompound82DAVX2EdgeMatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestCompound8AVX2ZeroAlloc(t *testing.T) {
+func TestCompound8GoSIMDZeroAlloc(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xA110C))
 	round0, offsetBits, roundOffset, roundBits := compoundRoundParams8()
 	const pad = filterTaps
@@ -211,11 +211,11 @@ func TestCompound8AVX2ZeroAlloc(t *testing.T) {
 	k := avx2FilterTables()[0][7]
 	var scratch CompoundConvolveScratch
 	if a := testing.AllocsPerRun(20, func() {
-		blendCompoundAvg8AVX2(dst, src0, src1, 0, 0, w, h, 9, 7, roundOffset, roundBits)
-		predictInterCompoundRef8ToConvBufCopyAVX2(out, ref, pad, pad, w, h, round0, roundOffset)
-		predictInterCompoundRef8ToConvBufXAVX2(out, ref, pad, pad, w, h, k, roundOffset)
-		predictInterCompoundRef8ToConvBufYAVX2(out, ref, pad, pad, w, h, k, round0, roundOffset)
-		predictInterCompoundRef8ToConvBuf2DAVX2(out, ref, pad, pad, w, h, k, k, offsetBits, &scratch)
+		blendCompoundAvg8GoSIMD(dst, src0, src1, 0, 0, w, h, 9, 7, roundOffset, roundBits)
+		predictInterCompoundRef8ToConvBufCopyGoSIMD(out, ref, pad, pad, w, h, round0, roundOffset)
+		predictInterCompoundRef8ToConvBufXGoSIMD(out, ref, pad, pad, w, h, k, roundOffset)
+		predictInterCompoundRef8ToConvBufYGoSIMD(out, ref, pad, pad, w, h, k, round0, roundOffset)
+		predictInterCompoundRef8ToConvBuf2DGoSIMD(out, ref, pad, pad, w, h, k, k, offsetBits, &scratch)
 	}); a != 0 {
 		t.Fatalf("8-bit compound AVX2 allocates: %v allocs/run", a)
 	}

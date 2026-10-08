@@ -291,7 +291,7 @@ func convolve2DHighBDKernel(ctx *convolveHighBDGoSIMDCtx) {
 // compoundCopyHighBDKernel is the unfiltered HBD compound copy: each sample is
 // scaled to CONV_BUF precision by 1 << shift (shift = 7 - round0) and offset.
 // The wrapper guarantees width%8 == 0.
-func compoundCopyHighBDKernel(ctx *compoundCopyHighBDGoSIMDCtx, shift int) {
+func compoundCopyHighBDKernel(ctx *compoundCopyGoSIMDCtx, shift int) {
 	// The scalar reference is uint16(s*scale + roundOffset) with scale a power
 	// of two; the same value is the low 16 bits of (s << shift) + roundOffset,
 	// so the copy runs in uint16 lanes with no widening.
@@ -339,7 +339,7 @@ func hbdSumRowX(pix []byte, t *hbdTaps16, n int) (lo, hi archsimd.Int32x4) {
 // compoundXHighBDKernel is the horizontal HBD compound predictor: the filter
 // result is (sum + 2^(round0-1)) >> round0 plus the offset, stored as uint16
 // CONV_BUF samples without clipping.
-func compoundXHighBDKernel(ctx *compoundFilterHighBDGoSIMDCtx) {
+func compoundXHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 	n := int(ctx.taps)
 	taps := hbdBroadcastTaps16(&ctx.kernel)
 	rndOff := archsimd.BroadcastInt32x4(int32(ctx.roundOffset))
@@ -367,7 +367,7 @@ func compoundXHighBDKernel(ctx *compoundFilterHighBDGoSIMDCtx) {
 
 // compoundYHighBDKernel is the vertical HBD compound predictor:
 // roundPowerOfTwo7(sum << (7 - round0)) plus the offset.
-func compoundYHighBDKernel(ctx *compoundFilterHighBDGoSIMDCtx) {
+func compoundYHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 	n := int(ctx.taps)
 	taps := hbdBroadcastTaps16(&ctx.kernel)
 	scale := archsimd.BroadcastInt32x4(int32(1) << (filterBits - int(ctx.round0)))
@@ -397,40 +397,11 @@ func compoundYHighBDKernel(ctx *compoundFilterHighBDGoSIMDCtx) {
 
 // compound2DHighBDKernel is the separable 2D HBD compound predictor. The output
 // is roundPowerOfTwo7(yBias + vertical sum) with no further offset.
-func compound2DHighBDKernel(ctx *compound2DHighBDGoSIMDCtx) {
-	nx, ny := int(ctx.tapsX), int(ctx.tapsY)
-	xTaps := hbdBroadcastTaps16(&ctx.xKern)
-	yTaps := hbdBroadcastTaps32(&ctx.kernel)
-	round0 := int(ctx.round0)
-	width, height := int(ctx.width), int(ctx.height)
-	xBias := archsimd.BroadcastInt32x4(int32(ctx.xBias))
-	yBias := archsimd.BroadcastInt32x4(int32(ctx.yBias))
-	imStr := ctx.imStr
-
-	hbdHorizontalIM(ctx.ref, ctx.refStr, ctx.im, imStr, width, height+ny-1, &xTaps, nx, xBias, round0)
-
-	for y := range height {
-		out := ctx.out[y*width:]
-		col := ctx.im[y*imStr:]
-		x := 0
-		for ; x+8 <= width; x += 8 {
-			lo, hi := hbdSum8Int32(col[x:], imStr, &yTaps, ny)
-			lo = hbdRound(lo.Add(yBias), filterBits)
-			hi = hbdRound(hi.Add(yBias), filterBits)
-			hbdStoreU16x8(out[x:], lo, hi)
-		}
-		if x < width {
-			lo := hbdSum4Int32(col[x:], imStr, &yTaps, ny)
-			lo = hbdRound(lo.Add(yBias), filterBits)
-			hbdStoreU16x4(out[x:], lo)
-		}
-	}
-}
 
 // blendCompoundAvgHighBDKernel averages two CONV_BUF predictions with distance
 // weights: clip(roundPowerOfTwo(((s0*fwd + s1*bck) >> 4) - roundOffset, bits)).
 // The wrapper guarantees width%4 == 0.
-func blendCompoundAvgHighBDKernel(ctx *compoundBlendHighBDGoSIMDCtx, roundOffset, roundBits int) {
+func blendCompoundAvgHighBDKernel(ctx *compoundBlendGoSIMDCtx, roundOffset, roundBits int) {
 	fwd := archsimd.BroadcastInt32x4(int32(ctx.fwd))
 	bck := archsimd.BroadcastInt32x4(int32(ctx.bck))
 	roundOff := archsimd.BroadcastInt32x4(int32(roundOffset))
@@ -467,4 +438,56 @@ func hbdBlendHalf(a, b archsimd.Uint16x8, fwd, bck, roundOff archsimd.Int32x4, r
 	lo := a0.Mul(fwd).Add(b0.Mul(bck)).ShiftAllRight(4).Sub(roundOff)
 	hi := a1.Mul(fwd).Add(b1.Mul(bck)).ShiftAllRight(4).Sub(roundOff)
 	return hbdClip(hbdRound(lo, roundBits), zero, maxV), hbdClip(hbdRound(hi, roundBits), zero, maxV)
+}
+
+// compound2DHighBDKernel is the separable 2D HBD compound predictor. The output
+// is roundPowerOfTwo7(yBias + vertical sum) with no further offset.
+func compound2DHighBDKernel(ctx *compound2DGoSIMDCtx) {
+	nx, ny := int(ctx.tapsX), int(ctx.tapsY)
+	xTaps := hbdBroadcastTaps16(&ctx.xKern)
+	yTaps := hbdBroadcastTaps32(&ctx.kernel)
+	width, height := int(ctx.width), int(ctx.height)
+	xBias := archsimd.BroadcastInt32x4(int32(ctx.xBias))
+	yBias := archsimd.BroadcastInt32x4(int32(ctx.yBias))
+
+	hbdHorizontalIM(ctx.ref, ctx.refStr, ctx.im, ctx.imStr, width, height+ny-1, &xTaps, nx, xBias, int(ctx.round0))
+	compoundVerticalIM(ctx.out, width, height, ctx.im, ctx.imStr, &yTaps, ny, yBias)
+}
+
+// compoundVerticalIM is the vertical stage shared by the 2D compound
+// predictors: out[y][x] = uint16(roundPowerOfTwo7(yBias + sum_k t[k]*im[y+k][x])).
+// im rows are imStr elements apart.
+func compoundVerticalIM(out []uint16, width, height int, im []int32, imStr int, yTaps *hbdTaps32, ny int, yBias archsimd.Int32x4) {
+	for y := range height {
+		row := out[y*width:]
+		col := im[y*imStr:]
+		x := 0
+		for ; x+8 <= width; x += 8 {
+			lo, hi := hbdSum8Int32(col[x:], imStr, yTaps, ny)
+			lo = hbdRound(lo.Add(yBias), filterBits)
+			hi = hbdRound(hi.Add(yBias), filterBits)
+			hbdStoreU16x8(row[x:], lo, hi)
+		}
+		if x < width {
+			lo := hbdSum4Int32(col[x:], imStr, yTaps, ny)
+			lo = hbdRound(lo.Add(yBias), filterBits)
+			hbdStoreU16x4(row[x:], lo)
+		}
+	}
+}
+
+// hbdStoreU8x8 writes eight clipped 8-bit samples (lo and hi already clipped to
+// [0, 255]) at the start of dst.
+func hbdStoreU8x8(dst []byte, lo, hi archsimd.Int32x4) {
+	var t [16]byte
+	narrowU8x8(lo, hi).Store(t[:])
+	copy(dst[:8], t[:8])
+}
+
+// hbdStoreU8x4 writes the four low lanes of lo as 8-bit samples at the start of
+// dst.
+func hbdStoreU8x4(dst []byte, lo archsimd.Int32x4) {
+	var t [16]byte
+	narrowU8x8(lo, lo).Store(t[:])
+	copy(dst[:4], t[:4])
 }

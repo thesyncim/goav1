@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package motion
 
@@ -13,7 +13,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
-func TestBlendCompoundAvg8NEONMatchesPureGo(t *testing.T) {
+func TestBlendCompoundAvg8GoSIMDMatchesPureGo(t *testing.T) {
 	const (
 		stride = 160
 		planeH = 140
@@ -27,7 +27,7 @@ func TestBlendCompoundAvg8NEONMatchesPureGo(t *testing.T) {
 		height int
 	}{
 		{2, 2}, {2, 8}, {4, 4}, {4, 7}, {4, 16}, {8, 2}, {8, 8}, {8, 32},
-		{16, 5}, {16, 16}, {32, 8}, {32, 32}, {64, 16}, {64, 64}, {128, 128},
+		{12, 4}, {12, 9}, {16, 5}, {16, 16}, {20, 6}, {32, 8}, {32, 32}, {64, 16}, {64, 64}, {128, 128},
 	}
 	for _, w := range weights {
 		for _, sz := range sizes {
@@ -53,7 +53,7 @@ func TestBlendCompoundAvg8NEONMatchesPureGo(t *testing.T) {
 					got.Pix[i] = byte(i * 31)
 					want.Pix[i] = byte(i * 31)
 				}
-				blendCompoundAvg8NEON(got, src0, src1, dstOff[0], dstOff[1], sz.width, sz.height, w[0], w[1], roundOffset, roundBits)
+				blendCompoundAvg8GoSIMD(got, src0, src1, dstOff[0], dstOff[1], sz.width, sz.height, w[0], w[1], roundOffset, roundBits)
 				blendCompoundAvg8PureGo(want, src0, src1, dstOff[0], dstOff[1], sz.width, sz.height, w[0], w[1], roundOffset, roundBits)
 				for i := range got.Pix {
 					if got.Pix[i] != want.Pix[i] {
@@ -66,7 +66,7 @@ func TestBlendCompoundAvg8NEONMatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestBlendCompoundAvg8NEONZeroAlloc(t *testing.T) {
+func TestBlendCompoundAvg8GoSIMDZeroAlloc(t *testing.T) {
 	const width, height = 32, 32
 	src0 := make([]uint16, width*height)
 	src1 := make([]uint16, width*height)
@@ -78,10 +78,10 @@ func TestBlendCompoundAvg8NEONZeroAlloc(t *testing.T) {
 	roundOffset := (1 << (19 - compoundRound1Bits)) + (1 << (19 - compoundRound1Bits - 1))
 	const roundBits = 2*filterBits - compoundRound0Bits - compoundRound1Bits
 	allocs := testing.AllocsPerRun(100, func() {
-		blendCompoundAvg8NEON(dst, src0, src1, 0, 0, width, height, 9, 7, roundOffset, roundBits)
+		blendCompoundAvg8GoSIMD(dst, src0, src1, 0, 0, width, height, 9, 7, roundOffset, roundBits)
 	})
 	if allocs != 0 {
-		t.Fatalf("blendCompoundAvg8NEON allocates: %v allocs/run", allocs)
+		t.Fatalf("blendCompoundAvg8GoSIMD allocates: %v allocs/run", allocs)
 	}
 }
 
@@ -101,7 +101,7 @@ func benchBlendCompoundAvg8(b *testing.B, width, height int, fn func(dst frame.P
 }
 
 func BenchmarkBlendCompoundAvg8NEONDirect_32(b *testing.B) {
-	benchBlendCompoundAvg8(b, 32, 32, blendCompoundAvg8NEON)
+	benchBlendCompoundAvg8(b, 32, 32, blendCompoundAvg8GoSIMD)
 }
 
 func BenchmarkBlendCompoundAvg8PureGoDirect_32(b *testing.B) {
@@ -109,7 +109,7 @@ func BenchmarkBlendCompoundAvg8PureGoDirect_32(b *testing.B) {
 }
 
 func BenchmarkBlendCompoundAvg8NEONDirect_8(b *testing.B) {
-	benchBlendCompoundAvg8(b, 8, 8, blendCompoundAvg8NEON)
+	benchBlendCompoundAvg8(b, 8, 8, blendCompoundAvg8GoSIMD)
 }
 
 func BenchmarkBlendCompoundAvg8PureGoDirect_8(b *testing.B) {
@@ -117,7 +117,7 @@ func BenchmarkBlendCompoundAvg8PureGoDirect_8(b *testing.B) {
 }
 
 func BenchmarkBlendCompoundAvg8NEONDirect_4x8(b *testing.B) {
-	benchBlendCompoundAvg8(b, 4, 8, blendCompoundAvg8NEON)
+	benchBlendCompoundAvg8(b, 4, 8, blendCompoundAvg8GoSIMD)
 }
 
 func BenchmarkBlendCompoundAvg8PureGoDirect_4x8(b *testing.B) {
@@ -142,7 +142,7 @@ func benchBlendCompoundAvg8Fair(b *testing.B, fn func(dst frame.Plane, src0, src
 }
 
 func BenchmarkBlendCompoundAvg8NEON_32(b *testing.B) {
-	benchBlendCompoundAvg8Fair(b, blendCompoundAvg8NEON)
+	benchBlendCompoundAvg8Fair(b, blendCompoundAvg8GoSIMD)
 }
 
 func BenchmarkBlendCompoundAvg8Scalar_32(b *testing.B) {

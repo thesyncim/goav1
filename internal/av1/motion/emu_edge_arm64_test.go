@@ -107,8 +107,8 @@ func TestCompoundConvBuf2DEmuEdgeMatchesPureGo(t *testing.T) {
 					gotNEON := make([]uint16, w*h)
 					want := make([]uint16, w*h)
 					var scratchA, scratchB CompoundConvolveScratch
-					predictInterCompoundRef8ToConvBuf2DI8MM(gotI8MM, ref, refX, refY, w, h, kernels[0], kernels[1], offsetBits, &scratchA)
-					predictInterCompoundRef8ToConvBuf2DNEON(gotNEON, ref, refX, refY, w, h, kernels[0], kernels[1], offsetBits, &scratchB)
+					predictInterCompoundRef8ToConvBuf2DImpl(gotI8MM, ref, refX, refY, w, h, kernels[0], kernels[1], offsetBits, &scratchA)
+					predictInterCompoundRef8ToConvBuf2DImpl(gotNEON, ref, refX, refY, w, h, kernels[0], kernels[1], offsetBits, &scratchB)
 					predictInterCompoundRef8ToConvBuf2DPureGo(want, ref, refX, refY, w, h, kernels[0], kernels[1], offsetBits, nil)
 					for i := range want {
 						if gotI8MM[i] != want[i] {
@@ -185,8 +185,8 @@ func TestConvolve2D8ClampedEmuEdgeZeroAlloc(t *testing.T) {
 	allocs := testing.AllocsPerRun(50, func() {
 		convolve2D8ClampedI8MMWithScratch(dst, ref, 0, 0, -5, -9, 32, 32, xKernel, yKernel, &scratch)
 		convolve2D8ClampedNEONWithScratch(dst, ref, 0, 0, refW-3, refH-2, 32, 32, xKernel, yKernel, &scratch)
-		predictInterCompoundRef8ToConvBuf2DI8MM(out, ref, -5, refH-2, 32, 32, xKernel, yKernel, 19, &compound)
-		predictInterCompoundRef8ToConvBuf2DNEON(out, ref, refW-3, -9, 32, 32, xKernel, yKernel, 19, &compound)
+		predictInterCompoundRef8ToConvBuf2DImpl(out, ref, -5, refH-2, 32, 32, xKernel, yKernel, 19, &compound)
+		predictInterCompoundRef8ToConvBuf2DImpl(out, ref, refW-3, -9, 32, 32, xKernel, yKernel, 19, &compound)
 	})
 	if allocs != 0 {
 		t.Fatalf("emu_edge path allocates: %v allocs/run", allocs)

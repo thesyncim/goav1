@@ -68,3 +68,17 @@ func avx2FilterTables() [][16][filterTaps]int16 {
 		bilinearFilters,
 	}
 }
+
+func compoundRoundOffset8() int {
+	round0 := compoundRound0(8)
+	offsetBits := 8 + 2*filterBits - round0
+	return (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
+}
+
+func randPlane(rng *rand.Rand, side, bps int) frame.Plane {
+	p, _ := testPlane(side, side, bps, side*bps)
+	for i := range p.Pix {
+		p.Pix[i] = byte(rng.Intn(256))
+	}
+	return p
+}

@@ -43,3 +43,9 @@ func hbdMulAdd32(x, y, z archsimd.Int32x4) archsimd.Int32x4 {
 func hbdWidenU16(u archsimd.Uint16x8) (lo, hi archsimd.Int32x4) {
 	return u.ExtendLo4ToUint32().BitsToInt32(), u.HiToLo().ExtendLo4ToUint32().BitsToInt32()
 }
+
+// narrowU8x8 packs the sixteen int32 lanes of lo and hi (already clipped to
+// [0, 255]) into the low eight bytes of the result.
+func narrowU8x8(lo, hi archsimd.Int32x4) archsimd.Uint8x16 {
+	return hbdJoinU16(lo, hi).TruncToUint8()
+}
