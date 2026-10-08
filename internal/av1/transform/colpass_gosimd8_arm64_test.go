@@ -101,13 +101,13 @@ func benchDCT8x8(b *testing.B, fn func([]int32, int, int32, int32)) {
 
 // int16 8-wide vs int32 4-wide (x2 for 8 cols) vs NEON asm (x4 Col2).
 func BenchmarkDCT8x8_Int16(b *testing.B) { benchDCT8x8(b, inverseDCT8Col8SIMD) }
-func BenchmarkDCT8x8_Int32(b *testing.B) {
+func BenchmarkDCT8x8_ASMCol4(b *testing.B) {
 	benchDCT8x8(b, func(buf []int32, s int, mn, mx int32) {
-		inverseDCT8Col4SIMD(buf, s, mn, mx)
-		inverseDCT8Col4SIMD(buf[4:], s, mn, mx)
+		inverseDCT8Col4NEONAdapter(buf, s, mn, mx)
+		inverseDCT8Col4NEONAdapter(buf[4:], s, mn, mx)
 	})
 }
-func BenchmarkDCT8x8_ASM(b *testing.B) {
+func BenchmarkDCT8x8_ASMCol2(b *testing.B) {
 	benchDCT8x8(b, func(buf []int32, s int, mn, mx int32) {
 		inverseDCT8Col2NEONAdapter(buf, s, mn, mx)
 		inverseDCT8Col2NEONAdapter(buf[2:], s, mn, mx)
@@ -197,22 +197,19 @@ func BenchmarkDCT16x8_Int16Buf(b *testing.B) {
 		inverseDCT16Col8SIMD16(work, stride, -(1 << 12), (1<<12)-1)
 	}
 }
-func BenchmarkDCT16x8_ASM(b *testing.B) {
-	rng := rand.New(rand.NewSource(9))
-	const stride = 8
-	buf := make([]int32, 16*stride+8)
-	for i := range buf {
-		buf[i] = int32(rng.Intn(1<<12) - (1 << 11))
-	}
-	work := make([]int32, len(buf))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		copy(work, buf)
-		inverseDCT16Col2NEONAdapter(work, stride, -(1 << 12), (1<<12)-1)
-		inverseDCT16Col2NEONAdapter(work[2:], stride, -(1 << 12), (1<<12)-1)
-		inverseDCT16Col2NEONAdapter(work[4:], stride, -(1 << 12), (1<<12)-1)
-		inverseDCT16Col2NEONAdapter(work[6:], stride, -(1 << 12), (1<<12)-1)
-	}
+func BenchmarkDCT16x8_ASMCol4(b *testing.B) {
+	benchDCTx8ASM(b, 16, func(buf []int32, s int, mn, mx int32) {
+		inverseDCT16Col4NEONAdapter(buf, s, mn, mx)
+		inverseDCT16Col4NEONAdapter(buf[4:], s, mn, mx)
+	})
+}
+func BenchmarkDCT16x8_ASMCol2(b *testing.B) {
+	benchDCTx8ASM(b, 16, func(buf []int32, s int, mn, mx int32) {
+		inverseDCT16Col2NEONAdapter(buf, s, mn, mx)
+		inverseDCT16Col2NEONAdapter(buf[2:], s, mn, mx)
+		inverseDCT16Col2NEONAdapter(buf[4:], s, mn, mx)
+		inverseDCT16Col2NEONAdapter(buf[6:], s, mn, mx)
+	})
 }
 
 func TestInverseDCT32Col8SIMD16MatchesScalar(t *testing.T) {

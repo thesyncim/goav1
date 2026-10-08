@@ -38,27 +38,5 @@ func forwardDCT8x8NEON(coeff []int32, coeffStride int, residual []int16, residua
 	fdct8x8NEONAsm(&ctx)
 }
 
-//go:noescape
-func fdct4x4NEONAsm(ctx *fdct8x8NEONCtx)
-
-// The NEON 4x4 kernel is bit-exact in the 8-bit residual range; larger values
-// use the portable int64 implementation.
-var forwardDCT4x4Impl = forwardDCT4x4NEONGuarded
-
-func forwardDCT4x4NEONGuarded(coeff []int32, coeffStride int, residual []int16, residualStride int) {
-	if !residualFitsMagnitude(residual, residualStride, 4, 4, 255) {
-		forwardDCT4x4PureGo(coeff, coeffStride, residual, residualStride)
-		return
-	}
-	forwardDCT4x4NEON(coeff, coeffStride, residual, residualStride)
-}
-
-func forwardDCT4x4NEON(coeff []int32, coeffStride int, residual []int16, residualStride int) {
-	ctx := fdct8x8NEONCtx{
-		In:        unsafe.Pointer(&residual[0]),
-		InStride:  int64(residualStride),
-		Out:       unsafe.Pointer(&coeff[0]),
-		OutStride: int64(coeffStride),
-	}
-	fdct4x4NEONAsm(&ctx)
-}
+// The default build has no Go SIMD backend; use the scalar reference here.
+var forwardDCT4x4Impl = forwardDCT4x4PureGo

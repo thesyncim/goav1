@@ -2,12 +2,9 @@ package transform
 
 import "testing"
 
-// TestForwardBlock8x8ADSTImplExtremeResidual hardens the SIMD-vs-PureGo
-// differential gate at the residual extremes (all +255 / -255 and alternating
-// checkerboards), where the int16 SIMD kernel's intermediates are largest, to
-// prove the saturating int16 adds never clamp inside the valid 8-bit residual
-// domain (i.e. still byte-identical to the int32 scalar reference).
-func TestForwardBlock8x8ADSTImplExtremeResidual(t *testing.T) {
+// TestForwardBlock8x8ImplExtremeResidual checks the selected implementation
+// against the scalar oracle at residual extremes and alternating checkerboards.
+func TestForwardBlock8x8ImplExtremeResidual(t *testing.T) {
 	const resStride, coeffStride = 19, 13
 	patterns := []func(r, c int) int16{
 		func(r, c int) int16 { return 255 },

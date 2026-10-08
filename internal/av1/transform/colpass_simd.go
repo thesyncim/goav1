@@ -37,8 +37,8 @@ var (
 )
 
 // inverseDCT8Col4Impl transforms four adjacent columns for the 8-point DCT.
-// The default replicates the historical behaviour (two batched column pairs);
-// GOEXPERIMENT=simd binds the byte-exact int32 4-wide kernel (colpass_gosimd4).
+// The fallback replicates the historical behaviour (two batched column pairs);
+// arm64 dispatch binds the direct 4-column NEON adapter.
 var inverseDCT8Col4Impl = inverseDCT8Col4Default
 
 func inverseDCT8Col4Default(buf []int32, rowStride int, min int32, max int32) {
@@ -46,6 +46,8 @@ func inverseDCT8Col4Default(buf []int32, rowStride int, min int32, max int32) {
 	inverseDCT8Col2Impl(buf[2:], rowStride, min, max)
 }
 
+// The fallback replicates the historical behaviour (two batched column pairs);
+// arm64 dispatch binds the direct 4-column NEON adapter.
 var inverseDCT16Col4Impl = inverseDCT16Col4Default
 
 func inverseDCT16Col4Default(buf []int32, rowStride int, min int32, max int32) {

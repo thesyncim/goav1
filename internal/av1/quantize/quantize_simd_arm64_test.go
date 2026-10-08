@@ -34,63 +34,6 @@ func requireQuantizeBinding(t *testing.T, name string, fn any, want string) {
 	}
 }
 
-func TestQuantizeFPBlockSIMDMatchesScalar(t *testing.T) {
-	rng := rand.New(rand.NewSource(73))
-	edges := []int32{
-		-(1 << 20), -32768, -32767, -1, 0, 1, 32767, 32768, 1 << 20,
-		// extremes past maxSafe: verify the scan-free clamp path matches scalar
-		minInt32, maxInt32, 1 << 30, -(1 << 30), 1 << 28, -(1 << 28),
-	}
-	for _, n := range []int{4, 8, 16, 32} {
-		for _, ts := range []uint8{0, 1, 2} {
-			for trial := 0; trial < 200; trial++ {
-				q := Quantizer{
-					DC: int32(4 + rng.Intn(8000)),
-					AC: int32(4 + rng.Intn(8000)),
-				}
-				coeff := make([]int32, n*n)
-				for i := range coeff {
-					if i < len(edges) {
-						coeff[i] = edges[i]
-					} else {
-						coeff[i] = int32(rng.Intn(1<<22)) - 1<<21
-					}
-				}
-				want := make([]int16, n*n)
-				got := make([]int16, n*n)
-				asm := make([]int16, n*n)
-				quantDC := int64(1<<16) / int64(q.DC)
-				roundDC := roundPowerOfTwo((64*q.DC)>>7, ts)
-				quantAC := int64(1<<16) / int64(q.AC)
-				roundAC := roundPowerOfTwo((64*q.AC)>>7, ts)
-				for i := range coeff {
-					if i == 0 {
-						want[i] = quantizeScalarFP(coeff[i], q.DC, quantDC, roundDC, ts)
-					} else {
-						want[i] = quantizeScalarFP(coeff[i], q.AC, quantAC, roundAC, ts)
-					}
-				}
-				if !quantizeFPBlockSIMD(got, coeff, n, q, ts) {
-					t.Fatalf("n=%d ts=%d: kernel refused", n, ts)
-				}
-				if !quantizeFPBlockNEON(asm, coeff, n, q, ts) {
-					t.Fatalf("n=%d ts=%d: NEON kernel refused", n, ts)
-				}
-				for i := range want {
-					if want[i] != got[i] {
-						t.Fatalf("n=%d ts=%d trial=%d q[%d] simd %d want %d coeff=%d dc=%v q=%+v",
-							n, ts, trial, i, got[i], want[i], coeff[i], i == 0, q)
-					}
-					if want[i] != asm[i] {
-						t.Fatalf("n=%d ts=%d trial=%d q[%d] NEON %d want %d coeff=%d dc=%v q=%+v",
-							n, ts, trial, i, asm[i], want[i], coeff[i], i == 0, q)
-					}
-				}
-			}
-		}
-	}
-}
-
 func benchQuantizeBlock(b *testing.B, n int, fn func([]int16, []int32, int, Quantizer, uint8) bool) {
 	rng := rand.New(rand.NewSource(79))
 	q := Quantizer{DC: 107, AC: 130}
@@ -163,17 +106,11 @@ func quantizeFPBlockScalarBench(qcoeff []int16, coeff []int32, n int, q Quantize
 func BenchmarkQuantizeFPBlock16x16_Scalar(b *testing.B) {
 	benchQuantizeFPBlock(b, 16, quantizeFPBlockScalarBench)
 }
-func BenchmarkQuantizeFPBlock16x16_SIMD(b *testing.B) {
-	benchQuantizeFPBlock(b, 16, quantizeFPBlockSIMD)
-}
 func BenchmarkQuantizeFPBlock16x16_ASM(b *testing.B) {
 	benchQuantizeFPBlock(b, 16, quantizeFPBlockNEON)
 }
 func BenchmarkQuantizeFPBlock32x32_Scalar(b *testing.B) {
 	benchQuantizeFPBlock(b, 32, quantizeFPBlockScalarBench)
-}
-func BenchmarkQuantizeFPBlock32x32_SIMD(b *testing.B) {
-	benchQuantizeFPBlock(b, 32, quantizeFPBlockSIMD)
 }
 func BenchmarkQuantizeFPBlock32x32_ASM(b *testing.B) {
 	benchQuantizeFPBlock(b, 32, quantizeFPBlockNEON)

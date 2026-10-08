@@ -114,21 +114,21 @@ func pixelStats32x64(src []byte, srcStride int, ref []byte, refStride int) (uint
 }
 
 func satdCoeffs(coeff []int32, count int) int {
-	return satdCoeffsNEON(coeff, count)
+	return satdCoeffsImpl(coeff, count)
 }
 
 func hadamard4x4(src []int16, srcStride int, coeff []int32) {
-	hadamard4x4NEON(src, srcStride, coeff)
+	hadamard4x4Impl(src, srcStride, coeff)
 }
 
 func hadamard8x8(src []int16, srcStride int, coeff []int32) {
-	hadamard8x8NEON(src, srcStride, coeff)
+	hadamard8x8Impl(src, srcStride, coeff)
 }
 
 func hadamard16x16(src []int16, srcStride int, coeff []int32) {
-	hadamard16x16NEON(src, srcStride, coeff)
+	hadamard16x16Impl(src, srcStride, coeff)
 }
 
 func hadamard32x32(src []int16, srcStride int, coeff []int32) {
-	hadamard32x32NEON(src, srcStride, coeff)
+	hadamard32x32Impl(src, srcStride, coeff)
 }

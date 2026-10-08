@@ -45,64 +45,6 @@ func quantizeBlockSIMD(qcoeff []int16, coeff []int32, n int, q Quantizer, txScal
 	return true
 }
 
-func quantizeFPBlockSIMD(qcoeff []int16, coeff []int32, n int, q Quantizer, txScale uint8) bool {
-	count := n * n
-	if count == 0 || q.AC > quantizeSIMDMaxStep || q.DC > quantizeSIMDMaxStep {
-		return false
-	}
-	quantAC := int64(1<<16) / int64(q.AC)
-	quantDC := int64(1<<16) / int64(q.DC)
-	if quantAC > 1<<14 || quantDC > 1<<14 {
-		return false
-	}
-	roundAC := roundPowerOfTwo((64*int32(q.AC))>>7, txScale)
-
-	// Hoist all constant vectors out of the group loop; the runtime shift
-	// (16-txScale) is loop-invariant so precompute its (negative = right) amount
-	// vector once and use Shift() instead of ShiftAllRight()'s per-call rebuild.
-	maxV := archsimd.BroadcastInt32x4(maxInt16)
-	roundV := archsimd.BroadcastInt32x4(roundAC)
-	quantV := archsimd.BroadcastInt32x4(int32(quantAC))
-	dequantV := archsimd.BroadcastInt32x4(int32(q.AC))
-	lshV := archsimd.BroadcastInt32x4(int32(1 + txScale))
-	rshV := archsimd.BroadcastInt32x4(-int32(16 - txScale))
-	// No per-group overflow guard. The keep mask reproduces the scalar's exact
-	// test `abs<<(1+txScale) >= dequant` on the *raw* (unclamped) abs, so it
-	// matches the scalar for every int32 coeff — including extremes where that
-	// left shift overflows to a negative value and zeroes the coeff (minInt32,
-	// maxInt32, anything past maxSafe). Abs() then Min(maxV) bounds the multiply.
-	// The NEON asm likewise scans nothing. Walk raw pointers: no bounds check.
-	cp := unsafe.Pointer(&coeff[0])
-	qp := unsafe.Pointer(&qcoeff[0])
-	i := 0
-	for ; i+8 <= count; i += 8 {
-		c0 := archsimd.LoadInt32x4Array((*[4]int32)(cp))
-		c1 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(cp, 16)))
-		raw0 := c0.Abs()
-		keep0 := raw0.Shift(lshV).GreaterEqual(dequantV)
-		m0 := raw0.Add(roundV).Min(maxV).Mul(quantV).Shift(rshV).Masked(keep0)
-		q0 := quantizeApplySignSIMD(m0, c0)
-		raw1 := c1.Abs()
-		keep1 := raw1.Shift(lshV).GreaterEqual(dequantV)
-		m1 := raw1.Add(roundV).Min(maxV).Mul(quantV).Shift(rshV).Masked(keep1)
-		q1 := quantizeApplySignSIMD(m1, c1)
-		quantizePackInt16x8SIMD(q0, q1).StoreArray((*[8]int16)(qp))
-		if i+16 <= count {
-			cp = unsafe.Add(cp, 32)
-			qp = unsafe.Add(qp, 16)
-		}
-	}
-	for ; i < count; i++ {
-		if coeff[i] == minInt32 || quantizeScalarFPUnsafeShift(coeff[i], txScale) {
-			return false
-		}
-		qcoeff[i] = quantizeScalarFP(coeff[i], q.AC, quantAC, roundAC, txScale)
-	}
-	roundDC := roundPowerOfTwo((64*int32(q.DC))>>7, txScale)
-	qcoeff[0] = quantizeScalarFP(coeff[0], q.DC, quantDC, roundDC, txScale)
-	return true
-}
-
 func quantizeFPNoQMatrixSIMD(qcoeff []int32, dqcoeff []int32, coeff []int32, scan []int16, q FPQuantizer) (int, bool) {
 	count := len(scan)
 	for i, rc := range scan {
@@ -170,19 +112,6 @@ func quantizeDiv32SIMD(num archsimd.Int32x4, scale int32, recip int32) archsimd.
 	return q.Add(archsimd.BroadcastInt32x4(1).Masked(rem.GreaterEqual(scaleV)))
 }
 
-func quantizeFP4SIMD(c archsimd.Int32x4, dequant int32, quant int32, round int32, txScale uint8) archsimd.Int32x4 {
-	return quantizeFPMag4SIMD(c, dequant, quant, round, txScale)
-}
-
-func quantizeFPMag4SIMD(c archsimd.Int32x4, dequant int32, quant int32, round int32, txScale uint8) archsimd.Int32x4 {
-	abs := c.Max(archsimd.BroadcastInt32x4(-maxInt16)).Min(archsimd.BroadcastInt32x4(maxInt16)).Abs()
-	threshold := archsimd.BroadcastInt32x4(quantizeSIMDThreshold(dequant, 1+txScale))
-	mag := abs.Add(archsimd.BroadcastInt32x4(round)).Min(archsimd.BroadcastInt32x4(maxInt16))
-	mag = mag.Mul(archsimd.BroadcastInt32x4(quant)).ShiftAllRight(uint64(16 - txScale))
-	mag = mag.Masked(abs.GreaterEqual(threshold))
-	return quantizeApplySignSIMD(mag, c)
-}
-
 func quantizeFPNoQMatrix4SIMD(c archsimd.Int32x4, quant int32, dequant int32, round int32, logScale uint8) (archsimd.Int32x4, archsimd.Int32x4, archsimd.Int32x4) {
 	abs := c.Max(archsimd.BroadcastInt32x4(-maxInt16)).Min(archsimd.BroadcastInt32x4(maxInt16)).Abs()
 	threshold := archsimd.BroadcastInt32x4(quantizeSIMDThreshold(dequant, 1+logScale))
@@ -243,16 +172,6 @@ func quantizeTruncMaxSafeAbs(scale int32, txScale uint8) int64 {
 	// SIMD only where that quotient stays representable; the scalar fallback
 	// preserves its wrap-then-int16-clamp behavior for larger values.
 	return ((int64(maxInt32)+1)*int64(scale) - 1) >> txScale
-}
-
-func quantizeSIMDHasFPUnsafeShift(v archsimd.Int32x4, txScale uint8) bool {
-	maxSafe := int32(maxInt32 >> (1 + txScale))
-	return v.ReduceMax() > maxSafe || v.ReduceMin() < -maxSafe
-}
-
-func quantizeScalarFPUnsafeShift(coeff int32, txScale uint8) bool {
-	maxSafe := int32(maxInt32 >> (1 + txScale))
-	return coeff > maxSafe || coeff < -maxSafe
 }
 
 func quantizeSIMDSaturationAbs(scale int32, txScale uint8) int32 {

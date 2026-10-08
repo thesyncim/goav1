@@ -11,8 +11,9 @@ import (
 	"unsafe"
 )
 
-// Bind the int16 8-wide SIMD DCT8 column kernel under GOEXPERIMENT=simd. It is
-// byte-exact and ~3.8x faster than the NEON asm (no boundary narrowing).
+// Bind the int16 8-wide SIMD DCT column kernels under GOEXPERIMENT=simd.
+// The public path keeps the int16 buffer between passes and uses these kernels
+// for the vertical DCT when the block height is supported.
 func init() {
 	inverseDCT8Col8Impl16 = inverseDCT8Col8SIMD16
 	inverseDCT16Col8Impl16 = inverseDCT16Col8SIMD16

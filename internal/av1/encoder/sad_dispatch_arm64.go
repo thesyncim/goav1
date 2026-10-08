@@ -2,9 +2,9 @@
 
 package encoder
 
-// init binds the SAD dispatch vars to the NEON asm kernels. Under
-// GOEXPERIMENT=simd this file is excluded and sad_dispatch_simd_arm64.go binds
-// the ported shapes to Go-native SIMD instead (re-binding the rest to NEON).
+// init binds the available SAD dispatch vars to NEON asm kernels. The
+// promoted 8x8 four-reference kernel keeps the scalar default in ordinary
+// builds; under GOEXPERIMENT=simd it is bound to Go-native SIMD.
 func init() { bindNEONSAD() }
 
 func sad8x8(src, ref []byte, stride int, limit int) int {
@@ -28,7 +28,7 @@ func sad8x8x4Step4(src, ref []byte, stride int) (int, int, int, int) {
 }
 
 func sad8x8x4(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int, int) {
-	return sad8x8x4NEON(src, ref0, ref1, ref2, ref3, stride)
+	return sad8x8x4Impl(src, ref0, ref1, ref2, ref3, stride)
 }
 
 func sad16x16x4(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int, int) {

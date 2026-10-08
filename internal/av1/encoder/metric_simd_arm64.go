@@ -1,10 +1,9 @@
 //go:build goexperiment.simd && arm64 && !purego
 
-// metric_simd_arm64.go hosts Go-native SIMD (simd/archsimd NEON) ports of the
-// encoder SATD metric kernels. These mirror the hand-written NEON assembly in
-// metric_neon_arm64.s bit-for-bit in numeric result, but are expressed with the
-// standard-library archsimd intrinsics so the compiler owns register allocation
-// and scheduling.
+// metric_simd_arm64.go hosts Go-native SIMD (simd/archsimd) implementations of
+// the encoder SATD metric kernels. They preserve the scalar oracle's numeric
+// behavior and AV1 coefficient layout while leaving register allocation and
+// instruction scheduling to the compiler.
 //
 // SATD = apply a Hadamard transform to the residual block, then sum |coeff|.
 // The reducer (satdCoeffs) is the pure abs+add+reduce tail; the Hadamard
@@ -21,10 +20,8 @@ import (
 	"unsafe"
 )
 
-// init binds the SATD/Hadamard encoder metric kernels to their Go-native SIMD
-// (archsimd NEON) ports. The pixelStats kernels stay on the hand-written NEON
-// assembly via bindPixelStatsNEON. This replaces metric_neon_init_arm64.go's
-// binding, which is gated off under goexperiment.simd.
+// init binds SATD and Hadamard to Go-native SIMD. Pixel statistics remain on
+// their hand-written NEON implementations.
 func init() {
 	bindPixelStatsNEON()
 	satdCoeffsImpl = satdCoeffsSIMD
@@ -37,10 +34,9 @@ func init() {
 // satdCoeffsSIMD mirrors satdCoeffsPureGo: sum of abs(coeff[i]) for i in
 // [0,count). It follows svt_aom_satd_neon's shape — process 16 int32 lanes per
 // iteration and abs into four int32 vectors — but accumulates into four
-// independent int32x4 lane-accumulators to break the serial add dependency
-// (the big win over the NEON asm at large counts), then widen-reduces the
-// lanes to int64 (matching NEON's SADDLV and the pure-Go int64 accumulator; no
-// int32-lane overflow occurs for the coefficient ranges these kernels consume).
+// independent int32x4 lane-accumulators to break the serial add dependency,
+// then widen-reduces the lanes to int64 to match the pure-Go accumulator. No
+// int32-lane overflow occurs for the coefficient ranges these kernels consume.
 // count is always a multiple of 16 for the AV1 TX sizes {16,64,256,1024}; whole
 // int32x4 and scalar tails handle any residual for safety.
 func satdCoeffsSIMD(coeff []int32, count int) int {
@@ -74,9 +70,8 @@ func satdCoeffsSIMD(coeff []int32, count int) int {
 		acc = acc.Add(archsimd.LoadInt32x4Array(p).Abs())
 	}
 
-	// Widen the four int32 lanes to int64 and sum, matching NEON's SADDLV and
-	// the pure-Go 64-bit accumulator (no int32-lane overflow across the loop
-	// for the coefficient ranges these kernels consume, mirroring the asm).
+	// Widen the four int32 lanes to int64 before summing, matching the pure-Go
+	// 64-bit accumulator (no int32-lane overflow for the coefficient ranges used).
 	lo := acc.ExtendLo2ToInt64()
 	hi := acc.HiToLo().ExtendLo2ToInt64()
 	wide := lo.Add(hi)
@@ -188,9 +183,9 @@ func storeCoeff8(base unsafe.Pointer, row archsimd.Int16x8) {
 	hi.StoreArray((*[4]int32)(unsafe.Add(base, 4*4)))
 }
 
-// hadamard8x8SIMD mirrors hadamard8x8NEONAsm: load eight int16 residual rows,
-// run the 8-point butterfly on columns, transpose, run it again on rows, then
-// sign-extend to int32 coefficients in SVT's NEON order.
+// hadamard8x8SIMD loads eight int16 residual rows, runs the 8-point butterfly
+// on columns, transposes, runs it again on rows, and sign-extends the results
+// to int32 coefficients in the order expected by the AV1 SATD path.
 func hadamard8x8SIMD(src []int16, srcStride int, coeff []int32) {
 	_ = src[7*srcStride+7]
 	_ = coeff[63]
@@ -221,12 +216,10 @@ func hadamard8x8SIMD(src []int16, srcStride int, coeff []int32) {
 	storeCoeff8(unsafe.Add(cp, 56*4), v7)
 }
 
-// hadamard4x4SIMD mirrors hadamard4x4NEONAsm: load four int16 residual rows in
-// the low 4 lanes of int16 vectors, run the 4-point signed-halving butterfly,
-// transpose the 4x4, rerun the butterfly, and sign-extend the low 4 outputs to
-// int32 coefficients. The signed-halving (a+b)>>1 is done as int16 Add then
-// arithmetic ShiftAllRight(1), matching hadamardCol4's int16 arithmetic (the
-// residual range keeps a+b within int16, so this equals NEON's SHADD).
+// hadamard4x4SIMD loads four int16 residual rows in the low 4 lanes of int16
+// vectors, runs the 4-point signed-halving butterfly, transposes the 4x4,
+// reruns the butterfly, and sign-extends the outputs to int32 coefficients.
+// The supported residual range keeps each intermediate sum within int16.
 func hadamard4x4SIMD(src []int16, srcStride int, coeff []int32) {
 	_ = src[3*srcStride+3]
 	_ = coeff[15]
@@ -305,10 +298,8 @@ func as16From32(v archsimd.Int32x4) archsimd.Int16x8 {
 	return v.ToBits().ReshapeToUint16s().BitsToInt16()
 }
 
-// hadamard16x16SIMD mirrors hadamard16x16NEON: four 8x8 SIMD producers (in
-// NEON coefficient order) followed by the NEON quadrant combine, whose store
-// order scatters the four butterfly groups so the result matches SVT's NEON
-// coefficient layout (which the SATD consumer treats as order-invariant).
+// hadamard16x16SIMD computes four 8x8 quadrants, then combines them in the
+// coefficient order expected by the AV1 SATD path.
 func hadamard16x16SIMD(src []int16, srcStride int, coeff []int32) {
 	_ = src[15*srcStride+15]
 	_ = coeff[255]
@@ -319,8 +310,8 @@ func hadamard16x16SIMD(src []int16, srcStride int, coeff []int32) {
 	hadamard16x16CombineSIMD(coeff)
 }
 
-// hadamard32x32SIMD mirrors hadamard32x32NEON: four 16x16 SIMD producers
-// followed by the contiguous >>2 quadrant combine.
+// hadamard32x32SIMD computes four 16x16 quadrants, then combines them with the
+// final signed right shift required by the AV1 transform semantics.
 func hadamard32x32SIMD(src []int16, srcStride int, coeff []int32) {
 	_ = src[31*srcStride+31]
 	_ = coeff[1023]
@@ -331,12 +322,10 @@ func hadamard32x32SIMD(src []int16, srcStride int, coeff []int32) {
 	hadamard32x32CombineSIMD(coeff)
 }
 
-// hadamard16x16CombineSIMD ports hadamard16x16CombineNEONAsm exactly. Each of
-// the four 16-element bases holds four lane-groups read at offsets 0,4,8,12.
-// The NEON store scatters them: the group read at offset {0,4,8,12} is written
-// at offset {0,8,4,12} within every quadrant row — SVT's NEON coefficient
-// order. All groups are computed before any store, so the offset swap between
-// groups 1 and 2 is hazard-free (matching the asm's register staging).
+// hadamard16x16CombineSIMD interleaves the four transformed coefficient
+// quadrants in the AV1 layout. The group read at offset {0,4,8,12} is written
+// at offset {0,8,4,12} within each quadrant row. Groups 1 and 2 are computed
+// before either store so their offset swap is hazard-free.
 func hadamard16x16CombineSIMD(coeff []int32) {
 	_ = coeff[255]
 	base := unsafe.Pointer(&coeff[0])
@@ -405,11 +394,10 @@ func combineGroup16(base unsafe.Pointer, src, dst int, rsh archsimd.Int32x4) {
 	o3.StoreArray((*[4]int32)(unsafe.Add(base, uintptr(192+dst)*4)))
 }
 
-// hadamard32x32CombineSIMD ports hadamard32x32CombineNEONAsm: a contiguous
-// >>2 four-quadrant combine over the 256-element span (quadrants at 0,256,512,
-// 768). The shift is applied to the sums before the second add/sub, matching
-// both the NEON sshr #2 and hadamard32x32PureGo's (a+b)>>2. The >>2 amount is
-// hoisted (rsh2 = -2) so each shift is a single VSSHL inside the loop.
+// hadamard32x32CombineSIMD combines each four-element group from the four
+// quadrants at offsets 0, 256, 512, and 768. The shift is applied to the sums
+// before the second add/sub, matching hadamard32x32PureGo's (a+b)>>2 semantics.
+// The >>2 amount is hoisted (rsh2 = -2) so each shift is a single VSSHL.
 func hadamard32x32CombineSIMD(coeff []int32) {
 	_ = coeff[1023]
 	base := unsafe.Pointer(&coeff[0])

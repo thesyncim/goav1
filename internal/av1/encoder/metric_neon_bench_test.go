@@ -471,32 +471,16 @@ func BenchmarkSATDCoeffs16Scalar(b *testing.B) {
 	benchSATDCoeffs(b, satdCoeffsPureGo, 16)
 }
 
-func BenchmarkSATDCoeffs16NEON(b *testing.B) {
-	benchSATDCoeffs(b, satdCoeffsNEON, 16)
-}
-
 func BenchmarkSATDCoeffs64Scalar(b *testing.B) {
 	benchSATDCoeffs(b, satdCoeffsPureGo, 64)
-}
-
-func BenchmarkSATDCoeffs64NEON(b *testing.B) {
-	benchSATDCoeffs(b, satdCoeffsNEON, 64)
 }
 
 func BenchmarkSATDCoeffs256Scalar(b *testing.B) {
 	benchSATDCoeffs(b, satdCoeffsPureGo, 256)
 }
 
-func BenchmarkSATDCoeffs256NEON(b *testing.B) {
-	benchSATDCoeffs(b, satdCoeffsNEON, 256)
-}
-
 func BenchmarkSATDCoeffs1024Scalar(b *testing.B) {
 	benchSATDCoeffs(b, satdCoeffsPureGo, 1024)
-}
-
-func BenchmarkSATDCoeffs1024NEON(b *testing.B) {
-	benchSATDCoeffs(b, satdCoeffsNEON, 1024)
 }
 
 func benchSATDCoeffs(b *testing.B, fn func([]int32, int) int, count int) {
@@ -518,10 +502,6 @@ func benchSATDCoeffs(b *testing.B, fn func([]int32, int) int, count int) {
 
 func BenchmarkHadamard4x4Scalar(b *testing.B) {
 	benchHadamard4x4(b, hadamard4x4PureGo)
-}
-
-func BenchmarkHadamard4x4NEON(b *testing.B) {
-	benchHadamard4x4(b, hadamard4x4NEON)
 }
 
 func benchHadamard4x4(b *testing.B, fn func([]int16, int, []int32)) {
@@ -550,10 +530,6 @@ func BenchmarkHadamard8x8Scalar(b *testing.B) {
 	benchHadamard8x8(b, hadamard8x8PureGo)
 }
 
-func BenchmarkHadamard8x8NEON(b *testing.B) {
-	benchHadamard8x8(b, hadamard8x8NEON)
-}
-
 func benchHadamard8x8(b *testing.B, fn func([]int16, int, []int32)) {
 	rng := rand.New(rand.NewSource(6110))
 	const (
@@ -580,10 +556,6 @@ func BenchmarkHadamard16x16Scalar(b *testing.B) {
 	benchHadamard16x16(b, hadamard16x16PureGo)
 }
 
-func BenchmarkHadamard16x16NEON(b *testing.B) {
-	benchHadamard16x16(b, hadamard16x16NEON)
-}
-
 func benchHadamard16x16(b *testing.B, fn func([]int16, int, []int32)) {
 	rng := rand.New(rand.NewSource(6113))
 	const (
@@ -608,10 +580,6 @@ func benchHadamard16x16(b *testing.B, fn func([]int16, int, []int32)) {
 
 func BenchmarkHadamard32x32Scalar(b *testing.B) {
 	benchHadamard32x32(b, hadamard32x32PureGo)
-}
-
-func BenchmarkHadamard32x32NEON(b *testing.B) {
-	benchHadamard32x32(b, hadamard32x32NEON)
 }
 
 func benchHadamard32x32(b *testing.B, fn func([]int16, int, []int32)) {

@@ -32,37 +32,6 @@ func pixelStatsDotProdAsm(ctx *pixelStatsNEONCtx)
 
 var useDotProdPixelStats = cpu.Detected.DOTPROD
 
-// satdCoeffsNEONCtx carries SVT's int32 coefficient SATD reducer arguments.
-// Field offsets are mirrored by #define in metric_neon_arm64.s.
-type satdCoeffsNEONCtx struct {
-	Coeff unsafe.Pointer
-	Count int64
-	Sum   int64
-}
-
-//go:noescape
-func satdCoeffsNEONAsm(ctx *satdCoeffsNEONCtx)
-
-//go:noescape
-func hadamard4x4NEONAsm(ctx *hadamard8x8NEONCtx)
-
-// hadamard8x8NEONCtx carries SVT's low-bitdepth 8x8 Hadamard producer
-// arguments. Field offsets are mirrored by #define in metric_neon_arm64.s.
-type hadamard8x8NEONCtx struct {
-	Src       unsafe.Pointer
-	SrcStride int64
-	Coeff     unsafe.Pointer
-}
-
-//go:noescape
-func hadamard8x8NEONAsm(ctx *hadamard8x8NEONCtx)
-
-//go:noescape
-func hadamard16x16CombineNEONAsm(coeff unsafe.Pointer)
-
-//go:noescape
-func hadamard32x32CombineNEONAsm(coeff unsafe.Pointer)
-
 func pixelStatsNEON(src []byte, srcStride int, ref []byte, refStride int, w, h int) (sse uint32, sum int32) {
 	ctx := pixelStatsNEONCtx{
 		Src:       unsafe.Pointer(&src[0]),
@@ -230,58 +199,10 @@ func pixelStats32x64DotProd(src []byte, srcStride int, ref []byte, refStride int
 	return pixelStatsDotProd(src, srcStride, ref, refStride, 32, 64)
 }
 
-func satdCoeffsNEON(coeff []int32, count int) int {
-	ctx := satdCoeffsNEONCtx{
-		Coeff: unsafe.Pointer(&coeff[0]),
-		Count: int64(count),
-	}
-	satdCoeffsNEONAsm(&ctx)
-	return int(ctx.Sum)
-}
-
-func hadamard4x4NEON(src []int16, srcStride int, coeff []int32) {
-	ctx := hadamard8x8NEONCtx{
-		Src:       unsafe.Pointer(&src[0]),
-		SrcStride: int64(srcStride),
-		Coeff:     unsafe.Pointer(&coeff[0]),
-	}
-	hadamard4x4NEONAsm(&ctx)
-}
-
-func hadamard8x8NEON(src []int16, srcStride int, coeff []int32) {
-	ctx := hadamard8x8NEONCtx{
-		Src:       unsafe.Pointer(&src[0]),
-		SrcStride: int64(srcStride),
-		Coeff:     unsafe.Pointer(&coeff[0]),
-	}
-	hadamard8x8NEONAsm(&ctx)
-}
-
-func hadamard16x16NEON(src []int16, srcStride int, coeff []int32) {
-	_ = src[15*srcStride+15]
-	_ = coeff[255]
-	hadamard8x8NEON(src, srcStride, coeff)
-	hadamard8x8NEON(src[8:], srcStride, coeff[64:])
-	hadamard8x8NEON(src[8*srcStride:], srcStride, coeff[128:])
-	hadamard8x8NEON(src[8*srcStride+8:], srcStride, coeff[192:])
-	hadamard16x16CombineNEONAsm(unsafe.Pointer(&coeff[0]))
-}
-
-func hadamard32x32NEON(src []int16, srcStride int, coeff []int32) {
-	_ = src[31*srcStride+31]
-	_ = coeff[1023]
-	hadamard16x16NEON(src, srcStride, coeff)
-	hadamard16x16NEON(src[16:], srcStride, coeff[256:])
-	hadamard16x16NEON(src[16*srcStride:], srcStride, coeff[512:])
-	hadamard16x16NEON(src[16*srcStride+16:], srcStride, coeff[768:])
-	hadamard32x32CombineNEONAsm(unsafe.Pointer(&coeff[0]))
-}
-
 // bindPixelStatsNEON binds every pixel-domain statistics kernel to its NEON
 // (or DOTPROD, when detected) implementation. It is shared by the NEON-only
-// dispatch init and the goexperiment.simd dispatch init: the SATD/Hadamard
-// kernels get a Go-native SIMD binding under goexperiment.simd, but the
-// pixelStats kernels stay on the hand-written NEON assembly in both builds.
+// dispatch init and the goexperiment.simd dispatch init. SATD and Hadamard
+// use Go SIMD when enabled and scalar implementations otherwise.
 func bindPixelStatsNEON() {
 	pixelStats8x8Impl = pixelStats8x8NEON
 	pixelStats4x4Impl = pixelStats4x4NEON
