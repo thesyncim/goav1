@@ -2,22 +2,23 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build amd64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package superres
 
 import (
 	"math/rand"
+	"reflect"
+	"runtime"
+	"simd/archsimd"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
-// runRowImplsAVX2 upscales the same input with both the AVX2 kernel and the
+// runRowImplsSIMD upscales the same input with the Go SIMD kernel and the
 // pure-Go reference and returns the two destination rows for comparison.
-func runRowImplsAVX2(t *testing.T, srcRow []uint16, dstWidth, codedWidth, bitDepth int) ([]uint16, []uint16) {
-	t.Helper()
+func runRowImplsSIMD(srcRow []uint16, dstWidth, codedWidth, bitDepth int) ([]uint16, []uint16) {
 	srcWidth := len(srcRow)
 	stepX := ((codedWidth << ScaleBits) + (dstWidth / 2)) / dstWidth
 	errTerm := (dstWidth * stepX) - (codedWidth << ScaleBits)
@@ -29,12 +30,12 @@ func runRowImplsAVX2(t *testing.T, srcRow []uint16, dstWidth, codedWidth, bitDep
 
 	got := make([]uint16, dstWidth)
 	want := make([]uint16, dstWidth)
-	upscaleRowAVX2(srcRow, got, dstWidth, stepX, initialSubpelX, srcLast, maxValue)
+	upscaleRowSIMD(srcRow, got, dstWidth, stepX, initialSubpelX, srcLast, maxValue)
 	upscaleRowPureGo(srcRow, want, dstWidth, stepX, initialSubpelX, srcLast, maxValue)
 	return got, want
 }
 
-func TestUpscaleRowAVX2MatchesPureGo(t *testing.T) {
+func TestUpscaleRowSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
 	bitDepths := []int{8, 10, 12}
 	// Exercise a spread of coded/dst widths, including the awkward small and
@@ -55,7 +56,7 @@ func TestUpscaleRowAVX2MatchesPureGo(t *testing.T) {
 			for i := range src {
 				src[i] = uint16(rng.Intn(int(maxVal) + 1))
 			}
-			got, want := runRowImplsAVX2(t, src, sh.dst, sh.coded, bd)
+			got, want := runRowImplsSIMD(src, sh.dst, sh.coded, bd)
 			for i := range want {
 				if got[i] != want[i] {
 					t.Fatalf("bd=%d coded=%d dst=%d srcW=%d: dst[%d]=%d want %d\nsrc=%v\ngot=%v\nwant=%v",
@@ -66,12 +67,9 @@ func TestUpscaleRowAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-// TestUpscalePlaneAVX2MatchesPureGo drives the full plane entry point against a
-// pure-Go-only reference computed with upscaleRowPureGo, over many rows. Note
-// it only exercises the AVX2 row kernel through the dispatcher if
-// cpu.Detected.AVX2 is set; the direct-kernel TestUpscaleRowAVX2MatchesPureGo
-// validates the AVX2 path unconditionally.
-func TestUpscalePlaneAVX2MatchesPureGo(t *testing.T) {
+// TestUpscalePlaneSIMDMatchesPureGo drives the full plane entry point against a
+// pure-Go-only reference computed with upscaleRowPureGo, over many rows.
+func TestUpscalePlaneSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(7))
 	for _, bd := range []uint8{8, 10, 12} {
 		maxVal := uint16((1 << bd) - 1)
@@ -110,7 +108,7 @@ func TestUpscalePlaneAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestUpscaleRowAVX2ZeroAlloc(t *testing.T) {
+func TestUpscaleRowSIMDZeroAlloc(t *testing.T) {
 	coded, dst := 480, 640
 	srcWidth := coded + 3
 	src := make([]uint16, srcWidth)
@@ -127,25 +125,31 @@ func TestUpscaleRowAVX2ZeroAlloc(t *testing.T) {
 	maxValue := 255
 
 	allocs := testing.AllocsPerRun(100, func() {
-		upscaleRowAVX2(src, out, dst, stepX, initialSubpelX, srcLast, maxValue)
+		upscaleRowSIMD(src, out, dst, stepX, initialSubpelX, srcLast, maxValue)
 	})
 	if allocs != 0 {
-		t.Fatalf("upscaleRowAVX2 allocated %v objects/run, want 0", allocs)
+		t.Fatalf("upscaleRowSIMD allocated %v objects/run, want 0", allocs)
 	}
 }
 
-// TestReportAVX2DispatchStatus prints whether the dispatcher bound the AVX2
-// kernel (cpu.Detected.AVX2) or fell back to pure-Go.
-func TestReportAVX2DispatchStatus(t *testing.T) {
-	t.Logf("cpu.Detected.AVX2 = %v", cpu.Detected.AVX2)
-	if cpu.Detected.AVX2 {
-		t.Logf("super-res dispatch bound AVX2 kernel")
-	} else {
-		t.Logf("super-res dispatch fell back to pure-Go (cpu package does not detect AVX2)")
+// TestUpscaleDispatchBindsSIMD asserts the package dispatcher selects the Go
+// SIMD row kernel: always on arm64 (NEON is mandatory), and on amd64 whenever
+// the CPU advertises AVX2.
+func TestUpscaleDispatchBindsSIMD(t *testing.T) {
+	want := reflect.ValueOf(upscaleRowSIMD).Pointer()
+	bound := reflect.ValueOf(upscaleRowImpl).Pointer()
+	if runtime.GOARCH == "arm64" || archsimd.X86.AVX2() {
+		if bound != want {
+			t.Fatalf("upscaleRowImpl is not bound to upscaleRowSIMD on a SIMD-capable CPU")
+		}
+		return
+	}
+	if bound == want {
+		t.Fatalf("upscaleRowImpl bound to SIMD without AVX2")
 	}
 }
 
-func benchRowImplAVX2(b *testing.B, impl func([]uint16, []uint16, int, int, int, int, int)) {
+func benchRowImpl(b *testing.B, impl func([]uint16, []uint16, int, int, int, int, int)) {
 	b.Helper()
 	coded, dst := 480, 640
 	srcWidth := coded + 3
@@ -166,5 +170,5 @@ func benchRowImplAVX2(b *testing.B, impl func([]uint16, []uint16, int, int, int,
 	}
 }
 
-func BenchmarkRowPureGoAMD64(b *testing.B) { benchRowImplAVX2(b, upscaleRowPureGo) }
-func BenchmarkRowAVX2(b *testing.B)        { benchRowImplAVX2(b, upscaleRowAVX2) }
+func BenchmarkRowPureGo(b *testing.B) { benchRowImpl(b, upscaleRowPureGo) }
+func BenchmarkRowSIMD(b *testing.B)   { benchRowImpl(b, upscaleRowSIMD) }
