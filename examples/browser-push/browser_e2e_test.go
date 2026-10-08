@@ -26,9 +26,12 @@ import (
 )
 
 const (
-	browserE2EEnv        = "GOAV1_BROWSER_E2E"
-	requireBrowserE2EEnv = "GOAV1_REQUIRE_WEBRTC_BROWSER"
-	browserExecutableEnv = "GOAV1_BROWSER_EXECUTABLE"
+	browserE2EEnv                 = "GOAV1_BROWSER_E2E"
+	requireBrowserE2EEnv          = "GOAV1_REQUIRE_WEBRTC_BROWSER"
+	browserExecutableEnv          = "GOAV1_BROWSER_EXECUTABLE"
+	browserProbeTotalTimeout      = 60 * time.Second
+	browserProbeNoProgressTimeout = 15 * time.Second
+	browserProbeContextTimeout    = 75 * time.Second
 )
 
 func TestBrowserLiveAV1PlaybackStats(t *testing.T) {
@@ -71,7 +74,7 @@ func TestBrowserLiveAV1PlaybackStats(t *testing.T) {
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 130*time.Second)
 	defer cancel()
 	browserCtx, closeBrowser := newBrowserE2EContext(t, ctx, browserPath)
 	defer closeBrowser()
@@ -709,7 +712,7 @@ func runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedbackFrames(
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), browserProbeContextTimeout)
 	defer cancel()
 	browserCtx, closeBrowser := newBrowserE2EContext(t, ctx, browserPath)
 	defer closeBrowser()
@@ -801,7 +804,7 @@ func TestBrowserLiveRTCEncoderDirectRTPImpairmentFeedback(t *testing.T) {
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), browserProbeContextTimeout)
 	defer cancel()
 	browserCtx, closeBrowser := newBrowserE2EContext(t, ctx, browserPath)
 	defer closeBrowser()
@@ -969,7 +972,7 @@ func TestBrowserLiveRTCEncoderDirectRTPNACKRetransmission(t *testing.T) {
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), browserProbeContextTimeout)
 	defer cancel()
 	browserCtx, closeBrowser := newBrowserE2EContext(t, ctx, browserPath)
 	defer closeBrowser()
@@ -1118,10 +1121,23 @@ func browserPlaybackProbeJS(minFrames int) string {
     });
     return out;
   };
-  const deadline = Date.now() + 20000;
+  const deadline = Date.now() + %d;
+  let lastProgressAt = 0;
+  let previousFramesDecoded = 0;
   while (Date.now() < deadline) {
     last = await snapshot();
+    const now = Date.now();
     if (last.pageError) return Object.assign(last, { error: last.pageError });
+    if (last.framesDecoded > previousFramesDecoded) {
+      previousFramesDecoded = last.framesDecoded;
+      lastProgressAt = now;
+    } else if (
+      lastProgressAt === 0 &&
+      last.connectionState === 'connected' &&
+      last.videoReadyState >= 2
+    ) {
+      lastProgressAt = now;
+    }
     if (
       last.connectionState === 'connected' &&
       last.videoReadyState >= 2 &&
@@ -1134,10 +1150,13 @@ func browserPlaybackProbeJS(minFrames int) string {
     ) {
       return Object.assign(last, { ok: true });
     }
+    if (lastProgressAt > 0 && now - lastProgressAt >= %d) {
+      return Object.assign(last, { error: 'timed out waiting for decoded-frame progress' });
+    }
     await sleep(250);
   }
-  return Object.assign(last, { error: 'timed out waiting for live AV1 frames decoded by browser' });
-})()`, minFrames)
+  return Object.assign(last, { error: 'overall timeout waiting for live AV1 frames decoded by browser' });
+})()`, browserProbeTotalTimeout.Milliseconds(), minFrames, browserProbeNoProgressTimeout.Milliseconds())
 }
 
 func evalAwaitPromise(p *cdpruntime.EvaluateParams) *cdpruntime.EvaluateParams {

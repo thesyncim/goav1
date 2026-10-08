@@ -144,8 +144,21 @@ jobs:
           ./internal/av1/encoder
 
   race:
-    name: race (ubuntu)
+    name: race (${{ matrix.shard }})
     needs: build
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard:
+          - public
+          - encoder
+          - testvector
+          - decode
+          - kernels-a
+          - kernels-b
+          - syntax-transport
+          - tools
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -163,8 +176,10 @@ jobs:
             libaom-example-
       - name: fetch example fixture
         run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
+      - name: audit race shard coverage
+        run: bash .github/scripts/race-ci.sh audit
       - name: go test -race
-        run: go test -race -count=1 -timeout 45m ./...
+        run: bash .github/scripts/race-ci.sh run "${{ matrix.shard }}"
 
   alloc:
     name: alloc regression
@@ -212,6 +227,7 @@ jobs:
     needs: build
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         include:
           - shard: 1
@@ -221,13 +237,13 @@ jobs:
           - shard: 3
             name: encoder format reference tests
           - shard: 4
-            name: internal and browser controls
+            name: encoder internal and RTP controls
           - shard: 5
-            name: direct, two-layer SVC, and S2 playback
+            name: direct L1 playback
           - shard: 6
-            name: three-layer SVC playback
+            name: shared SVC L2T1 playback
           - shard: 7
-            name: three-layer SVC and S3 playback
+            name: shared SVC L2T2 playback
           - shard: 8
             name: encoder control reference tests
           - shard: 9
@@ -238,6 +254,38 @@ jobs:
             name: shared-reference SVC L3 modes
           - shard: 12
             name: public remainder
+          - shard: 13
+            name: simulcast S2T1 and S2T2 playback
+          - shard: 14
+            name: simulcast S2T3 playback
+          - shard: 15
+            name: shared SVC L2T3 playback
+          - shard: 16
+            name: shared SVC L3T1 playback
+          - shard: 17
+            name: shared SVC L3T2 playback
+          - shard: 18
+            name: shared SVC L3T3 playback
+          - shard: 19
+            name: simulcast S3T1 and S3T2 playback
+          - shard: 20
+            name: simulcast S3T3 playback
+          - shard: 21
+            name: browser playback reconnect
+          - shard: 22
+            name: direct browser playback soak
+          - shard: 23
+            name: shared SVC browser playback soak
+          - shard: 24
+            name: simulcast browser playback soak
+          - shard: 25
+            name: direct browser control churn
+          - shard: 26
+            name: shared SVC browser control churn
+          - shard: 27
+            name: simulcast browser control churn
+          - shard: 28
+            name: browser feedback controls
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -247,6 +295,7 @@ jobs:
           check-latest: true
           cache: true
       - name: install reference decoders
+        if: ${{ matrix.shard <= 4 || (matrix.shard >= 8 && matrix.shard <= 12) }}
         run: |
           sudo apt-get update
           sudo apt-get install -y aom-tools dav1d

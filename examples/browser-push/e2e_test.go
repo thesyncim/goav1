@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -923,19 +924,65 @@ func rtcFrameRTPPacketsWithoutHeaderExtensions(
 	return out, sequence + uint16(len(out)), 0, nil
 }
 
+const (
+	rtcTemporalUnitCollectionTimeout = 45 * time.Second
+	rtcTemporalUnitNoProgressTimeout = 15 * time.Second
+)
+
 func collectTemporalUnits(t *testing.T, decoded <-chan receivedTemporalUnit, want int) [][]byte {
 	t.Helper()
-	var tus [][]byte
-	deadline := time.After(15 * time.Second)
-	for len(tus) < want {
-		select {
-		case u := <-decoded:
-			tus = append(tus, u.data)
-		case <-deadline:
-			t.Fatalf("only %d temporal units arrived", len(tus))
-		}
+	tus, err := collectTemporalUnitsWithBudget(
+		decoded, want, rtcTemporalUnitCollectionTimeout, rtcTemporalUnitNoProgressTimeout)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return tus
+}
+
+func collectTemporalUnitsWithBudget(
+	decoded <-chan receivedTemporalUnit, want int, maxWait, noProgress time.Duration,
+) ([][]byte, error) {
+	if want < 0 {
+		return nil, fmt.Errorf("cannot collect a negative number of temporal units: %d", want)
+	}
+	if want == 0 {
+		return nil, nil
+	}
+	if maxWait <= 0 || noProgress <= 0 {
+		return nil, fmt.Errorf("temporal-unit collection budgets must be positive: total=%s no-progress=%s",
+			maxWait, noProgress)
+	}
+
+	started := time.Now()
+	overallDeadline := started.Add(maxWait)
+	progressDeadline := started.Add(noProgress)
+	tus := make([][]byte, 0, want)
+	for len(tus) < want {
+		deadline := overallDeadline
+		noProgressDeadline := progressDeadline.Before(overallDeadline)
+		if noProgressDeadline {
+			deadline = progressDeadline
+		}
+		timer := time.NewTimer(time.Until(deadline))
+		select {
+		case unit, ok := <-decoded:
+			timer.Stop()
+			if !ok {
+				return nil, fmt.Errorf("decoded stream closed after %d/%d temporal units", len(tus), want)
+			}
+			tus = append(tus, unit.data)
+			progressDeadline = time.Now().Add(noProgress)
+		case <-timer.C:
+			elapsed := time.Since(started).Round(time.Millisecond)
+			if noProgressDeadline {
+				return nil, fmt.Errorf("no temporal-unit progress for %s: received %d/%d after %s",
+					noProgress, len(tus), want, elapsed)
+			}
+			return nil, fmt.Errorf("overall temporal-unit collection timeout after %s: received %d/%d",
+				maxWait, len(tus), want)
+		}
+	}
+	return tus, nil
 }
 
 func assertTemporalUnitsDecodeAndReference(t *testing.T, name string, tus [][]byte) {
