@@ -119,12 +119,6 @@ func filterBlockSIMD(dst []uint16, dstStride int, dstOrigin int, input []uint16,
 	cdefFilterBlockSIMD(&ctx, int(params.Width))
 }
 
-// cdefAbsDiffInt16x8 computes signed absolute difference in each 16-bit lane,
-// preserving the low 16 bits when the full-range difference wraps.
-func cdefAbsDiffInt16x8(a, b archsimd.Int16x8) archsimd.Int16x8 {
-	return a.Max(b).Sub(a.Min(b))
-}
-
 // cdefLoadU16P loads 8 uint16 CDEF samples at a raw pointer as Int16x8
 // (samples <= 0x4000, the bit pattern is a non-negative int16).
 func cdefLoadU16P(p unsafe.Pointer) archsimd.Int16x8 {
