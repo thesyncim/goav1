@@ -592,8 +592,17 @@ func predictInterCompoundRef8ToConvBufYGoSIMD(out []uint16, ref frame.Plane, ref
 func predictInterCompoundRef8ToConvBuf2DGoSIMD(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, offsetBits int, scratch *CompoundConvolveScratch) {
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
-	if width%4 != 0 || !planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps, height+filterTaps-1) {
+	if width%4 != 0 {
 		predictInterCompoundRef8ToConvBuf2DPureGo(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
+		return
+	}
+	if !planeRegionFits(ref, 1, refX-foX, refY-foY, width+filterTaps, height+filterTaps-1) {
+		if scratch == nil || !planeRegionFits(ref, 1, 0, 0, ref.Width, ref.Height) {
+			predictInterCompoundRef8ToConvBuf2DPureGo(out, ref, refX, refY, width, height, xKernel, yKernel, offsetBits, scratch)
+			return
+		}
+		emu, emuX, emuY := emuEdgeWindow(ref, refX, refY, width, height, &scratch.edge)
+		predictInterCompoundRef8ToConvBuf2DGoSIMD(out, emu, emuX, emuY, width, height, xKernel, yKernel, offsetBits, scratch)
 		return
 	}
 	loX, nX := hbdTapSpan(&xKernel)

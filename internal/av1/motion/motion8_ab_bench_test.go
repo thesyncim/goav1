@@ -103,4 +103,20 @@ func BenchmarkMotion8ABMatrix(b *testing.B) {
 			}
 		})
 	}
+	edgeRef := frame.Plane{Pix: make([]byte, 32*32), Stride: 32, Width: 32, Height: 32}
+	for k := range edgeRef.Pix {
+		edgeRef.Pix[k] = byte((k*37 + k/32*11) & 255)
+	}
+	var edgeBuf CompoundConvBuf
+	edgeBuf.Width, edgeBuf.Height = 32, 32
+	var edgeScratch CompoundConvolveScratch
+	regular := InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapRegular}
+	b.Run("Compound/2D/edge/32x32", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			if err := PredictInterCompoundRefToConvBufWithScratch(&edgeBuf, edgeRef, 1, 8, 0, 0, 32, 32, 3, 5, regular, &edgeScratch); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }
