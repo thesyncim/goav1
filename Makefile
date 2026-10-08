@@ -102,7 +102,10 @@ QUALITYBENCH_SVT_BIN ?=
 QUALITYBENCH_SVT_SHA256 ?=
 WEBRTC_REFERENCE_TESTS = Test.*ReferenceDecoders$$
 WEBRTC_ENCODER_REFERENCE_TESTS = ^TestEncoded.*ReferenceDecoders$$
-WEBRTC_PRODUCTION_CI_CONTROLLER_TEST = ^TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders$$
+WEBRTC_PRODUCTION_CI_CONTROLLER_I422_10 = ^TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders$$/^i422-10bit$$
+WEBRTC_PRODUCTION_CI_CONTROLLER_I422_12 = ^TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders$$/^i422-12bit$$
+WEBRTC_PRODUCTION_CI_CONTROLLER_I444_10 = ^TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders$$/^i444-10bit$$
+WEBRTC_PRODUCTION_CI_CONTROLLER_I444_12 = ^TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders$$/^i444-12bit$$
 WEBRTC_PRODUCTION_CI_SCALABILITY_TEST = ^TestPublicRTCEncoderHighBitDepthNon420ScalabilityModeCatalogueReferenceDecoders$$
 WEBRTC_PRODUCTION_CI_SPLIT_TESTS = ^(TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders|TestPublicRTCEncoderHighBitDepthNon420ScalabilityModeCatalogueReferenceDecoders)$$
 WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1A = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(direct-L1T[12])$$
@@ -573,7 +576,7 @@ webrtc-production:
 # `webrtc-production` above remains the complete local gate.
 webrtc-production-ci:
 ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),1)
-	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_CONTROLLER_TEST)' -count=1 -timeout 600s -v
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_CONTROLLER_I422_10)' -count=1 -timeout 600s -v
 else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),2)
 	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_SCALABILITY_TEST)' -count=1 -timeout 600s -v
 else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),3)
@@ -653,8 +656,14 @@ else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),39)
 	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go -C examples/browser-push test . -run '^(TestEndToEndAV1OverRTPRTCEncoderControlChurn|TestEndToEndAV1OverRTPRTCEncoderREMBBitrateControl)$$' -count=1 -timeout 360s -v
 else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),40)
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_FEEDBACK_B)' -count=1 -timeout 300s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),41)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_CONTROLLER_I422_12)' -count=1 -timeout 600s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),42)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_CONTROLLER_I444_10)' -count=1 -timeout 600s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),43)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_CONTROLLER_I444_12)' -count=1 -timeout 600s -v
 else
-	@echo 'set WEBRTC_PRODUCTION_CI_SHARD to 1 through 40' >&2
+	@echo 'set WEBRTC_PRODUCTION_CI_SHARD to 1 through 43' >&2
 	@exit 2
 endif
 

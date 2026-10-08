@@ -231,7 +231,7 @@ jobs:
       matrix:
         include:
           - shard: 1
-            name: controller settings
+            name: controller settings i422 10-bit
           - shard: 2
             name: scalability catalogue
           - shard: 3
@@ -310,6 +310,12 @@ jobs:
             name: RTP control and REMB
           - shard: 40
             name: browser feedback controls B
+          - shard: 41
+            name: controller settings i422 12-bit
+          - shard: 42
+            name: controller settings i444 10-bit
+          - shard: 43
+            name: controller settings i444 12-bit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -319,7 +325,7 @@ jobs:
           check-latest: true
           cache: true
       - name: install reference decoders
-        if: ${{ matrix.shard <= 4 || (matrix.shard >= 8 && matrix.shard <= 12) || (matrix.shard >= 38 && matrix.shard <= 39) }}
+        if: ${{ matrix.shard <= 4 || (matrix.shard >= 8 && matrix.shard <= 12) || (matrix.shard >= 38 && matrix.shard <= 39) || (matrix.shard >= 41 && matrix.shard <= 43) }}
         run: |
           sudo apt-get update
           sudo apt-get install -y aom-tools dav1d
