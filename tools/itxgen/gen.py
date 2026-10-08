@@ -20,7 +20,13 @@ INT32_MAX = (1 << 31) - 1
 # ---------------------------------------------------------------- Go parsing
 
 def extract_func(name):
-    m = re.search(r"func %s\(c \[\]int32, stride int, min int32, max int32\) \{" % name, GO)
+    # The transform kernels are generic over int16 and int32, but their
+    # butterfly arithmetic is still defined in int32. Accept both the older
+    # concrete signature and the current txElem generic signature.
+    m = re.search(
+        r"func %s(?:\[[^\]]+\])?\(c \[\](?:int32|T), stride int, min int32, max int32\) \{" % name,
+        GO,
+    )
     assert m, name
     depth = 0
     i = m.end() - 1
@@ -33,7 +39,9 @@ def extract_func(name):
             if depth == 0:
                 break
         i += 1
-    return GO[start + 1:i]
+    # The Go source uses a generic typed clip helper; the generator models the
+    # same clamped result through its existing clipRange IR operation.
+    return re.sub(r"clipRangeT\[[A-Za-z_]\w*\]", "clipRange", GO[start + 1:i])
 
 def go_stmts(body):
     """Yield cleaned single-line statements (drop comments/decls/closures)."""
