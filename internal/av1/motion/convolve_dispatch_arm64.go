@@ -63,6 +63,7 @@ func init() {
 		convolve2DHighBDClampedImpl = convolve2DHighBDClampedNEON
 		convolve2DHighBDWithScratchImpl = convolve2DHighBDNEONWithScratch
 		convolve2DHighBDClampedWithScratchImpl = convolve2DHighBDClampedNEONWithScratch
+		bindHBD6TapGoSIMD()
 		return
 	}
 	convolveX8Impl = convolveX8PureGo
