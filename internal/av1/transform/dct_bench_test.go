@@ -1,6 +1,9 @@
 package transform
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 // Extended InverseDCTBlock benchmarks for the 16x16, 32x32, and 64x64
 // transform sizes. The 4x4 and 8x8 variants live alongside the unit
@@ -60,4 +63,47 @@ func BenchmarkInverseBlockHybrid16x16(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+// BenchmarkInverseBlockBitDepth8 exercises the public 8-bit API that selects
+// the int16 column pipeline. The bounded fixture reaches that pipeline for
+// every size; the high-range fixture forces the certified DCT16/32/64 guard
+// to fall back to the exact int32 column kernel. DCT8 is full-range exact.
+func BenchmarkInverseBlockBitDepth8(b *testing.B) {
+	for _, side := range []int{8, 16, 32, 64} {
+		for _, pattern := range []string{"bounded", "high-range"} {
+			b.Run(inverseBenchSizeName(side)+"/"+pattern, func(b *testing.B) {
+				coeff := inverseColumnBenchmarkCoefficients(side, pattern)
+				dst := make([]int16, side*side)
+				scratch := make([]int32, side*side)
+				size := Size{Width: uint8(side), Height: uint8(side)}
+				b.SetBytes(int64(side * side * 6))
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					if err := InverseBlockBitDepth(dst, side, coeff, side, scratch, size, TypeDCTDCT, 8); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func inverseColumnBenchmarkCoefficients(side int, pattern string) []int32 {
+	coeff := make([]int32, side*side)
+	for i := range coeff {
+		if pattern == "bounded" {
+			coeff[i] = int32((i*7)%3 - 1)
+		} else if i&1 == 0 {
+			coeff[i] = 30000
+		} else {
+			coeff[i] = -30000
+		}
+	}
+	return coeff
+}
+
+func inverseBenchSizeName(side int) string {
+	return fmt.Sprintf("DCT%dx%d", side, side)
 }

@@ -16,6 +16,20 @@ func TestInt16ColumnSIMDInputGuardBounds(t *testing.T) {
 			t.Fatalf("height=%d has no SIMD bound", height)
 		}
 		full := make([]int16, 8*height)
+		if height == 8 {
+			full[0], full[1] = minInt16, maxInt16
+			if !int16ColumnSIMDInputSafe(full, 8, height, minInt16, maxInt16) {
+				t.Fatal("DCT8 rejected the full int16 input range")
+			}
+			full[0], full[1] = 30000, 30000
+			if !int16ColumnSIMDInputSafe(full, 8, height, minInt16, maxInt16) {
+				t.Fatal("DCT8 rejected a full-range even-butterfly input")
+			}
+			if !int16ColumnSIMDInputSafe(full, 8, height, 1, maxInt16) {
+				t.Fatal("DCT8 rejected a valid positive-only int16 clamp")
+			}
+			continue
+		}
 		full[0], full[1] = int16(limit), int16(-limit)
 		if !int16ColumnSIMDInputSafe(full, 8, height, minInt16, maxInt16) {
 			t.Fatalf("height=%d rejected certified boundary", height)
@@ -30,11 +44,42 @@ func TestInt16ColumnSIMDInputGuardBounds(t *testing.T) {
 
 	input := make([]int16, 8*8)
 	input[0], input[4*8] = 30000, 30000
-	if int16ColumnSIMDInputSafe(input, 8, 8, minInt16, maxInt16) {
-		t.Fatal("accepted DCT8 even-butterfly input that overflows an int16 pre-rotation sum")
+	if !int16ColumnSIMDInputSafe(input, 8, 8, minInt16, maxInt16) {
+		t.Fatal("DCT8 rejected an exact wide pre-rotation sum")
 	}
-	if int16ColumnSIMDInputSafe(input, 8, 8, 1, maxInt16) {
-		t.Fatal("accepted a clamp interval that excludes zero")
+	if int16ColumnSIMDInputSafe(make([]int16, 8*16), 8, 16, 1, maxInt16) {
+		t.Fatal("accepted a deeper DCT clamp interval that excludes zero")
+	}
+}
+
+func TestInverseBlockBitDepth8BenchmarkFixturesSelectExpectedColumnPath(t *testing.T) {
+	if !int16ColumnFast {
+		t.Skip("SIMD int16 column path is not bound")
+	}
+	for _, side := range []int{8, 16, 32, 64} {
+		for _, pattern := range []string{"bounded", "high-range"} {
+			t.Run(inverseBenchSizeName(side)+"/"+pattern, func(t *testing.T) {
+				coeff := inverseColumnBenchmarkCoefficients(side, pattern)
+				size := Size{Width: uint8(side), Height: uint8(side)}
+				scratch := make([]int32, side*side)
+				col16 := make([]int16, side*side)
+				rowMin, rowMax, colMin, colMax, ok := stageRangeBounds(8)
+				if !ok {
+					t.Fatal("missing 8-bit stage bounds")
+				}
+				usedInt16, err := inverseSeparableBlockClampedRowsToScratch(
+					coeff, side, scratch, size, TypeDCTDCT,
+					rowMin, rowMax, colMin, colMax, 0, col16, false,
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantInt16 := pattern == "bounded"
+				if usedInt16 != wantInt16 {
+					t.Fatalf("usedInt16=%t want %t", usedInt16, wantInt16)
+				}
+			})
+		}
 	}
 }
 
@@ -63,7 +108,8 @@ func TestInverseBlockBitDepthFullRangeMatchesScalarColumnPath(t *testing.T) {
 
 	// TypeVDCT leaves each row as an identity transform. These coefficients
 	// produce pre-column values of +16384 at c0 and c4 after the 8x8 mid-pass,
-	// crossing the int16 SIMD DCT8 sum boundary while remaining valid int32 input.
+	// crossing the profitability threshold. The exact widened kernel supports
+	// this range, but production dispatch should use the faster int32/NEON path.
 	coeff := make([]int32, 8*8)
 	coeff[0], coeff[4] = 1<<14, 1<<14
 	size := Size{Width: 8, Height: 8}
@@ -77,10 +123,30 @@ func TestInverseBlockBitDepthFullRangeMatchesScalarColumnPath(t *testing.T) {
 			t.Fatal(err)
 		}
 		if usedSIMD {
-			t.Fatal("SIMD column path accepted pre-column values outside its certified interval")
+			t.Fatal("high-magnitude DCT8 fixture did not take the faster int32 path")
 		}
 	}
 	compareInverseBlockBitDepthToScalar(t, size, TypeVDCT, coeff)
+
+	// DCT16 still uses its certified narrow range. This identity-row block
+	// produces an input above the DCT16 SIMD bound and must take the int32 path.
+	coeff16 := make([]int32, 16*16)
+	coeff16[0], coeff16[8] = 12000, 12000
+	size16 := Size{Width: 16, Height: 16}
+	if int16ColumnFast {
+		rowMin, rowMax, colMin, colMax, _ := stageRangeBounds(8)
+		usedSIMD, err := inverseSeparableBlockClampedRowsToScratch(
+			coeff16, 16, make([]int32, 16*16), size16, TypeVDCT,
+			rowMin, rowMax, colMin, colMax, 0, make([]int16, 16*16), false,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if usedSIMD {
+			t.Fatal("DCT16 SIMD path accepted values outside its certified interval")
+		}
+	}
+	compareInverseBlockBitDepthToScalar(t, size16, TypeVDCT, coeff16)
 }
 
 func compareInverseBlockBitDepthToScalar(t *testing.T, size Size, typ Type, coeff []int32) {

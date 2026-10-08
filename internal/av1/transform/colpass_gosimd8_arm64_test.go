@@ -13,6 +13,65 @@ import (
 	"simd/archsimd"
 )
 
+func TestInt16ColumnSIMDInputGuardMatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x16b001))
+	for _, height := range []int{8, 16, 32, 64} {
+		width := height
+		limit := int16ColumnSIMDInputBound(height)
+		clamps := [][2]int32{{minInt16, maxInt16}, {0, maxInt16}, {minInt16, 0}, {1, maxInt16}, {minInt16, -1}, {0, 0}}
+		for _, clamp := range clamps {
+			for _, pattern := range []string{"random", "at-bound", "over-bound", "min-int16", "max-int16"} {
+				buf := make([]int16, width*height)
+				for i := range buf {
+					switch pattern {
+					case "random":
+						buf[i] = int16(rng.Uint32())
+					case "at-bound":
+						if i&1 == 0 {
+							buf[i] = int16(limit)
+						} else {
+							buf[i] = int16(-limit)
+						}
+					case "over-bound":
+						if i&1 == 0 {
+							buf[i] = int16(limit + 1)
+						} else {
+							buf[i] = int16(-limit - 1)
+						}
+					case "min-int16":
+						buf[i] = minInt16
+					case "max-int16":
+						buf[i] = maxInt16
+					}
+				}
+				got := int16ColumnSIMDInputSafeSIMD(buf, width, height, clamp[0], clamp[1])
+				want := int16ColumnSIMDInputSafeScalar(buf, width, height, clamp[0], clamp[1])
+				if got != want {
+					t.Fatalf("height=%d clamp=[%d,%d] pattern=%s SIMD=%t scalar=%t", height, clamp[0], clamp[1], pattern, got, want)
+				}
+			}
+		}
+	}
+
+	invalid := []struct {
+		buf           []int16
+		width, height int
+		min, max      int32
+	}{
+		{nil, 8, 16, minInt16, maxInt16},
+		{make([]int16, 8*16), 8, 16, 1, 0},
+		{make([]int16, 8*16), 8, 16, -32769, maxInt16},
+		{make([]int16, 8*16), 8, 16, minInt16, 32768},
+	}
+	for _, tc := range invalid {
+		got := int16ColumnSIMDInputSafeSIMD(tc.buf, tc.width, tc.height, tc.min, tc.max)
+		want := int16ColumnSIMDInputSafeScalar(tc.buf, tc.width, tc.height, tc.min, tc.max)
+		if got != want {
+			t.Fatalf("invalid input width=%d height=%d clamp=[%d,%d] SIMD=%t scalar=%t", tc.width, tc.height, tc.min, tc.max, got, want)
+		}
+	}
+}
+
 func TestRoundShiftNarrowInt32x4ToInt16x8MatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x51f7))
 	values := []int32{
@@ -118,15 +177,27 @@ func BenchmarkDCT8x8_ASMCol2(b *testing.B) {
 
 func TestInverseDCT8Col8SIMD16MatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x16b))
-	// The production dispatcher only enters this SIMD kernel when every
-	// pre-column value is within the interval-certified DCT8 bound.
-	min, max := -int16ColumnSIMDInputBound(8), int16ColumnSIMDInputBound(8)
+	min, max := int32(minInt16), int32(maxInt16)
 	for iter := 0; iter < 40000; iter++ {
 		stride := 8 + rng.Intn(3)
 		a := make([]int16, 8*stride)
 		for k := 0; k < 8; k++ {
 			for col := 0; col < 8; col++ {
-				a[k*stride+col] = int16(min + int32(rng.Int63n(int64(max)-int64(min)+1)))
+				a[k*stride+col] = int16(rng.Uint32())
+			}
+		}
+		if iter == 0 {
+			clear(a)
+			a[0], a[4*stride] = 30000, 30000
+		} else if iter == 1 {
+			for k := 0; k < 8; k++ {
+				for col := 0; col < 8; col++ {
+					if (k+col)&1 == 0 {
+						a[k*stride+col] = minInt16
+					} else {
+						a[k*stride+col] = maxInt16
+					}
+				}
 			}
 		}
 		b := make([]int16, len(a))
@@ -138,6 +209,36 @@ func TestInverseDCT8Col8SIMD16MatchesScalar(t *testing.T) {
 		for i := range a {
 			if a[i] != b[i] {
 				t.Fatalf("iter=%d at %d: scalar=%d simd=%d", iter, i, a[i], b[i])
+			}
+		}
+	}
+}
+
+func TestInverseDCT8Col8SIMD16FullRangeClampIntervals(t *testing.T) {
+	clamps := [][2]int32{{minInt16, maxInt16}, {1, maxInt16}, {minInt16, -1}, {-1024, 2047}}
+	patterns := [][8]int16{
+		{30000, -30000, 12000, -8000, 30000, 24000, -16000, -30000},
+		{30000, minInt16, -30000, maxInt16, -30000, maxInt16, 30000, minInt16},
+		{minInt16, maxInt16, minInt16, maxInt16, maxInt16, minInt16, maxInt16, minInt16},
+	}
+	for _, clamp := range clamps {
+		for patternIndex, pattern := range patterns {
+			const stride = 8
+			input := make([]int16, 8*stride)
+			for row, value := range pattern {
+				for col := 0; col < 8; col++ {
+					input[row*stride+col] = value
+				}
+			}
+			want, got := append([]int16(nil), input...), append([]int16(nil), input...)
+			for col := 0; col < 8; col++ {
+				inverseDCT8(want[col:], stride, clamp[0], clamp[1])
+			}
+			inverseDCT8Col8SIMD16(got, stride, clamp[0], clamp[1])
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("clamp=[%d,%d] pattern=%d index=%d: scalar=%d SIMD=%d", clamp[0], clamp[1], patternIndex, i, want[i], got[i])
+				}
 			}
 		}
 	}

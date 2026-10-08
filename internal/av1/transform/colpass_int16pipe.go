@@ -73,18 +73,17 @@ func inverseDCT64Col8Scalar16(buf []int16, stride int, min int32, max int32) {
 // SIMD build binds the fused SQRSHRN form (colpass_int16pipe_gosimd_arm64.go).
 var clampRoundNarrowInt16Impl = clampRoundNarrowInt16Scalar
 
-// int16ColumnSIMDInputBound returns a conservative input-magnitude bound for
-// which the 8-wide int16 SIMD DCT kernels are bit-identical to the int64 scalar
-// kernels under the production int16 stage clamp. The SIMD kernels use
-// saturating int16 operations for some unclipped rotation intermediates, so
-// the full int16 clamp alone is not a sufficient precondition. These bounds
-// come from inclusive integer-interval propagation through every SIMD stage
-// and recursive even transform; every intermediate then stays in int16.
-// Broaden them only after repeating that analysis and extending the parity tests.
+// int16ColumnSIMDInputBound returns the exactness input-magnitude bound for
+// each 8-wide int16 SIMD DCT kernel under the production int16 stage clamp.
+// DCT8 widens its rotations and is exact across the full int16 domain. DCT16,
+// DCT32, and DCT64 still use saturating int16 intermediates; their conservative
+// bounds come from inclusive interval propagation through each stage and
+// recursive even transform. Broaden those only after repeating the analysis
+// and extending the parity tests.
 func int16ColumnSIMDInputBound(height int) int32 {
 	switch height {
 	case dct8Size:
-		return 4095
+		return 1 << 15
 	case dct16Size:
 		return 1023
 	case dct32Size:
@@ -96,17 +95,37 @@ func int16ColumnSIMDInputBound(height int) int32 {
 	}
 }
 
-// int16ColumnSIMDInputSafe checks the values after mid-pass round/clamp and
-// before the SIMD column kernel mutates them. Widths below eight only use the
-// scalar int16 DCT implementation and need no SIMD-specific range guard.
-func int16ColumnSIMDInputSafe(buf []int16, width int, height int, min int32, max int32) bool {
+// dct8SIMDProfitabilityBound is not a correctness limit: the widened DCT8
+// kernel is exact above it. Benchmarks show the int32/NEON fallback wins for
+// high-magnitude inputs, so the SIMD dispatcher uses this bound to avoid a
+// measured slowdown while keeping the low-magnitude SIMD win.
+const dct8SIMDProfitabilityBound int32 = 4095
+
+// int16ColumnSIMDInputSafe checks mathematical exactness after the mid-pass
+// round/clamp. Widths below eight use the scalar int16 DCT implementation and
+// need no SIMD-specific range guard. The Go SIMD build binds a vectorized scan;
+// other builds use this exact scalar one.
+var int16ColumnSIMDInputSafe = int16ColumnSIMDInputSafeScalar
+
+// int16ColumnSIMDInputEligible also applies workload profitability policy to
+// the bound SIMD kernel. It is separate from the exactness predicate because
+// DCT8 is full-range exact but the int32/NEON fallback is faster for large
+// magnitudes. The Go SIMD build supplies its vectorized eligibility check.
+var int16ColumnSIMDInputEligible = int16ColumnSIMDInputSafeScalar
+
+func int16ColumnSIMDInputSafeScalar(buf []int16, width int, height int, min int32, max int32) bool {
 	if width < 8 {
 		return true
 	}
-	if min > 0 || max < 0 || min < minInt16 || max > maxInt16 {
+	if width <= 0 || height <= 0 || len(buf) < width*height || min > max || min < minInt16 || max > maxInt16 {
 		return false
 	}
-	if width <= 0 || height <= 0 || len(buf) < width*height {
+	// DCT8 now keeps all rotations wide until the scalar clip points, so every
+	// int16 input is exact for any valid int16 clamp interval.
+	if height == dct8Size {
+		return true
+	}
+	if min > 0 || max < 0 {
 		return false
 	}
 	limit := int16ColumnSIMDInputBound(height)

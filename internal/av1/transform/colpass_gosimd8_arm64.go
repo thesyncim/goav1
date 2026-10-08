@@ -117,80 +117,114 @@ func inverseDCT8Col8SIMD(buf []int32, stride int, min int32, max int32) {
 	st(7, clip(d0.Sub(t7)))
 }
 
-// inverseDCT8Col8SIMD16 is inverseDCT8Col8SIMD operating directly on an int16
-// scratch buffer — no load-narrow or store-widen. This is the form used by the
-// dav1d-style int16 column pipeline (8/10-bit); the whole column pass runs in
-// int16 so the 8-wide kernel pays off with zero boundary conversion.
+type int32x8Pair struct {
+	lo archsimd.Int32x4
+	hi archsimd.Int32x4
+}
+
+func widenInt16x8(x archsimd.Int16x8) int32x8Pair {
+	return int32x8Pair{lo: x.ExtendLo4ToInt32(), hi: x.HiToLo().ExtendLo4ToInt32()}
+}
+
+func mulWidenInt16x8(x archsimd.Int16x8, c int16) int32x8Pair {
+	k := archsimd.BroadcastInt16x8(c)
+	return int32x8Pair{lo: x.MulWidenLo(k), hi: x.HiToLo().MulWidenLo(k)}
+}
+
+func addInt32x8Pair(x, y int32x8Pair) int32x8Pair {
+	return int32x8Pair{lo: x.lo.Add(y.lo), hi: x.hi.Add(y.hi)}
+}
+
+func subInt32x8Pair(x, y int32x8Pair) int32x8Pair {
+	return int32x8Pair{lo: x.lo.Sub(y.lo), hi: x.hi.Sub(y.hi)}
+}
+
+func roundShiftInt32x8Pair(x int32x8Pair, shift uint8) int32x8Pair {
+	n := uint64(shift)
+	one := archsimd.BroadcastInt32x4(1)
+	return int32x8Pair{
+		lo: x.lo.ShiftAllRight(n).Add(x.lo.ShiftAllRight(n - 1).And(one)),
+		hi: x.hi.ShiftAllRight(n).Add(x.hi.ShiftAllRight(n - 1).And(one)),
+	}
+}
+
+func clipInt32x8PairToInt16(x int32x8Pair, minV, maxV archsimd.Int16x8) archsimd.Int16x8 {
+	lo := x.lo.SaturateToInt16()
+	hi := x.hi.SaturateToInt16()
+	packed := lo.ToBits().ReshapeToUint64s().InterleaveLo(hi.ToBits().ReshapeToUint64s()).ReshapeToUint16s().BitsToInt16()
+	return packed.Max(minV).Min(maxV)
+}
+
+// inverseDCT8Col8SIMD16 evaluates every DCT8 rotation in int32 and applies
+// int16 saturation only at the scalar transform's actual clip stages. The
+// whole int16 input range is therefore exact, including sums that exceed int16
+// before a later rotation or stage clip.
 func inverseDCT8Col8SIMD16(buf []int16, stride int, min int32, max int32) {
-	minV := archsimd.BroadcastInt16x8(int16(min))
-	maxV := archsimd.BroadcastInt16x8(int16(max))
+	min16V, max16V := archsimd.BroadcastInt16x8(int16(min)), archsimd.BroadcastInt16x8(int16(max))
 	ld := func(k int) archsimd.Int16x8 { return archsimd.LoadInt16x8Array((*[8]int16)(buf[k*stride:])) }
 	st := func(k int, v archsimd.Int16x8) { v.StoreArray((*[8]int16)(buf[k*stride:])) }
-	clip := func(v archsimd.Int16x8) archsimd.Int16x8 { return v.Max(minV).Min(maxV) }
-	mw := func(a archsimd.Int16x8, c int16) (archsimd.Int32x4, archsimd.Int32x4) {
-		kc := archsimd.BroadcastInt16x8(c)
-		return a.MulWidenLo(kc), a.HiToLo().MulWidenLo(kc)
+	clip := func(v archsimd.Int16x8) archsimd.Int16x8 { return v.Max(min16V).Min(max16V) }
+	clipWide := func(v int32x8Pair) archsimd.Int16x8 { return clipInt32x8PairToInt16(v, min16V, max16V) }
+	clippedAdd := func(a, b archsimd.Int16x8) archsimd.Int16x8 {
+		return clip(a.AddSaturated(b))
 	}
-	nr := func(lo, hi archsimd.Int32x4, n uint8) archsimd.Int16x8 {
-		return roundShiftNarrowInt32x4ToInt16x8(lo, hi, n)
+	clippedSub := func(a, b archsimd.Int16x8) archsimd.Int16x8 {
+		return clip(a.SubSaturated(b))
 	}
-	// int16 butterfly adds saturate, matching dav1d's sqadd/sqsub (byte-exact
-	// with the non-saturating scalar when no overflow occurs, i.e. valid decode).
-	sadd := func(a, b archsimd.Int16x8) archsimd.Int16x8 { return a.AddSaturated(b) }
-	ssub := func(a, b archsimd.Int16x8) archsimd.Int16x8 { return a.SubSaturated(b) }
+	rotate := func(a, b archsimd.Int16x8, aCoeff, bCoeff int16, shift uint8, subtract bool) int32x8Pair {
+		left, right := mulWidenInt16x8(a, aCoeff), mulWidenInt16x8(b, bCoeff)
+		var sum int32x8Pair
+		if subtract {
+			sum = subInt32x8Pair(left, right)
+		} else {
+			sum = addInt32x8Pair(left, right)
+		}
+		return roundShiftInt32x8Pair(sum, shift)
+	}
+	wide16 := widenInt16x8
 
 	c0, c1, c2, c3 := ld(0), ld(1), ld(2), ld(3)
 	c4, c5, c6, c7 := ld(4), ld(5), ld(6), ld(7)
 
-	a0l, a0h := mw(sadd(c0, c4), 181)
-	t0 := nr(a0l, a0h, 8)
-	a1l, a1h := mw(ssub(c0, c4), 181)
-	t1 := nr(a1l, a1h, 8)
-	p2al, p2ah := mw(c2, 1567)
-	p2bl, p2bh := mw(c6, 3784-4096)
-	t2 := ssub(nr(p2al.Sub(p2bl), p2ah.Sub(p2bh), 12), c6)
-	p3al, p3ah := mw(c2, 3784-4096)
-	p3bl, p3bh := mw(c6, 1567)
-	t3 := sadd(nr(p3al.Add(p3bl), p3ah.Add(p3bh), 12), c2)
-	d0 := clip(sadd(t0, t3))
-	d2 := clip(sadd(t1, t2))
-	d4 := clip(ssub(t1, t2))
-	d6 := clip(ssub(t0, t3))
+	// Even DCT4. Keep rounded rotations wide until the four scalar clip points.
+	t0 := rotate(c0, c4, 181, 181, 8, false)
+	t1 := rotate(c0, c4, 181, 181, 8, true)
+	t2 := rotate(c2, c6, 1567, -3784, 12, false)
+	t3 := rotate(c2, c6, 3784, 1567, 12, false)
+	d0 := clipWide(addInt32x8Pair(t0, t3))
+	d2 := clipWide(addInt32x8Pair(t1, t2))
+	d4 := clipWide(subInt32x8Pair(t1, t2))
+	d6 := clipWide(subInt32x8Pair(t0, t3))
 
-	q4al, q4ah := mw(c1, 799)
-	q4bl, q4bh := mw(c7, 4017-4096)
-	t4a := ssub(nr(q4al.Sub(q4bl), q4ah.Sub(q4bh), 12), c7)
-	q5al, q5ah := mw(c5, 1703)
-	q5bl, q5bh := mw(c3, 1138)
-	t5a := nr(q5al.Sub(q5bl), q5ah.Sub(q5bh), 11)
-	q6al, q6ah := mw(c5, 1138)
-	q6bl, q6bh := mw(c3, 1703)
-	t6a := nr(q6al.Add(q6bl), q6ah.Add(q6bh), 11)
-	q7al, q7ah := mw(c1, 4017-4096)
-	q7bl, q7bh := mw(c7, 799)
-	t7a := sadd(nr(q7al.Add(q7bl), q7ah.Add(q7bh), 12), c1)
-	t4 := clip(sadd(t4a, t5a))
-	t5c := clip(ssub(t4a, t5a))
-	t7 := clip(sadd(t7a, t6a))
-	t6c := clip(ssub(t7a, t6a))
-	s5l, s5h := mw(ssub(t6c, t5c), 181)
-	t5 := nr(s5l, s5h, 8)
-	s6l, s6h := mw(sadd(t6c, t5c), 181)
-	t6 := nr(s6l, s6h, 8)
+	// Odd rotations and their actual scalar clip stages.
+	t4a := rotate(c1, c7, 799, -4017, 12, false)
+	t5a := rotate(c5, c3, 1703, 1138, 11, true)
+	t6a := rotate(c5, c3, 1138, 1703, 11, false)
+	t7a := rotate(c1, c7, 4017, 799, 12, false)
+	t4 := clipWide(addInt32x8Pair(t4a, t5a))
+	t5c := clipWide(subInt32x8Pair(t4a, t5a))
+	t7 := clipWide(addInt32x8Pair(t7a, t6a))
+	t6c := clipWide(subInt32x8Pair(t7a, t6a))
 
-	st(0, clip(sadd(d0, t7)))
-	st(1, clip(sadd(d2, t6)))
-	st(2, clip(sadd(d4, t5)))
-	st(3, clip(sadd(d6, t4)))
-	st(4, clip(ssub(d6, t4)))
-	st(5, clip(ssub(d4, t5)))
-	st(6, clip(ssub(d2, t6)))
-	st(7, clip(ssub(d0, t7)))
+	// These final 181 rotations may exceed int16 and are not clipped until the
+	// final output butterflies. Form the product from widened terms directly.
+	t5 := roundShiftInt32x8Pair(addInt32x8Pair(mulWidenInt16x8(t6c, 181), mulWidenInt16x8(t5c, -181)), 8)
+	t6 := roundShiftInt32x8Pair(addInt32x8Pair(mulWidenInt16x8(t6c, 181), mulWidenInt16x8(t5c, 181)), 8)
+
+	st(0, clippedAdd(d0, t7))
+	st(1, clipWide(addInt32x8Pair(wide16(d2), t6)))
+	st(2, clipWide(addInt32x8Pair(wide16(d4), t5)))
+	st(3, clippedAdd(d6, t4))
+	st(4, clippedSub(d6, t4))
+	st(5, clipWide(subInt32x8Pair(wide16(d4), t5)))
+	st(6, clipWide(subInt32x8Pair(wide16(d2), t6)))
+	st(7, clippedSub(d0, t7))
 }
 
 // inverseDCT16Col8SIMD16 is the int16 8-wide DCT16 column pass (dav1d 8bpc):
 // inverseDCT8 on the even rows, then the 16-point odd butterfly, saturating
-// int16 adds throughout. Byte-exact with scalar inverseDCT16[int16].
+// int16 adds throughout. It is byte-exact with scalar inverseDCT16[int16] for
+// values accepted by the DCT16 input guard.
 func inverseDCT16Col8SIMD16(buf []int16, stride int, min int32, max int32) {
 	inverseDCT8Col8SIMD16(buf, stride<<1, min, max)
 

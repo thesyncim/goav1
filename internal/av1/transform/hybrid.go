@@ -235,9 +235,9 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 			}
 		}
 		// Scalar int16 kernels use exact wide intermediates and support the full
-		// int16 range. Apply the conservative interval guard only when the SIMD
-		// kernels that use saturating intermediates are bound.
-		if !int16ColumnFast || int16ColumnSIMDInputSafe(col16, width, height, colMin, colMax) {
+		// int16 range. SIMD dispatch also checks the certified bounds for wider
+		// transforms and the measured DCT8 profitability cutoff.
+		if !int16ColumnFast || int16ColumnSIMDInputEligible(col16, width, height, colMin, colMax) {
 			inverseDCTColumnPassInt16(col16, width, height, colMin, colMax)
 			return true, nil
 		}
