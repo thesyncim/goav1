@@ -67,6 +67,33 @@ jobs:
       - name: go test
         run: go test -count=1 ./...
 
+  linux-386-bounds:
+    name: linux/386 bounds and parser regressions
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GOARCH: '386'
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: true
+      - name: go build (linux/386)
+        run: go build ./...
+      - name: IVF and public plane-bound regressions
+        run: >-
+          go test -count=1 -timeout 180s
+          -run '^(TestReaderAtDecoderPayloadSource.*|FuzzReaderAtDecoderPayloadSourceMatchesSliceIterator|FuzzPublicSimpleDecoderIVF|TestPublicEncodeRejectsStrideWhosePlaneLengthOverflows|TestPublicEncodeAcceptsMinimalAndPaddedStrides)$'
+          .
+      - name: encoder plane-length boundaries
+        run: >-
+          go test -count=1 -timeout 180s
+          -run '^(TestCheckedPlaneLengthBoundaries|TestMonochromeRenderValidatorsRejectOverflowingStride|TestMonochromeRenderValidatorsAcceptSingleRow|TestColor16ValidatorChecksChromaPlaneLength|TestColor16RenderValidatorAcceptsSingleRowSubsampledGeometry)$'
+          ./internal/av1/encoder
+
   race:
     name: race (ubuntu)
     needs: build
