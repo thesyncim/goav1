@@ -8,38 +8,33 @@ package motion
 
 import "testing"
 
-// These benchmarks set up a resident 48x48 ref plane with a representative shear
-// (alpha!=0, beta!=0) so the per-column-varying filter path is exercised, then
-// measure the horizontal pass (scalar reference vs the Go-native SIMD kernel) in
-// isolation.
+// These benchmarks reuse the exact fixture and shear from the NEON benchmarks
+// in warp_neon_arm64_test.go so scalar, NEON, and Go SIMD results are comparable.
 func BenchmarkWarpHorizontal8ResidentScalar(b *testing.B) {
-	ref, _ := testPlane(48, 48, 1, 48)
-	for i := range ref.Pix {
-		ref.Pix[i] = byte((i*61 + (i/48)*29 + 7) & 0xff)
-	}
+	ref, ix4, iy4, sx4, sy4, alpha, beta := benchWarpHorizInputs()
 	const reduceBitsHoriz = round0Bits
 	const offsetBitsHoriz = 8 + filterBits - 1
-	const ix4, iy4 = 20, 20
 	var tmp [warpedIntermediateRows * warpedIntermediateColumns]int32
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		warpHorizontal8Resident(&tmp, ref, ix4, 512, iy4, -256, 32, -16, reduceBitsHoriz, offsetBitsHoriz)
+		warpHorizontal8Resident(&tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz)
 	}
 	sink32 = tmp[0]
 }
 
 func BenchmarkWarpHorizontal8ResidentSIMD(b *testing.B) {
-	ref, _ := testPlane(48, 48, 1, 48)
-	for i := range ref.Pix {
-		ref.Pix[i] = byte((i*61 + (i/48)*29 + 7) & 0xff)
-	}
+	ref, ix4, iy4, sx4, sy4, alpha, beta := benchWarpHorizInputs()
 	const reduceBitsHoriz = round0Bits
 	const offsetBitsHoriz = 8 + filterBits - 1
-	const ix4, iy4 = 20, 20
 	var tmp [warpedIntermediateRows * warpedIntermediateColumns]int32
+	if !warpHorizResidentOffsInRange(sx4, alpha, beta) {
+		b.Skip("bench inputs out of range")
+	}
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		warpHorizontal8ResidentSIMD(&tmp, ref, ix4, 512, iy4, -256, 32, -16, reduceBitsHoriz, offsetBitsHoriz)
+		warpHorizontal8ResidentSIMD(&tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz)
 	}
 	sink32 = tmp[0]
 }

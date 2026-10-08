@@ -5,6 +5,8 @@ package motion
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
 // TestBlendCompoundAvg8GoSIMDMatchesPureGo checks the Go-native SIMD compound
@@ -37,7 +39,7 @@ func TestBlendCompoundAvg8GoSIMDMatchesPureGo(t *testing.T) {
 	}
 }
 
-func BenchmarkBlendCompoundAvg8GoSIMD_32(b *testing.B) {
+func benchBlendCompoundAvg8GoSIMDAndNEON(b *testing.B, fn func(dst frame.Plane, src0, src1 []uint16, dstX, dstY, w, h, fwd, bck, roundOffset, roundBits int)) {
 	const roundOffset, roundBits = 6144, 4
 	const w, h = 32, 32
 	src0 := make([]uint16, w*h)
@@ -47,24 +49,17 @@ func BenchmarkBlendCompoundAvg8GoSIMD_32(b *testing.B) {
 		src1[i] = uint16(4000 + (i*7)%5000)
 	}
 	dst, _ := testPlane(w, h, 1, w)
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		blendCompoundAvg8GoSIMD(dst, src0, src1, 0, 0, w, h, 8, 8, roundOffset, roundBits)
+		fn(dst, src0, src1, 0, 0, w, h, 8, 8, roundOffset, roundBits)
 	}
 }
 
+func BenchmarkBlendCompoundAvg8GoSIMD_32(b *testing.B) {
+	benchBlendCompoundAvg8GoSIMDAndNEON(b, blendCompoundAvg8GoSIMD)
+}
+
 func BenchmarkBlendCompoundAvg8NEON_32(b *testing.B) {
-	const roundOffset, roundBits = 6144, 4
-	const w, h = 32, 32
-	src0 := make([]uint16, w*h)
-	src1 := make([]uint16, w*h)
-	for i := range src0 {
-		src0[i] = uint16(3000 + i%5000)
-		src1[i] = uint16(4000 + (i*7)%5000)
-	}
-	dst, _ := testPlane(w, h, 1, w)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		blendCompoundAvg8NEON(dst, src0, src1, 0, 0, w, h, 8, 8, roundOffset, roundBits)
-	}
+	benchBlendCompoundAvg8GoSIMDAndNEON(b, blendCompoundAvg8NEON)
 }

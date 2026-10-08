@@ -1256,14 +1256,17 @@ func decoderFrameWorkResidualEventContext(sequence SequenceHeader, event Decoder
 	return decoderFrameWorkResidualEventContextPtr(sequence, &event)
 }
 
+// decoderFrameWorkResidualEventContextPtr builds the context used by scratch
+// sizing. Scaled-reference policy does not affect those lengths, so keep this
+// conversion independent of environment lookups.
 func decoderFrameWorkResidualEventContextPtr(sequence SequenceHeader, event *DecoderEvent) DecoderFrameWorkFrameContext {
 	if event == nil {
 		return DecoderFrameWorkFrameContext{
-			Sequence: DecoderFrameWorkSequenceContextFromHeader(sequence),
+			Sequence: internalthreading.FrameWorkSequenceContextFromHeader(sequence),
 		}
 	}
 	return DecoderFrameWorkFrameContext{
-		Sequence:            DecoderFrameWorkSequenceContextFromHeader(sequence),
+		Sequence:            internalthreading.FrameWorkSequenceContextFromHeader(sequence),
 		FrameHeader:         event.FrameHeader,
 		FrameSize:           event.FrameSize,
 		TileInfo:            event.TileInfo,

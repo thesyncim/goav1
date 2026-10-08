@@ -34,21 +34,29 @@ import (
 //
 // Because 128+256==384 is subtracted AFTER the arithmetic shift, and
 // 384<<reduceBitsVert is an exact multiple of 1<<reduceBitsVert, it folds into
-// the pre-shift value: (X>>n) - k == (X - k*2^n)>>n. The rounding term
-// (1<<(reduceBitsVert-1)) is supplied by simdRoundShiftNarrowInt32Pair, so it
-// is NOT included here.
+// the pre-shift value: (X>>n) - k == (X - k*2^n)>>n. The vertical SIMD kernels
+// add the rounding term to this bias after verifying the supported bit counts.
 func biasVert(reduceBitsVert, offsetBitsVert int) int32 {
-	return int32((1 << offsetBitsVert) - ((1 << 7) + (1 << 8)) << uint(reduceBitsVert))
+	const clipOffset = (1 << 7) + (1 << 8)
+	return int32((1 << offsetBitsVert) - (clipOffset << uint(reduceBitsVert)))
 }
 
 // warpVertical8FullGamma0SIMD is the gamma==0 case: the vertical filter is
 // constant across all eight columns of a row (offs depends only on sy, which is
 // fixed per row), so it is a straight 8-tap vertical filter applied to eight
-// int32 columns at once. An out-of-range offs skips the whole row (dst
-// untouched), exactly as the scalar path.
+// int32 columns at once. An out-of-range offset sends the whole block through
+// the scalar path, which leaves each out-of-range row untouched.
 func warpVertical8FullGamma0SIMD(dst frame.Plane, tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, i, j, rowShift, colShift, baseSY, delta, reduceBitsVert, offsetBitsVert int) {
-	bias := archsimd.BroadcastInt32x4(biasVert(reduceBitsVert, offsetBitsVert))
-	rb := uint8(reduceBitsVert)
+	const expectedOffsetBits = 8 + 2*filterBits - round0Bits
+	if reduceBitsVert != round1Bits || offsetBitsVert != expectedOffsetBits || !warpVertFullOffsInRange(baseSY, 0, delta) {
+		warpVertical8FullGamma0(dst, tmp, i, j, rowShift, colShift, baseSY, delta, reduceBitsVert, offsetBitsVert)
+		return
+	}
+	// Include the rounding bias before the arithmetic shift. The accumulator
+	// bound is far below int32 limits, so this is exact and avoids a second shift
+	// plus per-row shift-count broadcasts in the tie-correction sequence.
+	bias := archsimd.BroadcastInt32x4(biasVert(round1Bits, expectedOffsetBits) + (1 << (round1Bits - 1)))
+	shift := archsimd.BroadcastInt32x4(-round1Bits)
 
 	// Narrow the 15 tmp rows (int32, |tmp|<2^15) to Int16x8 once. Output row k
 	// reads the 8-tap window tmp rows (k+4)..(k+11) (scalar tmpRow=(k+4)*8).
@@ -60,9 +68,6 @@ func warpVertical8FullGamma0SIMD(dst frame.Plane, tmp *[warpedIntermediateRows *
 	for k := -4; k < 4; k++ {
 		sy := baseSY + delta*(k+4)
 		offs := roundPowerOfTwo(sy, warpedDiffPrecBits) + warpedPixelPrecShifts
-		if offs < 0 || offs >= len(warpedFilter) {
-			continue
-		}
 		base := k + 4
 		c := &warpedFilter[offs]
 		// Broadcast each tap across all 8 columns; MAC in int32 lanes.
@@ -91,9 +96,9 @@ func warpVertical8FullGamma0SIMD(dst frame.Plane, tmp *[warpedIntermediateRows *
 		lo = lo.Add(s[base+7].MulWidenLo(t7))
 		hi = hi.Add(s[base+7].HiToLo().MulWidenLo(t7.HiToLo()))
 
-		lo = lo.Add(bias)
-		hi = hi.Add(bias)
-		out := simdRoundShiftNarrowInt32Pair(lo, hi, uint64(rb))
+		lo = lo.Add(bias).Shift(shift)
+		hi = hi.Add(bias).Shift(shift)
+		out := simdConcatInt16x8(lo.SaturateToInt16(), hi.SaturateToInt16())
 		dstRow := (i+rowShift+k+4)*dst.Stride + j + colShift
 		convStore8(unsafe.Pointer(&dst.Pix[dstRow]), out)
 	}
@@ -106,12 +111,19 @@ func warpVertical8FullGamma0SIMD(dst frame.Plane, tmp *[warpedIntermediateRows *
 // elementwise product s[m]*ftap[m] yields, per lane col, coeffs_col[m]*tmp[m].
 //
 // The scalar path skips any column whose offs is out of range (leaving dst
-// unchanged for that pixel). Rows where every column is in range take the full
-// SIMD store; a row with any out-of-range column falls back to the scalar row
-// (rare edge shears) to preserve the exact per-pixel skip semantics.
+// unchanged for that pixel). A single affine bounds check decides whether the
+// entire block is safe for SIMD; edge shears fall back to scalar to preserve
+// the exact per-pixel skip semantics without a bounds branch in every row.
 func warpVertical8FullSIMD(dst frame.Plane, tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, i, j, rowShift, colShift, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert int) {
-	bias := archsimd.BroadcastInt32x4(biasVert(reduceBitsVert, offsetBitsVert))
-	rb := uint8(reduceBitsVert)
+	const expectedOffsetBits = 8 + 2*filterBits - round0Bits
+	if reduceBitsVert != round1Bits || offsetBitsVert != expectedOffsetBits || !warpVertFullOffsInRange(baseSY, gamma, delta) {
+		warpVertical8Full(dst, tmp, i, j, rowShift, colShift, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert)
+		return
+	}
+	// As in the gamma0 kernel, fold roundPowerOfTwo's bias into the existing
+	// vertical offset. The bounded MAC accumulator cannot overflow int32.
+	bias := archsimd.BroadcastInt32x4(biasVert(round1Bits, expectedOffsetBits) + (1 << (round1Bits - 1)))
+	shift := archsimd.BroadcastInt32x4(-round1Bits)
 
 	// Output row k reads the 8-tap window tmp rows (k+4)..(k+11).
 	var s [warpedIntermediateRows]archsimd.Int16x8
@@ -124,14 +136,9 @@ func warpVertical8FullSIMD(dst frame.Plane, tmp *[warpedIntermediateRows * warpe
 		// Gather the 8 per-column filters and transpose into per-tap columns:
 		// ftap[m][col] = warpedFilter[offs_col][m].
 		var ftap [8][8]int16
-		ok := true
 		syc := sy
 		for col := 0; col < 8; col++ {
 			offs := roundPowerOfTwo(syc, warpedDiffPrecBits) + warpedPixelPrecShifts
-			if offs < 0 || offs >= len(warpedFilter) {
-				ok = false
-				break
-			}
 			c := &warpedFilter[offs]
 			ftap[0][col] = c[0]
 			ftap[1][col] = c[1]
@@ -142,12 +149,6 @@ func warpVertical8FullSIMD(dst frame.Plane, tmp *[warpedIntermediateRows * warpe
 			ftap[6][col] = c[6]
 			ftap[7][col] = c[7]
 			syc += gamma
-		}
-		if !ok {
-			// Rare: at least one column out of range. Scalar handles the exact
-			// per-pixel skip for just this row.
-			warpVertical8FullRowScalar(dst, tmp, i, j, rowShift, colShift, sy, gamma, k, reduceBitsVert, offsetBitsVert)
-			continue
 		}
 		base := k + 4
 		f0 := archsimd.LoadInt16x8Array(&ftap[0])
@@ -175,37 +176,11 @@ func warpVertical8FullSIMD(dst frame.Plane, tmp *[warpedIntermediateRows * warpe
 		lo = lo.Add(s[base+7].MulWidenLo(f7))
 		hi = hi.Add(s[base+7].HiToLo().MulWidenLo(f7.HiToLo()))
 
-		lo = lo.Add(bias)
-		hi = hi.Add(bias)
-		out := simdRoundShiftNarrowInt32Pair(lo, hi, uint64(rb))
+		lo = lo.Add(bias).Shift(shift)
+		hi = hi.Add(bias).Shift(shift)
+		out := simdConcatInt16x8(lo.SaturateToInt16(), hi.SaturateToInt16())
 		dstRow := (i+rowShift+k+4)*dst.Stride + j + colShift
 		convStore8(unsafe.Pointer(&dst.Pix[dstRow]), out)
-	}
-}
-
-// warpVertical8FullRowScalar reproduces the scalar warpVertical8Full inner
-// column loop for a single row k, including the per-column out-of-range skip.
-func warpVertical8FullRowScalar(dst frame.Plane, tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, i, j, rowShift, colShift, sy, gamma, k, reduceBitsVert, offsetBitsVert int) {
-	dstRow := (i+rowShift+k+4)*dst.Stride + j + colShift
-	tmpRow := (k + 4) * warpedIntermediateColumns
-	for l := -4; l < 4; l++ {
-		offs := roundPowerOfTwo(sy, warpedDiffPrecBits) + warpedPixelPrecShifts
-		if offs >= 0 && offs < len(warpedFilter) {
-			coeffs := warpedFilter[offs]
-			col := l + 4
-			sum := 1 << offsetBitsVert
-			sum += int(coeffs[0]) * int(tmp[tmpRow+0*warpedIntermediateColumns+col])
-			sum += int(coeffs[1]) * int(tmp[tmpRow+1*warpedIntermediateColumns+col])
-			sum += int(coeffs[2]) * int(tmp[tmpRow+2*warpedIntermediateColumns+col])
-			sum += int(coeffs[3]) * int(tmp[tmpRow+3*warpedIntermediateColumns+col])
-			sum += int(coeffs[4]) * int(tmp[tmpRow+4*warpedIntermediateColumns+col])
-			sum += int(coeffs[5]) * int(tmp[tmpRow+5*warpedIntermediateColumns+col])
-			sum += int(coeffs[6]) * int(tmp[tmpRow+6*warpedIntermediateColumns+col])
-			sum += int(coeffs[7]) * int(tmp[tmpRow+7*warpedIntermediateColumns+col])
-			sum = roundPowerOfTwo(sum, reduceBitsVert)
-			dst.Pix[dstRow+l+4] = byte(clipPixel(sum - (1 << 7) - (1 << 8)))
-		}
-		sy += gamma
 	}
 }
 

@@ -186,9 +186,14 @@ func benchWarpVertTmp() warpTmp {
 	return tmp
 }
 
-func BenchmarkWarpVertical8FullScalarNEONOracle(b *testing.B) {
+func benchWarpVerticalInputs() (warpTmp, frame.Plane) {
 	tmp := benchWarpVertTmp()
 	dst, _ := testPlane(32, 32, 1, 32)
+	return tmp, dst
+}
+
+func BenchmarkWarpVertical8FullScalarNEONOracle(b *testing.B) {
+	tmp, dst := benchWarpVerticalInputs()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
@@ -197,14 +202,25 @@ func BenchmarkWarpVertical8FullScalarNEONOracle(b *testing.B) {
 }
 
 func BenchmarkWarpVertical8FullNEON(b *testing.B) {
-	tmp := benchWarpVertTmp()
+	tmp, dst := benchWarpVerticalInputs()
 	if !warpVertFullOffsInRange(32768, 96, -64) {
 		b.Skip("bench inputs out of range")
 	}
-	dst, _ := testPlane(32, 32, 1, 32)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
 		warpVertical8FullNEON(dst, &tmp, 8, 8, 0, 0, 32768, 96, -64, round1Bits, 8+2*filterBits-round0Bits)
+	}
+}
+
+func BenchmarkWarpVertical8FullGamma0NEON(b *testing.B) {
+	tmp, dst := benchWarpVerticalInputs()
+	if !warpVertFullOffsInRange(32768, 0, -64) {
+		b.Skip("bench inputs out of range")
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		warpVertical8FullGamma0NEON(dst, &tmp, 8, 8, 0, 0, 32768, -64, round1Bits, 8+2*filterBits-round0Bits)
 	}
 }

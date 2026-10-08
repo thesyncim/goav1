@@ -208,8 +208,20 @@ jobs:
           FUZZTIME: 50000x
 
   webrtc-reference:
-    name: webrtc reference decoders
+    name: webrtc reference decoders (${{ matrix.name }})
     needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: 1
+            name: controller settings
+          - shard: 2
+            name: scalability catalogue
+          - shard: 3
+            name: public remainder
+          - shard: 4
+            name: internal and browser
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -224,8 +236,8 @@ jobs:
           sudo apt-get install -y aom-tools dav1d
           command -v aomdec
           command -v dav1d
-      - name: WebRTC production gate
-        run: make webrtc-production
+      - name: WebRTC production shard ${{ matrix.shard }}
+        run: make webrtc-production-ci WEBRTC_PRODUCTION_CI_SHARD=${{ matrix.shard }}
 
   cli-smoke:
     name: cli smoke (aom-go-dec)

@@ -66,6 +66,9 @@ var warpedFilterI8x8 = func() [len(warpedFilter)]int64 {
 // roundPowerOfTwo(sum, reduceBitsHoriz) int32 result (sum is non-negative for
 // every resident phase so the shift is bit-identical).
 func warpHorizontal8ResidentSIMD(tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, ref frame.Plane, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz int) int {
+	if reduceBitsHoriz != round0Bits || offsetBitsHoriz != 8+filterBits-1 {
+		return warpHorizontal8Resident(tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz)
+	}
 	// Even-lane bias = (1<<offsetBitsHoriz) + round const (1<<(reduceBitsHoriz-1)),
 	// odd lanes zero: after ConcatAddPairs collapses each column's two 4-tap
 	// half-sums, every output lane carries exactly one copy of bias+round, so the
@@ -73,7 +76,7 @@ func warpHorizontal8ResidentSIMD(tmp *[warpedIntermediateRows * warpedIntermedia
 	// reduceBitsHoriz == roundPowerOfTwo(sum, reduceBitsHoriz).
 	bias := int32((1 << offsetBitsHoriz) + (1 << (reduceBitsHoriz - 1)))
 	seed := archsimd.LoadInt32x4Array(&[4]int32{bias, 0, bias, 0})
-	shift := uint64(reduceBitsHoriz)
+	shift := archsimd.BroadcastInt32x4(-int32(reduceBitsHoriz))
 
 	perm01 := archsimd.LoadUint8x16Array(&warpHPerm01Arr)
 	perm23 := archsimd.LoadUint8x16Array(&warpHPerm23Arr)
@@ -156,10 +159,10 @@ func warpHorizontal8ResidentSIMD(tmp *[warpedIntermediateRows * warpedIntermedia
 		m45 := simdDotProdUS(seed, raw.LookupOrZero(perm45), fv45)
 		m67 := simdDotProdUS(seed, raw.LookupOrZero(perm67), fv67)
 
-		// ConcatAddPairs collapses each column's two 4-tap half-sums; ShiftAllRight
+		// ConcatAddPairs collapses each column's two 4-tap half-sums; Shift
 		// finishes roundPowerOfTwo. Cols 0..3 then 4..7.
-		m01.ConcatAddPairs(m23).ShiftAllRight(shift).StoreArray((*[4]int32)(dp))
-		m45.ConcatAddPairs(m67).ShiftAllRight(shift).StoreArray((*[4]int32)(unsafe.Add(dp, 16)))
+		m01.ConcatAddPairs(m23).Shift(shift).StoreArray((*[4]int32)(dp))
+		m45.ConcatAddPairs(m67).Shift(shift).StoreArray((*[4]int32)(unsafe.Add(dp, 16)))
 
 		if k+1 < 8 {
 			rowp = unsafe.Add(rowp, rowStride)

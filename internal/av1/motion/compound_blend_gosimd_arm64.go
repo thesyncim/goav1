@@ -33,8 +33,8 @@ func blendMulAddU16Hi(x, xWeight, y, yWeight archsimd.Uint16x8) archsimd.Uint32x
 // blendShiftNarrowU16 applies the arithmetic >>8 and unsigned-saturating
 // int32-to-uint16 conversion used by SQSHRUN. Narrowing keeps its four results
 // in the low 64 bits and clears the upper half.
-func blendShiftNarrowU16(x archsimd.Int32x4) archsimd.Uint16x8 {
-	return x.ShiftAllRight(8).SaturateToUint16()
+func blendShiftNarrowU16(x, shift archsimd.Int32x4) archsimd.Uint16x8 {
+	return x.Shift(shift).SaturateToUint16()
 }
 
 // blendJoinLowU16 places four low uint16 lanes from each narrowing result into
@@ -75,6 +75,7 @@ func blendCompoundAvg8GoSIMD(dst frame.Plane, src0 []uint16, src1 []uint16, dstX
 	const distBits = 4 // DIST_PRECISION_BITS; roundBits is guaranteed 4 here too.
 	fwdV := archsimd.BroadcastUint16x8(uint16(fwdOffset))
 	bckV := archsimd.BroadcastUint16x8(uint16(bckOffset))
+	rightShift8 := archsimd.BroadcastInt32x4(-8)
 	// biasV = ((1<<(roundBits-1)) - roundOffset) << distBits == -(16*roundOffset - 128).
 	biasV := archsimd.BroadcastInt32x4(int32(((1 << (roundBits - 1)) - roundOffset) << distBits))
 
@@ -103,8 +104,8 @@ func blendCompoundAvg8GoSIMD(dst frame.Plane, src0 []uint16, src1 []uint16, dstX
 			rLoB := accLoB.BitsToInt32().Add(biasV)
 			rHiB := accHiB.BitsToInt32().Add(biasV)
 
-			pa := blendJoinLowU16(blendShiftNarrowU16(rLoA), blendShiftNarrowU16(rHiA)) // px 0..7
-			pb := blendJoinLowU16(blendShiftNarrowU16(rLoB), blendShiftNarrowU16(rHiB)) // px 8..15
+			pa := blendJoinLowU16(blendShiftNarrowU16(rLoA, rightShift8), blendShiftNarrowU16(rHiA, rightShift8)) // px 0..7
+			pb := blendJoinLowU16(blendShiftNarrowU16(rLoB, rightShift8), blendShiftNarrowU16(rHiB, rightShift8)) // px 8..15
 			// Clamp both groups to [0,255] and join their low eight bytes.
 			out := blendJoinLowU8(pa.SaturateToUint8(), pb.SaturateToUint8())
 			out.StoreArray((*[16]uint8)(dp))
@@ -124,7 +125,7 @@ func blendCompoundAvg8GoSIMD(dst frame.Plane, src0 []uint16, src1 []uint16, dstX
 			accHi := blendMulAddU16Hi(s0, fwdV, s1, bckV)
 			rLo := accLo.BitsToInt32().Add(biasV)
 			rHi := accHi.BitsToInt32().Add(biasV)
-			narrowed := blendJoinLowU16(blendShiftNarrowU16(rLo), blendShiftNarrowU16(rHi))
+			narrowed := blendJoinLowU16(blendShiftNarrowU16(rLo, rightShift8), blendShiftNarrowU16(rHi, rightShift8))
 			out := narrowed.SaturateToUint8()
 			convStore8U8(dp, out)
 		}
