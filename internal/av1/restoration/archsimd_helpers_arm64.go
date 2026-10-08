@@ -24,22 +24,12 @@ func restorationSaturateInt32PairToUint16(lo, hi archsimd.Int32x4) archsimd.Uint
 	return lo64.InterleaveLo(hi64).ReshapeToUint16s()
 }
 
-// restorationRoundShiftInt32 applies AV1's rounded arithmetic right shift
-// without adding a bias to the accumulator, which could overflow int32.
-func restorationRoundShiftInt32(v archsimd.Int32x4, shift uint8) archsimd.Int32x4 {
-	if shift == 0 {
-		return v
-	}
-	s := uint64(shift)
-	roundBit := v.ShiftAllRight(s - 1).And(archsimd.BroadcastInt32x4(1))
-	return v.ShiftAllRight(s).Add(roundBit)
-}
-
 // restorationRoundShiftNarrowInt32Pair rounds and signed-saturates two int32
-// halves to int16, matching the former SQRSHRN/SQRSHRN2 pair.
-func restorationRoundShiftNarrowInt32Pair(lo, hi archsimd.Int32x4, shift uint8) archsimd.Int16x8 {
-	lo16 := restorationRoundShiftInt32(lo, shift).SaturateToInt16()
-	hi16 := restorationRoundShiftInt32(hi, shift).SaturateToInt16()
+// halves to int16, matching the former SQRSHRN/SQRSHRN2 pair. The two shift
+// vectors and one mask are broadcast once by the caller, outside the row loop.
+func restorationRoundShiftNarrowInt32Pair(lo, hi, shiftV, roundBitShiftV, oneV archsimd.Int32x4) archsimd.Int16x8 {
+	lo16 := lo.Shift(shiftV).Add(lo.Shift(roundBitShiftV).And(oneV)).SaturateToInt16()
+	hi16 := hi.Shift(shiftV).Add(hi.Shift(roundBitShiftV).And(oneV)).SaturateToInt16()
 	lo64 := lo16.ToBits().ReshapeToUint64s()
 	hi64 := hi16.ToBits().ReshapeToUint64s()
 	return lo64.InterleaveLo(hi64).ReshapeToUint16s().BitsToInt16()

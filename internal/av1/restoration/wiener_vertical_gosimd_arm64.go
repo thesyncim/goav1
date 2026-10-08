@@ -12,19 +12,20 @@ import (
 )
 
 // wienerVerticalU8SIMD is the Go-native SIMD form of the 8-bit Wiener vertical
-// pass: a 7-tap column MAC over the horizontal-pass int16 intermediate, rounded
-// by round1 and clamped to uint8. The center-tap DC boost c3<<WienerFilterBits
-// folds into f3' = f3 + (1<<WienerFilterBits), so the body is a pure 7-tap MAC:
-// sum = -offset + Σ r_i*f_i', then roundPowerOfTwo(sum, round1) clamped [0,255].
+// pass over the horizontal-pass int16 intermediate, rounded by round1 and
+// clamped to uint8. Symmetric taps combine the three outer row pairs in int16,
+// reducing the column MAC to four widening products. The center-tap DC boost
+// folds into f3' = f3 + (1<<WienerFilterBits).
 //
 // Column-strip walk with a SLIDING 7-row register window: each temp row is loaded
 // once and reused across the 7 output rows that read it (the hand asm's trick),
 // instead of reloading all 7 rows per output row. temp is bounded to [0,8191]
 // (< 2^15), so its uint16 cells reinterpret losslessly as int16 for widening
-// multiplication; the int32 accumulator's overflow-safe rounded shift and
-// uint8 saturation reproduce clamp(roundPowerOfTwo(sum,round1),0,255) exactly.
+// multiplication and each pair sum is at most 16382. The int32 accumulator's
+// overflow-safe rounded shift and uint8 saturation reproduce the scalar result.
 func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride int, width int, height int, filter WienerFilter, round1 int) {
-	if width < 8 || round1 < 1 || round1 > 16 {
+	if width < 8 || round1 < 1 || round1 > 16 ||
+		filter[0] != filter[6] || filter[1] != filter[5] || filter[2] != filter[4] {
 		wienerVerticalU8(temp, tempStride, dst, dstStride, width, height, filter, round1)
 		return
 	}
@@ -34,14 +35,11 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 	f1 := archsimd.BroadcastInt16x8(filter[1])
 	f2 := archsimd.BroadcastInt16x8(filter[2])
 	f3 := archsimd.BroadcastInt16x8(filter[3] + (1 << WienerFilterBits))
-	f4 := archsimd.BroadcastInt16x8(filter[4])
-	f5 := archsimd.BroadcastInt16x8(filter[5])
-	f6 := archsimd.BroadcastInt16x8(filter[6])
 	hf0, hf1 := f0.HiToLo(), f1.HiToLo()
 	hf2, hf3 := f2.HiToLo(), f3.HiToLo()
-	hf4, hf5 := f4.HiToLo(), f5.HiToLo()
-	hf6 := f6.HiToLo()
-	rb := uint8(round1)
+	roundShiftV := archsimd.BroadcastInt32x4(-int32(round1))
+	roundBitShiftV := archsimd.BroadcastInt32x4(-int32(round1 - 1))
+	roundOneV := archsimd.BroadcastInt32x4(1)
 
 	const u16 = 2
 	w16 := width &^ 15
@@ -71,16 +69,18 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 		for row := 0; row < height; row++ {
 			r6a := archsimd.LoadInt16x8Array((*[8]int16)(nexta))
 			r6b := archsimd.LoadInt16x8Array((*[8]int16)(nextb))
-			loA := biasV.Add(r0a.MulWidenLo(f0)).Add(r1a.MulWidenLo(f1)).Add(r2a.MulWidenLo(f2)).
-				Add(r3a.MulWidenLo(f3)).Add(r4a.MulWidenLo(f4)).Add(r5a.MulWidenLo(f5)).Add(r6a.MulWidenLo(f6))
-			hiA := biasV.Add(r0a.HiToLo().MulWidenLo(hf0)).Add(r1a.HiToLo().MulWidenLo(hf1)).Add(r2a.HiToLo().MulWidenLo(hf2)).
-				Add(r3a.HiToLo().MulWidenLo(hf3)).Add(r4a.HiToLo().MulWidenLo(hf4)).Add(r5a.HiToLo().MulWidenLo(hf5)).Add(r6a.HiToLo().MulWidenLo(hf6))
-			pa := restorationRoundShiftNarrowInt32Pair(loA, hiA, rb)
-			loB := biasV.Add(r0b.MulWidenLo(f0)).Add(r1b.MulWidenLo(f1)).Add(r2b.MulWidenLo(f2)).
-				Add(r3b.MulWidenLo(f3)).Add(r4b.MulWidenLo(f4)).Add(r5b.MulWidenLo(f5)).Add(r6b.MulWidenLo(f6))
-			hiB := biasV.Add(r0b.HiToLo().MulWidenLo(hf0)).Add(r1b.HiToLo().MulWidenLo(hf1)).Add(r2b.HiToLo().MulWidenLo(hf2)).
-				Add(r3b.HiToLo().MulWidenLo(hf3)).Add(r4b.HiToLo().MulWidenLo(hf4)).Add(r5b.HiToLo().MulWidenLo(hf5)).Add(r6b.HiToLo().MulWidenLo(hf6))
-			pb := restorationRoundShiftNarrowInt32Pair(loB, hiB, rb)
+			pair0a, pair1a, pair2a := r0a.Add(r6a), r1a.Add(r5a), r2a.Add(r4a)
+			loA := biasV.Add(pair0a.MulWidenLo(f0)).Add(pair1a.MulWidenLo(f1)).
+				Add(pair2a.MulWidenLo(f2)).Add(r3a.MulWidenLo(f3))
+			hiA := biasV.Add(pair0a.HiToLo().MulWidenLo(hf0)).Add(pair1a.HiToLo().MulWidenLo(hf1)).
+				Add(pair2a.HiToLo().MulWidenLo(hf2)).Add(r3a.HiToLo().MulWidenLo(hf3))
+			pa := restorationRoundShiftNarrowInt32Pair(loA, hiA, roundShiftV, roundBitShiftV, roundOneV)
+			pair0b, pair1b, pair2b := r0b.Add(r6b), r1b.Add(r5b), r2b.Add(r4b)
+			loB := biasV.Add(pair0b.MulWidenLo(f0)).Add(pair1b.MulWidenLo(f1)).
+				Add(pair2b.MulWidenLo(f2)).Add(r3b.MulWidenLo(f3))
+			hiB := biasV.Add(pair0b.HiToLo().MulWidenLo(hf0)).Add(pair1b.HiToLo().MulWidenLo(hf1)).
+				Add(pair2b.HiToLo().MulWidenLo(hf2)).Add(r3b.HiToLo().MulWidenLo(hf3))
+			pb := restorationRoundShiftNarrowInt32Pair(loB, hiB, roundShiftV, roundBitShiftV, roundOneV)
 			out := restorationSaturateInt16PairToUint8(pa, pb)
 			out.StoreArray((*[16]uint8)(unsafe.Add(drow, row*dstStride)))
 			if row+1 < height {
@@ -105,11 +105,12 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 		drow := unsafe.Add(dp, col)
 		for row := 0; row < height; row++ {
 			r6 := archsimd.LoadInt16x8Array((*[8]int16)(nextp))
-			lo := r0.MulWidenLo(f0).Add(r1.MulWidenLo(f1)).Add(r2.MulWidenLo(f2)).
-				Add(r3.MulWidenLo(f3)).Add(r4.MulWidenLo(f4)).Add(r5.MulWidenLo(f5)).Add(r6.MulWidenLo(f6)).Add(biasV)
-			hi := r0.HiToLo().MulWidenLo(hf0).Add(r1.HiToLo().MulWidenLo(hf1)).Add(r2.HiToLo().MulWidenLo(hf2)).
-				Add(r3.HiToLo().MulWidenLo(hf3)).Add(r4.HiToLo().MulWidenLo(hf4)).Add(r5.HiToLo().MulWidenLo(hf5)).Add(r6.HiToLo().MulWidenLo(hf6)).Add(biasV)
-			out := restorationRoundShiftNarrowInt32Pair(lo, hi, rb).SaturateToUint8()
+			pair0, pair1, pair2 := r0.Add(r6), r1.Add(r5), r2.Add(r4)
+			lo := pair0.MulWidenLo(f0).Add(pair1.MulWidenLo(f1)).
+				Add(pair2.MulWidenLo(f2)).Add(r3.MulWidenLo(f3)).Add(biasV)
+			hi := pair0.HiToLo().MulWidenLo(hf0).Add(pair1.HiToLo().MulWidenLo(hf1)).
+				Add(pair2.HiToLo().MulWidenLo(hf2)).Add(r3.HiToLo().MulWidenLo(hf3)).Add(biasV)
+			out := restorationRoundShiftNarrowInt32Pair(lo, hi, roundShiftV, roundBitShiftV, roundOneV).SaturateToUint8()
 			*(*float64)(unsafe.Add(drow, row*dstStride)) = out.ReshapeToUint64s().BitsToFloat64().GetElem(0)
 			// Slide the window: drop r0, shift up, r6 becomes the new r5 side.
 			if row+1 < height {

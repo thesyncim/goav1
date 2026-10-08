@@ -31,20 +31,103 @@ func TestWienerVerticalU8SIMDMatchesReference(t *testing.T) {
 			}
 		}
 	}
+
+	// The maximum horizontal-pass sample makes each symmetric pair sum to
+	// 16382, still a positive int16 before the widening multiply.
+	const width, height = 16, 8
+	temp := make([]uint16, width*(height+2*WienerHalfwin))
+	for i := range temp {
+		temp[i] = 8191
+	}
+	filter := wienerDispatchFilters()[0].VFilter
+	want := make([]uint8, width*height)
+	got := make([]uint8, width*height)
+	wienerVerticalU8(temp, width, want, width, width, height, filter, round1)
+	wienerVerticalU8SIMD(temp, width, got, width, width, height, filter, round1)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("max pair sum dst[%d]=%d want %d", i, got[i], want[i])
+		}
+	}
 }
 
-func BenchmarkWienerVerticalU8SIMD(b *testing.B) {
+func TestWienerVerticalU8SIMDAsymmetricFilterFallback(t *testing.T) {
+	const width, height = 8, 5
 	_, round1 := wienerRounds(8)
-	const w, h = 64, 64
-	temp := make([]uint16, w*(h+2*WienerHalfwin))
+	rnd := newRestorationRandom(restorationDeterministicSeed ^ 0x5c4)
+	temp := make([]uint16, width*(height+2*WienerHalfwin))
+	for i := range temp {
+		temp[i] = uint16(rnd.pseudoUniform(8192))
+	}
+	filter := WienerFilter{17, -21, 8, 112, 4, -21, 19}
+	want := make([]uint8, width*height)
+	got := make([]uint8, width*height)
+	wienerVerticalU8(temp, width, want, width, width, height, filter, round1)
+	wienerVerticalU8SIMD(temp, width, got, width, width, height, filter, round1)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("asymmetric filter dst[%d]=%d want %d", i, got[i], want[i])
+		}
+	}
+}
+
+var wienerU8VerticalBenchmarkSink uint8
+
+func benchWienerVerticalU8(b *testing.B, fn func([]uint16, int, []uint8, int, int, int, WienerFilter, int), width int) {
+	const height = 64
+	_, round1 := wienerRounds(8)
+	temp := make([]uint16, width*(height+2*WienerHalfwin))
 	for i := range temp {
 		temp[i] = uint16((i*97 + 31) % 8192)
 	}
-	dst := make([]uint8, w*h)
+	dst := make([]uint8, width*height)
 	info := wienerDispatchFilters()[0]
-	b.SetBytes(int64(w * h))
+	b.ReportAllocs()
+	b.SetBytes(int64(width * height))
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		wienerVerticalU8SIMD(temp, w, dst, w, w, h, info.VFilter, round1)
+	for b.Loop() {
+		fn(temp, width, dst, width, width, height, info.VFilter, round1)
 	}
+	b.StopTimer()
+	wienerU8VerticalBenchmarkSink = dst[len(dst)-1]
+}
+
+func BenchmarkWienerVerticalU8_8_SIMD(b *testing.B) {
+	benchWienerVerticalU8(b, wienerVerticalU8SIMD, 8)
+}
+func BenchmarkWienerVerticalU8_8_NEON(b *testing.B) {
+	benchWienerVerticalU8(b, wienerVerticalU8NEON, 8)
+}
+func BenchmarkWienerVerticalU8_8_PureGo(b *testing.B) {
+	benchWienerVerticalU8(b, wienerVerticalU8, 8)
+}
+
+func BenchmarkWienerVerticalU8_32_SIMD(b *testing.B) {
+	benchWienerVerticalU8(b, wienerVerticalU8SIMD, 32)
+}
+func BenchmarkWienerVerticalU8_32_NEON(b *testing.B) {
+	benchWienerVerticalU8(b, wienerVerticalU8NEON, 32)
+}
+func BenchmarkWienerVerticalU8_32_PureGo(b *testing.B) {
+	benchWienerVerticalU8(b, wienerVerticalU8, 32)
+}
+
+func BenchmarkWienerVerticalU8_64_SIMD(b *testing.B) {
+	benchWienerVerticalU8(b, wienerVerticalU8SIMD, 64)
+}
+func BenchmarkWienerVerticalU8_64_NEON(b *testing.B) {
+	benchWienerVerticalU8(b, wienerVerticalU8NEON, 64)
+}
+func BenchmarkWienerVerticalU8_64_PureGo(b *testing.B) {
+	benchWienerVerticalU8(b, wienerVerticalU8, 64)
+}
+
+func BenchmarkWienerVerticalU8_256_SIMD(b *testing.B) {
+	benchWienerVerticalU8(b, wienerVerticalU8SIMD, 256)
+}
+func BenchmarkWienerVerticalU8_256_NEON(b *testing.B) {
+	benchWienerVerticalU8(b, wienerVerticalU8NEON, 256)
+}
+func BenchmarkWienerVerticalU8_256_PureGo(b *testing.B) {
+	benchWienerVerticalU8(b, wienerVerticalU8, 256)
 }

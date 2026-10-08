@@ -62,7 +62,14 @@ func TestMotionSIMDOfficialWideningAndLaneJoins(t *testing.T) {
 	for i := range kernel {
 		kernel[i] = int16((i*29)%127 - 61)
 	}
-	lo, hi := simdHorizontalConvAcc(archsimd.LoadUint8x16Array(&raw), kernel, 1234)
+	rawVector := archsimd.LoadUint8x16Array(&raw)
+	lo := archsimd.BroadcastInt32x4(1234)
+	hi := archsimd.BroadcastInt32x4(1234)
+	for tap := range filterTaps {
+		samples := rawVector.ConcatShiftBytesRight(rawVector, uint64(tap)).ExtendLo8ToUint16().ConvertToInt16()
+		coeff := archsimd.BroadcastInt16x8(kernel[tap])
+		lo, hi = simdHorizontalConvMAC(lo, hi, samples, coeff)
+	}
 	var gotLo, gotHi [4]int32
 	lo.StoreArray(&gotLo)
 	hi.StoreArray(&gotHi)

@@ -40,6 +40,110 @@ func TestConvolveX8GoSIMDMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestSIMDNarrowHorizontalBoundsAndRounding(t *testing.T) {
+	tables := []struct {
+		name    string
+		filters [16][filterTaps]int16
+	}{
+		{"regular", subpelFilters8},
+		{"sharp", subpelFilters8Sharp},
+		{"smooth", subpelFilters8Smooth},
+		{"4-tap", subpelFilters4},
+		{"4-tap smooth", subpelFilters4Smooth},
+		{"bilinear", bilinearFilters},
+	}
+	for _, table := range tables {
+		t.Run(table.name, func(t *testing.T) {
+			for phase, kernel := range table.filters {
+				if _, _, ok := convolveX8I8MMFilter(kernel); !ok {
+					t.Fatalf("phase %d is not a packed filter", phase)
+				}
+				if _, ok := simdNarrowHorizontalKernel(kernel); !ok {
+					t.Fatalf("phase %d does not meet the narrow-MAC bound", phase)
+				}
+			}
+		})
+	}
+
+	// The packing guard permits larger coefficients than the narrow accumulator
+	// can safely hold. Keep that shape on the existing int32 widening path.
+	wider := [filterTaps]int16{1: 254, 2: 254}
+	if _, _, ok := convolveX8I8MMFilter(wider); !ok {
+		t.Fatal("wide regression filter should remain in the packed-filter domain")
+	}
+	if _, ok := simdNarrowHorizontalKernel(wider); ok {
+		t.Fatal("wide regression filter must not use the narrow-MAC path")
+	}
+
+	const maxHalfSum = 255 * 128
+	for halfSum := -maxHalfSum; halfSum <= maxHalfSum; halfSum++ {
+		// Collapsing the two 8-bit convolution rounds to one shift is exact
+		// throughout the proven narrow-MAC range.
+		staged := roundPowerOfTwo(roundPowerOfTwo(2*halfSum, round0Bits), filterBits-round0Bits)
+		collapsed := (halfSum + 34) >> 6
+		if collapsed != staged {
+			t.Fatalf("half sum %d: collapsed X round %d, staged reference %d", halfSum, collapsed, staged)
+		}
+		firstStage := roundPowerOfTwo(2*halfSum, round0Bits)
+		if firstStage < -1<<15 || firstStage > 1<<15-1 {
+			t.Fatalf("half sum %d: X first stage %d overflows int16", halfSum, firstStage)
+		}
+		if got, want := roundPowerOfTwo(halfSum, compoundRound0Bits-1), roundPowerOfTwo(2*halfSum, compoundRound0Bits); got != want {
+			t.Fatalf("half sum %d: collapsed compound round %d, reference %d", halfSum, got, want)
+		}
+
+		// The 2D horizontal bias can move after the half-sum round because the
+		// full filter coefficients are exactly twice the half coefficients.
+		xBias := 1 << (8 + filterBits - 1)
+		staged2D := roundPowerOfTwo(2*halfSum+xBias, round0Bits)
+		collapsed2D := roundPowerOfTwo(halfSum, round0Bits-1) + (xBias >> round0Bits)
+		if collapsed2D != staged2D {
+			t.Fatalf("half sum %d: collapsed 2D round %d, staged reference %d", halfSum, collapsed2D, staged2D)
+		}
+		if collapsed2D < -1<<15 || collapsed2D > 1<<15-1 {
+			t.Fatalf("half sum %d: collapsed 2D intermediate %d overflows int16", halfSum, collapsed2D)
+		}
+	}
+}
+
+func TestHorizontalGoSIMDZeroAlloc(t *testing.T) {
+	const w, h = 32, 32
+	const pad = filterTaps
+	refSide := w + 2*pad
+	ref, _ := testPlane(refSide, h+2*pad, 1, refSide)
+	fillMotionTestPlane(ref)
+	dst, _ := testPlane(w, h, 1, w)
+	kernel := subpelFilters8[3]
+	yKernel := subpelFilters8[7]
+	var convolveScratch ConvolveScratch
+	var compoundScratch CompoundConvolveScratch
+	var buf CompoundConvBuf
+	out, ok := compoundConvBufView(&buf, w, h)
+	if !ok {
+		t.Fatal("invalid compound convolution buffer")
+	}
+	roundOffset := compoundRoundOffset8()
+
+	cases := []struct {
+		name string
+		call func()
+	}{
+		{"convolveX dispatch", func() { convolveX8Impl(dst, ref, 0, 0, pad, pad, w, h, kernel) }},
+		{"compoundX dispatch", func() { predictInterCompoundRef8ToConvBufXImpl(out, ref, pad, pad, w, h, kernel, roundOffset) }},
+		{"convolve2D scratch dispatch", func() { convolve2D8WithScratchImpl(dst, ref, 0, 0, pad, pad, w, h, kernel, yKernel, &convolveScratch) }},
+		{"compound2D scratch dispatch", func() {
+			predictInterCompoundRef8ToConvBuf2DImpl(out, ref, pad, pad, w, h, kernel, yKernel, 19, &compoundScratch)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if allocs := testing.AllocsPerRun(30, tc.call); allocs != 0 {
+				t.Fatalf("dispatched GoSIMD path allocated %.1f objects/run, want 0", allocs)
+			}
+		})
+	}
+}
+
 func TestConvolve2D8GoSIMDMatchesPureGo(t *testing.T) {
 	tables := [][16][filterTaps]int16{subpelFilters8, subpelFilters8Sharp, subpelFilters8Smooth, subpelFilters4, subpelFilters4Smooth, bilinearFilters}
 	sizes := []struct{ w, h int }{

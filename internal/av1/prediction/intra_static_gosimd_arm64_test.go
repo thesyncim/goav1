@@ -163,7 +163,7 @@ func benchPaethVariants(b *testing.B, fn predictPaethFunc) {
 		above, left, _, _ := benchInputs(w, h)
 		block := makeDispatchBlock(w, h, 1)
 		b.Run(benchName(w, h, ""), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				fn(block, 1, above, left, 123)
 			}
 		})
@@ -180,7 +180,7 @@ func benchSmoothVariants(b *testing.B, fn predictSmoothFunc) {
 		above, left, weightsW, weightsH := benchInputs(w, h)
 		block := makeDispatchBlock(w, h, 1)
 		b.Run(benchName(w, h, ""), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				fn(block, 1, weightsW, weightsH, above, left, left[h-1], above[w-1])
 			}
 		})
@@ -197,7 +197,7 @@ func benchSmoothVVariants(b *testing.B, fn predictSmoothVerticalFunc) {
 		above, left, _, weightsH := benchInputs(w, h)
 		block := makeDispatchBlock(w, h, 1)
 		b.Run(benchName(w, h, ""), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				fn(block, 1, weightsH, above, left[h-1])
 			}
 		})
@@ -214,7 +214,7 @@ func benchSmoothHVariants(b *testing.B, fn predictSmoothHorizontalFunc) {
 		above, left, weightsW, _ := benchInputs(w, h)
 		block := makeDispatchBlock(w, h, 1)
 		b.Run(benchName(w, h, ""), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				fn(block, 1, weightsW, left, above[w-1])
 			}
 		})

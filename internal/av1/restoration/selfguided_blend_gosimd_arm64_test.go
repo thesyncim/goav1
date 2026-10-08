@@ -133,7 +133,7 @@ func benchU8Blend(b *testing.B, fn func([]uint8, []uint8, []int32, []int32, int3
 	}
 	dst := make([]uint8, width)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		fn(dst, src, f0, f1, 12, 116)
 	}
 }
@@ -155,7 +155,7 @@ func benchU16Blend(b *testing.B, fn func([]uint16, []uint16, []int32, []int32, i
 	}
 	dst := make([]uint16, width)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		fn(dst, src, f0, f1, 12, 116, 1023)
 	}
 }

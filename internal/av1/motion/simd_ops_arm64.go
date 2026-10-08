@@ -6,17 +6,10 @@
 
 package motion
 
-import "simd/archsimd"
-
-var motionConvXTapPermutes = func() [filterTaps][16]uint8 {
-	var out [filterTaps][16]uint8
-	for tap := range filterTaps {
-		for lane := range 8 {
-			out[tap][lane] = uint8(tap + lane)
-		}
-	}
-	return out
-}()
+import (
+	"simd/archsimd"
+	"unsafe"
+)
 
 // simdRoundShiftInt16 mirrors signed rounding shift right (SQRSHR) without
 // adding a positive bias to x. The arithmetic shift plus the discarded
@@ -96,20 +89,81 @@ func simdMulWidenAddUint16Hi(acc archsimd.Uint32x4, x, y archsimd.Uint16x8) arch
 	return acc.Add(x.HiToLo().MulWidenLo(y.HiToLo()))
 }
 
-// simdHorizontalConvAcc computes eight adjacent unsigned-byte by signed-int16
-// FIR outputs, keeping each four-lane half in int32 until the caller applies
-// the codec's specified rounding stage.
-func simdHorizontalConvAcc(raw archsimd.Uint8x16, kernel [filterTaps]int16, bias int32) (archsimd.Int32x4, archsimd.Int32x4) {
-	lo := archsimd.BroadcastInt32x4(bias)
-	hi := archsimd.BroadcastInt32x4(bias)
-	for tap := range filterTaps {
-		samples := raw.LookupOrZero(archsimd.LoadUint8x16Array(&motionConvXTapPermutes[tap])).
-			ExtendLo8ToUint16().ConvertToInt16()
-		coeff := archsimd.BroadcastInt16x8(kernel[tap])
-		lo = lo.Add(samples.MulWidenLo(coeff))
-		hi = hi.Add(samples.HiToLo().MulWidenLo(coeff.HiToLo()))
+// simdHorizontalConvMAC adds one tap's unsigned-byte by signed-int16 products
+// to the low and high four output lanes. Coefficients are broadcast once per
+// kernel outside the pixel loops, and callers use literal VEXT shifts for the
+// sample windows so the inner loop contains no tap loop or lookup table loads.
+func simdHorizontalConvMAC(lo, hi archsimd.Int32x4, samples, coeff archsimd.Int16x8) (archsimd.Int32x4, archsimd.Int32x4) {
+	return lo.Add(samples.MulWidenLo(coeff)), hi.Add(samples.HiToLo().MulWidenLo(coeff))
+}
+
+// simdNarrowHorizontalKernel allows a faster 16-bit multiply-accumulate for
+// filters whose half-coefficients have an absolute sum no greater than 128.
+// For byte samples, every partial sum is then bounded by 255*128 = 32640, so
+// Int16x8.MulAdd cannot wrap. Filters outside this bound keep the wide path.
+func simdNarrowHorizontalKernel(kernel [filterTaps]int16) (half [filterTaps]int16, ok bool) {
+	var sumAbs int32
+	for i, coeff := range kernel {
+		if coeff%2 != 0 {
+			return [filterTaps]int16{}, false
+		}
+		h := coeff / 2
+		half[i] = h
+		if h < 0 {
+			sumAbs -= int32(h)
+		} else {
+			sumAbs += int32(h)
+		}
 	}
-	return lo, hi
+	return half, sumAbs <= 128
+}
+
+// simdHorizontalNarrowToIM computes the horizontal byte-to-int16 pass for a
+// filter accepted by simdNarrowHorizontalKernel. The int16 MAC bound is checked
+// once per kernel. Since full coefficients are twice the half coefficients,
+// roundPowerOfTwo(2*h+xBias,3) is roundPowerOfTwo(h,2)+xBias/8. The int16
+// bound proves both the round and post-round bias fit without saturation.
+func simdHorizontalNarrowToIM(src, dst unsafe.Pointer, width, height, srcStride, dstStride int, kernel [filterTaps]int16, xBias int32) {
+	k0 := archsimd.BroadcastInt16x8(kernel[0])
+	k1 := archsimd.BroadcastInt16x8(kernel[1])
+	k2 := archsimd.BroadcastInt16x8(kernel[2])
+	k3 := archsimd.BroadcastInt16x8(kernel[3])
+	k4 := archsimd.BroadcastInt16x8(kernel[4])
+	k5 := archsimd.BroadcastInt16x8(kernel[5])
+	k6 := archsimd.BroadcastInt16x8(kernel[6])
+	k7 := archsimd.BroadcastInt16x8(kernel[7])
+	zero := archsimd.BroadcastInt16x8(0)
+	xBiasHalf := archsimd.BroadcastInt16x8(int16(xBias >> round0Bits))
+	roundBias := archsimd.BroadcastInt16x8(2)
+	roundShift := archsimd.BroadcastInt16x8(-2)
+
+	for y := 0; y < height; y++ {
+		sp := unsafe.Add(src, y*srcStride)
+		ip := unsafe.Add(dst, y*dstStride*2)
+		for col := 0; col < width; col += 8 {
+			raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
+			even := raw.ExtendLo8ToUint16().ConvertToInt16().MulAdd(k0, zero)
+			odd := raw.ConcatShiftBytesRight(raw, 1).ExtendLo8ToUint16().ConvertToInt16().MulAdd(k1, zero)
+			even = raw.ConcatShiftBytesRight(raw, 2).ExtendLo8ToUint16().ConvertToInt16().MulAdd(k2, even)
+			odd = raw.ConcatShiftBytesRight(raw, 3).ExtendLo8ToUint16().ConvertToInt16().MulAdd(k3, odd)
+			even = raw.ConcatShiftBytesRight(raw, 4).ExtendLo8ToUint16().ConvertToInt16().MulAdd(k4, even)
+			odd = raw.ConcatShiftBytesRight(raw, 5).ExtendLo8ToUint16().ConvertToInt16().MulAdd(k5, odd)
+			even = raw.ConcatShiftBytesRight(raw, 6).ExtendLo8ToUint16().ConvertToInt16().MulAdd(k6, even)
+			odd = raw.ConcatShiftBytesRight(raw, 7).ExtendLo8ToUint16().ConvertToInt16().MulAdd(k7, odd)
+			// fullSum=2*halfSum, so roundPowerOfTwo(fullSum+xBias, 3)
+			// equals roundPowerOfTwo(halfSum, 2)+xBias/8. The coefficient
+			// bound keeps that intermediate within int16, so saturation is inert.
+			// The guarded half-sum has two spare units of int16 headroom, so
+			// add the rounding bias before one precomputed arithmetic shift.
+			outIM := even.Add(odd).Add(roundBias).Shift(roundShift).Add(xBiasHalf)
+			outIM.StoreArray((*[8]int16)(ip))
+
+			if col+8 < width {
+				sp = unsafe.Add(sp, 8)
+				ip = unsafe.Add(ip, 8*2)
+			}
+		}
+	}
 }
 
 func simdKernelFromI8MMFilter(filter [16]byte, f0 uint8) [filterTaps]int16 {

@@ -6,10 +6,11 @@
 
 // Go-native SIMD 8-bit motion-compensation convolve kernels. They use the
 // official Go 1.27 archsimd API and must match the pure-Go reference sample for
-// sample. The horizontal and two-dimensional paths use widening multiplies;
-// the vertical path retains the transposed dot-product layout and composes its
-// dot products from official vector operations. Dispatch and performance are
-// measured separately from these correctness kernels.
+// sample. Horizontal paths use guarded int16 multiply-accumulates when the
+// filter bounds prove them exact and widening multiplies otherwise; the
+// vertical path composes its dot products from official vector operations.
+// Dispatch and performance are measured separately from these correctness
+// kernels.
 
 package motion
 
@@ -36,18 +37,30 @@ func convStore8U8(p unsafe.Pointer, v archsimd.Uint8x16) {
 	*(*uint64)(p) = v.ReshapeToUint64s().GetElem(0)
 }
 
-// convolveX8GoSIMD is the Go-native SIMD form of convolveX8PureGo. It uses
-// official widening vector multiplies for each 8-column group, then preserves
-// the reference's intermediate narrowing, rounding, and byte saturation stages.
-// Kernels outside the existing packed-filter set and widths that are not a
-// positive multiple of 8 fall back to the scalar reference.
+// convolveX8GoSIMD is the Go-native SIMD form of convolveX8PureGo. Bounded
+// filters use exact half-coefficient int16 multiply-accumulates; wider packed
+// filters use int32 widening multiplies. Both paths preserve the reference's
+// staged rounding and saturation. Unsupported kernels and widths fall back to
+// the scalar reference.
 func convolveX8GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
 	_, _, ok := convolveX8I8MMFilter(kernel)
 	if !ok || !(width >= 8 && width%8 == 0) {
 		convolveX8PureGo(dst, ref, dstX, dstY, refX, refY, width, height, kernel)
 		return
 	}
+	if halfKernel, narrowOK := simdNarrowHorizontalKernel(kernel); narrowOK {
+		convolveX8GoSIMDNarrow(dst, ref, dstX, dstY, refX, refY, width, height, halfKernel)
+		return
+	}
 	fo := filterTaps/2 - 1
+	k0 := archsimd.BroadcastInt16x8(kernel[0])
+	k1 := archsimd.BroadcastInt16x8(kernel[1])
+	k2 := archsimd.BroadcastInt16x8(kernel[2])
+	k3 := archsimd.BroadcastInt16x8(kernel[3])
+	k4 := archsimd.BroadcastInt16x8(kernel[4])
+	k5 := archsimd.BroadcastInt16x8(kernel[5])
+	k6 := archsimd.BroadcastInt16x8(kernel[6])
+	k7 := archsimd.BroadcastInt16x8(kernel[7])
 
 	rbase := unsafe.Pointer(&ref.Pix[refY*ref.Stride+refX-fo])
 	dbase := unsafe.Pointer(&dst.Pix[dstY*dst.Stride+dstX])
@@ -56,12 +69,70 @@ func convolveX8GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX
 		dp := unsafe.Add(dbase, y*dst.Stride)
 		for col := 0; col < width; col += 8 {
 			raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
-			lo, hi := simdHorizontalConvAcc(raw, kernel, 0)
+			lo := archsimd.BroadcastInt32x4(0)
+			hi := archsimd.BroadcastInt32x4(0)
+			lo, hi = simdHorizontalConvMAC(lo, hi, raw.ExtendLo8ToUint16().ConvertToInt16(), k0)
+			lo, hi = simdHorizontalConvMAC(lo, hi, raw.ConcatShiftBytesRight(raw, 1).ExtendLo8ToUint16().ConvertToInt16(), k1)
+			lo, hi = simdHorizontalConvMAC(lo, hi, raw.ConcatShiftBytesRight(raw, 2).ExtendLo8ToUint16().ConvertToInt16(), k2)
+			lo, hi = simdHorizontalConvMAC(lo, hi, raw.ConcatShiftBytesRight(raw, 3).ExtendLo8ToUint16().ConvertToInt16(), k3)
+			lo, hi = simdHorizontalConvMAC(lo, hi, raw.ConcatShiftBytesRight(raw, 4).ExtendLo8ToUint16().ConvertToInt16(), k4)
+			lo, hi = simdHorizontalConvMAC(lo, hi, raw.ConcatShiftBytesRight(raw, 5).ExtendLo8ToUint16().ConvertToInt16(), k5)
+			lo, hi = simdHorizontalConvMAC(lo, hi, raw.ConcatShiftBytesRight(raw, 6).ExtendLo8ToUint16().ConvertToInt16(), k6)
+			lo, hi = simdHorizontalConvMAC(lo, hi, raw.ConcatShiftBytesRight(raw, 7).ExtendLo8ToUint16().ConvertToInt16(), k7)
 			// Preserve the reference's two separately rounded shifts. The first
 			// narrows the intermediate to int16; the second applies the remaining
 			// filter shift and clamps to the output byte range.
 			stage1 := simdRoundShiftNarrowInt32Pair(lo, hi, round0Bits)
 			out := simdRoundShiftNarrowUint8(stage1, filterBits-round0Bits)
+			convStore8U8(dp, out)
+
+			if col+8 < width {
+				sp = unsafe.Add(sp, 8)
+				dp = unsafe.Add(dp, 8)
+			}
+		}
+	}
+}
+
+// convolveX8GoSIMDNarrow uses int16 multiply-accumulates only when the half
+// filter's L1 coefficient bound proves every partial sum exact. Widening and
+// doubling restores the full even-coefficient sum before the reference's two
+// separately rounded and saturated stages.
+func convolveX8GoSIMDNarrow(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+	fo := filterTaps/2 - 1
+	k0 := archsimd.BroadcastInt16x8(kernel[0])
+	k1 := archsimd.BroadcastInt16x8(kernel[1])
+	k2 := archsimd.BroadcastInt16x8(kernel[2])
+	k3 := archsimd.BroadcastInt16x8(kernel[3])
+	k4 := archsimd.BroadcastInt16x8(kernel[4])
+	k5 := archsimd.BroadcastInt16x8(kernel[5])
+	k6 := archsimd.BroadcastInt16x8(kernel[6])
+	k7 := archsimd.BroadcastInt16x8(kernel[7])
+	zero := archsimd.BroadcastInt16x8(0)
+	const collapsedRoundBias = int16(34)
+	roundBias := archsimd.BroadcastInt16x8(collapsedRoundBias)
+	roundShift := archsimd.BroadcastInt16x8(-6)
+
+	rbase := unsafe.Pointer(&ref.Pix[refY*ref.Stride+refX-fo])
+	dbase := unsafe.Pointer(&dst.Pix[dstY*dst.Stride+dstX])
+	for y := 0; y < height; y++ {
+		sp := unsafe.Add(rbase, y*ref.Stride)
+		dp := unsafe.Add(dbase, y*dst.Stride)
+		for col := 0; col < width; col += 8 {
+			raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
+			even := raw.ExtendLo8ToUint16().ConvertToInt16().MulAdd(k0, zero)
+			odd := raw.ConcatShiftBytesRight(raw, 1).ExtendLo8ToUint16().ConvertToInt16().MulAdd(k1, zero)
+			even = raw.ConcatShiftBytesRight(raw, 2).ExtendLo8ToUint16().ConvertToInt16().MulAdd(k2, even)
+			odd = raw.ConcatShiftBytesRight(raw, 3).ExtendLo8ToUint16().ConvertToInt16().MulAdd(k3, odd)
+			even = raw.ConcatShiftBytesRight(raw, 4).ExtendLo8ToUint16().ConvertToInt16().MulAdd(k4, even)
+			odd = raw.ConcatShiftBytesRight(raw, 5).ExtendLo8ToUint16().ConvertToInt16().MulAdd(k5, odd)
+			even = raw.ConcatShiftBytesRight(raw, 6).ExtendLo8ToUint16().ConvertToInt16().MulAdd(k6, even)
+			odd = raw.ConcatShiftBytesRight(raw, 7).ExtendLo8ToUint16().ConvertToInt16().MulAdd(k7, odd)
+			// With full taps equal to 2*half taps, the two reference shifts
+			// collapse exactly to floor((halfSum+34)/64). The guard bounds
+			// halfSum to [-32640,32640], so the bias and arithmetic shift stay
+			// inside int16 and the omitted intermediate saturation cannot trigger.
+			out := even.Add(odd).Add(roundBias).Shift(roundShift).SaturateToUint8()
 			convStore8U8(dp, out)
 
 			if col+8 < width {
@@ -141,28 +212,48 @@ func convolve2D8GoSIMDIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, r
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
 
-	// ---- Horizontal pass: byte ref -> int16 im. The original even-tap
-	// I8MM packing can be reconstructed without loss, but the official Go SIMD
-	// API has no USMMLA operation. Use NEON widening multiplies and preserve the
-	// scalar reference's bias and rounding stage directly.
+	// ---- Horizontal pass: byte ref -> int16 im. The packed kernel is
+	// reconstructed without loss. Filters with a bounded half-coefficient sum
+	// use int16 multiply-accumulates; the wide path preserves arbitrary packed
+	// filters that exceed that proven range.
 	kernel := simdKernelFromI8MMFilter(filter, f0)
 	const xBias = 1 << (8 + filterBits - 1)
 
 	rbase := unsafe.Pointer(&ref.Pix[(refY-foY)*ref.Stride+refX-foX])
 	ibase := unsafe.Pointer(&im[0])
 	const imElem = 2
-	for y := 0; y < imH; y++ {
-		sp := unsafe.Add(rbase, y*ref.Stride)
-		ip := unsafe.Add(ibase, y*imStride*imElem)
-		for col := 0; col < width; col += 8 {
-			raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
-			lo, hi := simdHorizontalConvAcc(raw, kernel, xBias)
-			outIM := simdRoundShiftNarrowInt32Pair(lo, hi, round0Bits)
-			outIM.StoreArray((*[8]int16)(ip))
+	if halfKernel, narrowOK := simdNarrowHorizontalKernel(kernel); narrowOK {
+		simdHorizontalNarrowToIM(rbase, ibase, width, imH, ref.Stride, imStride, halfKernel, xBias)
+	} else {
+		k0 := archsimd.BroadcastInt16x8(kernel[0])
+		k1 := archsimd.BroadcastInt16x8(kernel[1])
+		k2 := archsimd.BroadcastInt16x8(kernel[2])
+		k3 := archsimd.BroadcastInt16x8(kernel[3])
+		k4 := archsimd.BroadcastInt16x8(kernel[4])
+		k5 := archsimd.BroadcastInt16x8(kernel[5])
+		k6 := archsimd.BroadcastInt16x8(kernel[6])
+		k7 := archsimd.BroadcastInt16x8(kernel[7])
+		for y := 0; y < imH; y++ {
+			sp := unsafe.Add(rbase, y*ref.Stride)
+			ip := unsafe.Add(ibase, y*imStride*imElem)
+			for col := 0; col < width; col += 8 {
+				raw := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
+				lo := archsimd.BroadcastInt32x4(xBias)
+				hi := archsimd.BroadcastInt32x4(xBias)
+				lo, hi = simdHorizontalConvMAC(lo, hi, raw.ExtendLo8ToUint16().ConvertToInt16(), k0)
+				lo, hi = simdHorizontalConvMAC(lo, hi, raw.ConcatShiftBytesRight(raw, 1).ExtendLo8ToUint16().ConvertToInt16(), k1)
+				lo, hi = simdHorizontalConvMAC(lo, hi, raw.ConcatShiftBytesRight(raw, 2).ExtendLo8ToUint16().ConvertToInt16(), k2)
+				lo, hi = simdHorizontalConvMAC(lo, hi, raw.ConcatShiftBytesRight(raw, 3).ExtendLo8ToUint16().ConvertToInt16(), k3)
+				lo, hi = simdHorizontalConvMAC(lo, hi, raw.ConcatShiftBytesRight(raw, 4).ExtendLo8ToUint16().ConvertToInt16(), k4)
+				lo, hi = simdHorizontalConvMAC(lo, hi, raw.ConcatShiftBytesRight(raw, 5).ExtendLo8ToUint16().ConvertToInt16(), k5)
+				lo, hi = simdHorizontalConvMAC(lo, hi, raw.ConcatShiftBytesRight(raw, 6).ExtendLo8ToUint16().ConvertToInt16(), k6)
+				lo, hi = simdHorizontalConvMAC(lo, hi, raw.ConcatShiftBytesRight(raw, 7).ExtendLo8ToUint16().ConvertToInt16(), k7)
+				simdRoundShiftNarrowInt32Pair(lo, hi, round0Bits).StoreArray((*[8]int16)(ip))
 
-			if col+8 < width {
-				sp = unsafe.Add(sp, 8)
-				ip = unsafe.Add(ip, 8*imElem)
+				if col+8 < width {
+					sp = unsafe.Add(sp, 8)
+					ip = unsafe.Add(ip, 8*imElem)
+				}
 			}
 		}
 	}
