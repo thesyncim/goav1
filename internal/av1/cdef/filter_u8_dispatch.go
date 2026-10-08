@@ -13,6 +13,6 @@ package cdef
 var filterBlockU8Impl = filterBlockU8PureGo
 
 // The per-unit 8-bit block loop (filterUnitBlocksU8) dispatches by build tag
-// (filter_u8_unit_generic.go / filter_u8_neon_arm64.go) for the same
+// (filter_u8_unit_generic.go / filter_simd_arm64.go) for the same
 // escape-analysis reason as filterUnitBlocks: a func-variable call would leak
 // the decoder's stack-resident CDEF scratch to the heap.

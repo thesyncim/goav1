@@ -20,9 +20,10 @@ func TestFilterBlockSIMDDispatchBound(t *testing.T) {
 	if !archsimd.X86.AVX2() {
 		t.Skip("CPU does not advertise AVX2")
 	}
-	got := reflect.ValueOf(filterBlockImpl).Pointer()
-	want := reflect.ValueOf(filterBlockSIMD).Pointer()
-	if got != want {
+	if got, want := reflect.ValueOf(filterBlockImpl).Pointer(), reflect.ValueOf(filterBlockSIMD).Pointer(); got != want {
 		t.Fatalf("filterBlockImpl is not bound to the AVX2 Go SIMD kernel")
+	}
+	if got, want := reflect.ValueOf(filterBlockU8Impl).Pointer(), reflect.ValueOf(filterBlockU8SIMD).Pointer(); got != want {
+		t.Fatalf("filterBlockU8Impl is not bound to the AVX2 Go SIMD kernel")
 	}
 }

@@ -2,116 +2,46 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego
+//go:build goexperiment.simd && arm64 && !purego
 
 package cdef
 
 import "testing"
 
-// buildU8NEONCtx prepares a filterBlockU8NEONCtx for a single block exactly as
-// filterBlockU8NEON does, so the interior kernels can be driven directly from a
-// BlockFilterParams in tests.
-func buildU8NEONCtx(dst []byte, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) filterBlockU8NEONCtx {
-	primaryStrength := int(params.PrimaryStrength)
-	secondaryStrength := int(params.SecondaryStrength)
-	direction := int(params.Direction)
-	coeffShift := int(params.CoeffShift)
-	priTaps := cdefPrimaryTaps[(primaryStrength>>coeffShift)&1]
-	ctx := filterBlockU8NEONCtx{
-		dst:    &dst[dstOrigin],
-		input:  &input[inputOrigin],
-		dstStr: int64(dstStride),
-		height: int64(params.Height),
-
-		pri0: int64(cdefDirections[direction+2][0]),
-		pri1: int64(cdefDirections[direction+2][1]),
-		sec0: int64(cdefDirections[direction+4][0]),
-		sec1: int64(cdefDirections[direction][0]),
-		sec2: int64(cdefDirections[direction+4][1]),
-		sec3: int64(cdefDirections[direction][1]),
-
-		priTap0: int64(priTaps[0]),
-		priTap1: int64(priTaps[1]),
-		secTap0: int64(cdefSecondaryTaps[0]),
-		secTap1: int64(cdefSecondaryTaps[1]),
-
-		priStrength: int64(primaryStrength),
-		secStrength: int64(secondaryStrength),
-		priShift:    int64(constrainShift(primaryStrength, int(params.PrimaryDamping))),
-		secShift:    int64(constrainShift(secondaryStrength, int(params.SecondaryDamping))),
-	}
-	if primaryStrength != 0 {
-		ctx.enablePrimary = 1
-	}
-	if secondaryStrength != 0 {
-		ctx.enableSecondary = 1
-	}
-	if primaryStrength != 0 && secondaryStrength != 0 {
-		ctx.clipping = 1
-	}
-	return ctx
-}
-
-// TestFilterBlockU8InteriorNEONMatchesPureGo is the safety net for the CDEF
-// interior .16b kernels: over sentinel-free (fully interior) tap buffers it
-// pins each of the six kernels — fused / primary-only / secondary-only at
-// widths 8 and 4 — against filterBlockU8PureGo, the goav1 scalar reference,
-// across every direction, the strength/damping corpus, and many random inputs.
-// A byte mismatch fails, so any divergence in the ported dav1d arithmetic or in
-// a hand-written encoding is caught here before it can reach a frame.
-func TestFilterBlockU8InteriorNEONMatchesPureGo(t *testing.T) {
+// TestFilterBlockU8InteriorSIMDMatchesPureGo is the safety net for the interior
+// fused kernel: over sentinel-free tap buffers (every tap a real 8-bit sample)
+// it pins the 8-wide fused block against filterBlockU8PureGo across every
+// direction, the strength/damping corpus, both 8-wide heights, and many random
+// inputs. A byte mismatch fails, so the byte-lane constrain must reproduce the
+// reference exactly.
+func TestFilterBlockU8InteriorSIMDMatchesPureGo(t *testing.T) {
 	const dstStride = 24
 	origin := cdefBlockOrigin()
-	shapes := [...]struct{ width, height int }{
-		{8, 8}, {8, 4}, {8, 2}, {4, 8}, {4, 4},
-	}
-	rnd := newCDEFRandom(cdefDeterministicSeed ^ 0x1c7e2d05)
-	for iter := 0; iter < 48; iter++ {
-		// boundary == 0: no VeryLarge sentinel anywhere, i.e. a fully interior
-		// block, which is the sole precondition of the interior kernels.
-		input := makeCDEFBlockInput(rnd, 8, 0, iter+1)
-		if !cdefUnitInteriorU8(input, origin, []BlockPosition{{BY: 0, BX: 0}}, 3, 3) {
-			t.Fatalf("iter=%d: interior tap buffer flagged as boundary", iter)
+	for trial := 0; trial < 3000; trial++ {
+		rnd := newCDEFRandom(uint32(0x1a7e0000 + trial))
+		input := makeCDEFBlockInput(rnd, 8, trial%16, trial%16+1)
+		for i := range input {
+			if input[i] == VeryLarge {
+				input[i] = uint16(rnd.generate(256))
+			}
 		}
-		for _, shape := range shapes {
-			width := shape.width
-			height := shape.height
-			if width == 8 && height%2 != 0 {
-				continue
+		for _, height := range []int{8, 4} {
+			params := BlockFilterParams{
+				PrimaryStrength:   uint8(1 + rnd.generate(15)),
+				SecondaryStrength: uint8(1 + rnd.generate(4)),
+				Direction:         uint8(rnd.generate(8)),
+				PrimaryDamping:    uint8(3 + rnd.generate(4)),
+				SecondaryDamping:  uint8(3 + rnd.generate(4)),
+				Width:             8,
+				Height:            uint8(height),
 			}
-			if width == 4 && height%4 != 0 {
-				continue
-			}
-			for dir := 0; dir <= 7; dir++ {
-				for _, pri := range cdefPrimaryStrengthCorpus(0) {
-					for _, sec := range cdefSecondaryStrengthCorpus(0) {
-						if pri == 0 && sec == 0 {
-							continue
-						}
-						for _, damping := range []int{3, 4, 5, 6} {
-							params := BlockFilterParams{
-								PrimaryStrength:   uint8(pri),
-								SecondaryStrength: uint8(sec),
-								Direction:         uint8(dir),
-								PrimaryDamping:    uint8(damping),
-								SecondaryDamping:  uint8(damping),
-								CoeffShift:        0,
-								Width:             uint8(width),
-								Height:            uint8(height),
-							}
-							want := make([]byte, dstStride*height)
-							got := make([]byte, dstStride*height)
-							filterBlockU8PureGo(want, dstStride, 0, input, origin, params)
-							ctx := buildU8NEONCtx(got, dstStride, 0, input, origin, params)
-							dispatchFilterBlockU8InteriorNEON(&ctx, width, pri, sec)
-							for i := range want {
-								if got[i] != want[i] {
-									t.Fatalf("iter=%d shape=%dx%d dir=%d pri=%d sec=%d damp=%d idx=%d got=%d want=%d",
-										iter, width, height, dir, pri, sec, damping, i, got[i], want[i])
-								}
-							}
-						}
-					}
+			want := make([]byte, dstStride*8)
+			got := make([]byte, dstStride*8)
+			filterBlockU8PureGo(want, dstStride, 0, input, origin, params)
+			filterBlockU8InteriorSIMD(got, dstStride, 0, input, origin, params)
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("trial=%d params=%+v idx=%d interior=%d want=%d", trial, params, i, got[i], want[i])
 				}
 			}
 		}
@@ -293,4 +223,40 @@ func cdefUnitInteriorU8ScalarOracle(input []uint16, inputOrigin int, blocks []Bl
 		}
 	}
 	return true
+}
+
+// TestFilterBlockU8InteriorSIMDClipCorpus drives the interior kernel's clamp:
+// narrow-spread, sentinel-free neighbourhoods with strong fused strengths are
+// the only inputs where the summed taps overshoot the neighbourhood, so the
+// random corpus above does not reach the clamp by itself.
+func TestFilterBlockU8InteriorSIMDClipCorpus(t *testing.T) {
+	rng := newCDEFRandom(0x1c11b0a7)
+	input := make([]uint16, BStride*24)
+	origin := cdefBlockOrigin()
+	const dstStride = 24
+	for trial := 0; trial < 6000; trial++ {
+		base := rng.generate(256)
+		spread := uint32(1) << rng.generate(6)
+		for i := range input {
+			input[i] = uint16(min(base+rng.generate(spread+1), 255))
+		}
+		params := BlockFilterParams{
+			PrimaryStrength:   uint8(1 + rng.generate(15)),
+			SecondaryStrength: uint8(1 + rng.generate(4)),
+			Direction:         uint8(rng.generate(8)),
+			PrimaryDamping:    uint8(3 + rng.generate(4)),
+			SecondaryDamping:  uint8(3 + rng.generate(4)),
+			Width:             8,
+			Height:            8,
+		}
+		want := make([]byte, dstStride*8)
+		got := make([]byte, dstStride*8)
+		filterBlockU8PureGo(want, dstStride, 0, input, origin, params)
+		filterBlockU8InteriorSIMD(got, dstStride, 0, input, origin, params)
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("trial=%d params=%+v base=%d spread=%d idx=%d interior=%d want=%d", trial, params, base, spread, i, got[i], want[i])
+			}
+		}
+	}
 }

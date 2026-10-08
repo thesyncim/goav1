@@ -221,7 +221,7 @@ func cdefFilterBlock8SIMD(ctx *cdefSIMDCtx) {
 			y = y.Max(mn).Min(mx)
 		}
 		if u8 {
-			*(*uint64)(dst) = y.ToBits().SaturateToUint8().ReshapeToUint64s().GetElem(0)
+			*(*uint64)(dst) = cdefNarrowU8(y).ReshapeToUint64s().GetElem(0)
 		} else {
 			y.ToBits().StoreArray((*[8]uint16)(dst))
 		}
@@ -303,7 +303,7 @@ func cdefFilterBlock4SIMD(ctx *cdefSIMDCtx) {
 			y = y.Max(mn).Min(mx)
 		}
 		if u8 {
-			out := y.ToBits().SaturateToUint8().ReshapeToUint32s()
+			out := cdefNarrowU8(y).ReshapeToUint32s()
 			*(*uint32)(dst) = out.GetElem(0)
 			*(*uint32)(unsafe.Add(dst, dstStr)) = out.GetElem(1)
 		} else {
@@ -316,4 +316,18 @@ func cdefFilterBlock4SIMD(ctx *cdefSIMDCtx) {
 			dst = unsafe.Add(dst, 2*dstStr)
 		}
 	}
+}
+
+// filterBlockU8SIMD is the 8-bit-dst Go SIMD block filter. It shares the
+// uint16 kernel body; the store narrows each row to bytes in place, under the
+// 8-bit contract documented in filter_u8.go. It matches filterBlockU8PureGo
+// sample for sample.
+func filterBlockU8SIMD(dst []byte, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
+	if w := int(params.Width); (w != 8 && w != 4) || (w == 4 && params.Height&1 != 0) {
+		filterBlockU8PureGo(dst, dstStride, dstOrigin, input, inputOrigin, params)
+		return
+	}
+	var ctx cdefSIMDCtx
+	ctx.setBlock(unsafe.Pointer(&dst[dstOrigin]), dstStride, unsafe.Pointer(&input[inputOrigin]), params, true)
+	cdefFilterBlockSIMD(&ctx, int(params.Width))
 }

@@ -6,9 +6,11 @@
 
 package cdef
 
-// init binds the Go SIMD CDEF block filter on arm64. It is bit-exact with the
-// pure-Go reference (TestFilterBlockSIMDMatchesPureGo). The unit-level loop
-// binds statically in filter_simd_arm64.go.
+// init binds the Go SIMD CDEF block filters on arm64. Both are bit-exact with
+// the pure-Go references (TestFilterBlockSIMDMatchesPureGo and
+// TestFilterBlockU8SIMDMatchesPureGo). The unit-level loops bind statically in
+// filter_simd_arm64.go.
 func init() {
 	filterBlockImpl = filterBlockSIMD
+	filterBlockU8Impl = filterBlockU8SIMD
 }
