@@ -44,6 +44,36 @@ func TestLoadSampleRows8SIMDMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestLoadSampleRows8SIMDOffsetsAndTails(t *testing.T) {
+	for width := 1; width <= 65; width++ {
+		for height := 1; height <= 9; height++ {
+			for off := 0; off <= 3; off++ {
+				srcStride := width + (off & 1)
+				dstStride := width + (off & 2)
+				srcLen := (height-1)*srcStride + width
+				dstLen := (height-1)*dstStride + width
+				srcBacking := make([]byte, off+srcLen)
+				gotBacking := make([]uint16, off+dstLen)
+				wantBacking := make([]uint16, off+dstLen)
+				for i := range srcBacking {
+					srcBacking[i] = byte(i*37 + width*11)
+				}
+				for i := range gotBacking {
+					gotBacking[i] = 0xbeef
+					wantBacking[i] = 0xbeef
+				}
+				loadSampleRows8SIMD(gotBacking[off:], dstStride, srcBacking[off:], srcStride, width, height)
+				loadSampleRows8PureGo(wantBacking[off:], dstStride, srcBacking[off:], srcStride, width, height)
+				for i, want := range wantBacking {
+					if gotBacking[i] != want {
+						t.Fatalf("width=%d height=%d offset=%d index=%d: got %#x, want %#x", width, height, off, i, gotBacking[i], want)
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestLoadSampleRows8SIMDZeroAlloc(t *testing.T) {
 	const width, height, stride = 129, 16, 144
 	src := make([]byte, height*stride)
