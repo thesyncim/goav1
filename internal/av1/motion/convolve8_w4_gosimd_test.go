@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package motion
 
@@ -55,7 +55,7 @@ func TestConvolveW4NEONMatchesPureGo(t *testing.T) {
 		ref := makeRef(maxInt2(w, h), randomize)
 		got, _ := testPlane(w, h, 1, w)
 		want, _ := testPlane(w, h, 1, w)
-		convolveX8NEON(got, ref, 0, 0, pad, pad, w, h, k)
+		convolveX8GoSIMD(got, ref, 0, 0, pad, pad, w, h, k)
 		convolveX8PureGo(want, ref, 0, 0, pad, pad, w, h, k)
 		assertClampedEqual(t, got, want, w, h)
 	}
@@ -63,7 +63,7 @@ func TestConvolveW4NEONMatchesPureGo(t *testing.T) {
 		ref := makeRef(maxInt2(w, h), randomize)
 		got, _ := testPlane(w, h, 1, w)
 		want, _ := testPlane(w, h, 1, w)
-		convolveY8NEON(got, ref, 0, 0, pad, pad, w, h, k)
+		convolveY8GoSIMD(got, ref, 0, 0, pad, pad, w, h, k)
 		convolveY8PureGo(want, ref, 0, 0, pad, pad, w, h, k)
 		assertClampedEqual(t, got, want, w, h)
 	}
@@ -71,7 +71,7 @@ func TestConvolveW4NEONMatchesPureGo(t *testing.T) {
 		ref := makeRef(maxInt2(w, h), randomize)
 		got, _ := testPlane(w, h, 1, w)
 		want, _ := testPlane(w, h, 1, w)
-		convolve2D8NEON(got, ref, 0, 0, pad, pad, w, h, xk, yk)
+		convolve2D8GoSIMD(got, ref, 0, 0, pad, pad, w, h, xk, yk)
 		convolve2D8PureGo(want, ref, 0, 0, pad, pad, w, h, xk, yk)
 		assertClampedEqual(t, got, want, w, h)
 	}
@@ -164,21 +164,21 @@ func TestConvolveW4ClampedNEONMatchesPureGo(t *testing.T) {
 		t.Run("X/"+c.name, func(t *testing.T) {
 			got, _ := testPlane(w, c.height, 1, w)
 			want, _ := testPlane(w, c.height, 1, w)
-			convolveX8ClampedNEON(got, ref, 0, 0, c.refX, c.refY, w, c.height, xk)
+			convolveX8ClampedGoSIMD(got, ref, 0, 0, c.refX, c.refY, w, c.height, xk)
 			convolveX8ClampedPureGo(want, ref, 0, 0, c.refX, c.refY, w, c.height, xk)
 			assertClampedEqual(t, got, want, w, c.height)
 		})
 		t.Run("Y/"+c.name, func(t *testing.T) {
 			got, _ := testPlane(w, c.height, 1, w)
 			want, _ := testPlane(w, c.height, 1, w)
-			convolveY8ClampedNEON(got, ref, 0, 0, c.refX, c.refY, w, c.height, yk)
+			convolveY8ClampedGoSIMD(got, ref, 0, 0, c.refX, c.refY, w, c.height, yk)
 			convolveY8ClampedPureGo(want, ref, 0, 0, c.refX, c.refY, w, c.height, yk)
 			assertClampedEqual(t, got, want, w, c.height)
 		})
 		t.Run("2D/"+c.name, func(t *testing.T) {
 			got, _ := testPlane(w, c.height, 1, w)
 			want, _ := testPlane(w, c.height, 1, w)
-			convolve2D8ClampedNEON(got, ref, 0, 0, c.refX, c.refY, w, c.height, xk, yk)
+			convolve2D8ClampedGoSIMD(got, ref, 0, 0, c.refX, c.refY, w, c.height, xk, yk)
 			convolve2D8ClampedPureGo(want, ref, 0, 0, c.refX, c.refY, w, c.height, xk, yk)
 			assertClampedEqual(t, got, want, w, c.height)
 		})

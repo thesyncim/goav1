@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package motion
 
@@ -53,8 +53,8 @@ func TestConvolve2D8NEONMatchesPureGo(t *testing.T) {
 		gotScratch, _ := testPlane(w, h, 1, w)
 		want, _ := testPlane(w, h, 1, w)
 		var scratch ConvolveScratch
-		convolve2D8NEON(got, ref, 0, 0, pad, pad, w, h, xk, yk)
-		convolve2D8NEONWithScratch(gotScratch, ref, 0, 0, pad, pad, w, h, xk, yk, &scratch)
+		convolve2D8GoSIMD(got, ref, 0, 0, pad, pad, w, h, xk, yk)
+		convolve2D8GoSIMDWithScratch(gotScratch, ref, 0, 0, pad, pad, w, h, xk, yk, &scratch)
 		convolve2D8PureGo(want, ref, 0, 0, pad, pad, w, h, xk, yk)
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
@@ -98,9 +98,9 @@ func TestConvolve2D8NEONMatchesPureGo(t *testing.T) {
 	yk := subpelFilters8[5]
 	var scratch ConvolveScratch
 	allocs := testing.AllocsPerRun(50, func() {
-		convolve2D8NEONWithScratch(dst, ref, 0, 0, pad, pad, 32, 32, xk, yk, &scratch)
+		convolve2D8GoSIMDWithScratch(dst, ref, 0, 0, pad, pad, 32, 32, xk, yk, &scratch)
 	})
 	if allocs != 0 {
-		t.Fatalf("convolve2D8NEONWithScratch allocated %v times, want 0", allocs)
+		t.Fatalf("convolve2D8GoSIMDWithScratch allocated %v times, want 0", allocs)
 	}
 }

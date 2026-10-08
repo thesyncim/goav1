@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package motion
 
@@ -25,7 +25,7 @@ func BenchmarkConvolve2D8W4_4x4_NEON(b *testing.B) {
 	dst, ref := benchPlanes(4, 8)
 	xk := subpelFilters8[3]
 	yk := subpelFilters8[5]
-	benchW4(b, 4, func() { convolve2D8NEON(dst, ref, 0, 0, filterTaps, filterTaps, 4, 4, xk, yk) })
+	benchW4(b, 4, func() { convolve2D8GoSIMD(dst, ref, 0, 0, filterTaps, filterTaps, 4, 4, xk, yk) })
 }
 
 func BenchmarkConvolve2D8W4_4x4_PureGo(b *testing.B) {
@@ -39,7 +39,7 @@ func BenchmarkConvolve2D8W4_4x16_NEON(b *testing.B) {
 	dst, ref := benchPlanes(16, 8)
 	xk := subpelFilters8[3]
 	yk := subpelFilters8[5]
-	benchW4(b, 16, func() { convolve2D8NEON(dst, ref, 0, 0, filterTaps, filterTaps, 4, 16, xk, yk) })
+	benchW4(b, 16, func() { convolve2D8GoSIMD(dst, ref, 0, 0, filterTaps, filterTaps, 4, 16, xk, yk) })
 }
 
 func BenchmarkConvolve2D8W4_4x16_PureGo(b *testing.B) {
@@ -52,7 +52,7 @@ func BenchmarkConvolve2D8W4_4x16_PureGo(b *testing.B) {
 func BenchmarkConvolveX8W4_4x16_NEON(b *testing.B) {
 	dst, ref := benchPlanes(16, 8)
 	xk := subpelFilters8[3]
-	benchW4(b, 16, func() { convolveX8NEON(dst, ref, 0, 0, filterTaps, filterTaps, 4, 16, xk) })
+	benchW4(b, 16, func() { convolveX8GoSIMD(dst, ref, 0, 0, filterTaps, filterTaps, 4, 16, xk) })
 }
 
 func BenchmarkConvolveX8W4_4x16_PureGo(b *testing.B) {
@@ -64,7 +64,7 @@ func BenchmarkConvolveX8W4_4x16_PureGo(b *testing.B) {
 func BenchmarkConvolveY8W4_4x16_NEON(b *testing.B) {
 	dst, ref := benchPlanes(16, 8)
 	yk := subpelFilters8[5]
-	benchW4(b, 16, func() { convolveY8NEON(dst, ref, 0, 0, filterTaps, filterTaps, 4, 16, yk) })
+	benchW4(b, 16, func() { convolveY8GoSIMD(dst, ref, 0, 0, filterTaps, filterTaps, 4, 16, yk) })
 }
 
 func BenchmarkConvolveY8W4_4x16_PureGo(b *testing.B) {

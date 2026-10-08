@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build amd64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package motion
 
@@ -37,7 +37,7 @@ func TestConvolveX8AVX2MatchesPureGo(t *testing.T) {
 					ref := randPlane(rng, side+2*pad, 1)
 					got, _ := testPlane(w, h, 1, w)
 					want, _ := testPlane(w, h, 1, w)
-					convolveX8AVX2(got, ref, 0, 0, pad, pad, w, h, k)
+					convolveX8GoSIMD(got, ref, 0, 0, pad, pad, w, h, k)
 					convolveX8PureGo(want, ref, 0, 0, pad, pad, w, h, k)
 					diffPlanes8(t, got, want, w, h, "X", k, k)
 				}
@@ -62,7 +62,7 @@ func TestConvolveY8AVX2MatchesPureGo(t *testing.T) {
 					ref := randPlane(rng, side+2*pad, 1)
 					got, _ := testPlane(w, h, 1, w)
 					want, _ := testPlane(w, h, 1, w)
-					convolveY8AVX2(got, ref, 0, 0, pad, pad, w, h, k)
+					convolveY8GoSIMD(got, ref, 0, 0, pad, pad, w, h, k)
 					convolveY8PureGo(want, ref, 0, 0, pad, pad, w, h, k)
 					diffPlanes8(t, got, want, w, h, "Y", k, k)
 				}
@@ -105,7 +105,7 @@ func TestConvolve1D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
 					refY := filterTaps
 					got, _ := testPlane(w, h, 1, w)
 					want, _ := testPlane(w, h, 1, w)
-					if !convolveX8HorizontalEdgeAVX2(got, ref, 0, 0, refX, refY, w, h, k) {
+					if !convolveX8HorizontalEdgeGoSIMD(got, ref, 0, 0, refX, refY, w, h, k) {
 						t.Fatalf("X8horizontal-edge AVX2 split path was not used w=%d h=%d edge=%s", w, h, edge)
 					}
 					convolveX8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, k)
@@ -125,7 +125,7 @@ func TestConvolve1D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
 					}
 					got, _ := testPlane(w, h, 1, w)
 					want, _ := testPlane(w, h, 1, w)
-					if !convolveY8VerticalEdgeAVX2(got, ref, 0, 0, refX, refY, w, h, k) {
+					if !convolveY8VerticalEdgeGoSIMD(got, ref, 0, 0, refX, refY, w, h, k) {
 						t.Fatalf("Y8vertical-edge AVX2 split path was not used w=%d h=%d edge=%s", w, h, edge)
 					}
 					convolveY8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, k)
@@ -135,13 +135,19 @@ func TestConvolve1D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
 		}
 	}
 
+	// The Go SIMD edge paths accept four-tap kernels (the AVX2 asm they replace
+	// rejected them). Whenever a path reports that it ran, it must match the
+	// per-tap clamped reference.
 	ref, _ := testPlane(64, 64, 1, 64)
 	got, _ := testPlane(16, 16, 1, 16)
-	if convolveX8HorizontalEdgeAVX2(got, ref, 0, 0, 1, filterTaps, 16, 16, bilinearFilters[7]) {
-		t.Fatalf("X8horizontal-edge AVX2 accepted four-tap fallback kernel")
+	want, _ := testPlane(16, 16, 1, 16)
+	if convolveX8HorizontalEdgeGoSIMD(got, ref, 0, 0, 1, filterTaps, 16, 16, bilinearFilters[7]) {
+		convolveX8ClampedPureGo(want, ref, 0, 0, 1, filterTaps, 16, 16, bilinearFilters[7])
+		diffPlanes8(t, got, want, 16, 16, "X8horizontal-edge four-tap", bilinearFilters[7], bilinearFilters[7])
 	}
-	if convolveY8VerticalEdgeAVX2(got, ref, 0, 0, filterTaps, 1, 16, 16, bilinearFilters[7]) {
-		t.Fatalf("Y8vertical-edge AVX2 accepted four-tap fallback kernel")
+	if convolveY8VerticalEdgeGoSIMD(got, ref, 0, 0, filterTaps, 1, 16, 16, bilinearFilters[7]) {
+		convolveY8ClampedPureGo(want, ref, 0, 0, filterTaps, 1, 16, 16, bilinearFilters[7])
+		diffPlanes8(t, got, want, 16, 16, "Y8vertical-edge four-tap", bilinearFilters[7], bilinearFilters[7])
 	}
 }
 
@@ -164,7 +170,7 @@ func TestConvolve2D8AVX2MatchesPureGo(t *testing.T) {
 				ref := randPlane(rng, side+2*pad, 1)
 				got, _ := testPlane(w, h, 1, w)
 				want, _ := testPlane(w, h, 1, w)
-				convolve2D8AVX2(got, ref, 0, 0, pad, pad, w, h, xk, yk)
+				convolve2D8GoSIMD(got, ref, 0, 0, pad, pad, w, h, xk, yk)
 				convolve2D8PureGo(want, ref, 0, 0, pad, pad, w, h, xk, yk)
 				diffPlanes8(t, got, want, w, h, "2D", xk, yk)
 			}
@@ -178,7 +184,7 @@ func TestConvolve2D8AVX2MatchesPureGo(t *testing.T) {
 				ref := randPlane(rng, 32+2*pad, 1)
 				got, _ := testPlane(16, 16, 1, 16)
 				want, _ := testPlane(16, 16, 1, 16)
-				convolve2D8AVX2(got, ref, 0, 0, pad, pad, 16, 16, tbl[sx], tbl[sy])
+				convolve2D8GoSIMD(got, ref, 0, 0, pad, pad, 16, 16, tbl[sx], tbl[sy])
 				convolve2D8PureGo(want, ref, 0, 0, pad, pad, 16, 16, tbl[sx], tbl[sy])
 				diffPlanes8(t, got, want, 16, 16, "2Dphase", tbl[sx], tbl[sy])
 			}
@@ -216,10 +222,10 @@ func TestConvolve2D8ClampedEdgeSplitAVX2MatchesPureGo(t *testing.T) {
 					gotScratch, _ := testPlane(w, h, 1, w)
 					want, _ := testPlane(w, h, 1, w)
 					var scratch ConvolveScratch
-					if !convolve2D8ClampedEdgeSplitAVX2WithScratch(got, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], nil) {
+					if !convolve2D8ClampedEdgeSplitGoSIMDWithScratch(got, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], nil) {
 						t.Fatalf("2D8horizontal-edge AVX2 split path was not used w=%d h=%d edge=%s", w, h, edge)
 					}
-					if !convolve2D8ClampedEdgeSplitAVX2WithScratch(gotScratch, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &scratch) {
+					if !convolve2D8ClampedEdgeSplitGoSIMDWithScratch(gotScratch, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &scratch) {
 						t.Fatalf("2D8horizontal-edge AVX2 scratch split path was not used w=%d h=%d edge=%s", w, h, edge)
 					}
 					convolve2D8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
@@ -239,14 +245,14 @@ func TestConvolveAVX2ZeroAlloc(t *testing.T) {
 	xk := subpelFilters8[3]
 	yk := subpelFilters8[5]
 	if a := testing.AllocsPerRun(20, func() {
-		convolve2D8AVX2(dst, ref, 0, 0, pad, pad, 32, 32, xk, yk)
+		convolve2D8GoSIMD(dst, ref, 0, 0, pad, pad, 32, 32, xk, yk)
 	}); a != 0 {
-		t.Fatalf("convolve2D8AVX2 allocated %v times, want 0", a)
+		t.Fatalf("convolve2D8GoSIMD allocated %v times, want 0", a)
 	}
 	if a := testing.AllocsPerRun(20, func() {
-		convolveX8AVX2(dst, ref, 0, 0, pad, pad, 32, 32, xk)
+		convolveX8GoSIMD(dst, ref, 0, 0, pad, pad, 32, 32, xk)
 	}); a != 0 {
-		t.Fatalf("convolveX8AVX2 allocated %v times, want 0", a)
+		t.Fatalf("convolveX8GoSIMD allocated %v times, want 0", a)
 	}
 }
 

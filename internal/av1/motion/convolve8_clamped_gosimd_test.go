@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package motion
 
@@ -36,19 +36,19 @@ func TestConvolveClampedNEONMatchesPureGo(t *testing.T) {
 			for _, org := range []int{0, 1} {
 				gx, _ := testPlane(w, h, 1, w)
 				ex, _ := testPlane(w, h, 1, w)
-				convolveX8ClampedNEON(gx, ref, 0, 0, org, org, w, h, xk)
+				convolveX8ClampedGoSIMD(gx, ref, 0, 0, org, org, w, h, xk)
 				convolveX8ClampedPureGo(ex, ref, 0, 0, org, org, w, h, xk)
 				assertBytesEqual(t, gx, ex, w, h, "X8clamped", w, h, org)
 
 				gy, _ := testPlane(w, h, 1, w)
 				ey, _ := testPlane(w, h, 1, w)
-				convolveY8ClampedNEON(gy, ref, 0, 0, org, org, w, h, yk)
+				convolveY8ClampedGoSIMD(gy, ref, 0, 0, org, org, w, h, yk)
 				convolveY8ClampedPureGo(ey, ref, 0, 0, org, org, w, h, yk)
 				assertBytesEqual(t, gy, ey, w, h, "Y8clamped", w, h, org)
 
 				g2, _ := testPlane(w, h, 1, w)
 				e2, _ := testPlane(w, h, 1, w)
-				convolve2D8ClampedNEON(g2, ref, 0, 0, org, org, w, h, xk, yk)
+				convolve2D8ClampedGoSIMD(g2, ref, 0, 0, org, org, w, h, xk, yk)
 				convolve2D8ClampedPureGo(e2, ref, 0, 0, org, org, w, h, xk, yk)
 				assertBytesEqual(t, g2, e2, w, h, "2D8clamped", w, h, org)
 			}
@@ -86,7 +86,7 @@ func TestConvolve1D8ClampedEdgeNEONMatchesPureGo(t *testing.T) {
 					refY := filterTaps
 					got, _ := testPlane(w, h, 1, w)
 					want, _ := testPlane(w, h, 1, w)
-					convolveX8ClampedNEON(got, ref, 0, 0, refX, refY, w, h, k)
+					convolveX8ClampedGoSIMD(got, ref, 0, 0, refX, refY, w, h, k)
 					convolveX8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, k)
 					assertBytesEqual(t, got, want, w, h, "X8horizontal-edge", w, h, edge)
 				}
@@ -111,7 +111,7 @@ func TestConvolve1D8ClampedEdgeNEONMatchesPureGo(t *testing.T) {
 					}
 					got, _ := testPlane(w, h, 1, w)
 					want, _ := testPlane(w, h, 1, w)
-					convolveY8ClampedNEON(got, ref, 0, 0, refX, refY, w, h, k)
+					convolveY8ClampedGoSIMD(got, ref, 0, 0, refX, refY, w, h, k)
 					convolveY8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, k)
 					assertBytesEqual(t, got, want, w, h, "Y8vertical-edge", w, h, edge)
 				}
@@ -152,9 +152,9 @@ func TestConvolve2D8ClampedHorizontalEdgeNEONMatchesPureGo(t *testing.T) {
 					want, _ := testPlane(w, h, 1, w)
 					var scratch ConvolveScratch
 					var splitScratch ConvolveScratch
-					convolve2D8ClampedNEON(got, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
-					convolve2D8ClampedNEONWithScratch(gotScratch, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &scratch)
-					if !convolve2D8ClampedEdgeSplitNEONWithScratch(gotSplit, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &splitScratch) {
+					convolve2D8ClampedGoSIMD(got, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
+					convolve2D8ClampedGoSIMDWithScratch(gotScratch, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &scratch)
+					if !convolve2D8ClampedEdgeSplitGoSIMDWithScratch(gotSplit, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &splitScratch) {
 						t.Fatalf("2D8horizontal-edge split path was not used w=%d h=%d edge=%s", w, h, edge)
 					}
 					convolve2D8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
@@ -176,10 +176,10 @@ func TestConvolve2D8ClampedHorizontalEdgeNEONMatchesPureGo(t *testing.T) {
 	dst, _ := testPlane(w, h, 1, w)
 	var scratch ConvolveScratch
 	allocs := testing.AllocsPerRun(50, func() {
-		convolve2D8ClampedNEONWithScratch(dst, ref, 0, 0, refW-w-3, filterTaps, w, h, subpelFilters8[3], subpelFilters8[5], &scratch)
+		convolve2D8ClampedGoSIMDWithScratch(dst, ref, 0, 0, refW-w-3, filterTaps, w, h, subpelFilters8[3], subpelFilters8[5], &scratch)
 	})
 	if allocs != 0 {
-		t.Fatalf("convolve2D8ClampedNEONWithScratch horizontal edge allocated %v times, want 0", allocs)
+		t.Fatalf("convolve2D8ClampedGoSIMDWithScratch horizontal edge allocated %v times, want 0", allocs)
 	}
 }
 
