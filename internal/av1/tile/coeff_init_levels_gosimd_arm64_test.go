@@ -2,30 +2,24 @@
 //
 // See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
 
-//go:build amd64 && !purego
+//go:build goexperiment.simd && arm64 && !purego
 
 package tile
 
 import (
 	"bytes"
 	"testing"
+
+	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
 
-// These tests call the AVX2 kernel directly rather than through the dispatch
-// gate. The gate only binds AVX2 when CPUID reports OS-enabled AVX2; under
-// Apple Rosetta 2 the guest CPUID hides AVX so the gate falls back to pure-Go
-// even though Rosetta can execute the AVX2 instructions. Calling
-// coeffInitLevelsAVX2 directly exercises the real assembly on every amd64 host.
-
-func TestCoeffInitLevelsAVX2MatchesPureGo(t *testing.T) {
+func TestCoeffInitLevelsSIMDMatchesPureGo(t *testing.T) {
+	if !cpu.Detected.NEON {
+		t.Skip("NEON unavailable")
+	}
 	for size := range transformSizeCount {
 		geo := coeffGeometryTable[size]
 		if !geo.valid {
-			continue
-		}
-		switch geo.scanHeight {
-		case 4, 8, 16, 32:
-		default:
 			continue
 		}
 		maxEOB := int(geo.maxEOB)
@@ -56,7 +50,9 @@ func TestCoeffInitLevelsAVX2MatchesPureGo(t *testing.T) {
 
 		got := bytes.Repeat([]byte{0x5a}, scratchLen)
 		want := bytes.Repeat([]byte{0xa5}, scratchLen)
-		coeffInitLevelsAVX2(coeffs, int(geo.scanWidth), int(geo.scanHeight), got, scratchLen)
+		if ok := coeffInitLevelsArch(coeffs, int(geo.scanWidth), int(geo.scanHeight), got, scratchLen); !ok {
+			t.Fatalf("size=%d SIMD path not used", size)
+		}
 		coeffInitLevelsPureGo(coeffs, int(geo.scanWidth), int(geo.scanHeight), want, scratchLen)
 		if !bytes.Equal(got, want) {
 			for i := range got {
@@ -68,7 +64,10 @@ func TestCoeffInitLevelsAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestCoeffInitLevelsAVX2DoesNotAllocate(t *testing.T) {
+func TestCoeffInitLevelsSIMDDoesNotAllocate(t *testing.T) {
+	if !cpu.Detected.NEON {
+		t.Skip("NEON unavailable")
+	}
 	var coeffs [1024]int16
 	var levels [maxCoeffScratchLen]uint8
 	for i := range coeffs {
@@ -76,9 +75,11 @@ func TestCoeffInitLevelsAVX2DoesNotAllocate(t *testing.T) {
 	}
 	geo := coeffGeometryTable[TransformSize64x64]
 	allocs := testing.AllocsPerRun(1000, func() {
-		coeffInitLevelsAVX2(coeffs[:int(geo.maxEOB)], int(geo.scanWidth), int(geo.scanHeight), levels[:int(geo.scratchLen)], int(geo.scratchLen))
+		if ok := coeffInitLevelsArch(coeffs[:int(geo.maxEOB)], int(geo.scanWidth), int(geo.scanHeight), levels[:int(geo.scratchLen)], int(geo.scratchLen)); !ok {
+			t.Fatal("SIMD path not used")
+		}
 	})
 	if allocs != 0 {
-		t.Fatalf("CoeffInitLevels AVX2 allocated: %f", allocs)
+		t.Fatalf("CoeffInitLevels SIMD allocated: %f", allocs)
 	}
 }
