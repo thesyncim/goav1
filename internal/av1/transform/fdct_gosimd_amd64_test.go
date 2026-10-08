@@ -41,12 +41,18 @@ func TestForwardDCT8x8SIMDMatchesPureGo(t *testing.T) {
 
 // TestForwardDCT8x8SIMDBinding checks that the dispatcher selects the AVX2
 // kernel whenever the host advertises AVX2.
-func TestForwardDCT8x8SIMDBinding(t *testing.T) {
+func TestForwardDCTSIMDBindingsAMD64(t *testing.T) {
 	if !archsimd.X86.AVX2() {
 		t.Skip("host has no AVX2")
 	}
-	fn := runtime.FuncForPC(reflect.ValueOf(forwardDCT8x8Impl).Pointer())
-	if fn == nil || !strings.Contains(fn.Name(), "forwardDCT8x8SIMDGuarded") {
-		t.Fatalf("8x8 forward DCT bound to %v, want forwardDCT8x8SIMDGuarded", fn)
+	check := func(name string, got any, want string) {
+		t.Helper()
+		fn := runtime.FuncForPC(reflect.ValueOf(got).Pointer())
+		if fn == nil || !strings.Contains(fn.Name(), want) {
+			t.Fatalf("%s forward DCT bound to %v, want %s", name, fn, want)
+		}
 	}
+	check("8x8", forwardDCT8x8Impl, "forwardDCT8x8SIMDGuarded")
+	check("16x16", forwardDCT16x16Impl, "forwardDCT16x16SIMDGuarded")
+	check("32x32", forwardDCT32x32Impl, "forwardDCT32x32SIMDGuarded")
 }

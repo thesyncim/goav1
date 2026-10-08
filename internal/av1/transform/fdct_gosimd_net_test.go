@@ -78,6 +78,65 @@ func TestForwardBlock8x8SIMDMatchesPureGo(t *testing.T) {
 	}
 }
 
+// TestForwardDCTSquareSIMDMatchesPureGo checks the Go SIMD 16x16 and 32x32 DCT
+// kernels against the scalar oracle over random and extreme 8-bit residuals.
+func TestForwardDCTSquareSIMDMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(83))
+	cases := []struct {
+		name string
+		side int
+		simd func([]int32, int, []int16, int)
+		pure func([]int32, int, []int16, int)
+	}{
+		{"16x16", 16, forwardDCT16x16SIMD, forwardDCT16x16PureGo},
+		{"32x32", 32, forwardDCT32x32SIMD, forwardDCT32x32PureGo},
+	}
+	for _, tc := range cases {
+		const resExtra, coeffExtra = 5, 3
+		resStride := tc.side + resExtra
+		coeffStride := tc.side + coeffExtra
+		residual := make([]int16, resStride*tc.side)
+		got := make([]int32, coeffStride*tc.side)
+		want := make([]int32, coeffStride*tc.side)
+		patterns := []func(r, c int) int16{
+			func(r, c int) int16 { return 255 },
+			func(r, c int) int16 { return -255 },
+			func(r, c int) int16 {
+				if (r+c)&1 == 0 {
+					return 255
+				}
+				return -255
+			},
+		}
+		check := func(trial int) {
+			t.Helper()
+			clear(got)
+			clear(want)
+			tc.simd(got, coeffStride, residual, resStride)
+			tc.pure(want, coeffStride, residual, resStride)
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("%s trial %d: coeff[%d] simd %d want %d", tc.name, trial, i, got[i], want[i])
+				}
+			}
+		}
+		for _, pat := range patterns {
+			for r := range tc.side {
+				for c := range tc.side {
+					residual[r*resStride+c] = pat(r, c)
+				}
+			}
+			check(-1)
+		}
+		for trial := range 400 {
+			for i := range residual {
+				residual[i] = int16(rng.Intn(511)) - 255
+			}
+			check(trial)
+		}
+	}
+}
+
 // TestForwardDCT8x8SIMDZeroAlloc keeps the 8x8 SIMD driver allocation-free.
 func TestForwardDCT8x8SIMDZeroAlloc(t *testing.T) {
 	var residual [64]int16

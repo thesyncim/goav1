@@ -11,88 +11,15 @@ import (
 	"unsafe"
 )
 
-// fdct16NEONCtx carries the kernel arguments; offsets are mirrored by
-// #define in fdct16_neon_arm64.s. Buf points at caller-owned 16x16 int32
-// scratch for the column-pass output.
-type fdct16NEONCtx struct {
-	In        unsafe.Pointer
-	InStride  int64
-	Out       unsafe.Pointer
-	OutStride int64
-	Buf       unsafe.Pointer
-}
-
-//go:noescape
-func fdct16x16NEONAsm(ctx *fdct16NEONCtx)
-
-func forwardDCT16x16NEON(coeff []int32, coeffStride int, residual []int16, residualStride int) {
-	var buf [256]int32
-	ctx := fdct16NEONCtx{
-		In:        unsafe.Pointer(&residual[0]),
-		InStride:  int64(residualStride),
-		Out:       unsafe.Pointer(&coeff[0]),
-		OutStride: int64(coeffStride),
-		Buf:       unsafe.Pointer(&buf[0]),
-	}
-	fdct16x16NEONAsm(&ctx)
-}
-
-func forwardDCT16x16NEONGuarded(coeff []int32, coeffStride int, residual []int16, residualStride int) {
-	if !residualFitsMagnitude(residual, residualStride, 16, 16, 255) {
-		forwardDCT16x16PureGo(coeff, coeffStride, residual, residualStride)
-		return
-	}
-	forwardDCT16x16NEON(coeff, coeffStride, residual, residualStride)
-}
-
-// fdct32NEONCtx carries the kernel arguments; offsets are mirrored by
-// #define in fdct32_neon_arm64.s. Buf points at caller-owned 32x32 int32
-// scratch for the column-pass output and Spill at sixteen vectors of
-// stage-1 difference staging.
-type fdct32NEONCtx struct {
-	In        unsafe.Pointer
-	InStride  int64
-	Out       unsafe.Pointer
-	OutStride int64
-	Buf       unsafe.Pointer
-	Spill     unsafe.Pointer
-}
-
-//go:noescape
-func fdct32x32NEONAsm(ctx *fdct32NEONCtx)
-
-func forwardDCT32x32NEON(coeff []int32, coeffStride int, residual []int16, residualStride int) {
-	if !residualFitsMagnitude(residual, residualStride, 32, 32, 255) {
-		forwardDCT32x32PureGo(coeff, coeffStride, residual, residualStride)
-		return
-	}
-	forwardDCT32x32NEONRaw(coeff, coeffStride, residual, residualStride)
-}
-
-func forwardDCT32x32NEONRaw(coeff []int32, coeffStride int, residual []int16, residualStride int) {
-	var buf [1024]int32
-	var spill [64]int32
-	ctx := fdct32NEONCtx{
-		In:        unsafe.Pointer(&residual[0]),
-		InStride:  int64(residualStride),
-		Out:       unsafe.Pointer(&coeff[0]),
-		OutStride: int64(coeffStride),
-		Buf:       unsafe.Pointer(&buf[0]),
-		Spill:     unsafe.Pointer(&spill[0]),
-	}
-	fdct32x32NEONAsm(&ctx)
-}
-
-// The 4x4 and 8x8 dispatch slots are Go SIMD; 16x16 and 32x32 keep their
-// guarded NEON kernels until they are ported.
+// Every forward DCT dispatch slot is Go SIMD on arm64.
 var forwardDCT4x4Impl = forwardDCT4x4SIMD
 var forwardDCT8x8Impl = forwardDCT8x8SIMDGuarded
-var forwardDCT16x16Impl = forwardDCT16x16NEONGuarded
-var forwardDCT32x32Impl = forwardDCT32x32NEON
+var forwardDCT16x16Impl = forwardDCT16x16SIMDGuarded
+var forwardDCT32x32Impl = forwardDCT32x32SIMDGuarded
 var forwardDCT4x4Trusted8BitImpl = forwardDCT4x4SIMDCore
 var forwardDCT8x8Trusted8BitImpl = forwardDCT8x8SIMD
-var forwardDCT16x16Trusted8BitImpl = forwardDCT16x16NEON
-var forwardDCT32x32Trusted8BitImpl = forwardDCT32x32NEONRaw
+var forwardDCT16x16Trusted8BitImpl = forwardDCT16x16SIMD
+var forwardDCT32x32Trusted8BitImpl = forwardDCT32x32SIMD
 
 // Pre-broadcast fdct4 twiddle vectors, kept as package-level (rodata) arrays so
 // each loads with a single instruction instead of a per-call stack fill. This

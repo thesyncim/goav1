@@ -27,8 +27,8 @@ func TestForwardDCTSIMDBindings(t *testing.T) {
 	}
 	check("4x4", forwardDCT4x4Impl, "forwardDCT4x4SIMD")
 	check("8x8", forwardDCT8x8Impl, "forwardDCT8x8SIMDGuarded")
-	check("16x16", forwardDCT16x16Impl, "forwardDCT16x16NEONGuarded")
-	check("32x32", forwardDCT32x32Impl, "forwardDCT32x32NEON")
+	check("16x16", forwardDCT16x16Impl, "forwardDCT16x16SIMDGuarded")
+	check("32x32", forwardDCT32x32Impl, "forwardDCT32x32SIMDGuarded")
 }
 
 func TestForwardDCT4x4SIMDExactResidualLength(t *testing.T) {
@@ -122,7 +122,7 @@ func BenchmarkForwardDCT16x16Kernels(b *testing.B) {
 		name string
 		fn   func([]int32, int, []int16, int)
 	}{
-		{name: "neon", fn: benchmarkForwardDCTGuardedNEON(forwardDCT16x16NEON, forwardDCT16x16PureGo, 16)},
+		{name: "simd", fn: benchmarkForwardDCTGuardedNEON(forwardDCT16x16SIMD, forwardDCT16x16PureGo, 16)},
 		{name: "purego", fn: forwardDCT16x16PureGo},
 	})
 }
