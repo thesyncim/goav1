@@ -25,7 +25,7 @@ func colPass4TestFuncs() []col2TestFunc {
 		{"DCT8Col4", dct8Size, inverseDCT8Col4SIMDAdapter, inverseDCT8Col4PureGo},
 		{"DCT16Col4", dct16Size, inverseDCT16Col4SIMDAdapter, inverseDCT16Col4PureGo},
 		{"DCT32Col4", dct32Size, inverseDCT32Col4SIMDAdapter, inverseDCT32Col4PureGo},
-		{"DCT64Col4", dct64Size, inverseDCT64Col4NEONAdapter, inverseDCT64Col4PureGo},
+		{"DCT64Col4", dct64Size, inverseDCT64Col4Impl, inverseDCT64Col4PureGo},
 		{"ADST16Col4", adst16Size, inverseADST16Col4SIMDAdapter, inverseADST16Col4PureGo},
 		{"ADST16Col4Flip", adst16Size, inverseADST16Col4FlipSIMDAdapter, inverseADST16Col4FlipPureGo},
 	}

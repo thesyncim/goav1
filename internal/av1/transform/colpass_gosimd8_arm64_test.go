@@ -399,9 +399,9 @@ func BenchmarkDCT32x8_ASM(b *testing.B) {
 		inverseDCT32Col4SIMDAdapter(buf[4:], s, mn, mx)
 	})
 }
-func BenchmarkDCT64x8_ASM(b *testing.B) {
+func BenchmarkDCT64x8_PureGo(b *testing.B) {
 	benchDCTx8ASM(b, 64, func(buf []int32, s int, mn, mx int32) {
-		inverseDCT64Col4NEONAdapter(buf, s, mn, mx)
-		inverseDCT64Col4NEONAdapter(buf[4:], s, mn, mx)
+		inverseDCT64Col4PureGo(buf, s, mn, mx)
+		inverseDCT64Col4PureGo(buf[4:], s, mn, mx)
 	})
 }

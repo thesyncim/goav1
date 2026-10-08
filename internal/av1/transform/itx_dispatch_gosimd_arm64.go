@@ -8,6 +8,12 @@ package transform
 
 import "simd/archsimd"
 
+// colClampBoundNEON is the stage-range envelope the four-column int32-lane
+// kernels are proven overflow-free for: every supported bit depth's row and
+// column stage bounds satisfy |bound| <= 1<<19 (stageRangeBounds caps at
+// bitDepth 12: rowBits 20). Wider bounds fall back to pure Go.
+const colClampBoundNEON = 1 << 19
+
 // init binds the Go SIMD batched inverse kernels that replaced the arm64 NEON
 // assembly. The column kernels run four (or two) columns in int32 lanes and the
 // row kernels run rows through a 4x4 transpose; the adapters keep the same
