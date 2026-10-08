@@ -19,22 +19,21 @@ import (
 //
 //	sum = seed + f0*(s0+s6) + f1*(s1+s5) + f2*(s2+s4) + f3'*s3
 //
-// where seed = offset + 1<<(round0-1) also folds the rounding bias, so the trailing
-// shift is a plain arithmetic right shift. The symmetric pair sums fit a positive
-// int16 lane (u8: <= 510; u16 samples <= 4095: <= 8190), so each term is one widening
-// product and the 8 products per 8 outputs of the plain form become 4.
+// where seed = offset + 1<<(round0-1) also folds the rounding bias. The symmetric
+// pair sums fit a positive int16 lane (u8: <= 510; u16 samples <= 4095: <= 8190).
+// The uint16 path uses four widening products per half. The uint8 path packs
+// adjacent columns into 32-bit lanes and uses scaled taps, as below.
 //
-// Window construction: one 16-byte load per 8-output group, then ConcatShiftBytesRight
-// on the reshaped lanes derives the shifted windows in-register. The last load of
-// each row reaches two samples past the three-sample border; callers establish that
-// pad with the wrappers' CanRun checks. Every memory access is a bounds-checked
-// slice index, so no pointer ever leaves its allocation.
+// Window construction uses ConcatShiftBytesRight on reshaped lanes. The last
+// load of each row reaches two samples past the three-sample border; the
+// wrappers' CanRun checks establish that pad before raw pointer loads.
 
 // wienerHorizontalSIMD is the Go-native SIMD form of wienerHorizontal for the uint16
 // sample domain. It applies the reference validity scan first (every window sample
 // must be <= max, else the call fails with false), then runs the kernel.
 func wienerHorizontalSIMD(src []uint16, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, bitDepth int, round0 int, max uint16, temp []uint16) bool {
-	if !wienerHorizontalU16SIMDCanRun(len(src), srcStride, srcOrigin, width, height, filter) {
+	if !wienerHorizontalU16SIMDCanRun(len(src), srcStride, srcOrigin, width, height, filter) ||
+		!blockFits(len(temp), width, width, height+2*WienerHalfwin) {
 		return wienerHorizontal(src, srcStride, srcOrigin, width, height, filter, bitDepth, round0, max, temp)
 	}
 	for row := -WienerHalfwin; row < height+WienerHalfwin; row++ {
@@ -52,7 +51,8 @@ func wienerHorizontalSIMD(src []uint16, srcStride int, srcOrigin int, width int,
 // wienerHorizontalSIMDTrusted is the uint16 SIMD horizontal pass without the
 // per-sample validity scan, used by the decoder-owned trusted entry.
 func wienerHorizontalSIMDTrusted(src []uint16, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, bitDepth int, round0 int, max uint16, temp []uint16) {
-	if !wienerHorizontalU16SIMDCanRun(len(src), srcStride, srcOrigin, width, height, filter) {
+	if !wienerHorizontalU16SIMDCanRun(len(src), srcStride, srcOrigin, width, height, filter) ||
+		!blockFits(len(temp), width, width, height+2*WienerHalfwin) {
 		wienerHorizontalTrusted(src, srcStride, srcOrigin, width, height, filter, bitDepth, round0, max, temp)
 		return
 	}
@@ -73,11 +73,14 @@ func wienerHorizontalU16SIMDCanRun(srcLen int, srcStride int, srcOrigin int, wid
 // wienerHorizontalSIMDKernel is the uint16 SIMD horizontal pass. The caller must
 // have checked wienerHorizontalU16SIMDCanRun.
 func wienerHorizontalSIMDKernel(src []uint16, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, bitDepth int, round0 int, max uint16, temp []uint16) {
+	if t0, t1, t2, t3, seedA, seedO, ok := wienerHorizontalU16PackedTaps(filter, bitDepth, round0, max); ok {
+		wienerHorizontalU16PackedKernel(src, srcStride, srcOrigin, width, height, t0, t1, t2, t3, seedA, seedO, bitDepth, round0, temp)
+		return
+	}
 	limit := int32(1) << (bitDepth + 1 + WienerFilterBits - round0)
 	offset := int32(1) << (bitDepth + WienerFilterBits - 1)
 	seedV := archsimd.BroadcastInt32x4(offset + roundBias(round0))
 	shV := archsimd.BroadcastInt32x4(-int32(round0))
-	zero := archsimd.BroadcastInt32x4(0)
 	maxV := archsimd.BroadcastUint16x8(uint16(limit - 1))
 	g0 := archsimd.BroadcastInt16x8(filter[0])
 	g1 := archsimd.BroadcastInt16x8(filter[1])
@@ -88,12 +91,14 @@ func wienerHorizontalSIMDKernel(src []uint16, srcStride int, srcOrigin int, widt
 	hg2, hg3 := g2.HiToLo(), g3.HiToLo()
 
 	rows := height + 2*WienerHalfwin
+	sp := unsafe.Pointer(unsafe.SliceData(src))
+	tp := unsafe.Pointer(unsafe.SliceData(temp))
 	for row := 0; row < rows; row++ {
 		sBase := srcOrigin + (row-WienerHalfwin)*srcStride - WienerHalfwin
 		dBase := row * width
 		for col := 0; col < width; col += 8 {
-			v0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&src[sBase+col])))   // s0..s7
-			v1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&src[sBase+col+8]))) // s8..s15
+			v0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(sp, (sBase+col)*2)))   // s0..s7
+			v1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(sp, (sBase+col+8)*2))) // s8..s15
 			lb := v0.ReshapeToUint8s()
 			hb := v1.ReshapeToUint8s()
 			w1 := hb.ConcatShiftBytesRight(lb, 2*1).ReshapeToUint16s().BitsToInt16() // s1..s8
@@ -111,8 +116,82 @@ func wienerHorizontalSIMDKernel(src []uint16, srcStride int, srcOrigin int, widt
 				Add(c.HiToLo().MulWidenLo(hg2)).Add(w3.HiToLo().MulWidenLo(hg3))
 			lo = lo.Shift(shV)
 			hi = hi.Shift(shV)
-			out := restorationSaturateInt32PairToUint16(lo.Max(zero), hi.Max(zero)).Min(maxV)
-			out.StoreArray((*[8]uint16)(unsafe.Pointer(&temp[dBase+col])))
+			out := restorationSaturateInt32PairToUint16(lo, hi).Min(maxV)
+			out.StoreArray((*[8]uint16)(unsafe.Add(tp, (dBase+col)*2)))
+		}
+	}
+}
+
+// wienerHorizontalU16PackedTaps checks the signed 32-bit bound for the packed
+// even/odd column form. Extreme filters outside the bound use the widening path.
+func wienerHorizontalU16PackedTaps(filter WienerFilter, bitDepth int, round0 int, max uint16) (t0, t1, t2, t3, seedA, seedO uint32, ok bool) {
+	if round0 < 1 || round0 > 16 || bitDepth < 0 || bitDepth+WienerFilterBits-1 > 30 || max > 4095 {
+		return 0, 0, 0, 0, 0, 0, false
+	}
+	limitShift := bitDepth + 1 + WienerFilterBits - round0
+	if limitShift < 0 || limitShift > 15 {
+		return 0, 0, 0, 0, 0, 0, false
+	}
+	abs := func(x int64) int64 {
+		if x < 0 {
+			return -x
+		}
+		return x
+	}
+	f0, f1, f2 := int64(filter[0]), int64(filter[1]), int64(filter[2])
+	f3 := int64(filter[3]) + (1 << WienerFilterBits)
+	c := int64(1)<<(bitDepth+WienerFilterBits-1) + int64(roundBias(round0))
+	s := int64(1) << (16 - round0)
+	if s*(2*int64(max)*(abs(f0)+abs(f1)+abs(f2))+int64(max)*abs(f3)+c) >= 1<<31 {
+		return 0, 0, 0, 0, 0, 0, false
+	}
+	seedO = uint32(s * c)
+	seedA = seedO + seedO<<16
+	return uint32(s * f0), uint32(s * f1), uint32(s * f2), uint32(s * f3), seedA, seedO, true
+}
+
+// wienerHorizontalU16PackedKernel uses one 32-bit MLA per symmetric tap and
+// packed column pair. The odd accumulator removes its contribution from the
+// even accumulator's high half; TRN2 assembles eight rounded columns.
+func wienerHorizontalU16PackedKernel(src []uint16, srcStride int, srcOrigin int, width int, height int, t0, t1, t2, t3, seedA, seedO uint32, bitDepth int, round0 int, temp []uint16) {
+	t0V, t1V := archsimd.BroadcastUint32x4(t0), archsimd.BroadcastUint32x4(t1)
+	t2V, t3V := archsimd.BroadcastUint32x4(t2), archsimd.BroadcastUint32x4(t3)
+	seedAV, seedOV := archsimd.BroadcastUint32x4(seedA), archsimd.BroadcastUint32x4(seedO)
+	shr16 := archsimd.BroadcastInt32x4(-16)
+	negK := archsimd.BroadcastUint32x4(0xffff0000)
+	zero := archsimd.BroadcastInt16x8(0)
+	maxV := archsimd.BroadcastInt16x8(int16((1 << (bitDepth + 1 + WienerFilterBits - round0)) - 1))
+	sp := unsafe.Pointer(unsafe.SliceData(src))
+	tp := unsafe.Pointer(unsafe.SliceData(temp))
+	for row := 0; row < height+2*WienerHalfwin; row++ {
+		sBase := srcOrigin + (row-WienerHalfwin)*srcStride - WienerHalfwin
+		dBase := row * width
+		v0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(sp, sBase*2)))
+		for col := 0; col < width; col += 8 {
+			v1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(sp, (sBase+col+8)*2)))
+			lb, hb := v0.ReshapeToUint8s(), v1.ReshapeToUint8s()
+			w1 := hb.ConcatShiftBytesRight(lb, 2).ReshapeToUint16s()
+			w2 := hb.ConcatShiftBytesRight(lb, 4).ReshapeToUint16s()
+			w3 := hb.ConcatShiftBytesRight(lb, 6).ReshapeToUint16s()
+			w4 := hb.ConcatShiftBytesRight(lb, 8).ReshapeToUint16s()
+			w5 := hb.ConcatShiftBytesRight(lb, 10).ReshapeToUint16s()
+			w6 := hb.ConcatShiftBytesRight(lb, 12).ReshapeToUint16s()
+			p0 := v0.Add(w6).ReshapeToUint32s()
+			p1 := w1.Add(w5).ReshapeToUint32s()
+			p2 := w2.Add(w4).ReshapeToUint32s()
+			p3 := w3.ReshapeToUint32s()
+			acc := p3.MulAdd(t3V, seedAV)
+			acc = p2.MulAdd(t2V, acc)
+			acc = p1.MulAdd(t1V, acc)
+			acc = p0.MulAdd(t0V, acc)
+			odd := p3.Shift(shr16).MulAdd(t3V, seedOV)
+			odd = p2.Shift(shr16).MulAdd(t2V, odd)
+			odd = p1.Shift(shr16).MulAdd(t1V, odd)
+			odd = p0.Shift(shr16).MulAdd(t0V, odd)
+			even := odd.MulAdd(negK, acc)
+			out := even.ReshapeToUint16s().InterleaveOdd(odd.ReshapeToUint16s()).BitsToInt16().Max(zero).Min(maxV).ToBits()
+			out.StoreArray((*[8]uint16)(unsafe.Add(tp, (dBase+col)*2)))
+			v0 = v1
 		}
 	}
 }
