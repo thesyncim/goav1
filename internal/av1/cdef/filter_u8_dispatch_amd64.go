@@ -21,6 +21,13 @@ func init() {
 	filterBlockU8Impl = filterBlockU8PureGo
 }
 
+func boolToInt64(v bool) int64 {
+	if v {
+		return 1
+	}
+	return 0
+}
+
 // filterBlockU8AVX2Ctx is the asm calling context for
 // filter_u8_avx2_amd64.s. Field order and sizes are part of the ABI shared
 // with the asm; do not reorder.

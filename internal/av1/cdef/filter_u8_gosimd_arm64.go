@@ -68,12 +68,6 @@ func dispatchFilterBlockU8NEON(ctx *filterBlockU8NEONCtx, width int, primaryStre
 	}
 }
 
-// cdefLoadU16P loads 8 uint16 CDEF samples at a raw pointer as Int16x8
-// (samples <= 0x4000, the bit pattern is a non-negative int16).
-func cdefLoadU16P(p unsafe.Pointer) archsimd.Int16x8 {
-	return archsimd.LoadInt16x8Array((*[8]int16)(p))
-}
-
 // cdefFilterBlock8SecondaryU8SIMD is the 8-wide secondary-only kernel.
 // The eight tap chains are pasted inline so everything stays
 // register-resident; each chain is
@@ -135,17 +129,6 @@ func cdefFilterBlock8SecondaryU8SIMD(ctx *filterBlockU8NEONCtx) {
 			dst = unsafe.Add(dst, dstStr)
 		}
 	}
-}
-
-// cdefLoadPairU16P zips the low four uint16 samples of two rows into one
-// Int16x8 (lanes 0..3 = row r, lanes 4..7 = row r+1), the vector shape the
-// 4-wide kernel filters two rows at a time with. The full-width loads read
-// four halo samples past each 4-wide row segment; the CDEF input buffer's
-// 8-column horizontal border keeps them in bounds.
-func cdefLoadPairU16P(p, q unsafe.Pointer) archsimd.Int16x8 {
-	lo := archsimd.LoadInt16x8Array((*[8]int16)(p)).ToBits().ReshapeToUint64s()
-	hi := archsimd.LoadInt16x8Array((*[8]int16)(q)).ToBits().ReshapeToUint64s()
-	return lo.InterleaveLo(hi).ReshapeToUint16s().BitsToInt16()
 }
 
 // cdefFilterBlock4SecondaryU8SIMD is the 4-wide secondary-only kernel: two

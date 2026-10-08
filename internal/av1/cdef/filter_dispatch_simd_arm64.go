@@ -6,8 +6,9 @@
 
 package cdef
 
-// The measured uint16 Go SIMD block filter loses to the NEON kernel, so keep
-// the architecture dispatch on NEON when the SIMD experiment is enabled.
+// init binds the Go SIMD CDEF block filter on arm64. It is bit-exact with the
+// pure-Go reference (TestFilterBlockSIMDMatchesPureGo). The unit-level loop
+// binds statically in filter_simd_arm64.go.
 func init() {
-	filterBlockImpl = filterBlockNEON
+	filterBlockImpl = filterBlockSIMD
 }
