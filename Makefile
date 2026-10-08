@@ -570,7 +570,7 @@ else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),3)
 	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_ENCODER_FORMAT_REF_TESTS)' -skip '$(WEBRTC_PRODUCTION_CI_SPLIT_TESTS)' -count=1 -timeout 600s -v
 else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),4)
 	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test ./internal/av1/encoder -run '($(WEBRTC_PRODUCTION_INTERNAL_TESTS)|$(WEBRTC_ENCODER_REFERENCE_TESTS))' -count=1 -timeout 900s -v
-	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go -C examples/browser-push test . -run '^(TestEndToEndAV1OverRTP|TestCollectTemporalUnitsWithBudget)$$' -count=1 -timeout 300s -v
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go -C examples/browser-push test . -run '^(TestEndToEndAV1OverRTP.*|TestCollectTemporalUnitsWithBudget.*)$$' -count=1 -timeout 300s -v
 else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),5)
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1A)' -count=1 -timeout 360s -v
 else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),6)
