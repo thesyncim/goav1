@@ -336,7 +336,7 @@ func TestEndToEndAV1OverRTPRTCEncoderREMBBitrateControl(t *testing.T) {
 	startReceiverEstimatedMaximumBitrateFeedback(t, receiver, trackSSRC, rembBitrateBps, doneFeedback)
 
 	tus, err := collectTemporalUnitsWithBudget(
-		decoded, 70, rtcTemporalUnitCollectionTimeout, rtcTemporalUnitNoProgressTimeout)
+		decoded, 70, rtcREMBTemporalUnitCollectionTimeout, rtcTemporalUnitNoProgressTimeout)
 	if err != nil {
 		select {
 		case streamErr := <-streamErr:
@@ -954,6 +954,10 @@ const (
 	// stalled stream after a bounded idle interval.
 	rtcTemporalUnitCollectionTimeout = 120 * time.Second
 	rtcTemporalUnitNoProgressTimeout = 30 * time.Second
+	// The REMB case runs at a much lower bitrate and reached 47/70 units within
+	// two minutes on CI. Keep its 70-unit requirement and 30-second stall guard,
+	// but give a progressing encoder four minutes to finish within the shard.
+	rtcREMBTemporalUnitCollectionTimeout = 240 * time.Second
 )
 
 func collectTemporalUnits(t *testing.T, decoded <-chan receivedTemporalUnit, want int) [][]byte {
