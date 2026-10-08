@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build goexperiment.simd && arm64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package motion
 
@@ -12,7 +12,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
@@ -20,29 +19,29 @@ func testHBDZeroEndpointKernel(kernel [filterTaps]int16) bool {
 	return kernel[0] == 0 && kernel[filterTaps-1] == 0
 }
 
-func TestHBD6TapGoSIMDDispatchBound(t *testing.T) {
-	if !cpu.Detected.NEON {
-		t.Skip("arm64 NEON is unavailable")
+func TestHBDGoSIMDDispatchBound(t *testing.T) {
+	if !hbdSIMDAvailable() {
+		t.Skip("Go SIMD high-bit-depth kernels are unavailable on this CPU")
 	}
 	cases := []struct {
 		name string
 		got  any
 		want any
 	}{
-		{"convolve-X-keeps-NEON", convolveXHighBDImpl, convolveXHighBDNEON},
-		{"convolve-Y-keeps-NEON", convolveYHighBDImpl, convolveYHighBDNEON},
+		{"convolve-X", convolveXHighBDImpl, convolveXHighBDGoSIMD},
+		{"convolve-Y", convolveYHighBDImpl, convolveYHighBDGoSIMD},
 		{"convolve-2D", convolve2DHighBDImpl, convolve2DHighBDGoSIMD},
-		{"convolve-X-clamped-keeps-NEON", convolveXHighBDClampedImpl, convolveXHighBDClampedNEON},
-		{"convolve-Y-clamped-keeps-NEON", convolveYHighBDClampedImpl, convolveYHighBDClampedNEON},
+		{"convolve-X-clamped", convolveXHighBDClampedImpl, convolveXHighBDClampedGoSIMD},
+		{"convolve-Y-clamped", convolveYHighBDClampedImpl, convolveYHighBDClampedGoSIMD},
 		{"convolve-2D-clamped", convolve2DHighBDClampedImpl, convolve2DHighBDClampedGoSIMD},
-		{"compound-X-keeps-NEON", predictInterCompoundRefHighBDToConvBufXResidentImpl, predictInterCompoundRefHighBDToConvBufXResidentNEON},
-		{"compound-Y-keeps-NEON", predictInterCompoundRefHighBDToConvBufYResidentImpl, predictInterCompoundRefHighBDToConvBufYResidentNEON},
+		{"compound-X", predictInterCompoundRefHighBDToConvBufXResidentImpl, predictInterCompoundRefHighBDToConvBufXResidentGoSIMD},
+		{"compound-Y", predictInterCompoundRefHighBDToConvBufYResidentImpl, predictInterCompoundRefHighBDToConvBufYResidentGoSIMD},
 		{"compound-2D", predictInterCompoundRefHighBDToConvBuf2DResidentImpl, predictInterCompoundRefHighBDToConvBuf2DResidentGoSIMD},
 		{"compound-2D-clamped", predictInterCompoundRefHighBDToConvBuf2DClampedImpl, predictInterCompoundRefHighBDToConvBuf2DClampedGoSIMD},
 	}
 	for _, tc := range cases {
 		if reflect.ValueOf(tc.got).Pointer() != reflect.ValueOf(tc.want).Pointer() {
-			t.Errorf("%s dispatch does not select the six-tap Go SIMD candidate", tc.name)
+			t.Errorf("%s dispatch does not select the Go SIMD candidate", tc.name)
 		}
 	}
 }
@@ -161,42 +160,6 @@ func TestConvolveHighBDGoSIMD2DZeroEndpointFourTapAndBilinearPhases(t *testing.T
 		convolve2DHighBDGoSIMD(got, ref, 10, max, 0, 0, filterTaps, filterTaps, w, h, pair.x, pair.y)
 		convolve2DHighBDPureGo(want, ref, 10, max, 0, 0, filterTaps, filterTaps, w, h, pair.x, pair.y)
 		eqHighBDBlock(t, got, want, w, h, "GoSIMD-zero-endpoint-mixed", pair.name)
-	}
-}
-
-func TestHBD6TapGoSIMDShapeThresholdAndFilterEligibility(t *testing.T) {
-	for _, tc := range []struct {
-		w, h int
-		want bool
-	}{
-		{8, 1, true}, {8, 2, true}, {8, 4, true}, {8, 8, true},
-		{8, 16, true}, {8, 32, true},
-		{16, 1, true}, {16, 4, true}, {16, 8, true}, {16, 16, true},
-		{32, 4, true}, {32, 8, true},
-		{128, 128, true}, {4, 64, false}, {32, 0, false}, {maxBlockSize + 1, 32, false},
-	} {
-		if got := hbdSIMDShape(tc.w, tc.h); got != tc.want {
-			t.Errorf("hbdSIMDShape(%d,%d)=%t, want %t", tc.w, tc.h, got, tc.want)
-		}
-	}
-
-	for _, table := range []struct {
-		name string
-		k    [16][filterTaps]int16
-	}{
-		{"regular8", subpelFilters8}, {"smooth8", subpelFilters8Smooth},
-		{"regular4", subpelFilters4}, {"smooth4", subpelFilters4Smooth}, {"bilinear", bilinearFilters},
-	} {
-		for phase, kernel := range table.k {
-			if !testHBDZeroEndpointKernel(kernel) {
-				t.Errorf("%s phase %d should have zero endpoint taps", table.name, phase)
-			}
-		}
-	}
-	for phase, kernel := range subpelFilters8Sharp {
-		if got, want := testHBDZeroEndpointKernel(kernel), phase == 0; got != want {
-			t.Errorf("sharp phase %d eligibility=%t, want %t", phase, got, want)
-		}
 	}
 }
 
@@ -346,7 +309,7 @@ func BenchmarkMotionHBD6TapConvolve(b *testing.B) {
 		b.Run(filter.name, func(b *testing.B) {
 			for _, size := range sizes {
 				size := size
-				for _, variant := range []string{"NEON", "GoSIMD-kernel", "GoSIMD-dispatch"} {
+				for _, variant := range []string{"GoSIMD"} {
 					variant := variant
 					name := fmt.Sprintf("2D/%s/W%dH%d", variant, size.w, size.h)
 					b.Run(name, func(b *testing.B) {
@@ -355,13 +318,7 @@ func BenchmarkMotionHBD6TapConvolve(b *testing.B) {
 						b.ReportAllocs()
 						b.SetBytes(int64(size.w * size.h * 2))
 						for b.Loop() {
-							if variant == "NEON" {
-								convolve2DHighBDNEONWithScratch(dst, ref, bd, max, 0, 0, pad, pad, size.w, size.h, filter.x, filter.y, scratch)
-							} else if variant == "GoSIMD-kernel" {
-								convolve2DHighBD6SIMDWithIM(dst, ref, bd, max, 0, 0, pad, pad, size.w, size.h, filter.x, filter.y, &scratch.imHBD[0])
-							} else {
-								convolve2DHighBDGoSIMDWithScratch(dst, ref, bd, max, 0, 0, pad, pad, size.w, size.h, filter.x, filter.y, scratch)
-							}
+							convolve2DHighBDGoSIMDWithScratch(dst, ref, bd, max, 0, 0, pad, pad, size.w, size.h, filter.x, filter.y, scratch)
 						}
 						hbd6TapBenchmarkSink = getSample(dst, 2, size.w-1, size.h-1)
 					})
@@ -389,7 +346,7 @@ func BenchmarkMotionHBD6TapCompound(b *testing.B) {
 		b.Run(filter.name, func(b *testing.B) {
 			for _, size := range sizes {
 				size := size
-				for _, variant := range []string{"NEON", "GoSIMD-kernel", "GoSIMD-dispatch"} {
+				for _, variant := range []string{"GoSIMD"} {
 					variant := variant
 					name := fmt.Sprintf("2D/%s/W%dH%d", variant, size.w, size.h)
 					b.Run(name, func(b *testing.B) {
@@ -398,13 +355,7 @@ func BenchmarkMotionHBD6TapCompound(b *testing.B) {
 						b.ReportAllocs()
 						b.SetBytes(int64(size.w * size.h * 2))
 						for b.Loop() {
-							if variant == "NEON" {
-								predictInterCompoundRefHighBDToConvBuf2DResidentNEON(out, ref, pad, pad, size.w, size.h, filter.x, filter.y, round0, offsetBits, bd, &im)
-							} else if variant == "GoSIMD-kernel" {
-								predictInterCompoundRefHighBDToConvBuf2D6SIMD(out, ref, pad, pad, size.w, size.h, filter.x, filter.y, round0, offsetBits, bd, &im)
-							} else {
-								predictInterCompoundRefHighBDToConvBuf2DResidentGoSIMD(out, ref, pad, pad, size.w, size.h, filter.x, filter.y, round0, offsetBits, bd, &im)
-							}
+							predictInterCompoundRefHighBDToConvBuf2DResidentGoSIMD(out, ref, pad, pad, size.w, size.h, filter.x, filter.y, round0, offsetBits, bd, &im)
 						}
 						hbd6TapBenchmarkSink = out[len(out)-1]
 					})

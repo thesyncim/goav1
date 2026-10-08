@@ -15,14 +15,6 @@ import (
 
 // convolve2DKernelPhases returns every 8-tap subpel kernel phase across the four
 // filter types so the differential test exercises all 16 x/y phases per type.
-func convolve2DKernelTables() [][16][filterTaps]int16 {
-	return [][16][filterTaps]int16{
-		subpelFilters8,
-		subpelFilters8Smooth,
-		subpelFilters8Sharp,
-		bilinearFilters,
-	}
-}
 
 // TestConvolve2D8NEONMatchesPureGo asserts the NEON 2D convolve is bit-identical
 // to convolve2D8PureGo for every width/height in 4..64, all 16 x and 16 y subpel

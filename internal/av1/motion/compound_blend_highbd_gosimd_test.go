@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package motion
 
@@ -22,12 +22,12 @@ func blendHighBDRoundParams(bitDepth uint8) (roundOffset int, roundBits int) {
 	return roundOffset, roundBits
 }
 
-// TestBlendCompoundAvgHighBDNEONMatchesPureGo asserts the HBD NEON compound
+// TestBlendCompoundAvgHighBDGoSIMDMatchesPureGo asserts the HBD NEON compound
 // average / dist-wtd blend is bit-identical to the pure-Go reference for every
 // AV1 block width (including the width-4 two-rows-per-iteration variant and
 // the odd-height fallback), every dist-wtd weight pair, at bit depths 10 and
 // 12, over full-range uint16 CONV_BUF inputs that exercise both clip bounds.
-func TestBlendCompoundAvgHighBDNEONMatchesPureGo(t *testing.T) {
+func TestBlendCompoundAvgHighBDGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xb1e4d))
 	widths := []int{4, 8, 16, 24, 32, 64, 128}
 	heights := []int{1, 2, 3, 4, 5, 8, 16, 32, 64}
@@ -51,7 +51,7 @@ func TestBlendCompoundAvgHighBDNEONMatchesPureGo(t *testing.T) {
 						planeH := dstY + h
 						got, _ := testPlane(planeW, planeH, 2, planeW*2)
 						want, _ := testPlane(planeW, planeH, 2, planeW*2)
-						blendCompoundAvgHighBDNEON(got, src0, src1, max, dstX, dstY, w, h, wt[0], wt[1], roundOffset, roundBits)
+						blendCompoundAvgHighBDGoSIMD(got, src0, src1, max, dstX, dstY, w, h, wt[0], wt[1], roundOffset, roundBits)
 						blendCompoundAvgHighBD(want, src0, src1, max, dstX, dstY, w, h, wt[0], wt[1], roundOffset, roundBits)
 						for y := 0; y < h; y++ {
 							for x := 0; x < w; x++ {
@@ -70,9 +70,9 @@ func TestBlendCompoundAvgHighBDNEONMatchesPureGo(t *testing.T) {
 	}
 }
 
-// TestBlendCompoundAvgHighBDNEONZeroAlloc asserts the HBD blend NEON wrapper
+// TestBlendCompoundAvgHighBDGoSIMDZeroAlloc asserts the HBD blend NEON wrapper
 // allocates nothing on either asm path.
-func TestBlendCompoundAvgHighBDNEONZeroAlloc(t *testing.T) {
+func TestBlendCompoundAvgHighBDGoSIMDZeroAlloc(t *testing.T) {
 	max, _ := highBDMax(10)
 	roundOffset, roundBits := blendHighBDRoundParams(10)
 	src0 := make([]uint16, 32*32)
@@ -87,10 +87,10 @@ func TestBlendCompoundAvgHighBDNEONZeroAlloc(t *testing.T) {
 		fn   func()
 	}{
 		{"W8", func() {
-			blendCompoundAvgHighBDNEON(dst, src0[:32*8], src1[:32*8], max, 0, 0, 32, 8, 9, 7, roundOffset, roundBits)
+			blendCompoundAvgHighBDGoSIMD(dst, src0[:32*8], src1[:32*8], max, 0, 0, 32, 8, 9, 7, roundOffset, roundBits)
 		}},
 		{"W4", func() {
-			blendCompoundAvgHighBDNEON(dst, src0[:4*8], src1[:4*8], max, 0, 0, 4, 8, 8, 8, roundOffset, roundBits)
+			blendCompoundAvgHighBDGoSIMD(dst, src0[:4*8], src1[:4*8], max, 0, 0, 4, 8, 8, 8, roundOffset, roundBits)
 		}},
 	}
 	for _, c := range cases {
@@ -100,11 +100,11 @@ func TestBlendCompoundAvgHighBDNEONZeroAlloc(t *testing.T) {
 	}
 }
 
-// TestConvolve2DHighBDNEONWithScratchMatchesPureGo asserts the scratch-carrying
+// TestConvolve2DHighBDGoSIMDWithScratchMatchesPureGo asserts the scratch-carrying
 // HBD 2D NEON convolve (resident and edge-clamped emu_edge shapes) stays
 // bit-identical to the pure-Go references with a deliberately poisoned scratch,
 // proving every intermediate sample read is written first.
-func TestConvolve2DHighBDNEONWithScratchMatchesPureGo(t *testing.T) {
+func TestConvolve2DHighBDGoSIMDWithScratchMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x5c4a7c))
 	scratch := &ConvolveScratch{}
 	poison := func() {
@@ -132,14 +132,14 @@ func TestConvolve2DHighBDNEONWithScratchMatchesPureGo(t *testing.T) {
 				got, _ := testPlane(w, h, 2, w*2)
 				want, _ := testPlane(w, h, 2, w*2)
 				poison()
-				convolve2DHighBDNEONWithScratch(got, ref, bd, max, 0, 0, pad, pad, w, h, xk, yk, scratch)
+				convolve2DHighBDGoSIMDWithScratch(got, ref, bd, max, 0, 0, pad, pad, w, h, xk, yk, scratch)
 				convolve2DHighBDPureGo(want, ref, bd, max, 0, 0, pad, pad, w, h, xk, yk)
 				eqHighBDBlock(t, got, want, w, h, "2DHBDscratch", bd, w, h)
 				// Overhanging window (emu_edge path through scratch.edge16).
 				gotC, _ := testPlane(w, h, 2, w*2)
 				wantC, _ := testPlane(w, h, 2, w*2)
 				poison()
-				convolve2DHighBDClampedNEONWithScratch(gotC, ref, bd, max, 0, 0, -3, -3, w, h, xk, yk, scratch)
+				convolve2DHighBDClampedGoSIMDWithScratch(gotC, ref, bd, max, 0, 0, -3, -3, w, h, xk, yk, scratch)
 				convolve2DHighBDClampedPureGo(wantC, ref, bd, max, 0, 0, -3, -3, w, h, xk, yk)
 				eqHighBDBlock(t, gotC, wantC, w, h, "2DHBDscratch-clamped", bd, w, h)
 			}
@@ -147,9 +147,9 @@ func TestConvolve2DHighBDNEONWithScratchMatchesPureGo(t *testing.T) {
 	}
 }
 
-// TestConvolve2DHighBDNEONWithScratchZeroAlloc asserts the scratch path (both
+// TestConvolve2DHighBDGoSIMDWithScratchZeroAlloc asserts the scratch path (both
 // resident and emu_edge clamped) allocates nothing.
-func TestConvolve2DHighBDNEONWithScratchZeroAlloc(t *testing.T) {
+func TestConvolve2DHighBDGoSIMDWithScratchZeroAlloc(t *testing.T) {
 	max, _ := highBDMax(10)
 	rng := rand.New(rand.NewSource(11))
 	const pad = filterTaps
@@ -163,10 +163,10 @@ func TestConvolve2DHighBDNEONWithScratchZeroAlloc(t *testing.T) {
 		fn   func()
 	}{
 		{"resident", func() {
-			convolve2DHighBDNEONWithScratch(dst, ref, 10, max, 0, 0, pad, pad, 64, 64, xk, yk, scratch)
+			convolve2DHighBDGoSIMDWithScratch(dst, ref, 10, max, 0, 0, pad, pad, 64, 64, xk, yk, scratch)
 		}},
 		{"clamped", func() {
-			convolve2DHighBDClampedNEONWithScratch(dst, ref, 10, max, 0, 0, -3, -3, 64, 64, xk, yk, scratch)
+			convolve2DHighBDClampedGoSIMDWithScratch(dst, ref, 10, max, 0, 0, -3, -3, 64, 64, xk, yk, scratch)
 		}},
 	}
 	for _, c := range cases {

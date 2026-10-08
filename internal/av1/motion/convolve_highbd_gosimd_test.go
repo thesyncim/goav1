@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build arm64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package motion
 
@@ -13,8 +13,6 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
-// makeHighBDRef builds a (side+2*pad)-square high-bit-depth reference plane
-// whose samples are valid for the given bit depth.
 func makeHighBDRef(side, pad int, max uint16, randomize bool, rng *rand.Rand) frame.Plane {
 	refSide := side + 2*pad
 	r, _ := testPlane(refSide, refSide, 2, refSide*2)
@@ -43,11 +41,11 @@ func eqHighBDBlock(t *testing.T, got, want frame.Plane, w, h int, tag string, ct
 	}
 }
 
-// TestConvolveHighBDNEONMatchesPureGo asserts the high-bit-depth NEON X/Y/2D
+// TestConvolveHighBDGoSIMDMatchesPureGo asserts the high-bit-depth NEON X/Y/2D
 // convolves are bit-identical to their pure-Go references for every width/height
 // in 4..64, every subpel phase of each filter type, at bit depths 10 and 12,
 // over deterministic and random reference pixels.
-func TestConvolveHighBDNEONMatchesPureGo(t *testing.T) {
+func TestConvolveHighBDGoSIMDMatchesPureGo(t *testing.T) {
 	tables := convolve2DKernelTables()
 	rng := rand.New(rand.NewSource(0x4b1d))
 	const pad = filterTaps
@@ -71,19 +69,19 @@ func TestConvolveHighBDNEONMatchesPureGo(t *testing.T) {
 						// X
 						gx, _ := testPlane(w, h, 2, w*2)
 						ex, _ := testPlane(w, h, 2, w*2)
-						convolveXHighBDNEON(gx, ref, bd, max, 0, 0, pad, pad, w, h, xk)
+						convolveXHighBDGoSIMD(gx, ref, bd, max, 0, 0, pad, pad, w, h, xk)
 						convolveXHighBDPureGo(ex, ref, bd, max, 0, 0, pad, pad, w, h, xk)
 						eqHighBDBlock(t, gx, ex, w, h, "X", bd, w, h)
 						// Y
 						gy, _ := testPlane(w, h, 2, w*2)
 						ey, _ := testPlane(w, h, 2, w*2)
-						convolveYHighBDNEON(gy, ref, bd, max, 0, 0, pad, pad, w, h, yk)
+						convolveYHighBDGoSIMD(gy, ref, bd, max, 0, 0, pad, pad, w, h, yk)
 						convolveYHighBDPureGo(ey, ref, bd, max, 0, 0, pad, pad, w, h, yk)
 						eqHighBDBlock(t, gy, ey, w, h, "Y", bd, w, h)
 						// 2D
 						g2, _ := testPlane(w, h, 2, w*2)
 						e2, _ := testPlane(w, h, 2, w*2)
-						convolve2DHighBDNEON(g2, ref, bd, max, 0, 0, pad, pad, w, h, xk, yk)
+						convolve2DHighBDGoSIMD(g2, ref, bd, max, 0, 0, pad, pad, w, h, xk, yk)
 						convolve2DHighBDPureGo(e2, ref, bd, max, 0, 0, pad, pad, w, h, xk, yk)
 						eqHighBDBlock(t, g2, e2, w, h, "2D", bd, w, h)
 					}
@@ -98,19 +96,19 @@ func TestConvolveHighBDNEONMatchesPureGo(t *testing.T) {
 				k := tbl[sp]
 				gx, _ := testPlane(16, 16, 2, 32)
 				ex, _ := testPlane(16, 16, 2, 32)
-				convolveXHighBDNEON(gx, ref, bd, max, 0, 0, pad, pad, 16, 16, k)
+				convolveXHighBDGoSIMD(gx, ref, bd, max, 0, 0, pad, pad, 16, 16, k)
 				convolveXHighBDPureGo(ex, ref, bd, max, 0, 0, pad, pad, 16, 16, k)
 				eqHighBDBlock(t, gx, ex, 16, 16, "Xphase", bd, sp)
 
 				gy, _ := testPlane(16, 16, 2, 32)
 				ey, _ := testPlane(16, 16, 2, 32)
-				convolveYHighBDNEON(gy, ref, bd, max, 0, 0, pad, pad, 16, 16, k)
+				convolveYHighBDGoSIMD(gy, ref, bd, max, 0, 0, pad, pad, 16, 16, k)
 				convolveYHighBDPureGo(ey, ref, bd, max, 0, 0, pad, pad, 16, 16, k)
 				eqHighBDBlock(t, gy, ey, 16, 16, "Yphase", bd, sp)
 
 				g2, _ := testPlane(16, 16, 2, 32)
 				e2, _ := testPlane(16, 16, 2, 32)
-				convolve2DHighBDNEON(g2, ref, bd, max, 0, 0, pad, pad, 16, 16, k, k)
+				convolve2DHighBDGoSIMD(g2, ref, bd, max, 0, 0, pad, pad, 16, 16, k, k)
 				convolve2DHighBDPureGo(e2, ref, bd, max, 0, 0, pad, pad, 16, 16, k, k)
 				eqHighBDBlock(t, g2, e2, 16, 16, "2Dphase", bd, sp)
 			}
@@ -118,9 +116,9 @@ func TestConvolveHighBDNEONMatchesPureGo(t *testing.T) {
 	}
 }
 
-// TestConvolveHighBDNEONZeroAlloc asserts the HBD NEON wrappers allocate nothing
+// TestConvolveHighBDGoSIMDZeroAlloc asserts the HBD NEON wrappers allocate nothing
 // on the fast (asm) path.
-func TestConvolveHighBDNEONZeroAlloc(t *testing.T) {
+func TestConvolveHighBDGoSIMDZeroAlloc(t *testing.T) {
 	const pad = filterTaps
 	max, _ := highBDMax(10)
 	rng := rand.New(rand.NewSource(7))
@@ -132,9 +130,9 @@ func TestConvolveHighBDNEONZeroAlloc(t *testing.T) {
 		name string
 		fn   func()
 	}{
-		{"X", func() { convolveXHighBDNEON(dst, ref, 10, max, 0, 0, pad, pad, 32, 32, xk) }},
-		{"Y", func() { convolveYHighBDNEON(dst, ref, 10, max, 0, 0, pad, pad, 32, 32, yk) }},
-		{"2D", func() { convolve2DHighBDNEON(dst, ref, 10, max, 0, 0, pad, pad, 32, 32, xk, yk) }},
+		{"X", func() { convolveXHighBDGoSIMD(dst, ref, 10, max, 0, 0, pad, pad, 32, 32, xk) }},
+		{"Y", func() { convolveYHighBDGoSIMD(dst, ref, 10, max, 0, 0, pad, pad, 32, 32, yk) }},
+		{"2D", func() { convolve2DHighBDGoSIMD(dst, ref, 10, max, 0, 0, pad, pad, 32, 32, xk, yk) }},
 	}
 	for _, c := range cases {
 		if allocs := testing.AllocsPerRun(20, c.fn); allocs != 0 {
@@ -148,46 +146,9 @@ func TestConvolveHighBDNEONZeroAlloc(t *testing.T) {
 // references at genuine frame edges, where the tap window falls off the plane.
 // It also covers the in-bounds case where the wrapper routes to the fast NEON
 // kernel.
-func TestConvolveClampedNEONMatchesPureGo(t *testing.T) {
+func TestConvolveClampedHighBDGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xc1a))
 	sizes := []int{4, 8, 12, 16, 32}
-
-	// 8-bit clamped: place the block at the plane origin so the negative-offset
-	// halo clamps, plus an interior offset that stays resident.
-	for _, w := range sizes {
-		for _, h := range sizes {
-			side := w
-			if h > side {
-				side = h
-			}
-			ref, _ := testPlane(side, side, 1, side)
-			for i := range ref.Pix {
-				ref.Pix[i] = byte(rng.Intn(256))
-			}
-			xk := subpelFilters8[6]
-			yk := subpelFilters8[9]
-			for _, org := range []int{0, 1} {
-				gx, _ := testPlane(w, h, 1, w)
-				ex, _ := testPlane(w, h, 1, w)
-				convolveX8ClampedNEON(gx, ref, 0, 0, org, org, w, h, xk)
-				convolveX8ClampedPureGo(ex, ref, 0, 0, org, org, w, h, xk)
-				assertBytesEqual(t, gx, ex, w, h, "X8clamped", w, h, org)
-
-				gy, _ := testPlane(w, h, 1, w)
-				ey, _ := testPlane(w, h, 1, w)
-				convolveY8ClampedNEON(gy, ref, 0, 0, org, org, w, h, yk)
-				convolveY8ClampedPureGo(ey, ref, 0, 0, org, org, w, h, yk)
-				assertBytesEqual(t, gy, ey, w, h, "Y8clamped", w, h, org)
-
-				g2, _ := testPlane(w, h, 1, w)
-				e2, _ := testPlane(w, h, 1, w)
-				convolve2D8ClampedNEON(g2, ref, 0, 0, org, org, w, h, xk, yk)
-				convolve2D8ClampedPureGo(e2, ref, 0, 0, org, org, w, h, xk, yk)
-				assertBytesEqual(t, g2, e2, w, h, "2D8clamped", w, h, org)
-			}
-		}
-	}
-
 	// High-bit-depth clamped at bd 10 and 12.
 	for _, bd := range []uint8{10, 12} {
 		max, _ := highBDMax(bd)
@@ -208,19 +169,19 @@ func TestConvolveClampedNEONMatchesPureGo(t *testing.T) {
 				for _, org := range []int{0, 1} {
 					gx, _ := testPlane(w, h, 2, w*2)
 					ex, _ := testPlane(w, h, 2, w*2)
-					convolveXHighBDClampedNEON(gx, ref, bd, max, 0, 0, org, org, w, h, xk)
+					convolveXHighBDClampedGoSIMD(gx, ref, bd, max, 0, 0, org, org, w, h, xk)
 					convolveXHighBDClampedPureGo(ex, ref, bd, max, 0, 0, org, org, w, h, xk)
 					eqHighBDBlock(t, gx, ex, w, h, "XHBDclamped", bd, w, h, org)
 
 					gy, _ := testPlane(w, h, 2, w*2)
 					ey, _ := testPlane(w, h, 2, w*2)
-					convolveYHighBDClampedNEON(gy, ref, bd, max, 0, 0, org, org, w, h, yk)
+					convolveYHighBDClampedGoSIMD(gy, ref, bd, max, 0, 0, org, org, w, h, yk)
 					convolveYHighBDClampedPureGo(ey, ref, bd, max, 0, 0, org, org, w, h, yk)
 					eqHighBDBlock(t, gy, ey, w, h, "YHBDclamped", bd, w, h, org)
 
 					g2, _ := testPlane(w, h, 2, w*2)
 					e2, _ := testPlane(w, h, 2, w*2)
-					convolve2DHighBDClampedNEON(g2, ref, bd, max, 0, 0, org, org, w, h, xk, yk)
+					convolve2DHighBDClampedGoSIMD(g2, ref, bd, max, 0, 0, org, org, w, h, xk, yk)
 					convolve2DHighBDClampedPureGo(e2, ref, bd, max, 0, 0, org, org, w, h, xk, yk)
 					eqHighBDBlock(t, g2, e2, w, h, "2DHBDclamped", bd, w, h, org)
 				}
@@ -272,19 +233,19 @@ func TestConvolveHighBDClampedEmuEdgeMatchesPureGo(t *testing.T) {
 					rx, ry := o[0], o[1]
 					gx, _ := testPlane(w, h, 2, w*2)
 					ex, _ := testPlane(w, h, 2, w*2)
-					convolveXHighBDClampedNEON(gx, ref, bd, max, 0, 0, rx, ry, w, h, xk)
+					convolveXHighBDClampedGoSIMD(gx, ref, bd, max, 0, 0, rx, ry, w, h, xk)
 					convolveXHighBDClampedPureGo(ex, ref, bd, max, 0, 0, rx, ry, w, h, xk)
 					eqHighBDBlock(t, gx, ex, w, h, "XHBDemu", bd, w, h, o)
 
 					gy, _ := testPlane(w, h, 2, w*2)
 					ey, _ := testPlane(w, h, 2, w*2)
-					convolveYHighBDClampedNEON(gy, ref, bd, max, 0, 0, rx, ry, w, h, yk)
+					convolveYHighBDClampedGoSIMD(gy, ref, bd, max, 0, 0, rx, ry, w, h, yk)
 					convolveYHighBDClampedPureGo(ey, ref, bd, max, 0, 0, rx, ry, w, h, yk)
 					eqHighBDBlock(t, gy, ey, w, h, "YHBDemu", bd, w, h, o)
 
 					g2, _ := testPlane(w, h, 2, w*2)
 					e2, _ := testPlane(w, h, 2, w*2)
-					convolve2DHighBDClampedNEON(g2, ref, bd, max, 0, 0, rx, ry, w, h, xk, yk)
+					convolve2DHighBDClampedGoSIMD(g2, ref, bd, max, 0, 0, rx, ry, w, h, xk, yk)
 					convolve2DHighBDClampedPureGo(e2, ref, bd, max, 0, 0, rx, ry, w, h, xk, yk)
 					eqHighBDBlock(t, g2, e2, w, h, "2DHBDemu", bd, w, h, o)
 				}
@@ -312,13 +273,13 @@ func TestConvolveHighBDClampedEmuEdgeZeroAlloc(t *testing.T) {
 		}
 	}
 	check("2DHBDemu", func() {
-		convolve2DHighBDClampedNEON(dst, ref, 10, max, 0, 0, -3, -3, 64, 64, xk, yk)
+		convolve2DHighBDClampedGoSIMD(dst, ref, 10, max, 0, 0, -3, -3, 64, 64, xk, yk)
 	})
 	check("XHBDemu", func() {
-		convolveXHighBDClampedNEON(dst, ref, 10, max, 0, 0, -3, -3, 64, 64, xk)
+		convolveXHighBDClampedGoSIMD(dst, ref, 10, max, 0, 0, -3, -3, 64, 64, xk)
 	})
 	check("YHBDemu", func() {
-		convolveYHighBDClampedNEON(dst, ref, 10, max, 0, 0, -3, -3, 64, 64, yk)
+		convolveYHighBDClampedGoSIMD(dst, ref, 10, max, 0, 0, -3, -3, 64, 64, yk)
 	})
 }
 
@@ -338,7 +299,7 @@ func BenchmarkConvolveHighBDClampedEmuEdge(b *testing.B) {
 		dst, _ := testPlane(w, w, 2, w*2)
 		b.Run("neon_"+itoaW(w), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				convolve2DHighBDClampedNEON(dst, ref, 10, max, 0, 0, -3, -3, w, w, xk, yk)
+				convolve2DHighBDClampedGoSIMD(dst, ref, 10, max, 0, 0, -3, -3, w, w, xk, yk)
 			}
 		})
 		b.Run("purego_"+itoaW(w), func(b *testing.B) {
@@ -349,154 +310,81 @@ func BenchmarkConvolveHighBDClampedEmuEdge(b *testing.B) {
 	}
 }
 
-func itoaW(w int) string {
-	switch w {
-	case 8:
-		return "8"
-	case 16:
-		return "16"
-	case 32:
-		return "32"
-	default:
-		return "64"
-	}
-}
-
-func TestConvolve1D8ClampedEdgeNEONMatchesPureGo(t *testing.T) {
-	rng := rand.New(rand.NewSource(0x1d8c1a))
-	xWidths := []int{4, 8, 12, 15, 16, 24, 32}
-	yWidths := []int{4, 8, 16, 24, 32}
-	heights := []int{4, 8, 12, 15, 16, 24, 32}
-	kernels := [][filterTaps]int16{
-		subpelFilters8[3],
-		subpelFilters8Smooth[6],
-		subpelFilters8Sharp[9],
-		bilinearFilters[7],
-	}
-
-	for _, w := range xWidths {
-		for _, h := range heights {
-			for _, k := range kernels {
-				for _, edge := range []string{"left", "right"} {
-					const refW = 96
-					refH := h + 2*filterTaps
-					ref, _ := testPlane(refW, refH, 1, refW)
-					for i := range ref.Pix {
-						ref.Pix[i] = byte(rng.Intn(256))
+func TestConvolveHighBDGoSIMDXYMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x6BD0FACE))
+	const pad = filterTaps
+	sizes := []int{4, 8, 12, 16, 24, 32}
+	for _, bd := range []uint8{10, 12} {
+		max := uint16((1 << bd) - 1)
+		for _, tbl := range avx2FilterTables() {
+			for ph := 0; ph < 16; ph++ {
+				k := tbl[ph]
+				for _, w := range sizes {
+					for _, h := range []int{1, 4, 8, 16} {
+						side := w
+						if h > side {
+							side = h
+						}
+						ref := randPlaneHBD(rng, side+2*pad, max)
+						// X
+						gx, _ := testPlane(w, h, 2, w*2)
+						wx, _ := testPlane(w, h, 2, w*2)
+						convolveXHighBDGoSIMD(gx, ref, bd, max, 0, 0, pad, pad, w, h, k)
+						convolveXHighBDPureGo(wx, ref, bd, max, 0, 0, pad, pad, w, h, k)
+						diffPlanesHBD(t, gx, wx, w, h, "Xhbd", bd)
+						// Y
+						gy, _ := testPlane(w, h, 2, w*2)
+						wy, _ := testPlane(w, h, 2, w*2)
+						convolveYHighBDGoSIMD(gy, ref, bd, max, 0, 0, pad, pad, w, h, k)
+						convolveYHighBDPureGo(wy, ref, bd, max, 0, 0, pad, pad, w, h, k)
+						diffPlanesHBD(t, gy, wy, w, h, "Yhbd", bd)
 					}
-					refX := 1
-					if edge == "right" {
-						refX = refW - w - 3
-					}
-					refY := filterTaps
-					got, _ := testPlane(w, h, 1, w)
-					want, _ := testPlane(w, h, 1, w)
-					convolveX8ClampedNEON(got, ref, 0, 0, refX, refY, w, h, k)
-					convolveX8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, k)
-					assertBytesEqual(t, got, want, w, h, "X8horizontal-edge", w, h, edge)
-				}
-			}
-		}
-	}
-
-	for _, w := range yWidths {
-		for _, h := range heights {
-			for _, k := range kernels {
-				for _, edge := range []string{"top", "bottom"} {
-					refW := w + 2*filterTaps
-					const refH = 96
-					ref, _ := testPlane(refW, refH, 1, refW)
-					for i := range ref.Pix {
-						ref.Pix[i] = byte(rng.Intn(256))
-					}
-					refX := filterTaps
-					refY := 1
-					if edge == "bottom" {
-						refY = refH - h - 3
-					}
-					got, _ := testPlane(w, h, 1, w)
-					want, _ := testPlane(w, h, 1, w)
-					convolveY8ClampedNEON(got, ref, 0, 0, refX, refY, w, h, k)
-					convolveY8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, k)
-					assertBytesEqual(t, got, want, w, h, "Y8vertical-edge", w, h, edge)
 				}
 			}
 		}
 	}
 }
 
-func TestConvolve2D8ClampedHorizontalEdgeNEONMatchesPureGo(t *testing.T) {
-	rng := rand.New(rand.NewSource(0x2d8c1a))
-	widths := []int{8, 12, 15, 16, 24, 32}
-	heights := []int{4, 8, 16, 32}
-	phasePairs := [][2][filterTaps]int16{
-		{subpelFilters8[3], subpelFilters8[5]},
-		{subpelFilters8Smooth[6], subpelFilters8Smooth[11]},
-		{subpelFilters8Sharp[9], subpelFilters8Sharp[13]},
-		{bilinearFilters[7], bilinearFilters[2]},
-	}
-
-	for _, w := range widths {
-		for _, h := range heights {
-			for _, kernels := range phasePairs {
-				for _, edge := range []string{"left", "right"} {
-					const refW = 96
-					refH := h + 2*filterTaps
-					ref, _ := testPlane(refW, refH, 1, refW)
-					for i := range ref.Pix {
-						ref.Pix[i] = byte(rng.Intn(256))
+func TestConvolve2DHighBDGoSIMDSweepMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x123abc))
+	const pad = filterTaps
+	sizes := []int{4, 8, 16, 32}
+	tables := avx2FilterTables()
+	for _, bd := range []uint8{10, 12} {
+		max := uint16((1 << bd) - 1)
+		// size sweep
+		for _, tbl := range tables {
+			xk := tbl[3]
+			yk := tbl[5]
+			for _, w := range sizes {
+				for _, h := range []int{4, 8, 16} {
+					side := w
+					if h > side {
+						side = h
 					}
-					refX := 1
-					if edge == "right" {
-						refX = refW - w - 3
-					}
-					refY := filterTaps
-					got, _ := testPlane(w, h, 1, w)
-					gotScratch, _ := testPlane(w, h, 1, w)
-					gotSplit, _ := testPlane(w, h, 1, w)
-					want, _ := testPlane(w, h, 1, w)
-					var scratch ConvolveScratch
-					var splitScratch ConvolveScratch
-					convolve2D8ClampedNEON(got, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
-					convolve2D8ClampedNEONWithScratch(gotScratch, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &scratch)
-					if !convolve2D8ClampedEdgeSplitNEONWithScratch(gotSplit, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &splitScratch) {
-						t.Fatalf("2D8horizontal-edge split path was not used w=%d h=%d edge=%s", w, h, edge)
-					}
-					convolve2D8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
-					assertBytesEqual(t, got, want, w, h, "2D8horizontal-edge", w, h, edge)
-					assertBytesEqual(t, gotScratch, want, w, h, "2D8horizontal-edge-scratch", w, h, edge)
-					assertBytesEqual(t, gotSplit, want, w, h, "2D8horizontal-edge-split", w, h, edge)
+					ref := randPlaneHBD(rng, side+2*pad, max)
+					g, _ := testPlane(w, h, 2, w*2)
+					wn, _ := testPlane(w, h, 2, w*2)
+					convolve2DHighBDGoSIMD(g, ref, bd, max, 0, 0, pad, pad, w, h, xk, yk)
+					convolve2DHighBDPureGo(wn, ref, bd, max, 0, 0, pad, pad, w, h, xk, yk)
+					diffPlanesHBD(t, g, wn, w, h, "2Dhbd", bd)
+				}
+			}
+		}
+		// all phases on a fixed shape
+		for _, tbl := range tables {
+			for sx := 0; sx < 16; sx++ {
+				for sy := 0; sy < 16; sy++ {
+					ref := randPlaneHBD(rng, 16+2*pad, max)
+					g, _ := testPlane(8, 8, 2, 16)
+					wn, _ := testPlane(8, 8, 2, 16)
+					convolve2DHighBDGoSIMD(g, ref, bd, max, 0, 0, pad, pad, 8, 8, tbl[sx], tbl[sy])
+					convolve2DHighBDPureGo(wn, ref, bd, max, 0, 0, pad, pad, 8, 8, tbl[sx], tbl[sy])
+					diffPlanesHBD(t, g, wn, 8, 8, "2Dhbdphase", bd)
 				}
 			}
 		}
 	}
-
-	const refW = 64
-	const w = 16
-	const h = 16
-	ref, _ := testPlane(refW, h+2*filterTaps, 1, refW)
-	for i := range ref.Pix {
-		ref.Pix[i] = byte(rng.Intn(256))
-	}
-	dst, _ := testPlane(w, h, 1, w)
-	var scratch ConvolveScratch
-	allocs := testing.AllocsPerRun(50, func() {
-		convolve2D8ClampedNEONWithScratch(dst, ref, 0, 0, refW-w-3, filterTaps, w, h, subpelFilters8[3], subpelFilters8[5], &scratch)
-	})
-	if allocs != 0 {
-		t.Fatalf("convolve2D8ClampedNEONWithScratch horizontal edge allocated %v times, want 0", allocs)
-	}
 }
 
-func assertBytesEqual(t *testing.T, got, want frame.Plane, w, h int, tag string, ctx ...any) {
-	t.Helper()
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			g := got.Pix[y*got.Stride+x]
-			e := want.Pix[y*want.Stride+x]
-			if g != e {
-				t.Fatalf("%s (%d,%d): NEON=%d PureGo=%d ctx=%v", tag, x, y, g, e, ctx)
-			}
-		}
-	}
-}
+// TestConvolveAVX2ZeroAlloc asserts the AVX2 fast paths allocate nothing.

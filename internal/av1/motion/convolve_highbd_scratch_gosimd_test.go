@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build amd64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package motion
 
@@ -11,12 +11,12 @@ import (
 	"testing"
 )
 
-// TestConvolve2DHighBDAVX2WithScratchMatchesPureGo asserts the scratch-carrying
+// TestConvolve2DHighBDGoSIMDScratchSweepMatchesPureGo asserts the scratch-carrying
 // HBD 2D AVX2 convolve stays bit-identical to the pure-Go reference with a
 // deliberately poisoned scratch, proving every intermediate sample read is
 // written first. Kernels are called directly (never gated on cpu.Detected) so
 // the sweep runs under Rosetta too.
-func TestConvolve2DHighBDAVX2WithScratchMatchesPureGo(t *testing.T) {
+func TestConvolve2DHighBDGoSIMDScratchSweepMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xa7c2d))
 	const pad = filterTaps
 	scratch := &ConvolveScratch{}
@@ -39,14 +39,14 @@ func TestConvolve2DHighBDAVX2WithScratchMatchesPureGo(t *testing.T) {
 				g, _ := testPlane(w, h, 2, w*2)
 				wn, _ := testPlane(w, h, 2, w*2)
 				poison()
-				convolve2DHighBDAVX2WithScratch(g, ref, bd, max, 0, 0, pad, pad, w, h, xk, yk, scratch)
+				convolve2DHighBDGoSIMDWithScratch(g, ref, bd, max, 0, 0, pad, pad, w, h, xk, yk, scratch)
 				convolve2DHighBDPureGo(wn, ref, bd, max, 0, 0, pad, pad, w, h, xk, yk)
 				diffPlanesHBD(t, g, wn, w, h, "2Dhbd-scratch", bd)
 
 				gc, _ := testPlane(w, h, 2, w*2)
 				wc, _ := testPlane(w, h, 2, w*2)
 				poison()
-				convolve2DHighBDClampedAVX2WithScratch(gc, ref, bd, max, 0, 0, -3, -3, w, h, xk, yk, scratch)
+				convolve2DHighBDClampedGoSIMDWithScratch(gc, ref, bd, max, 0, 0, -3, -3, w, h, xk, yk, scratch)
 				convolve2DHighBDClampedPureGo(wc, ref, bd, max, 0, 0, -3, -3, w, h, xk, yk)
 				diffPlanesHBD(t, gc, wc, w, h, "2Dhbd-scratch-clamped", bd)
 			}

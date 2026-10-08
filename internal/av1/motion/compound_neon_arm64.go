@@ -30,17 +30,6 @@ type compoundFilter8NEONCtx struct {
 	roundOffset uintptr
 }
 
-type compoundFilterHighBDNEONCtx struct {
-	dst         *uint16
-	ref         *byte
-	kernel      *int16
-	refStr      uintptr
-	width       uintptr
-	height      uintptr
-	round0      uintptr
-	roundOffset uintptr
-}
-
 type compound2D8NEONCtx struct {
 	dst    *uint16
 	ref    *byte
@@ -51,21 +40,6 @@ type compound2D8NEONCtx struct {
 	height uintptr
 	im     *int16
 	imStr  uintptr
-}
-
-type compound2DHighBDNEONCtx struct {
-	dst    *uint16
-	ref    *byte
-	kernel *int16
-	xKern  *int16
-	refStr uintptr
-	width  uintptr
-	height uintptr
-	im     *int32
-	imStr  uintptr
-	round0 uintptr
-	xBias  uintptr
-	yBias  uintptr
 }
 
 type compoundBlend8NEONCtx struct {
@@ -80,31 +54,11 @@ type compoundBlend8NEONCtx struct {
 	bias   uintptr
 }
 
-type compoundBlendHighBDNEONCtx struct {
-	dst    *byte // first destination sample (2 bytes/sample)
-	src0   *uint16
-	src1   *uint16
-	dstStr uintptr // destination stride in bytes
-	width  uintptr
-	height uintptr
-	fwd    uintptr
-	bck    uintptr
-	bias   uintptr
-	shift  uintptr // negative combined shift -(4+roundBits) for SSHL
-	maxVal uintptr // clip upper bound (1<<bd)-1
-}
-
 //go:noescape
 func blendCompoundAvg8NEONAsm(ctx *compoundBlend8NEONCtx)
 
 //go:noescape
 func blendCompoundAvg8NEONAsmW4(ctx *compoundBlend8NEONCtx)
-
-//go:noescape
-func blendCompoundAvgHighBDNEONAsm(ctx *compoundBlendHighBDNEONCtx)
-
-//go:noescape
-func blendCompoundAvgHighBDNEONAsmW4(ctx *compoundBlendHighBDNEONCtx)
 
 //go:noescape
 func compoundCopy8NEONAsm(ctx *compoundCopy8NEONCtx)
@@ -113,25 +67,7 @@ func compoundCopy8NEONAsm(ctx *compoundCopy8NEONCtx)
 func compoundCopy8NEONAsmW4(ctx *compoundCopy8NEONCtx)
 
 //go:noescape
-func compoundCopyHighBDNEONAsmS4(ctx *compoundCopy8NEONCtx)
-
-//go:noescape
-func compoundCopyHighBDNEONAsmS2(ctx *compoundCopy8NEONCtx)
-
-//go:noescape
 func compoundX8NEONAsm(ctx *compoundFilter8NEONCtx)
-
-//go:noescape
-func compoundXHighBDNEONAsm(ctx *compoundFilterHighBDNEONCtx)
-
-//go:noescape
-func compoundXHighBDNEONAsmW4(ctx *compoundFilterHighBDNEONCtx)
-
-//go:noescape
-func compoundYHighBDNEONAsm(ctx *compoundFilterHighBDNEONCtx)
-
-//go:noescape
-func compoundYHighBDNEONAsmW4(ctx *compoundFilterHighBDNEONCtx)
 
 //go:noescape
 func compoundX8NEONAsmW4(ctx *compoundFilter8NEONCtx)
@@ -147,9 +83,6 @@ func compound2D8NEONAsm(ctx *compound2D8NEONCtx)
 
 //go:noescape
 func compound2D8NEONAsmW4(ctx *compound2D8NEONCtx)
-
-//go:noescape
-func compound2DHighBDNEONAsm(ctx *compound2DHighBDNEONCtx)
 
 func predictInterCompoundRef8ToConvBufCopyNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, round0 int, roundOffset int) {
 	if round0 != compoundRound0Bits ||
@@ -174,153 +107,6 @@ func predictInterCompoundRef8ToConvBufCopyNEON(out []uint16, ref frame.Plane, re
 		return
 	}
 	compoundCopy8NEONAsm(&ctx)
-}
-
-func predictInterCompoundRefHighBDToConvBufCopyResidentNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, round0 int, roundOffset int) {
-	if (round0 != compoundRound0Bits && round0 != compoundRound0Bits+2) ||
-		width < 8 || width%8 != 0 ||
-		!planeRegionFits(ref, 2, refX, refY, width, height) {
-		predictInterCompoundRefHighBDToConvBufCopyResidentPureGo(out, ref, refX, refY, width, height, round0, roundOffset)
-		return
-	}
-	ctx := compoundCopy8NEONCtx{
-		dst:         &out[0],
-		ref:         &ref.Pix[refY*ref.Stride+refX*2],
-		refStr:      uintptr(ref.Stride),
-		width:       uintptr(width),
-		height:      uintptr(height),
-		roundOffset: uintptr(roundOffset),
-	}
-	if round0 == compoundRound0Bits {
-		compoundCopyHighBDNEONAsmS4(&ctx)
-		return
-	}
-	compoundCopyHighBDNEONAsmS2(&ctx)
-}
-
-func predictInterCompoundRefHighBDToConvBufXResidentNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
-	fo := filterTaps/2 - 1
-	if round0 != compoundRound0Bits && round0 != compoundRound0Bits+2 {
-		predictInterCompoundRefHighBDToConvBufXResident(out, ref, refX, refY, width, height, kernel, round0, roundOffset)
-		return
-	}
-	k := kernel
-	if width == 4 {
-		if k[0] != 0 || k[1] != 0 || k[6] != 0 || k[7] != 0 {
-			predictInterCompoundRefHighBDToConvBufXResident(out, ref, refX, refY, width, height, kernel, round0, roundOffset)
-			return
-		}
-		ctx := compoundFilterHighBDNEONCtx{
-			dst:         &out[0],
-			ref:         &ref.Pix[refY*ref.Stride+(refX-1)*2],
-			kernel:      &k[2],
-			refStr:      uintptr(ref.Stride),
-			width:       uintptr(width),
-			height:      uintptr(height),
-			round0:      uintptr(round0),
-			roundOffset: uintptr(roundOffset),
-		}
-		compoundXHighBDNEONAsmW4(&ctx)
-		return
-	}
-	if width < 8 || width%8 != 0 {
-		predictInterCompoundRefHighBDToConvBufXResident(out, ref, refX, refY, width, height, kernel, round0, roundOffset)
-		return
-	}
-	ctx := compoundFilterHighBDNEONCtx{
-		dst:         &out[0],
-		ref:         &ref.Pix[refY*ref.Stride+(refX-fo)*2],
-		kernel:      &k[0],
-		refStr:      uintptr(ref.Stride),
-		width:       uintptr(width),
-		height:      uintptr(height),
-		round0:      uintptr(round0),
-		roundOffset: uintptr(roundOffset),
-	}
-	compoundXHighBDNEONAsm(&ctx)
-}
-
-func predictInterCompoundRefHighBDToConvBufYResidentNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
-	fo := filterTaps/2 - 1
-	if round0 != compoundRound0Bits && round0 != compoundRound0Bits+2 {
-		predictInterCompoundRefHighBDToConvBufYResident(out, ref, refX, refY, width, height, kernel, round0, roundOffset)
-		return
-	}
-	if !(width == 4 || (width >= 8 && width%8 == 0)) {
-		predictInterCompoundRefHighBDToConvBufYResident(out, ref, refX, refY, width, height, kernel, round0, roundOffset)
-		return
-	}
-	k := kernel
-	ctx := compoundFilterHighBDNEONCtx{
-		dst:         &out[0],
-		ref:         &ref.Pix[(refY-fo)*ref.Stride+refX*2],
-		kernel:      &k[0],
-		refStr:      uintptr(ref.Stride),
-		width:       uintptr(width),
-		height:      uintptr(height),
-		round0:      uintptr(round0),
-		roundOffset: uintptr(roundOffset),
-	}
-	if width == 4 {
-		compoundYHighBDNEONAsmW4(&ctx)
-		return
-	}
-	compoundYHighBDNEONAsm(&ctx)
-}
-
-func predictInterCompoundRefHighBDToConvBuf2DResidentNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, bitDepth int, im *compoundIM) {
-	foX := filterTaps/2 - 1
-	foY := filterTaps/2 - 1
-	// The horizontal slide loads one extra uint16 sample in the last 4-column
-	// group. Keep exact resident/clamped behavior by falling back when that
-	// single extra sample is not available.
-	if (round0 != compoundRound0Bits && round0 != compoundRound0Bits+2) ||
-		width < 4 || width%4 != 0 ||
-		!planeRegionFits(ref, 2, refX-foX, refY-foY, width+filterTaps, height+filterTaps-1) {
-		predictInterCompoundRefHighBDToConvBuf2DResident(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, im)
-		return
-	}
-	xk := xKernel
-	yk := yKernel
-	ctx := compound2DHighBDNEONCtx{
-		dst:    &out[0],
-		ref:    &ref.Pix[(refY-foY)*ref.Stride+(refX-foX)*2],
-		kernel: &yk[0],
-		xKern:  &xk[0],
-		refStr: uintptr(ref.Stride),
-		width:  uintptr(width),
-		height: uintptr(height),
-		im:     &im[0],
-		imStr:  uintptr(maxBlockSize),
-		round0: uintptr(round0),
-		xBias:  uintptr(1 << (bitDepth + filterBits - 1)),
-		yBias:  uintptr(1 << offsetBits),
-	}
-	compound2DHighBDNEONAsm(&ctx)
-}
-
-// predictInterCompoundRefHighBDToConvBuf2DClampedNEON handles the
-// edge-overhanging HBD compound 2D convolve. Following dav1d's reconstruction
-// model (src/recon_tmpl.c mc(), src/mc_tmpl.c emu_edge_c), it materializes the
-// clamped tap-window halo once (emuEdgeWindow16) and re-runs the resident NEON
-// joint-convolve over the resident window. Bit-identical to the pure-Go
-// per-tap-clamping reference (predictInterCompoundRefHighBDToConvBuf2DClamped).
-// Only width%4 != 0 shapes, which do not occur for AV1 inter blocks, take
-// pure-Go. edge optionally carries the caller-owned halo window so the ~38KB
-// buffer is not zero-filled per call; nil keeps per-call stack storage.
-func predictInterCompoundRefHighBDToConvBuf2DClampedNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, bitDepth int, im *compoundIM, edge *emuEdge16Buf) {
-	if width < 4 || width%4 != 0 {
-		predictInterCompoundRefHighBDToConvBuf2DClamped(out, ref, refX, refY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, im)
-		return
-	}
-	if edge != nil {
-		emu, emuX, emuY := emuEdgeWindow16(ref, refX, refY, width, height, edge)
-		predictInterCompoundRefHighBDToConvBuf2DResidentNEON(out, emu, emuX, emuY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, im)
-		return
-	}
-	var stackEdge emuEdge16Buf
-	emu, emuX, emuY := emuEdgeWindow16(ref, refX, refY, width, height, &stackEdge)
-	predictInterCompoundRefHighBDToConvBuf2DResidentNEON(out, emu, emuX, emuY, width, height, xKernel, yKernel, round0, offsetBits, bitDepth, im)
 }
 
 func predictInterCompoundRef8ToConvBufXNEON(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, roundOffset int) {
@@ -484,72 +270,13 @@ func blendCompoundAvg8NEON(dst frame.Plane, src0 []uint16, src1 []uint16, dstX i
 	}
 }
 
-// blendCompoundAvgHighBDNEON is the NEON binding for the high-bit-depth
-// compound average / dist-wtd blend (av1_highbd_dist_wtd_convolve_* do_average
-// branch); the kernel follows dav1d's 16bpc avg/w_avg bidir blend
-// (src/mc16_tmpl.c, src/arm/64/mc16.S bidir_fn) adapted to libaom's offset
-// CONV_BUF domain: dav1d keeps PREP_BIAS-centered int16 intermediates and can
-// blend in 16-bit lanes, while goav1's CompoundConvBuf is libaom's offset
-// uint16, so the weighted combine widens through umull/umlal exactly like the
-// 8-bit kernel (blendCompoundAvg8NEON). The pure-Go reference computes
-//
-//	res = clipHBD(round((s0*fwd + s1*bck) >> DIST_PRECISION_BITS - roundOffset, roundBits))
-//
-// which folds via nested floor-division identities to the single arithmetic
-// shift the asm applies:
-//
-//	res = clipHBD((s0*fwd + s1*bck - bias) >> (4 + roundBits))
-//	bias = (roundOffset - (1 << (roundBits - 1))) << 4
-//
-// roundBits is 4 at bd <= 10 and 2 at bd == 12 (compoundRound0), so the shift
-// is passed as a negative SSHL lane amount and one code path covers both bit
-// depths. The final clamp is sqxtun (clip >= 0) plus umin(maxVal), matching
-// clipPixelHighBD; the pre-narrow value is bounded by 2^20 >> 6 = 2^14, so the
-// u16 narrowing saturation never engages below maxVal.
-func blendCompoundAvgHighBDNEON(dst frame.Plane, src0 []uint16, src1 []uint16, max uint16, dstX int, dstY int, width int, height int, fwdOffset int, bckOffset int, roundOffset int, roundBits int) {
-	if (roundBits != 4 && roundBits != 2) || roundOffset <= 0 ||
-		fwdOffset < 0 || fwdOffset > 16 || bckOffset < 0 || bckOffset > 16 ||
-		height <= 0 {
-		blendCompoundAvgHighBD(dst, src0, src1, max, dstX, dstY, width, height, fwdOffset, bckOffset, roundOffset, roundBits)
-		return
-	}
-	ctx := compoundBlendHighBDNEONCtx{
-		dst:    &dst.Pix[dstY*dst.Stride+dstX*2],
-		src0:   &src0[0],
-		src1:   &src1[0],
-		dstStr: uintptr(dst.Stride),
-		width:  uintptr(width),
-		height: uintptr(height),
-		fwd:    uintptr(fwdOffset),
-		bck:    uintptr(bckOffset),
-		bias:   uintptr((roundOffset - (1 << (roundBits - 1))) << 4),
-		shift:  uintptr(-(4 + roundBits)),
-		maxVal: uintptr(max),
-	}
-	switch {
-	case width >= 8 && width%8 == 0:
-		blendCompoundAvgHighBDNEONAsm(&ctx)
-	case width == 4 && height%2 == 0:
-		blendCompoundAvgHighBDNEONAsmW4(&ctx)
-	default:
-		blendCompoundAvgHighBD(dst, src0, src1, max, dstX, dstY, width, height, fwdOffset, bckOffset, roundOffset, roundBits)
-	}
-}
-
 // compoundNEONBind wires every compound predictor to its NEON/I8MM/DOTPROD asm
 // implementation. It is invoked from the dispatch init in compound_dispatch_arm64.go.
 func compoundNEONBind() {
 	if cpu.Detected.NEON {
 		blendCompoundAvg8Impl = blendCompoundAvg8NEON
-		blendCompoundAvgHighBDImpl = blendCompoundAvgHighBDNEON
 		predictInterCompoundRef8ToConvBuf2DImpl = predictInterCompoundRef8ToConvBuf2DNEON
 		predictInterCompoundRef8ToConvBufCopyImpl = predictInterCompoundRef8ToConvBufCopyNEON
-		predictInterCompoundRefHighBDToConvBufCopyResidentImpl = predictInterCompoundRefHighBDToConvBufCopyResidentNEON
-		predictInterCompoundRefHighBDToConvBuf2DResidentImpl = predictInterCompoundRefHighBDToConvBuf2DResidentNEON
-		predictInterCompoundRefHighBDToConvBuf2DClampedImpl = predictInterCompoundRefHighBDToConvBuf2DClampedNEON
-		predictInterCompoundRefHighBDToConvBufXResidentImpl = predictInterCompoundRefHighBDToConvBufXResidentNEON
-		predictInterCompoundRefHighBDToConvBufYResidentImpl = predictInterCompoundRefHighBDToConvBufYResidentNEON
-		bindCompoundHBD6TapGoSIMD()
 		predictInterCompoundRef8ToConvBufXImpl = predictInterCompoundRef8ToConvBufXNEON
 		predictInterCompoundRef8ToConvBufYImpl = predictInterCompoundRef8ToConvBufYNEON
 		if cpu.Detected.I8MM {

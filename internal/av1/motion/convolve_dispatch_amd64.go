@@ -32,14 +32,6 @@ func init() {
 		convolve2D8ClampedImpl = convolve2D8ClampedAVX2
 		convolve2D8ClampedWithScratchImpl = convolve2D8ClampedAVX2WithScratch
 
-		convolveXHighBDImpl = convolveXHighBDAVX2
-		convolveYHighBDImpl = convolveYHighBDAVX2
-		convolve2DHighBDImpl = convolve2DHighBDAVX2
-		convolveXHighBDClampedImpl = convolveXHighBDClampedAVX2
-		convolveYHighBDClampedImpl = convolveYHighBDClampedAVX2
-		convolve2DHighBDClampedImpl = convolve2DHighBDClampedAVX2
-		convolve2DHighBDWithScratchImpl = convolve2DHighBDAVX2WithScratch
-		convolve2DHighBDClampedWithScratchImpl = convolve2DHighBDClampedAVX2WithScratch
 		return
 	}
 	convolveX8Impl = convolveX8PureGo

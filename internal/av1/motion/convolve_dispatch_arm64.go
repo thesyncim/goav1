@@ -52,18 +52,6 @@ func init() {
 			convolve2D8ClampedWithScratchImpl = convolve2D8ClampedI8MMWithScratch
 		}
 
-		// High-bit-depth (10/12-bit). The 1D Y, 1D X and 2D non-clamped kernels
-		// have NEON; the clamped HBD variants reuse the same in-bounds fast-path
-		// trick.
-		convolveXHighBDImpl = convolveXHighBDNEON
-		convolveYHighBDImpl = convolveYHighBDNEON
-		convolve2DHighBDImpl = convolve2DHighBDNEON
-		convolveXHighBDClampedImpl = convolveXHighBDClampedNEON
-		convolveYHighBDClampedImpl = convolveYHighBDClampedNEON
-		convolve2DHighBDClampedImpl = convolve2DHighBDClampedNEON
-		convolve2DHighBDWithScratchImpl = convolve2DHighBDNEONWithScratch
-		convolve2DHighBDClampedWithScratchImpl = convolve2DHighBDClampedNEONWithScratch
-		bindHBD6TapGoSIMD()
 		return
 	}
 	convolveX8Impl = convolveX8PureGo

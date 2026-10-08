@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build amd64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package motion
 
@@ -30,7 +30,7 @@ func compoundHBDSizes() []struct{ w, h int } {
 	}
 }
 
-func TestCompoundHBDCopyAVX2MatchesPureGo(t *testing.T) {
+func TestCompoundHBDCopyGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xC0DE01))
 	const pad = filterTaps
 	for _, bd := range []uint8{10, 12} {
@@ -44,7 +44,7 @@ func TestCompoundHBDCopyAVX2MatchesPureGo(t *testing.T) {
 			ref := randPlaneHBD(rng, side+2*pad, max)
 			got := make([]uint16, sz.w*sz.h)
 			want := make([]uint16, sz.w*sz.h)
-			predictInterCompoundRefHighBDToConvBufCopyResidentAVX2(got, ref, pad, pad, sz.w, sz.h, round0, roundOffset)
+			predictInterCompoundRefHighBDToConvBufCopyResidentGoSIMD(got, ref, pad, pad, sz.w, sz.h, round0, roundOffset)
 			predictInterCompoundRefHighBDToConvBufCopyResidentPureGo(want, ref, pad, pad, sz.w, sz.h, round0, roundOffset)
 			for i := range want {
 				if got[i] != want[i] {
@@ -55,7 +55,7 @@ func TestCompoundHBDCopyAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestCompoundHBDXAVX2MatchesPureGo(t *testing.T) {
+func TestCompoundHBDXGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xC0DE02))
 	const pad = filterTaps
 	for _, bd := range []uint8{10, 12} {
@@ -72,7 +72,7 @@ func TestCompoundHBDXAVX2MatchesPureGo(t *testing.T) {
 					ref := randPlaneHBD(rng, side+2*pad, max)
 					got := make([]uint16, sz.w*sz.h)
 					want := make([]uint16, sz.w*sz.h)
-					predictInterCompoundRefHighBDToConvBufXResidentAVX2(got, ref, pad, pad, sz.w, sz.h, k, round0, roundOffset)
+					predictInterCompoundRefHighBDToConvBufXResidentGoSIMD(got, ref, pad, pad, sz.w, sz.h, k, round0, roundOffset)
 					predictInterCompoundRefHighBDToConvBufXResident(want, ref, pad, pad, sz.w, sz.h, k, round0, roundOffset)
 					for i := range want {
 						if got[i] != want[i] {
@@ -85,7 +85,7 @@ func TestCompoundHBDXAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestCompoundHBDYAVX2MatchesPureGo(t *testing.T) {
+func TestCompoundHBDYGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xC0DE03))
 	const pad = filterTaps
 	for _, bd := range []uint8{10, 12} {
@@ -102,7 +102,7 @@ func TestCompoundHBDYAVX2MatchesPureGo(t *testing.T) {
 					ref := randPlaneHBD(rng, side+2*pad, max)
 					got := make([]uint16, sz.w*sz.h)
 					want := make([]uint16, sz.w*sz.h)
-					predictInterCompoundRefHighBDToConvBufYResidentAVX2(got, ref, pad, pad, sz.w, sz.h, k, round0, roundOffset)
+					predictInterCompoundRefHighBDToConvBufYResidentGoSIMD(got, ref, pad, pad, sz.w, sz.h, k, round0, roundOffset)
 					predictInterCompoundRefHighBDToConvBufYResident(want, ref, pad, pad, sz.w, sz.h, k, round0, roundOffset)
 					for i := range want {
 						if got[i] != want[i] {
@@ -115,7 +115,7 @@ func TestCompoundHBDYAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestCompoundHBD2DAVX2MatchesPureGo(t *testing.T) {
+func TestCompoundHBD2DGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xC0DE04))
 	const pad = filterTaps
 	tables := avx2FilterTables()
@@ -137,7 +137,7 @@ func TestCompoundHBD2DAVX2MatchesPureGo(t *testing.T) {
 						got := make([]uint16, sz.w*sz.h)
 						want := make([]uint16, sz.w*sz.h)
 						var imG, imW compoundIM
-						predictInterCompoundRefHighBDToConvBuf2DResidentAVX2(got, ref, pad, pad, sz.w, sz.h, xk, yk, round0, offsetBits, int(bd), &imG)
+						predictInterCompoundRefHighBDToConvBuf2DResidentGoSIMD(got, ref, pad, pad, sz.w, sz.h, xk, yk, round0, offsetBits, int(bd), &imG)
 						predictInterCompoundRefHighBDToConvBuf2DResident(want, ref, pad, pad, sz.w, sz.h, xk, yk, round0, offsetBits, int(bd), &imW)
 						for i := range want {
 							if got[i] != want[i] {
@@ -151,7 +151,7 @@ func TestCompoundHBD2DAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestCompoundHBD2DClampedAVX2MatchesPureGo(t *testing.T) {
+func TestCompoundHBD2DClampedGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xC0DE05))
 	tables := avx2FilterTables()
 	xk := tables[2][11]
@@ -177,8 +177,8 @@ func TestCompoundHBD2DClampedAVX2MatchesPureGo(t *testing.T) {
 					edge[i] = 0xa5
 				}
 				gotEdge := make([]uint16, sz.w*sz.h)
-				predictInterCompoundRefHighBDToConvBuf2DClampedAVX2(got, ref, org[0], org[1], sz.w, sz.h, xk, yk, round0, offsetBits, int(bd), &imG, nil)
-				predictInterCompoundRefHighBDToConvBuf2DClampedAVX2(gotEdge, ref, org[0], org[1], sz.w, sz.h, xk, yk, round0, offsetBits, int(bd), &imG, &edge)
+				predictInterCompoundRefHighBDToConvBuf2DClampedGoSIMD(got, ref, org[0], org[1], sz.w, sz.h, xk, yk, round0, offsetBits, int(bd), &imG, nil)
+				predictInterCompoundRefHighBDToConvBuf2DClampedGoSIMD(gotEdge, ref, org[0], org[1], sz.w, sz.h, xk, yk, round0, offsetBits, int(bd), &imG, &edge)
 				predictInterCompoundRefHighBDToConvBuf2DClamped(want, ref, org[0], org[1], sz.w, sz.h, xk, yk, round0, offsetBits, int(bd), &imW)
 				for i := range want {
 					if got[i] != want[i] {
@@ -193,11 +193,11 @@ func TestCompoundHBD2DClampedAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-// TestCompoundHBDXYClampedEmuEdgeAVX2MatchesPureGo runs the AVX2 X/Y resident
+// TestCompoundHBDXYClampedEmuEdgeGoSIMDMatchesPureGo runs the AVX2 X/Y resident
 // kernels over emu_edge halo windows of edge-overhanging blocks (the compound
 // X/Y clamped fast path) and asserts bit-identity with the pure-Go per-tap
 // clamping references.
-func TestCompoundHBDXYClampedEmuEdgeAVX2MatchesPureGo(t *testing.T) {
+func TestCompoundHBDXYClampedEmuEdgeGoSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xC0DE07))
 	tables := avx2FilterTables()
 	xk := tables[2][11]
@@ -224,13 +224,13 @@ func TestCompoundHBDXYClampedEmuEdgeAVX2MatchesPureGo(t *testing.T) {
 					edge[i] = 0xa5
 				}
 				emu, emuX := emuEdgeWindow16X(ref, org[0], org[1], sz.w, sz.h, &edge)
-				predictInterCompoundRefHighBDToConvBufXResidentAVX2(gotX, emu, emuX, 0, sz.w, sz.h, xk, round0, roundOffset)
+				predictInterCompoundRefHighBDToConvBufXResidentGoSIMD(gotX, emu, emuX, 0, sz.w, sz.h, xk, round0, roundOffset)
 				predictInterCompoundRefHighBDToConvBufXClamped(wantX, ref, org[0], org[1], sz.w, sz.h, xk, round0, roundOffset)
 				for i := range edge {
 					edge[i] = 0x5a
 				}
 				emu, emuY := emuEdgeWindow16Y(ref, org[0], org[1], sz.w, sz.h, &edge)
-				predictInterCompoundRefHighBDToConvBufYResidentAVX2(gotY, emu, 0, emuY, sz.w, sz.h, yk, round0, roundOffset)
+				predictInterCompoundRefHighBDToConvBufYResidentGoSIMD(gotY, emu, 0, emuY, sz.w, sz.h, yk, round0, roundOffset)
 				predictInterCompoundRefHighBDToConvBufYClamped(wantY, ref, org[0], org[1], sz.w, sz.h, yk, round0, roundOffset)
 				for i := range wantX {
 					if gotX[i] != wantX[i] {
@@ -245,7 +245,7 @@ func TestCompoundHBDXYClampedEmuEdgeAVX2MatchesPureGo(t *testing.T) {
 	}
 }
 
-func TestCompoundHBDAVX2ZeroAlloc(t *testing.T) {
+func TestCompoundHBDGoSIMDZeroAlloc(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xC0DE06))
 	const pad = filterTaps
 	const w, h = 32, 32
@@ -255,10 +255,10 @@ func TestCompoundHBDAVX2ZeroAlloc(t *testing.T) {
 	k := avx2FilterTables()[0][7]
 	var im compoundIM
 	if a := testing.AllocsPerRun(20, func() {
-		predictInterCompoundRefHighBDToConvBufCopyResidentAVX2(out, ref, pad, pad, w, h, round0, roundOffset)
-		predictInterCompoundRefHighBDToConvBufXResidentAVX2(out, ref, pad, pad, w, h, k, round0, roundOffset)
-		predictInterCompoundRefHighBDToConvBufYResidentAVX2(out, ref, pad, pad, w, h, k, round0, roundOffset)
-		predictInterCompoundRefHighBDToConvBuf2DResidentAVX2(out, ref, pad, pad, w, h, k, k, round0, offsetBits, 12, &im)
+		predictInterCompoundRefHighBDToConvBufCopyResidentGoSIMD(out, ref, pad, pad, w, h, round0, roundOffset)
+		predictInterCompoundRefHighBDToConvBufXResidentGoSIMD(out, ref, pad, pad, w, h, k, round0, roundOffset)
+		predictInterCompoundRefHighBDToConvBufYResidentGoSIMD(out, ref, pad, pad, w, h, k, round0, roundOffset)
+		predictInterCompoundRefHighBDToConvBuf2DResidentGoSIMD(out, ref, pad, pad, w, h, k, k, round0, offsetBits, 12, &im)
 	}); a != 0 {
 		t.Fatalf("HBD compound AVX2 allocates: %v allocs/run", a)
 	}
