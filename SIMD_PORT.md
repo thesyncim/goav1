@@ -46,12 +46,15 @@ Measure performance separately on the same official toolchain and hardware for
 the SIMD, scalar, and assembly implementations, using representative sizes and
 inputs. Confirm the SIMD implementation is live and check allocations before
 making performance claims. See [quality and parity](docs/quality-and-parity.md)
-for project-level checks.
+for project-level checks. The current arm64 kernel results, reproduction
+commands, and claim limits are in the
+[Go 1.27 SIMD measurement note](docs/go127-simd-performance.md).
 
 ## Porting guidelines
 
-- Keep architecture and experiment build constraints explicit, and ensure the
-  generic or assembly fallback remains available.
+- Keep architecture and experiment build constraints explicit. Standard builds
+  use the Go fallback where SIMD replaces assembly, and retain assembly where
+  SIMD has not shown a repeatable benefit.
 - Test output bytes and state with an independent oracle. Do not derive expected
   results from the implementation under test or widen tolerances to mask drift.
 - Include tails, unaligned boundaries, extreme values, and supported bit depths
