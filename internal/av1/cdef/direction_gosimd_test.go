@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build goexperiment.simd && arm64 && !purego
+//go:build goexperiment.simd && (arm64 || amd64) && !purego
 
 package cdef
 
@@ -200,6 +200,9 @@ func TestFindDirectionU8SIMDTightTail(t *testing.T) {
 }
 
 func TestFindDirectionSIMDDispatchBound(t *testing.T) {
+	if !directionSIMDBound() {
+		t.Skip("CPU does not advertise AVX2")
+	}
 	nameOf := func(v interface{}) string {
 		return runtime.FuncForPC(reflect.ValueOf(v).Pointer()).Name()
 	}
