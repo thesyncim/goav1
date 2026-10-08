@@ -12,6 +12,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  GOTOOLCHAIN: local
+
 jobs:
   build:
     name: build (${{ matrix.os }}, go${{ matrix.go }})
@@ -19,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.25.x', '1.26.x']
+        go: ['1.26.x']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +45,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.25.x', '1.26.x']
+        go: ['1.26.x']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

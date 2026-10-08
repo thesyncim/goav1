@@ -54,6 +54,9 @@ func NewDecoderFromIVFReaderAt(r io.ReaderAt, size int64, opts ...Option) (*Deco
 }
 
 func newReaderAtDecoderPayloadSource(r io.ReaderAt, size int64) (decoderPayloadSource, IVFHeader, error) {
+	if size < IVFFileHeaderSize {
+		return decoderPayloadSource{}, IVFHeader{}, ErrIVFShortHeader
+	}
 	var headerBuf [IVFFileHeaderSize]byte
 	if err := decoderReadFullAt(r, headerBuf[:], 0); err != nil {
 		if decoderShortRead(err) {
@@ -74,6 +77,9 @@ func newReaderAtDecoderPayloadSource(r io.ReaderAt, size int64) (decoderPayloadS
 	maxPayload := 0
 	off := int64(n)
 	for off < size {
+		if size-off < IVFFrameHeaderSize {
+			return decoderPayloadSource{}, header, ErrIVFShortFrameHeader
+		}
 		var frameHeader [IVFFrameHeaderSize]byte
 		if err := decoderReadFullAt(r, frameHeader[:], off); err != nil {
 			if decoderShortRead(err) {
