@@ -122,6 +122,59 @@ jobs:
       - name: strict profile decoder parity with native SIMD
         run: make dryrun-profiles
 
+  simd-amd64:
+    name: SIMD (linux/amd64 AVX2, Go 1.27.x)
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GOEXPERIMENT: simd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          check-latest: true
+          cache: true
+      - name: verify official toolchain and native amd64 AVX2
+        run: |
+          go version
+          test "$(go env GOARCH)" = amd64
+          test "$(uname -m)" = x86_64
+          grep -q -w avx2 /proc/cpuinfo
+      - name: cache libaom example fixtures
+        uses: actions/cache@v4
+        with:
+          path: internal/av1/testdata/libaom
+          key: libaom-example-${{ hashFiles('internal/av1/testvector/libaom_manifest.go') }}
+          restore-keys: |
+            libaom-example-
+      - name: fetch example fixture
+        shell: bash
+        run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
+      - name: build with native SIMD
+        run: go build ./...
+      - name: vet with native SIMD
+        run: go vet ./...
+      - name: test with native SIMD
+        run: go test -count=1 -timeout 30m ./...
+      - name: focused SIMD race and checkptr tests
+        run: >-
+          go test -race -count=1 -timeout 30m
+          ./internal/av1/dsp
+          ./internal/av1/cdef
+          ./internal/av1/loopfilter
+          ./internal/av1/prediction
+          ./internal/av1/restoration
+          ./internal/av1/motion
+          ./internal/av1/transform
+          ./internal/av1/quantize
+          ./internal/av1/decoder
+          ./internal/av1/encoder
+      - name: strict fast decoder parity with native SIMD
+        run: make dryrun-fast
+      - name: strict profile decoder parity with native SIMD
+        run: make dryrun-profiles
+
   linux-386-bounds:
     name: linux/386 bounds and parser regressions
     needs: build
