@@ -85,6 +85,24 @@ func TestNativeDCTLanes4Parity(t *testing.T) {
 					}
 				}
 			}
+		})
+	}
+}
+
+func TestNativeDCTLanes4NoAlloc(t *testing.T) {
+	if !fourLaneSIMDAvailable() {
+		t.Skip("native SIMD unavailable")
+	}
+	for _, kernel := range []struct {
+		name   string
+		size   int
+		column func([]int32, int, int32, int32)
+		row    func([]int32, []int32, []int32, []int32, int32, int32)
+	}{
+		{"DCT32", 32, inverseDCT32Lanes4ColSIMD, inverseDCT32Lanes4RowSIMD},
+		{"DCT64", 64, inverseDCT64Col4SIMD, inverseDCT64Row4SIMD},
+	} {
+		t.Run(kernel.name, func(t *testing.T) {
 			buffer := make([]int32, kernel.size*4)
 			if allocations := testing.AllocsPerRun(20, func() {
 				kernel.column(buffer, 4, -itxNarrowBound, itxNarrowBound-1)
@@ -109,6 +127,47 @@ func TestAMD64DCTLanes4Dispatch(t *testing.T) {
 		if reflect.ValueOf(binding.actual).Pointer() != reflect.ValueOf(binding.expected).Pointer() {
 			t.Fatal("four-lane dispatch is not bound to Go SIMD")
 		}
+	}
+}
+
+func TestNativeDCTLanes4ShortRows(t *testing.T) {
+	if !fourLaneSIMDAvailable() {
+		t.Skip("native SIMD unavailable")
+	}
+	for _, kernel := range []struct {
+		name   string
+		size   int
+		row    func([]int32, []int32, []int32, []int32, int32, int32)
+		scalar func([]int32, []int32, []int32, []int32, int32, int32)
+	}{
+		{"DCT32", 32, inverseDCT32Lanes4RowSIMD, inverseDCT32Row4PureGo},
+		{"DCT64", 64, inverseDCT64Row4SIMD, inverseDCT64Row4PureGo},
+	} {
+		t.Run(kernel.name, func(t *testing.T) {
+			for shortLane := 0; shortLane < 4; shortLane++ {
+				for _, length := range []int{0, 1, kernel.size - 1, kernel.size, kernel.size + 3} {
+					var actual, expected [4][]int32
+					for lane := range actual {
+						rowLength := kernel.size + 3
+						if lane == shortLane {
+							rowLength = length
+						}
+						actual[lane] = make([]int32, rowLength)
+						for index := range actual[lane] {
+							actual[lane][index] = int32(index*17 + lane*31 - 100)
+						}
+						expected[lane] = slices.Clone(actual[lane])
+					}
+					kernel.scalar(expected[0], expected[1], expected[2], expected[3], -32768, 32767)
+					kernel.row(actual[0], actual[1], actual[2], actual[3], -32768, 32767)
+					for lane := range actual {
+						if !slices.Equal(actual[lane], expected[lane]) {
+							t.Fatalf("short lane=%d length=%d output lane=%d mismatch", shortLane, length, lane)
+						}
+					}
+				}
+			}
+		})
 	}
 }
 

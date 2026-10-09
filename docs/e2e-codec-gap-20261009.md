@@ -156,6 +156,11 @@ Motion and loop-filter parity, race, exact-window/checkptr checks and the
 864-frame MD5 corpus check also passed in the preceding optimization round.
 Native ARM64 measurement does not establish native AMD64 performance.
 
-All ARM64 repository assembly has been removed. Two AMD64 assembly files
-remain: four live DCT32/DCT64 transform kernels and CPUID/XGETBV. The migration
-is not complete until those paths are safely replaced and natively validated.
+At the measured checkpoint, two AMD64 assembly files remained: four live
+DCT32/DCT64 transform kernels and CPUID/XGETBV. Commit `d985372a` subsequently
+replaced those final sources with Go SIMD and official CPU queries. This
+report's E2E measurements remain pinned to `0824b687`; they are not new
+performance measurements of the replacement. See the
+[assembly-removal evidence](assembly-removal-20261009.md) for its separate
+validation and emulated microbenchmark limitations. Native AMD64 execution
+and competitive E2E performance remain distinct gates.

@@ -1,19 +1,32 @@
-# itxgen — inverse-transform NEON kernel generator
+# itxgen — inverse-transform generators
 
-Tooling that produced the four-lane NEON DCT32/DCT64 kernels in
-`internal/av1/transform/dct{32,64}_{col4,row4}_neon_arm64.s` (commit
-"transform: add four-lane neon dct32/dct64 kernels"). Reuse it for the
-remaining inverse-transform kernels (ADST, smaller DCT widening) and as the
-template for an amd64 AVX2 wave.
+The active DCT32/DCT64 four-lane implementation is Go-native SIMD. AMD64
+dispatch uses official `archsimd.X86.AVX2()` detection; ARM64 uses NEON.
+There are no repository-owned transform assembly files or active assembly
+generators. The old `avx2gen` emitter has been removed.
 
-The amd64 AVX2 wave lives in a self-contained Go sibling, `avx2gen/`, rather
-than an extension of this Python pipeline: Go's assembler has full VEX mnemonic
-coverage, so no clang/disassemble/WORD-encode round trip is needed. avx2gen
-transliterates the same pure-Go `inverseDCT32`/`inverseDCT64` butterflies into
-YMM int64-lane kernels (four rows/columns per register, VPMULDQ for the exact
-signed 32x32->64 products) and emits
-`internal/av1/transform/dct4lane_avx2_amd64.{s,go}`. Regenerate with
-`go run ./tools/itxgen/avx2gen internal/av1/transform`.
+`dct32_from_lanes4.py` derives the DCT32 network from the even DCT32 half of
+the existing DCT64 Go network, halves each even input index and stores its
+32 outputs without the final DCT64 odd-half butterfly. It preserves both
+narrow and wide coefficient decompositions and per-stage clamps. Regenerate
+the portable Go kernel with:
+
+```sh
+python3 tools/itxgen/dct32_from_lanes4.py > internal/av1/transform/dct32_lanes4_gosimd.go
+```
+
+`TestNativeDCTLanes4Parity` checks both sizes against the independent scalar
+Go implementation across stage bounds, strides, extremes and sparse inputs.
+`TestNativeDCTLanes4ShortRows` checks mixed short rows and untouched tails;
+`TestNativeDCTLanes4NoAlloc` checks zero steady-state allocations.
+`TestAMD64DCTLanes4Dispatch` checks that live
+AMD64 slots select Go SIMD rather than silently measuring scalar fallback.
+
+## Historical NEON assembly tooling
+
+The C harness and the older Python transcription pipeline below are retained
+as historical reference/oracle tooling, not as the production build path.
+Do not regenerate or reintroduce assembly into the transform package.
 
 Pipeline:
 

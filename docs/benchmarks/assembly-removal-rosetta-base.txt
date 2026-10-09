@@ -1,0 +1,54 @@
+goos: darwin
+goarch: amd64
+pkg: github.com/thesyncim/goav1/internal/av1/transform
+cpu: VirtualApple @ 2.50GHz
+BenchmarkDCT32Col4AVX2 	   75184	      2392 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT64Col4AVX2 	   34964	      5133 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT32Row4AVX2 	   75294	      2313 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT64Row4AVX2 	   36888	      4975 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: amd64
+pkg: github.com/thesyncim/goav1/internal/av1/transform
+cpu: VirtualApple @ 2.50GHz
+BenchmarkDCT32Col4AVX2 	   79296	      2276 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT64Col4AVX2 	   36769	      4880 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT32Row4AVX2 	   78486	      2276 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT64Row4AVX2 	   36981	      4877 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: amd64
+pkg: github.com/thesyncim/goav1/internal/av1/transform
+cpu: VirtualApple @ 2.50GHz
+BenchmarkDCT32Col4AVX2 	   69903	      2418 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT64Col4AVX2 	   34744	      5148 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT32Row4AVX2 	   74904	      2467 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT64Row4AVX2 	   35040	      5479 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: amd64
+pkg: github.com/thesyncim/goav1/internal/av1/transform
+cpu: VirtualApple @ 2.50GHz
+BenchmarkDCT32Col4AVX2 	   75070	      2348 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT64Col4AVX2 	   36512	      4893 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT32Row4AVX2 	   78956	      2277 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT64Row4AVX2 	   36942	      4874 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: amd64
+pkg: github.com/thesyncim/goav1/internal/av1/transform
+cpu: VirtualApple @ 2.50GHz
+BenchmarkDCT32Col4AVX2 	   77546	      2276 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT64Col4AVX2 	   36361	      4901 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT32Row4AVX2 	   79190	      2269 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT64Row4AVX2 	   36590	      4884 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: amd64
+pkg: github.com/thesyncim/goav1/internal/av1/transform
+cpu: VirtualApple @ 2.50GHz
+BenchmarkDCT32Col4AVX2 	   75003	      2436 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT64Col4AVX2 	   34515	      5172 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT32Row4AVX2 	   74972	      2442 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDCT64Row4AVX2 	   33450	      5290 ns/op	       0 B/op	       0 allocs/op
+PASS

@@ -50,16 +50,25 @@ for project-level checks. The current arm64 kernel results, reproduction
 commands, and claim limits are in the
 [Go 1.27 SIMD measurement note](docs/go127-simd-performance.md).
 
-## Remaining assembly (2026-10-09 snapshot)
+## Assembly removal (2026-10-09)
 
-This tree contains two assembly source files, both AMD64, with six `TEXT`
-symbols. No ARM64 assembly source files remain. These are source counts, not
-runtime shares or evidence that the Go SIMD replacements are faster.
+The repository-owned Go packages contain **zero assembly source files** on
+AMD64 and ARM64. Upstream reference trees and assembly inside the official Go
+toolchain are outside this source count. This does not mean the compiler emits
+no machine SIMD instructions, or establish competitive codec performance.
 
-| Source | Symbols | Remaining work |
-| --- | ---: | --- |
-| `internal/av1/transform/dct4lane_avx2_amd64.s` | 4 | Four-row/four-column inverse DCT32 and DCT64 kernels; replace the live adapters and preserve stage-range fallbacks |
-| `internal/av1/dsp/cpu/cpuid_amd64.s` | 2 | CPUID/XGETBV feature detection; remove only after the remaining assembly dispatch no longer requires it |
+The final four AMD64 DCT32/DCT64 row/column symbols are replaced with four-lane
+Go SIMD butterflies. DCT32 reuses the independently tested DCT64 even-half
+network; both sizes retain narrow/wide range selection and scalar fallbacks.
+CPU detection uses official `archsimd.X86` queries when SIMD is enabled,
+including their OS-state checks. Non-SIMD and purego AMD64 builds now use the
+SSE2 baseline and scalar transforms, not the previous assembly implementation.
+AVX-512 reporting follows the toolchain's complete feature bundle rather than
+the earlier F-only probe. No new external CPU dependency is introduced.
+
+See [assembly-removal evidence](docs/assembly-removal-20261009.md) for the
+validation boundary and emulated AMD64 measurements. These microbenchmarks
+do not replace the [full-clip codec comparison](docs/e2e-codec-gap-20261009.md).
 
 The experiment build enables architecture-specific Go SIMD replacements.
 Default and `purego` builds use scalar Go where assembly has been removed;

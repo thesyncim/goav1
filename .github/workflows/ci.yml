@@ -141,6 +141,11 @@ jobs:
           test "$(go env GOARCH)" = amd64
           test "$(uname -m)" = x86_64
           grep -q -w avx2 /proc/cpuinfo
+      - name: four-lane Go SIMD parity and live dispatch
+        run: >-
+          go test -count=1 -v
+          -run '^(TestNativeDCTLanes4.*|TestAMD64DCTLanes4Dispatch|TestSIMDAMD64MatchesArchsimdQueries|TestDetectedMatchesArch)$'
+          ./internal/av1/transform ./internal/av1/dsp/cpu
       - name: cache libaom example fixtures
         uses: actions/cache@v4
         with:
