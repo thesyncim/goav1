@@ -98,6 +98,12 @@ against the independent sidecars. These are correctness checks, not timing
 samples. The race-shard package audit is updated to remove the deleted
 `tools/itxgen/avx2gen` package and passes for all 38 remaining packages.
 
+Full local SIMD and default package suites also pass. The SIMD suite included
+the subsequently rejected, bit-exact encoder reduction candidate; after
+restoring the original production reduction, the full encoder package suite
+and targeted differential/allocation tests pass again. The final public
+MD5 preflight passes all 864 frames after that restoration.
+
 Rosetta execution is emulated evidence. Linux cross-builds prove compilation,
 not execution. The CI workflow now runs focused four-lane parity and live
 AMD64 binding checks early on its native AVX2 runner; those results must be
