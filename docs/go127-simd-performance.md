@@ -1,5 +1,9 @@
 # Go 1.27 SIMD performance evidence
 
+The [October 9 end-to-end gap report](e2e-codec-gap-20261009.md) measures the
+current PR #6 checkpoint against dav1d and SVT-AV1, with raw samples and quality
+checks. Kernel speedups below do not establish competitive codec performance.
+
 The final validation for the October 8 follow-up uses official Go 1.27.2.
 Earlier measurements below retain their original Go 1.27.1 labels; compiler
 versions are not mixed within a before/after comparison. The module minimum

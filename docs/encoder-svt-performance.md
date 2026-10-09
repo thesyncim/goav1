@@ -1,5 +1,10 @@
 # Encoder comparison with SVT-AV1
 
+For the current PR #6 checkpoint, see the
+[October 9 end-to-end rerun](e2e-codec-gap-20261009.md). The historical timing
+table below is not the current encoder gap and must not be mixed with that
+rerun to infer a code speedup or regression.
+
 This October 8, 2026 diagnostic compares the final Go 1.27.2 SIMD build with
 SVT-AV1 4.0.1 preset 13 on an Apple M4 Max. Go uses one encoder thread and
 GOMAXPROCS=1; SVT uses LP=1, with measured CPU/wall parallelism close to one.
