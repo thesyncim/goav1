@@ -7,11 +7,62 @@
 package motion
 
 import (
+	"fmt"
 	"math/rand"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
+
+func TestCompoundHighBD4TapWidth4ExactWindow(t *testing.T) {
+	for _, bitDepth := range []uint8{10, 12} {
+		for _, height := range []int{1, 3, 13} {
+			for _, stride := range []int{14, 15, 16, 31} {
+				t.Run(fmt.Sprintf("%d/%d/%d", bitDepth, height, stride), func(t *testing.T) {
+					ref := make([]byte, (height-1)*stride+14)
+					maxSample := (1 << bitDepth) - 1
+					for row := range height {
+						for sample := range 7 {
+							value := uint16((row*733 + sample*599) & maxSample)
+							ref[row*stride+sample*2] = byte(value)
+							ref[row*stride+sample*2+1] = byte(value >> 8)
+						}
+					}
+					storage := make([]uint16, height*4+2)
+					storage[0], storage[len(storage)-1] = 0xbeef, 0xcafe
+					out := storage[1 : len(storage)-1]
+					round0 := compoundRound0(bitDepth)
+					offsetBits := int(bitDepth) + 2*filterBits - round0
+					offset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
+					kernel := [filterTaps]int16{-8, 80, 64, -8}
+					ctx := compoundFilterGoSIMDCtx{out: out, ref: ref, kernel: kernel, refStr: stride,
+						width: 4, height: height, round0: round0, roundOffset: int32(offset), taps: 4}
+					compoundXHighBDKernel(&ctx)
+					for row := range height {
+						for column := range 4 {
+							var sum int32
+							for tap := range 4 {
+								index := row*stride + (column+tap)*2
+								sample := uint16(ref[index]) | uint16(ref[index+1])<<8
+								sum += int32(sample) * int32(kernel[tap])
+							}
+							want := uint16(((sum + (1 << (round0 - 1))) >> round0) + int32(offset))
+							if got := out[row*4+column]; got != want {
+								t.Fatalf("row=%d column=%d got=%d want=%d", row, column, got, want)
+							}
+						}
+					}
+					if storage[0] != 0xbeef || storage[len(storage)-1] != 0xcafe {
+						t.Fatal("output guard overwritten")
+					}
+					if allocs := testing.AllocsPerRun(100, func() { compoundXHighBDKernel(&ctx) }); allocs != 0 {
+						t.Fatalf("allocs=%g, want zero", allocs)
+					}
+				})
+			}
+		}
+	}
+}
 
 func TestCompoundHighBDCopyGoSIMDMatchesPureGo(t *testing.T) {
 	const (

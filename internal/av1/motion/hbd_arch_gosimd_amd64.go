@@ -41,6 +41,12 @@ func hbdMAC8(lo, hi archsimd.Int32x4, s, c archsimd.Int16x8) (archsimd.Int32x4, 
 	return lo.Add(lo32.Mul(c32)), hi.Add(hi32.Mul(c32))
 }
 
+func hbdMAC4(sum archsimd.Int32x4, s, c archsimd.Int16x8) archsimd.Int32x4 {
+	zero := archsimd.BroadcastInt16x8(0)
+	x := s.InterleaveLo(zero).ToBits().ReshapeToUint32s().BitsToInt32()
+	return sum.Add(x.Mul(c.ExtendLo4ToInt32()))
+}
+
 // hbdMulAdd32 returns x*y + z for int32 lanes.
 func hbdMulAdd32(x, y, z archsimd.Int32x4) archsimd.Int32x4 {
 	return x.Mul(y).Add(z)

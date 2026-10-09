@@ -645,6 +645,10 @@ func hbdSumRowX(pix []byte, t *hbdTaps16, n int) (lo, hi archsimd.Int32x4) {
 // CONV_BUF samples without clipping.
 func compoundXHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 	n := int(ctx.taps)
+	if ctx.width == 4 && n == 4 {
+		compoundXHighBD4TapW4(ctx)
+		return
+	}
 	taps := hbdBroadcastTaps16(&ctx.kernel)
 	rndOff := archsimd.BroadcastInt32x4(int32(ctx.roundOffset))
 	zero := archsimd.BroadcastInt32x4(0)
@@ -691,6 +695,38 @@ func compoundXHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 			lo = hbdRoundShift(lo, roundBias, roundShift, round0).Add(rndOff)
 			hbdStoreU16x4(out[x:], lo)
 		}
+	}
+}
+
+// compoundXHighBD4TapW4 computes only the four output lanes. The common path
+// can read one vector from resident planes; the exact-minimum slice stages its
+// fourteen input bytes before the same vector operations.
+func compoundXHighBD4TapW4(ctx *compoundFilterGoSIMDCtx) {
+	ref, out := ctx.ref, ctx.out
+	height, refStr := ctx.height, ctx.refStr
+	_ = ref[(height-1)*refStr+13]
+	_ = out[height*4-1]
+	t := hbdBroadcastTaps16(&ctx.kernel)
+	c0, c1, c2, c3 := t[0], t[1], t[2], t[3]
+	round0 := int(ctx.round0)
+	bias := archsimd.BroadcastInt32x4(int32(1) << (round0 - 1))
+	shift := archsimd.BroadcastInt32x4(int32(-round0))
+	off := archsimd.BroadcastInt32x4(ctx.roundOffset)
+	for y := 0; y < height; y++ {
+		src := ref[y*refStr:]
+		var a archsimd.Uint8x16
+		if len(src) >= 16 {
+			a = archsimd.LoadUint8x16(src[:16])
+		} else {
+			var win [16]byte
+			copy(win[:14], src[:14])
+			a = archsimd.LoadUint8x16(win[:])
+		}
+		sum := hbdMAC4(bias, hbdSamplesU8(a), c0)
+		sum = hbdMAC4(sum, hbdSamplesU8(a.ConcatShiftBytesRight(a, 2)), c1)
+		sum = hbdMAC4(sum, hbdSamplesU8(a.ConcatShiftBytesRight(a, 4)), c2)
+		sum = hbdMAC4(sum, hbdSamplesU8(a.ConcatShiftBytesRight(a, 6)), c3)
+		hbdStoreU16x4(out[y*4:], hbdShiftRight(sum, shift, round0).Add(off))
 	}
 }
 
