@@ -81,6 +81,27 @@ func TestRDStatsBlockSIMDMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestRDStatsBlockSIMDSingleNonzero(t *testing.T) {
+	for _, count := range []int{8, 9, 16, 17, 31, 64} {
+		tran := make([]int32, count)
+		qcoeff := make([]int16, count)
+		for index := range tran {
+			tran[index] = int32(index*37 - 1000)
+		}
+		for active := range qcoeff {
+			for _, level := range []int16{-32768, -1, 1, 32767} {
+				qcoeff[active] = level
+				wantSkip, wantCode, wantRate, wantZero := rdStatsBlockPureGo(tran, qcoeff, count, 32768, 3)
+				gotSkip, gotCode, gotRate, gotZero := rdStatsBlockSIMD(tran, qcoeff, count, 32768, 3)
+				if gotSkip != wantSkip || gotCode != wantCode || gotRate != wantRate || gotZero != wantZero {
+					t.Fatalf("count=%d active=%d level=%d mismatch", count, active, level)
+				}
+				qcoeff[active] = 0
+			}
+		}
+	}
+}
+
 func TestBlockErrorSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x5D03))
 	for _, count := range []int{0, 1, 3, 4, 5, 7, 8, 16, 63, 64, 256, 1024} {

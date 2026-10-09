@@ -2,6 +2,11 @@ package encoder
 
 import "testing"
 
+var rdStatsBenchmarkSink struct {
+	skip, code, rate int64
+	zero             bool
+}
+
 // Benchmarks run through the dispatch vars, so they measure the kernel bound
 // for the current build (Go SIMD under GOEXPERIMENT=simd, scalar otherwise).
 
@@ -32,8 +37,8 @@ func benchRDStatsDispatch(b *testing.B, n int) {
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for range b.N {
-		_, _, _, _ = rdStatsBlockImpl(tran, qcoeff, n, 21, 1)
+	for b.Loop() {
+		rdStatsBenchmarkSink.skip, rdStatsBenchmarkSink.code, rdStatsBenchmarkSink.rate, rdStatsBenchmarkSink.zero = rdStatsBlockImpl(tran, qcoeff, n, 21, 1)
 	}
 }
 

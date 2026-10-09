@@ -1,0 +1,48 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/thesyncim/goav1/internal/av1/encoder
+cpu: Apple M4 Max
+BenchmarkRDStatsDispatch1024 	  475399	       472.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRDStatsDispatch256  	 2198294	       109.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRDStatsDispatch64   	 8337940	        28.79 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/thesyncim/goav1/internal/av1/encoder
+cpu: Apple M4 Max
+BenchmarkRDStatsDispatch1024 	  549828	       432.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRDStatsDispatch256  	 2197416	       109.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRDStatsDispatch64   	 8374296	        28.71 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/thesyncim/goav1/internal/av1/encoder
+cpu: Apple M4 Max
+BenchmarkRDStatsDispatch1024 	  541867	       433.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRDStatsDispatch256  	 2194002	       109.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRDStatsDispatch64   	 8348769	        28.78 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/thesyncim/goav1/internal/av1/encoder
+cpu: Apple M4 Max
+BenchmarkRDStatsDispatch1024 	  551401	       433.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRDStatsDispatch256  	 2195287	       109.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRDStatsDispatch64   	 8302200	        28.74 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/thesyncim/goav1/internal/av1/encoder
+cpu: Apple M4 Max
+BenchmarkRDStatsDispatch1024 	  549460	       432.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRDStatsDispatch256  	 2200515	       109.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRDStatsDispatch64   	 8293616	        28.89 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/thesyncim/goav1/internal/av1/encoder
+cpu: Apple M4 Max
+BenchmarkRDStatsDispatch1024 	  551623	       438.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRDStatsDispatch256  	 2173521	       110.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRDStatsDispatch64   	 8274744	        28.93 ns/op	       0 B/op	       0 allocs/op
+PASS

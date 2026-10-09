@@ -107,3 +107,37 @@ The [E2E comparison](e2e-codec-gap-20261009.md) remains pinned to `0824b687`:
 about 3.65× Go/dav1d decode time and 3.68× median Go/SVT encode time in its
 measured configuration, with unequal quality tradeoffs. Assembly removal
 alone does not establish that either gap has closed.
+
+## Rejected encoder reduction experiment
+
+An additional candidate replaced variable-index SIMD lane extraction in
+`rdStatsBlockSIMD` with fixed indexes and a two-half zero test. On ARM64,
+objdump showed that this removed two indirect jump tables. Scalar differential
+tests, single-nonzero-lane/tail cases and zero-allocation checks passed.
+
+Six alternating-order paired samples used official Go 1.27.2 SIMD,
+Apple M4 Max, GOMAXPROCS=1 and one encoder worker. The baseline was built
+using a Go overlay restoring `rdstats_gosimd.go` from `d985372a`; the candidate
+differed only in the reduction. Both binaries used the same benchmark
+harness, including observable RD outputs and `testing.B.Loop`.
+
+| Workload | Baseline | Candidate | Comparison |
+| --- | ---: | ---: | --- |
+| RD statistics, 1024 coefficients | 433.4 ns | 431.1 ns | -0.54%, p=0.026 |
+| RD statistics, 256 coefficients | 109.4 ns | 108.6 ns | -0.69%, p=0.002 |
+| RD statistics, 64 coefficients | 28.79 ns | 28.20 ns | -2.05%, p=0.002 |
+| Full 1080p panning P-frame encode | 14.98 ms | 14.94 ms | No significant change, p=0.180 |
+
+All four rows report zero steady-state allocations. The full-frame benchmark
+uses exactly 31 encode iterations per sample, the same prewarmed encoder,
+rate-control state and deterministic frame sequence on both sides; it is
+not the process-inclusive SVT comparison. RD samples use 200 ms per benchmark.
+Local validation was paused during timing and then resumed; other shared-host
+activity remains uncontrolled.
+
+**The production reduction change was dropped** because its full-frame
+benefit was not established. Improved benchmark output consumption and
+single-nonzero-lane regression coverage are retained. Raw samples are
+preserved in `docs/benchmarks/rdstats-reduction-{base,candidate}.txt` and
+`docs/benchmarks/encoder-pan-reduction-{base,candidate}.txt`; experiment
+binaries and disassembly remain in `/tmp/pr6/assembly-removal-20261009`.

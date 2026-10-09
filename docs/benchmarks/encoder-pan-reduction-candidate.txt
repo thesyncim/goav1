@@ -1,0 +1,36 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/thesyncim/goav1/internal/av1/encoder
+cpu: Apple M4 Max
+BenchmarkVideoEncoderPFramePan1080pSingleThreadMinEffort 	      31	  14971249 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/thesyncim/goav1/internal/av1/encoder
+cpu: Apple M4 Max
+BenchmarkVideoEncoderPFramePan1080pSingleThreadMinEffort 	      31	  14956324 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/thesyncim/goav1/internal/av1/encoder
+cpu: Apple M4 Max
+BenchmarkVideoEncoderPFramePan1080pSingleThreadMinEffort 	      31	  14785047 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/thesyncim/goav1/internal/av1/encoder
+cpu: Apple M4 Max
+BenchmarkVideoEncoderPFramePan1080pSingleThreadMinEffort 	      31	  14952579 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/thesyncim/goav1/internal/av1/encoder
+cpu: Apple M4 Max
+BenchmarkVideoEncoderPFramePan1080pSingleThreadMinEffort 	      31	  14782961 ns/op	       0 B/op	       0 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/thesyncim/goav1/internal/av1/encoder
+cpu: Apple M4 Max
+BenchmarkVideoEncoderPFramePan1080pSingleThreadMinEffort 	      31	  14936837 ns/op	       0 B/op	       0 allocs/op
+PASS
