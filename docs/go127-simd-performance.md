@@ -307,6 +307,70 @@ establish codec speedups, cross-machine results, or superiority to optimized C
 codecs. Recheck correctness, dispatch, allocations, and public end-to-end
 workloads before making those claims.
 
+## October 9 recovered motion and loop-filter work
+
+PR checkpoint `4936325b` did not include nine completed motion and loop-filter
+optimization commits. Checkpoint `4f5d6348` integrates those commits: specialized
+8-bit compound filtering, vectorized warp filtering and edge windows, HBD
+vertical-row reuse and unrolled compound taps, and loop-filter transposes,
+shift reuse, and checked full-width gathers.
+
+An interleaved A/B on one Apple M4 Max used official Go 1.27.2,
+`GOEXPERIMENT=simd`, `-cpu=1`, six samples per side, and prebuilt test binaries.
+Kernel samples used 150 ms; whole-clip samples used three iterations. The
+`BenchmarkGoav1DecodeE2E` fixture reads IVF bytes before timing and observes the
+decoded frame count. It includes decoder construction and decoding, not file
+reads or CLI startup. Both revisions used the same existing corpus files.
+
+| Whole-clip fixture | `4936325b` | `4f5d6348` | Time change |
+| --- | ---: | ---: | ---: |
+| `p360_inter_q32_10bit.ivf` | 114.4 ms | 100.6 ms | -12.0% |
+| `p720_inter_q32.ivf` | 238.4 ms | 195.2 ms | -18.1% |
+
+Both comparisons have `p=0.002`, `n=6` in benchstat. The geometric mean time
+change across these two fixtures is -15.1%; it is not a full-corpus result.
+Representative public-entry motion kernels improved by 70.8% for 32×32 8-bit
+compound X, 74.3% for compound Y, 22.4% for HBD compound 2D, and 62.3% for HBD
+compound Y. The direct 8-bit vertical warp kernel improved by 81.4%. Three
+10-bit filter14 fixtures improved by 32.6–72.3%. All of these measured kernels
+reported zero bytes and zero allocations per operation. The existing 16-wide
+clamped 8-bit convolution benchmark had no significant change.
+
+A separate four-tap, width-four HBD horizontal specialization at `b471b9fa`
+avoids computing unused upper lanes. Public-entry 10/12-bit 4×4 and 4×8 measurements against
+`4f5d6348` reduced time by 40.0–52.1% (`p=0.002`, six samples, zero allocations).
+Exact-minimum input slices, odd strides, output guards, scalar agreement, and
+allocation checks cover this path. The two whole-clip fixtures showed no
+significant additional gain when this specialization and two other proposed
+refinements were tested together. The unproven convolution split and
+loop-filter constant-placement refinements were not retained; the HBD gain
+is a public-operation result, not an additional decoder speedup claim.
+
+The retained code passes motion/loop-filter SIMD and default tests, race tests,
+`purego` tests, strict `checkptr=2` window checks, and focused `go vet`. The
+generated corpus passes MD5 conformance for all 18 clips and 864 visible frames.
+Linux/AMD64 SIMD motion and loop-filter test binaries cross-compile; this is
+build coverage, not native AMD64 correctness or performance evidence.
+
+Reproduce the whole-clip comparison by building each checkpoint's test binary
+separately, then alternating executions instead of measuring concurrent runs:
+
+~~~sh
+CODEX_AGENT_ID=simd-ab GOTOOLCHAIN=go1.27.2 GOEXPERIMENT=simd \
+  /Users/thesyncim/.codex/bin/project-env go test -tags goav1_oracle \
+  -c -o /tmp/goav1-e2e.test ./internal/av1/testvector
+GOAV1_BENCH_CORPUS_DIR=/path/to/benchcorpus /tmp/goav1-e2e.test \
+  -test.run '^$' -test.cpu 1 -test.benchtime 3x \
+  -test.bench 'BenchmarkGoav1DecodeE2E/(p360_inter_q32_10bit|p720_inter_q32)\.ivf$'
+~~~
+
+The project environment wrapper in this example is local to the measurement
+machine; elsewhere use the official Go executable with a project-scoped cache.
+Raw local logs are under `/tmp/pr6/recovery-20261009/`, not checked into Git.
+These are exploratory same-project comparisons, not a new matched dav1d or
+SVT-AV1 comparison. They do not establish superiority to either codec, and the
+historical C API and encoder tables retain their original checkpoints.
+
 ## Encoder versus SVT-AV1
 
 The [encoder comparison](encoder-svt-performance.md) records the Go 1.27.2

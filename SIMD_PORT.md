@@ -1,6 +1,6 @@
 # Go-native SIMD port
 
-The arm64 Go-native SIMD kernels use `simd/archsimd` behind Go's experimental
+The arm64 and amd64 Go-native SIMD kernels use `simd/archsimd` behind Go's experimental
 `GOEXPERIMENT=simd` build experiment. This document describes how to build and
 validate those paths; it does not make a performance claim. Earlier measurements
 used a forked toolchain and are not evidence for the official Go release.
@@ -50,32 +50,27 @@ for project-level checks. The current arm64 kernel results, reproduction
 commands, and claim limits are in the
 [Go 1.27 SIMD measurement note](docs/go127-simd-performance.md).
 
-## Remaining assembly (2026-10-08 snapshot)
+## Remaining assembly (2026-10-09 snapshot)
 
-The replacement is partial. This tree contains 109 assembly source files:
-67 ARM64 and 42 AMD64, with 303 `TEXT` symbols across both architectures.
-These are source counts, not runtime shares: a shared file can contain both
-replaced kernels and live fallback kernels. Relative to `origin/main` at
-`024942ea`, four assembly files have been removed entirely; additional replaced
-bodies were removed from shared files. AMD64 remains primarily assembly-backed.
+This tree contains two assembly source files, both AMD64, with six `TEXT`
+symbols. No ARM64 assembly source files remain. These are source counts, not
+runtime shares or evidence that the Go SIMD replacements are faster.
 
-| Area | Assembly files | Main work still remaining |
+| Source | Symbols | Remaining work |
 | --- | ---: | --- |
-| Transforms | 23 | Remaining forward transforms, fused transform/reconstruction glue, shapes and numeric-range fallbacks |
-| Encoder | 14 | SAD shapes other than selected 8×8×4, motion-search helpers, RD statistics, residual preparation and resizing |
-| Motion compensation | 10 | 8-bit I8MM/dot-product convolution, 8-bit warp, remaining compound and high-bit-depth fallback shapes |
-| Intra prediction | 9 | Remaining directional, filter-intra and static predictor kernels |
-| Restoration | 9 | Wiener and most self-guided filtering; the HBD final projection has a Go SIMD implementation |
-| Loop filters | 8 | 8-bit filters and HBD 4/8-tap paths; HBD 6/14-tap Go SIMD is selected |
-| CDEF | 7 | Remaining filtering variants; direction search and selected filtering paths use Go SIMD |
-| Other DSP, entropy, quantization, frame/tile helpers, film grain and super-resolution | 29 | Includes serial entropy routines, so SIMD is not a direct substitute for every assembly function |
+| `internal/av1/transform/dct4lane_avx2_amd64.s` | 4 | Four-row/four-column inverse DCT32 and DCT64 kernels; replace the live adapters and preserve stage-range fallbacks |
+| `internal/av1/dsp/cpu/cpuid_amd64.s` | 2 | CPUID/XGETBV feature detection; remove only after the remaining assembly dispatch no longer requires it |
 
-The current Go 1.27.2 ARM64 SIMD API lacks the I8MM matrix-multiply operations
-used by the 8-bit motion kernels. Widening multiply/add implementations are
-possible, but the tested versions have not matched that specialized assembly.
-The six-tap I8MM improvement removes zero-tap work in retained assembly; it is
-not an assembly replacement. The quantize-b encoder path also still selects
-NEON assembly, as do measured-losing SAD and loop-filter shapes.
+The experiment build enables architecture-specific Go SIMD replacements.
+Default and `purego` builds use scalar Go where assembly has been removed;
+unsupported CPUs, shapes, and numeric ranges retain checked scalar fallbacks.
+Removing assembly does not establish performance parity: whole-decoder and
+encoder measurements must still demonstrate the result independently.
+
+The recovered October 9 motion and loop-filter optimizations are evaluated
+against the previous PR checkpoint, not against dav1d or SVT-AV1. See the
+[measurement note](docs/go127-simd-performance.md) for the sampling protocol
+and remaining comparison limits.
 
 Do not delete an entire assembly file merely because one SIMD dispatch replaces
 one of its symbols. Check default builds, experiment builds, other architectures,
