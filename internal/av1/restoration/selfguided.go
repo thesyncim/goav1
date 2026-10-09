@@ -192,35 +192,58 @@ func ApplySelfguidedRestoration(src []uint16, srcStride int, srcOrigin int, dst 
 	xq := DecodeSGRXQ(xqd, params)
 	xq0 := int32(xq[0])
 	xq1 := int32(xq[1])
-	use0 := params.Radius[0] > 0
-	use1 := params.Radius[1] > 0
+	// The u16 reference used to guard each projection term with use0/use1, but
+	// DecodeSGRXQ pins the unused filter's xq to exactly 0 (Radius[0]==0 =>
+	// xq[0]=0, Radius[1]==0 => xq[1]=0) and the unused flt buffer is zeroed
+	// above, so applying both terms unconditionally is bit-identical:
+	// 0*(f-u) == 0 in two's-complement int32 for every f. That lets the blend
+	// be one branch-free dispatch slot shared with the SIMD kernel.
 	maxI := int32(max)
 	for row := range height {
 		srcRow := src[srcOrigin+row*srcStride : srcOrigin+row*srcStride+width]
 		dstRow := dst[row*dstStride : row*dstStride+width]
 		f0Row := flt0[row*width : row*width+width]
 		f1Row := flt1[row*width : row*width+width]
-		for col, s := range srcRow {
-			u := int32(s) << SGRProjRstBits
-			v := u << SGRProjPrjBits
-			if use0 {
-				v += xq0 * (f0Row[col] - u)
-			}
-			if use1 {
-				v += xq1 * (f1Row[col] - u)
-			}
-			// libaom casts the rounded projection to int16_t before clipping,
-			// so a value beyond [-32768, 32767] wraps modulo 2^16 and is then
-			// re-extended to int32 inside clip_pixel_highbd. Match that exactly
-			// instead of clamping the wider int32 directly, otherwise extreme
-			// projections (very negative or very large) diverge by entire-pixel
-			// values.
-			rounded := roundPowerOfTwo(v, SGRProjPrjBits+SGRProjRstBits)
-			w := int32(int16(rounded))
-			dstRow[col] = uint16(clampInt32(w, 0, maxI))
-		}
+		sgrWeightedRowImpl(dstRow, srcRow, f0Row, f1Row, xq0, xq1, maxI)
 	}
 	return nil
+}
+
+// sgrWeightedRowImpl is the dispatch slot for the final SGR projection row over
+// high-bit-depth (uint16) pixels, resolved once at package init (see the
+// selfguided_blend dispatch/gosimd files). sgrWeightedRow below is the
+// canonical bit-exact reference; every tuned variant MUST match it sample for
+// sample (including the int16 wrap before the [0,max] clip).
+var sgrWeightedRowImpl = sgrWeightedRow
+
+// sgrWeightedRow applies the final self-guided projection for one row of
+// high-bit-depth (uint16) pixels. It is the per-pixel tail of
+// ApplySelfguidedRestoration lifted into a dispatch slot, keeping libaom's
+// exact arithmetic: the rounded projection is cast to int16 (wrapping) before
+// the [0,maxI] clip.
+//
+// libaom casts the rounded projection to int16_t before clipping, so a value
+// beyond [-32768, 32767] wraps modulo 2^16 and is then re-extended to int32
+// inside clip_pixel_highbd. Match that exactly instead of clamping the wider
+// int32 directly, otherwise extreme projections (very negative or very large)
+// diverge by entire-pixel values. Both projection terms are applied
+// unconditionally; DecodeSGRXQ pins an unused filter's xq to 0, so its term is
+// exactly 0 (see the call site). dst, src, f0, and f1 all hold len(dst)
+// samples of the same row; maxI is the bit depth's maximum sample value.
+func sgrWeightedRow(dst []uint16, src []uint16, f0 []int32, f1 []int32, xq0 int32, xq1 int32, maxI int32) {
+	width := len(dst)
+	src = src[:width]
+	f0 = f0[:width]
+	f1 = f1[:width]
+	for col, s := range src {
+		u := int32(s) << SGRProjRstBits
+		v := u << SGRProjPrjBits
+		v += xq0 * (f0[col] - u)
+		v += xq1 * (f1[col] - u)
+		rounded := roundPowerOfTwo(v, SGRProjPrjBits+SGRProjRstBits)
+		w := int32(int16(rounded))
+		dst[col] = uint16(clampInt32(w, 0, maxI))
+	}
 }
 
 func selfguidedFast(dgd []int32, dgdOrigin int, width int, height int, dgdStride int, dst []int32, dstStride int, bitDepth int, paramsIndex int, radiusIndex int, aBuf []int32, bBuf []int32, bufStride int) {

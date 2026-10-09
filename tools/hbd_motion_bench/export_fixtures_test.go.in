@@ -1,0 +1,77 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//go:build goexperiment.simd && arm64 && !purego
+
+// This test is compiled only through a temporary Go overlay by prepare_fixtures.sh.
+package motion
+
+import (
+	"encoding/binary"
+	"math/rand"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestHBDMotionBenchExportFixtures(t *testing.T) {
+	root := os.Getenv("GOAV1_HBD_FIXTURE_DIR")
+	if root == "" {
+		t.Fatal("GOAV1_HBD_FIXTURE_DIR is empty")
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	const (
+		bd  = uint8(10)
+		pad = filterTaps
+	)
+	max, ok := highBDMax(bd)
+	if !ok {
+		t.Fatal("unsupported bit depth")
+	}
+	xKernel, yKernel := subpelFilters8[6], subpelFilters8Smooth[9]
+	sizes := []int{8, 16, 32, 64, 128}
+
+	convolveRef := makeHighBDRef(maxBlockSize, pad, max, true, rand.New(rand.NewSource(0x6bdc)))
+	compoundRef := makeHighBDRef(maxBlockSize, pad, max, true, rand.New(rand.NewSource(0x6bdd)))
+	write := func(name string, b []byte) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("convolve_ref_144x144_u16le.bin", convolveRef.Pix)
+	write("compound_ref_144x144_u16le.bin", compoundRef.Pix)
+
+	for _, side := range sizes {
+		w, h := side, side
+		put, _ := testPlane(w, h, 2, w*2)
+		convolve2DHighBDPureGo(put, convolveRef, bd, max, 0, 0, pad, pad, w, h, xKernel, yKernel)
+		write("put_expected_"+itoa(side)+"x"+itoa(side)+"_u16le.bin", put.Pix)
+
+		compound := make([]uint16, w*h)
+		var im compoundIM
+		round0 := compoundRound0(bd)
+		offsetBits := int(bd) + 2*filterBits - round0
+		predictInterCompoundRefHighBDToConvBuf2DResident(compound, compoundRef, pad, pad, w, h, xKernel, yKernel, round0, offsetBits, int(bd), &im)
+		encoded := make([]byte, len(compound)*2)
+		for i, sample := range compound {
+			binary.LittleEndian.PutUint16(encoded[i*2:], sample)
+		}
+		write("prep_expected_"+itoa(side)+"x"+itoa(side)+"_u16le.bin", encoded)
+	}
+}
+
+func itoa(v int) string {
+	if v == 0 {
+		return "0"
+	}
+	var b [20]byte
+	i := len(b)
+	for v > 0 {
+		i--
+		b[i] = byte('0' + v%10)
+		v /= 10
+	}
+	return string(b[i:])
+}

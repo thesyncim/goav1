@@ -384,7 +384,7 @@ func warpVerticalHighBDFullGamma0(dst frame.Plane, bitDepth uint8, max uint16, t
 func warpHorizontalHighBD(tmp *[warpedIntermediateRows * warpedIntermediateColumns]int32, ref frame.Plane, i int, j int, matrix [6]int32, alpha int, beta int, gamma int, delta int, ssX int, ssY int, reduceBitsHoriz int, offsetBitsHoriz int) int {
 	ix4, sx4, iy4, sy4 := warpBlockOrigin(i, j, matrix, alpha, beta, gamma, delta, ssX, ssY)
 	if iy4 >= 7 && iy4+7 < ref.Height && ix4 >= 7 && ix4+8 <= ref.Width {
-		return warpHorizontalHighBDResident(tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz)
+		return warpHorizontalHighBDResidentDispatch(tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz)
 	}
 	for k := -7; k < 8; k++ {
 		iy := clampInt(iy4+k, 0, ref.Height-1)

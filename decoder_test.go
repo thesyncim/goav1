@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"testing"
+
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 )
 
 func TestDecoderDecodeNextReusesVisibleSlice(t *testing.T) {
@@ -238,6 +240,24 @@ func TestDecoderFrameWorkBatchPlaneHelpers(t *testing.T) {
 	}
 	if jobReferencePlane.Width != 8 || jobReferencePlane.Height != 8 || jobReferencePlane.Plane != DecoderFrameWorkPlaneU {
 		t.Fatalf("job reference plane=%+v", jobReferencePlane)
+	}
+}
+
+func TestDecoderFrameWorkSequenceContextCapturesScaledPredictionPolicy(t *testing.T) {
+	t.Setenv("GOAV1_SCALED_PRED", "0")
+	sequence := DecoderFrameWorkSequenceContextFromHeader(SequenceHeader{})
+	wantDisabled := !internalthreading.ScaledReferencePredictionEnabled()
+	if sequence.ScaledReferencePredictionDisabled != wantDisabled {
+		t.Fatalf("scaled prediction disabled=%v want %v", sequence.ScaledReferencePredictionDisabled, wantDisabled)
+	}
+
+	t.Setenv("GOAV1_SCALED_PRED", "1")
+	if sequence.ScaledReferencePredictionDisabled != wantDisabled {
+		t.Fatal("sequence context changed after GOAV1_SCALED_PRED changed")
+	}
+	newSequence := DecoderFrameWorkSequenceContextFromHeader(SequenceHeader{})
+	if newSequence.ScaledReferencePredictionDisabled != !internalthreading.ScaledReferencePredictionEnabled() {
+		t.Fatalf("new context disabled=%v want %v", newSequence.ScaledReferencePredictionDisabled, !internalthreading.ScaledReferencePredictionEnabled())
 	}
 }
 

@@ -688,6 +688,66 @@ func BenchmarkReconstructPlaneBlockDCT8x8(b *testing.B) {
 	}
 }
 
+func BenchmarkReconstructPlaneBlockTrustedRawDCT(b *testing.B) {
+	for _, tc := range []struct {
+		name string
+		size int
+	}{
+		{name: "DCT8x8", size: 8},
+		{name: "DCT16x16", size: 16},
+		{name: "DCT32x32", size: 32},
+		{name: "DCT64x64", size: 64},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			n := tc.size
+			size := transform.Size{Width: uint8(n), Height: uint8(n)}
+			scan, err := transform.DefaultScan(size, transform.Class2D)
+			if err != nil {
+				b.Fatal(err)
+			}
+			scanSize, err := transform.ScanSize(size)
+			if err != nil {
+				b.Fatal(err)
+			}
+			txScale, err := quantize.TransformScale(n, n)
+			if err != nil {
+				b.Fatal(err)
+			}
+			cfg := Block{
+				Size:      size,
+				Transform: transform.TypeDCTDCT,
+				Quantizer: quantize.Quantizer{DC: 4, AC: 8},
+				EOB:       int16(len(scan)),
+			}
+			quantized := make([]int16, n*n)
+			for i := range quantized {
+				quantized[i] = int16((i*7)%17 - 8)
+			}
+			quantized[0] = 5
+			dst := make([]byte, n*n)
+			int32Len, int16Len, err := ScratchLen(cfg)
+			if err != nil {
+				b.Fatal(err)
+			}
+			int32Scratch := make([]int32, int32Len)
+			residualScratch := make([]int16, int16Len)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				for i := range dst {
+					dst[i] = 128
+				}
+				if err := ReconstructPlaneBlockVisibleTrustedAtWithGeometryAndScan(dst, n, 1, 8, n, n, quantized, n, scan, scanSize, txScale, int32Scratch, residualScratch, cfg); err != nil {
+					b.Fatal(err)
+				}
+				reconstructTrustedRawBenchmarkSink ^= dst[(n/2)*n+n/2]
+			}
+		})
+	}
+}
+
+var reconstructTrustedRawBenchmarkSink byte
+
 func BenchmarkReconstructPlaneBlockTrustedDCT8x8DCOnly(b *testing.B) {
 	const width, height = 8, 8
 	dst := make([]byte, width*height)

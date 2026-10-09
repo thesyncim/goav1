@@ -2,6 +2,7 @@ package threading
 
 import (
 	"fmt"
+	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/motion"
@@ -339,10 +340,7 @@ func (b *FrameWorkBatch) PredictBlockChromaCFL(index int, visit tile.BlockLoopVi
 		!tile.HasChromaBlockAt(visit.Block.Size, int(visit.Block.X4), int(visit.Block.Y4), b.Sequence.ColorConfig) {
 		return ErrInvalidBatch
 	}
-	if err := b.predictBlockChromaCFLPlane(index, visit, FrameWorkPlaneU, scratch); err != nil {
-		return err
-	}
-	return b.predictBlockChromaCFLPlane(index, visit, FrameWorkPlaneV, scratch)
+	return b.predictBlockChromaCFLShared(index, &visit, scratch)
 }
 
 // PredictBlockIntraCoeff writes intra prediction for one transform block from a
@@ -710,12 +708,78 @@ func (b *FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.
 	return b.predictBlockChromaIntraTransformPtr(index, &visit, plane, tx, scratch)
 }
 
+func (b *FrameWorkBatch) predictBlockChromaCFLShared(index int, visit *tile.BlockLoopVisit, scratch *FrameWorkCFLPredictionScratch) error {
+	if visit == nil || scratch == nil {
+		return ErrInvalidBatch
+	}
+	// Frame.Bind lays Y, U, and V into disjoint ranges, but callers may provide
+	// manually assembled Frames whose planes alias. In that case, retain the
+	// original U-then-V path: U writes could otherwise change the luma bytes
+	// that the old V pass would subsample.
+	if b.Output != nil && frameWorkCFLYMayAliasChroma(b.Output) {
+		if err := b.predictBlockChromaCFLPlanePtr(index, visit, FrameWorkPlaneU, scratch); err != nil {
+			return err
+		}
+		return b.predictBlockChromaCFLPlanePtr(index, visit, FrameWorkPlaneV, scratch)
+	}
+	geomU, presentU, err := b.blockPredictionPlaneGeometry(index, visit.Block, FrameWorkPlaneU)
+	if err != nil {
+		return err
+	}
+	if !presentU {
+		// Preserve the former per-plane behavior for clipped/malformed frames
+		// where U is absent but V can still be addressed.
+		return b.predictBlockChromaCFLPlanePtr(index, visit, FrameWorkPlaneV, scratch)
+	}
+	if b.Output == nil {
+		return ErrInvalidBatch
+	}
+	if err := b.prepareBlockChromaCFL(index, visit, FrameWorkPlaneU, geomU, scratch); err != nil {
+		return err
+	}
+	if err := b.predictBlockChromaCFLPlaneWithAC(visit, FrameWorkPlaneU, geomU, scratch); err != nil {
+		return err
+	}
+
+	// Check V only after the U write, preserving the former partial-write/error
+	// order. U and V normally have identical luma origins and extents; if a
+	// caller supplies inconsistent plane geometry, recompute V as before.
+	geomV, presentV, err := b.blockPredictionPlaneGeometry(index, visit.Block, FrameWorkPlaneV)
+	if err != nil || !presentV {
+		return err
+	}
+	if !frameWorkCFLGeometrySharesLuma(visit, b.Sequence.ColorConfig, geomU, geomV) {
+		return b.predictBlockChromaCFLPlanePtr(index, visit, FrameWorkPlaneV, scratch)
+	}
+	return b.predictBlockChromaCFLPlaneWithAC(visit, FrameWorkPlaneV, geomV, scratch)
+}
+
+// predictBlockChromaCFLPlane retains the original one-plane operation for
+// aliasing and geometry fallbacks, and is also the test oracle for the former
+// U-then-V implementation.
 func (b *FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkCFLPredictionScratch) error {
+	return b.predictBlockChromaCFLPlanePtr(index, &visit, plane, scratch)
+}
+
+func (b *FrameWorkBatch) predictBlockChromaCFLPlanePtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkCFLPredictionScratch) error {
+	if visit == nil || scratch == nil {
+		return ErrInvalidBatch
+	}
 	geom, present, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
 	if err != nil || !present {
 		return err
 	}
 	if b.Output == nil {
+		return ErrInvalidBatch
+	}
+	if err := b.prepareBlockChromaCFL(index, visit, plane, geom, scratch); err != nil {
+		return err
+	}
+	return b.predictBlockChromaCFLPlaneWithAC(visit, plane, geom, scratch)
+}
+
+func (b *FrameWorkBatch) prepareBlockChromaCFL(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, geom frameWorkPredictionPlaneGeometry, scratch *FrameWorkCFLPredictionScratch) error {
+	if visit == nil || scratch == nil || b.Output == nil {
 		return ErrInvalidBatch
 	}
 	// libaom reconstructs whole transform blocks out to the MI-aligned frame
@@ -798,6 +862,17 @@ func (b *FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockL
 	}
 	if err := prediction.SubtractCFLAverage(scratch.ReconQ3[:], scratch.ACQ3[:], fullWidth, fullHeight); err != nil {
 		return ErrInvalidBatch
+	}
+	return nil
+}
+
+func (b *FrameWorkBatch) predictBlockChromaCFLPlaneWithAC(visit *tile.BlockLoopVisit, plane FrameWorkPlane, geom frameWorkPredictionPlaneGeometry, scratch *FrameWorkCFLPredictionScratch) error {
+	if visit == nil || scratch == nil || b.Output == nil {
+		return ErrInvalidBatch
+	}
+	fullWidth, fullHeight, err := frameWorkBlockPlanePredictionExtentPixels(visit.Block, b.Sequence.ColorConfig, plane)
+	if err != nil {
+		return err
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
 	readBoundX, readBoundY := frameWorkWindowEdgeReadBoundAbsolute(geom.Window)
@@ -1090,7 +1165,7 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *ti
 		if err != nil {
 			return err
 		}
-		sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+		sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 		if err != nil {
 			return err
 		}
@@ -1160,7 +1235,7 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithGeometry(visit *til
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 	if err != nil {
 		return err
 	}
@@ -1446,7 +1521,7 @@ func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithGeometry(visit *tile.Bloc
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 	if err != nil {
 		return err
 	}
@@ -1652,7 +1727,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundRefToConvBuf(buf *motion.Compo
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 	if err != nil {
 		return err
 	}
@@ -1962,7 +2037,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutputWithGeometry(geo
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 	if err != nil {
 		return err
 	}
@@ -2009,7 +2084,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plan
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 	if err != nil {
 		return err
 	}
@@ -2058,7 +2133,7 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpToScratch(dst frame.Plane, p
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 	if err != nil {
 		return err
 	}
@@ -2202,7 +2277,7 @@ func (b *FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, pla
 	// area must run through the scaled 8-tap convolver instead. libaom
 	// mirror: av1_make_inter_predictor() routes through
 	// av1_convolve_2d_scale_c whenever av1_is_scaled(sf).
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref)
+	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
 	if err != nil {
 		return err
 	}
@@ -3899,6 +3974,48 @@ func frameWorkBlockPlanePredictionExtentPixels(block tile.BlockVisit, color pars
 	return int(dims.W4) * 4, int(dims.H4) * 4, nil
 }
 
+func frameWorkCFLGeometrySharesLuma(visit *tile.BlockLoopVisit, color parser.ColorConfig, a frameWorkPredictionPlaneGeometry, b frameWorkPredictionPlaneGeometry) bool {
+	if visit == nil || a.X != b.X || a.Y != b.Y ||
+		a.SubsamplingX != b.SubsamplingX || a.SubsamplingY != b.SubsamplingY ||
+		a.bytesPerSample() != b.bytesPerSample() {
+		return false
+	}
+	aw, ah, err := frameWorkBlockPlanePredictionExtentPixels(visit.Block, color, FrameWorkPlaneU)
+	if err != nil {
+		return false
+	}
+	bw, bh, err := frameWorkBlockPlanePredictionExtentPixels(visit.Block, color, FrameWorkPlaneV)
+	return err == nil && aw == bw && ah == bh
+}
+
+func frameWorkCFLYMayAliasChroma(output *frame.Frame) bool {
+	if output == nil {
+		return false
+	}
+	return frameWorkByteSlicesOverlap(output.Y.Pix, output.U.Pix) || frameWorkByteSlicesOverlap(output.Y.Pix, output.V.Pix)
+}
+
+func frameWorkByteSlicesOverlap(a []byte, b []byte) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	aStart := uintptr(unsafe.Pointer(unsafe.SliceData(a)))
+	bStart := uintptr(unsafe.Pointer(unsafe.SliceData(b)))
+	aEnd := aStart + uintptr(len(a))
+	bEnd := bStart + uintptr(len(b))
+	// An address-range overflow is not a plausible Go slice, but treating it as
+	// overlap keeps the fallback conservative if one is ever presented.
+	if aEnd < aStart || bEnd < bStart {
+		return true
+	}
+	return aStart < bEnd && bStart < aEnd
+}
+
+var frameWorkNativeLittleEndian = func() bool {
+	var sample uint16 = 1
+	return *(*byte)(unsafe.Pointer(&sample)) == 1
+}()
+
 func frameWorkSubsampleLumaCFLQ3(dst []uint16, plane frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, subX bool, subY bool) error {
 	if !frameWorkPlaneBlockAddressable(plane, bytesPerSample, x, y, width, height) {
 		return ErrInvalidBatch
@@ -3945,6 +4062,32 @@ func frameWorkSubsampleLumaCFLQ3(dst []uint16, plane frame.Plane, bytesPerSample
 	max, ok := frameWorkSampleMax(bitDepth)
 	if !ok || bitDepth <= 8 {
 		return ErrInvalidBatch
+	}
+	// The frame API stores HBD samples as little-endian bytes. Reuse the
+	// prediction package's HBD CfL kernel when the source can be viewed as a
+	// naturally aligned native-endian []uint16; unusual caller layouts retain
+	// the byte-wise fallback below.
+	if frameWorkNativeLittleEndian && plane.Stride&1 == 0 && (subX || !subY) {
+		rowOffset, ok := frameWorkCheckedMul(y, plane.Stride)
+		if !ok {
+			return ErrInvalidBatch
+		}
+		colOffset, ok := frameWorkCheckedMul(x, bytesPerSample)
+		if !ok {
+			return ErrInvalidBatch
+		}
+		offset, ok := frameWorkCheckedAdd(rowOffset, colOffset)
+		if !ok || offset < 0 || offset >= len(plane.Pix) {
+			return ErrInvalidBatch
+		}
+		ptr := unsafe.Pointer(&plane.Pix[offset])
+		if uintptr(ptr)&(unsafe.Alignof(uint16(0))-1) == 0 {
+			input := unsafe.Slice((*uint16)(ptr), (len(plane.Pix)-offset)/bytesPerSample)
+			if err := prediction.SubsampleLuma16ToQ3(dst, input, plane.Stride/bytesPerSample, width, height, subX, subY, bitDepth); err != nil {
+				return ErrInvalidBatch
+			}
+			return nil
+		}
 	}
 	switch {
 	case subX && subY:

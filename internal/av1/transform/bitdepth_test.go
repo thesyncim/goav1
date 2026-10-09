@@ -83,7 +83,9 @@ func TestInverseBlockBitDepthMatchesInverseBlockAt8Bit(t *testing.T) {
 	size := Size{Width: 8, Height: 8}
 	coeff := make([]int32, 64)
 	for i := range coeff {
-		coeff[i] = int32((i*1709)%65536) - 32768
+		// Keep this legacy equivalence case moderate; the full int16 input range
+		// is covered separately through the guarded SIMD and scalar fallback.
+		coeff[i] = int32((i*37)%1024) - 512
 	}
 	scratchA := make([]int32, 64)
 	scratchB := make([]int32, 64)

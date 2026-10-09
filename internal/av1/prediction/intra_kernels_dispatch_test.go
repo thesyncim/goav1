@@ -63,6 +63,30 @@ func TestSubsampleLuma8DispatchMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestSubtractCFLAverageDispatchMatchesPureGo(t *testing.T) {
+	var seed uint32 = 0x871
+	for _, dim := range [][2]int{{4, 4}, {8, 8}, {16, 16}, {32, 32}, {8, 32}, {32, 8}} {
+		w, h := dim[0], dim[1]
+		src := make([]uint16, CFLBufSquare)
+		for row := 0; row < h; row++ {
+			for col := 0; col < w; col++ {
+				seed = seed*1664525 + 1013904223
+				src[row*CFLBufLine+col] = uint16(seed >> 17)
+			}
+		}
+		log2, _ := log2PowerOfTwoInt(w * h)
+		got := make([]int16, CFLBufSquare)
+		want := make([]int16, CFLBufSquare)
+		subtractCFLAverageImpl(src, got, w, h, log2)
+		subtractCFLAveragePureGo(src, want, w, h, log2)
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("subtract-average %dx%d idx=%d got=%d want=%d", w, h, i, got[i], want[i])
+			}
+		}
+	}
+}
+
 func TestApplyCFLDispatchMatchesPureGo(t *testing.T) {
 	dims := [][2]int{{8, 8}, {16, 16}, {32, 32}, {8, 16}, {16, 8}, {4, 4}, {32, 8}}
 	depths := []struct {

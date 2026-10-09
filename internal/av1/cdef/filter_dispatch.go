@@ -16,10 +16,10 @@ package cdef
 var filterBlockImpl = filterBlockPureGo
 
 // The per-filter-unit block loop (filterUnitBlocks) dispatches by build tag
-// (filter_unit_generic.go / filter_neon_arm64.go) instead of through a func
+// (filter_unit_generic.go / filter_simd_arm64.go) instead of through a func
 // variable: an indirect call would leak the caller's block list and
 // direction/variance grids, forcing the decoder's stack-resident CDEF scratch
-// arrays to the heap and breaking its zero-alloc steady-state budget. NEON is
-// architecturally mandatory on arm64, so the static binding loses no runtime
-// detection. Every implementation MUST produce output identical to
-// filterUnitBlocksPureGo.
+// arrays to the heap and breaking its zero-alloc steady-state budget. arm64
+// always has the Go SIMD unit loop under the experiment, so the static binding
+// loses no runtime detection. Every implementation MUST produce output
+// identical to filterUnitBlocksPureGo.

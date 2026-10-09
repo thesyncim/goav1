@@ -79,44 +79,7 @@ func SubsampleLuma16ToQ3(outputQ3 []uint16, input []uint16, inputStride int, wid
 	if err != nil {
 		return err
 	}
-	switch {
-	case subX && subY:
-		for row := 0; row < height; row += 2 {
-			outRow := row >> 1
-			for col := 0; col < width; col += 2 {
-				p0 := input[row*inputStride+col]
-				p1 := input[row*inputStride+col+1]
-				p2 := input[(row+1)*inputStride+col]
-				p3 := input[(row+1)*inputStride+col+1]
-				if p0 > max || p1 > max || p2 > max || p3 > max {
-					return ErrInvalidPrediction
-				}
-				outputQ3[outRow*CFLBufLine+(col>>1)] = (p0 + p1 + p2 + p3) << 1
-			}
-		}
-	case subX:
-		for row := range outH {
-			for col := 0; col < width; col += 2 {
-				p0 := input[row*inputStride+col]
-				p1 := input[row*inputStride+col+1]
-				if p0 > max || p1 > max {
-					return ErrInvalidPrediction
-				}
-				outputQ3[row*CFLBufLine+(col>>1)] = (p0 + p1) << 2
-			}
-		}
-	default:
-		for row := range outH {
-			for col := range outW {
-				p := input[row*inputStride+col]
-				if p > max {
-					return ErrInvalidPrediction
-				}
-				outputQ3[row*CFLBufLine+col] = p << 3
-			}
-		}
-	}
-	return nil
+	return subsampleLuma16Impl(outputQ3, input, inputStride, width, height, outW, outH, subX, subY, max)
 }
 
 // PadCFLReconQ3 ports libaom's cfl_pad for frame-boundary overrun handling.
@@ -156,18 +119,7 @@ func SubtractCFLAverage(srcQ3 []uint16, dstQ3 []int16, width int, height int) er
 	if !ok {
 		return ErrInvalidPrediction
 	}
-	sum := (width * height) >> 1
-	for row := range height {
-		for col := range width {
-			sum += int(srcQ3[row*CFLBufLine+col])
-		}
-	}
-	avg := sum >> numPelLog2
-	for row := range height {
-		for col := range width {
-			dstQ3[row*CFLBufLine+col] = int16(int(srcQ3[row*CFLBufLine+col]) - avg)
-		}
-	}
+	subtractCFLAverageImpl(srcQ3, dstQ3, width, height, numPelLog2)
 	return nil
 }
 

@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish pgo-regenerate qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference webrtc-browser webrtc-production dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
+.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish pgo-regenerate qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference webrtc-browser webrtc-production webrtc-production-ci dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -102,8 +102,49 @@ QUALITYBENCH_SVT_BIN ?=
 QUALITYBENCH_SVT_SHA256 ?=
 WEBRTC_REFERENCE_TESTS = Test.*ReferenceDecoders$$
 WEBRTC_ENCODER_REFERENCE_TESTS = ^TestEncoded.*ReferenceDecoders$$
+WEBRTC_PRODUCTION_CI_CONTROLLER_I422_10 = ^TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders$$/^i422-10bit$$
+WEBRTC_PRODUCTION_CI_CONTROLLER_I422_12 = ^TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders$$/^i422-12bit$$
+WEBRTC_PRODUCTION_CI_CONTROLLER_I444_10 = ^TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders$$/^i444-10bit$$
+WEBRTC_PRODUCTION_CI_CONTROLLER_I444_12 = ^TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders$$/^i444-12bit$$
+WEBRTC_PRODUCTION_CI_SCALABILITY_TEST = ^TestPublicRTCEncoderHighBitDepthNon420ScalabilityModeCatalogueReferenceDecoders$$
+WEBRTC_PRODUCTION_CI_SPLIT_TESTS = ^(TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders|TestPublicRTCEncoderHighBitDepthNon420ScalabilityModeCatalogueReferenceDecoders)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1A = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(direct-L1T[12])$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1A_REMAINDER = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(direct-L1T3)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1B = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(shared-svc-forward-base-L2T1(h)?)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1B_REMAINDER = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(shared-svc-forward-base-L2T1_KEY)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1C = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(shared-svc-forward-base-L2T2(h)?)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1C_REMAINDER = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(shared-svc-forward-base-L2T2(_KEY|_KEY_SHIFT))$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1D = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(simulcast-forward-top-S2T1h?)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1D_REMAINDER = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(simulcast-forward-top-S2T2h?)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1E = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(simulcast-forward-top-S2T3h?)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_2A = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(shared-svc-forward-base-L2T3(h)?)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_2A_REMAINDER = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(shared-svc-forward-base-L2T3(_KEY|_KEY_SHIFT))$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_2B = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(shared-svc-forward-base-L3T1(h)?)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_2B_REMAINDER = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(shared-svc-forward-base-L3T1_KEY)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_2C = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(shared-svc-forward-base-L3T2(h)?)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_2C_REMAINDER = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(shared-svc-forward-base-L3T2(_KEY|_KEY_SHIFT))$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_3A = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(shared-svc-forward-base-L3T3(h)?)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_3A_REMAINDER = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(shared-svc-forward-base-L3T3(_KEY|_KEY_SHIFT))$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_3B = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(simulcast-forward-top-S3T1h?)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_3B_REMAINDER = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(simulcast-forward-top-S3T2h?)$$
+WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_3C = ^TestBrowserLiveRTCEncoderDirectRTPPlaybackStats$$/^(simulcast-forward-top-S3T3h?)$$
+WEBRTC_PRODUCTION_CI_BROWSER_SOAK_DIRECT = ^TestBrowserLiveRTCEncoderDirectRTPRepeatedPlaybackSoak$$/^(direct-L1T3)$$
+WEBRTC_PRODUCTION_CI_BROWSER_SOAK_SHARED = ^TestBrowserLiveRTCEncoderDirectRTPRepeatedPlaybackSoak$$/^(shared-svc-forward-base-L3T3_KEY_SHIFT)$$
+WEBRTC_PRODUCTION_CI_BROWSER_SOAK_SIMULCAST = ^TestBrowserLiveRTCEncoderDirectRTPRepeatedPlaybackSoak$$/^(simulcast-forward-top-S3T3h)$$
+WEBRTC_PRODUCTION_CI_BROWSER_CONTROL_DIRECT = ^TestBrowserLiveRTCEncoderDirectRTPControlChurnPlayback$$/^(direct-l1-scalability-controls)$$
+WEBRTC_PRODUCTION_CI_BROWSER_CONTROL_SHARED = ^TestBrowserLiveRTCEncoderDirectRTPControlChurnPlayback$$/^(shared-svc-base-controls)$$
+WEBRTC_PRODUCTION_CI_BROWSER_CONTROL_SIMULCAST = ^TestBrowserLiveRTCEncoderDirectRTPControlChurnPlayback$$/^(simulcast-top-controls)$$
+WEBRTC_PRODUCTION_CI_BROWSER_FEEDBACK_A = ^(TestBrowserLiveRTCEncoderDirectRTPReceiverEstimatedMaximumBitrateControl|TestBrowserLiveRTCEncoderDirectRTPTransportWideCCFeedback)$$
+WEBRTC_PRODUCTION_CI_BROWSER_FEEDBACK_B = ^(TestBrowserLiveRTCEncoderDirectRTPImpairmentFeedback|TestBrowserLiveRTCEncoderDirectRTPNACKRetransmission)$$
+WEBRTC_PRODUCTION_CI_ENCODER_REF_TESTS = ^TestPublicRTCEncoder.*ReferenceDecoders$$
+WEBRTC_PRODUCTION_CI_ENCODER_FORMAT_REF_TESTS = ^TestPublicRTCEncoder(I|HighBitDepth).*ReferenceDecoders$$
+WEBRTC_PRODUCTION_CI_ENCODER_NONREF_TESTS = ^TestPublicRTCEncoder.*$$
+WEBRTC_PRODUCTION_CI_PUBLIC_REMAINDER_SKIP = ^(TestPublicRTCEncoder.*|TestPublicRTCSharedReferenceSVCDecodeRTPPayloads)$$
+WEBRTC_PRODUCTION_CI_SHARED_RTP_L2 = ^TestPublicRTCSharedReferenceSVCDecodeRTPPayloads$$/^L2.*$$
+WEBRTC_PRODUCTION_CI_SHARED_RTP_L3 = ^TestPublicRTCSharedReferenceSVCDecodeRTPPayloads$$/^L3.*$$
 WEBRTC_PRODUCTION_TESTS = Test(AV1SDP|AV1RTCP|EncoderWebRTC|HighLevelRTPDecodersWebRTCSVCCatalogue|NewDecoderFromRTPPayloads|ParseRTPPacketDependencyDescriptor|PublicDecoderFrameWorkResidual(EventRunner.*TileList|StreamRunnerRTP)|PublicDecoderRTP(Packet|PayloadRunner)|PublicEncodeI(400|420)|PublicEncoderWebRTC|PublicLayeredDecoderRTP|PublicParseTileListOBU|PublicPlanDecoderTileList|PublicResolveDecoderTileList|PublicRTC|PublicRTP|PublicTileList|PublicWebRTCEncoder|RTCP|SimpleDecoderTileListIVFPlayback)
 WEBRTC_PRODUCTION_INTERNAL_TESTS = Test(AppendWebRTCScalabilityModesMatchesPinnedLibWebRTC|WebRTCStreamAcceptedScalabilityModes(CoverExportedModes|Decode)|WebRTCStreamControlCombinationMatrixDecode|WebRTCEncoderStateTemporalUnitsKeyShiftModes)
+WEBRTC_PRODUCTION_CI_SHARD ?= 0
 
 test:
 	go test $(GOAV1_PGO_FLAGS) -timeout 30m ./...
@@ -508,11 +549,11 @@ webrtc-reference:
 	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_REFERENCE_TESTS)' -count=1 -timeout 900s -v
 
 webrtc-browser:
-	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go -C examples/browser-push test . -run TestEndToEndAV1OverRTP -count=1 -timeout 180s -v
-	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveAV1PlaybackStats -count=1 -timeout 120s -v
-	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPPlaybackStats -count=1 -timeout 240s -v
-	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPRepeatedPlaybackSoak -count=1 -timeout 180s -v
-	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPControlChurnPlayback -count=1 -timeout 120s -v
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go -C examples/browser-push test . -run TestEndToEndAV1OverRTP -count=1 -timeout 600s -v
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveAV1PlaybackStats -count=1 -timeout 330s -v
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPPlaybackStats -count=1 -timeout 600s -v
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPRepeatedPlaybackSoak -count=1 -timeout 300s -v
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPControlChurnPlayback -count=1 -timeout 180s -v
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPReceiverEstimatedMaximumBitrateControl -count=1 -timeout 120s -v
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPTransportWideCCFeedback -count=1 -timeout 120s -v
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPImpairmentFeedback -count=1 -timeout 120s -v
@@ -521,15 +562,110 @@ webrtc-browser:
 webrtc-production:
 	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test ./internal/av1/encoder -run '($(WEBRTC_PRODUCTION_INTERNAL_TESTS)|$(WEBRTC_ENCODER_REFERENCE_TESTS))' -count=1 -timeout 900s -v
 	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '($(WEBRTC_PRODUCTION_TESTS)|$(WEBRTC_REFERENCE_TESTS))' -count=1 -timeout 1200s -v
-	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go -C examples/browser-push test . -run TestEndToEndAV1OverRTP -count=1 -timeout 180s -v
-	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveAV1PlaybackStats -count=1 -timeout 120s -v
-	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPPlaybackStats -count=1 -timeout 240s -v
-	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPRepeatedPlaybackSoak -count=1 -timeout 180s -v
-	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPControlChurnPlayback -count=1 -timeout 120s -v
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go -C examples/browser-push test . -run TestEndToEndAV1OverRTP -count=1 -timeout 600s -v
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveAV1PlaybackStats -count=1 -timeout 240s -v
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPPlaybackStats -count=1 -timeout 600s -v
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPRepeatedPlaybackSoak -count=1 -timeout 300s -v
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPControlChurnPlayback -count=1 -timeout 180s -v
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPReceiverEstimatedMaximumBitrateControl -count=1 -timeout 120s -v
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPTransportWideCCFeedback -count=1 -timeout 120s -v
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPImpairmentFeedback -count=1 -timeout 120s -v
 	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run TestBrowserLiveRTCEncoderDirectRTPNACKRetransmission -count=1 -timeout 120s -v
+
+# CI splits long public and browser cases across separate runners.
+# `webrtc-production` above remains the complete local gate.
+webrtc-production-ci:
+ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),1)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_CONTROLLER_I422_10)' -count=1 -timeout 600s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),2)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_SCALABILITY_TEST)' -count=1 -timeout 600s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),3)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_ENCODER_FORMAT_REF_TESTS)' -skip '$(WEBRTC_PRODUCTION_CI_SPLIT_TESTS)' -count=1 -timeout 600s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),4)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test ./internal/av1/encoder -run '($(WEBRTC_PRODUCTION_INTERNAL_TESTS)|$(WEBRTC_ENCODER_REFERENCE_TESTS))' -count=1 -timeout 900s -v
+	go -C examples/browser-push test . -run '^(TestBrowserRTCEncoderDirectRTPPlaybackScenarios|TestCollectTemporalUnitsWithBudget.*)$$' -count=1 -timeout 60s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),5)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1A)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),6)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1B)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),7)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1C)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),8)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_ENCODER_REF_TESTS)' -skip '$(WEBRTC_PRODUCTION_CI_ENCODER_FORMAT_REF_TESTS)' -count=1 -timeout 600s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),9)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_ENCODER_NONREF_TESTS)' -skip '$(WEBRTC_PRODUCTION_CI_ENCODER_REF_TESTS)' -count=1 -timeout 600s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),10)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_SHARED_RTP_L2)' -count=1 -timeout 600s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),11)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_SHARED_RTP_L3)' -count=1 -timeout 600s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),12)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '($(WEBRTC_PRODUCTION_TESTS)|$(WEBRTC_REFERENCE_TESTS))' -skip '$(WEBRTC_PRODUCTION_CI_PUBLIC_REMAINDER_SKIP)' -count=1 -timeout 600s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),13)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1D)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),14)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1E)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),15)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_2A)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),16)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_2B)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),17)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_2C)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),18)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_3A)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),19)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_3B)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),20)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_3C)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),21)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '^TestBrowserLiveAV1PlaybackStats$$' -count=1 -timeout 330s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),22)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_SOAK_DIRECT)' -count=1 -timeout 300s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),23)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_SOAK_SHARED)' -count=1 -timeout 300s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),24)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_SOAK_SIMULCAST)' -count=1 -timeout 300s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),25)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_CONTROL_DIRECT)' -count=1 -timeout 180s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),26)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_CONTROL_SHARED)' -count=1 -timeout 180s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),27)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_CONTROL_SIMULCAST)' -count=1 -timeout 180s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),28)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_FEEDBACK_A)' -count=1 -timeout 300s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),29)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1A_REMAINDER)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),30)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1B_REMAINDER)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),31)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1C_REMAINDER)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),32)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_1D_REMAINDER)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),33)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_2A_REMAINDER)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),34)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_2B_REMAINDER)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),35)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_2C_REMAINDER)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),36)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_3A_REMAINDER)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),37)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_PLAYBACK_3B_REMAINDER)' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),38)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go -C examples/browser-push test . -run '^(TestEndToEndAV1OverRTP|TestEndToEndAV1OverRTPOfferEndpoint)$$' -count=1 -timeout 360s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),39)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go -C examples/browser-push test . -run '^(TestEndToEndAV1OverRTPRTCEncoderControlChurn|TestEndToEndAV1OverRTPRTCEncoderREMBBitrateControl)$$' -count=1 -timeout 480s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),40)
+	GOAV1_REQUIRE_WEBRTC_BROWSER=1 go -C examples/browser-push test . -run '$(WEBRTC_PRODUCTION_CI_BROWSER_FEEDBACK_B)' -count=1 -timeout 300s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),41)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_CONTROLLER_I422_12)' -count=1 -timeout 600s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),42)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_CONTROLLER_I444_10)' -count=1 -timeout 600s -v
+else ifeq ($(WEBRTC_PRODUCTION_CI_SHARD),43)
+	GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 go test . -run '$(WEBRTC_PRODUCTION_CI_CONTROLLER_I444_12)' -count=1 -timeout 600s -v
+else
+	@echo 'set WEBRTC_PRODUCTION_CI_SHARD to 1 through 43' >&2
+	@exit 2
+endif
 
 dryrun-fast:
 	GOAV1_FAST_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomFastFrameWorkDryRun' -count=1 -timeout 600s -v

@@ -128,7 +128,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksPooledBands(p
 			if !bands.PlaneActive(plane) {
 				continue
 			}
-			if err := ctx.applyLoopFilterMaskPlaneRange(&local, bands.masks, lc, sharpness, plane, maskDirVertical, lo, hi); err != nil {
+			if err := ctx.applyLoopFilterMaskPlaneRange(&local, bands.masks, lc, sharpness, plane, maskDirVertical, lo, hi, 0, bands.masks.SB128W); err != nil {
 				return err
 			}
 		}
@@ -151,7 +151,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksPooledBands(p
 			if !bands.PlaneActive(plane) {
 				continue
 			}
-			if err := ctx.applyLoopFilterMaskPlaneRange(&local, bands.masks, lc, sharpness, plane, maskDirHorizontal, 0, regionRows); err != nil {
+			if err := ctx.applyLoopFilterMaskPlaneRange(&local, bands.masks, lc, sharpness, plane, maskDirHorizontal, 0, regionRows, 0, bands.masks.SB128W); err != nil {
 				return err
 			}
 		}

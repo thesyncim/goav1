@@ -1,6 +1,7 @@
 package encoder
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/bits"
 
@@ -901,8 +902,46 @@ func realtimeFillVarianceTree64(vt *realtimeVarTree64) {
 	realtimeSum2Variances(&vt.part.vert[0], &vt.part.vert[1], &vt.part.none)
 }
 
-var realtimeAvg8x8Impl = realtimeAvg8x8PureGo
-var realtimeAvg8x8QuadImpl = realtimeAvg8x8QuadPureGo
+var realtimeAvg8x8Impl = realtimeAvg8x8Wide
+var realtimeAvg8x8QuadImpl = realtimeAvg8x8QuadWide
+
+// realtimeAvg8x8Wide sums the 64 samples of an 8x8 block with SWAR: each row
+// is one little-endian uint64, its even and odd bytes are split into 16-bit
+// lanes, and the lanes accumulate over the eight rows. A lane holds at most
+// 8*510 = 4080, so no carry crosses lanes and the sum is exact.
+func realtimeAvg8x8Wide(src []byte, stride int) int {
+	const lowBytes = 0x00ff00ff00ff00ff
+	_ = src[7*stride+7]
+	r1 := src[stride:]
+	r2 := src[2*stride:]
+	r3 := src[3*stride:]
+	r4 := src[4*stride:]
+	r5 := src[5*stride:]
+	r6 := src[6*stride:]
+	r7 := src[7*stride:]
+	acc := rowPairSum(binary.LittleEndian.Uint64(src), lowBytes) +
+		rowPairSum(binary.LittleEndian.Uint64(r1), lowBytes) +
+		rowPairSum(binary.LittleEndian.Uint64(r2), lowBytes) +
+		rowPairSum(binary.LittleEndian.Uint64(r3), lowBytes) +
+		rowPairSum(binary.LittleEndian.Uint64(r4), lowBytes) +
+		rowPairSum(binary.LittleEndian.Uint64(r5), lowBytes) +
+		rowPairSum(binary.LittleEndian.Uint64(r6), lowBytes) +
+		rowPairSum(binary.LittleEndian.Uint64(r7), lowBytes)
+	sum := acc&0xffff + (acc>>16)&0xffff + (acc>>32)&0xffff + acc>>48
+	return int(sum+32) >> 6
+}
+
+// rowPairSum returns the four 16-bit lanes of w's even and odd byte pairs.
+func rowPairSum(w, lowBytes uint64) uint64 {
+	return (w & lowBytes) + ((w >> 8) & lowBytes)
+}
+
+func realtimeAvg8x8QuadWide(src []byte, stride int) (int, int, int, int) {
+	return realtimeAvg8x8Wide(src, stride),
+		realtimeAvg8x8Wide(src[8:], stride),
+		realtimeAvg8x8Wide(src[8*stride:], stride),
+		realtimeAvg8x8Wide(src[8*stride+8:], stride)
+}
 
 func realtimeAvg8x8(src []byte, stride int) int {
 	return realtimeAvg8x8Impl(src, stride)
@@ -2586,6 +2625,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 	}
 	drlIndex := 0
+	mds0PredRetained := false
 	if !refs.Compound {
 		mds0Picked := false
 		// The light-PD1 MDS0 candidate decision (SVT preset 12 shape; see
@@ -2606,11 +2646,12 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 		if st.mds0Level != 0 && mds0Gate && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height &&
 			st.realtimeContentStateForBlock(lumaPX, lumaPY).sourceSADNonRD != realtimeSourceSADZero {
-			if cand, ok := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {
+			if cand, ok, retained := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {
 				modeResult.Mode = cand.mode
 				mv = cand.mv
 				drlIndex = int(cand.drl)
 				mds0Picked = true
+				mds0PredRetained = retained
 			}
 		}
 		if !mds0Picked {
@@ -2682,8 +2723,10 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 				}
 			}
 		} else {
-			if err := predictIntoFilters(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, blockFilters, st.scaledScratch.Conv()); err != nil {
-				return fmt.Errorf("predict luma: %w", err)
+			if !mds0PredictorMatchesCodedFilters(mds0PredRetained, mv, blockFilters) {
+				if err := predictIntoFilters(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, blockFilters, st.scaledScratch.Conv()); err != nil {
+					return fmt.Errorf("predict luma: %w", err)
+				}
 			}
 			if hasChroma {
 				if err := predictIntoFilters(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters, st.scaledScratch.Conv()); err != nil {
@@ -4024,7 +4067,7 @@ func (st *lossyEncodeState) prepareInterTXBTyped(srcPlane, pred []byte, predStri
 	n := geo.sampleCount
 	cn := geo.coeffCount
 	tran := &st.tranScratch
-	if err := forwardTransformBlock(tran[:cn], residual[:n], st.dqScratch[:n], w, h, txType); err != nil {
+	if err := forwardTransformBlock8BitResidualTrusted(tran[:cn], residual[:n], st.dqScratch[:n], w, h, txType); err != nil {
 		return false
 	}
 	if len(qcoeff) < cn {
@@ -4591,6 +4634,17 @@ func forwardTransformBlock(tran []int32, residual []int16, scratch []int32, w, h
 		return nil
 	}
 	return transform.ForwardBlock(tran, h, residual, w, scratch, transform.Size{Width: uint8(w), Height: uint8(h)}, typ)
+}
+
+// forwardTransformBlock8BitResidualTrusted is used only after residuals have
+// been formed from 8-bit source and prediction planes. The residual values are
+// therefore bounded to [-255, 255], allowing narrow transform kernels to skip
+// their defensive full-block range scan.
+func forwardTransformBlock8BitResidualTrusted(tran []int32, residual []int16, scratch []int32, w, h int, typ transform.Type) error {
+	return transform.ForwardBlock8BitResidualTrusted(
+		tran, h, residual, w, scratch,
+		transform.Size{Width: uint8(w), Height: uint8(h)}, typ,
+	)
 }
 
 // forwardDCTBlock dispatches the forward DCT_DCT for every coded transform

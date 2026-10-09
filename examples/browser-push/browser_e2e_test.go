@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"runtime"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -29,6 +30,16 @@ const (
 	browserE2EEnv        = "GOAV1_BROWSER_E2E"
 	requireBrowserE2EEnv = "GOAV1_REQUIRE_WEBRTC_BROWSER"
 	browserExecutableEnv = "GOAV1_BROWSER_EXECUTABLE"
+	// A loaded CI runner reached 28/30 frames by 58.85 seconds while still
+	// receiving AV1 packets, so leave time for that same fixed frame count.
+	browserProbeTotalTimeout       = 110 * time.Second
+	browserProbeNoProgressTimeout  = 30 * time.Second
+	browserWSURLReadTimeout        = 45 * time.Second
+	browserProbeContextTimeout     = browserProbeTotalTimeout + browserWSURLReadTimeout + 5*time.Second
+	browserReconnectContextTimeout = 2*browserProbeTotalTimeout + browserWSURLReadTimeout + 5*time.Second
+	browserDirectRTPProbeTimeout   = browserProbeTotalTimeout
+	browserDirectRTPNoProgress     = browserProbeNoProgressTimeout
+	browserDirectRTPContext        = browserProbeContextTimeout
 )
 
 func TestBrowserLiveAV1PlaybackStats(t *testing.T) {
@@ -71,7 +82,7 @@ func TestBrowserLiveAV1PlaybackStats(t *testing.T) {
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), browserReconnectContextTimeout)
 	defer cancel()
 	browserCtx, closeBrowser := newBrowserE2EContext(t, ctx, browserPath)
 	defer closeBrowser()
@@ -104,8 +115,9 @@ func TestBrowserLiveRTCEncoderDirectRTPPlaybackStats(t *testing.T) {
 	for _, scenario := range browserRTCEncoderDirectRTPPlaybackScenarios(t) {
 		scenario := scenario
 		t.Run(scenario.name, func(t *testing.T) {
-			got := runBrowserLiveRTCEncoderDirectRTPPlaybackStats(
-				t, browserPath, scenario.name, scenario.query, scenario.options, scenario.wantWidth, scenario.wantHeight)
+			got := runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithBudgets(
+				t, browserPath, scenario.name, scenario.query, scenario.options, scenario.wantWidth, scenario.wantHeight,
+				rtcSenderFeedbackOptions{}, 45, browserDirectRTPProbeTimeout, browserDirectRTPNoProgress, browserDirectRTPContext)
 			if got.KeyFramesDecoded < scenario.minKeyFrames {
 				t.Fatalf("%s browser keyframes=%d want at least %d after forced refresh",
 					scenario.name, got.KeyFramesDecoded, scenario.minKeyFrames)
@@ -680,6 +692,16 @@ func runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedbackFrames(
 	t *testing.T, browserPath string, label string, query string, options rtcEncoderRTPStreamOptions,
 	wantWidth int, wantHeight int, feedback rtcSenderFeedbackOptions, minFrames int,
 ) browserPlaybackEvidence {
+	return runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithBudgets(
+		t, browserPath, label, query, options, wantWidth, wantHeight,
+		feedback, minFrames, browserProbeTotalTimeout, browserProbeNoProgressTimeout, browserProbeContextTimeout)
+}
+
+func runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithBudgets(
+	t *testing.T, browserPath string, label string, query string, options rtcEncoderRTPStreamOptions,
+	wantWidth int, wantHeight int, feedback rtcSenderFeedbackOptions, minFrames int,
+	probeTimeout time.Duration, noProgressTimeout time.Duration, contextTimeout time.Duration,
+) browserPlaybackEvidence {
 	t.Helper()
 	var mu sync.Mutex
 	var peers []*webrtc.PeerConnection
@@ -709,7 +731,7 @@ func runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedbackFrames(
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), contextTimeout)
 	defer cancel()
 	browserCtx, closeBrowser := newBrowserE2EContext(t, ctx, browserPath)
 	defer closeBrowser()
@@ -717,7 +739,7 @@ func runBrowserLiveRTCEncoderDirectRTPPlaybackStatsWithFeedbackFrames(
 	got := browserPlaybackEvidence{}
 	if err := chromedp.Run(browserCtx,
 		chromedp.Navigate(server.URL+"?"+query),
-		chromedp.Evaluate(browserPlaybackProbeJS(minFrames), &got, evalAwaitPromise),
+		chromedp.Evaluate(browserPlaybackProbeJSWithBudgets(minFrames, probeTimeout, noProgressTimeout), &got, evalAwaitPromise),
 	); err != nil {
 		t.Fatalf("%s browser AV1 playback probe: %v", label, err)
 	}
@@ -801,7 +823,7 @@ func TestBrowserLiveRTCEncoderDirectRTPImpairmentFeedback(t *testing.T) {
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), browserProbeContextTimeout)
 	defer cancel()
 	browserCtx, closeBrowser := newBrowserE2EContext(t, ctx, browserPath)
 	defer closeBrowser()
@@ -863,38 +885,93 @@ func TestBrowserLiveRTCEncoderDirectRTPNACKRetransmission(t *testing.T) {
 	}
 
 	feedback := &rtcSenderFeedbackCounters{}
+	const noDroppedSequence = 1 << 16
 	var cacheMu sync.Mutex
 	var droppedPackets atomic.Int64
 	var repairedPackets atomic.Int64
 	var repairMisses atomic.Int64
 	var keyPictures atomic.Int64
-	var postFeedbackKeyPictures atomic.Int64
+	var postDropKeyPictures atomic.Int64
+	var currentTemporalID atomic.Uint32
+	var currentFrameID atomic.Uint64
+	var startupKeySeen atomic.Bool
+	var startupBasePictures atomic.Int64
+	var startupMiddlePictures atomic.Int64
+	var droppedSequence atomic.Uint32
+	var droppedFrameID atomic.Uint64
+	var droppedTemporalID atomic.Uint32
+	var nackRequestedDroppedSequence atomic.Bool
+	var repairedDroppedSequence atomic.Bool
+	var droppedPacketIndex atomic.Uint32
+	var droppedPacketMarker atomic.Bool
+	var browserKeyFramesAtDrop atomic.Int64
+	browserDropBaselineReady := make(chan struct{})
+	var browserDropBaselineOnce sync.Once
+	browserKeyFramesAtDrop.Store(-1)
+	droppedSequence.Store(noDroppedSequence)
 	options := defaultRTCEncoderRTPStreamOptions()
 	options.ForceKeyFrame = func(frameIndex int) bool { return false }
-	options.DropPacket = func(frameIndex int, packetIndex int, _ rtp.Packet) bool {
-		if frameIndex != 10 || packetIndex >= 4 {
+	options.DropPacket = func(_ int, packetIndex int, packet rtp.Packet) bool {
+		if packetIndex != 1 || packet.Marker || currentTemporalID.Load() != 2 || !startupKeySeen.Load() ||
+			startupBasePictures.Load() < 2 || startupMiddlePictures.Load() < 1 {
 			return false
 		}
+		// Packet zero already carried the frame descriptor. A non-marker second
+		// packet proves this loss is interior to a fragmented disposable T2 frame.
+		if !droppedSequence.CompareAndSwap(noDroppedSequence, uint32(packet.SequenceNumber)) {
+			return false
+		}
+		droppedFrameID.Store(currentFrameID.Load())
+		droppedTemporalID.Store(currentTemporalID.Load())
+		droppedPacketIndex.Store(uint32(packetIndex))
+		droppedPacketMarker.Store(packet.Marker)
 		droppedPackets.Add(1)
 		return true
 	}
-	options.OnPacket = func(_ int, _ int, packet rtp.Packet, _ bool) error {
+	options.OnPacket = func(_ int, _ int, packet rtp.Packet, dropped bool) error {
 		raw := make([]byte, packet.MarshalSize())
 		n, err := packet.MarshalTo(raw)
 		if err != nil {
 			return err
 		}
 		cacheMu.Lock()
-		defer cacheMu.Unlock()
-		return retransmitCache.Store(raw[:n])
+		err = retransmitCache.Store(raw[:n])
+		cacheMu.Unlock()
+		if err != nil {
+			return err
+		}
+		if dropped {
+			select {
+			case <-browserDropBaselineReady:
+			case <-time.After(5 * time.Second):
+				return errors.New("browser did not report its keyframe baseline after the dropped RTP packet")
+			}
+		}
+		return nil
 	}
 	options.OnPicture = func(_ int, picture goav1.RTCPicture) {
+		// OnPicture runs immediately before this picture's RTP packetization,
+		// so DropPacket reads metadata for the same encoded picture.
+		frame := picture.Frames[0]
+		currentTemporalID.Store(uint32(frame.TemporalID))
+		currentFrameID.Store(frame.FrameID)
 		if !picture.Keyframe {
+			if startupKeySeen.Load() {
+				switch frame.TemporalID {
+				case 0:
+					startupBasePictures.Add(1)
+				case 1:
+					startupMiddlePictures.Add(1)
+				}
+			}
 			return
 		}
 		keyPictures.Add(1)
-		if rtcSenderFeedbackTotal(feedback) > 0 {
-			postFeedbackKeyPictures.Add(1)
+		startupKeySeen.Store(true)
+		startupBasePictures.Store(0)
+		startupMiddlePictures.Store(0)
+		if droppedSequence.Load() != noDroppedSequence {
+			postDropKeyPictures.Add(1)
 		}
 	}
 
@@ -918,6 +995,14 @@ func TestBrowserLiveRTCEncoderDirectRTPNACKRetransmission(t *testing.T) {
 			repairMisses.Add(1)
 			return false
 		}
+		if target := droppedSequence.Load(); target != noDroppedSequence {
+			for _, sequence := range nackSeqs {
+				if uint32(sequence) == target {
+					nackRequestedDroppedSequence.Store(true)
+					break
+				}
+			}
+		}
 		cacheMu.Lock()
 		out, count, err := retransmitCache.AppendPacketsForRTCPGenericNACKPairs(
 			retransmitBuf[:0], retransmitSpans, pairs)
@@ -933,6 +1018,9 @@ func TestBrowserLiveRTCEncoderDirectRTPNACKRetransmission(t *testing.T) {
 				return false
 			}
 			repairedPackets.Add(1)
+			if uint32(span.SequenceNumber) == droppedSequence.Load() {
+				repairedDroppedSequence.Store(true)
+			}
 		}
 		if count < len(nackSeqs) {
 			repairMisses.Add(int64(len(nackSeqs) - count))
@@ -948,6 +1036,24 @@ func TestBrowserLiveRTCEncoderDirectRTPNACKRetransmission(t *testing.T) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(indexHTML)
+	})
+	mux.HandleFunc("/drop-state", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"dropped":%t}`, droppedSequence.Load() != noDroppedSequence)
+	})
+	mux.HandleFunc("/drop-baseline", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+		keyFrames, err := strconv.Atoi(r.URL.Query().Get("keyframes"))
+		if err != nil || keyFrames < 0 {
+			http.Error(w, "invalid browser keyframe baseline", http.StatusBadRequest)
+			return
+		}
+		browserKeyFramesAtDrop.Store(int64(keyFrames))
+		browserDropBaselineOnce.Do(func() { close(browserDropBaselineReady) })
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("/offer", func(w http.ResponseWriter, r *http.Request) {
 		err := handleRTCEncoderRTPOfferWithStreamOptions(w, r, func(pc *webrtc.PeerConnection) {
@@ -969,7 +1075,7 @@ func TestBrowserLiveRTCEncoderDirectRTPNACKRetransmission(t *testing.T) {
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), browserProbeContextTimeout)
 	defer cancel()
 	browserCtx, closeBrowser := newBrowserE2EContext(t, ctx, browserPath)
 	defer closeBrowser()
@@ -977,7 +1083,7 @@ func TestBrowserLiveRTCEncoderDirectRTPNACKRetransmission(t *testing.T) {
 	got := browserPlaybackEvidence{}
 	if err := chromedp.Run(browserCtx,
 		chromedp.Navigate(server.URL+"?direct-rtp-retransmit=1"),
-		chromedp.Evaluate(browserPlaybackProbeJS(45), &got, evalAwaitPromise),
+		chromedp.Evaluate(browserPlaybackProbeJSWithDropObservation(45), &got, evalAwaitPromise),
 	); err != nil {
 		t.Fatalf("direct RTP retransmission browser AV1 playback probe: %v", err)
 	}
@@ -989,54 +1095,78 @@ func TestBrowserLiveRTCEncoderDirectRTPNACKRetransmission(t *testing.T) {
 		}
 	}
 	assertBrowserPlaybackEvidence(t, "direct-rtp-retransmission", got)
-	if droppedPackets.Load() == 0 {
-		t.Fatal("direct RTP retransmission test did not drop any packets")
+	if droppedPackets.Load() != 1 || droppedSequence.Load() == noDroppedSequence || droppedTemporalID.Load() != 2 ||
+		droppedPacketIndex.Load() != 1 || droppedPacketMarker.Load() {
+		t.Fatalf("direct RTP retransmission dropped=%d sequence=%d temporalID=%d frameID=%d packetIndex=%d marker=%t; want one interior packet from an established disposable T2 picture",
+			droppedPackets.Load(), droppedSequence.Load(), droppedTemporalID.Load(), droppedFrameID.Load(),
+			droppedPacketIndex.Load(), droppedPacketMarker.Load())
 	}
 	if feedback.NACK.Load() == 0 && got.NACKCount == 0 {
 		t.Fatalf("direct RTP retransmission produced no browser NACK after %d dropped packets", droppedPackets.Load())
 	}
+	if !nackRequestedDroppedSequence.Load() {
+		t.Fatalf("direct RTP retransmission NACK did not request dropped sequence %d; feedback=%s",
+			droppedSequence.Load(), rtcSenderFeedbackString(feedback))
+	}
 	if repairedPackets.Load() == 0 {
 		t.Fatalf("direct RTP retransmission did not resend cached packets after %d dropped packets", droppedPackets.Load())
+	}
+	if !repairedDroppedSequence.Load() {
+		t.Fatalf("direct RTP retransmission did not resend dropped sequence %d; repaired=%d feedback=%s",
+			droppedSequence.Load(), repairedPackets.Load(), rtcSenderFeedbackString(feedback))
 	}
 	if repairMisses.Load() != 0 {
 		t.Fatalf("direct RTP retransmission repair misses=%d repaired=%d feedback=%s",
 			repairMisses.Load(), repairedPackets.Load(), rtcSenderFeedbackString(feedback))
 	}
-	if postFeedbackKeyPictures.Load() != 0 || got.KeyFramesDecoded > 1 {
-		t.Fatalf("direct RTP retransmission forced key recovery instead of packet repair: serverKeys=%d postFeedback=%d browserKeys=%d feedback=%s",
-			keyPictures.Load(), postFeedbackKeyPictures.Load(), got.KeyFramesDecoded, rtcSenderFeedbackString(feedback))
+	if got.KeyFramesDecodedAtDrop < 0 || browserKeyFramesAtDrop.Load() != int64(got.KeyFramesDecodedAtDrop) {
+		t.Fatalf("direct RTP retransmission browser did not report a keyframe baseline at drop: browser=%d handler=%d",
+			got.KeyFramesDecodedAtDrop, browserKeyFramesAtDrop.Load())
+	}
+	if got.FramesDecodedAtDrop <= 0 {
+		t.Fatalf("direct RTP retransmission dropped before browser startup was established: framesAtDrop=%d",
+			got.FramesDecodedAtDrop)
+	}
+	if postDropKeyPictures.Load() != 0 || got.KeyFramesDecoded > got.KeyFramesDecodedAtDrop {
+		t.Fatalf("direct RTP retransmission forced key recovery after dropped sequence %d in T%d frameID=%d: serverKeys=%d beforeDrop=%d afterDrop=%d browserKeys=%d feedback=%s",
+			droppedSequence.Load(), droppedTemporalID.Load(), droppedFrameID.Load(), keyPictures.Load(),
+			got.KeyFramesDecodedAtDrop, postDropKeyPictures.Load(), got.KeyFramesDecoded, rtcSenderFeedbackString(feedback))
 	}
 	select {
 	case err := <-streamErr:
 		t.Fatalf("direct RTP retransmission stream failed: %v", err)
 	default:
 	}
-	t.Logf("direct RTP retransmission: dropped=%d repaired=%d %s browserNACK=%d",
-		droppedPackets.Load(), repairedPackets.Load(), rtcSenderFeedbackString(feedback), got.NACKCount)
+	t.Logf("direct RTP retransmission: droppedSequence=%d temporalID=%d frameID=%d packetIndex=%d repaired=%d framesAtDrop=%d keyframesAtDrop=%d %s browserNACK=%d",
+		droppedSequence.Load(), droppedTemporalID.Load(), droppedFrameID.Load(), droppedPacketIndex.Load(),
+		repairedPackets.Load(), got.FramesDecodedAtDrop, got.KeyFramesDecodedAtDrop,
+		rtcSenderFeedbackString(feedback), got.NACKCount)
 }
 
 type browserPlaybackEvidence struct {
-	OK                    bool   `json:"ok"`
-	Error                 string `json:"error"`
-	ConnectionState       string `json:"connectionState"`
-	ICEConnectionState    string `json:"iceConnectionState"`
-	PageError             string `json:"pageError"`
-	VideoReadyState       int    `json:"videoReadyState"`
-	VideoCurrentTimeMS    int    `json:"videoCurrentTimeMS"`
-	VideoWidth            int    `json:"videoWidth"`
-	VideoHeight           int    `json:"videoHeight"`
-	FramesDecoded         int    `json:"framesDecoded"`
-	KeyFramesDecoded      int    `json:"keyFramesDecoded"`
-	FramesReceived        int    `json:"framesReceived"`
-	PacketsReceived       int    `json:"packetsReceived"`
-	BytesReceived         int    `json:"bytesReceived"`
-	PLICount              int    `json:"pliCount"`
-	FIRCount              int    `json:"firCount"`
-	NACKCount             int    `json:"nackCount"`
-	FreezeCount           int    `json:"freezeCount"`
-	JitterMS              int    `json:"jitterMS"`
-	CodecMimeType         string `json:"codecMimeType"`
-	DecoderImplementation string `json:"decoderImplementation"`
+	OK                     bool   `json:"ok"`
+	Error                  string `json:"error"`
+	ConnectionState        string `json:"connectionState"`
+	ICEConnectionState     string `json:"iceConnectionState"`
+	PageError              string `json:"pageError"`
+	VideoReadyState        int    `json:"videoReadyState"`
+	VideoCurrentTimeMS     int    `json:"videoCurrentTimeMS"`
+	VideoWidth             int    `json:"videoWidth"`
+	VideoHeight            int    `json:"videoHeight"`
+	FramesDecoded          int    `json:"framesDecoded"`
+	FramesDecodedAtDrop    int    `json:"framesDecodedAtDrop"`
+	KeyFramesDecoded       int    `json:"keyFramesDecoded"`
+	KeyFramesDecodedAtDrop int    `json:"keyFramesDecodedAtDrop"`
+	FramesReceived         int    `json:"framesReceived"`
+	PacketsReceived        int    `json:"packetsReceived"`
+	BytesReceived          int    `json:"bytesReceived"`
+	PLICount               int    `json:"pliCount"`
+	FIRCount               int    `json:"firCount"`
+	NACKCount              int    `json:"nackCount"`
+	FreezeCount            int    `json:"freezeCount"`
+	JitterMS               int    `json:"jitterMS"`
+	CodecMimeType          string `json:"codecMimeType"`
+	DecoderImplementation  string `json:"decoderImplementation"`
 }
 
 func assertBrowserPlaybackEvidence(t *testing.T, label string, got browserPlaybackEvidence) {
@@ -1065,9 +1195,31 @@ func assertBrowserPlaybackEvidenceWithSize(t *testing.T, label string, got brows
 }
 
 func browserPlaybackProbeJS(minFrames int) string {
+	return browserPlaybackProbeJSWithBudgets(minFrames, browserProbeTotalTimeout, browserProbeNoProgressTimeout)
+}
+
+func browserPlaybackProbeJSWithBudgets(minFrames int, probeTimeout time.Duration, noProgressTimeout time.Duration) string {
+	return browserPlaybackProbeJSWithObservation(minFrames, probeTimeout, noProgressTimeout, false)
+}
+
+func browserPlaybackProbeJSWithDropObservation(minFrames int) string {
+	return browserPlaybackProbeJSWithObservation(
+		minFrames, browserProbeTotalTimeout, browserProbeNoProgressTimeout, true)
+}
+
+func browserPlaybackProbeJSWithObservation(
+	minFrames int, probeTimeout time.Duration, noProgressTimeout time.Duration, observeDrop bool,
+) string {
 	return fmt.Sprintf(`(async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const observeDrop = %t;
   let last = {};
+  let framesDecodedAtDrop = -1;
+  let keyFramesDecodedAtDrop = -1;
+  const withDropBaseline = (value) => Object.assign(value, {
+    framesDecodedAtDrop,
+    keyFramesDecodedAtDrop,
+  });
   const snapshot = async () => {
     const pc = window.goav1PC;
     const video = window.goav1Video || document.getElementById('video');
@@ -1118,10 +1270,42 @@ func browserPlaybackProbeJS(minFrames int) string {
     });
     return out;
   };
-  const deadline = Date.now() + 20000;
+  const deadline = Date.now() + %d;
+  let lastProgressAt = 0;
+  let previousFramesDecoded = 0;
   while (Date.now() < deadline) {
     last = await snapshot();
-    if (last.pageError) return Object.assign(last, { error: last.pageError });
+    const now = Date.now();
+    if (observeDrop && keyFramesDecodedAtDrop < 0) {
+      try {
+        const stateResponse = await fetch('/drop-state', { cache: 'no-store' });
+        if (!stateResponse.ok) throw new Error('drop-state request failed: ' + stateResponse.status);
+        const state = await stateResponse.json();
+        if (state.dropped) {
+          last = await snapshot();
+          framesDecodedAtDrop = last.framesDecoded;
+          keyFramesDecodedAtDrop = last.keyFramesDecoded;
+          const baselineResponse = await fetch(
+            '/drop-baseline?keyframes=' + encodeURIComponent(keyFramesDecodedAtDrop),
+            { method: 'POST', cache: 'no-store' },
+          );
+          if (!baselineResponse.ok) throw new Error('drop-baseline request failed: ' + baselineResponse.status);
+        }
+      } catch (error) {
+        return withDropBaseline(Object.assign(last, { error: 'drop observation failed: ' + String(error) }));
+      }
+    }
+    if (last.pageError) return withDropBaseline(Object.assign(last, { error: last.pageError }));
+    if (last.framesDecoded > previousFramesDecoded) {
+      previousFramesDecoded = last.framesDecoded;
+      lastProgressAt = now;
+    } else if (
+      lastProgressAt === 0 &&
+      last.connectionState === 'connected' &&
+      last.videoReadyState >= 2
+    ) {
+      lastProgressAt = now;
+    }
     if (
       last.connectionState === 'connected' &&
       last.videoReadyState >= 2 &&
@@ -1132,12 +1316,15 @@ func browserPlaybackProbeJS(minFrames int) string {
       last.packetsReceived > 0 &&
       last.bytesReceived > 0
     ) {
-      return Object.assign(last, { ok: true });
+      return withDropBaseline(Object.assign(last, { ok: true }));
+    }
+    if (lastProgressAt > 0 && now - lastProgressAt >= %d) {
+      return withDropBaseline(Object.assign(last, { error: 'timed out waiting for decoded-frame progress' }));
     }
     await sleep(250);
   }
-  return Object.assign(last, { error: 'timed out waiting for live AV1 frames decoded by browser' });
-})()`, minFrames)
+  return withDropBaseline(Object.assign(last, { error: 'overall timeout waiting for live AV1 frames decoded by browser' }));
+})()`, observeDrop, probeTimeout.Milliseconds(), minFrames, noProgressTimeout.Milliseconds())
 }
 
 func evalAwaitPromise(p *cdpruntime.EvaluateParams) *cdpruntime.EvaluateParams {
@@ -1356,6 +1543,9 @@ func newBrowserE2EContext(t *testing.T, parent context.Context, browserPath stri
 	options := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
 	options = append(options,
 		chromedp.ExecPath(browserPath),
+		// CI has exceeded chromedp's 20-second default while Chrome was still
+		// starting; the test context continues to bound startup and playback.
+		chromedp.WSURLReadTimeout(browserWSURLReadTimeout),
 		chromedp.Flag("headless", "new"),
 		chromedp.Flag("autoplay-policy", "no-user-gesture-required"),
 		chromedp.Flag("disable-background-timer-throttling", true),

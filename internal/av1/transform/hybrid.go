@@ -87,14 +87,37 @@ func inverseSeparableBlockClampedRows(dst []int16, dstStride int, coeff []int32,
 	if dstStride < width || !blockFits(len(dst), dstStride, width, height) {
 		return ErrInvalidTransform
 	}
-	if err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, scratch, size, typ, rowMin, rowMax, colMin, colMax, activeRows); err != nil {
+	if _, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, scratch, size, typ, rowMin, rowMax, colMin, colMax, activeRows, nil, false); err != nil {
 		return err
 	}
 	narrowStoreImpl(dst, dstStride, scratch, width, height)
 	return nil
 }
 
-func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, scratch []int32, size Size, typ Type, rowMin int32, rowMax int32, colMin int32, colMax int32, activeRows int) error {
+// stageTransposeClampScalar stages the rows x cols rectangle of the
+// column-major coefficient block into row-major scratch lines of length
+// width, clamping every value to [lo, hi]; rect2 applies the rectangular-
+// transform sqrt2 scale before the clamp. Only the rectangle is written —
+// line tails and trailing lines are the caller's to clear.
+func stageTransposeClampScalar(scratch []int32, width int, coeff []int32, coeffStride int, rows int, cols int, rect2 bool, lo int32, hi int32) {
+	if rect2 {
+		for row := 0; row < rows; row++ {
+			tmpLine := scratch[row*width : row*width+cols : row*width+cols]
+			for col := range tmpLine {
+				tmpLine[col] = clipRange(int64(rect2Scale(coeff[col*coeffStride+row])), lo, hi)
+			}
+		}
+	} else {
+		for row := 0; row < rows; row++ {
+			tmpLine := scratch[row*width : row*width+cols : row*width+cols]
+			for col := range tmpLine {
+				tmpLine[col] = clipRange(int64(coeff[col*coeffStride+row]), lo, hi)
+			}
+		}
+	}
+}
+
+func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, scratch []int32, size Size, typ Type, rowMin int32, rowMax int32, colMin int32, colMax int32, activeRows int, col16 []int16, col16AliasesScratch bool) (bool, error) {
 	// Resolve every per-size datum from a single compact index instead of
 	// re-deriving it through size.shift(), adjustedScanSize() and IsRect2(),
 	// each of which would recompute sizeIndex on this hot path.
@@ -123,10 +146,13 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 		coeffStride < coeffH ||
 		len(scratch) < scratchLen ||
 		!coeffBlockFits(len(coeff), coeffStride, coeffW, coeffH) {
-		return ErrInvalidTransform
+		return false, ErrInvalidTransform
 	}
 	if activeRows < 0 || activeRows > height {
-		return ErrInvalidTransform
+		return false, ErrInvalidTransform
+	}
+	if col16 != nil && len(col16) < scratchLen {
+		return false, ErrInvalidTransform
 	}
 
 	// Reslice scratch to its exact span so the row/column copy loops below
@@ -141,62 +167,28 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 	// Stage the row inputs into scratch, then run the row pass. The input
 	// staging is kept separate from the transform so the transform can batch
 	// two already-staged rows through the SIMD-accelerated inverse1DRow2.
+	// stageTransposeClamp writes only the rows x cols rectangle, so each
+	// branch clears its line tails and trailing lines exactly as before.
 	if rowLimit < height {
 		rowsToStage := rowLimit
 		if rowsToStage > coeffH {
 			rowsToStage = coeffH
 		}
-		if rect2 {
+		stageTransposeClamp(scratch, width, coeff, coeffStride, rowsToStage, coeffW, rect2, rowMin, rowMax)
+		if coeffW < width {
 			for row := 0; row < rowsToStage; row++ {
-				tmpLine := scratch[row*width : row*width+width : row*width+width]
-				for col := 0; col < coeffW; col++ {
-					tmpLine[col] = clipRange(int64(rect2Scale(coeff[col*coeffStride+row])), rowMin, rowMax)
-				}
-				clear(tmpLine[coeffW:])
-			}
-		} else {
-			for row := 0; row < rowsToStage; row++ {
-				tmpLine := scratch[row*width : row*width+width : row*width+width]
-				for col := 0; col < coeffW; col++ {
-					tmpLine[col] = clipRange(int64(coeff[col*coeffStride+row]), rowMin, rowMax)
-				}
-				clear(tmpLine[coeffW:])
+				clear(scratch[row*width+coeffW : (row+1)*width])
 			}
 		}
 		clear(scratch[rowsToStage*width:])
 		rowLimit = rowsToStage
 	} else if coeffW == width && coeffH == height {
-		if rect2 {
-			for row := range height {
-				tmpLine := scratch[row*width : row*width+width : row*width+width]
-				for col := range tmpLine {
-					tmpLine[col] = clipRange(int64(rect2Scale(coeff[col*coeffStride+row])), rowMin, rowMax)
-				}
-			}
-		} else {
-			for row := range height {
-				tmpLine := scratch[row*width : row*width+width : row*width+width]
-				for col := range tmpLine {
-					tmpLine[col] = clipRange(int64(coeff[col*coeffStride+row]), rowMin, rowMax)
-				}
-			}
-		}
+		stageTransposeClamp(scratch, width, coeff, coeffStride, height, width, rect2, rowMin, rowMax)
 	} else {
-		if rect2 {
+		stageTransposeClamp(scratch, width, coeff, coeffStride, coeffH, coeffW, rect2, rowMin, rowMax)
+		if coeffW < width {
 			for row := 0; row < coeffH; row++ {
-				tmpLine := scratch[row*width : row*width+width : row*width+width]
-				for col := 0; col < coeffW; col++ {
-					tmpLine[col] = clipRange(int64(rect2Scale(coeff[col*coeffStride+row])), rowMin, rowMax)
-				}
-				clear(tmpLine[coeffW:])
-			}
-		} else {
-			for row := 0; row < coeffH; row++ {
-				tmpLine := scratch[row*width : row*width+width : row*width+width]
-				for col := 0; col < coeffW; col++ {
-					tmpLine[col] = clipRange(int64(coeff[col*coeffStride+row]), rowMin, rowMax)
-				}
-				clear(tmpLine[coeffW:])
+				clear(scratch[row*width+coeffW : (row+1)*width])
 			}
 		}
 		clear(scratch[coeffH*width:])
@@ -227,12 +219,47 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 		inverse1DRow(tmpLine, width, horizontal, rowMin, rowMax)
 	}
 
+	// int16 column pipeline (dav1d 8bpc): narrow the int32 row output into the
+	// int16 scratch during the round/clamp (free), then run the int16 DCT column
+	// pass with no boundary conversion. col16 is only supplied for bitDepth==8
+	// blocks whose vertical transform is a DCT.
+	midPassClamped := false
+	if col16 != nil {
+		total := width * height
+		if rowLimit == height {
+			clampRoundNarrowInt16Impl(scratch, col16, shift, colMin, colMax)
+		} else {
+			clampRoundNarrowInt16Impl(scratch[:rowLimit*width], col16[:rowLimit*width], shift, colMin, colMax)
+			for i := rowLimit * width; i < total; i++ {
+				col16[i] = 0
+			}
+		}
+		// Scalar int16 kernels use exact wide intermediates and support the full
+		// int16 range. SIMD dispatch also checks the certified bounds for wider
+		// transforms and the measured DCT8 profitability cutoff.
+		if !int16ColumnFast || int16ColumnSIMDInputEligible(col16, width, height, colMin, colMax) {
+			inverseDCTColumnPassInt16(col16, width, height, colMin, colMax)
+			return true, nil
+		}
+		if col16AliasesScratch {
+			// The in-place narrow already applied the mid-pass round/clamp. Restore
+			// those values to int32 before continuing through the exact int32 column
+			// path. Descending order preserves unread packed int16 lanes.
+			for i := total - 1; i >= 0; i-- {
+				scratch[i] = int32(col16[i])
+			}
+			midPassClamped = true
+		}
+	}
+
 	// Rows beyond rowLimit have already been zeroed; zero is unchanged by the
 	// round/shift and lies inside every supported column clamp range.
-	if rowLimit == height {
-		clampRoundImpl(scratch, shift, colMin, colMax)
-	} else {
-		clampRoundImpl(scratch[:rowLimit*width], shift, colMin, colMax)
+	if !midPassClamped {
+		if rowLimit == height {
+			clampRoundImpl(scratch, shift, colMin, colMax)
+		} else {
+			clampRoundImpl(scratch[:rowLimit*width], shift, colMin, colMax)
+		}
 	}
 
 	// Column pass: transform four adjacent columns per iteration when a
@@ -252,7 +279,7 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 		inverse1D(scratch[col:], width, height, vertical, colMin, colMax)
 	}
 
-	return nil
+	return false, nil
 }
 
 // clampRoundPureGo is the portable mid-pass round and clamp.

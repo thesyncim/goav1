@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -204,11 +205,12 @@ func TestRequiredEncoderError(t *testing.T) {
 
 func TestValidateRequiredEncoderTools(t *testing.T) {
 	cfg := benchConfig{requiredEncoders: []string{"goav1", "aomenc"}}
+	aomencBin, _ := writeTestExecutableWithSHA256(t, qualitybenchTestHelper(t), "aomenc")
 	if err := validateRequiredEncoderTools(cfg, func(name string) (string, error) {
 		if name != "aomenc" {
 			t.Fatalf("unexpected tool lookup %q", name)
 		}
-		return "/bin/aomenc", nil
+		return aomencBin, nil
 	}); err != nil {
 		t.Fatalf("valid tools failed: %v", err)
 	}
@@ -693,23 +695,6 @@ func TestGoAV1EncodeHelperWritesArtifactResult(t *testing.T) {
 
 func TestEncodeGoAV1ExternalBaselineMetricsUseFFmpegDecode(t *testing.T) {
 	dir := t.TempDir()
-	ffmpegPath := filepath.Join(dir, "ffmpeg")
-	argsPath := filepath.Join(dir, "ffmpeg.args")
-	yuvBytes := expectedRawI420Bytes(64, 64, 2)
-	script := fmt.Sprintf(`#!/bin/sh
-: > %q
-for arg in "$@"; do
-	printf '%%s\n' "$arg" >> %q
-done
-out=""
-for arg in "$@"; do
-	out="$arg"
-done
-dd if=/dev/zero of="$out" bs=%d count=1 2>/dev/null
-`, argsPath, argsPath, yuvBytes)
-	if err := os.WriteFile(ffmpegPath, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	cfg := benchConfig{
 		width:            64,
 		height:           64,
@@ -719,7 +704,7 @@ dd if=/dev/zero of="$out" bs=%d count=1 2>/dev/null
 		layers:           1,
 		timingMode:       timingModeEndToEnd,
 		encoders:         []string{"goav1", "aomenc"},
-		ffmpegBin:        ffmpegPath,
+		ffmpegBin:        qualitybenchTestHelper(t),
 		ffmpegAV1Decoder: "libdav1d",
 	}
 
@@ -770,7 +755,7 @@ dd if=/dev/zero of="$out" bs=%d count=1 2>/dev/null
 	if _, ok, err := it.Next(); err != nil || ok {
 		t.Fatalf("unexpected extra ivf frame ok=%v err=%v", ok, err)
 	}
-	args, err := os.ReadFile(argsPath)
+	args, err := os.ReadFile(result.decodedYUV + ".args")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1583,20 +1568,8 @@ func assertSettings(t *testing.T, got map[string]string, want map[string]string)
 func TestTimeCommandCapturesFailureWithoutRerun(t *testing.T) {
 	dir := t.TempDir()
 	countPath := filepath.Join(dir, "count")
-	scriptPath := filepath.Join(dir, "fail-once.sh")
-	script := fmt.Sprintf(`#!/bin/sh
-n=$(cat %q 2>/dev/null || echo 0)
-n=$((n + 1))
-echo "$n" > %q
-echo "stdout-run-$n"
-echo "stderr-run-$n" >&2
-exit 7
-`, countPath, countPath)
-	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	var result encodeResult
-	_ = timeCommand(defaultCommandTimeout, scriptPath, nil, &result)
+	_ = timeCommand(defaultCommandTimeout, qualitybenchTestHelper(t), qualitybenchHelperArgs("fail-once", countPath), &result)
 	rawCount, err := os.ReadFile(countPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1614,26 +1587,13 @@ exit 7
 func TestExternalCommandEnvSanitizesAmbientControls(t *testing.T) {
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, "env.txt")
-	scriptPath := filepath.Join(dir, "env.sh")
-	script := fmt.Sprintf(`#!/bin/sh
-{
-printf 'omp=%%s\n' "$OMP_NUM_THREADS"
-printf 'dyld=%%s\n' "$DYLD_INSERT_LIBRARIES"
-printf 'lc=%%s\n' "$LC_ALL"
-printf 'tz=%%s\n' "$TZ"
-printf 'path=%%s\n' "$PATH"
-} > %q
-`, envPath)
-	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("OMP_NUM_THREADS", "99")
 	t.Setenv("DYLD_INSERT_LIBRARIES", "/tmp/not-real.dylib")
 	t.Setenv("LC_ALL", "fr_FR.UTF-8")
 	t.Setenv("TZ", "Europe/Lisbon")
 
 	var result encodeResult
-	_ = timeCommand(defaultCommandTimeout, scriptPath, nil, &result)
+	_ = timeCommand(defaultCommandTimeout, qualitybenchTestHelper(t), qualitybenchHelperArgs("env", envPath), &result)
 	if result.status != "" {
 		t.Fatalf("command status=%q err=%q", result.status, result.errText)
 	}
@@ -1657,10 +1617,11 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		AffinityAllowedList: "0-3",
 		CPUOnlineList:       "0-3",
 	})
-	ffmpegBin, ffmpegHash := writeTestExecutableWithSHA256(t, "ffmpeg")
-	goBin, goHash := writeTestExecutableWithSHA256(t, "go")
-	aomencBin, aomencHash := writeTestExecutableWithSHA256(t, "aomenc")
-	svtBin, svtHash := writeTestExecutableWithSHA256(t, "SvtAv1EncApp")
+	testExecutable := qualitybenchTestHelper(t)
+	ffmpegBin, ffmpegHash := writeTestExecutableWithSHA256(t, testExecutable, "ffmpeg")
+	goBin, goHash := writeTestExecutableWithSHA256(t, testExecutable, "go")
+	aomencBin, aomencHash := writeTestExecutableWithSHA256(t, testExecutable, "aomenc")
+	svtBin, svtHash := writeTestExecutableWithSHA256(t, testExecutable, "SvtAv1EncApp")
 	vmafModelPath := filepath.Join(t.TempDir(), "vmaf.json")
 	if err := os.WriteFile(vmafModelPath, []byte(`{"model":"fixture"}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -2574,10 +2535,15 @@ func TestRunEncoderJobsMeasuredPublishRequiresCPUBudgetEvidence(t *testing.T) {
 	}
 }
 
-func writeTestExecutableWithSHA256(t *testing.T, name string) (string, string) {
+func writeTestExecutableWithSHA256(t *testing.T, source, name string) (string, string) {
 	t.Helper()
+	name = qualitybenchExecutableName(name)
 	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	hash, err := sha256File(path)
@@ -2814,6 +2780,48 @@ func TestCommandMetadataRecordsBinaryHash(t *testing.T) {
 	}
 }
 
+func TestVMAFModelPathPreservesWindowsDriveColon(t *testing.T) {
+	for _, model := range []string{
+		`path=C:\models\vmaf.json`,
+		`log_fmt=json:path=C:\models\vmaf.json`,
+	} {
+		got, ok, err := vmafModelPath(model)
+		if err != nil || !ok || got != `C:\models\vmaf.json` {
+			t.Fatalf("vmafModelPath(%q)=%q,%v,%v", model, got, ok, err)
+		}
+	}
+}
+
+func TestWindowsExecutableSuffixValidation(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows executable suffix semantics")
+	}
+	helper := qualitybenchTestHelper(t)
+	for _, tc := range []struct {
+		ext  string
+		want bool
+	}{
+		{ext: ".exe", want: true},
+		{ext: ".cmd", want: false},
+	} {
+		path := filepath.Join(t.TempDir(), "tool"+tc.ext)
+		raw, err := os.ReadFile(helper)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, raw, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := isExecutableFile(path, info); got != tc.want {
+			t.Errorf("isExecutableFile(%q)=%v want %v", path, got, tc.want)
+		}
+	}
+}
+
 func TestWriteMetadataJSON(t *testing.T) {
 	stubQualitybenchCPUState(t, benchenv.CPUState{
 		GOOS:                "test",
@@ -2993,21 +3001,28 @@ func TestWriteMetadataJSON(t *testing.T) {
 }
 
 func TestCommandTimeoutReportsDeadline(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "sleepy")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nsleep 2\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	bin := qualitybenchTestHelper(t)
+	timeout := 250 * time.Millisecond
+	timeoutMessage := "command timed out after 250ms"
+
 	var result encodeResult
-	elapsed := timeCommand(10*time.Millisecond, bin, nil, &result)
-	if result.status != "error" || !strings.Contains(result.errText, "command timed out after 10ms") {
+	elapsed := timeCommand(timeout, bin, qualitybenchHelperArgs("pipe-child"), &result)
+	if result.status != "error" || !strings.Contains(result.errText, timeoutMessage) {
 		t.Fatalf("timeout result=%+v", result)
 	}
-	if elapsed > time.Second {
-		t.Fatalf("timeout elapsed=%s, want prompt cancellation", elapsed)
+	if elapsed > timeout+commandWaitDelay+time.Second {
+		t.Fatalf("timeout elapsed=%s, want prompt cancellation after %s", elapsed, timeout)
 	}
 
-	out, err := combinedOutputWithTimeout(10*time.Millisecond, bin)
-	if err == nil || !strings.Contains(err.Error(), "command timed out after 10ms") {
+	var out []byte
+	var err error
+	started := time.Now()
+	out, err = combinedOutputWithTimeout(timeout, bin, qualitybenchHelperArgs("pipe-child")...)
+	combinedElapsed := time.Since(started)
+	if err == nil || !strings.Contains(err.Error(), timeoutMessage) {
 		t.Fatalf("combined timeout err=%v out=%q", err, out)
+	}
+	if combinedElapsed > timeout+commandWaitDelay+time.Second {
+		t.Fatalf("combined timeout elapsed=%s, want prompt cancellation after %s", combinedElapsed, timeout)
 	}
 }

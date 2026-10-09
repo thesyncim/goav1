@@ -110,23 +110,6 @@ func BenchmarkCoeffCulLevel(b *testing.B) {
 					b.Fatal(sink)
 				}
 			})
-			b.Run(name+"/"+coeffBenchClassName(class)+"/arch-direct", func(b *testing.B) {
-				if _, ok := coeffCulLevelArch(coeffs, scan, maxEOB); !ok {
-					b.Skip("arch path unavailable")
-				}
-				var sink uint8
-				b.ReportAllocs()
-				for i := 0; i < b.N; i++ {
-					v, ok := coeffCulLevelArch(coeffs, scan, maxEOB)
-					if !ok {
-						b.Fatal("arch path became unavailable")
-					}
-					sink = v
-				}
-				if sink == 0xff {
-					b.Fatal(sink)
-				}
-			})
 		}
 	}
 }

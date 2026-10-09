@@ -549,6 +549,7 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 		}
 	}
 	drlIndex := 0
+	mds0PredRetained := false
 	if !refs.Compound {
 		mds0Picked := false
 		mds0Gate := fullSAD*4 > bw*bh
@@ -557,11 +558,12 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 		}
 		if st.mds0Level != 0 && mds0Gate && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height &&
 			st.realtimeContentStateForBlock(lumaPX, lumaPY).sourceSADNonRD != realtimeSourceSADZero {
-			if cand, ok := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {
+			if cand, ok, retained := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {
 				modeResult.Mode = cand.mode
 				mv = cand.mv
 				drlIndex = int(cand.drl)
 				mds0Picked = true
+				mds0PredRetained = retained
 			}
 		}
 		if !mds0Picked {
@@ -624,8 +626,10 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 				}
 			}
 		} else {
-			if err := predictIntoFilters(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, blockFilters, st.scaledScratch.Conv()); err != nil {
-				return fmt.Errorf("predict luma: %w", err)
+			if !mds0PredictorMatchesCodedFilters(mds0PredRetained, mv, blockFilters) {
+				if err := predictIntoFilters(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, blockFilters, st.scaledScratch.Conv()); err != nil {
+					return fmt.Errorf("predict luma: %w", err)
+				}
 			}
 			if hasChroma {
 				if err := predictIntoFilters(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters, st.scaledScratch.Conv()); err != nil {

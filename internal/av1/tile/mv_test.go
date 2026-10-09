@@ -450,3 +450,39 @@ func BenchmarkReadMotionVectorStream(b *testing.B) {
 	}
 	_ = sum
 }
+
+// BenchmarkReadMotionVector measures the full ReadMotionVector chain (joint +
+// both component reads at high precision) over a random stream with default
+// nmv CDFs.
+func BenchmarkReadMotionVector(b *testing.B) {
+	payload := make([]byte, 1<<20)
+	rng := rand.New(rand.NewSource(0xd3e5eed))
+	rng.Read(payload)
+	var cdfs MVCDFs
+	if err := cdfs.InitDefault(); err != nil {
+		b.Fatal(err)
+	}
+	var s DecodeState
+	reset := func() {
+		if err := s.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
+			b.Fatal(err)
+		}
+		if err := cdfs.InitDefault(); err != nil {
+			b.Fatal(err)
+		}
+	}
+	reset()
+	ref := motion.Vector{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if i&8191 == 8191 {
+			reset()
+		}
+		if _, _, err := s.ReadMotionVector(&cdfs, ref, MVSubpelHigh); err != nil {
+			// A maximal class-10 magnitude can clamp against the ±16384
+			// open interval; restart the stream and keep measuring.
+			reset()
+		}
+	}
+}

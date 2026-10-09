@@ -237,6 +237,21 @@ func blockFits(length int, stride int, width int, height int) bool {
 	return ok && needed <= length
 }
 
+// residualFitsMagnitude reports whether every sample in a validated residual
+// block lies in [-maxAbs, maxAbs]. Narrow architecture-specific transform
+// kernels use it to select the scalar reference outside their proven domain.
+func residualFitsMagnitude(residual []int16, stride, width, height int, maxAbs int32) bool {
+	for row := 0; row < height; row++ {
+		for col := 0; col < width; col++ {
+			v := int32(residual[row*stride+col])
+			if v < -maxAbs || v > maxAbs {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func coeffBlockFits(length int, stride int, width int, height int) bool {
 	if stride <= 0 || width <= 0 || height <= 0 {
 		return false

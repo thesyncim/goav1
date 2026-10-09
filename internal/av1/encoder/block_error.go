@@ -19,3 +19,9 @@ func blockErrorPureGo(coeff []int32, dqcoeff []int32, count int) (err int64, ssz
 	}
 	return err, ssz
 }
+
+// blockError dispatches to the bound implementation (scalar by default, Go SIMD
+// under GOEXPERIMENT=simd).
+func blockError(coeff []int32, dqcoeff []int32, count int) (err int64, ssz int64) {
+	return blockErrorImpl(coeff, dqcoeff, count)
+}

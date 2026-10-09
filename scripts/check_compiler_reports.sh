@@ -6,6 +6,8 @@ export LC_ALL
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 allowlist="$repo_root/scripts/compiler_hotpath_escape_allowlist.txt"
+# This reviewed baseline matches main's Go 1.27 report plus capacity-backed
+# preallocation sites. Recheck warmed call paths before adding compiler escapes.
 tmp=${TMPDIR:-/tmp}/goav1-compiler-reports.$$
 mkdir -p "$tmp"
 trap 'rm -rf "$tmp"' EXIT INT HUP TERM

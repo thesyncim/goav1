@@ -34,6 +34,11 @@ package testvector
 // timing provenance is persisted alongside the human log.
 // GOAV1_BENCH_CORPUS_REQUIRE_DECODERS can require a named comma-separated
 // subset (or "all") for local audits.
+// Setting GOAV1_BENCH_CORPUS_REPORT_JSON without publish mode writes an
+// exploratory report only when GOAV1_BENCH_CORPUS_REQUIRE_DECODERS explicitly
+// names decoders whose absolute paths and SHA-256 values are pinned in the
+// matching GOAV1_BENCH_CORPUS_<DECODER>_BIN/_SHA256 variables. Its
+// validation_mode is "exploratory" and does not certify corpus provenance.
 //
 // METHODOLOGY (mirrors cross_decoder_bench_test.go)
 //
@@ -206,6 +211,11 @@ const (
 	corpusManifestMagicV2   = "# goav1_bench_corpus_manifest_v2"
 	corpusManifestColumnsV1 = "name\twidth\theight\tframes\tcq\tdepth\tchroma\tprofile\tivf_bytes\tivf_sha256\tmd5\tmd5_sha256\tdav1d_check\taomenc_args"
 	corpusManifestColumnsV2 = corpusManifestColumnsV1 + "\tsource_id\tsource_sha256\tsource_url\tsource_license\tsource_category"
+)
+
+const (
+	corpusValidationModeExploratory      = "exploratory"
+	corpusValidationModeValidatedPublish = "validated_publish"
 )
 
 type corpusOracleSidecar struct {
@@ -1682,7 +1692,7 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 		},
 	}
 	reportPath := filepath.Join(dir, "report", "corpus.json")
-	if err := writeCorpusPublishReport(reportPath, dir, manifest, []corpusClip{clip}, results, timers); err != nil {
+	if err := writeCorpusPublishReport(reportPath, corpusValidationModeValidatedPublish, dir, manifest, []corpusClip{clip}, results, timers); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(reportPath)
@@ -1692,6 +1702,9 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 	var report corpusPublishReport
 	if err := json.Unmarshal(raw, &report); err != nil {
 		t.Fatal(err)
+	}
+	if report.ValidationMode != corpusValidationModeValidatedPublish {
+		t.Fatalf("validation_mode=%q want %q", report.ValidationMode, corpusValidationModeValidatedPublish)
 	}
 	if report.Corpus.ManifestSHA256 != manifestSHA || report.Corpus.ExpectedClips != 1 || report.Corpus.LoadedClips != 1 || report.Corpus.TotalFrames != 3 {
 		t.Fatalf("corpus report=%+v want manifest hash/clip counts", report.Corpus)
@@ -1757,6 +1770,24 @@ func TestWriteCorpusPublishReport(t *testing.T) {
 		report.Decoders[1].PerClip[0].MedianMS != 16 || report.Decoders[1].PerClip[0].IQRMS != 3 ||
 		len(report.Decoders[1].PerClip[0].SamplesMS) != 3 {
 		t.Fatalf("per-clip=%+v", report.Decoders[1].PerClip)
+	}
+
+	exploratoryPath := filepath.Join(dir, "report", "exploratory.json")
+	if err := writeCorpusPublishReport(exploratoryPath, corpusValidationModeExploratory, dir, corpusPublishManifest{}, []corpusClip{clip}, results, timers); err != nil {
+		t.Fatal(err)
+	}
+	exploratoryRaw, err := os.ReadFile(exploratoryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exploratoryReport corpusPublishReport
+	if err := json.Unmarshal(exploratoryRaw, &exploratoryReport); err != nil {
+		t.Fatal(err)
+	}
+	if exploratoryReport.ValidationMode != corpusValidationModeExploratory ||
+		exploratoryReport.Corpus.Manifest != "" || exploratoryReport.Corpus.SourceCount != 0 ||
+		len(exploratoryReport.Corpus.Sources) != 0 || exploratoryReport.Clips[0].SourceID != "" {
+		t.Fatalf("exploratory report mode/provenance=%q %+v", exploratoryReport.ValidationMode, exploratoryReport.Corpus)
 	}
 }
 
@@ -2887,6 +2918,7 @@ type corpusTimingDecoder struct {
 }
 
 type corpusPublishReport struct {
+	ValidationMode string                       `json:"validation_mode"`
 	GeneratedAtUTC string                       `json:"generated_at_utc"`
 	Git            corpusPublishGit             `json:"git"`
 	Environment    corpusPublishEnvironment     `json:"environment"`
@@ -3174,7 +3206,7 @@ func resolveCorpusPublishExternalDecoders(decoders []externalDecoder, required m
 		binEnv, shaEnv := corpusPublishExternalDecoderPinEnvNames(dec.name)
 		bin := strings.TrimSpace(os.Getenv(binEnv))
 		if bin == "" {
-			return nil, fmt.Errorf("set %s to the absolute %s decoder path for corpus publish", binEnv, dec.name)
+			return nil, fmt.Errorf("set %s to the absolute %s decoder path for a corpus report", binEnv, dec.name)
 		}
 		if !filepath.IsAbs(bin) {
 			return nil, fmt.Errorf("%s must be an absolute path, got %q", binEnv, bin)
@@ -3280,6 +3312,9 @@ func TestCrossDecoderCorpus(t *testing.T) {
 	if publish && reportPath == "" {
 		t.Fatalf("cross-corpus publish: set %s to write the machine-readable benchmark sidecar", envBenchCorpusReportJSON)
 	}
+	if !publish && reportPath != "" && strings.TrimSpace(os.Getenv(envBenchCorpusRequireDecoders)) == "" {
+		t.Fatalf("cross-corpus exploratory report: set %s to explicitly select the reference decoders", envBenchCorpusRequireDecoders)
+	}
 	if publish {
 		if err := validateCorpusPublishGitClean(currentCorpusPublishGit()); err != nil {
 			t.Fatalf("cross-corpus publish: %v", err)
@@ -3342,13 +3377,18 @@ func TestCrossDecoderCorpus(t *testing.T) {
 		t.Fatalf("cross-corpus: %v", err)
 	}
 	var resolvedExternal []resolvedCorpusExternalDecoder
-	if publish {
+	if publish || reportPath != "" {
 		resolvedExternal, err = resolveCorpusPublishExternalDecoders(decoders, requiredDecoders)
 		if err != nil {
-			t.Fatalf("cross-corpus publish: %v", err)
+			if publish {
+				t.Fatalf("cross-corpus publish: %v", err)
+			}
+			t.Fatalf("cross-corpus exploratory report: %v", err)
 		}
-		if err := validateCorpusPublishDecoderManifestHashes(manifest, resolvedExternal); err != nil {
-			t.Fatalf("cross-corpus publish: %v", err)
+		if publish {
+			if err := validateCorpusPublishDecoderManifestHashes(manifest, resolvedExternal); err != nil {
+				t.Fatalf("cross-corpus publish: %v", err)
+			}
 		}
 	} else {
 		var missingExternal []string
@@ -3474,19 +3514,26 @@ func TestCrossDecoderCorpus(t *testing.T) {
 		}
 	}
 
-	if publish {
-		if err := writeCorpusPublishReport(reportPath, dir, manifest, clips, filteredResults, filteredTimers); err != nil {
+	if reportPath != "" {
+		mode := corpusValidationModeExploratory
+		if publish {
+			mode = corpusValidationModeValidatedPublish
+		}
+		if err := writeCorpusPublishReport(reportPath, mode, dir, manifest, clips, filteredResults, filteredTimers); err != nil {
 			t.Fatalf("cross-corpus: write %s: %v", reportPath, err)
 		}
-		t.Logf("cross-corpus: wrote report JSON %s", reportPath)
+		t.Logf("cross-corpus: wrote %s report JSON %s", mode, reportPath)
 	}
 
 	printCorpusReport(t, clips, filteredResults)
 }
 
-func writeCorpusPublishReport(path, dir string, manifest corpusPublishManifest, clips []corpusClip, results []decoderResult, timers []corpusTimingDecoder) error {
+func writeCorpusPublishReport(path, validationMode, dir string, manifest corpusPublishManifest, clips []corpusClip, results []decoderResult, timers []corpusTimingDecoder) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("%s is empty", envBenchCorpusReportJSON)
+	}
+	if validationMode != corpusValidationModeExploratory && validationMode != corpusValidationModeValidatedPublish {
+		return fmt.Errorf("invalid corpus report validation mode %q", validationMode)
 	}
 	manifestSHA := ""
 	if manifest.path != "" {
@@ -3497,6 +3544,7 @@ func writeCorpusPublishReport(path, dir string, manifest corpusPublishManifest, 
 		manifestSHA = sha
 	}
 	report := corpusPublishReport{
+		ValidationMode: validationMode,
 		GeneratedAtUTC: time.Now().UTC().Format(time.RFC3339Nano),
 		Git:            currentCorpusPublishGit(),
 		Environment:    currentCorpusPublishEnvironment(),

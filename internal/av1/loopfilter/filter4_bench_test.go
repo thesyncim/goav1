@@ -28,7 +28,7 @@ func benchFilter4Edge(edgeLen int) ([]byte, int, int, int, filter4Params) {
 
 // BenchmarkFilter4EdgePureGo and BenchmarkFilter4EdgeDispatch bracket the
 // per-kernel speedup: the first always runs the pure-Go reference, the second
-// runs whatever the dispatcher resolved (NEON on arm64). Both time only the
+// runs whatever the dispatcher resolved (Go SIMD on arm64). Both time only the
 // inner edge kernel, not the validation wrapper.
 func BenchmarkFilter4EdgePureGo(b *testing.B) {
 	buf, q0Base, step, length, params := benchFilter4Edge(64)

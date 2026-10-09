@@ -34,6 +34,13 @@ func frameWorkScaledRefEnabled() bool {
 	return os.Getenv(frameWorkScaledRefDisabledEnv) != "0"
 }
 
+// ScaledReferencePredictionEnabled reports the environment-selected scaled
+// reference policy. Decoder constructors call it once so the policy remains
+// stable for that decoder's lifetime without allocating in block prediction.
+func ScaledReferencePredictionEnabled() bool {
+	return frameWorkScaledRefEnabled()
+}
+
 // frameWorkSameOrScaledReferencePlane validates a reference plane against
 // geom for either same-size sampling or, when the scaled-prediction path is
 // enabled, the AV1 scale-factor range. It mirrors libaom's
@@ -42,7 +49,7 @@ func frameWorkScaledRefEnabled() bool {
 // Returns (true, nil) if the reference is same-size; (false, nil) if a
 // non-identity scaling is acceptable for the scaled convolver; or an error if
 // the reference dimensions are unusable.
-func frameWorkSameOrScaledReferencePlane(geom frameWorkPredictionPlaneGeometry, ref frame.Plane) (bool, error) {
+func frameWorkSameOrScaledReferencePlane(geom frameWorkPredictionPlaneGeometry, ref frame.Plane, scaledReferencePredictionDisabled bool) (bool, error) {
 	// Compare against the current frame's CODED (cropped) plane dimensions, not
 	// geom.Output.Width/Height: the predictor's output plane is extended to the
 	// MI-aligned write extent (frameWorkExtendPlaneToClip), which can exceed the
@@ -57,7 +64,7 @@ func frameWorkSameOrScaledReferencePlane(geom frameWorkPredictionPlaneGeometry, 
 	if ref.Width == curWidth && ref.Height == curHeight {
 		return true, nil
 	}
-	if !frameWorkScaledRefEnabled() {
+	if scaledReferencePredictionDisabled {
 		return false, ErrInvalidBatch
 	}
 	if _, err := motion.NewScaleFactors(ref.Width, ref.Height, curWidth, curHeight); err != nil {

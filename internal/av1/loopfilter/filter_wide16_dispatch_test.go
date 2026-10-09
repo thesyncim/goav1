@@ -2,9 +2,9 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-// This differential drives the arm64 NEON 10/12-bit wide kernels
-// (filter6/8/14Edge16NEON) directly, so it is constrained to that build. Other
-// architectures cover the two-byte wide dispatch through the pure-Go reference.
+// This differential drives arm64 10/12-bit wide kernels and fallbacks directly,
+// so it is constrained to that build. Other architectures cover the two-byte
+// wide dispatch through the pure-Go reference.
 //go:build arm64 && !purego
 
 package loopfilter
@@ -107,16 +107,16 @@ func fillWide16Content(buf []byte, rng *rand.Rand, mode int, maxVal int) {
 }
 
 type wide16Kernel struct {
-	name string
-	ref  func(pix []byte, q0Base, step, outer, length, scale int, params filter4Params)
-	neon func(pix []byte, q0Base, step, outer, length, scale int, params filter4Params)
+	name     string
+	ref      func(pix []byte, q0Base, step, outer, length, scale int, params filter4Params)
+	baseline func(pix []byte, q0Base, step, outer, length, scale int, params filter4Params)
 }
 
 func wide16Kernels() []wide16Kernel {
 	return []wide16Kernel{
-		{"filter6", filter6Edge16PureGo, filter6Edge16NEON},
-		{"filter8", filter8Edge16PureGo, filter8Edge16NEON},
-		{"filter14", filter14Edge16PureGo, filter14Edge16NEON},
+		{"filter6", filter6Edge16PureGo, filter6Edge16PureGo},
+		{"filter8", filter8Edge16PureGo, filter8Edge16PureGo},
+		{"filter14", filter14Edge16PureGo, filter14Edge16PureGo},
 	}
 }
 
@@ -136,7 +136,7 @@ func runWide16Horizontal(t *testing.T, k wide16Kernel, seed int64, length int, c
 	want := append([]byte(nil), base...)
 	got := append([]byte(nil), base...)
 	k.ref(want, q0Base, step, outer, length, scale, params)
-	k.neon(got, q0Base, step, outer, length, scale, params)
+	k.baseline(got, q0Base, step, outer, length, scale, params)
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("%s H %s seed=%d len=%d idx=%d got=%d want=%d", k.name, c.name, seed, length, i, got[i], want[i])
@@ -160,7 +160,7 @@ func runWide16Vertical(t *testing.T, k wide16Kernel, seed int64, length int, c w
 	want := append([]byte(nil), base...)
 	got := append([]byte(nil), base...)
 	k.ref(want, q0Base, step, outer, length, scale, params)
-	k.neon(got, q0Base, step, outer, length, scale, params)
+	k.baseline(got, q0Base, step, outer, length, scale, params)
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("%s V %s seed=%d len=%d idx=%d got=%d want=%d", k.name, c.name, seed, length, i, got[i], want[i])
@@ -168,11 +168,11 @@ func runWide16Vertical(t *testing.T, k wide16Kernel, seed int64, length int, c w
 	}
 }
 
-// TestWide16FilterNEONMatchesPureGo drives the 10/12-bit wide NEON kernels
+// TestWide16FilterDispatchMatchesPureGo drives the 10/12-bit wide dispatch kernels
 // (executed directly) against the pure-Go reference across all widths, levels,
 // thresholds, and both 10- and 12-bit sample ranges, for horizontal and
 // vertical edges. Every output byte must match.
-func TestWide16FilterNEONMatchesPureGo(t *testing.T) {
+func TestWide16FilterDispatchMatchesPureGo(t *testing.T) {
 	lengths := []int{1, 3, 7, 8, 9, 15, 16, 17, 24, 31, 32, 48, 64}
 	for _, k := range wide16Kernels() {
 		var seed int64 = 100000
@@ -188,9 +188,9 @@ func TestWide16FilterNEONMatchesPureGo(t *testing.T) {
 	}
 }
 
-// TestWide16FilterNEONZeroAlloc guards that the accelerated 10-bit paths
+// TestWide16FilterDispatchZeroAlloc guards that the accelerated 10-bit paths
 // (horizontal direct and vertical repack) allocate nothing per call.
-func TestWide16FilterNEONZeroAlloc(t *testing.T) {
+func TestWide16FilterDispatchZeroAlloc(t *testing.T) {
 	const strideBytes = 256
 	const rows = 96
 	base := make([]byte, strideBytes*rows)
@@ -201,14 +201,14 @@ func TestWide16FilterNEONZeroAlloc(t *testing.T) {
 		// horizontal
 		hBuf := append([]byte(nil), base...)
 		if n := testing.AllocsPerRun(50, func() {
-			k.neon(hBuf, 16*strideBytes+16*2, strideBytes, 2, 64, scale, params)
+			k.baseline(hBuf, 16*strideBytes+16*2, strideBytes, 2, 64, scale, params)
 		}); n != 0 {
 			t.Fatalf("%s horizontal allocs=%v", k.name, n)
 		}
 		// vertical
 		vBuf := append([]byte(nil), base...)
 		if n := testing.AllocsPerRun(50, func() {
-			k.neon(vBuf, 16*2, 2, strideBytes, 64, scale, params)
+			k.baseline(vBuf, 16*2, 2, strideBytes, 64, scale, params)
 		}); n != 0 {
 			t.Fatalf("%s vertical allocs=%v", k.name, n)
 		}

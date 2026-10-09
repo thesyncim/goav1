@@ -79,7 +79,7 @@ func TestConvolve2DHighBDScratchMatchesNoScratch(t *testing.T) {
 }
 
 // TestBlendCompoundAvgHighBDImplMatchesReference asserts the bound HBD blend
-// dispatch slot (NEON on arm64, pure-Go elsewhere) matches the canonical
+// dispatch slot (GoSIMD on arm64, pure-Go elsewhere) matches the canonical
 // pure-Go reference on every build.
 func TestBlendCompoundAvgHighBDImplMatchesReference(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xb1e42))

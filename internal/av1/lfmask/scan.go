@@ -1,5 +1,7 @@
 package lfmask
 
+import "math/bits"
+
 // This file ports the pure bit-scan at the heart of dav1d's deblock apply pass.
 // dav1d consumes the edge bitmasks with zero neighbour or tree lookups: for one
 // 4x4 column (vertical edges) or row (horizontal edges) position it combines the
@@ -50,11 +52,11 @@ func ScanLuma(mask *[3][2]uint16, starty4, endy4 int, visit EdgeVisitor) {
 		m2 = uint32(mask[2][1])
 	}
 	vm := m0 | m1 | m2
-	y := uint32(1)
-	for offset := 0; vm&^(y-1) != 0; offset, y = offset+1, y<<1 {
-		if vm&y == 0 {
-			continue
-		}
+	// Walk set bits directly (ctz), skipping empty 4x4 positions, instead of
+	// stepping through every position. Same offsets in the same ascending order.
+	for vm != 0 {
+		offset := bits.TrailingZeros32(vm)
+		y := uint32(1) << uint(offset)
 		widthClass := 0
 		if m2&y != 0 {
 			widthClass = 2
@@ -62,6 +64,7 @@ func ScanLuma(mask *[3][2]uint16, starty4, endy4 int, visit EdgeVisitor) {
 			widthClass = 1
 		}
 		visit(offset, widthClass)
+		vm &= vm - 1
 	}
 }
 
@@ -85,15 +88,14 @@ func ScanChroma(mask *[2][2]uint16, laneStart, laneEnd, laneBits int, visit Edge
 		m1 = uint32(mask[1][1])
 	}
 	vm := m0 | m1
-	y := uint32(1)
-	for offset := 0; vm&^(y-1) != 0; offset, y = offset+1, y<<1 {
-		if vm&y == 0 {
-			continue
-		}
+	for vm != 0 {
+		offset := bits.TrailingZeros32(vm)
+		y := uint32(1) << uint(offset)
 		widthClass := 0
 		if m1&y != 0 {
 			widthClass = 1
 		}
 		visit(offset, widthClass)
+		vm &= vm - 1
 	}
 }

@@ -22,7 +22,7 @@ type warpTmp = [warpedIntermediateRows * warpedIntermediateColumns]int32
 // is a no-op for this block. The selected index is
 // offs(k,l) = 64 + roundPowerOfTwo(sx4 + beta*(k+4) + alpha*(l+4), 10), which is
 // affine (hence monotone) in the sample offsets k+4 in [-3,11] and l+4 in [0,7];
-// its extremes therefore sit at the corners. When this returns true the NEON
+// its extremes therefore sit at the corners. When this returns true the Go SIMD
 // kernel can skip the clamp and still match the scalar output bit-for-bit;
 // otherwise the caller must fall back to scalar.
 func warpHorizResidentOffsInRange(sx4, alpha, beta int) bool {
@@ -39,7 +39,7 @@ func warpHorizResidentOffsInRange(sx4, alpha, beta int) bool {
 // The full vertical pass selects offs(k,l) = 64 + roundPowerOfTwo(baseSY +
 // delta*(k+4) + gamma*(l+4), 10) with k+4 and l+4 both in [0,7]. Unlike the
 // horizontal pass the scalar vertical *skips* (leaves the destination pixel
-// untouched) when an index falls out of range, so the NEON kernel — which has no
+// untouched) when an index falls out of range, so the Go SIMD kernel — which has no
 // per-lane skip — must defer to scalar whenever this returns false.
 func warpVertFullOffsInRange(baseSY, gamma, delta int) bool {
 	loD, hiD := mulRange(delta, 0, 7)

@@ -91,7 +91,7 @@ func TestCompound8XYClampedEmuEdgeMatchesPureGo(t *testing.T) {
 // TestCompound8XYClampedEmuEdgeEntryPoint proves the public convbuf entry
 // routes edge-overhanging X-only and Y-only 8-bit blocks through the scratch
 // emu_edge path byte-identically to the scratchless scalar route. Resident
-// cases are included to keep the direct SIMD route covered by the same table.
+// cases are included to keep the direct optimized route covered by the same table.
 func TestCompound8XYClampedEmuEdgeEntryPoint(t *testing.T) {
 	const refW, refH = 31, 23
 	ref := frame.Plane{Pix: make([]byte, refW*refH), Stride: refW, Width: refW, Height: refH}

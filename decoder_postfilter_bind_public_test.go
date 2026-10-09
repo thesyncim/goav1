@@ -1,6 +1,7 @@
 package goav1_test
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
@@ -420,6 +421,100 @@ func TestPublicDecoderFrameWorkSupportedPostFilterScratchRunner(t *testing.T) {
 	}
 	if allocs != 0 {
 		t.Fatalf("runner allocated: %f", allocs)
+	}
+}
+
+func TestPublicPostFilterScratchRunnerParallelCDEFAllocsAndParity(t *testing.T) {
+	const width, height = 256, 512
+	sequence := publicDecoderPostFilterSequence()
+	sequence.EnableCDEF = true
+	cdef := av1.CDEFParams{
+		Damping: 5, StrengthCount: 2,
+		YStrength:  [av1.MaxCDEFStrengths]uint8{9, 31},
+		UVStrength: [av1.MaxCDEFStrengths]uint8{5, 17},
+	}
+	size := av1.FrameSize{CodedWidth: width, UpscaledWidth: width, Height: height, SuperResDenominator: 8}
+	format := av1.FrameFormat{Width: width, Height: height, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
+	build := func(parallel *av1.DecoderFrameWorkPostFilterParallel) (*av1.Frame, av1.DecoderFrameWorkPostFilterContext, *av1.DecoderFrameWorkSupportedPostFilterScratchRunner) {
+		sideSize, err := av1.DecoderFrameWorkSideDataScratchLen(sequence, size, cdef, av1.RestorationParams{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sideScratch := av1.DecoderFrameWorkSideDataScratch{
+			CDEFIndexMap:             make([]uint8, sideSize.CDEFIndexMap),
+			CDEFReadMap:              make([]bool, sideSize.CDEFReadMap),
+			LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, sideSize.LoopFilterMap),
+			RestorationRecords:       make([]av1.TileRestorationUnitRecord, sideSize.RestorationRecords),
+			RestorationBoundaryAbove: make([]uint16, sideSize.RestorationBoundaryAbove),
+			RestorationBoundaryBelow: make([]uint16, sideSize.RestorationBoundaryBelow),
+		}
+		side, err := av1.BindDecoderFrameWorkSideData(sequence, size, cdef, av1.RestorationParams{}, sideScratch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range side.CDEFIndexMap.Index {
+			side.CDEFIndexMap.Index[i] = uint8(i % 2)
+			side.CDEFIndexMap.Read[i] = true
+		}
+		out := publicDecoderPostFilterFrame(t, format)
+		publicFillDecoderPostFilterPlane(out.Y)
+		publicFillDecoderPostFilterPlane(out.U)
+		publicFillDecoderPostFilterPlane(out.V)
+		ctx := av1.DecoderFrameWorkPostFilterContext{
+			Event: av1.DecoderEvent{
+				Kind:           av1.DecoderEventTileGroup,
+				SequenceHeader: sequence,
+				FrameSize:      size,
+				CDEF:           cdef,
+				TileGroup:      av1.TileGroup{Final: true},
+			},
+			Output:                  out,
+			CDEFIndexMap:            &side.CDEFIndexMap,
+			LoopFilterMap:           &side.LoopFilterMap,
+			RestorationFrameBuffers: &side.RestorationFrameBuffers,
+		}.WithCompletedPostFilters(av1.DecoderFrameWorkPostFilterLoopFilter)
+		var probe av1.DecoderFrameWorkSupportedPostFilterScratchRunner
+		exact, err := probe.ScratchLen(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runner := &av1.DecoderFrameWorkSupportedPostFilterScratchRunner{
+			Scratch:  publicDecoderPostFilterRequestScratch(av1.DecoderFrameWorkPostFilterRequestScratchLen(exact)),
+			Parallel: parallel,
+		}
+		return out, ctx, runner
+	}
+
+	serialOut, serialCtx, serialRunner := build(nil)
+	if err := serialRunner.Apply(serialCtx); err != nil {
+		t.Fatalf("serial public post-filter: %v", err)
+	}
+	parallel := &av1.DecoderFrameWorkPostFilterParallel{Workers: 2}
+	defer parallel.Close()
+	parallelOut, parallelCtx, runner := build(parallel)
+	initialY := append([]byte(nil), parallelOut.Y.Pix...)
+	initialU := append([]byte(nil), parallelOut.U.Pix...)
+	initialV := append([]byte(nil), parallelOut.V.Pix...)
+	apply := func() {
+		copy(parallelOut.Y.Pix, initialY)
+		copy(parallelOut.U.Pix, initialU)
+		copy(parallelOut.V.Pix, initialV)
+		if err := runner.Apply(parallelCtx); err != nil {
+			t.Fatalf("parallel public post-filter: %v", err)
+		}
+		if runner.Result.CDEF.Blocks == 0 || !runner.Result.Completed.Has(av1.DecoderFrameWorkPostFilterCDEF) {
+			t.Fatalf("public runner did not complete active CDEF: %+v", runner.Result)
+		}
+	}
+	apply()
+	allocs := testing.AllocsPerRun(5, apply)
+	if allocs != 0 {
+		t.Fatalf("warmed public two-worker post-filter runner allocated %g times per apply", allocs)
+	}
+	for _, planes := range [][2]av1.FramePlane{{serialOut.Y, parallelOut.Y}, {serialOut.U, parallelOut.U}, {serialOut.V, parallelOut.V}} {
+		if !bytes.Equal(planes[0].Pix, planes[1].Pix) {
+			t.Fatal("public two-worker post-filter output differs from serial output")
+		}
 	}
 }
 

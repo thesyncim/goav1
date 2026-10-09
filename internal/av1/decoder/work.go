@@ -70,10 +70,10 @@ type FrameWorkEventResult struct {
 }
 
 type FrameWorkPreparedPayloadStep struct {
-	Base           FrameWorkBatch
-	JobCount       int
-	BatchCount     int
-	ReferenceCount uint8
+	Base            FrameWorkBatch
+	JobCount        int
+	BatchCount      int
+	ReferenceCount  uint8
 	HasTileWork     bool
 	CDEFIndexMap    *threading.FrameWorkCDEFIndexMap
 	LoopFilterMap   *threading.FrameWorkLoopFilterMap
@@ -95,6 +95,17 @@ type FrameWorkPostFilterContext struct {
 	LoopFilterMap           *threading.FrameWorkLoopFilterMap
 	LoopFilterMasks         *threading.FrameWorkLoopFilterMasks
 	RestorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers
+
+	// Parallel, when non-nil and reporting more than one worker, lets the
+	// supported post-filter chain fan its already-independent row bands out
+	// across worker goroutines instead of running the serial band loops. It is
+	// caller-owned and reused across frames so the parallel path stays
+	// allocation-free after warm-up. It never changes decoded output: each band
+	// reads the previous stage's complete output through the same boundary
+	// snapshots the serial banded path uses. Direct callers should call
+	// Parallel.Close when finished; a frame-work context's pool is borrowed and
+	// remains owned by its decoder or caller.
+	Parallel *FrameWorkPostFilterParallel
 
 	// pool is the tile worker pool, offered to the postfilter so a row-banded
 	// stage (currently CDEF) can fan out across the same lanes the tile decode
@@ -222,7 +233,29 @@ type FrameWorkState struct {
 	ReferenceCount uint8
 	Sequence       threading.FrameWorkSequenceContext
 
-	tileResidualFrameContexts     [parser.RefFrames]threading.FrameWorkTileResidualCDFStorage
+	// Scaled-reference policy is captured once per state. High-level decoder
+	// constructors set it; low-level callers that leave it unset capture the
+	// environment when the first frame begins.
+	scaledRefPolicySet     bool
+	scaledRefPolicyEnabled bool
+
+	// Saved entropy (CDF) frame contexts are kept in a fixed pool of storages
+	// referenced by per-slot handles instead of one 56KB value per slot, so
+	// saving a frame context under N refresh_frame_flags slots is N handle
+	// stores (dav1d's refcounted CdfThreadContext model, src/cdf.c
+	// dav1d_cdf_thread_ref) rather than N 56KB copies, and inheriting one
+	// binds the tile batch straight to the pool entry with no staging copy.
+	// Capacity proof: at any instant the distinct live entries are at most
+	// RefFrames slot targets + the current frame's initial context (fresh only
+	// when default-initialized or SVC-loaded; otherwise it aliases a slot
+	// entry) + the current frame's retained capture buffer.
+	// tileResidualCDFPoolRefs counts, per entry, slot references plus the
+	// current/retained frame holds; 0 means free. An entry is only ever
+	// written while it is a fresh frame-held acquisition (refs==1), so slot
+	// readers never observe mutation.
+	tileResidualCDFPool           [parser.RefFrames + 2]threading.FrameWorkTileResidualCDFStorage
+	tileResidualCDFPoolRefs       [parser.RefFrames + 2]uint8
+	tileResidualSlotCDF           [parser.RefFrames]int8
 	tileResidualFrameContextValid [parser.RefFrames]bool
 	// sharedFrameContexts, when non-nil, redirects entropy (CDF) frame-context
 	// save/restore to a stream-global, surface-keyed store instead of the
@@ -239,10 +272,16 @@ type FrameWorkState struct {
 	sharedFrameContexts             *SharedFrameContextStore
 	sharedFrameContextRefs          *SurfaceReferences
 	sharedFrameContextGlobalSurface func(local int) int
-	tileResidualCurrentCDFs         threading.FrameWorkTileResidualCDFStorage
-	tileResidualCurrentCDFsValid    bool
-	tileResidualRetainedCDFs        threading.FrameWorkTileResidualCDFStorage
-	tileResidualRetainedCDFsValid   bool
+	// tileResidualCurrentCDF is the pool entry holding the current frame's
+	// initial (inherited or default) context; it is immutable for the frame's
+	// duration — per-job adaptation copies out of it (threading
+	// InitTileResidualCDFStorage). tileResidualRetainedCDF is the fresh pool
+	// entry the context_update_tile_id job captures the adapted frame context
+	// into. Both carry a frame hold released by resetActive.
+	tileResidualCurrentCDF        int8
+	tileResidualCurrentCDFsValid  bool
+	tileResidualRetainedCDF       int8
+	tileResidualRetainedCDFsValid bool
 
 	// Temporal motion-vector (ref_frame_mvs / MFMV) state for the single-pool
 	// decode path. AV1 inter frames with use_ref_frame_mvs project a temporal
@@ -336,16 +375,70 @@ func (s *FrameWorkState) Reset() {
 	if s == nil {
 		return
 	}
+	scaledRefPolicySet := s.scaledRefPolicySet
+	scaledRefPolicyEnabled := s.scaledRefPolicyEnabled
 	currentBack := s.currentMVFrameBack[:0]
 	temporalBack := s.temporalMVsBack[:0]
 	var storeBack [parser.RefFrames][]tile.ReferenceMVEntry
 	for i := range s.mvFrameStoreBacking {
 		storeBack[i] = s.mvFrameStoreBacking[i][:0]
 	}
-	*s = FrameWorkState{}
+	*s = FrameWorkState{
+		scaledRefPolicySet:     scaledRefPolicySet,
+		scaledRefPolicyEnabled: scaledRefPolicyEnabled,
+	}
 	s.currentMVFrameBack = currentBack
 	s.temporalMVsBack = temporalBack
 	s.mvFrameStoreBacking = storeBack
+}
+
+// SetScaledReferencePredictionEnabled captures whether this state may decode
+// references whose coded dimensions differ from the current frame. High-level
+// decoder constructors use this to snapshot GOAV1_SCALED_PRED once per decoder.
+func (s *FrameWorkState) SetScaledReferencePredictionEnabled(enabled bool) {
+	if s == nil {
+		return
+	}
+	s.scaledRefPolicySet = true
+	s.scaledRefPolicyEnabled = enabled
+}
+
+// acquireTileResidualCDFEntry claims a free pool entry with one frame hold.
+// The pool is sized so exhaustion is impossible while the release invariants
+// hold (see the field comment); a miss therefore reports invalid state rather
+// than allocating.
+func (s *FrameWorkState) acquireTileResidualCDFEntry() (int8, error) {
+	for i := range s.tileResidualCDFPoolRefs {
+		if s.tileResidualCDFPoolRefs[i] == 0 {
+			s.tileResidualCDFPoolRefs[i] = 1
+			return int8(i), nil
+		}
+	}
+	return -1, ErrInvalidFrameWorkState
+}
+
+func (s *FrameWorkState) retainTileResidualCDFEntry(idx int8) {
+	if idx >= 0 && int(idx) < len(s.tileResidualCDFPoolRefs) {
+		s.tileResidualCDFPoolRefs[idx]++
+	}
+}
+
+func (s *FrameWorkState) releaseTileResidualCDFEntry(idx int8) {
+	if idx >= 0 && int(idx) < len(s.tileResidualCDFPoolRefs) && s.tileResidualCDFPoolRefs[idx] > 0 {
+		s.tileResidualCDFPoolRefs[idx]--
+	}
+}
+
+// tileResidualCDFBindings resolves the batch-facing CDF pointers: the frame's
+// immutable initial context and the retained-capture destination. Both are
+// nil until Begin acquires them.
+func (s *FrameWorkState) tileResidualCDFBindings() (initial, retained *threading.FrameWorkTileResidualCDFStorage, retainedValid *bool) {
+	if s == nil || !s.tileResidualCurrentCDFsValid {
+		return nil, nil, nil
+	}
+	return &s.tileResidualCDFPool[s.tileResidualCurrentCDF],
+		&s.tileResidualCDFPool[s.tileResidualRetainedCDF],
+		&s.tileResidualRetainedCDFsValid
 }
 
 func (s *FrameWorkState) resetActive() {
@@ -355,9 +448,13 @@ func (s *FrameWorkState) resetActive() {
 	s.Surface = 0
 	s.ReferenceCount = 0
 	s.Sequence = threading.FrameWorkSequenceContext{}
-	s.tileResidualCurrentCDFs = threading.FrameWorkTileResidualCDFStorage{}
+	if s.tileResidualCurrentCDFsValid {
+		s.releaseTileResidualCDFEntry(s.tileResidualCurrentCDF)
+		s.releaseTileResidualCDFEntry(s.tileResidualRetainedCDF)
+	}
+	s.tileResidualCurrentCDF = -1
 	s.tileResidualCurrentCDFsValid = false
-	s.tileResidualRetainedCDFs = threading.FrameWorkTileResidualCDFStorage{}
+	s.tileResidualRetainedCDF = -1
 	s.tileResidualRetainedCDFsValid = false
 	// The per-slot mvFrameStore (and its backing) persists across frames so
 	// future frames can inherit it; only the current frame's transient MV
@@ -383,7 +480,12 @@ func (s *FrameWorkState) resetReferenceState() {
 	if s == nil {
 		return
 	}
-	s.tileResidualFrameContexts = [parser.RefFrames]threading.FrameWorkTileResidualCDFStorage{}
+	for i := range s.tileResidualSlotCDF {
+		if s.tileResidualFrameContextValid[i] {
+			s.releaseTileResidualCDFEntry(s.tileResidualSlotCDF[i])
+		}
+		s.tileResidualSlotCDF[i] = -1
+	}
 	s.tileResidualFrameContextValid = [parser.RefFrames]bool{}
 	// Drop the saved MV_REF side data so a new coded video sequence does not
 	// project temporal candidates from a prior sequence's frames. The backing
@@ -515,22 +617,38 @@ func (s *FrameWorkState) Begin(refs *SurfaceReferences, pool *frame.Pool, sequen
 	if s == nil || s.active {
 		return FrameWorkPlan{}, nil, ErrInvalidFrameWorkState
 	}
-	tileResidualCDFs, err := s.initialTileResidualCDFs(event)
+	if !s.scaledRefPolicySet {
+		s.SetScaledReferencePredictionEnabled(threading.ScaledReferencePredictionEnabled())
+	}
+	currentCDF, err := s.acquireInitialTileResidualCDFs(event)
 	if err != nil {
+		return FrameWorkPlan{}, nil, err
+	}
+	retainedCDF, err := s.acquireTileResidualCDFEntry()
+	if err != nil {
+		s.releaseTileResidualCDFEntry(currentCDF)
 		return FrameWorkPlan{}, nil, err
 	}
 	plan, output, err := BeginFrameWork(refs, pool, sequence, event, align, references, workers, spans, jobs, batches)
 	if err != nil {
+		s.releaseTileResidualCDFEntry(currentCDF)
+		s.releaseTileResidualCDFEntry(retainedCDF)
 		return FrameWorkPlan{}, nil, err
 	}
 	s.Surface = plan.Surface
 	s.ReferenceCount = plan.ReferenceCount
 	s.Sequence = threading.FrameWorkSequenceContextFromHeader(sequence)
-	s.tileResidualCurrentCDFs = tileResidualCDFs
+	s.Sequence.ScaledReferencePredictionDisabled = !s.scaledRefPolicyEnabled
+	s.tileResidualCurrentCDF = currentCDF
 	s.tileResidualCurrentCDFsValid = true
-	s.tileResidualRetainedCDFs = threading.FrameWorkTileResidualCDFStorage{}
+	s.tileResidualRetainedCDF = retainedCDF
 	s.tileResidualRetainedCDFsValid = false
 	if err := s.prepareTemporalMotionField(event); err != nil {
+		s.releaseTileResidualCDFEntry(currentCDF)
+		s.releaseTileResidualCDFEntry(retainedCDF)
+		s.tileResidualCurrentCDF = -1
+		s.tileResidualCurrentCDFsValid = false
+		s.tileResidualRetainedCDF = -1
 		return FrameWorkPlan{}, nil, err
 	}
 	s.active = true
@@ -564,8 +682,7 @@ func (s *FrameWorkState) Finish(refs *SurfaceReferences, pool *frame.Pool, event
 	return count, nil
 }
 
-func (s *FrameWorkState) initialTileResidualCDFs(event Event) (threading.FrameWorkTileResidualCDFStorage, error) {
-	var storage threading.FrameWorkTileResidualCDFStorage
+func (s *FrameWorkState) acquireInitialTileResidualCDFs(event Event) (int8, error) {
 	// AV1 frame-context inheritance: when primary_ref_frame != PRIMARY_REF_NONE
 	// the frame's entropy (CDF) context is loaded from the referenced buffer,
 	// mirroring libaom's
@@ -583,20 +700,35 @@ func (s *FrameWorkState) initialTileResidualCDFs(event Event) (threading.FrameWo
 			if s.sharedFrameContexts != nil && s.sharedFrameContextRefs != nil {
 				if globalID, ok := s.sharedFrameContextRefs.ReferenceSlot(int(slot)); ok {
 					if ctx, ok := s.sharedFrameContexts.load(globalID); ok {
-						return ctx, nil
+						idx, err := s.acquireTileResidualCDFEntry()
+						if err != nil {
+							return -1, err
+						}
+						s.tileResidualCDFPool[idx] = ctx
+						return idx, nil
 					}
 				}
 			} else if s.tileResidualFrameContextValid[slot] {
-				// Single-pool fallback: per-layer reference array keyed by the
-				// local reference-map slot.
-				return s.tileResidualFrameContexts[slot], nil
+				// Single-pool fast path: the frame's initial context IS the
+				// slot's saved pool entry — bind it by handle (one more
+				// reference) instead of staging a copy. The entry is immutable
+				// while referenced: per-job adaptation copies out of it and
+				// saves land in fresh entries.
+				idx := s.tileResidualSlotCDF[slot]
+				s.retainTileResidualCDFEntry(idx)
+				return idx, nil
 			}
 		}
 	}
-	if err := storage.InitDefault(event.Quantization.BaseQIdx); err != nil {
-		return threading.FrameWorkTileResidualCDFStorage{}, err
+	idx, err := s.acquireTileResidualCDFEntry()
+	if err != nil {
+		return -1, err
 	}
-	return storage, nil
+	if err := s.tileResidualCDFPool[idx].InitDefault(event.Quantization.BaseQIdx); err != nil {
+		s.releaseTileResidualCDFEntry(idx)
+		return -1, err
+	}
+	return idx, nil
 }
 
 // mvFrameMIExtent mirrors libaom's mi_params.mi_cols/mi_rows derivation used to
@@ -736,9 +868,9 @@ func (s *FrameWorkState) finishTileResidualCDFs(event Event, publishedGlobalSurf
 	if s == nil || !s.tileResidualCurrentCDFsValid {
 		return
 	}
-	cdfs := s.tileResidualCurrentCDFs
+	chosen := s.tileResidualCurrentCDF
 	if s.tileResidualRetainedCDFsValid {
-		cdfs = s.tileResidualRetainedCDFs
+		chosen = s.tileResidualRetainedCDF
 	}
 	// Save the adapted frame context for every refreshed reference-map slot,
 	// mirroring libaom's cm->cur_frame->frame_context = *cm->fc at frame end:
@@ -753,15 +885,22 @@ func (s *FrameWorkState) finishTileResidualCDFs(event Event, publishedGlobalSurf
 		if publishedGlobalSurface < 0 {
 			publishedGlobalSurface = s.sharedFrameContextGlobalSurface(s.Surface)
 		}
-		s.sharedFrameContexts.store(publishedGlobalSurface, cdfs)
+		s.sharedFrameContexts.store(publishedGlobalSurface, s.tileResidualCDFPool[chosen])
 		return
 	}
+	// Every refreshed slot takes one more reference to the chosen pool entry;
+	// the previous slot targets drop theirs. No context bytes move — the
+	// dav1d model (cdf.c dav1d_cdf_thread_ref for each refresh slot).
 	for i := range parser.RefFrames {
 		if (event.FrameSize.RefreshFrameFlags & (1 << uint(i))) == 0 {
 			continue
 		}
-		s.tileResidualFrameContexts[i] = cdfs
+		if s.tileResidualFrameContextValid[i] {
+			s.releaseTileResidualCDFEntry(s.tileResidualSlotCDF[i])
+		}
+		s.tileResidualSlotCDF[i] = chosen
 		s.tileResidualFrameContextValid[i] = true
+		s.retainTileResidualCDFEntry(chosen)
 	}
 }
 
@@ -1058,14 +1197,7 @@ func (s *FrameWorkState) runStepWithPayloadContext(refs *SurfaceReferences, fram
 		return FrameWorkStepResult{}, err
 	}
 	frameContext := frameWorkFrameContext(event, s.sequenceContext())
-	var initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
-	var retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
-	var retainedTileResidualCDFsValid *bool
-	if s != nil && s.tileResidualCurrentCDFsValid {
-		initialTileResidualCDFs = &s.tileResidualCurrentCDFs
-		retainedTileResidualCDFs = &s.tileResidualRetainedCDFs
-		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
-	}
+	initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid := s.tileResidualCDFBindings()
 	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
 	executed, err := executeFrameWorkStepWithPayload(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, jobs, batches, fn)
 	if err != nil {
@@ -1104,14 +1236,7 @@ func (s *FrameWorkState) runStepWithPayloadContextRunner(refs *SurfaceReferences
 		return FrameWorkStepResult{}, err
 	}
 	frameContext := frameWorkFrameContext(event, s.sequenceContext())
-	var initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
-	var retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
-	var retainedTileResidualCDFsValid *bool
-	if s != nil && s.tileResidualCurrentCDFsValid {
-		initialTileResidualCDFs = &s.tileResidualCurrentCDFs
-		retainedTileResidualCDFs = &s.tileResidualRetainedCDFs
-		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
-	}
+	initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid := s.tileResidualCDFBindings()
 	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
 	executed, err := executeFrameWorkStepWithPayloadRunner(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, jobs, batches, runner)
 	if err != nil {
@@ -1146,14 +1271,7 @@ func PrepareFrameWorkStepWithPayloadContext(s *FrameWorkState, event Event, step
 		return FrameWorkPreparedPayloadStep{}, ErrInvalidFrameWorkStep
 	}
 	frameContext := frameWorkFrameContext(event, s.sequenceContext())
-	var initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
-	var retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
-	var retainedTileResidualCDFsValid *bool
-	if s != nil && s.tileResidualCurrentCDFsValid {
-		initialTileResidualCDFs = &s.tileResidualCurrentCDFs
-		retainedTileResidualCDFs = &s.tileResidualRetainedCDFs
-		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
-	}
+	initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid := s.tileResidualCDFBindings()
 	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
 	return prepareFrameWorkStepWithPayload(step, output, references, payload, true, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, jobs, batches)
 }
@@ -1222,14 +1340,7 @@ func (s *FrameWorkState) runStepWithPayloadContextRunners(refs *SurfaceReference
 		return FrameWorkStepResult{}, err
 	}
 	frameContext := frameWorkFrameContext(event, s.sequenceContext())
-	var initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
-	var retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
-	var retainedTileResidualCDFsValid *bool
-	if s != nil && s.tileResidualCurrentCDFsValid {
-		initialTileResidualCDFs = &s.tileResidualCurrentCDFs
-		retainedTileResidualCDFs = &s.tileResidualRetainedCDFs
-		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
-	}
+	initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid := s.tileResidualCDFBindings()
 	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
 	executed, err := executeFrameWorkStepWithPayloadRunner(step, workerPool, output, references, payload, validatePayload, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, jobs, batches, runner)
 	if err != nil {
@@ -1920,10 +2031,10 @@ func prepareFrameWorkStepWithPayload(step FrameWorkStep, output *frame.Frame, re
 		RestorationFrameBuffers:       restorationFrameBuffers,
 	}
 	return FrameWorkPreparedPayloadStep{
-		Base:           base,
-		JobCount:       plan.JobCount,
-		BatchCount:     plan.BatchCount,
-		ReferenceCount: referenceCount,
+		Base:            base,
+		JobCount:        plan.JobCount,
+		BatchCount:      plan.BatchCount,
+		ReferenceCount:  referenceCount,
 		HasTileWork:     true,
 		CDEFIndexMap:    cdefIndexMap,
 		LoopFilterMap:   loopFilterMap,
@@ -1936,6 +2047,8 @@ func frameWorkFrameContext(event Event, fallback threading.FrameWorkSequenceCont
 	sequence := threading.FrameWorkSequenceContextFromHeader(event.SequenceHeader)
 	if !sequence.Valid() {
 		sequence = fallback
+	} else {
+		sequence.ScaledReferencePredictionDisabled = fallback.ScaledReferencePredictionDisabled
 	}
 	return FrameWorkFrameContext{
 		Sequence:            sequence,

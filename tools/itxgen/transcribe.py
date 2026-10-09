@@ -5,6 +5,7 @@ Go assembler lacks)."""
 import re, subprocess, sys
 
 OBJ = "kernels.o"
+RESERVED_GPRS = re.compile(r"(?<![a-z0-9_])[wx](?:18|28)(?![a-z0-9_])", re.I)
 
 def functions():
     out = subprocess.run(["objdump", "-d", OBJ], capture_output=True, text=True).stdout
@@ -39,6 +40,10 @@ def main():
         assert rets == [len(insns) - 1], (name, rets, len(insns))
         for _, t in insns:
             assert not re.match(r"^(bl|adrp|adr|ldr\s+q\d+, \[pc)", t), t
+            # Go reserves x28 for g. x18 is reserved by Darwin's platform ABI.
+            # Keep both unavailable so a generated leaf cannot corrupt runtime
+            # state or violate the platform calling convention.
+            assert not RESERVED_GPRS.search(t), (name, t)
         open(name + ".body.s", "w").write(emit(insns) + "\n")
         print(name, len(insns), "insns")
 

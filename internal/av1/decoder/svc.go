@@ -448,14 +448,7 @@ func (s *FrameWorkState) runStepExternalRefresh(refs *SurfaceReferences, framePo
 		return FrameWorkStepResult{}, err
 	}
 	frameContext := frameWorkFrameContext(event, s.sequenceContext())
-	var initialTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
-	var retainedTileResidualCDFs *threading.FrameWorkTileResidualCDFStorage
-	var retainedTileResidualCDFsValid *bool
-	if s != nil && s.tileResidualCurrentCDFsValid {
-		initialTileResidualCDFs = &s.tileResidualCurrentCDFs
-		retainedTileResidualCDFs = &s.tileResidualRetainedCDFs
-		retainedTileResidualCDFsValid = &s.tileResidualRetainedCDFsValid
-	}
+	initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid := s.tileResidualCDFBindings()
 	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
 	executed, err := executeFrameWorkStepWithPayloadRunner(step, workerPool, output, references, payload, true, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, jobs, batches, runner)
 	if err != nil {

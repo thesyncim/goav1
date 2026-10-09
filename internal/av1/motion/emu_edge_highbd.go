@@ -18,7 +18,7 @@ import "github.com/thesyncim/goav1/internal/av1/frame"
 // bytes, matching frame.Plane / loadHighBDSample.
 
 // emuEdge16Stride is one row of the 16bpc emulated-edge scratch window, in
-// samples. The widest inter block is maxBlockSize; the resident NEON horizontal
+// samples. The widest inter block is maxBlockSize; the resident horizontal
 // convolves load 8 samples at [cursor] and another 8 at [cursor+16 bytes], so
 // the final width-4 column group over-reads up to 5 samples past the
 // width+filterTaps-1 tap span. The extra filterTaps of slack columns absorb

@@ -97,7 +97,7 @@ func emuEdgeWindow(ref frame.Plane, refX int, refY int, width int, height int, e
 // emuEdgeWindow8X materializes only the horizontal halo of an 8-bit width x
 // height block at (refX, refY). This mirrors dav1d's reconstruction edge path
 // (src/recon_tmpl.c mc(): bw = w + !!mx*7, bh = h + !!my*7), with one extra
-// byte of horizontal padding because goav1's NEON/DOTPROD/I8MM slide kernels
+// byte of horizontal padding because goav1 slide kernels
 // intentionally over-read by one byte in their last vector group. Returns a
 // plane over the resident window plus the block's x origin inside it; y origin
 // is 0.

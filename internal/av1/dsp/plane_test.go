@@ -297,6 +297,53 @@ func TestAddRawTransformPlaneBlockTrustedMatchesResidualAdd(t *testing.T) {
 	}
 }
 
+func TestAddRawTransformPlaneBlockTrustedSignedExtrema(t *testing.T) {
+	const minInt32 = int32(-1 << 31)
+	const maxInt32 = int32(1<<31 - 1)
+	values := []int32{minInt32, maxInt32, minInt32 + 8, maxInt32 - 8, -524297, -524296, -9, -8, -7, -1, 0, 7, 8, 9, 524295, 524296}
+	for _, tt := range []struct {
+		name           string
+		width          int
+		bytesPerSample int
+		max            uint16
+	}{
+		{name: "8-bit-width4", width: 4, bytesPerSample: 1, max: 255},
+		{name: "8-bit-width16", width: 16, bytesPerSample: 1, max: 255},
+		{name: "high-bit-depth-width4", width: 4, bytesPerSample: 2, max: 4095},
+		{name: "high-bit-depth-width16", width: 16, bytesPerSample: 2, max: 4095},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			const height = 1
+			stride := (tt.width + 4) * tt.bytesPerSample
+			rawStride := tt.width + 2
+			raw := make([]int32, rawStride)
+			copy(raw, values[:tt.width])
+
+			got := make([]byte, stride)
+			if tt.bytesPerSample == 1 {
+				for i := range got {
+					got[i] = byte(13 + i*17)
+				}
+			} else {
+				for i := 0; i < len(got); i += 2 {
+					v := uint16((i * 13) % (int(tt.max) + 1))
+					got[i], got[i+1] = byte(v), byte(v>>8)
+				}
+			}
+			want := append([]byte(nil), got...)
+			block := planeBlock{pix: want, stride: stride, width: tt.width, height: height, rowBytes: tt.width * tt.bytesPerSample}
+			addRawTransformPlaneBlockPureGo(block, tt.bytesPerSample, tt.max, tt.width, raw, rawStride)
+
+			AddRawTransformPlaneBlockTrusted(got, stride, tt.bytesPerSample, tt.max, tt.width, height, raw, rawStride)
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("byte %d=%d want %d", i, got[i], want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestPlaneBlockRejectsInvalidInputs(t *testing.T) {
 	plane, _ := testPlane(4, 4, 1, 4)
 	if err := FillPlaneBlock(plane, 3, 0, 0, 1, 1, 0); !errors.Is(err, ErrInvalidBlock) {

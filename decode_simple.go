@@ -3,6 +3,8 @@ package goav1
 import (
 	"errors"
 	"fmt"
+
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 )
 
 // Decoder is an ergonomic, high-level wrapper around the byte-exact public
@@ -29,7 +31,9 @@ import (
 //
 // A Decoder is not safe for concurrent use; serialize calls. The worker count
 // (see WithWorkers) controls intra-frame tile parallelism inside the runner,
-// not concurrent use of the Decoder itself.
+// not concurrent use of the Decoder itself. GOAV1_SCALED_PRED is read when the
+// Decoder is constructed, so changing it later does not change this decoder's
+// prediction policy.
 type Decoder struct {
 	pool       FramePool
 	outputPool FramePool
@@ -50,6 +54,11 @@ type Decoder struct {
 	runner     DecoderFrameWorkResidualStreamRunner
 	postFilter DecoderFrameWorkReusableSupportedPostFilterRunner
 	external   decoderExternalPostFilterRunner
+
+	// postFilterParallel fans the post-filter chain's independent row bands out
+	// across the same worker count as tile decode. It is reused across frames so
+	// the parallel path stays allocation-free after warm-up.
+	postFilterParallel DecoderFrameWorkPostFilterParallel
 
 	payloadKind   decoderPayloadKind
 	payloadSource decoderPayloadSource
@@ -269,6 +278,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		format:        format,
 		useExternal:   useExternal,
 	}
+	d.state.SetScaledReferencePredictionEnabled(internalthreading.ScaledReferencePredictionEnabled())
 	if d.useExternal {
 		d.external.outputPool = &d.outputPool
 	}
@@ -291,6 +301,12 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		d.postFilter.size = postArena
 		d.postFilter.runner.Scratch = decoderPostFilterScratchFromArena(postArena, &arena)
 	}
+	// Let the post-filter chain fan its independent row bands across the tile
+	// worker count. This is a byte-exact scheduling change (each band reads the
+	// previous stage's complete output via boundary snapshots and writes disjoint
+	// rows), so it never alters decoded output.
+	d.postFilterParallel.Workers = d.workerPool.WorkerCount()
+	d.postFilter.Parallel = &d.postFilterParallel
 
 	runtime := DecoderFrameWorkResidualEventRuntime{
 		State:             &d.state,
@@ -630,6 +646,7 @@ func (d *Decoder) Close() {
 		d.workerPool.Close()
 		d.workerPool = nil
 	}
+	d.postFilterParallel.Close()
 }
 
 // DecodeIVF is a one-shot convenience helper: it demuxes an in-memory IVF
@@ -774,6 +791,8 @@ func newDecoderSideDataScratch(size DecoderFrameWorkSideDataScratchSize, arena *
 		CDEFIndexMap:             arena.takeUint8s(size.CDEFIndexMap),
 		CDEFReadMap:              arena.takeBools(size.CDEFReadMap),
 		LoopFilterMap:            make([]DecoderFrameWorkLoopFilterBlockRecord, size.LoopFilterMap),
+		LoopFilterMasks:          make([]DecoderFrameWorkLoopFilterFilterMask, size.LoopFilterMasks),
+		LoopFilterLevelCache:     make([][4]uint8, size.LoopFilterLevelCache),
 		RestorationRecords:       make([]TileRestorationUnitRecord, size.RestorationRecords),
 		RestorationBoundaryAbove: arena.takeUint16s(size.RestorationBoundaryAbove),
 		RestorationBoundaryBelow: arena.takeUint16s(size.RestorationBoundaryBelow),

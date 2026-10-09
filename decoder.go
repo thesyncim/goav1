@@ -34,9 +34,21 @@ package goav1
 
 import (
 	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internallfmask "github.com/thesyncim/goav1/internal/av1/lfmask"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 )
+
+// DecoderFrameWorkLoopFilterMasks is the frame-level dav1d-style deblocking
+// edge-mask handle: the tile block walk ORs each block's edges into it during
+// decode, and the supported post-filter applies them (byte-identical to the
+// edge-list sweep, and faster). It is caller-owned, reused across frames.
+type DecoderFrameWorkLoopFilterMasks = internalthreading.FrameWorkLoopFilterMasks
+
+// DecoderFrameWorkLoopFilterFilterMask is one 128x128 mask region's edge
+// bitmask storage; a frame's masks are a []DecoderFrameWorkLoopFilterFilterMask
+// sized by FrameWorkLoopFilterMaskShape.
+type DecoderFrameWorkLoopFilterFilterMask = internallfmask.FilterMask
 
 // DecoderStream wires an OBU/temporal-unit byte source to a decoder pipeline
 // and yields parsed DecoderEvent values to the caller, who drives frame work
@@ -138,6 +150,14 @@ type DecoderFrameWorkEventResult = internaldecoder.FrameWorkEventResult
 // inputs (frame, references, side data) supplied to a
 // DecoderFrameWorkPostFilterFunc when a frame finishes.
 type DecoderFrameWorkPostFilterContext = internaldecoder.FrameWorkPostFilterContext
+
+// DecoderFrameWorkPostFilterParallel is caller-owned, reusable scratch that
+// lets the supported post-filter chain fan its independent row bands out across
+// worker goroutines. It is caller-owned; call Close when finished to release
+// any pool it created for direct use. A frame-work context's pool is borrowed.
+// Installing it on a post-filter runner is a pure scheduling change; decoded
+// output stays byte-identical.
+type DecoderFrameWorkPostFilterParallel = internaldecoder.FrameWorkPostFilterParallel
 
 // DecoderFrameWorkPostFilterFunc is the per-frame callback invoked after
 // the final tile-group of a frame to apply loop-filter, CDEF, super-res,
@@ -632,9 +652,12 @@ func NewTileWorkerPool(workers int) (*TileWorkerPool, error) {
 
 // DecoderFrameWorkSequenceContextFromHeader builds a
 // DecoderFrameWorkSequenceContext from sequence so it can be threaded into
-// the frame-work helpers without re-parsing.
+// the frame-work helpers without re-parsing. It also captures the current
+// GOAV1_SCALED_PRED setting in the returned context.
 func DecoderFrameWorkSequenceContextFromHeader(sequence SequenceHeader) DecoderFrameWorkSequenceContext {
-	return internalthreading.FrameWorkSequenceContextFromHeader(sequence)
+	context := internalthreading.FrameWorkSequenceContextFromHeader(sequence)
+	context.ScaledReferencePredictionDisabled = !internalthreading.ScaledReferencePredictionEnabled()
+	return context
 }
 
 // DecoderAcquireFrameSurface acquires a Frame from pool sized for (sequence,

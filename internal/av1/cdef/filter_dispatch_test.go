@@ -8,7 +8,8 @@ import "testing"
 
 // TestFilterBlockDispatchMatchesPureGo is the bit-exactness guard for the
 // dispatched CDEF block filter. It exercises the resolved dispatch slot
-// (filterBlockImpl, which routes through the NEON asm on arm64) against the
+// (filterBlockImpl, which routes through the Go SIMD kernel when the SIMD
+// experiment is on) against the
 // canonical pure-Go reference across the full matrix of directions,
 // primary/secondary strengths, damping, bit depths, and the four CDEF border
 // configurations. Every output sample must match the reference exactly.

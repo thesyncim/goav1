@@ -472,3 +472,113 @@ func TestPoolRunRanges(t *testing.T) {
 		pool.Close()
 	}
 }
+
+func TestPoolRunRangesNoWarmAllocs(t *testing.T) {
+	pool, err := NewPool(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	var work atomic.Int64
+	callback := RangeFunc(func(_, lo, hi int) error {
+		work.Add(int64(hi - lo))
+		return nil
+	})
+	for range 3 {
+		if err := pool.RunRanges(64, 2, callback); err != nil {
+			t.Fatalf("warm RunRanges: %v", err)
+		}
+	}
+	const runs = 25
+	allocs := testing.AllocsPerRun(runs, func() {
+		if err := pool.RunRanges(64, 2, callback); err != nil {
+			t.Fatalf("RunRanges: %v", err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("warm two-band RunRanges allocations/run=%g, want 0", allocs)
+	}
+	if got, want := work.Load(), int64(64*(3+runs+1)); got != want {
+		t.Fatalf("callback work=%d, want %d", got, want)
+	}
+}
+
+type rangeRunnerCoverage struct {
+	covered []atomic.Int32
+	bands   atomic.Int32
+}
+
+func (r *rangeRunnerCoverage) RunRange(band, lo, hi int) error {
+	r.bands.Add(1)
+	for i := lo; i < hi; i++ {
+		r.covered[i].Add(1)
+	}
+	return nil
+}
+
+type rangeRunnerDrain struct {
+	entered   chan int
+	release   <-chan struct{}
+	failBand  int
+	fail      error
+	completed atomic.Int32
+}
+
+func (r *rangeRunnerDrain) RunRange(band, _, _ int) error {
+	r.entered <- band
+	if band != r.failBand {
+		<-r.release
+	}
+	r.completed.Add(1)
+	if band == r.failBand {
+		return r.fail
+	}
+	return nil
+}
+
+func TestPoolRunRangesRunnerDrainsErrorsAndReusesPool(t *testing.T) {
+	pool, err := NewPool(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	sentinel := errors.New("range failed")
+	release := make(chan struct{})
+	drain := &rangeRunnerDrain{
+		entered:  make(chan int, 2),
+		release:  release,
+		failBand: 0,
+		fail:     sentinel,
+	}
+	finished := make(chan error, 1)
+	go func() { finished <- pool.RunRangesRunner(8, 2, drain) }()
+	<-drain.entered
+	<-drain.entered
+	select {
+	case err := <-finished:
+		t.Fatalf("RunRangesRunner returned before all submitted bands joined: %v", err)
+	default:
+	}
+	close(release)
+	if err := <-finished; !errors.Is(err, sentinel) {
+		t.Fatalf("RunRangesRunner error=%v, want %v", err, sentinel)
+	}
+	if got := drain.completed.Load(); got != 2 {
+		t.Fatalf("completed ranges=%d, want 2 after the error barrier", got)
+	}
+
+	coverage := &rangeRunnerCoverage{covered: make([]atomic.Int32, 17)}
+	if err := pool.RunRangesRunner(len(coverage.covered), 2, coverage); err != nil {
+		t.Fatalf("pool reuse after range error: %v", err)
+	}
+	if got := coverage.bands.Load(); got != 2 {
+		t.Fatalf("reused runner bands=%d, want 2", got)
+	}
+	for i := range coverage.covered {
+		if got := coverage.covered[i].Load(); got != 1 {
+			t.Fatalf("reused runner index %d covered %d times, want once", i, got)
+		}
+	}
+}

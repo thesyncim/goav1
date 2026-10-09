@@ -1,0 +1,211 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant.
+
+//go:build goexperiment.simd && arm64 && !purego
+
+package encoder
+
+import (
+	"math/rand"
+	"testing"
+
+	"simd/archsimd"
+)
+
+func makeSADPlane(seed int64, n int) ([]byte, []byte) {
+	rng := rand.New(rand.NewSource(seed))
+	src := make([]byte, n)
+	ref := make([]byte, n)
+	for i := range src {
+		src[i] = uint8(rng.Intn(256))
+		ref[i] = uint8(rng.Intn(256))
+	}
+	return src, ref
+}
+
+// TestSAD8x8x4SIMDByteExact covers random data, odd strides, and unaligned
+// block origins against the scalar oracle.
+func TestSAD8x8x4SIMDByteExact(t *testing.T) {
+	for _, stride := range []int{24, 40, 79, 96} {
+		src, ref := makeSADPlane(int64(stride)*19+9, stride*128)
+		rng := rand.New(rand.NewSource(int64(stride) + 400))
+		for range 2000 {
+			row := rng.Intn(96) + 8
+			col := rng.Intn(stride-16) + 8
+			off := row*stride + col
+			r0, r1, r2, r3 := off+2, off-2, off+2*stride, off-2*stride
+			w0, w1, w2, w3 := sad8x8x4PureGo(src[off:], ref[r0:], ref[r1:], ref[r2:], ref[r3:], stride)
+			g0, g1, g2, g3 := sad8x8x4SIMD(src[off:], ref[r0:], ref[r1:], ref[r2:], ref[r3:], stride)
+			if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+				t.Fatalf("stride %d off %d: SIMD (%d,%d,%d,%d) want (%d,%d,%d,%d)",
+					stride, off, g0, g1, g2, g3, w0, w1, w2, w3)
+			}
+		}
+	}
+}
+
+// TestSAD8x8x4SIMDExactMinimumSlice checks the smallest legal block windows
+// with both aligned and offset slice starts. In particular, it ensures the
+// raw-pointer loop does not advance past the allocation after the final row
+// pair; run this test with checkptr=2 as well as ordinary SIMD tests.
+func TestSAD8x8x4SIMDExactMinimumSlice(t *testing.T) {
+	for _, stride := range []int{17, 32, 79} {
+		const rowCount = 8
+		windowLen := (rowCount-1)*stride + 8
+		for _, offset := range []int{0, 1, 7} {
+			makeWindow := func(seed int64) []byte {
+				rng := rand.New(rand.NewSource(seed))
+				backing := make([]byte, windowLen+offset)
+				for i := range backing {
+					backing[i] = uint8(rng.Intn(256))
+				}
+				return backing[offset:]
+			}
+
+			src := makeWindow(int64(stride*100 + offset))
+			refs := [4][]byte{
+				makeWindow(int64(stride*200 + offset)),
+				makeWindow(int64(stride*300 + offset)),
+				makeWindow(int64(stride*400 + offset)),
+				makeWindow(int64(stride*500 + offset)),
+			}
+			w0, w1, w2, w3 := sad8x8x4PureGo(src, refs[0], refs[1], refs[2], refs[3], stride)
+			g0, g1, g2, g3 := sad8x8x4SIMD(src, refs[0], refs[1], refs[2], refs[3], stride)
+			if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+				t.Fatalf("stride=%d offset=%d: SIMD (%d,%d,%d,%d), want (%d,%d,%d,%d)",
+					stride, offset, g0, g1, g2, g3, w0, w1, w2, w3)
+			}
+		}
+	}
+}
+
+// TestSAD8x8SIMDPackedRowsExactWindows covers every entry point that packs two
+// 8-byte rows through a local array. The allocation ends at the last legal
+// byte, including for overlapping rows and misaligned window starts.
+func TestSAD8x8SIMDPackedRowsExactWindows(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x5ad8))
+	for _, srcStride := range []int{1, 2, 7, 8, 17, 79} {
+		for _, refStride := range []int{1, 8, 19} {
+			for _, offset := range []int{0, 1, 7} {
+				src := sadWindow(rng, 7*srcStride+8, offset, sadFillRandom)
+				ref0 := sadWindow(rng, 7*refStride+8, offset, sadFillBinary)
+				ref1 := sadWindow(rng, 7*refStride+8, offset, sadFillMax)
+				if got, want := sad8x8SIMD(src, srcStride, ref0, refStride),
+					sad8x8DualPureGo(src, srcStride, ref0, refStride); got != want {
+					t.Fatalf("dual strides %d/%d offset %d: got %d want %d", srcStride, refStride, offset, got, want)
+				}
+				if got, want := sad8x8CompoundAvgSIMD(src, srcStride, ref0, refStride, ref1, refStride),
+					sad8x8CompoundAvgBlockPureGo(src, srcStride, ref0, refStride, ref1, refStride); got != want {
+					t.Fatalf("compound strides %d/%d offset %d: got %d want %d", srcStride, refStride, offset, got, want)
+				}
+			}
+		}
+	}
+	for _, stride := range []int{1, 2, 7, 8, 17, 79} {
+		for _, offset := range []int{0, 1, 7} {
+			src := sadWindow(rng, 7*stride+8, offset, sadFillRandom)
+			refs := [4][]byte{
+				sadWindow(rng, 7*stride+8, offset, sadFillRandom),
+				sadWindow(rng, 7*stride+8, offset, sadFillZero),
+				sadWindow(rng, 7*stride+8, offset, sadFillMax),
+				sadWindow(rng, 7*stride+8, offset, sadFillBinary),
+			}
+			g0, g1, g2, g3 := sad8x8x4SIMD(src, refs[0], refs[1], refs[2], refs[3], stride)
+			w0, w1, w2, w3 := sad8x8x4PureGo(src, refs[0], refs[1], refs[2], refs[3], stride)
+			if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+				t.Fatalf("x4 stride %d offset %d: got (%d,%d,%d,%d) want (%d,%d,%d,%d)", stride, offset,
+					g0, g1, g2, g3, w0, w1, w2, w3)
+			}
+			ref := sadWindow(rng, 7*stride+20, offset, sadFillRandom)
+			g0, g1, g2, g3 = sad8x8x4Step4SIMD(src, ref, stride)
+			w0, w1, w2, w3 = sad8x8x4Step4PureGo(src, ref, stride)
+			if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+				t.Fatalf("step4 stride %d offset %d: got (%d,%d,%d,%d) want (%d,%d,%d,%d)", stride, offset,
+					g0, g1, g2, g3, w0, w1, w2, w3)
+			}
+		}
+	}
+}
+
+func TestSAD8x8x4SIMDExtremes(t *testing.T) {
+	const stride = 32
+	src := make([]byte, stride*32)
+	ref := make([]byte, stride*32)
+	for i := range src {
+		src[i] = 255
+	}
+	g0, g1, g2, g3 := sad8x8x4SIMD(src, ref, ref, ref, ref, stride)
+	w0, w1, w2, w3 := sad8x8x4PureGo(src, ref, ref, ref, ref, stride)
+	if g0 != w0 || g1 != w1 || g2 != w2 || g3 != w3 {
+		t.Fatalf("all-255 vs all-0: SIMD (%d,%d,%d,%d) want (%d,%d,%d,%d)",
+			g0, g1, g2, g3, w0, w1, w2, w3)
+	}
+}
+
+func TestSADSIMDAbsDiffUnsignedEdges(t *testing.T) {
+	var a, b, got [16]uint8
+	for i := range a {
+		a[i] = uint8(i * 17)
+		b[i] = 255 - a[i]
+	}
+	absd := absDiffU8x16(archsimd.LoadUint8x16Array(&a), archsimd.LoadUint8x16Array(&b))
+	absd.StoreArray(&got)
+	for i := range got {
+		want := int(a[i]) - int(b[i])
+		if want < 0 {
+			want = -want
+		}
+		if int(got[i]) != want {
+			t.Fatalf("lane %d: absdiff(%d,%d)=%d, want %d", i, a[i], b[i], got[i], want)
+		}
+	}
+}
+
+var sadSIMDBenchSink int
+
+func benchPlane() ([]byte, []byte) {
+	src := make([]byte, 128*128)
+	ref := make([]byte, 128*128)
+	for i := range src {
+		src[i] = uint8(i * 7)
+		ref[i] = uint8(i * 13)
+	}
+	return src, ref
+}
+
+func BenchmarkSAD8x8x4_Scalar(b *testing.B) {
+	src, ref := benchPlane()
+	r0, r1, r2, r3 := ref, ref[4:], ref[8:], ref[12:]
+	var sums [4]int
+	b.ReportAllocs()
+	for b.Loop() {
+		s0, s1, s2, s3 := sad8x8x4PureGo(src, r0, r1, r2, r3, 128)
+		sums[0] += s0
+		sums[1] += s1
+		sums[2] += s2
+		sums[3] += s3
+	}
+	sadSIMDBenchSink = sums[0] + sums[1] + sums[2] + sums[3]
+	if sadSIMDBenchSink == 0 {
+		b.Fatal("unexpected zero SAD")
+	}
+}
+
+func BenchmarkSAD8x8x4_SIMD(b *testing.B) {
+	src, ref := benchPlane()
+	r0, r1, r2, r3 := ref, ref[4:], ref[8:], ref[12:]
+	var sums [4]int
+	b.ReportAllocs()
+	for b.Loop() {
+		s0, s1, s2, s3 := sad8x8x4SIMD(src, r0, r1, r2, r3, 128)
+		sums[0] += s0
+		sums[1] += s1
+		sums[2] += s2
+		sums[3] += s3
+	}
+	sadSIMDBenchSink = sums[0] + sums[1] + sums[2] + sums[3]
+	if sadSIMDBenchSink == 0 {
+		b.Fatal("unexpected zero SAD")
+	}
+}

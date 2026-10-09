@@ -84,12 +84,25 @@ func markLoopFilterBlock(m *threading.FrameWorkLoopFilterMap, block tile.BlockVi
 		return fmt.Errorf("encoder: loop-filter block %d,%d..%d,%d outside %dx%d map",
 			lfBlock.MICol, lfBlock.MIRow, lfBlock.MIColEnd, lfBlock.MIRowEnd, m.Stride, m.Rows)
 	}
-	for miRow := int(lfBlock.MIRow); miRow < int(lfBlock.MIRowEnd); miRow++ {
+	col := int(lfBlock.MICol)
+	colEnd := int(lfBlock.MIColEnd)
+	rowStart := int(lfBlock.MIRow)
+	rowEnd := int(lfBlock.MIRowEnd)
+	if colEnd <= col || rowEnd <= rowStart {
+		return nil
+	}
+	// Fill the first row by exponential doubling (log2(bw) memmoves instead of bw
+	// per-element struct copies), then memmove that filled row into the remaining
+	// rows. copy() lowers to SIMD memmove; both are far faster than element-wise
+	// struct assignment for the wide blocks this hot fill sees.
+	first := m.Records[rowStart*stride+col : rowStart*stride+colEnd]
+	first[0] = record
+	for filled := 1; filled < len(first); filled *= 2 {
+		copy(first[filled:], first[:filled])
+	}
+	for miRow := rowStart + 1; miRow < rowEnd; miRow++ {
 		row := miRow * stride
-		cells := m.Records[row+int(lfBlock.MICol) : row+int(lfBlock.MIColEnd)]
-		for i := range cells {
-			cells[i] = record
-		}
+		copy(m.Records[row+col:row+colEnd], first)
 	}
 	return nil
 }

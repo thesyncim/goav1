@@ -526,6 +526,28 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFP
 			result.Planes++
 			continue
 		}
+		// On little-endian hosts, a whole-frame 10/12-bit apply can use the
+		// same in-place row ownership as dav1d: keep only the two pre-filter
+		// lines and eight-column left halo, assemble each tap buffer from the
+		// frame, and have the uint16 CDEF kernel write directly to the frame
+		// view. Explicit snapshot/unit-row APIs and banded callers retain their
+		// immutable whole-plane snapshot contract.
+		if loadSamples && rowStart == 0 && rowEnd == rows &&
+			ctx.Output.Layout.BytesPerSample == 2 && frameWorkCDEFHBDInPlaceAvailable() &&
+			frameWorkCDEFHBDPlaneViewAvailable(planeFrame) {
+			lineNeed := 4 * planeFrame.Width
+			if len(req.SampleScratch[plane]) < lineNeed {
+				return FrameWorkCDEFPostFilterResult{}, frame.ErrShortBuffer
+			}
+			planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRowsHBD(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane][:lineNeed], FrameWorkCDEFPostFilterHBD16BandBoundary{}, req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, coeffShift, chromaFiltering)
+			if err != nil {
+				return FrameWorkCDEFPostFilterResult{}, err
+			}
+			result.Units += planeUnits
+			result.Blocks += planeBlocks
+			result.Planes++
+			continue
+		}
 		var src frame.SamplePlane
 		if loadSamples {
 			var err error
@@ -689,7 +711,8 @@ func frameWorkApplyCDEFPlaneRows(params parser.CDEFParams, indexMap FrameWorkCDE
 			if plane != 0 {
 				packed = params.UVStrength[index]
 			}
-			directionOnly := plane == 0 && forceLumaDirections && packed == 0 && params.UVStrength[index] != 0
+			needPrimaryDirection := frameWorkCDEFPlaneNeedsPrimaryDirection(params, index, plane, forceLumaDirections)
+			directionOnly := plane == 0 && forceLumaDirections && packed == 0 && params.UVStrength[index]>>2 != 0
 			if packed == 0 && !directionOnly {
 				continue
 			}
@@ -746,8 +769,14 @@ func frameWorkApplyCDEFPlaneRows(params parser.CDEFParams, indexMap FrameWorkCDE
 					return units, blocksTotal, err
 				}
 			}
-			if err := cdef.FilterFrameBlocksTrusted(unitDst, cdef.BStride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams); err != nil {
-				return units, blocksTotal, err
+			var filterErr error
+			if needPrimaryDirection {
+				filterErr = cdef.FilterFrameBlocksTrusted(unitDst, cdef.BStride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+			} else {
+				filterErr = cdef.FilterFrameBlocksTrustedNoPrimaryDirection(unitDst, cdef.BStride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+			}
+			if filterErr != nil {
+				return units, blocksTotal, filterErr
 			}
 			cdefDebugLogUnitDst(plane, unitRow, unitCol, unitDst)
 			if directionOnly {
@@ -761,6 +790,18 @@ func frameWorkApplyCDEFPlaneRows(params parser.CDEFParams, indexMap FrameWorkCDE
 		}
 	}
 	return units, blocksTotal, nil
+}
+
+// frameWorkCDEFPlaneNeedsPrimaryDirection mirrors dav1d's raw-level gate:
+// direction search runs when the original luma primary level is nonzero, or
+// when chroma filtering needs that luma direction for a nonzero chroma primary
+// level. The per-block variance-adjusted luma strength must not be used here.
+func frameWorkCDEFPlaneNeedsPrimaryDirection(params parser.CDEFParams, index int, plane int, forceLumaDirections bool) bool {
+	if plane == 0 {
+		return params.YStrength[index]>>2 != 0 ||
+			(forceLumaDirections && params.UVStrength[index]>>2 != 0)
+	}
+	return params.UVStrength[index]>>2 != 0
 }
 
 func frameWorkStoreCDEFUnit(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, src []uint16) error {

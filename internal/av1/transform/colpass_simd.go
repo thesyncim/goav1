@@ -36,15 +36,30 @@ var (
 	inverseDCT64Col2Impl = inverseDCT64Col2PureGo
 )
 
-// inverseDCT8Col4 / inverseDCT16Col4 / inverseDCT32Col4 / inverseDCT64Col4
-// transform four adjacent columns of the scratch buffer in place (dav1d's
-// four-lane column shape, src/arm/64/itx16.S). The result for each column
-// equals the corresponding single-column scalar kernel. Same binding rules as
-// the two-column slots.
+// inverseDCT8Col4Impl transforms four adjacent columns for the 8-point DCT.
+// The fallback replicates the historical behaviour (two batched column pairs);
+// arm64 dispatch binds the direct 4-column NEON adapter.
+var inverseDCT8Col4Impl = inverseDCT8Col4Default
+
+func inverseDCT8Col4Default(buf []int32, rowStride int, min int32, max int32) {
+	inverseDCT8Col2Impl(buf, rowStride, min, max)
+	inverseDCT8Col2Impl(buf[2:], rowStride, min, max)
+}
+
+// The fallback replicates the historical behaviour (two batched column pairs);
+// arm64 dispatch binds the direct 4-column NEON adapter.
+var inverseDCT16Col4Impl = inverseDCT16Col4Default
+
+func inverseDCT16Col4Default(buf []int32, rowStride int, min int32, max int32) {
+	inverseDCT16Col2Impl(buf, rowStride, min, max)
+	inverseDCT16Col2Impl(buf[2:], rowStride, min, max)
+}
+
+// inverseDCT4Col4Impl, inverseDCT32Col4Impl, and inverseDCT64Col4Impl are the
+// pure-Go references unless a target-specific dispatcher binds an optimized
+// implementation.
 var (
 	inverseDCT4Col4Impl  = inverseDCT4Col4PureGo
-	inverseDCT8Col4Impl  = inverseDCT8Col4PureGo
-	inverseDCT16Col4Impl = inverseDCT16Col4PureGo
 	inverseDCT32Col4Impl = inverseDCT32Col4PureGo
 	inverseDCT64Col4Impl = inverseDCT64Col4PureGo
 )

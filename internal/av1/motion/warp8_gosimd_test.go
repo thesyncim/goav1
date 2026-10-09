@@ -1,0 +1,312 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant.
+
+//go:build goexperiment.simd && arm64 && !purego
+
+package motion
+
+import (
+	"math/rand"
+	"testing"
+
+	"github.com/thesyncim/goav1/internal/av1/frame"
+)
+
+// TestWarpedFilterI8Exact guards the two properties the GoSIMD warp math depends
+// on: the int8 narrow of warpedFilter is lossless, and every row still sums to
+// 128 (the identity behind the horizontal SMULL bias fold).
+func TestWarpedFilterI8Exact(t *testing.T) {
+	for i := range warpedFilter {
+		sum := 0
+		minDot, maxDot := 0, 0
+		for j := range warpedFilter[i] {
+			if int16(warpedFilterI8[i][j]) != warpedFilter[i][j] {
+				t.Fatalf("warpedFilterI8[%d][%d]=%d lossy vs %d", i, j, warpedFilterI8[i][j], warpedFilter[i][j])
+			}
+			sum += int(warpedFilter[i][j])
+			v := int(warpedFilter[i][j])
+			if v >= 0 {
+				minDot -= 128 * v
+				maxDot += 127 * v
+			} else {
+				minDot += 127 * v
+				maxDot -= 128 * v
+			}
+		}
+		if sum != 128 {
+			t.Fatalf("warpedFilter[%d] sums to %d, want 128", i, sum)
+		}
+		if minDot < -32768 || maxDot+4 > 32767 {
+			t.Fatalf("warpedFilter[%d] centred dot exceeds int16: [%d,%d]", i, minDot, maxDot+4)
+		}
+	}
+}
+
+func TestWarpHorizontal8AllPhasesAndMinimumWindow(t *testing.T) {
+	ref := frame.Plane{Pix: make([]byte, 16*15), Stride: 16, Width: 16, Height: 15}
+	for phase := range warpedFilter {
+		for pattern := 0; pattern < 3; pattern++ {
+			for y := 0; y < ref.Height; y++ {
+				for x := 0; x < ref.Width; x++ {
+					switch pattern {
+					case 0:
+						ref.Pix[y*16+x] = 0
+					case 1:
+						ref.Pix[y*16+x] = 255
+					default:
+						ref.Pix[y*16+x] = byte(((x + y) & 1) * 255)
+					}
+				}
+			}
+			sx := (phase - warpedPixelPrecShifts) << warpedDiffPrecBits
+			var want, got warpTmp
+			warpHorizontal8Resident(&want, ref, 8, sx, 7, 0, 0, 0, round0Bits, 8+filterBits-1)
+			warpHorizontal8ResidentGoSIMD(&got, ref, 8, sx, 7, 0, 0, 0, round0Bits, 8+filterBits-1)
+			if got != want {
+				t.Fatalf("phase=%d pattern=%d mismatch", phase, pattern)
+			}
+		}
+	}
+}
+
+func TestWarpVertical8AllPhasesAndExtremes(t *testing.T) {
+	for phase := range warpedFilter {
+		baseSY := (phase - warpedPixelPrecShifts) << warpedDiffPrecBits
+		for pattern := 0; pattern < 3; pattern++ {
+			var tmp warpTmp
+			for k := range tmp {
+				switch pattern {
+				case 0:
+					tmp[k] = 0
+				case 1:
+					tmp[k] = (1 << 14) - 1
+				default:
+					tmp[k] = int32((k & 1) * ((1 << 14) - 1))
+				}
+			}
+			for _, gamma := range [...]int{0, 64} {
+				if !warpVertFullOffsInRange(baseSY, gamma, 0) {
+					continue
+				}
+				want := frame.Plane{Pix: make([]byte, 64), Stride: 8, Width: 8, Height: 8}
+				got := frame.Plane{Pix: make([]byte, 64), Stride: 8, Width: 8, Height: 8}
+				if gamma == 0 {
+					warpVertical8FullGamma0(want, &tmp, 0, 0, 0, 0, baseSY, 0, round1Bits, 8+2*filterBits-round0Bits)
+					warpVertical8FullGamma0GoSIMD(got, &tmp, 0, 0, 0, 0, baseSY, 0, round1Bits, 8+2*filterBits-round0Bits)
+				} else {
+					warpVertical8Full(want, &tmp, 0, 0, 0, 0, baseSY, gamma, 0, round1Bits, 8+2*filterBits-round0Bits)
+					warpVertical8FullGoSIMD(got, &tmp, 0, 0, 0, 0, baseSY, gamma, 0, round1Bits, 8+2*filterBits-round0Bits)
+				}
+				for k := range want.Pix {
+					if got.Pix[k] != want.Pix[k] {
+						t.Fatalf("phase=%d gamma=%d pattern=%d pixel=%d got=%d want=%d", phase, gamma, pattern, k, got.Pix[k], want.Pix[k])
+					}
+				}
+			}
+		}
+	}
+}
+
+// residentRefPlane builds an 8-bit reference plane large enough that the
+// resident horizontal window (and its one-byte right overshoot) is always in
+// bounds for interior positions.
+func residentRefPlane(rng *rand.Rand) frame.Plane {
+	const w, h, stride = 80, 80, 96
+	pix := make([]byte, stride*(h+2)) // +2 rows of border for the 16-byte load overshoot
+	for i := range pix {
+		pix[i] = byte(rng.Intn(256))
+	}
+	return frame.Plane{Pix: pix, Stride: stride, Width: w, Height: h}
+}
+
+func TestWarpHorizontal8ResidentGoSIMDMatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x5A1D0FF))
+	const reduceBitsHoriz = round0Bits
+	const offsetBitsHoriz = 8 + filterBits - 1
+
+	tested := 0
+	for draw := 0; draw < 20000 && tested < 1500; draw++ {
+		ref := residentRefPlane(rng)
+		ix4 := 7 + rng.Intn(ref.Width-15) // keeps ix4>=7 and ix4+8<=Width
+		iy4 := 7 + rng.Intn(ref.Height-15)
+		sx4 := rng.Intn(1 << 16)
+		sy4 := rng.Intn(1 << 16)
+		alpha := rng.Intn(513) - 256
+		beta := rng.Intn(513) - 256
+
+		if !warpHorizResidentOffsInRange(sx4, alpha, beta) {
+			continue
+		}
+		tested++
+
+		var want, got warpTmp
+		wantSY := warpHorizontal8Resident(&want, ref, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz)
+		gotSY := warpHorizontal8ResidentGoSIMD(&got, ref, ix4, sx4, iy4, sy4, alpha, beta, reduceBitsHoriz, offsetBitsHoriz)
+
+		if gotSY != wantSY {
+			t.Fatalf("draw %d: sy4 got %d want %d", draw, gotSY, wantSY)
+		}
+		if got != want {
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("draw %d ix4=%d iy4=%d sx4=%d alpha=%d beta=%d: tmp[%d]=%d want %d",
+						draw, ix4, iy4, sx4, alpha, beta, i, got[i], want[i])
+				}
+			}
+		}
+	}
+	if tested == 0 {
+		t.Fatal("no in-range horizontal cases exercised the GoSIMD path")
+	}
+	t.Logf("compared %d in-range resident horizontal blocks", tested)
+}
+
+func TestWarpVertical8FullGoSIMDMatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(0xBEEF77))
+	const reduceBitsHoriz = round0Bits
+	const offsetBitsHoriz = 8 + filterBits - 1
+	const reduceBitsVert = round1Bits
+	const offsetBitsVert = 8 + 2*filterBits - round0Bits
+
+	testedFull, testedGamma0 := 0, 0
+	for draw := 0; draw < 40000 && (testedFull < 1200 || testedGamma0 < 400); draw++ {
+		// Produce a realistic int32 tmp from a resident horizontal pass.
+		ref := residentRefPlane(rng)
+		ix4 := 7 + rng.Intn(ref.Width-15)
+		iy4 := 7 + rng.Intn(ref.Height-15)
+		hsx4 := rng.Intn(1 << 16)
+		halpha := rng.Intn(257) - 128
+		hbeta := rng.Intn(257) - 128
+		if !warpHorizResidentOffsInRange(hsx4, halpha, hbeta) {
+			continue
+		}
+		var tmp warpTmp
+		warpHorizontal8Resident(&tmp, ref, ix4, hsx4, iy4, 0, halpha, hbeta, reduceBitsHoriz, offsetBitsHoriz)
+
+		baseSY := rng.Intn(1 << 16)
+		gamma := rng.Intn(257) - 128
+		delta := rng.Intn(513) - 256
+
+		gamma0 := draw%4 == 0
+		if gamma0 {
+			gamma = 0
+		}
+		if !warpVertFullOffsInRange(baseSY, gamma, delta) {
+			continue
+		}
+
+		want, _ := testPlane(32, 32, 1, 32)
+		got, _ := testPlane(32, 32, 1, 32)
+		for i := range want.Pix {
+			want.Pix[i] = 0xAA
+			got.Pix[i] = 0xAA
+		}
+
+		if gamma0 {
+			warpVertical8FullGamma0(want, &tmp, 8, 8, 0, 0, baseSY, delta, reduceBitsVert, offsetBitsVert)
+			warpVertical8FullGamma0GoSIMD(got, &tmp, 8, 8, 0, 0, baseSY, delta, reduceBitsVert, offsetBitsVert)
+			testedGamma0++
+		} else {
+			warpVertical8Full(want, &tmp, 8, 8, 0, 0, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert)
+			warpVertical8FullGoSIMD(got, &tmp, 8, 8, 0, 0, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert)
+			testedFull++
+		}
+
+		for i := range want.Pix {
+			if got.Pix[i] != want.Pix[i] {
+				t.Fatalf("draw %d gamma0=%v baseSY=%d gamma=%d delta=%d pix[%d]=%d want %d",
+					draw, gamma0, baseSY, gamma, delta, i, got.Pix[i], want.Pix[i])
+			}
+		}
+	}
+	if testedFull == 0 || testedGamma0 == 0 {
+		t.Fatalf("insufficient vertical coverage: full=%d gamma0=%d", testedFull, testedGamma0)
+	}
+	t.Logf("compared %d full + %d gamma0 vertical blocks", testedFull, testedGamma0)
+}
+
+func benchWarpHorizInputs() (frame.Plane, int, int, int, int, int, int) {
+	rng := rand.New(rand.NewSource(1))
+	ref := residentRefPlane(rng)
+	return ref, 40, 40, 32768, 0, 96, -64
+}
+
+func BenchmarkWarpHorizontal8ResidentScalarGoSIMDOracle(b *testing.B) {
+	ref, ix4, iy4, sx4, sy4, alpha, beta := benchWarpHorizInputs()
+	var tmp warpTmp
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		warpHorizontal8Resident(&tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, round0Bits, 8+filterBits-1)
+	}
+}
+
+func BenchmarkWarpHorizontal8ResidentGoSIMD(b *testing.B) {
+	ref, ix4, iy4, sx4, sy4, alpha, beta := benchWarpHorizInputs()
+	if !warpHorizResidentOffsInRange(sx4, alpha, beta) {
+		b.Skip("bench inputs out of range")
+	}
+	var tmp warpTmp
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		warpHorizontal8ResidentGoSIMD(&tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, round0Bits, 8+filterBits-1)
+	}
+}
+
+func benchWarpVertTmp() warpTmp {
+	rng := rand.New(rand.NewSource(2))
+	ref := residentRefPlane(rng)
+	var tmp warpTmp
+	warpHorizontal8Resident(&tmp, ref, 40, 32768, 40, 0, 96, -64, round0Bits, 8+filterBits-1)
+	return tmp
+}
+
+func benchWarpVerticalInputs() (warpTmp, frame.Plane) {
+	tmp := benchWarpVertTmp()
+	dst, _ := testPlane(32, 32, 1, 32)
+	return tmp, dst
+}
+
+func BenchmarkWarpVertical8FullScalarGoSIMDOracle(b *testing.B) {
+	tmp, dst := benchWarpVerticalInputs()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		warpVertical8Full(dst, &tmp, 8, 8, 0, 0, 32768, 96, -64, round1Bits, 8+2*filterBits-round0Bits)
+	}
+}
+
+func BenchmarkWarpVertical8FullGamma0Scalar(b *testing.B) {
+	tmp, dst := benchWarpVerticalInputs()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		warpVertical8FullGamma0(dst, &tmp, 8, 8, 0, 0, 32768, -64, round1Bits, 8+2*filterBits-round0Bits)
+	}
+}
+
+func BenchmarkWarpVertical8FullGoSIMD(b *testing.B) {
+	tmp, dst := benchWarpVerticalInputs()
+	if !warpVertFullOffsInRange(32768, 96, -64) {
+		b.Skip("bench inputs out of range")
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		warpVertical8FullGoSIMD(dst, &tmp, 8, 8, 0, 0, 32768, 96, -64, round1Bits, 8+2*filterBits-round0Bits)
+	}
+}
+
+func BenchmarkWarpVertical8FullGamma0GoSIMD(b *testing.B) {
+	tmp, dst := benchWarpVerticalInputs()
+	if !warpVertFullOffsInRange(32768, 0, -64) {
+		b.Skip("bench inputs out of range")
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		warpVertical8FullGamma0GoSIMD(dst, &tmp, 8, 8, 0, 0, 32768, -64, round1Bits, 8+2*filterBits-round0Bits)
+	}
+}

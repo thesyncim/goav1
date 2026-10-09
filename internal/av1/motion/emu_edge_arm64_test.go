@@ -37,7 +37,7 @@ func emuEdgeTestGeometries(rng *rand.Rand, refW int, refH int, w int, h int) [][
 // TestConvolve2D8ClampedEmuEdgeMatchesPureGo pins the emu_edge fast path
 // (dav1d src/recon_tmpl.c mc(): emu_edge + plain 8tap) byte-exact against the
 // per-tap clamped pure-Go reference for the single-prediction 2D kernels,
-// through both the I8MM and NEON clamped entries.
+// through the dispatched clamped entry.
 func TestConvolve2D8ClampedEmuEdgeMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xe19e))
 	widths := []int{4, 8, 16, 32, 64, 128}
@@ -58,19 +58,14 @@ func TestConvolve2D8ClampedEmuEdgeMatchesPureGo(t *testing.T) {
 			for _, kernels := range phasePairs {
 				for _, at := range emuEdgeTestGeometries(rng, refW, refH, w, h) {
 					refX, refY := at[0], at[1]
-					gotI8MM, _ := testPlane(w, h, 1, w)
-					gotNEON, _ := testPlane(w, h, 1, w)
+					got, _ := testPlane(w, h, 1, w)
 					want, _ := testPlane(w, h, 1, w)
-					var scratchA, scratchB ConvolveScratch
-					convolve2D8ClampedI8MMWithScratch(gotI8MM, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &scratchA)
-					convolve2D8ClampedNEONWithScratch(gotNEON, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &scratchB)
+					var scratch ConvolveScratch
+					convolve2D8ClampedWithScratchImpl(got, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &scratch)
 					convolve2D8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
 					for i := range want.Pix {
-						if gotI8MM.Pix[i] != want.Pix[i] {
-							t.Fatalf("i8mm %dx%d ref=(%d,%d) sample=%d got=%d want=%d", w, h, refX, refY, i, gotI8MM.Pix[i], want.Pix[i])
-						}
-						if gotNEON.Pix[i] != want.Pix[i] {
-							t.Fatalf("neon %dx%d ref=(%d,%d) sample=%d got=%d want=%d", w, h, refX, refY, i, gotNEON.Pix[i], want.Pix[i])
+						if got.Pix[i] != want.Pix[i] {
+							t.Fatalf("clamped 2D %dx%d ref=(%d,%d) sample=%d got=%d want=%d", w, h, refX, refY, i, got.Pix[i], want.Pix[i])
 						}
 					}
 				}
@@ -81,7 +76,7 @@ func TestConvolve2D8ClampedEmuEdgeMatchesPureGo(t *testing.T) {
 
 // TestCompoundConvBuf2DEmuEdgeMatchesPureGo pins the emu_edge fast path for
 // the compound conv-buf 2D kernels byte-exact against the clamped pure-Go
-// reference, through both the I8MM and NEON entries.
+// reference, through the dispatched compound entry.
 func TestCompoundConvBuf2DEmuEdgeMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xc03b))
 	widths := []int{4, 8, 16, 32, 64, 128}
@@ -103,19 +98,19 @@ func TestCompoundConvBuf2DEmuEdgeMatchesPureGo(t *testing.T) {
 			for _, kernels := range phasePairs {
 				for _, at := range emuEdgeTestGeometries(rng, refW, refH, w, h) {
 					refX, refY := at[0], at[1]
-					gotI8MM := make([]uint16, w*h)
-					gotNEON := make([]uint16, w*h)
+					gotDispatch := make([]uint16, w*h)
+					gotGoSIMD := make([]uint16, w*h)
 					want := make([]uint16, w*h)
 					var scratchA, scratchB CompoundConvolveScratch
-					predictInterCompoundRef8ToConvBuf2DI8MM(gotI8MM, ref, refX, refY, w, h, kernels[0], kernels[1], offsetBits, &scratchA)
-					predictInterCompoundRef8ToConvBuf2DNEON(gotNEON, ref, refX, refY, w, h, kernels[0], kernels[1], offsetBits, &scratchB)
+					predictInterCompoundRef8ToConvBuf2DImpl(gotDispatch, ref, refX, refY, w, h, kernels[0], kernels[1], offsetBits, &scratchA)
+					predictInterCompoundRef8ToConvBuf2DImpl(gotGoSIMD, ref, refX, refY, w, h, kernels[0], kernels[1], offsetBits, &scratchB)
 					predictInterCompoundRef8ToConvBuf2DPureGo(want, ref, refX, refY, w, h, kernels[0], kernels[1], offsetBits, nil)
 					for i := range want {
-						if gotI8MM[i] != want[i] {
-							t.Fatalf("i8mm %dx%d ref=(%d,%d) sample=%d got=%d want=%d", w, h, refX, refY, i, gotI8MM[i], want[i])
+						if gotDispatch[i] != want[i] {
+							t.Fatalf("i8mm %dx%d ref=(%d,%d) sample=%d got=%d want=%d", w, h, refX, refY, i, gotDispatch[i], want[i])
 						}
-						if gotNEON[i] != want[i] {
-							t.Fatalf("neon %dx%d ref=(%d,%d) sample=%d got=%d want=%d", w, h, refX, refY, i, gotNEON[i], want[i])
+						if gotGoSIMD[i] != want[i] {
+							t.Fatalf("neon %dx%d ref=(%d,%d) sample=%d got=%d want=%d", w, h, refX, refY, i, gotGoSIMD[i], want[i])
 						}
 					}
 				}
@@ -152,8 +147,8 @@ func TestConvolve1D8ClampedEmuEdgeMatchesPureGo(t *testing.T) {
 					wantX, _ := testPlane(w, h, 1, w)
 					wantY, _ := testPlane(w, h, 1, w)
 					var scratchX, scratchY ConvolveScratch
-					convolveX8ClampedNEONWithScratch(gotX, ref, 0, 0, refX, refY, w, h, kernel, &scratchX)
-					convolveY8ClampedNEONWithScratch(gotY, ref, 0, 0, refX, refY, w, h, kernel, &scratchY)
+					convolveX8ClampedWithScratchImpl(gotX, ref, 0, 0, refX, refY, w, h, kernel, &scratchX)
+					convolveY8ClampedWithScratchImpl(gotY, ref, 0, 0, refX, refY, w, h, kernel, &scratchY)
 					convolveX8ClampedPureGo(wantX, ref, 0, 0, refX, refY, w, h, kernel)
 					convolveY8ClampedPureGo(wantY, ref, 0, 0, refX, refY, w, h, kernel)
 					for i := range wantX.Pix {
@@ -183,10 +178,10 @@ func TestConvolve2D8ClampedEmuEdgeZeroAlloc(t *testing.T) {
 	var compound CompoundConvolveScratch
 	out := make([]uint16, 32*32)
 	allocs := testing.AllocsPerRun(50, func() {
-		convolve2D8ClampedI8MMWithScratch(dst, ref, 0, 0, -5, -9, 32, 32, xKernel, yKernel, &scratch)
-		convolve2D8ClampedNEONWithScratch(dst, ref, 0, 0, refW-3, refH-2, 32, 32, xKernel, yKernel, &scratch)
-		predictInterCompoundRef8ToConvBuf2DI8MM(out, ref, -5, refH-2, 32, 32, xKernel, yKernel, 19, &compound)
-		predictInterCompoundRef8ToConvBuf2DNEON(out, ref, refW-3, -9, 32, 32, xKernel, yKernel, 19, &compound)
+		convolve2D8ClampedWithScratchImpl(dst, ref, 0, 0, -5, -9, 32, 32, xKernel, yKernel, &scratch)
+		convolve2D8ClampedWithScratchImpl(dst, ref, 0, 0, refW-3, refH-2, 32, 32, xKernel, yKernel, &scratch)
+		predictInterCompoundRef8ToConvBuf2DImpl(out, ref, -5, refH-2, 32, 32, xKernel, yKernel, 19, &compound)
+		predictInterCompoundRef8ToConvBuf2DImpl(out, ref, refW-3, -9, 32, 32, xKernel, yKernel, 19, &compound)
 	})
 	if allocs != 0 {
 		t.Fatalf("emu_edge path allocates: %v allocs/run", allocs)

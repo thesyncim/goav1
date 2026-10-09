@@ -1,4 +1,10 @@
-//go:build purego || !arm64
+//go:build !(goexperiment.simd && arm64 && !purego)
+
+// sad_dispatch_default.go routes every SAD wrapper through its dispatch
+// variable. Those variables hold the portable Go references, and the SIMD
+// init functions (sad_dispatch_simd_{arm64,amd64}.go) rebind them when the
+// CPU supports the Go-native-SIMD kernels. arm64 under GOEXPERIMENT=simd uses
+// direct wrappers in sad_dispatch_simd_arm64.go instead.
 
 package encoder
 

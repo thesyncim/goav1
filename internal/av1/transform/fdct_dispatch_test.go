@@ -98,6 +98,49 @@ func TestForwardDCT16x16ImplMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestForwardDCTDispatchFullInt16MatchesPureGo(t *testing.T) {
+	type kernel struct {
+		name string
+		side int
+		run  func([]int32, int, []int16, int) error
+		pure func([]int32, int, []int16, int)
+	}
+	kernels := []kernel{
+		{name: "4x4", side: 4, run: ForwardDCT4x4, pure: forwardDCT4x4PureGo},
+		{name: "8x8", side: 8, run: ForwardDCT8x8, pure: forwardDCT8x8PureGo},
+		{name: "16x16", side: 16, run: ForwardDCT16x16, pure: forwardDCT16x16PureGo},
+		{name: "32x32", side: 32, run: ForwardDCT32x32, pure: forwardDCT32x32PureGo},
+	}
+	rng := rand.New(rand.NewSource(403))
+	for _, k := range kernels {
+		t.Run(k.name, func(t *testing.T) {
+			residual := make([]int16, k.side*k.side)
+			want := make([]int32, k.side*k.side)
+			got := make([]int32, k.side*k.side)
+			trials := 100
+			if k.side == 32 {
+				trials = 8
+			}
+			for trial := range trials {
+				for i := range residual {
+					residual[i] = int16(rng.Intn(1<<16) - (1 << 15))
+				}
+				clear(want)
+				clear(got)
+				k.pure(want, k.side, residual, k.side)
+				if err := k.run(got, k.side, residual, k.side); err != nil {
+					t.Fatalf("trial %d: %v", trial, err)
+				}
+				for i := range want {
+					if got[i] != want[i] {
+						t.Fatalf("trial %d coeff[%d]=%d want %d", trial, i, got[i], want[i])
+					}
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkForwardDCT16x16(b *testing.B) {
 	var residual [256]int16
 	for i := range residual {

@@ -38,6 +38,12 @@ func QuantizeFPNoQMatrix(qcoeff []int32, dqcoeff []int32, coeff []int32, scan []
 		}
 	}
 
+	if quantizeFPNoQMatrixImpl != nil {
+		if eob, ok := quantizeFPNoQMatrixImpl(qcoeff[:count], dqcoeff[:count], coeff[:count], scan, q); ok {
+			return eob, nil
+		}
+	}
+
 	for i := range count {
 		qcoeff[i] = 0
 		dqcoeff[i] = 0
@@ -55,35 +61,46 @@ func QuantizeFPNoQMatrix(qcoeff []int32, dqcoeff []int32, coeff []int32, scan []
 			idx = 1
 		}
 
-		absCoeff := int64(coeff[rc])
-		negative := absCoeff < 0
-		if negative {
-			absCoeff = -absCoeff
-		}
-
-		tmp := int32(0)
-		thresh := int64(q.Dequant[idx])
-		if (absCoeff << (1 + q.LogScale)) >= thresh {
-			absCoeff += int64(rounding[idx])
-			absCoeff = clampInt64(absCoeff, minInt16, maxInt16)
-			tmp = int32((absCoeff * int64(q.Quant[idx])) >> (16 - q.LogScale))
-			if tmp != 0 {
-				qc := tmp
-				dqc := (tmp * int32(q.Dequant[idx])) >> q.LogScale
-				if negative {
-					qc = -qc
-					dqc = -dqc
-				}
-				qcoeff[rc] = qc
-				dqcoeff[rc] = dqc
-			}
-		}
-		if tmp != 0 {
+		qc, dqc, nonzero := quantizeFPNoQMatrixScalarCoeff(coeff[rc], idx, q, rounding)
+		qcoeff[rc] = qc
+		dqcoeff[rc] = dqc
+		if nonzero {
 			eob = i + 1
 		}
 	}
 	return eob, nil
 }
+
+func quantizeFPNoQMatrixScalarCoeff(coeff int32, idx int, q FPQuantizer, rounding [2]int32) (int32, int32, bool) {
+	absCoeff := int64(coeff)
+	negative := absCoeff < 0
+	if negative {
+		absCoeff = -absCoeff
+	}
+
+	thresh := int64(q.Dequant[idx])
+	if (absCoeff << (1 + q.LogScale)) < thresh {
+		return 0, 0, false
+	}
+	absCoeff += int64(rounding[idx])
+	absCoeff = clampInt64(absCoeff, minInt16, maxInt16)
+	tmp := int32((absCoeff * int64(q.Quant[idx])) >> (16 - q.LogScale))
+	if tmp == 0 {
+		return 0, 0, false
+	}
+	qc := tmp
+	dqc := (tmp * int32(q.Dequant[idx])) >> q.LogScale
+	if negative {
+		qc = -qc
+		dqc = -dqc
+	}
+	return qc, dqc, true
+}
+
+// quantizeFPNoQMatrixImpl, when non-nil, may handle QuantizeFPNoQMatrix after
+// public input validation. It returns ok=false for scan shapes it does not
+// support, leaving the scalar path to produce the canonical result.
+var quantizeFPNoQMatrixImpl func(qcoeff []int32, dqcoeff []int32, coeff []int32, scan []int16, q FPQuantizer) (eob int, ok bool)
 
 func roundPowerOfTwo(v int32, bits uint8) int32 {
 	if bits == 0 {

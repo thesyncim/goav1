@@ -61,12 +61,13 @@ type mds0Cand struct {
 }
 
 // mds0PickInterMode runs the MDS0 fast loop over the single-reference
-// candidates for the block and returns the rate-distortion winner. ok=false
+// candidates for the block and returns the rate-distortion winner. The third
+// result says predY contains that winner's regular-filter predictor. ok=false
 // keeps the caller on its legacy choice (stack resolution failed, or no
 // candidate could be predicted).
 func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byte, refStride int,
 	stack *tile.ReferenceMVStackResult,
-	lumaPX, lumaPY, bw, bh int, meMV motion.Vector) (mds0Cand, bool) {
+	lumaPX, lumaPY, bw, bh int, meMV motion.Vector) (mds0Cand, bool, bool) {
 
 	// Skip-certain bypass, ported from libaom's realtime skip-txfm test
 	// (av1/encoder/nonrd_pickmode.c set_early_term_based_on_uv_plane): when
@@ -76,8 +77,11 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	// syntax churn, so the block keeps the legacy classification. The ME
 	// prediction's distortion is cached for the candidate loop below.
 	meDist := int64(-1)
-	if perr := predictInto(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, false, false, &st.scaledScratch); perr == nil {
-		meSSE, meVar := realtimeInterResidualSSEVariance(src.Y, st.sadScratch[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
+	predYValid := false
+	predYMV := motion.Vector{}
+	if perr := predictInto(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, false, false, &st.scaledScratch); perr == nil {
+		predYValid, predYMV = true, meMV
+		meSSE, meVar := realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
 		acThr := (int64(st.yQuant.AC) * int64(st.yQuant.AC) >> 6) * int64(bw*bh) / 256
 		// Upstream narrows the dead-zone test on high-motion HD blocks
 		// (same function: 720p+, non-screen tuning, source_sad above low,
@@ -88,7 +92,7 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 			acThr >>= 4
 		}
 		if int64(meVar) < acThr {
-			return mds0Cand{}, false
+			return mds0Cand{}, false, false
 		}
 		meDist = int64(meVar) << 4
 	}
@@ -100,7 +104,7 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	// (inject_mvp_candidates_ii_light_pd1).
 	nearestRefs, err := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNearestMV}, 0, false, st.forceIntegerMV)
 	if err != nil {
-		return mds0Cand{}, false
+		return mds0Cand{}, false, false
 	}
 	cands[n] = mds0Cand{mode: tile.InterModeNearestMV, mv: nearestRefs.Nearest[0]}
 	n++
@@ -149,20 +153,30 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	}
 
 	var dists [mds0MaxCands]int64
+	var distSource [mds0MaxCands]uint8 // 1=ME prediction, 2=earlier candidate cache
 	best := -1
 	bestCost := int64(0)
+	bestMV := motion.Vector{}
 	for i := 0; i < n; i++ {
 		cand := &cands[i]
 		// Distortion: one prediction per unique vector; the residual
 		// variance <<4 matches fast_loop_core_light_pd1's squared-metric
 		// scale.
 		dist := int64(-1)
+		source := uint8(0)
 		if cand.mv == meMV {
 			dist = meDist
+			if dist >= 0 {
+				source = 1
+			}
 		}
 		for j := 0; dist < 0 && j < i; j++ {
 			if cands[j].mv == cand.mv && dists[j] >= 0 {
 				dist = dists[j]
+				source = 2
+				if distSource[j] == 1 {
+					source = 1
+				}
 				break
 			}
 		}
@@ -175,6 +189,7 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 			dist = int64(variance) << 4
 		}
 		dists[i] = dist
+		distSource[i] = source
 
 		rate := int64(st.mds0Rates.SingleInterModeBits(stack.ModeContext, cand.mode))
 		if cand.mode == tile.InterModeNewMV || cand.mode == tile.InterModeNearMV {
@@ -199,13 +214,47 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 		// (dist << 7), the same shape the skip decision already uses.
 		cost := ((rate*st.rdMult + 256) >> 9) + (dist << 7)
 		if best < 0 || cost < bestCost {
+			if !predYValid || predYMV != cand.mv {
+				switch source {
+				case 0:
+					// This candidate was just predicted into sadScratch.
+					copy(st.predY[:bw*bh], st.sadScratch[:bw*bh])
+					predYValid = true
+				case 1:
+					// The cached ME pixels were overwritten after a different
+					// candidate became best; restore them only on this path.
+					predYValid = predictInto(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, false, false, &st.scaledScratch) == nil
+				case 2:
+					// A duplicate vector can reuse its measured distortion, but
+					// sadScratch may hold another candidate's pixels.
+					predYValid = predictInto(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, false, false, &st.scaledScratch) == nil
+				}
+				if predYValid {
+					predYMV = cand.mv
+				}
+			}
 			best, bestCost = i, cost
+			bestMV = cand.mv
 		}
 	}
 	if best < 0 {
-		return mds0Cand{}, false
+		return mds0Cand{}, false, false
 	}
-	return cands[best], true
+	return cands[best], true, predYValid && predYMV == bestMV
+}
+
+// mds0PredictorMatchesCodedFilters reports whether predY, retained by MDS0
+// with regular filters, is still the predictor the block will code. A full-pel
+// vector is independent of interpolation filters; a sub-pel vector requires
+// the regular filters to remain selected.
+func mds0PredictorMatchesCodedFilters(retained bool, mv motion.Vector, codedFilters motion.InterpFilters) bool {
+	if !retained {
+		return false
+	}
+	if mv.Row%8 == 0 && mv.Col%8 == 0 {
+		return true
+	}
+	return codedFilters == motion.RegularFilters
 }
 
 // mds0AlreadyInjected is SVT-AV1's mv_is_already_injected over the built

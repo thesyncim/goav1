@@ -777,12 +777,31 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 	if remaining.Has(FrameWorkPostFilterLoopFilter) {
 		var loopFilterResult FrameWorkLoopFilterPostFilterApplyResult
 		var err error
-		if banding.LoopFilterMIRows > 0 {
+		switch {
+		case banding.LoopFilterMIRows > 0:
 			loopFilterResult, err = ctx.ApplyLoopFilterEdgesBanded(req.LoopFilter, banding.LoopFilterMIRows)
-		} else {
-			// applyLoopFilterEdgesMaybePooled fans the mask-driven deblock across the
-			// idle worker lanes when a multi-lane pool was threaded in (single-tile
-			// frames), and otherwise runs the byte-identical serial apply.
+		case ctx.loopFilterMasksUsable() && ctx.pool != nil && ctx.postFilterWorkerCount() > 1:
+			// The pooled path uses decode-time masks and fans independent bands over
+			// the tile worker lanes after tile execution has joined.
+			loopFilterResult, err = ctx.applyLoopFilterEdgesMaybePooled(req.LoopFilter)
+		case ctx.loopFilterMasksUsable():
+			// Prefer the dav1d-style bitmask apply whenever the decode built
+			// single-tile edge masks: byte-identical to the edge-list sweep
+			// (lfmask_apply_diff_test + strict-MD5 oracle) and faster (no per-frame
+			// edge-list planning). The public decoder now builds masks too, so this
+			// replaces the ~16%-of-decode sweep on single-tile frames. When a
+			// parallel worker set is installed, fan the mask apply out across
+			// goroutines (vertical row-bands, then horizontal column-bands, over the
+			// now-immutable cache/masks) -- byte-identical and race-free; falls back
+			// to the single-shot apply when the parallel path declines.
+			handled := false
+			if ctx.Parallel.workers() > 0 {
+				loopFilterResult, handled, err = ctx.applyLoopFilterMaskBandsParallel(req.LoopFilter.Map)
+			}
+			if err == nil && !handled {
+				loopFilterResult, err = ctx.ApplyLoopFilterEdgesFromMasks(ctx.LoopFilterMasks, req.LoopFilter.Map)
+			}
+		default:
 			loopFilterResult, err = ctx.applyLoopFilterEdgesMaybePooled(req.LoopFilter)
 		}
 		if err != nil {
@@ -804,12 +823,32 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 	if remaining.Has(FrameWorkPostFilterCDEF) {
 		var cdefResult FrameWorkCDEFPostFilterResult
 		var err error
-		if banding.CDEFUnitRows > 0 {
+		if ctx.pool != nil && ctx.postFilterWorkerCount() > 1 && banding.CDEFUnitRows <= 0 {
+			// The pooled path uses the tile worker lanes after tile execution has
+			// joined; each CDEF band reads immutable input and writes disjoint rows.
+			cdefResult, err = ctx.applyCDEFPostFilterMaybePooled(req.CDEF)
+		} else if ctx.Parallel.workers() > 0 {
+			// Keep the caller-owned fan-out available when no multi-lane tile pool
+			// is threaded through this context. Explicit bands also size this path.
+			unitRowsPerBand := banding.CDEFUnitRows
+			if unitRowsPerBand <= 0 {
+				unitRowsPerBand = frameWorkDav1dPostFilterBanding(ctx).CDEFUnitRows
+			}
+			handled := false
+			cdefResult, handled, err = ctx.applyCDEFPostFilterParallel(req.CDEF, unitRowsPerBand)
+			if err != nil {
+				return ctx, result, err
+			}
+			if !handled {
+				if banding.CDEFUnitRows > 0 {
+					cdefResult, err = ctx.ApplyCDEFPostFilterBanded(req.CDEF, banding.CDEFUnitRows)
+				} else {
+					cdefResult, err = ctx.ApplyCDEFPostFilter(req.CDEF)
+				}
+			}
+		} else if banding.CDEFUnitRows > 0 {
 			cdefResult, err = ctx.ApplyCDEFPostFilterBanded(req.CDEF, banding.CDEFUnitRows)
 		} else {
-			// applyCDEFPostFilterMaybePooled fans CDEF unit rows across the idle
-			// worker lanes when a multi-lane pool was threaded in, and otherwise
-			// runs the byte-identical serial whole-frame apply.
 			cdefResult, err = ctx.applyCDEFPostFilterMaybePooled(req.CDEF)
 		}
 		if err != nil {

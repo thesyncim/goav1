@@ -2,25 +2,15 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build amd64 && !purego
+//go:build amd64 && !purego && !goexperiment.simd
 
 package restoration
 
-import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
-
-// init binds the architecture-best self-guided kernels on amd64. When AVX2 is
-// available the box sums and the per-pixel blend route through the hand-written
-// AVX2 asm; the data-dependent LUT gather inside calculateIntermediate stays
-// scalar in both paths. The assignment happens once, before any decoder
-// goroutine starts, so the steady-state cost is a single indirect call.
+// init binds the pure-Go self-guided kernels on default (non-goexperiment.simd)
+// amd64 builds. The Go-native AVX2 bindings live in
+// selfguided_dispatch_gosimd_amd64.go.
 func init() {
-	_ = cpu.Detected // ensure cpu package init runs before this point
 	boxsumImpl = boxsum
 	selfguidedImpl = selfguided
 	selfguidedFastImpl = selfguidedFast
-	if cpu.Detected.AVX2 {
-		boxsumImpl = boxsumAVX2
-		selfguidedImpl = selfguidedAVX2
-		selfguidedFastImpl = selfguidedFastAVX2
-	}
 }

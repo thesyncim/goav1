@@ -1,0 +1,274 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//
+// See LICENSE for the BSD-2-Clause grant.
+
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
+
+package motion
+
+import (
+	"math/rand"
+	"testing"
+
+	"github.com/thesyncim/goav1/internal/av1/frame"
+)
+
+// These differential tests assert the GoSIMD convolve kernels are bit-identical to
+// the pure-Go references for every width/height and every subpel phase of each
+// filter type. They call the GoSIMD wrappers directly rather than through the
+// dispatch slots, so they validate the asm even on hosts whose CPUID does not
+// advertise GoSIMD (e.g. amd64 under Rosetta 2, which translates GoSIMD anyway). On
+// a true non-GoSIMD amd64 host these would fault; the harness that runs them is
+// expected to be GoSIMD-capable (real CI) or GoSIMD-translating (Rosetta).
+
+func TestConvolveX8GoSIMDMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0xA1A2B3C4))
+	const pad = filterTaps
+	sizes := []int{8, 16, 24, 32, 48, 64}
+	for _, tbl := range avx2FilterTables() {
+		for ph := 0; ph < 16; ph++ {
+			k := tbl[ph]
+			for _, w := range sizes {
+				for _, h := range []int{1, 4, 8, 17, 32} {
+					side := w
+					if h > side {
+						side = h
+					}
+					ref := randPlane(rng, side+2*pad, 1)
+					got, _ := testPlane(w, h, 1, w)
+					want, _ := testPlane(w, h, 1, w)
+					convolveX8GoSIMD(got, ref, 0, 0, pad, pad, w, h, k)
+					convolveX8PureGo(want, ref, 0, 0, pad, pad, w, h, k)
+					diffPlanes8(t, got, want, w, h, "X", k, k)
+				}
+			}
+		}
+	}
+}
+
+func TestConvolveY8GoSIMDMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0xB1B2C3D4))
+	const pad = filterTaps
+	sizes := []int{8, 16, 24, 32, 48, 64}
+	for _, tbl := range avx2FilterTables() {
+		for ph := 0; ph < 16; ph++ {
+			k := tbl[ph]
+			for _, w := range sizes {
+				for _, h := range []int{1, 4, 8, 17, 32} {
+					side := w
+					if h > side {
+						side = h
+					}
+					ref := randPlane(rng, side+2*pad, 1)
+					got, _ := testPlane(w, h, 1, w)
+					want, _ := testPlane(w, h, 1, w)
+					convolveY8GoSIMD(got, ref, 0, 0, pad, pad, w, h, k)
+					convolveY8PureGo(want, ref, 0, 0, pad, pad, w, h, k)
+					diffPlanes8(t, got, want, w, h, "Y", k, k)
+				}
+			}
+		}
+	}
+}
+
+func TestConvolve1D8ClampedEdgeSplitGoSIMDMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x1d8a11e))
+	widths := []int{16, 24, 32}
+	heights := []int{4, 8, 16, 32}
+	kernels := [][filterTaps]int16{
+		subpelFilters8Sharp[2],
+		subpelFilters8Sharp[9],
+	}
+	for _, k := range kernels {
+		if isFourTap(k) {
+			t.Fatalf("test kernel unexpectedly uses GoSIMD four-tap fallback: %v", k)
+		}
+	}
+	if !isFourTap(bilinearFilters[7]) {
+		t.Fatalf("bilinear fallback guard no longer exercises a four-tap kernel: %v", bilinearFilters[7])
+	}
+
+	for _, w := range widths {
+		for _, h := range heights {
+			for _, k := range kernels {
+				for _, edge := range []string{"left", "right"} {
+					const refW = 96
+					refH := h + 2*filterTaps
+					ref, _ := testPlane(refW, refH, 1, refW)
+					for i := range ref.Pix {
+						ref.Pix[i] = byte(rng.Intn(256))
+					}
+					refX := 1
+					if edge == "right" {
+						refX = refW - w - 3
+					}
+					refY := filterTaps
+					got, _ := testPlane(w, h, 1, w)
+					want, _ := testPlane(w, h, 1, w)
+					if !convolveX8HorizontalEdgeGoSIMD(got, ref, 0, 0, refX, refY, w, h, k) {
+						t.Fatalf("X8horizontal-edge GoSIMD split path was not used w=%d h=%d edge=%s", w, h, edge)
+					}
+					convolveX8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, k)
+					diffPlanes8(t, got, want, w, h, "Xclamped-edge", k, k)
+				}
+				for _, edge := range []string{"top", "bottom"} {
+					const refH = 96
+					refW := w + 2*filterTaps
+					ref, _ := testPlane(refW, refH, 1, refW)
+					for i := range ref.Pix {
+						ref.Pix[i] = byte(rng.Intn(256))
+					}
+					refX := filterTaps
+					refY := 1
+					if edge == "bottom" {
+						refY = refH - h - 3
+					}
+					got, _ := testPlane(w, h, 1, w)
+					want, _ := testPlane(w, h, 1, w)
+					if !convolveY8VerticalEdgeGoSIMD(got, ref, 0, 0, refX, refY, w, h, k) {
+						t.Fatalf("Y8vertical-edge GoSIMD split path was not used w=%d h=%d edge=%s", w, h, edge)
+					}
+					convolveY8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, k)
+					diffPlanes8(t, got, want, w, h, "Yclamped-edge", k, k)
+				}
+			}
+		}
+	}
+
+	// The Go SIMD edge paths accept four-tap kernels (the GoSIMD asm they replace
+	// rejected them). Whenever a path reports that it ran, it must match the
+	// per-tap clamped reference.
+	ref, _ := testPlane(64, 64, 1, 64)
+	got, _ := testPlane(16, 16, 1, 16)
+	want, _ := testPlane(16, 16, 1, 16)
+	if convolveX8HorizontalEdgeGoSIMD(got, ref, 0, 0, 1, filterTaps, 16, 16, bilinearFilters[7]) {
+		convolveX8ClampedPureGo(want, ref, 0, 0, 1, filterTaps, 16, 16, bilinearFilters[7])
+		diffPlanes8(t, got, want, 16, 16, "X8horizontal-edge four-tap", bilinearFilters[7], bilinearFilters[7])
+	}
+	if convolveY8VerticalEdgeGoSIMD(got, ref, 0, 0, filterTaps, 1, 16, 16, bilinearFilters[7]) {
+		convolveY8ClampedPureGo(want, ref, 0, 0, filterTaps, 1, 16, 16, bilinearFilters[7])
+		diffPlanes8(t, got, want, 16, 16, "Y8vertical-edge four-tap", bilinearFilters[7], bilinearFilters[7])
+	}
+}
+
+func TestConvolve2D8GoSIMDSweepMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x2d20feed))
+	const pad = filterTaps
+	sizes := []int{8, 16, 24, 32, 48, 64}
+	tables := avx2FilterTables()
+
+	// Full size sweep with one representative phase per filter type.
+	for _, tbl := range tables {
+		xk := tbl[3]
+		yk := tbl[5]
+		for _, w := range sizes {
+			for _, h := range []int{4, 8, 16, 32} {
+				side := w
+				if h > side {
+					side = h
+				}
+				ref := randPlane(rng, side+2*pad, 1)
+				got, _ := testPlane(w, h, 1, w)
+				want, _ := testPlane(w, h, 1, w)
+				convolve2D8GoSIMD(got, ref, 0, 0, pad, pad, w, h, xk, yk)
+				convolve2D8PureGo(want, ref, 0, 0, pad, pad, w, h, xk, yk)
+				diffPlanes8(t, got, want, w, h, "2D", xk, yk)
+			}
+		}
+	}
+
+	// All 16x16 phase combinations on fixed shapes.
+	for _, tbl := range tables {
+		for sx := 0; sx < 16; sx++ {
+			for sy := 0; sy < 16; sy++ {
+				ref := randPlane(rng, 32+2*pad, 1)
+				got, _ := testPlane(16, 16, 1, 16)
+				want, _ := testPlane(16, 16, 1, 16)
+				convolve2D8GoSIMD(got, ref, 0, 0, pad, pad, 16, 16, tbl[sx], tbl[sy])
+				convolve2D8PureGo(want, ref, 0, 0, pad, pad, 16, 16, tbl[sx], tbl[sy])
+				diffPlanes8(t, got, want, 16, 16, "2Dphase", tbl[sx], tbl[sy])
+			}
+		}
+	}
+}
+
+func TestConvolve2D8ClampedEdgeSplitGoSIMDMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x2d8a11e))
+	widths := []int{16, 24, 32}
+	heights := []int{4, 8, 16, 32}
+	phasePairs := [][2][filterTaps]int16{
+		{subpelFilters8[3], subpelFilters8[5]},
+		{subpelFilters8Smooth[6], subpelFilters8Smooth[11]},
+		{subpelFilters8Sharp[9], subpelFilters8Sharp[13]},
+		{bilinearFilters[7], bilinearFilters[2]},
+	}
+
+	for _, w := range widths {
+		for _, h := range heights {
+			for _, kernels := range phasePairs {
+				for _, edge := range []string{"left", "right"} {
+					const refW = 96
+					refH := h + 2*filterTaps
+					ref, _ := testPlane(refW, refH, 1, refW)
+					for i := range ref.Pix {
+						ref.Pix[i] = byte(rng.Intn(256))
+					}
+					refX := 1
+					if edge == "right" {
+						refX = refW - w - 3
+					}
+					refY := filterTaps
+					got, _ := testPlane(w, h, 1, w)
+					gotScratch, _ := testPlane(w, h, 1, w)
+					want, _ := testPlane(w, h, 1, w)
+					var scratch ConvolveScratch
+					if !convolve2D8ClampedEdgeSplitGoSIMDWithScratch(got, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], nil) {
+						t.Fatalf("2D8horizontal-edge GoSIMD split path was not used w=%d h=%d edge=%s", w, h, edge)
+					}
+					if !convolve2D8ClampedEdgeSplitGoSIMDWithScratch(gotScratch, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1], &scratch) {
+						t.Fatalf("2D8horizontal-edge GoSIMD scratch split path was not used w=%d h=%d edge=%s", w, h, edge)
+					}
+					convolve2D8ClampedPureGo(want, ref, 0, 0, refX, refY, w, h, kernels[0], kernels[1])
+					diffPlanes8(t, got, want, w, h, "2Dclamped-edge", kernels[0], kernels[1])
+					diffPlanes8(t, gotScratch, want, w, h, "2Dclamped-edge-scratch", kernels[0], kernels[1])
+				}
+			}
+		}
+	}
+}
+
+func TestConvolveGoSIMDZeroAlloc(t *testing.T) {
+	const pad = filterTaps
+	rng := rand.New(rand.NewSource(1))
+	ref := randPlane(rng, 32+2*pad, 1)
+	dst, _ := testPlane(32, 32, 1, 32)
+	xk := subpelFilters8[3]
+	yk := subpelFilters8[5]
+	if a := testing.AllocsPerRun(20, func() {
+		convolve2D8GoSIMD(dst, ref, 0, 0, pad, pad, 32, 32, xk, yk)
+	}); a != 0 {
+		t.Fatalf("convolve2D8GoSIMD allocated %v times, want 0", a)
+	}
+	if a := testing.AllocsPerRun(20, func() {
+		convolveX8GoSIMD(dst, ref, 0, 0, pad, pad, 32, 32, xk)
+	}); a != 0 {
+		t.Fatalf("convolveX8GoSIMD allocated %v times, want 0", a)
+	}
+}
+
+func diffPlanes8(t *testing.T, got, want frame.Plane, w, h int, tag string, xk, yk [filterTaps]int16) {
+	t.Helper()
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			g := got.Pix[y*got.Stride+x]
+			e := want.Pix[y*want.Stride+x]
+			if g != e {
+				t.Fatalf("%s w=%d h=%d (%d,%d): GoSIMD=%d PureGo=%d xk=%v yk=%v", tag, w, h, x, y, g, e, xk, yk)
+			}
+		}
+	}
+}
+
+func isFourTap(k [filterTaps]int16) bool {
+	return k[0] == 0 && k[1] == 0 && k[6] == 0 && k[7] == 0
+}

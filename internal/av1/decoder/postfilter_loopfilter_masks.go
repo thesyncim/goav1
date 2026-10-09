@@ -204,7 +204,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksInPlanePassOr
 				continue
 			}
 		}
-		if err := ctx.applyLoopFilterMaskPlaneRange(result, masks, lc, sharpness, plane, maskDirBoth, 0, masks.SB128H); err != nil {
+		if err := ctx.applyLoopFilterMaskPlaneRange(result, masks, lc, sharpness, plane, maskDirBoth, 0, masks.SB128H, 0, masks.SB128W); err != nil {
 			return err
 		}
 	}
@@ -219,7 +219,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksInPlanePassOr
 // region-row band writes only pixels within that band's rows (perpendicular filter
 // taps are bounded by the adjacent transform sizes), so disjoint bands can run on
 // separate goroutines with their own result once a direction barrier is in place.
-func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRange(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, sharpness uint8, plane loopfilter.Plane, dirMask, rRow0, rRow1 int) error {
+func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRange(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, sharpness uint8, plane loopfilter.Plane, dirMask, rRow0, rRow1, rCol0, rCol1 int) error {
 	bytesPerSample := ctx.Output.Layout.BytesPerSample
 	bitDepth := ctx.Output.Format.BitDepth
 	dst, ok := frameWorkLoopFilterOutputPlane(*ctx.Output, plane)
@@ -366,20 +366,20 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRange(result *Fram
 
 	if plane == loopfilter.PlaneY {
 		if dirMask&maskDirVertical != 0 {
-			ctx.scanLoopFilterMaskLumaBand(masks, lc, loopfilter.EdgeVertical, rRow0, rRow1, applyCell)
+			ctx.scanLoopFilterMaskLumaBand(masks, lc, loopfilter.EdgeVertical, rRow0, rRow1, rCol0, rCol1, applyCell)
 			flushRun()
 		}
 		if firstErr == nil && dirMask&maskDirHorizontal != 0 {
-			ctx.scanLoopFilterMaskLumaBand(masks, lc, loopfilter.EdgeHorizontal, rRow0, rRow1, applyCell)
+			ctx.scanLoopFilterMaskLumaBand(masks, lc, loopfilter.EdgeHorizontal, rRow0, rRow1, rCol0, rCol1, applyCell)
 			flushRun()
 		}
 	} else {
 		if dirMask&maskDirVertical != 0 {
-			ctx.scanLoopFilterMaskChromaBand(masks, lc, plane, loopfilter.EdgeVertical, rRow0, rRow1, applyCell)
+			ctx.scanLoopFilterMaskChromaBand(masks, lc, plane, loopfilter.EdgeVertical, rRow0, rRow1, rCol0, rCol1, applyCell)
 			flushRun()
 		}
 		if firstErr == nil && dirMask&maskDirHorizontal != 0 {
-			ctx.scanLoopFilterMaskChromaBand(masks, lc, plane, loopfilter.EdgeHorizontal, rRow0, rRow1, applyCell)
+			ctx.scanLoopFilterMaskChromaBand(masks, lc, plane, loopfilter.EdgeHorizontal, rRow0, rRow1, rCol0, rCol1, applyCell)
 			flushRun()
 		}
 	}
@@ -392,7 +392,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRange(result *Fram
 // skipped to match the edge-list apply's have_left / have_top boundary skip.
 // Passing rRow0=0, rRow1=SB128H reproduces the whole-frame scan; a sub-range is
 // one band of the parallel apply.
-func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, dir loopfilter.Edge, rRow0, rRow1 int, applyCell func(edge loopfilter.Edge, x4, y4 int, level, width uint8)) {
+func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, dir loopfilter.Edge, rRow0, rRow1, rCol0, rCol1 int, applyCell func(edge loopfilter.Edge, x4, y4 int, level, width uint8)) {
 	cols := masks.Cols
 	rows := masks.Rows
 	if dir == loopfilter.EdgeVertical {
@@ -403,7 +403,7 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadin
 			if extentRows <= 0 {
 				continue
 			}
-			for rCol := 0; rCol < masks.SB128W; rCol++ {
+			for rCol := rCol0; rCol < rCol1; rCol++ {
 				baseCol := rCol * 32
 				extentCols := minInt(32, cols-baseCol)
 				if extentCols <= 0 {
@@ -438,7 +438,7 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadin
 		if extentRows <= 0 {
 			continue
 		}
-		for rCol := 0; rCol < masks.SB128W; rCol++ {
+		for rCol := rCol0; rCol < rCol1; rCol++ {
 			baseCol := rCol * 32
 			extentCols := minInt(32, cols-baseCol)
 			if extentCols <= 0 {
@@ -470,7 +470,7 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadin
 // (U or V) and one edge direction over the 128x128 region-row range [rRow0,rRow1),
 // dispatching each set 4x4 chroma edge through applyCell in chroma-plane 4x4
 // coordinates. Passing rRow0=0, rRow1=SB128H reproduces the whole-frame scan.
-func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, plane loopfilter.Plane, dir loopfilter.Edge, rRow0, rRow1 int, applyCell func(edge loopfilter.Edge, x4, y4 int, level, width uint8)) {
+func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, plane loopfilter.Plane, dir loopfilter.Edge, rRow0, rRow1, rCol0, rCol1 int, applyCell func(edge loopfilter.Edge, x4, y4 int, level, width uint8)) {
 	cols := masks.Cols
 	rows := masks.Rows
 	ssHor := masks.Layout.SSHor
@@ -493,7 +493,7 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *thread
 			if extentCRows <= 0 {
 				continue
 			}
-			for rCol := 0; rCol < masks.SB128W; rCol++ {
+			for rCol := rCol0; rCol < rCol1; rCol++ {
 				baseCCol := rCol * regionCW
 				extentCCols := minInt(regionCW, ccols-baseCCol)
 				if extentCCols <= 0 {
@@ -528,7 +528,7 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *thread
 		if extentCRows <= 0 {
 			continue
 		}
-		for rCol := 0; rCol < masks.SB128W; rCol++ {
+		for rCol := rCol0; rCol < rCol1; rCol++ {
 			baseCCol := rCol * regionCW
 			extentCCols := minInt(regionCW, ccols-baseCCol)
 			if extentCCols <= 0 {
@@ -695,13 +695,32 @@ func (b FrameWorkLoopFilterMaskBands) PopulateBand(rowStart, rowEnd int) error {
 	return b.ctx.populateLoopFilterLevelCacheRange(b.masks, b.filterMap, levelCtx, &plan, rowStart, rowEnd)
 }
 
+// RegionCols is the number of 128x128 mask region-columns (the horizontal-pass
+// banding axis: an ApplyBandCols band is a contiguous sub-range of [0,RegionCols)).
+func (b FrameWorkLoopFilterMaskBands) RegionCols() int { return b.masks.SB128W }
+
 // ApplyBand scans and filters one plane's edges for one direction over the mask
-// region-row range [rRow0,rRow1). It assumes PrepareLoopFilterMaskBands already
-// populated the level cache; the band writes only pixels within its rows (for the
-// given direction), so concurrent bands of the same direction on disjoint row
-// ranges, and distinct planes, are race-free. Callers must complete every vertical
-// band before dispatching any horizontal band.
+// region-ROW range [rRow0,rRow1), all columns. Row-banding is race-free ONLY for
+// VERTICAL edges: a vertical-edge filter modifies pixels left/right of the edge
+// within the edge's own rows, so disjoint region-row bands (and distinct planes)
+// write disjoint pixels. Horizontal edges modify pixels above/below the edge and
+// straddle region-row seams, so they must be column-banded via ApplyBandCols
+// instead. Callers must complete every vertical band before any horizontal band.
 func (b FrameWorkLoopFilterMaskBands) ApplyBand(plane loopfilter.Plane, dir loopfilter.Edge, rRow0, rRow1 int) error {
+	return b.applyBandRange(plane, dir, rRow0, rRow1, 0, b.masks.SB128W)
+}
+
+// ApplyBandCols scans and filters one plane's edges for one direction over the
+// mask region-COLUMN range [rCol0,rCol1), all rows. This is the horizontal-pass
+// dual of ApplyBand: a horizontal-edge filter modifies pixels above/below the
+// edge within the edge's own COLUMNS, so disjoint region-column bands (and
+// distinct planes) write disjoint pixels and run concurrently without straddling
+// the region-row seams that make horizontal row-banding unsafe.
+func (b FrameWorkLoopFilterMaskBands) ApplyBandCols(plane loopfilter.Plane, dir loopfilter.Edge, rCol0, rCol1 int) error {
+	return b.applyBandRange(plane, dir, 0, b.masks.SB128H, rCol0, rCol1)
+}
+
+func (b FrameWorkLoopFilterMaskBands) applyBandRange(plane loopfilter.Plane, dir loopfilter.Edge, rRow0, rRow1, rCol0, rCol1 int) error {
 	if !b.active {
 		return nil
 	}
@@ -714,7 +733,7 @@ func (b FrameWorkLoopFilterMaskBands) ApplyBand(plane loopfilter.Plane, dir loop
 	}
 	lc := lfmask.LevelCache{Cells: b.masks.LevelCache, Stride: b.masks.Cols}
 	var result FrameWorkLoopFilterPostFilterApplyResult
-	return b.ctx.applyLoopFilterMaskPlaneRange(&result, b.masks, lc, b.sharpness, plane, dirMask, rRow0, rRow1)
+	return b.ctx.applyLoopFilterMaskPlaneRange(&result, b.masks, lc, b.sharpness, plane, dirMask, rRow0, rRow1, rCol0, rCol1)
 }
 
 func frameWorkCountAppliedLoopFilterMaskEdge(result *FrameWorkLoopFilterPostFilterApplyResult, plane loopfilter.Plane, level uint8) {
