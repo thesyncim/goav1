@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build goexperiment.simd && arm64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package transform
 
@@ -40,7 +40,7 @@ func inverseDCT64Lanes4(p unsafe.Pointer, stride uintptr, min, max int32) bool {
 }
 
 func inverseDCT64Col4SIMD(buf []int32, rowStride int, min, max int32) {
-	if rowStride < 4 || len(buf) < (dct64Size-1)*rowStride+4 ||
+	if rowStride < 4 || len(buf) < 4 || rowStride > (len(buf)-4)/(dct64Size-1) ||
 		!inverseDCT64Lanes4(unsafe.Pointer(&buf[0]), uintptr(rowStride)*4, min, max) {
 		inverseDCT64Col4PureGo(buf, rowStride, min, max)
 	}

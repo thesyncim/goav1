@@ -8,7 +8,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
 
-//go:build goexperiment.simd && arm64 && !purego
+//go:build goexperiment.simd && (amd64 || arm64) && !purego
 
 package transform
 
