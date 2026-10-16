@@ -148,8 +148,66 @@ func pred8H(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int
 	return sad + sumU16(acc)
 }
 
-// pred8V is convolve_y_sr over 16-column (or a final 8-column) strips.
+// pred8V is convolve_y_sr over 16-column (or a final 8-column) strips. The
+// pinned libaom av1/common/arm/convolve_neon.c six-tap vertical kernel omits
+// coefficients 0 and 7. Regular/smooth kernels have zero outer taps; fractional
+// sharp kernels retain the full eight-tap path.
 func pred8V(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int, ref unsafe.Pointer, refStride, w, h int, k *[8]int16) int {
+	if k[0] == 0 && k[7] == 0 {
+		c1 := archsimd.BroadcastInt16x8(k[1] >> 1)
+		c2 := archsimd.BroadcastInt16x8(k[2] >> 1)
+		c3 := archsimd.BroadcastInt16x8(k[3] >> 1)
+		c4 := archsimd.BroadcastInt16x8(k[4] >> 1)
+		c5 := archsimd.BroadcastInt16x8(k[5] >> 1)
+		c6 := archsimd.BroadcastInt16x8(k[6] >> 1)
+		bias := archsimd.BroadcastInt16x8(32)
+		sh := archsimd.BroadcastInt16x8(-6)
+		var acc archsimd.Uint16x8
+		sad := 0
+		s := refStride
+		for y := 0; y < h; y++ {
+			p := unsafe.Add(ref, (y-2)*s)
+			x := 0
+			for ; x+16 <= w; x += 16 {
+				q := unsafe.Add(p, x)
+				v := load16(q)
+				a0 := v.ExtendLo8ToUint16().BitsToInt16().MulAdd(c1, bias)
+				a1 := widenHi8(v).BitsToInt16().MulAdd(c1, bias)
+				v = load16(unsafe.Add(q, s))
+				a0 = v.ExtendLo8ToUint16().BitsToInt16().MulAdd(c2, a0)
+				a1 = widenHi8(v).BitsToInt16().MulAdd(c2, a1)
+				v = load16(unsafe.Add(q, 2*s))
+				a0 = v.ExtendLo8ToUint16().BitsToInt16().MulAdd(c3, a0)
+				a1 = widenHi8(v).BitsToInt16().MulAdd(c3, a1)
+				v = load16(unsafe.Add(q, 3*s))
+				a0 = v.ExtendLo8ToUint16().BitsToInt16().MulAdd(c4, a0)
+				a1 = widenHi8(v).BitsToInt16().MulAdd(c4, a1)
+				v = load16(unsafe.Add(q, 4*s))
+				a0 = v.ExtendLo8ToUint16().BitsToInt16().MulAdd(c5, a0)
+				a1 = widenHi8(v).BitsToInt16().MulAdd(c5, a1)
+				v = load16(unsafe.Add(q, 5*s))
+				a0 = v.ExtendLo8ToUint16().BitsToInt16().MulAdd(c6, a0)
+				a1 = widenHi8(v).BitsToInt16().MulAdd(c6, a1)
+				acc = pred8Out16(pred8Pack16(a0.Shift(sh), a1.Shift(sh)), dst, y*dstStride+x, src, y*srcStride+x, acc)
+			}
+			if x < w {
+				q := unsafe.Add(p, x)
+				a0 := load16(q).ExtendLo8ToUint16().BitsToInt16().MulAdd(c1, bias)
+				a0 = load16(unsafe.Add(q, s)).ExtendLo8ToUint16().BitsToInt16().MulAdd(c2, a0)
+				a0 = load16(unsafe.Add(q, 2*s)).ExtendLo8ToUint16().BitsToInt16().MulAdd(c3, a0)
+				a0 = load16(unsafe.Add(q, 3*s)).ExtendLo8ToUint16().BitsToInt16().MulAdd(c4, a0)
+				a0 = load16(unsafe.Add(q, 4*s)).ExtendLo8ToUint16().BitsToInt16().MulAdd(c5, a0)
+				a0 = load16(unsafe.Add(q, 5*s)).ExtendLo8ToUint16().BitsToInt16().MulAdd(c6, a0)
+				pred8Store8(unsafe.Add(dst, y*dstStride+x), a0.Shift(sh))
+			}
+			if src != nil && y&15 == 15 {
+				sad += sumU16(acc)
+				acc = archsimd.Uint16x8{}
+			}
+		}
+		return sad + sumU16(acc)
+	}
+
 	c0 := archsimd.BroadcastInt16x8(k[0] >> 1)
 	c1 := archsimd.BroadcastInt16x8(k[1] >> 1)
 	c2 := archsimd.BroadcastInt16x8(k[2] >> 1)
