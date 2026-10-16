@@ -64,12 +64,13 @@ func (s *SBStats) Add(o SBStats) {
 // units in an 8-bit plane. pix[off] is the sample just right of the edge (q0)
 // on the first unit's first row; unit n starts 4*n rows below. lvl[lvlOff +
 // n*lvlStride][comp] is unit n's level; a zero level falls back to the unit on
-// the left (lvl[... - 1]). vm[2] must be zero for chroma.
-func FilterSBVertical8(pix []byte, off, stride int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
+// the left (lvl[... - 1]). vm[2] must be zero for chroma. rowBytes is how many
+// bytes from off to the end of the row the call may read and rewrite.
+func FilterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	if vm[0]|vm[1]|vm[2] == 0 {
 		return SBStats{}
 	}
-	return filterSBVertical8(pix, off, stride, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+	return filterSBVertical8(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 }
 
 // FilterSBHorizontal8 filters the horizontal edges of one 4-pixel row of 4x4

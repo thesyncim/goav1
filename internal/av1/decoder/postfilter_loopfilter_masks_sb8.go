@@ -59,7 +59,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRangeSB8(result *F
 						if vm[0]|vm[1]|vm[2] == 0 {
 							continue
 						}
-						st.Add(loopfilter.FilterSBVertical8(pix, rowOff+col*4, stride, vm, true, cells, lvlRow+col, cols, 0, lut))
+						st.Add(loopfilter.FilterSBVertical8(pix, rowOff+col*4, stride, dst.Width-col*4, vm, true, cells, lvlRow+col, cols, 0, lut))
 					}
 				}
 			}
@@ -144,7 +144,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRangeSB8(result *F
 					if vm[0]|vm[1] == 0 {
 						continue
 					}
-					st.Add(loopfilter.FilterSBVertical8(pix, rowOff+ccol*4, stride, vm, false, cells, lvlRow+ccol, cols, comp, lut))
+					st.Add(loopfilter.FilterSBVertical8(pix, rowOff+ccol*4, stride, dst.Width-ccol*4, vm, false, cells, lvlRow+ccol, cols, comp, lut))
 				}
 			}
 		}

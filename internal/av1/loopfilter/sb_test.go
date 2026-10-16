@@ -105,7 +105,7 @@ func TestFilterSB8MatchesScalar(t *testing.T) {
 			off := y0*w + x
 			lvlOff := (y0/4)*lvlStride + x/4
 			ws = filterSBVertical8Scalar(want, off, w, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-			gs = FilterSBVertical8(got, off, w, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			gs = FilterSBVertical8(got, off, w, w-x, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 		} else {
 			y := 4 * (2 + rng.Intn(h/4-4))
 			if vm[2] != 0 {

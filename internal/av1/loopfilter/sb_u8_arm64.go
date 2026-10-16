@@ -423,7 +423,7 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 }
 
 //go:nocheckptr
-func filterSBVertical8(pix []byte, off, stride int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
+func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	var st SBStats
 	gt4All := vm[1] | vm[2]
 	all := vm[0] | gt4All
@@ -477,10 +477,13 @@ func filterSBVertical8(pix []byte, off, stride int, vm [3]uint32, luma bool, lvl
 			sbVerticalScalarGroup(pix, q0Off, stride, vm, sh, luma, lvl, u0, lvlStride, comp, lut)
 			continue
 		}
+		wide := wd != 16 && rowBytes >= 12 && lastRow+12 <= len(pix)
 		grp.resolve(&lv, lut)
 		eV, iV, hV, m4, mGt4, m16 := sbGroupVectors(&grp)
 		if wd == 16 {
 			lpfVertical16x16U8(unsafe.Add(base, q0Off-8), stride, eV, iV, hV, m4, mGt4, m16)
+		} else if wide {
+			lpfVertical16x8U8Wide(unsafe.Add(base, q0Off-4), stride, wd, eV, iV, hV, m4, mGt4, m16)
 		} else {
 			lpfVertical16x8U8(unsafe.Add(base, q0Off-4), stride, wd, eV, iV, hV, m4, mGt4, m16)
 		}
@@ -662,4 +665,69 @@ func lpfTranspose16x16Store(src unsafe.Pointer, srcStride int, dst unsafe.Pointe
 	lpfStore(dst, 13*dstStride, r13)
 	lpfStore(dst, 14*dstStride, r14)
 	lpfStore(dst, 15*dstStride, r15)
+}
+
+// lpfLowHalf selects the low eight bytes of a vector.
+var lpfLowHalf = [16]uint8{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+
+// lpfVertical16x8U8Wide is lpfVertical16x8U8 for groups whose rows can be read
+// and rewritten sixteen bytes at a time from p (p3 of the edge): each row goes
+// straight into a vector register, rows r and r+8 pair with one zip, and the
+// filtered eight bytes are merged back into the untouched upper eight with one
+// bit-select per row, avoiding the scalar gather/scatter through the stack.
+//
+//go:nocheckptr
+func lpfVertical16x8U8Wide(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) {
+	var buf [8][16]uint8
+	r0, r8 := lpfLoad(p, 0), lpfLoad(p, 8*stride)
+	r1, r9 := lpfLoad(p, stride), lpfLoad(p, 9*stride)
+	r2, r10 := lpfLoad(p, 2*stride), lpfLoad(p, 10*stride)
+	r3, r11 := lpfLoad(p, 3*stride), lpfLoad(p, 11*stride)
+	r4, r12 := lpfLoad(p, 4*stride), lpfLoad(p, 12*stride)
+	r5, r13 := lpfLoad(p, 5*stride), lpfLoad(p, 13*stride)
+	r6, r14 := lpfLoad(p, 6*stride), lpfLoad(p, 14*stride)
+	r7, r15 := lpfLoad(p, 7*stride), lpfLoad(p, 15*stride)
+	t0, t1, t2, t3, t4, t5, t6, t7 := lpfTranspose8x8Pairs(
+		lpfZipLo64(r0, r8), lpfZipLo64(r1, r9), lpfZipLo64(r2, r10), lpfZipLo64(r3, r11),
+		lpfZipLo64(r4, r12), lpfZipLo64(r5, r13), lpfZipLo64(r6, r14), lpfZipLo64(r7, r15))
+	t0.StoreArray(&buf[0])
+	t1.StoreArray(&buf[1])
+	t2.StoreArray(&buf[2])
+	t3.StoreArray(&buf[3])
+	t4.StoreArray(&buf[4])
+	t5.StoreArray(&buf[5])
+	t6.StoreArray(&buf[6])
+	t7.StoreArray(&buf[7])
+	lpf16U8(unsafe.Pointer(&buf[4]), 16, wd, eV, iV, hV, m4, mGt4, m16)
+	t0, t1, t2, t3, t4, t5, t6, t7 = lpfTranspose8x8Pairs(
+		archsimd.LoadUint8x16Array(&buf[0]), archsimd.LoadUint8x16Array(&buf[1]),
+		archsimd.LoadUint8x16Array(&buf[2]), archsimd.LoadUint8x16Array(&buf[3]),
+		archsimd.LoadUint8x16Array(&buf[4]), archsimd.LoadUint8x16Array(&buf[5]),
+		archsimd.LoadUint8x16Array(&buf[6]), archsimd.LoadUint8x16Array(&buf[7]))
+	lo := archsimd.LoadUint8x16Array(&lpfLowHalf).BitsToInt8().ToMask()
+	lpfStore(p, 0, t0.IfElse(lo, r0))
+	lpfStore(p, stride, t1.IfElse(lo, r1))
+	lpfStore(p, 2*stride, t2.IfElse(lo, r2))
+	lpfStore(p, 3*stride, t3.IfElse(lo, r3))
+	lpfStore(p, 4*stride, t4.IfElse(lo, r4))
+	lpfStore(p, 5*stride, t5.IfElse(lo, r5))
+	lpfStore(p, 6*stride, t6.IfElse(lo, r6))
+	lpfStore(p, 7*stride, t7.IfElse(lo, r7))
+	lpfStore(p, 8*stride, lpfZipHi64(t0, r8))
+	lpfStore(p, 9*stride, lpfZipHi64(t1, r9))
+	lpfStore(p, 10*stride, lpfZipHi64(t2, r10))
+	lpfStore(p, 11*stride, lpfZipHi64(t3, r11))
+	lpfStore(p, 12*stride, lpfZipHi64(t4, r12))
+	lpfStore(p, 13*stride, lpfZipHi64(t5, r13))
+	lpfStore(p, 14*stride, lpfZipHi64(t6, r14))
+	lpfStore(p, 15*stride, lpfZipHi64(t7, r15))
+}
+
+// lpfZipLo64 returns [a.lo8 | b.lo8]; lpfZipHi64 returns [a.hi8 | b.hi8].
+func lpfZipLo64(a, b archsimd.Uint8x16) archsimd.Uint8x16 {
+	return a.ReshapeToUint64s().InterleaveLo(b.ReshapeToUint64s()).ReshapeToUint8s()
+}
+
+func lpfZipHi64(a, b archsimd.Uint8x16) archsimd.Uint8x16 {
+	return a.ReshapeToUint64s().InterleaveHi(b.ReshapeToUint64s()).ReshapeToUint8s()
 }
