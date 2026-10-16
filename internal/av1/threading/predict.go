@@ -1634,13 +1634,15 @@ func (b *FrameWorkBatch) predictBlockInterCompoundPlaneWithFiltersPtr(index int,
 		!motionResult.References.Ref[1].Valid() {
 		return ErrInvalidBatch
 	}
-	var t frameWorkInterTarget
-	ok, err := b.interTarget(index, &visit.Block, plane, &t)
-	if err != nil || !ok {
-		return err
-	}
-	if handled, err := b.predictBlockInterCompoundLean(visit, plane, scratch, &t, blend, filters); handled {
-		return err
+	if b.Sequence.ColorConfig.BitDepth == 8 {
+		var t frameWorkInterTarget
+		ok, err := b.interTarget(index, &visit.Block, plane, &t)
+		if err != nil || !ok {
+			return err
+		}
+		if handled, err := b.predictBlockInterCompoundLean(visit, plane, scratch, &t, blend, filters); handled {
+			return err
+		}
 	}
 	geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
 	if err != nil || !ok {
@@ -2042,20 +2044,23 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, bloc
 	// Same-size 8-bit references take the lean target + PredictTranslation8
 	// route; scaled references, high bit depth and every error case rerun the
 	// general geometry path below, which owns their semantics.
-	var t frameWorkInterTarget
-	ok, err := b.interTarget(index, block, plane, &t)
-	if err != nil || !ok {
-		return err
-	}
-	if reference, ok := frameWorkReferenceFromTile(refFrame); ok && t.bps == 1 && b.Sequence.ColorConfig.BitDepth == 8 {
-		var ref frame.Plane
-		if b.referencePlaneViewInto(reference, plane, &ref) && ref.Width == t.codedW && ref.Height == t.codedH {
-			// Select the interpolation-filter kernel from the un-clipped plane
-			// block dimensions (see predictBlockInterReferencePlaneToOutputWithGeometry).
-			if err := motion.PredictTranslation8(&t.output, &ref, t.x, t.y, t.writeW, t.writeH, t.filterW, t.filterH, mv, t.ssX, t.ssY, filters, frameWorkConvolveScratch(scratch)); err != nil {
-				return ErrInvalidBatch
+	if b.Sequence.ColorConfig.BitDepth == 8 {
+		var t frameWorkInterTarget
+		ok, err := b.interTarget(index, block, plane, &t)
+		if err != nil || !ok {
+			return err
+		}
+		if reference, ok := frameWorkReferenceFromTile(refFrame); ok && t.bps == 1 {
+			var ref frame.Plane
+			if b.referencePlaneViewInto(reference, plane, &ref) && ref.Width == t.codedW && ref.Height == t.codedH {
+				// Select the interpolation-filter kernel from the un-clipped
+				// plane block dimensions (see
+				// predictBlockInterReferencePlaneToOutputWithGeometry).
+				if err := motion.PredictTranslation8(&t.output, &ref, t.x, t.y, t.writeW, t.writeH, t.filterW, t.filterH, mv, t.ssX, t.ssY, filters, frameWorkConvolveScratch(scratch)); err != nil {
+					return ErrInvalidBatch
+				}
+				return nil
 			}
-			return nil
 		}
 	}
 	geom, ok, err := b.blockPredictionPlaneGeometry(index, *block, plane)
