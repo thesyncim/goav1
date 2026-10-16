@@ -85,8 +85,15 @@ func pred8Predict(dst []byte, dstStride int, ref *frame.Plane, refX, refY, w, h,
 // bw): the fast predictor for interior blocks, the motion package predictor
 // otherwise.
 func (st *lossyEncodeState) predictLuma(dst []byte, refPlane []byte, stride, width, height, px, py, bw, bh int, mv motion.Vector, filters motion.InterpFilters) error {
-	if pred8Impl != nil {
-		refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(px, py, mv, false, false)
+	return st.predictPlane(dst, refPlane, stride, width, height, px, py, bw, bh, mv, false, false, filters)
+}
+
+// predictPlane is predictLuma for any unscaled plane: chroma blocks 8 or more
+// samples wide and tall use the same 8-tap kernels at their subsampled
+// positions.
+func (st *lossyEncodeState) predictPlane(dst []byte, refPlane []byte, stride, width, height, px, py, bw, bh int, mv motion.Vector, ssX, ssY bool, filters motion.InterpFilters) error {
+	if pred8Impl != nil && bw >= 8 && bh >= 8 {
+		refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(px, py, mv, ssX, ssY)
 		if err == nil {
 			ref := frame.Plane{Pix: refPlane, Stride: stride, Width: width, Height: height}
 			if st.subpelCache == nil {
@@ -97,7 +104,7 @@ func (st *lossyEncodeState) predictLuma(dst []byte, refPlane []byte, stride, wid
 			}
 		}
 	}
-	return predictIntoFilters(dst, refPlane, stride, width, height, px, py, bw, bh, mv, false, false, filters, st.scaledScratch.Conv())
+	return predictIntoFilters(dst, refPlane, stride, width, height, px, py, bw, bh, mv, ssX, ssY, filters, st.scaledScratch.Conv())
 }
 
 // pred8SAD returns the SAD between the regular-filter prediction of a w x h
