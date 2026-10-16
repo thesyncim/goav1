@@ -139,6 +139,21 @@ func (w *Writer) ensure(n int) {
 // normalize renormalizes (low, rng) so 0x8000 <= rng < 0x10000, flushing ready
 // bytes to the output. Port of od_ec_enc_normalize.
 func (w *Writer) normalize(low uint64, rng uint32) {
+	// Fast path, small enough to inline into every symbol writer: no bytes
+	// are ready, so the state only shifts.
+	d := int32(bits.LeadingZeros16(uint16(rng))) // 16 - OD_ILOG_NZ(rng)
+	if s := w.cnt + d; s < 40 && w.err == nil {
+		w.low = low << uint32(d)
+		w.rng = rng << uint32(d)
+		w.cnt = s
+		return
+	}
+	w.normalizeFlush(low, rng)
+}
+
+// normalizeFlush is normalize when output bytes are ready (or the writer has
+// failed).
+func (w *Writer) normalizeFlush(low uint64, rng uint32) {
 	if w.err != nil {
 		return
 	}
@@ -224,7 +239,12 @@ func (w *Writer) encodeQ15(fl, fh uint32, s, nsyms int) {
 	} else {
 		r -= ((r>>8)*(fh>>ecProbShift))>>(7-ecProbShift) + ecMinProb*(n-uint32(s))
 	}
-	w.normalize(l, r)
+	// normalize, with its no-flush fast path inlined.
+	if d := int32(bits.LeadingZeros16(uint16(r))); w.cnt+d < 40 && w.err == nil {
+		w.low, w.rng, w.cnt = l<<uint32(d), r<<uint32(d), w.cnt+d
+		return
+	}
+	w.normalizeFlush(l, r)
 }
 
 func (w *BitCounter) encodeQ15(fl, fh uint32, s, nsyms int) {
@@ -256,7 +276,12 @@ func (w *Writer) WriteBoolQ15(val int, f uint32) {
 	} else {
 		r -= v
 	}
-	w.normalize(l, r)
+	// normalize, with its no-flush fast path inlined.
+	if d := int32(bits.LeadingZeros16(uint16(r))); w.cnt+d < 40 && w.err == nil {
+		w.low, w.rng, w.cnt = l<<uint32(d), r<<uint32(d), w.cnt+d
+		return
+	}
+	w.normalizeFlush(l, r)
 }
 
 func (w *BitCounter) WriteBoolQ15(val int, f uint32) {
@@ -288,7 +313,12 @@ func (w *Writer) WriteBit(val int) {
 	} else {
 		r -= v
 	}
-	w.normalize(l, r)
+	// normalize, with its no-flush fast path inlined.
+	if d := int32(bits.LeadingZeros16(uint16(r))); w.cnt+d < 40 && w.err == nil {
+		w.low, w.rng, w.cnt = l<<uint32(d), r<<uint32(d), w.cnt+d
+		return
+	}
+	w.normalizeFlush(l, r)
 }
 
 func (w *BitCounter) WriteBit(val int) {
@@ -518,7 +548,12 @@ func (w *Writer) WriteBinaryCDFTrusted(cdf *CDF, s int) {
 	if count < MaxCDFCount {
 		values[2] = count + 1
 	}
-	w.normalize(l, r)
+	// normalize, with its no-flush fast path inlined.
+	if d := int32(bits.LeadingZeros16(uint16(r))); w.cnt+d < 40 && w.err == nil {
+		w.low, w.rng, w.cnt = l<<uint32(d), r<<uint32(d), w.cnt+d
+		return
+	}
+	w.normalizeFlush(l, r)
 }
 
 func (w *BitCounter) WriteBinaryCDFTrusted(cdf *CDF, s int) {
@@ -581,7 +616,12 @@ func (w *Writer) WriteCDF3(cdf *CDF, s int) {
 	if count < MaxCDFCount {
 		values[3] = count + 1
 	}
-	w.normalize(l, r)
+	// normalize, with its no-flush fast path inlined.
+	if d := int32(bits.LeadingZeros16(uint16(r))); w.cnt+d < 40 && w.err == nil {
+		w.low, w.rng, w.cnt = l<<uint32(d), r<<uint32(d), w.cnt+d
+		return
+	}
+	w.normalizeFlush(l, r)
 }
 
 func (w *BitCounter) WriteCDF3(cdf *CDF, s int) {
@@ -664,7 +704,12 @@ func (w *Writer) WriteCDF4(cdf *CDF, s int) {
 	if count < MaxCDFCount {
 		values[4] = count + 1
 	}
-	w.normalize(l, r)
+	// normalize, with its no-flush fast path inlined.
+	if d := int32(bits.LeadingZeros16(uint16(r))); w.cnt+d < 40 && w.err == nil {
+		w.low, w.rng, w.cnt = l<<uint32(d), r<<uint32(d), w.cnt+d
+		return
+	}
+	w.normalizeFlush(l, r)
 }
 
 func (w *BitCounter) WriteCDF4(cdf *CDF, s int) {
@@ -729,7 +774,12 @@ func (w *Writer) WriteCDF4Zero(cdf *CDF) {
 	if count < MaxCDFCount {
 		values[4] = count + 1
 	}
-	w.normalize(l, r)
+	// normalize, with its no-flush fast path inlined.
+	if d := int32(bits.LeadingZeros16(uint16(r))); w.cnt+d < 40 && w.err == nil {
+		w.low, w.rng, w.cnt = l<<uint32(d), r<<uint32(d), w.cnt+d
+		return
+	}
+	w.normalizeFlush(l, r)
 }
 
 // WriteCDF4Zero prices/adapts a known zero symbol in a four-symbol CDF.
@@ -812,7 +862,12 @@ func (w *Writer) WriteCDF5(cdf *CDF, s int) {
 	if count < MaxCDFCount {
 		values[5] = count + 1
 	}
-	w.normalize(l, r)
+	// normalize, with its no-flush fast path inlined.
+	if d := int32(bits.LeadingZeros16(uint16(r))); w.cnt+d < 40 && w.err == nil {
+		w.low, w.rng, w.cnt = l<<uint32(d), r<<uint32(d), w.cnt+d
+		return
+	}
+	w.normalizeFlush(l, r)
 }
 
 func (w *BitCounter) WriteCDF5(cdf *CDF, s int) {
@@ -962,7 +1017,12 @@ func (w *Writer) WriteCDF7(cdf *CDF, s int) {
 	if count < MaxCDFCount {
 		values[7] = count + 1
 	}
-	w.normalize(l, r)
+	// normalize, with its no-flush fast path inlined.
+	if d := int32(bits.LeadingZeros16(uint16(r))); w.cnt+d < 40 && w.err == nil {
+		w.low, w.rng, w.cnt = l<<uint32(d), r<<uint32(d), w.cnt+d
+		return
+	}
+	w.normalizeFlush(l, r)
 }
 
 func (w *BitCounter) WriteCDF7(cdf *CDF, s int) {
