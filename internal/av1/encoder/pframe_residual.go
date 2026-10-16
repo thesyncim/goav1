@@ -1653,6 +1653,7 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs, color 
 		}
 		*dst = q
 	}
+	st.ensureSubpelProbeCache()
 	if err := st.initScans(); err != nil {
 		return err
 	}
@@ -3517,14 +3518,16 @@ func (st *lossyEncodeState) subpelRefineLibaomTree(src, refPlane []byte, stride,
 	startMV := mv
 	probe := st.sadScratch[:n*n]
 	srcBlock := src[py*stride+px:]
-	if st.subpelCache == nil {
-		st.subpelCache = new(subpelProbeCache)
-	}
+	st.ensureSubpelProbeCache()
 	cache := st.subpelCache
-	cache.init(frame.Plane{Pix: refPlane, Stride: stride, Width: width, Height: height}, src, stride, px, py, n, startMV)
+	if cache != nil {
+		cache.init(frame.Plane{Pix: refPlane, Stride: stride, Width: width, Height: height}, src, stride, px, py, n, startMV)
+	}
 	exact := func(cand motion.Vector) int {
-		if sad, ok := cache.sad(motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}); ok {
-			return sad
+		if cache != nil {
+			if sad, ok := cache.sad(motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}); ok {
+				return sad
+			}
 		}
 		switch n {
 		case 8:

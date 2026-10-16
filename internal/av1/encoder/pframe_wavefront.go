@@ -59,11 +59,12 @@ type pframeDecideWorker struct {
 // adopt refreshes the lane's encode state from the tile's frame-configured
 // state. The struct copy shares the frame-level read-only slices (scan tables,
 // motion/SAD grids, content caches — grid writes are per-SB disjoint) and
-// privatizes every value-array scratch; the two mutable heap slices the
-// decision pass touches (levels, invScratch) keep lane-owned backing.
+// privatizes every value-array scratch; levels, invScratch, and the mutable
+// subpel cache keep lane-owned backing.
 func (w *pframeDecideWorker) adopt(src *lossyEncodeState) {
 	levels := w.st.levels
 	inv := w.st.invScratch
+	subpelCache := w.st.subpelCache
 	w.st = *src
 	if len(levels) < len(src.levels) {
 		levels = make([]uint8, len(src.levels))
@@ -73,6 +74,8 @@ func (w *pframeDecideWorker) adopt(src *lossyEncodeState) {
 	}
 	w.st.levels = levels
 	w.st.invScratch = inv
+	w.st.subpelCache = subpelCache
+	w.st.ensureSubpelProbeCache()
 	// The decision pass never writes symbols; poison the writer-side hooks so
 	// a stray write path fails fast, and zero the accumulators this lane will
 	// contribute back after the join.

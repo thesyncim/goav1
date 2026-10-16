@@ -34,6 +34,12 @@ type subpelProbeCache struct {
 	scratch   [pred8IMLen]int16
 }
 
+func (st *lossyEncodeState) ensureSubpelProbeCache() {
+	if st.subpelCache == nil && pred8Impl != nil && pred8IMImpl != nil && pred8VIMImpl != nil && pred8KernelsOK {
+		st.subpelCache = new(subpelProbeCache)
+	}
+}
+
 // init prepares the cache for refinements of the n x n block at (px, py)
 // starting from the full-pel vector startMV. ok stays false (callers use the
 // prober) unless the vector kernels exist, n is 16, 32 or 64, startMV is
