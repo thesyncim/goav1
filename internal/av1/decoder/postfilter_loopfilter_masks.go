@@ -238,8 +238,8 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRange(result *Fram
 	if err != nil {
 		return err
 	}
-	if bytesPerSample == 1 && bitDepth == 8 {
-		ctx.applyLoopFilterMaskPlaneRangeSB8(result, masks, lc, sharpness, plane, dirMask, rRow0, rRow1, rCol0, rCol1, dst, bounds)
+	if (bytesPerSample == 1 && bitDepth == 8) || (bytesPerSample == 2 && (bitDepth == 10 || bitDepth == 12)) {
+		ctx.applyLoopFilterMaskPlaneRangeSB(result, masks, lc, sharpness, plane, dirMask, rRow0, rRow1, rCol0, rCol1, dst, bytesPerSample, bitDepth, bounds)
 		return nil
 	}
 
