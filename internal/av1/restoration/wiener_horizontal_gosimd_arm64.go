@@ -343,3 +343,114 @@ func wienerHorizontalU8SIMD(src []uint8, srcStride int, srcOrigin int, width int
 		}
 	}
 }
+
+// wienerHorizontalU8SIMD5 is wienerHorizontalU8SIMD for filters whose outer
+// tap is zero (always for chroma, and the common luma case): dav1d's
+// wiener_filter5 path. Dropping the zero tap pair removes its window, add,
+// and two multiply-accumulates per group; the sums are unchanged.
+func wienerHorizontalU8SIMD5(src []uint8, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, round0 int, temp []uint16) {
+	_, t1, t2, t3, seedA, seedO, ok := wienerHorizontalU8PackedTaps(filter)
+	if round0 != WienerRound0Bits || !wienerFilterSymmetric(filter) || !ok ||
+		!wienerHorizontalU8SIMDCanRun(len(src), srcStride, srcOrigin, width, height) ||
+		!blockFits(len(temp), width, width, height+2*WienerHalfwin) {
+		wienerHorizontalU8(src, srcStride, srcOrigin, width, height, filter, round0, temp)
+		return
+	}
+	t1V := archsimd.BroadcastUint32x4(t1)
+	t2V, t3V := archsimd.BroadcastUint32x4(t2), archsimd.BroadcastUint32x4(t3)
+	seedAV, seedOV := archsimd.BroadcastUint32x4(seedA), archsimd.BroadcastUint32x4(seedO)
+	negK := archsimd.BroadcastUint32x4(0xffff0000)
+	shr16 := archsimd.BroadcastInt32x4(-16)
+	zero16 := archsimd.BroadcastInt16x8(0)
+	max16 := archsimd.BroadcastInt16x8(8191)
+
+	rows := height + 2*WienerHalfwin
+	w16 := width &^ 15
+	sp := unsafe.Pointer(unsafe.SliceData(src))
+	tp := unsafe.Pointer(unsafe.SliceData(temp))
+	for row := 0; row < rows; row++ {
+		sBase := srcOrigin + (row-WienerHalfwin)*srcStride - WienerHalfwin
+		dBase := row * width
+		for col := 0; col < w16; col += 16 {
+			v0 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, sBase+col)))   // s0..s15
+			v1 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, sBase+col+8))) // s8..s23
+			l0 := v0.ExtendLo8ToUint16()                                                // s0..s7  (u16)
+			m0 := v0.HiToLo().ExtendLo8ToUint16()                                       // s8..s15 (u16)
+			h1 := v1.HiToLo().ExtendLo8ToUint16()                                       // s16..s23 (u16)
+			lb := l0.ReshapeToUint8s()
+			mb := m0.ReshapeToUint8s()
+			hb := h1.ReshapeToUint8s()
+
+			// Group A: outputs col..col+7, windows over s0..s13.
+			w1a := mb.ConcatShiftBytesRight(lb, 2).ReshapeToUint16s()  // s1..s8
+			w2a := mb.ConcatShiftBytesRight(lb, 4).ReshapeToUint16s()  // s2..s9
+			w3a := mb.ConcatShiftBytesRight(lb, 6).ReshapeToUint16s()  // s3..s10
+			w4a := mb.ConcatShiftBytesRight(lb, 8).ReshapeToUint16s()  // s4..s11
+			w5a := mb.ConcatShiftBytesRight(lb, 10).ReshapeToUint16s() // s5..s12
+			bA := w1a.Add(w5a)
+			cA := w2a.Add(w4a)
+			dA := w3a
+			pA1 := bA.ReshapeToUint32s()
+			pA2 := cA.ReshapeToUint32s()
+			pA3 := dA.ReshapeToUint32s()
+			accA := pA3.MulAdd(t3V, seedAV)
+			accA = pA2.MulAdd(t2V, accA)
+			accA = pA1.MulAdd(t1V, accA)
+			oddA := pA3.Shift(shr16).MulAdd(t3V, seedOV)
+			oddA = pA2.Shift(shr16).MulAdd(t2V, oddA)
+			oddA = pA1.Shift(shr16).MulAdd(t1V, oddA)
+			evenA := oddA.MulAdd(negK, accA)
+			outA := evenA.ReshapeToUint16s().InterleaveOdd(oddA.ReshapeToUint16s()).BitsToInt16().Max(zero16).Min(max16).ToBits()
+			outA.StoreArray((*[8]uint16)(unsafe.Add(tp, (dBase+col)*2)))
+
+			// Group B: outputs col+8..col+15, windows over s8..s21.
+			w1b := hb.ConcatShiftBytesRight(mb, 2).ReshapeToUint16s()  // s9..s16
+			w2b := hb.ConcatShiftBytesRight(mb, 4).ReshapeToUint16s()  // s10..s17
+			w3b := hb.ConcatShiftBytesRight(mb, 6).ReshapeToUint16s()  // s11..s18
+			w4b := hb.ConcatShiftBytesRight(mb, 8).ReshapeToUint16s()  // s12..s19
+			w5b := hb.ConcatShiftBytesRight(mb, 10).ReshapeToUint16s() // s13..s20
+			bB := w1b.Add(w5b)
+			cB := w2b.Add(w4b)
+			dB := w3b
+			pB1 := bB.ReshapeToUint32s()
+			pB2 := cB.ReshapeToUint32s()
+			pB3 := dB.ReshapeToUint32s()
+			accB := pB3.MulAdd(t3V, seedAV)
+			accB = pB2.MulAdd(t2V, accB)
+			accB = pB1.MulAdd(t1V, accB)
+			oddB := pB3.Shift(shr16).MulAdd(t3V, seedOV)
+			oddB = pB2.Shift(shr16).MulAdd(t2V, oddB)
+			oddB = pB1.Shift(shr16).MulAdd(t1V, oddB)
+			evenB := oddB.MulAdd(negK, accB)
+			outB := evenB.ReshapeToUint16s().InterleaveOdd(oddB.ReshapeToUint16s()).BitsToInt16().Max(zero16).Min(max16).ToBits()
+			outB.StoreArray((*[8]uint16)(unsafe.Add(tp, (dBase+col+8)*2)))
+		}
+		if w16 != width { // trailing width%16 == 8 group
+			v0 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, sBase+w16))) // s0..s15 (needs s0..s13)
+			l0 := v0.ExtendLo8ToUint16()
+			m0 := v0.HiToLo().ExtendLo8ToUint16()
+			lb := l0.ReshapeToUint8s()
+			mb := m0.ReshapeToUint8s()
+			w1 := mb.ConcatShiftBytesRight(lb, 2).ReshapeToUint16s()
+			w2 := mb.ConcatShiftBytesRight(lb, 4).ReshapeToUint16s()
+			w3 := mb.ConcatShiftBytesRight(lb, 6).ReshapeToUint16s()
+			w4 := mb.ConcatShiftBytesRight(lb, 8).ReshapeToUint16s()
+			w5 := mb.ConcatShiftBytesRight(lb, 10).ReshapeToUint16s()
+			b := w1.Add(w5)
+			c := w2.Add(w4)
+			d := w3
+			p1 := b.ReshapeToUint32s()
+			p2 := c.ReshapeToUint32s()
+			p3 := d.ReshapeToUint32s()
+			acc := p3.MulAdd(t3V, seedAV)
+			acc = p2.MulAdd(t2V, acc)
+			acc = p1.MulAdd(t1V, acc)
+			odd := p3.Shift(shr16).MulAdd(t3V, seedOV)
+			odd = p2.Shift(shr16).MulAdd(t2V, odd)
+			odd = p1.Shift(shr16).MulAdd(t1V, odd)
+			even := odd.MulAdd(negK, acc)
+			out := even.ReshapeToUint16s().InterleaveOdd(odd.ReshapeToUint16s()).BitsToInt16().Max(zero16).Min(max16).ToBits()
+			out.StoreArray((*[8]uint16)(unsafe.Add(tp, (dBase+w16)*2)))
+		}
+	}
+}

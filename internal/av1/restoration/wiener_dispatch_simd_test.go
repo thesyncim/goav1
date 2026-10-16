@@ -27,8 +27,8 @@ func TestWienerDispatchUsesSIMD(t *testing.T) {
 		{"wienerHorizontalImpl", wienerHorizontalImpl, wienerHorizontalSIMD},
 		{"wienerHorizontalTrustedImpl", wienerHorizontalTrustedImpl, wienerHorizontalSIMDTrusted},
 		{"wienerVerticalImpl", wienerVerticalImpl, wienerVerticalSIMD},
-		{"wienerHorizontalU8Impl", wienerHorizontalU8Impl, wienerHorizontalU8SIMDChecked},
-		{"wienerVerticalU8Impl", wienerVerticalU8Impl, wienerVerticalU8SIMD},
+		{"wienerHorizontalU8Impl", wienerHorizontalU8Impl, wantWienerHorizontalU8Impl},
+		{"wienerVerticalU8Impl", wienerVerticalU8Impl, wantWienerVerticalU8Impl},
 	} {
 		if got, want := nameOf(slot.got), nameOf(slot.want); got != want {
 			t.Errorf("%s = %s, want %s", slot.name, got, want)

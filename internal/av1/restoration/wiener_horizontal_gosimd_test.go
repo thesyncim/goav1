@@ -20,8 +20,8 @@ func TestWienerHorizontalU8SIMDIsBound(t *testing.T) {
 	nameOf := func(v any) string {
 		return runtime.FuncForPC(reflect.ValueOf(v).Pointer()).Name()
 	}
-	if got := nameOf(wienerHorizontalU8Impl); got != nameOf(wienerHorizontalU8SIMDChecked) {
-		t.Fatalf("wienerHorizontalU8Impl = %s, want wienerHorizontalU8SIMDChecked", got)
+	if got := nameOf(wienerHorizontalU8Impl); got != nameOf(wantWienerHorizontalU8Impl) {
+		t.Fatalf("wienerHorizontalU8Impl = %s, want %s", got, nameOf(wantWienerHorizontalU8Impl))
 	}
 }
 
