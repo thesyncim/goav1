@@ -7,6 +7,7 @@
 package transform
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"testing"
@@ -24,9 +25,9 @@ func TestStageTransposeClampSIMDDifferential(t *testing.T) {
 		(1 << 22) - 1, 1 << 22, (1 << 22) + 1, math.MaxInt32 - 1, math.MaxInt32,
 	}
 	clamps := []struct{ lo, hi int32 }{
-		{-32768, 32767},           // 8-bit row clamp
-		{-131072, 131071},         // 10-bit
-		{-524288, 524287},         // 12-bit
+		{-32768, 32767},                // 8-bit row clamp
+		{-131072, 131071},              // 10-bit
+		{-524288, 524287},              // 12-bit
 		{math.MinInt32, math.MaxInt32}, // degenerate wide clamp (rect2 falls back)
 	}
 	shapes := []struct{ rows, cols, width, stride int }{
@@ -34,6 +35,8 @@ func TestStageTransposeClampSIMDDifferential(t *testing.T) {
 		{32, 32, 32, 32}, {32, 32, 64, 32}, {5, 4, 8, 8}, {4, 5, 8, 8},
 		{7, 6, 8, 8}, {13, 9, 16, 16}, {3, 3, 4, 4}, {2, 7, 8, 8},
 		{16, 4, 16, 16}, {4, 16, 16, 16}, {31, 17, 32, 32},
+		{1, 4, 4, 4}, {1, 8, 8, 8}, {2, 32, 32, 32}, {3, 16, 16, 16}, {2, 6, 8, 8},
+		{6, 8, 8, 8}, {10, 12, 16, 16}, {3, 64, 64, 32}, {1, 32, 32, 4},
 	}
 	for _, sh := range shapes {
 		coeff := make([]int32, sh.stride*sh.cols+sh.rows)
@@ -113,5 +116,14 @@ func benchStageScalar(b *testing.B, rows, cols, width int, rect2 bool) {
 	b.ReportAllocs()
 	for b.Loop() {
 		stageTransposeClampScalar(scratch, width, coeff, width, rows, cols, rect2, -32768, 32767)
+	}
+}
+
+// Short stagings (EOB-limited active rows) and row counts off the 4-row grid.
+func BenchmarkStageTransposeClampShort(b *testing.B) {
+	for _, sh := range []struct{ rows, cols int }{{1, 8}, {1, 32}, {2, 8}, {2, 16}, {3, 32}, {2, 32}, {6, 16}} {
+		name := fmt.Sprintf("%dx%d", sh.rows, sh.cols)
+		b.Run(name+"/simd", func(b *testing.B) { benchStage(b, sh.rows, sh.cols, sh.cols, false) })
+		b.Run(name+"/scalar", func(b *testing.B) { benchStageScalar(b, sh.rows, sh.cols, sh.cols, false) })
 	}
 }
