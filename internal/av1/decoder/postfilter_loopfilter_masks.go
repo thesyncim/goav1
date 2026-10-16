@@ -238,6 +238,10 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRange(result *Fram
 	if err != nil {
 		return err
 	}
+	if bytesPerSample == 1 && bitDepth == 8 {
+		ctx.applyLoopFilterMaskPlaneRangeSB8(result, masks, lc, sharpness, plane, dirMask, rRow0, rRow1, rCol0, rCol1, dst, bounds)
+		return nil
+	}
 
 	var thresholds [loopfilter.MaxLevel + 1]loopfilter.Thresholds
 	var thresholdReady [loopfilter.MaxLevel + 1]bool
