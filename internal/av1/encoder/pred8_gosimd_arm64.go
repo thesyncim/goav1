@@ -277,8 +277,70 @@ func pred8IM(im unsafe.Pointer, imStride int, ref unsafe.Pointer, refStride, w, 
 }
 
 // pred8VIM is the 2-D second pass over im in 8-column groups with int32
-// accumulation.
+// accumulation. The pinned libaom av1/common/arm/convolve_neon.c
+// (av1_convolve_2d_sr_neon) uses its six-tap kernel when the first and last
+// coefficients are zero; the regular and smooth tables in av1/common/filter.h
+// have that shape, while fractional sharp filters retain the eight-tap path.
 func pred8VIM(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int, im unsafe.Pointer, imStride, w, h int, k *[8]int16) int {
+	if k[0] != 0 || k[7] != 0 {
+		return pred8VIM8(dst, dstStride, src, srcStride, im, imStride, w, h, k)
+	}
+	c1 := archsimd.BroadcastInt32x4(int32(k[1]))
+	c2 := archsimd.BroadcastInt32x4(int32(k[2]))
+	c3 := archsimd.BroadcastInt32x4(int32(k[3]))
+	c4 := archsimd.BroadcastInt32x4(int32(k[4]))
+	c5 := archsimd.BroadcastInt32x4(int32(k[5]))
+	c6 := archsimd.BroadcastInt32x4(int32(k[6]))
+	bias := archsimd.BroadcastInt32x4(-261120)
+	sh := archsimd.BroadcastInt32x4(-11)
+	var acc archsimd.Uint16x8
+	sad := 0
+	for y := 0; y < h; y++ {
+		p := unsafe.Add(im, (y+1)*imStride)
+		x := 0
+		for ; x+8 <= w; x += 8 {
+			q := unsafe.Add(p, 2*x)
+			v := archsimd.LoadInt16x8Array((*[8]int16)(q))
+			lo := v.ExtendLo4ToInt32().MulAdd(c1, bias)
+			hi := v.HiToLo().ExtendLo4ToInt32().MulAdd(c1, bias)
+			v = archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(q, 1*imStride)))
+			lo = v.ExtendLo4ToInt32().MulAdd(c2, lo)
+			hi = v.HiToLo().ExtendLo4ToInt32().MulAdd(c2, hi)
+			v = archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(q, 2*imStride)))
+			lo = v.ExtendLo4ToInt32().MulAdd(c3, lo)
+			hi = v.HiToLo().ExtendLo4ToInt32().MulAdd(c3, hi)
+			v = archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(q, 3*imStride)))
+			lo = v.ExtendLo4ToInt32().MulAdd(c4, lo)
+			hi = v.HiToLo().ExtendLo4ToInt32().MulAdd(c4, hi)
+			v = archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(q, 4*imStride)))
+			lo = v.ExtendLo4ToInt32().MulAdd(c5, lo)
+			hi = v.HiToLo().ExtendLo4ToInt32().MulAdd(c5, hi)
+			v = archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(q, 5*imStride)))
+			lo = v.ExtendLo4ToInt32().MulAdd(c6, lo)
+			hi = v.HiToLo().ExtendLo4ToInt32().MulAdd(c6, hi)
+			r16 := lo.Shift(sh).SaturateToInt16().ToBits().ReshapeToUint64s().
+				InterleaveLo(hi.Shift(sh).SaturateToInt16().ToBits().ReshapeToUint64s()).ReshapeToUint16s().BitsToInt16()
+			out := r16.SaturateToUint8()
+			if src != nil {
+				s := *(*uint64)(unsafe.Add(src, y*srcStride+x))
+				var pair [16]uint8
+				*(*uint64)(unsafe.Pointer(&pair[0])) = s
+				acc = acc.Add(absDiffU8x16(out, archsimd.LoadUint8x16Array(&pair)).ExtendLo8ToUint16())
+			} else {
+				*(*uint64)(unsafe.Add(dst, y*dstStride+x)) = out.ReshapeToUint64s().GetElem(0)
+			}
+		}
+		if src != nil && y&15 == 15 {
+			sad += sumU16(acc)
+			acc = archsimd.Uint16x8{}
+		}
+	}
+	return sad + sumU16(acc)
+}
+
+// pred8VIM8 retains the full eight-tap path for kernels with nonzero outer
+// coefficients.
+func pred8VIM8(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int, im unsafe.Pointer, imStride, w, h int, k *[8]int16) int {
 	c0 := archsimd.BroadcastInt32x4(int32(k[0]))
 	c1 := archsimd.BroadcastInt32x4(int32(k[1]))
 	c2 := archsimd.BroadcastInt32x4(int32(k[2]))
