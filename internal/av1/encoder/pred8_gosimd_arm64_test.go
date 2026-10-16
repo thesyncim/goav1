@@ -16,6 +16,7 @@ import (
 
 var pred8VIMBenchSink byte
 var pred8VBenchSink byte
+var pred8IMBenchSink byte
 
 func pred8VIMScalarOracle(dst []byte, src []byte, srcStride int, im []int16, imStride, w, h int, k *[8]int16) int {
 	sad := 0
@@ -344,6 +345,147 @@ func BenchmarkPred8VTapPaths(b *testing.B) {
 					pred8V(unsafe.Pointer(&dst[0]), shape.w, nil, 0, refPtr, refStride, shape.w, shape.h, k)
 				}
 				pred8VBenchSink = dst[len(dst)-1]
+			})
+		}
+	}
+}
+
+// pred8IMScalarOracle evaluates the original eight-tap expression at the
+// original coefficient scale, independently of the SIMD tap reduction.
+func pred8IMScalarOracle(dst []int16, dstStride int, ref []byte, refOffset, refStride, w, rows int, k *[8]int16) {
+	for y := 0; y < rows; y++ {
+		for x := 0; x < w; x++ {
+			sum := int64(16384)
+			for tap := 0; tap < 8; tap++ {
+				sum += int64(ref[refOffset+y*refStride+x+tap-3]) * int64(k[tap])
+			}
+			dst[y*dstStride+x] = int16((sum + 4) >> 3)
+		}
+	}
+}
+
+// TestPred8IMZeroOuterTapDispatch compares every filter phase against the
+// original eight-tap expression. The pinned libaom
+// av1/common/arm/av1_convolve_scale_neon.c (convolve6_8_h) omits coefficients 0
+// and 7; regular and smooth filters have zero outer taps, while fractional
+// sharp filters retain the full eight-tap path.
+func TestPred8IMZeroOuterTapDispatch(t *testing.T) {
+	var rng = rand.New(rand.NewSource(0x3c6ef372))
+	shapes := []struct {
+		name              string
+		w, rows, imStride int
+	}{
+		{name: "8x15-tight", w: 8, rows: 15, imStride: 8},
+		{name: "16x23-tight", w: 16, rows: 23, imStride: 16},
+		{name: "32x39-tight", w: 32, rows: 39, imStride: 32},
+		{name: "64x71-tight", w: 64, rows: 71, imStride: 64},
+		{name: "32x39-padded", w: 32, rows: 39, imStride: 39},
+		{name: "cache-24x26-s80", w: 24, rows: 26, imStride: 80},
+		{name: "cache-40x42-s80", w: 40, rows: 42, imStride: 80},
+		{name: "cache-72x74-s80", w: 72, rows: 74, imStride: 80},
+	}
+	for _, shape := range shapes {
+		refStride := shape.w + 33 // odd pitch plus horizontal read padding
+		// pred8IM advances p after the final row; pred8Fits and
+		// subpelProbeCache.init provide this post-row padding at the call sites.
+		ref := make([]byte, (shape.rows+1)*refStride)
+		refOffset := 8
+		got := make([]int16, (shape.rows-1)*shape.imStride+shape.w) // exact final span
+		want := make([]int16, len(got))
+		for pattern := 0; pattern < 5; pattern++ {
+			switch pattern {
+			case 0: // random bytes
+				_, _ = rng.Read(ref)
+			case 1: // all zero
+				clear(ref)
+			case 2: // all 255
+				for i := range ref {
+					ref[i] = 255
+				}
+			case 3: // checkerboard extremes
+				for i := range ref {
+					y, x := i/refStride, i%refStride
+					ref[i] = byte((x+y)&1) * 255
+				}
+			default: // randomized binary extremes
+				for i := range ref {
+					if rng.Intn(2) == 0 {
+						ref[i] = 0
+					} else {
+						ref[i] = 255
+					}
+				}
+			}
+			refPtr := unsafe.Pointer(&ref[refOffset])
+			for filter := motion.InterpEightTapRegular; filter <= motion.InterpMultiTapSharp; filter++ {
+				for phase := range 16 {
+					k := &pred8Kernels[filter][phase]
+					if filter != motion.InterpMultiTapSharp && (k[0] != 0 || k[7] != 0) {
+						t.Fatalf("filter=%d phase=%d has nonzero outer taps: %v", filter, phase, *k)
+					}
+					if filter == motion.InterpMultiTapSharp && phase != 0 && k[0] == 0 && k[7] == 0 {
+						t.Fatalf("sharp phase=%d unexpectedly has zero outer taps: %v", phase, *k)
+					}
+
+					for i := range got {
+						got[i] = -1234
+						want[i] = -1234
+					}
+					pred8IMScalarOracle(want, shape.imStride, ref, refOffset, refStride, shape.w, shape.rows, k)
+					pred8IM(unsafe.Pointer(&got[0]), shape.imStride*2, refPtr, refStride, shape.w, shape.rows, k)
+					for y := 0; y < shape.rows; y++ {
+						for x := 0; x < shape.w; x++ {
+							if got[y*shape.imStride+x] != want[y*shape.imStride+x] {
+								t.Fatalf("filter=%d phase=%d shape=%s pattern=%d row=%d col=%d: got %d want %d", filter, phase, shape.name, pattern, y, x, got[y*shape.imStride+x], want[y*shape.imStride+x])
+							}
+						}
+						for x := shape.w; x < shape.imStride && y < shape.rows-1; x++ {
+							if got[y*shape.imStride+x] != -1234 {
+								t.Fatalf("filter=%d phase=%d shape=%s wrote intermediate row padding at row=%d col=%d", filter, phase, shape.name, y, x)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// BenchmarkPred8IMTapPaths measures the horizontal first pass on cache-sized
+// blocks through the same public entry point for regular and sharp filters.
+func BenchmarkPred8IMTapPaths(b *testing.B) {
+	for _, shape := range []struct {
+		name              string
+		w, rows, imStride int
+	}{
+		{name: "cache-24x26-s80", w: 24, rows: 26, imStride: 80},
+		{name: "cache-40x42-s80", w: 40, rows: 42, imStride: 80},
+		{name: "cache-72x74-s80", w: 72, rows: 74, imStride: 80},
+	} {
+		shape := shape
+		refStride := shape.w + 33
+		ref := make([]byte, (shape.rows+1)*refStride)
+		for i := range ref {
+			ref[i] = byte((i*37 + i/refStride*17) % 256)
+		}
+		refPtr := unsafe.Pointer(&ref[8])
+		im := make([]int16, (shape.rows-1)*shape.imStride+shape.w)
+		for _, kernel := range []struct {
+			name   string
+			filter motion.InterpFilter
+		}{
+			{name: "regular", filter: motion.InterpEightTapRegular},
+			{name: "sharp", filter: motion.InterpMultiTapSharp},
+		} {
+			kernel := kernel
+			k := &pred8Kernels[kernel.filter][8]
+			b.Run(shape.name+"/"+kernel.name, func(b *testing.B) {
+				b.ReportAllocs()
+				b.SetBytes(int64(shape.w * shape.rows))
+				for b.Loop() {
+					pred8IM(unsafe.Pointer(&im[0]), shape.imStride*2, refPtr, refStride, shape.w, shape.rows, k)
+				}
+				pred8IMBenchSink = byte(im[len(im)-1])
 			})
 		}
 	}

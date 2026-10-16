@@ -3,7 +3,7 @@
   "date": "2026-10-16",
   "status": "Candidate retained for PR integration; kernel microbench gain is clear for regular filters, while the incremental whole-Pan effect is small and timing-sensitive.",
   "scope": {
-    "change": "For vertical interpolation, regular/smooth filters with k[0]==0 and k[7]==0 use six taps; sharp filters retain the existing eight-tap path.",
+    "change": "For vertical interpolation, regular/smooth filters with k[0]==0 and k[7]==0 use six taps; sharp phase 0 also meets this condition, while fractional sharp filters retain the existing eight-tap path.",
     "fixture": "Pan benchmark generates deterministic synthetic camera-like content (seed 15, blurred texture, 4-pixel pan steps, constant chroma) in video_bench_test.go; it is not a corpus clip. GOAV1_BENCH_CORPUS_DIR was set but this benchmark does not read it.",
     "claim_limit": "The fresh 10-round leaf-vs-VIM6 whole-Pan interval crosses zero. The combined 20 paired rounds favor leaf, but do not imply general codec throughput improvement."
   },

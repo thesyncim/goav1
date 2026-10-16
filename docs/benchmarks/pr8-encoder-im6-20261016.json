@@ -1,0 +1,1430 @@
+{
+  "schema": "goav1-pr8-encoder-im6-benchmark-v1",
+  "date": "2026-10-16",
+  "decision": "Accept as a regular-kernel improvement only, subject to final validation already passed. Do not claim a whole-Pan speedup.",
+  "change": "pred8IM skips exact-zero outer coefficients k[0] and k[7] in the horizontal intermediate pass. Regular/smooth and sharp phase 0 have zero outer taps and use six taps; fractional sharp filters retain the eight-tap path.",
+  "scope_and_caveats": {
+    "micro": "Direct pred8IM on cache-sized intermediate shapes (widths 24/40/72, rows 26/42/74, int16 intermediate stride 80); regular and sharp phase 8.",
+    "whole_frame": "Single-thread 1920x1080 synthetic Pan benchmark, 31 measured P-frame encodes per sample; content is generated in video_bench_test.go (seed 15, blurred texture, 4-pixel shifts and constant chroma), not a corpus clip. GOAV1_BENCH_CORPUS_DIR was set but the benchmark does not read it.",
+    "whole_frame_result": "Fresh 10-pair confirmation is neutral: 5/10 candidate wins and its paired bootstrap interval crosses zero. No whole-frame speed improvement is demonstrated.",
+    "wrapper_issue": "An initial wrapper invocation failed before running benchmarks because Darwin confstr returned an I/O error for DARWIN_USER_CACHE_DIR. No samples came from it. The subsequent runs set CODEX_PROJECT_CACHE_ROOT explicitly and used the verified project-scoped cache."
+  },
+  "environment": {
+    "go": "go1.27.0",
+    "goos": "darwin",
+    "goarch": "arm64",
+    "goexperiment": "simd",
+    "goarm64": "v8.0",
+    "cgo_enabled": true,
+    "cpu": "Apple M4 Max",
+    "GOMAXPROCS": 1,
+    "GOGC": 100,
+    "CODEX_AGENT_ID": "pr8-speed2",
+    "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+    "project_cache_id": "37b85e7d09c67423",
+    "wrapper": "/Users/thesyncim/.codex/bin/project-env"
+  },
+  "source_identity": {
+    "baseline_commit": "b6d521006396a76b6ecffcff985ff70e5a05bf96",
+    "candidate_production_source_sha256": "f1b8d73ae51d0ed2c82da65a4b440e17cce01974661bdb28874a92ecad278508",
+    "shared_test_source_sha256": "9ebaa1a98ae406ee77d2d49f21195ac79e766051bfb875eb1bf7c7352661101b",
+    "shared_video_benchmark_source_sha256": "5395d5335feb239f13b7e2690cf16a555d67a941ff5640a613e78cd26f16e8fc",
+    "baseline_production_overlay_sha256": "4d614b51817f8a36d364e54b157f80dba538af6105e779468353afadae512646",
+    "binaries": {
+      "baseline": {
+        "path": "/private/tmp/pr8-im6-b6d.test",
+        "sha256": "5dc24e44ac4bcaf03be2442d5d59f0e46ae2584d71d760dac0ef0e9b6f1a81a6"
+      },
+      "candidate": {
+        "path": "/private/tmp/pr8-im6-candidate.test",
+        "sha256": "68090364bf217c9dbbf77f0bb0fdb0d113193746de280d36f94021ce18998326"
+      }
+    },
+    "candidate_assembly_review": "Astra approved; objdump is recorded under raw_logs.",
+    "candidate_assembly_review_objdump": {
+      "path": "/private/tmp/pr8-im6-pred8IM-objdump.txt",
+      "sha256": "f3bf6f6c94a24728eca6afcdfdd6530e8ee4a9c77afe23ea2da2e5d10dfb08fa"
+    }
+  },
+  "commands": {
+    "micro": "GOMAXPROCS=1 GOGC=100 GOEXPERIMENT=simd CODEX_AGENT_ID=pr8-speed2 CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects /Users/thesyncim/.codex/bin/project-env <binary> -test.run=^$ -test.bench=^BenchmarkPred8IMTapPaths$ -test.benchtime=200ms -test.benchmem -test.count=1",
+    "pan": "GOMAXPROCS=1 GOGC=100 GOEXPERIMENT=simd CODEX_AGENT_ID=pr8-speed2 CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects /Users/thesyncim/.codex/bin/project-env <binary> -test.run=^$ -test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$ -test.benchtime=31x -test.benchmem -test.count=1",
+    "order": "Alternating baseline-first/candidate-first across rounds in each paired group."
+  },
+  "micro": {
+    "benchmark": "BenchmarkPred8IMTapPaths",
+    "samples_by_round": [
+      {
+        "round": 1,
+        "execution_order": [
+          "baseline",
+          "candidate"
+        ],
+        "cases": {
+          "cache-24x26-s80/regular": {
+            "baseline": {
+              "ns_per_op": 92.37,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 70.81,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.34091155136949
+          },
+          "cache-24x26-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 84.83,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 84.6,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.27113049628669783
+          },
+          "cache-40x42-s80/regular": {
+            "baseline": {
+              "ns_per_op": 226.2,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 173.6,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.253757736516356
+          },
+          "cache-40x42-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 226.2,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 225.4,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.35366931918655586
+          },
+          "cache-72x74-s80/regular": {
+            "baseline": {
+              "ns_per_op": 715.7,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 557.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -22.06231661310606
+          },
+          "cache-72x74-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 722.1,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 721.3,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.11078797950423436
+          }
+        }
+      },
+      {
+        "round": 2,
+        "execution_order": [
+          "candidate",
+          "baseline"
+        ],
+        "cases": {
+          "cache-24x26-s80/regular": {
+            "baseline": {
+              "ns_per_op": 84.81,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 65.29,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.01615375545336
+          },
+          "cache-24x26-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 85.01,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 84.71,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.35289965886368124
+          },
+          "cache-40x42-s80/regular": {
+            "baseline": {
+              "ns_per_op": 226.3,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 172.7,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.685373398144062
+          },
+          "cache-40x42-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 225.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 225.7,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.04428697962799433
+          },
+          "cache-72x74-s80/regular": {
+            "baseline": {
+              "ns_per_op": 719.9,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 557.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -22.51701625225726
+          },
+          "cache-72x74-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 714.9,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 720.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.7133864876206486
+          }
+        }
+      },
+      {
+        "round": 3,
+        "execution_order": [
+          "baseline",
+          "candidate"
+        ],
+        "cases": {
+          "cache-24x26-s80/regular": {
+            "baseline": {
+              "ns_per_op": 84.66,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 65.44,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -22.702575005905977
+          },
+          "cache-24x26-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 84.65,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 84.67,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.02362669816893259
+          },
+          "cache-40x42-s80/regular": {
+            "baseline": {
+              "ns_per_op": 225.7,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 172.7,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.48249889233496
+          },
+          "cache-40x42-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 225.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 227.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.5314437555358653
+          },
+          "cache-72x74-s80/regular": {
+            "baseline": {
+              "ns_per_op": 713.3,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 566.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -20.53834291322024
+          },
+          "cache-72x74-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 714.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 716.2,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.1958589815333145
+          }
+        }
+      },
+      {
+        "round": 4,
+        "execution_order": [
+          "candidate",
+          "baseline"
+        ],
+        "cases": {
+          "cache-24x26-s80/regular": {
+            "baseline": {
+              "ns_per_op": 84.68,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 65.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.240434577231937
+          },
+          "cache-24x26-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 84.92,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 84.75,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.2001884126236475
+          },
+          "cache-40x42-s80/regular": {
+            "baseline": {
+              "ns_per_op": 226.9,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 172.6,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.931247245482602
+          },
+          "cache-40x42-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 226.2,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 225.4,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.35366931918655586
+          },
+          "cache-72x74-s80/regular": {
+            "baseline": {
+              "ns_per_op": 717.5,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 548.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.623693379790943
+          },
+          "cache-72x74-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 712.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 713.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.028058361391702924
+          }
+        }
+      },
+      {
+        "round": 5,
+        "execution_order": [
+          "baseline",
+          "candidate"
+        ],
+        "cases": {
+          "cache-24x26-s80/regular": {
+            "baseline": {
+              "ns_per_op": 84.66,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 65.59,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -22.525395700448847
+          },
+          "cache-24x26-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 84.66,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 85.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 1.3465627214741316
+          },
+          "cache-40x42-s80/regular": {
+            "baseline": {
+              "ns_per_op": 226.2,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 175.7,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -22.325375773651636
+          },
+          "cache-40x42-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 226.2,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 230.3,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 1.812555260831128
+          },
+          "cache-72x74-s80/regular": {
+            "baseline": {
+              "ns_per_op": 731.5,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 598.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -18.250170881749828
+          },
+          "cache-72x74-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 725.2,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 723.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.19305019305020377
+          }
+        }
+      },
+      {
+        "round": 6,
+        "execution_order": [
+          "candidate",
+          "baseline"
+        ],
+        "cases": {
+          "cache-24x26-s80/regular": {
+            "baseline": {
+              "ns_per_op": 84.67,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 65.04,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.184126609188603
+          },
+          "cache-24x26-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 84.63,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 84.91,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.3308519437551727
+          },
+          "cache-40x42-s80/regular": {
+            "baseline": {
+              "ns_per_op": 227.2,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 173.1,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.811619718309863
+          },
+          "cache-40x42-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 226.3,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 226.1,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.08837825894830731
+          },
+          "cache-72x74-s80/regular": {
+            "baseline": {
+              "ns_per_op": 720.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 550.9,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.486111111111118
+          },
+          "cache-72x74-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 713.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 717.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.44830484729616593
+          }
+        }
+      },
+      {
+        "round": 7,
+        "execution_order": [
+          "baseline",
+          "candidate"
+        ],
+        "cases": {
+          "cache-24x26-s80/regular": {
+            "baseline": {
+              "ns_per_op": 85.1,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 65.11,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.49001175088131
+          },
+          "cache-24x26-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 84.58,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 84.98,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.47292504138094493
+          },
+          "cache-40x42-s80/regular": {
+            "baseline": {
+              "ns_per_op": 228.4,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 174.5,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.598949211908938
+          },
+          "cache-40x42-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 226.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 225.7,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.13274336283186638
+          },
+          "cache-72x74-s80/regular": {
+            "baseline": {
+              "ns_per_op": 715.6,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 550.5,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.0715483510341
+          },
+          "cache-72x74-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 720.4,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 719.2,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.16657412548582995
+          }
+        }
+      },
+      {
+        "round": 8,
+        "execution_order": [
+          "candidate",
+          "baseline"
+        ],
+        "cases": {
+          "cache-24x26-s80/regular": {
+            "baseline": {
+              "ns_per_op": 87.35,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 65.43,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -25.09444762449913
+          },
+          "cache-24x26-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 85.66,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 85.37,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.33854774690637024
+          },
+          "cache-40x42-s80/regular": {
+            "baseline": {
+              "ns_per_op": 232.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 172.9,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -25.730240549828174
+          },
+          "cache-40x42-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 231.4,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 228.9,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -1.0803802938634366
+          },
+          "cache-72x74-s80/regular": {
+            "baseline": {
+              "ns_per_op": 720.7,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 555.6,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -22.90828361315388
+          },
+          "cache-72x74-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 729.5,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 716.4,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -1.7957505140507202
+          }
+        }
+      },
+      {
+        "round": 9,
+        "execution_order": [
+          "baseline",
+          "candidate"
+        ],
+        "cases": {
+          "cache-24x26-s80/regular": {
+            "baseline": {
+              "ns_per_op": 85.58,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 65.56,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.393316195372748
+          },
+          "cache-24x26-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 85.59,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 86.1,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.5958640028040474
+          },
+          "cache-40x42-s80/regular": {
+            "baseline": {
+              "ns_per_op": 228.3,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 177.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -22.47043363994744
+          },
+          "cache-40x42-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 228.1,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 228.3,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.08768084173609303
+          },
+          "cache-72x74-s80/regular": {
+            "baseline": {
+              "ns_per_op": 726.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 558.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.22509631260319
+          },
+          "cache-72x74-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 733.2,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 723.4,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -1.3366066557556011
+          }
+        }
+      },
+      {
+        "round": 10,
+        "execution_order": [
+          "candidate",
+          "baseline"
+        ],
+        "cases": {
+          "cache-24x26-s80/regular": {
+            "baseline": {
+              "ns_per_op": 85.66,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 65.7,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -23.301424235349046
+          },
+          "cache-24x26-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 85.81,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 85.52,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.337955949190083
+          },
+          "cache-40x42-s80/regular": {
+            "baseline": {
+              "ns_per_op": 230.7,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 174.4,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -24.403987863025566
+          },
+          "cache-40x42-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 227.9,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 228.3,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.1755155770074568
+          },
+          "cache-72x74-s80/regular": {
+            "baseline": {
+              "ns_per_op": 719.5,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 566.9,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -21.20917303683113
+          },
+          "cache-72x74-s80/sharp": {
+            "baseline": {
+              "ns_per_op": 720.5,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 723.6,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.43025676613464015
+          }
+        }
+      }
+    ],
+    "summary_by_case": {
+      "cache-24x26-s80/regular": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 84.955,
+        "median_candidate_ns_per_op": 65.435,
+        "median_paired_change_percent": -23.27092940629049,
+        "geometric_mean_paired_change_percent": -23.331719375644965,
+        "ratio_of_medians_change_percent": -22.976870107704073,
+        "candidate_faster_pairs": 10,
+        "all_samples_zero_bytes_and_allocs": true
+      },
+      "cache-24x26-s80/sharp": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 84.875,
+        "median_candidate_ns_per_op": 84.945,
+        "median_paired_change_percent": -0.08828085722735746,
+        "geometric_mean_paired_change_percent": 0.12551379023850728,
+        "ratio_of_medians_change_percent": 0.08247422680411898,
+        "candidate_faster_pairs": 5,
+        "all_samples_zero_bytes_and_allocs": true
+      },
+      "cache-40x42-s80/regular": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 227.05,
+        "median_candidate_ns_per_op": 173.35,
+        "median_paired_change_percent": -23.642161305026498,
+        "geometric_mean_paired_change_percent": -23.674835856853992,
+        "ratio_of_medians_change_percent": -23.651178154591502,
+        "candidate_faster_pairs": 10,
+        "all_samples_zero_bytes_and_allocs": true
+      },
+      "cache-40x42-s80/sharp": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 226.2,
+        "median_candidate_ns_per_op": 226.55,
+        "median_paired_change_percent": -0.06633261928815082,
+        "geometric_mean_paired_change_percent": 0.05291081073186543,
+        "ratio_of_medians_change_percent": 0.15473032714412582,
+        "candidate_faster_pairs": 6,
+        "all_samples_zero_bytes_and_allocs": true
+      },
+      "cache-72x74-s80/regular": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 719.7,
+        "median_candidate_ns_per_op": 557.8,
+        "median_paired_change_percent": -22.71264993270557,
+        "geometric_mean_paired_change_percent": -22.105160381356825,
+        "ratio_of_medians_change_percent": -22.495484229540097,
+        "candidate_faster_pairs": 10,
+        "all_samples_zero_bytes_and_allocs": true
+      },
+      "cache-72x74-s80/sharp": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 720.45,
+        "median_candidate_ns_per_op": 719.6,
+        "median_paired_change_percent": -0.04136480905626572,
+        "geometric_mean_paired_change_percent": -0.1815625820412503,
+        "ratio_of_medians_change_percent": -0.11798181691998755,
+        "candidate_faster_pairs": 5,
+        "all_samples_zero_bytes_and_allocs": true
+      }
+    },
+    "raw_log": {
+      "path": "/private/tmp/pr8-im6-tap-micro-10pairs.raw.log",
+      "sha256": "63db6652b0b12e1c12f576b0ca5eca2f0527838d437356e6cd8c403810421828"
+    }
+  },
+  "whole_pan": {
+    "screen_5_pairs": {
+      "samples": [
+        {
+          "round": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "ns_per_op": 20495210.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20556458.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": 0.29884055835485146
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "baseline": {
+            "ns_per_op": 20352047.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20253356.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -0.4849192810924663
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "ns_per_op": 20349269.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20306415.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -0.21059233135106714
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "baseline": {
+            "ns_per_op": 20506309.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20314032.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -0.9376480184708047
+        },
+        {
+          "round": 5,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "ns_per_op": 20368238.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20187427.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -0.8877105619052528
+        }
+      ],
+      "summary": {
+        "n_pairs": 5,
+        "median_baseline_ns_per_op": 20368238.0,
+        "median_candidate_ns_per_op": 20306415.0,
+        "median_paired_change_percent": -0.4849192810924663,
+        "geometric_mean_paired_change_percent": -0.44545770051368505,
+        "ratio_of_medians_change_percent": -0.3035265004267873,
+        "candidate_faster_pairs": 4,
+        "all_samples_zero_bytes_and_allocs": true
+      },
+      "paired_log_ratio_bootstrap_95_percent_interval_change": [
+        -0.827277,
+        -0.041452
+      ],
+      "interpretation": "Screen only; not treated as confirmation.",
+      "raw_log": {
+        "path": "/private/tmp/pr8-im6-pan-screen-5pairs.raw.log",
+        "sha256": "85e9fb3aa0566e192ffc9f706120f862e725641b9887ae6b6284a8541267f331"
+      }
+    },
+    "fresh_confirmation_10_pairs": {
+      "samples": [
+        {
+          "round": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "ns_per_op": 20524478.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20738978.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": 1.045093570711031
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "baseline": {
+            "ns_per_op": 20333559.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20341238.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": 0.037765154639179954
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "ns_per_op": 20342245.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20238269.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -0.5111333581912958
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "baseline": {
+            "ns_per_op": 20383409.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20229573.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -0.7547118345120785
+        },
+        {
+          "round": 5,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "ns_per_op": 19870505.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20011066.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": 0.7073851419478361
+        },
+        {
+          "round": 6,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "baseline": {
+            "ns_per_op": 19806199.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 19781233.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -0.12605144480271058
+        },
+        {
+          "round": 7,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "ns_per_op": 20171132.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20219746.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": 0.2410077927208043
+        },
+        {
+          "round": 8,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "baseline": {
+            "ns_per_op": 19981508.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 19929039.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -0.26258778866939947
+        },
+        {
+          "round": 9,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "ns_per_op": 19862492.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 19949517.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": 0.438137369671443
+        },
+        {
+          "round": 10,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "baseline": {
+            "ns_per_op": 20107315.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 19807398.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -1.491581546317844
+        }
+      ],
+      "summary": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 20139223.5,
+        "median_candidate_ns_per_op": 20115406.0,
+        "median_paired_change_percent": -0.04414314508176531,
+        "geometric_mean_paired_change_percent": -0.07014324600524979,
+        "ratio_of_medians_change_percent": -0.11826424191577756,
+        "candidate_faster_pairs": 5,
+        "all_samples_zero_bytes_and_allocs": true
+      },
+      "paired_log_ratio_bootstrap_95_percent_interval_change": [
+        -0.520285,
+        0.349319
+      ],
+      "interpretation": "Neutral confirmation: 5/10 faster, interval crosses zero.",
+      "raw_log": {
+        "path": "/private/tmp/pr8-im6-pan-confirm-10pairs.raw.log",
+        "sha256": "e38ce535b6c31dc9273d742301d888bca863b31cc6565b9a5b298312536d18d2"
+      }
+    },
+    "pooled_screen_plus_confirmation_diagnostic": {
+      "summary": {
+        "n_pairs": 15,
+        "median_baseline_ns_per_op": 20342245.0,
+        "median_candidate_ns_per_op": 20229573.0,
+        "median_paired_change_percent": -0.21059233135106714,
+        "geometric_mean_paired_change_percent": -0.19540501380901354,
+        "ratio_of_medians_change_percent": -0.5538818355594444,
+        "candidate_faster_pairs": 9,
+        "all_samples_zero_bytes_and_allocs": true
+      },
+      "paired_log_ratio_bootstrap_95_percent_interval_change": [
+        -0.532498,
+        0.135401
+      ],
+      "stratified_5_plus_10_interval_change": [
+        -0.525438,
+        0.115854
+      ],
+      "note": "Astra review, 20,000 paired log-ratio bootstrap draws, Python random.Random(23117), linearly interpolated 2.5th/97.5th percentiles. Pooled data are a diagnostic only; no speed claim."
+    }
+  },
+  "raw_logs": {
+    "micro": {
+      "path": "/private/tmp/pr8-im6-tap-micro-10pairs.raw.log",
+      "sha256": "63db6652b0b12e1c12f576b0ca5eca2f0527838d437356e6cd8c403810421828"
+    },
+    "pan_screen": {
+      "path": "/private/tmp/pr8-im6-pan-screen-5pairs.raw.log",
+      "sha256": "85e9fb3aa0566e192ffc9f706120f862e725641b9887ae6b6284a8541267f331"
+    },
+    "pan_confirmation": {
+      "path": "/private/tmp/pr8-im6-pan-confirm-10pairs.raw.log",
+      "sha256": "e38ce535b6c31dc9273d742301d888bca863b31cc6565b9a5b298312536d18d2"
+    },
+    "wrapper_failed": {
+      "path": "/private/tmp/pr8-im6-tap-screen-wrapper-cache-failed.log",
+      "sha256": "ea4ec8bfd37be5ff864f03ab6b5611c79adc15d385d3f8e3a247fd11f44f1d55"
+    },
+    "focused": {
+      "path": "/private/tmp/pr8-im6-focused.log",
+      "sha256": "167cb270c7288876f5c160e3aaef05e093e87482d084bf69eb7443148c119b21"
+    },
+    "full_race": {
+      "path": "/private/tmp/pr8-im6-full-race.log",
+      "sha256": "24f883455328666bfec2e50db5229937b6938fd61b19517396b09717e579ac22"
+    },
+    "parity_checkptr": {
+      "path": "/private/tmp/pr8-im6-parity-checkptr.log",
+      "sha256": "3f5b13a09ec42c89f2f1a6dcf56012a0b93d62fb5c24e294180d05cdc1eb740a"
+    },
+    "reference_decoders": {
+      "path": "/private/tmp/pr8-im6-reference-decoders.log",
+      "sha256": "778cf07c11c283a35e7df06cb689b3fd2371e4ce721497f3d0c80d986996d5cb"
+    },
+    "alloc": {
+      "path": "/private/tmp/pr8-im6-alloc.log",
+      "sha256": "caa85798eee2eeb941ebd12c252320cb5c05f30de8c64dec46643efaba769201"
+    },
+    "objdump": {
+      "path": "/private/tmp/pr8-im6-pred8IM-objdump.txt",
+      "sha256": "f3bf6f6c94a24728eca6afcdfdd6530e8ee4a9c77afe23ea2da2e5d10dfb08fa"
+    }
+  },
+  "validation": {
+    "focused_race_checkptr": {
+      "status": "passed",
+      "duration_seconds": 2.278,
+      "log": "focused",
+      "raw_log": {
+        "path": "/private/tmp/pr8-im6-focused.log",
+        "sha256": "167cb270c7288876f5c160e3aaef05e093e87482d084bf69eb7443148c119b21"
+      }
+    },
+    "full_encoder_simd_race": {
+      "status": "passed",
+      "duration_seconds": 254.119,
+      "log": "full_race",
+      "raw_log": {
+        "path": "/private/tmp/pr8-im6-full-race.log",
+        "sha256": "24f883455328666bfec2e50db5229937b6938fd61b19517396b09717e579ac22"
+      }
+    },
+    "parity_and_checkptr": {
+      "status": "passed",
+      "log": "parity_checkptr",
+      "note": "Pinned encoded-output hash, synthetic serial/wavefront (2/3/6 lanes), split/fused tile parity (1/2/4 tiles), exact-window SIMD differential and encoder invariants passed. RealC wavefront and split/fused tests skipped because /tmp/corpus/realC.yuv is absent.",
+      "raw_log": {
+        "path": "/private/tmp/pr8-im6-parity-checkptr.log",
+        "sha256": "3f5b13a09ec42c89f2f1a6dcf56012a0b93d62fb5c24e294180d05cdc1eb740a"
+      }
+    },
+    "reference_decoders": {
+      "status": "passed",
+      "log": "reference_decoders",
+      "decoders": [
+        "aomdec",
+        "dav1d"
+      ],
+      "note": "Six reference-decoder cases passed.",
+      "raw_log": {
+        "path": "/private/tmp/pr8-im6-reference-decoders.log",
+        "sha256": "778cf07c11c283a35e7df06cb689b3fd2371e4ce721497f3d0c80d986996d5cb"
+      }
+    },
+    "steady_state_allocations": {
+      "status": "passed",
+      "log": "alloc",
+      "benchmark": "BenchmarkVideoEncoderPFramePan1080pSingleThread",
+      "ns_per_op": 15000833,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "raw_log": {
+        "path": "/private/tmp/pr8-im6-alloc.log",
+        "sha256": "caa85798eee2eeb941ebd12c252320cb5c05f30de8c64dec46643efaba769201"
+      }
+    }
+  }
+}

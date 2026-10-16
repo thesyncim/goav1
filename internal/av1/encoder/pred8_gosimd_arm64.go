@@ -272,9 +272,59 @@ func pred8V(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int
 	return sad + sumU16(acc)
 }
 
-// pred8IM is the 2-D first pass: rows -3..h+3 of the block into im (row
-// stride 64), as int16 (a + 8194) >> 2.
+// pred8IM is the 2-D first pass: rows -3..h+3 of the block into im with the
+// supplied intermediate stride in bytes, as int16 (a + 8194) >> 2.
 func pred8IM(im unsafe.Pointer, imStride int, ref unsafe.Pointer, refStride, w, rows int, k *[8]int16) {
+	if k[0] == 0 && k[7] == 0 {
+		c1 := archsimd.BroadcastInt16x8(k[1] >> 1)
+		c2 := archsimd.BroadcastInt16x8(k[2] >> 1)
+		c3 := archsimd.BroadcastInt16x8(k[3] >> 1)
+		c4 := archsimd.BroadcastInt16x8(k[4] >> 1)
+		c5 := archsimd.BroadcastInt16x8(k[5] >> 1)
+		c6 := archsimd.BroadcastInt16x8(k[6] >> 1)
+		bias := archsimd.BroadcastInt16x8(8194)
+		sh := archsimd.BroadcastInt16x8(-2)
+		p := unsafe.Add(ref, -2)
+		for y := 0; y < rows; y++ {
+			row := unsafe.Add(im, y*imStride)
+			x := 0
+			for ; x+16 <= w; x += 16 {
+				q := unsafe.Add(p, x)
+				v := load16(q)
+				a0 := v.ExtendLo8ToUint16().BitsToInt16().MulAdd(c1, bias)
+				a1 := widenHi8(v).BitsToInt16().MulAdd(c1, bias)
+				v = load16(unsafe.Add(q, 1))
+				a0 = v.ExtendLo8ToUint16().BitsToInt16().MulAdd(c2, a0)
+				a1 = widenHi8(v).BitsToInt16().MulAdd(c2, a1)
+				v = load16(unsafe.Add(q, 2))
+				a0 = v.ExtendLo8ToUint16().BitsToInt16().MulAdd(c3, a0)
+				a1 = widenHi8(v).BitsToInt16().MulAdd(c3, a1)
+				v = load16(unsafe.Add(q, 3))
+				a0 = v.ExtendLo8ToUint16().BitsToInt16().MulAdd(c4, a0)
+				a1 = widenHi8(v).BitsToInt16().MulAdd(c4, a1)
+				v = load16(unsafe.Add(q, 4))
+				a0 = v.ExtendLo8ToUint16().BitsToInt16().MulAdd(c5, a0)
+				a1 = widenHi8(v).BitsToInt16().MulAdd(c5, a1)
+				v = load16(unsafe.Add(q, 5))
+				a0 = v.ExtendLo8ToUint16().BitsToInt16().MulAdd(c6, a0)
+				a1 = widenHi8(v).BitsToInt16().MulAdd(c6, a1)
+				a0.Shift(sh).StoreArray((*[8]int16)(unsafe.Add(row, 2*x)))
+				a1.Shift(sh).StoreArray((*[8]int16)(unsafe.Add(row, 2*x+16)))
+			}
+			if x < w {
+				q := unsafe.Add(p, x)
+				a0 := load16(q).ExtendLo8ToUint16().BitsToInt16().MulAdd(c1, bias)
+				a0 = load16(unsafe.Add(q, 1)).ExtendLo8ToUint16().BitsToInt16().MulAdd(c2, a0)
+				a0 = load16(unsafe.Add(q, 2)).ExtendLo8ToUint16().BitsToInt16().MulAdd(c3, a0)
+				a0 = load16(unsafe.Add(q, 3)).ExtendLo8ToUint16().BitsToInt16().MulAdd(c4, a0)
+				a0 = load16(unsafe.Add(q, 4)).ExtendLo8ToUint16().BitsToInt16().MulAdd(c5, a0)
+				a0 = load16(unsafe.Add(q, 5)).ExtendLo8ToUint16().BitsToInt16().MulAdd(c6, a0)
+				a0.Shift(sh).StoreArray((*[8]int16)(unsafe.Add(row, 2*x)))
+			}
+			p = unsafe.Add(p, refStride)
+		}
+		return
+	}
 	c0 := archsimd.BroadcastInt16x8(k[0] >> 1)
 	c1 := archsimd.BroadcastInt16x8(k[1] >> 1)
 	c2 := archsimd.BroadcastInt16x8(k[2] >> 1)
