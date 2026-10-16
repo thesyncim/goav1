@@ -4039,9 +4039,7 @@ func sadRectDualBlock(src []byte, srcStride int, ref []byte, refStride int, bw, 
 // copyPredScratch copies a materialized n x n prediction into the recon plane
 // for skipped blocks.
 func copyPredScratch(reconPlane, pred []byte, stride, px, py, w, h int) {
-	for r := range h {
-		copy(reconPlane[(py+r)*stride+px:(py+r)*stride+px+w], pred[r*w:r*w+w])
-	}
+	copyPredToReconBlock(reconPlane, pred, w, stride, px, py, w, h)
 }
 
 // prepareInterTXB computes the quantized coefficients of one square n x n
@@ -4575,7 +4573,7 @@ func scanActiveRows(scan []int16, eob, coeffHeight int) int {
 	return rows
 }
 
-func addConstantResidualToPredReconBlock(reconPlane, pred []byte, predStride, stride, px, py, w, h int, residual int16) {
+func addConstantResidualToPredReconBlockPureGo(reconPlane, pred []byte, predStride, stride, px, py, w, h int, residual int16) {
 	rv := int(residual)
 	for r := range h {
 		row := (py+r)*stride + px
@@ -4591,7 +4589,7 @@ func addConstantResidualToPredReconBlock(reconPlane, pred []byte, predStride, st
 	}
 }
 
-func copyPredToReconBlock(reconPlane, pred []byte, predStride, stride, px, py, w, h int) {
+func copyPredToReconBlockPureGo(reconPlane, pred []byte, predStride, stride, px, py, w, h int) {
 	for r := range h {
 		row := (py+r)*stride + px
 		copy(reconPlane[row:row+w], pred[r*predStride:r*predStride+w])
