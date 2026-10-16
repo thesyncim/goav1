@@ -199,7 +199,8 @@ func TestReconWavefrontProgressBlocksUntilPublished(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		var st frameWorkReconState
-		done <- wf.reconstructRow(&st, 1, 2)
+		view := frameWorkReconView{rowStart: wf.rowStart, sbs: wf.sbSpans}
+		done <- wf.reconstructRow(&st, &view, 1, 2)
 	}()
 
 	select {
@@ -224,7 +225,8 @@ func TestReconWavefrontAbortWakesWaiter(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		var st frameWorkReconState
-		done <- wf.reconstructRow(&st, 1, 2)
+		view := frameWorkReconView{rowStart: wf.rowStart, sbs: wf.sbSpans}
+		done <- wf.reconstructRow(&st, &view, 1, 2)
 	}()
 
 	select {

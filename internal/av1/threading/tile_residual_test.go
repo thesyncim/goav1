@@ -1490,3 +1490,60 @@ func overwriteFrameWorkCFLLuma(output *frame.Frame) {
 		}
 	}
 }
+
+// TestFrameWorkDeferredPaletteInstallIncremental covers the streamed
+// wavefront's use of the palette arena: bindings are installed a prefix at a
+// time while later blocks keep appending (and the arena keeps moving), and
+// every installed map must keep reading its own block's colours.
+func TestFrameWorkDeferredPaletteInstallIncremental(t *testing.T) {
+	var scratch FrameWorkTileResidualScratch
+	scratch.paletteArena = make([]tile.PaletteModeScratch, 0, 1)
+	var src tile.PaletteModeScratch
+	appendVisit := func(v uint8) {
+		src.Y[0], src.UV[0] = v, v+1
+		buffered, paletteIndex, paletteMask := scratch.captureDeferredVisit(tile.BlockLoopVisit{
+			Prediction: tile.BlockPredictionModeResult{
+				Valid: true,
+				Intra: true,
+				Palette: tile.PaletteModeResult{
+					YSize: 2, UVSize: 2, YMap: &src.Y, UVMap: &src.UV,
+				},
+			},
+		})
+		visitIndex := len(scratch.reconVisits)
+		scratch.reconVisits = append(scratch.reconVisits, buffered)
+		if err := scratch.rememberDeferredPalette(visitIndex, paletteIndex, paletteMask); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cursor := 0
+	for round := 0; round < 6; round++ {
+		for k := 0; k < round+1; k++ {
+			appendVisit(uint8(2 * len(scratch.reconVisits)))
+		}
+		next, err := scratch.installDeferredPalettes(cursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if next != len(scratch.paletteBindings) {
+			t.Fatalf("cursor=%d, want %d", next, len(scratch.paletteBindings))
+		}
+		cursor = next
+	}
+	src.Y[0], src.UV[0] = 255, 255
+	for i := range scratch.reconVisits {
+		pal := scratch.reconVisits[i].Prediction.Palette
+		if pal.YMap == nil || pal.UVMap == nil {
+			t.Fatalf("visit %d: maps not installed", i)
+		}
+		if got, want := pal.YMap[0], uint8(2*i); got != want {
+			t.Fatalf("visit %d: Y map = %d, want %d", i, got, want)
+		}
+		if got, want := pal.UVMap[0], uint8(2*i+1); got != want {
+			t.Fatalf("visit %d: UV map = %d, want %d", i, got, want)
+		}
+	}
+	if _, err := scratch.installDeferredPalettes(len(scratch.paletteBindings) + 1); err == nil {
+		t.Fatal("cursor past the bindings accepted")
+	}
+}

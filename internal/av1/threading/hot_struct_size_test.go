@@ -31,7 +31,10 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "frameWorkReconEvent", size: unsafe.Sizeof(frameWorkReconEvent{}), max: 8},
 		{name: "frameWorkReconPaletteBinding", size: unsafe.Sizeof(frameWorkReconPaletteBinding{}), max: 12},
 		{name: "frameWorkReconSB", size: unsafe.Sizeof(frameWorkReconSB{}), max: 12},
-		{name: "frameWorkReconWavefront", size: unsafe.Sizeof(frameWorkReconWavefront{}), max: 328},
+		// The wavefront is allocated once per scratch behind a pointer; it carries
+		// the parse-side span cursor and the published row snapshot the lanes
+		// read while the tile is still parsing.
+		{name: "frameWorkReconWavefront", size: unsafe.Sizeof(frameWorkReconWavefront{}), max: 472},
 		{name: "frameWorkBlockCoeffGeometry", size: unsafe.Sizeof(frameWorkBlockCoeffGeometry{}), max: 88},
 		{name: "frameWorkJobGeometryCache", size: unsafe.Sizeof(frameWorkJobGeometryCache{}), max: 264},
 		{name: "frameWorkPredictionPlaneGeometry", size: unsafe.Sizeof(frameWorkPredictionPlaneGeometry{}), max: 152},
