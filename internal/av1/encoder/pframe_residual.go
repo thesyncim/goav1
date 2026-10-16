@@ -4999,18 +4999,27 @@ func fullPelDiamondSearchRectSeeded(src, ref []byte, stride, width, height, px, 
 func fullPelLibaomMeshSearch(src, ref []byte, stride, width, height, px, py, bw, bh int, seedDX, seedDY, reach int) (int, int, int) {
 	seedDX = minInt(maxInt(seedDX, -px), width-bw-px)
 	seedDY = minInt(maxInt(seedDY, -py), height-bh-py)
-	bestDX, bestDY, _ := fullPelLibaomExhaustiveMeshSearch(src, ref, stride, width, height, px, py, bw, bh, seedDX, seedDY, reach, 4)
-	return fullPelLibaomExhaustiveMeshSearch(src, ref, stride, width, height, px, py, bw, bh, bestDX, bestDY, 2, 2)
+	bestDX, bestDY, bestSAD := fullPelLibaomExhaustiveMeshSearch(src, ref, stride, width, height, px, py, bw, bh, seedDX, seedDY, reach, 4, -1)
+	// The refinement mesh is centred on the first mesh's winner, whose SAD it
+	// already has.
+	return fullPelLibaomExhaustiveMeshSearch(src, ref, stride, width, height, px, py, bw, bh, bestDX, bestDY, 2, 2, bestSAD)
 }
 
 // Ported from libaom av1/encoder/mcomp.c exhaustive_mesh_search. The local
 // caller supplies the mesh pattern used by the realtime HME-seeded search.
-func fullPelLibaomExhaustiveMeshSearch(src, ref []byte, stride, width, height, px, py, bw, bh int, startDX, startDY, searchRange, step int) (int, int, int) {
+// centerSAD, when not negative, is the SAD at (startDX, startDY) and is reused
+// instead of recomputed. The centre itself is never re-scored inside the mesh:
+// its SAD cannot be below the running best, which starts there.
+func fullPelLibaomExhaustiveMeshSearch(src, ref []byte, stride, width, height, px, py, bw, bh int, startDX, startDY, searchRange, step, centerSAD int) (int, int, int) {
 	if step < 1 {
 		step = 1
 	}
-	startDX = minInt(maxInt(startDX, -px), width-bw-px)
-	startDY = minInt(maxInt(startDY, -py), height-bh-py)
+	clampedDX := minInt(maxInt(startDX, -px), width-bw-px)
+	clampedDY := minInt(maxInt(startDY, -py), height-bh-py)
+	if clampedDX != startDX || clampedDY != startDY {
+		centerSAD = -1
+	}
+	startDX, startDY = clampedDX, clampedDY
 	minDX := -px
 	maxDX := width - bw - px
 	minDY := -py
@@ -5024,7 +5033,10 @@ func fullPelLibaomExhaustiveMeshSearch(src, ref []byte, stride, width, height, p
 	base := py*stride + px
 	srcBlock := src[base:]
 	bestDX, bestDY := startDX, startDY
-	bestSAD := fullPelSearchSAD(srcBlock, ref[base+startDY*stride+startDX:], stride, bw, bh, 1<<30)
+	bestSAD := centerSAD
+	if bestSAD < 0 {
+		bestSAD = fullPelSearchSAD(srcBlock, ref[base+startDY*stride+startDX:], stride, bw, bh, 1<<30)
+	}
 	colStep := step
 	if step <= 1 {
 		colStep = 4
@@ -5068,6 +5080,9 @@ func fullPelLibaomExhaustiveMeshSearch(src, ref []byte, stride, width, height, p
 				if s3 < bestSAD {
 					bestSAD, bestDX, bestDY = s3, dx+3, dy
 				}
+				continue
+			}
+			if col == 0 && row == 0 {
 				continue
 			}
 			if s := fullPelSearchSAD(srcBlock, ref[base+dy*stride+dx:], stride, bw, bh, bestSAD); s < bestSAD {
