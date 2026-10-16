@@ -231,7 +231,7 @@ func PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSizeScratch(dst fra
 // predictor: ReferenceOriginSubsampled followed by
 // PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSizeScratch at bit
 // depth 8, with the dav1d-style copy/put kernels tried first.
-func PredictTranslation8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int, filterW int, filterH int, mv Vector, subsamplingX bool, subsamplingY bool, filters InterpFilters, scratch *ConvolveScratch) error {
+func PredictTranslation8(dst *frame.Plane, ref *frame.Plane, dstX int, dstY int, width int, height int, filterW int, filterH int, mv Vector, subsamplingX bool, subsamplingY bool, filters InterpFilters, scratch *ConvolveScratch) error {
 	if !filters.X.Valid() || !filters.Y.Valid() {
 		return ErrInvalidMotion
 	}
@@ -247,7 +247,7 @@ func PredictTranslation8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, w
 		mc8PutFast(dst, ref, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch) {
 		return nil
 	}
-	return predictInterPlaneBlockFromOriginWithFilterSizeScratch(dst, ref, 1, 8, true, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch)
+	return predictInterPlaneBlockFromOriginWithFilterSizeScratch(*dst, *ref, 1, 8, true, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch)
 }
 
 func predictInterPlaneBlockFromOriginWithFilter(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, explicitBitDepth bool, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {
@@ -269,7 +269,7 @@ func predictInterPlaneBlockFromOriginWithFilterSizeScratch(dst frame.Plane, ref 
 		return ErrInvalidMotion
 	}
 	if subX == 0 && subY == 0 {
-		if bytesPerSample == 1 && mc8CopyFast(dst, ref, dstX, dstY, refX, refY, width, height) {
+		if bytesPerSample == 1 && mc8CopyFast(&dst, &ref, dstX, dstY, refX, refY, width, height) {
 			return nil
 		}
 		if planeRegionFits(ref, bytesPerSample, refX, refY, width, height) {
@@ -318,7 +318,7 @@ func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	if width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
 	}
-	if mc8PutFast(dst, ref, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch) {
+	if mc8PutFast(&dst, &ref, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch) {
 		return nil
 	}
 	if !planeRegionFits(dst, 1, dstX, dstY, width, height) {

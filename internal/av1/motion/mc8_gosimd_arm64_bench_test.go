@@ -33,7 +33,7 @@ func BenchmarkMC8Put(b *testing.B) {
 			}
 			b.Run(fmt.Sprintf("%s_%dx%d", mode, w, h), func(b *testing.B) {
 				for b.Loop() {
-					mc8PutFast(dst, ref, 0, 0, 40, 40, w, h, w, h, subX, subY, RegularFilters, &scratch)
+					mc8PutFast(&dst, &ref, 0, 0, 40, 40, w, h, w, h, subX, subY, RegularFilters, &scratch)
 				}
 			})
 		}
@@ -60,7 +60,7 @@ func BenchmarkMC8Prep(b *testing.B) {
 			}
 			b.Run(fmt.Sprintf("%s_%dx%d", mode, w, h), func(b *testing.B) {
 				for b.Loop() {
-					mc8PrepFast(out[:w*h], ref, 40, 40, w, h, subX, subY, RegularFilters, scratch)
+					mc8PrepFast(out[:w*h], &ref, 40, 40, w, h, subX, subY, RegularFilters, scratch)
 				}
 			})
 		}
@@ -82,7 +82,7 @@ func BenchmarkMC8BlendAvg(b *testing.B) {
 		w, h := sz[0], sz[1]
 		b.Run(fmt.Sprintf("int16_%dx%d", w, h), func(b *testing.B) {
 			for b.Loop() {
-				mc8BlendAvgFast(dst, a, c, 0, 0, w, h)
+				mc8BlendAvgFast(&dst, a, c, 0, 0, w, h)
 			}
 		})
 		b.Run(fmt.Sprintf("general_%dx%d", w, h), func(b *testing.B) {

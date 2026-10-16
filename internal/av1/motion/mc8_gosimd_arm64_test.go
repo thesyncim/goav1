@@ -113,7 +113,7 @@ func TestMC8PutFastMatchesPureGo(t *testing.T) {
 				}
 				got := frame.Plane{Pix: slices.Clone(want.Pix), Stride: dw, Width: dw, Height: dh}
 				mc8RefPut(want, ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters)
-				if !mc8PutFast(got, ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters, &scratch) {
+				if !mc8PutFast(&got, &ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters, &scratch) {
 					kx, ky := mc8Kind(filters.X, filterW), mc8Kind(filters.Y, filterH)
 					if (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) && (w%8 == 0 || w == 4) {
 						t.Fatalf("mc8PutFast declined w=%d h=%d filters=%v sub=%d,%d", w, h, filters, subX, subY)
@@ -186,7 +186,7 @@ func TestMC8PrepFastMatchesPureGo(t *testing.T) {
 				}
 				got := slices.Clone(want)
 				mc8RefPrep(want, ref, refX, refY, w, h, subX, subY, filters)
-				if !mc8PrepFast(got[:w*h], ref, refX, refY, w, h, subX, subY, filters, scratch) {
+				if !mc8PrepFast(got[:w*h], &ref, refX, refY, w, h, subX, subY, filters, scratch) {
 					kx, ky := mc8Kind(filters.X, w), mc8Kind(filters.Y, h)
 					if (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) {
 						t.Fatalf("mc8PrepFast declined w=%d h=%d filters=%v sub=%d,%d", w, h, filters, subX, subY)
@@ -232,7 +232,7 @@ func TestMC8CopyFastMatchesClampedCopy(t *testing.T) {
 				t.Fatal(err)
 			}
 			inside := refX >= 0 && refY >= 0 && refX+w <= rw && refY+h <= rh
-			if mc8CopyFast(got, ref, 7, 3, refX, refY, w, h) != inside {
+			if mc8CopyFast(&got, &ref, 7, 3, refX, refY, w, h) != inside {
 				t.Fatalf("%dx%d iter %d ref=%d,%d: handled=%v want %v", w, h, iter, refX, refY, !inside, inside)
 			}
 			if inside && !bytes.Equal(got.Pix, want.Pix) {
@@ -270,7 +270,7 @@ func TestMC8BlendAvgFastMatchesPureGo(t *testing.T) {
 			}
 			got := frame.Plane{Pix: slices.Clone(want.Pix), Stride: dw, Width: dw, Height: dh}
 			blendCompoundAvg8PureGo(want, a, b, 5, 2, w, h, 8, 8, 6144, 4)
-			if !mc8BlendAvgFast(got, a, b, 5, 2, w, h) {
+			if !mc8BlendAvgFast(&got, a, b, 5, 2, w, h) {
 				t.Fatalf("mc8BlendAvgFast declined %dx%d", w, h)
 			}
 			if !bytes.Equal(got.Pix, want.Pix) {

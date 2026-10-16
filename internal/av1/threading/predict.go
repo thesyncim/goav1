@@ -1108,7 +1108,7 @@ func (b *FrameWorkBatch) predictBlockInterPlaneWithFiltersPtr(index int, visit *
 	if visit.Prediction.SubChromaInterValid && (plane == FrameWorkPlaneU || plane == FrameWorkPlaneV) {
 		return b.predictBlockInterSubChromaPlanePtr(index, visit, plane, scratch)
 	}
-	return b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters, scratch)
+	return b.predictBlockInterReferencePlaneToOutput(index, &visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters, scratch)
 }
 
 // predictBlockInterSubChromaPlane drives libaom's sub8x8 chroma prediction
@@ -1571,7 +1571,7 @@ func (b *FrameWorkBatch) predictBlockInterOBMCPlaneWithFiltersPtr(index int, vis
 	if err != nil || !ok {
 		return err
 	}
-	if err := b.predictBlockInterReferencePlaneToOutput(index, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters, scratch); err != nil {
+	if err := b.predictBlockInterReferencePlaneToOutput(index, &visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters, scratch); err != nil {
 		return err
 	}
 	tmp, err := frameWorkInterScratchPlane(scratch.First[:], geom.bytesPerSample(), geom.width(), geom.height())
@@ -1701,18 +1701,17 @@ func (b *FrameWorkBatch) predictBlockInterCompoundLean(visit *tile.BlockLoopVisi
 	if !ok0 || !ok1 {
 		return false, nil
 	}
-	ref0, err := b.referencePlaneView(reference0, plane)
-	if err != nil || ref0.Width != t.codedW || ref0.Height != t.codedH {
+	var ref0, ref1 frame.Plane
+	if !b.referencePlaneViewInto(reference0, plane, &ref0) || ref0.Width != t.codedW || ref0.Height != t.codedH {
 		return false, nil
 	}
-	ref1, err := b.referencePlaneView(reference1, plane)
-	if err != nil || ref1.Width != t.codedW || ref1.Height != t.codedH {
+	if !b.referencePlaneViewInto(reference1, plane, &ref1) || ref1.Width != t.codedW || ref1.Height != t.codedH {
 		return false, nil
 	}
-	if err := motion.PrepTranslation8(&scratch.Conv0, ref0, t.x, t.y, t.width, t.height, motionResult.MV[0], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
+	if err := motion.PrepTranslation8(&scratch.Conv0, &ref0, t.x, t.y, t.width, t.height, motionResult.MV[0], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
 		return true, ErrInvalidBatch
 	}
-	if err := motion.PrepTranslation8(&scratch.Conv1, ref1, t.x, t.y, t.width, t.height, motionResult.MV[1], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
+	if err := motion.PrepTranslation8(&scratch.Conv1, &ref1, t.x, t.y, t.width, t.height, motionResult.MV[1], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
 		return true, ErrInvalidBatch
 	}
 	return true, b.blendCompoundConvBufs(visit, plane, scratch, blend, t.output, t.bps, t.x, t.y, t.width, t.height, t.ssX, t.ssY)
@@ -1723,6 +1722,12 @@ func (b *FrameWorkBatch) predictBlockInterCompoundLean(visit *tile.BlockLoopVisi
 func (b *FrameWorkBatch) blendCompoundConvBufs(visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, blend tile.CompoundBlendResult, output frame.Plane, bytesPerSample int, x int, y int, width int, height int, subsamplingX bool, subsamplingY bool) error {
 	motionResult := &visit.Prediction.InterMotion
 	bitDepth := b.Sequence.ColorConfig.BitDepth
+	// The plain average (offsets 8/8, frameWorkCompoundOffsets) of two 8-bit
+	// CONV_BUFs goes straight to the int16 kernel.
+	if blend.Type == tile.CompoundTypeAverage && bytesPerSample == 1 && bitDepth == 8 &&
+		motion.BlendAvg8(&output, &scratch.Conv0, &scratch.Conv1, x, y, width, height) {
+		return nil
+	}
 	switch blend.Type {
 	case tile.CompoundTypeAverage, tile.CompoundTypeDistWtd:
 		fwdOffset, bckOffset, err := b.frameWorkCompoundOffsets(motionResult.References, blend)
@@ -2033,30 +2038,31 @@ func frameWorkPredictionFilterExtentPacked(width int, height int) (uint8, bool) 
 	return widthCode | (heightCode << 4), true
 }
 
-func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, block tile.BlockVisit, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
+func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, block *tile.BlockVisit, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
 	// Same-size 8-bit references take the lean target + PredictTranslation8
 	// route; scaled references, high bit depth and every error case rerun the
 	// general geometry path below, which owns their semantics.
 	var t frameWorkInterTarget
-	ok, err := b.interTarget(index, &block, plane, &t)
+	ok, err := b.interTarget(index, block, plane, &t)
 	if err != nil || !ok {
 		return err
 	}
 	if reference, ok := frameWorkReferenceFromTile(refFrame); ok && t.bps == 1 && b.Sequence.ColorConfig.BitDepth == 8 {
-		if ref, err := b.referencePlaneView(reference, plane); err == nil && ref.Width == t.codedW && ref.Height == t.codedH {
+		var ref frame.Plane
+		if b.referencePlaneViewInto(reference, plane, &ref) && ref.Width == t.codedW && ref.Height == t.codedH {
 			// Select the interpolation-filter kernel from the un-clipped plane
 			// block dimensions (see predictBlockInterReferencePlaneToOutputWithGeometry).
-			if err := motion.PredictTranslation8(t.output, ref, t.x, t.y, t.writeW, t.writeH, t.filterW, t.filterH, mv, t.ssX, t.ssY, filters, frameWorkConvolveScratch(scratch)); err != nil {
+			if err := motion.PredictTranslation8(&t.output, &ref, t.x, t.y, t.writeW, t.writeH, t.filterW, t.filterH, mv, t.ssX, t.ssY, filters, frameWorkConvolveScratch(scratch)); err != nil {
 				return ErrInvalidBatch
 			}
 			return nil
 		}
 	}
-	geom, ok, err := b.blockPredictionPlaneGeometry(index, block, plane)
+	geom, ok, err := b.blockPredictionPlaneGeometry(index, *block, plane)
 	if err != nil || !ok {
 		return err
 	}
-	return b.predictBlockInterReferencePlaneToOutputWithGeometry(geom, block, plane, refFrame, mv, filters, scratch)
+	return b.predictBlockInterReferencePlaneToOutputWithGeometry(geom, *block, plane, refFrame, mv, filters, scratch)
 }
 
 // referencePlaneView is ReferencePlane's hot inter-prediction twin: it returns
@@ -2488,6 +2494,12 @@ func (b *FrameWorkBatch) blockPredictionPlaneGeometry(index int, block tile.Bloc
 // past the visible edge stay within the underlying frame buffer. When the
 // window has no recorded clip extent the plane is returned unchanged.
 func frameWorkExtendPlaneToClip(plane frame.Plane, window FrameWorkPlaneRegion, bytesPerSample int) frame.Plane {
+	return frameWorkExtendPlaneToClipPtr(plane, &window, bytesPerSample)
+}
+
+// frameWorkExtendPlaneToClipPtr is frameWorkExtendPlaneToClip reading the
+// window through a pointer (hot inter path: no 72-byte region copy).
+func frameWorkExtendPlaneToClipPtr(plane frame.Plane, window *FrameWorkPlaneRegion, bytesPerSample int) frame.Plane {
 	if bytesPerSample <= 0 {
 		return plane
 	}
@@ -3853,6 +3865,12 @@ func frameWorkPlaneFromWindow(window FrameWorkPlaneRegion) frame.Plane {
 // width/height for the downstream writeback and the input predWidth/predHeight
 // for libaom's edge/DC/Smooth sample weighting.
 func frameWorkClipVisiblePixelsToWindow(window FrameWorkPlaneRegion, x int, y int, width int, height int) (int, int, bool) {
+	return frameWorkClipVisiblePixelsToWindowPtr(&window, x, y, width, height)
+}
+
+// frameWorkClipVisiblePixelsToWindowPtr is frameWorkClipVisiblePixelsToWindow
+// reading the window through a pointer.
+func frameWorkClipVisiblePixelsToWindowPtr(window *FrameWorkPlaneRegion, x int, y int, width int, height int) (int, int, bool) {
 	windowX := int(window.X)
 	windowY := int(window.Y)
 	if width <= 0 || height <= 0 || x < windowX || y < windowY {
@@ -3939,12 +3957,19 @@ func frameWorkBlockWithinJobRegion(region FrameWorkJobRegion, block tile.BlockVi
 }
 
 func frameWorkBlockPlanePosition(block tile.BlockVisit, color parser.ColorConfig, plane FrameWorkPlane) (x int, y int, width int, height int, subsamplingX bool, subsamplingY bool, present bool, err error) {
+	return frameWorkBlockPlanePositionPtr(&block, &color, plane)
+}
+
+// frameWorkBlockPlanePositionPtr is frameWorkBlockPlanePosition taking the
+// block and color config by pointer (both exceed the register ABI, so the
+// by-value form copies them field by field on every call).
+func frameWorkBlockPlanePositionPtr(block *tile.BlockVisit, color *parser.ColorConfig, plane FrameWorkPlane) (x int, y int, width int, height int, subsamplingX bool, subsamplingY bool, present bool, err error) {
 	if plane == FrameWorkPlaneY {
-		width, height, present = frameWorkBlockVisiblePixels(block)
+		width, height, present = frameWorkBlockVisiblePixels(*block)
 		if !present {
 			return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
 		}
-		x, y, err = frameWorkBlockLumaPosition(block)
+		x, y, err = frameWorkBlockLumaPosition(*block)
 		return x, y, width, height, false, false, true, err
 	}
 	if plane != FrameWorkPlaneU && plane != FrameWorkPlaneV {
@@ -3953,17 +3978,10 @@ func frameWorkBlockPlanePosition(block tile.BlockVisit, color parser.ColorConfig
 	if color.MonoChrome {
 		return 0, 0, 0, 0, false, false, false, nil
 	}
-	req := tile.TransformTreeRequest{
-		Size:      block.Size,
-		X4:        block.X4,
-		Y4:        block.Y4,
-		VisibleW4: block.VisibleW4,
-		VisibleH4: block.VisibleH4,
-	}
-	if !tile.HasChromaBlock(req, color) {
+	if !tile.HasChromaBlockAt(block.Size, int(block.X4), int(block.Y4), *color) {
 		return 0, 0, 0, 0, false, false, false, nil
 	}
-	if _, err := tile.PlaneBlockSize(block.Size, color, int(plane)); err != nil {
+	if _, err := tile.PlaneBlockSize(block.Size, *color, int(plane)); err != nil {
 		return 0, 0, 0, 0, false, false, false, ErrInvalidBatch
 	}
 	dims, ok := block.Size.Dimensions()
@@ -4023,6 +4041,12 @@ func frameWorkBlockPlaneWarpAllowed(block tile.BlockVisit, color parser.ColorCon
 }
 
 func frameWorkBlockPlanePredictionExtentPixels(block tile.BlockVisit, color parser.ColorConfig, plane FrameWorkPlane) (int, int, error) {
+	return frameWorkBlockPlanePredictionExtentPixelsPtr(&block, &color, plane)
+}
+
+// frameWorkBlockPlanePredictionExtentPixelsPtr is
+// frameWorkBlockPlanePredictionExtentPixels taking its arguments by pointer.
+func frameWorkBlockPlanePredictionExtentPixelsPtr(block *tile.BlockVisit, color *parser.ColorConfig, plane FrameWorkPlane) (int, int, error) {
 	if plane == FrameWorkPlaneY {
 		dims, ok := block.Size.Dimensions()
 		if !ok {
@@ -4033,7 +4057,7 @@ func frameWorkBlockPlanePredictionExtentPixels(block tile.BlockVisit, color pars
 	if plane != FrameWorkPlaneU && plane != FrameWorkPlaneV {
 		return 0, 0, ErrInvalidBatch
 	}
-	planeSize, err := tile.PlaneBlockSize(block.Size, color, int(plane))
+	planeSize, err := tile.PlaneBlockSize(block.Size, *color, int(plane))
 	if err != nil {
 		return 0, 0, ErrInvalidBatch
 	}

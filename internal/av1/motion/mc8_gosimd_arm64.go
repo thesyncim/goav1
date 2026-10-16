@@ -125,7 +125,7 @@ func mc8Kind(f InterpFilter, blockSize int) int {
 // loads 16 bytes per eight output columns, so the window must stay readable
 // for max(w+8, 16) bytes from its left edge on every row. ok is false only when the
 // reference plane itself is unusable.
-func mc8Source(ref frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEdgeStride * emuEdgeRows]byte) (src unsafe.Pointer, stride int, ok bool) {
+func mc8Source(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEdgeStride * emuEdgeRows]byte) (src unsafe.Pointer, stride int, ok bool) {
 	x0, y0, bw, bh := refX, refY, w, h
 	if hx {
 		x0 -= 2
@@ -149,14 +149,14 @@ func mc8Source(ref frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEdg
 	}
 	// The edge window holds 135 rows of 136 bytes; bh <= 133 and the
 	// kernels read at most max(w+8, 16) <= 136 bytes per row.
-	emuEdge8(bw, bh, ref, x0, y0, edge[:], emuEdgeStride)
+	emuEdge8(bw, bh, *ref, x0, y0, edge[:], emuEdgeStride)
 	return unsafe.Pointer(&edge[0]), emuEdgeStride, true
 }
 
 // mc8PutFast predicts a w x h 8-bit block (w a multiple of 8) with the
 // dav1d-style put kernels. It returns false for shapes it does not cover, in
 // which case the caller runs the general path.
-func mc8PutFast(dst frame.Plane, ref frame.Plane, dstX, dstY, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *ConvolveScratch) bool {
+func mc8PutFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *ConvolveScratch) bool {
 	if subX|subY == 0 || (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil {
 		return false
 	}
@@ -206,7 +206,7 @@ func mc8PutFast(dst frame.Plane, ref frame.Plane, dstX, dstY, refX, refY, w, h, 
 // mc8CopyFast is the put copy (dav1d put_neon) for an in-plane w x h 8-bit
 // block with w a multiple of 4: vector rows instead of one memmove per row.
 // It returns false when the source leaves the plane (the clamped copy runs).
-func mc8CopyFast(dst frame.Plane, ref frame.Plane, dstX, dstY, refX, refY, w, h int) bool {
+func mc8CopyFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h int) bool {
 	if w&3 != 0 || w > maxBlockSize || h <= 0 {
 		return false
 	}
@@ -253,7 +253,7 @@ func mc8Copy(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride in
 
 // mc8PrepFast fills a w x h CONV_BUF (row stride w) with the dav1d-style prep
 // kernels. It returns false for shapes it does not cover.
-func mc8PrepFast(out []uint16, ref frame.Plane, refX, refY, w, h, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {
+func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {
 	if (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil || len(out) < w*h {
 		return false
 	}
@@ -803,7 +803,7 @@ func mc8PackU8(v0, v1 archsimd.Int16x8) archsimd.Uint8x16 {
 // clip(round4(((a*8 + b*8) >> 4) - 6144)) is (a + b - 12272) >> 5 by nested
 // floor division, evaluated in int16 lanes (8-bit CONV_BUF values stay below
 // 2^14, so a + b cannot wrap) and saturated to bytes.
-func mc8BlendAvgFast(dst frame.Plane, a, b []uint16, dstX, dstY, w, h int) bool {
+func mc8BlendAvgFast(dst *frame.Plane, a, b []uint16, dstX, dstY, w, h int) bool {
 	if w&3 != 0 || h <= 0 || len(a) < w*h || len(b) < w*h || (w == 4 && h&1 != 0) {
 		return false
 	}
