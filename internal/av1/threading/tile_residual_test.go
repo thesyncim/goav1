@@ -1198,13 +1198,11 @@ func TestFrameWorkDeferredPaletteArenaFinalizesAfterGrowth(t *testing.T) {
 	secondMaps.UV[0] = 13
 
 	appendVisit := func(visit tile.BlockLoopVisit) {
-		buffered, paletteIndex, paletteMask := scratch.captureDeferredVisit(visit)
-		visitIndex := len(scratch.reconVisits)
+		visitIndex, paletteIndex, paletteMask := scratch.bufferDeferredVisit(&visit)
 		visitIndex32, ok := frameWorkReconIndex(visitIndex)
 		if !ok {
 			t.Fatalf("visit index overflow: %d", visitIndex)
 		}
-		scratch.reconVisits = append(scratch.reconVisits, buffered)
 		scratch.reconEvents = append(scratch.reconEvents, frameWorkReconEvent{
 			kind:  frameWorkReconEventBlockBegin,
 			index: visitIndex32,
@@ -1501,7 +1499,7 @@ func TestFrameWorkDeferredPaletteInstallIncremental(t *testing.T) {
 	var src tile.PaletteModeScratch
 	appendVisit := func(v uint8) {
 		src.Y[0], src.UV[0] = v, v+1
-		buffered, paletteIndex, paletteMask := scratch.captureDeferredVisit(tile.BlockLoopVisit{
+		visitIndex, paletteIndex, paletteMask := scratch.bufferDeferredVisit(&tile.BlockLoopVisit{
 			Prediction: tile.BlockPredictionModeResult{
 				Valid: true,
 				Intra: true,
@@ -1510,8 +1508,6 @@ func TestFrameWorkDeferredPaletteInstallIncremental(t *testing.T) {
 				},
 			},
 		})
-		visitIndex := len(scratch.reconVisits)
-		scratch.reconVisits = append(scratch.reconVisits, buffered)
 		if err := scratch.rememberDeferredPalette(visitIndex, paletteIndex, paletteMask); err != nil {
 			t.Fatal(err)
 		}

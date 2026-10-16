@@ -543,19 +543,28 @@ func (s *FrameWorkTileResidualScratch) nextPaletteScratch() int {
 	return n
 }
 
-// captureDeferredVisit returns a copy of visit safe to buffer for deferred
-// replay. The decoded visit's palette colour maps (YMap/UVMap) point into a
-// single per-tile PaletteModeScratch that subsequent palette-coded blocks
-// overwrite during pass 1; the fused path reads them immediately, but the
-// deferred path replays prediction after the whole tile has decoded, by which
-// time the shared scratch holds a later block's map. Deep-copy the referenced
-// map(s) into the scratch palette arena and return an index binding so pass 2
-// can install stable pointers after event collection completes. Non-palette
-// visits (the overwhelming majority) are returned unchanged and pay no copy.
-func (s *FrameWorkTileResidualScratch) captureDeferredVisit(visit tile.BlockLoopVisit) (tile.BlockLoopVisit, int, uint8) {
-	pal := &visit.Prediction.Palette
+// bufferDeferredVisit appends a copy of visit to reconVisits for deferred
+// replay and returns its index. The visit is copied once, straight into its
+// slot (a BlockLoopVisit is close to 1 KiB, and this runs for every block of a
+// deferred tile). The decoded visit's palette colour maps (YMap/UVMap) point
+// into a single per-tile PaletteModeScratch that subsequent palette-coded
+// blocks overwrite during pass 1; the fused path reads them immediately, but
+// the deferred path replays prediction later, by which time the shared scratch
+// holds a later block's map. Deep-copy the referenced map(s) into the scratch
+// palette arena and return an index binding so pass 2 can install stable
+// pointers after event collection. Non-palette visits (the overwhelming
+// majority) pay no palette copy.
+func (s *FrameWorkTileResidualScratch) bufferDeferredVisit(visit *tile.BlockLoopVisit) (int, int, uint8) {
+	n := len(s.reconVisits)
+	if n < cap(s.reconVisits) {
+		s.reconVisits = s.reconVisits[:n+1]
+		s.reconVisits[n] = *visit
+	} else {
+		s.reconVisits = append(s.reconVisits, *visit)
+	}
+	pal := &s.reconVisits[n].Prediction.Palette
 	if pal.YMap == nil && pal.UVMap == nil {
-		return visit, -1, 0
+		return n, -1, 0
 	}
 	paletteIndex := s.nextPaletteScratch()
 	store := &s.paletteArena[paletteIndex]
@@ -570,7 +579,7 @@ func (s *FrameWorkTileResidualScratch) captureDeferredVisit(visit tile.BlockLoop
 		pal.UVMap = nil
 		mask |= frameWorkReconPaletteUV
 	}
-	return visit, paletteIndex, mask
+	return n, paletteIndex, mask
 }
 
 func (s *FrameWorkTileResidualScratch) rememberDeferredPalette(visitIndex int, paletteIndex int, mask uint8) error {
@@ -1438,13 +1447,11 @@ func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficientsPtr(visit *
 				return err
 			}
 		}
-		bufferedVisit, paletteIndex, paletteMask := c.scratch.captureDeferredVisit(*visit)
-		visitIndex := len(c.scratch.reconVisits)
+		visitIndex, paletteIndex, paletteMask := c.scratch.bufferDeferredVisit(visit)
 		visitIndex32, ok := frameWorkReconIndex(visitIndex)
 		if !ok {
 			return ErrInvalidBatch
 		}
-		c.scratch.reconVisits = append(c.scratch.reconVisits, bufferedVisit)
 		c.scratch.reconEvents = append(c.scratch.reconEvents, frameWorkReconEvent{
 			kind:  frameWorkReconEventBlockBegin,
 			index: visitIndex32,
