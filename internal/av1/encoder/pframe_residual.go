@@ -4161,7 +4161,8 @@ func (st *lossyEncodeState) accumulateInterTXBStats(geo *txBlockGeometry, q quan
 // coefficient rows that provably quantize to zero (and the whole
 // quantize/stats pass when every row does). The levels, the all-zero result
 // and the skip decision are exactly those of prepareInterTXB; only the
-// cancelling distortion terms are omitted, so no caller may read the absolute
+// cancelling distortion terms are omitted (rdDskip carries the skip-minus-code
+// difference of the non-zero levels), so no caller may read the absolute
 // rdDcode/rdDskip after it (the 8x8 TX-type trial's DCT baseline must keep
 // using prepareInterTXB).
 func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16) bool {
@@ -4198,7 +4199,27 @@ func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStr
 	if !quantize.QuantizeBRowGroupsTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, q, geo.txScale) {
 		return true
 	}
-	return st.accumulateInterTXBStats(geo, q, qcoeff)
+	return st.accumulateInterTXBStatsDiff(geo, q, qcoeff)
+}
+
+// accumulateInterTXBStatsDiff is accumulateInterTXBStats for the skip
+// comparison alone: only rdDskip - rdDcode and the rate matter there, and a
+// zero level adds equally to both distortions, so the non-zero levels'
+// difference terms go to rdDskip (rdStatsDiffImpl) and rdDcode is left as is.
+func (st *lossyEncodeState) accumulateInterTXBStatsDiff(geo *txBlockGeometry, q quantize.Quantizer, qcoeff []int16) bool {
+	cn := geo.coeffCount
+	tran := &st.tranScratch
+	diff, rate, allZero := rdStatsDiffImpl(tran[:cn], qcoeff[:cn], cn, q.AC, geo.txScale)
+	if v := qcoeff[0]; v != 0 {
+		// The vector pass used the AC step for DC too.
+		c := int64(tran[0])
+		eAC := c - ((int64(v) * int64(q.AC)) >> geo.txScale)
+		eDC := c - ((int64(v) * int64(q.DC)) >> geo.txScale)
+		diff += eAC*eAC - eDC*eDC
+	}
+	st.rdDskip += diff
+	st.rdRcode += rate
+	return allZero
 }
 
 func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lumaPY int, dctDcode int64) transform.Type {

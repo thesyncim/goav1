@@ -31,6 +31,12 @@ func sqSumInt32(acc archsimd.Int64x2, v archsimd.Int32x4) archsimd.Int64x2 {
 	return acc.Add(v.MulWidenLo(v)).Add(hi.MulWidenLo(hi))
 }
 
+// mulSumInt32 adds the exact products a[i]*b[i] of the four int32 lane pairs
+// to acc.
+func mulSumInt32(acc archsimd.Int64x2, a, b archsimd.Int32x4) archsimd.Int64x2 {
+	return acc.Add(a.MulWidenLo(b)).Add(a.HiToLo().MulWidenLo(b.HiToLo()))
+}
+
 // interleaveEven16 and interleaveOdd16 are the VTRN1/VTRN2 transposes of two
 // 16-bit vectors: [x0 y0 x2 y2 ...] and [x1 y1 x3 y3 ...].
 func interleaveEven16(x, y archsimd.Int16x8) archsimd.Int16x8 { return x.InterleaveEven(y) }
