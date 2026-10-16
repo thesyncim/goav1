@@ -4466,10 +4466,14 @@ func (st *lossyEncodeState) reconInterTXBResult(reconPlane, pred []byte, predStr
 	}
 
 	dq := &st.dqScratch
-	quantize.DequantizeBlockScaledBitDepthEOBTrusted(dq[:geo.coeffCount], geo.coeffHeight, qcoeff, geo.coeffHeight, scan, int(txbResult.EOB), geo.coeffWidth, geo.coeffHeight, q, geo.txScale, 8)
+	eob := int(txbResult.EOB)
+	quantize.DequantizeBlockScaledBitDepthEOBTrusted(dq[:geo.coeffCount], geo.coeffHeight, qcoeff, geo.coeffHeight, scan, eob, geo.coeffWidth, geo.coeffHeight, q, geo.txScale, 8)
 	if txType != transform.TypeIDTX {
 		raw := st.invScratch[:n]
-		if err := transform.InverseBlockBitDepthRaw(raw, dq[:geo.coeffCount], geo.coeffHeight, geo.size, txType, 8, 0); err != nil {
+		// Every coefficient past the EOB is zero, so the row pass only needs
+		// the transform rows the scan prefix reaches — the decoder's own
+		// activeRows bound (reconstruct.activeTransformRowsFromScan).
+		if err := transform.InverseBlockBitDepthRaw(raw, dq[:geo.coeffCount], geo.coeffHeight, geo.size, txType, 8, scanActiveRows(scan, eob, geo.coeffHeight)); err != nil {
 			return err
 		}
 		copyPredToReconBlock(reconPlane, pred, predStride, stride, px, py, w, h)
@@ -4496,6 +4500,27 @@ func (st *lossyEncodeState) reconInterTXBResult(reconPlane, pred []byte, predStr
 	}
 	return nil
 
+}
+
+// scanActiveRows returns one past the largest coefficient row (position modulo
+// the column-major coefficient height) any of the first eob scan positions
+// addresses (coeffHeight is a power of two). Coefficients past the EOB are
+// zero, so the inverse transform's row pass can stop there.
+func scanActiveRows(scan []int16, eob, coeffHeight int) int {
+	if eob > len(scan) {
+		return 0
+	}
+	mask := coeffHeight - 1
+	rows := 0
+	for _, p := range scan[:eob] {
+		if r := int(p) & mask; r >= rows {
+			rows = r + 1
+			if rows == coeffHeight {
+				break
+			}
+		}
+	}
+	return rows
 }
 
 func addConstantResidualToPredReconBlock(reconPlane, pred []byte, predStride, stride, px, py, w, h int, residual int16) {
