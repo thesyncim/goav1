@@ -3657,6 +3657,14 @@ func (p realtimeInterTXPlan) ForEachLeaf(visit func(i, dx, dy int) error) error 
 	if visit == nil || p.leafSize != 8 && p.leafSize != 16 {
 		return tile.ErrInvalidDecodeState
 	}
+	if c := realtimeInterTXPlanCached(p.block, p.leafSize); c != nil && c.plan == p {
+		for i := 0; i < c.leaves; i++ {
+			if err := visit(i, int(c.dx[i]), int(c.dy[i])); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	maxY, err := tile.MaxTransformSize(p.block, parser.ColorConfig{}, 0)
 	if err != nil {
 		return err
@@ -3712,6 +3720,13 @@ func realtimeInterTXPlanForBlock(block tile.BlockSize, qIndex uint8, qAC int32, 
 }
 
 func realtimeInterTXPlanForLeafSize(block tile.BlockSize, leafSize int) (realtimeInterTXPlan, error) {
+	if c := realtimeInterTXPlanCached(block, leafSize); c != nil {
+		return c.plan, nil
+	}
+	return realtimeInterTXPlanBuild(block, leafSize)
+}
+
+func realtimeInterTXPlanBuild(block tile.BlockSize, leafSize int) (realtimeInterTXPlan, error) {
 	var leafTX tile.TransformSize
 	switch leafSize {
 	case 8:
