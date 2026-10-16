@@ -4783,10 +4783,20 @@ func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth
 	if allowTopRight && topRightLimit > 0 {
 		maxRealEnd = primaryWidth + topRightLimit
 	}
+	// Zone-2 callers (90 < angle < 180) ask for negative indices too. The
+	// predictor reads the above row no further left than index -1 (libaom
+	// dr_prediction_z2's min_base_x; upsampling derives -2 from -1), and
+	// frameWorkDirectionalPredictionEdges overwrites index -1 with the
+	// top-left sample, so those slots only need defined contents. Fill them
+	// from column x instead of reading the frame to the left of the block,
+	// which for a block on a tile's left edge belongs to the neighbouring
+	// tile and may still be under reconstruction on another worker.
 	for j := range above {
 		i := minIndex + j
 		var sampleX int
 		switch {
+		case i < 0:
+			sampleX = x
 		case i < primaryLimit:
 			sampleX = x + i
 		case allowTopRight && i >= primaryWidth && i < primaryWidth+topRightLimit:
@@ -4870,10 +4880,16 @@ func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, bitDepth 
 	if allowBottomLeft && bottomLeftLimit > 0 {
 		maxRealEnd = primaryHeight + bottomLeftLimit
 	}
+	// As in frameWorkFillDirectionalAbove, negative (zone-2) indices are
+	// never read past -1, which the caller overwrites with the top-left
+	// sample; fill them from row y rather than reading the column above the
+	// block, which can belong to the tile above.
 	for j := range left {
 		i := minIndex + j
 		var sampleY int
 		switch {
+		case i < 0:
+			sampleY = y
 		case i < primaryLimit:
 			sampleY = y + i
 		case allowBottomLeft && i >= primaryHeight && i < primaryHeight+bottomLeftLimit:
