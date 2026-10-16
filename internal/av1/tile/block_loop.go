@@ -490,7 +490,7 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 
 func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8) error {
 	scratch.Partition = PartitionContext{}
-	scratch.Mode = BlockModeContext{}
+	scratch.Mode.resetForSuperblock()
 	scratch.CDEF.Reset()
 	scratch.CoeffCtx = CoeffEntropyContext{}
 	if carrier == nil {
