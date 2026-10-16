@@ -4028,6 +4028,22 @@ func sadRectDualBlock(src []byte, srcStride int, ref []byte, refStride int, bw, 
 	case bw == 16 && bh == 32:
 		return sad16x16Dual(src, srcStride, ref, refStride) +
 			sad16x16Dual(src[16*srcStride:], srcStride, ref[16*refStride:], refStride)
+	case bw == 64 && bh == 32:
+		return sad32x32Dual(src, srcStride, ref, refStride) +
+			sad32x32Dual(src[32:], srcStride, ref[32:], refStride)
+	case bw == 32 && bh == 64:
+		return sad32x32Dual(src, srcStride, ref, refStride) +
+			sad32x32Dual(src[32*srcStride:], srcStride, ref[32*refStride:], refStride)
+	case bw == 64 && bh == 16:
+		return sad16x16Dual(src, srcStride, ref, refStride) +
+			sad16x16Dual(src[16:], srcStride, ref[16:], refStride) +
+			sad16x16Dual(src[32:], srcStride, ref[32:], refStride) +
+			sad16x16Dual(src[48:], srcStride, ref[48:], refStride)
+	case bw == 16 && bh == 64:
+		return sad16x16Dual(src, srcStride, ref, refStride) +
+			sad16x16Dual(src[16*srcStride:], srcStride, ref[16*refStride:], refStride) +
+			sad16x16Dual(src[32*srcStride:], srcStride, ref[32*refStride:], refStride) +
+			sad16x16Dual(src[48*srcStride:], srcStride, ref[48*refStride:], refStride)
 	}
 	total := 0
 	for r := range bh {
