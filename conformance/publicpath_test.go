@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -536,6 +537,57 @@ func TestPublicPathProfileClips(t *testing.T) {
 	}
 }
 
+// TestPublicPathProfileClipsWorkers keeps the independent public-path libaom
+// MD5 oracle on multiworker decoder runs, including 10/12-bit and 4:4:4 clips.
+func TestPublicPathProfileClipsWorkers(t *testing.T) {
+	for _, workers := range []int{2, 4, 8} {
+		t.Run(fmt.Sprintf("workers-%d", workers), func(t *testing.T) {
+			sawMultiColumnLoopFilterMasks := false
+			for _, clip := range publicClips {
+				t.Run(clip.file, func(t *testing.T) {
+					postFilter := newPublicProfilePostFilterObserver()
+					got := decodeClipPublicDataWithRunnerWorkers(t, readPublicClip(t, clip.file), &postFilter, workers)
+					if postFilter.sawMultiColumnLoopFilterMasks {
+						sawMultiColumnLoopFilterMasks = true
+					}
+					if len(got) != len(clip.frameMD5Hex) {
+						t.Fatalf("decoded %d visible frames, want %d", len(got), len(clip.frameMD5Hex))
+					}
+					for i, want := range clip.frameMD5Hex {
+						if g := hex.EncodeToString(got[i][:]); g != want {
+							t.Fatalf("frame %d md5 got=%s want=%s (libaom golden, workers=%d)", i, g, want, workers)
+						}
+					}
+				})
+			}
+			if !sawMultiColumnLoopFilterMasks {
+				t.Fatal("no LF-active public clip exposed valid multi-column loop-filter masks")
+			}
+		})
+	}
+}
+
+type publicProfilePostFilterObserver struct {
+	runner                        av1.DecoderFrameWorkReusableSupportedPostFilterRunner
+	sawMultiColumnLoopFilterMasks bool
+}
+
+func newPublicProfilePostFilterObserver() publicProfilePostFilterObserver {
+	return publicProfilePostFilterObserver{}
+}
+
+func (r *publicProfilePostFilterObserver) Apply(ctx av1.DecoderFrameWorkPostFilterContext) error {
+	if ctx.RemainingPostFilters().Has(av1.DecoderFrameWorkPostFilterLoopFilter) &&
+		ctx.LoopFilterMasks != nil && ctx.LoopFilterMasks.Valid() && ctx.LoopFilterMasks.SB128W > 1 {
+		r.sawMultiColumnLoopFilterMasks = true
+	}
+	return r.runner.Apply(ctx)
+}
+
+func (r *publicProfilePostFilterObserver) PostFilterOutput() (*av1.Frame, bool) {
+	return r.runner.PostFilterOutput()
+}
+
 // TestPublicPathCallerPostFilterProfileClips drives all-keyframe super-res
 // clips through the exported caller-owned full postfilter runner. This covers
 // display output for super-res and post-super-res restoration without requiring
@@ -645,6 +697,14 @@ func decodeClipPublicData(t *testing.T, ivfData []byte) [][16]byte {
 
 func decodeClipPublicDataWithRunner(t *testing.T, ivfData []byte, postFilter av1.DecoderFrameWorkPostFilterRunner) [][16]byte {
 	t.Helper()
+	return decodeClipPublicDataWithRunnerWorkers(t, ivfData, postFilter, 1)
+}
+
+func decodeClipPublicDataWithRunnerWorkers(t *testing.T, ivfData []byte, postFilter av1.DecoderFrameWorkPostFilterRunner, workers int) [][16]byte {
+	t.Helper()
+	if workers <= 0 {
+		t.Fatalf("workers must be positive, got %d", workers)
+	}
 
 	it, err := av1.NewIVFIterator(ivfData)
 	if err != nil {
@@ -667,7 +727,6 @@ func decodeClipPublicDataWithRunner(t *testing.T, ivfData []byte, postFilter av1
 		t.Fatal("clip produced no frames")
 	}
 
-	const workers = 1
 	workerPool, err := av1.NewTileWorkerPool(workers)
 	if err != nil {
 		t.Fatalf("worker pool: %v", err)
@@ -1136,6 +1195,8 @@ func newPublicSideDataScratch(size av1.DecoderFrameWorkSideDataScratchSize) av1.
 		CDEFIndexMap:             make([]uint8, size.CDEFIndexMap),
 		CDEFReadMap:              make([]bool, size.CDEFReadMap),
 		LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, size.LoopFilterMap),
+		LoopFilterMasks:          make([]av1.DecoderFrameWorkLoopFilterFilterMask, size.LoopFilterMasks),
+		LoopFilterLevelCache:     make([][4]uint8, size.LoopFilterLevelCache),
 		RestorationRecords:       make([]av1.TileRestorationUnitRecord, size.RestorationRecords),
 		RestorationBoundaryAbove: make([]uint16, size.RestorationBoundaryAbove),
 		RestorationBoundaryBelow: make([]uint16, size.RestorationBoundaryBelow),

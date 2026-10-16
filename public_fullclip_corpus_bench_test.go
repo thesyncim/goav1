@@ -224,6 +224,67 @@ func BenchmarkPublicDecoderFullClip(b *testing.B) {
 	}
 }
 
+// BenchmarkPublicDecoderFullClipWorkers measures the public cold decoder path
+// at worker counts relevant to the post-filter scheduling change. Each selected
+// clip and worker count is checked against its independent MD5 sidecar before
+// timing. The timed operation includes NewDecoderFromIVF, all DecodeNext calls,
+// and Close; corpus reads and MD5 hashing stay outside the timed section.
+func BenchmarkPublicDecoderFullClipWorkers(b *testing.B) {
+	clips := loadPublicFullClipCorpus(b)
+	wanted := map[string]bool{
+		"p360_inter_q32_2tiles": true,
+		"p720_inter_q32":        true,
+		"p720_inter_q32_2tiles": true,
+	}
+	workers := [...]int{1, 2, 4, 8}
+	matched := 0
+	for _, clip := range clips {
+		if !wanted[clip.name] {
+			continue
+		}
+		matched++
+		clip := clip
+		for _, workerCount := range workers {
+			workerCount := workerCount
+			b.Run(fmt.Sprintf("%s/workers=%d", clip.name, workerCount), func(b *testing.B) {
+				preflight, err := decodePublicFullClipFreshWorkers(clip.data, workerCount, true)
+				if err != nil {
+					b.Fatalf("MD5 preflight decode: %v", err)
+				}
+				if err := comparePublicFullClipOracle(preflight, clip.oracle); err != nil {
+					b.Fatalf("MD5 preflight sidecar %s: %v", clip.oracle.path, err)
+				}
+				wantFrames := preflight.frames
+				warmup, err := decodePublicFullClipFreshWorkers(clip.data, workerCount, false)
+				if err != nil {
+					b.Fatalf("warmup decode: %v", err)
+				}
+				if warmup.frames != wantFrames {
+					b.Fatalf("warmup produced %d frames, MD5 preflight produced %d", warmup.frames, wantFrames)
+				}
+
+				b.SetBytes(int64(len(clip.data)))
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					result, err := decodePublicFullClipFreshWorkers(clip.data, workerCount, false)
+					if err != nil {
+						b.Fatalf("decode: %v", err)
+					}
+					if result.frames != wantFrames {
+						b.Fatalf("decoded %d frames, want %d", result.frames, wantFrames)
+					}
+					publicFullClipSampleSink += result.observed
+				}
+				b.ReportMetric(float64(wantFrames), "frames/op")
+			})
+		}
+	}
+	if matched != len(wanted) {
+		b.Fatalf("benchmark corpus matched %d selected clips, want %d", matched, len(wanted))
+	}
+}
+
 func loadPublicFullClipCorpus(t testing.TB) []publicFullClip {
 	t.Helper()
 	dir := os.Getenv("GOAV1_BENCH_CORPUS_DIR")
@@ -380,7 +441,11 @@ func comparePublicFullClipOracle(result publicFullClipResult, oracle publicFullC
 }
 
 func decodePublicFullClipFresh(data []byte, hashFrames bool) (publicFullClipResult, error) {
-	dec, err := av1.NewDecoderFromIVF(data, av1.WithWorkers(1))
+	return decodePublicFullClipFreshWorkers(data, 1, hashFrames)
+}
+
+func decodePublicFullClipFreshWorkers(data []byte, workers int, hashFrames bool) (publicFullClipResult, error) {
+	dec, err := av1.NewDecoderFromIVF(data, av1.WithWorkers(workers))
 	if err != nil {
 		return publicFullClipResult{}, fmt.Errorf("NewDecoderFromIVF: %w", err)
 	}
