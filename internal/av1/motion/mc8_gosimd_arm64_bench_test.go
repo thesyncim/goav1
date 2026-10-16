@@ -66,3 +66,29 @@ func BenchmarkMC8Prep(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkMC8BlendAvg compares the int16 plain average with the general
+// distance-weighted SIMD blend it replaces for fwd = bck = 8.
+func BenchmarkMC8BlendAvg(b *testing.B) {
+	rng := rand.New(rand.NewSource(6))
+	a := make([]uint16, 128*128)
+	c := make([]uint16, 128*128)
+	for i := range a {
+		a[i] = uint16(4000 + rng.Intn(8000))
+		c[i] = uint16(4000 + rng.Intn(8000))
+	}
+	dst := frame.Plane{Pix: make([]byte, 128*128), Stride: 128, Width: 128, Height: 128}
+	for _, sz := range [][2]int{{8, 8}, {16, 16}, {32, 32}} {
+		w, h := sz[0], sz[1]
+		b.Run(fmt.Sprintf("int16_%dx%d", w, h), func(b *testing.B) {
+			for b.Loop() {
+				mc8BlendAvgFast(dst, a, c, 0, 0, w, h)
+			}
+		})
+		b.Run(fmt.Sprintf("general_%dx%d", w, h), func(b *testing.B) {
+			for b.Loop() {
+				blendCompoundAvg8GoSIMD(dst, a, c, 0, 0, w, h, 8, 8, 6144, 4)
+			}
+		})
+	}
+}

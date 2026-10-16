@@ -714,3 +714,67 @@ func mc8PrepCopy(src unsafe.Pointer, srcStride, w, h int, out unsafe.Pointer) {
 func mc8LoadRow(p unsafe.Pointer) archsimd.Int16x8 {
 	return archsimd.LoadUint8x16Array((*[16]uint8)(p)).ExtendLo8ToUint16().BitsToInt16()
 }
+
+// mc8PackU8 saturates two int16x8 vectors to one uint8x16 (SQXTUN +
+// SQXTUN2).
+func mc8PackU8(v0, v1 archsimd.Int16x8) archsimd.Uint8x16 {
+	lo := v0.SaturateToUint8().ReshapeToUint64s().BitsToFloat64()
+	return lo.SetElem(1, v1.SaturateToUint8().ReshapeToUint64s().BitsToFloat64().GetElem(0)).ToBits().ReshapeToUint8s()
+}
+
+// mc8BlendAvgFast is the 8-bit plain compound average (fwd = bck = 8) over
+// two CONV_BUF predictors with row stride w: libaom's
+// clip(round4(((a*8 + b*8) >> 4) - 6144)) is (a + b - 12272) >> 5 by nested
+// floor division, evaluated in int16 lanes (8-bit CONV_BUF values stay below
+// 2^14, so a + b cannot wrap) and saturated to bytes.
+func mc8BlendAvgFast(dst frame.Plane, a, b []uint16, dstX, dstY, w, h int) bool {
+	if w&3 != 0 || h <= 0 || len(a) < w*h || len(b) < w*h || (w == 4 && h&1 != 0) {
+		return false
+	}
+	off := dstY*dst.Stride + dstX
+	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || off+(h-1)*dst.Stride+w > len(dst.Pix) {
+		return false
+	}
+	mc8BlendAvg(unsafe.Pointer(&dst.Pix[off]), dst.Stride, unsafe.Pointer(&a[0]), unsafe.Pointer(&b[0]), w, h)
+	return true
+}
+
+//go:nocheckptr
+func mc8BlendAvg(dst unsafe.Pointer, dstStride int, a, b unsafe.Pointer, w, h int) {
+	bias := archsimd.BroadcastInt16x8(-12272)
+	sh := archsimd.BroadcastInt16x8(-5)
+	if w == 4 {
+		for r := 0; r < h; r += 2 {
+			o := r * 8
+			v := mc8L16(unsafe.Add(a, o)).Add(mc8L16(unsafe.Add(b, o))).Add(bias).Shift(sh)
+			x := v.SaturateToUint8().ReshapeToUint64s().GetElem(0)
+			d := unsafe.Add(dst, r*dstStride)
+			*(*uint32)(d) = uint32(x)
+			*(*uint32)(unsafe.Add(d, dstStride)) = uint32(x >> 32)
+		}
+		return
+	}
+	ro := w * 2
+	for r := 0; r < h; r++ {
+		pa := unsafe.Add(a, r*ro)
+		pb := unsafe.Add(b, r*ro)
+		d := unsafe.Add(dst, r*dstStride)
+		c := 0
+		for ; c+16 <= w; c += 16 {
+			v0 := mc8L16(unsafe.Add(pa, 2*c)).Add(mc8L16(unsafe.Add(pb, 2*c))).Add(bias).Shift(sh)
+			v1 := mc8L16(unsafe.Add(pa, 2*c+16)).Add(mc8L16(unsafe.Add(pb, 2*c+16))).Add(bias).Shift(sh)
+			mc8PackU8(v0, v1).StoreArray((*[16]uint8)(unsafe.Add(d, c)))
+		}
+		if c < w {
+			v := mc8L16(unsafe.Add(pa, 2*c)).Add(mc8L16(unsafe.Add(pb, 2*c))).Add(bias).Shift(sh)
+			*(*uint64)(unsafe.Add(d, c)) = v.SaturateToUint8().ReshapeToUint64s().GetElem(0)
+		}
+	}
+}
+
+// mc8L16 loads eight int16 lanes at p.
+//
+//go:nocheckptr
+func mc8L16(p unsafe.Pointer) archsimd.Int16x8 {
+	return archsimd.LoadInt16x8Array((*[8]int16)(p))
+}

@@ -1132,6 +1132,9 @@ func BlendCompoundAvg(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConv
 	src0 := buf0.Data[:width*height]
 	src1 := buf1.Data[:width*height]
 	if bytesPerSample == 1 {
+		if fwdOffset == 8 && bckOffset == 8 && mc8BlendAvgFast(dst, src0, src1, dstX, dstY, width, height) {
+			return nil
+		}
 		blendCompoundAvg8Impl(dst, src0, src1, dstX, dstY, width, height, fwdOffset, bckOffset, roundOffset, roundBits)
 		return nil
 	}

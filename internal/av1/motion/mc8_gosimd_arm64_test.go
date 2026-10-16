@@ -212,3 +212,41 @@ func TestMC8SixTapKinds(t *testing.T) {
 		t.Fatalf("six-tap kinds = %v, want %v", mc8SixTap, want)
 	}
 }
+
+func TestMC8BlendAvgFastMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(5))
+	for _, sz := range [][2]int{{4, 4}, {4, 8}, {4, 16}, {8, 4}, {8, 8}, {16, 8}, {16, 16}, {24, 8}, {32, 32}, {64, 64}, {128, 128}, {8, 2}} {
+		w, h := sz[0], sz[1]
+		for iter := range 40 {
+			a := make([]uint16, w*h)
+			b := make([]uint16, w*h)
+			for i := range a {
+				switch iter % 4 {
+				case 0: // the full 8-bit CONV_BUF range (sharp 2D bounds)
+					a[i] = uint16(2000 + rng.Intn(13400))
+					b[i] = uint16(2000 + rng.Intn(13400))
+				case 1:
+					a[i], b[i] = 15356, 15356
+				case 2:
+					a[i], b[i] = 0, 0
+				default:
+					a[i] = uint16(6144 + 16*rng.Intn(256))
+					b[i] = uint16(6144 + 16*rng.Intn(256))
+				}
+			}
+			dw, dh := w+16, h+4
+			want := frame.Plane{Pix: make([]byte, dw*dh), Stride: dw, Width: dw, Height: dh}
+			for i := range want.Pix {
+				want.Pix[i] = byte(i * 5)
+			}
+			got := frame.Plane{Pix: slices.Clone(want.Pix), Stride: dw, Width: dw, Height: dh}
+			blendCompoundAvg8PureGo(want, a, b, 5, 2, w, h, 8, 8, 6144, 4)
+			if !mc8BlendAvgFast(got, a, b, 5, 2, w, h) {
+				t.Fatalf("mc8BlendAvgFast declined %dx%d", w, h)
+			}
+			if !bytes.Equal(got.Pix, want.Pix) {
+				t.Fatalf("%dx%d iter %d: mismatch", w, h, iter)
+			}
+		}
+	}
+}
