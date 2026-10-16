@@ -678,7 +678,6 @@ var lpfLowHalf = [16]uint8{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 //
 //go:nocheckptr
 func lpfVertical16x8U8Wide(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) {
-	var buf [8][16]uint8
 	r0, r8 := lpfLoad(p, 0), lpfLoad(p, 8*stride)
 	r1, r9 := lpfLoad(p, stride), lpfLoad(p, 9*stride)
 	r2, r10 := lpfLoad(p, 2*stride), lpfLoad(p, 10*stride)
@@ -690,20 +689,8 @@ func lpfVertical16x8U8Wide(p unsafe.Pointer, stride int, wd int, eV, iV, hV arch
 	t0, t1, t2, t3, t4, t5, t6, t7 := lpfTranspose8x8Pairs(
 		lpfZipLo64(r0, r8), lpfZipLo64(r1, r9), lpfZipLo64(r2, r10), lpfZipLo64(r3, r11),
 		lpfZipLo64(r4, r12), lpfZipLo64(r5, r13), lpfZipLo64(r6, r14), lpfZipLo64(r7, r15))
-	t0.StoreArray(&buf[0])
-	t1.StoreArray(&buf[1])
-	t2.StoreArray(&buf[2])
-	t3.StoreArray(&buf[3])
-	t4.StoreArray(&buf[4])
-	t5.StoreArray(&buf[5])
-	t6.StoreArray(&buf[6])
-	t7.StoreArray(&buf[7])
-	lpf16U8(unsafe.Pointer(&buf[4]), 16, wd, eV, iV, hV, m4, mGt4, m16)
-	t0, t1, t2, t3, t4, t5, t6, t7 = lpfTranspose8x8Pairs(
-		archsimd.LoadUint8x16Array(&buf[0]), archsimd.LoadUint8x16Array(&buf[1]),
-		archsimd.LoadUint8x16Array(&buf[2]), archsimd.LoadUint8x16Array(&buf[3]),
-		archsimd.LoadUint8x16Array(&buf[4]), archsimd.LoadUint8x16Array(&buf[5]),
-		archsimd.LoadUint8x16Array(&buf[6]), archsimd.LoadUint8x16Array(&buf[7]))
+	t1, t2, t3, t4, t5, t6 = lpf16U8Regs(wd, t0, t1, t2, t3, t4, t5, t6, t7, eV, iV, hV, m4, mGt4)
+	t0, t1, t2, t3, t4, t5, t6, t7 = lpfTranspose8x8Pairs(t0, t1, t2, t3, t4, t5, t6, t7)
 	lo := archsimd.LoadUint8x16Array(&lpfLowHalf).BitsToInt8().ToMask()
 	lpfStore(p, 0, t0.IfElse(lo, r0))
 	lpfStore(p, stride, t1.IfElse(lo, r1))
@@ -730,4 +717,132 @@ func lpfZipLo64(a, b archsimd.Uint8x16) archsimd.Uint8x16 {
 
 func lpfZipHi64(a, b archsimd.Uint8x16) archsimd.Uint8x16 {
 	return a.ReshapeToUint64s().InterleaveHi(b.ReshapeToUint64s()).ReshapeToUint8s()
+}
+
+// lpf16U8Regs is lpf16U8 for widths up to 8 on taps held in registers:
+// p3..q3 in, the filtered p2..q2 out (p3/q3 never change at these widths).
+// Vector arguments and results travel in SIMD registers, so the transposed
+// vertical path filters without a stack round trip.
+func lpf16U8Regs(wd int, p3, p2, p1, p0, q0, q1, q2, q3, eV, iV, hV archsimd.Uint8x16, m4, mGt4 archsimd.Mask8x16) (o2, o1, o0, n0, n1, n2 archsimd.Uint8x16) {
+	o2, o1, o0, n0, n1, n2 = p2, p1, p0, q0, q1, q2
+	d10 := lpfAbsDiff(p1, p0)
+	dq := lpfAbsDiff(q1, q0)
+	maxd := d10.Max(dq)
+	t := maxd
+	if wd >= 6 {
+		tt := lpfAbsDiff(p2, p1).Max(lpfAbsDiff(q2, q1))
+		if wd >= 8 {
+			tt = tt.Max(lpfAbsDiff(p3, p2).Max(lpfAbsDiff(q3, q2)))
+		}
+		t = t.Max(tt.Masked(mGt4))
+	}
+	d00 := lpfAbsDiff(p0, q0)
+	sum := d00.AddSaturated(d00).AddSaturated(lpfAbsDiff(p1, q1).ShiftAllRight(1))
+	fm := iV.GreaterEqual(t).And(eV.GreaterEqual(sum)).And(m4)
+	if !lpfAny(fm) {
+		return
+	}
+	mF4 := fm
+	var mFlat archsimd.Mask8x16
+	if wd >= 6 {
+		fl := lpfAbsDiff(p2, p0).Max(maxd).Max(lpfAbsDiff(q2, q0))
+		if wd >= 8 {
+			fl = fl.Max(lpfAbsDiff(p3, p0)).Max(lpfAbsDiff(q3, q0))
+		}
+		mFlat = archsimd.BroadcastUint8x16(1).GreaterEqual(fl).And(mGt4).And(fm)
+		mF4 = fm.And(mFlat.Not())
+	}
+	if lpfAny(mF4) {
+		bias := archsimd.BroadcastUint8x16(128)
+		zero := archsimd.Uint8x16{}
+		hev := maxd.Greater(hV)
+		p1c := p1.Xor(bias).BitsToInt8()
+		p0c := p0.Xor(bias).BitsToInt8()
+		q0c := q0.Xor(bias).BitsToInt8()
+		q1c := q1.Xor(bias).BitsToInt8()
+		outerF := p1c.SubSaturated(q1c).Masked(hev)
+		three16 := archsimd.BroadcastInt16x8(3)
+		dLo := q0.InterleaveLo(zero).ReshapeToUint16s().BitsToInt16().Sub(p0.InterleaveLo(zero).ReshapeToUint16s().BitsToInt16())
+		dHi := q0.InterleaveHi(zero).ReshapeToUint16s().BitsToInt16().Sub(p0.InterleaveHi(zero).ReshapeToUint16s().BitsToInt16())
+		fLo := dLo.Mul(three16).Add(outerF.ExtendLo8ToInt16()).SaturateToInt8()
+		fHi := dHi.Mul(three16).Add(outerF.HiToLo().ExtendLo8ToInt16()).SaturateToInt8()
+		f := fLo.ToBits().ReshapeToUint64s().InterleaveLo(fHi.ToBits().ReshapeToUint64s()).ReshapeToUint8s().BitsToInt8()
+		shift3 := archsimd.BroadcastInt8x16(-3)
+		shift1 := archsimd.BroadcastInt8x16(-1)
+		filter1 := f.AddSaturated(archsimd.BroadcastInt8x16(4)).Shift(shift3)
+		filter2 := f.AddSaturated(archsimd.BroadcastInt8x16(3)).Shift(shift3)
+		outer := filter1.Add(archsimd.BroadcastInt8x16(1)).Shift(shift1)
+		o0 = p0c.AddSaturated(filter2).ToBits().Xor(bias).IfElse(mF4, p0)
+		n0 = q0c.SubSaturated(filter1).ToBits().Xor(bias).IfElse(mF4, q0)
+		mOuter := mF4.And(hev.Not())
+		o1 = p1c.AddSaturated(outer).ToBits().Xor(bias).IfElse(mOuter, p1)
+		n1 = q1c.SubSaturated(outer).ToBits().Xor(bias).IfElse(mOuter, q1)
+	}
+	if wd < 6 || !lpfAny(mFlat) {
+		return
+	}
+	zero := archsimd.Uint8x16{}
+	four := archsimd.BroadcastUint16x8(4)
+	if wd == 6 {
+		lp2, lp1, lp0 := lpfWidenLo(p2, zero), lpfWidenLo(p1, zero), lpfWidenLo(p0, zero)
+		lq0, lq1, lq2 := lpfWidenLo(q0, zero), lpfWidenLo(q1, zero), lpfWidenLo(q2, zero)
+		s := lp2.Add(lp2).Add(lp2).Add(lp1.Add(lp0).Add(lp1.Add(lp0))).Add(lq0).Add(four)
+		ap1 := s
+		s = s.Add(lq0.Add(lq1)).Sub(lp2.Add(lp2))
+		ap0 := s
+		s = s.Add(lq1.Add(lq2)).Sub(lp2.Add(lp1))
+		aq0 := s
+		s = s.Add(lq2.Add(lq2)).Sub(lp1.Add(lp0))
+		aq1 := s
+		hp2, hp1, hp0 := lpfWidenHi(p2, zero), lpfWidenHi(p1, zero), lpfWidenHi(p0, zero)
+		hq0, hq1, hq2 := lpfWidenHi(q0, zero), lpfWidenHi(q1, zero), lpfWidenHi(q2, zero)
+		s = hp2.Add(hp2).Add(hp2).Add(hp1.Add(hp0).Add(hp1.Add(hp0))).Add(hq0).Add(four)
+		bp1 := s
+		s = s.Add(hq0.Add(hq1)).Sub(hp2.Add(hp2))
+		bp0 := s
+		s = s.Add(hq1.Add(hq2)).Sub(hp2.Add(hp1))
+		bq0 := s
+		s = s.Add(hq2.Add(hq2)).Sub(hp1.Add(hp0))
+		bq1 := s
+		o1 = lpfNarrow3(ap1, bp1).IfElse(mFlat, o1)
+		o0 = lpfNarrow3(ap0, bp0).IfElse(mFlat, o0)
+		n0 = lpfNarrow3(aq0, bq0).IfElse(mFlat, n0)
+		n1 = lpfNarrow3(aq1, bq1).IfElse(mFlat, n1)
+		return
+	}
+	lp3, lp2, lp1, lp0 := lpfWidenLo(p3, zero), lpfWidenLo(p2, zero), lpfWidenLo(p1, zero), lpfWidenLo(p0, zero)
+	lq0, lq1, lq2, lq3 := lpfWidenLo(q0, zero), lpfWidenLo(q1, zero), lpfWidenLo(q2, zero), lpfWidenLo(q3, zero)
+	s := lp3.Add(lp3).Add(lp3).Add(lp2.Add(lp2)).Add(lp1.Add(lp0)).Add(lq0.Add(four))
+	ap2 := s
+	s = s.Add(lp1.Add(lq1)).Sub(lp3.Add(lp2))
+	ap1 := s
+	s = s.Add(lp0.Add(lq2)).Sub(lp3.Add(lp1))
+	ap0 := s
+	s = s.Add(lq0.Add(lq3)).Sub(lp3.Add(lp0))
+	aq0 := s
+	s = s.Add(lq1.Add(lq3)).Sub(lp2.Add(lq0))
+	aq1 := s
+	s = s.Add(lq2.Add(lq3)).Sub(lp1.Add(lq1))
+	aq2 := s
+	hp3, hp2, hp1, hp0 := lpfWidenHi(p3, zero), lpfWidenHi(p2, zero), lpfWidenHi(p1, zero), lpfWidenHi(p0, zero)
+	hq0, hq1, hq2, hq3 := lpfWidenHi(q0, zero), lpfWidenHi(q1, zero), lpfWidenHi(q2, zero), lpfWidenHi(q3, zero)
+	s = hp3.Add(hp3).Add(hp3).Add(hp2.Add(hp2)).Add(hp1.Add(hp0)).Add(hq0.Add(four))
+	bp2 := s
+	s = s.Add(hp1.Add(hq1)).Sub(hp3.Add(hp2))
+	bp1 := s
+	s = s.Add(hp0.Add(hq2)).Sub(hp3.Add(hp1))
+	bp0 := s
+	s = s.Add(hq0.Add(hq3)).Sub(hp3.Add(hp0))
+	bq0 := s
+	s = s.Add(hq1.Add(hq3)).Sub(hp2.Add(hq0))
+	bq1 := s
+	s = s.Add(hq2.Add(hq3)).Sub(hp1.Add(hq1))
+	bq2 := s
+	o2 = lpfNarrow3(ap2, bp2).IfElse(mFlat, o2)
+	o1 = lpfNarrow3(ap1, bp1).IfElse(mFlat, o1)
+	o0 = lpfNarrow3(ap0, bp0).IfElse(mFlat, o0)
+	n0 = lpfNarrow3(aq0, bq0).IfElse(mFlat, n0)
+	n1 = lpfNarrow3(aq1, bq1).IfElse(mFlat, n1)
+	n2 = lpfNarrow3(aq2, bq2).IfElse(mFlat, n2)
+	return
 }
