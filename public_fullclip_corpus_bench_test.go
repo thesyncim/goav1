@@ -62,6 +62,34 @@ func TestPublicDecoderFullClipCorpusMD5(t *testing.T) {
 	t.Logf("public decoder MD5 preflight passed: clips=%d frames=%d workers=1", len(clips), totalFrames)
 }
 
+// TestPublicDecoderFullClipCorpusMD5Workers repeats the sidecar check with
+// multi-worker pools, covering the tile-parallel and SB-row wavefront paths
+// (including pools wider than a tile has wavefront rows for). Set
+// GOAV1_PUBLIC_FULLCLIP=1 to run it.
+func TestPublicDecoderFullClipCorpusMD5Workers(t *testing.T) {
+	if os.Getenv("GOAV1_PUBLIC_FULLCLIP") != "1" {
+		t.Skip("set GOAV1_PUBLIC_FULLCLIP=1 to verify the full public decoder corpus")
+	}
+	clips := loadPublicFullClipCorpus(t)
+	for _, workers := range []int{2, 3, 4, 8} {
+		for _, clip := range clips {
+			dec, err := av1.NewDecoderFromIVF(clip.data, av1.WithWorkers(workers))
+			if err != nil {
+				t.Fatalf("%s workers=%d NewDecoderFromIVF: %v", clip.name, workers, err)
+			}
+			result, err := decodePublicFullClip(dec, true)
+			dec.Close()
+			if err != nil {
+				t.Fatalf("%s workers=%d decode: %v", clip.name, workers, err)
+			}
+			if err := comparePublicFullClipOracle(result, clip.oracle); err != nil {
+				t.Fatalf("%s workers=%d sidecar %s: %v", clip.name, workers, clip.oracle.path, err)
+			}
+		}
+		t.Logf("public decoder MD5 verified: clips=%d workers=%d", len(clips), workers)
+	}
+}
+
 // TestPublicDecoderFullClipCorpusSamples is an opt-in full-clip sampling
 // harness. It verifies every sidecar first, then collects one warmup and nine
 // whole-clip samples for each cold IVF, cold pre-parsed payload, and warm

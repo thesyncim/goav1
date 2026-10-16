@@ -1141,8 +1141,8 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *t
 	// threshold. When it does not engage, the fused single-thread path runs
 	// verbatim at zero added cost.
 	wavefrontWorkers := uint16(0)
-	if req.Predict == nil && frameWorkWavefrontEligible(*b, index) {
-		wavefrontWorkers = b.WavefrontWorkers
+	if req.Predict == nil {
+		wavefrontWorkers = frameWorkWavefrontLanes(*b, index)
 	}
 	deferReconstruction := frameWorkDeferReconstruction || wavefrontWorkers > 1
 	batchValue := *b
@@ -1227,17 +1227,19 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *t
 	return scratch.stats, nil
 }
 
-// frameWorkWavefrontEligible reports whether the deferred SB-row wavefront may
-// engage for Jobs[index]. The wavefront helps only when the pool offered idle
-// lanes (set by the pool when a single batch is dispatched) and the tile has
-// enough SB rows to keep those lanes busy past the wavefront ramp. Below the
-// threshold the fused single-thread path is the better choice (no buffering, no
-// goroutines), so this returns false and the caller leaves reconstruction
-// fused.
-func frameWorkWavefrontEligible(b FrameWorkBatch, index int) bool {
+// frameWorkWavefrontLanes returns how many lanes the deferred SB-row
+// wavefront runs for Jobs[index], or 0 to leave reconstruction fused. The
+// wavefront helps only when the pool offered idle lanes (set by the pool when a
+// single batch is dispatched) and every lane gets enough SB rows for the
+// wavefront diagonal to fill before it drains. A tile with fewer rows than the
+// offered lanes need runs on fewer lanes rather than none (a 720p frame with
+// 128x128 superblocks has six SB rows: three lanes, not a serial fallback as
+// soon as the pool exceeds three workers); below two lanes the fused
+// single-thread path is the better choice (no buffering, no goroutines).
+func frameWorkWavefrontLanes(b FrameWorkBatch, index int) uint16 {
 	workers := int(b.WavefrontWorkers)
 	if workers <= 1 {
-		return false
+		return 0
 	}
 	// Intra block copy frames reconstruct blocks by copying from an earlier
 	// already-reconstructed region of the SAME frame via a block displacement
@@ -1250,16 +1252,17 @@ func frameWorkWavefrontEligible(b FrameWorkBatch, index int) bool {
 	// intrabc frames disable CDEF, loop filter, and loop restoration, so this is
 	// the only within-frame parallelism they can take.
 	if b.FrameSize.AllowIntrabc {
-		return false
+		return 0
 	}
 	region, err := b.JobRegion(index)
 	if err != nil {
-		return false
+		return 0
 	}
-	sbRows := int(region.SBRows)
-	// Require enough SB rows per worker so the wavefront diagonal fills before
-	// it drains. Tiny frames stay on the fused path.
-	return sbRows >= frameWorkWavefrontMinSBRowsPerWorker*workers
+	lanes := min(workers, int(region.SBRows)/frameWorkWavefrontMinSBRowsPerWorker)
+	if lanes <= 1 {
+		return 0
+	}
+	return uint16(lanes)
 }
 
 // DecodeAndReconstructJobResidualsDefault derives the standard block-loop and
