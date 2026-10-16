@@ -19,6 +19,10 @@ func mc8PrepFast(out []uint16, ref frame.Plane, refX, refY, w, h, subX, subY int
 	return false
 }
 
+func mc8CopyFast(dst frame.Plane, ref frame.Plane, dstX, dstY, refX, refY, w, h int) bool {
+	return false
+}
+
 func mc8BlendAvgFast(dst frame.Plane, a, b []uint16, dstX, dstY, w, h int) bool {
 	return false
 }

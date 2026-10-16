@@ -190,6 +190,54 @@ func mc8PutFast(dst frame.Plane, ref frame.Plane, dstX, dstY, refX, refY, w, h, 
 	return true
 }
 
+// mc8CopyFast is the put copy (dav1d put_neon) for an in-plane w x h 8-bit
+// block with w a multiple of 4: vector rows instead of one memmove per row.
+// It returns false when the source leaves the plane (the clamped copy runs).
+func mc8CopyFast(dst frame.Plane, ref frame.Plane, dstX, dstY, refX, refY, w, h int) bool {
+	if w&3 != 0 || w > maxBlockSize || h <= 0 {
+		return false
+	}
+	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < dst.Width {
+		return false
+	}
+	if refX < 0 || refY < 0 || refX+w > ref.Width || refY+h > ref.Height || ref.Stride < ref.Width {
+		return false
+	}
+	dOff := dstY*dst.Stride + dstX
+	sOff := refY*ref.Stride + refX
+	if dOff+(h-1)*dst.Stride+w > len(dst.Pix) || sOff+(h-1)*ref.Stride+w > len(ref.Pix) {
+		return false
+	}
+	mc8Copy(unsafe.Pointer(&dst.Pix[dOff]), dst.Stride, unsafe.Pointer(&ref.Pix[sOff]), ref.Stride, w, h)
+	return true
+}
+
+//go:nocheckptr
+func mc8Copy(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int, w, h int) {
+	switch {
+	case w&15 == 0:
+		for r := 0; r < h; r++ {
+			s := unsafe.Add(src, r*srcStride)
+			d := unsafe.Add(dst, r*dstStride)
+			for c := 0; c < w; c += 16 {
+				archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(s, c))).StoreArray((*[16]uint8)(unsafe.Add(d, c)))
+			}
+		}
+	case w == 8:
+		for r := 0; r < h; r++ {
+			*(*uint64)(unsafe.Add(dst, r*dstStride)) = *(*uint64)(unsafe.Add(src, r*srcStride))
+		}
+	default:
+		for r := 0; r < h; r++ {
+			s := unsafe.Add(src, r*srcStride)
+			d := unsafe.Add(dst, r*dstStride)
+			for c := 0; c < w; c += 4 {
+				*(*uint32)(unsafe.Add(d, c)) = *(*uint32)(unsafe.Add(s, c))
+			}
+		}
+	}
+}
+
 // mc8PrepFast fills a w x h CONV_BUF (row stride w) with the dav1d-style prep
 // kernels. It returns false for shapes it does not cover.
 func mc8PrepFast(out []uint16, ref frame.Plane, refX, refY, w, h, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {

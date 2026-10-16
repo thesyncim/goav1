@@ -96,6 +96,23 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 	return PredictInterCompoundRefToConvBufWithScratch(buf, ref, bytesPerSample, bitDepth, refX, refY, width, height, subX, subY, filters, nil)
 }
 
+// PrepTranslation8 is the decoder's 8-bit translational compound predictor for
+// one reference: ReferenceOriginSubsampled followed by
+// PredictInterCompoundRefToConvBufWithScratch at bit depth 8, with the
+// dav1d-style prep kernels tried first.
+func PrepTranslation8(buf *CompoundConvBuf, ref frame.Plane, dstX int, dstY int, width int, height int, mv Vector, subsamplingX bool, subsamplingY bool, filters InterpFilters, scratch *CompoundConvolveScratch) error {
+	refX, refY, subX, subY, err := ReferenceOriginSubsampled(dstX, dstY, mv, subsamplingX, subsamplingY)
+	if err != nil {
+		return err
+	}
+	if buf != nil && filters.X.Valid() && filters.Y.Valid() {
+		if out, ok := compoundConvBufView(buf, width, height); ok && mc8PrepFast(out, ref, refX, refY, width, height, subX, subY, filters, scratch) {
+			return nil
+		}
+	}
+	return PredictInterCompoundRefToConvBufWithScratch(buf, ref, 1, 8, refX, refY, width, height, subX, subY, filters, scratch)
+}
+
 // PredictInterCompoundRefToConvBufWithScratch is PredictInterCompoundRefToConvBuf
 // using optional caller-owned scratch for the large 2D intermediate block.
 func PredictInterCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) error {

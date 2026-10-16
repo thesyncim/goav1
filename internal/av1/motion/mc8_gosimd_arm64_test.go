@@ -213,6 +213,35 @@ func TestMC8SixTapKinds(t *testing.T) {
 	}
 }
 
+func TestMC8CopyFastMatchesClampedCopy(t *testing.T) {
+	rng := rand.New(rand.NewSource(7))
+	const rw, rh = 200, 180
+	ref := mc8TestRef(rng, rw, rh, rw+24, 0)
+	for _, sz := range [][2]int{{4, 4}, {4, 16}, {8, 8}, {12, 4}, {16, 16}, {24, 8}, {32, 32}, {64, 64}, {128, 128}} {
+		w, h := sz[0], sz[1]
+		for iter := range 50 {
+			refX := rng.Intn(rw+2*w) - w
+			refY := rng.Intn(rh+2*h) - h
+			dw, dh := w+16, h+4
+			want := frame.Plane{Pix: make([]byte, dw*dh), Stride: dw, Width: dw, Height: dh}
+			for i := range want.Pix {
+				want.Pix[i] = byte(i * 3)
+			}
+			got := frame.Plane{Pix: slices.Clone(want.Pix), Stride: dw, Width: dw, Height: dh}
+			if err := copyPlaneBlockClamped(want, ref, 1, 7, 3, refX, refY, w, h); err != nil {
+				t.Fatal(err)
+			}
+			inside := refX >= 0 && refY >= 0 && refX+w <= rw && refY+h <= rh
+			if mc8CopyFast(got, ref, 7, 3, refX, refY, w, h) != inside {
+				t.Fatalf("%dx%d iter %d ref=%d,%d: handled=%v want %v", w, h, iter, refX, refY, !inside, inside)
+			}
+			if inside && !bytes.Equal(got.Pix, want.Pix) {
+				t.Fatalf("%dx%d iter %d ref=%d,%d: mismatch", w, h, iter, refX, refY)
+			}
+		}
+	}
+}
+
 func TestMC8BlendAvgFastMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(5))
 	for _, sz := range [][2]int{{4, 4}, {4, 8}, {4, 16}, {8, 4}, {8, 8}, {16, 8}, {16, 16}, {24, 8}, {32, 32}, {64, 64}, {128, 128}, {8, 2}} {

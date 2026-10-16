@@ -1634,6 +1634,14 @@ func (b *FrameWorkBatch) predictBlockInterCompoundPlaneWithFiltersPtr(index int,
 		!motionResult.References.Ref[1].Valid() {
 		return ErrInvalidBatch
 	}
+	var t frameWorkInterTarget
+	ok, err := b.interTarget(index, &visit.Block, plane, &t)
+	if err != nil || !ok {
+		return err
+	}
+	if handled, err := b.predictBlockInterCompoundLean(visit, plane, scratch, &t, blend, filters); handled {
+		return err
+	}
 	geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
 	if err != nil || !ok {
 		return err
@@ -1661,7 +1669,6 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *t
 		return ErrInvalidBatch
 	}
 	motionResult := visit.Prediction.InterMotion
-	bitDepth := b.Sequence.ColorConfig.BitDepth
 	warp := geom.width() >= 8 && geom.height() >= 8
 	warp0 := warp && visit.Prediction.GlobalWarpedMotionCompoundValid[0]
 	warp1 := warp && visit.Prediction.GlobalWarpedMotionCompoundValid[1]
@@ -1671,13 +1678,58 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *t
 	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv1, plane, motionResult.References.Ref[1], motionResult.MV[1], geom, filters, warp1, visit.Prediction.GlobalWarpedMotionCompound[1], &scratch.Scaled, &scratch.Compound); err != nil {
 		return err
 	}
+	return b.blendCompoundConvBufs(visit, plane, scratch, blend, geom.Output, geom.bytesPerSample(), geom.X, geom.Y, geom.width(), geom.height(), geom.SubsamplingX, geom.SubsamplingY)
+}
+
+// predictBlockInterCompoundLean is the same-size 8-bit translational compound
+// route: both references go straight to motion.PrepTranslation8 from the lean
+// target and the CONV_BUFs are blended as in predictBlockInterCompoundConvBufPtr.
+// It reports false (with nothing written) when a reference is scaled, a
+// global-warp model applies, or the stream is not 8-bit, leaving those to the
+// general geometry path.
+func (b *FrameWorkBatch) predictBlockInterCompoundLean(visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, t *frameWorkInterTarget, blend tile.CompoundBlendResult, filters motion.InterpFilters) (bool, error) {
+	if t.bps != 1 || b.Sequence.ColorConfig.BitDepth != 8 {
+		return false, nil
+	}
+	if t.width >= 8 && t.height >= 8 &&
+		(visit.Prediction.GlobalWarpedMotionCompoundValid[0] || visit.Prediction.GlobalWarpedMotionCompoundValid[1]) {
+		return false, nil
+	}
+	motionResult := &visit.Prediction.InterMotion
+	reference0, ok0 := frameWorkReferenceFromTile(motionResult.References.Ref[0])
+	reference1, ok1 := frameWorkReferenceFromTile(motionResult.References.Ref[1])
+	if !ok0 || !ok1 {
+		return false, nil
+	}
+	ref0, err := b.referencePlaneView(reference0, plane)
+	if err != nil || ref0.Width != t.codedW || ref0.Height != t.codedH {
+		return false, nil
+	}
+	ref1, err := b.referencePlaneView(reference1, plane)
+	if err != nil || ref1.Width != t.codedW || ref1.Height != t.codedH {
+		return false, nil
+	}
+	if err := motion.PrepTranslation8(&scratch.Conv0, ref0, t.x, t.y, t.width, t.height, motionResult.MV[0], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
+		return true, ErrInvalidBatch
+	}
+	if err := motion.PrepTranslation8(&scratch.Conv1, ref1, t.x, t.y, t.width, t.height, motionResult.MV[1], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
+		return true, ErrInvalidBatch
+	}
+	return true, b.blendCompoundConvBufs(visit, plane, scratch, blend, t.output, t.bps, t.x, t.y, t.width, t.height, t.ssX, t.ssY)
+}
+
+// blendCompoundConvBufs blends scratch.Conv0/Conv1 into output at (x, y) by
+// the block's compound type (distance-weighted average or A64 soft mask).
+func (b *FrameWorkBatch) blendCompoundConvBufs(visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, blend tile.CompoundBlendResult, output frame.Plane, bytesPerSample int, x int, y int, width int, height int, subsamplingX bool, subsamplingY bool) error {
+	motionResult := &visit.Prediction.InterMotion
+	bitDepth := b.Sequence.ColorConfig.BitDepth
 	switch blend.Type {
 	case tile.CompoundTypeAverage, tile.CompoundTypeDistWtd:
 		fwdOffset, bckOffset, err := b.frameWorkCompoundOffsets(motionResult.References, blend)
 		if err != nil {
 			return err
 		}
-		if err := motion.BlendCompoundAvg(geom.Output, &scratch.Conv0, &scratch.Conv1, geom.bytesPerSample(), bitDepth, geom.X, geom.Y, geom.width(), geom.height(), fwdOffset, bckOffset); err != nil {
+		if err := motion.BlendCompoundAvg(output, &scratch.Conv0, &scratch.Conv1, bytesPerSample, bitDepth, x, y, width, height, fwdOffset, bckOffset); err != nil {
 			return ErrInvalidBatch
 		}
 	case tile.CompoundTypeWedge:
@@ -1689,7 +1741,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *t
 		if err := frameWorkBuildWedgeMask(scratch.Mask[:], maskStride, visit.Block.Size, blend.WedgeIndex, blend.WedgeSign); err != nil {
 			return err
 		}
-		if err := motion.BlendCompoundMaskD16(geom.Output, &scratch.Conv0, &scratch.Conv1, geom.bytesPerSample(), bitDepth, geom.X, geom.Y, geom.width(), geom.height(), scratch.Mask[:lumaWidth*lumaHeight], maskStride, geom.SubsamplingX, geom.SubsamplingY); err != nil {
+		if err := motion.BlendCompoundMaskD16(output, &scratch.Conv0, &scratch.Conv1, bytesPerSample, bitDepth, x, y, width, height, scratch.Mask[:lumaWidth*lumaHeight], maskStride, subsamplingX, subsamplingY); err != nil {
 			return ErrInvalidBatch
 		}
 	case tile.CompoundTypeDiffWtd:
@@ -1702,11 +1754,11 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *t
 		}
 		maskStride := lumaWidth
 		if plane == FrameWorkPlaneY {
-			if err := motion.BuildDiffWtdMaskD16(scratch.Mask[:], maskStride, &scratch.Conv0, &scratch.Conv1, bitDepth, geom.width(), geom.height(), blend.MaskType == tile.DiffWtdMaskType38Inv); err != nil {
+			if err := motion.BuildDiffWtdMaskD16(scratch.Mask[:], maskStride, &scratch.Conv0, &scratch.Conv1, bitDepth, width, height, blend.MaskType == tile.DiffWtdMaskType38Inv); err != nil {
 				return ErrInvalidBatch
 			}
 		}
-		if err := motion.BlendCompoundMaskD16(geom.Output, &scratch.Conv0, &scratch.Conv1, geom.bytesPerSample(), bitDepth, geom.X, geom.Y, geom.width(), geom.height(), scratch.Mask[:lumaWidth*lumaHeight], maskStride, geom.SubsamplingX, geom.SubsamplingY); err != nil {
+		if err := motion.BlendCompoundMaskD16(output, &scratch.Conv0, &scratch.Conv1, bytesPerSample, bitDepth, x, y, width, height, scratch.Mask[:lumaWidth*lumaHeight], maskStride, subsamplingX, subsamplingY); err != nil {
 			return ErrInvalidBatch
 		}
 	default:
@@ -1982,6 +2034,24 @@ func frameWorkPredictionFilterExtentPacked(width int, height int) (uint8, bool) 
 }
 
 func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, block tile.BlockVisit, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
+	// Same-size 8-bit references take the lean target + PredictTranslation8
+	// route; scaled references, high bit depth and every error case rerun the
+	// general geometry path below, which owns their semantics.
+	var t frameWorkInterTarget
+	ok, err := b.interTarget(index, &block, plane, &t)
+	if err != nil || !ok {
+		return err
+	}
+	if reference, ok := frameWorkReferenceFromTile(refFrame); ok && t.bps == 1 && b.Sequence.ColorConfig.BitDepth == 8 {
+		if ref, err := b.referencePlaneView(reference, plane); err == nil && ref.Width == t.codedW && ref.Height == t.codedH {
+			// Select the interpolation-filter kernel from the un-clipped plane
+			// block dimensions (see predictBlockInterReferencePlaneToOutputWithGeometry).
+			if err := motion.PredictTranslation8(t.output, ref, t.x, t.y, t.writeW, t.writeH, t.filterW, t.filterH, mv, t.ssX, t.ssY, filters, frameWorkConvolveScratch(scratch)); err != nil {
+				return ErrInvalidBatch
+			}
+			return nil
+		}
+	}
 	geom, ok, err := b.blockPredictionPlaneGeometry(index, block, plane)
 	if err != nil || !ok {
 		return err
