@@ -60,6 +60,21 @@ func txBlockGeometryForSize(size transform.Size) (txBlockGeometry, error) {
 	}, nil
 }
 
+// Square geometries resolved once for hot paths.
+var (
+	txBlockGeometry8x8   = mustTxBlockGeometry(8)
+	txBlockGeometry16x16 = mustTxBlockGeometry(16)
+	txBlockGeometry32x32 = mustTxBlockGeometry(32)
+)
+
+func mustTxBlockGeometry(n int) txBlockGeometry {
+	g, err := txBlockGeometryForDimensions(n, n)
+	if err != nil {
+		panic(err)
+	}
+	return g
+}
+
 func (g txBlockGeometry) matchesDimensions(width, height int) bool {
 	return g.width == width && g.height == height
 }

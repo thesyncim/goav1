@@ -4073,6 +4073,15 @@ func (st *lossyEncodeState) prepareInterTXBTyped(srcPlane, pred []byte, predStri
 	if len(qcoeff) < cn {
 		return false
 	}
+	return st.quantizeInterTXBStats(&geo, q, qcoeff)
+}
+
+// quantizeInterTXBStats quantizes the transform coefficients in tranScratch
+// into qcoeff and accumulates the block's skip-decision RD terms (see
+// prepareInterTXB), reporting whether every level is zero.
+func (st *lossyEncodeState) quantizeInterTXBStats(geo *txBlockGeometry, q quantize.Quantizer, qcoeff []int16) bool {
+	cn := geo.coeffCount
+	tran := &st.tranScratch
 	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
 		return false
 	}
@@ -4089,6 +4098,49 @@ func (st *lossyEncodeState) prepareInterTXBTyped(srcPlane, pred []byte, predStri
 	st.rdDcode += dcode
 	st.rdRcode += rate
 	return allZero
+}
+
+// prepareInterTXBDecide is prepareInterTXB for decideInterTXBlock, whose RD
+// terms only ever feed the skip comparison rdDskip<<7 <= rate + rdDcode<<7.
+// A coefficient that quantizes to zero adds the same c*c to rdDskip and
+// rdDcode, so its terms cancel there; square 8x8, 16x16 and 32x32 DCT_DCT
+// blocks therefore take the row-skipping forward DCT, which leaves out the
+// coefficient rows that provably quantize to zero (and the whole
+// quantize/stats pass when every row does). The levels, the all-zero result
+// and the skip decision are exactly those of prepareInterTXB; only the
+// cancelling distortion terms are omitted, so no caller may read the absolute
+// rdDcode/rdDskip after it (the 8x8 TX-type trial's DCT baseline must keep
+// using prepareInterTXB).
+func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16) bool {
+	var geo *txBlockGeometry
+	switch {
+	case w == 8 && h == 8:
+		geo = &txBlockGeometry8x8
+	case w == 16 && h == 16:
+		geo = &txBlockGeometry16x16
+	case w == 32 && h == 32:
+		geo = &txBlockGeometry32x32
+	}
+	if geo == nil || len(qcoeff) < geo.coeffCount {
+		return st.prepareInterTXB(srcPlane, pred, predStride, stride, px, py, w, h, q, qcoeff)
+	}
+	residualBlockImpl(st.resScratch[:geo.sampleCount], srcPlane, py*stride+px, stride, pred, predStride, w, h)
+	dcZero, acZero := quantize.ZeroBinB(q, geo.txScale)
+	thr0, thr := min(dcZero, acZero), acZero
+	var mask uint8
+	switch w {
+	case 8:
+		mask = transform.ForwardDCT8x8RowSkip8BitTrusted((*[64]int32)(st.tranScratch[:64]), (*[64]int16)(st.resScratch[:64]), thr0, thr)
+	case 16:
+		mask = transform.ForwardDCT16x16RowSkip8BitTrusted((*[256]int32)(st.tranScratch[:256]), (*[256]int16)(st.resScratch[:256]), thr0, thr)
+	default:
+		mask = transform.ForwardDCT32x32RowSkip8BitTrusted((*[1024]int32)(st.tranScratch[:1024]), (*[1024]int16)(st.resScratch[:1024]), thr0, thr)
+	}
+	if mask == 0 {
+		clear(qcoeff[:geo.coeffCount])
+		return true
+	}
+	return st.quantizeInterTXBStats(geo, q, qcoeff)
 }
 
 func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lumaPY int, dctDcode int64) transform.Type {
