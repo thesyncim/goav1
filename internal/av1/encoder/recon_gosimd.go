@@ -27,9 +27,11 @@ func copyPredToReconBlockSIMD(reconPlane, pred []byte, predStride, stride, px, p
 	dp := unsafe.Pointer(&reconPlane[py*stride+px])
 	sp := unsafe.Pointer(&pred[0])
 	if w == 8 {
-		for range h {
+		for row := 0; row < h; row++ {
 			*(*uint64)(dp) = *(*uint64)(sp)
-			dp, sp = step(dp, stride), step(sp, predStride)
+			if row+1 < h {
+				dp, sp = step(dp, stride), step(sp, predStride)
+			}
 		}
 		return
 	}
@@ -37,11 +39,13 @@ func copyPredToReconBlockSIMD(reconPlane, pred []byte, predStride, stride, px, p
 		copyPredToReconBlockPureGo(reconPlane, pred, predStride, stride, px, py, w, h)
 		return
 	}
-	for range h {
+	for row := 0; row < h; row++ {
 		for c := 0; c < w; c += 16 {
 			load16(step(sp, c)).StoreArray((*[16]uint8)(step(dp, c)))
 		}
-		dp, sp = step(dp, stride), step(sp, predStride)
+		if row+1 < h {
+			dp, sp = step(dp, stride), step(sp, predStride)
+		}
 	}
 }
 
@@ -72,25 +76,31 @@ func addConstantResidualToPredReconBlockSIMD(reconPlane, pred []byte, predStride
 			archsimd.LoadUint8x16Array(&pair).AddSaturated(add).SubSaturated(sub).StoreArray(&pair)
 			*(*uint64)(dp) = *(*uint64)(unsafe.Pointer(&pair[0]))
 			*(*uint64)(step(dp, stride)) = *(*uint64)(unsafe.Pointer(&pair[8]))
-			dp, sp = step(dp, 2*stride), step(sp, 2*predStride)
+			if row+2 < h {
+				dp, sp = step(dp, 2*stride), step(sp, 2*predStride)
+			}
 		}
 		return
 	}
 	if r >= 0 {
 		v := archsimd.BroadcastUint8x16(uint8(r))
-		for range h {
+		for row := 0; row < h; row++ {
 			for c := 0; c < w; c += 16 {
 				load16(step(sp, c)).AddSaturated(v).StoreArray((*[16]uint8)(step(dp, c)))
 			}
-			dp, sp = step(dp, stride), step(sp, predStride)
+			if row+1 < h {
+				dp, sp = step(dp, stride), step(sp, predStride)
+			}
 		}
 		return
 	}
 	v := archsimd.BroadcastUint8x16(uint8(-r))
-	for range h {
+	for row := 0; row < h; row++ {
 		for c := 0; c < w; c += 16 {
 			load16(step(sp, c)).SubSaturated(v).StoreArray((*[16]uint8)(step(dp, c)))
 		}
-		dp, sp = step(dp, stride), step(sp, predStride)
+		if row+1 < h {
+			dp, sp = step(dp, stride), step(sp, predStride)
+		}
 	}
 }
