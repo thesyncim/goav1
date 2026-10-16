@@ -4083,6 +4083,15 @@ func (st *lossyEncodeState) quantizeInterTXBStats(geo *txBlockGeometry, q quanti
 	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
 		return false
 	}
+	return st.accumulateInterTXBStats(geo, q, qcoeff)
+}
+
+// accumulateInterTXBStats adds the skip-decision RD terms of the levels in
+// qcoeff over the coefficients in tranScratch (see prepareInterTXB) and
+// reports whether every level is zero.
+func (st *lossyEncodeState) accumulateInterTXBStats(geo *txBlockGeometry, q quantize.Quantizer, qcoeff []int16) bool {
+	cn := geo.coeffCount
+	tran := &st.tranScratch
 	// The vector statistics apply the AC step to every lane; the DC
 	// coefficient's coded distortion is then corrected with the DC step.
 	dskip, dcode, rate, allZero := rdStatsBlockImpl(tran[:cn], qcoeff[:cn], cn, q.AC, geo.txScale)
@@ -4138,7 +4147,12 @@ func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStr
 		clear(qcoeff[:geo.coeffCount])
 		return true
 	}
-	return st.quantizeInterTXBStats(geo, q, qcoeff)
+	// Quantize only the live rows; when every level is zero the block adds
+	// nothing to the skip comparison.
+	if !quantize.QuantizeBRowGroupsTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, q, geo.txScale) {
+		return true
+	}
+	return st.accumulateInterTXBStats(geo, q, qcoeff)
 }
 
 func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lumaPY int, dctDcode int64) transform.Type {
