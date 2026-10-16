@@ -150,12 +150,9 @@ type loopFilterApplier struct {
 	maskBands decoder.FrameWorkLoopFilterMaskBands
 }
 
-// lfApplyLumaBands is the fan-out of the per-direction luma apply. Bands cut
-// at superblock-row boundaries; same-direction deblock edges never overlap in
-// read or written pixels (the AV1 constraint libaom's row-mt loop filter
-// relies on: filter taps are bounded by the adjacent transform sizes), so the
-// banded application is bit-exact against the sequential pass, with the
-// vertical phase completing frame-wide before the horizontal phase starts.
+// lfApplyLumaBands is the maximum fan-out of the per-direction luma apply.
+// Vertical edges use region-row bands and horizontal edges use region-column
+// bands so each job owns disjoint output pixels, including at mask-region seams.
 const lfApplyLumaBands = 4
 
 // lfApplyMaxJobs bounds one phase's job count: luma bands plus one job per
@@ -164,7 +161,8 @@ const lfApplyMaxJobs = lfApplyLumaBands + 2
 
 // lfJob is one parked-worker task: an edge-planning band, an edge-set apply, a
 // mask level-cache populate band (maskPopulate, over MI rows [r0,r1)), or a
-// mask-scan apply band (maskApply, over mask region-rows [r0,r1) for plane/dir).
+// mask-scan apply band (maskApply, over region-rows for vertical edges or
+// region-columns for horizontal edges in [r0,r1)).
 type lfJob struct {
 	plan         bool
 	maskPopulate bool
@@ -209,7 +207,12 @@ func (a *loopFilterApplier) startWorkers() {
 				case j.maskPopulate:
 					a.errs[j.band] = a.maskBands.PopulateBand(j.r0, j.r1)
 				case j.maskApply:
-					a.applyErrs[j.slot] = a.maskBands.ApplyBand(loopfilter.Plane(j.plane), loopfilter.Edge(j.dir), j.r0, j.r1)
+					plane, dir := loopfilter.Plane(j.plane), loopfilter.Edge(j.dir)
+					if dir == loopfilter.EdgeHorizontal {
+						a.applyErrs[j.slot] = a.maskBands.ApplyBandCols(plane, dir, j.r0, j.r1)
+					} else {
+						a.applyErrs[j.slot] = a.maskBands.ApplyBand(plane, dir, j.r0, j.r1)
+					}
 				default:
 					_, a.applyErrs[j.slot] = a.jobCtx.ApplyPlannedLoopFilterPlaneEdges(j.edges, nil, loopfilter.Plane(j.plane))
 				}
@@ -522,11 +525,10 @@ func (a *loopFilterApplier) applySerialMasks(recon *SourceFrame420, lf parser.Lo
 //     the mask apply lose to the edge-list on edge-dense frames.)
 //   - Phases 1-2: the vertical then horizontal edge scan+filter. All vertical edges
 //     filter before any horizontal edge (the horizontal filter reads pixels the
-//     vertical pass modified). Within a phase, luma fans out into region-row bands
-//     (each owns whole 128px mask rows; same-direction filter taps never cross a
-//     band boundary) and each active chroma plane runs as one whole-frame job;
-//     distinct planes and disjoint bands write disjoint pixels, so every job of a
-//     phase runs concurrently.
+//     vertical pass modified). Luma uses region-row bands for vertical edges and
+//     region-column bands for horizontal edges, matching each filter's write
+//     direction. Each active chroma plane runs as one whole-frame job; planes and
+//     luma bands write disjoint pixels, so every job of a phase can run concurrently.
 func (a *loopFilterApplier) applyParallelMasks(recon *SourceFrame420, lf parser.LoopFilterParams) error {
 	if !a.masksBound {
 		return a.apply(recon, lf)
@@ -584,19 +586,26 @@ func (a *loopFilterApplier) applyParallelMasks(recon *SourceFrame420, lf parser.
 	if regionRows <= 0 {
 		return nil
 	}
-	// Partition the region-rows into at most lfApplyLumaBands luma bands.
-	lumaBands := lfApplyLumaBands
-	if lumaBands > regionRows {
-		lumaBands = regionRows
-	}
-	perBand := (regionRows + lumaBands - 1) / lumaBands
+	regionCols := bands.RegionCols()
 	for _, dir := range [2]loopfilter.Edge{loopfilter.EdgeVertical, loopfilter.EdgeHorizontal} {
+		axisCount := regionRows
+		if dir == loopfilter.EdgeHorizontal {
+			axisCount = regionCols
+		}
+		if axisCount <= 0 {
+			continue
+		}
+		// Partition the filter's non-overlapping axis into at most
+		// lfApplyLumaBands luma bands: rows for vertical edges, columns for
+		// horizontal edges.
+		lumaBands := min(lfApplyLumaBands, axisCount)
+		perBand := (axisCount + lumaBands - 1) / lumaBands
 		jobs := 0
 		slot := 0
-		for rr0 := 0; rr0 < regionRows; rr0 += perBand {
-			rr1 := min(rr0+perBand, regionRows)
+		for r0 := 0; r0 < axisCount; r0 += perBand {
+			r1 := min(r0+perBand, axisCount)
 			a.applyErrs[slot] = nil
-			a.work <- lfJob{maskApply: true, plane: int(loopfilter.PlaneY), dir: int(dir), r0: rr0, r1: rr1, slot: slot}
+			a.work <- lfJob{maskApply: true, plane: int(loopfilter.PlaneY), dir: int(dir), r0: r0, r1: r1, slot: slot}
 			slot++
 			jobs++
 		}
@@ -605,7 +614,7 @@ func (a *loopFilterApplier) applyParallelMasks(recon *SourceFrame420, lf parser.
 				continue
 			}
 			a.applyErrs[slot] = nil
-			a.work <- lfJob{maskApply: true, plane: int(p), dir: int(dir), r0: 0, r1: regionRows, slot: slot}
+			a.work <- lfJob{maskApply: true, plane: int(p), dir: int(dir), r0: 0, r1: axisCount, slot: slot}
 			slot++
 			jobs++
 		}
