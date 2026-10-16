@@ -292,6 +292,9 @@ func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	if width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
 	}
+	if mc8PutFast(dst, ref, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch) {
+		return nil
+	}
 	if !planeRegionFits(dst, 1, dstX, dstY, width, height) {
 		return ErrInvalidMotion
 	}

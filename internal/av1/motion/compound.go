@@ -112,6 +112,9 @@ func PredictInterCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref frame
 	if !ok {
 		return ErrInvalidMotion
 	}
+	if bytesPerSample == 1 && mc8PrepFast(out, ref, refX, refY, width, height, subX, subY, filters, scratch) {
+		return nil
+	}
 	bd := int(bitDepth)
 	xKernel, err := interpKernel(filters.X, width, subX)
 	if err != nil {
