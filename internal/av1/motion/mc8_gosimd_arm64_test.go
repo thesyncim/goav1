@@ -62,7 +62,7 @@ func mc8RefPut(dst frame.Plane, ref frame.Plane, dstX, dstY, refX, refY, w, h, f
 
 func TestMC8PutFastMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
-	sizes := [][2]int{{8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 4}, {8, 2}, {8, 16}, {16, 8}, {24, 8}, {64, 64}, {128, 128}, {32, 8}, {64, 16}, {16, 64}, {8, 32}}
+	sizes := [][2]int{{4, 4}, {4, 8}, {4, 16}, {4, 2}, {4, 5}, {8, 5}, {16, 7}, {8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 4}, {8, 2}, {8, 16}, {16, 8}, {24, 8}, {64, 64}, {128, 128}, {32, 8}, {64, 16}, {16, 64}, {8, 32}}
 	const rw, rh = 200, 180
 	for pattern := range 5 {
 		ref := mc8TestRef(rng, rw, rh, rw+24, pattern)
@@ -115,7 +115,7 @@ func TestMC8PutFastMatchesPureGo(t *testing.T) {
 				mc8RefPut(want, ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters)
 				if !mc8PutFast(got, ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters, &scratch) {
 					kx, ky := mc8Kind(filters.X, filterW), mc8Kind(filters.Y, filterH)
-					if (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) && w%8 == 0 {
+					if (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) && (w%8 == 0 || w == 4) {
 						t.Fatalf("mc8PutFast declined w=%d h=%d filters=%v sub=%d,%d", w, h, filters, subX, subY)
 					}
 					continue
@@ -147,7 +147,7 @@ func mc8RefPrep(out []uint16, ref frame.Plane, refX, refY, w, h, subX, subY int,
 
 func TestMC8PrepFastMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(2))
-	sizes := [][2]int{{8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 4}, {8, 16}, {16, 8}, {64, 64}, {128, 128}, {32, 8}, {16, 64}}
+	sizes := [][2]int{{4, 4}, {4, 8}, {4, 16}, {4, 2}, {4, 5}, {8, 5}, {16, 7}, {8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 4}, {8, 16}, {16, 8}, {64, 64}, {128, 128}, {32, 8}, {16, 64}}
 	const rw, rh = 200, 180
 	scratch := new(CompoundConvolveScratch)
 	for pattern := range 5 {
@@ -275,6 +275,103 @@ func TestMC8BlendAvgFastMatchesPureGo(t *testing.T) {
 			}
 			if !bytes.Equal(got.Pix, want.Pix) {
 				t.Fatalf("%dx%d iter %d: mismatch", w, h, iter)
+			}
+		}
+	}
+}
+
+// mc8RefBlendMask is BlendCompoundMaskD16's 8-bit scalar loop.
+func mc8RefBlendMask(dst frame.Plane, src0, src1 []uint16, dstX, dstY, width, height int, mask []byte, maskStride int, subX, subY bool) {
+	for y := range height {
+		for x := range width {
+			m, _ := compoundMaskSample(mask, maskStride, y, x, subX, subY)
+			i := y*width + x
+			res := (m*int(src0[i]) + (compoundBlendA64MaxAlpha-m)*int(src1[i])) >> compoundBlendA64RoundBits
+			res -= 6144
+			res = roundPowerOfTwo(res, 4)
+			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = clipPixel(res)
+		}
+	}
+}
+
+// mc8RefDiffWtd is BuildDiffWtdMaskD16's 8-bit scalar loop.
+func mc8RefDiffWtd(mask []byte, maskStride int, src0, src1 []uint16, width, height int, invert bool) {
+	for y := range height {
+		for x := range width {
+			i := y*width + x
+			diff := int(src0[i]) - int(src1[i])
+			if diff < 0 {
+				diff = -diff
+			}
+			diff = roundPowerOfTwo(diff, 4)
+			m := max(38+diff/16, 0)
+			if m > compoundBlendA64MaxAlpha {
+				m = compoundBlendA64MaxAlpha
+			}
+			if invert {
+				m = compoundBlendA64MaxAlpha - m
+			}
+			mask[y*maskStride+x] = byte(m)
+		}
+	}
+}
+
+func TestMC8MaskBlendAndDiffWtdMatchScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(8))
+	for _, sz := range [][2]int{{8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 8}, {64, 64}, {128, 128}, {8, 32}} {
+		w, h := sz[0], sz[1]
+		for iter := range 30 {
+			a := make([]uint16, w*h)
+			b := make([]uint16, w*h)
+			for i := range a {
+				switch iter % 3 {
+				case 0:
+					a[i] = uint16(2000 + rng.Intn(13400))
+					b[i] = uint16(2000 + rng.Intn(13400))
+				case 1:
+					a[i] = uint16(rng.Intn(65536))
+					b[i] = uint16(rng.Intn(65536))
+				default:
+					a[i] = uint16(6144 + 16*rng.Intn(256))
+					b[i] = uint16(6144 + 16*rng.Intn(256))
+				}
+			}
+			invert := iter&1 != 0
+			if iter%3 != 1 { // diff-wtd needs |a-b| + 8 to fit (8-bit CONV_BUF range)
+				ms := w + 8
+				want := make([]byte, ms*h+16)
+				got := slices.Clone(want)
+				mc8RefDiffWtd(want, ms, a, b, w, h, invert)
+				if !mc8DiffWtdMaskFast(got, ms, a, b, w, h, invert) {
+					t.Fatalf("diffwtd %dx%d declined", w, h)
+				}
+				if !bytes.Equal(got, want) {
+					t.Fatalf("diffwtd %dx%d iter %d mismatch", w, h, iter)
+				}
+			}
+			for _, sub := range []bool{false, true} {
+				mw, mh := w, h
+				if sub {
+					mw, mh = 2*w, 2*h
+				}
+				ms := mw + 4
+				mask := make([]byte, ms*mh+16)
+				for i := range mask {
+					mask[i] = byte(rng.Intn(65))
+				}
+				dw, dh := w+16, h+4
+				want := frame.Plane{Pix: make([]byte, dw*dh), Stride: dw, Width: dw, Height: dh}
+				for i := range want.Pix {
+					want.Pix[i] = byte(i * 11)
+				}
+				got := frame.Plane{Pix: slices.Clone(want.Pix), Stride: dw, Width: dw, Height: dh}
+				mc8RefBlendMask(want, a, b, 3, 1, w, h, mask[:ms*mh], ms, sub, sub)
+				if !mc8BlendMaskFast(got, a, b, 3, 1, w, h, mask[:ms*mh], ms, sub, sub) {
+					t.Fatalf("mask blend %dx%d sub=%v declined", w, h, sub)
+				}
+				if !bytes.Equal(got.Pix, want.Pix) {
+					t.Fatalf("mask blend %dx%d sub=%v iter %d mismatch", w, h, sub, iter)
+				}
 			}
 		}
 	}

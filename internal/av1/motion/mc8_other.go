@@ -23,6 +23,14 @@ func mc8CopyFast(dst frame.Plane, ref frame.Plane, dstX, dstY, refX, refY, w, h 
 	return false
 }
 
+func mc8BlendMaskFast(dst frame.Plane, a, b []uint16, dstX, dstY, w, h int, mask []byte, maskStride int, subX, subY bool) bool {
+	return false
+}
+
+func mc8DiffWtdMaskFast(mask []byte, maskStride int, a, b []uint16, w, h int, invert bool) bool {
+	return false
+}
+
 func mc8BlendAvgFast(dst frame.Plane, a, b []uint16, dstX, dstY, w, h int) bool {
 	return false
 }

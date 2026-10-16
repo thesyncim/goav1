@@ -123,7 +123,7 @@ func mc8Kind(f InterpFilter, blockSize int) int {
 // stride; when any tap falls outside the plane the clamped window is first
 // materialized in edge (dav1d src/recon_tmpl.c mc() emu_edge). Every kernel
 // loads 16 bytes per eight output columns, so the window must stay readable
-// for w+8 bytes from its left edge on every row. ok is false only when the
+// for max(w+8, 16) bytes from its left edge on every row. ok is false only when the
 // reference plane itself is unusable.
 func mc8Source(ref frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEdgeStride * emuEdgeRows]byte) (src unsafe.Pointer, stride int, ok bool) {
 	x0, y0, bw, bh := refX, refY, w, h
@@ -140,7 +140,7 @@ func mc8Source(ref frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEdg
 	}
 	if x0 >= 0 && y0 >= 0 && x0+bw <= ref.Width && y0+bh <= ref.Height {
 		start := y0*ref.Stride + x0
-		if start+(bh-1)*ref.Stride+w+8 <= len(ref.Pix) {
+		if start+(bh-1)*ref.Stride+max(w+8, 16) <= len(ref.Pix) {
 			return unsafe.Pointer(unsafe.SliceData(ref.Pix[start:])), ref.Stride, true
 		}
 	}
@@ -148,7 +148,7 @@ func mc8Source(ref frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEdg
 		return nil, 0, false
 	}
 	// The edge window holds 135 rows of 136 bytes; bh <= 133 and the
-	// kernels read at most w+8 <= 136 bytes per row.
+	// kernels read at most max(w+8, 16) <= 136 bytes per row.
 	emuEdge8(bw, bh, ref, x0, y0, edge[:], emuEdgeStride)
 	return unsafe.Pointer(&edge[0]), emuEdgeStride, true
 }
@@ -157,7 +157,7 @@ func mc8Source(ref frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEdg
 // dav1d-style put kernels. It returns false for shapes it does not cover, in
 // which case the caller runs the general path.
 func mc8PutFast(dst frame.Plane, ref frame.Plane, dstX, dstY, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *ConvolveScratch) bool {
-	if subX|subY == 0 || w&7 != 0 || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil {
+	if subX|subY == 0 || (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil {
 		return false
 	}
 	kx := mc8Kind(filters.X, filterW)
@@ -177,6 +177,19 @@ func mc8PutFast(dst frame.Plane, ref frame.Plane, dstX, dstY, refX, refY, w, h, 
 		return false
 	}
 	d := unsafe.Pointer(&dst.Pix[dOff])
+	if w == 4 {
+		switch {
+		case subX != 0 && subY != 0:
+			im := unsafe.Pointer(&scratch.imHBD[0])
+			mc8H6ToI32W4(src, stride, h+5, &mc8Phases[kx][subX], im)
+			mc8PutV6FromI32W4(im, h, &mc8Phases[ky][subY], d, dst.Stride)
+		case subX != 0:
+			mc8PutH6W4(src, stride, h, &mc8Phases[kx][subX], d, dst.Stride)
+		default:
+			mc8PutV6W4(src, stride, h, &mc8Phases[ky][subY], d, dst.Stride)
+		}
+		return true
+	}
 	switch {
 	case subX != 0 && subY != 0:
 		im := unsafe.Pointer(&scratch.imHBD[0])
@@ -241,7 +254,7 @@ func mc8Copy(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride in
 // mc8PrepFast fills a w x h CONV_BUF (row stride w) with the dav1d-style prep
 // kernels. It returns false for shapes it does not cover.
 func mc8PrepFast(out []uint16, ref frame.Plane, refX, refY, w, h, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {
-	if w&7 != 0 || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil || len(out) < w*h {
+	if (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil || len(out) < w*h {
 		return false
 	}
 	kx := mc8Kind(filters.X, w)
@@ -254,6 +267,21 @@ func mc8PrepFast(out []uint16, ref frame.Plane, refX, refY, w, h, subX, subY int
 		return false
 	}
 	o := unsafe.Pointer(&out[0])
+	if w == 4 {
+		switch {
+		case subX != 0 && subY != 0:
+			im := unsafe.Pointer(&scratch.im[0])
+			mc8H6ToI32W4(src, stride, h+5, &mc8Phases[kx][subX], im)
+			mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], o)
+		case subX != 0:
+			mc8PrepH6W4(src, stride, h, &mc8Phases[kx][subX], o)
+		case subY != 0:
+			mc8PrepV6W4(src, stride, h, &mc8Phases[ky][subY], o)
+		default:
+			mc8PrepCopyW4(src, stride, h, o)
+		}
+		return true
+	}
 	switch {
 	case subX != 0 && subY != 0:
 		im := unsafe.Pointer(&scratch.im[0])

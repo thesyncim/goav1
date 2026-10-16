@@ -1180,6 +1180,9 @@ func BlendCompoundMaskD16(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *Compound
 	roundBits := 2*filterBits - round0 - compoundRound1Bits
 	src0 := buf0.Data[:width*height]
 	src1 := buf1.Data[:width*height]
+	if bytesPerSample == 1 && mc8BlendMaskFast(dst, src0, src1, dstX, dstY, width, height, mask, maskStride, subX, subY) {
+		return nil
+	}
 	max := uint16(0)
 	if bytesPerSample != 1 {
 		max, _ = highBDMax(bitDepth)
@@ -1221,6 +1224,9 @@ func BuildDiffWtdMaskD16(mask []byte, maskStride int, buf0 *CompoundConvBuf, buf
 	const diffFactor = 16
 	src0 := buf0.Data[:width*height]
 	src1 := buf1.Data[:width*height]
+	if bitDepth == 8 && mc8DiffWtdMaskFast(mask, maskStride, src0, src1, width, height, invert) {
+		return nil
+	}
 	for y := range height {
 		for x := range width {
 			i := y*width + x
