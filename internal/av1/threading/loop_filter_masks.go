@@ -27,6 +27,11 @@ type FrameWorkLoopFilterMasks struct {
 
 	Layout    lfmask.Layout
 	HasChroma bool
+
+	// TileBoundariesFixed reports that FixTileBoundaries has patched this
+	// frame's tile-start columns/rows, making a multi-tile frame's masks
+	// equivalent to a single carried-context build. Bind clears it per frame.
+	TileBoundariesFixed bool
 }
 
 // FrameWorkLoopFilterMaskShape returns the 128x128 region grid dimensions for a
@@ -473,7 +478,7 @@ func (h *FrameWorkLoopFilterMasks) fillLeftChromaContext(m FrameWorkLoopFilterMa
 	stride := int(m.Stride)
 	cby := by >> ssVer
 	for cy := 0; cy < cbh4; cy++ {
-		lumaRow := ((cby+cy)<<ssVer) + ssVer
+		lumaRow := ((cby + cy) << ssVer) + ssVer
 		if lumaRow >= h.Rows {
 			lumaRow = h.Rows - 1
 		}
@@ -490,7 +495,7 @@ func (h *FrameWorkLoopFilterMasks) fillAboveChromaContext(m FrameWorkLoopFilterM
 	stride := int(m.Stride)
 	cbx := bx >> ssHor
 	for cx := 0; cx < cbw4; cx++ {
-		lumaCol := ((cbx+cx)<<ssHor) + ssHor
+		lumaCol := ((cbx + cx) << ssHor) + ssHor
 		if lumaCol >= h.Cols {
 			lumaCol = h.Cols - 1
 		}
@@ -524,4 +529,125 @@ func imin32(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// FixTileBoundaries patches decode-time masks of a multi-tile frame at every
+// tile-column and tile-row start, porting dav1d's "fix lpf strength at tile
+// col/row boundaries" (src/lf_apply_tmpl.c dav1d_loopfilter_sbrow_cols). Each
+// tile's block walk starts from reset above/left edge contexts (dav1d
+// reset_context), so the first column/row of a tile carries the current block's
+// own width class; the true class is the minimum with the neighbouring tile's
+// right/bottom edge context, which is derived here from the shared record map
+// exactly as BuildFromMap derives it. colStarts/rowStarts are tile starts in
+// MI (4x4) units; the frame edge (0) is skipped. After the fix the masks are
+// equivalent to a single carried-context build and TileBoundariesFixed is set.
+func (h *FrameWorkLoopFilterMasks) FixTileBoundaries(scratch *FrameWorkLoopFilterMaskBuildScratch, m FrameWorkLoopFilterMap, colStarts, rowStarts []int) error {
+	if !h.Valid() || scratch == nil {
+		return ErrInvalidBatch
+	}
+	if int(m.Stride) != h.Cols || int(m.Rows) != h.Rows || len(m.Records) < h.Cols*h.Rows {
+		return ErrInvalidBatch
+	}
+	ssHor, ssVer := h.Layout.SSHor, h.Layout.SSVer
+	crows := (h.Rows + ssVer) >> ssVer
+	ccols := (h.Cols + ssHor) >> ssHor
+	for _, x := range colStarts {
+		if x <= 0 || x >= h.Cols {
+			continue
+		}
+		pos := x & 31
+		for y0 := 0; y0 < h.Rows; y0 += 32 {
+			n := imin32(32, h.Rows-y0)
+			ly := scratch.ly[:n]
+			for i := range ly {
+				ly[i] = 2
+			}
+			h.fillLeftLumaContext(scratch, m, x, y0, n, ly)
+			fixLumaLane(&h.region(x, y0).Y[0][pos], ly)
+			if !h.HasChroma {
+				continue
+			}
+			cy0 := y0 >> ssVer
+			cn := imin32(32>>ssVer, crows-cy0)
+			if cn <= 0 {
+				continue
+			}
+			luv := scratch.luv[:cn]
+			for i := range luv {
+				luv[i] = 1
+			}
+			h.fillLeftChromaContext(m, x, y0, cn, ssHor, ssVer, luv)
+			fixChromaLane(&h.region(x, y0).UV[0][pos>>ssHor], luv, 16>>ssVer)
+		}
+	}
+	for _, y := range rowStarts {
+		if y <= 0 || y >= h.Rows {
+			continue
+		}
+		pos := y & 31
+		for x0 := 0; x0 < h.Cols; x0 += 32 {
+			n := imin32(32, h.Cols-x0)
+			ay := scratch.ay[:n]
+			for i := range ay {
+				ay[i] = 2
+			}
+			h.fillAboveLumaContext(scratch, m, x0, y, n, ay)
+			fixLumaLane(&h.region(x0, y).Y[1][pos], ay)
+			if !h.HasChroma {
+				continue
+			}
+			cx0 := x0 >> ssHor
+			cn := imin32(32>>ssHor, ccols-cx0)
+			if cn <= 0 {
+				continue
+			}
+			auv := scratch.auv[:cn]
+			for i := range auv {
+				auv[i] = 1
+			}
+			h.fillAboveChromaContext(m, x0, y, cn, ssHor, ssVer, auv)
+			fixChromaLane(&h.region(x0, y).UV[1][pos>>ssVer], auv, 16>>ssHor)
+		}
+	}
+	h.TileBoundariesFixed = true
+	return nil
+}
+
+// fixLumaLane re-files every unit of one luma mask position under
+// min(current class, neighbour context), dav1d's imin(idx, lpf_y[y]).
+func fixLumaLane(mk *[3][2]uint16, ctx []uint8) {
+	for i, c := range ctx {
+		sidx := i >> 4
+		bit := uint16(1) << uint(i&15)
+		idx := 0
+		if mk[2][sidx]&bit != 0 {
+			idx = 2
+		}
+		if mk[1][sidx]&bit != 0 {
+			idx++
+		}
+		mk[0][sidx] &^= bit
+		mk[1][sidx] &^= bit
+		mk[2][sidx] &^= bit
+		mk[imin32(idx, int(c))][sidx] |= bit
+	}
+}
+
+// fixChromaLane is the two-class chroma counterpart; laneBits is the lo/hi
+// lane split (16 >> subsampling along the scanned axis).
+func fixChromaLane(mk *[2][2]uint16, ctx []uint8, laneBits int) {
+	for i, c := range ctx {
+		sidx, j := 0, i
+		if i >= laneBits {
+			sidx, j = 1, i-laneBits
+		}
+		bit := uint16(1) << uint(j)
+		idx := 0
+		if mk[1][sidx]&bit != 0 {
+			idx = 1
+		}
+		mk[0][sidx] &^= bit
+		mk[1][sidx] &^= bit
+		mk[imin32(idx, int(c))][sidx] |= bit
+	}
 }
