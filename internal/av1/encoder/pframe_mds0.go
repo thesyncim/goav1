@@ -79,7 +79,7 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	meDist := int64(-1)
 	predYValid := false
 	predYMV := motion.Vector{}
-	if perr := predictInto(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, false, false, &st.scaledScratch); perr == nil {
+	if perr := st.predictLuma(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, motion.RegularFilters); perr == nil {
 		predYValid, predYMV = true, meMV
 		meSSE, meVar := realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
 		acThr := (int64(st.yQuant.AC) * int64(st.yQuant.AC) >> 6) * int64(bw*bh) / 256
@@ -181,7 +181,7 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 			}
 		}
 		if dist < 0 {
-			if perr := predictInto(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, false, false, &st.scaledScratch); perr != nil {
+			if perr := st.predictLuma(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, motion.RegularFilters); perr != nil {
 				dists[i] = -1
 				continue
 			}
@@ -223,11 +223,11 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 				case 1:
 					// The cached ME pixels were overwritten after a different
 					// candidate became best; restore them only on this path.
-					predYValid = predictInto(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, false, false, &st.scaledScratch) == nil
+					predYValid = st.predictLuma(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, motion.RegularFilters) == nil
 				case 2:
 					// A duplicate vector can reuse its measured distortion, but
 					// sadScratch may hold another candidate's pixels.
-					predYValid = predictInto(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, false, false, &st.scaledScratch) == nil
+					predYValid = st.predictLuma(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, motion.RegularFilters) == nil
 				}
 				if predYValid {
 					predYMV = cand.mv

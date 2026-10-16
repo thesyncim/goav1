@@ -622,6 +622,8 @@ type lossyEncodeState struct {
 	// prober hoists the subpel refinement's geometry validation per block;
 	// its convolve scratch is reused across blocks.
 	prober motion.LumaSubpelProber
+	// subpelCache evaluates subpel tree candidates with the fast predictor.
+	subpelCache *subpelProbeCache
 
 	// lfMap, when non-nil, collects per-MI loop-filter records for the
 	// frame-level deblocking pass (the decoder's own map type, filled with

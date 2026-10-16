@@ -148,7 +148,7 @@ func (st *lossyEncodeState) interpolationFilterSearch(src SourceFrame420, refPla
 		if isFP {
 			rd = (rs*st.rdMult + 256) >> 9
 		} else {
-			if perr := predictIntoFilters(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, motion.InterpFilters{X: f, Y: f}, st.scaledScratch.Conv()); perr != nil {
+			if perr := st.predictLuma(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, motion.InterpFilters{X: f, Y: f}); perr != nil {
 				continue
 			}
 			sse, _ := realtimeInterResidualSSEVariance(src.Y, st.sadScratch[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)

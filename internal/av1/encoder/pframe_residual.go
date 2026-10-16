@@ -2724,7 +2724,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			}
 		} else {
 			if !mds0PredictorMatchesCodedFilters(mds0PredRetained, mv, blockFilters) {
-				if err := predictIntoFilters(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, blockFilters, st.scaledScratch.Conv()); err != nil {
+				if err := st.predictLuma(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, blockFilters); err != nil {
 					return fmt.Errorf("predict luma: %w", err)
 				}
 			}
@@ -3032,7 +3032,7 @@ func (st *lossyEncodeState) classifyInterMode(src, refPlanes SourceFrame420, sta
 		}
 		if dr <= 16 && dc <= 16 {
 			mvBits := 4 + bits.Len(uint(dr)) + bits.Len(uint(dc))
-			if err := predictInto(st.sadScratch[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, nearest, false, false, &st.scaledScratch); err == nil {
+			if err := st.predictLuma(st.sadScratch[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, nearest, motion.RegularFilters); err == nil {
 				srcBlock := src.Y[lumaPY*src.YStride+lumaPX:]
 				predBlock := st.sadScratch[:bw*bh]
 				nearSAD := 0
@@ -3510,7 +3510,15 @@ func (st *lossyEncodeState) subpelRefineLibaomTree(src, refPlane []byte, stride,
 	startMV := mv
 	probe := st.sadScratch[:n*n]
 	srcBlock := src[py*stride+px:]
+	if st.subpelCache == nil {
+		st.subpelCache = new(subpelProbeCache)
+	}
+	cache := st.subpelCache
+	cache.init(frame.Plane{Pix: refPlane, Stride: stride, Width: width, Height: height}, src, stride, px, py, n, startMV)
 	exact := func(cand motion.Vector) int {
+		if sad, ok := cache.sad(motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}); ok {
+			return sad
+		}
 		switch n {
 		case 8:
 			return st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, startMV, cand)

@@ -627,7 +627,7 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 			}
 		} else {
 			if !mds0PredictorMatchesCodedFilters(mds0PredRetained, mv, blockFilters) {
-				if err := predictIntoFilters(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, blockFilters, st.scaledScratch.Conv()); err != nil {
+				if err := st.predictLuma(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, blockFilters); err != nil {
 					return fmt.Errorf("predict luma: %w", err)
 				}
 			}
