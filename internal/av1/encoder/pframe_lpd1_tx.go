@@ -196,7 +196,13 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 	useRealtimeTXPlan := videoColorIs420(st.color)
 	lpd1UseShortcuts := false
 	if useRealtimeTXPlan {
-		sse, variance := realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
+		sse, variance, ok := uint32(0), uint32(0), false
+		if st.predYKey.valid {
+			sse, variance, ok = st.predStats.lookup(st.predYKey.mv, st.predYKey.filters)
+		}
+		if !ok {
+			sse, variance = realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
+		}
 		if st.lpd1Tx.enabled {
 			lpd1UseShortcuts = st.lpd1TxDetect(variance, bw, bh)
 		}

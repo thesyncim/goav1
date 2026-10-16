@@ -624,6 +624,10 @@ type lossyEncodeState struct {
 	prober motion.LumaSubpelProber
 	// subpelCache evaluates subpel tree candidates with the fast predictor.
 	subpelCache *subpelProbeCache
+	// predStats and predYKey carry the luma prediction statistics of the
+	// current inter block between its stages (pred_stats.go).
+	predStats lumaPredStats
+	predYKey  lumaPredKey
 
 	// lfMap, when non-nil, collects per-MI loop-filter records for the
 	// frame-level deblocking pass (the decoder's own map type, filled with

@@ -139,26 +139,38 @@ func (st *lossyEncodeState) interpolationFilterSearch(src SourceFrame420, refPla
 	nLog2 := uint(bits.TrailingZeros(uint(bw * bh)))
 	best := motion.InterpEightTapRegular
 	bestRD := int64(1) << 62
+	bestSSE, bestVar, bestStats := uint32(0), uint32(0), false
 	for f := motion.InterpEightTapRegular; f <= motion.InterpMultiTapSharp; f++ {
 		rs := int64(st.interpRates.SwitchableBits(ctx0, f))
 		if ctx1 >= 0 {
 			rs += int64(st.interpRates.SwitchableBits(ctx1, f))
 		}
 		var rd int64
+		var sse, variance uint32
 		if isFP {
 			rd = (rs*st.rdMult + 256) >> 9
 		} else {
-			if perr := st.predictLuma(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, motion.InterpFilters{X: f, Y: f}); perr != nil {
-				continue
+			filters := motion.InterpFilters{X: f, Y: f}
+			var ok bool
+			// The MDS0 winner's regular-filter statistics are this exact
+			// prediction's (pred_stats.go).
+			if sse, variance, ok = st.predStats.lookup(mv, filters); !ok {
+				if perr := st.predictLuma(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, filters); perr != nil {
+					continue
+				}
+				sse, variance = realtimeInterResidualSSEVariance(src.Y, st.sadScratch[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
 			}
-			sse, _ := realtimeInterResidualSSEVariance(src.Y, st.sadScratch[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
 			rate, dist := modelRDFromSSE(nLog2, int64(st.yQuant.AC), int64(sse))
 			rd = (((rs+rate)*st.rdMult + 256) >> 9) + (dist << 7)
 		}
 		if rd < bestRD {
 			bestRD = rd
 			best = f
+			bestSSE, bestVar, bestStats = sse, variance, !isFP
 		}
+	}
+	if bestStats {
+		st.predStats.set(mv, motion.InterpFilters{X: best, Y: best}, bestSSE, bestVar)
 	}
 	return motion.InterpFilters{X: best, Y: best}
 }
