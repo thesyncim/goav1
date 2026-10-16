@@ -281,11 +281,14 @@ func (c *BlockModeContext) MarkInterFilters(size BlockSize, x4 int, y4 int, refs
 	// each covered luma sub-block's own filters (libaom's this_mbmi->
 	// interp_filters), mirroring the GridInterMotion grid written by
 	// MarkInterMotion.
-	for r := 0; r < int(dims.H4); r++ {
-		for col := 0; col < int(dims.W4); col++ {
-			c.GridInterp[y4+r][x4+col] = filters
-			c.GridInterpValid[y4+r][x4+col] = 1
-		}
+	xEnd := x4 + int(dims.W4)
+	i0 := c.GridInterp[y4][x4:xEnd]
+	v0 := c.GridInterpValid[y4][x4:xEnd]
+	fillGridRow(i0, filters)
+	fillGridRow(v0, 1)
+	for y := y4 + 1; y < y4+int(dims.H4); y++ {
+		copy(c.GridInterp[y][x4:xEnd], i0)
+		copy(c.GridInterpValid[y][x4:xEnd], v0)
 	}
 	return nil
 }
