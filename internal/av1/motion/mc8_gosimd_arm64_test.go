@@ -8,6 +8,7 @@ package motion
 
 import (
 	"bytes"
+	"fmt"
 	"math/rand"
 	"slices"
 	"testing"
@@ -277,6 +278,37 @@ func TestMC8BlendAvgFastMatchesPureGo(t *testing.T) {
 				t.Fatalf("%dx%d iter %d: mismatch", w, h, iter)
 			}
 		}
+	}
+}
+
+func TestMC8BlendAvgFastDeclinesUnsupportedWidthsWithoutWriting(t *testing.T) {
+	const h = 3
+	for _, width := range []int{12, 20, 28, 36, 0, -4} {
+		t.Run(fmt.Sprintf("width-%d", width), func(t *testing.T) {
+			count := max(width, 0) * h
+			a := make([]uint16, count)
+			b := make([]uint16, count)
+			for i := range count {
+				a[i] = uint16(6144 + 16*((i*17+3)%256))
+				b[i] = uint16(6144 + 16*((i*29+111)%256))
+			}
+
+			dstWidth := max(width, 0) + 8
+			stride := dstWidth + 5
+			pix := make([]byte, stride*(h+2))
+			for i := range pix {
+				pix[i] = 0xa5
+			}
+			got := frame.Plane{Pix: pix, Stride: stride, Width: dstWidth, Height: h + 2}
+			if mc8BlendAvgFast(&got, a, b, 3, 1, width, h) {
+				t.Fatalf("mc8BlendAvgFast accepted unsupported width %d", width)
+			}
+			for i, v := range got.Pix {
+				if v != 0xa5 {
+					t.Fatalf("declined width %d changed destination byte %d to %d", width, i, v)
+				}
+			}
+		})
 	}
 }
 

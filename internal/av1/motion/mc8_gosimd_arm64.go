@@ -804,7 +804,7 @@ func mc8PackU8(v0, v1 archsimd.Int16x8) archsimd.Uint8x16 {
 // floor division, evaluated in int16 lanes (8-bit CONV_BUF values stay below
 // 2^14, so a + b cannot wrap) and saturated to bytes.
 func mc8BlendAvgFast(dst *frame.Plane, a, b []uint16, dstX, dstY, w, h int) bool {
-	if w&3 != 0 || h <= 0 || len(a) < w*h || len(b) < w*h || (w == 4 && h&1 != 0) {
+	if w <= 0 || (w != 4 && w&7 != 0) || h <= 0 || len(a) < w*h || len(b) < w*h || (w == 4 && h&1 != 0) {
 		return false
 	}
 	off := dstY*dst.Stride + dstX

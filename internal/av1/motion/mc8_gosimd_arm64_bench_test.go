@@ -80,6 +80,9 @@ func BenchmarkMC8BlendAvg(b *testing.B) {
 	dst := frame.Plane{Pix: make([]byte, 128*128), Stride: 128, Width: 128, Height: 128}
 	for _, sz := range [][2]int{{8, 8}, {16, 16}, {32, 32}} {
 		w, h := sz[0], sz[1]
+		if !mc8BlendAvgFast(&dst, a, c, 0, 0, w, h) {
+			b.Fatalf("mc8BlendAvgFast declined benchmark size %dx%d", w, h)
+		}
 		b.Run(fmt.Sprintf("int16_%dx%d", w, h), func(b *testing.B) {
 			for b.Loop() {
 				mc8BlendAvgFast(&dst, a, c, 0, 0, w, h)
