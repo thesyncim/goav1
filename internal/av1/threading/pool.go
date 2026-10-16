@@ -1308,10 +1308,7 @@ func (p *Pool) ExecuteFrameWork(batches []Batch, jobs []tile.Job, base FrameWork
 		return ErrPoolClosed
 	}
 
-	wavefrontWorkers := uint16(0)
-	if len(batches) == 1 {
-		wavefrontWorkers = uint16(len(p.workers))
-	}
+	wavefrontWorkers := frameWorkPoolWavefrontShare(len(p.workers), len(batches))
 
 	for i := range batches {
 		batch := batches[i]
@@ -1402,12 +1399,9 @@ func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base Fra
 	// A single batch on a multi-worker pool means a single-tile frame: only one
 	// lane runs the per-tile decode while the other W-1 lanes sit idle. Offer
 	// those idle lanes to the per-tile reconstruction so it can run an SB-row
-	// wavefront. With more than one batch every lane is busy, so leave the count
-	// zero and let each batch run the fused single-thread path.
-	wavefrontWorkers := uint16(0)
-	if len(batches) == 1 {
-		wavefrontWorkers = uint16(len(p.workers))
-	}
+	// wavefront; with fewer batches than workers each batch gets an equal share
+	// (frameWorkPoolWavefrontShare).
+	wavefrontWorkers := frameWorkPoolWavefrontShare(len(p.workers), len(batches))
 
 	for i := range batches {
 		batch := batches[i]
@@ -1521,4 +1515,19 @@ func poolWorkerLoop(tasks <-chan poolTask, done chan<- workerResult) {
 		}
 		done <- workerResult{err: task.fn(task.batch, task.jobs)}
 	}
+}
+
+// frameWorkPoolWavefrontShare is the number of wavefront lanes each of batches
+// concurrently dispatched batches may use on a pool of workers: an equal share
+// of the pool, or 0 when that share is a single lane (every worker already runs
+// its own batch, so each tile keeps the fused single-thread path).
+func frameWorkPoolWavefrontShare(workers int, batches int) uint16 {
+	if batches <= 0 {
+		return 0
+	}
+	share := workers / batches
+	if share <= 1 {
+		return 0
+	}
+	return uint16(min(share, int(^uint16(0))))
 }
