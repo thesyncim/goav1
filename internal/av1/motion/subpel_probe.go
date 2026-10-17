@@ -73,14 +73,14 @@ func (p *LumaSubpelProber) Predict(dst []byte, delta Vector) bool {
 	case subX != 0:
 		xKernel := regularSubpelKernel(p.n, subX)
 		if clamped {
-			convolveX8ClampedImpl(dstPlane, p.ref, 0, 0, refX, refY, p.n, p.n, xKernel)
+			convolveX8ClampedWithScratchImpl(dstPlane, p.ref, 0, 0, refX, refY, p.n, p.n, xKernel, &p.scratch)
 			break
 		}
 		convolveX8Impl(dstPlane, p.ref, 0, 0, refX, refY, p.n, p.n, xKernel)
 	case subY != 0:
 		yKernel := regularSubpelKernel(p.n, subY)
 		if clamped {
-			convolveY8ClampedImpl(dstPlane, p.ref, 0, 0, refX, refY, p.n, p.n, yKernel)
+			convolveY8ClampedWithScratchImpl(dstPlane, p.ref, 0, 0, refX, refY, p.n, p.n, yKernel, &p.scratch)
 			break
 		}
 		convolveY8Impl(dstPlane, p.ref, 0, 0, refX, refY, p.n, p.n, yKernel)
@@ -121,14 +121,14 @@ func (p *LumaSubpelProber) Predict8x8(dst []byte, delta Vector) bool {
 	case subX != 0:
 		xKernel := subpelFilters8[subX]
 		if clamped {
-			convolveX8ClampedImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel)
+			convolveX8ClampedWithScratchImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel, &p.scratch)
 			break
 		}
 		convolveX8Impl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel)
 	case subY != 0:
 		yKernel := subpelFilters8[subY]
 		if clamped {
-			convolveY8ClampedImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, yKernel)
+			convolveY8ClampedWithScratchImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, yKernel, &p.scratch)
 			break
 		}
 		convolveY8Impl(dstPlane, p.ref, 0, 0, refX, refY, n, n, yKernel)
@@ -163,14 +163,14 @@ func (p *LumaSubpelProber) Predict16x16(dst []byte, delta Vector) bool {
 	case subX != 0:
 		xKernel := subpelFilters8[subX]
 		if clamped {
-			convolveX8ClampedImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel)
+			convolveX8ClampedWithScratchImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel, &p.scratch)
 			break
 		}
 		convolveX8Impl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel)
 	case subY != 0:
 		yKernel := subpelFilters8[subY]
 		if clamped {
-			convolveY8ClampedImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, yKernel)
+			convolveY8ClampedWithScratchImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, yKernel, &p.scratch)
 			break
 		}
 		convolveY8Impl(dstPlane, p.ref, 0, 0, refX, refY, n, n, yKernel)
@@ -205,14 +205,14 @@ func (p *LumaSubpelProber) Predict32x32(dst []byte, delta Vector) bool {
 	case subX != 0:
 		xKernel := subpelFilters8[subX]
 		if clamped {
-			convolveX8ClampedImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel)
+			convolveX8ClampedWithScratchImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel, &p.scratch)
 			break
 		}
 		convolveX8Impl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel)
 	case subY != 0:
 		yKernel := subpelFilters8[subY]
 		if clamped {
-			convolveY8ClampedImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, yKernel)
+			convolveY8ClampedWithScratchImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, yKernel, &p.scratch)
 			break
 		}
 		convolveY8Impl(dstPlane, p.ref, 0, 0, refX, refY, n, n, yKernel)
@@ -247,14 +247,14 @@ func (p *LumaSubpelProber) Predict64x64(dst []byte, delta Vector) bool {
 	case subX != 0:
 		xKernel := subpelFilters8[subX]
 		if clamped {
-			convolveX8ClampedImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel)
+			convolveX8ClampedWithScratchImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel, &p.scratch)
 			break
 		}
 		convolveX8Impl(dstPlane, p.ref, 0, 0, refX, refY, n, n, xKernel)
 	case subY != 0:
 		yKernel := subpelFilters8[subY]
 		if clamped {
-			convolveY8ClampedImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, yKernel)
+			convolveY8ClampedWithScratchImpl(dstPlane, p.ref, 0, 0, refX, refY, n, n, yKernel, &p.scratch)
 			break
 		}
 		convolveY8Impl(dstPlane, p.ref, 0, 0, refX, refY, n, n, yKernel)
