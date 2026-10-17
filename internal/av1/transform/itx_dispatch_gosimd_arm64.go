@@ -31,6 +31,7 @@ func init() {
 	inverseADST16Row4FlipImpl = inverseADST16Row4FlipSIMDAdapter
 	inverseDCT32Col2Impl = inverseDCT32Col2SIMDAdapter
 	inverseDCT32Col4Impl = inverseDCT32Col4SIMDAdapter
+	inverseDCT32Low8Col4Impl = inverseDCT32Low8Col4SIMDAdapter
 	inverseDCT32Row2Impl = inverseDCT32Row2SIMDAdapter
 	inverseDCT32Row4Impl = inverseDCT32Row4SIMDAdapter
 }
@@ -152,6 +153,16 @@ func inverseDCT32Col4SIMDAdapter(buf []int32, rowStride int, min, max int32) {
 		return
 	}
 	inverseDCT32Col4SIMD(buf, rowStride, min, max)
+}
+
+func inverseDCT32Low8Col4SIMDAdapter(buf []int32, rowStride int, min, max int32) {
+	// Replacing omitted input rows with zero also requires the column clamp to
+	// preserve zero; use the full kernel for intervals wholly above or below it.
+	if rowStride < 4 || len(buf) < (dct32Size-1)*rowStride+4 || !simdColEnvelope(min, max) || min > 0 || max < 0 {
+		inverseDCT32Col4SIMDAdapter(buf, rowStride, min, max)
+		return
+	}
+	inverseDCT32Col4Low8SIMD(buf, rowStride, min, max)
 }
 
 func inverseDCT32Row2SIMDAdapter(r0, r1 []int32, min, max int32) {

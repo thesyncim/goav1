@@ -64,6 +64,10 @@ var (
 	inverseDCT64Col4Impl = inverseDCT64Col4PureGo
 )
 
+// inverseDCT32Low8Col4Impl is nil unless the ARM64 GoSIMD backend binds the
+// flattened DCT32 kernel specialized for exact-zero input rows 8..31.
+var inverseDCT32Low8Col4Impl func(buf []int32, rowStride int, min, max int32)
+
 // inverseADST16Col4 / inverseADST16Col4Flip transform four adjacent columns of
 // the scratch buffer in place with the (flip-)ADST16 vertical transform (four
 // columns per int32 lane group, dav1d's inv_adst_4s_x16_neon shape). The

@@ -262,6 +262,18 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 		}
 	}
 
+	// Low-row DCT32 SIMD specialization. Staging and the horizontal pass have
+	// left rows rowLimit..31 at exact zero; the kernel derives every output row
+	// from rows 0..7 and preserves the full transform's clamp graph.
+	if inverseDCT32Low8Col4Impl != nil &&
+		rowLimit > 0 && rowLimit <= 8 && height == dct32Size && vertical == tx1DDCT &&
+		colMin == minInt16 && colMax == maxInt16 && width >= 4 && width%4 == 0 {
+		for col := 0; col < width; col += 4 {
+			inverseDCT32Low8Col4Impl(scratch[col:], width, colMin, colMax)
+		}
+		return false, nil
+	}
+
 	// Column pass: transform four adjacent columns per iteration when a
 	// batched kernel exists (inverse1DCol4 guarantees the result equals four
 	// independent inverse1D calls), then two, falling back to one scalar
