@@ -18,16 +18,20 @@ import (
 // skip patterns, direction-only luma passes, and chroma geometries.
 
 type cdefU8WalkCase struct {
-	name      string
-	lumaW     int // MI-aligned luma extent (multiple of 8)
-	lumaH     int
-	xDecC     int // chroma decimation (420: 1,1; 422: 1,0; 444: 0,0)
-	yDecC     int
-	mono      bool
-	params    parser.CDEFParams
-	readProb  uint32 // percent of units with Read=true
-	withSkip  bool   // attach a skip map with random SkipTransform blocks
-	noPrimary bool   // all entries use secondary-only strengths; direction grids must stay untouched
+	name        string
+	lumaW       int // MI-aligned luma extent (multiple of 8)
+	lumaH       int
+	xDecC       int // chroma decimation (420: 1,1; 422: 1,0; 444: 0,0)
+	yDecC       int
+	mono        bool
+	params      parser.CDEFParams
+	readProb    uint32  // percent of units with Read=true
+	withSkip    bool    // attach a skip map with random SkipTransform blocks
+	noPrimary   bool    // all entries use secondary-only strengths; direction grids must stay untouched
+	unitIndex   []uint8 // optional exact per-unit strength indexes, row-major
+	unitRead    []bool  // optional exact per-unit read mask, row-major
+	poisonInput bool    // poison the shared tap scratch before each U8 walk
+	lowRange    bool    // use low-range samples so secondary taps produce visible deltas
 }
 
 func cdefU8WalkCases() []cdefU8WalkCase {
@@ -52,6 +56,30 @@ func cdefU8WalkCases() []cdefU8WalkCase {
 			params: mk(4, [2]uint8{0, 5<<2 | 2}, [2]uint8{0, 3 << 2}), readProb: 100},
 		{name: "secondary_only_no_direction_420", lumaW: 192, lumaH: 128, xDecC: 1, yDecC: 1,
 			params: mk(4, [2]uint8{2, 2}, [2]uint8{0, 0}), readProb: 100, noPrimary: true},
+		{name: "secondary_only_byte_interior_420", lumaW: 192, lumaH: 192, xDecC: 1, yDecC: 1,
+			params: mk(4, [2]uint8{2, 2}), readProb: 100, noPrimary: true},
+		{name: "secondary_only_byte_interior_420_partial_crop_skip", lumaW: 200, lumaH: 200, xDecC: 1, yDecC: 1,
+			params: mk(5, [2]uint8{1, 2}), readProb: 100, withSkip: true, noPrimary: true},
+		{name: "secondary_only_byte_interior_422", lumaW: 192, lumaH: 192, xDecC: 1, yDecC: 0,
+			params: mk(4, [2]uint8{2, 2}), readProb: 100, noPrimary: true},
+		{name: "secondary_only_byte_interior_444", lumaW: 192, lumaH: 192, xDecC: 0, yDecC: 0,
+			params: mk(4, [2]uint8{2, 2}), readProb: 100, noPrimary: true},
+		{name: "secondary_only_byte_interior_mono", lumaW: 192, lumaH: 192, mono: true,
+			params: mk(4, [2]uint8{2, 0}), readProb: 100, noPrimary: true},
+		{name: "secondary_byte_mixed_skip_transitions", lumaW: 384, lumaH: 256, xDecC: 1, yDecC: 1,
+			params: mk(4, [2]uint8{2, 2}, [2]uint8{5<<2 | 2, 5<<2 | 2}, [2]uint8{4, 4}), readProb: 100, withSkip: true, poisonInput: true, lowRange: true,
+			unitIndex: []uint8{
+				0, 0, 0, 0, 0, 0,
+				0, 1, 0, 2, 0, 1,
+				0, 0, 1, 0, 2, 0,
+				0, 0, 0, 0, 0, 0,
+			},
+			unitRead: []bool{
+				true, true, true, true, true, true,
+				true, true, true, false, true, true,
+				true, true, true, true, false, true,
+				true, true, true, true, true, true,
+			}},
 		{name: "secondary_only_no_luma_direction_422", lumaW: 192, lumaH: 128, xDecC: 1, yDecC: 0,
 			params: mk(4, [2]uint8{0, 2}, [2]uint8{0, 2}), readProb: 100, noPrimary: true},
 		{name: "luma_only", lumaW: 128, lumaH: 128, xDecC: 1, yDecC: 1,
@@ -99,9 +127,23 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 		Index:  make([]uint8, unitCount),
 		Read:   make([]bool, unitCount),
 	}
+	if len(tc.unitIndex) != 0 && len(tc.unitIndex) != unitCount {
+		t.Fatalf("exact unit index map length=%d want=%d", len(tc.unitIndex), unitCount)
+	}
+	if len(tc.unitRead) != 0 && len(tc.unitRead) != unitCount {
+		t.Fatalf("exact unit read map length=%d want=%d", len(tc.unitRead), unitCount)
+	}
 	for i := range unitCount {
-		indexMap.Index[i] = uint8(rnd.next(uint32(tc.params.StrengthCount)))
-		indexMap.Read[i] = rnd.next(100) < tc.readProb
+		if len(tc.unitIndex) != 0 {
+			indexMap.Index[i] = tc.unitIndex[i]
+		} else {
+			indexMap.Index[i] = uint8(rnd.next(uint32(tc.params.StrengthCount)))
+		}
+		if len(tc.unitRead) != 0 {
+			indexMap.Read[i] = tc.unitRead[i]
+		} else {
+			indexMap.Read[i] = rnd.next(100) < tc.readProb
+		}
 	}
 
 	var skipMap *FrameWorkLoopFilterMap
@@ -166,8 +208,12 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 		height := tc.lumaH >> yDec
 		stride := width + 16 // stride padding with garbage to pin clamping
 		pix := make([]byte, stride*height)
+		pixelRange := uint32(256)
+		if tc.lowRange {
+			pixelRange = 16
+		}
 		for i := range pix {
-			pix[i] = byte(rnd.next(256))
+			pix[i] = byte(rnd.next(pixelRange))
 		}
 		processPlane := frameWorkCDEFPlaneHasFiltering(tc.params, plane)
 		if plane == 0 && !processPlane {
@@ -192,6 +238,11 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 
 		gotPlane := frame.Plane{Pix: append([]byte(nil), pix...), Stride: stride, Width: width, Height: height}
 		byteScratch := make([]uint16, stride*height)
+		if tc.poisonInput {
+			for i := range input {
+				input[i] = 0xdeed
+			}
+		}
 		gu, gb, err := frameWorkApplyCDEFPlaneRowsU8(tc.params, indexMap, skipMap, cols, rows, 0, rows, gotPlane, byteScratch, FrameWorkCDEFPostFilterU8BandBoundary{}, input, blockStorage[:], &gotDirs, &gotVars, gotDirGrid, gotVarGrid, plane, xDec, yDec, chromaFiltering, nil)
 		if err != nil {
 			t.Fatalf("u8 walk: %v", err)
@@ -241,6 +292,32 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 // allocation budget.
 func TestCDEFPlaneWalkU8IsZeroAlloc(t *testing.T) {
 	tc := cdefU8WalkCases()[0]
+	if allocs := cdefPlaneWalkU8Allocs(t, tc); allocs != 0 {
+		t.Fatalf("u8 CDEF walk allocates: %v allocs/op", allocs)
+	}
+}
+
+func TestCDEFPlaneWalkU8SecondaryByteIsZeroAlloc(t *testing.T) {
+	if !cdef.U8SecondaryOnlyByteInteriorAvailable() {
+		t.Skip("secondary-only byte kernel is unavailable in this build")
+	}
+	var tc cdefU8WalkCase
+	for _, candidate := range cdefU8WalkCases() {
+		if candidate.name == "secondary_only_byte_interior_420" {
+			tc = candidate
+			break
+		}
+	}
+	if tc.name == "" {
+		t.Fatal("secondary-only byte walk case is missing")
+	}
+	if allocs := cdefPlaneWalkU8Allocs(t, tc); allocs != 0 {
+		t.Fatalf("secondary-only byte u8 CDEF walk allocates: %v allocs/op", allocs)
+	}
+}
+
+func cdefPlaneWalkU8Allocs(t *testing.T, tc cdefU8WalkCase) float64 {
+	t.Helper()
 	rnd := &cdefU8TestRand{state: 0xa110c}
 	cols := (tc.lumaW + cdef.BlockSize - 1) / cdef.BlockSize
 	rows := (tc.lumaH + cdef.BlockSize - 1) / cdef.BlockSize
@@ -268,12 +345,9 @@ func TestCDEFPlaneWalkU8IsZeroAlloc(t *testing.T) {
 	var dirs cdef.DirectionGrid
 	var vars cdef.VarianceGrid
 	var blockStorage [cdef.NBlocks * cdef.NBlocks]cdef.BlockPosition
-	allocs := testing.AllocsPerRun(8, func() {
+	return testing.AllocsPerRun(8, func() {
 		if _, _, err := frameWorkApplyCDEFPlaneRowsU8(tc.params, indexMap, nil, cols, rows, 0, rows, plane, byteScratch, FrameWorkCDEFPostFilterU8BandBoundary{}, input, blockStorage[:], &dirs, &vars, dirGrid, varGrid, 0, 0, 0, true, nil); err != nil {
 			t.Fatal(err)
 		}
 	})
-	if allocs != 0 {
-		t.Fatalf("u8 CDEF walk allocates: %v allocs/op", allocs)
-	}
 }

@@ -1026,7 +1026,7 @@ func TestCDEFPostFilterBandedMatchesWhole(t *testing.T) {
 	const width, height = 256, 192
 	seq := testSequence()
 	seq.EnableCDEF = true
-	size := parser.FrameSize{CodedWidth: width, UpscaledWidth: width, Height: height, SuperResDenominator: 8}
+	size := parser.FrameSize{CodedWidth: uint32(width), UpscaledWidth: uint32(width), Height: uint32(height), SuperResDenominator: 8}
 	event := Event{
 		SequenceHeader: seq,
 		FrameSize:      size,
@@ -1115,18 +1115,28 @@ func TestCDEFPostFilterBandedMatchesWhole(t *testing.T) {
 }
 
 func TestCDEFPostFilterBandedU8MatchesSnapshot(t *testing.T) {
-	const width, height = 256, 512
+	runCDEFPostFilterBandedU8MatchesSnapshot(t, 256, 512, [2]uint8{9, 31}, [2]uint8{5, 17})
+}
+
+func TestCDEFPostFilterBandedU8SecondaryOnlyMatchesSnapshot(t *testing.T) {
+	// Four unit rows and columns provide a real interior unit while exercising
+	// the immutable top/bottom boundary snapshots between one-row bands.
+	runCDEFPostFilterBandedU8MatchesSnapshot(t, 256, 256, [2]uint8{2, 2}, [2]uint8{2, 2})
+}
+
+func runCDEFPostFilterBandedU8MatchesSnapshot(t *testing.T, width int, height int, yStrength [2]uint8, uvStrength [2]uint8) {
+	t.Helper()
 	seq := testSequence()
 	seq.EnableCDEF = true
-	size := parser.FrameSize{CodedWidth: width, UpscaledWidth: width, Height: height, SuperResDenominator: 8}
+	size := parser.FrameSize{CodedWidth: uint32(width), UpscaledWidth: uint32(width), Height: uint32(height), SuperResDenominator: 8}
 	event := Event{
 		SequenceHeader: seq,
 		FrameSize:      size,
 		CDEF: parser.CDEFParams{
 			Damping:       5,
 			StrengthCount: 2,
-			YStrength:     [parser.MaxCDEFStrengths]uint8{9, 31},
-			UVStrength:    [parser.MaxCDEFStrengths]uint8{5, 17},
+			YStrength:     [parser.MaxCDEFStrengths]uint8{yStrength[0], yStrength[1]},
+			UVStrength:    [parser.MaxCDEFStrengths]uint8{uvStrength[0], uvStrength[1]},
 		},
 	}
 	build := func() (*frame.Frame, FrameWorkPostFilterContext, FrameWorkCDEFPostFilterRequest) {
