@@ -16,6 +16,30 @@ type BlockCoeffScratch struct {
 	block BlockCoeffBlock
 }
 
+// CoeffDequantProvider supplies per-plane dequant factors for the private
+// synchronous reconstruction path. It is called only after a nonzero tracked
+// 2D TXB has been decoded.
+type CoeffDequantProvider interface {
+	PrepareCoeffDequantPlane(plane uint8) bool
+}
+
+// CoeffDequantTarget is job-owned scratch shared by the tracked coefficient
+// reader and its synchronous reconstruction consumer. PreparedPlanes and
+// Factors are cached by the provider for the current quantization key; Ready,
+// ActiveRows, and TxScale describe only the most recently decoded TXB.
+type CoeffDequantTarget struct {
+	Dst            []int32
+	Factors        [3][2]int32 // [Y/U/V][DC/AC]
+	BitDepth       uint8
+	Ready          bool
+	ActiveRows     int
+	TxScale        uint8
+	Provider       CoeffDequantProvider
+	PreparedPlanes uint8
+
+	decoded bool // set by the tracked reader; published as Ready after recording succeeds
+}
+
 type BlockCoeffRequest struct {
 	Transform TransformTreeRequest
 
@@ -25,6 +49,10 @@ type BlockCoeffRequest struct {
 	EOBMultiContext [3]uint8
 
 	SkipAllZeroCoeffClear bool
+
+	// Dequant is used only by the internal synchronous pointer-visitor path.
+	// Public/value visitors retain the ordinary quantized-coefficient contract.
+	Dequant *CoeffDequantTarget
 }
 
 type BlockCoeffBlock struct {
@@ -224,6 +252,7 @@ func (s *DecodeState) decodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 }
 
 func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs BlockCoeffCDFs, modeCtx *BlockModeContext, coeffCtx *CoeffEntropyContext, scratch *BlockCoeffScratch, req BlockCoeffRequest, loopVisit *BlockLoopVisit, coeffController T) (BlockCoeffResult, error) {
+	resetCoeffDequantTXB(req.Dequant)
 	if s == nil || cdfs.Transform == nil || cdfs.Coeff == nil ||
 		modeCtx == nil || coeffCtx == nil || scratch == nil || loopVisit == nil {
 		return BlockCoeffResult{}, ErrInvalidDecodeState
@@ -258,6 +287,7 @@ func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s
 		TransformSelect:       req.TransformSelect,
 		EOBMultiContext:       req.EOBMultiContext[0],
 		SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
+		dequant:               req.Dequant,
 	}
 
 	hasChroma := !req.Transform.Color.MonoChrome && tree.HasUV
@@ -276,6 +306,7 @@ func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s
 				TransformSelect:       req.TransformSelect,
 				EOBMultiContext:       req.EOBMultiContext[plane],
 				SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
+				dequant:               req.Dequant,
 			}
 			prep, err := s.prepareChromaCoefficients(coeffCtx, chromaReq[plane-1])
 			if err != nil {

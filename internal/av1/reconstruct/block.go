@@ -95,6 +95,56 @@ func ReconstructPlaneBlockVisibleTrustedAtWithGeometryScanAndNonZero(dst []byte,
 	return reconstructPlaneBlockTrustedAtWithGeometry(dst, dstStride, bytesPerSample, bitDepth, visibleWidth, visibleHeight, quantized, quantizedStride, scan, nonzero, scanSize, txScale, int32Scratch, residualScratch, cfg)
 }
 
+// ReconstructPlaneBlockVisibleTrustedAtWithDequantized is the fused decoder
+// path for a tracked 2D TXB whose entropy reader has already written
+// dequantized coefficients into int32Scratch[:scanSize.Width*scanSize.Height].
+// The ordinary quantized reconstruction path remains separate so public
+// visitors, deferred reconstruction, and unsupported coefficient modes retain
+// their established behavior and error ordering. As with the existing trusted
+// entry points, the caller validates geometry and scratch capacity and only
+// uses this for non-lossless, no-qmatrix blocks; dcOnly must match an EOB-1
+// DCT_DCT block. Those contracts are intentionally not rechecked here.
+func ReconstructPlaneBlockVisibleTrustedAtWithDequantized(dst []byte, dstStride int, bytesPerSample int, bitDepth uint8, visibleWidth int, visibleHeight int, scanSize transform.Size, activeRows int, dcOnly bool, int32Scratch []int32, residualScratch []int16, cfg Block) error {
+	width := int(cfg.Size.Width)
+	height := int(cfg.Size.Height)
+	scanWidth := int(scanSize.Width)
+	scanHeight := int(scanSize.Height)
+	blockLen := width * height
+	dequantLen := scanWidth * scanHeight
+	needed32 := blockLen
+	if cfg.Transform != transform.TypeIDTX {
+		needed32 += blockLen
+	}
+	dequant := int32Scratch[:dequantLen:dequantLen]
+	// The transform scratch always begins after the full coded block, including
+	// 64x64 TXBs whose coefficient scan is adjusted to 32x32.
+	transformScratch := int32Scratch[blockLen:needed32:needed32]
+	residual := residualScratch[:blockLen:blockLen]
+	if dcOnly {
+		sample, err := transform.InverseDCTDCOnlySampleBitDepth(dequant[0], transformScratch, cfg.Size, bitDepth)
+		if err != nil {
+			return ErrInvalidBlock
+		}
+		max := uint16((1 << bitDepth) - 1)
+		dsp.AddConstantResidualPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, sample)
+		return nil
+	}
+	if cfg.Transform == transform.TypeIDTX {
+		if err := transform.InverseBlockBitDepth(residual, width, dequant, scanHeight, transformScratch, cfg.Size, cfg.Transform, bitDepth); err != nil {
+			return ErrInvalidBlock
+		}
+		max := uint16((1 << bitDepth) - 1)
+		dsp.AddResidualPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, residual, width)
+		return nil
+	}
+	if err := transform.InverseBlockBitDepthRaw(transformScratch, dequant, scanHeight, cfg.Size, cfg.Transform, bitDepth, activeRows); err != nil {
+		return ErrInvalidBlock
+	}
+	max := uint16((1 << bitDepth) - 1)
+	dsp.AddRawTransformPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, transformScratch, width)
+	return nil
+}
+
 func reconstructPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, visibleWidth int, visibleHeight int, quantized []int16, quantizedStride int, int32Scratch []int32, residualScratch []int16, cfg Block) error {
 	int32Len, residualLen, err := ScratchLen(cfg)
 	if err != nil ||

@@ -2,6 +2,7 @@ package entropy
 
 import (
 	"errors"
+	"math/bits"
 	"testing"
 	"unsafe"
 )
@@ -372,6 +373,205 @@ func TestCursorTrustedReadsMatchReader(t *testing.T) {
 					ref2.Values(), ref3.Values(), ref4.Values(), refHi.Values(), ref7.Values())
 			}
 		})
+	}
+}
+
+func TestCursorReadBitNoRefillTrustedMatchesReaderBoundaryStates(t *testing.T) {
+	rngValues := []uint16{32768, 32771, 32772, 33023, 33024, 65411, 65412, 65535}
+	cntValues := []int16{0, 1, 2, 48, 16384}
+	lengths := []int{0, 1, 7, 8, 9}
+	patterns := []string{"zero", "ones", "mixed"}
+	if traceEntropyReads {
+		rngValues = []uint16{32768, 65412, 65535}
+		cntValues = []int16{0, 1}
+		lengths = []int{0, 9}
+	}
+	sawRefill := false
+	sawNoRefill := false
+	sawCountZero := false
+	sawCountMinusOne := false
+	sawCountMinusTwo := false
+	for _, allowUpdate := range []bool{true, false} {
+		for _, length := range lengths {
+			for _, pattern := range patterns {
+				src := make([]byte, length)
+				for i := range src {
+					switch pattern {
+					case "ones":
+						src[i] = 0xff
+					case "mixed":
+						src[i] = byte(i*73 + length*19 + 0xa5)
+					}
+				}
+				for _, rng := range rngValues {
+					split := ((rng >> 8) << 7) + ecMinProb
+					window := uint64(split) << (ecWindow - 16)
+					limit := uint64(rng) << (ecWindow - 16)
+					difValues := []uint64{0, window - 1, window, window + 1, limit - 1}
+					for _, dif := range difValues {
+						if dif >= limit {
+							continue
+						}
+						for _, cnt := range cntValues {
+							ref := NewReaderWithCDFUpdate(src, allowUpdate)
+							gotReader := NewReaderWithCDFUpdate(src, allowUpdate)
+							for _, r := range []*Reader{&ref, &gotReader} {
+								r.pos = 0
+								r.dif = dif
+								r.rng = rng
+								r.cnt = cnt
+								r.tellOffs = readerInitTellOffs
+							}
+							want := ref.ReadBitTrusted()
+							cur := gotReader.Cursor()
+							got, refill := cur.ReadBitNoRefillTrusted()
+							if got != want {
+								t.Fatalf("allow=%v len=%d pattern=%s rng=%d dif=%016x cnt=%d: bit=%d want %d", allowUpdate, length, pattern, rng, dif, cnt, got, want)
+							}
+							nextRange := split
+							if dif >= window {
+								nextRange = rng - split
+							}
+							shift := uint(16 - bits.Len16(nextRange))
+							afterCount := int32(cnt) - int32(shift)
+							expectedRefill := afterCount < 0
+							if traceEntropyReads {
+								if refill {
+									t.Fatalf("trace path reported a second refill: rng=%d dif=%016x cnt=%d", rng, dif, cnt)
+								}
+							} else if refill != expectedRefill {
+								t.Fatalf("allow=%v len=%d pattern=%s rng=%d dif=%016x cnt=%d: refill=%v want %v", allowUpdate, length, pattern, rng, dif, cnt, refill, expectedRefill)
+							}
+							if refill {
+								cur.RefillTrusted()
+							}
+							cur.CommitTo(&gotReader)
+							if gotReader.pos != ref.pos || gotReader.dif != ref.dif || gotReader.rng != ref.rng ||
+								gotReader.cnt != ref.cnt || gotReader.tellOffs != ref.tellOffs ||
+								gotReader.allowCDFUpdate != ref.allowCDFUpdate || gotReader.BitsRead() != ref.BitsRead() {
+								t.Fatalf("allow=%v len=%d pattern=%s rng=%d dif=%016x cnt=%d: got state pos=%d dif=%016x rng=%d cnt=%d tell=%d bits=%d want pos=%d dif=%016x rng=%d cnt=%d tell=%d bits=%d", allowUpdate, length, pattern, rng, dif, cnt, gotReader.pos, gotReader.dif, gotReader.rng, gotReader.cnt, gotReader.tellOffs, gotReader.BitsRead(), ref.pos, ref.dif, ref.rng, ref.cnt, ref.tellOffs, ref.BitsRead())
+							}
+							if expectedRefill {
+								sawRefill = true
+							} else {
+								sawNoRefill = true
+							}
+							if afterCount == 0 {
+								sawCountZero = true
+							}
+							if afterCount == -1 {
+								sawCountMinusOne = true
+							}
+							if afterCount == -2 {
+								sawCountMinusTwo = true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if !sawRefill || !sawNoRefill || !sawCountZero || !sawCountMinusOne || !sawCountMinusTwo {
+		t.Fatalf("coverage refill=%v noRefill=%v countZero=%v countMinusOne=%v countMinusTwo=%v", sawRefill, sawNoRefill, sawCountZero, sawCountMinusOne, sawCountMinusTwo)
+	}
+}
+
+func TestCursorReadBitNoRefillTrustedMixedStreamMatchesReader(t *testing.T) {
+	sawBulkRefill := false
+	for _, allowUpdate := range []bool{true, false} {
+		for _, length := range []int{0, 1, 7, 8, 9, 64} {
+			src := make([]byte, length)
+			for i := range src {
+				src[i] = byte(i*53 + 0x81)
+			}
+			ref := NewReaderWithCDFUpdate(src, allowUpdate)
+			gotReader := NewReaderWithCDFUpdate(src, allowUpdate)
+			oracleReader := NewReaderWithCDFUpdate(src, allowUpdate)
+			cur := gotReader.Cursor()
+			oracle := oracleReader.Cursor()
+			var refCDF, gotCDF, oracleCDF CDF
+			if err := refCDF.InitUniform(4); err != nil {
+				t.Fatal(err)
+			}
+			gotCDF, oracleCDF = refCDF, refCDF
+			var refHigh, gotHigh, oracleHigh CDF
+			if err := refHigh.InitUniform(4); err != nil {
+				t.Fatal(err)
+			}
+			gotHigh, oracleHigh = refHigh, refHigh
+			stateMatches := func(got *Reader) bool {
+				return got.pos == ref.pos && got.dif == ref.dif && got.rng == ref.rng &&
+					got.cnt == ref.cnt && got.tellOffs == ref.tellOffs &&
+					got.allowCDFUpdate == ref.allowCDFUpdate && got.BitsRead() == ref.BitsRead()
+			}
+			checkState := func(operation string, iteration int) {
+				cur.CommitTo(&gotReader)
+				oracle.CommitTo(&oracleReader)
+				if !stateMatches(&gotReader) || !stateMatches(&oracleReader) {
+					t.Fatalf("allow=%v len=%d %s[%d]: candidate or old Cursor differs from Reader state", allowUpdate, length, operation, iteration)
+				}
+				cur = gotReader.Cursor()
+				oracle = oracleReader.Cursor()
+			}
+			for i := 0; i < 96; i++ {
+				wantCDFSymbol := ref.ReadCDF4Unchecked(&refCDF)
+				oracleCDFSymbol := oracle.ReadCDF4Unchecked(&oracleCDF)
+				gotCDFSymbol := cur.ReadCDF4Unchecked(&gotCDF)
+				if gotCDFSymbol != wantCDFSymbol || oracleCDFSymbol != wantCDFSymbol || gotCDF != refCDF || oracleCDF != refCDF {
+					t.Fatalf("allow=%v len=%d cdf4[%d] candidate=%d/%v cursor=%d/%v want=%d/%v", allowUpdate, length, i, gotCDFSymbol, gotCDF.Values(), oracleCDFSymbol, oracleCDF.Values(), wantCDFSymbol, refCDF.Values())
+				}
+				checkState("cdf4", i)
+
+				wantHighToken := uint8(0)
+				oracleHighToken := uint8(0)
+				for j := 0; j < 4; j++ {
+					symbol := ref.ReadCDF4Unchecked(&refHigh)
+					oracleSymbol := oracle.ReadCDF4Unchecked(&oracleHigh)
+					wantHighToken += uint8(symbol)
+					oracleHighToken += uint8(oracleSymbol)
+					if symbol < 3 {
+						if oracleSymbol >= 3 {
+							t.Fatalf("allow=%v len=%d high-token oracle termination mismatch at %d", allowUpdate, length, i)
+						}
+						break
+					}
+					if oracleSymbol < 3 {
+						t.Fatalf("allow=%v len=%d high-token oracle terminated early at %d", allowUpdate, length, i)
+					}
+				}
+				gotHighToken := cur.ReadCDF4HighTokenUnchecked(&gotHigh)
+				if gotHighToken != wantHighToken || oracleHighToken != wantHighToken || gotHigh != refHigh || oracleHigh != refHigh {
+					t.Fatalf("allow=%v len=%d high-token[%d] candidate=%d/%v cursor=%d/%v want=%d/%v", allowUpdate, length, i, gotHighToken, gotHigh.Values(), oracleHighToken, oracleHigh.Values(), wantHighToken, refHigh.Values())
+				}
+				checkState("high-token", i)
+
+				wantBit := ref.ReadBitTrusted()
+				oracleBit := oracle.ReadBitTrustedInline()
+				beforePos := cur.pos
+				gotBit, refill := cur.ReadBitNoRefillTrusted()
+				if gotBit != wantBit || oracleBit != wantBit {
+					t.Fatalf("allow=%v len=%d bit[%d] candidate=%d cursor=%d want=%d", allowUpdate, length, i, gotBit, oracleBit, wantBit)
+				}
+				if refill {
+					cur.RefillTrusted()
+					if int(cur.pos)-int(beforePos) >= 6 {
+						sawBulkRefill = true
+					}
+				}
+				checkState("bit", i)
+
+				wantBits := ref.ReadBitsTrusted(3)
+				oracleBits := oracle.ReadBitsTrusted(3)
+				gotBits := cur.ReadBitsTrusted(3)
+				if gotBits != wantBits || oracleBits != wantBits {
+					t.Fatalf("allow=%v len=%d bits[%d] candidate=%d cursor=%d want=%d", allowUpdate, length, i, gotBits, oracleBits, wantBits)
+				}
+				checkState("bits", i)
+			}
+		}
+	}
+	if !traceEntropyReads && !sawBulkRefill {
+		t.Fatal("64-byte stream did not exercise a bulk refill")
 	}
 }
 

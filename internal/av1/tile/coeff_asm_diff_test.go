@@ -15,6 +15,7 @@ package tile
 import (
 	"math/rand"
 	"os"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -58,6 +59,7 @@ type txbDiffState struct {
 	levelDirty    [maxCoeffScanLen]int16
 	levelDirtyLen uint16
 	levelScratch  [maxCoeffScratchLen]uint8
+	levelsPacked  bool
 }
 
 func newTXBDiffState(t *testing.T, payload []byte, size TransformSize, class transform.Class, cdfs *CoeffCDFs, update bool) *txbDiffState {
@@ -70,7 +72,7 @@ func newTXBDiffState(t *testing.T, payload []byte, size TransformSize, class tra
 	s := &txbDiffState{
 		cdfs:    *cdfs,
 		sizeVal: size,
-		coeffs:  make([]int16, len(scan)),
+		coeffs:  make([]int16, maxCoeffScanLen),
 		scan:    scan,
 	}
 	// The sparse level clear consumes levelDirtyScratch; production points it
@@ -117,10 +119,99 @@ func (s *txbDiffState) decodeOne(v txbDiffVariant, class transform.Class, dcSign
 	}
 	// The production tracked path only serves Class2D with a trusted scan;
 	// everything else goes through the general body.
-	if v == txbVariantTracked {
-		return s.state.readCoefficientsTXBTracked2DWithGeo(&s.cdfs, req, s.coeffs, s.scan, s.levels, geo)
+	var result TXBDecodeResult
+	var err error
+	if v == txbVariantTracked && class == transform.Class2D {
+		result, err = s.state.readCoefficientsTXBTracked2DWithGeo(&s.cdfs, req, s.coeffs, s.scan, s.levels, geo)
+	} else {
+		result, err = s.state.readCoefficientsTXBWithGeo(&s.cdfs, req, s.coeffs, s.scan, s.levels, geo)
 	}
-	return s.state.readCoefficientsTXBWithGeo(&s.cdfs, req, s.coeffs, s.scan, s.levels, geo)
+	if err == nil && result.EOB > 1 {
+		s.levelsPacked = v == txbVariantTracked && class == transform.Class2D
+	}
+	return result, err
+}
+
+// decodeShape resets only the range reader and CDF image for this synthetic
+// transition step. Coefficient, level, and dirty-list scratch remain shared
+// across transform sizes/classes, matching the production reusable scratch.
+func (s *txbDiffState) decodeShape(t *testing.T, v txbDiffVariant, size TransformSize, class transform.Class, payload []byte, allZero bool) (TXBDecodeResult, error) {
+	t.Helper()
+	if !allZero {
+		for i := 0; i < int(s.dirtyLen); i++ {
+			s.coeffs[coeffDirtyPackedPos(s.dirty[i])] = 0
+		}
+		s.dirtyLen = 0
+	}
+
+	txSize, err := size.TransformSize()
+	if err != nil {
+		return TXBDecodeResult{}, err
+	}
+	s.scan, s.levels = coeffScanAndScratch(t, size, txSize, class)
+	s.levels = s.levelScratch[:len(s.levels)]
+	s.sizeVal = size
+	if err := s.cdfs.InitDefault(0); err != nil {
+		return TXBDecodeResult{}, err
+	}
+	if err := s.state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
+		return TXBDecodeResult{}, err
+	}
+	req := TXBDecodeRequest{
+		Size:                  size,
+		Plane:                 CoeffPlaneY,
+		Class:                 class,
+		TXBSkipContext:        0,
+		DCSignContext:         0,
+		EOBMultiContext:       0,
+		TXBSkipKnown:          !allZero,
+		TXBSkip:               false,
+		SkipAllZeroCoeffClear: true,
+		skipNonZeroCoeffClear: true,
+		coeffDirtyPos:         &s.dirty,
+		coeffDirtyLen:         &s.dirtyLen,
+		levelDirtyPos:         &s.levelDirty,
+		levelDirtyLen:         &s.levelDirtyLen,
+		levelDirtyScratch:     &s.levelScratch,
+		trustedScan:           true,
+		knownNonZero:          !allZero,
+	}
+	if allZero {
+		// Let the real skip CDF take the all-zero return while retaining both
+		// scratch backings exactly as the production caller does.
+		req.TXBSkipKnown = false
+	}
+	tracked2D := v == txbVariantTracked && class == transform.Class2D && !allZero
+	var result TXBDecodeResult
+	if tracked2D {
+		geo, ok := coeffGeoPtr(size)
+		if !ok {
+			return TXBDecodeResult{}, ErrInvalidDecodeState
+		}
+		result, err = s.state.readCoefficientsTXBTracked2DWithGeo(&s.cdfs, req, s.coeffs, s.scan, s.levels, geo)
+	} else {
+		result, err = s.state.ReadCoefficientsTXB(&s.cdfs, req, s.coeffs, s.scan, s.levels)
+	}
+	if err == nil && result.EOB > 1 {
+		s.levelsPacked = tracked2D
+		if s.levelsPacked {
+			assertTracked2DPackedLevels(t, s)
+		}
+	}
+	return result, err
+}
+
+func assertTracked2DPackedLevels(t *testing.T, s *txbDiffState) {
+	t.Helper()
+	for i := 0; i < int(s.levelDirtyLen); i++ {
+		pos := int(s.levelDirty[i])
+		if pos < 0 || pos >= len(s.levels) {
+			t.Fatalf("tracked2D level-dirty position %d outside active levels len=%d", pos, len(s.levels))
+		}
+		if !validPackedTracked2DLevel(s.levels[pos]) {
+			t.Fatalf("tracked2D level at %d is not packed: %#02x", pos, s.levels[pos])
+		}
+	}
 }
 
 // compareTXBDiffStates asserts two variants observed the identical decode
@@ -133,14 +224,20 @@ func compareTXBDiffStates(t *testing.T, tag string, txb int, va, vb txbDiffVaria
 	if (ea != nil) != (eb != nil) || (ea != nil && ea.Error() != eb.Error()) {
 		fail("error", ea, eb)
 	}
+	if a.state.Reader.State() != b.state.Reader.State() {
+		fail("reader state", a.state.Reader.State(), b.state.Reader.State())
+	}
+	if a.cdfs != b.cdfs {
+		fail("cdfs", "post-TXB CDF images differ", "")
+	}
 	if ea != nil {
 		return
 	}
 	if ra != rb {
 		fail("result", ra, rb)
 	}
-	if a.state.Reader.State() != b.state.Reader.State() {
-		fail("reader state", a.state.Reader.State(), b.state.Reader.State())
+	if rb.EOB > 1 && vb == txbVariantTracked && b.levelsPacked {
+		assertTracked2DPackedLevels(t, b)
 	}
 	for i := range a.coeffs {
 		if a.coeffs[i] != b.coeffs[i] {
@@ -163,14 +260,33 @@ func compareTXBDiffStates(t *testing.T, tag string, txb int, va, vb txbDiffVaria
 			fail("levelDirty", i, []int16{a.levelDirty[i], b.levelDirty[i]})
 		}
 	}
+	if len(a.levels) != len(b.levels) {
+		fail("levels len", len(a.levels), len(b.levels))
+	}
 	for i := range a.levels {
-		if a.levels[i] != b.levels[i] {
-			fail("levels", i, []uint8{a.levels[i], b.levels[i]})
+		av := a.levels[i]
+		bv := b.levels[i]
+		if a.levelsPacked {
+			if !validPackedTracked2DLevel(av) {
+				fail("invalid packed level", i, av)
+			}
+			av &= 0x3f
+		}
+		if b.levelsPacked {
+			if !validPackedTracked2DLevel(bv) {
+				fail("invalid packed level", i, bv)
+			}
+			bv &= 0x3f
+		}
+		if av != bv {
+			fail("levels(raw)", i, []uint8{av, bv})
 		}
 	}
-	if a.cdfs != b.cdfs {
-		fail("cdfs", "post-TXB CDF images differ", "")
-	}
+}
+
+func validPackedTracked2DLevel(packed uint8) bool {
+	raw := packed & 0x3f
+	return raw <= 15 && packed>>6 == min(raw, uint8(3))
 }
 
 // scrambleCDF re-seeds one CDF row into an adversarial-but-valid state:
@@ -488,4 +604,120 @@ func TestReadCoefficientsTXBSignGolombLockstep(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestTracked2DPackedScratchTransitions(t *testing.T) {
+	type step struct {
+		name    string
+		size    TransformSize
+		class   transform.Class
+		payload []byte
+		zero    bool
+	}
+	steps := []step{
+		{name: "large_2d", size: TransformSize32x32, class: transform.Class2D, payload: tracked2DTransitionPayload(t, TransformSize32x32, transform.Class2D, 32)},
+		{name: "small_dc", size: TransformSize4x4, class: transform.Class2D, payload: tracked2DTransitionPayload(t, TransformSize4x4, transform.Class2D, 1)},
+		{name: "horizontal", size: TransformSize8x8, class: transform.ClassHoriz, payload: tracked2DTransitionPayload(t, TransformSize8x8, transform.ClassHoriz, 4)},
+		{name: "vertical", size: TransformSize8x8, class: transform.ClassVert, payload: tracked2DTransitionPayload(t, TransformSize8x8, transform.ClassVert, 4)},
+		{name: "all_zero", size: TransformSize8x8, class: transform.Class2D, payload: tracked2DAllZeroPayload(t, TransformSize8x8), zero: true},
+		{name: "larger_2d", size: TransformSize64x64, class: transform.Class2D, payload: tracked2DTransitionPayload(t, TransformSize64x64, transform.Class2D, 64)},
+	}
+	var cdfs CoeffCDFs
+	if err := cdfs.InitDefault(0); err != nil {
+		t.Fatal(err)
+	}
+	base := newTXBDiffState(t, steps[0].payload, steps[0].size, steps[0].class, &cdfs, true)
+	tracked := newTXBDiffState(t, steps[0].payload, steps[0].size, steps[0].class, &cdfs, true)
+	for i, step := range steps {
+		t.Run(step.name, func(t *testing.T) {
+			baseBefore := slices.Clone(base.levelScratch[:])
+			trackedBefore := slices.Clone(tracked.levelScratch[:])
+			rb, eb := base.decodeShape(t, txbVariantGeoTrusted, step.size, step.class, step.payload, step.zero)
+			rt, et := tracked.decodeShape(t, txbVariantTracked, step.size, step.class, step.payload, step.zero)
+			if eb != nil || et != nil {
+				t.Fatalf("transition decode errors base=%v tracked=%v", eb, et)
+			}
+			if step.zero && (eb == nil && !rb.AllZero || et == nil && !rt.AllZero) {
+				t.Fatalf("all-zero step results base=%+v tracked=%+v", rb, rt)
+			}
+			compareTXBDiffStates(t, "shared-scratch", i, txbVariantGeoTrusted, txbVariantTracked, base, tracked, rb, rt, eb, et)
+			if rb.EOB <= 1 || rb.AllZero {
+				assertLevelScratchUnchanged(t, "base", baseBefore, base.levelScratch[:])
+				assertLevelScratchUnchanged(t, "tracked", trackedBefore, tracked.levelScratch[:])
+				return
+			}
+			assertLevelScratchTailZero(t, "base", base.levelScratch[:], len(base.levels))
+			assertLevelScratchTailZero(t, "tracked", tracked.levelScratch[:], len(tracked.levels))
+		})
+	}
+}
+
+func assertLevelScratchUnchanged(t *testing.T, name string, before, after []uint8) {
+	t.Helper()
+	if !slices.Equal(before, after) {
+		t.Fatalf("%s level scratch changed on DC-only/all-zero transition", name)
+	}
+}
+
+func assertLevelScratchTailZero(t *testing.T, name string, scratch []uint8, validLen int) {
+	t.Helper()
+	if validLen < 0 || validLen > len(scratch) {
+		t.Fatalf("%s invalid active level length %d for scratch len %d", name, validLen, len(scratch))
+	}
+	for i, v := range scratch[validLen:] {
+		if v != 0 {
+			t.Fatalf("%s level scratch canary at %d was not cleared: %#02x", name, validLen+i, v)
+		}
+	}
+}
+
+func tracked2DTransitionPayload(t *testing.T, size TransformSize, class transform.Class, minEOB uint16) []byte {
+	t.Helper()
+	txSize, err := size.TransformSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, levels := coeffScanAndScratch(t, size, txSize, class)
+	coeffs := make([]int16, len(scan))
+	for seed := 0; seed < 8192; seed++ {
+		payload := []byte{byte(seed), byte(seed*73 + 19), byte(seed ^ 0xa5), byte(seed*29 + 7), byte(seed*11 + 3), 0x5a}
+		clear(coeffs)
+		clear(levels)
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(0); err != nil {
+			t.Fatal(err)
+		}
+		var state DecodeState
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		req := TXBDecodeRequest{Size: size, Plane: CoeffPlaneY, Class: class, TXBSkipKnown: true, knownNonZero: true, trustedScan: true}
+		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, levels)
+		if err == nil && !result.AllZero && (minEOB == 1 && result.EOB == 1 || minEOB > 1 && result.EOB >= minEOB) {
+			return slices.Clone(payload)
+		}
+	}
+	t.Fatalf("could not find transition payload size=%d class=%d eob=%d", size, class, minEOB)
+	return nil
+}
+
+func tracked2DAllZeroPayload(t *testing.T, size TransformSize) []byte {
+	t.Helper()
+	for seed := 0; seed < 8192; seed++ {
+		payload := []byte{byte(seed), byte(seed*73 + 19), byte(seed ^ 0xa5), byte(seed*29 + 7), byte(seed*11 + 3), 0x5a}
+		var cdfs CoeffCDFs
+		if err := cdfs.InitDefault(0); err != nil {
+			t.Fatal(err)
+		}
+		var state DecodeState
+		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		allZero, err := state.ReadTXBSkip(&cdfs, TXBSkipRequest{Size: size, Context: 0})
+		if err == nil && allZero {
+			return slices.Clone(payload)
+		}
+	}
+	t.Fatalf("could not find all-zero transition payload size=%d", size)
+	return nil
 }

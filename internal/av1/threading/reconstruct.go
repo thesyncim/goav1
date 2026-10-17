@@ -256,6 +256,40 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometryAndNonZero(geom fr
 	return nil
 }
 
+// reconstructBlockCoeffCoreWithGeometryDequantized consumes the private fused
+// coefficient target after the tile reader has completed one tracked 2D TXB.
+// Geometry and the output window are resolved exactly as for the quantized
+// path; only the already-dequantized scratch bypasses quantizer/matrix lookup
+// and coefficient dequantization.
+func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometryDequantized(geom frameWorkBlockCoeffGeometry, block *tile.BlockCoeffBlock, activeRows int, dcOnly bool, int32Scratch []int32, residualScratch []int16) error {
+	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
+		return nil
+	}
+	if block.Result.AllZero || block.Result.EOB == 0 {
+		return nil
+	}
+	relX := int(geom.x) - int(geom.window.X)
+	relY := int(geom.y) - int(geom.window.Y)
+	visibleWidth := int(geom.visibleWidth)
+	visibleHeight := int(geom.visibleHeight)
+	bytesPerSample := int(geom.window.BytesPerSample)
+	dstStride := int(geom.window.Stride)
+	dstOffset := relY*dstStride + relX*bytesPerSample
+	rowBytes := visibleWidth * bytesPerSample
+	dstLen := (visibleHeight-1)*dstStride + rowBytes
+	dst := geom.window.Pix[dstOffset : dstOffset+dstLen : dstOffset+dstLen]
+	cfg := reconstruct.Block{
+		Size:      geom.size,
+		Transform: block.Transform,
+		EOB:       int16(block.Result.EOB),
+	}
+	if err := reconstruct.ReconstructPlaneBlockVisibleTrustedAtWithDequantized(dst, dstStride, bytesPerSample, b.Sequence.ColorConfig.BitDepth,
+		visibleWidth, visibleHeight, geom.scanSize, activeRows, dcOnly, int32Scratch, residualScratch, cfg); err != nil {
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
 func (b *FrameWorkBatch) cachedBlockQuantizer(cache *frameWorkReconQuantCache, currentQIndex uint8, segmentID uint8, qPlane quantize.Plane) (quantize.Quantizer, bool, error) {
 	idx := int(qPlane)
 	key := frameWorkReconQuantKey(currentQIndex, segmentID)

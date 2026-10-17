@@ -8,6 +8,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
@@ -1339,6 +1340,15 @@ type frameWorkTileResidualLoopController struct {
 	// scratch so the fused path pays no extra copy.
 	recon    frameWorkReconState
 	reconHot *frameWorkReconState
+
+	// dequantTarget is a stable per-controller target shared with the tracked
+	// coefficient reader. The controller is replaced wholesale for each tile
+	// job, so prepared factors cannot leak across frame quantization parameters.
+	dequantTarget        tile.CoeffDequantTarget
+	dequantKey           uint16
+	dequantKeyValid      bool
+	dequantCurrentQIndex uint8
+	dequantSegmentID     uint8
 }
 
 // frameWorkReconState is the per-goroutine reconstruction state: the CFL
@@ -1579,6 +1589,11 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile
 }
 
 func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *tile.BlockLoopVisit) (tile.BlockCoeffRequest, error) {
+	// A previous call can have returned a ready target that was never consumed
+	// because its visitor failed. Do not let it leak into this block.
+	c.dequantTarget.Ready = false
+	c.dequantTarget.ActiveRows = 0
+	c.dequantTarget.TxScale = 0
 	if visit == nil {
 		return tile.BlockCoeffRequest{}, ErrInvalidBatch
 	}
@@ -1624,7 +1639,7 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 		c.scratch.InterTX.ResetForColor(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, segmentQIndex, c.batch.Sequence.ColorConfig)
 		transformSelect = &c.scratch.InterTX
 	}
-	return tile.BlockCoeffRequest{
+	request := tile.BlockCoeffRequest{
 		Transform: tile.TransformTreeRequest{
 			Size:          visit.Block.Size,
 			X4:            visit.Block.X4,
@@ -1644,7 +1659,65 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 		TransformSelect:       transformSelect,
 		EOBMultiContext:       transforms.EOBMultiContext,
 		SkipAllZeroCoeffClear: c.userCoeffVisitor == nil,
-	}, nil
+	}
+	if target := c.bindCoeffDequantTarget(visit, lossless); target != nil {
+		request.Dequant = target
+	}
+	return request, nil
+}
+
+func (c *frameWorkTileResidualLoopController) bindCoeffDequantTarget(visit *tile.BlockLoopVisit, lossless bool) *tile.CoeffDequantTarget {
+	if visit == nil || c.deferReconstruction || c.userCoeffVisitor != nil ||
+		c.req.Predict != nil || c.req.Transforms != nil || !c.req.UseDefaultTransforms ||
+		visit.Prefix.SkipTransform || lossless || c.batch.Quantization.UsingQMatrix {
+		return nil
+	}
+	key := frameWorkReconQuantKey(c.state.CurrentBaseQIdx, visit.SegmentID)
+	if !c.dequantKeyValid || c.dequantKey != key {
+		c.dequantTarget.Factors = [3][2]int32{}
+		c.dequantTarget.PreparedPlanes = 0
+		c.dequantKey = key
+		c.dequantKeyValid = true
+		c.dequantCurrentQIndex = c.state.CurrentBaseQIdx
+		c.dequantSegmentID = visit.SegmentID
+	}
+	recon := c.reconHot
+	if recon == nil {
+		return nil
+	}
+	if c.dequantTarget.Provider == nil {
+		// The controller and its reconstruction state are job-owned and stable;
+		// this exact slice is consumed by the synchronous reconstruction path.
+		c.dequantTarget.Dst = recon.int32Scratch
+		c.dequantTarget.BitDepth = c.batch.Sequence.ColorConfig.BitDepth
+		c.dequantTarget.Provider = c
+	}
+	return &c.dequantTarget
+}
+
+// PrepareCoeffDequantPlane lazily resolves one plane's dequant factors only
+// after the tracked 2D reader has found a nonzero EOB. Returning false leaves
+// the reader on its ordinary quantized fallback and does not move quantizer
+// errors ahead of the original reconstruction point.
+func (c *frameWorkTileResidualLoopController) PrepareCoeffDequantPlane(plane uint8) bool {
+	if c == nil || plane > uint8(quantize.PlaneV) || !c.dequantKeyValid {
+		return false
+	}
+	bit := uint8(1 << plane)
+	if c.dequantTarget.PreparedPlanes&bit != 0 {
+		return true
+	}
+	recon := c.reconHot
+	if recon == nil {
+		return false
+	}
+	q, lossless, err := c.batch.cachedBlockQuantizerTrusted(&recon.quant, c.dequantCurrentQIndex, c.dequantSegmentID, quantize.Plane(plane))
+	if err != nil || lossless || q.DC <= 0 || q.AC <= 0 {
+		return false
+	}
+	c.dequantTarget.Factors[plane] = [2]int32{q.DC, q.AC}
+	c.dequantTarget.PreparedPlanes |= bit
+	return true
 }
 
 func (c *frameWorkTileResidualLoopController) selectBlockTransforms(visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
@@ -1669,10 +1742,26 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLo
 }
 
 func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock) error {
+	dequantReady := c.dequantTarget.Ready
+	activeRows := c.dequantTarget.ActiveRows
+	// The tile target only becomes ready for EOB-1 DCT_DCT when its DC-only
+	// constant-add shortcut is valid. The transform type in this callback is
+	// the selected per-TXB type, so ADST EOB-1 remains on the full clear path.
+	dcOnly := block != nil && block.Transform == transform.TypeDCTDCT && block.Result.EOB == 1
+	c.dequantTarget.Ready = false
+	c.dequantTarget.ActiveRows = 0
 	if visit == nil || block == nil {
 		return ErrInvalidBatch
 	}
-	if c.deferReconstruction {
+	if dequantReady && !c.deferReconstruction && c.userCoeffVisitor == nil && c.req.Predict == nil {
+		recon := c.reconHot
+		if recon == nil {
+			recon = c.fusedReconState()
+		}
+		if err := recon.reconstructTXBWithDequantized(visit, block, activeRows, dcOnly); err != nil {
+			return err
+		}
+	} else if c.deferReconstruction {
 		if err := c.bufferReconTXB(visit, block, c.state.CurrentBaseQIdx); err != nil {
 			return err
 		}
@@ -2016,6 +2105,59 @@ func (s *frameWorkReconState) reconstructTXBWithNonZero(visit *tile.BlockLoopVis
 		return nil
 	}
 	if err := s.batch.reconstructBlockCoeffCoreTrustedWithNonZero(s.index, visit.Block, block, nonzero, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
+		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
+	}
+	s.stats.Residuals++
+	return nil
+}
+
+// reconstructTXBWithDequantized is used only by the synchronous, private
+// tracked-2D route. It deliberately keeps the existing quantized path intact;
+// the predictor/CfL ordering is mirrored here and the narrow reconstruction
+// tail consumes the dequantized scratch before the next TXB reuses it.
+func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, activeRows int, dcOnly bool) error {
+	if s.predict == nil && s.predictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra && !visit.Prefix.SkipTransform {
+		if block.Plane != 0 && frameWorkVisitUsesCFLPtr(visit) {
+			if err := s.predictDeferredCFLChroma(); err != nil {
+				return err
+			}
+		} else {
+			if err := s.batch.predictBlockIntraCoeffPtr(s.index, visit, block, &s.predictionScratch.Intra); err != nil {
+				return fmt.Errorf("predict intra txb plane=%d visit=%+v block=%+v luma_mode=%d angle_delta=%d: %w", block.Plane, visit.Block, block.Block, visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta, err)
+			}
+			s.stats.Predictions++
+		}
+	} else if block.Plane != 0 {
+		if err := s.predictDeferredCFLChroma(); err != nil {
+			return err
+		}
+	}
+	if block.Result.AllZero || block.Result.EOB == 0 {
+		s.stats.Residuals++
+		return nil
+	}
+
+	var geom frameWorkBlockCoeffGeometry
+	var err error
+	if block.Plane == 0 && s.lumaReady {
+		c := s.batch.geomCache
+		geom, err = s.batch.blockCoeffGeometryLumaKnown(c.region, c.plane[FrameWorkPlaneY], visit.Block, block)
+	} else if block.Plane != 0 && s.chromaReady {
+		plane := FrameWorkPlaneU
+		if block.Plane == 2 {
+			plane = FrameWorkPlaneV
+		} else if block.Plane != 1 {
+			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, ErrInvalidBatch)
+		}
+		c := s.batch.geomCache
+		geom, err = s.batch.blockCoeffGeometryChromaKnown(c.region, c.plane[plane], plane, visit.Block, block)
+	} else {
+		geom, err = s.batch.blockCoeffGeometry(s.index, visit.Block, block)
+	}
+	if err != nil {
+		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
+	}
+	if err := s.batch.reconstructBlockCoeffCoreWithGeometryDequantized(geom, block, activeRows, dcOnly, s.int32Scratch, s.residualScratch); err != nil {
 		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 	}
 	s.stats.Residuals++

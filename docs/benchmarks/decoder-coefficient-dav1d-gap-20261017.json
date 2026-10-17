@@ -1,0 +1,2565 @@
+{
+  "aggregate_summary_ms": {
+    "combined_per_clip_18_sample_medians": {
+      "dav1d": 568.8645,
+      "go_cold_ivf": 1601.0247695,
+      "go_cold_preparsed_payload": 1613.05231,
+      "go_time_reduction_needed_to_match_dav1d": 0.6446872585377574,
+      "go_warm_reset": 1577.853063,
+      "ratio": 2.814422009986561
+    },
+    "round1": {
+      "dav1d": 566.803,
+      "go_cold_ivf": 1583.186374,
+      "ratio": 2.793186299296228
+    },
+    "round2": {
+      "dav1d": 571.219,
+      "go_cold_ivf": 1631.417751,
+      "ratio": 2.8560285127070353
+    },
+    "round_variation": {
+      "dav1d_round2_vs_round1_percent": 0.7791066737473207,
+      "go_round2_vs_round1_percent": 3.0464749944847602,
+      "interpretation": "descriptive run-order drift only; samples are clustered and no paired-significance claim is made"
+    }
+  },
+  "combined_18_sample_per_clip_medians": {
+    "p144_inter_q20": {
+      "dav1d_median_18_ns": 10740500.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 39519583.0,
+      "go_cold_preparsed_payload_median_18_ns": 38929125.0,
+      "go_over_dav1d_ratio": 3.679491923094828,
+      "go_warm_reset_median_18_ns": 36700104.5,
+      "ivf_sha256": "a9026dba753d88a075faddbfa22c8c5164769c861d22bc32e0aaa4e4e2ff4c75",
+      "sidecar_md5": "c81031f90d8b64d4b7600891360a2586"
+    },
+    "p144_inter_q32": {
+      "dav1d_median_18_ns": 8117500.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 29994812.5,
+      "go_cold_preparsed_payload_median_18_ns": 29908771.0,
+      "go_over_dav1d_ratio": 3.6950800739143825,
+      "go_warm_reset_median_18_ns": 27994916.5,
+      "ivf_sha256": "0a168d67dd055aa8269e41138cc498626b73f27b304488c39107ea003b5370b5",
+      "sidecar_md5": "52c881fcbd960e61b494bdb0212a598f"
+    },
+    "p144_inter_q55": {
+      "dav1d_median_18_ns": 4151000.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 17617584.0,
+      "go_cold_preparsed_payload_median_18_ns": 17408166.5,
+      "go_over_dav1d_ratio": 4.244178270296314,
+      "go_warm_reset_median_18_ns": 15464771.5,
+      "ivf_sha256": "b24510df279ff5a318ccb7cd59246e8a1bfe2b1ef1e3257f0a126e38dc9cb766",
+      "sidecar_md5": "2cddf86f5d4a1bd8f401b4f5549dd3d0"
+    },
+    "p144_intra_q32": {
+      "dav1d_median_18_ns": 9676500.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 31780812.5,
+      "go_cold_preparsed_payload_median_18_ns": 31347125.0,
+      "go_over_dav1d_ratio": 3.284329302950447,
+      "go_warm_reset_median_18_ns": 29289729.0,
+      "ivf_sha256": "a0b1e577c5d847016059594cacdd26e9294d4eb9356fe7e3324dbd652bf6832b",
+      "sidecar_md5": "5bb05de29c9f528b43a1279a55fb2229"
+    },
+    "p288_inter_q20": {
+      "dav1d_median_18_ns": 24728000.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 78358792.0,
+      "go_cold_preparsed_payload_median_18_ns": 78492354.0,
+      "go_over_dav1d_ratio": 3.168828534454869,
+      "go_warm_reset_median_18_ns": 77272687.5,
+      "ivf_sha256": "1eaf9aafb240a701b40d2ab9a7ff578864b6fd6c01d617899a2ad5ed422de0de",
+      "sidecar_md5": "50b72e533bf48e4c23a3b16b8aa17e46"
+    },
+    "p288_inter_q32": {
+      "dav1d_median_18_ns": 20184500.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 65549291.5,
+      "go_cold_preparsed_payload_median_18_ns": 65423791.0,
+      "go_over_dav1d_ratio": 3.247506329113924,
+      "go_warm_reset_median_18_ns": 64634604.0,
+      "ivf_sha256": "e1846e58d78e7e8da87698ff14952e7e6c1bee42f5cb97f058df36040e31ec83",
+      "sidecar_md5": "30ba24a8463f4593ad8683d5beedbf3f"
+    },
+    "p288_inter_q55": {
+      "dav1d_median_18_ns": 13255500.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 41372646.0,
+      "go_cold_preparsed_payload_median_18_ns": 41876187.0,
+      "go_over_dav1d_ratio": 3.1211682697748104,
+      "go_warm_reset_median_18_ns": 39772375.0,
+      "ivf_sha256": "9d066d6183e96e534c5eb1cffd0da69c7bc76ce17d1b052b272e18990ffdace9",
+      "sidecar_md5": "b2e2ee1fb5f8638e3a1446621c198e59"
+    },
+    "p288_intra_q32": {
+      "dav1d_median_18_ns": 24401500.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 68594916.5,
+      "go_cold_preparsed_payload_median_18_ns": 67737041.0,
+      "go_over_dav1d_ratio": 2.811094256500625,
+      "go_warm_reset_median_18_ns": 64518958.5,
+      "ivf_sha256": "1cdd87c2407c6023198ea9df1231f212b3d5dc3621ba4236eedf59059f22cc53",
+      "sidecar_md5": "c435e5fbb36afcaf9973874e56a831b4"
+    },
+    "p360_inter_q20": {
+      "dav1d_median_18_ns": 34194000.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 105724020.5,
+      "go_cold_preparsed_payload_median_18_ns": 105964479.0,
+      "go_over_dav1d_ratio": 3.09188806515763,
+      "go_warm_reset_median_18_ns": 104292854.0,
+      "ivf_sha256": "8da210a3315c50a71c462455717409b32cef2f9221b87019011a80dd3a2923e6",
+      "sidecar_md5": "98f748a039be59c3dafd5317887e2c67"
+    },
+    "p360_inter_q32": {
+      "dav1d_median_18_ns": 28116000.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 87371791.5,
+      "go_cold_preparsed_payload_median_18_ns": 87104270.5,
+      "go_over_dav1d_ratio": 3.107547001707213,
+      "go_warm_reset_median_18_ns": 84946541.5,
+      "ivf_sha256": "31f6e229d0648905cccbc433dd56200c0b83953f908f989618b65898fa064853",
+      "sidecar_md5": "0631d86d4d5f49d2b0b6b7505e0138ac"
+    },
+    "p360_inter_q32_10bit": {
+      "dav1d_median_18_ns": 30617500.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 108318083.5,
+      "go_cold_preparsed_payload_median_18_ns": 110808978.5,
+      "go_over_dav1d_ratio": 3.5377834081815953,
+      "go_warm_reset_median_18_ns": 108887875.0,
+      "ivf_sha256": "76874e6b262fcc6e43e603be02ed75e843cacf6593c19e150037daebe568cff2",
+      "sidecar_md5": "8506fce82608a83814eaa5e3067c0d9b"
+    },
+    "p360_inter_q32_2tiles": {
+      "dav1d_median_18_ns": 28442000.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 89093583.0,
+      "go_cold_preparsed_payload_median_18_ns": 87866396.5,
+      "go_over_dav1d_ratio": 3.132465473595387,
+      "go_warm_reset_median_18_ns": 85728896.0,
+      "ivf_sha256": "0943b27adb836f61d8b6d7a736337ec4c2cedd133b338b63663a1d520a2beca1",
+      "sidecar_md5": "f55ab93cdcee03fd89e7122b89bc920a"
+    },
+    "p360_inter_q55": {
+      "dav1d_median_18_ns": 19536000.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 56737958.0,
+      "go_cold_preparsed_payload_median_18_ns": 56827646.0,
+      "go_over_dav1d_ratio": 2.9042771294021295,
+      "go_warm_reset_median_18_ns": 54733791.5,
+      "ivf_sha256": "77c25f364bda730336bc0d0e75d5dabf321509028cdad9c835ee1bc77989912f",
+      "sidecar_md5": "cf3b847ee616726b3b048a4c955ae4da"
+    },
+    "p360_intra_q32": {
+      "dav1d_median_18_ns": 30991000.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 82601479.0,
+      "go_cold_preparsed_payload_median_18_ns": 82445729.0,
+      "go_over_dav1d_ratio": 2.665337646413475,
+      "go_warm_reset_median_18_ns": 78998104.5,
+      "ivf_sha256": "4ab04bd48bd4f09a834a23e8bb4a46c28d7264789af72574712ec3c2760a7698",
+      "sidecar_md5": "5cef0494bd9549db6534ffa4504c0d94"
+    },
+    "p720_inter_q20": {
+      "dav1d_median_18_ns": 90396000.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 222902541.5,
+      "go_cold_preparsed_payload_median_18_ns": 234647812.5,
+      "go_over_dav1d_ratio": 2.4658451867339264,
+      "go_warm_reset_median_18_ns": 233309333.0,
+      "ivf_sha256": "e968cb160683445484ae3f5549689e2949e30ff5006850ae4be19f7e8440372f",
+      "sidecar_md5": "1369c36ec029c222e0e7ee2cf95f5b98"
+    },
+    "p720_inter_q32": {
+      "dav1d_median_18_ns": 72350000.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 179494979.0,
+      "go_cold_preparsed_payload_median_18_ns": 179895500.0,
+      "go_over_dav1d_ratio": 2.480925763648929,
+      "go_warm_reset_median_18_ns": 178496979.0,
+      "ivf_sha256": "3c42bdbc27d55077a0b4afd0e94bea7b720c7e6e160921dca2885315b6a13383",
+      "sidecar_md5": "47854463914ca952c4b0c63b8e7edd45"
+    },
+    "p720_inter_q32_2tiles": {
+      "dav1d_median_18_ns": 72361500.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 180209541.5,
+      "go_cold_preparsed_payload_median_18_ns": 180676812.5,
+      "go_over_dav1d_ratio": 2.4904063832286507,
+      "go_warm_reset_median_18_ns": 179569791.5,
+      "ivf_sha256": "bbe0af93cbb26a4724320a2cde2c9f48d22080426fa6bb566dfed40b0c14dd35",
+      "sidecar_md5": "44564e87c87399fbf13b92c6dd39052d"
+    },
+    "p720_inter_q55": {
+      "dav1d_median_18_ns": 46605500.0,
+      "frames": 48,
+      "go_cold_ivf_median_18_ns": 115782354.0,
+      "go_cold_preparsed_payload_median_18_ns": 115692125.0,
+      "go_over_dav1d_ratio": 2.484306659085301,
+      "go_warm_reset_median_18_ns": 113240750.5,
+      "ivf_sha256": "0d42622afdb46b55ddfefb272eeb7579f5eb85be81e211384aaaecf6cd8b3696",
+      "sidecar_md5": "28554980fa3adb9f0c0cbc345d62eee6"
+    }
+  },
+  "combined_sum_per_clip_medians_ns": {
+    "dav1d": 568864500.0,
+    "go_cold_ivf": 1601024769.5,
+    "go_cold_preparsed_payload": 1613052310.0,
+    "go_warm_reset": 1577853063.0
+  },
+  "commands": {
+    "dav1d": "direct invocation of the supplied immutable C API helper with --corpus; no build wrapper is used",
+    "go_test": "project-env <frozen test binary> -test.run '^TestPublicDecoderFullClipCorpusSamples$' -test.count=1 -test.v with GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100",
+    "recorded_commands_path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/commands.txt"
+  },
+  "corpus_and_boundary": {
+    "boundary_difference": "Go NewDecoderFromIVF copies packet payloads during its timed constructor; C wraps preloaded packet slices without copying them. C still parses IVF frame records in the timed interval. This is a public-API comparison, not an isolated language/SIMD comparison.",
+    "clip_count": 18,
+    "clip_identity": {
+      "p144_inter_q20": {
+        "ivf_sha256": "a9026dba753d88a075faddbfa22c8c5164769c861d22bc32e0aaa4e4e2ff4c75",
+        "sidecar_md5": "c81031f90d8b64d4b7600891360a2586"
+      },
+      "p144_inter_q32": {
+        "ivf_sha256": "0a168d67dd055aa8269e41138cc498626b73f27b304488c39107ea003b5370b5",
+        "sidecar_md5": "52c881fcbd960e61b494bdb0212a598f"
+      },
+      "p144_inter_q55": {
+        "ivf_sha256": "b24510df279ff5a318ccb7cd59246e8a1bfe2b1ef1e3257f0a126e38dc9cb766",
+        "sidecar_md5": "2cddf86f5d4a1bd8f401b4f5549dd3d0"
+      },
+      "p144_intra_q32": {
+        "ivf_sha256": "a0b1e577c5d847016059594cacdd26e9294d4eb9356fe7e3324dbd652bf6832b",
+        "sidecar_md5": "5bb05de29c9f528b43a1279a55fb2229"
+      },
+      "p288_inter_q20": {
+        "ivf_sha256": "1eaf9aafb240a701b40d2ab9a7ff578864b6fd6c01d617899a2ad5ed422de0de",
+        "sidecar_md5": "50b72e533bf48e4c23a3b16b8aa17e46"
+      },
+      "p288_inter_q32": {
+        "ivf_sha256": "e1846e58d78e7e8da87698ff14952e7e6c1bee42f5cb97f058df36040e31ec83",
+        "sidecar_md5": "30ba24a8463f4593ad8683d5beedbf3f"
+      },
+      "p288_inter_q55": {
+        "ivf_sha256": "9d066d6183e96e534c5eb1cffd0da69c7bc76ce17d1b052b272e18990ffdace9",
+        "sidecar_md5": "b2e2ee1fb5f8638e3a1446621c198e59"
+      },
+      "p288_intra_q32": {
+        "ivf_sha256": "1cdd87c2407c6023198ea9df1231f212b3d5dc3621ba4236eedf59059f22cc53",
+        "sidecar_md5": "c435e5fbb36afcaf9973874e56a831b4"
+      },
+      "p360_inter_q20": {
+        "ivf_sha256": "8da210a3315c50a71c462455717409b32cef2f9221b87019011a80dd3a2923e6",
+        "sidecar_md5": "98f748a039be59c3dafd5317887e2c67"
+      },
+      "p360_inter_q32": {
+        "ivf_sha256": "31f6e229d0648905cccbc433dd56200c0b83953f908f989618b65898fa064853",
+        "sidecar_md5": "0631d86d4d5f49d2b0b6b7505e0138ac"
+      },
+      "p360_inter_q32_10bit": {
+        "ivf_sha256": "76874e6b262fcc6e43e603be02ed75e843cacf6593c19e150037daebe568cff2",
+        "sidecar_md5": "8506fce82608a83814eaa5e3067c0d9b"
+      },
+      "p360_inter_q32_2tiles": {
+        "ivf_sha256": "0943b27adb836f61d8b6d7a736337ec4c2cedd133b338b63663a1d520a2beca1",
+        "sidecar_md5": "f55ab93cdcee03fd89e7122b89bc920a"
+      },
+      "p360_inter_q55": {
+        "ivf_sha256": "77c25f364bda730336bc0d0e75d5dabf321509028cdad9c835ee1bc77989912f",
+        "sidecar_md5": "cf3b847ee616726b3b048a4c955ae4da"
+      },
+      "p360_intra_q32": {
+        "ivf_sha256": "4ab04bd48bd4f09a834a23e8bb4a46c28d7264789af72574712ec3c2760a7698",
+        "sidecar_md5": "5cef0494bd9549db6534ffa4504c0d94"
+      },
+      "p720_inter_q20": {
+        "ivf_sha256": "e968cb160683445484ae3f5549689e2949e30ff5006850ae4be19f7e8440372f",
+        "sidecar_md5": "1369c36ec029c222e0e7ee2cf95f5b98"
+      },
+      "p720_inter_q32": {
+        "ivf_sha256": "3c42bdbc27d55077a0b4afd0e94bea7b720c7e6e160921dca2885315b6a13383",
+        "sidecar_md5": "47854463914ca952c4b0c63b8e7edd45"
+      },
+      "p720_inter_q32_2tiles": {
+        "ivf_sha256": "bbe0af93cbb26a4724320a2cde2c9f48d22080426fa6bb566dfed40b0c14dd35",
+        "sidecar_md5": "44564e87c87399fbf13b92c6dd39052d"
+      },
+      "p720_inter_q55": {
+        "ivf_sha256": "0d42622afdb46b55ddfefb272eeb7579f5eb85be81e211384aaaecf6cd8b3696",
+        "sidecar_md5": "28554980fa3adb9f0c0cbc345d62eee6"
+      }
+    },
+    "corpus_dir": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+    "corpus_label": "exploratory_unmanifested",
+    "corpus_provenance": "not provided to this helper; do not infer source provenance",
+    "dav1d_timed_operation": "parse IVF frame records from preloaded whole-file bytes + fresh single-thread dav1d context + wrap packet slices without copying + decode/drain/observe visible frame edges + unref pictures + close context",
+    "excluded_from_both": "file reads, input SHA-256, sidecar reads, full-output MD5 preflight and result comparison; process startup",
+    "frames_per_clip": 48,
+    "go_diagnostics": "cold NewDecoder(payloads) excludes IVF parsing and packet copying; warm Reset+DecodeNext reuses one decoder. Both are reported but excluded from the primary ratio.",
+    "go_timed_operation": "NewDecoderFromIVF(preloaded IVF bytes) + all DecodeNext calls + touch first/last visible byte of Y/U/V and dimensions + Close; timed constructor parses IVF and copies packet payloads",
+    "visible_frames": 864
+  },
+  "environment": {
+    "c_compiler": "clang 21.0.0 (clang-2100.1.1.101)",
+    "c_compiler_flags": "-O3 -DNDEBUG -std=c11 -Wall -Wextra -Wconversion",
+    "capture_path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/environment.txt",
+    "dav1d_binary_provenance_verified": false,
+    "dav1d_reference_commit_embedded_by_harness": "b546257f770768b2c88258c533da38b91a06f737",
+    "dav1d_runtime_version": "1.5.3",
+    "dav1d_source_checkout_commit_verified": false,
+    "decoder_threads": 1,
+    "go_experiment": "simd",
+    "gogc": 100,
+    "gomaxprocs": 1
+  },
+  "fractional_go_time_reduction_needed_to_match_dav1d": 0.6446872585377574,
+  "measurement_date": "2026-10-17",
+  "post_run_source_tree_observation": {
+    "capture_phase": "after both benchmark rounds",
+    "git_common_dir_observed_after_run": "/Users/thesyncim/GolandProjects/goav1/.git",
+    "git_head_observed_after_run": "cf11a8d2fa8c140adb48a9a2a556972f90e419ba",
+    "interpretation": "post-run worktree observation only; not proof of which source built the supplied Go binary",
+    "source_file_sha256_observed_after_run": {
+      "public_fullclip_corpus_bench_test.go": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59",
+      "scripts/run_c_api_decode_bench.sh": "1e26d647ed3a0da039c7c2bc5fdde139546810426b552caf758ace1feb238e65",
+      "tools/c_api_decode_bench/bench.c": "8384c1478c14d87cff1b31742226a09a3fb1d2013a120c5c5fa1cbe017a2246d",
+      "tools/c_api_decode_bench/build.sh": "06e7bc67792936b943c240b164857952b7eadb14bd30d3cfcb19d657377887d5"
+    },
+    "source_root_path": "/Users/thesyncim/.codex/worktrees/goav1-pr8-quality/goav1"
+  },
+  "primary_combined_go_over_dav1d_ratio": 2.814422009986561,
+  "publication_note": {
+    "boundary": "Go NewDecoderFromIVF copies packet payloads during the timed constructor. The C helper wraps packet slices from preloaded IVF bytes without copying; it still parses IVF frame records in the timed interval.",
+    "comparison_caveat": "Do not compare the 2.814x ratio with the older 2.823x snapshot as a causal performance change.",
+    "primary_result": "Combined 18-sample-per-clip medians: Go cold IVF 1601.0247695 ms; installed dav1d 1.5.3 568.8645 ms; ratio 2.814422009986561x.",
+    "provenance": "The installed dav1d runtime is version 1.5.3 and its dylib hash is recorded; installed binary/source-build provenance is unverified.",
+    "round_ratios": [
+      2.793186299296228,
+      2.8560285127070353
+    ],
+    "validation": "Both rounds match MD5 sidecars for all 18 clips / 864 visible frames."
+  },
+  "raw_artifacts": {
+    "commands": {
+      "path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/commands.txt",
+      "sha256": "dfd98759b8abab35ca4cb2dc1d2fa4da2d945bcff392a3fb81611e0b5f980f25"
+    },
+    "environment": {
+      "path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/environment.txt",
+      "sha256": "9ac1f7173a88561cebea4168aec93d7d61bb2fcc7fd747bb75aee2c716e99dd4"
+    },
+    "round1_dav1d": {
+      "path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/round1-dav1d.jsonl",
+      "sha256": "222a174609721dd2bdefcf460a5ea59406ce9c4b79f2cd16736bb2fc0513c519"
+    },
+    "round1_go": {
+      "path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/round1-go.log",
+      "sha256": "fb129d458387882fe75977b05a09733d3e3c3c85923b3458db963b40d731b56d"
+    },
+    "round2_dav1d": {
+      "path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/round2-dav1d.jsonl",
+      "sha256": "7103e4d24915fb1f6a22696bad02b22bf18dd0703f3493a38d52a543c9adba78"
+    },
+    "round2_go": {
+      "path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/round2-go.log",
+      "sha256": "9eebc022666fc842408cf7c3a7759a5729c7a25a053b11345508a581123a7150"
+    },
+    "run_events": {
+      "path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/run-events.tsv",
+      "sha256": "c218b1d4f1b5300a0e465b8f625171ed331819f1afb61bb16cb5da48edd974d7"
+    }
+  },
+  "rounds": [
+    {
+      "backend_order": [
+        "goav1",
+        "dav1d"
+      ],
+      "per_clip": {
+        "p144_inter_q20": {
+          "dav1d_median_ns": 10709000,
+          "dav1d_samples_ns": [
+            10893000,
+            10721000,
+            11020000,
+            10967000,
+            10630000,
+            10608000,
+            10511000,
+            10709000,
+            10528000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 37909541,
+          "go_cold_ivf_samples_ns": [
+            38119208,
+            39381791,
+            38368208,
+            37440417,
+            38334667,
+            37909541,
+            37497541,
+            37801333,
+            37735875
+          ],
+          "go_cold_preparsed_payload_median_ns": 38306833,
+          "go_cold_preparsed_payload_samples_ns": [
+            38525500,
+            38930583,
+            38306833,
+            37461833,
+            37931041,
+            37903167,
+            38769333,
+            37542625,
+            38601584
+          ],
+          "go_observation_sink": 1583296745050530,
+          "go_over_dav1d_ratio": 3.539970211971239,
+          "go_warm_reset_median_ns": 35761833,
+          "go_warm_reset_samples_ns": [
+            36329167,
+            35911500,
+            35706708,
+            36112333,
+            36663834,
+            35761833,
+            35713916,
+            35698417,
+            35554209
+          ],
+          "ivf_sha256": "a9026dba753d88a075faddbfa22c8c5164769c861d22bc32e0aaa4e4e2ff4c75",
+          "sidecar_md5": "c81031f90d8b64d4b7600891360a2586"
+        },
+        "p144_inter_q32": {
+          "dav1d_median_ns": 8113000,
+          "dav1d_samples_ns": [
+            7803000,
+            8005000,
+            8146000,
+            8133000,
+            8113000,
+            8226000,
+            8191000,
+            7907000,
+            7764000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 29414458,
+          "go_cold_ivf_samples_ns": [
+            29226334,
+            29453875,
+            29559292,
+            29716542,
+            29414458,
+            29582000,
+            29285083,
+            29381792,
+            28930417
+          ],
+          "go_cold_preparsed_payload_median_ns": 29535833,
+          "go_cold_preparsed_payload_samples_ns": [
+            29348625,
+            29774167,
+            29535833,
+            29844625,
+            28949083,
+            29157042,
+            29404042,
+            29892084,
+            29925458
+          ],
+          "go_observation_sink": 1583296745054160,
+          "go_over_dav1d_ratio": 3.625595710587945,
+          "go_warm_reset_median_ns": 27395333,
+          "go_warm_reset_samples_ns": [
+            27997958,
+            27341000,
+            27991875,
+            27395333,
+            27909750,
+            27809750,
+            27085458,
+            27238334,
+            27030333
+          ],
+          "ivf_sha256": "0a168d67dd055aa8269e41138cc498626b73f27b304488c39107ea003b5370b5",
+          "sidecar_md5": "52c881fcbd960e61b494bdb0212a598f"
+        },
+        "p144_inter_q55": {
+          "dav1d_median_ns": 4245000,
+          "dav1d_samples_ns": [
+            4197000,
+            4245000,
+            4395000,
+            4354000,
+            4215000,
+            4105000,
+            3852000,
+            4318000,
+            4344000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 17344375,
+          "go_cold_ivf_samples_ns": [
+            17344375,
+            16945750,
+            16804458,
+            17422250,
+            16944083,
+            17450459,
+            17397625,
+            17382334,
+            17294167
+          ],
+          "go_cold_preparsed_payload_median_ns": 16968750,
+          "go_cold_preparsed_payload_samples_ns": [
+            16695042,
+            17152500,
+            17385125,
+            16958458,
+            17431208,
+            18410417,
+            16899125,
+            16968750,
+            16900666
+          ],
+          "go_observation_sink": 1583296745052090,
+          "go_over_dav1d_ratio": 4.085836277974087,
+          "go_warm_reset_median_ns": 15117833,
+          "go_warm_reset_samples_ns": [
+            15462959,
+            15178125,
+            15226708,
+            15100250,
+            15457000,
+            14731041,
+            14764000,
+            15045250,
+            15117833
+          ],
+          "ivf_sha256": "b24510df279ff5a318ccb7cd59246e8a1bfe2b1ef1e3257f0a126e38dc9cb766",
+          "sidecar_md5": "2cddf86f5d4a1bd8f401b4f5549dd3d0"
+        },
+        "p144_intra_q32": {
+          "dav1d_median_ns": 9572000,
+          "dav1d_samples_ns": [
+            9572000,
+            9470000,
+            9665000,
+            9499000,
+            9796000,
+            9697000,
+            9199000,
+            9688000,
+            9338000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 31016125,
+          "go_cold_ivf_samples_ns": [
+            31117250,
+            31016125,
+            31731709,
+            30903875,
+            31055417,
+            30623291,
+            30760708,
+            31211459,
+            30952709
+          ],
+          "go_cold_preparsed_payload_median_ns": 31285292,
+          "go_cold_preparsed_payload_samples_ns": [
+            31719208,
+            31333667,
+            31353750,
+            30523792,
+            30359500,
+            31288542,
+            30888083,
+            31285292,
+            31244208
+          ],
+          "go_observation_sink": 1583296745053860,
+          "go_over_dav1d_ratio": 3.240297221061429,
+          "go_warm_reset_median_ns": 29222667,
+          "go_warm_reset_samples_ns": [
+            28612666,
+            29222667,
+            28558208,
+            30036667,
+            29306708,
+            29272750,
+            29321167,
+            28692084,
+            28907375
+          ],
+          "ivf_sha256": "a0b1e577c5d847016059594cacdd26e9294d4eb9356fe7e3324dbd652bf6832b",
+          "sidecar_md5": "5bb05de29c9f528b43a1279a55fb2229"
+        },
+        "p288_inter_q20": {
+          "dav1d_median_ns": 24870000,
+          "dav1d_samples_ns": [
+            24652000,
+            25323000,
+            25209000,
+            25121000,
+            24878000,
+            24870000,
+            24527000,
+            24732000,
+            24506000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 78000791,
+          "go_cold_ivf_samples_ns": [
+            78000791,
+            78794542,
+            78023083,
+            78534500,
+            77329667,
+            77592834,
+            77895541,
+            78196250,
+            77702333
+          ],
+          "go_cold_preparsed_payload_median_ns": 78274042,
+          "go_cold_preparsed_payload_samples_ns": [
+            79093958,
+            78274042,
+            78502875,
+            78234625,
+            78158500,
+            77600667,
+            78592791,
+            78821625,
+            78155125
+          ],
+          "go_observation_sink": 3166593489258750,
+          "go_over_dav1d_ratio": 3.1363406111781265,
+          "go_warm_reset_median_ns": 77727042,
+          "go_warm_reset_samples_ns": [
+            76449625,
+            78947917,
+            77727042,
+            76459750,
+            77079041,
+            78535083,
+            78261875,
+            78829000,
+            76355000
+          ],
+          "ivf_sha256": "1eaf9aafb240a701b40d2ab9a7ff578864b6fd6c01d617899a2ad5ed422de0de",
+          "sidecar_md5": "50b72e533bf48e4c23a3b16b8aa17e46"
+        },
+        "p288_inter_q32": {
+          "dav1d_median_ns": 20228000,
+          "dav1d_samples_ns": [
+            20316000,
+            20054000,
+            19856000,
+            20228000,
+            20368000,
+            20278000,
+            20357000,
+            19650000,
+            20182000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 64390875,
+          "go_cold_ivf_samples_ns": [
+            64861292,
+            64089625,
+            65257625,
+            63474334,
+            64390875,
+            65186208,
+            65026500,
+            63749000,
+            64258166
+          ],
+          "go_cold_preparsed_payload_median_ns": 64051042,
+          "go_cold_preparsed_payload_samples_ns": [
+            65283541,
+            63977334,
+            64051042,
+            63547375,
+            64912208,
+            64296125,
+            63743166,
+            63753792,
+            64664708
+          ],
+          "go_observation_sink": 3166593489257910,
+          "go_over_dav1d_ratio": 3.183254647023927,
+          "go_warm_reset_median_ns": 62274667,
+          "go_warm_reset_samples_ns": [
+            63205375,
+            61680708,
+            62994375,
+            62274667,
+            62070917,
+            62333625,
+            62070125,
+            61400875,
+            62809125
+          ],
+          "ivf_sha256": "e1846e58d78e7e8da87698ff14952e7e6c1bee42f5cb97f058df36040e31ec83",
+          "sidecar_md5": "30ba24a8463f4593ad8683d5beedbf3f"
+        },
+        "p288_inter_q55": {
+          "dav1d_median_ns": 13265000,
+          "dav1d_samples_ns": [
+            13246000,
+            13187000,
+            13290000,
+            12917000,
+            13266000,
+            13101000,
+            13417000,
+            13265000,
+            13309000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 41220666,
+          "go_cold_ivf_samples_ns": [
+            42135166,
+            40229666,
+            40894500,
+            41220666,
+            41152667,
+            41430667,
+            41201792,
+            41314625,
+            41301459
+          ],
+          "go_cold_preparsed_payload_median_ns": 41361125,
+          "go_cold_preparsed_payload_samples_ns": [
+            41377459,
+            41082334,
+            41295792,
+            42092208,
+            41638292,
+            41361125,
+            41660166,
+            41264750,
+            41201333
+          ],
+          "go_observation_sink": 3166593489258660,
+          "go_over_dav1d_ratio": 3.1074757632868453,
+          "go_warm_reset_median_ns": 38477416,
+          "go_warm_reset_samples_ns": [
+            38401250,
+            38723708,
+            38544708,
+            38122375,
+            38482291,
+            38477416,
+            38469334,
+            39049791,
+            38427375
+          ],
+          "ivf_sha256": "9d066d6183e96e534c5eb1cffd0da69c7bc76ce17d1b052b272e18990ffdace9",
+          "sidecar_md5": "b2e2ee1fb5f8638e3a1446621c198e59"
+        },
+        "p288_intra_q32": {
+          "dav1d_median_ns": 24497000,
+          "dav1d_samples_ns": [
+            24710000,
+            24497000,
+            23918000,
+            24391000,
+            24755000,
+            24289000,
+            24245000,
+            24632000,
+            24530000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 66551292,
+          "go_cold_ivf_samples_ns": [
+            66655833,
+            68381625,
+            66806125,
+            66034458,
+            65933250,
+            66953208,
+            66423750,
+            66451583,
+            66551292
+          ],
+          "go_cold_preparsed_payload_median_ns": 65969333,
+          "go_cold_preparsed_payload_samples_ns": [
+            65969333,
+            66249000,
+            66768292,
+            66567958,
+            65852250,
+            65651750,
+            65693583,
+            65645500,
+            67762291
+          ],
+          "go_observation_sink": 3166593489256890,
+          "go_over_dav1d_ratio": 2.7167119239090503,
+          "go_warm_reset_median_ns": 63285750,
+          "go_warm_reset_samples_ns": [
+            63461250,
+            62605083,
+            63534333,
+            64096042,
+            63870375,
+            62590917,
+            63211458,
+            63285750,
+            63187500
+          ],
+          "ivf_sha256": "1cdd87c2407c6023198ea9df1231f212b3d5dc3621ba4236eedf59059f22cc53",
+          "sidecar_md5": "c435e5fbb36afcaf9973874e56a831b4"
+        },
+        "p360_inter_q20": {
+          "dav1d_median_ns": 34145000,
+          "dav1d_samples_ns": [
+            34404000,
+            34073000,
+            33926000,
+            34445000,
+            34513000,
+            34062000,
+            34231000,
+            34145000,
+            34093000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 104866792,
+          "go_cold_ivf_samples_ns": [
+            105313041,
+            104866792,
+            105176125,
+            105175959,
+            103327375,
+            104184000,
+            104203542,
+            103987291,
+            105245333
+          ],
+          "go_cold_preparsed_payload_median_ns": 104382542,
+          "go_cold_preparsed_payload_samples_ns": [
+            103764042,
+            104376000,
+            105360917,
+            103587000,
+            104382542,
+            104196958,
+            105036292,
+            104585375,
+            105421208
+          ],
+          "go_observation_sink": 3958241861358900,
+          "go_over_dav1d_ratio": 3.071219563625714,
+          "go_warm_reset_median_ns": 102246833,
+          "go_warm_reset_samples_ns": [
+            102127000,
+            102492042,
+            102246833,
+            102111667,
+            103076750,
+            102076083,
+            102061041,
+            102724500,
+            103496708
+          ],
+          "ivf_sha256": "8da210a3315c50a71c462455717409b32cef2f9221b87019011a80dd3a2923e6",
+          "sidecar_md5": "98f748a039be59c3dafd5317887e2c67"
+        },
+        "p360_inter_q32": {
+          "dav1d_median_ns": 28188000,
+          "dav1d_samples_ns": [
+            28322000,
+            28108000,
+            27661000,
+            28188000,
+            28244000,
+            27676000,
+            28353000,
+            27639000,
+            28373000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 86095625,
+          "go_cold_ivf_samples_ns": [
+            85285125,
+            86095625,
+            86177834,
+            86487833,
+            85258500,
+            86161625,
+            85485000,
+            86100292,
+            85257250
+          ],
+          "go_cold_preparsed_payload_median_ns": 86234208,
+          "go_cold_preparsed_payload_samples_ns": [
+            85025084,
+            86257458,
+            85144916,
+            87315000,
+            86234208,
+            86466417,
+            85571542,
+            85738708,
+            86541875
+          ],
+          "go_observation_sink": 3958241861358990,
+          "go_over_dav1d_ratio": 3.0543360649921953,
+          "go_warm_reset_median_ns": 83672208,
+          "go_warm_reset_samples_ns": [
+            83672208,
+            84539541,
+            83422375,
+            83596750,
+            82977833,
+            83880417,
+            83923750,
+            83511208,
+            84014667
+          ],
+          "ivf_sha256": "31f6e229d0648905cccbc433dd56200c0b83953f908f989618b65898fa064853",
+          "sidecar_md5": "0631d86d4d5f49d2b0b6b7505e0138ac"
+        },
+        "p360_inter_q32_10bit": {
+          "dav1d_median_ns": 30765000,
+          "dav1d_samples_ns": [
+            30818000,
+            30493000,
+            31127000,
+            30542000,
+            31010000,
+            30140000,
+            30693000,
+            30765000,
+            38529000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 107058584,
+          "go_cold_ivf_samples_ns": [
+            105079208,
+            108046750,
+            106919583,
+            107819083,
+            106693792,
+            107076834,
+            107471375,
+            107058584,
+            106784042
+          ],
+          "go_cold_preparsed_payload_median_ns": 106950542,
+          "go_cold_preparsed_payload_samples_ns": [
+            106047708,
+            106950542,
+            107258250,
+            106752958,
+            105771000,
+            106209792,
+            112857459,
+            107674917,
+            107919916
+          ],
+          "go_observation_sink": 3958241861096100,
+          "go_over_dav1d_ratio": 3.479882463838778,
+          "go_warm_reset_median_ns": 105200042,
+          "go_warm_reset_samples_ns": [
+            104403834,
+            105829125,
+            104284250,
+            105200042,
+            105158792,
+            105361000,
+            106142208,
+            105138333,
+            108437833
+          ],
+          "ivf_sha256": "76874e6b262fcc6e43e603be02ed75e843cacf6593c19e150037daebe568cff2",
+          "sidecar_md5": "8506fce82608a83814eaa5e3067c0d9b"
+        },
+        "p360_inter_q32_2tiles": {
+          "dav1d_median_ns": 28488000,
+          "dav1d_samples_ns": [
+            28747000,
+            28815000,
+            28488000,
+            28094000,
+            28103000,
+            28087000,
+            28742000,
+            28917000,
+            28435000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 88263625,
+          "go_cold_ivf_samples_ns": [
+            89677958,
+            88281375,
+            87780834,
+            88647583,
+            87027125,
+            88263625,
+            86402500,
+            88272417,
+            87153833
+          ],
+          "go_cold_preparsed_payload_median_ns": 86690625,
+          "go_cold_preparsed_payload_samples_ns": [
+            85816917,
+            87995959,
+            87241209,
+            87067959,
+            86636958,
+            86368041,
+            86690625,
+            87122625,
+            86377584
+          ],
+          "go_observation_sink": 3958241861359950,
+          "go_over_dav1d_ratio": 3.0982738345970233,
+          "go_warm_reset_median_ns": 85243625,
+          "go_warm_reset_samples_ns": [
+            83920417,
+            84120667,
+            85703625,
+            85445792,
+            87607000,
+            85486417,
+            84705500,
+            84655625,
+            85243625
+          ],
+          "ivf_sha256": "0943b27adb836f61d8b6d7a736337ec4c2cedd133b338b63663a1d520a2beca1",
+          "sidecar_md5": "f55ab93cdcee03fd89e7122b89bc920a"
+        },
+        "p360_inter_q55": {
+          "dav1d_median_ns": 19394000,
+          "dav1d_samples_ns": [
+            19489000,
+            19844000,
+            19962000,
+            19376000,
+            19284000,
+            19392000,
+            19387000,
+            19604000,
+            19394000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 56464292,
+          "go_cold_ivf_samples_ns": [
+            57381750,
+            56230625,
+            56464292,
+            55794583,
+            56737791,
+            54863667,
+            57188917,
+            56627958,
+            56221833
+          ],
+          "go_cold_preparsed_payload_median_ns": 56210791,
+          "go_cold_preparsed_payload_samples_ns": [
+            56066125,
+            56473792,
+            55577250,
+            56564334,
+            55603084,
+            56187541,
+            56210791,
+            56279958,
+            56921833
+          ],
+          "go_observation_sink": 3958241861354370,
+          "go_over_dav1d_ratio": 2.911430958028256,
+          "go_warm_reset_median_ns": 53999208,
+          "go_warm_reset_samples_ns": [
+            54690125,
+            53949791,
+            54023584,
+            54056166,
+            53589750,
+            53999208,
+            53926834,
+            53883333,
+            54347458
+          ],
+          "ivf_sha256": "77c25f364bda730336bc0d0e75d5dabf321509028cdad9c835ee1bc77989912f",
+          "sidecar_md5": "cf3b847ee616726b3b048a4c955ae4da"
+        },
+        "p360_intra_q32": {
+          "dav1d_median_ns": 30939000,
+          "dav1d_samples_ns": [
+            30941000,
+            30871000,
+            30976000,
+            30892000,
+            31081000,
+            30829000,
+            30939000,
+            31402000,
+            30925000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 81207833,
+          "go_cold_ivf_samples_ns": [
+            81207833,
+            80457458,
+            81953292,
+            83123167,
+            81076625,
+            80108542,
+            81271000,
+            80639833,
+            81643292
+          ],
+          "go_cold_preparsed_payload_median_ns": 81678875,
+          "go_cold_preparsed_payload_samples_ns": [
+            81678875,
+            81642084,
+            80924083,
+            82626167,
+            81147500,
+            81795375,
+            80794541,
+            81733333,
+            82330958
+          ],
+          "go_observation_sink": 3958241861361000,
+          "go_over_dav1d_ratio": 2.624772390833576,
+          "go_warm_reset_median_ns": 77039292,
+          "go_warm_reset_samples_ns": [
+            78833459,
+            79162750,
+            77814666,
+            77039292,
+            77425959,
+            76751125,
+            76993625,
+            76924000,
+            76756500
+          ],
+          "ivf_sha256": "4ab04bd48bd4f09a834a23e8bb4a46c28d7264789af72574712ec3c2760a7698",
+          "sidecar_md5": "5cef0494bd9549db6534ffa4504c0d94"
+        },
+        "p720_inter_q20": {
+          "dav1d_median_ns": 89690000,
+          "dav1d_samples_ns": [
+            88372000,
+            89573000,
+            87671000,
+            89290000,
+            90155000,
+            89696000,
+            90394000,
+            90071000,
+            89690000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 220648792,
+          "go_cold_ivf_samples_ns": [
+            221070166,
+            221036625,
+            220952125,
+            220648792,
+            222409875,
+            219754375,
+            218647042,
+            220318500,
+            219444834
+          ],
+          "go_cold_preparsed_payload_median_ns": 233147750,
+          "go_cold_preparsed_payload_samples_ns": [
+            221853792,
+            225241167,
+            232886583,
+            241642833,
+            231747375,
+            233147750,
+            242509208,
+            249867333,
+            244919208
+          ],
+          "go_observation_sink": 7916483721873210,
+          "go_over_dav1d_ratio": 2.4601270152748356,
+          "go_warm_reset_median_ns": 242700500,
+          "go_warm_reset_samples_ns": [
+            243286000,
+            245802542,
+            246635292,
+            242700500,
+            239067500,
+            234603709,
+            243741250,
+            234627042,
+            234430958
+          ],
+          "ivf_sha256": "e968cb160683445484ae3f5549689e2949e30ff5006850ae4be19f7e8440372f",
+          "sidecar_md5": "1369c36ec029c222e0e7ee2cf95f5b98"
+        },
+        "p720_inter_q32": {
+          "dav1d_median_ns": 72201000,
+          "dav1d_samples_ns": [
+            71498000,
+            72049000,
+            71556000,
+            72340000,
+            72489000,
+            72246000,
+            71087000,
+            72327000,
+            72201000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 178764292,
+          "go_cold_ivf_samples_ns": [
+            178981458,
+            175092958,
+            178764292,
+            176861667,
+            178136750,
+            180339916,
+            177688333,
+            180083917,
+            179885375
+          ],
+          "go_cold_preparsed_payload_median_ns": 181623458,
+          "go_cold_preparsed_payload_samples_ns": [
+            179709250,
+            180491334,
+            179614125,
+            182441208,
+            182133291,
+            181623458,
+            180081750,
+            183080209,
+            183337000
+          ],
+          "go_observation_sink": 7916483721873900,
+          "go_over_dav1d_ratio": 2.475925430395701,
+          "go_warm_reset_median_ns": 178912958,
+          "go_warm_reset_samples_ns": [
+            179744542,
+            178912958,
+            178518916,
+            178460167,
+            178038000,
+            186111792,
+            180272292,
+            179392625,
+            178592708
+          ],
+          "ivf_sha256": "3c42bdbc27d55077a0b4afd0e94bea7b720c7e6e160921dca2885315b6a13383",
+          "sidecar_md5": "47854463914ca952c4b0c63b8e7edd45"
+        },
+        "p720_inter_q32_2tiles": {
+          "dav1d_median_ns": 71593000,
+          "dav1d_samples_ns": [
+            72291000,
+            71965000,
+            71061000,
+            71422000,
+            72092000,
+            71593000,
+            70989000,
+            71676000,
+            71159000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 179816375,
+          "go_cold_ivf_samples_ns": [
+            182348250,
+            181576000,
+            183853750,
+            179308166,
+            175931958,
+            179816375,
+            176520000,
+            180172916,
+            179614208
+          ],
+          "go_cold_preparsed_payload_median_ns": 179115417,
+          "go_cold_preparsed_payload_samples_ns": [
+            176370167,
+            179970959,
+            179115417,
+            182202125,
+            178960083,
+            178589666,
+            179093083,
+            181647708,
+            180654458
+          ],
+          "go_observation_sink": 7916483721874530,
+          "go_over_dav1d_ratio": 2.511647437598648,
+          "go_warm_reset_median_ns": 176313625,
+          "go_warm_reset_samples_ns": [
+            175945917,
+            176093292,
+            177671792,
+            176942833,
+            175874500,
+            177290208,
+            176007208,
+            176313625,
+            178482666
+          ],
+          "ivf_sha256": "bbe0af93cbb26a4724320a2cde2c9f48d22080426fa6bb566dfed40b0c14dd35",
+          "sidecar_md5": "44564e87c87399fbf13b92c6dd39052d"
+        },
+        "p720_inter_q55": {
+          "dav1d_median_ns": 45901000,
+          "dav1d_samples_ns": [
+            45700000,
+            46142000,
+            45725000,
+            46219000,
+            45901000,
+            46401000,
+            45618000,
+            45651000,
+            46011000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 114152041,
+          "go_cold_ivf_samples_ns": [
+            115108083,
+            113170375,
+            115354875,
+            113760000,
+            114307542,
+            114653083,
+            114152041,
+            113488792,
+            113999375
+          ],
+          "go_cold_preparsed_payload_median_ns": 113799875,
+          "go_cold_preparsed_payload_samples_ns": [
+            115429000,
+            114348250,
+            114456000,
+            113219459,
+            113799875,
+            114215917,
+            113303000,
+            113327250,
+            112875667
+          ],
+          "go_observation_sink": 7916483721868500,
+          "go_over_dav1d_ratio": 2.486918389577569,
+          "go_warm_reset_median_ns": 112069084,
+          "go_warm_reset_samples_ns": [
+            110809458,
+            111341500,
+            112515709,
+            110869500,
+            112175375,
+            112069084,
+            113638667,
+            112121750,
+            111943083
+          ],
+          "ivf_sha256": "0d42622afdb46b55ddfefb272eeb7579f5eb85be81e211384aaaecf6cd8b3696",
+          "sidecar_md5": "28554980fa3adb9f0c0cbc345d62eee6"
+        }
+      },
+      "primary_go_over_dav1d_ratio": 2.793186299296228,
+      "raw_artifacts": {
+        "dav1d": {
+          "path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/round1-dav1d.jsonl",
+          "sha256": "222a174609721dd2bdefcf460a5ea59406ce9c4b79f2cd16736bb2fc0513c519"
+        },
+        "go": {
+          "path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/round1-go.log",
+          "sha256": "fb129d458387882fe75977b05a09733d3e3c3c85923b3458db963b40d731b56d"
+        }
+      },
+      "round": 1,
+      "sum_per_clip_medians_ns": {
+        "dav1d": 566803000,
+        "go_cold_ivf": 1583186374,
+        "go_cold_preparsed_payload": 1595586333,
+        "go_warm_reset": 1566659916
+      }
+    },
+    {
+      "backend_order": [
+        "dav1d",
+        "goav1"
+      ],
+      "per_clip": {
+        "p144_inter_q20": {
+          "dav1d_median_ns": 10900000,
+          "dav1d_samples_ns": [
+            10717000,
+            10760000,
+            10954000,
+            10215000,
+            10930000,
+            10460000,
+            10900000,
+            11078000,
+            10900000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 41466834,
+          "go_cold_ivf_samples_ns": [
+            39729292,
+            39657375,
+            41892125,
+            41709708,
+            40709083,
+            40485084,
+            42536625,
+            43156167,
+            41466834
+          ],
+          "go_cold_preparsed_payload_median_ns": 40490375,
+          "go_cold_preparsed_payload_samples_ns": [
+            40725333,
+            40490375,
+            41177875,
+            40060708,
+            40824334,
+            41692458,
+            38927667,
+            39687625,
+            40114500
+          ],
+          "go_observation_sink": 1583296745050530,
+          "go_over_dav1d_ratio": 3.8042966972477066,
+          "go_warm_reset_median_ns": 37720042,
+          "go_warm_reset_samples_ns": [
+            38546000,
+            38335750,
+            37265250,
+            36736375,
+            37720042,
+            36743000,
+            38002917,
+            37237375,
+            37940541
+          ],
+          "ivf_sha256": "a9026dba753d88a075faddbfa22c8c5164769c861d22bc32e0aaa4e4e2ff4c75",
+          "sidecar_md5": "c81031f90d8b64d4b7600891360a2586"
+        },
+        "p144_inter_q32": {
+          "dav1d_median_ns": 8122000,
+          "dav1d_samples_ns": [
+            7772000,
+            8122000,
+            8300000,
+            8153000,
+            8254000,
+            8150000,
+            8082000,
+            7826000,
+            8047000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 31993000,
+          "go_cold_ivf_samples_ns": [
+            31001667,
+            31579500,
+            30650041,
+            30273083,
+            32137042,
+            32287417,
+            31993000,
+            34753542,
+            32414042
+          ],
+          "go_cold_preparsed_payload_median_ns": 31354666,
+          "go_cold_preparsed_payload_samples_ns": [
+            31354666,
+            31351958,
+            31997958,
+            31602542,
+            31437875,
+            31893083,
+            31167250,
+            30772666,
+            29453375
+          ],
+          "go_observation_sink": 1583296745054160,
+          "go_over_dav1d_ratio": 3.939054420093573,
+          "go_warm_reset_median_ns": 28747167,
+          "go_warm_reset_samples_ns": [
+            28747167,
+            28554583,
+            28919041,
+            29145792,
+            28099167,
+            29519083,
+            27932041,
+            28625666,
+            29802917
+          ],
+          "ivf_sha256": "0a168d67dd055aa8269e41138cc498626b73f27b304488c39107ea003b5370b5",
+          "sidecar_md5": "52c881fcbd960e61b494bdb0212a598f"
+        },
+        "p144_inter_q55": {
+          "dav1d_median_ns": 3887000,
+          "dav1d_samples_ns": [
+            4289000,
+            4050000,
+            3857000,
+            3876000,
+            3918000,
+            3887000,
+            3837000,
+            3844000,
+            4256000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 18081084,
+          "go_cold_ivf_samples_ns": [
+            18458791,
+            18444541,
+            18528167,
+            18429958,
+            18012042,
+            17784709,
+            18081084,
+            17910708,
+            17856833
+          ],
+          "go_cold_preparsed_payload_median_ns": 17753125,
+          "go_cold_preparsed_payload_samples_ns": [
+            18124167,
+            17734625,
+            17117500,
+            17295417,
+            17949417,
+            17753125,
+            18385750,
+            17488417,
+            19290083
+          ],
+          "go_observation_sink": 1583296745052090,
+          "go_over_dav1d_ratio": 4.651680987908413,
+          "go_warm_reset_median_ns": 15594541,
+          "go_warm_reset_samples_ns": [
+            15594541,
+            15634833,
+            16046417,
+            15698042,
+            15544916,
+            15513917,
+            15470167,
+            15758459,
+            15466584
+          ],
+          "ivf_sha256": "b24510df279ff5a318ccb7cd59246e8a1bfe2b1ef1e3257f0a126e38dc9cb766",
+          "sidecar_md5": "2cddf86f5d4a1bd8f401b4f5549dd3d0"
+        },
+        "p144_intra_q32": {
+          "dav1d_median_ns": 9827000,
+          "dav1d_samples_ns": [
+            9894000,
+            9783000,
+            9288000,
+            9848000,
+            9900000,
+            9892000,
+            9463000,
+            9364000,
+            9827000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 32505292,
+          "go_cold_ivf_samples_ns": [
+            32236458,
+            31972292,
+            31829916,
+            32505292,
+            33033167,
+            32521750,
+            32280000,
+            33210666,
+            33543917
+          ],
+          "go_cold_preparsed_payload_median_ns": 31631792,
+          "go_cold_preparsed_payload_samples_ns": [
+            31751125,
+            32437500,
+            31340500,
+            31077000,
+            31750958,
+            31613208,
+            31568542,
+            31631792,
+            40380500
+          ],
+          "go_observation_sink": 1583296745053860,
+          "go_over_dav1d_ratio": 3.30775333265493,
+          "go_warm_reset_median_ns": 29681000,
+          "go_warm_reset_samples_ns": [
+            44223375,
+            35191709,
+            32132500,
+            30736041,
+            29591375,
+            29681000,
+            29214792,
+            29083459,
+            28917958
+          ],
+          "ivf_sha256": "a0b1e577c5d847016059594cacdd26e9294d4eb9356fe7e3324dbd652bf6832b",
+          "sidecar_md5": "5bb05de29c9f528b43a1279a55fb2229"
+        },
+        "p288_inter_q20": {
+          "dav1d_median_ns": 24686000,
+          "dav1d_samples_ns": [
+            24834000,
+            24724000,
+            24325000,
+            24563000,
+            24634000,
+            25100000,
+            24800000,
+            24686000,
+            24633000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 78732875,
+          "go_cold_ivf_samples_ns": [
+            79229291,
+            79211000,
+            78276125,
+            79949541,
+            79034167,
+            78610375,
+            78732875,
+            78342584,
+            78375000
+          ],
+          "go_cold_preparsed_payload_median_ns": 78702333,
+          "go_cold_preparsed_payload_samples_ns": [
+            79144292,
+            78702333,
+            79348250,
+            78481833,
+            80870084,
+            78393708,
+            79059292,
+            78077375,
+            78124292
+          ],
+          "go_observation_sink": 3166593489258750,
+          "go_over_dav1d_ratio": 3.1893735315563476,
+          "go_warm_reset_median_ns": 76839750,
+          "go_warm_reset_samples_ns": [
+            75949958,
+            76565584,
+            76839750,
+            75493292,
+            75824875,
+            77884958,
+            82896042,
+            81887542,
+            77466334
+          ],
+          "ivf_sha256": "1eaf9aafb240a701b40d2ab9a7ff578864b6fd6c01d617899a2ad5ed422de0de",
+          "sidecar_md5": "50b72e533bf48e4c23a3b16b8aa17e46"
+        },
+        "p288_inter_q32": {
+          "dav1d_median_ns": 20150000,
+          "dav1d_samples_ns": [
+            20187000,
+            20301000,
+            20203000,
+            20238000,
+            20055000,
+            20150000,
+            20054000,
+            19986000,
+            20106000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 68766042,
+          "go_cold_ivf_samples_ns": [
+            70098584,
+            68766042,
+            66458875,
+            67995459,
+            71422416,
+            68851250,
+            69625667,
+            66320375,
+            65840958
+          ],
+          "go_cold_preparsed_payload_median_ns": 67135792,
+          "go_cold_preparsed_payload_samples_ns": [
+            67656292,
+            68591042,
+            67135792,
+            66472917,
+            65618208,
+            67124917,
+            65564041,
+            71731208,
+            69634375
+          ],
+          "go_observation_sink": 3166593489257910,
+          "go_over_dav1d_ratio": 3.4127067990074442,
+          "go_warm_reset_median_ns": 67551167,
+          "go_warm_reset_samples_ns": [
+            66698417,
+            66862417,
+            67551167,
+            66063833,
+            67357000,
+            67797375,
+            69676583,
+            68772416,
+            67991666
+          ],
+          "ivf_sha256": "e1846e58d78e7e8da87698ff14952e7e6c1bee42f5cb97f058df36040e31ec83",
+          "sidecar_md5": "30ba24a8463f4593ad8683d5beedbf3f"
+        },
+        "p288_inter_q55": {
+          "dav1d_median_ns": 13130000,
+          "dav1d_samples_ns": [
+            13286000,
+            12990000,
+            13084000,
+            13326000,
+            13130000,
+            12546000,
+            13304000,
+            13072000,
+            13407000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 42582000,
+          "go_cold_ivf_samples_ns": [
+            46865959,
+            44173833,
+            42418125,
+            42582000,
+            42608542,
+            42843167,
+            42309042,
+            41251958,
+            41186667
+          ],
+          "go_cold_preparsed_payload_median_ns": 42963125,
+          "go_cold_preparsed_payload_samples_ns": [
+            43303875,
+            41315333,
+            42819541,
+            45123708,
+            42559250,
+            42963125,
+            43692583,
+            42877417,
+            44447208
+          ],
+          "go_observation_sink": 3166593489258660,
+          "go_over_dav1d_ratio": 3.2431073876618433,
+          "go_warm_reset_median_ns": 42217709,
+          "go_warm_reset_samples_ns": [
+            42217709,
+            42070667,
+            44838625,
+            40623833,
+            42597042,
+            43693458,
+            40494959,
+            41264500,
+            45329125
+          ],
+          "ivf_sha256": "9d066d6183e96e534c5eb1cffd0da69c7bc76ce17d1b052b272e18990ffdace9",
+          "sidecar_md5": "b2e2ee1fb5f8638e3a1446621c198e59"
+        },
+        "p288_intra_q32": {
+          "dav1d_median_ns": 24377000,
+          "dav1d_samples_ns": [
+            24673000,
+            24291000,
+            24505000,
+            24293000,
+            24491000,
+            24377000,
+            24363000,
+            24303000,
+            24412000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 71869750,
+          "go_cold_ivf_samples_ns": [
+            70361083,
+            70163875,
+            98508208,
+            71869750,
+            70126042,
+            72961750,
+            68808208,
+            73384541,
+            72961750
+          ],
+          "go_cold_preparsed_payload_median_ns": 68375833,
+          "go_cold_preparsed_payload_samples_ns": [
+            67711791,
+            67763375,
+            67926375,
+            68375833,
+            69342667,
+            68122125,
+            68893000,
+            69007208,
+            68440042
+          ],
+          "go_observation_sink": 3166593489256890,
+          "go_over_dav1d_ratio": 2.948260655535956,
+          "go_warm_reset_median_ns": 66195667,
+          "go_warm_reset_samples_ns": [
+            66521792,
+            66311666,
+            66195667,
+            67659541,
+            65920125,
+            65676042,
+            65387833,
+            64941875,
+            68162500
+          ],
+          "ivf_sha256": "1cdd87c2407c6023198ea9df1231f212b3d5dc3621ba4236eedf59059f22cc53",
+          "sidecar_md5": "c435e5fbb36afcaf9973874e56a831b4"
+        },
+        "p360_inter_q20": {
+          "dav1d_median_ns": 34292000,
+          "dav1d_samples_ns": [
+            34292000,
+            34000000,
+            34157000,
+            34530000,
+            33927000,
+            34000000,
+            34419000,
+            34399000,
+            34572000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 108619750,
+          "go_cold_ivf_samples_ns": [
+            108619750,
+            110949833,
+            107895584,
+            110388083,
+            106135000,
+            107823375,
+            109738375,
+            111093125,
+            108513542
+          ],
+          "go_cold_preparsed_payload_median_ns": 108653125,
+          "go_cold_preparsed_payload_samples_ns": [
+            106513125,
+            106507750,
+            108888334,
+            109332000,
+            110418583,
+            108522583,
+            107047000,
+            111120875,
+            108653125
+          ],
+          "go_observation_sink": 3958241861358900,
+          "go_over_dav1d_ratio": 3.167495334188732,
+          "go_warm_reset_median_ns": 106576709,
+          "go_warm_reset_samples_ns": [
+            106017209,
+            106576709,
+            105089000,
+            105304292,
+            106596750,
+            106054917,
+            107369583,
+            106944459,
+            108120834
+          ],
+          "ivf_sha256": "8da210a3315c50a71c462455717409b32cef2f9221b87019011a80dd3a2923e6",
+          "sidecar_md5": "98f748a039be59c3dafd5317887e2c67"
+        },
+        "p360_inter_q32": {
+          "dav1d_median_ns": 28062000,
+          "dav1d_samples_ns": [
+            28446000,
+            28294000,
+            27443000,
+            28124000,
+            27990000,
+            28517000,
+            28062000,
+            27823000,
+            28030000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 89025125,
+          "go_cold_ivf_samples_ns": [
+            89025125,
+            88723750,
+            88530375,
+            88334000,
+            91731667,
+            89963917,
+            88255750,
+            90587375,
+            94651791
+          ],
+          "go_cold_preparsed_payload_median_ns": 87472458,
+          "go_cold_preparsed_payload_samples_ns": [
+            90548833,
+            87173250,
+            87134208,
+            88846458,
+            88033500,
+            88943375,
+            87355292,
+            87472458,
+            87074333
+          ],
+          "go_observation_sink": 3958241861358990,
+          "go_over_dav1d_ratio": 3.1724440524552775,
+          "go_warm_reset_median_ns": 88110541,
+          "go_warm_reset_samples_ns": [
+            85353542,
+            86090958,
+            88110541,
+            88029083,
+            89251834,
+            88445250,
+            87364208,
+            90709458,
+            90581417
+          ],
+          "ivf_sha256": "31f6e229d0648905cccbc433dd56200c0b83953f908f989618b65898fa064853",
+          "sidecar_md5": "0631d86d4d5f49d2b0b6b7505e0138ac"
+        },
+        "p360_inter_q32_10bit": {
+          "dav1d_median_ns": 30466000,
+          "dav1d_samples_ns": [
+            30370000,
+            30538000,
+            30466000,
+            30985000,
+            30437000,
+            31500000,
+            30209000,
+            30252000,
+            31246000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 110277333,
+          "go_cold_ivf_samples_ns": [
+            110959041,
+            110058208,
+            110277333,
+            109027916,
+            108589417,
+            108921959,
+            111435750,
+            114952458,
+            111939250
+          ],
+          "go_cold_preparsed_payload_median_ns": 114340375,
+          "go_cold_preparsed_payload_samples_ns": [
+            114340375,
+            115980375,
+            116441166,
+            116965125,
+            114765958,
+            112057875,
+            111570041,
+            110047916,
+            113022125
+          ],
+          "go_observation_sink": 3958241861096100,
+          "go_over_dav1d_ratio": 3.619685321341824,
+          "go_warm_reset_median_ns": 113374125,
+          "go_warm_reset_samples_ns": [
+            112091625,
+            116287916,
+            115501042,
+            122118250,
+            113374125,
+            115998708,
+            109337917,
+            112264250,
+            112109792
+          ],
+          "ivf_sha256": "76874e6b262fcc6e43e603be02ed75e843cacf6593c19e150037daebe568cff2",
+          "sidecar_md5": "8506fce82608a83814eaa5e3067c0d9b"
+        },
+        "p360_inter_q32_2tiles": {
+          "dav1d_median_ns": 28425000,
+          "dav1d_samples_ns": [
+            28449000,
+            28800000,
+            28267000,
+            27856000,
+            28888000,
+            28425000,
+            28856000,
+            28105000,
+            28111000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 90783583,
+          "go_cold_ivf_samples_ns": [
+            92611250,
+            91645042,
+            89309750,
+            89464458,
+            88877416,
+            91056667,
+            89664125,
+            90783583,
+            94634334
+          ],
+          "go_cold_preparsed_payload_median_ns": 91504125,
+          "go_cold_preparsed_payload_samples_ns": [
+            92485625,
+            94273417,
+            90764917,
+            91859083,
+            88940125,
+            97424250,
+            91504125,
+            88801750,
+            87736834
+          ],
+          "go_observation_sink": 3958241861359950,
+          "go_over_dav1d_ratio": 3.193793597185576,
+          "go_warm_reset_median_ns": 85875875,
+          "go_warm_reset_samples_ns": [
+            85875875,
+            88888292,
+            85754167,
+            86092750,
+            85860750,
+            85815791,
+            85527292,
+            88861042,
+            86895708
+          ],
+          "ivf_sha256": "0943b27adb836f61d8b6d7a736337ec4c2cedd133b338b63663a1d520a2beca1",
+          "sidecar_md5": "f55ab93cdcee03fd89e7122b89bc920a"
+        },
+        "p360_inter_q55": {
+          "dav1d_median_ns": 19626000,
+          "dav1d_samples_ns": [
+            19469000,
+            19781000,
+            18701000,
+            19972000,
+            19729000,
+            19451000,
+            19626000,
+            19629000,
+            19583000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 57351333,
+          "go_cold_ivf_samples_ns": [
+            57906666,
+            57351333,
+            56738125,
+            56795750,
+            57677500,
+            56695375,
+            58604333,
+            56561542,
+            57421500
+          ],
+          "go_cold_preparsed_payload_median_ns": 57337250,
+          "go_cold_preparsed_payload_samples_ns": [
+            58010417,
+            57966542,
+            57299792,
+            57211208,
+            56762875,
+            57648958,
+            58920500,
+            56892417,
+            57337250
+          ],
+          "go_observation_sink": 3958241861354370,
+          "go_over_dav1d_ratio": 2.9222120146744115,
+          "go_warm_reset_median_ns": 55675750,
+          "go_warm_reset_samples_ns": [
+            55675750,
+            56123792,
+            54777458,
+            55694917,
+            55980458,
+            55100000,
+            55192959,
+            55042167,
+            56726375
+          ],
+          "ivf_sha256": "77c25f364bda730336bc0d0e75d5dabf321509028cdad9c835ee1bc77989912f",
+          "sidecar_md5": "cf3b847ee616726b3b048a4c955ae4da"
+        },
+        "p360_intra_q32": {
+          "dav1d_median_ns": 31091000,
+          "dav1d_samples_ns": [
+            31198000,
+            30478000,
+            31072000,
+            30657000,
+            31463000,
+            31185000,
+            31006000,
+            31531000,
+            31091000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 83804792,
+          "go_cold_ivf_samples_ns": [
+            86479917,
+            83804792,
+            82819750,
+            83659833,
+            82621458,
+            83920875,
+            82581500,
+            89184000,
+            85780500
+          ],
+          "go_cold_preparsed_payload_median_ns": 83478833,
+          "go_cold_preparsed_payload_samples_ns": [
+            83887416,
+            82560500,
+            84222208,
+            82137875,
+            87573583,
+            84831750,
+            82897500,
+            83102459,
+            83478833
+          ],
+          "go_observation_sink": 3958241861361000,
+          "go_over_dav1d_ratio": 2.6954678845968285,
+          "go_warm_reset_median_ns": 79943958,
+          "go_warm_reset_samples_ns": [
+            80165750,
+            79904416,
+            80071625,
+            78510333,
+            79355916,
+            79943958,
+            79563500,
+            80517167,
+            80569417
+          ],
+          "ivf_sha256": "4ab04bd48bd4f09a834a23e8bb4a46c28d7264789af72574712ec3c2760a7698",
+          "sidecar_md5": "5cef0494bd9549db6534ffa4504c0d94"
+        },
+        "p720_inter_q20": {
+          "dav1d_median_ns": 90848000,
+          "dav1d_samples_ns": [
+            90398000,
+            90848000,
+            90720000,
+            90621000,
+            91430000,
+            91708000,
+            92314000,
+            90510000,
+            91644000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 228217417,
+          "go_cold_ivf_samples_ns": [
+            228685750,
+            231466875,
+            228707500,
+            223395208,
+            225732542,
+            227688375,
+            228099791,
+            229319208,
+            228217417
+          ],
+          "go_cold_preparsed_payload_median_ns": 235363333,
+          "go_cold_preparsed_payload_samples_ns": [
+            226630375,
+            238092083,
+            237141542,
+            235363333,
+            242665542,
+            233932292,
+            236351167,
+            229355291,
+            229684250
+          ],
+          "go_observation_sink": 7916483721873210,
+          "go_over_dav1d_ratio": 2.512079704561465,
+          "go_warm_reset_median_ns": 228216917,
+          "go_warm_reset_samples_ns": [
+            230044209,
+            224486750,
+            228216917,
+            230951875,
+            232187708,
+            226669208,
+            225918875,
+            227266833,
+            230246875
+          ],
+          "ivf_sha256": "e968cb160683445484ae3f5549689e2949e30ff5006850ae4be19f7e8440372f",
+          "sidecar_md5": "1369c36ec029c222e0e7ee2cf95f5b98"
+        },
+        "p720_inter_q32": {
+          "dav1d_median_ns": 72681000,
+          "dav1d_samples_ns": [
+            72681000,
+            72006000,
+            72360000,
+            72492000,
+            73399000,
+            73220000,
+            73755000,
+            72569000,
+            73216000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 179895042,
+          "go_cold_ivf_samples_ns": [
+            181263292,
+            178090958,
+            181307917,
+            183539167,
+            179814958,
+            179895042,
+            178885667,
+            179175000,
+            181122667
+          ],
+          "go_cold_preparsed_payload_median_ns": 178546166,
+          "go_cold_preparsed_payload_samples_ns": [
+            177839333,
+            179117542,
+            178466792,
+            180267042,
+            178546166,
+            177444417,
+            179159500,
+            178372209,
+            181269208
+          ],
+          "go_observation_sink": 7916483721873900,
+          "go_over_dav1d_ratio": 2.4751316299995874,
+          "go_warm_reset_median_ns": 178134958,
+          "go_warm_reset_samples_ns": [
+            180217291,
+            178215750,
+            178687500,
+            178475042,
+            178134958,
+            178086625,
+            177409000,
+            176270750,
+            176490083
+          ],
+          "ivf_sha256": "3c42bdbc27d55077a0b4afd0e94bea7b720c7e6e160921dca2885315b6a13383",
+          "sidecar_md5": "47854463914ca952c4b0c63b8e7edd45"
+        },
+        "p720_inter_q32_2tiles": {
+          "dav1d_median_ns": 73205000,
+          "dav1d_samples_ns": [
+            72653000,
+            73392000,
+            73460000,
+            73673000,
+            72972000,
+            72432000,
+            73385000,
+            72823000,
+            73205000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 180277041,
+          "go_cold_ivf_samples_ns": [
+            182675000,
+            179797916,
+            181319125,
+            178818958,
+            178258541,
+            180277041,
+            183195875,
+            182584417,
+            180246167
+          ],
+          "go_cold_preparsed_payload_median_ns": 182277709,
+          "go_cold_preparsed_payload_samples_ns": [
+            183306417,
+            180699167,
+            182463542,
+            182277709,
+            178934792,
+            182070375,
+            178753166,
+            182980750,
+            184712667
+          ],
+          "go_observation_sink": 7916483721874530,
+          "go_over_dav1d_ratio": 2.4626328939280104,
+          "go_warm_reset_median_ns": 182832666,
+          "go_warm_reset_samples_ns": [
+            182016333,
+            181719750,
+            184821291,
+            184116167,
+            183350958,
+            182863833,
+            180656917,
+            181934750,
+            182832666
+          ],
+          "ivf_sha256": "bbe0af93cbb26a4724320a2cde2c9f48d22080426fa6bb566dfed40b0c14dd35",
+          "sidecar_md5": "44564e87c87399fbf13b92c6dd39052d"
+        },
+        "p720_inter_q55": {
+          "dav1d_median_ns": 47444000,
+          "dav1d_samples_ns": [
+            47002000,
+            48458000,
+            47444000,
+            47228000,
+            47939000,
+            47310000,
+            46810000,
+            48286000,
+            47476000
+          ],
+          "frames": 48,
+          "go_cold_ivf_median_ns": 117169458,
+          "go_cold_ivf_samples_ns": [
+            116694542,
+            116209833,
+            116789875,
+            118614166,
+            117870166,
+            116806542,
+            118625333,
+            117169458,
+            118914333
+          ],
+          "go_cold_preparsed_payload_median_ns": 118042291,
+          "go_cold_preparsed_payload_samples_ns": [
+            117012958,
+            116624083,
+            118042291,
+            117835750,
+            119457291,
+            119375625,
+            121325958,
+            119102167,
+            115955250
+          ],
+          "go_observation_sink": 7916483721868500,
+          "go_over_dav1d_ratio": 2.469637003625327,
+          "go_warm_reset_median_ns": 115278958,
+          "go_warm_reset_samples_ns": [
+            115278958,
+            114787125,
+            115533833,
+            115527500,
+            116658750,
+            112842834,
+            115430250,
+            114681125,
+            115182792
+          ],
+          "ivf_sha256": "0d42622afdb46b55ddfefb272eeb7579f5eb85be81e211384aaaecf6cd8b3696",
+          "sidecar_md5": "28554980fa3adb9f0c0cbc345d62eee6"
+        }
+      },
+      "primary_go_over_dav1d_ratio": 2.8560285127070353,
+      "raw_artifacts": {
+        "dav1d": {
+          "path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/round2-dav1d.jsonl",
+          "sha256": "7103e4d24915fb1f6a22696bad02b22bf18dd0703f3493a38d52a543c9adba78"
+        },
+        "go": {
+          "path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/round2-go.log",
+          "sha256": "9eebc022666fc842408cf7c3a7759a5729c7a25a053b11345508a581123a7150"
+        }
+      },
+      "round": 2,
+      "sum_per_clip_medians_ns": {
+        "dav1d": 571219000,
+        "go_cold_ivf": 1631417751,
+        "go_cold_preparsed_payload": 1635422706,
+        "go_warm_reset": 1598567500
+      }
+    }
+  ],
+  "sampling_protocol": {
+    "aggregate_statistic": "sum of the combined per-clip medians",
+    "combined_per_clip_statistic": "median of 18 raw samples (mean of the two middle values)",
+    "interpretation": "round samples are clustered by serialized run order; reversing order reveals but does not eliminate drift; no paired-significance claim",
+    "paired_significance_claim": false,
+    "round1_backend_order": [
+      "goav1",
+      "dav1d"
+    ],
+    "round2_backend_order": [
+      "dav1d",
+      "goav1"
+    ],
+    "samples_per_backend_clip_round": 9,
+    "warmups_per_backend_clip_round": 1
+  },
+  "schema": "goav1-public-dav1d-gap-refresh-v1",
+  "self_contained_inputs": {
+    "artifact_sha256s_file_path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/artifact-SHA256SUMS.txt",
+    "artifact_sha256s_file_text": "dfd98759b8abab35ca4cb2dc1d2fa4da2d945bcff392a3fb81611e0b5f980f25  commands.txt\n9ac1f7173a88561cebea4168aec93d7d61bb2fcc7fd747bb75aee2c716e99dd4  environment.txt\n94e2fb0f8448ef675faf1ef05daa375f95de7e721cd3abbcee5ba0f9885adcea  inputs/provenance.json\n71944e06c491b8c4373dfcbf6fe6571b0b5dad9557f189b809ecf91890085e87  inputs/source-manifest.json\n222a174609721dd2bdefcf460a5ea59406ce9c4b79f2cd16736bb2fc0513c519  round1-dav1d.jsonl\nfb129d458387882fe75977b05a09733d3e3c3c85923b3458db963b40d731b56d  round1-go.log\n7103e4d24915fb1f6a22696bad02b22bf18dd0703f3493a38d52a543c9adba78  round2-dav1d.jsonl\n9eebc022666fc842408cf7c3a7759a5729c7a25a053b11345508a581123a7150  round2-go.log\nc218b1d4f1b5300a0e465b8f625171ed331819f1afb61bb16cb5da48edd974d7  run-events.tsv\nfedf76828a6f4655e19ed4b97c5ef4f4f9fa87ea0845149ef7531c66904a76c5  summary.json\n3b775f0b1328453c3ad5a53f4112f4e8a56b0cfbb6e3b81534c2e1af81990a9f  summary.md\n",
+    "commands_file_path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/commands.txt",
+    "commands_file_text": "round1 go env CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-luna-dav1d-final-refresh GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 GOAV1_PUBLIC_FULLCLIP_SAMPLES=1 GOAV1_BENCH_CORPUS_DIR=/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus /Users/thesyncim/.codex/bin/project-env /private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test -test.run \\^TestPublicDecoderFullClipCorpusSamples\\$ -test.count=1 -test.v \nround1 dav1d env CODEX_AGENT_ID=pr8-luna-dav1d-final-refresh /private/tmp/pr8-dav1d-e2e/c-api/c-api-decode-bench-dav1d --corpus /Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus \nround2 dav1d env CODEX_AGENT_ID=pr8-luna-dav1d-final-refresh /private/tmp/pr8-dav1d-e2e/c-api/c-api-decode-bench-dav1d --corpus /Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus \nround2 go env CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-luna-dav1d-final-refresh GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 GOAV1_PUBLIC_FULLCLIP_SAMPLES=1 GOAV1_BENCH_CORPUS_DIR=/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus /Users/thesyncim/.codex/bin/project-env /private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test -test.run \\^TestPublicDecoderFullClipCorpusSamples\\$ -test.count=1 -test.v \n",
+    "environment_file_path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/environment.txt",
+    "environment_file_text": "prepared_utc=2026-10-17T17:05:46Z\nvariant=coeff-fusion-v4-bit-leaf\nagent_id=pr8-luna-dav1d-final-refresh\ngo_binary=/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test\nsource_root=/Users/thesyncim/.codex/worktrees/goav1-pr8-quality/goav1\ngit_common_dir=/Users/thesyncim/GolandProjects/goav1/.git\ncorpus_dir=/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus\ndav1d_helper=/private/tmp/pr8-dav1d-e2e/c-api/c-api-decode-bench-dav1d\nproject_env=/Users/thesyncim/.codex/bin/project-env\nproject_cache_root=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects\nsource_manifest_input=/private/tmp/pr8-coeff-fusion-v4-bit-leaf/source-manifest.canonical.json\nsource_manifest_copy=/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/inputs/source-manifest.json\nprovenance_input=/private/tmp/pr8-dav1d-gap-refresh-20261017/coefficient-refresh-provenance.json\nprovenance_copy=/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/inputs/provenance.json\ngo_environment=GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 GOAV1_PUBLIC_FULLCLIP_SAMPLES=1\ndav1d_pkg_config_version=1.5.3\n\nProductName:\t\tmacOS\nProductVersion:\t\t26.3.1\nProductVersionExtra:\t(a)\nBuildVersion:\t\t25D771280a\nDarwin Marcelos-MacBook-Pro.local 25.3.0 Darwin Kernel Version 25.3.0: Wed Jan 28 20:51:28 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T6041 arm64\n\nhelper_dependencies:\n/private/tmp/pr8-dav1d-e2e/c-api/c-api-decode-bench-dav1d:\n\t/opt/homebrew/opt/dav1d/lib/libdav1d.7.dylib (compatibility version 7.0.0, current version 7.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)\ngo_binary_stat_before=24097266:1792254920\ngo_binary_sha256_before=3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7\ndav1d_helper_stat_before=53016:1792236264\ndav1d_helper_sha256_before=d94ec98ccaf7324529de560d7eee25ad849f7c147f6c08e3f8baa727e2e8661c\ndav1d_library_linked_path_before=/opt/homebrew/opt/dav1d/lib/libdav1d.7.dylib\ndav1d_library_sha256_before=bdd18b4f70a9e8956a58de310d8acfdad2ecf6b1be00b813b397e14331d5d0bd\ngo_binary_stat_after=24097266:1792254920\ngo_binary_sha256_after=3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7\ndav1d_helper_stat_after=53016:1792236264\ndav1d_helper_sha256_after=d94ec98ccaf7324529de560d7eee25ad849f7c147f6c08e3f8baa727e2e8661c\ndav1d_library_linked_path_after=/opt/homebrew/opt/dav1d/lib/libdav1d.7.dylib\ndav1d_library_sha256_after=bdd18b4f70a9e8956a58de310d8acfdad2ecf6b1be00b813b397e14331d5d0bd\n",
+    "run_events_file_path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/run-events.tsv",
+    "run_events_file_text": "round\tbackend\tstarted_utc\tfinished_utc\texit_status\nround1\tgo\t2026-10-17T17:05:46Z\t2026-10-17T17:06:39Z\t0\nround1\tdav1d\t2026-10-17T17:06:39Z\t2026-10-17T17:06:46Z\t0\nround2\tdav1d\t2026-10-17T17:06:46Z\t2026-10-17T17:06:53Z\t0\nround2\tgo\t2026-10-17T17:06:53Z\t2026-10-17T17:07:48Z\t0\n"
+  },
+  "source_identity": {
+    "dav1d_helper_path": "/private/tmp/pr8-dav1d-e2e/c-api/c-api-decode-bench-dav1d",
+    "dav1d_helper_sha256": "d94ec98ccaf7324529de560d7eee25ad849f7c147f6c08e3f8baa727e2e8661c",
+    "dav1d_helper_stat_before_after": "53016:1792236264",
+    "dav1d_runtime_library": {
+      "linked_path": "/opt/homebrew/opt/dav1d/lib/libdav1d.7.dylib",
+      "linked_path_before_after": "/opt/homebrew/opt/dav1d/lib/libdav1d.7.dylib",
+      "resolved_path": "/opt/homebrew/Cellar/dav1d/1.5.3/lib/libdav1d.7.dylib",
+      "sha256": "bdd18b4f70a9e8956a58de310d8acfdad2ecf6b1be00b813b397e14331d5d0bd",
+      "sha256_before_after": "bdd18b4f70a9e8956a58de310d8acfdad2ecf6b1be00b813b397e14331d5d0bd"
+    },
+    "go_test_binary_path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+    "go_test_binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+    "go_test_binary_stat_before_after": "24097266:1792254920",
+    "provenance": {
+      "artifact_path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/inputs/provenance.json",
+      "input_path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/coefficient-refresh-provenance.json",
+      "json_content": {
+        "base_commit": "cf11a8d2fa8c140adb48a9a2a556972f90e419ba",
+        "baseline_binary": {
+          "path": "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4"
+        },
+        "branch": "codex/decoder-coefficient-contexts",
+        "build_command": "CODEX_AGENT_ID=pr8-speed2 GOEXPERIMENT=simd CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects /Users/thesyncim/.codex/bin/project-env go test -c . -o /private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "build_environment": {
+          "go_experiment": "simd",
+          "platform": "darwin/arm64",
+          "toolchain": "go1.27.0-X:simd; darwin/arm64; GOARM64=v8.0; compiler=gc; normal optimized go test -c build"
+        },
+        "cache_setup_failure": "Initial default-sandbox build failed before compilation: go: creating work dir: mkdir /private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects/37b85e7d09c67423/tmp/pr8-speed2_/go-build2628905262: operation not permitted. Retried the identical authorized command with cache-write escalation; it succeeded.",
+        "candidate_binary": {
+          "path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7"
+        },
+        "go_binary_path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "go_binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "public_harness_sha256": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59",
+        "schema": "goav1-build-provenance-v1",
+        "source_files_sha256": {
+          "go.mod": "2d9afa6f2b2dd13cf953546a7076df9c85f014f10913b47fbaf80d9116ed6e19",
+          "internal/av1/entropy/reader.go": "75ae34597ee74f79f118b8db43fd258ce4879d33e82e9e3fb36caec34040bd8d",
+          "internal/av1/entropy/reader_test.go": "0e697c6ab81ee1e51ef84ab1755ff438f3df154e6a73647a9d692a1bc3b52bf5",
+          "internal/av1/quantize/dequant.go": "dc5fb21bc2f10e5e9021d0ed8d8d62c53dd5ded778adc9b3589e33b4524c56a6",
+          "internal/av1/quantize/dequant_fused_test.go": "7f355e86e515e760d9d74997b58e82044055b0f835517bbba05b2e7bd0bdb870",
+          "internal/av1/reconstruct/block.go": "97e7f6fe414dac098d59d783f1831b0a8139132740ea463946fe331f79fe86b2",
+          "internal/av1/reconstruct/block_dequantized_test.go": "23fb5d67573e36eb3751b6e5a72e5ddf91e4290337fcbe7f68bbd50d7510491c",
+          "internal/av1/threading/coeff_dequant_provider_test.go": "d125930f29d62cbdecf338e5afb919af13645fd6ad3ce14e63cd1ca93d6aaee5",
+          "internal/av1/threading/reconstruct.go": "d926e45cc3c20e5a05d9cec97b8d868704bba54669217a7bbe587e7f96ab9dae",
+          "internal/av1/threading/tile_residual.go": "e0ab8ee4bb0fbe9161c0bf8df0659c30a509109d52f72ea33a1eb0ded354586d",
+          "internal/av1/tile/block_coeff.go": "dc1f921bdca41ff1101d9550cffa9e87ba44099093c9230dda155c7ba5b306e8",
+          "internal/av1/tile/coeff.go": "fa5698461d55db8dc1995d9624cebc1a18da5608ce09cf4274ca2bd8d78059ec",
+          "internal/av1/tile/coeff_asm_diff_test.go": "a486062064edfea39672b11797f13f737228e541fbe85b891291f0dd68910629",
+          "internal/av1/tile/coeff_dequant_fused_test.go": "e52b4c0168c853318e695d39f6e3ffb1df244e92212394c6cce3f6dba73339c0",
+          "internal/av1/tile/coeff_test.go": "78ea7cb7da5c868db31f34c3c6ac11ebb42ea0de9260bfab6d32ffd516691f60",
+          "internal/av1/tile/coeff_tree.go": "d88576e288691182eeb1e0f940944455da13d3161de887f8055b4f7addf941d6",
+          "public_fullclip_corpus_bench_test.go": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59"
+        },
+        "source_manifest_path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/source-manifest.canonical.json",
+        "source_manifest_sha256": "71944e06c491b8c4373dfcbf6fe6571b0b5dad9557f189b809ecf91890085e87",
+        "source_root": "/Users/thesyncim/.codex/worktrees/goav1-pr8-quality/goav1",
+        "source_snapshot_dir": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/source-snapshot",
+        "variant": "coeff-fusion-v4-bit-leaf"
+      },
+      "parsed_as_json": true,
+      "sha256": "94e2fb0f8448ef675faf1ef05daa375f95de7e721cd3abbcee5ba0f9885adcea"
+    },
+    "source_manifest": {
+      "artifact_path": "/private/tmp/pr8-dav1d-gap-refresh-20261017/runs/coeff-fusion-v4-bit-leaf-final-refresh-shared-cache/inputs/source-manifest.json",
+      "input_path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/source-manifest.canonical.json",
+      "json_content": {
+        "base_commit": "cf11a8d2fa8c140adb48a9a2a556972f90e419ba",
+        "baseline_binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "baseline_binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "branch": "codex/decoder-coefficient-contexts",
+        "build_command": "CODEX_AGENT_ID=pr8-speed2 GOEXPERIMENT=simd CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects /Users/thesyncim/.codex/bin/project-env go test -c . -o /private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "cache_setup_failure": "Initial default-sandbox build failed before compilation: go: creating work dir: mkdir /private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects/37b85e7d09c67423/tmp/pr8-speed2_/go-build2628905262: operation not permitted. Retried the identical authorized command with cache-write escalation; it succeeded.",
+        "candidate_binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "candidate_binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "public_harness_sha256": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59",
+        "source_files_sha256": {
+          "go.mod": "2d9afa6f2b2dd13cf953546a7076df9c85f014f10913b47fbaf80d9116ed6e19",
+          "internal/av1/entropy/reader.go": "75ae34597ee74f79f118b8db43fd258ce4879d33e82e9e3fb36caec34040bd8d",
+          "internal/av1/entropy/reader_test.go": "0e697c6ab81ee1e51ef84ab1755ff438f3df154e6a73647a9d692a1bc3b52bf5",
+          "internal/av1/quantize/dequant.go": "dc5fb21bc2f10e5e9021d0ed8d8d62c53dd5ded778adc9b3589e33b4524c56a6",
+          "internal/av1/quantize/dequant_fused_test.go": "7f355e86e515e760d9d74997b58e82044055b0f835517bbba05b2e7bd0bdb870",
+          "internal/av1/reconstruct/block.go": "97e7f6fe414dac098d59d783f1831b0a8139132740ea463946fe331f79fe86b2",
+          "internal/av1/reconstruct/block_dequantized_test.go": "23fb5d67573e36eb3751b6e5a72e5ddf91e4290337fcbe7f68bbd50d7510491c",
+          "internal/av1/threading/coeff_dequant_provider_test.go": "d125930f29d62cbdecf338e5afb919af13645fd6ad3ce14e63cd1ca93d6aaee5",
+          "internal/av1/threading/reconstruct.go": "d926e45cc3c20e5a05d9cec97b8d868704bba54669217a7bbe587e7f96ab9dae",
+          "internal/av1/threading/tile_residual.go": "e0ab8ee4bb0fbe9161c0bf8df0659c30a509109d52f72ea33a1eb0ded354586d",
+          "internal/av1/tile/block_coeff.go": "dc1f921bdca41ff1101d9550cffa9e87ba44099093c9230dda155c7ba5b306e8",
+          "internal/av1/tile/coeff.go": "fa5698461d55db8dc1995d9624cebc1a18da5608ce09cf4274ca2bd8d78059ec",
+          "internal/av1/tile/coeff_asm_diff_test.go": "a486062064edfea39672b11797f13f737228e541fbe85b891291f0dd68910629",
+          "internal/av1/tile/coeff_dequant_fused_test.go": "e52b4c0168c853318e695d39f6e3ffb1df244e92212394c6cce3f6dba73339c0",
+          "internal/av1/tile/coeff_test.go": "78ea7cb7da5c868db31f34c3c6ac11ebb42ea0de9260bfab6d32ffd516691f60",
+          "internal/av1/tile/coeff_tree.go": "d88576e288691182eeb1e0f940944455da13d3161de887f8055b4f7addf941d6",
+          "public_fullclip_corpus_bench_test.go": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59"
+        },
+        "source_snapshot_dir": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/source-snapshot",
+        "toolchain": "go1.27.0-X:simd; darwin/arm64; GOARM64=v8.0; compiler=gc; normal optimized go test -c build"
+      },
+      "parsed_as_json": true,
+      "sha256": "71944e06c491b8c4373dfcbf6fe6571b0b5dad9557f189b809ecf91890085e87"
+    },
+    "variant": "coeff-fusion-v4-bit-leaf",
+    "verified_binary_source_binding": {
+      "go_binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+      "provenance_schema_fields": [
+        "go_binary_sha256",
+        "source_manifest_sha256"
+      ],
+      "provenance_sha256": "94e2fb0f8448ef675faf1ef05daa375f95de7e721cd3abbcee5ba0f9885adcea",
+      "source_manifest_sha256": "71944e06c491b8c4373dfcbf6fe6571b0b5dad9557f189b809ecf91890085e87",
+      "verified": true
+    }
+  },
+  "title": "Public full-clip decoder comparison: coeff-fusion-v4-bit-leaf vs installed dav1d",
+  "validation": {
+    "cross_backend_preflight": "Go IVF, Go payload constructor, dav1d, and sidecar MD5s match clip by clip in both rounds",
+    "dav1d_round1": "PASS; 18/18 sidecar MD5 matches; 864 visible frames; nine raw samples per clip and reported medians validated",
+    "dav1d_round2": "PASS; 18/18 sidecar MD5 matches; 864 visible frames; nine raw samples per clip and reported medians validated",
+    "go_round1": "PASS; 18 IVF-constructor and 18 payload-constructor stream MD5s matched sidecars; 864 visible frames",
+    "go_round2": "PASS; 18 IVF-constructor and 18 payload-constructor stream MD5s matched sidecars; 864 visible frames",
+    "raw_clip_rows": "exactly one row per corpus clip per backend and round; missing or duplicate rows are rejected"
+  },
+  "variant": "coeff-fusion-v4-bit-leaf"
+}

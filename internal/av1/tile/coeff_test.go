@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
@@ -1329,6 +1330,64 @@ func TestReadCoefficientsTXBTracked2DFastPathMatchesGeneric(t *testing.T) {
 	}
 }
 
+func TestTracked2DPackedLevelContextFormulas(t *testing.T) {
+	pack := func(level int) uint8 {
+		clipped := min(level, 3)
+		return uint8(level | clipped<<6)
+	}
+	for level := 0; level <= 15; level++ {
+		packed := pack(level)
+		if got := int(packed & 0x3f); got != level {
+			t.Fatalf("packed level %d raw bits=%d", level, got)
+		}
+		if got, want := int(packed>>6), min(level, 3); got != want {
+			t.Fatalf("packed level %d clipped bits=%d want=%d", level, got, want)
+		}
+	}
+	clip3 := func(v int) int { return min(v, 3) }
+	for a := 0; a <= 15; a++ {
+		for b := 0; b <= 15; b++ {
+			for c := 0; c <= 15; c++ {
+				packedH := int(pack(a)) + int(pack(b)) + int(pack(c))
+				gotBR := ((packedH & 63) + 1) >> 1
+				if gotBR > 6 {
+					gotBR = 6
+				}
+				wantBR := (a + b + c + 1) >> 1
+				if wantBR > 6 {
+					wantBR = 6
+				}
+				if gotBR != wantBR {
+					t.Fatalf("BR context (%d,%d,%d)=%d want=%d", a, b, c, gotBR, wantBR)
+				}
+			}
+		}
+	}
+	for a := 0; a <= 15; a++ {
+		for b := 0; b <= 15; b++ {
+			for c := 0; c <= 15; c++ {
+				for d := 0; d <= 15; d++ {
+					for e := 0; e <= 15; e++ {
+						packedSum := int(pack(a)) + int(pack(b)) + int(pack(c)) + int(pack(d)) + int(pack(e))
+						got := (packedSum + 64) >> 7
+						if got > 4 {
+							got = 4
+						}
+						clippedSum := clip3(a) + clip3(b) + clip3(c) + clip3(d) + clip3(e)
+						want := (clippedSum + 1) >> 1
+						if want > 4 {
+							want = 4
+						}
+						if got != want {
+							t.Fatalf("low context (%d,%d,%d,%d,%d)=%d want=%d", a, b, c, d, e, got, want)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestReadCoefficientsTXBTrackedMatrixAllocs(t *testing.T) {
 	for _, tc := range coeffTXBMatrixCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1797,5 +1856,41 @@ func assertTXBDecodeInvariants(t *testing.T, result TXBDecodeResult, coeffs []in
 		if coeffs[pos] != 0 {
 			t.Fatalf("coeff after eob scan=%d pos=%d value=%d want 0", c, pos, coeffs[pos])
 		}
+	}
+}
+
+func TestCoeffGeometryTxScaleMatchesQuantizeTransformScale(t *testing.T) {
+	valid := 0
+	for size := TransformSize(0); size < transformSizeCount; size++ {
+		dims, ok := size.Dimensions()
+		if !ok {
+			t.Fatalf("transform size %d has no dimensions", size)
+		}
+		shape, err := size.TransformSize()
+		if err != nil {
+			t.Fatalf("transform size %d: %v", size, err)
+		}
+		want, err := quantize.TransformScale(int(shape.Width), int(shape.Height))
+		if err != nil {
+			t.Fatalf("TransformScale(%dx%d): %v", shape.Width, shape.Height, err)
+		}
+		geo, ok := coeffGeo(size)
+		if !ok {
+			t.Fatalf("transform size %d has no coefficient geometry", size)
+		}
+		if geo.txCtx != (dims.Min+dims.Max+1)>>1 || geo.txCtx >= CoeffTxSizeContexts {
+			t.Fatalf("transform size %d tx context=%d", size, geo.txCtx)
+		}
+		got := uint8(0)
+		if geo.txCtx > 2 {
+			got = geo.txCtx - 2
+		}
+		if got != want {
+			t.Errorf("transform size %d (%dx%d): txCtx=%d scale=%d want %d", size, shape.Width, shape.Height, geo.txCtx, got, want)
+		}
+		valid++
+	}
+	if valid != 19 {
+		t.Fatalf("validated %d transform sizes, want 19", valid)
 	}
 }
