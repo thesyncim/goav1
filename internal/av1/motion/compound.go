@@ -96,6 +96,23 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 	return PredictInterCompoundRefToConvBufWithScratch(buf, ref, bytesPerSample, bitDepth, refX, refY, width, height, subX, subY, filters, nil)
 }
 
+// PrepTranslation8 is the decoder's 8-bit translational compound predictor for
+// one reference: ReferenceOriginSubsampled followed by
+// PredictInterCompoundRefToConvBufWithScratch at bit depth 8, with the
+// dav1d-style prep kernels tried first.
+func PrepTranslation8(buf *CompoundConvBuf, ref *frame.Plane, dstX int, dstY int, width int, height int, mv Vector, subsamplingX bool, subsamplingY bool, filters InterpFilters, scratch *CompoundConvolveScratch) error {
+	refX, refY, subX, subY, err := ReferenceOriginSubsampled(dstX, dstY, mv, subsamplingX, subsamplingY)
+	if err != nil {
+		return err
+	}
+	if buf != nil && filters.X.Valid() && filters.Y.Valid() {
+		if out, ok := compoundConvBufView(buf, width, height); ok && mc8PrepFast(out, ref, refX, refY, width, height, subX, subY, filters, scratch) {
+			return nil
+		}
+	}
+	return PredictInterCompoundRefToConvBufWithScratch(buf, *ref, 1, 8, refX, refY, width, height, subX, subY, filters, scratch)
+}
+
 // PredictInterCompoundRefToConvBufWithScratch is PredictInterCompoundRefToConvBuf
 // using optional caller-owned scratch for the large 2D intermediate block.
 func PredictInterCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) error {
@@ -111,6 +128,9 @@ func PredictInterCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref frame
 	out, ok := compoundConvBufView(buf, width, height)
 	if !ok {
 		return ErrInvalidMotion
+	}
+	if bytesPerSample == 1 && mc8PrepFast(out, &ref, refX, refY, width, height, subX, subY, filters, scratch) {
+		return nil
 	}
 	bd := int(bitDepth)
 	xKernel, err := interpKernel(filters.X, width, subX)
@@ -1108,6 +1128,19 @@ func PredictWarpedCompoundToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytes
 	return nil
 }
 
+// BlendAvg8 is BlendCompoundAvg's plain 8-bit average (fwd = bck = 8) for the
+// decoder's lean compound route. It reports false when the kernel does not
+// apply; the caller then runs BlendCompoundAvg, which owns the errors.
+func BlendAvg8(dst *frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConvBuf, dstX int, dstY int, width int, height int) bool {
+	if buf0 == nil || buf1 == nil ||
+		int(buf0.Width) != width || int(buf0.Height) != height ||
+		int(buf1.Width) != width || int(buf1.Height) != height ||
+		width <= 0 || height <= 0 || width*height > len(buf0.Data) || dstY+height > dst.Height {
+		return false
+	}
+	return mc8BlendAvgFast(dst, buf0.Data[:width*height], buf1.Data[:width*height], dstX, dstY, width, height)
+}
+
 // BlendCompoundAvg blends two CONV_BUF predictors with distance weights
 // (fwdOffset/bckOffset; both 8 for a plain average) and writes the final pixels
 // (av1_dist_wtd_convolve_* do_average branch).
@@ -1129,6 +1162,9 @@ func BlendCompoundAvg(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConv
 	src0 := buf0.Data[:width*height]
 	src1 := buf1.Data[:width*height]
 	if bytesPerSample == 1 {
+		if fwdOffset == 8 && bckOffset == 8 && mc8BlendAvgFast(&dst, src0, src1, dstX, dstY, width, height) {
+			return nil
+		}
 		blendCompoundAvg8Impl(dst, src0, src1, dstX, dstY, width, height, fwdOffset, bckOffset, roundOffset, roundBits)
 		return nil
 	}
@@ -1157,6 +1193,9 @@ func BlendCompoundMaskD16(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *Compound
 	roundBits := 2*filterBits - round0 - compoundRound1Bits
 	src0 := buf0.Data[:width*height]
 	src1 := buf1.Data[:width*height]
+	if bytesPerSample == 1 && mc8BlendMaskFast(dst, src0, src1, dstX, dstY, width, height, mask, maskStride, subX, subY) {
+		return nil
+	}
 	max := uint16(0)
 	if bytesPerSample != 1 {
 		max, _ = highBDMax(bitDepth)
@@ -1198,6 +1237,9 @@ func BuildDiffWtdMaskD16(mask []byte, maskStride int, buf0 *CompoundConvBuf, buf
 	const diffFactor = 16
 	src0 := buf0.Data[:width*height]
 	src1 := buf1.Data[:width*height]
+	if bitDepth == 8 && mc8DiffWtdMaskFast(mask, maskStride, src0, src1, width, height, invert) {
+		return nil
+	}
 	for y := range height {
 		for x := range width {
 			i := y*width + x

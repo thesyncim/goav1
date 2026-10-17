@@ -39,6 +39,16 @@ func sqSumInt32(acc archsimd.Int64x2, v archsimd.Int32x4) archsimd.Int64x2 {
 	return acc.Add(v.MulWidenEven(v)).Add(odd.MulWidenEven(odd))
 }
 
+// mulSumInt32 adds the exact products a[i]*b[i] of the four int32 lane pairs
+// to acc.
+func mulSumInt32(acc archsimd.Int64x2, a, b archsimd.Int32x4) archsimd.Int64x2 {
+	oddA := a.ToBits().ReshapeToUint8s().PermuteOrZero(archsimd.LoadInt8x16Array(&oddDwordsIdx)).
+		ReshapeToUint32s().BitsToInt32()
+	oddB := b.ToBits().ReshapeToUint8s().PermuteOrZero(archsimd.LoadInt8x16Array(&oddDwordsIdx)).
+		ReshapeToUint32s().BitsToInt32()
+	return acc.Add(a.MulWidenEven(b)).Add(oddA.MulWidenEven(oddB))
+}
+
 // Even/odd element shuffles: each source keeps its even (or odd) lanes packed
 // into the low half via PSHUFB, and PUNPCKL zips the two packed halves.
 var (

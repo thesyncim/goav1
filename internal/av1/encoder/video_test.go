@@ -57,6 +57,7 @@ func TestVideoEncoderChainDecodesBitExact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = enc.Close() })
 	const frames = 6
 	tus := make([][]byte, 0, frames)
 	recons := make([]encoder.SourceFrame420, 0, frames)

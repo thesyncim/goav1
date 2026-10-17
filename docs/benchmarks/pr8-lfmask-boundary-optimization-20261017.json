@@ -1,0 +1,1544 @@
+{
+  "binaries": {
+    "p720_stream": {
+      "baseline": {
+        "go_version_m": "/private/tmp/pr8-lfctx-boundary/public-encoder-baseline.test: go1.27.0-X:simd\n\tpath\tgithub.com/thesyncim/goav1.test\n\tmod\tgithub.com/thesyncim/goav1\t(devel)\t\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\tCGO_ENABLED=1\n\tbuild\tCGO_CFLAGS=\n\tbuild\tCGO_CPPFLAGS=\n\tbuild\tCGO_CXXFLAGS=\n\tbuild\tCGO_LDFLAGS=\n\tbuild\tGOARCH=arm64\n\tbuild\tGOEXPERIMENT=simd\n\tbuild\tGOOS=darwin\n\tbuild\tGOARM64=v8.0\n",
+        "path": "/private/tmp/pr8-lfctx-boundary/public-encoder-baseline.test",
+        "sha256": "72d7254f2b304e6ed0eef65548145752e66a607f7c31ad582406b6e25824e395"
+      },
+      "candidate": {
+        "go_version_m": "/private/tmp/pr8-lfctx-boundary/public-encoder-candidate.test: go1.27.0-X:simd\n\tpath\tgithub.com/thesyncim/goav1.test\n\tmod\tgithub.com/thesyncim/goav1\t(devel)\t\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\tCGO_ENABLED=1\n\tbuild\tCGO_CFLAGS=\n\tbuild\tCGO_CPPFLAGS=\n\tbuild\tCGO_CXXFLAGS=\n\tbuild\tCGO_LDFLAGS=\n\tbuild\tGOARCH=arm64\n\tbuild\tGOEXPERIMENT=simd\n\tbuild\tGOOS=darwin\n\tbuild\tGOARM64=v8.0\n",
+        "path": "/private/tmp/pr8-lfctx-boundary/public-encoder-candidate.test",
+        "sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4"
+      }
+    },
+    "pan": {
+      "baseline": {
+        "go_version_m": "/private/tmp/pr8-lfctx-boundary/encoder-baseline.test: go1.27.0-X:simd\n\tpath\tgithub.com/thesyncim/goav1/internal/av1/encoder.test\n\tmod\tgithub.com/thesyncim/goav1\t(devel)\t\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\tCGO_ENABLED=1\n\tbuild\tCGO_CFLAGS=\n\tbuild\tCGO_CPPFLAGS=\n\tbuild\tCGO_CXXFLAGS=\n\tbuild\tCGO_LDFLAGS=\n\tbuild\tGOARCH=arm64\n\tbuild\tGOEXPERIMENT=simd\n\tbuild\tGOOS=darwin\n\tbuild\tGOARM64=v8.0\n",
+        "path": "/private/tmp/pr8-lfctx-boundary/encoder-baseline.test",
+        "sha256": "bfa97599d75f4c53d8032199824e2a757cc6307accd9c51adc79dda141882c57"
+      },
+      "candidate": {
+        "go_version_m": "/private/tmp/pr8-lfctx-boundary/encoder-candidate.test: go1.27.0-X:simd\n\tpath\tgithub.com/thesyncim/goav1/internal/av1/encoder.test\n\tmod\tgithub.com/thesyncim/goav1\t(devel)\t\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\tCGO_ENABLED=1\n\tbuild\tCGO_CFLAGS=\n\tbuild\tCGO_CPPFLAGS=\n\tbuild\tCGO_CXXFLAGS=\n\tbuild\tCGO_LDFLAGS=\n\tbuild\tGOARCH=arm64\n\tbuild\tGOEXPERIMENT=simd\n\tbuild\tGOOS=darwin\n\tbuild\tGOARM64=v8.0\n",
+        "path": "/private/tmp/pr8-lfctx-boundary/encoder-candidate.test",
+        "sha256": "cb22474a7300e3eb7fdc90f5b453cea9b1d930fbfbeef787abe3231e2d1bb6cf"
+      }
+    }
+  },
+  "decision": {
+    "scope_note": "The Pan and P720 workloads are reported separately. This confirmation is not pooled with the earlier five-pair screen or with the combined MDS0 screen.",
+    "status": "accepted for the scoped Pan improvement; the P720 full-stream result remains inconclusive",
+    "summary": "The fresh ten-pair confirmation shows a small Pan single-thread improvement; the separate public P720 stream result is inconclusive and does not support a broad end-to-end gain claim."
+  },
+  "environment_and_protocol": {
+    "fixture": {
+      "path": "/private/tmp/pr8-encoder-p720/p720_inter_q32.yuv",
+      "raw_stream_md5": "47854463914ca952c4b0c63b8e7edd45",
+      "sha256": "8a1c607974284d5a47902f0081015de0de572208438217c109cdd72c2dac58d1",
+      "sidecar_path": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus/p720_inter_q32.md5",
+      "sidecar_sha256": "db82b4c2385ce3ec464f0054c9c1c580d8142d03fe59a6cd79122d77a3d405e6"
+    },
+    "flags": [
+      "-test.run=^$",
+      "-test.cpu=1",
+      "-test.count=1",
+      "-test.benchmem"
+    ],
+    "fresh_output_directory": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017",
+    "go": "go1.27.0-X:simd, darwin/arm64",
+    "goexperiment": "simd",
+    "gogc": 100,
+    "gomaxprocs": 1,
+    "host": {
+      "machine": "arm64",
+      "processor": "arm",
+      "release": "25.3.0",
+      "system": "Darwin"
+    },
+    "order": "BA on odd pairs and AB on even pairs for each workload, reversing the earlier five-pair screen; case order is Pan then P720 on odd pairs and P720 then Pan on even pairs. Each sample preserves the runner ledger order index 0\u20133 across the four processes in that pair.",
+    "p720_stream": {
+      "N": 3,
+      "benchtime": "3x",
+      "bitstream_bytes_per_stream": 720250,
+      "frames_per_op": 48,
+      "selector": "^BenchmarkPublicEncoderP720CorpusStream$"
+    },
+    "pairs_per_case": 10,
+    "pan": {
+      "N": 31,
+      "benchtime": "31x",
+      "selector": "^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+      "unit": "ns/op per encoded P-frame"
+    },
+    "project_cache_root": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+    "project_env": "/Users/thesyncim/.codex/bin/project-env",
+    "runner": {
+      "path": "/private/tmp/pr8-lfctx-boundary/confirm10.py",
+      "sha256": "40ca886bea7b5fa87a900ac721080edecb3efe0d394b129c5c2be1a0499b968e"
+    },
+    "test_cpu": 1
+  },
+  "excluded_setup_attempts": [
+    {
+      "command": "/usr/bin/python3 -u /private/tmp/pr8-lfctx-boundary/confirm10.py --preflight",
+      "log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-preflight-attempt1.log",
+      "log_sha256": "bc2576b863593d4e339c0460ff61e95e08aa3559fe323acc0b4f3360d0d5a18d",
+      "status": "no data; sandbox denied project-env shared-cache temp-directory creation; no benchmark process started"
+    }
+  ],
+  "final_source_validation": [
+    {
+      "command": "CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-lfctx-final-native GOEXPERIMENT=simd /Users/thesyncim/.codex/bin/project-env go test -count=1 ./internal/av1/lfmask ./internal/av1/threading",
+      "log_path": "/private/tmp/pr8-lfctx-boundary/final-native-lfmask-threading.log",
+      "log_sha256": "cbe821a2a07b3ec39b13d61bd0936d356344d202d9d3ca339117a91865a13f86",
+      "name": "native SIMD affected packages",
+      "output": "ok  \tgithub.com/thesyncim/goav1/internal/av1/lfmask\t0.366s\nok  \tgithub.com/thesyncim/goav1/internal/av1/threading\t0.766s",
+      "result": "PASS"
+    },
+    {
+      "command": "CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-lfctx-final-purego GOEXPERIMENT=simd /Users/thesyncim/.codex/bin/project-env go test -tags=purego -count=1 ./internal/av1/lfmask ./internal/av1/threading",
+      "log_path": "/private/tmp/pr8-lfctx-boundary/final-purego-lfmask-threading.log",
+      "log_sha256": "5c253efaabbfbe4f192099313927ba06f4912f9e6764e3518f5327ef208912bc",
+      "name": "purego affected packages",
+      "output": "ok  \tgithub.com/thesyncim/goav1/internal/av1/lfmask\t0.300s\nok  \tgithub.com/thesyncim/goav1/internal/av1/threading\t0.500s",
+      "result": "PASS"
+    },
+    {
+      "command": "CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-lfctx-final-race-checkptr GOEXPERIMENT=simd /Users/thesyncim/.codex/bin/project-env go test -race -gcflags=all=-d=checkptr=2 -count=1 -run '^(TestInterEdgeContextMatchesFullTransformGrid|TestBuildFromMapMatchesZOrderStaircase|TestBuildFromMapMatchesInterZOrderStaircaseAtPartialFrame)$' ./internal/av1/lfmask ./internal/av1/threading",
+      "log_path": "/private/tmp/pr8-lfctx-boundary/final-race-checkptr-boundary-order.log",
+      "log_sha256": "cc7933850248851079d65973983322eea421a37fdd057f9d21f7651bd79ab683",
+      "name": "focused race and strict checkptr boundary/order regressions",
+      "output": "ok  \tgithub.com/thesyncim/goav1/internal/av1/lfmask\t1.365s\nok  \tgithub.com/thesyncim/goav1/internal/av1/threading\t1.356s",
+      "result": "PASS"
+    },
+    {
+      "command": "CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-lfctx-final-encoder-pinned GOEXPERIMENT=simd /Users/thesyncim/.codex/bin/project-env go test -count=1 -run '^TestPFrameReuseOptimizationsPreserveEncodedOutput$' -v ./internal/av1/encoder",
+      "log_path": "/private/tmp/pr8-lfctx-boundary/final-pinned-encoder-output.log",
+      "log_sha256": "d7f19805f0ccdb5bd49803ed14bf799c08ebbfdc2524576de429d35f078b5d15",
+      "name": "pinned encoder bitstream/reconstruction parity",
+      "output": "=== RUN   TestPFrameReuseOptimizationsPreserveEncodedOutput\n=== RUN   TestPFrameReuseOptimizationsPreserveEncodedOutput/threads-1\n=== RUN   TestPFrameReuseOptimizationsPreserveEncodedOutput/threads-4\n--- PASS: TestPFrameReuseOptimizationsPreserveEncodedOutput (0.22s)\n    --- PASS: TestPFrameReuseOptimizationsPreserveEncodedOutput/threads-1 (0.14s)\n    --- PASS: TestPFrameReuseOptimizationsPreserveEncodedOutput/threads-4 (0.09s)\nPASS\nok  \tgithub.com/thesyncim/goav1/internal/av1/encoder\t0.557s",
+      "result": "PASS; serial and four-thread cases"
+    },
+    {
+      "command": "CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-lfctx-final-p720 GOEXPERIMENT=simd GOAV1_ENCODER_P720_I420=/private/tmp/pr8-encoder-p720/p720_inter_q32.yuv GOAV1_BENCH_CORPUS_DIR=/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus GOAV1_ENCODER_P720_EXPECT_BITSTREAM_SHA256=2114c08db1008904b2d69634ed733f7eff4201caca23186c2d643adc7823898a GOAV1_ENCODER_P720_EXPECT_RECON_SHA256=c3c2d1bb6092fc986c05398767b7d931566b1dcfa9cf82a73b58acc0124ce948 /Users/thesyncim/.codex/bin/project-env go test -count=1 -run '^TestPublicEncoderP720CorpusParity$' -v .",
+      "log_path": "/private/tmp/pr8-lfctx-boundary/final-public-p720-parity.log",
+      "log_sha256": "de6e4e497552ad099a69e58653b22b6b3bacc6e4dfd403a43be353c1f00f0c72",
+      "name": "opt-in P720 public stream and reconstruction hash",
+      "output": "=== RUN   TestPublicEncoderP720CorpusParity\n    public_encoder_corpus_bench_test.go:56: public_encoder_p720 frames=48 raw_sha256=8a1c607974284d5a47902f0081015de0de572208438217c109cdd72c2dac58d1 source_stream_md5=47854463914ca952c4b0c63b8e7edd45 bitstream_sha256=2114c08db1008904b2d69634ed733f7eff4201caca23186c2d643adc7823898a reconstruction_sha256=c3c2d1bb6092fc986c05398767b7d931566b1dcfa9cf82a73b58acc0124ce948 bitstream_bytes=720250\n--- PASS: TestPublicEncoderP720CorpusParity (0.91s)\nPASS\nok  \tgithub.com/thesyncim/goav1\t1.328s",
+      "result": "PASS; 48 frames, bitstream and reconstruction SHA256 matched"
+    }
+  ],
+  "measurement_date": "2026-10-17",
+  "optimization": {
+    "allocation_contract": "Pan remained 0 B/op and 0 allocs/op. P720 allocations matched exactly between baseline and candidate at 106402424 B/op and 197 allocs/op.",
+    "correctness_oracle": "Compare every carried edge cell against the unchanged full-grid decompTx path, with sentinel guards, legal transform shapes, split masks, clipped extents, and Builder reuse. Integration compares BuildFromMap to ordered decode-time construction for inter blocks, including a partial-frame staircase.",
+    "mechanism": "Prune transform-tree recursion to subtrees containing a visible rightmost column or bottom row, since this helper returns only the transform contexts carried to right/below neighbors. The all-zero split-mask case uses the exact uniform intra-edge helper. Split decisions, root offsets, transform classes, and clipped-frame extents remain unchanged.",
+    "production_path": "internal/av1/lfmask/build.go:Builder.InterEdgeContext"
+  },
+  "paired_statistics": {
+    "cases": {
+      "p720_stream": {
+        "allocation_parity": true,
+        "baseline_ns_op": [
+          727797639.0,
+          731036611.0,
+          734787028.0,
+          736511083.0,
+          746592625.0,
+          743882139.0,
+          769435903.0,
+          773508153.0,
+          768558722.0,
+          762198930.0
+        ],
+        "bootstrap_95_percentile_interval_pct": [
+          -1.7009814088580755,
+          0.9617614590135104
+        ],
+        "candidate_ns_op": [
+          734156875.0,
+          726822139.0,
+          724808361.0,
+          732269847.0,
+          730157306.0,
+          791199889.0,
+          776796278.0,
+          768745708.0,
+          767095125.0,
+          754639819.0
+        ],
+        "geometric_mean_time_reduction_pct": -0.14359317924903525,
+        "median_paired_time_reduction_pct": 0.5761806489400889,
+        "paired_time_reduction_pct": [
+          -0.8737643074437029,
+          0.5765062838966384,
+          1.3580352700510612,
+          0.5758550139835394,
+          2.2013770896812668,
+          -6.360920301650097,
+          -0.9565936514402518,
+          0.6156942213898065,
+          0.19043398482179175,
+          0.9917504082562756
+        ],
+        "pairs": 10,
+        "wins": 7
+      },
+      "pan": {
+        "allocation_parity": true,
+        "baseline_ns_op": [
+          18458761.0,
+          18679797.0,
+          18716698.0,
+          18582306.0,
+          18736527.0,
+          20232569.0,
+          19729796.0,
+          19518280.0,
+          19503976.0,
+          19746868.0
+        ],
+        "bootstrap_95_percentile_interval_pct": [
+          0.2855219756081351,
+          1.274527964093707
+        ],
+        "candidate_ns_op": [
+          18117792.0,
+          18331063.0,
+          18539684.0,
+          18488776.0,
+          18461849.0,
+          20078827.0,
+          19847899.0,
+          19609483.0,
+          19395445.0,
+          19530987.0
+        ],
+        "geometric_mean_time_reduction_pct": 0.8005558619197162,
+        "median_paired_time_reduction_pct": 0.8528141361987374,
+        "paired_time_reduction_pct": [
+          1.8471933192048984,
+          1.8669046564049885,
+          0.945754427410217,
+          0.5033282736814249,
+          1.466002744265249,
+          0.7598738449872577,
+          -0.5986022359278254,
+          -0.4672696569574697,
+          0.5564557708643614,
+          1.0932417231937719
+        ],
+        "pairs": 10,
+        "wins": 8
+      }
+    },
+    "cohort": "fresh ten-pair boundary-only confirmation; not pooled with five-pair screen or combined MDS0 screen",
+    "input_ledger": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/ledger.json",
+    "input_ledger_sha256": "3da412306f298b77339ce4cd7e455ed88f0f666b086c98c6d50fee070f619c6a",
+    "method": "Paired bootstrap of candidate/baseline time ratios, resampling the ten within-pair log ratios with replacement. Each replicate reports 100*(1-exp(mean(log(candidate/baseline)))) percent time reduction. Percentile interval uses linear interpolation at (n-1)*p.",
+    "resamples": 30000,
+    "seed": 8173
+  },
+  "parity_preflights": {
+    "internal_pinned_encoder": {
+      "baseline_log": {
+        "path": "/private/tmp/pr8-lfctx-boundary/encoder-baseline-hash-preflight.log",
+        "result": "PASS",
+        "sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431"
+      },
+      "candidate_log": {
+        "path": "/private/tmp/pr8-lfctx-boundary/encoder-candidate-hash-preflight.log",
+        "result": "PASS",
+        "sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431"
+      },
+      "scope": "The immutable encoder test binaries preserve pinned output for serial and four-thread stream/reconstruction expectations."
+    },
+    "public_p720": {
+      "baseline_log": {
+        "path": "/private/tmp/pr8-lfctx-boundary/public-baseline-hash-preflight.log",
+        "result": "PASS",
+        "sha256": "3e8d86fac432f5bcdb948b14b5ae293ef80c19518507e36df6761fab3afa37c5"
+      },
+      "bitstream_bytes": 720250,
+      "bitstream_sha256": "2114c08db1008904b2d69634ed733f7eff4201caca23186c2d643adc7823898a",
+      "candidate_log": {
+        "path": "/private/tmp/pr8-lfctx-boundary/public-candidate-hash-preflight.log",
+        "result": "PASS",
+        "sha256": "cedf81ca19baa9c3a3c97a79043ff8b85e3a349eeba90520fe22096dde0a2117"
+      },
+      "frames": 48,
+      "reconstruction_sha256": "c3c2d1bb6092fc986c05398767b7d931566b1dcfa9cf82a73b58acc0124ce948"
+    }
+  },
+  "raw_confirmation_samples": [
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247423804371000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 18117792.0
+      },
+      "order_in_pair": 0,
+      "pair": 1,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair01-pan-candidate.log",
+      "raw_log_sha256": "3cceaf9aab62bcbe04fc90940e652a1c22075bb7e3fc00a53ddd9cf0d26bb32f",
+      "role": "candidate",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  18117792 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247422704639000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247424920366000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 18458761.0
+      },
+      "order_in_pair": 1,
+      "pair": 1,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair01-pan-baseline.log",
+      "raw_log_sha256": "7cbca863ca4acede2b3f1c83a78db63d4f3b7878c626d5afad796eedc2029ef1",
+      "role": "baseline",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  18458761 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247423805039000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247427258746000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 734156875.0
+      },
+      "order_in_pair": 2,
+      "pair": 1,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair01-p720_stream-candidate.log",
+      "raw_log_sha256": "4080a00cce670673fd6fea8b76235cdb08c3355ef5969d7455d06528b3fee372",
+      "role": "candidate",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 734156875 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247424921033000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247429579131000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 727797639.0
+      },
+      "order_in_pair": 3,
+      "pair": 1,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair01-p720_stream-baseline.log",
+      "raw_log_sha256": "4e07b853692a406a591a6b6d51b8273d98eae497e48bfa0f40c47e4dc72eaab7",
+      "role": "baseline",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 727797639 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247427259391000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247431909414000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 731036611.0
+      },
+      "order_in_pair": 0,
+      "pair": 2,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair02-p720_stream-baseline.log",
+      "raw_log_sha256": "2b8da7e8b06ce25ea88991d537bff725694a227cbf0f267a8510df494ec2e674",
+      "role": "baseline",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 731036611 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247429579807000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247434226937000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 726822139.0
+      },
+      "order_in_pair": 1,
+      "pair": 2,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair02-p720_stream-candidate.log",
+      "raw_log_sha256": "1d22d61d9e7594101f1c230ae699db6c6f8c947f5ca55085cf4ea35c1bd2b096",
+      "role": "candidate",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 726822139 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247431909866000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247435354333000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 18679797.0
+      },
+      "order_in_pair": 2,
+      "pair": 2,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair02-pan-baseline.log",
+      "raw_log_sha256": "26d96c1c81c19ae583d2882795918337a3c9627d3278f03dcbcf3c1b19fd54df",
+      "role": "baseline",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  18679797 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247434227666000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247436467914000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 18331063.0
+      },
+      "order_in_pair": 3,
+      "pair": 2,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair02-pan-candidate.log",
+      "raw_log_sha256": "e017bf8e7e08bd7f3213cfda13185c4a1cf08a41cdb54455071c68c3b3cc7544",
+      "role": "candidate",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  18331063 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247435355026000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247437594594000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 18539684.0
+      },
+      "order_in_pair": 0,
+      "pair": 3,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair03-pan-candidate.log",
+      "raw_log_sha256": "6a9e65f36dc60927a268948e8e7c7796214144e6ac59c59e5600870f26a5eff3",
+      "role": "candidate",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  18539684 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247436468638000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247438738274000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 18716698.0
+      },
+      "order_in_pair": 1,
+      "pair": 3,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair03-pan-baseline.log",
+      "raw_log_sha256": "8cf39fd0ed316320dce1c6a234e3644c3d06529974932ac9aa0f9f13f5c82745",
+      "role": "baseline",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  18716698 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247437595080000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247441048387000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 724808361.0
+      },
+      "order_in_pair": 2,
+      "pair": 3,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair03-p720_stream-candidate.log",
+      "raw_log_sha256": "e54e5071e316b4155a67aa3173df4165b6c2cdd7db27892d14dc4c8fdc2f78f4",
+      "role": "candidate",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 724808361 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247438738786000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247443388536000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 734787028.0
+      },
+      "order_in_pair": 3,
+      "pair": 3,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair03-p720_stream-baseline.log",
+      "raw_log_sha256": "37db062ee3fd128dd020af83b97a6b7f07fa04848cc718fac29fb3682cff0dca",
+      "role": "baseline",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 734787028 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247441049143000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247445735567000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 736511083.0
+      },
+      "order_in_pair": 0,
+      "pair": 4,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair04-p720_stream-baseline.log",
+      "raw_log_sha256": "3a8e9168bc96d35a087e5462e56733728c7f09f8edf41fb29c6e5971f34a12b8",
+      "role": "baseline",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 736511083 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247443389325000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247448068432000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 732269847.0
+      },
+      "order_in_pair": 1,
+      "pair": 4,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair04-p720_stream-candidate.log",
+      "raw_log_sha256": "48e90e21f5c1377b0c5348362ab5096f6ac67d777e230296e7bc29e84caaf098",
+      "role": "candidate",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 732269847 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247445736123000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247449197118000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 18582306.0
+      },
+      "order_in_pair": 2,
+      "pair": 4,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair04-pan-baseline.log",
+      "raw_log_sha256": "67c46c58f7749bb85dcf0f3b5a03f31e44369dc4f55906654ea02665551091e1",
+      "role": "baseline",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  18582306 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247448069252000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247450317102000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 18488776.0
+      },
+      "order_in_pair": 3,
+      "pair": 4,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair04-pan-candidate.log",
+      "raw_log_sha256": "3323fa08a7e17ee66129b1c851a129c34e2087945b72886bd72743976f008fe1",
+      "role": "candidate",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  18488776 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247449197929000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247451437103000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 18461849.0
+      },
+      "order_in_pair": 0,
+      "pair": 5,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair05-pan-candidate.log",
+      "raw_log_sha256": "e5392ce3a4fdbdd3a6a0f021cdf6bd0e3d50dcb9818114c249a3d7f46db639ef",
+      "role": "candidate",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  18461849 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247450317934000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247452569629000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 18736527.0
+      },
+      "order_in_pair": 1,
+      "pair": 5,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair05-pan-baseline.log",
+      "raw_log_sha256": "33260cbf9f3dea407290a309a150a0ecf5180c114a24663d957c83b79b1b38d4",
+      "role": "baseline",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  18736527 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247451437933000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247454898861000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 730157306.0
+      },
+      "order_in_pair": 2,
+      "pair": 5,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair05-p720_stream-candidate.log",
+      "raw_log_sha256": "2c8bc99df412f46ed1511d7185663a7ce062e43bde70e0a06796d082edc4a900",
+      "role": "candidate",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 730157306 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247452570506000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247457275383000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 746592625.0
+      },
+      "order_in_pair": 3,
+      "pair": 5,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair05-p720_stream-baseline.log",
+      "raw_log_sha256": "5f0a5db7aae91fc96e092ee83ed05f342915e47c5e82792a640d551432b96092",
+      "role": "baseline",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 746592625 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247454899498000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247459645996000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 743882139.0
+      },
+      "order_in_pair": 0,
+      "pair": 6,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair06-p720_stream-baseline.log",
+      "raw_log_sha256": "f85192fae747533749c9befb9e60022a44d2eaf80cabcc78dd0a2dd97fb9ff0c",
+      "role": "baseline",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 743882139 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247457276311000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247462157543000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 791199889.0
+      },
+      "order_in_pair": 1,
+      "pair": 6,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair06-p720_stream-candidate.log",
+      "raw_log_sha256": "3f57e0e7d018fe45e3ab10adfb1aa8c1a98dc2954a1e2b089c05e90177d12eb7",
+      "role": "candidate",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 791199889 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247459647249000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247463383889000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 20232569.0
+      },
+      "order_in_pair": 2,
+      "pair": 6,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair06-pan-baseline.log",
+      "raw_log_sha256": "96cc41c1ca5d96ce922caec8b904b73c3dcf5b20c9ffbb1be15ccf271a862154",
+      "role": "baseline",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  20232569 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247462158341000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247464598596000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 20078827.0
+      },
+      "order_in_pair": 3,
+      "pair": 6,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair06-pan-candidate.log",
+      "raw_log_sha256": "a1558b0c83e968d315832105142c50cb9e939375143d520d2705132221483f49",
+      "role": "candidate",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  20078827 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247463384876000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247465805700000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 19847899.0
+      },
+      "order_in_pair": 0,
+      "pair": 7,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair07-pan-candidate.log",
+      "raw_log_sha256": "78f5513649086ca4b1860f8f1e33b11ad6e1751602b5a086a3ec2422ac0feb69",
+      "role": "candidate",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  19847899 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247464599573000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247467023943000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 19729796.0
+      },
+      "order_in_pair": 1,
+      "pair": 7,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair07-pan-baseline.log",
+      "raw_log_sha256": "77de6f256a41fc9a87bab73bd69e5931b46390fb23d77b368877994f3271639f",
+      "role": "baseline",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  19729796 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247465806384000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247469508444000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 776796278.0
+      },
+      "order_in_pair": 2,
+      "pair": 7,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair07-p720_stream-candidate.log",
+      "raw_log_sha256": "c241f3fafc5a3ba8f8b918c1e502c12e3be189b347609f3293595d84577dbccf",
+      "role": "candidate",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 776796278 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247467024862000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247471962593000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 769435903.0
+      },
+      "order_in_pair": 3,
+      "pair": 7,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair07-p720_stream-baseline.log",
+      "raw_log_sha256": "c34c2b96a6067cee159282c159fe2aaa011eaf951c4a30c93dfbcbd11b57eb76",
+      "role": "baseline",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 769435903 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247469509388000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247474427155000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 773508153.0
+      },
+      "order_in_pair": 0,
+      "pair": 8,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair08-p720_stream-baseline.log",
+      "raw_log_sha256": "f873e5d1c80885efb1938199c58e474e32629ce332cfb56bef7c46d0dff13f06",
+      "role": "baseline",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 773508153 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247471963795000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247476875035000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 768745708.0
+      },
+      "order_in_pair": 1,
+      "pair": 8,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair08-p720_stream-candidate.log",
+      "raw_log_sha256": "dd8505b84770c2a2af5ea22afe7828d3a842f2054c7678b17a86c698bdc729f0",
+      "role": "candidate",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 768745708 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247474428098000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247478059655000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 19518280.0
+      },
+      "order_in_pair": 2,
+      "pair": 8,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair08-pan-baseline.log",
+      "raw_log_sha256": "ed2f707f20159ffb31a87ccf16601bdb9e4db0607daadb3f69418f92c829e413",
+      "role": "baseline",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  19518280 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247476876417000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247479235005000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 19609483.0
+      },
+      "order_in_pair": 3,
+      "pair": 8,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair08-pan-candidate.log",
+      "raw_log_sha256": "cd296eab84934ad67a07c45815db2aa6395dc59415c0f7344120e46c614fde2d",
+      "role": "candidate",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  19609483 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247478061001000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247480414206000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 19395445.0
+      },
+      "order_in_pair": 0,
+      "pair": 9,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair09-pan-candidate.log",
+      "raw_log_sha256": "b1a97d34aa51010e7c9584883e53f1e8ae21764616545fe5c99bd3306985bf33",
+      "role": "candidate",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  19395445 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247479236032000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247481594498000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 19503976.0
+      },
+      "order_in_pair": 1,
+      "pair": 9,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair09-pan-baseline.log",
+      "raw_log_sha256": "ae775c5c0946ee7f39a0a14171e4ea1c78990cc617c7592344b94bcfb7f4089a",
+      "role": "baseline",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  19503976 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247480414982000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247484059698000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 767095125.0
+      },
+      "order_in_pair": 2,
+      "pair": 9,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair09-p720_stream-candidate.log",
+      "raw_log_sha256": "920ee3cb5ac36071286cede4bad1860d0be7f5da10cf1033c687c5e92f23694b",
+      "role": "candidate",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 767095125 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247481595340000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247486508075000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 768558722.0
+      },
+      "order_in_pair": 3,
+      "pair": 9,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair09-p720_stream-baseline.log",
+      "raw_log_sha256": "da6ef2ee4b7fbe2bc82c4f57114f10198ed46b7d07411016f76c1951f92993f0",
+      "role": "baseline",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 768558722 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247484060694000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247488939768000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 762198930.0
+      },
+      "order_in_pair": 0,
+      "pair": 10,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair10-p720_stream-baseline.log",
+      "raw_log_sha256": "3a7bade3d564ad8268d0eabdb31f44c68de5a439de5dab86df0cbbd9d5340483",
+      "role": "baseline",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 762198930 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247486509119000
+    },
+    {
+      "N": 3,
+      "case": "p720_stream",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/public-encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicEncoderP720CorpusStream$",
+        "-test.benchtime=3x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247491347222000,
+      "metrics": {
+        "B/op": 106402424.0,
+        "allocs/op": 197.0,
+        "bitstream_B/stream": 720250.0,
+        "frames/op": 48.0,
+        "ns/op": 754639819.0
+      },
+      "order_in_pair": 1,
+      "pair": 10,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair10-p720_stream-candidate.log",
+      "raw_log_sha256": "9e237e825147a8726c7b14f3d7d1924702cae31d1485c5b6a3b60a6dc7f8057a",
+      "role": "candidate",
+      "row": "BenchmarkPublicEncoderP720CorpusStream \t       3\t 754639819 ns/op\t    720250 bitstream_B/stream\t        48.00 frames/op\t106402424 B/op\t     197 allocs/op",
+      "started_unix_ns": 1792247488940845000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247492533218000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 19746868.0
+      },
+      "order_in_pair": 2,
+      "pair": 10,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair10-pan-baseline.log",
+      "raw_log_sha256": "5b04d771dd79b0c4f417ea9a285cf72d5a5545d3755ea7238a9195062ebec40f",
+      "role": "baseline",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  19746868 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247491348355000
+    },
+    {
+      "N": 31,
+      "case": "pan",
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/pr8-lfctx-boundary/encoder-candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$",
+        "-test.benchtime=31x",
+        "-test.cpu=1",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "exit_code": 0,
+      "finished_unix_ns": 1792247493709918000,
+      "metrics": {
+        "B/op": 0.0,
+        "allocs/op": 0.0,
+        "ns/op": 19530987.0
+      },
+      "order_in_pair": 3,
+      "pair": 10,
+      "raw_log_path": "/private/tmp/pr8-lfctx-boundary/confirm10-20261017/pair10-pan-candidate.log",
+      "raw_log_sha256": "d96ba4fd390734e87260a9a8b249633ad2283109c3667648d3a29bd58032d3da",
+      "role": "candidate",
+      "row": "BenchmarkVideoEncoderPFramePan1080pSingleThread \t      31\t  19530987 ns/op\t       0 B/op\t       0 allocs/op",
+      "started_unix_ns": 1792247492534257000
+    }
+  ],
+  "rejected_experiment_references": [
+    {
+      "candidate_geometric_mean_time_change_pct": 0.7608854828569767,
+      "disposition": "Rejected after public whole-operation decoder screen; source restored to HEAD and excluded from this encoder boundary candidate.",
+      "index_path": "/private/tmp/pr8-cdef-tap-lifetime/rejected-experiment-index.json",
+      "index_sha256": "1ea14e0127907fd81ca6f3ecc995399c25aefa9f58adec2d792cdf0d614c29dd",
+      "name": "CDEF tap-lifetime reduction",
+      "positive_time_change_means": "candidate slower than baseline"
+    },
+    {
+      "combined_ledger_path": "/private/tmp/pr8-boundary-mds0-combined/screen5-20261017/ledger.json",
+      "combined_ledger_sha256": "dfa61a5bd0cca0045c80eefa4fbbc77485fa60ed9bc2b92c5bedf61936dcd9a7",
+      "disposition": "Not retained; combined-screen data are preserved above but separate screen point estimates are not an incremental comparison.",
+      "name": "MDS0 low-variance predictor-retention experiment",
+      "patch_path": "/private/tmp/pr8-mds0-reuse-prep/mds0-reuse.patch",
+      "patch_sha256": "e7945551dba194ade8fb9df7d3987b4d8d93013a95e8ed8d5e6babae107dde00"
+    },
+    {
+      "archived_patch_path": "/private/tmp/pr8-lfctx-boundary/pred8-experiment-tests.patch",
+      "archived_patch_sha256": "60327f7f1496af5919425df862cffcf2bdf5e733a27d6bca3a84f87b12dd8808",
+      "disposition": "Restored to HEAD; not part of the proposed source diff or candidate acceptance.",
+      "name": "unrelated pred8 rolling-kernel experiment tests"
+    }
+  ],
+  "separate_prior_cohorts": [
+    {
+      "name": "boundary-only five-pair screen",
+      "note": "Preliminary screen only; kept separate and not pooled with the fresh ten-pair confirmation.",
+      "p720_geometric_mean_time_reduction_pct": 0.6794991376915305,
+      "pan_geometric_mean_time_reduction_pct": 1.5148513348853032,
+      "path": "/private/tmp/pr8-lfctx-boundary/screen5-20261017/ledger.json",
+      "sha256": "eb81b5b5c6786d5b371709eddb136ee7e0abb0756f454cabede8ec8f6f8bcbcd"
+    },
+    {
+      "name": "combined boundary and MDS0-reuse five-pair screen",
+      "note": "Separate combined candidate, not used to infer an incremental MDS0 effect and not pooled with either boundary-only cohort. The MDS0 source/test patch was removed from the proposed change.",
+      "p720_geometric_mean_time_reduction_pct": 0.5419450181127772,
+      "pan_geometric_mean_time_reduction_pct": 1.4810547383736328,
+      "patch_path": "/private/tmp/pr8-mds0-reuse-prep/mds0-reuse.patch",
+      "patch_sha256": "e7945551dba194ade8fb9df7d3987b4d8d93013a95e8ed8d5e6babae107dde00",
+      "path": "/private/tmp/pr8-boundary-mds0-combined/screen5-20261017/ledger.json",
+      "sha256": "dfa61a5bd0cca0045c80eefa4fbbc77485fa60ed9bc2b92c5bedf61936dcd9a7"
+    }
+  ],
+  "source_identity": {
+    "final_candidate_sources": {
+      "existing_encoder_benchmark": {
+        "path": "internal/av1/encoder/video_bench_test.go",
+        "sha256": "a8757c120e989b9ccb83428e5e671f42d568989107f77329ec1b2209f7537bfb"
+      },
+      "integration_order_tests": {
+        "path": "internal/av1/threading/loop_filter_masks_order_test.go",
+        "sha256": "7d59e7472e8d040f8a98b6df951b5521f527b3c9f3bbe13162dd036ce07230be"
+      },
+      "oracle_tests": {
+        "path": "internal/av1/lfmask/mask_test.go",
+        "sha256": "8ab7ee1c76b70fde07b57aef55cd95583250fea50b8e7f3467e05a0272449b9b"
+      },
+      "production": {
+        "path": "internal/av1/lfmask/build.go",
+        "sha256": "cbca50719f8d7c75fbb2e218ce4aa787f75a11e8f8e007fd8848cea086e27070"
+      },
+      "public_harness": {
+        "path": "public_encoder_corpus_bench_test.go",
+        "sha256": "471b50e91716cbc40a6fbc3346c6d4df323469579c7a8c273ebd6c78ff44189c"
+      }
+    },
+    "frozen_binary_build_tree": {
+      "baseline_source_copy_path": "/private/tmp/pr8-lfctx-boundary/build.baseline.go",
+      "baseline_source_copy_sha256": "5f31d5f6db938c3575839511bc380b4d261964856acd8888542c68656abe5b54",
+      "manifest": {
+        "HEAD": "3f9b8ec05779255818955cf214e7a957143a26d9",
+        "baseline overlay": "485054cdecd4d949d625ca3ef5b736626f0fc7b872417d5ea5683535142e8a4d",
+        "baseline source copy": "5f31d5f6db938c3575839511bc380b4d261964856acd8888542c68656abe5b54",
+        "encoder baseline hash-preflight log": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
+        "encoder candidate hash-preflight log": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
+        "internal/av1/encoder/pred8_gosimd_arm64_test.go": "5b18c7e5ccb25413b018a047e50290b663d3505cdf06559739be4c92352b7481",
+        "internal/av1/encoder/video_bench_test.go": "a8757c120e989b9ccb83428e5e671f42d568989107f77329ec1b2209f7537bfb",
+        "internal/av1/lfmask/build.go": "cbca50719f8d7c75fbb2e218ce4aa787f75a11e8f8e007fd8848cea086e27070",
+        "internal/av1/lfmask/mask_test.go": "8ab7ee1c76b70fde07b57aef55cd95583250fea50b8e7f3467e05a0272449b9b",
+        "internal/av1/threading/loop_filter_masks_order_test.go": "7d59e7472e8d040f8a98b6df951b5521f527b3c9f3bbe13162dd036ce07230be",
+        "public baseline hash-preflight log": "3e8d86fac432f5bcdb948b14b5ae293ef80c19518507e36df6761fab3afa37c5",
+        "public candidate hash-preflight log": "cedf81ca19baa9c3a3c97a79043ff8b85e3a349eeba90520fe22096dde0a2117",
+        "public_encoder_corpus_bench_test.go": "471b50e91716cbc40a6fbc3346c6d4df323469579c7a8c273ebd6c78ff44189c"
+      },
+      "note": "Both baseline and candidate were built from the same tree at HEAD plus the boundary candidate/test additions and public harness; baseline overlaid only internal/av1/lfmask/build.go with the HEAD source. The unrelated pred8 test extension was present in both frozen test binaries but was restored to HEAD before final validation; it is absent from the proposed source diff.",
+      "overlay_path": "/private/tmp/pr8-lfctx-boundary/baseline-overlay.json",
+      "overlay_sha256": "485054cdecd4d949d625ca3ef5b736626f0fc7b872417d5ea5683535142e8a4d",
+      "pred8_test_extension_archive": "/private/tmp/pr8-lfctx-boundary/pred8-experiment-tests.patch",
+      "pred8_test_extension_archive_sha256": "60327f7f1496af5919425df862cffcf2bdf5e733a27d6bca3a84f87b12dd8808"
+    },
+    "head": "3f9b8ec05779255818955cf214e7a957143a26d9"
+  },
+  "title": "AV1 inter transform edge-context boundary-pruning benchmark evidence",
+  "upstream_comparison": {
+    "pinned_dav1d": {
+      "commit": "b546257f770768b2c88258c533da38b91a06f737",
+      "comparison": "dav1d recursively fills a full transform grid because mask_edges_inter also derives the block\u2019s internal transform edges; it then copies the last column and row into the carried contexts. This Go helper only prepares those carried boundary contexts, so its pruned walk is narrower in purpose. The oracle preserves dav1d\u2019s boundary values; no claim is made that dav1d\u2019s full-grid work is useless for its broader mask operation.",
+      "refs": [
+        "third_party/upstream/dav1d/src/lf_mask.c:40-77",
+        "third_party/upstream/dav1d/src/lf_mask.c:79-145"
+      ]
+    },
+    "pinned_svt_av1": {
+      "commit": "c04f951541ad600e0d9c10836f2ab7b9bc69816d",
+      "comparison": "The inspected SVT path reads top/left transform contexts from neighbor arrays. No matching full-grid carried-context builder was identified in the inspected source, so no direct implementation or speed comparison is claimed.",
+      "ref": "third_party/upstream/svt-av1/Source/Lib/Codec/coding_loop.c:1714-1719"
+    }
+  }
+}

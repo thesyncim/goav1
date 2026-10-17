@@ -50,6 +50,7 @@ func TestVideoEncoderSceneCutAutoKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = enc.Close() })
 	var tus [][]byte
 	var recons []encoder.SourceFrame420
 	var keys []bool

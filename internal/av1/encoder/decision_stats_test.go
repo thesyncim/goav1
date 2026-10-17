@@ -7,6 +7,7 @@ func TestVideoEncoderDecisionStatsDisabledByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = enc.Close() })
 	if _, _, err := enc.Encode(decisionStatsFrame(64, 64, 0), false); err != nil {
 		t.Fatal(err)
 	}
@@ -23,6 +24,7 @@ func TestVideoEncoderDecisionStatsAccumulatesKeyAndInter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = enc.Close() })
 	enc.SetTileColumns(1)
 	enc.SetDecisionStatsEnabled(true)
 	if _, key, err := enc.Encode(decisionStatsFrame(64, 64, 0), false); err != nil || !key {
@@ -57,6 +59,7 @@ func TestVideoEncoderDecisionStatsReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = enc.Close() })
 	enc.SetDecisionStatsEnabled(true)
 	if _, _, err := enc.Encode(decisionStatsFrame(64, 64, 0), false); err != nil {
 		t.Fatal(err)

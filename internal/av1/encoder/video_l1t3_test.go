@@ -44,6 +44,7 @@ func TestVideoEncoderL1T3LayerDrops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = enc.Close() })
 	if err := enc.SetTemporalLayers(3); err != nil {
 		t.Fatal(err)
 	}

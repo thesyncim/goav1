@@ -29,66 +29,50 @@ import "simd/archsimd"
 // identically to the scalar clipInt32 path.
 const stageRect2SafeBound = 2966528
 
-// stageTransposeClamp is the SIMD staging kernel; shapes below one 4x4 block
-// (and rect2 calls with out-of-contract clamp bounds, which production never
-// produces) fall back to the scalar reference.
+// stageTransposeClamp is the SIMD staging kernel. It works in 4x4 tiles: a
+// shape with fewer than four rows still loads full tiles (the column-major
+// coefficient block is at least four rows tall) and stores only the rows it
+// stages, and a row count that is not a multiple of four finishes with a tile
+// overlapping the previous one, rewriting those rows with identical values.
+// Single-row stagings (a strided gather either way; the tile would load four
+// rows to keep one), blocks narrower than one tile, and rect2 calls with
+// out-of-contract clamp bounds (which production never produces) use the
+// scalar reference.
 func stageTransposeClamp(scratch []int32, width int, coeff []int32, coeffStride int, rows int, cols int, rect2 bool, lo int32, hi int32) {
-	if rows < 4 || cols < 4 || (rect2 && (hi >= stageRect2SafeBound || lo <= -stageRect2SafeBound)) {
+	colsBlk := cols &^ 3
+	if rows <= 1 || cols < 4 || coeffStride < 4 || len(coeff) < (colsBlk-1)*coeffStride+max(rows, 4) ||
+		(rect2 && (hi >= stageRect2SafeBound || lo <= -stageRect2SafeBound)) {
 		stageTransposeClampScalar(scratch, width, coeff, coeffStride, rows, cols, rect2, lo, hi)
 		return
 	}
-	loV := archsimd.BroadcastInt32x4(lo)
-	hiV := archsimd.BroadcastInt32x4(hi)
-	rowsBlk := rows &^ 3
-	colsBlk := cols &^ 3
+	k := stageClampKernel{
+		lo: archsimd.BroadcastInt32x4(lo),
+		hi: archsimd.BroadcastInt32x4(hi),
+	}
 	if rect2 {
-		preLo := archsimd.BroadcastInt32x4(-(1 << 22))
-		preHi := archsimd.BroadcastInt32x4(1 << 22)
-		k181 := archsimd.BroadcastInt32x4(181)
-		r128 := archsimd.BroadcastInt32x4(128)
-		for r := 0; r < rowsBlk; r += 4 {
-			for c := 0; c < colsBlk; c += 4 {
-				base := c*coeffStride + r
-				v0 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base:]))
-				v1 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base+coeffStride:]))
-				v2 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base+2*coeffStride:]))
-				v3 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base+3*coeffStride:]))
-				v0 = v0.Max(preLo).Min(preHi).MulAdd(k181, r128).ShiftAllRight(8).Max(loV).Min(hiV)
-				v1 = v1.Max(preLo).Min(preHi).MulAdd(k181, r128).ShiftAllRight(8).Max(loV).Min(hiV)
-				v2 = v2.Max(preLo).Min(preHi).MulAdd(k181, r128).ShiftAllRight(8).Max(loV).Min(hiV)
-				v3 = v3.Max(preLo).Min(preHi).MulAdd(k181, r128).ShiftAllRight(8).Max(loV).Min(hiV)
-				// In-register 4x4 int32 transpose: vN holds column c+N rows
-				// r..r+3; tN holds row r+N cols c..c+3.
-				e0 := v0.InterleaveLo(v1)
-				e1 := v0.InterleaveHi(v1)
-				e2 := v2.InterleaveLo(v3)
-				e3 := v2.InterleaveHi(v3)
-				t0 := fdctInt64AsInt32(fdctInt32AsInt64(e0).InterleaveLo(fdctInt32AsInt64(e2)))
-				t1 := fdctInt64AsInt32(fdctInt32AsInt64(e0).InterleaveHi(fdctInt32AsInt64(e2)))
-				t2 := fdctInt64AsInt32(fdctInt32AsInt64(e1).InterleaveLo(fdctInt32AsInt64(e3)))
-				t3 := fdctInt64AsInt32(fdctInt32AsInt64(e1).InterleaveHi(fdctInt32AsInt64(e3)))
-				t0.StoreArray((*[4]int32)(scratch[(r+0)*width+c:]))
-				t1.StoreArray((*[4]int32)(scratch[(r+1)*width+c:]))
-				t2.StoreArray((*[4]int32)(scratch[(r+2)*width+c:]))
-				t3.StoreArray((*[4]int32)(scratch[(r+3)*width+c:]))
+		k.preLo = archsimd.BroadcastInt32x4(-(1 << 22))
+		k.preHi = archsimd.BroadcastInt32x4(1 << 22)
+		k.k181 = archsimd.BroadcastInt32x4(181)
+		k.r128 = archsimd.BroadcastInt32x4(128)
+	}
+	if rows < 4 {
+		for c := 0; c < colsBlk; c += 4 {
+			t0, t1, t2, _ := k.tile(coeff, c*coeffStride, coeffStride, rect2)
+			t0.StoreArray((*[4]int32)(scratch[c:]))
+			if rows > 1 {
+				t1.StoreArray((*[4]int32)(scratch[width+c:]))
+			}
+			if rows > 2 {
+				t2.StoreArray((*[4]int32)(scratch[2*width+c:]))
 			}
 		}
 	} else {
-		for r := 0; r < rowsBlk; r += 4 {
+		for r := 0; r < rows; r += 4 {
+			if r+4 > rows {
+				r = rows - 4
+			}
 			for c := 0; c < colsBlk; c += 4 {
-				base := c*coeffStride + r
-				v0 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base:])).Max(loV).Min(hiV)
-				v1 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base+coeffStride:])).Max(loV).Min(hiV)
-				v2 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base+2*coeffStride:])).Max(loV).Min(hiV)
-				v3 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base+3*coeffStride:])).Max(loV).Min(hiV)
-				e0 := v0.InterleaveLo(v1)
-				e1 := v0.InterleaveHi(v1)
-				e2 := v2.InterleaveLo(v3)
-				e3 := v2.InterleaveHi(v3)
-				t0 := fdctInt64AsInt32(fdctInt32AsInt64(e0).InterleaveLo(fdctInt32AsInt64(e2)))
-				t1 := fdctInt64AsInt32(fdctInt32AsInt64(e0).InterleaveHi(fdctInt32AsInt64(e2)))
-				t2 := fdctInt64AsInt32(fdctInt32AsInt64(e1).InterleaveLo(fdctInt32AsInt64(e3)))
-				t3 := fdctInt64AsInt32(fdctInt32AsInt64(e1).InterleaveHi(fdctInt32AsInt64(e3)))
+				t0, t1, t2, t3 := k.tile(coeff, c*coeffStride+r, coeffStride, rect2)
 				t0.StoreArray((*[4]int32)(scratch[(r+0)*width+c:]))
 				t1.StoreArray((*[4]int32)(scratch[(r+1)*width+c:]))
 				t2.StoreArray((*[4]int32)(scratch[(r+2)*width+c:]))
@@ -96,9 +80,9 @@ func stageTransposeClamp(scratch []int32, width int, coeff []int32, coeffStride 
 			}
 		}
 	}
-	// Column tail: cols not covered by a 4-wide block, over the blocked rows.
+	// Column tail: cols not covered by a 4-wide tile.
 	if colsBlk < cols {
-		for row := 0; row < rowsBlk; row++ {
+		for row := 0; row < rows; row++ {
 			line := scratch[row*width : row*width+cols : row*width+cols]
 			if rect2 {
 				for col := colsBlk; col < cols; col++ {
@@ -111,8 +95,40 @@ func stageTransposeClamp(scratch []int32, width int, coeff []int32, coeffStride 
 			}
 		}
 	}
-	// Row tail: the remaining rows across every column.
-	if rowsBlk < rows {
-		stageTransposeClampScalar(scratch[rowsBlk*width:], width, coeff[rowsBlk:], coeffStride, rows-rowsBlk, cols, rect2, lo, hi)
+}
+
+// stageClampKernel holds the broadcast clamp (and rect2 scale) constants.
+type stageClampKernel struct {
+	lo, hi, preLo, preHi, k181, r128 archsimd.Int32x4
+}
+
+// tile loads the 4x4 tile whose first column starts at coeff[base] (columns
+// coeffStride apart), clamps it (rect2-scaling first when set) and returns it
+// transposed: tN holds row N of the tile.
+func (k *stageClampKernel) tile(coeff []int32, base int, coeffStride int, rect2 bool) (t0, t1, t2, t3 archsimd.Int32x4) {
+	v0 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base:]))
+	v1 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base+coeffStride:]))
+	v2 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base+2*coeffStride:]))
+	v3 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base+3*coeffStride:]))
+	if rect2 {
+		v0 = v0.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).ShiftAllRight(8)
+		v1 = v1.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).ShiftAllRight(8)
+		v2 = v2.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).ShiftAllRight(8)
+		v3 = v3.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).ShiftAllRight(8)
 	}
+	v0 = v0.Max(k.lo).Min(k.hi)
+	v1 = v1.Max(k.lo).Min(k.hi)
+	v2 = v2.Max(k.lo).Min(k.hi)
+	v3 = v3.Max(k.lo).Min(k.hi)
+	// In-register 4x4 int32 transpose: vN holds column N rows 0..3; tN holds
+	// row N columns 0..3.
+	e0 := v0.InterleaveLo(v1)
+	e1 := v0.InterleaveHi(v1)
+	e2 := v2.InterleaveLo(v3)
+	e3 := v2.InterleaveHi(v3)
+	t0 = fdctInt64AsInt32(fdctInt32AsInt64(e0).InterleaveLo(fdctInt32AsInt64(e2)))
+	t1 = fdctInt64AsInt32(fdctInt32AsInt64(e0).InterleaveHi(fdctInt32AsInt64(e2)))
+	t2 = fdctInt64AsInt32(fdctInt32AsInt64(e1).InterleaveLo(fdctInt32AsInt64(e3)))
+	t3 = fdctInt64AsInt32(fdctInt32AsInt64(e1).InterleaveHi(fdctInt32AsInt64(e3)))
+	return
 }

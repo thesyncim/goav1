@@ -1,0 +1,1673 @@
+{
+  "schema": "goav1-pr8-encoder-vim6-benchmark-v1",
+  "date": "2026-10-16",
+  "provenance": {
+    "host": "Apple M4 Max; macOS Darwin arm64",
+    "go_version": "go1.27.0",
+    "goexperiment": "simd",
+    "goos": "darwin",
+    "goarch": "arm64",
+    "gogc": 100,
+    "head_commit": "b0735ce740d329479b0f7bead4309439ed1d1f5a",
+    "pre_cachefix_commit": "fb5f9047b6b242b7868b9adf69e8ad31a60f18c4",
+    "candidate": "uncommitted VIM6 source based on b0735ce7; kernel SHA is recorded below",
+    "source_file_sha256": {
+      "internal/av1/encoder/pred8_gosimd_arm64.go": "9a158dfc2cff65078013dd3062e02f798651809b635f22672501e741a02c47e9",
+      "internal/av1/encoder/pred8_gosimd_arm64_test.go": "aed96806e81ca2074f3fba9162940ffc27d5fcf66c52bf60848b0f675d3865d9",
+      "internal/av1/encoder/video_bench_test.go": "5395d5335feb239f13b7e2690cf16a555d67a941ff5640a613e78cd26f16e8fc"
+    },
+    "overlay_sha256": {
+      "b073": "ed8822d911b27c61ac0c977edd787cb42e72bbd4381c085faf7e51eca608314c",
+      "fb5": "2219798d8edeac5e149f90f7028ce28bd38e4b8706f57cfcb2cf5ff5c15f8bb6"
+    },
+    "overlay_mapping": {
+      "b073": "replace pred8_gosimd_arm64.go with its b0735ce7 version; retain the shared current test and benchmark sources",
+      "fb5": "replace pred8_gosimd_arm64.go with its fb5f9047 version, and replace pframe_residual.go, pframe_wavefront.go, recon_gosimd.go, and subpel_cache.go with their fb5f9047 versions; retain shared current tests and benchmark sources"
+    },
+    "binary_sha256": {
+      "fb5": "66105ca51b7891fd9f2fe00a69329ad833d644acf9ad5ce9a26530bf51fd9825",
+      "b073": "cf89696a74f319459bd2a6ee70c9ccb5fd1b018d1fe2f735940ea68b9df96bef",
+      "vim6": "9540f6591146929792d28d7ae287cc1f9affe6b2d5db100530d24630c1f36be6"
+    },
+    "builds": {
+      "candidate": "env CODEX_AGENT_ID=pr8-speed2 GOTOOLCHAIN=go1.27.0 GOEXPERIMENT=simd /Users/thesyncim/.codex/bin/project-env go test -c -o <candidate.test> ./internal/av1/encoder",
+      "b073": "same command with -overlay=/private/tmp/pr8-vim6-matched-baselines/b073.overlay.json",
+      "fb5": "same command with -overlay=/private/tmp/pr8-vim6-matched-baselines/fb5.overlay.json"
+    },
+    "benchmark_command_template": "env CODEX_AGENT_ID=pr8-speed2 GOTOOLCHAIN=go1.27.0 GOEXPERIMENT=simd GOMAXPROCS=<1|6> GOGC=100 /Users/thesyncim/.codex/bin/project-env <binary> -test.run=^$ -test.bench=<benchmark> -test.benchtime=<31x|250ms> -test.benchmem -test.count=1 -test.timeout=120s",
+    "binary_test_sources_match": "All three final binaries were built with the same current pred8 differential/microbenchmark test file and video benchmark file; baseline overlays changed production sources only."
+  },
+  "benchmarks": {
+    "pan_singlethread": {
+      "name": "BenchmarkVideoEncoderPFramePan1080pSingleThread",
+      "gomaxprocs": 1,
+      "benchtime": "31x",
+      "frame_sequence": "31 measured P frames, frames[1] through frames[31], from deterministic seed-15 1080p synthetic pan; each invocation creates and prewarms a fresh encoder outside the timer.",
+      "raw_samples": [
+        {
+          "round": 1,
+          "order_index": 1,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 21512276,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 1,
+          "order_index": 2,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 21274956,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 1,
+          "order_index": 3,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 21373136,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 2,
+          "order_index": 1,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 21300886,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 2,
+          "order_index": 2,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 21184530,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 2,
+          "order_index": 3,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 21297331,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 3,
+          "order_index": 1,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 20718277,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 3,
+          "order_index": 2,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 20776121,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 3,
+          "order_index": 3,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 20344343,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 4,
+          "order_index": 1,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 20879867,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 4,
+          "order_index": 2,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 20337302,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 4,
+          "order_index": 3,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 20677004,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 5,
+          "order_index": 1,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 20361093,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 5,
+          "order_index": 2,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 20714645,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 5,
+          "order_index": 3,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 20778310,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 6,
+          "order_index": 1,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 21550844,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 6,
+          "order_index": 2,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 21684766,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 6,
+          "order_index": 3,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 20794606,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 7,
+          "order_index": 1,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 20688218,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 7,
+          "order_index": 2,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 20941454,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 7,
+          "order_index": 3,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 21544505,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 8,
+          "order_index": 1,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 21253970,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 8,
+          "order_index": 2,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 21843835,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 8,
+          "order_index": 3,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 21689804,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 9,
+          "order_index": 1,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 21357859,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 9,
+          "order_index": 2,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 21543949,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 9,
+          "order_index": 3,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 21353700,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 10,
+          "order_index": 1,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 21586431,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 10,
+          "order_index": 2,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 21499972,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 10,
+          "order_index": 3,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 22060534,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        }
+      ],
+      "execution_order_by_round": {
+        "1": [
+          "fb5",
+          "vim6",
+          "b073"
+        ],
+        "2": [
+          "vim6",
+          "b073",
+          "fb5"
+        ],
+        "3": [
+          "b073",
+          "fb5",
+          "vim6"
+        ],
+        "4": [
+          "fb5",
+          "vim6",
+          "b073"
+        ],
+        "5": [
+          "vim6",
+          "b073",
+          "fb5"
+        ],
+        "6": [
+          "b073",
+          "fb5",
+          "vim6"
+        ],
+        "7": [
+          "fb5",
+          "vim6",
+          "b073"
+        ],
+        "8": [
+          "vim6",
+          "b073",
+          "fb5"
+        ],
+        "9": [
+          "b073",
+          "fb5",
+          "vim6"
+        ],
+        "10": [
+          "fb5",
+          "vim6",
+          "b073"
+        ]
+      },
+      "summary": {
+        "b073_vs_fb5": {
+          "baseline": "fb5",
+          "candidate": "b073",
+          "rounds": 10,
+          "baseline_median_ns_per_op": 21404803.5,
+          "candidate_median_ns_per_op": 21365497.5,
+          "median_ratio_delta_percent": -0.184,
+          "median_paired_delta_percent": -0.418,
+          "mean_paired_delta_percent": 0.283,
+          "candidate_faster_pairs": 7,
+          "paired_sign_test_two_sided_p": 0.3438,
+          "paired_deltas_percent": [
+            -0.647,
+            -0.53,
+            -0.278,
+            -0.972,
+            -0.306,
+            -0.618,
+            4.139,
+            0.71,
+            -0.864,
+            2.196
+          ]
+        },
+        "vim6_vs_b073": {
+          "baseline": "b073",
+          "candidate": "vim6",
+          "rounds": 10,
+          "baseline_median_ns_per_op": 21365497.5,
+          "candidate_median_ns_per_op": 21097712.0,
+          "median_ratio_delta_percent": -1.253,
+          "median_paired_delta_percent": -1.756,
+          "mean_paired_delta_percent": -1.663,
+          "candidate_faster_pairs": 9,
+          "paired_sign_test_two_sided_p": 0.0215,
+          "paired_deltas_percent": [
+            -0.459,
+            0.549,
+            -1.805,
+            -1.643,
+            -1.707,
+            -3.509,
+            -2.799,
+            -2.7,
+            -0.019,
+            -2.541
+          ]
+        },
+        "vim6_vs_fb5_net": {
+          "baseline": "fb5",
+          "candidate": "vim6",
+          "rounds": 10,
+          "baseline_median_ns_per_op": 21404803.5,
+          "candidate_median_ns_per_op": 21097712.0,
+          "median_ratio_delta_percent": -1.435,
+          "median_paired_delta_percent": -1.556,
+          "mean_paired_delta_percent": -1.395,
+          "candidate_faster_pairs": 8,
+          "paired_sign_test_two_sided_p": 0.1094,
+          "paired_deltas_percent": [
+            -1.103,
+            0.017,
+            -2.078,
+            -2.599,
+            -2.008,
+            -4.105,
+            1.224,
+            -2.009,
+            -0.883,
+            -0.401
+          ]
+        }
+      }
+    },
+    "pan_gomax6": {
+      "name": "BenchmarkVideoEncoderPFramePan1080p",
+      "gomaxprocs": 6,
+      "benchtime": "31x",
+      "frame_sequence": "Same deterministic seed-15 synthetic 1080p pan and 31 measured P-frame sequence; default encoder worker fanout is allowed at GOMAXPROCS=6.",
+      "raw_samples": [
+        {
+          "round": 1,
+          "order_index": 1,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 5354495,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 1,
+          "order_index": 2,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 5237395,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 1,
+          "order_index": 3,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 5342539,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 2,
+          "order_index": 1,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 5009388,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 2,
+          "order_index": 2,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 5211699,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 2,
+          "order_index": 3,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 5345680,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 3,
+          "order_index": 1,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 5296203,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 3,
+          "order_index": 2,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 5381563,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 3,
+          "order_index": 3,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 5229422,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 4,
+          "order_index": 1,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 5481719,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 4,
+          "order_index": 2,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 5269987,
+          "bytes_per_op": 171,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 4,
+          "order_index": 3,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 5575669,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 5,
+          "order_index": 1,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 5640633,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 5,
+          "order_index": 2,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 5785509,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 5,
+          "order_index": 3,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 6003308,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 6,
+          "order_index": 1,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 6362075,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 6,
+          "order_index": 2,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 6457321,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 6,
+          "order_index": 3,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 5270798,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 7,
+          "order_index": 1,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 8850898,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 7,
+          "order_index": 2,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 5634515,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 7,
+          "order_index": 3,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 5626499,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 8,
+          "order_index": 1,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 5408489,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 8,
+          "order_index": 2,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 5479411,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 8,
+          "order_index": 3,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 5484087,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 9,
+          "order_index": 1,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 5707989,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 9,
+          "order_index": 2,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 5622333,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 9,
+          "order_index": 3,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 10859593,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 10,
+          "order_index": 1,
+          "variant": "fb5",
+          "n": 31,
+          "ns_per_op": 5532898,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 10,
+          "order_index": 2,
+          "variant": "vim6",
+          "n": 31,
+          "ns_per_op": 5394815,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        },
+        {
+          "round": 10,
+          "order_index": 3,
+          "variant": "b073",
+          "n": 31,
+          "ns_per_op": 5526054,
+          "bytes_per_op": 0,
+          "allocs_per_op": 0
+        }
+      ],
+      "execution_order_by_round": {
+        "1": [
+          "fb5",
+          "vim6",
+          "b073"
+        ],
+        "2": [
+          "vim6",
+          "b073",
+          "fb5"
+        ],
+        "3": [
+          "b073",
+          "fb5",
+          "vim6"
+        ],
+        "4": [
+          "fb5",
+          "vim6",
+          "b073"
+        ],
+        "5": [
+          "vim6",
+          "b073",
+          "fb5"
+        ],
+        "6": [
+          "b073",
+          "fb5",
+          "vim6"
+        ],
+        "7": [
+          "fb5",
+          "vim6",
+          "b073"
+        ],
+        "8": [
+          "vim6",
+          "b073",
+          "fb5"
+        ],
+        "9": [
+          "b073",
+          "fb5",
+          "vim6"
+        ],
+        "10": [
+          "fb5",
+          "vim6",
+          "b073"
+        ]
+      },
+      "summary": {
+        "b073_vs_fb5": {
+          "baseline": "fb5",
+          "candidate": "b073",
+          "rounds": 10,
+          "baseline_median_ns_per_op": 5508492.5,
+          "candidate_median_ns_per_op": 5550861.5,
+          "median_ratio_delta_percent": 0.769,
+          "median_paired_delta_percent": -0.849,
+          "mean_paired_delta_percent": -4.282,
+          "candidate_faster_pairs": 8,
+          "paired_sign_test_two_sided_p": 0.1094,
+          "paired_deltas_percent": [
+            -0.223,
+            -2.506,
+            -1.586,
+            1.714,
+            -3.628,
+            -1.475,
+            -36.43,
+            -0.085,
+            1.523,
+            -0.124
+          ]
+        },
+        "vim6_vs_b073": {
+          "baseline": "b073",
+          "candidate": "vim6",
+          "rounds": 10,
+          "baseline_median_ns_per_op": 5550861.5,
+          "candidate_median_ns_per_op": 5332806.5,
+          "median_ratio_delta_percent": -3.928,
+          "median_paired_delta_percent": -2.171,
+          "mean_paired_delta_percent": 5.448,
+          "candidate_faster_pairs": 8,
+          "paired_sign_test_two_sided_p": 0.1094,
+          "paired_deltas_percent": [
+            -1.968,
+            -3.882,
+            -1.261,
+            -5.482,
+            -2.504,
+            -17.153,
+            0.142,
+            -1.294,
+            90.253,
+            -2.375
+          ]
+        },
+        "vim6_vs_fb5_net": {
+          "baseline": "fb5",
+          "candidate": "vim6",
+          "rounds": 10,
+          "baseline_median_ns_per_op": 5508492.5,
+          "candidate_median_ns_per_op": 5332806.5,
+          "median_ratio_delta_percent": -3.189,
+          "median_paired_delta_percent": -3.345,
+          "mean_paired_delta_percent": 1.335,
+          "candidate_faster_pairs": 9,
+          "paired_sign_test_two_sided_p": 0.0215,
+          "paired_deltas_percent": [
+            -2.187,
+            -6.291,
+            -2.827,
+            -3.863,
+            -6.041,
+            -18.375,
+            -36.34,
+            -1.378,
+            93.151,
+            -2.496
+          ]
+        }
+      },
+      "variability_note": "Threaded timings contain outliers: fb5 reached 8,850,898 ns/op and VIM6 reached 10,859,593 ns/op. One VIM6 sample reported 171 B/op and 0 allocs/op; all other samples reported 0/0. Treat this as corroboration only."
+    },
+    "pred8_tap_micro": {
+      "name": "BenchmarkPred8VIMTapPaths",
+      "gomaxprocs": 1,
+      "benchtime": "250ms per subcase",
+      "input": "64x64 int16 intermediate where im[i]=int16((i*97)%7651+263); phase-8 regular and sharp kernels; invokes the public pred8VIM entry point.",
+      "raw_samples": [
+        {
+          "round": 1,
+          "order_index": 1,
+          "variant": "b073",
+          "subcases": {
+            "regular": {
+              "n": 229516,
+              "ns_per_op": 1302,
+              "mb_per_s": 3146.65,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 225616,
+              "ns_per_op": 1310,
+              "mb_per_s": 3127.5,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 1,
+          "order_index": 2,
+          "variant": "vim6",
+          "subcases": {
+            "regular": {
+              "n": 286128,
+              "ns_per_op": 1047,
+              "mb_per_s": 3910.46,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 227012,
+              "ns_per_op": 1308,
+              "mb_per_s": 3131.35,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 1,
+          "order_index": 3,
+          "variant": "fb5",
+          "subcases": {
+            "regular": {
+              "n": 230450,
+              "ns_per_op": 1302,
+              "mb_per_s": 3146.66,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 230167,
+              "ns_per_op": 1305,
+              "mb_per_s": 3138.78,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 2,
+          "order_index": 1,
+          "variant": "vim6",
+          "subcases": {
+            "regular": {
+              "n": 285873,
+              "ns_per_op": 1053,
+              "mb_per_s": 3889.07,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 226952,
+              "ns_per_op": 1307,
+              "mb_per_s": 3132.71,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 2,
+          "order_index": 2,
+          "variant": "fb5",
+          "subcases": {
+            "regular": {
+              "n": 227509,
+              "ns_per_op": 1310,
+              "mb_per_s": 3125.67,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 230088,
+              "ns_per_op": 1304,
+              "mb_per_s": 3141.26,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 2,
+          "order_index": 3,
+          "variant": "b073",
+          "subcases": {
+            "regular": {
+              "n": 230404,
+              "ns_per_op": 1301,
+              "mb_per_s": 3149.49,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 229861,
+              "ns_per_op": 1316,
+              "mb_per_s": 3112.82,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 3,
+          "order_index": 1,
+          "variant": "fb5",
+          "subcases": {
+            "regular": {
+              "n": 230433,
+              "ns_per_op": 1307,
+              "mb_per_s": 3134.88,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 228352,
+              "ns_per_op": 1302,
+              "mb_per_s": 3145.69,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 3,
+          "order_index": 2,
+          "variant": "b073",
+          "subcases": {
+            "regular": {
+              "n": 228415,
+              "ns_per_op": 1311,
+              "mb_per_s": 3124.98,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 226776,
+              "ns_per_op": 1307,
+              "mb_per_s": 3133.91,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 3,
+          "order_index": 3,
+          "variant": "vim6",
+          "subcases": {
+            "regular": {
+              "n": 284883,
+              "ns_per_op": 1048,
+              "mb_per_s": 3909.09,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 228829,
+              "ns_per_op": 1312,
+              "mb_per_s": 3121.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 4,
+          "order_index": 1,
+          "variant": "b073",
+          "subcases": {
+            "regular": {
+              "n": 230725,
+              "ns_per_op": 1312,
+              "mb_per_s": 3121.96,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 227686,
+              "ns_per_op": 1329,
+              "mb_per_s": 3081.99,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 4,
+          "order_index": 2,
+          "variant": "vim6",
+          "subcases": {
+            "regular": {
+              "n": 280902,
+              "ns_per_op": 1052,
+              "mb_per_s": 3893.19,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 231045,
+              "ns_per_op": 1302,
+              "mb_per_s": 3145.01,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 4,
+          "order_index": 3,
+          "variant": "fb5",
+          "subcases": {
+            "regular": {
+              "n": 228595,
+              "ns_per_op": 1301,
+              "mb_per_s": 3148.21,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 230929,
+              "ns_per_op": 1316,
+              "mb_per_s": 3112.65,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 5,
+          "order_index": 1,
+          "variant": "vim6",
+          "subcases": {
+            "regular": {
+              "n": 284666,
+              "ns_per_op": 1055,
+              "mb_per_s": 3883.05,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 229228,
+              "ns_per_op": 1309,
+              "mb_per_s": 3129.15,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 5,
+          "order_index": 2,
+          "variant": "fb5",
+          "subcases": {
+            "regular": {
+              "n": 229869,
+              "ns_per_op": 1310,
+              "mb_per_s": 3126.59,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 230337,
+              "ns_per_op": 1306,
+              "mb_per_s": 3137.48,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 5,
+          "order_index": 3,
+          "variant": "b073",
+          "subcases": {
+            "regular": {
+              "n": 227176,
+              "ns_per_op": 1309,
+              "mb_per_s": 3130.3,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 230720,
+              "ns_per_op": 1307,
+              "mb_per_s": 3134.99,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 6,
+          "order_index": 1,
+          "variant": "fb5",
+          "subcases": {
+            "regular": {
+              "n": 230089,
+              "ns_per_op": 1304,
+              "mb_per_s": 3142.03,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 226314,
+              "ns_per_op": 1312,
+              "mb_per_s": 3122.96,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 6,
+          "order_index": 2,
+          "variant": "b073",
+          "subcases": {
+            "regular": {
+              "n": 230134,
+              "ns_per_op": 1316,
+              "mb_per_s": 3112.85,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 231559,
+              "ns_per_op": 1299,
+              "mb_per_s": 3152.07,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 6,
+          "order_index": 3,
+          "variant": "vim6",
+          "subcases": {
+            "regular": {
+              "n": 282355,
+              "ns_per_op": 1049,
+              "mb_per_s": 3904.92,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 229458,
+              "ns_per_op": 1309,
+              "mb_per_s": 3128.42,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 7,
+          "order_index": 1,
+          "variant": "b073",
+          "subcases": {
+            "regular": {
+              "n": 230428,
+              "ns_per_op": 1303,
+              "mb_per_s": 3143.44,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 227168,
+              "ns_per_op": 1308,
+              "mb_per_s": 3130.42,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 7,
+          "order_index": 2,
+          "variant": "vim6",
+          "subcases": {
+            "regular": {
+              "n": 275458,
+              "ns_per_op": 1056,
+              "mb_per_s": 3877.83,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 228018,
+              "ns_per_op": 1308,
+              "mb_per_s": 3132.35,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 7,
+          "order_index": 3,
+          "variant": "fb5",
+          "subcases": {
+            "regular": {
+              "n": 228862,
+              "ns_per_op": 1308,
+              "mb_per_s": 3132.25,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 230096,
+              "ns_per_op": 1311,
+              "mb_per_s": 3124.84,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 8,
+          "order_index": 1,
+          "variant": "vim6",
+          "subcases": {
+            "regular": {
+              "n": 285787,
+              "ns_per_op": 1051,
+              "mb_per_s": 3896.13,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 229659,
+              "ns_per_op": 1305,
+              "mb_per_s": 3139.15,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 8,
+          "order_index": 2,
+          "variant": "fb5",
+          "subcases": {
+            "regular": {
+              "n": 229161,
+              "ns_per_op": 1307,
+              "mb_per_s": 3133.28,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 226840,
+              "ns_per_op": 1301,
+              "mb_per_s": 3148.92,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 8,
+          "order_index": 3,
+          "variant": "b073",
+          "subcases": {
+            "regular": {
+              "n": 227724,
+              "ns_per_op": 1313,
+              "mb_per_s": 3118.86,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 227448,
+              "ns_per_op": 1304,
+              "mb_per_s": 3142.17,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 9,
+          "order_index": 1,
+          "variant": "fb5",
+          "subcases": {
+            "regular": {
+              "n": 226108,
+              "ns_per_op": 1303,
+              "mb_per_s": 3144.34,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 230962,
+              "ns_per_op": 1308,
+              "mb_per_s": 3132.42,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 9,
+          "order_index": 2,
+          "variant": "b073",
+          "subcases": {
+            "regular": {
+              "n": 230792,
+              "ns_per_op": 1311,
+              "mb_per_s": 3123.65,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 227365,
+              "ns_per_op": 1304,
+              "mb_per_s": 3141.3,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 9,
+          "order_index": 3,
+          "variant": "vim6",
+          "subcases": {
+            "regular": {
+              "n": 285876,
+              "ns_per_op": 1054,
+              "mb_per_s": 3885.89,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 228150,
+              "ns_per_op": 1303,
+              "mb_per_s": 3144.71,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 10,
+          "order_index": 1,
+          "variant": "b073",
+          "subcases": {
+            "regular": {
+              "n": 227047,
+              "ns_per_op": 1305,
+              "mb_per_s": 3138.24,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 231098,
+              "ns_per_op": 1306,
+              "mb_per_s": 3135.14,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 10,
+          "order_index": 2,
+          "variant": "vim6",
+          "subcases": {
+            "regular": {
+              "n": 285916,
+              "ns_per_op": 1048,
+              "mb_per_s": 3907.84,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 228649,
+              "ns_per_op": 1306,
+              "mb_per_s": 3135.37,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 10,
+          "order_index": 3,
+          "variant": "fb5",
+          "subcases": {
+            "regular": {
+              "n": 231060,
+              "ns_per_op": 1310,
+              "mb_per_s": 3127.31,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "sharp": {
+              "n": 229904,
+              "ns_per_op": 1301,
+              "mb_per_s": 3147.44,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        }
+      ],
+      "execution_order_by_round": {
+        "1": [
+          "b073",
+          "vim6",
+          "fb5"
+        ],
+        "2": [
+          "vim6",
+          "fb5",
+          "b073"
+        ],
+        "3": [
+          "fb5",
+          "b073",
+          "vim6"
+        ],
+        "4": [
+          "b073",
+          "vim6",
+          "fb5"
+        ],
+        "5": [
+          "vim6",
+          "fb5",
+          "b073"
+        ],
+        "6": [
+          "fb5",
+          "b073",
+          "vim6"
+        ],
+        "7": [
+          "b073",
+          "vim6",
+          "fb5"
+        ],
+        "8": [
+          "vim6",
+          "fb5",
+          "b073"
+        ],
+        "9": [
+          "fb5",
+          "b073",
+          "vim6"
+        ],
+        "10": [
+          "b073",
+          "vim6",
+          "fb5"
+        ]
+      },
+      "summary": {
+        "regular": {
+          "variant_medians_ns_per_op": {
+            "fb5": 1307.0,
+            "b073": 1310.0,
+            "vim6": 1051.5
+          },
+          "vim6_vs_b073": {
+            "baseline": "b073",
+            "candidate": "vim6",
+            "rounds": 10,
+            "baseline_median_ns_per_op": 1310.0,
+            "candidate_median_ns_per_op": 1051.5,
+            "median_ratio_delta_percent": -19.733,
+            "median_paired_delta_percent": -19.648,
+            "mean_paired_delta_percent": -19.643,
+            "candidate_faster_pairs": 10,
+            "paired_sign_test_two_sided_p": 0.002,
+            "paired_deltas_percent": [
+              -19.585,
+              -19.062,
+              -20.061,
+              -19.817,
+              -19.404,
+              -20.289,
+              -18.956,
+              -19.954,
+              -19.603,
+              -19.693
+            ]
+          },
+          "vim6_vs_fb5_net": {
+            "baseline": "fb5",
+            "candidate": "vim6",
+            "rounds": 10,
+            "baseline_median_ns_per_op": 1307.0,
+            "candidate_median_ns_per_op": 1051.5,
+            "median_ratio_delta_percent": -19.549,
+            "median_paired_delta_percent": -19.57,
+            "mean_paired_delta_percent": -19.514,
+            "candidate_faster_pairs": 10,
+            "paired_sign_test_two_sided_p": 0.002,
+            "paired_deltas_percent": [
+              -19.585,
+              -19.618,
+              -19.816,
+              -19.139,
+              -19.466,
+              -19.555,
+              -19.266,
+              -19.587,
+              -19.11,
+              -20.0
+            ]
+          }
+        },
+        "sharp": {
+          "variant_medians_ns_per_op": {
+            "fb5": 1305.5,
+            "b073": 1307.0,
+            "vim6": 1307.5
+          },
+          "vim6_vs_b073": {
+            "baseline": "b073",
+            "candidate": "vim6",
+            "rounds": 10,
+            "baseline_median_ns_per_op": 1307.0,
+            "candidate_median_ns_per_op": 1307.5,
+            "median_ratio_delta_percent": 0.038,
+            "median_paired_delta_percent": 0.0,
+            "mean_paired_delta_percent": -0.156,
+            "candidate_faster_pairs": 4,
+            "paired_sign_test_two_sided_p": 1.0,
+            "paired_deltas_percent": [
+              -0.153,
+              -0.684,
+              0.383,
+              -2.032,
+              0.153,
+              0.77,
+              0.0,
+              0.077,
+              -0.077,
+              0.0
+            ]
+          },
+          "vim6_vs_fb5_net": {
+            "baseline": "fb5",
+            "candidate": "vim6",
+            "rounds": 10,
+            "baseline_median_ns_per_op": 1305.5,
+            "candidate_median_ns_per_op": 1307.5,
+            "median_ratio_delta_percent": 0.153,
+            "median_paired_delta_percent": 0.23,
+            "mean_paired_delta_percent": 0.025,
+            "candidate_faster_pairs": 4,
+            "paired_sign_test_two_sided_p": 0.7539,
+            "paired_deltas_percent": [
+              0.23,
+              0.23,
+              0.768,
+              -1.064,
+              0.23,
+              -0.229,
+              -0.229,
+              0.307,
+              -0.382,
+              0.384
+            ]
+          }
+        }
+      }
+    }
+  },
+  "profile_context": {
+    "cpu_profile_path": "/private/tmp/pr8-pan-singlethread.cpu",
+    "cpu_profile_sha256": "70aba75658ce60a6c70d7f8e889487c0c9c22f6b10f1840ae325ffba6b3963e8",
+    "pred8VIM_flat_share_percent": 7.22
+  },
+  "scope_limit": "Performance evidence is specific to this deterministic synthetic Pan benchmark on Apple M4 Max, Darwin arm64, Go 1.27.0 with simd. The clean primary comparison is single-thread Pan; GOMAXPROCS=6 is noisy corroboration. These samples do not establish general codec throughput across content, CPUs, or platforms.",
+  "raw_log_sha256": {
+    "pan_singlethread": {
+      "path": "/private/tmp/pr8-vim6-pan-singlethread-3way-10rounds.raw.log",
+      "sha256": "cd69342a6f466f79a5cfb37313dbc73acd98884bf3293e87ebffe4717fb92f23"
+    },
+    "pan_gomax6": {
+      "path": "/private/tmp/pr8-vim6-pan-gomax6-3way-10rounds.raw.log",
+      "sha256": "83ae06906c56521f6419477d47c7c71936af24058de8c72598e5b8da973ccb9f"
+    },
+    "tap_micro": {
+      "path": "/private/tmp/pr8-vim6-tap-micro-10rounds.raw.log",
+      "sha256": "43cbdfbb9a024fc6fcc32d0b9df45b7c6f28b6735560ac3d7cca858d49e32c62"
+    }
+  }
+}

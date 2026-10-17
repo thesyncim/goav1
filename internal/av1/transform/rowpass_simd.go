@@ -25,6 +25,10 @@ package transform
 // each hold at least the transform length. The two rows are independent; the
 // result for each row equals the corresponding single-row scalar kernel.
 //
+// Every input must already be clamped to the [min, max] passed alongside it
+// (the row-pass staging in inverseSeparableBlockClampedRowsToScratch does
+// this); the SIMD bindings rely on it instead of rescanning the rows.
+//
 // These are dispatch slots bound once at init. They must not be mutated
 // concurrently with live decoding.
 var (

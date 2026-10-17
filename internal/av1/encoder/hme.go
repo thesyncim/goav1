@@ -1,6 +1,8 @@
 package encoder
 
 import (
+	"sync"
+
 	"github.com/thesyncim/goav1/internal/av1/motion"
 )
 
@@ -35,9 +37,10 @@ type hmeState struct {
 	// Persistent band workers: spawning goroutines per frame allocates a
 	// closure and often a fresh stack each time, so the four workers park
 	// on a job channel for the encoder's lifetime instead.
-	work    chan hmeJob
-	done    chan struct{}
-	started bool
+	work     chan hmeJob
+	done     chan struct{}
+	started  bool
+	workerWG sync.WaitGroup // persistent helpers, separate from per-pass job completion
 	// bandStatic counts regions whose zero-motion match was already below
 	// the search bar - the static-content signal for the layer offset.
 	bandStatic [hmeBands]int
@@ -61,17 +64,20 @@ func (h *hmeState) startWorkers() {
 	if h.started {
 		return
 	}
-	h.work = make(chan hmeJob, hmeBands)
-	h.done = make(chan struct{}, hmeBands)
+	work := make(chan hmeJob, hmeBands)
+	done := make(chan struct{}, hmeBands)
+	h.work, h.done = work, done
 	for range hmeBands {
+		h.workerWG.Add(1)
 		go func() {
-			for j := range h.work {
+			defer h.workerWG.Done()
+			for j := range work {
 				if j.build {
 					buildQuarterPlane(h.srcQ[j.r0*h.qw:], j.src[j.r0*4*j.srcStride:], j.srcStride, h.qw, j.r1-j.r0)
 				} else {
 					h.searchRows(j.band, j.r0, j.r1)
 				}
-				h.done <- struct{}{}
+				done <- struct{}{}
 			}
 		}()
 	}
@@ -79,10 +85,13 @@ func (h *hmeState) startWorkers() {
 }
 
 func (h *hmeState) close() {
-	if h.work != nil {
-		close(h.work)
-		h.work = nil
+	work := h.work
+	if work == nil {
+		return
 	}
+	close(work)
+	h.workerWG.Wait()
+	h.work = nil
 	h.done = nil
 	h.started = false
 }

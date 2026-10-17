@@ -1,0 +1,2511 @@
+{
+  "title": "ARM64 pred8V zero-outer-tap six-tap leaf optimization",
+  "date": "2026-10-16",
+  "status": "Candidate retained for PR integration; kernel microbench gain is clear for regular filters, while the incremental whole-Pan effect is small and timing-sensitive.",
+  "scope": {
+    "change": "For vertical interpolation, regular/smooth filters with k[0]==0 and k[7]==0 use six taps; sharp phase 0 also meets this condition, while fractional sharp filters retain the existing eight-tap path.",
+    "fixture": "Pan benchmark generates deterministic synthetic camera-like content (seed 15, blurred texture, 4-pixel pan steps, constant chroma) in video_bench_test.go; it is not a corpus clip. GOAV1_BENCH_CORPUS_DIR was set but this benchmark does not read it.",
+    "claim_limit": "The fresh 10-round leaf-vs-VIM6 whole-Pan interval crosses zero. The combined 20 paired rounds favor leaf, but do not imply general codec throughput improvement."
+  },
+  "environment": {
+    "go": "go1.27.0",
+    "goos": "darwin",
+    "goarch": "arm64",
+    "goexperiment": "simd",
+    "goarm64": "v8.0",
+    "cgo_enabled": true,
+    "cpu": "Apple M4 Max",
+    "runtime_env": {
+      "GOMAXPROCS": 1,
+      "GOGC": 100,
+      "CODEX_AGENT_ID": "pr8-speed2",
+      "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus"
+    },
+    "build_wrapper": "/Users/thesyncim/.codex/bin/project-env; project cache ID 37b85e7d09c67423"
+  },
+  "source_identity": {
+    "worktree_head": "22abbdee89da5eced11d6dad46492786170f157a",
+    "original_baseline_commit": "fb5f9047b6b242b7868b9adf69e8ad31a60f18c4",
+    "vim6_commit": "5b1cc5753f7298956081004b564b2f2c19b20a31",
+    "candidate_kernel_uncommitted_at_measurement": true,
+    "candidate_kernel_sha256": "693d81fd0b73b1c2f9baa751395694f4d26d5d2369c47660df71f0f96e44d7da",
+    "vim6_kernel_sha256": "9a158dfc2cff65078013dd3062e02f798651809b635f22672501e741a02c47e9",
+    "test_source_sha256": "09fcd56ad141b334434c605b570db922a6815abaf3d8943c57897a26fd3a0764",
+    "video_benchmark_source_sha256": "5395d5335feb239f13b7e2690cf16a555d67a941ff5640a613e78cd26f16e8fc",
+    "fb5_overlay_sha256": "2219798d8edeac5e149f90f7028ce28bd38e4b8706f57cfcb2cf5ff5c15f8bb6",
+    "fb5_restored_source_sha256": {
+      "pred8_gosimd_arm64.go": "6b585751f6c1e84d6b377ae26e688d8bb47bab68344899b56d63ff6b215346aa",
+      "pframe_residual.go": "f0fb04143d5dc55648bf74af26f9c368aa700fb0fdb7cbae430c6edb43e5485c",
+      "pframe_wavefront.go": "845572971730322e6778f473d2f7c6d7c64e9f16b7249f4d83cc257953db62b4",
+      "recon_gosimd.go": "2363595780293c9d4f78e6ecfc606ea28b4ddbcd400e4c144644d26e9ddecf8a",
+      "subpel_cache.go": "af611a04b650b32f2a6b649019321c1532ef12a47778d2d45c72725034cc85aa"
+    },
+    "binaries": {
+      "fb5_original": {
+        "path": "/private/tmp/pr8-encoder-fb5-current-tests.test",
+        "sha256": "73b67105ee4db9ffc0e6bf3e2c05942fb5f5341e6103cdc11499f6866cb5d90c"
+      },
+      "vim6": {
+        "path": "/private/tmp/pr8-encoder-pred8v6-vim6-baseline.test",
+        "sha256": "0aa8e34d1eba4cda5a62986751477d6afe94c53153a5ab8874edf83c7a7f773c"
+      },
+      "leaf": {
+        "path": "/private/tmp/pr8-encoder-pred8v6-leaf.test",
+        "sha256": "8e48782caa9b395a49c417bcb71b903f6a2460cd5e02852ebc4e806450b92573"
+      }
+    }
+  },
+  "commands": {
+    "benchmark_prefix": "GOMAXPROCS=<1|6> GOGC=100 CODEX_AGENT_ID=pr8-speed2 GOAV1_BENCH_CORPUS_DIR=/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus /Users/thesyncim/.codex/bin/project-env <binary> -test.run=^$ -test.bench=<regexp> -test.benchtime=<31x|200ms> -test.benchmem -test.count=1",
+    "single_thread_pan": "-test.bench=^BenchmarkVideoEncoderPFramePan1080pSingleThread$ -test.benchtime=31x",
+    "gomax6_pan": "-test.bench=^BenchmarkVideoEncoderPFramePan1080p$ -test.benchtime=31x",
+    "micro": "-test.bench=^BenchmarkPred8VTapPaths$ -test.benchtime=200ms",
+    "order": "Two-way Pan alternated vim6/leaf. Fresh three-way rotated fb5\u2192vim6\u2192leaf, vim6\u2192leaf\u2192fb5, leaf\u2192fb5\u2192vim6. GOMAXPROCS=6 alternated vim6/leaf."
+  },
+  "microbench": {
+    "benchmark": "BenchmarkPred8VTapPaths (direct pred8V kernel)",
+    "samples": [
+      {
+        "round": 1,
+        "execution_order": [
+          "vim6",
+          "leaf"
+        ],
+        "cases": {
+          "8x8/regular": {
+            "vim6": {
+              "ns_per_op": 18.78,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 16.58,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -11.714589989350388
+          },
+          "8x8/sharp": {
+            "vim6": {
+              "ns_per_op": 20.13,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 18.76,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -6.805762543467453
+          },
+          "16x8/regular": {
+            "vim6": {
+              "ns_per_op": 28.48,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 22.47,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -21.102528089887652
+          },
+          "16x8/sharp": {
+            "vim6": {
+              "ns_per_op": 26.61,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 27.47,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 3.23186771890267
+          },
+          "64x64/regular": {
+            "vim6": {
+              "ns_per_op": 617.3,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 477.1,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -22.711809492953172
+          },
+          "64x64/sharp": {
+            "vim6": {
+              "ns_per_op": 607.5,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 609.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 0.24691358024691024
+          }
+        }
+      },
+      {
+        "round": 2,
+        "execution_order": [
+          "leaf",
+          "vim6"
+        ],
+        "cases": {
+          "8x8/regular": {
+            "vim6": {
+              "ns_per_op": 19.03,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 14.85,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -21.965317919075154
+          },
+          "8x8/sharp": {
+            "vim6": {
+              "ns_per_op": 18.26,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 18.55,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 1.5881708652792925
+          },
+          "16x8/regular": {
+            "vim6": {
+              "ns_per_op": 27.22,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 22.85,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -16.05437178545186
+          },
+          "16x8/sharp": {
+            "vim6": {
+              "ns_per_op": 27.39,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 27.42,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 0.10952902519167917
+          },
+          "64x64/regular": {
+            "vim6": {
+              "ns_per_op": 598.9,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 479.7,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -19.90315578560694
+          },
+          "64x64/sharp": {
+            "vim6": {
+              "ns_per_op": 601.9,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 613.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 1.8441601594949342
+          }
+        }
+      },
+      {
+        "round": 3,
+        "execution_order": [
+          "vim6",
+          "leaf"
+        ],
+        "cases": {
+          "8x8/regular": {
+            "vim6": {
+              "ns_per_op": 18.81,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 14.98,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -20.361509835194035
+          },
+          "8x8/sharp": {
+            "vim6": {
+              "ns_per_op": 18.05,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 18.52,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 2.603878116343483
+          },
+          "16x8/regular": {
+            "vim6": {
+              "ns_per_op": 27.17,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 23.09,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -15.016562384983445
+          },
+          "16x8/sharp": {
+            "vim6": {
+              "ns_per_op": 26.49,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 27.5,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 3.812759531898835
+          },
+          "64x64/regular": {
+            "vim6": {
+              "ns_per_op": 599.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 477.7,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -20.250417362270458
+          },
+          "64x64/sharp": {
+            "vim6": {
+              "ns_per_op": 607.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 609.6,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 0.4283360790774404
+          }
+        }
+      },
+      {
+        "round": 4,
+        "execution_order": [
+          "leaf",
+          "vim6"
+        ],
+        "cases": {
+          "8x8/regular": {
+            "vim6": {
+              "ns_per_op": 18.1,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 15.02,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -17.016574585635368
+          },
+          "8x8/sharp": {
+            "vim6": {
+              "ns_per_op": 18.04,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 18.56,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 2.882483370288247
+          },
+          "16x8/regular": {
+            "vim6": {
+              "ns_per_op": 27.18,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 23.08,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -15.08462104488595
+          },
+          "16x8/sharp": {
+            "vim6": {
+              "ns_per_op": 27.42,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 27.38,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -0.14587892049600093
+          },
+          "64x64/regular": {
+            "vim6": {
+              "ns_per_op": 598.5,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 479.2,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -19.933166248955725
+          },
+          "64x64/sharp": {
+            "vim6": {
+              "ns_per_op": 602.1,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 611.6,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 1.5778109948513475
+          }
+        }
+      },
+      {
+        "round": 5,
+        "execution_order": [
+          "vim6",
+          "leaf"
+        ],
+        "cases": {
+          "8x8/regular": {
+            "vim6": {
+              "ns_per_op": 18.76,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 14.98,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -20.149253731343286
+          },
+          "8x8/sharp": {
+            "vim6": {
+              "ns_per_op": 18.47,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 18.82,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 1.8949648077964287
+          },
+          "16x8/regular": {
+            "vim6": {
+              "ns_per_op": 26.47,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 22.21,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -16.09369097091046
+          },
+          "16x8/sharp": {
+            "vim6": {
+              "ns_per_op": 26.75,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 27.27,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 1.943925233644861
+          },
+          "64x64/regular": {
+            "vim6": {
+              "ns_per_op": 598.2,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 476.9,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -20.277499164159153
+          },
+          "64x64/sharp": {
+            "vim6": {
+              "ns_per_op": 606.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 608.2,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 0.36303630363037076
+          }
+        }
+      },
+      {
+        "round": 6,
+        "execution_order": [
+          "leaf",
+          "vim6"
+        ],
+        "cases": {
+          "8x8/regular": {
+            "vim6": {
+              "ns_per_op": 18.73,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 15.43,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -17.618793379604913
+          },
+          "8x8/sharp": {
+            "vim6": {
+              "ns_per_op": 19.35,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 19.02,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -1.705426356589157
+          },
+          "16x8/regular": {
+            "vim6": {
+              "ns_per_op": 27.31,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 21.85,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -19.99267667521054
+          },
+          "16x8/sharp": {
+            "vim6": {
+              "ns_per_op": 25.66,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 27.47,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 7.05378020265004
+          },
+          "64x64/regular": {
+            "vim6": {
+              "ns_per_op": 609.1,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 484.5,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -20.45641109834182
+          },
+          "64x64/sharp": {
+            "vim6": {
+              "ns_per_op": 608.7,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 617.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 1.4949893215048249
+          }
+        }
+      },
+      {
+        "round": 7,
+        "execution_order": [
+          "vim6",
+          "leaf"
+        ],
+        "cases": {
+          "8x8/regular": {
+            "vim6": {
+              "ns_per_op": 18.71,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 15.21,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -18.706574024585787
+          },
+          "8x8/sharp": {
+            "vim6": {
+              "ns_per_op": 18.35,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 18.74,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 2.1253405994550167
+          },
+          "16x8/regular": {
+            "vim6": {
+              "ns_per_op": 26.77,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 22.85,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -14.643257377661556
+          },
+          "16x8/sharp": {
+            "vim6": {
+              "ns_per_op": 26.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 27.61,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 6.192307692307697
+          },
+          "64x64/regular": {
+            "vim6": {
+              "ns_per_op": 611.1,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 486.9,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -20.324005891016206
+          },
+          "64x64/sharp": {
+            "vim6": {
+              "ns_per_op": 608.5,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 614.4,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 0.9695973705833971
+          }
+        }
+      },
+      {
+        "round": 8,
+        "execution_order": [
+          "leaf",
+          "vim6"
+        ],
+        "cases": {
+          "8x8/regular": {
+            "vim6": {
+              "ns_per_op": 18.76,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 15.07,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -19.66950959488274
+          },
+          "8x8/sharp": {
+            "vim6": {
+              "ns_per_op": 18.28,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 18.93,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 3.5557986870897063
+          },
+          "16x8/regular": {
+            "vim6": {
+              "ns_per_op": 26.15,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 23.21,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -11.242829827915857
+          },
+          "16x8/sharp": {
+            "vim6": {
+              "ns_per_op": 26.02,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 27.51,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 5.726364335126832
+          },
+          "64x64/regular": {
+            "vim6": {
+              "ns_per_op": 604.9,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 485.2,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -19.788394775996032
+          },
+          "64x64/sharp": {
+            "vim6": {
+              "ns_per_op": 607.6,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 614.6,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 1.1520737327188835
+          }
+        }
+      },
+      {
+        "round": 9,
+        "execution_order": [
+          "vim6",
+          "leaf"
+        ],
+        "cases": {
+          "8x8/regular": {
+            "vim6": {
+              "ns_per_op": 18.57,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 14.99,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -19.278406031233175
+          },
+          "8x8/sharp": {
+            "vim6": {
+              "ns_per_op": 19.33,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 18.97,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -1.8623900672529725
+          },
+          "16x8/regular": {
+            "vim6": {
+              "ns_per_op": 27.41,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 22.68,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -17.25647573878146
+          },
+          "16x8/sharp": {
+            "vim6": {
+              "ns_per_op": 26.57,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 27.19,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 2.3334587881068902
+          },
+          "64x64/regular": {
+            "vim6": {
+              "ns_per_op": 606.3,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 483.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -20.33646709549727
+          },
+          "64x64/sharp": {
+            "vim6": {
+              "ns_per_op": 607.1,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 623.1,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 2.635480151540115
+          }
+        }
+      },
+      {
+        "round": 10,
+        "execution_order": [
+          "leaf",
+          "vim6"
+        ],
+        "cases": {
+          "8x8/regular": {
+            "vim6": {
+              "ns_per_op": 18.91,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 15.47,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -18.19143310417768
+          },
+          "8x8/sharp": {
+            "vim6": {
+              "ns_per_op": 19.25,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 18.63,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -3.220779220779224
+          },
+          "16x8/regular": {
+            "vim6": {
+              "ns_per_op": 27.48,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 23.06,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -16.084425036390105
+          },
+          "16x8/sharp": {
+            "vim6": {
+              "ns_per_op": 27.36,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 27.41,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 0.1827485380117011
+          },
+          "64x64/regular": {
+            "vim6": {
+              "ns_per_op": 604.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 483.8,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": -20.006613756613746
+          },
+          "64x64/sharp": {
+            "vim6": {
+              "ns_per_op": 612.1,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 617.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_leaf_vs_vim6": 0.8005227903937318
+          }
+        }
+      }
+    ],
+    "summary_by_case": {
+      "8x8/regular": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 18.76,
+        "median_candidate_ns_per_op": 15.045,
+        "median_paired_change_percent": -18.992490027909483,
+        "geometric_mean_paired_change_percent": -18.508512244613495,
+        "ratio_of_medians_change_percent": -19.80277185501067,
+        "candidate_faster_pairs": 10,
+        "zero_bytes_and_allocs_every_pair": true
+      },
+      "8x8/sharp": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 18.41,
+        "median_candidate_ns_per_op": 18.75,
+        "median_paired_change_percent": 1.7415678365378606,
+        "geometric_mean_paired_change_percent": 0.05401526974140314,
+        "ratio_of_medians_change_percent": 1.846822379141777,
+        "candidate_faster_pairs": 4,
+        "zero_bytes_and_allocs_every_pair": true
+      },
+      "16x8/regular": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 27.2,
+        "median_candidate_ns_per_op": 22.85,
+        "median_paired_change_percent": -16.069398410920982,
+        "geometric_mean_paired_change_percent": -16.298661200424625,
+        "ratio_of_medians_change_percent": -15.992647058823517,
+        "candidate_faster_pairs": 10,
+        "zero_bytes_and_allocs_every_pair": true
+      },
+      "16x8/sharp": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 26.59,
+        "median_candidate_ns_per_op": 27.445,
+        "median_paired_change_percent": 2.78266325350478,
+        "geometric_mean_paired_change_percent": 3.0138513548398027,
+        "ratio_of_medians_change_percent": 3.2154945468221063,
+        "candidate_faster_pairs": 1,
+        "zero_bytes_and_allocs_every_pair": true
+      },
+      "64x64/regular": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 604.8499999999999,
+        "median_candidate_ns_per_op": 481.35,
+        "median_paired_change_percent": -20.263958263214803,
+        "geometric_mean_paired_change_percent": -20.402870582555966,
+        "ratio_of_medians_change_percent": -20.41828552533684,
+        "candidate_faster_pairs": 10,
+        "zero_bytes_and_allocs_every_pair": true
+      },
+      "64x64/sharp": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 607.3,
+        "median_candidate_ns_per_op": 613.7,
+        "median_paired_change_percent": 1.0608355516511403,
+        "geometric_mean_paired_change_percent": 1.1487772305291077,
+        "ratio_of_medians_change_percent": 1.0538448872056794,
+        "candidate_faster_pairs": 0,
+        "zero_bytes_and_allocs_every_pair": true
+      }
+    },
+    "raw_log": {
+      "path": "/private/tmp/pr8-pred8v6-leaf-tap-micro-screen-5rounds.raw.log",
+      "sha256": "6d547246bc94c34d1c2872490d16d51a1490302db19216f109c0976af3afac33"
+    }
+  },
+  "single_thread_pan": {
+    "initial_10_pair_leaf_vs_vim6": {
+      "samples": [
+        {
+          "round": 1,
+          "baseline": {
+            "ns_per_op": 21355942.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 21038212.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "vim6",
+            "leaf"
+          ],
+          "change_percent_candidate_vs_baseline": -1.4877826508425618
+        },
+        {
+          "round": 2,
+          "baseline": {
+            "ns_per_op": 21822641.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 21351383.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "leaf",
+            "vim6"
+          ],
+          "change_percent_candidate_vs_baseline": -2.1594911449993592
+        },
+        {
+          "round": 3,
+          "baseline": {
+            "ns_per_op": 21380356.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 21249762.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "vim6",
+            "leaf"
+          ],
+          "change_percent_candidate_vs_baseline": -0.6108130285576108
+        },
+        {
+          "round": 4,
+          "baseline": {
+            "ns_per_op": 21190965.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 21161249.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "leaf",
+            "vim6"
+          ],
+          "change_percent_candidate_vs_baseline": -0.1402295742548798
+        },
+        {
+          "round": 5,
+          "baseline": {
+            "ns_per_op": 21356550.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20930700.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "vim6",
+            "leaf"
+          ],
+          "change_percent_candidate_vs_baseline": -1.9940018401848558
+        },
+        {
+          "round": 6,
+          "baseline": {
+            "ns_per_op": 21160647.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20755472.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "leaf",
+            "vim6"
+          ],
+          "change_percent_candidate_vs_baseline": -1.914757143295287
+        },
+        {
+          "round": 7,
+          "baseline": {
+            "ns_per_op": 21205433.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20270300.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "vim6",
+            "leaf"
+          ],
+          "change_percent_candidate_vs_baseline": -4.4098745826128605
+        },
+        {
+          "round": 8,
+          "baseline": {
+            "ns_per_op": 20506004.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20455845.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "leaf",
+            "vim6"
+          ],
+          "change_percent_candidate_vs_baseline": -0.24460640893272378
+        },
+        {
+          "round": 9,
+          "baseline": {
+            "ns_per_op": 20529699.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20262427.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "vim6",
+            "leaf"
+          ],
+          "change_percent_candidate_vs_baseline": -1.3018797791433778
+        },
+        {
+          "round": 10,
+          "baseline": {
+            "ns_per_op": 20537716.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20573262.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "leaf",
+            "vim6"
+          ],
+          "change_percent_candidate_vs_baseline": 0.17307669460420172
+        }
+      ],
+      "summary": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 21198199.0,
+        "median_candidate_ns_per_op": 20843086.0,
+        "median_paired_change_percent": -1.3948312149929698,
+        "geometric_mean_paired_change_percent": -1.4173668903058156,
+        "ratio_of_medians_change_percent": -1.6752036340445753,
+        "candidate_faster_pairs": 9,
+        "zero_bytes_and_allocs_every_pair": true
+      },
+      "bootstrap_95_percent_interval_change": [
+        -2.2476,
+        -0.6809
+      ],
+      "raw_log": {
+        "path": "/private/tmp/pr8-pred8v6-leaf-pan-singlethread-10pairs.raw.log",
+        "sha256": "e43fbe21fb3dd5a2a56b818c355e0e2add7d43d7174a7ab6fdba8d662bc706f9"
+      }
+    },
+    "fresh_3way_10_rounds": {
+      "samples": [
+        {
+          "round": 1,
+          "execution_order": [
+            "fb5",
+            "vim6",
+            "leaf"
+          ],
+          "samples": {
+            "fb5": {
+              "ns_per_op": 21206171.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "vim6": {
+              "ns_per_op": 21287000.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 20088898.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "vim6",
+            "leaf",
+            "fb5"
+          ],
+          "samples": {
+            "vim6": {
+              "ns_per_op": 20390751.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 20356418.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "fb5": {
+              "ns_per_op": 20762684.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "leaf",
+            "fb5",
+            "vim6"
+          ],
+          "samples": {
+            "leaf": {
+              "ns_per_op": 20315601.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "fb5": {
+              "ns_per_op": 20981301.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "vim6": {
+              "ns_per_op": 20895126.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "fb5",
+            "vim6",
+            "leaf"
+          ],
+          "samples": {
+            "fb5": {
+              "ns_per_op": 20782078.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "vim6": {
+              "ns_per_op": 21295966.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 21225048.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 5,
+          "execution_order": [
+            "vim6",
+            "leaf",
+            "fb5"
+          ],
+          "samples": {
+            "vim6": {
+              "ns_per_op": 21340440.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 20918457.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "fb5": {
+              "ns_per_op": 21174685.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 6,
+          "execution_order": [
+            "leaf",
+            "fb5",
+            "vim6"
+          ],
+          "samples": {
+            "leaf": {
+              "ns_per_op": 20256372.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "fb5": {
+              "ns_per_op": 21199688.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "vim6": {
+              "ns_per_op": 20814020.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 7,
+          "execution_order": [
+            "fb5",
+            "vim6",
+            "leaf"
+          ],
+          "samples": {
+            "fb5": {
+              "ns_per_op": 20679532.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "vim6": {
+              "ns_per_op": 20276996.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 20192835.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 8,
+          "execution_order": [
+            "vim6",
+            "leaf",
+            "fb5"
+          ],
+          "samples": {
+            "vim6": {
+              "ns_per_op": 20452078.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 20960211.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "fb5": {
+              "ns_per_op": 21830993.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 9,
+          "execution_order": [
+            "leaf",
+            "fb5",
+            "vim6"
+          ],
+          "samples": {
+            "leaf": {
+              "ns_per_op": 20704450.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "fb5": {
+              "ns_per_op": 20858646.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "vim6": {
+              "ns_per_op": 20493125.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        },
+        {
+          "round": 10,
+          "execution_order": [
+            "fb5",
+            "vim6",
+            "leaf"
+          ],
+          "samples": {
+            "fb5": {
+              "ns_per_op": 20903841.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "vim6": {
+              "ns_per_op": 21352723.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "leaf": {
+              "ns_per_op": 21465339.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        }
+      ],
+      "leaf_vs_vim6": {
+        "pairs": [
+          {
+            "round": 1,
+            "baseline": {
+              "ns_per_op": 21287000.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20088898.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -5.628327148024614
+          },
+          {
+            "round": 2,
+            "baseline": {
+              "ns_per_op": 20390751.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20356418.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.1683753580238423
+          },
+          {
+            "round": 3,
+            "baseline": {
+              "ns_per_op": 20895126.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20315601.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -2.773493684603767
+          },
+          {
+            "round": 4,
+            "baseline": {
+              "ns_per_op": 21295966.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 21225048.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.3330114257319883
+          },
+          {
+            "round": 5,
+            "baseline": {
+              "ns_per_op": 21340440.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20918457.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -1.977386595590347
+          },
+          {
+            "round": 6,
+            "baseline": {
+              "ns_per_op": 20814020.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20256372.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -2.679194120117112
+          },
+          {
+            "round": 7,
+            "baseline": {
+              "ns_per_op": 20276996.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20192835.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.4150565497966219
+          },
+          {
+            "round": 8,
+            "baseline": {
+              "ns_per_op": 20452078.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20960211.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 2.4845054864351734
+          },
+          {
+            "round": 9,
+            "baseline": {
+              "ns_per_op": 20493125.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20704450.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 1.0311994876330388
+          },
+          {
+            "round": 10,
+            "baseline": {
+              "ns_per_op": 21352723.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 21465339.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.5274081436826616
+          }
+        ],
+        "summary": {
+          "n_pairs": 10,
+          "median_baseline_ns_per_op": 20854573.0,
+          "median_candidate_ns_per_op": 20530434.0,
+          "median_paired_change_percent": -0.3740339877643051,
+          "geometric_mean_paired_change_percent": -1.0178308791635837,
+          "ratio_of_medians_change_percent": -1.5542826026694434,
+          "candidate_faster_pairs": 7,
+          "zero_bytes_and_allocs_every_pair": true
+        },
+        "bootstrap_95_percent_interval_change": [
+          -2.4433,
+          0.3011
+        ],
+        "note": "Fresh interval crosses zero."
+      },
+      "leaf_vs_fb5_original": {
+        "pairs": [
+          {
+            "round": 1,
+            "baseline": {
+              "ns_per_op": 21206171.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20088898.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -5.268622044026716
+          },
+          {
+            "round": 2,
+            "baseline": {
+              "ns_per_op": 20762684.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20356418.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -1.9567123402735365
+          },
+          {
+            "round": 3,
+            "baseline": {
+              "ns_per_op": 20981301.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20315601.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -3.1728251741872437
+          },
+          {
+            "round": 4,
+            "baseline": {
+              "ns_per_op": 20782078.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 21225048.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 2.1315000357519542
+          },
+          {
+            "round": 5,
+            "baseline": {
+              "ns_per_op": 21174685.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20918457.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -1.210067587782293
+          },
+          {
+            "round": 6,
+            "baseline": {
+              "ns_per_op": 21199688.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20256372.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -4.449669259283439
+          },
+          {
+            "round": 7,
+            "baseline": {
+              "ns_per_op": 20679532.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20192835.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -2.3535203794747384
+          },
+          {
+            "round": 8,
+            "baseline": {
+              "ns_per_op": 21830993.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20960211.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -3.9887420604275747
+          },
+          {
+            "round": 9,
+            "baseline": {
+              "ns_per_op": 20858646.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20704450.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.7392426143096764
+          },
+          {
+            "round": 10,
+            "baseline": {
+              "ns_per_op": 20903841.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 21465339.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 2.6860996502987122
+          }
+        ],
+        "summary": {
+          "n_pairs": 10,
+          "median_baseline_ns_per_op": 20942571.0,
+          "median_candidate_ns_per_op": 20530434.0,
+          "median_paired_change_percent": -2.155116359874137,
+          "geometric_mean_paired_change_percent": -1.8640441731623714,
+          "ratio_of_medians_change_percent": -1.9679388934625064,
+          "candidate_faster_pairs": 8,
+          "zero_bytes_and_allocs_every_pair": true
+        },
+        "bootstrap_95_percent_interval_change": [
+          -3.341,
+          -0.2277
+        ],
+        "note": "Astra review, 20,000 seeded draws, seed 23117."
+      },
+      "vim6_vs_fb5_original": {
+        "pairs": [
+          {
+            "round": 1,
+            "baseline": {
+              "ns_per_op": 21206171.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 21287000.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.38115791860775516
+          },
+          {
+            "round": 2,
+            "baseline": {
+              "ns_per_op": 20762684.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20390751.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -1.7913531795792914
+          },
+          {
+            "round": 3,
+            "baseline": {
+              "ns_per_op": 20981301.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20895126.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -0.41072286222860743
+          },
+          {
+            "round": 4,
+            "baseline": {
+              "ns_per_op": 20782078.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 21295966.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 2.472745988153835
+          },
+          {
+            "round": 5,
+            "baseline": {
+              "ns_per_op": 21174685.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 21340440.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 0.7827979495326653
+          },
+          {
+            "round": 6,
+            "baseline": {
+              "ns_per_op": 21199688.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20814020.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -1.8192154526047721
+          },
+          {
+            "round": 7,
+            "baseline": {
+              "ns_per_op": 20679532.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20276996.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -1.9465430842438791
+          },
+          {
+            "round": 8,
+            "baseline": {
+              "ns_per_op": 21830993.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20452078.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -6.316318272833488
+          },
+          {
+            "round": 9,
+            "baseline": {
+              "ns_per_op": 20858646.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 20493125.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": -1.7523716544209034
+          },
+          {
+            "round": 10,
+            "baseline": {
+              "ns_per_op": 20903841.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "ns_per_op": 21352723.0,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "change_percent_candidate_vs_baseline": 2.1473661228096796
+          }
+        ],
+        "summary": {
+          "n_pairs": 10,
+          "median_baseline_ns_per_op": 20942571.0,
+          "median_candidate_ns_per_op": 20854573.0,
+          "median_paired_change_percent": -1.0815472583247554,
+          "geometric_mean_paired_change_percent": -0.8549148816548335,
+          "ratio_of_medians_change_percent": -0.4201871871414409,
+          "candidate_faster_pairs": 6,
+          "zero_bytes_and_allocs_every_pair": true
+        }
+      },
+      "raw_log": {
+        "path": "/private/tmp/pr8-pred8v6-leaf-pan-singlethread-3way-10rounds.raw.log",
+        "sha256": "52182b48092e21bec88781285948ea43a935dff784a7d461d59df5453bd283cf"
+      }
+    },
+    "combined_20_pair_leaf_vs_vim6": {
+      "samples": [
+        {
+          "source_set": "initial_10_pair",
+          "round": 1,
+          "baseline": {
+            "ns_per_op": 21355942.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 21038212.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -1.4877826508425618
+        },
+        {
+          "source_set": "initial_10_pair",
+          "round": 2,
+          "baseline": {
+            "ns_per_op": 21822641.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 21351383.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -2.1594911449993592
+        },
+        {
+          "source_set": "initial_10_pair",
+          "round": 3,
+          "baseline": {
+            "ns_per_op": 21380356.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 21249762.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -0.6108130285576108
+        },
+        {
+          "source_set": "initial_10_pair",
+          "round": 4,
+          "baseline": {
+            "ns_per_op": 21190965.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 21161249.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -0.1402295742548798
+        },
+        {
+          "source_set": "initial_10_pair",
+          "round": 5,
+          "baseline": {
+            "ns_per_op": 21356550.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20930700.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -1.9940018401848558
+        },
+        {
+          "source_set": "initial_10_pair",
+          "round": 6,
+          "baseline": {
+            "ns_per_op": 21160647.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20755472.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -1.914757143295287
+        },
+        {
+          "source_set": "initial_10_pair",
+          "round": 7,
+          "baseline": {
+            "ns_per_op": 21205433.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20270300.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -4.4098745826128605
+        },
+        {
+          "source_set": "initial_10_pair",
+          "round": 8,
+          "baseline": {
+            "ns_per_op": 20506004.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20455845.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -0.24460640893272378
+        },
+        {
+          "source_set": "initial_10_pair",
+          "round": 9,
+          "baseline": {
+            "ns_per_op": 20529699.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20262427.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -1.3018797791433778
+        },
+        {
+          "source_set": "initial_10_pair",
+          "round": 10,
+          "baseline": {
+            "ns_per_op": 20537716.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20573262.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": 0.17307669460420172
+        },
+        {
+          "source_set": "fresh_3way_10_pair",
+          "round": 1,
+          "baseline": {
+            "ns_per_op": 21287000.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20088898.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -5.628327148024614
+        },
+        {
+          "source_set": "fresh_3way_10_pair",
+          "round": 2,
+          "baseline": {
+            "ns_per_op": 20390751.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20356418.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -0.1683753580238423
+        },
+        {
+          "source_set": "fresh_3way_10_pair",
+          "round": 3,
+          "baseline": {
+            "ns_per_op": 20895126.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20315601.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -2.773493684603767
+        },
+        {
+          "source_set": "fresh_3way_10_pair",
+          "round": 4,
+          "baseline": {
+            "ns_per_op": 21295966.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 21225048.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -0.3330114257319883
+        },
+        {
+          "source_set": "fresh_3way_10_pair",
+          "round": 5,
+          "baseline": {
+            "ns_per_op": 21340440.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20918457.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -1.977386595590347
+        },
+        {
+          "source_set": "fresh_3way_10_pair",
+          "round": 6,
+          "baseline": {
+            "ns_per_op": 20814020.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20256372.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -2.679194120117112
+        },
+        {
+          "source_set": "fresh_3way_10_pair",
+          "round": 7,
+          "baseline": {
+            "ns_per_op": 20276996.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20192835.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": -0.4150565497966219
+        },
+        {
+          "source_set": "fresh_3way_10_pair",
+          "round": 8,
+          "baseline": {
+            "ns_per_op": 20452078.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20960211.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": 2.4845054864351734
+        },
+        {
+          "source_set": "fresh_3way_10_pair",
+          "round": 9,
+          "baseline": {
+            "ns_per_op": 20493125.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 20704450.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": 1.0311994876330388
+        },
+        {
+          "source_set": "fresh_3way_10_pair",
+          "round": 10,
+          "baseline": {
+            "ns_per_op": 21352723.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 21465339.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "change_percent_candidate_vs_baseline": 0.5274081436826616
+        }
+      ],
+      "summary": {
+        "n_pairs": 20,
+        "median_baseline_ns_per_op": 21175806.0,
+        "median_candidate_ns_per_op": 20729961.0,
+        "median_paired_change_percent": -0.9563464038504943,
+        "geometric_mean_paired_change_percent": -1.2178008807198215,
+        "ratio_of_medians_change_percent": -2.105445242556525,
+        "candidate_faster_pairs": 16,
+        "zero_bytes_and_allocs_every_pair": true
+      },
+      "bootstrap_95_percent_interval_change": [
+        -2.0447,
+        -0.436
+      ],
+      "note": "Astra reviewed 20 paired log ratios: 16/20 faster; interval excludes zero. The fresh 10-pair comparison crosses zero."
+    },
+    "exploratory_gomaxprocs6": {
+      "samples": [
+        {
+          "round": 1,
+          "baseline": {
+            "ns_per_op": 5343957.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 5295435.0,
+            "bytes_per_op": 171,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "vim6",
+            "leaf"
+          ],
+          "change_percent_candidate_vs_baseline": -0.9079788628538754
+        },
+        {
+          "round": 2,
+          "baseline": {
+            "ns_per_op": 5284871.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 5409824.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "leaf",
+            "vim6"
+          ],
+          "change_percent_candidate_vs_baseline": 2.3643528858131146
+        },
+        {
+          "round": 3,
+          "baseline": {
+            "ns_per_op": 5374067.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 5419887.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "vim6",
+            "leaf"
+          ],
+          "change_percent_candidate_vs_baseline": 0.8526131140530913
+        },
+        {
+          "round": 4,
+          "baseline": {
+            "ns_per_op": 5534422.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 5429832.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "leaf",
+            "vim6"
+          ],
+          "change_percent_candidate_vs_baseline": -1.8898089086809788
+        },
+        {
+          "round": 5,
+          "baseline": {
+            "ns_per_op": 5540677.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 5435239.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "vim6",
+            "leaf"
+          ],
+          "change_percent_candidate_vs_baseline": -1.9029804480571566
+        },
+        {
+          "round": 6,
+          "baseline": {
+            "ns_per_op": 5942469.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 5318004.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "leaf",
+            "vim6"
+          ],
+          "change_percent_candidate_vs_baseline": -10.508510856346076
+        },
+        {
+          "round": 7,
+          "baseline": {
+            "ns_per_op": 5486120.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 5529042.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "vim6",
+            "leaf"
+          ],
+          "change_percent_candidate_vs_baseline": 0.782374428557886
+        },
+        {
+          "round": 8,
+          "baseline": {
+            "ns_per_op": 5528613.0,
+            "bytes_per_op": 171,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 5708638.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "leaf",
+            "vim6"
+          ],
+          "change_percent_candidate_vs_baseline": 3.2562416649528636
+        },
+        {
+          "round": 9,
+          "baseline": {
+            "ns_per_op": 5501517.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 5702742.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "vim6",
+            "leaf"
+          ],
+          "change_percent_candidate_vs_baseline": 3.6576275234630806
+        },
+        {
+          "round": 10,
+          "baseline": {
+            "ns_per_op": 5717673.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "ns_per_op": 5662710.0,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "execution_order": [
+            "leaf",
+            "vim6"
+          ],
+          "change_percent_candidate_vs_baseline": -0.9612826756619341
+        }
+      ],
+      "summary": {
+        "n_pairs": 10,
+        "median_baseline_ns_per_op": 5515065.0,
+        "median_candidate_ns_per_op": 5432535.5,
+        "median_paired_change_percent": -0.06280221714799472,
+        "geometric_mean_paired_change_percent": -0.6029848861798581,
+        "ratio_of_medians_change_percent": -1.4964374853242868,
+        "candidate_faster_pairs": 5,
+        "zero_bytes_and_allocs_every_pair": false
+      },
+      "note": "Noisy corroboration only: 5/10 faster; one leaf sample reported 171 B/op and 0 allocs/op. Not used for single-thread conclusion.",
+      "raw_log": {
+        "path": "/private/tmp/pr8-pred8v6-leaf-pan-gomax6-10pairs.raw.log",
+        "sha256": "800ecbf8353a01141dbf5a2e016ee1362852a66670dc257a429d6c16358941a1"
+      }
+    }
+  },
+  "validation": {
+    "focused_race_checkptr": {
+      "status": "passed",
+      "tests": [
+        "TestPred8VIMZeroOuterTapDispatch",
+        "TestPred8VZeroOuterTapDispatch",
+        "TestPred8MatchesMotionPredictor",
+        "TestSubpelProbeCacheMatchesPredictor"
+      ],
+      "log": {
+        "path": "/private/tmp/pr8-pred8v6-leaf-focused.log",
+        "sha256": "c7529cfbf9ea99be3f5fc257d63f8ae37c8e1c6a7bf6d5bbbb330238d01821dd"
+      }
+    },
+    "encoder_parity": {
+      "status": "passed",
+      "tests": [
+        "TestPFrameReuseOptimizationsPreserveEncodedOutput (1 and 4 threads)",
+        "TestPFrameWavefrontMatchesSerialSynthetic (2, 3, 6 lanes)",
+        "TestPFrameSplitMatchesFusedSynthetic (1, 2, 4 tiles)",
+        "TestPFrameDecideWorkerAdoptKeepsLaneSubpelCache"
+      ],
+      "skip_note": "RealC tests skipped because /tmp/corpus/realC.yuv was unavailable.",
+      "log": {
+        "path": "/private/tmp/pr8-pred8v6-leaf-parity.log",
+        "sha256": "82f9c5cf6130d077fba530b3568dfae2888e932583eb721edcc05e652bdb3033"
+      }
+    },
+    "reference_decoders": {
+      "status": "passed",
+      "decoders": [
+        "aomdec",
+        "dav1d"
+      ],
+      "note": "Six reference-decoder test cases passed, including P-frame, scaled-reference, monochrome, and lossy reconstruction cases.",
+      "log": {
+        "path": "/private/tmp/pr8-pred8v6-leaf-reference-decoders.log",
+        "sha256": "7132a3c2f3709330304c8d920f25d83a0c51db1fd4d3eb36290041d7a1656838"
+      }
+    },
+    "allocation_benchmark": {
+      "status": "passed",
+      "benchmark": "BenchmarkVideoEncoderPFramePan1080pSingleThread",
+      "samples": 1,
+      "ns_per_op": 15461125,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "log": {
+        "path": "/private/tmp/pr8-pred8v6-leaf-alloc.log",
+        "sha256": "ffdc8986f181165b95e012d5c5d905e7ce26d8ade01db5c0623c9c8c5c8dcc8d"
+      }
+    }
+  }
+}

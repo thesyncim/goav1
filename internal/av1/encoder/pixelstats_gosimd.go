@@ -62,6 +62,11 @@ func reducePixelAcc(sse, sum archsimd.Int32x4) (total, signed int64) {
 
 // pixelStatsRows16 handles w >= 16 with w a multiple of 16.
 func pixelStatsRows16(src []byte, srcStride int, ref []byte, refStride int, w, h int) (sse uint32, sum int32) {
+	return pixelStatsRows16Arch(src, srcStride, ref, refStride, w, h)
+}
+
+// pixelStatsRows16Generic is pixelStatsRows16 on the shared lane vocabulary.
+func pixelStatsRows16Generic(src []byte, srcStride int, ref []byte, refStride int, w, h int) (sse uint32, sum int32) {
 	sseAcc := archsimd.BroadcastInt32x4(0)
 	sumAcc := archsimd.BroadcastInt32x4(0)
 	for r := range h {

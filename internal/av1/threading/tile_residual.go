@@ -349,9 +349,7 @@ func (s *FrameWorkTileResidualScratch) PreallocLoopFilterMaskScratch(cols int) {
 type frameWorkReconWavefront struct {
 	rowStart       []int32
 	sbSpans        []frameWorkReconSB
-	events         []frameWorkReconEvent
-	visits         []tile.BlockLoopVisit
-	blocks         []tile.BlockCoeffBlock
+	build          frameWorkReconSpanBuilder
 	done           []atomic.Int32
 	states         []frameWorkReconState
 	predict        []FrameWorkPredictionScratch
@@ -363,28 +361,20 @@ type frameWorkReconWavefront struct {
 	residualStride uint16
 	doneAlloc      []atomic.Int32
 	progress       *frameWorkReconWavefrontProgress
+
+	// pub and published (guarded by progress.mu) hand parsed SB rows to the
+	// lanes: rows [0, published) of pub are complete.
+	pub       frameWorkReconView
+	published int
+	lanes     int
+	wg        sync.WaitGroup
+	firstErr  atomic.Pointer[wavefrontError]
 }
 
 type frameWorkReconWavefrontProgress struct {
 	mu      sync.Mutex
 	cond    sync.Cond
 	aborted atomic.Bool
-}
-
-func (wf *frameWorkReconWavefront) reuseSBs() []frameWorkReconSB {
-	return wf.sbSpans[:0]
-}
-
-func (wf *frameWorkReconWavefront) commitSBs(sbs []frameWorkReconSB) {
-	wf.sbSpans = sbs
-}
-
-func (wf *frameWorkReconWavefront) sbs() []frameWorkReconSB {
-	return wf.sbSpans
-}
-
-func (wf *frameWorkReconWavefront) eventSpan(start int, end int) []frameWorkReconEvent {
-	return wf.events[start:end]
 }
 
 func (wf *frameWorkReconWavefront) appendRowStart(sbCount int) error {
@@ -423,6 +413,8 @@ func (wf *frameWorkReconWavefront) resetProgress(rowCount int) {
 	for r := range rowCount {
 		wf.done[r].Store(0)
 	}
+	wf.pub = frameWorkReconView{}
+	wf.published = 0
 	p.mu.Unlock()
 }
 
@@ -551,19 +543,28 @@ func (s *FrameWorkTileResidualScratch) nextPaletteScratch() int {
 	return n
 }
 
-// captureDeferredVisit returns a copy of visit safe to buffer for deferred
-// replay. The decoded visit's palette colour maps (YMap/UVMap) point into a
-// single per-tile PaletteModeScratch that subsequent palette-coded blocks
-// overwrite during pass 1; the fused path reads them immediately, but the
-// deferred path replays prediction after the whole tile has decoded, by which
-// time the shared scratch holds a later block's map. Deep-copy the referenced
-// map(s) into the scratch palette arena and return an index binding so pass 2
-// can install stable pointers after event collection completes. Non-palette
-// visits (the overwhelming majority) are returned unchanged and pay no copy.
-func (s *FrameWorkTileResidualScratch) captureDeferredVisit(visit tile.BlockLoopVisit) (tile.BlockLoopVisit, int, uint8) {
-	pal := &visit.Prediction.Palette
+// bufferDeferredVisit appends a copy of visit to reconVisits for deferred
+// replay and returns its index. The visit is copied once, straight into its
+// slot (a BlockLoopVisit is close to 1 KiB, and this runs for every block of a
+// deferred tile). The decoded visit's palette colour maps (YMap/UVMap) point
+// into a single per-tile PaletteModeScratch that subsequent palette-coded
+// blocks overwrite during pass 1; the fused path reads them immediately, but
+// the deferred path replays prediction later, by which time the shared scratch
+// holds a later block's map. Deep-copy the referenced map(s) into the scratch
+// palette arena and return an index binding so pass 2 can install stable
+// pointers after event collection. Non-palette visits (the overwhelming
+// majority) pay no palette copy.
+func (s *FrameWorkTileResidualScratch) bufferDeferredVisit(visit *tile.BlockLoopVisit) (int, int, uint8) {
+	n := len(s.reconVisits)
+	if n < cap(s.reconVisits) {
+		s.reconVisits = s.reconVisits[:n+1]
+		s.reconVisits[n] = *visit
+	} else {
+		s.reconVisits = append(s.reconVisits, *visit)
+	}
+	pal := &s.reconVisits[n].Prediction.Palette
 	if pal.YMap == nil && pal.UVMap == nil {
-		return visit, -1, 0
+		return n, -1, 0
 	}
 	paletteIndex := s.nextPaletteScratch()
 	store := &s.paletteArena[paletteIndex]
@@ -578,7 +579,7 @@ func (s *FrameWorkTileResidualScratch) captureDeferredVisit(visit tile.BlockLoop
 		pal.UVMap = nil
 		mask |= frameWorkReconPaletteUV
 	}
-	return visit, paletteIndex, mask
+	return n, paletteIndex, mask
 }
 
 func (s *FrameWorkTileResidualScratch) rememberDeferredPalette(visitIndex int, paletteIndex int, mask uint8) error {
@@ -602,12 +603,24 @@ func (s *FrameWorkTileResidualScratch) rememberDeferredPalette(visitIndex int, p
 }
 
 func (s *FrameWorkTileResidualScratch) finalizeDeferredPalettes() error {
-	for i := range s.paletteBindings {
+	_, err := s.installDeferredPalettes(0)
+	return err
+}
+
+// installDeferredPalettes installs the colour-map pointers of the palette
+// bindings recorded since from and returns the new cursor. The arena slots are
+// fully written before their binding is recorded and never written again, so
+// a pointer stays valid after a later append moves the arena.
+func (s *FrameWorkTileResidualScratch) installDeferredPalettes(from int) (int, error) {
+	if from < 0 || from > len(s.paletteBindings) {
+		return from, ErrInvalidBatch
+	}
+	for i := from; i < len(s.paletteBindings); i++ {
 		binding := &s.paletteBindings[i]
 		visitIndex := int(binding.visitIndex)
 		paletteIndex := int(binding.paletteIndex)
 		if binding.visitIndex < 0 || visitIndex >= len(s.reconVisits) || binding.paletteIndex < 0 || paletteIndex >= len(s.paletteArena) {
-			return ErrInvalidBatch
+			return i, ErrInvalidBatch
 		}
 		visit := &s.reconVisits[visitIndex]
 		store := &s.paletteArena[paletteIndex]
@@ -619,7 +632,7 @@ func (s *FrameWorkTileResidualScratch) finalizeDeferredPalettes() error {
 			pal.UVMap = &store.UV
 		}
 	}
-	return nil
+	return len(s.paletteBindings), nil
 }
 
 // FrameWorkBlockTransforms carries the transform policy already determined by
@@ -1141,8 +1154,8 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *t
 	// threshold. When it does not engage, the fused single-thread path runs
 	// verbatim at zero added cost.
 	wavefrontWorkers := uint16(0)
-	if req.Predict == nil && frameWorkWavefrontEligible(*b, index) {
-		wavefrontWorkers = b.WavefrontWorkers
+	if req.Predict == nil {
+		wavefrontWorkers = frameWorkWavefrontLanes(*b, index)
 	}
 	deferReconstruction := frameWorkDeferReconstruction || wavefrontWorkers > 1
 	batchValue := *b
@@ -1185,6 +1198,11 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *t
 		loopReq.BeforeSuperblock = scratch.beforeSuperblock
 	}
 
+	if scratch.controller.wavefrontWorkers > 1 {
+		if err := scratch.controller.startReconStream(); err != nil {
+			return scratch.stats, err
+		}
+	}
 	loopStats, err := tile.DecodeBlockLoopWithCoeffControllerPtr(state, loopCDFs, &scratch.Loop, loopReq, &scratch.controller, func(visit *tile.BlockLoopVisit) error {
 		if !visit.CoefficientsValid {
 			return ErrInvalidBatch
@@ -1209,35 +1227,36 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *t
 		return nil
 	})
 	scratch.stats.Loop = loopStats
+	if scratch.controller.streaming {
+		err = scratch.controller.finishReconStream(err)
+	}
 	if err != nil {
 		return scratch.stats, err
 	}
-	if scratch.controller.deferReconstruction {
+	if scratch.controller.deferReconstruction && scratch.controller.wavefrontWorkers <= 1 {
 		if err := scratch.finalizeDeferredPalettes(); err != nil {
 			return scratch.stats, err
 		}
-		if scratch.controller.wavefrontWorkers > 1 {
-			if err := scratch.controller.replayDeferredReconstructionWavefront(); err != nil {
-				return scratch.stats, err
-			}
-		} else if err := scratch.controller.replayDeferredReconstruction(); err != nil {
+		if err := scratch.controller.replayDeferredReconstruction(); err != nil {
 			return scratch.stats, err
 		}
 	}
 	return scratch.stats, nil
 }
 
-// frameWorkWavefrontEligible reports whether the deferred SB-row wavefront may
-// engage for Jobs[index]. The wavefront helps only when the pool offered idle
-// lanes (set by the pool when a single batch is dispatched) and the tile has
-// enough SB rows to keep those lanes busy past the wavefront ramp. Below the
-// threshold the fused single-thread path is the better choice (no buffering, no
-// goroutines), so this returns false and the caller leaves reconstruction
-// fused.
-func frameWorkWavefrontEligible(b FrameWorkBatch, index int) bool {
+// frameWorkWavefrontLanes returns how many lanes the deferred SB-row
+// wavefront runs for Jobs[index], or 0 to leave reconstruction fused. The
+// wavefront helps only when the pool offered idle lanes (set by the pool when a
+// single batch is dispatched) and every lane gets enough SB rows for the
+// wavefront diagonal to fill before it drains. A tile with fewer rows than the
+// offered lanes need runs on fewer lanes rather than none (a 720p frame with
+// 128x128 superblocks has six SB rows: three lanes, not a serial fallback as
+// soon as the pool exceeds three workers); below two lanes the fused
+// single-thread path is the better choice (no buffering, no goroutines).
+func frameWorkWavefrontLanes(b FrameWorkBatch, index int) uint16 {
 	workers := int(b.WavefrontWorkers)
 	if workers <= 1 {
-		return false
+		return 0
 	}
 	// Intra block copy frames reconstruct blocks by copying from an earlier
 	// already-reconstructed region of the SAME frame via a block displacement
@@ -1250,16 +1269,17 @@ func frameWorkWavefrontEligible(b FrameWorkBatch, index int) bool {
 	// intrabc frames disable CDEF, loop filter, and loop restoration, so this is
 	// the only within-frame parallelism they can take.
 	if b.FrameSize.AllowIntrabc {
-		return false
+		return 0
 	}
 	region, err := b.JobRegion(index)
 	if err != nil {
-		return false
+		return 0
 	}
-	sbRows := int(region.SBRows)
-	// Require enough SB rows per worker so the wavefront diagonal fills before
-	// it drains. Tiny frames stay on the fused path.
-	return sbRows >= frameWorkWavefrontMinSBRowsPerWorker*workers
+	lanes := min(workers, int(region.SBRows)/frameWorkWavefrontMinSBRowsPerWorker)
+	if lanes <= 1 {
+		return 0
+	}
+	return uint16(lanes)
 }
 
 // DecodeAndReconstructJobResidualsDefault derives the standard block-loop and
@@ -1308,6 +1328,10 @@ type frameWorkTileResidualLoopController struct {
 	// single-worker and multi-tile paths, where the fused single-thread path
 	// runs verbatim.
 	wavefrontWorkers uint16
+
+	// streaming is set while scratch.wavefront runs alongside a multi-lane
+	// tile's parse (startReconStream).
+	streaming bool
 
 	// recon holds the reconstruction state for the fused single-thread path and
 	// the serial deferred replay. The multi-worker wavefront uses its own
@@ -1418,13 +1442,16 @@ func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficientsPtr(visit *
 		c.stats.CoefficientBlocks++
 	}
 	if c.deferReconstruction {
-		bufferedVisit, paletteIndex, paletteMask := c.scratch.captureDeferredVisit(*visit)
-		visitIndex := len(c.scratch.reconVisits)
+		if c.streaming {
+			if err := c.streamBlockBegin(visit); err != nil {
+				return err
+			}
+		}
+		visitIndex, paletteIndex, paletteMask := c.scratch.bufferDeferredVisit(visit)
 		visitIndex32, ok := frameWorkReconIndex(visitIndex)
 		if !ok {
 			return ErrInvalidBatch
 		}
-		c.scratch.reconVisits = append(c.scratch.reconVisits, bufferedVisit)
 		c.scratch.reconEvents = append(c.scratch.reconEvents, frameWorkReconEvent{
 			kind:  frameWorkReconEventBlockBegin,
 			index: visitIndex32,
@@ -1780,7 +1807,9 @@ type frameWorkReconSB struct {
 // publishes done[R] = C+1. Row 0 is ungated. Each goroutine uses its own
 // reconstruction state (CFL machine, prediction/residual scratch, geometry
 // cache), and the buffered events/arenas are read-only during the replay, so
-// the only cross-goroutine communication is the atomic done counters.
+// the only cross-goroutine communication is the atomic done counters. The
+// decode path streams the same wavefront while the tile parses
+// (startReconStream); this after-parse form replays a fully buffered tile.
 func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefront() error {
 	region, err := c.batch.JobRegion(c.index)
 	if err != nil {
@@ -1795,113 +1824,46 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 		return ErrInvalidBatch
 	}
 	workers := min(int(c.wavefrontWorkers), rowCount)
-	eventLimit, ok := frameWorkReconIndex(len(c.scratch.reconEvents))
-	if !ok {
-		return ErrInvalidBatch
-	}
 
 	if c.scratch.wavefront == nil {
 		c.scratch.wavefront = &frameWorkReconWavefront{}
 	}
 	wf := c.scratch.wavefront
-	// Partition the flat event list into per-SB-row spans and record each
-	// superblock's column. rowStart[r] is the first SB of row r in the sbs
-	// slice; rowStart[rowCount] is the total SB count. A new SB begins at a
-	// blockBegin event whose (sbRow, sbCol) differs from the previous block's.
-	wf.rowStart = wf.rowStart[:0]
-	sbs := wf.reuseSBs()
-	prevRow, prevCol := -1, -1
+	// Partition the flat event list into per-SB spans and SB rows; a new SB
+	// begins at a blockBegin event whose (sbRow, sbCol) differs from the
+	// previous block's.
+	wf.beginSpans(region, int(sbSizeMIB))
 	for i := range c.scratch.reconEvents {
 		ev := &c.scratch.reconEvents[i]
 		if ev.kind != frameWorkReconEventBlockBegin {
 			continue
-		}
-		eventIndex, ok := frameWorkReconIndex(i)
-		if !ok {
-			return ErrInvalidBatch
 		}
 		idx := int(ev.index)
 		if ev.index < 0 || idx >= len(c.scratch.reconVisits) {
 			return ErrInvalidBatch
 		}
 		visit := &c.scratch.reconVisits[idx]
-		sbRow := (int(visit.Block.MIRow) - int(region.MIRowStart)) / int(sbSizeMIB)
-		sbCol := (int(visit.Block.MICol) - int(region.MIColStart)) / int(sbSizeMIB)
-		if sbRow < 0 || sbRow >= rowCount || sbCol < 0 {
-			return ErrInvalidBatch
-		}
-		if sbRow == prevRow && sbCol == prevCol {
-			continue
-		}
-		if sbRow < prevRow || (sbRow == prevRow && sbCol < prevCol) {
-			// Events must arrive in SB-raster order for the wavefront gate to be
-			// valid; bail to the safe serial replay if they ever do not.
-			return ErrInvalidBatch
-		}
-		// Close the previous SB span.
-		if len(sbs) > 0 {
-			sbs[len(sbs)-1].end = eventIndex
-		}
-		// Open new row spans up to and including sbRow.
-		for len(wf.rowStart) <= sbRow {
-			if err := wf.appendRowStart(len(sbs)); err != nil {
-				return err
-			}
-		}
-		sbCol32, ok := frameWorkReconWavefrontCol(sbCol)
-		if !ok {
-			return ErrInvalidBatch
-		}
-		sbs = append(sbs, frameWorkReconSB{start: eventIndex, end: eventLimit, col: sbCol32})
-		prevRow, prevCol = sbRow, sbCol
-	}
-	for len(wf.rowStart) <= rowCount {
-		if err := wf.appendRowStart(len(sbs)); err != nil {
+		if _, err := wf.noteBlockBegin(i, int(visit.Block.MIRow), int(visit.Block.MICol)); err != nil {
 			return err
 		}
 	}
-	wf.commitSBs(sbs)
-
-	wf.events = c.scratch.reconEvents
-	wf.visits = c.scratch.reconVisits
-	wf.blocks = c.scratch.reconBlocks
+	if err := wf.closeSpans(len(c.scratch.reconEvents)); err != nil {
+		return err
+	}
 	wf.ensureDone(rowCount)
 	wf.resetProgress(rowCount)
-
 	if err := wf.ensureStates(workers, c); err != nil {
 		return err
 	}
-
-	var wg sync.WaitGroup
-	var firstErr atomic.Pointer[wavefrontError]
-	wg.Add(workers)
-	for w := 0; w < workers; w++ {
-		go func(w int) {
-			defer wg.Done()
-			st := &wf.states[w]
-			for row := w; row < rowCount; row += workers {
-				if err := wf.reconstructRow(st, row, rowCount); err != nil {
-					// Signal abort so any goroutine waiting on this row's (now
-					// never-published) progress stops waiting instead of
-					// deadlocking, then record the first error.
-					firstErr.CompareAndSwap(nil, &wavefrontError{err: err})
-					wf.abortProgress()
-					return
-				}
-			}
-		}(w)
-	}
-	wg.Wait()
-	if e := firstErr.Load(); e != nil {
-		return e.err
-	}
-	// Merge the per-goroutine reconstruction counters into the tile stats. The
-	// goroutines have all joined, so this read is race-free.
-	for w := 0; w < workers; w++ {
-		c.stats.Predictions += wf.states[w].localStats.Predictions
-		c.stats.Residuals += wf.states[w].localStats.Residuals
-	}
-	return nil
+	wf.startLanes(workers, rowCount)
+	wf.publishRows(rowCount, frameWorkReconView{
+		rowStart: wf.rowStart,
+		sbs:      wf.sbSpans,
+		events:   c.scratch.reconEvents,
+		visits:   c.scratch.reconVisits,
+		blocks:   c.scratch.reconBlocks,
+	})
+	return wf.finishLanes(c.stats)
 }
 
 // wavefrontError boxes a worker error so atomic.Pointer can carry the first one
@@ -1910,17 +1872,18 @@ type wavefrontError struct{ err error }
 
 // reconstructRow reconstructs every superblock of one SB row in left-to-right
 // order, gating each column on the row above via the done counters.
-func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row int, rowCount int) error {
+func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, view *frameWorkReconView, row int, rowCount int) error {
 	// rowStart holds rowCount+1 entries and done holds rowCount; validating the
 	// row index against both once lets the prove pass discharge the per-SB
 	// rowStart[row], rowStart[row+1] and done[row] accesses below (and, under the
 	// row>0 guard, the row-1 reads) without a check per superblock.
-	if row < 0 || row >= rowCount || row+1 >= len(wf.rowStart) || row >= len(wf.done) {
+	rowStart := view.rowStart
+	if row < 0 || row >= rowCount || row+1 >= len(rowStart) || row >= len(wf.done) {
 		return ErrInvalidBatch
 	}
-	sbs := wf.sbs()
-	lo32 := wf.rowStart[row]
-	hi32 := wf.rowStart[row+1]
+	sbs := view.sbs
+	lo32 := rowStart[row]
+	hi32 := rowStart[row+1]
 	if lo32 < 0 || hi32 < lo32 {
 		return ErrInvalidBatch
 	}
@@ -1939,15 +1902,15 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row i
 	var donePrev *atomic.Int32
 	aboveCount := 0
 	if row > 0 {
-		prevStart := wf.rowStart[row-1]
-		curStart := wf.rowStart[row]
+		prevStart := rowStart[row-1]
+		curStart := rowStart[row]
 		if prevStart < 0 || curStart < prevStart {
 			return ErrInvalidBatch
 		}
 		aboveCount = int(curStart - prevStart)
 		donePrev = &wf.done[row-1]
 	}
-	eventCount, ok := frameWorkReconIndex(len(wf.events))
+	eventCount, ok := frameWorkReconIndex(len(view.events))
 	if !ok {
 		return ErrInvalidBatch
 	}
@@ -1971,7 +1934,7 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, row i
 		if sb.start < 0 || sb.end < sb.start || sb.end > eventCount {
 			return ErrInvalidBatch
 		}
-		if err := frameWorkReplayReconEvents(st, wf.eventSpan(int(sb.start), int(sb.end)), wf.visits, wf.blocks); err != nil {
+		if err := frameWorkReplayReconEvents(st, view.events[sb.start:sb.end], view.visits, view.blocks); err != nil {
 			return err
 		}
 		wf.publishRowProgress(doneCur, sb.col+1)

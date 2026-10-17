@@ -129,4 +129,75 @@ func TestLoopFilterParallelMaskDiffChromaGated(t *testing.T) {
 	lfParallelMaskRun(t, 256, 256, 4, 4, tile.BlockSize16x16, tree, lf, true)
 }
 
+func TestLoopFilterParallelMaskDiffHorizontalMixedWidthBoundary(t *testing.T) {
+	for _, w := range []int{128, 136, 384} {
+		t.Run(fmt.Sprintf("width-%d", w), func(t *testing.T) {
+			const h = 256
+			lf := parser.LoopFilterParams{LevelY: [2]uint8{28, 28}, Sharpness: 0}
+			wideTree := tile.TransformTreeResult{Y: tile.TransformSize8x16, UV: tile.TransformSize4x4, HasUV: true}
+			narrowTree := tile.TransformTreeResult{Y: tile.TransformSize8x8, UV: tile.TransformSize4x4, HasUV: true}
+
+			var a loopFilterApplier
+			if err := a.init(w, h); err != nil {
+				t.Fatalf("init: %v", err)
+			}
+			defer a.close()
+			if err := a.reset(); err != nil {
+				t.Fatalf("reset: %v", err)
+			}
+
+			for col := 0; col < int(a.filtMap.Stride); col += 4 {
+				wideCols := min(2, int(a.filtMap.Stride)-col)
+				for row := 0; row < int(a.filtMap.Rows); row += 4 {
+					lfTilePutBlock(a.filtMap, col, row, wideCols, 4, tile.BlockSize8x16, wideTree, false)
+				}
+				narrowCol := col + wideCols
+				if narrowCol >= int(a.filtMap.Stride) {
+					continue
+				}
+				narrowCols := min(2, int(a.filtMap.Stride)-narrowCol)
+				for row := 0; row < int(a.filtMap.Rows); row += 2 {
+					lfTilePutBlock(a.filtMap, narrowCol, row, narrowCols, 2, tile.BlockSize8x8, narrowTree, false)
+				}
+			}
+
+			src := lfDiffFrame(w, h)
+			for y := 0; y < h; y++ {
+				for x := 0; x < w; x++ {
+					switch {
+					case x%16 < 8 && y >= 128:
+						src.Y[y*w+x] = 101
+					case x%16 >= 8 && y >= 120:
+						src.Y[y*w+x] = 108
+					default:
+						src.Y[y*w+x] = 100
+					}
+				}
+			}
+			serialMasks := lfDiffCopy(src)
+			parallelMasks := lfDiffCopy(src)
+
+			for iteration := range 100 {
+				copy(serialMasks.Y, src.Y)
+				copy(serialMasks.U, src.U)
+				copy(serialMasks.V, src.V)
+				copy(parallelMasks.Y, src.Y)
+				copy(parallelMasks.U, src.U)
+				copy(parallelMasks.V, src.V)
+
+				if err := a.applySerialMasks(&serialMasks, lf); err != nil {
+					t.Fatalf("iteration %d applySerialMasks: %v", iteration, err)
+				}
+				if got := serialMasks.Y[122*w+8]; got == 108 {
+					t.Fatalf("iteration %d serial narrow q2=%d was not filtered", iteration, got)
+				}
+				if err := a.applyParallelMasks(&parallelMasks, lf); err != nil {
+					t.Fatalf("iteration %d applyParallelMasks: %v", iteration, err)
+				}
+				lfDiffAssertEqual(t, serialMasks, parallelMasks)
+			}
+		})
+	}
+}
+
 var _ = loopfilter.PlaneY

@@ -1,6 +1,9 @@
 package motion
 
 import (
+	"bytes"
+	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -153,6 +156,56 @@ func TestBlendCompoundAvg(t *testing.T) {
 						t.Fatalf("pixel(%d,%d)=%d want %d", x, y, got, tc.pixel)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestBlendCompoundAvg8ClippedWidthsFallback(t *testing.T) {
+	const h = 3
+	// Clipped inter targets can leave widths that are divisible by 4 but not
+	// 8. The pinned libaom av1_dist_wtd_convolve_2d_copy_c iterates x < w, so
+	// these rows must not inherit the SIMD kernel's 8-pixel tail assumptions.
+	for _, width := range []int{12, 20, 28, 36} {
+		t.Run(fmt.Sprintf("width-%d", width), func(t *testing.T) {
+			var buf0, buf1 CompoundConvBuf
+			buf0.Width, buf1.Width = uint8(width), uint8(width)
+			buf0.Height, buf1.Height = h, h
+			for i := range width * h {
+				buf0.Data[i] = uint16(6144 + 16*((i*17+3)%256))
+				buf1.Data[i] = uint16(6144 + 16*((i*29+111)%256))
+			}
+
+			const dstX, dstY = 3, 1
+			dstWidth := width + 8
+			stride := dstWidth + 5
+			dstHeight := h + 2
+			pix := make([]byte, stride*dstHeight)
+			for i := range pix {
+				pix[i] = 0xa5
+			}
+			unchanged := frame.Plane{Pix: slices.Clone(pix), Stride: stride, Width: dstWidth, Height: dstHeight}
+			want := frame.Plane{Pix: slices.Clone(pix), Stride: stride, Width: dstWidth, Height: dstHeight}
+			blendCompoundAvg8PureGo(want, buf0.Data[:width*h], buf1.Data[:width*h], dstX, dstY, width, h, 8, 8, 6144, 4)
+			got := frame.Plane{Pix: slices.Clone(pix), Stride: stride, Width: dstWidth, Height: dstHeight}
+			if err := BlendCompoundAvg(got, &buf0, &buf1, 1, 8, dstX, dstY, width, h, 8, 8); err != nil {
+				t.Fatalf("BlendCompoundAvg: %v", err)
+			}
+			if !bytes.Equal(got.Pix, want.Pix) {
+				for i := range got.Pix {
+					if got.Pix[i] != want.Pix[i] {
+						t.Fatalf("BlendCompoundAvg byte %d=%d want %d (pure-Go oracle plus row guards)", i, got.Pix[i], want.Pix[i])
+					}
+				}
+			}
+
+			fastDst := frame.Plane{Pix: slices.Clone(pix), Stride: stride, Width: dstWidth, Height: dstHeight}
+			if BlendAvg8(&fastDst, &buf0, &buf1, dstX, dstY, width, h) {
+				if !bytes.Equal(fastDst.Pix, want.Pix) {
+					t.Fatal("BlendAvg8 differs from pure-Go oracle or changed destination guards")
+				}
+			} else if !bytes.Equal(fastDst.Pix, unchanged.Pix) {
+				t.Fatal("declined BlendAvg8 changed destination pixels or row guards")
 			}
 		})
 	}

@@ -48,6 +48,10 @@ func BenchmarkVideoEncoderPFrame(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() {
+		b.StopTimer()
+		_ = enc.Close()
+	})
 	if err := enc.Prewarm(); err != nil {
 		b.Fatal(err)
 	}

@@ -208,6 +208,21 @@ func QuantizeBlockScaledB(qcoeff []int16, qStride int, coeff []int32, coeffStrid
 	return nil
 }
 
+// ZeroBinB returns the quantize_b zero-bin thresholds QuantizeBlockScaledB
+// applies at txScale: a DC (respectively AC) coefficient whose magnitude is
+// below dc (ac) quantizes to zero. Both return 0 for an invalid quantizer.
+func ZeroBinB(q Quantizer, txScale uint8) (dc, ac int32) {
+	if q.DC <= 0 || q.AC <= 0 || txScale > 2 {
+		return 0, 0
+	}
+	zbinFactor := int32(80)
+	if q.DC < 148 {
+		zbinFactor = 84
+	}
+	return roundPowerOfTwo(roundPowerOfTwo(zbinFactor*q.DC, 7), txScale),
+		roundPowerOfTwo(roundPowerOfTwo(zbinFactor*q.AC, 7), txScale)
+}
+
 type quantBParams struct {
 	zbin  int32
 	round int32

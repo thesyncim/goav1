@@ -220,3 +220,121 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 		}
 	}
 }
+
+// wienerVerticalU8SIMD5 is wienerVerticalU8SIMD for filters whose outer tap
+// is zero (dav1d wiener_filter5): rows 0 and 6 of each window carry no weight.
+func wienerVerticalU8SIMD5(temp []uint16, tempStride int, dst []uint8, dstStride int, width int, height int, filter WienerFilter, round1 int) {
+	_, t1, t2, t3, seedA, seedO, ok := wienerVerticalPackedTaps(filter, 8, round1)
+	if width < 8 || !ok || !wienerVerticalFootprintFits(len(temp), tempStride, len(dst), dstStride, width, height) {
+		wienerVerticalU8(temp, tempStride, dst, dstStride, width, height, filter, round1)
+		return
+	}
+	t1V := archsimd.BroadcastUint32x4(t1)
+	t2V := archsimd.BroadcastUint32x4(t2)
+	t3V := archsimd.BroadcastUint32x4(t3)
+	seedAV := archsimd.BroadcastUint32x4(seedA)
+	seedOV := archsimd.BroadcastUint32x4(seedO)
+	negK := archsimd.BroadcastUint32x4(0xffff0000) // -65536
+	shr16 := archsimd.BroadcastInt32x4(-16)
+
+	// The footprint check above proves every load and store below is in bounds,
+	// so the hot loops address both buffers by byte offset from their bases.
+	tp := unsafe.Pointer(unsafe.SliceData(temp))
+	dp := unsafe.Pointer(unsafe.SliceData(dst))
+	ts := tempStride * 2
+
+	col := 0
+	for ; col+16 <= width; col += 16 {
+		t := col * 2
+		d := col
+		t += ts
+		a1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
+		b1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
+		t += ts
+		a2 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
+		b2 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
+		t += ts
+		a3 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
+		b3 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
+		t += ts
+		a4 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
+		b4 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
+		t += ts
+		a5 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
+		b5 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
+		t += ts
+		for row := 0; row < height; row++ {
+			a6 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
+			b6 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
+			t += ts
+
+			pa1 := a1.Add(a5).ReshapeToUint32s()
+			pa2 := a2.Add(a4).ReshapeToUint32s()
+			pa3 := a3.ReshapeToUint32s()
+			accA := pa3.MulAdd(t3V, seedAV)
+			accA = pa2.MulAdd(t2V, accA)
+			accA = pa1.MulAdd(t1V, accA)
+			oddA := pa3.Shift(shr16).MulAdd(t3V, seedOV)
+			oddA = pa2.Shift(shr16).MulAdd(t2V, oddA)
+			oddA = pa1.Shift(shr16).MulAdd(t1V, oddA)
+			evenA := oddA.MulAdd(negK, accA)
+			va := evenA.ReshapeToUint16s().InterleaveOdd(oddA.ReshapeToUint16s()).BitsToInt16()
+
+			pb1 := b1.Add(b5).ReshapeToUint32s()
+			pb2 := b2.Add(b4).ReshapeToUint32s()
+			pb3 := b3.ReshapeToUint32s()
+			accB := pb3.MulAdd(t3V, seedAV)
+			accB = pb2.MulAdd(t2V, accB)
+			accB = pb1.MulAdd(t1V, accB)
+			oddB := pb3.Shift(shr16).MulAdd(t3V, seedOV)
+			oddB = pb2.Shift(shr16).MulAdd(t2V, oddB)
+			oddB = pb1.Shift(shr16).MulAdd(t1V, oddB)
+			evenB := oddB.MulAdd(negK, accB)
+			vb := evenB.ReshapeToUint16s().InterleaveOdd(oddB.ReshapeToUint16s()).BitsToInt16()
+
+			restorationSaturateInt16PairToUint8(va, vb).StoreArray((*[16]uint8)(unsafe.Add(dp, d)))
+			d += dstStride
+			a1, a2, a3, a4, a5 = a2, a3, a4, a5, a6
+			b1, b2, b3, b4, b5 = b2, b3, b4, b5, b6
+
+		}
+	}
+	// Trailing columns: eight-wide strips, the last one shifted left to end at
+	// width so it overlaps already-written columns instead of running past them.
+	for ; col < width; col += 8 {
+		c := min(col, width-8)
+		t := c * 2
+		t += ts
+		a1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
+		t += ts
+		a2 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
+		t += ts
+		a3 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
+		t += ts
+		a4 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
+		t += ts
+		a5 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
+		t += ts
+		d := c
+		for row := 0; row < height; row++ {
+			a6 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
+			t += ts
+
+			p1 := a1.Add(a5).ReshapeToUint32s()
+			p2 := a2.Add(a4).ReshapeToUint32s()
+			p3 := a3.ReshapeToUint32s()
+			acc := p3.MulAdd(t3V, seedAV)
+			acc = p2.MulAdd(t2V, acc)
+			acc = p1.MulAdd(t1V, acc)
+			odd := p3.Shift(shr16).MulAdd(t3V, seedOV)
+			odd = p2.Shift(shr16).MulAdd(t2V, odd)
+			odd = p1.Shift(shr16).MulAdd(t1V, odd)
+			even := odd.MulAdd(negK, acc)
+			v := even.ReshapeToUint16s().InterleaveOdd(odd.ReshapeToUint16s()).BitsToInt16()
+			*(*uint64)(unsafe.Add(dp, d)) = v.SaturateToUint8().ReshapeToUint64s().GetElem(0)
+			d += dstStride
+
+			a1, a2, a3, a4, a5 = a2, a3, a4, a5, a6
+		}
+	}
+}

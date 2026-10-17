@@ -483,15 +483,53 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdges(req FrameWorkLoopFilt
 
 // loopFilterMasksUsable reports whether the decode-time bitmasks can drive the
 // deblock apply for this frame. The per-tile mask build resets the neighbour
-// transform context at each tile boundary, so tile-boundary edge strengths are
-// not yet fixed up the way dav1d does at loop-filter time (src/lf_apply_tmpl.c
-// tx_lpf_right_edge). Multi-tile frames therefore stay on the byte-exact
-// edge-list apply, which reads the shared frame map across tile boundaries.
+// transform context at each tile boundary, so a multi-tile frame's masks are
+// usable only after fixLoopFilterMaskTileBoundaries has applied dav1d's
+// tile-boundary fixup (src/lf_apply_tmpl.c tx_lpf_right_edge); until then the
+// byte-exact edge-list apply, which reads the shared frame map across tile
+// boundaries, handles them.
 func (ctx FrameWorkPostFilterContext) loopFilterMasksUsable() bool {
 	if !ctx.LoopFilterMasks.Valid() {
 		return false
 	}
-	return ctx.Event.TileInfo.Cols <= 1 && ctx.Event.TileInfo.Rows <= 1
+	return (ctx.Event.TileInfo.Cols <= 1 && ctx.Event.TileInfo.Rows <= 1) || ctx.LoopFilterMasks.TileBoundariesFixed
+}
+
+// fixLoopFilterMaskTileBoundaries runs the dav1d tile-boundary fixup on a
+// multi-tile frame's decode-time masks once per frame, after every tile has
+// decoded and before any deblock apply, so the frame can use the mask apply.
+func (ctx FrameWorkPostFilterContext) fixLoopFilterMaskTileBoundaries(filterMap FrameWorkLoopFilterMap) {
+	masks := ctx.LoopFilterMasks
+	if !masks.Valid() || masks.TileBoundariesFixed {
+		return
+	}
+	tiles := ctx.Event.TileInfo
+	if tiles.Cols <= 1 && tiles.Rows <= 1 {
+		return
+	}
+	if frameWorkLoopFilterMapEmpty(filterMap) && ctx.LoopFilterMap != nil {
+		filterMap = *ctx.LoopFilterMap
+	}
+	if frameWorkLoopFilterMapEmpty(filterMap) {
+		return
+	}
+	sbLog2 := 4
+	if ctx.Event.SequenceHeader.Use128x128Superblock {
+		sbLog2 = 5
+	}
+	var colStarts, rowStarts [parser.MaxTileCols + parser.MaxTileRows]int
+	nc := 0
+	for i := 1; i < int(tiles.Cols) && i < parser.MaxTileCols; i++ {
+		colStarts[nc] = int(tiles.ColStartSB[i]) << sbLog2
+		nc++
+	}
+	nr := 0
+	for i := 1; i < int(tiles.Rows) && i < parser.MaxTileRows; i++ {
+		rowStarts[nr] = int(tiles.RowStartSB[i]) << sbLog2
+		nr++
+	}
+	var scratch threading.FrameWorkLoopFilterMaskBuildScratch
+	_ = masks.FixTileBoundaries(&scratch, filterMap, colStarts[:nc], rowStarts[:nr])
 }
 
 func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesList(req FrameWorkLoopFilterPostFilterRequest) (FrameWorkLoopFilterPostFilterApplyResult, error) {

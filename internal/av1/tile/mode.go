@@ -1,6 +1,8 @@
 package tile
 
 import (
+	"unsafe"
+
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -173,7 +175,6 @@ type BlockModeContext struct {
 	AbovePaletteUV           [MaxBlockModeSlots]paletteContext
 	LeftPaletteUV            [MaxBlockModeSlots]paletteContext
 
-	GridInterMotion [MaxBlockModeSlots][MaxBlockModeSlots]InterMotionResult
 	GridMotionValid [MaxBlockModeSlots][MaxBlockModeSlots]uint8
 	GridBlockSize   [MaxBlockModeSlots][MaxBlockModeSlots]BlockSize
 
@@ -184,9 +185,8 @@ type BlockModeContext struct {
 	// neighbor cells rather than the collapsed 1D Above/Left filter contexts
 	// (which only retain the last block written to a row/column slot and can
 	// therefore report a different neighbor's filter). Written by
-	// MarkInterFilters alongside GridInterMotion; read under the same
-	// GridMotionValid guard.
-	GridInterp      [MaxBlockModeSlots][MaxBlockModeSlots]motion.InterpFilters
+	// MarkInterFilters alongside GridInterMotion and read only under
+	// GridInterpValid; the payload itself lives at the end of the struct.
 	GridInterpValid [MaxBlockModeSlots][MaxBlockModeSlots]uint8
 
 	// GridBlockSizeVisited mirrors GridBlockSize but signals whether the
@@ -199,6 +199,21 @@ type BlockModeContext struct {
 	// and forces the scan to fall back to a 4x4 stride past intra neighbors,
 	// oversampling deeper cells libaom never visits.
 	GridBlockSizeVisited [MaxBlockModeSlots][MaxBlockModeSlots]uint8
+
+	// The per-cell payload grids stay LAST: resetForSuperblock clears only
+	// the fields before GridInterMotion. Every reader gates GridInterMotion on
+	// GridMotionValid and GridInterp on GridInterpValid (both cleared per
+	// superblock), so stale payload from the previous superblock is never
+	// observed and its 18 KB need not be zeroed.
+	GridInterMotion [MaxBlockModeSlots][MaxBlockModeSlots]InterMotionResult
+	GridInterp      [MaxBlockModeSlots][MaxBlockModeSlots]motion.InterpFilters
+}
+
+// resetForSuperblock is BlockModeContext{} minus the trailing payload grids
+// (see GridInterMotion). The struct holds no pointers, so a byte clear of the
+// prefix is a plain zero-assignment of every other field.
+func (c *BlockModeContext) resetForSuperblock() {
+	clear(unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Offsetof(c.GridInterMotion)))
 }
 
 // CDEFIndexContext caches the cdef_idx values already read for the 64x64 CDEF

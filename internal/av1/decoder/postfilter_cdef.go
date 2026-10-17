@@ -1,6 +1,7 @@
 package decoder
 
 import (
+	"math/bits"
 	"sync/atomic"
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
@@ -494,6 +495,11 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFP
 	var directions cdef.DirectionGrid
 	var variances cdef.VarianceGrid
 	var blockStorage [cdef.NBlocks * cdef.NBlocks]cdef.BlockPosition
+	var unitMaskCache frameWorkCDEFUnitMaskCache
+	var unitMasks *frameWorkCDEFUnitMaskCache
+	if useU8 && unitMaskCache.reset(skipMap, rowStart, rowEnd, cols) {
+		unitMasks = &unitMaskCache
+	}
 	for plane := range 3 {
 		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
 		processPlane := frameWorkCDEFPlaneHasFiltering(ctx.Event.CDEF, plane)
@@ -517,7 +523,7 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFP
 			if u8Boundary != nil {
 				boundary = *u8Boundary
 			}
-			planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRowsU8(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane], boundary, req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, chromaFiltering)
+			planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRowsU8(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane], boundary, req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, chromaFiltering, unitMasks)
 			if err != nil {
 				return FrameWorkCDEFPostFilterResult{}, err
 			}
@@ -1196,4 +1202,103 @@ func maxInt(a int, b int) int {
 		return a
 	}
 	return b
+}
+
+// frameWorkCDEFUnitMaskCap bounds the per-band unit filter-mask cache kept on
+// the stack (2048 units covers a 4K frame); larger bands fall back to
+// computing block positions per plane.
+const frameWorkCDEFUnitMaskCap = 2048
+
+// frameWorkCDEFUnitBlocks is the 8x8-block count along one side of a 64x64
+// CDEF unit (the luma block grid; chroma units map 1:1 onto it).
+const frameWorkCDEFUnitBlocks = cdef.BlockSize / 8
+
+// frameWorkCDEFUnitMaskCache memoizes, per 64x64 CDEF unit of a row band, the
+// 8x8-block filter mask derived from the frame's skip map, so the luma and both
+// chroma planes share one scan of the MI records (dav1d keeps the equivalent
+// noskip_mask per superblock). Bit by*8+bx is set when the block is NOT
+// all-skip, i.e. exactly when frameWorkCDEFBlockPositionsFiltered keeps it.
+type frameWorkCDEFUnitMaskCache struct {
+	skipMap  *FrameWorkLoopFilterMap
+	rowStart int
+	cols     int
+	masks    [frameWorkCDEFUnitMaskCap]uint64
+	done     [frameWorkCDEFUnitMaskCap / 64]uint64
+}
+
+func (c *frameWorkCDEFUnitMaskCache) reset(skipMap *FrameWorkLoopFilterMap, rowStart, rowEnd, cols int) bool {
+	if skipMap == nil || cols <= 0 || (rowEnd-rowStart)*cols > frameWorkCDEFUnitMaskCap {
+		return false
+	}
+	c.skipMap = skipMap
+	c.rowStart = rowStart
+	c.cols = cols
+	clear(c.done[:])
+	return true
+}
+
+func (c *frameWorkCDEFUnitMaskCache) mask(unitRow, unitCol int) uint64 {
+	i := (unitRow-c.rowStart)*c.cols + unitCol
+	if c.done[i>>6]&(1<<uint(i&63)) != 0 {
+		return c.masks[i]
+	}
+	m := frameWorkCDEFUnitFilterMask(c.skipMap, unitRow, unitCol)
+	c.masks[i] = m
+	c.done[i>>6] |= 1 << uint(i&63)
+	return m
+}
+
+// frameWorkCDEFBlockPositionsFromMask is frameWorkCDEFBlockPositionsFiltered
+// driven by a precomputed unit filter mask: same blocks, same order.
+func frameWorkCDEFBlockPositionsFromMask(storage []cdef.BlockPosition, m uint64, unitW, unitH, blockW, blockH int) []cdef.BlockPosition {
+	cols := (unitW + blockW - 1) / blockW
+	rows := (unitH + blockH - 1) / blockH
+	colMask := uint64(1)<<uint(cols) - 1
+	out := storage[:0]
+	for by := 0; by < rows; by++ {
+		row := (m >> uint(by*frameWorkCDEFUnitBlocks)) & colMask
+		for row != 0 {
+			bx := bits.TrailingZeros64(row)
+			out = append(out, cdef.BlockPosition{BY: uint8(by), BX: uint8(bx)})
+			row &= row - 1
+		}
+	}
+	return out
+}
+
+// frameWorkCDEFUnitFilterMask scans one 64x64 unit's MI records once and
+// returns its 8x8-block filter mask (bit by*8+bx set unless all four MI cells
+// of the block are valid skip-transform cells), matching
+// frameWorkCDEFBlockAllSkipped block by block. Units overhanging the map use
+// that per-block helper directly.
+func frameWorkCDEFUnitFilterMask(skipMap *FrameWorkLoopFilterMap, unitRow, unitCol int) uint64 {
+	const miPerUnit = 2 * frameWorkCDEFUnitBlocks
+	stride := int(skipMap.Stride)
+	miCol0 := unitCol * miPerUnit
+	miRow0 := unitRow * miPerUnit
+	var m uint64
+	if miCol0+miPerUnit > stride || miRow0+miPerUnit > int(skipMap.Rows) {
+		for by := 0; by < frameWorkCDEFUnitBlocks; by++ {
+			for bx := 0; bx < frameWorkCDEFUnitBlocks; bx++ {
+				if !frameWorkCDEFBlockAllSkipped(skipMap, unitRow, unitCol, by, bx) {
+					m |= 1 << uint(by*frameWorkCDEFUnitBlocks+bx)
+				}
+			}
+		}
+		return m
+	}
+	for by := 0; by < frameWorkCDEFUnitBlocks; by++ {
+		base := (miRow0+2*by)*stride + miCol0
+		r0 := skipMap.Records[base : base+miPerUnit : base+miPerUnit]
+		r1 := skipMap.Records[base+stride : base+stride+miPerUnit : base+stride+miPerUnit]
+		for bx := 0; bx < frameWorkCDEFUnitBlocks; bx++ {
+			a, b := &r0[2*bx], &r0[2*bx+1]
+			c, d := &r1[2*bx], &r1[2*bx+1]
+			if !(a.Valid && a.SkipTransform && b.Valid && b.SkipTransform &&
+				c.Valid && c.SkipTransform && d.Valid && d.SkipTransform) {
+				m |= 1 << uint(by*frameWorkCDEFUnitBlocks+bx)
+			}
+		}
+	}
+	return m
 }

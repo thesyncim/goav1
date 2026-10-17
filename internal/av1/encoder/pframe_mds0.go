@@ -77,11 +77,14 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	// syntax churn, so the block keeps the legacy classification. The ME
 	// prediction's distortion is cached for the candidate loop below.
 	meDist := int64(-1)
+	meSSE := uint32(0)
 	predYValid := false
 	predYMV := motion.Vector{}
-	if perr := predictInto(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, false, false, &st.scaledScratch); perr == nil {
+	if perr := st.predictLuma(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, motion.RegularFilters); perr == nil {
 		predYValid, predYMV = true, meMV
-		meSSE, meVar := realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
+		sse, meVar := realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
+		meSSE = sse
+		st.predStats.set(meMV, motion.RegularFilters, meSSE, meVar)
 		acThr := (int64(st.yQuant.AC) * int64(st.yQuant.AC) >> 6) * int64(bw*bh) / 256
 		// Upstream narrows the dead-zone test on high-motion HD blocks
 		// (same function: 720p+, non-screen tuning, source_sad above low,
@@ -153,6 +156,7 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	}
 
 	var dists [mds0MaxCands]int64
+	var sses [mds0MaxCands]uint32
 	var distSource [mds0MaxCands]uint8 // 1=ME prediction, 2=earlier candidate cache
 	best := -1
 	bestCost := int64(0)
@@ -168,12 +172,14 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 			dist = meDist
 			if dist >= 0 {
 				source = 1
+				sses[i] = meSSE
 			}
 		}
 		for j := 0; dist < 0 && j < i; j++ {
 			if cands[j].mv == cand.mv && dists[j] >= 0 {
 				dist = dists[j]
 				source = 2
+				sses[i] = sses[j]
 				if distSource[j] == 1 {
 					source = 1
 				}
@@ -181,12 +187,13 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 			}
 		}
 		if dist < 0 {
-			if perr := predictInto(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, false, false, &st.scaledScratch); perr != nil {
+			if perr := st.predictLuma(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, motion.RegularFilters); perr != nil {
 				dists[i] = -1
 				continue
 			}
-			_, variance := realtimeInterResidualSSEVariance(src.Y, st.sadScratch[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
+			sse, variance := realtimeInterResidualSSEVariance(src.Y, st.sadScratch[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
 			dist = int64(variance) << 4
+			sses[i] = sse
 		}
 		dists[i] = dist
 		distSource[i] = source
@@ -223,11 +230,11 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 				case 1:
 					// The cached ME pixels were overwritten after a different
 					// candidate became best; restore them only on this path.
-					predYValid = predictInto(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, false, false, &st.scaledScratch) == nil
+					predYValid = st.predictLuma(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, motion.RegularFilters) == nil
 				case 2:
 					// A duplicate vector can reuse its measured distortion, but
 					// sadScratch may hold another candidate's pixels.
-					predYValid = predictInto(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, false, false, &st.scaledScratch) == nil
+					predYValid = st.predictLuma(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, motion.RegularFilters) == nil
 				}
 				if predYValid {
 					predYMV = cand.mv
@@ -240,6 +247,9 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	if best < 0 {
 		return mds0Cand{}, false, false
 	}
+	// The winner's regular-filter prediction statistics (dist is its
+	// variance << 4) for the later stages (pred_stats.go).
+	st.predStats.set(bestMV, motion.RegularFilters, sses[best], uint32(dists[best]>>4))
 	return cands[best], true, predYValid && predYMV == bestMV
 }
 

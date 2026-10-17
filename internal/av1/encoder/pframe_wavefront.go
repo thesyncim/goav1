@@ -59,11 +59,12 @@ type pframeDecideWorker struct {
 // adopt refreshes the lane's encode state from the tile's frame-configured
 // state. The struct copy shares the frame-level read-only slices (scan tables,
 // motion/SAD grids, content caches — grid writes are per-SB disjoint) and
-// privatizes every value-array scratch; the two mutable heap slices the
-// decision pass touches (levels, invScratch) keep lane-owned backing.
+// privatizes every value-array scratch; levels, invScratch, and the mutable
+// subpel cache keep lane-owned backing.
 func (w *pframeDecideWorker) adopt(src *lossyEncodeState) {
 	levels := w.st.levels
 	inv := w.st.invScratch
+	subpelCache := w.st.subpelCache
 	w.st = *src
 	if len(levels) < len(src.levels) {
 		levels = make([]uint8, len(src.levels))
@@ -73,6 +74,8 @@ func (w *pframeDecideWorker) adopt(src *lossyEncodeState) {
 	}
 	w.st.levels = levels
 	w.st.invScratch = inv
+	w.st.subpelCache = subpelCache
+	w.st.ensureSubpelProbeCache()
 	// The decision pass never writes symbols; poison the writer-side hooks so
 	// a stray write path fails fast, and zero the accumulators this lane will
 	// contribute back after the join.
@@ -88,10 +91,11 @@ func (w *pframeDecideWorker) adopt(src *lossyEncodeState) {
 // pframeWavefront owns the per-tile wavefront scheduling state and the parked
 // worker goroutines. Job parameters live in owner fields set per frame.
 type pframeWavefront struct {
-	workers []pframeDecideWorker
-	started int
-	work    chan int
-	wg      sync.WaitGroup
+	workers  []pframeDecideWorker
+	started  int
+	work     chan int
+	wg       sync.WaitGroup // per-frame jobs
+	workerWG sync.WaitGroup // persistent helper goroutines
 
 	carriers  tile.BlockLoopWavefrontCarriers
 	doneAlloc []atomic.Int32
@@ -224,14 +228,47 @@ func (wf *pframeWavefront) ensureWorkers(n int, pc *pframeCoder) {
 	}
 	for wf.started < n {
 		wf.started++
+		wf.workerWG.Add(1)
+		work := wf.work
 		go func() {
-			for idx := range wf.work {
+			defer wf.workerWG.Done()
+			for idx := range work {
 				wf.runWorker(idx)
 				wf.wg.Done()
 			}
 		}()
 	}
 	wf.coder = pc
+}
+
+// close stops the persistent helpers after all submitted frame jobs finish,
+// then releases the worker and frame state they retain. The captured channel
+// ensures a helper that has not yet started cannot park on a nil field when
+// Close resets wf.work.
+func (wf *pframeWavefront) close() {
+	work := wf.work
+	if work == nil {
+		return
+	}
+	wf.wg.Wait()
+	close(work)
+	wf.workerWG.Wait()
+	wf.work = nil
+	wf.started = 0
+	wf.workers = nil
+	wf.coder = nil
+	wf.src, wf.ref = SourceFrame420{}, SourceFrame420{}
+	wf.golden, wf.recon = nil, nil
+	wf.doneAlloc, wf.done = nil, nil
+	wf.carriers = tile.BlockLoopWavefrontCarriers{}
+	wf.referenceMode = 0
+	wf.walkReq = tile.BlockWalkRequest{}
+	wf.miCols, wf.miRows = 0, 0
+	wf.rows, wf.cols = 0, 0
+	wf.scaledReference = false
+	wf.launched = 0
+	wf.nextRow.Store(0)
+	wf.aborted.Store(false)
 }
 
 // decidePartition is the lane's partition decider: the shared content-only

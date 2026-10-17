@@ -22,6 +22,7 @@ func init() {
 	}
 	residualBlockImpl = residualBlockSIMD
 	rdStatsBlockImpl = rdStatsBlockSIMD
+	rdStatsDiffImpl = rdStatsDiffSIMD
 	blockErrorImpl = blockErrorSIMD
 }
 

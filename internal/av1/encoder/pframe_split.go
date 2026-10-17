@@ -329,6 +329,7 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 		return fmt.Errorf("encoder: unexpected block %+v", block)
 	}
 	n := bw // square tier size; rect blocks take dedicated paths below
+	st.predStats.valid = false
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
 	hasChroma := !st.color.MonoChrome
@@ -627,15 +628,15 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 			}
 		} else {
 			if !mds0PredictorMatchesCodedFilters(mds0PredRetained, mv, blockFilters) {
-				if err := predictIntoFilters(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, blockFilters, st.scaledScratch.Conv()); err != nil {
+				if err := st.predictLuma(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, blockFilters); err != nil {
 					return fmt.Errorf("predict luma: %w", err)
 				}
 			}
 			if hasChroma {
-				if err := predictIntoFilters(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters, st.scaledScratch.Conv()); err != nil {
+				if err := st.predictPlane(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters); err != nil {
 					return fmt.Errorf("predict u: %w", err)
 				}
-				if err := predictIntoFilters(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters, st.scaledScratch.Conv()); err != nil {
+				if err := st.predictPlane(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters); err != nil {
 					return fmt.Errorf("predict v: %w", err)
 				}
 			}
@@ -645,8 +646,14 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	// Quantize all planes and take the rate-priced skip decision through the
 	// same shared helper as the fused path, including the light-PD1 TX
 	// shortcut detectors (pframe_lpd1_tx.go).
+	st.predYKey = lumaPredKey{
+		valid:   !refs.Compound && refPlanes.Width == src.Width && refPlanes.Height == src.Height,
+		mv:      mv,
+		filters: blockFilters,
+	}
 	skip, splitTX, txPlan, txType, err := st.decideInterTXBlock(src, refPlanes, mv, block,
 		lumaPX, lumaPY, bw, bh, cbw, cbh, chromaPX, chromaPY, hasChroma, fullSAD)
+	st.predYKey.valid = false
 	if err != nil {
 		return err
 	}

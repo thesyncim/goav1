@@ -1653,6 +1653,7 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs, color 
 		}
 		*dst = q
 	}
+	st.ensureSubpelProbeCache()
 	if err := st.initScans(); err != nil {
 		return err
 	}
@@ -2365,6 +2366,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		return fmt.Errorf("encoder: unexpected block %+v", block)
 	}
 	n := bw // square tier size; rect blocks take dedicated paths below
+	st.predStats.valid = false
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
 	hasChroma := !st.color.MonoChrome
@@ -2724,15 +2726,15 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			}
 		} else {
 			if !mds0PredictorMatchesCodedFilters(mds0PredRetained, mv, blockFilters) {
-				if err := predictIntoFilters(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, blockFilters, st.scaledScratch.Conv()); err != nil {
+				if err := st.predictLuma(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, blockFilters); err != nil {
 					return fmt.Errorf("predict luma: %w", err)
 				}
 			}
 			if hasChroma {
-				if err := predictIntoFilters(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters, st.scaledScratch.Conv()); err != nil {
+				if err := st.predictPlane(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters); err != nil {
 					return fmt.Errorf("predict u: %w", err)
 				}
-				if err := predictIntoFilters(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters, st.scaledScratch.Conv()); err != nil {
+				if err := st.predictPlane(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters); err != nil {
 					return fmt.Errorf("predict v: %w", err)
 				}
 			}
@@ -2743,8 +2745,14 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// quantizes to zero everywhere is coded as skip (no residual symbols, the
 	// reconstruction is the prediction itself). The shared decision helper
 	// also applies the light-PD1 TX shortcut detectors (pframe_lpd1_tx.go).
+	st.predYKey = lumaPredKey{
+		valid:   !refs.Compound && refPlanes.Width == src.Width && refPlanes.Height == src.Height,
+		mv:      mv,
+		filters: blockFilters,
+	}
 	skip, splitTX, txPlan, txType, err := st.decideInterTXBlock(src, refPlanes, mv, block,
 		lumaPX, lumaPY, bw, bh, cbw, cbh, chromaPX, chromaPY, hasChroma, fullSAD)
+	st.predYKey.valid = false
 	if err != nil {
 		return err
 	}
@@ -3032,7 +3040,7 @@ func (st *lossyEncodeState) classifyInterMode(src, refPlanes SourceFrame420, sta
 		}
 		if dr <= 16 && dc <= 16 {
 			mvBits := 4 + bits.Len(uint(dr)) + bits.Len(uint(dc))
-			if err := predictInto(st.sadScratch[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, nearest, false, false, &st.scaledScratch); err == nil {
+			if err := st.predictLuma(st.sadScratch[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, nearest, motion.RegularFilters); err == nil {
 				srcBlock := src.Y[lumaPY*src.YStride+lumaPX:]
 				predBlock := st.sadScratch[:bw*bh]
 				nearSAD := 0
@@ -3510,7 +3518,17 @@ func (st *lossyEncodeState) subpelRefineLibaomTree(src, refPlane []byte, stride,
 	startMV := mv
 	probe := st.sadScratch[:n*n]
 	srcBlock := src[py*stride+px:]
+	st.ensureSubpelProbeCache()
+	cache := st.subpelCache
+	if cache != nil {
+		cache.init(frame.Plane{Pix: refPlane, Stride: stride, Width: width, Height: height}, src, stride, px, py, n, startMV)
+	}
 	exact := func(cand motion.Vector) int {
+		if cache != nil {
+			if sad, ok := cache.sad(motion.Vector{Row: cand.Row - startMV.Row, Col: cand.Col - startMV.Col}); ok {
+				return sad
+			}
+		}
 		switch n {
 		case 8:
 			return st.subpelExact8x8(probe, srcBlock, refPlane, stride, width, height, px, py, startMV, cand)
@@ -3642,6 +3660,14 @@ func (p realtimeInterTXPlan) ForEachLeaf(visit func(i, dx, dy int) error) error 
 	if visit == nil || p.leafSize != 8 && p.leafSize != 16 {
 		return tile.ErrInvalidDecodeState
 	}
+	if c := realtimeInterTXPlanCached(p.block, p.leafSize); c != nil && c.plan == p {
+		for i := 0; i < c.leaves; i++ {
+			if err := visit(i, int(c.dx[i]), int(c.dy[i])); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	maxY, err := tile.MaxTransformSize(p.block, parser.ColorConfig{}, 0)
 	if err != nil {
 		return err
@@ -3697,6 +3723,13 @@ func realtimeInterTXPlanForBlock(block tile.BlockSize, qIndex uint8, qAC int32, 
 }
 
 func realtimeInterTXPlanForLeafSize(block tile.BlockSize, leafSize int) (realtimeInterTXPlan, error) {
+	if c := realtimeInterTXPlanCached(block, leafSize); c != nil {
+		return c.plan, nil
+	}
+	return realtimeInterTXPlanBuild(block, leafSize)
+}
+
+func realtimeInterTXPlanBuild(block tile.BlockSize, leafSize int) (realtimeInterTXPlan, error) {
 	var leafTX tile.TransformSize
 	switch leafSize {
 	case 8:
@@ -4020,6 +4053,22 @@ func sadRectDualBlock(src []byte, srcStride int, ref []byte, refStride int, bw, 
 	case bw == 16 && bh == 32:
 		return sad16x16Dual(src, srcStride, ref, refStride) +
 			sad16x16Dual(src[16*srcStride:], srcStride, ref[16*refStride:], refStride)
+	case bw == 64 && bh == 32:
+		return sad32x32Dual(src, srcStride, ref, refStride) +
+			sad32x32Dual(src[32:], srcStride, ref[32:], refStride)
+	case bw == 32 && bh == 64:
+		return sad32x32Dual(src, srcStride, ref, refStride) +
+			sad32x32Dual(src[32*srcStride:], srcStride, ref[32*refStride:], refStride)
+	case bw == 64 && bh == 16:
+		return sad16x16Dual(src, srcStride, ref, refStride) +
+			sad16x16Dual(src[16:], srcStride, ref[16:], refStride) +
+			sad16x16Dual(src[32:], srcStride, ref[32:], refStride) +
+			sad16x16Dual(src[48:], srcStride, ref[48:], refStride)
+	case bw == 16 && bh == 64:
+		return sad16x16Dual(src, srcStride, ref, refStride) +
+			sad16x16Dual(src[16*srcStride:], srcStride, ref[16*refStride:], refStride) +
+			sad16x16Dual(src[32*srcStride:], srcStride, ref[32*refStride:], refStride) +
+			sad16x16Dual(src[48*srcStride:], srcStride, ref[48*refStride:], refStride)
 	}
 	total := 0
 	for r := range bh {
@@ -4039,9 +4088,7 @@ func sadRectDualBlock(src []byte, srcStride int, ref []byte, refStride int, bw, 
 // copyPredScratch copies a materialized n x n prediction into the recon plane
 // for skipped blocks.
 func copyPredScratch(reconPlane, pred []byte, stride, px, py, w, h int) {
-	for r := range h {
-		copy(reconPlane[(py+r)*stride+px:(py+r)*stride+px+w], pred[r*w:r*w+w])
-	}
+	copyPredToReconBlock(reconPlane, pred, w, stride, px, py, w, h)
 }
 
 // prepareInterTXB computes the quantized coefficients of one square n x n
@@ -4073,9 +4120,27 @@ func (st *lossyEncodeState) prepareInterTXBTyped(srcPlane, pred []byte, predStri
 	if len(qcoeff) < cn {
 		return false
 	}
+	return st.quantizeInterTXBStats(&geo, q, qcoeff)
+}
+
+// quantizeInterTXBStats quantizes the transform coefficients in tranScratch
+// into qcoeff and accumulates the block's skip-decision RD terms (see
+// prepareInterTXB), reporting whether every level is zero.
+func (st *lossyEncodeState) quantizeInterTXBStats(geo *txBlockGeometry, q quantize.Quantizer, qcoeff []int16) bool {
+	cn := geo.coeffCount
+	tran := &st.tranScratch
 	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
 		return false
 	}
+	return st.accumulateInterTXBStats(geo, q, qcoeff)
+}
+
+// accumulateInterTXBStats adds the skip-decision RD terms of the levels in
+// qcoeff over the coefficients in tranScratch (see prepareInterTXB) and
+// reports whether every level is zero.
+func (st *lossyEncodeState) accumulateInterTXBStats(geo *txBlockGeometry, q quantize.Quantizer, qcoeff []int16) bool {
+	cn := geo.coeffCount
+	tran := &st.tranScratch
 	// The vector statistics apply the AC step to every lane; the DC
 	// coefficient's coded distortion is then corrected with the DC step.
 	dskip, dcode, rate, allZero := rdStatsBlockImpl(tran[:cn], qcoeff[:cn], cn, q.AC, geo.txScale)
@@ -4087,6 +4152,75 @@ func (st *lossyEncodeState) prepareInterTXBTyped(srcPlane, pred []byte, predStri
 	}
 	st.rdDskip += dskip
 	st.rdDcode += dcode
+	st.rdRcode += rate
+	return allZero
+}
+
+// prepareInterTXBDecide is prepareInterTXB for decideInterTXBlock, whose RD
+// terms only ever feed the skip comparison rdDskip<<7 <= rate + rdDcode<<7.
+// A coefficient that quantizes to zero adds the same c*c to rdDskip and
+// rdDcode, so its terms cancel there; square 8x8, 16x16 and 32x32 DCT_DCT
+// blocks therefore take the row-skipping forward DCT, which leaves out the
+// coefficient rows that provably quantize to zero (and the whole
+// quantize/stats pass when every row does). The levels, the all-zero result
+// and the skip decision are exactly those of prepareInterTXB; only the
+// cancelling distortion terms are omitted (rdDskip carries the skip-minus-code
+// difference of the non-zero levels), so no caller may read the absolute
+// rdDcode/rdDskip after it (the 8x8 TX-type trial's DCT baseline must keep
+// using prepareInterTXB).
+func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16) bool {
+	var geo *txBlockGeometry
+	switch {
+	case w == 8 && h == 8:
+		geo = &txBlockGeometry8x8
+	case w == 16 && h == 16:
+		geo = &txBlockGeometry16x16
+	case w == 32 && h == 32:
+		geo = &txBlockGeometry32x32
+	}
+	if geo == nil || len(qcoeff) < geo.coeffCount {
+		return st.prepareInterTXB(srcPlane, pred, predStride, stride, px, py, w, h, q, qcoeff)
+	}
+	residualBlockImpl(st.resScratch[:geo.sampleCount], srcPlane, py*stride+px, stride, pred, predStride, w, h)
+	dcZero, acZero := quantize.ZeroBinB(q, geo.txScale)
+	thr0, thr := min(dcZero, acZero), acZero
+	var mask uint8
+	switch w {
+	case 8:
+		mask = transform.ForwardDCT8x8RowSkip8BitTrusted((*[64]int32)(st.tranScratch[:64]), (*[64]int16)(st.resScratch[:64]), thr0, thr)
+	case 16:
+		mask = transform.ForwardDCT16x16RowSkip8BitTrusted((*[256]int32)(st.tranScratch[:256]), (*[256]int16)(st.resScratch[:256]), thr0, thr)
+	default:
+		mask = transform.ForwardDCT32x32RowSkip8BitTrusted((*[1024]int32)(st.tranScratch[:1024]), (*[1024]int16)(st.resScratch[:1024]), thr0, thr)
+	}
+	if mask == 0 {
+		clear(qcoeff[:geo.coeffCount])
+		return true
+	}
+	// Quantize only the live rows; when every level is zero the block adds
+	// nothing to the skip comparison.
+	if !quantize.QuantizeBRowGroupsTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, q, geo.txScale) {
+		return true
+	}
+	return st.accumulateInterTXBStatsDiff(geo, q, qcoeff)
+}
+
+// accumulateInterTXBStatsDiff is accumulateInterTXBStats for the skip
+// comparison alone: only rdDskip - rdDcode and the rate matter there, and a
+// zero level adds equally to both distortions, so the non-zero levels'
+// difference terms go to rdDskip (rdStatsDiffImpl) and rdDcode is left as is.
+func (st *lossyEncodeState) accumulateInterTXBStatsDiff(geo *txBlockGeometry, q quantize.Quantizer, qcoeff []int16) bool {
+	cn := geo.coeffCount
+	tran := &st.tranScratch
+	diff, rate, allZero := rdStatsDiffImpl(tran[:cn], qcoeff[:cn], cn, q.AC, geo.txScale)
+	if v := qcoeff[0]; v != 0 {
+		// The vector pass used the AC step for DC too.
+		c := int64(tran[0])
+		eAC := c - ((int64(v) * int64(q.AC)) >> geo.txScale)
+		eDC := c - ((int64(v) * int64(q.DC)) >> geo.txScale)
+		diff += eAC*eAC - eDC*eDC
+	}
+	st.rdDskip += diff
 	st.rdRcode += rate
 	return allZero
 }
@@ -4466,10 +4600,14 @@ func (st *lossyEncodeState) reconInterTXBResult(reconPlane, pred []byte, predStr
 	}
 
 	dq := &st.dqScratch
-	quantize.DequantizeBlockScaledBitDepthEOBTrusted(dq[:geo.coeffCount], geo.coeffHeight, qcoeff, geo.coeffHeight, scan, int(txbResult.EOB), geo.coeffWidth, geo.coeffHeight, q, geo.txScale, 8)
+	eob := int(txbResult.EOB)
+	quantize.DequantizeBlockScaledBitDepthEOBTrusted(dq[:geo.coeffCount], geo.coeffHeight, qcoeff, geo.coeffHeight, scan, eob, geo.coeffWidth, geo.coeffHeight, q, geo.txScale, 8)
 	if txType != transform.TypeIDTX {
 		raw := st.invScratch[:n]
-		if err := transform.InverseBlockBitDepthRaw(raw, dq[:geo.coeffCount], geo.coeffHeight, geo.size, txType, 8, 0); err != nil {
+		// Every coefficient past the EOB is zero, so the row pass only needs
+		// the transform rows the scan prefix reaches — the decoder's own
+		// activeRows bound (reconstruct.activeTransformRowsFromScan).
+		if err := transform.InverseBlockBitDepthRaw(raw, dq[:geo.coeffCount], geo.coeffHeight, geo.size, txType, 8, scanActiveRows(scan, eob, geo.coeffHeight)); err != nil {
 			return err
 		}
 		copyPredToReconBlock(reconPlane, pred, predStride, stride, px, py, w, h)
@@ -4498,7 +4636,28 @@ func (st *lossyEncodeState) reconInterTXBResult(reconPlane, pred []byte, predStr
 
 }
 
-func addConstantResidualToPredReconBlock(reconPlane, pred []byte, predStride, stride, px, py, w, h int, residual int16) {
+// scanActiveRows returns one past the largest coefficient row (position modulo
+// the column-major coefficient height) any of the first eob scan positions
+// addresses (coeffHeight is a power of two). Coefficients past the EOB are
+// zero, so the inverse transform's row pass can stop there.
+func scanActiveRows(scan []int16, eob, coeffHeight int) int {
+	if eob > len(scan) {
+		return 0
+	}
+	mask := coeffHeight - 1
+	rows := 0
+	for _, p := range scan[:eob] {
+		if r := int(p) & mask; r >= rows {
+			rows = r + 1
+			if rows == coeffHeight {
+				break
+			}
+		}
+	}
+	return rows
+}
+
+func addConstantResidualToPredReconBlockPureGo(reconPlane, pred []byte, predStride, stride, px, py, w, h int, residual int16) {
 	rv := int(residual)
 	for r := range h {
 		row := (py+r)*stride + px
@@ -4514,7 +4673,7 @@ func addConstantResidualToPredReconBlock(reconPlane, pred []byte, predStride, st
 	}
 }
 
-func copyPredToReconBlock(reconPlane, pred []byte, predStride, stride, px, py, w, h int) {
+func copyPredToReconBlockPureGo(reconPlane, pred []byte, predStride, stride, px, py, w, h int) {
 	for r := range h {
 		row := (py+r)*stride + px
 		copy(reconPlane[row:row+w], pred[r*predStride:r*predStride+w])
@@ -4843,18 +5002,27 @@ func fullPelDiamondSearchRectSeeded(src, ref []byte, stride, width, height, px, 
 func fullPelLibaomMeshSearch(src, ref []byte, stride, width, height, px, py, bw, bh int, seedDX, seedDY, reach int) (int, int, int) {
 	seedDX = minInt(maxInt(seedDX, -px), width-bw-px)
 	seedDY = minInt(maxInt(seedDY, -py), height-bh-py)
-	bestDX, bestDY, _ := fullPelLibaomExhaustiveMeshSearch(src, ref, stride, width, height, px, py, bw, bh, seedDX, seedDY, reach, 4)
-	return fullPelLibaomExhaustiveMeshSearch(src, ref, stride, width, height, px, py, bw, bh, bestDX, bestDY, 2, 2)
+	bestDX, bestDY, bestSAD := fullPelLibaomExhaustiveMeshSearch(src, ref, stride, width, height, px, py, bw, bh, seedDX, seedDY, reach, 4, -1)
+	// The refinement mesh is centred on the first mesh's winner, whose SAD it
+	// already has.
+	return fullPelLibaomExhaustiveMeshSearch(src, ref, stride, width, height, px, py, bw, bh, bestDX, bestDY, 2, 2, bestSAD)
 }
 
 // Ported from libaom av1/encoder/mcomp.c exhaustive_mesh_search. The local
 // caller supplies the mesh pattern used by the realtime HME-seeded search.
-func fullPelLibaomExhaustiveMeshSearch(src, ref []byte, stride, width, height, px, py, bw, bh int, startDX, startDY, searchRange, step int) (int, int, int) {
+// centerSAD, when not negative, is the SAD at (startDX, startDY) and is reused
+// instead of recomputed. The centre itself is never re-scored inside the mesh:
+// its SAD cannot be below the running best, which starts there.
+func fullPelLibaomExhaustiveMeshSearch(src, ref []byte, stride, width, height, px, py, bw, bh int, startDX, startDY, searchRange, step, centerSAD int) (int, int, int) {
 	if step < 1 {
 		step = 1
 	}
-	startDX = minInt(maxInt(startDX, -px), width-bw-px)
-	startDY = minInt(maxInt(startDY, -py), height-bh-py)
+	clampedDX := minInt(maxInt(startDX, -px), width-bw-px)
+	clampedDY := minInt(maxInt(startDY, -py), height-bh-py)
+	if clampedDX != startDX || clampedDY != startDY {
+		centerSAD = -1
+	}
+	startDX, startDY = clampedDX, clampedDY
 	minDX := -px
 	maxDX := width - bw - px
 	minDY := -py
@@ -4868,7 +5036,10 @@ func fullPelLibaomExhaustiveMeshSearch(src, ref []byte, stride, width, height, p
 	base := py*stride + px
 	srcBlock := src[base:]
 	bestDX, bestDY := startDX, startDY
-	bestSAD := fullPelSearchSAD(srcBlock, ref[base+startDY*stride+startDX:], stride, bw, bh, 1<<30)
+	bestSAD := centerSAD
+	if bestSAD < 0 {
+		bestSAD = fullPelSearchSAD(srcBlock, ref[base+startDY*stride+startDX:], stride, bw, bh, 1<<30)
+	}
 	colStep := step
 	if step <= 1 {
 		colStep = 4
@@ -4912,6 +5083,9 @@ func fullPelLibaomExhaustiveMeshSearch(src, ref []byte, stride, width, height, p
 				if s3 < bestSAD {
 					bestSAD, bestDX, bestDY = s3, dx+3, dy
 				}
+				continue
+			}
+			if col == 0 && row == 0 {
 				continue
 			}
 			if s := fullPelSearchSAD(srcBlock, ref[base+dy*stride+dx:], stride, bw, bh, bestSAD); s < bestSAD {

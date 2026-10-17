@@ -199,7 +199,8 @@ func TestReconWavefrontProgressBlocksUntilPublished(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		var st frameWorkReconState
-		done <- wf.reconstructRow(&st, 1, 2)
+		view := frameWorkReconView{rowStart: wf.rowStart, sbs: wf.sbSpans}
+		done <- wf.reconstructRow(&st, &view, 1, 2)
 	}()
 
 	select {
@@ -224,7 +225,8 @@ func TestReconWavefrontAbortWakesWaiter(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		var st frameWorkReconState
-		done <- wf.reconstructRow(&st, 1, 2)
+		view := frameWorkReconView{rowStart: wf.rowStart, sbs: wf.sbSpans}
+		done <- wf.reconstructRow(&st, &view, 1, 2)
 	}()
 
 	select {
@@ -334,4 +336,56 @@ func TestReconWavefrontSpeedup(t *testing.T) {
 		}
 		t.Fatalf("wavefront did not speed up reconstruction: serial %v vs wavefront %v", serial, wave)
 	}
+}
+
+// TestFrameWorkWavefrontLanesCapsToRows checks that a pool wider than the tile
+// has wavefront rows for runs on fewer lanes instead of falling back to the
+// fused serial path.
+func TestFrameWorkWavefrontLanesCapsToRows(t *testing.T) {
+	format := frame.Format{Width: 1280, Height: 720, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
+	for _, tc := range []struct {
+		sb128   bool
+		workers uint16
+		want    uint16
+	}{
+		{sb128: true, workers: 1, want: 0},  // no idle lanes
+		{sb128: true, workers: 2, want: 2},  // 6 SB rows
+		{sb128: true, workers: 3, want: 3},  // 6 rows / 2 per lane
+		{sb128: true, workers: 4, want: 3},  // capped, not disabled
+		{sb128: true, workers: 16, want: 3}, // capped, not disabled
+		{sb128: false, workers: 8, want: 6}, // 12 SB rows of 64x64
+	} {
+		b := wavefrontLanesTestBatch(t, format, tc.sb128)
+		b.WavefrontWorkers = tc.workers
+		if got := frameWorkWavefrontLanes(b, 0); got != tc.want {
+			t.Errorf("sb128=%v workers=%d: lanes=%d, want %d", tc.sb128, tc.workers, got, tc.want)
+		}
+		b.FrameSize.AllowIntrabc = true
+		if got := frameWorkWavefrontLanes(b, 0); got != 0 {
+			t.Errorf("sb128=%v workers=%d intrabc: lanes=%d, want 0", tc.sb128, tc.workers, got)
+		}
+	}
+}
+
+func wavefrontLanesTestBatch(t *testing.T, format frame.Format, sb128 bool) FrameWorkBatch {
+	t.Helper()
+	sb := 64
+	if sb128 {
+		sb = 128
+	}
+	b := FrameWorkBatch{
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				Use128x128Superblock: sb128,
+				ColorConfig: parser.ColorConfig{
+					BitDepth:     format.BitDepth,
+					SubsamplingX: format.SubsamplingX,
+					SubsamplingY: format.SubsamplingY,
+				},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: uint32(format.Width), Height: uint32(format.Height)},
+		},
+		Jobs: []tile.Job{{SBCols: uint16((format.Width + sb - 1) / sb), SBRows: uint16((format.Height + sb - 1) / sb)}},
+	}
+	return b
 }

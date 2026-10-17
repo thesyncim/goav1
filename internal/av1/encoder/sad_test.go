@@ -505,7 +505,7 @@ func TestSADRectDualBlockMatchesReference(t *testing.T) {
 	for i := range ref {
 		ref[i] = uint8(rng.Intn(256))
 	}
-	for _, size := range [][2]int{{8, 8}, {16, 8}, {8, 16}, {16, 16}, {32, 16}, {16, 32}, {32, 32}, {64, 64}, {24, 8}} {
+	for _, size := range [][2]int{{8, 8}, {16, 8}, {8, 16}, {16, 16}, {32, 16}, {16, 32}, {32, 32}, {64, 64}, {64, 32}, {32, 64}, {64, 16}, {16, 64}, {24, 8}} {
 		bw, bh := size[0], size[1]
 		for range 500 {
 			so := rng.Intn(128-bh)*srcStride + rng.Intn(srcStride-bw)

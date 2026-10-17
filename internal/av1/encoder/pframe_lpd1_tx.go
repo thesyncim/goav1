@@ -196,7 +196,13 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 	useRealtimeTXPlan := videoColorIs420(st.color)
 	lpd1UseShortcuts := false
 	if useRealtimeTXPlan {
-		sse, variance := realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
+		sse, variance, ok := uint32(0), uint32(0), false
+		if st.predYKey.valid {
+			sse, variance, ok = st.predStats.lookup(st.predYKey.mv, st.predYKey.filters)
+		}
+		if !ok {
+			sse, variance = realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
+		}
 		if st.lpd1Tx.enabled {
 			lpd1UseShortcuts = st.lpd1TxDetect(variance, bw, bh)
 		}
@@ -213,15 +219,20 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 		if txPlan.Variable() {
 			leafArea := txPlan.leafSize * txPlan.leafSize
 			if lerr := txPlan.ForEachLeaf(func(i, dx, dy int) error {
-				if !st.prepareInterTXB(src.Y, st.predY[dy*bw+dx:], bw, src.YStride, lumaPX+dx, lumaPY+dy, txPlan.leafSize, txPlan.leafSize, st.yQuant, st.lumaQ2[i*leafArea:(i+1)*leafArea]) {
+				if !st.prepareInterTXBDecide(src.Y, st.predY[dy*bw+dx:], bw, src.YStride, lumaPX+dx, lumaPY+dy, txPlan.leafSize, txPlan.leafSize, st.yQuant, st.lumaQ2[i*leafArea:(i+1)*leafArea]) {
 					lumaZero = false
 				}
 				return nil
 			}); lerr != nil {
 				return false, false, txPlan, transform.TypeDCTDCT, fmt.Errorf("prepare realtime luma tx: %w", lerr)
 			}
-		} else {
+		} else if bw == 8 && bh == 8 {
+			// The 8x8 TX-type trial (chooseInter8x8TXType) prices its
+			// alternatives against this block's absolute DCT distortion, so
+			// the luma terms stay complete here.
 			lumaZero = st.prepareInterTXB(src.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
+		} else {
+			lumaZero = st.prepareInterTXBDecide(src.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
 		}
 		if hasChroma {
 			// zero_y_coeff_exit: an all-zero luma block skips the chroma TX
@@ -239,12 +250,12 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 			if performChroma {
 				uZero, vZero := true, true
 				if comp == lpd1ComponentChroma || comp == lpd1ComponentChromaCb {
-					uZero = st.prepareInterTXB(src.U, st.predU[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.uQuant, st.uQ[:cbw*cbh])
+					uZero = st.prepareInterTXBDecide(src.U, st.predU[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.uQuant, st.uQ[:cbw*cbh])
 				} else {
 					clear(st.uQ[:cbw*cbh])
 				}
 				if comp == lpd1ComponentChroma || comp == lpd1ComponentChromaCr {
-					vZero = st.prepareInterTXB(src.V, st.predV[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.vQuant, st.vQ[:cbw*cbh])
+					vZero = st.prepareInterTXBDecide(src.V, st.predV[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.vQuant, st.vQ[:cbw*cbh])
 				} else {
 					clear(st.vQ[:cbw*cbh])
 				}

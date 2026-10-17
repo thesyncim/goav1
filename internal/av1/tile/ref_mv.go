@@ -410,13 +410,32 @@ func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, res
 func (c *BlockModeContext) markGridInterMotion(size BlockSize, x4 int, y4 int, result InterMotionResult, dims BlockDimensions) {
 	xEnd := x4 + int(dims.W4)
 	yEnd := y4 + int(dims.H4)
-	for y := y4; y < yEnd; y++ {
-		for x := x4; x < xEnd; x++ {
-			c.GridInterMotion[y][x] = result
-			c.GridMotionValid[y][x] = 1
-			c.GridBlockSize[y][x] = size
-			c.GridBlockSizeVisited[y][x] = 1
-		}
+	if yEnd <= y4 || xEnd <= x4 {
+		return
+	}
+	// Fill the block's first grid row, then replicate it down (dav1d splats
+	// its refmvs/ctx rows the same way) instead of storing every cell through
+	// a doubly indexed loop.
+	m0 := c.GridInterMotion[y4][x4:xEnd]
+	v0 := c.GridMotionValid[y4][x4:xEnd]
+	s0 := c.GridBlockSize[y4][x4:xEnd]
+	z0 := c.GridBlockSizeVisited[y4][x4:xEnd]
+	fillGridRow(m0, result)
+	fillGridRow(v0, 1)
+	fillGridRow(s0, size)
+	fillGridRow(z0, 1)
+	for y := y4 + 1; y < yEnd; y++ {
+		copy(c.GridInterMotion[y][x4:xEnd], m0)
+		copy(c.GridMotionValid[y][x4:xEnd], v0)
+		copy(c.GridBlockSize[y][x4:xEnd], s0)
+		copy(c.GridBlockSizeVisited[y][x4:xEnd], z0)
+	}
+}
+
+// fillGridRow stores v into every element of row.
+func fillGridRow[T any](row []T, v T) {
+	for i := range row {
+		row[i] = v
 	}
 }
 
@@ -436,12 +455,18 @@ func (c *BlockModeContext) markGridInterMotion(size BlockSize, x4 int, y4 int, r
 func (c *BlockModeContext) clearGridInterMotion(size BlockSize, x4 int, y4 int, dims BlockDimensions) {
 	xEnd := x4 + int(dims.W4)
 	yEnd := y4 + int(dims.H4)
-	for y := y4; y < yEnd; y++ {
+	if yEnd <= y4 || xEnd <= x4 {
+		return
+	}
+	s0 := c.GridBlockSize[y4][x4:xEnd]
+	z0 := c.GridBlockSizeVisited[y4][x4:xEnd]
+	clear(c.GridMotionValid[y4][x4:xEnd])
+	fillGridRow(s0, size)
+	fillGridRow(z0, 1)
+	for y := y4 + 1; y < yEnd; y++ {
 		clear(c.GridMotionValid[y][x4:xEnd])
-		for x := x4; x < xEnd; x++ {
-			c.GridBlockSize[y][x] = size
-			c.GridBlockSizeVisited[y][x] = 1
-		}
+		copy(c.GridBlockSize[y][x4:xEnd], s0)
+		copy(c.GridBlockSizeVisited[y][x4:xEnd], z0)
 	}
 }
 

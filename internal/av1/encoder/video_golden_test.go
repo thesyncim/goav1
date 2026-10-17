@@ -50,6 +50,7 @@ func TestVideoEncoderGoldenReference(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { _ = enc.Close() })
 		enc.SetGoldenInterval(goldenInterval)
 		var tus [][]byte
 		var recons []encoder.SourceFrame420
@@ -335,6 +336,7 @@ func TestVideoEncoderCompoundGoldenAverageReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = withGoldenEnc.Close() })
 	withGoldenEnc.SetGoldenInterval(32)
 	tu0, _, err := withGoldenEnc.Encode(first, false)
 	if err != nil {
@@ -361,6 +363,7 @@ func TestVideoEncoderCompoundGoldenAverageReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = lastOnlyEnc.Close() })
 	lastOnlyEnc.SetGoldenInterval(0)
 	var lastOnly [][]byte
 	for i, f := range []encoder.SourceFrame420{first, second, average} {

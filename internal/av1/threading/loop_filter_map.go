@@ -178,12 +178,16 @@ func (m FrameWorkLoopFilterMap) MarkBlockPtr(visit *tile.BlockLoopVisit, state *
 	stride := int(m.Stride)
 	miColStart := int(block.MICol)
 	miColEnd := int(block.MIColEnd)
-	for miRow := block.MIRow; miRow < block.MIRowEnd; miRow++ {
-		row := int(miRow) * stride
-		cells := m.Records[row+miColStart : row+miColEnd : row+miColEnd]
-		for i := range cells {
-			cells[i] = record
-		}
+	// Store the record across the block's first MI row, then copy that row
+	// down: one memmove per row instead of a per-cell struct store.
+	row := int(block.MIRow) * stride
+	first := m.Records[row+miColStart : row+miColEnd : row+miColEnd]
+	for i := range first {
+		first[i] = record
+	}
+	for miRow := block.MIRow + 1; miRow < block.MIRowEnd; miRow++ {
+		row = int(miRow) * stride
+		copy(m.Records[row+miColStart:row+miColEnd], first)
 	}
 	return nil
 }

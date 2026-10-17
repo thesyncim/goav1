@@ -1,0 +1,1033 @@
+{
+  "title": "Subpel clamped-edge scratch dispatch optimization evidence",
+  "measurement_date": "2026-10-17",
+  "source_identity": {
+    "git_head": "ff35737478053df7c9ed6c4c9aa06ad626820d57",
+    "state": "At final binary build time HEAD was ff35737478053df7c9ed6c4c9aa06ad626820d57 plus the listed edge, lifecycle, cleanup, and evidence-source changes. The lifecycle source/test content was later committed as 900077f8d37215cf56db1a09be121699795142ed without content changes. Baseline and candidate used the same complete source and test tree; only internal/av1/motion/subpel_probe.go was overlaid for baseline.",
+    "optimization_source": {
+      "path": "internal/av1/motion/subpel_probe.go",
+      "sha256": "820c9cc33d3829bedf92b88f3948a8e07b46c5a3d69cb0695c69d1868bd954bc",
+      "change_scope": "Exactly ten clamped X/Y single-axis dispatch calls across Predict and Predict8x8/Predict16x16/Predict32x32/Predict64x64 now pass &p.scratch to the existing scratch-aware wrappers."
+    },
+    "test_source": {
+      "path": "internal/av1/motion/subpel_probe_test.go",
+      "sha256": "8bad3145b756404ed18d76de4261ca0b2cb5ef73f8be41672079a1affc13cbfe",
+      "coverage": "Direct PureGo scalar oracle; phases including signed odd and even deltas; X/Y/2D scratch reuse; corners, sides, off-frame and bottom-right origins; exact source and destination allocations; output canaries; sizes 3/4/5/8/12/16/24/32/64/128."
+    },
+    "lifecycle_source_hashes": {
+      "internal/av1/encoder/hme.go": "00a64d079d9f2e5dfcbf9f35a67f55750b15e4b5e93f6e36ea1045a277cc2012",
+      "internal/av1/encoder/video.go": "8d3398a5f176d6acb44d4928be2cf602b89e65b33b0b94d363b72eedaa1c1278",
+      "internal/av1/encoder/video_pipeline.go": "3c472722408b6329c9e24ceb294c708853d8ebda5bf8c4abc9f0634974cc1aa4",
+      "internal/av1/encoder/video_overlap_test.go": "79f4067a454f67652b5994f6e0c47130b6911d44488daf89e0c56da31a98ac95"
+    },
+    "complete_source_hash_manifest": {
+      "path": "/private/tmp/goav1-pr8-edge-final-source-hashes-20261017.txt",
+      "sha256": "30bc146e5892486f37a8662ea645f8016127439072383c1c7133dc560202a3c1"
+    },
+    "baseline_overlay": {
+      "overlay_json_path": "/private/tmp/goav1-pr8-edge-overlay.json",
+      "overlay_json_sha256": "710358b9f348074f47e14bfe079b3b8c240ceb770eee47ce167bc126c7a5a158",
+      "subpel_source_path": "/private/tmp/goav1-pr8-edge-subpel-baseline.go",
+      "subpel_source_sha256": "1dc5ff3600227a12a003b791dc74d0d703d33bae5379c6be0225d78197ccd177"
+    },
+    "final_native_simd_binaries": {
+      "go_version": "go1.27.0 darwin/arm64; binary metadata reports go1.27.0-X:simd and GOEXPERIMENT=simd",
+      "build_flags": "native release go test -c; no -race, -tags, or -gcflags",
+      "baseline": {
+        "path": "/private/tmp/goav1-pr8-edge-final-baseline-native-simd.test",
+        "sha256": "16cb30ecaf6dbe808aa3e61a41c1ca233933a2f8d9661fad95cdcda2875c7b77"
+      },
+      "candidate": {
+        "path": "/private/tmp/goav1-pr8-edge-final-candidate-native-simd.test",
+        "sha256": "1e4415d9fd891f1f2a8d2a1176aa950ba9b5fab68efa277444dff5290c617163"
+      }
+    },
+    "build_source_file_hashes": {
+      "internal/av1/encoder/crosscheck_test.go": "22a727db1fb2cd685e988199cacafc37c2f18627d25ae9b1a0f7a82c9dd70f45",
+      "internal/av1/encoder/decision_stats_test.go": "c679ad01706464eded21d831b8f43e63d96e2f646fe1a69d1f4934ca667ea5b9",
+      "internal/av1/encoder/hme.go": "00a64d079d9f2e5dfcbf9f35a67f55750b15e4b5e93f6e36ea1045a277cc2012",
+      "internal/av1/encoder/pframe_fastpan_test.go": "5705d9fd2b1c5f55ed95943dd6c151c68e932418e8dc2ebc78ddc26b6d749ac6",
+      "internal/av1/encoder/pframe_interp_filter_test.go": "552420a7b4faf1ae9c633cef036efb6207263c375b89a00fb32a7801cc08a6fa",
+      "internal/av1/encoder/video.go": "8d3398a5f176d6acb44d4928be2cf602b89e65b33b0b94d363b72eedaa1c1278",
+      "internal/av1/encoder/video_bench_test.go": "a8757c120e989b9ccb83428e5e671f42d568989107f77329ec1b2209f7537bfb",
+      "internal/av1/encoder/video_cbr_test.go": "5f346b4ffc5ca56ba189075c0991d858af3b55e6ca17864b01183ae185e2ada9",
+      "internal/av1/encoder/video_golden_test.go": "dd0c9ebe7dea9d6351f862ea8645d2b70d498114d7a6c3143c3082629f81bede",
+      "internal/av1/encoder/video_l1t2_test.go": "3cf5c58b870819ae781b91a598c43356a86f9083b8cac3bc88553f40188e14db",
+      "internal/av1/encoder/video_l1t3_test.go": "3738df3363e426c8c52a8e923cf2a564c4804e2ba451b0e13445b5e42c94dc0f",
+      "internal/av1/encoder/video_odd_dims_test.go": "701c1f4b66534e39bbef2b7ecbbc07ca20467923614c8f05d4a11c269cfa1f23",
+      "internal/av1/encoder/video_overlap_test.go": "79f4067a454f67652b5994f6e0c47130b6911d44488daf89e0c56da31a98ac95",
+      "internal/av1/encoder/video_pipeline.go": "3c472722408b6329c9e24ceb294c708853d8ebda5bf8c4abc9f0634974cc1aa4",
+      "internal/av1/encoder/video_realres_test.go": "aeb911d37b931e8e38cc857b78ae98ee8569f331dafbe1ec24bc92d77b43909e",
+      "internal/av1/encoder/video_scenecut_test.go": "8619b5ce334ad9d8b6465fe2bebf0e74831b66ed22b531c52632e845df67c8e0",
+      "internal/av1/encoder/video_test.go": "f6ec93c17c5ba67136f8301c9c70e8d0fde76ce0c525894b05a42e8db46ab9a0",
+      "internal/av1/encoder/video_tiles_layered_test.go": "0d50a203d3bb5483ee1c397e6c9d5a2254fc0b9deee4e0d5a267b97f001c6a5c",
+      "internal/av1/encoder/video_tiles_test.go": "45c80ee585790a47167b451f02c3f30866e31693dd3385f12bc5a1939a5c27da",
+      "internal/av1/motion/subpel_probe.go": "820c9cc33d3829bedf92b88f3948a8e07b46c5a3d69cb0695c69d1868bd954bc",
+      "internal/av1/motion/subpel_probe_test.go": "8bad3145b756404ed18d76de4261ca0b2cb5ef73f8be41672079a1affc13cbfe",
+      "docs/benchmarks/pr8-dav1d-gap-20261017.json": "d6f59b496cb5b4c47b7ef30abd66ba23677aaa3b08686908cb5367a2543ce558"
+    },
+    "lifecycle_changes_commit_after_binary_build": {
+      "commit": "900077f8d37215cf56db1a09be121699795142ed",
+      "note": "Contains the exact lifecycle source/test content already present in the final baseline and candidate binaries; committed after their build, with no content changes."
+    }
+  },
+  "optimization": {
+    "behavior": "The scratchless clamped X/Y dispatch can vectorize resident interior subsets, but edge portions fall back to per-tap scalar clamping. The prober-owned scratch-aware path materializes the needed halo once and then runs the existing vector kernel over the block.",
+    "semantic_scope": "No motion-search strategy, filter, interpolation result, or output format changes; scalar fallback remains available.",
+    "scratch_ownership": "The edge materialization uses p.scratch.edge, distinct from the IM, SAD scratch, and subpel cache.",
+    "pinned_dav1d_source_shape": {
+      "reference_commit": "b546257f770768b2c88258c533da38b91a06f737",
+      "locations": [
+        "src/mc_tmpl.c:868",
+        "src/recon_tmpl.c:969-977"
+      ],
+      "comparison": "Source-shape context for emu-edge plus existing motion-compensation kernels, not a measurement of dav1d throughput. The embedded commit reference is not proof that the installed library was built from that checkout.",
+      "reviewed_against_commit_note": "The pinned source-code shape is an implementation comparison only; the separate installed dav1d 1.5.3 runtime artifact reports unverified binary provenance."
+    },
+    "installed_dav1d_measurement_provenance": {
+      "runtime_version": "1.5.3",
+      "runtime_library": "/opt/homebrew/Cellar/dav1d/1.5.3/lib/libdav1d.7.dylib",
+      "runtime_library_sha256": "bdd18b4f70a9e8956a58de310d8acfdad2ecf6b1be00b813b397e14331d5d0bd",
+      "binary_provenance_verified": false,
+      "separate_artifact": "docs/benchmarks/pr8-dav1d-gap-20261017.json",
+      "scope_note": "That artifact measures a public full-clip decoder operation on an exploratory corpus. It is a separate runtime comparison and must not be represented as a pinned-source or subpel benchmark."
+    }
+  },
+  "redundant_work_audit": {
+    "implemented_edge_clamp_removal": {
+      "old_work": "Edge portions/windows of clamped single-axis probes perform scalar per-tap boundary clamping; resident interior subsets can already use SIMD.",
+      "new_work": "Materialize the halo once into private prober scratch, then use the existing vector kernel for the block.",
+      "evidence": "In the earlier 310-iteration native-SIMD profile, baseline convolveY8ClampedPureGo was 0.29 s cumulative (4.03% of 7.19 s sampled); candidate convolveY8ClampedGoSIMDWithScratch was 0.07 s (1.03% of 6.77 s), with emuEdgeWindow at 0.06 s.",
+      "dav1d_relation": "Consistent with the pinned recon/mc source shape above: prepare edge data and then use the normal motion-compensation path. This is explanatory source review, not a claim that the Go implementation is identical."
+    },
+    "next_public_measurement": {
+      "priority": "next",
+      "candidate": "Measure duplicate public decoder side-data allocation and reset work on cold NewDecoderFromIVF and warm Reset+DecodeNext paths before changing it.",
+      "claim": "No performance gain is claimed; this is a measurement target only."
+    },
+    "deferred_profile_backlog": {
+      "candidate": "MarkInterMotion clear-before-overwrite work",
+      "profile_share": "approximately 0.39%",
+      "decision": "defer until higher-share public-path work is measured"
+    },
+    "svt_negative_control": {
+      "pinned_checkout": "third_party/upstream/svt-av1",
+      "commit": "c04f951541ad600e0d9c10836f2ab7b9bc69816d",
+      "upstream_ownership_and_reuse_refs": [
+        {
+          "file": "Source/Lib/Codec/mode_decision.h",
+          "lines": "65-95",
+          "proof": "ModeDecisionCandidateBuffer owns its pred buffer and valid_luma_pred flag (line 94), so validity is scoped to the candidate buffer whose prediction is reused."
+        },
+        {
+          "file": "Source/Lib/Codec/product_coding_loop.c",
+          "lines": "6382-6386",
+          "proof": "Recompute INTER prediction only when the luma prediction is invalid or another mode requires it, then mark valid_luma_pred true."
+        },
+        {
+          "file": "Source/Lib/Codec/enc_inter_prediction.c",
+          "lines": "3809-3818",
+          "proof": "At later MD stages, a valid luma predictor changes the component mask to chroma-only where legal, avoiding another luma prediction."
+        }
+      ],
+      "go_implementation_refs": [
+        {
+          "file": "internal/av1/encoder/pframe_mds0.go",
+          "lines": "81-85,224-253",
+          "proof": "MDS0 stores luma prediction in st.predY and returns whether the selected predictor remains valid for the winning MV."
+        },
+        {
+          "file": "internal/av1/encoder/pframe_mds0.go",
+          "lines": "256-267",
+          "proof": "Retained prediction validity is checked against the filters that the block will code."
+        },
+        {
+          "file": "internal/av1/encoder/pframe_residual.go",
+          "lines": "2728-2732",
+          "proof": "The residual path skips st.predictLuma when the MDS0 prediction remains valid for the MV and coded filters."
+        }
+      ],
+      "profile_share": "IFS approximately 0.94%",
+      "decision": "Negative control: this analogous prediction reuse is already implemented in Go; defer further work because the sampled share is small."
+    }
+  },
+  "performance": {
+    "host": "Apple M4 Max, macOS 26.3.1 arm64",
+    "benchmark": "BenchmarkVideoEncoderPFramePan1080pSingleThread",
+    "operation_units": "Each process invocation encoded 31 measured P-frames; ns/op is per encoded P-frame, not per 31-frame batch.",
+    "environment": {
+      "GOMAXPROCS": 1,
+      "GOGC": 100,
+      "test.cpu": 1,
+      "GOEXPERIMENT": "simd",
+      "allocations": "0 B/op and 0 allocs/op in every retained native-SIMD timing sample"
+    },
+    "original_20_pairs": {
+      "source_tree": "Earlier valid screen and confirmation binaries used the same pre-lifecycle-fix source/test tree. Keep these 20 pairs separate from the final 10 because the lifecycle source changed before the final rebuild.",
+      "screen_10": {
+        "baseline_median_ns_per_frame": 20800751,
+        "candidate_median_ns_per_frame": 19942492,
+        "paired_geomean_time_reduction_pct": 3.488012,
+        "paired_wins": "10/10",
+        "raw_log": {
+          "path": "/private/tmp/goav1-pr8-edge-pan-screen-native-simd-20261017.log",
+          "sha256": "ceb8f805f4c9750f1d5ed17a627195393086a753c4005006999a186777809ce7"
+        },
+        "raw_pair_samples": [
+          {
+            "pair": 1,
+            "execution_order": [
+              "baseline",
+              "candidate"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:32:46Z",
+              "ns_per_frame": 21098632,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:32:47Z",
+              "ns_per_frame": 19826898,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 2,
+            "execution_order": [
+              "candidate",
+              "baseline"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:32:50Z",
+              "ns_per_frame": 21160629,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:32:49Z",
+              "ns_per_frame": 20356626,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 3,
+            "execution_order": [
+              "baseline",
+              "candidate"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:32:51Z",
+              "ns_per_frame": 21171468,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:32:53Z",
+              "ns_per_frame": 19909411,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 4,
+            "execution_order": [
+              "candidate",
+              "baseline"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:32:55Z",
+              "ns_per_frame": 20847144,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:32:54Z",
+              "ns_per_frame": 20021691,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 5,
+            "execution_order": [
+              "baseline",
+              "candidate"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:32:56Z",
+              "ns_per_frame": 20320581,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:32:57Z",
+              "ns_per_frame": 19812027,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 6,
+            "execution_order": [
+              "candidate",
+              "baseline"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:00Z",
+              "ns_per_frame": 21194340,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:32:58Z",
+              "ns_per_frame": 20500481,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 7,
+            "execution_order": [
+              "baseline",
+              "candidate"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:01Z",
+              "ns_per_frame": 20754358,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:33:02Z",
+              "ns_per_frame": 20540051,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 8,
+            "execution_order": [
+              "candidate",
+              "baseline"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:04Z",
+              "ns_per_frame": 20150509,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:33:03Z",
+              "ns_per_frame": 19975573,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 9,
+            "execution_order": [
+              "baseline",
+              "candidate"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:06Z",
+              "ns_per_frame": 20419023,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:33:07Z",
+              "ns_per_frame": 19672173,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 10,
+            "execution_order": [
+              "candidate",
+              "baseline"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:09Z",
+              "ns_per_frame": 20326363,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:33:08Z",
+              "ns_per_frame": 19582728,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        ],
+        "order_schedule": "Odd-numbered pairs baseline then candidate; even-numbered pairs candidate then baseline."
+      },
+      "confirmation_10": {
+        "baseline_median_ns_per_frame": 20827643,
+        "candidate_median_ns_per_frame": 20142999,
+        "paired_geomean_time_reduction_pct": 3.323936,
+        "paired_wins": "10/10",
+        "raw_log": {
+          "path": "/private/tmp/goav1-pr8-edge-pan-confirm-native-simd-20261017.log",
+          "sha256": "04180bc0b5a4c62a37504db3c722f12f1d9c5bce0e797ffcf859d3365de1a3ce"
+        },
+        "raw_pair_samples": [
+          {
+            "pair": 1,
+            "execution_order": [
+              "candidate",
+              "baseline"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:30Z",
+              "ns_per_frame": 20744015,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:33:28Z",
+              "ns_per_frame": 20256782,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 2,
+            "execution_order": [
+              "baseline",
+              "candidate"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:31Z",
+              "ns_per_frame": 21052110,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:33:32Z",
+              "ns_per_frame": 20217476,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 3,
+            "execution_order": [
+              "candidate",
+              "baseline"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:34Z",
+              "ns_per_frame": 21014211,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:33:33Z",
+              "ns_per_frame": 20180630,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 4,
+            "execution_order": [
+              "baseline",
+              "candidate"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:36Z",
+              "ns_per_frame": 20970305,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:33:37Z",
+              "ns_per_frame": 19665171,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 5,
+            "execution_order": [
+              "candidate",
+              "baseline"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:39Z",
+              "ns_per_frame": 20877230,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:33:38Z",
+              "ns_per_frame": 20043235,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 6,
+            "execution_order": [
+              "baseline",
+              "candidate"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:40Z",
+              "ns_per_frame": 20613855,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:33:42Z",
+              "ns_per_frame": 20041952,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 7,
+            "execution_order": [
+              "candidate",
+              "baseline"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:44Z",
+              "ns_per_frame": 20607722,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:33:43Z",
+              "ns_per_frame": 20063949,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 8,
+            "execution_order": [
+              "baseline",
+              "candidate"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:45Z",
+              "ns_per_frame": 20479930,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:33:46Z",
+              "ns_per_frame": 20452222,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 9,
+            "execution_order": [
+              "candidate",
+              "baseline"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:49Z",
+              "ns_per_frame": 20778055,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:33:48Z",
+              "ns_per_frame": 20105367,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          },
+          {
+            "pair": 10,
+            "execution_order": [
+              "baseline",
+              "candidate"
+            ],
+            "baseline": {
+              "started_utc": "2026-10-17T11:33:50Z",
+              "ns_per_frame": 21024042,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            },
+            "candidate": {
+              "started_utc": "2026-10-17T11:33:51Z",
+              "ns_per_frame": 20216267,
+              "bytes_per_op": 0,
+              "allocs_per_op": 0
+            }
+          }
+        ],
+        "order_schedule": "Odd-numbered pairs candidate then baseline; even-numbered pairs baseline then candidate."
+      },
+      "combined": {
+        "pairs": 20,
+        "paired_wins": "20/20",
+        "paired_geomean_time_reduction_pct": 3.406009,
+        "paired_geomean_throughput_gain_pct": 3.526108,
+        "bootstrap_95_percentile_ci_time_reduction_pct": [
+          2.718326,
+          4.085183
+        ],
+        "bootstrap_method": "Recomputed from retained paired log time ratios using 30000 resamples with Python random.Random(8173); the original 200000-resample seed was not retained or documented.",
+        "paired_log_t_95_ci_time_reduction_pct": [
+          2.653285,
+          4.152913
+        ],
+        "baseline_binary": {
+          "path": "/private/tmp/goav1-pr8-edge-encoder-baseline-native-simd.test",
+          "sha256": "1f7fb94e289c1821bbe7101490b06adb918500b7ce82215e0131451cd406ed98"
+        },
+        "candidate_binary": {
+          "path": "/private/tmp/goav1-pr8-edge-encoder-candidate-native-simd.test",
+          "sha256": "036b03bdc9d733d109597d4239e9779161c989ee52aef14cb513d528b9f896a6"
+        }
+      }
+    },
+    "final_source_confirmation_10": {
+      "source_tree": "Final lifecycle-fixed code/test tree described in source_identity; baseline differs only by the subpel_probe.go overlay.",
+      "pairs": 10,
+      "paired_wins": "9/10",
+      "baseline_median_ns_per_frame": 20285851.5,
+      "candidate_median_ns_per_frame": 19904258.0,
+      "paired_median_time_reduction_pct": 1.8169496089031345,
+      "paired_geomean_time_reduction_pct": 2.552269,
+      "paired_geomean_throughput_gain_pct": 2.619116,
+      "bootstrap_95_percentile_ci_time_reduction_pct": [
+        1.342345,
+        3.981378
+      ],
+      "bootstrap_method": "200000 paired-log bootstrap resamples with Python random.Random(20261017); percentile interval with linear interpolation.",
+      "raw_log": {
+        "path": "/private/tmp/goav1-pr8-edge-pan-final-confirm-native-simd-20261017.log",
+        "sha256": "fbd240ff705eabb3abcd91cc4fe4f41b2e6eaa7bb54613c0b75bbcf607807394"
+      },
+      "raw_pair_samples": [
+        {
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "started_utc": "2026-10-17T11:51:46Z",
+            "ns_per_frame": 20048032,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "started_utc": "2026-10-17T11:51:48Z",
+            "ns_per_frame": 20052859,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          }
+        },
+        {
+          "pair": 2,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "baseline": {
+            "started_utc": "2026-10-17T11:51:50Z",
+            "ns_per_frame": 20770099,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "started_utc": "2026-10-17T11:51:49Z",
+            "ns_per_frame": 19306958,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          }
+        },
+        {
+          "pair": 3,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "started_utc": "2026-10-17T11:51:51Z",
+            "ns_per_frame": 20245332,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "started_utc": "2026-10-17T11:51:53Z",
+            "ns_per_frame": 19874523,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          }
+        },
+        {
+          "pair": 4,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "baseline": {
+            "started_utc": "2026-10-17T11:51:55Z",
+            "ns_per_frame": 20186095,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "started_utc": "2026-10-17T11:51:54Z",
+            "ns_per_frame": 19571973,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          }
+        },
+        {
+          "pair": 5,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "started_utc": "2026-10-17T11:51:56Z",
+            "ns_per_frame": 20725458,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "started_utc": "2026-10-17T11:51:57Z",
+            "ns_per_frame": 19506046,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          }
+        },
+        {
+          "pair": 6,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "baseline": {
+            "started_utc": "2026-10-17T11:52:00Z",
+            "ns_per_frame": 20416661,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "started_utc": "2026-10-17T11:51:58Z",
+            "ns_per_frame": 20096491,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          }
+        },
+        {
+          "pair": 7,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "started_utc": "2026-10-17T11:52:01Z",
+            "ns_per_frame": 20211948,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "started_utc": "2026-10-17T11:52:02Z",
+            "ns_per_frame": 20059438,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          }
+        },
+        {
+          "pair": 8,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "baseline": {
+            "started_utc": "2026-10-17T11:52:04Z",
+            "ns_per_frame": 20326371,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "started_utc": "2026-10-17T11:52:03Z",
+            "ns_per_frame": 20079386,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          }
+        },
+        {
+          "pair": 9,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "started_utc": "2026-10-17T11:52:05Z",
+            "ns_per_frame": 20164383,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "started_utc": "2026-10-17T11:52:07Z",
+            "ns_per_frame": 19800956,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          }
+        },
+        {
+          "pair": 10,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "baseline": {
+            "started_utc": "2026-10-17T11:52:09Z",
+            "ns_per_frame": 20375767,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          },
+          "candidate": {
+            "started_utc": "2026-10-17T11:52:08Z",
+            "ns_per_frame": 19933993,
+            "bytes_per_op": 0,
+            "allocs_per_op": 0
+          }
+        }
+      ],
+      "order_schedule": "Odd-numbered pairs baseline then candidate; even-numbered pairs candidate then baseline.",
+      "paired_median_time_reduction_definition": "Median of the ten pairwise reductions 1-candidate_ns/baseline_ns, computed as the average of the fifth and sixth sorted pairwise values."
+    },
+    "old_valid_binaries": {
+      "baseline": {
+        "path": "/private/tmp/goav1-pr8-edge-encoder-baseline-native-simd.test",
+        "sha256": "1f7fb94e289c1821bbe7101490b06adb918500b7ce82215e0131451cd406ed98"
+      },
+      "candidate": {
+        "path": "/private/tmp/goav1-pr8-edge-encoder-candidate-native-simd.test",
+        "sha256": "036b03bdc9d733d109597d4239e9779161c989ee52aef14cb513d528b9f896a6"
+      }
+    }
+  },
+  "profile_artifacts": {
+    "source_scope": "These profile captures predate the lifecycle source fixes; only the edge-dispatch change is the measured optimization. They support mechanism attribution, not benchmark timing.",
+    "baseline_cpu": {
+      "path": "/private/tmp/goav1-pr8-edge-pan-baseline-native-simd-310x.cpu",
+      "sha256": "49a8ee70e226b6b4ae2029e2f6f4f8894a17c89d4d6ad0ff0fbb1e5b70caa59d"
+    },
+    "candidate_cpu": {
+      "path": "/private/tmp/goav1-pr8-edge-pan-candidate-native-simd-310x.cpu",
+      "sha256": "926f4332abad0e8de4d361d70f2b9bdbd7f705b6bf6aedb96f10591cfb6c8915"
+    },
+    "baseline_profile_summary": {
+      "path": "/private/tmp/goav1-pr8-edge-pan-baseline-native-simd-310x-motion-top.txt",
+      "sha256": "11f79219a7521a6ec61bae2367e4e9c77ed61db03d86f7b0de423fe092db5b65"
+    },
+    "candidate_profile_summary": {
+      "path": "/private/tmp/goav1-pr8-edge-pan-candidate-native-simd-310x-motion-top.txt",
+      "sha256": "d6a41d62a6d784f7b10abdb2eab1b399d8401e0af5ee855603d8ff3812bb8bac"
+    },
+    "profile_runs": {
+      "baseline_log": {
+        "path": "/private/tmp/goav1-pr8-edge-pan-baseline-native-simd-310x.log",
+        "sha256": "ee908c481b029aad41cda5359a2c2b933fa3ceda0b00e1b1daf879aabbf66bd1"
+      },
+      "candidate_log": {
+        "path": "/private/tmp/goav1-pr8-edge-pan-candidate-native-simd-310x.log",
+        "sha256": "3372dbdbd990f7139aed0afe5414f7f2e494e66d3349d0cd10b30a0755632b0f"
+      }
+    },
+    "limitation": "Profiling overhead materially changes ns/op and B/op; never use these profile runs as performance comparisons."
+  },
+  "validation": {
+    "focused_clamped_prober_tests": {
+      "native_simd": "PASS",
+      "purego": "PASS",
+      "strict_checkptr_2": "PASS",
+      "scope": "All three updated clamped scratch/oracle tests, including odd-delta phase coverage, passed on the final lifecycle-fixed source tree.",
+      "commands": [
+        {
+          "mode": "native SIMD",
+          "command": "CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-edge GOEXPERIMENT=simd /Users/thesyncim/.codex/bin/project-env go test -v ./internal/av1/motion -run '^TestLumaSubpelProberClampedScratch' -count=1",
+          "result": "PASS",
+          "log": {
+            "path": "/private/tmp/goav1-pr8-edge-final-subpel-focused-simd-20261017.log",
+            "sha256": "27376bffb77b2c4628e8cea5fdfb55cdfae15b7ec2a658b2ea7a5f5fbda6b25e"
+          }
+        },
+        {
+          "mode": "purego",
+          "command": "CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-edge GOEXPERIMENT=simd /Users/thesyncim/.codex/bin/project-env go test -v -tags=purego ./internal/av1/motion -run '^TestLumaSubpelProberClampedScratch' -count=1",
+          "result": "PASS",
+          "log": {
+            "path": "/private/tmp/goav1-pr8-edge-final-subpel-focused-purego-20261017.log",
+            "sha256": "2b8116068fbd345ceeea9e1c168b8893d1dfccac16d9b8d5557f771a12d5ded2"
+          }
+        },
+        {
+          "mode": "strict checkptr level 2",
+          "command": "CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-edge GOEXPERIMENT=simd /Users/thesyncim/.codex/bin/project-env go test -v -gcflags=all=-d=checkptr=2 ./internal/av1/motion -run '^TestLumaSubpelProberClampedScratch' -count=1",
+          "result": "PASS",
+          "log": {
+            "path": "/private/tmp/goav1-pr8-edge-final-subpel-focused-checkptr2-20261017.log",
+            "sha256": "d8d4fe566fd48107b32814e0cc1b7052e60dfb7fbc691aa8d31f02260d1a103f"
+          }
+        }
+      ]
+    },
+    "native_allocation_gates": {
+      "encoder": {
+        "command": "CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-edge GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 /Users/thesyncim/.codex/bin/project-env go test ./internal/av1/encoder -run Alloc -count=1",
+        "result": "PASS; 5.846s; 0 allocations in guarded encoder paths",
+        "log": {
+          "path": "/private/tmp/goav1-pr8-edge-final-encoder-alloc-native-simd-20261017.log",
+          "sha256": "6a75723bff573de7757364040d5907be4982afea537359caa5c07c17c74a0b68"
+        }
+      },
+      "motion": {
+        "command": "CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-edge GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 /Users/thesyncim/.codex/bin/project-env go test ./internal/av1/motion -run Alloc -count=1",
+        "result": "PASS; 0.314s; motion zero-allocation assertions",
+        "log": {
+          "path": "/private/tmp/goav1-pr8-edge-final-motion-alloc-native-simd-20261017.log",
+          "sha256": "7033c3e6681c445d77d147e8b1bdc2fc5a3342b386f6e6f8a61823d8369e7108"
+        }
+      }
+    },
+    "final_race_suite": {
+      "command": "CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-edge GOEXPERIMENT=simd GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1 /Users/thesyncim/.codex/bin/project-env go test -race -v -count=1 -p=1 -timeout=45m ./internal/av1/encoder ./internal/av1/motion",
+      "result": "PASS; encoder 255.003s, motion 17.864s; no race reports.",
+      "log": {
+        "path": "/private/tmp/goav1-pr8-edge-final-encoder-motion-race-native-simd-20261017.log",
+        "sha256": "39fdfa404b0ab6af6150d7db74069991bedcf5dd42d4fd3a1fdcba43d81cade6"
+      },
+      "parity_and_reference_coverage": {
+        "pinned_stream_reconstruction": "PASS",
+        "synthetic_wavefront_serial_parity": "PASS",
+        "synthetic_split_fused_parity": "PASS",
+        "external_aomdec_and_dav1d_reference_tests": "PASS; GOAV1_REQUIRE_WEBRTC_REFERENCE_DECODERS=1",
+        "realC_skips": [
+          "TestPFrameWavefrontMatchesSerialRealC",
+          "TestPFrameSplitMatchesFusedRealC",
+          "TestRealCMaskDefaultMultiTile",
+          "TestRealCMaskSingleThread"
+        ],
+        "realC_skip_reason": "Required /tmp/corpus/realC.yuv is unavailable.",
+        "race_only_allocation_skip": {
+          "test": "TestVideoEncoder1080pMultiTileKeyframeWorkerAllocs",
+          "result": "SKIP under race; same non-race native allocation gate passed separately."
+        },
+        "optional_full_libaom_matrix": {
+          "test": "TestLibaomConvolve2DRunTestPort",
+          "result": "SKIP; requires GOAV1_FULL_LIBAOM_CONVOLVE=1; the quick matrix passed."
+        }
+      }
+    },
+    "initial_race_failure_before_lifecycle_fixes": {
+      "result": "FAIL; three decision-statistics/Close tests reported an HME worker shutdown race between hmeState.close clearing h.work and startWorkers workers reading it.",
+      "affected_tests": [
+        "TestVideoEncoderDecisionStatsDisabledByDefault",
+        "TestVideoEncoderDecisionStatsAccumulatesKeyAndInter",
+        "TestVideoEncoderCloseReleasesPersistentWorkers"
+      ],
+      "log": {
+        "path": "/private/tmp/goav1-pr8-edge-encoder-motion-race-native-simd-20261017.log",
+        "sha256": "9b2542d845ba27827b31454bdc64d7317ef786162c90e14865f06006d9eac7e2"
+      }
+    },
+    "compiler_report_default": {
+      "command": "env -u GOEXPERIMENT CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-edge GOAV1_COMPILER_REPORT_DIR=/private/tmp/goav1-pr8-edge-final-compiler-reports-default GOMAXPROCS=1 GOGC=100 /Users/thesyncim/.codex/bin/project-env make compiler-reports",
+      "result": "PASS; 515 hot heap escapes allowlisted; 4932 hot bounds-check sites reported.",
+      "log": {
+        "path": "/private/tmp/goav1-pr8-edge-final-compiler-reports-default-20261017.log",
+        "sha256": "95f5b6a540ed0f6c62fea90ba0a2b17f32a862601efe9b1188a4b13ba372e025"
+      },
+      "hot_escapes_sha256": "3433ab8915ba59769c7ccecd2e8a36bd17563e589af0b485966315ed90a4fec0",
+      "hot_bce_sha256": "68c945c7f34e137dd92b5b1517c5eb155e56f8588da93b07305a83316e02e25a"
+    },
+    "compiler_report_explicit_simd_diagnostic": {
+      "result": "FAIL by configuration mismatch, not treated as a source regression: GOEXPERIMENT=simd adds two existing guarded compound8_gosimd.go escapes absent from the default-experiment allowlist; allowlist was not changed.",
+      "log": {
+        "path": "/private/tmp/goav1-pr8-edge-final-compiler-reports-native-simd-20261017.log",
+        "sha256": "ceea3fc26d79b69df3ccd4ac031111125d6e959c731b9c9e18d7ecfc497aebff"
+      }
+    },
+    "interrupted_broad_alloc_gate": {
+      "command": "GOEXPERIMENT=simd CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-edge GOMAXPROCS=1 GOGC=100 /Users/thesyncim/.codex/bin/project-env make alloc",
+      "result": "NO RESULT; intentionally interrupted with exit 130 before final lifecycle source freeze. The partial log contains only the script startup and make error.",
+      "log": {
+        "path": "/private/tmp/goav1-pr8-edge-alloc-native-simd-20261017.log",
+        "sha256": "3aa5f361170d9bd7c8a6704898009632dc08d8e4bcdaf0beea113d4938e48f34"
+      }
+    }
+  },
+  "excluded_experiment_ledger": {
+    "invalid_non_simd_partial_pan_run": {
+      "result": "EXCLUDED; do not infer performance.",
+      "reason": "Stopped during pair 4 when concurrent test-tree edits made source identity uncertain; later inspection also established these unsuffixed binaries lacked GOEXPERIMENT=simd. Pair 4 baseline was incomplete.",
+      "baseline_binary": {
+        "path": "/private/tmp/goav1-pr8-edge-encoder-baseline.test",
+        "sha256": "675bd928402579118604d7880c0c5808cf457ccc03eeeb768b8cdf56058e0c90"
+      },
+      "candidate_binary": {
+        "path": "/private/tmp/goav1-pr8-edge-encoder-candidate.test",
+        "sha256": "32e42ef16969ab1f2161e3126ecfdda6979b2aff8f3d9b37173644acfcfc1d85"
+      },
+      "partial_samples_ns_per_frame": {
+        "pair1": {
+          "baseline": 107104562,
+          "candidate": 106903503
+        },
+        "pair2": {
+          "baseline": 108032483,
+          "candidate": 107998672
+        },
+        "pair3": {
+          "baseline": 106389399,
+          "candidate": 108278220
+        },
+        "pair4": {
+          "candidate": 107840522,
+          "baseline": "incomplete"
+        }
+      },
+      "raw_log": {
+        "path": "/private/tmp/goav1-pr8-edge-pan-screen-20261017.log",
+        "sha256": "a030c8cfa4c970503165aede96cfbd6596104f0cdf61873a19ae842a54b1a487"
+      },
+      "status_file": {
+        "path": "/private/tmp/goav1-pr8-edge-pan-screen-20261017.status.txt",
+        "sha256": "e19e29bcf291bfbcb9933173a9bb4036d5c765936b37f6c8335dfa1d442a5c4e"
+      }
+    }
+  },
+  "reproduction": {
+    "agent_id": "pr8-edge",
+    "baseline_source_materialization_command": "git -C /Users/thesyncim/.codex/worktrees/goav1-pr8-quality/goav1 show ff35737478053df7c9ed6c4c9aa06ad626820d57:internal/av1/motion/subpel_probe.go > /private/tmp/goav1-pr8-edge-subpel-baseline.go",
+    "overlay_file_content": {
+      "Replace": {
+        "/Users/thesyncim/.codex/worktrees/goav1-pr8-quality/goav1/internal/av1/motion/subpel_probe.go": "/private/tmp/goav1-pr8-edge-subpel-baseline.go"
+      }
+    },
+    "baseline_overlay_creation_command": "cat > /private/tmp/goav1-pr8-edge-overlay.json <<'EOF'\n{\n  \"Replace\": {\n    \"/Users/thesyncim/.codex/worktrees/goav1-pr8-quality/goav1/internal/av1/motion/subpel_probe.go\": \"/private/tmp/goav1-pr8-edge-subpel-baseline.go\"\n  }\n}\nEOF",
+    "baseline_build_command": "CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-edge GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 /Users/thesyncim/.codex/bin/project-env go test -c -overlay=/private/tmp/goav1-pr8-edge-overlay.json -o /private/tmp/goav1-pr8-edge-final-baseline-native-simd.test ./internal/av1/encoder",
+    "candidate_build_command": "CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects CODEX_AGENT_ID=pr8-edge GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 /Users/thesyncim/.codex/bin/project-env go test -c -o /private/tmp/goav1-pr8-edge-final-candidate-native-simd.test ./internal/av1/encoder",
+    "sample_command_template": "GOMAXPROCS=1 GOGC=100 <baseline-or-candidate-test-binary> -test.run='^$' -test.bench='^BenchmarkVideoEncoderPFramePan1080pSingleThread$' -test.benchtime=31x -test.benchmem -test.cpu=1",
+    "order_protocol": "Run each process serially; alternate baseline-first and candidate-first pairs. Actual order and UTC start time for every process are embedded under each retained raw_pair_samples array.",
+    "timing_log_hashes": {
+      "/private/tmp/goav1-pr8-edge-pan-screen-native-simd-20261017.log": "ceb8f805f4c9750f1d5ed17a627195393086a753c4005006999a186777809ce7",
+      "/private/tmp/goav1-pr8-edge-pan-confirm-native-simd-20261017.log": "04180bc0b5a4c62a37504db3c722f12f1d9c5bce0e797ffcf859d3365de1a3ce",
+      "/private/tmp/goav1-pr8-edge-pan-final-confirm-native-simd-20261017.log": "fbd240ff705eabb3abcd91cc4fe4f41b2e6eaa7bb54613c0b75bbcf607807394"
+    },
+    "gocache": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects/37b85e7d09c67423/go-build",
+    "project_cache_root": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects"
+  }
+}

@@ -310,13 +310,7 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 	w := entropy.NewBitCounter()
 	base := w.Tell()
 
-	eob := 0
-	for c := maxEOB - 1; c >= 0; c-- {
-		if coeff64[scanHot[c].pos] != 0 {
-			eob = c + 1
-			break
-		}
-	}
+	eob := txbEOB64(coeff64)
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
@@ -457,13 +451,7 @@ func CountCoefficientsTXB8x8UV2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16
 	w := entropy.NewBitCounter()
 	base := w.Tell()
 
-	eob := 0
-	for c := maxEOB - 1; c >= 0; c-- {
-		if coeff64[scanHot[c].pos] != 0 {
-			eob = c + 1
-			break
-		}
-	}
+	eob := txbEOB64(coeff64)
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
@@ -712,13 +700,7 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 	w := entropy.NewBitCounter()
 	base := w.Tell()
 
-	eob := 0
-	for c := maxEOB - 1; c >= 0; c-- {
-		if coeff256[scanHot[c].pos] != 0 {
-			eob = c + 1
-			break
-		}
-	}
+	eob := txbEOB256(coeff256)
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
@@ -867,13 +849,7 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 	w := entropy.NewBitCounter()
 	base := w.Tell()
 
-	eob := 0
-	for c := maxEOB - 1; c >= 0; c-- {
-		if coeff256[scanHot[c].pos] != 0 {
-			eob = c + 1
-			break
-		}
-	}
+	eob := txbEOB256(coeff256)
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
@@ -1047,13 +1023,7 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 	)
 	scanHot := &coeffScanHot16x16Y2D
 
-	eob := 0
-	for c := maxEOB - 1; c >= 0; c-- {
-		if coeff256[scanHot[c].pos] != 0 {
-			eob = c + 1
-			break
-		}
-	}
+	eob := txbEOB256(coeff256)
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
@@ -1239,13 +1209,7 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 	w := entropy.NewBitCounter()
 	base := w.Tell()
 
-	eob := 0
-	for c := maxEOB - 1; c >= 0; c-- {
-		if coeff1024[scanHot[c].pos] != 0 {
-			eob = c + 1
-			break
-		}
-	}
+	eob := txbEOB1024(coeff1024)
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
@@ -1433,13 +1397,7 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 	)
 	scanHot := &coeffScanHot32x32Y2D
 
-	eob := 0
-	for c := maxEOB - 1; c >= 0; c-- {
-		if coeff1024[scanHot[c].pos] != 0 {
-			eob = c + 1
-			break
-		}
-	}
+	eob := txbEOB1024(coeff1024)
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
@@ -1630,13 +1588,7 @@ func writeCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *Coef
 	)
 	scanHot := &coeffScanHot4x4Y2D
 
-	eob := 0
-	for c := maxEOB - 1; c >= 0; c-- {
-		if coeffs[scanHot[c].pos] != 0 {
-			eob = c + 1
-			break
-		}
-	}
+	eob := txbEOB16(coeffs)
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
@@ -1788,13 +1740,7 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 	w := entropy.NewBitCounter()
 	base := w.Tell()
 
-	eob := 0
-	for c := maxEOB - 1; c >= 0; c-- {
-		if coeff16[scanHot[c].pos] != 0 {
-			eob = c + 1
-			break
-		}
-	}
+	eob := txbEOB16(coeff16)
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
@@ -1936,13 +1882,7 @@ func WriteCoefficientsTXB4x4UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 	)
 	scanHot := &coeffScanHot4x4Y2D
 
-	eob := 0
-	for c := maxEOB - 1; c >= 0; c-- {
-		if coeffs[scanHot[c].pos] != 0 {
-			eob = c + 1
-			break
-		}
-	}
+	eob := txbEOB16(coeffs)
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
@@ -2088,13 +2028,7 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 	w := entropy.NewBitCounter()
 	base := w.Tell()
 
-	eob := 0
-	for c := maxEOB - 1; c >= 0; c-- {
-		if coeff16[scanHot[c].pos] != 0 {
-			eob = c + 1
-			break
-		}
-	}
+	eob := txbEOB16(coeff16)
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][0], boolToSym(eob == 0))
 	if eob == 0 {
@@ -2240,13 +2174,7 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 	)
 	scanHot := &coeffScanHot8x8Y2D
 
-	eob := 0
-	for c := maxEOB - 1; c >= 0; c-- {
-		if coeff64[scanHot[c].pos] != 0 {
-			eob = c + 1
-			break
-		}
-	}
+	eob := txbEOB64(coeff64)
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
@@ -2402,13 +2330,7 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 	)
 	scanHot := &coeffScanHot8x8Y2D
 
-	eob := 0
-	for c := maxEOB - 1; c >= 0; c-- {
-		if coeffs[scanHot[c].pos] != 0 {
-			eob = c + 1
-			break
-		}
-	}
+	eob := txbEOB64(coeffs)
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
