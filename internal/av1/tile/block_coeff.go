@@ -30,11 +30,11 @@ type CoeffDequantProvider interface {
 type CoeffDequantTarget struct {
 	Dst            []int32
 	Factors        [3][2]int32 // [Y/U/V][DC/AC]
+	ActiveRows     int
+	Provider       CoeffDequantProvider
 	BitDepth       uint8
 	Ready          bool
-	ActiveRows     int
 	TxScale        uint8
-	Provider       CoeffDequantProvider
 	PreparedPlanes uint8
 
 	decoded bool // set by the tracked reader; published as Ready after recording succeeds

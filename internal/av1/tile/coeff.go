@@ -88,6 +88,7 @@ type TXBDecodeRequest struct {
 	levelDirtyPos     *[maxCoeffScanLen]int16
 	levelDirtyLen     *uint16
 	levelDirtyScratch *[maxCoeffScratchLen]uint8
+	dequant           *CoeffDequantTarget
 
 	Size            TransformSize
 	Plane           CoeffPlaneType
@@ -106,7 +107,6 @@ type TXBDecodeRequest struct {
 	skipNonZeroCoeffClear bool
 	trustedScan           bool
 	knownNonZero          bool
-	dequant               *CoeffDequantTarget
 	dequantPlane          uint8
 	dequantDCOnly         bool
 }
