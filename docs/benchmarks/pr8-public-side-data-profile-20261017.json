@@ -1,0 +1,210 @@
+{
+  "title": "Public decoder side-data profile",
+  "date": "2026-10-17",
+  "decision": {
+    "finding": "The private public-Decoder path retains a duplicate side-data scratch view. The profile proves at least 2,286,976 B of duplicate directly allocated typed slices per p720 NewDecoder; arena-backed CDEF and restoration-boundary portions are additional.",
+    "speed_evidence": "The p720 warm profile attributed about 0.9% of sampled CPU to side-data bind/attach scopes combined; the constructor scratch function had no CPU-profile samples.",
+    "disposition": "Do not implement this as a speed improvement without a matched whole-operation A/B that demonstrates a gain. No speedup is claimed here."
+  },
+  "source_identity": {
+    "repository_commit": "ff35737478053df7c9ed6c4c9aa06ad626820d57",
+    "go_binary": {
+      "path": "/private/tmp/pr8-dav1d-e2e/public-fullclip-baseline.test",
+      "sha256": "e88053ad5384f959f20670e0261c60804559c8a77c28bc919b09ede5b7d0a829",
+      "build_provenance": "At build time only internal/av1/motion/subpel_probe_test.go was dirty and restored by overlay. Production sources matched HEAD at ff357374. Subsequent candidate source edits occurred after the immutable benchmark binary was frozen and cannot affect these profiling runs."
+    },
+    "benchmark_source": {
+      "path": "public_fullclip_corpus_bench_test.go",
+      "sha256": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59"
+    },
+    "corpus": {
+      "directory": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+      "p720_inter_q32_ivf_sha256": "3c42bdbc27d55077a0b4afd0e94bea7b720c7e6e160921dca2885315b6a13383",
+      "p720_inter_q32_sidecar_md5": "47854463914ca952c4b0c63b8e7edd45",
+      "p360_inter_q32_10bit_ivf_sha256": "76874e6b262fcc6e43e603be02ed75e843cacf6593c19e150037daebe568cff2",
+      "p360_inter_q32_10bit_sidecar_md5": "8506fce82608a83814eaa5e3067c0d9b"
+    }
+  },
+  "environment": {
+    "host": "Apple M4 Max, macOS 26.3.1, arm64",
+    "go": "go1.27.0 darwin/arm64",
+    "goexperiment": "simd",
+    "gomaxprocs": 1,
+    "gogc": 100,
+    "codex_agent_id": "pr8-side-data-prof",
+    "project_cache_root": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects"
+  },
+  "benchmark_boundaries": {
+    "cold_fresh_decoder": "Timed benchmark operation: NewDecoderFromIVF over preloaded IVF bytes (including IVF parse and packet-payload copies), drain all DecodeNext results, observe frame dimensions and first/last visible byte of Y/U/V, then Close. Corpus load and one benchmark warmup are outside b.ResetTimer.",
+    "warm_reset_decode": "Construct and warm one decoder before timing. Timed operation: Reset, drain DecodeNext, observe frame dimensions and first/last visible byte of Y/U/V. Close is benchmark cleanup outside the timer.",
+    "profile_scope": "CPU profile collection spans process and benchmark setup/warmup as well as timed iterations, even where b.ResetTimer excludes setup from ns/op. Allocation profiles are process-cumulative; do not treat their total as per-iteration bytes.",
+    "correctness_scope": "These profile invocations used -test.run '^$'; the benchmark checked the 48-frame count and consumed output-edge observations, but did not compute MD5 during profiling."
+  },
+  "source_proof": [
+    {
+      "refs": [
+        "decode_simple.go:753-768",
+        "decode_simple.go:789-799"
+      ],
+      "fact": "newDecoderStreamScratch allocates Event through newDecoderEventScratch, which allocates one DecoderFrameWorkSideDataScratch, and also allocates a second stream SideData backing of the planned shape. Both views allocate LoopFilterMap, LoopFilterMasks, LoopFilterLevelCache, and RestorationRecords."
+    },
+    {
+      "refs": [
+        "decode_simple.go:850-864"
+      ],
+      "fact": "decoderArenaSize.addStream adds the nested event side-data arena and a second stream side-data arena, matching the two scratch views."
+    },
+    {
+      "refs": [
+        "decode_simple.go:320",
+        "decode_simple.go:333-340",
+        "decoder_residual_event.go:259-310",
+        "decoder_residual_event.go:533-560",
+        "decoder_residual_stream.go:226-234"
+      ],
+      "fact": "The initial event bind returns a side-data view, but NewDecoder ignores that return. The event runner stores runtime.SideData (&d.sideData), and later per-event binds use the stream runner's SideDataScratch. The event scratch backing therefore remains retained in d.scratch after its initial binding."
+    },
+    {
+      "refs": [
+        "decode_layered.go:211",
+        "decode_layered.go:719"
+      ],
+      "fact": "LayeredDecoder also uses the scratch helper and stream SideData view; any future private alias optimization needs layered ownership/error tests. Caller-owned low-level scratch APIs should retain their semantics."
+    },
+    {
+      "refs": [
+        "decoder_postfilter_bind.go:749-814",
+        "internal/av1/threading/loop_filter_map.go:104-130",
+        "decoder_residual_event.go:698-705",
+        "decoder_residual_state.go:581-595",
+        "internal/av1/decoder/work.go:593-615"
+      ],
+      "fact": "The per-frame high-level path binds/clears side data, then attaches it to the batch residual runner and FrameWorkState. Those attachment setters reset CDEF/LF/restoration data again. Keep public Bind/Set validation and malformed/split-tile semantics; no reset skip was inferred for untested coverage conditions."
+    }
+  ],
+  "source_size_ledger": {
+    "loop_filter_record_layout": "34 bytes per record on arm64 (threading/loop_filter_map.go:12-63; internal/av1/threading/hot_struct_size_test.go:24).",
+    "p720_logical_backing": "320x180 MI shape gives 1,958,400 B of LoopFilterMap records plus 230,400 B of LoopFilterLevelCache per backing, before masks/restoration/CDEF.",
+    "allocation_profile_note": "The exact profile below counts allocator-charged bytes (Go size classes), which differ slightly from requested slice lengths."
+  },
+  "dav1d_reference": {
+    "commit": "b546257f770768b2c88258c533da38b91a06f737",
+    "source_checkout": "third_party/upstream/dav1d",
+    "refs": [
+      "src/decode.c:2996-3014 resizes loop-filter mask/level backing only when geometry changes.",
+      "src/decode.c:3039 clears the loop-filter mask once per frame.",
+      "src/picture.c:71-88 obtains the backing through the picture pool.",
+      "src/mem.c:239-272 reuses retired same-size buffers; this does not permit reusing live reference surfaces."
+    ],
+    "scope_note": "Reference ownership/design context only; this is not a measured Go-versus-dav1d performance comparison."
+  },
+  "measurements": {
+    "p720_cold_cpu_100x": {
+      "benchmark": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder",
+      "ns_per_op": 179625320,
+      "frames_per_op": 48,
+      "bytes_per_op": 39086069,
+      "allocs_per_op": 205,
+      "cpu_profile_duration_s": 18.26,
+      "cpu_profile_samples_s": 15.68,
+      "profile_path": "/private/tmp/pr8-side-data-prof/p720-cold.cpu",
+      "profile_sha256": "f20cf601e8204d4fd4b30fbe3a827f68e6e89e206e0fbf205406515ad7e8be18",
+      "pprof_top_path": "/private/tmp/pr8-side-data-prof/p720-cold-cpu-top.txt",
+      "pprof_top_sha256": "3b08a0b66a39877914a16c8b53a42b426d5859b5e2d50a4fc577a393e5bfe275"
+    },
+    "p720_warm_cpu_100x": {
+      "benchmark": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "ns_per_op": 175558944,
+      "frames_per_op": 48,
+      "bytes_per_op_reported": 5327,
+      "allocs_per_op": 0,
+      "cpu_profile_duration_s": 17.91,
+      "cpu_profile_samples_s": 15.35,
+      "profile_path": "/private/tmp/pr8-side-data-prof/p720-warm.cpu",
+      "profile_sha256": "9fac693e128895b8a4fff5387ce5cba0bc434ba976b69e9b80499ca0a42fb749",
+      "pprof_top_path": "/private/tmp/pr8-side-data-prof/p720-warm-cpu-top.txt",
+      "pprof_top_sha256": "3f0c81556e49132c4009563e5134a03fa83e75accd29d83006e615f80af9d29a"
+    },
+    "p720_cold_alloc_1x": {
+      "benchmark": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder",
+      "ns_per_op_profiled": 183219916,
+      "bytes_per_op": 39081328,
+      "allocs_per_op": 207,
+      "memprofile_rate_bytes": 1,
+      "profile_path": "/private/tmp/pr8-side-data-prof/p720-cold.mem",
+      "profile_sha256": "af1178ce3953258c00f72bb9d95b8ea0dd92dafd3f4e8eec0d68557ed438a1cd",
+      "alloc_space_total_profile_bytes": 81102064,
+      "newDecoderSideDataScratch_alloc_space_bytes": 9147904,
+      "newDecoderSideDataScratch_alloc_space_percent": 11.28,
+      "scratch_constructor_calls": 4,
+      "decoder_constructions_in_profile": 2,
+      "pprof_top_path": "/private/tmp/pr8-side-data-prof/p720-cold-alloc-top.txt",
+      "pprof_top_sha256": "8782aa6b1f2e999ab4afc949e040ff2a96e3af9d1f8d3eccc7fd4204aa887c1d",
+      "pprof_source_listing_path": "/private/tmp/pr8-side-data-prof/p720-scratch-alloc-bytes-list.txt",
+      "pprof_source_listing_sha256": "ea8df75e6e547950e14a61baa6fc056eff1a4ebd1791a16d72a9490c9073fd14",
+      "minimum_duplicate_direct_heap_bytes_per_decoder": 2286976,
+      "direct_allocation_scope": "LoopFilterMap, LoopFilterMasks, LoopFilterLevelCache, and RestorationRecords allocated directly in newDecoderSideDataScratch; arena-backed CDEF maps and restoration boundaries are not included."
+    },
+    "p720_warm_alloc_1x": {
+      "benchmark": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "ns_per_op_profiled": 176539125,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "memprofile_rate_bytes": 1,
+      "profile_path": "/private/tmp/pr8-side-data-prof/p720-warm.mem",
+      "profile_sha256": "0fae8b3d6df28d3928273b433970cd71d9620ad1fc6dbf08fe5f7761afabe75b",
+      "pprof_top_path": "/private/tmp/pr8-side-data-prof/p720-warm-alloc-top.txt",
+      "pprof_top_sha256": "dd9593179aba76c71b09409147e6bc24d68fb8ca10e0b0b801b739931c9d4be0"
+    },
+    "p360_10bit_cold_cpu_20x": {
+      "benchmark": "BenchmarkPublicDecoderFullClip/p360_inter_q32_10bit/cold_fresh_decoder",
+      "ns_per_op": 107754123,
+      "frames_per_op": 48,
+      "bytes_per_op": 19512710,
+      "allocs_per_op": 143,
+      "cpu_profile_duration_s": 2.37,
+      "cpu_profile_samples_s": 1.97,
+      "profile_path": "/private/tmp/pr8-side-data-prof/p360-10bit-cold.cpu",
+      "profile_sha256": "d348e50d07703f867acaef443caf3a9b0470ee90bc66d771d7a33570c57568a8",
+      "pprof_top_path": "/private/tmp/pr8-side-data-prof/p360-10bit-cold-cpu-top.txt",
+      "pprof_top_sha256": "d1f291f2c66964cb77fa85dd6d3bb63358785f2cd85790650d3a0183ef479e4a"
+    }
+  },
+  "embedded_pprof_excerpts": {
+    "p720_cold_alloc_space": [
+      "Type: alloc_space; total profile bytes: 81,102,064 B.",
+      "9,147,904 B (11.28%) flat/cumulative: github.com/thesyncim/goav1.newDecoderSideDataScratch.",
+      "Source lines: LoopFilterMap 7,864,320 B; LoopFilterMasks 327,680 B; LoopFilterLevelCache 950,272 B; RestorationRecords 5,632 B.",
+      "The allocation profile covers benchmark warmup plus one measured cold operation: two Decoder constructions and four calls to newDecoderSideDataScratch. The exact 9,147,904 B divided by four calls is 2,286,976 B of direct typed allocations per scratch view; one equivalent view is the duplicate in this private path. Arena-backed CDEF and restoration-boundary portions are additional."
+    ],
+    "p720_warm_cpu_side_data": [
+      "Total CPU samples: 15.35 s.",
+      "BindDecoderFrameWorkSideData: 50 ms cumulative (0.33%).",
+      "DecoderFrameWorkBatchResidualRunner.SetSideData: 70 ms cumulative (0.46%); LoopFilterMap.Reset 40 ms and RestorationFrameBuffers.ResetRecords 30 ms.",
+      "internal/av1/decoder.(*FrameWorkState).SetSideData: 20 ms cumulative (0.13%).",
+      "SetDecoderFrameWorkSideData: 20 ms cumulative (0.13%); this overlaps the internal FrameWorkState.SetSideData sample and must not be added twice.",
+      "These listed sequential bind/batch/state scopes total about 140 ms, ~0.91% of the sampled CPU; profile resolution is 10 ms and this is not a timing acceptance result."
+    ],
+    "p720_broad_hot_paths": [
+      "Cold profile: partitionWalker.walkNode 8.70 s cumulative (55.48% of 15.68 s); prepared postfilter 5.01 s (31.95%); CDEF 2.26 s (14.41%); inter prediction 2.09 s (13.33%).",
+      "Warm profile: tile.walkBlocks 9.21 s cumulative (60.00% of 15.35 s); prepared postfilter 4.53 s (29.51%); CDEF 1.93 s (12.57%); inter prediction 2.15 s (14.01%).",
+      "Cumulative scopes overlap. The newDecoderSideDataScratch function had no CPU-profile match; no constructor-time speed gain is established."
+    ]
+  },
+  "reproduction_commands": {
+    "p720_cold_cpu": "env CODEX_AGENT_ID=pr8-side-data-prof CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 GOAV1_BENCH_CORPUS_DIR=/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus /Users/thesyncim/.codex/bin/project-env /private/tmp/pr8-dav1d-e2e/public-fullclip-baseline.test -test.run '^$' -test.bench '^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$' -test.benchtime=100x -test.benchmem -test.count=1 -test.cpuprofile /private/tmp/pr8-side-data-prof/p720-cold.cpu",
+    "p720_warm_cpu": "env CODEX_AGENT_ID=pr8-side-data-prof CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 GOAV1_BENCH_CORPUS_DIR=/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus /Users/thesyncim/.codex/bin/project-env /private/tmp/pr8-dav1d-e2e/public-fullclip-baseline.test -test.run '^$' -test.bench '^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$' -test.benchtime=100x -test.benchmem -test.count=1 -test.cpuprofile /private/tmp/pr8-side-data-prof/p720-warm.cpu",
+    "p360_10bit_cpu": "env CODEX_AGENT_ID=pr8-side-data-prof CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 GOAV1_BENCH_CORPUS_DIR=/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus /Users/thesyncim/.codex/bin/project-env /private/tmp/pr8-dav1d-e2e/public-fullclip-baseline.test -test.run '^$' -test.bench '^BenchmarkPublicDecoderFullClip$/^p360_inter_q32_10bit$/^cold_fresh_decoder$' -test.benchtime=20x -test.benchmem -test.count=1 -test.cpuprofile /private/tmp/pr8-side-data-prof/p360-10bit-cold.cpu",
+    "p720_cold_alloc": "env CODEX_AGENT_ID=pr8-side-data-prof CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 GOAV1_BENCH_CORPUS_DIR=/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus /Users/thesyncim/.codex/bin/project-env /private/tmp/pr8-dav1d-e2e/public-fullclip-baseline.test -test.run '^$' -test.bench '^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$' -test.benchtime=1x -test.benchmem -test.count=1 -test.memprofilerate=1 -test.memprofile /private/tmp/pr8-side-data-prof/p720-cold.mem",
+    "p720_warm_alloc": "env CODEX_AGENT_ID=pr8-side-data-prof CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 GOAV1_BENCH_CORPUS_DIR=/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus /Users/thesyncim/.codex/bin/project-env /private/tmp/pr8-dav1d-e2e/public-fullclip-baseline.test -test.run '^$' -test.bench '^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$' -test.benchtime=1x -test.benchmem -test.count=1 -test.memprofilerate=1 -test.memprofile /private/tmp/pr8-side-data-prof/p720-warm.mem",
+    "pprof_cpu": "env CODEX_AGENT_ID=pr8-side-data-prof CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects /Users/thesyncim/.codex/bin/project-env go tool pprof -top -cum -nodecount=50 <binary> <cpu-profile>",
+    "pprof_alloc": "env CODEX_AGENT_ID=pr8-side-data-prof CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects /Users/thesyncim/.codex/bin/project-env go tool pprof -top -sample_index=alloc_space -unit=bytes -nodecount=20 <binary> <mem-profile>"
+  },
+  "limitations": [
+    "This is an attribution profile, not an A/B benchmark or a speedup claim.",
+    "The CPU profiles include setup/warmup samples; allocation profiles are process-cumulative. The 100x warm benchmark printed 5,327 B/op with 0 allocs/op, while the separate 1x allocation-profile benchmark printed 0 B/op and 0 allocs/op. Preserve this discrepancy; do not claim a warm-path allocation from it.",
+    "The p720 100x benchmark latencies are measured while CPU profiling is active and are not clean timing baselines.",
+    "A future scratch alias must preserve public caller-owned Bind/Set behavior and validate both Decoder and LayeredDecoder ownership, reset, malformed-input, and split-tile paths.",
+    "No whole-operation speed gain was demonstrated. Under the user's end-to-end speed objective, defer implementation until a paired public-operation A/B shows a repeatable gain."
+  ]
+}
