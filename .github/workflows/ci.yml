@@ -64,7 +64,11 @@ jobs:
       - name: fetch example fixture
         shell: bash
         run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
+      - name: go test (Windows, streaming output)
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: go test -json -count=1 -timeout 30m ./...
       - name: go test
+        if: ${{ matrix.os != 'windows-latest' }}
         run: go test -count=1 -timeout 30m ./...
 
   simd-arm64:

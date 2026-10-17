@@ -3,7 +3,9 @@ package encoder
 import (
 	"bytes"
 	"math/rand"
+	"sync"
 	"testing"
+	"time"
 )
 
 // TestVideoEncoderOverlapDeterminism proves the backgrounded in-loop filter
@@ -120,6 +122,66 @@ func TestVideoEncoderSingleThreadFiltersStayInline(t *testing.T) {
 	if enc.filterStarted || enc.tileWorkers != 0 || enc.lf.started || enc.cdefApp.started || enc.hme.started {
 		t.Fatalf("single-thread mode started workers: filter=%v tile=%d lf=%v cdef=%v hme=%v",
 			enc.filterStarted, enc.tileWorkers, enc.lf.started, enc.cdefApp.started, enc.hme.started)
+	}
+}
+
+func TestVideoEncoderCloseWaitsForWavefrontWorkers(t *testing.T) {
+	enc, err := NewVideoEncoder(64, 64, 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc.wavefront.ensureWorkers(3, &enc.pc)
+	enc.leafWavefront.ensureWorkers(2, &enc.leafPC)
+	baseStarted := enc.wavefront.started
+	leafStarted := enc.leafWavefront.started
+	if baseStarted != 3 || leafStarted != 2 {
+		t.Fatalf("wavefront helpers did not start: base=%d leaf=%d", baseStarted, leafStarted)
+	}
+	t.Cleanup(func() {
+		enc.wavefront.close()
+		enc.leafWavefront.close()
+	})
+
+	waitForHelpers := func(wg *sync.WaitGroup) <-chan struct{} {
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+		return done
+	}
+	baseDone := waitForHelpers(&enc.wavefront.workerWG)
+	leafDone := waitForHelpers(&enc.leafWavefront.workerWG)
+	if err := enc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, pool := range []struct {
+		name    string
+		done    <-chan struct{}
+		wf      *pframeWavefront
+		started int
+	}{
+		{name: "base", done: baseDone, wf: &enc.wavefront, started: baseStarted},
+		{name: "leaf", done: leafDone, wf: &enc.leafWavefront, started: leafStarted},
+	} {
+		select {
+		case <-pool.done:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s wavefront helpers did not exit after Close", pool.name)
+		}
+		if pool.wf.work != nil || pool.wf.started != 0 || len(pool.wf.workers) != 0 {
+			t.Fatalf("%s wavefront retained workers: work=%v started=%d workers=%d", pool.name, pool.wf.work != nil, pool.wf.started, len(pool.wf.workers))
+		}
+		if pool.wf.coder != nil || pool.wf.src.Y != nil || pool.wf.ref.Y != nil || pool.wf.golden != nil || pool.wf.recon != nil {
+			t.Fatalf("%s wavefront retained frame state", pool.name)
+		}
+		if pool.started == 0 {
+			t.Fatalf("%s wavefront test did not exercise helpers", pool.name)
+		}
+	}
+
+	if err := enc.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

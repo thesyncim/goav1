@@ -723,6 +723,8 @@ func (e *VideoEncoder) Close() error {
 		e.leafWork = nil
 		e.leafStarted = false
 	}
+	e.wavefront.close()
+	e.leafWavefront.close()
 	e.lf.close()
 	e.cdefApp.close()
 	e.hme.close()
