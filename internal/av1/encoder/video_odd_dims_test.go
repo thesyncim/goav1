@@ -39,6 +39,7 @@ func TestVideoEncoderOddDimensions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() { _ = enc.Close() })
 			var tus [][]byte
 			var recons []encoder.SourceFrame420
 			for i := range 4 {

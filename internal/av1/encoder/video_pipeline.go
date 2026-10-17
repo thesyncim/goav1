@@ -257,15 +257,18 @@ func (e *VideoEncoder) startLeafWorker() {
 	if e.leafStarted {
 		return
 	}
-	e.leafWork = make(chan struct{}, 1)
-	e.leafDone = make(chan error, 1)
+	work := make(chan struct{}, 1)
+	done := make(chan error, 1)
+	e.leafWork, e.leafDone = work, done
+	e.leafWorkerWG.Add(1)
 	go func() {
-		for range e.leafWork {
+		defer e.leafWorkerWG.Done()
+		for range work {
 			j := &e.leafJob
 			tu, cnt, err := e.computeLeafTU(j.src, j.refRecon, j.prevCtx)
 			j.tu = tu
 			j.cntZeroMV = cnt
-			e.leafDone <- err
+			done <- err
 		}
 	}()
 	e.leafStarted = true

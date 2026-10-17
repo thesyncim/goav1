@@ -53,6 +53,7 @@ func TestEncodedStreamDecodesInReferenceDecoders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = enc.Close() })
 	const frames = 6
 	stream := ivf.AppendFileHeader(nil, w, h, 30, 1, frames)
 	wantYUV := make([]byte, 0, frames*(w*h+2*cw*ch))

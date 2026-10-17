@@ -96,6 +96,7 @@ type VideoEncoder struct {
 	tuScratch2    []byte
 	tileWork      chan tileWorkRange
 	tileWait      sync.WaitGroup
+	tileWorkerWG  sync.WaitGroup // persistent helpers, separate from per-job completion
 	tileWorkers   int
 	tileJobParams struct {
 		src, refRecon  SourceFrame420
@@ -119,12 +120,13 @@ type VideoEncoder struct {
 	// filterDone carries the pass result and joinFilter is the barrier
 	// every reader of the filtered reconstruction or the applier state
 	// crosses first.
-	filterDone    chan error
-	filterWork    chan struct{}
-	filterStarted bool
-	filterPending bool
-	filterErr     error
-	filterParams  struct {
+	filterDone     chan error
+	filterWork     chan struct{}
+	filterStarted  bool
+	filterWorkerWG sync.WaitGroup // persistent helper, separate from per-frame completion
+	filterPending  bool
+	filterErr      error
+	filterParams   struct {
 		out     *SourceFrame420
 		lfLevel uint8
 		cdef    parser.CDEFParams
@@ -205,10 +207,11 @@ type VideoEncoder struct {
 	pipeLeafRecon    SourceFrame420
 	pipeLeafCtx      frameCDFs
 	// Persistent leaf worker (parked between frames; no per-frame closures).
-	leafWork    chan struct{}
-	leafDone    chan error
-	leafStarted bool
-	leafJob     struct {
+	leafWork     chan struct{}
+	leafDone     chan error
+	leafStarted  bool
+	leafWorkerWG sync.WaitGroup // persistent helper, separate from per-frame completion
+	leafJob      struct {
 		src, refRecon SourceFrame420
 		prevCtx       *frameCDFs
 		tu            []byte
@@ -708,21 +711,32 @@ func (e *VideoEncoder) Close() error {
 		return nil
 	}
 	err := e.joinFilter()
-	if e.tileWork != nil {
-		close(e.tileWork)
-		e.tileWork = nil
-		e.tileWorkers = 0
+	tileWork, filterWork, leafWork := e.tileWork, e.filterWork, e.leafWork
+	if tileWork != nil {
+		e.tileWait.Wait()
+		close(tileWork)
 	}
-	if e.filterWork != nil {
-		close(e.filterWork)
-		e.filterWork = nil
-		e.filterStarted = false
+	if filterWork != nil {
+		close(filterWork)
 	}
-	if e.leafWork != nil {
-		close(e.leafWork)
-		e.leafWork = nil
-		e.leafStarted = false
+	if leafWork != nil {
+		close(leafWork)
 	}
+	e.tileWorkerWG.Wait()
+	e.filterWorkerWG.Wait()
+	e.leafWorkerWG.Wait()
+	e.tileWork, e.tileWorkers = nil, 0
+	e.filterWork, e.filterDone, e.filterStarted = nil, nil, false
+	e.filterPending = false
+	e.filterParams.out = nil
+	e.leafWork, e.leafDone, e.leafStarted = nil, nil, false
+	e.leafJob.src, e.leafJob.refRecon = SourceFrame420{}, SourceFrame420{}
+	e.leafJob.prevCtx, e.leafJob.tu = nil, nil
+	e.leafJob.cntZeroMV = 0
+	e.tileJobParams.src, e.tileJobParams.refRecon = SourceFrame420{}, SourceFrame420{}
+	e.tileJobParams.golden, e.tileJobParams.out = nil, nil
+	e.tileJobParams.prevCtx, e.tileJobParams.lfMap = nil, nil
+	e.tileJobParams.payloads, e.tileJobParams.errs = nil, nil
 	e.wavefront.close()
 	e.leafWavefront.close()
 	e.lf.close()
@@ -1158,9 +1172,12 @@ func (e *VideoEncoder) startTileWorkers(workers int) {
 	if e.tileWork == nil {
 		e.tileWork = make(chan tileWorkRange, 16)
 	}
+	workCh := e.tileWork
 	for ; e.tileWorkers < workers; e.tileWorkers++ {
+		e.tileWorkerWG.Add(1)
 		go func() {
-			for work := range e.tileWork {
+			defer e.tileWorkerWG.Done()
+			for work := range workCh {
 				tj := &e.tileJobParams
 				for t := work.first; t < work.limit; t += work.stride {
 					c0, c1 := tileColBounds(tj.tile, t, tj.miCols)
@@ -1232,17 +1249,20 @@ func (e *VideoEncoder) startFilterWorker() {
 	if e.filterStarted {
 		return
 	}
-	e.filterDone = make(chan error, 1)
-	e.filterWork = make(chan struct{}, 1)
+	work := make(chan struct{}, 1)
+	done := make(chan error, 1)
+	e.filterDone, e.filterWork = done, work
+	e.filterWorkerWG.Add(1)
 	go func() {
-		for range e.filterWork {
+		defer e.filterWorkerWG.Done()
+		for range work {
 			p := &e.filterParams
 			// The background worker only runs for the multithread branch
 			// (dispatched under !e.singleThread), so it always uses a parallel
 			// apply — never re-read e.singleThread or e.tileColsLog2 here, which
 			// SetConfig may be mutating concurrently; the single-tile-vs-multi-tile
 			// choice is snapshotted into filterParams on the dispatch goroutine.
-			e.filterDone <- e.applyInLoopFilters(p.out, p.lfLevel, p.cdef, false, p.parallelMasks)
+			done <- e.applyInLoopFilters(p.out, p.lfLevel, p.cdef, false, p.parallelMasks)
 		}
 	}()
 	e.filterStarted = true

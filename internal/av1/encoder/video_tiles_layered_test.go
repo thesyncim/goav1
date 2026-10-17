@@ -27,6 +27,7 @@ func TestVideoEncoderLayeredTilesParity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = enc.Close() })
 	if err := enc.SetTemporalLayers(2); err != nil {
 		t.Fatal(err)
 	}

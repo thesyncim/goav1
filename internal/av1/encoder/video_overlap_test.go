@@ -2,6 +2,7 @@ package encoder
 
 import (
 	"bytes"
+	"errors"
 	"math/rand"
 	"sync"
 	"testing"
@@ -42,6 +43,7 @@ func TestVideoEncoderOverlapDeterminism(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { _ = e.Close() })
 		e.SetGoldenInterval(8)
 		return e
 	}
@@ -182,6 +184,90 @@ func TestVideoEncoderCloseWaitsForWavefrontWorkers(t *testing.T) {
 
 	if err := enc.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestVideoEncoderCloseWaitsForHMEWorkers(t *testing.T) {
+	enc, err := NewVideoEncoder(64, 64, 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = enc.Close() })
+	enc.hme.startWorkers()
+	if !enc.hme.started {
+		t.Fatal("HME workers did not start")
+	}
+
+	exited := make(chan struct{})
+	go func() {
+		enc.hme.workerWG.Wait()
+		close(exited)
+	}()
+
+	if err := enc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("HME workers did not exit after Close")
+	}
+	if enc.hme.work != nil || enc.hme.done != nil || enc.hme.started {
+		t.Fatalf("Close left HME workers active: work=%v done=%v started=%v",
+			enc.hme.work != nil, enc.hme.done != nil, enc.hme.started)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
+
+func TestVideoEncoderCloseWaitsForOuterWorkers(t *testing.T) {
+	for _, wantFilterErr := range []bool{false, true} {
+		name := "success"
+		if wantFilterErr {
+			name = "filter error"
+		}
+		t.Run(name, func(t *testing.T) {
+			enc, err := NewVideoEncoder(64, 64, 80)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = enc.Close() })
+
+			enc.startTileWorkers(2)
+			enc.startFilterWorker()
+			enc.startLeafWorker()
+
+			helpersDone := make(chan struct{})
+			go func() {
+				enc.tileWorkerWG.Wait()
+				enc.filterWorkerWG.Wait()
+				enc.leafWorkerWG.Wait()
+				close(helpersDone)
+			}()
+
+			var filterErr error
+			if wantFilterErr {
+				filterErr = errors.New("test filter error")
+				enc.filterErr = filterErr
+			}
+			if err := enc.Close(); err != filterErr {
+				t.Fatalf("Close error = %v, want %v", err, filterErr)
+			}
+			select {
+			case <-helpersDone:
+			case <-time.After(5 * time.Second):
+				t.Fatal("outer workers did not exit after Close")
+			}
+			if enc.tileWork != nil || enc.tileWorkers != 0 ||
+				enc.filterWork != nil || enc.filterDone != nil || enc.filterStarted ||
+				enc.leafWork != nil || enc.leafDone != nil || enc.leafStarted {
+				t.Fatal("Close left outer worker state active")
+			}
+			if err := enc.Close(); err != nil {
+				t.Fatalf("second Close: %v", err)
+			}
+		})
 	}
 }
 

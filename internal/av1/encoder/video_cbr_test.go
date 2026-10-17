@@ -60,6 +60,7 @@ func TestVideoEncoderCBRConvergesAndDecodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = enc.Close() })
 
 	// The boosted keyframe repays its debt over the controller's 24-frame
 	// memory; steady state is measured after that horizon.
