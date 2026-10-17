@@ -497,8 +497,23 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFP
 	var blockStorage [cdef.NBlocks * cdef.NBlocks]cdef.BlockPosition
 	var unitMaskCache frameWorkCDEFUnitMaskCache
 	var unitMasks *frameWorkCDEFUnitMaskCache
-	if useU8 && unitMaskCache.reset(skipMap, rowStart, rowEnd, cols) {
+	compactUnitSource := useU8 && loadSamples && rowStart == 0 && rowEnd == rows && u8Boundary == nil
+	compactActive := threading.FrameWorkLoopFilterCompactStateActive(ctx.compactLoopFilterState)
+	if compactActive {
+		miCols, miRows, err := frameWorkLoopFilterMapGrid(ctx.Event.FrameSize)
+		if err != nil {
+			return FrameWorkCDEFPostFilterResult{}, err
+		}
+		if !compactUnitSource || ctx.LoopFilterMasks == nil ||
+			!threading.FrameWorkLoopFilterCompactReady(ctx.LoopFilterMasks, ctx.compactLoopFilterState, miCols, miRows) ||
+			!threading.FrameWorkLoopFilterCompactUnitGridMatches(ctx.LoopFilterMasks, ctx.compactLoopFilterState, cols, rows) {
+			return FrameWorkCDEFPostFilterResult{}, threading.ErrInvalidBatch
+		}
+	}
+	if useU8 && unitMaskCache.resetWithCompact(skipMap, ctx.LoopFilterMasks, ctx.compactLoopFilterState, rowStart, rowEnd, cols, compactUnitSource) {
 		unitMasks = &unitMaskCache
+	} else if compactActive {
+		return FrameWorkCDEFPostFilterResult{}, threading.ErrInvalidBatch
 	}
 	for plane := range 3 {
 		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
@@ -1219,18 +1234,37 @@ const frameWorkCDEFUnitBlocks = cdef.BlockSize / 8
 // noskip_mask per superblock). Bit by*8+bx is set when the block is NOT
 // all-skip, i.e. exactly when frameWorkCDEFBlockPositionsFiltered keeps it.
 type frameWorkCDEFUnitMaskCache struct {
-	skipMap  *FrameWorkLoopFilterMap
-	rowStart int
-	cols     int
-	masks    [frameWorkCDEFUnitMaskCap]uint64
-	done     [frameWorkCDEFUnitMaskCap / 64]uint64
+	skipMap      *FrameWorkLoopFilterMap
+	compactMasks *threading.FrameWorkLoopFilterMasks
+	compactState *threading.FrameWorkLoopFilterCompactState
+	direct       bool
+	rowStart     int
+	cols         int
+	masks        [frameWorkCDEFUnitMaskCap]uint64
+	done         [frameWorkCDEFUnitMaskCap / 64]uint64
 }
 
 func (c *frameWorkCDEFUnitMaskCache) reset(skipMap *FrameWorkLoopFilterMap, rowStart, rowEnd, cols int) bool {
+	return c.resetWithCompact(skipMap, nil, nil, rowStart, rowEnd, cols, false)
+}
+
+func (c *frameWorkCDEFUnitMaskCache) resetWithCompact(skipMap *FrameWorkLoopFilterMap, masks *threading.FrameWorkLoopFilterMasks, state *threading.FrameWorkLoopFilterCompactState, rowStart, rowEnd, cols int, allowCompact bool) bool {
+	if allowCompact && threading.FrameWorkLoopFilterCompactUnitGridMatches(masks, state, cols, rowEnd) {
+		c.skipMap = nil
+		c.compactMasks = masks
+		c.compactState = state
+		c.direct = true
+		c.rowStart = rowStart
+		c.cols = cols
+		return true
+	}
 	if skipMap == nil || cols <= 0 || (rowEnd-rowStart)*cols > frameWorkCDEFUnitMaskCap {
 		return false
 	}
 	c.skipMap = skipMap
+	c.compactMasks = nil
+	c.compactState = nil
+	c.direct = false
 	c.rowStart = rowStart
 	c.cols = cols
 	clear(c.done[:])
@@ -1238,6 +1272,10 @@ func (c *frameWorkCDEFUnitMaskCache) reset(skipMap *FrameWorkLoopFilterMap, rowS
 }
 
 func (c *frameWorkCDEFUnitMaskCache) mask(unitRow, unitCol int) uint64 {
+	if c.direct {
+		mask, _ := threading.FrameWorkLoopFilterCompactUnitMask(c.compactMasks, c.compactState, unitRow, unitCol)
+		return mask
+	}
 	i := (unitRow-c.rowStart)*c.cols + unitCol
 	if c.done[i>>6]&(1<<uint(i&63)) != 0 {
 		return c.masks[i]

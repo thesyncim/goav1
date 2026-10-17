@@ -189,6 +189,10 @@ func (h *FrameWorkLoopFilterMasks) MaskBits() []lfmask.FilterMask { return h.Mas
 // and the record-map-driven BuildFromMap: it ORs one block's deblocking edges
 // into the frame-level masks and advances the carried above/left tx-context.
 func (h *FrameWorkLoopFilterMasks) buildBlock(s *frameWorkLoopFilterMaskScratch, bx, by int, size tile.BlockSize, tree tile.TransformTreeResult, skipTransform, intra bool, sbLog2 int) {
+	h.buildBlockWithLevels(s, bx, by, size, tree, skipTransform, intra, sbLog2, lfmask.LevelCache{}, lfmask.Levels{})
+}
+
+func (h *FrameWorkLoopFilterMasks) buildBlockWithLevels(s *frameWorkLoopFilterMaskScratch, bx, by int, size tile.BlockSize, tree tile.TransformTreeResult, skipTransform, intra bool, sbLog2 int, lc lfmask.LevelCache, lv lfmask.Levels) {
 	sbRow := by >> sbLog2
 	if !s.started || sbRow != s.sbRow {
 		s.resetLeft(h.HasChroma)
@@ -220,9 +224,8 @@ func (h *FrameWorkLoopFilterMasks) buildBlock(s *frameWorkLoopFilterMaskScratch,
 	}
 
 	m := h.region(bx, by)
-	var lc lfmask.LevelCache // nil cells: geometry-only build
 	if intra {
-		s.builder.CreateIntra(m, lc, lfmask.Levels{}, bx, by, h.Cols, h.Rows,
+		s.builder.CreateIntra(m, lc, lv, bx, by, h.Cols, h.Rows,
 			size, tree.Y, tree.UV, h.Layout, ay, ly, auv, luv)
 		return
 	}
@@ -230,7 +233,7 @@ func (h *FrameWorkLoopFilterMasks) buildBlock(s *frameWorkLoopFilterMaskScratch,
 	if skipTransform {
 		skip = 1
 	}
-	s.builder.CreateInter(m, lc, lfmask.Levels{}, bx, by, h.Cols, h.Rows, skip,
+	s.builder.CreateInter(m, lc, lv, bx, by, h.Cols, h.Rows, skip,
 		size, tree.Y, tree.Split, tree.UV, h.Layout, ay, ly, auv, luv)
 }
 

@@ -1095,12 +1095,27 @@ func (b *FrameWorkBatch) JobBlockLoopContextRootColumns(index int) (int, error) 
 // caller's prediction hook, decodes residual TXBs, and reconstructs each decoded
 // TXB into the batch output frame.
 func (b FrameWorkBatch) DecodeAndReconstructJobResiduals(index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualRequest) (FrameWorkTileResidualStats, error) {
-	return (&b).DecodeAndReconstructJobResidualsPtr(index, state, cdfs, scratch, req)
+	return decodeAndReconstructJobResidualsPtr(&b, index, state, cdfs, scratch, req, nil)
 }
 
 // DecodeAndReconstructJobResidualsPtr is the pointer-core form used by typed
 // residual runners that already own a stack-local batch context.
 func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualRequest) (FrameWorkTileResidualStats, error) {
+	return decodeAndReconstructJobResidualsPtr(b, index, state, cdfs, scratch, req, nil)
+}
+
+// DecodeAndReconstructJobResidualsPtrOwned is the internal high-level
+// decoder entry. Generic batch APIs always pass nil compact capability, even
+// when handed a copied FrameWorkBatch that originated in an owned decode.
+func DecodeAndReconstructJobResidualsPtrOwned(b *FrameWorkBatch, index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualRequest, compact *FrameWorkLoopFilterCompactState) (FrameWorkTileResidualStats, error) {
+	if b == nil || compact == nil || !FrameWorkLoopFilterCompactStateActive(compact) ||
+		b.LoopFilterMasks == nil || !FrameWorkLoopFilterCompactMatchesMasks(b.LoopFilterMasks, compact) {
+		return FrameWorkTileResidualStats{}, ErrInvalidBatch
+	}
+	return decodeAndReconstructJobResidualsPtr(b, index, state, cdfs, scratch, req, compact)
+}
+
+func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualRequest, compact *FrameWorkLoopFilterCompactState) (FrameWorkTileResidualStats, error) {
 	if state == nil || scratch == nil || (req.Transforms == nil && !req.UseDefaultTransforms) {
 		return FrameWorkTileResidualStats{}, ErrInvalidBatch
 	}
@@ -1113,6 +1128,16 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *t
 	}
 	if req.LoopFilterMasks == nil {
 		req.LoopFilterMasks = b.LoopFilterMasks
+	}
+	compactActive := FrameWorkLoopFilterCompactStateActive(compact)
+	if compactActive {
+		if req.LoopFilterMasks == nil {
+			return FrameWorkTileResidualStats{}, ErrInvalidBatch
+		}
+		cols, rows, _, err := b.LoopFilterMapShape()
+		if err != nil || !FrameWorkLoopFilterCompactActiveShape(req.LoopFilterMasks, compact, cols, rows) {
+			return FrameWorkTileResidualStats{}, ErrInvalidBatch
+		}
 	}
 
 	loopCDFs := cdfs.Loop
@@ -1208,18 +1233,28 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsPtr(index int, state *t
 			return ErrInvalidBatch
 		}
 		frameWorkAccumulateResidualStats(&scratch.stats, visit.Coefficients.TotalStats())
-		if req.LoopFilterMap != nil {
-			if err := req.LoopFilterMap.MarkBlockPtr(visit, state); err != nil {
-				return fmt.Errorf("mark loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
-			}
-		}
 		if req.LoopFilterMasks.Valid() {
-			intra := !visit.Prediction.Valid || visit.Prediction.Intra
 			sbLog2 := 4
 			if b.Sequence.Use128x128Superblock {
 				sbLog2 = 5
 			}
-			req.LoopFilterMasks.build(&scratch.lfMask, visit, sbLog2, intra)
+			if compactActive {
+				if err := req.LoopFilterMasks.buildCompact(compact, &scratch.lfMask, visit, state, sbLog2); err != nil {
+					return fmt.Errorf("build compact loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
+				}
+			} else {
+				if req.LoopFilterMap != nil {
+					if err := req.LoopFilterMap.MarkBlockPtr(visit, state); err != nil {
+						return fmt.Errorf("mark loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
+					}
+				}
+				intra := !visit.Prediction.Valid || visit.Prediction.Intra
+				req.LoopFilterMasks.build(&scratch.lfMask, visit, sbLog2, intra)
+			}
+		} else if req.LoopFilterMap != nil {
+			if err := req.LoopFilterMap.MarkBlockPtr(visit, state); err != nil {
+				return fmt.Errorf("mark loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
+			}
 		}
 		if req.AfterBlock != nil {
 			return req.AfterBlock(*visit)

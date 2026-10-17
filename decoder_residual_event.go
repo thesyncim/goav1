@@ -74,6 +74,12 @@ type DecoderFrameWorkResidualEventRunner struct {
 	External DecoderFrameWorkExternalReferenceRuntime
 
 	sideRunner DecoderFrameWorkSideDataRunner
+
+	compactState      *internalthreading.FrameWorkLoopFilterCompactState
+	compactNoSkip     []byte
+	compactPostOwner  *DecoderFrameWorkReusableSupportedPostFilterRunner
+	compactBatchOwner *DecoderFrameWorkBatchResidualRunner
+	compactSideOwner  *DecoderFrameWorkSideData
 }
 
 // DecoderFrameWorkResidualEventsResult summarizes a batch of parsed decoder
@@ -370,6 +376,9 @@ func (r DecoderFrameWorkResidualEventRunner) boundSideDataRunner(side *DecoderFr
 	if side == nil || side != r.SideData {
 		return nil
 	}
+	if owned, ok := r.sideRunner.(decoderFrameWorkResidualSideDataRunner); ok && owned.SideData != side {
+		return nil
+	}
 	return r.sideRunner
 }
 
@@ -530,14 +539,18 @@ func bindDecoderFrameWorkResidualEventSideDataPtr(sequence SequenceHeader, event
 	return BindDecoderFrameWorkSideData(sequence, event.FrameSize, event.CDEF, event.Restoration, scratch)
 }
 
-func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, events []DecoderEvent, sideScratch DecoderFrameWorkSideDataScratch, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualEventsResult, error) {
+func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, events []DecoderEvent, sideScratch DecoderFrameWorkSideDataScratch, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (result DecoderFrameWorkResidualEventsResult, runErr error) {
+	defer func() {
+		if runErr != nil {
+			internalthreading.InvalidateFrameWorkLoopFilterCompactState(r.compactState)
+		}
+	}()
 	if post != nil && postRunner != nil {
 		return DecoderFrameWorkResidualEventsResult{}, ErrDecoderInvalidFrameWorkState
 	}
 	if r.Outputs != nil && len(r.Outputs) < decoderFrameWorkResidualEventsOutputLen(events) {
 		return DecoderFrameWorkResidualEventsResult{}, ErrFrameShortBuffer
 	}
-	var result DecoderFrameWorkResidualEventsResult
 	if r.Outputs != nil {
 		result.Outputs = r.Outputs[:0]
 	}
@@ -553,9 +566,25 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 			}
 			sidePtr = r.SideData
 			var err error
-			*sidePtr, err = BindDecoderFrameWorkResidualEventSideData(sequence, events[i], sideScratch)
+			compact := r.compactState
+			if compact != nil && !r.ownsCompactLoopFilter(sequence, postRunner, &events[i]) {
+				internalthreading.DeactivateFrameWorkLoopFilterCompactState(compact)
+				if r.BatchRunner != nil {
+					r.BatchRunner.compactBoundSide = nil
+				}
+				compact = nil
+			}
+			if compact != nil {
+				internalthreading.InvalidateFrameWorkLoopFilterCompactState(compact)
+				*sidePtr, err = bindDecoderFrameWorkSideData(sequence, events[i].FrameSize, events[i].CDEF, events[i].Restoration, sideScratch, compact, r.compactNoSkip, &events[i])
+			} else {
+				*sidePtr, err = BindDecoderFrameWorkResidualEventSideData(sequence, events[i], sideScratch)
+			}
 			if err != nil {
 				return result, err
+			}
+			if compact != nil && r.BatchRunner != nil {
+				r.BatchRunner.compactBoundSide = sidePtr
 			}
 		}
 
@@ -603,6 +632,36 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 	return result, nil
 }
 
+func (r DecoderFrameWorkResidualEventRunner) ownsCompactLoopFilter(sequence SequenceHeader, post DecoderFrameWorkPostFilterRunner, event *DecoderEvent) bool {
+	if event == nil {
+		return false
+	}
+	ownedSide, sideOK := r.sideRunner.(decoderFrameWorkResidualSideDataRunner)
+	if !sideOK || ownedSide.SideData == nil || ownedSide.SideData != r.SideData || ownedSide.BatchRunner != r.BatchRunner {
+		return false
+	}
+	payloadEvent := event.Kind == DecoderEventFrame || event.Kind == DecoderEventTileGroup
+	kindEligible := event.Kind == DecoderEventFrameHeader || payloadEvent
+	if payloadEvent && (event.TileGroup.TileCount != 1 || !event.TileGroup.Final) {
+		return false
+	}
+	if r.compactState == nil || r.BatchRunner == nil || r.compactBatchOwner == nil ||
+		r.BatchRunner != r.compactBatchOwner || r.BatchRunner.compactOwner != r.BatchRunner ||
+		r.SideData == nil || r.compactSideOwner == nil || r.SideData != r.compactSideOwner ||
+		r.BatchRunner.compactSideOwner != r.compactSideOwner ||
+		r.Workers != 1 || r.External.Enabled() || !kindEligible ||
+		sequence.ColorConfig.BitDepth != 8 || event.FrameSize.SuperResEnabled || event.FrameSize.AllowIntrabc ||
+		event.TileInfo.Cols != 1 || event.TileInfo.Rows != 1 ||
+		!(event.LoopFilter.LevelY[0] != 0 || event.LoopFilter.LevelY[1] != 0) {
+		return false
+	}
+	if r.WorkerPool != nil && r.WorkerPool.WorkerCount() != 1 {
+		return false
+	}
+	owner, ok := post.(*DecoderFrameWorkReusableSupportedPostFilterRunner)
+	return ok && owner == r.compactPostOwner && r.compactPostOwner != nil && len(r.compactNoSkip) != 0
+}
+
 func decoderFrameWorkResidualEventsOutputLen(events []DecoderEvent) int {
 	count := 0
 	for i := range events {
@@ -633,7 +692,12 @@ func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	return runDecoderFrameWorkEventWithResidualRunner(req, nil)
 }
 
-func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEventRequest, sideRunner DecoderFrameWorkSideDataRunner) (DecoderFrameWorkEventResult, error) {
+func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEventRequest, sideRunner DecoderFrameWorkSideDataRunner) (result DecoderFrameWorkEventResult, runErr error) {
+	defer func() {
+		if runErr != nil && req.Runner != nil && req.Runner.compactOwner == req.Runner {
+			internalthreading.InvalidateFrameWorkLoopFilterCompactState(req.Runner.compactState)
+		}
+	}()
 	if decoderFrameWorkResidualEventHasTilePayload(req.Event) && req.Runner == nil {
 		return DecoderFrameWorkEventResult{}, ErrThreadingInvalidBatch
 	}
@@ -696,13 +760,19 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		return DecoderFrameWorkEventResult{}, err
 	}
 	if hasTile && req.SideData != nil {
-		if tile.JobCount != 0 {
-			if err := SetDecoderFrameWorkBatchResidualRunnerSideData(req.Runner, *req.SideData); err != nil {
+		if decoderFrameWorkResidualSideRunnerOwnsCompact(sideRunner, req.Runner, req.SideData) {
+			if err := sideRunner.BindFrameWorkSideData(req.State, DecoderFrameWorkBatch{}); err != nil {
 				return DecoderFrameWorkEventResult{}, err
 			}
-		}
-		if err := SetDecoderFrameWorkSideData(req.State, *req.SideData); err != nil {
-			return DecoderFrameWorkEventResult{}, err
+		} else {
+			if tile.JobCount != 0 {
+				if err := SetDecoderFrameWorkBatchResidualRunnerSideData(req.Runner, *req.SideData); err != nil {
+					return DecoderFrameWorkEventResult{}, err
+				}
+			}
+			if err := SetDecoderFrameWorkSideData(req.State, *req.SideData); err != nil {
+				return DecoderFrameWorkEventResult{}, err
+			}
 		}
 	}
 
@@ -752,7 +822,11 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 
 	var run DecoderFrameWorkStepResult
 	if req.WorkerPool != nil && req.WorkerPool.WorkerCount() == 1 {
-		run, err = runDecoderFrameWorkEventSingleWorkerResidualRunner(req, event, step, output, references)
+		var compact *internalthreading.FrameWorkLoopFilterCompactState
+		if decoderFrameWorkResidualSideRunnerOwnsCompact(sideRunner, req.Runner, req.SideData) {
+			compact = req.Runner.compactState
+		}
+		run, err = runDecoderFrameWorkEventSingleWorkerResidualRunner(req, event, step, output, references, compact)
 	} else if req.PostRunner != nil {
 		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunners(req.Refs, req.FramePool, event, step, req.WorkerPool, output, references, event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.PostRunner)
 	} else {
@@ -777,7 +851,7 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	}, nil
 }
 
-func runDecoderFrameWorkEventSingleWorkerResidualRunner(req DecoderFrameWorkResidualEventRequest, event DecoderEvent, step DecoderFrameWorkStep, output *Frame, references []*Frame) (DecoderFrameWorkStepResult, error) {
+func runDecoderFrameWorkEventSingleWorkerResidualRunner(req DecoderFrameWorkResidualEventRequest, event DecoderEvent, step DecoderFrameWorkStep, output *Frame, references []*Frame, compact *internalthreading.FrameWorkLoopFilterCompactState) (DecoderFrameWorkStepResult, error) {
 	prepared, err := internaldecoder.PrepareFrameWorkStepWithPayloadContext(req.State, event, step, output, references, event.Unit.Payload, req.Jobs, req.Batches)
 	if err != nil {
 		return DecoderFrameWorkStepResult{}, err
@@ -808,6 +882,9 @@ func runDecoderFrameWorkEventSingleWorkerResidualRunner(req DecoderFrameWorkResi
 		return DecoderFrameWorkStepResult{}, firstErr
 	}
 	if req.PostRunner != nil {
+		if compact != nil {
+			return internaldecoder.CompleteFrameWorkPreparedPayloadStepRunnerOwned(req.State, req.Refs, req.FramePool, event, step, prepared, output, req.Releases, true, req.PostRunner, compact)
+		}
 		return internaldecoder.CompleteFrameWorkPreparedPayloadStepRunner(req.State, req.Refs, req.FramePool, event, step, prepared, output, req.Releases, true, req.PostRunner)
 	}
 	return internaldecoder.CompleteFrameWorkPreparedPayloadStep(req.State, req.Refs, req.FramePool, event, step, prepared, output, req.Releases, true, req.Post)
@@ -1098,9 +1175,30 @@ type decoderFrameWorkResidualSideDataRunner struct {
 	BatchRunner *DecoderFrameWorkBatchResidualRunner
 }
 
+func decoderFrameWorkResidualSideRunnerOwnsCompact(sideRunner DecoderFrameWorkSideDataRunner, batchRunner *DecoderFrameWorkBatchResidualRunner, side *DecoderFrameWorkSideData) bool {
+	r, ok := sideRunner.(decoderFrameWorkResidualSideDataRunner)
+	if !ok || side == nil || r.SideData != side || batchRunner == nil || r.BatchRunner != batchRunner ||
+		batchRunner.compactOwner != batchRunner || batchRunner.compactState == nil ||
+		batchRunner.compactSideOwner == nil || r.SideData != batchRunner.compactSideOwner ||
+		batchRunner.compactBoundSide != side {
+		return false
+	}
+	return internalthreading.FrameWorkLoopFilterCompactStateActive(batchRunner.compactState)
+}
+
 func (r decoderFrameWorkResidualSideDataRunner) BindFrameWorkSideData(state *DecoderFrameWorkState, _ DecoderFrameWorkBatch) error {
 	if r.SideData == nil {
 		return nil
+	}
+	if r.BatchRunner != nil && r.BatchRunner.compactOwner == r.BatchRunner &&
+		r.BatchRunner.compactSideOwner != nil && r.SideData == r.BatchRunner.compactSideOwner &&
+		r.BatchRunner.compactBoundSide == r.SideData &&
+		internalthreading.FrameWorkLoopFilterCompactStateActive(r.BatchRunner.compactState) {
+		compact := r.BatchRunner.compactState
+		if err := internaldecoder.SetOwnedFrameWorkLoopFilterSideData(state, r.SideData.CDEFIndexMap, r.SideData.LoopFilterMasks, compact, r.SideData.RestorationFrameBuffers); err != nil {
+			return err
+		}
+		return r.BatchRunner.setOwnedCompactSideData(r.SideData)
 	}
 	if r.BatchRunner != nil {
 		if err := SetDecoderFrameWorkBatchResidualRunnerSideData(r.BatchRunner, *r.SideData); err != nil {

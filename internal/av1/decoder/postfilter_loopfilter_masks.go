@@ -49,21 +49,37 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdgesFromMasks(masks *threa
 	if cols != masks.Cols || rows != masks.Rows {
 		return result, threading.ErrInvalidBatch
 	}
-	if frameWorkLoopFilterMapEmpty(filterMap) && ctx.LoopFilterMap != nil {
-		filterMap = *ctx.LoopFilterMap
-	}
-	if frameWorkLoopFilterMapEmpty(filterMap) {
+	compactActive := threading.FrameWorkLoopFilterCompactStateActive(ctx.compactLoopFilterState)
+	if compactActive && !threading.FrameWorkLoopFilterCompactReady(masks, ctx.compactLoopFilterState, cols, rows) {
 		return result, threading.ErrInvalidBatch
 	}
-	if err := frameWorkValidateLoopFilterMap(filterMap, cols, rows); err != nil {
-		return result, err
+	if !compactActive {
+		if frameWorkLoopFilterMapEmpty(filterMap) && ctx.LoopFilterMap != nil {
+			filterMap = *ctx.LoopFilterMap
+		}
+		if frameWorkLoopFilterMapEmpty(filterMap) {
+			return result, threading.ErrInvalidBatch
+		}
+		if err := frameWorkValidateLoopFilterMap(filterMap, cols, rows); err != nil {
+			return result, err
+		}
 	}
 	result.Plan.Active = true
 	result.Plan.MICols = uint16(cols)
 	result.Plan.MIRows = uint16(rows)
-	levelCtx := frameWorkLoopFilterLevelContextFor(&ctx.Event)
-	if err := ctx.populateLoopFilterLevelCacheFromMap(masks, filterMap, levelCtx, &result.Plan); err != nil {
-		return result, err
+	levelCtxValue := frameWorkLoopFilterLevelContextFor(&ctx.Event)
+	levelCtx := &levelCtxValue
+	if compactActive {
+		cells, blocks, ok := threading.FrameWorkLoopFilterCompactCoverage(masks, ctx.compactLoopFilterState, cols, rows)
+		if !ok || cells != int32(cols*rows) {
+			return result, threading.ErrInvalidBatch
+		}
+		result.Plan.Cells = cells
+		result.Plan.Blocks = blocks
+	} else {
+		if err := ctx.populateLoopFilterLevelCacheFromMap(masks, filterMap, levelCtx, &result.Plan); err != nil {
+			return result, err
+		}
 	}
 	maxPlane := loopfilter.PlaneV
 	if masks.Layout.Mono || ctx.Output.Format.MonoChrome || !masks.HasChroma {
@@ -80,7 +96,7 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdgesFromMasks(masks *threa
 // writes dav1d's create_lf_mask_{inter,intra} would perform (lfmask build.go).
 // The level cells are order-independent, so a raster walk over block origins is
 // sufficient.
-func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheFromMap(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap, levelCtx frameWorkLoopFilterLevelContext, plan *FrameWorkLoopFilterPostFilterPlan) error {
+func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheFromMap(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap, levelCtx *frameWorkLoopFilterLevelContext, plan *FrameWorkLoopFilterPostFilterPlan) error {
 	if len(masks.LevelCache) < masks.Cols*masks.Rows {
 		return threading.ErrInvalidBatch
 	}
@@ -95,7 +111,7 @@ func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheFromMap(masks 
 // neighbour band's rows, but never overwrites another block's cells -- so bands run
 // concurrently without a barrier between them. The caller must clear the whole
 // cache and complete every band before any level read (the mask apply scan).
-func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheRange(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap, levelCtx frameWorkLoopFilterLevelContext, plan *FrameWorkLoopFilterPostFilterPlan, rowStart, rowEnd int) error {
+func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheRange(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap, levelCtx *frameWorkLoopFilterLevelContext, plan *FrameWorkLoopFilterPostFilterPlan, rowStart, rowEnd int) error {
 	cols := masks.Cols
 	rows := masks.Rows
 	if len(masks.LevelCache) < cols*rows {
@@ -189,7 +205,7 @@ const (
 	maskDirBoth       = maskDirVertical | maskDirHorizontal
 )
 
-func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksInPlanePassOrder(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, levelCtx frameWorkLoopFilterLevelContext, minPlane, maxPlane loopfilter.Plane) error {
+func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksInPlanePassOrder(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, levelCtx *frameWorkLoopFilterLevelContext, minPlane, maxPlane loopfilter.Plane) error {
 	sharpness := ctx.Event.LoopFilter.Sharpness
 	lc := lfmask.LevelCache{Cells: masks.LevelCache, Stride: masks.Cols}
 	// Match the edge-list chroma gating: AV1 deblocks chroma only when the frame
@@ -696,7 +712,7 @@ func (b FrameWorkLoopFilterMaskBands) PopulateBand(rowStart, rowEnd int) error {
 	// keeping it off the shared struct keeps b.ctx.Event on this worker's stack.
 	levelCtx := frameWorkLoopFilterLevelContextFor(&b.ctx.Event)
 	var plan FrameWorkLoopFilterPostFilterPlan
-	return b.ctx.populateLoopFilterLevelCacheRange(b.masks, b.filterMap, levelCtx, &plan, rowStart, rowEnd)
+	return b.ctx.populateLoopFilterLevelCacheRange(b.masks, b.filterMap, &levelCtx, &plan, rowStart, rowEnd)
 }
 
 // RegionCols is the number of 128x128 mask region-columns (the horizontal-pass

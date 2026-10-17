@@ -98,7 +98,7 @@ func lfmaskLumaCells(t *testing.T, event Event, size parser.FrameSize, records [
 
 	for i := range records {
 		rec := &records[i]
-		levels, err := frameWorkResolveLoopFilterRecordLevels(levelCtx, rec)
+		levels, err := frameWorkResolveLoopFilterRecordLevels(&levelCtx, rec)
 		if err != nil {
 			t.Fatalf("resolve levels: %v", err)
 		}
@@ -278,7 +278,7 @@ func lfmaskChromaCells(t *testing.T, event Event, size parser.FrameSize, records
 
 	for i := range records {
 		rec := &records[i]
-		levels, err := frameWorkResolveLoopFilterRecordLevels(levelCtx, rec)
+		levels, err := frameWorkResolveLoopFilterRecordLevels(&levelCtx, rec)
 		if err != nil {
 			t.Fatalf("resolve levels: %v", err)
 		}

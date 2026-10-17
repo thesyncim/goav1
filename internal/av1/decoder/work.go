@@ -116,6 +116,10 @@ type FrameWorkPostFilterContext struct {
 	// scratch sizing derived from it stays stable.
 	pool *threading.Pool
 
+	// compactLoopFilterState is present only on the private single-worker
+	// decoder path. Public/manual postfilter contexts leave it nil.
+	compactLoopFilterState *threading.FrameWorkLoopFilterCompactState
+
 	completedPostFilters     FrameWorkPostFilterStage
 	detachedPostFilterOutput bool
 }
@@ -312,6 +316,7 @@ type FrameWorkState struct {
 	loopFilterMapValid           bool
 	loopFilterMasks              threading.FrameWorkLoopFilterMasks
 	loopFilterMasksValid         bool
+	loopFilterCompactState       *threading.FrameWorkLoopFilterCompactState
 	restorationFrameBuffers      threading.FrameWorkRestorationFrameBuffers
 	restorationFrameBuffersValid bool
 	externalReleaseScratch       [parser.RefFrames + 1]int
@@ -375,6 +380,7 @@ func (s *FrameWorkState) Reset() {
 	if s == nil {
 		return
 	}
+	deactivateFrameWorkStateLoopFilterCompact(s)
 	scaledRefPolicySet := s.scaledRefPolicySet
 	scaledRefPolicyEnabled := s.scaledRefPolicyEnabled
 	currentBack := s.currentMVFrameBack[:0]
@@ -445,6 +451,7 @@ func (s *FrameWorkState) resetActive() {
 	if s == nil {
 		return
 	}
+	deactivateFrameWorkStateLoopFilterCompact(s)
 	s.Surface = 0
 	s.ReferenceCount = 0
 	s.Sequence = threading.FrameWorkSequenceContext{}
@@ -474,6 +481,14 @@ func (s *FrameWorkState) resetActive() {
 	s.restorationFrameBuffersValid = false
 	s.sideDataBound = false
 	s.active = false
+}
+
+func deactivateFrameWorkStateLoopFilterCompact(s *FrameWorkState) {
+	if s == nil {
+		return
+	}
+	threading.DeactivateFrameWorkLoopFilterCompactState(s.loopFilterCompactState)
+	s.loopFilterCompactState = nil
 }
 
 func (s *FrameWorkState) resetReferenceState() {
@@ -554,6 +569,7 @@ func (s *FrameWorkState) SetLoopFilterMap(lfMap threading.FrameWorkLoopFilterMap
 	if err := lfMap.Reset(); err != nil {
 		return err
 	}
+	deactivateFrameWorkStateLoopFilterCompact(s)
 	s.loopFilterMap = lfMap
 	s.loopFilterMapValid = true
 	return nil
@@ -567,6 +583,7 @@ func (s *FrameWorkState) SetLoopFilterMasks(masks threading.FrameWorkLoopFilterM
 	if s == nil || !s.active {
 		return ErrInvalidFrameWorkState
 	}
+	deactivateFrameWorkStateLoopFilterCompact(s)
 	s.loopFilterMasks = masks
 	s.loopFilterMasksValid = true
 	return nil
@@ -603,10 +620,43 @@ func (s *FrameWorkState) SetSideData(cdefMap threading.FrameWorkCDEFIndexMap, lf
 	if err := buffers.ResetRecords(); err != nil {
 		return err
 	}
+	deactivateFrameWorkStateLoopFilterCompact(s)
 	s.cdefIndexMap = cdefMap
 	s.cdefIndexMapValid = true
 	s.loopFilterMap = lfMap
 	s.loopFilterMapValid = true
+	s.restorationFrameBuffers = buffers
+	s.restorationFrameBuffersValid = true
+	return nil
+}
+
+// SetOwnedFrameWorkLoopFilterSideData attaches the exact private compact
+// decoder capability. Unlike the public setters it intentionally leaves the
+// per-MI record map absent; callers must provide the owned compact handle.
+func SetOwnedFrameWorkLoopFilterSideData(s *FrameWorkState, cdefMap threading.FrameWorkCDEFIndexMap, masks threading.FrameWorkLoopFilterMasks, compact *threading.FrameWorkLoopFilterCompactState, buffers threading.FrameWorkRestorationFrameBuffers) error {
+	if s == nil || !s.active {
+		return ErrInvalidFrameWorkState
+	}
+	if compact == nil || !threading.FrameWorkLoopFilterCompactMatchesMasks(&masks, compact) ||
+		masks.Cols <= 0 || masks.Rows <= 0 || len(masks.LevelCache) < masks.Cols*masks.Rows {
+		return threading.ErrInvalidBatch
+	}
+	if err := cdefMap.Reset(); err != nil {
+		return err
+	}
+	if err := buffers.ResetRecords(); err != nil {
+		return err
+	}
+	if current := s.loopFilterCompactState; current != compact {
+		deactivateFrameWorkStateLoopFilterCompact(s)
+	}
+	s.cdefIndexMap = cdefMap
+	s.cdefIndexMapValid = true
+	s.loopFilterMap = threading.FrameWorkLoopFilterMap{}
+	s.loopFilterMapValid = false
+	s.loopFilterMasks = masks
+	s.loopFilterMasksValid = true
+	s.loopFilterCompactState = compact
 	s.restorationFrameBuffers = buffers
 	s.restorationFrameBuffersValid = true
 	return nil
@@ -1306,6 +1356,20 @@ func CompleteFrameWorkPreparedPayloadStep(s *FrameWorkState, refs *SurfaceRefere
 }
 
 func CompleteFrameWorkPreparedPayloadStepRunner(s *FrameWorkState, refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, prepared FrameWorkPreparedPayloadStep, output *frame.Frame, releases []int, executed bool, post FrameWorkPostFilterRunner) (FrameWorkStepResult, error) {
+	return completeFrameWorkPreparedPayloadStepRunner(s, refs, framePool, event, step, prepared, output, releases, executed, post, nil)
+}
+
+// CompleteFrameWorkPreparedPayloadStepRunnerOwned is the private high-level
+// decoder completion path. Generic/manual completion APIs never inject the
+// compact capability into postfilter contexts.
+func CompleteFrameWorkPreparedPayloadStepRunnerOwned(s *FrameWorkState, refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, prepared FrameWorkPreparedPayloadStep, output *frame.Frame, releases []int, executed bool, post FrameWorkPostFilterRunner, compact *threading.FrameWorkLoopFilterCompactState) (FrameWorkStepResult, error) {
+	if s == nil || compact == nil || s.loopFilterCompactState != compact || !threading.FrameWorkLoopFilterCompactStateActive(compact) {
+		return FrameWorkStepResult{}, ErrInvalidFrameWorkState
+	}
+	return completeFrameWorkPreparedPayloadStepRunner(s, refs, framePool, event, step, prepared, output, releases, executed, post, compact)
+}
+
+func completeFrameWorkPreparedPayloadStepRunner(s *FrameWorkState, refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, prepared FrameWorkPreparedPayloadStep, output *frame.Frame, releases []int, executed bool, post FrameWorkPostFilterRunner, compact *threading.FrameWorkLoopFilterCompactState) (FrameWorkStepResult, error) {
 	if output == nil {
 		var err error
 		output, err = frameWorkPostFilterRunnerOutput(event, framePool, step, post)
@@ -1313,7 +1377,7 @@ func CompleteFrameWorkPreparedPayloadStepRunner(s *FrameWorkState, refs *Surface
 			return FrameWorkStepResult{ExecutedTileWork: executed}, err
 		}
 	}
-	if err := runFrameWorkPostFilterRunner(event, step, output, prepared.ReferenceCount, executed, prepared.CDEFIndexMap, prepared.LoopFilterMap, prepared.LoopFilterMasks, prepared.Restoration, nil, post); err != nil {
+	if err := runFrameWorkPostFilterRunnerWithCompact(event, step, output, prepared.ReferenceCount, executed, prepared.CDEFIndexMap, prepared.LoopFilterMap, prepared.LoopFilterMasks, prepared.Restoration, nil, post, compact); err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
 	completed, releaseCount, err := s.FinishIfEventCompletesFrameWork(refs, framePool, event, releases)
@@ -1829,6 +1893,10 @@ func runFrameWorkPostFilter(event Event, step FrameWorkStep, output *frame.Frame
 }
 
 func runFrameWorkPostFilterRunner(event Event, step FrameWorkStep, output *frame.Frame, referenceCount uint8, executed bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, loopFilterMasks *threading.FrameWorkLoopFilterMasks, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, workerPool *threading.Pool, post FrameWorkPostFilterRunner) error {
+	return runFrameWorkPostFilterRunnerWithCompact(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, loopFilterMasks, restorationFrameBuffers, workerPool, post, nil)
+}
+
+func runFrameWorkPostFilterRunnerWithCompact(event Event, step FrameWorkStep, output *frame.Frame, referenceCount uint8, executed bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, loopFilterMasks *threading.FrameWorkLoopFilterMasks, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, workerPool *threading.Pool, post FrameWorkPostFilterRunner, compact *threading.FrameWorkLoopFilterCompactState) error {
 	if post == nil || !EventCompletesFrameWork(event) {
 		return nil
 	}
@@ -1846,6 +1914,7 @@ func runFrameWorkPostFilterRunner(event Event, step FrameWorkStep, output *frame
 		LoopFilterMasks:         loopFilterMasks,
 		RestorationFrameBuffers: restorationFrameBuffers,
 		pool:                    workerPool,
+		compactLoopFilterState:  compact,
 	})
 }
 

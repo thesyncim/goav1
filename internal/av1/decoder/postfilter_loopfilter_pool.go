@@ -85,8 +85,8 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksPooledBands(p
 
 	// Populate the per-4x4 level cache serially. PrepareLoopFilterMaskBands already
 	// cleared it; this fills the stats (Blocks/Cells/level maxes) into result.Plan.
-	levelCtx := frameWorkLoopFilterLevelContextFor(&ctx.Event)
-	if err := ctx.populateLoopFilterLevelCacheRange(bands.masks, bands.filterMap, levelCtx, &result.Plan, 0, bands.MIRows()); err != nil {
+	levelCtxValue := frameWorkLoopFilterLevelContextFor(&ctx.Event)
+	if err := ctx.populateLoopFilterLevelCacheRange(bands.masks, bands.filterMap, &levelCtxValue, &result.Plan, 0, bands.MIRows()); err != nil {
 		return result, err
 	}
 
