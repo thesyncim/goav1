@@ -108,30 +108,89 @@ func (b *Builder) CreateIntra(m *FilterMask, lc LevelCache, lv Levels, bx, by, i
 	maskEdgesChroma(&m.UV, cby4, cbx4, cbw4, cbh4, 0, uvtx, auv, luv, ssHor, ssVer)
 }
 
-// InterEdgeContext decomposes an inter block's variable transform tree and
-// writes, into right and bottom, the clamped log2 tx-context dav1d would carry
-// out of the block on its right column (l[y] = txa[0][0][y][w4-1], one per luma
-// 4x4 row, len bh4) and bottom row (a[x] = txa[1][0][h4-1][x], one per luma 4x4
-// col, len bw4). These are exactly the neighbour context a block to the right or
-// below reads for its left/top block edge. It reuses the Builder's decomposition
-// scratch. bw4/bh4 are the block's luma 4x4 extent (already clamped to the frame
-// if partial). right and bottom must have len >= bh4 and bw4 respectively.
+// InterEdgeContext walks only the transform-tree leaves that touch the block's
+// right or bottom edge and writes the clamped log2 tx-context dav1d carries out
+// of the block: right[y] is the width class for the rightmost luma 4x4 cell in
+// row y, and bottom[x] is the height class for the bottommost cell in column x.
+// These are exactly the neighbour contexts a block to the right or below reads
+// for its left/top edge. bw4/bh4 are the block's luma 4x4 extent (already
+// clamped to the frame if partial). right and bottom must have len >= bh4 and
+// bw4 respectively.
 func (b *Builder) InterEdgeContext(bw4, bh4 int, maxYtx tile.TransformSize, txMasks [2]uint16, right, bottom []uint8) {
 	td, _ := maxYtx.Dimensions()
+	if txMasks == [2]uint16{} {
+		// No tree node can split, so every visible cell carries the root
+		// transform's same clamped width/height classes.
+		b.IntraEdgeContext(bw4, bh4, maxYtx, right, bottom)
+		return
+	}
 	yOff := 0
 	for y := 0; y < bh4; y += int(td.H4) {
 		xOff := 0
 		for x := 0; x < bw4; x += int(td.W4) {
-			decompTx(&b.txa, y, x, maxYtx, 0, yOff, xOff, txMasks)
+			decompTxEdgeContext(bw4, bh4, right, bottom, y, x, maxYtx, 0, yOff, xOff, txMasks)
 			xOff++
 		}
 		yOff++
 	}
-	for y := 0; y < bh4; y++ {
-		right[y] = b.txa[0][0][y][bw4-1]
+}
+
+// decompTxEdgeContext mirrors decompTx's split decisions and tree-position
+// offsets, but visits only subtrees that contain a visible right-edge cell or
+// bottom-edge cell. Interior leaves cannot affect either carried context.
+func decompTxEdgeContext(bw4, bh4 int, right, bottom []uint8, yBase, xBase int, from tile.TransformSize, depth, yOff, xOff int, txMasks [2]uint16) {
+	if xBase >= bw4 || yBase >= bh4 {
+		return
 	}
-	for x := 0; x < bw4; x++ {
-		bottom[x] = b.txa[1][0][bh4-1][x]
+	td, _ := from.Dimensions()
+	w4, h4 := int(td.W4), int(td.H4)
+	rightX, bottomY := bw4-1, bh4-1
+	touchesRight := rightX >= xBase && rightX < xBase+w4
+	touchesBottom := bottomY >= yBase && bottomY < yBase+h4
+	if !touchesRight && !touchesBottom {
+		return
+	}
+
+	isSplit := false
+	if from != tile.TransformSize4x4 && depth <= 1 {
+		isSplit = (txMasks[depth]>>(uint(yOff*4+xOff)))&1 != 0
+	}
+	if isSplit {
+		sub := td.Sub
+		htw4 := w4 >> 1
+		hth4 := h4 >> 1
+		decompTxEdgeContext(bw4, bh4, right, bottom, yBase, xBase, sub, depth+1, yOff*2, xOff*2, txMasks)
+		if td.W4 >= td.H4 {
+			decompTxEdgeContext(bw4, bh4, right, bottom, yBase, xBase+htw4, sub, depth+1, yOff*2, xOff*2+1, txMasks)
+		}
+		if td.H4 >= td.W4 {
+			decompTxEdgeContext(bw4, bh4, right, bottom, yBase+hth4, xBase, sub, depth+1, yOff*2+1, xOff*2, txMasks)
+			if td.W4 >= td.H4 {
+				decompTxEdgeContext(bw4, bh4, right, bottom, yBase+hth4, xBase+htw4, sub, depth+1, yOff*2+1, xOff*2+1, txMasks)
+			}
+		}
+		return
+	}
+
+	if touchesRight {
+		lw := int(td.Log2W)
+		if lw > 2 {
+			lw = 2
+		}
+		endY := imin(yBase+h4, bh4)
+		for y := yBase; y < endY; y++ {
+			right[y] = uint8(lw)
+		}
+	}
+	if touchesBottom {
+		lh := int(td.Log2H)
+		if lh > 2 {
+			lh = 2
+		}
+		endX := imin(xBase+w4, bw4)
+		for x := xBase; x < endX; x++ {
+			bottom[x] = uint8(lh)
+		}
 	}
 }
 

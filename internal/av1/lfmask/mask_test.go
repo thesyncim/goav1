@@ -1,6 +1,7 @@
 package lfmask
 
 import (
+	"math/rand"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
@@ -76,6 +77,151 @@ func TestDecompTxSplit8x8(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestInterEdgeContextMatchesFullTransformGrid(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x1fca))
+	var builder Builder // Reuse scratch across differently sized calls.
+	for size := tile.TransformSize4x4; size <= tile.TransformSize64x16; size++ {
+		dims, ok := size.Dimensions()
+		if !ok {
+			t.Fatalf("invalid transform size %d", size)
+		}
+		widths := edgeContextTestExtents(int(dims.W4))
+		heights := edgeContextTestExtents(int(dims.H4))
+		masks := [][2]uint16{
+			{},
+			{0xffff, 0xffff},
+			{0xaaaa, 0x5555},
+			{0x5555, 0xaaaa},
+			{0x8421, 0x1248},
+			{0x1248, 0x8421},
+		}
+		for i := 0; i < 4; i++ {
+			masks = append(masks, [2]uint16{uint16(rng.Uint32()), uint16(rng.Uint32())})
+		}
+
+		for _, bw4 := range widths {
+			for _, bh4 := range heights {
+				for _, txMasks := range masks {
+					assertInterEdgeContextMatchesOracle(t, &builder, bw4, bh4, size, txMasks)
+				}
+			}
+		}
+
+		// Exercise every root/depth-1 split bit individually on a multi-root,
+		// partially visible block where those bits can select border leaves.
+		bw4 := minTestInt(32, maxTestInt(1, int(dims.W4)*2-1))
+		bh4 := minTestInt(32, maxTestInt(1, int(dims.H4)*2-1))
+		for depth := 0; depth < 2; depth++ {
+			for bit := uint(0); bit < 16; bit++ {
+				var txMasks [2]uint16
+				if depth == 0 {
+					txMasks[0] = 1 << bit
+				} else {
+					// Split each root so the selected depth-1 bit is reachable.
+					txMasks[0] = 0xffff
+					txMasks[1] = 1 << bit
+				}
+				assertInterEdgeContextMatchesOracle(t, &builder, bw4, bh4, size, txMasks)
+			}
+		}
+	}
+}
+
+func assertInterEdgeContextMatchesOracle(t *testing.T, builder *Builder, bw4, bh4 int, size tile.TransformSize, txMasks [2]uint16) {
+	t.Helper()
+	var wantRight, wantBottom [32]uint8
+	var txa [2][2][32][32]uint8
+	td, _ := size.Dimensions()
+	yOff := 0
+	for y := 0; y < bh4; y += int(td.H4) {
+		xOff := 0
+		for x := 0; x < bw4; x += int(td.W4) {
+			decompTx(&txa, y, x, size, 0, yOff, xOff, txMasks)
+			xOff++
+		}
+		yOff++
+	}
+	for y := 0; y < bh4; y++ {
+		wantRight[y] = txa[0][0][y][bw4-1]
+	}
+	for x := 0; x < bw4; x++ {
+		wantBottom[x] = txa[1][0][bh4-1][x]
+	}
+
+	const guard = uint8(0xa5)
+	rightBuf := make([]uint8, bh4+2)
+	bottomBuf := make([]uint8, bw4+2)
+	for i := range rightBuf {
+		rightBuf[i] = guard
+	}
+	for i := range bottomBuf {
+		bottomBuf[i] = guard
+	}
+	builder.InterEdgeContext(bw4, bh4, size, txMasks, rightBuf[1:bh4+1], bottomBuf[1:bw4+1])
+	if rightBuf[0] != guard || rightBuf[len(rightBuf)-1] != guard || bottomBuf[0] != guard || bottomBuf[len(bottomBuf)-1] != guard {
+		t.Fatalf("size=%d extent=%dx%d masks=%04x/%04x wrote outside edge slices", size, bw4, bh4, txMasks[0], txMasks[1])
+	}
+	for y := 0; y < bh4; y++ {
+		if got := rightBuf[y+1]; got != wantRight[y] {
+			t.Fatalf("size=%d extent=%dx%d masks=%04x/%04x right[%d]=%d want %d", size, bw4, bh4, txMasks[0], txMasks[1], y, got, wantRight[y])
+		}
+	}
+	for x := 0; x < bw4; x++ {
+		if got := bottomBuf[x+1]; got != wantBottom[x] {
+			t.Fatalf("size=%d extent=%dx%d masks=%04x/%04x bottom[%d]=%d want %d", size, bw4, bh4, txMasks[0], txMasks[1], x, got, wantBottom[x])
+		}
+	}
+}
+
+func edgeContextTestExtents(tileExtent int) []int {
+	values := [...]int{
+		1,
+		tileExtent/4 + 1,
+		tileExtent/2 - 1,
+		tileExtent / 2,
+		tileExtent/2 + 1,
+		tileExtent - 1,
+		tileExtent,
+		tileExtent + 1,
+		2*tileExtent - 1,
+		2*tileExtent + 1,
+		32,
+	}
+	var out []int
+	for _, value := range values {
+		if value < 1 {
+			value = 1
+		} else if value > 32 {
+			value = 32
+		}
+		found := false
+		for _, prior := range out {
+			if prior == value {
+				found = true
+				break
+			}
+		}
+		if !found {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func minTestInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxTestInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func TestMaskEdgesIntra4x4(t *testing.T) {

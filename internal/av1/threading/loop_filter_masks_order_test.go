@@ -149,3 +149,57 @@ func TestBuildFromMapMatchesZOrderStaircase(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildFromMapMatchesInterZOrderStaircaseAtPartialFrame(t *testing.T) {
+	const cols, rows = 31, 30 // Clip the final blocks at the right and bottom edges.
+	raw := zOrderStaircase(32, 32)
+	blocks := make([]orderTestBlock, 0, len(raw))
+	for _, b := range raw {
+		if b.bx >= cols || b.by >= rows {
+			continue
+		}
+		if b.bx+b.bw4 > cols {
+			b.bw4 = cols - b.bx
+		}
+		if b.by+b.bh4 > rows {
+			b.bh4 = rows - b.by
+		}
+		b.intra = false
+		switch b.size {
+		case tile.BlockSize32x32:
+			// Split the root, then only selected depth-1 children.
+			b.tree.Split = [2]uint16{1, 0x0021}
+		case tile.BlockSize16x16:
+			b.tree.Split = [2]uint16{1, 0x0001}
+		case tile.BlockSize8x8:
+			// The root split reaches 4x4 leaves.
+			b.tree.Split = [2]uint16{1, 0}
+		}
+		blocks = append(blocks, b)
+	}
+
+	ref, _ := newOrderTestMasks(t, cols, rows)
+	ordered := make([]OrderedBlock, len(blocks))
+	for i, b := range blocks {
+		ordered[i] = OrderedBlock{BX: b.bx, BY: b.by, Size: b.size, Tree: b.tree, Intra: false}
+	}
+	ref.BuildFromOrderedBlocks(ordered, 4)
+
+	got, m := newOrderTestMasks(t, cols, rows)
+	for _, b := range blocks {
+		b.put(m)
+	}
+	var scratch FrameWorkLoopFilterMaskBuildScratch
+	if err := got.BuildFromMap(&scratch, m, 4); err != nil {
+		t.Fatalf("BuildFromMap: %v", err)
+	}
+	refBits, gotBits := ref.MaskBits(), got.MaskBits()
+	if len(refBits) != len(gotBits) {
+		t.Fatalf("mask count mismatch %d vs %d", len(refBits), len(gotBits))
+	}
+	for i := range refBits {
+		if refBits[i] != gotBits[i] {
+			t.Fatalf("partial-frame inter mask differs in region %d", i)
+		}
+	}
+}
