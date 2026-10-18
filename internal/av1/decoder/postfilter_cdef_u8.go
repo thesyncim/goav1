@@ -40,9 +40,10 @@ import (
 // frames keep the uint16 path unchanged.
 
 // cdefByteScratchView reinterprets a segment of the uint16 sample scratch
-// arena as byte storage for the pre-filter line backups. The 8-bit walk needs
-// only 4 plane-width rows, far below the arena's plane-sized allocation; the
-// arena is otherwise unused on the u8 path (no snapshot).
+// arena as byte storage for 8-bit CDEF line backups or a real-tap unit. The
+// 8-bit walk needs only 4 plane-width rows for its line buffers, far below
+// the arena's plane-sized allocation; the arena is otherwise unused on the
+// u8 path (no snapshot).
 func cdefByteScratchView(seg []uint16, n int) ([]byte, bool) {
 	if n <= 0 || len(seg) == 0 || n > 2*len(seg) {
 		return nil, false
@@ -194,6 +195,29 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 				prevFiltered = false
 				continue
 			}
+			if frameWorkCDEFCanUseSecondaryByteUnit(cdef.U8SecondaryOnlyByteInteriorAvailable(), needPrimaryDirection, filterParams, unitX, unitY, unitW, unitH, width, height, blockWidth, blockHeight, cdefDebugUnit(plane, unitRow, unitCol)) {
+				byteInput, byteOK := cdefByteScratchView(input, 2*len(input))
+				if byteOK && frameWorkAssembleCDEFSecondaryByteInputU8(byteInput, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitX, unitY, unitW, unitH) == nil {
+					// Preserve the previous left halo until the byte filter accepts
+					// the unit. Its entry validates the complete read window before
+					// writing, so a decline can safely fall through to the wide path.
+					oldLeftStorage := leftStorage
+					nextUnitX := unitX + unitSizeX
+					if nextUnitX < width {
+						for r := 0; r < unitH; r++ {
+							rowOff := (unitY+r)*stride + nextUnitX - cdef.HorizontalBorder
+							copy(leftStorage[r*cdef.HorizontalBorder:(r+1)*cdef.HorizontalBorder], dst.Pix[rowOff:rowOff+cdef.HorizontalBorder])
+						}
+					}
+					if cdef.FilterFrameBlocksU8SecondaryOnlyByteInteriorTrusted(dst.Pix[unitOrigin:], stride, byteInput, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, unitW, unitH, blocks, filterParams) {
+						prevFiltered = true
+						units++
+						blocksTotal += uint32(len(blocks))
+						continue
+					}
+					leftStorage = oldLeftStorage
+				}
+			}
 			if err := frameWorkAssembleCDEFInputU8(input, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
 				return units, blocksTotal, err
 			}
@@ -227,6 +251,74 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 		}
 	}
 	return units, blocksTotal, nil
+}
+
+func frameWorkCDEFCanUseSecondaryByteUnit(available bool, needPrimaryDirection bool, params cdef.FrameFilterParams, unitX int, unitY int, unitW int, unitH int, planeWidth int, planeHeight int, blockWidth int, blockHeight int, debug bool) bool {
+	const tapReach = 2
+	if !available || needPrimaryDirection || debug || params.Level != 0 ||
+		(params.SecondaryStrength != 1 && params.SecondaryStrength != 2 && params.SecondaryStrength != 4) ||
+		(blockWidth != 4 && blockWidth != 8) || (blockHeight != 4 && blockHeight != 8) ||
+		unitW <= 0 || unitH <= 0 || unitW%blockWidth != 0 || unitH%blockHeight != 0 {
+		return false
+	}
+	return unitX >= tapReach && unitY >= tapReach &&
+		unitX+unitW+tapReach <= planeWidth &&
+		unitY+unitH+tapReach <= planeHeight
+}
+
+// frameWorkAssembleCDEFSecondaryByteInputU8 copies only the real two-pixel
+// neighborhood consumed by the byte-native secondary-only kernel. Unlike the
+// wide assembly, this fast route requires a complete in-plane halo and uses
+// no sentinels or edge replication. Input is a byte view over the worker's
+// existing uint16 scratch; every byte read by the kernel is written here.
+func frameWorkAssembleCDEFSecondaryByteInputU8(input []byte, dst frame.Plane, topBuf []byte, bottomBuf []byte, leftBuf []byte, leftFromBackup bool, unitX int, unitY int, unitW int, unitH int) error {
+	const tapReach = 2
+	width := dst.Width
+	height := dst.Height
+	stride := dst.Stride
+	const halo = cdef.VerticalBorder
+	spanWidth := unitW + 2*tapReach
+	if unitW <= 0 || unitH <= 0 || unitX < tapReach || unitY < cdef.VerticalBorder ||
+		unitX+unitW+tapReach > width || unitY+unitH+cdef.VerticalBorder > height ||
+		spanWidth > cdef.BStride ||
+		cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder+(unitH+1)*cdef.BStride+unitW+2 > len(input) ||
+		leftFromBackup && len(leftBuf) < cdef.HorizontalBorder*unitH ||
+		unitY >= halo && len(topBuf) < cdef.VerticalBorder*width ||
+		unitY+unitH+halo <= height && bottomBuf != nil && len(bottomBuf) < cdef.VerticalBorder*width {
+		return threading.ErrInvalidBatch
+	}
+	origin := cdef.VerticalBorder*cdef.BStride + cdef.HorizontalBorder
+	for row := -cdef.VerticalBorder; row < unitH+cdef.VerticalBorder; row++ {
+		dstRow := origin + row*cdef.BStride - tapReach
+		if row < 0 {
+			srcRow := row + cdef.VerticalBorder
+			src := topBuf[srcRow*width+unitX-tapReach:]
+			copy(input[dstRow:dstRow+spanWidth], src[:spanWidth])
+			continue
+		}
+		if row >= unitH {
+			srcRow := row - unitH
+			var src []byte
+			if bottomBuf != nil {
+				src = bottomBuf[srcRow*width+unitX-tapReach:]
+			} else {
+				srcOffset := (unitY+row)*stride + unitX - tapReach
+				src = dst.Pix[srcOffset:]
+			}
+			copy(input[dstRow:dstRow+spanWidth], src[:spanWidth])
+			continue
+		}
+		if leftFromBackup {
+			leftOffset := row*cdef.HorizontalBorder + cdef.HorizontalBorder - tapReach
+			copy(input[dstRow:dstRow+tapReach], leftBuf[leftOffset:leftOffset+tapReach])
+		} else {
+			srcOffset := (unitY+row)*stride + unitX - tapReach
+			copy(input[dstRow:dstRow+tapReach], dst.Pix[srcOffset:srcOffset+tapReach])
+		}
+		srcOffset := (unitY+row)*stride + unitX
+		copy(input[dstRow+tapReach:dstRow+spanWidth], dst.Pix[srcOffset:srcOffset+unitW+tapReach])
+	}
+	return nil
 }
 
 // frameWorkAssembleCDEFInputU8 builds the unit's padded uint16 tap buffer
