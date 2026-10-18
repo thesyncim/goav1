@@ -707,27 +707,18 @@ func uniCompRefContext(ctx *BlockModeContext, req InterReferenceRequest, bit int
 // SMOOTH_V) flips get_intra_edge_filter_type and corrupts directional chroma
 // prediction (av1-1-b8-00-quantizer-00 frame 1 mi(15,82) D135 chroma).
 func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result InterReferencesResult, hasChroma bool) error {
-	if c == nil {
-		return ErrInvalidDecodeState
-	}
-	dims, ok := size.Dimensions()
-	if !ok {
-		return ErrInvalidDecodeState
-	}
-	if x4 < 0 || y4 < 0 ||
-		x4+int(dims.W4) > MaxBlockModeSlots ||
-		y4+int(dims.H4) > MaxBlockModeSlots {
-		return ErrInvalidDecodeState
-	}
-	if !result.Ref[0].Valid() {
-		return ErrInvalidDecodeState
-	}
-	if result.Compound {
-		if !result.Ref[1].Valid() {
-			return ErrInvalidDecodeState
-		}
-	} else if result.Ref[1] != ReferenceFrameNone {
-		return ErrInvalidDecodeState
+	_, err := c.markInterContext(size, x4, y4, result, hasChroma, false)
+	return err
+}
+
+// markInterContext records the shared reference context for an inter block.
+// MarkInterMotion sets motion validity and grid state immediately afterward,
+// so motionKnown keeps this shared setup from clearing state that it will
+// replace in full.
+func (c *BlockModeContext) markInterContext(size BlockSize, x4 int, y4 int, result InterReferencesResult, hasChroma, motionKnown bool) (BlockDimensions, error) {
+	dims, err := c.validateInterContext(size, x4, y4, result)
+	if err != nil {
+		return BlockDimensions{}, err
 	}
 
 	compound := boolByte(result.Compound)
@@ -739,12 +730,16 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 	clear(c.AboveIntra[x4:xEnd])
 	clear(c.AboveCompGroup[x4:xEnd])
 	clear(c.AboveInterIntra[x4:xEnd])
-	clear(c.AboveMotionValid[x4:xEnd])
+	if !motionKnown {
+		clear(c.AboveMotionValid[x4:xEnd])
+	}
 	clear(c.AboveInterpValid[x4:xEnd])
 	clear(c.LeftIntra[y4:yEnd])
 	clear(c.LeftCompGroup[y4:yEnd])
 	clear(c.LeftInterIntra[y4:yEnd])
-	clear(c.LeftMotionValid[y4:yEnd])
+	if !motionKnown {
+		clear(c.LeftMotionValid[y4:yEnd])
+	}
 	clear(c.LeftInterpValid[y4:yEnd])
 	if hasChroma {
 		clear(c.AboveChromaIntra[x4:xEnd])
@@ -766,8 +761,38 @@ func (c *BlockModeContext) MarkInter(size BlockSize, x4 int, y4 int, result Inte
 		c.LeftCompIndex[y4+i] = compIndex
 		c.LeftBlockSize[y4+i] = size
 	}
-	c.clearGridInterMotion(size, x4, y4, dims)
-	return nil
+	if !motionKnown {
+		c.clearGridInterMotion(size, x4, y4, dims)
+	}
+	return dims, nil
+}
+
+// validateInterContext preserves the public reference-commit validation order.
+func (c *BlockModeContext) validateInterContext(size BlockSize, x4, y4 int, result InterReferencesResult) (BlockDimensions, error) {
+	if c == nil {
+		return BlockDimensions{}, ErrInvalidDecodeState
+	}
+	dims, ok := size.Dimensions()
+	if !ok {
+		return BlockDimensions{}, ErrInvalidDecodeState
+	}
+	if x4 < 0 || y4 < 0 ||
+		x4+int(dims.W4) > MaxBlockModeSlots ||
+		y4+int(dims.H4) > MaxBlockModeSlots {
+		return BlockDimensions{}, ErrInvalidDecodeState
+	}
+	if !result.Ref[0].Valid() {
+		return BlockDimensions{}, ErrInvalidDecodeState
+	}
+	if result.Compound {
+		if !result.Ref[1].Valid() {
+			return BlockDimensions{}, ErrInvalidDecodeState
+		}
+	} else if result.Ref[1] != ReferenceFrameNone {
+		return BlockDimensions{}, ErrInvalidDecodeState
+	}
+
+	return dims, nil
 }
 
 // MarkInterIntra records that the block at (x4, y4) of `size` is an
