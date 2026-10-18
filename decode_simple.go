@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 )
 
@@ -281,6 +282,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		format:        format,
 		useExternal:   useExternal,
 	}
+	internaldecoder.EnableOwnedTemporalMotionStorage(&d.state)
 	d.state.SetScaledReferencePredictionEnabled(internalthreading.ScaledReferencePredictionEnabled())
 	if d.useExternal {
 		d.external.outputPool = &d.outputPool

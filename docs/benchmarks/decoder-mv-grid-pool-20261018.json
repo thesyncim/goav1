@@ -1,0 +1,410 @@
+{
+  "scope": "R7 private decoder MV grid sharing and unused ordinary-intra omission",
+  "freeze": {
+    "base": "10f4a6ae956e881e8d9e85a4797c55a441cd27c3",
+    "baseline": "/private/tmp/decoder-superres-direct-20261018/candidate-fold.test",
+    "candidate": "/private/tmp/decoder-mv-grid-pool-20261018/candidate-v1.test",
+    "baseline_sha256": "ee822414026a0fa7df468c41026a850c9d8268834d4b7c5e6fae0580a6d9f8e6",
+    "candidate_sha256": "6f69413a0296672310718e022d19753bd4d1de6ea883737d152647cdba3cf6a8",
+    "sources": {
+      "decode_simple.go": "a093cd3c71944c42d6af286a2546acaf71aa24032aa0e3c17e7071e1c7fd3c2e",
+      "internal/av1/decoder/work.go": "d29ee43661adfb03fddefa912b319e96963df5c4a9ca7952d3606d45f15028fe",
+      "internal/av1/decoder/work_mv_pool_test.go": "37449587ca8099bb7cbdb30f969d9a937698a541dc5f156c3fb73f7a41824c99",
+      "public_fullclip_corpus_bench_test.go": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59",
+      "go.mod": "2d9afa6f2b2dd13cf953546a7076df9c85f014f10913b47fbaf80d9116ed6e19"
+    },
+    "focused_log_sha256": "5611418c36561620917bd09d5ae1c1c4a36c0fb6d0f7b455e5d2dd8535cb37f7",
+    "focused_result": "PASS 0.370s: frozen main-10f4 prepare/publish oracle, mixed 48-frame sequence, metadata/setup counters, slot aliasing, generic isolation, 9-buffer capacity, abort/finish/error/Reset, shared/show-existing/intrabc, zero allocations",
+    "criterion": "Fixed 3-pair warm public screen: at least one affected case >=0.5% paired-GM latency saved and at least 2/3 faster pairs; other affected case must not regress >1% paired GM; all rows retained, 0 warm allocations; no unchanged resampling. p720_inter_q32 and p360_intra_q32 are BOTH affected."
+  },
+  "protocol": {
+    "base": "10f4a6ae956e881e8d9e85a4797c55a441cd27c3",
+    "binaries": {
+      "B": "/private/tmp/decoder-superres-direct-20261018/candidate-fold.test",
+      "C": "/private/tmp/decoder-mv-grid-pool-20261018/candidate-v1.test"
+    },
+    "hashes": {
+      "B": "ee822414026a0fa7df468c41026a850c9d8268834d4b7c5e6fae0580a6d9f8e6",
+      "C": "6f69413a0296672310718e022d19753bd4d1de6ea883737d152647cdba3cf6a8"
+    },
+    "sources": {
+      "decode_simple.go": "a093cd3c71944c42d6af286a2546acaf71aa24032aa0e3c17e7071e1c7fd3c2e",
+      "internal/av1/decoder/work.go": "d29ee43661adfb03fddefa912b319e96963df5c4a9ca7952d3606d45f15028fe",
+      "internal/av1/decoder/work_mv_pool_test.go": "37449587ca8099bb7cbdb30f969d9a937698a541dc5f156c3fb73f7a41824c99",
+      "public_fullclip_corpus_bench_test.go": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59",
+      "go.mod": "2d9afa6f2b2dd13cf953546a7076df9c85f014f10913b47fbaf80d9116ed6e19"
+    },
+    "ops": 15,
+    "plan": [
+      [
+        0,
+        "p720_inter_q32",
+        "BC"
+      ],
+      [
+        0,
+        "p360_intra_q32",
+        "CB"
+      ],
+      [
+        1,
+        "p360_intra_q32",
+        "BC"
+      ],
+      [
+        1,
+        "p720_inter_q32",
+        "CB"
+      ],
+      [
+        2,
+        "p720_inter_q32",
+        "CB"
+      ],
+      [
+        2,
+        "p360_intra_q32",
+        "BC"
+      ]
+    ],
+    "protocol": "R7 private owned MV grid sharing and ordinary-intra omission; Fixed 3-pair warm public screen: at least one affected case >=0.5% paired-GM latency saved and at least 2/3 faster pairs; other affected case must not regress >1% paired GM; all rows retained, 0 warm allocations; no unchanged resampling. p720_inter_q32 and p360_intra_q32 are BOTH affected.",
+    "initial_load": [
+      8.28515625,
+      21.47900390625,
+      22.23779296875
+    ]
+  },
+  "summary": {
+    "p720_inter_q32": {
+      "paired_gm_saved_pct": 1.2400859389944285,
+      "wins": 2,
+      "pairs": [
+        {
+          "round": 0,
+          "B": 158371250.0,
+          "C": 158785386.0,
+          "saved_pct": -0.26149695730759426
+        },
+        {
+          "round": 1,
+          "C": 154669550.0,
+          "B": 154711508.0,
+          "saved_pct": 0.027120154500726024
+        },
+        {
+          "round": 2,
+          "C": 156509117.0,
+          "B": 162859808.0,
+          "saved_pct": 3.8994832905611676
+        }
+      ]
+    },
+    "p360_intra_q32": {
+      "paired_gm_saved_pct": 1.1782874481093386,
+      "wins": 2,
+      "pairs": [
+        {
+          "round": 0,
+          "C": 67192225.0,
+          "B": 66354364.0,
+          "saved_pct": -1.2627067000446246
+        },
+        {
+          "round": 1,
+          "B": 68284883.0,
+          "C": 66342917.0,
+          "saved_pct": 2.843917884431313
+        },
+        {
+          "round": 2,
+          "B": 67302675.0,
+          "C": 66019150.0,
+          "saved_pct": 1.9070935887763762
+        }
+      ]
+    },
+    "audit": {
+      "rows": 12,
+      "all_0_allocs": true,
+      "binary_and_source_hashes_unchanged": true,
+      "final_load": [
+        7.4658203125,
+        20.44189453125,
+        21.84814453125
+      ]
+    }
+  },
+  "rows": [
+    {
+      "round": 0,
+      "clip": "p720_inter_q32",
+      "role": "B",
+      "exit": 0,
+      "seconds": 2.605592727661133,
+      "log": "00-r0-p720_inter_q32-B.log",
+      "sha256": "9488cc4b45be42eca56ba617522db0c61a6024d4c6bc080398544bf672e35166",
+      "load": [
+        8.28515625,
+        21.47900390625,
+        22.23779296875
+      ],
+      "ops": 15,
+      "ns_op": 158371250.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 158371250 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 0,
+      "clip": "p720_inter_q32",
+      "role": "C",
+      "exit": 0,
+      "seconds": 3.1465940475463867,
+      "log": "01-r0-p720_inter_q32-C.log",
+      "sha256": "c733d9658b6cc247af0fe81b9d5d131ca7f04e597f3705f252012aae1502bd55",
+      "load": [
+        8.34228515625,
+        21.271484375,
+        22.16015625
+      ],
+      "ops": 15,
+      "ns_op": 158785386.0,
+      "frames": 48.0,
+      "bytes_op": 3,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 158785386 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 0,
+      "clip": "p360_intra_q32",
+      "role": "C",
+      "exit": 0,
+      "seconds": 1.1546177864074707,
+      "log": "02-r0-p360_intra_q32-C.log",
+      "sha256": "9d064717a92e24f904906cfac41066c38fccb6c4a3b1139141ec1245e86a62b8",
+      "load": [
+        8.34228515625,
+        21.271484375,
+        22.16015625
+      ],
+      "ops": 15,
+      "ns_op": 67192225.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  67192225 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 0,
+      "clip": "p360_intra_q32",
+      "role": "B",
+      "exit": 0,
+      "seconds": 1.1440918445587158,
+      "log": "03-r0-p360_intra_q32-B.log",
+      "sha256": "2b4fa317baf3536cf52725a645cfc46acd716583a90190bb749dcdafbc818c0f",
+      "load": [
+        8.34228515625,
+        21.271484375,
+        22.16015625
+      ],
+      "ops": 15,
+      "ns_op": 66354364.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  66354364 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 1,
+      "clip": "p360_intra_q32",
+      "role": "B",
+      "exit": 0,
+      "seconds": 1.1567859649658203,
+      "log": "04-r1-p360_intra_q32-B.log",
+      "sha256": "90a41e3148cb643d0ca68caa553a85fe4059c71a1a3523e91114d52383d85bf4",
+      "load": [
+        8.34228515625,
+        21.271484375,
+        22.16015625
+      ],
+      "ops": 15,
+      "ns_op": 68284883.0,
+      "frames": 48.0,
+      "bytes_op": 3,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  68284883 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 1,
+      "clip": "p360_intra_q32",
+      "role": "C",
+      "exit": 0,
+      "seconds": 1.1581621170043945,
+      "log": "05-r1-p360_intra_q32-C.log",
+      "sha256": "394009938bca4bef057a4b657be94e9d237c02c6711761e52dbc088c6eebd12c",
+      "load": [
+        7.9140625,
+        20.9677734375,
+        22.0478515625
+      ],
+      "ops": 15,
+      "ns_op": 66342917.0,
+      "frames": 48.0,
+      "bytes_op": 3,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  66342917 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 1,
+      "clip": "p720_inter_q32",
+      "role": "C",
+      "exit": 0,
+      "seconds": 2.559523820877075,
+      "log": "06-r1-p720_inter_q32-C.log",
+      "sha256": "f10f87f7aba2dd04d87f0626aea4a5b1f35f21f56a055a680f9b1616c5e56116",
+      "load": [
+        7.9140625,
+        20.9677734375,
+        22.0478515625
+      ],
+      "ops": 15,
+      "ns_op": 154669550.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 154669550 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 1,
+      "clip": "p720_inter_q32",
+      "role": "B",
+      "exit": 0,
+      "seconds": 2.5645430088043213,
+      "log": "07-r1-p720_inter_q32-B.log",
+      "sha256": "790623f1bf09c972bcc051fbada7fd82e5ffcbafaaf211373afa0d55c52ee75c",
+      "load": [
+        7.6806640625,
+        20.70263671875,
+        21.94775390625
+      ],
+      "ops": 15,
+      "ns_op": 154711508.0,
+      "frames": 48.0,
+      "bytes_op": 3,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 154711508 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 2,
+      "clip": "p720_inter_q32",
+      "role": "C",
+      "exit": 0,
+      "seconds": 2.603348970413208,
+      "log": "08-r2-p720_inter_q32-C.log",
+      "sha256": "c56d57046575ed338a7451a1f69bfcd8fe4c647a21668eaf460c6b359f1d946d",
+      "load": [
+        7.6806640625,
+        20.70263671875,
+        21.94775390625
+      ],
+      "ops": 15,
+      "ns_op": 156509117.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 156509117 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 2,
+      "clip": "p720_inter_q32",
+      "role": "B",
+      "exit": 0,
+      "seconds": 2.6645450592041016,
+      "log": "09-r2-p720_inter_q32-B.log",
+      "sha256": "aa11a0521f88c99c394949cbcf977b85403d6f5d83df4a5f76efc384827c688a",
+      "load": [
+        7.4658203125,
+        20.44189453125,
+        21.84814453125
+      ],
+      "ops": 15,
+      "ns_op": 162859808.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 162859808 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 2,
+      "clip": "p360_intra_q32",
+      "role": "B",
+      "exit": 0,
+      "seconds": 1.1578130722045898,
+      "log": "10-r2-p360_intra_q32-B.log",
+      "sha256": "981c32f9e34976041756661ad0b2c9d5debb3695e232b672beff2c7e886a0abe",
+      "load": [
+        7.4658203125,
+        20.44189453125,
+        21.84814453125
+      ],
+      "ops": 15,
+      "ns_op": 67302675.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  67302675 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 2,
+      "clip": "p360_intra_q32",
+      "role": "C",
+      "exit": 0,
+      "seconds": 1.1508660316467285,
+      "log": "11-r2-p360_intra_q32-C.log",
+      "sha256": "63291d3d7333453de4d6f77cd15fc36468c6d52b6c6542e9e8025e0a16627a87",
+      "load": [
+        7.4658203125,
+        20.44189453125,
+        21.84814453125
+      ],
+      "ops": 15,
+      "ns_op": 66019150.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  66019150 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n"
+    }
+  ],
+  "source_review": "# R7 private MV storage proof (frozen V1)\n\nBase: merged PR19 `10f4a6ae956e881e8d9e85a4797c55a441cd27c3`. Pinned decoder comparison: dav1d `b546257f770768b2c88258c533da38b91a06f737`, `src/decode.c:3571\u20133610` creates MV storage only for inter/switch or intrabc; `3685\u20133692` retains it across refreshed reference slots.\n\nThe high-level `Decoder` constructor alone calls a free internal-package enable function. Its state and tile callbacks are unexported; decoded image outputs contain no MV-grid pointers. Public/manual `FrameWorkState`, callback users, and layered/shared-state routing retain the old independent grid copies. No method is added to the public alias.\n\nThe nine original MV backing allocations remain nine buffers. A completed grid stays immutable while any of eight slots holds its one-based handle. A new frame takes an unreferenced buffer, with one current hold, so eight distinct slots plus one current frame are sufficient. Publishing adds slot holds; replacing slots releases old holds; successful finish or abort releases current. Failure before publication retains the old references; failed prepare releases its private current hold. Reset drops all descriptors/holds but preserves capacity and private mode. No new warm allocation is permitted.\n\nOrdinary key/intra-only frames with no intrabc and no temporal-reference flag omit current-grid initialization, block-loop invalid-entry marks and saved-grid copies. Refreshed slots still receive valid intra-only order-hint metadata, replacing any old inter grid. Resolution passes a NON-NIL empty descriptor: temporal Setup uses reference presence for LastOverlay/RefStamp, then projectSetupReference checks IntraOnly before reading/validating payload. Intrabc still receives a current grid; mixed intra blocks inside an inter frame are unchanged. Shared-store and show-existing frames acquire no private grid.\n\nThe frozen original prepare/publish oracle compares 48 frames with zero/single/multi/all refresh masks, size changes and intra/inter transitions. It compares projection payloads and Setup counters, not only final saved arrays. Separate tests prove private sharing and next-frame nonaliasing, default mutable-slot isolation, capacity-nine reuse, Reset, zero warm allocation, failed reference/projection setup, successful and failed abort/finish, shared/show-existing and intrabc fallback. Focused run passed in 0.370s. Production block arithmetic, rounding, candidate order, CDFs and output handling are unchanged.\n\nScreen policy is fixed in freeze-v1.json: three paired warm rounds of two affected clips, 15 full-clip operations, all slash components anchored, exactly one expected row per invocation, no retries/exclusions. At least one case must save >=0.5% paired GM with >=2/3 wins; neither may regress >1%; zero warm allocations. The fixed screen passed; pair variability and exact results are in the summary.\n",
+  "pixel_gate": "PASS 5.20s: 18 clips, 864 frames, workers=1, both public IVF and pre-parsed payload constructors, independent MD5 sidecars",
+  "integrated": {
+    "base": "6605b664622f9ea290a6543662f51b19b923d873",
+    "base_tree": "2816c77548bc64926fea0df3e091a2146b947da4",
+    "candidate_binary": "/private/tmp/decoder-mv-grid-pool-20261018/candidate-integrated.test",
+    "candidate_sha256": "c810e2f47b85398ef96b00c7a217a3d9fecdb6de20514ec8e0026ec35e9008ac",
+    "sources": {
+      "decode_simple.go": "a093cd3c71944c42d6af286a2546acaf71aa24032aa0e3c17e7071e1c7fd3c2e",
+      "internal/av1/decoder/work.go": "d29ee43661adfb03fddefa912b319e96963df5c4a9ca7952d3606d45f15028fe",
+      "internal/av1/decoder/work_mv_pool_test.go": "37449587ca8099bb7cbdb30f969d9a937698a541dc5f156c3fb73f7a41824c99",
+      "public_fullclip_corpus_bench_test.go": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59",
+      "go.mod": "2d9afa6f2b2dd13cf953546a7076df9c85f014f10913b47fbaf80d9116ed6e19"
+    },
+    "gates": {
+      "focused-integrated.log": {
+        "sha256": "6cb14505495d580e0e18dcd06e3f3d309f679c65dccede0b13533e1400354c82",
+        "log": "ok  \tgithub.com/thesyncim/goav1/internal/av1/decoder\t0.357s\n"
+      },
+      "build-public-integrated.log": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "log": ""
+      },
+      "md5-integrated.log": {
+        "sha256": "864afb66602fe3f75c3780ff94a962b78d6a0053d315215d7dd5ab94d9666a7c",
+        "log": "=== RUN   TestPublicDecoderFullClipCorpusMD5\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_inter_q20 frames=48 digest=c81031f90d8b64d4b7600891360a2586\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_inter_q20 frames=48 digest=c81031f90d8b64d4b7600891360a2586\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_inter_q32 frames=48 digest=52c881fcbd960e61b494bdb0212a598f\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_inter_q32 frames=48 digest=52c881fcbd960e61b494bdb0212a598f\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_inter_q55 frames=48 digest=2cddf86f5d4a1bd8f401b4f5549dd3d0\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_inter_q55 frames=48 digest=2cddf86f5d4a1bd8f401b4f5549dd3d0\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_intra_q32 frames=48 digest=5bb05de29c9f528b43a1279a55fb2229\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_intra_q32 frames=48 digest=5bb05de29c9f528b43a1279a55fb2229\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_inter_q20 frames=48 digest=50b72e533bf48e4c23a3b16b8aa17e46\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_inter_q20 frames=48 digest=50b72e533bf48e4c23a3b16b8aa17e46\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_inter_q32 frames=48 digest=30ba24a8463f4593ad8683d5beedbf3f\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_inter_q32 frames=48 digest=30ba24a8463f4593ad8683d5beedbf3f\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_inter_q55 frames=48 digest=b2e2ee1fb5f8638e3a1446621c198e59\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_inter_q55 frames=48 digest=b2e2ee1fb5f8638e3a1446621c198e59\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_intra_q32 frames=48 digest=c435e5fbb36afcaf9973874e56a831b4\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_intra_q32 frames=48 digest=c435e5fbb36afcaf9973874e56a831b4\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q20 frames=48 digest=98f748a039be59c3dafd5317887e2c67\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q20 frames=48 digest=98f748a039be59c3dafd5317887e2c67\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q32 frames=48 digest=0631d86d4d5f49d2b0b6b7505e0138ac\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q32 frames=48 digest=0631d86d4d5f49d2b0b6b7505e0138ac\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q32_10bit frames=48 digest=8506fce82608a83814eaa5e3067c0d9b\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q32_10bit frames=48 digest=8506fce82608a83814eaa5e3067c0d9b\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q32_2tiles frames=48 digest=f55ab93cdcee03fd89e7122b89bc920a\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q32_2tiles frames=48 digest=f55ab93cdcee03fd89e7122b89bc920a\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q55 frames=48 digest=cf3b847ee616726b3b048a4c955ae4da\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q55 frames=48 digest=cf3b847ee616726b3b048a4c955ae4da\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_intra_q32 frames=48 digest=5cef0494bd9549db6534ffa4504c0d94\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_intra_q32 frames=48 digest=5cef0494bd9549db6534ffa4504c0d94\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q20 frames=48 digest=1369c36ec029c222e0e7ee2cf95f5b98\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q20 frames=48 digest=1369c36ec029c222e0e7ee2cf95f5b98\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q32 frames=48 digest=47854463914ca952c4b0c63b8e7edd45\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q32 frames=48 digest=47854463914ca952c4b0c63b8e7edd45\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q32_2tiles frames=48 digest=44564e87c87399fbf13b92c6dd39052d\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q32_2tiles frames=48 digest=44564e87c87399fbf13b92c6dd39052d\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q55 frames=48 digest=28554980fa3adb9f0c0cbc345d62eee6\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q55 frames=48 digest=28554980fa3adb9f0c0cbc345d62eee6\n    public_fullclip_corpus_bench_test.go:62: public decoder MD5 preflight passed: clips=18 frames=864 workers=1\n--- PASS: TestPublicDecoderFullClipCorpusMD5 (5.20s)\nPASS\n"
+      }
+    },
+    "review": "Private constructor only; generic mutable alias behavior preserved; current/slot lifetimes and errors covered by old-copy oracle. Intra metadata reference presence and Setup counters preserved. No source blocker found. No production or test changes after measured freeze; integrated deblock changes are disjoint."
+  },
+  "measurement_scope": "Measured against PR19 10f4a6ae; integrated on PR20 6605b664 with unchanged R7 source and focused state/MD5 gates; no timing repeated or combined with other work."
+}

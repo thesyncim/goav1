@@ -300,11 +300,19 @@ type FrameWorkState struct {
 	// finished frame's MV_REF side data, and primary/temporal lookups read the
 	// slot named by RefFrameIdx. mvFrameStoreMeta carries each saved frame's
 	// order-hint metadata needed for motion_field_projection scaling.
-	mvFrameStore                 [parser.RefFrames]tile.ReferenceMVFrame
-	mvFrameStoreBacking          [parser.RefFrames][]tile.ReferenceMVEntry
+	mvFrameStore [parser.RefFrames]tile.ReferenceMVFrame
+	// Generic callers retain independent current/slot grids. The private
+	// high-level decoder instead holds immutable completed grids by handle.
+	// Eight distinct slot targets plus one writable current frame require at
+	// most nine buffers, the same backing count as the generic copy path.
+	mvFrameBacking               [parser.RefFrames + 1][]tile.ReferenceMVEntry
+	mvGridRefs                   [parser.RefFrames + 1]uint8
+	mvSlotGrid                   [parser.RefFrames]uint8 // one-based; zero has no grid
+	currentMVGrid                uint8
+	ownedTemporalMotion          bool
+	currentMVIntra               bool
 	mvFrameStoreMeta             [parser.RefFrames]mvFrameMeta
 	currentMVFrame               tile.ReferenceMVFrame
-	currentMVFrameBack           []tile.ReferenceMVEntry
 	currentMVFrameValid          bool
 	temporalMVs                  tile.TemporalMotionField
 	temporalMVsBack              []tile.TemporalMotionEntry
@@ -383,19 +391,59 @@ func (s *FrameWorkState) Reset() {
 	deactivateFrameWorkStateLoopFilterCompact(s)
 	scaledRefPolicySet := s.scaledRefPolicySet
 	scaledRefPolicyEnabled := s.scaledRefPolicyEnabled
-	currentBack := s.currentMVFrameBack[:0]
+	ownedTemporalMotion := s.ownedTemporalMotion
 	temporalBack := s.temporalMVsBack[:0]
-	var storeBack [parser.RefFrames][]tile.ReferenceMVEntry
-	for i := range s.mvFrameStoreBacking {
-		storeBack[i] = s.mvFrameStoreBacking[i][:0]
+	var mvBack [parser.RefFrames + 1][]tile.ReferenceMVEntry
+	for i := range s.mvFrameBacking {
+		mvBack[i] = s.mvFrameBacking[i][:0]
 	}
 	*s = FrameWorkState{
 		scaledRefPolicySet:     scaledRefPolicySet,
 		scaledRefPolicyEnabled: scaledRefPolicyEnabled,
+		ownedTemporalMotion:    ownedTemporalMotion,
 	}
-	s.currentMVFrameBack = currentBack
 	s.temporalMVsBack = temporalBack
-	s.mvFrameStoreBacking = storeBack
+	s.mvFrameBacking = mvBack
+}
+
+// EnableOwnedTemporalMotionStorage is only for a newly constructed high-level
+// decoder whose state and tile callbacks cannot escape. Generic FrameWorkState
+// callers retain independent mutable grids. This is a free internal-package
+// function so the public FrameWorkState alias acquires no ownership method.
+func EnableOwnedTemporalMotionStorage(s *FrameWorkState) {
+	if s != nil {
+		s.ownedTemporalMotion = true
+	}
+}
+
+func (s *FrameWorkState) releaseMVGrid(handle uint8) {
+	if handle != 0 {
+		s.mvGridRefs[handle-1]--
+	}
+}
+
+func (s *FrameWorkState) releaseCurrentMVGrid() {
+	s.releaseMVGrid(s.currentMVGrid)
+	s.currentMVGrid = 0
+}
+
+func (s *FrameWorkState) acquireMVGrid() (int, error) {
+	for i := range s.mvGridRefs {
+		if s.mvGridRefs[i] == 0 {
+			s.mvGridRefs[i] = 1
+			s.currentMVGrid = uint8(i + 1)
+			return i, nil
+		}
+	}
+	return 0, ErrInvalidFrameWorkState
+}
+
+func (s *FrameWorkState) temporalMotionPrepareError(err error) error {
+	if s.ownedTemporalMotion {
+		s.releaseCurrentMVGrid()
+		s.currentMVFrameValid = false
+	}
+	return err
 }
 
 // SetScaledReferencePredictionEnabled captures whether this state may decode
@@ -466,6 +514,8 @@ func (s *FrameWorkState) resetActive() {
 	// The per-slot mvFrameStore (and its backing) persists across frames so
 	// future frames can inherit it; only the current frame's transient MV
 	// state is cleared. The backing slices are retained for reuse.
+	s.releaseCurrentMVGrid()
+	s.currentMVIntra = false
 	s.currentMVFrame = tile.ReferenceMVFrame{}
 	s.currentMVFrameValid = false
 	s.temporalMVs = tile.TemporalMotionField{}
@@ -509,8 +559,12 @@ func (s *FrameWorkState) resetReferenceState() {
 	// grid descriptors are cleared.
 	s.mvFrameStore = [parser.RefFrames]tile.ReferenceMVFrame{}
 	s.mvFrameStoreMeta = [parser.RefFrames]mvFrameMeta{}
-	for i := range s.mvFrameStoreBacking {
-		s.mvFrameStoreBacking[i] = s.mvFrameStoreBacking[i][:0]
+	for i := range s.mvSlotGrid {
+		s.releaseMVGrid(s.mvSlotGrid[i])
+		s.mvSlotGrid[i] = 0
+	}
+	for i := range parser.RefFrames {
+		s.mvFrameBacking[i] = s.mvFrameBacking[i][:0]
 	}
 }
 
@@ -530,15 +584,12 @@ func (s *FrameWorkState) PreallocTemporalMotionScratch(size parser.FrameSize) er
 	if err != nil {
 		return nil
 	}
-	if cap(s.currentMVFrameBack) < need {
-		s.currentMVFrameBack = make([]tile.ReferenceMVEntry, need)
-	}
 	if cap(s.temporalMVsBack) < need {
 		s.temporalMVsBack = make([]tile.TemporalMotionEntry, need)
 	}
-	for i := range s.mvFrameStoreBacking {
-		if cap(s.mvFrameStoreBacking[i]) < need {
-			s.mvFrameStoreBacking[i] = make([]tile.ReferenceMVEntry, need)
+	for i := range s.mvFrameBacking {
+		if cap(s.mvFrameBacking[i]) < need {
+			s.mvFrameBacking[i] = make([]tile.ReferenceMVEntry, need)
 		}
 	}
 	return nil
@@ -800,6 +851,8 @@ func mvFrameMIExtent(pixels uint32) uint32 {
 // like the entropy frame-context store, so no reference surface list is needed
 // here.
 func (s *FrameWorkState) prepareTemporalMotionField(event Event) error {
+	s.releaseCurrentMVGrid()
+	s.currentMVIntra = false
 	s.currentMVFrameValid = false
 	s.temporalMVsValid = false
 	if s.sharedFrameContexts != nil {
@@ -818,11 +871,26 @@ func (s *FrameWorkState) prepareTemporalMotionField(event Event) error {
 		// A zero-dimension frame carries no MV grid; nothing to project.
 		return nil
 	}
-	if cap(s.currentMVFrameBack) < need {
-		s.currentMVFrameBack = make([]tile.ReferenceMVEntry, need)
+	grid := parser.RefFrames // generic callers keep a separate current buffer
+	if s.ownedTemporalMotion {
+		if !event.FrameSize.AllowIntrabc && !event.TileInfo.UseRefFrameMVS &&
+			(event.FrameHeader.FrameType == parser.FrameTypeKey || event.FrameHeader.FrameType == parser.FrameTypeIntraOnly) {
+			// All decoded blocks are intra and temporal projection skips intra
+			// sources. Retain publication metadata, but omit the unused clear,
+			// per-block invalid-entry stores, and grid publication.
+			s.currentMVIntra = true
+			return nil
+		}
+		grid, err = s.acquireMVGrid()
+		if err != nil {
+			return err
+		}
 	}
-	if err := s.currentMVFrame.Init(miRows, miCols, s.currentMVFrameBack[:need]); err != nil {
-		return err
+	if cap(s.mvFrameBacking[grid]) < need {
+		s.mvFrameBacking[grid] = make([]tile.ReferenceMVEntry, need)
+	}
+	if err := s.currentMVFrame.Init(miRows, miCols, s.mvFrameBacking[grid][:need]); err != nil {
+		return s.temporalMotionPrepareError(err)
 	}
 	s.currentMVFrameValid = true
 
@@ -838,7 +906,7 @@ func (s *FrameWorkState) prepareTemporalMotionField(event Event) error {
 	for ref := 0; ref < parser.InterRefsPerFrame; ref++ {
 		slot := int(event.FrameSize.RefFrameIdx[ref])
 		if slot < 0 || slot >= parser.RefFrames {
-			return ErrInvalidSurfaceReference
+			return s.temporalMotionPrepareError(ErrInvalidSurfaceReference)
 		}
 		meta := s.mvFrameStoreMeta[slot]
 		if !meta.valid {
@@ -861,7 +929,7 @@ func (s *FrameWorkState) prepareTemporalMotionField(event Event) error {
 		s.temporalMVsBack = make([]tile.TemporalMotionEntry, need)
 	}
 	if err := s.temporalMVs.Init(miRows, miCols, s.temporalMVsBack[:need]); err != nil {
-		return err
+		return s.temporalMotionPrepareError(err)
 	}
 	if _, err := s.temporalMVs.Setup(tile.TemporalMotionSetupRequest{
 		EnableOrderHint:  s.Sequence.EnableOrderHint,
@@ -869,23 +937,25 @@ func (s *FrameWorkState) prepareTemporalMotionField(event Event) error {
 		CurrentOrderHint: event.FrameHeader.OrderHint,
 		References:       s.mvReferences,
 	}); err != nil {
-		return err
+		return s.temporalMotionPrepareError(err)
 	}
 	s.temporalMVsValid = true
 	return nil
 }
 
-// publishTemporalMotionFrame copies the just-decoded frame's MV_REF side data
+// publishTemporalMotionFrame publishes the just-decoded frame's MV_REF side data
 // into every reference-map slot named by refresh_frame_flags, mirroring
 // libaom's cm->cur_frame->mvs being reachable through ref_frame_map after the
 // frame is published. It is the single-pool counterpart to the shared path's
 // per-surface MV store and is skipped when that store is active.
 func (s *FrameWorkState) publishTemporalMotionFrame(event Event) {
-	if s == nil || s.sharedFrameContexts != nil || !s.currentMVFrameValid {
+	if s == nil || s.sharedFrameContexts != nil {
 		return
 	}
-	if err := s.currentMVFrame.Validate(); err != nil {
-		return
+	if !s.currentMVIntra {
+		if !s.currentMVFrameValid || s.currentMVFrame.Validate() != nil {
+			return
+		}
 	}
 	meta := mvFrameMeta{
 		valid:         true,
@@ -898,11 +968,26 @@ func (s *FrameWorkState) publishTemporalMotionFrame(event Event) {
 		if (event.FrameSize.RefreshFrameFlags & (1 << uint(i))) == 0 {
 			continue
 		}
-		need := len(s.currentMVFrame.Entries)
-		if cap(s.mvFrameStoreBacking[i]) < need {
-			s.mvFrameStoreBacking[i] = make([]tile.ReferenceMVEntry, need)
+		if s.ownedTemporalMotion {
+			s.releaseMVGrid(s.mvSlotGrid[i])
+			s.mvSlotGrid[i] = s.currentMVGrid
+			if s.currentMVGrid != 0 {
+				s.mvGridRefs[s.currentMVGrid-1]++
+				s.mvFrameStore[i] = s.currentMVFrame
+			} else {
+				// Keep a non-nil descriptor when resolving this slot: Setup's
+				// LastOverlay/RefStamp use reference presence even for intra.
+				// projectSetupReference checks IntraOnly before reading the grid.
+				s.mvFrameStore[i] = tile.ReferenceMVFrame{}
+			}
+			s.mvFrameStoreMeta[i] = meta
+			continue
 		}
-		dst := s.mvFrameStoreBacking[i][:need]
+		need := len(s.currentMVFrame.Entries)
+		if cap(s.mvFrameBacking[i]) < need {
+			s.mvFrameBacking[i] = make([]tile.ReferenceMVEntry, need)
+		}
+		dst := s.mvFrameBacking[i][:need]
 		copy(dst, s.currentMVFrame.Entries)
 		s.mvFrameStore[i] = tile.ReferenceMVFrame{
 			Rows:    s.currentMVFrame.Rows,
