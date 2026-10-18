@@ -107,6 +107,9 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 			return 0, 0, frame.ErrShortBuffer
 		}
 	}
+	// Sparse staging preserves the old path for overlapping caller scratch.
+	// The left backup is local and cannot alias the caller's input buffer.
+	sparseIndependent := frameWorkCDEFSparseScratchIndependent(input, dst.Pix, lineBuf, boundary.Top[plane], bottomBoundary)
 	var leftStorage [cdef.HorizontalBorder * cdef.BlockSize]byte
 
 	for unitRow := rowStart; unitRow < rowEnd; unitRow++ {
@@ -195,9 +198,22 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 				prevFiltered = false
 				continue
 			}
+			var stageRect frameWorkCDEFStageRect
+			if sparseIndependent && !cdefDebugUnit(plane, unitRow, unitCol) && len(blocks) < (unitW/blockWidth)*(unitH/blockHeight) {
+				stageRect = frameWorkCDEFSparseStageRect(blocks, unitW, unitH, blockWidth, blockHeight)
+			}
 			if frameWorkCDEFCanUseSecondaryByteUnit(cdef.U8SecondaryOnlyByteInteriorAvailable(), needPrimaryDirection, filterParams, unitX, unitY, unitW, unitH, width, height, blockWidth, blockHeight, cdefDebugUnit(plane, unitRow, unitCol)) {
 				byteInput, byteOK := cdefByteScratchView(input, 2*len(input))
-				if byteOK && frameWorkAssembleCDEFSecondaryByteInputU8(byteInput, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitX, unitY, unitW, unitH) == nil {
+				assembled := false
+				if byteOK {
+					if stageRect.active {
+						assembled = frameWorkAssembleCDEFSparseByteInputU8(byteInput, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitX, unitY, unitW, unitH, stageRect)
+					}
+					if !assembled {
+						assembled = frameWorkAssembleCDEFSecondaryByteInputU8(byteInput, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitX, unitY, unitW, unitH) == nil
+					}
+				}
+				if assembled {
 					// Preserve the previous left halo until the byte filter accepts
 					// the unit. Its entry validates the complete read window before
 					// writing, so a decline can safely fall through to the wide path.
@@ -218,8 +234,10 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 					leftStorage = oldLeftStorage
 				}
 			}
-			if err := frameWorkAssembleCDEFInputU8(input, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
-				return units, blocksTotal, err
+			if !stageRect.active || !frameWorkAssembleCDEFSparseInputU8(input, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH, stageRect) {
+				if err := frameWorkAssembleCDEFInputU8(input, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
+					return units, blocksTotal, err
+				}
 			}
 			// Back up the pre-filter columns the NEXT unit reads as its left
 			// halo (dav1d backup2x8 / lr_bak). This must happen after this

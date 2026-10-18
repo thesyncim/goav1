@@ -25,13 +25,14 @@ type cdefU8WalkCase struct {
 	yDecC       int
 	mono        bool
 	params      parser.CDEFParams
-	readProb    uint32  // percent of units with Read=true
-	withSkip    bool    // attach a skip map with random SkipTransform blocks
-	noPrimary   bool    // all entries use secondary-only strengths; direction grids must stay untouched
-	unitIndex   []uint8 // optional exact per-unit strength indexes, row-major
-	unitRead    []bool  // optional exact per-unit read mask, row-major
-	poisonInput bool    // poison the shared tap scratch before each U8 walk
-	lowRange    bool    // use low-range samples so secondary taps produce visible deltas
+	readProb    uint32   // percent of units with Read=true
+	withSkip    bool     // attach a skip map with random SkipTransform blocks
+	noPrimary   bool     // all entries use secondary-only strengths; direction grids must stay untouched
+	unitIndex   []uint8  // optional exact per-unit strength indexes, row-major
+	unitRead    []bool   // optional exact per-unit read mask, row-major
+	activeMasks []uint64 // optional explicit active 8x8 masks, row-major
+	poisonInput bool     // poison the shared tap scratch before each U8 walk
+	lowRange    bool     // use low-range samples so secondary taps produce visible deltas
 }
 
 func cdefU8WalkCases() []cdefU8WalkCase {
@@ -158,6 +159,18 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 		for i := range m.Records {
 			m.Records[i].Valid = true
 			m.Records[i].SkipTransform = rnd.next(3) == 0
+		}
+		if len(tc.activeMasks) != 0 {
+			if len(tc.activeMasks) != unitCount {
+				t.Fatal("active mask count does not match unit grid")
+			}
+			for y := 0; y < miRows; y++ {
+				for x := 0; x < miCols; x++ {
+					unit := (y/16)*cols + x/16
+					bit := ((y%16)/2)*8 + (x%16)/2
+					m.Records[y*miCols+x].SkipTransform = tc.activeMasks[unit]&(uint64(1)<<uint(bit)) == 0
+				}
+			}
 		}
 		skipMap = &m
 	}
@@ -345,8 +358,21 @@ func cdefPlaneWalkU8Allocs(t *testing.T, tc cdefU8WalkCase) float64 {
 	var dirs cdef.DirectionGrid
 	var vars cdef.VarianceGrid
 	var blockStorage [cdef.NBlocks * cdef.NBlocks]cdef.BlockPosition
+	var skipMap *FrameWorkLoopFilterMap
+	if len(tc.activeMasks) != 0 {
+		miCols, miRows := width/4, height/4
+		records := make([]threading.FrameWorkLoopFilterBlockRecord, miCols*miRows)
+		for y := 0; y < miRows; y++ {
+			for x := 0; x < miCols; x++ {
+				unit, bit := (y/16)*cols+x/16, ((y%16)/2)*8+(x%16)/2
+				records[y*miCols+x].Valid = true
+				records[y*miCols+x].SkipTransform = tc.activeMasks[unit]&(uint64(1)<<uint(bit)) == 0
+			}
+		}
+		skipMap = &FrameWorkLoopFilterMap{Records: records, Stride: uint16(miCols), Rows: uint16(miRows)}
+	}
 	return testing.AllocsPerRun(8, func() {
-		if _, _, err := frameWorkApplyCDEFPlaneRowsU8(tc.params, indexMap, nil, cols, rows, 0, rows, plane, byteScratch, FrameWorkCDEFPostFilterU8BandBoundary{}, input, blockStorage[:], &dirs, &vars, dirGrid, varGrid, 0, 0, 0, true, nil); err != nil {
+		if _, _, err := frameWorkApplyCDEFPlaneRowsU8(tc.params, indexMap, skipMap, cols, rows, 0, rows, plane, byteScratch, FrameWorkCDEFPostFilterU8BandBoundary{}, input, blockStorage[:], &dirs, &vars, dirGrid, varGrid, 0, 0, 0, true, nil); err != nil {
 			t.Fatal(err)
 		}
 	})
