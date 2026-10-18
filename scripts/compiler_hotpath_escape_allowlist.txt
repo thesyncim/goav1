@@ -469,7 +469,7 @@ internal/av1/threading/tile_residual.go:*:*: make([]int32, int32Total) escapes t
 internal/av1/threading/tile_residual.go:*:*: make([]uint8, cols) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]uint8, cols) escapes to heap in (*FrameWorkTileResidualScratch).PreallocLoopFilterMaskScratch:
 internal/av1/threading/tile_residual.go:*:*: make([]uint8, h.Cols) escapes to heap
-internal/av1/threading/tile_residual.go:*:*: make([]uint8, h.Cols) escapes to heap in (*FrameWorkBatch).DecodeAndReconstructJobResidualsPtr:
+internal/av1/threading/tile_residual.go:*:*: make([]uint8, h.Cols) escapes to heap in decodeAndReconstructJobResidualsPtr:
 internal/av1/threading/tile_residual_testhook.go:*:*: func literal escapes to heap
 internal/av1/threading/tile_residual_testhook.go:*:*: func literal escapes to heap in OverrideWavefrontMinSBRowsPerWorkerForTest:
 internal/av1/threading/wavefront_stream.go:*:*: func literal escapes to heap in (*frameWorkReconWavefront).startLanes:
