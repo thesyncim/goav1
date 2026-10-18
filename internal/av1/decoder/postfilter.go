@@ -933,15 +933,7 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFiltersForPublication(re
 
 	displayCtx := publishCtx
 	displayCtx.completedPostFilters &^= FrameWorkPostFilterFilmGrain
-	displayOutput, err := displayCtx.BindFilmGrainPostFilterOutput(req.FilmGrain)
-	if err != nil {
-		return ctx, nil, result, err
-	}
-	if displayOutput != nil {
-		displayCtx.Output = displayOutput
-		displayCtx.detachedPostFilterOutput = true
-	}
-	filmGrainResult, err := displayCtx.ApplyFilmGrainPostFilter(req.FilmGrain)
+	displayOutput, filmGrainResult, err := frameWorkApplyFilmGrainForPublication(&displayCtx, req.FilmGrain)
 	if err != nil {
 		return ctx, nil, result, err
 	}
@@ -1147,15 +1139,7 @@ func (ctx FrameWorkPostFilterContext) ApplyCallerPostFiltersForPublication(req F
 
 	displayCtx := publishCtx
 	displayCtx.completedPostFilters &^= FrameWorkPostFilterFilmGrain
-	displayOutput, err := displayCtx.BindFilmGrainPostFilterOutput(req.FilmGrain)
-	if err != nil {
-		return ctx, nil, result, err
-	}
-	if displayOutput != nil {
-		displayCtx.Output = displayOutput
-		displayCtx.detachedPostFilterOutput = true
-	}
-	filmGrainResult, err := displayCtx.ApplyFilmGrainPostFilter(req.FilmGrain)
+	displayOutput, filmGrainResult, err := frameWorkApplyFilmGrainForPublication(&displayCtx, req.FilmGrain)
 	if err != nil {
 		return ctx, nil, result, err
 	}

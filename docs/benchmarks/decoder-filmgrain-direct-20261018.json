@@ -1,0 +1,721 @@
+{
+  "status": "passes predeclared feature-screen gate and final focused integration checks",
+  "scope": "Direct 8-bit display film grain on arm64 GOEXPERIMENT=simd. Grain is absent from the measured18clip dav1d-gap corpus; this result cannot close that measured corpus gap.",
+  "host": {
+    "os": "darwin",
+    "arch": "arm64",
+    "cpu": "Apple M4 Max",
+    "go": "go1.27.0",
+    "GOEXPERIMENT": "simd"
+  },
+  "manifest": {
+    "baseline_revision": "6605b664622f9ea290a6543662f51b19b923d873",
+    "hashes": {
+      "baseline": "29553aba47f8aeb22a6fa6df1ecd877dcfc6009ab92b125d9db922c4682f9377",
+      "candidate": "84ee8579f069030213c77193492136302b11729027c6cad7640cf8374157dd56"
+    },
+    "commands": [
+      {
+        "pair": 1,
+        "case": "8bit_444_96x96_3frames",
+        "side": "baseline",
+        "command": [
+          "/private/tmp/decoder-grain-direct-20261018/baseline-main.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkFilmGrainDirectPublication$/^8bit_444_96x96_3frames$",
+          "-test.benchtime=200x",
+          "-test.count=1",
+          "-test.cpu=1",
+          "-test.benchmem"
+        ]
+      },
+      {
+        "pair": 1,
+        "case": "8bit_444_96x96_3frames",
+        "side": "candidate",
+        "command": [
+          "/private/tmp/decoder-grain-direct-20261018/candidate-v1.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkFilmGrainDirectPublication$/^8bit_444_96x96_3frames$",
+          "-test.benchtime=200x",
+          "-test.count=1",
+          "-test.cpu=1",
+          "-test.benchmem"
+        ]
+      },
+      {
+        "pair": 1,
+        "case": "10bit_444_96x96_3frames",
+        "side": "baseline",
+        "command": [
+          "/private/tmp/decoder-grain-direct-20261018/baseline-main.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkFilmGrainDirectPublication$/^10bit_444_96x96_3frames$",
+          "-test.benchtime=200x",
+          "-test.count=1",
+          "-test.cpu=1",
+          "-test.benchmem"
+        ]
+      },
+      {
+        "pair": 1,
+        "case": "10bit_444_96x96_3frames",
+        "side": "candidate",
+        "command": [
+          "/private/tmp/decoder-grain-direct-20261018/candidate-v1.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkFilmGrainDirectPublication$/^10bit_444_96x96_3frames$",
+          "-test.benchtime=200x",
+          "-test.count=1",
+          "-test.cpu=1",
+          "-test.benchmem"
+        ]
+      },
+      {
+        "pair": 2,
+        "case": "8bit_444_96x96_3frames",
+        "side": "candidate",
+        "command": [
+          "/private/tmp/decoder-grain-direct-20261018/candidate-v1.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkFilmGrainDirectPublication$/^8bit_444_96x96_3frames$",
+          "-test.benchtime=200x",
+          "-test.count=1",
+          "-test.cpu=1",
+          "-test.benchmem"
+        ]
+      },
+      {
+        "pair": 2,
+        "case": "8bit_444_96x96_3frames",
+        "side": "baseline",
+        "command": [
+          "/private/tmp/decoder-grain-direct-20261018/baseline-main.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkFilmGrainDirectPublication$/^8bit_444_96x96_3frames$",
+          "-test.benchtime=200x",
+          "-test.count=1",
+          "-test.cpu=1",
+          "-test.benchmem"
+        ]
+      },
+      {
+        "pair": 2,
+        "case": "10bit_444_96x96_3frames",
+        "side": "candidate",
+        "command": [
+          "/private/tmp/decoder-grain-direct-20261018/candidate-v1.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkFilmGrainDirectPublication$/^10bit_444_96x96_3frames$",
+          "-test.benchtime=200x",
+          "-test.count=1",
+          "-test.cpu=1",
+          "-test.benchmem"
+        ]
+      },
+      {
+        "pair": 2,
+        "case": "10bit_444_96x96_3frames",
+        "side": "baseline",
+        "command": [
+          "/private/tmp/decoder-grain-direct-20261018/baseline-main.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkFilmGrainDirectPublication$/^10bit_444_96x96_3frames$",
+          "-test.benchtime=200x",
+          "-test.count=1",
+          "-test.cpu=1",
+          "-test.benchmem"
+        ]
+      },
+      {
+        "pair": 3,
+        "case": "8bit_444_96x96_3frames",
+        "side": "baseline",
+        "command": [
+          "/private/tmp/decoder-grain-direct-20261018/baseline-main.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkFilmGrainDirectPublication$/^8bit_444_96x96_3frames$",
+          "-test.benchtime=200x",
+          "-test.count=1",
+          "-test.cpu=1",
+          "-test.benchmem"
+        ]
+      },
+      {
+        "pair": 3,
+        "case": "8bit_444_96x96_3frames",
+        "side": "candidate",
+        "command": [
+          "/private/tmp/decoder-grain-direct-20261018/candidate-v1.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkFilmGrainDirectPublication$/^8bit_444_96x96_3frames$",
+          "-test.benchtime=200x",
+          "-test.count=1",
+          "-test.cpu=1",
+          "-test.benchmem"
+        ]
+      },
+      {
+        "pair": 3,
+        "case": "10bit_444_96x96_3frames",
+        "side": "baseline",
+        "command": [
+          "/private/tmp/decoder-grain-direct-20261018/baseline-main.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkFilmGrainDirectPublication$/^10bit_444_96x96_3frames$",
+          "-test.benchtime=200x",
+          "-test.count=1",
+          "-test.cpu=1",
+          "-test.benchmem"
+        ]
+      },
+      {
+        "pair": 3,
+        "case": "10bit_444_96x96_3frames",
+        "side": "candidate",
+        "command": [
+          "/private/tmp/decoder-grain-direct-20261018/candidate-v1.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkFilmGrainDirectPublication$/^10bit_444_96x96_3frames$",
+          "-test.benchtime=200x",
+          "-test.count=1",
+          "-test.cpu=1",
+          "-test.benchmem"
+        ]
+      }
+    ],
+    "expected_rows": 12,
+    "statistic": "1-exp(mean(log(candidate_ns/base_ns))), paired per case",
+    "env": {
+      "GOMAXPROCS": "1",
+      "GOGC": "100"
+    },
+    "scope": "8bit affected,10bit control; grain absent measured18clip gap corpus",
+    "promotion_guard": {
+      "affected_8bit_min_paired_geomean_saving": 0.005,
+      "affected_8bit_min_faster_pairs": 2,
+      "control_10bit_max_paired_geomean_regression": 0.01,
+      "steady_allocs_per_op": 0,
+      "all_parity_gates_required": true,
+      "scope": "Grain is absent from measured18clip dav1d-gap corpus; cannot close that measured corpus gap."
+    }
+  },
+  "summary": {
+    "8bit_444_96x96_3frames": {
+      "pairs": [
+        {
+          "pair": 1,
+          "baseline_ns": 1532767.0,
+          "candidate_ns": 1424820.0,
+          "candidate_over_baseline": 0.9295737708340537,
+          "saving_fraction": 0.07042622916594632
+        },
+        {
+          "pair": 2,
+          "baseline_ns": 1480060.0,
+          "candidate_ns": 1435762.0,
+          "candidate_over_baseline": 0.9700701322919341,
+          "saving_fraction": 0.029929867708065938
+        },
+        {
+          "pair": 3,
+          "baseline_ns": 1475902.0,
+          "candidate_ns": 1444319.0,
+          "candidate_over_baseline": 0.978600882714435,
+          "saving_fraction": 0.021399117285564984
+        }
+      ],
+      "paired_geomean_saving_fraction": 0.040825702983872225
+    },
+    "10bit_444_96x96_3frames": {
+      "pairs": [
+        {
+          "pair": 1,
+          "baseline_ns": 2472981.0,
+          "candidate_ns": 2385538.0,
+          "candidate_over_baseline": 0.9646406502920969,
+          "saving_fraction": 0.03535934970790311
+        },
+        {
+          "pair": 2,
+          "baseline_ns": 2516447.0,
+          "candidate_ns": 2467652.0,
+          "candidate_over_baseline": 0.98060956578859,
+          "saving_fraction": 0.019390434211409957
+        },
+        {
+          "pair": 3,
+          "baseline_ns": 2356522.0,
+          "candidate_ns": 2414886.0,
+          "candidate_over_baseline": 1.0247670083283755,
+          "saving_fraction": -0.024767008328375528
+        }
+      ],
+      "paired_geomean_saving_fraction": 0.010318147911681175
+    }
+  },
+  "all_raw_rows": [
+    {
+      "pair": 1,
+      "case": "8bit_444_96x96_3frames",
+      "side": "baseline",
+      "command": [
+        "/private/tmp/decoder-grain-direct-20261018/baseline-main.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkFilmGrainDirectPublication$/^8bit_444_96x96_3frames$",
+        "-test.benchtime=200x",
+        "-test.count=1",
+        "-test.cpu=1",
+        "-test.benchmem"
+      ],
+      "log": "/private/tmp/decoder-grain-direct-20261018/screen-v1/01-pair1-8bit_444_96x96_3frames-baseline.txt",
+      "start": "2026-10-18T18:20:00.724695+00:00",
+      "returncode": 0,
+      "matches": [
+        [
+          "8bit_444_96x96_3frames",
+          "200",
+          "1532767",
+          "0",
+          "0"
+        ]
+      ],
+      "ns_per_op": 1532767.0,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "actual_case": "8bit_444_96x96_3frames",
+      "raw_stdout": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkFilmGrainDirectPublication/8bit_444_96x96_3frames         \t     200\t   1532767 ns/op\t   1.94 MB/s\t         3.000 frames/op\t      1957 frames/s\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "raw_stdout_sha256": "0fb29605a8b5a8213441fd25b53cc85111af82cd44e1f427a86b6938e0bb9477"
+    },
+    {
+      "pair": 1,
+      "case": "8bit_444_96x96_3frames",
+      "side": "candidate",
+      "command": [
+        "/private/tmp/decoder-grain-direct-20261018/candidate-v1.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkFilmGrainDirectPublication$/^8bit_444_96x96_3frames$",
+        "-test.benchtime=200x",
+        "-test.count=1",
+        "-test.cpu=1",
+        "-test.benchmem"
+      ],
+      "log": "/private/tmp/decoder-grain-direct-20261018/screen-v1/02-pair1-8bit_444_96x96_3frames-candidate.txt",
+      "start": "2026-10-18T18:20:01.043519+00:00",
+      "returncode": 0,
+      "matches": [
+        [
+          "8bit_444_96x96_3frames",
+          "200",
+          "1424820",
+          "0",
+          "0"
+        ]
+      ],
+      "ns_per_op": 1424820.0,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "actual_case": "8bit_444_96x96_3frames",
+      "raw_stdout": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkFilmGrainDirectPublication/8bit_444_96x96_3frames         \t     200\t   1424820 ns/op\t   2.09 MB/s\t         3.000 frames/op\t      2106 frames/s\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "raw_stdout_sha256": "05de564dcfbaa2ad685b445a41bf7ebfc91b6996ee6512bc7a2e37560e4bf5ec"
+    },
+    {
+      "pair": 1,
+      "case": "10bit_444_96x96_3frames",
+      "side": "baseline",
+      "command": [
+        "/private/tmp/decoder-grain-direct-20261018/baseline-main.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkFilmGrainDirectPublication$/^10bit_444_96x96_3frames$",
+        "-test.benchtime=200x",
+        "-test.count=1",
+        "-test.cpu=1",
+        "-test.benchmem"
+      ],
+      "log": "/private/tmp/decoder-grain-direct-20261018/screen-v1/03-pair1-10bit_444_96x96_3frames-baseline.txt",
+      "start": "2026-10-18T18:20:01.339191+00:00",
+      "returncode": 0,
+      "matches": [
+        [
+          "10bit_444_96x96_3frames",
+          "200",
+          "2472981",
+          "0",
+          "0"
+        ]
+      ],
+      "ns_per_op": 2472981.0,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "actual_case": "10bit_444_96x96_3frames",
+      "raw_stdout": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkFilmGrainDirectPublication/10bit_444_96x96_3frames         \t     200\t   2472981 ns/op\t   2.44 MB/s\t         3.000 frames/op\t      1213 frames/s\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "raw_stdout_sha256": "8646c14b35dabe22404508d5fec370123e32cb35f50c369209359b42aa1f0e0d"
+    },
+    {
+      "pair": 1,
+      "case": "10bit_444_96x96_3frames",
+      "side": "candidate",
+      "command": [
+        "/private/tmp/decoder-grain-direct-20261018/candidate-v1.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkFilmGrainDirectPublication$/^10bit_444_96x96_3frames$",
+        "-test.benchtime=200x",
+        "-test.count=1",
+        "-test.cpu=1",
+        "-test.benchmem"
+      ],
+      "log": "/private/tmp/decoder-grain-direct-20261018/screen-v1/04-pair1-10bit_444_96x96_3frames-candidate.txt",
+      "start": "2026-10-18T18:20:01.847786+00:00",
+      "returncode": 0,
+      "matches": [
+        [
+          "10bit_444_96x96_3frames",
+          "200",
+          "2385538",
+          "0",
+          "0"
+        ]
+      ],
+      "ns_per_op": 2385538.0,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "actual_case": "10bit_444_96x96_3frames",
+      "raw_stdout": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkFilmGrainDirectPublication/10bit_444_96x96_3frames         \t     200\t   2385538 ns/op\t   2.53 MB/s\t         3.000 frames/op\t      1258 frames/s\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "raw_stdout_sha256": "9c483344705ba54abfed2f6d575e53b9a36131a8c9557e732dbc4edccc64d458"
+    },
+    {
+      "pair": 2,
+      "case": "8bit_444_96x96_3frames",
+      "side": "candidate",
+      "command": [
+        "/private/tmp/decoder-grain-direct-20261018/candidate-v1.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkFilmGrainDirectPublication$/^8bit_444_96x96_3frames$",
+        "-test.benchtime=200x",
+        "-test.count=1",
+        "-test.cpu=1",
+        "-test.benchmem"
+      ],
+      "log": "/private/tmp/decoder-grain-direct-20261018/screen-v1/05-pair2-8bit_444_96x96_3frames-candidate.txt",
+      "start": "2026-10-18T18:20:02.339499+00:00",
+      "returncode": 0,
+      "matches": [
+        [
+          "8bit_444_96x96_3frames",
+          "200",
+          "1435762",
+          "0",
+          "0"
+        ]
+      ],
+      "ns_per_op": 1435762.0,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "actual_case": "8bit_444_96x96_3frames",
+      "raw_stdout": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkFilmGrainDirectPublication/8bit_444_96x96_3frames         \t     200\t   1435762 ns/op\t   2.07 MB/s\t         3.000 frames/op\t      2089 frames/s\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "raw_stdout_sha256": "ba9b8a384568c7d4e3660d763a645e45471ef8a2c5368a98f8696f08e9beb7f6"
+    },
+    {
+      "pair": 2,
+      "case": "8bit_444_96x96_3frames",
+      "side": "baseline",
+      "command": [
+        "/private/tmp/decoder-grain-direct-20261018/baseline-main.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkFilmGrainDirectPublication$/^8bit_444_96x96_3frames$",
+        "-test.benchtime=200x",
+        "-test.count=1",
+        "-test.cpu=1",
+        "-test.benchmem"
+      ],
+      "log": "/private/tmp/decoder-grain-direct-20261018/screen-v1/06-pair2-8bit_444_96x96_3frames-baseline.txt",
+      "start": "2026-10-18T18:20:02.637537+00:00",
+      "returncode": 0,
+      "matches": [
+        [
+          "8bit_444_96x96_3frames",
+          "200",
+          "1480060",
+          "0",
+          "0"
+        ]
+      ],
+      "ns_per_op": 1480060.0,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "actual_case": "8bit_444_96x96_3frames",
+      "raw_stdout": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkFilmGrainDirectPublication/8bit_444_96x96_3frames         \t     200\t   1480060 ns/op\t   2.01 MB/s\t         3.000 frames/op\t      2027 frames/s\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "raw_stdout_sha256": "b414415e86e7cf68a5405c52d15793d79e0fcc0bc9ab05e2084d4b73a322eb70"
+    },
+    {
+      "pair": 2,
+      "case": "10bit_444_96x96_3frames",
+      "side": "candidate",
+      "command": [
+        "/private/tmp/decoder-grain-direct-20261018/candidate-v1.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkFilmGrainDirectPublication$/^10bit_444_96x96_3frames$",
+        "-test.benchtime=200x",
+        "-test.count=1",
+        "-test.cpu=1",
+        "-test.benchmem"
+      ],
+      "log": "/private/tmp/decoder-grain-direct-20261018/screen-v1/07-pair2-10bit_444_96x96_3frames-candidate.txt",
+      "start": "2026-10-18T18:20:02.944746+00:00",
+      "returncode": 0,
+      "matches": [
+        [
+          "10bit_444_96x96_3frames",
+          "200",
+          "2467652",
+          "0",
+          "0"
+        ]
+      ],
+      "ns_per_op": 2467652.0,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "actual_case": "10bit_444_96x96_3frames",
+      "raw_stdout": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkFilmGrainDirectPublication/10bit_444_96x96_3frames         \t     200\t   2467652 ns/op\t   2.45 MB/s\t         3.000 frames/op\t      1216 frames/s\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "raw_stdout_sha256": "6328e81227aa3f603987bbefff429a1b969a215302ce27a83b1fb871c6e993bc"
+    },
+    {
+      "pair": 2,
+      "case": "10bit_444_96x96_3frames",
+      "side": "baseline",
+      "command": [
+        "/private/tmp/decoder-grain-direct-20261018/baseline-main.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkFilmGrainDirectPublication$/^10bit_444_96x96_3frames$",
+        "-test.benchtime=200x",
+        "-test.count=1",
+        "-test.cpu=1",
+        "-test.benchmem"
+      ],
+      "log": "/private/tmp/decoder-grain-direct-20261018/screen-v1/08-pair2-10bit_444_96x96_3frames-baseline.txt",
+      "start": "2026-10-18T18:20:03.452451+00:00",
+      "returncode": 0,
+      "matches": [
+        [
+          "10bit_444_96x96_3frames",
+          "200",
+          "2516447",
+          "0",
+          "0"
+        ]
+      ],
+      "ns_per_op": 2516447.0,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "actual_case": "10bit_444_96x96_3frames",
+      "raw_stdout": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkFilmGrainDirectPublication/10bit_444_96x96_3frames         \t     200\t   2516447 ns/op\t   2.40 MB/s\t         3.000 frames/op\t      1192 frames/s\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "raw_stdout_sha256": "91d46d34faa6b210c00989d794d24b5e3dcc696fa18820260073a1cf768cd09e"
+    },
+    {
+      "pair": 3,
+      "case": "8bit_444_96x96_3frames",
+      "side": "baseline",
+      "command": [
+        "/private/tmp/decoder-grain-direct-20261018/baseline-main.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkFilmGrainDirectPublication$/^8bit_444_96x96_3frames$",
+        "-test.benchtime=200x",
+        "-test.count=1",
+        "-test.cpu=1",
+        "-test.benchmem"
+      ],
+      "log": "/private/tmp/decoder-grain-direct-20261018/screen-v1/09-pair3-8bit_444_96x96_3frames-baseline.txt",
+      "start": "2026-10-18T18:20:03.971293+00:00",
+      "returncode": 0,
+      "matches": [
+        [
+          "8bit_444_96x96_3frames",
+          "200",
+          "1475902",
+          "0",
+          "0"
+        ]
+      ],
+      "ns_per_op": 1475902.0,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "actual_case": "8bit_444_96x96_3frames",
+      "raw_stdout": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkFilmGrainDirectPublication/8bit_444_96x96_3frames         \t     200\t   1475902 ns/op\t   2.01 MB/s\t         3.000 frames/op\t      2033 frames/s\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "raw_stdout_sha256": "4c7b110b9939e70363700c693794ae0213abc5138784897419485b5339302a2c"
+    },
+    {
+      "pair": 3,
+      "case": "8bit_444_96x96_3frames",
+      "side": "candidate",
+      "command": [
+        "/private/tmp/decoder-grain-direct-20261018/candidate-v1.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkFilmGrainDirectPublication$/^8bit_444_96x96_3frames$",
+        "-test.benchtime=200x",
+        "-test.count=1",
+        "-test.cpu=1",
+        "-test.benchmem"
+      ],
+      "log": "/private/tmp/decoder-grain-direct-20261018/screen-v1/10-pair3-8bit_444_96x96_3frames-candidate.txt",
+      "start": "2026-10-18T18:20:04.277883+00:00",
+      "returncode": 0,
+      "matches": [
+        [
+          "8bit_444_96x96_3frames",
+          "200",
+          "1444319",
+          "0",
+          "0"
+        ]
+      ],
+      "ns_per_op": 1444319.0,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "actual_case": "8bit_444_96x96_3frames",
+      "raw_stdout": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkFilmGrainDirectPublication/8bit_444_96x96_3frames         \t     200\t   1444319 ns/op\t   2.06 MB/s\t         3.000 frames/op\t      2077 frames/s\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "raw_stdout_sha256": "f796718962c56f333eab016a993960e48a808b392f35a6e37b765b31dbbffda1"
+    },
+    {
+      "pair": 3,
+      "case": "10bit_444_96x96_3frames",
+      "side": "baseline",
+      "command": [
+        "/private/tmp/decoder-grain-direct-20261018/baseline-main.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkFilmGrainDirectPublication$/^10bit_444_96x96_3frames$",
+        "-test.benchtime=200x",
+        "-test.count=1",
+        "-test.cpu=1",
+        "-test.benchmem"
+      ],
+      "log": "/private/tmp/decoder-grain-direct-20261018/screen-v1/11-pair3-10bit_444_96x96_3frames-baseline.txt",
+      "start": "2026-10-18T18:20:04.579118+00:00",
+      "returncode": 0,
+      "matches": [
+        [
+          "10bit_444_96x96_3frames",
+          "200",
+          "2356522",
+          "0",
+          "0"
+        ]
+      ],
+      "ns_per_op": 2356522.0,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "actual_case": "10bit_444_96x96_3frames",
+      "raw_stdout": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkFilmGrainDirectPublication/10bit_444_96x96_3frames         \t     200\t   2356522 ns/op\t   2.56 MB/s\t         3.000 frames/op\t      1273 frames/s\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "raw_stdout_sha256": "4d78ea1ca904ac95525496c92618869c139d7327f59ac7ad49b9b9f960803339"
+    },
+    {
+      "pair": 3,
+      "case": "10bit_444_96x96_3frames",
+      "side": "candidate",
+      "command": [
+        "/private/tmp/decoder-grain-direct-20261018/candidate-v1.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkFilmGrainDirectPublication$/^10bit_444_96x96_3frames$",
+        "-test.benchtime=200x",
+        "-test.count=1",
+        "-test.cpu=1",
+        "-test.benchmem"
+      ],
+      "log": "/private/tmp/decoder-grain-direct-20261018/screen-v1/12-pair3-10bit_444_96x96_3frames-candidate.txt",
+      "start": "2026-10-18T18:20:05.065210+00:00",
+      "returncode": 0,
+      "matches": [
+        [
+          "10bit_444_96x96_3frames",
+          "200",
+          "2414886",
+          "0",
+          "0"
+        ]
+      ],
+      "ns_per_op": 2414886.0,
+      "bytes_per_op": 0,
+      "allocs_per_op": 0,
+      "actual_case": "10bit_444_96x96_3frames",
+      "raw_stdout": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkFilmGrainDirectPublication/10bit_444_96x96_3frames         \t     200\t   2414886 ns/op\t   2.50 MB/s\t         3.000 frames/op\t      1242 frames/s\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "raw_stdout_sha256": "227e3de2ed859909376f6dcacb42c299dbdf13bc9dedc0383f4e1bb5e45d2ea8"
+    }
+  ],
+  "actual_case_count": 2,
+  "actual_raw_row_count": 12,
+  "raw_row_omissions": 0,
+  "gates": {
+    "affected_8bit_paired_geomean_saving_ge_0_005": true,
+    "affected_8bit_at_least_2_of_3_faster": true,
+    "control_10bit_no_more_than_1pct_geomean_regression": true,
+    "all_zero_steady_allocations": true,
+    "focused_parity_passed": true
+  },
+  "benchmark_source": "package goav1_test\n\nimport \"testing\"\n\n// Same public decode, reset and warmup lifecycle on each side of the screen.\nfunc BenchmarkFilmGrainDirectPublication(b *testing.B) {\n\tb.Run(\"8bit_444_96x96_3frames\", func(b *testing.B) {\n\t\tbenchmarkDecodeHighLevelProfileClip(b, \"internal/av1/testvector/testdata/profiles/profile1-444-8bit-filmgrain-96x96.ivf\", 3)\n\t})\n\tb.Run(\"10bit_444_96x96_3frames\", func(b *testing.B) {\n\t\tbenchmarkDecodeHighLevelProfileClip(b, filmGrainProfileBenchVectorPath, 3)\n\t})\n}\n",
+  "screen_script": "import datetime, hashlib, json, math, os, re, subprocess\nfrom pathlib import Path\nA=Path('/private/tmp/decoder-grain-direct-20261018')\nroot=Path('/Users/thesyncim/.codex/worktrees/decoder-intra-endpoints/goav1')\nfiles={'baseline':A/'baseline-main.test','candidate':A/'candidate-v1.test'}\nexpected={'baseline':'29553aba47f8aeb22a6fa6df1ecd877dcfc6009ab92b125d9db922c4682f9377','candidate':'84ee8579f069030213c77193492136302b11729027c6cad7640cf8374157dd56'}\ncases=['8bit_444_96x96_3frames','10bit_444_96x96_3frames']\ncommands=[]\nfor pair,order in enumerate([['baseline','candidate'],['candidate','baseline'],['baseline','candidate']],1):\n    for case in cases:\n        for side in order:\n            cmd=[str(files[side]),'-test.run=^$','-test.bench=^BenchmarkFilmGrainDirectPublication$/^'+case+'$','-test.benchtime=200x','-test.count=1','-test.cpu=1','-test.benchmem']\n            commands.append({'pair':pair,'case':case,'side':side,'command':cmd})\nmanifest={'baseline_revision':'6605b664622f9ea290a6543662f51b19b923d873','hashes':expected,'commands':commands,'expected_rows':12,'statistic':'1-exp(mean(log(candidate_ns/base_ns))), paired per case','env':{'GOMAXPROCS':'1','GOGC':'100'},'scope':'8bit affected,10bit control; grain absent measured18clip gap corpus'}\nmanifest['promotion_guard']={'affected_8bit_min_paired_geomean_saving':0.005,'affected_8bit_min_faster_pairs':2,'control_10bit_max_paired_geomean_regression':0.01,'steady_allocs_per_op':0,'all_parity_gates_required':True,'scope':'Grain is absent from measured18clip dav1d-gap corpus; cannot close that measured corpus gap.'}\n(A/'screen-v1-manifest.json').write_text(json.dumps(manifest,indent=2)+'\\n')\nif os.environ.get('RUN_EXCLUSIVE_SCREEN')!='1':\n    print('Manifest prepared; exclusive grant required to run.')\n    raise SystemExit(0)\nfor side,f in files.items():\n    assert hashlib.sha256(f.read_bytes()).hexdigest()==expected[side],side\nout=A/'screen-v1';out.mkdir(exist_ok=False)\nrecords=[]\nenv=os.environ.copy();env.update(manifest['env'])\nfor i,row in enumerate(commands):\n    log=out/f'{i+1:02d}-pair{row[\"pair\"]}-{row[\"case\"]}-{row[\"side\"]}.txt'\n    start=datetime.datetime.now(datetime.timezone.utc).isoformat()\n    p=subprocess.run(row['command'],cwd=root,env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)\n    log.write_text(p.stdout)\n    matches=re.findall(r'^BenchmarkFilmGrainDirectPublication/(\\S+)\\s+(\\d+)\\s+([0-9.]+) ns/op\\s+.*?([0-9]+) B/op\\s+([0-9]+) allocs/op',p.stdout,re.M)\n    record={**row,'log':str(log),'start':start,'returncode':p.returncode,'matches':matches}\n    records.append(record)\n    (out/'raw-rows.json').write_text(json.dumps(records,indent=2)+'\\n')\n    assert p.returncode==0 and len(matches)==1,(row,p.stdout)\n    name,n,ns,b,alloc=matches[0]\n    assert name in (row['case'],row['case']+'-1') and int(n)==200,(name,n)\n    record.update(ns_per_op=float(ns),bytes_per_op=int(b),allocs_per_op=int(alloc),actual_case=name)\n    print(f'{i+1}/12 {row[\"case\"]} pair{row[\"pair\"]} {row[\"side\"]}: {ns} ns/op {alloc} allocs/op',flush=True)\nsummary={}\nfor case in cases:\n    pairs=[]\n    for pair in (1,2,3):\n        r={x['side']:x for x in records if x['case']==case and x['pair']==pair}\n        ratio=r['candidate']['ns_per_op']/r['baseline']['ns_per_op']\n        pairs.append({'pair':pair,'baseline_ns':r['baseline']['ns_per_op'],'candidate_ns':r['candidate']['ns_per_op'],'candidate_over_baseline':ratio,'saving_fraction':1-ratio})\n    summary[case]={'pairs':pairs,'paired_geomean_saving_fraction':1-math.exp(sum(math.log(p['candidate_over_baseline']) for p in pairs)/3)}\n(out/'raw-rows.json').write_text(json.dumps(records,indent=2)+'\\n')\n(out/'summary.json').write_text(json.dumps(summary,indent=2)+'\\n')\nprint(json.dumps(summary,indent=2))\n",
+  "screen_script_sha256": "f139bbb426801ba41c751d7f30d178ee88b821a58a7ed0b020b13fcb5e9abf01",
+  "source_hashes": {
+    "internal/av1/decoder/postfilter.go": "f5299a9d6be581094325d3d6d61814263bc2f22e34173eeb5af4ce4c71d668ec",
+    "internal/av1/decoder/postfilter_filmgrain_direct.go": "1f69ce2b85d3d6ce1aefdc0a999f0b516f1b2813c09f63ea6770031f02aa8439",
+    "internal/av1/decoder/postfilter_filmgrain_direct_generic.go": "b73c8d6dd9a2e2072b3b91c6b4040134254bc9f8379892720b5870540cbdfcd0",
+    "internal/av1/decoder/postfilter_filmgrain_direct_gosimd_arm64.go": "e5b5199814f0e81aca3efd9a62192d7483f70f3cd15499dd87031c7121f57887",
+    "internal/av1/decoder/postfilter_filmgrain_direct_test.go": "ee86087fc708c149062001132e16864ca916c8ecde704fe061e4d514006059b9",
+    "internal/av1/filmgrain/apply_segment_u8.go": "f9dec4fd592755e4e138f2e7bce078dc4f9bf71f655dd64dd5f5ee71611c76c2",
+    "internal/av1/filmgrain/apply_segment_u8_generic.go": "ce9796239ee4f32ad007e13effd4f867bd30fffab2c65eabed86d7dcfa852897",
+    "internal/av1/filmgrain/apply_segment_u8_gosimd_arm64.go": "4ec7b4197535bd8330fce61089b392e003fe9f11574624dd13d54d57b9422ba8",
+    "internal/av1/filmgrain/apply_u8.go": "a6a2ff80a2b9e80bca8c54d5592228df8c779df053b5b2de4822a1aca2f149e5",
+    "internal/av1/filmgrain/apply_u8_test.go": "59235098d3e292dd58190473c70407748c7a1fccb8be80a17f620c78b563f7fa"
+  },
+  "correctness_logs": {
+    "parity-simd.log": "ok  \tgithub.com/thesyncim/goav1/internal/av1/filmgrain\t0.203s\nok  \tgithub.com/thesyncim/goav1/internal/av1/decoder\t0.328s\n",
+    "parity-purego.log": "ok  \tgithub.com/thesyncim/goav1/internal/av1/filmgrain\t0.324s\nok  \tgithub.com/thesyncim/goav1/internal/av1/decoder\t0.341s\n",
+    "parity-experiment-off.log": "ok  \tgithub.com/thesyncim/goav1/internal/av1/filmgrain\t0.314s\nok  \tgithub.com/thesyncim/goav1/internal/av1/decoder\t0.383s\n",
+    "golden-baseline-main.log": "=== RUN   TestSimpleDecoderProfileClipsMatchGolden\n=== RUN   TestSimpleDecoderProfileClipsMatchGolden/profile1-444-8bit-filmgrain-96x96.ivf\n=== RUN   TestSimpleDecoderProfileClipsMatchGolden/profile1-444-10bit-filmgrain-96x96.ivf\n--- PASS: TestSimpleDecoderProfileClipsMatchGolden (0.01s)\n    --- PASS: TestSimpleDecoderProfileClipsMatchGolden/profile1-444-8bit-filmgrain-96x96.ivf (0.01s)\n    --- PASS: TestSimpleDecoderProfileClipsMatchGolden/profile1-444-10bit-filmgrain-96x96.ivf (0.00s)\nPASS\n",
+    "golden-candidate-v1.log": "=== RUN   TestSimpleDecoderProfileClipsMatchGolden\n=== RUN   TestSimpleDecoderProfileClipsMatchGolden/profile1-444-8bit-filmgrain-96x96.ivf\n=== RUN   TestSimpleDecoderProfileClipsMatchGolden/profile1-444-10bit-filmgrain-96x96.ivf\n--- PASS: TestSimpleDecoderProfileClipsMatchGolden (0.01s)\n    --- PASS: TestSimpleDecoderProfileClipsMatchGolden/profile1-444-8bit-filmgrain-96x96.ivf (0.01s)\n    --- PASS: TestSimpleDecoderProfileClipsMatchGolden/profile1-444-10bit-filmgrain-96x96.ivf (0.01s)\nPASS\n",
+    "golden-candidate-v1-12bit.log": "=== RUN   TestSimpleDecoderProfileClipsMatchGolden\n=== RUN   TestSimpleDecoderProfileClipsMatchGolden/profile2-444-12bit-filmgrain-96x96.ivf\n--- PASS: TestSimpleDecoderProfileClipsMatchGolden (0.01s)\n    --- PASS: TestSimpleDecoderProfileClipsMatchGolden/profile2-444-12bit-filmgrain-96x96.ivf (0.01s)\nPASS\n"
+  },
+  "codegen": {
+    "public_route": "frameWorkApplyFilmGrainDirectU8 calls ApplyLumaRowU8/ApplyChromaRowU8; no LoadSamplePlane/StoreSamplePlane or allocation calls. Legacy bind/apply remain in guarded fallback.",
+    "segment": "8 samples; two exact int32 products, signed rounding/add/clamp and byte narrowing; no calls/vector spills in hot loop. Safe 8-byte load uses scalar->vector transfer and pack uses vector->scalar transfer. Dynamic shift-vector construction remains repeated, as in original uint16 segment.",
+    "callers": "Luma LUT gather inlined. Chroma gather/scaling index and seam helpers remain direct calls, as in the staged baseline. Stack scale/blend buffers do not escape.",
+    "files": [
+      "codegen-v1.log",
+      "publication-codegen-v1.txt",
+      "applyGrainSegmentU8-compiler-v1.txt",
+      "applyLumaBlockU8-compiler-v1.txt",
+      "applyChromaBlockU8-compiler-v1.txt",
+      "gatherChromaScaleRowU8-compiler-v1.txt"
+    ]
+  },
+  "upstream": {
+    "library": "dav1d",
+    "revision": "b546257f770768b2c88258c533da38b91a06f737",
+    "source": "src/fg_apply_tmpl.c:100-219",
+    "boundary": "prep copies inactive planes; apply reads original ungrained source and writes separate display; chroma reads original luma"
+  },
+  "preserved_contracts": [
+    "original LUT/RNG/seed/grain/overlap/clipping math",
+    "reference surfaces remain ungrained",
+    "full display padding matches legacy copy+store",
+    "existing scratch sizing/binding/validation and error ordering",
+    "HBD/portable and alias/noncanonical/odd subsampled width fallback",
+    "public in-place API unchanged"
+  ],
+  "limits": [
+    "one small three-frame affected feature fixture; no universal resolution or platform performance claim",
+    "10bit control variation is not attributed to a high-bit-depth kernel change",
+    "scratch capacities remain allocated for compatibility",
+    "not a claim about current18clip measured gap"
+  ],
+  "artifact_directory": "/private/tmp/decoder-grain-direct-20261018",
+  "prior_experiments": "Wiener V1/V2 closed unmerged, exact patches and all rows preserved separately at /private/tmp/decoder-wiener-gap-20261018; no pooling.",
+  "integration": {
+    "base_revision": "b031717264a14638af59f1b60ca1895fb28820fb",
+    "source_identical_to_measured_grain_candidate": true,
+    "binary_sha256": "893ba02c9e349ca59be930c774a7d3e433f7a9444731027e899ee1f05fa98ee1",
+    "binary": "/private/tmp/decoder-grain-direct-20261018/candidate-integrated.test",
+    "timing_repeated": false,
+    "focused_publication_gate": "ok  \tgithub.com/thesyncim/goav1/internal/av1/decoder\t0.455s\n",
+    "selected_independent_frame_goldens": "=== RUN   TestSimpleDecoderProfileClipsMatchGolden\n=== RUN   TestSimpleDecoderProfileClipsMatchGolden/profile1-444-8bit-filmgrain-96x96.ivf\n=== RUN   TestSimpleDecoderProfileClipsMatchGolden/profile1-444-10bit-filmgrain-96x96.ivf\n=== RUN   TestSimpleDecoderProfileClipsMatchGolden/profile2-444-12bit-filmgrain-96x96.ivf\n--- PASS: TestSimpleDecoderProfileClipsMatchGolden (0.02s)\n    --- PASS: TestSimpleDecoderProfileClipsMatchGolden/profile1-444-8bit-filmgrain-96x96.ivf (0.01s)\n    --- PASS: TestSimpleDecoderProfileClipsMatchGolden/profile1-444-10bit-filmgrain-96x96.ivf (0.01s)\n    --- PASS: TestSimpleDecoderProfileClipsMatchGolden/profile2-444-12bit-filmgrain-96x96.ivf (0.01s)\nPASS\n",
+    "status": "passed final focused integration checks; ready for publication"
+  }
+}
