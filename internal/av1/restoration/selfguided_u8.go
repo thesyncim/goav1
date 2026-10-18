@@ -58,11 +58,8 @@ func ApplySelfguidedRestorationU8(src []uint8, srcStride int, srcOrigin int, dst
 	ab := scratch[dgdLen+2*fltLen:]
 	aBuf := ab[:bufLen]
 	bBuf := ab[bufLen : 2*bufLen]
-	clearInt32s(dgd)
-	clearInt32s(flt0)
-	clearInt32s(flt1)
-	clearInt32s(aBuf)
-	clearInt32s(bBuf)
+	// dgd and each active filter plane are fully overwritten. The A/B
+	// producer writes every consumed coefficient; inactive filter terms have xq==0.
 
 	dgdOrigin := SGRProjBorderVert*dgdStride + SGRProjBorderHorz
 	extWidth := width + 2*SGRProjBorderHorz
@@ -78,6 +75,11 @@ func ApplySelfguidedRestorationU8(src []uint8, srcStride int, srcOrigin int, dst
 
 	params := SGRParameterTable[paramsIndex]
 	if params.Radius[0] == 0 && params.Radius[1] == 0 {
+		// Retain the old error state if a caller modifies the parameter table.
+		clearInt32s(flt0)
+		clearInt32s(flt1)
+		clearInt32s(aBuf)
+		clearInt32s(bBuf)
 		return ErrInvalidRestoration
 	}
 	if params.Radius[0] > 0 {
@@ -92,8 +94,8 @@ func ApplySelfguidedRestorationU8(src []uint8, srcStride int, srcOrigin int, dst
 	xq1 := int32(xq[1])
 	// The u16 reference guards each projection term with use0/use1, but
 	// DecodeSGRXQ pins the unused filter's xq to exactly 0 (Radius[0]==0 =>
-	// xq[0]=0, Radius[1]==0 => xq[1]=0) and the unused flt buffer is zeroed
-	// above, so applying both terms unconditionally is bit-identical:
+	// xq[0]=0, Radius[1]==0 => xq[1]=0), so even if the unused flt buffer
+	// holds old scratch data, applying both terms is bit-identical:
 	// 0*(f-u) == 0 in two's-complement int32 for every f.
 	for row := range height {
 		srcRow := src[srcOrigin+row*srcStride : srcOrigin+row*srcStride+width]

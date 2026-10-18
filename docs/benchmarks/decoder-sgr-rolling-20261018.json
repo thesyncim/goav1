@@ -1,0 +1,865 @@
+{
+  "base": "5e21bb5c62827a3f5890cb89be3a3d17c217d540",
+  "reference": "dav1d b546257f770768b2c88258c533da38b91a06f737 src/looprestoration_tmpl.c:419-535",
+  "screen_rolling": {
+    "plan": {
+      "base": "5e21bb5c62827a3f5890cb89be3a3d17c217d540",
+      "binary_paths": {
+        "B": "/private/tmp/decoder-sgr-work-20261018/baseline-profile.test",
+        "C": "/private/tmp/decoder-sgr-work-20261018/candidate-rolling.test"
+      },
+      "binary_sha256": {
+        "B": "0f7760535361264431632e6f425f916fa78803f08233b0c6cd9ca699c0b5481a",
+        "C": "b140cb9555e6a39fc7b687a8a74bbf9266cc03e153ee3042760ebc9e0133c31b"
+      },
+      "sources": {
+        "internal/av1/restoration/selfguided_u8.go": "16c370ed3ff45ccbbc717fa26fed8e0757ca56760224c0f11eff75f218423445",
+        "internal/av1/restoration/selfguided_u8_scratch_test.go": "7e14b7eeff9f657be4fac941fc661a82b3525f3ed15b22b3e36dea58b9424dab",
+        "internal/av1/restoration/selfguided.go": "76f71fad038586757cb908d165239ed22062cfa774d080257b49a7327245b1c8",
+        "internal/av1/restoration/selfguided_rolling.go": "7e793d343bebf0c8f83f5391499cf3b920fb4d15832c50c5bbb4113cbd70e058",
+        "internal/av1/restoration/selfguided_rolling_test.go": "3e59bedebcee2a4efe0abd0be7bbe0bb6c318b0dcbc716506792512e2847fe86",
+        "bench_test.go": "e5071f64eb1b80e53255a4a31cff2c0216088af365b09501b5a922479326b69b",
+        "decoder_sgr_bench_test.go": "afa8359ee222ff333273b1b1d28e0284c75ecfd4113c75c73936857eac92d9e6"
+      },
+      "plan": [
+        [
+          0,
+          "sgr_u8",
+          "BC"
+        ],
+        [
+          0,
+          "sgr_hbd",
+          "CB"
+        ],
+        [
+          0,
+          "hbd_control",
+          "BC"
+        ],
+        [
+          1,
+          "sgr_hbd",
+          "BC"
+        ],
+        [
+          1,
+          "hbd_control",
+          "CB"
+        ],
+        [
+          1,
+          "sgr_u8",
+          "CB"
+        ],
+        [
+          2,
+          "hbd_control",
+          "BC"
+        ],
+        [
+          2,
+          "sgr_u8",
+          "CB"
+        ],
+        [
+          2,
+          "sgr_hbd",
+          "CB"
+        ]
+      ],
+      "ops": 200,
+      "protocol": "One rolling-intermediate iteration after clear-only failed.3paired rounds200ops, public Reset+decode. U8 target4frames9SGR calls; HBD target8frames162SGR calls; HBD control4frames0SGR calls. Baseline clean5e21 with identical test-only HBD benchmark. All rows retained; >=0.5% saving and>=2/3wins in an affected case, no clear other-case loss; no retries or pooling. No new native gap claim."
+    },
+    "rows": [
+      {
+        "round": 0,
+        "case": "sgr_u8",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.7227649688720703,
+        "log": "00-r0-sgr_u8-B.log",
+        "sha256": "0b34944ec6b22aa8a78021ad3d273535d42e15cb2820720db9b4674a140a2af5",
+        "load": [
+          6.2041015625,
+          5.34423828125,
+          6.61376953125
+        ],
+        "ops": 200,
+        "ns_op": 5955551.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "sgr_u8",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.6920230388641357,
+        "log": "01-r0-sgr_u8-C.log",
+        "sha256": "53f971eb98a9a5234336d9799d51cd0c92bc021c97922d484f1b0f3f211e3035",
+        "load": [
+          6.267578125,
+          5.37158203125,
+          6.61572265625
+        ],
+        "ops": 200,
+        "ns_op": 5672966.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "sgr_hbd",
+        "role": "C",
+        "exit": 0,
+        "seconds": 2.5588271617889404,
+        "log": "02-r0-sgr_hbd-C.log",
+        "sha256": "022ee18338a67eb265e10bc5d17674f2f4a57a45ff083df14ab492457ad26a26",
+        "load": [
+          6.267578125,
+          5.37158203125,
+          6.61572265625
+        ],
+        "ops": 200,
+        "ns_op": 12195496.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "sgr_hbd",
+        "role": "B",
+        "exit": 0,
+        "seconds": 2.678356885910034,
+        "log": "03-r0-sgr_hbd-B.log",
+        "sha256": "55cd707b2782a3d9918611a298fdc1c5fa434149416b31c775c4591619e3795a",
+        "load": [
+          6.005859375,
+          5.33203125,
+          6.59423828125
+        ],
+        "ops": 200,
+        "ns_op": 12940564.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "hbd_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 0.9962718486785889,
+        "log": "04-r0-hbd_control-B.log",
+        "sha256": "e132bd8ab57420bd8e48965942701c67778c3d4fe6b1e8aeecd79ad8e50fc77e",
+        "load": [
+          6.005859375,
+          5.33203125,
+          6.59423828125
+        ],
+        "ops": 200,
+        "ns_op": 4416081.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "hbd_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 0.989501953125,
+        "log": "05-r0-hbd_control-C.log",
+        "sha256": "b379825aee33ff43faa00a6f9609ffff369a51535f0919b9a5ba2562f08ef339",
+        "load": [
+          6.005859375,
+          5.33203125,
+          6.59423828125
+        ],
+        "ops": 200,
+        "ns_op": 4412730.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "sgr_hbd",
+        "role": "B",
+        "exit": 0,
+        "seconds": 2.7553389072418213,
+        "log": "06-r1-sgr_hbd-B.log",
+        "sha256": "266133e2efa0a753ac2e0d8034146a2e019ef49fff66ac5d42675a9f71bfc6d6",
+        "load": [
+          6.96630859375,
+          5.5419921875,
+          6.66064453125
+        ],
+        "ops": 200,
+        "ns_op": 13198852.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "sgr_hbd",
+        "role": "C",
+        "exit": 0,
+        "seconds": 2.7005550861358643,
+        "log": "07-r1-sgr_hbd-C.log",
+        "sha256": "41b3b6426225a362d9b8698dde79f661dabde75d09def2b6268a5fb5e7b62970",
+        "load": [
+          6.96630859375,
+          5.5419921875,
+          6.66064453125
+        ],
+        "ops": 200,
+        "ns_op": 12948937.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "hbd_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 0.9844462871551514,
+        "log": "08-r1-hbd_control-C.log",
+        "sha256": "47bf97573d8abb3dd26b0884fef25ba595c0096ec6b781947b9fd27532551092",
+        "load": [
+          6.96630859375,
+          5.5419921875,
+          6.66064453125
+        ],
+        "ops": 200,
+        "ns_op": 4540432.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "hbd_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.0289230346679688,
+        "log": "09-r1-hbd_control-B.log",
+        "sha256": "9e8cf943157c54569df9b2b241e84d965e8d78d3103637ee3153c68a7e7307ac",
+        "load": [
+          6.96630859375,
+          5.5419921875,
+          6.66064453125
+        ],
+        "ops": 200,
+        "ns_op": 4557777.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "sgr_u8",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.2990930080413818,
+        "log": "10-r1-sgr_u8-C.log",
+        "sha256": "eff04c694f1139fff88bab8f8b5690d3424df390ac09a563bbcf926ade2a60f8",
+        "load": [
+          6.96875,
+          5.56591796875,
+          6.66259765625
+        ],
+        "ops": 200,
+        "ns_op": 6010644.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "sgr_u8",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.291712999343872,
+        "log": "11-r1-sgr_u8-B.log",
+        "sha256": "256c38f617b688f609851e26177c056e6706d65b04e1d4a48f6e4d2a027a2589",
+        "load": [
+          6.96875,
+          5.56591796875,
+          6.66259765625
+        ],
+        "ops": 200,
+        "ns_op": 5956437.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "hbd_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.7940258979797363,
+        "log": "12-r2-hbd_control-B.log",
+        "sha256": "bdb0adcc45346229ef994e419e1f4ad78b0ccaebe724002b718c15c97e41aab8",
+        "load": [
+          6.96875,
+          5.56591796875,
+          6.66259765625
+        ],
+        "ops": 200,
+        "ns_op": 8447636.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "hbd_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 0.990056037902832,
+        "log": "13-r2-hbd_control-C.log",
+        "sha256": "0e925cc3d1f523ea5aca7bf71022520c62f399aed9d7be0cb8ee9cb35bc108b6",
+        "load": [
+          7.13134765625,
+          5.62255859375,
+          6.67626953125
+        ],
+        "ops": 200,
+        "ns_op": 4395567.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "sgr_u8",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.3506240844726562,
+        "log": "14-r2-sgr_u8-C.log",
+        "sha256": "5473bbe21bee9bdc2fc685bf28a9f7ee25ce6d5ab017b9d75a974d480f9e54d6",
+        "load": [
+          7.13134765625,
+          5.62255859375,
+          6.67626953125
+        ],
+        "ops": 200,
+        "ns_op": 6164346.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "sgr_u8",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.3050339221954346,
+        "log": "15-r2-sgr_u8-B.log",
+        "sha256": "701771baa55db6c93488ec18323066408108a131d145e5b85d99ad546f97c825",
+        "load": [
+          7.13134765625,
+          5.62255859375,
+          6.67626953125
+        ],
+        "ops": 200,
+        "ns_op": 6007159.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "sgr_hbd",
+        "role": "C",
+        "exit": 0,
+        "seconds": 2.5603060722351074,
+        "log": "16-r2-sgr_hbd-C.log",
+        "sha256": "913c315db77cca060cf84b7ab58f87e09fff5d7c16b2cb41415b4348897eb0fe",
+        "load": [
+          7.68115234375,
+          5.76123046875,
+          6.71875
+        ],
+        "ops": 200,
+        "ns_op": 12388045.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "sgr_hbd",
+        "role": "B",
+        "exit": 0,
+        "seconds": 2.6137349605560303,
+        "log": "17-r2-sgr_hbd-B.log",
+        "sha256": "385194804307440bd75b40a97f8188faacc51921241f8981ac72d7b67885ed9e",
+        "load": [
+          7.68115234375,
+          5.76123046875,
+          6.71875
+        ],
+        "ops": 200,
+        "ns_op": 12545050.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      }
+    ],
+    "summary": {
+      "sgr_u8": {
+        "paired_gm_saved_pct": 0.45635894143187805,
+        "wins": 1,
+        "pairs": [
+          {
+            "round": 0,
+            "B": 5955551.0,
+            "C": 5672966.0,
+            "saved_pct": 4.744901017554881
+          },
+          {
+            "round": 1,
+            "C": 6010644.0,
+            "B": 5956437.0,
+            "saved_pct": -0.9100574722774812
+          },
+          {
+            "round": 2,
+            "C": 6164346.0,
+            "B": 6007159.0,
+            "saved_pct": -2.6166612203872175
+          }
+        ]
+      },
+      "sgr_hbd": {
+        "paired_gm_saved_pct": 2.9881321417873474,
+        "wins": 3,
+        "pairs": [
+          {
+            "round": 0,
+            "C": 12195496.0,
+            "B": 12940564.0,
+            "saved_pct": 5.757616128632415
+          },
+          {
+            "round": 1,
+            "B": 13198852.0,
+            "C": 12948937.0,
+            "saved_pct": 1.8934601281990315
+          },
+          {
+            "round": 2,
+            "C": 12388045.0,
+            "B": 12545050.0,
+            "saved_pct": 1.2515294877262328
+          }
+        ]
+      },
+      "hbd_control": {
+        "paired_gm_saved_pct": 19.690908437367362,
+        "wins": 3,
+        "pairs": [
+          {
+            "round": 0,
+            "B": 4416081.0,
+            "C": 4412730.0,
+            "saved_pct": 0.07588176032097271
+          },
+          {
+            "round": 1,
+            "C": 4540432.0,
+            "B": 4557777.0,
+            "saved_pct": 0.380558329203029
+          },
+          {
+            "round": 2,
+            "B": 8447636.0,
+            "C": 4395567.0,
+            "saved_pct": 47.96689866845588
+          }
+        ]
+      },
+      "audit": {
+        "rows": 18,
+        "all_0_allocs": true,
+        "binary_source_unchanged": true
+      }
+    }
+  },
+  "clear_only_rejected": {
+    "plan": {
+      "base": "5e21bb5c62827a3f5890cb89be3a3d17c217d540",
+      "binary_paths": {
+        "B": "/private/tmp/decoder-inter-commit-20261018/candidate-v2.test",
+        "C": "/private/tmp/decoder-sgr-work-20261018/candidate-clear.test"
+      },
+      "binary_sha256": {
+        "B": "6230c7007a86e6b6c2f8a03ac51fa9bf850fa6f6ecce9ddc8975f1f85941284f",
+        "C": "5edc9c6da1387f4867ec37085530281aac04a3df7f3f3aee1a36a908995c399c"
+      },
+      "sources": {
+        "internal/av1/restoration/selfguided_u8.go": "16c370ed3ff45ccbbc717fa26fed8e0757ca56760224c0f11eff75f218423445",
+        "internal/av1/restoration/selfguided_u8_scratch_test.go": "7e14b7eeff9f657be4fac941fc661a82b3525f3ed15b22b3e36dea58b9424dab",
+        "bench_test.go": "e5071f64eb1b80e53255a4a31cff2c0216088af365b09501b5a922479326b69b"
+      },
+      "plan": [
+        [
+          0,
+          "sgr_u8",
+          "BC"
+        ],
+        [
+          0,
+          "hbd_control",
+          "CB"
+        ],
+        [
+          1,
+          "hbd_control",
+          "BC"
+        ],
+        [
+          1,
+          "sgr_u8",
+          "CB"
+        ],
+        [
+          2,
+          "sgr_u8",
+          "CB"
+        ],
+        [
+          2,
+          "hbd_control",
+          "BC"
+        ]
+      ],
+      "ops": 200,
+      "protocol": "3 paired rounds, public Reset+decode 4 frames. U8 target has9actual SGR calls/clip, HBD control has0U8 SGR. Candidate clear omission only. All rows retained; >=0.5% target saving with>=2/3wins and no clear control loss; no retries. No new native gap claim."
+    },
+    "rows": [
+      {
+        "round": 0,
+        "case": "sgr_u8",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.3501360416412354,
+        "log": "00-r0-sgr_u8-B.log",
+        "sha256": "68f149209c714f0f50f540bf20e1048f3442a34eade2fc747d16779a49cef715",
+        "load": [
+          4.59033203125,
+          5.64453125,
+          7.26025390625
+        ],
+        "ops": 200,
+        "ns_op": 6216239.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "sgr_u8",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.8849761486053467,
+        "log": "01-r0-sgr_u8-C.log",
+        "sha256": "52231bbe1fc7ce0fce0280859c3120b33abc9dbe22ed3a286dc1a5889da24180",
+        "load": [
+          4.54296875,
+          5.6171875,
+          7.24072265625
+        ],
+        "ops": 200,
+        "ns_op": 6319799.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "hbd_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.0445678234100342,
+        "log": "02-r0-hbd_control-C.log",
+        "sha256": "975b53585ec68a808ba48cf71dd65faef0feacfbafd78fbedf3be5254bfcacae",
+        "load": [
+          4.54296875,
+          5.6171875,
+          7.24072265625
+        ],
+        "ops": 200,
+        "ns_op": 4694054.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "hbd_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.037559986114502,
+        "log": "03-r0-hbd_control-B.log",
+        "sha256": "5584322de0b67dc97c683f9bddeac521050d9d592674919f75c9c4f350f68d99",
+        "load": [
+          4.54296875,
+          5.6171875,
+          7.24072265625
+        ],
+        "ops": 200,
+        "ns_op": 4682905.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "hbd_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.0243940353393555,
+        "log": "04-r1-hbd_control-B.log",
+        "sha256": "71924d8edf4685878dcf07a075e676e4536efaf973454bca3c744590a5dac65f",
+        "load": [
+          4.54296875,
+          5.6171875,
+          7.24072265625
+        ],
+        "ops": 200,
+        "ns_op": 4692732.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "hbd_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.030864953994751,
+        "log": "05-r1-hbd_control-C.log",
+        "sha256": "a3d573aa4f8bc440043308c5beab71d274600b9c0b44d595ffbdabee07fe3b7b",
+        "load": [
+          4.54296875,
+          5.6171875,
+          7.24072265625
+        ],
+        "ops": 200,
+        "ns_op": 4684427.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "sgr_u8",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.3398900032043457,
+        "log": "06-r1-sgr_u8-C.log",
+        "sha256": "aae186248e97b97666169350d4cd4faf21713cc3943a85e9ff94c52ef2e489e8",
+        "load": [
+          4.4990234375,
+          5.59033203125,
+          7.2216796875
+        ],
+        "ops": 200,
+        "ns_op": 6247072.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "sgr_u8",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.3527491092681885,
+        "log": "07-r1-sgr_u8-B.log",
+        "sha256": "a3e13ead8a2ebb696cd0057e5a49140a22dacce05ee8bb8a4126cc6f35fcfd93",
+        "load": [
+          4.4990234375,
+          5.59033203125,
+          7.2216796875
+        ],
+        "ops": 200,
+        "ns_op": 6222820.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "sgr_u8",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.3404901027679443,
+        "log": "08-r2-sgr_u8-C.log",
+        "sha256": "3d84b40b65bd7f1ffe77d678b576159e1ad1004f2a74341760ef9a440640d775",
+        "load": [
+          4.4990234375,
+          5.59033203125,
+          7.2216796875
+        ],
+        "ops": 200,
+        "ns_op": 6279655.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "sgr_u8",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.3347809314727783,
+        "log": "09-r2-sgr_u8-B.log",
+        "sha256": "a7cc30d08979ace8b9d4b643249fcf99b2ba49e32a0eca57c0593e128855c73a",
+        "load": [
+          4.4990234375,
+          5.59033203125,
+          7.2216796875
+        ],
+        "ops": 200,
+        "ns_op": 6238645.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "hbd_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.0227057933807373,
+        "log": "10-r2-hbd_control-B.log",
+        "sha256": "e2a916b0b6050dddf84eb9359070c7e89fe6638861aa52fddab59520c2cba297",
+        "load": [
+          4.37890625,
+          5.546875,
+          7.19677734375
+        ],
+        "ops": 200,
+        "ns_op": 4691173.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "hbd_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.0545761585235596,
+        "log": "11-r2-hbd_control-C.log",
+        "sha256": "e2ff3aefd82d0f2c9c8ef4e1ffd12246a69c76ed751354d6abe69e1f0ae8b2a8",
+        "load": [
+          4.37890625,
+          5.546875,
+          7.19677734375
+        ],
+        "ops": 200,
+        "ns_op": 4725534.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      }
+    ],
+    "summary": {
+      "sgr_u8": {
+        "paired_gm_saved_pct": -0.9028536038666157,
+        "wins": 0,
+        "pairs": [
+          {
+            "round": 0,
+            "B": 6216239.0,
+            "C": 6319799.0,
+            "saved_pct": -1.6659591112889949
+          },
+          {
+            "round": 1,
+            "C": 6247072.0,
+            "B": 6222820.0,
+            "saved_pct": -0.3897268440996138
+          },
+          {
+            "round": 2,
+            "C": 6279655.0,
+            "B": 6238645.0,
+            "saved_pct": -0.6573542812581934
+          }
+        ]
+      },
+      "hbd_control": {
+        "paired_gm_saved_pct": -0.26383223697947766,
+        "wins": 1,
+        "pairs": [
+          {
+            "round": 0,
+            "C": 4694054.0,
+            "B": 4682905.0,
+            "saved_pct": -0.2380787139606655
+          },
+          {
+            "round": 1,
+            "B": 4692732.0,
+            "C": 4684427.0,
+            "saved_pct": 0.1769758000243815
+          },
+          {
+            "round": 2,
+            "B": 4691173.0,
+            "C": 4725534.0,
+            "saved_pct": -0.7324607299709518
+          }
+        ]
+      },
+      "audit": {
+        "rows": 12,
+        "all_0_allocs": true,
+        "binary_source_unchanged": true
+      }
+    }
+  },
+  "final_source_sha256": {
+    "internal/av1/restoration/selfguided_u8.go": "f9db91d7fc9bad05d2fe36d8b5c2566b59020a587dc7730f814ff64519de10bc",
+    "internal/av1/restoration/selfguided_u8_scratch_test.go": "7e14b7eeff9f657be4fac941fc661a82b3525f3ed15b22b3e36dea58b9424dab",
+    "internal/av1/restoration/selfguided.go": "76f71fad038586757cb908d165239ed22062cfa774d080257b49a7327245b1c8",
+    "internal/av1/restoration/selfguided_rolling.go": "7e793d343bebf0c8f83f5391499cf3b920fb4d15832c50c5bbb4113cbd70e058",
+    "internal/av1/restoration/selfguided_rolling_test.go": "3e59bedebcee2a4efe0abd0be7bbe0bb6c318b0dcbc716506792512e2847fe86",
+    "bench_test.go": "e5071f64eb1b80e53255a4a31cff2c0216088af365b09501b5a922479326b69b",
+    "decoder_sgr_bench_test.go": "afa8359ee222ff333273b1b1d28e0284c75ecfd4113c75c73936857eac92d9e6"
+  },
+  "measured_source_delta": "Comment-only selfguided_u8.go correction after timing: A/B producer writes consumed coefficients; it no longer clears workspace. No executable/test changes.",
+  "gates": {
+    "clear-tests.log": {
+      "sha256": "b6611507f8e255d8d55e70a98640d868624877ab8be4e1df2aefb4281c95dc11",
+      "result": "PASS"
+    },
+    "rolling-tests.log": {
+      "sha256": "b92926045a46e2d64dbcaadb623ac6e88430a27c2cb8ca3717978833fb07048c",
+      "result": "PASS"
+    },
+    "winner-pixels.log": {
+      "sha256": "c1107f80baa21850ee549e9f8d40acec02acdd6689759976e0b2a7d801164232",
+      "result": "PASS"
+    },
+    "coverage/result.log": {
+      "sha256": "71848c3d819dc3f833161b0ee8641eaf382fcd55458d2557ec58de47413a17e8",
+      "result": "PASS"
+    }
+  },
+  "coverage": {
+    "u8_444_8bit_cdef_restoration": {
+      "frames": 4,
+      "SGR_calls": 9,
+      "parameters": {
+        "9": 9
+      }
+    },
+    "hbd_422_12bit_inter_cdef_restoration": {
+      "frames": 8,
+      "SGR_calls": 162,
+      "parameters": {
+        "4": 9,
+        "6": 9,
+        "7": 9,
+        "8": 27,
+        "9": 99,
+        "15": 9
+      }
+    },
+    "hbd_superres_restoration_control": {
+      "frames": 4,
+      "SGR_calls": 0
+    }
+  },
+  "artifact_root": "/private/tmp/decoder-sgr-work-20261018",
+  "limitations": [
+    "Only3paired rounds/case; estimates, no confidence interval",
+    "U8 case mixed1/3; do not claim U8 speedup",
+    "Unchanged control aggregate dominated by slow baseline round2; all rows retained, no causal control gain claim",
+    "No fresh native dav1d gap, no additive performance claim"
+  ]
+}

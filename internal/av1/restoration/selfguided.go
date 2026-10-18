@@ -310,6 +310,18 @@ func selfguided(dgd []int32, dgdOrigin int, width int, height int, dgdStride int
 }
 
 func calculateIntermediate(dgd []int32, dgdOrigin int, width int, height int, dgdStride int, bitDepth int, paramsIndex int, radiusIndex int, pass int, aBuf []int32, bBuf []int32, bufStride int) {
+	params := SGRParameterTable[paramsIndex]
+	radius := int(params.Radius[radiusIndex])
+	if validSGRBlock(width, height) && (radius == 1 || radius == 2) {
+		calculateIntermediateRolling(dgd, dgdOrigin, width, height, dgdStride, bitDepth, params, radiusIndex, pass, aBuf, bBuf, bufStride)
+		return
+	}
+	calculateIntermediateFull(dgd, dgdOrigin, width, height, dgdStride, bitDepth, paramsIndex, radiusIndex, pass, aBuf, bBuf, bufStride)
+}
+
+// calculateIntermediateFull retains the general box-sum domain for non-AV1
+// parameter-table mutations and direct internal calls outside a processing unit.
+func calculateIntermediateFull(dgd []int32, dgdOrigin int, width int, height int, dgdStride int, bitDepth int, paramsIndex int, radiusIndex int, pass int, aBuf []int32, bBuf []int32, bufStride int) {
 	clearInt32s(aBuf)
 	clearInt32s(bBuf)
 	params := SGRParameterTable[paramsIndex]
