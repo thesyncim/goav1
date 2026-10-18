@@ -1510,6 +1510,17 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			e.tilePCs[t].st.lfMap = nil
 		}
 	}
+	// A serial single-tile block walk has the same ordering as the decoder.
+	// Build edge masks here while its above/left transform contexts are live,
+	// retaining the record map for CDEF and level resolution.
+	e.pc.st.lfMaskBuilder = nil
+	if lfLevel > 0 && e.singleThread && nTiles == 1 {
+		if err := e.lf.orderedBuilder.Reset(&e.lf.masks, encoderLoopFilterSBLog2); err != nil {
+			return nil, fmt.Errorf("loop filter mask reset: %w", err)
+		}
+		e.lf.orderedMasks = true
+		e.pc.st.lfMaskBuilder = &e.lf.orderedBuilder
+	}
 	// The light-PD1 MDS0 candidate decision runs on every inter frame, with
 	// droppable leaves on the lighter detector-gated level, mirroring
 	// SVT-AV1 preset 12's temporal-layer modulation (enc_mode_config.c:

@@ -6,11 +6,11 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/motion"
 )
 
-// markDecodedInterContext commits the adjacent motion and interpolation-filter
-// updates after sub8x8 chroma has collected the previous grid cells. ReadInterMotion
-// preserves the reference result, and no observer runs between the two commits.
-// Keep public MarkInterMotion and MarkInterFilters independently callable.
-func (c *BlockModeContext) markDecodedInterContext(size BlockSize, x4, y4 int, result InterMotionResult, filters motion.InterpFilters, hasChroma bool) error {
+// MarkInterMotionAndFilters commits adjacent motion and interpolation-filter
+// updates together, after the caller has collected any sub8x8 chroma cells. It
+// preserves the separate calls' motion-first errors and partial state. Keep the
+// individual methods for callers that observe the intermediate state.
+func (c *BlockModeContext) MarkInterMotionAndFilters(size BlockSize, x4, y4 int, result InterMotionResult, filters motion.InterpFilters, hasChroma bool) error {
 	if !filters.X.Valid() || !filters.Y.Valid() {
 		// Preserve motion-first errors and partial state even for an invalid
 		// filter pair; the decoded valid path below has no failing second phase.
@@ -31,21 +31,16 @@ func (c *BlockModeContext) markDecodedInterContext(size BlockSize, x4, y4 int, r
 	}
 	xEnd := x4 + int(dims.W4)
 	yEnd := y4 + int(dims.H4)
-	clear(c.AboveIntra[x4:xEnd])
-	clear(c.AboveCompGroup[x4:xEnd])
-	clear(c.AboveInterIntra[x4:xEnd])
-	clear(c.LeftIntra[y4:yEnd])
-	clear(c.LeftCompGroup[y4:yEnd])
-	clear(c.LeftInterIntra[y4:yEnd])
-	if hasChroma {
-		clear(c.AboveChromaIntra[x4:xEnd])
-		clear(c.AboveChromaMode[x4:xEnd])
-		clear(c.LeftChromaIntra[y4:yEnd])
-		clear(c.LeftChromaMode[y4:yEnd])
-	}
 	compound := boolByte(result.References.Compound)
 
 	for x := x4; x < xEnd; x++ {
+		c.AboveIntra[x] = 0
+		c.AboveCompGroup[x] = 0
+		c.AboveInterIntra[x] = 0
+		if hasChroma {
+			c.AboveChromaIntra[x] = 0
+			c.AboveChromaMode[x] = 0
+		}
 		c.AboveRef[0][x] = result.References.Ref[0]
 		c.AboveRef[1][x] = result.References.Ref[1]
 		c.AboveCompound[x] = compound
@@ -57,6 +52,13 @@ func (c *BlockModeContext) markDecodedInterContext(size BlockSize, x4, y4 int, r
 		c.AboveInterpValid[x] = 1
 	}
 	for y := y4; y < yEnd; y++ {
+		c.LeftIntra[y] = 0
+		c.LeftCompGroup[y] = 0
+		c.LeftInterIntra[y] = 0
+		if hasChroma {
+			c.LeftChromaIntra[y] = 0
+			c.LeftChromaMode[y] = 0
+		}
 		c.LeftRef[0][y] = result.References.Ref[0]
 		c.LeftRef[1][y] = result.References.Ref[1]
 		c.LeftCompound[y] = compound

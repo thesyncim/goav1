@@ -551,13 +551,13 @@ type lossyEncodeState struct {
 	// at frame start). Inter tiles set it so decisions are independent of
 	// coding order — required for the SB-row wavefront to be byte-identical
 	// to the serial walk. Keyframe paths leave it false (unchanged behavior).
-	trialBlockLocal bool
-	intraEdgeScratch             threading.FrameWorkIntraPredictionScratch
-	keyMIColEnd, keyMIRowEnd     uint32
-	keyVisW, keyVisH             int
-	invScratch                   []int32
-	color                        parser.ColorConfig
-	transformMode                parser.TransformMode
+	trialBlockLocal          bool
+	intraEdgeScratch         threading.FrameWorkIntraPredictionScratch
+	keyMIColEnd, keyMIRowEnd uint32
+	keyVisW, keyVisH         int
+	invScratch               []int32
+	color                    parser.ColorConfig
+	transformMode            parser.TransformMode
 
 	// Per-block scratch reused across blocks so the hot encode loop stays
 	// allocation-free: quantized coefficients per plane (sized for the largest
@@ -632,7 +632,8 @@ type lossyEncodeState struct {
 	// lfMap, when non-nil, collects per-MI loop-filter records for the
 	// frame-level deblocking pass (the decoder's own map type, filled with
 	// the same per-block syntax the decoder records).
-	lfMap *threading.FrameWorkLoopFilterMap
+	lfMap         *threading.FrameWorkLoopFilterMap
+	lfMaskBuilder *threading.FrameWorkLoopFilterOrderedBuilder
 
 	// hme, when non-nil, supplies the coarse-search seeds that recenter the
 	// full-pel refinement windows.
@@ -734,6 +735,7 @@ func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, re
 	st.allowScreenContentTools = allowScreenContentTools
 	st.color = color
 	st.lfMap = lfMap
+	st.lfMaskBuilder = nil
 	st.hme = nil
 	st.decisionStats = nil
 	if pc.decisionStatsEnabled {

@@ -375,7 +375,7 @@ func TestDecodedInterContextMatchesOriginalCommits(t *testing.T) {
 					result := validInterMotionForOracle(refs, caseIndex)
 					filters := motion.InterpFilters{X: motion.InterpFilter(caseIndex % 4), Y: motion.InterpFilter((caseIndex / 4) % 4)}
 					got, want := initial, initial
-					gotErr := got.markDecodedInterContext(size, pos[0], pos[1], result, filters, hasChroma)
+					gotErr := got.MarkInterMotionAndFilters(size, pos[0], pos[1], result, filters, hasChroma)
 					wantErr := frozenDecodedInterContextOracle(&want, size, pos[0], pos[1], result, filters, hasChroma)
 					if gotErr != nil || wantErr != nil || !reflect.DeepEqual(got, want) {
 						t.Fatalf("combined commit differs: size=%d pos=%v compound=%t chroma=%t filters=%+v errors=%v/%v", size, pos, compound, hasChroma, filters, gotErr, wantErr)
@@ -414,7 +414,7 @@ func TestDecodedInterContextPreservesErrorAndPartialState(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, want := initial, initial
-			gotErr := got.markDecodedInterContext(tc.size, tc.x, tc.y, tc.result, tc.filters, true)
+			gotErr := got.MarkInterMotionAndFilters(tc.size, tc.x, tc.y, tc.result, tc.filters, true)
 			wantErr := frozenDecodedInterContextOracle(&want, tc.size, tc.x, tc.y, tc.result, tc.filters, true)
 			if gotErr == nil || fmt.Sprint(gotErr) != fmt.Sprint(wantErr) || !reflect.DeepEqual(got, want) {
 				t.Fatalf("combined error/state differs: errors=%v/%v", gotErr, wantErr)
@@ -426,7 +426,7 @@ func TestDecodedInterContextPreservesErrorAndPartialState(t *testing.T) {
 	}
 	for _, filters := range []motion.InterpFilters{validFilters, badFilters} {
 		for _, result := range []InterMotionResult{valid, badMotion} {
-			got := (*BlockModeContext)(nil).markDecodedInterContext(BlockSize4x4, 0, 0, result, filters, false)
+			got := (*BlockModeContext)(nil).MarkInterMotionAndFilters(BlockSize4x4, 0, 0, result, filters, false)
 			want := frozenDecodedInterContextOracle(nil, BlockSize4x4, 0, 0, result, filters, false)
 			if got == nil || fmt.Sprint(got) != fmt.Sprint(want) {
 				t.Fatalf("nil combined error=%v want %v", got, want)
