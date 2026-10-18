@@ -4597,13 +4597,12 @@ func (st *lossyEncodeState) reconInterTXBResult(reconPlane, pred []byte, predStr
 
 	dq := &st.dqScratch
 	eob := int(txbResult.EOB)
-	quantize.DequantizeBlockScaledBitDepthEOBTrusted(dq[:geo.coeffCount], geo.coeffHeight, qcoeff, geo.coeffHeight, scan, eob, geo.coeffWidth, geo.coeffHeight, q, geo.txScale, 8)
 	if txType != transform.TypeIDTX {
+		// Collect the same scan-prefix row bound while dequantization already
+		// visits those positions, including entries whose coefficient is zero.
+		activeRows := quantize.DequantizeBlockScaledBitDepthEOBRowsFlatTrusted(dq[:geo.coeffCount], qcoeff, scan, eob, geo.coeffHeight, q, geo.txScale, 8)
 		raw := st.invScratch[:n]
-		// Every coefficient past the EOB is zero, so the row pass only needs
-		// the transform rows the scan prefix reaches — the decoder's own
-		// activeRows bound (reconstruct.activeTransformRowsFromScan).
-		if err := transform.InverseBlockBitDepthRaw(raw, dq[:geo.coeffCount], geo.coeffHeight, geo.size, txType, 8, scanActiveRows(scan, eob, geo.coeffHeight)); err != nil {
+		if err := transform.InverseBlockBitDepthRaw(raw, dq[:geo.coeffCount], geo.coeffHeight, geo.size, txType, 8, activeRows); err != nil {
 			return err
 		}
 		dst := reconPlane[py*stride+px:]
@@ -4611,6 +4610,7 @@ func (st *lossyEncodeState) reconInterTXBResult(reconPlane, pred []byte, predStr
 		return nil
 	}
 
+	quantize.DequantizeBlockScaledBitDepthEOBTrusted(dq[:geo.coeffCount], geo.coeffHeight, qcoeff, geo.coeffHeight, scan, eob, geo.coeffWidth, geo.coeffHeight, q, geo.txScale, 8)
 	res := &st.invResidual
 	if err := transform.InverseBlock(res[:n], w, dq[:geo.coeffCount], geo.coeffHeight, st.invScratch[:n], geo.size, txType); err != nil {
 		return err
@@ -4629,27 +4629,6 @@ func (st *lossyEncodeState) reconInterTXBResult(reconPlane, pred []byte, predStr
 	}
 	return nil
 
-}
-
-// scanActiveRows returns one past the largest coefficient row (position modulo
-// the column-major coefficient height) any of the first eob scan positions
-// addresses (coeffHeight is a power of two). Coefficients past the EOB are
-// zero, so the inverse transform's row pass can stop there.
-func scanActiveRows(scan []int16, eob, coeffHeight int) int {
-	if eob > len(scan) {
-		return 0
-	}
-	mask := coeffHeight - 1
-	rows := 0
-	for _, p := range scan[:eob] {
-		if r := int(p) & mask; r >= rows {
-			rows = r + 1
-			if rows == coeffHeight {
-				break
-			}
-		}
-	}
-	return rows
 }
 
 func addConstantResidualToPredReconBlockPureGo(reconPlane, pred []byte, predStride, stride, px, py, w, h int, residual int16) {
