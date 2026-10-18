@@ -1,0 +1,589 @@
+{
+  "experiment": "Private postfilter pointer queries",
+  "base": "c72c0fb01379dca14cf4ee575afe240ea45794c2",
+  "integration_base": "0034a13b475c53645e83e477db34438baf92b9d5",
+  "freeze": {
+    "base": "c72c0fb01379dca14cf4ee575afe240ea45794c2",
+    "base_tree": "ec516ee057aab69658836476e7a44856b8a287eb",
+    "baseline_binary_provenance": "PR28 integrated.test matches current c72 production/tests/benchmark harness; only final docs changed after build, per /private/tmp/astra-decoder-cdef-sparse-staging/integration.json. Go1.27simd/arm64v8.0/CGO1, no PGO.",
+    "binary_paths": {
+      "B": "/private/tmp/astra-decoder-cdef-sparse-staging/integrated.test",
+      "C": "/private/tmp/decoder-postfilter-context-20261018/candidate.test"
+    },
+    "binary_sha256": {
+      "B": "eb2ca25d583a1057828b4ea6765648548e042bc535c849bd602fc29d3aff5691",
+      "C": "09f5cdab4dcb0e9b36c4794b10b23b7d4ac9b457174f627eafc447ff956896ce"
+    },
+    "sources": {
+      "internal/av1/decoder/postfilter.go": "e1b08d5d00c853cb97f37a14ed464f4b122565560e6c854c3b9b2996bacde75c",
+      "internal/av1/decoder/postfilter_context_query_test.go": "06a4747fc805d2ebf4d92212a63beea5758e02039abfbfd5a2f9886e2e703828",
+      "go.mod": "2d9afa6f2b2dd13cf953546a7076df9c85f014f10913b47fbaf80d9116ed6e19",
+      "bench_test.go": "e5071f64eb1b80e53255a4a31cff2c0216088af365b09501b5a922479326b69b",
+      "public_fullclip_corpus_bench_test.go": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59"
+    },
+    "screen_script_sha256": "71b9c4d909e5ee88082cd1f69325f862fb468c4a83efa417148fb4cbe78beef1",
+    "owned_files": [
+      "internal/av1/decoder/postfilter.go",
+      "internal/av1/decoder/postfilter_context_query_test.go"
+    ],
+    "initial_untimed_binary_sha256": "d4490b3a2020c6423e7535a954146d5a2b5a97ea68bd691f7b91c7c7ab888e43"
+  },
+  "rows": [
+    {
+      "round": 0,
+      "clip": "p720_inter_q32",
+      "role": "B",
+      "exit": 0,
+      "wall_s": 3.3729379177093506,
+      "log": "00-r0-p720_inter_q32-B.log",
+      "sha256": "19a4efdc454008416e632e3d80830f447f7b9077329439e809d57af84362038d",
+      "load": [
+        8.517578125,
+        12.35107421875,
+        13.642578125
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/astra-decoder-cdef-sparse-staging/integrated.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+          "20",
+          "156028094",
+          "0",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 156028094.0,
+      "bytes_op": 0,
+      "allocs_op": 0
+    },
+    {
+      "round": 0,
+      "clip": "p720_inter_q32",
+      "role": "C",
+      "exit": 0,
+      "wall_s": 3.247643232345581,
+      "log": "01-r0-p720_inter_q32-C.log",
+      "sha256": "8ae4f988a64a4d3db514ebdbfef42d6341f7a7b2c3fda871c8a08ae1edfa0eaa",
+      "load": [
+        8.517578125,
+        12.35107421875,
+        13.642578125
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-postfilter-context-20261018/candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+          "20",
+          "151379204",
+          "0",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 151379204.0,
+      "bytes_op": 0,
+      "allocs_op": 0
+    },
+    {
+      "round": 0,
+      "clip": "p360_intra_q32",
+      "role": "C",
+      "exit": 0,
+      "wall_s": 1.4214868545532227,
+      "log": "02-r0-p360_intra_q32-C.log",
+      "sha256": "5d4b417249fb63f01535fad59ea7f02f2ba975559f5a1e9bfed3e14fb670d866",
+      "load": [
+        8.517578125,
+        12.35107421875,
+        13.642578125
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-postfilter-context-20261018/candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+          "20",
+          "64126817",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 64126817.0,
+      "bytes_op": 2,
+      "allocs_op": 0
+    },
+    {
+      "round": 0,
+      "clip": "p360_intra_q32",
+      "role": "B",
+      "exit": 0,
+      "wall_s": 1.4746308326721191,
+      "log": "03-r0-p360_intra_q32-B.log",
+      "sha256": "27aa21b636d6acfe88c3064f8ce1b4a4cd170ea5c58269083d6ce5dad532c769",
+      "load": [
+        8.07568359375,
+        12.19580078125,
+        13.580078125
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/astra-decoder-cdef-sparse-staging/integrated.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+          "20",
+          "65649279",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 65649279.0,
+      "bytes_op": 2,
+      "allocs_op": 0
+    },
+    {
+      "round": 1,
+      "clip": "p360_intra_q32",
+      "role": "B",
+      "exit": 0,
+      "wall_s": 1.4140100479125977,
+      "log": "04-r1-p360_intra_q32-B.log",
+      "sha256": "4df0dd28122edce011a19f109eb1de9a9f51b31852382b626e7feadb0ca5a0ed",
+      "load": [
+        8.07568359375,
+        12.19580078125,
+        13.580078125
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/astra-decoder-cdef-sparse-staging/integrated.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+          "20",
+          "64367183",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 64367183.0,
+      "bytes_op": 2,
+      "allocs_op": 0
+    },
+    {
+      "round": 1,
+      "clip": "p360_intra_q32",
+      "role": "C",
+      "exit": 0,
+      "wall_s": 1.4061219692230225,
+      "log": "05-r1-p360_intra_q32-C.log",
+      "sha256": "964fabad6a2da09bbf114355b9ed3e8208d6b349821aa112d8e462298c1ad4aa",
+      "load": [
+        8.07568359375,
+        12.19580078125,
+        13.580078125
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-postfilter-context-20261018/candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+          "20",
+          "64206077",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 64206077.0,
+      "bytes_op": 2,
+      "allocs_op": 0
+    },
+    {
+      "round": 1,
+      "clip": "p720_inter_q32",
+      "role": "C",
+      "exit": 0,
+      "wall_s": 3.24872088432312,
+      "log": "06-r1-p720_inter_q32-C.log",
+      "sha256": "41c11dddbfee5df67303364d579264d81a137c80aa6c7396237c4b9b92355237",
+      "load": [
+        7.8291015625,
+        12.076171875,
+        13.52978515625
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-postfilter-context-20261018/candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+          "20",
+          "151083519",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 151083519.0,
+      "bytes_op": 2,
+      "allocs_op": 0
+    },
+    {
+      "round": 1,
+      "clip": "p720_inter_q32",
+      "role": "B",
+      "exit": 0,
+      "wall_s": 3.30193829536438,
+      "log": "07-r1-p720_inter_q32-B.log",
+      "sha256": "80ae2792488f3d8d8a72a03369f81e4f9898e8726db30f6c267cde6e09a4da6d",
+      "load": [
+        7.5224609375,
+        11.94189453125,
+        13.4736328125
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/astra-decoder-cdef-sparse-staging/integrated.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+          "20",
+          "153938940",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 153938940.0,
+      "bytes_op": 2,
+      "allocs_op": 0
+    },
+    {
+      "round": 2,
+      "clip": "p720_inter_q32",
+      "role": "B",
+      "exit": 0,
+      "wall_s": 3.3405089378356934,
+      "log": "08-r2-p720_inter_q32-B.log",
+      "sha256": "fad10f6c2dbe26cf79d1273c185afc4cd85fdec5646653b29e6e459934d742bb",
+      "load": [
+        7.5224609375,
+        11.94189453125,
+        13.4736328125
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/astra-decoder-cdef-sparse-staging/integrated.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+          "20",
+          "156301569",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 156301569.0,
+      "bytes_op": 2,
+      "allocs_op": 0
+    },
+    {
+      "round": 2,
+      "clip": "p720_inter_q32",
+      "role": "C",
+      "exit": 0,
+      "wall_s": 3.264601230621338,
+      "log": "09-r2-p720_inter_q32-C.log",
+      "sha256": "59272eb805a46e59e44bf4991fa211a6a6346c9b23a42fe56b27837a79da0e6a",
+      "load": [
+        7.80078125,
+        11.92578125,
+        13.458984375
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-postfilter-context-20261018/candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+          "20",
+          "151937671",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 151937671.0,
+      "bytes_op": 2,
+      "allocs_op": 0
+    },
+    {
+      "round": 2,
+      "clip": "p360_intra_q32",
+      "role": "C",
+      "exit": 0,
+      "wall_s": 1.4230401515960693,
+      "log": "10-r2-p360_intra_q32-C.log",
+      "sha256": "6888139f486da8b18a530eb9f9f67a631679a3fb13bc9482eaa134b224c33fb6",
+      "load": [
+        7.80078125,
+        11.92578125,
+        13.458984375
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-postfilter-context-20261018/candidate.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+          "20",
+          "64328333",
+          "0",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 64328333.0,
+      "bytes_op": 0,
+      "allocs_op": 0
+    },
+    {
+      "round": 2,
+      "clip": "p360_intra_q32",
+      "role": "B",
+      "exit": 0,
+      "wall_s": 1.4759862422943115,
+      "log": "11-r2-p360_intra_q32-B.log",
+      "sha256": "162573d10aa4cd511f6f9711597627120745bfa68fcc041377c23d66a7ec615e",
+      "load": [
+        9.498046875,
+        12.208984375,
+        13.5498046875
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/astra-decoder-cdef-sparse-staging/integrated.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+          "20",
+          "66047852",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 66047852.0,
+      "bytes_op": 2,
+      "allocs_op": 0
+    }
+  ],
+  "summary": {
+    "p720_inter_q32": {
+      "paired_gm_saved_pct": 2.543372061708693,
+      "wins": 3,
+      "pairs": [
+        {
+          "round": 0,
+          "B": 156028094.0,
+          "C": 151379204.0,
+          "saved_pct": 2.979521111114769
+        },
+        {
+          "round": 1,
+          "C": 151083519.0,
+          "B": 153938940.0,
+          "saved_pct": 1.8549049382826754
+        },
+        {
+          "round": 2,
+          "B": 156301569.0,
+          "C": 151937671.0,
+          "saved_pct": 2.791973252680524
+        }
+      ]
+    },
+    "p360_intra_q32": {
+      "paired_gm_saved_pct": 1.72984262814333,
+      "wins": 3,
+      "pairs": [
+        {
+          "round": 0,
+          "C": 64126817.0,
+          "B": 65649279.0,
+          "saved_pct": 2.319084113627512
+        },
+        {
+          "round": 1,
+          "B": 64367183.0,
+          "C": 64206077.0,
+          "saved_pct": 0.2502921403287117
+        },
+        {
+          "round": 2,
+          "C": 64328333.0,
+          "B": 66047852.0,
+          "saved_pct": 2.603444242213959
+        }
+      ]
+    },
+    "audit": {
+      "processes": 12,
+      "actual_rows": 12,
+      "all_0_allocs": true,
+      "all_0_bytes": false,
+      "bytes_op_rows": [
+        0,
+        0,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        0,
+        2
+      ],
+      "binary_source_unchanged": true
+    },
+    "gate_pass": true
+  },
+  "root_independent_audit": {
+    "p720_inter_q32": {
+      "saved_pct": 2.543372061708693,
+      "wins": 3
+    },
+    "p360_intra_q32": {
+      "saved_pct": 1.72984262814333,
+      "wins": 3
+    },
+    "rows": 12,
+    "all_0_allocs": true,
+    "bytes_op_rows": [
+      0,
+      0,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      0,
+      2
+    ]
+  },
+  "compiler_evidence": {
+    "actual_Context_copy_sites_before": 55,
+    "actual_Context_copy_sites_after": 34,
+    "unchanged_zero_loop": 1,
+    "remaining_argument_sites": 21,
+    "remaining_return_sites": 13,
+    "postfilter_frame_bytes_before": 13072,
+    "postfilter_frame_bytes_after": 13072,
+    "boundary_query_frame_bytes_before": 11648,
+    "boundary_query_frame_bytes_after": 32,
+    "chain_instructions_before": 2076,
+    "chain_instructions_after": 1752
+  },
+  "validation": "Focused state/order/error/public-snapshot tests; actual profile1 goldens; existing full18clip864frame independent hashes both constructors; all benchmark rows zero allocations. Reused completed evidence; source byte-identical after integration."
+}
