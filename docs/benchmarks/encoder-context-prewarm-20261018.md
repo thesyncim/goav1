@@ -40,7 +40,7 @@ Per-pair wall savings were FourPeople +0.309%, +4.777%, +5.871% and Johnny +4.21
 - Main binary SHA-256: `2402cf1e541fa3e94f5b54a845203d83b23e159341c51c09a011ac9db312cebe`.
 - Integrated binary SHA-256: `6897d8c91eb43f45d53aa942f2d4210b8f5ba0dcf0f3d51e824f9c94eb6d8545`.
 
-For publication, the two source commits were rebased onto decoder-only main `6c755647`, producing source commit `b8c20b66d2c5715960ed555db4d42daf607058ad`. Every changed source file has the same hash as the timed candidate. The final public L1T1/L1T2 encoded-byte and reconstruction fixture passed exactly after this integration. Timing remains attributed to the frozen `6605b664` pair; it was not repeated after the decoder-only rebase.
+For publication, the two source commits were rebased onto decoder-only main `6c755647`, producing source commit `b8c20b66d2c5715960ed555db4d42daf607058ad`. Every changed source file has the same hash as the timed candidate. The final public L1T1/L1T2 encoded-byte and reconstruction fixture passed exactly after this integration. Timing remains attributed to the frozen `6605b664` pair; it was not repeated after the decoder-only rebase. Publication then incorporated disjoint palette PR22 (`9d0f90b3`); all changed encoder, context, and test source hashes still match the timed candidate. No timing or redundant fixture run was repeated for that source-independent rebase.
 
 ## Byte, state, and allocation gates
 

@@ -5322,6 +5322,10 @@
       }
     ],
     "all_changed_source_hashes_match_timed_candidate": true,
-    "final_fixture_status": "passed exactly after rebasing onto decoder-only main6c755647"
+    "final_fixture_status": "passed exactly after rebasing onto decoder-only main6c755647",
+    "final_disjoint_rebase": {
+      "base_commit": "9d0f90b37b75416694e13847fe6a05242afa871b",
+      "reason": "PR22 adds the disjoint palette decoder path, fixture/oracle/benchmark evidence. All encoder, shared inter-context and test source hashes still match the timed candidate. The relevant final encoded/reconstruction fixture already passed on6c755647; no timing or redundant validation repeat."
+    }
   }
 }
