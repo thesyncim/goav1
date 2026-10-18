@@ -107,6 +107,19 @@ func markLoopFilterBlock(m *threading.FrameWorkLoopFilterMap, block tile.BlockVi
 	return nil
 }
 
+// markLoopFilterBlock retains the generic per-MI records and, when the frame
+// is serial, commits mask geometry while the transform-edge contexts are live.
+func (st *lossyEncodeState) markLoopFilterBlock(block tile.BlockVisit, tree tile.TransformTreeResult,
+	skip bool, intra bool, refFrame uint8, mode loopfilter.ModeDeltaClass) error {
+	if err := markLoopFilterBlock(st.lfMap, block, tree, skip, intra, refFrame, mode); err != nil {
+		return err
+	}
+	if st.lfMaskBuilder != nil {
+		return st.lfMaskBuilder.MarkBlock(block, tree, skip, intra)
+	}
+	return nil
+}
+
 // loopFilterApplier owns the reusable frame-level deblocking state: the
 // decoder's loop-filter map over caller-owned records and the edge scratch
 // for its planner. One applier serves a stream of same-sized frames.
@@ -124,9 +137,11 @@ type loopFilterApplier struct {
 	// completed record map and consumed by the mask-driven apply. Single-tile
 	// only: the raster mask build carries above/left context across the whole
 	// frame width. masksBound tracks whether init sized the grid this stream.
-	masks       threading.FrameWorkLoopFilterMasks
-	maskScratch threading.FrameWorkLoopFilterMaskBuildScratch
-	masksBound  bool
+	masks          threading.FrameWorkLoopFilterMasks
+	maskScratch    threading.FrameWorkLoopFilterMaskBuildScratch
+	masksBound     bool
+	orderedBuilder threading.FrameWorkLoopFilterOrderedBuilder
+	orderedMasks   bool
 
 	// Persistent band workers: per-frame goroutine spawns allocate their
 	// closures, so the workers park on a job channel for the applier's
@@ -327,6 +342,7 @@ func (a *loopFilterApplier) init(width, height int) error {
 
 // reset clears the per-frame records before a frame's tiles fill them.
 func (a *loopFilterApplier) reset() error {
+	a.orderedMasks = false
 	return a.filtMap.Reset()
 }
 
@@ -501,7 +517,11 @@ func (a *loopFilterApplier) applySerialMasks(recon *SourceFrame420, lf parser.Lo
 	if err != nil || !active {
 		return err
 	}
-	if err := a.masks.BuildFromMap(&a.maskScratch, a.filtMap, encoderLoopFilterSBLog2); err != nil {
+	if a.orderedMasks {
+		if !a.orderedBuilder.Complete(&a.masks) {
+			return threading.ErrInvalidBatch
+		}
+	} else if err := a.masks.BuildFromMap(&a.maskScratch, a.filtMap, encoderLoopFilterSBLog2); err != nil {
 		return err
 	}
 	_, err = a.jobCtx.ApplyLoopFilterEdgesFromMasks(&a.masks, a.filtMap)

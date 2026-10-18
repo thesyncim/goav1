@@ -1414,7 +1414,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 						result.SubChromaInterValid = true
 					}
 				}
-				if err := ctx.markDecodedInterContext(block.Size, blockX4, blockY4, result.InterMotion, filters, hasChroma); err != nil {
+				if err := ctx.MarkInterMotionAndFilters(block.Size, blockX4, blockY4, result.InterMotion, filters, hasChroma); err != nil {
 					return err
 				}
 				if result.InterIntraValid && result.InterIntra.Enabled {

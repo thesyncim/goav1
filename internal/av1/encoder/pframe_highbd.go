@@ -546,11 +546,8 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 	}, motionResult); err != nil {
 		return fmt.Errorf("motion vector: %w", err)
 	}
-	if err := modeCtx.MarkInterMotion(block.Size, int(block.X4), int(block.Y4), motionResult, false); err != nil {
-		return fmt.Errorf("mark inter motion: %w", err)
-	}
-	if err := modeCtx.MarkInterFilters(block.Size, int(block.X4), int(block.Y4), refs, motion.InterpFilters{}); err != nil {
-		return fmt.Errorf("mark inter filters: %w", err)
+	if err := modeCtx.MarkInterMotionAndFilters(block.Size, int(block.X4), int(block.Y4), motionResult, motion.InterpFilters{}, false); err != nil {
+		return err
 	}
 
 	lfTree, err := tile.WriteTransformTree(st.w, &st.treeCDFs, modeCtx, tile.TransformTreeRequest{
@@ -673,11 +670,8 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 	}, motionResult); err != nil {
 		return fmt.Errorf("motion vector: %w", err)
 	}
-	if err := modeCtx.MarkInterMotion(block.Size, int(block.X4), int(block.Y4), motionResult, true); err != nil {
-		return fmt.Errorf("mark inter motion: %w", err)
-	}
-	if err := modeCtx.MarkInterFilters(block.Size, int(block.X4), int(block.Y4), interRefs, motion.InterpFilters{}); err != nil {
-		return fmt.Errorf("mark inter filters: %w", err)
+	if err := modeCtx.MarkInterMotionAndFilters(block.Size, int(block.X4), int(block.Y4), motionResult, motion.InterpFilters{}, true); err != nil {
+		return err
 	}
 
 	lfTree, err := tile.WriteTransformTree(st.w, &st.treeCDFs, modeCtx, tile.TransformTreeRequest{

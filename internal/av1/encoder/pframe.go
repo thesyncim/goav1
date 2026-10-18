@@ -312,11 +312,8 @@ func encodeRepeatPFrameTile(width, height int) ([]byte, error) {
 			References: refs,
 			Mode:       modeResult,
 		}
-		if err := modeCtx.MarkInterMotion(block.Size, int(block.X4), int(block.Y4), motionResult, hasChroma); err != nil {
-			return fmt.Errorf("mark inter motion: %w", err)
-		}
-		if err := modeCtx.MarkInterFilters(block.Size, int(block.X4), int(block.Y4), refs, motion.InterpFilters{}); err != nil {
-			return fmt.Errorf("mark inter filters: %w", err)
+		if err := modeCtx.MarkInterMotionAndFilters(block.Size, int(block.X4), int(block.Y4), motionResult, motion.InterpFilters{}, hasChroma); err != nil {
+			return err
 		}
 
 		// 6) skipped block: reset the coefficient entropy contexts per plane

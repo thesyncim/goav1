@@ -2833,11 +2833,8 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 	}
 
-	if err := modeCtx.MarkInterMotion(block.Size, int(block.X4), int(block.Y4), motionResult, hasChroma); err != nil {
-		return fmt.Errorf("mark inter motion: %w", err)
-	}
-	if err := modeCtx.MarkInterFilters(block.Size, int(block.X4), int(block.Y4), refs, blockFilters); err != nil {
-		return fmt.Errorf("mark inter filters: %w", err)
+	if err := modeCtx.MarkInterMotionAndFilters(block.Size, int(block.X4), int(block.Y4), motionResult, blockFilters, hasChroma); err != nil {
+		return err
 	}
 	if refs.Compound {
 		if err := modeCtx.MarkCompoundBlend(block.Size, int(block.X4), int(block.Y4), tile.CompoundBlendResult{
@@ -2872,7 +2869,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if !interModeResultUsesGlobalOnly(modeResult) {
 			lfMode = loopfilter.ModeDeltaClassMotion
 		}
-		if err := markLoopFilterBlock(st.lfMap, block, lfTree, skip, false, uint8(refs.Ref[0])+1, lfMode); err != nil {
+		if err := st.markLoopFilterBlock(block, lfTree, skip, false, uint8(refs.Ref[0])+1, lfMode); err != nil {
 			return fmt.Errorf("mark loop filter: %w", err)
 		}
 	}
@@ -3171,7 +3168,7 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		return fmt.Errorf("intra transform tree: %w", err)
 	}
 	if st.lfMap != nil {
-		if err := markLoopFilterBlock(st.lfMap, block, lfTree, false, true, 0, loopfilter.ModeDeltaClassZero); err != nil {
+		if err := st.markLoopFilterBlock(block, lfTree, false, true, 0, loopfilter.ModeDeltaClassZero); err != nil {
 			return fmt.Errorf("mark intra loop filter: %w", err)
 		}
 	}
