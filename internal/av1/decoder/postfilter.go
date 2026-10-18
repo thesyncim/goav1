@@ -507,6 +507,12 @@ func (r *FrameWorkCallerPostFilterRunner) Apply(ctx FrameWorkPostFilterContext) 
 // ActivePostFilters returns the frame-level postfilter stages signaled by this
 // final-frame context.
 func (ctx FrameWorkPostFilterContext) ActivePostFilters() FrameWorkPostFilterStage {
+	return frameWorkActivePostFilters(&ctx)
+}
+
+// Internal queries can inspect the context already owned by their caller.
+// Public methods retain their value receivers and callback-local snapshots.
+func frameWorkActivePostFilters(ctx *FrameWorkPostFilterContext) FrameWorkPostFilterStage {
 	var stages FrameWorkPostFilterStage
 	if frameWorkLoopFilterActive(ctx.Event.LoopFilter) {
 		stages |= FrameWorkPostFilterLoopFilter
@@ -530,14 +536,22 @@ func (ctx FrameWorkPostFilterContext) ActivePostFilters() FrameWorkPostFilterSta
 // marked complete. It does not change ActivePostFilters, which remains the syntax
 // capability gate for callers that cannot run postfilters.
 func (ctx FrameWorkPostFilterContext) WithCompletedPostFilters(stages FrameWorkPostFilterStage) FrameWorkPostFilterContext {
-	ctx.completedPostFilters |= stages & ctx.ActivePostFilters()
+	frameWorkMarkCompletedPostFilters(&ctx, stages)
 	return ctx
+}
+
+func frameWorkMarkCompletedPostFilters(ctx *FrameWorkPostFilterContext, stages FrameWorkPostFilterStage) {
+	ctx.completedPostFilters |= stages & frameWorkActivePostFilters(ctx)
 }
 
 // RemainingPostFilters returns active stages that have not been marked complete
 // in this callback-local context.
 func (ctx FrameWorkPostFilterContext) RemainingPostFilters() FrameWorkPostFilterStage {
-	return ctx.ActivePostFilters() &^ ctx.completedPostFilters
+	return frameWorkRemainingPostFilters(&ctx)
+}
+
+func frameWorkRemainingPostFilters(ctx *FrameWorkPostFilterContext) FrameWorkPostFilterStage {
+	return frameWorkActivePostFilters(ctx) &^ ctx.completedPostFilters
 }
 
 // SupportedPostFilters returns the remaining active stages that the supported
@@ -751,7 +765,7 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFiltersBanded(req FrameW
 
 func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPostFilterRequest, banding FrameWorkPostFilterBanding) (FrameWorkPostFilterContext, FrameWorkPostFilterResult, error) {
 	var result FrameWorkPostFilterResult
-	remaining := ctx.RemainingPostFilters()
+	remaining := frameWorkRemainingPostFilters(&ctx)
 	supported, err := ctx.supportedPostFilterStages(remaining)
 	if err != nil {
 		return ctx, result, err
@@ -810,7 +824,7 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 		if err != nil {
 			return ctx, result, err
 		}
-		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopFilter)
+		frameWorkMarkCompletedPostFilters(&ctx, FrameWorkPostFilterLoopFilter)
 		result.Completed |= FrameWorkPostFilterLoopFilter
 		result.LoopFilter = loopFilterResult
 	}
@@ -857,18 +871,18 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 		if err != nil {
 			return ctx, result, err
 		}
-		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterCDEF)
+		frameWorkMarkCompletedPostFilters(&ctx, FrameWorkPostFilterCDEF)
 		result.Completed |= FrameWorkPostFilterCDEF
 		result.CDEF = cdefResult
 	}
 	// Save the CDEF boundary lines (afterCDEF=true) for the frame-edge stripes
 	// that have no neighboring deblock context.
-	if ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopRestoration) {
+	if frameWorkRemainingPostFilters(&ctx).Has(FrameWorkPostFilterLoopRestoration) {
 		if err := ctx.saveRestorationBoundariesForRequest(req.Restoration, true); err != nil {
 			return ctx, result, err
 		}
 	}
-	if ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopRestoration) {
+	if frameWorkRemainingPostFilters(&ctx).Has(FrameWorkPostFilterLoopRestoration) {
 		cdefDebugLogChromaPreLR(ctx.Output)
 		cdefDebugLogLRRecords(req.Restoration.Records)
 		// applyLoopRestorationPostFilterMaybePooled fans the 8-bit in-place
@@ -878,7 +892,7 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 		if err != nil {
 			return ctx, result, err
 		}
-		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterLoopRestoration)
+		frameWorkMarkCompletedPostFilters(&ctx, FrameWorkPostFilterLoopRestoration)
 		result.Completed |= FrameWorkPostFilterLoopRestoration
 		result.Restoration = restorationResult
 	}
@@ -893,23 +907,23 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 	if ctx.Output != nil {
 		ctx.Output.ExtendBorders()
 	}
-	if ctx.RemainingPostFilters().Has(FrameWorkPostFilterFilmGrain) {
+	if frameWorkRemainingPostFilters(&ctx).Has(FrameWorkPostFilterFilmGrain) {
 		filmGrainResult, err := ctx.ApplyFilmGrainPostFilter(req.FilmGrain)
 		if err != nil {
 			return ctx, result, err
 		}
-		ctx = ctx.WithCompletedPostFilters(FrameWorkPostFilterFilmGrain)
+		frameWorkMarkCompletedPostFilters(&ctx, FrameWorkPostFilterFilmGrain)
 		result.Completed |= FrameWorkPostFilterFilmGrain
 		result.FilmGrain = filmGrainResult
 	}
 	return ctx, result, nil
 }
 
-func (ctx FrameWorkPostFilterContext) shouldSaveRestorationDeblockBoundaries() bool {
-	if !ctx.ActivePostFilters().Has(FrameWorkPostFilterCDEF) {
+func (ctx *FrameWorkPostFilterContext) shouldSaveRestorationDeblockBoundaries() bool {
+	if !frameWorkActivePostFilters(ctx).Has(FrameWorkPostFilterCDEF) {
 		return true
 	}
-	return ctx.RemainingPostFilters().Has(FrameWorkPostFilterCDEF)
+	return frameWorkRemainingPostFilters(ctx).Has(FrameWorkPostFilterCDEF)
 }
 
 // ApplySupportedPostFiltersForPublication runs the supported postfilter chain
