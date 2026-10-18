@@ -4193,6 +4193,13 @@ func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStr
 		clear(qcoeff[:geo.coeffCount])
 		return true
 	}
+	// Keep the quantizer's loaded coefficients and levels for the following
+	// skip-only statistics when the architecture can fuse the two passes.
+	if diff, rate, handled := quantize.TryQuantizeBRowGroupsDiffTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, q, geo.txScale); handled {
+		st.rdDskip += diff
+		st.rdRcode += rate
+		return rate == 0
+	}
 	// Quantize only the live rows; when every level is zero the block adds
 	// nothing to the skip comparison.
 	if !quantize.QuantizeBRowGroupsTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, q, geo.txScale) {
