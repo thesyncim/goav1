@@ -85,6 +85,19 @@ func PredictDirectionalIntraPlaneBlock(dst frame.Plane, bytesPerSample int, bitD
 // the full extent here restores byte parity for partially-visible directional
 // blocks (e.g. a TX_16X16 D45 block on the last superblock row).
 func PredictDirectionalIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, predWidth int, predHeight int, angle int, edges DirectionalEdges) error {
+	return PredictDirectionalIntraPlaneBlockWithExtentBounded(dst, bytesPerSample, bitDepth, x, y, width, height, predWidth, predHeight, angle, edges, false)
+}
+
+// PredictDirectionalIntraPlaneBlockWithByteEdges is for decoder edges just
+// gathered from an 8-bit plane and optionally filtered/upsampled. Every sample
+// in a consumed span must be <=255; geometry and span checks are still applied.
+// The ordinary uint16-edge entry point continues to validate sample values.
+func PredictDirectionalIntraPlaneBlockWithByteEdges(dst frame.Plane, x, y, width, height, predWidth, predHeight, angle int, edges DirectionalEdges) error {
+	return PredictDirectionalIntraPlaneBlockWithExtentBounded(dst, 1, 8, x, y, width, height, predWidth, predHeight, angle, edges, true)
+}
+
+// PredictDirectionalIntraPlaneBlockWithExtentBounded has the same call-scoped sample-bound contract as PredictIntraPlaneBlockWithExtentBounded.
+func PredictDirectionalIntraPlaneBlockWithExtentBounded(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, predWidth int, predHeight int, angle int, edges DirectionalEdges, bounded bool) error {
 	if predWidth < width || predHeight < height || width <= 0 || height <= 0 {
 		return ErrInvalidPrediction
 	}
@@ -102,12 +115,12 @@ func PredictDirectionalIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample
 
 	switch {
 	case angle == 90:
-		if err := validateDirectionalRange(edges.Above, edges.AboveOrigin, 0, width-1, max); err != nil {
+		if err := validateDirectionalRange(edges.Above, edges.AboveOrigin, 0, width-1, max, bounded); err != nil {
 			return err
 		}
 		predictVertical(block, bytesPerSample, edges.Above[edges.AboveOrigin:edges.AboveOrigin+width])
 	case angle == 180:
-		if err := validateDirectionalRange(edges.Left, edges.LeftOrigin, 0, height-1, max); err != nil {
+		if err := validateDirectionalRange(edges.Left, edges.LeftOrigin, 0, height-1, max, bounded); err != nil {
 			return err
 		}
 		predictHorizontal(block, bytesPerSample, edges.Left[edges.LeftOrigin:edges.LeftOrigin+height])
@@ -116,25 +129,25 @@ func PredictDirectionalIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample
 		if dx <= 0 {
 			return ErrInvalidPrediction
 		}
-		return predictDirectionalZ1(block, bytesPerSample, edges, boolToInt(edges.UpsampleAbove), dx, max, predWidth, predHeight)
+		return predictDirectionalZ1(block, bytesPerSample, edges, boolToInt(edges.UpsampleAbove), dx, max, predWidth, predHeight, bounded)
 	case angle < 180:
 		dx := DirectionalDX(angle)
 		dy := DirectionalDY(angle)
 		if dx <= 0 || dy <= 0 {
 			return ErrInvalidPrediction
 		}
-		return predictDirectionalZ2(block, bytesPerSample, edges, boolToInt(edges.UpsampleAbove), boolToInt(edges.UpsampleLeft), dx, dy, max, predWidth, predHeight)
+		return predictDirectionalZ2(block, bytesPerSample, edges, boolToInt(edges.UpsampleAbove), boolToInt(edges.UpsampleLeft), dx, dy, max, predWidth, predHeight, bounded)
 	default:
 		dy := DirectionalDY(angle)
 		if dy <= 0 {
 			return ErrInvalidPrediction
 		}
-		return predictDirectionalZ3(block, bytesPerSample, edges, boolToInt(edges.UpsampleLeft), dy, max, predWidth, predHeight)
+		return predictDirectionalZ3(block, bytesPerSample, edges, boolToInt(edges.UpsampleLeft), dy, max, predWidth, predHeight, bounded)
 	}
 	return nil
 }
 
-func predictDirectionalZ1(block planeBlock, bytesPerSample int, edges DirectionalEdges, upsampleAbove int, dx int, max uint16, predWidth int, predHeight int) error {
+func predictDirectionalZ1(block planeBlock, bytesPerSample int, edges DirectionalEdges, upsampleAbove int, dx int, max uint16, predWidth int, predHeight int, bounded bool) error {
 	// libaom av1_dr_prediction_z1_c keys max_base_x and the per-row base
 	// accumulation off the full transform dimensions (predWidth/predHeight),
 	// iterating r in [0,predHeight) and c in [0,predWidth). Only the visible
@@ -142,7 +155,7 @@ func predictDirectionalZ1(block planeBlock, bytesPerSample int, edges Directiona
 	// iterations exist solely to keep max_base_x and the clamp behaviour
 	// identical for partially-visible blocks.
 	maxBaseX := (predWidth + predHeight - 1) << upsampleAbove
-	if err := validateDirectionalRange(edges.Above, edges.AboveOrigin, 0, maxBaseX, max); err != nil {
+	if err := validateDirectionalRange(edges.Above, edges.AboveOrigin, 0, maxBaseX, max, bounded); err != nil {
 		return err
 	}
 	fracBits := 6 - upsampleAbove
@@ -205,7 +218,7 @@ func predictDirectionalZ1(block planeBlock, bytesPerSample int, edges Directiona
 	return nil
 }
 
-func predictDirectionalZ2(block planeBlock, bytesPerSample int, edges DirectionalEdges, upsampleAbove int, upsampleLeft int, dx int, dy int, max uint16, predWidth int, predHeight int) error {
+func predictDirectionalZ2(block planeBlock, bytesPerSample int, edges DirectionalEdges, upsampleAbove int, upsampleLeft int, dx int, dy int, max uint16, predWidth int, predHeight int, bounded bool) error {
 	// Zone 2 is computed per pixel (no running base/early clamp), so the only
 	// extent dependence is the validated reference span. libaom predicts the
 	// full transform block; the visible sub-rectangle's per-pixel base indices
@@ -227,10 +240,10 @@ func predictDirectionalZ2(block planeBlock, bytesPerSample int, edges Directiona
 	if err != nil {
 		return err
 	}
-	if err := aboveRange.validate(edges.Above, edges.AboveOrigin, max); err != nil {
+	if err := aboveRange.validate(edges.Above, edges.AboveOrigin, max, bounded); err != nil {
 		return err
 	}
-	if err := leftRange.validate(edges.Left, edges.LeftOrigin, max); err != nil {
+	if err := leftRange.validate(edges.Left, edges.LeftOrigin, max, bounded); err != nil {
 		return err
 	}
 
@@ -313,13 +326,13 @@ func predictDirectionalZ2(block planeBlock, bytesPerSample int, edges Directiona
 	return nil
 }
 
-func predictDirectionalZ3(block planeBlock, bytesPerSample int, edges DirectionalEdges, upsampleLeft int, dy int, max uint16, predWidth int, predHeight int) error {
+func predictDirectionalZ3(block planeBlock, bytesPerSample int, edges DirectionalEdges, upsampleLeft int, dy int, max uint16, predWidth int, predHeight int, bounded bool) error {
 	// Mirror of predictDirectionalZ1 for the left edge: libaom
 	// av1_dr_prediction_z3_c iterates c in [0,predWidth), r in [0,predHeight)
 	// with max_base_y derived from the full transform extent and stores only
 	// the visible sub-rectangle.
 	maxBaseY := (predWidth + predHeight - 1) << upsampleLeft
-	if err := validateDirectionalRange(edges.Left, edges.LeftOrigin, 0, maxBaseY, max); err != nil {
+	if err := validateDirectionalRange(edges.Left, edges.LeftOrigin, 0, maxBaseY, max, bounded); err != nil {
 		return err
 	}
 	fracBits := 6 - upsampleLeft
@@ -383,7 +396,44 @@ func predictDirectionalZ3(block planeBlock, bytesPerSample int, edges Directiona
 	return nil
 }
 
+// directionalZ2Ranges computes the same visited edge spans from each row's
+// monotone endpoints. Like dav1d src/ipred_tmpl.c ipred_z2_c, the above/left
+// split is determined by x >= -64, independently of edge upsampling. Only the
+// bounded AV1 domain takes this algebraic path; retain the original arithmetic
+// for nonstandard inputs, including its overflow and error behavior.
 func directionalZ2Ranges(width int, height int, upsampleAbove int, upsampleLeft int, dx int, dy int) (sampleIndexRange, sampleIndexRange, error) {
+	if width <= 0 || width > 128 || height <= 0 || height > 128 ||
+		upsampleAbove < 0 || upsampleAbove > 1 || upsampleLeft < 0 || upsampleLeft > 1 ||
+		dx <= 0 || dx > 1023 || dy <= 0 || dy > 1023 {
+		return directionalZ2RangesWalk(width, height, upsampleAbove, upsampleLeft, dx, dy)
+	}
+	fracBitsX := 6 - upsampleAbove
+	fracBitsY := 6 - upsampleLeft
+	minBaseY := -(1 << upsampleLeft)
+	var aboveRange, leftRange sampleIndexRange
+	for row := range height {
+		ydx := (row + 1) * dx
+		// ceil((ydx-64)/64) == (ydx-1)>>6 for positive ydx.
+		firstAbove := min((ydx-1)>>6, width)
+		if firstAbove < width {
+			aboveRange.add(((firstAbove << 6) - ydx) >> fracBitsX)
+			aboveRange.add((((width-1)<<6)-ydx)>>fracBitsX + 1)
+		}
+		if firstAbove > 0 {
+			// Left indices decrease with column; its final column is the
+			// minimum and detects every error the original row walk did.
+			lo := ((row << 6) - firstAbove*dy) >> fracBitsY
+			if lo < minBaseY {
+				return sampleIndexRange{}, sampleIndexRange{}, ErrInvalidPrediction
+			}
+			leftRange.add(lo)
+			leftRange.add(((row<<6)-dy)>>fracBitsY + 1)
+		}
+	}
+	return aboveRange, leftRange, nil
+}
+
+func directionalZ2RangesWalk(width int, height int, upsampleAbove int, upsampleLeft int, dx int, dy int) (sampleIndexRange, sampleIndexRange, error) {
 	minBaseX := -(1 << upsampleAbove)
 	minBaseY := -(1 << upsampleLeft)
 	fracBitsX := 6 - upsampleAbove
@@ -434,14 +484,14 @@ func (r *sampleIndexRange) add(index int) {
 	}
 }
 
-func (r sampleIndexRange) validate(samples []uint16, origin int, max uint16) error {
+func (r sampleIndexRange) validate(samples []uint16, origin int, max uint16, bounded bool) error {
 	if !r.used {
 		return nil
 	}
-	return validateDirectionalRange(samples, origin, r.min, r.max, max)
+	return validateDirectionalRange(samples, origin, r.min, r.max, max, bounded)
 }
 
-func validateDirectionalRange(samples []uint16, origin int, minIndex int, maxIndex int, max uint16) error {
+func validateDirectionalRange(samples []uint16, origin int, minIndex int, maxIndex int, max uint16, bounded bool) error {
 	if minIndex > maxIndex || origin < 0 {
 		return ErrInvalidPrediction
 	}
@@ -450,7 +500,7 @@ func validateDirectionalRange(samples []uint16, origin int, minIndex int, maxInd
 	if start < 0 || end < start || end > len(samples) {
 		return ErrInvalidPrediction
 	}
-	return validateSamples(samples[start:end], max)
+	return validateEdgeSamples(samples[start:end], max, bounded)
 }
 
 func setBlockSample(block planeBlock, bytesPerSample int, row int, col int, value uint16) {
