@@ -47,6 +47,18 @@ func PredictIntraPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8,
 // boundary. predWidth/predHeight select the libaom smooth/DC weights and edge
 // lengths; width/height select the pixels addressable in dst.
 func PredictIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, predWidth int, predHeight int, mode IntraMode, edges IntraEdges) error {
+	return PredictIntraPlaneBlockWithExtentBounded(dst, bytesPerSample, bitDepth, x, y, width, height, predWidth, predHeight, mode, edges, false)
+}
+
+// PredictIntraPlaneBlockWithByteEdges consumes edges just gathered from an
+// 8-bit plane. Available samples must be <=255. Length, availability, mode and
+// destination checks remain identical to PredictIntraPlaneBlockWithExtent.
+func PredictIntraPlaneBlockWithByteEdges(dst frame.Plane, x, y, width, height, predWidth, predHeight int, mode IntraMode, edges IntraEdges) error {
+	return PredictIntraPlaneBlockWithExtentBounded(dst, 1, 8, x, y, width, height, predWidth, predHeight, mode, edges, true)
+}
+
+// PredictIntraPlaneBlockWithExtentBounded is an internal decoder entry. bounded may be true only when the caller has established the value bound of every consumed edge sample. Geometry, availability and mode checks are retained.
+func PredictIntraPlaneBlockWithExtentBounded(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, predWidth int, predHeight int, mode IntraMode, edges IntraEdges, bounded bool) error {
 	if predWidth < width || predHeight < height {
 		return ErrInvalidPrediction
 	}
@@ -61,7 +73,7 @@ func PredictIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int, bitDe
 
 	switch mode {
 	case IntraModeDC:
-		value, err := dcPrediction(predWidth, predHeight, max, edges)
+		value, err := dcPrediction(predWidth, predHeight, max, edges, bounded)
 		if err != nil {
 			return err
 		}
@@ -70,7 +82,7 @@ func PredictIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int, bitDe
 		if !edges.AboveAvailable || len(edges.Above) < predWidth {
 			return ErrInvalidPrediction
 		}
-		if err := validateSamples(edges.Above[:predWidth], max); err != nil {
+		if err := validateEdgeSamples(edges.Above[:predWidth], max, bounded); err != nil {
 			return err
 		}
 		predictVertical(block, bytesPerSample, edges.Above[:width])
@@ -78,31 +90,31 @@ func PredictIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int, bitDe
 		if !edges.LeftAvailable || len(edges.Left) < predHeight {
 			return ErrInvalidPrediction
 		}
-		if err := validateSamples(edges.Left[:predHeight], max); err != nil {
+		if err := validateEdgeSamples(edges.Left[:predHeight], max, bounded); err != nil {
 			return err
 		}
 		predictHorizontal(block, bytesPerSample, edges.Left[:height])
 	case IntraModePaeth:
-		if err := validateIntraDirectionalEdges(predWidth, predHeight, max, edges, true); err != nil {
+		if err := validateIntraDirectionalEdges(predWidth, predHeight, max, edges, true, bounded); err != nil {
 			return err
 		}
 		predictPaeth(block, bytesPerSample, edges.Above[:width], edges.Left[:height], edges.AboveLeft)
 	case IntraModeSmooth:
-		if err := validateIntraDirectionalEdges(predWidth, predHeight, max, edges, false); err != nil {
+		if err := validateIntraDirectionalEdges(predWidth, predHeight, max, edges, false, bounded); err != nil {
 			return err
 		}
 		if err := predictSmoothWithExtent(block, bytesPerSample, predWidth, predHeight, edges.Above[:predWidth], edges.Left[:predHeight]); err != nil {
 			return err
 		}
 	case IntraModeSmoothVertical:
-		if err := validateIntraDirectionalEdges(predWidth, predHeight, max, edges, false); err != nil {
+		if err := validateIntraDirectionalEdges(predWidth, predHeight, max, edges, false, bounded); err != nil {
 			return err
 		}
 		if err := predictSmoothVerticalWithExtent(block, bytesPerSample, predHeight, edges.Above[:width], edges.Left[:predHeight]); err != nil {
 			return err
 		}
 	case IntraModeSmoothHorizontal:
-		if err := validateIntraDirectionalEdges(predWidth, predHeight, max, edges, false); err != nil {
+		if err := validateIntraDirectionalEdges(predWidth, predHeight, max, edges, false, bounded); err != nil {
 			return err
 		}
 		if err := predictSmoothHorizontalWithExtent(block, bytesPerSample, predWidth, edges.Above[:predWidth], edges.Left[:height]); err != nil {
@@ -114,14 +126,14 @@ func PredictIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int, bitDe
 	return nil
 }
 
-func dcPrediction(width int, height int, max uint16, edges IntraEdges) (uint16, error) {
+func dcPrediction(width int, height int, max uint16, edges IntraEdges, bounded bool) (uint16, error) {
 	sum := 0
 	count := 0
 	if edges.AboveAvailable {
 		if len(edges.Above) < width {
 			return 0, ErrInvalidPrediction
 		}
-		if err := validateSamples(edges.Above[:width], max); err != nil {
+		if err := validateEdgeSamples(edges.Above[:width], max, bounded); err != nil {
 			return 0, err
 		}
 		sum += sumSamplesImpl(edges.Above[:width])
@@ -131,7 +143,7 @@ func dcPrediction(width int, height int, max uint16, edges IntraEdges) (uint16, 
 		if len(edges.Left) < height {
 			return 0, ErrInvalidPrediction
 		}
-		if err := validateSamples(edges.Left[:height], max); err != nil {
+		if err := validateEdgeSamples(edges.Left[:height], max, bounded); err != nil {
 			return 0, err
 		}
 		sum += sumSamplesImpl(edges.Left[:height])
@@ -297,7 +309,7 @@ func predictHorizontal(block planeBlock, bytesPerSample int, left []uint16) {
 	}
 }
 
-func validateIntraDirectionalEdges(width int, height int, max uint16, edges IntraEdges, requireAboveLeft bool) error {
+func validateIntraDirectionalEdges(width int, height int, max uint16, edges IntraEdges, requireAboveLeft bool, bounded bool) error {
 	if !edges.AboveAvailable || len(edges.Above) < width || !edges.LeftAvailable || len(edges.Left) < height {
 		return ErrInvalidPrediction
 	}
@@ -306,10 +318,10 @@ func validateIntraDirectionalEdges(width int, height int, max uint16, edges Intr
 			return ErrInvalidPrediction
 		}
 	}
-	if err := validateSamples(edges.Above[:width], max); err != nil {
+	if err := validateEdgeSamples(edges.Above[:width], max, bounded); err != nil {
 		return err
 	}
-	return validateSamples(edges.Left[:height], max)
+	return validateEdgeSamples(edges.Left[:height], max, bounded)
 }
 
 func dcRectPredictionValue(width int, height int, max uint16, sum int) (uint16, bool) {
@@ -357,6 +369,15 @@ func log2PowerOfTwoInt(v int) (int, bool) {
 		log++
 	}
 	return log, true
+}
+
+// validateEdgeSamples skips only the value scan for a call whose producer has
+// established the sample bound; callers must still validate slice extents.
+func validateEdgeSamples(samples []uint16, max uint16, bounded bool) error {
+	if bounded {
+		return nil
+	}
+	return validateSamples(samples, max)
 }
 
 func validateSamples(samples []uint16, max uint16) error {

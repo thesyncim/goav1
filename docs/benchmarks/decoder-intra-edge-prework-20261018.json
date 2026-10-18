@@ -1,0 +1,720 @@
+{
+  "base": "04a90b32fee2e1fa18c56d586afbcaa41a12bf78",
+  "upstream_dav1d": "b546257f770768b2c88258c533da38b91a06f737",
+  "decision": "Keep V2: short intra screen positive in all3pairs; no clear inter control loss. V1 kept separately; no pooling or aggregate-gap claim.",
+  "variants": {
+    "screen-v1": {
+      "plan": {
+        "base": "04a90b32fee2e1fa18c56d586afbcaa41a12bf78",
+        "binaries": {
+          "B": "/private/tmp/decoder-projection-runs-20261018/candidate.test",
+          "C": "/private/tmp/decoder-intra-endpoints-20261018/candidate-v1.test"
+        },
+        "hashes": {
+          "B": "b90eae34abebbb7744b85786ad589c82d15c810eb0f6b7054a28bdfa4a8bb9e9",
+          "C": "320e6398c347778d860c27496ee4d2e4f89b32edc2c8a4c9cb095f6c1e27a617"
+        },
+        "sources": {
+          "internal/av1/prediction/directional.go": "c51d3071458fe15840bbf236fe6122979011c595cc0dd6d7c6b762ae71d9bf50",
+          "internal/av1/prediction/intra.go": "b820f19448eb480dc3d88eff6d8a8b849dfacc5e39a1bfa8e5984049d42cb628",
+          "internal/av1/prediction/filter_intra.go": "5ae10069c94f746647444c577a1e3f44dad9c6fe86f5189e55270c8a8a3e9299",
+          "internal/av1/prediction/intra_edge.go": "75239f0873fd1b80b17ebc755a1c48124d71ffe466086d114996ca546c97e03d",
+          "internal/av1/prediction/byte_edges_test.go": "94462d64df43bd8ec69dce197f39f73b847ec5467cac922a742bb43c04b76ea5",
+          "internal/av1/threading/predict.go": "1a6bd4a121d57fdfc27181be9df9f8db12fe9745e05810e59f3d628bf31dadee",
+          "internal/av1/threading/predict_byte_edges.go": "96c1b8af5d95638c762d78d385be6eea1ddba583c087d88581f0197743f9ee33",
+          "internal/av1/threading/predict_byte_edges_test.go": "00027591505b3a580a44fad4772a75d939c5c15329ab71560ce1a3ac848d092b",
+          "public_fullclip_corpus_bench_test.go": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59"
+        },
+        "ops": 15,
+        "plan": [
+          [
+            0,
+            "p720_inter_q32",
+            "BC"
+          ],
+          [
+            0,
+            "p360_intra_q32",
+            "CB"
+          ],
+          [
+            1,
+            "p360_intra_q32",
+            "BC"
+          ],
+          [
+            1,
+            "p720_inter_q32",
+            "CB"
+          ],
+          [
+            2,
+            "p720_inter_q32",
+            "CB"
+          ],
+          [
+            2,
+            "p360_intra_q32",
+            "BC"
+          ]
+        ],
+        "protocol": "R2 intra row endpoints and freshly gathered byte-edge scan omission; 3 paired warm public clips per case; all rows retained; >=0.5% intra saving and no clear inter control loss; fixed candidate and same PR14-production baseline; no retries/exclusions",
+        "initial_load": [
+          7.5888671875,
+          7.4912109375,
+          7.8115234375
+        ]
+      },
+      "rows": [
+        {
+          "round": 0,
+          "clip": "p720_inter_q32",
+          "role": "B",
+          "exit": 0,
+          "seconds": 4.141014099121094,
+          "log": "00-r0-p720_inter_q32-B.log",
+          "sha256": "8a659eeb10566882115b8ea291561eba0a7fab8934a440fbd4884e27a01117ae",
+          "load": [
+            8.66259765625,
+            7.71533203125,
+            7.888671875
+          ],
+          "ops": 15,
+          "ns_op": 259167178.0,
+          "frames": 48.0,
+          "bytes_op": 0,
+          "allocs_op": 0
+        },
+        {
+          "round": 0,
+          "clip": "p720_inter_q32",
+          "role": "C",
+          "exit": 0,
+          "seconds": 7.798281908035278,
+          "log": "01-r0-p720_inter_q32-C.log",
+          "sha256": "a5ba1406735b200543cd80f0bea577d1d369ba59931dda5772bcd1e28019a18b",
+          "load": [
+            8.76953125,
+            7.7529296875,
+            7.90087890625
+          ],
+          "ops": 15,
+          "ns_op": 165832386.0,
+          "frames": 48.0,
+          "bytes_op": 0,
+          "allocs_op": 0
+        },
+        {
+          "round": 0,
+          "clip": "p360_intra_q32",
+          "role": "C",
+          "exit": 0,
+          "seconds": 1.1988909244537354,
+          "log": "02-r0-p360_intra_q32-C.log",
+          "sha256": "6988937e6d4d8c28e1557563d4c2266077ec8d89904c7c565952815dff47d4cf",
+          "load": [
+            10.54931640625,
+            8.138671875,
+            8.0361328125
+          ],
+          "ops": 15,
+          "ns_op": 69526142.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        },
+        {
+          "round": 0,
+          "clip": "p360_intra_q32",
+          "role": "B",
+          "exit": 0,
+          "seconds": 1.2022790908813477,
+          "log": "03-r0-p360_intra_q32-B.log",
+          "sha256": "df4cc13aa26cbc935c48375023c8551039c456414072adb1dd893ce93468e2bb",
+          "load": [
+            10.54931640625,
+            8.138671875,
+            8.0361328125
+          ],
+          "ops": 15,
+          "ns_op": 71159367.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        },
+        {
+          "round": 1,
+          "clip": "p360_intra_q32",
+          "role": "B",
+          "exit": 0,
+          "seconds": 1.2848858833312988,
+          "log": "04-r1-p360_intra_q32-B.log",
+          "sha256": "47fb18a94408fb3c0f69a8c2f6bf95f0a18fb91cbe7a5e70b94e5545ae0f9ad1",
+          "load": [
+            10.54931640625,
+            8.138671875,
+            8.0361328125
+          ],
+          "ops": 15,
+          "ns_op": 74421653.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        },
+        {
+          "round": 1,
+          "clip": "p360_intra_q32",
+          "role": "C",
+          "exit": 0,
+          "seconds": 1.2489490509033203,
+          "log": "05-r1-p360_intra_q32-C.log",
+          "sha256": "d59e0c6e59f5d2490912d1c9107b40250ea044af22eafddcc343769977efca7b",
+          "load": [
+            10.54931640625,
+            8.138671875,
+            8.0361328125
+          ],
+          "ops": 15,
+          "ns_op": 73557456.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        },
+        {
+          "round": 1,
+          "clip": "p720_inter_q32",
+          "role": "C",
+          "exit": 0,
+          "seconds": 2.6153438091278076,
+          "log": "06-r1-p720_inter_q32-C.log",
+          "sha256": "9cada18f5dddd50d614062d0ce22436e6fb5465a71032ded6c0467364a7a9202",
+          "load": [
+            10.1845703125,
+            8.10302734375,
+            8.02392578125
+          ],
+          "ops": 15,
+          "ns_op": 156649992.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        },
+        {
+          "round": 1,
+          "clip": "p720_inter_q32",
+          "role": "B",
+          "exit": 0,
+          "seconds": 2.559217929840088,
+          "log": "07-r1-p720_inter_q32-B.log",
+          "sha256": "8efbc68479499548acfbc3d21f1e1664b1a5c8945b86e52fa6a67ff9475c0311",
+          "load": [
+            10.1845703125,
+            8.10302734375,
+            8.02392578125
+          ],
+          "ops": 15,
+          "ns_op": 155956728.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        },
+        {
+          "round": 2,
+          "clip": "p720_inter_q32",
+          "role": "C",
+          "exit": 0,
+          "seconds": 2.6476800441741943,
+          "log": "08-r2-p720_inter_q32-C.log",
+          "sha256": "58d7b43588d7e78b758e929c325c9ef46a45687f0c05167966300925e27cf1ac",
+          "load": [
+            9.84912109375,
+            8.06787109375,
+            8.01171875
+          ],
+          "ops": 15,
+          "ns_op": 158937906.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        },
+        {
+          "round": 2,
+          "clip": "p720_inter_q32",
+          "role": "B",
+          "exit": 0,
+          "seconds": 2.6184771060943604,
+          "log": "09-r2-p720_inter_q32-B.log",
+          "sha256": "740e186b3af6096e2803f97d007bf734acfe1da2bea3c7517188ea975c835f54",
+          "load": [
+            9.84912109375,
+            8.06787109375,
+            8.01171875
+          ],
+          "ops": 15,
+          "ns_op": 157086853.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        },
+        {
+          "round": 2,
+          "clip": "p360_intra_q32",
+          "role": "B",
+          "exit": 0,
+          "seconds": 1.1420519351959229,
+          "log": "10-r2-p360_intra_q32-B.log",
+          "sha256": "87d3f4ea71cd014982d9f1cc332730118b2d9e9a965ad1e90691eebf30c6baf4",
+          "load": [
+            9.46044921875,
+            8.0166015625,
+            7.99365234375
+          ],
+          "ops": 15,
+          "ns_op": 68139303.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        },
+        {
+          "round": 2,
+          "clip": "p360_intra_q32",
+          "role": "C",
+          "exit": 0,
+          "seconds": 1.1932120323181152,
+          "log": "11-r2-p360_intra_q32-C.log",
+          "sha256": "f81e243fca75d3a0ad99676b5c372ebc49a7af711bcbc338fd4d79fbcc613623",
+          "load": [
+            9.46044921875,
+            8.0166015625,
+            7.99365234375
+          ],
+          "ops": 15,
+          "ns_op": 68746336.0,
+          "frames": 48.0,
+          "bytes_op": 0,
+          "allocs_op": 0
+        }
+      ],
+      "summary": {
+        "p720_inter_q32": {
+          "paired_gm_saved_pct": 13.363462629232215,
+          "wins": 1,
+          "pairs": [
+            {
+              "round": 0,
+              "B": 259167178.0,
+              "C": 165832386.0,
+              "saved_pct": 36.01335351191731
+            },
+            {
+              "round": 1,
+              "C": 156649992.0,
+              "B": 155956728.0,
+              "saved_pct": -0.4445233039256813
+            },
+            {
+              "round": 2,
+              "C": 158937906.0,
+              "B": 157086853.0,
+              "saved_pct": -1.1783627748911618
+            }
+          ]
+        },
+        "p360_intra_q32": {
+          "paired_gm_saved_pct": 0.8639134203868193,
+          "wins": 2,
+          "pairs": [
+            {
+              "round": 0,
+              "C": 69526142.0,
+              "B": 71159367.0,
+              "saved_pct": 2.295165160758106
+            },
+            {
+              "round": 1,
+              "B": 74421653.0,
+              "C": 73557456.0,
+              "saved_pct": 1.1612171527552562
+            },
+            {
+              "round": 2,
+              "B": 68139303.0,
+              "C": 68746336.0,
+              "saved_pct": -0.8908705743585266
+            }
+          ]
+        },
+        "audit": {
+          "rows": 12,
+          "all_0_allocs": true,
+          "binary_and_source_hashes_unchanged": true,
+          "final_load": [
+            9.46044921875,
+            8.0166015625,
+            7.99365234375
+          ]
+        }
+      }
+    },
+    "screen-v2": {
+      "plan": {
+        "base": "04a90b32fee2e1fa18c56d586afbcaa41a12bf78",
+        "binaries": {
+          "B": "/private/tmp/decoder-projection-runs-20261018/candidate.test",
+          "C": "/private/tmp/decoder-intra-endpoints-20261018/candidate-v2.test"
+        },
+        "hashes": {
+          "B": "b90eae34abebbb7744b85786ad589c82d15c810eb0f6b7054a28bdfa4a8bb9e9",
+          "C": "aab588cb0814de3d754d0d3b56a20b5c0b09641fdc6a2bb6bc7ef691a51a2a6b"
+        },
+        "sources": {
+          "internal/av1/prediction/directional.go": "4036d1bb8d7c0481281b623113dff86fdb959df31d985a93e7108d1af9323110",
+          "internal/av1/prediction/intra.go": "09395efbd5ffe7cd4450c6cb70189d4a74e5d5df6d8179aa6ba54e054bbdc64e",
+          "internal/av1/prediction/filter_intra.go": "3749cbe7dc09fe735b70770ed36ee05f50c8fd26f9130818b95a9a446f3eb28e",
+          "internal/av1/prediction/intra_edge.go": "b8f4cc519da4f7f7dd09c2bde2fd57b053586f04640634c939041c90d1df3add",
+          "internal/av1/prediction/byte_edges_test.go": "94462d64df43bd8ec69dce197f39f73b847ec5467cac922a742bb43c04b76ea5",
+          "internal/av1/threading/predict.go": "7a5cac56d51f61024fb00654f538a45ae055f8cbb77aeeec4ab3f349973211b6",
+          "internal/av1/threading/predict_byte_edges_test.go": "8d44132caf3f56124f2b17730033d3a05530dddd88affdf650e4577b32246282",
+          "public_fullclip_corpus_bench_test.go": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59"
+        },
+        "ops": 15,
+        "plan": [
+          [
+            0,
+            "p720_inter_q32",
+            "BC"
+          ],
+          [
+            0,
+            "p360_intra_q32",
+            "CB"
+          ],
+          [
+            1,
+            "p360_intra_q32",
+            "BC"
+          ],
+          [
+            1,
+            "p720_inter_q32",
+            "CB"
+          ],
+          [
+            2,
+            "p720_inter_q32",
+            "CB"
+          ],
+          [
+            2,
+            "p360_intra_q32",
+            "BC"
+          ]
+        ],
+        "protocol": "R2 V2 direct bounded-core routing: intra row endpoints and freshly gathered byte-edge scan omission; 3 paired warm public clips per case; all rows retained; >=0.5% intra saving and no clear inter control loss; fixed candidate and same PR14-production baseline; no retries/exclusions",
+        "initial_load": [
+          8.640625,
+          8.0029296875,
+          7.9599609375
+        ]
+      },
+      "rows": [
+        {
+          "round": 0,
+          "clip": "p720_inter_q32",
+          "role": "B",
+          "exit": 0,
+          "seconds": 2.5504720211029053,
+          "log": "00-r0-p720_inter_q32-B.log",
+          "sha256": "b2ca453c66c147c7e94f041d3219dc0ae6fe2afc0a5d7ec0bf57ba80798368b3",
+          "load": [
+            8.1884765625,
+            7.91943359375,
+            7.9306640625
+          ],
+          "ops": 15,
+          "ns_op": 155776836.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        },
+        {
+          "round": 0,
+          "clip": "p720_inter_q32",
+          "role": "C",
+          "exit": 0,
+          "seconds": 3.0263121128082275,
+          "log": "01-r0-p720_inter_q32-C.log",
+          "sha256": "54441f9b35d4d53e8d93eaa82ebe0367fedc88ef2abede5f1cc95ceeaf11dee8",
+          "load": [
+            8.1884765625,
+            7.91943359375,
+            7.9306640625
+          ],
+          "ops": 15,
+          "ns_op": 156211711.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        },
+        {
+          "round": 0,
+          "clip": "p360_intra_q32",
+          "role": "C",
+          "exit": 0,
+          "seconds": 1.1477110385894775,
+          "log": "02-r0-p360_intra_q32-C.log",
+          "sha256": "39a52791e3bf4c28470e5da2d0770575a5d16d9d299118b934aea3b4558ff995",
+          "load": [
+            7.85302734375,
+            7.85400390625,
+            7.9072265625
+          ],
+          "ops": 15,
+          "ns_op": 68454172.0,
+          "frames": 48.0,
+          "bytes_op": 0,
+          "allocs_op": 0
+        },
+        {
+          "round": 0,
+          "clip": "p360_intra_q32",
+          "role": "B",
+          "exit": 0,
+          "seconds": 1.1989500522613525,
+          "log": "03-r0-p360_intra_q32-B.log",
+          "sha256": "d026acb5924713b8830197d117edb6e4fde6805a15d06788eb2a7bd973ee14ad",
+          "load": [
+            7.85302734375,
+            7.85400390625,
+            7.9072265625
+          ],
+          "ops": 15,
+          "ns_op": 69540403.0,
+          "frames": 48.0,
+          "bytes_op": 0,
+          "allocs_op": 0
+        },
+        {
+          "round": 1,
+          "clip": "p360_intra_q32",
+          "role": "B",
+          "exit": 0,
+          "seconds": 1.1878259181976318,
+          "log": "04-r1-p360_intra_q32-B.log",
+          "sha256": "954a83419512121902c40fd574c085372bfbadf342720d39ab4427eacc726884",
+          "load": [
+            7.85302734375,
+            7.85400390625,
+            7.9072265625
+          ],
+          "ops": 15,
+          "ns_op": 70170608.0,
+          "frames": 48.0,
+          "bytes_op": 0,
+          "allocs_op": 0
+        },
+        {
+          "round": 1,
+          "clip": "p360_intra_q32",
+          "role": "C",
+          "exit": 0,
+          "seconds": 1.202559232711792,
+          "log": "05-r1-p360_intra_q32-C.log",
+          "sha256": "7264c4db54c03a0fe218a5ebb58f8d222ea9e718e40bf0a1dde95a41d10366af",
+          "load": [
+            7.85302734375,
+            7.85400390625,
+            7.9072265625
+          ],
+          "ops": 15,
+          "ns_op": 69358036.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        },
+        {
+          "round": 1,
+          "clip": "p720_inter_q32",
+          "role": "C",
+          "exit": 0,
+          "seconds": 2.657379150390625,
+          "log": "06-r1-p720_inter_q32-C.log",
+          "sha256": "a4d3a0843cd7dfcd831ef5e1dd5089b40dfaff7ae95052620ce3a67811c3b5bc",
+          "load": [
+            7.78466796875,
+            7.83935546875,
+            7.90185546875
+          ],
+          "ops": 15,
+          "ns_op": 159507153.0,
+          "frames": 48.0,
+          "bytes_op": 0,
+          "allocs_op": 0
+        },
+        {
+          "round": 1,
+          "clip": "p720_inter_q32",
+          "role": "B",
+          "exit": 0,
+          "seconds": 2.710827112197876,
+          "log": "07-r1-p720_inter_q32-B.log",
+          "sha256": "6d51f2975ee3d30e334428f2f3423be8d7f0dc646a0c39ae00fa5c82d54f6e45",
+          "load": [
+            7.78466796875,
+            7.83935546875,
+            7.90185546875
+          ],
+          "ops": 15,
+          "ns_op": 163975192.0,
+          "frames": 48.0,
+          "bytes_op": 0,
+          "allocs_op": 0
+        },
+        {
+          "round": 2,
+          "clip": "p720_inter_q32",
+          "role": "C",
+          "exit": 0,
+          "seconds": 2.6351070404052734,
+          "log": "08-r2-p720_inter_q32-C.log",
+          "sha256": "f32db17324f696b6f7649ea568765344f6d887a2e7ba182f93a84c6507ae349a",
+          "load": [
+            7.8017578125,
+            7.841796875,
+            7.90234375
+          ],
+          "ops": 15,
+          "ns_op": 160743944.0,
+          "frames": 48.0,
+          "bytes_op": 0,
+          "allocs_op": 0
+        },
+        {
+          "round": 2,
+          "clip": "p720_inter_q32",
+          "role": "B",
+          "exit": 0,
+          "seconds": 2.6640398502349854,
+          "log": "09-r2-p720_inter_q32-B.log",
+          "sha256": "9f82d6c60241cfa8f2ac1a4a261d724ef03b520ddfd0622955de19135ef22924",
+          "load": [
+            7.4970703125,
+            7.77783203125,
+            7.87939453125
+          ],
+          "ops": 15,
+          "ns_op": 160811781.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        },
+        {
+          "round": 2,
+          "clip": "p360_intra_q32",
+          "role": "B",
+          "exit": 0,
+          "seconds": 1.2020926475524902,
+          "log": "10-r2-p360_intra_q32-B.log",
+          "sha256": "ba233ec8ada9d5f687d2f49859a0e96a8a91222db3ef0f475ce76c317ba7bd0b",
+          "load": [
+            7.4970703125,
+            7.77783203125,
+            7.87939453125
+          ],
+          "ops": 15,
+          "ns_op": 69336375.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        },
+        {
+          "round": 2,
+          "clip": "p360_intra_q32",
+          "role": "C",
+          "exit": 0,
+          "seconds": 1.1515071392059326,
+          "log": "11-r2-p360_intra_q32-C.log",
+          "sha256": "861c1001b32d33799d58a3634b81690efebd729988e33ba6d0f59ab7de0fa474",
+          "load": [
+            7.4970703125,
+            7.77783203125,
+            7.87939453125
+          ],
+          "ops": 15,
+          "ns_op": 67780458.0,
+          "frames": 48.0,
+          "bytes_op": 3,
+          "allocs_op": 0
+        }
+      ],
+      "summary": {
+        "p720_inter_q32": {
+          "paired_gm_saved_pct": 0.8384831577121998,
+          "wins": 2,
+          "pairs": [
+            {
+              "round": 0,
+              "B": 155776836.0,
+              "C": 156211711.0,
+              "saved_pct": -0.2791653824577578
+            },
+            {
+              "round": 1,
+              "C": 159507153.0,
+              "B": 163975192.0,
+              "saved_pct": 2.7248262041980054
+            },
+            {
+              "round": 2,
+              "C": 160743944.0,
+              "B": 160811781.0,
+              "saved_pct": 0.04218409843990134
+            }
+          ]
+        },
+        "p360_intra_q32": {
+          "paired_gm_saved_pct": 1.6556960593649084,
+          "wins": 3,
+          "pairs": [
+            {
+              "round": 0,
+              "C": 68454172.0,
+              "B": 69540403.0,
+              "saved_pct": 1.5620142437195783
+            },
+            {
+              "round": 1,
+              "B": 70170608.0,
+              "C": 69358036.0,
+              "saved_pct": 1.1579948117308558
+            },
+            {
+              "round": 2,
+              "B": 69336375.0,
+              "C": 67780458.0,
+              "saved_pct": 2.2440126124274595
+            }
+          ]
+        },
+        "audit": {
+          "rows": 12,
+          "all_0_allocs": true,
+          "binary_and_source_hashes_unchanged": true,
+          "final_load": [
+            7.4970703125,
+            7.77783203125,
+            7.87939453125
+          ]
+        }
+      }
+    }
+  },
+  "validation": {
+    "targeted_v2": "ok  \tgithub.com/thesyncim/goav1/internal/av1/prediction\t0.280s\nok  \tgithub.com/thesyncim/goav1/internal/av1/threading\t0.354s\n",
+    "targeted_log_sha256": "ccb12147c68a44be91656058053372923ca0b983d0868ebfe04bf255172ec95b",
+    "public_md5": "PASS18clips864framesworkers1; IVF and payload constructors verified (5.13s)",
+    "public_md5_log_sha256": "b9889e8c5e9fadc7290a0d33585496b90b0f9d9f8136135104356428feb06391",
+    "retained_attempts": "An edit-script argument-count assertion was fixed before complete V2 testing. The first MD5 invocation lacked GOAV1_PUBLIC_FULLCLIP=1 and skipped; its log is retained, and the subsequent opted-in gate executed once. Neither is performance data."
+  },
+  "self_review": "The row boundary inequality x>=-64 is exact for both upsample modes; monotonically increasing above and decreasing left indices give identical extrema/error outcomes in the guarded128x128 domain. Nonstandard inputs retain the old walk. The threading flag exists only at each call after fresh byte-edge gather; byte loads/defaults, convex filters and clipped upsampling bound consumed values. Direct arbitrary-edge helpers and generic entry points still validate. Full coded extents, visible writes, validation-before-output order, output/scratch alias handling and all interpolation/round/clamp arithmetic are unchanged; bounded helpers omit only value scans. The source uses no retained capability/field or dynamic dispatch. Existing scalar/libaom fixtures, frozen original range walk and poison/canary tests passed. All24screenrows report0allocs."
+}

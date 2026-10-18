@@ -431,7 +431,7 @@ func (b *FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVi
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictFilterIntraPlaneBlockWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
+		if err := prediction.PredictFilterIntraPlaneBlockWithExtentBounded(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges, int(window.BytesPerSample) == 1 && b.Sequence.ColorConfig.BitDepth == 8); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -444,7 +444,7 @@ func (b *FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVi
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, angle, edges); err != nil {
+		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtentBounded(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, angle, edges, int(window.BytesPerSample) == 1 && b.Sequence.ColorConfig.BitDepth == 8); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -459,7 +459,7 @@ func (b *FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVi
 	if err != nil {
 		return err
 	}
-	if err := prediction.PredictIntraPlaneBlockWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
+	if err := prediction.PredictIntraPlaneBlockWithExtentBounded(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges, int(window.BytesPerSample) == 1 && b.Sequence.ColorConfig.BitDepth == 8); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -530,7 +530,7 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictFilterIntraPlaneBlockWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
+		if err := prediction.PredictFilterIntraPlaneBlockWithExtentBounded(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges, int(window.BytesPerSample) == 1 && b.Sequence.ColorConfig.BitDepth == 8); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -543,7 +543,7 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, angle, edges); err != nil {
+		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtentBounded(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, angle, edges, int(window.BytesPerSample) == 1 && b.Sequence.ColorConfig.BitDepth == 8); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -558,7 +558,7 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 	if err != nil {
 		return err
 	}
-	if err := prediction.PredictIntraPlaneBlockWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
+	if err := prediction.PredictIntraPlaneBlockWithExtentBounded(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges, int(window.BytesPerSample) == 1 && b.Sequence.ColorConfig.BitDepth == 8); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -605,7 +605,7 @@ func (b *FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Bloc
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtent(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), geom.width(), geom.height(), angle, edges); err != nil {
+		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtentBounded(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), geom.width(), geom.height(), angle, edges, geom.bytesPerSample() == 1 && b.Sequence.ColorConfig.BitDepth == 8); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -618,7 +618,7 @@ func (b *FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Bloc
 	if err != nil {
 		return err
 	}
-	if err := prediction.PredictIntraPlaneBlockWithExtent(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, writeWidth, writeHeight, predWidth, predHeight, mode, edges); err != nil {
+	if err := prediction.PredictIntraPlaneBlockWithExtentBounded(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, writeWidth, writeHeight, predWidth, predHeight, mode, edges, geom.bytesPerSample() == 1 && b.Sequence.ColorConfig.BitDepth == 8); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -685,7 +685,7 @@ func (b *FrameWorkBatch) predictBlockChromaIntraTransformPtr(index int, visit *t
 		if err != nil {
 			return err
 		}
-		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtent(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, angle, edges); err != nil {
+		if err := prediction.PredictDirectionalIntraPlaneBlockWithExtentBounded(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, angle, edges, geom.bytesPerSample() == 1 && b.Sequence.ColorConfig.BitDepth == 8); err != nil {
 			return ErrInvalidBatch
 		}
 		return nil
@@ -698,7 +698,7 @@ func (b *FrameWorkBatch) predictBlockChromaIntraTransformPtr(index int, visit *t
 	if err != nil {
 		return err
 	}
-	if err := prediction.PredictIntraPlaneBlockWithExtent(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges); err != nil {
+	if err := prediction.PredictIntraPlaneBlockWithExtentBounded(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, mode, edges, geom.bytesPerSample() == 1 && b.Sequence.ColorConfig.BitDepth == 8); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil
@@ -894,7 +894,7 @@ func (b *FrameWorkBatch) predictBlockChromaCFLPlaneWithAC(visit *tile.BlockLoopV
 	if err != nil {
 		return err
 	}
-	if err := prediction.PredictIntraPlaneBlockWithExtent(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, writeWidth, writeHeight, fullWidth, fullHeight, prediction.IntraModeDC, edges); err != nil {
+	if err := prediction.PredictIntraPlaneBlockWithExtentBounded(geom.Output, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, writeWidth, writeHeight, fullWidth, fullHeight, prediction.IntraModeDC, edges, geom.bytesPerSample() == 1 && b.Sequence.ColorConfig.BitDepth == 8); err != nil {
 		return ErrInvalidBatch
 	}
 	predType := prediction.CFLPredU
@@ -1407,7 +1407,7 @@ func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFiltersPtr(index int, vi
 	if err != nil {
 		return err
 	}
-	if err := prediction.PredictIntraPlaneBlockWithExtent(intra, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, 0, 0, geom.width(), geom.height(), predWidth, predHeight, mode, edges); err != nil {
+	if err := prediction.PredictIntraPlaneBlockWithExtentBounded(intra, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, 0, 0, geom.width(), geom.height(), predWidth, predHeight, mode, edges, geom.bytesPerSample() == 1 && b.Sequence.ColorConfig.BitDepth == 8); err != nil {
 		return ErrInvalidBatch
 	}
 	mask := scratch.Mask[:]
@@ -4342,6 +4342,11 @@ func frameWorkWindowEdgeReadBoundAbsolute(window FrameWorkPlaneRegion) (int, int
 	return int(window.X) + w, int(window.Y) + h
 }
 
+// The prediction calls immediately after this gather pass a bounded-sample
+// flag only for one-byte, 8-bit planes. Every consumed slot is overwritten from
+// byte pixels or127/128/129 defaults. No callback intervenes; no trust survives
+// in reusable scratch. Directional filtering is convex and upsampling clips.
+//
 // frameWorkIntraPredictionEdgesWithExtent builds the top/left/top-left intra
 // predictor edge samples for one block. visibleW / visibleH are the
 // past-visible-end positions in the same coordinate system as x / dst (so for
@@ -4547,7 +4552,7 @@ func frameWorkDirectionalPredictionEdges(dst frame.Plane, bytesPerSample int, bi
 		scratch.Left[frameWorkDirectionalEdgeOrigin-1] = topLeft
 	}
 	if enableIntraEdgeFilter {
-		if err := frameWorkApplyDirectionalIntraEdgeFilter(bitDepth, width, height, angle, block, smoothNeighbor, &edges, scratch); err != nil {
+		if err := frameWorkApplyDirectionalIntraEdgeFilterBounded(bitDepth, width, height, angle, block, smoothNeighbor, &edges, scratch, bytesPerSample == 1 && bitDepth == 8); err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
 	}
@@ -4555,6 +4560,10 @@ func frameWorkDirectionalPredictionEdges(dst frame.Plane, bytesPerSample int, bi
 }
 
 func frameWorkApplyDirectionalIntraEdgeFilter(bitDepth uint8, width int, height int, angle int, block tile.BlockVisit, smoothNeighbor bool, edges *prediction.DirectionalEdges, scratch *FrameWorkIntraPredictionScratch) error {
+	return frameWorkApplyDirectionalIntraEdgeFilterBounded(bitDepth, width, height, angle, block, smoothNeighbor, edges, scratch, false)
+}
+
+func frameWorkApplyDirectionalIntraEdgeFilterBounded(bitDepth uint8, width int, height int, angle int, block tile.BlockVisit, smoothNeighbor bool, edges *prediction.DirectionalEdges, scratch *FrameWorkIntraPredictionScratch, bounded bool) error {
 	needAbove := angle < 180
 	needLeft := angle > 90
 	needRight := angle < 90
@@ -4582,7 +4591,7 @@ func frameWorkApplyDirectionalIntraEdgeFilter(bitDepth uint8, width int, height 
 			if !frameWorkDirectionalEdgeFilterRangeFits(edges.AboveOrigin, npx) {
 				return ErrInvalidBatch
 			}
-			if err := prediction.FilterIntraEdge(edges.Above[edges.AboveOrigin-1:edges.AboveOrigin-1+npx], scratch.Edge[:], strength, bitDepth); err != nil {
+			if err := prediction.FilterIntraEdgeBounded(edges.Above[edges.AboveOrigin-1:edges.AboveOrigin-1+npx], scratch.Edge[:], strength, bitDepth, bounded); err != nil {
 				return ErrInvalidBatch
 			}
 		}
@@ -4595,7 +4604,7 @@ func frameWorkApplyDirectionalIntraEdgeFilter(bitDepth uint8, width int, height 
 			if !frameWorkDirectionalEdgeFilterRangeFits(edges.LeftOrigin, npx) {
 				return ErrInvalidBatch
 			}
-			if err := prediction.FilterIntraEdge(edges.Left[edges.LeftOrigin-1:edges.LeftOrigin-1+npx], scratch.Edge[:], strength, bitDepth); err != nil {
+			if err := prediction.FilterIntraEdgeBounded(edges.Left[edges.LeftOrigin-1:edges.LeftOrigin-1+npx], scratch.Edge[:], strength, bitDepth, bounded); err != nil {
 				return ErrInvalidBatch
 			}
 		}
@@ -4606,7 +4615,7 @@ func frameWorkApplyDirectionalIntraEdgeFilter(bitDepth uint8, width int, height 
 		if needRight {
 			npx += height
 		}
-		if err := prediction.UpsampleIntraEdge(edges.Above, edges.AboveOrigin, npx, scratch.Edge[:], bitDepth); err != nil {
+		if err := prediction.UpsampleIntraEdgeBounded(edges.Above, edges.AboveOrigin, npx, scratch.Edge[:], bitDepth, bounded); err != nil {
 			return ErrInvalidBatch
 		}
 		edges.UpsampleAbove = true
@@ -4617,7 +4626,7 @@ func frameWorkApplyDirectionalIntraEdgeFilter(bitDepth uint8, width int, height 
 		if needBottom {
 			npx += width
 		}
-		if err := prediction.UpsampleIntraEdge(edges.Left, edges.LeftOrigin, npx, scratch.Edge[:], bitDepth); err != nil {
+		if err := prediction.UpsampleIntraEdgeBounded(edges.Left, edges.LeftOrigin, npx, scratch.Edge[:], bitDepth, bounded); err != nil {
 			return ErrInvalidBatch
 		}
 		edges.UpsampleLeft = true
