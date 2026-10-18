@@ -1,0 +1,957 @@
+{
+  "candidate": "ARM64 rolling SGR coefficient SIMD",
+  "base": "5746ed09ae15e9c7a9388e94524706aa8fb9fae0",
+  "base_tree": "18bf88909f8dafdc5136eb09f9c5c1ae54d8cdf2",
+  "toolchain": "Go 1.27.0 GOEXPERIMENT=simd darwin/arm64 Apple M4 Max",
+  "environment": {
+    "GOMAXPROCS": "1",
+    "GOGC": "100",
+    "GOEXPERIMENT": "simd",
+    "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus"
+  },
+  "build_command": "CODEX_AGENT_ID=astra_decoder_entropy_gap CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects GOEXPERIMENT=simd /Users/thesyncim/.codex/bin/project-env go test -c -o <path> .",
+  "plan": {
+    "name": "ARM64 rolling SGR coefficient SIMD on 5746ed09 (production same ccec)",
+    "primary": "sgr_highbd",
+    "secondary": "postfiltered",
+    "cases": [
+      {
+        "id": "sgr_highbd",
+        "benchmark": "BenchmarkDecodeSGRHighBDProfileClip",
+        "frames": 8,
+        "iterations": 200
+      },
+      {
+        "id": "postfiltered",
+        "benchmark": "BenchmarkDecodePostFilteredProfileClip",
+        "frames": 4,
+        "iterations": 200
+      },
+      {
+        "id": "ordinary_inter",
+        "benchmark": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+        "frames": 48,
+        "iterations": 10
+      }
+    ],
+    "order": [
+      [
+        "baseline",
+        "candidate"
+      ],
+      [
+        "candidate",
+        "baseline"
+      ],
+      [
+        "baseline",
+        "candidate"
+      ]
+    ],
+    "total_rows": 18,
+    "gate": {
+      "primary_minimum_geomean_saved_percent": 0.5,
+      "primary_minimum_faster_pairs": 2,
+      "secondary_maximum_geomean_regression_percent": 1.0,
+      "allocs_per_op": 0,
+      "B_per_op": "report separately, no threshold",
+      "all_exact_golden_hashes_required": true,
+      "regression_control_maximum_geomean_regression_percent": 1.0
+    },
+    "golden_test_pattern": "^TestSimpleDecoderProfileClipsMatchGolden$/^(profile1-444-8bit-cdef-restoration-160x128.ivf|profile2-422-12bit-inter-cdef-restoration-160x128.ivf)$",
+    "golden_clip_names": [
+      "profile1-444-8bit-cdef-restoration-160x128.ivf",
+      "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+    ],
+    "selection_basis": "SGRHighBD baseline own-CPU profile: rolling coefficient producer 12.15% cumulative; retains previously preselected HBD primary and U8 secondary. Ordinary inter is a fixed regression control.",
+    "root_approved": true,
+    "no_retries_exclusions_pooling": true,
+    "same_build_command": "GOEXPERIMENT=simd project-env go test -c -o <binary> .",
+    "same_toolchain": "go1.27.0 darwin/arm64 Apple M4 Max",
+    "environment": {
+      "GOMAXPROCS": "1",
+      "GOGC": "100",
+      "GOEXPERIMENT": "simd",
+      "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus"
+    },
+    "scope": "Two whole existing profile clips and one 48-frame ordinary-inter control; no native-gap or generalized performance claim.",
+    "regression_control": "ordinary_inter"
+  },
+  "result": {
+    "accepted": true,
+    "summary": {
+      "sgr_highbd": {
+        "paired_geomean_saving_percent": 9.1198591660116,
+        "faster_pairs": 3,
+        "pairs": [
+          {
+            "pair": 1,
+            "baseline_ns": 12311287.0,
+            "candidate_ns": 10709319.0,
+            "ratio": 0.8698781045393548,
+            "saving_percent": 13.012189546064523
+          },
+          {
+            "pair": 2,
+            "baseline_ns": 11666046.0,
+            "candidate_ns": 10739164.0,
+            "ratio": 0.9205487446217853,
+            "saving_percent": 7.945125537821474
+          },
+          {
+            "pair": 3,
+            "baseline_ns": 11640144.0,
+            "candidate_ns": 10910889.0,
+            "ratio": 0.9373500018556471,
+            "saving_percent": 6.26499981443529
+          }
+        ]
+      },
+      "postfiltered": {
+        "paired_geomean_saving_percent": 0.10181233297779091,
+        "faster_pairs": 1,
+        "pairs": [
+          {
+            "pair": 1,
+            "baseline_ns": 5750965.0,
+            "candidate_ns": 5846843.0,
+            "ratio": 1.0166716368470334,
+            "saving_percent": -1.6671636847033433
+          },
+          {
+            "pair": 2,
+            "baseline_ns": 5962928.0,
+            "candidate_ns": 6020619.0,
+            "ratio": 1.009674944926385,
+            "saving_percent": -0.9674944926385098
+          },
+          {
+            "pair": 3,
+            "baseline_ns": 5852168.0,
+            "candidate_ns": 5683650.0,
+            "ratio": 0.9712041759566711,
+            "saving_percent": 2.879582404332892
+          }
+        ]
+      },
+      "ordinary_inter": {
+        "paired_geomean_saving_percent": 1.561012801310957,
+        "faster_pairs": 3,
+        "pairs": [
+          {
+            "pair": 1,
+            "baseline_ns": 157316817.0,
+            "candidate_ns": 154699238.0,
+            "ratio": 0.9833610986421115,
+            "saving_percent": 1.663890135788848
+          },
+          {
+            "pair": 2,
+            "baseline_ns": 159064304.0,
+            "candidate_ns": 156087762.0,
+            "ratio": 0.9812871780459304,
+            "saving_percent": 1.8712821954069647
+          },
+          {
+            "pair": 3,
+            "baseline_ns": 155928929.0,
+            "candidate_ns": 154141279.0,
+            "ratio": 0.9885354820849184,
+            "saving_percent": 1.146451791508163
+          }
+        ]
+      }
+    },
+    "raw_rows": 18,
+    "all_zero_allocs": true,
+    "B_per_op_reported_without_threshold": true,
+    "selected_profile_clips_only": true,
+    "no_native_gap_extrapolation": true
+  },
+  "rows": [
+    {
+      "case": "sgr_highbd",
+      "benchmark": "BenchmarkDecodeSGRHighBDProfileClip",
+      "pair": 1,
+      "version": "baseline",
+      "iterations": 200,
+      "frames_per_op": 8.0,
+      "ns_per_op": 12311287.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 3.108137417,
+      "raw": "sgr_highbd-pair1-baseline.log",
+      "raw_sha256": "6206f4aeb0860a7d47effac74427c539ff11b9622b03ed3a5699af44aeb601e4"
+    },
+    {
+      "case": "sgr_highbd",
+      "benchmark": "BenchmarkDecodeSGRHighBDProfileClip",
+      "pair": 1,
+      "version": "candidate",
+      "iterations": 200,
+      "frames_per_op": 8.0,
+      "ns_per_op": 10709319.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 2.244714334,
+      "raw": "sgr_highbd-pair1-candidate.log",
+      "raw_sha256": "7a0d04ae04dcf5b9e8be35aba66ee0e3f7d4ab9f083d8e1f0c9ffd9e2d31decd"
+    },
+    {
+      "case": "sgr_highbd",
+      "benchmark": "BenchmarkDecodeSGRHighBDProfileClip",
+      "pair": 2,
+      "version": "candidate",
+      "iterations": 200,
+      "frames_per_op": 8.0,
+      "ns_per_op": 10739164.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 2.2486995829999996,
+      "raw": "sgr_highbd-pair2-candidate.log",
+      "raw_sha256": "91c8c20385f4270524c1c2e8ee57b2dc750c200f8bc42c90c1fe4b902ac01c54"
+    },
+    {
+      "case": "sgr_highbd",
+      "benchmark": "BenchmarkDecodeSGRHighBDProfileClip",
+      "pair": 2,
+      "version": "baseline",
+      "iterations": 200,
+      "frames_per_op": 8.0,
+      "ns_per_op": 11666046.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 2.4380217920000007,
+      "raw": "sgr_highbd-pair2-baseline.log",
+      "raw_sha256": "252e0faa1890b2e9c6d06b69ca5babf2ef2bc567a6dfd3ae0a6d1999512a5d9c"
+    },
+    {
+      "case": "sgr_highbd",
+      "benchmark": "BenchmarkDecodeSGRHighBDProfileClip",
+      "pair": 3,
+      "version": "baseline",
+      "iterations": 200,
+      "frames_per_op": 8.0,
+      "ns_per_op": 11640144.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 2.4276711669999997,
+      "raw": "sgr_highbd-pair3-baseline.log",
+      "raw_sha256": "476564af49d5d6092b72d75d248496c021d4719ee819d880f1c1a67b68d7a3ad"
+    },
+    {
+      "case": "sgr_highbd",
+      "benchmark": "BenchmarkDecodeSGRHighBDProfileClip",
+      "pair": 3,
+      "version": "candidate",
+      "iterations": 200,
+      "frames_per_op": 8.0,
+      "ns_per_op": 10910889.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 2.2830302080000013,
+      "raw": "sgr_highbd-pair3-candidate.log",
+      "raw_sha256": "08bdaafbbc9989932892d4fce7f122efc4447446459b20346beee4cb6508f327"
+    },
+    {
+      "case": "postfiltered",
+      "benchmark": "BenchmarkDecodePostFilteredProfileClip",
+      "pair": 1,
+      "version": "baseline",
+      "iterations": 200,
+      "frames_per_op": 4.0,
+      "ns_per_op": 5750965.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 1.2352022919999985,
+      "raw": "postfiltered-pair1-baseline.log",
+      "raw_sha256": "880f135491eccba4ddd6577923116b973f056727684f905dfc96eb541607cf41"
+    },
+    {
+      "case": "postfiltered",
+      "benchmark": "BenchmarkDecodePostFilteredProfileClip",
+      "pair": 1,
+      "version": "candidate",
+      "iterations": 200,
+      "frames_per_op": 4.0,
+      "ns_per_op": 5846843.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 1.2500483330000023,
+      "raw": "postfiltered-pair1-candidate.log",
+      "raw_sha256": "cd2923a46e29123ce50913ff608c17da877104dcb62c3c6db190c903acb3f304"
+    },
+    {
+      "case": "postfiltered",
+      "benchmark": "BenchmarkDecodePostFilteredProfileClip",
+      "pair": 2,
+      "version": "candidate",
+      "iterations": 200,
+      "frames_per_op": 4.0,
+      "ns_per_op": 6020619.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 1.2956798750000011,
+      "raw": "postfiltered-pair2-candidate.log",
+      "raw_sha256": "1d58b93bd61e6326b67115672fce7022b70c52511f7dd92aac64faa04cd5890d"
+    },
+    {
+      "case": "postfiltered",
+      "benchmark": "BenchmarkDecodePostFilteredProfileClip",
+      "pair": 2,
+      "version": "baseline",
+      "iterations": 200,
+      "frames_per_op": 4.0,
+      "ns_per_op": 5962928.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 1.2810180829999993,
+      "raw": "postfiltered-pair2-baseline.log",
+      "raw_sha256": "5b94c76f7da5b367eaa6333ec547ee59caa9fc59deb4721cb7e0d33dd0f915b7"
+    },
+    {
+      "case": "postfiltered",
+      "benchmark": "BenchmarkDecodePostFilteredProfileClip",
+      "pair": 3,
+      "version": "baseline",
+      "iterations": 200,
+      "frames_per_op": 4.0,
+      "ns_per_op": 5852168.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 1.2583085830000016,
+      "raw": "postfiltered-pair3-baseline.log",
+      "raw_sha256": "3ec4c82dd1934d4cbb49ebdb8c3fa6a8a4df34ba390b00707635d5ec94b73b4d"
+    },
+    {
+      "case": "postfiltered",
+      "benchmark": "BenchmarkDecodePostFilteredProfileClip",
+      "pair": 3,
+      "version": "candidate",
+      "iterations": 200,
+      "frames_per_op": 4.0,
+      "ns_per_op": 5683650.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 1.217099375,
+      "raw": "postfiltered-pair3-candidate.log",
+      "raw_sha256": "95600c7a7b5b5c6609b0855ae27c6da174ef390386d895118fda9320ef9a6f5c"
+    },
+    {
+      "case": "ordinary_inter",
+      "benchmark": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "pair": 1,
+      "version": "baseline",
+      "iterations": 10,
+      "frames_per_op": 48.0,
+      "ns_per_op": 157316817.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 1.7988286249999987,
+      "raw": "ordinary_inter-pair1-baseline.log",
+      "raw_sha256": "25cc885a8eb5e8745233d907668ca8604955b6dc91413dd9b495d8019ae29530"
+    },
+    {
+      "case": "ordinary_inter",
+      "benchmark": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "pair": 1,
+      "version": "candidate",
+      "iterations": 10,
+      "frames_per_op": 48.0,
+      "ns_per_op": 154699238.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 1.7640747919999988,
+      "raw": "ordinary_inter-pair1-candidate.log",
+      "raw_sha256": "7d12d1d2fc33a18bd0b0999357ce5c9bae3d1245abbfe362094870f1a36128c3"
+    },
+    {
+      "case": "ordinary_inter",
+      "benchmark": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "pair": 2,
+      "version": "candidate",
+      "iterations": 10,
+      "frames_per_op": 48.0,
+      "ns_per_op": 156087762.0,
+      "B_per_op": 4,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 1.7997190839999995,
+      "raw": "ordinary_inter-pair2-candidate.log",
+      "raw_sha256": "ebe4e92366f58d25330d350481a685a1b20e1840d32d96eaa0ef234049524b40"
+    },
+    {
+      "case": "ordinary_inter",
+      "benchmark": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "pair": 2,
+      "version": "baseline",
+      "iterations": 10,
+      "frames_per_op": 48.0,
+      "ns_per_op": 159064304.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 1.8131239579999985,
+      "raw": "ordinary_inter-pair2-baseline.log",
+      "raw_sha256": "c89353f6f56da537a6fbb552906356da98013f8d96ddd2d5b8eb6b5b88d93203"
+    },
+    {
+      "case": "ordinary_inter",
+      "benchmark": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "pair": 3,
+      "version": "baseline",
+      "iterations": 10,
+      "frames_per_op": 48.0,
+      "ns_per_op": 155928929.0,
+      "B_per_op": 4,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 1.8017927090000008,
+      "raw": "ordinary_inter-pair3-baseline.log",
+      "raw_sha256": "4d4ea654d5068ce049627c802abe66a888fdb8bd6ae98b7d3e4eebfa18b85b00"
+    },
+    {
+      "case": "ordinary_inter",
+      "benchmark": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "pair": 3,
+      "version": "candidate",
+      "iterations": 10,
+      "frames_per_op": 48.0,
+      "ns_per_op": 154141279.0,
+      "B_per_op": 0,
+      "allocs_per_op": 0,
+      "golden_clips": [
+        "profile1-444-8bit-cdef-restoration-160x128.ivf",
+        "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+      ],
+      "process_seconds": 1.768584041999997,
+      "raw": "ordinary_inter-pair3-candidate.log",
+      "raw_sha256": "a92562d340141489ebd280aed9ebe85578269bf5b94fdfd6f564175396da5066"
+    }
+  ],
+  "independent_audit": {
+    "independent_raw_audit_pass": true,
+    "all_rows": 18,
+    "golden_checks": 36,
+    "all_zero_allocs": true,
+    "B_per_op_values": [
+      0,
+      4
+    ],
+    "cases": {
+      "sgr_highbd": {
+        "saved_percent": 9.1198591660116,
+        "wins": 3,
+        "pair_savings": [
+          13.012189546064523,
+          7.945125537821474,
+          6.26499981443529
+        ]
+      },
+      "postfiltered": {
+        "saved_percent": 0.10181233297779091,
+        "wins": 1,
+        "pair_savings": [
+          -1.6671636847033433,
+          -0.9674944926385098,
+          2.879582404332892
+        ]
+      },
+      "ordinary_inter": {
+        "saved_percent": 1.561012801310957,
+        "wins": 3,
+        "pair_savings": [
+          1.663890135788848,
+          1.8712821954069647,
+          1.146451791508163
+        ]
+      }
+    },
+    "known_work_samples": 34,
+    "no_external_known_work": true,
+    "other_busy_programs": [
+      "/Applications/Google",
+      "/usr/libexec/PerfPowerServices"
+    ]
+  },
+  "host": {
+    "status": {
+      "launched": true,
+      "returncode": 0,
+      "external_known_work_detected": false,
+      "all_samples_retained": true,
+      "scope": "Known Go/test/qualitybench work excluded; OS/app CPU recorded, not controlled. Own screen descendants excluded."
+    },
+    "samples": 34,
+    "other_busy_processes": [
+      {
+        "program": "/Applications/Google",
+        "observed_cpu_percent_min": 59.9,
+        "observed_cpu_percent_max": 126.5
+      },
+      {
+        "program": "/usr/libexec/PerfPowerServices",
+        "observed_cpu_percent_min": 160.7,
+        "observed_cpu_percent_max": 186.0
+      }
+    ]
+  },
+  "binary_sha256": {
+    "baseline": "11b6ed6e2c9c983abf040c883e57e60008c64ce082aae1dae4308c372ab389c3",
+    "candidate": "405319b326f8038cfa76a6e8dc4416fa0f57e7f33f4f66045dd88e43d29089c1"
+  },
+  "changed_source_sha256": {
+    "internal/av1/restoration/selfguided_simd.go": "e496e91d7469736cc79804162960b6aa2abf9804e1374b559c767b79ef4ea0d4",
+    "internal/av1/restoration/selfguided_coeff_frozen_arm64_test.go": "82fd0e69e09c7701cd40115a7e63ba4cf0b01334894d2693eb611f116fe111ec",
+    "internal/av1/restoration/selfguided_coeff_gosimd_arm64_test.go": "2824a1dc263d6b4b58f125056da7eb2f165e23839119b6c9bbbe2191e32bdde4",
+    "internal/av1/restoration/selfguided_driver_gosimd_arm64.go": "b525e0656632a22e2fea9d38e7175cbe7e63c59e560adb725fcfb7d911170f7d",
+    "internal/av1/restoration/selfguided_rolling_gosimd_arm64.go": "c79797322f84184e811efa9e52351628c299bcb48d2646ee9be422bbb37839e8"
+  },
+  "script_sha256": "21b69c0a6c08f36d6b6a2421ec14a9877643e0e422637a5e08b5b0ef00df02a4",
+  "freeze_sha256": "9439bdbcc3b0f43eb15a1848bcec7b6cf70e3eafdb7c3684ee8473ccbc95f7d1",
+  "codegen": {
+    "selfguidedSIMD": {
+      "instructions": 397,
+      "frame_bytes": 320,
+      "vector_stack_accesses": [],
+      "non_panic_non_morestack_calls": [
+        "selfguided_driver_gosimd_arm64.go:13\t0x1001b39c8\t\t940004f6\t\tCALL github.com/thesyncim/goav1/internal/av1/restoration.calculateIntermediateSIMD(SB)",
+        "selfguided_driver_gosimd_arm64.go:24\t0x1001b3c18\t\t97fffc82\t\tCALL github.com/thesyncim/goav1/internal/av1/restoration.sgrBlendRowSIMD(SB)"
+      ]
+    },
+    "selfguidedFastSIMD": {
+      "instructions": 497,
+      "frame_bytes": 352,
+      "vector_stack_accesses": [],
+      "non_panic_non_morestack_calls": [
+        "selfguided_driver_gosimd_arm64.go:48\t0x1001b3ff8\t\t9400036a\t\tCALL github.com/thesyncim/goav1/internal/av1/restoration.calculateIntermediateSIMD(SB)",
+        "selfguided_driver_gosimd_arm64.go:61\t0x1001b4260\t\t97fffaf0\t\tCALL github.com/thesyncim/goav1/internal/av1/restoration.sgrBlendRowSIMD(SB)",
+        "selfguided_driver_gosimd_arm64.go:79\t0x1001b440c\t\t97fffa85\t\tCALL github.com/thesyncim/goav1/internal/av1/restoration.sgrBlendRowSIMD(SB)"
+      ]
+    },
+    "calculateIntermediateRolling": {
+      "instructions": 409,
+      "frame_bytes": 608,
+      "vector_stack_accesses": [],
+      "non_panic_non_morestack_calls": []
+    },
+    "calculateIntermediateSIMD": {
+      "instructions": 85,
+      "frame_bytes": 176,
+      "vector_stack_accesses": [],
+      "non_panic_non_morestack_calls": [
+        "selfguided_rolling_gosimd_arm64.go:21\t0x1001b4e64\t\t94000023\t\tCALL github.com/thesyncim/goav1/internal/av1/restoration.calculateIntermediateRollingSIMD(SB)",
+        "selfguided_rolling_gosimd_arm64.go:24\t0x1001b4e88\t\t97fff486\t\tCALL github.com/thesyncim/goav1/internal/av1/restoration.calculateIntermediateFull(SB)"
+      ]
+    },
+    "calculateIntermediateRollingSIMD": {
+      "instructions": 576,
+      "frame_bytes": 608,
+      "vector_stack_accesses": [],
+      "non_panic_non_morestack_calls": []
+    },
+    "driver_body_proof": {
+      "AMD64_all_three_bodies_identical": true,
+      "ARM64_both_bodies_identical_except_producer_target": true
+    },
+    "SIMD_loop": {
+      "per_vector_bounds_branches": 0,
+      "hot_helper_calls": 0,
+      "vector_spills": 0,
+      "lookup_scalar_loads": 4,
+      "vector_loads_radius1": 6,
+      "vector_loads_radius2": 10,
+      "vector_stores": 2,
+      "in_loop_shift_broadcasts": 0,
+      "general_register_argument_reloads_per_vector": 3,
+      "note": "Three GPR argument reloads remain; no assumption that instruction counts alone predict whole-clip speed."
+    }
+  },
+  "raw_artifacts_local": "/private/tmp/decoder-sgr-coeff-simd-20261018",
+  "historical_native_gap": {
+    "decode_go_over_dav1d": 2.6525466686,
+    "encode_go_over_svt": 2.8594374708,
+    "predates_recent_wins": true,
+    "not_recomputed_by_this_screen": true
+  },
+  "quality": "Independent libaom decoded golden hashes exact; no encoder change; scalar coefficient oracle unchanged.",
+  "astra_independent_review": {
+    "raw_rows_checked": 18,
+    "golden_checks": 36,
+    "all_zero_allocations": true,
+    "B_per_op_values": [
+      0,
+      4
+    ],
+    "source_binary_script_evidence_identities_match": true,
+    "accepted_by_original_gate": true,
+    "summary": {
+      "sgr_highbd": {
+        "saving_percent": 9.1198591660116,
+        "wins": 3,
+        "pair_savings_percent": [
+          13.012189546064523,
+          7.945125537821474,
+          6.26499981443529
+        ]
+      },
+      "postfiltered": {
+        "saving_percent": 0.10181233297779091,
+        "wins": 1,
+        "pair_savings_percent": [
+          -1.6671636847033433,
+          -0.9674944926385098,
+          2.879582404332892
+        ]
+      },
+      "ordinary_inter": {
+        "saving_percent": 1.561012801310957,
+        "wins": 3,
+        "pair_savings_percent": [
+          1.663890135788848,
+          1.8712821954069647,
+          1.146451791508163
+        ]
+      }
+    },
+    "ordinary_control_zero_hits_no_causal_claim": true,
+    "source_review": "No blocking overflow, bounds, alias ownership, fallback or build-tag issue found. Existing scalar route remains independent; no new AMD64 function body/call change. Native validation is Go1.27.0 darwin/arm64; other compiler/target performance remains unmeasured.",
+    "rows": [
+      {
+        "case": "sgr_highbd",
+        "pair": 1,
+        "version": "baseline",
+        "ns_per_op": 12311287.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 200,
+        "frames": 8.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "6206f4aeb0860a7d47effac74427c539ff11b9622b03ed3a5699af44aeb601e4"
+      },
+      {
+        "case": "sgr_highbd",
+        "pair": 1,
+        "version": "candidate",
+        "ns_per_op": 10709319.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 200,
+        "frames": 8.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "7a0d04ae04dcf5b9e8be35aba66ee0e3f7d4ab9f083d8e1f0c9ffd9e2d31decd"
+      },
+      {
+        "case": "sgr_highbd",
+        "pair": 2,
+        "version": "baseline",
+        "ns_per_op": 11666046.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 200,
+        "frames": 8.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "252e0faa1890b2e9c6d06b69ca5babf2ef2bc567a6dfd3ae0a6d1999512a5d9c"
+      },
+      {
+        "case": "sgr_highbd",
+        "pair": 2,
+        "version": "candidate",
+        "ns_per_op": 10739164.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 200,
+        "frames": 8.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "91c8c20385f4270524c1c2e8ee57b2dc750c200f8bc42c90c1fe4b902ac01c54"
+      },
+      {
+        "case": "sgr_highbd",
+        "pair": 3,
+        "version": "baseline",
+        "ns_per_op": 11640144.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 200,
+        "frames": 8.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "476564af49d5d6092b72d75d248496c021d4719ee819d880f1c1a67b68d7a3ad"
+      },
+      {
+        "case": "sgr_highbd",
+        "pair": 3,
+        "version": "candidate",
+        "ns_per_op": 10910889.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 200,
+        "frames": 8.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "08bdaafbbc9989932892d4fce7f122efc4447446459b20346beee4cb6508f327"
+      },
+      {
+        "case": "postfiltered",
+        "pair": 1,
+        "version": "baseline",
+        "ns_per_op": 5750965.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 200,
+        "frames": 4.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "880f135491eccba4ddd6577923116b973f056727684f905dfc96eb541607cf41"
+      },
+      {
+        "case": "postfiltered",
+        "pair": 1,
+        "version": "candidate",
+        "ns_per_op": 5846843.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 200,
+        "frames": 4.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "cd2923a46e29123ce50913ff608c17da877104dcb62c3c6db190c903acb3f304"
+      },
+      {
+        "case": "postfiltered",
+        "pair": 2,
+        "version": "baseline",
+        "ns_per_op": 5962928.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 200,
+        "frames": 4.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "5b94c76f7da5b367eaa6333ec547ee59caa9fc59deb4721cb7e0d33dd0f915b7"
+      },
+      {
+        "case": "postfiltered",
+        "pair": 2,
+        "version": "candidate",
+        "ns_per_op": 6020619.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 200,
+        "frames": 4.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "1d58b93bd61e6326b67115672fce7022b70c52511f7dd92aac64faa04cd5890d"
+      },
+      {
+        "case": "postfiltered",
+        "pair": 3,
+        "version": "baseline",
+        "ns_per_op": 5852168.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 200,
+        "frames": 4.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "3ec4c82dd1934d4cbb49ebdb8c3fa6a8a4df34ba390b00707635d5ec94b73b4d"
+      },
+      {
+        "case": "postfiltered",
+        "pair": 3,
+        "version": "candidate",
+        "ns_per_op": 5683650.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 200,
+        "frames": 4.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "95600c7a7b5b5c6609b0855ae27c6da174ef390386d895118fda9320ef9a6f5c"
+      },
+      {
+        "case": "ordinary_inter",
+        "pair": 1,
+        "version": "baseline",
+        "ns_per_op": 157316817.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 10,
+        "frames": 48.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "25cc885a8eb5e8745233d907668ca8604955b6dc91413dd9b495d8019ae29530"
+      },
+      {
+        "case": "ordinary_inter",
+        "pair": 1,
+        "version": "candidate",
+        "ns_per_op": 154699238.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 10,
+        "frames": 48.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "7d12d1d2fc33a18bd0b0999357ce5c9bae3d1245abbfe362094870f1a36128c3"
+      },
+      {
+        "case": "ordinary_inter",
+        "pair": 2,
+        "version": "baseline",
+        "ns_per_op": 159064304.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 10,
+        "frames": 48.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "c89353f6f56da537a6fbb552906356da98013f8d96ddd2d5b8eb6b5b88d93203"
+      },
+      {
+        "case": "ordinary_inter",
+        "pair": 2,
+        "version": "candidate",
+        "ns_per_op": 156087762.0,
+        "B_per_op": 4,
+        "allocs_per_op": 0,
+        "iterations": 10,
+        "frames": 48.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "ebe4e92366f58d25330d350481a685a1b20e1840d32d96eaa0ef234049524b40"
+      },
+      {
+        "case": "ordinary_inter",
+        "pair": 3,
+        "version": "baseline",
+        "ns_per_op": 155928929.0,
+        "B_per_op": 4,
+        "allocs_per_op": 0,
+        "iterations": 10,
+        "frames": 48.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "4d4ea654d5068ce049627c802abe66a888fdb8bd6ae98b7d3e4eebfa18b85b00"
+      },
+      {
+        "case": "ordinary_inter",
+        "pair": 3,
+        "version": "candidate",
+        "ns_per_op": 154141279.0,
+        "B_per_op": 0,
+        "allocs_per_op": 0,
+        "iterations": 10,
+        "frames": 48.0,
+        "golden_passes": [
+          "profile1-444-8bit-cdef-restoration-160x128.ivf",
+          "profile2-422-12bit-inter-cdef-restoration-160x128.ivf"
+        ],
+        "raw_sha256": "a92562d340141489ebd280aed9ebe85578269bf5b94fdfd6f564175396da5066"
+      }
+    ]
+  }
+}
