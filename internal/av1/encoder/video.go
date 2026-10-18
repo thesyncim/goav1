@@ -1088,6 +1088,13 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 // per-coder scratch exists before the first real frame: steady-state encoding
 // allocates nothing and the first frame pays no initialization latency.
 func (e *VideoEncoder) Prewarm() error {
+	// A fresh single-layer encoder has no learned controller/stream state to
+	// preserve. The keyframe below already allocates the golden snapshot;
+	// refreshing it later only copies into that same storage. Temporal-layer
+	// and reused encoders keep the legacy walk because their retained rate
+	// controller and motion history can depend on the number of warmup frames.
+	freshSingleLayer := !e.haveKey && e.frameIndex == 0 && e.avgFrameLowMotion == 0 &&
+		e.temporalLayers <= 1 && !e.decisionStatsEnabled
 	color := e.parserColorConfig()
 	cw := chromaWidthForColor(e.width, color)
 	ch := chromaHeightForColor(e.height, color)
@@ -1120,6 +1127,11 @@ func (e *VideoEncoder) Prewarm() error {
 	}
 	if e.goldenEvery > 0 && frames < e.goldenEvery+1 {
 		frames = e.goldenEvery + 1
+	}
+	if freshSingleLayer && frames > 3 {
+		// Two P frames visit both reconstruction buffers. Keep the legacy
+		// parity so the returned encoder retains the same buffer ownership.
+		frames = 2 + frames&1
 	}
 	for i := 0; i < frames; i++ {
 		if _, _, err := e.Encode(src, false); err != nil {
