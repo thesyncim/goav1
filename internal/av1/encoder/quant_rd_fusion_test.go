@@ -54,7 +54,7 @@ func TestPrepareInterTXBQuantRDOriginalState(t *testing.T) {
 	rng := rand.New(rand.NewSource(8145))
 	for _, n := range []int{8, 16, 32} {
 		for trial := 0; trial < 40; trial++ {
-			q := []quantize.Quantizer{{4, 4}, {120, 140}, {1828, 4}, {4, 1828}, {147, 148}, {148, 147}, {65536, 65536}}[trial%7]
+			q := []quantize.Quantizer{{DC: 4, AC: 4}, {DC: 120, AC: 140}, {DC: 1828, AC: 4}, {DC: 4, AC: 1828}, {DC: 147, AC: 148}, {DC: 148, AC: 147}, {DC: 65536, AC: 65536}}[trial%7]
 			got, want := &lossyEncodeState{}, &lossyEncodeState{}
 			for i := range got.resScratch {
 				got.resScratch[i] = int16(i*101 - 32768)
