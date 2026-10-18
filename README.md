@@ -14,8 +14,8 @@ encoder quality, and throughput coverage continue to expand.
 Requires the official Go distribution, version 1.27.0 or newer; no Go patch
 release is pinned. The native arm64 SIMD paths use the experimental
 `GOEXPERIMENT=simd` setting. Build with `GOEXPERIMENT=simd go build ./...` to
-enable them. Without it, normal Go fallbacks and retained assembly paths are
-used.
+enable them. Without it, normal Go fallbacks are used. Codec implementations,
+including SIMD paths, are written in Go without handwritten assembly.
 See [SIMD validation and measurements](SIMD_PORT.md) for the selected paths.
 
 ~~~sh
