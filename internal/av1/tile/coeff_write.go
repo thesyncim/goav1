@@ -343,9 +343,9 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 	c := eob - 1
 	p := &scanHot[c]
 	level := int(absLevels[c])
-	w.WriteCDF3(&baseEOBCDFs[int(p.lowerEOBCtx)], minInt(level, 3)-1)
+	w.WriteCDF3(&baseEOBCDFs[int(p.LowerEOBCtx)], minInt(level, 3)-1)
 	if level > NumBaseLevels {
-		brCDF := &brCDFs[int(p.brEOBCtx)]
+		brCDF := &brCDFs[int(p.BREOBCtx)]
 		baseRange := level - 1 - NumBaseLevels
 		for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
 			k := minInt(baseRange-idx, BRCDFSize-1)
@@ -358,10 +358,10 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 	for c = eob - 2; c > 0; c-- {
 		p := &scanHot[c]
 		level := int(absLevels[c])
-		pad := p.padded
+		pad := p.Padded
 		mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 			clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-		ctx := minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+		ctx := minInt((mag+1)>>1, 4) + int(p.Lower2DOffset)
 		if level == 0 {
 			w.WriteCDF4Zero(&baseCDFs[ctx])
 		} else {
@@ -371,7 +371,7 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 			mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 				minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 				minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
-			brCtx := minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+			brCtx := minInt((mag+1)>>1, 6) + int(p.BR2DOffset)
 			brCDF := &brCDFs[brCtx]
 			baseRange := level - 1 - NumBaseLevels
 			for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
@@ -392,7 +392,7 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 			w.WriteCDF4(&baseCDFs[0], minInt(level, 3))
 		}
 		if level > NumBaseLevels {
-			pad := p.padded
+			pad := p.Padded
 			mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 			brCtx := minInt((mag+1)>>1, 6)
 			brCDF := &brCDFs[brCtx]
@@ -410,7 +410,7 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 	for nz := prep.NonZeroBits; nz != 0; nz &= nz - 1 {
 		c := bits.TrailingZeros64(nz)
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		sign := int((prep.SignBits >> uint(c)) & 1)
 		if pos == 0 {
@@ -477,12 +477,12 @@ func CountCoefficientsTXB8x8UV2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16
 	maxScanLine := 0
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		cv := coeff64[pos]
 		if cv == 0 {
 			continue
 		}
-		levels[p.padded] = coeffAbsClamp127(cv)
+		levels[p.Padded] = coeffAbsClamp127(cv)
 		if pos > maxScanLine {
 			maxScanLine = pos
 		}
@@ -503,18 +503,18 @@ func CountCoefficientsTXB8x8UV2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16
 	brCDFs := &cdfs.CoeffBR[txBR][CoeffPlaneUV]
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if c == eob-1 {
-			ctx := int(p.lowerEOBCtx)
+			ctx := int(p.LowerEOBCtx)
 			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				ctx = minInt((mag+1)>>1, 4) + int(p.Lower2DOffset)
 			}
 			if level == 0 {
 				w.WriteCDF4Zero(&baseCDFs[ctx])
@@ -525,15 +525,15 @@ func CountCoefficientsTXB8x8UV2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16
 		if level > NumBaseLevels {
 			brCtx := 0
 			if c == eob-1 {
-				brCtx = int(p.brEOBCtx)
+				brCtx = int(p.BREOBCtx)
 			} else if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
-				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+				brCtx = minInt((mag+1)>>1, 6) + int(p.BR2DOffset)
 			} else {
-				pad := p.padded
+				pad := p.Padded
 				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 				brCtx = minInt((mag+1)>>1, 6)
 			}
@@ -552,7 +552,7 @@ func CountCoefficientsTXB8x8UV2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16
 	for nz := nonZeroBits; nz != 0; nz &= nz - 1 {
 		c := bits.TrailingZeros64(nz)
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		sign := int((signBits >> uint(c)) & 1)
 		if pos == 0 {
@@ -626,12 +626,12 @@ func prepTXB16x16Y2DTrusted(coeff256 *[256]int16, levels *[400]uint8, absLevels 
 	scanHot := &coeffScanHot16x16Y2D
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		cv := coeff256[pos]
 		if cv == 0 {
 			continue
 		}
-		levels[p.padded] = coeffAbsClamp127(cv)
+		levels[p.Padded] = coeffAbsClamp127(cv)
 		if pos > int(prep.maxScanLine) {
 			prep.maxScanLine = uint16(pos)
 		}
@@ -654,7 +654,7 @@ func prepTXB16x16Y2DTrustedSummary(coeff256 *[256]int16, absLevels *[256]uint16,
 	culLevel := 0
 	scanHot := &coeffScanHot16x16Y2D
 	for c := range eob {
-		pos := int(scanHot[c].pos)
+		pos := int(scanHot[c].Pos)
 		cv := coeff256[pos]
 		level := absInt(int(cv))
 		absLevels[c] = uint16(level)
@@ -735,9 +735,9 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 	c := eob - 1
 	p := &scanHot[c]
 	level := int(absLevels[c])
-	w.WriteCDF3(&baseEOBCDFs[int(p.lowerEOBCtx)], minInt(level, 3)-1)
+	w.WriteCDF3(&baseEOBCDFs[int(p.LowerEOBCtx)], minInt(level, 3)-1)
 	if level > NumBaseLevels {
-		brCDF := &brCDFs[int(p.brEOBCtx)]
+		brCDF := &brCDFs[int(p.BREOBCtx)]
 		baseRange := level - 1 - NumBaseLevels
 		for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
 			k := minInt(baseRange-idx, BRCDFSize-1)
@@ -750,12 +750,12 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 	for c = eob - 2; c > 0; c-- {
 		p := &scanHot[c]
 		level := int(absLevels[c])
-		pad := p.padded
-		ctx := int(lowerContexts[p.pos])
+		pad := p.Padded
+		ctx := int(lowerContexts[p.Pos])
 		if !lowerContextMap {
 			mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 				clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-			ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+			ctx = minInt((mag+1)>>1, 4) + int(p.Lower2DOffset)
 		}
 		if level == 0 {
 			w.WriteCDF4Zero(&baseCDFs[ctx])
@@ -766,7 +766,7 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 			mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 				minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 				minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
-			brCtx := minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+			brCtx := minInt((mag+1)>>1, 6) + int(p.BR2DOffset)
 			brCDF := &brCDFs[brCtx]
 			baseRange := level - 1 - NumBaseLevels
 			for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
@@ -787,7 +787,7 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 			w.WriteCDF4(&baseCDFs[0], minInt(level, 3))
 		}
 		if level > NumBaseLevels {
-			pad := p.padded
+			pad := p.Padded
 			mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 			brCtx := minInt((mag+1)>>1, 6)
 			brCDF := &brCDFs[brCtx]
@@ -806,7 +806,7 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 		for nz := bits64; nz != 0; nz &= nz - 1 {
 			c := word*64 + bits.TrailingZeros64(nz)
 			p := &scanHot[c]
-			pos := int(p.pos)
+			pos := int(p.Pos)
 			level := int(absLevels[c])
 			sign := int((prep.signBits[word] >> uint(c&63)) & 1)
 			if pos == 0 {
@@ -875,12 +875,12 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 	maxScanLine := 0
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		cv := coeff256[pos]
 		if cv == 0 {
 			continue
 		}
-		levels[p.padded] = coeffAbsClamp127(cv)
+		levels[p.Padded] = coeffAbsClamp127(cv)
 		if pos > maxScanLine {
 			maxScanLine = pos
 		}
@@ -905,20 +905,20 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 	brCDFs := &cdfs.CoeffBR[txBR][CoeffPlaneUV]
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if c == eob-1 {
-			ctx := int(p.lowerEOBCtx)
+			ctx := int(p.LowerEOBCtx)
 			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
 				ctx = int(lowerContexts[pos])
 				if !lowerContextMap {
-					pad := p.padded
+					pad := p.Padded
 					mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 						clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+					ctx = minInt((mag+1)>>1, 4) + int(p.Lower2DOffset)
 				}
 			}
 			if level == 0 {
@@ -930,15 +930,15 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 		if level > NumBaseLevels {
 			brCtx := 0
 			if c == eob-1 {
-				brCtx = int(p.brEOBCtx)
+				brCtx = int(p.BREOBCtx)
 			} else if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
-				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+				brCtx = minInt((mag+1)>>1, 6) + int(p.BR2DOffset)
 			} else {
-				pad := p.padded
+				pad := p.Padded
 				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 				brCtx = minInt((mag+1)>>1, 6)
 			}
@@ -958,7 +958,7 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 		for nz := bits64; nz != 0; nz &= nz - 1 {
 			c := word*64 + bits.TrailingZeros64(nz)
 			p := &scanHot[c]
-			pos := int(p.pos)
+			pos := int(p.Pos)
 			level := int(absLevels[c])
 			sign := int((signBits[word] >> uint(c&63)) & 1)
 			if pos == 0 {
@@ -1051,12 +1051,12 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 	var nonZeroBits [4]uint64
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		cv := coeff256[pos]
 		if cv == 0 {
 			continue
 		}
-		levels[p.padded] = coeffAbsClamp127(cv)
+		levels[p.Padded] = coeffAbsClamp127(cv)
 		if pos > maxScanLine {
 			maxScanLine = pos
 		}
@@ -1076,20 +1076,20 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 	brCDFs := &cdfs.CoeffBR[txBR][plane]
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if c == eob-1 {
-			ctx := int(p.lowerEOBCtx)
+			ctx := int(p.LowerEOBCtx)
 			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
 				ctx = int(lowerContexts[pos])
 				if !lowerContextMap {
-					pad := p.padded
+					pad := p.Padded
 					mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 						clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+					ctx = minInt((mag+1)>>1, 4) + int(p.Lower2DOffset)
 				}
 			}
 			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
@@ -1097,15 +1097,15 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 		if level > NumBaseLevels {
 			brCtx := 0
 			if c == eob-1 {
-				brCtx = int(p.brEOBCtx)
+				brCtx = int(p.BREOBCtx)
 			} else if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
-				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+				brCtx = minInt((mag+1)>>1, 6) + int(p.BR2DOffset)
 			} else {
-				pad := p.padded
+				pad := p.Padded
 				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 				brCtx = minInt((mag+1)>>1, 6)
 			}
@@ -1125,7 +1125,7 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 		for nz := bits64; nz != 0; nz &= nz - 1 {
 			c := word*64 + bits.TrailingZeros64(nz)
 			p := &scanHot[c]
-			pos := int(p.pos)
+			pos := int(p.Pos)
 			level := int(absLevels[c])
 			cv := coeff256[pos]
 			sign := int(uint16(cv) >> 15)
@@ -1238,12 +1238,12 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 	maxScanLine := 0
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		cv := coeff1024[pos]
 		if cv == 0 {
 			continue
 		}
-		levels[p.padded] = coeffAbsClamp127(cv)
+		levels[p.Padded] = coeffAbsClamp127(cv)
 		if pos > maxScanLine {
 			maxScanLine = pos
 		}
@@ -1262,20 +1262,20 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 	brCDFs := &cdfs.CoeffBR[txBR][plane]
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
-		pos := int(p.pos)
-		level := minInt(int(levels[p.padded]), MaxBaseBRRange)
+		pos := int(p.Pos)
+		level := minInt(int(levels[p.Padded]), MaxBaseBRRange)
 		if c == eob-1 {
-			ctx := int(p.lowerEOBCtx)
+			ctx := int(p.LowerEOBCtx)
 			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
 				ctx = int(lowerContexts[pos])
 				if !lowerContextMap {
-					pad := p.padded
+					pad := p.Padded
 					mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 						clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-					ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+					ctx = minInt((mag+1)>>1, 4) + int(p.Lower2DOffset)
 				}
 			}
 			if level == 0 {
@@ -1287,15 +1287,15 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 		if level > NumBaseLevels {
 			brCtx := 0
 			if c == eob-1 {
-				brCtx = int(p.brEOBCtx)
+				brCtx = int(p.BREOBCtx)
 			} else if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
-				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+				brCtx = minInt((mag+1)>>1, 6) + int(p.BR2DOffset)
 			} else {
-				pad := p.padded
+				pad := p.Padded
 				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 				brCtx = minInt((mag+1)>>1, 6)
 			}
@@ -1315,7 +1315,7 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 		for nz := bits64; nz != 0; nz &= nz - 1 {
 			c := word*64 + bits.TrailingZeros64(nz)
 			p := &scanHot[c]
-			pos := int(p.pos)
+			pos := int(p.Pos)
 			cv := coeff1024[pos]
 			sign := int(uint16(cv) >> 15)
 			if pos == 0 {
@@ -1323,7 +1323,7 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 			} else {
 				w.WriteBit(sign)
 			}
-			if levels[p.padded] >= MaxBaseBRRange {
+			if levels[p.Padded] >= MaxBaseBRRange {
 				level := absInt(int(cv))
 				writeGolombCounter(&w, level-MaxBaseBRRange)
 			}
@@ -1423,12 +1423,12 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 	var nonZeroBits [16]uint64
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		cv := coeff1024[pos]
 		if cv == 0 {
 			continue
 		}
-		levels[p.padded] = coeffAbsClamp127(cv)
+		levels[p.Padded] = coeffAbsClamp127(cv)
 		if pos > maxScanLine {
 			maxScanLine = pos
 		}
@@ -1448,10 +1448,10 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 
 	c := eob - 1
 	p := &scanHot[c]
-	level := minInt(int(levels[p.padded]), MaxBaseBRRange)
-	w.WriteCDF3(&baseEOBCDFs[int(p.lowerEOBCtx)], minInt(level, 3)-1)
+	level := minInt(int(levels[p.Padded]), MaxBaseBRRange)
+	w.WriteCDF3(&baseEOBCDFs[int(p.LowerEOBCtx)], minInt(level, 3)-1)
 	if level > NumBaseLevels {
-		brCDF := &brCDFs[int(p.brEOBCtx)]
+		brCDF := &brCDFs[int(p.BREOBCtx)]
 		baseRange := level - 1 - NumBaseLevels
 		for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
 			k := minInt(baseRange-idx, BRCDFSize-1)
@@ -1463,13 +1463,13 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 	}
 	for c = eob - 2; c > 0; c-- {
 		p := &scanHot[c]
-		level := minInt(int(levels[p.padded]), MaxBaseBRRange)
-		pad := p.padded
-		ctx := int(lowerContexts[p.pos])
+		level := minInt(int(levels[p.Padded]), MaxBaseBRRange)
+		pad := p.Padded
+		ctx := int(lowerContexts[p.Pos])
 		if !lowerContextMap {
 			mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 				clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-			ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+			ctx = minInt((mag+1)>>1, 4) + int(p.Lower2DOffset)
 		}
 		if level == 0 {
 			w.WriteCDF4Zero(&baseCDFs[ctx])
@@ -1480,7 +1480,7 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 			mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 				minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 				minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
-			brCtx := minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+			brCtx := minInt((mag+1)>>1, 6) + int(p.BR2DOffset)
 			brCDF := &brCDFs[brCtx]
 			baseRange := level - 1 - NumBaseLevels
 			for idx := 0; idx < CoeffBaseRange; idx += BRCDFSize - 1 {
@@ -1494,14 +1494,14 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 	}
 	if eob > 1 {
 		p := &scanHot[0]
-		level := minInt(int(levels[p.padded]), MaxBaseBRRange)
+		level := minInt(int(levels[p.Padded]), MaxBaseBRRange)
 		if level == 0 {
 			w.WriteCDF4Zero(&baseCDFs[0])
 		} else {
 			w.WriteCDF4(&baseCDFs[0], minInt(level, 3))
 		}
 		if level > NumBaseLevels {
-			pad := p.padded
+			pad := p.Padded
 			mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 			brCtx := minInt((mag+1)>>1, 6)
 			brCDF := &brCDFs[brCtx]
@@ -1520,7 +1520,7 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 		for nz := bits64; nz != 0; nz &= nz - 1 {
 			c := word*64 + bits.TrailingZeros64(nz)
 			p := &scanHot[c]
-			pos := int(p.pos)
+			pos := int(p.Pos)
 			cv := coeff1024[pos]
 			sign := int(uint16(cv) >> 15)
 			if pos == 0 {
@@ -1528,9 +1528,9 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 			} else {
 				w.WriteBit(sign)
 			}
-			level := levels[p.padded]
+			level := levels[p.Padded]
 			if clearLevels {
-				levels[p.padded] = 0
+				levels[p.Padded] = 0
 			}
 			if level >= MaxBaseBRRange {
 				level := absInt(int(cv))
@@ -1620,12 +1620,12 @@ func writeCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *Coef
 	maxScanLine := 0
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		cv := coeffs[pos]
 		if cv == 0 {
 			continue
 		}
-		levels[p.padded] = coeffAbsClamp127(cv)
+		levels[p.Padded] = coeffAbsClamp127(cv)
 		if pos > maxScanLine {
 			maxScanLine = pos
 		}
@@ -1645,33 +1645,33 @@ func writeCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *Coef
 	brCDFs := &cdfs.CoeffBR[txBR][CoeffPlaneY]
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if c == eob-1 {
-			ctx := int(p.lowerEOBCtx)
+			ctx := int(p.LowerEOBCtx)
 			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				ctx = minInt((mag+1)>>1, 4) + int(p.Lower2DOffset)
 			}
 			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
 		}
 		if level > NumBaseLevels {
 			brCtx := 0
 			if c == eob-1 {
-				brCtx = int(p.brEOBCtx)
+				brCtx = int(p.BREOBCtx)
 			} else if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
-				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+				brCtx = minInt((mag+1)>>1, 6) + int(p.BR2DOffset)
 			} else {
-				pad := p.padded
+				pad := p.Padded
 				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 				brCtx = minInt((mag+1)>>1, 6)
 			}
@@ -1689,7 +1689,7 @@ func writeCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *Coef
 
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if level == 0 {
 			continue
@@ -1765,12 +1765,12 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 	maxScanLine := 0
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		cv := coeff16[pos]
 		if cv == 0 {
 			continue
 		}
-		levels[p.padded] = coeffAbsClamp127(cv)
+		levels[p.Padded] = coeffAbsClamp127(cv)
 		if pos > maxScanLine {
 			maxScanLine = pos
 		}
@@ -1790,33 +1790,33 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 	brCDFs := &cdfs.CoeffBR[txBR][CoeffPlaneY]
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if c == eob-1 {
-			ctx := int(p.lowerEOBCtx)
+			ctx := int(p.LowerEOBCtx)
 			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				ctx = minInt((mag+1)>>1, 4) + int(p.Lower2DOffset)
 			}
 			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
 		}
 		if level > NumBaseLevels {
 			brCtx := 0
 			if c == eob-1 {
-				brCtx = int(p.brEOBCtx)
+				brCtx = int(p.BREOBCtx)
 			} else if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
-				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+				brCtx = minInt((mag+1)>>1, 6) + int(p.BR2DOffset)
 			} else {
-				pad := p.padded
+				pad := p.Padded
 				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 				brCtx = minInt((mag+1)>>1, 6)
 			}
@@ -1834,7 +1834,7 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if level == 0 {
 			continue
@@ -1907,12 +1907,12 @@ func WriteCoefficientsTXB4x4UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 	maxScanLine := 0
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		cv := coeffs[pos]
 		if cv == 0 {
 			continue
 		}
-		levels[p.padded] = coeffAbsClamp127(cv)
+		levels[p.Padded] = coeffAbsClamp127(cv)
 		if pos > maxScanLine {
 			maxScanLine = pos
 		}
@@ -1932,33 +1932,33 @@ func WriteCoefficientsTXB4x4UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 	brCDFs := &cdfs.CoeffBR[txBR][CoeffPlaneUV]
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if c == eob-1 {
-			ctx := int(p.lowerEOBCtx)
+			ctx := int(p.LowerEOBCtx)
 			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				ctx = minInt((mag+1)>>1, 4) + int(p.Lower2DOffset)
 			}
 			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
 		}
 		if level > NumBaseLevels {
 			brCtx := 0
 			if c == eob-1 {
-				brCtx = int(p.brEOBCtx)
+				brCtx = int(p.BREOBCtx)
 			} else if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
-				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+				brCtx = minInt((mag+1)>>1, 6) + int(p.BR2DOffset)
 			} else {
-				pad := p.padded
+				pad := p.Padded
 				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 				brCtx = minInt((mag+1)>>1, 6)
 			}
@@ -1976,7 +1976,7 @@ func WriteCoefficientsTXB4x4UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if level == 0 {
 			continue
@@ -2053,12 +2053,12 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 	maxScanLine := 0
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		cv := coeff16[pos]
 		if cv == 0 {
 			continue
 		}
-		levels[p.padded] = coeffAbsClamp127(cv)
+		levels[p.Padded] = coeffAbsClamp127(cv)
 		if pos > maxScanLine {
 			maxScanLine = pos
 		}
@@ -2078,33 +2078,33 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 	brCDFs := &cdfs.CoeffBR[txBR][CoeffPlaneUV]
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if c == eob-1 {
-			ctx := int(p.lowerEOBCtx)
+			ctx := int(p.LowerEOBCtx)
 			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				ctx = minInt((mag+1)>>1, 4) + int(p.Lower2DOffset)
 			}
 			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
 		}
 		if level > NumBaseLevels {
 			brCtx := 0
 			if c == eob-1 {
-				brCtx = int(p.brEOBCtx)
+				brCtx = int(p.BREOBCtx)
 			} else if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
-				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+				brCtx = minInt((mag+1)>>1, 6) + int(p.BR2DOffset)
 			} else {
-				pad := p.padded
+				pad := p.Padded
 				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 				brCtx = minInt((mag+1)>>1, 6)
 			}
@@ -2122,7 +2122,7 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if level == 0 {
 			continue
@@ -2209,12 +2209,12 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 	maxScanLine := 0
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		cv := coeff64[pos]
 		if cv == 0 {
 			continue
 		}
-		levels[p.padded] = coeffAbsClamp127(cv)
+		levels[p.Padded] = coeffAbsClamp127(cv)
 		if pos > maxScanLine {
 			maxScanLine = pos
 		}
@@ -2234,33 +2234,33 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 	brCDFs := &cdfs.CoeffBR[txBR][CoeffPlaneY]
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if c == eob-1 {
-			ctx := int(p.lowerEOBCtx)
+			ctx := int(p.LowerEOBCtx)
 			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				ctx = minInt((mag+1)>>1, 4) + int(p.Lower2DOffset)
 			}
 			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
 		}
 		if level > NumBaseLevels {
 			brCtx := 0
 			if c == eob-1 {
-				brCtx = int(p.brEOBCtx)
+				brCtx = int(p.BREOBCtx)
 			} else if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
-				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+				brCtx = minInt((mag+1)>>1, 6) + int(p.BR2DOffset)
 			} else {
-				pad := p.padded
+				pad := p.Padded
 				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 				brCtx = minInt((mag+1)>>1, 6)
 			}
@@ -2278,7 +2278,7 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if level == 0 {
 			continue
@@ -2355,12 +2355,12 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 	maxScanLine := 0
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		cv := coeffs[pos]
 		if cv == 0 {
 			continue
 		}
-		levels[p.padded] = coeffAbsClamp127(cv)
+		levels[p.Padded] = coeffAbsClamp127(cv)
 		if pos > maxScanLine {
 			maxScanLine = pos
 		}
@@ -2380,33 +2380,33 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 	brCDFs := &cdfs.CoeffBR[txBR][CoeffPlaneUV]
 	for c := eob - 1; c >= 0; c-- {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if c == eob-1 {
-			ctx := int(p.lowerEOBCtx)
+			ctx := int(p.LowerEOBCtx)
 			w.WriteCDF3(&baseEOBCDFs[ctx], minInt(level, 3)-1)
 		} else {
 			ctx := 0
 			if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := clipMax3(levels[pad+stride]) + clipMax3(levels[pad+1]) +
 					clipMax3(levels[pad+stride+1]) + clipMax3(levels[pad+(stride<<1)]) + clipMax3(levels[pad+2])
-				ctx = minInt((mag+1)>>1, 4) + int(p.lower2DOffset)
+				ctx = minInt((mag+1)>>1, 4) + int(p.Lower2DOffset)
 			}
 			w.WriteCDF4(&baseCDFs[ctx], minInt(level, 3))
 		}
 		if level > NumBaseLevels {
 			brCtx := 0
 			if c == eob-1 {
-				brCtx = int(p.brEOBCtx)
+				brCtx = int(p.BREOBCtx)
 			} else if pos != 0 {
-				pad := p.padded
+				pad := p.Padded
 				mag := minInt(int(levels[pad+1]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride]), MaxBaseBRRange) +
 					minInt(int(levels[pad+stride+1]), MaxBaseBRRange)
-				brCtx = minInt((mag+1)>>1, 6) + int(p.br2DOffset)
+				brCtx = minInt((mag+1)>>1, 6) + int(p.BR2DOffset)
 			} else {
-				pad := p.padded
+				pad := p.Padded
 				mag := int(levels[pad+1]) + int(levels[pad+stride]) + int(levels[pad+stride+1])
 				brCtx = minInt((mag+1)>>1, 6)
 			}
@@ -2424,7 +2424,7 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 
 	for c := range eob {
 		p := &scanHot[c]
-		pos := int(p.pos)
+		pos := int(p.Pos)
 		level := int(absLevels[c])
 		if level == 0 {
 			continue

@@ -16,16 +16,16 @@ var (
 
 func init() {
 	for c := range coeffScanHot4x4Y2D {
-		coeffIScanP14x4Y2D[coeffScanHot4x4Y2D[c].pos] = int16(c + 1)
+		coeffIScanP14x4Y2D[coeffScanHot4x4Y2D[c].Pos] = int16(c + 1)
 	}
 	for c := range coeffScanHot8x8Y2D {
-		coeffIScanP18x8Y2D[coeffScanHot8x8Y2D[c].pos] = int16(c + 1)
+		coeffIScanP18x8Y2D[coeffScanHot8x8Y2D[c].Pos] = int16(c + 1)
 	}
 	for c := range coeffScanHot16x16Y2D {
-		coeffIScanP116x16Y2D[coeffScanHot16x16Y2D[c].pos] = int16(c + 1)
+		coeffIScanP116x16Y2D[coeffScanHot16x16Y2D[c].Pos] = int16(c + 1)
 	}
 	for c := range coeffScanHot32x32Y2D {
-		coeffIScanP132x32Y2D[coeffScanHot32x32Y2D[c].pos] = int16(c + 1)
+		coeffIScanP132x32Y2D[coeffScanHot32x32Y2D[c].Pos] = int16(c + 1)
 	}
 }
 
@@ -38,7 +38,7 @@ func txbEOB16(coeffs *[16]int16) int {
 		return txbEOBVectorImpl(coeffs[:], coeffIScanP14x4Y2D[:])
 	}
 	for c := 15; c >= 0; c-- {
-		if coeffs[coeffScanHot4x4Y2D[c].pos] != 0 {
+		if coeffs[coeffScanHot4x4Y2D[c].Pos] != 0 {
 			return c + 1
 		}
 	}
@@ -50,7 +50,7 @@ func txbEOB64(coeffs *[64]int16) int {
 		return txbEOBVectorImpl(coeffs[:], coeffIScanP18x8Y2D[:])
 	}
 	for c := 63; c >= 0; c-- {
-		if coeffs[coeffScanHot8x8Y2D[c].pos] != 0 {
+		if coeffs[coeffScanHot8x8Y2D[c].Pos] != 0 {
 			return c + 1
 		}
 	}
@@ -62,7 +62,7 @@ func txbEOB256(coeffs *[256]int16) int {
 		return txbEOBVectorImpl(coeffs[:], coeffIScanP116x16Y2D[:])
 	}
 	for c := 255; c >= 0; c-- {
-		if coeffs[coeffScanHot16x16Y2D[c].pos] != 0 {
+		if coeffs[coeffScanHot16x16Y2D[c].Pos] != 0 {
 			return c + 1
 		}
 	}
@@ -74,7 +74,7 @@ func txbEOB1024(coeffs *[1024]int16) int {
 		return txbEOBVectorImpl(coeffs[:], coeffIScanP132x32Y2D[:])
 	}
 	for c := 1023; c >= 0; c-- {
-		if coeffs[coeffScanHot32x32Y2D[c].pos] != 0 {
+		if coeffs[coeffScanHot32x32Y2D[c].Pos] != 0 {
 			return c + 1
 		}
 	}

@@ -12,7 +12,7 @@ func TestTXBEOBMatchesScan(t *testing.T) {
 	rng := rand.New(rand.NewSource(3))
 	scanEOB := func(coeffs []int16, scan []coeffScanHot) int {
 		for c := len(scan) - 1; c >= 0; c-- {
-			if coeffs[scan[c].pos] != 0 {
+			if coeffs[scan[c].Pos] != 0 {
 				return c + 1
 			}
 		}
