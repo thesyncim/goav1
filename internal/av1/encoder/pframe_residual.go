@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/bits"
 
-	"github.com/thesyncim/goav1/internal/av1/dsp"
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
@@ -4607,9 +4606,8 @@ func (st *lossyEncodeState) reconInterTXBResult(reconPlane, pred []byte, predStr
 		if err := transform.InverseBlockBitDepthRaw(raw, dq[:geo.coeffCount], geo.coeffHeight, geo.size, txType, 8, scanActiveRows(scan, eob, geo.coeffHeight)); err != nil {
 			return err
 		}
-		copyPredToReconBlock(reconPlane, pred, predStride, stride, px, py, w, h)
 		dst := reconPlane[py*stride+px:]
-		dsp.AddRawTransformPlaneBlockTrusted(dst, stride, 1, 0xff, w, h, raw, w)
+		addRawResidualToPredReconBlock(dst, stride, pred, predStride, raw, w, h)
 		return nil
 	}
 
