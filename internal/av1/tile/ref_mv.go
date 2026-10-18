@@ -335,22 +335,17 @@ func (c *BlockModeContext) MarkInterMotion(size BlockSize, x4 int, y4 int, resul
 	if err := validateInterMotion(result); err != nil {
 		return err
 	}
-	if err := c.MarkInter(size, x4, y4, result.References, hasChroma); err != nil {
+	dims, err := c.markInterContext(size, x4, y4, result.References, hasChroma, true)
+	if err != nil {
 		return err
-	}
-	dims, ok := size.Dimensions()
-	if !ok {
-		return ErrInvalidDecodeState
 	}
 	for i := 0; i < int(dims.W4); i++ {
 		c.AboveInterMotion[x4+i] = result
 		c.AboveMotionValid[x4+i] = 1
-		c.AboveBlockSize[x4+i] = size
 	}
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftInterMotion[y4+i] = result
 		c.LeftMotionValid[y4+i] = 1
-		c.LeftBlockSize[y4+i] = size
 	}
 	c.markGridInterMotion(size, x4, y4, result, dims)
 	return nil
