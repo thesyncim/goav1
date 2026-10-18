@@ -24,3 +24,13 @@ func init() {
 func superresPack8(lo, hi archsimd.Int32x4) archsimd.Uint16x8 {
 	return lo.SaturateToInt16Concat(hi).ConvertToUint16()
 }
+
+// superresTapFold sign-extends the low and high four 16-bit lanes of s and c to
+// 32 bits, multiplies them exactly in 32-bit lanes, and adds the two halves
+// lane-wise, leaving four partial sums whose total is the 8-tap sum. Every
+// product fits int32 because samples are at most 4095 and coefficients fit
+// int16. Everything stays at 128-bit width so the kernel needs no AVX2 256-bit
+// or AVX-512 encodings.
+func superresTapFold(s, c archsimd.Int16x8) archsimd.Int32x4 {
+	return s.ExtendLo4ToInt32().Mul(c.ExtendLo4ToInt32()).Add(superresHi4(s).ExtendLo4ToInt32().Mul(superresHi4(c).ExtendLo4ToInt32()))
+}
