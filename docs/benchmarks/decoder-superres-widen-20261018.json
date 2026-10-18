@@ -1,0 +1,1446 @@
+{
+  "hbd": {
+    "plan": {
+      "base": "4e8cbc2ad0894099afb5990fe7a3e34e1782dcbb",
+      "binary_paths": {
+        "B": "/private/tmp/decoder-sgr-work-20261018/candidate-rolling.test",
+        "C": "/private/tmp/decoder-superres-direct-20261018/candidate-hbd.test"
+      },
+      "binary_sha256": {
+        "B": "b140cb9555e6a39fc7b687a8a74bbf9266cc03e153ee3042760ebc9e0133c31b",
+        "C": "d951b0615c045c779f325d9fe68cdfc1bcef5f25bcfb2c205ecb52e73c70dd62"
+      },
+      "sources": {
+        "decode_external.go": "3ca1752da62ad7ccb62572be10166a6f2c3c8c29df11da80cbc168d1f1c0b5e6",
+        "internal/av1/decoder/work.go": "d1930142394a7d2b72c9414d399c3e549f3e61f41fc7635eef207270171e1043",
+        "internal/av1/decoder/postfilter_superres.go": "3af59684fbc1ccdba733c36ee08dae257cb2d1b97c8a56589fd1b6b1e4b5d521",
+        "internal/av1/decoder/postfilter_superres_hbd_le.go": "e3742d63cd8dc45778aaa7f2a7e5bc48e0b956d3fbe718f51654a368b95b0497",
+        "internal/av1/decoder/postfilter_superres_hbd_generic.go": "0b33e90071da83ab92aee1d4781e4196b8ccaae840152700b1da6a800f854adf",
+        "internal/av1/decoder/postfilter_superres_hbd_le_test.go": "ac3ea8ca444fae87567776b5cf42a1796225dfb63c39d55dc9f85245ea164ef1",
+        "bench_test.go": "e5071f64eb1b80e53255a4a31cff2c0216088af365b09501b5a922479326b69b",
+        "decoder_sgr_bench_test.go": "afa8359ee222ff333273b1b1d28e0284c75ecfd4113c75c73936857eac92d9e6"
+      },
+      "plan": [
+        [
+          0,
+          "u8_control",
+          "BC"
+        ],
+        [
+          0,
+          "hbd_inter",
+          "CB"
+        ],
+        [
+          0,
+          "hbd_rest",
+          "BC"
+        ],
+        [
+          1,
+          "hbd_inter",
+          "BC"
+        ],
+        [
+          1,
+          "hbd_rest",
+          "CB"
+        ],
+        [
+          1,
+          "u8_control",
+          "CB"
+        ],
+        [
+          2,
+          "hbd_rest",
+          "BC"
+        ],
+        [
+          2,
+          "u8_control",
+          "CB"
+        ],
+        [
+          2,
+          "hbd_inter",
+          "CB"
+        ]
+      ],
+      "ops": 200,
+      "protocol": "Direct private HBD superres native source/output; original SIMD resampler unchanged.3paired rounds200ops public Reset+decode. Targets10bit superres inter8frames and superres/restoration4frames; U8 superres inter8frame control. Baseline frozen PR17; currentmain onlydocs changed. Allrows retained; >=0.5%pairedGM saving and>=2/3wins in at leastone target, no othercase point regression>1%; no retries/pooling. No new native gap claim."
+    },
+    "summary": {
+      "u8_control": {
+        "paired_gm_saved_pct": -3.407243554007322,
+        "wins": 1,
+        "pairs": [
+          {
+            "round": 0,
+            "B": 3467640.0,
+            "C": 3780005.0,
+            "saved_pct": -9.007999677013757
+          },
+          {
+            "round": 1,
+            "C": 3626907.0,
+            "B": 3638291.0,
+            "saved_pct": 0.31289415827375766
+          },
+          {
+            "round": 2,
+            "C": 3552662.0,
+            "B": 3491390.0,
+            "saved_pct": -1.7549457379439026
+          }
+        ]
+      },
+      "hbd_inter": {
+        "paired_gm_saved_pct": -0.7429226827405655,
+        "wins": 1,
+        "pairs": [
+          {
+            "round": 0,
+            "C": 5407140.0,
+            "B": 5188827.0,
+            "saved_pct": -4.207367098575454
+          },
+          {
+            "round": 1,
+            "B": 5165578.0,
+            "C": 5248852.0,
+            "saved_pct": -1.612094522626517
+          },
+          {
+            "round": 2,
+            "C": 5000614.0,
+            "B": 5178733.0,
+            "saved_pct": 3.4394320000664225
+          }
+        ]
+      },
+      "hbd_rest": {
+        "paired_gm_saved_pct": -0.10433868830408422,
+        "wins": 2,
+        "pairs": [
+          {
+            "round": 0,
+            "B": 4612274.0,
+            "C": 4584461.0,
+            "saved_pct": 0.6030214163338932
+          },
+          {
+            "round": 1,
+            "C": 4738842.0,
+            "B": 4666008.0,
+            "saved_pct": -1.5609488882144973
+          },
+          {
+            "round": 2,
+            "B": 4553374.0,
+            "C": 4524724.0,
+            "saved_pct": 0.6292037508888959
+          }
+        ]
+      },
+      "audit": {
+        "rows": 18,
+        "all_0_allocs": true,
+        "binary_source_unchanged": true
+      }
+    },
+    "rows": [
+      {
+        "round": 0,
+        "case": "u8_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 0.7813091278076172,
+        "log": "00-r0-u8_control-B.log",
+        "sha256": "feda155fa7ec66de8ee8103279b974dd65162f321a56c76ea1021dbeeb798446",
+        "load": [
+          7.2744140625,
+          7.26904296875,
+          7.52734375
+        ],
+        "ops": 200,
+        "ns_op": 3467640.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "u8_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.2557299137115479,
+        "log": "01-r0-u8_control-C.log",
+        "sha256": "2a59b9747a10d8950ecbcabd1b59b268cd4f50aa4c52c4cfb00d393b45803484",
+        "load": [
+          7.2744140625,
+          7.26904296875,
+          7.52734375
+        ],
+        "ops": 200,
+        "ns_op": 3780005.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "hbd_inter",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.144920825958252,
+        "log": "02-r0-hbd_inter-C.log",
+        "sha256": "ff648954188ba10b0942845dc2d073743a3dd4fe0885608b1a166a45251c0213",
+        "load": [
+          7.2744140625,
+          7.26904296875,
+          7.52734375
+        ],
+        "ops": 200,
+        "ns_op": 5407140.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "hbd_inter",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.1464183330535889,
+        "log": "03-r0-hbd_inter-B.log",
+        "sha256": "ea3005d6b1832463e7c70066b6fe394ccc974c73a30c502b7635e55418f4c52d",
+        "load": [
+          7.01171875,
+          7.21435546875,
+          7.50634765625
+        ],
+        "ops": 200,
+        "ns_op": 5188827.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "hbd_rest",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.0408239364624023,
+        "log": "04-r0-hbd_rest-B.log",
+        "sha256": "ff46258da534d0e0da8db67612d7f3885dc991deb460835556e259d5543a0812",
+        "load": [
+          7.01171875,
+          7.21435546875,
+          7.50634765625
+        ],
+        "ops": 200,
+        "ns_op": 4612274.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "hbd_rest",
+        "role": "C",
+        "exit": 0,
+        "seconds": 0.9926540851593018,
+        "log": "05-r0-hbd_rest-C.log",
+        "sha256": "75399bef3d05a9690d3c498322580dff9db452765348982a33c10924ccd5db89",
+        "load": [
+          7.01171875,
+          7.21435546875,
+          7.50634765625
+        ],
+        "ops": 200,
+        "ns_op": 4584461.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "hbd_inter",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.100823163986206,
+        "log": "06-r1-hbd_inter-B.log",
+        "sha256": "9c4f5cbd96e60494bf17af57e5334bfde7aa42342e9d7a8448a062774e781268",
+        "load": [
+          7.01171875,
+          7.21435546875,
+          7.50634765625
+        ],
+        "ops": 200,
+        "ns_op": 5165578.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "hbd_inter",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.1411747932434082,
+        "log": "07-r1-hbd_inter-C.log",
+        "sha256": "3e7e5a722e48a523101564377fcf48de90fcac6999e8cf123d6b7c787c5a6c78",
+        "load": [
+          7.01171875,
+          7.21435546875,
+          7.50634765625
+        ],
+        "ops": 200,
+        "ns_op": 5248852.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "hbd_rest",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.0445168018341064,
+        "log": "08-r1-hbd_rest-C.log",
+        "sha256": "b0706bd50f121e9bd19f94b286f87e49aaad64bb6742173ddf820d2161d9d92e",
+        "load": [
+          7.1708984375,
+          7.24365234375,
+          7.5146484375
+        ],
+        "ops": 200,
+        "ns_op": 4738842.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "hbd_rest",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.0475609302520752,
+        "log": "09-r1-hbd_rest-B.log",
+        "sha256": "db071b287f36665e8cf9ed224ecf884229828ecb390af847bfafc3b39fa057cb",
+        "load": [
+          7.1708984375,
+          7.24365234375,
+          7.5146484375
+        ],
+        "ops": 200,
+        "ns_op": 4666008.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "u8_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 0.8343799114227295,
+        "log": "10-r1-u8_control-C.log",
+        "sha256": "84e3acd6b1abde64991f7f064bf670fb6b800bd0d69fabebff8fc2e633c1ab1f",
+        "load": [
+          7.1708984375,
+          7.24365234375,
+          7.5146484375
+        ],
+        "ops": 200,
+        "ns_op": 3626907.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "u8_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 0.8383932113647461,
+        "log": "11-r1-u8_control-B.log",
+        "sha256": "e647749c6d45441cecf26f656f4ff3e148f356fb321450d5921529975b3f244a",
+        "load": [
+          7.1708984375,
+          7.24365234375,
+          7.5146484375
+        ],
+        "ops": 200,
+        "ns_op": 3638291.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "hbd_rest",
+        "role": "B",
+        "exit": 0,
+        "seconds": 0.9936850070953369,
+        "log": "12-r2-hbd_rest-B.log",
+        "sha256": "1e8a90bfd73df9f71c7a65167bf9f80f8978d121fe199836e0e01afb55e8e89f",
+        "load": [
+          7.1708984375,
+          7.24365234375,
+          7.5146484375
+        ],
+        "ops": 200,
+        "ns_op": 4553374.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "hbd_rest",
+        "role": "C",
+        "exit": 0,
+        "seconds": 0.977139949798584,
+        "log": "13-r2-hbd_rest-C.log",
+        "sha256": "335e5f6fe8bb23187f7da44ce13193cbe3ea738788b7d45638d2dbfa7395780d",
+        "load": [
+          6.99658203125,
+          7.2060546875,
+          7.49951171875
+        ],
+        "ops": 200,
+        "ns_op": 4524724.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "u8_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 0.823601245880127,
+        "log": "14-r2-u8_control-C.log",
+        "sha256": "d1128bae4011507d7d2103a88535057ff11a4228f4e582c30944864c23c00c02",
+        "load": [
+          6.99658203125,
+          7.2060546875,
+          7.49951171875
+        ],
+        "ops": 200,
+        "ns_op": 3552662.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "u8_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 0.7746548652648926,
+        "log": "15-r2-u8_control-B.log",
+        "sha256": "02997e29e839e204c4d221dd74dde440a414ab7f128fb07a5f09721d46e1a7f9",
+        "load": [
+          6.99658203125,
+          7.2060546875,
+          7.49951171875
+        ],
+        "ops": 200,
+        "ns_op": 3491390.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "hbd_inter",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.1018881797790527,
+        "log": "16-r2-hbd_inter-C.log",
+        "sha256": "1b0c6fd46c1f28c9cf3b0d0f0ebee82429891d1b803078d0c0b2d194170a3405",
+        "load": [
+          6.99658203125,
+          7.2060546875,
+          7.49951171875
+        ],
+        "ops": 200,
+        "ns_op": 5000614.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "hbd_inter",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.106173038482666,
+        "log": "17-r2-hbd_inter-B.log",
+        "sha256": "ac30c6272c032e956fafaaf16dbf6fff8954184e019ea150837687dea52f8c5f",
+        "load": [
+          6.99658203125,
+          7.2060546875,
+          7.49951171875
+        ],
+        "ops": 200,
+        "ns_op": 5178733.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      }
+    ]
+  },
+  "u8": {
+    "plan": {
+      "base": "4e8cbc2ad0894099afb5990fe7a3e34e1782dcbb",
+      "binary_paths": {
+        "B": "/private/tmp/decoder-sgr-work-20261018/candidate-rolling.test",
+        "C": "/private/tmp/decoder-superres-direct-20261018/candidate-u8.test"
+      },
+      "binary_sha256": {
+        "B": "b140cb9555e6a39fc7b687a8a74bbf9266cc03e153ee3042760ebc9e0133c31b",
+        "C": "248d217738b121b9facaa7a19bc470cde40fb8ef3bbb1b3412a193354fd0c216"
+      },
+      "sources": {
+        "decode_external.go": "3ca1752da62ad7ccb62572be10166a6f2c3c8c29df11da80cbc168d1f1c0b5e6",
+        "internal/av1/decoder/work.go": "d1930142394a7d2b72c9414d399c3e549f3e61f41fc7635eef207270171e1043",
+        "internal/av1/decoder/postfilter_superres.go": "67341f1914dcbc5ceb8b0c4bb06a82eb4c8ff77702fe10c69e8f3a9fc1beb2a4",
+        "internal/av1/decoder/postfilter_superres_u8_test.go": "589c854eb18b4d5a0f7fe66469f07251ca4c93200ca07ed64957a59786666f98",
+        "internal/av1/superres/superres_u8.go": "460f196b1c81968f0a530cedea170c8189838cd5d85b3977100f1e2c249dbb03",
+        "internal/av1/superres/superres_u8_test.go": "bf22433717e72eea659bc0e91527fc96f3b44dd1e26b9e71fb5fe14401d832b4",
+        "internal/av1/superres/upscale_u8_gosimd.go": "789d4484b25821087541f0d192a8a841cced7b3dbf17cb98dff2ac41c3c6783d",
+        "internal/av1/superres/upscale_gosimd.go": "875e8d029272f538184e5e48daef0ee7a42f2abf1b26c0c6fa72afb76917522c",
+        "internal/av1/superres/upscale_gosimd_arm64.go": "ea0616e45c941551fa9d997640960249c292150b07da13d936542e6d27b2633d",
+        "internal/av1/superres/upscale_gosimd_amd64.go": "01747efd8835f4c95199abd2ed110e11bebcabe15fba9a9756c82303fb2ba9f3",
+        "bench_test.go": "e5071f64eb1b80e53255a4a31cff2c0216088af365b09501b5a922479326b69b",
+        "decoder_sgr_bench_test.go": "afa8359ee222ff333273b1b1d28e0284c75ecfd4113c75c73936857eac92d9e6"
+      },
+      "plan": [
+        [
+          0,
+          "u8_superres",
+          "BC"
+        ],
+        [
+          0,
+          "hbd_inter",
+          "CB"
+        ],
+        [
+          0,
+          "no_superres_control",
+          "BC"
+        ],
+        [
+          1,
+          "hbd_inter",
+          "BC"
+        ],
+        [
+          1,
+          "no_superres_control",
+          "CB"
+        ],
+        [
+          1,
+          "u8_superres",
+          "CB"
+        ],
+        [
+          2,
+          "no_superres_control",
+          "BC"
+        ],
+        [
+          2,
+          "u8_superres",
+          "CB"
+        ],
+        [
+          2,
+          "hbd_inter",
+          "CB"
+        ]
+      ],
+      "ops": 200,
+      "protocol": "Private direct byte superres plus exact arm64 widening-product fold shared with original HBD staged path.3paired rounds200ops public Reset+decode. Affected8bit and10bit superres inter8frames; no-superres8bit postfilter4frames control. Direct HBD staging-removal variant remains separately unmerged. Baseline frozen PR17; currentmain onlydocs changed. Allrows retained; >=0.5%pairedGM saving and>=2/3wins in at leastone target, no othercase point regression>1%; no retries/pooling. No new native gap claim."
+    },
+    "summary": {
+      "u8_superres": {
+        "paired_gm_saved_pct": 0.06645120131204552,
+        "wins": 2,
+        "pairs": [
+          {
+            "round": 0,
+            "B": 3546620.0,
+            "C": 3624068.0,
+            "saved_pct": -2.183712943591365
+          },
+          {
+            "round": 1,
+            "C": 3658940.0,
+            "B": 3725385.0,
+            "saved_pct": 1.7835740467092687
+          },
+          {
+            "round": 2,
+            "C": 3673887.0,
+            "B": 3694517.0,
+            "saved_pct": 0.5583950486626521
+          }
+        ]
+      },
+      "hbd_inter": {
+        "paired_gm_saved_pct": 11.824988524819535,
+        "wins": 3,
+        "pairs": [
+          {
+            "round": 0,
+            "C": 5036694.0,
+            "B": 5115085.0,
+            "saved_pct": 1.5325454024713192
+          },
+          {
+            "round": 1,
+            "B": 7662950.0,
+            "C": 5433830.0,
+            "saved_pct": 29.089580383533754
+          },
+          {
+            "round": 2,
+            "C": 5195089.0,
+            "B": 5291261.0,
+            "saved_pct": 1.8175629589997522
+          }
+        ]
+      },
+      "no_superres_control": {
+        "paired_gm_saved_pct": -3.4526266698608366,
+        "wins": 0,
+        "pairs": [
+          {
+            "round": 0,
+            "B": 5884004.0,
+            "C": 6049185.0,
+            "saved_pct": -2.807289050109407
+          },
+          {
+            "round": 1,
+            "C": 6553762.0,
+            "B": 6151176.0,
+            "saved_pct": -6.544862315758815
+          },
+          {
+            "round": 2,
+            "B": 6199627.0,
+            "C": 6266625.0,
+            "saved_pct": -1.0806779182037873
+          }
+        ]
+      },
+      "audit": {
+        "rows": 18,
+        "all_0_allocs": true,
+        "binary_source_unchanged": true
+      }
+    },
+    "rows": [
+      {
+        "round": 0,
+        "case": "u8_superres",
+        "role": "B",
+        "exit": 0,
+        "seconds": 0.8268539905548096,
+        "log": "00-r0-u8_superres-B.log",
+        "sha256": "4b66b8018458f747590f4b0450a2e17c3763e90ccf647a293ab9d19d6c416fd6",
+        "load": [
+          7.03125,
+          6.89404296875,
+          7.10498046875
+        ],
+        "ops": 200,
+        "ns_op": 3546620.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "u8_superres",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.246696949005127,
+        "log": "01-r0-u8_superres-C.log",
+        "sha256": "8817ccd11aa13f2e420b72e505e757548f596f1b33dace6eae08dd4fcadeaa0d",
+        "load": [
+          7.03125,
+          6.89404296875,
+          7.10498046875
+        ],
+        "ops": 200,
+        "ns_op": 3624068.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "hbd_inter",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.0982680320739746,
+        "log": "02-r0-hbd_inter-C.log",
+        "sha256": "fad53a88dd4a383c465026c5c15d8c2f74ba689a91d3aba1679610a61e1e156d",
+        "load": [
+          7.03125,
+          6.89404296875,
+          7.10498046875
+        ],
+        "ops": 200,
+        "ns_op": 5036694.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "hbd_inter",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.0912470817565918,
+        "log": "03-r0-hbd_inter-B.log",
+        "sha256": "d0b8f84f620f597246bf13d1b98d301936cc39b59dfe713b26609671ad9a5395",
+        "load": [
+          7.4287109375,
+          6.978515625,
+          7.13330078125
+        ],
+        "ops": 200,
+        "ns_op": 5115085.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "no_superres_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.256714105606079,
+        "log": "04-r0-no_superres_control-B.log",
+        "sha256": "6c59766b6f508eb77d3dc786d2303544275c3d3f539fb56b6e9f4228e4dd7273",
+        "load": [
+          7.4287109375,
+          6.978515625,
+          7.13330078125
+        ],
+        "ops": 200,
+        "ns_op": 5884004.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "no_superres_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.3080618381500244,
+        "log": "05-r0-no_superres_control-C.log",
+        "sha256": "6fd725670da49e515eb4f4af59e2c2d648aafd209276e646c266a489dd1c1832",
+        "load": [
+          7.4287109375,
+          6.978515625,
+          7.13330078125
+        ],
+        "ops": 200,
+        "ns_op": 6049185.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "hbd_inter",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.6175587177276611,
+        "log": "06-r1-hbd_inter-B.log",
+        "sha256": "dd47c44da94acd037bbadcf6f3152d8716a09dd7314a842bac61bbbc90d2a6bd",
+        "load": [
+          7.79443359375,
+          7.0615234375,
+          7.16162109375
+        ],
+        "ops": 200,
+        "ns_op": 7662950.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "hbd_inter",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.2005078792572021,
+        "log": "07-r1-hbd_inter-C.log",
+        "sha256": "b6bd0f3a92cce0bcbe751f14c6718b92387f82eaa5acaa11ca7592c7c3e8d187",
+        "load": [
+          7.79443359375,
+          7.0615234375,
+          7.16162109375
+        ],
+        "ops": 200,
+        "ns_op": 5433830.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "no_superres_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.4072520732879639,
+        "log": "08-r1-no_superres_control-C.log",
+        "sha256": "0638033a980f9ac926d348999f63c231ea34c5388e805464afba3c858a011109",
+        "load": [
+          7.79443359375,
+          7.0615234375,
+          7.16162109375
+        ],
+        "ops": 200,
+        "ns_op": 6553762.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "no_superres_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.3614122867584229,
+        "log": "09-r1-no_superres_control-B.log",
+        "sha256": "f4fb04a6742e98666e68e69df65ab2b1b555e122458a4b40ef53fcdcc151cd68",
+        "load": [
+          7.79443359375,
+          7.0615234375,
+          7.16162109375
+        ],
+        "ops": 200,
+        "ns_op": 6151176.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "u8_superres",
+        "role": "C",
+        "exit": 0,
+        "seconds": 0.8170843124389648,
+        "log": "10-r1-u8_superres-C.log",
+        "sha256": "8ab374373119eb54c09c30b114747fe88664969c58c1de5ca3252ca5ec4a0ae0",
+        "load": [
+          7.79443359375,
+          7.0615234375,
+          7.16162109375
+        ],
+        "ops": 200,
+        "ns_op": 3658940.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "u8_superres",
+        "role": "B",
+        "exit": 0,
+        "seconds": 0.8247530460357666,
+        "log": "11-r1-u8_superres-B.log",
+        "sha256": "9ecaa6c8bd82eab2e8f0c957ccdcf4bb5b593faeda0dfb9fc622a3551223a548",
+        "load": [
+          7.810546875,
+          7.07666015625,
+          7.16650390625
+        ],
+        "ops": 200,
+        "ns_op": 3725385.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "no_superres_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.3610591888427734,
+        "log": "12-r2-no_superres_control-B.log",
+        "sha256": "a504100f663360fb68052e9313b5537e43f01d2b6603c2de51e6faffbc78f661",
+        "load": [
+          7.810546875,
+          7.07666015625,
+          7.16650390625
+        ],
+        "ops": 200,
+        "ns_op": 6199627.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "no_superres_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.3726468086242676,
+        "log": "13-r2-no_superres_control-C.log",
+        "sha256": "0485b32c2470735e87cf6a3963868a4a8cd003c64919e5e984749818a118c7b0",
+        "load": [
+          7.810546875,
+          7.07666015625,
+          7.16650390625
+        ],
+        "ops": 200,
+        "ns_op": 6266625.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "u8_superres",
+        "role": "C",
+        "exit": 0,
+        "seconds": 0.8152410984039307,
+        "log": "14-r2-u8_superres-C.log",
+        "sha256": "284798193b5fd6442b9c0f6a68846a07787a21efd451e1d1eeb90f844f1006ca",
+        "load": [
+          7.810546875,
+          7.07666015625,
+          7.16650390625
+        ],
+        "ops": 200,
+        "ns_op": 3673887.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "u8_superres",
+        "role": "B",
+        "exit": 0,
+        "seconds": 0.8247160911560059,
+        "log": "15-r2-u8_superres-B.log",
+        "sha256": "74605fe061f291679cb5813a0562041439b60ba90e19033739ffc651212dce7b",
+        "load": [
+          7.58544921875,
+          7.0419921875,
+          7.15380859375
+        ],
+        "ops": 200,
+        "ns_op": 3694517.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "hbd_inter",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.152482271194458,
+        "log": "16-r2-hbd_inter-C.log",
+        "sha256": "72ecfe726ae8156a49c1b78957975a4c54e1e7169584beaaf74cc6585d6813b1",
+        "load": [
+          7.58544921875,
+          7.0419921875,
+          7.15380859375
+        ],
+        "ops": 200,
+        "ns_op": 5195089.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "hbd_inter",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.1482081413269043,
+        "log": "17-r2-hbd_inter-B.log",
+        "sha256": "a696341db03161474ce6f9366fba3882ad5eae43e1ac75cc9cff69a6815524eb",
+        "load": [
+          7.58544921875,
+          7.0419921875,
+          7.15380859375
+        ],
+        "ops": 200,
+        "ns_op": 5291261.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      }
+    ]
+  },
+  "fold": {
+    "plan": {
+      "base": "4e8cbc2ad0894099afb5990fe7a3e34e1782dcbb",
+      "binary_paths": {
+        "B": "/private/tmp/decoder-sgr-work-20261018/candidate-rolling.test",
+        "C": "/private/tmp/decoder-superres-direct-20261018/candidate-fold.test"
+      },
+      "binary_sha256": {
+        "B": "b140cb9555e6a39fc7b687a8a74bbf9266cc03e153ee3042760ebc9e0133c31b",
+        "C": "ee822414026a0fa7df468c41026a850c9d8268834d4b7c5e6fae0580a6d9f8e6"
+      },
+      "sources": {
+        "internal/av1/superres/upscale_gosimd.go": "875e8d029272f538184e5e48daef0ee7a42f2abf1b26c0c6fa72afb76917522c",
+        "internal/av1/superres/upscale_gosimd_arm64.go": "38ff288bd0251cc71c67b7fabef4f39f93ba1f61ce52e4a24c15924b67d3064d",
+        "internal/av1/superres/upscale_gosimd_amd64.go": "f8fb15684a14d607ff6197237d23a3e68b61d527fe93c816171478dd090e4a07",
+        "internal/av1/superres/upscale_gosimd_test.go": "210d8d36eb15931226701b2ac2fb47e736a017c7d5701cbec94699c5abbfe8ad",
+        "bench_test.go": "e5071f64eb1b80e53255a4a31cff2c0216088af365b09501b5a922479326b69b",
+        "decoder_sgr_bench_test.go": "afa8359ee222ff333273b1b1d28e0284c75ecfd4113c75c73936857eac92d9e6"
+      },
+      "plan": [
+        [
+          0,
+          "u8_superres",
+          "BC"
+        ],
+        [
+          0,
+          "hbd_inter",
+          "CB"
+        ],
+        [
+          0,
+          "no_superres_control",
+          "BC"
+        ],
+        [
+          1,
+          "hbd_inter",
+          "BC"
+        ],
+        [
+          1,
+          "no_superres_control",
+          "CB"
+        ],
+        [
+          1,
+          "u8_superres",
+          "CB"
+        ],
+        [
+          2,
+          "no_superres_control",
+          "BC"
+        ],
+        [
+          2,
+          "u8_superres",
+          "CB"
+        ],
+        [
+          2,
+          "hbd_inter",
+          "CB"
+        ]
+      ],
+      "ops": 200,
+      "protocol": "Isolated exact arm64 widening-product fold; both8/10bit staged superres paths affected; direct byte I/O and ownership plumbing removed.3paired rounds200ops public Reset+decode. Affected8bit and10bit superres inter8frames; no-superres8bit postfilter4frames control. Direct HBD staging removal and byte I/O variants remain separately unmerged. Baseline frozen PR17; currentmain onlydocs changed. Allrows retained; >=0.5%pairedGM saving and>=2/3wins in at leastone target, no othercase point regression>1%; no retries/pooling. No new native gap claim."
+    },
+    "summary": {
+      "u8_superres": {
+        "paired_gm_saved_pct": 2.5318650683442745,
+        "wins": 3,
+        "pairs": [
+          {
+            "round": 0,
+            "B": 3451044.0,
+            "C": 3350280.0,
+            "saved_pct": 2.919812091645313
+          },
+          {
+            "round": 1,
+            "C": 3327262.0,
+            "B": 3427970.0,
+            "saved_pct": 2.9378320113653267
+          },
+          {
+            "round": 2,
+            "C": 3398825.0,
+            "B": 3458768.0,
+            "saved_pct": 1.733073741864155
+          }
+        ]
+      },
+      "hbd_inter": {
+        "paired_gm_saved_pct": 3.2925253130710264,
+        "wins": 3,
+        "pairs": [
+          {
+            "round": 0,
+            "C": 4814530.0,
+            "B": 4915314.0,
+            "saved_pct": 2.050408173313034
+          },
+          {
+            "round": 1,
+            "B": 5091974.0,
+            "C": 4839683.0,
+            "saved_pct": 4.9546796586156905
+          },
+          {
+            "round": 2,
+            "C": 4857245.0,
+            "B": 4999692.0,
+            "saved_pct": 2.849115505515143
+          }
+        ]
+      },
+      "no_superres_control": {
+        "paired_gm_saved_pct": 0.5979821675526575,
+        "wins": 2,
+        "pairs": [
+          {
+            "round": 0,
+            "B": 6170944.0,
+            "C": 6225438.0,
+            "saved_pct": -0.8830739672892829
+          },
+          {
+            "round": 1,
+            "C": 5661755.0,
+            "B": 5769681.0,
+            "saved_pct": 1.870571353944872
+          },
+          {
+            "round": 2,
+            "B": 5668587.0,
+            "C": 5623968.0,
+            "saved_pct": 0.7871273740704732
+          }
+        ]
+      },
+      "audit": {
+        "rows": 18,
+        "all_0_allocs": true,
+        "binary_source_unchanged": true
+      }
+    },
+    "rows": [
+      {
+        "round": 0,
+        "case": "u8_superres",
+        "role": "B",
+        "exit": 0,
+        "seconds": 0.7667279243469238,
+        "log": "00-r0-u8_superres-B.log",
+        "sha256": "f0ae662a55483b649e4a659a36a0d9df27ffe6ae8dc5e9563ae7891d69223ab9",
+        "load": [
+          7.5380859375,
+          7.65234375,
+          7.41357421875
+        ],
+        "ops": 200,
+        "ns_op": 3451044.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "u8_superres",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.2661240100860596,
+        "log": "01-r0-u8_superres-C.log",
+        "sha256": "2c01b1558c50de426d4e900c9b84502dc03e8d404eda74b76173e0a84098b688",
+        "load": [
+          7.5380859375,
+          7.65234375,
+          7.41357421875
+        ],
+        "ops": 200,
+        "ns_op": 3350280.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "hbd_inter",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.0440709590911865,
+        "log": "02-r0-hbd_inter-C.log",
+        "sha256": "706bb26e59bbdfe54b05753895e37af0bd03cc468500377b2b241c935a847e72",
+        "load": [
+          7.41455078125,
+          7.62451171875,
+          7.4052734375
+        ],
+        "ops": 200,
+        "ns_op": 4814530.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "hbd_inter",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.0979928970336914,
+        "log": "03-r0-hbd_inter-B.log",
+        "sha256": "17065e78f996817bcdde23507ab640c0bed51aa58a74342b0bdaa8ed46443aac",
+        "load": [
+          7.41455078125,
+          7.62451171875,
+          7.4052734375
+        ],
+        "ops": 200,
+        "ns_op": 4915314.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "no_superres_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.3083720207214355,
+        "log": "04-r0-no_superres_control-B.log",
+        "sha256": "941d63dd9227213011239c1e8c653ed540df665444ccaaea875f56df3a893824",
+        "load": [
+          7.41455078125,
+          7.62451171875,
+          7.4052734375
+        ],
+        "ops": 200,
+        "ns_op": 6170944.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "case": "no_superres_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.3162319660186768,
+        "log": "05-r0-no_superres_control-C.log",
+        "sha256": "03992d4fb9cc7f7b4736d5316620d3e1f48e0808058c1e8f66d1af03c116258f",
+        "load": [
+          7.41455078125,
+          7.62451171875,
+          7.4052734375
+        ],
+        "ops": 200,
+        "ns_op": 6225438.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "hbd_inter",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.094839096069336,
+        "log": "06-r1-hbd_inter-B.log",
+        "sha256": "49d7764dc5629488defb6b37f0af416d75a52f2a70031685b33b2b6b33d44093",
+        "load": [
+          7.41455078125,
+          7.62451171875,
+          7.4052734375
+        ],
+        "ops": 200,
+        "ns_op": 5091974.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "hbd_inter",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.0598788261413574,
+        "log": "07-r1-hbd_inter-C.log",
+        "sha256": "03ae8370bdfaec09a32133706e1c3b60c6a5b3cf91f667e99f7f33af5d2daec4",
+        "load": [
+          7.14111328125,
+          7.56396484375,
+          7.38525390625
+        ],
+        "ops": 200,
+        "ns_op": 4839683.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "no_superres_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.2052299976348877,
+        "log": "08-r1-no_superres_control-C.log",
+        "sha256": "9fc2c8b1665c160fed5132cbd78cd1607c1ff05c9b619467b08ae74208be70d6",
+        "load": [
+          7.14111328125,
+          7.56396484375,
+          7.38525390625
+        ],
+        "ops": 200,
+        "ns_op": 5661755.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "no_superres_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.2548987865447998,
+        "log": "09-r1-no_superres_control-B.log",
+        "sha256": "3c08bb1ac490240f72db7f31f57b8f4b7199de457579cef26ec4ca40c11c5b36",
+        "load": [
+          7.14111328125,
+          7.56396484375,
+          7.38525390625
+        ],
+        "ops": 200,
+        "ns_op": 5769681.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "u8_superres",
+        "role": "C",
+        "exit": 0,
+        "seconds": 0.7227938175201416,
+        "log": "10-r1-u8_superres-C.log",
+        "sha256": "e64d54a6c4edcc2d9cec6f63182e4184b140aefb1586080c0981b5c04fed2523",
+        "load": [
+          7.14111328125,
+          7.56396484375,
+          7.38525390625
+        ],
+        "ops": 200,
+        "ns_op": 3327262.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "case": "u8_superres",
+        "role": "B",
+        "exit": 0,
+        "seconds": 0.7754056453704834,
+        "log": "11-r1-u8_superres-B.log",
+        "sha256": "5ec531da8bb8930130ef96f80fdc014557d8a4381e881687d1d1695bb7a088be",
+        "load": [
+          7.14111328125,
+          7.56396484375,
+          7.38525390625
+        ],
+        "ops": 200,
+        "ns_op": 3427970.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "no_superres_control",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.217115879058838,
+        "log": "12-r2-no_superres_control-B.log",
+        "sha256": "428246bbd299f6c25743f93ae4344c1064fe5213c34a6f00cbae015bdb8991d6",
+        "load": [
+          6.80908203125,
+          7.48779296875,
+          7.359375
+        ],
+        "ops": 200,
+        "ns_op": 5668587.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "no_superres_control",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.2213060855865479,
+        "log": "13-r2-no_superres_control-C.log",
+        "sha256": "9c8b07b0917955412d89b715c28fb2a5c7a2d59512e9204de48621d4ebcd2f20",
+        "load": [
+          6.80908203125,
+          7.48779296875,
+          7.359375
+        ],
+        "ops": 200,
+        "ns_op": 5623968.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "u8_superres",
+        "role": "C",
+        "exit": 0,
+        "seconds": 0.7705137729644775,
+        "log": "14-r2-u8_superres-C.log",
+        "sha256": "cbe4468bcc2e5fb0f7909b62c6e9f4912bbbee56a27384c06fb1ecc7f49a6025",
+        "load": [
+          6.80908203125,
+          7.48779296875,
+          7.359375
+        ],
+        "ops": 200,
+        "ns_op": 3398825.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "u8_superres",
+        "role": "B",
+        "exit": 0,
+        "seconds": 0.7685818672180176,
+        "log": "15-r2-u8_superres-B.log",
+        "sha256": "eeaf819324b2f8832e6929a8fa13cb15532566a8507f1e14a995ac7c78554fa1",
+        "load": [
+          6.80908203125,
+          7.48779296875,
+          7.359375
+        ],
+        "ops": 200,
+        "ns_op": 3458768.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "hbd_inter",
+        "role": "C",
+        "exit": 0,
+        "seconds": 1.0486650466918945,
+        "log": "16-r2-hbd_inter-C.log",
+        "sha256": "b320afe66560eb8fb1a7c3f2aca7275055a4853ca3660bf80a4d39f3e62bd49a",
+        "load": [
+          6.80908203125,
+          7.48779296875,
+          7.359375
+        ],
+        "ops": 200,
+        "ns_op": 4857245.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "case": "hbd_inter",
+        "role": "B",
+        "exit": 0,
+        "seconds": 1.1027848720550537,
+        "log": "17-r2-hbd_inter-B.log",
+        "sha256": "f18eb6661cfbb6d8827e7ca594d02cfa71fdf12d29e1bce1b3bb0015dfa08140",
+        "load": [
+          6.904296875,
+          7.49609375,
+          7.36279296875
+        ],
+        "ops": 200,
+        "ns_op": 4999692.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      }
+    ]
+  },
+  "gates": {
+    "focused-fold.log": "d177b323fa8c0c0f469a483ea2c2eb30a142539e673dc198b6c2d153aab67e75",
+    "golden-fold.log": "ab6d8ddaf391e549dc4db30b0f398aad28149ab169c57e2074f45cc04c184990",
+    "fold-row-compiler.txt": "211c5e4945aeee50a6763c48fa884c033ef052eaed1e7595d4058a3a80302da3"
+  },
+  "artifact_root": "/private/tmp/decoder-superres-direct-20261018",
+  "status": {
+    "hbd": "unmerged, no accepted gain",
+    "u8": "unmerged, no accepted group gain; includes one slow HBD baseline",
+    "fold": "winner under declared short-screen rule; small-sample estimates"
+  }
+}

@@ -23,3 +23,11 @@ func superresPack8(lo, hi archsimd.Int32x4) archsimd.Uint16x8 {
 	h := hi.SaturateToInt16().ConvertToUint16().ReshapeToUint64s()
 	return l.InterleaveLo(h).ReshapeToUint16s()
 }
+
+// superresTapFold widens signed int16 products directly to int32. This is
+// exactly the former sign-extend then int32 multiply: every signed 16x16
+// product fits int32, and the following addition has the same int32 semantics.
+// There is no intermediate rounding, saturation, or narrowing.
+func superresTapFold(s, c archsimd.Int16x8) archsimd.Int32x4 {
+	return s.MulWidenLo(c).Add(superresHi4(s).MulWidenLo(superresHi4(c)))
+}
