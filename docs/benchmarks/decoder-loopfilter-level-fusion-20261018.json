@@ -1,0 +1,1979 @@
+{
+  "date": "2026-10-18",
+  "worktree": "/Users/thesyncim/.codex/worktrees/decoder-inter-commit/goav1",
+  "base_commit": "10f4a6ae956e881e8d9e85a4797c55a441cd27c3",
+  "base_tree": "6c0ed30fcaa5d62627d262c93ea8960f50666932",
+  "candidate_status": "selected narrow inter win under the predeclared short-screen rule; final byte gates pass",
+  "production_files": [
+    "internal/av1/loopfilter/sb_u8_arm64.go"
+  ],
+  "source_patch": "diff --git a/internal/av1/loopfilter/sb_u8_arm64.go b/internal/av1/loopfilter/sb_u8_arm64.go\nindex a823ecaa..65c0a95b 100644\n--- a/internal/av1/loopfilter/sb_u8_arm64.go\n+++ b/internal/av1/loopfilter/sb_u8_arm64.go\n@@ -38,18 +38,12 @@ type sbGroup struct {\n \tapplied  uint32\n }\n \n-// resolve fills the group's limits from the four resolved unit levels.\n-func (g *sbGroup) resolve(lv *[4]uint8, lut *SBLUT) {\n-\tfor k := 0; k < 4; k++ {\n-\t\tL := lv[k]\n-\t\tif L == 0 {\n-\t\t\tg.e[k], g.i[k], g.h[k] = 0, 0, 0\n-\t\t\tcontinue\n-\t\t}\n-\t\tg.e[k] = uint32(lut.E[L]) * 0x01010101\n-\t\tg.i[k] = uint32(lut.I[L]) * 0x01010101\n-\t\tg.h[k] = uint32(L>>4) * 0x01010101\n-\t}\n+// setLimits fills one live unit while its level is already in a register.\n+// The group's zero value supplies the limits for inactive units.\n+func (g *sbGroup) setLimits(k int, L uint8, lut *SBLUT) {\n+\tg.e[k] = uint32(lut.E[L]) * 0x01010101\n+\tg.i[k] = uint32(lut.I[L]) * 0x01010101\n+\tg.h[k] = uint32(L>>4) * 0x01010101\n }\n \n func lpfLoad(p unsafe.Pointer, off int) archsimd.Uint8x16 {\n@@ -372,7 +366,6 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu\n \t\t\tcontinue\n \t\t}\n \t\tvar grp sbGroup\n-\t\tvar lv [4]uint8\n \t\tu0 := lvlOff + 4*g\n \t\tfor k := 0; k < 4; k++ {\n \t\t\tif nib&(1<<uint(k)) == 0 {\n@@ -385,7 +378,7 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu\n \t\t\tif L == 0 {\n \t\t\t\tcontinue\n \t\t\t}\n-\t\t\tlv[k] = L\n+\t\t\tgrp.setLimits(k, L, lut)\n \t\t\tgrp.m4 |= 1 << uint(k)\n \t\t\tgrp.applied++\n \t\t\tif L > grp.maxLevel {\n@@ -415,7 +408,6 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu\n \t\t\t_ = filterSBHorizontal8Scalar(pix, q0Off, stride, sub, luma, lvl, u0, lvlStride, comp, lut)\n \t\t\tcontinue\n \t\t}\n-\t\tgrp.resolve(&lv, lut)\n \t\teV, iV, hV, m4, mGt4, m16 := sbGroupVectors(&grp)\n \t\tlpf16U8(unsafe.Add(base, q0Off), stride, wd, eV, iV, hV, m4, mGt4, m16)\n \t}\n@@ -435,7 +427,6 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma\n \t\t\tcontinue\n \t\t}\n \t\tvar grp sbGroup\n-\t\tvar lv [4]uint8\n \t\tu0 := lvlOff + 4*g*lvlStride\n \t\tfor k := 0; k < 4; k++ {\n \t\t\tif nib&(1<<uint(k)) == 0 {\n@@ -449,7 +440,7 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma\n \t\t\tif L == 0 {\n \t\t\t\tcontinue\n \t\t\t}\n-\t\t\tlv[k] = L\n+\t\t\tgrp.setLimits(k, L, lut)\n \t\t\tgrp.m4 |= 1 << uint(k)\n \t\t\tgrp.applied++\n \t\t\tif L > grp.maxLevel {\n@@ -478,7 +469,6 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma\n \t\t\tcontinue\n \t\t}\n \t\twide := wd != 16 && rowBytes >= 12 && lastRow+12 <= len(pix)\n-\t\tgrp.resolve(&lv, lut)\n \t\teV, iV, hV, m4, mGt4, m16 := sbGroupVectors(&grp)\n \t\tif wd == 16 {\n \t\t\tlpfVertical16x16U8(unsafe.Add(base, q0Off-8), stride, eV, iV, hV, m4, mGt4, m16)\n",
+  "source_reference": {
+    "repository": "dav1d",
+    "commit": "b546257f770768b2c88258c533da38b91a06f737",
+    "file": "src/loopfilter_tmpl.c",
+    "lines": [
+      163,
+      240
+    ],
+    "boundary": "loop_filter_{h,v}_sb128{y,uv}_c: resolve L, skip zero, derive H/E/I before filtering",
+    "new_native_timing": false
+  },
+  "environment": {
+    "cpu": "Apple M4 Max",
+    "go": "go1.27.0-X:simd",
+    "os": "darwin",
+    "arch": "arm64",
+    "GOARM64": "v8.0",
+    "GOEXPERIMENT": "simd",
+    "CGO_ENABLED": "1",
+    "GOMAXPROCS": "1",
+    "GOGC": "100",
+    "build_info": "/private/tmp/decoder-loopfilter-levels-20261018/candidate.test: go1.27.0-X:simd\n\tpath\tgithub.com/thesyncim/goav1.test\n\tmod\tgithub.com/thesyncim/goav1\t(devel)\t\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\tCGO_ENABLED=1\n\tbuild\tCGO_CFLAGS=\n\tbuild\tCGO_CPPFLAGS=\n\tbuild\tCGO_CXXFLAGS=\n\tbuild\tCGO_LDFLAGS=\n\tbuild\tGOARCH=arm64\n\tbuild\tGOEXPERIMENT=simd\n\tbuild\tGOOS=darwin\n\tbuild\tGOARM64=v8.0\n/private/tmp/decoder-superres-direct-20261018/candidate-fold.test: go1.27.0-X:simd\n\tpath\tgithub.com/thesyncim/goav1.test\n\tmod\tgithub.com/thesyncim/goav1\t(devel)\t\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\tCGO_ENABLED=1\n\tbuild\tCGO_CFLAGS=\n\tbuild\tCGO_CPPFLAGS=\n\tbuild\tCGO_CXXFLAGS=\n\tbuild\tCGO_LDFLAGS=\n\tbuild\tGOARCH=arm64\n\tbuild\tGOEXPERIMENT=simd\n\tbuild\tGOOS=darwin\n\tbuild\tGOARM64=v8.0\n",
+    "project_identity_source": "git rev-parse --git-common-dir",
+    "git_common_dir": "/Users/thesyncim/GolandProjects/goav1/.git",
+    "GOCACHE": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects/37b85e7d09c67423/go-build",
+    "wrapper": "/Users/thesyncim/.codex/bin/project-env"
+  },
+  "screen": {
+    "original_manifest": {
+      "base": "10f4a6ae956e881e8d9e85a4797c55a441cd27c3",
+      "binary_paths": {
+        "B": "/private/tmp/decoder-superres-direct-20261018/candidate-fold.test",
+        "C": "/private/tmp/decoder-loopfilter-levels-20261018/candidate.test"
+      },
+      "binary_sha256": {
+        "B": "ee822414026a0fa7df468c41026a850c9d8268834d4b7c5e6fae0580a6d9f8e6",
+        "C": "f4dfaa09581fd4dbb3ec4eb427b7ab819557e5db79837c197d10541adc3e02b9"
+      },
+      "sources": {
+        "internal/av1/loopfilter/sb_u8_arm64.go": "dd36fe9b2ebd1764ddfebef1e2c629767f7392a83308936063641e626b22256e"
+      },
+      "plan": [
+        [
+          0,
+          "p720_inter_q32",
+          "BC"
+        ],
+        [
+          0,
+          "p360_intra_q32",
+          "CB"
+        ],
+        [
+          1,
+          "p360_intra_q32",
+          "BC"
+        ],
+        [
+          1,
+          "p720_inter_q32",
+          "CB"
+        ],
+        [
+          2,
+          "p720_inter_q32",
+          "BC"
+        ],
+        [
+          2,
+          "p360_intra_q32",
+          "CB"
+        ]
+      ],
+      "ops": 20,
+      "protocol": "One short paired screen: fuse live-level resolution and E/I/H replication for arm64 8-bit deblocking groups. Warm public Reset+DecodeNext at workers=1. Target p720_inter_q32 >=0.5% paired geometric-mean saving and >=2/3 faster pairs; affected intra comparison p360_intra_q32 <=1% regression; all warm rows zero allocations. Three alternating pairs, all observations retained. No retry or pooling. No native-gap claim."
+    },
+    "original_exact_target_summary": {
+      "p720_inter_q32": {
+        "paired_gm_saved_pct": 1.8907662880681464,
+        "wins": 3,
+        "pairs": [
+          {
+            "round": 0,
+            "B": 156156398.0,
+            "C": 155827338.0,
+            "saved_pct": 0.2107246351827352
+          },
+          {
+            "round": 1,
+            "C": 156675027.0,
+            "B": 161374173.0,
+            "saved_pct": 2.9119566735130498
+          },
+          {
+            "round": 2,
+            "B": 160812988.0,
+            "C": 156747692.0,
+            "saved_pct": 2.5279649676057225
+          }
+        ]
+      },
+      "p360_intra_q32": {
+        "paired_gm_saved_pct": -0.527325631947817,
+        "wins": 1,
+        "pairs": [
+          {
+            "round": 0,
+            "C": 68426988.0,
+            "B": 67145694.0,
+            "saved_pct": -1.9082295880358258
+          },
+          {
+            "round": 1,
+            "B": 66721306.0,
+            "C": 66838721.0,
+            "saved_pct": -0.1759782699697121
+          },
+          {
+            "round": 2,
+            "C": 65971825.0,
+            "B": 66294723.0,
+            "saved_pct": 0.48706440782624316
+          }
+        ]
+      },
+      "audit": {
+        "rows": 12,
+        "all_0_allocs": true,
+        "binary_source_unchanged": true
+      }
+    },
+    "all_actual_rows_and_audit": {
+      "protocol_deviation": "The Go -test.bench pattern was split at slashes. The clip component p720_inter_q32 lacked its own end anchor, so every intended p720 process also ran p720_inter_q32_2tiles afterward. Original raw logs and manifests remain unchanged. Acceptance used only the predeclared exact p720 and intra rows. Accidental two-tile rows are disclosed here and do not substitute for the target gate. No new timings were collected.",
+      "processes": 12,
+      "actual_benchmark_rows": 18,
+      "intended_benchmark_rows": 12,
+      "all_actual_rows_zero_allocs": true,
+      "rows": [
+        {
+          "round": 0,
+          "role": "B",
+          "clip": "p720_inter_q32",
+          "ops": 20,
+          "ns_op": 156156398.0,
+          "bytes_op": 2,
+          "allocs_op": 0,
+          "log": "00-r0-p720_inter_q32-B.log",
+          "intended": true
+        },
+        {
+          "round": 0,
+          "role": "B",
+          "clip": "p720_inter_q32_2tiles",
+          "ops": 20,
+          "ns_op": 168213867.0,
+          "bytes_op": 0,
+          "allocs_op": 0,
+          "log": "00-r0-p720_inter_q32-B.log",
+          "intended": false
+        },
+        {
+          "round": 0,
+          "role": "C",
+          "clip": "p720_inter_q32",
+          "ops": 20,
+          "ns_op": 155827338.0,
+          "bytes_op": 2,
+          "allocs_op": 0,
+          "log": "01-r0-p720_inter_q32-C.log",
+          "intended": true
+        },
+        {
+          "round": 0,
+          "role": "C",
+          "clip": "p720_inter_q32_2tiles",
+          "ops": 20,
+          "ns_op": 161609396.0,
+          "bytes_op": 0,
+          "allocs_op": 0,
+          "log": "01-r0-p720_inter_q32-C.log",
+          "intended": false
+        },
+        {
+          "round": 0,
+          "role": "C",
+          "clip": "p360_intra_q32",
+          "ops": 20,
+          "ns_op": 68426988.0,
+          "bytes_op": 2,
+          "allocs_op": 0,
+          "log": "02-r0-p360_intra_q32-C.log",
+          "intended": true
+        },
+        {
+          "round": 0,
+          "role": "B",
+          "clip": "p360_intra_q32",
+          "ops": 20,
+          "ns_op": 67145694.0,
+          "bytes_op": 0,
+          "allocs_op": 0,
+          "log": "03-r0-p360_intra_q32-B.log",
+          "intended": true
+        },
+        {
+          "round": 1,
+          "role": "B",
+          "clip": "p360_intra_q32",
+          "ops": 20,
+          "ns_op": 66721306.0,
+          "bytes_op": 2,
+          "allocs_op": 0,
+          "log": "04-r1-p360_intra_q32-B.log",
+          "intended": true
+        },
+        {
+          "round": 1,
+          "role": "C",
+          "clip": "p360_intra_q32",
+          "ops": 20,
+          "ns_op": 66838721.0,
+          "bytes_op": 0,
+          "allocs_op": 0,
+          "log": "05-r1-p360_intra_q32-C.log",
+          "intended": true
+        },
+        {
+          "round": 1,
+          "role": "C",
+          "clip": "p720_inter_q32",
+          "ops": 20,
+          "ns_op": 156675027.0,
+          "bytes_op": 0,
+          "allocs_op": 0,
+          "log": "06-r1-p720_inter_q32-C.log",
+          "intended": true
+        },
+        {
+          "round": 1,
+          "role": "C",
+          "clip": "p720_inter_q32_2tiles",
+          "ops": 20,
+          "ns_op": 162752610.0,
+          "bytes_op": 0,
+          "allocs_op": 0,
+          "log": "06-r1-p720_inter_q32-C.log",
+          "intended": false
+        },
+        {
+          "round": 1,
+          "role": "B",
+          "clip": "p720_inter_q32",
+          "ops": 20,
+          "ns_op": 161374173.0,
+          "bytes_op": 2,
+          "allocs_op": 0,
+          "log": "07-r1-p720_inter_q32-B.log",
+          "intended": true
+        },
+        {
+          "round": 1,
+          "role": "B",
+          "clip": "p720_inter_q32_2tiles",
+          "ops": 20,
+          "ns_op": 163547256.0,
+          "bytes_op": 0,
+          "allocs_op": 0,
+          "log": "07-r1-p720_inter_q32-B.log",
+          "intended": false
+        },
+        {
+          "round": 2,
+          "role": "B",
+          "clip": "p720_inter_q32",
+          "ops": 20,
+          "ns_op": 160812988.0,
+          "bytes_op": 2,
+          "allocs_op": 0,
+          "log": "08-r2-p720_inter_q32-B.log",
+          "intended": true
+        },
+        {
+          "round": 2,
+          "role": "B",
+          "clip": "p720_inter_q32_2tiles",
+          "ops": 20,
+          "ns_op": 158696288.0,
+          "bytes_op": 0,
+          "allocs_op": 0,
+          "log": "08-r2-p720_inter_q32-B.log",
+          "intended": false
+        },
+        {
+          "round": 2,
+          "role": "C",
+          "clip": "p720_inter_q32",
+          "ops": 20,
+          "ns_op": 156747692.0,
+          "bytes_op": 2,
+          "allocs_op": 0,
+          "log": "09-r2-p720_inter_q32-C.log",
+          "intended": true
+        },
+        {
+          "round": 2,
+          "role": "C",
+          "clip": "p720_inter_q32_2tiles",
+          "ops": 20,
+          "ns_op": 161511098.0,
+          "bytes_op": 0,
+          "allocs_op": 0,
+          "log": "09-r2-p720_inter_q32-C.log",
+          "intended": false
+        },
+        {
+          "round": 2,
+          "role": "C",
+          "clip": "p360_intra_q32",
+          "ops": 20,
+          "ns_op": 65971825.0,
+          "bytes_op": 2,
+          "allocs_op": 0,
+          "log": "10-r2-p360_intra_q32-C.log",
+          "intended": true
+        },
+        {
+          "round": 2,
+          "role": "B",
+          "clip": "p360_intra_q32",
+          "ops": 20,
+          "ns_op": 66294723.0,
+          "bytes_op": 2,
+          "allocs_op": 0,
+          "log": "11-r2-p360_intra_q32-B.log",
+          "intended": true
+        }
+      ],
+      "summary": {
+        "p360_intra_q32": {
+          "paired_gm_saved_pct": -0.527325631947817,
+          "wins": 1,
+          "pairs": [
+            {
+              "round": 0,
+              "C": 68426988.0,
+              "B": 67145694.0,
+              "saved_pct": -1.9082295880358258
+            },
+            {
+              "round": 1,
+              "B": 66721306.0,
+              "C": 66838721.0,
+              "saved_pct": -0.1759782699697121
+            },
+            {
+              "round": 2,
+              "C": 65971825.0,
+              "B": 66294723.0,
+              "saved_pct": 0.48706440782624316
+            }
+          ]
+        },
+        "p720_inter_q32": {
+          "paired_gm_saved_pct": 1.8907662880681464,
+          "wins": 3,
+          "pairs": [
+            {
+              "round": 0,
+              "B": 156156398.0,
+              "C": 155827338.0,
+              "saved_pct": 0.2107246351827352
+            },
+            {
+              "round": 1,
+              "C": 156675027.0,
+              "B": 161374173.0,
+              "saved_pct": 2.9119566735130498
+            },
+            {
+              "round": 2,
+              "B": 160812988.0,
+              "C": 156747692.0,
+              "saved_pct": 2.5279649676057225
+            }
+          ]
+        },
+        "p720_inter_q32_2tiles": {
+          "paired_gm_saved_pct": 0.9072902764598823,
+          "wins": 2,
+          "pairs": [
+            {
+              "round": 0,
+              "B": 168213867.0,
+              "C": 161609396.0,
+              "saved_pct": 3.926234571374543
+            },
+            {
+              "round": 1,
+              "C": 162752610.0,
+              "B": 163547256.0,
+              "saved_pct": 0.4858815851976117
+            },
+            {
+              "round": 2,
+              "B": 158696288.0,
+              "C": 161511098.0,
+              "saved_pct": -1.773708783913075
+            }
+          ]
+        }
+      }
+    },
+    "processes": [
+      {
+        "round": 0,
+        "clip": "p720_inter_q32",
+        "role": "B",
+        "exit": 0,
+        "wall_s": 6.895719289779663,
+        "log": "00-r0-p720_inter_q32-B.log",
+        "sha256": "af88c74045ebf3ab245746d48856a1c51bd285e69abe98ec1a15617b6f708c6a",
+        "load": [
+          19.5830078125,
+          10.779296875,
+          9.6123046875
+        ],
+        "ops": 20,
+        "ns_op": 156156398.0,
+        "bytes_op": 2,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "clip": "p720_inter_q32",
+        "role": "C",
+        "exit": 0,
+        "wall_s": 6.739567995071411,
+        "log": "01-r0-p720_inter_q32-C.log",
+        "sha256": "b5ab708b7830775b6e2593b247cfb5ac1fbde0dca31e655e29924fc51902236a",
+        "load": [
+          18.8154296875,
+          10.76611328125,
+          9.6142578125
+        ],
+        "ops": 20,
+        "ns_op": 155827338.0,
+        "bytes_op": 2,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "clip": "p360_intra_q32",
+        "role": "C",
+        "exit": 0,
+        "wall_s": 1.5433647632598877,
+        "log": "02-r0-p360_intra_q32-C.log",
+        "sha256": "3d350e503b26c12afadedfa6e76a498503a22740b98bb9caa735defe7feec62a",
+        "load": [
+          18.8154296875,
+          10.76611328125,
+          9.6142578125
+        ],
+        "ops": 20,
+        "ns_op": 68426988.0,
+        "bytes_op": 2,
+        "allocs_op": 0
+      },
+      {
+        "round": 0,
+        "clip": "p360_intra_q32",
+        "role": "B",
+        "exit": 0,
+        "wall_s": 1.5039832592010498,
+        "log": "03-r0-p360_intra_q32-B.log",
+        "sha256": "8d1321a55e48f80958e4eeae6c1867022f3903eec1683fab13437b8698c3561d",
+        "load": [
+          18.509765625,
+          10.8359375,
+          9.6455078125
+        ],
+        "ops": 20,
+        "ns_op": 67145694.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "clip": "p360_intra_q32",
+        "role": "B",
+        "exit": 0,
+        "wall_s": 1.4656810760498047,
+        "log": "04-r1-p360_intra_q32-B.log",
+        "sha256": "7d3a555f4acbb5e6a18dd4991fd42f006fd824d7fbc99447eb0338ab3ab63c05",
+        "load": [
+          18.509765625,
+          10.8359375,
+          9.6455078125
+        ],
+        "ops": 20,
+        "ns_op": 66721306.0,
+        "bytes_op": 2,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "clip": "p360_intra_q32",
+        "role": "C",
+        "exit": 0,
+        "wall_s": 1.5022549629211426,
+        "log": "05-r1-p360_intra_q32-C.log",
+        "sha256": "973e059fc0aa023e0c55225a8e26fdff34f6b71dcf44d6c090e0006dfd1dc84b",
+        "load": [
+          18.509765625,
+          10.8359375,
+          9.6455078125
+        ],
+        "ops": 20,
+        "ns_op": 66838721.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "clip": "p720_inter_q32",
+        "role": "C",
+        "exit": 0,
+        "wall_s": 6.8245439529418945,
+        "log": "06-r1-p720_inter_q32-C.log",
+        "sha256": "f8498f84637ef698eb92a5c30159979518c1fca842589978bce7d00942ff1c02",
+        "load": [
+          16.8935546875,
+          10.7421875,
+          9.6259765625
+        ],
+        "ops": 20,
+        "ns_op": 156675027.0,
+        "bytes_op": 0,
+        "allocs_op": 0
+      },
+      {
+        "round": 1,
+        "clip": "p720_inter_q32",
+        "role": "B",
+        "exit": 0,
+        "wall_s": 6.916315078735352,
+        "log": "07-r1-p720_inter_q32-B.log",
+        "sha256": "67bcec0d2941f9bd4cbd8d56e42f410402faee7d82bf1a5f3ad1e92e559a44ad",
+        "load": [
+          16.50146484375,
+          10.7626953125,
+          9.6396484375
+        ],
+        "ops": 20,
+        "ns_op": 161374173.0,
+        "bytes_op": 2,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "clip": "p720_inter_q32",
+        "role": "B",
+        "exit": 0,
+        "wall_s": 6.766276836395264,
+        "log": "08-r2-p720_inter_q32-B.log",
+        "sha256": "fed521e599c5ca249d1522bec3a3c6886a7ad898b2f89b9d199295ed43935b4a",
+        "load": [
+          15.8203125,
+          10.716796875,
+          9.6298828125
+        ],
+        "ops": 20,
+        "ns_op": 160812988.0,
+        "bytes_op": 2,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "clip": "p720_inter_q32",
+        "role": "C",
+        "exit": 0,
+        "wall_s": 6.781638860702515,
+        "log": "09-r2-p720_inter_q32-C.log",
+        "sha256": "1354d4deeb63f5f8d69761cd060605f0030bad9bf8d129534d81352403b5bd88",
+        "load": [
+          14.69775390625,
+          10.6435546875,
+          9.6162109375
+        ],
+        "ops": 20,
+        "ns_op": 156747692.0,
+        "bytes_op": 2,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "clip": "p360_intra_q32",
+        "role": "C",
+        "exit": 0,
+        "wall_s": 1.478693962097168,
+        "log": "10-r2-p360_intra_q32-C.log",
+        "sha256": "d811f6c9166dafd4aa7112945fd30194485a4156915d90e3b940118d3dc48d7f",
+        "load": [
+          14.69775390625,
+          10.6435546875,
+          9.6162109375
+        ],
+        "ops": 20,
+        "ns_op": 65971825.0,
+        "bytes_op": 2,
+        "allocs_op": 0
+      },
+      {
+        "round": 2,
+        "clip": "p360_intra_q32",
+        "role": "B",
+        "exit": 0,
+        "wall_s": 1.4501280784606934,
+        "log": "11-r2-p360_intra_q32-B.log",
+        "sha256": "5bd8332e68dd21db66173a945d4936870ac6b6ac5a8307a35c9c484ce69430e9",
+        "load": [
+          14.69775390625,
+          10.6435546875,
+          9.6162109375
+        ],
+        "ops": 20,
+        "ns_op": 66294723.0,
+        "bytes_op": 2,
+        "allocs_op": 0
+      }
+    ],
+    "raw_logs": {
+      "00-r0-p720_inter_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 156156398 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 168213867 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "01-r0-p720_inter_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 155827338 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 161609396 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "02-r0-p360_intra_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  68426988 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+      "03-r0-p360_intra_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  67145694 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "04-r1-p360_intra_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  66721306 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+      "05-r1-p360_intra_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  66838721 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "06-r1-p720_inter_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 156675027 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 162752610 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "07-r1-p720_inter_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 161374173 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 163547256 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "08-r2-p720_inter_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 160812988 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 158696288 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "09-r2-p720_inter_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 156747692 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 161511098 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+      "10-r2-p360_intra_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  65971825 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+      "11-r2-p360_intra_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  66294723 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n"
+    },
+    "runner_source": "#!/usr/bin/python3\nimport hashlib, json, math, os, pathlib, re, subprocess, time\n\nROOT = pathlib.Path('/private/tmp/decoder-loopfilter-levels-20261018')\nWT = pathlib.Path('/Users/thesyncim/.codex/worktrees/decoder-inter-commit/goav1')\nOUT = ROOT / 'screen'\nOUT.mkdir(exist_ok=False)\nPATHS = {\n    'B': '/private/tmp/decoder-superres-direct-20261018/candidate-fold.test',\n    'C': str(ROOT / 'candidate.test'),\n}\nEXPECTED = {\n    'B': 'ee822414026a0fa7df468c41026a850c9d8268834d4b7c5e6fae0580a6d9f8e6',\n    'C': 'f4dfaa09581fd4dbb3ec4eb427b7ab819557e5db79837c197d10541adc3e02b9',\n}\ndef sha(path):\n    return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()\nassert {k: sha(p) for k, p in PATHS.items()} == EXPECTED\nFILES = ['internal/av1/loopfilter/sb_u8_arm64.go']\nsource_hashes = {p: sha(WT / p) for p in FILES}\nenv = os.environ.copy()\nenv.update(CODEX_AGENT_ID='astra_filter_gap', CODEX_PROJECT_CACHE_ROOT='/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects', GOEXPERIMENT='simd', GOARM64='v8.0', CGO_ENABLED='1', GOMAXPROCS='1', GOGC='100', GOAV1_BENCH_CORPUS_DIR='/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus')\nplan = [(0, 'p720_inter_q32', 'BC'), (0, 'p360_intra_q32', 'CB'), (1, 'p360_intra_q32', 'BC'), (1, 'p720_inter_q32', 'CB'), (2, 'p720_inter_q32', 'BC'), (2, 'p360_intra_q32', 'CB')]\nmanifest = {'base': '10f4a6ae956e881e8d9e85a4797c55a441cd27c3', 'binary_paths': PATHS, 'binary_sha256': EXPECTED, 'sources': source_hashes, 'plan': plan, 'ops': 20, 'protocol': 'One short paired screen: fuse live-level resolution and E/I/H replication for arm64 8-bit deblocking groups. Warm public Reset+DecodeNext at workers=1. Target p720_inter_q32 >=0.5% paired geometric-mean saving and >=2/3 faster pairs; affected intra comparison p360_intra_q32 <=1% regression; all warm rows zero allocations. Three alternating pairs, all observations retained. No retry or pooling. No native-gap claim.'}\n(OUT / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\\n')\nrows = []\nfor rnd, clip, order in plan:\n    for role in order:\n        log = OUT / f'{len(rows):02d}-r{rnd}-{clip}-{role}.log'\n        bench = f'BenchmarkPublicDecoderFullClip/{clip}/warm_reset_decode'\n        cmd = ['/Users/thesyncim/.codex/bin/project-env', PATHS[role], '-test.run=^$', f'-test.bench=^{bench}$', '-test.benchtime=20x', '-test.count=1', '-test.benchmem']\n        start = time.time()\n        with log.open('w') as f:\n            proc = subprocess.run(cmd, cwd=WT, env=env, stdout=f, stderr=subprocess.STDOUT, timeout=90)\n        text = log.read_text()\n        m = re.search('^' + re.escape(bench) + r'\\s+(\\d+)\\s+([\\d.]+) ns/op.*?\\s+(\\d+) B/op\\s+(\\d+) allocs/op$', text, re.M)\n        row = {'round': rnd, 'clip': clip, 'role': role, 'exit': proc.returncode, 'wall_s': time.time()-start, 'log': log.name, 'sha256': sha(log), 'load': os.getloadavg()}\n        if m:\n            row.update(ops=int(m[1]), ns_op=float(m[2]), bytes_op=int(m[3]), allocs_op=int(m[4]))\n        rows.append(row)\n        (OUT / 'rows.json').write_text(json.dumps(rows, indent=2) + '\\n')\n        print(json.dumps(row), flush=True)\n        assert proc.returncode == 0 and m and row['ops'] == 20, row\nsummary = {}\nfor clip in ('p720_inter_q32', 'p360_intra_q32'):\n    pairs = []\n    for rnd in range(3):\n        pair = {r['role']: r['ns_op'] for r in rows if r['round'] == rnd and r['clip'] == clip}\n        pairs.append({'round': rnd, **pair, 'saved_pct': 100*(1-pair['C']/pair['B'])})\n    summary[clip] = {'paired_gm_saved_pct': 100*(1-math.exp(sum(math.log(p['C']/p['B']) for p in pairs)/3)), 'wins': sum(p['C'] < p['B'] for p in pairs), 'pairs': pairs}\nassert {k: sha(p) for k, p in PATHS.items()} == EXPECTED\nassert {p: sha(WT / p) for p in FILES} == source_hashes\nsummary['audit'] = {'rows': len(rows), 'all_0_allocs': all(r['allocs_op'] == 0 for r in rows), 'binary_source_unchanged': True}\n(OUT / 'summary.json').write_text(json.dumps(summary, indent=2) + '\\n')\nprint(json.dumps(summary, indent=2), flush=True)\n"
+  },
+  "codegen": {
+    "horizontal": {
+      "whole_symbol_instructions_before": 325,
+      "whole_symbol_instructions_after": 297,
+      "frame_bytes_before": 272,
+      "frame_bytes_after": 256
+    },
+    "vertical": {
+      "whole_symbol_instructions_before": 400,
+      "whole_symbol_instructions_after": 372,
+      "frame_bytes_before": 624,
+      "frame_bytes_after": 624
+    },
+    "finding": "setLimits is inline; second four-lane loop and temporary lv array removed; whole-symbol instruction counts include cold paths and do not predict speed",
+    "artifacts": {
+      "baseline-codegen.txt": {
+        "path": "/private/tmp/decoder-loopfilter-levels-20261018/baseline-codegen.txt",
+        "sha256": "b64f0262ba5193c83cee24effea868887afac0ea0c743ed2e831b0291784e247"
+      },
+      "candidate-codegen.txt": {
+        "path": "/private/tmp/decoder-loopfilter-levels-20261018/candidate-codegen.txt",
+        "sha256": "28c6dacc527f6d91ee11f63f10c6a3f62572b254888e5754b69ba1cd3895fdbb"
+      }
+    }
+  },
+  "validation": [
+    {
+      "command": "GOEXPERIMENT=simd project-env go test ./internal/av1/loopfilter -run TestFilterSB8(MatchesScalar|ScalarMatchesEdgeKernels)$ -count=1",
+      "status": "PASS",
+      "scope": "4000 dispatched-vs-scalar random groups and 3000 scalar-vs-edge-kernel cases; output and stats"
+    },
+    {
+      "command": "GOEXPERIMENT=simd project-env go test ./internal/av1/decoder -run TestFrameWorkPostFilterContextApplyLoopFilterEdges(UsesPlanePassOrder|HighBitDepthChroma|Allocs)$|TestLoopFilterPooledMatchesSerial$ -count=1",
+      "status": "PASS"
+    },
+    {
+      "command": "project-env candidate.test -test.run=^TestPublicLoopFilterAllocs$|^TestDecoderCompactLoopFilterWarmResetAllocations$ -test.count=1",
+      "status": "PASS"
+    },
+    {
+      "command": "GOAV1_PUBLIC_FULLCLIP=1 GOAV1_BENCH_CORPUS_DIR=/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus project-env candidate.test -test.run=^TestPublicDecoderFullClipCorpusMD5$ -test.count=1 -test.v",
+      "status": "PASS",
+      "scope": "18 clips/864 frames, both IVF and pre-parsed-payload constructors, independent sidecars, workers=1",
+      "log": "=== RUN   TestPublicDecoderFullClipCorpusMD5\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_inter_q20 frames=48 digest=c81031f90d8b64d4b7600891360a2586\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_inter_q20 frames=48 digest=c81031f90d8b64d4b7600891360a2586\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_inter_q32 frames=48 digest=52c881fcbd960e61b494bdb0212a598f\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_inter_q32 frames=48 digest=52c881fcbd960e61b494bdb0212a598f\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_inter_q55 frames=48 digest=2cddf86f5d4a1bd8f401b4f5549dd3d0\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_inter_q55 frames=48 digest=2cddf86f5d4a1bd8f401b4f5549dd3d0\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_intra_q32 frames=48 digest=5bb05de29c9f528b43a1279a55fb2229\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_intra_q32 frames=48 digest=5bb05de29c9f528b43a1279a55fb2229\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_inter_q20 frames=48 digest=50b72e533bf48e4c23a3b16b8aa17e46\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_inter_q20 frames=48 digest=50b72e533bf48e4c23a3b16b8aa17e46\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_inter_q32 frames=48 digest=30ba24a8463f4593ad8683d5beedbf3f\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_inter_q32 frames=48 digest=30ba24a8463f4593ad8683d5beedbf3f\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_inter_q55 frames=48 digest=b2e2ee1fb5f8638e3a1446621c198e59\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_inter_q55 frames=48 digest=b2e2ee1fb5f8638e3a1446621c198e59\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_intra_q32 frames=48 digest=c435e5fbb36afcaf9973874e56a831b4\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_intra_q32 frames=48 digest=c435e5fbb36afcaf9973874e56a831b4\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q20 frames=48 digest=98f748a039be59c3dafd5317887e2c67\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q20 frames=48 digest=98f748a039be59c3dafd5317887e2c67\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q32 frames=48 digest=0631d86d4d5f49d2b0b6b7505e0138ac\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q32 frames=48 digest=0631d86d4d5f49d2b0b6b7505e0138ac\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q32_10bit frames=48 digest=8506fce82608a83814eaa5e3067c0d9b\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q32_10bit frames=48 digest=8506fce82608a83814eaa5e3067c0d9b\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q32_2tiles frames=48 digest=f55ab93cdcee03fd89e7122b89bc920a\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q32_2tiles frames=48 digest=f55ab93cdcee03fd89e7122b89bc920a\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q55 frames=48 digest=cf3b847ee616726b3b048a4c955ae4da\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q55 frames=48 digest=cf3b847ee616726b3b048a4c955ae4da\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_intra_q32 frames=48 digest=5cef0494bd9549db6534ffa4504c0d94\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_intra_q32 frames=48 digest=5cef0494bd9549db6534ffa4504c0d94\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q20 frames=48 digest=1369c36ec029c222e0e7ee2cf95f5b98\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q20 frames=48 digest=1369c36ec029c222e0e7ee2cf95f5b98\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q32 frames=48 digest=47854463914ca952c4b0c63b8e7edd45\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q32 frames=48 digest=47854463914ca952c4b0c63b8e7edd45\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q32_2tiles frames=48 digest=44564e87c87399fbf13b92c6dd39052d\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q32_2tiles frames=48 digest=44564e87c87399fbf13b92c6dd39052d\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q55 frames=48 digest=28554980fa3adb9f0c0cbc345d62eee6\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q55 frames=48 digest=28554980fa3adb9f0c0cbc345d62eee6\n    public_fullclip_corpus_bench_test.go:62: public decoder MD5 preflight passed: clips=18 frames=864 workers=1\n--- PASS: TestPublicDecoderFullClipCorpusMD5 (5.34s)\nPASS\n"
+    },
+    {
+      "command": "GOEXPERIMENT=simd project-env go test ./internal/av1/encoder -run ^TestPFrameReuseOptimizationsPreserveEncodedOutput$/^threads-1$ -count=1 -v",
+      "status": "PASS",
+      "scope": "48 frames; existing encoded-stream and reconstructed-plane SHA256 expectations",
+      "log": "=== RUN   TestPFrameReuseOptimizationsPreserveEncodedOutput\n=== RUN   TestPFrameReuseOptimizationsPreserveEncodedOutput/threads-1\n--- PASS: TestPFrameReuseOptimizationsPreserveEncodedOutput (0.14s)\n    --- PASS: TestPFrameReuseOptimizationsPreserveEncodedOutput/threads-1 (0.14s)\nPASS\nok  \tgithub.com/thesyncim/goav1/internal/av1/encoder\t0.487s\n"
+    }
+  ],
+  "rejected_cdef": [
+    {
+      "variant": "V1",
+      "status": "rejected; production changes reverted",
+      "explanation": "Hoisting fixed rounding shifts adds two vector spill slots; failed target gate.",
+      "binary_path": "/private/tmp/decoder-filter-shifts-20261018/candidate-v1.test",
+      "binary_sha256": "42d7ef0211dec7aa27b9f56d853d1ce9104aaaa55b44e5e5ab1a46874e6cf11a",
+      "source_patch": "diff --git a/internal/av1/cdef/filter_simd.go b/internal/av1/cdef/filter_simd.go\nindex abc22585..f2bb8be2 100644\n--- a/internal/av1/cdef/filter_simd.go\n+++ b/internal/av1/cdef/filter_simd.go\n@@ -152,6 +152,8 @@ func cdefFilterBlock8SIMD(ctx *cdefSIMDCtx) {\n \tsecStr := archsimd.BroadcastInt16x8(int16(ctx.secStrength)).ToBits()\n \tpriSh := cdefShiftCountOf(ctx.priShift)\n \tsecSh := cdefShiftCountOf(ctx.secShift)\n+\tsignSh := cdefShiftCountOf(15)\n+\troundSh := cdefShiftCountOf(4)\n \tpriTap0 := archsimd.BroadcastInt16x8(int16(ctx.priTap0))\n \tpriTap1 := archsimd.BroadcastInt16x8(int16(ctx.priTap1))\n \tsecTap0 := archsimd.BroadcastInt16x8(int16(ctx.secTap0))\n@@ -210,7 +212,7 @@ func cdefFilterBlock8SIMD(ctx *cdefSIMDCtx) {\n \t\t\t}\n \t\t}\n \t\t// y = x + ((8 + sum - (sum<0)) >> 4)\n-\t\ty := x.Add(sum.Add(sum.ShiftAllRight(15)).Add(eight).ShiftAllRight(4))\n+\t\ty := x.Add(cdefRoundScale(sum.Add(cdefRoundSign(sum, signSh)).Add(eight), roundSh))\n \t\tif clip {\n \t\t\ty = y.Max(mn).Min(mx)\n \t\t}\n@@ -234,6 +236,8 @@ func cdefFilterBlock4SIMD(ctx *cdefSIMDCtx) {\n \tsecStr := archsimd.BroadcastInt16x8(int16(ctx.secStrength)).ToBits()\n \tpriSh := cdefShiftCountOf(ctx.priShift)\n \tsecSh := cdefShiftCountOf(ctx.secShift)\n+\tsignSh := cdefShiftCountOf(15)\n+\troundSh := cdefShiftCountOf(4)\n \tpriTap0 := archsimd.BroadcastInt16x8(int16(ctx.priTap0))\n \tpriTap1 := archsimd.BroadcastInt16x8(int16(ctx.priTap1))\n \tsecTap0 := archsimd.BroadcastInt16x8(int16(ctx.secTap0))\n@@ -292,7 +296,7 @@ func cdefFilterBlock4SIMD(ctx *cdefSIMDCtx) {\n \t\t\t\tmn = mn.Min(s4).Min(s5).Min(s6).Min(s7)\n \t\t\t}\n \t\t}\n-\t\ty := x.Add(sum.Add(sum.ShiftAllRight(15)).Add(eight).ShiftAllRight(4))\n+\t\ty := x.Add(cdefRoundScale(sum.Add(cdefRoundSign(sum, signSh)).Add(eight), roundSh))\n \t\tif clip {\n \t\t\ty = y.Max(mn).Min(mx)\n \t\t}\ndiff --git a/internal/av1/cdef/filter_simd_amd64.go b/internal/av1/cdef/filter_simd_amd64.go\nindex 0bbc5da3..2fcaf56f 100644\n--- a/internal/av1/cdef/filter_simd_amd64.go\n+++ b/internal/av1/cdef/filter_simd_amd64.go\n@@ -23,6 +23,15 @@ func cdefShrU16(v archsimd.Uint16x8, sh cdefShiftCount) archsimd.Uint16x8 {\n \treturn v.ShiftAllRight(sh)\n }\n \n+// x86 keeps immediate shifts for the fixed rounding counts.\n+func cdefRoundSign(v archsimd.Int16x8, _ cdefShiftCount) archsimd.Int16x8 {\n+\treturn v.ShiftAllRight(15)\n+}\n+\n+func cdefRoundScale(v archsimd.Int16x8, _ cdefShiftCount) archsimd.Int16x8 {\n+\treturn v.ShiftAllRight(4)\n+}\n+\n // cdefLowByteIdx gathers the low byte of each 16-bit lane into bytes 0..7\n // (PSHUFB, AVX2-era; the lanes 8..15 index with the zeroing high bit).\n var cdefLowByteIdx = archsimd.LoadInt8x16Array(&[16]int8{0, 2, 4, 6, 8, 10, 12, 14, -128, -128, -128, -128, -128, -128, -128, -128})\ndiff --git a/internal/av1/cdef/filter_simd_arm64.go b/internal/av1/cdef/filter_simd_arm64.go\nindex 9a1793df..9c06347b 100644\n--- a/internal/av1/cdef/filter_simd_arm64.go\n+++ b/internal/av1/cdef/filter_simd_arm64.go\n@@ -24,6 +24,16 @@ func cdefShrU16(v archsimd.Uint16x8, sh cdefShiftCount) archsimd.Uint16x8 {\n \treturn v.Shift(sh)\n }\n \n+// Keep the two fixed rounding counts outside the row loop. ShiftAllRight\n+// materializes its NEON count vector at each use with this compiler.\n+func cdefRoundSign(v archsimd.Int16x8, sh cdefShiftCount) archsimd.Int16x8 {\n+\treturn v.Shift(sh)\n+}\n+\n+func cdefRoundScale(v archsimd.Int16x8, sh cdefShiftCount) archsimd.Int16x8 {\n+\treturn v.Shift(sh)\n+}\n+\n // filterUnitBlocks binds the Go SIMD unit-level loop on arm64 (NEON is\n // architecturally mandatory there). See filter_dispatch.go for why this is a\n // build-tag binding instead of a func variable.\n",
+      "screen": {
+        "original_manifest": {
+          "base": "10f4a6ae956e881e8d9e85a4797c55a441cd27c3",
+          "binary_paths": {
+            "B": "/private/tmp/decoder-superres-direct-20261018/candidate-fold.test",
+            "C": "/private/tmp/decoder-filter-shifts-20261018/candidate.test"
+          },
+          "binary_sha256": {
+            "B": "ee822414026a0fa7df468c41026a850c9d8268834d4b7c5e6fae0580a6d9f8e6",
+            "C": "42d7ef0211dec7aa27b9f56d853d1ce9104aaaa55b44e5e5ab1a46874e6cf11a"
+          },
+          "sources": {
+            "internal/av1/cdef/filter_simd.go": "64b2d179b05d27b04dbdb1b58b7459b12a1b171f1e0cd11441b030e204e60f89",
+            "internal/av1/cdef/filter_simd_arm64.go": "ff360da087fba4fde711ff60f805769b9b32d0940943855d28968753d493386f",
+            "internal/av1/cdef/filter_simd_amd64.go": "ba4da978b41004d918e36d8b965e71c042814a516c964e565f791918867232a7"
+          },
+          "plan": [
+            [
+              0,
+              "p720_inter_q32",
+              "BC"
+            ],
+            [
+              0,
+              "p360_intra_q32",
+              "CB"
+            ],
+            [
+              1,
+              "p360_intra_q32",
+              "BC"
+            ],
+            [
+              1,
+              "p720_inter_q32",
+              "CB"
+            ],
+            [
+              2,
+              "p720_inter_q32",
+              "BC"
+            ],
+            [
+              2,
+              "p360_intra_q32",
+              "CB"
+            ]
+          ],
+          "ops": 20,
+          "protocol": "One short paired screen: hoist CDEF signed rounding shifts outside 8/4-wide row loops. Warm public Reset+DecodeNext at workers=1. Target p720_inter_q32 >=0.5% paired geometric-mean saving and >=2/3 faster pairs; control p360_intra_q32 <=1% regression; all warm rows zero allocations. Three alternating pairs, all observations retained. No retry or pooling. No native-gap claim."
+        },
+        "original_exact_target_summary": {
+          "p720_inter_q32": {
+            "paired_gm_saved_pct": -4.522018174102782,
+            "wins": 1,
+            "pairs": [
+              {
+                "round": 0,
+                "B": 156952385.0,
+                "C": 165152869.0,
+                "saved_pct": -5.224822802151108
+              },
+              {
+                "round": 1,
+                "C": 157116658.0,
+                "B": 157264575.0,
+                "saved_pct": 0.0940561471011514
+              },
+              {
+                "round": 2,
+                "B": 158653425.0,
+                "C": 172330950.0,
+                "saved_pct": -8.621008339403957
+              }
+            ]
+          },
+          "p360_intra_q32": {
+            "paired_gm_saved_pct": 3.4064827558711985,
+            "wins": 3,
+            "pairs": [
+              {
+                "round": 0,
+                "C": 68951625.0,
+                "B": 71066425.0,
+                "saved_pct": 2.9758074927787592
+              },
+              {
+                "round": 1,
+                "B": 70271646.0,
+                "C": 66394888.0,
+                "saved_pct": 5.516816839611238
+              },
+              {
+                "round": 2,
+                "C": 69146217.0,
+                "B": 70332983.0,
+                "saved_pct": 1.6873534284760794
+              }
+            ]
+          },
+          "audit": {
+            "rows": 12,
+            "all_0_allocs": true,
+            "binary_source_unchanged": true
+          }
+        },
+        "all_actual_rows_and_audit": {
+          "protocol_deviation": "The Go -test.bench pattern was split at slashes. The clip component p720_inter_q32 lacked its own end anchor, so every intended p720 process also ran p720_inter_q32_2tiles afterward. Original raw logs and manifests remain unchanged. Acceptance used only the predeclared exact p720 and intra rows. Accidental two-tile rows are disclosed here and do not substitute for the target gate. No new timings were collected.",
+          "processes": 12,
+          "actual_benchmark_rows": 18,
+          "intended_benchmark_rows": 12,
+          "all_actual_rows_zero_allocs": true,
+          "rows": [
+            {
+              "round": 0,
+              "role": "B",
+              "clip": "p720_inter_q32",
+              "ops": 20,
+              "ns_op": 156952385.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "00-r0-p720_inter_q32-B.log",
+              "intended": true
+            },
+            {
+              "round": 0,
+              "role": "B",
+              "clip": "p720_inter_q32_2tiles",
+              "ops": 20,
+              "ns_op": 161854692.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "00-r0-p720_inter_q32-B.log",
+              "intended": false
+            },
+            {
+              "round": 0,
+              "role": "C",
+              "clip": "p720_inter_q32",
+              "ops": 20,
+              "ns_op": 165152869.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "01-r0-p720_inter_q32-C.log",
+              "intended": true
+            },
+            {
+              "round": 0,
+              "role": "C",
+              "clip": "p720_inter_q32_2tiles",
+              "ops": 20,
+              "ns_op": 165092596.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "01-r0-p720_inter_q32-C.log",
+              "intended": false
+            },
+            {
+              "round": 0,
+              "role": "C",
+              "clip": "p360_intra_q32",
+              "ops": 20,
+              "ns_op": 68951625.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "02-r0-p360_intra_q32-C.log",
+              "intended": true
+            },
+            {
+              "round": 0,
+              "role": "B",
+              "clip": "p360_intra_q32",
+              "ops": 20,
+              "ns_op": 71066425.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "03-r0-p360_intra_q32-B.log",
+              "intended": true
+            },
+            {
+              "round": 1,
+              "role": "B",
+              "clip": "p360_intra_q32",
+              "ops": 20,
+              "ns_op": 70271646.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "04-r1-p360_intra_q32-B.log",
+              "intended": true
+            },
+            {
+              "round": 1,
+              "role": "C",
+              "clip": "p360_intra_q32",
+              "ops": 20,
+              "ns_op": 66394888.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "05-r1-p360_intra_q32-C.log",
+              "intended": true
+            },
+            {
+              "round": 1,
+              "role": "C",
+              "clip": "p720_inter_q32",
+              "ops": 20,
+              "ns_op": 157116658.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "06-r1-p720_inter_q32-C.log",
+              "intended": true
+            },
+            {
+              "round": 1,
+              "role": "C",
+              "clip": "p720_inter_q32_2tiles",
+              "ops": 20,
+              "ns_op": 159863177.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "06-r1-p720_inter_q32-C.log",
+              "intended": false
+            },
+            {
+              "round": 1,
+              "role": "B",
+              "clip": "p720_inter_q32",
+              "ops": 20,
+              "ns_op": 157264575.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "07-r1-p720_inter_q32-B.log",
+              "intended": true
+            },
+            {
+              "round": 1,
+              "role": "B",
+              "clip": "p720_inter_q32_2tiles",
+              "ops": 20,
+              "ns_op": 165181206.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "07-r1-p720_inter_q32-B.log",
+              "intended": false
+            },
+            {
+              "round": 2,
+              "role": "B",
+              "clip": "p720_inter_q32",
+              "ops": 20,
+              "ns_op": 158653425.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "08-r2-p720_inter_q32-B.log",
+              "intended": true
+            },
+            {
+              "round": 2,
+              "role": "B",
+              "clip": "p720_inter_q32_2tiles",
+              "ops": 20,
+              "ns_op": 164654429.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "08-r2-p720_inter_q32-B.log",
+              "intended": false
+            },
+            {
+              "round": 2,
+              "role": "C",
+              "clip": "p720_inter_q32",
+              "ops": 20,
+              "ns_op": 172330950.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "09-r2-p720_inter_q32-C.log",
+              "intended": true
+            },
+            {
+              "round": 2,
+              "role": "C",
+              "clip": "p720_inter_q32_2tiles",
+              "ops": 20,
+              "ns_op": 172479025.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "09-r2-p720_inter_q32-C.log",
+              "intended": false
+            },
+            {
+              "round": 2,
+              "role": "C",
+              "clip": "p360_intra_q32",
+              "ops": 20,
+              "ns_op": 69146217.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "10-r2-p360_intra_q32-C.log",
+              "intended": true
+            },
+            {
+              "round": 2,
+              "role": "B",
+              "clip": "p360_intra_q32",
+              "ops": 20,
+              "ns_op": 70332983.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "11-r2-p360_intra_q32-B.log",
+              "intended": true
+            }
+          ],
+          "summary": {
+            "p360_intra_q32": {
+              "paired_gm_saved_pct": 3.4064827558711985,
+              "wins": 3,
+              "pairs": [
+                {
+                  "round": 0,
+                  "C": 68951625.0,
+                  "B": 71066425.0,
+                  "saved_pct": 2.9758074927787592
+                },
+                {
+                  "round": 1,
+                  "B": 70271646.0,
+                  "C": 66394888.0,
+                  "saved_pct": 5.516816839611238
+                },
+                {
+                  "round": 2,
+                  "C": 69146217.0,
+                  "B": 70332983.0,
+                  "saved_pct": 1.6873534284760794
+                }
+              ]
+            },
+            "p720_inter_q32": {
+              "paired_gm_saved_pct": -4.522018174102782,
+              "wins": 1,
+              "pairs": [
+                {
+                  "round": 0,
+                  "B": 156952385.0,
+                  "C": 165152869.0,
+                  "saved_pct": -5.224822802151108
+                },
+                {
+                  "round": 1,
+                  "C": 157116658.0,
+                  "B": 157264575.0,
+                  "saved_pct": 0.0940561471011514
+                },
+                {
+                  "round": 2,
+                  "B": 158653425.0,
+                  "C": 172330950.0,
+                  "saved_pct": -8.621008339403957
+                }
+              ]
+            },
+            "p720_inter_q32_2tiles": {
+              "paired_gm_saved_pct": -1.1232441323878684,
+              "wins": 1,
+              "pairs": [
+                {
+                  "round": 0,
+                  "B": 161854692.0,
+                  "C": 165092596.0,
+                  "saved_pct": -2.0005005477382154
+                },
+                {
+                  "round": 1,
+                  "C": 159863177.0,
+                  "B": 165181206.0,
+                  "saved_pct": 3.2195121520059655
+                },
+                {
+                  "round": 2,
+                  "B": 164654429.0,
+                  "C": 172479025.0,
+                  "saved_pct": -4.752132115437968
+                }
+              ]
+            }
+          }
+        },
+        "processes": [
+          {
+            "round": 0,
+            "clip": "p720_inter_q32",
+            "role": "B",
+            "exit": 0,
+            "wall_s": 6.802973985671997,
+            "log": "00-r0-p720_inter_q32-B.log",
+            "sha256": "8e1f42cbcadfccdea4e938d1a77d131362ce2295d72b6e47110e157ef41eb033",
+            "load": [
+              9.3134765625,
+              9.6142578125,
+              9.58251953125
+            ],
+            "ops": 20,
+            "ns_op": 156952385.0,
+            "bytes_op": 0,
+            "allocs_op": 0
+          },
+          {
+            "round": 0,
+            "clip": "p720_inter_q32",
+            "role": "C",
+            "exit": 0,
+            "wall_s": 7.50650691986084,
+            "log": "01-r0-p720_inter_q32-C.log",
+            "sha256": "4ae85764ed1c2f0da40c049d5a60646da367006b28f52d179c1b11cc9a3a2d7c",
+            "load": [
+              8.79052734375,
+              9.49462890625,
+              9.54052734375
+            ],
+            "ops": 20,
+            "ns_op": 165152869.0,
+            "bytes_op": 0,
+            "allocs_op": 0
+          },
+          {
+            "round": 0,
+            "clip": "p360_intra_q32",
+            "role": "C",
+            "exit": 0,
+            "wall_s": 1.5221619606018066,
+            "log": "02-r0-p360_intra_q32-C.log",
+            "sha256": "f5d814c3cec42be23720dd03409b94d463b43688db48f338e72f5c5c0cb6e853",
+            "load": [
+              8.79052734375,
+              9.49462890625,
+              9.54052734375
+            ],
+            "ops": 20,
+            "ns_op": 68951625.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          },
+          {
+            "round": 0,
+            "clip": "p360_intra_q32",
+            "role": "B",
+            "exit": 0,
+            "wall_s": 1.5868618488311768,
+            "log": "03-r0-p360_intra_q32-B.log",
+            "sha256": "daea2d7c75b30c3edf5229088bcfcef3d1d6392f300dc5660bc45d83857c6b94",
+            "load": [
+              8.79052734375,
+              9.49462890625,
+              9.54052734375
+            ],
+            "ops": 20,
+            "ns_op": 71066425.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          },
+          {
+            "round": 1,
+            "clip": "p360_intra_q32",
+            "role": "B",
+            "exit": 0,
+            "wall_s": 1.5780441761016846,
+            "log": "04-r1-p360_intra_q32-B.log",
+            "sha256": "b8ec0ef501948f5a5326501ff5ea6e34085dd46c0e9346e5564a0dc32caddd55",
+            "load": [
+              8.40673828125,
+              9.4033203125,
+              9.5078125
+            ],
+            "ops": 20,
+            "ns_op": 70271646.0,
+            "bytes_op": 0,
+            "allocs_op": 0
+          },
+          {
+            "round": 1,
+            "clip": "p360_intra_q32",
+            "role": "C",
+            "exit": 0,
+            "wall_s": 1.4701409339904785,
+            "log": "05-r1-p360_intra_q32-C.log",
+            "sha256": "f06fa7d6411d279a4a0f0ca8e8f197d3547958919fa6ce79f427cbec8a4594a5",
+            "load": [
+              8.40673828125,
+              9.4033203125,
+              9.5078125
+            ],
+            "ops": 20,
+            "ns_op": 66394888.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          },
+          {
+            "round": 1,
+            "clip": "p720_inter_q32",
+            "role": "C",
+            "exit": 0,
+            "wall_s": 6.721750974655151,
+            "log": "06-r1-p720_inter_q32-C.log",
+            "sha256": "67ac4dccf12724c460c13214968a1be0566d9eced21c04f14d65476889189508",
+            "load": [
+              8.1337890625,
+              9.330078125,
+              9.48095703125
+            ],
+            "ops": 20,
+            "ns_op": 157116658.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          },
+          {
+            "round": 1,
+            "clip": "p720_inter_q32",
+            "role": "B",
+            "exit": 0,
+            "wall_s": 6.870586156845093,
+            "log": "07-r1-p720_inter_q32-B.log",
+            "sha256": "bbbb494e4c1c39f4e08fdb14781a8693af939f3c6c80bcc43f7d4ec2dacef1fd",
+            "load": [
+              11.482421875,
+              9.9833984375,
+              9.70947265625
+            ],
+            "ops": 20,
+            "ns_op": 157264575.0,
+            "bytes_op": 0,
+            "allocs_op": 0
+          },
+          {
+            "round": 2,
+            "clip": "p720_inter_q32",
+            "role": "B",
+            "exit": 0,
+            "wall_s": 6.85089111328125,
+            "log": "08-r2-p720_inter_q32-B.log",
+            "sha256": "134d884a61201f5042c5db63d4be78d2ac254ca63a9f6da2434325e945461d26",
+            "load": [
+              10.8828125,
+              9.8837890625,
+              9.67578125
+            ],
+            "ops": 20,
+            "ns_op": 158653425.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          },
+          {
+            "round": 2,
+            "clip": "p720_inter_q32",
+            "role": "C",
+            "exit": 0,
+            "wall_s": 7.336418867111206,
+            "log": "09-r2-p720_inter_q32-C.log",
+            "sha256": "417f9a47398629c103a5b7d52a21a7cdbc208208e91e580882ca7db94d0eef9f",
+            "load": [
+              10.49169921875,
+              9.81884765625,
+              9.65380859375
+            ],
+            "ops": 20,
+            "ns_op": 172330950.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          },
+          {
+            "round": 2,
+            "clip": "p360_intra_q32",
+            "role": "C",
+            "exit": 0,
+            "wall_s": 1.532945156097412,
+            "log": "10-r2-p360_intra_q32-C.log",
+            "sha256": "840ba55c2003fa5e423967f02e759cc00e3632edf18304001cb42d965d6928bf",
+            "load": [
+              9.9716796875,
+              9.72216796875,
+              9.62060546875
+            ],
+            "ops": 20,
+            "ns_op": 69146217.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          },
+          {
+            "round": 2,
+            "clip": "p360_intra_q32",
+            "role": "B",
+            "exit": 0,
+            "wall_s": 1.5814430713653564,
+            "log": "11-r2-p360_intra_q32-B.log",
+            "sha256": "61df7bfb367317f646d6aa5b8bc0467bd4aab9b224fb0f4ff234d89fa88a61d4",
+            "load": [
+              9.9716796875,
+              9.72216796875,
+              9.62060546875
+            ],
+            "ops": 20,
+            "ns_op": 70332983.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          }
+        ],
+        "raw_logs": {
+          "00-r0-p720_inter_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 156952385 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 161854692 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+          "01-r0-p720_inter_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 165152869 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 165092596 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+          "02-r0-p360_intra_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  68951625 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+          "03-r0-p360_intra_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  71066425 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+          "04-r1-p360_intra_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  70271646 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+          "05-r1-p360_intra_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  66394888 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+          "06-r1-p720_inter_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 157116658 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 159863177 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+          "07-r1-p720_inter_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 157264575 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 165181206 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+          "08-r2-p720_inter_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 158653425 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 164654429 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+          "09-r2-p720_inter_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 172330950 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 172479025 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+          "10-r2-p360_intra_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  69146217 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+          "11-r2-p360_intra_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  70332983 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n"
+        },
+        "runner_source": "#!/usr/bin/python3\nimport hashlib, json, math, os, pathlib, re, subprocess, time\n\nROOT = pathlib.Path('/private/tmp/decoder-filter-shifts-20261018')\nWT = pathlib.Path('/Users/thesyncim/.codex/worktrees/decoder-inter-commit/goav1')\nOUT = ROOT / 'screen'\nOUT.mkdir(exist_ok=False)\nPATHS = {\n    'B': '/private/tmp/decoder-superres-direct-20261018/candidate-fold.test',\n    'C': str(ROOT / 'candidate.test'),\n}\nEXPECTED = {\n    'B': 'ee822414026a0fa7df468c41026a850c9d8268834d4b7c5e6fae0580a6d9f8e6',\n    'C': '42d7ef0211dec7aa27b9f56d853d1ce9104aaaa55b44e5e5ab1a46874e6cf11a',\n}\ndef sha(path):\n    return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()\nassert {k: sha(p) for k, p in PATHS.items()} == EXPECTED\nFILES = ['internal/av1/cdef/filter_simd.go', 'internal/av1/cdef/filter_simd_arm64.go', 'internal/av1/cdef/filter_simd_amd64.go']\nsource_hashes = {p: sha(WT / p) for p in FILES}\nenv = os.environ.copy()\nenv.update(CODEX_AGENT_ID='astra_filter_gap', CODEX_PROJECT_CACHE_ROOT='/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects', GOEXPERIMENT='simd', GOARM64='v8.0', CGO_ENABLED='1', GOMAXPROCS='1', GOGC='100', GOAV1_BENCH_CORPUS_DIR='/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus')\nplan = [(0, 'p720_inter_q32', 'BC'), (0, 'p360_intra_q32', 'CB'), (1, 'p360_intra_q32', 'BC'), (1, 'p720_inter_q32', 'CB'), (2, 'p720_inter_q32', 'BC'), (2, 'p360_intra_q32', 'CB')]\nmanifest = {'base': '10f4a6ae956e881e8d9e85a4797c55a441cd27c3', 'binary_paths': PATHS, 'binary_sha256': EXPECTED, 'sources': source_hashes, 'plan': plan, 'ops': 20, 'protocol': 'One short paired screen: hoist CDEF signed rounding shifts outside 8/4-wide row loops. Warm public Reset+DecodeNext at workers=1. Target p720_inter_q32 >=0.5% paired geometric-mean saving and >=2/3 faster pairs; control p360_intra_q32 <=1% regression; all warm rows zero allocations. Three alternating pairs, all observations retained. No retry or pooling. No native-gap claim.'}\n(OUT / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\\n')\nrows = []\nfor rnd, clip, order in plan:\n    for role in order:\n        log = OUT / f'{len(rows):02d}-r{rnd}-{clip}-{role}.log'\n        bench = f'BenchmarkPublicDecoderFullClip/{clip}/warm_reset_decode'\n        cmd = ['/Users/thesyncim/.codex/bin/project-env', PATHS[role], '-test.run=^$', f'-test.bench=^{bench}$', '-test.benchtime=20x', '-test.count=1', '-test.benchmem']\n        start = time.time()\n        with log.open('w') as f:\n            proc = subprocess.run(cmd, cwd=WT, env=env, stdout=f, stderr=subprocess.STDOUT, timeout=90)\n        text = log.read_text()\n        m = re.search('^' + re.escape(bench) + r'\\s+(\\d+)\\s+([\\d.]+) ns/op.*?\\s+(\\d+) B/op\\s+(\\d+) allocs/op$', text, re.M)\n        row = {'round': rnd, 'clip': clip, 'role': role, 'exit': proc.returncode, 'wall_s': time.time()-start, 'log': log.name, 'sha256': sha(log), 'load': os.getloadavg()}\n        if m:\n            row.update(ops=int(m[1]), ns_op=float(m[2]), bytes_op=int(m[3]), allocs_op=int(m[4]))\n        rows.append(row)\n        (OUT / 'rows.json').write_text(json.dumps(rows, indent=2) + '\\n')\n        print(json.dumps(row), flush=True)\n        assert proc.returncode == 0 and m and row['ops'] == 20, row\nsummary = {}\nfor clip in ('p720_inter_q32', 'p360_intra_q32'):\n    pairs = []\n    for rnd in range(3):\n        pair = {r['role']: r['ns_op'] for r in rows if r['round'] == rnd and r['clip'] == clip}\n        pairs.append({'round': rnd, **pair, 'saved_pct': 100*(1-pair['C']/pair['B'])})\n    summary[clip] = {'paired_gm_saved_pct': 100*(1-math.exp(sum(math.log(p['C']/p['B']) for p in pairs)/3)), 'wins': sum(p['C'] < p['B'] for p in pairs), 'pairs': pairs}\nassert {k: sha(p) for k, p in PATHS.items()} == EXPECTED\nassert {p: sha(WT / p) for p in FILES} == source_hashes\nsummary['audit'] = {'rows': len(rows), 'all_0_allocs': all(r['allocs_op'] == 0 for r in rows), 'binary_source_unchanged': True}\n(OUT / 'summary.json').write_text(json.dumps(summary, indent=2) + '\\n')\nprint(json.dumps(summary, indent=2), flush=True)\n"
+      },
+      "correctness": "Focused SIMD random/strength/sentinel/clip/unit/U8 parity and zeroalloc passed; source-derived libaom corpus passed; decoder U8 whole/banded and native HBD snapshot passed. V1 experiment-off U8 test and both amd64 SIMD crossbuilds passed. No acceptance based on compiler diagnostics alone."
+    },
+    {
+      "variant": "V2",
+      "status": "rejected; production changes reverted",
+      "explanation": "Phased secondary tap lifetimes eliminate all SIMD spills in both kernels; still failed target gate.",
+      "binary_path": "/private/tmp/decoder-filter-shifts-20261018/candidate-v2.test",
+      "binary_sha256": "9aae88a70afe977c7301b99c11ef59cd13484f2514a234bbcdc14b8b78860c81",
+      "source_patch": "diff --git a/internal/av1/cdef/filter_simd.go b/internal/av1/cdef/filter_simd.go\nindex abc22585..b4b81b77 100644\n--- a/internal/av1/cdef/filter_simd.go\n+++ b/internal/av1/cdef/filter_simd.go\n@@ -152,6 +152,8 @@ func cdefFilterBlock8SIMD(ctx *cdefSIMDCtx) {\n \tsecStr := archsimd.BroadcastInt16x8(int16(ctx.secStrength)).ToBits()\n \tpriSh := cdefShiftCountOf(ctx.priShift)\n \tsecSh := cdefShiftCountOf(ctx.secShift)\n+\tsignSh := cdefShiftCountOf(15)\n+\troundSh := cdefShiftCountOf(4)\n \tpriTap0 := archsimd.BroadcastInt16x8(int16(ctx.priTap0))\n \tpriTap1 := archsimd.BroadcastInt16x8(int16(ctx.priTap1))\n \tsecTap0 := archsimd.BroadcastInt16x8(int16(ctx.secTap0))\n@@ -189,28 +191,33 @@ func cdefFilterBlock8SIMD(ctx *cdefSIMDCtx) {\n \t\t\ts1 := cdefLoadU16P(unsafe.Add(src, -sec0))\n \t\t\ts2 := cdefLoadU16P(unsafe.Add(src, sec1))\n \t\t\ts3 := cdefLoadU16P(unsafe.Add(src, -sec1))\n-\t\t\ts4 := cdefLoadU16P(unsafe.Add(src, sec2))\n-\t\t\ts5 := cdefLoadU16P(unsafe.Add(src, -sec2))\n-\t\t\ts6 := cdefLoadU16P(unsafe.Add(src, sec3))\n-\t\t\ts7 := cdefLoadU16P(unsafe.Add(src, -sec3))\n \t\t\tc0 := cdefConstrain(s0, x, secStr, secSh)\n \t\t\tc1 := cdefConstrain(s1, x, secStr, secSh)\n \t\t\tc2 := cdefConstrain(s2, x, secStr, secSh)\n \t\t\tc3 := cdefConstrain(s3, x, secStr, secSh)\n+\t\t\t// Consume the near taps before loading the far taps, so raw taps\n+\t\t\t// and constrain temporaries from both distances need not coexist.\n+\t\t\tsum = sum.Add(c0.Add(c1).Add(c2).Add(c3).Mul(secTap0))\n+\t\t\tif clip {\n+\t\t\t\tmx = mx.Max(s0.And(noSentinel)).Max(s1.And(noSentinel)).Max(s2.And(noSentinel)).Max(s3.And(noSentinel))\n+\t\t\t\tmn = mn.Min(s0).Min(s1).Min(s2).Min(s3)\n+\t\t\t}\n+\t\t\ts4 := cdefLoadU16P(unsafe.Add(src, sec2))\n+\t\t\ts5 := cdefLoadU16P(unsafe.Add(src, -sec2))\n+\t\t\ts6 := cdefLoadU16P(unsafe.Add(src, sec3))\n+\t\t\ts7 := cdefLoadU16P(unsafe.Add(src, -sec3))\n \t\t\tc4 := cdefConstrain(s4, x, secStr, secSh)\n \t\t\tc5 := cdefConstrain(s5, x, secStr, secSh)\n \t\t\tc6 := cdefConstrain(s6, x, secStr, secSh)\n \t\t\tc7 := cdefConstrain(s7, x, secStr, secSh)\n-\t\t\tsum = sum.Add(c0.Add(c1).Add(c2).Add(c3).Mul(secTap0)).Add(c4.Add(c5).Add(c6).Add(c7).Mul(secTap1))\n+\t\t\tsum = sum.Add(c4.Add(c5).Add(c6).Add(c7).Mul(secTap1))\n \t\t\tif clip {\n-\t\t\t\tmx = mx.Max(s0.And(noSentinel)).Max(s1.And(noSentinel)).Max(s2.And(noSentinel)).Max(s3.And(noSentinel))\n \t\t\t\tmx = mx.Max(s4.And(noSentinel)).Max(s5.And(noSentinel)).Max(s6.And(noSentinel)).Max(s7.And(noSentinel))\n-\t\t\t\tmn = mn.Min(s0).Min(s1).Min(s2).Min(s3)\n \t\t\t\tmn = mn.Min(s4).Min(s5).Min(s6).Min(s7)\n \t\t\t}\n \t\t}\n \t\t// y = x + ((8 + sum - (sum<0)) >> 4)\n-\t\ty := x.Add(sum.Add(sum.ShiftAllRight(15)).Add(eight).ShiftAllRight(4))\n+\t\ty := x.Add(cdefRoundScale(sum.Add(cdefRoundSign(sum, signSh)).Add(eight), roundSh))\n \t\tif clip {\n \t\t\ty = y.Max(mn).Min(mx)\n \t\t}\n@@ -234,6 +241,8 @@ func cdefFilterBlock4SIMD(ctx *cdefSIMDCtx) {\n \tsecStr := archsimd.BroadcastInt16x8(int16(ctx.secStrength)).ToBits()\n \tpriSh := cdefShiftCountOf(ctx.priShift)\n \tsecSh := cdefShiftCountOf(ctx.secShift)\n+\tsignSh := cdefShiftCountOf(15)\n+\troundSh := cdefShiftCountOf(4)\n \tpriTap0 := archsimd.BroadcastInt16x8(int16(ctx.priTap0))\n \tpriTap1 := archsimd.BroadcastInt16x8(int16(ctx.priTap1))\n \tsecTap0 := archsimd.BroadcastInt16x8(int16(ctx.secTap0))\n@@ -272,27 +281,32 @@ func cdefFilterBlock4SIMD(ctx *cdefSIMDCtx) {\n \t\t\ts1 := cdefLoadPairU16P(unsafe.Add(src, -sec0), unsafe.Add(src2, -sec0))\n \t\t\ts2 := cdefLoadPairU16P(unsafe.Add(src, sec1), unsafe.Add(src2, sec1))\n \t\t\ts3 := cdefLoadPairU16P(unsafe.Add(src, -sec1), unsafe.Add(src2, -sec1))\n-\t\t\ts4 := cdefLoadPairU16P(unsafe.Add(src, sec2), unsafe.Add(src2, sec2))\n-\t\t\ts5 := cdefLoadPairU16P(unsafe.Add(src, -sec2), unsafe.Add(src2, -sec2))\n-\t\t\ts6 := cdefLoadPairU16P(unsafe.Add(src, sec3), unsafe.Add(src2, sec3))\n-\t\t\ts7 := cdefLoadPairU16P(unsafe.Add(src, -sec3), unsafe.Add(src2, -sec3))\n \t\t\tc0 := cdefConstrain(s0, x, secStr, secSh)\n \t\t\tc1 := cdefConstrain(s1, x, secStr, secSh)\n \t\t\tc2 := cdefConstrain(s2, x, secStr, secSh)\n \t\t\tc3 := cdefConstrain(s3, x, secStr, secSh)\n+\t\t\t// As in the 8-wide kernel, release the near-tap values before\n+\t\t\t// introducing the far-tap values and their constrain temporaries.\n+\t\t\tsum = sum.Add(c0.Add(c1).Add(c2).Add(c3).Mul(secTap0))\n+\t\t\tif clip {\n+\t\t\t\tmx = mx.Max(s0.And(noSentinel)).Max(s1.And(noSentinel)).Max(s2.And(noSentinel)).Max(s3.And(noSentinel))\n+\t\t\t\tmn = mn.Min(s0).Min(s1).Min(s2).Min(s3)\n+\t\t\t}\n+\t\t\ts4 := cdefLoadPairU16P(unsafe.Add(src, sec2), unsafe.Add(src2, sec2))\n+\t\t\ts5 := cdefLoadPairU16P(unsafe.Add(src, -sec2), unsafe.Add(src2, -sec2))\n+\t\t\ts6 := cdefLoadPairU16P(unsafe.Add(src, sec3), unsafe.Add(src2, sec3))\n+\t\t\ts7 := cdefLoadPairU16P(unsafe.Add(src, -sec3), unsafe.Add(src2, -sec3))\n \t\t\tc4 := cdefConstrain(s4, x, secStr, secSh)\n \t\t\tc5 := cdefConstrain(s5, x, secStr, secSh)\n \t\t\tc6 := cdefConstrain(s6, x, secStr, secSh)\n \t\t\tc7 := cdefConstrain(s7, x, secStr, secSh)\n-\t\t\tsum = sum.Add(c0.Add(c1).Add(c2).Add(c3).Mul(secTap0)).Add(c4.Add(c5).Add(c6).Add(c7).Mul(secTap1))\n+\t\t\tsum = sum.Add(c4.Add(c5).Add(c6).Add(c7).Mul(secTap1))\n \t\t\tif clip {\n-\t\t\t\tmx = mx.Max(s0.And(noSentinel)).Max(s1.And(noSentinel)).Max(s2.And(noSentinel)).Max(s3.And(noSentinel))\n \t\t\t\tmx = mx.Max(s4.And(noSentinel)).Max(s5.And(noSentinel)).Max(s6.And(noSentinel)).Max(s7.And(noSentinel))\n-\t\t\t\tmn = mn.Min(s0).Min(s1).Min(s2).Min(s3)\n \t\t\t\tmn = mn.Min(s4).Min(s5).Min(s6).Min(s7)\n \t\t\t}\n \t\t}\n-\t\ty := x.Add(sum.Add(sum.ShiftAllRight(15)).Add(eight).ShiftAllRight(4))\n+\t\ty := x.Add(cdefRoundScale(sum.Add(cdefRoundSign(sum, signSh)).Add(eight), roundSh))\n \t\tif clip {\n \t\t\ty = y.Max(mn).Min(mx)\n \t\t}\ndiff --git a/internal/av1/cdef/filter_simd_amd64.go b/internal/av1/cdef/filter_simd_amd64.go\nindex 0bbc5da3..2fcaf56f 100644\n--- a/internal/av1/cdef/filter_simd_amd64.go\n+++ b/internal/av1/cdef/filter_simd_amd64.go\n@@ -23,6 +23,15 @@ func cdefShrU16(v archsimd.Uint16x8, sh cdefShiftCount) archsimd.Uint16x8 {\n \treturn v.ShiftAllRight(sh)\n }\n \n+// x86 keeps immediate shifts for the fixed rounding counts.\n+func cdefRoundSign(v archsimd.Int16x8, _ cdefShiftCount) archsimd.Int16x8 {\n+\treturn v.ShiftAllRight(15)\n+}\n+\n+func cdefRoundScale(v archsimd.Int16x8, _ cdefShiftCount) archsimd.Int16x8 {\n+\treturn v.ShiftAllRight(4)\n+}\n+\n // cdefLowByteIdx gathers the low byte of each 16-bit lane into bytes 0..7\n // (PSHUFB, AVX2-era; the lanes 8..15 index with the zeroing high bit).\n var cdefLowByteIdx = archsimd.LoadInt8x16Array(&[16]int8{0, 2, 4, 6, 8, 10, 12, 14, -128, -128, -128, -128, -128, -128, -128, -128})\ndiff --git a/internal/av1/cdef/filter_simd_arm64.go b/internal/av1/cdef/filter_simd_arm64.go\nindex 9a1793df..9c06347b 100644\n--- a/internal/av1/cdef/filter_simd_arm64.go\n+++ b/internal/av1/cdef/filter_simd_arm64.go\n@@ -24,6 +24,16 @@ func cdefShrU16(v archsimd.Uint16x8, sh cdefShiftCount) archsimd.Uint16x8 {\n \treturn v.Shift(sh)\n }\n \n+// Keep the two fixed rounding counts outside the row loop. ShiftAllRight\n+// materializes its NEON count vector at each use with this compiler.\n+func cdefRoundSign(v archsimd.Int16x8, sh cdefShiftCount) archsimd.Int16x8 {\n+\treturn v.Shift(sh)\n+}\n+\n+func cdefRoundScale(v archsimd.Int16x8, sh cdefShiftCount) archsimd.Int16x8 {\n+\treturn v.Shift(sh)\n+}\n+\n // filterUnitBlocks binds the Go SIMD unit-level loop on arm64 (NEON is\n // architecturally mandatory there). See filter_dispatch.go for why this is a\n // build-tag binding instead of a func variable.\n",
+      "screen": {
+        "original_manifest": {
+          "base": "10f4a6ae956e881e8d9e85a4797c55a441cd27c3",
+          "binary_paths": {
+            "B": "/private/tmp/decoder-superres-direct-20261018/candidate-fold.test",
+            "C": "/private/tmp/decoder-filter-shifts-20261018/candidate-v2.test"
+          },
+          "binary_sha256": {
+            "B": "ee822414026a0fa7df468c41026a850c9d8268834d4b7c5e6fae0580a6d9f8e6",
+            "C": "9aae88a70afe977c7301b99c11ef59cd13484f2514a234bbcdc14b8b78860c81"
+          },
+          "sources": {
+            "internal/av1/cdef/filter_simd.go": "6219dd49e1cf405ab790be683c7ec5d067f43272a4211a15f29a447f9ebb5269",
+            "internal/av1/cdef/filter_simd_arm64.go": "ff360da087fba4fde711ff60f805769b9b32d0940943855d28968753d493386f",
+            "internal/av1/cdef/filter_simd_amd64.go": "ba4da978b41004d918e36d8b965e71c042814a516c964e565f791918867232a7"
+          },
+          "plan": [
+            [
+              0,
+              "p720_inter_q32",
+              "BC"
+            ],
+            [
+              0,
+              "p360_intra_q32",
+              "CB"
+            ],
+            [
+              1,
+              "p360_intra_q32",
+              "BC"
+            ],
+            [
+              1,
+              "p720_inter_q32",
+              "CB"
+            ],
+            [
+              2,
+              "p720_inter_q32",
+              "BC"
+            ],
+            [
+              2,
+              "p360_intra_q32",
+              "CB"
+            ]
+          ],
+          "ops": 20,
+          "protocol": "One short paired screen: phase CDEF secondary taps by distance to remove spills, retaining hoisted signed rounding shifts outside 8/4-wide row loops. Warm public Reset+DecodeNext at workers=1. Target p720_inter_q32 >=0.5% paired geometric-mean saving and >=2/3 faster pairs; control p360_intra_q32 <=1% regression; all warm rows zero allocations. Three alternating pairs, all observations retained. No retry or pooling. No native-gap claim."
+        },
+        "original_exact_target_summary": {
+          "p720_inter_q32": {
+            "paired_gm_saved_pct": -0.12247801318863161,
+            "wins": 2,
+            "pairs": [
+              {
+                "round": 0,
+                "B": 165233690.0,
+                "C": 163478677.0,
+                "saved_pct": 1.062139930422179
+              },
+              {
+                "round": 1,
+                "C": 165405773.0,
+                "B": 157595706.0,
+                "saved_pct": -4.9557612946637075
+              },
+              {
+                "round": 2,
+                "B": 165068865.0,
+                "C": 159547917.0,
+                "saved_pct": 3.3446331626500236
+              }
+            ]
+          },
+          "p360_intra_q32": {
+            "paired_gm_saved_pct": 1.3580284109796614,
+            "wins": 2,
+            "pairs": [
+              {
+                "round": 0,
+                "C": 69595277.0,
+                "B": 71329335.0,
+                "saved_pct": 2.4310586941543755
+              },
+              {
+                "round": 1,
+                "B": 70660208.0,
+                "C": 69090425.0,
+                "saved_pct": 2.22159408305167
+              },
+              {
+                "round": 2,
+                "C": 68448933.0,
+                "B": 68035565.0,
+                "saved_pct": -0.6075763462830119
+              }
+            ]
+          },
+          "audit": {
+            "rows": 12,
+            "all_0_allocs": true,
+            "binary_source_unchanged": true
+          }
+        },
+        "all_actual_rows_and_audit": {
+          "protocol_deviation": "The Go -test.bench pattern was split at slashes. The clip component p720_inter_q32 lacked its own end anchor, so every intended p720 process also ran p720_inter_q32_2tiles afterward. Original raw logs and manifests remain unchanged. Acceptance used only the predeclared exact p720 and intra rows. Accidental two-tile rows are disclosed here and do not substitute for the target gate. No new timings were collected.",
+          "processes": 12,
+          "actual_benchmark_rows": 18,
+          "intended_benchmark_rows": 12,
+          "all_actual_rows_zero_allocs": true,
+          "rows": [
+            {
+              "round": 0,
+              "role": "B",
+              "clip": "p720_inter_q32",
+              "ops": 20,
+              "ns_op": 165233690.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "00-r0-p720_inter_q32-B.log",
+              "intended": true
+            },
+            {
+              "round": 0,
+              "role": "B",
+              "clip": "p720_inter_q32_2tiles",
+              "ops": 20,
+              "ns_op": 169098715.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "00-r0-p720_inter_q32-B.log",
+              "intended": false
+            },
+            {
+              "round": 0,
+              "role": "C",
+              "clip": "p720_inter_q32",
+              "ops": 20,
+              "ns_op": 163478677.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "01-r0-p720_inter_q32-C.log",
+              "intended": true
+            },
+            {
+              "round": 0,
+              "role": "C",
+              "clip": "p720_inter_q32_2tiles",
+              "ops": 20,
+              "ns_op": 164551138.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "01-r0-p720_inter_q32-C.log",
+              "intended": false
+            },
+            {
+              "round": 0,
+              "role": "C",
+              "clip": "p360_intra_q32",
+              "ops": 20,
+              "ns_op": 69595277.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "02-r0-p360_intra_q32-C.log",
+              "intended": true
+            },
+            {
+              "round": 0,
+              "role": "B",
+              "clip": "p360_intra_q32",
+              "ops": 20,
+              "ns_op": 71329335.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "03-r0-p360_intra_q32-B.log",
+              "intended": true
+            },
+            {
+              "round": 1,
+              "role": "B",
+              "clip": "p360_intra_q32",
+              "ops": 20,
+              "ns_op": 70660208.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "04-r1-p360_intra_q32-B.log",
+              "intended": true
+            },
+            {
+              "round": 1,
+              "role": "C",
+              "clip": "p360_intra_q32",
+              "ops": 20,
+              "ns_op": 69090425.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "05-r1-p360_intra_q32-C.log",
+              "intended": true
+            },
+            {
+              "round": 1,
+              "role": "C",
+              "clip": "p720_inter_q32",
+              "ops": 20,
+              "ns_op": 165405773.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "06-r1-p720_inter_q32-C.log",
+              "intended": true
+            },
+            {
+              "round": 1,
+              "role": "C",
+              "clip": "p720_inter_q32_2tiles",
+              "ops": 20,
+              "ns_op": 167264356.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "06-r1-p720_inter_q32-C.log",
+              "intended": false
+            },
+            {
+              "round": 1,
+              "role": "B",
+              "clip": "p720_inter_q32",
+              "ops": 20,
+              "ns_op": 157595706.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "07-r1-p720_inter_q32-B.log",
+              "intended": true
+            },
+            {
+              "round": 1,
+              "role": "B",
+              "clip": "p720_inter_q32_2tiles",
+              "ops": 20,
+              "ns_op": 162209610.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "07-r1-p720_inter_q32-B.log",
+              "intended": false
+            },
+            {
+              "round": 2,
+              "role": "B",
+              "clip": "p720_inter_q32",
+              "ops": 20,
+              "ns_op": 165068865.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "08-r2-p720_inter_q32-B.log",
+              "intended": true
+            },
+            {
+              "round": 2,
+              "role": "B",
+              "clip": "p720_inter_q32_2tiles",
+              "ops": 20,
+              "ns_op": 166148856.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "08-r2-p720_inter_q32-B.log",
+              "intended": false
+            },
+            {
+              "round": 2,
+              "role": "C",
+              "clip": "p720_inter_q32",
+              "ops": 20,
+              "ns_op": 159547917.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "09-r2-p720_inter_q32-C.log",
+              "intended": true
+            },
+            {
+              "round": 2,
+              "role": "C",
+              "clip": "p720_inter_q32_2tiles",
+              "ops": 20,
+              "ns_op": 159852523.0,
+              "bytes_op": 0,
+              "allocs_op": 0,
+              "log": "09-r2-p720_inter_q32-C.log",
+              "intended": false
+            },
+            {
+              "round": 2,
+              "role": "C",
+              "clip": "p360_intra_q32",
+              "ops": 20,
+              "ns_op": 68448933.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "10-r2-p360_intra_q32-C.log",
+              "intended": true
+            },
+            {
+              "round": 2,
+              "role": "B",
+              "clip": "p360_intra_q32",
+              "ops": 20,
+              "ns_op": 68035565.0,
+              "bytes_op": 2,
+              "allocs_op": 0,
+              "log": "11-r2-p360_intra_q32-B.log",
+              "intended": true
+            }
+          ],
+          "summary": {
+            "p360_intra_q32": {
+              "paired_gm_saved_pct": 1.3580284109796614,
+              "wins": 2,
+              "pairs": [
+                {
+                  "round": 0,
+                  "C": 69595277.0,
+                  "B": 71329335.0,
+                  "saved_pct": 2.4310586941543755
+                },
+                {
+                  "round": 1,
+                  "B": 70660208.0,
+                  "C": 69090425.0,
+                  "saved_pct": 2.22159408305167
+                },
+                {
+                  "round": 2,
+                  "C": 68448933.0,
+                  "B": 68035565.0,
+                  "saved_pct": -0.6075763462830119
+                }
+              ]
+            },
+            "p720_inter_q32": {
+              "paired_gm_saved_pct": -0.12247801318863161,
+              "wins": 2,
+              "pairs": [
+                {
+                  "round": 0,
+                  "B": 165233690.0,
+                  "C": 163478677.0,
+                  "saved_pct": 1.062139930422179
+                },
+                {
+                  "round": 1,
+                  "C": 165405773.0,
+                  "B": 157595706.0,
+                  "saved_pct": -4.9557612946637075
+                },
+                {
+                  "round": 2,
+                  "B": 165068865.0,
+                  "C": 159547917.0,
+                  "saved_pct": 3.3446331626500236
+                }
+              ]
+            },
+            "p720_inter_q32_2tiles": {
+              "paired_gm_saved_pct": 1.1667261097033421,
+              "wins": 2,
+              "pairs": [
+                {
+                  "round": 0,
+                  "B": 169098715.0,
+                  "C": 164551138.0,
+                  "saved_pct": 2.689303109133623
+                },
+                {
+                  "round": 1,
+                  "C": 167264356.0,
+                  "B": 162209610.0,
+                  "saved_pct": -3.1161815875150767
+                },
+                {
+                  "round": 2,
+                  "B": 166148856.0,
+                  "C": 159852523.0,
+                  "saved_pct": 3.789573489449727
+                }
+              ]
+            }
+          }
+        },
+        "processes": [
+          {
+            "round": 0,
+            "clip": "p720_inter_q32",
+            "role": "B",
+            "exit": 0,
+            "wall_s": 7.133496999740601,
+            "log": "00-r0-p720_inter_q32-B.log",
+            "sha256": "b41e68fe466ec43974769ac72fcebad2d8bf7d48b22765295b5022a2161f85cf",
+            "load": [
+              6.70166015625,
+              8.671875,
+              9.22607421875
+            ],
+            "ops": 20,
+            "ns_op": 165233690.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          },
+          {
+            "round": 0,
+            "clip": "p720_inter_q32",
+            "role": "C",
+            "exit": 0,
+            "wall_s": 7.424411058425903,
+            "log": "01-r0-p720_inter_q32-C.log",
+            "sha256": "5ad8dd9ad501474e410319f98043a2f8d5e86ca93e3ab4c6a5e3d076289743b7",
+            "load": [
+              6.279296875,
+              8.517578125,
+              9.16455078125
+            ],
+            "ops": 20,
+            "ns_op": 163478677.0,
+            "bytes_op": 0,
+            "allocs_op": 0
+          },
+          {
+            "round": 0,
+            "clip": "p360_intra_q32",
+            "role": "C",
+            "exit": 0,
+            "wall_s": 1.5225181579589844,
+            "log": "02-r0-p360_intra_q32-C.log",
+            "sha256": "0d41a84a54297d1a086c1f42138bba925712f835fbab630df33caab0330bc9a0",
+            "load": [
+              6.279296875,
+              8.517578125,
+              9.16455078125
+            ],
+            "ops": 20,
+            "ns_op": 69595277.0,
+            "bytes_op": 0,
+            "allocs_op": 0
+          },
+          {
+            "round": 0,
+            "clip": "p360_intra_q32",
+            "role": "B",
+            "exit": 0,
+            "wall_s": 1.5838418006896973,
+            "log": "03-r0-p360_intra_q32-B.log",
+            "sha256": "9d37909fbe251ba94c72fad5a6ab73c57509c987e0ee0a72f8c2dfc4af2f5aca",
+            "load": [
+              6.2568359375,
+              8.4755859375,
+              9.14599609375
+            ],
+            "ops": 20,
+            "ns_op": 71329335.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          },
+          {
+            "round": 1,
+            "clip": "p360_intra_q32",
+            "role": "B",
+            "exit": 0,
+            "wall_s": 1.5778560638427734,
+            "log": "04-r1-p360_intra_q32-B.log",
+            "sha256": "f2c3f515209013fff09cf9f24c61c27651212eef9e57c18df8175e385d35f0b2",
+            "load": [
+              6.2568359375,
+              8.4755859375,
+              9.14599609375
+            ],
+            "ops": 20,
+            "ns_op": 70660208.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          },
+          {
+            "round": 1,
+            "clip": "p360_intra_q32",
+            "role": "C",
+            "exit": 0,
+            "wall_s": 1.528806209564209,
+            "log": "05-r1-p360_intra_q32-C.log",
+            "sha256": "9223b8bb0fc8df65d6c2724a027adf2091ef35dc6e678fbf4a8158365db9d9fa",
+            "load": [
+              6.2568359375,
+              8.4755859375,
+              9.14599609375
+            ],
+            "ops": 20,
+            "ns_op": 69090425.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          },
+          {
+            "round": 1,
+            "clip": "p720_inter_q32",
+            "role": "C",
+            "exit": 0,
+            "wall_s": 7.052761077880859,
+            "log": "06-r1-p720_inter_q32-C.log",
+            "sha256": "0cd1eb597f53b3d6122997a7e3291a8267e9beac933d759fc2961ae9cb481845",
+            "load": [
+              7.15185546875,
+              8.59130859375,
+              9.17919921875
+            ],
+            "ops": 20,
+            "ns_op": 165405773.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          },
+          {
+            "round": 1,
+            "clip": "p720_inter_q32",
+            "role": "B",
+            "exit": 0,
+            "wall_s": 6.79866099357605,
+            "log": "07-r1-p720_inter_q32-B.log",
+            "sha256": "486f3761211e49e85061ab195a21dc73af558e8927cc2571525537b9942f4174",
+            "load": [
+              7.1396484375,
+              8.564453125,
+              9.166015625
+            ],
+            "ops": 20,
+            "ns_op": 157595706.0,
+            "bytes_op": 0,
+            "allocs_op": 0
+          },
+          {
+            "round": 2,
+            "clip": "p720_inter_q32",
+            "role": "B",
+            "exit": 0,
+            "wall_s": 7.033346891403198,
+            "log": "08-r2-p720_inter_q32-B.log",
+            "sha256": "f00478945dec1205bf098808287a8484896946417625a56c6da930a75337f310",
+            "load": [
+              7.20849609375,
+              8.5546875,
+              9.1591796875
+            ],
+            "ops": 20,
+            "ns_op": 165068865.0,
+            "bytes_op": 0,
+            "allocs_op": 0
+          },
+          {
+            "round": 2,
+            "clip": "p720_inter_q32",
+            "role": "C",
+            "exit": 0,
+            "wall_s": 6.814686059951782,
+            "log": "09-r2-p720_inter_q32-C.log",
+            "sha256": "8bacaf1a178cac810e7e6adc22eaea08a1abd3f573fc9d97f4e75ad3af77cc4b",
+            "load": [
+              6.86181640625,
+              8.43701171875,
+              9.1103515625
+            ],
+            "ops": 20,
+            "ns_op": 159547917.0,
+            "bytes_op": 0,
+            "allocs_op": 0
+          },
+          {
+            "round": 2,
+            "clip": "p360_intra_q32",
+            "role": "C",
+            "exit": 0,
+            "wall_s": 1.502336025238037,
+            "log": "10-r2-p360_intra_q32-C.log",
+            "sha256": "552a7365e17045fa0af453da4bcf9c5fa0622de30db915dda3b009c98813524f",
+            "load": [
+              6.86181640625,
+              8.43701171875,
+              9.1103515625
+            ],
+            "ops": 20,
+            "ns_op": 68448933.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          },
+          {
+            "round": 2,
+            "clip": "p360_intra_q32",
+            "role": "B",
+            "exit": 0,
+            "wall_s": 1.5179450511932373,
+            "log": "11-r2-p360_intra_q32-B.log",
+            "sha256": "8a885b056b2beba3786715b99daac1bfa3757cdd1a0f25529e8a509b09ee195f",
+            "load": [
+              6.86181640625,
+              8.43701171875,
+              9.1103515625
+            ],
+            "ops": 20,
+            "ns_op": 68035565.0,
+            "bytes_op": 2,
+            "allocs_op": 0
+          }
+        ],
+        "raw_logs": {
+          "00-r0-p720_inter_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 165233690 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 169098715 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+          "01-r0-p720_inter_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 163478677 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 164551138 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+          "02-r0-p360_intra_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  69595277 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+          "03-r0-p360_intra_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  71329335 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+          "04-r1-p360_intra_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  70660208 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+          "05-r1-p360_intra_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  69090425 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+          "06-r1-p720_inter_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 165405773 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 167264356 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+          "07-r1-p720_inter_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 157595706 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 162209610 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+          "08-r2-p720_inter_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 165068865 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 166148856 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+          "09-r2-p720_inter_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 159547917 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nBenchmarkPublicDecoderFullClip/p720_inter_q32_2tiles/warm_reset_decode  \t      20\t 159852523 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n",
+          "10-r2-p360_intra_q32-C.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  68448933 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n",
+          "11-r2-p360_intra_q32-B.log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  68035565 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n"
+        },
+        "runner_source": "#!/usr/bin/python3\nimport hashlib, json, math, os, pathlib, re, subprocess, time\n\nROOT = pathlib.Path('/private/tmp/decoder-filter-shifts-20261018')\nWT = pathlib.Path('/Users/thesyncim/.codex/worktrees/decoder-inter-commit/goav1')\nOUT = ROOT / 'screen-v2'\nOUT.mkdir(exist_ok=False)\nPATHS = {\n    'B': '/private/tmp/decoder-superres-direct-20261018/candidate-fold.test',\n    'C': str(ROOT / 'candidate-v2.test'),\n}\nEXPECTED = {\n    'B': 'ee822414026a0fa7df468c41026a850c9d8268834d4b7c5e6fae0580a6d9f8e6',\n    'C': '9aae88a70afe977c7301b99c11ef59cd13484f2514a234bbcdc14b8b78860c81',\n}\ndef sha(path):\n    return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()\nassert {k: sha(p) for k, p in PATHS.items()} == EXPECTED\nFILES = ['internal/av1/cdef/filter_simd.go', 'internal/av1/cdef/filter_simd_arm64.go', 'internal/av1/cdef/filter_simd_amd64.go']\nsource_hashes = {p: sha(WT / p) for p in FILES}\nenv = os.environ.copy()\nenv.update(CODEX_AGENT_ID='astra_filter_gap', CODEX_PROJECT_CACHE_ROOT='/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects', GOEXPERIMENT='simd', GOARM64='v8.0', CGO_ENABLED='1', GOMAXPROCS='1', GOGC='100', GOAV1_BENCH_CORPUS_DIR='/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus')\nplan = [(0, 'p720_inter_q32', 'BC'), (0, 'p360_intra_q32', 'CB'), (1, 'p360_intra_q32', 'BC'), (1, 'p720_inter_q32', 'CB'), (2, 'p720_inter_q32', 'BC'), (2, 'p360_intra_q32', 'CB')]\nmanifest = {'base': '10f4a6ae956e881e8d9e85a4797c55a441cd27c3', 'binary_paths': PATHS, 'binary_sha256': EXPECTED, 'sources': source_hashes, 'plan': plan, 'ops': 20, 'protocol': 'One short paired screen: phase CDEF secondary taps by distance to remove spills, retaining hoisted signed rounding shifts outside 8/4-wide row loops. Warm public Reset+DecodeNext at workers=1. Target p720_inter_q32 >=0.5% paired geometric-mean saving and >=2/3 faster pairs; control p360_intra_q32 <=1% regression; all warm rows zero allocations. Three alternating pairs, all observations retained. No retry or pooling. No native-gap claim.'}\n(OUT / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\\n')\nrows = []\nfor rnd, clip, order in plan:\n    for role in order:\n        log = OUT / f'{len(rows):02d}-r{rnd}-{clip}-{role}.log'\n        bench = f'BenchmarkPublicDecoderFullClip/{clip}/warm_reset_decode'\n        cmd = ['/Users/thesyncim/.codex/bin/project-env', PATHS[role], '-test.run=^$', f'-test.bench=^{bench}$', '-test.benchtime=20x', '-test.count=1', '-test.benchmem']\n        start = time.time()\n        with log.open('w') as f:\n            proc = subprocess.run(cmd, cwd=WT, env=env, stdout=f, stderr=subprocess.STDOUT, timeout=90)\n        text = log.read_text()\n        m = re.search('^' + re.escape(bench) + r'\\s+(\\d+)\\s+([\\d.]+) ns/op.*?\\s+(\\d+) B/op\\s+(\\d+) allocs/op$', text, re.M)\n        row = {'round': rnd, 'clip': clip, 'role': role, 'exit': proc.returncode, 'wall_s': time.time()-start, 'log': log.name, 'sha256': sha(log), 'load': os.getloadavg()}\n        if m:\n            row.update(ops=int(m[1]), ns_op=float(m[2]), bytes_op=int(m[3]), allocs_op=int(m[4]))\n        rows.append(row)\n        (OUT / 'rows.json').write_text(json.dumps(rows, indent=2) + '\\n')\n        print(json.dumps(row), flush=True)\n        assert proc.returncode == 0 and m and row['ops'] == 20, row\nsummary = {}\nfor clip in ('p720_inter_q32', 'p360_intra_q32'):\n    pairs = []\n    for rnd in range(3):\n        pair = {r['role']: r['ns_op'] for r in rows if r['round'] == rnd and r['clip'] == clip}\n        pairs.append({'round': rnd, **pair, 'saved_pct': 100*(1-pair['C']/pair['B'])})\n    summary[clip] = {'paired_gm_saved_pct': 100*(1-math.exp(sum(math.log(p['C']/p['B']) for p in pairs)/3)), 'wins': sum(p['C'] < p['B'] for p in pairs), 'pairs': pairs}\nassert {k: sha(p) for k, p in PATHS.items()} == EXPECTED\nassert {p: sha(WT / p) for p in FILES} == source_hashes\nsummary['audit'] = {'rows': len(rows), 'all_0_allocs': all(r['allocs_op'] == 0 for r in rows), 'binary_source_unchanged': True}\n(OUT / 'summary.json').write_text(json.dumps(summary, indent=2) + '\\n')\nprint(json.dumps(summary, indent=2), flush=True)\n"
+      },
+      "correctness": "Focused SIMD random/strength/sentinel/clip/unit/U8 parity and zeroalloc passed; source-derived libaom corpus passed; decoder U8 whole/banded and native HBD snapshot passed. V1 experiment-off U8 test and both amd64 SIMD crossbuilds passed. No acceptance based on compiler diagnostics alone."
+    }
+  ],
+  "limitations": [
+    "Three pairs are a small screen, with no interval or whole-corpus speedup claim.",
+    "p360 intra is an affected comparison case, not an inactive control; its point estimate regresses 0.5273%.",
+    "The regex deviation added six two-tile rows. All eighteen actual rows are preserved; extra outcomes are descriptive only, and original target selection is unchanged.",
+    "One-minute host load at process end ranged from 14.70 to 19.58; coordinated agent CPU work was paused but unrelated host work was not controlled.",
+    "Earlier E/I/H setup does additional unused work for groups that fall back to scalar kernels.",
+    "No new race/full-worker matrix or native performance campaign was run. No allocation or memory-reduction claim."
+  ]
+}

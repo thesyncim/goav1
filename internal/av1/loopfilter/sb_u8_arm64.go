@@ -38,18 +38,12 @@ type sbGroup struct {
 	applied  uint32
 }
 
-// resolve fills the group's limits from the four resolved unit levels.
-func (g *sbGroup) resolve(lv *[4]uint8, lut *SBLUT) {
-	for k := 0; k < 4; k++ {
-		L := lv[k]
-		if L == 0 {
-			g.e[k], g.i[k], g.h[k] = 0, 0, 0
-			continue
-		}
-		g.e[k] = uint32(lut.E[L]) * 0x01010101
-		g.i[k] = uint32(lut.I[L]) * 0x01010101
-		g.h[k] = uint32(L>>4) * 0x01010101
-	}
+// setLimits fills one live unit while its level is already in a register.
+// The group's zero value supplies the limits for inactive units.
+func (g *sbGroup) setLimits(k int, L uint8, lut *SBLUT) {
+	g.e[k] = uint32(lut.E[L]) * 0x01010101
+	g.i[k] = uint32(lut.I[L]) * 0x01010101
+	g.h[k] = uint32(L>>4) * 0x01010101
 }
 
 func lpfLoad(p unsafe.Pointer, off int) archsimd.Uint8x16 {
@@ -372,7 +366,6 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 			continue
 		}
 		var grp sbGroup
-		var lv [4]uint8
 		u0 := lvlOff + 4*g
 		for k := 0; k < 4; k++ {
 			if nib&(1<<uint(k)) == 0 {
@@ -385,7 +378,7 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 			if L == 0 {
 				continue
 			}
-			lv[k] = L
+			grp.setLimits(k, L, lut)
 			grp.m4 |= 1 << uint(k)
 			grp.applied++
 			if L > grp.maxLevel {
@@ -415,7 +408,6 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 			_ = filterSBHorizontal8Scalar(pix, q0Off, stride, sub, luma, lvl, u0, lvlStride, comp, lut)
 			continue
 		}
-		grp.resolve(&lv, lut)
 		eV, iV, hV, m4, mGt4, m16 := sbGroupVectors(&grp)
 		lpf16U8(unsafe.Add(base, q0Off), stride, wd, eV, iV, hV, m4, mGt4, m16)
 	}
@@ -435,7 +427,6 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 			continue
 		}
 		var grp sbGroup
-		var lv [4]uint8
 		u0 := lvlOff + 4*g*lvlStride
 		for k := 0; k < 4; k++ {
 			if nib&(1<<uint(k)) == 0 {
@@ -449,7 +440,7 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 			if L == 0 {
 				continue
 			}
-			lv[k] = L
+			grp.setLimits(k, L, lut)
 			grp.m4 |= 1 << uint(k)
 			grp.applied++
 			if L > grp.maxLevel {
@@ -478,7 +469,6 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 			continue
 		}
 		wide := wd != 16 && rowBytes >= 12 && lastRow+12 <= len(pix)
-		grp.resolve(&lv, lut)
 		eV, iV, hV, m4, mGt4, m16 := sbGroupVectors(&grp)
 		if wd == 16 {
 			lpfVertical16x16U8(unsafe.Add(base, q0Off-8), stride, eV, iV, hV, m4, mGt4, m16)
