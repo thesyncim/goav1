@@ -2,11 +2,11 @@
 //
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build goexperiment.simd && (arm64 || amd64) && !purego
+//go:build goexperiment.simd && amd64 && !purego
 
 package restoration
 
-// Go-native SIMD self-guided restoration drivers shared by arm64 and amd64. The
+// Go-native SIMD self-guided restoration drivers for amd64. The
 // per-pixel blend (sgrBlendRowSIMD) and the lane count (sgrBlendLanes) are
 // supplied by the architecture file. The data-dependent LUT gather inside
 // calculateIntermediate (xByXPlus1 / oneByX) stays scalar, and the columns beyond
