@@ -1,0 +1,372 @@
+{
+  "dct64_population": [
+    {
+      "clip": "p360_intra_q32",
+      "column4_calls": 17536,
+      "frames": 48,
+      "meaning": "Static operations removed for this observed population; not cycles, bandwidth, or a speed prediction.",
+      "removed_vector_input_loads": 704576,
+      "removed_vector_zero_products": 1365116,
+      "row4_calls": 4482
+    },
+    {
+      "clip": "p720_inter_q32",
+      "column4_calls": 10576,
+      "frames": 48,
+      "meaning": "Static operations removed for this observed population; not cycles, bandwidth, or a speed prediction.",
+      "removed_vector_input_loads": 379328,
+      "removed_vector_zero_products": 734948,
+      "row4_calls": 1278
+    }
+  ],
+  "eight_lane_feasibility_result": {
+    "audit": "/private/tmp/decoder-astra-work-ledger-20261018/dct64-eight-feasibility/micro-v1/audit.json",
+    "status": "Not promoted: stride64 sparse-low8 gained9.1354%, below predeclared10% in every case; all42rows retained; no public integration or retuning."
+  },
+  "go_baseline": {
+    "binary_sha256": "78b19b09b90c8d8102d9617091b2cdceb32fdaece14708b6b6e114529bb6e95d",
+    "commit": "8c68bb81b353f98ab988270e476fbb602ba367e0",
+    "cpu": "Apple M4 Max,16 logical cores; GOMAXPROCS=1,GOGC=100",
+    "toolchain": "Go1.27.0 GOEXPERIMENT=simd GOARM64=v8.0 CGO_ENABLED=1"
+  },
+  "integration_update": {
+    "main": "f05383c85c62ba39d0cd0055e66379f6fa0f839c",
+    "merged_features": [
+      "PR9 coefficient work",
+      "PR12 compact loop filter"
+    ],
+    "note": "Original profile percentages/counts remain scoped to8c68. New screens use separately frozen matching integrated binaries; no additive performance claim.",
+    "tree": "6b12132bdd8062a7e25d32e2397dc300ae4200dd"
+  },
+  "ledger": [
+    {
+      "dav1d": "decode.c:1209/recon_tmpl.c:779-815; pass0 decodes and reconstructs, extra event storage is for threaded pass1/2.",
+      "finding": "No extra full reconstruction pass found. An initial2x diagnostic count was a counter-snapshot alias bug, preserved as invalid-v1; corrected cold/warm counts agree.",
+      "go": "threading/tile_residual.go:18,1160; serial deferred reconstruction disabled; fused entropy decode then per-TXB prediction/reconstruction.",
+      "work": "Whole reconstruction passes"
+    },
+    {
+      "dav1d": "helper bench.c wraps input; dav1d allocates decoder state.",
+      "finding": "Different cold API ownership/planning boundary; preserve API and report separately. Not included in warm profile. No evidence it explains the2.8x historical ratio.",
+      "go": "decode_simple.go:158-235,347-375 probes headers for scratch plans, copies IVF payloads once; NewDecoder(payloads) retains caller bytes.",
+      "work": "Constructor probing and packet copies"
+    },
+    {
+      "dav1d": "recon_tmpl.c:read_coef_tree/read_coef_blocks co-locates decode and dequant.",
+      "finding": "Mandatory entropy work remains. Merged PR9 already removes redundant coefficient-context/dequant traffic; it is part of thef053 baseline, not a new or additive claim.",
+      "go": "tile/coeff.go:1656; threading/reconstruct.go:207; sparse dirty-position and all-zero clear bypass already present.",
+      "profile_pct_intra_inter": [
+        17.06,
+        4.94
+      ],
+      "work": "Coefficient decode, context materialization and dequantization"
+    },
+    {
+      "dav1d": "itx_tmpl.c:75-112 uses sw/sh=min(axis,32); itx_1d.c:436 only consumes low32 input positions in DCT64.",
+      "finding": "Private low32 four-lane graph variants preserved rounding/clamps/all64outputs and passed parity, but both failed their predeclared public screen. Static work removal was insufficient to accept either.",
+      "go": "transform/hybrid.go:120 staging caps coded axis32, but original dct64_lanes4_gosimd.go:375 consumes all64 input positions.",
+      "profile_pct_intra_inter": [
+        5.03,
+        1.06
+      ],
+      "work": "DCT64 zero input graph"
+    },
+    {
+      "dav1d": "refmvs.c:192,416,845 caches reference offsets and traverses half-grid coordinates.",
+      "finding": "An unmeasured V2 draft reduces invariant reference setup to the first valid sample per request and clips once. It remains separate from this accepted intra change; the full2.65% profile share is not removable.",
+      "go": "tile/ref_mv.go:745 computes selected reference hint validation/difference/clamp for each valid temporal sample.",
+      "profile_pct_intra_inter": [
+        0,
+        2.65
+      ],
+      "work": "Temporal MV setup per sample"
+    },
+    {
+      "dav1d": "decode.c:527/542/559 splats final motion entry.",
+      "finding": "A small exact-state draft remains unmeasured and separate. The percentage covers the whole MarkInter path, not only removable work.",
+      "go": "tile/inter.go:709 clears motion-valid/grid, ref_mv.go:334 immediately fills it.",
+      "profile_pct_intra_inter": [
+        0,
+        1.59
+      ],
+      "work": "Inter state clear then refill"
+    },
+    {
+      "dav1d": "decode.c:1263 only splats intra refs for inter/switch or intrabc.",
+      "finding": "Selected via the existing decoder-private ownership capability introduced by merged PR12. Ordinary key/intra-only frames omit dead motion/ref/filter grids and histories while preserving live intra/transform/coefficient contexts. Fresh80-row confirmation accepted; profile share bounds fullroot helpers and is not a prediction.",
+      "go": "tile/block_loop.go:491,823,859 clears/copies motion state even for intra-only noIBC.",
+      "profile_pct_intra_inter": [
+        3.59,
+        1.94
+      ],
+      "work": "Intra superblock motion history"
+    },
+    {
+      "dav1d": "decode-time masks/levels feed row filtering.",
+      "finding": "Listed shares cover level-cache materialization only. Merged PR12 avoids populating replicated34-byte per-MI records and rescanning them on its owned path. Reusable backing storage remains allocated; no allocation or capacity-saving claim. PR12 is included in thef053 baseline.",
+      "go": "threading loop-filter map per-MI materialization, decoder/postfilter_loopfilter_masks.go:83-98 scans into level cache.",
+      "profile_pct_intra_inter": [
+        1.44,
+        1.76
+      ],
+      "work": "Loop-filter maps and level-cache sweep"
+    },
+    {
+      "dav1d": "recon_tmpl.c:1989-2104 and cdef_apply_tmpl.c process corresponding row stages.",
+      "finding": "Mandatory output-affecting filtering, not a quality search. PR11 already avoids secondary-only widen/staging work; remaining kernels have instruction/data-layout differences, not proof of redundant full passes.",
+      "go": "decoder/postfilter.go:752-850 executes selected normative filters once; CDEF unit/stripe halos and restoration boundary snapshots preserve pre-filter inputs.",
+      "profile_pct_cdef_intra_inter": [
+        15.08,
+        12.7
+      ],
+      "profile_pct_restoration_intra_inter": [
+        1.08,
+        7.94
+      ],
+      "work": "CDEF, restoration, loop filter image passes"
+    },
+    {
+      "finding": "runtime memmove+memclr includes the above owners and required pixel/data movement. Not an independent pool of removable work or additive to caller costs.",
+      "profile_pct_intra_inter": [
+        2.69,
+        5.64
+      ],
+      "work": "All copies and clears"
+    },
+    {
+      "dav1d": "src/arm/itx.h54-88 assigns64-axis transforms via BF; include/common/bitdepth.h51-52 binds BITDEPTH8 to *_8bpc_neon. src/arm/64/itx.S3006 exports64x64_8bpc, using8h SQRDMULH and saturated add/sub; itx16.S uses4s.",
+      "finding": "The port uses wider arithmetic at some points where the8-bit stage clamp is16 bits. This is instruction/data representation work, not a higher-quality reconstruction choice. Wider values remain required across original unclamped rotations. Installed archsimd ARM64 API has saturating add/sub, widening multiply and saturating narrow, but no SQRDMULH or rounding-narrow intrinsic; the C assembly instruction count cannot be presumed achievable in Go.",
+      "go": "dct64_lanes4_gosimd.go explicitly follows dav1d itx16.S; live Raw fused-add path block.go195 supplies nil col16, so the8-lane int16 column pipeline is unused in the observed public clips. Existing Col8SIMD16 DCT16/32/64 kernels require absolute input bounds1023/511/255 and a range scan.",
+      "historical_rejection": "pr-packed-inverse-v1 reused existing bounded kernels plus packed residual/add plumbing; all5pairs slower, intra~8%, inter5\u20137%. Do not revive that representation change. A prospective low32 mixed-width8-lane graph would keep the public int32 scratch and preserve exact unclamped rotations in paired int32.",
+      "work": "8-bit transform SIMD width and intermediate precision"
+    }
+  ],
+  "owned_intra_context_candidate": {
+    "confirmation_audit": "/private/tmp/decoder-astra-work-ledger-20261018/confirmation-intra-v1-audit.json",
+    "confirmation_results": {
+      "p360_intra_q32/cold_fresh_decoder": {
+        "candidate_over_baseline_ratios": [
+          0.8922811006899029,
+          0.952007615748866,
+          0.9350066626437286,
+          0.9570697865614404,
+          0.9688326793054509,
+          0.9349019097890819,
+          0.9397201109921226,
+          0.9645740364490275,
+          0.9444347344218674,
+          1.0189873962329155
+        ],
+        "confidence_interval95_percent": [
+          3.0189289593545077,
+          6.816095569060176
+        ],
+        "faster_pairs": 9,
+        "latency_saved_percent": 4.970376029636448,
+        "role_balance": {
+          "AB": 5,
+          "BA": 5
+        }
+      },
+      "p360_intra_q32/warm_reset_decode": {
+        "candidate_over_baseline_ratios": [
+          0.9215040337642096,
+          0.9645026065445158,
+          0.9398602161158123,
+          0.9634337072838368,
+          0.9546806618963791,
+          0.890338365584662,
+          0.9639665210585169,
+          1.0457463042494524,
+          1.0321781770070737,
+          0.95503166363734
+        ],
+        "confidence_interval95_percent": [
+          0.9674317295381599,
+          6.334393347013287
+        ],
+        "faster_pairs": 8,
+        "latency_saved_percent": 3.7865097211161824,
+        "role_balance": {
+          "AB": 5,
+          "BA": 5
+        }
+      },
+      "p720_inter_q32/cold_fresh_decoder": {
+        "candidate_over_baseline_ratios": [
+          1.0856126839077187,
+          1.0153347706417741,
+          1.0077587064585831,
+          1.0052472733048439,
+          0.9858517174206509,
+          0.9789881527667833,
+          0.9973276895801645,
+          0.9826609603807476,
+          0.9962225607251,
+          1.0133332559203738
+        ],
+        "confidence_interval95_percent": [
+          -2.6353961424154266,
+          0.7968830321599675
+        ],
+        "faster_pairs": 5,
+        "latency_saved_percent": -0.6433979663779343,
+        "role_balance": {
+          "AB": 5,
+          "BA": 5
+        }
+      },
+      "p720_inter_q32/warm_reset_decode": {
+        "candidate_over_baseline_ratios": [
+          0.9302503071911312,
+          0.9799869653838986,
+          0.985391763722525,
+          1.0057755797449113,
+          0.9921295580578394,
+          0.990337807186317,
+          0.9756912742257049,
+          1.0050535317848541,
+          1.0133955475027123,
+          1.0122534246839678
+        ],
+        "confidence_interval95_percent": [
+          -0.16845097352195415,
+          2.748059289311686
+        ],
+        "faster_pairs": 6,
+        "latency_saved_percent": 1.1253009713910855,
+        "role_balance": {
+          "AB": 5,
+          "BA": 5
+        }
+      }
+    },
+    "frozen_identity": "/private/tmp/decoder-astra-work-ledger-20261018/candidate-intra-v1/identity.json",
+    "inter_limit": "Inter cold point-0.6434%,95%CI[-2.6354,+0.7969]; these data do not establish flatness or an inter win.",
+    "main": "f05383c85c62ba39d0cd0055e66379f6fa0f839c",
+    "native_gap_audit": {
+      "all108clip_preflights48frames_match": true,
+      "all16resource_guards_pass": true,
+      "all6serial_invocations_exit0": true,
+      "identities_and_all_log_hashes_match": true,
+      "interpretation": "Candidate cold-IVF ratio2.7135 and baseline2.7018 are a contemporaneous descriptive snapshot. This cohort does not show an aggregate cold improvement. Four-case paired confirmation separately supports the intra change; native clustered samples have no paired confidence claim. Warm Go/native ratio compares different lifecycle boundaries. Historical2.7586 is neither a paired baseline nor additive progress evidence.",
+      "ratios": {
+        "baseline": {
+          "cold_ivf": 2.7018393714627527,
+          "cold_preparsed_payload": 2.710484979524226,
+          "warm_reset": 2.6311091786683845
+        },
+        "candidate": {
+          "cold_ivf": 2.713531381769659,
+          "cold_preparsed_payload": 2.7273394901762296,
+          "warm_reset": 2.6274870031748954
+        }
+      },
+      "raw_samples_retained": 2268,
+      "resources": {
+        "free_bytes_min": 51639459840,
+        "load1_max": 8.76220703125,
+        "load1_min": 5.771484375,
+        "system_headroom_min": 15284,
+        "uid_headroom_min": 10201,
+        "uv_max": 0
+      },
+      "round2_vs_round1_percent": {
+        "baseline": {
+          "cold_ivf": -2.203611098881686,
+          "cold_preparsed_payload": -2.0612165028174645,
+          "warm_reset": -2.856549050009116
+        },
+        "candidate": {
+          "cold_ivf": 1.4258722076306407,
+          "cold_preparsed_payload": 2.1471350740527084,
+          "warm_reset": 2.5260099843703143
+        },
+        "dav1d": {
+          "cold_context": -0.06537688119221396
+        }
+      },
+      "status": "COMPLETE_AUDITED_DESCRIPTIVE_ONLY",
+      "sum_of_clip_medians_ms": {
+        "baseline": {
+          "cold_ivf": 1467.9768765,
+          "cold_preparsed_payload": 1472.6742515,
+          "warm_reset": 1429.5473945
+        },
+        "candidate": {
+          "cold_ivf": 1474.329438,
+          "cold_preparsed_payload": 1481.8317285,
+          "warm_reset": 1427.579376
+        },
+        "dav1d": {
+          "cold_context": 543.325
+        }
+      }
+    },
+    "no_additive_gap_claim": true,
+    "publication_status": "Confirmed intra latency reduction; published native snapshot does not establish an aggregate cold gap reduction.",
+    "screen_GM_latency_saved_percent": {
+      "inter_cold": -0.9229201468346826,
+      "inter_warm": 0.417185508815332,
+      "intra_cold": 5.3251000968245865,
+      "intra_warm": 4.498345180211826
+    },
+    "screen_audit": "/private/tmp/decoder-astra-work-ledger-20261018/screen-intra-v1-audit.json",
+    "source_proof": "/private/tmp/decoder-astra-work-ledger-20261018/intra-context/source-proof.json",
+    "status": "Fresh80-row confirmation passed exact predeclared acceptance; both intra intervals positive, inter outcomes unresolved."
+  },
+  "predeclared_screen": "3 paired rounds in4 cases; promote if >=0.5% paired geometric-mean latency saved in at least one intra case, all3pairs faster there, and no other case GM regression >1%. Fresh10pair confirmation after selection. No timings inspected at declaration.",
+  "profiles": {
+    "interpretation": "Short diagnostic CPU samples, not before/after timings. Cumulative entries overlap; cannot be added indiscriminately or treated as removable-time predictions.",
+    "p360_intra_q32": {
+      "path": "/private/tmp/decoder-astra-work-ledger-20261018/baseline/p360-intra.cpu",
+      "samples_seconds": 5.57
+    },
+    "p720_inter_q32": {
+      "path": "/private/tmp/decoder-astra-work-ledger-20261018/baseline/p720-inter.cpu",
+      "samples_seconds": 5.67
+    }
+  },
+  "publication_evidence_files": [
+    "decoder-owned-intra-contexts-20261018.md",
+    "decoder-owned-intra-contexts-20261018.json",
+    "decoder-owned-intra-dav1d-gap-20261018.json"
+  ],
+  "reference": {
+    "commit": "b546257f770768b2c88258c533da38b91a06f737",
+    "dav1d_source": "/Users/thesyncim/GolandProjects/goav1/third_party/upstream/dav1d",
+    "helper_contract": "tools/c_api_decode_bench/bench.c:905-920; threads1,max_frame_delay1,output_invisible_frames0,apply_grain1,default other settings; all visible pixels MD5 verified before timing. C wraps preloaded packet slices; Go IVF constructor owns copies.",
+    "historical_runtime": "Homebrew dav1d1.5.3; historical helper/library hashes pinned in prior published gap JSON but library build provenance was not independently tied to this source commit. No new absolute ratio is asserted here.",
+    "source_checkout_verified_clean": true,
+    "svt": "SVT-AV1 is an encoder comparator only. Its quality/search settings are not used to explain a decoder ratio."
+  },
+  "schema": "goav1-source-backed-decoder-work-ledger-v1",
+  "scope": "Historical source/work profiles are scoped to main8c68. The accepted private intra context change is measured independently against mainf053 including merged PR9/12; one worker,48 visible frames per case. SVT is an encoder comparator only.",
+  "screen_results": [
+    {
+      "audit": "screen-v1-audit.json",
+      "latency_saved_pct": {
+        "inter_cold": -0.6466019158,
+        "inter_warm": -2.9748895143,
+        "intra_cold": -0.1226947329,
+        "intra_warm": -0.7107537434
+      },
+      "scope": "8c68 baseline",
+      "status": "not promoted",
+      "variant": "V1 low32 four-lane graph"
+    },
+    {
+      "audit": "screen-v2-integrated-audit.json",
+      "latency_saved_pct": {
+        "inter_cold": -1.3699246324,
+        "inter_warm": 0.5659949551,
+        "intra_cold": 2.0240448167,
+        "intra_warm": 0.9657236194
+      },
+      "reason": "Inter cold violates predeclared no>1% regression rule. Every row retained; no confirmation, selective exclusion, or pooled retry.",
+      "scope": "f053 integrated baseline",
+      "status": "not promoted",
+      "variant": "V2 additionally transposes only low32 row inputs"
+    }
+  ]
+}

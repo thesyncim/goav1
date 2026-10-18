@@ -1153,6 +1153,7 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 		loopReq.ContextCarrier = &scratch.LoopContext
 	}
 	loopReq.DecodeCoefficients = true
+	ownedIntraContexts := compactActive && frameWorkOwnedIntraContexts(b, scratch, req, loopReq)
 	var restoration FrameWorkTileRestorationRequest
 	readRestoration := false
 	if req.Restoration != nil {
@@ -1229,7 +1230,7 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 			return scratch.stats, err
 		}
 	}
-	loopStats, err := tile.DecodeBlockLoopWithCoeffControllerPtr(state, loopCDFs, &scratch.Loop, loopReq, &scratch.controller, func(visit *tile.BlockLoopVisit) error {
+	visitBlock := func(visit *tile.BlockLoopVisit) error {
 		if !visit.CoefficientsValid {
 			return ErrInvalidBatch
 		}
@@ -1261,7 +1262,14 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 			return req.AfterBlock(*visit)
 		}
 		return nil
-	})
+	}
+	var loopStats tile.BlockLoopStats
+	var err error
+	if ownedIntraContexts {
+		loopStats, err = tile.DecodeBlockLoopWithCoeffControllerPtrOwnedIntra(state, loopCDFs, &scratch.Loop, loopReq, &scratch.controller, visitBlock)
+	} else {
+		loopStats, err = tile.DecodeBlockLoopWithCoeffControllerPtr(state, loopCDFs, &scratch.Loop, loopReq, &scratch.controller, visitBlock)
+	}
 	scratch.stats.Loop = loopStats
 	if scratch.controller.streaming {
 		err = scratch.controller.finishReconStream(err)
@@ -1278,6 +1286,20 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 		}
 	}
 	return scratch.stats, nil
+}
+
+// frameWorkOwnedIntraContexts is used only after the compact decoder ownership
+// capability has been checked. Caller callbacks or a different carrier retain
+// the complete public scratch semantics. The default controller is installed
+// after this check, so its internal restoration callback is not a caller hook.
+func frameWorkOwnedIntraContexts(b *FrameWorkBatch, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualRequest, loop tile.BlockLoopRequest) bool {
+	return (b.FrameHeader.FrameType == parser.FrameTypeKey || b.FrameHeader.FrameType == parser.FrameTypeIntraOnly) &&
+		loop.FrameType == b.FrameHeader.FrameType && !b.FrameSize.AllowIntrabc && !loop.AllowIntrabc &&
+		loop.DecodePredictionModes && !loop.SkipMode.Enabled && loop.ContextCarrier == &scratch.LoopContext &&
+		!loop.Walk.UseNeighborBounds && b.WavefrontWorkers == 0 &&
+		req.Predict == nil && req.AfterBlock == nil && req.Transforms == nil && req.UseDefaultTransforms &&
+		loop.BeforeSuperblock == nil && loop.BeforeCoefficients == nil && loop.CoeffVisitor == nil &&
+		loop.CoeffController == nil && loop.CoeffRequest == nil && loop.TransformSelect == nil
 }
 
 // frameWorkWavefrontLanes returns how many lanes the deferred SB-row

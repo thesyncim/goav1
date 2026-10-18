@@ -337,7 +337,7 @@ func DecodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 	if visit == nil {
 		return BlockLoopStats{}, ErrInvalidDecodeState
 	}
-	return decodeBlockLoopWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, true, func(block *BlockLoopVisit) error {
+	return decodeBlockLoopWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, true, false, func(block *BlockLoopVisit) error {
 		return visit(*block)
 	})
 }
@@ -346,7 +346,7 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 	if visit == nil {
 		return BlockLoopStats{}, ErrInvalidDecodeState
 	}
-	return decodeBlockLoopWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, hasCoeffController, func(block *BlockLoopVisit) error {
+	return decodeBlockLoopWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, hasCoeffController, false, func(block *BlockLoopVisit) error {
 		return visit(*block)
 	})
 }
@@ -356,10 +356,10 @@ func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeSta
 // during the callback. BlockLoopVisit carries large prediction/coefficient
 // side data, so the pointer path avoids one full visit copy per decoded block.
 func DecodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, visit BlockLoopPointerVisitor) (BlockLoopStats, error) {
-	return decodeBlockLoopWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, true, visit)
+	return decodeBlockLoopWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, true, false, visit)
 }
 
-func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, visit BlockLoopPointerVisitor) (BlockLoopStats, error) {
+func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, intraOnlyContexts bool, visit BlockLoopPointerVisitor) (BlockLoopStats, error) {
 	if s == nil || scratch == nil || cdfs.Partition == nil || cdfs.Mode == nil || visit == nil {
 		return BlockLoopStats{}, ErrInvalidDecodeState
 	}
@@ -375,12 +375,22 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 	miRowEnd := uint32(req.Walk.MIRowEnd)
 	neighborMIColStart := req.Walk.neighborMIColStart()
 	neighborMIRowStart := req.Walk.neighborMIRowStart()
-	ensureIntrabcDiagonalCarriers(req.ContextCarrier)
+	if !intraOnlyContexts {
+		ensureIntrabcDiagonalCarriers(req.ContextCarrier)
+	}
 	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
-		promotePendingDiagonalCarriers(req.ContextCarrier)
+		if !intraOnlyContexts {
+			promotePendingDiagonalCarriers(req.ContextCarrier)
+		}
 		for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
 			rootColIndex := int((miCol - miColStart) / rootSize)
-			if err := blockLoopLoadRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB); err != nil {
+			var err error
+			if intraOnlyContexts {
+				err = blockLoopLoadIntraRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB)
+			} else {
+				err = blockLoopLoadRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB)
+			}
+			if err != nil {
 				return stats, err
 			}
 			rootReq := BlockWalkRequest{
@@ -405,7 +415,7 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 			walkStats, err := walkBlocks(&scratch.Partition, rootReq, func(level BlockLevel, context int, _ uint32, _ uint32, haveRight bool, haveBottom bool) (Partition, error) {
 				return s.ReadPartition(cdfs.Partition, level, context, haveRight, haveBottom)
 			}, func(block BlockVisit) error {
-				visitInfo, err := decodeBlockLoopVisitWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, hasCoeffController, block)
+				visitInfo, err := decodeBlockLoopVisitWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, hasCoeffController, intraOnlyContexts, block)
 				if err != nil {
 					return fmt.Errorf("decode block=%+v: %w", block, err)
 				}
@@ -479,10 +489,17 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 			if err != nil {
 				return stats, fmt.Errorf("walk root col=%d row=%d: %w", rootColIndex, miRow, err)
 			}
-			if err := blockLoopStoreRootContext(scratch, req.ContextCarrier, rootColIndex, req.SBSizeMIB); err != nil {
+			if intraOnlyContexts {
+				err = blockLoopStoreIntraRootContext(scratch, req.ContextCarrier, rootColIndex)
+			} else {
+				err = blockLoopStoreRootContext(scratch, req.ContextCarrier, rootColIndex, req.SBSizeMIB)
+			}
+			if err != nil {
 				return stats, fmt.Errorf("store root context col=%d row=%d: %w", rootColIndex, miRow, err)
 			}
-			captureDiagonalCornerToPending(req.ContextCarrier, rootColIndex+1, &scratch.Mode, req.SBSizeMIB)
+			if !intraOnlyContexts {
+				captureDiagonalCornerToPending(req.ContextCarrier, rootColIndex+1, &scratch.Mode, req.SBSizeMIB)
+			}
 		}
 	}
 	return stats, nil
@@ -889,14 +906,14 @@ func captureLeftCrossSBHistory(dst *blockModeLeftContext, mode *BlockModeContext
 }
 
 func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, block BlockVisit) (BlockLoopVisit, error) {
-	visit, err := decodeBlockLoopVisitWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, hasCoeffController, block)
+	visit, err := decodeBlockLoopVisitWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, hasCoeffController, false, block)
 	if err != nil {
 		return BlockLoopVisit{}, err
 	}
 	return *visit, nil
 }
 
-func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, block BlockVisit) (*BlockLoopVisit, error) {
+func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, intraOnlyContexts bool, block BlockVisit) (*BlockLoopVisit, error) {
 	if entropy.TraceRNGEnabled {
 		entropy.TraceLabel("BLOCK mi_row=%d mi_col=%d size=%d", block.MIRow, block.MICol, int(block.Size))
 	}
@@ -1004,7 +1021,7 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 	visit.Delta = delta
 
 	if req.DecodePredictionModes {
-		if err := s.decodeBlockPredictionModeInto(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.Palette, &visit.Prediction); err != nil {
+		if err := s.decodeBlockPredictionModeInto(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.Palette, &visit.Prediction, intraOnlyContexts); err != nil {
 			return nil, fmt.Errorf("decode prediction: %w", err)
 		}
 	}
@@ -1063,13 +1080,13 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 
 func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch) (BlockPredictionModeResult, error) {
 	var result BlockPredictionModeResult
-	if err := s.decodeBlockPredictionModeInto(cdfs, ctx, req, block, prefix, segmentID, segment, paletteMap, &result); err != nil {
+	if err := s.decodeBlockPredictionModeInto(cdfs, ctx, req, block, prefix, segmentID, segment, paletteMap, &result, false); err != nil {
 		return BlockPredictionModeResult{}, err
 	}
 	return result, nil
 }
 
-func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch, result *BlockPredictionModeResult) error {
+func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch, result *BlockPredictionModeResult, intraOnlyContexts bool) error {
 	if result == nil {
 		return ErrInvalidDecodeState
 	}
@@ -1448,7 +1465,12 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 		return err
 	}
 	result.IntraEdgeSmoothNeighbor = smoothNeighbor
-	if err := ctx.MarkIntra(block.Size, blockX4, blockY4, true, mode); err != nil {
+	if intraOnlyContexts {
+		err = ctx.markOwnedIntra(block.Size, blockX4, blockY4, mode)
+	} else {
+		err = ctx.MarkIntra(block.Size, blockX4, blockY4, true, mode)
+	}
+	if err != nil {
 		return err
 	}
 	result.LumaMode = mode
