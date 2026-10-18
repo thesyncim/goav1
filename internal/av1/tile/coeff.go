@@ -2,6 +2,7 @@ package tile
 
 import (
 	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
@@ -87,6 +88,7 @@ type TXBDecodeRequest struct {
 	levelDirtyPos     *[maxCoeffScanLen]int16
 	levelDirtyLen     *uint16
 	levelDirtyScratch *[maxCoeffScratchLen]uint8
+	dequant           *CoeffDequantTarget
 
 	Size            TransformSize
 	Plane           CoeffPlaneType
@@ -105,6 +107,8 @@ type TXBDecodeRequest struct {
 	skipNonZeroCoeffClear bool
 	trustedScan           bool
 	knownNonZero          bool
+	dequantPlane          uint8
+	dequantDCOnly         bool
 }
 
 type TXBDecodeResult struct {
@@ -1713,11 +1717,11 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 		reader.CommitStateTo(&s.Reader)
 		return TXBDecodeResult{}, ErrInvalidDecodeState
 	}
-
 	lastC := eobPos - 1
 	lastHot := scanHotSlice[lastC]
 	lastPos := int(lastHot.pos)
 	lastLevel := reader.ReadCDF3Unchecked(&baseEOBArr[lastHot.lowerEOBCtx]) + 1
+	lastPackedLevel := uint8(lastLevel * 0x41)
 	if lastLevel > NumBaseLevels {
 		var extra uint8
 		if cdfUpdate {
@@ -1726,6 +1730,7 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 			extra = readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, int(lastHot.brEOBCtx))
 		}
 		lastLevel += int(extra)
+		lastPackedLevel = uint8(lastLevel | 0xc0)
 	}
 	if eobPos == 1 {
 		if coeffTraceEnabled {
@@ -1754,22 +1759,36 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 			reader.CommitStateTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
-		signed := int16(lastLevel)
-		if negative {
-			signed = -signed
+		dequantTarget, dequantTxScale, dqMax := prepareTrackedCoeffDequant(req.dequant, req.dequantPlane, geo)
+		if dequantTarget != nil {
+			if !req.dequantDCOnly {
+				clear(dequantTarget.Dst[:maxEOB])
+			}
+			dcFactor := dequantTarget.Factors[req.dequantPlane][0]
+			dequantTarget.Dst[lastPos] = quantize.DequantizeMagnitudeWithBoundsTrusted(int32(lastLevel), negative, dcFactor, dequantTxScale, dqMax)
+			dequantTarget.ActiveRows = (lastPos & (int(geo.scanHeight) - 1)) + 1
+			dequantTarget.TxScale = dequantTxScale
+			dequantTarget.decoded = true
+		} else {
+			signed := int16(lastLevel)
+			if negative {
+				signed = -signed
+			}
+			coeffs[lastPos] = signed
+			dirtyArr[0] = int16(lastPos)
+			*dirtyLen = 1
 		}
-		coeffs[lastPos] = signed
-		dirtyArr[0] = int16(lastPos)
-		*dirtyLen = 1
 
 		culLevel := lastLevel
 		if culLevel > CoeffContextMask {
 			culLevel = CoeffContextMask
 		}
-		if signed < 0 {
-			culLevel |= 1 << CoeffContextBits
-		} else if signed > 0 {
-			culLevel += 2 << CoeffContextBits
+		if lastLevel != 0 {
+			if negative {
+				culLevel |= 1 << CoeffContextBits
+			} else {
+				culLevel += 2 << CoeffContextBits
+			}
 		}
 		if coeffTraceEnabled {
 			coeffTraceCulLevel(culLevel)
@@ -1795,7 +1814,7 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 	*levelDirtyLen = 0
 	levelDirtyNext := 0
 	lastPadded := int(lastHot.padded)
-	levelsScratch[lastPadded] = uint8(lastLevel)
+	levelsScratch[lastPadded] = lastPackedLevel
 	levelDirtyArr[levelDirtyNext] = int16(lastPadded)
 	levelDirtyNext++
 	dirtyArr[0] = packCoeffDirty(lastPos, lastLevel)
@@ -1814,29 +1833,36 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 			p2 := padded + 2
 			_ = levelsScratch[s2]
 			_ = levelsScratch[p2]
-			mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
-				clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
-			ctx := (mag + 1) >> 1
+			// Tracked 2D levels store the raw token in bits 0..5 and
+			// min(token, 3) in bits 6..7. Summing the five packed neighbors
+			// makes the rounded half-sum of clipped levels available in bits
+			// 7 and above. If the clipped sum is below 8, the raw sum cannot
+			// carry into that field; otherwise the context saturates at 4.
+			h := int(levelsScratch[s1]) + int(levelsScratch[p1]) + int(levelsScratch[s1p1])
+			l := h + int(levelsScratch[s2]) + int(levelsScratch[p2])
+			ctx := (l + 64) >> 7
 			if ctx > 4 {
 				ctx = 4
 			}
 			ctx += int(p.lower2DOffset)
 			level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
+			packedLevel := uint8(level * 0x41)
 			if level == NumBaseLevels+1 {
-				s1 := padded + stride
-				s1p1 := s1 + 1
-				p1 := padded + 1
-				_ = levelsScratch[s1p1]
-				mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
+				// Re-read only on the rare high-token path so h does not need
+				// to stay live across the CDF update call. The low six bits
+				// recover the raw-token sum (at most 45).
+				brH := (int(levelsScratch[s1]) + int(levelsScratch[p1]) + int(levelsScratch[s1p1])) & 63
+				mag := (brH + 1) >> 1
 				if mag > 6 {
 					mag = 6
 				}
 				brCtx := mag + int(p.br2DOffset)
 				extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 				level += int(extra)
+				packedLevel = uint8(level | 0xc0)
 			}
 			if level != 0 {
-				levelsScratch[padded] = uint8(level)
+				levelsScratch[padded] = packedLevel
 				levelDirtyArr[levelDirtyNext] = int16(padded)
 				levelDirtyNext++
 				dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
@@ -1855,29 +1881,28 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 			p2 := padded + 2
 			_ = levelsScratch[s2]
 			_ = levelsScratch[p2]
-			mag := clipMax3(levelsScratch[s1]) + clipMax3(levelsScratch[p1]) +
-				clipMax3(levelsScratch[s1p1]) + clipMax3(levelsScratch[s2]) + clipMax3(levelsScratch[p2])
-			ctx := (mag + 1) >> 1
+			h := int(levelsScratch[s1]) + int(levelsScratch[p1]) + int(levelsScratch[s1p1])
+			l := h + int(levelsScratch[s2]) + int(levelsScratch[p2])
+			ctx := (l + 64) >> 7
 			if ctx > 4 {
 				ctx = 4
 			}
 			ctx += int(p.lower2DOffset)
 			level := reader.ReadCDF4NoUpdateUnchecked(&baseArr[ctx])
+			packedLevel := uint8(level * 0x41)
 			if level == NumBaseLevels+1 {
-				s1 := padded + stride
-				s1p1 := s1 + 1
-				p1 := padded + 1
-				_ = levelsScratch[s1p1]
-				mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
+				brH := (int(levelsScratch[s1]) + int(levelsScratch[p1]) + int(levelsScratch[s1p1])) & 63
+				mag := (brH + 1) >> 1
 				if mag > 6 {
 					mag = 6
 				}
 				brCtx := mag + int(p.br2DOffset)
 				extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 				level += int(extra)
+				packedLevel = uint8(level | 0xc0)
 			}
 			if level != 0 {
-				levelsScratch[padded] = uint8(level)
+				levelsScratch[padded] = packedLevel
 				levelDirtyArr[levelDirtyNext] = int16(padded)
 				levelDirtyNext++
 				dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
@@ -1888,39 +1913,46 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 	dcHot := scanHotSlice[0]
 	dcPadded := int(dcHot.padded)
 	var dcLevel int
+	var packedDCLevel uint8
 	if cdfUpdate {
 		dcLevel = reader.ReadCDF4UpdateUnchecked(&baseArr[0])
+		packedDCLevel = uint8(dcLevel * 0x41)
 		if dcLevel == NumBaseLevels+1 {
 			s1 := dcPadded + stride
 			s1p1 := s1 + 1
 			p1 := dcPadded + 1
 			_ = levelsScratch[s1p1]
-			mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
+			h := int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1])
+			mag := ((h & 63) + 1) >> 1
 			if mag > 6 {
 				mag = 6
 			}
 			brCtx := mag + int(dcHot.br2DOffset)
 			extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 			dcLevel += int(extra)
+			packedDCLevel = uint8(dcLevel | 0xc0)
 		}
 	} else {
 		dcLevel = reader.ReadCDF4NoUpdateUnchecked(&baseArr[0])
+		packedDCLevel = uint8(dcLevel * 0x41)
 		if dcLevel == NumBaseLevels+1 {
 			s1 := dcPadded + stride
 			s1p1 := s1 + 1
 			p1 := dcPadded + 1
 			_ = levelsScratch[s1p1]
-			mag := (int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1]) + 1) >> 1
+			h := int(levelsScratch[p1]) + int(levelsScratch[s1]) + int(levelsScratch[s1p1])
+			mag := ((h & 63) + 1) >> 1
 			if mag > 6 {
 				mag = 6
 			}
 			brCtx := mag + int(dcHot.br2DOffset)
 			extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 			dcLevel += int(extra)
+			packedDCLevel = uint8(dcLevel | 0xc0)
 		}
 	}
 	if dcLevel != 0 {
-		levelsScratch[dcPadded] = uint8(dcLevel)
+		levelsScratch[dcPadded] = packedDCLevel
 		levelDirtyArr[levelDirtyNext] = int16(dcPadded)
 		levelDirtyNext++
 		dirtyArr[nonzeroScanLen] = packCoeffDirty(0, dcLevel)
@@ -1931,9 +1963,19 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 	if coeffTraceEnabled {
 		coeffTraceBlock(int(req.Plane), 0, 0, int(req.Size), int(req.Class), eobPos)
 	}
+	dequantTarget, dequantTxScale, dqMax := prepareTrackedCoeffDequant(req.dequant, req.dequantPlane, geo)
+	var dcFactor, acFactor int32
+	activeRowMask := 0
+	if dequantTarget != nil {
+		factors := dequantTarget.Factors[req.dequantPlane]
+		dcFactor, acFactor = factors[0], factors[1]
+		activeRowMask = int(geo.scanHeight) - 1
+		clear(dequantTarget.Dst[:maxEOB])
+	}
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
+	activeRows := 0
 	i := nonzeroScanLen - 1
 	if i >= 0 && coeffDirtyPackedPos(dirtyArr[i]) == 0 {
 		pos := 0
@@ -1963,13 +2005,27 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 			reader.CommitStateTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
-		signed := int16(level)
-		if negative {
-			signed = -signed
+		if dequantTarget != nil {
+			dequantTarget.Dst[pos] = quantize.DequantizeMagnitudeWithBoundsTrusted(int32(level), negative, dcFactor, dequantTxScale, dqMax)
+			row := pos & activeRowMask
+			if row+1 > activeRows {
+				activeRows = row + 1
+			}
+			if level != 0 {
+				dcValue = 1
+				if negative {
+					dcValue = -1
+				}
+			}
+		} else {
+			signed := int16(level)
+			if negative {
+				signed = -signed
+			}
+			dcValue = int(signed)
+			coeffs[pos] = signed
+			dirtyArr[i] = int16(pos)
 		}
-		dcValue = int(signed)
-		coeffs[pos] = signed
-		dirtyArr[i] = int16(pos)
 		i--
 	}
 	for ; i >= 0; i-- {
@@ -1979,7 +2035,10 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 		if pos > maxScanLine {
 			maxScanLine = pos
 		}
-		bit := reader.ReadBitTrustedInline()
+		bit, refill := reader.ReadBitNoRefillTrusted()
+		if refill {
+			reader.RefillTrusted()
+		}
 		negative := bit != 0
 		baseLevel := level
 		golombExtra := 0
@@ -2005,14 +2064,29 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 			reader.CommitStateTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
-		signed := int16(level)
-		if negative {
-			signed = -signed
+		if dequantTarget != nil {
+			dequantTarget.Dst[pos] = quantize.DequantizeMagnitudeWithBoundsTrusted(int32(level), negative, acFactor, dequantTxScale, dqMax)
+			row := pos & activeRowMask
+			if row+1 > activeRows {
+				activeRows = row + 1
+			}
+		} else {
+			signed := int16(level)
+			if negative {
+				signed = -signed
+			}
+			coeffs[pos] = signed
+			dirtyArr[i] = int16(pos)
 		}
-		coeffs[pos] = signed
-		dirtyArr[i] = int16(pos)
 	}
-	*dirtyLen = uint16(nonzeroScanLen)
+	if dequantTarget != nil {
+		*dirtyLen = 0
+		dequantTarget.ActiveRows = activeRows
+		dequantTarget.TxScale = dequantTxScale
+		dequantTarget.decoded = true
+	} else {
+		*dirtyLen = uint16(nonzeroScanLen)
+	}
 
 	if culLevel > CoeffContextMask {
 		culLevel = CoeffContextMask
@@ -2032,6 +2106,41 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 		MaxScanLine: uint16(maxScanLine),
 		CulLevel:    uint8(culLevel),
 	}, nil
+}
+
+func prepareTrackedCoeffDequant(target *CoeffDequantTarget, plane uint8, geo *coeffGeometry) (*CoeffDequantTarget, uint8, int32) {
+	if target == nil || geo == nil || plane > 2 || geo.txCtx >= CoeffTxSizeContexts || target.Provider == nil ||
+		len(target.Dst) < int(geo.maxEOB) || int(geo.scanHeight) <= 0 {
+		return nil, 0, 0
+	}
+	switch target.BitDepth {
+	case 8, 10, 12:
+	default:
+		return nil, 0, 0
+	}
+	// txCtx uses full coded dimensions, not the adjusted coefficient scan
+	// size. For all legal AV1 transforms, max(txCtx-2, 0) matches the coded
+	// area thresholds used by TransformScale (>256 and >1024 pixels).
+	txScale := uint8(0)
+	if geo.txCtx > 2 {
+		txScale = geo.txCtx - 2
+	}
+	if txScale > 2 {
+		return nil, 0, 0
+	}
+	planeBit := uint8(1 << plane)
+	if target.PreparedPlanes&planeBit == 0 && !target.Provider.PrepareCoeffDequantPlane(plane) {
+		return nil, 0, 0
+	}
+	if target.PreparedPlanes&planeBit == 0 {
+		return nil, 0, 0
+	}
+	factors := target.Factors[plane]
+	if factors[0] <= 0 || factors[1] <= 0 {
+		return nil, 0, 0
+	}
+	_, dqMax := quantize.DequantCoefficientBoundsTrusted(target.BitDepth)
+	return target, txScale, dqMax
 }
 
 func readBaseRangeFromArrCursorUpdateTrusted(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context int) uint8 {

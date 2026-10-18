@@ -427,6 +427,30 @@ func (c *Cursor) ReadBitTrustedInline() uint8 {
 	return bit
 }
 
+// ReadBitNoRefillTrusted decodes one equiprobable bit and reports whether the
+// caller must immediately refill before performing any other entropy operation.
+// The trusted caller enters with a normalized range and non-negative count.
+//
+//go:nosplit
+func (c *Cursor) ReadBitNoRefillTrusted() (bit uint8, refill bool) {
+	if traceEntropyReads {
+		return c.readBitTrustedTrace(), false
+	}
+	split := ((c.rng >> 8) << 7) + ecMinProb
+	bit = 1
+	if c.dif >= uint64(split)<<(ecWindow-16) {
+		c.dif -= uint64(split) << (ecWindow - 16)
+		split = c.rng - split
+		bit = 0
+	}
+	// Normalized range splits yield shift 0..2; the mask removes Go's wide-shift guard.
+	shift := uint(16-bits.Len16(split)) & 3
+	c.rng = split << shift
+	c.cnt -= int16(shift)
+	c.dif = ((c.dif + 1) << shift) - 1
+	return bit, c.cnt < 0
+}
+
 // ReadBitsTrusted decodes n equiprobable bits MSB-first from cursor state.
 //
 //go:nosplit
@@ -3057,7 +3081,9 @@ func (r *Reader) refill() {
 	r.tellOffs = int16(tellOffs)
 }
 
-func (c *Cursor) refill() {
+// RefillTrusted applies the cold byte refill immediately after a no-refill
+// trusted read reports that the normalized count is negative.
+func (c *Cursor) RefillTrusted() {
 	pos, dif, cnt, tellOffs := refillState(c.src, int(c.pos), c.dif, int32(c.cnt), int32(c.tellOffs))
 	c.pos = uint32(pos)
 	c.dif = dif

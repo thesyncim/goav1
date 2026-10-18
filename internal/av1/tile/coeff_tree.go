@@ -23,6 +23,7 @@ type LumaCoeffTreeRequest struct {
 	EOBMultiContext  uint8
 
 	SkipAllZeroCoeffClear bool
+	dequant               *CoeffDequantTarget
 }
 
 type LumaCoeffTreeScratch struct {
@@ -123,6 +124,7 @@ type ChromaCoeffTreeRequest struct {
 	EOBMultiContext  uint8
 
 	SkipAllZeroCoeffClear bool
+	dequant               *CoeffDequantTarget
 }
 
 type ChromaCoeffBlock struct {
@@ -212,6 +214,8 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 		txbReq := TXBDecodeRequest{
 			EOBMultiContext:       eobCtx,
 			SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
+			dequant:               req.dequant,
+			dequantPlane:          0,
 		}
 		for y := yStart; y < yEnd; y += int(dims.H4) {
 			for x := xStart; x < xEnd; x += int(dims.W4) {
@@ -300,6 +304,8 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 		typ, result, coeffs, scan, err := s.decodeCoeffTXBWithKnownContext(cdfs, ctx, scratch, ctxReq, TXBDecodeRequest{
 			EOBMultiContext:       eobCtx,
 			SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
+			dequant:               req.dequant,
+			dequantPlane:          0,
 		}, coeffContextKnown{
 			Plane:    CoeffPlaneY,
 			TXDims:   txDims,
@@ -385,6 +391,8 @@ func decodeLumaCoefficientsInWindowWithCoeffControllerPtr[T BlockLoopCoeffContro
 	txbReq := TXBDecodeRequest{
 		EOBMultiContext:       eobCtx,
 		SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
+		dequant:               req.dequant,
+		dequantPlane:          0,
 	}
 	for y := yStart; y < yEnd; y += int(dims.H4) {
 		for x := xStart; x < xEnd; x += int(dims.W4) {
@@ -584,6 +592,8 @@ func (s *DecodeState) decodeChromaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coe
 			typ, result, coeffs, scan, err := s.decodeCoeffTXBWithKnownContext(cdfs, ctx, scratch, ctxReq, TXBDecodeRequest{
 				EOBMultiContext:       eobCtx,
 				SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
+				dequant:               req.dequant,
+				dequantPlane:          req.Plane,
 			}, coeffContextKnown{
 				Plane:    CoeffPlaneUV,
 				TXDims:   uvDims,
@@ -673,6 +683,8 @@ func decodeChromaCoefficientsInWindowWithCoeffControllerPtr[T BlockLoopCoeffCont
 			typ, result, coeffs, scan, err := s.decodeCoeffTXBWithKnownContext(cdfs, ctx, scratch, ctxReq, TXBDecodeRequest{
 				EOBMultiContext:       eobCtx,
 				SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
+				dequant:               req.dequant,
+				dequantPlane:          req.Plane,
 			}, coeffContextKnown{
 				Plane:    CoeffPlaneUV,
 				TXDims:   uvDims,
@@ -743,6 +755,7 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 }
 
 func (s *DecodeState) decodeCoeffTXBWithKnownContext(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, ctxReq CoeffContextRequest, req TXBDecodeRequest, known coeffContextKnown, selector CoeffTransformSelector, typ transform.Type, useType bool, class transform.Class, transformReq CoeffTransformRequest) (transform.Type, TXBDecodeResult, []int16, []int16, error) {
+	resetCoeffDequantTXB(req.dequant)
 	txbCtx := ctx.txbContextTrusted(ctxReq, known.TXDims, known.Block)
 	req.Size = ctxReq.Size
 	req.Plane = known.Plane
@@ -763,6 +776,7 @@ func (s *DecodeState) decodeCoeffTXBWithKnownContext(cdfs *CoeffCDFs, ctx *Coeff
 			return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("resolve coeff transform: %w", err)
 		}
 	}
+	req.dequantDCOnly = selected == transform.TypeDCTDCT
 	if allZero && req.SkipAllZeroCoeffClear {
 		result := TXBDecodeResult{AllZero: true}
 		ctx.markTXBKnown(ctxReq, known.TXDims, known.VisibleW, known.VisibleH, result)
@@ -804,9 +818,23 @@ func (s *DecodeState) decodeCoeffTXBWithKnownContext(cdfs *CoeffCDFs, ctx *Coeff
 	}
 	ctx.markTXBKnown(ctxReq, known.TXDims, known.VisibleW, known.VisibleH, result)
 	if err := recordCoeffTransform(selector, transformReq, selected); err != nil {
+		resetCoeffDequantTXB(req.dequant)
 		return 0, TXBDecodeResult{}, nil, nil, fmt.Errorf("record coeff transform=%v: %w", selected, err)
 	}
+	if req.dequant != nil && req.dequant.decoded {
+		req.dequant.Ready = true
+	}
 	return selected, result, coeffs, scan, nil
+}
+
+func resetCoeffDequantTXB(target *CoeffDequantTarget) {
+	if target == nil {
+		return
+	}
+	target.Ready = false
+	target.ActiveRows = 0
+	target.TxScale = 0
+	target.decoded = false
 }
 
 func recordCoeffTransform(selector CoeffTransformSelector, req CoeffTransformRequest, selected transform.Type) error {

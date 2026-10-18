@@ -222,6 +222,43 @@ func DequantizeDCCoeffBitDepthTrusted(coeff int16, q Quantizer, txScale uint8, i
 	return dequantScalar(int32(coeff), scale, txScale, dqMin, dqMax)
 }
 
+// DequantCoefficientBoundsTrusted returns the dq_coeff clamp bounds for a
+// validated 8, 10, or 12-bit decoder path. The tracked coefficient reader
+// computes them once per TXB before its per-coefficient loop.
+func DequantCoefficientBoundsTrusted(bitDepth uint8) (dqMin int32, dqMax int32) {
+	dqMin, dqMax, _ = dqCoeffBounds(bitDepth)
+	return dqMin, dqMax
+}
+
+// DequantizeCoefficientWithBoundsTrusted applies AV1's scalar dequantization
+// step to one signed quantized level using bounds computed once for the TXB.
+// Callers must supply a positive factor, a signed int16-range level, txScale
+// <= 2, and the validated bounds for the frame bit depth.
+func DequantizeCoefficientWithBoundsTrusted(level int32, factor int32, txScale uint8, dqMin int32, dqMax int32) int32 {
+	return dequantScalar(level, factor, txScale, dqMin, dqMax)
+}
+
+// DequantizeMagnitudeWithBoundsTrusted applies decoder dequantization to a
+// nonnegative coefficient magnitude and its separately decoded sign. The
+// caller supplies a positive factor, magnitude <= 32768, txScale <= 2, and
+// the validated positive dqMax bound. Keeping magnitude and sign separate
+// avoids converting a signed int16 back to its magnitude in the hot parser.
+func DequantizeMagnitudeWithBoundsTrusted(magnitude int32, negative bool, factor int32, txScale uint8, dqMax int32) int32 {
+	product := int32((int64(magnitude) * int64(factor)) & 0xffffff)
+	value := product >> (txScale & 3)
+	maxMagnitude := dqMax
+	if negative {
+		maxMagnitude++ // dqMin is exactly -(dqMax+1).
+	}
+	if value > maxMagnitude {
+		value = maxMagnitude
+	}
+	if negative {
+		value = -value
+	}
+	return value
+}
+
 func dequantizeBlockScaledQMatrix(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {
 	if width <= 0 || height <= 0 {
 		return ErrInvalidQuantizer

@@ -1,0 +1,3718 @@
+{
+  "bootstrap": {
+    "estimand": "For each case, candidate time saved percent = 100 * (1 - exp(mean(log(candidate_ns_op / baseline_ns_op)))).",
+    "interval": "Percentile 95% interval from sorted replicate saved-percent values, with linear interpolation at 2.5% and 97.5% (h=(n-1)*p).",
+    "replicates": 20000,
+    "resampling_unit": "Paired log ratios within one case; sample 10 pairs with replacement for each replicate.",
+    "rng": "Python random.Random(23117); random.choices(range(10), k=10) for each replicate, iterated case by case in final_results.per_case order.",
+    "scope": "A separate interval is calculated for each case; no cross-case bootstrap is used."
+  },
+  "change": {
+    "public_and_fallback_scope": "The public coefficient visitor and general coefficient/dequantization fallback remain unchanged. The measured direct route applies only to eligible tracked 2D blocks.",
+    "summary": "Tracked 2D coefficient decoding packs the raw token and clipped neighbor-context value into one level byte. The private built-in reconstruction route can write eligible non-lossless, no-quant-matrix 2D coefficients directly into existing int32 transform scratch, with the quantized fallback preserved. The tracked-path bit update separates its cold refill into an underflow branch so the hot update can inline; the prior bit reader already refilled conditionally."
+  },
+  "commands": {
+    "candidate_build": "CODEX_AGENT_ID=pr8-speed2 GOEXPERIMENT=simd CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects /Users/thesyncim/.codex/bin/project-env go test -c . -o /private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+    "confirmation_benchmark_command_template": "CODEX_AGENT_ID=pr8-speed2 CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 GOAV1_BENCH_CORPUS_DIR=/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus /Users/thesyncim/.codex/bin/project-env <binary> -test.run=^$ -test.bench=<anchored exact case selector> -test.benchtime=15x -test.count=1 -test.benchmem",
+    "confirmation_runner": "/usr/bin/python3 /private/tmp/pr8-coeff-fusion-v4-bit-leaf/run-confirm10-retry1.py",
+    "confirmation_runner_sha256": "6700941d762f1be14abbdfd9f6e256ca3671100cde440cacda11255c14f6de87",
+    "encoder_parity": "GOAV1_ENCODER_P720_I420=/private/tmp/pr8-encoder-p720/p720_inter_q32.yuv GOAV1_ENCODER_P720_EXPECT_BITSTREAM_SHA256=2114c08db1008904b2d69634ed733f7eff4201caca23186c2d643adc7823898a GOAV1_ENCODER_P720_EXPECT_RECON_SHA256=c3c2d1bb6092fc986c05398767b7d931566b1dcfa9cf82a73b58acc0124ce948 GOAV1_BENCH_CORPUS_DIR=/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus CODEX_AGENT_ID=pr8-speed2 CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects GOEXPERIMENT=simd /Users/thesyncim/.codex/bin/project-env /private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test -test.run=^TestPublicEncoderP720CorpusParity$ -test.count=1 -test.v",
+    "exploratory_screen_runner": "/usr/bin/python3 /private/tmp/pr8-coeff-fusion-v4-bit-leaf/run-screen-v4-leaf.py",
+    "full_corpus_md5_preflight": "GOAV1_PUBLIC_FULLCLIP=1 with GOAV1_BENCH_CORPUS_DIR set; /Users/thesyncim/.codex/bin/project-env <baseline-or-candidate-binary> -test.run=^TestPublicDecoderFullClipCorpusMD5$ -test.count=1 -test.v"
+  },
+  "confirmation_run": {
+    "all_rows": [
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3634677499999999,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 1,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-1:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-01.log",
+        "raw_log_sha256": "fcb01ae1c2af09b3e03038dd0868466654bfec20d5ae93379dd0522612f20bec",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t  81915372 ns/op\t        48.00 frames/op\t15081864 B/op\t     180 allocs/op",
+        "round": 1,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:56:32.365250+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3942531250000005,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 2,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-1:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-02.log",
+        "raw_log_sha256": "9c75418e15e406f5fba45416dbb9f88d92dfc27805e8651860b34812796859c6",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t  83194919 ns/op\t        48.00 frames/op\t15081863 B/op\t     180 allocs/op",
+        "round": 1,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:56:33.737676+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.334888750000001,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 3,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-1:p360_intra_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-03.log",
+        "raw_log_sha256": "b6f6913f3ba833ecab1419f769a07783e79dc167a5573143429b137b2ed12904",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  79733261 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op",
+        "round": 1,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:56:35.132646+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3447773330000015,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 4,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-1:p360_intra_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-04.log",
+        "raw_log_sha256": "3bcd23bf389f5468dd74bffdc180c8d66d1996b6cc448af9836d261f5442505b",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  81018019 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op",
+        "round": 1,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:56:36.468304+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.979059791000001,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 5,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-1:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-05.log",
+        "raw_log_sha256": "2b27dba5529041cfa592cda842963e6b0fc81a0ba33364a351a07ea11bd064f0",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 182547292 ns/op\t        48.00 frames/op\t39080778 B/op\t     205 allocs/op",
+        "round": 1,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:56:37.817412+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 3.068579500000002,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 6,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-1:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-06.log",
+        "raw_log_sha256": "890d4e7da1a82209eeaab9ffe640c0a3f0585028501aeda3feacd4aece89bfda",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 187911619 ns/op\t        48.00 frames/op\t39080775 B/op\t     205 allocs/op",
+        "round": 1,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:56:40.798430+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 3.1576023749999997,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 7,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-1:p720_inter_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-07.log",
+        "raw_log_sha256": "7d93a873c463431f559f250871bd3ca4bfb3a130abed82608dbc683249e4ada3",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 193745831 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 1,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:56:43.868401+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 3.7779137499999997,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 8,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-1:p720_inter_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-08.log",
+        "raw_log_sha256": "9ff632f9bf5cb52894e60035059db7c5bf83c1f245cba059114e2dff47279673",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 227191119 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 1,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:56:47.026732+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.667521292,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 9,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-2:p360_intra_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-09.log",
+        "raw_log_sha256": "cc91f1f510dc6b56ac56475f4e676df3f76c5f3056d7537dff5d257ba51e0227",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t 100259881 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 2,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:56:50.807109+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.6790019590000007,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 10,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-2:p360_intra_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-10.log",
+        "raw_log_sha256": "31230c61bb116733c9532b18eead638023cff359aa6e00c43949a53de2a730da",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t 102757542 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op",
+        "round": 2,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:56:52.475193+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 4.295824041000003,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 11,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-2:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-11.log",
+        "raw_log_sha256": "ab07a1deb54b013b487ce660050fd5305a370134be7d5b64013ccbb065a968a1",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 262587758 ns/op\t        48.00 frames/op\t39080778 B/op\t     205 allocs/op",
+        "round": 2,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:56:54.154837+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 4.179851416000005,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 12,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-2:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-12.log",
+        "raw_log_sha256": "88ca1a773fe3a0c6a436000cee5a20db14e36a9fa06a79578297026e4686e095",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 253778542 ns/op\t        48.00 frames/op\t39080778 B/op\t     205 allocs/op",
+        "round": 2,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:56:58.451469+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 4.3199922910000055,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 13,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-2:p720_inter_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-13.log",
+        "raw_log_sha256": "443bc6fd3aa6e96a663422ff6c7ce1fb561c00470974850c9e164f2a6da0def8",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 263531125 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 2,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:57:02.634629+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 4.320054042000002,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 14,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-2:p720_inter_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-14.log",
+        "raw_log_sha256": "b08fdbe5bd3164e004cc49a3c292da1175d6abd200a87388cbfd481e59807e94",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 260268928 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 2,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:57:06.955895+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.1244878330000034,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 15,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-2:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-15.log",
+        "raw_log_sha256": "0a950daefd1e03999a34a6d08663c7a869f04cf1a3838c7e9573666e7adeb5e3",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t 125106894 ns/op\t        48.00 frames/op\t15081863 B/op\t     180 allocs/op",
+        "round": 2,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:57:11.281168+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.0680755420000025,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 16,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-2:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-16.log",
+        "raw_log_sha256": "d389a8ba1653c18f86b5a33fba7577fe8d2648b4ca7ff37b807c7b3a9afb4baf",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t 124170492 ns/op\t        48.00 frames/op\t15081867 B/op\t     180 allocs/op",
+        "round": 2,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:57:13.407496+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 4.425138833999995,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 17,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-3:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-17.log",
+        "raw_log_sha256": "6317956db71aa7a9e3ffaa859237a3f614631109593cafaabe3a85af143d2385",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 271803778 ns/op\t        48.00 frames/op\t39080779 B/op\t     205 allocs/op",
+        "round": 3,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:57:15.487841+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 4.334656334000002,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 18,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-3:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-18.log",
+        "raw_log_sha256": "38604ce7de0934bd61b481adb945bcba6fa3c6bc8cc09336e5597b44269bd723",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 263494047 ns/op\t        48.00 frames/op\t39080775 B/op\t     205 allocs/op",
+        "round": 3,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:57:19.914507+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 4.1673222920000015,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 19,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-3:p720_inter_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-19.log",
+        "raw_log_sha256": "6a26a891df36f6471cb9c6bbd28755e2a975cf37ab6dafae74592177e308000e",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 253662164 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op",
+        "round": 3,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:57:24.249818+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 4.1700201660000005,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 20,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-3:p720_inter_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-20.log",
+        "raw_log_sha256": "c16ce2141b39a37e8204e6d99014d47e8b9d5a47b84ffa1bce7d51f6ed17bdb3",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 252793769 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 3,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:57:28.433443+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.947895542000012,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 21,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-3:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-21.log",
+        "raw_log_sha256": "64d0ac1a294afc317471289a865dde73fe2aa25a041cd291c4f284d54173843d",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t 116078800 ns/op\t        48.00 frames/op\t15081864 B/op\t     180 allocs/op",
+        "round": 3,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:57:32.604536+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.072225040999996,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 22,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-3:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-22.log",
+        "raw_log_sha256": "ae0e3241bd49c77b567444ce969d380875e338964ff7b85991d487a2244bbaad",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t 122208294 ns/op\t        48.00 frames/op\t15081863 B/op\t     180 allocs/op",
+        "round": 3,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:57:34.555131+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.8707559580000037,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 23,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-3:p360_intra_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-23.log",
+        "raw_log_sha256": "0dfc014e09ca1034191fc3f567da3423d0101c1d59e3235950839f17ba5bce3b",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t 110773464 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 3,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:57:36.628395+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.9324285419999967,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 24,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-3:p360_intra_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-24.log",
+        "raw_log_sha256": "ca06f4df2bb3fb6759bd7d53eea66c1188208ff072001c5d5888229682515523",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t 113332847 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op",
+        "round": 3,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:57:38.500069+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 4.101542959,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 25,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-4:p720_inter_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-25.log",
+        "raw_log_sha256": "211dd500d4aa5cec0d2cd62e3e105d3e857af48e5e9d634469126998a5eef8ad",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 246873303 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 4,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:57:40.433331+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 3.5386363329999995,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 26,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-4:p720_inter_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-26.log",
+        "raw_log_sha256": "e5b9d6e88bf8827c1489e82bf9741eb9029ce7aac212820cdc5cc9d8fce8b8f8",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 216839269 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op",
+        "round": 4,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:57:44.535555+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.0624497919999953,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 27,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-4:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-27.log",
+        "raw_log_sha256": "eab94f4a1809f32db329622b7ce48d4b0afca41761b342e09c93a11ae2052054",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t 122634633 ns/op\t        48.00 frames/op\t15081867 B/op\t     180 allocs/op",
+        "round": 4,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:57:48.074738+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.9474438750000047,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 28,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-4:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-28.log",
+        "raw_log_sha256": "7c82e9a7731cd1b66a5f26508a37fb6070ba7b4365bda3a1f01ebfa3ffd5b884",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t 116236169 ns/op\t        48.00 frames/op\t15081866 B/op\t     180 allocs/op",
+        "round": 4,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:57:50.138213+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.8453391249999953,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 29,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-4:p360_intra_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-29.log",
+        "raw_log_sha256": "bd98edba8b56980fbff14b470c9a7efd11d5c7213831025af25287c4e0238438",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t 111825456 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 4,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:57:52.086166+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.8335311250000075,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 30,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-4:p360_intra_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-30.log",
+        "raw_log_sha256": "609ddcf88bbfb22ae22a9be5ceaaf6b259af6d5adf3ee032763f49b8e5538c24",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t 107504897 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 4,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:57:53.953917+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 3.9561578750000024,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 31,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-4:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-31.log",
+        "raw_log_sha256": "405269d510381763749dea71fd63c4766a623250079b678b1e6c069ce797df70",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 242052553 ns/op\t        48.00 frames/op\t39080778 B/op\t     205 allocs/op",
+        "round": 4,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:57:55.788243+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 4.141549709000003,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 32,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-4:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-32.log",
+        "raw_log_sha256": "f91324c9bcfbe2fa1b4a6856a0119a39b38071a59d052e15d290f4c55e84f105",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 250258414 ns/op\t        48.00 frames/op\t39080778 B/op\t     205 allocs/op",
+        "round": 4,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:57:59.745080+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.385755415999995,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 33,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-5:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-33.log",
+        "raw_log_sha256": "cc531bedab3ab97cbae9d7158b90c5afbcf4d929008c9af45bdd375e2bd84386",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t  83111203 ns/op\t        48.00 frames/op\t15081863 B/op\t     180 allocs/op",
+        "round": 5,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:58:03.890100+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.376234709000002,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 34,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-5:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-34.log",
+        "raw_log_sha256": "8a27e3ea7de5f7bbfbe14759019143b0dd245d3f898d1ac26cf07983a7bb9caa",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t  82811933 ns/op\t        48.00 frames/op\t15081866 B/op\t     180 allocs/op",
+        "round": 5,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:58:05.276358+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3192274170000076,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 35,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-5:p360_intra_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-35.log",
+        "raw_log_sha256": "0b776b9c6cd63cd2834964216b791e398446ac755e3b4f8aab106c38ffec1292",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  79208992 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 5,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:58:06.658397+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.351714666999996,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 36,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-5:p360_intra_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-36.log",
+        "raw_log_sha256": "ff33c59323478231bddaaa29631f148857b6b2855746558d9cfa5a68e7becae7",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  81313381 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op",
+        "round": 5,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:58:07.978123+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.909181375000003,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 37,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-5:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-37.log",
+        "raw_log_sha256": "88095db9ec350a483e8ad35fee39f1fca7452e8c6bc8b1554cef53d4582226d2",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 178608322 ns/op\t        48.00 frames/op\t39080778 B/op\t     205 allocs/op",
+        "round": 5,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:58:09.330433+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.8674398329999917,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 38,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-5:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-38.log",
+        "raw_log_sha256": "6fd1c4a04a0733976675f45ff49bc60b2fe36c1760a080a390a3ce5817344db5",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 176499436 ns/op\t        48.00 frames/op\t39080776 B/op\t     205 allocs/op",
+        "round": 5,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:58:12.240230+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.8432234170000044,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 39,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-5:p720_inter_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-39.log",
+        "raw_log_sha256": "4f9722cf092f8173c73550e759557b7f0d73d2083ab738807b84f0b851c4c0d1",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 173745800 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op",
+        "round": 5,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:58:15.108263+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.817964042,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 40,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-5:p720_inter_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-40.log",
+        "raw_log_sha256": "7a646ec4c871de3f5556fddd3d06763b4407513fd4421fdbcfc77fa3aeaa3064",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 172799950 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 5,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:58:17.951989+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3401764170000092,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 41,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-6:p360_intra_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-41.log",
+        "raw_log_sha256": "0bd9f66c9a9184f33af1406e8df40a5a72b804f5c2d3c57d791daa907ce025ec",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  80911347 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 6,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:58:20.770525+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3151411249999967,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 42,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-6:p360_intra_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-42.log",
+        "raw_log_sha256": "bf4578c6ff15b00da0feded4e1048199c1f12e9ffd185cf3ea4c17916abfbb18",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  79003714 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 6,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:58:22.111240+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.8925352500000088,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 43,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-6:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-43.log",
+        "raw_log_sha256": "9074a9230c16ca9c1af924680e74ba5ac832d4d851d6cfc86d0d98942f4eedd7",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 177832569 ns/op\t        48.00 frames/op\t39080778 B/op\t     205 allocs/op",
+        "round": 6,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:58:23.426869+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.916418207999996,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 44,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-6:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-44.log",
+        "raw_log_sha256": "4d1dbd8eb7d5aac7033c1ad3dca5d85adade3b4454a0e67b59f2e7b6499d8fd3",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 179378272 ns/op\t        48.00 frames/op\t39080775 B/op\t     205 allocs/op",
+        "round": 6,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:58:26.319922+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.875579166999998,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 45,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-6:p720_inter_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-45.log",
+        "raw_log_sha256": "fc87a09f746b8cd52d91898fa84b585bedd7f549bcdf62900cce762e5e59efdf",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 176661917 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 6,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:58:29.236850+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 3.409423457999992,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 46,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-6:p720_inter_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-46.log",
+        "raw_log_sha256": "7066c43bef26c9e723ebbcf22141d312ab2d2220a429e7ae693b7b7636cdc5f9",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 211661058 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 6,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:58:32.122070+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.5056664580000074,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 47,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-6:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-47.log",
+        "raw_log_sha256": "5deb159eb65a598552b610ed0ae2b14e2dde1a3d0cf50e0985082082f55ba528",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t  91337433 ns/op\t        48.00 frames/op\t15081864 B/op\t     180 allocs/op",
+        "round": 6,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:58:35.532265+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3842290830000081,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 48,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-6:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-48.log",
+        "raw_log_sha256": "04ede5e962eee24a3f60bfb436f822fe1a9a6847d31a6f458ffca95e072b9cbb",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t  83315178 ns/op\t        48.00 frames/op\t15081866 B/op\t     180 allocs/op",
+        "round": 6,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:58:37.042713+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 3.0922324160000016,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 49,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-7:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-49.log",
+        "raw_log_sha256": "96d2e229d94db72266f67753dd4b83ed4242001f8d31a6114efb3d6adcb7a677",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 190627889 ns/op\t        48.00 frames/op\t39080779 B/op\t     205 allocs/op",
+        "round": 7,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:58:38.427455+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 3.006817500000011,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 50,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-7:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-50.log",
+        "raw_log_sha256": "3ba80c4c2eed129014e0f8a1323756a0724bb3ea712d62e7f0221105b38ea8f5",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 185202131 ns/op\t        48.00 frames/op\t39080778 B/op\t     205 allocs/op",
+        "round": 7,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:58:41.520230+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.8993396250000103,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 51,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-7:p720_inter_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-51.log",
+        "raw_log_sha256": "e5c4d598f6728aeaa9603a361452363b17e5fe326ee01164de5c2fbd79af86dd",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 177708261 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 7,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:58:44.527599+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.8806978329999993,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 52,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-7:p720_inter_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-52.log",
+        "raw_log_sha256": "e01706b9642d93f552b4bacb3702fec330a2f5d88b68ca58b1995d6fb98d5da7",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 176869192 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 7,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:58:47.427529+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3560911669999882,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 53,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-7:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-53.log",
+        "raw_log_sha256": "fe51be8a1a9411ac8921d3d8829b2363f9ec2cde155184c6ffa3a3207c494c9b",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t  81394078 ns/op\t        48.00 frames/op\t15081866 B/op\t     180 allocs/op",
+        "round": 7,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:58:50.308797+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.384751250000022,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 54,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-7:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-54.log",
+        "raw_log_sha256": "1c8ee97bafaa71f13e257b25b15eb9f38343d3d1d043e43d49b8f648e6063bdc",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t  83352375 ns/op\t        48.00 frames/op\t15081864 B/op\t     180 allocs/op",
+        "round": 7,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:58:51.665389+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3215371670000025,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 55,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-7:p360_intra_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-55.log",
+        "raw_log_sha256": "c5fe5a6bcb3d24c6b29b9407bcd49ed5078cba402f2b277ffc2e6c8b76d0eef9",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  79453756 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 7,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:58:53.050712+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3455036670000027,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 56,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-7:p360_intra_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-56.log",
+        "raw_log_sha256": "56b087fc8b13df608ababff9be24d244b5395480878e65065d9c682f3746ebf0",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  80651642 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op",
+        "round": 7,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:58:54.372808+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.8367116249999924,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 57,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-8:p720_inter_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-57.log",
+        "raw_log_sha256": "b82d2bbaf6443e431f8e58488ff0a652cd3029ef8b2b0d989cdb8e2730f072bc",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 173627322 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op",
+        "round": 8,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:58:55.718831+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.852171249999998,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 58,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-8:p720_inter_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-58.log",
+        "raw_log_sha256": "05d184154cf590dd923c0c4bb28ec175d30fd5a66a31004d8994e49c24e18767",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 175031306 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 8,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:58:58.556065+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3624706669999966,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 59,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-8:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-59.log",
+        "raw_log_sha256": "92b3acf25d43ee9842e32cfead2f4d0fed2a92ce6fc24eb65ae7973f8e257f67",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t  82136483 ns/op\t        48.00 frames/op\t15081863 B/op\t     180 allocs/op",
+        "round": 8,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:59:01.408806+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.355132583999989,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 60,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-8:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-60.log",
+        "raw_log_sha256": "ff1dcffd165bc8a28274b7442c8b83623f406e87d01fc0efec5038967d501060",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t  81554703 ns/op\t        48.00 frames/op\t15081863 B/op\t     180 allocs/op",
+        "round": 8,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:59:02.771905+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3405491249999955,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 61,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-8:p360_intra_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-61.log",
+        "raw_log_sha256": "21dc6ff85aa6834729a97d65c2a21f3de04b0bf319fa2db017864c7187b1309d",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  80635992 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 8,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:59:04.127572+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3291300829999955,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 62,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-8:p360_intra_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-62.log",
+        "raw_log_sha256": "f61feb8dd5f2c05e4d3821c891f4bd2cc8a69f8a416ab69bfa1da56935bd68b3",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  79446911 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op",
+        "round": 8,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:59:05.468672+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.9512801670000215,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 63,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-8:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-63.log",
+        "raw_log_sha256": "8171008d5bd7bbcb6eecf4c7305496fbd2d50f59790edf545b1f48bc7f80ca0a",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 181326806 ns/op\t        48.00 frames/op\t39080775 B/op\t     205 allocs/op",
+        "round": 8,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:59:06.798375+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.9689697919999958,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 64,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-8:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-64.log",
+        "raw_log_sha256": "d91235fa05f19874f308aacf1ac920eb93d9ae325c42eff76a7a5e46f331c4c5",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 181924414 ns/op\t        48.00 frames/op\t39080775 B/op\t     205 allocs/op",
+        "round": 8,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:59:09.750363+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3449030000000164,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 65,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-9:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-65.log",
+        "raw_log_sha256": "1bef78286e0246ba892bb69590b6f4091a1a51e64becda79bf67f287a29c41db",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t  81011556 ns/op\t        48.00 frames/op\t15081866 B/op\t     180 allocs/op",
+        "round": 9,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:59:12.719883+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3668354159999865,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 66,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-9:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-66.log",
+        "raw_log_sha256": "46f71eab61d9928bd71539bd3f7608187ebb7b2c2d1bdbdeac04f21e79aacfbc",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t  82480486 ns/op\t        48.00 frames/op\t15081863 B/op\t     180 allocs/op",
+        "round": 9,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:59:14.065294+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3155787919999966,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 67,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-9:p360_intra_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-67.log",
+        "raw_log_sha256": "e8433f08af3e9585f9e0479883877d76b3234f8f0bd7947f290bc535cee1bba6",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  78565331 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op",
+        "round": 9,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:59:15.432625+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3381228339999893,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 68,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-9:p360_intra_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-68.log",
+        "raw_log_sha256": "3071cb9bbaaf9406fd49432bb7cffa1ee612bf0e8f1b2021715f19e6c2f1cad5",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  80547650 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 9,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:59:16.748729+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.9243999999999915,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 69,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-9:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-69.log",
+        "raw_log_sha256": "63953edd9cb5671e77dd58f3642438065f8255fa35d79de02b81ec95abce61b2",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 179756811 ns/op\t        48.00 frames/op\t39080775 B/op\t     205 allocs/op",
+        "round": 9,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:59:18.087380+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.9726338749999854,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 70,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-9:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-70.log",
+        "raw_log_sha256": "604f6032c5f77901352c1c4682f9a28b38cc69baea094452ed3f1b798f4afa32",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 182576444 ns/op\t        48.00 frames/op\t39080779 B/op\t     205 allocs/op",
+        "round": 9,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:59:21.012525+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.856940584,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 71,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-9:p720_inter_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-71.log",
+        "raw_log_sha256": "0dae1321de572c2b4ce4772ecbeb9249a6cf7e2782357a3e84477d4e7d8b0d61",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 175449986 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 9,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:59:23.985702+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.9585064159999774,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 72,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-9:p720_inter_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-72.log",
+        "raw_log_sha256": "4d243cee0bf2053619dd5fdc2876b1d2054724bce417712c36d6e4c8643b6c69",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 181341006 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 9,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:59:26.843244+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3638373329999922,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 73,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-10:p360_intra_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-73.log",
+        "raw_log_sha256": "359ed7cd3d99e4da229dfffbef4b9ea26aab00481483b955db90717b8a2bcf3d",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  82130558 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op",
+        "round": 10,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:59:29.802321+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.337625916999997,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 74,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-10:p360_intra_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-74.log",
+        "raw_log_sha256": "6bdfb63730cbd5816b9d2188f52b730b09c6155b1172406be1cf1425d2d19f00",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      15\t  79809800 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 10,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:59:31.166976+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 3.0692730840000024,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 75,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-10:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-75.log",
+        "raw_log_sha256": "919ea0f274a91247885931d94ac31996bdcd00abcf389200e450a239c888d236",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 188571253 ns/op\t        48.00 frames/op\t39080776 B/op\t     205 allocs/op",
+        "round": 10,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:59:32.505337+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.955578250000002,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 76,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-10:p720_inter_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-76.log",
+        "raw_log_sha256": "a37709a649ae932f53e23d3ae133d45e1824921f065faa9045f5a0a33ad0bb26",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/cold_fresh_decoder         \t      15\t 181194914 ns/op\t        48.00 frames/op\t39080775 B/op\t     205 allocs/op",
+        "round": 10,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:59:35.575207+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.9243843339999955,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 77,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-10:p720_inter_q32:warm_reset_decode",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-77.log",
+        "raw_log_sha256": "33d9137142f0e3ce3b61cead4d03fe746ffe4d8f4ec83b1c87009cdc1693a270",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 179016689 ns/op\t        48.00 frames/op\t       3 B/op\t       0 allocs/op",
+        "round": 10,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:59:38.531395+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p720_inter_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 2.9385612089999995,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 78,
+        "mode": "warm_reset_decode",
+        "operations": 15,
+        "pair_id": "round-10:p720_inter_q32:warm_reset_decode",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-78.log",
+        "raw_log_sha256": "207f141eed962dbac1f694eeb7846dd9c5c1ef875c733a29f9dd9f34b8f9fdae",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      15\t 180027539 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op",
+        "round": 10,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "started_utc": "2026-10-17T16:59:41.456482+00:00",
+        "variant": "candidate"
+      },
+      {
+        "binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+        "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.4268577919999927,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 79,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-10:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 0,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-79.log",
+        "raw_log_sha256": "a866ecf080df0ce456d74e6bdea375a66f66bc9f1882eec4e979283ea7c9de27",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t  84920753 ns/op\t        48.00 frames/op\t15081864 B/op\t     180 allocs/op",
+        "round": 10,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:59:44.395914+00:00",
+        "variant": "baseline"
+      },
+      {
+        "binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+        "binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+        "clip": "p360_intra_q32",
+        "command": [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^$",
+          "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+          "-test.benchtime=15x",
+          "-test.count=1",
+          "-test.benchmem"
+        ],
+        "elapsed_wall_seconds": 1.3884443329999954,
+        "environment": {
+          "CODEX_AGENT_ID": "pr8-speed2",
+          "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+          "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+          "GOEXPERIMENT": "simd",
+          "GOGC": "100",
+          "GOMAXPROCS": "1"
+        },
+        "exit_code": 0,
+        "frames_per_op": 48,
+        "index": 80,
+        "mode": "cold_fresh_decoder",
+        "operations": 15,
+        "pair_id": "round-10:p360_intra_q32:cold_fresh_decoder",
+        "pair_order": 1,
+        "raw_log": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/run-80.log",
+        "raw_log_sha256": "f7216fd90e673b2afaafad4bf701fcd9b4b2e4a9b746fa592657a64347ddfdcd",
+        "reported_benchmark_line": "BenchmarkPublicDecoderFullClip/p360_intra_q32/cold_fresh_decoder         \t      15\t  83391839 ns/op\t        48.00 frames/op\t15081866 B/op\t     180 allocs/op",
+        "round": 10,
+        "selector": "^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^cold_fresh_decoder$",
+        "started_utc": "2026-10-17T16:59:45.832538+00:00",
+        "variant": "candidate"
+      }
+    ],
+    "manifest_path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/manifest.json",
+    "manifest_sha256": "3386224bf814134d6821b3752c1da6a3b9df63d8f3c3e3e12da58211eec82e46",
+    "rows_path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/rows.jsonl",
+    "rows_sha256": "db3035d97137231dcc13f38c3a50b5b25badfe72f100d2a9aff98e95d32e94b9",
+    "status": "complete"
+  },
+  "decision": "Retain the candidate as a content-specific decoder improvement: fresh confirmation supports p360_intra_q32 cold and warm full-clip decode. The two p720_inter_q32 cases are inconclusive. No general decoder-speed claim is made.",
+  "environment_and_protocol": {
+    "backend_order_by_case": {
+      "p360_intra_q32/cold_fresh_decoder": [
+        "BA",
+        "AB",
+        "BA",
+        "AB",
+        "BA",
+        "AB",
+        "BA",
+        "AB",
+        "BA",
+        "AB"
+      ],
+      "p360_intra_q32/warm_reset_decode": [
+        "BA",
+        "AB",
+        "BA",
+        "AB",
+        "BA",
+        "AB",
+        "BA",
+        "AB",
+        "BA",
+        "AB"
+      ],
+      "p720_inter_q32/cold_fresh_decoder": [
+        "BA",
+        "AB",
+        "BA",
+        "AB",
+        "BA",
+        "AB",
+        "BA",
+        "AB",
+        "BA",
+        "AB"
+      ],
+      "p720_inter_q32/warm_reset_decode": [
+        "BA",
+        "AB",
+        "BA",
+        "AB",
+        "BA",
+        "AB",
+        "BA",
+        "AB",
+        "BA",
+        "AB"
+      ]
+    },
+    "benchmark_corpus": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus",
+    "build": "normal optimized go test -c; no race/checkptr/compiler instrumentation in timed binaries",
+    "case_order_by_round": [
+      [
+        "p360_intra_q32/cold_fresh_decoder",
+        "p360_intra_q32/warm_reset_decode",
+        "p720_inter_q32/cold_fresh_decoder",
+        "p720_inter_q32/warm_reset_decode"
+      ],
+      [
+        "p360_intra_q32/warm_reset_decode",
+        "p720_inter_q32/cold_fresh_decoder",
+        "p720_inter_q32/warm_reset_decode",
+        "p360_intra_q32/cold_fresh_decoder"
+      ],
+      [
+        "p720_inter_q32/cold_fresh_decoder",
+        "p720_inter_q32/warm_reset_decode",
+        "p360_intra_q32/cold_fresh_decoder",
+        "p360_intra_q32/warm_reset_decode"
+      ],
+      [
+        "p720_inter_q32/warm_reset_decode",
+        "p360_intra_q32/cold_fresh_decoder",
+        "p360_intra_q32/warm_reset_decode",
+        "p720_inter_q32/cold_fresh_decoder"
+      ],
+      [
+        "p360_intra_q32/cold_fresh_decoder",
+        "p360_intra_q32/warm_reset_decode",
+        "p720_inter_q32/cold_fresh_decoder",
+        "p720_inter_q32/warm_reset_decode"
+      ],
+      [
+        "p360_intra_q32/warm_reset_decode",
+        "p720_inter_q32/cold_fresh_decoder",
+        "p720_inter_q32/warm_reset_decode",
+        "p360_intra_q32/cold_fresh_decoder"
+      ],
+      [
+        "p720_inter_q32/cold_fresh_decoder",
+        "p720_inter_q32/warm_reset_decode",
+        "p360_intra_q32/cold_fresh_decoder",
+        "p360_intra_q32/warm_reset_decode"
+      ],
+      [
+        "p720_inter_q32/warm_reset_decode",
+        "p360_intra_q32/cold_fresh_decoder",
+        "p360_intra_q32/warm_reset_decode",
+        "p720_inter_q32/cold_fresh_decoder"
+      ],
+      [
+        "p360_intra_q32/cold_fresh_decoder",
+        "p360_intra_q32/warm_reset_decode",
+        "p720_inter_q32/cold_fresh_decoder",
+        "p720_inter_q32/warm_reset_decode"
+      ],
+      [
+        "p360_intra_q32/warm_reset_decode",
+        "p720_inter_q32/cold_fresh_decoder",
+        "p720_inter_q32/warm_reset_decode",
+        "p360_intra_q32/cold_fresh_decoder"
+      ]
+    ],
+    "compiler": "gc",
+    "confirmation_startup_free_space_guard": {
+      "free_bytes_at_start": 24932216832,
+      "minimum_bytes": 2147483648
+    },
+    "go": "go1.27.0-X:simd",
+    "goarch": "arm64",
+    "goarm64": "v8.0",
+    "gogc": 100,
+    "gomaxprocs": 1,
+    "goos": "darwin",
+    "host_cpu": "Apple M4 Max",
+    "os": "Darwin arm64, kernel 25.3.0",
+    "project_cache_root": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+    "project_env_wrapper": "/Users/thesyncim/.codex/bin/project-env"
+  },
+  "exploratory_screen": {
+    "description": "An earlier five-pair screen used the same four cases and N=15, 48 frames/op. It is retained as exploratory evidence and is not pooled with the fresh confirmation.",
+    "descriptive_equal_weight_geometric_mean_time_saved_percent": 0.9105252581564471,
+    "manifest_path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/screen-main-baseline/manifest.json",
+    "manifest_sha256": "fdd54ce68296e040d7eb950d3a3c1d67b0ab38ab535694eee0ea5e8a2221fc3d",
+    "per_case": {
+      "p360_intra_q32/cold_fresh_decoder": {
+        "allocations": {
+          "baseline": {
+            "allocs_per_op_values": [
+              180,
+              180,
+              180,
+              180,
+              180
+            ],
+            "allocs_per_op_values_unique": [
+              180
+            ],
+            "bytes_per_op_range": [
+              15081863,
+              15081866
+            ],
+            "bytes_per_op_values": [
+              15081864,
+              15081863,
+              15081866,
+              15081863,
+              15081863
+            ]
+          },
+          "candidate": {
+            "allocs_per_op_values": [
+              180,
+              180,
+              180,
+              180,
+              180
+            ],
+            "allocs_per_op_values_unique": [
+              180
+            ],
+            "bytes_per_op_range": [
+              15081863,
+              15081867
+            ],
+            "bytes_per_op_values": [
+              15081866,
+              15081863,
+              15081866,
+              15081867,
+              15081863
+            ]
+          }
+        },
+        "candidate_faster_pairs": 5,
+        "geometric_mean_time_saved_percent": 1.9024773138443418,
+        "paired_time_saved_percent_95pct_bootstrap_ci": [
+          1.555049579178569,
+          2.248678921316183
+        ],
+        "pairs": 5
+      },
+      "p360_intra_q32/warm_reset_decode": {
+        "allocations": {
+          "baseline": {
+            "allocs_per_op_values": [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "allocs_per_op_values_unique": [
+              0
+            ],
+            "bytes_per_op_range": [
+              0,
+              3
+            ],
+            "bytes_per_op_values": [
+              3,
+              3,
+              0,
+              3,
+              0
+            ]
+          },
+          "candidate": {
+            "allocs_per_op_values": [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "allocs_per_op_values_unique": [
+              0
+            ],
+            "bytes_per_op_range": [
+              0,
+              3
+            ],
+            "bytes_per_op_values": [
+              0,
+              0,
+              3,
+              3,
+              3
+            ]
+          }
+        },
+        "candidate_faster_pairs": 5,
+        "geometric_mean_time_saved_percent": 1.6637814303436138,
+        "paired_time_saved_percent_95pct_bootstrap_ci": [
+          0.9163462695153779,
+          2.188303290078053
+        ],
+        "pairs": 5
+      },
+      "p720_inter_q32/cold_fresh_decoder": {
+        "allocations": {
+          "baseline": {
+            "allocs_per_op_values": [
+              205,
+              205,
+              205,
+              205,
+              205
+            ],
+            "allocs_per_op_values_unique": [
+              205
+            ],
+            "bytes_per_op_range": [
+              39080775,
+              39080779
+            ],
+            "bytes_per_op_values": [
+              39080775,
+              39080775,
+              39080778,
+              39080779,
+              39080775
+            ]
+          },
+          "candidate": {
+            "allocs_per_op_values": [
+              205,
+              205,
+              205,
+              205,
+              205
+            ],
+            "allocs_per_op_values_unique": [
+              205
+            ],
+            "bytes_per_op_range": [
+              39080775,
+              39080779
+            ],
+            "bytes_per_op_values": [
+              39080775,
+              39080778,
+              39080779,
+              39080775,
+              39080775
+            ]
+          }
+        },
+        "candidate_faster_pairs": 3,
+        "geometric_mean_time_saved_percent": -0.17177322809205364,
+        "paired_time_saved_percent_95pct_bootstrap_ci": [
+          -1.126249030166604,
+          0.6131598478872902
+        ],
+        "pairs": 5
+      },
+      "p720_inter_q32/warm_reset_decode": {
+        "allocations": {
+          "baseline": {
+            "allocs_per_op_values": [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "allocs_per_op_values_unique": [
+              0
+            ],
+            "bytes_per_op_range": [
+              0,
+              3
+            ],
+            "bytes_per_op_values": [
+              0,
+              0,
+              0,
+              3,
+              3
+            ]
+          },
+          "candidate": {
+            "allocs_per_op_values": [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "allocs_per_op_values_unique": [
+              0
+            ],
+            "bytes_per_op_range": [
+              0,
+              3
+            ],
+            "bytes_per_op_values": [
+              0,
+              0,
+              0,
+              3,
+              3
+            ]
+          }
+        },
+        "candidate_faster_pairs": 2,
+        "geometric_mean_time_saved_percent": 0.23155585754977004,
+        "paired_time_saved_percent_95pct_bootstrap_ci": [
+          -0.40051152755677943,
+          0.8596440878369305
+        ],
+        "pairs": 5
+      }
+    },
+    "pooled_inference": "No pooled CI; descriptive aggregate across unlike cases only.",
+    "raw_rows_path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/screen-main-baseline/rows.jsonl",
+    "status": "superseded_by_fresh_confirmation"
+  },
+  "failed_confirmation_attempt": {
+    "failure_marker_path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline/FAILED_INCOMPLETE.json",
+    "failure_marker_sha256": "99230beb2a0b3202e40b2f946a2b6e066fd2e1723b0082d1027eb07042ea4c90",
+    "handling": "The 52 saved rows remain untouched and are excluded wholesale; the fresh 80-row confirmation is independent.",
+    "path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline",
+    "persisted_rows": 52,
+    "planned_rows": 80,
+    "reason": "ENOSPC while persisting benchmark log for run 53; run 53 output was not persisted and is excluded. The 52 persisted rows are retained as a separate incomplete attempt and will not be analyzed or merged with the fresh retry.",
+    "rows_path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline/rows.jsonl",
+    "rows_sha256": "d899a2001765921587249f7d31fbc67510c1ca033c2045f88625194089ef196e",
+    "status": "failed_incomplete",
+    "timestamp": "Omitted; the failure event time was not separately recorded."
+  },
+  "final_results": {
+    "interpretation": "The two p360 intra intervals exclude zero and both have 9/10 candidate wins. The p720 inter intervals include zero and each case has 4/10 wins, so the inter result is inconclusive.",
+    "per_case": {
+      "p360_intra_q32/cold_fresh_decoder": {
+        "allocs_per_op": {
+          "baseline_unique": [
+            180
+          ],
+          "candidate_unique": [
+            180
+          ],
+          "equal_all_pairs": true
+        },
+        "backend_order_by_round": [
+          "BA",
+          "AB",
+          "BA",
+          "AB",
+          "BA",
+          "AB",
+          "BA",
+          "AB",
+          "BA",
+          "AB"
+        ],
+        "baseline_median_ns_per_op": 84136564.0,
+        "bytes_per_op_range": {
+          "baseline": [
+            15081863,
+            15081867
+          ],
+          "candidate": [
+            15081863,
+            15081867
+          ]
+        },
+        "candidate_faster_pairs": 9,
+        "candidate_median_ns_per_op": 83213190.5,
+        "geometric_mean_candidate_over_baseline": 0.9720578973886103,
+        "geometric_mean_time_saved_percent": 2.794210261138974,
+        "median_paired_time_saved_percent": 1.7906716814246937,
+        "paired_time_saved_percent_95pct_bootstrap_ci": [
+          1.2923468807237604,
+          4.544198303106589
+        ],
+        "pairs": 10
+      },
+      "p360_intra_q32/warm_reset_decode": {
+        "allocs_per_op": {
+          "baseline_unique": [
+            0
+          ],
+          "candidate_unique": [
+            0
+          ],
+          "equal_all_pairs": true
+        },
+        "backend_order_by_round": [
+          "BA",
+          "AB",
+          "BA",
+          "AB",
+          "BA",
+          "AB",
+          "BA",
+          "AB",
+          "BA",
+          "AB"
+        ],
+        "baseline_median_ns_per_op": 81165700.0,
+        "bytes_per_op_range": {
+          "baseline": [
+            0,
+            3
+          ],
+          "candidate": [
+            0,
+            3
+          ]
+        },
+        "candidate_faster_pairs": 9,
+        "candidate_median_ns_per_op": 79593508.5,
+        "geometric_mean_candidate_over_baseline": 0.9814634481723269,
+        "geometric_mean_time_saved_percent": 1.853655182767311,
+        "median_paired_time_saved_percent": 2.3079858588911097,
+        "paired_time_saved_percent_95pct_bootstrap_ci": [
+          0.7532037056258004,
+          2.675113511286998
+        ],
+        "pairs": 10
+      },
+      "p720_inter_q32/cold_fresh_decoder": {
+        "allocs_per_op": {
+          "baseline_unique": [
+            205
+          ],
+          "candidate_unique": [
+            205
+          ],
+          "equal_all_pairs": true
+        },
+        "backend_order_by_round": [
+          "BA",
+          "AB",
+          "BA",
+          "AB",
+          "BA",
+          "AB",
+          "BA",
+          "AB",
+          "BA",
+          "AB"
+        ],
+        "baseline_median_ns_per_op": 186556875.0,
+        "bytes_per_op_range": {
+          "baseline": [
+            39080775,
+            39080779
+          ],
+          "candidate": [
+            39080775,
+            39080779
+          ]
+        },
+        "candidate_faster_pairs": 4,
+        "candidate_median_ns_per_op": 182235853.0,
+        "geometric_mean_candidate_over_baseline": 0.9998534156873116,
+        "geometric_mean_time_saved_percent": 0.014658431268843586,
+        "median_paired_time_saved_percent": -0.5993825756842708,
+        "paired_time_saved_percent_95pct_bootstrap_ci": [
+          -1.5958977198392998,
+          1.683753602110626
+        ],
+        "pairs": 10
+      },
+      "p720_inter_q32/warm_reset_decode": {
+        "allocs_per_op": {
+          "baseline_unique": [
+            0
+          ],
+          "candidate_unique": [
+            0
+          ],
+          "equal_all_pairs": true
+        },
+        "backend_order_by_round": [
+          "BA",
+          "AB",
+          "BA",
+          "AB",
+          "BA",
+          "AB",
+          "BA",
+          "AB",
+          "BA",
+          "AB"
+        ],
+        "baseline_median_ns_per_op": 180178847.5,
+        "bytes_per_op_range": {
+          "baseline": [
+            0,
+            3
+          ],
+          "candidate": [
+            0,
+            3
+          ]
+        },
+        "candidate_faster_pairs": 4,
+        "candidate_median_ns_per_op": 186886685.0,
+        "geometric_mean_candidate_over_baseline": 0.987440445112954,
+        "geometric_mean_time_saved_percent": 1.2559554887045965,
+        "median_paired_time_saved_percent": -0.40896001277804794,
+        "paired_time_saved_percent_95pct_bootstrap_ci": [
+          -4.237247299253087,
+          6.275143399581658
+        ],
+        "pairs": 10
+      }
+    }
+  },
+  "measurement_date": "2026-10-17",
+  "native_gap_report": {
+    "status": "complete",
+    "path": "docs/benchmarks/decoder-coefficient-dav1d-gap-20261017.json",
+    "sha256": "eda9c2b2fbb129f163b9327059c301233fb8f44fde6af137c99a7e994867d0eb",
+    "aggregate_statistic": "sum of per-clip medians, where each median is from 18 samples (9 per backend/order round)",
+    "go_cold_ivf_median_sum_ms": 1601.0247695,
+    "installed_dav1d_1_5_3_median_sum_ms": 568.8645,
+    "go_over_dav1d_ratio": 2.814422009986561,
+    "round_ratios": [
+      2.793186299296228,
+      2.8560285127070353
+    ],
+    "validation": "Both rounds matched MD5 sidecars for all 18 clips / 864 visible frames.",
+    "boundary": "Go NewDecoderFromIVF copies packet payloads in the timed constructor; the C helper wraps preloaded packet slices without copying but still parses IVF records in the timed interval.",
+    "provenance": "Installed dav1d runtime is 1.5.3 and its dylib hash is recorded; installed binary/source-build provenance is unverified.",
+    "comparison_caveat": "Do not interpret the difference from the prior 2.823x snapshot as a causal change.",
+    "round_variation": {
+      "dav1d_round2_vs_round1_percent": 0.7791066737473207,
+      "go_round2_vs_round1_percent": 3.0464749944847602,
+      "interpretation": "descriptive run-order drift only; samples are clustered and no paired-significance claim is made"
+    }
+  },
+  "schema": "goav1-decoder-coefficient-contexts-followup-v1",
+  "scope_and_caveats": {
+    "allocation": "Allocation counts match by case: cold p360=180, cold p720=205, both warm cases=0. B/op has small run-to-run variation and is not claimed as exact byte parity.",
+    "inference": "Per-case paired results are reported independently. The intervals do not support a general claim across codec content or all decoder workloads. No pooled confidence interval or mixed-workload timing ratio is reported.",
+    "measurement_field": "Use benchmark-reported ns/op for timing. elapsed_wall_seconds in raw rows is process wall time for ordering/audit only, not the performance outcome.",
+    "outliers": "All 80 rows in the completed confirmation are retained. The prior ENOSPC attempt is a separate failed run and is excluded wholesale; no rows are pooled between attempts.",
+    "sample_contract": "Each benchmark sample runs N=15 iterations; each iteration decodes one full 48-frame clip. The 10-pair confirmation has 80 rows across four cases and 40 paired rounds.",
+    "workload": "Public full-clip decode benchmark on p360_intra_q32 and p720_inter_q32, each 48 frames per operation, one decoder thread, GOMAXPROCS=1, GOGC=100.",
+    "native_gap_report": "Current public gap snapshot is linked above. It is a clustered comparison, not evidence of a causal change from the older 2.823x snapshot."
+  },
+  "source_and_build_identity": {
+    "baseline_provenance": {
+      "binary_path": "/private/tmp/pr8-packed-context-v1/baseline.test",
+      "binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+      "merged_main_equivalence": "Parent and Astra confirmed this baseline tree is equivalent to merged main cf11a8d2; independent tree ID audit found the 7808 and cf11 trees identical (403fcdc533577ba8e81a9d5383f61b62b0e82065).",
+      "original_build_manifest_path": "/private/tmp/pr8-p720-public-profile/profile-manifest.json",
+      "original_build_manifest_sha256": "144d8f56463a73f640128c4e974184d2be0e8b010e07b188b334eb3aaab3d2b3",
+      "original_build_worktree_clean": true,
+      "original_source_commit": "7808b9d3f1d976d809bf3363e87f613c316100f7"
+    },
+    "benchmark_harness_sha256": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59",
+    "candidate_build_info": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test: go1.27.0-X:simd\n path github.com/thesyncim/goav1.test\n mod github.com/thesyncim/goav1 (devel)\n build -buildmode=exe\n build -compiler=gc\n build CGO_ENABLED=1\n build CGO_CFLAGS=\n build CGO_CPPFLAGS=\n build CGO_CXXFLAGS=\n build CGO_LDFLAGS=\n build GOARCH=arm64\n build GOEXPERIMENT=simd\n build GOOS=darwin\n build GOARM64=v8.0",
+    "candidate_build_info_path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/build-info.txt",
+    "canonical_manifest_sha256": "71944e06c491b8c4373dfcbf6fe6571b0b5dad9557f189b809ecf91890085e87",
+    "source_manifest": {
+      "base_commit": "cf11a8d2fa8c140adb48a9a2a556972f90e419ba",
+      "baseline_binary": "/private/tmp/pr8-packed-context-v1/baseline.test",
+      "baseline_binary_sha256": "1aa8291fb7a904f008f5c2dcd948852cd10ac1d5f58411808bd90d4ab33c85e4",
+      "branch": "codex/decoder-coefficient-contexts",
+      "build_command": "CODEX_AGENT_ID=pr8-speed2 GOEXPERIMENT=simd CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects /Users/thesyncim/.codex/bin/project-env go test -c . -o /private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+      "cache_setup_failure": "Initial default-sandbox build failed before compilation: go: creating work dir: mkdir /private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects/37b85e7d09c67423/tmp/pr8-speed2_/go-build2628905262: operation not permitted. Retried the identical authorized command with cache-write escalation; it succeeded.",
+      "candidate_binary": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+      "candidate_binary_sha256": "3e7c728970e144e7ed2563b52727ec59ec571d074eb89c429356ad2b24c4fcd7",
+      "public_harness_sha256": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59",
+      "source_files_sha256": {
+        "go.mod": "2d9afa6f2b2dd13cf953546a7076df9c85f014f10913b47fbaf80d9116ed6e19",
+        "internal/av1/entropy/reader.go": "75ae34597ee74f79f118b8db43fd258ce4879d33e82e9e3fb36caec34040bd8d",
+        "internal/av1/entropy/reader_test.go": "0e697c6ab81ee1e51ef84ab1755ff438f3df154e6a73647a9d692a1bc3b52bf5",
+        "internal/av1/quantize/dequant.go": "dc5fb21bc2f10e5e9021d0ed8d8d62c53dd5ded778adc9b3589e33b4524c56a6",
+        "internal/av1/quantize/dequant_fused_test.go": "7f355e86e515e760d9d74997b58e82044055b0f835517bbba05b2e7bd0bdb870",
+        "internal/av1/reconstruct/block.go": "97e7f6fe414dac098d59d783f1831b0a8139132740ea463946fe331f79fe86b2",
+        "internal/av1/reconstruct/block_dequantized_test.go": "23fb5d67573e36eb3751b6e5a72e5ddf91e4290337fcbe7f68bbd50d7510491c",
+        "internal/av1/threading/coeff_dequant_provider_test.go": "d125930f29d62cbdecf338e5afb919af13645fd6ad3ce14e63cd1ca93d6aaee5",
+        "internal/av1/threading/reconstruct.go": "d926e45cc3c20e5a05d9cec97b8d868704bba54669217a7bbe587e7f96ab9dae",
+        "internal/av1/threading/tile_residual.go": "e0ab8ee4bb0fbe9161c0bf8df0659c30a509109d52f72ea33a1eb0ded354586d",
+        "internal/av1/tile/block_coeff.go": "dc1f921bdca41ff1101d9550cffa9e87ba44099093c9230dda155c7ba5b306e8",
+        "internal/av1/tile/coeff.go": "fa5698461d55db8dc1995d9624cebc1a18da5608ce09cf4274ca2bd8d78059ec",
+        "internal/av1/tile/coeff_asm_diff_test.go": "a486062064edfea39672b11797f13f737228e541fbe85b891291f0dd68910629",
+        "internal/av1/tile/coeff_dequant_fused_test.go": "e52b4c0168c853318e695d39f6e3ffb1df244e92212394c6cce3f6dba73339c0",
+        "internal/av1/tile/coeff_test.go": "78ea7cb7da5c868db31f34c3c6ac11ebb42ea0de9260bfab6d32ffd516691f60",
+        "internal/av1/tile/coeff_tree.go": "d88576e288691182eeb1e0f940944455da13d3161de887f8055b4f7addf941d6",
+        "public_fullclip_corpus_bench_test.go": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59"
+      },
+      "source_snapshot_dir": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/source-snapshot",
+      "toolchain": "go1.27.0-X:simd; darwin/arm64; GOARM64=v8.0; compiler=gc; normal optimized go test -c build"
+    },
+    "source_manifest_file_path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/source-manifest.json",
+    "source_manifest_file_sha256": "737f1cb0179be9cbdc7d6bdbad4679fd2594628282bbf1e59df71591c2d1b516"
+  },
+  "title": "Decoder coefficient context and fused dequantization follow-up",
+  "validation": {
+    "candidate_focused_native_simd_race_checkptr": {
+      "commands": {
+        "entropy": "CODEX_AGENT_ID=pr8-speed2 GOEXPERIMENT=simd CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects /Users/thesyncim/.codex/bin/project-env go test -race -gcflags=all=-d=checkptr=2 ./internal/av1/entropy -run '^(TestCursorReadBitNoRefillTrustedMatchesReaderBoundaryStates|TestCursorTrustedReadsMatchReader)$'",
+        "tile": "CODEX_AGENT_ID=pr8-speed2 GOEXPERIMENT=simd CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects /Users/thesyncim/.codex/bin/project-env go test -race -gcflags=all=-d=checkptr=2 ./internal/av1/tile -run '^(TestReadCoefficientsTXBTracked2DFastPathMatchesGeneric|TestTracked2DPackedLevelContextFormulas|TestReadTracked2DDequantFusionMatchesQuantizedOracle|TestReadTracked2DDequantFusionUsesPerPlaneFactors|TestReadTracked2DDequantFusionScratchTransitions|TestDecodeCoeffTXBDequantTargetLifecycleAndFallback|TestCoeffGeometryTxScaleMatchesQuantizeTransformScale)$'",
+        "trace": "CODEX_AGENT_ID=pr8-speed2 GOEXPERIMENT=simd CODEX_PROJECT_CACHE_ROOT=/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects /Users/thesyncim/.codex/bin/project-env go test -tags=goav1_trace_rng ./internal/av1/entropy -run '^TestCursorReadBitNoRefillTrustedMatchesReaderBoundaryStates$'"
+      },
+      "entropy_log": {
+        "path": "/private/tmp/pr8-v4-leaf-entropy-focused-mask3.log",
+        "sha256": "9ed25583cb658d8c84c4f267f6aa91c7d1a9678b62a1ffdc8b51a17296f4ded8"
+      },
+      "status": "passed",
+      "tile_log": {
+        "path": "/private/tmp/pr8-v4-leaf-tile-focused-mask3.log",
+        "sha256": "8e34f4749da0f91f4d73f15ba9ca441ab469f2ccd5e52557122904ba1927431f"
+      },
+      "trace_log": {
+        "path": "/private/tmp/pr8-v4-leaf-entropy-trace.log",
+        "sha256": "c349c511307a724c4440052902bdeee36b041dcfbe6ab4c49270c0cd295a1da1"
+      }
+    },
+    "compiler_inline_codegen": {
+      "objdump_path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-mask3-tracked2d.objdump",
+      "objdump_sha256": "802b6630c623d2e493671b28bb536f05280fc15f874c2ef7f6f813f8afd32a56",
+      "status": "passed",
+      "summary": "Trusted bit update inline cost 79; inlined at tracked2D callsite; &3 mask removes wide-shift guard; 560-byte frame and 409 stack accesses match unmasked variant; refill remains cold underflow call."
+    },
+    "p720_encoder_bitstream_and_reconstruction_parity": {
+      "bitstream_bytes": 720250,
+      "expected_and_actual_bitstream_sha256": "2114c08db1008904b2d69634ed733f7eff4201caca23186c2d643adc7823898a",
+      "expected_and_actual_reconstruction_sha256": "c3c2d1bb6092fc986c05398767b7d931566b1dcfa9cf82a73b58acc0124ce948",
+      "frames": 48,
+      "log_path": "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/encoder-p720-parity.log",
+      "log_sha256": "48183fec43e026b8ccefba19dc5f727fc1038d0e184de399047c0c820cacdb10",
+      "raw_i420_sha256": "8a1c607974284d5a47902f0081015de0de572208438217c109cdd72c2dac58d1",
+      "source_stream_md5": "47854463914ca952c4b0c63b8e7edd45",
+      "status": "passed"
+    },
+    "public_corpus_md5": {
+      "baseline_logs": [
+        "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/preflight-baseline-serial-workers.log",
+        "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/baseline-md5-preflight.log"
+      ],
+      "candidate_logs": [
+        "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/preflight-candidate-serial-workers.log",
+        "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/confirmation10-main-baseline-retry1/candidate-md5-preflight.log"
+      ],
+      "confirmation_preflight_log_sha256": {
+        "baseline": "dafb04875dbda536710d1043d6fdcf18af1c4b14277a0b52d60fd75f2b78de81",
+        "candidate": "9a6b1d67e46f59d0fae44ff38ec2513831b48171b122e717806c22a9f01abedc"
+      },
+      "exact_confirmation_preflight_commands": [
+        [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-packed-context-v1/baseline.test",
+          "-test.run=^TestPublicDecoderFullClipCorpusMD5$",
+          "-test.count=1",
+          "-test.v"
+        ],
+        [
+          "/Users/thesyncim/.codex/bin/project-env",
+          "/private/tmp/pr8-coeff-fusion-v4-bit-leaf/v4-leaf-public.test",
+          "-test.run=^TestPublicDecoderFullClipCorpusMD5$",
+          "-test.count=1",
+          "-test.v"
+        ]
+      ],
+      "status": "passed for baseline and candidate; 18 clips / 864 frames with workers 1, 2, 3, 4, and 8",
+      "worker_counts": [
+        1,
+        2,
+        3,
+        4,
+        8
+      ],
+      "worker_gate_test": "TestPublicDecoderFullClipCorpusMD5Workers"
+    }
+  }
+}
