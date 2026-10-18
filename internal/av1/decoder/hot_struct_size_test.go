@@ -16,11 +16,11 @@ func TestHotStructSizes(t *testing.T) {
 		max  uintptr
 	}{
 		{name: "Event", size: unsafe.Sizeof(Event{}), max: 5632},
-		// One private pointer links the active owned compact loop-filter state
-		// back to its frame lifecycle so public map/mask rebinds and Reset can
-		// invalidate it. The capability is per in-flight FrameWorkState, not
-		// copied into per-block or per-plane state.
-		{name: "FrameWorkState", size: unsafe.Sizeof(FrameWorkState{}), max: 566800},
+		// The compact loop-filter lifecycle pointer is included in 566800.
+		// Owned MV storage adds 20 bytes of handles, refcounts and flags plus
+		// 4 bytes of alignment on 64-bit targets. Its nine backing slices
+		// replace the previous eight slot slices and one current-frame slice.
+		{name: "FrameWorkState", size: unsafe.Sizeof(FrameWorkState{}), max: 566824},
 		{name: "FrameWorkLoopFilterPostFilterEdge", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterEdge{}), max: 16},
 		{name: "FrameWorkLoopFilterPostFilterLevelStats", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterLevelStats{}), max: 12},
 		{name: "FrameWorkLoopFilterPostFilterPlan", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterPlan{}), max: 136},
