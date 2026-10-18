@@ -147,6 +147,16 @@ func (c *CDF) ResetCount() error {
 	return nil
 }
 
+// ResetCDFCountTrusted clears the adaptation count of decoder-owned CDF state.
+// The caller must prove c is non-nil and either valid by construction or the
+// unused zero value. Call ResetCount when Values may have been modified by a
+// caller. Entropy adaptation preserves the initialized shape.
+func ResetCDFCountTrusted(c *CDF) {
+	if c.symbols != 0 {
+		c.values[c.symbols] = 0
+	}
+}
+
 // Symbols returns the number of symbols represented by c.
 func (c *CDF) Symbols() int {
 	if c == nil {

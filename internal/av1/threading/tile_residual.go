@@ -234,6 +234,30 @@ func (b *FrameWorkBatch) InitTileResidualCDFStorage(storage *FrameWorkTileResidu
 // RetainTileResidualCDFStorage publishes storage as the adapted frame context
 // only for the context_update_tile_id job when CDF updates are enabled.
 func (b *FrameWorkBatch) RetainTileResidualCDFStorage(index int, state *tile.DecodeState, storage *FrameWorkTileResidualCDFStorage) error {
+	return b.retainTileResidualCDFStorage(index, state, storage, false)
+}
+
+// RetainTileResidualCDFStorageOwned is the private decoder retention entry.
+// Its caller has successfully decoded into initialized, exclusively owned
+// storage. Caller hooks and generic batch entry points retain full validation.
+func RetainTileResidualCDFStorageOwned(b *FrameWorkBatch, index int, state *tile.DecodeState, storage *FrameWorkTileResidualCDFStorage, req *FrameWorkTileResidualRequest, compact *FrameWorkLoopFilterCompactState) error {
+	if b == nil {
+		return ErrInvalidBatch
+	}
+	trusted := FrameWorkLoopFilterCompactStateActive(compact) &&
+		FrameWorkLoopFilterCompactMatchesMasks(b.LoopFilterMasks, compact) &&
+		frameWorkOwnedCDFCounts(b, req)
+	return b.retainTileResidualCDFStorage(index, state, storage, trusted)
+}
+
+func frameWorkOwnedCDFCounts(b *FrameWorkBatch, req *FrameWorkTileResidualRequest) bool {
+	return req != nil && b.WavefrontWorkers == 0 &&
+		req.Predict == nil && req.AfterBlock == nil && req.Transforms == nil && req.UseDefaultTransforms &&
+		req.Loop.BeforeSuperblock == nil && req.Loop.BeforeCoefficients == nil && req.Loop.CoeffVisitor == nil &&
+		req.Loop.CoeffController == nil && req.Loop.CoeffRequest == nil && req.Loop.TransformSelect == nil
+}
+
+func (b *FrameWorkBatch) retainTileResidualCDFStorage(index int, state *tile.DecodeState, storage *FrameWorkTileResidualCDFStorage, trusted bool) error {
 	if index < 0 || index >= len(b.Jobs) || state == nil || storage == nil {
 		return ErrInvalidBatch
 	}
@@ -250,7 +274,9 @@ func (b *FrameWorkBatch) RetainTileResidualCDFStorage(index int, state *tile.Dec
 	if b.RetainedTileResidualCDFs == nil || b.RetainedTileResidualCDFsValid == nil {
 		return ErrInvalidBatch
 	}
-	if err := storage.ResetCDFCounts(); err != nil {
+	if trusted {
+		storage.resetCDFCountsTrusted()
+	} else if err := storage.ResetCDFCounts(); err != nil {
 		return err
 	}
 	*b.RetainedTileResidualCDFs = *storage
