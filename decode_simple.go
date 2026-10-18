@@ -46,6 +46,9 @@ type Decoder struct {
 	sideData DecoderFrameWorkSideData
 	batch    DecoderFrameWorkBatchResidualRunner
 
+	compactLF     internalthreading.FrameWorkLoopFilterCompactState
+	compactNoSkip []byte
+
 	refSurface [InterRefsPerFrame]int
 	refFrames  [InterRefsPerFrame]*Frame
 	releases   [RefFrames]int
@@ -283,6 +286,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		d.external.outputPool = &d.outputPool
 	}
 	d.scratch = newDecoderStreamScratch(plan.Size, &arena)
+	d.compactNoSkip = arena.takeBytes(decoderCompactNoSkipBytes(plan.Size.Event.SideData.CDEFIndexMap))
 	if cap(d.scratch.Outputs) > 0 {
 		d.visible = d.scratch.Outputs[:0]
 	} else {
@@ -337,6 +341,16 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		return nil, fmt.Errorf("goav1: bind runner: %w", err)
 	}
 	d.runner = runner
+	if !d.useExternal && d.workerPool.WorkerCount() == 1 {
+		d.batch.compactState = &d.compactLF
+		d.batch.compactOwner = &d.batch
+		d.batch.compactSideOwner = &d.sideData
+		d.runner.EventRunner.compactState = &d.compactLF
+		d.runner.EventRunner.compactNoSkip = d.compactNoSkip
+		d.runner.EventRunner.compactPostOwner = &d.postFilter
+		d.runner.EventRunner.compactBatchOwner = &d.batch
+		d.runner.EventRunner.compactSideOwner = &d.sideData
+	}
 	return d, nil
 }
 
@@ -390,6 +404,11 @@ func ivfPayloads(ivf []byte) ([][]byte, error) {
 // valid only until the next DecodeNext / DecodeAll call or Close. See the
 // Decoder type documentation for full lifetime semantics.
 func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
+	defer func() {
+		if err != nil && d != nil {
+			internalthreading.InvalidateFrameWorkLoopFilterCompactState(&d.compactLF)
+		}
+	}()
 	if d == nil || d.payloadSource.len() == 0 {
 		return nil, false, errors.New("goav1: decoder is not initialized")
 	}
@@ -450,6 +469,9 @@ func (d *Decoder) DecodeRTPPayload(payload []byte) ([]*Frame, error) {
 func (d *Decoder) DecodeRTPPacket(packet []byte) ([]*Frame, error) {
 	rtp, err := ParseRTPPacket(packet)
 	if err != nil {
+		if d != nil {
+			internalthreading.InvalidateFrameWorkLoopFilterCompactState(&d.compactLF)
+		}
 		return nil, fmt.Errorf("goav1: rtp packet: %w", err)
 	}
 	return d.decodeExternalRTPPayload(rtp.Payload, false)
@@ -476,12 +498,20 @@ func (d *Decoder) DecodeRTPPayloadAfterLoss(payload []byte) ([]*Frame, error) {
 func (d *Decoder) DecodeRTPPacketAfterLoss(packet []byte) ([]*Frame, error) {
 	rtp, err := ParseRTPPacket(packet)
 	if err != nil {
+		if d != nil {
+			internalthreading.InvalidateFrameWorkLoopFilterCompactState(&d.compactLF)
+		}
 		return nil, fmt.Errorf("goav1: rtp packet: %w", err)
 	}
 	return d.decodeExternalRTPPayload(rtp.Payload, true)
 }
 
-func (d *Decoder) decodeExternalRTPPayload(payload []byte, afterLoss bool) ([]*Frame, error) {
+func (d *Decoder) decodeExternalRTPPayload(payload []byte, afterLoss bool) (frames []*Frame, decodeErr error) {
+	defer func() {
+		if decodeErr != nil && d != nil {
+			internalthreading.InvalidateFrameWorkLoopFilterCompactState(&d.compactLF)
+		}
+	}()
 	if d == nil || d.payloadKind != decoderPayloadRTP {
 		return nil, errors.New("goav1: decoder is not initialized for RTP payloads")
 	}
@@ -624,6 +654,7 @@ func (d *Decoder) Reset() error {
 	d.shownHeld = d.shownHeld[:0]
 	d.refs.Reset()
 	d.state.Reset()
+	internalthreading.DeactivateFrameWorkLoopFilterCompactState(&d.compactLF)
 	d.stats = DecoderFrameWorkTileResidualStats{}
 	if err := d.runner.Reset(); err != nil {
 		return fmt.Errorf("goav1: runner reset: %w", err)
@@ -642,6 +673,7 @@ func (d *Decoder) Close() {
 		return
 	}
 	d.closed = true
+	internalthreading.DeactivateFrameWorkLoopFilterCompactState(&d.compactLF)
 	if d.workerPool != nil {
 		d.workerPool.Close()
 		d.workerPool = nil
@@ -821,6 +853,13 @@ func decoderArenaSizeFor(format FrameFormat, outputFormat FrameFormat, useExtern
 	if err := size.addStream(stream); err != nil {
 		return decoderArenaSize{}, err
 	}
+	noSkipBytes, ok := decoderArenaMultiply(stream.Event.SideData.CDEFIndexMap, 8)
+	if !ok {
+		return decoderArenaSize{}, ErrFrameShortBuffer
+	}
+	if err := size.addBytes(noSkipBytes); err != nil {
+		return decoderArenaSize{}, err
+	}
 	postCopies := 1
 	if useExternal {
 		postCopies = 2
@@ -831,6 +870,25 @@ func decoderArenaSizeFor(format FrameFormat, outputFormat FrameFormat, useExtern
 		}
 	}
 	return size, nil
+}
+
+func decoderCompactNoSkipBytes(cdefUnits int) int {
+	n, ok := decoderArenaMultiply(cdefUnits, 8)
+	if !ok {
+		return 0
+	}
+	return n
+}
+
+func decoderArenaMultiply(a, b int) (int, bool) {
+	if a < 0 || b < 0 {
+		return 0, false
+	}
+	maxInt := int(^uint(0) >> 1)
+	if b != 0 && a > maxInt/b {
+		return 0, false
+	}
+	return a * b, true
 }
 
 func (s *decoderArenaSize) addFramePool(format FrameFormat, count int) error {

@@ -31,7 +31,10 @@ package goav1
 //     ResetStats, TotalStats helpers: the bounded per-batch executor that
 //     ties the residual pipeline to the worker pool.
 
-import internaltile "github.com/thesyncim/goav1/internal/av1/tile"
+import (
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
+)
 
 // DecoderFrameWorkResidualScratchLen reports the int32 and int16 residual
 // scratch lengths required to reconstruct one block at (size, typ) for the
@@ -348,6 +351,10 @@ type DecoderFrameWorkBatchResidualRunner struct {
 	LoopFilterMasks           DecoderFrameWorkLoopFilterMasks
 	sideDataValid             bool
 	sideDataRestorationActive bool
+	compactState              *internalthreading.FrameWorkLoopFilterCompactState
+	compactOwner              *DecoderFrameWorkBatchResidualRunner
+	compactSideOwner          *DecoderFrameWorkSideData
+	compactBoundSide          *DecoderFrameWorkSideData
 }
 
 // DecoderFrameWorkResidualMaxFrameScratchLen reports the worst-case
@@ -549,7 +556,18 @@ func (r *DecoderFrameWorkBatchResidualRunner) Run(batch DecoderFrameWorkBatch) e
 // RunPtr decodes every residual in batch without copying the frame-work
 // context into the runner call. It is used by the internal single-worker typed
 // path; public callers should keep using Run.
-func (r *DecoderFrameWorkBatchResidualRunner) RunPtr(batch *DecoderFrameWorkBatch) error {
+func (r *DecoderFrameWorkBatchResidualRunner) RunPtr(batch *DecoderFrameWorkBatch) (runErr error) {
+	if r != nil && internalthreading.FrameWorkLoopFilterCompactStateActive(r.compactState) {
+		defer func() {
+			if runErr != nil {
+				internalthreading.InvalidateFrameWorkLoopFilterCompactState(r.compactState)
+			}
+		}()
+		if r.compactOwner != r || r.compactSideOwner == nil || r.compactBoundSide != r.compactSideOwner ||
+			!decoderFrameWorkResidualCompactBatchValid(r, batch) {
+			return ErrThreadingInvalidBatch
+		}
+	}
 	if batch == nil {
 		return ErrThreadingInvalidBatch
 	}
@@ -569,9 +587,17 @@ func (r *DecoderFrameWorkBatchResidualRunner) RunPtr(batch *DecoderFrameWorkBatc
 	if err := InitDecoderFrameWorkTileResidualCDFStorage(*batch, &r.Storages[worker]); err != nil {
 		return err
 	}
-	stats, err := decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch, &r.States[worker], &r.Storages[worker], &r.TileScratch[worker], req)
+	stats, err := decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch, &r.States[worker], &r.Storages[worker], &r.TileScratch[worker], req, r.compactState)
 	r.Stats[worker] = stats
-	return err
+	if err != nil {
+		return err
+	}
+	if internalthreading.FrameWorkLoopFilterCompactStateActive(r.compactState) {
+		if err := internalthreading.CompleteFrameWorkLoopFilterCompactState(r.compactState); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SetSideData attaches bound frame-level side data (CDEF index map,
@@ -594,6 +620,9 @@ func (r *DecoderFrameWorkBatchResidualRunner) SetSideData(side DecoderFrameWorkS
 	if err := side.RestorationFrameBuffers.ResetRecords(); err != nil {
 		return err
 	}
+	if r.compactState != nil {
+		internalthreading.DeactivateFrameWorkLoopFilterCompactState(r.compactState)
+	}
 	if side.RestorationFrameBuffers.Plan.Active {
 		for i := range r.States {
 			req := &r.RestorationRequests[i]
@@ -608,6 +637,39 @@ func (r *DecoderFrameWorkBatchResidualRunner) SetSideData(side DecoderFrameWorkS
 	r.LoopFilterMasks = side.LoopFilterMasks
 	r.sideDataValid = true
 	r.sideDataRestorationActive = side.RestorationFrameBuffers.Plan.Active
+	r.compactBoundSide = nil
+	return nil
+}
+
+func (r *DecoderFrameWorkBatchResidualRunner) setOwnedCompactSideData(side *DecoderFrameWorkSideData) error {
+	if r == nil || side == nil || r.compactOwner != r || r.compactSideOwner == nil || side != r.compactSideOwner ||
+		r.compactState == nil || !internalthreading.FrameWorkLoopFilterCompactStateActive(r.compactState) || !side.LoopFilterMasks.Valid() {
+		return ErrThreadingInvalidBatch
+	}
+	if side.RestorationFrameBuffers.Plan.Active && len(r.RestorationRequests) < len(r.States) {
+		return ErrFrameShortBuffer
+	}
+	if err := side.CDEFIndexMap.Reset(); err != nil {
+		return err
+	}
+	if err := side.RestorationFrameBuffers.ResetRecords(); err != nil {
+		return err
+	}
+	if side.RestorationFrameBuffers.Plan.Active {
+		for i := range r.States {
+			req := &r.RestorationRequests[i]
+			req.Buffers = side.RestorationFrameBuffers
+			if err := InitDecoderFrameWorkTileRestorationRequestReferences(req); err != nil {
+				return err
+			}
+		}
+	}
+	r.LoopFilterMap = DecoderFrameWorkLoopFilterMap{}
+	r.LoopFilterMasks = side.LoopFilterMasks
+	r.CDEFIndexMap = side.CDEFIndexMap
+	r.sideDataValid = true
+	r.sideDataRestorationActive = side.RestorationFrameBuffers.Plan.Active
+	r.compactBoundSide = side
 	return nil
 }
 
@@ -664,10 +726,10 @@ func DecoderFrameWorkBatchResidualLoopContextAboveLen(batch DecoderFrameWorkBatc
 // reusable, lower-level building block underneath
 // DecoderFrameWorkBatchResidualRunner.Run.
 func DecodeAndRetainDecoderFrameWorkBatchResiduals(batch DecoderFrameWorkBatch, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkBatchResidualRequest) (DecoderFrameWorkTileResidualStats, error) {
-	return decodeAndRetainDecoderFrameWorkBatchResidualsPtr(&batch, state, storage, scratch, req)
+	return decodeAndRetainDecoderFrameWorkBatchResidualsPtr(&batch, state, storage, scratch, req, nil)
 }
 
-func decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch *DecoderFrameWorkBatch, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkBatchResidualRequest) (DecoderFrameWorkTileResidualStats, error) {
+func decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch *DecoderFrameWorkBatch, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkBatchResidualRequest, compact *internalthreading.FrameWorkLoopFilterCompactState) (DecoderFrameWorkTileResidualStats, error) {
 	if state == nil || storage == nil || scratch == nil {
 		return DecoderFrameWorkTileResidualStats{}, ErrThreadingInvalidBatch
 	}
@@ -716,7 +778,7 @@ func decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch *DecoderFrameWorkBat
 		}
 		decoderFrameWorkApplyBatchResidualLoopOverrides(&loopReq, req.Tile.Loop)
 		tileReq.Loop = loopReq
-		stats, err := decodeAndRetainDecoderFrameWorkJobResidualsPtr(batch, i, state, storage, scratch, tileReq)
+		stats, err := decodeAndRetainDecoderFrameWorkJobResidualsPtr(batch, i, state, storage, scratch, tileReq, compact)
 		decoderFrameWorkAccumulateResidualStats(&total, stats)
 		if err != nil {
 			return total, err
@@ -725,14 +787,20 @@ func decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch *DecoderFrameWorkBat
 	return total, nil
 }
 
-func decodeAndRetainDecoderFrameWorkJobResidualsPtr(batch *DecoderFrameWorkBatch, index int, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkTileResidualRequest) (DecoderFrameWorkTileResidualStats, error) {
+func decodeAndRetainDecoderFrameWorkJobResidualsPtr(batch *DecoderFrameWorkBatch, index int, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkTileResidualRequest, compact *internalthreading.FrameWorkLoopFilterCompactState) (DecoderFrameWorkTileResidualStats, error) {
 	if storage == nil || batch == nil {
 		return DecoderFrameWorkTileResidualStats{}, ErrThreadingInvalidBatch
 	}
 	if err := batch.JobDecodeState(index, state); err != nil {
 		return DecoderFrameWorkTileResidualStats{}, err
 	}
-	stats, err := batch.DecodeAndReconstructJobResidualsPtr(index, state, DecoderFrameWorkTileResidualCDFsFromStorage(storage), scratch, req)
+	var stats DecoderFrameWorkTileResidualStats
+	var err error
+	if internalthreading.FrameWorkLoopFilterCompactStateActive(compact) {
+		stats, err = internalthreading.DecodeAndReconstructJobResidualsPtrOwned(batch, index, state, DecoderFrameWorkTileResidualCDFsFromStorage(storage), scratch, req, compact)
+	} else {
+		stats, err = batch.DecodeAndReconstructJobResidualsPtr(index, state, DecoderFrameWorkTileResidualCDFsFromStorage(storage), scratch, req)
+	}
 	if err != nil {
 		return stats, err
 	}
@@ -740,6 +808,34 @@ func decodeAndRetainDecoderFrameWorkJobResidualsPtr(batch *DecoderFrameWorkBatch
 		return stats, err
 	}
 	return stats, nil
+}
+
+func decoderFrameWorkResidualCompactBatchValid(r *DecoderFrameWorkBatchResidualRunner, batch *DecoderFrameWorkBatch) bool {
+	if r == nil || batch == nil || r.compactState == nil || !r.sideDataValid || len(r.States) != 1 ||
+		batch.Batch.Worker != 0 || batch.Batch.Count != 1 || batch.Batch.FirstJob != 0 ||
+		batch.WavefrontWorkers != 0 || len(batch.Jobs) != 1 ||
+		batch.Jobs[0].Tile != 0 || batch.Jobs[0].Row != 0 || batch.Jobs[0].Col != 0 ||
+		batch.TileInfo.Cols != 1 || batch.TileInfo.Rows != 1 ||
+		batch.Sequence.ColorConfig.BitDepth != 8 || batch.FrameSize.SuperResEnabled || batch.FrameSize.AllowIntrabc ||
+		batch.LoopFilterMap != nil || batch.LoopFilterMasks == nil ||
+		!(batch.LoopFilter.LevelY[0] != 0 || batch.LoopFilter.LevelY[1] != 0) {
+		return false
+	}
+	cols, rows, _, err := batch.LoopFilterMapShape()
+	if err != nil || !internalthreading.FrameWorkLoopFilterCompactActiveShape(batch.LoopFilterMasks, r.compactState, cols, rows) {
+		return false
+	}
+	color := batch.Sequence.ColorConfig
+	ssHor, ssVer := 0, 0
+	if color.SubsamplingX {
+		ssHor = 1
+	}
+	if color.SubsamplingY {
+		ssVer = 1
+	}
+	layout := batch.LoopFilterMasks.Layout
+	return layout.Mono == color.MonoChrome && layout.SSHor == ssHor && layout.SSVer == ssVer &&
+		batch.LoopFilterMasks.HasChroma == !color.MonoChrome
 }
 
 func (r *DecoderFrameWorkBatchResidualRunner) workerIndex(batch DecoderFrameWorkBatch) (int, error) {
@@ -791,7 +887,14 @@ func (r *DecoderFrameWorkBatchResidualRunner) workerRequest(worker int) (Decoder
 	req.LoopContextAbove = bound.LoopContextAbove
 	if r.sideDataValid {
 		req.Tile.CDEFIndexMap = &r.CDEFIndexMap
-		req.Tile.LoopFilterMap = &r.LoopFilterMap
+		if internalthreading.FrameWorkLoopFilterCompactStateActive(r.compactState) {
+			if r.compactOwner != r || r.compactSideOwner == nil || r.compactBoundSide != r.compactSideOwner {
+				return DecoderFrameWorkBatchResidualRequest{}, ErrThreadingInvalidBatch
+			}
+			req.Tile.LoopFilterMap = nil
+		} else {
+			req.Tile.LoopFilterMap = &r.LoopFilterMap
+		}
 		req.Tile.LoopFilterMasks = &r.LoopFilterMasks
 		if r.sideDataRestorationActive {
 			if worker >= len(r.RestorationRequests) {

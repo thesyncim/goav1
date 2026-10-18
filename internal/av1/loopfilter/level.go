@@ -52,6 +52,142 @@ type LevelRequest struct {
 	DeltaLF int8
 }
 
+// PreparedLevelResolver is an immutable frame-level snapshot used when many
+// blocks resolve loop-filter levels during one decode. It copies only the
+// numeric inputs needed by the resolver, so callers do not retain pointers to
+// event or parser scratch that may be reused for the next frame.
+//
+// The shape intentionally mirrors ResolveLevel's operation order: clamp the
+// base plus delta-lf, clamp the segmentation delta, then apply scaled
+// reference/mode deltas and clamp once more.
+type PreparedLevelResolver struct {
+	base          [3][2]uint8
+	deltaPresent  bool
+	deltaMulti    bool
+	segmentEnable bool
+	modeRefEnable bool
+	lumaZero      bool
+	monoChrome    bool
+	refDelta      [parser.RefFrames]int8
+	modeDelta     [2]int8
+	segmentDelta  [parser.MaxSegments]preparedSegmentDelta
+}
+
+type preparedSegmentDelta struct {
+	yVert int16
+	yHorz int16
+	u     int16
+	v     int16
+}
+
+// PrepareLevelResolver snapshots the frame-header and segmentation values
+// needed by ResolveBlockLevels. It is intended to be called once per frame or
+// tile job, then reused for every decoded block in that frame.
+func PrepareLevelResolver(params parser.LoopFilterParams, seg parser.SegmentationParams, delta parser.DeltaParams, monoChrome bool) PreparedLevelResolver {
+	r := PreparedLevelResolver{
+		base: [3][2]uint8{
+			{ClampLevel(int(params.LevelY[0])), ClampLevel(int(params.LevelY[1]))},
+			{ClampLevel(int(params.LevelU)), ClampLevel(int(params.LevelU))},
+			{ClampLevel(int(params.LevelV)), ClampLevel(int(params.LevelV))},
+		},
+		deltaPresent:  delta.DeltaLFPresent,
+		deltaMulti:    delta.DeltaLFMulti,
+		segmentEnable: seg.Enabled,
+		modeRefEnable: params.ModeRefDeltaEnabled,
+		lumaZero:      params.LevelY[0] == 0 && params.LevelY[1] == 0,
+		monoChrome:    monoChrome,
+		refDelta:      params.Deltas.Ref,
+		modeDelta:     params.Deltas.Mode,
+	}
+	if seg.Enabled {
+		for i := range r.segmentDelta {
+			data := seg.Data.Segments[i]
+			r.segmentDelta[i] = preparedSegmentDelta{
+				yVert: data.DeltaLFYV,
+				yHorz: data.DeltaLFYH,
+				u:     data.DeltaLFU,
+				v:     data.DeltaLFV,
+			}
+		}
+	}
+	return r
+}
+
+// ResolveBlockLevels resolves all plane/edge levels for one decoded block.
+// Validation and early-return ordering match the optimized decoder record
+// resolver: ref/mode are validated before the luma-zero fast path, and the
+// segment ID is only checked when enabled segmentation is actually consulted.
+func (r *PreparedLevelResolver) ResolveBlockLevels(segmentID, refFrame uint8, mode ModeDeltaClass, deltaFromBase int8, multi [DeltaCount]int8) ([3][2]uint8, error) {
+	if r == nil {
+		return [3][2]uint8{}, ErrInvalidFilter
+	}
+	var levels [3][2]uint8
+	if refFrame >= parser.RefFrames || !validMode(mode) {
+		return levels, ErrInvalidFilter
+	}
+	if r.lumaZero {
+		return levels, nil
+	}
+	if !r.deltaPresent && !r.segmentEnable && !r.modeRefEnable {
+		return r.base, nil
+	}
+	planeCount := 3
+	if r.monoChrome {
+		planeCount = 1
+	}
+	for plane := 0; plane < planeCount; plane++ {
+		for edge := 0; edge < 2; edge++ {
+			base := r.base[plane][edge]
+			if plane != int(PlaneY) && base == 0 {
+				continue
+			}
+			deltaLF := int8(0)
+			if r.deltaPresent {
+				if !r.deltaMulti {
+					deltaLF = deltaFromBase
+				} else {
+					idx := plane*2 + edge
+					if plane != int(PlaneY) {
+						idx = plane + 1
+					}
+					deltaLF = multi[idx]
+				}
+			}
+			segDelta := int16(0)
+			if r.segmentEnable {
+				if segmentID >= parser.MaxSegments {
+					return levels, ErrInvalidFilter
+				}
+				seg := r.segmentDelta[segmentID]
+				switch plane {
+				case int(PlaneY):
+					if edge == int(EdgeVertical) {
+						segDelta = seg.yVert
+					} else {
+						segDelta = seg.yHorz
+					}
+				case int(PlaneU):
+					segDelta = seg.u
+				case int(PlaneV):
+					segDelta = seg.v
+				}
+			}
+			level := clampLevelInt(int(base) + int(deltaLF))
+			level = clampLevelInt(level + int(segDelta))
+			if r.modeRefEnable {
+				scale := 1 << (level >> 5)
+				delta := int(r.refDelta[refFrame])
+				if refFrame > 0 {
+					delta += int(r.modeDelta[mode])
+				}
+				level = clampLevelInt(level + delta*scale)
+			}
+			levels[plane][edge] = uint8(level)
+		}
+	}
+	return levels, nil
+}
+
 // ClampLevel clamps v to AV1's legal loop-filter level range.
 func ClampLevel(v int) uint8 {
 	return uint8(clampLevelInt(v))

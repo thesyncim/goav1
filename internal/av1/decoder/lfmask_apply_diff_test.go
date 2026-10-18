@@ -234,7 +234,7 @@ func lfMaskApplyCountPerCell(t *testing.T, ctx FrameWorkPostFilterContext, masks
 	t.Helper()
 	levelCtx := frameWorkLoopFilterLevelContextFor(&ctx.Event)
 	var want FrameWorkLoopFilterPostFilterApplyResult
-	if err := ctx.populateLoopFilterLevelCacheFromMap(masks, filterMap, levelCtx, &want.Plan); err != nil {
+	if err := ctx.populateLoopFilterLevelCacheFromMap(masks, filterMap, &levelCtx, &want.Plan); err != nil {
 		t.Fatalf("count oracle level cache: %v", err)
 	}
 	lc := lfmask.LevelCache{Cells: masks.LevelCache, Stride: masks.Cols}

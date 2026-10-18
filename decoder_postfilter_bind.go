@@ -22,7 +22,9 @@ package goav1
 // CDEF, super-res, restoration, film grain) so callers can scan the file
 // for the stage they want.
 
-import internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+import (
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+)
 
 // DecoderFrameWorkCDEFIndexMapShape reports the column count, row count, and
 // total entry count required to back the CDEF index map for (sequence, size).
@@ -747,6 +749,10 @@ func DecoderFrameWorkSideDataScratchLen(sequence SequenceHeader, size FrameSize,
 //
 // See also: DecoderFrameWorkSideDataScratchLen, SetDecoderFrameWorkSideData.
 func BindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef CDEFParams, restoration RestorationParams, scratch DecoderFrameWorkSideDataScratch) (DecoderFrameWorkSideData, error) {
+	return bindDecoderFrameWorkSideData(sequence, size, cdef, restoration, scratch, nil, nil, nil)
+}
+
+func bindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef CDEFParams, restoration RestorationParams, scratch DecoderFrameWorkSideDataScratch, compact *internalthreading.FrameWorkLoopFilterCompactState, noSkip []byte, event *DecoderEvent) (DecoderFrameWorkSideData, error) {
 	scratchSize, err := DecoderFrameWorkSideDataScratchLen(sequence, size, cdef, restoration)
 	if err != nil {
 		return DecoderFrameWorkSideData{}, err
@@ -786,9 +792,12 @@ func BindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef 
 	if err != nil {
 		return DecoderFrameWorkSideData{}, err
 	}
-	loopFilterMap, err := BindDecoderFrameWorkLoopFilterMap(sequence, size, scratch.LoopFilterMap[:scratchSize.LoopFilterMap])
-	if err != nil {
-		return DecoderFrameWorkSideData{}, err
+	var loopFilterMap DecoderFrameWorkLoopFilterMap
+	if compact == nil {
+		loopFilterMap, err = BindDecoderFrameWorkLoopFilterMap(sequence, size, scratch.LoopFilterMap[:scratchSize.LoopFilterMap])
+		if err != nil {
+			return DecoderFrameWorkSideData{}, err
+		}
 	}
 	var loopFilterMasks DecoderFrameWorkLoopFilterMasks
 	if buildMasks {
@@ -796,6 +805,16 @@ func BindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef 
 		if err != nil {
 			return DecoderFrameWorkSideData{}, err
 		}
+		if compact != nil {
+			if event == nil {
+				return DecoderFrameWorkSideData{}, ErrDecoderInvalidFrameWorkState
+			}
+			if err := internalthreading.BindFrameWorkLoopFilterCompactState(&loopFilterMasks, compact, noSkip, event.LoopFilter, event.Segmentation, event.Delta, sequence.ColorConfig.MonoChrome); err != nil {
+				return DecoderFrameWorkSideData{}, err
+			}
+		}
+	} else if compact != nil {
+		return DecoderFrameWorkSideData{}, ErrFrameShortBuffer
 	}
 	restorationBuffers, err := BindDecoderFrameWorkRestorationFrameBuffers(
 		sequence,

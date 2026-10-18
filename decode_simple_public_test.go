@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -573,6 +574,53 @@ func TestSimpleDecoderProfileClipsMatchGolden(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSimpleDecoderProfileClipsWorkersMatchGolden checks the full vendored
+// profile corpus through the public decoder at each supported worker count.
+// It pins filtered output to the existing libaom frame MD5s, so a route change
+// cannot silently alter pixels at a different tile-worker setting.
+func TestSimpleDecoderProfileClipsWorkersMatchGolden(t *testing.T) {
+	for _, workers := range []int{1, 2, 3, 4, 8} {
+		for _, clip := range profileClips {
+			t.Run(fmt.Sprintf("workers=%d/%s", workers, clip.file), func(t *testing.T) {
+				ivf, err := os.ReadFile(profileClipPath(clip.file))
+				if err != nil {
+					t.Fatalf("read clip: %v", err)
+				}
+
+				dec, err := av1.NewDecoderFromIVF(ivf, av1.WithWorkers(workers))
+				if err != nil {
+					t.Fatalf("NewDecoderFromIVF workers=%d: %v", workers, err)
+				}
+				defer dec.Close()
+
+				var got []string
+				for {
+					frames, ok, err := dec.DecodeNext()
+					if err != nil {
+						t.Fatalf("DecodeNext workers=%d: %v", workers, err)
+					}
+					if !ok {
+						break
+					}
+					for _, f := range frames {
+						sum := frameMD5Visible(f)
+						got = append(got, hex.EncodeToString(sum[:]))
+					}
+				}
+
+				if len(got) != len(clip.frameMD5Hex) {
+					t.Fatalf("workers=%d decoded %d visible frames, want %d", workers, len(got), len(clip.frameMD5Hex))
+				}
+				for i, want := range clip.frameMD5Hex {
+					if got[i] != want {
+						t.Fatalf("workers=%d frame %d md5 got=%s want=%s (libaom golden)", workers, i, got[i], want)
+					}
+				}
+			})
+		}
 	}
 }
 
