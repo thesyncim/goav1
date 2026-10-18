@@ -642,16 +642,61 @@ func paletteColorIndexContext(colorMap []uint8, stride int, row int, col int, pa
 	if paletteSize < PaletteMinSize || paletteSize > PaletteMaxSize || (row == 0 && col == 0) {
 		return 0, [PaletteMaxSize]uint8{}, ErrInvalidDecodeState
 	}
-	neighbors := [3]int{-1, -1, -1}
+	left, diagonal, top := -1, -1, -1
 	if col > 0 {
-		neighbors[0] = int(colorMap[row*stride+col-1])
+		left = int(colorMap[row*stride+col-1])
 	}
 	if col > 0 && row > 0 {
-		neighbors[1] = int(colorMap[(row-1)*stride+col-1])
+		diagonal = int(colorMap[(row-1)*stride+col-1])
 	}
 	if row > 0 {
-		neighbors[2] = int(colorMap[(row-1)*stride+col])
+		top = int(colorMap[(row-1)*stride+col])
 	}
+	if left >= paletteSize || diagonal >= paletteSize || top >= paletteSize || (left < 0 && top < 0) {
+		// Keep the weighted scorer's behavior for noncanonical maps. Decoded
+		// neighbors are all below paletteSize and always have top or left.
+		return paletteColorIndexContextScored(left, diagonal, top, paletteSize)
+	}
+
+	// dav1d b546257f, src/decode.c:order_palette. These equality cases
+	// reproduce the 2:1:2 neighbor scores and stable color-index tie order.
+	var order [PaletteMaxSize]uint8
+	var ctx, n int
+	var used uint
+	switch {
+	case left < 0:
+		order[0], n = uint8(top), 1
+		used = 1 << uint8(top)
+	case top < 0:
+		order[0], n = uint8(left), 1
+		used = 1 << uint8(left)
+	case top == left && top == diagonal:
+		ctx, order[0], n = 4, uint8(top), 1
+		used = 1 << uint8(top)
+	case top == left:
+		ctx, order[0], order[1], n = 3, uint8(top), uint8(diagonal), 2
+		used = 1<<uint8(top) | 1<<uint8(diagonal)
+	case top == diagonal:
+		ctx, order[0], order[1], n = 2, uint8(diagonal), uint8(left), 2
+		used = 1<<uint8(diagonal) | 1<<uint8(left)
+	case left == diagonal:
+		ctx, order[0], order[1], n = 2, uint8(diagonal), uint8(top), 2
+		used = 1<<uint8(diagonal) | 1<<uint8(top)
+	default:
+		ctx, order[0], order[1], order[2], n = 1, uint8(min(top, left)), uint8(max(top, left)), uint8(diagonal), 3
+		used = 1<<uint8(top) | 1<<uint8(left) | 1<<uint8(diagonal)
+	}
+	// Prefix entries are distinct and in 0..7. Append each unused color in
+	// ascending order, including the unused tail beyond paletteSize.
+	for remaining := used ^ 0xff; remaining != 0; remaining &= remaining - 1 {
+		order[n] = uint8(bits.TrailingZeros(remaining))
+		n++
+	}
+	return ctx, order, nil
+}
+
+func paletteColorIndexContextScored(left, diagonal, top, paletteSize int) (int, [PaletteMaxSize]uint8, error) {
+	neighbors := [3]int{left, diagonal, top}
 	weights := [3]int{2, 1, 2}
 	var scores [PaletteMaxSize]int
 	for i, n := range neighbors {
