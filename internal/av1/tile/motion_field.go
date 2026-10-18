@@ -225,22 +225,33 @@ func (f *TemporalMotionField) ProjectReferenceFrame(req TemporalMotionProjection
 		sourceRowBase := blkRow * startStride
 		sourceRow := start.Entries[sourceRowBase : sourceRowBase+startCols]
 		destinationOriginRow := blkRow * stride
-		for blkCol, mvRef := range sourceRow {
+		for blkCol := 0; blkCol < startCols; {
+			mvRef := sourceRow[blkCol]
 			if !mvRef.Valid || !mvRef.Ref.Valid() {
+				blkCol++
 				continue
 			}
 			projection := projectionRefs[mvRef.Ref]
 			if !projection.valid {
+				blkCol++
 				continue
 			}
+
+			// Like dav1d's load_tmvs_c, project equal ref/MV runs once. The
+			// validity bit is part of equality; an invalid entry breaks a run.
+			// Runs stop at the visible row, never at or beyond stride padding.
+			runEnd := blkCol + 1
+			for runEnd < startCols && sourceRow[runEnd] == mvRef {
+				runEnd++
+			}
+			entry := TemporalMotionEntry{MV: mvRef.MV, RefFrameOffset: projection.refFrameOffset, Valid: true}
 			if mvRef.MV.Row == 0 && mvRef.MV.Col == 0 {
-				// With matching grids, the source position is always admissible.
-				// A zero vector projects back to that origin for every valid scale.
-				f.Entries[destinationOriginRow+blkCol] = TemporalMotionEntry{
-					MV:             mvRef.MV,
-					RefFrameOffset: projection.refFrameOffset,
-					Valid:          true,
+				// Matching grids admit every origin in the run for every scale.
+				destination := f.Entries[destinationOriginRow+blkCol : destinationOriginRow+runEnd]
+				for i := range destination {
+					destination[i] = entry
 				}
+				blkCol = runEnd
 				continue
 			}
 
@@ -251,26 +262,26 @@ func (f *TemporalMotionField) ProjectReferenceFrame(req TemporalMotionProjection
 				row = blkRow - rowOffset
 			}
 			if row < rowMin || row >= rowMax {
+				blkCol = runEnd
 				continue
 			}
 
 			projectedCol := motionFieldProjectComponent(mvRef.MV.Col, projection.scale)
 			colOffset := motionFieldBlockOffset(projectedCol)
-			baseBlkCol := (blkCol >> 3) << 3
-			colMin := max(0, baseBlkCol-(motionFieldMaxOffsetWidth>>3))
-			colMax := min(cols, baseBlkCol+8+(motionFieldMaxOffsetWidth>>3))
-			col := blkCol + colOffset
 			if req.Backward {
-				col = blkCol - colOffset
+				colOffset = -colOffset
 			}
-			if col < colMin || col >= colMax {
-				continue
-			}
-
-			f.Entries[row*stride+col] = TemporalMotionEntry{
-				MV:             mvRef.MV,
-				RefFrameOffset: projection.refFrameOffset,
-				Valid:          true,
+			destinationRow := row * stride
+			for ; blkCol < runEnd; blkCol++ {
+				// The 8-cell window changes inside a run. Keep its per-position
+				// test and ascending write order so collisions retain the last writer.
+				baseBlkCol := (blkCol >> 3) << 3
+				colMin := max(0, baseBlkCol-(motionFieldMaxOffsetWidth>>3))
+				colMax := min(cols, baseBlkCol+8+(motionFieldMaxOffsetWidth>>3))
+				col := blkCol + colOffset
+				if col >= colMin && col < colMax {
+					f.Entries[destinationRow+col] = entry
+				}
 			}
 		}
 	}

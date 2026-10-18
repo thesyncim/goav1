@@ -1,0 +1,361 @@
+{
+  "status": "Fast screen passes: promising decoder-only candidate; no broad confirmation claim.",
+  "baseline": "Merged PR13 b2eff253, frozen public binary051696d1f3c19db886085c6467576bea776145eec054aa5bc7607d125e42b0ce",
+  "source": "dav1d b546257f770768b2c88258c533da38b91a06f737 src/refmvs.c load_tmvs_c:725-758 groups equal ref+MV runs; Go motion_field.go previously repeated projection per entry.",
+  "change": "Project equal ReferenceMVEntry runs once, including validity in equality; retain row-major writes, visible row boundaries, per-position8-cell clips, signed offsets/round/clamp, errors and storage.",
+  "self_review": "Same scale and numeric helpers; equivalent bounded Backward offset negation; rows and different runs never reordered; zero-MV fills preserve every origin; invalid refs/entries/padding never merged into valid runs; input/source unchanged. Existing frozen per-entry oracle independently rounds outputs and covers error/setup/placement/0alloc.",
+  "focused_log": "ok  \tgithub.com/thesyncim/goav1/internal/av1/tile\t0.417s\n",
+  "plan": {
+    "base": "b2eff253323a3610beab87ef51c200d2586c8dbc",
+    "binaries": {
+      "B": "/private/tmp/decoder-astra-work-ledger-20261018/candidate-intra-v1/public.test",
+      "C": "/private/tmp/decoder-projection-runs-20261018/candidate.test"
+    },
+    "hashes": {
+      "B": "051696d1f3c19db886085c6467576bea776145eec054aa5bc7607d125e42b0ce",
+      "C": "b90eae34abebbb7744b85786ad589c82d15c810eb0f6b7054a28bdfa4a8bb9e9"
+    },
+    "sources": {
+      "internal/av1/tile/motion_field.go": "76c0f803e3082132767dc62ac1d32bd274c4ca9a4be757a3a71ed3bf7c90b18e",
+      "internal/av1/tile/motion_field_runs_test.go": "cab3a7a70194da5ed5682f039b2be569c57af11cbbc6bda7489b949ab7dfec34",
+      "internal/av1/tile/motion_field_test.go": "e59e6b909d472cd5182ef335ad5036c17b6b6d5a8e237f00f47a6dbd49e4c480",
+      "public_fullclip_corpus_bench_test.go": "5305c46dcd7b0e91a1476f0aea78aa5425759027c6134bf81acbe0a7c79c8d59"
+    },
+    "ops": 15,
+    "plan": [
+      [
+        0,
+        "p720_inter_q32",
+        "BC"
+      ],
+      [
+        0,
+        "p360_intra_q32",
+        "CB"
+      ],
+      [
+        1,
+        "p360_intra_q32",
+        "BC"
+      ],
+      [
+        1,
+        "p720_inter_q32",
+        "CB"
+      ],
+      [
+        2,
+        "p720_inter_q32",
+        "CB"
+      ],
+      [
+        2,
+        "p360_intra_q32",
+        "BC"
+      ]
+    ],
+    "protocol": "Frame equal-ref/MV run projection; 3 paired warm public clips per case; all rows retained; >=0.5% inter saving and no clear intra loss; fixed candidate and same PR13-production baseline; no retries/exclusions",
+    "initial_load": [
+      6.62646484375,
+      7.70068359375,
+      8.73583984375
+    ]
+  },
+  "rows": [
+    {
+      "round": 0,
+      "clip": "p720_inter_q32",
+      "role": "B",
+      "exit": 0,
+      "seconds": 2.5685367584228516,
+      "log": "00-r0-p720_inter_q32-B.log",
+      "sha256": "7d09dc522adfab9b02eb1951e959bf553b402d6f256dd2949eb4501f78c9b047",
+      "load": [
+        6.62646484375,
+        7.70068359375,
+        8.73583984375
+      ],
+      "ops": 15,
+      "ns_op": 156902164.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0
+    },
+    {
+      "round": 0,
+      "clip": "p720_inter_q32",
+      "role": "C",
+      "exit": 0,
+      "seconds": 3.102992057800293,
+      "log": "01-r0-p720_inter_q32-C.log",
+      "sha256": "a86ad6c294800a0d0472dd756d6a87fd365cfcde9ede06a9df2a6b5189c971f3",
+      "load": [
+        6.49609375,
+        7.65576171875,
+        8.7138671875
+      ],
+      "ops": 15,
+      "ns_op": 157087478.0,
+      "frames": 48.0,
+      "bytes_op": 3,
+      "allocs_op": 0
+    },
+    {
+      "round": 0,
+      "clip": "p360_intra_q32",
+      "role": "C",
+      "exit": 0,
+      "seconds": 1.150975227355957,
+      "log": "02-r0-p360_intra_q32-C.log",
+      "sha256": "a23570321645faeaf0c100ac1592f04e3ac50545b0bb3c139807f0ed3cb8df0e",
+      "load": [
+        6.49609375,
+        7.65576171875,
+        8.7138671875
+      ],
+      "ops": 15,
+      "ns_op": 66920544.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0
+    },
+    {
+      "round": 0,
+      "clip": "p360_intra_q32",
+      "role": "B",
+      "exit": 0,
+      "seconds": 1.1512079238891602,
+      "log": "03-r0-p360_intra_q32-B.log",
+      "sha256": "8e77c76de1b1ec05eb2fc4fa2fda29606a336ad6b00df2728ad934814a1c9ada",
+      "load": [
+        6.49609375,
+        7.65576171875,
+        8.7138671875
+      ],
+      "ops": 15,
+      "ns_op": 67458431.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0
+    },
+    {
+      "round": 1,
+      "clip": "p360_intra_q32",
+      "role": "B",
+      "exit": 0,
+      "seconds": 1.160264253616333,
+      "log": "04-r1-p360_intra_q32-B.log",
+      "sha256": "d90cb9e2a149bfdd39eac1628b77c7ffe8439c429681966436becd1838ed56ea",
+      "load": [
+        6.3759765625,
+        7.611328125,
+        8.69189453125
+      ],
+      "ops": 15,
+      "ns_op": 67755886.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0
+    },
+    {
+      "round": 1,
+      "clip": "p360_intra_q32",
+      "role": "C",
+      "exit": 0,
+      "seconds": 1.166491985321045,
+      "log": "05-r1-p360_intra_q32-C.log",
+      "sha256": "fc59f24b071f91fc5adb95db438a591bfe1606428c89bfdff3189bc0bbdcadb4",
+      "load": [
+        6.3759765625,
+        7.611328125,
+        8.69189453125
+      ],
+      "ops": 15,
+      "ns_op": 67191717.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0
+    },
+    {
+      "round": 1,
+      "clip": "p720_inter_q32",
+      "role": "C",
+      "exit": 0,
+      "seconds": 2.5528581142425537,
+      "log": "06-r1-p720_inter_q32-C.log",
+      "sha256": "b70f4bd3562a3e2440188496bf65c91d00854f4ab4bcb47f7d3cb427b20476ea",
+      "load": [
+        6.3759765625,
+        7.611328125,
+        8.69189453125
+      ],
+      "ops": 15,
+      "ns_op": 154224000.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0
+    },
+    {
+      "round": 1,
+      "clip": "p720_inter_q32",
+      "role": "B",
+      "exit": 0,
+      "seconds": 2.6079680919647217,
+      "log": "07-r1-p720_inter_q32-B.log",
+      "sha256": "e12af8c238a3c47d4a83dad85bcd25b7569e3780edb09a611520c7d58a465a89",
+      "load": [
+        6.345703125,
+        7.58447265625,
+        8.67578125
+      ],
+      "ops": 15,
+      "ns_op": 158111306.0,
+      "frames": 48.0,
+      "bytes_op": 3,
+      "allocs_op": 0
+    },
+    {
+      "round": 2,
+      "clip": "p720_inter_q32",
+      "role": "C",
+      "exit": 0,
+      "seconds": 2.5571999549865723,
+      "log": "08-r2-p720_inter_q32-C.log",
+      "sha256": "3bc1a3c025911a94f162fe672f130fe170beeb79c03a46bd14db2e19bc4c4cfe",
+      "load": [
+        6.345703125,
+        7.58447265625,
+        8.67578125
+      ],
+      "ops": 15,
+      "ns_op": 155411997.0,
+      "frames": 48.0,
+      "bytes_op": 3,
+      "allocs_op": 0
+    },
+    {
+      "round": 2,
+      "clip": "p720_inter_q32",
+      "role": "B",
+      "exit": 0,
+      "seconds": 2.652437925338745,
+      "log": "09-r2-p720_inter_q32-B.log",
+      "sha256": "b5e8ab8d884169a5fad13e3cf597ca112fd23079f4d9ffd8a24be685ae4a41db",
+      "load": [
+        6.31787109375,
+        7.55810546875,
+        8.65966796875
+      ],
+      "ops": 15,
+      "ns_op": 160007081.0,
+      "frames": 48.0,
+      "bytes_op": 3,
+      "allocs_op": 0
+    },
+    {
+      "round": 2,
+      "clip": "p360_intra_q32",
+      "role": "B",
+      "exit": 0,
+      "seconds": 1.1493041515350342,
+      "log": "10-r2-p360_intra_q32-B.log",
+      "sha256": "6f0faff808b3edfd4fcc468cd60f998f1df31ae380f5cfeb138c30977d8d79d5",
+      "load": [
+        6.31787109375,
+        7.55810546875,
+        8.65966796875
+      ],
+      "ops": 15,
+      "ns_op": 68378214.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0
+    },
+    {
+      "round": 2,
+      "clip": "p360_intra_q32",
+      "role": "C",
+      "exit": 0,
+      "seconds": 1.1451866626739502,
+      "log": "11-r2-p360_intra_q32-C.log",
+      "sha256": "2ae0b67a347c0d888ea5b571e46c0c67616609d3dde645e9ec003526af097ae9",
+      "load": [
+        6.31787109375,
+        7.55810546875,
+        8.65966796875
+      ],
+      "ops": 15,
+      "ns_op": 67922750.0,
+      "frames": 48.0,
+      "bytes_op": 0,
+      "allocs_op": 0
+    }
+  ],
+  "summary": {
+    "p720_inter_q32": {
+      "paired_gm_saved_pct": 1.7462798032681137,
+      "wins": 2,
+      "pairs": [
+        {
+          "round": 0,
+          "B": 156902164.0,
+          "C": 157087478.0,
+          "saved_pct": -0.1181079949923447
+        },
+        {
+          "round": 1,
+          "C": 154224000.0,
+          "B": 158111306.0,
+          "saved_pct": 2.458588255541949
+        },
+        {
+          "round": 2,
+          "C": 155411997.0,
+          "B": 160007081.0,
+          "saved_pct": 2.871800404883329
+        }
+      ]
+    },
+    "p360_intra_q32": {
+      "paired_gm_saved_pct": 0.7653943011799225,
+      "wins": 3,
+      "pairs": [
+        {
+          "round": 0,
+          "C": 66920544.0,
+          "B": 67458431.0,
+          "saved_pct": 0.7973606738644667
+        },
+        {
+          "round": 1,
+          "B": 67755886.0,
+          "C": 67191717.0,
+          "saved_pct": 0.8326494321098554
+        },
+        {
+          "round": 2,
+          "B": 68378214.0,
+          "C": 67922750.0,
+          "saved_pct": 0.6660951980992036
+        }
+      ]
+    },
+    "audit": {
+      "rows": 12,
+      "all_0_allocs": true,
+      "binary_and_source_hashes_unchanged": true,
+      "final_load": [
+        6.31787109375,
+        7.55810546875,
+        8.65966796875
+      ]
+    }
+  },
+  "limits": "Short3pair warm screen only; no cold, aggregate, native-gap, highbit or multiworker speed claim. Decoder-only source change; encoder does not call TemporalMotionField. No numerical/quality approximation.",
+  "public_pixel_gate": {
+    "command": "GOAV1_PUBLIC_FULLCLIP=1 GOMAXPROCS=1 project-env candidate.test -test.run ^TestPublicDecoderFullClipCorpusMD5$ -test.count=1 -test.v",
+    "log": "=== RUN   TestPublicDecoderFullClipCorpusMD5\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_inter_q20 frames=48 digest=c81031f90d8b64d4b7600891360a2586\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_inter_q20 frames=48 digest=c81031f90d8b64d4b7600891360a2586\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_inter_q32 frames=48 digest=52c881fcbd960e61b494bdb0212a598f\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_inter_q32 frames=48 digest=52c881fcbd960e61b494bdb0212a598f\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_inter_q55 frames=48 digest=2cddf86f5d4a1bd8f401b4f5549dd3d0\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_inter_q55 frames=48 digest=2cddf86f5d4a1bd8f401b4f5549dd3d0\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_intra_q32 frames=48 digest=5bb05de29c9f528b43a1279a55fb2229\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_intra_q32 frames=48 digest=5bb05de29c9f528b43a1279a55fb2229\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_inter_q20 frames=48 digest=50b72e533bf48e4c23a3b16b8aa17e46\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_inter_q20 frames=48 digest=50b72e533bf48e4c23a3b16b8aa17e46\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_inter_q32 frames=48 digest=30ba24a8463f4593ad8683d5beedbf3f\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_inter_q32 frames=48 digest=30ba24a8463f4593ad8683d5beedbf3f\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_inter_q55 frames=48 digest=b2e2ee1fb5f8638e3a1446621c198e59\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_inter_q55 frames=48 digest=b2e2ee1fb5f8638e3a1446621c198e59\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_intra_q32 frames=48 digest=c435e5fbb36afcaf9973874e56a831b4\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_intra_q32 frames=48 digest=c435e5fbb36afcaf9973874e56a831b4\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q20 frames=48 digest=98f748a039be59c3dafd5317887e2c67\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q20 frames=48 digest=98f748a039be59c3dafd5317887e2c67\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q32 frames=48 digest=0631d86d4d5f49d2b0b6b7505e0138ac\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q32 frames=48 digest=0631d86d4d5f49d2b0b6b7505e0138ac\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q32_10bit frames=48 digest=8506fce82608a83814eaa5e3067c0d9b\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q32_10bit frames=48 digest=8506fce82608a83814eaa5e3067c0d9b\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q32_2tiles frames=48 digest=f55ab93cdcee03fd89e7122b89bc920a\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q32_2tiles frames=48 digest=f55ab93cdcee03fd89e7122b89bc920a\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q55 frames=48 digest=cf3b847ee616726b3b048a4c955ae4da\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q55 frames=48 digest=cf3b847ee616726b3b048a4c955ae4da\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_intra_q32 frames=48 digest=5cef0494bd9549db6534ffa4504c0d94\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_intra_q32 frames=48 digest=5cef0494bd9549db6534ffa4504c0d94\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q20 frames=48 digest=1369c36ec029c222e0e7ee2cf95f5b98\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q20 frames=48 digest=1369c36ec029c222e0e7ee2cf95f5b98\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q32 frames=48 digest=47854463914ca952c4b0c63b8e7edd45\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q32 frames=48 digest=47854463914ca952c4b0c63b8e7edd45\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q32_2tiles frames=48 digest=44564e87c87399fbf13b92c6dd39052d\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q32_2tiles frames=48 digest=44564e87c87399fbf13b92c6dd39052d\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q55 frames=48 digest=28554980fa3adb9f0c0cbc345d62eee6\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q55 frames=48 digest=28554980fa3adb9f0c0cbc345d62eee6\n    public_fullclip_corpus_bench_test.go:62: public decoder MD5 preflight passed: clips=18 frames=864 workers=1\n--- PASS: TestPublicDecoderFullClipCorpusMD5 (5.03s)\nPASS\n",
+    "sha256": "f9d2792726a3abca437c6f8a361c21a91747aee4f83e0326fa45ae952e055dcd",
+    "result": "18 clips /864 frames, workers1; every public pixel MD5 matches independent sidecars"
+  }
+}
