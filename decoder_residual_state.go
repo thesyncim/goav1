@@ -804,7 +804,7 @@ func decodeAndRetainDecoderFrameWorkJobResidualsPtr(batch *DecoderFrameWorkBatch
 	if err != nil {
 		return stats, err
 	}
-	if err := batch.RetainTileResidualCDFStorage(index, state, storage); err != nil {
+	if err := internalthreading.RetainTileResidualCDFStorageOwned(batch, index, state, storage, &req, compact); err != nil {
 		return stats, err
 	}
 	return stats, nil

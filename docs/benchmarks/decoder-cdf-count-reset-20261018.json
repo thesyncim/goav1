@@ -1,0 +1,723 @@
+{
+  "scope": "R10 private decoder CDF adaptation-count reset; no CDF representation or public method-set change",
+  "native_reference": {
+    "commit": "b546257f770768b2c88258c533da38b91a06f737",
+    "version": "dav1d 1.5.3",
+    "source": "src/cdf.c:3916 onward dav1d_cdf_thread_update; copy context then clear known counter slots"
+  },
+  "protocol": {
+    "base": "b9e260f470c33a5369b5357d74a54b302044ea74",
+    "baseline_binary_provenance": "Built from clean merged b9e260f4 before the R10 edits, matching tree 3b988381227b930c4c2c2d5555c836a583580f25. Same Go toolchain and public full-clip harness as candidate.",
+    "binary_paths": {
+      "B": "/private/tmp/decoder-cdf-reset-20261018/baseline.test",
+      "C": "/private/tmp/decoder-cdf-reset-20261018/candidate-free.test"
+    },
+    "binary_sha256": {
+      "B": "2c7eb87ae4fcc3dfdb22dccb3e7ae7630e915214ffc042e43f7b59f9000cfd95",
+      "C": "c38c1df9c4a4eb2d0e25d1494b36447ff9440684461c933c555dbbf081cfcaef"
+    },
+    "sources": {
+      "decoder_residual_state.go": "cb41f5e5a2a24697c3485fd0c69aeb6cf272d89cfa1ea09033dafcf5e2e24c1e",
+      "internal/av1/entropy/cdf.go": "6bcb1c1f77e8964e72bf8a3fc8d1f9fbc77ad977f6fdaad08243f50e96387aea",
+      "internal/av1/entropy/cdf_reset_trusted_test.go": "e70ebd380f07ee7128022a09dd2070cd1000572c03bff386fcd5ebb455cf6bc9",
+      "internal/av1/threading/cdf_reset_trusted.go": "f0dfd1585428ffc9d17df11d9fa6e6906a5481ffbb33f6b897e4aed757c77fc3",
+      "internal/av1/threading/cdf_reset_trusted_test.go": "bbba8dac64a084f35881220ca1b37906c676ade35a7a31370f1601e0ae5e5cd1",
+      "internal/av1/threading/tile_residual.go": "324ee40fa3efaccb2fcc467692a58f586d88b136285a7f472190a396b5c6e12b"
+    },
+    "plan": [
+      [
+        0,
+        "p360_intra_q32",
+        "BC"
+      ],
+      [
+        0,
+        "p720_inter_q32",
+        "CB"
+      ],
+      [
+        1,
+        "p720_inter_q32",
+        "BC"
+      ],
+      [
+        1,
+        "p360_intra_q32",
+        "CB"
+      ],
+      [
+        2,
+        "p360_intra_q32",
+        "BC"
+      ],
+      [
+        2,
+        "p720_inter_q32",
+        "CB"
+      ]
+    ],
+    "ops": 20,
+    "protocol": "One short paired screen of private trusted CDF counter reset. Warm public Reset+DecodeNext, workers=1. Target p360_intra_q32 must save >=0.5% by paired geometric mean and win >=2/3 pairs; p720_inter_q32 affected comparison must regress <=1%. Both clips use the changed reset: the untimed oracle counted 48 trusted intra resets and 49 trusted/3 generic inter resets. All actual rows must report 0 allocs/op; B/op is separately retained and reported without a zero-byte gate, since the prior unchanged harness reported occasional 2 B/op at 0 allocs/op. Three alternating pairs, 12 processes and exactly 12 benchmark rows, all retained. Every slash component is independently anchored. No retry, resampling, postselection or native-gap claim."
+  },
+  "script": {
+    "path": "/private/tmp/decoder-cdf-reset-20261018/screen.py",
+    "sha256": "90941a2357575008c2a7907ba3e03bdf53f918da15b87ec2fd399ab4f9e661fa"
+  },
+  "environment": {
+    "os": "darwin",
+    "arch": "arm64",
+    "cpu": "Apple M4 Max",
+    "GOEXPERIMENT": "simd",
+    "GOARM64": "v8.0",
+    "GOMAXPROCS": "1",
+    "GOGC": "100",
+    "workers": 1,
+    "coordinated_agent_cpu_work": "paused for screen; other host activity not controlled",
+    "end_load_1m_range": [
+      6.2490234375,
+      9.42919921875
+    ]
+  },
+  "summary": {
+    "p720_inter_q32": {
+      "paired_gm_saved_pct": 0.2722822829449245,
+      "wins": 3,
+      "pairs": [
+        {
+          "round": 0,
+          "C": 152118023.0,
+          "B": 152138469.0,
+          "saved_pct": 0.013439073059162698
+        },
+        {
+          "round": 1,
+          "B": 153058783.0,
+          "C": 152697421.0,
+          "saved_pct": 0.23609360594484263
+        },
+        {
+          "round": 2,
+          "C": 152282369.0,
+          "B": 153150021.0,
+          "saved_pct": 0.5665373039681176
+        }
+      ]
+    },
+    "p360_intra_q32": {
+      "paired_gm_saved_pct": 1.0919875789803246,
+      "wins": 3,
+      "pairs": [
+        {
+          "round": 0,
+          "B": 65427640.0,
+          "C": 65383200.0,
+          "saved_pct": 0.06792236430963605
+        },
+        {
+          "round": 1,
+          "C": 64602969.0,
+          "B": 66226227.0,
+          "saved_pct": 2.4510802948203625
+        },
+        {
+          "round": 2,
+          "B": 67532221.0,
+          "C": 67031367.0,
+          "saved_pct": 0.7416518997650057
+        }
+      ]
+    },
+    "audit": {
+      "processes": 12,
+      "actual_rows": 12,
+      "all_0_allocs": true,
+      "all_0_bytes": false,
+      "bytes_op_rows": [
+        2,
+        2,
+        0,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        0
+      ],
+      "binary_source_unchanged": true
+    },
+    "gate_pass": true
+  },
+  "rows": [
+    {
+      "round": 0,
+      "clip": "p360_intra_q32",
+      "role": "B",
+      "exit": 0,
+      "wall_s": 1.9771199226379395,
+      "log": "00-r0-p360_intra_q32-B.log",
+      "sha256": "669b383b54a8d33f021ca86233e1a8e9a3adebb8c3e558934a7ee07d983af465",
+      "load": [
+        6.4453125,
+        7.19140625,
+        8.646484375
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-cdf-reset-20261018/baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+          "20",
+          "65427640",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 65427640.0,
+      "bytes_op": 2,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  65427640 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 0,
+      "clip": "p360_intra_q32",
+      "role": "C",
+      "exit": 0,
+      "wall_s": 1.8608241081237793,
+      "log": "01-r0-p360_intra_q32-C.log",
+      "sha256": "1ca98222819cb508b6c16fce2925bea278040b09436fa9a35337cc08db5a3514",
+      "load": [
+        6.2490234375,
+        7.13818359375,
+        8.619140625
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-cdf-reset-20261018/candidate-free.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+          "20",
+          "65383200",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 65383200.0,
+      "bytes_op": 2,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  65383200 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 0,
+      "clip": "p720_inter_q32",
+      "role": "C",
+      "exit": 0,
+      "wall_s": 3.301558017730713,
+      "log": "02-r0-p720_inter_q32-C.log",
+      "sha256": "657bb28a083251aa8a85d626c349d3c4dec51d96af9e3e0acc6c8136644b0bab",
+      "load": [
+        6.2490234375,
+        7.13818359375,
+        8.619140625
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-cdf-reset-20261018/candidate-free.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+          "20",
+          "152118023",
+          "0",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 152118023.0,
+      "bytes_op": 0,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 152118023 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 0,
+      "clip": "p720_inter_q32",
+      "role": "B",
+      "exit": 0,
+      "wall_s": 3.2716257572174072,
+      "log": "03-r0-p720_inter_q32-B.log",
+      "sha256": "07159941b2e4532e4d6e6196eddcf2435af5a02b81e2069e42476f5841a5c7ff",
+      "load": [
+        6.78955078125,
+        7.2353515625,
+        8.64453125
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-cdf-reset-20261018/baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+          "20",
+          "152138469",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 152138469.0,
+      "bytes_op": 2,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 152138469 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 1,
+      "clip": "p720_inter_q32",
+      "role": "B",
+      "exit": 0,
+      "wall_s": 3.2746119499206543,
+      "log": "04-r1-p720_inter_q32-B.log",
+      "sha256": "d594443694de12a3ed467793a01f34735356d8f795ca44ab6a39c66c20b641e9",
+      "load": [
+        6.78955078125,
+        7.2353515625,
+        8.64453125
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-cdf-reset-20261018/baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+          "20",
+          "153058783",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 153058783.0,
+      "bytes_op": 2,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 153058783 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 1,
+      "clip": "p720_inter_q32",
+      "role": "C",
+      "exit": 0,
+      "wall_s": 3.2747597694396973,
+      "log": "05-r1-p720_inter_q32-C.log",
+      "sha256": "6fa180b6ca3d6b51583259a9e71f4d1e155f859694e3b1e85707211dce41b811",
+      "load": [
+        6.72607421875,
+        7.21435546875,
+        8.62890625
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-cdf-reset-20261018/candidate-free.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+          "20",
+          "152697421",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 152697421.0,
+      "bytes_op": 2,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 152697421 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 1,
+      "clip": "p360_intra_q32",
+      "role": "C",
+      "exit": 0,
+      "wall_s": 1.4600560665130615,
+      "log": "06-r1-p360_intra_q32-C.log",
+      "sha256": "8093dc28e706059b05fba9b9a16f57d0a47bd32e3c09edc09e5ae955cd0bcf82",
+      "load": [
+        6.72607421875,
+        7.21435546875,
+        8.62890625
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-cdf-reset-20261018/candidate-free.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+          "20",
+          "64602969",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 64602969.0,
+      "bytes_op": 2,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  64602969 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 1,
+      "clip": "p360_intra_q32",
+      "role": "B",
+      "exit": 0,
+      "wall_s": 1.4951727390289307,
+      "log": "07-r1-p360_intra_q32-B.log",
+      "sha256": "e51bfd80907a61ff793a51f556d9b7514fc234db54ad319d429b04e53bed389b",
+      "load": [
+        6.50732421875,
+        7.16064453125,
+        8.6015625
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-cdf-reset-20261018/baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+          "20",
+          "66226227",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 66226227.0,
+      "bytes_op": 2,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  66226227 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 2,
+      "clip": "p360_intra_q32",
+      "role": "B",
+      "exit": 0,
+      "wall_s": 1.5047788619995117,
+      "log": "08-r2-p360_intra_q32-B.log",
+      "sha256": "abd398c967bdfd546dff4ca5066e9d4855a7c8f18dc7cd5b6e57dfeb1975af38",
+      "load": [
+        6.50732421875,
+        7.16064453125,
+        8.6015625
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-cdf-reset-20261018/baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+          "20",
+          "67532221",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 67532221.0,
+      "bytes_op": 2,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  67532221 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 2,
+      "clip": "p360_intra_q32",
+      "role": "C",
+      "exit": 0,
+      "wall_s": 1.5028071403503418,
+      "log": "09-r2-p360_intra_q32-C.log",
+      "sha256": "dc21f8f3c4601fd0fe68e4d7fb625f38c33987086acbabd9255f93c5a7fb96b0",
+      "load": [
+        6.50732421875,
+        7.16064453125,
+        8.6015625
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-cdf-reset-20261018/candidate-free.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p360_intra_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+          "20",
+          "67031367",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 67031367.0,
+      "bytes_op": 2,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p360_intra_q32/warm_reset_decode         \t      20\t  67031367 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 2,
+      "clip": "p720_inter_q32",
+      "role": "C",
+      "exit": 0,
+      "wall_s": 3.284806966781616,
+      "log": "10-r2-p720_inter_q32-C.log",
+      "sha256": "e92b0e194f5f03a945e1317f9dfed5c957d04142a20ebb6e068379e6bba87f81",
+      "load": [
+        9.42919921875,
+        7.75537109375,
+        8.802734375
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-cdf-reset-20261018/candidate-free.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+          "20",
+          "152282369",
+          "2",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 152282369.0,
+      "bytes_op": 2,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 152282369 ns/op\t        48.00 frames/op\t       2 B/op\t       0 allocs/op\nPASS\n"
+    },
+    {
+      "round": 2,
+      "clip": "p720_inter_q32",
+      "role": "B",
+      "exit": 0,
+      "wall_s": 3.2807366847991943,
+      "log": "11-r2-p720_inter_q32-B.log",
+      "sha256": "a5efe858816b13248e5aadc06442cb1827d49cd13b2eda95d4ce27a672d128ea",
+      "load": [
+        8.994140625,
+        7.69287109375,
+        8.7744140625
+      ],
+      "command": [
+        "/Users/thesyncim/.codex/bin/project-env",
+        "/private/tmp/decoder-cdf-reset-20261018/baseline.test",
+        "-test.run=^$",
+        "-test.bench=^BenchmarkPublicDecoderFullClip$/^p720_inter_q32$/^warm_reset_decode$",
+        "-test.benchtime=20x",
+        "-test.count=1",
+        "-test.benchmem"
+      ],
+      "all_benchmark_rows": [
+        [
+          "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+          "20",
+          "153150021",
+          "0",
+          "0"
+        ]
+      ],
+      "name": "BenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode",
+      "ops": 20,
+      "ns_op": 153150021.0,
+      "bytes_op": 0,
+      "allocs_op": 0,
+      "raw_log": "goos: darwin\ngoarch: arm64\npkg: github.com/thesyncim/goav1\ncpu: Apple M4 Max\nBenchmarkPublicDecoderFullClip/p720_inter_q32/warm_reset_decode         \t      20\t 153150021 ns/op\t        48.00 frames/op\t       0 B/op\t       0 allocs/op\nPASS\n"
+    }
+  ],
+  "source_proof": {
+    "ownership": "Opaque compact capability must match masks, exclusively owned initialized storage after successful decode, no caller hooks, no wavefront. Generic API always validates writable CDF.Values() and preserves error/partial-mutation/publication order.",
+    "coverage": {
+      "total_cdf_slots": 1570,
+      "active": 1463,
+      "unused": 107,
+      "q_contexts": 4,
+      "leaf_field_sites": 74
+    },
+    "production_route": "Existing private 8-bit single-tile single-worker non-superres/non-IBC active-deblocking capability only",
+    "private_uses": {
+      "p360_intra_q32": {
+        "visible_frames": 48,
+        "trusted_resets": 48,
+        "generic_resets": 0
+      },
+      "p720_inter_q32": {
+        "visible_frames": 48,
+        "trusted_resets": 49,
+        "generic_resets": 3
+      }
+    },
+    "compiler": {
+      "generic_coeff_frame_bytes": 192,
+      "trusted_coeff_frame_bytes": 16,
+      "trusted_coeff_ordinary_calls": 0,
+      "root_caller_frame_bytes_before": 2272,
+      "root_caller_frame_bytes_after": 2272,
+      "new_ownership_wrapper_frame_bytes": 64,
+      "trusted_free_function": "fully inlined; no linked out-of-line symbol",
+      "new_cost": "one per-retention trusted branch plus capability/mask/hook checks",
+      "unchanged": "CDF/storage representation, retained-state copy, every field including inter CDFs on intra frames"
+    },
+    "compiler_artifacts": [
+      {
+        "path": "/private/tmp/decoder-cdf-reset-20261018/baseline-codegen.txt",
+        "sha256": "cdcf582e35ced656618c034ac10fd89536d0fe005bfff00435d94a8b842636b9"
+      },
+      {
+        "path": "/private/tmp/decoder-cdf-reset-20261018/candidate-free-codegen.txt",
+        "sha256": "1659fdcf634dde04bd80213efa1148ded6a55d8284335dc7c300501710a837a2"
+      }
+    ]
+  },
+  "focused_checks": [
+    {
+      "name": "Reviewed free-function CDF sizes/all-field storage/generic fallback tests",
+      "log": "free-function-tests.log",
+      "sha256": "959c132639b2479e703f24318ae55ab3f4d5be450381863ae64e2bd37d91a187",
+      "raw_log": "=== RUN   TestCDFResetCountTrusted\n--- PASS: TestCDFResetCountTrusted (0.00s)\n=== RUN   TestCDFResetCountValidatesWritableValues\n--- PASS: TestCDFResetCountValidatesWritableValues (0.00s)\nPASS\nok  \tgithub.com/thesyncim/goav1/internal/av1/entropy\t0.297s\n=== RUN   TestFrameWorkCDFResetTrustedAllFields\n=== RUN   TestFrameWorkCDFResetTrustedAllFields/0\n    cdf_reset_trusted_test.go:74: q=0 active=1463 unused=107\n=== RUN   TestFrameWorkCDFResetTrustedAllFields/21\n    cdf_reset_trusted_test.go:74: q=21 active=1463 unused=107\n=== RUN   TestFrameWorkCDFResetTrustedAllFields/61\n    cdf_reset_trusted_test.go:74: q=61 active=1463 unused=107\n=== RUN   TestFrameWorkCDFResetTrustedAllFields/121\n    cdf_reset_trusted_test.go:74: q=121 active=1463 unused=107\n--- PASS: TestFrameWorkCDFResetTrustedAllFields (0.01s)\n    --- PASS: TestFrameWorkCDFResetTrustedAllFields/0 (0.00s)\n    --- PASS: TestFrameWorkCDFResetTrustedAllFields/21 (0.00s)\n    --- PASS: TestFrameWorkCDFResetTrustedAllFields/61 (0.00s)\n    --- PASS: TestFrameWorkCDFResetTrustedAllFields/121 (0.00s)\n=== RUN   TestFrameWorkCDFResetOwnedRetention\n--- PASS: TestFrameWorkCDFResetOwnedRetention (0.00s)\n=== RUN   TestFrameWorkCDFResetFallbackValidation\n=== RUN   TestFrameWorkCDFResetFallbackValidation/inactive_capability\n=== RUN   TestFrameWorkCDFResetFallbackValidation/detached_masks\n=== RUN   TestFrameWorkCDFResetFallbackValidation/wavefront\n=== RUN   TestFrameWorkCDFResetFallbackValidation/predict\n=== RUN   TestFrameWorkCDFResetFallbackValidation/after_block\n=== RUN   TestFrameWorkCDFResetFallbackValidation/transforms\n=== RUN   TestFrameWorkCDFResetFallbackValidation/default_transforms_off\n=== RUN   TestFrameWorkCDFResetFallbackValidation/before_superblock\n=== RUN   TestFrameWorkCDFResetFallbackValidation/before_coefficients\n=== RUN   TestFrameWorkCDFResetFallbackValidation/coefficient_visitor\n=== RUN   TestFrameWorkCDFResetFallbackValidation/coefficient_controller\n=== RUN   TestFrameWorkCDFResetFallbackValidation/coefficient_request\n=== RUN   TestFrameWorkCDFResetFallbackValidation/transform_select\n--- PASS: TestFrameWorkCDFResetFallbackValidation (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/inactive_capability (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/detached_masks (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/wavefront (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/predict (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/after_block (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/transforms (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/default_transforms_off (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/before_superblock (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/before_coefficients (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/coefficient_visitor (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/coefficient_controller (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/coefficient_request (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/transform_select (0.00s)\n=== RUN   TestFrameWorkCDFResetGenericRetentionValidation\n--- PASS: TestFrameWorkCDFResetGenericRetentionValidation (0.00s)\nPASS\nok  \tgithub.com/thesyncim/goav1/internal/av1/threading\t0.382s\n"
+    },
+    {
+      "name": "Initial operation-equivalent method-form existing storage/retention/allocation fixtures",
+      "log": "threading-tests.log",
+      "sha256": "15f2e1c1cd7cc94d554eef4912f28790740671375d105dae03d229e06e79e2e0",
+      "raw_log": "=== RUN   TestFrameWorkBatchTileResidualCDFStorage\n--- PASS: TestFrameWorkBatchTileResidualCDFStorage (0.00s)\n=== RUN   TestFrameWorkBatchJobDecodeStateRejectsInvalidInputs\n--- PASS: TestFrameWorkBatchJobDecodeStateRejectsInvalidInputs (0.00s)\n=== RUN   TestFrameWorkCDFResetTrustedAllFields\n=== RUN   TestFrameWorkCDFResetTrustedAllFields/0\n    cdf_reset_trusted_test.go:74: q=0 active=1463 unused=107\n=== RUN   TestFrameWorkCDFResetTrustedAllFields/21\n    cdf_reset_trusted_test.go:74: q=21 active=1463 unused=107\n=== RUN   TestFrameWorkCDFResetTrustedAllFields/61\n    cdf_reset_trusted_test.go:74: q=61 active=1463 unused=107\n=== RUN   TestFrameWorkCDFResetTrustedAllFields/121\n    cdf_reset_trusted_test.go:74: q=121 active=1463 unused=107\n--- PASS: TestFrameWorkCDFResetTrustedAllFields (0.00s)\n    --- PASS: TestFrameWorkCDFResetTrustedAllFields/0 (0.00s)\n    --- PASS: TestFrameWorkCDFResetTrustedAllFields/21 (0.00s)\n    --- PASS: TestFrameWorkCDFResetTrustedAllFields/61 (0.00s)\n    --- PASS: TestFrameWorkCDFResetTrustedAllFields/121 (0.00s)\n=== RUN   TestFrameWorkCDFResetOwnedRetention\n--- PASS: TestFrameWorkCDFResetOwnedRetention (0.00s)\n=== RUN   TestFrameWorkCDFResetFallbackValidation\n=== RUN   TestFrameWorkCDFResetFallbackValidation/inactive_capability\n=== RUN   TestFrameWorkCDFResetFallbackValidation/detached_masks\n=== RUN   TestFrameWorkCDFResetFallbackValidation/wavefront\n=== RUN   TestFrameWorkCDFResetFallbackValidation/predict\n=== RUN   TestFrameWorkCDFResetFallbackValidation/after_block\n=== RUN   TestFrameWorkCDFResetFallbackValidation/transforms\n=== RUN   TestFrameWorkCDFResetFallbackValidation/default_transforms_off\n=== RUN   TestFrameWorkCDFResetFallbackValidation/before_superblock\n=== RUN   TestFrameWorkCDFResetFallbackValidation/before_coefficients\n=== RUN   TestFrameWorkCDFResetFallbackValidation/coefficient_visitor\n=== RUN   TestFrameWorkCDFResetFallbackValidation/coefficient_controller\n=== RUN   TestFrameWorkCDFResetFallbackValidation/coefficient_request\n=== RUN   TestFrameWorkCDFResetFallbackValidation/transform_select\n--- PASS: TestFrameWorkCDFResetFallbackValidation (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/inactive_capability (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/detached_masks (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/wavefront (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/predict (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/after_block (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/transforms (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/default_transforms_off (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/before_superblock (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/before_coefficients (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/coefficient_visitor (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/coefficient_controller (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/coefficient_request (0.00s)\n    --- PASS: TestFrameWorkCDFResetFallbackValidation/transform_select (0.00s)\n=== RUN   TestFrameWorkCDFResetGenericRetentionValidation\n--- PASS: TestFrameWorkCDFResetGenericRetentionValidation (0.00s)\n=== RUN   TestFrameWorkTileResidualCDFStorageInitDefault\n--- PASS: TestFrameWorkTileResidualCDFStorageInitDefault (0.00s)\n=== RUN   TestFrameWorkTileResidualCDFStorageResetCDFCounts\n--- PASS: TestFrameWorkTileResidualCDFStorageResetCDFCounts (0.00s)\n=== RUN   TestFrameWorkTileResidualCDFStorageRejectsNil\n--- PASS: TestFrameWorkTileResidualCDFStorageRejectsNil (0.00s)\n=== RUN   TestFrameWorkTileResidualCDFStorageAllocs\n--- PASS: TestFrameWorkTileResidualCDFStorageAllocs (0.00s)\nPASS\nok  \tgithub.com/thesyncim/goav1/internal/av1/threading\t0.390s\n"
+    },
+    {
+      "name": "Initial operation-equivalent method-form four public 8/10-bit inter/edge fixtures",
+      "log": "public-golden.log",
+      "sha256": "a4e8cfac910ee36206774d7b6acad40ac9610ba2f7e02bb88054806bae92e1a1",
+      "raw_log": "=== RUN   TestSimpleDecoderProfileClipsMatchGolden\n=== RUN   TestSimpleDecoderProfileClipsMatchGolden/profile1-444-8bit-inter-64x64.ivf\n=== RUN   TestSimpleDecoderProfileClipsMatchGolden/profile1-444-10bit-inter-64x64.ivf\n=== RUN   TestSimpleDecoderProfileClipsMatchGolden/profile1-444-8bit-edgemv-130x130.ivf\n=== RUN   TestSimpleDecoderProfileClipsMatchGolden/profile1-444-10bit-edgemv-130x130.ivf\n--- PASS: TestSimpleDecoderProfileClipsMatchGolden (0.02s)\n    --- PASS: TestSimpleDecoderProfileClipsMatchGolden/profile1-444-8bit-inter-64x64.ivf (0.00s)\n    --- PASS: TestSimpleDecoderProfileClipsMatchGolden/profile1-444-10bit-inter-64x64.ivf (0.00s)\n    --- PASS: TestSimpleDecoderProfileClipsMatchGolden/profile1-444-8bit-edgemv-130x130.ivf (0.00s)\n    --- PASS: TestSimpleDecoderProfileClipsMatchGolden/profile1-444-10bit-edgemv-130x130.ivf (0.00s)\nPASS\n"
+    },
+    {
+      "name": "Initial operation-equivalent method-form public warm superres fallback allocation fixture",
+      "log": "public-alloc.log",
+      "sha256": "5e87cb56a9d10c169888f36032a9a1e4294ca8a4a58e687b2d3848fcc170a59d",
+      "raw_log": "=== RUN   TestSimpleDecoderPostFilteredClipAllocBudget\n=== RUN   TestSimpleDecoderPostFilteredClipAllocBudget/superres_inter_external_references\n--- PASS: TestSimpleDecoderPostFilteredClipAllocBudget (0.08s)\n    --- PASS: TestSimpleDecoderPostFilteredClipAllocBudget/superres_inter_external_references (0.08s)\nPASS\n"
+    },
+    {
+      "name": "Initial operation-equivalent method-form untimed MD5 and private-route count overlay",
+      "log": "diagnostic.log",
+      "sha256": "d2a55c0724413894914564cb7bb7aeb101c4bed16dfc10efc376b486fbbff20e",
+      "raw_log": "=== RUN   TestCDFResetPublicDiagnostic\n    z_cdf_reset_diagnostic_test.go:14: clip=p360_intra_q32 frames=48 trusted=48 generic=0\n    z_cdf_reset_diagnostic_test.go:14: clip=p720_inter_q32 frames=48 trusted=49 generic=3\n--- PASS: TestCDFResetPublicDiagnostic (0.43s)\nPASS\nok  \tgithub.com/thesyncim/goav1\t0.822s\n"
+    }
+  ],
+  "selected_final_gate": {
+    "status": "PASS",
+    "command": "GOAV1_PUBLIC_FULLCLIP=1 GOAV1_BENCH_CORPUS_DIR=/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus GOMAXPROCS=1 /Users/thesyncim/.codex/bin/project-env /private/tmp/decoder-cdf-reset-20261018/candidate-free.test -test.run=^TestPublicDecoderFullClipCorpusMD5$ -test.v",
+    "expected_clips": 18,
+    "expected_frames": 864,
+    "logical_clips": 18,
+    "logical_frames": 864,
+    "ivf_constructor_checks": 18,
+    "preparsed_payload_constructor_checks": 18,
+    "workers": 1,
+    "log": "fullclip-md5.log",
+    "sha256": "5fd6fd67cf9d2abb422ce3549ece272b9772884b393dbbe48beb99b8cdfa6d69",
+    "raw_log": "=== RUN   TestPublicDecoderFullClipCorpusMD5\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_inter_q20 frames=48 digest=c81031f90d8b64d4b7600891360a2586\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_inter_q20 frames=48 digest=c81031f90d8b64d4b7600891360a2586\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_inter_q32 frames=48 digest=52c881fcbd960e61b494bdb0212a598f\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_inter_q32 frames=48 digest=52c881fcbd960e61b494bdb0212a598f\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_inter_q55 frames=48 digest=2cddf86f5d4a1bd8f401b4f5549dd3d0\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_inter_q55 frames=48 digest=2cddf86f5d4a1bd8f401b4f5549dd3d0\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p144_intra_q32 frames=48 digest=5bb05de29c9f528b43a1279a55fb2229\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p144_intra_q32 frames=48 digest=5bb05de29c9f528b43a1279a55fb2229\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_inter_q20 frames=48 digest=50b72e533bf48e4c23a3b16b8aa17e46\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_inter_q20 frames=48 digest=50b72e533bf48e4c23a3b16b8aa17e46\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_inter_q32 frames=48 digest=30ba24a8463f4593ad8683d5beedbf3f\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_inter_q32 frames=48 digest=30ba24a8463f4593ad8683d5beedbf3f\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_inter_q55 frames=48 digest=b2e2ee1fb5f8638e3a1446621c198e59\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_inter_q55 frames=48 digest=b2e2ee1fb5f8638e3a1446621c198e59\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p288_intra_q32 frames=48 digest=c435e5fbb36afcaf9973874e56a831b4\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p288_intra_q32 frames=48 digest=c435e5fbb36afcaf9973874e56a831b4\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q20 frames=48 digest=98f748a039be59c3dafd5317887e2c67\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q20 frames=48 digest=98f748a039be59c3dafd5317887e2c67\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q32 frames=48 digest=0631d86d4d5f49d2b0b6b7505e0138ac\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q32 frames=48 digest=0631d86d4d5f49d2b0b6b7505e0138ac\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q32_10bit frames=48 digest=8506fce82608a83814eaa5e3067c0d9b\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q32_10bit frames=48 digest=8506fce82608a83814eaa5e3067c0d9b\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q32_2tiles frames=48 digest=f55ab93cdcee03fd89e7122b89bc920a\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q32_2tiles frames=48 digest=f55ab93cdcee03fd89e7122b89bc920a\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_inter_q55 frames=48 digest=cf3b847ee616726b3b048a4c955ae4da\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_inter_q55 frames=48 digest=cf3b847ee616726b3b048a4c955ae4da\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p360_intra_q32 frames=48 digest=5cef0494bd9549db6534ffa4504c0d94\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p360_intra_q32 frames=48 digest=5cef0494bd9549db6534ffa4504c0d94\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q20 frames=48 digest=1369c36ec029c222e0e7ee2cf95f5b98\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q20 frames=48 digest=1369c36ec029c222e0e7ee2cf95f5b98\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q32 frames=48 digest=47854463914ca952c4b0c63b8e7edd45\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q32 frames=48 digest=47854463914ca952c4b0c63b8e7edd45\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q32_2tiles frames=48 digest=44564e87c87399fbf13b92c6dd39052d\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q32_2tiles frames=48 digest=44564e87c87399fbf13b92c6dd39052d\n    public_fullclip_corpus_bench_test.go:58: public MD5 verified: clip=p720_inter_q55 frames=48 digest=28554980fa3adb9f0c0cbc345d62eee6\n    public_fullclip_corpus_bench_test.go:58: public payload constructor MD5 verified: clip=p720_inter_q55 frames=48 digest=28554980fa3adb9f0c0cbc345d62eee6\n    public_fullclip_corpus_bench_test.go:62: public decoder MD5 preflight passed: clips=18 frames=864 workers=1\n--- PASS: TestPublicDecoderFullClipCorpusMD5 (5.05s)\nPASS\n",
+    "environment": {
+      "CODEX_AGENT_ID": "astra_filter_gap",
+      "CODEX_PROJECT_CACHE_ROOT": "/private/var/folders/x3/kqy4mlzx43n21g8wpjj2hp580000gn/C/codex-projects",
+      "GOEXPERIMENT": "simd",
+      "GOMAXPROCS": "1",
+      "GOAV1_PUBLIC_FULLCLIP": "1",
+      "GOAV1_BENCH_CORPUS_DIR": "/Users/thesyncim/GolandProjects/goav1/testdata/benchcorpus"
+    }
+  },
+  "limitations": [
+    "Three paired samples per case; no confidence-interval claim.",
+    "All 12 actual rows retained; no resampling, postselection, or regex selection deviation.",
+    "B/op varied 0/2 and was explicitly not a zero-byte gate; no memory-reduction claim.",
+    "A narrow measured intra win; no updated whole-corpus native speed ratio or all-workload claim.",
+    "No encoder production call changed. No broad race/worker matrix run."
+  ],
+  "artifact_directory": "/private/tmp/decoder-cdf-reset-20261018",
+  "source_archive": {
+    "patch_sha256": "9625e806390415a89ec9af855806fc0e92bbacbf8d536c6a79b95cce2ae24289",
+    "tar_gz_sha256": "bc08293ac2247b828f23cf84ee7d7813f1d874ea59969b7158be81483d234bf9"
+  },
+  "build_notes": "Initial threading compile failed ENOSPC. After root reclaimed only regenerable decoded quality output and released builds, focused tests completed. Source/evidence and caches were retained.",
+  "review": "Untimed method-form draft was changed to the internal free function to avoid expanding public aliased CDF method sets. All 74 calls changed mechanically; focused tests and identical compiler shape verified again. Only the reviewed free-function binary was screened."
+}
