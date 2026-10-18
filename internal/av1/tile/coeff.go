@@ -206,14 +206,7 @@ type coeffPosHot struct {
 	br2DOffset    int8
 }
 
-type coeffScanHot struct {
-	pos           uint16
-	padded        uint16
-	lower2DOffset int8
-	br2DOffset    int8
-	lowerEOBCtx   uint8
-	brEOBCtx      uint8
-}
+type coeffScanHot = entropy.CoeffScanContext
 
 // coeffPosTable[size][coeffIndex] holds the precomputed position for every
 // valid coefficient index of size, indexed in [0, maxEOB).
@@ -331,12 +324,12 @@ func init() {
 						pos := int(rawPos)
 						p := hotPositions[pos]
 						scanHot[c] = coeffScanHot{
-							pos:           uint16(pos),
-							padded:        p.padded,
-							lower2DOffset: p.lower2DOffset,
-							br2DOffset:    p.br2DOffset,
-							lowerEOBCtx:   coeffLowerLevelsCtxEOBFast(maxEOB, c),
-							brEOBCtx:      coeffBRContextEOBFast(positions[pos], class, pos),
+							Pos:           uint16(pos),
+							Padded:        p.padded,
+							Lower2DOffset: p.lower2DOffset,
+							BR2DOffset:    p.br2DOffset,
+							LowerEOBCtx:   coeffLowerLevelsCtxEOBFast(maxEOB, c),
+							BREOBCtx:      coeffBRContextEOBFast(positions[pos], class, pos),
 						}
 					}
 					coeffScanHotTable[size][class] = scanHot
@@ -1101,8 +1094,8 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 			if useScanHot {
 				for c := eobPos - 2; c >= 0; c-- {
 					p := scanHotSlice[c]
-					pos := int(p.pos)
-					padded := int(p.padded)
+					pos := int(p.Pos)
+					padded := int(p.Padded)
 					ctx := 0
 					if pos != 0 {
 						s1 := padded + stride
@@ -1118,7 +1111,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 						if ctx > 4 {
 							ctx = 4
 						}
-						ctx += int(p.lower2DOffset)
+						ctx += int(p.Lower2DOffset)
 					}
 					level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
 					if level == NumBaseLevels+1 {
@@ -1130,7 +1123,7 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 						if mag > 6 {
 							mag = 6
 						}
-						brCtx := mag + int(p.br2DOffset)
+						brCtx := mag + int(p.BR2DOffset)
 						extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 						level += int(extra)
 					}
@@ -1719,15 +1712,15 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 	}
 	lastC := eobPos - 1
 	lastHot := scanHotSlice[lastC]
-	lastPos := int(lastHot.pos)
-	lastLevel := reader.ReadCDF3Unchecked(&baseEOBArr[lastHot.lowerEOBCtx]) + 1
+	lastPos := int(lastHot.Pos)
+	lastLevel := reader.ReadCDF3Unchecked(&baseEOBArr[lastHot.LowerEOBCtx]) + 1
 	lastPackedLevel := uint8(lastLevel * 0x41)
 	if lastLevel > NumBaseLevels {
 		var extra uint8
 		if cdfUpdate {
-			extra = readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, int(lastHot.brEOBCtx))
+			extra = readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, int(lastHot.BREOBCtx))
 		} else {
-			extra = readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, int(lastHot.brEOBCtx))
+			extra = readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, int(lastHot.BREOBCtx))
 		}
 		lastLevel += int(extra)
 		lastPackedLevel = uint8(lastLevel | 0xc0)
@@ -1813,7 +1806,7 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 	}
 	*levelDirtyLen = 0
 	levelDirtyNext := 0
-	lastPadded := int(lastHot.padded)
+	lastPadded := int(lastHot.Padded)
 	levelsScratch[lastPadded] = lastPackedLevel
 	levelDirtyArr[levelDirtyNext] = int16(lastPadded)
 	levelDirtyNext++
@@ -1822,58 +1815,14 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 
 	stride := int(geo.stride)
 	if cdfUpdate {
-		for c := eobPos - 2; c >= 1; c-- {
-			p := scanHotSlice[c]
-			pos := int(p.pos)
-			padded := int(p.padded)
-			s1 := padded + stride
-			s1p1 := s1 + 1
-			s2 := s1 + stride
-			p1 := padded + 1
-			p2 := padded + 2
-			_ = levelsScratch[s2]
-			_ = levelsScratch[p2]
-			// Tracked 2D levels store the raw token in bits 0..5 and
-			// min(token, 3) in bits 6..7. Summing the five packed neighbors
-			// makes the rounded half-sum of clipped levels available in bits
-			// 7 and above. If the clipped sum is below 8, the raw sum cannot
-			// carry into that field; otherwise the context saturates at 4.
-			h := int(levelsScratch[s1]) + int(levelsScratch[p1]) + int(levelsScratch[s1p1])
-			l := h + int(levelsScratch[s2]) + int(levelsScratch[p2])
-			ctx := (l + 64) >> 7
-			if ctx > 4 {
-				ctx = 4
-			}
-			ctx += int(p.lower2DOffset)
-			level := reader.ReadCDF4UpdateUnchecked(&baseArr[ctx])
-			packedLevel := uint8(level * 0x41)
-			if level == NumBaseLevels+1 {
-				// Re-read only on the rare high-token path so h does not need
-				// to stay live across the CDF update call. The low six bits
-				// recover the raw-token sum (at most 45).
-				brH := (int(levelsScratch[s1]) + int(levelsScratch[p1]) + int(levelsScratch[s1p1])) & 63
-				mag := (brH + 1) >> 1
-				if mag > 6 {
-					mag = 6
-				}
-				brCtx := mag + int(p.br2DOffset)
-				extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
-				level += int(extra)
-				packedLevel = uint8(level | 0xc0)
-			}
-			if level != 0 {
-				levelsScratch[padded] = packedLevel
-				levelDirtyArr[levelDirtyNext] = int16(padded)
-				levelDirtyNext++
-				dirtyArr[nonzeroScanLen] = packCoeffDirty(pos, level)
-				nonzeroScanLen++
-			}
-		}
+		nonzeroScanLen, levelDirtyNext = reader.ReadCoeffTokens2DUpdateUnchecked(
+			scanHotSlice[1:eobPos-1], stride, levelsScratch, baseArr, brArr, dirtyArr, levelDirtyArr,
+		)
 	} else {
 		for c := eobPos - 2; c >= 1; c-- {
 			p := scanHotSlice[c]
-			pos := int(p.pos)
-			padded := int(p.padded)
+			pos := int(p.Pos)
+			padded := int(p.Padded)
 			s1 := padded + stride
 			s1p1 := s1 + 1
 			s2 := s1 + stride
@@ -1887,7 +1836,7 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 			if ctx > 4 {
 				ctx = 4
 			}
-			ctx += int(p.lower2DOffset)
+			ctx += int(p.Lower2DOffset)
 			level := reader.ReadCDF4NoUpdateUnchecked(&baseArr[ctx])
 			packedLevel := uint8(level * 0x41)
 			if level == NumBaseLevels+1 {
@@ -1896,7 +1845,7 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 				if mag > 6 {
 					mag = 6
 				}
-				brCtx := mag + int(p.br2DOffset)
+				brCtx := mag + int(p.BR2DOffset)
 				extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 				level += int(extra)
 				packedLevel = uint8(level | 0xc0)
@@ -1911,7 +1860,7 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 		}
 	}
 	dcHot := scanHotSlice[0]
-	dcPadded := int(dcHot.padded)
+	dcPadded := int(dcHot.Padded)
 	var dcLevel int
 	var packedDCLevel uint8
 	if cdfUpdate {
@@ -1927,7 +1876,7 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 			if mag > 6 {
 				mag = 6
 			}
-			brCtx := mag + int(dcHot.br2DOffset)
+			brCtx := mag + int(dcHot.BR2DOffset)
 			extra := readBaseRangeFromArrCursorUpdateTrusted(&reader, brArr, brCtx)
 			dcLevel += int(extra)
 			packedDCLevel = uint8(dcLevel | 0xc0)
@@ -1945,7 +1894,7 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 			if mag > 6 {
 				mag = 6
 			}
-			brCtx := mag + int(dcHot.br2DOffset)
+			brCtx := mag + int(dcHot.BR2DOffset)
 			extra := readBaseRangeFromArrCursorNoUpdateTrusted(&reader, brArr, brCtx)
 			dcLevel += int(extra)
 			packedDCLevel = uint8(dcLevel | 0xc0)
