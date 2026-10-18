@@ -448,6 +448,8 @@ internal/av1/motion/scale_scratch.go:*:*: new(scaledHighBDIM) escapes to heap in
 internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap
 internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap in (*FrameWorkLoopFilterMasks).BuildFromOrderedBlocks:
 internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap in (*frameWorkLoopFilterMaskScratch).reset:
+internal/av1/threading/loop_filter_ordered.go:*:*: make([]uint8, h.Cols) escapes to heap
+internal/av1/threading/loop_filter_ordered.go:*:*: make([]uint8, h.Cols) escapes to heap in (*FrameWorkLoopFilterOrderedBuilder).Reset:
 internal/av1/threading/pool.go:*:*: func literal escapes to heap in NewPool:
 internal/av1/threading/pool.go:*:*: make([]poolWorker, workers) escapes to heap
 internal/av1/threading/pool.go:*:*: make([]poolWorker, workers) escapes to heap in NewPool:
@@ -504,8 +506,8 @@ internal/av1/tile/coeff.go:*:*: make([]coeffPos, maxEOB) escapes to heap
 internal/av1/tile/coeff.go:*:*: make([]coeffPos, maxEOB) escapes to heap in init.N:
 internal/av1/tile/coeff.go:*:*: make([]coeffPosHot, maxEOB) escapes to heap
 internal/av1/tile/coeff.go:*:*: make([]coeffPosHot, maxEOB) escapes to heap in init.N:
-internal/av1/tile/coeff.go:*:*: make([]coeffScanHot, maxEOB) escapes to heap
-internal/av1/tile/coeff.go:*:*: make([]coeffScanHot, maxEOB) escapes to heap in init.N:
+internal/av1/tile/coeff.go:*:*: make([]entropy.CoeffScanContext, maxEOB) escapes to heap
+internal/av1/tile/coeff.go:*:*: make([]entropy.CoeffScanContext, maxEOB) escapes to heap in init.N:
 internal/av1/tile/coeff.go:*:*: make([]uint8, maxEOB) escapes to heap
 internal/av1/tile/coeff.go:*:*: make([]uint8, maxEOB) escapes to heap in init.N:
 internal/av1/transform/precompute.go:*:*: make([]int16, total) escapes to heap
