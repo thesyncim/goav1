@@ -251,7 +251,7 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 					Block: block,
 				})
 				if err != nil {
-					return stats, fmt.Errorf("decode luma txb block=%+v ctx=%+v: %w", block, ctxReq, err)
+					return stats, lumaTXBError(block, ctxReq, err)
 				}
 
 				stats.TXBs++
@@ -317,7 +317,7 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 			Block: block,
 		})
 		if err != nil {
-			return fmt.Errorf("decode luma txb block=%+v ctx=%+v: %w", block, ctxReq, err)
+			return lumaTXBError(block, ctxReq, err)
 		}
 
 		stats.TXBs++
@@ -374,26 +374,78 @@ func decodeLumaCoefficientsInWindowWithCoeffControllerPtr[T BlockLoopCoeffContro
 	xStart := maxInt(int(window.X4Start), reqX4)
 	xEnd := minInt(int(window.X4End), reqX4+int(req.TreeRequest.VisibleW4))
 
-	if req.Tree.Variable {
-		return s.decodeLumaCoefficientsInWindow(cdfs, ctx, scratch, req, window, func(block LumaCoeffBlock) error {
-			blockScratch.block = BlockCoeffBlock{
-				Plane:     0,
-				Block:     block.Block,
-				Transform: block.Transform,
-				Result:    block.Result,
-				Coeffs:    block.Coeffs,
-				Scan:      block.Scan,
-			}
-			return coeffController.VisitBlockCoeffPtr(loopVisit, &blockScratch.block)
-		})
-	}
-
 	txbReq := TXBDecodeRequest{
 		EOBMultiContext:       eobCtx,
 		SkipAllZeroCoeffClear: req.SkipAllZeroCoeffClear,
 		dequant:               req.dequant,
 		dequantPlane:          0,
 	}
+	if req.Tree.Variable {
+		var blocks [lumaTXBWindowCap]TransformBlock
+		n, err := req.Tree.collectLumaTXBsInWindow(req.TreeRequest, window, &blocks)
+		if err == errTXBWindowFull {
+			return decodeLumaCoefficientsInWindowVisitor(s, cdfs, ctx, scratch, req, window, blockScratch, loopVisit, coeffController)
+		}
+		if err != nil {
+			return stats, err
+		}
+		for _, block := range blocks[:n] {
+			txDims, ok := block.Size.Dimensions()
+			if !ok {
+				return stats, ErrInvalidDecodeState
+			}
+			ctxReq := CoeffContextRequest{
+				Plane:      0,
+				PlaneBlock: req.TreeRequest.Size,
+				Size:       block.Size,
+				X4:         block.X4,
+				Y4:         block.Y4,
+				VisibleW4:  block.VisibleW4,
+				VisibleH4:  block.VisibleH4,
+			}
+			visibleW := int(block.VisibleW4)
+			if visibleW == 0 {
+				visibleW = int(txDims.W4)
+			}
+			visibleH := int(block.VisibleH4)
+			if visibleH == 0 {
+				visibleH = int(txDims.H4)
+			}
+			typ, result, coeffs, scan, err := s.decodeCoeffTXBWithKnownContext(cdfs, ctx, scratch, ctxReq, txbReq, coeffContextKnown{
+				Plane:    CoeffPlaneY,
+				TXDims:   txDims,
+				Block:    blockDims,
+				VisibleW: visibleW,
+				VisibleH: visibleH,
+			}, req.TransformSelect, req.TransformType, req.UseTransformType, req.Class, CoeffTransformRequest{
+				Plane: 0,
+				Block: block,
+			})
+			if err != nil {
+				return stats, lumaTXBError(block, ctxReq, err)
+			}
+			stats.TXBs++
+			stats.EOBTotal += uint32(result.EOB)
+			if result.AllZero {
+				stats.AllZero++
+			} else {
+				stats.NonZero++
+			}
+			blockScratch.block = BlockCoeffBlock{
+				Plane:     0,
+				Block:     block,
+				Transform: typ,
+				Result:    result,
+				Coeffs:    coeffs,
+				Scan:      scan,
+			}
+			if err := coeffController.VisitBlockCoeffPtr(loopVisit, &blockScratch.block); err != nil {
+				return stats, err
+			}
+		}
+		return stats, nil
+	}
+
 	for y := yStart; y < yEnd; y += int(dims.H4) {
 		for x := xStart; x < xEnd; x += int(dims.W4) {
 			visibleW := minInt(int(dims.W4), reqX4+int(req.TreeRequest.VisibleW4)-x)
@@ -428,7 +480,7 @@ func decodeLumaCoefficientsInWindowWithCoeffControllerPtr[T BlockLoopCoeffContro
 				Block: block,
 			})
 			if err != nil {
-				return stats, fmt.Errorf("decode luma txb block=%+v ctx=%+v: %w", block, ctxReq, err)
+				return stats, lumaTXBError(block, ctxReq, err)
 			}
 
 			stats.TXBs++
@@ -605,7 +657,7 @@ func (s *DecodeState) decodeChromaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coe
 				Block: block,
 			})
 			if err != nil {
-				return stats, fmt.Errorf("decode chroma txb plane=%d block=%+v ctx=%+v: %w", req.Plane, block, ctxReq, err)
+				return stats, chromaTXBError(req.Plane, block, ctxReq, err)
 			}
 			stats.TXBs++
 			stats.EOBTotal += uint32(result.EOB)
@@ -696,7 +748,7 @@ func decodeChromaCoefficientsInWindowWithCoeffControllerPtr[T BlockLoopCoeffCont
 				Block: block,
 			})
 			if err != nil {
-				return stats, fmt.Errorf("decode chroma txb plane=%d block=%+v ctx=%+v: %w", req.Plane, block, ctxReq, err)
+				return stats, chromaTXBError(req.Plane, block, ctxReq, err)
 			}
 			stats.TXBs++
 			stats.EOBTotal += uint32(result.EOB)
@@ -911,4 +963,39 @@ func (s *LumaCoeffTreeScratch) coeffBuffersWithGeo(size TransformSize, class tra
 		return nil, nil, nil, ErrInvalidDecodeState
 	}
 	return s.Coeffs[:scanLen], scan, s.Levels[:levelsLen], nil
+}
+
+// lumaTXBError and chromaTXBError format a transform-block decode failure.
+// They take copies so formatting the request with %+v happens only on the
+// error path; boxing the caller's locals directly made TinyGo heap-allocate
+// them for every transform block.
+//
+//go:noinline
+func lumaTXBError(block TransformBlock, ctxReq CoeffContextRequest, err error) error {
+	return fmt.Errorf("decode luma txb block=%+v ctx=%+v: %w", block, ctxReq, err)
+}
+
+//go:noinline
+func chromaTXBError(plane uint8, block TransformBlock, ctxReq CoeffContextRequest, err error) error {
+	return fmt.Errorf("decode chroma txb plane=%d block=%+v ctx=%+v: %w", plane, block, ctxReq, err)
+}
+
+// decodeLumaCoefficientsInWindowVisitor is the visitor-walk fallback of
+// decodeLumaCoefficientsInWindowWithCoeffControllerPtr for windows with more
+// transform blocks than lumaTXBWindowCap. It is a separate function so the
+// closure's captures do not move the caller's parameters to the heap.
+//
+//go:noinline
+func decodeLumaCoefficientsInWindowVisitor[T BlockLoopCoeffController](s *DecodeState, cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req LumaCoeffTreeRequest, window coeffUnitWindow, blockScratch *BlockCoeffScratch, loopVisit *BlockLoopVisit, coeffController T) (LumaCoeffStats, error) {
+	return s.decodeLumaCoefficientsInWindow(cdfs, ctx, scratch, req, window, func(block LumaCoeffBlock) error {
+		blockScratch.block = BlockCoeffBlock{
+			Plane:     0,
+			Block:     block.Block,
+			Transform: block.Transform,
+			Result:    block.Result,
+			Coeffs:    block.Coeffs,
+			Scan:      block.Scan,
+		}
+		return coeffController.VisitBlockCoeffPtr(loopVisit, &blockScratch.block)
+	})
 }

@@ -118,62 +118,71 @@ func (s *FrameWorkTileResidualCDFStorage) InitDefault(baseQIndex uint8) error {
 	if s == nil {
 		return ErrInvalidBatch
 	}
-	var next FrameWorkTileResidualCDFStorage
-	if err := next.Partition.InitDefault(); err != nil {
+	defaults, err := defaultTileResidualCDFStorage(baseQIndex)
+	if err != nil {
 		return err
 	}
-	if err := next.Mode.InitDefault(); err != nil {
+	copyCDFStorage(s, defaults)
+	return nil
+}
+
+// buildDefault fills s with the defaults; InitDefault copies them from a
+// per-q-context cache built once by this.
+func (s *FrameWorkTileResidualCDFStorage) buildDefault(baseQIndex uint8) error {
+	if err := s.Partition.InitDefault(); err != nil {
 		return err
 	}
-	if err := next.Intra.InitDefault(); err != nil {
+	if err := s.Mode.InitDefault(); err != nil {
 		return err
 	}
-	if err := next.InterRef.InitDefault(); err != nil {
+	if err := s.Intra.InitDefault(); err != nil {
 		return err
 	}
-	if err := next.InterMode.InitDefault(); err != nil {
+	if err := s.InterRef.InitDefault(); err != nil {
 		return err
 	}
-	if err := next.MV.InitDefault(); err != nil {
+	if err := s.InterMode.InitDefault(); err != nil {
 		return err
 	}
-	if err := next.Interp.InitDefault(); err != nil {
+	if err := s.MV.InitDefault(); err != nil {
 		return err
 	}
-	if err := next.Motion.InitDefault(); err != nil {
+	if err := s.Interp.InitDefault(); err != nil {
 		return err
 	}
-	if err := next.Blend.InitDefault(); err != nil {
+	if err := s.Motion.InitDefault(); err != nil {
 		return err
 	}
-	if err := next.Transform.InitDefault(); err != nil {
+	if err := s.Blend.InitDefault(); err != nil {
 		return err
 	}
-	if err := next.TransformType.InitDefault(); err != nil {
+	if err := s.Transform.InitDefault(); err != nil {
 		return err
 	}
-	if err := next.Coeff.InitDefault(baseQIndex); err != nil {
+	if err := s.TransformType.InitDefault(); err != nil {
 		return err
 	}
-	if err := next.DeltaQ.InitDefaultDelta(); err != nil {
+	if err := s.Coeff.InitDefault(baseQIndex); err != nil {
 		return err
 	}
-	if err := next.DeltaLF.InitDefaultDelta(); err != nil {
+	if err := s.DeltaQ.InitDefaultDelta(); err != nil {
+		return err
+	}
+	if err := s.DeltaLF.InitDefaultDelta(); err != nil {
 		return err
 	}
 	for i := range tile.FrameLoopFilterCount {
-		if err := next.DeltaLFMulti[i].InitDefaultDelta(); err != nil {
+		if err := s.DeltaLFMulti[i].InitDefaultDelta(); err != nil {
 			return err
 		}
 	}
 	if err := tile.InitDefaultRestorationCDFs(tile.RestorationCDFs{
-		Switchable: &next.RestorationSwitchable,
-		Wiener:     &next.RestorationWiener,
-		SGRProj:    &next.RestorationSGRProj,
+		Switchable: &s.RestorationSwitchable,
+		Wiener:     &s.RestorationWiener,
+		SGRProj:    &s.RestorationSGRProj,
 	}); err != nil {
 		return err
 	}
-	*s = next
 	return nil
 }
 
@@ -225,7 +234,7 @@ func (b *FrameWorkBatch) InitTileResidualCDFStorage(storage *FrameWorkTileResidu
 		return ErrInvalidBatch
 	}
 	if b.InitialTileResidualCDFs != nil {
-		*storage = *b.InitialTileResidualCDFs
+		copyCDFStorage(storage, b.InitialTileResidualCDFs)
 		return nil
 	}
 	return storage.InitDefault(b.Quantization.BaseQIdx)
@@ -279,7 +288,7 @@ func (b *FrameWorkBatch) retainTileResidualCDFStorage(index int, state *tile.Dec
 	} else if err := storage.ResetCDFCounts(); err != nil {
 		return err
 	}
-	*b.RetainedTileResidualCDFs = *storage
+	copyCDFStorage(b.RetainedTileResidualCDFs, storage)
 	*b.RetainedTileResidualCDFsValid = true
 	return nil
 }
