@@ -837,9 +837,10 @@ func (c *BlockModeContext) validateInterRefRequest(req InterReferenceRequest) er
 
 func (c *BlockModeContext) countRefDirs(req InterReferenceRequest) ([2]int, error) {
 	var counts [2]int
-	err := c.visitNeighborRefs(req, func(ref ReferenceFrame) {
+	refs, n, err := c.neighborRefs(req)
+	for _, ref := range refs[:n] {
 		counts[boolInt(ref.Backward())]++
-	})
+	}
 	return counts, err
 }
 
@@ -848,36 +849,43 @@ func (c *BlockModeContext) countRefs(req InterReferenceRequest, from ReferenceFr
 	if to <= from || int(to-from) > len(counts) {
 		return counts, ErrInvalidDecodeState
 	}
-	err := c.visitNeighborRefs(req, func(ref ReferenceFrame) {
+	refs, n, err := c.neighborRefs(req)
+	for _, ref := range refs[:n] {
 		if ref >= from && ref < to {
 			counts[int(ref-from)]++
 		}
-	})
+	}
 	return counts, err
 }
 
-func (c *BlockModeContext) visitNeighborRefs(req InterReferenceRequest, fn func(ReferenceFrame)) error {
+// neighborRefs returns the valid references of the above and left inter
+// neighbours, in that order (at most two each). It returns them by value
+// rather than through a callback so counting needs no closure, which TinyGo
+// would heap-allocate on every block.
+func (c *BlockModeContext) neighborRefs(req InterReferenceRequest) (refs [4]ReferenceFrame, n int, err error) {
 	if err := c.validateInterRefRequest(req); err != nil {
-		return err
+		return refs, 0, err
 	}
 	if req.HaveTop && c.AboveIntra[req.X4] == 0 {
-		c.visitRefPair(c.AboveRef[0][req.X4], c.AboveRef[1][req.X4], c.AboveCompound[req.X4] != 0, fn)
+		n = appendRefPair(&refs, n, c.AboveRef[0][req.X4], c.AboveRef[1][req.X4], c.AboveCompound[req.X4] != 0)
 	}
 	if req.HaveLeft && c.LeftIntra[req.Y4] == 0 {
-		c.visitRefPair(c.LeftRef[0][req.Y4], c.LeftRef[1][req.Y4], c.LeftCompound[req.Y4] != 0, fn)
+		n = appendRefPair(&refs, n, c.LeftRef[0][req.Y4], c.LeftRef[1][req.Y4], c.LeftCompound[req.Y4] != 0)
 	}
-	return nil
+	return refs, n, nil
 }
 
-func (c *BlockModeContext) visitRefPair(ref0 ReferenceFrame, ref1 ReferenceFrame, compound bool, fn func(ReferenceFrame)) {
+func appendRefPair(refs *[4]ReferenceFrame, n int, ref0 ReferenceFrame, ref1 ReferenceFrame, compound bool) int {
 	if ref0.Valid() {
-		fn(ref0)
+		refs[n&3] = ref0
+		n++
 	}
 	if compound && ref1.Valid() {
-		fn(ref1)
+		refs[n&3] = ref1
+		n++
 	}
+	return n
 }
-
 func (c *BlockModeContext) aboveUnidir(x4 int) bool {
 	return (c.AboveRef[0][x4] < ReferenceFrameBWD) == (c.AboveRef[1][x4] < ReferenceFrameBWD)
 }

@@ -9,6 +9,8 @@
 
 package cdef
 
+import "math/bits"
+
 // 8-bit-pixel CDEF kernel family. dav1d's 8bpc CDEF filter
 // (src/cdef_tmpl.c cdef_filter_block_c with pixel=uint8_t, src/arm/64/cdef.S)
 // keeps its padded tap buffer in 16 bits (padding() builds an int16 tmp with
@@ -42,89 +44,169 @@ package cdef
 // assumes the FilterFrameBlocksU8Trusted contract; the dispatch slot in
 // filter_u8_dispatch.go defaults to it so every build has a working
 // reference path.
+//
+// Like dav1d's cdef_filter_block_c it runs one loop per strength mode
+// (primary only, secondary only, both), so the per-pixel work has no mode
+// branches, and constrain is branch-free. Row slices are cut once per row so
+// the tap loads carry no per-pixel bounds checks.
 func filterBlockU8PureGo(dst []byte, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
 	primaryStrength := int(params.PrimaryStrength)
 	secondaryStrength := int(params.SecondaryStrength)
 	direction := int(params.Direction)
-	primaryDamping := int(params.PrimaryDamping)
-	secondaryDamping := int(params.SecondaryDamping)
-	coeffShift := int(params.CoeffShift)
+	t := cdefU8Taps{
+		priTap0:  int(cdefPrimaryTaps[(primaryStrength>>int(params.CoeffShift))&1][0]),
+		priTap1:  int(cdefPrimaryTaps[(primaryStrength>>int(params.CoeffShift))&1][1]),
+		priStr:   primaryStrength,
+		priShift: constrainShift(primaryStrength, int(params.PrimaryDamping)),
+		secStr:   secondaryStrength,
+		secShift: constrainShift(secondaryStrength, int(params.SecondaryDamping)),
+		pri0:     int(cdefDirections[direction+2][0]),
+		pri1:     int(cdefDirections[direction+2][1]),
+		sec0:     int(cdefDirections[direction+4][0]),
+		sec1:     int(cdefDirections[direction+4][1]),
+		sec2:     int(cdefDirections[direction][0]),
+		sec3:     int(cdefDirections[direction][1]),
+	}
 	width := int(params.Width)
 	height := int(params.Height)
-
-	enablePrimary := primaryStrength != 0
-	enableSecondary := secondaryStrength != 0
-	clippingRequired := enablePrimary && enableSecondary
-	priTaps := cdefPrimaryTaps[(primaryStrength>>coeffShift)&1]
-
-	pri0 := int(cdefDirections[direction+2][0])
-	pri1 := int(cdefDirections[direction+2][1])
-	sec0a := int(cdefDirections[direction+4][0])
-	sec0b := int(cdefDirections[direction+4][1])
-	sec1a := int(cdefDirections[direction][0])
-	sec1b := int(cdefDirections[direction][1])
-	priTap0 := int(priTaps[0])
-	priTap1 := int(priTaps[1])
-	secTap0 := int(cdefSecondaryTaps[0])
-	secTap1 := int(cdefSecondaryTaps[1])
-	priStrength := primaryStrength
-	secStrength := secondaryStrength
-	priShift := constrainShift(priStrength, primaryDamping)
-	secShift := constrainShift(secStrength, secondaryDamping)
-
-	for row := 0; row < height; row++ {
-		rowBase := inputOrigin + row*BStride
-		dstRow := dstOrigin + row*dstStride
-		for col := 0; col < width; col++ {
-			base := rowBase + col
-			sum := 0
-			x := int(input[base])
-			maxSample := x
-			minSample := x
-			if enablePrimary {
-				p0 := int(input[base+pri0])
-				p1 := int(input[base-pri0])
-				p2 := int(input[base+pri1])
-				p3 := int(input[base-pri1])
-				sum += priTap0 * constrainShifted(p0-x, priStrength, priShift)
-				sum += priTap0 * constrainShifted(p1-x, priStrength, priShift)
-				sum += priTap1 * constrainShifted(p2-x, priStrength, priShift)
-				sum += priTap1 * constrainShifted(p3-x, priStrength, priShift)
-				if clippingRequired {
-					maxSample = maxClip(maxSample, p0, p1, p2, p3)
-					minSample = min4(minSample, p0, p1, p2, p3)
-				}
+	switch {
+	case primaryStrength != 0 && secondaryStrength != 0:
+		plut, slut := cdefLUT(t.priStr, t.priShift), cdefLUT(t.secStr, t.secShift)
+		if plut != nil && slut != nil {
+			for row := 0; row < height; row++ {
+				filterRowU8PriSecLUT(dst[dstOrigin+row*dstStride:][:width], input, inputOrigin+row*BStride, &t, plut, slut)
 			}
-			if enableSecondary {
-				s0 := int(input[base+sec0a])
-				s1 := int(input[base-sec0a])
-				s2 := int(input[base+sec1a])
-				s3 := int(input[base-sec1a])
-				s4 := int(input[base+sec0b])
-				s5 := int(input[base-sec0b])
-				s6 := int(input[base+sec1b])
-				s7 := int(input[base-sec1b])
-				if clippingRequired {
-					maxSample = maxClip(maxSample, s0, s1, s2, s3)
-					maxSample = maxClip(maxSample, s4, s5, s6, s7)
-					minSample = min4(minSample, s0, s1, s2, s3)
-					minSample = min4(minSample, s4, s5, s6, s7)
-				}
-				sum += secTap0 * constrainShifted(s0-x, secStrength, secShift)
-				sum += secTap0 * constrainShifted(s1-x, secStrength, secShift)
-				sum += secTap0 * constrainShifted(s2-x, secStrength, secShift)
-				sum += secTap0 * constrainShifted(s3-x, secStrength, secShift)
-				sum += secTap1 * constrainShifted(s4-x, secStrength, secShift)
-				sum += secTap1 * constrainShifted(s5-x, secStrength, secShift)
-				sum += secTap1 * constrainShifted(s6-x, secStrength, secShift)
-				sum += secTap1 * constrainShifted(s7-x, secStrength, secShift)
-			}
-			y := x + ((8 + sum - boolToInt(sum < 0)) >> 4)
-			if clippingRequired {
-				y = clampInt(y, minSample, maxSample)
-			}
-			dst[dstRow+col] = byte(y)
+			return
 		}
+		for row := 0; row < height; row++ {
+			filterRowU8PriSec(dst[dstOrigin+row*dstStride:][:width], input, inputOrigin+row*BStride, &t)
+		}
+	case primaryStrength != 0:
+		if lut := cdefLUT(t.priStr, t.priShift); lut != nil {
+			for row := 0; row < height; row++ {
+				filterRowU8PriLUT(dst[dstOrigin+row*dstStride:][:width], input, inputOrigin+row*BStride, &t, lut)
+			}
+			return
+		}
+		for row := 0; row < height; row++ {
+			filterRowU8Pri(dst[dstOrigin+row*dstStride:][:width], input, inputOrigin+row*BStride, &t)
+		}
+	case secondaryStrength != 0:
+		if lut := cdefLUT(t.secStr, t.secShift); lut != nil {
+			for row := 0; row < height; row++ {
+				filterRowU8SecLUT(dst[dstOrigin+row*dstStride:][:width], input, inputOrigin+row*BStride, &t, lut)
+			}
+			return
+		}
+		for row := 0; row < height; row++ {
+			filterRowU8Sec(dst[dstOrigin+row*dstStride:][:width], input, inputOrigin+row*BStride, &t)
+		}
+	default:
+		for row := 0; row < height; row++ {
+			d := dst[dstOrigin+row*dstStride:][:width]
+			src := input[inputOrigin+row*BStride:][:len(d)]
+			for i := range d {
+				d[i] = byte(src[i])
+			}
+		}
+	}
+}
+
+// cdefU8Taps holds the per-block constants of filterBlockU8PureGo: tap
+// weights, constrain thresholds and shifts, and the six direction offsets
+// into the BStride-pitched input.
+type cdefU8Taps struct {
+	priTap0, priTap1 int
+	priStr, priShift int
+	secStr, secShift int
+	pri0, pri1       int
+	sec0, sec1       int
+	sec2, sec3       int
+}
+
+const cdefSignShift = bits.UintSize - 1
+
+// constrainU8 is constrainShifted for a nonzero threshold, without branches.
+func constrainU8(diff int, threshold int, shift int) int {
+	s := diff >> cdefSignShift
+	a := (diff ^ s) - s
+	l := min(max(threshold-(a>>shift), 0), a)
+	return (l ^ s) - s
+}
+
+// cdefRound applies the CDEF output rounding: x + (8 + sum - (sum < 0)) >> 4.
+func cdefRound(x int, sum int) int {
+	return x + ((8 + sum + (sum >> cdefSignShift)) >> 4)
+}
+
+// cdefTapRow returns the width-long run of input starting off past base.
+func cdefTapRow(input []uint16, base int, off int, width int) []uint16 {
+	return input[base+off:][:width]
+}
+
+func filterRowU8Pri(d []byte, input []uint16, base int, t *cdefU8Taps) {
+	n := len(d)
+	c := input[base:][:n]
+	p0, p1 := cdefTapRow(input, base, t.pri0, n), cdefTapRow(input, base, -t.pri0, n)
+	p2, p3 := cdefTapRow(input, base, t.pri1, n), cdefTapRow(input, base, -t.pri1, n)
+	tap0, tap1, str, sh := t.priTap0, t.priTap1, t.priStr, t.priShift
+	for i := range d {
+		x := int(c[i])
+		sum := tap0*(constrainU8(int(p0[i])-x, str, sh)+constrainU8(int(p1[i])-x, str, sh)) +
+			tap1*(constrainU8(int(p2[i])-x, str, sh)+constrainU8(int(p3[i])-x, str, sh))
+		d[i] = byte(cdefRound(x, sum))
+	}
+}
+
+func filterRowU8Sec(d []byte, input []uint16, base int, t *cdefU8Taps) {
+	n := len(d)
+	c := input[base:][:n]
+	s0, s1 := cdefTapRow(input, base, t.sec0, n), cdefTapRow(input, base, -t.sec0, n)
+	s2, s3 := cdefTapRow(input, base, t.sec2, n), cdefTapRow(input, base, -t.sec2, n)
+	s4, s5 := cdefTapRow(input, base, t.sec1, n), cdefTapRow(input, base, -t.sec1, n)
+	s6, s7 := cdefTapRow(input, base, t.sec3, n), cdefTapRow(input, base, -t.sec3, n)
+	str, sh := t.secStr, t.secShift
+	for i := range d {
+		x := int(c[i])
+		sum := 2*(constrainU8(int(s0[i])-x, str, sh)+constrainU8(int(s1[i])-x, str, sh)+
+			constrainU8(int(s2[i])-x, str, sh)+constrainU8(int(s3[i])-x, str, sh)) +
+			constrainU8(int(s4[i])-x, str, sh) + constrainU8(int(s5[i])-x, str, sh) +
+			constrainU8(int(s6[i])-x, str, sh) + constrainU8(int(s7[i])-x, str, sh)
+		d[i] = byte(cdefRound(x, sum))
+	}
+}
+
+// filterRowU8PriSec also clamps the result to the range of the real taps.
+// The VeryLarge (0x4000) halo sentinel is the only tap value above 255, so
+// masking it with 0x3fff turns it into 0 for the max (x itself already
+// bounds the max from below) and it never wins the min.
+func filterRowU8PriSec(d []byte, input []uint16, base int, t *cdefU8Taps) {
+	n := len(d)
+	c := input[base:][:n]
+	p0, p1 := cdefTapRow(input, base, t.pri0, n), cdefTapRow(input, base, -t.pri0, n)
+	p2, p3 := cdefTapRow(input, base, t.pri1, n), cdefTapRow(input, base, -t.pri1, n)
+	s0, s1 := cdefTapRow(input, base, t.sec0, n), cdefTapRow(input, base, -t.sec0, n)
+	s2, s3 := cdefTapRow(input, base, t.sec2, n), cdefTapRow(input, base, -t.sec2, n)
+	s4, s5 := cdefTapRow(input, base, t.sec1, n), cdefTapRow(input, base, -t.sec1, n)
+	s6, s7 := cdefTapRow(input, base, t.sec3, n), cdefTapRow(input, base, -t.sec3, n)
+	tap0, tap1, pstr, psh := t.priTap0, t.priTap1, t.priStr, t.priShift
+	sstr, ssh := t.secStr, t.secShift
+	const mask = VeryLarge - 1
+	for i := range d {
+		x := int(c[i])
+		a0, a1, a2, a3 := int(p0[i]), int(p1[i]), int(p2[i]), int(p3[i])
+		b0, b1, b2, b3 := int(s0[i]), int(s1[i]), int(s2[i]), int(s3[i])
+		b4, b5, b6, b7 := int(s4[i]), int(s5[i]), int(s6[i]), int(s7[i])
+		sum := tap0*(constrainU8(a0-x, pstr, psh)+constrainU8(a1-x, pstr, psh)) +
+			tap1*(constrainU8(a2-x, pstr, psh)+constrainU8(a3-x, pstr, psh)) +
+			2*(constrainU8(b0-x, sstr, ssh)+constrainU8(b1-x, sstr, ssh)+
+				constrainU8(b2-x, sstr, ssh)+constrainU8(b3-x, sstr, ssh)) +
+			constrainU8(b4-x, sstr, ssh) + constrainU8(b5-x, sstr, ssh) +
+			constrainU8(b6-x, sstr, ssh) + constrainU8(b7-x, sstr, ssh)
+		hi := max(x, a0&mask, a1&mask, a2&mask, a3&mask, b0&mask, b1&mask, b2&mask, b3&mask,
+			b4&mask, b5&mask, b6&mask, b7&mask)
+		lo := min(x, a0, a1, a2, a3, b0, b1, b2, b3, b4, b5, b6, b7)
+		d[i] = byte(min(max(cdefRound(x, sum), lo), hi))
 	}
 }
 
