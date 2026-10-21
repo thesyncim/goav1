@@ -112,6 +112,7 @@ func main() {
 	maxQ := flag.Int("maxq", 0, "CBR maximum qindex (0 = encoder default)")
 	ivfPath := flag.String("o", "", "write the encoded stream as IVF to this path")
 	reconPath := flag.String("recon", "", "write the encoder reconstruction as raw I420 to this path")
+	noPSNR := flag.Bool("nopsnr", false, "skip the per-frame PSNR pass (for CPU measurement; score from -o instead)")
 	cpuProfile := flag.String("cpuprofile", "", "write a CPU profile of the encode loop to this path")
 	flag.Parse()
 	if *cpuProfile != "" {
@@ -306,7 +307,10 @@ func main() {
 		}
 		totalBytes += len(out.Data)
 		r := enc.Reconstruction()
-		p := psnr(srcs[n].Y, r.Y)
+		p := 0.0
+		if !*noPSNR {
+			p = psnr(srcs[n].Y, r.Y)
+		}
 		if ivfFile != nil {
 			var fh [12]byte
 			binary.LittleEndian.PutUint32(fh[0:], uint32(len(out.Data)))
