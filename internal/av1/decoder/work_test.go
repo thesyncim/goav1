@@ -2683,7 +2683,7 @@ func TestFrameWorkStateRunEventWithContextPostFilterErrorKeepsActive(t *testing.
 }
 
 func TestFrameWorkPostFilterContextRequireNoActivePostFilters(t *testing.T) {
-	if err := (FrameWorkPostFilterContext{}).RequireNoActivePostFilters(); err != nil {
+	if err := (&FrameWorkPostFilterContext{}).RequireNoActivePostFilters(); err != nil {
 		t.Fatalf("inactive postfilter err=%v", err)
 	}
 
@@ -2730,7 +2730,7 @@ func TestFrameWorkPostFilterContextRequireNoActivePostFilters(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := (FrameWorkPostFilterContext{Event: tt.event}).RequireNoActivePostFilters()
+			err := (&FrameWorkPostFilterContext{Event: tt.event}).RequireNoActivePostFilters()
 			if !errors.Is(err, ErrUnsupportedPostFilter) {
 				t.Fatalf("err=%v want %v", err, ErrUnsupportedPostFilter)
 			}

@@ -136,7 +136,7 @@ func (r *FrameWorkLayerPoolPostFilterRunner) applySuperRes(ctx FrameWorkPostFilt
 }
 
 func (r *FrameWorkLayerPoolPostFilterRunner) optionsFromContext(ctx FrameWorkPostFilterContext) FrameWorkPostFilterBindOptions {
-	options := frameWorkPostFilterBindOptionsFromContext(ctx, r.Options)
+	options := frameWorkPostFilterBindOptionsFromContext(&ctx, r.Options)
 	if options.FilmGrainOutputView == nil {
 		options.FilmGrainOutputView = &r.displayOutputView
 	}

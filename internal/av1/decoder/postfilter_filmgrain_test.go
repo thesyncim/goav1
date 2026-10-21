@@ -10,14 +10,14 @@ import (
 )
 
 func TestFrameWorkPostFilterContextFilmGrainPostFilterPlanSkipsInactive(t *testing.T) {
-	plan, err := (FrameWorkPostFilterContext{}).FilmGrainPostFilterPlan()
+	plan, err := (&FrameWorkPostFilterContext{}).FilmGrainPostFilterPlan()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if plan != (FrameWorkFilmGrainPostFilterPlan{}) {
 		t.Fatalf("plan=%+v want zero", plan)
 	}
-	size, err := (FrameWorkPostFilterContext{}).FilmGrainPostFilterScratchLen()
+	size, err := (&FrameWorkPostFilterContext{}).FilmGrainPostFilterScratchLen()
 	if err != nil {
 		t.Fatal(err)
 	}

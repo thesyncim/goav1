@@ -189,7 +189,7 @@ type FrameWorkFilmGrainPostFilterChromaRow struct {
 
 // FilmGrainPostFilterPlan validates active film-grain state and reports the
 // plane-local synthesis inputs. It does not mutate ctx.Output.
-func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterPlan() (FrameWorkFilmGrainPostFilterPlan, error) {
+func (ctx *FrameWorkPostFilterContext) FilmGrainPostFilterPlan() (FrameWorkFilmGrainPostFilterPlan, error) {
 	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterFilmGrain) {
 		return FrameWorkFilmGrainPostFilterPlan{}, nil
 	}
@@ -264,7 +264,7 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterPlan() (FrameWorkFilmGr
 
 // FilmGrainPostFilterScratchLen reports scratch lengths needed by the planned
 // film-grain synthesis inputs.
-func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterScratchLen() (FrameWorkFilmGrainPostFilterScratchSize, error) {
+func (ctx *FrameWorkPostFilterContext) FilmGrainPostFilterScratchLen() (FrameWorkFilmGrainPostFilterScratchSize, error) {
 	plan, err := ctx.FilmGrainPostFilterPlan()
 	if err != nil {
 		return FrameWorkFilmGrainPostFilterScratchSize{}, err
@@ -299,7 +299,7 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterScratchLen() (FrameWork
 // FilmGrainPostFilterScalingLUTs builds the per-plane film-grain scaling lookup
 // tables from parsed frame parameters. It does not synthesize grain or mutate
 // ctx.Output.
-func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterScalingLUTs() (FrameWorkFilmGrainPostFilterScalingLUTs, error) {
+func (ctx *FrameWorkPostFilterContext) FilmGrainPostFilterScalingLUTs() (FrameWorkFilmGrainPostFilterScalingLUTs, error) {
 	plan, err := ctx.FilmGrainPostFilterPlan()
 	if err != nil {
 		return FrameWorkFilmGrainPostFilterScalingLUTs{}, err
@@ -332,7 +332,7 @@ func (ctx FrameWorkPostFilterContext) FilmGrainPostFilterScalingLUTs() (FrameWor
 
 // GenerateFilmGrainLumaGrain fills caller-owned scratch with the luma grain
 // template for the current frame. It does not place grain onto ctx.Output.
-func (ctx FrameWorkPostFilterContext) GenerateFilmGrainLumaGrain(dst []int16) (FrameWorkFilmGrainPostFilterLumaGrain, error) {
+func (ctx *FrameWorkPostFilterContext) GenerateFilmGrainLumaGrain(dst []int16) (FrameWorkFilmGrainPostFilterLumaGrain, error) {
 	plan, err := ctx.FilmGrainPostFilterPlan()
 	if err != nil {
 		return FrameWorkFilmGrainPostFilterLumaGrain{}, err
@@ -359,7 +359,7 @@ func (ctx FrameWorkPostFilterContext) GenerateFilmGrainLumaGrain(dst []int16) (F
 // GenerateFilmGrainChromaGrain fills caller-owned scratch with one chroma grain
 // template for the current frame. plane must be filmgrain.ChromaPlaneCb or
 // filmgrain.ChromaPlaneCr.
-func (ctx FrameWorkPostFilterContext) GenerateFilmGrainChromaGrain(dst []int16, luma []int16, plane int) (FrameWorkFilmGrainPostFilterChromaGrain, error) {
+func (ctx *FrameWorkPostFilterContext) GenerateFilmGrainChromaGrain(dst []int16, luma []int16, plane int) (FrameWorkFilmGrainPostFilterChromaGrain, error) {
 	plan, err := ctx.FilmGrainPostFilterPlan()
 	if err != nil {
 		return FrameWorkFilmGrainPostFilterChromaGrain{}, err
@@ -402,7 +402,7 @@ func (ctx FrameWorkPostFilterContext) GenerateFilmGrainChromaGrain(dst []int16, 
 
 // ApplyFilmGrainLumaRow applies luma film grain to one 32-line row band using
 // caller-owned uint16 sample views. src and dst may alias.
-func (ctx FrameWorkPostFilterContext) ApplyFilmGrainLumaRow(dst []uint16, src []uint16, grain []int16, scaling []uint8, row int) (FrameWorkFilmGrainPostFilterLumaRow, error) {
+func (ctx *FrameWorkPostFilterContext) ApplyFilmGrainLumaRow(dst []uint16, src []uint16, grain []int16, scaling []uint8, row int) (FrameWorkFilmGrainPostFilterLumaRow, error) {
 	plan, err := ctx.FilmGrainPostFilterPlan()
 	if err != nil {
 		return FrameWorkFilmGrainPostFilterLumaRow{}, err
@@ -449,7 +449,7 @@ func (ctx FrameWorkPostFilterContext) ApplyFilmGrainLumaRow(dst []uint16, src []
 // ApplyFilmGrainChromaRow applies chroma film grain to one chroma row band
 // using caller-owned uint16 sample views. src and dst may alias. luma must be a
 // pre-grain luma sample view for the matching luma row band.
-func (ctx FrameWorkPostFilterContext) ApplyFilmGrainChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16, scaling []uint8, plane int, row int) (FrameWorkFilmGrainPostFilterChromaRow, error) {
+func (ctx *FrameWorkPostFilterContext) ApplyFilmGrainChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16, scaling []uint8, plane int, row int) (FrameWorkFilmGrainPostFilterChromaRow, error) {
 	plan, err := ctx.FilmGrainPostFilterPlan()
 	if err != nil {
 		return FrameWorkFilmGrainPostFilterChromaRow{}, err
@@ -513,7 +513,7 @@ func (ctx FrameWorkPostFilterContext) ApplyFilmGrainChromaRow(dst []uint16, src 
 }
 
 // ApplyFilmGrainPostFilter applies the currently supported film-grain subset.
-func (ctx FrameWorkPostFilterContext) ApplyFilmGrainPostFilter(req FrameWorkFilmGrainPostFilterRequest) (FrameWorkFilmGrainPostFilterResult, error) {
+func (ctx *FrameWorkPostFilterContext) ApplyFilmGrainPostFilter(req FrameWorkFilmGrainPostFilterRequest) (FrameWorkFilmGrainPostFilterResult, error) {
 	remaining := ctx.RemainingPostFilters()
 	preFilmGrain := FrameWorkPostFilterLoopFilter |
 		FrameWorkPostFilterCDEF |
@@ -627,7 +627,7 @@ func (ctx FrameWorkPostFilterContext) ApplyFilmGrainPostFilter(req FrameWorkFilm
 // BindFilmGrainPostFilterOutput copies ctx.Output into caller-owned display
 // scratch for display-only grain synthesis. A no-op grain plan returns nil so
 // callers can keep using the publishable output directly.
-func (ctx FrameWorkPostFilterContext) BindFilmGrainPostFilterOutput(req FrameWorkFilmGrainPostFilterRequest) (*frame.Frame, error) {
+func (ctx *FrameWorkPostFilterContext) BindFilmGrainPostFilterOutput(req FrameWorkFilmGrainPostFilterRequest) (*frame.Frame, error) {
 	plan, err := ctx.FilmGrainPostFilterPlan()
 	if err != nil {
 		return nil, err
@@ -648,7 +648,7 @@ func (ctx FrameWorkPostFilterContext) BindFilmGrainPostFilterOutput(req FrameWor
 	return ctx.bindFilmGrainPostFilterOutputAllocated(req, size)
 }
 
-func (ctx FrameWorkPostFilterContext) bindFilmGrainPostFilterOutputView(req FrameWorkFilmGrainPostFilterRequest, size int) (*frame.Frame, error) {
+func (ctx *FrameWorkPostFilterContext) bindFilmGrainPostFilterOutputView(req FrameWorkFilmGrainPostFilterRequest, size int) (*frame.Frame, error) {
 	output, err := frame.Bind(req.OutputFrame[:size], ctx.Output.Format)
 	if err != nil {
 		return nil, err
@@ -660,7 +660,7 @@ func (ctx FrameWorkPostFilterContext) bindFilmGrainPostFilterOutputView(req Fram
 	return req.OutputView, nil
 }
 
-func (ctx FrameWorkPostFilterContext) bindFilmGrainPostFilterOutputAllocated(req FrameWorkFilmGrainPostFilterRequest, size int) (*frame.Frame, error) {
+func (ctx *FrameWorkPostFilterContext) bindFilmGrainPostFilterOutputAllocated(req FrameWorkFilmGrainPostFilterRequest, size int) (*frame.Frame, error) {
 	output, err := frame.Bind(req.OutputFrame[:size], ctx.Output.Format)
 	if err != nil {
 		return nil, err
@@ -671,7 +671,7 @@ func (ctx FrameWorkPostFilterContext) bindFilmGrainPostFilterOutputAllocated(req
 	return &output, nil
 }
 
-func (ctx FrameWorkPostFilterContext) filmGrainPostFilterSupported() (bool, error) {
+func (ctx *FrameWorkPostFilterContext) filmGrainPostFilterSupported() (bool, error) {
 	plan, err := ctx.FilmGrainPostFilterPlan()
 	if err != nil {
 		return false, err
@@ -679,7 +679,7 @@ func (ctx FrameWorkPostFilterContext) filmGrainPostFilterSupported() (bool, erro
 	return plan.Active && (frameWorkFilmGrainNoOp(plan.Params) || frameWorkFilmGrainAnyPlaneActive(plan)), nil
 }
 
-func (ctx FrameWorkPostFilterContext) validateFilmGrainPostFilterRequest(req FrameWorkFilmGrainPostFilterRequest) error {
+func (ctx *FrameWorkPostFilterContext) validateFilmGrainPostFilterRequest(req FrameWorkFilmGrainPostFilterRequest) error {
 	plan, err := ctx.FilmGrainPostFilterPlan()
 	if err != nil {
 		return err
@@ -712,7 +712,7 @@ func (ctx FrameWorkPostFilterContext) validateFilmGrainPostFilterRequest(req Fra
 	return nil
 }
 
-func (ctx FrameWorkPostFilterContext) validateFilmGrainPostFilterOutputRequest(req FrameWorkFilmGrainPostFilterRequest) error {
+func (ctx *FrameWorkPostFilterContext) validateFilmGrainPostFilterOutputRequest(req FrameWorkFilmGrainPostFilterRequest) error {
 	plan, err := ctx.FilmGrainPostFilterPlan()
 	if err != nil {
 		return err

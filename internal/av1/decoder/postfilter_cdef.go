@@ -102,7 +102,7 @@ type FrameWorkCDEFPostFilterResult struct {
 
 // CDEFPostFilterScratchLen reports scratch lengths needed to apply CDEF to
 // ctx.Output.
-func (ctx FrameWorkPostFilterContext) CDEFPostFilterScratchLen() (FrameWorkCDEFPostFilterScratchSize, error) {
+func (ctx *FrameWorkPostFilterContext) CDEFPostFilterScratchLen() (FrameWorkCDEFPostFilterScratchSize, error) {
 	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterCDEF) {
 		return FrameWorkCDEFPostFilterScratchSize{}, nil
 	}
@@ -146,7 +146,7 @@ func (ctx FrameWorkPostFilterContext) CDEFPostFilterScratchLen() (FrameWorkCDEFP
 
 // ApplyCDEFPostFilter applies CDEF to ctx.Output. Loop filter must already be
 // inactive or marked complete with WithCompletedPostFilters.
-func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostFilterRequest) (FrameWorkCDEFPostFilterResult, error) {
+func (ctx *FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostFilterRequest) (FrameWorkCDEFPostFilterResult, error) {
 	return ctx.applyCDEFPostFilterRows(req, 0, -1, true, nil)
 }
 
@@ -155,7 +155,7 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostF
 // each unit-row band are disjoint, while every band reads the same immutable
 // snapshot. This is the source-shaped split needed by dav1d-style row postfilter
 // scheduling without changing the CDEF decisions or filter kernels.
-func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilterBanded(req FrameWorkCDEFPostFilterRequest, unitRowsPerBand int) (FrameWorkCDEFPostFilterResult, error) {
+func (ctx *FrameWorkPostFilterContext) ApplyCDEFPostFilterBanded(req FrameWorkCDEFPostFilterRequest, unitRowsPerBand int) (FrameWorkCDEFPostFilterResult, error) {
 	if unitRowsPerBand <= 0 {
 		return ctx.ApplyCDEFPostFilter(req)
 	}
@@ -212,7 +212,7 @@ func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilterBanded(req FrameWorkCDE
 // CDEFPostFilterScratchLen sized to W bands; the snapshot, direction grid, and
 // variance grid are shared (bands touch disjoint unit rows). The result counters
 // sum the same per-unit work the serial apply would report.
-func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterMaybePooled(req FrameWorkCDEFPostFilterRequest) (FrameWorkCDEFPostFilterResult, error) {
+func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterMaybePooled(req FrameWorkCDEFPostFilterRequest) (FrameWorkCDEFPostFilterResult, error) {
 	pool := ctx.pool
 	workers := ctx.postFilterWorkerCount()
 	if pool == nil || workers <= 1 {
@@ -269,7 +269,10 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterMaybePooled(req FrameWo
 // the result is bit-identical to the serial apply. It is deliberately a distinct
 // function: its band closure escapes to the goroutines, so keeping it out of the
 // maybe-pooled entry point lets the serial fall-through stay allocation-free.
-func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterPooledBands(req FrameWorkCDEFPostFilterRequest, pool *threading.Pool, rows int, bands int, ibs int) (FrameWorkCDEFPostFilterResult, error) {
+func (pctx *FrameWorkPostFilterContext) applyCDEFPostFilterPooledBands(req FrameWorkCDEFPostFilterRequest, pool *threading.Pool, rows int, bands int, ibs int) (FrameWorkCDEFPostFilterResult, error) {
+	// The band closures run on pool workers; they capture a copy so the
+	// caller's context does not escape.
+	ctx := *pctx
 	if err := ctx.LoadCDEFPostFilterSamples(req); err != nil {
 		return FrameWorkCDEFPostFilterResult{}, err
 	}
@@ -306,7 +309,7 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterPooledBands(req FrameWo
 // request's sample scratch. Callers that band the application across unit
 // rows load once and then run ApplyCDEFPostFilterUnitRows per band against
 // the shared read-only snapshot.
-func (ctx FrameWorkPostFilterContext) LoadCDEFPostFilterSamples(req FrameWorkCDEFPostFilterRequest) error {
+func (ctx *FrameWorkPostFilterContext) LoadCDEFPostFilterSamples(req FrameWorkCDEFPostFilterRequest) error {
 	if ctx.Output == nil {
 		return frame.ErrInvalidSlot
 	}
@@ -331,14 +334,14 @@ func (ctx FrameWorkPostFilterContext) LoadCDEFPostFilterSamples(req FrameWorkCDE
 // concurrently when each band binds its own input and unit scratch (the
 // sample scratch, direction grid, and variance grid are shared; the chroma
 // passes of a band reuse the luma directions of the same band's rows).
-func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilterUnitRows(req FrameWorkCDEFPostFilterRequest, rowStart, rowEnd int) (FrameWorkCDEFPostFilterResult, error) {
+func (ctx *FrameWorkPostFilterContext) ApplyCDEFPostFilterUnitRows(req FrameWorkCDEFPostFilterRequest, rowStart, rowEnd int) (FrameWorkCDEFPostFilterResult, error) {
 	return ctx.applyCDEFPostFilterRows(req, rowStart, rowEnd, false, nil)
 }
 
 // LoadCDEFPostFilterU8BandBoundary snapshots only the rows an in-place 8-bit
 // unit-row band may otherwise race with neighbouring bands. It must run before
 // any parallel ApplyCDEFPostFilterUnitRowsU8 calls for the frame.
-func (ctx FrameWorkPostFilterContext) LoadCDEFPostFilterU8BandBoundary(boundary *FrameWorkCDEFPostFilterU8BandBoundary, rowStart, rowEnd int) error {
+func (ctx *FrameWorkPostFilterContext) LoadCDEFPostFilterU8BandBoundary(boundary *FrameWorkCDEFPostFilterU8BandBoundary, rowStart, rowEnd int) error {
 	if boundary == nil {
 		return frame.ErrShortBuffer
 	}
@@ -395,7 +398,7 @@ func (ctx FrameWorkPostFilterContext) LoadCDEFPostFilterU8BandBoundary(boundary 
 // ApplyCDEFPostFilterUnitRows, it does not read req.SampleScratch as a full-frame
 // snapshot; each worker must provide private SampleScratch line buffers plus
 // private InputScratch.
-func (ctx FrameWorkPostFilterContext) ApplyCDEFPostFilterUnitRowsU8(req FrameWorkCDEFPostFilterRequest, boundary FrameWorkCDEFPostFilterU8BandBoundary, rowStart, rowEnd int) (FrameWorkCDEFPostFilterResult, error) {
+func (ctx *FrameWorkPostFilterContext) ApplyCDEFPostFilterUnitRowsU8(req FrameWorkCDEFPostFilterRequest, boundary FrameWorkCDEFPostFilterU8BandBoundary, rowStart, rowEnd int) (FrameWorkCDEFPostFilterResult, error) {
 	return ctx.applyCDEFPostFilterRows(req, rowStart, rowEnd, false, &boundary)
 }
 
@@ -439,7 +442,7 @@ func loadCDEFU8BandBoundaryPlane(boundary *FrameWorkCDEFPostFilterU8BandBoundary
 	return nil
 }
 
-func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFPostFilterRequest, rowStart, rowEnd int, loadSamples bool, u8Boundary *FrameWorkCDEFPostFilterU8BandBoundary) (FrameWorkCDEFPostFilterResult, error) {
+func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFPostFilterRequest, rowStart, rowEnd int, loadSamples bool, u8Boundary *FrameWorkCDEFPostFilterU8BandBoundary) (FrameWorkCDEFPostFilterResult, error) {
 	remaining := ctx.RemainingPostFilters()
 	if remaining.Has(FrameWorkPostFilterLoopFilter) {
 		return FrameWorkCDEFPostFilterResult{}, ErrUnsupportedPostFilter
@@ -595,7 +598,7 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFP
 	return result, nil
 }
 
-func (ctx FrameWorkPostFilterContext) validateCDEFPostFilterRequest(req FrameWorkCDEFPostFilterRequest) error {
+func (ctx *FrameWorkPostFilterContext) validateCDEFPostFilterRequest(req FrameWorkCDEFPostFilterRequest) error {
 	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterCDEF) {
 		return nil
 	}
@@ -650,7 +653,7 @@ func (ctx FrameWorkPostFilterContext) validateCDEFPostFilterRequest(req FrameWor
 	return nil
 }
 
-func (ctx FrameWorkPostFilterContext) validateCDEFPostFilterU8BandRequest(req FrameWorkCDEFPostFilterRequest) error {
+func (ctx *FrameWorkPostFilterContext) validateCDEFPostFilterU8BandRequest(req FrameWorkCDEFPostFilterRequest) error {
 	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterCDEF) {
 		return nil
 	}

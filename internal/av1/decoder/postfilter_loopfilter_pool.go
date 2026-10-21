@@ -26,7 +26,7 @@ const lfMaskMinRegionRowsPerBand = 1
 // applyLoopFilterEdgesFromMasksPooledBands, so its band closures (which escape to
 // the worker goroutines) never land in this function's frame and the serial
 // fall-through stays allocation-free, mirroring applyCDEFPostFilterMaybePooled.
-func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesMaybePooled(req FrameWorkLoopFilterPostFilterRequest) (FrameWorkLoopFilterPostFilterApplyResult, error) {
+func (ctx *FrameWorkPostFilterContext) applyLoopFilterEdgesMaybePooled(req FrameWorkLoopFilterPostFilterRequest) (FrameWorkLoopFilterPostFilterApplyResult, error) {
 	pool := ctx.pool
 	workers := ctx.postFilterWorkerCount()
 	if pool == nil || workers <= 1 {
@@ -69,7 +69,10 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesMaybePooled(req FrameW
 //     horizontal is race-free and worker-count invariant. Luma stays the serial
 //     critical path (see the report; the byte-exact luma-horizontal split needs
 //     dav1d's per-sb-row wavefront, which RunRanges' fork-join cannot express).
-func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksPooledBands(pool *threading.Pool, workers int, masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap) (FrameWorkLoopFilterPostFilterApplyResult, error) {
+func (pctx *FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksPooledBands(pool *threading.Pool, workers int, masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap) (FrameWorkLoopFilterPostFilterApplyResult, error) {
+	// The band closures run on pool workers; they capture a copy so the
+	// caller's context does not escape.
+	ctx := *pctx
 	bands, err := ctx.PrepareLoopFilterMaskBands(masks, filterMap)
 	if err != nil {
 		return FrameWorkLoopFilterPostFilterApplyResult{}, err

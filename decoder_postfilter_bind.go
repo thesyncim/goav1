@@ -23,6 +23,7 @@ package goav1
 // for the stage they want.
 
 import (
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 )
 
@@ -259,6 +260,10 @@ type DecoderFrameWorkSupportedPostFilterScratchRunner struct {
 	Result  DecoderFrameWorkPostFilterResult
 
 	output *Frame
+
+	// work holds the in-flight context so the chain runs on it by pointer;
+	// Context is updated only after a successful Apply.
+	work DecoderFrameWorkPostFilterContext
 }
 
 // DecoderFrameWorkPostFilterOutputProvider exposes the final display output
@@ -292,7 +297,7 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) ScratchLen(ctx Decode
 	})
 }
 
-func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) reusableScratchLen(ctx DecoderFrameWorkPostFilterContext) (DecoderFrameWorkPostFilterScratchSize, error) {
+func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) reusableScratchLen(ctx *DecoderFrameWorkPostFilterContext) (DecoderFrameWorkPostFilterScratchSize, error) {
 	if r == nil {
 		return DecoderFrameWorkPostFilterScratchSize{}, ErrDecoderInvalidFrameWorkState
 	}
@@ -351,19 +356,24 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) Apply(ctx DecoderFram
 	if r == nil {
 		return ErrDecoderInvalidFrameWorkState
 	}
-	size, err := r.ScratchLen(ctx)
+	r.work = ctx
+	size, err := r.work.SupportedPostFilterScratchLen(DecoderFrameWorkPostFilterRequest{
+		Restoration: DecoderFrameWorkRestorationPostFilterRequest{Optimized: r.RestorationOptimized},
+	})
 	if err != nil {
 		return err
 	}
-	return r.applyWithScratchSize(ctx, size)
+	return r.applyWithScratchSize(size)
 }
 
-func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) applyWithScratchSize(ctx DecoderFrameWorkPostFilterContext, size DecoderFrameWorkPostFilterScratchSize) error {
+// applyWithScratchSize runs the chain on r.work, which the caller has loaded.
+func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) applyWithScratchSize(size DecoderFrameWorkPostFilterScratchSize) error {
 	if r == nil {
 		return ErrDecoderInvalidFrameWorkState
 	}
 	r.output = nil
-	side := DecoderFrameWorkPostFilterRequestSideDataFromContext(ctx)
+	ctx := &r.work
+	side := decoderFrameWorkPostFilterRequestSideDataFromContext(ctx)
 	side.RestorationOptimized = r.RestorationOptimized
 	req, err := BindDecoderFrameWorkPostFilterRequestFromScratch(size, side, r.Scratch)
 	if err != nil {
@@ -371,16 +381,16 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) applyWithScratchSize(
 	}
 	req.FilmGrain.OutputView = &r.FilmGrainOutput
 	ctx.Parallel = r.Parallel
-	next, output, result, err := ctx.ApplySupportedPostFiltersForPublication(req)
+	output, result, err := internaldecoder.ApplySupportedPostFiltersForPublicationInPlace(ctx, req)
 	if err != nil {
 		return err
 	}
-	if err := next.RequirePublishablePostFilterOutput(); err != nil {
+	if err := ctx.RequirePublishablePostFilterOutput(); err != nil {
 		return err
 	}
 	r.Size = size
 	r.Request = req
-	r.Context = next
+	r.Context = *ctx
 	r.Result = result
 	r.output = output
 	return nil
@@ -452,7 +462,8 @@ func (r *DecoderFrameWorkReusableSupportedPostFilterRunner) Apply(ctx DecoderFra
 	}
 	r.runner.RestorationOptimized = r.RestorationOptimized
 	r.runner.Parallel = r.Parallel
-	exact, err := r.runner.reusableScratchLen(ctx)
+	r.runner.work = ctx
+	exact, err := r.runner.reusableScratchLen(&r.runner.work)
 	if err != nil {
 		return err
 	}
@@ -461,7 +472,7 @@ func (r *DecoderFrameWorkReusableSupportedPostFilterRunner) Apply(ctx DecoderFra
 		r.size = r.size.Max(arena)
 		r.runner.Scratch = decoderFrameWorkReusablePostFilterScratch(r.size)
 	}
-	return r.runner.applyWithScratchSize(ctx, exact)
+	return r.runner.applyWithScratchSize(exact)
 }
 
 // PostFilterOutput returns the final publishable output after Apply.
@@ -854,6 +865,10 @@ func DecoderFrameWorkPostFilterSideData(side DecoderFrameWorkSideData) DecoderFr
 // DecoderFrameWorkPostFilterRequestSideDataFromContext extracts postfilter
 // request side-data views attached to a final-frame postfilter callback.
 func DecoderFrameWorkPostFilterRequestSideDataFromContext(ctx DecoderFrameWorkPostFilterContext) DecoderFrameWorkPostFilterRequestSideData {
+	return decoderFrameWorkPostFilterRequestSideDataFromContext(&ctx)
+}
+
+func decoderFrameWorkPostFilterRequestSideDataFromContext(ctx *DecoderFrameWorkPostFilterContext) DecoderFrameWorkPostFilterRequestSideData {
 	var side DecoderFrameWorkPostFilterRequestSideData
 	if ctx.LoopFilterMap != nil {
 		side.LoopFilterMap = *ctx.LoopFilterMap

@@ -18,7 +18,7 @@ import (
 // of the bitmasks, which is exactly the edge-length clamp and padding-edge
 // suppression the per-cell apply performs; on 8-aligned buffers no filter width
 // ever needs downgrading, so the result is byte-identical.
-func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRangeSB(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, sharpness uint8, plane loopfilter.Plane, dirMask, rRow0, rRow1, rCol0, rCol1 int, dst frame.Plane, bps int, bitDepth uint8, bounds frameWorkLoopFilterBounds) {
+func (ctx *FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRangeSB(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, sharpness uint8, plane loopfilter.Plane, dirMask, rRow0, rRow1, rCol0, rCol1 int, dst frame.Plane, bps int, bitDepth uint8, bounds frameWorkLoopFilterBounds) {
 	lut := loopfilter.SBLUTFor(sharpness)
 	cols := masks.Cols
 	pix := dst.Pix

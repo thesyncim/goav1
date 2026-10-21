@@ -311,7 +311,7 @@ func TestApplySupportedPostFiltersBandedMatchesWholeChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bandedNext, bandedResult, err := banded.ctx.ApplySupportedPostFiltersBanded(bandedReq, frameWorkDav1dPostFilterBanding(banded.ctx))
+	bandedNext, bandedResult, err := banded.ctx.ApplySupportedPostFiltersBanded(bandedReq, frameWorkDav1dPostFilterBanding(&banded.ctx))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +387,7 @@ func BenchmarkApplyLoopFilterBanded(b *testing.B) {
 	ctx.Event.Restoration = parser.RestorationParams{}
 	req := f.loopFilter
 	req.TrustedCoverage = true
-	banding := frameWorkDav1dPostFilterBanding(ctx)
+	banding := frameWorkDav1dPostFilterBanding(&ctx)
 
 	b.SetBytes(f.frameBytes())
 	b.ReportAllocs()
@@ -431,7 +431,7 @@ func BenchmarkApplyCDEFBanded(b *testing.B) {
 	ctx.Event.LoopFilter = parser.LoopFilterParams{}
 	ctx.Event.SequenceHeader.EnableRestoration = false
 	ctx.Event.Restoration = parser.RestorationParams{}
-	banding := frameWorkDav1dPostFilterBanding(ctx)
+	banding := frameWorkDav1dPostFilterBanding(&ctx)
 
 	b.SetBytes(f.frameBytes())
 	b.ReportAllocs()
@@ -506,7 +506,7 @@ func BenchmarkApplyFullPostFilterBanded(b *testing.B) {
 		CDEF:        f.cdef,
 		Restoration: f.rest,
 	}
-	banding := frameWorkDav1dPostFilterBanding(ctx)
+	banding := frameWorkDav1dPostFilterBanding(&ctx)
 
 	b.SetBytes(f.frameBytes())
 	b.ReportAllocs()

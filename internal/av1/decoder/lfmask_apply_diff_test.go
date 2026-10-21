@@ -248,7 +248,7 @@ func lfMaskApplyCountPerCell(t *testing.T, ctx FrameWorkPostFilterContext, masks
 		if plane != loopfilter.PlaneY && (chromaGated || levelCtx.base[plane][loopfilter.EdgeVertical] == 0) {
 			continue
 		}
-		bounds, err := frameWorkLoopFilterPlaneBounds(ctx, plane)
+		bounds, err := frameWorkLoopFilterPlaneBounds(&ctx, plane)
 		if err != nil {
 			t.Fatalf("count oracle bounds: %v", err)
 		}

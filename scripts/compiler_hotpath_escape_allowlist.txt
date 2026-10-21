@@ -1,5 +1,5 @@
 internal/av1/decoder/postfilter_cdef.go:*:*: func literal escapes to heap
-internal/av1/decoder/postfilter_cdef.go:*:*: func literal escapes to heap in FrameWorkPostFilterContext.applyCDEFPostFilterPooledBands:
+internal/av1/decoder/postfilter_cdef.go:*:*: func literal escapes to heap in (*FrameWorkPostFilterContext).applyCDEFPostFilterPooledBands:
 internal/av1/decoder/postfilter_cdef.go:*:*: moved to heap: blocks
 internal/av1/decoder/postfilter_cdef.go:*:*: moved to heap: ctx
 internal/av1/decoder/postfilter_cdef.go:*:*: moved to heap: planes
@@ -7,7 +7,7 @@ internal/av1/decoder/postfilter_cdef.go:*:*: moved to heap: req
 internal/av1/decoder/postfilter_cdef.go:*:*: moved to heap: units
 internal/av1/decoder/postfilter_filmgrain.go:*:*: moved to heap: output
 internal/av1/decoder/postfilter_loopfilter_pool.go:*:*: func literal escapes to heap
-internal/av1/decoder/postfilter_loopfilter_pool.go:*:*: func literal escapes to heap in FrameWorkPostFilterContext.applyLoopFilterEdgesFromMasksPooledBands:
+internal/av1/decoder/postfilter_loopfilter_pool.go:*:*: func literal escapes to heap in (*FrameWorkPostFilterContext).applyLoopFilterEdgesFromMasksPooledBands:
 internal/av1/decoder/postfilter_loopfilter_pool.go:*:*: moved to heap: applied
 internal/av1/decoder/postfilter_loopfilter_pool.go:*:*: moved to heap: bands
 internal/av1/decoder/postfilter_loopfilter_pool.go:*:*: moved to heap: ctx
@@ -30,7 +30,7 @@ internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, need0) escapes t
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, needC) escapes to heap
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, needC) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
 internal/av1/decoder/postfilter_restoration_pool.go:*:*: func literal escapes to heap
-internal/av1/decoder/postfilter_restoration_pool.go:*:*: func literal escapes to heap in FrameWorkPostFilterContext.applyLoopRestorationPostFilterPooledBands:
+internal/av1/decoder/postfilter_restoration_pool.go:*:*: func literal escapes to heap in (*FrameWorkPostFilterContext).applyLoopRestorationPostFilterPooledBands:
 internal/av1/decoder/postfilter_restoration_pool.go:*:*: moved to heap: filtAcc
 internal/av1/decoder/postfilter_restoration_pool.go:*:*: moved to heap: puAcc
 internal/av1/decoder/postfilter_restoration_pool.go:*:*: moved to heap: recAcc

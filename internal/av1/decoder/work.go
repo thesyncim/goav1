@@ -129,7 +129,7 @@ type FrameWorkPostFilterContext struct {
 // threaded into the context. Scratch sizing scales with this count, so it must
 // be stable across a frame's sizing and apply passes (it is: the pool is fixed
 // for the decoder's lifetime).
-func (ctx FrameWorkPostFilterContext) postFilterWorkerCount() int {
+func (ctx *FrameWorkPostFilterContext) postFilterWorkerCount() int {
 	if ctx.pool == nil {
 		return 1
 	}

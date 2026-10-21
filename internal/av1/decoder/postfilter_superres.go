@@ -100,7 +100,7 @@ type FrameWorkSuperResPostFilterResult struct {
 
 // SuperResPostFilterPlan returns the frame-level superres geometry for the
 // current output. It does not resample or mutate ctx.Output.
-func (ctx FrameWorkPostFilterContext) SuperResPostFilterPlan() (FrameWorkSuperResPostFilterPlan, error) {
+func (ctx *FrameWorkPostFilterContext) SuperResPostFilterPlan() (FrameWorkSuperResPostFilterPlan, error) {
 	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterSuperRes) {
 		return FrameWorkSuperResPostFilterPlan{}, nil
 	}
@@ -152,7 +152,7 @@ func (ctx FrameWorkPostFilterContext) SuperResPostFilterPlan() (FrameWorkSuperRe
 
 // SuperResPostFilterScratchLen reports scratch lengths needed to hold the
 // upscaled output frame for the current superres postfilter.
-func (ctx FrameWorkPostFilterContext) SuperResPostFilterScratchLen() (FrameWorkSuperResPostFilterScratchSize, error) {
+func (ctx *FrameWorkPostFilterContext) SuperResPostFilterScratchLen() (FrameWorkSuperResPostFilterScratchSize, error) {
 	plan, err := ctx.SuperResPostFilterPlan()
 	if err != nil {
 		return FrameWorkSuperResPostFilterScratchSize{}, err
@@ -206,7 +206,7 @@ func frameWorkSuperResPlanePlan(codedWidth int, outputWidth int, height int, byt
 // ApplySuperResPostFilter upscales ctx.Output into caller-owned scratch and
 // returns an output-format frame view. It does not replace the published frame
 // surface.
-func (ctx FrameWorkPostFilterContext) ApplySuperResPostFilter(req FrameWorkSuperResPostFilterRequest) (FrameWorkSuperResPostFilterResult, error) {
+func (ctx *FrameWorkPostFilterContext) ApplySuperResPostFilter(req FrameWorkSuperResPostFilterRequest) (FrameWorkSuperResPostFilterResult, error) {
 	remaining := ctx.RemainingPostFilters()
 	preSuperRes := FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF
 	if remaining&preSuperRes != 0 {
@@ -371,7 +371,7 @@ func (ctx FrameWorkPostFilterContext) bindSuperResPostFilterOutputContextDetache
 	return ctx, nil
 }
 
-func (ctx FrameWorkPostFilterContext) validateSuperResPostFilterRequest(req FrameWorkSuperResPostFilterRequest) error {
+func (ctx *FrameWorkPostFilterContext) validateSuperResPostFilterRequest(req FrameWorkSuperResPostFilterRequest) error {
 	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterSuperRes) {
 		return nil
 	}

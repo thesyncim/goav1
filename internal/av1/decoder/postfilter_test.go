@@ -69,7 +69,7 @@ func TestFrameWorkPostFilterContextRequireNoActivePostFiltersAllowsInactiveSynta
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := (FrameWorkPostFilterContext{Event: tt.event}).RequireNoActivePostFilters(); err != nil {
+			if err := (&FrameWorkPostFilterContext{Event: tt.event}).RequireNoActivePostFilters(); err != nil {
 				t.Fatalf("RequireNoActivePostFilters err=%v", err)
 			}
 		})
@@ -156,7 +156,7 @@ func TestFrameWorkPostFilterContextRequireNoActivePostFiltersRejectsActiveCompon
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := (FrameWorkPostFilterContext{Event: tt.event}).RequireNoActivePostFilters()
+			err := (&FrameWorkPostFilterContext{Event: tt.event}).RequireNoActivePostFilters()
 			if !errors.Is(err, ErrUnsupportedPostFilter) {
 				t.Fatalf("RequireNoActivePostFilters err=%v want %v", err, ErrUnsupportedPostFilter)
 			}

@@ -40,7 +40,7 @@ func TestFrameWorkPostFilterContextGenerateFilmGrainLumaGrain(t *testing.T) {
 }
 
 func TestFrameWorkPostFilterContextGenerateFilmGrainLumaGrainSkipsInactive(t *testing.T) {
-	result, err := (FrameWorkPostFilterContext{}).GenerateFilmGrainLumaGrain(nil)
+	result, err := (&FrameWorkPostFilterContext{}).GenerateFilmGrainLumaGrain(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestFrameWorkPostFilterContextApplyFilmGrainLumaRow(t *testing.T) {
 }
 
 func TestFrameWorkPostFilterContextApplyFilmGrainLumaRowSkipsInactive(t *testing.T) {
-	result, err := (FrameWorkPostFilterContext{}).ApplyFilmGrainLumaRow(nil, nil, nil, nil, 0)
+	result, err := (&FrameWorkPostFilterContext{}).ApplyFilmGrainLumaRow(nil, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
