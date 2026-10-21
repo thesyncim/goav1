@@ -3577,15 +3577,35 @@ func (st *lossyEncodeState) subpelRefineLibaomTree(src, refPlane []byte, stride,
 		return sadDualBlock(srcBlock, stride, probe, n, n)
 	}
 
+	// The tree scores candidates with libaom's realtime USE_2_TAPS kernel
+	// (subpel_bilinear.go) from a full-pel start, whose error is the
+	// full-pel SAD it was handed; candidates whose bilinear window leaves
+	// the plane keep the regular-filter score.
+	score := exact
+	bil := startMV.Row&7 == 0 && startMV.Col&7 == 0
+	if bil {
+		score = func(cand motion.Vector) int {
+			ax, ay := int(cand.Col), int(cand.Row)
+			if sad, ok := bilinearSubpelSAD(srcBlock, stride, refPlane, stride, width, height,
+				px+(ax>>3), py+(ay>>3), n, ax&7, ay&7); ok {
+				return sad
+			}
+			return exact(cand)
+		}
+	}
 	for hstep := int16(4); ; hstep >>= 1 {
 		iterCenter := mv
-		diagStep := subpelFirstLevelCheck(exact, iterCenter, hstep, &mv, &bestSAD)
+		diagStep := subpelFirstLevelCheck(score, iterCenter, hstep, &mv, &bestSAD)
 		if iterCenter != mv {
-			subpelSecondLevelCheckV2(exact, iterCenter, diagStep, &mv, &bestSAD)
+			subpelSecondLevelCheckV2(score, iterCenter, diagStep, &mv, &bestSAD)
 		}
 		if stop == realtimeSubpelStopHalf || hstep == 2 {
 			break
 		}
+	}
+	if mv != startMV && bil {
+		// Later stages read the SAD of the prediction actually coded.
+		bestSAD = exact(mv)
 	}
 	return mv, bestSAD
 }
