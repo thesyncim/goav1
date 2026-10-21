@@ -40,7 +40,9 @@ func TestVideoEncoderCBRConvergesAndDecodes(t *testing.T) {
 			f.U[i] = 120
 			f.V[i] = 130
 		}
-		sx, sy := 8+t*4, 16+t*2
+		// The mover wraps so the clip never turns static: a frozen scene
+		// codes as skip at any q, leaving no rate for a controller to spend.
+		sx, sy := 8+(t*4)%160, 16+(t*2)%96
 		for y := sy; y < sy+24 && y < h; y++ {
 			for x := sx; x < sx+24 && x < w; x++ {
 				f.Y[y*w+x] = 220
