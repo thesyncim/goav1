@@ -143,13 +143,19 @@ func (wf *frameWorkReconWavefront) waitRows(need int) (frameWorkReconView, bool)
 	return view, ok
 }
 
-// startLanes launches the wavefront goroutines. Lane w statically owns SB rows
-// w, w+workers, ...; each row starts once the parse has published it.
-func (wf *frameWorkReconWavefront) startLanes(workers int, rowCount int) {
+// startLanes launches the wavefront lanes on the pool's persistent lane group
+// (or on fresh goroutines when the batch did not come from a pool). Lane w
+// statically owns SB rows w, w+workers, ...; each row starts once the parse
+// has published it.
+func (wf *frameWorkReconWavefront) startLanes(lanes chan<- wavefrontLaneTask, workers int, rowCount int) {
 	wf.firstErr.Store(nil)
 	wf.lanes = workers
 	wf.wg.Add(workers)
 	for w := 0; w < workers; w++ {
+		if lanes != nil {
+			lanes <- wavefrontLaneTask{wf: wf, lane: w, lanes: workers, rowCount: rowCount}
+			continue
+		}
 		go wf.runLane(w, workers, rowCount)
 	}
 }
@@ -220,7 +226,7 @@ func (c *frameWorkTileResidualLoopController) startReconStream() error {
 	if err := wf.ensureStates(workers, c); err != nil {
 		return err
 	}
-	wf.startLanes(workers, rowCount)
+	wf.startLanes(c.batch.wavefrontLanes, workers, rowCount)
 	c.streaming = true
 	return nil
 }

@@ -313,6 +313,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	// rows), so it never alters decoded output.
 	d.postFilterParallel.Workers = d.workerPool.WorkerCount()
 	d.postFilter.Parallel = &d.postFilterParallel
+	d.external.supported.Parallel = &d.postFilterParallel
 
 	runtime := DecoderFrameWorkResidualEventRuntime{
 		State:             &d.state,

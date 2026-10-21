@@ -18,6 +18,8 @@ internal/av1/decoder/postfilter_loopfilter_pool.go:*:*: moved to heap: planeEdge
 internal/av1/decoder/postfilter_loopfilter_pool.go:*:*: moved to heap: planeMaxLevel
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]FrameWorkCDEFPostFilterU8BandBoundary, bands) escapes to heap
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]FrameWorkCDEFPostFilterU8BandBoundary, bands) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]FrameWorkLoopFilterPostFilterPlan, workers) escapes to heap
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]FrameWorkLoopFilterPostFilterPlan, workers) escapes to heap in (*FrameWorkPostFilterContext).applyLoopFilterMaskBandsParallel:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, need) escapes to heap
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, need) escapes to heap in (*FrameWorkCDEFPostFilterU8BandBoundary).ensure:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, need) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
@@ -29,6 +31,17 @@ internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, need0) escapes t
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, need0) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, needC) escapes to heap
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, needC) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
+internal/av1/decoder/postfilter_restoration_parallel.go:*:*: append(p.lr, make([]frameWorkParallelRestorationScratch, workers - len(p.lr))...) escapes to heap in (*FrameWorkPostFilterContext).applyLoopRestorationPostFilterParallel:
+internal/av1/decoder/postfilter_restoration_parallel.go:*:*: append(p.lr, make([]frameWorkParallelRestorationScratch, workers - len(p.lr))...) escapes to heap in (*FrameWorkPostFilterParallel).ensureRestorationScratch:
+internal/av1/decoder/postfilter_restoration_parallel.go:*:*: make([]int32, sgrLen) escapes to heap
+internal/av1/decoder/postfilter_restoration_parallel.go:*:*: make([]int32, sgrLen) escapes to heap in (*FrameWorkPostFilterContext).applyLoopRestorationPostFilterParallel:
+internal/av1/decoder/postfilter_restoration_parallel.go:*:*: make([]int32, sgrLen) escapes to heap in (*FrameWorkPostFilterParallel).ensureRestorationScratch:
+internal/av1/decoder/postfilter_restoration_parallel.go:*:*: make([]uint16, dataLen) escapes to heap
+internal/av1/decoder/postfilter_restoration_parallel.go:*:*: make([]uint16, dataLen) escapes to heap in (*FrameWorkPostFilterContext).applyLoopRestorationPostFilterParallel:
+internal/av1/decoder/postfilter_restoration_parallel.go:*:*: make([]uint16, dataLen) escapes to heap in (*FrameWorkPostFilterParallel).ensureRestorationScratch:
+internal/av1/decoder/postfilter_restoration_parallel.go:*:*: make([]uint16, wienerLen) escapes to heap
+internal/av1/decoder/postfilter_restoration_parallel.go:*:*: make([]uint16, wienerLen) escapes to heap in (*FrameWorkPostFilterContext).applyLoopRestorationPostFilterParallel:
+internal/av1/decoder/postfilter_restoration_parallel.go:*:*: make([]uint16, wienerLen) escapes to heap in (*FrameWorkPostFilterParallel).ensureRestorationScratch:
 internal/av1/decoder/postfilter_restoration_pool.go:*:*: func literal escapes to heap
 internal/av1/decoder/postfilter_restoration_pool.go:*:*: func literal escapes to heap in (*FrameWorkPostFilterContext).applyLoopRestorationPostFilterPooledBands:
 internal/av1/decoder/postfilter_restoration_pool.go:*:*: moved to heap: filtAcc
@@ -450,6 +463,7 @@ internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes t
 internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap in (*frameWorkLoopFilterMaskScratch).reset:
 internal/av1/threading/loop_filter_ordered.go:*:*: make([]uint8, h.Cols) escapes to heap
 internal/av1/threading/loop_filter_ordered.go:*:*: make([]uint8, h.Cols) escapes to heap in (*FrameWorkLoopFilterOrderedBuilder).Reset:
+internal/av1/threading/pool.go:*:*: func literal escapes to heap in (*Pool).wavefrontLaneGroupLocked:
 internal/av1/threading/pool.go:*:*: func literal escapes to heap in NewPool:
 internal/av1/threading/pool.go:*:*: make([]poolWorker, workers) escapes to heap
 internal/av1/threading/pool.go:*:*: make([]poolWorker, workers) escapes to heap in NewPool:

@@ -705,14 +705,20 @@ func (ctx *FrameWorkPostFilterContext) PrepareLoopFilterMaskBands(masks *threadi
 // concurrently. Every PopulateBand must complete (barrier) before any ApplyBand,
 // which reads the level cache.
 func (b FrameWorkLoopFilterMaskBands) PopulateBand(rowStart, rowEnd int) error {
+	var plan FrameWorkLoopFilterPostFilterPlan
+	return b.populateBandStats(rowStart, rowEnd, &plan)
+}
+
+// populateBandStats is PopulateBand that also adds the band's block, cell and
+// missing-record counts to plan.
+func (b FrameWorkLoopFilterMaskBands) populateBandStats(rowStart, rowEnd int, plan *FrameWorkLoopFilterPostFilterPlan) error {
 	if !b.active {
 		return nil
 	}
 	// Recompute the level context locally (it holds pointers into b.ctx.Event);
 	// keeping it off the shared struct keeps b.ctx.Event on this worker's stack.
 	levelCtx := frameWorkLoopFilterLevelContextFor(&b.ctx.Event)
-	var plan FrameWorkLoopFilterPostFilterPlan
-	return b.ctx.populateLoopFilterLevelCacheRange(b.masks, b.filterMap, &levelCtx, &plan, rowStart, rowEnd)
+	return b.ctx.populateLoopFilterLevelCacheRange(b.masks, b.filterMap, &levelCtx, plan, rowStart, rowEnd)
 }
 
 // RegionCols is the number of 128x128 mask region-columns (the horizontal-pass

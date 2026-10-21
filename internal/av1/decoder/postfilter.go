@@ -802,7 +802,7 @@ func (ctx *FrameWorkPostFilterContext) applySupportedPostFiltersInPlace(req Fram
 		switch {
 		case banding.LoopFilterMIRows > 0:
 			loopFilterResult, err = ctx.ApplyLoopFilterEdgesBanded(req.LoopFilter, banding.LoopFilterMIRows)
-		case ctx.loopFilterMasksUsable() && ctx.pool != nil && ctx.postFilterWorkerCount() > 1:
+		case ctx.loopFilterMasksUsable() && ctx.pool != nil && ctx.postFilterWorkerCount() > 1 && ctx.Parallel.workers() == 0:
 			// The pooled path uses decode-time masks and fans independent bands over
 			// the tile worker lanes after tile execution has joined.
 			loopFilterResult, err = ctx.applyLoopFilterEdgesMaybePooled(req.LoopFilter)
@@ -845,7 +845,7 @@ func (ctx *FrameWorkPostFilterContext) applySupportedPostFiltersInPlace(req Fram
 	if remaining.Has(FrameWorkPostFilterCDEF) {
 		var cdefResult FrameWorkCDEFPostFilterResult
 		var err error
-		if ctx.pool != nil && ctx.postFilterWorkerCount() > 1 && banding.CDEFUnitRows <= 0 {
+		if ctx.pool != nil && ctx.postFilterWorkerCount() > 1 && banding.CDEFUnitRows <= 0 && ctx.Parallel.workers() == 0 {
 			// The pooled path uses the tile worker lanes after tile execution has
 			// joined; each CDEF band reads immutable input and writes disjoint rows.
 			cdefResult, err = ctx.applyCDEFPostFilterMaybePooled(req.CDEF)
@@ -893,7 +893,15 @@ func (ctx *FrameWorkPostFilterContext) applySupportedPostFiltersInPlace(req Fram
 		// applyLoopRestorationPostFilterMaybePooled fans the 8-bit in-place
 		// restoration-unit rows across the idle worker lanes when a multi-lane pool
 		// was threaded in, and otherwise runs the byte-identical serial apply.
-		restorationResult, err := ctx.applyLoopRestorationPostFilterMaybePooled(req.Restoration)
+		var restorationResult tile.RestorationFrameApplyResult
+		handled := false
+		var err error
+		if ctx.Parallel.workers() > 0 {
+			restorationResult, handled, err = ctx.applyLoopRestorationPostFilterParallel(req.Restoration)
+		}
+		if err == nil && !handled {
+			restorationResult, err = ctx.applyLoopRestorationPostFilterMaybePooled(req.Restoration)
+		}
 		if err != nil {
 			return result, err
 		}
