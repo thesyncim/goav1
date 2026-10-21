@@ -46,6 +46,9 @@ type LayeredDecoder struct {
 
 	scratch    DecoderFrameWorkResidualStreamScratch
 	postFilter DecoderFrameWorkReusableSupportedPostFilterRunner
+	// postFilterParallel fans the post-filter bands across the tile workers,
+	// as in Decoder.
+	postFilterParallel DecoderFrameWorkPostFilterParallel
 
 	payloadKind   decoderPayloadKind
 	payloadSource decoderPayloadSource
@@ -227,6 +230,8 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 	d.globalSurface = d.globalSurfaceForCurrentPool
 	d.postFilter.size = postArena
 	d.postFilter.runner.Scratch = decoderPostFilterScratchFromArena(postArena, &arena)
+	d.postFilterParallel.Workers = workerPool.WorkerCount()
+	d.postFilter.Parallel = &d.postFilterParallel
 
 	d.layerPool, err = BindFrameLayerPool(
 		make([]FramePool, layeredDecoderMaxFrameFormats),
@@ -876,6 +881,7 @@ func (d *LayeredDecoder) Close() {
 		return
 	}
 	d.closed = true
+	d.postFilterParallel.Close()
 	if d.workerPool != nil {
 		d.workerPool.Close()
 		d.workerPool = nil
