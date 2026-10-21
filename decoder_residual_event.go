@@ -178,7 +178,7 @@ type DecoderFrameWorkResidualEventBindPlan struct {
 // HasEvent reports whether Event/EventIndex refer to a bind-relevant parsed
 // event.
 func (p DecoderFrameWorkResidualEventBindPlan) HasEvent() bool {
-	return p.EventIndex >= 0 && decoderFrameWorkResidualEventBindCandidate(p.Event)
+	return p.EventIndex >= 0 && decoderFrameWorkResidualEventBindCandidate(&p.Event)
 }
 
 // DecoderFrameWorkResidualEventScratchSize reports the caller-owned scratch
@@ -262,7 +262,7 @@ func DecoderFrameWorkResidualEventsBindPlan(sequence SequenceHeader, events []De
 // frame-level side data from caller-owned scratch. batchRunner is caller-owned
 // storage for the nested residual batch runner; the returned event runner keeps
 // a pointer to it.
-func BindDecoderFrameWorkResidualEventRunner(size DecoderFrameWorkResidualEventScratchSize, sequence SequenceHeader, event DecoderEvent, runtime DecoderFrameWorkResidualEventRuntime, scratch DecoderFrameWorkResidualEventScratch, batchRunner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkResidualEventRunner, DecoderFrameWorkSideData, error) {
+func BindDecoderFrameWorkResidualEventRunner(size DecoderFrameWorkResidualEventScratchSize, sequence SequenceHeader, event *DecoderEvent, runtime DecoderFrameWorkResidualEventRuntime, scratch DecoderFrameWorkResidualEventScratch, batchRunner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkResidualEventRunner, DecoderFrameWorkSideData, error) {
 	if size.Runner.Workers != 0 && batchRunner == nil {
 		return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, ErrThreadingInvalidBatch
 	}
@@ -319,14 +319,14 @@ func BindDecoderFrameWorkResidualEventRunner(size DecoderFrameWorkResidualEventS
 // Run plans and executes one decoder frame-work event using the runner's
 // stable caller-owned state. The sequence, event, side-data, and postfilter
 // callback remain per-event inputs.
-func (r DecoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event DecoderEvent, side *DecoderFrameWorkSideData, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkEventResult, error) {
+func (r DecoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event *DecoderEvent, side *DecoderFrameWorkSideData, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkEventResult, error) {
 	return runDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
 		State:              r.State,
 		Refs:               r.Refs,
 		FramePool:          r.FramePool,
 		TileListOutputPool: r.TileListOutputPool,
 		Sequence:           sequence,
-		Event:              event,
+		Event:              *event,
 		Align:              r.Align,
 		ReferenceSurfaces:  r.ReferenceSurfaces,
 		ReferenceFrames:    r.ReferenceFrames,
@@ -347,14 +347,14 @@ func (r DecoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event 
 // RunWithPostFilterRunner plans and executes one decoder frame-work event using
 // direct residual and postfilter runners, avoiding callback method values in the
 // final-frame path.
-func (r DecoderFrameWorkResidualEventRunner) RunWithPostFilterRunner(sequence SequenceHeader, event DecoderEvent, side *DecoderFrameWorkSideData, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkEventResult, error) {
+func (r DecoderFrameWorkResidualEventRunner) RunWithPostFilterRunner(sequence SequenceHeader, event *DecoderEvent, side *DecoderFrameWorkSideData, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkEventResult, error) {
 	return runDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
 		State:              r.State,
 		Refs:               r.Refs,
 		FramePool:          r.FramePool,
 		TileListOutputPool: r.TileListOutputPool,
 		Sequence:           sequence,
-		Event:              event,
+		Event:              *event,
 		Align:              r.Align,
 		ReferenceSurfaces:  r.ReferenceSurfaces,
 		ReferenceFrames:    r.ReferenceFrames,
@@ -400,8 +400,8 @@ func (r DecoderFrameWorkResidualEventRunner) RunEventsWithPostFilterRunner(seque
 // DecoderFrameWorkResidualEventScratchLen plans event tile work into
 // caller-owned spans/jobs/batches and reports both residual-runner scratch and
 // frame-level side-data scratch for the event.
-func DecoderFrameWorkResidualEventScratchLen(sequence SequenceHeader, event DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualEventScratchSize, error) {
-	return decoderFrameWorkResidualEventScratchLenPtr(sequence, &event, workers, spans, jobs, batches)
+func DecoderFrameWorkResidualEventScratchLen(sequence SequenceHeader, event *DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualEventScratchSize, error) {
+	return decoderFrameWorkResidualEventScratchLenPtr(sequence, event, workers, spans, jobs, batches)
 }
 
 func decoderFrameWorkResidualEventScratchLenPtr(sequence SequenceHeader, event *DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualEventScratchSize, error) {
@@ -470,8 +470,8 @@ func DecoderFrameWorkResidualEventsScratchLen(sequence SequenceHeader, events []
 // DecoderFrameWorkResidualEventRunnerScratchLen plans event tile work into
 // caller-owned spans/jobs/batches and reports the residual runner scratch
 // required to execute the planned event.
-func DecoderFrameWorkResidualEventRunnerScratchLen(sequence SequenceHeader, event DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkBatchResidualRunnerScratchSize, DecoderTileWorkPlan, error) {
-	return decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence, &event, workers, spans, jobs, batches)
+func DecoderFrameWorkResidualEventRunnerScratchLen(sequence SequenceHeader, event *DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkBatchResidualRunnerScratchSize, DecoderTileWorkPlan, error) {
+	return decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence, event, workers, spans, jobs, batches)
 }
 
 func decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence SequenceHeader, event *DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkBatchResidualRunnerScratchSize, DecoderTileWorkPlan, error) {
@@ -509,7 +509,7 @@ func decoderFrameWorkResidualTileListRunnerScratchLenPtr(sequence SequenceHeader
 	probe := *event
 	probe.SequenceHeader = sequence
 	for i := 0; i < tileCount; i++ {
-		nextSize, plan, err := DecoderTileListEntryDecodeRunnerScratchLen(probe, i, workers, spans, jobs, batches)
+		nextSize, plan, err := DecoderTileListEntryDecodeRunnerScratchLen(&probe, i, workers, spans, jobs, batches)
 		if err != nil {
 			return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, err
 		}
@@ -521,8 +521,8 @@ func decoderFrameWorkResidualTileListRunnerScratchLenPtr(sequence SequenceHeader
 
 // DecoderFrameWorkResidualEventSideDataScratchLen reports frame-level side-data
 // scratch for the event's frame size, CDEF, and restoration parameters.
-func DecoderFrameWorkResidualEventSideDataScratchLen(sequence SequenceHeader, event DecoderEvent) (DecoderFrameWorkSideDataScratchSize, error) {
-	return decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence, &event)
+func DecoderFrameWorkResidualEventSideDataScratchLen(sequence SequenceHeader, event *DecoderEvent) (DecoderFrameWorkSideDataScratchSize, error) {
+	return decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence, event)
 }
 
 func decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence SequenceHeader, event *DecoderEvent) (DecoderFrameWorkSideDataScratchSize, error) {
@@ -531,8 +531,8 @@ func decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence SequenceHeader,
 
 // BindDecoderFrameWorkResidualEventSideData binds frame-level side data using
 // the event's frame size, CDEF, and restoration parameters.
-func BindDecoderFrameWorkResidualEventSideData(sequence SequenceHeader, event DecoderEvent, scratch DecoderFrameWorkSideDataScratch) (DecoderFrameWorkSideData, error) {
-	return bindDecoderFrameWorkResidualEventSideDataPtr(sequence, &event, scratch)
+func BindDecoderFrameWorkResidualEventSideData(sequence SequenceHeader, event *DecoderEvent, scratch DecoderFrameWorkSideDataScratch) (DecoderFrameWorkSideData, error) {
+	return bindDecoderFrameWorkResidualEventSideDataPtr(sequence, event, scratch)
 }
 
 func bindDecoderFrameWorkResidualEventSideDataPtr(sequence SequenceHeader, event *DecoderEvent, scratch DecoderFrameWorkSideDataScratch) (DecoderFrameWorkSideData, error) {
@@ -557,10 +557,10 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 	single := r
 	single.Stats = nil
 	for i := range events {
-		sequence = decoderFrameWorkResidualEventSequence(sequence, events[i])
+		sequence = decoderFrameWorkResidualEventSequence(sequence, &events[i])
 
 		sidePtr := (*DecoderFrameWorkSideData)(nil)
-		if decoderFrameWorkResidualEventNeedsSideData(events[i]) {
+		if decoderFrameWorkResidualEventNeedsSideData(&events[i]) {
 			if r.SideData == nil {
 				return result, ErrDecoderInvalidFrameWorkState
 			}
@@ -578,7 +578,7 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 				internalthreading.InvalidateFrameWorkLoopFilterCompactState(compact)
 				*sidePtr, err = bindDecoderFrameWorkSideData(sequence, events[i].FrameSize, events[i].CDEF, events[i].Restoration, sideScratch, compact, r.compactNoSkip, &events[i])
 			} else {
-				*sidePtr, err = BindDecoderFrameWorkResidualEventSideData(sequence, events[i], sideScratch)
+				*sidePtr, err = BindDecoderFrameWorkResidualEventSideData(sequence, &events[i], sideScratch)
 			}
 			if err != nil {
 				return result, err
@@ -591,9 +591,9 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 		var step DecoderFrameWorkEventResult
 		var err error
 		if postRunner != nil {
-			step, err = single.RunWithPostFilterRunner(sequence, events[i], sidePtr, postRunner)
+			step, err = single.RunWithPostFilterRunner(sequence, &events[i], sidePtr, postRunner)
 		} else {
-			step, err = single.Run(sequence, events[i], sidePtr, post)
+			step, err = single.Run(sequence, &events[i], sidePtr, post)
 		}
 		if err != nil {
 			return result, err
@@ -608,7 +608,7 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 		if step.Run.ExecutedTileWork {
 			result.ExecutedTileWork++
 		}
-		if decoderFrameWorkResidualResultOutputsFrame(events[i], step) {
+		if decoderFrameWorkResidualResultOutputsFrame(&events[i], step) {
 			if r.Outputs != nil {
 				if result.OutputCount >= len(r.Outputs) {
 					return result, ErrFrameShortBuffer
@@ -665,12 +665,12 @@ func (r DecoderFrameWorkResidualEventRunner) ownsCompactLoopFilter(sequence Sequ
 func decoderFrameWorkResidualEventsOutputLen(events []DecoderEvent) int {
 	count := 0
 	for i := range events {
-		count += decoderFrameWorkResidualEventOutputLen(events[i])
+		count += decoderFrameWorkResidualEventOutputLen(&events[i])
 	}
 	return count
 }
 
-func decoderFrameWorkResidualEventOutputLen(event DecoderEvent) int {
+func decoderFrameWorkResidualEventOutputLen(event *DecoderEvent) int {
 	if DecoderEventOutputsFrame(event) {
 		return 1
 	}
@@ -681,7 +681,7 @@ func decoderFrameWorkResidualEventOutputLenPtr(event *DecoderEvent) int {
 	if event == nil {
 		return 0
 	}
-	return decoderFrameWorkResidualEventOutputLen(*event)
+	return decoderFrameWorkResidualEventOutputLen(&*event)
 }
 
 // RunDecoderFrameWorkEventWithResidualRunner plans and executes one decoder
@@ -698,7 +698,7 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 			internalthreading.InvalidateFrameWorkLoopFilterCompactState(req.Runner.compactState)
 		}
 	}()
-	if decoderFrameWorkResidualEventHasTilePayload(req.Event) && req.Runner == nil {
+	if decoderFrameWorkResidualEventHasTilePayload(&req.Event) && req.Runner == nil {
 		return DecoderFrameWorkEventResult{}, ErrThreadingInvalidBatch
 	}
 	if req.Post != nil && req.PostRunner != nil {
@@ -723,7 +723,7 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		if req.Stats != nil {
 			*req.Stats = DecoderFrameWorkTileResidualStats{}
 		}
-		result, err := runDecoderFrameWorkTileListWithResidualRunner(req, event)
+		result, err := runDecoderFrameWorkTileListWithResidualRunner(req, &event)
 		stats, statsErr := decoderFrameWorkResidualRunnerStats(req.Runner)
 		if req.Stats != nil {
 			*req.Stats = stats
@@ -747,10 +747,10 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	}
 
 	if req.External.Enabled() {
-		return runDecoderFrameWorkEventWithExternalResidualRunner(req, event, sideRunner)
+		return runDecoderFrameWorkEventWithExternalResidualRunner(req, &event, sideRunner)
 	}
 
-	step, output, err := req.State.PlanEvent(req.Refs, req.FramePool, req.Sequence, event, req.Align, req.ReferenceSurfaces, req.Workers, req.Spans, req.Jobs, req.Batches, req.Releases)
+	step, output, err := req.State.PlanEvent(req.Refs, req.FramePool, req.Sequence, &event, req.Align, req.ReferenceSurfaces, req.Workers, req.Spans, req.Jobs, req.Batches, req.Releases)
 	if err != nil {
 		return DecoderFrameWorkEventResult{}, err
 	}
@@ -801,7 +801,7 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 				return DecoderFrameWorkEventResult{}, ErrDecoderSurfaceReferenceBufferTooSmall
 			}
 			if step.Kind == DecoderFrameWorkStepTile {
-				count, err := req.Refs.FrameReferences(event, req.ReferenceSurfaces)
+				count, err := req.Refs.FrameReferences(&event, req.ReferenceSurfaces)
 				if err != nil {
 					return DecoderFrameWorkEventResult{}, err
 				}
@@ -826,11 +826,11 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		if decoderFrameWorkResidualSideRunnerOwnsCompact(sideRunner, req.Runner, req.SideData) {
 			compact = req.Runner.compactState
 		}
-		run, err = runDecoderFrameWorkEventSingleWorkerResidualRunner(req, event, step, output, references, compact)
+		run, err = runDecoderFrameWorkEventSingleWorkerResidualRunner(req, &event, step, output, references, compact)
 	} else if req.PostRunner != nil {
-		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunners(req.Refs, req.FramePool, event, step, req.WorkerPool, output, references, event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.PostRunner)
+		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunners(req.Refs, req.FramePool, &event, step, req.WorkerPool, output, references, event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.PostRunner)
 	} else {
-		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunner(req.Refs, req.FramePool, event, step, req.WorkerPool, output, references, event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.Post)
+		run, err = req.State.RunStepWithPayloadContextAndPostFilterRunner(req.Refs, req.FramePool, &event, step, req.WorkerPool, output, references, event.Unit.Payload, req.Jobs, req.Batches, req.Releases, req.Runner, req.Post)
 	}
 	stats, statsErr := decoderFrameWorkResidualRunnerStats(req.Runner)
 	if req.Stats != nil {
@@ -851,7 +851,7 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	}, nil
 }
 
-func runDecoderFrameWorkEventSingleWorkerResidualRunner(req DecoderFrameWorkResidualEventRequest, event DecoderEvent, step DecoderFrameWorkStep, output *Frame, references []*Frame, compact *internalthreading.FrameWorkLoopFilterCompactState) (DecoderFrameWorkStepResult, error) {
+func runDecoderFrameWorkEventSingleWorkerResidualRunner(req DecoderFrameWorkResidualEventRequest, event *DecoderEvent, step DecoderFrameWorkStep, output *Frame, references []*Frame, compact *internalthreading.FrameWorkLoopFilterCompactState) (DecoderFrameWorkStepResult, error) {
 	prepared, err := internaldecoder.PrepareFrameWorkStepWithPayloadContext(req.State, event, step, output, references, event.Unit.Payload, req.Jobs, req.Batches)
 	if err != nil {
 		return DecoderFrameWorkStepResult{}, err
@@ -890,7 +890,7 @@ func runDecoderFrameWorkEventSingleWorkerResidualRunner(req DecoderFrameWorkResi
 	return internaldecoder.CompleteFrameWorkPreparedPayloadStep(req.State, req.Refs, req.FramePool, event, step, prepared, output, req.Releases, true, req.Post)
 }
 
-func runDecoderFrameWorkEventWithExternalResidualRunner(req DecoderFrameWorkResidualEventRequest, event DecoderEvent, sideRunner DecoderFrameWorkSideDataRunner) (DecoderFrameWorkEventResult, error) {
+func runDecoderFrameWorkEventWithExternalResidualRunner(req DecoderFrameWorkResidualEventRequest, event *DecoderEvent, sideRunner DecoderFrameWorkSideDataRunner) (DecoderFrameWorkEventResult, error) {
 	postRunner := req.PostRunner
 	if req.Post != nil {
 		postRunner = decoderFrameWorkResidualPostFuncRunner{fn: req.Post}
@@ -938,7 +938,7 @@ func runDecoderFrameWorkEventWithExternalResidualRunner(req DecoderFrameWorkResi
 	return result, nil
 }
 
-func runDecoderFrameWorkTileListWithResidualRunner(req DecoderFrameWorkResidualEventRequest, event DecoderEvent) (DecoderFrameWorkEventResult, error) {
+func runDecoderFrameWorkTileListWithResidualRunner(req DecoderFrameWorkResidualEventRequest, event *DecoderEvent) (DecoderFrameWorkEventResult, error) {
 	if event.TileListErr != nil {
 		return DecoderFrameWorkEventResult{}, event.TileListErr
 	}
@@ -1000,7 +1000,7 @@ func runDecoderFrameWorkTileListWithResidualRunner(req DecoderFrameWorkResidualE
 		if err != nil {
 			return DecoderFrameWorkEventResult{}, fmt.Errorf("tile-list entry plan %d: %w", i, err)
 		}
-		prepared, err := internaldecoder.PrepareFrameWorkStepWithPayloadContext(nil, plan.Event, plan.Step, entryOutput, references[:plan.ReferenceCount], plan.Payload, req.Jobs, req.Batches)
+		prepared, err := internaldecoder.PrepareFrameWorkStepWithPayloadContext(nil, &plan.Event, plan.Step, entryOutput, references[:plan.ReferenceCount], plan.Payload, req.Jobs, req.Batches)
 		if err != nil {
 			return DecoderFrameWorkEventResult{}, fmt.Errorf("tile-list entry prepare %d: %w", i, err)
 		}
@@ -1065,7 +1065,7 @@ func runDecoderFrameWorkTileListPreparedStep(req DecoderFrameWorkResidualEventRe
 	return true, nil
 }
 
-func decoderFrameWorkResolveTileListAnchorFrames(req DecoderFrameWorkResidualEventRequest, event DecoderEvent, dst []*Frame) (int, error) {
+func decoderFrameWorkResolveTileListAnchorFrames(req DecoderFrameWorkResidualEventRequest, event *DecoderEvent, dst []*Frame) (int, error) {
 	tileCount := event.TileList.TileCount()
 	if tileCount <= 0 || tileCount > TileListMaxTiles || tileCount != len(event.TileList.Entries) {
 		return 0, ErrTileListInvalidTileCount
@@ -1215,7 +1215,7 @@ func decoderFrameWorkResidualRunnerStats(runner *DecoderFrameWorkBatchResidualRu
 	return runner.TotalStats()
 }
 
-func decoderFrameWorkResidualResultOutputsFrame(event DecoderEvent, result DecoderFrameWorkEventResult) bool {
+func decoderFrameWorkResidualResultOutputsFrame(event *DecoderEvent, result DecoderFrameWorkEventResult) bool {
 	if result.Output == nil {
 		return false
 	}
@@ -1248,8 +1248,8 @@ func decoderFrameWorkResidualPostFilterOutput(output *Frame, run DecoderFrameWor
 	return postOutput
 }
 
-func decoderFrameWorkResidualEventSequence(sequence SequenceHeader, event DecoderEvent) SequenceHeader {
-	return decoderFrameWorkResidualEventSequencePtr(sequence, &event)
+func decoderFrameWorkResidualEventSequence(sequence SequenceHeader, event *DecoderEvent) SequenceHeader {
+	return decoderFrameWorkResidualEventSequencePtr(sequence, event)
 }
 
 func decoderFrameWorkResidualEventSequencePtr(sequence SequenceHeader, event *DecoderEvent) SequenceHeader {
@@ -1276,8 +1276,8 @@ func decoderFrameWorkResidualEventSequencePtr(sequence SequenceHeader, event *De
 	}
 }
 
-func decoderFrameWorkResidualEventHasSequence(event DecoderEvent) bool {
-	return decoderFrameWorkResidualEventHasSequencePtr(&event)
+func decoderFrameWorkResidualEventHasSequence(event *DecoderEvent) bool {
+	return decoderFrameWorkResidualEventHasSequencePtr(event)
 }
 
 func decoderFrameWorkResidualEventHasSequencePtr(event *DecoderEvent) bool {
@@ -1287,8 +1287,8 @@ func decoderFrameWorkResidualEventHasSequencePtr(event *DecoderEvent) bool {
 	return event.SequenceHeader.ColorConfig.BitDepth != 0
 }
 
-func decoderFrameWorkResidualEventNeedsSideData(event DecoderEvent) bool {
-	return decoderFrameWorkResidualEventNeedsSideDataPtr(&event)
+func decoderFrameWorkResidualEventNeedsSideData(event *DecoderEvent) bool {
+	return decoderFrameWorkResidualEventNeedsSideDataPtr(event)
 }
 
 func decoderFrameWorkResidualEventNeedsSideDataPtr(event *DecoderEvent) bool {
@@ -1303,8 +1303,8 @@ func decoderFrameWorkResidualEventNeedsSideDataPtr(event *DecoderEvent) bool {
 	}
 }
 
-func decoderFrameWorkResidualEventHasTilePayload(event DecoderEvent) bool {
-	return decoderFrameWorkResidualEventHasTilePayloadPtr(&event)
+func decoderFrameWorkResidualEventHasTilePayload(event *DecoderEvent) bool {
+	return decoderFrameWorkResidualEventHasTilePayloadPtr(event)
 }
 
 func decoderFrameWorkResidualEventHasTilePayloadPtr(event *DecoderEvent) bool {
@@ -1319,14 +1319,14 @@ func decoderFrameWorkResidualEventHasTilePayloadPtr(event *DecoderEvent) bool {
 	}
 }
 
-func decoderFrameWorkResidualEventBindCandidate(event DecoderEvent) bool {
-	return decoderFrameWorkResidualEventBindCandidatePtr(&event)
+func decoderFrameWorkResidualEventBindCandidate(event *DecoderEvent) bool {
+	return decoderFrameWorkResidualEventBindCandidatePtr(event)
 }
 
 func decoderFrameWorkResidualEventBindCandidatePtr(event *DecoderEvent) bool {
 	return decoderFrameWorkResidualEventNeedsSideDataPtr(event) ||
 		decoderFrameWorkResidualEventHasTilePayloadPtr(event) ||
-		(event != nil && DecoderEventOutputsFrame(*event))
+		(event != nil && DecoderEventOutputsFrame(&*event))
 }
 
 func decoderFrameWorkResidualEventPlanMax(a DecoderTileWorkPlan, b DecoderTileWorkPlan) DecoderTileWorkPlan {
@@ -1350,8 +1350,8 @@ func decoderFrameWorkEventStepTile(step DecoderFrameWorkStep) (DecoderTileWorkPl
 	}
 }
 
-func decoderFrameWorkResidualEventContext(sequence SequenceHeader, event DecoderEvent) DecoderFrameWorkFrameContext {
-	return decoderFrameWorkResidualEventContextPtr(sequence, &event)
+func decoderFrameWorkResidualEventContext(sequence SequenceHeader, event *DecoderEvent) DecoderFrameWorkFrameContext {
+	return decoderFrameWorkResidualEventContextPtr(sequence, event)
 }
 
 // decoderFrameWorkResidualEventContextPtr builds the context used by scratch

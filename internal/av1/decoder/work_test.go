@@ -33,7 +33,7 @@ func TestPlanTileWorkTileGroupEvent(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	plan, err := PlanTileWork(events[2], 1, spans[:], jobs[:], batches[:])
+	plan, err := PlanTileWork(&events[2], 1, spans[:], jobs[:], batches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestPlanTileWorkTileGroupEvent(t *testing.T) {
 func TestBeginFrameWorkFrameHeader(t *testing.T) {
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
-	plan, output, err := BeginFrameWork(&refs, &pool, testSequence(), Event{
+	plan, output, err := BeginFrameWork(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -93,7 +93,7 @@ func TestBeginFrameWorkFrameEventPlansTiles(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	plan, output, err := BeginFrameWork(&refs, &pool, testSequence(), events[1], 32, nil, 1, spans[:], jobs[:], batches[:])
+	plan, output, err := BeginFrameWork(&refs, &pool, testSequence(), &events[1], 32, nil, 1, spans[:], jobs[:], batches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestBeginFrameWorkRejectsTilePlanBeforeAcquire(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	_, _, err := BeginFrameWork(&refs, &pool, testSequence(), Event{
+	_, _, err := BeginFrameWork(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrame,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -151,7 +151,7 @@ func TestBeginFrameWorkRejectsFormatAfterTilePlanBeforeAcquire(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	_, _, err = BeginFrameWork(&refs, &pool, testSequence(), events[1], 32, nil, 1, spans[:], jobs[:], batches[:])
+	_, _, err = BeginFrameWork(&refs, &pool, testSequence(), &events[1], 32, nil, 1, spans[:], jobs[:], batches[:])
 	if !errors.Is(err, frame.ErrInvalidFormat) {
 		t.Fatalf("BeginFrameWork err=%v want %v", err, frame.ErrInvalidFormat)
 	}
@@ -166,7 +166,7 @@ func TestBeginFrameWorkRejectsFormatAfterTilePlanBeforeAcquire(t *testing.T) {
 func TestBeginFrameWorkRejectsNonFrameEvent(t *testing.T) {
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
-	_, _, err := BeginFrameWork(&refs, &pool, testSequence(), Event{Kind: EventTileGroup}, 32, nil, 1, nil, nil, nil)
+	_, _, err := BeginFrameWork(&refs, &pool, testSequence(), &Event{Kind: EventTileGroup}, 32, nil, 1, nil, nil, nil)
 	if !errors.Is(err, ErrInvalidSurfaceEvent) {
 		t.Fatalf("BeginFrameWork err=%v want %v", err, ErrInvalidSurfaceEvent)
 	}
@@ -194,7 +194,7 @@ func TestPlanFrameTileWorkTileGroup(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	plan, err := PlanFrameTileWork(events[2], 5, 0, 1, spans[:], jobs[:], batches[:])
+	plan, err := PlanFrameTileWork(&events[2], 5, 0, 1, spans[:], jobs[:], batches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,15 +210,15 @@ func TestPlanFrameTileWorkRejectsInvalidState(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	_, err := PlanFrameTileWork(Event{Kind: EventFrameHeader}, 0, 0, 1, spans[:], jobs[:], batches[:])
+	_, err := PlanFrameTileWork(&Event{Kind: EventFrameHeader}, 0, 0, 1, spans[:], jobs[:], batches[:])
 	if !errors.Is(err, ErrInvalidTileWork) {
 		t.Fatalf("wrong event err=%v want %v", err, ErrInvalidTileWork)
 	}
-	_, err = PlanFrameTileWork(Event{Kind: EventTileGroup}, -1, 0, 1, spans[:], jobs[:], batches[:])
+	_, err = PlanFrameTileWork(&Event{Kind: EventTileGroup}, -1, 0, 1, spans[:], jobs[:], batches[:])
 	if !errors.Is(err, ErrInvalidTileWork) {
 		t.Fatalf("bad surface err=%v want %v", err, ErrInvalidTileWork)
 	}
-	_, err = PlanFrameTileWork(Event{Kind: EventTileGroup}, 0, parser.InterRefsPerFrame+1, 1, spans[:], jobs[:], batches[:])
+	_, err = PlanFrameTileWork(&Event{Kind: EventTileGroup}, 0, parser.InterRefsPerFrame+1, 1, spans[:], jobs[:], batches[:])
 	if !errors.Is(err, ErrInvalidTileWork) {
 		t.Fatalf("bad references err=%v want %v", err, ErrInvalidTileWork)
 	}
@@ -257,7 +257,7 @@ func TestEventDropsFrameWork(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		if got := EventDropsFrameWork(tt.event); got != tt.want {
+		if got := EventDropsFrameWork(&tt.event); got != tt.want {
 			t.Fatalf("%s: EventDropsFrameWork=%v want %v", tt.name, got, tt.want)
 		}
 	}
@@ -291,7 +291,7 @@ func TestEventCompletesFrameWork(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		if got := EventCompletesFrameWork(tt.event); got != tt.want {
+		if got := EventCompletesFrameWork(&tt.event); got != tt.want {
 			t.Fatalf("%s: EventCompletesFrameWork=%v want %v", tt.name, got, tt.want)
 		}
 	}
@@ -330,7 +330,7 @@ func TestEventOutputsFrame(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		if got := EventOutputsFrame(tt.event); got != tt.want {
+		if got := EventOutputsFrame(&tt.event); got != tt.want {
 			t.Fatalf("%s: EventOutputsFrame=%v want %v", tt.name, got, tt.want)
 		}
 	}
@@ -355,7 +355,7 @@ func TestFrameWorkStateLifecycle(t *testing.T) {
 	pool := testFramePoolForSize(t, events[1].FrameSize.CodedWidth, events[1].FrameSize.Height, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	plan, output, err := state.Begin(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, nil, nil, nil)
+	plan, output, err := state.Begin(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +374,7 @@ func TestFrameWorkStateLifecycle(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	tilePlan, err := state.PlanTile(events[2], 1, spans[:], jobs[:], batches[:])
+	tilePlan, err := state.PlanTile(&events[2], 1, spans[:], jobs[:], batches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +387,7 @@ func TestFrameWorkStateLifecycle(t *testing.T) {
 	}
 
 	var releases [parser.RefFrames]int
-	releaseCount, err := state.Finish(&refs, &pool, events[2], releases[:])
+	releaseCount, err := state.Finish(&refs, &pool, &events[2], releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,10 +413,10 @@ func TestFrameWorkStateScaledReferencePolicySurvivesReset(t *testing.T) {
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
 	}
-	if _, _, err := state.Begin(&refs, &pool, testSequence(), event, 32, nil, 1, nil, nil, nil); err != nil {
+	if _, _, err := state.Begin(&refs, &pool, testSequence(), &event, 32, nil, 1, nil, nil, nil); err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
-	context := frameWorkFrameContext(event, state.sequenceContext())
+	context := frameWorkFrameContext(&event, state.sequenceContext())
 	if !context.Sequence.ScaledReferencePredictionDisabled {
 		t.Fatal("frame context did not retain the decoder's captured disabled policy")
 	}
@@ -449,7 +449,7 @@ func TestFrameWorkStatePlanEventLifecycle(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	step, output, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	step, output, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +458,7 @@ func TestFrameWorkStatePlanEventLifecycle(t *testing.T) {
 		t.Fatalf("step=%+v output=%p state=%+v active=%v", step, output, state, state.Active())
 	}
 
-	step, output, err = state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[2], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	step, output, err = state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[2], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +469,7 @@ func TestFrameWorkStatePlanEventLifecycle(t *testing.T) {
 	}
 
 	var releases [parser.RefFrames]int
-	completed, releaseCount, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, events[2], releases[:])
+	completed, releaseCount, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, &events[2], releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,7 +502,7 @@ func TestFrameWorkStatePlanEventFrameOBU(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	step, output, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	step, output, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,7 +520,7 @@ func TestFrameWorkStatePlanEventDropsBoundary(t *testing.T) {
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	begin, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	begin, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -529,7 +529,7 @@ func TestFrameWorkStatePlanEventDropsBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	step, output, err := state.PlanEvent(&refs, &pool, testSequence(), Event{Kind: EventTemporalDelimiter, NewTemporalUnit: true}, 32, nil, 1, nil, nil, nil, nil)
+	step, output, err := state.PlanEvent(&refs, &pool, testSequence(), &Event{Kind: EventTemporalDelimiter, NewTemporalUnit: true}, 32, nil, 1, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,7 +545,7 @@ func TestFrameWorkStatePlanEventDropsBeforeBoundaryBegin(t *testing.T) {
 	pool := testFramePool(t, 2)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	if _, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	if _, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -553,7 +553,7 @@ func TestFrameWorkStatePlanEventDropsBeforeBoundaryBegin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	step, output, err := state.PlanEvent(&refs, &pool, testSequence(), Event{
+	step, output, err := state.PlanEvent(&refs, &pool, testSequence(), &Event{
 		Kind:                  EventFrameHeader,
 		NewCodedVideoSequence: true,
 		FrameHeader:           parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
@@ -580,7 +580,7 @@ func TestFrameWorkStatePlanEventNewCodedVideoSequenceReleasesReferencesBeforeBeg
 	}
 	var state FrameWorkState
 
-	step, output, err := state.PlanEvent(&refs, &pool, testSequence(), Event{
+	step, output, err := state.PlanEvent(&refs, &pool, testSequence(), &Event{
 		Kind:                  EventFrameHeader,
 		NewCodedVideoSequence: true,
 		FrameHeader:           parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
@@ -613,7 +613,7 @@ func TestFrameWorkStatePlanEventNewCodedVideoSequenceReleasesReferencesOnIgnored
 	var state FrameWorkState
 	event := Event{Kind: EventSequenceHeader, NewCodedVideoSequence: true}
 
-	step, output, err := state.PlanEvent(&refs, &pool, testSequence(), event, 32, nil, 1, nil, nil, nil, releases[:])
+	step, output, err := state.PlanEvent(&refs, &pool, testSequence(), &event, 32, nil, 1, nil, nil, nil, releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -625,7 +625,7 @@ func TestFrameWorkStatePlanEventNewCodedVideoSequenceReleasesReferencesOnIgnored
 		refs.Holds(reference) {
 		t.Fatalf("step=%+v output=%p active=%v available=%d holdsReference=%v", step, output, state.Active(), pool.Available(), refs.Holds(reference))
 	}
-	run, err := state.RunStep(&refs, &pool, event, step, nil, nil, nil, releases[:], nil)
+	run, err := state.RunStep(&refs, &pool, &event, step, nil, nil, nil, releases[:], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -647,7 +647,7 @@ func TestFrameWorkStatePlanEventShowExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 	var state FrameWorkState
-	if _, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	if _, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -655,7 +655,7 @@ func TestFrameWorkStatePlanEventShowExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	step, output, err := state.PlanEvent(&refs, &pool, testSequence(), showExistingWorkEvent(0, parser.FrameTypeInter), 32, nil, 1, nil, nil, nil, releases[:])
+	step, output, err := state.PlanEvent(&refs, &pool, testSequence(), showExistingWorkEventPtr(0, parser.FrameTypeInter), 32, nil, 1, nil, nil, nil, releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -670,7 +670,7 @@ func TestFrameWorkStatePlanEventIgnoresNonWorkEvent(t *testing.T) {
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	step, output, err := state.PlanEvent(&refs, &pool, testSequence(), Event{Kind: EventMetadata}, 32, nil, 1, nil, nil, nil, nil)
+	step, output, err := state.PlanEvent(&refs, &pool, testSequence(), &Event{Kind: EventMetadata}, 32, nil, 1, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -683,7 +683,7 @@ func TestFrameWorkStatePlanEventRejectsActiveBegin(t *testing.T) {
 	pool := testFramePool(t, 2)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	begin, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	begin, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -692,7 +692,7 @@ func TestFrameWorkStatePlanEventRejectsActiveBegin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err = state.PlanEvent(&refs, &pool, testSequence(), Event{
+	_, _, err = state.PlanEvent(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -938,7 +938,7 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 	}
 	payload := []byte{0x00, 0x00, 0x00}
 	state := FrameWorkState{active: true}
-	cdefContext := FrameWorkBatch{FrameWorkFrameContext: frameWorkFrameContext(event, threading.FrameWorkSequenceContextFromHeader(event.SequenceHeader))}
+	cdefContext := FrameWorkBatch{FrameWorkFrameContext: frameWorkFrameContext(&event, threading.FrameWorkSequenceContextFromHeader(event.SequenceHeader))}
 	_, _, cdefMapLen, err := cdefContext.CDEFIndexMapShape()
 	if err != nil {
 		t.Fatal(err)
@@ -964,7 +964,7 @@ func TestFrameWorkStateRunStepWithPayloadContextCarriesCDFUpdateMode(t *testing.
 		t.Fatal(err)
 	}
 
-	result, err := state.RunStepWithPayloadContext(nil, nil, event, step, workerPool, nil, nil, payload, jobs[:], batches[:], nil, func(ctx FrameWorkBatch) error {
+	result, err := state.RunStepWithPayloadContext(nil, nil, &event, step, workerPool, nil, nil, payload, jobs[:], batches[:], nil, func(ctx FrameWorkBatch) error {
 		if !ctx.DisableCDFUpdate {
 			t.Fatal("DisableCDFUpdate not propagated")
 		}
@@ -1121,7 +1121,7 @@ func TestFrameWorkStateCarriesTileResidualCDFsThroughReferenceSlots(t *testing.T
 		TileInfo:     parser.TileInfo{RefreshContext: true, ContextUpdateTileID: 0},
 		Quantization: parser.QuantizationParams{BaseQIdx: 64},
 	}
-	plan, _, err := state.Begin(&refs, &pool, testSequence(), key, 32, nil, 1, nil, nil, nil)
+	plan, _, err := state.Begin(&refs, &pool, testSequence(), &key, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1133,7 +1133,7 @@ func TestFrameWorkStateCarriesTileResidualCDFsThroughReferenceSlots(t *testing.T
 	finalKey.Unit.Payload = []byte{0x00}
 	finalKey.FrameSize.RefreshFrameFlags = 0xff
 	finalKey.TileGroup = parser.TileGroup{Final: true}
-	_, err = state.RunStepWithPayloadContext(&refs, &pool, finalKey, step, workerPool, nil, nil, finalKey.Unit.Payload, jobs, batches, releases[:], func(ctx FrameWorkBatch) error {
+	_, err = state.RunStepWithPayloadContext(&refs, &pool, &finalKey, step, workerPool, nil, nil, finalKey.Unit.Payload, jobs, batches, releases[:], func(ctx FrameWorkBatch) error {
 		var storage threading.FrameWorkTileResidualCDFStorage
 		if err := ctx.InitTileResidualCDFStorage(&storage); err != nil {
 			return err
@@ -1168,7 +1168,7 @@ func TestFrameWorkStateCarriesTileResidualCDFsThroughReferenceSlots(t *testing.T
 	}
 	var referenceSurfaces [parser.InterRefsPerFrame]int
 	var referenceFrames [parser.InterRefsPerFrame]*frame.Frame
-	plan, _, err = state.Begin(&refs, &pool, testSequence(), inter, 32, referenceSurfaces[:], 1, nil, nil, nil)
+	plan, _, err = state.Begin(&refs, &pool, testSequence(), &inter, 32, referenceSurfaces[:], 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1189,7 +1189,7 @@ func TestFrameWorkStateCarriesTileResidualCDFsThroughReferenceSlots(t *testing.T
 	finalInter.Unit.Payload = []byte{0x00}
 	finalInter.FrameSize.RefreshFrameFlags = 0x01
 	finalInter.TileGroup = parser.TileGroup{Final: true}
-	_, err = state.RunStepWithPayloadContext(&refs, &pool, finalInter, step, workerPool, nil, referenceFrames[:int(plan.ReferenceCount)], finalInter.Unit.Payload, jobs, batches, releases[:], func(ctx FrameWorkBatch) error {
+	_, err = state.RunStepWithPayloadContext(&refs, &pool, &finalInter, step, workerPool, nil, referenceFrames[:int(plan.ReferenceCount)], finalInter.Unit.Payload, jobs, batches, releases[:], func(ctx FrameWorkBatch) error {
 		var storage threading.FrameWorkTileResidualCDFStorage
 		if err := ctx.InitTileResidualCDFStorage(&storage); err != nil {
 			return err
@@ -1349,7 +1349,7 @@ func TestFrameWorkStateRunStepFrameOBUExecutesThenFinishes(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	step, output, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	step, output, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1359,7 +1359,7 @@ func TestFrameWorkStateRunStepFrameOBUExecutesThenFinishes(t *testing.T) {
 
 	var ranWhileActive bool
 	var releases [parser.RefFrames]int
-	result, err := state.RunStep(&refs, &pool, events[1], step, workerPool, jobs[:], batches[:], releases[:], func(batch threading.Batch, batchJobs []tile.Job) error {
+	result, err := state.RunStep(&refs, &pool, &events[1], step, workerPool, jobs[:], batches[:], releases[:], func(batch threading.Batch, batchJobs []tile.Job) error {
 		ranWhileActive = state.Active() && batch.Count == 1 && len(batchJobs) == 1
 		return nil
 	})
@@ -1405,7 +1405,7 @@ func TestFrameWorkStateRunStepWithContextFrameOBUExecutesThenFinishes(t *testing
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	step, output, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	step, output, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1415,7 +1415,7 @@ func TestFrameWorkStateRunStepWithContextFrameOBUExecutesThenFinishes(t *testing
 
 	var ranWhileActive bool
 	var releases [parser.RefFrames]int
-	result, err := state.RunStepWithContext(&refs, &pool, events[1], step, workerPool, output, nil, jobs[:], batches[:], releases[:], func(ctx FrameWorkBatch) error {
+	result, err := state.RunStepWithContext(&refs, &pool, &events[1], step, workerPool, output, nil, jobs[:], batches[:], releases[:], func(ctx FrameWorkBatch) error {
 		ranWhileActive = state.Active() &&
 			ctx.Step == step &&
 			ctx.Output == output &&
@@ -1464,11 +1464,11 @@ func TestFrameWorkStateRunStepTileGroupExecutesThenFinishes(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	begin, _, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	begin, _, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := state.RunStep(&refs, &pool, events[1], begin, workerPool, jobs[:], batches[:], nil, nil)
+	result, err := state.RunStep(&refs, &pool, &events[1], begin, workerPool, jobs[:], batches[:], nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1476,12 +1476,12 @@ func TestFrameWorkStateRunStepTileGroupExecutesThenFinishes(t *testing.T) {
 		t.Fatalf("begin result=%+v active=%v", result, state.Active())
 	}
 
-	step, _, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[2], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	step, _, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[2], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var releases [parser.RefFrames]int
-	result, err = state.RunStep(&refs, &pool, events[2], step, workerPool, jobs[:], batches[:], releases[:], func(threading.Batch, []tile.Job) error {
+	result, err = state.RunStep(&refs, &pool, &events[2], step, workerPool, jobs[:], batches[:], releases[:], func(threading.Batch, []tile.Job) error {
 		return nil
 	})
 	if err != nil {
@@ -1520,18 +1520,18 @@ func TestFrameWorkStateRunStepKeepsActiveOnCallbackError(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	begin, _, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	begin, _, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	step, _, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[2], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	step, _, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[2], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	want := errors.New("tile decode")
 	var releases [parser.RefFrames]int
-	_, err = state.RunStep(&refs, &pool, events[2], step, workerPool, jobs[:], batches[:], releases[:], func(threading.Batch, []tile.Job) error {
+	_, err = state.RunStep(&refs, &pool, &events[2], step, workerPool, jobs[:], batches[:], releases[:], func(threading.Batch, []tile.Job) error {
 		return want
 	})
 	if !errors.Is(err, want) {
@@ -1573,18 +1573,18 @@ func TestFrameWorkStateRunStepWithContextKeepsActiveOnCallbackError(t *testing.T
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	begin, output, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	begin, output, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	step, _, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[2], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
+	step, _, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[2], 32, nil, 1, spans[:], jobs[:], batches[:], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	want := errors.New("tile decode")
 	var releases [parser.RefFrames]int
-	_, err = state.RunStepWithContext(&refs, &pool, events[2], step, workerPool, output, nil, jobs[:], batches[:], releases[:], func(ctx FrameWorkBatch) error {
+	_, err = state.RunStepWithContext(&refs, &pool, &events[2], step, workerPool, output, nil, jobs[:], batches[:], releases[:], func(ctx FrameWorkBatch) error {
 		if ctx.Output != output {
 			t.Fatalf("output=%p want %p", ctx.Output, output)
 		}
@@ -1637,7 +1637,7 @@ func TestFrameWorkStateRunEventWithContextFrameOBU(t *testing.T) {
 
 	wantSequence := threading.FrameWorkSequenceContextFromHeader(events[0].SequenceHeader)
 	var seenOutput *frame.Frame
-	result, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
+	result, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
 		seenOutput = ctx.Output
 		if ctx.Step.Kind != FrameWorkStepBegin ||
 			len(ctx.References) != 0 ||
@@ -1717,7 +1717,7 @@ func TestFrameWorkStateRunEventWithContextRunnerFrameOBU(t *testing.T) {
 		wantEvent:    events[1],
 		wantPayload:  0xaa,
 	}
-	result, err := state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &runner)
+	result, err := state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &runner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1778,7 +1778,7 @@ func TestFrameWorkStateRunEventWithResidualRunnerFrameOBU(t *testing.T) {
 		},
 	}
 
-	result, err := state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &runner)
+	result, err := state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &runner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1828,14 +1828,14 @@ func TestFrameWorkBoundSideDataRunnerBindsActiveMaps(t *testing.T) {
 	pool := testFramePoolForSize(t, event.FrameSize.CodedWidth, event.FrameSize.Height, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	plan, output, err := state.Begin(&refs, &pool, seq, event, 32, nil, 1, nil, nil, nil)
+	plan, output, err := state.Begin(&refs, &pool, seq, &event, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := FrameWorkBatch{
 		Step:                  FrameWorkStep{Kind: FrameWorkStepBegin, Begin: plan},
 		Output:                output,
-		FrameWorkFrameContext: frameWorkFrameContext(event, threading.FrameWorkSequenceContextFromHeader(seq)),
+		FrameWorkFrameContext: frameWorkFrameContext(&event, threading.FrameWorkSequenceContextFromHeader(seq)),
 	}
 	_, _, cdefLen, err := ctx.CDEFIndexMapShape()
 	if err != nil {
@@ -1907,14 +1907,14 @@ func TestFrameWorkBoundSideDataRunnerIgnoresInactiveReusableScratch(t *testing.T
 	pool := testFramePoolForSize(t, event.FrameSize.CodedWidth, event.FrameSize.Height, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	plan, output, err := state.Begin(&refs, &pool, seq, event, 32, nil, 1, nil, nil, nil)
+	plan, output, err := state.Begin(&refs, &pool, seq, &event, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := FrameWorkBatch{
 		Step:                  FrameWorkStep{Kind: FrameWorkStepBegin, Begin: plan},
 		Output:                output,
-		FrameWorkFrameContext: frameWorkFrameContext(event, threading.FrameWorkSequenceContextFromHeader(seq)),
+		FrameWorkFrameContext: frameWorkFrameContext(&event, threading.FrameWorkSequenceContextFromHeader(seq)),
 	}
 	size, err := FrameWorkSideDataScratchLen(ctx)
 	if err != nil {
@@ -1949,7 +1949,7 @@ func TestFrameWorkBoundSideDataRunnerIgnoresInactiveReusableScratch(t *testing.T
 func TestFrameWorkSideDataScratchSizeBindRunnerAllocs(t *testing.T) {
 	seq := testSequence()
 	ctx := FrameWorkBatch{
-		FrameWorkFrameContext: frameWorkFrameContext(Event{
+		FrameWorkFrameContext: frameWorkFrameContext(&Event{
 			SequenceHeader: seq,
 			FrameSize: parser.FrameSize{
 				CodedWidth:          64,
@@ -2113,7 +2113,7 @@ func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilter(t *testing.T
 		},
 	}
 
-	result, err := state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &side, &runner, &post)
+	result, err := state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &side, &runner, &post)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2180,7 +2180,7 @@ func TestFrameWorkStateRunEventWithContextTileGroup(t *testing.T) {
 	var batches [1]threading.Batch
 	var releases [parser.RefFrames]int
 
-	begin, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, nil)
+	begin, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2191,7 +2191,7 @@ func TestFrameWorkStateRunEventWithContextTileGroup(t *testing.T) {
 	wantSequence := threading.FrameWorkSequenceContextFromHeader(events[0].SequenceHeader)
 	events[2].SequenceHeader = parser.SequenceHeader{}
 	var seenOutput *frame.Frame
-	tileResult, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[2], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
+	tileResult, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, &events[2], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
 		seenOutput = ctx.Output
 		if ctx.Step.Kind != FrameWorkStepTile ||
 			len(ctx.References) != 0 ||
@@ -2247,7 +2247,7 @@ func TestFrameWorkStateRunEventWithContextRunnerTileGroup(t *testing.T) {
 	var batches [1]threading.Batch
 	var releases [parser.RefFrames]int
 
-	begin, err := state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, nil)
+	begin, err := state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2262,7 +2262,7 @@ func TestFrameWorkStateRunEventWithContextRunnerTileGroup(t *testing.T) {
 		wantEvent:    events[2],
 		wantPayload:  0x80,
 	}
-	tileResult, err := state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, events[2], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &runner)
+	tileResult, err := state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, &events[2], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &runner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2314,7 +2314,7 @@ func TestFrameWorkStateRunEventWithContextPostFilterBeforeFinish(t *testing.T) {
 
 	var order [2]string
 	orderIndex := 0
-	result, err := state.RunEventWithContextAndPostFilter(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
+	result, err := state.RunEventWithContextAndPostFilter(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
 		order[orderIndex] = "tile"
 		orderIndex++
 		if !state.Active() {
@@ -2408,7 +2408,7 @@ func TestFrameWorkStateRunEventWithContextRunnersPostFilterBeforeFinish(t *testi
 		state: &state,
 		value: 0x33,
 	}
-	result, err := state.RunEventWithContextAndPostFilterRunners(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &runner, &post)
+	result, err := state.RunEventWithContextAndPostFilterRunners(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &runner, &post)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2450,7 +2450,7 @@ func TestFrameWorkStateRunStepWithPostFilterCarriesSideMaps(t *testing.T) {
 		FrameHeader:    parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:      testFrameSize(64, 64),
 	}
-	plan, _, err := state.Begin(&refs, &pool, seq, begin, 32, nil, 1, nil, nil, nil)
+	plan, _, err := state.Begin(&refs, &pool, seq, &begin, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2467,7 +2467,7 @@ func TestFrameWorkStateRunStepWithPostFilterCarriesSideMaps(t *testing.T) {
 		Type:      [3]parser.RestorationType{parser.RestorationWiener},
 		UnitSizeY: 64,
 	}
-	ctx := FrameWorkBatch{FrameWorkFrameContext: frameWorkFrameContext(final, threading.FrameWorkSequenceContextFromHeader(final.SequenceHeader))}
+	ctx := FrameWorkBatch{FrameWorkFrameContext: frameWorkFrameContext(&final, threading.FrameWorkSequenceContextFromHeader(final.SequenceHeader))}
 	_, _, cdefLen, err := ctx.CDEFIndexMapShape()
 	if err != nil {
 		t.Fatal(err)
@@ -2511,7 +2511,7 @@ func TestFrameWorkStateRunStepWithPostFilterCarriesSideMaps(t *testing.T) {
 		Tile: FrameTileWorkPlan{Surface: plan.Surface},
 	}
 	var postRan bool
-	result, err := state.RunStepWithPostFilter(&refs, &pool, final, step, nil, nil, nil, releases[:], nil, func(post FrameWorkPostFilterContext) error {
+	result, err := state.RunStepWithPostFilter(&refs, &pool, &final, step, nil, nil, nil, releases[:], nil, func(post FrameWorkPostFilterContext) error {
 		postRan = true
 		if post.CDEFIndexMap == nil || post.CDEFIndexMap.Stride != cdefMap.Stride || post.CDEFIndexMap.Rows != cdefMap.Rows {
 			t.Fatalf("CDEFIndexMap=%+v want stride=%d rows=%d", post.CDEFIndexMap, cdefMap.Stride, cdefMap.Rows)
@@ -2573,7 +2573,7 @@ func TestFrameWorkStatePostFilterContextPreview(t *testing.T) {
 		},
 	}
 
-	ctx, err := state.PostFilterContext(&pool, event, step, true)
+	ctx, err := state.PostFilterContext(&pool, &event, step, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2599,21 +2599,21 @@ func TestFrameWorkStatePostFilterContextPreview(t *testing.T) {
 
 	nonFinal := event
 	nonFinal.TileGroup.Final = false
-	noop, err := state.PostFilterContext(&pool, nonFinal, step, true)
+	noop, err := state.PostFilterContext(&pool, &nonFinal, step, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if noop.Output != nil || noop.Event.Kind != EventIgnored || noop.Step.Kind != FrameWorkStepIgnored {
 		t.Fatalf("non-final context=%+v want zero", noop)
 	}
-	if _, err := state.PostFilterContext(nil, event, step, true); !errors.Is(err, frame.ErrInvalidPool) {
+	if _, err := state.PostFilterContext(nil, &event, step, true); !errors.Is(err, frame.ErrInvalidPool) {
 		t.Fatalf("nil pool err=%v want %v", err, frame.ErrInvalidPool)
 	}
-	if _, err := state.PostFilterContext(&pool, event, FrameWorkStep{}, true); !errors.Is(err, ErrInvalidFrameWorkStep) {
+	if _, err := state.PostFilterContext(&pool, &event, FrameWorkStep{}, true); !errors.Is(err, ErrInvalidFrameWorkStep) {
 		t.Fatalf("bad step err=%v want %v", err, ErrInvalidFrameWorkStep)
 	}
 	state.active = false
-	if _, err := state.PostFilterContext(&pool, event, step, true); !errors.Is(err, ErrInvalidFrameWorkState) {
+	if _, err := state.PostFilterContext(&pool, &event, step, true); !errors.Is(err, ErrInvalidFrameWorkState) {
 		t.Fatalf("inactive err=%v want %v", err, ErrInvalidFrameWorkState)
 	}
 }
@@ -2654,7 +2654,7 @@ func TestFrameWorkStateRunEventWithContextPostFilterErrorKeepsActive(t *testing.
 
 	want := errors.New("postfilter")
 	var tileRan bool
-	_, err = state.RunEventWithContextAndPostFilter(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
+	_, err = state.RunEventWithContextAndPostFilter(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
 		tileRan = true
 		ctx.Output.Y.Pix[0] = 0x22
 		return nil
@@ -2760,7 +2760,7 @@ func TestFrameWorkStateRunStepWithPostFilterAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		var refs SurfaceReferences
 		state = FrameWorkState{Surface: surface, active: true}
-		if _, err := state.RunStepWithPostFilter(&refs, &pool, event, step, nil, nil, nil, nil, nil, post); err != nil {
+		if _, err := state.RunStepWithPostFilter(&refs, &pool, &event, step, nil, nil, nil, nil, nil, post); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -2783,7 +2783,7 @@ func TestFrameWorkStatePostFilterContextAllocs(t *testing.T) {
 	state := FrameWorkState{Surface: surface, active: true}
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		ctx, err := state.PostFilterContext(&pool, event, step, false)
+		ctx, err := state.PostFilterContext(&pool, &event, step, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2841,7 +2841,7 @@ func TestFrameWorkStateRunEventWithContextInterFrameReferences(t *testing.T) {
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
 
-	result, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[2], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
+	result, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, &events[2], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
 		if ctx.Output == nil || ctx.Output == referenceFrame {
 			t.Fatalf("output=%p reference=%p", ctx.Output, referenceFrame)
 		}
@@ -2919,7 +2919,7 @@ func TestFrameWorkStateRunEventWithContextSwitchFrameRefreshesAllReferences(t *t
 	var releases [parser.RefFrames]int
 
 	var keyOutput *frame.Frame
-	keyResult, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
+	keyResult, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
 		keyOutput = ctx.Output
 		if ctx.Output == nil || len(ctx.References) != 0 {
 			t.Fatalf("key ctx output=%p references=%d", ctx.Output, len(ctx.References))
@@ -2946,7 +2946,7 @@ func TestFrameWorkStateRunEventWithContextSwitchFrameRefreshesAllReferences(t *t
 	}
 
 	var switchOutput *frame.Frame
-	switchResult, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[2], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
+	switchResult, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, &events[2], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx FrameWorkBatch) error {
 		switchOutput = ctx.Output
 		if ctx.Output == nil || ctx.Output == keyOutput {
 			t.Fatalf("switch output=%p key=%p", ctx.Output, keyOutput)
@@ -3000,7 +3000,7 @@ func TestFrameWorkStateRunEventWithContextShowExisting(t *testing.T) {
 	}
 
 	var state FrameWorkState
-	result, err := state.RunEventWithContext(&refs, &pool, testSequence(), showExistingWorkEvent(0, parser.FrameTypeInter), 32, nil, nil, 1, nil, nil, nil, releases[:], nil, nil)
+	result, err := state.RunEventWithContext(&refs, &pool, testSequence(), showExistingWorkEventPtr(0, parser.FrameTypeInter), 32, nil, nil, 1, nil, nil, nil, releases[:], nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3016,7 +3016,7 @@ func TestFrameWorkStateRunStepRejectsMismatchedFinalStep(t *testing.T) {
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	begin, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	begin, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -3026,7 +3026,7 @@ func TestFrameWorkStateRunStepRejectsMismatchedFinalStep(t *testing.T) {
 	}
 
 	var releases [parser.RefFrames]int
-	_, err = state.RunStep(&refs, &pool, finalFrameEvent(0xff), FrameWorkStep{Kind: FrameWorkStepIgnored}, nil, nil, nil, releases[:], nil)
+	_, err = state.RunStep(&refs, &pool, finalFrameEventPtr(0xff), FrameWorkStep{Kind: FrameWorkStepIgnored}, nil, nil, nil, releases[:], nil)
 	if !errors.Is(err, ErrInvalidFrameWorkStep) {
 		t.Fatalf("RunStep err=%v want %v", err, ErrInvalidFrameWorkStep)
 	}
@@ -3040,7 +3040,7 @@ func TestFrameWorkStateRunStepRejectsMismatchedFinalStep(t *testing.T) {
 
 func TestFrameWorkStateRunStepNoop(t *testing.T) {
 	var state FrameWorkState
-	result, err := state.RunStep(nil, nil, Event{Kind: EventMetadata}, FrameWorkStep{Kind: FrameWorkStepIgnored}, nil, nil, nil, nil, nil)
+	result, err := state.RunStep(nil, nil, &Event{Kind: EventMetadata}, FrameWorkStep{Kind: FrameWorkStepIgnored}, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3071,13 +3071,13 @@ func TestFrameWorkStateFinishIfEventCompletesFrameWork(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	plan, _, err := state.Begin(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:])
+	plan, _, err := state.Begin(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, spans[:], jobs[:], batches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var releases [parser.RefFrames]int
-	completed, releaseCount, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, events[2], releases[:])
+	completed, releaseCount, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, &events[2], releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3114,13 +3114,13 @@ func TestFrameWorkStateFinishIfEventCompletesFrameWorkFrameOBU(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	plan, _, err := state.Begin(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:])
+	plan, _, err := state.Begin(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, spans[:], jobs[:], batches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var releases [parser.RefFrames]int
-	completed, releaseCount, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, events[1], releases[:])
+	completed, releaseCount, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, &events[1], releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3135,7 +3135,7 @@ func TestFrameWorkStateFinishIfEventCompletesFrameWorkFrameOBU(t *testing.T) {
 
 func TestFrameWorkStateFinishIfEventCompletesFrameWorkNoop(t *testing.T) {
 	var nilState *FrameWorkState
-	completed, count, err := nilState.FinishIfEventCompletesFrameWork(nil, nil, Event{Kind: EventTileGroup}, nil)
+	completed, count, err := nilState.FinishIfEventCompletesFrameWork(nil, nil, &Event{Kind: EventTileGroup}, nil)
 	if err != nil || completed || count != 0 {
 		t.Fatalf("nil state completed=%v count=%d err=%v", completed, count, err)
 	}
@@ -3143,14 +3143,14 @@ func TestFrameWorkStateFinishIfEventCompletesFrameWorkNoop(t *testing.T) {
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	if _, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	if _, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
 	}, 32, nil, 1, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	completed, count, err = state.FinishIfEventCompletesFrameWork(&refs, &pool, Event{Kind: EventTileGroup}, nil)
+	completed, count, err = state.FinishIfEventCompletesFrameWork(&refs, &pool, &Event{Kind: EventTileGroup}, nil)
 	if err != nil || completed || count != 0 || !state.Active() {
 		t.Fatalf("completed=%v count=%d err=%v active=%v", completed, count, err, state.Active())
 	}
@@ -3159,7 +3159,7 @@ func TestFrameWorkStateFinishIfEventCompletesFrameWorkNoop(t *testing.T) {
 func TestFrameWorkStateFinishIfEventCompletesFrameWorkRejectsInactive(t *testing.T) {
 	var state FrameWorkState
 	var releases [parser.RefFrames]int
-	completed, count, err := state.FinishIfEventCompletesFrameWork(nil, nil, finalFrameEvent(0xff), releases[:])
+	completed, count, err := state.FinishIfEventCompletesFrameWork(nil, nil, finalFrameEventPtr(0xff), releases[:])
 	if !errors.Is(err, ErrInvalidFrameWorkState) {
 		t.Fatalf("FinishIfEventCompletesFrameWork err=%v want %v", err, ErrInvalidFrameWorkState)
 	}
@@ -3182,7 +3182,7 @@ func TestFrameWorkStateFinishIfEventCompletesFrameWorkKeepsActiveOnError(t *test
 	}
 
 	var state FrameWorkState
-	plan, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	plan, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -3194,7 +3194,7 @@ func TestFrameWorkStateFinishIfEventCompletesFrameWorkKeepsActiveOnError(t *test
 		t.Fatal(err)
 	}
 
-	completed, count, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, finalFrameEvent(0xff), releases[:])
+	completed, count, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, finalFrameEventPtr(0xff), releases[:])
 	if !errors.Is(err, frame.ErrInvalidSlot) {
 		t.Fatalf("FinishIfEventCompletesFrameWork err=%v want %v", err, frame.ErrInvalidSlot)
 	}
@@ -3221,7 +3221,7 @@ func TestFrameWorkStateShowExistingDropsActiveWork(t *testing.T) {
 	}
 
 	var state FrameWorkState
-	begin, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	begin, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -3230,7 +3230,7 @@ func TestFrameWorkStateShowExistingDropsActiveWork(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	plan, err := state.ShowExisting(&refs, &pool, showExistingWorkEvent(0, parser.FrameTypeInter), releases[:])
+	plan, err := state.ShowExisting(&refs, &pool, showExistingWorkEventPtr(0, parser.FrameTypeInter), releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3273,7 +3273,7 @@ func TestFrameWorkStateShowExistingKeyResetsReferences(t *testing.T) {
 	}
 
 	var state FrameWorkState
-	if _, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	if _, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -3281,7 +3281,7 @@ func TestFrameWorkStateShowExistingKeyResetsReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	plan, err := state.ShowExisting(&refs, &pool, showExistingWorkEvent(1, parser.FrameTypeKey), releases[:])
+	plan, err := state.ShowExisting(&refs, &pool, showExistingWorkEventPtr(1, parser.FrameTypeKey), releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3313,7 +3313,7 @@ func TestFrameWorkStateShowExistingInactive(t *testing.T) {
 	}
 
 	var state FrameWorkState
-	plan, err := state.ShowExisting(&refs, &pool, showExistingWorkEvent(0, parser.FrameTypeInter), releases[:])
+	plan, err := state.ShowExisting(&refs, &pool, showExistingWorkEventPtr(0, parser.FrameTypeInter), releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3326,7 +3326,7 @@ func TestFrameWorkStateShowExistingRejectsInvalidEventBeforeAbort(t *testing.T) 
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	begin, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	begin, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -3335,7 +3335,7 @@ func TestFrameWorkStateShowExistingRejectsInvalidEventBeforeAbort(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	_, err = state.ShowExisting(&refs, &pool, Event{Kind: EventFrameHeader}, nil)
+	_, err = state.ShowExisting(&refs, &pool, &Event{Kind: EventFrameHeader}, nil)
 	if !errors.Is(err, ErrInvalidSurfaceEvent) {
 		t.Fatalf("ShowExisting err=%v want %v", err, ErrInvalidSurfaceEvent)
 	}
@@ -3349,7 +3349,7 @@ func TestFrameWorkStateShowExistingRejectsMissingReferenceBeforeAbort(t *testing
 	var refs SurfaceReferences
 	var releases [parser.RefFrames]int
 	var state FrameWorkState
-	begin, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	begin, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -3358,7 +3358,7 @@ func TestFrameWorkStateShowExistingRejectsMissingReferenceBeforeAbort(t *testing
 		t.Fatal(err)
 	}
 
-	_, err = state.ShowExisting(&refs, &pool, showExistingWorkEvent(0, parser.FrameTypeInter), releases[:])
+	_, err = state.ShowExisting(&refs, &pool, showExistingWorkEventPtr(0, parser.FrameTypeInter), releases[:])
 	if !errors.Is(err, ErrInvalidSurfaceReference) {
 		t.Fatalf("ShowExisting err=%v want %v", err, ErrInvalidSurfaceReference)
 	}
@@ -3380,7 +3380,7 @@ func TestFrameWorkStateShowExistingKeepsActiveOnAbortError(t *testing.T) {
 	}
 
 	var state FrameWorkState
-	begin, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	begin, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -3389,7 +3389,7 @@ func TestFrameWorkStateShowExistingKeepsActiveOnAbortError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = state.ShowExisting(&refs, nil, showExistingWorkEvent(0, parser.FrameTypeInter), nil)
+	_, err = state.ShowExisting(&refs, nil, showExistingWorkEventPtr(0, parser.FrameTypeInter), nil)
 	if !errors.Is(err, frame.ErrInvalidPool) {
 		t.Fatalf("ShowExisting err=%v want %v", err, frame.ErrInvalidPool)
 	}
@@ -3402,7 +3402,7 @@ func TestFrameWorkStateAbortIfEventDropsFrameWork(t *testing.T) {
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	plan, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	plan, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -3411,7 +3411,7 @@ func TestFrameWorkStateAbortIfEventDropsFrameWork(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	aborted, err := state.AbortIfEventDropsFrameWork(&pool, Event{Kind: EventTemporalDelimiter, NewTemporalUnit: true})
+	aborted, err := state.AbortIfEventDropsFrameWork(&pool, &Event{Kind: EventTemporalDelimiter, NewTemporalUnit: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3427,7 +3427,7 @@ func TestFrameWorkStateAbortIfShowExistingFrameDropsFrameWork(t *testing.T) {
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	plan, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	plan, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -3436,7 +3436,7 @@ func TestFrameWorkStateAbortIfShowExistingFrameDropsFrameWork(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	aborted, err := state.AbortIfEventDropsFrameWork(&pool, Event{Kind: EventExistingFrame})
+	aborted, err := state.AbortIfEventDropsFrameWork(&pool, &Event{Kind: EventExistingFrame})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3450,7 +3450,7 @@ func TestFrameWorkStateAbortIfShowExistingFrameDropsFrameWork(t *testing.T) {
 
 func TestFrameWorkStateAbortIfEventDropsFrameWorkNoop(t *testing.T) {
 	var nilState *FrameWorkState
-	aborted, err := nilState.AbortIfEventDropsFrameWork(nil, Event{Kind: EventTemporalDelimiter, NewTemporalUnit: true})
+	aborted, err := nilState.AbortIfEventDropsFrameWork(nil, &Event{Kind: EventTemporalDelimiter, NewTemporalUnit: true})
 	if err != nil || aborted {
 		t.Fatalf("nil state aborted=%v err=%v", aborted, err)
 	}
@@ -3458,18 +3458,18 @@ func TestFrameWorkStateAbortIfEventDropsFrameWorkNoop(t *testing.T) {
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	if aborted, err = state.AbortIfEventDropsFrameWork(&pool, Event{Kind: EventTemporalDelimiter, NewTemporalUnit: true}); err != nil || aborted {
+	if aborted, err = state.AbortIfEventDropsFrameWork(&pool, &Event{Kind: EventTemporalDelimiter, NewTemporalUnit: true}); err != nil || aborted {
 		t.Fatalf("inactive state aborted=%v err=%v", aborted, err)
 	}
 
-	if _, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	if _, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
 	}, 32, nil, 1, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	aborted, err = state.AbortIfEventDropsFrameWork(&pool, Event{Kind: EventSequenceHeader, OperatingParametersChanged: true})
+	aborted, err = state.AbortIfEventDropsFrameWork(&pool, &Event{Kind: EventSequenceHeader, OperatingParametersChanged: true})
 	if err != nil || aborted || !state.Active() || pool.Available() != 0 {
 		t.Fatalf("non-drop event aborted=%v err=%v active=%v available=%d", aborted, err, state.Active(), pool.Available())
 	}
@@ -3479,7 +3479,7 @@ func TestFrameWorkStateAbortIfEventDropsFrameWorkKeepsActiveOnError(t *testing.T
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	plan, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	plan, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -3488,7 +3488,7 @@ func TestFrameWorkStateAbortIfEventDropsFrameWorkKeepsActiveOnError(t *testing.T
 		t.Fatal(err)
 	}
 
-	aborted, err := state.AbortIfEventDropsFrameWork(nil, Event{Kind: EventSequenceHeader, NewCodedVideoSequence: true})
+	aborted, err := state.AbortIfEventDropsFrameWork(nil, &Event{Kind: EventSequenceHeader, NewCodedVideoSequence: true})
 	if !errors.Is(err, frame.ErrInvalidPool) {
 		t.Fatalf("AbortIfEventDropsFrameWork err=%v want %v", err, frame.ErrInvalidPool)
 	}
@@ -3502,13 +3502,13 @@ func TestFrameWorkStateRejectsInvalidState(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	_, err := state.PlanTile(Event{Kind: EventTileGroup}, 1, spans[:], jobs[:], batches[:])
+	_, err := state.PlanTile(&Event{Kind: EventTileGroup}, 1, spans[:], jobs[:], batches[:])
 	if !errors.Is(err, ErrInvalidFrameWorkState) {
 		t.Fatalf("inactive PlanTile err=%v want %v", err, ErrInvalidFrameWorkState)
 	}
 
 	var releases [parser.RefFrames]int
-	_, err = state.Finish(nil, nil, finalFrameEvent(0xff), releases[:])
+	_, err = state.Finish(nil, nil, finalFrameEventPtr(0xff), releases[:])
 	if !errors.Is(err, ErrInvalidFrameWorkState) {
 		t.Fatalf("inactive Finish err=%v want %v", err, ErrInvalidFrameWorkState)
 	}
@@ -3530,10 +3530,10 @@ func TestFrameWorkStateRejectsInvalidState(t *testing.T) {
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
 	}
-	if _, _, err := state.Begin(&refs, &pool, testSequence(), event, 32, nil, 1, nil, nil, nil); err != nil {
+	if _, _, err := state.Begin(&refs, &pool, testSequence(), &event, 32, nil, 1, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = state.Begin(&refs, &pool, testSequence(), event, 32, nil, 1, nil, nil, nil)
+	_, _, err = state.Begin(&refs, &pool, testSequence(), &event, 32, nil, 1, nil, nil, nil)
 	if !errors.Is(err, ErrInvalidFrameWorkState) {
 		t.Fatalf("active Begin err=%v want %v", err, ErrInvalidFrameWorkState)
 	}
@@ -3546,7 +3546,7 @@ func TestFrameWorkStateAbortReleasesSurface(t *testing.T) {
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	plan, output, err := state.Begin(&refs, &pool, testSequence(), Event{
+	plan, output, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -3579,7 +3579,7 @@ func TestFrameWorkStateKeepsActiveOnAbortError(t *testing.T) {
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	plan, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	plan, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -3614,7 +3614,7 @@ func TestFrameWorkStateKeepsActiveOnFinishError(t *testing.T) {
 	}
 
 	var state FrameWorkState
-	plan, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	plan, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -3626,7 +3626,7 @@ func TestFrameWorkStateKeepsActiveOnFinishError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = state.Finish(&refs, &pool, finalFrameEvent(0xff), releases[:])
+	_, err = state.Finish(&refs, &pool, finalFrameEventPtr(0xff), releases[:])
 	if !errors.Is(err, frame.ErrInvalidSlot) {
 		t.Fatalf("Finish err=%v want %v", err, frame.ErrInvalidSlot)
 	}
@@ -3660,7 +3660,7 @@ func TestPlanTileWorkFrameEvent(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	plan, err := PlanTileWork(events[1], 1, spans[:], jobs[:], batches[:])
+	plan, err := PlanTileWork(&events[1], 1, spans[:], jobs[:], batches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3702,7 +3702,7 @@ func TestPlanTileWorkPropagatesContextUpdateTile(t *testing.T) {
 	var jobs [2]tile.Job
 	var batches [2]threading.Batch
 
-	plan, err := PlanTileWork(event, 1, spans[:], jobs[:], batches[:])
+	plan, err := PlanTileWork(&event, 1, spans[:], jobs[:], batches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3721,7 +3721,7 @@ func TestPlanTileWorkRejectsNonTileEvent(t *testing.T) {
 	var spans [1]parser.TileSpan
 	var jobs [1]tile.Job
 	var batches [1]threading.Batch
-	_, err := PlanTileWork(Event{Kind: EventSequenceHeader}, 1, spans[:], jobs[:], batches[:])
+	_, err := PlanTileWork(&Event{Kind: EventSequenceHeader}, 1, spans[:], jobs[:], batches[:])
 	if !errors.Is(err, ErrInvalidTileWork) {
 		t.Fatalf("PlanTileWork err=%v want %v", err, ErrInvalidTileWork)
 	}
@@ -3747,7 +3747,7 @@ func TestPlanTileWorkAllocs(t *testing.T) {
 	var batches [1]threading.Batch
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		_, err := PlanTileWork(events[2], 1, spans[:], jobs[:], batches[:])
+		_, err := PlanTileWork(&events[2], 1, spans[:], jobs[:], batches[:])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -3769,7 +3769,7 @@ func TestBeginFrameWorkAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		pool.Reset()
 		refs.Reset()
-		plan, _, err := BeginFrameWork(&refs, &pool, testSequence(), event, 32, nil, 1, nil, nil, nil)
+		plan, _, err := BeginFrameWork(&refs, &pool, testSequence(), &event, 32, nil, 1, nil, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -3802,7 +3802,7 @@ func TestPlanFrameTileWorkAllocs(t *testing.T) {
 	var batches [1]threading.Batch
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		_, err := PlanFrameTileWork(events[2], 0, 0, 1, spans[:], jobs[:], batches[:])
+		_, err := PlanFrameTileWork(&events[2], 0, 0, 1, spans[:], jobs[:], batches[:])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -3840,15 +3840,15 @@ func TestFrameWorkStateAllocs(t *testing.T) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		_, _, err := state.Begin(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, nil, nil, nil)
+		_, _, err := state.Begin(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, nil, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = state.PlanTile(events[2], 1, spans[:], jobs[:], batches[:])
+		_, err = state.PlanTile(&events[2], 1, spans[:], jobs[:], batches[:])
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = state.Finish(&refs, &pool, events[2], releases[:]); err != nil {
+		if _, err = state.Finish(&refs, &pool, &events[2], releases[:]); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -3871,7 +3871,7 @@ func TestFrameWorkStateAbortAllocs(t *testing.T) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		if _, _, err := state.Begin(&refs, &pool, testSequence(), event, 32, nil, 1, nil, nil, nil); err != nil {
+		if _, _, err := state.Begin(&refs, &pool, testSequence(), &event, 32, nil, 1, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Abort(&pool); err != nil {
@@ -3898,10 +3898,10 @@ func TestFrameWorkStateAbortIfEventDropsFrameWorkAllocs(t *testing.T) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		if _, _, err := state.Begin(&refs, &pool, testSequence(), begin, 32, nil, 1, nil, nil, nil); err != nil {
+		if _, _, err := state.Begin(&refs, &pool, testSequence(), &begin, 32, nil, 1, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
-		aborted, err := state.AbortIfEventDropsFrameWork(&pool, drop)
+		aborted, err := state.AbortIfEventDropsFrameWork(&pool, &drop)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -3939,10 +3939,10 @@ func TestFrameWorkStateFinishIfEventCompletesFrameWorkAllocs(t *testing.T) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		if _, _, err := state.Begin(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, nil, nil, nil); err != nil {
+		if _, _, err := state.Begin(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
-		completed, _, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, events[2], releases[:])
+		completed, _, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, &events[2], releases[:])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -3978,10 +3978,10 @@ func TestFrameWorkStateShowExistingAllocs(t *testing.T) {
 		if _, err := refs.Refresh(1<<0, reference, releases[:]); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := state.Begin(&refs, &pool, testSequence(), begin, 32, nil, 1, nil, nil, nil); err != nil {
+		if _, _, err := state.Begin(&refs, &pool, testSequence(), &begin, 32, nil, 1, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
-		plan, err := state.ShowExisting(&refs, &pool, show, releases[:])
+		plan, err := state.ShowExisting(&refs, &pool, &show, releases[:])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4022,21 +4022,21 @@ func TestFrameWorkStatePlanEventAllocs(t *testing.T) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		step, output, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:], releases[:])
+		step, output, err := state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, spans[:], jobs[:], batches[:], releases[:])
 		if err != nil {
 			t.Fatal(err)
 		}
 		if step.Kind != FrameWorkStepBegin || output == nil {
 			t.Fatalf("begin step=%+v output=%p", step, output)
 		}
-		step, output, err = state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[2], 32, nil, 1, spans[:], jobs[:], batches[:], releases[:])
+		step, output, err = state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[2], 32, nil, 1, spans[:], jobs[:], batches[:], releases[:])
 		if err != nil {
 			t.Fatal(err)
 		}
 		if step.Kind != FrameWorkStepTile || output != nil {
 			t.Fatalf("tile step=%+v output=%p", step, output)
 		}
-		completed, _, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, events[2], releases[:])
+		completed, _, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, &events[2], releases[:])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4163,10 +4163,10 @@ func TestFrameWorkStateRunStepAllocs(t *testing.T) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		if _, _, err := state.Begin(&refs, &pool, testSequence(), begin, 32, nil, 1, nil, nil, nil); err != nil {
+		if _, _, err := state.Begin(&refs, &pool, testSequence(), &begin, 32, nil, 1, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
-		result, err := state.RunStep(&refs, &pool, final, step, workerPool, jobs[:], batches[:], releases[:], func(threading.Batch, []tile.Job) error {
+		result, err := state.RunStep(&refs, &pool, &final, step, workerPool, jobs[:], batches[:], releases[:], func(threading.Batch, []tile.Job) error {
 			return nil
 		})
 		if err != nil {
@@ -4208,11 +4208,11 @@ func TestFrameWorkStateRunStepWithContextAllocs(t *testing.T) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		_, output, err := state.Begin(&refs, &pool, testSequence(), begin, 32, nil, 1, nil, nil, nil)
+		_, output, err := state.Begin(&refs, &pool, testSequence(), &begin, 32, nil, 1, nil, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := state.RunStepWithContext(&refs, &pool, final, step, workerPool, output, nil, jobs[:], batches[:], releases[:], func(FrameWorkBatch) error {
+		result, err := state.RunStepWithContext(&refs, &pool, &final, step, workerPool, output, nil, jobs[:], batches[:], releases[:], func(FrameWorkBatch) error {
 			return nil
 		})
 		if err != nil {
@@ -4265,7 +4265,7 @@ func TestFrameWorkStateRunEventWithContextAllocs(t *testing.T) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		result, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, noopFrameWorkBatch)
+		result, err := state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, noopFrameWorkBatch)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4317,7 +4317,7 @@ func TestFrameWorkStateRunEventWithContextRunnerAllocs(t *testing.T) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		result, err := state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, runner)
+		result, err := state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, runner)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4375,7 +4375,7 @@ func TestFrameWorkStateRunEventWithResidualRunnerAllocs(t *testing.T) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		result, err := state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &runner)
+		result, err := state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &runner)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4444,7 +4444,7 @@ func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilterAllocs(t *tes
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		result, err := state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &side, &runner, &post)
+		result, err := state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &side, &runner, &post)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4480,7 +4480,7 @@ func BenchmarkPlanTileWork(b *testing.B) {
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _ = PlanTileWork(events[2], 1, spans[:], jobs[:], batches[:])
+		_, _ = PlanTileWork(&events[2], 1, spans[:], jobs[:], batches[:])
 	}
 }
 
@@ -4505,7 +4505,7 @@ func BenchmarkPlanFrameTileWork(b *testing.B) {
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _ = PlanFrameTileWork(events[2], 0, 0, 1, spans[:], jobs[:], batches[:])
+		_, _ = PlanFrameTileWork(&events[2], 0, 0, 1, spans[:], jobs[:], batches[:])
 	}
 }
 
@@ -4538,9 +4538,9 @@ func BenchmarkFrameWorkState(b *testing.B) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		_, _, _ = state.Begin(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, nil, nil, nil)
-		_, _ = state.PlanTile(events[2], 1, spans[:], jobs[:], batches[:])
-		_, _ = state.Finish(&refs, &pool, events[2], releases[:])
+		_, _, _ = state.Begin(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, nil, nil, nil)
+		_, _ = state.PlanTile(&events[2], 1, spans[:], jobs[:], batches[:])
+		_, _ = state.Finish(&refs, &pool, &events[2], releases[:])
 	}
 }
 
@@ -4559,7 +4559,7 @@ func BenchmarkFrameWorkStateAbort(b *testing.B) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		_, _, _ = state.Begin(&refs, &pool, testSequence(), event, 32, nil, 1, nil, nil, nil)
+		_, _, _ = state.Begin(&refs, &pool, testSequence(), &event, 32, nil, 1, nil, nil, nil)
 		_ = state.Abort(&pool)
 	}
 }
@@ -4580,8 +4580,8 @@ func BenchmarkFrameWorkStateAbortIfEventDropsFrameWork(b *testing.B) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		_, _, _ = state.Begin(&refs, &pool, testSequence(), begin, 32, nil, 1, nil, nil, nil)
-		_, _ = state.AbortIfEventDropsFrameWork(&pool, drop)
+		_, _, _ = state.Begin(&refs, &pool, testSequence(), &begin, 32, nil, 1, nil, nil, nil)
+		_, _ = state.AbortIfEventDropsFrameWork(&pool, &drop)
 	}
 }
 
@@ -4611,8 +4611,8 @@ func BenchmarkFrameWorkStateFinishIfEventCompletesFrameWork(b *testing.B) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		_, _, _ = state.Begin(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, nil, nil, nil)
-		_, _, _ = state.FinishIfEventCompletesFrameWork(&refs, &pool, events[2], releases[:])
+		_, _, _ = state.Begin(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, nil, nil, nil)
+		_, _, _ = state.FinishIfEventCompletesFrameWork(&refs, &pool, &events[2], releases[:])
 	}
 }
 
@@ -4635,8 +4635,8 @@ func BenchmarkFrameWorkStateShowExisting(b *testing.B) {
 		state.Reset()
 		reference, _, _ := pool.Acquire()
 		_, _ = refs.Refresh(1<<0, reference, releases[:])
-		_, _, _ = state.Begin(&refs, &pool, testSequence(), begin, 32, nil, 1, nil, nil, nil)
-		_, _ = state.ShowExisting(&refs, &pool, show, releases[:])
+		_, _, _ = state.Begin(&refs, &pool, testSequence(), &begin, 32, nil, 1, nil, nil, nil)
+		_, _ = state.ShowExisting(&refs, &pool, &show, releases[:])
 	}
 }
 
@@ -4669,9 +4669,9 @@ func BenchmarkFrameWorkStatePlanEvent(b *testing.B) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		_, _, _ = state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[1], 32, nil, 1, spans[:], jobs[:], batches[:], releases[:])
-		_, _, _ = state.PlanEvent(&refs, &pool, events[0].SequenceHeader, events[2], 32, nil, 1, spans[:], jobs[:], batches[:], releases[:])
-		_, _, _ = state.FinishIfEventCompletesFrameWork(&refs, &pool, events[2], releases[:])
+		_, _, _ = state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[1], 32, nil, 1, spans[:], jobs[:], batches[:], releases[:])
+		_, _, _ = state.PlanEvent(&refs, &pool, events[0].SequenceHeader, &events[2], 32, nil, 1, spans[:], jobs[:], batches[:], releases[:])
+		_, _, _ = state.FinishIfEventCompletesFrameWork(&refs, &pool, &events[2], releases[:])
 	}
 }
 
@@ -4768,8 +4768,8 @@ func BenchmarkFrameWorkStateRunStep(b *testing.B) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		_, _, _ = state.Begin(&refs, &pool, testSequence(), begin, 32, nil, 1, nil, nil, nil)
-		_, _ = state.RunStep(&refs, &pool, final, step, workerPool, jobs[:], batches[:], releases[:], func(threading.Batch, []tile.Job) error {
+		_, _, _ = state.Begin(&refs, &pool, testSequence(), &begin, 32, nil, 1, nil, nil, nil)
+		_, _ = state.RunStep(&refs, &pool, &final, step, workerPool, jobs[:], batches[:], releases[:], func(threading.Batch, []tile.Job) error {
 			return nil
 		})
 	}
@@ -4803,8 +4803,8 @@ func BenchmarkFrameWorkStateRunStepWithContext(b *testing.B) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		_, output, _ := state.Begin(&refs, &pool, testSequence(), begin, 32, nil, 1, nil, nil, nil)
-		_, _ = state.RunStepWithContext(&refs, &pool, final, step, workerPool, output, nil, jobs[:], batches[:], releases[:], func(FrameWorkBatch) error {
+		_, output, _ := state.Begin(&refs, &pool, testSequence(), &begin, 32, nil, 1, nil, nil, nil)
+		_, _ = state.RunStepWithContext(&refs, &pool, &final, step, workerPool, output, nil, jobs[:], batches[:], releases[:], func(FrameWorkBatch) error {
 			return nil
 		})
 	}
@@ -4849,7 +4849,7 @@ func BenchmarkFrameWorkStateRunEventWithContext(b *testing.B) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		_, _ = state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, noopFrameWorkBatch)
+		_, _ = state.RunEventWithContext(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, noopFrameWorkBatch)
 	}
 }
 
@@ -4893,7 +4893,7 @@ func BenchmarkFrameWorkStateRunEventWithContextRunner(b *testing.B) {
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		_, _ = state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, runner)
+		_, _ = state.RunEventWithContextRunner(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, runner)
 	}
 }
 
@@ -4982,7 +4982,7 @@ func BenchmarkFrameWorkStateRunEventWithResidualSideDataPostFilter(b *testing.B)
 	pool.Reset()
 	refs.Reset()
 	state.Reset()
-	result, err := state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &side, &runner, &post)
+	result, err := state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &side, &runner, &post)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -4998,7 +4998,7 @@ func BenchmarkFrameWorkStateRunEventWithResidualSideDataPostFilter(b *testing.B)
 		pool.Reset()
 		refs.Reset()
 		state.Reset()
-		result, err := state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, events[0].SequenceHeader, events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &side, &runner, &post)
+		result, err := state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, events[0].SequenceHeader, &events[1], 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &side, &runner, &post)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -5023,7 +5023,7 @@ func BenchmarkBeginFrameWork(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		pool.Reset()
 		refs.Reset()
-		_, _, _ = BeginFrameWork(&refs, &pool, testSequence(), event, 32, nil, 1, nil, nil, nil)
+		_, _, _ = BeginFrameWork(&refs, &pool, testSequence(), &event, 32, nil, 1, nil, nil, nil)
 	}
 }
 

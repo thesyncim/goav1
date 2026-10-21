@@ -241,7 +241,7 @@ func TestRunEventWithContextAndExternalReferencesNilProvider(t *testing.T) {
 	var state FrameWorkState
 	var refs SurfaceReferences
 	var event Event
-	if _, err := state.RunEventWithContextAndExternalReferences(&refs, nil, parser.SequenceHeader{}, event, 32, nil, nil, 1, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil); !errors.Is(err, ErrInvalidSurfaceReference) {
+	if _, err := state.RunEventWithContextAndExternalReferences(&refs, nil, parser.SequenceHeader{}, &event, 32, nil, nil, 1, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil); !errors.Is(err, ErrInvalidSurfaceReference) {
 		t.Fatalf("nil-provider err=%v want %v", err, ErrInvalidSurfaceReference)
 	}
 }
@@ -250,7 +250,7 @@ func TestFrameWorkStateFinishExternalPublishesPostFilterGlobalSurface(t *testing
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	begin, _, err := state.Begin(&refs, &pool, testSequence(), Event{
+	begin, _, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -277,7 +277,7 @@ func TestFrameWorkStateFinishExternalPublishesPostFilterGlobalSurface(t *testing
 	state.sharedFrameContextGlobalSurface = func(local int) int { return local }
 
 	var releases [parser.RefFrames]int
-	completed, releaseCount, err := state.finishIfEventCompletesFrameWorkExternal(&refs, &pool, finalFrameEvent(0xff), releases[:], func(local int) int { return local }, releaser, publishedGlobalSurface, true)
+	completed, releaseCount, err := state.finishIfEventCompletesFrameWorkExternal(&refs, &pool, finalFrameEventPtr(0xff), releases[:], func(local int) int { return local }, releaser, publishedGlobalSurface, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func TestFrameWorkStateFinishExternalPublishesTemporalMotionFrame(t *testing.T) 
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
 	var state FrameWorkState
-	begin, output, err := state.Begin(&refs, &pool, testSequence(), Event{
+	begin, output, err := state.Begin(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey, OrderHint: 7},
 		FrameSize:   testFrameSize(16, 16),
@@ -325,7 +325,7 @@ func TestFrameWorkStateFinishExternalPublishesTemporalMotionFrame(t *testing.T) 
 	event := finalFrameEvent(0x03)
 	event.FrameHeader.FrameType = parser.FrameTypeInter
 	event.FrameHeader.OrderHint = 7
-	completed, releaseCount, err := state.finishIfEventCompletesFrameWorkExternal(&refs, &pool, event, releases[:], func(local int) int { return local }, nil, -1, false)
+	completed, releaseCount, err := state.finishIfEventCompletesFrameWorkExternal(&refs, &pool, &event, releases[:], func(local int) int { return local }, nil, -1, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -306,7 +306,7 @@ func FuzzPublicRunDecoderFrameWorkEventWithResidualRunner(f *testing.F) {
 		var scratchSpans [2]av1.TileSpan
 		var scratchJobs [2]av1.TileJob
 		var scratchBatches [1]av1.TileBatch
-		eventScratch, err := av1.DecoderFrameWorkResidualEventScratchLen(sequence, event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+		eventScratch, err := av1.DecoderFrameWorkResidualEventScratchLen(sequence, &event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -318,7 +318,7 @@ func FuzzPublicRunDecoderFrameWorkEventWithResidualRunner(f *testing.F) {
 		var side *av1.DecoderFrameWorkSideData
 		var boundSide av1.DecoderFrameWorkSideData
 		if sideData {
-			boundSide, err = av1.BindDecoderFrameWorkResidualEventSideData(sequence, event, publicDecoderFrameWorkSideDataScratch(eventScratch.SideData))
+			boundSide, err = av1.BindDecoderFrameWorkResidualEventSideData(sequence, &event, publicDecoderFrameWorkSideDataScratch(eventScratch.SideData))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -11680,7 +11680,7 @@ func (h *publicRTCLayerPoolDecodeHarness) runEvents(t *testing.T, payloadIndex i
 		}
 
 		framePool := publicRTCLayerDecodeFramePool(t, &h.layerPool, h.sequence, event)
-		size, err := goav1.DecoderFrameWorkResidualEventScratchLen(h.sequence, event, h.workers, h.planSpans, h.planJobs, h.planBatches)
+		size, err := goav1.DecoderFrameWorkResidualEventScratchLen(h.sequence, &event, h.workers, h.planSpans, h.planJobs, h.planBatches)
 		if err != nil {
 			t.Fatalf("payload %d event %d scratch len: %v", payloadIndex, eventIndex, err)
 		}
@@ -11745,7 +11745,7 @@ func (h *publicRTCLayerPoolDecodeHarness) runEvents(t *testing.T, payloadIndex i
 				event.FrameHeader.FrameType, event.FrameSize.RefreshFrameFlags, h.refs, framePool == nil, state.Surface, event.FrameSize, err)
 		}
 		h.assertReferencedSurfacesResolvable(t, payloadIndex, eventIndex, event)
-		if goav1.DecoderEventOutputsFrame(event) {
+		if goav1.DecoderEventOutputsFrame(&event) {
 			if result.Output == nil {
 				t.Fatalf("payload %d event %d output frame is nil", payloadIndex, eventIndex)
 			}

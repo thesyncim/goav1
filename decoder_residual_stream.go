@@ -179,7 +179,7 @@ func (r *DecoderFrameWorkResidualStreamRunner) ResetRTP() error {
 // stream runner from caller-owned stream and event scratch. It first binds the
 // nested residual event runner, then binds parser/RTP scratch and stream output
 // slots around it.
-func BindDecoderFrameWorkResidualStreamEventRunner(size DecoderFrameWorkResidualStreamScratchSize, stream *DecoderStream, sequence SequenceHeader, event DecoderEvent, runtime DecoderFrameWorkResidualEventRuntime, scratch DecoderFrameWorkResidualStreamScratch, batchRunner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkResidualStreamRunner, DecoderFrameWorkSideData, error) {
+func BindDecoderFrameWorkResidualStreamEventRunner(size DecoderFrameWorkResidualStreamScratchSize, stream *DecoderStream, sequence SequenceHeader, event *DecoderEvent, runtime DecoderFrameWorkResidualEventRuntime, scratch DecoderFrameWorkResidualStreamScratch, batchRunner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkResidualStreamRunner, DecoderFrameWorkSideData, error) {
 	if stream == nil {
 		return DecoderFrameWorkResidualStreamRunner{}, DecoderFrameWorkSideData{}, ErrDecoderInvalidFrameWorkState
 	}
@@ -203,7 +203,7 @@ func BindDecoderFrameWorkResidualStreamEventRunner(size DecoderFrameWorkResidual
 // DecoderFrameWorkResidualRTPPayloadStreamPlan, or
 // DecoderFrameWorkResidualRTPPayloadsStreamPlan.
 func BindDecoderFrameWorkResidualStreamPlanRunner(plan DecoderFrameWorkResidualStreamPlan, stream *DecoderStream, runtime DecoderFrameWorkResidualEventRuntime, scratch DecoderFrameWorkResidualStreamScratch, batchRunner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkResidualStreamRunner, DecoderFrameWorkSideData, error) {
-	return BindDecoderFrameWorkResidualStreamEventRunner(plan.Size, stream, plan.Bind.Sequence, plan.Bind.Event, runtime, scratch, batchRunner)
+	return BindDecoderFrameWorkResidualStreamEventRunner(plan.Size, stream, plan.Bind.Sequence, &plan.Bind.Event, runtime, scratch, batchRunner)
 }
 
 // BindDecoderFrameWorkResidualStreamRunner binds a stream runner from

@@ -563,7 +563,7 @@ func TestFrameWorkStateRunStepWithPostFilterGateRejectsBeforePublish(t *testing.
 		Tile: FrameTileWorkPlan{Surface: surface},
 	}
 
-	result, err := state.RunStepWithPostFilter(&refs, &pool, event, step, nil, nil, nil, releases[:], nil, func(ctx FrameWorkPostFilterContext) error {
+	result, err := state.RunStepWithPostFilter(&refs, &pool, &event, step, nil, nil, nil, releases[:], nil, func(ctx FrameWorkPostFilterContext) error {
 		return ctx.RequireNoActivePostFilters()
 	})
 	if !errors.Is(err, ErrUnsupportedPostFilter) {
@@ -607,7 +607,7 @@ func TestFrameWorkStateRunStepWithPostFilterSkipsHookUntilFinalTileGroup(t *test
 	}
 
 	called := false
-	result, err := state.RunStepWithPostFilter(&refs, &pool, event, step, nil, nil, nil, releases[:], nil, func(FrameWorkPostFilterContext) error {
+	result, err := state.RunStepWithPostFilter(&refs, &pool, &event, step, nil, nil, nil, releases[:], nil, func(FrameWorkPostFilterContext) error {
 		called = true
 		return nil
 	})

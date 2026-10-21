@@ -264,7 +264,7 @@ func selectOutput(events []av1.DecoderEvent, outputs []*av1.Frame, spatialLayer 
 	var pinnedSpatial int8 = -1
 	outIdx := 0
 	for i := range events {
-		if !av1.DecoderEventOutputsFrame(events[i]) {
+		if !av1.DecoderEventOutputsFrame(&events[i]) {
 			continue
 		}
 		if outIdx >= len(outputs) {

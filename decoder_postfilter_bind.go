@@ -636,11 +636,10 @@ func (r *DecoderFrameWorkCallerPostFilterScratchRunner) PostFilterOutput() (*Fra
 // postfilter context for scratch sizing. output is filled with a geometry-only
 // coded-frame view; its pixel slices are nil and must not be used to apply
 // filters.
-func DecoderFrameWorkPostFilterScratchContext(sequence SequenceHeader, event DecoderEvent, align int, side *DecoderFrameWorkSideData, output *Frame) (DecoderFrameWorkPostFilterContext, error) {
+func DecoderFrameWorkPostFilterScratchContext(sequence SequenceHeader, event *DecoderEvent, align int, side *DecoderFrameWorkSideData, output *Frame) (DecoderFrameWorkPostFilterContext, error) {
 	if output == nil {
 		return DecoderFrameWorkPostFilterContext{}, ErrFrameInvalidSlot
 	}
-	event.SequenceHeader = sequence
 	format, err := FrameCodedFormatFromHeaders(sequence, event.FrameSize, align)
 	if err != nil {
 		return DecoderFrameWorkPostFilterContext{}, err
@@ -651,9 +650,10 @@ func DecoderFrameWorkPostFilterScratchContext(sequence SequenceHeader, event Dec
 	}
 	*output = decoderFrameWorkPostFilterScratchFrame(format, layout)
 	ctx := DecoderFrameWorkPostFilterContext{
-		Event:  event,
+		Event:  *event,
 		Output: output,
 	}
+	ctx.Event.SequenceHeader = sequence
 	if side != nil {
 		ctx.CDEFIndexMap = &side.CDEFIndexMap
 		ctx.LoopFilterMap = &side.LoopFilterMap

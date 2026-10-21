@@ -609,7 +609,7 @@ func TestPublicDecoderFrameWorkCallerPostFilterScratchRunner(t *testing.T) {
 		},
 	}
 	var scratchOutput av1.Frame
-	scratchCtx, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, 32, nil, &scratchOutput)
+	scratchCtx, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, &event, 32, nil, &scratchOutput)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -619,11 +619,11 @@ func TestPublicDecoderFrameWorkCallerPostFilterScratchRunner(t *testing.T) {
 		len(scratchOutput.Y.Pix) != 0 {
 		t.Fatalf("scratch ctx=%+v output=%+v", scratchCtx, scratchOutput)
 	}
-	if _, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, 32, nil, nil); !errors.Is(err, av1.ErrFrameInvalidSlot) {
+	if _, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, &event, 32, nil, nil); !errors.Is(err, av1.ErrFrameInvalidSlot) {
 		t.Fatalf("nil scratch output err=%v want %v", err, av1.ErrFrameInvalidSlot)
 	}
 	allocs := testing.AllocsPerRun(1000, func() {
-		_, err = av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, 32, nil, &scratchOutput)
+		_, err = av1.DecoderFrameWorkPostFilterScratchContext(sequence, &event, 32, nil, &scratchOutput)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -717,7 +717,7 @@ func TestPublicDecoderFrameWorkReusableCallerPostFilterRunner(t *testing.T) {
 		},
 	}
 	var scratchOutput av1.Frame
-	_, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, 32, nil, &scratchOutput)
+	_, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, &event, 32, nil, &scratchOutput)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -801,7 +801,7 @@ func TestPublicDecoderFrameWorkSideDataSet(t *testing.T) {
 	}
 	var refs av1.DecoderSurfaceReferences
 	var state av1.DecoderFrameWorkState
-	plan, output, err := state.Begin(&refs, &pool, sequence, begin, 32, nil, 1, nil, nil, nil)
+	plan, output, err := state.Begin(&refs, &pool, sequence, &begin, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -819,7 +819,7 @@ func TestPublicDecoderFrameWorkSideDataSet(t *testing.T) {
 	if err := av1.SetDecoderFrameWorkSideData(&state, badSide); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
 		t.Fatalf("invalid loop-filter map err=%v want %v", err, av1.ErrThreadingInvalidBatch)
 	}
-	ctx, err := state.PostFilterContext(&pool, final, step, false)
+	ctx, err := state.PostFilterContext(&pool, &final, step, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -841,7 +841,7 @@ func TestPublicDecoderFrameWorkSideDataSet(t *testing.T) {
 	if allocs != 0 {
 		t.Fatalf("SetDecoderFrameWorkSideData allocated: %f", allocs)
 	}
-	ctx, err = state.PostFilterContext(&pool, final, step, true)
+	ctx, err = state.PostFilterContext(&pool, &final, step, true)
 	if err != nil {
 		t.Fatal(err)
 	}

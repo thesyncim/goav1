@@ -20,7 +20,7 @@ func TestTemporalMotionReferencePublishAndResolve(t *testing.T) {
 		},
 		ReferenceOrderHints: [parser.InterRefsPerFrame]uint8{1, 2, 3, 4, 5, 6, 7},
 	}
-	if err := PublishTemporalMotionReference(event, 2, mvFrame, store); err != nil {
+	if err := PublishTemporalMotionReference(&event, 2, mvFrame, store); err != nil {
 		t.Fatal(err)
 	}
 	if store[2].Frame != mvFrame || store[2].OrderHint != 9 ||
@@ -42,7 +42,7 @@ func TestTemporalMotionReferencePublishAndResolve(t *testing.T) {
 func TestTemporalMotionReferencePublishMarksIntraOnly(t *testing.T) {
 	mvFrame := testDecoderReferenceMVFrame(t)
 	store := make([]tile.TemporalMotionReferenceFrame, 1)
-	err := PublishTemporalMotionReference(Event{
+	err := PublishTemporalMotionReference(&Event{
 		Kind:        EventTileGroup,
 		TileGroup:   parser.TileGroup{Final: true},
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
@@ -74,13 +74,13 @@ func TestTemporalMotionReferenceResolveIsAtomic(t *testing.T) {
 func TestTemporalMotionReferenceRejectsInvalidInputs(t *testing.T) {
 	mvFrame := testDecoderReferenceMVFrame(t)
 	store := make([]tile.TemporalMotionReferenceFrame, 1)
-	if err := PublishTemporalMotionReference(Event{Kind: EventFrame}, 0, mvFrame, store); !errors.Is(err, ErrInvalidSurfaceEvent) {
+	if err := PublishTemporalMotionReference(&Event{Kind: EventFrame}, 0, mvFrame, store); !errors.Is(err, ErrInvalidSurfaceEvent) {
 		t.Fatalf("non-final publish err=%v want %v", err, ErrInvalidSurfaceEvent)
 	}
-	if err := PublishTemporalMotionReference(Event{Kind: EventFrame, TileGroup: parser.TileGroup{Final: true}}, -1, mvFrame, store); !errors.Is(err, ErrInvalidSurfaceReference) {
+	if err := PublishTemporalMotionReference(&Event{Kind: EventFrame, TileGroup: parser.TileGroup{Final: true}}, -1, mvFrame, store); !errors.Is(err, ErrInvalidSurfaceReference) {
 		t.Fatalf("bad surface err=%v want %v", err, ErrInvalidSurfaceReference)
 	}
-	if err := PublishTemporalMotionReference(Event{Kind: EventFrame, TileGroup: parser.TileGroup{Final: true}}, 1, mvFrame, store); !errors.Is(err, ErrSurfaceReferenceBufferTooSmall) {
+	if err := PublishTemporalMotionReference(&Event{Kind: EventFrame, TileGroup: parser.TileGroup{Final: true}}, 1, mvFrame, store); !errors.Is(err, ErrSurfaceReferenceBufferTooSmall) {
 		t.Fatalf("short store err=%v want %v", err, ErrSurfaceReferenceBufferTooSmall)
 	}
 	if _, err := ResolveTemporalMotionReferences([]int{0}, store, nil); !errors.Is(err, ErrSurfaceReferenceBufferTooSmall) {
@@ -102,7 +102,7 @@ func TestTemporalMotionReferenceAllocs(t *testing.T) {
 	}
 	var out [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := PublishTemporalMotionReference(event, 0, mvFrame, store); err != nil {
+		if err := PublishTemporalMotionReference(&event, 0, mvFrame, store); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := ResolveTemporalMotionReferences([]int{0}, store, out[:]); err != nil {

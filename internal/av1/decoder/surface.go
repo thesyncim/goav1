@@ -64,7 +64,7 @@ func (r *SurfaceReferences) ReleaseAll(releases []int) (int, error) {
 // FrameReferences resolves the AV1 inter-reference indices selected by a frame
 // event into caller-owned frame-pool surface indices. It returns zero for
 // intra-only frame types.
-func (r *SurfaceReferences) FrameReferences(event Event, surfaces []int) (int, error) {
+func (r *SurfaceReferences) FrameReferences(event *Event, surfaces []int) (int, error) {
 	if event.Kind != EventFrameHeader && event.Kind != EventFrame && event.Kind != EventTileGroup {
 		return 0, ErrInvalidSurfaceEvent
 	}
@@ -102,7 +102,7 @@ func (r *SurfaceReferences) FrameReferences(event Event, surfaces []int) (int, e
 
 // FinishFrame applies the reference refresh described by a complete decoded
 // frame event.
-func (r *SurfaceReferences) FinishFrame(event Event, surface int, releases []int) (int, error) {
+func (r *SurfaceReferences) FinishFrame(event *Event, surface int, releases []int) (int, error) {
 	if (event.Kind != EventFrame && event.Kind != EventTileGroup) || !event.TileGroup.Final {
 		return 0, ErrInvalidSurfaceEvent
 	}
@@ -138,7 +138,7 @@ func (r *SurfaceReferences) Refresh(flags uint8, surface int, releases []int) (i
 // ShowExistingFrame returns the referenced output surface for a
 // show_existing_frame event and applies the key-frame reference reset when AV1
 // requires it. The first return value is the surface to output.
-func (r *SurfaceReferences) ShowExistingFrame(event Event, releases []int) (int, int, error) {
+func (r *SurfaceReferences) ShowExistingFrame(event *Event, releases []int) (int, int, error) {
 	if event.Kind != EventExistingFrame || !event.FrameHeader.ShowExistingFrame {
 		return -1, 0, ErrInvalidSurfaceEvent
 	}

@@ -328,11 +328,11 @@ func frameWorkIdentityGlobalSurface(local int) int { return local }
 //
 // refs must be shared across all spatial layers that participate in the same
 // AV1 stream, because reference slots are stream-global per the AV1 spec.
-func (s *FrameWorkState) RunEventWithContextAndExternalReferences(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, provider FrameSurfaceProvider, globalSurface func(local int) int, releaser FrameSurfaceReleaser, frameContexts *SharedFrameContextStore, side FrameWorkSideDataRunner, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner) (FrameWorkEventResult, error) {
+func (s *FrameWorkState) RunEventWithContextAndExternalReferences(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event *Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, provider FrameSurfaceProvider, globalSurface func(local int) int, releaser FrameSurfaceReleaser, frameContexts *SharedFrameContextStore, side FrameWorkSideDataRunner, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner) (FrameWorkEventResult, error) {
 	return s.RunEventWithContextAndExternalReferencesWithPostPublisher(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases, workerPool, provider, globalSurface, releaser, frameContexts, side, runner, post, nil)
 }
 
-func (s *FrameWorkState) RunEventWithContextAndExternalReferencesWithPostPublisher(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, provider FrameSurfaceProvider, globalSurface func(local int) int, releaser FrameSurfaceReleaser, frameContexts *SharedFrameContextStore, side FrameWorkSideDataRunner, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner, postPublisher FrameWorkPostFilterGlobalSurfacePublisher) (FrameWorkEventResult, error) {
+func (s *FrameWorkState) RunEventWithContextAndExternalReferencesWithPostPublisher(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event *Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, workerPool *threading.Pool, provider FrameSurfaceProvider, globalSurface func(local int) int, releaser FrameSurfaceReleaser, frameContexts *SharedFrameContextStore, side FrameWorkSideDataRunner, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner, postPublisher FrameWorkPostFilterGlobalSurfacePublisher) (FrameWorkEventResult, error) {
 	if provider == nil {
 		return FrameWorkEventResult{}, ErrInvalidSurfaceReference
 	}
@@ -380,7 +380,7 @@ func (s *FrameWorkState) clearSharedFrameContext() {
 	s.sharedFrameContextGlobalSurface = nil
 }
 
-func (s *FrameWorkState) planEventWithExternalReferenceContext(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, provider FrameSurfaceProvider) (FrameWorkStep, *frame.Frame, uint8, []*frame.Frame, error) {
+func (s *FrameWorkState) planEventWithExternalReferenceContext(refs *SurfaceReferences, framePool *frame.Pool, sequence parser.SequenceHeader, event *Event, align int, referenceSurfaces []int, referenceFrames []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch, releases []int, provider FrameSurfaceProvider) (FrameWorkStep, *frame.Frame, uint8, []*frame.Frame, error) {
 	step, output, err := s.PlanEvent(refs, framePool, sequence, event, align, referenceSurfaces, workers, spans, jobs, batches, releases)
 	if err != nil {
 		return FrameWorkStep{}, nil, 0, nil, err
@@ -439,7 +439,7 @@ func (s *FrameWorkState) planEventWithExternalReferenceContext(refs *SurfaceRefe
 	return step, output, referenceCount, references, nil
 }
 
-func (s *FrameWorkState) runStepExternalRefresh(refs *SurfaceReferences, framePool *frame.Pool, event Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, jobs []tile.Job, batches []threading.Batch, releases []int, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner, postPublisher FrameWorkPostFilterGlobalSurfacePublisher, globalSurface func(local int) int, releaser FrameSurfaceReleaser) (FrameWorkStepResult, error) {
+func (s *FrameWorkState) runStepExternalRefresh(refs *SurfaceReferences, framePool *frame.Pool, event *Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, jobs []tile.Job, batches []threading.Batch, releases []int, runner threading.FrameWorkBatchRunner, post FrameWorkPostFilterRunner, postPublisher FrameWorkPostFilterGlobalSurfacePublisher, globalSurface func(local int) int, releaser FrameSurfaceReleaser) (FrameWorkStepResult, error) {
 	if !frameWorkStepMatchesEvent(event, step) {
 		return FrameWorkStepResult{}, ErrInvalidFrameWorkStep
 	}
@@ -479,7 +479,7 @@ func (s *FrameWorkState) runStepExternalRefresh(refs *SurfaceReferences, framePo
 	}, nil
 }
 
-func (s *FrameWorkState) finishIfEventCompletesFrameWorkExternal(refs *SurfaceReferences, framePool *frame.Pool, event Event, releases []int, globalSurface func(local int) int, releaser FrameSurfaceReleaser, publishedGlobalSurface int, hasPublishedGlobalSurface bool) (bool, int, error) {
+func (s *FrameWorkState) finishIfEventCompletesFrameWorkExternal(refs *SurfaceReferences, framePool *frame.Pool, event *Event, releases []int, globalSurface func(local int) int, releaser FrameSurfaceReleaser, publishedGlobalSurface int, hasPublishedGlobalSurface bool) (bool, int, error) {
 	if !EventCompletesFrameWork(event) {
 		return false, 0, nil
 	}
@@ -493,7 +493,7 @@ func (s *FrameWorkState) finishIfEventCompletesFrameWorkExternal(refs *SurfaceRe
 	return true, count, nil
 }
 
-func (s *FrameWorkState) finishExternal(refs *SurfaceReferences, framePool *frame.Pool, event Event, releases []int, globalSurface func(local int) int, releaser FrameSurfaceReleaser, publishedGlobalSurface int, hasPublishedGlobalSurface bool) (int, error) {
+func (s *FrameWorkState) finishExternal(refs *SurfaceReferences, framePool *frame.Pool, event *Event, releases []int, globalSurface func(local int) int, releaser FrameSurfaceReleaser, publishedGlobalSurface int, hasPublishedGlobalSurface bool) (int, error) {
 	if s == nil || !s.active {
 		return 0, ErrInvalidFrameWorkState
 	}

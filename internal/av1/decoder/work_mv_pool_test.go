@@ -206,7 +206,7 @@ func TestOwnedMVPoolMatchesFrozenCopy(t *testing.T) {
 		for i := range saved {
 			saved[i] = append([]tile.ReferenceMVEntry(nil), s.mvFrameStore[i].Entries...)
 		}
-		err := s.prepareTemporalMotionField(event)
+		err := s.prepareTemporalMotionField(&event)
 		wantErr := old.prepareTemporalMotionField(event)
 		if err != wantErr {
 			t.Fatalf("frame %d prepare=%v old=%v", n, err, wantErr)
@@ -238,7 +238,7 @@ func TestOwnedMVPoolMatchesFrozenCopy(t *testing.T) {
 			fillMVPoolFrame(&s.currentMVFrame, n)
 			fillMVPoolFrame(&old.currentMVFrame, n)
 		}
-		s.publishTemporalMotionFrame(event)
+		s.publishTemporalMotionFrame(&event)
 		old.publishTemporalMotionFrame(event)
 		if s.mvFrameStoreMeta != old.mvFrameStoreMeta {
 			t.Fatalf("frame %d saved metadata differs", n)
@@ -272,11 +272,11 @@ func TestOwnedMVPoolSharingAndGenericIsolation(t *testing.T) {
 		e := mvPoolEvent(1)
 		e.TileInfo.UseRefFrameMVS = false
 		e.FrameSize.RefreshFrameFlags = 255
-		if err := s.prepareTemporalMotionField(e); err != nil {
+		if err := s.prepareTemporalMotionField(&e); err != nil {
 			t.Fatal(err)
 		}
 		fillMVPoolFrame(&s.currentMVFrame, 1)
-		s.publishTemporalMotionFrame(e)
+		s.publishTemporalMotionFrame(&e)
 		current := &s.currentMVFrame.Entries[0]
 		for i := range s.mvFrameStore {
 			shared := &s.mvFrameStore[i].Entries[0] == current
@@ -301,7 +301,7 @@ func TestOwnedMVPoolSharingAndGenericIsolation(t *testing.T) {
 			}
 		}
 		e.FrameSize.RefreshFrameFlags = 0
-		if err := s.prepareTemporalMotionField(e); err != nil {
+		if err := s.prepareTemporalMotionField(&e); err != nil {
 			t.Fatal(err)
 		}
 		if owned && &s.currentMVFrame.Entries[0] == current {
@@ -327,7 +327,7 @@ func TestOwnedMVPoolIntraMetadataAndFallback(t *testing.T) {
 			}
 			e := mvPoolEvent(0)
 			e.FrameSize.AllowIntrabc = intrabc
-			if err := s.prepareTemporalMotionField(e); err != nil {
+			if err := s.prepareTemporalMotionField(&e); err != nil {
 				t.Fatal(err)
 			}
 			omit := owned && !intrabc
@@ -337,11 +337,11 @@ func TestOwnedMVPoolIntraMetadataAndFallback(t *testing.T) {
 			if (s.motionFields().current == nil) != omit {
 				t.Fatal("block-loop current-grid binding differs")
 			}
-			s.publishTemporalMotionFrame(e)
+			s.publishTemporalMotionFrame(&e)
 			s.resetActive()
 			next := mvPoolEvent(1)
 			s.Sequence = threading.FrameWorkSequenceContext{EnableOrderHint: true, OrderHintBits: 8}
-			if err := s.prepareTemporalMotionField(next); err != nil {
+			if err := s.prepareTemporalMotionField(&next); err != nil {
 				t.Fatal(err)
 			}
 			for _, ref := range s.mvReferences {
@@ -351,7 +351,7 @@ func TestOwnedMVPoolIntraMetadataAndFallback(t *testing.T) {
 			}
 			s.resetActive()
 			s.sharedFrameContexts = &SharedFrameContextStore{}
-			if err := s.prepareTemporalMotionField(next); err != nil {
+			if err := s.prepareTemporalMotionField(&next); err != nil {
 				t.Fatal(err)
 			}
 			if s.currentMVFrameValid || s.currentMVGrid != 0 || s.currentMVIntra {
@@ -359,7 +359,7 @@ func TestOwnedMVPoolIntraMetadataAndFallback(t *testing.T) {
 			}
 			s.sharedFrameContexts = nil
 			next.FrameHeader.ShowExistingFrame = true
-			if err := s.prepareTemporalMotionField(next); err != nil {
+			if err := s.prepareTemporalMotionField(&next); err != nil {
 				t.Fatal(err)
 			}
 			if s.currentMVFrameValid || s.currentMVGrid != 0 || s.currentMVIntra {
@@ -374,7 +374,7 @@ func TestOwnedMVPoolFailureAndReuse(t *testing.T) {
 	EnableOwnedTemporalMotionStorage(&s)
 	e := mvPoolEvent(1)
 	e.FrameSize.RefFrameIdx[3] = parser.RefFrames
-	if err := s.prepareTemporalMotionField(e); !errors.Is(err, ErrInvalidSurfaceReference) {
+	if err := s.prepareTemporalMotionField(&e); !errors.Is(err, ErrInvalidSurfaceReference) {
 		t.Fatalf("invalid ref error=%v", err)
 	}
 	if s.currentMVGrid != 0 || s.currentMVFrameValid {
@@ -383,14 +383,14 @@ func TestOwnedMVPoolFailureAndReuse(t *testing.T) {
 	checkMVPoolRefs(t, &s)
 	e = mvPoolEvent(1)
 	s.Sequence = threading.FrameWorkSequenceContext{EnableOrderHint: true, OrderHintBits: 0}
-	if err := s.prepareTemporalMotionField(e); err == nil {
+	if err := s.prepareTemporalMotionField(&e); err == nil {
 		t.Fatal("invalid order bits accepted")
 	}
 	if s.currentMVGrid != 0 || s.currentMVFrameValid {
 		t.Fatal("failed projection retained current grid")
 	}
 	s.Sequence = threading.FrameWorkSequenceContext{EnableOrderHint: true, OrderHintBits: 8}
-	if err := s.prepareTemporalMotionField(e); err != nil {
+	if err := s.prepareTemporalMotionField(&e); err != nil {
 		t.Fatal(err)
 	}
 	checkMVPoolRefs(t, &s)
@@ -399,10 +399,10 @@ func TestOwnedMVPoolFailureAndReuse(t *testing.T) {
 	e.TileInfo.UseRefFrameMVS = false
 	for n := 0; n < 24; n++ {
 		e.FrameSize.RefreshFrameFlags = 1 << uint(n%8)
-		if err := s.prepareTemporalMotionField(e); err != nil {
+		if err := s.prepareTemporalMotionField(&e); err != nil {
 			t.Fatal(err)
 		}
-		s.publishTemporalMotionFrame(e)
+		s.publishTemporalMotionFrame(&e)
 		s.resetActive()
 		checkMVPoolRefs(t, &s)
 	}
@@ -425,7 +425,7 @@ func TestOwnedMVPoolFinishAbortFailureLifetimes(t *testing.T) {
 	EnableOwnedTemporalMotionStorage(&s)
 	event := Event{Kind: EventFrameHeader, FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey}, FrameSize: testFrameSize(16, 16)}
 	event.FrameSize.AllowIntrabc = true // retain a writable grid for the lifecycle checks
-	plan, _, err := s.Begin(&refs, &pool, testSequence(), event, 32, nil, 1, nil, nil, nil)
+	plan, _, err := s.Begin(&refs, &pool, testSequence(), &event, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,7 +433,7 @@ func TestOwnedMVPoolFinishAbortFailureLifetimes(t *testing.T) {
 	if handle == 0 {
 		t.Fatal("Begin did not acquire current grid")
 	}
-	if _, err = s.Finish(&refs, &pool, Event{}, nil); err == nil {
+	if _, err = s.Finish(&refs, &pool, &Event{}, nil); err == nil {
 		t.Fatal("invalid finish accepted")
 	}
 	if s.currentMVGrid != handle || !s.Active() {
@@ -445,7 +445,7 @@ func TestOwnedMVPoolFinishAbortFailureLifetimes(t *testing.T) {
 	if s.currentMVGrid != 0 || s.Active() {
 		t.Fatal("Abort kept current grid")
 	}
-	plan, _, err = s.Begin(&refs, &pool, testSequence(), event, 32, nil, 1, nil, nil, nil)
+	plan, _, err = s.Begin(&refs, &pool, testSequence(), &event, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -475,11 +475,11 @@ func TestOwnedMVPoolWarmAllocs(t *testing.T) {
 	var err error
 	allocs := testing.AllocsPerRun(20, func() {
 		for i := 0; i < 12; i++ {
-			err = s.prepareTemporalMotionField(e)
+			err = s.prepareTemporalMotionField(&e)
 			if err != nil {
 				return
 			}
-			s.publishTemporalMotionFrame(e)
+			s.publishTemporalMotionFrame(&e)
 			s.resetActive()
 		}
 		s.Reset()
