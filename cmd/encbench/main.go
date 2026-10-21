@@ -9,6 +9,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"encoding/csv"
 	"flag"
 	"fmt"
@@ -105,6 +106,11 @@ func main() {
 	warmupFrames := flag.Int("warmup", 20, "frames to exclude from steady-state summary")
 	keyInterval := flag.Int("keyint", 0, "force a keyframe every N frames after frame 0 (0 = only first frame and scene cuts)")
 	infps := flag.Int("fps", fps, "frame rate for rate control and bitrate reporting")
+	fixedQ := flag.Int("qindex", 0, "fixed qindex 1..255 (disables CBR when > 0)")
+	minQ := flag.Int("minq", 0, "CBR minimum qindex (0 = encoder default)")
+	maxQ := flag.Int("maxq", 0, "CBR maximum qindex (0 = encoder default)")
+	ivfPath := flag.String("o", "", "write the encoded stream as IVF to this path")
+	reconPath := flag.String("recon", "", "write the encoder reconstruction as raw I420 to this path")
 	flag.Parse()
 	nFrames := *nframes
 	if nFrames <= 0 {
@@ -165,9 +171,20 @@ func main() {
 		return
 	}
 
+	if *fixedQ < 0 || *fixedQ > 255 || *minQ < 0 || *minQ > 255 || *maxQ < 0 || *maxQ > 255 {
+		fmt.Fprintf(os.Stderr, "invalid qindex bounds: qindex %d minq %d maxq %d\n", *fixedQ, *minQ, *maxQ)
+		os.Exit(1)
+	}
+	targetBitrate := *bitrate
+	if *fixedQ > 0 {
+		targetBitrate = 0
+	}
 	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
 		Width: w, Height: h,
-		TargetBitrate: *bitrate, Framerate: *infps,
+		TargetBitrate: targetBitrate, Framerate: *infps,
+		QIndex:         uint8(*fixedQ),
+		MinQIndex:      uint8(*minQ),
+		MaxQIndex:      uint8(*maxQ),
 		TemporalLayers: *layers,
 		TileColumns:    *tiles,
 		GoldenInterval: *golden,
@@ -219,6 +236,36 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	var ivfFile, reconFile *os.File
+	if *ivfPath != "" {
+		ivfFile, err = os.Create(*ivfPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		defer ivfFile.Close()
+		var hdr [32]byte
+		copy(hdr[0:4], "DKIF")
+		binary.LittleEndian.PutUint16(hdr[6:], 32)
+		copy(hdr[8:12], "AV01")
+		binary.LittleEndian.PutUint16(hdr[12:], uint16(w))
+		binary.LittleEndian.PutUint16(hdr[14:], uint16(h))
+		binary.LittleEndian.PutUint32(hdr[16:], uint32(*infps))
+		binary.LittleEndian.PutUint32(hdr[20:], 1)
+		binary.LittleEndian.PutUint32(hdr[24:], uint32(nFrames))
+		if _, err := ivfFile.Write(hdr[:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+	if *reconPath != "" {
+		reconFile, err = os.Create(*reconPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		defer reconFile.Close()
+	}
 	steadyStart := *warmupFrames
 	if steadyStart >= nFrames {
 		steadyStart = 0
@@ -243,6 +290,27 @@ func main() {
 		totalBytes += len(out.Data)
 		r := enc.Reconstruction()
 		p := psnr(srcs[n].Y, r.Y)
+		if ivfFile != nil {
+			var fh [12]byte
+			binary.LittleEndian.PutUint32(fh[0:], uint32(len(out.Data)))
+			binary.LittleEndian.PutUint64(fh[4:], uint64(n))
+			if _, err := ivfFile.Write(fh[:]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			if _, err := ivfFile.Write(out.Data); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}
+		if reconFile != nil {
+			for _, plane := range [][]byte{r.Y, r.U, r.V} {
+				if _, err := reconFile.Write(plane); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					os.Exit(1)
+				}
+			}
+		}
 		if *frameStats {
 			fmt.Printf("frame %3d: T%d key=%t  %7d bytes  %6.2f dB  q=%d\n", n, out.TemporalID, out.Keyframe, len(out.Data), p, enc.QIndex())
 		}
