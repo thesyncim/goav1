@@ -371,6 +371,7 @@ func (s *FrameWorkTileResidualScratch) PreallocLoopFilterMaskScratch(cols int) {
 	if cap(s.lfMask.aUV) < cols {
 		s.lfMask.aUV = make([]uint8, cols)
 	}
+	tile.PreallocBlockLoopRefmvsScratch(&s.Loop, cols)
 }
 
 // frameWorkReconWavefront owns the reusable per-tile SB-row bucketing and

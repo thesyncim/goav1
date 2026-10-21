@@ -36,6 +36,9 @@ type BlockLoopScratch struct {
 	CoeffCtx  CoeffEntropyContext
 	Palette   PaletteModeScratch
 
+	// Refmvs is the tile's dav1d refmvs row storage (see refmvs.go).
+	Refmvs refmvsTile
+
 	visit BlockLoopVisit
 }
 
@@ -378,9 +381,14 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 	if !intraOnlyContexts {
 		ensureIntrabcDiagonalCarriers(req.ContextCarrier)
 	}
+	useRefmvs := !intraOnlyContexts && bindRefmvsForLoop(&scratch.Refmvs, &req)
+	defer func() { scratch.Refmvs.bound = false }()
 	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
 		if !intraOnlyContexts {
 			promotePendingDiagonalCarriers(req.ContextCarrier)
+		}
+		if useRefmvs {
+			scratch.Refmvs.sbrowInit(int32(miRow/rootSize), int32(rootSize))
 		}
 		for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
 			rootColIndex := int((miCol - miColStart) / rootSize)
@@ -1021,7 +1029,11 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 	visit.Delta = delta
 
 	if req.DecodePredictionModes {
-		if err := s.decodeBlockPredictionModeInto(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.Palette, &visit.Prediction, intraOnlyContexts); err != nil {
+		var rt *refmvsTile
+		if scratch.Refmvs.bound {
+			rt = &scratch.Refmvs
+		}
+		if err := s.decodeBlockPredictionModeInto(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.Palette, &visit.Prediction, intraOnlyContexts, rt); err != nil {
 			return nil, fmt.Errorf("decode prediction: %w", err)
 		}
 	}
@@ -1064,13 +1076,13 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 
 func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch) (BlockPredictionModeResult, error) {
 	var result BlockPredictionModeResult
-	if err := s.decodeBlockPredictionModeInto(cdfs, ctx, req, block, prefix, segmentID, segment, paletteMap, &result, false); err != nil {
+	if err := s.decodeBlockPredictionModeInto(cdfs, ctx, req, block, prefix, segmentID, segment, paletteMap, &result, false, nil); err != nil {
 		return BlockPredictionModeResult{}, err
 	}
 	return result, nil
 }
 
-func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch, result *BlockPredictionModeResult, intraOnlyContexts bool) error {
+func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch, result *BlockPredictionModeResult, intraOnlyContexts bool, rt *refmvsTile) error {
 	if result == nil {
 		return ErrInvalidDecodeState
 	}
@@ -1142,76 +1154,15 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 		globalMVs := blockReferenceGlobalMVsForBlock(refs, req.GlobalMVs, req.GlobalMotion, req.AllowHighPrecisionMV, req.ForceIntegerMV, block)
 		globalMotionTypes := blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes)
 		if req.DecodeInterModes {
-			stackReq := referenceMVStackRequestRegion(req, block)
-			stackReq.Size = block.Size
-			stackReq.References = refs
-			stackReq.X4 = block.X4
-			stackReq.Y4 = block.Y4
-			stackReq.HaveTop = block.HaveTop
-			stackReq.HaveLeft = block.HaveLeft
-			stackReq.HaveTopRight = blockHasTopRight(req.SBSizeMIB, block)
-			stackReq.GlobalMVs = globalMVs
-			stackReq.GlobalMotionType = globalMotionTypes
-			stackReq.RefSignBias = req.RefSignBias
-			stackReq.TemporalMVs = req.TemporalMVs
-			stackReq.OrderHintBits = req.OrderHintBits
-			stackReq.CurrentOrderHint = req.CurrentOrderHint
-			stackReq.ReferenceOrderHints = req.ReferenceOrderHints
-			stackReq.AllowHighPrecisionMV = req.AllowHighPrecisionMV
-			stackReq.ForceIntegerMV = req.ForceIntegerMV
-			stackReq.UseRefFrameMVS = req.UseRefFrameMVS
-			stackReq.TemporalMVSampleUnavailable = req.TemporalMVSampleUnavailable
-			stack, err := ctx.BuildReferenceMVStack(stackReq)
-			if err != nil {
-				return fmt.Errorf("build ref mv stack: %w", err)
-			}
-			mode, err := s.ReadBlockInterMode(cdfs.InterMode, InterModeRequest{
-				Compound:            refs.Compound,
-				SkipMode:            prefix.SkipMode,
-				SegmentationEnabled: req.Segmentation.Enabled,
-				Segment:             segment,
-				ModeContext:         stack.ModeContext,
-			})
-			if err != nil {
-				return fmt.Errorf("read inter mode: %w", err)
-			}
-			drlReq, err := stack.Stack.DRLRequestForMode(mode)
-			if err != nil {
-				return fmt.Errorf("select drl request: %w", err)
-			}
-			drlIndex, err := s.ReadDRLIndex(cdfs.InterMode, drlReq)
-			if err != nil {
-				return fmt.Errorf("read drl index: %w", err)
-			}
-			result.InterMode = mode
-			result.InterModeValid = true
-			result.ReferenceMVStack = stack
-			result.ReferenceMVStackValid = true
-			result.DRLIndex = uint8(drlIndex)
-			result.DRLIndexValid = drlReq.usesNewMV() || drlReq.usesNearMV()
-			if !interModeUsesGlobalOnly(mode) {
-				mvRefs, err := stack.Stack.ResolveInterMVReferences(mode, drlIndex, req.AllowHighPrecisionMV, req.ForceIntegerMV)
-				if err != nil {
-					return fmt.Errorf("resolve inter mv references mode=%+v drl=%d stack_count=%d nearest=%d: %w", mode, drlIndex, stack.Stack.Count, stack.NearestCount, err)
+			if rt != nil {
+				if err := s.decodeInterModeRefmvs(cdfs.InterMode, cdfs.MV, ctx, rt, &req, block, refs, prefix.SkipMode, &segment, globalMVs, result); err != nil {
+					return fmt.Errorf("decode inter mode: %w", err)
 				}
-				result.InterMVReferences = mvRefs
-				result.InterMVReferencesValid = true
+			} else if err := s.decodeInterModeLegacy(cdfs, ctx, &req, block, refs, prefix.SkipMode, segment, globalMVs, globalMotionTypes, result); err != nil {
+				return err
 			}
+			mode := result.InterMode
 			if req.DecodeMotionVectors {
-				motionResult, err := s.ReadInterMotion(cdfs.MV, InterMotionRequest{
-					References:   refs,
-					Mode:         mode,
-					ReferenceMVs: result.InterMVReferences,
-					GlobalMVs:    globalMVs,
-					Precision:    MVPrecision(req.AllowHighPrecisionMV, req.ForceIntegerMV),
-				})
-				if err != nil {
-					return fmt.Errorf("read inter motion: %w", err)
-				}
-				result.InterMotion = motionResult.Motion
-				result.InterMotionValid = true
-				result.MVResiduals = motionResult.Residuals
-				result.MVResidualValid = motionResult.ResidualValid
 
 				motionMode := MotionModeTranslation
 				if req.DecodeInterIntra && !refs.Compound {
@@ -1282,7 +1233,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 					result.MotionMode = motionMode
 					result.MotionModeValid = true
 					if motionMode == MotionModeWarp {
-						model, invalid, err := ctx.WarpProjectionWithContext(block, refs.Ref[0], motionResult.Motion.MV[0], req.SBSizeMIB)
+						model, invalid, err := ctx.WarpProjectionWithContext(block, refs.Ref[0], result.InterMotion.MV[0], req.SBSizeMIB)
 						if err != nil {
 							return fmt.Errorf("project warped motion: %w", err)
 						}
@@ -1401,6 +1352,9 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 				if err := ctx.MarkInterMotionAndFilters(block.Size, blockX4, blockY4, result.InterMotion, filters, hasChroma); err != nil {
 					return err
 				}
+				if rt != nil {
+					rt.splatInterBlock(block.Size, int32(block.MIRow), int32(block.MICol), result.InterMotion)
+				}
 				if result.InterIntraValid && result.InterIntra.Enabled {
 					// MarkInterMotion -> MarkInter clears AboveInterIntra /
 					// LeftInterIntra; record the inter-intra status here so
@@ -1453,6 +1407,9 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 	}
 	if err != nil {
 		return err
+	}
+	if rt != nil {
+		rt.splatIntraBlock(block.Size, int32(block.MIRow), int32(block.MICol))
 	}
 	result.LumaMode = mode
 	lumaAngleDelta, err := s.ReadIntraAngleDelta(cdfs.Intra, IntraAngleDeltaRequest{
@@ -1862,6 +1819,92 @@ func intrabcFallbackMV(req BlockLoopRequest, block BlockVisit) (motion.Vector, e
 		return motion.Vector{}, ErrInvalidDecodeState
 	}
 	return mv, nil
+}
+
+// decodeInterModeLegacy is the libaom-shaped BuildReferenceMVStack path used
+// when the dav1d refmvs rows are not bound (block-loop callers outside the
+// frame decoder). It fills the mode, DRL and motion fields of result.
+func (s *DecodeState) decodeInterModeLegacy(cdfs BlockLoopCDFs, ctx *BlockModeContext, req *BlockLoopRequest, block BlockVisit, refs InterReferencesResult, skipMode bool, segment parser.SegmentData, globalMVs [2]motion.Vector, globalMotionTypes [2]parser.GlobalMotionType, result *BlockPredictionModeResult) error {
+	stackReq := legacyReferenceMVStackRequest(*req, block, refs, globalMVs, globalMotionTypes)
+	stack, err := ctx.BuildReferenceMVStack(stackReq)
+	if err != nil {
+		return fmt.Errorf("build ref mv stack: %w", err)
+	}
+	mode, err := s.ReadBlockInterMode(cdfs.InterMode, InterModeRequest{
+		Compound:            refs.Compound,
+		SkipMode:            skipMode,
+		SegmentationEnabled: req.Segmentation.Enabled,
+		Segment:             segment,
+		ModeContext:         stack.ModeContext,
+	})
+	if err != nil {
+		return fmt.Errorf("read inter mode: %w", err)
+	}
+	drlReq, err := stack.Stack.DRLRequestForMode(mode)
+	if err != nil {
+		return fmt.Errorf("select drl request: %w", err)
+	}
+	drlIndex, err := s.ReadDRLIndex(cdfs.InterMode, drlReq)
+	if err != nil {
+		return fmt.Errorf("read drl index: %w", err)
+	}
+	result.InterMode = mode
+	result.InterModeValid = true
+	result.ReferenceMVStack = stack
+	result.ReferenceMVStackValid = true
+	result.DRLIndex = uint8(drlIndex)
+	result.DRLIndexValid = drlReq.usesNewMV() || drlReq.usesNearMV()
+	if !interModeUsesGlobalOnly(mode) {
+		mvRefs, err := stack.Stack.ResolveInterMVReferences(mode, drlIndex, req.AllowHighPrecisionMV, req.ForceIntegerMV)
+		if err != nil {
+			return fmt.Errorf("resolve inter mv references mode=%+v drl=%d stack_count=%d nearest=%d: %w", mode, drlIndex, stack.Stack.Count, stack.NearestCount, err)
+		}
+		result.InterMVReferences = mvRefs
+		result.InterMVReferencesValid = true
+	}
+	if !req.DecodeMotionVectors {
+		return nil
+	}
+	motionResult, err := s.ReadInterMotion(cdfs.MV, InterMotionRequest{
+		References:   refs,
+		Mode:         mode,
+		ReferenceMVs: result.InterMVReferences,
+		GlobalMVs:    globalMVs,
+		Precision:    MVPrecision(req.AllowHighPrecisionMV, req.ForceIntegerMV),
+	})
+	if err != nil {
+		return fmt.Errorf("read inter motion: %w", err)
+	}
+	result.InterMotion = motionResult.Motion
+	result.InterMotionValid = true
+	result.MVResiduals = motionResult.Residuals
+	result.MVResidualValid = motionResult.ResidualValid
+	return nil
+}
+
+// legacyReferenceMVStackRequest builds the BuildReferenceMVStack request for
+// one inter block (legacy libaom-shaped path and the refmvs oracle).
+func legacyReferenceMVStackRequest(req BlockLoopRequest, block BlockVisit, refs InterReferencesResult, globalMVs [2]motion.Vector, globalMotionTypes [2]parser.GlobalMotionType) ReferenceMVStackRequest {
+	stackReq := referenceMVStackRequestRegion(req, block)
+	stackReq.Size = block.Size
+	stackReq.References = refs
+	stackReq.X4 = block.X4
+	stackReq.Y4 = block.Y4
+	stackReq.HaveTop = block.HaveTop
+	stackReq.HaveLeft = block.HaveLeft
+	stackReq.HaveTopRight = blockHasTopRight(req.SBSizeMIB, block)
+	stackReq.GlobalMVs = globalMVs
+	stackReq.GlobalMotionType = globalMotionTypes
+	stackReq.RefSignBias = req.RefSignBias
+	stackReq.TemporalMVs = req.TemporalMVs
+	stackReq.OrderHintBits = req.OrderHintBits
+	stackReq.CurrentOrderHint = req.CurrentOrderHint
+	stackReq.ReferenceOrderHints = req.ReferenceOrderHints
+	stackReq.AllowHighPrecisionMV = req.AllowHighPrecisionMV
+	stackReq.ForceIntegerMV = req.ForceIntegerMV
+	stackReq.UseRefFrameMVS = req.UseRefFrameMVS
+	stackReq.TemporalMVSampleUnavailable = req.TemporalMVSampleUnavailable
+	return stackReq
 }
 
 func referenceMVStackRequestRegion(req BlockLoopRequest, block BlockVisit) ReferenceMVStackRequest {
