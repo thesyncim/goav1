@@ -663,6 +663,7 @@ type lossyEncodeState struct {
 	skipRateCDFs  tile.CoeffCDFs
 	skipRateBase  tile.CoeffCDFs
 	skipRateSB    int
+	skipRateDirty uint16
 	skipRateReady bool
 
 	// sbQIndex holds the per-64x64 superblock qindex of an inter frame

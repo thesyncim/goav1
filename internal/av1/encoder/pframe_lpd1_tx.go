@@ -317,11 +317,13 @@ func (st *lossyEncodeState) exactInterCoeffCost(txPlan realtimeInterTXPlan, bw, 
 		if err := st.skipRateBase.InitDefault(st.qIndex); err != nil {
 			return 0, false
 		}
+		st.skipRateCDFs = st.skipRateBase
+		st.skipRateDirty = 0
 		st.skipRateReady = true
 		st.skipRateSB = -1
 	}
 	if sb := (lumaPY>>6)<<16 | lumaPX>>6; sb != st.skipRateSB {
-		st.skipRateCDFs = st.skipRateBase
+		st.restoreSkipRateCDFs()
 		st.skipRateSB = sb
 	}
 	if hasChroma && (cbw != cbh || cbw > 32) {
@@ -357,6 +359,24 @@ func (st *lossyEncodeState) exactInterCoeffCost(txPlan realtimeInterTXPlan, bw, 
 // -1 marks an unsupported size.
 func (st *lossyEncodeState) skipRateTXBBits(luma bool, q []int16, n int) int {
 	c := &st.skipRateCDFs
+	plane := tile.CoeffPlaneUV
+	if luma {
+		plane = tile.CoeffPlaneY
+	}
+	txCtx := -1
+	switch n {
+	case 4:
+		txCtx = 0
+	case 8:
+		txCtx = 1
+	case 16:
+		txCtx = 2
+	case 32:
+		txCtx = 3
+	}
+	if txCtx >= 0 {
+		st.skipRateDirty |= 1 << (txCtx*tile.CoeffPlaneTypes + int(plane))
+	}
 	var bits int
 	switch {
 	case luma && n == 8:
@@ -377,4 +397,44 @@ func (st *lossyEncodeState) skipRateTXBBits(luma bool, q []int16, n int) int {
 		return -1 << 30
 	}
 	return bits
+}
+
+// restoreSkipRateCDFs returns the coefficient families the last superblock's
+// pricing touched to their frame-start state. A (tx-size context, plane)
+// pair's counters touch only that pair's TXB-skip, EOB, base, BR and DC-sign
+// tables, so copying those rows equals restoring the whole set.
+func (st *lossyEncodeState) restoreSkipRateCDFs() {
+	d := st.skipRateDirty
+	if d == 0 {
+		return
+	}
+	c, b := &st.skipRateCDFs, &st.skipRateBase
+	planeDirty := [tile.CoeffPlaneTypes]bool{}
+	for tx := 0; tx < tile.CoeffTxSizeContexts; tx++ {
+		for p := 0; p < tile.CoeffPlaneTypes; p++ {
+			if d&(1<<(tx*tile.CoeffPlaneTypes+p)) == 0 {
+				continue
+			}
+			planeDirty[p] = true
+			c.TXBSkip[tx] = b.TXBSkip[tx]
+			c.EOBExtra[tx][p] = b.EOBExtra[tx][p]
+			c.CoeffBR[min(tx, 3)][p] = b.CoeffBR[min(tx, 3)][p]
+			c.CoeffBase[tx][p] = b.CoeffBase[tx][p]
+			c.CoeffBaseEOB[tx][p] = b.CoeffBaseEOB[tx][p]
+		}
+	}
+	for p, dirty := range planeDirty {
+		if !dirty {
+			continue
+		}
+		c.DCSign[p] = b.DCSign[p]
+		c.EOBFlag16[p] = b.EOBFlag16[p]
+		c.EOBFlag32[p] = b.EOBFlag32[p]
+		c.EOBFlag64[p] = b.EOBFlag64[p]
+		c.EOBFlag128[p] = b.EOBFlag128[p]
+		c.EOBFlag256[p] = b.EOBFlag256[p]
+		c.EOBFlag512[p] = b.EOBFlag512[p]
+		c.EOBFlag1024[p] = b.EOBFlag1024[p]
+	}
+	st.skipRateDirty = 0
 }
