@@ -96,7 +96,7 @@ func decodeLibaomQuantizer00FirstLumaTXB(t *testing.T) libaomFirstLumaTXB {
 			continue
 		}
 		pool, _, backing, frameSlots, free, used := bindLibaomVectorFramePool(t, event, 8)
-		_, err := state.RunEventWithContextAndPostFilter(&refs, &pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx decoder.FrameWorkBatch) error {
+		_, err := state.RunEventWithContextAndPostFilter(&refs, &pool, event.SequenceHeader, &event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx decoder.FrameWorkBatch) error {
 			for j := 0; j < len(ctx.Jobs); j++ {
 				var decodeState tile.DecodeState
 				if err := ctx.JobDecodeState(j, &decodeState); err != nil {

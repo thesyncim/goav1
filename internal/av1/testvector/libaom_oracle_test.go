@@ -352,7 +352,7 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 			)
 			spatialID := event.SpatialID
 			globalSurface := func(local int) int { return libaomGlobalSurfaceID(spatialID, local) }
-			result, err := layer.state.RunEventWithContextAndExternalReferences(&layers.sharedRefs, &layer.pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], workers, spans[:], jobs[:], batches[:], releases[:], workerPool, layers, globalSurface, layers, &layers.sharedFrameContexts, libaomFrameWorkSideDataRunner{}, libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
+			result, err := layer.state.RunEventWithContextAndExternalReferences(&layers.sharedRefs, &layer.pool, event.SequenceHeader, &event, 32, referenceSurfaces[:], referenceFrames[:], workers, spans[:], jobs[:], batches[:], releases[:], workerPool, layers, globalSurface, layers, &layers.sharedFrameContexts, libaomFrameWorkSideDataRunner{}, libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
 				surface, err := ctx.Surface()
 				if err != nil {
 					return err
@@ -502,7 +502,7 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 					return fmt.Errorf("apply supported postfilters: %w", err)
 				}
 				if currentMVSurface >= 0 {
-					if err := decoder.PublishTemporalMotionReference(post.Context.Event, currentMVSurface, &layer.mvFrames[currentMVSurface], layer.mvStore); err != nil {
+					if err := decoder.PublishTemporalMotionReference(&post.Context.Event, currentMVSurface, &layer.mvFrames[currentMVSurface], layer.mvStore); err != nil {
 						return err
 					}
 				}

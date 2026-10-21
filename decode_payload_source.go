@@ -518,8 +518,10 @@ func decoderForEachRTPEventFromSource(source decoderPayloadSource, fn func(Seque
 		return err
 	}
 	rtpBuffer := make([]byte, rtpBufferBytes)
-	rtpSpans := make([]RTPObuSpan, source.len()*16+64)
-	events := make([]DecoderEvent, source.len()*16+64)
+	// Both grow to the largest per-payload event count below; sizing them by
+	// payload count would reserve gigabytes for long RTP sources.
+	rtpSpans := make([]RTPObuSpan, 64)
+	events := make([]DecoderEvent, 64)
 	var stream DecoderStream
 	used := 0
 	return source.forEachPayload(nil, func(payload []byte) error {
