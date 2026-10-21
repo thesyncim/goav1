@@ -240,6 +240,19 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	return cands[best], true, predYValid && predYMV == bestMV
 }
 
+// mds0WinnerSAD re-measures the luma SAD once MDS0 has swapped the motion
+// vector away from the ME result: the block's later stages (the SAD skip
+// shortcut in decideInterTXBlock among them) must judge the prediction
+// actually coded, not the stale ME match. retained says predY holds the
+// winner's prediction; otherwise the shortcut is disarmed so the
+// coefficient proof decides skip.
+func (st *lossyEncodeState) mds0WinnerSAD(src SourceFrame420, lumaPX, lumaPY, bw, bh int, retained bool, fullSAD int) int {
+	if !retained {
+		return max(fullSAD, bw*bh)
+	}
+	return sadRectDualBlock(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, st.predY[:bw*bh], bw, bw, bh)
+}
+
 // intraPBlockGeometry is the luma side of an intra block inside an inter
 // frame: the square size, its whole-block transform and scan. 8x8 keeps the
 // legacy fallback's mode search; 16x16 and 32x32 come from the MDS0 DC arm.
