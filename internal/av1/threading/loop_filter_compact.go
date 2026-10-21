@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 
 	"github.com/thesyncim/goav1/internal/av1/lfmask"
-	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
@@ -24,7 +23,9 @@ type FrameWorkLoopFilterCompactState struct {
 	cells     int32
 	blocks    int32
 	noskip    []byte
-	levels    loopfilter.PreparedLevelResolver
+
+	// levels is dav1d's frame-level loop-filter level table (f->lf.lvl).
+	levels FrameWorkLoopFilterLevelTable
 }
 
 // BindFrameWorkLoopFilterCompactState configures an owned compact state for a
@@ -53,7 +54,8 @@ func BindFrameWorkLoopFilterCompactState(h *FrameWorkLoopFilterMasks, state *Fra
 	state.cells = 0
 	state.blocks = 0
 	state.noskip = noSkip[:unitBytes]
-	state.levels = loopfilter.PrepareLevelResolver(loopFilter, segmentation, delta, monoChrome)
+	_ = monoChrome
+	state.levels.Bind(loopFilter, segmentation, delta)
 	clear(state.noskip)
 	// Frame MI extents are even. Only the final 8x8 block column/row can
 	// contain padding, so preserve legacy out-of-map bits without scanning the
@@ -208,28 +210,12 @@ func (h *FrameWorkLoopFilterMasks) buildCompact(compact *FrameWorkLoopFilterComp
 		int(block.MIColEnd) > h.Cols || int(block.MIRowEnd) > h.Rows {
 		return ErrInvalidBatch
 	}
-	if _, err := FrameWorkLoopFilterBlockFromVisit(block); err != nil {
-		return err
-	}
-	_, ok := block.Size.Dimensions()
-	if !ok {
+	if _, ok := block.Size.Dimensions(); !ok {
 		return ErrInvalidBatch
 	}
-	refFrame, mode, err := frameWorkLoopFilterRefModePtr(visit)
-	if err != nil || refFrame < 0 || refFrame >= parser.RefFrames {
-		return ErrInvalidBatch
-	}
-	var multi [loopfilter.DeltaCount]int8
-	copy(multi[:], state.DeltaLF[:])
-	levels, err := compact.levels.ResolveBlockLevels(visit.SegmentID, uint8(refFrame), mode, state.DeltaLFFromBase, multi)
+	levelValues, err := compact.levels.blockLevels(scratch, visit, state)
 	if err != nil {
 		return err
-	}
-	levelValues := lfmask.Levels{
-		YVert: levels[loopfilter.PlaneY][loopfilter.EdgeVertical],
-		YHorz: levels[loopfilter.PlaneY][loopfilter.EdgeHorizontal],
-		U:     levels[loopfilter.PlaneU][loopfilter.EdgeVertical],
-		V:     levels[loopfilter.PlaneV][loopfilter.EdgeVertical],
 	}
 	intra := !visit.Prediction.Valid || visit.Prediction.Intra
 	lc := lfmask.LevelCache{Cells: h.LevelCache, Stride: h.Cols}

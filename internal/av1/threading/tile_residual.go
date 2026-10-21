@@ -1288,7 +1288,9 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 					}
 				}
 				intra := !visit.Prediction.Valid || visit.Prediction.Intra
-				req.LoopFilterMasks.build(&scratch.lfMask, visit, sbLog2, intra)
+				if err := req.LoopFilterMasks.build(&scratch.lfMask, visit, state, sbLog2, intra); err != nil {
+					return fmt.Errorf("build loop filter masks block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
+				}
 			}
 		} else if req.LoopFilterMap != nil {
 			if err := req.LoopFilterMap.MarkBlockPtr(visit, state); err != nil {

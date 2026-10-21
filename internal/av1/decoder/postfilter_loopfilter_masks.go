@@ -76,7 +76,13 @@ func (ctx *FrameWorkPostFilterContext) ApplyLoopFilterEdgesFromMasks(masks *thre
 		}
 		result.Plan.Cells = cells
 		result.Plan.Blocks = blocks
+	} else if masks.LevelsAtDecode() {
+		// The completed tile walk covered every MI cell.
+		result.Plan.Cells = int32(cols * rows)
 	} else {
+		// dav1d writes each block's levels into the level cache at decode time
+		// (dav1d_create_lf_mask_*, above); only a mask handle bound without a
+		// level table needs them re-derived from the record map here.
 		if err := ctx.populateLoopFilterLevelCacheFromMap(masks, filterMap, levelCtx, &result.Plan); err != nil {
 			return result, err
 		}
@@ -606,7 +612,14 @@ type FrameWorkLoopFilterMaskBands struct {
 	regionRows  int
 	rows        int
 	active      bool
+	// levelsAtDecode reports that the decode walk already wrote the level cache
+	// (dav1d_create_lf_mask_*), so the populate phase is a no-op.
+	levelsAtDecode bool
 }
+
+// LevelsAtDecode reports whether the level cache was written at decode time, so
+// callers can skip the populate phase entirely.
+func (b FrameWorkLoopFilterMaskBands) LevelsAtDecode() bool { return b.levelsAtDecode }
 
 // Active reports whether the frame owes a loop-filter pass; when false the caller
 // applies nothing.
@@ -671,7 +684,10 @@ func (ctx *FrameWorkPostFilterContext) PrepareLoopFilterMaskBands(masks *threadi
 	if len(masks.LevelCache) < cols*rows {
 		return FrameWorkLoopFilterMaskBands{}, threading.ErrInvalidBatch
 	}
-	clear(masks.LevelCache[:cols*rows])
+	levelsAtDecode := masks.LevelsAtDecode()
+	if !levelsAtDecode {
+		clear(masks.LevelCache[:cols*rows])
+	}
 	levelCtx := frameWorkLoopFilterLevelContextFor(&ctx.Event)
 	maxPlane := loopfilter.PlaneV
 	if masks.Layout.Mono || ctx.Output.Format.MonoChrome || !masks.HasChroma {
@@ -687,6 +703,8 @@ func (ctx *FrameWorkPostFilterContext) PrepareLoopFilterMaskBands(masks *threadi
 		regionRows: masks.SB128H,
 		rows:       rows,
 		active:     true,
+
+		levelsAtDecode: levelsAtDecode,
 	}
 	chromaGated := levelCtx.lumaZero
 	for plane := loopfilter.PlaneY; plane <= maxPlane; plane++ {
@@ -712,7 +730,7 @@ func (b FrameWorkLoopFilterMaskBands) PopulateBand(rowStart, rowEnd int) error {
 // populateBandStats is PopulateBand that also adds the band's block, cell and
 // missing-record counts to plan.
 func (b FrameWorkLoopFilterMaskBands) populateBandStats(rowStart, rowEnd int, plan *FrameWorkLoopFilterPostFilterPlan) error {
-	if !b.active {
+	if !b.active || b.levelsAtDecode {
 		return nil
 	}
 	// Recompute the level context locally (it holds pointers into b.ctx.Event);

@@ -48,6 +48,7 @@ type Decoder struct {
 	batch    DecoderFrameWorkBatchResidualRunner
 
 	compactLF     internalthreading.FrameWorkLoopFilterCompactState
+	lfLevels      internalthreading.FrameWorkLoopFilterLevelTable
 	compactNoSkip []byte
 
 	refSurface [InterRefsPerFrame]int
@@ -343,6 +344,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		return nil, fmt.Errorf("goav1: bind runner: %w", err)
 	}
 	d.runner = runner
+	d.runner.EventRunner.lfLevels = &d.lfLevels
 	if !d.useExternal && d.workerPool.WorkerCount() == 1 {
 		d.batch.compactState = &d.compactLF
 		d.batch.compactOwner = &d.batch
