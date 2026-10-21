@@ -29,7 +29,7 @@ type TileListEntryDecodePlan struct {
 // The returned Event and Step can be supplied to the frame-work residual runner
 // with output set to a caller-owned scratch reconstruction frame; after the
 // entry decodes, copy the returned Region into the tile-list output mosaic.
-func PlanTileListEntryDecode(event Event, entryIndex int, surface int, anchors []*frame.Frame, references []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch) (TileListEntryDecodePlan, error) {
+func PlanTileListEntryDecode(event *Event, entryIndex int, surface int, anchors []*frame.Frame, references []*frame.Frame, workers int, spans []parser.TileSpan, jobs []tile.Job, batches []threading.Batch) (TileListEntryDecodePlan, error) {
 	if event.Kind != EventTileList {
 		return TileListEntryDecodePlan{}, ErrInvalidSurfaceEvent
 	}
@@ -63,7 +63,7 @@ func PlanTileListEntryDecode(event Event, entryIndex int, surface int, anchors [
 	}
 
 	references[0] = anchors[anchor]
-	decodeEvent := event
+	decodeEvent := *event
 	decodeEvent.Kind = EventTileGroup
 	decodeEvent.Type = obu.TypeTileGroup
 	decodeEvent.Unit.Payload = entry.TileData

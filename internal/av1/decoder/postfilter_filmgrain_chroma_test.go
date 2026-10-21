@@ -55,7 +55,7 @@ func TestFrameWorkPostFilterContextGenerateFilmGrainChromaGrain(t *testing.T) {
 }
 
 func TestFrameWorkPostFilterContextGenerateFilmGrainChromaGrainSkipsInactive(t *testing.T) {
-	result, err := (FrameWorkPostFilterContext{}).GenerateFilmGrainChromaGrain(nil, nil, filmgrain.ChromaPlaneCb)
+	result, err := (&FrameWorkPostFilterContext{}).GenerateFilmGrainChromaGrain(nil, nil, filmgrain.ChromaPlaneCb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestFrameWorkPostFilterContextApplyFilmGrainChromaRow(t *testing.T) {
 }
 
 func TestFrameWorkPostFilterContextApplyFilmGrainChromaRowSkipsInactive(t *testing.T) {
-	result, err := (FrameWorkPostFilterContext{}).ApplyFilmGrainChromaRow(nil, nil, nil, nil, nil, filmgrain.ChromaPlaneCb, 0)
+	result, err := (&FrameWorkPostFilterContext{}).ApplyFilmGrainChromaRow(nil, nil, nil, nil, nil, filmgrain.ChromaPlaneCb, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

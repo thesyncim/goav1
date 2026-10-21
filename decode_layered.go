@@ -46,6 +46,9 @@ type LayeredDecoder struct {
 
 	scratch    DecoderFrameWorkResidualStreamScratch
 	postFilter DecoderFrameWorkReusableSupportedPostFilterRunner
+	// postFilterParallel fans the post-filter bands across the tile workers,
+	// as in Decoder.
+	postFilterParallel DecoderFrameWorkPostFilterParallel
 
 	payloadKind   decoderPayloadKind
 	payloadSource decoderPayloadSource
@@ -135,7 +138,8 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 		return nil, fmt.Errorf("goav1: worker pool: %w", err)
 	}
 
-	probeEvents := make([]DecoderEvent, source.len()*16+64)
+	// The probes grow probeEvents to the largest per-payload event count.
+	probeEvents := make([]DecoderEvent, 64)
 	probeSpans := make([]TileSpan, MaxTiles)
 	probeJobs := make([]TileJob, MaxTiles)
 	probeBatches := make([]TileBatch, MaxTiles)
@@ -226,6 +230,8 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 	d.globalSurface = d.globalSurfaceForCurrentPool
 	d.postFilter.size = postArena
 	d.postFilter.runner.Scratch = decoderPostFilterScratchFromArena(postArena, &arena)
+	d.postFilterParallel.Workers = workerPool.WorkerCount()
+	d.postFilter.Parallel = &d.postFilterParallel
 
 	d.layerPool, err = BindFrameLayerPool(
 		make([]FramePool, layeredDecoderMaxFrameFormats),
@@ -287,8 +293,8 @@ func decoderLayeredCodedFormatsFromSource(source decoderPayloadSource, kind deco
 			}
 			for i := range count {
 				event := events[i]
-				sequence = decoderFrameWorkResidualEventSequence(sequence, event)
-				formats, err = decoderLayeredAppendCodedFormat(formats, sequence, event, align)
+				sequence = decoderFrameWorkResidualEventSequence(sequence, &event)
+				formats, err = decoderLayeredAppendCodedFormat(formats, sequence, &event, align)
 				if err != nil {
 					return err
 				}
@@ -299,7 +305,7 @@ func decoderLayeredCodedFormatsFromSource(source decoderPayloadSource, kind deco
 	case decoderPayloadRTP:
 		err := decoderForEachRTPEventFromSource(source, func(sequence SequenceHeader, event DecoderEvent) error {
 			var err error
-			formats, err = decoderLayeredAppendCodedFormat(formats, sequence, event, align)
+			formats, err = decoderLayeredAppendCodedFormat(formats, sequence, &event, align)
 			return err
 		})
 		return formats, err
@@ -308,7 +314,7 @@ func decoderLayeredCodedFormatsFromSource(source decoderPayloadSource, kind deco
 	}
 }
 
-func decoderLayeredAppendCodedFormat(formats []FrameFormat, sequence SequenceHeader, event DecoderEvent, align int) ([]FrameFormat, error) {
+func decoderLayeredAppendCodedFormat(formats []FrameFormat, sequence SequenceHeader, event *DecoderEvent, align int) ([]FrameFormat, error) {
 	if !decoderFrameWorkResidualEventBindCandidate(event) {
 		return formats, nil
 	}
@@ -581,20 +587,20 @@ func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]LayeredFrame, error
 	d.outputSurface = d.outputSurfBuf[:0]
 	for i := range events {
 		event := events[i]
-		d.sequence = decoderFrameWorkResidualEventSequence(d.sequence, event)
-		state, err := d.stateForEvent(event)
+		d.sequence = decoderFrameWorkResidualEventSequence(d.sequence, &event)
+		state, err := d.stateForEvent(&event)
 		if err != nil {
 			return out, err
 		}
-		framePool, err := d.framePoolForEvent(d.sequence, event)
+		framePool, err := d.framePoolForEvent(d.sequence, &event)
 		if err != nil {
 			return out, err
 		}
-		sideData, err := d.sideDataForEvent(d.sequence, event)
+		sideData, err := d.sideDataForEvent(d.sequence, &event)
 		if err != nil {
 			return out, err
 		}
-		batchRunner := d.batchRunnerForEvent(event)
+		batchRunner := d.batchRunnerForEvent(&event)
 		d.bindGlobalSurfacePool(framePool)
 		result, err := runDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
 			State:             state,
@@ -625,7 +631,7 @@ func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]LayeredFrame, error
 		if err != nil {
 			return out, err
 		}
-		if !DecoderEventOutputsFrame(event) {
+		if !DecoderEventOutputsFrame(&event) {
 			continue
 		}
 		if result.Output == nil {
@@ -635,7 +641,7 @@ func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]LayeredFrame, error
 		if err != nil {
 			return out, err
 		}
-		out = append(out, layeredFrameFromEvent(result.Output, event))
+		out = append(out, layeredFrameFromEvent(result.Output, &event))
 		d.outputSurface = append(d.outputSurface, layeredShownSurface{id: surface})
 	}
 	d.trackShownSurfaces(d.outputSurface)
@@ -663,7 +669,7 @@ func (d *LayeredDecoder) sideRunnerForEvent(sideData *DecoderFrameWorkSideData, 
 	return &d.sideRunner
 }
 
-func layeredFrameFromEvent(frame *Frame, event DecoderEvent) LayeredFrame {
+func layeredFrameFromEvent(frame *Frame, event *DecoderEvent) LayeredFrame {
 	frameType := event.FrameHeader.FrameType
 	showable := event.FrameHeader.ShowableFrame
 	if event.FrameHeader.ShowExistingFrame {
@@ -692,14 +698,14 @@ func (d *LayeredDecoder) framesFromLayered(outputs []LayeredFrame) []*Frame {
 	return out
 }
 
-func (d *LayeredDecoder) stateForEvent(event DecoderEvent) (*DecoderFrameWorkState, error) {
+func (d *LayeredDecoder) stateForEvent(event *DecoderEvent) (*DecoderFrameWorkState, error) {
 	if event.SpatialID >= EncoderWebRTCMaxSpatialLayers {
 		return nil, ErrDecoderInvalidFrameWorkState
 	}
 	return &d.states[event.SpatialID], nil
 }
 
-func (d *LayeredDecoder) framePoolForEvent(sequence SequenceHeader, event DecoderEvent) (*FramePool, error) {
+func (d *LayeredDecoder) framePoolForEvent(sequence SequenceHeader, event *DecoderEvent) (*FramePool, error) {
 	switch event.Kind {
 	case DecoderEventFrameHeader, DecoderEventFrame, DecoderEventTileGroup:
 		format, err := FrameCodedFormatFromHeaders(sequence, event.FrameSize, 64)
@@ -712,7 +718,7 @@ func (d *LayeredDecoder) framePoolForEvent(sequence SequenceHeader, event Decode
 	}
 }
 
-func (d *LayeredDecoder) sideDataForEvent(sequence SequenceHeader, event DecoderEvent) (*DecoderFrameWorkSideData, error) {
+func (d *LayeredDecoder) sideDataForEvent(sequence SequenceHeader, event *DecoderEvent) (*DecoderFrameWorkSideData, error) {
 	if !decoderFrameWorkResidualEventNeedsSideData(event) {
 		return nil, nil
 	}
@@ -724,7 +730,7 @@ func (d *LayeredDecoder) sideDataForEvent(sequence SequenceHeader, event Decoder
 	return &d.sideData, nil
 }
 
-func (d *LayeredDecoder) batchRunnerForEvent(event DecoderEvent) *DecoderFrameWorkBatchResidualRunner {
+func (d *LayeredDecoder) batchRunnerForEvent(event *DecoderEvent) *DecoderFrameWorkBatchResidualRunner {
 	if !decoderFrameWorkResidualEventHasTilePayload(event) || !d.hasBatch {
 		return nil
 	}
@@ -770,7 +776,7 @@ func decoderLayeredEventsStartNewPicture(events []DecoderEvent) bool {
 		if events[i].NewTemporalUnit || events[i].NewCodedVideoSequence {
 			return true
 		}
-		if decoderFrameWorkResidualEventBindCandidate(events[i]) && events[i].SpatialID == 0 {
+		if decoderFrameWorkResidualEventBindCandidate(&events[i]) && events[i].SpatialID == 0 {
 			return true
 		}
 	}
@@ -875,6 +881,7 @@ func (d *LayeredDecoder) Close() {
 		return
 	}
 	d.closed = true
+	d.postFilterParallel.Close()
 	if d.workerPool != nil {
 		d.workerPool.Close()
 		d.workerPool = nil

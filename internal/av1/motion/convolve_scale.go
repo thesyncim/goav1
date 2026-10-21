@@ -31,27 +31,27 @@ type SubpelKernelTable [1 << subpelQ4Bits][filterTaps]int16
 // SubpelKernelTableFor returns the AV1 sub-pel kernel table for filter at the
 // requested block-size axis. Smaller blocks select libaom's 4-tap-equivalent
 // table; everything 8 and up uses the standard 8-tap table.
-func SubpelKernelTableFor(filter InterpFilter, blockSize int) (SubpelKernelTable, error) {
+func SubpelKernelTableFor(filter InterpFilter, blockSize int) (*SubpelKernelTable, error) {
 	if !filter.Valid() {
-		return SubpelKernelTable{}, ErrInvalidMotion
+		return nil, ErrInvalidMotion
 	}
 	if blockSize <= 4 && filter != InterpBilinear {
 		if filter == InterpEightTapSmooth {
-			return SubpelKernelTable(subpelFilters4Smooth), nil
+			return (*SubpelKernelTable)(&subpelFilters4Smooth), nil
 		}
-		return SubpelKernelTable(subpelFilters4), nil
+		return (*SubpelKernelTable)(&subpelFilters4), nil
 	}
 	switch filter {
 	case InterpEightTapRegular:
-		return SubpelKernelTable(subpelFilters8), nil
+		return (*SubpelKernelTable)(&subpelFilters8), nil
 	case InterpEightTapSmooth:
-		return SubpelKernelTable(subpelFilters8Smooth), nil
+		return (*SubpelKernelTable)(&subpelFilters8Smooth), nil
 	case InterpMultiTapSharp:
-		return SubpelKernelTable(subpelFilters8Sharp), nil
+		return (*SubpelKernelTable)(&subpelFilters8Sharp), nil
 	case InterpBilinear:
-		return SubpelKernelTable(bilinearFilters), nil
+		return (*SubpelKernelTable)(&bilinearFilters), nil
 	default:
-		return SubpelKernelTable{}, ErrInvalidMotion
+		return nil, ErrInvalidMotion
 	}
 }
 
@@ -76,7 +76,7 @@ func scaledIdentityStepOrigin(startX int64, startY int64) (refX int, refY int, s
 }
 
 func convolveScale2D8IdentityStep(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
-	startX int64, startY int64, xTable SubpelKernelTable, yTable SubpelKernelTable, clamped bool) bool {
+	startX int64, startY int64, xTable, yTable *SubpelKernelTable, clamped bool) bool {
 	refX, refY, subX, subY, ok := scaledIdentityStepOrigin(startX, startY)
 	if !ok {
 		return false
@@ -116,7 +116,7 @@ func convolveScale2D8IdentityStep(dst frame.Plane, ref frame.Plane, dstX int, ds
 }
 
 func convolveScale2DHighBDIdentityStep(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, width int, height int,
-	startX int64, startY int64, xTable SubpelKernelTable, yTable SubpelKernelTable, clamped bool) bool {
+	startX int64, startY int64, xTable, yTable *SubpelKernelTable, clamped bool) bool {
 	refX, refY, subX, subY, ok := scaledIdentityStepOrigin(startX, startY)
 	if !ok {
 		return false
@@ -156,7 +156,7 @@ func convolveScale2DHighBDIdentityStep(dst frame.Plane, ref frame.Plane, bitDept
 }
 
 func convolveScale2D8YIdentity(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
-	startX int64, startY int64, xStep int64, xTable SubpelKernelTable, clamped bool) {
+	startX int64, startY int64, xStep int64, xTable *SubpelKernelTable, clamped bool) {
 	const xBias = 1 << (8 + filterBits - 1)
 	const centerOffset = 1 << (8 - 1)
 	const finalRoundBits = filterBits - round0Bits
@@ -201,7 +201,7 @@ func convolveScale2D8YIdentity(dst frame.Plane, ref frame.Plane, dstX int, dstY 
 }
 
 func convolveScale2DHighBDYIdentity(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, width int, height int,
-	startX int64, startY int64, xStep int64, xTable SubpelKernelTable, clamped bool) {
+	startX int64, startY int64, xStep int64, xTable *SubpelKernelTable, clamped bool) {
 	round0, _ := highBDRoundBits(bitDepth)
 	xBias := 1 << (int(bitDepth) + filterBits - 1)
 	round0Bias := 1 << (round0 - 1)
@@ -277,7 +277,7 @@ func convolveScale2DHighBDYIdentity(dst frame.Plane, ref frame.Plane, bitDepth u
 // taps may step outside the reference plane.
 func ConvolveScale2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable) error {
+	xTable, yTable *SubpelKernelTable) error {
 	return ConvolveScale2D8WithScratch(dst, ref, dstX, dstY, width, height,
 		startX, xStep, startY, yStep, xTable, yTable, nil)
 }
@@ -286,7 +286,7 @@ func ConvolveScale2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, widt
 // scratch for the large intermediate block.
 func ConvolveScale2D8WithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable, scratch *ScaledConvolveScratch) error {
+	xTable, yTable *SubpelKernelTable, scratch *ScaledConvolveScratch) error {
 	if width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
 	}
@@ -330,7 +330,7 @@ func ConvolveScale2D8WithScratch(dst frame.Plane, ref frame.Plane, dstX int, dst
 // plane at its edges when a tap falls outside the plane.
 func ConvolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable) error {
+	xTable, yTable *SubpelKernelTable) error {
 	return ConvolveScale2D8ClampedWithScratch(dst, ref, dstX, dstY, width, height,
 		startX, xStep, startY, yStep, xTable, yTable, nil)
 }
@@ -339,7 +339,7 @@ func ConvolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 // caller-owned scratch for the large intermediate block.
 func ConvolveScale2D8ClampedWithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable, scratch *ScaledConvolveScratch) error {
+	xTable, yTable *SubpelKernelTable, scratch *ScaledConvolveScratch) error {
 	if width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
 	}
@@ -367,6 +367,11 @@ func ConvolveScale2D8ClampedWithScratch(dst frame.Plane, ref frame.Plane, dstX i
 			return nil
 		}
 	}
+	if xStep == scaledStep2Half && yStep == scaledStep2Half && scratch != nil &&
+		scaledRefRegionFits(ref, width, imH, startX, xStep, startY) &&
+		convolveScale2D8Step2GoSIMD(dst, ref, dstX, dstY, width, height, startX, startY, xTable, yTable, imH, &scratch.im) {
+		return nil
+	}
 	if scratch != nil {
 		if scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
 			convolveScale2D8(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, &scratch.im)
@@ -387,7 +392,7 @@ func ConvolveScale2D8ClampedWithScratch(dst frame.Plane, ref frame.Plane, dstX i
 // ConvolveScale2DHighBD is the 10/12-bit variant of ConvolveScale2D8.
 func ConvolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable) error {
+	xTable, yTable *SubpelKernelTable) error {
 	return ConvolveScale2DHighBDWithScratch(dst, ref, bitDepth, dstX, dstY, width, height,
 		startX, xStep, startY, yStep, xTable, yTable, nil)
 }
@@ -396,7 +401,7 @@ func ConvolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, dst
 // caller-owned scratch for the large intermediate block.
 func ConvolveScale2DHighBDWithScratch(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable, scratch *ScaledConvolveScratch) error {
+	xTable, yTable *SubpelKernelTable, scratch *ScaledConvolveScratch) error {
 	max, ok := highBDMax(bitDepth)
 	if !ok || width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
@@ -438,7 +443,7 @@ func ConvolveScale2DHighBDWithScratch(dst frame.Plane, ref frame.Plane, bitDepth
 // reference plane at its edges when a tap falls outside the plane.
 func ConvolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable) error {
+	xTable, yTable *SubpelKernelTable) error {
 	return ConvolveScale2DHighBDClampedWithScratch(dst, ref, bitDepth, dstX, dstY, width, height,
 		startX, xStep, startY, yStep, xTable, yTable, nil)
 }
@@ -447,7 +452,7 @@ func ConvolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uin
 // optional caller-owned scratch for the large intermediate block.
 func ConvolveScale2DHighBDClampedWithScratch(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable, scratch *ScaledConvolveScratch) error {
+	xTable, yTable *SubpelKernelTable, scratch *ScaledConvolveScratch) error {
 	max, ok := highBDMax(bitDepth)
 	if !ok || width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
@@ -561,7 +566,7 @@ func scaledRefRegionFits(ref frame.Plane, width int, imH int,
 
 func convolveScale2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int, imBuf *scaledIM) {
+	xTable, yTable *SubpelKernelTable, imH int, imBuf *scaledIM) {
 	const imStride = maxBlockSize
 	const xBias = 1 << (8 + filterBits - 1)
 	im := imBuf[:]
@@ -637,7 +642,7 @@ func convolveScale2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, widt
 
 func convolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int, imBuf *scaledIM) {
+	xTable, yTable *SubpelKernelTable, imH int, imBuf *scaledIM) {
 	const imStride = maxBlockSize
 	im := imBuf[:]
 	foX := filterTaps/2 - 1
@@ -725,7 +730,7 @@ func convolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 
 func convolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int, im *scaledHighBDIM) {
+	xTable, yTable *SubpelKernelTable, imH int, im *scaledHighBDIM) {
 	const imStride = maxBlockSize
 	round0, round1 := highBDRoundBits(bitDepth)
 	foX := filterTaps/2 - 1
@@ -814,7 +819,7 @@ func convolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max
 
 func convolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int, im *scaledHighBDIM) {
+	xTable, yTable *SubpelKernelTable, imH int, im *scaledHighBDIM) {
 	const imStride = maxBlockSize
 	round0, round1 := highBDRoundBits(bitDepth)
 	foX := filterTaps/2 - 1

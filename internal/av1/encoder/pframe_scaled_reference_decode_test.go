@@ -116,7 +116,7 @@ func decodeLayerPoolLowOverheads(t *testing.T, payloads ...[]byte) []*goav1.Fram
 			}
 
 			framePool := scaledReferenceDecodeFramePool(t, &layerPool, sequence, event)
-			size, err := goav1.DecoderFrameWorkResidualEventScratchLen(sequence, event, workers, planSpans, planJobs, planBatches)
+			size, err := goav1.DecoderFrameWorkResidualEventScratchLen(sequence, &event, workers, planSpans, planJobs, planBatches)
 			if err != nil {
 				t.Fatalf("payload %d event %d scratch len: %v", payloadIndex, eventIndex, err)
 			}
@@ -177,7 +177,7 @@ func decodeLayerPoolLowOverheads(t *testing.T, payloads ...[]byte) []*goav1.Fram
 			if err != nil {
 				t.Fatalf("payload %d event %d run: %v", payloadIndex, eventIndex, err)
 			}
-			if goav1.DecoderEventOutputsFrame(event) {
+			if goav1.DecoderEventOutputsFrame(&event) {
 				if result.Output == nil {
 					t.Fatalf("payload %d event %d output frame is nil", payloadIndex, eventIndex)
 				}

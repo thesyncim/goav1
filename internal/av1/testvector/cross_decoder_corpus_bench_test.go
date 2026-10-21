@@ -609,7 +609,7 @@ func (s *corpusDecodeState) runEvents(events []decoder.Event) error {
 		spatialID := event.SpatialID
 		globalSurface := func(local int) int { return libaomGlobalSurfaceID(spatialID, local) }
 		result, err := layer.state.RunEventWithContextAndExternalReferences(
-			&layers.sharedRefs, &layer.pool, event.SequenceHeader, event, 32,
+			&layers.sharedRefs, &layer.pool, event.SequenceHeader, &event, 32,
 			referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:],
 			s.workerPool, layers, globalSurface, layers, &layers.sharedFrameContexts,
 			&s.sideData,
@@ -627,7 +627,7 @@ func (s *corpusDecodeState) runEvents(events []decoder.Event) error {
 					return fmt.Errorf("apply postfilters: %w", err)
 				}
 				if currentMVSurface >= 0 {
-					if err := decoder.PublishTemporalMotionReference(post.Context.Event, currentMVSurface, &layer.mvFrames[currentMVSurface], layer.mvStore); err != nil {
+					if err := decoder.PublishTemporalMotionReference(&post.Context.Event, currentMVSurface, &layer.mvFrames[currentMVSurface], layer.mvStore); err != nil {
 						return err
 					}
 				}

@@ -7,7 +7,7 @@ import (
 
 // PublishTemporalMotionReference stores the decoded frame's MV_REF side data
 // and order-hint metadata under its frame-pool surface index.
-func PublishTemporalMotionReference(event Event, surface int, current *tile.ReferenceMVFrame, store []tile.TemporalMotionReferenceFrame) error {
+func PublishTemporalMotionReference(event *Event, surface int, current *tile.ReferenceMVFrame, store []tile.TemporalMotionReferenceFrame) error {
 	if (event.Kind != EventFrame && event.Kind != EventTileGroup) || !event.TileGroup.Final {
 		return ErrInvalidSurfaceEvent
 	}

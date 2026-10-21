@@ -145,7 +145,7 @@ func FuzzPublicDecoderFrameWorkPostFilterScratchContext(f *testing.F) {
 		}
 
 		var scratchOutput av1.Frame
-		ctx, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, event, align, nil, &scratchOutput)
+		ctx, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, &event, align, nil, &scratchOutput)
 		if err != nil {
 			return
 		}

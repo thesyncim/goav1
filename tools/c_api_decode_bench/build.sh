@@ -17,8 +17,8 @@ else
 fi
 
 expected_aom_commit=047d8cf6168feafe1300eb6902000dd1a03d5549
-expected_dav1d_commit=b546257f770768b2c88258c533da38b91a06f737
-expected_dav1d_version=${GOAV1_C_API_EXPECT_DAV1D_VERSION:-1.5.3}
+expected_dav1d_commit=54706fc6bc0cdecab7e9593974a4039cc038fca7
+expected_dav1d_version=${GOAV1_C_API_EXPECT_DAV1D_VERSION:-1.5.4}
 flags=(-O3 -DNDEBUG -std=c11 -Wall -Wextra -Wconversion)
 flags_text="-O3 -DNDEBUG -std=c11 -Wall -Wextra -Wconversion"
 

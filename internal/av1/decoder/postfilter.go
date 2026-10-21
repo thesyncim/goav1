@@ -285,7 +285,7 @@ type FrameWorkPostFilterBanding struct {
 	CDEFUnitRows     int
 }
 
-func frameWorkDav1dPostFilterBanding(ctx FrameWorkPostFilterContext) FrameWorkPostFilterBanding {
+func frameWorkDav1dPostFilterBanding(ctx *FrameWorkPostFilterContext) FrameWorkPostFilterBanding {
 	if ctx.Event.SequenceHeader.Use128x128Superblock {
 		return FrameWorkPostFilterBanding{
 			LoopFilterMIRows: 32,
@@ -379,7 +379,7 @@ func (r *FrameWorkBoundSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterC
 	if r == nil {
 		return ErrInvalidFrameWorkState
 	}
-	options := frameWorkPostFilterBindOptionsFromContext(ctx, r.Options)
+	options := frameWorkPostFilterBindOptionsFromContext(&ctx, r.Options)
 	probe := FrameWorkPostFilterRequest{
 		LoopFilter: FrameWorkLoopFilterPostFilterRequest{
 			Map:             options.LoopFilterMap,
@@ -414,7 +414,7 @@ func (r *FrameWorkBoundSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterC
 	return nil
 }
 
-func frameWorkPostFilterBindOptionsFromContext(ctx FrameWorkPostFilterContext, options FrameWorkPostFilterBindOptions) FrameWorkPostFilterBindOptions {
+func frameWorkPostFilterBindOptionsFromContext(ctx *FrameWorkPostFilterContext, options FrameWorkPostFilterBindOptions) FrameWorkPostFilterBindOptions {
 	if frameWorkLoopFilterMapEmpty(options.LoopFilterMap) && ctx.LoopFilterMap != nil {
 		options.LoopFilterMap = *ctx.LoopFilterMap
 		options.LoopFilterTrustedCoverage = true
@@ -434,7 +434,7 @@ func frameWorkPostFilterBindOptionsFromContext(ctx FrameWorkPostFilterContext, o
 // ApplyLoopFilterEdges: that path computes the exact edge count and reports a
 // short buffer before mutating the output, so the bound runner does not need to
 // pay a duplicate full planning pass just to learn the same count.
-func (ctx FrameWorkPostFilterContext) boundSupportedPostFilterScratchLen(req FrameWorkPostFilterRequest, scratch FrameWorkPostFilterScratch) (FrameWorkPostFilterScratchSize, error) {
+func (ctx *FrameWorkPostFilterContext) boundSupportedPostFilterScratchLen(req FrameWorkPostFilterRequest, scratch FrameWorkPostFilterScratch) (FrameWorkPostFilterScratchSize, error) {
 	remaining := ctx.RemainingPostFilters()
 	supported, err := ctx.supportedPostFilterStages(remaining)
 	if err != nil {
@@ -506,8 +506,8 @@ func (r *FrameWorkCallerPostFilterRunner) Apply(ctx FrameWorkPostFilterContext) 
 
 // ActivePostFilters returns the frame-level postfilter stages signaled by this
 // final-frame context.
-func (ctx FrameWorkPostFilterContext) ActivePostFilters() FrameWorkPostFilterStage {
-	return frameWorkActivePostFilters(&ctx)
+func (ctx *FrameWorkPostFilterContext) ActivePostFilters() FrameWorkPostFilterStage {
+	return frameWorkActivePostFilters(ctx)
 }
 
 // Internal queries can inspect the context already owned by their caller.
@@ -546,8 +546,8 @@ func frameWorkMarkCompletedPostFilters(ctx *FrameWorkPostFilterContext, stages F
 
 // RemainingPostFilters returns active stages that have not been marked complete
 // in this callback-local context.
-func (ctx FrameWorkPostFilterContext) RemainingPostFilters() FrameWorkPostFilterStage {
-	return frameWorkRemainingPostFilters(&ctx)
+func (ctx *FrameWorkPostFilterContext) RemainingPostFilters() FrameWorkPostFilterStage {
+	return frameWorkRemainingPostFilters(ctx)
 }
 
 func frameWorkRemainingPostFilters(ctx *FrameWorkPostFilterContext) FrameWorkPostFilterStage {
@@ -556,7 +556,7 @@ func frameWorkRemainingPostFilters(ctx *FrameWorkPostFilterContext) FrameWorkPos
 
 // SupportedPostFilters returns the remaining active stages that the supported
 // frame-pool publication pipeline can run.
-func (ctx FrameWorkPostFilterContext) SupportedPostFilters() (FrameWorkPostFilterStage, error) {
+func (ctx *FrameWorkPostFilterContext) SupportedPostFilters() (FrameWorkPostFilterStage, error) {
 	remaining := ctx.RemainingPostFilters()
 	supported, err := ctx.supportedPostFilterStages(remaining)
 	if err != nil {
@@ -567,7 +567,7 @@ func (ctx FrameWorkPostFilterContext) SupportedPostFilters() (FrameWorkPostFilte
 
 // UnsupportedPostFilters returns the remaining active stages that require the
 // caller-owned full postfilter path or are not currently integrated.
-func (ctx FrameWorkPostFilterContext) UnsupportedPostFilters() (FrameWorkPostFilterStage, error) {
+func (ctx *FrameWorkPostFilterContext) UnsupportedPostFilters() (FrameWorkPostFilterStage, error) {
 	remaining := ctx.RemainingPostFilters()
 	supported, err := ctx.supportedPostFilterStages(remaining)
 	if err != nil {
@@ -580,7 +580,7 @@ func (ctx FrameWorkPostFilterContext) UnsupportedPostFilters() (FrameWorkPostFil
 // current reconstructed frame directly. It accepts frames whose postfilter plan
 // is a no-op and rejects frames that need loop filter, CDEF, superres, loop
 // restoration, or film grain before MD5/reference use.
-func (ctx FrameWorkPostFilterContext) RequireNoActivePostFilters() error {
+func (ctx *FrameWorkPostFilterContext) RequireNoActivePostFilters() error {
 	if !ctx.ActivePostFilters().Empty() {
 		return ErrUnsupportedPostFilter
 	}
@@ -589,7 +589,7 @@ func (ctx FrameWorkPostFilterContext) RequireNoActivePostFilters() error {
 
 // RequireSupportedPostFilters rejects contexts with remaining stages that the
 // frame-pool publication pipeline cannot complete.
-func (ctx FrameWorkPostFilterContext) RequireSupportedPostFilters() error {
+func (ctx *FrameWorkPostFilterContext) RequireSupportedPostFilters() error {
 	unsupported, err := ctx.UnsupportedPostFilters()
 	if err != nil {
 		return err
@@ -602,7 +602,7 @@ func (ctx FrameWorkPostFilterContext) RequireSupportedPostFilters() error {
 
 // RequireNoRemainingPostFilters rejects active postfilters that have not been
 // marked complete in this callback-local context.
-func (ctx FrameWorkPostFilterContext) RequireNoRemainingPostFilters() error {
+func (ctx *FrameWorkPostFilterContext) RequireNoRemainingPostFilters() error {
 	if !ctx.RemainingPostFilters().Empty() {
 		return ErrUnsupportedPostFilter
 	}
@@ -612,7 +612,7 @@ func (ctx FrameWorkPostFilterContext) RequireNoRemainingPostFilters() error {
 // DetachedPostFilterOutput reports whether ctx.Output points at caller-owned
 // postfilter scratch instead of the frame-pool surface that the framework will
 // publish to reference slots.
-func (ctx FrameWorkPostFilterContext) DetachedPostFilterOutput() bool {
+func (ctx *FrameWorkPostFilterContext) DetachedPostFilterOutput() bool {
 	return ctx.detachedPostFilterOutput
 }
 
@@ -620,7 +620,7 @@ func (ctx FrameWorkPostFilterContext) DetachedPostFilterOutput() bool {
 // but whose current output is detached caller-owned scratch. Use this guard from
 // frame-pool publication hooks; display/caller-owned consumers can instead use
 // RequireNoRemainingPostFilters and then read ctx.Output directly.
-func (ctx FrameWorkPostFilterContext) RequirePublishablePostFilterOutput() error {
+func (ctx *FrameWorkPostFilterContext) RequirePublishablePostFilterOutput() error {
 	if err := ctx.RequireNoRemainingPostFilters(); err != nil {
 		return err
 	}
@@ -633,7 +633,7 @@ func (ctx FrameWorkPostFilterContext) RequirePublishablePostFilterOutput() error
 // SupportedPostFilterScratchLen reports scratch lengths needed by
 // ApplySupportedPostFilters. It rejects frames requiring unsupported stages
 // before callers allocate scratch for a pipeline that cannot complete.
-func (ctx FrameWorkPostFilterContext) SupportedPostFilterScratchLen(req FrameWorkPostFilterRequest) (FrameWorkPostFilterScratchSize, error) {
+func (ctx *FrameWorkPostFilterContext) SupportedPostFilterScratchLen(req FrameWorkPostFilterRequest) (FrameWorkPostFilterScratchSize, error) {
 	remaining := ctx.RemainingPostFilters()
 	supported, err := ctx.supportedPostFilterStages(remaining)
 	if err != nil {
@@ -682,7 +682,7 @@ func (ctx FrameWorkPostFilterContext) SupportedPostFilterScratchLen(req FrameWor
 // postfilter stages that AV1 runs before superres. It intentionally ignores
 // superres and later stages so callers can allocate and run this prefix before
 // switching to caller-owned upscaled output scratch.
-func (ctx FrameWorkPostFilterContext) PreSuperResPostFilterScratchLen(req FrameWorkPostFilterRequest) (FrameWorkPostFilterScratchSize, error) {
+func (ctx *FrameWorkPostFilterContext) PreSuperResPostFilterScratchLen(req FrameWorkPostFilterRequest) (FrameWorkPostFilterScratchSize, error) {
 	remaining := ctx.RemainingPostFilters()
 	var size FrameWorkPostFilterScratchSize
 	if remaining.Has(FrameWorkPostFilterLoopFilter) {
@@ -706,7 +706,7 @@ func (ctx FrameWorkPostFilterContext) PreSuperResPostFilterScratchLen(req FrameW
 // chain. When superres is active, callers can use the returned SuperRes sizes to
 // allocate req.SuperRes first; a second call with req.SuperRes.OutputFrame sized
 // will also report post-superres restoration and film-grain scratch.
-func (ctx FrameWorkPostFilterContext) CallerPostFilterScratchLen(req FrameWorkPostFilterRequest) (FrameWorkPostFilterScratchSize, error) {
+func (ctx *FrameWorkPostFilterContext) CallerPostFilterScratchLen(req FrameWorkPostFilterRequest) (FrameWorkPostFilterScratchSize, error) {
 	size, err := ctx.PreSuperResPostFilterScratchLen(req)
 	if err != nil {
 		return FrameWorkPostFilterScratchSize{}, err
@@ -752,7 +752,8 @@ func (ctx FrameWorkPostFilterContext) CallerPostFilterScratchLen(req FrameWorkPo
 // normal AV1 order. It rejects frames requiring unsupported stages before
 // mutating ctx.Output.
 func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPostFilterRequest) (FrameWorkPostFilterContext, FrameWorkPostFilterResult, error) {
-	return ctx.applySupportedPostFilters(req, FrameWorkPostFilterBanding{})
+	result, err := ctx.applySupportedPostFiltersInPlace(req, FrameWorkPostFilterBanding{})
+	return ctx, result, err
 }
 
 // ApplySupportedPostFiltersBanded runs the supported postfilter chain in AV1
@@ -760,32 +761,36 @@ func (ctx FrameWorkPostFilterContext) ApplySupportedPostFilters(req FrameWorkPos
 // by banding. The banded stages preserve the same final plane pass order and
 // restoration boundary-save points as ApplySupportedPostFilters.
 func (ctx FrameWorkPostFilterContext) ApplySupportedPostFiltersBanded(req FrameWorkPostFilterRequest, banding FrameWorkPostFilterBanding) (FrameWorkPostFilterContext, FrameWorkPostFilterResult, error) {
-	return ctx.applySupportedPostFilters(req, banding)
+	result, err := ctx.applySupportedPostFiltersInPlace(req, banding)
+	return ctx, result, err
 }
 
-func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPostFilterRequest, banding FrameWorkPostFilterBanding) (FrameWorkPostFilterContext, FrameWorkPostFilterResult, error) {
+// applySupportedPostFiltersInPlace runs the supported chain on ctx, marking
+// completed stages in place so callers holding the context in long-lived
+// storage avoid copying it.
+func (ctx *FrameWorkPostFilterContext) applySupportedPostFiltersInPlace(req FrameWorkPostFilterRequest, banding FrameWorkPostFilterBanding) (FrameWorkPostFilterResult, error) {
 	var result FrameWorkPostFilterResult
-	remaining := frameWorkRemainingPostFilters(&ctx)
+	remaining := frameWorkRemainingPostFilters(ctx)
 	supported, err := ctx.supportedPostFilterStages(remaining)
 	if err != nil {
-		return ctx, result, err
+		return result, err
 	}
 	if remaining&^supported != 0 {
-		return ctx, result, ErrUnsupportedPostFilter
+		return result, ErrUnsupportedPostFilter
 	}
 	if remaining.Has(FrameWorkPostFilterFilmGrain) {
 		if err := ctx.validateFilmGrainPostFilterRequest(req.FilmGrain); err != nil {
-			return ctx, result, err
+			return result, err
 		}
 	}
 	if remaining.Has(FrameWorkPostFilterCDEF) {
 		if err := ctx.validateCDEFPostFilterRequest(req.CDEF); err != nil {
-			return ctx, result, err
+			return result, err
 		}
 	}
 	if remaining.Has(FrameWorkPostFilterLoopRestoration) {
 		if err := ctx.validateLoopRestorationPostFilterRequest(req.Restoration); err != nil {
-			return ctx, result, err
+			return result, err
 		}
 	}
 	if remaining.Has(FrameWorkPostFilterLoopFilter) {
@@ -797,7 +802,7 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 		switch {
 		case banding.LoopFilterMIRows > 0:
 			loopFilterResult, err = ctx.ApplyLoopFilterEdgesBanded(req.LoopFilter, banding.LoopFilterMIRows)
-		case ctx.loopFilterMasksUsable() && ctx.pool != nil && ctx.postFilterWorkerCount() > 1:
+		case ctx.loopFilterMasksUsable() && ctx.pool != nil && ctx.postFilterWorkerCount() > 1 && ctx.Parallel.workers() == 0:
 			// The pooled path uses decode-time masks and fans independent bands over
 			// the tile worker lanes after tile execution has joined.
 			loopFilterResult, err = ctx.applyLoopFilterEdgesMaybePooled(req.LoopFilter)
@@ -822,9 +827,9 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 			loopFilterResult, err = ctx.applyLoopFilterEdgesMaybePooled(req.LoopFilter)
 		}
 		if err != nil {
-			return ctx, result, err
+			return result, err
 		}
-		frameWorkMarkCompletedPostFilters(&ctx, FrameWorkPostFilterLoopFilter)
+		frameWorkMarkCompletedPostFilters(ctx, FrameWorkPostFilterLoopFilter)
 		result.Completed |= FrameWorkPostFilterLoopFilter
 		result.LoopFilter = loopFilterResult
 	}
@@ -834,13 +839,13 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 	// non-optimized restoration path still requires those rows to be saved.
 	if remaining.Has(FrameWorkPostFilterLoopRestoration) && ctx.shouldSaveRestorationDeblockBoundaries() {
 		if err := ctx.saveRestorationBoundariesForRequest(req.Restoration, false); err != nil {
-			return ctx, result, err
+			return result, err
 		}
 	}
 	if remaining.Has(FrameWorkPostFilterCDEF) {
 		var cdefResult FrameWorkCDEFPostFilterResult
 		var err error
-		if ctx.pool != nil && ctx.postFilterWorkerCount() > 1 && banding.CDEFUnitRows <= 0 {
+		if ctx.pool != nil && ctx.postFilterWorkerCount() > 1 && banding.CDEFUnitRows <= 0 && ctx.Parallel.workers() == 0 {
 			// The pooled path uses the tile worker lanes after tile execution has
 			// joined; each CDEF band reads immutable input and writes disjoint rows.
 			cdefResult, err = ctx.applyCDEFPostFilterMaybePooled(req.CDEF)
@@ -854,7 +859,7 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 			handled := false
 			cdefResult, handled, err = ctx.applyCDEFPostFilterParallel(req.CDEF, unitRowsPerBand)
 			if err != nil {
-				return ctx, result, err
+				return result, err
 			}
 			if !handled {
 				if banding.CDEFUnitRows > 0 {
@@ -869,30 +874,38 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 			cdefResult, err = ctx.applyCDEFPostFilterMaybePooled(req.CDEF)
 		}
 		if err != nil {
-			return ctx, result, err
+			return result, err
 		}
-		frameWorkMarkCompletedPostFilters(&ctx, FrameWorkPostFilterCDEF)
+		frameWorkMarkCompletedPostFilters(ctx, FrameWorkPostFilterCDEF)
 		result.Completed |= FrameWorkPostFilterCDEF
 		result.CDEF = cdefResult
 	}
 	// Save the CDEF boundary lines (afterCDEF=true) for the frame-edge stripes
 	// that have no neighboring deblock context.
-	if frameWorkRemainingPostFilters(&ctx).Has(FrameWorkPostFilterLoopRestoration) {
+	if frameWorkRemainingPostFilters(ctx).Has(FrameWorkPostFilterLoopRestoration) {
 		if err := ctx.saveRestorationBoundariesForRequest(req.Restoration, true); err != nil {
-			return ctx, result, err
+			return result, err
 		}
 	}
-	if frameWorkRemainingPostFilters(&ctx).Has(FrameWorkPostFilterLoopRestoration) {
+	if frameWorkRemainingPostFilters(ctx).Has(FrameWorkPostFilterLoopRestoration) {
 		cdefDebugLogChromaPreLR(ctx.Output)
 		cdefDebugLogLRRecords(req.Restoration.Records)
 		// applyLoopRestorationPostFilterMaybePooled fans the 8-bit in-place
 		// restoration-unit rows across the idle worker lanes when a multi-lane pool
 		// was threaded in, and otherwise runs the byte-identical serial apply.
-		restorationResult, err := ctx.applyLoopRestorationPostFilterMaybePooled(req.Restoration)
-		if err != nil {
-			return ctx, result, err
+		var restorationResult tile.RestorationFrameApplyResult
+		handled := false
+		var err error
+		if ctx.Parallel.workers() > 0 {
+			restorationResult, handled, err = ctx.applyLoopRestorationPostFilterParallel(req.Restoration)
 		}
-		frameWorkMarkCompletedPostFilters(&ctx, FrameWorkPostFilterLoopRestoration)
+		if err == nil && !handled {
+			restorationResult, err = ctx.applyLoopRestorationPostFilterMaybePooled(req.Restoration)
+		}
+		if err != nil {
+			return result, err
+		}
+		frameWorkMarkCompletedPostFilters(ctx, FrameWorkPostFilterLoopRestoration)
 		result.Completed |= FrameWorkPostFilterLoopRestoration
 		result.Restoration = restorationResult
 	}
@@ -907,16 +920,16 @@ func (ctx FrameWorkPostFilterContext) applySupportedPostFilters(req FrameWorkPos
 	if ctx.Output != nil {
 		ctx.Output.ExtendBorders()
 	}
-	if frameWorkRemainingPostFilters(&ctx).Has(FrameWorkPostFilterFilmGrain) {
+	if frameWorkRemainingPostFilters(ctx).Has(FrameWorkPostFilterFilmGrain) {
 		filmGrainResult, err := ctx.ApplyFilmGrainPostFilter(req.FilmGrain)
 		if err != nil {
-			return ctx, result, err
+			return result, err
 		}
-		frameWorkMarkCompletedPostFilters(&ctx, FrameWorkPostFilterFilmGrain)
+		frameWorkMarkCompletedPostFilters(ctx, FrameWorkPostFilterFilmGrain)
 		result.Completed |= FrameWorkPostFilterFilmGrain
 		result.FilmGrain = filmGrainResult
 	}
-	return ctx, result, nil
+	return result, nil
 }
 
 func (ctx *FrameWorkPostFilterContext) shouldSaveRestorationDeblockBoundaries() bool {
@@ -931,42 +944,58 @@ func (ctx *FrameWorkPostFilterContext) shouldSaveRestorationDeblockBoundaries() 
 // Display-only film grain is synthesized into caller-owned request scratch and
 // returned separately.
 func (ctx FrameWorkPostFilterContext) ApplySupportedPostFiltersForPublication(req FrameWorkPostFilterRequest) (FrameWorkPostFilterContext, *frame.Frame, FrameWorkPostFilterResult, error) {
-	var result FrameWorkPostFilterResult
-	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterFilmGrain) {
-		next, result, err := ctx.ApplySupportedPostFilters(req)
-		return next, next.Output, result, err
+	next := ctx
+	output, result, err := next.applySupportedPostFiltersForPublicationInPlace(req)
+	if err != nil {
+		if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterFilmGrain) {
+			return next, next.Output, result, err
+		}
+		return ctx, nil, result, err
+	}
+	return next, output, result, nil
+}
+
+// applySupportedPostFiltersForPublicationInPlace is the in-place form of
+// ApplySupportedPostFiltersForPublication for callers that keep the context in
+// long-lived storage. On error ctx may hold partially marked stages.
+func (ctx *FrameWorkPostFilterContext) applySupportedPostFiltersForPublicationInPlace(req FrameWorkPostFilterRequest) (*frame.Frame, FrameWorkPostFilterResult, error) {
+	if !frameWorkRemainingPostFilters(ctx).Has(FrameWorkPostFilterFilmGrain) {
+		result, err := ctx.applySupportedPostFiltersInPlace(req, FrameWorkPostFilterBanding{})
+		return ctx.Output, result, err
 	}
 	if err := ctx.validateFilmGrainPostFilterRequest(req.FilmGrain); err != nil {
-		return ctx, nil, result, err
+		return nil, FrameWorkPostFilterResult{}, err
 	}
 
-	publishCtx, result, err := ctx.WithCompletedPostFilters(FrameWorkPostFilterFilmGrain).ApplySupportedPostFilters(req)
+	frameWorkMarkCompletedPostFilters(ctx, FrameWorkPostFilterFilmGrain)
+	result, err := ctx.applySupportedPostFiltersInPlace(req, FrameWorkPostFilterBanding{})
 	if err != nil {
-		return ctx, nil, result, err
+		return nil, result, err
 	}
 
-	displayCtx := publishCtx
-	displayCtx.completedPostFilters &^= FrameWorkPostFilterFilmGrain
-	displayOutput, filmGrainResult, err := frameWorkApplyFilmGrainForPublication(&displayCtx, req.FilmGrain)
+	// Grain synthesis sees the stage as pending; the publishable context then
+	// records it complete.
+	ctx.completedPostFilters &^= FrameWorkPostFilterFilmGrain
+	displayOutput, filmGrainResult, err := frameWorkApplyFilmGrainForPublication(ctx, req.FilmGrain)
+	frameWorkMarkCompletedPostFilters(ctx, FrameWorkPostFilterFilmGrain)
 	if err != nil {
-		return ctx, nil, result, err
+		return nil, result, err
 	}
 	if displayOutput == nil {
-		displayOutput = publishCtx.Output
+		displayOutput = ctx.Output
 	} else if filmGrainResult.OutputSize == 0 {
 		filmGrainResult.Output = displayOutput
 		filmGrainResult.OutputSize = displayOutput.Layout.Size
 	}
-	publishCtx = publishCtx.WithCompletedPostFilters(FrameWorkPostFilterFilmGrain)
 	result.Completed |= FrameWorkPostFilterFilmGrain
 	result.FilmGrain = filmGrainResult
-	return publishCtx, displayOutput, result, nil
+	return displayOutput, result, nil
 }
 
 // saveRestorationBoundariesForRequest is the AV1 loop-restoration boundary save
 // pass that captures pre-CDEF (afterCDEF=false) and post-CDEF (afterCDEF=true)
 // boundary samples from ctx.Output for use during restoration application.
-func (ctx FrameWorkPostFilterContext) saveRestorationBoundariesForRequest(req FrameWorkRestorationPostFilterRequest, afterCDEF bool) error {
+func (ctx *FrameWorkPostFilterContext) saveRestorationBoundariesForRequest(req FrameWorkRestorationPostFilterRequest, afterCDEF bool) error {
 	if req.Optimized {
 		return nil
 	}
@@ -1006,7 +1035,7 @@ func (ctx FrameWorkPostFilterContext) saveRestorationBoundariesForRequest(req Fr
 // superResActiveForRestorationSave reports whether the current output surface is
 // still the coded (pre-super-res) surface and super-res will upscale it, so the
 // pre-CDEF restoration boundary save must upscale its rows on the fly.
-func (ctx FrameWorkPostFilterContext) superResActiveForRestorationSave() bool {
+func (ctx *FrameWorkPostFilterContext) superResActiveForRestorationSave() bool {
 	if ctx.detachedPostFilterOutput {
 		// Output already points at the upscaled super-res surface.
 		return false
@@ -1022,7 +1051,7 @@ func (ctx FrameWorkPostFilterContext) superResActiveForRestorationSave() bool {
 // saveRestorationDeblockBoundariesSuperRes performs the pre-CDEF restoration
 // boundary save against the MI-aligned coded surface, upscaling each saved row
 // to the upscaled plane width. It ports libaom's super-res deblock save branch.
-func (ctx FrameWorkPostFilterContext) saveRestorationDeblockBoundariesSuperRes(plan tile.RestorationFramePlan, boundaries [3]tile.RestorationStripeBoundaries, bytesPerSample int, rowScratch []uint16) error {
+func (ctx *FrameWorkPostFilterContext) saveRestorationDeblockBoundariesSuperRes(plan tile.RestorationFramePlan, boundaries [3]tile.RestorationStripeBoundaries, bytesPerSample int, rowScratch []uint16) error {
 	codedFormat, err := codedFrameFormatFromHeaders(ctx.Event.SequenceHeader, ctx.Event.FrameSize, ctx.Output.Format.Align)
 	if err != nil {
 		return err
@@ -1206,7 +1235,7 @@ func (ctx FrameWorkPostFilterContext) ApplyPreSuperResPostFilters(req FrameWorkP
 	return ctx, result, nil
 }
 
-func (ctx FrameWorkPostFilterContext) supportedPostFilterStages(remaining FrameWorkPostFilterStage) (FrameWorkPostFilterStage, error) {
+func (ctx *FrameWorkPostFilterContext) supportedPostFilterStages(remaining FrameWorkPostFilterStage) (FrameWorkPostFilterStage, error) {
 	supported := FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF | FrameWorkPostFilterLoopRestoration
 	if remaining&^(supported|FrameWorkPostFilterFilmGrain) != 0 {
 		return supported, nil
@@ -1260,13 +1289,13 @@ func frameWorkRestorationUnitRecordBoundaryScratchSizeMax(a tile.RestorationUnit
 
 // LoopRestorationPostFilterPlan returns the frame-level loop-restoration plan
 // for the current event.
-func (ctx FrameWorkPostFilterContext) LoopRestorationPostFilterPlan() (tile.RestorationFramePlan, error) {
+func (ctx *FrameWorkPostFilterContext) LoopRestorationPostFilterPlan() (tile.RestorationFramePlan, error) {
 	return tile.BuildRestorationFramePlan(ctx.Event.Restoration, ctx.Event.FrameSize, ctx.Event.SequenceHeader.ColorConfig)
 }
 
 // LoopRestorationPostFilterScratchLen reports scratch lengths needed to apply
 // decoded loop-restoration records to ctx.Output.
-func (ctx FrameWorkPostFilterContext) LoopRestorationPostFilterScratchLen(records [3][]tile.RestorationUnitRecord, optimized bool) (FrameWorkRestorationPostFilterScratchSize, error) {
+func (ctx *FrameWorkPostFilterContext) LoopRestorationPostFilterScratchLen(records [3][]tile.RestorationUnitRecord, optimized bool) (FrameWorkRestorationPostFilterScratchSize, error) {
 	plan, err := ctx.LoopRestorationPostFilterPlan()
 	if err != nil {
 		return FrameWorkRestorationPostFilterScratchSize{}, err
@@ -1323,7 +1352,7 @@ func (ctx FrameWorkPostFilterContext) LoopRestorationPostFilterScratchLen(record
 // the frame is 8-bit non-optimized (the only walk that bands cleanly over RU
 // rows). Each of the W band slots holds the widest active plane's in-place band
 // buffer plus one unit's Wiener/SGRProj scratch, so any band of any plane fits.
-func (ctx FrameWorkPostFilterContext) loopRestorationPoolScratchLen(plan tile.RestorationFramePlan, optimized bool, apply tile.RestorationUnitRecordBoundaryScratchSize) (FrameWorkRestorationPoolScratchSize, error) {
+func (ctx *FrameWorkPostFilterContext) loopRestorationPoolScratchLen(plan tile.RestorationFramePlan, optimized bool, apply tile.RestorationUnitRecordBoundaryScratchSize) (FrameWorkRestorationPoolScratchSize, error) {
 	workers := ctx.postFilterWorkerCount()
 	if workers <= 1 || optimized || ctx.Output == nil ||
 		ctx.Output.Layout.BytesPerSample != 1 || ctx.Output.Format.BitDepth != 8 {
@@ -1354,7 +1383,7 @@ func (ctx FrameWorkPostFilterContext) loopRestorationPoolScratchLen(plan tile.Re
 	}, nil
 }
 
-func (ctx FrameWorkPostFilterContext) loopRestorationSuperResBoundaryRowScratchLen(plan tile.RestorationFramePlan) (int, error) {
+func (ctx *FrameWorkPostFilterContext) loopRestorationSuperResBoundaryRowScratchLen(plan tile.RestorationFramePlan) (int, error) {
 	size := ctx.Event.FrameSize
 	if !size.SuperResEnabled || size.UpscaledWidth <= size.CodedWidth ||
 		size.SuperResDenominator < 9 || size.SuperResDenominator > 16 {
@@ -1385,7 +1414,7 @@ func (ctx FrameWorkPostFilterContext) loopRestorationSuperResBoundaryRowScratchL
 // ApplyLoopRestorationPostFilter applies loop restoration to ctx.Output. Earlier
 // postfilter stages that feed restoration must already be inactive or marked
 // complete with WithCompletedPostFilters.
-func (ctx FrameWorkPostFilterContext) ApplyLoopRestorationPostFilter(req FrameWorkRestorationPostFilterRequest) (tile.RestorationFrameApplyResult, error) {
+func (ctx *FrameWorkPostFilterContext) ApplyLoopRestorationPostFilter(req FrameWorkRestorationPostFilterRequest) (tile.RestorationFrameApplyResult, error) {
 	remaining := ctx.RemainingPostFilters()
 	preRestoration := FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF | FrameWorkPostFilterSuperRes
 	if remaining&preRestoration != 0 {
@@ -1427,7 +1456,7 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopRestorationPostFilter(req FrameWo
 	return tile.ApplyRestorationFrameToFrame(plan, *ctx.Output, req.Records, req.Boundaries, dataScratch, dstScratch, req.Scratch, req.Optimized)
 }
 
-func (ctx FrameWorkPostFilterContext) validateLoopRestorationPostFilterRequest(req FrameWorkRestorationPostFilterRequest) error {
+func (ctx *FrameWorkPostFilterContext) validateLoopRestorationPostFilterRequest(req FrameWorkRestorationPostFilterRequest) error {
 	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopRestoration) {
 		return nil
 	}
@@ -1473,4 +1502,12 @@ func frameWorkRestorationBoundariesEmpty(boundaries [3]tile.RestorationStripeBou
 		}
 	}
 	return true
+}
+
+// ApplySupportedPostFiltersForPublicationInPlace runs
+// ApplySupportedPostFiltersForPublication on ctx in place. It is for runners
+// that keep the context in their own storage; on error ctx may hold partially
+// marked stages and should be discarded.
+func ApplySupportedPostFiltersForPublicationInPlace(ctx *FrameWorkPostFilterContext, req FrameWorkPostFilterRequest) (*frame.Frame, FrameWorkPostFilterResult, error) {
+	return ctx.applySupportedPostFiltersForPublicationInPlace(req)
 }

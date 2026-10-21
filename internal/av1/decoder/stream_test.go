@@ -1147,7 +1147,7 @@ func TestStreamSwitchFrameSurfaceReferencesReset(t *testing.T) {
 		FrameSize: parser.FrameSize{RefreshFrameFlags: 0xff},
 		TileGroup: parser.TileGroup{Final: true},
 	}
-	count, err := refs.FinishFrame(event, 7, releases[:])
+	count, err := refs.FinishFrame(&event, 7, releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1195,7 +1195,7 @@ func TestStreamSwitchFrameProvidesReferencesForFollowingInter(t *testing.T) {
 		},
 	}
 	var surfaces [parser.InterRefsPerFrame]int
-	count, err := refs.FrameReferences(event, surfaces[:])
+	count, err := refs.FrameReferences(&event, surfaces[:])
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,7 +19,7 @@ func AcquireFrameSurface(pool *frame.Pool, sequence parser.SequenceHeader, size 
 // frame surface for a frame-header or frame event. Reference output is written
 // before the pool slot is acquired, so invalid references leave the pool
 // untouched.
-func BeginFrameSurface(refs *SurfaceReferences, pool *frame.Pool, sequence parser.SequenceHeader, event Event, align int, references []int) (int, *frame.Frame, int, error) {
+func BeginFrameSurface(refs *SurfaceReferences, pool *frame.Pool, sequence parser.SequenceHeader, event *Event, align int, references []int) (int, *frame.Frame, int, error) {
 	if event.Kind != EventFrameHeader && event.Kind != EventFrame {
 		return -1, nil, 0, ErrInvalidSurfaceEvent
 	}
@@ -102,7 +102,7 @@ func frameFormatFromHeaderWidth(sequence parser.SequenceHeader, width uint32, he
 // FinishFrameSurface applies a final decoded frame event to refs and releases
 // overwritten frame-pool slots. Reference state is published only after the
 // pool accepts the release batch.
-func FinishFrameSurface(refs *SurfaceReferences, pool *frame.Pool, event Event, surface int, releases []int) (int, error) {
+func FinishFrameSurface(refs *SurfaceReferences, pool *frame.Pool, event *Event, surface int, releases []int) (int, error) {
 	if refs == nil {
 		return 0, ErrInvalidSurfaceReference
 	}
@@ -154,7 +154,7 @@ func ResetFrameSurfaceReferences(refs *SurfaceReferences, pool *frame.Pool, rele
 // ShowExistingFrameSurface resolves a show-existing-frame event, applies any
 // key-frame reference reset, and releases overwritten frame-pool slots.
 // Reference state is published only after the pool accepts the release batch.
-func ShowExistingFrameSurface(refs *SurfaceReferences, pool *frame.Pool, event Event, releases []int) (int, int, error) {
+func ShowExistingFrameSurface(refs *SurfaceReferences, pool *frame.Pool, event *Event, releases []int) (int, int, error) {
 	if refs == nil {
 		return -1, 0, ErrInvalidSurfaceReference
 	}

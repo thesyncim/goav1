@@ -76,7 +76,7 @@ func TestDecoderFinishFrameSurface(t *testing.T) {
 	size := FrameSize{CodedWidth: 16, Height: 16}
 
 	var refs DecoderSurfaceReferences
-	plan0, _, err := BeginDecoderFrameWork(&refs, &pool, sequence, DecoderEvent{
+	plan0, _, err := BeginDecoderFrameWork(&refs, &pool, sequence, &DecoderEvent{
 		Kind:        DecoderEventFrameHeader,
 		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
 		FrameSize:   size,
@@ -87,7 +87,7 @@ func TestDecoderFinishFrameSurface(t *testing.T) {
 	if plan0.Surface != 0 || plan0.ReferenceCount != 0 || plan0.Tile != (DecoderTileWorkPlan{}) {
 		t.Fatalf("plan0=%+v", plan0)
 	}
-	plan1, _, err := BeginDecoderFrameWork(&refs, &pool, sequence, DecoderEvent{
+	plan1, _, err := BeginDecoderFrameWork(&refs, &pool, sequence, &DecoderEvent{
 		Kind:        DecoderEventFrameHeader,
 		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
 		FrameSize:   size,
@@ -104,7 +104,7 @@ func TestDecoderFinishFrameSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	count, err := DecoderFinishFrameSurface(&refs, &pool, DecoderEvent{
+	count, err := DecoderFinishFrameSurface(&refs, &pool, &DecoderEvent{
 		Kind:      DecoderEventTileGroup,
 		FrameSize: FrameSize{RefreshFrameFlags: 0xff},
 		TileGroup: TileGroup{Final: true},
@@ -142,7 +142,7 @@ func TestPlanDecoderFrameTileWork(t *testing.T) {
 	var spans [1]TileSpan
 	var jobs [1]TileJob
 	var batches [1]TileBatch
-	plan, err := PlanDecoderFrameTileWork(event, 3, 0, 1, spans[:], jobs[:], batches[:])
+	plan, err := PlanDecoderFrameTileWork(&event, 3, 0, 1, spans[:], jobs[:], batches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,43 +262,43 @@ func TestDecoderFrameWorkSequenceContextCapturesScaledPredictionPolicy(t *testin
 }
 
 func TestDecoderEventDropsFrameWork(t *testing.T) {
-	if !DecoderEventDropsFrameWork(DecoderEvent{Kind: DecoderEventSequenceHeader, NewCodedVideoSequence: true}) {
+	if !DecoderEventDropsFrameWork(&DecoderEvent{Kind: DecoderEventSequenceHeader, NewCodedVideoSequence: true}) {
 		t.Fatal("new sequence did not drop frame work")
 	}
-	if !DecoderEventDropsFrameWork(DecoderEvent{Kind: DecoderEventTemporalDelimiter, NewTemporalUnit: true}) {
+	if !DecoderEventDropsFrameWork(&DecoderEvent{Kind: DecoderEventTemporalDelimiter, NewTemporalUnit: true}) {
 		t.Fatal("temporal delimiter did not drop frame work")
 	}
-	if !DecoderEventDropsFrameWork(DecoderEvent{Kind: DecoderEventExistingFrame}) {
+	if !DecoderEventDropsFrameWork(&DecoderEvent{Kind: DecoderEventExistingFrame}) {
 		t.Fatal("show existing frame did not drop frame work")
 	}
-	if DecoderEventDropsFrameWork(DecoderEvent{Kind: DecoderEventSequenceHeader, OperatingParametersChanged: true}) {
+	if DecoderEventDropsFrameWork(&DecoderEvent{Kind: DecoderEventSequenceHeader, OperatingParametersChanged: true}) {
 		t.Fatal("operating parameter change dropped frame work")
 	}
 }
 
 func TestDecoderEventCompletesFrameWork(t *testing.T) {
-	if !DecoderEventCompletesFrameWork(DecoderEvent{Kind: DecoderEventFrame, TileGroup: TileGroup{Final: true}}) {
+	if !DecoderEventCompletesFrameWork(&DecoderEvent{Kind: DecoderEventFrame, TileGroup: TileGroup{Final: true}}) {
 		t.Fatal("final frame did not complete frame work")
 	}
-	if !DecoderEventCompletesFrameWork(DecoderEvent{Kind: DecoderEventTileGroup, TileGroup: TileGroup{Final: true}}) {
+	if !DecoderEventCompletesFrameWork(&DecoderEvent{Kind: DecoderEventTileGroup, TileGroup: TileGroup{Final: true}}) {
 		t.Fatal("final tile group did not complete frame work")
 	}
-	if DecoderEventCompletesFrameWork(DecoderEvent{Kind: DecoderEventTileGroup}) {
+	if DecoderEventCompletesFrameWork(&DecoderEvent{Kind: DecoderEventTileGroup}) {
 		t.Fatal("non-final tile group completed frame work")
 	}
 }
 
 func TestDecoderEventOutputsFrame(t *testing.T) {
-	if !DecoderEventOutputsFrame(DecoderEvent{Kind: DecoderEventFrame, FrameHeader: FrameHeaderPrefix{ShowFrame: true}, TileGroup: TileGroup{Final: true}}) {
+	if !DecoderEventOutputsFrame(&DecoderEvent{Kind: DecoderEventFrame, FrameHeader: FrameHeaderPrefix{ShowFrame: true}, TileGroup: TileGroup{Final: true}}) {
 		t.Fatal("shown final frame did not output frame")
 	}
-	if DecoderEventOutputsFrame(DecoderEvent{Kind: DecoderEventFrame, TileGroup: TileGroup{Final: true}}) {
+	if DecoderEventOutputsFrame(&DecoderEvent{Kind: DecoderEventFrame, TileGroup: TileGroup{Final: true}}) {
 		t.Fatal("not-shown final frame output frame")
 	}
-	if !DecoderEventOutputsFrame(DecoderEvent{Kind: DecoderEventExistingFrame}) {
+	if !DecoderEventOutputsFrame(&DecoderEvent{Kind: DecoderEventExistingFrame}) {
 		t.Fatal("show existing frame did not output frame")
 	}
-	if DecoderEventOutputsFrame(DecoderEvent{Kind: DecoderEventTileGroup}) {
+	if DecoderEventOutputsFrame(&DecoderEvent{Kind: DecoderEventTileGroup}) {
 		t.Fatal("non-final tile group output frame")
 	}
 }
@@ -323,7 +323,7 @@ func TestDecoderFrameWorkState(t *testing.T) {
 
 	var refs DecoderSurfaceReferences
 	var state DecoderFrameWorkState
-	plan, output, err := state.Begin(&refs, &pool, sequence, header, 32, nil, 1, nil, nil, nil)
+	plan, output, err := state.Begin(&refs, &pool, sequence, &header, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestDecoderFrameWorkState(t *testing.T) {
 	}
 
 	var releases [RefFrames]int
-	count, err := state.Finish(&refs, &pool, tileGroup, releases[:])
+	count, err := state.Finish(&refs, &pool, &tileGroup, releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +361,7 @@ func TestDecoderFrameWorkStatePostFilterContext(t *testing.T) {
 
 	var refs DecoderSurfaceReferences
 	var state DecoderFrameWorkState
-	plan, output, err := state.Begin(&refs, &pool, sequence, header, 32, nil, 1, nil, nil, nil)
+	plan, output, err := state.Begin(&refs, &pool, sequence, &header, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +370,7 @@ func TestDecoderFrameWorkStatePostFilterContext(t *testing.T) {
 		Tile: DecoderFrameTileWorkPlan{Surface: plan.Surface},
 	}
 
-	ctx, err := state.PostFilterContext(&pool, tileGroup, step, false)
+	ctx, err := state.PostFilterContext(&pool, &tileGroup, step, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +389,7 @@ func TestDecoderFrameWorkStatePostFilterContext(t *testing.T) {
 
 	nonFinal := tileGroup
 	nonFinal.TileGroup.Final = false
-	noop, err := state.PostFilterContext(&pool, nonFinal, step, false)
+	noop, err := state.PostFilterContext(&pool, &nonFinal, step, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,12 +418,12 @@ func TestDecoderFrameWorkStateFinishIfEventCompletesFrameWork(t *testing.T) {
 
 	var refs DecoderSurfaceReferences
 	var state DecoderFrameWorkState
-	if _, _, err := state.Begin(&refs, &pool, sequence, header, 32, nil, 1, nil, nil, nil); err != nil {
+	if _, _, err := state.Begin(&refs, &pool, sequence, &header, 32, nil, 1, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	var releases [RefFrames]int
-	completed, count, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, tileGroup, releases[:])
+	completed, count, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, &tileGroup, releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,11 +457,11 @@ func TestDecoderFrameWorkStateShowExisting(t *testing.T) {
 	}
 
 	var state DecoderFrameWorkState
-	if _, _, err := state.Begin(&refs, &pool, sequence, header, 32, nil, 1, nil, nil, nil); err != nil {
+	if _, _, err := state.Begin(&refs, &pool, sequence, &header, 32, nil, 1, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	plan, err := state.ShowExisting(&refs, &pool, DecoderEvent{
+	plan, err := state.ShowExisting(&refs, &pool, &DecoderEvent{
 		Kind: DecoderEventExistingFrame,
 		FrameHeader: FrameHeaderPrefix{
 			ShowExistingFrame: true,
@@ -497,7 +497,7 @@ func TestDecoderFrameWorkStatePlanEvent(t *testing.T) {
 
 	var refs DecoderSurfaceReferences
 	var state DecoderFrameWorkState
-	step, output, err := state.PlanEvent(&refs, &pool, sequence, header, 32, nil, 1, nil, nil, nil, nil)
+	step, output, err := state.PlanEvent(&refs, &pool, sequence, &header, 32, nil, 1, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +506,7 @@ func TestDecoderFrameWorkStatePlanEvent(t *testing.T) {
 	}
 
 	var releases [RefFrames]int
-	completed, count, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, tileGroup, releases[:])
+	completed, count, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, &tileGroup, releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -649,7 +649,7 @@ func TestRunDecoderFrameWorkEventWithContext(t *testing.T) {
 	var releases [RefFrames]int
 
 	var seenOutput *Frame
-	result, err := RunDecoderFrameWorkEventWithContext(&state, &refs, &pool, sequence, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx DecoderFrameWorkBatch) error {
+	result, err := RunDecoderFrameWorkEventWithContext(&state, &refs, &pool, sequence, &event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx DecoderFrameWorkBatch) error {
 		seenOutput = ctx.Output
 		if len(ctx.Payload) != 1 || ctx.Payload[0] != 0x80 {
 			t.Fatalf("payload=%v", ctx.Payload)
@@ -706,7 +706,7 @@ func TestRunDecoderFrameWorkEventWithContextAndPostFilter(t *testing.T) {
 	var releases [RefFrames]int
 
 	var order [2]string
-	result, err := RunDecoderFrameWorkEventWithContextAndPostFilter(&state, &refs, &pool, sequence, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx DecoderFrameWorkBatch) error {
+	result, err := RunDecoderFrameWorkEventWithContextAndPostFilter(&state, &refs, &pool, sequence, &event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx DecoderFrameWorkBatch) error {
 		order[0] = "tile"
 		ctx.Output.Y.Pix[0] = 0x21
 		return nil
@@ -769,11 +769,11 @@ func TestDecoderFrameWorkStateRunStep(t *testing.T) {
 
 	var refs DecoderSurfaceReferences
 	var state DecoderFrameWorkState
-	if _, _, err := state.Begin(&refs, &pool, sequence, header, 32, nil, 1, nil, nil, nil); err != nil {
+	if _, _, err := state.Begin(&refs, &pool, sequence, &header, 32, nil, 1, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	var releases [RefFrames]int
-	result, err := state.RunStep(&refs, &pool, tileGroup, step, workerPool, jobs[:], batches[:], releases[:], func(TileBatch, []TileJob) error {
+	result, err := state.RunStep(&refs, &pool, &tileGroup, step, workerPool, jobs[:], batches[:], releases[:], func(TileBatch, []TileJob) error {
 		return nil
 	})
 	if err != nil {
@@ -816,7 +816,7 @@ func TestDecoderFrameWorkStateAbort(t *testing.T) {
 
 	var refs DecoderSurfaceReferences
 	var state DecoderFrameWorkState
-	plan, _, err := state.Begin(&refs, &pool, sequence, header, 32, nil, 1, nil, nil, nil)
+	plan, _, err := state.Begin(&refs, &pool, sequence, &header, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

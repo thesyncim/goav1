@@ -148,7 +148,7 @@ func TestPublicDecoderTemporalMotionReferenceHelpers(t *testing.T) {
 		},
 	}
 	store := make([]av1.TileTemporalMotionReferenceFrame, 3)
-	if err := av1.PublishDecoderTemporalMotionReference(event, 1, &mvFrame, store); err != nil {
+	if err := av1.PublishDecoderTemporalMotionReference(&event, 1, &mvFrame, store); err != nil {
 		t.Fatalf("PublishDecoderTemporalMotionReference: %v", err)
 	}
 	var dst [1]av1.TileTemporalMotionReferenceFrame

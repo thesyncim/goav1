@@ -9,14 +9,14 @@ import (
 )
 
 func TestFrameWorkPostFilterContextSuperResPostFilterPlanSkipsInactive(t *testing.T) {
-	plan, err := (FrameWorkPostFilterContext{}).SuperResPostFilterPlan()
+	plan, err := (&FrameWorkPostFilterContext{}).SuperResPostFilterPlan()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if plan != (FrameWorkSuperResPostFilterPlan{}) {
 		t.Fatalf("plan=%+v want zero", plan)
 	}
-	size, err := (FrameWorkPostFilterContext{}).SuperResPostFilterScratchLen()
+	size, err := (&FrameWorkPostFilterContext{}).SuperResPostFilterScratchLen()
 	if err != nil {
 		t.Fatal(err)
 	}

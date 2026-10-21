@@ -34,6 +34,9 @@ type FrameWorkPostFilterParallel struct {
 
 	cdef   []frameWorkParallelCDEFScratch
 	cdefU8 []FrameWorkCDEFPostFilterU8BandBoundary
+	lr     []frameWorkParallelRestorationScratch
+	// lfPlan holds each worker's level-cache populate counters.
+	lfPlan []FrameWorkLoopFilterPostFilterPlan
 
 	ownedPool    *threading.Pool
 	ownedWorkers int
@@ -49,6 +52,7 @@ const (
 	frameWorkPostFilterStageLoopFilterPopulate
 	frameWorkPostFilterStageLoopFilterVertical
 	frameWorkPostFilterStageLoopFilterHorizontal
+	frameWorkPostFilterStageRestorationU8
 )
 
 // frameWorkPostFilterParallelJob is persistent runner state read by pool
@@ -60,6 +64,7 @@ type frameWorkPostFilterParallelJob struct {
 	ctx     FrameWorkPostFilterContext
 	request FrameWorkCDEFPostFilterRequest
 	lfBands FrameWorkLoopFilterMaskBands
+	lr      frameWorkParallelRestorationJob
 
 	unitRowsPerBand int
 	rows            int
@@ -84,7 +89,7 @@ func (p *FrameWorkPostFilterParallel) Close() {
 	p.job = frameWorkPostFilterParallelJob{}
 }
 
-func (p *FrameWorkPostFilterParallel) workerPool(ctx FrameWorkPostFilterContext, workers int) (*threading.Pool, int, error) {
+func (p *FrameWorkPostFilterParallel) workerPool(ctx *FrameWorkPostFilterContext, workers int) (*threading.Pool, int, error) {
 	if ctx.pool != nil {
 		poolWorkers := ctx.pool.WorkerCount()
 		if poolWorkers < 1 {
@@ -130,11 +135,13 @@ func (p *FrameWorkPostFilterParallel) RunRange(band, lo, hi int) error {
 		return p.runCDEFSnapshotRange(job, band, lo, hi)
 	case frameWorkPostFilterStageCDEFU8:
 		return p.runCDEFU8Range(job, band, lo, hi)
+	case frameWorkPostFilterStageRestorationU8:
+		return p.runRestorationU8Range(&job.lr, band, lo, hi)
 	case frameWorkPostFilterStageLoopFilterPopulate:
 		for bandIndex := lo; bandIndex < hi; bandIndex++ {
 			rowStart := bandIndex * job.populateRows
 			rowEnd := min(rowStart+job.populateRows, job.rows)
-			if err := job.lfBands.PopulateBand(rowStart, rowEnd); err != nil {
+			if err := job.lfBands.populateBandStats(rowStart, rowEnd, &p.lfPlan[band]); err != nil {
 				return err
 			}
 		}
@@ -294,7 +301,7 @@ func (b *FrameWorkCDEFPostFilterU8BandBoundary) ensure(lumaWidth, chromaWidth in
 // band filters its disjoint unit rows against immutable inputs. It returns
 // (result, true, nil) when it handled the stage, or (_, false, nil) when the
 // caller should fall back to the serial path.
-func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterParallel(req FrameWorkCDEFPostFilterRequest, unitRowsPerBand int) (FrameWorkCDEFPostFilterResult, bool, error) {
+func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterParallel(req FrameWorkCDEFPostFilterRequest, unitRowsPerBand int) (FrameWorkCDEFPostFilterResult, bool, error) {
 	workers := ctx.Parallel.workers()
 	if workers <= 0 || unitRowsPerBand <= 0 {
 		return FrameWorkCDEFPostFilterResult{}, false, nil
@@ -347,7 +354,7 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterParallel(req FrameWorkC
 	return ctx.applyCDEFPostFilterParallelSnapshot(req, unitRowsPerBand, rows, bandCount, workers, pool)
 }
 
-func frameWorkCDEFParallelPlaneWidths(ctx FrameWorkPostFilterContext) (int, int) {
+func frameWorkCDEFParallelPlaneWidths(ctx *FrameWorkPostFilterContext) (int, int) {
 	lumaWidth := 0
 	chromaWidth := 0
 	for plane := range 3 {
@@ -371,14 +378,14 @@ func frameWorkCDEFParallelPlaneWidths(ctx FrameWorkPostFilterContext) (int, int)
 // then filters disjoint unit-row bands against it. Each worker binds its own
 // InputScratch and UnitDstScratch; the shared snapshot, direction grid, and
 // variance grid are read/written at disjoint band offsets.
-func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterParallelSnapshot(req FrameWorkCDEFPostFilterRequest, unitRowsPerBand, rows, bandCount, workers int, pool *threading.Pool) (FrameWorkCDEFPostFilterResult, bool, error) {
+func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterParallelSnapshot(req FrameWorkCDEFPostFilterRequest, unitRowsPerBand, rows, bandCount, workers int, pool *threading.Pool) (FrameWorkCDEFPostFilterResult, bool, error) {
 	if err := ctx.LoadCDEFPostFilterSamples(req); err != nil {
 		return FrameWorkCDEFPostFilterResult{}, false, err
 	}
 	ctx.Parallel.resetCDEFResults(workers)
 	err := ctx.Parallel.runRanges(pool, frameWorkPostFilterParallelJob{
 		stage:           frameWorkPostFilterStageCDEFSnapshot,
-		ctx:             ctx,
+		ctx:             *ctx,
 		request:         req,
 		unitRowsPerBand: unitRowsPerBand,
 		rows:            rows,
@@ -393,7 +400,7 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterParallelSnapshot(req Fr
 // each band's immutable two-row top/bottom halos first (serial, cheap), then
 // filters the disjoint bands in place. Each worker binds its own byte line-backup
 // arena (SampleScratch) and InputScratch.
-func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterParallelU8(req FrameWorkCDEFPostFilterRequest, unitRowsPerBand, rows, bandCount, workers int, pool *threading.Pool) (FrameWorkCDEFPostFilterResult, bool, error) {
+func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterParallelU8(req FrameWorkCDEFPostFilterRequest, unitRowsPerBand, rows, bandCount, workers int, pool *threading.Pool) (FrameWorkCDEFPostFilterResult, bool, error) {
 	// Snapshot all band boundaries before any band mutates the frame in place.
 	for band := 0; band < bandCount; band++ {
 		rowStart := band * unitRowsPerBand
@@ -408,7 +415,7 @@ func (ctx FrameWorkPostFilterContext) applyCDEFPostFilterParallelU8(req FrameWor
 	ctx.Parallel.resetCDEFResults(workers)
 	err := ctx.Parallel.runRanges(pool, frameWorkPostFilterParallelJob{
 		stage:           frameWorkPostFilterStageCDEFU8,
-		ctx:             ctx,
+		ctx:             *ctx,
 		request:         req,
 		unitRowsPerBand: unitRowsPerBand,
 		rows:            rows,
@@ -469,7 +476,7 @@ func (p *FrameWorkPostFilterParallel) mergeCDEFResults(workers int) FrameWorkCDE
 // luma rows 2k/2k+1) is never split across two bands (a cell[2]/cell[3] race).
 // Returns (result, true, nil) when it handled the stage, or (_, false, nil) when
 // the caller should fall back to the serial apply.
-func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskBandsParallel(filterMap FrameWorkLoopFilterMap) (FrameWorkLoopFilterPostFilterApplyResult, bool, error) {
+func (ctx *FrameWorkPostFilterContext) applyLoopFilterMaskBandsParallel(filterMap FrameWorkLoopFilterMap) (FrameWorkLoopFilterPostFilterApplyResult, bool, error) {
 	workers := ctx.Parallel.workers()
 	if workers <= 0 {
 		return FrameWorkLoopFilterPostFilterApplyResult{}, false, nil
@@ -507,6 +514,12 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskBandsParallel(filterMap
 	miRows := bands.MIRows()
 	populateRows := (frameWorkParallelBandRows(miRows, workers) + 1) &^ 1
 	populateBands := (miRows + populateRows - 1) / populateRows
+	if len(ctx.Parallel.lfPlan) < workers {
+		ctx.Parallel.lfPlan = make([]FrameWorkLoopFilterPostFilterPlan, workers)
+	}
+	for i := range workers {
+		ctx.Parallel.lfPlan[i] = FrameWorkLoopFilterPostFilterPlan{}
+	}
 	if err := ctx.Parallel.runRanges(pool, frameWorkPostFilterParallelJob{
 		stage:        frameWorkPostFilterStageLoopFilterPopulate,
 		lfBands:      bands,
@@ -514,6 +527,12 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskBandsParallel(filterMap
 		rows:         miRows,
 	}, populateBands, workers); err != nil {
 		return FrameWorkLoopFilterPostFilterApplyResult{}, false, err
+	}
+	for i := range workers {
+		stats := &ctx.Parallel.lfPlan[i]
+		result.Plan.Cells += stats.Cells
+		result.Plan.Blocks += stats.Blocks
+		result.Plan.Missing += stats.Missing
 	}
 
 	regionRows := bands.RegionRows()

@@ -189,7 +189,11 @@ pgo-regenerate:
 	# 2. GOAV1_PROFILE_CLIP=$$PWD/testdata/benchcorpus/p720_inter_q32.ivf go test -tags goav1_oracle -run '^TestScratchProfileDecode$$' ./internal/av1/testvector -count=1 -cpuprofile /tmp/goav1-d2a-dec-p720.out
 	# 3. GOAV1_PROFILE_CLIP=$$PWD/testdata/benchcorpus/p288_inter_q20.ivf go test -tags goav1_oracle -run '^TestScratchProfileDecode$$' ./internal/av1/testvector -count=1 -cpuprofile /tmp/goav1-d2a-dec-p288.out
 	# 4. GOMAXPROCS=1 go test ./internal/av1/encoder -run '^$$' -bench '^BenchmarkVideoEncoderRealC1080p$$' -benchtime=60x -count=1 -cpuprofile /tmp/goav1-d2a-enc-realc.out
+	# 4b. Realtime decode: encode a 720p real-content clip with libaom examples/svc_encoder_rtc
+	#     (-sl 1 -tl 1 -lm 0 -sp 7 -b 2500 -bl 2500) and CPU-profile a one-worker
+	#     LayeredDecoder DecodeNext loop over it into /tmp/goav1-rtc-l1t1.out.
 	# 5. go tool pprof -proto -output cmd/qualitybench/default.pgo /tmp/goav1-d2a-dec-p720.out /tmp/goav1-d2a-dec-p288.out /tmp/goav1-d2a-enc-realc.out
+	#    Then merge the realtime profile: go tool pprof -proto -output cmd/qualitybench/default.pgo cmd/qualitybench/default.pgo /tmp/goav1-rtc-l1t1.out
 	# 6. Delete internal/av1/testvector/scratch_profile_test.go before committing.
 	@printf '%s\n' 'PGO regeneration recipe is documented in this target.'
 

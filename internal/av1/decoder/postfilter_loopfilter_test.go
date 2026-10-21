@@ -16,21 +16,21 @@ import (
 )
 
 func TestFrameWorkPostFilterContextLoopFilterPostFilterPlanSkipsInactive(t *testing.T) {
-	plan, err := (FrameWorkPostFilterContext{}).LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{})
+	plan, err := (&FrameWorkPostFilterContext{}).LoopFilterPostFilterPlan(FrameWorkLoopFilterPostFilterRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if plan != (FrameWorkLoopFilterPostFilterPlan{}) {
 		t.Fatalf("plan=%+v want zero", plan)
 	}
-	size, err := (FrameWorkPostFilterContext{}).LoopFilterPostFilterScratchLen(FrameWorkLoopFilterPostFilterRequest{})
+	size, err := (&FrameWorkPostFilterContext{}).LoopFilterPostFilterScratchLen(FrameWorkLoopFilterPostFilterRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if size != (FrameWorkLoopFilterPostFilterScratchSize{}) {
 		t.Fatalf("scratch=%+v want zero", size)
 	}
-	upper, err := (FrameWorkPostFilterContext{}).LoopFilterPostFilterScratchUpperBound()
+	upper, err := (&FrameWorkPostFilterContext{}).LoopFilterPostFilterScratchUpperBound()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1919,7 +1919,7 @@ func TestFrameWorkPostFilterContextApplySupportedPostFiltersRejectsShortRestorat
 }
 
 func TestFrameWorkPostFilterContextApplyLoopFilterLumaEdgesSkipsInactive(t *testing.T) {
-	result, err := (FrameWorkPostFilterContext{}).ApplyLoopFilterLumaEdges(FrameWorkLoopFilterPostFilterRequest{})
+	result, err := (&FrameWorkPostFilterContext{}).ApplyLoopFilterLumaEdges(FrameWorkLoopFilterPostFilterRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}

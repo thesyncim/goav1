@@ -25,7 +25,7 @@ func TestFinishFrameSurfaceReleasesPool(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	count, err := FinishFrameSurface(&refs, &pool, finalFrameEvent(0xff), index1, releases[:])
+	count, err := FinishFrameSurface(&refs, &pool, finalFrameEventPtr(0xff), index1, releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestAcquireFrameSurfaceRejectsFormatMismatch(t *testing.T) {
 
 func TestBeginFrameSurfaceIntra(t *testing.T) {
 	pool := testFramePool(t, 1)
-	surface, output, refCount, err := BeginFrameSurface(nil, &pool, testSequence(), Event{
+	surface, output, refCount, err := BeginFrameSurface(nil, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(16, 16),
@@ -189,7 +189,7 @@ func TestBeginFrameSurfaceInter(t *testing.T) {
 	}
 
 	var references [parser.InterRefsPerFrame]int
-	surface, output, refCount, err := BeginFrameSurface(&refs, &pool, testSequence(), Event{
+	surface, output, refCount, err := BeginFrameSurface(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeInter},
 		FrameSize: parser.FrameSize{
@@ -217,7 +217,7 @@ func TestBeginFrameSurfaceInter(t *testing.T) {
 func TestBeginFrameSurfaceRejectsReferencesBeforeAcquire(t *testing.T) {
 	pool := testFramePool(t, 1)
 	var refs SurfaceReferences
-	_, _, _, err := BeginFrameSurface(&refs, &pool, testSequence(), Event{
+	_, _, _, err := BeginFrameSurface(&refs, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeInter},
 		FrameSize:   testFrameSize(16, 16),
@@ -232,7 +232,7 @@ func TestBeginFrameSurfaceRejectsReferencesBeforeAcquire(t *testing.T) {
 
 func TestBeginFrameSurfaceRejectsFormatBeforeAcquire(t *testing.T) {
 	pool := testFramePool(t, 1)
-	_, _, _, err := BeginFrameSurface(nil, &pool, testSequence(), Event{
+	_, _, _, err := BeginFrameSurface(nil, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
 		FrameSize:   testFrameSize(32, 16),
@@ -247,7 +247,7 @@ func TestBeginFrameSurfaceRejectsFormatBeforeAcquire(t *testing.T) {
 
 func TestBeginFrameSurfaceRejectsTileGroup(t *testing.T) {
 	pool := testFramePool(t, 1)
-	_, _, _, err := BeginFrameSurface(nil, &pool, testSequence(), Event{
+	_, _, _, err := BeginFrameSurface(nil, &pool, testSequence(), &Event{
 		Kind:      EventTileGroup,
 		FrameSize: testFrameSize(16, 16),
 	}, 32, nil)
@@ -351,7 +351,7 @@ func TestFinishFrameSurfaceRejectsPoolReleaseAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = FinishFrameSurface(&refs, &pool, finalFrameEvent(0xff), index1, releases[:])
+	_, err = FinishFrameSurface(&refs, &pool, finalFrameEventPtr(0xff), index1, releases[:])
 	if !errors.Is(err, frame.ErrInvalidSlot) {
 		t.Fatalf("FinishFrameSurface err=%v want %v", err, frame.ErrInvalidSlot)
 	}
@@ -384,7 +384,7 @@ func TestShowExistingFrameSurfaceReleasesPool(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	surface, count, err := ShowExistingFrameSurface(&refs, &pool, Event{
+	surface, count, err := ShowExistingFrameSurface(&refs, &pool, &Event{
 		Kind:          EventExistingFrame,
 		FrameHeader:   parser.FrameHeaderPrefix{ShowExistingFrame: true, ExistingFrameIdx: 1},
 		ExistingFrame: parser.ReferenceFrame{FrameType: parser.FrameTypeKey},
@@ -424,11 +424,11 @@ func TestSurfacePoolHelpersAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		pool.Reset()
 		refs.Reset()
-		index0, _, _, err := BeginFrameSurface(&refs, &pool, sequence, beginEvent, 32, nil)
+		index0, _, _, err := BeginFrameSurface(&refs, &pool, sequence, &beginEvent, 32, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		index1, _, _, err := BeginFrameSurface(&refs, &pool, sequence, beginEvent, 32, nil)
+		index1, _, _, err := BeginFrameSurface(&refs, &pool, sequence, &beginEvent, 32, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -442,7 +442,7 @@ func TestSurfacePoolHelpersAllocs(t *testing.T) {
 		if referenceFrames[0] == nil {
 			t.Fatal("nil reference frame")
 		}
-		if _, err := FinishFrameSurface(&refs, &pool, event, index1, releases[:]); err != nil {
+		if _, err := FinishFrameSurface(&refs, &pool, &event, index1, releases[:]); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -481,7 +481,7 @@ func BenchmarkBeginFrameSurface(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		pool.Reset()
-		surface, _, _, err := BeginFrameSurface(nil, &pool, sequence, event, 32, nil)
+		surface, _, _, err := BeginFrameSurface(nil, &pool, sequence, &event, 32, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -508,18 +508,18 @@ func BenchmarkFinishFrameSurface(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		pool.Reset()
 		refs.Reset()
-		index0, _, _, err := BeginFrameSurface(&refs, &pool, sequence, beginEvent, 32, nil)
+		index0, _, _, err := BeginFrameSurface(&refs, &pool, sequence, &beginEvent, 32, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
-		index1, _, _, err := BeginFrameSurface(&refs, &pool, sequence, beginEvent, 32, nil)
+		index1, _, _, err := BeginFrameSurface(&refs, &pool, sequence, &beginEvent, 32, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
 		if _, err := refs.Refresh(0xff, index0, releases[:]); err != nil {
 			b.Fatal(err)
 		}
-		if _, err := FinishFrameSurface(&refs, &pool, event, index1, releases[:]); err != nil {
+		if _, err := FinishFrameSurface(&refs, &pool, &event, index1, releases[:]); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -600,4 +600,14 @@ func makeFramePool(count int) (frame.Pool, error) {
 	free := make([]int, count)
 	used := make([]bool, count)
 	return frame.BindPool(backing, format, frames, free, used)
+}
+
+func finalFrameEventPtr(refresh uint8) *Event {
+	event := finalFrameEvent(refresh)
+	return &event
+}
+
+func showExistingWorkEventPtr(index uint8, frameType parser.FrameType) *Event {
+	event := showExistingWorkEvent(index, frameType)
+	return &event
 }

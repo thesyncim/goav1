@@ -275,6 +275,12 @@ type FrameWorkBatch struct {
 	// for exactly one index at a time and is keyed/validated by index, so a
 	// worker that reuses one cache across successive jobs stays byte-exact.
 	geomCache *frameWorkJobGeometryCache
+
+	// wavefrontLanes, when non-nil, is the pool's persistent lane group that
+	// runs the SB-row wavefront goroutines, so a frame does not spawn (and
+	// heap-allocate) fresh goroutines. The pool sets it together with
+	// WavefrontWorkers and sizes the group to cover every lane it hands out.
+	wavefrontLanes chan<- wavefrontLaneTask
 }
 
 // frameWorkJobGeometryCache memoizes the job-constant reconstruction geometry
@@ -967,6 +973,12 @@ type Pool struct {
 	workers []poolWorker
 	done    chan workerResult
 	closed  bool
+
+	// lanes feeds the persistent wavefront lane goroutines; laneCount of them
+	// are running. Both are guarded by mu and grow only while a frame is
+	// dispatched, so steady-state frames reuse the same goroutines.
+	lanes     chan wavefrontLaneTask
+	laneCount int
 }
 
 type poolWorker struct {
@@ -1309,6 +1321,7 @@ func (p *Pool) ExecuteFrameWork(batches []Batch, jobs []tile.Job, base FrameWork
 	}
 
 	wavefrontWorkers := frameWorkPoolWavefrontShare(len(p.workers), len(batches))
+	lanes := p.wavefrontLaneGroupLocked(int(wavefrontWorkers) * len(batches))
 
 	for i := range batches {
 		batch := batches[i]
@@ -1319,6 +1332,7 @@ func (p *Pool) ExecuteFrameWork(batches []Batch, jobs []tile.Job, base FrameWork
 		}
 		ctx := base
 		ctx.WavefrontWorkers = wavefrontWorkers
+		ctx.wavefrontLanes = lanes
 		p.workers[batch.Worker].tasks <- poolTask{
 			frameFn:    fn,
 			frameBatch: ctx,
@@ -1402,6 +1416,7 @@ func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base Fra
 	// wavefront; with fewer batches than workers each batch gets an equal share
 	// (frameWorkPoolWavefrontShare).
 	wavefrontWorkers := frameWorkPoolWavefrontShare(len(p.workers), len(batches))
+	lanes := p.wavefrontLaneGroupLocked(int(wavefrontWorkers) * len(batches))
 
 	for i := range batches {
 		batch := batches[i]
@@ -1412,6 +1427,7 @@ func (p *Pool) ExecuteFrameWorkRunner(batches []Batch, jobs []tile.Job, base Fra
 		}
 		ctx := base
 		ctx.WavefrontWorkers = wavefrontWorkers
+		ctx.wavefrontLanes = lanes
 		p.workers[batch.Worker].tasks <- poolTask{
 			frameRunner: runner,
 			frameBatch:  ctx,
@@ -1469,6 +1485,9 @@ func (p *Pool) Close() {
 	p.closed = true
 	for i := 0; i < len(p.workers); i++ {
 		close(p.workers[i].tasks)
+	}
+	if p.lanes != nil {
+		close(p.lanes)
 	}
 	p.mu.Unlock()
 }
@@ -1530,4 +1549,37 @@ func frameWorkPoolWavefrontShare(workers int, batches int) uint16 {
 		return 0
 	}
 	return uint16(min(share, int(^uint16(0))))
+}
+
+// wavefrontLaneTask asks a persistent lane goroutine to run one SB-row
+// wavefront lane until the tile's reconstruction finishes or aborts.
+type wavefrontLaneTask struct {
+	wf       *frameWorkReconWavefront
+	lane     int
+	lanes    int
+	rowCount int
+}
+
+// wavefrontLaneGroupLocked grows the persistent lane group to at least need
+// goroutines and returns its task channel, or nil when need is zero. Callers
+// hold p.mu. Concurrent tiles never ask for more than the frame's share in
+// total, so a lane send always finds an idle goroutine and a tile's lanes
+// cannot wait on goroutines held by another tile.
+func (p *Pool) wavefrontLaneGroupLocked(need int) chan<- wavefrontLaneTask {
+	if need <= 0 {
+		return nil
+	}
+	if p.lanes == nil {
+		p.lanes = make(chan wavefrontLaneTask)
+	}
+	for ; p.laneCount < need; p.laneCount++ {
+		go poolWavefrontLaneLoop(p.lanes)
+	}
+	return p.lanes
+}
+
+func poolWavefrontLaneLoop(tasks <-chan wavefrontLaneTask) {
+	for task := range tasks {
+		task.wf.runLane(task.lane, task.lanes, task.rowCount)
+	}
 }

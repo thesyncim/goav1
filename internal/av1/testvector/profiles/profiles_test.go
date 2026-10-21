@@ -1561,7 +1561,7 @@ func runProfileClip(t *testing.T, clip profileClip) {
 					return -1, err
 				}
 				if currentMVSurface >= 0 {
-					if err := decoder.PublishTemporalMotionReference(post.Context.Event, currentMVSurface, &mvFrames[currentMVSurface], mvStore); err != nil {
+					if err := decoder.PublishTemporalMotionReference(&post.Context.Event, currentMVSurface, &mvFrames[currentMVSurface], mvStore); err != nil {
 						return -1, err
 					}
 				}
@@ -1581,9 +1581,9 @@ func runProfileClip(t *testing.T, clip profileClip) {
 			var err error
 			if clip.superRes {
 				provider := profileSurfaceProvider{coded: &pool, output: &outputPool}
-				result, err = state.RunEventWithContextAndExternalReferences(&refs, &pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, provider, func(local int) int { return local }, provider, &frameContexts, sideDataRunner{}, tileRunner, post)
+				result, err = state.RunEventWithContextAndExternalReferences(&refs, &pool, event.SequenceHeader, &event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, provider, func(local int) int { return local }, provider, &frameContexts, sideDataRunner{}, tileRunner, post)
 			} else {
-				result, err = state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, event.SequenceHeader, event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, sideDataRunner{}, tileRunner, post)
+				result, err = state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, event.SequenceHeader, &event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, sideDataRunner{}, tileRunner, post)
 			}
 			if err != nil {
 				t.Fatalf("ivf frame %d run framework event: %v", ivfFrame.Index, err)
@@ -1832,7 +1832,7 @@ func publishProfileSuperResTemporalMotionReference(event decoder.Event, globalSu
 		Stride:  current.Stride,
 		Entries: dst,
 	}
-	return decoder.PublishTemporalMotionReference(event, globalSurface, &published[local], store)
+	return decoder.PublishTemporalMotionReference(&event, globalSurface, &published[local], store)
 }
 
 func residualScratch(ctx decoder.FrameWorkBatch) ([]int32, []int16, error) {

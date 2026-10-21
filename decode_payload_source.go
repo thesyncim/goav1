@@ -264,7 +264,7 @@ func decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(stream DecoderStrea
 		return DecoderFrameWorkResidualStreamPlan{}, err
 	}
 	rtpBuffer := make([]byte, rtpBufferBytes)
-	rtpSpans := make([]RTPObuSpan, source.len()*16+64)
+	rtpSpans := make([]RTPObuSpan, 64)
 
 	var plan DecoderFrameWorkResidualStreamPlan
 	outputs := 0
@@ -341,11 +341,11 @@ func decoderExternalOutputFormatFromSource(source decoderPayloadSource, align in
 		}
 		for i := range count {
 			event := events[i]
-			sequence = decoderFrameWorkResidualEventSequence(sequence, event)
-			if !decoderFrameWorkResidualEventBindCandidate(event) {
+			sequence = decoderFrameWorkResidualEventSequence(sequence, &event)
+			if !decoderFrameWorkResidualEventBindCandidate(&event) {
 				continue
 			}
-			next, ok, err := decoderExternalOutputFormatForEvent(sequence, event, align)
+			next, ok, err := decoderExternalOutputFormatForEvent(sequence, &event, align)
 			if err != nil {
 				return err
 			}
@@ -367,10 +367,10 @@ func decoderExternalOutputFormatFromRTPSource(source decoderPayloadSource, align
 	var format FrameFormat
 	have := false
 	err := decoderForEachRTPEventFromSource(source, func(sequence SequenceHeader, event DecoderEvent) error {
-		if !decoderFrameWorkResidualEventBindCandidate(event) {
+		if !decoderFrameWorkResidualEventBindCandidate(&event) {
 			return nil
 		}
-		next, ok, err := decoderExternalOutputFormatForEvent(sequence, event, align)
+		next, ok, err := decoderExternalOutputFormatForEvent(sequence, &event, align)
 		if err != nil {
 			return err
 		}
@@ -387,7 +387,7 @@ func decoderExternalOutputFormatFromRTPSource(source decoderPayloadSource, align
 	return have, format, err
 }
 
-func decoderExternalOutputFormatForEvent(sequence SequenceHeader, event DecoderEvent, align int) (FrameFormat, bool, error) {
+func decoderExternalOutputFormatForEvent(sequence SequenceHeader, event *DecoderEvent, align int) (FrameFormat, bool, error) {
 	if event.Kind == DecoderEventTileList {
 		if event.TileListErr != nil {
 			return FrameFormat{}, false, event.TileListErr
@@ -430,11 +430,11 @@ func decoderPostFilterScratchArenaUpperBoundFromSource(source decoderPayloadSour
 		}
 		for i := range count {
 			event := events[i]
-			sequence = decoderFrameWorkResidualEventSequence(sequence, event)
-			if !decoderFrameWorkResidualEventBindCandidate(event) {
+			sequence = decoderFrameWorkResidualEventSequence(sequence, &event)
+			if !decoderFrameWorkResidualEventBindCandidate(&event) {
 				continue
 			}
-			size, err := decoderPostFilterScratchSizeUpperBound(sequence, event, align)
+			size, err := decoderPostFilterScratchSizeUpperBound(sequence, &event, align)
 			if err != nil {
 				return err
 			}
@@ -448,10 +448,10 @@ func decoderPostFilterScratchArenaUpperBoundFromSource(source decoderPayloadSour
 func decoderPostFilterScratchArenaUpperBoundFromRTPSource(source decoderPayloadSource, align int) (DecoderFrameWorkPostFilterRequestScratchSize, error) {
 	var arena DecoderFrameWorkPostFilterRequestScratchSize
 	err := decoderForEachRTPEventFromSource(source, func(sequence SequenceHeader, event DecoderEvent) error {
-		if !decoderFrameWorkResidualEventBindCandidate(event) {
+		if !decoderFrameWorkResidualEventBindCandidate(&event) {
 			return nil
 		}
-		size, err := decoderPostFilterScratchSizeUpperBound(sequence, event, align)
+		size, err := decoderPostFilterScratchSizeUpperBound(sequence, &event, align)
 		if err != nil {
 			return err
 		}
@@ -478,7 +478,7 @@ func decoderTemporalMotionScratchFrameSizeUpperBoundFromSource(source decoderPay
 		}
 		for i := range count {
 			event := events[i]
-			if !decoderFrameWorkResidualEventBindCandidate(event) ||
+			if !decoderFrameWorkResidualEventBindCandidate(&event) ||
 				event.FrameHeader.ShowExistingFrame {
 				continue
 			}
@@ -497,7 +497,7 @@ func decoderTemporalMotionScratchFrameSizeUpperBoundFromSource(source decoderPay
 func decoderTemporalMotionScratchFrameSizeUpperBoundFromRTPSource(source decoderPayloadSource) (FrameSize, error) {
 	var maxSize FrameSize
 	err := decoderForEachRTPEventFromSource(source, func(_ SequenceHeader, event DecoderEvent) error {
-		if !decoderFrameWorkResidualEventBindCandidate(event) ||
+		if !decoderFrameWorkResidualEventBindCandidate(&event) ||
 			event.FrameHeader.ShowExistingFrame {
 			return nil
 		}
@@ -518,8 +518,10 @@ func decoderForEachRTPEventFromSource(source decoderPayloadSource, fn func(Seque
 		return err
 	}
 	rtpBuffer := make([]byte, rtpBufferBytes)
-	rtpSpans := make([]RTPObuSpan, source.len()*16+64)
-	events := make([]DecoderEvent, source.len()*16+64)
+	// Both grow to the largest per-payload event count below; sizing them by
+	// payload count would reserve gigabytes for long RTP sources.
+	rtpSpans := make([]RTPObuSpan, 64)
+	events := make([]DecoderEvent, 64)
 	var stream DecoderStream
 	used := 0
 	return source.forEachPayload(nil, func(payload []byte) error {
@@ -546,7 +548,7 @@ func decoderForEachRTPEventFromSource(source decoderPayloadSource, fn func(Seque
 		}
 		for i := range count {
 			event := events[i]
-			sequence = decoderFrameWorkResidualEventSequence(sequence, event)
+			sequence = decoderFrameWorkResidualEventSequence(sequence, &event)
 			if err := fn(sequence, event); err != nil {
 				return err
 			}

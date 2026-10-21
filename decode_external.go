@@ -22,8 +22,8 @@ func decoderExternalOutputFormat(payloads [][]byte, align int) (bool, FrameForma
 		}
 		for i := range count {
 			event := events[i]
-			sequence = decoderFrameWorkResidualEventSequence(sequence, event)
-			if !decoderFrameWorkResidualEventBindCandidate(event) ||
+			sequence = decoderFrameWorkResidualEventSequence(sequence, &event)
+			if !decoderFrameWorkResidualEventBindCandidate(&event) ||
 				!event.FrameSize.SuperResEnabled ||
 				event.FrameSize.UpscaledWidth <= event.FrameSize.CodedWidth {
 				continue
@@ -60,11 +60,11 @@ func decoderPostFilterScratchArenaUpperBound(payloads [][]byte, align int, event
 		}
 		for i := range count {
 			event := events[i]
-			sequence = decoderFrameWorkResidualEventSequence(sequence, event)
-			if !decoderFrameWorkResidualEventBindCandidate(event) {
+			sequence = decoderFrameWorkResidualEventSequence(sequence, &event)
+			if !decoderFrameWorkResidualEventBindCandidate(&event) {
 				continue
 			}
-			size, err := decoderPostFilterScratchSizeUpperBound(sequence, event, align)
+			size, err := decoderPostFilterScratchSizeUpperBound(sequence, &event, align)
 			if err != nil {
 				return DecoderFrameWorkPostFilterRequestScratchSize{}, err
 			}
@@ -91,7 +91,7 @@ func decoderTemporalMotionScratchFrameSizeUpperBound(payloads [][]byte, events [
 		}
 		for i := range count {
 			event := events[i]
-			if !decoderFrameWorkResidualEventBindCandidate(event) ||
+			if !decoderFrameWorkResidualEventBindCandidate(&event) ||
 				event.FrameHeader.ShowExistingFrame {
 				continue
 			}
@@ -106,7 +106,7 @@ func decoderTemporalMotionScratchFrameSizeUpperBound(payloads [][]byte, events [
 	return maxSize, nil
 }
 
-func decoderPostFilterScratchSizeUpperBound(sequence SequenceHeader, event DecoderEvent, align int) (DecoderFrameWorkPostFilterScratchSize, error) {
+func decoderPostFilterScratchSizeUpperBound(sequence SequenceHeader, event *DecoderEvent, align int) (DecoderFrameWorkPostFilterScratchSize, error) {
 	var output Frame
 	ctx, err := DecoderFrameWorkPostFilterScratchContext(sequence, event, align, nil, &output)
 	if err != nil {

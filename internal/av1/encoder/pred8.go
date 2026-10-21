@@ -53,7 +53,7 @@ var pred8KernelsOK = func() bool {
 				}
 			}
 		}
-		pred8Kernels[f] = t
+		pred8Kernels[f] = *t
 	}
 	return true
 }()

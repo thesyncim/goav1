@@ -24,7 +24,7 @@ import (
 // separate function, so its band closure (which escapes to the worker goroutines)
 // never lands here and the serial fall-through stays allocation-free, mirroring
 // applyCDEFPostFilterMaybePooled.
-func (ctx FrameWorkPostFilterContext) applyLoopRestorationPostFilterMaybePooled(req FrameWorkRestorationPostFilterRequest) (tile.RestorationFrameApplyResult, error) {
+func (ctx *FrameWorkPostFilterContext) applyLoopRestorationPostFilterMaybePooled(req FrameWorkRestorationPostFilterRequest) (tile.RestorationFrameApplyResult, error) {
 	pool := ctx.pool
 	workers := ctx.postFilterWorkerCount()
 	if pool == nil || workers <= 1 {
@@ -78,7 +78,10 @@ func (ctx FrameWorkPostFilterContext) applyLoopRestorationPostFilterMaybePooled(
 // RU rows, so the restored plane is bit-identical to the serial whole-plane walk
 // regardless of band count. Result counters sum the same per-record work the
 // serial apply reports.
-func (ctx FrameWorkPostFilterContext) applyLoopRestorationPostFilterPooledBands(plan tile.RestorationFramePlan, req FrameWorkRestorationPostFilterRequest, pool *threading.Pool) (tile.RestorationFrameApplyResult, error) {
+func (pctx *FrameWorkPostFilterContext) applyLoopRestorationPostFilterPooledBands(plan tile.RestorationFramePlan, req FrameWorkRestorationPostFilterRequest, pool *threading.Pool) (tile.RestorationFrameApplyResult, error) {
+	// The band closures run on pool workers; they capture a copy so the
+	// caller's context does not escape.
+	ctx := *pctx
 	bands := req.Pool.Bands
 	if bands <= 0 {
 		return tile.RestorationFrameApplyResult{}, tile.ErrInvalidPlan

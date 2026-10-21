@@ -2036,7 +2036,7 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 	if err := wf.ensureStates(workers, c); err != nil {
 		return err
 	}
-	wf.startLanes(workers, rowCount)
+	wf.startLanes(c.batch.wavefrontLanes, workers, rowCount)
 	wf.publishRows(rowCount, frameWorkReconView{
 		rowStart: wf.rowStart,
 		sbs:      wf.sbSpans,

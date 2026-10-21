@@ -53,7 +53,7 @@ func ResolveDecoderTileListExternalReferencesWithProvider(provider DecoderFrameS
 
 // PublishDecoderTemporalMotionReference stores the decoded frame's temporal
 // motion-vector reference metadata under surface in store.
-func PublishDecoderTemporalMotionReference(event DecoderEvent, surface int, current *TileReferenceMVFrame, store []TileTemporalMotionReferenceFrame) error {
+func PublishDecoderTemporalMotionReference(event *DecoderEvent, surface int, current *TileReferenceMVFrame, store []TileTemporalMotionReferenceFrame) error {
 	return internaldecoder.PublishTemporalMotionReference(event, surface, current, store)
 }
 

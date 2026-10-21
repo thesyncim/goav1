@@ -30,7 +30,7 @@ var frameWorkLoopFilterMaskChromaWidth = [2]uint8{4, 6}
 // ApplyLoopFilterEdgesFromMasks applies the decode-time deblocking bitmasks to
 // ctx.Output, resolving per-4x4 levels from filterMap. It is the mask-driven
 // counterpart of ApplyLoopFilterEdges and produces byte-identical output.
-func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdgesFromMasks(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap) (FrameWorkLoopFilterPostFilterApplyResult, error) {
+func (ctx *FrameWorkPostFilterContext) ApplyLoopFilterEdgesFromMasks(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap) (FrameWorkLoopFilterPostFilterApplyResult, error) {
 	var result FrameWorkLoopFilterPostFilterApplyResult
 	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopFilter) {
 		return FrameWorkLoopFilterPostFilterApplyResult{}, nil
@@ -96,7 +96,7 @@ func (ctx FrameWorkPostFilterContext) ApplyLoopFilterEdgesFromMasks(masks *threa
 // writes dav1d's create_lf_mask_{inter,intra} would perform (lfmask build.go).
 // The level cells are order-independent, so a raster walk over block origins is
 // sufficient.
-func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheFromMap(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap, levelCtx *frameWorkLoopFilterLevelContext, plan *FrameWorkLoopFilterPostFilterPlan) error {
+func (ctx *FrameWorkPostFilterContext) populateLoopFilterLevelCacheFromMap(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap, levelCtx *frameWorkLoopFilterLevelContext, plan *FrameWorkLoopFilterPostFilterPlan) error {
 	if len(masks.LevelCache) < masks.Cols*masks.Rows {
 		return threading.ErrInvalidBatch
 	}
@@ -111,7 +111,7 @@ func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheFromMap(masks 
 // neighbour band's rows, but never overwrites another block's cells -- so bands run
 // concurrently without a barrier between them. The caller must clear the whole
 // cache and complete every band before any level read (the mask apply scan).
-func (ctx FrameWorkPostFilterContext) populateLoopFilterLevelCacheRange(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap, levelCtx *frameWorkLoopFilterLevelContext, plan *FrameWorkLoopFilterPostFilterPlan, rowStart, rowEnd int) error {
+func (ctx *FrameWorkPostFilterContext) populateLoopFilterLevelCacheRange(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap, levelCtx *frameWorkLoopFilterLevelContext, plan *FrameWorkLoopFilterPostFilterPlan, rowStart, rowEnd int) error {
 	cols := masks.Cols
 	rows := masks.Rows
 	if len(masks.LevelCache) < cols*rows {
@@ -205,7 +205,7 @@ const (
 	maskDirBoth       = maskDirVertical | maskDirHorizontal
 )
 
-func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksInPlanePassOrder(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, levelCtx *frameWorkLoopFilterLevelContext, minPlane, maxPlane loopfilter.Plane) error {
+func (ctx *FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksInPlanePassOrder(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, levelCtx *frameWorkLoopFilterLevelContext, minPlane, maxPlane loopfilter.Plane) error {
 	sharpness := ctx.Event.LoopFilter.Sharpness
 	lc := lfmask.LevelCache{Cells: masks.LevelCache, Stride: masks.Cols}
 	// Match the edge-list chroma gating: AV1 deblocks chroma only when the frame
@@ -235,7 +235,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksInPlanePassOr
 // region-row band writes only pixels within that band's rows (perpendicular filter
 // taps are bounded by the adjacent transform sizes), so disjoint bands can run on
 // separate goroutines with their own result once a direction barrier is in place.
-func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRange(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, sharpness uint8, plane loopfilter.Plane, dirMask, rRow0, rRow1, rCol0, rCol1 int) error {
+func (ctx *FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRange(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, sharpness uint8, plane loopfilter.Plane, dirMask, rRow0, rRow1, rCol0, rCol1 int) error {
 	bytesPerSample := ctx.Output.Layout.BytesPerSample
 	bitDepth := ctx.Output.Format.BitDepth
 	dst, ok := frameWorkLoopFilterOutputPlane(*ctx.Output, plane)
@@ -412,7 +412,7 @@ func (ctx FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRange(result *Fram
 // skipped to match the edge-list apply's have_left / have_top boundary skip.
 // Passing rRow0=0, rRow1=SB128H reproduces the whole-frame scan; a sub-range is
 // one band of the parallel apply.
-func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, dir loopfilter.Edge, rRow0, rRow1, rCol0, rCol1 int, applyCell func(edge loopfilter.Edge, x4, y4 int, level, width uint8)) {
+func (ctx *FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, dir loopfilter.Edge, rRow0, rRow1, rCol0, rCol1 int, applyCell func(edge loopfilter.Edge, x4, y4 int, level, width uint8)) {
 	cols := masks.Cols
 	rows := masks.Rows
 	if dir == loopfilter.EdgeVertical {
@@ -490,7 +490,7 @@ func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadin
 // (U or V) and one edge direction over the 128x128 region-row range [rRow0,rRow1),
 // dispatching each set 4x4 chroma edge through applyCell in chroma-plane 4x4
 // coordinates. Passing rRow0=0, rRow1=SB128H reproduces the whole-frame scan.
-func (ctx FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, plane loopfilter.Plane, dir loopfilter.Edge, rRow0, rRow1, rCol0, rCol1 int, applyCell func(edge loopfilter.Edge, x4, y4 int, level, width uint8)) {
+func (ctx *FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, plane loopfilter.Plane, dir loopfilter.Edge, rRow0, rRow1, rCol0, rCol1 int, applyCell func(edge loopfilter.Edge, x4, y4 int, level, width uint8)) {
 	cols := masks.Cols
 	rows := masks.Rows
 	ssHor := masks.Layout.SSHor
@@ -642,7 +642,7 @@ func (b FrameWorkLoopFilterMaskBands) MaxPlane() loopfilter.Plane { return b.max
 // (barrier), then the per-plane edge scan+filter across ApplyBand jobs (two
 // direction phases). Deferring both is what lets the parallel apply match the
 // edge-list parallel apply, which likewise plans in bands before filtering.
-func (ctx FrameWorkPostFilterContext) PrepareLoopFilterMaskBands(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap) (FrameWorkLoopFilterMaskBands, error) {
+func (ctx *FrameWorkPostFilterContext) PrepareLoopFilterMaskBands(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap) (FrameWorkLoopFilterMaskBands, error) {
 	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopFilter) {
 		return FrameWorkLoopFilterMaskBands{}, nil
 	}
@@ -678,7 +678,7 @@ func (ctx FrameWorkPostFilterContext) PrepareLoopFilterMaskBands(masks *threadin
 		maxPlane = loopfilter.PlaneY
 	}
 	bands := FrameWorkLoopFilterMaskBands{
-		ctx:        ctx,
+		ctx:        *ctx,
 		masks:      masks,
 		filterMap:  filterMap,
 		sharpness:  ctx.Event.LoopFilter.Sharpness,
@@ -705,14 +705,20 @@ func (ctx FrameWorkPostFilterContext) PrepareLoopFilterMaskBands(masks *threadin
 // concurrently. Every PopulateBand must complete (barrier) before any ApplyBand,
 // which reads the level cache.
 func (b FrameWorkLoopFilterMaskBands) PopulateBand(rowStart, rowEnd int) error {
+	var plan FrameWorkLoopFilterPostFilterPlan
+	return b.populateBandStats(rowStart, rowEnd, &plan)
+}
+
+// populateBandStats is PopulateBand that also adds the band's block, cell and
+// missing-record counts to plan.
+func (b FrameWorkLoopFilterMaskBands) populateBandStats(rowStart, rowEnd int, plan *FrameWorkLoopFilterPostFilterPlan) error {
 	if !b.active {
 		return nil
 	}
 	// Recompute the level context locally (it holds pointers into b.ctx.Event);
 	// keeping it off the shared struct keeps b.ctx.Event on this worker's stack.
 	levelCtx := frameWorkLoopFilterLevelContextFor(&b.ctx.Event)
-	var plan FrameWorkLoopFilterPostFilterPlan
-	return b.ctx.populateLoopFilterLevelCacheRange(b.masks, b.filterMap, &levelCtx, &plan, rowStart, rowEnd)
+	return b.ctx.populateLoopFilterLevelCacheRange(b.masks, b.filterMap, &levelCtx, plan, rowStart, rowEnd)
 }
 
 // RegionCols is the number of 128x128 mask region-columns (the horizontal-pass

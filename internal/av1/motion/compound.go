@@ -853,7 +853,7 @@ func predictInterCompoundRef8ToConvBufCopyPureGo(out []uint16, ref frame.Plane, 
 // the same precision as the same-size translational path.
 func PredictScaledCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable) error {
+	xTable, yTable *SubpelKernelTable) error {
 	return PredictScaledCompoundRefToConvBufWithScratch(buf, ref, bytesPerSample, bitDepth, width, height,
 		startX, xStep, startY, yStep, xTable, yTable, nil)
 }
@@ -863,7 +863,7 @@ func PredictScaledCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, by
 // large scaled intermediate block.
 func PredictScaledCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable, scratch *ScaledConvolveScratch) error {
+	xTable, yTable *SubpelKernelTable, scratch *ScaledConvolveScratch) error {
 	if buf == nil || xStep <= 0 || yStep <= 0 ||
 		!bitDepthMatchesSampleWidth(bytesPerSample, bitDepth) {
 		return ErrInvalidMotion
@@ -903,7 +903,7 @@ func PredictScaledCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref fram
 }
 
 func predictScaledCompoundRefToConvBufIdentityStep(out []uint16, ref frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int,
-	startX int64, startY int64, xTable SubpelKernelTable, yTable SubpelKernelTable, scratch *ScaledConvolveScratch) bool {
+	startX int64, startY int64, xTable, yTable *SubpelKernelTable, scratch *ScaledConvolveScratch) bool {
 	refX, refY, subX, subY, ok := scaledIdentityStepOrigin(startX, startY)
 	if !ok {
 		return false
@@ -929,7 +929,7 @@ func predictScaledCompoundRefToConvBufIdentityStep(out []uint16, ref frame.Plane
 }
 
 func predictScaledCompoundRef8ToConvBufYIdentity(out []uint16, ref frame.Plane, width int, height int,
-	startX int64, xStep int64, startY int64, xTable SubpelKernelTable) {
+	startX int64, xStep int64, startY int64, xTable *SubpelKernelTable) {
 	const roundOffset = (1 << (19 - compoundRound1Bits)) + (1 << (19 - compoundRound1Bits - 1))
 	foX := filterTaps/2 - 1
 	baseY := int(scaledIntFloor(startY))
@@ -966,7 +966,7 @@ func predictScaledCompoundRef8ToConvBufYIdentity(out []uint16, ref frame.Plane, 
 }
 
 func predictScaledCompoundRefHighBDToConvBufYIdentity(out []uint16, ref frame.Plane, bitDepth int, width int, height int,
-	startX int64, xStep int64, startY int64, xTable SubpelKernelTable) {
+	startX int64, xStep int64, startY int64, xTable *SubpelKernelTable) {
 	round0 := compoundRound0(uint8(bitDepth))
 	offsetBits := bitDepth + 2*filterBits - round0
 	roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
@@ -1012,7 +1012,7 @@ func predictScaledCompoundRefHighBDToConvBufYIdentity(out []uint16, ref frame.Pl
 
 func predictScaledCompoundRefToConvBufGeneric(out []uint16, ref frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
-	xTable SubpelKernelTable, yTable SubpelKernelTable, imH int, scratch *ScaledConvolveScratch) {
+	xTable, yTable *SubpelKernelTable, imH int, scratch *ScaledConvolveScratch) {
 	const imStride = maxBlockSize
 	im, pooled := scaledHighBDIMForScratch(scratch)
 	foX := filterTaps/2 - 1

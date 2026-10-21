@@ -16,14 +16,14 @@ type DecoderTileListEntryDecodePlan = internaldecoder.TileListEntryDecodePlan
 // frame-work residual runner with output set to a caller-owned scratch
 // reconstruction frame; after the entry decodes, copy Region into the tile-list
 // output mosaic with CopyTileListEntryToOutputFrame.
-func PlanDecoderTileListEntryDecode(event DecoderEvent, entryIndex int, surface int, anchors []*Frame, references []*Frame, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderTileListEntryDecodePlan, error) {
+func PlanDecoderTileListEntryDecode(event *DecoderEvent, entryIndex int, surface int, anchors []*Frame, references []*Frame, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderTileListEntryDecodePlan, error) {
 	return internaldecoder.PlanTileListEntryDecode(event, entryIndex, surface, anchors, references, workers, spans, jobs, batches)
 }
 
 // DecoderTileListEntryDecodeRunnerScratchLen reports residual-runner scratch
 // for the synthetic tile-group event produced by PlanDecoderTileListEntryDecode.
 // It also returns the tile work plan written into spans, jobs, and batches.
-func DecoderTileListEntryDecodeRunnerScratchLen(event DecoderEvent, entryIndex int, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkBatchResidualRunnerScratchSize, DecoderTileWorkPlan, error) {
+func DecoderTileListEntryDecodeRunnerScratchLen(event *DecoderEvent, entryIndex int, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkBatchResidualRunnerScratchSize, DecoderTileWorkPlan, error) {
 	if event.Kind != DecoderEventTileList {
 		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, ErrDecoderInvalidSurfaceEvent
 	}
