@@ -2630,10 +2630,11 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	if !refs.Compound {
 		mds0Picked := false
 		// The light-PD1 MDS0 candidate decision (SVT preset 12 shape; see
-		// pframe_mds0.go). Blocks already in certain skip territory keep the
-		// classification below so the stale ME SAD cannot mis-skip a swapped
-		// vector, and static superblocks keep the short path as libaom's
-		// realtime pick cuts its mode loop on zero source SAD
+		// pframe_mds0.go) prices every block, low-distortion ones included:
+		// SVT's generate_md_stage_0_cand_light_pd1 has no distortion gate,
+		// and at high q those are the blocks where a vector-free NEARESTMV
+		// undercuts NEWMV. Static superblocks keep the short path as
+		// libaom's realtime pick cuts its mode loop on zero source SAD
 		// (av1/encoder/nonrd_pickmode.c source-SAD shortcuts). Droppable
 		// leaves cap the loop to the moderate-distortion band: SVT keeps
 		// leaves on the highest lpd1 shortcut level (enc_mode_config.c:
@@ -2641,10 +2642,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		// steering by block difficulty), and here the hard leaf blocks keep
 		// the single-candidate NEWMV path so leaf frames hold the realtime
 		// wall budget.
-		mds0Gate := fullSAD*4 > bw*bh
-		if st.mds0Level == 2 {
-			mds0Gate = mds0Gate && fullSAD <= bw*bh*4
-		}
+		mds0Gate := st.mds0Level != 2 || fullSAD <= bw*bh*4
 		if st.mds0Level != 0 && mds0Gate && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height &&
 			st.realtimeContentStateForBlock(lumaPX, lumaPY).sourceSADNonRD != realtimeSourceSADZero {
 			if cand, ok, retained := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {

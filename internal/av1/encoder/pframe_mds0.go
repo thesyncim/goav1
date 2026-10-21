@@ -69,13 +69,11 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	stack *tile.ReferenceMVStackResult,
 	lumaPX, lumaPY, bw, bh int, meMV motion.Vector) (mds0Cand, bool, bool) {
 
-	// Skip-certain bypass, ported from libaom's realtime skip-txfm test
-	// (av1/encoder/nonrd_pickmode.c set_early_term_based_on_uv_plane): when
-	// the ME candidate's residual variance sits under the quantizer dead
-	// zone (ac_thr = ac_quant^2 >> 6, applied per 16x16 of samples), every
-	// candidate here quantizes to all-zero AC and a mode swap is pure
-	// syntax churn, so the block keeps the legacy classification. The ME
-	// prediction's distortion is cached for the candidate loop below.
+	// SVT's light-PD1 MDS0 prices every block's candidates; there is no
+	// dead-zone bypass ahead of it. When every candidate's residual
+	// quantizes to zero the rate term alone decides, which is exactly where
+	// a vector-free NEARESTMV/NEARMV beats the ME NEWMV. The ME prediction's
+	// distortion is cached for the candidate loop below.
 	meDist := int64(-1)
 	meSSE := uint32(0)
 	predYValid := false
@@ -85,18 +83,6 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 		sse, meVar := realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
 		meSSE = sse
 		st.predStats.set(meMV, motion.RegularFilters, meSSE, meVar)
-		acThr := (int64(st.yQuant.AC) * int64(st.yQuant.AC) >> 6) * int64(bw*bh) / 256
-		// Upstream narrows the dead-zone test on high-motion HD blocks
-		// (same function: 720p+, non-screen tuning, source_sad above low,
-		// per-pixel SSE over 1000 shift dc_thr/ac_thr right by 4).
-		if src.Width*src.Height >= 1280*720 && !st.allowScreenContentTools &&
-			int64(meSSE) > int64(bw*bh)*1000 &&
-			st.realtimeContentStateForBlock(lumaPX, lumaPY).sourceSADNonRD > realtimeSourceSADLow {
-			acThr >>= 4
-		}
-		if int64(meVar) < acThr {
-			return mds0Cand{}, false, false
-		}
 		meDist = int64(meVar) << 4
 	}
 
