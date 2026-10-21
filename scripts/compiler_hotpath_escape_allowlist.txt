@@ -91,6 +91,10 @@ internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.UnitDst) escapes to 
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint8, length) escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint8, length) escapes to heap in (*cdefApplier).init:
 internal/av1/encoder/config_frame.go:*:*: moved to heap: unit
+internal/av1/encoder/cyclic_refresh.go:*:*: make([]int64, sbCnt) escapes to heap
+internal/av1/encoder/cyclic_refresh.go:*:*: make([]int64, sbCnt) escapes to heap in (*cyclicRefresh).plan:
+internal/av1/encoder/cyclic_refresh.go:*:*: make([]uint8, sbCnt) escapes to heap
+internal/av1/encoder/cyclic_refresh.go:*:*: make([]uint8, sbCnt) escapes to heap in (*cyclicRefresh).plan:
 internal/av1/encoder/hme.go:*:*: func literal escapes to heap
 internal/av1/encoder/hme.go:*:*: func literal escapes to heap in (*hmeState).startWorkers:
 internal/av1/encoder/hme.go:*:*: make([]byte, qw * qh) escapes to heap
