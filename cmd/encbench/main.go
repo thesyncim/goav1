@@ -16,6 +16,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"runtime/pprof"
 	"strconv"
 	"time"
 
@@ -111,7 +112,23 @@ func main() {
 	maxQ := flag.Int("maxq", 0, "CBR maximum qindex (0 = encoder default)")
 	ivfPath := flag.String("o", "", "write the encoded stream as IVF to this path")
 	reconPath := flag.String("recon", "", "write the encoder reconstruction as raw I420 to this path")
+	cpuProfile := flag.String("cpuprofile", "", "write a CPU profile of the encode loop to this path")
 	flag.Parse()
+	if *cpuProfile != "" {
+		pf, err := os.Create(*cpuProfile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := pprof.StartCPUProfile(pf); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		defer func() {
+			pprof.StopCPUProfile()
+			pf.Close()
+		}()
+	}
 	nFrames := *nframes
 	if nFrames <= 0 {
 		fmt.Fprintf(os.Stderr, "invalid frame count %d\n", nFrames)
