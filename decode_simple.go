@@ -49,6 +49,7 @@ type Decoder struct {
 
 	compactLF     internalthreading.FrameWorkLoopFilterCompactState
 	lfLevels      internalthreading.FrameWorkLoopFilterLevelTable
+	lfTileEdges   internalthreading.FrameWorkLoopFilterTileEdges
 	compactNoSkip []byte
 
 	refSurface [InterRefsPerFrame]int
@@ -345,6 +346,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	}
 	d.runner = runner
 	d.runner.EventRunner.lfLevels = &d.lfLevels
+	d.runner.EventRunner.lfTileEdges = &d.lfTileEdges
 	if !d.useExternal && d.workerPool.WorkerCount() == 1 {
 		d.batch.compactState = &d.compactLF
 		d.batch.compactOwner = &d.batch

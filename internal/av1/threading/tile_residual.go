@@ -1208,6 +1208,13 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 	scratch.resetDeferredReconBuffers()
 	if req.LoopFilterMasks.Valid() {
 		scratch.lfMask.reset(req.LoopFilterMasks)
+		if scratch.lfMask.edges != nil {
+			region, err := b.JobRegion(index)
+			if err != nil {
+				return FrameWorkTileResidualStats{}, err
+			}
+			scratch.lfMask.setTile(region)
+		}
 	}
 	b.geomCache = &scratch.geomCache
 	if err := frameWorkPrimeLumaReconGeometry(b, index); err != nil {
@@ -1315,6 +1322,9 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 	}
 	if err != nil {
 		return scratch.stats, err
+	}
+	if req.LoopFilterMasks.Valid() {
+		scratch.lfMask.finishTileEdges()
 	}
 	if scratch.controller.deferReconstruction && scratch.controller.wavefrontWorkers <= 1 {
 		if err := scratch.finalizeDeferredPalettes(); err != nil {

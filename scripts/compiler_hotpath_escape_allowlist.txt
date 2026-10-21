@@ -462,10 +462,10 @@ internal/av1/motion/compound.go:*:*: moved to heap: im
 internal/av1/motion/scale_scratch.go:*:*: new(scaledHighBDIM) escapes to heap
 internal/av1/motion/scale_scratch.go:*:*: new(scaledHighBDIM) escapes to heap in init.func1:
 internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap
-internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap in (*FrameWorkLoopFilterMasks).BuildFromOrderedBlocks:
 internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap in (*frameWorkLoopFilterMaskScratch).reset:
-internal/av1/threading/loop_filter_ordered.go:*:*: make([]uint8, h.Cols) escapes to heap
-internal/av1/threading/loop_filter_ordered.go:*:*: make([]uint8, h.Cols) escapes to heap in (*FrameWorkLoopFilterOrderedBuilder).Reset:
+internal/av1/threading/loop_filter_tile_edges.go:*:*: make([]uint8, n) escapes to heap
+internal/av1/threading/loop_filter_tile_edges.go:*:*: make([]uint8, n) escapes to heap in (*FrameWorkLoopFilterMasks).BindTileEdges:
+internal/av1/threading/loop_filter_tile_edges.go:*:*: make([]uint8, n) escapes to heap in growBytes:
 internal/av1/threading/pool.go:*:*: func literal escapes to heap in (*Pool).wavefrontLaneGroupLocked:
 internal/av1/threading/pool.go:*:*: func literal escapes to heap in NewPool:
 internal/av1/threading/pool.go:*:*: make([]poolWorker, workers) escapes to heap
@@ -491,8 +491,6 @@ internal/av1/threading/tile_residual.go:*:*: make([]tile.refmvsBlock, tile.need)
 internal/av1/threading/tile_residual.go:*:*: make([]tile.refmvsBlock, tile.need) escapes to heap in (*FrameWorkTileResidualScratch).PreallocLoopFilterMaskScratch:
 internal/av1/threading/tile_residual.go:*:*: make([]uint8, cols) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]uint8, cols) escapes to heap in (*FrameWorkTileResidualScratch).PreallocLoopFilterMaskScratch:
-internal/av1/threading/tile_residual.go:*:*: make([]uint8, h.Cols) escapes to heap
-internal/av1/threading/tile_residual.go:*:*: make([]uint8, h.Cols) escapes to heap in decodeAndReconstructJobResidualsPtr:
 internal/av1/threading/tile_residual_testhook.go:*:*: func literal escapes to heap
 internal/av1/threading/tile_residual_testhook.go:*:*: func literal escapes to heap in OverrideWavefrontMinSBRowsPerWorkerForTest:
 internal/av1/threading/wavefront_stream.go:*:*: func literal escapes to heap in (*frameWorkReconWavefront).startLanes:

@@ -39,6 +39,11 @@ type FrameWorkLoopFilterMasks struct {
 	// so the post-filter consumer reads them directly instead of re-deriving
 	// them from the loop-filter record map.
 	levels *FrameWorkLoopFilterLevelTable
+
+	// tileEdges, when bound (BindTileEdges), collects dav1d's tile-boundary
+	// context backups during the block walk so FixTileBoundariesFromEdges can
+	// fix a multi-tile frame without the loop-filter record map.
+	tileEdges *FrameWorkLoopFilterTileEdges
 }
 
 // FrameWorkLoopFilterLevelTable is dav1d's frame loop-filter level table
@@ -186,6 +191,11 @@ type frameWorkLoopFilterMaskScratch struct {
 	lvlKey      uint32
 	lvlOwner    *FrameWorkLoopFilterLevelTable
 	lvlMemValid bool
+
+	// edges/tileCol/tileRow route this job's tile-boundary context backups
+	// (dav1d tx_lpf_right_edge and per-tile-row above context).
+	edges            *FrameWorkLoopFilterTileEdges
+	tileCol, tileRow int
 }
 
 // reset re-initialises the above-context arrays for a new tile job. It mirrors
@@ -212,6 +222,26 @@ func (s *frameWorkLoopFilterMaskScratch) reset(h *FrameWorkLoopFilterMasks) {
 	}
 	s.started = false
 	s.lvlMemValid = false
+	s.edges = h.tileEdges
+	s.tileCol, s.tileRow = 0, 0
+}
+
+// setTile records which tile this job decodes, validating it against the bound
+// tile-edge layout; an unexpected job geometry detaches the backups so the
+// decoder falls back to the record-map tile fix.
+func (s *frameWorkLoopFilterMaskScratch) setTile(region FrameWorkJobRegion) {
+	e := s.edges
+	if e == nil {
+		return
+	}
+	col, row := int(region.Col), int(region.Row)
+	if col >= e.tileCols || row >= e.tileRows ||
+		int(region.MIColStart) != e.colStart[col] || int(region.MIRowStart) != e.rowStart[row] {
+		e.broken.Store(true)
+		s.edges = nil
+		return
+	}
+	s.tileCol, s.tileRow = col, row
 }
 
 // resetLeft re-initialises the per-superblock-row left context (dav1d
@@ -286,6 +316,7 @@ func (h *FrameWorkLoopFilterMasks) buildBlock(s *frameWorkLoopFilterMaskScratch,
 func (h *FrameWorkLoopFilterMasks) buildBlockWithLevels(s *frameWorkLoopFilterMaskScratch, bx, by int, size tile.BlockSize, tree tile.TransformTreeResult, skipTransform, intra bool, sbLog2 int, lc lfmask.LevelCache, lv lfmask.Levels) {
 	sbRow := by >> sbLog2
 	if !s.started || sbRow != s.sbRow {
+		s.flushRightEdge()
 		s.resetLeft(h.HasChroma)
 		s.sbRow = sbRow
 		s.started = true
