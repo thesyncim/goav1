@@ -78,13 +78,6 @@ func (s *DecodeState) DecodeTransformTree(cdfs *TransformCDFs, ctx *BlockModeCon
 
 	if req.Inter && shouldReadVariableTransformTree(req, maxY) {
 		result.Variable = true
-		walker := transformTreeDecoder{
-			state:  s,
-			cdfs:   cdfs,
-			ctx:    ctx,
-			req:    req,
-			result: &result,
-		}
 		maxDims, _ := maxY.Dimensions()
 		reqX4 := int(req.X4)
 		reqY4 := int(req.Y4)
@@ -95,9 +88,16 @@ func (s *DecodeState) DecodeTransformTree(cdfs *TransformCDFs, ctx *BlockModeCon
 				// (x=0,y=0); once the loop advances past the first row/column
 				// the prior maxY sibling has marked above/left contexts so
 				// the next iteration sees a real neighbor.
-				haveTop := req.HaveTop || y > 0
-				haveLeft := req.HaveLeft || x > 0
-				if err := walker.read(maxY, 0, reqX4+x, reqY4+y, x/int(maxDims.W4), y/int(maxDims.H4), haveTop, haveLeft); err != nil {
+				root := txTreeNode{
+					size:     maxY,
+					haveTop:  req.HaveTop || y > 0,
+					haveLeft: req.HaveLeft || x > 0,
+					x4:       reqX4 + x,
+					y4:       reqY4 + y,
+					xOff:     x / int(maxDims.W4),
+					yOff:     y / int(maxDims.H4),
+				}
+				if err := s.readVariableTransformTree(cdfs, ctx, req, &result, root); err != nil {
 					return TransformTreeResult{}, err
 				}
 			}
@@ -184,6 +184,19 @@ func (r TransformTreeResult) forEachLumaTXBInWindow(req TransformTreeRequest, wi
 	xEnd := minInt(int(window.X4End), reqX4+int(req.VisibleW4))
 
 	if r.Variable {
+		var blocks [lumaTXBWindowCap]TransformBlock
+		n, err := r.collectLumaTXBsInWindow(req, window, &blocks)
+		if err == nil {
+			for _, block := range blocks[:n] {
+				if err := visit(block); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		if err != errTXBWindowFull {
+			return err
+		}
 		walker := transformTreeReplay{result: r, req: req, visit: visit}
 		for y := yStart; y < yEnd; y += int(dims.H4) {
 			for x := xStart; x < xEnd; x += int(dims.W4) {
@@ -205,72 +218,6 @@ func (r TransformTreeResult) forEachLumaTXBInWindow(req TransformTreeRequest, wi
 		}
 	}
 	return nil
-}
-
-type transformTreeDecoder struct {
-	state  *DecodeState
-	cdfs   *TransformCDFs
-	ctx    *BlockModeContext
-	req    TransformTreeRequest
-	result *TransformTreeResult
-}
-
-func (d *transformTreeDecoder) read(from TransformSize, depth int, x4 int, y4 int, xOff int, yOff int, haveTop bool, haveLeft bool) error {
-	dims, ok := from.Dimensions()
-	if !ok {
-		return ErrInvalidDecodeState
-	}
-	split, err := d.state.ReadTransformPartitionSplit(d.cdfs, d.ctx, TransformPartitionRequest{
-		Size:     d.req.Size,
-		From:     from,
-		Depth:    uint8(depth),
-		X4:       uint8(x4),
-		Y4:       uint8(y4),
-		HaveTop:  haveTop,
-		HaveLeft: haveLeft,
-	})
-	if err != nil {
-		return err
-	}
-	if split {
-		d.result.Split[depth] |= 1 << (yOff*4 + xOff)
-	}
-	if split && dims.Max > 1 {
-		sub := dims.Sub
-		subDims, ok := sub.Dimensions()
-		if !ok {
-			return ErrInvalidDecodeState
-		}
-		if err := d.read(sub, depth+1, x4, y4, xOff*2, yOff*2, haveTop, haveLeft); err != nil {
-			return err
-		}
-		if dims.Log2W >= dims.Log2H && transformChildVisible(d.req, x4+int(subDims.W4), y4) {
-			// Right child shares the parent's top availability but always has
-			// the within-parent left subblock as its left neighbor.
-			if err := d.read(sub, depth+1, x4+int(subDims.W4), y4, xOff*2+1, yOff*2, haveTop, true); err != nil {
-				return err
-			}
-		}
-		if dims.Log2H >= dims.Log2W && transformChildVisible(d.req, x4, y4+int(subDims.H4)) {
-			// Bottom child shares the parent's left availability but always
-			// has the within-parent top subblock as its top neighbor.
-			if err := d.read(sub, depth+1, x4, y4+int(subDims.H4), xOff*2, yOff*2+1, true, haveLeft); err != nil {
-				return err
-			}
-			if dims.Log2W >= dims.Log2H && transformChildVisible(d.req, x4+int(subDims.W4), y4+int(subDims.H4)) {
-				if err := d.read(sub, depth+1, x4+int(subDims.W4), y4+int(subDims.H4), xOff*2+1, yOff*2+1, true, true); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-
-	markW, markH := dims.Log2W, dims.Log2H
-	if split {
-		markW, markH = 0, 0
-	}
-	return d.ctx.MarkTransformArea(x4, y4, int(dims.W4), int(dims.H4), markW, markH, false)
 }
 
 type transformTreeReplay struct {
@@ -369,23 +316,33 @@ func transformChildVisible(req TransformTreeRequest, x4 int, y4 int) bool {
 }
 
 func emitTransformBlock(req TransformTreeRequest, x4 int, y4 int, size TransformSize, visit TransformBlockVisitor) error {
+	block, err := transformBlockAt(req, x4, y4, size)
+	if err != nil {
+		return err
+	}
+	return visit(block)
+}
+
+// transformBlockAt builds the transform block of the given size at x4/y4,
+// clipped to the visible part of the request.
+func transformBlockAt(req TransformTreeRequest, x4 int, y4 int, size TransformSize) (TransformBlock, error) {
 	dims, ok := size.Dimensions()
 	if !ok || !transformChildVisible(req, x4, y4) ||
 		x4 < 0 || y4 < 0 || x4 > int(^uint8(0)) || y4 > int(^uint8(0)) {
-		return ErrInvalidDecodeState
+		return TransformBlock{}, ErrInvalidDecodeState
 	}
 	visibleW := minInt(int(dims.W4), int(req.X4)+int(req.VisibleW4)-x4)
 	visibleH := minInt(int(dims.H4), int(req.Y4)+int(req.VisibleH4)-y4)
 	if visibleW <= 0 || visibleH <= 0 {
-		return ErrInvalidDecodeState
+		return TransformBlock{}, ErrInvalidDecodeState
 	}
-	return visit(TransformBlock{
+	return TransformBlock{
 		X4:        uint8(x4),
 		Y4:        uint8(y4),
 		Size:      size,
 		VisibleW4: uint8(visibleW),
 		VisibleH4: uint8(visibleH),
-	})
+	}, nil
 }
 
 func validateTransformTreeRequest(req TransformTreeRequest) (BlockDimensions, error) {

@@ -538,7 +538,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.SBTopInterMotion = above.mode.InterMotion
 		scratch.Mode.SBTopMotionValid = above.mode.MotionValid
 		scratch.Mode.SBTopBlockSize = above.mode.BlockSize
-		scratch.Mode.SBTopInterMotionGrid = above.mode.InterMotionHistory
+		copy(scratch.Mode.SBTopInterMotionGrid[:], above.mode.InterMotionHistory[:])
 		scratch.Mode.SBTopMotionValidGrid = above.mode.MotionValidHistory
 		scratch.Mode.SBTopBlockSizeGrid = above.mode.BlockSizeHistory
 		scratch.Mode.SBTopBlockSizeVisitedGrid = above.mode.BlockSizeVisitedHistory
@@ -579,7 +579,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.SBLeftInterMotion = left.mode.InterMotion
 		scratch.Mode.SBLeftMotionValid = left.mode.MotionValid
 		scratch.Mode.SBLeftBlockSize = left.mode.BlockSize
-		scratch.Mode.SBLeftInterMotionGrid = left.mode.InterMotionHistory
+		copy(scratch.Mode.SBLeftInterMotionGrid[:], left.mode.InterMotionHistory[:])
 		scratch.Mode.SBLeftMotionValidGrid = left.mode.MotionValidHistory
 		scratch.Mode.SBLeftBlockSizeGrid = left.mode.BlockSizeHistory
 		scratch.Mode.SBLeftBlockSizeVisitedGrid = left.mode.BlockSizeVisitedHistory
@@ -1054,25 +1054,9 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 					return nil, fmt.Errorf("before coefficients callback: %w", err)
 				}
 			}
-			coeffReq, err := blockLoopCoeffRequest(req, coeffController, hasCoeffController, *visit)
-			if err != nil {
-				return nil, fmt.Errorf("select coeff request: %w", err)
+			if err := decodeBlockLoopVisitCoefficients(s, cdfs, scratch, ctx, req, coeffController, hasCoeffController, visit); err != nil {
+				return nil, err
 			}
-			coeffVisit := req.CoeffVisitor
-			if coeffVisit == nil {
-				coeffVisit = discardBlockLoopCoeff
-			}
-			coefficients, err := s.DecodeBlockCoefficients(BlockCoeffCDFs{
-				Transform: cdfs.Transform,
-				Coeff:     cdfs.Coeff,
-			}, ctx, &scratch.CoeffCtx, &scratch.Coeff, coeffReq, func(block BlockCoeffBlock) error {
-				return coeffVisit(*visit, block)
-			})
-			if err != nil {
-				return nil, fmt.Errorf("decode coefficients: %w", err)
-			}
-			visit.Coefficients = coefficients
-			visit.CoefficientsValid = true
 		}
 	}
 	return visit, nil
@@ -2176,4 +2160,33 @@ func warpSampleDiagonalCorner(block BlockVisit, ctx *BlockModeContext, ref Refer
 		return 0
 	}
 	return 1
+}
+
+// decodeBlockLoopVisitCoefficients decodes one block's coefficients through
+// req.CoeffVisitor (the path without a coefficient controller). It is kept
+// out of decodeBlockLoopVisitWithCoeffControllerPtr so the visitor closure's
+// captures do not move that function's locals to the heap on every block.
+//
+//go:noinline
+func decodeBlockLoopVisitCoefficients[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, ctx *BlockModeContext, req BlockLoopRequest, coeffController T, hasCoeffController bool, visit *BlockLoopVisit) error {
+	coeffReq, err := blockLoopCoeffRequest(req, coeffController, hasCoeffController, *visit)
+	if err != nil {
+		return fmt.Errorf("select coeff request: %w", err)
+	}
+	coeffVisit := req.CoeffVisitor
+	if coeffVisit == nil {
+		coeffVisit = discardBlockLoopCoeff
+	}
+	coefficients, err := s.DecodeBlockCoefficients(BlockCoeffCDFs{
+		Transform: cdfs.Transform,
+		Coeff:     cdfs.Coeff,
+	}, ctx, &scratch.CoeffCtx, &scratch.Coeff, coeffReq, func(block BlockCoeffBlock) error {
+		return coeffVisit(*visit, block)
+	})
+	if err != nil {
+		return fmt.Errorf("decode coefficients: %w", err)
+	}
+	visit.Coefficients = coefficients
+	visit.CoefficientsValid = true
+	return nil
 }

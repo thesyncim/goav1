@@ -40,7 +40,7 @@ var (
 	convolveX8Impl             convolve1DFunc            = convolveX8PureGo
 	convolveY8Impl             convolve1DFunc            = convolveY8PureGo
 	convolve2D8Impl            convolve2DFunc            = convolve2D8PureGo
-	convolve2D8WithScratchImpl convolve2DWithScratchFunc = convolve2D8WithScratchDefault
+	convolve2D8WithScratchImpl convolve2DWithScratchFunc = convolve2D8PureGoWithScratch
 
 	convolveX8ClampedImpl             convolve1DFunc            = convolveX8ClampedPureGo
 	convolveY8ClampedImpl             convolve1DFunc            = convolveY8ClampedPureGo
@@ -60,10 +60,6 @@ var (
 	convolve2DHighBDWithScratchImpl        convolveHighBD2DWithScratchFunc = convolve2DHighBDWithScratchDefault
 	convolve2DHighBDClampedWithScratchImpl convolveHighBD2DWithScratchFunc = convolve2DHighBDClampedWithScratchDefault
 )
-
-func convolve2D8WithScratchDefault(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, _ *ConvolveScratch) {
-	convolve2D8Impl(dst, ref, dstX, dstY, refX, refY, width, height, xKernel, yKernel)
-}
 
 func convolveX8ClampedWithScratchDefault(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16, _ *ConvolveScratch) {
 	convolveX8ClampedImpl(dst, ref, dstX, dstY, refX, refY, width, height, kernel)

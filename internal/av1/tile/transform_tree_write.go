@@ -91,7 +91,7 @@ type transformTreeWriter struct {
 	tree TransformTreeResult
 }
 
-// write mirrors transformTreeDecoder.read: same symbol gating, recursion
+// write mirrors readVariableTransformTree: same symbol gating, recursion
 // order, availability propagation, and context marks, with the split decision
 // taken from the caller's tree.Split masks instead of the bitstream.
 func (d *transformTreeWriter) write(from TransformSize, depth int, x4 int, y4 int, xOff int, yOff int, haveTop bool, haveLeft bool) error {

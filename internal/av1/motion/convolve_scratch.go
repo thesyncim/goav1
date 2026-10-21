@@ -17,3 +17,13 @@ type ConvolveScratch struct {
 	// of edge.
 	edge16 emuEdge16Buf
 }
+
+// narrowIM is the 2D-convolve intermediate for blocks at most
+// convolve2D8NarrowStride wide.
+type narrowIM = [(maxBlockSize + filterTaps - 1) * convolve2D8NarrowStride]int16
+
+// narrowIM returns the narrow-block intermediate carved from the reusable im
+// buffer, so it is not zero-filled per block.
+func (s *ConvolveScratch) narrowIM() *narrowIM {
+	return (*narrowIM)(s.im[:len(narrowIM{})])
+}
