@@ -173,9 +173,8 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	// Probe the stream to learn how much scratch the runner will need and to
 	// bind the sequence/frame headers used to derive the pool format.
 	var probeStream DecoderStream
-	const eventsPerFrame = 16
-	probeEventBudget := source.len()*eventsPerFrame + 64
-	probeEvents := make([]DecoderEvent, probeEventBudget)
+	// The probes grow probeEvents to the largest per-payload event count.
+	probeEvents := make([]DecoderEvent, 64)
 	probeSpans := make([]TileSpan, MaxTiles)
 	probeJobs := make([]TileJob, MaxTiles)
 	probeBatches := make([]TileBatch, MaxTiles)

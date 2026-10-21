@@ -264,7 +264,7 @@ func decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(stream DecoderStrea
 		return DecoderFrameWorkResidualStreamPlan{}, err
 	}
 	rtpBuffer := make([]byte, rtpBufferBytes)
-	rtpSpans := make([]RTPObuSpan, source.len()*16+64)
+	rtpSpans := make([]RTPObuSpan, 64)
 
 	var plan DecoderFrameWorkResidualStreamPlan
 	outputs := 0

@@ -135,7 +135,8 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 		return nil, fmt.Errorf("goav1: worker pool: %w", err)
 	}
 
-	probeEvents := make([]DecoderEvent, source.len()*16+64)
+	// The probes grow probeEvents to the largest per-payload event count.
+	probeEvents := make([]DecoderEvent, 64)
 	probeSpans := make([]TileSpan, MaxTiles)
 	probeJobs := make([]TileJob, MaxTiles)
 	probeBatches := make([]TileBatch, MaxTiles)
