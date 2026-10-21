@@ -332,6 +332,9 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	st.predStats.valid = false
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
+	if err := st.useSBQuant(lumaPX, lumaPY); err != nil {
+		return err
+	}
 	hasChroma := !st.color.MonoChrome
 	modeCtx := &scratch.Mode
 	cbw, cbh := 0, 0
@@ -825,6 +828,9 @@ func (st *lossyEncodeState) writePBlock(block tile.BlockVisit, scratch *tile.Blo
 	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, skip); err != nil {
 		return fmt.Errorf("skip: %w", err)
 	}
+	if err := st.writeSBDeltaQ(block, skip); err != nil {
+		return fmt.Errorf("delta q: %w", err)
+	}
 	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{SkipTransform: skip}); err != nil {
 		return fmt.Errorf("mark prefix: %w", err)
 	}
@@ -1143,6 +1149,9 @@ func (st *lossyEncodeState) writeIntraPBlock(block tile.BlockVisit, scratch *til
 	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
 	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, false); err != nil {
 		return fmt.Errorf("intra skip: %w", err)
+	}
+	if err := st.writeSBDeltaQ(block, false); err != nil {
+		return fmt.Errorf("intra delta q: %w", err)
 	}
 	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
 		return fmt.Errorf("intra mark prefix: %w", err)

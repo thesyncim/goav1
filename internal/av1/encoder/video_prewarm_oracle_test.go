@@ -22,6 +22,7 @@ func frozenPrewarmOracle(e *VideoEncoder) error {
 		Height:       e.renderHeight,
 	}
 	savedQ := e.qIndex
+	savedCREnd, savedCRQ := e.cr.sbEnd, e.cr.avgInterQ
 	// Size the assembly buffers for real content up front; the throwaway
 	// frame below is black and would leave them near-empty.
 	if bound := e.width * e.height; cap(e.tuScratch) < bound {
@@ -58,6 +59,7 @@ func frozenPrewarmOracle(e *VideoEncoder) error {
 	e.frameIndex = 0
 	e.lastTemporalID = 0
 	e.qIndex = savedQ
+	e.cr.sbEnd, e.cr.avgInterQ = savedCREnd, savedCRQ
 	e.rcBuffer = 0
 	e.rcRecentBits = [2]int{}
 	e.sinceGoldenFresh = 0

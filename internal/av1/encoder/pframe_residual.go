@@ -1408,7 +1408,7 @@ func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, s
 	content := st.realtimeContentStateForBlock(px, py)
 	*sb = realtimeVarPartSB{
 		ready:      true,
-		thresholds: realtimeVarPartThresholds(src.Width, src.Height, st.qIndex, st.yQuant.AC, st.effortLevel, content, 0),
+		thresholds: realtimeVarPartThresholds(src.Width, src.Height, st.qIndex, st.baseQAC, st.effortLevel, content, 0),
 	}
 	for i := range sb.force32 {
 		sb.force32[i] = realtimePartEvalAll
@@ -1609,7 +1609,11 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs, color 
 		st.txCDFs = prev.TransformType
 		st.treeCDFs = prev.Transform
 		st.mvCDFs = prev.MV
+		st.deltaQCDF = prev.DeltaQ
 	} else {
+		if err := st.deltaQCDF.InitDefaultDelta(); err != nil {
+			return err
+		}
 		if err := pc.partCDFs.InitDefault(); err != nil {
 			return err
 		}
@@ -1794,6 +1798,7 @@ func (pc *pframeCoder) exportCDFs(dst *frameCDFs) error {
 	dst.TransformType = pc.st.txCDFs
 	dst.Transform = pc.st.treeCDFs
 	dst.MV = pc.st.mvCDFs
+	dst.DeltaQ = pc.st.deltaQCDF
 	return dst.ResetCDFCounts()
 }
 
@@ -1837,6 +1842,8 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		return nil, err
 	}
 	st := &pc.st
+	st.sbQIndex, st.sbQCols = st.sbQPending, st.sbQPendingCols
+	st.sbQPending = nil
 	st.forceIntegerMV = forceIntegerMV
 	st.allowScreenContentTools = allowScreenContentTools
 	st.transformMode = parser.TransformModeSwitchable
@@ -1898,11 +1905,10 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	// av1_compute_rd_mult_based_on_qindex, inter shape at 8-bit: the DC step
 	// squared scaled by the rate multiplier; RDCOST pairs it with rates in
 	// 512-units-per-bit and distortion shifted by RDDIV_BITS.
-	dcq := float64(st.yQuant.DC)
-	st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))
-	// av1's sad-per-bit LUT formula: full-pel motion search prices one bit
-	// of side information at this many SAD units.
-	st.sadPerBit = realtimeSADPerBit(st.yQuant, color.BitDepth)
+	st.setInterLambda()
+	st.quantQ = qIndex
+	st.baseQAC = st.yQuant.AC
+	st.deltaQCur = qIndex
 	scaledReference := ref.Width != src.Width || ref.Height != src.Height
 
 	scratch := &pc.scratch
@@ -2376,6 +2382,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	st.predStats.valid = false
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
+	if err := st.useSBQuant(lumaPX, lumaPY); err != nil {
+		return err
+	}
 	hasChroma := !st.color.MonoChrome
 	modeCtx := &scratch.Mode
 	coeffCtx := &scratch.CoeffCtx
@@ -2771,6 +2780,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, skip); err != nil {
 		return fmt.Errorf("skip: %w", err)
 	}
+	if err := st.writeSBDeltaQ(block, skip); err != nil {
+		return fmt.Errorf("delta q: %w", err)
+	}
 	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{SkipTransform: skip}); err != nil {
 		return fmt.Errorf("mark prefix: %w", err)
 	}
@@ -3098,6 +3110,9 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
 	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, false); err != nil {
 		return fmt.Errorf("intra skip: %w", err)
+	}
+	if err := st.writeSBDeltaQ(block, false); err != nil {
+		return fmt.Errorf("intra delta q: %w", err)
 	}
 	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
 		return fmt.Errorf("intra mark prefix: %w", err)
