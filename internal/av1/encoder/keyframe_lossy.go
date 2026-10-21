@@ -650,6 +650,14 @@ type lossyEncodeState struct {
 	// its own pricing mid-frame.
 	mds0Level uint8
 	mds0Rates tile.InterModeRateTables
+	// mds0IntraRates prices the DC_PRED candidate light-PD1 injects next to
+	// the inter candidates (pframe_mds0.go mds0IntraDCWins); mds0IntraOK
+	// reports that the frame-start tables were built. mds0BestCost and
+	// mds0BestVar carry the inter winner's RD cost and residual variance.
+	mds0IntraRates tile.IntraDCRateTables
+	mds0IntraOK    bool
+	mds0BestCost   int64
+	mds0BestVar    int64
 
 	// depthRemovalLevel arms SVT-AV1's depth-removal signal chain for inter
 	// frames (set_depth_removal_level_controls, enc_mode_config.c; see

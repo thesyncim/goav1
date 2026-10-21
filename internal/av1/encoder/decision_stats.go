@@ -57,6 +57,8 @@ type EncoderDecisionStats struct {
 	CodedBlocks    uint64
 	CompoundBlocks uint64
 	BlockSizes     [EncoderDecisionBlockSizeCount]uint64
+	// IntraBlockSizes counts the intra blocks of each tile.BlockSize.
+	IntraBlockSizes [EncoderDecisionBlockSizeCount]uint64
 
 	PrimaryReferenceBlocks [EncoderDecisionReferenceFrameCount]uint64
 	ReferenceUses          [EncoderDecisionReferenceFrameCount]uint64
@@ -106,6 +108,9 @@ func (s *EncoderDecisionStats) add(other EncoderDecisionStats) {
 	s.SkipBlocks += other.SkipBlocks
 	s.CodedBlocks += other.CodedBlocks
 	s.CompoundBlocks += other.CompoundBlocks
+	for i := range s.IntraBlockSizes {
+		s.IntraBlockSizes[i] += other.IntraBlockSizes[i]
+	}
 	for i := range s.BlockSizes {
 		s.BlockSizes[i] += other.BlockSizes[i]
 	}
@@ -199,6 +204,9 @@ func (s *EncoderDecisionStats) noteIntraBlock(size tile.BlockSize) {
 		return
 	}
 	s.noteBlockSize(size)
+	if int(size) < len(s.IntraBlockSizes) {
+		s.IntraBlockSizes[size]++
+	}
 	s.Blocks++
 	s.IntraBlocks++
 	s.CodedBlocks++
