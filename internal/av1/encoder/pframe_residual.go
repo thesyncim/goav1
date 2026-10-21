@@ -2080,6 +2080,13 @@ func (st *lossyEncodeState) decideRealtimePartition(src, ref SourceFrame420, sca
 	sbPX, sbPY := (px/64)*64, (py/64)*64
 	sb := st.realtimeVarPartitionSB(src, ref, sbPX, sbPY)
 	if sb == nil {
+		// Superblocks crossing the frame edge carry no variance tree, but a
+		// 16x16 that fits stays whole: SVT-AV1 realtime disallows 8x8 blocks
+		// at preset 11+ unless the frame dimensions require them
+		// (enc_mode_config.c get_disallow_8x8_rtc, dimensions_require_8x8).
+		if level == tile.BlockLevel16x16 && px+16 <= src.Width && py+16 <= src.Height {
+			return tile.PartitionNone, nil
+		}
 		return tile.PartitionSplit, nil
 	}
 	switch level {
