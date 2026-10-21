@@ -656,6 +656,15 @@ type lossyEncodeState struct {
 	// mds0BestVar carry the inter winner's RD cost and residual variance.
 	mds0IntraRates tile.IntraDCRateTables
 
+	// skipRateCDFs prices the inter skip decision's coded alternative
+	// (pframe_lpd1_tx.go exactInterCoeffCost), restarting from skipRateBase
+	// at every superblock skipRateSB names; skipRateReady arms the base
+	// lazily each frame.
+	skipRateCDFs  tile.CoeffCDFs
+	skipRateBase  tile.CoeffCDFs
+	skipRateSB    int
+	skipRateReady bool
+
 	// sbQIndex holds the per-64x64 superblock qindex of an inter frame
 	// under cyclic refresh (cyclic_refresh.go), frame-wide in raster order
 	// with sbQCols columns; nil codes every superblock at the frame q.

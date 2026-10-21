@@ -1897,6 +1897,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	// trial-priced decisions are independent of coding order (wavefront
 	// requirement; see trialBlockLocal).
 	st.trialReady = false
+	st.skipRateReady = false
 	st.trialBlockLocal = true
 	st.keyMIColEnd = uint32(miColEnd)
 	st.keyMIRowEnd = uint32(miRows)
