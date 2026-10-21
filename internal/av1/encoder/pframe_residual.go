@@ -1844,6 +1844,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	// (SVT md_rate_estimation.c svt_aom_estimate_syntax_rate).
 	if st.mds0Level != 0 {
 		pc.modeCDFs.EstimateRateTables(&st.mds0Rates)
+		st.mds0IntraOK = st.intraCDFs.EstimateIntraDCRateTables(&st.mds0IntraRates) == nil
 	}
 	// Freeze the switchable filter rate tables for the IFS combo loop (SVT
 	// md_rate_estimation.c switchable_interp_fac_bitss).
@@ -2662,6 +2663,8 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 		if !mds0Picked {
 			modeResult.Mode = st.classifyInterMode(src, refPlanes, &stack, lumaPX, lumaPY, bw, bh, &mv, &fullSAD)
+		} else if st.mds0IntraDCWins(src, recon, block, modeCtx, lumaPX, lumaPY, bw, bh) {
+			return st.encodeIntraPBlock(src, recon, block, scratch)
 		}
 	}
 	// Switchable interpolation filter decision, run once the mode and vector
@@ -3116,17 +3119,21 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	}
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
-	pred := st.predY[:64]
-	mode := selectIntraMode8(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, block.HaveTop, block.HaveLeft, pred)
-	if !st.trialReady {
-		if err := st.trialCDFs.InitDefault(st.qIndex); err != nil {
-			return err
+	n, lumaTX, lumaScan := intraPBlockGeometry(st, block.Size)
+	pred := st.predY[:n*n]
+	mode, angleDelta := tile.IntraModeDC, 0
+	if n == 8 {
+		mode = selectIntraMode8(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, block.HaveTop, block.HaveLeft, pred)
+		if !st.trialReady {
+			if err := st.trialCDFs.InitDefault(st.qIndex); err != nil {
+				return err
+			}
+			st.trialReady = true
 		}
-		st.trialReady = true
+		mode, angleDelta = st.improveIntraModeDirectional(src, recon, block, mode, pred, lumaPX, lumaPY, 8)
+	} else {
+		fillIntraDCPred(pred, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft)
 	}
-	mode, angleDelta := func() (tile.IntraMode, int) {
-		return st.improveIntraModeDirectional(src, recon, block, mode, pred, lumaPX, lumaPY, 8)
-	}()
 	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
 		FrameType: parser.FrameTypeInter,
 		Size:      block.Size, X4: block.X4, Y4: block.Y4,
@@ -3167,7 +3174,7 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		VisibleW4: block.VisibleW4, VisibleH4: block.VisibleH4,
 		HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
 		Color: st.color, TransformMode: st.transformMode,
-	}, tile.TransformTreeResult{Y: tile.TransformSize8x8})
+	}, tile.TransformTreeResult{Y: lumaTX})
 	if err != nil {
 		return fmt.Errorf("intra transform tree: %w", err)
 	}
@@ -3178,13 +3185,16 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	}
 
 	st.intraTxTypeReq.Mode = mode
-	if err := st.encodeTXBPred(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, 8, st.yQuant, tile.CoeffContextRequest{
+	st.intraTxTypeReq.Size = lumaTX
+	err = st.encodeTXBPred(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, n, st.yQuant, tile.CoeffContextRequest{
 		Plane:      0,
 		PlaneBlock: block.Size,
-		Size:       tile.TransformSize8x8,
+		Size:       lumaTX,
 		X4:         block.X4,
 		Y4:         block.Y4,
-	}, coeffCtx, st.scan8, st.afterSkipIntra, pred); err != nil {
+	}, coeffCtx, lumaScan, st.afterSkipIntra, pred)
+	st.intraTxTypeReq.Size = tile.TransformSize8x8
+	if err != nil {
 		return fmt.Errorf("intra luma txb: %w", err)
 	}
 	if !hasChroma {

@@ -236,7 +236,80 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	// The winner's regular-filter prediction statistics (dist is its
 	// variance << 4) for the later stages (pred_stats.go).
 	st.predStats.set(bestMV, motion.RegularFilters, sses[best], uint32(dists[best]>>4))
+	st.mds0BestCost, st.mds0BestVar = bestCost, dists[best]>>4
 	return cands[best], true, predYValid && predYMV == bestMV
+}
+
+// intraPBlockGeometry is the luma side of an intra block inside an inter
+// frame: the square size, its whole-block transform and scan. 8x8 keeps the
+// legacy fallback's mode search; 16x16 and 32x32 come from the MDS0 DC arm.
+func intraPBlockGeometry(st *lossyEncodeState, size tile.BlockSize) (int, tile.TransformSize, []int16) {
+	switch size {
+	case tile.BlockSize16x16:
+		return 16, tile.TransformSize16x16, st.scan16
+	case tile.BlockSize32x32:
+		return 32, tile.TransformSize32x32, st.scan32
+	}
+	return 8, tile.TransformSize8x8, st.scan8
+}
+
+// fillIntraDCPred writes the n x n DC_PRED block from the reconstructed
+// edges.
+func fillIntraDCPred(pred []byte, reconPlane []byte, stride, px, py, n int, haveTop, haveLeft bool) {
+	dc := dcPredictN(reconPlane, stride, px, py, n, haveTop, haveLeft)
+	for i := range pred[:n*n] {
+		pred[i] = dc
+	}
+}
+
+// mds0SkipDCTh is cand_elimination_ctrls.skip_dc_th at the cand reduction
+// level preset 12 runs (enc_mode_config.c set_cand_reduction_ctrls level 5,
+// is_not_last_layer: every flat-structure frame is a reference).
+const mds0SkipDCTh = 5
+
+// mds0IntraDCWins is the DC_PRED arm of SVT-AV1's light-PD1 MDS0
+// (mode_decision.c generate_md_stage_0_cand_light_pd1 inject_intra_candidates
+// with the DC-only intra level preset 12 sets): after the inter candidates,
+// DC is skipped when the best inter residual variance already sits under
+// skip_dc_th per sample (product_coding_loop.c fast_loop_core_light_pd1),
+// else priced like the inter candidates - residual variance << 4 plus
+// svt_aom_intra_fast_cost's rate - against the inter winner, which pays its
+// is_inter flag as av1_inter_fast_cost_light does. Square 16x16 and 32x32
+// blocks only: 8x8 keeps its own fallback and 64x64 would need a TX64.
+func (st *lossyEncodeState) mds0IntraDCWins(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, modeCtx *tile.BlockModeContext, lumaPX, lumaPY, bw, bh int) bool {
+	if !st.mds0IntraOK || bw != bh || (bw != 16 && bw != 32) || st.color.MonoChrome {
+		return false
+	}
+	if st.mds0BestVar < int64(mds0SkipDCTh*bw*bh) {
+		return false
+	}
+	ctx, err := modeCtx.IntraContext(int(block.X4), int(block.Y4), block.HaveTop, block.HaveLeft)
+	if err != nil || ctx < 0 || ctx >= len(st.mds0IntraRates.IntraFlag) {
+		return false
+	}
+	// The DC predictor is flat, so the residual variance is the source
+	// block's own variance.
+	var sum, sq int64
+	for r := range bh {
+		row := src.Y[(lumaPY+r)*src.YStride+lumaPX : (lumaPY+r)*src.YStride+lumaPX+bw]
+		for _, v := range row {
+			sum += int64(v)
+			sq += int64(v) * int64(v)
+		}
+	}
+	n := int64(bw * bh)
+	variance := sq - (sum*sum)/n
+	dist := variance << 4
+	cflAllowed := 0
+	if bw <= 32 {
+		cflAllowed = 1
+	}
+	rate := int64(st.mds0IntraRates.IntraFlag[ctx][0]) +
+		int64(st.mds0IntraRates.LumaDCBits(block.Size)) +
+		int64(st.mds0IntraRates.UVModeDC[cflAllowed])
+	intraCost := ((rate*st.rdMult + 256) >> 9) + (dist << 7)
+	interCost := st.mds0BestCost + ((int64(st.mds0IntraRates.IntraFlag[ctx][1])*st.rdMult + 256) >> 9)
+	return intraCost < interCost
 }
 
 // mds0PredictorMatchesCodedFilters reports whether predY, retained by MDS0
