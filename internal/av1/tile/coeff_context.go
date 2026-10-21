@@ -1,5 +1,7 @@
 package tile
 
+import "encoding/binary"
+
 type TXBContext struct {
 	TXBSkipContext uint8
 	DCSignContext  uint8
@@ -159,19 +161,10 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 			DCSignContext:  coeffDCSignContext(dcSign),
 		}
 	}
+	topMag, topSign := coeffContextWords(aboveRow, x4, w4)
+	leftMag, leftSign := coeffContextWords(leftRow, y4, h4)
+	dcSign = topSign + leftSign
 	if req.Plane == 0 {
-		topMag := uint8(0)
-		for k := 0; k < w4; k++ {
-			value := aboveRow[x4+k]
-			topMag |= value
-			dcSign += coeffContextSignDelta[value>>CoeffContextBits]
-		}
-		leftMag := uint8(0)
-		for k := 0; k < h4; k++ {
-			value := leftRow[y4+k]
-			leftMag |= value
-			dcSign += coeffContextSignDelta[value>>CoeffContextBits]
-		}
 		if blockDims.W4 != txDims.W4 || blockDims.H4 != txDims.H4 {
 			top := topMag & CoeffContextMask
 			top = min(top, 4)
@@ -180,18 +173,8 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 			txbSkipCtx = coeffSkipContexts[top][left]
 		}
 	} else {
-		topNonZero := false
-		for k := 0; k < w4; k++ {
-			value := aboveRow[x4+k]
-			topNonZero = topNonZero || value != 0
-			dcSign += coeffContextSignDelta[value>>CoeffContextBits]
-		}
-		leftNonZero := false
-		for k := 0; k < h4; k++ {
-			value := leftRow[y4+k]
-			leftNonZero = leftNonZero || value != 0
-			dcSign += coeffContextSignDelta[value>>CoeffContextBits]
-		}
+		topNonZero := topMag != 0
+		leftNonZero := leftMag != 0
 		ctxBase := uint8(0)
 		if topNonZero {
 			ctxBase++
@@ -436,4 +419,44 @@ func validCoeffEntropyValue(value uint8) bool {
 		return false
 	}
 	return value>>CoeffContextBits <= 2
+}
+
+// coeffContextWords returns the OR of the n context bytes at row[x:] and their
+// DC-sign sum (positive minus negative entries), reading them as one or two
+// words the way dav1d's get_skip_ctx and get_dc_sign_ctx do. A context byte
+// holds the magnitude in its low CoeffContextBits bits, then a negative flag
+// (bit 3) and a positive flag (bit 4). Transform sides are 1, 2, 4, 8 or 16
+// units; anything else takes the per-byte loop.
+func coeffContextWords(row *[MaxBlockModeSlots]uint8, x, n int) (uint8, int8) {
+	const ones = 0x0101010101010101
+	var lo, hi uint64
+	switch n {
+	case 1:
+		lo = uint64(row[x])
+	case 2:
+		lo = uint64(binary.LittleEndian.Uint16(row[x : x+2]))
+	case 4:
+		lo = uint64(binary.LittleEndian.Uint32(row[x : x+4]))
+	case 8:
+		lo = binary.LittleEndian.Uint64(row[x : x+8])
+	case 16:
+		lo = binary.LittleEndian.Uint64(row[x : x+8])
+		hi = binary.LittleEndian.Uint64(row[x+8 : x+16])
+	default:
+		or := uint8(0)
+		sign := int8(0)
+		for k := 0; k < n; k++ {
+			v := row[x+k]
+			or |= v
+			sign += coeffContextSignDelta[v>>CoeffContextBits]
+		}
+		return or, sign
+	}
+	neg := (((lo >> CoeffContextBits) & ones) + ((hi >> CoeffContextBits) & ones)) * ones >> 56
+	pos := (((lo >> (CoeffContextBits + 1)) & ones) + ((hi >> (CoeffContextBits + 1)) & ones)) * ones >> 56
+	v := lo | hi
+	v |= v >> 32
+	v |= v >> 16
+	v |= v >> 8
+	return uint8(v), int8(pos) - int8(neg)
 }

@@ -155,25 +155,7 @@ func (s *InterCoeffTransformSelector) SelectCoeffTransform(req CoeffTransformReq
 		if err != nil {
 			return 0, err
 		}
-		set, err := ExtTXSetTypeFor(req.Block.Size, true, s.ReducedTXSet)
-		if err != nil {
-			return 0, err
-		}
-		allowed, err := ExtTXTypeAllowed(set, typ)
-		if err != nil {
-			return 0, err
-		}
-		if !allowed {
-			return transform.TypeDCTDCT, nil
-		}
-		size, err := req.Block.Size.TransformSize()
-		if err != nil {
-			return 0, ErrInvalidDecodeState
-		}
-		if !typ.Supported(size) {
-			return transform.TypeDCTDCT, nil
-		}
-		return typ, nil
+		return uvInterTransformType(req.Block.Size, typ)
 	}
 	typ, err := s.State.ReadInterTransformType(s.CDFs, InterTransformTypeRequest{
 		Size:          req.Block.Size,
@@ -567,26 +549,14 @@ func (s *DecodeState) ReadIntraTransformType(cdfs *TransformTypeCDFs, req IntraT
 	if req.SkipTransform || req.Lossless || (req.QIndexKnown && req.QIndex == 0) {
 		return transform.TypeDCTDCT, nil
 	}
-	set, err := ExtTXSetTypeFor(req.Size, false, req.ReducedTXSet)
-	if err != nil {
-		return 0, err
+	p := &txTypeReadPlans[0][txTypePlanReduced(req.ReducedTXSet)][req.Size]
+	if !p.ok {
+		return 0, ErrInvalidDecodeState
 	}
-	symbols, err := ExtTXTypeCount(set)
-	if err != nil {
-		return 0, err
-	}
-	if symbols <= 1 {
+	if p.symbols <= 1 {
 		return transform.TypeDCTDCT, nil
 	}
-	index, err := ExtTXSetIndex(req.Size, false, req.ReducedTXSet)
-	if err != nil {
-		return 0, err
-	}
-	square, err := TransformSizeSquare(req.Size)
-	if err != nil {
-		return 0, err
-	}
-	cdf, err := cdfs.IntraCDF(index, square, req.Mode, symbols)
+	cdf, err := cdfs.IntraCDF(p.index, p.square, req.Mode, p.symbols)
 	if err != nil {
 		return 0, err
 	}
@@ -594,7 +564,7 @@ func (s *DecodeState) ReadIntraTransformType(cdfs *TransformTypeCDFs, req IntraT
 	if err != nil {
 		return 0, err
 	}
-	return ExtTXTypeFromSymbol(set, symbol)
+	return p.typeFromSymbol(symbol)
 }
 
 func (s *DecodeState) ReadInterTransformType(cdfs *TransformTypeCDFs, req InterTransformTypeRequest) (transform.Type, error) {
@@ -607,26 +577,14 @@ func (s *DecodeState) ReadInterTransformType(cdfs *TransformTypeCDFs, req InterT
 	if req.SkipTransform || req.Lossless || (req.QIndexKnown && req.QIndex == 0) {
 		return transform.TypeDCTDCT, nil
 	}
-	set, err := ExtTXSetTypeFor(req.Size, true, req.ReducedTXSet)
-	if err != nil {
-		return 0, err
+	p := &txTypeReadPlans[1][txTypePlanReduced(req.ReducedTXSet)][req.Size]
+	if !p.ok {
+		return 0, ErrInvalidDecodeState
 	}
-	symbols, err := ExtTXTypeCount(set)
-	if err != nil {
-		return 0, err
-	}
-	if symbols <= 1 {
+	if p.symbols <= 1 {
 		return transform.TypeDCTDCT, nil
 	}
-	index, err := ExtTXSetIndex(req.Size, true, req.ReducedTXSet)
-	if err != nil {
-		return 0, err
-	}
-	square, err := TransformSizeSquare(req.Size)
-	if err != nil {
-		return 0, err
-	}
-	cdf, err := cdfs.InterCDF(index, square, symbols)
+	cdf, err := cdfs.InterCDF(p.index, p.square, p.symbols)
 	if err != nil {
 		return 0, err
 	}
@@ -634,7 +592,7 @@ func (s *DecodeState) ReadInterTransformType(cdfs *TransformTypeCDFs, req InterT
 	if err != nil {
 		return 0, err
 	}
-	return ExtTXTypeFromSymbol(set, symbol)
+	return p.typeFromSymbol(symbol)
 }
 
 func intraModeTransformType(mode IntraMode) (transform.Type, error) {
@@ -650,4 +608,89 @@ func intraModeTransformType(mode IntraMode) (transform.Type, error) {
 	default:
 		return 0, ErrInvalidDecodeState
 	}
+}
+
+// uvInterTransformType derives an inter chroma transform type from the
+// co-located luma type, as dav1d's get_uv_inter_txtp does. A chroma TXB whose
+// square-up size is 32 only allows DCT_DCT and IDTX; a square 16 one excludes
+// the 1D ADST and FLIPADST types; every smaller size allows all sixteen. The
+// luma type was already read from a reduced set when reduced_tx_set is on, so
+// those three rules cover every allowed-set check.
+func uvInterTransformType(size TransformSize, luma transform.Type) (transform.Type, error) {
+	if !size.Valid() || !luma.Valid() {
+		return 0, ErrInvalidDecodeState
+	}
+	switch {
+	case transformSizeSquareUp[size] == TransformSize32x32:
+		if luma == transform.TypeIDTX {
+			return transform.TypeIDTX, nil
+		}
+		return transform.TypeDCTDCT, nil
+	case transformSizeSquare[size] == TransformSize16x16:
+		switch luma {
+		case transform.TypeVADST, transform.TypeHADST, transform.TypeVFlipADST, transform.TypeHFlipADST:
+			return transform.TypeDCTDCT, nil
+		}
+	}
+	return luma, nil
+}
+
+// txTypeReadPlan is everything the luma tx_type read derives from the
+// transform size alone: the allowed set, its CDF index and symbol count and
+// the square size that selects the CDF. dav1d hard-codes the same choices in
+// decode_coefs; these plans are built once from the set functions so they
+// match them exactly.
+type txTypeReadPlan struct {
+	set     ExtTXSetType
+	index   int
+	square  TransformSize
+	symbols int
+	ok      bool
+}
+
+// txTypeReadPlans is indexed by [inter][reduced][size].
+var txTypeReadPlans = func() (plans [2][2][transformSizeCount]txTypeReadPlan) {
+	for inter := range 2 {
+		for reduced := range 2 {
+			for size := TransformSize(0); size < transformSizeCount; size++ {
+				p := &plans[inter][reduced][size]
+				set, err := ExtTXSetTypeFor(size, inter == 1, reduced == 1)
+				if err != nil {
+					continue
+				}
+				symbols, err := ExtTXTypeCount(set)
+				if err != nil {
+					continue
+				}
+				square, err := TransformSizeSquare(size)
+				if err != nil {
+					continue
+				}
+				p.set, p.symbols, p.square, p.ok = set, symbols, square, true
+				if symbols > 1 {
+					index, err := ExtTXSetIndex(size, inter == 1, reduced == 1)
+					if err != nil {
+						p.ok = false
+						continue
+					}
+					p.index = index
+				}
+			}
+		}
+	}
+	return plans
+}()
+
+func txTypePlanReduced(reduced bool) int {
+	if reduced {
+		return 1
+	}
+	return 0
+}
+
+func (p *txTypeReadPlan) typeFromSymbol(symbol int) (transform.Type, error) {
+	if symbol < 0 || symbol >= p.symbols {
+		return 0, ErrInvalidDecodeState
+	}
+	return extTXTypeInv[p.set][symbol], nil
 }

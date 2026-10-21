@@ -216,7 +216,15 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 	}
 	if row < rowLimit {
 		tmpLine := scratch[row*width : row*width+width : row*width+width]
-		inverse1DRow(tmpLine, width, horizontal, rowMin, rowMax)
+		if row+1 < height {
+			// Rows past rowLimit are zero and transform to zero, so pairing the
+			// last active row with the next one keeps it on the batched kernel
+			// (dav1d never drops to a scalar row pass).
+			next := scratch[(row+1)*width : (row+1)*width+width : (row+1)*width+width]
+			inverse1DRow2(tmpLine, next, width, horizontal, rowMin, rowMax)
+		} else {
+			inverse1DRow(tmpLine, width, horizontal, rowMin, rowMax)
+		}
 	}
 
 	// int16 column pipeline (dav1d 8bpc): narrow the int32 row output into the
