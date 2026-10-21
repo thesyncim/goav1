@@ -5,11 +5,11 @@
 name = "dav1d"
 role = "decoder architecture, OBU parsing, tile/decode pipeline, DSP layout"
 url = "https://code.videolan.org/videolan/dav1d.git"
-ref = "refs/tags/1.5.3"
-tag = "1.5.3"
-tag_object = "0664c109d1b85503bc32bf89920f951cacf5702e"
-commit = "b546257f770768b2c88258c533da38b91a06f737"
-verify = "git ls-remote --tags https://code.videolan.org/videolan/dav1d.git refs/tags/1.5.3 refs/tags/1.5.3^{}"
+ref = "refs/tags/1.5.4"
+tag = "1.5.4"
+tag_object = "191bdda98ec3c68137754dc97da1db34043d7cd4"
+commit = "54706fc6bc0cdecab7e9593974a4039cc038fca7"
+verify = "git ls-remote --tags https://code.videolan.org/videolan/dav1d.git refs/tags/1.5.4 refs/tags/1.5.4^{}"
 
 [[source]]
 name = "libaom"

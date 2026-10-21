@@ -20,7 +20,7 @@ if [ ! -f "$DAV1D_STATIC_LIB" ]; then
   exit 2
 fi
 
-EXPECTED_DAV1D_COMMIT=b546257f770768b2c88258c533da38b91a06f737
+EXPECTED_DAV1D_COMMIT=54706fc6bc0cdecab7e9593974a4039cc038fca7
 DAV1D_SOURCE=${DAV1D_SOURCE:-$REPO_ROOT/third_party/upstream/dav1d}
 if [ ! -d "$DAV1D_SOURCE" ]; then
   echo "pinned dav1d source checkout not found; set DAV1D_SOURCE" >&2
