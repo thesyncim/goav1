@@ -18,7 +18,7 @@ import (
 // sub-pel fractional component plus per-output Q10 step.
 func libaomConvolveScale2DRef(dst frame.Plane, src frame.Plane, refX0, refY0 int,
 	dstX, dstY, width, height int, subpelXQN, xStepQN, subpelYQN, yStepQN int,
-	xTable, yTable SubpelKernelTable, conv_params_round_0, conv_params_round_1 int) {
+	xTable, yTable *SubpelKernelTable, conv_params_round_0, conv_params_round_1 int) {
 	const imStride = maxBlockSize
 	var im [scaledIMMaxHeight * maxBlockSize]int16
 	imH := (((height-1)*yStepQN + subpelYQN) >> ScaleSubpelBits) + filterTaps
@@ -70,7 +70,7 @@ func libaomConvolveScale2DRef(dst frame.Plane, src frame.Plane, refX0, refY0 int
 
 func libaomConvolveScale2DHighBDRef(dst frame.Plane, src frame.Plane, bd int, refX0, refY0 int,
 	dstX, dstY, width, height int, subpelXQN, xStepQN, subpelYQN, yStepQN int,
-	xTable, yTable SubpelKernelTable, conv_params_round_0, conv_params_round_1 int) {
+	xTable, yTable *SubpelKernelTable, conv_params_round_0, conv_params_round_1 int) {
 	const imStride = maxBlockSize
 	var im [scaledIMMaxHeight * maxBlockSize]int32
 	imH := (((height-1)*yStepQN + subpelYQN) >> ScaleSubpelBits) + filterTaps
