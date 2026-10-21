@@ -6,7 +6,7 @@ This harness compares 8-bit AV1 2D motion filtering with the same input pixels, 
 
 The timing boundary differs between the implementations. The Go benchmark calls the resident Go entry points `convolve2D8I8MMWithScratch` and `predictInterCompoundRef8ToConvBuf2DI8MM`, so its number includes their per-call feature/shape checks and coefficient preparation as well as the resident I8MM assembly kernel. The C harness calls dav1d's specialized `dav1d_put_8tap_regular_smooth_8bpc_neon_i8mm` and `dav1d_prep_8tap_regular_smooth_8bpc_neon_i8mm` symbols directly, bypassing dav1d's runtime dispatch. The results therefore compare a Go resident wrapper plus kernel against a direct specialized C kernel. They are not a pure assembly-to-assembly dispatch comparison or a full-decoder speed claim.
 
-The source checkout must be pinned to dav1d commit `b546257f770768b2c88258c533da38b91a06f737`; the harness also records the static archive hash because the source revision alone cannot prove which source produced that archive. The harness links no C code into the Go package.
+The source checkout must be pinned to dav1d commit `54706fc6bc0cdecab7e9593974a4039cc038fca7`; the harness also records the static archive hash because the source revision alone cannot prove which source produced that archive. The harness links no C code into the Go package.
 
 ## Build and verify
 

@@ -31,8 +31,8 @@ sync_repo() {
 sync_repo \
 	dav1d \
 	https://code.videolan.org/videolan/dav1d.git \
-	refs/tags/1.5.3 \
-	b546257f770768b2c88258c533da38b91a06f737 \
+	refs/tags/1.5.4 \
+	54706fc6bc0cdecab7e9593974a4039cc038fca7 \
 	src include tests tools /meson.build /NEWS /COPYING
 
 sync_repo \

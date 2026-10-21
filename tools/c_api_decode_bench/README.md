@@ -6,7 +6,7 @@ under testdata/benchcorpus. That local corpus has no source manifest, so its
 results are exploratory and do not establish source provenance.
 
 Build both backends against the pinned libaom 3.14.0 source/build and dav1d
-1.5.3 installed through pkg-config:
+1.5.4 installed through pkg-config:
 
 ~~~sh
 bash tools/c_api_decode_bench/build.sh
