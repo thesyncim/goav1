@@ -655,6 +655,23 @@ type lossyEncodeState struct {
 	// reports that the frame-start tables were built. mds0BestCost and
 	// mds0BestVar carry the inter winner's RD cost and residual variance.
 	mds0IntraRates tile.IntraDCRateTables
+
+	// sbQIndex holds the per-64x64 superblock qindex of an inter frame
+	// under cyclic refresh (cyclic_refresh.go), frame-wide in raster order
+	// with sbQCols columns; nil codes every superblock at the frame q.
+	// quantQ is the qindex the quantizers and lambda currently hold;
+	// deltaQCur is the delta_q writer's running CurrentQIndex and deltaQCDF
+	// the adaptive delta_q_abs CDF.
+	// sbQPending/sbQPendingCols hand the next tile encode its grid; the
+	// tile consumes them so no other inter path inherits a stale grid.
+	sbQPending     []uint8
+	sbQPendingCols int
+	sbQIndex       []uint8
+	sbQCols        int
+	quantQ         uint8
+	baseQAC        int32
+	deltaQCur      uint8
+	deltaQCDF      entropy.CDF
 	mds0IntraOK    bool
 	mds0BestCost   int64
 	mds0BestVar    int64
