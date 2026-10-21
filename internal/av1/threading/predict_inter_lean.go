@@ -270,3 +270,29 @@ func (b *FrameWorkBatch) interTargetBound(block *tile.BlockVisit, plane FrameWor
 	}
 	return true, nil
 }
+
+// chromaIntraGeometry returns the plane geometry the chroma intra transform
+// predictor reads (Output, Window, X, Y, BytesPerSample and subsampling). It
+// derives them from the job's bound output plane, as dav1d's recon_b_intra
+// offsets from f->cur, instead of recomputing the full validated geometry for
+// every transform. Without a cached job window it takes the full path.
+func (b *FrameWorkBatch) chromaIntraGeometry(index int, block *tile.BlockVisit, plane FrameWorkPlane) (frameWorkPredictionPlaneGeometry, bool, error) {
+	window := b.cachedJobOutputPlanePtr(index, plane)
+	if window == nil {
+		return b.blockPredictionPlaneGeometry(index, *block, plane)
+	}
+	var t frameWorkInterTarget
+	present, err := b.interTarget(index, block, plane, &t)
+	if err != nil || !present {
+		return frameWorkPredictionPlaneGeometry{}, present, err
+	}
+	return frameWorkPredictionPlaneGeometry{
+		Output:         t.output,
+		Window:         *window,
+		X:              t.x,
+		Y:              t.y,
+		BytesPerSample: uint8(t.bps),
+		SubsamplingX:   t.ssX,
+		SubsamplingY:   t.ssY,
+	}, true, nil
+}
