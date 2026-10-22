@@ -317,6 +317,7 @@ type FrameWorkState struct {
 	temporalMVs                  tile.TemporalMotionField
 	temporalMVsBack              []tile.TemporalMotionEntry
 	temporalMVsValid             bool
+	temporalMVsDeferred          bool // tile loops project mvReferences per SB row (load_tmvs)
 	mvReferences                 [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
 	cdefIndexMap                 threading.FrameWorkCDEFIndexMap
 	cdefIndexMapValid            bool
@@ -521,6 +522,7 @@ func (s *FrameWorkState) resetActive() {
 	s.temporalMVs = tile.TemporalMotionField{}
 	s.temporalMVsValid = false
 	s.mvReferences = [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame{}
+	s.temporalMVsDeferred = false
 	s.cdefIndexMap = threading.FrameWorkCDEFIndexMap{}
 	s.cdefIndexMapValid = false
 	s.loopFilterMap = threading.FrameWorkLoopFilterMap{}
@@ -855,6 +857,7 @@ func (s *FrameWorkState) prepareTemporalMotionField(event *Event) error {
 	s.currentMVIntra = false
 	s.currentMVFrameValid = false
 	s.temporalMVsValid = false
+	s.temporalMVsDeferred = false
 	if s.sharedFrameContexts != nil {
 		// The shared/SVC path wires per-surface MV frames through the caller's
 		// store and batch callback; leave the batch pointers nil here.
@@ -925,21 +928,18 @@ func (s *FrameWorkState) prepareTemporalMotionField(event *Event) error {
 	}
 	s.mvReferences = refs
 
-	if cap(s.temporalMVsBack) < need {
-		s.temporalMVsBack = make([]tile.TemporalMotionEntry, need)
-	}
-	if err := s.temporalMVs.Init(miRows, miCols, s.temporalMVsBack[:need]); err != nil {
-		return s.temporalMotionPrepareError(err)
-	}
-	if _, err := s.temporalMVs.Setup(tile.TemporalMotionSetupRequest{
+	// The tile block loops project the references per superblock row
+	// (dav1d load_tmvs), so no whole-frame field is built here.
+	setup := tile.TemporalMotionSetupRequest{
 		EnableOrderHint:  s.Sequence.EnableOrderHint,
 		OrderHintBits:    s.Sequence.OrderHintBits,
 		CurrentOrderHint: event.FrameHeader.OrderHint,
 		References:       s.mvReferences,
-	}); err != nil {
+	}
+	if err := setup.Validate(); err != nil {
 		return s.temporalMotionPrepareError(err)
 	}
-	s.temporalMVsValid = true
+	s.temporalMVsDeferred = true
 	return nil
 }
 
@@ -2055,6 +2055,7 @@ type frameWorkMotionFields struct {
 	current    *tile.ReferenceMVFrame
 	temporal   *tile.TemporalMotionField
 	references [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
+	deferred   *[parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
 }
 
 // motionFields exposes the active frame's temporal-MV batch pointers for the
@@ -2071,6 +2072,10 @@ func (s *FrameWorkState) motionFields() frameWorkMotionFields {
 	if s.temporalMVsValid {
 		fields.temporal = &s.temporalMVs
 		fields.references = s.mvReferences
+	}
+	if s.temporalMVsDeferred {
+		fields.references = s.mvReferences
+		fields.deferred = &s.mvReferences
 	}
 	return fields
 }
@@ -2115,6 +2120,7 @@ func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, o
 		CurrentMVFrame:                motion.current,
 		TemporalMVs:                   motion.temporal,
 		ReferenceMVs:                  motion.references,
+		DeferredTemporalReferences:    motion.deferred,
 		CDEFIndexMap:                  cdefIndexMap,
 		LoopFilterMap:                 loopFilterMap,
 		LoopFilterMasks:               loopFilterMasks,
@@ -2179,6 +2185,7 @@ func prepareFrameWorkStepWithPayload(step FrameWorkStep, output *frame.Frame, re
 		CurrentMVFrame:                motion.current,
 		TemporalMVs:                   motion.temporal,
 		ReferenceMVs:                  motion.references,
+		DeferredTemporalReferences:    motion.deferred,
 		CDEFIndexMap:                  cdefIndexMap,
 		LoopFilterMap:                 loopFilterMap,
 		LoopFilterMasks:               loopFilterMasks,

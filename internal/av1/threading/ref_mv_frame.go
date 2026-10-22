@@ -1,6 +1,9 @@
 package threading
 
-import "github.com/thesyncim/goav1/internal/av1/tile"
+import (
+	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/tile"
+)
 
 // ReferenceMVFrameShape returns the frame-level half-MI MV_REF grid dimensions
 // used by libaom for current-frame ref-frame-MVS side data.
@@ -92,4 +95,17 @@ func (b *FrameWorkBatch) referenceMVFrameMIExtents() (miRows uint32, miCols uint
 		return 0, 0, ErrInvalidBatch
 	}
 	return miRows, miCols, nil
+}
+
+// deferredTemporalReferences returns the references whose saved MV side data
+// the block loops project per superblock row, or nil when the batch carries
+// a whole-frame TemporalMVs field instead.
+func (b *FrameWorkBatch) deferredTemporalReferences() *[parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame {
+	// A caller that set up its own TemporalMVs (and resolved its own
+	// ReferenceMVs) keeps that field; the deferred references belong to the
+	// frame decoder's MV store and would be stale for it.
+	if !b.TileInfo.UseRefFrameMVS || b.TemporalMVs != nil {
+		return nil
+	}
+	return b.DeferredTemporalReferences
 }

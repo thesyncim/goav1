@@ -762,6 +762,12 @@ func chromaModeIsSmooth(mode ChromaIntraMode) (bool, error) {
 // MarkIntra updates the top/left intra contexts after a decoded intra/inter
 // block mode decision.
 func (c *BlockModeContext) MarkIntra(size BlockSize, x4 int, y4 int, intra bool, mode IntraMode) error {
+	return c.markIntra(size, x4, y4, intra, mode, true)
+}
+
+// markIntra is MarkIntra; keepMotion false skips the neighbor-motion validity
+// and grid state (see markInterMotionAndFilters).
+func (c *BlockModeContext) markIntra(size BlockSize, x4 int, y4 int, intra bool, mode IntraMode, keepMotion bool) error {
 	if c == nil || !mode.Valid() {
 		return ErrInvalidDecodeState
 	}
@@ -783,11 +789,9 @@ func (c *BlockModeContext) MarkIntra(size BlockSize, x4 int, y4 int, intra bool,
 	yEnd := y4 + h4
 	clear(c.AboveCompound[x4:xEnd])
 	clear(c.AboveInterIntra[x4:xEnd])
-	clear(c.AboveMotionValid[x4:xEnd])
 	clear(c.AboveInterpValid[x4:xEnd])
 	clear(c.LeftCompound[y4:yEnd])
 	clear(c.LeftInterIntra[y4:yEnd])
-	clear(c.LeftMotionValid[y4:yEnd])
 	clear(c.LeftInterpValid[y4:yEnd])
 	for i := 0; i < w4; i++ {
 		c.AboveRef[0][x4+i] = ref0
@@ -799,6 +803,11 @@ func (c *BlockModeContext) MarkIntra(size BlockSize, x4 int, y4 int, intra bool,
 		c.LeftRef[1][y4+i] = ref1
 		c.LeftBlockSize[y4+i] = size
 	}
+	if !keepMotion {
+		return nil
+	}
+	clear(c.AboveMotionValid[x4:xEnd])
+	clear(c.LeftMotionValid[y4:yEnd])
 	c.clearGridInterMotion(size, x4, y4, dims)
 	return nil
 }

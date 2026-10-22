@@ -371,6 +371,7 @@ func (s *FrameWorkTileResidualScratch) PreallocLoopFilterMaskScratch(cols int) {
 	if cap(s.lfMask.aUV) < cols {
 		s.lfMask.aUV = make([]uint8, cols)
 	}
+	tile.PreallocBlockLoopRefmvsScratch(&s.Loop, cols)
 }
 
 // frameWorkReconWavefront owns the reusable per-tile SB-row bucketing and
@@ -987,6 +988,7 @@ func (b *FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint
 		OrderHintBits:               b.Sequence.OrderHintBits,
 		CurrentOrderHint:            b.FrameHeader.OrderHint,
 		TemporalMVs:                 b.TemporalMVs,
+		TemporalReferences:          b.deferredTemporalReferences(),
 		CurrentMVFrame:              b.CurrentMVFrame,
 		FrameMIRows:                 uint16(frameMIRows),
 		FrameMICols:                 uint16(frameMICols),

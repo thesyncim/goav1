@@ -387,6 +387,12 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 					if err != nil {
 						return err
 					}
+					// Decode through the per-superblock-row projection the frame
+					// decoder uses (a bound TemporalMVs field would take precedence);
+					// the goav1_refmvs_oracle build diffs it against its own
+					// whole-frame projection.
+					ctx.TemporalMVs = nil
+					ctx.DeferredTemporalReferences = &ctx.ReferenceMVs
 					stats.temporalReferenceResolves += resolved
 					stats.temporalMotionProjections += int(setupStats.Projections)
 				}

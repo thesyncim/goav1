@@ -11,6 +11,13 @@ import (
 // preserves the separate calls' motion-first errors and partial state. Keep the
 // individual methods for callers that observe the intermediate state.
 func (c *BlockModeContext) MarkInterMotionAndFilters(size BlockSize, x4, y4 int, result InterMotionResult, filters motion.InterpFilters, hasChroma bool) error {
+	return c.markInterMotionAndFilters(size, x4, y4, result, filters, hasChroma, true)
+}
+
+// markInterMotionAndFilters is MarkInterMotionAndFilters; keepMotion false
+// skips the neighbor-motion arrays and grids (the frame decoder keeps
+// neighbor motion in the dav1d refmvs rows instead).
+func (c *BlockModeContext) markInterMotionAndFilters(size BlockSize, x4, y4 int, result InterMotionResult, filters motion.InterpFilters, hasChroma bool, keepMotion bool) error {
 	if !filters.X.Valid() || !filters.Y.Valid() {
 		// Preserve motion-first errors and partial state even for an invalid
 		// filter pair; the decoded valid path below has no failing second phase.
@@ -46,8 +53,6 @@ func (c *BlockModeContext) MarkInterMotionAndFilters(size BlockSize, x4, y4 int,
 		c.AboveCompound[x] = compound
 		c.AboveCompIndex[x] = 1
 		c.AboveBlockSize[x] = size
-		c.AboveInterMotion[x] = result
-		c.AboveMotionValid[x] = 1
 		c.AboveInterp[x] = filters
 		c.AboveInterpValid[x] = 1
 	}
@@ -64,10 +69,19 @@ func (c *BlockModeContext) MarkInterMotionAndFilters(size BlockSize, x4, y4 int,
 		c.LeftCompound[y] = compound
 		c.LeftCompIndex[y] = 1
 		c.LeftBlockSize[y] = size
-		c.LeftInterMotion[y] = result
-		c.LeftMotionValid[y] = 1
 		c.LeftInterp[y] = filters
 		c.LeftInterpValid[y] = 1
+	}
+	if !keepMotion {
+		return nil
+	}
+	for x := x4; x < xEnd; x++ {
+		c.AboveInterMotion[x] = result
+		c.AboveMotionValid[x] = 1
+	}
+	for y := y4; y < yEnd; y++ {
+		c.LeftInterMotion[y] = result
+		c.LeftMotionValid[y] = 1
 	}
 	// Fill one row and replicate the same complete motion/filter state in
 	// one grid walk, as dav1d's final block-context and ref-MV splats do.

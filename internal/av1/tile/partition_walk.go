@@ -36,6 +36,10 @@ type BlockVisit struct {
 
 	HaveTop  bool
 	HaveLeft bool
+
+	// Edge is dav1d's intra_edge_flags for the block (EDGE_* flags from the
+	// intra edge tree), set by the partition walk.
+	Edge uint8
 }
 
 // BlockWalkStats reports how much partition syntax was consumed.
@@ -83,7 +87,7 @@ func walkBlocks(ctx *PartitionContext, req BlockWalkRequest, read partitionReadF
 	}
 	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
 		for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
-			if err := w.walkNode(req.Root, miCol, miRow, miCol, miRow); err != nil {
+			if err := w.walkNode(req.Root, intraEdgeRoot(req.Root), miCol, miRow, miCol, miRow); err != nil {
 				return w.stats, err
 			}
 		}
@@ -100,7 +104,7 @@ type partitionWalker struct {
 	stats BlockWalkStats
 }
 
-func (w *partitionWalker) walkNode(level BlockLevel, rootCol uint32, rootRow uint32, miCol uint32, miRow uint32) error {
+func (w *partitionWalker) walkNode(level BlockLevel, node uint16, rootCol uint32, rootRow uint32, miCol uint32, miRow uint32) error {
 	miColEnd := uint32(w.req.MIColEnd)
 	miRowEnd := uint32(w.req.MIRowEnd)
 	if miCol >= miColEnd || miRow >= miRowEnd {
@@ -128,20 +132,21 @@ func (w *partitionWalker) walkNode(level BlockLevel, rootCol uint32, rootRow uin
 
 	if partition == PartitionSplit && level != BlockLevel8x8 {
 		next := level + 1
-		if err := w.walkNode(next, rootCol, rootRow, miCol, miRow); err != nil {
+		split := &intraEdgeTree.nodes[node].split
+		if err := w.walkNode(next, split[0], rootCol, rootRow, miCol, miRow); err != nil {
 			return err
 		}
 		if haveRight {
-			if err := w.walkNode(next, rootCol, rootRow, miCol+half, miRow); err != nil {
+			if err := w.walkNode(next, split[1], rootCol, rootRow, miCol+half, miRow); err != nil {
 				return err
 			}
 		}
 		if haveBottom {
-			if err := w.walkNode(next, rootCol, rootRow, miCol, miRow+half); err != nil {
+			if err := w.walkNode(next, split[2], rootCol, rootRow, miCol, miRow+half); err != nil {
 				return err
 			}
 			if haveRight {
-				if err := w.walkNode(next, rootCol, rootRow, miCol+half, miRow+half); err != nil {
+				if err := w.walkNode(next, split[3], rootCol, rootRow, miCol+half, miRow+half); err != nil {
 					return err
 				}
 			}
@@ -149,13 +154,13 @@ func (w *partitionWalker) walkNode(level BlockLevel, rootCol uint32, rootRow uin
 		return nil
 	}
 
-	if err := w.walkPartitionLeaves(level, partition, rootCol, rootRow, miCol, miRow, haveRight, haveBottom); err != nil {
+	if err := w.walkPartitionLeaves(level, partition, &intraEdgeTree.nodes[node], rootCol, rootRow, miCol, miRow, haveRight, haveBottom); err != nil {
 		return err
 	}
 	return w.ctx.Mark(level, partition, xb8, yb8)
 }
 
-func (w *partitionWalker) walkPartitionLeaves(level BlockLevel, partition Partition, rootCol uint32, rootRow uint32, miCol uint32, miRow uint32, haveRight bool, haveBottom bool) error {
+func (w *partitionWalker) walkPartitionLeaves(level BlockLevel, partition Partition, node *intraEdgeNode, rootCol uint32, rootRow uint32, miCol uint32, miRow uint32, haveRight bool, haveBottom bool) error {
 	half := uint32(level.HalfSize4x4())
 	switch partition {
 	case PartitionNone:
@@ -163,17 +168,17 @@ func (w *partitionWalker) walkPartitionLeaves(level BlockLevel, partition Partit
 		if !ok {
 			return ErrInvalidDecodeState
 		}
-		return w.visitLeaf(level, partition, size, rootCol, rootRow, miCol, miRow)
+		return w.visitLeaf(level, partition, size, node.o, rootCol, rootRow, miCol, miRow)
 	case PartitionH:
 		size, _, ok := partition.BlockSizes(level)
 		if !ok {
 			return ErrInvalidDecodeState
 		}
-		if err := w.visitLeaf(level, partition, size, rootCol, rootRow, miCol, miRow); err != nil {
+		if err := w.visitLeaf(level, partition, size, node.h[0], rootCol, rootRow, miCol, miRow); err != nil {
 			return err
 		}
 		if haveBottom {
-			return w.visitLeaf(level, partition, size, rootCol, rootRow, miCol, miRow+half)
+			return w.visitLeaf(level, partition, size, node.h[1], rootCol, rootRow, miCol, miRow+half)
 		}
 		return nil
 	case PartitionV:
@@ -181,11 +186,11 @@ func (w *partitionWalker) walkPartitionLeaves(level BlockLevel, partition Partit
 		if !ok {
 			return ErrInvalidDecodeState
 		}
-		if err := w.visitLeaf(level, partition, size, rootCol, rootRow, miCol, miRow); err != nil {
+		if err := w.visitLeaf(level, partition, size, node.v[0], rootCol, rootRow, miCol, miRow); err != nil {
 			return err
 		}
 		if haveRight {
-			return w.visitLeaf(level, partition, size, rootCol, rootRow, miCol+half, miRow)
+			return w.visitLeaf(level, partition, size, node.v[1], rootCol, rootRow, miCol+half, miRow)
 		}
 		return nil
 	case PartitionSplit:
@@ -193,20 +198,20 @@ func (w *partitionWalker) walkPartitionLeaves(level BlockLevel, partition Partit
 		if !ok || level != BlockLevel8x8 {
 			return ErrInvalidDecodeState
 		}
-		if err := w.visitLeaf(level, partition, size, rootCol, rootRow, miCol, miRow); err != nil {
+		if err := w.visitLeaf(level, partition, size, edgeAllTRAndBL, rootCol, rootRow, miCol, miRow); err != nil {
 			return err
 		}
 		if haveRight {
-			if err := w.visitLeaf(level, partition, size, rootCol, rootRow, miCol+half, miRow); err != nil {
+			if err := w.visitLeaf(level, partition, size, node.tip[0], rootCol, rootRow, miCol+half, miRow); err != nil {
 				return err
 			}
 		}
 		if haveBottom {
-			if err := w.visitLeaf(level, partition, size, rootCol, rootRow, miCol, miRow+half); err != nil {
+			if err := w.visitLeaf(level, partition, size, node.tip[1], rootCol, rootRow, miCol, miRow+half); err != nil {
 				return err
 			}
 			if haveRight {
-				if err := w.visitLeaf(level, partition, size, rootCol, rootRow, miCol+half, miRow+half); err != nil {
+				if err := w.visitLeaf(level, partition, size, node.tip[2], rootCol, rootRow, miCol+half, miRow+half); err != nil {
 					return err
 				}
 			}
@@ -217,61 +222,62 @@ func (w *partitionWalker) walkPartitionLeaves(level BlockLevel, partition Partit
 		if !ok {
 			return ErrInvalidDecodeState
 		}
-		if err := w.visitLeaf(level, partition, small, rootCol, rootRow, miCol, miRow); err != nil {
+		if err := w.visitLeaf(level, partition, small, edgeAllTRAndBL, rootCol, rootRow, miCol, miRow); err != nil {
 			return err
 		}
-		if err := w.visitLeaf(level, partition, small, rootCol, rootRow, miCol+half, miRow); err != nil {
+		if err := w.visitLeaf(level, partition, small, node.v[1], rootCol, rootRow, miCol+half, miRow); err != nil {
 			return err
 		}
-		return w.visitLeaf(level, partition, large, rootCol, rootRow, miCol, miRow+half)
+		return w.visitLeaf(level, partition, large, node.h[1], rootCol, rootRow, miCol, miRow+half)
 	case PartitionTBottomSplit:
 		large, small, ok := partition.BlockSizes(level)
 		if !ok {
 			return ErrInvalidDecodeState
 		}
-		if err := w.visitLeaf(level, partition, large, rootCol, rootRow, miCol, miRow); err != nil {
+		if err := w.visitLeaf(level, partition, large, node.h[0], rootCol, rootRow, miCol, miRow); err != nil {
 			return err
 		}
-		if err := w.visitLeaf(level, partition, small, rootCol, rootRow, miCol, miRow+half); err != nil {
+		if err := w.visitLeaf(level, partition, small, node.v[0], rootCol, rootRow, miCol, miRow+half); err != nil {
 			return err
 		}
-		return w.visitLeaf(level, partition, small, rootCol, rootRow, miCol+half, miRow+half)
+		return w.visitLeaf(level, partition, small, 0, rootCol, rootRow, miCol+half, miRow+half)
 	case PartitionTLeftSplit:
 		small, large, ok := partition.BlockSizes(level)
 		if !ok {
 			return ErrInvalidDecodeState
 		}
-		if err := w.visitLeaf(level, partition, small, rootCol, rootRow, miCol, miRow); err != nil {
+		if err := w.visitLeaf(level, partition, small, edgeAllTRAndBL, rootCol, rootRow, miCol, miRow); err != nil {
 			return err
 		}
-		if err := w.visitLeaf(level, partition, small, rootCol, rootRow, miCol, miRow+half); err != nil {
+		if err := w.visitLeaf(level, partition, small, node.h[1], rootCol, rootRow, miCol, miRow+half); err != nil {
 			return err
 		}
-		return w.visitLeaf(level, partition, large, rootCol, rootRow, miCol+half, miRow)
+		return w.visitLeaf(level, partition, large, node.v[1], rootCol, rootRow, miCol+half, miRow)
 	case PartitionTRightSplit:
 		large, small, ok := partition.BlockSizes(level)
 		if !ok {
 			return ErrInvalidDecodeState
 		}
-		if err := w.visitLeaf(level, partition, large, rootCol, rootRow, miCol, miRow); err != nil {
+		if err := w.visitLeaf(level, partition, large, node.v[0], rootCol, rootRow, miCol, miRow); err != nil {
 			return err
 		}
-		if err := w.visitLeaf(level, partition, small, rootCol, rootRow, miCol+half, miRow); err != nil {
+		if err := w.visitLeaf(level, partition, small, node.h[0], rootCol, rootRow, miCol+half, miRow); err != nil {
 			return err
 		}
-		return w.visitLeaf(level, partition, small, rootCol, rootRow, miCol+half, miRow+half)
+		return w.visitLeaf(level, partition, small, 0, rootCol, rootRow, miCol+half, miRow+half)
 	case PartitionH4:
 		size, _, ok := partition.BlockSizes(level)
 		if !ok {
 			return ErrInvalidDecodeState
 		}
+		h4Edges := [4]uint8{node.h[0], node.h4, edgeAllLeftHasBottom, node.h[1]}
 		step := half >> 1
 		for i := range uint32(4) {
 			y := miRow + i*step
 			if i > 0 && y >= uint32(w.req.MIRowEnd) {
 				break
 			}
-			if err := w.visitLeaf(level, partition, size, rootCol, rootRow, miCol, y); err != nil {
+			if err := w.visitLeaf(level, partition, size, h4Edges[i], rootCol, rootRow, miCol, y); err != nil {
 				return err
 			}
 		}
@@ -281,13 +287,14 @@ func (w *partitionWalker) walkPartitionLeaves(level BlockLevel, partition Partit
 		if !ok {
 			return ErrInvalidDecodeState
 		}
+		v4Edges := [4]uint8{node.v[0], node.v4, edgeAllTopHasRight, node.v[1]}
 		step := half >> 1
 		for i := range uint32(4) {
 			x := miCol + i*step
 			if i > 0 && x >= uint32(w.req.MIColEnd) {
 				break
 			}
-			if err := w.visitLeaf(level, partition, size, rootCol, rootRow, x, miRow); err != nil {
+			if err := w.visitLeaf(level, partition, size, v4Edges[i], rootCol, rootRow, x, miRow); err != nil {
 				return err
 			}
 		}
@@ -297,7 +304,7 @@ func (w *partitionWalker) walkPartitionLeaves(level BlockLevel, partition Partit
 	}
 }
 
-func (w *partitionWalker) visitLeaf(level BlockLevel, partition Partition, size BlockSize, rootCol uint32, rootRow uint32, miCol uint32, miRow uint32) error {
+func (w *partitionWalker) visitLeaf(level BlockLevel, partition Partition, size BlockSize, edge uint8, rootCol uint32, rootRow uint32, miCol uint32, miRow uint32) error {
 	miColEndLimit := uint32(w.req.MIColEnd)
 	miRowEndLimit := uint32(w.req.MIRowEnd)
 	if miCol >= miColEndLimit || miRow >= miRowEndLimit {
@@ -335,6 +342,7 @@ func (w *partitionWalker) visitLeaf(level BlockLevel, partition Partition, size 
 		VisibleH4: uint8(miEndRow - miRow),
 		HaveTop:   miRow > w.req.neighborMIRowStart(),
 		HaveLeft:  miCol > w.req.neighborMIColStart(),
+		Edge:      edge,
 	})
 }
 

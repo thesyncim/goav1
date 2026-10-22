@@ -230,6 +230,12 @@ type FrameWorkBatch struct {
 	// ReferenceMVs carries resolved per-reference MV_REF metadata used to set up
 	// TemporalMVs before block prediction.
 	ReferenceMVs [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
+	// DeferredTemporalReferences, when set, makes the tile block loops project
+	// these references per superblock row (dav1d load_tmvs) instead of reading
+	// TemporalMVs, which the frame decoder then leaves unset. It points at
+	// caller-owned storage (normally ReferenceMVs' source) so the batch value
+	// itself never has its address taken.
+	DeferredTemporalReferences *[parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
 	// CDEFIndexMap receives decoded cdef_idx values while tile residuals run.
 	// It is optional; callers can still pass a per-request map.
 	CDEFIndexMap *FrameWorkCDEFIndexMap

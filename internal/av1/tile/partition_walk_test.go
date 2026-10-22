@@ -99,14 +99,14 @@ func TestWalkBlocksScriptedSplitOrderMatchesDav1d(t *testing.T) {
 		t.Fatalf("stats=%+v want reads=5 blocks=8", stats)
 	}
 	want := []BlockVisit{
-		{MICol: 0, MIRow: 0, MIColEnd: 8, MIRowEnd: 8, X4: 0, Y4: 0, Level: BlockLevel32x32, Partition: PartitionNone, Size: BlockSize32x32, VisibleW4: 8, VisibleH4: 8},
-		{MICol: 8, MIRow: 0, MIColEnd: 16, MIRowEnd: 4, X4: 8, Y4: 0, Level: BlockLevel32x32, Partition: PartitionH, Size: BlockSize32x16, VisibleW4: 8, VisibleH4: 4, HaveLeft: true},
-		{MICol: 8, MIRow: 4, MIColEnd: 16, MIRowEnd: 8, X4: 8, Y4: 4, Level: BlockLevel32x32, Partition: PartitionH, Size: BlockSize32x16, VisibleW4: 8, VisibleH4: 4, HaveTop: true, HaveLeft: true},
-		{MICol: 0, MIRow: 8, MIColEnd: 4, MIRowEnd: 16, X4: 0, Y4: 8, Level: BlockLevel32x32, Partition: PartitionV, Size: BlockSize16x32, VisibleW4: 4, VisibleH4: 8, HaveTop: true},
-		{MICol: 4, MIRow: 8, MIColEnd: 8, MIRowEnd: 16, X4: 4, Y4: 8, Level: BlockLevel32x32, Partition: PartitionV, Size: BlockSize16x32, VisibleW4: 4, VisibleH4: 8, HaveTop: true, HaveLeft: true},
-		{MICol: 8, MIRow: 8, MIColEnd: 12, MIRowEnd: 12, X4: 8, Y4: 8, Level: BlockLevel32x32, Partition: PartitionTTopSplit, Size: BlockSize16x16, VisibleW4: 4, VisibleH4: 4, HaveTop: true, HaveLeft: true},
-		{MICol: 12, MIRow: 8, MIColEnd: 16, MIRowEnd: 12, X4: 12, Y4: 8, Level: BlockLevel32x32, Partition: PartitionTTopSplit, Size: BlockSize16x16, VisibleW4: 4, VisibleH4: 4, HaveTop: true, HaveLeft: true},
-		{MICol: 8, MIRow: 12, MIColEnd: 16, MIRowEnd: 16, X4: 8, Y4: 12, Level: BlockLevel32x32, Partition: PartitionTTopSplit, Size: BlockSize32x16, VisibleW4: 8, VisibleH4: 4, HaveTop: true, HaveLeft: true},
+		{MICol: 0, MIRow: 0, MIColEnd: 8, MIRowEnd: 8, X4: 0, Y4: 0, Level: BlockLevel32x32, Partition: PartitionNone, Size: BlockSize32x32, VisibleW4: 8, VisibleH4: 8, Edge: 63},
+		{MICol: 8, MIRow: 0, MIColEnd: 16, MIRowEnd: 4, X4: 8, Y4: 0, Level: BlockLevel32x32, Partition: PartitionH, Size: BlockSize32x16, VisibleW4: 8, VisibleH4: 4, HaveLeft: true, Edge: 63},
+		{MICol: 8, MIRow: 4, MIColEnd: 16, MIRowEnd: 8, X4: 8, Y4: 4, Level: BlockLevel32x32, Partition: PartitionH, Size: BlockSize32x16, VisibleW4: 8, VisibleH4: 4, HaveTop: true, HaveLeft: true, Edge: 0},
+		{MICol: 0, MIRow: 8, MIColEnd: 4, MIRowEnd: 16, X4: 0, Y4: 8, Level: BlockLevel32x32, Partition: PartitionV, Size: BlockSize16x32, VisibleW4: 4, VisibleH4: 8, HaveTop: true, Edge: 7},
+		{MICol: 4, MIRow: 8, MIColEnd: 8, MIRowEnd: 16, X4: 4, Y4: 8, Level: BlockLevel32x32, Partition: PartitionV, Size: BlockSize16x32, VisibleW4: 4, VisibleH4: 8, HaveTop: true, HaveLeft: true, Edge: 7},
+		{MICol: 8, MIRow: 8, MIColEnd: 12, MIRowEnd: 12, X4: 8, Y4: 8, Level: BlockLevel32x32, Partition: PartitionTTopSplit, Size: BlockSize16x16, VisibleW4: 4, VisibleH4: 4, HaveTop: true, HaveLeft: true, Edge: 63},
+		{MICol: 12, MIRow: 8, MIColEnd: 16, MIRowEnd: 12, X4: 12, Y4: 8, Level: BlockLevel32x32, Partition: PartitionTTopSplit, Size: BlockSize16x16, VisibleW4: 4, VisibleH4: 4, HaveTop: true, HaveLeft: true, Edge: 0},
+		{MICol: 8, MIRow: 12, MIColEnd: 16, MIRowEnd: 16, X4: 8, Y4: 12, Level: BlockLevel32x32, Partition: PartitionTTopSplit, Size: BlockSize32x16, VisibleW4: 8, VisibleH4: 4, HaveTop: true, HaveLeft: true, Edge: 0},
 	}
 	if len(visits) != len(want) {
 		t.Fatalf("visit count=%d want %d visits=%+v", len(visits), len(want), visits)
@@ -211,14 +211,14 @@ func TestWalkBlocksScriptedH4V4EdgeClipping(t *testing.T) {
 		t.Fatalf("stats=%+v want two roots and clipped leaves", stats)
 	}
 	want := []BlockVisit{
-		{MICol: 0, MIRow: 0, MIColEnd: 8, MIRowEnd: 2, X4: 0, Y4: 0, Level: BlockLevel32x32, Partition: PartitionH4, Size: BlockSize32x8, VisibleW4: 8, VisibleH4: 2},
-		{MICol: 0, MIRow: 2, MIColEnd: 8, MIRowEnd: 4, X4: 0, Y4: 2, Level: BlockLevel32x32, Partition: PartitionH4, Size: BlockSize32x8, VisibleW4: 8, VisibleH4: 2, HaveTop: true},
-		{MICol: 0, MIRow: 4, MIColEnd: 8, MIRowEnd: 6, X4: 0, Y4: 4, Level: BlockLevel32x32, Partition: PartitionH4, Size: BlockSize32x8, VisibleW4: 8, VisibleH4: 2, HaveTop: true},
-		{MICol: 0, MIRow: 6, MIColEnd: 8, MIRowEnd: 7, X4: 0, Y4: 6, Level: BlockLevel32x32, Partition: PartitionH4, Size: BlockSize32x8, VisibleW4: 8, VisibleH4: 1, HaveTop: true},
-		{MICol: 8, MIRow: 0, MIColEnd: 10, MIRowEnd: 7, X4: 0, Y4: 0, Level: BlockLevel32x32, Partition: PartitionV4, Size: BlockSize8x32, VisibleW4: 2, VisibleH4: 7, HaveLeft: true},
-		{MICol: 10, MIRow: 0, MIColEnd: 12, MIRowEnd: 7, X4: 2, Y4: 0, Level: BlockLevel32x32, Partition: PartitionV4, Size: BlockSize8x32, VisibleW4: 2, VisibleH4: 7, HaveLeft: true},
-		{MICol: 12, MIRow: 0, MIColEnd: 14, MIRowEnd: 7, X4: 4, Y4: 0, Level: BlockLevel32x32, Partition: PartitionV4, Size: BlockSize8x32, VisibleW4: 2, VisibleH4: 7, HaveLeft: true},
-		{MICol: 14, MIRow: 0, MIColEnd: 16, MIRowEnd: 7, X4: 6, Y4: 0, Level: BlockLevel32x32, Partition: PartitionV4, Size: BlockSize8x32, VisibleW4: 2, VisibleH4: 7, HaveLeft: true},
+		{MICol: 0, MIRow: 0, MIColEnd: 8, MIRowEnd: 2, X4: 0, Y4: 0, Level: BlockLevel32x32, Partition: PartitionH4, Size: BlockSize32x8, VisibleW4: 8, VisibleH4: 2, Edge: 63},
+		{MICol: 0, MIRow: 2, MIColEnd: 8, MIRowEnd: 4, X4: 0, Y4: 2, Level: BlockLevel32x32, Partition: PartitionH4, Size: BlockSize32x8, VisibleW4: 8, VisibleH4: 2, HaveTop: true, Edge: 56},
+		{MICol: 0, MIRow: 4, MIColEnd: 8, MIRowEnd: 6, X4: 0, Y4: 4, Level: BlockLevel32x32, Partition: PartitionH4, Size: BlockSize32x8, VisibleW4: 8, VisibleH4: 2, HaveTop: true, Edge: 56},
+		{MICol: 0, MIRow: 6, MIColEnd: 8, MIRowEnd: 7, X4: 0, Y4: 6, Level: BlockLevel32x32, Partition: PartitionH4, Size: BlockSize32x8, VisibleW4: 8, VisibleH4: 1, HaveTop: true, Edge: 56},
+		{MICol: 8, MIRow: 0, MIColEnd: 10, MIRowEnd: 7, X4: 0, Y4: 0, Level: BlockLevel32x32, Partition: PartitionV4, Size: BlockSize8x32, VisibleW4: 2, VisibleH4: 7, HaveLeft: true, Edge: 63},
+		{MICol: 10, MIRow: 0, MIColEnd: 12, MIRowEnd: 7, X4: 2, Y4: 0, Level: BlockLevel32x32, Partition: PartitionV4, Size: BlockSize8x32, VisibleW4: 2, VisibleH4: 7, HaveLeft: true, Edge: 7},
+		{MICol: 12, MIRow: 0, MIColEnd: 14, MIRowEnd: 7, X4: 4, Y4: 0, Level: BlockLevel32x32, Partition: PartitionV4, Size: BlockSize8x32, VisibleW4: 2, VisibleH4: 7, HaveLeft: true, Edge: 7},
+		{MICol: 14, MIRow: 0, MIColEnd: 16, MIRowEnd: 7, X4: 6, Y4: 0, Level: BlockLevel32x32, Partition: PartitionV4, Size: BlockSize8x32, VisibleW4: 2, VisibleH4: 7, HaveLeft: true, Edge: 7},
 	}
 	for i := range want {
 		if visits[i] != want[i] {
