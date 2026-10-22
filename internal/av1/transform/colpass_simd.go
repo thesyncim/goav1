@@ -222,4 +222,6 @@ var (
 	inverseDCT32Row2LowImpl   func(r0, r1 []int32, lowN int, min, max int32)
 	inverseDCT16Row2LowImpl   func(r0, r1 []int32, lowN int, min, max int32)
 	inverseDCT16LowCol4Impl   func(buf []int32, rowStride int, lowN int, min, max int32)
+	inverseDCT64LowCol4Impl   func(buf []int32, rowStride int, lowN int, min, max int32)
+	inverseDCT64Row4LowImpl   func(r0, r1, r2, r3 []int32, lowN int, min, max int32)
 )

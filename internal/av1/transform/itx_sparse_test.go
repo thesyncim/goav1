@@ -12,7 +12,7 @@ import (
 // extremes and sparse patterns.
 func TestInverseBlockBitDepthRawBoundedMatchesFull(t *testing.T) {
 	rng := rand.New(rand.NewPCG(5, 9))
-	sizes := []Size{{32, 8}, {32, 16}, {32, 32}, {32, 64}, {8, 32}, {16, 32}, {64, 32}, {16, 16}, {16, 4}, {16, 8}, {16, 64}, {4, 16}, {8, 16}, {64, 16}}
+	sizes := []Size{{32, 8}, {32, 16}, {32, 32}, {32, 64}, {8, 32}, {16, 32}, {64, 32}, {16, 16}, {16, 4}, {16, 8}, {16, 64}, {4, 16}, {8, 16}, {64, 16}, {64, 64}}
 	for _, size := range sizes {
 		scan := adjustedScanSizeTable[sizeIndex(size)]
 		cw, ch := int(scan.Width), int(scan.Height)
@@ -31,11 +31,8 @@ func TestInverseBlockBitDepthRawBoundedMatchesFull(t *testing.T) {
 					}
 					coeff[x*ch+y] = v
 				}
-				want := make([]int32, int(size.Width)*int(size.Height))
+				want := scalarDCTDCTReference(coeff, ch, size, bd)
 				got := make([]int32, len(want))
-				if err := InverseBlockBitDepthRaw(want, coeff, ch, size, TypeDCTDCT, bd, 0); err != nil {
-					t.Fatal(err)
-				}
 				if err := InverseBlockBitDepthRawBounded(got, coeff, ch, size, TypeDCTDCT, bd, rows, cols); err != nil {
 					t.Fatal(err)
 				}
@@ -45,4 +42,32 @@ func TestInverseBlockBitDepthRawBoundedMatchesFull(t *testing.T) {
 			}
 		}
 	}
+}
+
+// scalarDCTDCTReference is the two-pass DCT_DCT inverse with the scalar 1D
+// kernels only, independent of every batched/SIMD dispatch.
+func scalarDCTDCTReference(coeff []int32, coeffStride int, size Size, bitDepth uint8) []int32 {
+	width, height := int(size.Width), int(size.Height)
+	rowMin, rowMax, colMin, colMax, _ := stageRangeBounds(bitDepth)
+	idx := sizeIndex(size)
+	coeffSize := adjustedScanSizeTable[idx]
+	coeffW, coeffH := int(coeffSize.Width), int(coeffSize.Height)
+	shift := int(sizeShiftTable[idx])
+	scratch := make([]int32, width*height)
+	stageTransposeClampScalar(scratch, width, coeff, coeffStride, coeffH, coeffW, size.IsRect2(), rowMin, rowMax)
+	for row := 0; row < coeffH; row++ {
+		inverseDCT1D(scratch[row*width:row*width+width], 1, width, rowMin, rowMax)
+	}
+	for i, value := range scratch {
+		if shift > 0 {
+			value = int32(clipRange(roundShift(int64(value), shift), colMin, colMax))
+		} else {
+			value = clipRange(int64(value), colMin, colMax)
+		}
+		scratch[i] = value
+	}
+	for col := 0; col < width; col++ {
+		inverseDCT1D(scratch[col:], width, height, colMin, colMax)
+	}
+	return scratch
 }

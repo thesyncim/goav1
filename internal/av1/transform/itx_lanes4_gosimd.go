@@ -86,3 +86,76 @@ func itxTranspose4(v0, v1, v2, v3 archsimd.Int32x4) (archsimd.Int32x4, archsimd.
 	return e0.InterleaveLo(e2).ReshapeToUint32s().BitsToInt32(), e0.InterleaveHi(e2).ReshapeToUint32s().BitsToInt32(),
 		e1.InterleaveLo(e3).ReshapeToUint32s().BitsToInt32(), e1.InterleaveHi(e3).ReshapeToUint32s().BitsToInt32()
 }
+
+// inverseDCT64Lanes4Low is inverseDCT64Lanes4 for inputs whose entries at
+// lowN.. (lowN = 8, 16 or 32) are exactly zero. AV1 never codes DCT64
+// coefficients past 32, so lowN = 32 holds for every 64-point transform, as
+// in dav1d's dct64 kernels.
+func inverseDCT64Lanes4Low(p unsafe.Pointer, stride uintptr, lowN int, min, max int32) bool {
+	if min > 0 || max < 0 {
+		return inverseDCT64Lanes4(p, stride, min, max)
+	}
+	switch {
+	case min >= -itxNarrowBound && max < itxNarrowBound:
+		switch {
+		case lowN <= 8:
+			inverseDCT64Lanes4NarrowLow8(p, stride, min, max)
+		case lowN <= 16:
+			inverseDCT64Lanes4NarrowLow16(p, stride, min, max)
+		default:
+			inverseDCT64Lanes4NarrowLow32(p, stride, min, max)
+		}
+	case min >= -itxWideBound && max < itxWideBound:
+		switch {
+		case lowN <= 8:
+			inverseDCT64Lanes4WideLow8(p, stride, min, max)
+		case lowN <= 16:
+			inverseDCT64Lanes4WideLow16(p, stride, min, max)
+		default:
+			inverseDCT64Lanes4WideLow32(p, stride, min, max)
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+func inverseDCT64LowCol4SIMD(buf []int32, rowStride int, lowN int, min, max int32) {
+	if rowStride < 4 || len(buf) < 4 || rowStride > (len(buf)-4)/(dct64Size-1) ||
+		!inverseDCT64Lanes4Low(unsafe.Pointer(&buf[0]), uintptr(rowStride)*4, lowN, min, max) {
+		inverseDCT64Col4PureGo(buf, rowStride, min, max)
+	}
+}
+
+// inverseDCT64Row4LowSIMD is inverseDCT64Row4SIMD for rows whose inputs at
+// lowN.. are zero: only the first lowN inputs are transposed in.
+func inverseDCT64Row4LowSIMD(r0, r1, r2, r3 []int32, lowN int, lo, hi int32) {
+	if len(r0) < dct64Size || len(r1) < dct64Size || len(r2) < dct64Size || len(r3) < dct64Size ||
+		lo < -itxWideBound || hi >= itxWideBound || lo > 0 || hi < 0 {
+		inverseDCT64Row4PureGo(r0, r1, r2, r3, lo, hi)
+		return
+	}
+	lowN = min(max(lowN, 8), 32)
+	lowN = (lowN + 7) &^ 7
+	var t [dct64Size][4]int32
+	a, b, c, d := (*[dct64Size]int32)(r0), (*[dct64Size]int32)(r1), (*[dct64Size]int32)(r2), (*[dct64Size]int32)(r3)
+	for i := 0; i < lowN; i += 4 {
+		t0, t1, t2, t3 := itxTranspose4(
+			archsimd.LoadInt32x4Array((*[4]int32)(a[i:])), archsimd.LoadInt32x4Array((*[4]int32)(b[i:])),
+			archsimd.LoadInt32x4Array((*[4]int32)(c[i:])), archsimd.LoadInt32x4Array((*[4]int32)(d[i:])))
+		t0.StoreArray(&t[i])
+		t1.StoreArray(&t[i+1])
+		t2.StoreArray(&t[i+2])
+		t3.StoreArray(&t[i+3])
+	}
+	inverseDCT64Lanes4Low(unsafe.Pointer(&t), 16, lowN, lo, hi)
+	for i := 0; i < dct64Size; i += 4 {
+		o0, o1, o2, o3 := itxTranspose4(
+			archsimd.LoadInt32x4Array(&t[i]), archsimd.LoadInt32x4Array(&t[i+1]),
+			archsimd.LoadInt32x4Array(&t[i+2]), archsimd.LoadInt32x4Array(&t[i+3]))
+		o0.StoreArray((*[4]int32)(a[i:]))
+		o1.StoreArray((*[4]int32)(b[i:]))
+		o2.StoreArray((*[4]int32)(c[i:]))
+		o3.StoreArray((*[4]int32)(d[i:]))
+	}
+}

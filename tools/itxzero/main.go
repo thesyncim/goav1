@@ -50,6 +50,11 @@ func simplify(e ast.Expr) (ast.Expr, bool) {
 		}
 		return x, false
 	case *ast.CallExpr:
+		if fid, ok := x.Fun.(*ast.Ident); ok {
+			if r, z, done := simplifyClosureCall(fid.Name, x); done {
+				return r, z
+			}
+		}
 		sel, ok := x.Fun.(*ast.SelectorExpr)
 		if !ok {
 			for i, a := range x.Args {
@@ -128,10 +133,16 @@ func simplify(e ast.Expr) (ast.Expr, bool) {
 }
 
 func inputIndex(name string) (int, bool) {
-	if len(name) < 2 || name[0] != 'x' {
+	digits := ""
+	switch {
+	case strings.HasPrefix(name, "in"):
+		digits = name[2:]
+	case strings.HasPrefix(name, "x"):
+		digits = name[1:]
+	default:
 		return 0, false
 	}
-	n, err := strconv.Atoi(name[1:])
+	n, err := strconv.Atoi(digits)
 	return n, err == nil
 }
 
@@ -207,7 +218,7 @@ func main() {
 			as.Rhs[0] = ne
 			if as.Tok == token.DEFINE {
 				key := exprString(fset, ne)
-				if prev, ok := seen[key]; ok && strings.HasPrefix(id.Name, "v") {
+				if prev, ok := seen[key]; ok && (strings.HasPrefix(id.Name, "v") || strings.HasPrefix(id.Name, "t")) {
 					alias[id.Name] = prev
 					continue
 				}
@@ -261,9 +272,57 @@ func main() {
 		panic(err)
 	}
 	s := buf.String()
-	// zero may now be unused if every Average(zero) disappeared; keep it referenced.
-	if !strings.Contains(strings.SplitN(s, "var zero archsimd.Int32x4", 2)[1], "zero") {
-		s = strings.Replace(s, "var zero archsimd.Int32x4", "var zero archsimd.Int32x4\n\t_ = zero", 1)
+	// zero may now be unused if every Average(zero) disappeared; keep it
+	// referenced. Kernels without a zero vector get one when it is used.
+	if parts := strings.SplitN(s, "var zero archsimd.Int32x4", 2); len(parts) == 2 {
+		if !strings.Contains(parts[1], "zero") {
+			s = strings.Replace(s, "var zero archsimd.Int32x4", "var zero archsimd.Int32x4\n\t_ = zero", 1)
+		}
+	} else if strings.Contains(s, "zero") {
+		s = strings.Replace(s, "{\n", "{\n\tvar zero archsimd.Int32x4\n", 1)
 	}
 	fmt.Printf("// %s is %s with inputs %d.. known zero, derived mechanically by\n// zero propagation (exact identities only); all output stores are kept.\n%s\n\n", *name, *fn, *n, s)
+}
+
+// biasName is the rounding-bias seed of the closure-style kernels
+// (dct64_lanes4_gosimd.go): shr12 of an accumulator that only holds the bias
+// is (1<<11)>>12 = 0.
+const biasName = "r12"
+
+func isBias(e ast.Expr) bool {
+	id, ok := e.(*ast.Ident)
+	return ok && id.Name == biasName
+}
+
+// simplifyClosureCall handles the closure helpers of the lanes4 kernels:
+// mac(acc, x, c) = acc + x*k[c], shr12, clamp and st.
+func simplifyClosureCall(name string, x *ast.CallExpr) (ast.Expr, bool, bool) {
+	switch name {
+	case "mac":
+		acc, az := simplify(x.Args[0])
+		v, vz := simplify(x.Args[1])
+		if vz {
+			return acc, az, true
+		}
+		if az {
+			acc = zeroIdent()
+		}
+		x.Args[0], x.Args[1] = acc, v
+		return x, false, true
+	case "shr12", "clamp":
+		v, vz := simplify(x.Args[0])
+		if vz || (name == "shr12" && isBias(v)) {
+			return zeroIdent(), true, true
+		}
+		x.Args[0] = v
+		return x, false, true
+	case "st":
+		v, vz := simplify(x.Args[1])
+		if vz {
+			v = zeroIdent()
+		}
+		x.Args[1] = v
+		return x, false, true
+	}
+	return nil, false, false
 }
