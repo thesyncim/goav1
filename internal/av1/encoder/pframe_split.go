@@ -231,6 +231,12 @@ func (st *lossyEncodeState) interLumaTXAndScan(bw, bh int) (tile.TransformSize, 
 		lumaTX, lumaScan = tile.TransformSize64x16, st.scan64x16
 	case bw == 16 && bh == 64:
 		lumaTX, lumaScan = tile.TransformSize16x64, st.scan16x64
+	case bw == 64 && bh == 64:
+		lumaTX, lumaScan = tile.TransformSize64x64, st.scan32
+	case bw == 64 && bh == 32:
+		lumaTX, lumaScan = tile.TransformSize64x32, st.scan32
+	case bw == 32 && bh == 64:
+		lumaTX, lumaScan = tile.TransformSize32x64, st.scan32
 	}
 	return lumaTX, lumaScan
 }
@@ -900,8 +906,8 @@ func (st *lossyEncodeState) decideIntraPBlock(src SourceFrame420, recon *SourceF
 
 // reconRecordedIntraTXB is the write-free half of encodeTXBPredRect: residual,
 // forward DCT, quantize into the record arena, then the decoder-exact
-// dequant + inverse + add reconstruction (full-coefficient dequant, as the
-// fused intra path does).
+// dequant + inverse + add reconstruction of reconInterTXBResult, as the fused
+// intra path does.
 func (st *lossyEncodeState) reconRecordedIntraTXB(rec *pframeSplitRecord, reconPlane, srcPlane []byte, stride, px, py, w, h int,
 	q quantize.Quantizer, size tile.TransformSize, pred []byte) error {
 	geo, err := txBlockGeometryForTransformSize(size)
@@ -911,39 +917,23 @@ func (st *lossyEncodeState) reconRecordedIntraTXB(rec *pframeSplitRecord, reconP
 	if !geo.matchesDimensions(w, h) {
 		return tile.ErrInvalidDecodeState
 	}
+	scan, err := st.scanForLeafTX(size)
+	if err != nil {
+		return err
+	}
 	n := geo.sampleCount
 	cn := geo.coeffCount
 	residual := &st.resScratch
 	residualBlockImpl(residual[:n], srcPlane, py*stride+px, stride, pred, w, w, h)
 	tran := &st.tranScratch
-	if err := forwardDCTBlock(tran[:cn], residual[:n], w, h); err != nil {
+	if err := forwardTransformBlock8BitResidualTrusted(tran[:cn], residual[:n], st.dqScratch[:n], w, h, transform.TypeDCTDCT); err != nil {
 		return err
 	}
 	qcoeff := rec.grabCoeffs(cn)
 	if err := quantize.QuantizeBlockScaledB(qcoeff, geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
 		return err
 	}
-	dq := &st.dqScratch
-	if err := quantize.DequantizeBlockScaledBitDepth(dq[:cn], geo.coeffHeight, qcoeff, geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale, 8); err != nil {
-		return err
-	}
-	res := &st.invResidual
-	if err := transform.InverseDCTBlock(res[:n], w, dq[:cn], geo.coeffHeight, st.invScratch[:n], geo.size); err != nil {
-		return err
-	}
-	for r := range h {
-		row := (py+r)*stride + px
-		for c := range w {
-			v := int(pred[r*w+c]) + int(res[r*w+c])
-			if v < 0 {
-				v = 0
-			} else if v > 255 {
-				v = 255
-			}
-			reconPlane[row+c] = uint8(v)
-		}
-	}
-	return nil
+	return st.reconInterTXBResult(reconPlane, pred, w, stride, px, py, w, h, q, qcoeff, geo, scan, transform.TypeDCTDCT, interTXBResult(qcoeff, scan, cn))
 }
 
 // writeIntraPBlock is the entropy half of encodeIntraPBlock, replaying the
@@ -1031,7 +1021,7 @@ func (st *lossyEncodeState) writeIntraPBlock(block tile.BlockVisit, scratch *til
 
 	st.intraTxTypeReq.Mode = mode
 	st.intraTxTypeReq.Size = lumaTX
-	lumaCoeffs, err := rec.nextCoeffs(n * n)
+	lumaCoeffs, err := rec.nextCoeffs(min(n, 32) * min(n, 32))
 	if err != nil {
 		st.intraTxTypeReq.Size = tile.TransformSize8x8
 		return err

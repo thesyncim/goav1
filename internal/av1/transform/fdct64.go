@@ -820,3 +820,9 @@ func fwdDCT64(input, output *[64]int32, cospi *[64]int32, cosBit uint) {
 	bf1[62] = bf0[31]
 	bf1[63] = bf0[63]
 }
+
+// forwardDCT64x64PureGo is the scalar 64x64 DCT_DCT behind the trusted 8-bit
+// dispatch; the caller has validated the buffers.
+func forwardDCT64x64PureGo(coeff []int32, coeffStride int, residual []int16, residualStride int) {
+	_ = forwardDCT64Extent(coeff, coeffStride, residual, residualStride, Size{Width: 64, Height: 64})
+}

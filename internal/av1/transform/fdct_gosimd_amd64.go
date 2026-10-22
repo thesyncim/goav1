@@ -20,5 +20,6 @@ func init() {
 		forwardDCT16x16Trusted8BitImpl = forwardDCT16x16SIMD
 		forwardDCT32x32Impl = forwardDCT32x32SIMDGuarded
 		forwardDCT32x32Trusted8BitImpl = forwardDCT32x32SIMD
+		forwardDCT64x64Trusted8BitImpl = forwardDCT64x64SIMD
 	}
 }

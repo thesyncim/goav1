@@ -250,6 +250,8 @@ func intraPBlockGeometry(st *lossyEncodeState, size tile.BlockSize) (int, tile.T
 		return 16, tile.TransformSize16x16, st.scan16
 	case tile.BlockSize32x32:
 		return 32, tile.TransformSize32x32, st.scan32
+	case tile.BlockSize64x64:
+		return 64, tile.TransformSize64x64, st.scan32
 	}
 	return 8, tile.TransformSize8x8, st.scan8
 }
@@ -271,10 +273,11 @@ func fillIntraDCPred(pred []byte, reconPlane []byte, stride, px, py, n int, have
 // sample (product_coding_loop.c fast_loop_core_light_pd1),
 // else priced like the inter candidates - residual variance << 4 plus
 // svt_aom_intra_fast_cost's rate - against the inter winner, which pays its
-// is_inter flag as av1_inter_fast_cost_light does. Square 16x16 and 32x32
-// blocks only: 8x8 keeps its own fallback and 64x64 would need a TX64.
+// is_inter flag as av1_inter_fast_cost_light does. Square 16x16, 32x32 and
+// 64x64 blocks (SVT injects DC below 128x128; 64x64 codes TX_64X64): 8x8
+// keeps its own fallback.
 func (st *lossyEncodeState) mds0IntraDCWins(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, modeCtx *tile.BlockModeContext, lumaPX, lumaPY, bw, bh int) bool {
-	if !st.mds0IntraOK || bw != bh || (bw != 16 && bw != 32) || st.color.MonoChrome {
+	if !st.mds0IntraOK || bw != bh || (bw != 16 && bw != 32 && bw != 64) || st.color.MonoChrome {
 		return false
 	}
 	if st.mds0BestVar < int64(st.lpd1SB(lumaPX, lumaPY).skipDCTh*bw*bh) {

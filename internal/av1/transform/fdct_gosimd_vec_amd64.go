@@ -143,3 +143,27 @@ func fwdHalfBtf13V(w0, a, w1, b fwdVec) fwdVec {
 func fwdHalfBtf12V(w0, a, w1, b fwdVec) fwdVec {
 	return fwdShr(a.Mul(w0).Add(b.Mul(w1)).Add(fwdRound12), 12)
 }
+
+// fwdLoadResRawAt is fwdLoadResAt without the shift[0] = 2 pre-scale (the
+// 64-point transforms take shift[0] = 0).
+func fwdLoadResRawAt(s []int16, i, g int) fwdVec {
+	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*2)
+	return archsimd.LoadInt16x8Array((*[8]int16)(p)).ExtendToInt32()
+}
+
+// fwdTransposeRect writes the transpose of the rows x cols row-major matrix
+// src into dst (dst[c*rows+r] = src[r*cols+c]); both are multiples of eight.
+func fwdTransposeRect(dst, src []int32, rows, cols int) {
+	for bi := 0; bi < rows; bi += 8 {
+		for bj := 0; bj < cols; bj += 8 {
+			fwdTransposeBlock8(dst[bj*rows+bi:], rows, src[bi*cols+bj:], cols)
+		}
+	}
+}
+
+// fwdShift is a runtime arithmetic right-shift amount for fwdShrBy.
+type fwdShift = uint64
+
+func fwdMakeShift(n uint64) fwdShift { return n }
+
+func fwdShrBy(v fwdVec, s fwdShift) fwdVec { return v.ShiftAllRight(s) }

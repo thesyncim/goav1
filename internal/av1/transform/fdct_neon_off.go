@@ -21,3 +21,4 @@ var forwardDCT16x16Trusted8BitImpl = forwardDCT16x16PureGo
 // forwardDCT32x32Impl is the 32x32 forward DCT kernel dispatch.
 var forwardDCT32x32Impl = forwardDCT32x32PureGo
 var forwardDCT32x32Trusted8BitImpl = forwardDCT32x32PureGo
+var forwardDCT64x64Trusted8BitImpl = forwardDCT64x64PureGo
