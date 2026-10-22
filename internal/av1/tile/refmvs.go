@@ -898,3 +898,44 @@ func bindRefmvsForLoop(rt *refmvsTile, req *BlockLoopRequest) bool {
 		int32(req.Walk.MIRowStart), int32(req.Walk.MIRowEnd))
 	return true
 }
+
+// saveTmvs ports dav1d_refmvs_save_tmvs / save_tmvs_c: after a tile
+// superblock row is decoded, cache its projectable motion vectors for future
+// frames' temporal MV prediction. Each 8x8 cell takes the odd 4x4 record
+// (r[2y+1][2x+1]) of the rows; the second reference wins over the first, and
+// only references in the past (refFrameSide 0, dav1d's mfmv_sign) with
+// |mv| < 4096 are kept.
+func (rt *refmvsTile) saveTmvs(dst *ReferenceMVFrame, refFrameSide *[referenceFrameCount]int8, colStart8, colEnd8, rowStart8, rowEnd8 int32) {
+	rowEnd8 = min(rowEnd8, int32(dst.Rows))
+	colEnd8 = min(colEnd8, int32(dst.Cols))
+	stride := int32(dst.Stride)
+	for y := rowStart8; y < rowEnd8; y++ {
+		b := rt.row(6 + (y&15)*2)
+		rp := dst.Entries[y*stride : y*stride+colEnd8]
+		for x := colStart8; x < colEnd8; {
+			cand := &b[x*2+1]
+			end := min(x+(int32(blockDimensions[cand.bs].W4)+1)>>1, colEnd8)
+			tmv := ReferenceMVEntry{Ref: ReferenceFrameNone}
+			if r := cand.ref[1]; r > 0 && refFrameSide[r-1] == 0 && refmvsSaveable(cand.mv[1]) {
+				tmv = ReferenceMVEntry{Ref: ReferenceFrame(r - 1), MV: cand.mv[1].vector(), Valid: true}
+			} else if r := cand.ref[0]; r > 0 && refFrameSide[r-1] == 0 && refmvsSaveable(cand.mv[0]) {
+				tmv = ReferenceMVEntry{Ref: ReferenceFrame(r - 1), MV: cand.mv[0].vector(), Valid: true}
+			}
+			for ; x < end; x++ {
+				rp[x] = tmv
+			}
+		}
+	}
+}
+
+// refmvsSaveable is save_tmvs_c's (abs(mv.y) | abs(mv.x)) < 4096.
+func refmvsSaveable(m refmvsMV) bool {
+	r, c := m.row(), m.col()
+	if r < 0 {
+		r = -r
+	}
+	if c < 0 {
+		c = -c
+	}
+	return r|c < 4096
+}

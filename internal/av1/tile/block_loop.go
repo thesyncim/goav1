@@ -383,6 +383,15 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 	}
 	useRefmvs := !intraOnlyContexts && bindRefmvsForLoop(&scratch.Refmvs, &req)
 	defer func() { scratch.Refmvs.bound = false }()
+	// With refmvs rows bound, the current frame's MV_REF side data is written
+	// per superblock row from the rows (dav1d_refmvs_save_tmvs) instead of
+	// per block.
+	saveTmvs := useRefmvs && req.CurrentMVFrame != nil
+	if saveTmvs {
+		if err := req.CurrentMVFrame.Validate(); err != nil {
+			return stats, err
+		}
+	}
 	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
 		if !intraOnlyContexts && !useRefmvs {
 			promotePendingDiagonalCarriers(req.ContextCarrier)
@@ -508,6 +517,9 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 			if !intraOnlyContexts && !useRefmvs {
 				captureDiagonalCornerToPending(req.ContextCarrier, rootColIndex+1, &scratch.Mode, req.SBSizeMIB)
 			}
+		}
+		if saveTmvs {
+			scratch.Refmvs.saveTmvs(req.CurrentMVFrame, &req.RefFrameSide, int32(miColStart>>1), int32(miColEnd>>1), int32(miRow>>1), int32((miRow+rootSize)>>1))
 		}
 	}
 	return stats, nil
@@ -1065,7 +1077,7 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 			return nil, fmt.Errorf("decode prediction: %w", err)
 		}
 	}
-	if req.CurrentMVFrame != nil {
+	if req.CurrentMVFrame != nil && !scratch.Refmvs.bound {
 		if err := req.CurrentMVFrame.MarkBlockPtr(uint16(block.MICol), uint16(block.MIRow), block.VisibleW4, block.VisibleH4, &visit.Prediction, req.RefFrameSide); err != nil {
 			return nil, err
 		}
