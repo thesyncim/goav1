@@ -92,57 +92,6 @@ func (me *realtimeSBMultiSizeME) update(pu int, sad uint32, mvX, mvY int) {
 	}
 }
 
-// sweepSearchPoint4 ports open_loop_me_get_eight_search_point_results_block
-// (motion_estimation.c:407) narrowed to a four-candidate group so the existing
-// batched sad8x8x4 kernels do the pixel work: it scores the 64 8x8 blocks of
-// the SB at (px, py) against the reference positions (mvX..mvX+3, mvY) and
-// hierarchically folds the sums exactly as
-// svt_ext_all_sad_calculation_8x8_16x16 + svt_ext_eight_sad_calculation_
-// 32x32_64x64 do (full-SAD variant). Requires src/ref strides equal (the
-// sad8x8x4 kernel contract); callers fall back to sweepSearchPoint1 otherwise.
-func (me *realtimeSBMultiSizeME) sweepSearchPoint4(src, ref []byte, stride int, srcBase, refBase, mvX, mvY int) {
-	var sad16 [16][4]uint32
-	for n := range 16 {
-		q, w := n>>2, n&3
-		x16 := (q&1)*32 + (w&1)*16
-		y16 := (q>>1)*32 + (w>>1)*16
-		var sum0, sum1, sum2, sum3 uint32
-		for c := range 4 {
-			xo := x16 + (c&1)*8
-			yo := y16 + (c>>1)*8
-			so := srcBase + yo*stride + xo
-			ro := refBase + yo*stride + xo
-			// SUB_SAD_SEARCH (sig_deriv_me: me_search_method at every rtc preset):
-			// the even rows of the 8x8 block, doubled.
-			s0, s1, s2, s3 := sad8x4x4(src[so:], ref[ro:], ref[ro+1:], ref[ro+2:], ref[ro+3:], 2*stride)
-			s0, s1, s2, s3 = s0<<1, s1<<1, s2<<1, s3<<1
-			pu := 21 + n*4 + c
-			me.update(pu, uint32(s0), mvX, mvY)
-			me.update(pu, uint32(s1), mvX+1, mvY)
-			me.update(pu, uint32(s2), mvX+2, mvY)
-			me.update(pu, uint32(s3), mvX+3, mvY)
-			sum0 += uint32(s0)
-			sum1 += uint32(s1)
-			sum2 += uint32(s2)
-			sum3 += uint32(s3)
-		}
-		sad16[n] = [4]uint32{sum0, sum1, sum2, sum3}
-		me.update(5+n, sum0, mvX, mvY)
-		me.update(5+n, sum1, mvX+1, mvY)
-		me.update(5+n, sum2, mvX+2, mvY)
-		me.update(5+n, sum3, mvX+3, mvY)
-	}
-	for i := range 4 {
-		var sad64 uint32
-		for q := range 4 {
-			s32 := sad16[q*4][i] + sad16[q*4+1][i] + sad16[q*4+2][i] + sad16[q*4+3][i]
-			me.update(1+q, s32, mvX+i, mvY)
-			sad64 += s32
-		}
-		me.update(0, sad64, mvX+i, mvY)
-	}
-}
-
 // sweepSearchPoint1 ports open_loop_me_get_search_point_results_block
 // (motion_estimation.c:456) for a single candidate position; the
 // unequal-stride and odd-tail path.
@@ -286,13 +235,13 @@ func (me *realtimeSBMultiSizeME) sweepArea(src []byte, stride, srcBase int, ref 
 	for yi := 0; yi < ny; yi++ {
 		mvY := y0 + yi
 		rowBase := (refOy+mvY)*stride + refOx
+		// search_area_width_mult_8 in eight-position batches, the rest one
+		// position at a time.
 		xi := 0
-		if nx == 8 && me.sweepSearchPoint8(src, ref, stride, srcBase, rowBase+x0, x0, mvY) {
-			xi = 8
-		}
-		for ; xi+4 <= nx; xi += 4 {
-			mvX := x0 + xi
-			me.sweepSearchPoint4(src, ref, stride, srcBase, rowBase+mvX, mvX, mvY)
+		for ; xi+8 <= nx; xi += 8 {
+			if !me.sweepSearchPoint8(src, ref, stride, srcBase, rowBase+x0+xi, x0+xi, mvY) {
+				break
+			}
 		}
 		for ; xi < nx; xi++ {
 			mvX := x0 + xi
