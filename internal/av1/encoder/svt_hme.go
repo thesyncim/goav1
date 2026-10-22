@@ -153,8 +153,10 @@ func (p *svtPyramid) ready() bool { return p != nil && p.haveCur && p.havePrev }
 // svtHMESearch is svt_sad_loop_kernel over a w x h area at origin
 // (ox, oy) relative to the block at (bx, by): the SUB_SAD bw x bh block
 // (bh/2 rows at doubled stride, SAD doubled), y outer, x inner, strict '<'.
-// Positions whose block would leave the padded plane are not scored (SVT
-// corrects its search area to the padding).
+// Like SVT's search_area_width % 8 == 0 NEON/AVX2 kernels it scores eight
+// positions per step (svtSAD16xhx8 per 16 columns) and keeps the first
+// minimum (update_best_sad_u32). Positions whose block would leave the
+// padded plane are not scored (SVT corrects its search area to the padding).
 func svtHMESearch(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (bestSAD uint32, bestX, bestY int) {
 	bestSAD = ^uint32(0)
 	stride, b := cur.stride, cur.border
@@ -173,6 +175,19 @@ func svtHMESearch(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (bestSAD
 				continue
 			}
 			base := ref.org + ry*stride + rx
+			if x+8 <= w && rx+7+bw <= cur.w+b {
+				var t [8]uint32
+				for c := 0; c < bw; c += 16 {
+					svtSAD16xhx8(&t, s[c:], s2, ref.pix[base+c:], s2, rows)
+				}
+				for k, v := range t {
+					if sad := v << 1; sad < bestSAD {
+						bestSAD, bestX, bestY = sad, ox+x+k, oy+y
+					}
+				}
+				x += 8
+				continue
+			}
 			// Four positions per kernel call when all four are scorable.
 			if x+4 <= w && rx+3+bw <= cur.w+b {
 				var t0, t1, t2, t3 int
@@ -245,4 +260,24 @@ func (p *svtPyramid) copySlotFrom(q *svtPyramid, s int) {
 	}
 	p.slotHalf[s].copyFrom(&q.slotHalf[s])
 	p.slotSix[s].copyFrom(&q.slotSix[s])
+}
+
+// svtSAD16xhx8Scalar is the reference definition of svtSAD16xhx8: the SADs
+// of the 16-wide, rows-tall source block against ref+0..ref+7.
+func svtSAD16xhx8Scalar(src []byte, srcStride int, ref []byte, refStride, rows int) [8]uint32 {
+	var out [8]uint32
+	for k := range out {
+		for r := 0; r < rows; r++ {
+			a := src[r*srcStride : r*srcStride+16]
+			b := ref[r*refStride+k : r*refStride+k+16]
+			for c := range a {
+				d := int(a[c]) - int(b[c])
+				if d < 0 {
+					d = -d
+				}
+				out[k] += uint32(d)
+			}
+		}
+	}
+	return out
 }
