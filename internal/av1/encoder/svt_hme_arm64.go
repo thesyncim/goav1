@@ -12,6 +12,10 @@ import (
 // (sum + 2) >> 2 exactly as svt_aom_downsample_2d_c.
 func svtDownsample2DArch(dst []byte, dstStride int, src []byte, srcStride, w, h int) {
 	two := archsimd.BroadcastUint16x8(2)
+	// The count is built once: ShiftAllRight(2) rebuilds it (MOVD + INS + DUP)
+	// at every use. The high half saturates as UQXTN2 rather than a second
+	// UQXTN joined by ZIP1.
+	sh2 := archsimd.BroadcastInt16x8(-2)
 	for y := 0; y < h; y++ {
 		r0 := src[(2*y)*srcStride:]
 		r1 := src[(2*y+1)*srcStride:]
@@ -27,9 +31,9 @@ func svtDownsample2DArch(dst []byte, dstStride int, src []byte, srcStride, w, h 
 				e := load16(unsafe.Add(p1, 2*x+16))
 				lo := a.ExtendLo8ToUint16().Add(b.ExtendLo8ToUint16()).ConcatAddPairs(widenHi8(a).Add(widenHi8(b)))
 				hi := c.ExtendLo8ToUint16().Add(e.ExtendLo8ToUint16()).ConcatAddPairs(widenHi8(c).Add(widenHi8(e)))
-				lo = lo.Add(two).ShiftAllRight(2)
-				hi = hi.Add(two).ShiftAllRight(2)
-				out := lo.SaturateToUint8().ReshapeToUint64s().InterleaveLo(hi.SaturateToUint8().ReshapeToUint64s()).ReshapeToUint8s()
+				lf := lo.Add(two).Shift(sh2).SaturateToUint8().ReshapeToUint64s().BitsToFloat64()
+				hf := hi.Add(two).Shift(sh2).SaturateToUint8().ReshapeToUint64s().BitsToFloat64()
+				out := lf.SetElem(1, hf.GetElem(0)).ToBits().ReshapeToUint8s()
 				out.StoreArray((*[16]uint8)(unsafe.Pointer(&d[x])))
 			}
 		}
