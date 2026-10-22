@@ -793,6 +793,15 @@ func (ctx *FrameWorkPostFilterContext) applySupportedPostFiltersInPlace(req Fram
 			return result, err
 		}
 	}
+	if remaining.Has(FrameWorkPostFilterLoopFilter) && banding.LoopFilterMIRows <= 0 {
+		ctx.fixLoopFilterMaskTileBoundaries(req.LoopFilter.Map)
+		if ctx.sbrowPostFilterEligible(req, banding, remaining) {
+			if err := ctx.applySbrowPostFilters(req, &result); err != nil {
+				return result, err
+			}
+			remaining = frameWorkRemainingPostFilters(ctx)
+		}
+	}
 	if remaining.Has(FrameWorkPostFilterLoopFilter) {
 		var loopFilterResult FrameWorkLoopFilterPostFilterApplyResult
 		var err error
@@ -1006,6 +1015,7 @@ func (ctx *FrameWorkPostFilterContext) saveRestorationBoundariesForRequest(req F
 	if frameWorkRestorationBoundariesEmpty(boundaries) && ctx.RestorationFrameBuffers != nil {
 		boundaries = ctx.RestorationFrameBuffers.Boundaries
 	}
+	boundaries = ctx.restorationPixelBoundaries(boundaries)
 	if frameWorkRestorationBoundariesEmpty(boundaries) {
 		return nil
 	}
@@ -1438,6 +1448,7 @@ func (ctx *FrameWorkPostFilterContext) ApplyLoopRestorationPostFilter(req FrameW
 			req.Boundaries = ctx.RestorationFrameBuffers.Boundaries
 		}
 	}
+	req.Boundaries = ctx.restorationPixelBoundaries(req.Boundaries)
 	if err := ctx.validateLoopRestorationPostFilterRequest(req); err != nil {
 		return tile.RestorationFrameApplyResult{}, err
 	}
@@ -1510,4 +1521,17 @@ func frameWorkRestorationBoundariesEmpty(boundaries [3]tile.RestorationStripeBou
 // marked stages and should be discarded.
 func ApplySupportedPostFiltersForPublicationInPlace(ctx *FrameWorkPostFilterContext, req FrameWorkPostFilterRequest) (*frame.Frame, FrameWorkPostFilterResult, error) {
 	return ctx.applySupportedPostFiltersForPublicationInPlace(req)
+}
+
+// restorationPixelBoundaries marks an 8-bit frame's restoration stripe
+// context rows as stored pixels (tile.RestorationStripeBoundaries.Bytes), as
+// dav1d keeps its lr_lpf_line rows: the boundary save is then a row copy
+// and the stripe setup reads bytes, with no widen/narrow round trip. The
+// save and every 8-bit consumer of one frame see the same marking.
+func (ctx *FrameWorkPostFilterContext) restorationPixelBoundaries(boundaries [3]tile.RestorationStripeBoundaries) [3]tile.RestorationStripeBoundaries {
+	bytes := ctx.Output != nil && ctx.Output.Layout.BytesPerSample <= 1
+	for i := range boundaries {
+		boundaries[i].Bytes = bytes
+	}
+	return boundaries
 }

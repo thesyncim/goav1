@@ -91,7 +91,7 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 	if !ok {
 		return 0, 0, threading.ErrInvalidBatch
 	}
-	if rowStart > 0 {
+	if rowStart > 0 && !boundary.resume {
 		top := boundary.Top[plane]
 		need := cdef.VerticalBorder * width
 		if len(top) < need {
@@ -101,7 +101,7 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 		copy(lineBuf[topSlot:topSlot+need], top[:need])
 	}
 	var bottomBoundary []byte
-	if rowEnd < rows {
+	if rowEnd < rows && !boundary.resume {
 		bottomBoundary = boundary.Bottom[plane]
 		if len(bottomBoundary) < cdef.VerticalBorder*width {
 			return 0, 0, frame.ErrShortBuffer
@@ -116,7 +116,7 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 		unitY := (unitRow * cdef.BlockSize) >> yDec
 		// Back up the 2 pre-filter rows the NEXT unit row reads as its top
 		// halo before any unit in this row overwrites them.
-		if unitRow+1 < rowEnd {
+		if unitRow+1 < rowEnd || (boundary.resume && unitRow+1 < rows) {
 			nextTopY := unitY + unitSizeY
 			save := lineBuf[(unitRow&1)*2*width:]
 			for r := 0; r < cdef.VerticalBorder; r++ {

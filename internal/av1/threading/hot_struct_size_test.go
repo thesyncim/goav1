@@ -27,7 +27,9 @@ func TestHotStructSizes(t *testing.T) {
 		// It embeds FrameWorkBatch copies, so the 8-byte wavefront lane channel
 		// appears here too.
 		// The tile refmvs state carries dav1d's mfmv setup and rp_proj window.
-		{name: "FrameWorkTileResidualScratch", size: unsafe.Sizeof(FrameWorkTileResidualScratch{}), max: 91264},
+		// The three restoration stripe-boundary handles each add a pixel-row
+		// (Bytes) flag, 8 bytes with alignment.
+		{name: "FrameWorkTileResidualScratch", size: unsafe.Sizeof(FrameWorkTileResidualScratch{}), max: 91288},
 		{name: "FrameWorkJobRegion", size: unsafe.Sizeof(FrameWorkJobRegion{}), max: 36},
 		{name: "FrameWorkCDEFIndexMap", size: unsafe.Sizeof(FrameWorkCDEFIndexMap{}), max: 56},
 		{name: "FrameWorkLoopFilterBlockRecord", size: unsafe.Sizeof(FrameWorkLoopFilterBlockRecord{}), max: 34},

@@ -91,6 +91,12 @@ type FrameWorkCDEFPostFilterRequest struct {
 type FrameWorkCDEFPostFilterU8BandBoundary struct {
 	Top    [3][]byte
 	Bottom [3][]byte
+	// resume continues a sequential top-down walk (the per-superblock-row
+	// post-filter pipeline, dav1d filter_sbrow_cdef): the previous call left
+	// the pre-filter top halo of rowStart in the plane's line backup, and the
+	// rows below rowEnd are deblocked and not yet CDEF-filtered, so they are
+	// read from the frame; Top and Bottom are unused.
+	resume bool
 }
 
 // FrameWorkCDEFPostFilterResult summarizes CDEF frame filtering work.
@@ -444,7 +450,8 @@ func loadCDEFU8BandBoundaryPlane(boundary *FrameWorkCDEFPostFilterU8BandBoundary
 
 func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEFPostFilterRequest, rowStart, rowEnd int, loadSamples bool, u8Boundary *FrameWorkCDEFPostFilterU8BandBoundary) (FrameWorkCDEFPostFilterResult, error) {
 	remaining := ctx.RemainingPostFilters()
-	if remaining.Has(FrameWorkPostFilterLoopFilter) {
+	pipeline := u8Boundary != nil && u8Boundary.resume
+	if remaining.Has(FrameWorkPostFilterLoopFilter) && !pipeline {
 		return FrameWorkCDEFPostFilterResult{}, ErrUnsupportedPostFilter
 	}
 	if !remaining.Has(FrameWorkPostFilterCDEF) {
@@ -456,7 +463,7 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEF
 	if !frameWorkCDEFHasFiltering(ctx.Event.CDEF, ctx.Output.Format.MonoChrome) {
 		return FrameWorkCDEFPostFilterResult{}, nil
 	}
-	if u8Boundary != nil {
+	if u8Boundary != nil && !pipeline {
 		if err := ctx.validateCDEFPostFilterU8BandRequest(req); err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
@@ -492,7 +499,7 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEF
 	// immutable two-row boundaries for cross-band top/bottom halos. 10/12-bit
 	// frames keep the uint16 snapshot walk.
 	useU8 := ctx.Output.Layout.BytesPerSample == 1 && coeffShift == 0 &&
-		((loadSamples && rowStart == 0 && rowEnd == rows) || (!loadSamples && u8Boundary != nil))
+		((loadSamples && rowStart == 0 && rowEnd == rows) || (!loadSamples && u8Boundary != nil)) || (pipeline && ctx.Output.Layout.BytesPerSample == 1 && coeffShift == 0)
 
 	var result FrameWorkCDEFPostFilterResult
 	var directions cdef.DirectionGrid
@@ -500,7 +507,7 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEF
 	var blockStorage [cdef.NBlocks * cdef.NBlocks]cdef.BlockPosition
 	var unitMaskCache frameWorkCDEFUnitMaskCache
 	var unitMasks *frameWorkCDEFUnitMaskCache
-	compactUnitSource := useU8 && loadSamples && rowStart == 0 && rowEnd == rows && u8Boundary == nil
+	compactUnitSource := useU8 && loadSamples && rowStart == 0 && rowEnd == rows && u8Boundary == nil || (useU8 && pipeline)
 	compactActive := threading.FrameWorkLoopFilterCompactStateActive(ctx.compactLoopFilterState)
 	if compactActive {
 		miCols, miRows, err := frameWorkLoopFilterMapGrid(ctx.Event.FrameSize)
@@ -517,6 +524,9 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEF
 		// dav1d reads the decode-time noskip_mask (cdef_apply_tmpl.c), so the
 		// record map was never marked for this frame.
 		unitMaskCache.resetNoSkip(ctx.LoopFilterMasks, rowStart, cols)
+		unitMasks = &unitMaskCache
+	} else if useU8 && pipeline && unitMaskCache.resetWithCompact(skipMap, ctx.LoopFilterMasks, ctx.compactLoopFilterState, rowStart, rows, cols, compactUnitSource) {
+		// The compact no-skip grid is whole-frame; units are read by absolute row.
 		unitMasks = &unitMaskCache
 	} else if useU8 && unitMaskCache.resetWithCompact(skipMap, ctx.LoopFilterMasks, ctx.compactLoopFilterState, rowStart, rowEnd, cols, compactUnitSource) {
 		unitMasks = &unitMaskCache
