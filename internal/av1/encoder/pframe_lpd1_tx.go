@@ -32,6 +32,7 @@ import (
 	"fmt"
 
 	"github.com/thesyncim/goav1/internal/av1/motion"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
@@ -225,7 +226,8 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 		// rdoq_level.
 		lightPath = st.armRDOQ()
 		st.rdoqBlock = lightPath && dec.rdoq
-		if leaf, ok := svtDepth0TXLeaf(block.Size); lightPath && ok {
+		// TX_MODE_LARGEST pictures code the depth-0 transform on every block.
+		if leaf, ok := svtDepth0TXLeaf(block.Size); (lightPath || st.transformMode == parser.TransformModeLargest) && ok {
 			txPlan, err = realtimeInterTXPlanForLeafSize(block.Size, leaf)
 		} else {
 			txPlan, err = realtimeInterTXPlanForBlock(block.Size, st.qIndex, st.yQuant.AC, txLevel, sse, variance)
@@ -684,4 +686,17 @@ func (st *lossyEncodeState) svtTXDist(d int64, txScale uint8) int64 {
 		return d << 2
 	}
 	return d
+}
+
+// interTransformMode is the frame tx_mode of an inter picture. SVT rtc p12
+// runs txs_level 0 on inter pictures (enc_mode_config.c: txs_level =
+// is_islice ? 4 : 0), so frm_hdr->tx_mode is TX_MODE_LARGEST and every inter
+// block codes tx_depth_to_tx_size[0][bsize] with no txfm_split symbol. The
+// 8-bit 4:2:0 lossy realtime path, which codes exactly that depth-0 plan,
+// signals it; the other color paths keep TX_MODE_SELECT.
+func interTransformMode(color parser.ColorConfig, qIndex uint8) TransformMode {
+	if videoColorIs420(color) && qIndex != 0 {
+		return TransformModeLargest
+	}
+	return TransformModeSwitchable
 }

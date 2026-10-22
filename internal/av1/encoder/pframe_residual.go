@@ -51,6 +51,9 @@ func EncodePFrame(src SourceFrame420, ref SourceFrame420, qIndex uint8) ([]byte,
 
 	seq := losslessKeyframeSequence(src.Width, src.Height)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, qIndex, 0x01)
+	if interTransformMode(parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}, qIndex) == TransformModeLargest {
+		header.TransformRef.TransformMode = TransformModeLargest
+	}
 	header.References = &refState
 
 	var groupScratch, outScratch []byte
@@ -128,6 +131,9 @@ func EncodeScaledReferencePFrame(src SourceFrame420, ref SourceFrame420, qIndex 
 
 	seq := losslessKeyframeSequence(src.Width, src.Height)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, qIndex, 0x01)
+	if interTransformMode(parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}, qIndex) == TransformModeLargest {
+		header.TransformRef.TransformMode = TransformModeLargest
+	}
 	refState = referenceStateForFrame(ref.Width, ref.Height)
 	header.References = &refState
 
@@ -694,6 +700,9 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	st.forceIntegerMV = forceIntegerMV
 	st.allowScreenContentTools = allowScreenContentTools
 	st.transformMode = parser.TransformModeSwitchable
+	if interTransformMode(color, qIndex) == TransformModeLargest {
+		st.transformMode = parser.TransformModeLargest
+	}
 	// Freeze the MDS0 mode/DRL rate tables from the frame-start CDF state
 	// (SVT md_rate_estimation.c svt_aom_estimate_syntax_rate).
 	if st.mds0Level != 0 {
