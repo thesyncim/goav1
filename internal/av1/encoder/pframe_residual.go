@@ -244,32 +244,6 @@ const (
 	sadCacheMaxEpoch  = (uint32(1) << (32 - sadCacheBits)) - 1
 )
 
-type realtimeSourceSAD uint8
-
-const (
-	realtimeSourceSADZero realtimeSourceSAD = iota
-	realtimeSourceSADVeryLow
-	realtimeSourceSADLow
-	realtimeSourceSADMed
-	realtimeSourceSADHigh
-)
-
-const realtimeSourceVarianceUnknown = ^uint32(0)
-
-type realtimeContentStateSB struct {
-	sourceSADNonRD realtimeSourceSAD
-	sourceSADRD    realtimeSourceSAD
-	lightingChange bool
-	lowSumDiff     bool
-}
-
-func defaultRealtimeContentStateSB() realtimeContentStateSB {
-	return realtimeContentStateSB{
-		sourceSADNonRD: realtimeSourceSADMed,
-		sourceSADRD:    realtimeSourceSADMed,
-	}
-}
-
 func sadCachePack(epoch uint32, sad int) uint32 {
 	return epoch<<sadCacheBits | uint32(sad)
 }
@@ -292,93 +266,6 @@ func (st *lossyEncodeState) beginSADCacheFrame() {
 	clear(st.sad32Grid)
 	clear(st.sad64Grid)
 	st.sadCacheEpoch = 1
-}
-
-func realtimeSourceContentSB(src, last SourceFrame420, px, py int, increaseSourceSADThresh bool) realtimeContentStateSB {
-	state := defaultRealtimeContentStateSB()
-	if src.Width != last.Width || src.Height != last.Height ||
-		px < 0 || py < 0 || px+64 > src.Width || py+64 > src.Height {
-		return state
-	}
-	srcOff := py*src.YStride + px
-	lastOff := py*last.YStride + px
-	tmpSSE, tmpVariance := sseVariance64x64(src.Y[srcOff:], src.YStride, last.Y[lastOff:], last.YStride)
-	veryLowThresh := uint64(10000)
-	lowThreshNonRD := uint64(100000)
-	lowThreshRD := uint64(36000)
-	highThresh := uint64(1000000)
-	if increaseSourceSADThresh {
-		highThresh <<= 1
-		lowThreshNonRD <<= 1
-		veryLowThresh <<= 1
-	}
-	if uint64(tmpSSE) < lowThreshRD {
-		state.sourceSADRD = realtimeSourceSADLow
-	}
-	if tmpSSE == 0 {
-		state.sourceSADNonRD = realtimeSourceSADZero
-		return state
-	}
-	switch {
-	case uint64(tmpSSE) < veryLowThresh:
-		state.sourceSADNonRD = realtimeSourceSADVeryLow
-	case uint64(tmpSSE) < lowThreshNonRD:
-		state.sourceSADNonRD = realtimeSourceSADLow
-	case uint64(tmpSSE) > highThresh:
-		state.sourceSADNonRD = realtimeSourceSADHigh
-	}
-	sumSqThresh := uint32(10000)
-	sumSq := tmpSSE - tmpVariance
-	state.lightingChange = tmpVariance < tmpSSE>>1 && sumSq > sumSqThresh
-	state.lowSumDiff = sumSq < sumSqThresh>>1
-	return state
-}
-
-func (st *lossyEncodeState) prepareRealtimeSourceContent(src, last SourceFrame420, gridCols, gridRows int, miColStart, miColEnd uint16) {
-	st.sourceContentCols = gridCols
-	need := gridCols * gridRows
-	if need <= 0 {
-		return
-	}
-	if len(st.sourceContentGrid) < need {
-		st.sourceContentGrid = make([]realtimeContentStateSB, need)
-	}
-	if len(st.sourceVarianceGrid) < need {
-		st.sourceVarianceGrid = make([]uint32, need)
-	}
-	for i := range st.sourceContentGrid[:need] {
-		st.sourceContentGrid[i] = defaultRealtimeContentStateSB()
-		st.sourceVarianceGrid[i] = realtimeSourceVarianceUnknown
-	}
-	if src.Width != last.Width || src.Height != last.Height {
-		return
-	}
-	startCol := (int(miColStart) * 4) / 64
-	endCol := (int(miColEnd)*4 + 63) / 64
-	if startCol < 0 {
-		startCol = 0
-	}
-	if endCol > gridCols {
-		endCol = gridCols
-	}
-	for py := 0; py+64 <= src.Height; py += 64 {
-		row := py / 64
-		if row >= gridRows {
-			break
-		}
-		for col := startCol; col < endCol; col++ {
-			px := col * 64
-			if px+64 > src.Width {
-				continue
-			}
-			idx := row*gridCols + col
-			state := realtimeSourceContentSB(src, last, px, py, false)
-			st.sourceContentGrid[idx] = state
-			if state.sourceSADNonRD > realtimeSourceSADLow {
-				st.sourceVarianceGrid[idx] = realtimeSourceVariancePerPixel(src.Y[py*src.YStride+px:], src.YStride, 64, 64)
-			}
-		}
-	}
 }
 
 func realtimeStatic64METhreshold(effort int8) int {
@@ -479,88 +366,6 @@ func (st *lossyEncodeState) fillStatic64ChildSADCaches(src, ref SourceFrame420, 
 	}
 }
 
-func (st *lossyEncodeState) realtimeContentStateForBlock(px, py int) realtimeContentStateSB {
-	if st == nil || st.sourceContentCols <= 0 || px < 0 || py < 0 {
-		return defaultRealtimeContentStateSB()
-	}
-	col, row := px/64, py/64
-	idx := row*st.sourceContentCols + col
-	if idx < 0 || idx >= len(st.sourceContentGrid) {
-		return defaultRealtimeContentStateSB()
-	}
-	return st.sourceContentGrid[idx]
-}
-
-func realtimeSourceVariancePerPixel(src []byte, stride, w, h int) uint32 {
-	if variance, ok := realtimeSourceVarianceAgainstAV1VarOffs(src, stride, w, h); ok {
-		shift := uint(bits.TrailingZeros(uint(w * h)))
-		return roundPowerOfTwoUint32(variance, shift)
-	}
-	sse, sum := pixelStats128PureGo(src, stride, w, h)
-	shift := uint(bits.TrailingZeros(uint(w * h)))
-	variance := varianceFromStats(sse, sum, shift)
-	return roundPowerOfTwoUint32(variance, shift)
-}
-
-var realtimeAV1VarOffs = [128]byte{
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-	128, 128, 128, 128, 128, 128, 128, 128,
-}
-
-func realtimeSourceVarianceAgainstAV1VarOffs(src []byte, stride, w, h int) (uint32, bool) {
-	ref := realtimeAV1VarOffs[:]
-	switch {
-	case w == 64 && h == 64:
-		_, variance := sseVariance64x64(src, stride, ref, 0)
-		return variance, true
-	case w == 32 && h == 32:
-		_, variance := sseVariance32x32(src, stride, ref, 0)
-		return variance, true
-	case w == 16 && h == 16:
-		_, variance := sseVariance16x16(src, stride, ref, 0)
-		return variance, true
-	case w == 8 && h == 8:
-		_, variance := sseVariance8x8(src, stride, ref, 0)
-		return variance, true
-	default:
-		return 0, false
-	}
-}
-
-func pixelStats128PureGo(src []byte, stride, w, h int) (sse uint32, sum int32) {
-	total := 0
-	sumInt := 0
-	for r := range h {
-		row := r * stride
-		for c := range w {
-			d := int(src[row+c]) - 128
-			sumInt += d
-			total += d * d
-		}
-	}
-	return uint32(total), int32(sumInt)
-}
-
-func roundPowerOfTwoUint32(v uint32, shift uint) uint32 {
-	if shift == 0 {
-		return v
-	}
-	return (v + (1 << (shift - 1))) >> shift
-}
 
 var realtimeAvg8x8Impl = realtimeAvg8x8Wide
 var realtimeAvg8x8QuadImpl = realtimeAvg8x8QuadWide
@@ -982,7 +787,6 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		st.sad64Grid = make([]uint32, st.grid64Cols*grid64Rows)
 	}
 	st.beginSADCacheFrame()
-	st.prepareRealtimeSourceContent(src, ref, st.grid64Cols, grid64Rows, miColStart, miColEnd)
 	st.prepareStatic64MEBypass(src, ref, grid64Rows, miColStart, miColEnd)
 	st.prepareSVTPD0(st.grid64Cols, grid64Rows)
 	st.pd0Rates.estimate(&pc.partCDFs)
@@ -1525,11 +1329,10 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		// pframe_mds0.go) prices every block, low-distortion ones included:
 		// SVT's generate_md_stage_0_cand_light_pd1 has no distortion gate,
 		// and at high q those are the blocks where a vector-free NEARESTMV
-		// undercuts NEWMV. Static superblocks keep the short path as
-		// libaom's realtime pick cuts its mode loop on zero source SAD
-		// (av1/encoder/nonrd_pickmode.c source-SAD shortcuts).
-		if st.mds0Level != 0 && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height &&
-			st.realtimeContentStateForBlock(lumaPX, lumaPY).sourceSADNonRD != realtimeSourceSADZero {
+		// undercuts NEWMV. Static superblocks run it too:
+		// md_encode_block_light_pd1 calls md_stage_0_light_pd1 for every
+		// block with more than one candidate, with no source-SAD gate.
+		if st.mds0Level != 0 && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height {
 			if cand, ok, retained := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {
 				modeResult.Mode = cand.mode
 				if cand.mv != mv {
