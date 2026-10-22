@@ -8,8 +8,9 @@ package encoder
 //      motion_estimation.c:754) — an 8-wide x 3-tall search area (the preset-12
 //      rtc me_sa {8,1} floor-clamped to MAX(3, h), enc_mode_config.c
 //      set_me_search_params + motion_estimation.c:1255-1281) centered on the
-//      HME seed after SVT's zero-center arbitration (check_00_center,
-//      motion_estimation.c:1059). At every position the 64 8x8 SADs are
+//      HME seed (no check_00_center: SVT skips it when me_early_exit_th is
+//      set, as at preset 12 rtc), corrected against the padding like
+//      integer_search_b64. At every position the 64 8x8 SADs are
 //      computed and hierarchically summed 8x8 -> 16x16 -> 32x32 -> 64x64 with
 //      an INDEPENDENT (best SAD, best MV) argmin per PU — 85 PUs total
 //      (svt_ext_sad_calculation_8x8_16x16_c, motion_estimation.c:99 +
@@ -145,7 +146,7 @@ func subSADRect(src []byte, srcOff int, ref []byte, refOff, stride, bw, bh int) 
 // per-PU argmins (open_loop_me_fullpel_search_sblock) and compute_distortion,
 // on the padded current (h.cur) and reference (h.prev) source pictures. It
 // returns the HME level-1 SAD and me_8x8_distortion.
-func (h *hmeState) motionEstimateSB(me *realtimeSBMultiSizeME, width, height, px, py int, isRef bool) (uint32, uint64) {
+func (h *hmeState) motionEstimateSB(me *realtimeSBMultiSizeME, width, height, px, py int) (uint32, uint64) {
 	me.reset()
 	cur, prev := &h.cur, h.prev
 	stride := cur.stride
@@ -169,27 +170,15 @@ func (h *hmeState) motionEstimateSB(me *realtimeSBMultiSizeME, width, height, px
 	if zz >= realtimeSweepEarlyExitTH>>2 && h.svt.ready() {
 		xc, yc, l1 = h.svt.center(px, py)
 	}
-	// Keep the reference block within one superblock of the picture (SVT's
-	// search-area correction against its padding).
-	xc = min(max(xc, -px-63), width-1-px)
-	yc = min(max(yc, -py-63), height-1-py)
-
+	// integer_search_b64 at preset 12 rtc: the 8x3 area (me_sa sa_min,
+	// width rounded up to 8, height at least 3), 1x1 below
+	// me_early_exit_th / 6. With me_early_exit_th set SVT skips
+	// check_00_center, so the HME center is the search center as is.
 	nx, ny := realtimeSweepSearchW, realtimeSweepSearchH
-	earlyExit := zz < realtimeSweepEarlyExitTH/6
-	if earlyExit {
+	if zz < realtimeSweepEarlyExitTH/6 {
 		nx, ny = 1, 1
 	}
-	if !earlyExit && (xc != 0 || yc != 0) && isRef {
-		// check_00_center: the HME center survives only when its subsampled
-		// 64x64 SAD beats the zero-motion SAD; ties collapse to zero motion.
-		zeroSAD := sweepSAD64Sub(cur.pix, stride, sbOff, prev.pix, sbOff)
-		hmeSAD := sweepSAD64Sub(cur.pix, stride, sbOff, prev.pix, sbOff+yc*stride+xc)
-		if zeroSAD <= hmeSAD {
-			xc, yc = 0, 0
-		}
-	}
-	// x/y_search_area_origin = center - (area >> 1).
-	x0, y0 := xc-(nx>>1), yc-(ny>>1)
+	x0, y0, nx, ny := svtCorrectSearchArea(px, py, xc-(nx>>1), yc-(ny>>1), nx, ny, (width+7)&^7, (height+7)&^7)
 	me.sweepArea(cur.pix, stride, sbOff, prev.pix, prev.border+px, prev.border+py, x0, y0, nx, ny)
 
 	// compute_distortion: per-size sums of the per-PU best SADs, normalized
@@ -220,7 +209,7 @@ func (h *hmeState) motionEstimateSB(me *realtimeSBMultiSizeME, width, height, px
 	return l1, dist8 * 4096 / pix
 }
 
-// sweepSAD64Sub is the subsampled 64x64 SAD of check_00_center.
+// sweepSAD64Sub is the subsampled 64x64 SAD of get_zz_sad.
 func sweepSAD64Sub(src []byte, stride, srcOff int, ref []byte, refOff int) int {
 	s2 := stride << 1
 	return (sad32x32Dual(src[srcOff:], s2, ref[refOff:], s2) + sad32x32Dual(src[srcOff+32:], s2, ref[refOff+32:], s2)) << 1
@@ -518,4 +507,43 @@ func svtDimensionsRequire8x8(w, h int) bool {
 		lh %= half
 	}
 	return true
+}
+
+// svtCorrectSearchArea is integer_search_b64's correction of the full-pel
+// search area (x0, y0, nx, ny) of the superblock at (px, py) against the
+// padded reference (pad = BLOCK_SIZE_64 - 1) of the 8-aligned picture
+// picW x picH, statement for statement: the left/top width shrink reads the
+// already-corrected origin (so it never fires), the right/bottom shrink
+// keeps at least one position, and a width of 8 or more is rounded down to
+// a multiple of 8.
+func svtCorrectSearchArea(px, py, x0, y0, nx, ny, picW, picH int) (int, int, int, int) {
+	const pad = 64 - 1
+	if px+x0 < -pad {
+		x0 = -pad - px
+	}
+	if px+x0 < -pad {
+		nx -= -pad - (px + x0)
+	}
+	if px+x0 > picW-1 {
+		x0 -= (px + x0) - (picW - 1)
+	}
+	if px+x0+nx > picW {
+		nx = max(1, nx-((px+x0+nx)-picW))
+	}
+	if nx >= 8 {
+		nx &^= 7
+	}
+	if py+y0 < -pad {
+		y0 = -pad - py
+	}
+	if py+y0 < -pad {
+		ny -= -pad - (py + y0)
+	}
+	if py+y0 > picH-1 {
+		y0 -= (py + y0) - (picH - 1)
+	}
+	if py+y0+ny > picH {
+		ny = max(1, ny-((py+y0+ny)-picH))
+	}
+	return x0, y0, nx, ny
 }

@@ -78,7 +78,7 @@ func checkSweepBruteForce(t *testing.T, w, h int, sbs [][2]int) {
 	for _, sb := range sbs {
 		px, py := sb[0], sb[1]
 		var me realtimeSBMultiSizeME
-		hs.motionEstimateSB(&me, w, h, px, py, true)
+		hs.motionEstimateSB(&me, w, h, px, py)
 		if !me.valid {
 			t.Fatalf("sweep at (%d,%d) not valid", px, py)
 		}
@@ -285,6 +285,26 @@ func TestSVTPictureQP(t *testing.T) {
 	}{{0, 4}, {120, 30}, {121, 30}, {122, 31}, {255, 63}} {
 		if got := svtPictureQP(c.q); got != c.want {
 			t.Errorf("svtPictureQP(%d) = %d, want %d", c.q, got, c.want)
+		}
+	}
+}
+
+// TestSVTCorrectSearchArea pins integer_search_b64's search-area correction
+// (1280x720, 8x3 area).
+func TestSVTCorrectSearchArea(t *testing.T) {
+	for _, c := range []struct{ px, py, x0, y0, nx, ny, wx, wy, wnx, wny int }{
+		{64, 64, -4, -1, 8, 3, -4, -1, 8, 3},   // inside
+		{0, 0, -80, -70, 8, 3, -63, -63, 8, 3}, // left/top: origin moves, size kept
+		{1216, 0, 60, 0, 8, 3, 60, 0, 4, 3},    // right: 1276+8 > 1280 -> 4, below 8 kept
+		{1216, 0, 70, 0, 8, 3, 63, 0, 1, 3},    // origin past the edge moves to width-1
+		{1216, 0, 50, 0, 16, 3, 50, 0, 8, 3},   // 14 rounds down to 8
+		{0, 704, 0, 14, 8, 3, 0, 14, 8, 2},     // bottom: 718+3 > 720 -> 2
+		{0, 704, 0, 30, 8, 3, 0, 15, 8, 1},     // origin past the bottom
+		{0, 0, -4, -1, 1, 1, -4, -1, 1, 1},     // early-exit point
+	} {
+		x0, y0, nx, ny := svtCorrectSearchArea(c.px, c.py, c.x0, c.y0, c.nx, c.ny, 1280, 720)
+		if x0 != c.wx || y0 != c.wy || nx != c.wnx || ny != c.wny {
+			t.Errorf("%+v: got %d %d %d %d", c, x0, y0, nx, ny)
 		}
 	}
 }

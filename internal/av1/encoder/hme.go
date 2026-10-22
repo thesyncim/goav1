@@ -237,7 +237,7 @@ func (h *hmeState) meRows(src SourceFrame420, r0, r1 int) {
 	for r := r0; r < r1; r++ {
 		for c := 0; c < f.cols; c++ {
 			i := r*f.cols + c
-			f.l1SAD[i], f.me8x8Dist[i] = h.motionEstimateSB(&f.sb[i], src.Width, src.Height, c*64, r*64, f.isRef)
+			f.l1SAD[i], f.me8x8Dist[i] = h.motionEstimateSB(&f.sb[i], src.Width, src.Height, c*64, r*64)
 		}
 	}
 }
