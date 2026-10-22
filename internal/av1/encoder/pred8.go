@@ -96,6 +96,13 @@ func (st *lossyEncodeState) predictPlane(dst []byte, refPlane []byte, stride, wi
 		refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(px, py, mv, ssX, ssY)
 		if err == nil {
 			ref := frame.Plane{Pix: refPlane, Stride: stride, Width: width, Height: height}
+			if pp := st.refPads.lookup(refPlane, width, height); pp != nil {
+				// The padded reference (refpad.go): no clamped copy at the
+				// picture edges.
+				ref = pp.plane()
+				refX += pp.border
+				refY += pp.border
+			}
 			if st.subpelCache == nil {
 				st.subpelCache = new(subpelProbeCache)
 			}

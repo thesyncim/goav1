@@ -352,6 +352,12 @@ internal/av1/encoder/pred8.go:*:*: new(subpelProbeCache) escapes to heap in (*lo
 internal/av1/encoder/rdoq.go:*:*: make([]int16, area) escapes to heap
 internal/av1/encoder/rdoq.go:*:*: make([]int16, area) escapes to heap in init.func3:
 internal/av1/encoder/rdoq.go:*:*: make([]int16, area) escapes to heap in init:
+internal/av1/encoder/refpad.go:*:*: make([]byte, chromaNeed) escapes to heap
+internal/av1/encoder/refpad.go:*:*: make([]byte, chromaNeed) escapes to heap in (*refPadCache).reserve:
+internal/av1/encoder/refpad.go:*:*: make([]byte, lumaNeed) escapes to heap
+internal/av1/encoder/refpad.go:*:*: make([]byte, lumaNeed) escapes to heap in (*refPadCache).reserve:
+internal/av1/encoder/refpad.go:*:*: make([]byte, need) escapes to heap
+internal/av1/encoder/refpad.go:*:*: make([]byte, need) escapes to heap in (*refPadPlane).build:
 internal/av1/encoder/subpel_cache.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/subpel_cache.go:*:*: new(subpelProbeCache) escapes to heap in (*lossyEncodeState).ensureSubpelProbeCache:
 internal/av1/encoder/subpel_svt.go:*:*: new(subpelProbeCache) escapes to heap

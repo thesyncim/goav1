@@ -256,6 +256,7 @@ func (e *VideoEncoder) finishLazyCDEF() error {
 		return nil
 	}
 	p.pending = false
+	e.refPad.invalidate(p.out)
 	if p.out == nil || len(p.out.Y) == 0 || len(e.lastRecon.Y) == 0 || &p.out.Y[0] != &e.lastRecon.Y[0] {
 		return nil
 	}

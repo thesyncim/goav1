@@ -84,6 +84,8 @@ type VideoEncoder struct {
 	cdefRefLast svtCDEFRefStrengths
 	cdefRefT1   svtCDEFRefStrengths
 	cdefLogs    svtCDEFLogs
+	// refPad caches the padded reference copies (refpad.go).
+	refPad refPadCache
 	// lazyCDEF is the deferred CDEF pass of a non-reference picture.
 	lazyCDEF     lazyCDEFPass
 	hme          hmeState
@@ -751,6 +753,7 @@ func (e *VideoEncoder) EncodeWithTemporalID(src SourceFrame420, forceKey bool, t
 }
 
 func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, maxHeight int) ([]byte, error) {
+	e.dropRefPads()
 	// Periodic keyframes reuse the stream's recon buffer and tile-coder pool,
 	// so a scene cut allocates only its temporal unit.
 	nTiles := 1
@@ -805,6 +808,7 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 	// A shown keyframe refreshes every reference slot, so slot 1 (the GOLDEN
 	// name) now holds the keyframe; seed the search copy.
 	if e.goldenEvery > 0 {
+		e.refPad.invalidate(&e.golden)
 		copyFrameInto(&e.golden, recon)
 		e.sinceGoldenFresh = 0
 	}
@@ -813,6 +817,7 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 }
 
 func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, ref SourceFrame420, codedRefBuffer uint8, settings FrameEncodeSettings, maxWidth, maxHeight int) ([]byte, error) {
+	e.dropRefPads()
 	if src.Width != e.renderWidth || src.Height != e.renderHeight {
 		return nil, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", src.Width, src.Height, e.renderWidth, e.renderHeight)
 	}
@@ -983,6 +988,7 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 		e.hme.prime(src)
 	}
 	if e.goldenEvery > 0 {
+		e.refPad.invalidate(&e.golden)
 		copyFrameInto(&e.golden, *out)
 		e.sinceGoldenFresh = 0
 	}
@@ -1588,6 +1594,17 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		header.TransformRef.ReferenceMode = ReferenceModeSelect
 		referenceMode = parser.ReferenceModeSelect
 	}
+	// Padded references (refpad.go, SVT's svt_aom_generate_padding): the
+	// frame's output buffer is about to be rewritten, so its cached copy goes.
+	e.refPad.invalidate(out)
+	var pads *refPads
+	if videoColorIs420(color) && refRecon.Width == src.Width && refRecon.Height == src.Height {
+		pads = e.refPad.padsFor(refRecon, golden, chromaWidthForColor(src.Width, color), chromaHeightForColor(src.Height, color))
+	}
+	e.pc.st.refPads = pads
+	for t := range e.tilePCs {
+		e.tilePCs[t].st.refPads = pads
+	}
 	if nTiles == 1 {
 		data, err := e.pc.encodeTileWithOptionsColor(src, refRecon, golden, out, effQ, prevCtx, referenceMode, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, color, 0, uint16(src.Width/4))
 		if err != nil {
@@ -1638,6 +1655,11 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 				return nil, fmt.Errorf("encode tile %d: %w", t, errs[t])
 			}
 		}
+	}
+	// The padded copies mirror this frame's references only.
+	e.pc.st.refPads = nil
+	for t := range e.tilePCs {
+		e.tilePCs[t].st.refPads = nil
 	}
 	// update_motion_stat (libaom av1/encoder/encoder.c): the percentage of
 	// MI units coded as near-zero-motion LAST blocks, smoothed 3:1 into
@@ -1777,6 +1799,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		if err := e.joinFilter(); err != nil {
 			return nil, err
 		}
+		e.refPad.invalidate(&e.golden)
 		copyFrameInto(&e.golden, *out)
 		e.sinceGoldenFresh = 0
 	}
