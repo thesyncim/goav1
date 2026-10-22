@@ -263,6 +263,16 @@ func SaveRestorationFrameBoundaryLines(planes []RestorationFrameBoundaryPlane, a
 // libaom's av1_loop_restoration_save_boundary_lines for one plane without
 // requiring caller-owned uint16 sample scratch for the whole frame.
 func SaveRestorationBoundaryLinesFromFramePlane(grid RestorationPlaneGrid, plane av1frame.Plane, bytesPerSample int, boundaries RestorationStripeBoundaries, afterCDEF bool) error {
+	return SaveRestorationBoundaryLinesFromFramePlaneRows(grid, plane, bytesPerSample, boundaries, afterCDEF, 0, int(grid.PlaneHeight))
+}
+
+// SaveRestorationBoundaryLinesFromFramePlaneRows saves only the stripe context
+// lines whose first source row lies in plane rows [yStart,yEnd): the per-row
+// form of the save, as dav1d copy_lpf saves each superblock row's lines right
+// after deblocking it (and before CDEF overwrites them). Every line's source
+// rows fall inside one 64-row (32-row chroma) CDEF unit row, so saving unit
+// row by unit row covers each line exactly once.
+func SaveRestorationBoundaryLinesFromFramePlaneRows(grid RestorationPlaneGrid, plane av1frame.Plane, bytesPerSample int, boundaries RestorationStripeBoundaries, afterCDEF bool, yStart, yEnd int) error {
 	if !grid.validGeometry() || plane.Stride <= 0 || plane.Width <= 0 || plane.Height <= 0 {
 		return ErrInvalidPlan
 	}
@@ -292,23 +302,23 @@ func SaveRestorationBoundaryLinesFromFramePlane(grid RestorationPlaneGrid, plane
 
 		switch {
 		case !afterCDEF:
-			if useDeblockAbove {
+			if useDeblockAbove && inRestorationRows(relY0-restorationCtxVert, yStart, yEnd) {
 				if err := saveRestorationDeblockBoundaryLinesFromBytes(grid, plane, bytesPerSample, relY0-restorationCtxVert, tileStripe, true, boundaries); err != nil {
 					return err
 				}
 			}
-			if useDeblockBelow {
+			if useDeblockBelow && inRestorationRows(relY1, yStart, yEnd) {
 				if err := saveRestorationDeblockBoundaryLinesFromBytes(grid, plane, bytesPerSample, relY1, tileStripe, false, boundaries); err != nil {
 					return err
 				}
 			}
 		default:
-			if !useDeblockAbove {
+			if !useDeblockAbove && inRestorationRows(relY0, yStart, yEnd) {
 				if err := saveRestorationCDEFBoundaryLinesFromBytes(grid, plane, bytesPerSample, relY0, tileStripe, true, boundaries); err != nil {
 					return err
 				}
 			}
-			if !useDeblockBelow {
+			if !useDeblockBelow && inRestorationRows(relY1-1, yStart, yEnd) {
 				if err := saveRestorationCDEFBoundaryLinesFromBytes(grid, plane, bytesPerSample, relY1-1, tileStripe, false, boundaries); err != nil {
 					return err
 				}
@@ -1066,4 +1076,36 @@ func restorationBoundaryLineU8(buf []uint16, stride int, row int, x0 int, lineWi
 		return nil, false
 	}
 	return b[offset : offset+lineWidth], true
+}
+
+func inRestorationRows(y, yStart, yEnd int) bool { return y >= yStart && y < yEnd }
+
+// SaveRestorationFrameBoundaryLinesFromFrameRows is
+// SaveRestorationFrameBoundaryLinesFromFrame limited to the context lines
+// sourced from luma rows [yStart,yEnd) (chroma rows scaled by the plane's
+// vertical subsampling): the per-superblock-row save of the post-filter
+// pipeline (dav1d copy_lpf).
+func SaveRestorationFrameBoundaryLinesFromFrameRows(plan RestorationFramePlan, frm av1frame.Frame, bytesPerSample int, boundaries [3]RestorationStripeBoundaries, afterCDEF bool, yStart, yEnd int) error {
+	if err := validateRestorationFramePlan(plan); err != nil {
+		return err
+	}
+	planeCount := int(plan.Planes)
+	if planeCount != 1 && planeCount != 3 {
+		return ErrInvalidPlan
+	}
+	for plane := range planeCount {
+		grid := plan.Grids[plane]
+		if grid.Type == parser.RestorationNone {
+			continue
+		}
+		buffer, err := restorationFramePlaneBuffer(frm, plane)
+		if err != nil {
+			return err
+		}
+		sh := boolToShift(grid.SubsamplingY)
+		if err := SaveRestorationBoundaryLinesFromFramePlaneRows(grid, buffer, bytesPerSample, boundaries[plane], afterCDEF, yStart>>sh, yEnd>>sh); err != nil {
+			return err
+		}
+	}
+	return nil
 }

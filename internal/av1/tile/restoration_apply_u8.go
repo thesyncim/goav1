@@ -257,3 +257,80 @@ func applyRestorationUnitU8(src []uint8, srcStride int, srcOrigin int, dst []uin
 		return ErrInvalidPlan
 	}
 }
+
+// ApplyRestorationFrameToFrameStripesU8 is the per-stripe-row form of the
+// 8-bit in-place ApplyRestorationFrameToFrame (non-optimized boundary mode):
+// it runs dav1d's lr_sbrow on tile stripes [stripeStart,stripeEnd) of every
+// restored plane and adds the work to acc. The per-superblock-row post-filter
+// pipeline calls it once CDEF has finished a stripe's rows; calls must cover
+// the stripes in order, once each. dataScratch is the whole-frame sample
+// scratch (RestorationFrameSampleScratchLen).
+func ApplyRestorationFrameToFrameStripesU8(plan RestorationFramePlan, frm av1frame.Frame, records [3][]RestorationUnitRecord, boundaries [3]RestorationStripeBoundaries, dataScratch []uint16, scratch RestorationUnitRecordBoundaryScratch, stripeStart, stripeEnd int, acc *RestorationFrameApplyResult) error {
+	size, err := RestorationFrameSampleScratchLen(plan, frm, false)
+	if err != nil {
+		return err
+	}
+	if len(dataScratch) != size.DataLen {
+		return ErrInvalidPlan
+	}
+	bytesPerSample, _, err := restorationFrameSampleFormat(frm)
+	if err != nil {
+		return err
+	}
+	if bytesPerSample != 1 || acc == nil || stripeStart < 0 || stripeStart > stripeEnd {
+		return ErrInvalidPlan
+	}
+	dataOffset := 0
+	for plane := 0; plane < int(plan.Planes); plane++ {
+		grid := plan.Grids[plane]
+		if grid.Plane != uint8(plane) {
+			return ErrInvalidPlan
+		}
+		if grid.Type == parser.RestorationNone {
+			continue
+		}
+		dataLayout := size.Data[plane]
+		seg := dataScratch[dataOffset : dataOffset+dataLayout.Len]
+		dataOffset += dataLayout.Len
+		var planeResult RestorationPlaneApplyResult
+		if !restorationRecordsAnyFiltered(records[plane]) {
+			if stripeStart != 0 {
+				continue
+			}
+			if err := validateRestorationPlaneRecords(grid, records[plane]); err != nil {
+				return err
+			}
+			for i := range records[plane] {
+				if err := validateRestorationUnitRecord(grid, records[plane][i]); err != nil {
+					return err
+				}
+				planeResult.Records++
+			}
+		} else {
+			end := min(stripeEnd, RestorationTileStripeCount(grid))
+			if stripeStart >= end {
+				continue
+			}
+			buffer, err := restorationFramePlaneBuffer(frm, plane)
+			if err != nil {
+				return err
+			}
+			planeResult, err = ApplyRestorationFramePlaneInPlaceU8Stripes(grid, records[plane], boundaries[plane], buffer, seg, scratch, stripeStart, end)
+			if err != nil {
+				return err
+			}
+		}
+		if stripeStart == 0 {
+			acc.Planes++
+		}
+		pr := &acc.PlaneResults[plane]
+		pr.Records += planeResult.Records
+		pr.FilteredRecords += planeResult.FilteredRecords
+		pr.Stripes += planeResult.Stripes
+		pr.ProcessingUnits += planeResult.ProcessingUnits
+		if err := accumulateRestorationFrameResult(acc, planeResult); err != nil {
+			return err
+		}
+	}
+	return nil
+}

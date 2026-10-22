@@ -173,7 +173,8 @@ func applyRestorationPlaneRecordsInPlaceU8(grid RestorationPlaneGrid, records []
 	if err != nil {
 		return RestorationPlaneApplyResult{}, err
 	}
-	return walkRestorationPlaneRecordsInPlaceU8(grid, records, boundaries, buffer, layout, scratch, 0, len(records))
+	// dav1d lr_sbrow order: stripe by stripe across the units of its row.
+	return walkRestorationPlaneStripesInPlaceU8(grid, records, boundaries, buffer, layout, scratch, 0, RestorationTileStripeCount(grid))
 }
 
 // ApplyRestorationFramePlaneInPlaceU8Rows filters the restoration-unit ROWS
@@ -458,4 +459,125 @@ func backupRestorationRightColsU8(pix []uint8, stride int, rect RestorationUnitR
 		copy(bak[y*restorationExtraHorz:][:restorationExtraHorz], pix[(y0+y)*stride+x:][:restorationExtraHorz])
 	}
 	return nil
+}
+
+// RestorationTileStripeCount returns how many 64-row (32 for vertically
+// subsampled chroma) processing stripes cover the plane: dav1d lr_sbrow's
+// stripe rows, the first one shortened by the 8-row (4-row) unit offset.
+func RestorationTileStripeCount(grid RestorationPlaneGrid) int {
+	stripeH := int(av1restoration.ProcUnitSize >> boolToShift(grid.SubsamplingY))
+	off := int(restorationUnitOffset >> boolToShift(grid.SubsamplingY))
+	h := int(grid.PlaneHeight)
+	if stripeH <= 0 || h <= 0 {
+		return 0
+	}
+	return (h + off + stripeH - 1) / stripeH
+}
+
+// ApplyRestorationFramePlaneInPlaceU8Stripes filters the processing stripes
+// [stripeStart,stripeEnd) of one 8-bit plane in place, in dav1d's lr_sbrow
+// order (src/lr_apply_tmpl.c): stripe by stripe, and within a stripe unit by
+// unit left to right, each unit's stripe through lr_stripe. Before a unit's
+// stripe is overwritten its pre-filter right-edge columns of those rows are
+// backed up for the next unit's left halo (backup4xU), so the walk reads only
+// pre-filter pixels, the backups and the saved stripe boundary lines, and the
+// output is bit-identical to the unit-major record walk for any stripe split.
+// A call needs its stripes' interior rows final (CDEF done) and their
+// boundary lines saved; it writes only those stripes' rows.
+func ApplyRestorationFramePlaneInPlaceU8Stripes(grid RestorationPlaneGrid, records []RestorationUnitRecord, boundaries RestorationStripeBoundaries, buffer av1frame.Plane, dataSeg []uint16, scratch RestorationUnitRecordBoundaryScratch, stripeStart, stripeEnd int) (RestorationPlaneApplyResult, error) {
+	// The record set and boundaries are validated once, by the call that
+	// starts the plane; continuation calls of an in-order walk reuse them.
+	if stripeStart == 0 {
+		if err := validateRestorationPlaneRecords(grid, records); err != nil {
+			return RestorationPlaneApplyResult{}, err
+		}
+		if err := validateRestorationStripeBoundaries(grid, boundaries); err != nil {
+			return RestorationPlaneApplyResult{}, err
+		}
+	} else if len(records) != int(grid.HorzUnits)*int(grid.VertUnits) {
+		return RestorationPlaneApplyResult{}, ErrInvalidPlan
+	}
+	if buffer.Stride <= 0 || buffer.Width != int(grid.PlaneWidth) || buffer.Height != int(grid.PlaneHeight) {
+		return RestorationPlaneApplyResult{}, ErrInvalidPlan
+	}
+	if stripeStart < 0 || stripeEnd > RestorationTileStripeCount(grid) || stripeStart > stripeEnd {
+		return RestorationPlaneApplyResult{}, ErrInvalidPlan
+	}
+	layout, err := bindRestorationInPlaceU8Layout(grid, dataSeg)
+	if err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	return walkRestorationPlaneStripesInPlaceU8(grid, records, boundaries, buffer, layout, scratch, stripeStart, stripeEnd)
+}
+
+func walkRestorationPlaneStripesInPlaceU8(grid RestorationPlaneGrid, records []RestorationUnitRecord, boundaries RestorationStripeBoundaries, buffer av1frame.Plane, layout restorationInPlaceU8Layout, scratch RestorationUnitRecordBoundaryScratch, stripeStart, stripeEnd int) (RestorationPlaneApplyResult, error) {
+	var result RestorationPlaneApplyResult
+	stripeH := int(av1restoration.ProcUnitSize >> boolToShift(grid.SubsamplingY))
+	off := int(restorationUnitOffset >> boolToShift(grid.SubsamplingY))
+	unitSize := int(grid.UnitSize)
+	horz := int(grid.HorzUnits)
+	vert := int(grid.VertUnits)
+	if stripeH <= 0 || unitSize <= 0 || horz <= 0 || vert <= 0 {
+		return RestorationPlaneApplyResult{}, ErrInvalidPlan
+	}
+	for t := stripeStart; t < stripeEnd; t++ {
+		y0 := max(0, t*stripeH-off)
+		row := min((y0+off)/unitSize, vert-1)
+		prevBak, curBak := layout.Backup[0], layout.Backup[1]
+		leftFiltered := false
+		for col := 0; col < horz; col++ {
+			i := row*horz + col
+			record := &records[i]
+			firstStripe := (int(record.Rect.Y0) + off) / stripeH
+			local := t - firstStripe
+			if local < 0 || local >= int(record.StripeCount) {
+				return RestorationPlaneApplyResult{}, ErrInvalidPlan
+			}
+			if local == 0 {
+				// A unit is validated with its first stripe.
+				if err := validateRestorationUnitRecord(grid, *record); err != nil {
+					return RestorationPlaneApplyResult{}, err
+				}
+				result.Records++
+				if record.Unit.Type != parser.RestorationNone {
+					result.FilteredRecords++
+				}
+			}
+			if record.Unit.Type == parser.RestorationNone {
+				leftFiltered = false
+				continue
+			}
+			stripe, ok, err := grid.ProcessingStripe(record.Rect, local)
+			if err != nil {
+				return RestorationPlaneApplyResult{}, err
+			}
+			if !ok || int(stripe.TileStripe) != t {
+				return RestorationPlaneApplyResult{}, ErrInvalidPlan
+			}
+			// The stripe's rows of this unit, as the backup/halo rectangle.
+			stripeRect := record.Rect
+			stripeRect.Y0, stripeRect.Y1 = stripe.Rect.Y0, stripe.Rect.Y1
+			if col+1 < horz && records[i+1].Unit.Type != parser.RestorationNone {
+				if err := backupRestorationRightColsU8(buffer.Pix, buffer.Stride, stripeRect, curBak); err != nil {
+					return RestorationPlaneApplyResult{}, err
+				}
+			}
+			var leftBak []uint8
+			if col > 0 && leftFiltered {
+				leftBak = prevBak
+			}
+			if err := assembleRestorationStripeBandU8(grid, stripeRect, stripe, boundaries, buffer, layout.Band, layout.BandStride, leftBak); err != nil {
+				return RestorationPlaneApplyResult{}, err
+			}
+			unitCount, err := applyRestorationStripeUnitsInPlaceU8(grid, *record, stripe, layout.Band, layout.BandStride, buffer, scratch.Unit)
+			if err != nil {
+				return RestorationPlaneApplyResult{}, err
+			}
+			result.Stripes++
+			result.ProcessingUnits += uint32(unitCount)
+			prevBak, curBak = curBak, prevBak
+			leftFiltered = true
+		}
+	}
+	return result, nil
 }
