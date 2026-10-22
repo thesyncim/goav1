@@ -553,7 +553,7 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{SkipTransform: skip}); err != nil {
 		return fmt.Errorf("mark prefix: %w", err)
 	}
-	if err := modeCtx.MarkInterMotionAndFilters(block.Size, int(block.X4), int(block.Y4), motionResult, blockFilters, hasChroma); err != nil {
+	if err := scratch.EncoderCommitInter(block, motionResult, blockFilters, hasChroma); err != nil {
 		return err
 	}
 	if refs.Compound {
@@ -869,7 +869,7 @@ func (st *lossyEncodeState) decideIntraPBlock(src SourceFrame420, recon *SourceF
 	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
 		return fmt.Errorf("intra mark prefix: %w", err)
 	}
-	if err := modeCtx.MarkIntra(block.Size, int(block.X4), int(block.Y4), true, mode); err != nil {
+	if err := scratch.EncoderCommitIntra(block, mode); err != nil {
 		return fmt.Errorf("mark intra: %w", err)
 	}
 	hasChroma := !st.color.MonoChrome

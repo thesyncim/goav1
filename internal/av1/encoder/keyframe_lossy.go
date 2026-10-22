@@ -751,6 +751,10 @@ type lossyEncodeState struct {
 	sourceContentCols  int
 	varPartGrid        []realtimeVarPartSB
 	varPartCols        int
+
+	// refmvsScratch is the tile scratch whose dav1d refmvs rows the current
+	// serial walk bound (bindRefmvs), or nil.
+	refmvsScratch *tile.BlockLoopScratch
 }
 
 func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap) ([]byte, error) {

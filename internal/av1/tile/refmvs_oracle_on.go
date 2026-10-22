@@ -141,3 +141,37 @@ func refmvsOracleWholeField(req *BlockLoopRequest) *TemporalMotionField {
 	}
 	return field
 }
+
+// refmvsOracleEncoderStack diffs an encoder refmvs_find stack against the
+// legacy BuildReferenceMVStack one, field by field as the encoder consumes it.
+func refmvsOracleEncoderStack(c *BlockModeContext, req *ReferenceMVStackRequest, refs InterReferencesResult, got *ReferenceMVStackResult) {
+	if req == nil {
+		return
+	}
+	want, err := c.BuildReferenceMVStack(*req)
+	if err != nil {
+		panic(err)
+	}
+	fail := func(what string) {
+		panic(fmt.Sprintf("refmvs oracle: encoder %s at mi_row=%d mi_col=%d size=%d refs=%v\n legacy ctx=%#x %+v\n dav1d  ctx=%#x %+v",
+			what, req.MIRow, req.MICol, req.Size, refs, want.ModeContext, want.Stack, got.ModeContext, got.Stack))
+	}
+	if want.Stack.Count != got.Stack.Count {
+		fail("count")
+	}
+	if want.ModeContext != got.ModeContext {
+		fail("mode context")
+	}
+	for i := range int(got.Stack.Count) {
+		l, d := want.Stack.Candidates[i], got.Stack.Candidates[i]
+		if l.This != d.This || (refs.Compound && l.Compound != d.Compound) {
+			fail(fmt.Sprintf("mv[%d]", i))
+		}
+		if (l.Weight >= RefMVCategoryLevel) != (d.Weight >= RefMVCategoryLevel) {
+			fail(fmt.Sprintf("weight class[%d]", i))
+		}
+	}
+	if !refs.Compound && (want.Stack.SingleRefValid != got.Stack.SingleRefValid || want.Stack.SingleRefMVs != got.Stack.SingleRefMVs) {
+		fail("single ref mvs")
+	}
+}

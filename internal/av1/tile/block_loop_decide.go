@@ -93,7 +93,8 @@ func WalkBlockLoopDecideSB(scratch *BlockLoopScratch, carrier *BlockLoopContextC
 	neighborMIColStart := req.neighborMIColStart()
 	neighborMIRowStart := req.neighborMIRowStart()
 	rootColIndex := int((miCol - miColStart) / rootSize)
-	if err := blockLoopLoadRootContext(scratch, carrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, sbSizeMIB); err != nil {
+	keepMotion := scratch.keepLegacyMotion()
+	if err := blockLoopLoadRootContextMotion(scratch, carrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, sbSizeMIB, keepMotion); err != nil {
 		return err
 	}
 	rootReq := BlockWalkRequest{
@@ -111,7 +112,7 @@ func WalkBlockLoopDecideSB(scratch *BlockLoopScratch, carrier *BlockLoopContextC
 	}); err != nil {
 		return err
 	}
-	if err := blockLoopStoreRootContext(scratch, carrier, rootColIndex, sbSizeMIB); err != nil {
+	if err := blockLoopStoreRootContextMotion(scratch, carrier, rootColIndex, sbSizeMIB, keepMotion); err != nil {
 		return err
 	}
 	captureDiagonalCornerToPending(carrier, rootColIndex+1, &scratch.Mode, sbSizeMIB)
@@ -140,11 +141,17 @@ func WalkBlockLoopDecide(scratch *BlockLoopScratch, carrier *BlockLoopContextCar
 	neighborMIColStart := req.neighborMIColStart()
 	neighborMIRowStart := req.neighborMIRowStart()
 	ensureIntrabcDiagonalCarriers(carrier)
+	keepMotion := scratch.keepLegacyMotion()
 	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
-		promotePendingDiagonalCarriers(carrier)
+		if keepMotion {
+			promotePendingDiagonalCarriers(carrier)
+		}
+		if scratch.Refmvs.bound {
+			scratch.Refmvs.sbrowInit(int32(miRow/rootSize), int32(rootSize))
+		}
 		for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
 			rootColIndex := int((miCol - miColStart) / rootSize)
-			if err := blockLoopLoadRootContext(scratch, carrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, sbSizeMIB); err != nil {
+			if err := blockLoopLoadRootContextMotion(scratch, carrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, sbSizeMIB, keepMotion); err != nil {
 				return err
 			}
 			rootReq := BlockWalkRequest{
@@ -162,10 +169,12 @@ func WalkBlockLoopDecide(scratch *BlockLoopScratch, carrier *BlockLoopContextCar
 			}); err != nil {
 				return err
 			}
-			if err := blockLoopStoreRootContext(scratch, carrier, rootColIndex, sbSizeMIB); err != nil {
+			if err := blockLoopStoreRootContextMotion(scratch, carrier, rootColIndex, sbSizeMIB, keepMotion); err != nil {
 				return err
 			}
-			captureDiagonalCornerToPending(carrier, rootColIndex+1, &scratch.Mode, sbSizeMIB)
+			if keepMotion {
+				captureDiagonalCornerToPending(carrier, rootColIndex+1, &scratch.Mode, sbSizeMIB)
+			}
 		}
 	}
 	return nil

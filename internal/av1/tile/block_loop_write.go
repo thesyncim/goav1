@@ -41,11 +41,17 @@ func WalkBlockLoopWrite(w *entropy.Writer, partCDFs *PartitionCDFs, scratch *Blo
 	// and its MV predictors desync from the decoder for blocks whose corner
 	// neighbor is 16x16 or larger.
 	ensureIntrabcDiagonalCarriers(carrier)
+	keepMotion := scratch.keepLegacyMotion()
 	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
-		promotePendingDiagonalCarriers(carrier)
+		if keepMotion {
+			promotePendingDiagonalCarriers(carrier)
+		}
+		if scratch.Refmvs.bound {
+			scratch.Refmvs.sbrowInit(int32(miRow/rootSize), int32(rootSize))
+		}
 		for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
 			rootColIndex := int((miCol - miColStart) / rootSize)
-			if err := blockLoopLoadRootContext(scratch, carrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, sbSizeMIB); err != nil {
+			if err := blockLoopLoadRootContextMotion(scratch, carrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, sbSizeMIB, keepMotion); err != nil {
 				return err
 			}
 			rootReq := BlockWalkRequest{
@@ -63,10 +69,12 @@ func WalkBlockLoopWrite(w *entropy.Writer, partCDFs *PartitionCDFs, scratch *Blo
 			}); err != nil {
 				return err
 			}
-			if err := blockLoopStoreRootContext(scratch, carrier, rootColIndex, sbSizeMIB); err != nil {
+			if err := blockLoopStoreRootContextMotion(scratch, carrier, rootColIndex, sbSizeMIB, keepMotion); err != nil {
 				return err
 			}
-			captureDiagonalCornerToPending(carrier, rootColIndex+1, &scratch.Mode, sbSizeMIB)
+			if keepMotion {
+				captureDiagonalCornerToPending(carrier, rootColIndex+1, &scratch.Mode, sbSizeMIB)
+			}
 		}
 	}
 	return nil
