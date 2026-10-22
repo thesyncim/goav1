@@ -153,7 +153,7 @@ func (st *lossyEncodeState) buildSVTPD0(sb *svtPD0SB, src, ref SourceFrame420, p
 	// disallow_8x8 already holds it at 16 for a complete SB.
 	minSq := 16
 	if st.depthRemovalLevel != 0 && me != nil {
-		dec := realtimeDepthRemovalDecide(st.depthRemovalLevel, st.qIndex, me)
+		dec := realtimeDepthRemovalDecide(st.svtDepthRemovalLevelForSB(), st.svtDepthRemovalInputs(px, py), me)
 		switch {
 		case dec.below64:
 			sb.part64 = tile.PartitionNone
@@ -307,4 +307,40 @@ func svtPD0PixelStats(src []byte, srcStride int, ref []byte, refStride, n int) (
 		return pixelStats16x16(src, srcStride, ref, refStride)
 	}
 	return pixelStats8x8(src, srcStride, ref, refStride)
+}
+
+// svtDepthRemovalLevelForSB is the SB's depth-removal level after the
+// delta-q modulation (the SB quantizer is already selected by useSBQuant).
+func (st *lossyEncodeState) svtDepthRemovalLevelForSB() uint8 {
+	return svtDepthRemovalLevelForSB(st.depthRemovalLevel, st.sbQIndex != nil, st.quantQ, svtPictureQP(st.qIndex))
+}
+
+// svtDepthRemovalInputs gathers set_depth_removal_level_controls' per-SB
+// inputs for the SB at (px, py) once useSBQuant selected its quantizer.
+func (st *lossyEncodeState) svtDepthRemovalInputs(px, py int) svtDepthRemovalInputs {
+	dec := st.lpd1SB(px, py)
+	// svt_aom_compute_fast_lambda: av1_lambda_mode_decision8_bit_sad at the
+	// SB qindex through update_lambda's temporal-layer factor and the rtc
+	// me_q_index modulation (rc_process.c:393-454).
+	rdmult := int64(av1LambdaModeDecision8BitSAD[st.quantQ])
+	tl := st.lpd1.tlFactor
+	if tl == 0 {
+		tl = 150
+	}
+	rdmult = (rdmult * tl) >> 7
+	f := dec.meQFactor
+	if f == 0 {
+		f = 128
+	}
+	in := svtDepthRemovalInputs{
+		pictureQP:  svtPictureQP(st.qIndex),
+		fastLambda: (rdmult * f) >> 7,
+		refMinSq:   0xFF,
+	}
+	cur, ref := st.lpd1.cur, st.lpd1.ref
+	if cur != nil && ref != nil && ref.valid && !ref.sliceI && ref.width == cur.width && ref.height == cur.height &&
+		cur.poc-ref.poc <= 1 && ref.poc-cur.poc <= 1 {
+		in.refMinSq = ref.sb[(py/64)*ref.cols+px/64].minSq
+	}
+	return in
 }

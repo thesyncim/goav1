@@ -1497,6 +1497,8 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			e.lpd1Cur = new(lpd1Frame)
 		}
 		e.lpd1Cur.begin(src.Width, src.Height, &e.hme, effQ)
+		// The pipelined base runs before frameIndex advances (lpd1FrameBias).
+		e.lpd1Cur.poc = e.frameIndex + e.lpd1FrameBias
 		lpd1Setup.cur = e.lpd1Cur
 	}
 	e.pc.st.lpd1Pending = lpd1Setup

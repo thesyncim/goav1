@@ -345,6 +345,7 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 			e.lpd1Leaf = new(lpd1Frame)
 		}
 		e.lpd1Leaf.begin(src.Width, src.Height, &e.leafHME, effQ)
+		e.lpd1Leaf.poc = e.leafJob.frameIndex
 		leafSetup.cur = e.lpd1Leaf
 	}
 	e.leafPC.st.lpd1Pending = leafSetup

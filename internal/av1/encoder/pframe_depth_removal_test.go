@@ -128,7 +128,7 @@ func TestRealtimeDepthRemovalBelow16Arms(t *testing.T) {
 	me.dist32 = 1 << 24
 	me.dist16, me.dist8 = 100, 90
 	me.me8x8CostVariance = 1 << 30 // noise guard zeroes the dev threshold
-	dec := realtimeDepthRemovalDecide(9, 120, &me)
+	dec := realtimeDepthRemovalDecide(9, testDepthRemovalInputs(120), &me)
 	if !dec.cost16Arm || !dec.below16 {
 		t.Fatalf("cost arm should fire on tiny dist16: %+v", dec)
 	}
@@ -139,7 +139,7 @@ func TestRealtimeDepthRemovalBelow16Arms(t *testing.T) {
 	// Large distortion with tight 16->8 deviation: only the dev arm fires.
 	me.dist16, me.dist8 = 900000, 880000 // dev16 = 22
 	me.me8x8CostVariance = 0             // LOW guard: dev th <<= 2
-	dec = realtimeDepthRemovalDecide(9, 120, &me)
+	dec = realtimeDepthRemovalDecide(9, testDepthRemovalInputs(120), &me)
 	if dec.cost16Arm {
 		t.Fatalf("cost arm must not fire on large dist16: %+v", dec)
 	}
@@ -152,14 +152,14 @@ func TestRealtimeDepthRemovalBelow16Arms(t *testing.T) {
 
 	// Wide deviation: nothing fires.
 	me.dist16, me.dist8 = 900000, 200000
-	dec = realtimeDepthRemovalDecide(9, 120, &me)
+	dec = realtimeDepthRemovalDecide(9, testDepthRemovalInputs(120), &me)
 	if dec.below16 {
 		t.Fatalf("no arm should fire on wide deviation: %+v", dec)
 	}
 
 	// Level 0 disables the gate.
 	me.dist16, me.dist8 = 100, 90
-	dec = realtimeDepthRemovalDecide(0, 120, &me)
+	dec = realtimeDepthRemovalDecide(0, testDepthRemovalInputs(120), &me)
 	if dec.below16 || dec.below32 || dec.below64 {
 		t.Fatalf("level 0 must disable the gate: %+v", dec)
 	}
@@ -179,7 +179,7 @@ func TestRealtimeDepthRemovalBelow32And64Arms(t *testing.T) {
 	me.dist64 = 1 << 24
 	me.dist32, me.dist16, me.dist8 = 4000, 100, 90
 	me.me8x8CostVariance = 1 << 30 // HIGH noise band zeroes the dev thresholds
-	dec := realtimeDepthRemovalDecide(9, 120, &me)
+	dec := realtimeDepthRemovalDecide(9, testDepthRemovalInputs(120), &me)
 	if !dec.cost32Arm || !dec.below32 {
 		t.Fatalf("32 cost arm should fire on tiny dist32: %+v", dec)
 	}
@@ -194,7 +194,7 @@ func TestRealtimeDepthRemovalBelow32And64Arms(t *testing.T) {
 	// dev arm fires. dev32To16 = 22 < 150, dev32To8 = 46 < 187.
 	me.dist32, me.dist16, me.dist8 = 900000, 880000, 860000
 	me.me8x8CostVariance = 0 // LOW band leaves dev32To16Th untouched
-	dec = realtimeDepthRemovalDecide(9, 120, &me)
+	dec = realtimeDepthRemovalDecide(9, testDepthRemovalInputs(120), &me)
 	if dec.cost32Arm {
 		t.Fatalf("32 cost arm must not fire on large dist32: %+v", dec)
 	}
@@ -208,7 +208,7 @@ func TestRealtimeDepthRemovalBelow32And64Arms(t *testing.T) {
 	// The middle noise band halves dev32To16Th (75, 32->8 th 93): still fires
 	// at 22/46. picture_qp 30 divides the raw variance by 23.
 	me.me8x8CostVariance = 30000 * 23 // 30000 after the qp division: middle band
-	dec = realtimeDepthRemovalDecide(9, 120, &me)
+	dec = realtimeDepthRemovalDecide(9, testDepthRemovalInputs(120), &me)
 	if !dec.dev32Arm {
 		t.Fatalf("32 dev arm should survive the middle noise band: %+v", dec)
 	}
@@ -216,14 +216,14 @@ func TestRealtimeDepthRemovalBelow32And64Arms(t *testing.T) {
 	// The dual condition: tight 32->16 but wide 32->8 must NOT fire.
 	me.dist32, me.dist16, me.dist8 = 900000, 880000, 200000
 	me.me8x8CostVariance = 0
-	dec = realtimeDepthRemovalDecide(9, 120, &me)
+	dec = realtimeDepthRemovalDecide(9, testDepthRemovalInputs(120), &me)
 	if dec.dev32Arm || dec.below32 {
 		t.Fatalf("32 dev arm requires BOTH deviations tight: %+v", dec)
 	}
 
 	// Tiny 64x64 cost: the (cost-only) 64 arm fires.
 	me.dist64 = 4000
-	dec = realtimeDepthRemovalDecide(9, 120, &me)
+	dec = realtimeDepthRemovalDecide(9, testDepthRemovalInputs(120), &me)
 	if !dec.below64 {
 		t.Fatalf("64 cost arm should fire on tiny dist64: %+v", dec)
 	}
@@ -235,10 +235,43 @@ func TestRealtimeDepthRemovalBelow32And64Arms(t *testing.T) {
 	me.dist64 = 1 << 24
 	me.dist32, me.dist16, me.dist8 = 6000, 100, 90
 	me.me8x8CostVariance = 1 << 30
-	if dec = realtimeDepthRemovalDecide(9, 120, &me); dec.cost32Arm {
+	if dec = realtimeDepthRemovalDecide(9, testDepthRemovalInputs(120), &me); dec.cost32Arm {
 		t.Fatalf("32 cost arm must miss at level 9 with dist32=6000: %+v", dec)
 	}
-	if dec = realtimeDepthRemovalDecide(14, 120, &me); !dec.cost32Arm {
+	if dec = realtimeDepthRemovalDecide(14, testDepthRemovalInputs(120), &me); !dec.cost32Arm {
 		t.Fatalf("32 cost arm should fire at level 14 with dist32=6000: %+v", dec)
+	}
+}
+
+// testDepthRemovalInputs is a frame-uniform SB at qindex q with no reference
+// feedback.
+func testDepthRemovalInputs(q uint8) svtDepthRemovalInputs {
+	return svtDepthRemovalInputs{pictureQP: svtPictureQP(q), fastLambda: int64(av1LambdaModeDecision8BitSAD[q]), refMinSq: 0xFF}
+}
+
+func TestSVTDepthRemovalLevelForSB(t *testing.T) {
+	qp := svtPictureQP(120) // 30 -> quantizer_to_qindex 120
+	cases := []struct {
+		sbQ  uint8
+		want uint8
+	}{{120, 5}, {119, 4}, {117, 3}, {114, 2}, {108, 1}, {100, 1}, {130, 5}}
+	for _, c := range cases {
+		if got := svtDepthRemovalLevelForSB(5, true, c.sbQ, qp); got != c.want {
+			t.Errorf("sbQ %d: level %d, want %d", c.sbQ, got, c.want)
+		}
+	}
+	if got := svtDepthRemovalLevelForSB(5, false, 100, qp); got != 5 {
+		t.Errorf("no delta q: level %d, want 5", got)
+	}
+}
+
+func TestSVTPictureQP(t *testing.T) {
+	for _, c := range []struct {
+		q    uint8
+		want int64
+	}{{0, 4}, {120, 30}, {121, 30}, {122, 31}, {255, 63}} {
+		if got := svtPictureQP(c.q); got != c.want {
+			t.Errorf("svtPictureQP(%d) = %d, want %d", c.q, got, c.want)
+		}
 	}
 }
