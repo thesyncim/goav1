@@ -297,7 +297,8 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 						(lpd1UseShortcuts || st.lpd1Tx.useUVShortcutsOnYCoeffs) {
 						complexity = st.lpd1ChromaComplexityPred(src, lumaPX, lumaPY, bw, chromaPX, chromaPY, cbw, cbh, complexity)
 					}
-					n4U, n4V = st.lpd1ChromaN4(block.Size, lpd1UseShortcuts, complexity, lumaZero, txPlan, lumaBypass)
+					lumaTX, _ := st.interLumaTXAndScan(bw, bh)
+					n4U, n4V = st.lpd1ChromaN4(block.Size, lpd1UseShortcuts, complexity, lumaZero, lumaBypass, st.lumaQ[:], lumaTX, txPlan.Variable())
 				}
 				uZero, vZero := true, true
 				if comp == lpd1ComponentChroma || comp == lpd1ComponentChromaCb {
@@ -531,11 +532,19 @@ const lpd1InitBitEst = 6000
 // path (update_skip_coeff_ctx = 0) with frame-frozen skip_fac_bits.
 func (st *lossyEncodeState) lpd1BypassTX(sse uint32, bw, bh int, th, lambda int64) bool {
 	rate := st.mds0BestRate
-	if rate < 0 || th == 0 {
+	if rate < 0 {
 		return false
 	}
 	// fast_luma_rate carries the is_inter flag (av1_inter_fast_cost_light).
-	rate += st.lpd1IsInterBits
+	return st.lpd1BypassTXRate(rate+st.lpd1IsInterBits, sse, bw, bh, th, lambda)
+}
+
+// lpd1BypassTXRate is lpd1BypassTX for a candidate whose fast_luma_rate
+// (rate) and prediction SSE are given.
+func (st *lossyEncodeState) lpd1BypassTXRate(rate int64, sse uint32, bw, bh int, th, lambda int64) bool {
+	if th == 0 {
+		return false
+	}
 	skip0, skip1 := st.lpd1SkipBits[0], st.lpd1SkipBits[1]
 	est := rdoqCostRD(lambda, rate+skip1, int64(sse)<<4)
 	thCost := rdoqCostRD(lambda, rate+skip0+lpd1InitBitEst, int64(bw*bh)<<4)
@@ -609,7 +618,9 @@ func (st *lossyEncodeState) lpd1ChromaComplexityPred(src SourceFrame420, lumaPX,
 // is set, or (use_uv_shortcuts_on_y_coeffs) when luma coded no coefficient or
 // fewer than (tx_w_uv >> 4) * (tx_h_uv >> 4) of them (cnt_nz_coeff is the
 // luma end of block).
-func (st *lossyEncodeState) lpd1ChromaN4(block tile.BlockSize, useShortcuts bool, complexity lpd1Component, lumaZero bool, txPlan realtimeInterTXPlan, lumaBypass bool) (n4U, n4V bool) {
+// lumaQ holds the luma levels of the single lumaTX transform (lumaSplit: a
+// var-tx plan, whose end of block the detector does not read).
+func (st *lossyEncodeState) lpd1ChromaN4(block tile.BlockSize, useShortcuts bool, complexity lpd1Component, lumaZero bool, lumaBypass bool, lumaQ []int16, lumaTX tile.TransformSize, lumaSplit bool) (n4U, n4V bool) {
 	cbOK := complexity == lpd1ComponentLuma || complexity == lpd1ComponentChromaCr
 	crOK := complexity == lpd1ComponentLuma || complexity == lpd1ComponentChromaCb
 	if useShortcuts {
@@ -626,11 +637,9 @@ func (st *lossyEncodeState) lpd1ChromaN4(block tile.BlockSize, useShortcuts bool
 		}
 		dims, _ := chromaTX.Dimensions()
 		th := (int(dims.W4) * 4 >> 4) * (int(dims.H4) * 4 >> 4)
-		if th > 0 && !txPlan.Variable() {
-			bw, bh, _ := pframeBlockDims(block)
-			lumaTX, _ := st.interLumaTXAndScan(bw, bh)
+		if th > 0 && !lumaSplit {
 			g := rdoqGeometry(lumaTX, 0)
-			cond = rdoqEOBFromIScan(st.lumaQ[:g.area], g.iscan) < th
+			cond = rdoqEOBFromIScan(lumaQ[:g.area], g.iscan) < th
 		}
 	}
 	return cond && cbOK, cond && crOK

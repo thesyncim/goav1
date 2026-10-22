@@ -755,6 +755,10 @@ type lossyEncodeState struct {
 	// bit; -1 when MDS0 did not pick the block's mode), the input of
 	// the light-PD1 TX bypass.
 	mds0BestRate int64
+	// mds0Intra carries the DC candidate's MDS0 statistics when it won the
+	// block (mds0IntraDCWins): the inputs of the intra full loop's TX
+	// shortcuts (pframe_lpd1_intra.go).
+	mds0Intra mds0IntraStats
 	// lpd1 carries the picture's light-PD1 level setup and statistics
 	// (pframe_lpd1_level.go); lpd1Pending hands the next tile encode its
 	// setup the way sbQPending does. lpd1Dec caches the current SB's
@@ -1482,6 +1486,10 @@ func (st *lossyEncodeState) prepareIntraTXB(srcPlane []byte, stride int, px, py,
 	tran := &st.tranScratch
 	if err := forwardTransformBlock8BitResidualTrusted(tran[:cn], residual[:n], st.dqScratch[:n], w, h, transform.TypeDCTDCT); err != nil {
 		return geo, false, err
+	}
+	if st.pfN4 {
+		// N4_SHAPE (the light-PD1 chroma shortcut): only the low quarter.
+		svtPFN4Zero(tran[:cn], w, h, geo.coeffWidth, geo.coeffHeight)
 	}
 	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
 		return geo, false, err

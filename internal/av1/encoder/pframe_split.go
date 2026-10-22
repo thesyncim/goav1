@@ -338,6 +338,7 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	// The MDS0 winner statistics belong to this block only (a block that
 	// left MDS0 for intra must not hand them to the next).
 	st.mds0BestRate = -1
+	st.mds0Intra.valid = false
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
 	if err := st.useSBQuant(lumaPX, lumaPY); err != nil {
@@ -857,46 +858,45 @@ func (st *lossyEncodeState) decideIntraPBlock(src SourceFrame420, recon *SourceF
 	}
 
 	coeffStart := len(rec.coeffs)
-	// Luma: quantize against the chosen prediction, record, reconstruct.
-	if err := st.reconRecordedIntraTXB(rec, recon.Y, src.Y, src.YStride, lumaPX, lumaPY, n, n, st.yQuant, lumaTX, pred); err != nil {
+	var cg *intraChromaGeom
+	var cgv intraChromaGeom
+	if hasChroma {
+		var err error
+		if cg, _, _, err = st.intraChromaGeometry(&cgv, block, lumaPX, lumaPY); err != nil {
+			return err
+		}
+	}
+	lumaGeo, err := txBlockGeometryForTransformSize(lumaTX)
+	if err != nil {
+		return err
+	}
+	chromaCN := 0
+	if cg != nil {
+		chromaGeo, err := txBlockGeometryForTransformSize(cg.tx)
+		if err != nil {
+			return err
+		}
+		chromaCN = chromaGeo.coeffCount
+	}
+	// One contiguous grab: a later grab may move the arena.
+	all := rec.grabCoeffs(lumaGeo.coeffCount + 2*chromaCN)
+	qY := all[:lumaGeo.coeffCount]
+	qU := all[lumaGeo.coeffCount : lumaGeo.coeffCount+chromaCN]
+	qV := all[lumaGeo.coeffCount+chromaCN:]
+	fl, err := st.lpd1IntraFullLoop(src, recon, block, lumaPX, lumaPY, n, lumaTX, cg, qY, qU, qV)
+	if err != nil {
+		return fmt.Errorf("intra full loop: %w", err)
+	}
+	// Reconstruct as the fused path does: dequant + inverse + add.
+	if err := st.reconRecordedIntraPlane(recon.Y, pred, src.YStride, lumaPX, lumaPY, n, n, st.yQuant, lumaTX, qY, fl.lumaGeo); err != nil {
 		return fmt.Errorf("intra luma txb: %w", err)
 	}
-	if !hasChroma {
-		st.noteIntraSkip(rec, r, modeCtx, block, coeffStart)
-		if st.decisionStats != nil {
-			st.decisionStats.noteIntraBlock(block.Size)
+	if cg != nil {
+		if err := st.reconRecordedIntraPlane(recon.U, st.predU[:cg.cw*cg.ch], src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, st.uQuant, cg.tx, qU, fl.chromaGeo); err != nil {
+			return fmt.Errorf("intra chroma 1 txb: %w", err)
 		}
-		return nil
-	}
-	chromaBlock, err := tile.PlaneBlockSize(block.Size, st.color, 1)
-	if err != nil {
-		return fmt.Errorf("chroma plane block: %w", err)
-	}
-	cw, ch, err := planeBlockPixels(chromaBlock)
-	if err != nil {
-		return fmt.Errorf("chroma plane block dimensions: %w", err)
-	}
-	chromaTX, err := tile.MaxTransformSize(block.Size, st.color, 1)
-	if err != nil {
-		return fmt.Errorf("chroma transform size: %w", err)
-	}
-	chromaX := chromaXForColor(lumaPX, st.color)
-	chromaY := chromaYForColor(lumaPY, st.color)
-	for plane := 1; plane <= 2; plane++ {
-		data, rdata := src.U, recon.U
-		q := st.uQuant
-		if plane == 2 {
-			data, rdata = src.V, recon.V
-			q = st.vQuant
-		}
-		// DC prediction from the reconstructed edges, as encodeTXBAvailRect.
-		dc := dcPredictRect(rdata, src.ChromaStride, chromaX, chromaY, cw, ch, block.HaveTop, block.HaveLeft)
-		cpred := st.predU[:cw*ch]
-		for i := range cpred {
-			cpred[i] = dc
-		}
-		if err := st.reconRecordedIntraTXB(rec, rdata, data, src.ChromaStride, chromaX, chromaY, cw, ch, q, chromaTX, cpred); err != nil {
-			return fmt.Errorf("intra chroma %d txb: %w", plane, err)
+		if err := st.reconRecordedIntraPlane(recon.V, st.predV[:cg.cw*cg.ch], src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, st.vQuant, cg.tx, qV, fl.chromaGeo); err != nil {
+			return fmt.Errorf("intra chroma 2 txb: %w", err)
 		}
 	}
 	st.noteIntraSkip(rec, r, modeCtx, block, coeffStart)
@@ -906,36 +906,17 @@ func (st *lossyEncodeState) decideIntraPBlock(src SourceFrame420, recon *SourceF
 	return nil
 }
 
-// reconRecordedIntraTXB is the write-free half of encodeTXBPredRect: residual,
-// forward DCT, quantize into the record arena, then the decoder-exact
-// dequant + inverse + add reconstruction of reconInterTXBResult, as the fused
-// intra path does.
-func (st *lossyEncodeState) reconRecordedIntraTXB(rec *pframeSplitRecord, reconPlane, srcPlane []byte, stride, px, py, w, h int,
-	q quantize.Quantizer, size tile.TransformSize, pred []byte) error {
-	geo, err := txBlockGeometryForTransformSize(size)
-	if err != nil {
-		return err
-	}
-	if !geo.matchesDimensions(w, h) {
-		return tile.ErrInvalidDecodeState
-	}
+// reconRecordedIntraPlane is the decoder-exact reconstruction of one
+// recorded intra TXB (reconInterTXBResult driven by the levels' own end of
+// block), as the fused path's emitIntraTXB produces it.
+func (st *lossyEncodeState) reconRecordedIntraPlane(reconPlane, pred []byte, stride, px, py, w, h int,
+	q quantize.Quantizer, size tile.TransformSize, qcoeff []int16, geo txBlockGeometry) error {
 	scan, err := st.scanForLeafTX(size)
 	if err != nil {
 		return err
 	}
-	n := geo.sampleCount
 	cn := geo.coeffCount
-	residual := &st.resScratch
-	residualBlockImpl(residual[:n], srcPlane, py*stride+px, stride, pred, w, w, h)
-	tran := &st.tranScratch
-	if err := forwardTransformBlock8BitResidualTrusted(tran[:cn], residual[:n], st.dqScratch[:n], w, h, transform.TypeDCTDCT); err != nil {
-		return err
-	}
-	qcoeff := rec.grabCoeffs(cn)
-	if err := quantize.QuantizeBlockScaledB(qcoeff, geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
-		return err
-	}
-	return st.reconInterTXBResult(reconPlane, pred, w, stride, px, py, w, h, q, qcoeff, geo, scan, transform.TypeDCTDCT, interTXBResult(qcoeff, scan, cn))
+	return st.reconInterTXBResult(reconPlane, pred, w, stride, px, py, w, h, q, qcoeff[:cn], geo, scan, transform.TypeDCTDCT, interTXBResult(qcoeff[:cn], scan, cn))
 }
 
 // writeIntraPBlock is the entropy half of encodeIntraPBlock, replaying the

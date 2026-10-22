@@ -1229,6 +1229,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// The MDS0 winner statistics belong to this block only (a block that
 	// left MDS0 for intra must not hand them to the next).
 	st.mds0BestRate = -1
+	st.mds0Intra.valid = false
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
 	if err := st.useSBQuant(lumaPX, lumaPY); err != nil {
@@ -1750,55 +1751,28 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	} else {
 		fillIntraDCPred(pred, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft)
 	}
-	lumaGeo, lumaZero, err := st.prepareIntraTXB(src.Y, src.YStride, lumaPX, lumaPY, n, n, st.yQuant, lumaTX, pred, st.lumaQ[:])
-	if err != nil {
-		return fmt.Errorf("intra luma txb: %w", err)
-	}
-	skip := lumaZero
 	var chromaBlock tile.BlockSize
-	var chromaTX tile.TransformSize
 	var chromaScan []int16
-	var chromaGeo txBlockGeometry
+	var cg *intraChromaGeom
+	var cgv intraChromaGeom
 	var cw, ch, chromaX, chromaY int
 	if hasChroma {
-		chromaBlock, err = tile.PlaneBlockSize(block.Size, st.color, 1)
+		var err error
+		cg, chromaBlock, chromaScan, err = st.intraChromaGeometry(&cgv, block, lumaPX, lumaPY)
 		if err != nil {
-			return fmt.Errorf("chroma plane block: %w", err)
+			return err
 		}
-		cw, ch, err = planeBlockPixels(chromaBlock)
-		if err != nil {
-			return fmt.Errorf("chroma plane block dimensions: %w", err)
-		}
-		chromaTX, err = tile.MaxTransformSize(block.Size, st.color, 1)
-		if err != nil {
-			return fmt.Errorf("chroma transform size: %w", err)
-		}
-		var ok bool
-		chromaScan, ok = st.scanForTransformSize(chromaTX)
-		if !ok {
-			chromaScan, ok = st.scanForThinTransformSize(chromaTX)
-		}
-		if !ok {
-			return fmt.Errorf("encoder: unsupported chroma transform %d", chromaTX)
-		}
-		chromaX = chromaXForColor(lumaPX, st.color)
-		chromaY = chromaYForColor(lumaPY, st.color)
-		for plane := 1; plane <= 2; plane++ {
-			data, rdata, cpred, qc, q := src.U, recon.U, st.predU[:cw*ch], st.uQ[:], st.uQuant
-			if plane == 2 {
-				data, rdata, cpred, qc, q = src.V, recon.V, st.predV[:cw*ch], st.vQ[:], st.vQuant
-			}
-			dc := dcPredictRect(rdata, src.ChromaStride, chromaX, chromaY, cw, ch, block.HaveTop, block.HaveLeft)
-			for i := range cpred {
-				cpred[i] = dc
-			}
-			var zero bool
-			chromaGeo, zero, err = st.prepareIntraTXB(data, src.ChromaStride, chromaX, chromaY, cw, ch, q, chromaTX, cpred, qc)
-			if err != nil {
-				return fmt.Errorf("intra chroma %d txb: %w", plane, err)
-			}
-			skip = skip && zero
-		}
+		cw, ch, chromaX, chromaY = cg.cw, cg.ch, cg.x, cg.y
+	}
+	fl, err := st.lpd1IntraFullLoop(src, recon, block, lumaPX, lumaPY, n, lumaTX, cg, st.lumaQ[:], st.uQ[:], st.vQ[:])
+	if err != nil {
+		return fmt.Errorf("intra full loop: %w", err)
+	}
+	lumaGeo, chromaGeo := fl.lumaGeo, fl.chromaGeo
+	skip := fl.lumaZero && fl.uZero && fl.vZero
+	chromaTX := tile.TransformSize4x4
+	if cg != nil {
+		chromaTX = cg.tx
 	}
 
 	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
