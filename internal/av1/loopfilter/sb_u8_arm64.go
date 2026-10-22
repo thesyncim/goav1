@@ -52,7 +52,9 @@ func lpfNarrow4(lo, hi archsimd.Uint16x8) archsimd.Uint8x16 {
 // masks select each lane's own width exactly as the C reference does.
 //
 //go:nocheckptr
-func lpf16U8(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) {
+func lpf16U8W[W lpfWidth](p unsafe.Pointer, stride int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) bool {
+	var wdT W
+	wd := int(unsafe.Sizeof(wdT))
 	p1 := lpfLoad(p, -2*stride)
 	p0 := lpfLoad(p, -stride)
 	q0 := lpfLoad(p, 0)
@@ -77,7 +79,7 @@ func lpf16U8(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16,
 	sum := d00.AddSaturated(d00).AddSaturated(lpfAbsDiff(p1, q1).ShiftAllRight(1))
 	fm := iV.GreaterEqual(t).And(eV.GreaterEqual(sum)).And(m4)
 	if !lpfAny(fm) {
-		return
+		return false
 	}
 
 	one := archsimd.BroadcastUint8x16(1)
@@ -170,7 +172,7 @@ func lpf16U8(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16,
 		lpfStore(p, -stride, o0)
 		lpfStore(p, 0, n0)
 		lpfStore(p, stride, n1)
-		return
+		return true
 	}
 
 	o2, n2 := p2, q2
@@ -230,6 +232,7 @@ func lpf16U8(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16,
 	lpfStore(p, -stride, o0)
 	lpfStore(p, 0, n0)
 	lpfStore(p, stride, n1)
+	return true
 }
 
 // lpfFlat16U8 computes the 13-tap flat filter (dav1d wd16, AV1 filter14) on
@@ -463,7 +466,18 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 		if !ok {
 			continue
 		}
-		lpf16U8(unsafe.Add(base, q0Off), stride, wd, eV, iV, hV, m4, sbNibbleMask(nGt4), sbNibbleMask(n16))
+		q0 := unsafe.Add(base, q0Off)
+		mGt4, m16 := sbNibbleMask(nGt4), sbNibbleMask(n16)
+		switch wd {
+		case 16:
+			lpf16U8W[lpfW16](q0, stride, eV, iV, hV, m4, mGt4, m16)
+		case 8:
+			lpf16U8W[lpfW8](q0, stride, eV, iV, hV, m4, mGt4, m16)
+		case 6:
+			lpf16U8W[lpfW6](q0, stride, eV, iV, hV, m4, mGt4, m16)
+		default:
+			lpf16U8W[lpfW4](q0, stride, eV, iV, hV, m4, mGt4, m16)
+		}
 	}
 	st.Add(acc.stats())
 	return st
@@ -506,7 +520,16 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 		if wd == 16 {
 			lpfVertical16x16U8(unsafe.Add(base, q0Off-8), stride, eV, iV, hV, m4, sbNibbleMask(nGt4), sbNibbleMask(n16))
 		} else if rowBytes >= 12 && lastRow+12 <= len(pix) {
-			lpfVertical16x8U8Wide(unsafe.Add(base, q0Off-4), stride, wd, eV, iV, hV, m4, sbNibbleMask(nGt4), sbNibbleMask(n16))
+			p3 := unsafe.Add(base, q0Off-4)
+			mGt4 := sbNibbleMask(nGt4)
+			switch wd {
+			case 8:
+				lpfVertical16x8U8WideW[lpfW8](p3, stride, eV, iV, hV, m4, mGt4)
+			case 6:
+				lpfVertical16x8U8WideW[lpfW6](p3, stride, eV, iV, hV, m4, mGt4)
+			default:
+				lpfVertical16x8U8WideW[lpfW4](p3, stride, eV, iV, hV, m4, mGt4)
+			}
 		} else {
 			lpfVertical16x8U8(unsafe.Add(base, q0Off-4), stride, wd, eV, iV, hV, m4, sbNibbleMask(nGt4), sbNibbleMask(n16))
 		}
@@ -556,7 +579,9 @@ func lpfVertical16x8U8(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd
 	t5.StoreArray(&buf[5])
 	t6.StoreArray(&buf[6])
 	t7.StoreArray(&buf[7])
-	lpf16U8(unsafe.Pointer(&buf[4]), 16, wd, eV, iV, hV, m4, mGt4, m16)
+	if !lpf16U8(unsafe.Pointer(&buf[4]), 16, wd, eV, iV, hV, m4, mGt4, m16) {
+		return
+	}
 	a = archsimd.LoadUint8x16Array(&buf[0])
 	b = archsimd.LoadUint8x16Array(&buf[1])
 	c = archsimd.LoadUint8x16Array(&buf[2])
@@ -609,7 +634,9 @@ func lpfTranspose8x8Pairs(a, b, c, d, e, f, g, h archsimd.Uint8x16) (o0, o1, o2,
 func lpfVertical16x16U8(p unsafe.Pointer, stride int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) {
 	var buf [16][16]uint8
 	lpfTranspose16x16Store(p, stride, unsafe.Pointer(&buf), 16)
-	lpf16U8(unsafe.Pointer(&buf[8]), 16, 16, eV, iV, hV, m4, mGt4, m16)
+	if !lpf16U8(unsafe.Pointer(&buf[8]), 16, 16, eV, iV, hV, m4, mGt4, m16) {
+		return
+	}
 	lpfTranspose16x16Store(unsafe.Pointer(&buf), 16, p, stride)
 }
 
@@ -701,7 +728,7 @@ var lpfLowHalf = [16]uint8{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 // bit-select per row, avoiding the scalar gather/scatter through the stack.
 //
 //go:nocheckptr
-func lpfVertical16x8U8Wide(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) {
+func lpfVertical16x8U8WideW[W lpfWidth](p unsafe.Pointer, stride int, eV, iV, hV archsimd.Uint8x16, m4, mGt4 archsimd.Mask8x16) {
 	r0, r8 := lpfLoad(p, 0), lpfLoad(p, 8*stride)
 	r1, r9 := lpfLoad(p, stride), lpfLoad(p, 9*stride)
 	r2, r10 := lpfLoad(p, 2*stride), lpfLoad(p, 10*stride)
@@ -713,7 +740,12 @@ func lpfVertical16x8U8Wide(p unsafe.Pointer, stride int, wd int, eV, iV, hV arch
 	t0, t1, t2, t3, t4, t5, t6, t7 := lpfTranspose8x8Pairs(
 		lpfZipLo64(r0, r8), lpfZipLo64(r1, r9), lpfZipLo64(r2, r10), lpfZipLo64(r3, r11),
 		lpfZipLo64(r4, r12), lpfZipLo64(r5, r13), lpfZipLo64(r6, r14), lpfZipLo64(r7, r15))
-	t1, t2, t3, t4, t5, t6 = lpf16U8Regs(wd, t0, t1, t2, t3, t4, t5, t6, t7, eV, iV, hV, m4, mGt4)
+	var ok bool
+	t1, t2, t3, t4, t5, t6, ok = lpf16U8RegsW[W](t0, t1, t2, t3, t4, t5, t6, t7, eV, iV, hV, m4, mGt4)
+	if !ok {
+		// dav1d lpf_16_wd* x14 = 1: nothing filtered, nothing to store.
+		return
+	}
 	t0, t1, t2, t3, t4, t5, t6, t7 = lpfTranspose8x8Pairs(t0, t1, t2, t3, t4, t5, t6, t7)
 	lo := archsimd.LoadUint8x16Array(&lpfLowHalf).BitsToInt8().ToMask()
 	lpfStore(p, 0, t0.IfElse(lo, r0))
@@ -747,7 +779,9 @@ func lpfZipHi64(a, b archsimd.Uint8x16) archsimd.Uint8x16 {
 // p3..q3 in, the filtered p2..q2 out (p3/q3 never change at these widths).
 // Vector arguments and results travel in SIMD registers, so the transposed
 // vertical path filters without a stack round trip.
-func lpf16U8Regs(wd int, p3, p2, p1, p0, q0, q1, q2, q3, eV, iV, hV archsimd.Uint8x16, m4, mGt4 archsimd.Mask8x16) (o2, o1, o0, n0, n1, n2 archsimd.Uint8x16) {
+func lpf16U8RegsW[W lpfWidth](p3, p2, p1, p0, q0, q1, q2, q3, eV, iV, hV archsimd.Uint8x16, m4, mGt4 archsimd.Mask8x16) (o2, o1, o0, n0, n1, n2 archsimd.Uint8x16, ok bool) {
+	var wdT W
+	wd := int(unsafe.Sizeof(wdT))
 	o2, o1, o0, n0, n1, n2 = p2, p1, p0, q0, q1, q2
 	d10 := lpfAbsDiff(p1, p0)
 	dq := lpfAbsDiff(q1, q0)
@@ -766,6 +800,7 @@ func lpf16U8Regs(wd int, p3, p2, p1, p0, q0, q1, q2, q3, eV, iV, hV archsimd.Uin
 	if !lpfAny(fm) {
 		return
 	}
+	ok = true
 	mF4 := fm
 	var mFlat archsimd.Mask8x16
 	if wd >= 6 {
@@ -869,4 +904,33 @@ func lpf16U8Regs(wd int, p3, p2, p1, p0, q0, q1, q2, q3, eV, iV, hV archsimd.Uin
 	n1 = lpfNarrow3(aq1, bq1).IfElse(mFlat, n1)
 	n2 = lpfNarrow3(aq2, bq2).IfElse(mFlat, n2)
 	return
+}
+
+// lpfW4..lpfW16 select a width-specialized kernel instance, as dav1d's
+// loop_filter wd macro emits lpf_16_wd{4,6,8,16}_neon from one source: each
+// type's size is its filter width, so every stenciled body sees a constant
+// width and drops the code of the other widths.
+type (
+	lpfW4  [4]byte
+	lpfW6  [6]byte
+	lpfW8  [8]byte
+	lpfW16 [16]byte
+)
+
+type lpfWidth interface {
+	lpfW4 | lpfW6 | lpfW8 | lpfW16
+}
+
+// lpf16U8 dispatches to the width-specialized lpf16U8W instance.
+func lpf16U8(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) bool {
+	switch wd {
+	case 16:
+		return lpf16U8W[lpfW16](p, stride, eV, iV, hV, m4, mGt4, m16)
+	case 8:
+		return lpf16U8W[lpfW8](p, stride, eV, iV, hV, m4, mGt4, m16)
+	case 6:
+		return lpf16U8W[lpfW6](p, stride, eV, iV, hV, m4, mGt4, m16)
+	default:
+		return lpf16U8W[lpfW4](p, stride, eV, iV, hV, m4, mGt4, m16)
+	}
 }

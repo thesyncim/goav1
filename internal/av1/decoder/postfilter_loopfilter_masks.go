@@ -220,14 +220,24 @@ func (ctx *FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksInPlanePassO
 	// frameWorkAppendLoopFilterChromaEdges). Luma keeps its per-cell level with
 	// the level-from-previous fallback.
 	chromaGated := levelCtx.lumaZero
-	for plane := minPlane; plane <= maxPlane; plane++ {
-		if plane != loopfilter.PlaneY {
-			if chromaGated || levelCtx.base[plane][loopfilter.EdgeVertical] == 0 {
-				continue
+	// dav1d deblocks a superblock row at a time (src/lf_apply_tmpl.c
+	// dav1d_loopfilter_sbrow_cols, then dav1d_loopfilter_sbrow_rows): every
+	// plane's vertical edges of the row, then every plane's horizontal edges,
+	// so both passes run on cache-hot rows. A row's vertical filters touch
+	// only its own rows and its horizontal filters never read the next row,
+	// so this equals the whole-frame vertical-then-horizontal order.
+	for rRow := 0; rRow < masks.SB128H; rRow++ {
+		for _, dir := range [2]int{maskDirVertical, maskDirHorizontal} {
+			for plane := minPlane; plane <= maxPlane; plane++ {
+				if plane != loopfilter.PlaneY {
+					if chromaGated || levelCtx.base[plane][loopfilter.EdgeVertical] == 0 {
+						continue
+					}
+				}
+				if err := ctx.applyLoopFilterMaskPlaneRange(result, masks, lc, sharpness, plane, dir, rRow, rRow+1, 0, masks.SB128W); err != nil {
+					return err
+				}
 			}
-		}
-		if err := ctx.applyLoopFilterMaskPlaneRange(result, masks, lc, sharpness, plane, maskDirBoth, 0, masks.SB128H, 0, masks.SB128W); err != nil {
-			return err
 		}
 	}
 	return nil
