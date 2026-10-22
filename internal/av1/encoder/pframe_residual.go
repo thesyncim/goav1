@@ -3687,7 +3687,7 @@ func (p realtimeInterTXPlan) Variable() bool {
 }
 
 func (p realtimeInterTXPlan) ForEachLeaf(visit func(i, dx, dy int) error) error {
-	if visit == nil || p.leafSize != 8 && p.leafSize != 16 {
+	if visit == nil || p.leafSize != 8 && p.leafSize != 16 && p.leafSize != 32 {
 		return tile.ErrInvalidDecodeState
 	}
 	if c := realtimeInterTXPlanCached(p.block, p.leafSize); c != nil && c.plan == p {
@@ -3766,6 +3766,8 @@ func realtimeInterTXPlanBuild(block tile.BlockSize, leafSize int) (realtimeInter
 		leafTX = tile.TransformSize8x8
 	case 16:
 		leafTX = tile.TransformSize16x16
+	case 32:
+		leafTX = tile.TransformSize32x32
 	default:
 		return realtimeInterTXPlan{}, fmt.Errorf("encoder: invalid realtime tx leaf %d", leafSize)
 	}
@@ -4159,6 +4161,12 @@ func (st *lossyEncodeState) prepareInterTXBTyped(srcPlane, pred []byte, predStri
 func (st *lossyEncodeState) quantizeInterTXBStats(geo *txBlockGeometry, q quantize.Quantizer, qcoeff []int16) bool {
 	cn := geo.coeffCount
 	tran := &st.tranScratch
+	if st.rdoqArm != 0 && geo.width == geo.height {
+		if scan := st.rdoqScan(geo.width); scan != nil {
+			st.rdoqQuantize(tran[:cn], qcoeff[:cn], geo.width, int(st.rdoqArm-1), q, scan)
+			return st.accumulateInterTXBStats(geo, q, qcoeff)
+		}
+	}
 	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
 		return false
 	}
@@ -4212,6 +4220,9 @@ func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStr
 		return st.prepareInterTXB(srcPlane, pred, predStride, stride, px, py, w, h, q, qcoeff)
 	}
 	residualBlockImpl(st.resScratch[:geo.sampleCount], srcPlane, py*stride+px, stride, pred, predStride, w, h)
+	if st.rdoqArm != 0 {
+		return st.prepareInterTXBDecideRDOQ(geo, w, q, qcoeff)
+	}
 	dcZero, acZero := quantize.ZeroBinB(q, geo.txScale)
 	thr0, thr := min(dcZero, acZero), acZero
 	var mask uint8
@@ -4290,6 +4301,7 @@ func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lum
 		transform.TypeIDTX,
 	} {
 		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
+		st.setRDOQArm(0)
 		lumaZero := st.prepareInterTXBTyped(src.Y, st.predY[:64], 8, src.YStride, lumaPX, lumaPY, 8, 8, st.yQuant, tmpY, typ)
 		if typ != transform.TypeDCTDCT && lumaZero {
 			continue
@@ -4307,6 +4319,7 @@ func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lum
 		cost += lumaBits
 		if hasChroma {
 			baseTrialCDFs.restoreUV(&st.trialCDFs)
+			st.setRDOQArm(1)
 			st.prepareInterTXBTyped(src.U, st.predU[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.uQuant, tmpU, typ)
 			st.prepareInterTXBTyped(src.V, st.predV[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.vQuant, tmpV, typ)
 			cost = st.rdDcode << 7
@@ -4324,6 +4337,7 @@ func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lum
 			}
 		}
 	}
+	st.rdoqArm = 0
 	st.rdDcode, st.rdDskip, st.rdRcode = saveDcode, saveDskip, saveRcode
 	baseTrialCDFs.restore(&st.trialCDFs)
 	return bestType
