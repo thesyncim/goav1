@@ -220,10 +220,10 @@ func TestReferenceMVStackRejectsInvalidInputs(t *testing.T) {
 	if _, err := stack.DRLContext(3); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad drl ctx err=%v want %v", err, ErrInvalidDecodeState)
 	}
-	if _, _, err := (ReferenceMVStack{Count: 1}).BestSingleReferenceMVs(false, false); !errors.Is(err, ErrInvalidDecodeState) {
+	if _, _, err := (&ReferenceMVStack{Count: 1}).BestSingleReferenceMVs(false, false); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("short best err=%v want %v", err, ErrInvalidDecodeState)
 	}
-	if _, err := (ReferenceMVStack{Count: MaxRefMVStackSize + 1}).DRLContexts(); !errors.Is(err, ErrInvalidDecodeState) {
+	if _, err := (&ReferenceMVStack{Count: MaxRefMVStackSize + 1}).DRLContexts(); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad count err=%v want %v", err, ErrInvalidDecodeState)
 	}
 	if _, err := stack.ResolveInterMVReferences(InterModeResult{Mode: InterModeGlobalMV}, 0, false, false); !errors.Is(err, ErrInvalidDecodeState) {

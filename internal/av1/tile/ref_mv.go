@@ -143,7 +143,7 @@ type InterMVReferenceSet struct {
 }
 
 // DRLContext returns libaom's av1_drl_ctx()/dav1d's get_drl_context() value.
-func (stack ReferenceMVStack) DRLContext(refIdx int) (int, error) {
+func (stack *ReferenceMVStack) DRLContext(refIdx int) (int, error) {
 	if err := stack.validate(); err != nil {
 		return 0, err
 	}
@@ -165,26 +165,35 @@ func (stack ReferenceMVStack) DRLContext(refIdx int) (int, error) {
 }
 
 // DRLContexts returns the three contexts read_drl_idx may consult.
-func (stack ReferenceMVStack) DRLContexts() ([3]uint8, error) {
+func (stack *ReferenceMVStack) DRLContexts() ([3]uint8, error) {
 	var contexts [3]uint8
 	if err := stack.validate(); err != nil {
 		return contexts, err
 	}
-	for i := range contexts {
-		if i+1 >= int(stack.Count) {
-			break
-		}
-		ctx, err := stack.DRLContext(i)
-		if err != nil {
-			return contexts, err
-		}
-		contexts[i] = uint8(ctx)
+	// One pass over the weight classes, as dav1d's get_drl_context.
+	for i := 0; i < len(contexts) && i+1 < int(stack.Count); i++ {
+		contexts[i] = drlContextForWeights(stack.Candidates[i].Weight, stack.Candidates[i+1].Weight)
 	}
 	return contexts, nil
 }
 
+// drlContextForWeights is get_drl_context for the weights of stack entries
+// idx and idx+1.
+func drlContextForWeights(cur, next uint16) uint8 {
+	if cur >= RefMVCategoryLevel {
+		if next >= RefMVCategoryLevel {
+			return 0
+		}
+		return 1
+	}
+	if next < RefMVCategoryLevel {
+		return 2
+	}
+	return 0
+}
+
 // DRLRequestForMode builds the DRL syntax request for a decoded inter mode.
-func (stack ReferenceMVStack) DRLRequestForMode(mode InterModeResult) (DRLRequest, error) {
+func (stack *ReferenceMVStack) DRLRequestForMode(mode InterModeResult) (DRLRequest, error) {
 	if mode.Compound {
 		if !mode.CompoundMode.Valid() {
 			return DRLRequest{}, ErrInvalidDecodeState
@@ -206,7 +215,7 @@ func (stack ReferenceMVStack) DRLRequestForMode(mode InterModeResult) (DRLReques
 }
 
 // BestSingleReferenceMVs returns av1_find_best_ref_mvs()'s nearest/near pair.
-func (stack ReferenceMVStack) BestSingleReferenceMVs(allowHighPrecision bool, forceInteger bool) (motion.Vector, motion.Vector, error) {
+func (stack *ReferenceMVStack) BestSingleReferenceMVs(allowHighPrecision bool, forceInteger bool) (motion.Vector, motion.Vector, error) {
 	if stack.SingleRefValid {
 		nearest := motion.LowerPrecision(stack.SingleRefMVs[0], allowHighPrecision, forceInteger)
 		near := motion.LowerPrecision(stack.SingleRefMVs[1], allowHighPrecision, forceInteger)
@@ -222,7 +231,7 @@ func (stack ReferenceMVStack) BestSingleReferenceMVs(allowHighPrecision bool, fo
 
 // ResolveInterMVReferences ports the stack-selection part of libaom's
 // read_inter_block_mode_info()/assign_mv() path before MV residual bits.
-func (stack ReferenceMVStack) ResolveInterMVReferences(mode InterModeResult, refMVIndex int, allowHighPrecision bool, forceInteger bool) (InterMVReferenceSet, error) {
+func (stack *ReferenceMVStack) ResolveInterMVReferences(mode InterModeResult, refMVIndex int, allowHighPrecision bool, forceInteger bool) (InterMVReferenceSet, error) {
 	if err := stack.validate(); err != nil {
 		return InterMVReferenceSet{}, err
 	}
@@ -235,7 +244,7 @@ func (stack ReferenceMVStack) ResolveInterMVReferences(mode InterModeResult, ref
 	return stack.resolveSingleInterMVReferences(mode.Mode, refMVIndex, allowHighPrecision, forceInteger)
 }
 
-func (stack ReferenceMVStack) resolveSingleInterMVReferences(mode InterMode, refMVIndex int, allowHighPrecision bool, forceInteger bool) (InterMVReferenceSet, error) {
+func (stack *ReferenceMVStack) resolveSingleInterMVReferences(mode InterMode, refMVIndex int, allowHighPrecision bool, forceInteger bool) (InterMVReferenceSet, error) {
 	if !mode.Valid() || mode == InterModeGlobalMV {
 		return InterMVReferenceSet{}, ErrInvalidDecodeState
 	}
@@ -265,7 +274,7 @@ func (stack ReferenceMVStack) resolveSingleInterMVReferences(mode InterMode, ref
 	return refs, nil
 }
 
-func (stack ReferenceMVStack) resolveCompoundInterMVReferences(mode CompoundInterMode, refMVIndex int, allowHighPrecision bool, forceInteger bool) (InterMVReferenceSet, error) {
+func (stack *ReferenceMVStack) resolveCompoundInterMVReferences(mode CompoundInterMode, refMVIndex int, allowHighPrecision bool, forceInteger bool) (InterMVReferenceSet, error) {
 	if !mode.Valid() || mode == CompoundInterModeGlobalGlobal {
 		return InterMVReferenceSet{}, ErrInvalidDecodeState
 	}
@@ -313,7 +322,7 @@ func (stack ReferenceMVStack) resolveCompoundInterMVReferences(mode CompoundInte
 	return refs, nil
 }
 
-func (stack ReferenceMVStack) candidate(index int) (ReferenceMVCandidate, error) {
+func (stack *ReferenceMVStack) candidate(index int) (ReferenceMVCandidate, error) {
 	if err := stack.validate(); err != nil {
 		return ReferenceMVCandidate{}, err
 	}
@@ -323,7 +332,7 @@ func (stack ReferenceMVStack) candidate(index int) (ReferenceMVCandidate, error)
 	return stack.Candidates[index], nil
 }
 
-func (stack ReferenceMVStack) validate() error {
+func (stack *ReferenceMVStack) validate() error {
 	if stack.Count > MaxRefMVStackSize {
 		return ErrInvalidDecodeState
 	}
@@ -2256,7 +2265,7 @@ func negateMV(v motion.Vector) motion.Vector {
 	return motion.Vector{Row: -v.Row, Col: -v.Col}
 }
 
-func (stack ReferenceMVStack) validateCount(need int) error {
+func (stack *ReferenceMVStack) validateCount(need int) error {
 	if err := stack.validate(); err != nil {
 		return err
 	}

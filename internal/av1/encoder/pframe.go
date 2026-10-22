@@ -288,7 +288,13 @@ func encodeRepeatPFrameTile(width, height int) ([]byte, error) {
 			HaveLeft:       block.HaveLeft,
 			HaveTopRight:   tile.BlockHasTopRight(sbSizeMIB, block),
 		}
-		stack, err := modeCtx.BuildReferenceMVStack(stackReq)
+		var stack tile.ReferenceMVStackResult
+		var err error
+		if scratch.EncoderRefmvsBound() {
+			stack = scratch.EncoderReferenceMVStack(&stackReq, block)
+		} else {
+			stack, err = modeCtx.BuildReferenceMVStack(stackReq)
+		}
 		if err != nil {
 			return fmt.Errorf("build ref mv stack: %w", err)
 		}
@@ -312,7 +318,7 @@ func encodeRepeatPFrameTile(width, height int) ([]byte, error) {
 			References: refs,
 			Mode:       modeResult,
 		}
-		if err := modeCtx.MarkInterMotionAndFilters(block.Size, int(block.X4), int(block.Y4), motionResult, motion.InterpFilters{}, hasChroma); err != nil {
+		if err := scratch.EncoderCommitInter(block, motionResult, motion.InterpFilters{}, hasChroma); err != nil {
 			return err
 		}
 
@@ -332,7 +338,10 @@ func encodeRepeatPFrameTile(width, height int) ([]byte, error) {
 		}
 		return nil
 	}
-	if err := tile.WalkBlockLoopWrite(&w, &partCDFs, &scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
+	tile.BindEncoderRefmvs(&scratch, tile.EncoderRefmvsFrame{FrameMICols: miCols, FrameMIRows: miRows, Tile: walkReq})
+	err := tile.WalkBlockLoopWrite(&w, &partCDFs, &scratch, carrier, walkReq, sbSizeMIB, decide, visit)
+	tile.UnbindEncoderRefmvs(&scratch)
+	if err != nil {
 		return nil, err
 	}
 	return w.Finish()

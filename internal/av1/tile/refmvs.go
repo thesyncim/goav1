@@ -116,6 +116,10 @@ type refmvsTile struct {
 
 	frame refmvsFrame
 	bound bool
+	// tall marks rows bound to a frame-tall EncoderRefmvsRows store (one
+	// slab per superblock row, as dav1d's frame-thread buffer) instead of the
+	// tile-private 35-row buffer.
+	tall bool
 
 	// tl4x4Filter is dav1d's t->tl_4x4_filter: the interpolation filters of
 	// the first 4x4 block of an 8x8 split, used for the top-left cell of the
@@ -140,6 +144,7 @@ func (rt *refmvsTile) bindFrame(frame refmvsFrame, codedWidth int32, tileColStar
 	}
 	rt.buf = rt.buf[:need]
 	rt.stride = stride
+	rt.tall = false
 	if frame.projectTmvs {
 		if need := int(rpStride) * 16; cap(rt.rpProj) < need {
 			rt.rpProj = make([]TemporalMotionEntry, need)
@@ -176,6 +181,10 @@ func PreallocBlockLoopRefmvsScratch(s *BlockLoopScratch, miCols int) {
 
 // sbrowInit ports dav1d_refmvs_tile_sbrow_init for one tile superblock row.
 func (rt *refmvsTile) sbrowInit(sby int32, sbsz int32) {
+	if rt.tall {
+		rt.tallSbrowInit(sby, sbsz)
+		return
+	}
 	off := (sbsz * sby) & 16
 	r := int32(0)
 	for i := int32(0); i < sbsz; i++ {

@@ -94,6 +94,10 @@ func WalkBlockLoopDecideSB(scratch *BlockLoopScratch, carrier *BlockLoopContextC
 	neighborMIRowStart := req.neighborMIRowStart()
 	rootColIndex := int((miCol - miColStart) / rootSize)
 	keepMotion := scratch.keepLegacyMotion()
+	if scratch.Refmvs.bound {
+		// One wavefront work unit per call, so the row table is set per SB.
+		scratch.Refmvs.sbrowInit(int32(miRow/rootSize), int32(rootSize))
+	}
 	if err := blockLoopLoadRootContextMotion(scratch, carrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, sbSizeMIB, keepMotion); err != nil {
 		return err
 	}

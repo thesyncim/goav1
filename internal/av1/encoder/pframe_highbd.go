@@ -163,7 +163,10 @@ func (pc *pframeCoder) encodeHighBitDepthMonochromePFrameTile(src SourceFrameMon
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 		return st.encodeHighBitDepthMonochromePBlock(src, refPlane, goldenPlane, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, walkReq, uint16(src.Width/4), miRows)
 	}
-	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
+	st.bindRefmvs(scratch, walkReq, uint16(src.Width/4), miRows)
+	err = tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit)
+	st.unbindRefmvs(scratch)
+	if err != nil {
 		return nil, err
 	}
 	return pc.writer.Finish()
@@ -237,7 +240,10 @@ func (pc *pframeCoder) encodeHighBitDepthColorPFrameTile(src SourceFrame42016, r
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 		return st.encodeHighBitDepth420PBlock(src, refPlanes, goldenPlanes, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, walkReq, uint16(src.Width/4), miRows)
 	}
-	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
+	st.bindRefmvs(scratch, walkReq, uint16(src.Width/4), miRows)
+	err = tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit)
+	st.unbindRefmvs(scratch)
+	if err != nil {
 		return nil, err
 	}
 	return pc.writer.Finish()
@@ -498,7 +504,7 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 		HaveTopRight:   tile.BlockHasTopRight(16, block),
 		ForceIntegerMV: st.forceIntegerMV,
 	}
-	stack, err := modeCtx.BuildReferenceMVStack(stackReq)
+	stack, err := st.referenceMVStack(modeCtx, stackReq, block)
 	if err != nil {
 		return fmt.Errorf("build ref mv stack: %w", err)
 	}
@@ -546,7 +552,7 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 	}, motionResult); err != nil {
 		return fmt.Errorf("motion vector: %w", err)
 	}
-	if err := modeCtx.MarkInterMotionAndFilters(block.Size, int(block.X4), int(block.Y4), motionResult, motion.InterpFilters{}, false); err != nil {
+	if err := scratch.EncoderCommitInter(block, motionResult, motion.InterpFilters{}, false); err != nil {
 		return err
 	}
 
@@ -622,7 +628,7 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 		HaveTopRight:   tile.BlockHasTopRight(16, block),
 		ForceIntegerMV: st.forceIntegerMV,
 	}
-	stack, err := modeCtx.BuildReferenceMVStack(stackReq)
+	stack, err := st.referenceMVStack(modeCtx, stackReq, block)
 	if err != nil {
 		return fmt.Errorf("build ref mv stack: %w", err)
 	}
@@ -670,7 +676,7 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 	}, motionResult); err != nil {
 		return fmt.Errorf("motion vector: %w", err)
 	}
-	if err := modeCtx.MarkInterMotionAndFilters(block.Size, int(block.X4), int(block.Y4), motionResult, motion.InterpFilters{}, true); err != nil {
+	if err := scratch.EncoderCommitInter(block, motionResult, motion.InterpFilters{}, true); err != nil {
 		return err
 	}
 

@@ -114,6 +114,7 @@ func main() {
 	reconPath := flag.String("recon", "", "write the encoder reconstruction as raw I420 to this path")
 	noPSNR := flag.Bool("nopsnr", false, "skip the per-frame PSNR pass (for CPU measurement; score from -o instead)")
 	cpuProfile := flag.String("cpuprofile", "", "write a CPU profile of the encode loop to this path")
+	threads := flag.Int("threads", 0, "encoder MaxThreads (0 = encoder default; >1 runs the inter-frame SB-row wavefront)")
 	flag.Parse()
 	if *cpuProfile != "" {
 		pf, err := os.Create(*cpuProfile)
@@ -206,6 +207,7 @@ func main() {
 		TemporalLayers: *layers,
 		TileColumns:    *tiles,
 		GoldenInterval: *golden,
+		MaxThreads:     *threads,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
