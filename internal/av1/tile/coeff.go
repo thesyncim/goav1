@@ -2058,7 +2058,7 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 }
 
 func prepareTrackedCoeffDequant(target *CoeffDequantTarget, plane uint8, geo *coeffGeometry) (*CoeffDequantTarget, uint8, int32) {
-	if target == nil || target.Arena != nil || geo == nil || len(target.Dst) < int(geo.maxEOB) {
+	if target == nil || target.Arena != nil || target.Coef != nil || geo == nil || len(target.Dst) < int(geo.maxEOB) {
 		return nil, 0, 0
 	}
 	return prepareCoeffDequantFactors(target, plane, geo)
