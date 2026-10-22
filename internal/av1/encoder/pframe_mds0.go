@@ -306,7 +306,34 @@ func (st *lossyEncodeState) mds0IntraDCWins(src SourceFrame420, recon *SourceFra
 	lambda := st.lpd1FullLambda(st.lpd1SB(lumaPX, lumaPY))
 	intraCost := ((rate*lambda + 256) >> 9) + (dist << 7)
 	interCost := st.mds0BestCost + ((int64(st.mds0IntraRates.IntraFlag[ctx][1])*lambda + 256) >> 9)
-	return intraCost < interCost
+	if intraCost >= interCost {
+		return false
+	}
+	// The winner's statistics for the full loop: luma_fast_dist (the
+	// variance), the source moments its vf sse derives from once the DC
+	// value is known, and fast_luma_rate (svt_aom_intra_fast_cost: the
+	// is_inter flag plus the y mode bits; the uv mode bits are its
+	// fast_chroma_rate).
+	st.mds0Intra = mds0IntraStats{
+		valid:    true,
+		variance: uint32(variance),
+		srcSSE:   sse,
+		srcSum:   sum,
+		lumaRate: int64(st.mds0IntraRates.IntraFlag[ctx][0]) + int64(st.mds0IntraRates.LumaDCBits(block.Size)),
+	}
+	return true
+}
+
+// mds0IntraStats is the DC_PRED MDS0 winner's fast-loop output
+// (fast_loop_core_light_pd1): its residual variance (luma_fast_dist), the
+// source block's sum of squares and sum (against zero) and its
+// fast_luma_rate.
+type mds0IntraStats struct {
+	valid    bool
+	variance uint32
+	srcSSE   uint32
+	srcSum   int32
+	lumaRate int64
 }
 
 // mds0PredictorMatchesCodedFilters reports whether predY, retained by MDS0
