@@ -2711,6 +2711,9 @@ func (st *lossyEncodeState) prepareInterTXBTyped(srcPlane, pred []byte, predStri
 	if err := forwardTransformBlock8BitResidualTrusted(tran[:cn], residual[:n], st.dqScratch[:n], w, h, txType); err != nil {
 		return false
 	}
+	if st.pfN4 {
+		svtPFN4Zero(tran[:cn], w, h, geo.coeffWidth, geo.coeffHeight)
+	}
 	if len(qcoeff) < cn {
 		return false
 	}
@@ -2793,6 +2796,10 @@ func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStr
 		mask = transform.ForwardDCT16x16RowSkip8BitTrusted((*[256]int32)(st.tranScratch[:256]), (*[256]int16)(st.resScratch[:256]), thr0, thr)
 	default:
 		mask = transform.ForwardDCT32x32RowSkip8BitTrusted((*[1024]int32)(st.tranScratch[:1024]), (*[1024]int16)(st.resScratch[:1024]), thr0, thr)
+	}
+	if st.pfN4 {
+		svtPFN4Zero(st.tranScratch[:geo.coeffCount], w, h, geo.coeffWidth, geo.coeffHeight)
+		mask = svtPFN4Mask(mask, h)
 	}
 	if mask == 0 {
 		clear(qcoeff[:geo.coeffCount])

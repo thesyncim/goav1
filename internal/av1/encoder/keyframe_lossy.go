@@ -669,6 +669,9 @@ type lossyEncodeState struct {
 	// lpd1Tx holds the frame's light-PD1 TX shortcut controls (SVT-AV1
 	// set_lpd1_tx_ctrls; see pframe_lpd1_tx.go). Zero value = disabled.
 	lpd1Tx lpd1TxCtrls
+	// pfN4 arms the N4_SHAPE partial-frequency forward transform for the
+	// following inter TXB (svt_aom_full_loop_chroma_light_pd1).
+	pfN4 bool
 
 	// cntZeroMV accumulates the MI (4x4) area of inter blocks predicting
 	// from LAST with a sub-pixel-magnitude vector, exactly as libaom's
