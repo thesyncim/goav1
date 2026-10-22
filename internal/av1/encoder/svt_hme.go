@@ -16,8 +16,10 @@ package encoder
 //   - Level 0 (motion_estimation.c hme_level0_b64 / hme_level_0): the 16x16
 //     sixteenth-resolution block searched over num_hme_sa 2x2 regions. The
 //     total area is set_hme_search_params' rtc non-sc hme_l0_sa.sa_min {8, 8}
-//     (sa_max {96, 96}); get_hme_l0_search_area at picture distance 1 makes
-//     each region 16 wide (rounded up to 16) by 4 tall.
+//     (sa_max {96, 96}); get_hme_l0_search_area scales it by
+//     svt_aom_get_scaled_picture_distance of the reference distance: each
+//     region is 16 wide (rounded up to 16) by 4, 8 or 12 tall at distance
+//     1, 2 or 4 (the L1T3 leaf, middle layer and base).
 //   - Level 1 (hme_level1_b64 / hme_level_1): each region's level-0 vector
 //     refined on the quarter picture over hme_l1_sa {8, 3}.
 //   - The center is the region with the smallest level-1 SAD, scanned
@@ -29,10 +31,8 @@ package encoder
 // partial superblocks and edge positions search the padding.
 
 const (
-	svtHMEL0RegionW = 16 // per-region level-0 width at distance 1
-	svtHMEL0RegionH = 4  // per-region level-0 height at distance 1
-	svtHMEL1W       = 8  // hme_l1_sa.width
-	svtHMEL1H       = 3  // hme_l1_sa.height
+	svtHMEL1W = 8 // hme_l1_sa.width
+	svtHMEL1H = 3 // hme_l1_sa.height
 )
 
 // Pyramid borders (SVT pads its quarter and sixteenth pictures,
@@ -95,6 +95,37 @@ type svtPyramid struct {
 	slotHalf          [hmeRefSlots]svtPlane
 	slotSix           [hmeRefSlots]svtPlane
 	slotOK            [hmeRefSlots]bool
+	// l0W, l0H are the level-0 region size of the frame's reference
+	// distance (setDistance).
+	l0W, l0H int
+}
+
+// HME level-0 search area at preset 12 rtc non-sc (set_hme_search_params):
+// hme_l0_sa.sa_min {8, 8}, sa_max {96, 96}, over num_hme_sa 2x2 regions.
+const (
+	svtHMEL0SAMin = 8
+	svtHMEL0SAMax = 96
+	svtHMENumSA   = 2
+)
+
+// svtScaledPictureDistance is svt_aom_get_scaled_picture_distance.
+func svtScaledPictureDistance(dist int) int {
+	roundUp := 1
+	if dist%8 == 0 {
+		roundUp = 0
+	}
+	return dist*5/8 + roundUp
+}
+
+// setDistance is get_hme_l0_search_area for a reference dist pictures away:
+// the per-region width (rounded up to 16) and height scaled by the scaled
+// distance, capped at the sa_max region.
+func (p *svtPyramid) setDistance(dist int) {
+	f := svtScaledPictureDistance(max(dist, 1))
+	w := svtHMEL0SAMin / svtHMENumSA
+	p.l0W = min((w*f+15)&^15, (svtHMEL0SAMax/svtHMENumSA+15)&^15)
+	h := svtHMEL0SAMin / svtHMENumSA
+	p.l0H = min(h*f, svtHMEL0SAMax/svtHMENumSA)
 }
 
 // svtDownsample2D is svt_aom_downsample_2d_c with decim_step 2.
@@ -273,12 +304,14 @@ func (p *svtPyramid) center(px, py, sbW, sbH int) (int, int, uint32) {
 	var l1SAD [4]uint32
 	var l1X, l1Y [4]int
 	six, half := &p.curSix, &p.curHalf
+	l0W, l0H := p.l0W, p.l0H
 	for r := 0; r < 4; r++ {
 		srW, srH := r&1, r>>1
 		// hme_level_0: sa_origin = -(sa * num_hme_sa) / 2 + sa * sr.
-		ox := -(svtHMEL0RegionW*2)>>1 + svtHMEL0RegionW*srW
-		oy := -(svtHMEL0RegionH*2)>>1 + svtHMEL0RegionH*srH
-		ox, oy, w, h := svtHMECorrectArea(px>>2, py>>2, ox, oy, svtHMEL0RegionW, svtHMEL0RegionH, six.w, six.h, six.border-1)
+		saW, saH := (l0W+7)&^7, l0H
+		ox := -(saW*svtHMENumSA)>>1 + saW*srW
+		oy := -(saH*svtHMENumSA)>>1 + saH*srH
+		ox, oy, w, h := svtHMECorrectArea(px>>2, py>>2, ox, oy, saW, saH, six.w, six.h, six.border-1)
 		_, x0, y0 := svtHMESearch(six, &p.prevSix, px>>2, py>>2, sbW>>2, sbH>>2, ox, oy, w, h)
 		// hme_level_1 around the level-0 vector (x4 to full-pel, >>1 to the
 		// quarter picture).

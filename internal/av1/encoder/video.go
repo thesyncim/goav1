@@ -575,6 +575,17 @@ func (e *VideoEncoder) runHME(src SourceFrame420, temporalID uint8) {
 	case e.temporalLayers == 3 && temporalID == 1:
 		store = 1
 	}
+	// get_me_reference's picture distance in SVT's low-delay layering:
+	// a base picture references the previous base (2 or 4 pictures back with
+	// two or three layers), the L1T3 middle layer the base 2 back, a leaf
+	// the picture before it.
+	e.hme.dist = 1
+	switch {
+	case e.temporalLayers == 3 && temporalID == 0:
+		e.hme.dist = 4
+	case e.temporalLayers == 3 && temporalID == 1, e.temporalLayers == 2 && temporalID == 0:
+		e.hme.dist = 2
+	}
 	if e.singleThread {
 		e.hme.runSerial(src, isRef, ref, store)
 		return
