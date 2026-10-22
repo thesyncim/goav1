@@ -25,19 +25,18 @@ import "sync"
 type hmeState struct {
 	svt svtPyramid
 
-	// prevY is the previous source's luma at prevStride, the reference of
-	// the open-loop sweep and zz SAD.
-	prevY      []byte
-	prevStride int
-	prevW      int
-	prevH      int
-	havePrev   bool
+	// prev is the previous source's luma, the reference of the open-loop
+	// sweep and zz SAD, and cur the current source's, both padded by
+	// meBorder replicated samples like SVT's padded input pictures
+	// (svt_aom_generate_padding), so edge superblocks and search positions
+	// that leave the frame read the padding. curReady marks cur as built from
+	// the frame being estimated; keepPrev then swaps it into prev.
+	prev, cur svtPlane
+	curReady  bool
+	havePrev  bool
 
 	// fme is the current frame's ME result.
 	fme frameME
-
-	// win is per-band scratch for partial and edge superblocks.
-	win [hmeBands]meWindow
 
 	work     chan hmeJob
 	done     chan struct{}
@@ -103,6 +102,7 @@ func (h *hmeState) close() {
 // prime makes src the reference of the next inter frame (after a keyframe).
 func (h *hmeState) prime(src SourceFrame420) {
 	h.svt.build(src, true)
+	h.curReady = false
 	h.keepPrev(src)
 	h.fme.valid = false
 }
@@ -114,13 +114,28 @@ func (h *hmeState) primeFromRecon(ref SourceFrame420) {
 }
 
 func (h *hmeState) keepPrev(src SourceFrame420) {
-	n := src.YStride * src.Height
-	if len(h.prevY) < n {
-		h.prevY = make([]byte, n)
+	if h.curReady {
+		h.prev, h.cur = h.cur, h.prev
+		h.curReady = false
+	} else {
+		padLuma(&h.prev, src)
 	}
-	copy(h.prevY[:n], src.Y[:n])
-	h.prevStride, h.prevW, h.prevH = src.YStride, src.Width, src.Height
 	h.havePrev = true
+}
+
+// meBorder is the replicated padding of the ME pictures: the sweep reaches
+// 64 + realtimeSweepSearchW/2 + 3 samples past a frame edge horizontally and
+// 64 + 1 vertically (the search center is clamped to one superblock off the
+// picture).
+const meBorder = 80
+
+// padLuma copies src's luma into q with meBorder replicated samples.
+func padLuma(q *svtPlane, src SourceFrame420) {
+	q.size(src.Width, src.Height, meBorder)
+	for y := 0; y < src.Height; y++ {
+		copy(q.pix[q.org+y*q.stride:q.org+y*q.stride+src.Width], src.Y[y*src.YStride:y*src.YStride+src.Width])
+	}
+	q.pad()
 }
 
 // run is the frame's ME on the band workers; isRef is me_ctx->is_ref.
@@ -156,9 +171,11 @@ func (h *hmeState) runSerial(src SourceFrame420, isRef bool) {
 
 func (h *hmeState) prepare(src SourceFrame420, isRef bool) {
 	h.svt.build(src, false)
+	padLuma(&h.cur, src)
+	h.curReady = true
 	f := &h.fme
 	f.valid = false
-	if !h.havePrev || h.prevW != src.Width || h.prevH != src.Height || h.prevStride != src.YStride ||
+	if !h.havePrev || h.prev.w != src.Width || h.prev.h != src.Height ||
 		!h.svt.ready() || src.Width < 64 || src.Height < 64 {
 		return
 	}
@@ -178,7 +195,7 @@ func (h *hmeState) meRows(band int, src SourceFrame420, r0, r1 int) {
 	for r := r0; r < r1; r++ {
 		for c := 0; c < f.cols; c++ {
 			i := r*f.cols + c
-			f.l1SAD[i], f.me8x8Dist[i] = h.motionEstimateSB(&f.sb[i], src, c*64, r*64, f.isRef, &h.win[band])
+			f.l1SAD[i], f.me8x8Dist[i] = h.motionEstimateSB(&f.sb[i], src.Width, src.Height, c*64, r*64, f.isRef)
 		}
 	}
 }

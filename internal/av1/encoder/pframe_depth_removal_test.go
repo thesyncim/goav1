@@ -62,13 +62,14 @@ func TestRealtimeSBMultiSizeMESweepMatchesBruteForce(t *testing.T) {
 	}
 	src, ref := mk(), mk()
 
-	hs := &hmeState{prevY: ref.Y, prevStride: w, prevW: w, prevH: h, havePrev: true}
-	var win meWindow
+	hs := &hmeState{}
+	hs.keepPrev(ref)
+	padLuma(&hs.cur, src)
 
 	for _, sb := range [][2]int{{0, 0}, {64, 64}, {128, 96}, {64, 0}} {
 		px, py := sb[0], sb[1]
 		var me realtimeSBMultiSizeME
-		hs.motionEstimateSB(&me, src, px, py, true, &win)
+		hs.motionEstimateSB(&me, w, h, px, py, true)
 		if !me.valid {
 			t.Fatalf("sweep at (%d,%d) not valid", px, py)
 		}

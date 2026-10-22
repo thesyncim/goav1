@@ -241,12 +241,8 @@ func (e *VideoEncoder) runLeafHME(leafSrc SourceFrame420) {
 		return
 	}
 	e.leafHME.svt.primeFrom(&e.hme.svt)
-	n := e.hme.prevStride * e.hme.prevH
-	if len(e.leafHME.prevY) < n {
-		e.leafHME.prevY = make([]byte, n)
-	}
-	copy(e.leafHME.prevY[:n], e.hme.prevY[:n])
-	e.leafHME.prevStride, e.leafHME.prevW, e.leafHME.prevH = e.hme.prevStride, e.hme.prevW, e.hme.prevH
+	e.leafHME.prev.copyFrom(&e.hme.prev)
+	e.leafHME.curReady = false
 	e.leafHME.havePrev = true
 	e.leafHME.runSerial(leafSrc, false)
 	e.hme.svt.adoptCurFrom(&e.leafHME.svt)
