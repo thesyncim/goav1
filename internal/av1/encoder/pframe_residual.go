@@ -1279,7 +1279,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// neighbors; compare the motion SAD against a DC-prediction SAD over the
 	// source and take the cheaper block type. Larger leaves only exist where
 	// child vectors agreed, which presumes the motion model holds.
-	if bw == 8 && bh == 8 {
+	if bw == 8 && bh == 8 && !st.lpd1.skipIntra {
 		dc := dcPredictN(recon.Y, src.YStride, lumaPX, lumaPY, 8, block.HaveTop, block.HaveLeft)
 		intraSAD := 0
 		for r := range 8 {
