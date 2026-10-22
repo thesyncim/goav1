@@ -394,6 +394,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 			return nil, fmt.Errorf("goav1: frame threading: %w", err)
 		}
 		d.fp = fp
+		internaldecoder.EnableFrameThreadCDFPool(&d.state)
 		d.runner.EventRunner.fp = fp
 	}
 	return d, nil

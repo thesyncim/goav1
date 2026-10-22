@@ -33,7 +33,7 @@ func decoderFrameContextCount(workers, maxFrameDelay int) int {
 		return 1
 	}
 	if maxFrameDelay > 0 {
-		return min(maxFrameDelay, workers)
+		return min(maxFrameDelay, workers, internaldecoder.FrameThreadMaxFrames)
 	}
 	// ceil(sqrt(n)), min 8 (fc_lut).
 	n := 1
@@ -73,6 +73,7 @@ type decoderFrameContext struct {
 	surface int
 	output  *Frame
 	tailErr error
+	parseErr error
 	start   chan struct{}
 	done    chan struct{}
 }
@@ -100,7 +101,12 @@ type decoderFramePipeline struct {
 
 func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
 	for range fc.start {
-		err := fc.ft.Tail(&fc.postFilter)
+		err := fc.parseErr
+		if err != nil {
+			_ = fc.ft.Recon.Join()
+		} else {
+			err = fc.ft.Tail(&fc.postFilter)
+		}
 		if err == nil && fc.output != nil {
 			if out, ok := fc.postFilter.PostFilterOutput(); ok && out != nil {
 				fc.output = out
@@ -130,6 +136,7 @@ func (p *decoderFramePipeline) retire(fc *decoderFrameContext) {
 	}
 	<-fc.done
 	fc.busy = false
+	p.d.state.ReleaseFrameThreadHolds(&fc.ft)
 	for _, s := range fc.ft.Releases[:fc.ft.ReleaseCount] {
 		if p.readyHolds(s) {
 			// Returned by this call: the shown-surface bookkeeping releases
@@ -286,28 +293,37 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 	}
 
 	p.progress[surface].Reset()
-	var afterParse func()
-	if decoderFramePipelineParseHook != nil {
-		afterParse = decoderFramePipelineParseHook(p, fc, references)
-	}
-	run, err := d.state.RunStepFrameThreaded(&d.refs, event, step, d.workerPool, output, references, fc.scratch.Jobs, fc.scratch.Batches, &fc.batch, &fc.ft, p.laneNeed)
-	if afterParse != nil {
-		afterParse()
-	}
+	// dav1d_submit_frame: the reference slots, slot CDF handles and slot MV
+	// grids name this frame before its entropy pass runs.
+	run, err := d.state.PublishFrameThreaded(&d.refs, event, step, &fc.ft)
 	if err != nil {
-		if fc.ft.Recon.Pending() {
-			_ = fc.ft.Recon.Join()
-		}
 		p.progress[surface].Publish(internalthreading.FrameProgressError)
 		return DecoderFrameWorkEventResult{}, err
 	}
 	fc.surface = surface
+	fc.busy = true
+	var afterParse func()
+	if decoderFramePipelineParseHook != nil {
+		afterParse = decoderFramePipelineParseHook(p, fc, references)
+	}
+	fc.parseErr = d.state.RunStepFrameThreaded(event, step, d.workerPool, output, references, fc.scratch.Jobs, fc.scratch.Batches, &fc.batch, &fc.ft, p.laneNeed)
+	if afterParse != nil {
+		afterParse()
+	}
 	fc.output = nil
-	if event.FrameHeader.ShowFrame {
+	if event.FrameHeader.ShowFrame && fc.parseErr == nil {
 		fc.output = output
 	}
-	fc.busy = true
+	// A failed parse still runs through the tail so its lanes are joined, its
+	// surface reports FrameProgressError to dependents, and retire returns
+	// the frame's holds and reports the error.
 	fc.start <- struct{}{}
+	if fc.parseErr != nil {
+		err := fc.parseErr
+		p.retire(fc)
+		p.err = nil
+		return DecoderFrameWorkEventResult{}, err
+	}
 	return DecoderFrameWorkEventResult{
 		Step:           step,
 		Output:         output,

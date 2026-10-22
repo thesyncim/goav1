@@ -11,19 +11,37 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
+// FrameThreadMaxFrames bounds the frames in flight under frame threading
+// (dav1d caps n_fc at 8 in get_num_threads).
+const FrameThreadMaxFrames = 8
+
+// The saved-CDF pool holds the RefFrames slot targets, the planning frame's
+// initial and retained entries, and, per in-flight frame, its initial and
+// retained entries, which it keeps after the slots move on. The MV-grid pool
+// likewise holds the slot grids, the planning frame's grid and, per in-flight
+// frame, its own grid plus the reference grids its parse projects from.
+const (
+	frameWorkCDFPoolEntries = parser.RefFrames + 2 + 2*FrameThreadMaxFrames
+	frameWorkMVGrids        = parser.RefFrames + 1 + (1+parser.InterRefsPerFrame)*FrameThreadMaxFrames
+)
+
 // FrameThreadFrame is one in-flight frame of the frame-threaded decode
 // (dav1d's Dav1dFrameContext under n_fc > 1, src/decode.c + src/thread_task.c).
-// RunStepFrameThreaded runs the frame's entropy pass and publishes its parse
-// outputs; Tail later finishes the reconstruction and post-filter on another
-// goroutine, while the next frame parses.
 //
-// The frame owns copies of its post-filter side data, so the next frame's
-// Begin can rebind the FrameWorkState while this frame's tail still reads the
-// CDEF index map, loop-filter masks, and restoration buffers. Pool releases of
-// surfaces the frame dropped from the reference slots are deferred to
-// Releases: in-flight frames may still predict from them (dav1d holds those
-// pictures by refcount until the frame finishes, dav1d_thread_picture_unref in
-// dav1d_decode_frame_exit).
+// PublishFrameThreaded runs at the frame's Begin, the way dav1d_submit_frame
+// updates c->refs[] before any tile is decoded: the reference slots, the
+// slot frame contexts (CDF handles) and the slot MV_REF grids point at this
+// frame immediately, and the frame takes over everything its own entropy pass
+// reads (its initial CDF and retained-CDF entries, its MV grid, the reference
+// MV grids it projects from, its post-filter side data). The next frame can
+// therefore be planned while this one is still parsing. RunStepFrameThreaded
+// then runs the entropy pass from these bindings; Tail finishes the
+// reconstruction and post-filter; ReleaseFrameThreadHolds returns the held
+// entries once the frame is retired.
+//
+// Pool releases of surfaces the frame dropped from the reference slots are
+// deferred to Releases: in-flight frames may still predict from them (dav1d
+// holds those pictures by refcount until the frame finishes).
 type FrameThreadFrame struct {
 	Recon threading.FrameThreadRecon
 
@@ -35,6 +53,23 @@ type FrameThreadFrame struct {
 	loopFilterMapValid      bool
 	loopFilterMasksValid    bool
 	restorationValid        bool
+
+	// Entropy-pass bindings taken over from the FrameWorkState at Begin.
+	sequence       threading.FrameWorkSequenceContext
+	referenceCount uint8
+	initialCDF     int8
+	retainedCDF    int8
+	cdfHeld        bool
+	willRetain     bool
+	retainedValid  bool
+	currentMV      tile.ReferenceMVFrame
+	currentMVValid bool
+	temporal       bool
+	mvRefFrames    [parser.InterRefsPerFrame]tile.ReferenceMVFrame
+	mvRefs         [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
+	heldGrids      [1 + parser.InterRefsPerFrame]uint8
+	heldGridCount  int
+	published      bool
 
 	post    FrameWorkPostFilterContext
 	hasPost bool
@@ -86,47 +121,164 @@ func (f *FrameThreadFrame) sideData() (*threading.FrameWorkCDEFIndexMap, *thread
 	return cdef, lfMap, lfMasks, lr
 }
 
-// RunStepFrameThreaded runs the entropy pass of a frame-threadable event (see
-// EventFrameThreadable) planned by PlanEvent, then publishes the frame's parse
-// outputs: the reference slots, the adapted CDFs and the MV_REF grid, exactly
-// what FrameWorkState.Finish publishes, but before the frame is reconstructed
-// and post-filtered. dav1d signals the same outputs right after the
-// update-tile's entropy pass (thread_task.c, the out_cdf / progress[0] signal)
-// so the next frame's entropy pass can start. The state is left inactive for
-// the next Begin. Reconstruction lanes keep running; ft.Tail completes the
-// frame. laneNeed bounds the reconstruction lanes live at once across every
-// in-flight frame.
-func (s *FrameWorkState) RunStepFrameThreaded(refs *SurfaceReferences, event *Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, runner threading.FrameWorkBatchRunner, ft *FrameThreadFrame, laneNeed int) (FrameWorkStepResult, error) {
-	if s == nil || !s.active || ft == nil || refs == nil || output == nil || !EventFrameThreadable(event) || !frameWorkStepMatchesEvent(event, step) {
+func (f *FrameThreadFrame) motionFields() frameWorkMotionFields {
+	var fields frameWorkMotionFields
+	if f.currentMVValid {
+		fields.current = &f.currentMV
+	}
+	if f.temporal {
+		fields.references = f.mvRefs
+		fields.deferred = &f.mvRefs
+	}
+	return fields
+}
+
+func (s *FrameWorkState) holdMVGrid(f *FrameThreadFrame, handle uint8) {
+	if handle == 0 {
+		return
+	}
+	s.mvGridRefs[handle-1]++
+	f.heldGrids[f.heldGridCount] = handle
+	f.heldGridCount++
+}
+
+// PublishFrameThreaded publishes a planned frame-threadable event (see
+// EventFrameThreadable) at its Begin, before its entropy pass runs: the
+// reference-slot refresh without the pool release, the slot frame contexts
+// and the slot MV_REF grids, exactly what FrameWorkState.Finish publishes. The
+// slot CDF handle is the frame's retained entry when its update tile will
+// save the adapted contexts (refresh_frame_context and CDF updates on), else
+// its initial entry, so the choice is known before the parse; dav1d binds the
+// same out_cdf handle in dav1d_submit_frame. The state is left inactive for
+// the next Begin; ft owns the frame's entropy-pass bindings.
+func (s *FrameWorkState) PublishFrameThreaded(refs *SurfaceReferences, event *Event, step FrameWorkStep, ft *FrameThreadFrame) (FrameWorkStepResult, error) {
+	if s == nil || !s.active || ft == nil || refs == nil || s.sharedFrameContexts != nil || !s.ownedTemporalMotion ||
+		!EventFrameThreadable(event) || !frameWorkStepMatchesEvent(event, step) || s.temporalMVsValid ||
+		!s.tileResidualCurrentCDFsValid {
 		return FrameWorkStepResult{}, ErrInvalidFrameWorkState
 	}
-	_, referenceCount, _, err := frameWorkStepTilePlan(step)
-	if err != nil {
-		return FrameWorkStepResult{}, err
-	}
 	ft.captureSideData(s)
+	ft.sequence = s.sequenceContext()
+	ft.referenceCount = s.ReferenceCount
 	ft.hasPost = false
 	ft.ReleaseCount = 0
-	cdefIndexMap, loopFilterMap, loopFilterMasks, restoration := ft.sideData()
-	frameContext := frameWorkFrameContext(event, s.sequenceContext())
-	initialCDFs, retainedCDFs, retainedCDFsValid := s.tileResidualCDFBindings()
-	prepared, err := prepareFrameWorkStepWithPayload(step, output, references, event.Unit.Payload, true, frameContext, event.FrameHeader.DisableCDFUpdate, initialCDFs, retainedCDFs, retainedCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, loopFilterMasks, restoration, jobs, batches)
+	ft.retainedValid = false
+	ft.published = false
+
+	// Entropy bindings: the frame takes over the current/retained CDF holds
+	// and its MV grid hold, and holds every reference grid it projects from.
+	ft.initialCDF = s.tileResidualCurrentCDF
+	ft.retainedCDF = s.tileResidualRetainedCDF
+	ft.cdfHeld = true
+	ft.willRetain = event.TileInfo.RefreshContext && event.TileInfo.ContextUpdateTileID == 0 &&
+		!event.FrameHeader.DisableCDFUpdate
+	ft.currentMV = s.currentMVFrame
+	ft.currentMVValid = s.currentMVFrameValid
+	ft.temporal = s.temporalMVsDeferred
+	ft.heldGridCount = 0
+	if s.currentMVGrid != 0 {
+		ft.heldGrids[0] = s.currentMVGrid
+		ft.heldGridCount = 1
+	}
+	ft.mvRefs = [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame{}
+	if ft.temporal {
+		for ref := range s.mvReferences {
+			r := s.mvReferences[ref]
+			if r.Frame == nil {
+				continue
+			}
+			ft.mvRefFrames[ref] = *r.Frame
+			r.Frame = &ft.mvRefFrames[ref]
+			ft.mvRefs[ref] = r
+			slot := int(event.FrameSize.RefFrameIdx[ref])
+			if slot >= 0 && slot < parser.RefFrames {
+				s.holdMVGrid(ft, s.mvSlotGrid[slot])
+			}
+		}
+	}
+
+	next := *refs
+	count, err := next.FinishFrame(event, s.Surface, ft.Releases[:])
 	if err != nil {
 		return FrameWorkStepResult{}, err
 	}
+	*refs = next
+	ft.ReleaseCount = count
+	s.tileResidualRetainedCDFsValid = ft.willRetain
+	s.finishTileResidualCDFs(event, -1)
+	s.publishTemporalMotionFrame(event)
+	// The holds now belong to ft; resetActive must not drop them.
+	s.tileResidualCurrentCDFsValid = false
+	s.tileResidualCurrentCDF = -1
+	s.tileResidualRetainedCDF = -1
+	s.currentMVGrid = 0
+	s.resetActive()
+	ft.published = true
+
+	releaseCount, err := frameWorkAddReleaseCount(step.ReleaseCount, count)
+	if err != nil {
+		return FrameWorkStepResult{}, err
+	}
+	return FrameWorkStepResult{
+		ExecutedTileWork: true,
+		CompletedFrame:   true,
+		ReleaseCount:     releaseCount,
+	}, nil
+}
+
+// ReleaseFrameThreadHolds returns the CDF entries and MV grids a retired
+// frame held. It runs on the goroutine that plans frames.
+func (s *FrameWorkState) ReleaseFrameThreadHolds(ft *FrameThreadFrame) {
+	if s == nil || ft == nil {
+		return
+	}
+	if ft.cdfHeld {
+		s.releaseTileResidualCDFEntry(ft.initialCDF)
+		s.releaseTileResidualCDFEntry(ft.retainedCDF)
+		ft.cdfHeld = false
+	}
+	for i := 0; i < ft.heldGridCount; i++ {
+		s.releaseMVGrid(ft.heldGrids[i])
+	}
+	ft.heldGridCount = 0
+	ft.published = false
+}
+
+// RunStepFrameThreaded runs the entropy pass of a frame published by
+// PublishFrameThreaded, from the bindings the frame took over. Reconstruction
+// lanes keep running when it returns; ft.Tail completes the frame. laneNeed
+// bounds the reconstruction lanes live at once across every in-flight frame.
+// It reads the shared CDF pool only through the entries ft holds, so it may
+// run while the planning goroutine begins later frames.
+func (s *FrameWorkState) RunStepFrameThreaded(event *Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, runner threading.FrameWorkBatchRunner, ft *FrameThreadFrame, laneNeed int) error {
+	if s == nil || ft == nil || !ft.published || !ft.cdfHeld || output == nil {
+		return ErrInvalidFrameWorkState
+	}
+	cdefIndexMap, loopFilterMap, loopFilterMasks, restoration := ft.sideData()
+	frameContext := frameWorkFrameContext(event, ft.sequence)
+	initialCDFs := s.cdfEntry(ft.initialCDF)
+	retainedCDFs := s.cdfEntry(ft.retainedCDF)
+	prepared, err := prepareFrameWorkStepWithPayload(step, output, references, event.Unit.Payload, true, frameContext, event.FrameHeader.DisableCDFUpdate, initialCDFs, retainedCDFs, &ft.retainedValid, ft.motionFields(), cdefIndexMap, loopFilterMap, loopFilterMasks, restoration, jobs, batches)
+	if err != nil {
+		return err
+	}
 	if !prepared.HasTileWork || prepared.BatchCount != 1 {
-		return FrameWorkStepResult{}, ErrInvalidTileWork
+		return ErrInvalidTileWork
 	}
 	prepared.Base.FrameThread = &ft.Recon
 	if err := workerPool.ExecuteFrameWorkRunnerFrameThread(batches[0], jobs[:prepared.JobCount], prepared.Base, runner, laneNeed); err != nil {
-		return FrameWorkStepResult{ExecutedTileWork: true}, err
+		return err
 	}
-
+	if ft.retainedValid != ft.willRetain {
+		// The slot frame contexts were bound to the retained entry at Begin;
+		// the update tile must have filled it.
+		return ErrInvalidFrameWorkState
+	}
 	ft.post = FrameWorkPostFilterContext{
 		Event:                   *event,
 		Step:                    step,
 		Output:                  output,
-		ReferenceCount:          referenceCount,
+		ReferenceCount:          ft.referenceCount,
 		ExecutedTileWork:        true,
 		CDEFIndexMap:            cdefIndexMap,
 		LoopFilterMap:           loopFilterMap,
@@ -135,28 +287,7 @@ func (s *FrameWorkState) RunStepFrameThreaded(refs *SurfaceReferences, event *Ev
 		pool:                    workerPool,
 	}
 	ft.hasPost = true
-
-	// Publication seam: the reference-slot refresh without the pool release,
-	// then the adapted CDFs and the MV_REF grid (Finish's order).
-	next := *refs
-	count, err := next.FinishFrame(event, s.Surface, ft.Releases[:])
-	if err != nil {
-		return FrameWorkStepResult{ExecutedTileWork: true}, err
-	}
-	*refs = next
-	ft.ReleaseCount = count
-	s.finishTileResidualCDFs(event, -1)
-	s.publishTemporalMotionFrame(event)
-	s.resetActive()
-	releaseCount, err := frameWorkAddReleaseCount(step.ReleaseCount, count)
-	if err != nil {
-		return FrameWorkStepResult{ExecutedTileWork: true}, err
-	}
-	return FrameWorkStepResult{
-		ExecutedTileWork: true,
-		CompletedFrame:   true,
-		ReleaseCount:     releaseCount,
-	}, nil
+	return nil
 }
 
 // Tail finishes a frame-threaded frame: it joins the reconstruction lanes and
@@ -174,4 +305,21 @@ func (f *FrameThreadFrame) Tail(post FrameWorkPostFilterRunner) error {
 		return nil
 	}
 	return post.Apply(f.post)
+}
+
+// cdfEntry resolves a saved-CDF pool handle.
+func (s *FrameWorkState) cdfEntry(idx int8) *threading.FrameWorkTileResidualCDFStorage {
+	if int(idx) < len(s.tileResidualCDFPool) {
+		return &s.tileResidualCDFPool[idx]
+	}
+	return &s.tileResidualCDFPoolExtra[int(idx)-len(s.tileResidualCDFPool)]
+}
+
+// EnableFrameThreadCDFPool gives a decoder that runs frame threading the
+// extra saved-CDF entries its in-flight frames hold. It is a free function in
+// the internal package so the public FrameWorkState alias gains no method.
+func EnableFrameThreadCDFPool(s *FrameWorkState) {
+	if s != nil && s.tileResidualCDFPoolExtra == nil {
+		s.tileResidualCDFPoolExtra = new([frameWorkCDFPoolEntries - (parser.RefFrames + 2)]threading.FrameWorkTileResidualCDFStorage)
+	}
 }

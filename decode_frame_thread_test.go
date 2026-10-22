@@ -191,7 +191,7 @@ func TestFrameThreadedParseNeverReadsReferencePixels(t *testing.T) {
 func TestFrameContextCountMatchesDav1d(t *testing.T) {
 	cases := []struct{ workers, delay, want int }{
 		{1, 0, 1}, {2, 0, 2}, {4, 0, 2}, {5, 0, 3}, {8, 0, 3}, {9, 0, 3}, {10, 0, 4},
-		{16, 0, 4}, {64, 0, 8}, {8, 1, 1}, {8, 5, 5}, {2, 5, 2},
+		{16, 0, 4}, {64, 0, 8}, {8, 1, 1}, {8, 5, 5}, {2, 5, 2}, {64, 20, 8},
 	}
 	for _, c := range cases {
 		if got := decoderFrameContextCount(c.workers, c.delay); got != c.want {
