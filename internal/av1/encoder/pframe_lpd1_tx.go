@@ -271,8 +271,17 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 			// Rate-priced skip (RDCOST shapes): code when distortion saved
 			// outweighs the coefficient rate at the working quantizer.
 			// Dropped planes contribute equal dcode/dskip terms, so their
-			// omission leaves the comparison unchanged.
-			rdCode := ((st.rdRcode*st.rdMult + 256) >> 9) + (st.rdDcode << 7)
+			// omission leaves the comparison unchanged. The rate is the real
+			// coefficient coder's cost of every TXB, txb_skip and EOB
+			// symbols included, as SVT-AV1's full loop prices the coded
+			// alternative (full_loop.c svt_aom_txb_estimate_coeff_bits);
+			// the per-coefficient estimate remains only for layouts the
+			// trial counters do not cover.
+			rate := (st.rdRcode*st.rdMult + 256) >> 9
+			if r, ok := st.exactInterCoeffCost(txPlan, bw, bh, cbw, cbh, hasChroma, lumaPX, lumaPY); ok {
+				rate = r
+			}
+			rdCode := rate + (st.rdDcode << 7)
 			rdSkip := st.rdDskip << 7
 			if rdSkip <= rdCode {
 				skip = true
@@ -293,4 +302,139 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 		txType = st.chooseInter8x8TXType(src, lumaPX, lumaPY, dctRdD)
 	}
 	return skip, splitTX, txPlan, txType, nil
+}
+
+// exactInterCoeffCost prices the block's quantized luma and chroma
+// coefficients with the real coefficient coder against the frame-frozen
+// trial CDFs, lambda-scaled like the RDCOST rate term. ok=false leaves the
+// caller on its per-coefficient estimate (rectangular or 64-wide layouts).
+//
+// The pricing contexts restart from the frame-start defaults at every
+// superblock: adaptation inside a superblock follows its fixed block order,
+// so the serial, split and wavefront walks price identically.
+func (st *lossyEncodeState) exactInterCoeffCost(txPlan realtimeInterTXPlan, bw, bh, cbw, cbh int, hasChroma bool, lumaPX, lumaPY int) (int64, bool) {
+	if !st.skipRateReady {
+		if err := st.skipRateBase.InitDefault(st.qIndex); err != nil {
+			return 0, false
+		}
+		st.skipRateCDFs = st.skipRateBase
+		st.skipRateDirty = 0
+		st.skipRateReady = true
+		st.skipRateSB = -1
+	}
+	if sb := (lumaPY>>6)<<16 | lumaPX>>6; sb != st.skipRateSB {
+		st.restoreSkipRateCDFs()
+		st.skipRateSB = sb
+	}
+	if hasChroma && (cbw != cbh || cbw > 32) {
+		return 0, false
+	}
+	var bits int
+	if txPlan.Variable() {
+		leaf := txPlan.leafSize
+		area := leaf * leaf
+		if err := txPlan.ForEachLeaf(func(i, dx, dy int) error {
+			bits += st.skipRateTXBBits(true, st.lumaQ2[i*area:(i+1)*area], leaf)
+			return nil
+		}); err != nil {
+			return 0, false
+		}
+	} else {
+		if bw != bh || bw > 32 {
+			return 0, false
+		}
+		bits += st.skipRateTXBBits(true, st.lumaQ[:bw*bh], bw)
+	}
+	if hasChroma {
+		bits += st.skipRateTXBBits(false, st.uQ[:cbw*cbh], cbw)
+		bits += st.skipRateTXBBits(false, st.vQ[:cbw*cbh], cbw)
+	}
+	if bits < 0 {
+		return 0, false
+	}
+	return st.txbBitsToRate(bits), true
+}
+
+// skipRateTXBBits counts one square TXB against the skip-pricing contexts;
+// -1 marks an unsupported size.
+func (st *lossyEncodeState) skipRateTXBBits(luma bool, q []int16, n int) int {
+	c := &st.skipRateCDFs
+	plane := tile.CoeffPlaneUV
+	if luma {
+		plane = tile.CoeffPlaneY
+	}
+	txCtx := -1
+	switch n {
+	case 4:
+		txCtx = 0
+	case 8:
+		txCtx = 1
+	case 16:
+		txCtx = 2
+	case 32:
+		txCtx = 3
+	}
+	if txCtx >= 0 {
+		st.skipRateDirty |= 1 << (txCtx*tile.CoeffPlaneTypes + int(plane))
+	}
+	var bits int
+	switch {
+	case luma && n == 8:
+		_, bits = tile.CountCoefficientsTXB8x8Y2DTrustedArray(c, (*[64]int16)(q), nil, 0)
+	case luma && n == 16:
+		_, bits = tile.CountCoefficientsTXB16x16Y2DTrustedArray(c, (*[256]int16)(q))
+	case luma && n == 32:
+		_, bits = tile.CountCoefficientsTXB32x32Y2DTrustedArray(c, (*[1024]int16)(q))
+	case !luma && n == 4:
+		_, bits = tile.CountCoefficientsTXB4x4UV2DTrustedArray(c, (*[16]int16)(q))
+	case !luma && n == 8:
+		_, bits = tile.CountCoefficientsTXB8x8UV2DTrustedArray(c, (*[64]int16)(q))
+	case !luma && n == 16:
+		_, bits = tile.CountCoefficientsTXB16x16UV2DTrustedArray(c, (*[256]int16)(q))
+	case !luma && n == 32:
+		_, bits = tile.CountCoefficientsTXB32x32UV2DTrustedArray(c, (*[1024]int16)(q))
+	default:
+		return -1 << 30
+	}
+	return bits
+}
+
+// restoreSkipRateCDFs returns the coefficient families the last superblock's
+// pricing touched to their frame-start state. A (tx-size context, plane)
+// pair's counters touch only that pair's TXB-skip, EOB, base, BR and DC-sign
+// tables, so copying those rows equals restoring the whole set.
+func (st *lossyEncodeState) restoreSkipRateCDFs() {
+	d := st.skipRateDirty
+	if d == 0 {
+		return
+	}
+	c, b := &st.skipRateCDFs, &st.skipRateBase
+	planeDirty := [tile.CoeffPlaneTypes]bool{}
+	for tx := 0; tx < tile.CoeffTxSizeContexts; tx++ {
+		for p := 0; p < tile.CoeffPlaneTypes; p++ {
+			if d&(1<<(tx*tile.CoeffPlaneTypes+p)) == 0 {
+				continue
+			}
+			planeDirty[p] = true
+			c.TXBSkip[tx] = b.TXBSkip[tx]
+			c.EOBExtra[tx][p] = b.EOBExtra[tx][p]
+			c.CoeffBR[min(tx, 3)][p] = b.CoeffBR[min(tx, 3)][p]
+			c.CoeffBase[tx][p] = b.CoeffBase[tx][p]
+			c.CoeffBaseEOB[tx][p] = b.CoeffBaseEOB[tx][p]
+		}
+	}
+	for p, dirty := range planeDirty {
+		if !dirty {
+			continue
+		}
+		c.DCSign[p] = b.DCSign[p]
+		c.EOBFlag16[p] = b.EOBFlag16[p]
+		c.EOBFlag32[p] = b.EOBFlag32[p]
+		c.EOBFlag64[p] = b.EOBFlag64[p]
+		c.EOBFlag128[p] = b.EOBFlag128[p]
+		c.EOBFlag256[p] = b.EOBFlag256[p]
+		c.EOBFlag512[p] = b.EOBFlag512[p]
+		c.EOBFlag1024[p] = b.EOBFlag1024[p]
+	}
+	st.skipRateDirty = 0
 }

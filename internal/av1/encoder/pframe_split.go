@@ -332,6 +332,9 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	st.predStats.valid = false
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
+	if err := st.useSBQuant(lumaPX, lumaPY); err != nil {
+		return err
+	}
 	hasChroma := !st.color.MonoChrome
 	modeCtx := &scratch.Mode
 	cbw, cbh := 0, 0
@@ -553,14 +556,14 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	mds0PredRetained := false
 	if !refs.Compound {
 		mds0Picked := false
-		mds0Gate := fullSAD*4 > bw*bh
-		if st.mds0Level == 2 {
-			mds0Gate = mds0Gate && fullSAD <= bw*bh*4
-		}
+		mds0Gate := st.mds0Level != 2 || fullSAD <= bw*bh*4
 		if st.mds0Level != 0 && mds0Gate && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height &&
 			st.realtimeContentStateForBlock(lumaPX, lumaPY).sourceSADNonRD != realtimeSourceSADZero {
 			if cand, ok, retained := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {
 				modeResult.Mode = cand.mode
+				if cand.mv != mv {
+					fullSAD = st.mds0WinnerSAD(src, lumaPX, lumaPY, bw, bh, retained, fullSAD)
+				}
 				mv = cand.mv
 				drlIndex = int(cand.drl)
 				mds0Picked = true
@@ -569,6 +572,8 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 		}
 		if !mds0Picked {
 			modeResult.Mode = st.classifyInterMode(src, refPlanes, &stack, lumaPX, lumaPY, bw, bh, &mv, &fullSAD)
+		} else if st.mds0IntraDCWins(src, recon, block, modeCtx, lumaPX, lumaPY, bw, bh) {
+			return st.decideIntraPBlock(src, recon, block, scratch, rec)
 		}
 	}
 	// Switchable interpolation filter decision (SVT IFS_MDS3, see pframe_ifs.go).
@@ -823,6 +828,9 @@ func (st *lossyEncodeState) writePBlock(block tile.BlockVisit, scratch *tile.Blo
 	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, skip); err != nil {
 		return fmt.Errorf("skip: %w", err)
 	}
+	if err := st.writeSBDeltaQ(block, skip); err != nil {
+		return fmt.Errorf("delta q: %w", err)
+	}
 	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{SkipTransform: skip}); err != nil {
 		return fmt.Errorf("mark prefix: %w", err)
 	}
@@ -992,15 +1000,21 @@ func (st *lossyEncodeState) decideIntraPBlock(src SourceFrame420, recon *SourceF
 	modeCtx := &scratch.Mode
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
-	pred := st.predY[:64]
-	mode := selectIntraMode8(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, block.HaveTop, block.HaveLeft, pred)
-	if !st.trialReady {
-		if err := st.trialCDFs.InitDefault(st.qIndex); err != nil {
-			return err
+	n, lumaTX, _ := intraPBlockGeometry(st, block.Size)
+	pred := st.predY[:n*n]
+	mode, angleDelta := tile.IntraModeDC, 0
+	if n == 8 {
+		mode = selectIntraMode8(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, block.HaveTop, block.HaveLeft, pred)
+		if !st.trialReady {
+			if err := st.trialCDFs.InitDefault(st.qIndex); err != nil {
+				return err
+			}
+			st.trialReady = true
 		}
-		st.trialReady = true
+		mode, angleDelta = st.improveIntraModeDirectional(src, recon, block, mode, pred, lumaPX, lumaPY, 8)
+	} else {
+		fillIntraDCPred(pred, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft)
 	}
-	mode, angleDelta := st.improveIntraModeDirectional(src, recon, block, mode, pred, lumaPX, lumaPY, 8)
 
 	r := rec.appendBlock()
 	r.kind = pblockIntra
@@ -1031,7 +1045,7 @@ func (st *lossyEncodeState) decideIntraPBlock(src SourceFrame420, recon *SourceF
 	}
 
 	// Luma: quantize against the chosen prediction, record, reconstruct.
-	if err := st.reconRecordedIntraTXB(rec, recon.Y, src.Y, src.YStride, lumaPX, lumaPY, 8, 8, st.yQuant, tile.TransformSize8x8, pred); err != nil {
+	if err := st.reconRecordedIntraTXB(rec, recon.Y, src.Y, src.YStride, lumaPX, lumaPY, n, n, st.yQuant, lumaTX, pred); err != nil {
 		return fmt.Errorf("intra luma txb: %w", err)
 	}
 	if !hasChroma {
@@ -1130,10 +1144,14 @@ func (st *lossyEncodeState) reconRecordedIntraTXB(rec *pframeSplitRecord, reconP
 func (st *lossyEncodeState) writeIntraPBlock(block tile.BlockVisit, scratch *tile.BlockLoopScratch, r *pblockRecord, rec *pframeSplitRecord) error {
 	modeCtx := &scratch.Mode
 	coeffCtx := &scratch.CoeffCtx
+	n, lumaTX, lumaScan := intraPBlockGeometry(st, block.Size)
 
 	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
 	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, false); err != nil {
 		return fmt.Errorf("intra skip: %w", err)
+	}
+	if err := st.writeSBDeltaQ(block, false); err != nil {
+		return fmt.Errorf("intra delta q: %w", err)
 	}
 	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
 		return fmt.Errorf("intra mark prefix: %w", err)
@@ -1194,7 +1212,7 @@ func (st *lossyEncodeState) writeIntraPBlock(block tile.BlockVisit, scratch *til
 		VisibleW4: block.VisibleW4, VisibleH4: block.VisibleH4,
 		HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
 		Color: st.color, TransformMode: st.transformMode,
-	}, tile.TransformTreeResult{Y: tile.TransformSize8x8})
+	}, tile.TransformTreeResult{Y: lumaTX})
 	if err != nil {
 		return fmt.Errorf("intra transform tree: %w", err)
 	}
@@ -1205,17 +1223,21 @@ func (st *lossyEncodeState) writeIntraPBlock(block tile.BlockVisit, scratch *til
 	}
 
 	st.intraTxTypeReq.Mode = mode
-	lumaCoeffs, err := rec.nextCoeffs(64)
+	st.intraTxTypeReq.Size = lumaTX
+	lumaCoeffs, err := rec.nextCoeffs(n * n)
 	if err != nil {
+		st.intraTxTypeReq.Size = tile.TransformSize8x8
 		return err
 	}
-	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, tile.CoeffContextRequest{
+	_, err = tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, tile.CoeffContextRequest{
 		Plane:      0,
 		PlaneBlock: block.Size,
-		Size:       tile.TransformSize8x8,
+		Size:       lumaTX,
 		X4:         block.X4,
 		Y4:         block.Y4,
-	}, transform.Class2D, lumaCoeffs, st.scan8, st.levels, st.afterSkipIntra); err != nil {
+	}, transform.Class2D, lumaCoeffs, lumaScan, st.levels, st.afterSkipIntra)
+	st.intraTxTypeReq.Size = tile.TransformSize8x8
+	if err != nil {
 		return fmt.Errorf("intra luma txb: %w", err)
 	}
 	if !hasChroma {

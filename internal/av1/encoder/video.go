@@ -41,6 +41,8 @@ type VideoEncoder struct {
 	rcTemporalBuffer       [WebRTCMaxTemporalLayers]int
 	rcTemporalRecentBits   [WebRTCMaxTemporalLayers][2]int
 	rcTemporalPerFrameBits [WebRTCMaxTemporalLayers]int
+	// cr is the cyclic refresh state of single-layer CBR streams.
+	cr cyclicRefresh
 
 	pc        pframeCoder
 	reconBufs [2]SourceFrame420
@@ -578,6 +580,7 @@ func newVideoEncoderCBRWithColor(width, height int, rc RateControlConfig, color 
 	e.rcMinQ = rc.MinQIndex
 	e.rcMaxQ = rc.MaxQIndex
 	e.resetRCTemporalState()
+	e.cr.reset(e.rcMaxQ)
 	return e, nil
 }
 
@@ -642,6 +645,7 @@ func (e *VideoEncoder) SetRateControlConfig(rc RateControlConfig) error {
 	e.rcBuffer = 0
 	e.rcRecentBits = [2]int{}
 	e.resetRCTemporalState()
+	e.cr.reset(e.rcMaxQ)
 	return nil
 }
 
@@ -953,6 +957,11 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 	}
 	seq := e.sequenceHeader(maxWidth, maxHeight)
 	effQ := e.layerQIndex(settings.TemporalID)
+	// This path signals no delta_q; drop any grid a previous frame left.
+	e.pc.st.sbQPending = nil
+	for t := range e.tilePCs {
+		e.tilePCs[t].st.sbQPending = nil
+	}
 	header, _ := repeatPFrameHeader(src.Width, src.Height, effQ, refresh)
 	e.applyContentHintToFrameHeader(&header.Prefix)
 	header.Prefix.FrameSizeOverride = src.Width != maxWidth || src.Height != maxHeight
@@ -1108,6 +1117,7 @@ func (e *VideoEncoder) Prewarm() error {
 		Height:       e.renderHeight,
 	}
 	savedQ := e.qIndex
+	savedCREnd, savedCRQ := e.cr.sbEnd, e.cr.avgInterQ
 	// Size the assembly buffers for real content up front; the throwaway
 	// frame below is black and would leave them near-empty.
 	if bound := e.width * e.height; cap(e.tuScratch) < bound {
@@ -1149,6 +1159,7 @@ func (e *VideoEncoder) Prewarm() error {
 	e.frameIndex = 0
 	e.lastTemporalID = 0
 	e.qIndex = savedQ
+	e.cr.sbEnd, e.cr.avgInterQ = savedCREnd, savedCRQ
 	e.rcBuffer = 0
 	e.rcRecentBits = [2]int{}
 	e.sinceGoldenFresh = 0
@@ -1566,6 +1577,22 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	refRecon := e.recon
 	if afterT1 {
 		refRecon = e.t1Recon
+	}
+	// Cyclic refresh (cyclic_refresh.go): single-layer CBR inter frames
+	// lower the qindex of a sliding superblock window and signal it with
+	// delta_q (svt_aom_cyclic_refresh_init applies it to every flat-structure
+	// inter frame).
+	var sbQ []uint8
+	if e.rcEnabled && e.temporalLayers <= 1 && videoColorIs420(color) && effQ > 0 &&
+		refRecon.Width == src.Width && refRecon.Height == src.Height {
+		sbQ = e.cr.plan(effQ, e.rcMinQ, e.rcMaxQ, src.Width, src.Height, &e.hme, e.frameIndex, e.avgFrameLowMotion)
+		e.cr.noteInterQ(effQ)
+	}
+	header.Delta = DeltaParams{DeltaQPresent: sbQ != nil}
+	sbQCols := (src.Width + 63) / 64
+	e.pc.st.sbQPending, e.pc.st.sbQPendingCols = sbQ, sbQCols
+	for t := range e.tilePCs {
+		e.tilePCs[t].st.sbQPending, e.tilePCs[t].st.sbQPendingCols = sbQ, sbQCols
 	}
 	// Base frames run the per-block switchable interpolation filter search,
 	// so their headers signal SWITCHABLE (SVT-AV1 enc_mode_config.c:

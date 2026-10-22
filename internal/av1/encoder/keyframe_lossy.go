@@ -650,6 +650,41 @@ type lossyEncodeState struct {
 	// its own pricing mid-frame.
 	mds0Level uint8
 	mds0Rates tile.InterModeRateTables
+	// mds0IntraRates prices the DC_PRED candidate light-PD1 injects next to
+	// the inter candidates (pframe_mds0.go mds0IntraDCWins); mds0IntraOK
+	// reports that the frame-start tables were built. mds0BestCost and
+	// mds0BestVar carry the inter winner's RD cost and residual variance.
+	mds0IntraRates tile.IntraDCRateTables
+
+	// skipRateCDFs prices the inter skip decision's coded alternative
+	// (pframe_lpd1_tx.go exactInterCoeffCost), restarting from skipRateBase
+	// at every superblock skipRateSB names; skipRateReady arms the base
+	// lazily each frame.
+	skipRateCDFs  tile.CoeffCDFs
+	skipRateBase  tile.CoeffCDFs
+	skipRateSB    int
+	skipRateDirty uint16
+	skipRateReady bool
+
+	// sbQIndex holds the per-64x64 superblock qindex of an inter frame
+	// under cyclic refresh (cyclic_refresh.go), frame-wide in raster order
+	// with sbQCols columns; nil codes every superblock at the frame q.
+	// quantQ is the qindex the quantizers and lambda currently hold;
+	// deltaQCur is the delta_q writer's running CurrentQIndex and deltaQCDF
+	// the adaptive delta_q_abs CDF.
+	// sbQPending/sbQPendingCols hand the next tile encode its grid; the
+	// tile consumes them so no other inter path inherits a stale grid.
+	sbQPending     []uint8
+	sbQPendingCols int
+	sbQIndex       []uint8
+	sbQCols        int
+	quantQ         uint8
+	baseQAC        int32
+	deltaQCur      uint8
+	deltaQCDF      entropy.CDF
+	mds0IntraOK    bool
+	mds0BestCost   int64
+	mds0BestVar    int64
 
 	// depthRemovalLevel arms SVT-AV1's depth-removal signal chain for inter
 	// frames (set_depth_removal_level_controls, enc_mode_config.c; see

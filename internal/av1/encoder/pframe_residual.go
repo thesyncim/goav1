@@ -1408,7 +1408,7 @@ func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, s
 	content := st.realtimeContentStateForBlock(px, py)
 	*sb = realtimeVarPartSB{
 		ready:      true,
-		thresholds: realtimeVarPartThresholds(src.Width, src.Height, st.qIndex, st.yQuant.AC, st.effortLevel, content, 0),
+		thresholds: realtimeVarPartThresholds(src.Width, src.Height, st.qIndex, st.baseQAC, st.effortLevel, content, 0),
 	}
 	for i := range sb.force32 {
 		sb.force32[i] = realtimePartEvalAll
@@ -1609,7 +1609,11 @@ func (pc *pframeCoder) reset(qIndex uint8, rootCols int, prev *frameCDFs, color 
 		st.txCDFs = prev.TransformType
 		st.treeCDFs = prev.Transform
 		st.mvCDFs = prev.MV
+		st.deltaQCDF = prev.DeltaQ
 	} else {
+		if err := st.deltaQCDF.InitDefaultDelta(); err != nil {
+			return err
+		}
 		if err := pc.partCDFs.InitDefault(); err != nil {
 			return err
 		}
@@ -1794,6 +1798,7 @@ func (pc *pframeCoder) exportCDFs(dst *frameCDFs) error {
 	dst.TransformType = pc.st.txCDFs
 	dst.Transform = pc.st.treeCDFs
 	dst.MV = pc.st.mvCDFs
+	dst.DeltaQ = pc.st.deltaQCDF
 	return dst.ResetCDFCounts()
 }
 
@@ -1837,6 +1842,8 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		return nil, err
 	}
 	st := &pc.st
+	st.sbQIndex, st.sbQCols = st.sbQPending, st.sbQPendingCols
+	st.sbQPending = nil
 	st.forceIntegerMV = forceIntegerMV
 	st.allowScreenContentTools = allowScreenContentTools
 	st.transformMode = parser.TransformModeSwitchable
@@ -1844,6 +1851,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	// (SVT md_rate_estimation.c svt_aom_estimate_syntax_rate).
 	if st.mds0Level != 0 {
 		pc.modeCDFs.EstimateRateTables(&st.mds0Rates)
+		st.mds0IntraOK = st.intraCDFs.EstimateIntraDCRateTables(&st.mds0IntraRates) == nil
 	}
 	// Freeze the switchable filter rate tables for the IFS combo loop (SVT
 	// md_rate_estimation.c switchable_interp_fac_bitss).
@@ -1889,6 +1897,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	// trial-priced decisions are independent of coding order (wavefront
 	// requirement; see trialBlockLocal).
 	st.trialReady = false
+	st.skipRateReady = false
 	st.trialBlockLocal = true
 	st.keyMIColEnd = uint32(miColEnd)
 	st.keyMIRowEnd = uint32(miRows)
@@ -1897,11 +1906,10 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	// av1_compute_rd_mult_based_on_qindex, inter shape at 8-bit: the DC step
 	// squared scaled by the rate multiplier; RDCOST pairs it with rates in
 	// 512-units-per-bit and distortion shifted by RDDIV_BITS.
-	dcq := float64(st.yQuant.DC)
-	st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))
-	// av1's sad-per-bit LUT formula: full-pel motion search prices one bit
-	// of side information at this many SAD units.
-	st.sadPerBit = realtimeSADPerBit(st.yQuant, color.BitDepth)
+	st.setInterLambda()
+	st.quantQ = qIndex
+	st.baseQAC = st.yQuant.AC
+	st.deltaQCur = qIndex
 	scaledReference := ref.Width != src.Width || ref.Height != src.Height
 
 	scratch := &pc.scratch
@@ -2080,6 +2088,13 @@ func (st *lossyEncodeState) decideRealtimePartition(src, ref SourceFrame420, sca
 	sbPX, sbPY := (px/64)*64, (py/64)*64
 	sb := st.realtimeVarPartitionSB(src, ref, sbPX, sbPY)
 	if sb == nil {
+		// Superblocks crossing the frame edge carry no variance tree, but a
+		// 16x16 that fits stays whole: SVT-AV1 realtime disallows 8x8 blocks
+		// at preset 11+ unless the frame dimensions require them
+		// (enc_mode_config.c get_disallow_8x8_rtc, dimensions_require_8x8).
+		if level == tile.BlockLevel16x16 && px+16 <= src.Width && py+16 <= src.Height {
+			return tile.PartitionNone, nil
+		}
 		return tile.PartitionSplit, nil
 	}
 	switch level {
@@ -2368,6 +2383,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	st.predStats.valid = false
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
+	if err := st.useSBQuant(lumaPX, lumaPY); err != nil {
+		return err
+	}
 	hasChroma := !st.color.MonoChrome
 	modeCtx := &scratch.Mode
 	coeffCtx := &scratch.CoeffCtx
@@ -2630,10 +2648,11 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	if !refs.Compound {
 		mds0Picked := false
 		// The light-PD1 MDS0 candidate decision (SVT preset 12 shape; see
-		// pframe_mds0.go). Blocks already in certain skip territory keep the
-		// classification below so the stale ME SAD cannot mis-skip a swapped
-		// vector, and static superblocks keep the short path as libaom's
-		// realtime pick cuts its mode loop on zero source SAD
+		// pframe_mds0.go) prices every block, low-distortion ones included:
+		// SVT's generate_md_stage_0_cand_light_pd1 has no distortion gate,
+		// and at high q those are the blocks where a vector-free NEARESTMV
+		// undercuts NEWMV. Static superblocks keep the short path as
+		// libaom's realtime pick cuts its mode loop on zero source SAD
 		// (av1/encoder/nonrd_pickmode.c source-SAD shortcuts). Droppable
 		// leaves cap the loop to the moderate-distortion band: SVT keeps
 		// leaves on the highest lpd1 shortcut level (enc_mode_config.c:
@@ -2641,14 +2660,14 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		// steering by block difficulty), and here the hard leaf blocks keep
 		// the single-candidate NEWMV path so leaf frames hold the realtime
 		// wall budget.
-		mds0Gate := fullSAD*4 > bw*bh
-		if st.mds0Level == 2 {
-			mds0Gate = mds0Gate && fullSAD <= bw*bh*4
-		}
+		mds0Gate := st.mds0Level != 2 || fullSAD <= bw*bh*4
 		if st.mds0Level != 0 && mds0Gate && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height &&
 			st.realtimeContentStateForBlock(lumaPX, lumaPY).sourceSADNonRD != realtimeSourceSADZero {
 			if cand, ok, retained := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {
 				modeResult.Mode = cand.mode
+				if cand.mv != mv {
+					fullSAD = st.mds0WinnerSAD(src, lumaPX, lumaPY, bw, bh, retained, fullSAD)
+				}
 				mv = cand.mv
 				drlIndex = int(cand.drl)
 				mds0Picked = true
@@ -2657,6 +2676,8 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 		if !mds0Picked {
 			modeResult.Mode = st.classifyInterMode(src, refPlanes, &stack, lumaPX, lumaPY, bw, bh, &mv, &fullSAD)
+		} else if st.mds0IntraDCWins(src, recon, block, modeCtx, lumaPX, lumaPY, bw, bh) {
+			return st.encodeIntraPBlock(src, recon, block, scratch)
 		}
 	}
 	// Switchable interpolation filter decision, run once the mode and vector
@@ -2759,6 +2780,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
 	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, skip); err != nil {
 		return fmt.Errorf("skip: %w", err)
+	}
+	if err := st.writeSBDeltaQ(block, skip); err != nil {
+		return fmt.Errorf("delta q: %w", err)
 	}
 	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{SkipTransform: skip}); err != nil {
 		return fmt.Errorf("mark prefix: %w", err)
@@ -3088,6 +3112,9 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, false); err != nil {
 		return fmt.Errorf("intra skip: %w", err)
 	}
+	if err := st.writeSBDeltaQ(block, false); err != nil {
+		return fmt.Errorf("intra delta q: %w", err)
+	}
 	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
 		return fmt.Errorf("intra mark prefix: %w", err)
 	}
@@ -3111,17 +3138,21 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	}
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
-	pred := st.predY[:64]
-	mode := selectIntraMode8(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, block.HaveTop, block.HaveLeft, pred)
-	if !st.trialReady {
-		if err := st.trialCDFs.InitDefault(st.qIndex); err != nil {
-			return err
+	n, lumaTX, lumaScan := intraPBlockGeometry(st, block.Size)
+	pred := st.predY[:n*n]
+	mode, angleDelta := tile.IntraModeDC, 0
+	if n == 8 {
+		mode = selectIntraMode8(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, block.HaveTop, block.HaveLeft, pred)
+		if !st.trialReady {
+			if err := st.trialCDFs.InitDefault(st.qIndex); err != nil {
+				return err
+			}
+			st.trialReady = true
 		}
-		st.trialReady = true
+		mode, angleDelta = st.improveIntraModeDirectional(src, recon, block, mode, pred, lumaPX, lumaPY, 8)
+	} else {
+		fillIntraDCPred(pred, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft)
 	}
-	mode, angleDelta := func() (tile.IntraMode, int) {
-		return st.improveIntraModeDirectional(src, recon, block, mode, pred, lumaPX, lumaPY, 8)
-	}()
 	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
 		FrameType: parser.FrameTypeInter,
 		Size:      block.Size, X4: block.X4, Y4: block.Y4,
@@ -3162,7 +3193,7 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		VisibleW4: block.VisibleW4, VisibleH4: block.VisibleH4,
 		HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
 		Color: st.color, TransformMode: st.transformMode,
-	}, tile.TransformTreeResult{Y: tile.TransformSize8x8})
+	}, tile.TransformTreeResult{Y: lumaTX})
 	if err != nil {
 		return fmt.Errorf("intra transform tree: %w", err)
 	}
@@ -3173,13 +3204,16 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	}
 
 	st.intraTxTypeReq.Mode = mode
-	if err := st.encodeTXBPred(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, 8, st.yQuant, tile.CoeffContextRequest{
+	st.intraTxTypeReq.Size = lumaTX
+	err = st.encodeTXBPred(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, n, st.yQuant, tile.CoeffContextRequest{
 		Plane:      0,
 		PlaneBlock: block.Size,
-		Size:       tile.TransformSize8x8,
+		Size:       lumaTX,
 		X4:         block.X4,
 		Y4:         block.Y4,
-	}, coeffCtx, st.scan8, st.afterSkipIntra, pred); err != nil {
+	}, coeffCtx, lumaScan, st.afterSkipIntra, pred)
+	st.intraTxTypeReq.Size = tile.TransformSize8x8
+	if err != nil {
 		return fmt.Errorf("intra luma txb: %w", err)
 	}
 	if !hasChroma {
