@@ -763,6 +763,9 @@ type lossyEncodeState struct {
 	// block (mds0IntraDCWins): the inputs of the intra full loop's TX
 	// shortcuts (pframe_lpd1_intra.go).
 	mds0Intra mds0IntraStats
+	// refPads holds the padded copies of the frame's references (refpad.go),
+	// nil on paths that read the planes directly.
+	refPads *refPads
 	// lpd1 carries the picture's light-PD1 level setup and statistics
 	// (pframe_lpd1_level.go); lpd1Pending hands the next tile encode its
 	// setup the way sbQPending does. lpd1Dec caches the current SB's

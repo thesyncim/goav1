@@ -89,6 +89,8 @@ type svtSubpelScratch struct {
 	fdata [(64 + 1) * 64]uint16
 	pred  [64 * 64]byte
 	win   [(64+1)*(64+1) + 16]byte // +16: the vector kernel's row over-read
+	// pad is the searched reference's padded copy (refpad.go), nil without one.
+	pad *refPadPlane
 }
 
 // svtVarOffs is svt_aom_eb_av1_var_offs: an all-zero row read at stride 0,
@@ -111,6 +113,7 @@ func (st *lossyEncodeState) svtSubpelSearch(src, refPlane []byte, stride, width,
 
 	st.ensureSubpelProbeCache()
 	scratch := &st.subpelCache.svt
+	scratch.pad = st.refPads.lookup(refPlane, width, height)
 	qp := uint64(st.qIndex) >> 2 // pcs->ppcs->picture_qp
 	epb := fullLambda >> 6       // error_per_bit = AOMMAX(rdmult >> RD_EPB_SHIFT, 1)
 	if epb < 1 {
@@ -302,6 +305,10 @@ func b2i(b bool) int {
 func svtRefWindow(scratch *svtSubpelScratch, refPlane []byte, stride, width, height, x, y, bw, bh int) ([]byte, int) {
 	if x >= 0 && y >= 0 && x+bw < width && y+bh < height {
 		return refPlane[y*stride+x:], stride
+	}
+	if p := scratch.pad; p != nil && x >= -p.border && y >= -p.border && x+bw+1 <= width+p.border && y+bh+1 <= height+p.border {
+		// The padded reference holds the clamped samples in place.
+		return p.buf[(y+p.border)*p.stride+x+p.border:], p.stride
 	}
 	ws := bw + 1
 	for r := 0; r <= bh; r++ {
