@@ -119,18 +119,14 @@ func (cr *cyclicRefresh) plan(baseQ uint8, bestQ, worstQ uint8, width, height in
 	}
 	grid := cr.grid[:sbCnt]
 	dist := cr.sbDist[:sbCnt]
-	haveDist := hme != nil && hme.cols > 0
+	// me_8x8_distortion per SB and norm_me_dist, their frame average
+	// (initial_rc_process.c), from the frame's open-loop ME (hme.go).
+	haveDist := hme != nil && hme.fme.valid && hme.fme.cols == cols && hme.fme.rows == rows
 	var avg int64
 	if haveDist {
-		clear(dist)
-		for ry := 0; ry < hme.rows; ry++ {
-			for rx := 0; rx < hme.cols; rx++ {
-				sb := min(ry/2, rows-1)*cols + min(rx/2, cols-1)
-				dist[sb] += int64(hme.seedSADs[ry*hme.cols+rx])
-			}
-		}
-		for _, d := range dist {
-			avg += d
+		for i := range dist {
+			dist[i] = int64(hme.fme.me8x8Dist[i])
+			avg += dist[i]
 		}
 		avg /= int64(sbCnt)
 	}

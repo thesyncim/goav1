@@ -157,30 +157,13 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 			}
 		}
 		if fullSAD < 0 {
-			// The SB's open-loop ME result for the PU covering this block.
-			if me := st.sbOpenLoopME(lumaPX, lumaPY); me != nil {
+			// The frame ME's vector for the PU covering this block (zero
+			// motion when the frame has no ME), scored with its exact SAD.
+			if me := st.hme.sbME(lumaPX, lumaPY); me != nil {
 				pu := svtMEBlockOffset(lumaPX&63, lumaPY&63, max(bw, bh))
-				dx, dy := int(me.bestMV[pu][0]), int(me.bestMV[pu][1])
-				mv = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}
-				fullSAD = sadRectDualBlock(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, ref.Y[(lumaPY+dy)*ref.YStride+lumaPX+dx:], ref.YStride, bw, bh)
+				mv = motion.Vector{Row: me.bestMV[pu][1] * 8, Col: me.bestMV[pu][0] * 8}
 			}
-		}
-		if fullSAD < 0 {
-			seedDX, seedDY, reach := 0, 0, fullPelReach
-			if st.hme != nil {
-				var trusted bool
-				seedDX, seedDY, trusted = st.hme.seedAt(lumaPX, lumaPY)
-				if trusted {
-					reach = fullPelReachTrusted
-				}
-			}
-			dx, dy, sad := 0, 0, 0
-			if bw == bh {
-				dx, dy, sad = fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, seedDX, seedDY, reach)
-			} else {
-				dx, dy, sad = fullPelDiamondSearchRectSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, seedDX, seedDY, reach)
-			}
-			mv, fullSAD = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}, sad
+			fullSAD = st.leafFullPelSAD(src, ref, lumaPX, lumaPY, bw, bh, mv)
 		}
 		// read_refine_me_mvs_light_pd1: refine LAST's ME vector with the
 		// NEWMV predictor of LAST's MVP table as the MV cost reference.
@@ -291,24 +274,18 @@ func (st *lossyEncodeState) pblockStack(mo *pblockMotion, block tile.BlockVisit,
 	return stack, nil
 }
 
-// sbOpenLoopME returns the open-loop ME of the superblock containing luma
-// (px, py) when its sweep ran this frame (full superblocks over a
-// same-size LAST reference) with SVT's HME pyramid behind it, else nil:
-// without a previous source (the standalone P-frame API) there is no HME
-// center and the leaves keep their own seeded search.
-func (st *lossyEncodeState) sbOpenLoopME(px, py int) *realtimeSBMultiSizeME {
-	if st.varPartCols <= 0 || st.hme == nil || !st.hme.svt.ready() {
-		return nil
+// leafFullPelSAD is the luma SAD of the bw x bh block at full-pel motion mv,
+// through the edge-emulating predictor when the reference block leaves the
+// plane.
+func (st *lossyEncodeState) leafFullPelSAD(src, ref SourceFrame420, px, py, bw, bh int, mv motion.Vector) int {
+	dx, dy := int(mv.Col>>3), int(mv.Row>>3)
+	if px+dx >= 0 && py+dy >= 0 && px+dx+bw <= ref.Width && py+dy+bh <= ref.Height {
+		return sadRectDualBlock(src.Y[py*src.YStride+px:], src.YStride, ref.Y[(py+dy)*ref.YStride+px+dx:], ref.YStride, bw, bh)
 	}
-	idx := (py/64)*st.varPartCols + px/64
-	if uint(idx) >= uint(len(st.varPartGrid)) {
-		return nil
+	if err := st.predictLuma(st.sadScratch[:bw*bh], ref.Y, ref.YStride, ref.Width, ref.Height, px, py, bw, bh, mv, motion.RegularFilters); err != nil {
+		return 1 << 30
 	}
-	sb := &st.varPartGrid[idx]
-	if !sb.ready || !sb.me.valid {
-		return nil
-	}
-	return &sb.me
+	return sadRectDualBlock(src.Y[py*src.YStride+px:], src.YStride, st.sadScratch[:bw*bh], bw, bw, bh)
 }
 
 // svtMEBlockOffset is svt_aom_get_me_block_offset

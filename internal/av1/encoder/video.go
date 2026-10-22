@@ -541,12 +541,15 @@ func (e *VideoEncoder) setDefaultTileColumns() {
 	}
 }
 
-func (e *VideoEncoder) runHME(src SourceFrame420) {
+// runHME runs the frame's open-loop ME (hme.go). temporalID decides
+// me_ctx->is_ref: base pictures and the L1T3 middle layer are referenced.
+func (e *VideoEncoder) runHME(src SourceFrame420, temporalID uint8) {
+	isRef := temporalID == 0 || (e.temporalLayers == 3 && temporalID == 1)
 	if e.singleThread {
-		e.hme.runSerial(src)
+		e.hme.runSerial(src, isRef)
 		return
 	}
-	e.hme.run(src)
+	e.hme.run(src, isRef)
 }
 
 func tileColumnsLog2(cols int) uint8 {
@@ -835,7 +838,7 @@ func (e *VideoEncoder) EncodeWithTemporalID(src SourceFrame420, forceKey bool, t
 	// coding would cost near-keyframe bits at worse quality, so restart the
 	// chain with a real keyframe instead. The spacing guard keeps noisy
 	// content from forcing key storms.
-	e.runHME(src)
+	e.runHME(src, temporalID)
 	if e.sceneCutKeyframes && e.frameIndex >= 4 && e.hme.cutDetected() {
 		return e.Encode(src, true)
 	}
@@ -928,8 +931,8 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 		return nil, err
 	}
 
-	hmeArmed := e.hme.armed
-	e.runHME(src)
+	hmeArmed := e.hme.havePrev
+	e.runHME(src, settings.TemporalID)
 	e.pc.st.hme = &e.hme
 	for t := range e.tilePCs {
 		e.tilePCs[t].st.hme = &e.hme
@@ -1163,7 +1166,9 @@ func (e *VideoEncoder) Prewarm() error {
 	e.rcBuffer = 0
 	e.rcRecentBits = [2]int{}
 	e.sinceGoldenFresh = 0
-	e.hme.armed = false
+	e.hme.havePrev = false
+	e.hme.fme.valid = false
+	e.hme.svt.haveCur, e.hme.svt.havePrev = false, false
 	e.lastRecon = SourceFrame420{}
 	return nil
 }

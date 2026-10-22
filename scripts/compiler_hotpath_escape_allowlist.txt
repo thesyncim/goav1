@@ -96,14 +96,17 @@ internal/av1/encoder/cyclic_refresh.go:*:*: make([]uint8, sbCnt) escapes to heap
 internal/av1/encoder/cyclic_refresh.go:*:*: make([]uint8, sbCnt) escapes to heap in (*cyclicRefresh).plan:
 internal/av1/encoder/hme.go:*:*: func literal escapes to heap
 internal/av1/encoder/hme.go:*:*: func literal escapes to heap in (*hmeState).startWorkers:
-internal/av1/encoder/hme.go:*:*: make([]byte, qw * qh) escapes to heap
-internal/av1/encoder/hme.go:*:*: make([]byte, qw * qh) escapes to heap in (*hmeState).prime:
-internal/av1/encoder/hme.go:*:*: make([]int32, cols * rows) escapes to heap
-internal/av1/encoder/hme.go:*:*: make([]int32, cols * rows) escapes to heap in (*hmeState).run:
-internal/av1/encoder/hme.go:*:*: make([]int32, cols * rows) escapes to heap in (*hmeState).runSerial:
-internal/av1/encoder/hme.go:*:*: make([]motion.Vector, cols * rows) escapes to heap
-internal/av1/encoder/hme.go:*:*: make([]motion.Vector, cols * rows) escapes to heap in (*hmeState).run:
-internal/av1/encoder/hme.go:*:*: make([]motion.Vector, cols * rows) escapes to heap in (*hmeState).runSerial:
+internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap
+internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap in (*hmeState).keepPrev:
+internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap in (*hmeState).prime:
+internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap in (*hmeState).run:
+internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap in (*hmeState).runSerial:
+internal/av1/encoder/hme.go:*:*: make([]realtimeSBMultiSizeME, n) escapes to heap
+internal/av1/encoder/hme.go:*:*: make([]realtimeSBMultiSizeME, n) escapes to heap in (*hmeState).prepare:
+internal/av1/encoder/hme.go:*:*: make([]uint32, n) escapes to heap
+internal/av1/encoder/hme.go:*:*: make([]uint32, n) escapes to heap in (*hmeState).prepare:
+internal/av1/encoder/hme.go:*:*: make([]uint64, n) escapes to heap
+internal/av1/encoder/hme.go:*:*: make([]uint64, n) escapes to heap in (*hmeState).prepare:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 262144) escapes to heap
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 262144) escapes to heap in encodeLosslessHighBitDepth420KeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 262144) escapes to heap in encodeLosslessHighBitDepthMonochromeKeyframeTile:
@@ -272,6 +275,8 @@ internal/av1/encoder/pframe_residual.go:*:*: moved to heap: g
 internal/av1/encoder/pframe_residual.go:*:*: moved to heap: pc
 internal/av1/encoder/pframe_residual.go:*:*: moved to heap: recon
 internal/av1/encoder/pframe_residual.go:*:*: moved to heap: recon420
+internal/av1/encoder/pframe_residual.go:*:*: new(hmeState) escapes to heap
+internal/av1/encoder/pframe_residual.go:*:*: new(hmeState) escapes to heap in (*pframeCoder).encodeTileWithOptionsColor:
 internal/av1/encoder/pframe_residual.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: new(subpelProbeCache) escapes to heap in (*pframeCoder).reset:
 internal/av1/encoder/pframe_split.go:*:*: make([]int16, 0, maxCoeffs) escapes to heap
@@ -303,18 +308,12 @@ internal/av1/encoder/subpel_cache.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/subpel_cache.go:*:*: new(subpelProbeCache) escapes to heap in (*lossyEncodeState).ensureSubpelProbeCache:
 internal/av1/encoder/subpel_svt.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/subpel_svt.go:*:*: new(subpelProbeCache) escapes to heap in (*lossyEncodeState).svtSubpelSearch:
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, hn) escapes to heap
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, hn) escapes to heap in (*svtPyramid).adoptCurFrom:
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, hn) escapes to heap in (*svtPyramid).ensure:
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, hn) escapes to heap in (*svtPyramid).primeFrom:
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, hw * hh) escapes to heap
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, hw * hh) escapes to heap in (*svtPyramid).build:
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, sn) escapes to heap
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, sn) escapes to heap in (*svtPyramid).adoptCurFrom:
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, sn) escapes to heap in (*svtPyramid).ensure:
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, sn) escapes to heap in (*svtPyramid).primeFrom:
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, sw * sh) escapes to heap
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, sw * sh) escapes to heap in (*svtPyramid).build:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in (*svtPlane).copyFrom:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in (*svtPlane).size:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in (*svtPyramid).adoptCurFrom:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in (*svtPyramid).primeFrom:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in buildPyramid:
 internal/av1/encoder/video.go:*:*: func literal escapes to heap
 internal/av1/encoder/video.go:*:*: func literal escapes to heap in (*VideoEncoder).startFilterWorker:
 internal/av1/encoder/video.go:*:*: func literal escapes to heap in (*VideoEncoder).startTileWorkers:

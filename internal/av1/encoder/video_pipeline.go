@@ -170,7 +170,7 @@ func (e *VideoEncoder) encodeOverlap(baseSrc SourceFrame420) (tu []byte, key boo
 	// source quarter-plane. Both searches are cheap and run serially before the
 	// heavy encodes overlap.
 	e.runLeafHME(leafSrc)
-	e.runHME(baseSrc)
+	e.runHME(baseSrc, 0)
 
 	// Snapshot the leaf's read-only inputs before the base's encodePReusing
 	// mutates them: the base reference reconstruction (a stable double-buffer
@@ -224,32 +224,29 @@ func (e *VideoEncoder) encodeOverlap(baseSrc SourceFrame420) (tu []byte, key boo
 	return leafTU, false, true, nil
 }
 
-// runLeafHME runs the buffered leaf's hierarchical motion search on the isolated
-// leafHME, seeded from the previous base's source quarter-plane (e.hme.refQ),
-// then hands the leaf's own source quarter-plane back into e.hme.refQ so the
-// base search that follows references it — reproducing the serial swap chain.
+// runLeafHME runs the buffered leaf's frame ME on the isolated leafHME,
+// referencing the previous base's source (e.hme's latest source pyramid and
+// luma), then hands the leaf's own source back to e.hme so the base ME that
+// follows references it, reproducing the serial chain.
 func (e *VideoEncoder) runLeafHME(leafSrc SourceFrame420) {
-	if !e.hme.armed || e.hme.qw <= 0 || e.hme.qh <= 0 {
-		// No primed reference (should not happen post-keyframe); the leaf coder
-		// falls back to a seedless search exactly as a serial leaf would.
-		e.leafHME.armed = false
+	if !e.hme.havePrev {
+		// No primed reference (should not happen post-keyframe); the leaf
+		// coder runs without frame ME exactly as a serial leaf would.
+		e.leafHME.havePrev = false
+		e.leafHME.fme.valid = false
 		return
 	}
-	n := e.hme.qw * e.hme.qh
-	if len(e.leafHME.srcQ) < n {
-		e.leafHME.srcQ = make([]byte, n)
-		e.leafHME.refQ = make([]byte, n)
-	}
-	e.leafHME.qw, e.leafHME.qh = e.hme.qw, e.hme.qh
-	copy(e.leafHME.refQ[:n], e.hme.refQ[:n])
-	e.leafHME.armed = true
 	e.leafHME.svt.primeFrom(&e.hme.svt)
-	e.leafHME.runSerial(leafSrc)
-	// e.leafHME.refQ now holds the leaf's source quarter-plane; feed it to the
-	// base search's reference slot.
-	copy(e.hme.refQ[:n], e.leafHME.refQ[:n])
+	n := e.hme.prevStride * e.hme.prevH
+	if len(e.leafHME.prevY) < n {
+		e.leafHME.prevY = make([]byte, n)
+	}
+	copy(e.leafHME.prevY[:n], e.hme.prevY[:n])
+	e.leafHME.prevStride, e.leafHME.prevW, e.leafHME.prevH = e.hme.prevStride, e.hme.prevW, e.hme.prevH
+	e.leafHME.havePrev = true
+	e.leafHME.runSerial(leafSrc, false)
 	e.hme.svt.adoptCurFrom(&e.leafHME.svt)
-	e.hme.armed = true
+	e.hme.keepPrev(leafSrc)
 }
 
 // startLeafWorker launches the persistent leaf-encode worker once. It parks on

@@ -25,8 +25,8 @@ package encoder
 //   - me_early_exit_th: when the SB's zero-motion SAD is below
 //     me_early_exit_th >> 2, HME is skipped and the center is (0, 0).
 //
-// SVT's pictures are padded; goav1's planes are not, so candidate positions
-// whose block leaves the plane are not scored.
+// The pyramid planes carry replicated borders like SVT's padded pictures, so
+// partial superblocks and edge positions search the padding.
 
 const (
 	svtHMEL0RegionW = 16 // per-region level-0 width at distance 1
@@ -35,16 +35,60 @@ const (
 	svtHMEL1H       = 3  // hme_l1_sa.height
 )
 
+// Pyramid borders (SVT pads its quarter and sixteenth pictures,
+// svt_aom_generate_padding): wide enough for a partial superblock's block
+// and the full HME search around it.
+const (
+	svtHalfBorder = 64
+	svtSixBorder  = 32
+)
+
+// svtPlane is one padded pyramid plane: w x h samples at pix[org], stride
+// w + 2*border, edges replicated into the border.
+type svtPlane struct {
+	pix          []byte
+	w, h, stride int
+	border, org  int
+}
+
+func (q *svtPlane) size(w, h, border int) {
+	q.w, q.h, q.border = w, h, border
+	q.stride = w + 2*border
+	q.org = border*q.stride + border
+	if n := q.stride * (h + 2*border); len(q.pix) < n {
+		q.pix = make([]byte, n)
+	}
+}
+
+// pad replicates the interior's edges into the border.
+func (q *svtPlane) pad() {
+	b, s := q.border, q.stride
+	for y := 0; y < q.h; y++ {
+		row := q.pix[(b+y)*s : (b+y+1)*s]
+		l, r := row[b], row[b+q.w-1]
+		for x := 0; x < b; x++ {
+			row[x] = l
+			row[b+q.w+x] = r
+		}
+	}
+	top := q.pix[b*s : (b+1)*s]
+	bot := q.pix[(b+q.h-1)*s : (b+q.h)*s]
+	for y := 0; y < b; y++ {
+		copy(q.pix[y*s:(y+1)*s], top)
+		copy(q.pix[(b+q.h+y)*s:(b+q.h+y+1)*s], bot)
+	}
+}
+
+func (q *svtPlane) copyFrom(o *svtPlane) {
+	q.size(o.w, o.h, o.border)
+	copy(q.pix, o.pix[:len(q.pix)])
+}
+
 // svtPyramid holds the current and previous source pyramids.
 type svtPyramid struct {
-	halfW, halfH int
-	sixW, sixH   int
-	curHalf      []byte
-	prevHalf     []byte
-	curSix       []byte
-	prevSix      []byte
-	haveCur      bool
-	havePrev     bool
+	curHalf, prevHalf svtPlane
+	curSix, prevSix   svtPlane
+	haveCur, havePrev bool
 }
 
 // svtDownsample2D is svt_aom_downsample_2d_c with decim_step 2.
@@ -60,28 +104,28 @@ func svtDownsample2D(dst []byte, dstStride int, src []byte, srcStride, w, h int)
 	}
 }
 
+func buildPyramid(half, six *svtPlane, src SourceFrame420) {
+	hw, hh := src.Width/2, src.Height/2
+	half.size(hw, hh, svtHalfBorder)
+	six.size(hw/2, hh/2, svtSixBorder)
+	svtDownsample2DArch(half.pix[half.org:], half.stride, src.Y, src.YStride, hw, hh)
+	svtDownsample2DArch(six.pix[six.org:], six.stride, half.pix[half.org:], half.stride, hw/2, hh/2)
+	half.pad()
+	six.pad()
+}
+
 // build makes src the current pyramid level; with prime it becomes the
 // previous one instead (the keyframe that the next inter frame references).
 func (p *svtPyramid) build(src SourceFrame420, prime bool) {
-	hw, hh := src.Width/2, src.Height/2
-	sw, sh := hw/2, hh/2
-	if sw < 16 || sh < 16 {
+	if src.Width/4 < 16 || src.Height/4 < 16 {
 		p.haveCur, p.havePrev = false, false
 		return
 	}
-	if len(p.curHalf) < hw*hh {
-		p.curHalf = make([]byte, hw*hh)
-		p.prevHalf = make([]byte, hw*hh)
-		p.curSix = make([]byte, sw*sh)
-		p.prevSix = make([]byte, sw*sh)
+	if p.curHalf.w != src.Width/2 || p.curHalf.h != src.Height/2 {
+		p.haveCur = false
 	}
-	if p.halfW != hw || p.halfH != hh {
-		p.haveCur, p.havePrev = false, false
-	}
-	p.halfW, p.halfH, p.sixW, p.sixH = hw, hh, sw, sh
 	if prime {
-		svtDownsample2DArch(p.prevHalf, hw, src.Y, src.YStride, hw, hh)
-		svtDownsample2DArch(p.prevSix, sw, p.prevHalf, hw, sw, sh)
+		buildPyramid(&p.prevHalf, &p.prevSix, src)
 		p.havePrev, p.haveCur = true, false
 		return
 	}
@@ -90,9 +134,11 @@ func (p *svtPyramid) build(src SourceFrame420, prime bool) {
 		p.curSix, p.prevSix = p.prevSix, p.curSix
 		p.havePrev = true
 	}
-	svtDownsample2DArch(p.curHalf, hw, src.Y, src.YStride, hw, hh)
-	svtDownsample2DArch(p.curSix, sw, p.curHalf, hw, sw, sh)
+	buildPyramid(&p.curHalf, &p.curSix, src)
 	p.haveCur = true
+	if p.prevHalf.w != p.curHalf.w || p.prevHalf.h != p.curHalf.h {
+		p.havePrev = false
+	}
 }
 
 // ready reports whether both pyramids exist for this frame.
@@ -101,23 +147,31 @@ func (p *svtPyramid) ready() bool { return p != nil && p.haveCur && p.havePrev }
 // svtHMESearch is svt_sad_loop_kernel over a w x h area at origin
 // (ox, oy) relative to the block at (bx, by): the SUB_SAD bw x bh block
 // (bh/2 rows at doubled stride, SAD doubled), y outer, x inner, strict '<'.
-func svtHMESearch(src, ref []byte, stride, planeW, planeH, bx, by, bw, bh, ox, oy, w, h int) (bestSAD uint32, bestX, bestY int) {
+// Positions whose block would leave the padded plane are not scored (SVT
+// corrects its search area to the padding).
+func svtHMESearch(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (bestSAD uint32, bestX, bestY int) {
 	bestSAD = ^uint32(0)
-	s := src[by*stride+bx:]
+	stride, b := cur.stride, cur.border
 	rows := bh / 2
 	s2 := 2 * stride
+	s := cur.pix[cur.org+by*stride+bx:]
 	for y := 0; y < h; y++ {
 		ry := by + oy + y
-		if ry < 0 || ry+bh > planeH {
+		if ry < -b || ry+bh > cur.h+b {
 			continue
 		}
 		for x := 0; x < w; {
 			rx := bx + ox + x
+			if rx < -b || rx+bw > cur.w+b {
+				x++
+				continue
+			}
+			base := ref.org + ry*stride + rx
 			// Four positions per kernel call when all four are scorable.
-			if x+4 <= w && rx >= 0 && rx+3+bw <= planeW && ry*stride+rx+(2*rows-2)*stride+bw+3 <= len(ref) {
+			if x+4 <= w && rx+3+bw <= cur.w+b {
 				var t0, t1, t2, t3 int
 				for c := 0; c < bw; c += 16 {
-					a0, a1, a2, a3 := sad16xNx4(s[c:], s2, ref[ry*stride+rx+c:], s2, rows)
+					a0, a1, a2, a3 := sad16xNx4(s[c:], s2, ref.pix[base+c:], s2, rows)
 					t0, t1, t2, t3 = t0+a0, t1+a1, t2+a2, t3+a3
 				}
 				for k, t := range [4]int{t0, t1, t2, t3} {
@@ -128,11 +182,9 @@ func svtHMESearch(src, ref []byte, stride, planeW, planeH, bx, by, bw, bh, ox, o
 				x += 4
 				continue
 			}
-			if rx >= 0 && rx+bw <= planeW {
-				sad := uint32(sadRectDualBlock(s, s2, ref[ry*stride+rx:], s2, bw, rows)) << 1
-				if sad < bestSAD {
-					bestSAD, bestX, bestY = sad, ox+x, oy+y
-				}
+			sad := uint32(sadRectDualBlock(s, s2, ref.pix[base:], s2, bw, rows)) << 1
+			if sad < bestSAD {
+				bestSAD, bestX, bestY = sad, ox+x, oy+y
 			}
 			x++
 		}
@@ -140,8 +192,9 @@ func svtHMESearch(src, ref []byte, stride, planeW, planeH, bx, by, bw, bh, ox, o
 	return bestSAD, bestX, bestY
 }
 
-// center returns the HME search center (full-pel) of the SB at (px, py).
-func (p *svtPyramid) center(px, py int) (int, int) {
+// center returns the HME search center (full-pel) of the SB at (px, py) and
+// its level-1 SAD.
+func (p *svtPyramid) center(px, py int) (int, int, uint32) {
 	var l1SAD [4]uint32
 	var l1X, l1Y [4]int
 	for r := 0; r < 4; r++ {
@@ -149,7 +202,7 @@ func (p *svtPyramid) center(px, py int) (int, int) {
 		// hme_level_0: sa_origin = -(sa * num_hme_sa) / 2 + sa * sr.
 		ox := -(svtHMEL0RegionW*2)>>1 + svtHMEL0RegionW*srW
 		oy := -(svtHMEL0RegionH*2)>>1 + svtHMEL0RegionH*srH
-		sad0, x0, y0 := svtHMESearch(p.curSix, p.prevSix, p.sixW, p.sixW, p.sixH, px>>2, py>>2, 16, 16, ox, oy, svtHMEL0RegionW, svtHMEL0RegionH)
+		sad0, x0, y0 := svtHMESearch(&p.curSix, &p.prevSix, px>>2, py>>2, 16, 16, ox, oy, svtHMEL0RegionW, svtHMEL0RegionH)
 		if sad0 == ^uint32(0) {
 			l1SAD[r] = sad0
 			continue
@@ -157,7 +210,7 @@ func (p *svtPyramid) center(px, py int) (int, int) {
 		// hme_level_1 around the level-0 vector (x4 to full-pel, >>1 to the
 		// quarter picture).
 		cx, cy := (x0*4)>>1, (y0*4)>>1
-		sad1, x1, y1 := svtHMESearch(p.curHalf, p.prevHalf, p.halfW, p.halfW, p.halfH, px>>1, py>>1, 32, 32,
+		sad1, x1, y1 := svtHMESearch(&p.curHalf, &p.prevHalf, px>>1, py>>1, 32, 32,
 			cx-(svtHMEL1W>>1), cy-(svtHMEL1H>>1), svtHMEL1W, svtHMEL1H)
 		if sad1 == ^uint32(0) {
 			l1SAD[r], l1X[r], l1Y[r] = ^uint32(0)-1, cx*2, cy*2
@@ -172,38 +225,26 @@ func (p *svtPyramid) center(px, py int) (int, int) {
 		}
 	}
 	if l1SAD[best] == ^uint32(0) {
-		return 0, 0
+		return 0, 0, 0
 	}
-	return l1X[best], l1Y[best]
+	return l1X[best], l1Y[best], l1SAD[best]
 }
 
-// ensure sizes p's planes like q's.
-func (p *svtPyramid) ensure(q *svtPyramid) {
-	hn, sn := q.halfW*q.halfH, q.sixW*q.sixH
-	if len(p.curHalf) < hn || len(p.curSix) < sn {
-		p.curHalf, p.prevHalf = make([]byte, hn), make([]byte, hn)
-		p.curSix, p.prevSix = make([]byte, sn), make([]byte, sn)
-	}
-	p.halfW, p.halfH, p.sixW, p.sixH = q.halfW, q.halfH, q.sixW, q.sixH
-}
-
-// primeFrom makes q's current pyramid p's previous one (the pipelined
-// leaf's reference, as the serial swap chain would hold it).
+// primeFrom makes q's most recent pyramid (its current one, or right after a
+// keyframe prime its previous one) p's previous one: the pipelined leaf's
+// reference, as the serial chain would hold it.
 func (p *svtPyramid) primeFrom(q *svtPyramid) {
-	// q's most recent pyramid: its current one, or right after a keyframe
-	// prime its previous one.
-	half, six := q.curHalf, q.curSix
 	switch {
 	case q.haveCur:
+		p.prevHalf.copyFrom(&q.curHalf)
+		p.prevSix.copyFrom(&q.curSix)
 	case q.havePrev:
-		half, six = q.prevHalf, q.prevSix
+		p.prevHalf.copyFrom(&q.prevHalf)
+		p.prevSix.copyFrom(&q.prevSix)
 	default:
 		p.haveCur, p.havePrev = false, false
 		return
 	}
-	p.ensure(q)
-	copy(p.prevHalf, half[:q.halfW*q.halfH])
-	copy(p.prevSix, six[:q.sixW*q.sixH])
 	p.havePrev, p.haveCur = true, false
 }
 
@@ -212,8 +253,7 @@ func (p *svtPyramid) adoptCurFrom(q *svtPyramid) {
 	if !q.haveCur {
 		return
 	}
-	p.ensure(q)
-	copy(p.curHalf, q.curHalf[:q.halfW*q.halfH])
-	copy(p.curSix, q.curSix[:q.sixW*q.sixH])
+	p.curHalf.copyFrom(&q.curHalf)
+	p.curSix.copyFrom(&q.curSix)
 	p.haveCur = true
 }
