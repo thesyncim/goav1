@@ -81,7 +81,8 @@ func (q *svtPlane) pad() {
 
 func (q *svtPlane) copyFrom(o *svtPlane) {
 	q.size(o.w, o.h, o.border)
-	copy(q.pix, o.pix[:len(q.pix)])
+	n := q.stride * (q.h + 2*q.border)
+	copy(q.pix[:n], o.pix[:n])
 }
 
 // svtPyramid holds the current source pyramid, the pyramids of the
@@ -130,8 +131,21 @@ func (p *svtPyramid) build(src SourceFrame420) {
 	p.haveCur = true
 }
 
-// storeRef keeps the current pyramid as slot s's reference pyramid.
+// storeRef moves the current pyramid into reference slot s (the slot's old
+// planes become the next frame's scratch).
 func (p *svtPyramid) storeRef(s int) {
+	if !p.haveCur {
+		p.slotOK[s] = false
+		return
+	}
+	p.slotHalf[s], p.curHalf = p.curHalf, p.slotHalf[s]
+	p.slotSix[s], p.curSix = p.curSix, p.slotSix[s]
+	p.slotOK[s] = true
+	p.haveCur = false
+}
+
+// copyRef keeps a copy of the current pyramid as slot s's reference pyramid.
+func (p *svtPyramid) copyRef(s int) {
 	if !p.haveCur {
 		p.slotOK[s] = false
 		return

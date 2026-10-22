@@ -236,15 +236,9 @@ func (e *VideoEncoder) runLeafHME(leafSrc SourceFrame420) {
 	// The L1T2 leaf predicts from LAST (slot 0) and refreshes nothing.
 	r := &e.hme.refY[0]
 	l := &e.leafHME.refY[0]
-	if !r.valid {
-		l.valid = false
-	} else {
-		n := r.stride * r.h
-		if len(l.y) < n {
-			l.y = make([]byte, n)
-		}
-		copy(l.y[:n], r.y[:n])
-		l.stride, l.w, l.h, l.valid = r.stride, r.w, r.h, true
+	l.valid = r.valid
+	if r.valid {
+		l.pl.copyFrom(&r.pl)
 	}
 	e.leafHME.svt.copySlotFrom(&e.hme.svt, 0)
 	e.leafHME.runSerial(leafSrc, false, 0, -1)
