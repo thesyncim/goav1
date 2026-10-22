@@ -1628,10 +1628,6 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		}
 	}
 	e.collectDecisionStats(false, nTiles, false)
-	if depthRemovalStatsEnabled {
-		// Frame-serial: every tile and wavefront lane has joined by here.
-		dumpDepthRemovalStats(uint64(e.frameIndex))
-	}
 	if lpd1StatsEnabled {
 		dumpLPD1Stats(uint64(e.frameIndex))
 	}

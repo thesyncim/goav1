@@ -763,8 +763,14 @@ type lossyEncodeState struct {
 	sourceContentGrid  []realtimeContentStateSB
 	sourceVarianceGrid []uint32
 	sourceContentCols  int
-	varPartGrid        []realtimeVarPartSB
-	varPartCols        int
+
+	// pd0Grid holds the per-SB VERY_LIGHT_PD0 trees (pframe_vlpd0.go),
+	// pd0Rates the frame-frozen partition rates they price with and
+	// pd0EdgeRef the edge-replicated reference block of off-frame vectors.
+	pd0Grid    []svtPD0SB
+	pd0Cols    int
+	pd0Rates   svtPD0PartitionRates
+	pd0EdgeRef [64 * 64]byte
 
 	// refmvsScratch is the tile scratch whose dav1d refmvs rows the current
 	// serial walk bound (bindRefmvs), or nil.

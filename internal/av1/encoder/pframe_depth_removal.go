@@ -35,7 +35,7 @@ package encoder
 // an independent (bestSAD, bestMV) per PU in SVT's ME tier-zero layout
 // (me_ctx->p_sb_best_sad / p_sb_best_mv binding, motion_estimation.c:
 // 1298-1307) plus the compute_distortion sums. Value arrays only — the struct
-// lives inline in realtimeVarPartSB so the per-frame grid stays zero-alloc.
+// lives inline in the frame ME grid (hme.go) so it stays zero-alloc.
 //
 // PU indexing (ME_TIER_ZERO_PU_*):
 //
