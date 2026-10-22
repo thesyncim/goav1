@@ -1005,6 +1005,7 @@ func (b *FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint
 		CurrentMVFrame:              b.CurrentMVFrame,
 		FrameMIRows:                 uint16(frameMIRows),
 		FrameMICols:                 uint16(frameMICols),
+		MotionProgress:              b.frameThreadMotionProgress(),
 		SkipModeRefs: [2]tile.ReferenceFrame{
 			tile.ReferenceFrame(b.SkipMode.RefFrameIdx[0]),
 			tile.ReferenceFrame(b.SkipMode.RefFrameIdx[1]),

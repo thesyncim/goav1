@@ -485,3 +485,16 @@ func absInt(v int) int {
 	}
 	return v
 }
+
+// FrameMotionProgress connects a frame-threaded entropy pass to the saved
+// MV_REF rows of the frames around it (dav1d's progress[0] entropy progress,
+// waited on in thread_task.c check_tile for DAV1D_TASK_TYPE_TILE_ENTROPY).
+// Rows are in 8x8 units.
+type FrameMotionProgress interface {
+	// WaitReferenceRows blocks until every reference whose MV_REF rows the
+	// frame projects has saved rows [0, rowEnd8); it reports false when a
+	// reference failed to decode.
+	WaitReferenceRows(rowEnd8 int32) bool
+	// PublishRows announces that the frame saved its MV_REF rows [0, rowEnd8).
+	PublishRows(rowEnd8 int32)
+}

@@ -138,8 +138,14 @@ func TestFrameThreadedParseNeverReadsReferencePixels(t *testing.T) {
 		if len(references) == 0 {
 			return nil
 		}
-		// The previous frames' tails may still be filtering these surfaces;
-		// wait for them, then poison.
+		// The previous frames' tails may still be filtering or reading these
+		// surfaces: wait for every other frame in flight, then poison. Later
+		// frames are held back by the pipeline's hook lock until restore.
+		for s := range p.progress {
+			if s != fc.surface {
+				p.progress[s].Wait(internalthreading.FrameProgressDone)
+			}
+		}
 		for i := range references {
 			fc.ft.Recon.RefProgress[i].Wait(internalthreading.FrameProgressDone)
 		}
