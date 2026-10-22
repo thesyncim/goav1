@@ -5,16 +5,17 @@ import (
 	"testing"
 )
 
-func TestSweepSearchPoint8MatchesPoint4(t *testing.T) {
+// TestSweepSearchPoint8MatchesPoint1 checks the eight-position batch
+// (open_loop_me_get_eight_search_point_results_block) against eight
+// single-position searches (open_loop_me_get_search_point_results_block).
+func TestSweepSearchPoint8MatchesPoint1(t *testing.T) {
 	const stride = 160
 	rng := rand.New(rand.NewSource(5))
 	src := make([]byte, stride*100)
 	ref := make([]byte, stride*100)
-	for trial := 0; trial < 20; trial++ {
-		for i := range src {
-			src[i] = byte(rng.Intn(256))
-			ref[i] = byte(rng.Intn(256))
-		}
+	for trial := 0; trial < 24; trial++ {
+		fillMEPattern(rng, src, trial)
+		fillMEPattern(rng, ref, trial/4)
 		if trial%2 == 1 { // structured: ref is src shifted, so argmins move
 			for i := range ref {
 				ref[i] = src[(i+3)%len(src)] + byte(rng.Intn(5))
@@ -27,10 +28,11 @@ func TestSweepSearchPoint8MatchesPoint4(t *testing.T) {
 		for y := 0; y < 3; y++ {
 			rb := refBase + y*stride
 			if !a.sweepSearchPoint8(src, ref, stride, srcBase, rb, -6, y-1) {
-				t.Skip("no batch kernel in this build")
+				t.Fatal("batch declined in-bounds reads")
 			}
-			b.sweepSearchPoint4(src, ref, stride, srcBase, rb, -6, y-1)
-			b.sweepSearchPoint4(src, ref, stride, srcBase, rb+4, -2, y-1)
+			for k := range 8 {
+				b.sweepSearchPoint1(src, stride, ref, stride, srcBase, rb+k, -6+k, y-1)
+			}
 		}
 		if a.bestSAD != b.bestSAD || a.bestMV != b.bestMV {
 			t.Fatalf("trial %d: batch differs: %v %v vs %v %v", trial, a.bestSAD[:6], a.bestMV[:6], b.bestSAD[:6], b.bestMV[:6])
@@ -38,43 +40,73 @@ func TestSweepSearchPoint8MatchesPoint4(t *testing.T) {
 	}
 }
 
-func TestSVTHMEKernelsMatchScalar(t *testing.T) {
-	rng := rand.New(rand.NewSource(9))
-	const w, h, stride = 100, 40, 208
-	src := make([]byte, stride*(2*h+2))
-	for i := range src {
-		src[i] = byte(rng.Intn(256))
-	}
-	got := make([]byte, w*h)
-	want := make([]byte, w*h)
-	svtDownsample2DArch(got, w, src, stride, w, h)
-	svtDownsample2D(want, w, src, stride, w, h)
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("downsample sample %d = %d, want %d", i, got[i], want[i])
-		}
-	}
-	ref := make([]byte, stride*40)
-	for i := range ref {
-		ref[i] = byte(rng.Intn(256))
-	}
-	for rows := 1; rows <= 16; rows++ {
-		a := [4]int{}
-		a[0], a[1], a[2], a[3] = sad16xNx4(src[3:], 2*stride, ref[5:], stride, rows)
-		for k := range a {
-			want := 0
-			for r := 0; r < rows; r++ {
-				for c := 0; c < 16; c++ {
-					d := int(src[3+r*2*stride+c]) - int(ref[5+r*stride+k+c])
-					if d < 0 {
-						d = -d
-					}
-					want += d
-				}
-			}
-			if a[k] != want {
-				t.Fatalf("rows %d pos %d: sad %d, want %d", rows, k, a[k], want)
+// TestSVTAllSAD8x8_16x16SubMatchesScalar is the differential test of the
+// svt_ext_all_sad_calculation_8x8_16x16 kernel against its scalar
+// definition, on exact-length slices (the kernel's last read is the slice
+// end), with random running bests and ties.
+func TestSVTAllSAD8x8_16x16SubMatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(13))
+	const stride = 96
+	src := make([]byte, 64*stride)
+	ref := make([]byte, 64*stride)
+	for trial := 0; trial < 160; trial++ {
+		fillMEPattern(rng, src, trial)
+		fillMEPattern(rng, ref, trial/4)
+		s := src[:63*stride+64]
+		ro := rng.Intn(stride - 71)
+		r := ref[ro : ro+63*stride+71]
+		var a realtimeSBMultiSizeME
+		a.reset()
+		for i := range a.bestSAD {
+			// Random running bests, including ties with the new SADs.
+			if trial%3 != 0 {
+				a.bestSAD[i] = uint32(rng.Intn(20000))
+				a.bestMV[i] = [2]int16{int16(rng.Intn(9) - 4), 1}
 			}
 		}
+		b := a
+		mvX := rng.Intn(40) - 20
+		if trial%7 == 0 {
+			mvX = -3 // positions cross zero: the x half wraps in 16 bits
+		}
+		mvY := rng.Intn(9) - 4
+		var gA, gB [16][8]uint32
+		svtAllSAD8x8_16x16Sub(&a, s, r, stride, mvX, mvY, &gA)
+		svtAllSAD8x8_16x16SubScalar(&b, s, r, stride, mvX, mvY, &gB)
+		if gA != gB || a.bestSAD != b.bestSAD || a.bestMV != b.bestMV {
+			t.Fatalf("trial %d: kernel and scalar differ", trial)
+		}
+		a.eightSAD32x32_64x64(&gA, mvX, mvY)
+		b.eightSAD32x32_64x64Scalar(&gB, mvX, mvY)
+		if a.bestSAD != b.bestSAD || a.bestMV != b.bestMV {
+			t.Fatalf("trial %d: 32x32/64x64 differ", trial)
+		}
+	}
+}
+
+// eightSAD32x32_64x64Scalar is svt_ext_eight_sad_calculation_32x32_64x64_c.
+func (me *realtimeSBMultiSizeME) eightSAD32x32_64x64Scalar(sad16 *[16][8]uint32, mvX, mvY int) {
+	for k := range 8 {
+		var s64 uint32
+		for q := range 4 {
+			s := sad16[4*q][k] + sad16[4*q+1][k] + sad16[4*q+2][k] + sad16[4*q+3][k]
+			me.update(1+q, s, mvX+k, mvY)
+			s64 += s
+		}
+		me.update(0, s64, mvX+k, mvY)
+	}
+}
+
+func BenchmarkSweepSearchPoint8(b *testing.B) {
+	rng := rand.New(rand.NewSource(3))
+	const stride = 1440
+	src := make([]byte, stride*80)
+	ref := make([]byte, stride*80)
+	fillMEPattern(rng, src, 0)
+	fillMEPattern(rng, ref, 0)
+	var me realtimeSBMultiSizeME
+	for b.Loop() {
+		me.reset()
+		me.sweepSearchPoint8(src, ref, stride, 4*stride+100, 3*stride+96, -4, -1)
 	}
 }
