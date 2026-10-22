@@ -259,9 +259,8 @@ internal/av1/encoder/pframe_residual.go:*:*: make([]pframeSplitRecord, rows) esc
 internal/av1/encoder/pframe_residual.go:*:*: make([]pframeSplitRecord, rows) escapes to heap in (*pframeCoder).encodeTileWithOptionsColor:
 internal/av1/encoder/pframe_residual.go:*:*: make([]realtimeContentStateSB, need) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]realtimeContentStateSB, need) escapes to heap in (*lossyEncodeState).prepareRealtimeSourceContent:
-internal/av1/encoder/pframe_residual.go:*:*: make([]realtimeVarPartSB, need) escapes to heap
-internal/av1/encoder/pframe_residual.go:*:*: make([]realtimeVarPartSB, need) escapes to heap in (*lossyEncodeState).prepareRealtimeVarPartitioning:
-internal/av1/encoder/pframe_residual.go:*:*: make([]realtimeVarPartSB, need) escapes to heap in (*pframeCoder).encodeTileWithOptionsColor:
+internal/av1/encoder/pframe_residual.go:*:*: make([]svtPD0SB, need) escapes to heap
+internal/av1/encoder/pframe_residual.go:*:*: make([]svtPD0SB, need) escapes to heap in (*pframeCoder).encodeTileWithOptionsColor:
 internal/av1/encoder/pframe_residual.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in (*pframeCoder).encodeTileWithOptionsColor:
 internal/av1/encoder/pframe_residual.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in (*pframeCoder).reset:
@@ -292,6 +291,8 @@ internal/av1/encoder/pframe_split.go:*:*: make([]pblockRecord, 0, maxBlocks) esc
 internal/av1/encoder/pframe_split.go:*:*: make([]pblockRecord, 0, maxBlocks) escapes to heap in (*pframeSplitRecord).reset:
 internal/av1/encoder/pframe_split.go:*:*: make([]tile.Partition, 0, maxParts) escapes to heap
 internal/av1/encoder/pframe_split.go:*:*: make([]tile.Partition, 0, maxParts) escapes to heap in (*pframeSplitRecord).reset:
+internal/av1/encoder/pframe_vlpd0.go:*:*: make([]svtPD0SB, need) escapes to heap
+internal/av1/encoder/pframe_vlpd0.go:*:*: make([]svtPD0SB, need) escapes to heap in (*lossyEncodeState).prepareSVTPD0:
 internal/av1/encoder/pframe_wavefront.go:*:*: func literal escapes to heap
 internal/av1/encoder/pframe_wavefront.go:*:*: func literal escapes to heap in (*pframeWavefront).ensureWorkers:
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]atomic.Int32, rows) escapes to heap

@@ -148,6 +148,10 @@ type lpd1SBStat struct {
 	// 64x64 inter block coded with a predictor mode (not NEWMV).
 	mvp64    bool
 	skipArea uint32
+	// minSq is sb_min_sq_size (coding_loop.c update_b): the smallest square
+	// block size coded in the SB, 128 before any block; 0xFF where the
+	// picture recorded none (keyframes, whose path does not note blocks).
+	minSq uint8
 }
 
 // lpd1Frame holds one picture's per-SB light-PD1 statistics. A coded
@@ -156,6 +160,9 @@ type lpd1SBStat struct {
 type lpd1Frame struct {
 	cols, rows int
 	sb         []lpd1SBStat
+	// poc is the picture number (EbReferenceObject ref_poc), for the
+	// depth-removal reference feedback's distance check.
+	poc int
 	// meArmed: the frame's ME statistics exist (pa_me ran).
 	meArmed bool
 	// baseQ is base_q_idx and meQOffset the per-SB b64_me_qindex -
@@ -181,6 +188,7 @@ func (f *lpd1Frame) begin(w, h int, hme *hmeState, baseQ uint8) {
 	for i := range f.sb[:n] {
 		s := &f.sb[i]
 		s.intra, s.skip, s.skipArea, s.mvp64 = false, true, 0, false
+		s.minSq = 128
 		s.me64Dist, s.me8x8Var = 0, 0
 		if f.meArmed {
 			me := &hme.fme.sb[i]
@@ -211,6 +219,7 @@ func (f *lpd1Frame) setKey(w, h int) {
 	for i := range f.sb[:f.cols*f.rows] {
 		s := &f.sb[i]
 		s.intra, s.skip, s.skipArea, s.mvp64 = true, false, 0, false
+		s.minSq = 0xFF
 		s.me64Dist, s.me8x8Var = 0, 0
 	}
 	f.valid, f.sliceI, f.skipPerc = true, true, 0
@@ -504,6 +513,9 @@ func (st *lossyEncodeState) lpd1NoteBlock(px, py, bw, bh int, intra, hasCoeff bo
 		return
 	}
 	s := &f.sb[(py/64)*f.cols+px/64]
+	if sq := uint8(max(bw, bh)); sq < s.minSq {
+		s.minSq = sq
+	}
 	if intra {
 		s.intra = true
 	}
@@ -568,6 +580,7 @@ func (e *VideoEncoder) lpd1KeyRefs(w, h int) {
 	}
 	e.lpd1Last.setKey(w, h)
 	e.lpd1T1.setKey(w, h)
+	e.lpd1Last.poc, e.lpd1T1.poc = e.frameIndex, e.frameIndex
 }
 
 // lpd1InvalidateRefs drops the reference statistics when a frame refreshes

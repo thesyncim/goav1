@@ -35,7 +35,7 @@ package encoder
 // an independent (bestSAD, bestMV) per PU in SVT's ME tier-zero layout
 // (me_ctx->p_sb_best_sad / p_sb_best_mv binding, motion_estimation.c:
 // 1298-1307) plus the compute_distortion sums. Value arrays only — the struct
-// lives inline in realtimeVarPartSB so the per-frame grid stays zero-alloc.
+// lives inline in the frame ME grid (hme.go) so it stays zero-alloc.
 //
 // PU indexing (ME_TIER_ZERO_PU_*):
 //
@@ -394,30 +394,17 @@ var depthRemovalLevels = [16]depthRemovalCtrls{
 	15: {enabled: true, costMult4x4: 64, costMult16: 384, costMult32: 24, costMult64: 24, dev16To8Th: 300, dev32To16Th: 200, qpScale: 4},
 }
 
-// depthRemovalLevelForFrame is the preset-12 (>M8) rtc non-sc branch of the
-// pic_depth_removal_level ladder (enc_mode_config.c:9287-9295), with SVT's
-// input-resolution ranges (svt_aom_derive_input_resolution,
-// sequence_control_set.c:120 + definitions.h INPUT_SIZE_*_TH).
+// depthRemovalLevelForFrame is pic_depth_removal_level of SVT-AV1's rtc
+// mode-decision config (svt_aom_sig_deriv_mode_decision_config_rtc,
+// Source/Lib/Codec/enc_mode_config.c:9775-9783, v4.1.0): above M8 (M9 for
+// flat IPP) every non-transition picture, base and leaf alike, at every
+// resolution, runs level 5. goav1 has no transition pictures (the
+// transition_present level-0 arm). The parameters stay for the callers;
+// rtc's ladder does not read them. The resolution-dependent 9/14 ladder this
+// replaces is the non-rtc svt_aom_sig_deriv_mode_decision_config_default.
 func depthRemovalLevelForFrame(width, height int, isBase bool) uint8 {
-	const (
-		inputSize360pTH = 0x4CE00 // <= INPUT_SIZE_360p_RANGE
-		inputSize480pTH = 0xA1400 // <= INPUT_SIZE_480p_RANGE
-	)
-	numPixels := width * height
-	switch {
-	case numPixels < inputSize360pTH:
-		return 7
-	case numPixels < inputSize480pTH:
-		if isBase {
-			return 9
-		}
-		return 11
-	default:
-		if isBase {
-			return 9
-		}
-		return 14
-	}
+	_, _, _ = width, height, isBase
+	return 5
 }
 
 // Noise-guard thresholds (enc_mode_config.c:9-10).
@@ -460,17 +447,65 @@ type realtimeDepthRemovalDecision struct {
 	dev32To8  int64
 }
 
+// svtDepthRemovalInputs are the per-SB inputs of
+// set_depth_removal_level_controls beyond the ME statistics.
+type svtDepthRemovalInputs struct {
+	// pictureQP is ppcs->picture_qp (svtPictureQP).
+	pictureQP int64
+	// fastLambda is fast_lambda_md[EB_8_BIT_MD] at the SB's qindex
+	// (svt_aom_compute_fast_lambda, rc_process.c:448).
+	fastLambda int64
+	// refMinSq is the LAST reference's sb_min_sq_size for this SB when that
+	// reference is at most one picture away, else 0xFF (no reference info).
+	refMinSq uint8
+}
+
+// svtPictureQP is ppcs->picture_qp of the rtc rate control
+// (rc_process.c:842): clamp_qp((base_q_idx + 2) >> 2) to the rtc
+// [min_qp_allowed, max_qp_allowed] = [4, 63] (enc_handle.c MIN_QP_AUTO).
+func svtPictureQP(qIndex uint8) int64 {
+	return int64(min(max((int(qIndex)+2)>>2, 4), 63))
+}
+
+// svtQuantizerToQIndex is quantizer_to_qindex (md_process.c:20).
+var svtQuantizerToQIndex = [64]uint8{
+	0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 68, 72, 76, 80, 84,
+	88, 92, 96, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 148, 152, 156, 160, 164, 168, 172,
+	176, 180, 184, 188, 192, 196, 200, 204, 208, 212, 216, 220, 224, 228, 232, 236, 240, 244, 249, 255,
+}
+
+// svtDepthRemovalLevelForSB is the delta-q modulation of
+// set_depth_removal_level_controls (enc_mode_config.c:2958-2972): with
+// delta_q present, an SB coded below the picture quantizer lowers the level
+// by 1..4 with its qindex distance.
+func svtDepthRemovalLevelForSB(level uint8, deltaQPresent bool, sbQIndex uint8, pictureQP int64) uint8 {
+	if !deltaQPresent {
+		return level
+	}
+	diff := int(sbQIndex) - int(svtQuantizerToQIndex[pictureQP])
+	l := int(level)
+	switch {
+	case diff <= -12:
+		l -= 4
+	case diff <= -6:
+		l -= 3
+	case diff <= -3:
+		l -= 2
+	case diff < 0:
+		l--
+	}
+	return uint8(max(l, 0))
+}
+
 // realtimeDepthRemovalDecide ports the depth-removal decisions of
-// set_depth_removal_level_controls (enc_mode_config.c:3179-3245): the
-// me_8x8_cost_variance noise guard, the QP threshold scaling, the absolute
-// RD-cost arms and the deviation arms at every depth. SVT's SB-geometry
-// guards ((sb_geom->width % 64) == 0 || > 32 for the 64 arm, the mod-32
-// equivalent for the 32 arm, dimensions_require_8x8 for the 16 arm) are
-// satisfied by construction — the sweep only runs on full 64x64 SBs, so
-// width == height == 64 passes all three. The sb_min_sq_size reference
-// feedback (:3134-3166) is Phase 4; the delta-qp level modulation
-// (:2960-2972) never arms here because goav1 codes frame-uniform q.
-func realtimeDepthRemovalDecide(level uint8, qIndex uint8, me *realtimeSBMultiSizeME) realtimeDepthRemovalDecision {
+// set_depth_removal_level_controls (enc_mode_config.c:3133-3245): the
+// sb_min_sq_size reference feedback, the me_8x8_cost_variance noise guard,
+// the QP threshold scaling, the absolute RD-cost arms and the deviation arms
+// at every depth. SVT's SB-geometry guards ((sb_geom->width % 64) == 0 || >
+// 32 for the 64 arm, the mod-32 equivalent for the 32 arm,
+// dimensions_require_8x8 for the 16 arm) hold by construction: the caller
+// only evaluates complete 64x64 SBs.
+func realtimeDepthRemovalDecide(level uint8, in svtDepthRemovalInputs, me *realtimeSBMultiSizeME) realtimeDepthRemovalDecision {
 	var dec realtimeDepthRemovalDecision
 	if int(level) >= len(depthRemovalLevels) {
 		return dec
@@ -479,15 +514,22 @@ func realtimeDepthRemovalDecide(level uint8, qIndex uint8, me *realtimeSBMultiSi
 	if !ctrls.enabled || !me.valid {
 		return dec
 	}
-	// pcs->picture_qp is the 0..63 quantizer; quantizer_to_qindex maps it to
-	// qindex = qp * 4 (rc tables), so the inverse here is qindex >> 2.
-	pictureQP := int64(qIndex) >> 2
-	// fast_lambda_md[EB_8_BIT_MD] = av1_lambda_mode_decision8_bit_sad[qindex]
-	// (svt_aom_lambda_assign, rc_process.c:451/458).
-	fastLambda := int64(av1LambdaModeDecision8BitSAD[qIndex])
+	pictureQP := in.pictureQP
+	fastLambda := in.fastLambda
 
 	dev16Th := ctrls.dev16To8Th
 	dev32To16Th := ctrls.dev32To16Th
+	// use_ref_info (enc_mode_config.c:3139-3166): a LAST reference at most one
+	// picture away whose co-located SB coded only large blocks raises the
+	// deviation thresholds.
+	if in.refMinSq != 0xFF {
+		if in.refMinSq >= 64 {
+			dev32To16Th += 5
+			dev16Th += 20
+		} else if in.refMinSq >= 32 {
+			dev16Th += 15
+		}
+	}
 	// dev th = f(me_8x8_cost_variance) — the noise guard, verbatim
 	// (enc_mode_config.c:3181-3191): the low band quadruples the 16 threshold
 	// (32 untouched), the middle band doubles 16 and HALVES 32, the high band
@@ -565,4 +607,21 @@ var av1LambdaModeDecision8BitSAD = [256]uint32{
 	9423, 9553, 9683, 9835, 9987, 10117, 10290, 10442, 10593, 10767, 10940, 11113, 11308, 11481, 11676, 11893,
 	12110, 12326, 12543, 12781, 13041, 13301, 13561, 13865, 14168, 14471, 14818, 15164, 15533, 15944, 16356, 16789,
 	17244, 17742, 18262, 18826, 19411, 20039, 20689, 21404, 22140, 22920, 23787, 24675, 25650, 26690, 27773, 28943,
+}
+
+// svtDimensionsRequire8x8 is SVT-AV1's dimensions_require_8x8
+// (Source/Lib/Codec/enc_mode_config.c:2917): whether an SB of aligned size
+// w x h can only be covered with 8x8 blocks, scanning the square sizes from
+// 32 down to 8 for one whose leftover fits.
+func svtDimensionsRequire8x8(w, h int) bool {
+	const startBSize = 64
+	lw, lh := w%startBSize, h%startBSize
+	for half := startBSize >> 1; half >= 8; half >>= 1 {
+		if (lw == 0 || lw > half) && (lh == 0 || lh > half) {
+			return false
+		}
+		lw %= half
+		lh %= half
+	}
+	return true
 }

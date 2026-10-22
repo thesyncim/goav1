@@ -284,18 +284,14 @@ func (st *lossyEncodeState) mds0IntraDCWins(src SourceFrame420, recon *SourceFra
 	if err != nil || ctx < 0 || ctx >= len(st.mds0IntraRates.IntraFlag) {
 		return false
 	}
-	// The DC predictor is flat, so the residual variance is the source
-	// block's own variance.
-	var sum, sq int64
-	for r := range bh {
-		row := src.Y[(lumaPY+r)*src.YStride+lumaPX : (lumaPY+r)*src.YStride+lumaPX+bw]
-		for _, v := range row {
-			sum += int64(v)
-			sq += int64(v) * int64(v)
-		}
-	}
+	// fast_loop_core_light_pd1 scores the DC candidate like any other: the
+	// svt_aom_mefn_ptr[bsize].vf variance of source against prediction. The
+	// DC predictor is flat and the variance is shift-invariant, so the
+	// residual variance is the source block's own, measured against zero
+	// through the same pixel-statistics kernels.
+	sse, sum := svtPD0PixelStats(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, svtZeroRow[:], 0, bw)
 	n := int64(bw * bh)
-	variance := sq - (sum*sum)/n
+	variance := int64(sse) - (int64(sum)*int64(sum))/n
 	dist := variance << 4
 	cflAllowed := 0
 	if bw <= 32 {
@@ -334,3 +330,7 @@ func mds0AlreadyInjected(cands []mds0Cand, mv motion.Vector) bool {
 	}
 	return false
 }
+
+// svtZeroRow is a zero reference row; read at stride 0 it is an all-zero
+// block of any size up to 64 wide.
+var svtZeroRow [64]byte
