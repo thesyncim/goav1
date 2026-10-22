@@ -287,6 +287,7 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 			})
 			c.CommitStateTo(&s.Reader)
 			target.ActiveRows = r.activeRows
+			target.ActiveCols = r.activeCols
 			target.TxScale = txScale
 			target.Ready = true
 			result = TXBDecodeResult{EOB: uint16(r.eob + 1), CulLevel: r.culLevel}

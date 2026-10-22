@@ -14,5 +14,7 @@ func init() {
 	if cpu.Detected.NEON {
 		inverseDCT64Col4Impl = inverseDCT64Col4SIMD
 		inverseDCT64Row4Impl = inverseDCT64Row4SIMD
+		inverseDCT64LowCol4Impl = inverseDCT64LowCol4SIMD
+		inverseDCT64Row4LowImpl = inverseDCT64Row4LowSIMD
 	}
 }

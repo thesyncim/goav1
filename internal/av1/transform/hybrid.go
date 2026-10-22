@@ -87,7 +87,7 @@ func inverseSeparableBlockClampedRows(dst []int16, dstStride int, coeff []int32,
 	if dstStride < width || !blockFits(len(dst), dstStride, width, height) {
 		return ErrInvalidTransform
 	}
-	if _, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, scratch, size, typ, rowMin, rowMax, colMin, colMax, activeRows, nil, false); err != nil {
+	if _, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, scratch, size, typ, rowMin, rowMax, colMin, colMax, activeRows, 0, nil, false); err != nil {
 		return err
 	}
 	narrowStoreImpl(dst, dstStride, scratch, width, height)
@@ -117,7 +117,7 @@ func stageTransposeClampScalar(scratch []int32, width int, coeff []int32, coeffS
 	}
 }
 
-func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, scratch []int32, size Size, typ Type, rowMin int32, rowMax int32, colMin int32, colMax int32, activeRows int, col16 []int16, col16AliasesScratch bool) (bool, error) {
+func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, scratch []int32, size Size, typ Type, rowMin int32, rowMax int32, colMin int32, colMax int32, activeRows int, activeCols int, col16 []int16, col16AliasesScratch bool) (bool, error) {
 	// Resolve every per-size datum from a single compact index instead of
 	// re-deriving it through size.shift(), adjustedScanSize() and IsRect2(),
 	// each of which would recompute sizeIndex on this hot path.
@@ -201,7 +201,59 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 	// guarantee the result equals independent inverse1DRow calls. The staging
 	// loops above established the four-row kernels' precondition: every input
 	// is clamped to [rowMin, rowMax].
+	// dav1d's eob-bounded sub-sizes: when every staged row's nonzero inputs
+	// lie in its first 8 or 16 entries, the DCT32 row pass runs the kernels
+	// specialized for that many inputs.
+	lowN := 0
+	if width == dct32Size && horizontal == tx1DDCT && activeCols > 0 && activeCols <= 16 && inverseDCT32Row4LowImpl != nil {
+		lowN = 16
+		if activeCols <= 8 {
+			lowN = 8
+		}
+	}
 	row := 0
+	if lowN != 0 {
+		for ; row+3 < rowLimit; row += 4 {
+			r0 := scratch[row*width : row*width+width : row*width+width]
+			r1 := scratch[(row+1)*width : (row+1)*width+width : (row+1)*width+width]
+			r2 := scratch[(row+2)*width : (row+2)*width+width : (row+2)*width+width]
+			r3 := scratch[(row+3)*width : (row+3)*width+width : (row+3)*width+width]
+			inverseDCT32Row4LowImpl(r0, r1, r2, r3, lowN, rowMin, rowMax)
+		}
+		for ; row < rowLimit; row += 2 {
+			// A lone last row pairs with the zero row after it (height >= 8).
+			r0 := scratch[row*width : row*width+width : row*width+width]
+			r1 := scratch[(row+1)*width : (row+1)*width+width : (row+1)*width+width]
+			inverseDCT32Row2LowImpl(r0, r1, lowN, rowMin, rowMax)
+		}
+		row = rowLimit
+	} else if width == dct64Size && horizontal == tx1DDCT && inverseDCT64Row4LowImpl != nil {
+		// AV1 codes at most 32 DCT64 inputs; activeCols narrows that further.
+		low64 := 32
+		if activeCols > 0 && activeCols < 32 {
+			low64 = activeCols
+		}
+		for ; row < rowLimit; row += 4 {
+			// Rows past rowLimit are zero; heights of 64-wide blocks are >= 16.
+			r0 := scratch[row*width : row*width+width : row*width+width]
+			r1 := scratch[(row+1)*width : (row+1)*width+width : (row+1)*width+width]
+			r2 := scratch[(row+2)*width : (row+2)*width+width : (row+2)*width+width]
+			r3 := scratch[(row+3)*width : (row+3)*width+width : (row+3)*width+width]
+			inverseDCT64Row4LowImpl(r0, r1, r2, r3, low64, rowMin, rowMax)
+		}
+		row = rowLimit
+	} else if width == dct16Size && horizontal == tx1DDCT && activeCols > 0 && activeCols <= 8 && inverseDCT16Row2LowImpl != nil {
+		low16 := 8
+		if activeCols <= 4 {
+			low16 = 4
+		}
+		for ; row < rowLimit; row += 2 {
+			r0 := scratch[row*width : row*width+width : row*width+width]
+			r1 := scratch[(row+1)*width : (row+1)*width+width : (row+1)*width+width]
+			inverseDCT16Row2LowImpl(r0, r1, low16, rowMin, rowMax)
+		}
+		row = rowLimit
+	}
 	for ; row+3 < rowLimit; row += 4 {
 		r0 := scratch[row*width : row*width+width : row*width+width]
 		r1 := scratch[(row+1)*width : (row+1)*width+width : (row+1)*width+width]
@@ -278,6 +330,33 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 		colMin == minInt16 && colMax == maxInt16 && width >= 4 && width%4 == 0 {
 		for col := 0; col < width; col += 4 {
 			inverseDCT32Low8Col4Impl(scratch[col:], width, colMin, colMax)
+		}
+		return false, nil
+	}
+	if inverseDCT32Low16Col4Impl != nil &&
+		rowLimit > 8 && rowLimit <= 16 && height == dct32Size && vertical == tx1DDCT &&
+		colMin == minInt16 && colMax == maxInt16 && width >= 4 && width%4 == 0 {
+		for col := 0; col < width; col += 4 {
+			inverseDCT32Low16Col4Impl(scratch[col:], width, colMin, colMax)
+		}
+		return false, nil
+	}
+
+	if inverseDCT64LowCol4Impl != nil && rowLimit > 0 && rowLimit <= 32 && height == dct64Size && vertical == tx1DDCT &&
+		width >= 4 && width%4 == 0 {
+		for col := 0; col < width; col += 4 {
+			inverseDCT64LowCol4Impl(scratch[col:], width, rowLimit, colMin, colMax)
+		}
+		return false, nil
+	}
+	if inverseDCT16LowCol4Impl != nil && rowLimit > 0 && rowLimit <= 8 && height == dct16Size && vertical == tx1DDCT &&
+		width >= 4 && width%4 == 0 {
+		lowN := 8
+		if rowLimit <= 4 {
+			lowN = 4
+		}
+		for col := 0; col < width; col += 4 {
+			inverseDCT16LowCol4Impl(scratch[col:], width, lowN, colMin, colMax)
 		}
 		return false, nil
 	}

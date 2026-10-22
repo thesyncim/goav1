@@ -892,6 +892,7 @@ func resetCoeffDequantTXB(target *CoeffDequantTarget) {
 	}
 	target.Ready = false
 	target.ActiveRows = 0
+	target.ActiveCols = 0
 	target.TxScale = 0
 	target.decoded = false
 }

@@ -212,3 +212,16 @@ func inverseADST16Col4FlipPureGo(buf []int32, rowStride int, min int32, max int3
 	inverseFlipADST1D(buf[2:], rowStride, adst16Size, min, max)
 	inverseFlipADST1D(buf[3:], rowStride, adst16Size, min, max)
 }
+
+// Sparse-input DCT32 kernels (dav1d's eob-bounded sub-sizes): nil unless the
+// ARM64 GoSIMD backend binds them. lowN reports how many leading inputs may be
+// nonzero (8 or 16); the rest are exactly zero.
+var (
+	inverseDCT32Low16Col4Impl func(buf []int32, rowStride int, min, max int32)
+	inverseDCT32Row4LowImpl   func(r0, r1, r2, r3 []int32, lowN int, min, max int32)
+	inverseDCT32Row2LowImpl   func(r0, r1 []int32, lowN int, min, max int32)
+	inverseDCT16Row2LowImpl   func(r0, r1 []int32, lowN int, min, max int32)
+	inverseDCT16LowCol4Impl   func(buf []int32, rowStride int, lowN int, min, max int32)
+	inverseDCT64LowCol4Impl   func(buf []int32, rowStride int, lowN int, min, max int32)
+	inverseDCT64Row4LowImpl   func(r0, r1, r2, r3 []int32, lowN int, min, max int32)
+)

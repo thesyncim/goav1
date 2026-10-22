@@ -144,7 +144,7 @@ func inverseSeparableBlockInt16(dst []int16, dstStride int, coeff []int32, coeff
 	// mid-pass narrow, scratch[i] (4 bytes) is consumed before col16[i] (2 bytes)
 	// can reach it, so the in-place narrow never clobbers an unread element.
 	col16 := unsafe.Slice((*int16)(unsafe.Pointer(&scratch[0])), width*height)
-	usedInt16, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax, 0, col16, true)
+	usedInt16, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax, 0, 0, col16, true)
 	if err != nil {
 		return err
 	}
@@ -180,6 +180,14 @@ func InverseBlockBitDepthBoundedRows(dst []int16, dstStride int, coeff []int32, 
 // the existing exact transform kernels without first materializing an int16
 // residual block.
 func InverseBlockBitDepthRaw(dst []int32, coeff []int32, coeffStride int, size Size, t Type, bitDepth uint8, activeRows int) error {
+	return InverseBlockBitDepthRawBounded(dst, coeff, coeffStride, size, t, bitDepth, activeRows, 0)
+}
+
+// InverseBlockBitDepthRawBounded is InverseBlockBitDepthRaw with the extent of
+// the nonzero coefficients in both directions, the bound dav1d's itx derives
+// from eob: activeRows coefficient rows and activeCols coefficient columns
+// (0 = unknown). Every coefficient outside that rectangle must be zero.
+func InverseBlockBitDepthRawBounded(dst []int32, coeff []int32, coeffStride int, size Size, t Type, bitDepth uint8, activeRows int, activeCols int) error {
 	rowMin, rowMax, colMin, colMax, ok := stageRangeBounds(bitDepth)
 	if !ok {
 		return ErrInvalidTransform
@@ -192,7 +200,7 @@ func InverseBlockBitDepthRaw(dst []int32, coeff []int32, coeffStride int, size S
 	if len(dst) < width*height {
 		return ErrInvalidTransform
 	}
-	_, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, dst, size, t, rowMin, rowMax, colMin, colMax, activeRows, nil, false)
+	_, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, dst, size, t, rowMin, rowMax, colMin, colMax, activeRows, activeCols, nil, false)
 	return err
 }
 
