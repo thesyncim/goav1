@@ -112,13 +112,11 @@ func setupRestorationStripeBoundaryFromSavedU8(stripe RestorationProcessingStrip
 				return ErrInvalidPlan
 			}
 			bufRow := rsbRow + maxInt(i+restorationCtxVert, 0)
-			src, ok := restorationBoundaryLine(boundaries.Above, boundaries.Stride, bufRow, int(stripe.Rect.X0), lineWidth)
-			if !ok {
-				return ErrInvalidPlan
-			}
 			save := scratch.Above[(i+restorationBorder)*lineWidth : (i+restorationBorder+1)*lineWidth]
 			widenRestorationLineU8(save, dst)
-			narrowRestorationLineU16(dst, src)
+			if !loadRestorationBoundaryRowU8(dst, boundaries, boundaries.Above, bufRow, int(stripe.Rect.X0), lineWidth) {
+				return ErrInvalidPlan
+			}
 		}
 	}
 	if stripe.CopyBelow {
@@ -131,13 +129,11 @@ func setupRestorationStripeBoundaryFromSavedU8(stripe RestorationProcessingStrip
 				return ErrInvalidPlan
 			}
 			bufRow := rsbRow + minInt(i, restorationCtxVert-1)
-			src, ok := restorationBoundaryLine(boundaries.Below, boundaries.Stride, bufRow, int(stripe.Rect.X0), lineWidth)
-			if !ok {
-				return ErrInvalidPlan
-			}
 			save := scratch.Below[i*lineWidth : (i+1)*lineWidth]
 			widenRestorationLineU8(save, dst)
-			narrowRestorationLineU16(dst, src)
+			if !loadRestorationBoundaryRowU8(dst, boundaries, boundaries.Below, bufRow, int(stripe.Rect.X0), lineWidth) {
+				return ErrInvalidPlan
+			}
 		}
 	}
 	return nil
@@ -278,4 +274,24 @@ func narrowRestorationLineU16(dst []uint8, src []uint16) {
 	for i, s := range src {
 		dst[i] = uint8(s)
 	}
+}
+
+// loadRestorationBoundaryRowU8 copies one saved stripe-context row into an
+// 8-bit row: a row copy when the frame save stored pixels (Bytes), else a
+// narrow of the uint16 row.
+func loadRestorationBoundaryRowU8(dst []uint8, boundaries RestorationStripeBoundaries, buf []uint16, row int, x0 int, lineWidth int) bool {
+	if boundaries.Bytes {
+		src, ok := restorationBoundaryLineU8(buf, boundaries.Stride, row, x0, lineWidth)
+		if !ok {
+			return false
+		}
+		copy(dst, src)
+		return true
+	}
+	src, ok := restorationBoundaryLine(buf, boundaries.Stride, row, x0, lineWidth)
+	if !ok {
+		return false
+	}
+	narrowRestorationLineU16(dst, src)
+	return true
 }

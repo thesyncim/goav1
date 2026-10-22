@@ -59,6 +59,7 @@ func (ctx *FrameWorkPostFilterContext) applyLoopRestorationPostFilterParallel(re
 			req.Boundaries = ctx.RestorationFrameBuffers.Boundaries
 		}
 	}
+	req.Boundaries = ctx.restorationPixelBoundaries(req.Boundaries)
 	plan, err := ctx.LoopRestorationPostFilterPlan()
 	if err != nil {
 		return tile.RestorationFrameApplyResult{}, false, err

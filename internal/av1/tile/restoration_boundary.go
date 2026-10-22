@@ -1,6 +1,8 @@
 package tile
 
 import (
+	"unsafe"
+
 	av1frame "github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	av1restoration "github.com/thesyncim/goav1/internal/av1/restoration"
@@ -20,6 +22,10 @@ type RestorationStripeBoundaries struct {
 	Above  []uint16
 	Below  []uint16
 	Stride int
+	// Bytes marks rows saved by an 8-bit frame save, which stores them as
+	// pixels (restorationBoundaryLineU8); a uint16-sample consumer of such
+	// rows widens them.
+	Bytes bool
 }
 
 // RestorationFrameBoundaryPlane binds one plane's source and boundary buffers
@@ -402,18 +408,7 @@ func saveRestorationDeblockBoundaryLinesFromBytesSuperRes(grid RestorationPlaneG
 			return err
 		}
 	}
-	if linesToSave == 1 {
-		dst, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+1, int(grid.PlaneWidth))
-		if !ok {
-			return ErrInvalidPlan
-		}
-		srcLine, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert, int(grid.PlaneWidth))
-		if !ok {
-			return ErrInvalidPlan
-		}
-		copy(dst, srcLine)
-	}
-	return extendRestorationBoundaryLines(grid, stripe, above, boundaries)
+	return finishRestorationBoundaryLines(grid, stripe, above, boundaries, linesToSave, boundaries.Bytes)
 }
 
 // upscaleRestorationBoundaryLineFromBytes reads one MI-aligned coded source row
@@ -440,6 +435,31 @@ func upscaleRestorationBoundaryLineFromBytes(grid RestorationPlaneGrid, plane av
 		}
 	default:
 		return ErrInvalidPlan
+	}
+	if boundaries.Bytes {
+		if bytesPerSample != 1 {
+			return ErrInvalidPlan
+		}
+		// 8-bit boundary rows are stored as pixels, which use only the first
+		// half of the buffer's bytes: upscale into its last uint16 row (past
+		// every byte row), then store the row.
+		line, ok := restorationBoundaryLineU8(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+ctxRow, 0, upscaledWidth+2*restorationExtraHorz)
+		if !ok {
+			return ErrInvalidPlan
+		}
+		buf := boundariesForSide(boundaries, above)
+		rows := len(buf) / maxInt(boundaries.Stride, 1)
+		if rows < 2 || upscaledWidth > boundaries.Stride {
+			return ErrInvalidPlan
+		}
+		tmp := buf[(rows-1)*boundaries.Stride : (rows-1)*boundaries.Stride+upscaledWidth]
+		srcPlane := av1frame.SamplePlane{Pix: src, Width: plane.Width, Height: 1, Stride: plane.Width}
+		dstPlane := av1frame.SamplePlane{Pix: tmp, Width: upscaledWidth, Height: 1, Stride: upscaledWidth}
+		if err := superres.UpscalePlaneCoded(srcPlane, dstPlane, codedWidth, bitDepth); err != nil {
+			return err
+		}
+		narrowRestorationLineU16(line[restorationExtraHorz:restorationExtraHorz+upscaledWidth], tmp)
+		return nil
 	}
 	dst, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+ctxRow, upscaledWidth)
 	if !ok {
@@ -515,18 +535,7 @@ func saveRestorationDeblockBoundaryLinesFromBytes(grid RestorationPlaneGrid, pla
 			return err
 		}
 	}
-	if linesToSave == 1 {
-		dst, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+1, int(grid.PlaneWidth))
-		if !ok {
-			return ErrInvalidPlan
-		}
-		srcLine, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert, int(grid.PlaneWidth))
-		if !ok {
-			return ErrInvalidPlan
-		}
-		copy(dst, srcLine)
-	}
-	return extendRestorationBoundaryLines(grid, stripe, above, boundaries)
+	return finishRestorationBoundaryLines(grid, stripe, above, boundaries, linesToSave, boundaries.Bytes)
 }
 
 func saveRestorationCDEFBoundaryLinesFromBytes(grid RestorationPlaneGrid, plane av1frame.Plane, bytesPerSample int, row int, stripe int, above bool, boundaries RestorationStripeBoundaries) error {
@@ -538,13 +547,25 @@ func saveRestorationCDEFBoundaryLinesFromBytes(grid RestorationPlaneGrid, plane 
 			return err
 		}
 	}
-	return extendRestorationBoundaryLines(grid, stripe, above, boundaries)
+	return finishRestorationBoundaryLines(grid, stripe, above, boundaries, restorationCtxVert, boundaries.Bytes)
 }
 
 func saveRestorationBoundaryLineFromBytes(grid RestorationPlaneGrid, plane av1frame.Plane, bytesPerSample int, srcRow int, stripe int, ctxRow int, above bool, boundaries RestorationStripeBoundaries) error {
 	width := int(grid.PlaneWidth)
 	if srcRow < 0 || srcRow >= plane.Height || width > plane.Width {
 		return ErrInvalidPlan
+	}
+	if boundaries.Bytes {
+		if bytesPerSample != 1 {
+			return ErrInvalidPlan
+		}
+		dst, ok := restorationBoundaryLineU8(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+ctxRow, 0, width+2*restorationExtraHorz)
+		if !ok {
+			return ErrInvalidPlan
+		}
+		rowOffset := srcRow * plane.Stride
+		copy(dst[restorationExtraHorz:restorationExtraHorz+width], plane.Pix[rowOffset:rowOffset+width])
+		return nil
 	}
 	dst, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+ctxRow, width)
 	if !ok {
@@ -614,6 +635,16 @@ func setupRestorationStripeBoundaryFromSaved(stripe RestorationProcessingStripe,
 				return ErrInvalidPlan
 			}
 			bufRow := rsbRow + maxInt(i+restorationCtxVert, 0)
+			if boundaries.Bytes {
+				src, ok := restorationBoundaryLineU8(boundaries.Above, boundaries.Stride, bufRow, int(stripe.Rect.X0), lineWidth)
+				if !ok {
+					return ErrInvalidPlan
+				}
+				save := scratch.Above[(i+restorationBorder)*lineWidth : (i+restorationBorder+1)*lineWidth]
+				copy(save, dst)
+				widenRestorationLineU8(dst, src)
+				continue
+			}
 			src, ok := restorationBoundaryLine(boundaries.Above, boundaries.Stride, bufRow, int(stripe.Rect.X0), lineWidth)
 			if !ok {
 				return ErrInvalidPlan
@@ -633,6 +664,16 @@ func setupRestorationStripeBoundaryFromSaved(stripe RestorationProcessingStripe,
 				return ErrInvalidPlan
 			}
 			bufRow := rsbRow + minInt(i, restorationCtxVert-1)
+			if boundaries.Bytes {
+				src, ok := restorationBoundaryLineU8(boundaries.Below, boundaries.Stride, bufRow, int(stripe.Rect.X0), lineWidth)
+				if !ok {
+					return ErrInvalidPlan
+				}
+				save := scratch.Below[i*lineWidth : (i+1)*lineWidth]
+				copy(save, dst)
+				widenRestorationLineU8(dst, src)
+				continue
+			}
 			src, ok := restorationBoundaryLine(boundaries.Below, boundaries.Stride, bufRow, int(stripe.Rect.X0), lineWidth)
 			if !ok {
 				return ErrInvalidPlan
@@ -953,4 +994,76 @@ func maxInt(a int, b int) int {
 		return a
 	}
 	return b
+}
+
+// finishRestorationBoundaryLines completes one stripe side's saved context
+// rows: a single saved row is duplicated into the second slot, then both rows
+// get their restorationExtraHorz edge columns replicated. bytes selects the
+// 8-bit byte-line layout (see restorationBoundaryLineU8).
+func finishRestorationBoundaryLines(grid RestorationPlaneGrid, stripe int, above bool, boundaries RestorationStripeBoundaries, linesSaved int, bytes bool) error {
+	if !bytes {
+		if linesSaved == 1 {
+			dst, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+1, int(grid.PlaneWidth))
+			if !ok {
+				return ErrInvalidPlan
+			}
+			srcLine, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert, int(grid.PlaneWidth))
+			if !ok {
+				return ErrInvalidPlan
+			}
+			copy(dst, srcLine)
+		}
+		return extendRestorationBoundaryLines(grid, stripe, above, boundaries)
+	}
+	width := int(grid.PlaneWidth)
+	lineWidth := width + 2*restorationExtraHorz
+	buf := boundariesForSide(boundaries, above)
+	if linesSaved == 1 {
+		dst, ok := restorationBoundaryLineU8(buf, boundaries.Stride, stripe*restorationCtxVert+1, 0, lineWidth)
+		if !ok {
+			return ErrInvalidPlan
+		}
+		srcLine, ok := restorationBoundaryLineU8(buf, boundaries.Stride, stripe*restorationCtxVert, 0, lineWidth)
+		if !ok {
+			return ErrInvalidPlan
+		}
+		copy(dst, srcLine)
+	}
+	for i := range restorationCtxVert {
+		line, ok := restorationBoundaryLineU8(buf, boundaries.Stride, stripe*restorationCtxVert+i, 0, lineWidth)
+		if !ok {
+			return ErrInvalidPlan
+		}
+		first := line[restorationExtraHorz]
+		last := line[restorationExtraHorz+width-1]
+		for j := range restorationExtraHorz {
+			line[j] = first
+			line[restorationExtraHorz+width+j] = last
+		}
+	}
+	return nil
+}
+
+// restorationBoundaryLineU8 is restorationBoundaryLine for 8-bit frames,
+// whose saved context rows are stored as pixels (dav1d keeps its
+// lr_lpf_line rows as pixel rows): the boundary buffer's backing memory is
+// read as bytes with the same per-row sample stride, so a save is a row copy
+// and a stripe setup a row copy instead of a widen and a narrow.
+func restorationBoundaryLineU8(buf []uint16, stride int, row int, x0 int, lineWidth int) ([]uint8, bool) {
+	if len(buf) == 0 {
+		return nil, false
+	}
+	b := unsafe.Slice((*uint8)(unsafe.Pointer(unsafe.SliceData(buf))), len(buf))
+	if stride <= 0 || row < 0 || x0 < 0 {
+		return nil, false
+	}
+	offset, ok := checkedMulInt(row, stride)
+	if !ok {
+		return nil, false
+	}
+	offset, ok = checkedAddInt(offset, x0)
+	if !ok || !restorationLineFits(len(b), offset, lineWidth) {
+		return nil, false
+	}
+	return b[offset : offset+lineWidth], true
 }

@@ -22,7 +22,9 @@ func TestHotStructSizes(t *testing.T) {
 		// replace the previous eight slot slices and one current-frame slice.
 		// The loop-filter mask handle adds level-table, tile-edge and noskip
 		// pointers plus a single-tile flag.
-		{name: "FrameWorkState", size: unsafe.Sizeof(FrameWorkState{}), max: 566856},
+		// The three restoration stripe-boundary handles each add a pixel-row
+		// (Bytes) flag, 8 bytes with alignment.
+		{name: "FrameWorkState", size: unsafe.Sizeof(FrameWorkState{}), max: 566880},
 		{name: "FrameWorkLoopFilterPostFilterEdge", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterEdge{}), max: 16},
 		{name: "FrameWorkLoopFilterPostFilterLevelStats", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterLevelStats{}), max: 12},
 		{name: "FrameWorkLoopFilterPostFilterPlan", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterPlan{}), max: 136},

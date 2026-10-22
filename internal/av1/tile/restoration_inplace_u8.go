@@ -378,11 +378,9 @@ func assembleRestorationStripeBandU8(grid RestorationPlaneGrid, unitRect Restora
 		for i := -restorationBorder; i < 0; i++ {
 			bandRow := band[(restorationBorder+i)*bandStride:][:lineWidth]
 			bufRow := rsbRow + maxInt(i+restorationCtxVert, 0)
-			src, ok := restorationBoundaryLine(boundaries.Above, boundaries.Stride, bufRow, x0, lineWidth)
-			if !ok {
+			if !loadRestorationBoundaryRowU8(bandRow, boundaries, boundaries.Above, bufRow, x0, lineWidth) {
 				return ErrInvalidPlan
 			}
-			narrowRestorationLineU16(bandRow, src)
 		}
 	} else {
 		top := band[restorationBorder*bandStride:][:lineWidth]
@@ -394,11 +392,9 @@ func assembleRestorationStripeBandU8(grid RestorationPlaneGrid, unitRect Restora
 		for i := range restorationBorder {
 			bandRow := band[(restorationBorder+height+i)*bandStride:][:lineWidth]
 			bufRow := rsbRow + minInt(i, restorationCtxVert-1)
-			src, ok := restorationBoundaryLine(boundaries.Below, boundaries.Stride, bufRow, x0, lineWidth)
-			if !ok {
+			if !loadRestorationBoundaryRowU8(bandRow, boundaries, boundaries.Below, bufRow, x0, lineWidth) {
 				return ErrInvalidPlan
 			}
-			narrowRestorationLineU16(bandRow, src)
 		}
 	} else {
 		bottom := band[(restorationBorder+height-1)*bandStride:][:lineWidth]
