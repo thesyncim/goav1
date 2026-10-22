@@ -308,7 +308,12 @@ func main() {
 			os.Exit(1)
 		}
 		totalBytes += len(out.Data)
-		r := enc.Reconstruction()
+		// The reconstruction is fetched only when something reads it: a
+		// non-reference frame applies its CDEF pass lazily on this call.
+		var r goav1.I420Frame
+		if !*noPSNR || reconFile != nil {
+			r = enc.Reconstruction()
+		}
 		p := 0.0
 		if !*noPSNR {
 			p = psnr(srcs[n].Y, r.Y)

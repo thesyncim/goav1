@@ -2,6 +2,7 @@ package encoder
 
 import (
 	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 )
 
@@ -234,4 +235,29 @@ func lpd1RefSkipPerc(ref *lpd1Frame) uint8 {
 		return 0
 	}
 	return ref.skipPerc
+}
+
+// lazyCDEFPass is a non-reference picture's deferred CDEF application: the
+// parameters are already signaled and the loop-filter records still describe
+// the picture, so applying it later is the same filter pass the eager path
+// runs, over the same planes.
+type lazyCDEFPass struct {
+	out     *SourceFrame420
+	cdef    parser.CDEFParams
+	idx     []uint8
+	pending bool
+}
+
+// finishLazyCDEF applies the pending pass when the reconstruction it filters
+// is still the one Recon exposes. Callers have joined the filter worker.
+func (e *VideoEncoder) finishLazyCDEF() error {
+	p := &e.lazyCDEF
+	if !p.pending {
+		return nil
+	}
+	p.pending = false
+	if p.out == nil || len(p.out.Y) == 0 || len(e.lastRecon.Y) == 0 || &p.out.Y[0] != &e.lastRecon.Y[0] {
+		return nil
+	}
+	return e.cdefApp.applySerial(p.out, p.cdef, &e.lf.filtMap, p.idx)
 }

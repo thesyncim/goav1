@@ -71,6 +71,9 @@ func TestCDEFSearchMultiStrengthSignalsBitExact(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = enc.Close() })
 			enc.SetMaxThreads(threads)
+			if err := enc.SetTemporalLayers(3); err != nil {
+				t.Fatal(err)
+			}
 			const frames = 9
 			tus := make([][]byte, 0, frames)
 			recons := make([]encoder.SourceFrame420, 0, frames)
