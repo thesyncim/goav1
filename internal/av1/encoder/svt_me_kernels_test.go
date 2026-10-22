@@ -101,3 +101,22 @@ func BenchmarkSVTHMESearch(b *testing.B) {
 		}
 	})
 }
+
+// TestSVTHMECorrectArea pins hme_level_0 / hme_level_1's search-area
+// correction on the 1280x720 pyramid (borders 32 and 64).
+func TestSVTHMECorrectArea(t *testing.T) {
+	for _, c := range []struct{ orgX, orgY, ox, oy, w, h, picW, picH, pad, wx, wy, ww, wh int }{
+		{160, 96, -16, -4, 16, 4, 320, 180, 31, -16, -4, 16, 4}, // L0 inside
+		{608, 0, 26, -1, 8, 3, 640, 360, 63, 26, -1, 6, 3},      // L1 right edge: 608+26+8 > 640
+		{608, 0, 40, -1, 8, 3, 640, 360, 63, 31, -1, 1, 3},      // origin past the right edge
+		{0, 0, -70, -70, 8, 3, 640, 360, 63, -63, -63, 8, 3},    // left/top: origin moves, size kept
+		{0, 352, 0, 7, 8, 3, 640, 360, 63, 0, 7, 8, 1},          // bottom shrink
+		{304, 0, 0, 0, 16, 4, 320, 180, 31, 0, 0, 16, 4},        // L0 last column, exact fit
+		{304, 176, 0, 2, 16, 4, 320, 180, 31, 0, 2, 16, 2},      // L0 bottom shrink
+	} {
+		ox, oy, w, h := svtHMECorrectArea(c.orgX, c.orgY, c.ox, c.oy, c.w, c.h, c.picW, c.picH, c.pad)
+		if ox != c.wx || oy != c.wy || w != c.ww || h != c.wh {
+			t.Errorf("%+v: got %d %d %d %d", c, ox, oy, w, h)
+		}
+	}
+}
