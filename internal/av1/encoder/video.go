@@ -866,6 +866,9 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 		e.tilePCs[t].st.sbQPending = nil
 	}
 	header, _ := repeatPFrameHeader(src.Width, src.Height, effQ, refresh)
+	if interTransformMode(e.parserColorConfig(), effQ) == TransformModeLargest {
+		header.TransformRef.TransformMode = TransformModeLargest
+	}
 	e.applyContentHintToFrameHeader(&header.Prefix)
 	header.Prefix.FrameSizeOverride = src.Width != maxWidth || src.Height != maxHeight
 	header.Size.RefFrameIdx = [7]uint8{}
@@ -1354,6 +1357,9 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	effQ := e.rcInterQ(temporalID, rcRef, e.frameIndex+e.lpd1FrameBias, src.Width, src.Height, e.svtScreen())
 	header, refState := repeatPFrameHeader(src.Width, src.Height, effQ, refresh)
 	e.refState = refState
+	if interTransformMode(e.parserColorConfig(), effQ) == TransformModeLargest {
+		header.TransformRef.TransformMode = TransformModeLargest
+	}
 	e.applyContentHintToFrameHeader(&header.Prefix)
 	if e.renderWidth != e.width || e.renderHeight != e.height {
 		header.Size.RenderWidth = uint32(e.renderWidth)

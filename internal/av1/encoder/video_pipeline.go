@@ -281,6 +281,9 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 	effQ := e.qIndex
 	seq := e.sequenceHeader(src.Width, src.Height)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, effQ, 0)
+	if interTransformMode(color, effQ) == TransformModeLargest {
+		header.TransformRef.TransformMode = TransformModeLargest
+	}
 	e.leafRefState = refState
 	header.References = &e.leafRefState
 	e.applyContentHintToFrameHeader(&header.Prefix)
