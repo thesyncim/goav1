@@ -72,7 +72,8 @@ packages_for() {
         ./cmd/gobenchpublish \
         ./cmd/qualitybench \
         ./conformance \
-        ./internal/benchenv
+        ./internal/benchenv \
+        ./tools/itxzero
       ;;
     *)
       printf 'unknown race shard: %s\n' "$1" >&2
