@@ -2841,13 +2841,20 @@ func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStr
 	var mask uint8
 	switch w {
 	case 8:
+		if st.pfN4 {
+			// svt_av1_fwd_txfm2d_8x8_N4: only the 2x2 low coefficients, all in
+			// the first row group.
+			transform.ForwardDCT8x8N48BitTrusted((*[64]int32)(st.tranScratch[:64]), (*[64]int16)(st.resScratch[:64]))
+			mask = 1
+			break
+		}
 		mask = transform.ForwardDCT8x8RowSkip8BitTrusted((*[64]int32)(st.tranScratch[:64]), (*[64]int16)(st.resScratch[:64]), thr0, thr)
 	case 16:
 		mask = transform.ForwardDCT16x16RowSkip8BitTrusted((*[256]int32)(st.tranScratch[:256]), (*[256]int16)(st.resScratch[:256]), thr0, thr)
 	default:
 		mask = transform.ForwardDCT32x32RowSkip8BitTrusted((*[1024]int32)(st.tranScratch[:1024]), (*[1024]int16)(st.resScratch[:1024]), thr0, thr)
 	}
-	if st.pfN4 {
+	if st.pfN4 && w != 8 {
 		svtPFN4Zero(st.tranScratch[:geo.coeffCount], w, h, geo.coeffWidth, geo.coeffHeight)
 		mask = svtPFN4Mask(mask, h)
 	}

@@ -20,20 +20,34 @@ type txBlockGeometry struct {
 }
 
 func txBlockGeometryForTransformSize(size tile.TransformSize) (txBlockGeometry, error) {
-	txSize, err := size.TransformSize()
-	if err != nil {
-		return txBlockGeometry{}, err
+	if int(size) < len(txBlockGeometries) {
+		return txBlockGeometries[size], nil
 	}
-	return txBlockGeometryForSize(txSize)
+	return txBlockGeometry{}, transform.ErrInvalidTransform
 }
 
 func txBlockGeometryForDimensions(width, height int) (txBlockGeometry, error) {
-	txSize, err := transform.SizeFromDimensions(width, height)
-	if err != nil {
-		return txBlockGeometry{}, err
+	if lw, lh := log2Exact(width), log2Exact(height); lw >= 2 && lw <= 6 && lh >= 2 && lh <= 6 {
+		if tx := tileTransformSizes[lw-2][lh-2]; tx != 255 {
+			return txBlockGeometries[tx], nil
+		}
 	}
-	return txBlockGeometryForSize(txSize)
+	return txBlockGeometry{}, transform.ErrInvalidTransform
 }
+
+// txBlockGeometries resolves every transform size's geometry once.
+var txBlockGeometries = func() (g [int(tile.TransformSize64x16) + 1]txBlockGeometry) {
+	for s := range g {
+		txSize, err := tile.TransformSize(s).TransformSize()
+		if err != nil {
+			panic(err)
+		}
+		if g[s], err = txBlockGeometryForSize(txSize); err != nil {
+			panic(err)
+		}
+	}
+	return g
+}()
 
 // tileTransformSizes maps (log2 width - 2, log2 height - 2) to the tile
 // transform size; invalid shapes hold tile.TransformSize(255).

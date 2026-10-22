@@ -22,3 +22,4 @@ var forwardDCT16x16Trusted8BitImpl = forwardDCT16x16PureGo
 var forwardDCT32x32Impl = forwardDCT32x32PureGo
 var forwardDCT32x32Trusted8BitImpl = forwardDCT32x32PureGo
 var forwardDCT64x64Trusted8BitImpl = forwardDCT64x64PureGo
+var forwardDCT8x8N4Impl = forwardDCT8x8N4PureGo

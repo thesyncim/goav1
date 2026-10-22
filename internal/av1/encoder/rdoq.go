@@ -771,6 +771,13 @@ func (st *lossyEncodeState) prepareInterTXBDecideRDOQ(geo *txBlockGeometry, w in
 	var mask uint8
 	switch w {
 	case 8:
+		if st.pfN4 {
+			// svt_av1_fwd_txfm2d_8x8_N4: only the 2x2 low coefficients, all in
+			// the first row group.
+			transform.ForwardDCT8x8N48BitTrusted((*[64]int32)(st.tranScratch[:64]), (*[64]int16)(st.resScratch[:64]))
+			mask = 1
+			break
+		}
 		mask = transform.ForwardDCT8x8RowSkip8BitTrusted((*[64]int32)(st.tranScratch[:64]), (*[64]int16)(st.resScratch[:64]), thr0, thr)
 	case 16:
 		mask = transform.ForwardDCT16x16RowSkip8BitTrusted((*[256]int32)(st.tranScratch[:256]), (*[256]int16)(st.resScratch[:256]), thr0, thr)
@@ -778,7 +785,7 @@ func (st *lossyEncodeState) prepareInterTXBDecideRDOQ(geo *txBlockGeometry, w in
 		mask = transform.ForwardDCT32x32RowSkip8BitTrusted((*[1024]int32)(st.tranScratch[:1024]), (*[1024]int16)(st.resScratch[:1024]), thr0, thr)
 	}
 	cn := geo.coeffCount
-	if st.pfN4 {
+	if st.pfN4 && w != 8 {
 		svtPFN4Zero(st.tranScratch[:cn], w, w, geo.coeffWidth, geo.coeffHeight)
 		mask = svtPFN4Mask(mask, w)
 	}
@@ -909,11 +916,24 @@ func (st *lossyEncodeState) svtInterCoeffCost(txPlan realtimeInterTXPlan, lumaTX
 			return 0, false
 		}
 	} else {
-		cost += st.svtLumaCoeffBits(st.lumaQ[:], lumaTX, lumaLvl0)
+		if st.txbZero[0] {
+			cost += 6000 // eob 0 < (w*h)>>6: 6000 + 1000*eob
+		} else {
+			cost += st.svtLumaCoeffBits(st.lumaQ[:], lumaTX, lumaLvl0)
+		}
 	}
 	if hasChroma {
-		cost += st.svtCoeffCost(st.uQ[:], chromaTX, 1)
-		cost += st.svtCoeffCost(st.vQ[:], chromaTX, 1)
+		g := rdoqGeometry(chromaTX, 1)
+		if st.txbZero[1] {
+			cost += st.svtCoeffCostEOB(st.uQ[:], g, 0)
+		} else {
+			cost += st.svtCoeffCost(st.uQ[:], chromaTX, 1)
+		}
+		if st.txbZero[2] {
+			cost += st.svtCoeffCostEOB(st.vQ[:], g, 0)
+		} else {
+			cost += st.svtCoeffCost(st.vQ[:], chromaTX, 1)
+		}
 	}
 	return (cost*lambda + 256) >> 9, true
 }
