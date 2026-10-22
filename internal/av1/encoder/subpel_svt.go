@@ -24,28 +24,19 @@ import (
 //     Source/Lib/Codec/filter.h). The pruned tree never calls the upsampled
 //     (USE_4_TAPS) predictor: is_scaled is 0, so svt_check_better_fast takes
 //     svt_estimated_pref_error.
-//   - Source/Lib/Codec/enc_mode_config.c md_subpel_me_controls level 6, the
-//     level svt_aom_sig_deriv_enc_dec_rtc selects for PD_PASS_1 above M9 (M8
-//     flat): quarter-pel max precision, one iteration per step,
-//     skip_diag_refinement 3, bias_fp 110, no early exits. That is the
-//     regular-PD1 configuration, the one SVT pairs with
-//     interpolation_search_level 4 (IFS_MDS3, pframe_ifs.go), which this
-//     encoder keeps.
+//   - Source/Lib/Codec/enc_mode_config.c md_subpel_me_controls level 8, the
+//     level svt_aom_sig_deriv_enc_dec_light_pd1 selects at 720p/1080p for
+//     light-PD1 levels above LPD1_LVL_0 (preset 12 rtc pictures run
+//     pic_lpd1_lvl 4 / 7, i.e. LPD1_LVL_1 / LPD1_LVL_5): quarter-pel max
+//     precision, one iteration per step, pred_variance_th 100, abs_th_mult 8,
+//     round_dev_th -15, skip_diag_refinement 4, bias_fp 110. Light-PD1 runs
+//     no interpolation filter search, so every block predicts with REGULAR.
 //
-// Light-PD1 itself runs level 8 at 720p/1080p (pred_variance_th 100,
-// abs_th_mult 8, round_dev_th -15, skip_diag_refinement 4) with the
-// interpolation filter search off (svt_aom_sig_deriv_enc_dec_light_pd1 never
-// arms IFS; md_stage_0_light_pd1 forces REGULAR). Measured on the 720p
-// fwd/rev p720_inter_q20 clip (2026-10-22): level 8 with IFS kept loses 0.17
-// dB BD-PSNR (fixed q 140..220); level 8 with IFS off loses 0.28/0.62 dB at
-// 1/2 Mbps CBR, while beating the old libaom tree with IFS off. The light-PD1
-// pruning (and bias_fp) keeps vectors on full-pel, where SMOOTH/SHARP cannot
-// help, so level 8 only fits the IFS-off pipeline it was tuned for.
-//
-// With skip_diag_refinement 3, org_error starts at besterr (halved for
-// 64-sample sides), so first_level_check_fast probes the diagonal only when a
-// cardinal probe improved; subpel_iters_per_step 1 keeps
-// two_level_checks_fast from the second level.
+// With skip_diag_refinement >= 4 org_error is 0, so first_level_check_fast
+// returns before the diagonal probe and two_level_checks_fast never reaches
+// the second level: each round probes the four cardinal neighbours, and the
+// quarter-pel round only runs when the half-pel round cut the error by at
+// least 15%.
 
 // svtSubpelCtrls is MdSubPelSearchCtrls for the SUBPEL_TREE_PRUNED levels
 // with subpel_iters_per_step 1 (levels 6..10; the second level check never
@@ -59,14 +50,16 @@ type svtSubpelCtrls struct {
 	biasFP         uint64 // bias_fp
 }
 
-// svtSubpelLevel6 is md_subpel_me_controls(ctx, 6). Quarter-pel max
+// svtSubpelLevel8 is md_subpel_me_controls(ctx, 8). Quarter-pel max
 // precision with allow_high_precision_mv off gives two rounds (half,
-// quarter); round_dev_th MAX_SIGNED_VALUE never exits between them.
-var svtSubpelLevel6 = svtSubpelCtrls{
-	rounds:     2,
-	roundDevTh: 1<<31 - 1,
-	skipDiag:   3,
-	biasFP:     110,
+// quarter).
+var svtSubpelLevel8 = svtSubpelCtrls{
+	rounds:         2,
+	predVarianceTh: 100,
+	absThMult:      8,
+	roundDevTh:     -15,
+	skipDiag:       4,
+	biasFP:         110,
 }
 
 // svtSubpelScratch holds the bilinear passes' buffers (variance.c SUBPIX_VAR

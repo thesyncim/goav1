@@ -252,7 +252,7 @@ func TestSVTSubpelSearchMatchesPrunedTreeModel(t *testing.T) {
 	rng := rand.New(rand.NewSource(7))
 	src := make([]byte, stride*height)
 	ref := make([]byte, stride*height)
-	level8 := svtSubpelCtrls{rounds: 2, predVarianceTh: 100, absThMult: 8, roundDevTh: -15, skipDiag: 4, biasFP: 110}
+	level6 := svtSubpelCtrls{rounds: 2, roundDevTh: 1<<31 - 1, skipDiag: 3, biasFP: 110}
 	sizes := [][2]int{{8, 8}, {16, 16}, {32, 32}, {64, 64}, {16, 8}, {8, 16}, {32, 16}, {16, 32}, {64, 16}, {16, 64}}
 	for trial := 0; trial < 300; trial++ {
 		// Smooth content with a sub-pel shift so the tree actually moves.
@@ -271,9 +271,9 @@ func TestSVTSubpelSearchMatchesPrunedTreeModel(t *testing.T) {
 		py := (rng.Intn((height-bh)/8 + 1)) * 8
 		start := motion.Vector{Row: int16(rng.Intn(5)-2) * 8, Col: int16(rng.Intn(5)-2) * 8}
 		refMV := motion.Vector{Row: int16(rng.Intn(33) - 16), Col: int16(rng.Intn(33) - 16)}
-		ctrls := svtSubpelLevel6
+		ctrls := svtSubpelLevel8
 		if trial&1 == 1 {
-			ctrls = level8
+			ctrls = level6
 		}
 		var st lossyEncodeState
 		st.qIndex = uint8(60 + rng.Intn(180))

@@ -67,7 +67,7 @@ func (st *lossyEncodeState) svtNewMVPredictor(stack *tile.ReferenceMVStackResult
 // stays in predY (st.mePredY) for MDS0 to reuse.
 func (st *lossyEncodeState) pblockSubpel(src SourceFrame420, refPlane []byte, refStride, lumaPX, lumaPY, bw, bh int,
 	mv motion.Vector, fullSAD int, refMV motion.Vector, intoPredY bool) (motion.Vector, int) {
-	refined := st.svtSubpelSearch(src.Y, refPlane, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, refMV, &svtSubpelLevel6)
+	refined := st.svtSubpelSearch(src.Y, refPlane, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, refMV, &svtSubpelLevel8)
 	if refined == mv {
 		return mv, fullSAD
 	}

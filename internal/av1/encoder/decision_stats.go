@@ -179,13 +179,6 @@ func (st *lossyEncodeState) noteInterTXBSizes(blockSize tile.BlockSize, splitTX 
 	st.decisionStats.noteInterTXBs(lumaTX, lumaCount, chromaTX, chromaCount)
 }
 
-func (s *EncoderDecisionStats) noteInterpFilter(f int) {
-	if s == nil || f < 0 || f >= len(s.InterpFilters) {
-		return
-	}
-	s.InterpFilters[f]++
-}
-
 func (s *EncoderDecisionStats) notePartition(level tile.BlockLevel, partition tile.Partition) {
 	if s == nil {
 		return

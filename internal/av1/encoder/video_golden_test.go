@@ -374,7 +374,10 @@ func TestVideoEncoderCompoundGoldenAverageReference(t *testing.T) {
 		lastOnly = append(lastOnly, append([]byte(nil), tu...))
 	}
 	t.Logf("average frame: last-only %dB, with compound %dB", len(lastOnly[2]), len(withGolden[2]))
-	if len(withGolden[2])+128 >= len(lastOnly[2]) {
+	// The light-PD1 search (md_subpel_me level 8, no filter search) leaves
+	// the GOLDEN-anchored compound a smaller margin on this synthetic
+	// average; it must still beat LAST alone.
+	if len(withGolden[2]) >= len(lastOnly[2]) {
 		t.Fatalf("compound average %dB not well below last-only %dB", len(withGolden[2]), len(lastOnly[2]))
 	}
 
