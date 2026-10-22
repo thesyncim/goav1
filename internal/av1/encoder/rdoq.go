@@ -128,6 +128,7 @@ func (c *rdoqCosts) fill(cdfs *tile.CoeffCDFs) {
 
 // rdoqTXB is the per-transform-block geometry svt_av1_optimize_b reads.
 type rdoqTXB struct {
+	n      int // block side
 	size   tile.TransformSize
 	class  transform.Class
 	area   int // (height << bwl), the scan area
@@ -589,24 +590,37 @@ func (s *rdoqState) optimizeB(eob, txbSkipCtx, dcSignCtx int) int {
 	return eob
 }
 
+// rdoqSquareGeometries holds the RDOQ geometry of the n x n DCT_DCT blocks by
+// plane type and log2(n)-2.
+var rdoqSquareGeometries = func() (g [2][4]rdoqTXB) {
+	for plane := range 2 {
+		g[plane] = [4]rdoqTXB{
+			{n: 4, size: tile.TransformSize4x4, area: 16, shift: 0, txCtx: 0, eobSel: 0},
+			{n: 8, size: tile.TransformSize8x8, area: 64, shift: 0, txCtx: 1, eobSel: 2},
+			{n: 16, size: tile.TransformSize16x16, area: 256, shift: 0, txCtx: 2, eobSel: 4},
+			{n: 32, size: tile.TransformSize32x32, area: 1024, shift: 1, txCtx: 3, eobSel: 6},
+		}
+		for i := range g[plane] {
+			g[plane][i].class = transform.Class2D
+			g[plane][i].plane = plane
+		}
+	}
+	return g
+}()
+
 // rdoqSquareGeometry returns the RDOQ geometry of an n x n DCT_DCT block.
-func rdoqSquareGeometry(n int, plane int) (rdoqTXB, bool) {
-	var g rdoqTXB
+func rdoqSquareGeometry(n int, plane int) (*rdoqTXB, bool) {
 	switch n {
 	case 4:
-		g = rdoqTXB{size: tile.TransformSize4x4, area: 16, shift: 0, txCtx: 0, eobSel: 0}
+		return &rdoqSquareGeometries[plane][0], true
 	case 8:
-		g = rdoqTXB{size: tile.TransformSize8x8, area: 64, shift: 0, txCtx: 1, eobSel: 2}
+		return &rdoqSquareGeometries[plane][1], true
 	case 16:
-		g = rdoqTXB{size: tile.TransformSize16x16, area: 256, shift: 0, txCtx: 2, eobSel: 4}
+		return &rdoqSquareGeometries[plane][2], true
 	case 32:
-		g = rdoqTXB{size: tile.TransformSize32x32, area: 1024, shift: 1, txCtx: 3, eobSel: 6}
-	default:
-		return g, false
+		return &rdoqSquareGeometries[plane][3], true
 	}
-	g.class = transform.Class2D
-	g.plane = plane
-	return g, true
+	return nil, false
 }
 
 // rdoqQuantize quantizes the n x n DCT_DCT coefficients tran into qcoeff with
@@ -626,7 +640,7 @@ func (st *lossyEncodeState) rdoqQuantize(tran []int32, qcoeff []int16, n int, pl
 		return true
 	}
 	s := rdoqState{
-		g:       &g,
+		g:       g,
 		tc:      &st.rdoq.coeff[g.txCtx][plane],
 		ec:      &st.rdoq.eob[g.eobSel][plane],
 		rdmult:  st.rdoqLambda(plane),
@@ -741,9 +755,16 @@ func (st *lossyEncodeState) prepareInterTXBDecideRDOQ(geo *txBlockGeometry, w in
 }
 
 // rdoqEOBFromIScan returns the end of block of qcoeff: one past the largest
-// scan position of a non-zero level. Runs of four zero levels are skipped by
-// one 64-bit test.
+// scan position of a non-zero level (iscan maps a coefficient to its scan
+// position).
 func rdoqEOBFromIScan(qcoeff []int16, iscan []int16) int {
+	return rdoqEOBImpl(qcoeff, iscan)
+}
+
+var rdoqEOBImpl = rdoqEOBPureGo
+
+// rdoqEOBPureGo skips runs of four zero levels by one 64-bit test.
+func rdoqEOBPureGo(qcoeff []int16, iscan []int16) int {
 	eob := 0
 	n := len(qcoeff) &^ 3
 	iscan = iscan[:len(qcoeff)]
@@ -773,12 +794,17 @@ func (st *lossyEncodeState) svtCoeffCost(qcoeff []int16, n int, plane int) int64
 	if !ok {
 		return 0
 	}
+	return st.svtCoeffCostEOB(qcoeff, g, rdoqEOBFromIScan(qcoeff[:g.area], st.rdoqIScanN[g.txCtx][:g.area]))
+}
+
+// svtCoeffCostEOB is svtCoeffCost for a TXB whose end of block is known.
+func (st *lossyEncodeState) svtCoeffCostEOB(qcoeff []int16, g *rdoqTXB, eob int) int64 {
+	plane := g.plane
 	tc := &st.rdoq.coeff[g.txCtx][plane]
-	eob := rdoqEOBFromIScan(qcoeff[:g.area], st.rdoqIScanN[g.txCtx][:g.area])
 	if eob == 0 {
 		return int64(tc.txbSkip[0][1])
 	}
-	scan := st.rdoqScan(n)
+	scan := st.rdoqScan(g.n)
 	levels := st.levels
 	_ = tile.CoeffInitLevels(qcoeff, g.size, levels)
 	cost := int64(tc.txbSkip[0][0])
@@ -828,7 +854,7 @@ func (st *lossyEncodeState) svtLumaCoeffBits(qcoeff []int16, n int) int64 {
 	if eob < g.area>>6 {
 		return 6000 + int64(eob)*1000
 	}
-	return st.svtCoeffCost(qcoeff, n, 0)
+	return st.svtCoeffCostEOB(qcoeff, g, eob)
 }
 
 // svtInterCoeffCost prices the coded alternative of the skip decision the
