@@ -7,7 +7,6 @@
 package cdef
 
 import (
-	"encoding/binary"
 	"simd/archsimd"
 	"unsafe"
 )
@@ -81,8 +80,8 @@ func cdefLoadSecondary8x2SIMD(src unsafe.Pointer, rowStride int, dx int, dy int)
 	row0 := unsafe.Add(src, dy*BStride+dx)
 	row1 := unsafe.Add(row0, rowStride)
 	var packed archsimd.Uint64x2
-	packed = packed.SetElem(0, binary.LittleEndian.Uint64(unsafe.Slice((*byte)(row0), 8)))
-	packed = packed.SetElem(1, binary.LittleEndian.Uint64(unsafe.Slice((*byte)(row1), 8)))
+	packed = packed.SetElem(0, *(*uint64)(row0))
+	packed = packed.SetElem(1, *(*uint64)(row1))
 	return packed.ReshapeToUint8s()
 }
 
@@ -91,25 +90,25 @@ func cdefLoadSecondary8x2SIMD(src unsafe.Pointer, rowStride int, dx int, dy int)
 func cdefLoadSecondary4x4SIMD(src unsafe.Pointer, rowStride int, dx int, dy int) archsimd.Uint8x16 {
 	row0 := unsafe.Add(src, dy*BStride+dx)
 	var packed archsimd.Uint32x4
-	packed = packed.SetElem(0, binary.LittleEndian.Uint32(unsafe.Slice((*byte)(row0), 4)))
-	packed = packed.SetElem(1, binary.LittleEndian.Uint32(unsafe.Slice((*byte)(unsafe.Add(row0, rowStride)), 4)))
-	packed = packed.SetElem(2, binary.LittleEndian.Uint32(unsafe.Slice((*byte)(unsafe.Add(row0, 2*rowStride)), 4)))
-	packed = packed.SetElem(3, binary.LittleEndian.Uint32(unsafe.Slice((*byte)(unsafe.Add(row0, 3*rowStride)), 4)))
+	packed = packed.SetElem(0, *(*uint32)(row0))
+	packed = packed.SetElem(1, *(*uint32)(unsafe.Add(row0, rowStride)))
+	packed = packed.SetElem(2, *(*uint32)(unsafe.Add(row0, 2*rowStride)))
+	packed = packed.SetElem(3, *(*uint32)(unsafe.Add(row0, 3*rowStride)))
 	return packed.ReshapeToUint8s()
 }
 
 func cdefStoreSecondary8x2SIMD(dst unsafe.Pointer, dstStride int, pixels archsimd.Uint8x16) {
 	packed := pixels.ReshapeToUint64s()
-	binary.LittleEndian.PutUint64(unsafe.Slice((*byte)(dst), 8), packed.GetElem(0))
-	binary.LittleEndian.PutUint64(unsafe.Slice((*byte)(unsafe.Add(dst, dstStride)), 8), packed.GetElem(1))
+	*(*uint64)(dst) = packed.GetElem(0)
+	*(*uint64)(unsafe.Add(dst, dstStride)) = packed.GetElem(1)
 }
 
 func cdefStoreSecondary4x4SIMD(dst unsafe.Pointer, dstStride int, pixels archsimd.Uint8x16) {
 	packed := pixels.ReshapeToUint32s()
-	binary.LittleEndian.PutUint32(unsafe.Slice((*byte)(dst), 4), packed.GetElem(0))
-	binary.LittleEndian.PutUint32(unsafe.Slice((*byte)(unsafe.Add(dst, dstStride)), 4), packed.GetElem(1))
-	binary.LittleEndian.PutUint32(unsafe.Slice((*byte)(unsafe.Add(dst, 2*dstStride)), 4), packed.GetElem(2))
-	binary.LittleEndian.PutUint32(unsafe.Slice((*byte)(unsafe.Add(dst, 3*dstStride)), 4), packed.GetElem(3))
+	*(*uint32)(dst) = packed.GetElem(0)
+	*(*uint32)(unsafe.Add(dst, dstStride)) = packed.GetElem(1)
+	*(*uint32)(unsafe.Add(dst, 2*dstStride)) = packed.GetElem(2)
+	*(*uint32)(unsafe.Add(dst, 3*dstStride)) = packed.GetElem(3)
 }
 
 func cdefLoadSecondary16SIMD(src unsafe.Pointer, dx int, dy int) archsimd.Uint8x16 {
@@ -122,27 +121,18 @@ func cdefFilterSecondaryOnly16xSIMD(dst []byte, dstStride int, input []byte, hei
 	dstPtr := unsafe.Pointer(unsafe.SliceData(dst))
 	for y := 0; y < height; y++ {
 		x := cdefLoadSecondary16SIMD(src, 0, y)
-		var sum archsimd.Int8x16
-		t := cdefLoadSecondary16SIMD(src, 1, y)
-		d := cdefConstrainSecondaryByteSIMD(t, x, strength, shift)
-		sum = sum.Add(d.Add(d))
-		t = cdefLoadSecondary16SIMD(src, -1, y)
-		d = cdefConstrainSecondaryByteSIMD(t, x, strength, shift)
-		sum = sum.Add(d.Add(d))
-		t = cdefLoadSecondary16SIMD(src, 0, y+1)
-		d = cdefConstrainSecondaryByteSIMD(t, x, strength, shift)
-		sum = sum.Add(d.Add(d))
-		t = cdefLoadSecondary16SIMD(src, 0, y-1)
-		d = cdefConstrainSecondaryByteSIMD(t, x, strength, shift)
-		sum = sum.Add(d.Add(d))
-		t = cdefLoadSecondary16SIMD(src, 2, y)
-		sum = sum.Add(cdefConstrainSecondaryByteSIMD(t, x, strength, shift))
-		t = cdefLoadSecondary16SIMD(src, -2, y)
-		sum = sum.Add(cdefConstrainSecondaryByteSIMD(t, x, strength, shift))
-		t = cdefLoadSecondary16SIMD(src, 0, y+2)
-		sum = sum.Add(cdefConstrainSecondaryByteSIMD(t, x, strength, shift))
-		t = cdefLoadSecondary16SIMD(src, 0, y-2)
-		sum = sum.Add(cdefConstrainSecondaryByteSIMD(t, x, strength, shift))
+		// The four weight-2 taps sum before doubling (2a+2b+2c+2d wraps to the
+		// same int8 lanes as 2(a+b+c+d)), and every tap is consumed on the line
+		// that loads it, so no inlined helper call leaves an inline-mark NOP.
+		d := cdefConstrainSecondaryByteSIMD(cdefLoadSecondary16SIMD(src, 1, y), x, strength, shift).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary16SIMD(src, -1, y), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary16SIMD(src, 0, y+1), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary16SIMD(src, 0, y-1), x, strength, shift))
+		sum := d.Add(d).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary16SIMD(src, 2, y), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary16SIMD(src, -2, y), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary16SIMD(src, 0, y+2), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary16SIMD(src, 0, y-2), x, strength, shift))
 		pixels := x.Add(cdefRoundSecondaryByteSIMD(sum).ToBits())
 		dstPtrRow := unsafe.Add(dstPtr, y*dstStride)
 		pixels.StoreArray((*[16]uint8)(dstPtrRow))
@@ -154,27 +144,18 @@ func cdefFilterSecondaryOnly8xSIMD(dst []byte, dstStride int, input []byte, heig
 	dstPtr := unsafe.Pointer(unsafe.SliceData(dst))
 	for y := 0; y < height; y += 2 {
 		x := cdefLoadSecondary8x2SIMD(src, BStride, 0, y)
-		var sum archsimd.Int8x16
-		t := cdefLoadSecondary8x2SIMD(src, BStride, 1, y)
-		d := cdefConstrainSecondaryByteSIMD(t, x, strength, shift)
-		sum = sum.Add(d.Add(d))
-		t = cdefLoadSecondary8x2SIMD(src, BStride, -1, y)
-		d = cdefConstrainSecondaryByteSIMD(t, x, strength, shift)
-		sum = sum.Add(d.Add(d))
-		t = cdefLoadSecondary8x2SIMD(src, BStride, 0, y+1)
-		d = cdefConstrainSecondaryByteSIMD(t, x, strength, shift)
-		sum = sum.Add(d.Add(d))
-		t = cdefLoadSecondary8x2SIMD(src, BStride, 0, y-1)
-		d = cdefConstrainSecondaryByteSIMD(t, x, strength, shift)
-		sum = sum.Add(d.Add(d))
-		t = cdefLoadSecondary8x2SIMD(src, BStride, 2, y)
-		sum = sum.Add(cdefConstrainSecondaryByteSIMD(t, x, strength, shift))
-		t = cdefLoadSecondary8x2SIMD(src, BStride, -2, y)
-		sum = sum.Add(cdefConstrainSecondaryByteSIMD(t, x, strength, shift))
-		t = cdefLoadSecondary8x2SIMD(src, BStride, 0, y+2)
-		sum = sum.Add(cdefConstrainSecondaryByteSIMD(t, x, strength, shift))
-		t = cdefLoadSecondary8x2SIMD(src, BStride, 0, y-2)
-		sum = sum.Add(cdefConstrainSecondaryByteSIMD(t, x, strength, shift))
+		// The four weight-2 taps sum before doubling (2a+2b+2c+2d wraps to the
+		// same int8 lanes as 2(a+b+c+d)), and every tap is consumed on the line
+		// that loads it, so no inlined helper call leaves an inline-mark NOP.
+		d := cdefConstrainSecondaryByteSIMD(cdefLoadSecondary8x2SIMD(src, BStride, 1, y), x, strength, shift).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary8x2SIMD(src, BStride, -1, y), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary8x2SIMD(src, BStride, 0, y+1), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary8x2SIMD(src, BStride, 0, y-1), x, strength, shift))
+		sum := d.Add(d).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary8x2SIMD(src, BStride, 2, y), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary8x2SIMD(src, BStride, -2, y), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary8x2SIMD(src, BStride, 0, y+2), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary8x2SIMD(src, BStride, 0, y-2), x, strength, shift))
 		delta := cdefRoundSecondaryByteSIMD(sum)
 		cdefStoreSecondary8x2SIMD(unsafe.Add(dstPtr, y*dstStride), dstStride, x.Add(delta.ToBits()))
 	}
@@ -185,27 +166,18 @@ func cdefFilterSecondaryOnly4xSIMD(dst []byte, dstStride int, input []byte, heig
 	dstPtr := unsafe.Pointer(unsafe.SliceData(dst))
 	for y := 0; y < height; y += 4 {
 		x := cdefLoadSecondary4x4SIMD(src, BStride, 0, y)
-		var sum archsimd.Int8x16
-		t := cdefLoadSecondary4x4SIMD(src, BStride, 1, y)
-		d := cdefConstrainSecondaryByteSIMD(t, x, strength, shift)
-		sum = sum.Add(d.Add(d))
-		t = cdefLoadSecondary4x4SIMD(src, BStride, -1, y)
-		d = cdefConstrainSecondaryByteSIMD(t, x, strength, shift)
-		sum = sum.Add(d.Add(d))
-		t = cdefLoadSecondary4x4SIMD(src, BStride, 0, y+1)
-		d = cdefConstrainSecondaryByteSIMD(t, x, strength, shift)
-		sum = sum.Add(d.Add(d))
-		t = cdefLoadSecondary4x4SIMD(src, BStride, 0, y-1)
-		d = cdefConstrainSecondaryByteSIMD(t, x, strength, shift)
-		sum = sum.Add(d.Add(d))
-		t = cdefLoadSecondary4x4SIMD(src, BStride, 2, y)
-		sum = sum.Add(cdefConstrainSecondaryByteSIMD(t, x, strength, shift))
-		t = cdefLoadSecondary4x4SIMD(src, BStride, -2, y)
-		sum = sum.Add(cdefConstrainSecondaryByteSIMD(t, x, strength, shift))
-		t = cdefLoadSecondary4x4SIMD(src, BStride, 0, y+2)
-		sum = sum.Add(cdefConstrainSecondaryByteSIMD(t, x, strength, shift))
-		t = cdefLoadSecondary4x4SIMD(src, BStride, 0, y-2)
-		sum = sum.Add(cdefConstrainSecondaryByteSIMD(t, x, strength, shift))
+		// The four weight-2 taps sum before doubling (2a+2b+2c+2d wraps to the
+		// same int8 lanes as 2(a+b+c+d)), and every tap is consumed on the line
+		// that loads it, so no inlined helper call leaves an inline-mark NOP.
+		d := cdefConstrainSecondaryByteSIMD(cdefLoadSecondary4x4SIMD(src, BStride, 1, y), x, strength, shift).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary4x4SIMD(src, BStride, -1, y), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary4x4SIMD(src, BStride, 0, y+1), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary4x4SIMD(src, BStride, 0, y-1), x, strength, shift))
+		sum := d.Add(d).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary4x4SIMD(src, BStride, 2, y), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary4x4SIMD(src, BStride, -2, y), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary4x4SIMD(src, BStride, 0, y+2), x, strength, shift)).
+			Add(cdefConstrainSecondaryByteSIMD(cdefLoadSecondary4x4SIMD(src, BStride, 0, y-2), x, strength, shift))
 		delta := cdefRoundSecondaryByteSIMD(sum)
 		cdefStoreSecondary4x4SIMD(unsafe.Add(dstPtr, y*dstStride), dstStride, x.Add(delta.ToBits()))
 	}

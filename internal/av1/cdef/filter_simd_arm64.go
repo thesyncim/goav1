@@ -148,3 +148,10 @@ func filterUnitBlocksU8SIMD(dst []byte, dstStride int, input []uint16, inputOrig
 func cdefNarrowU8(y archsimd.Int16x8) archsimd.Uint8x16 {
 	return y.ToBits().TruncToUint8()
 }
+
+// cdefSarI16 is an arithmetic right shift of each lane by a count from
+// cdefShiftCountOf. The count vector is built once per block: ShiftAllRight
+// with a constant would rebuild it (MOVD + INS + DUP) on every row.
+func cdefSarI16(v archsimd.Int16x8, sh cdefShiftCount) archsimd.Int16x8 {
+	return v.Shift(sh)
+}

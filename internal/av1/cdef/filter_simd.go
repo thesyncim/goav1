@@ -158,6 +158,8 @@ func cdefFilterBlock8SIMD(ctx *cdefSIMDCtx) {
 	secTap1 := archsimd.BroadcastInt16x8(int16(ctx.secTap1))
 	eight := archsimd.BroadcastInt16x8(8)
 	noSentinel := archsimd.BroadcastInt16x8(int16(^VeryLarge))
+	sar15 := cdefShiftCountOf(15)
+	sar4 := cdefShiftCountOf(4)
 	priOn, secOn, u8 := ctx.enablePrimary, ctx.enableSecondary, ctx.u8
 	clip := priOn && secOn
 	pri0, pri1 := ctx.pri0*2, ctx.pri1*2
@@ -174,11 +176,10 @@ func cdefFilterBlock8SIMD(ctx *cdefSIMDCtx) {
 			t1 := cdefLoadU16P(unsafe.Add(src, -pri0))
 			t2 := cdefLoadU16P(unsafe.Add(src, pri1))
 			t3 := cdefLoadU16P(unsafe.Add(src, -pri1))
-			c0 := cdefConstrain(t0, x, priStr, priSh)
-			c1 := cdefConstrain(t1, x, priStr, priSh)
-			c2 := cdefConstrain(t2, x, priStr, priSh)
-			c3 := cdefConstrain(t3, x, priStr, priSh)
-			sum = c0.Add(c1).Mul(priTap0).Add(c2.Add(c3).Mul(priTap1))
+			// Each constrain result feeds an Add on its own line: a call that is
+			// alone on its line leaves an inline-mark NOP in the row loop.
+			sum = cdefConstrain(t0, x, priStr, priSh).Add(cdefConstrain(t1, x, priStr, priSh)).Mul(priTap0).
+				Add(cdefConstrain(t2, x, priStr, priSh).Add(cdefConstrain(t3, x, priStr, priSh)).Mul(priTap1))
 			if clip {
 				mx = mx.Max(t0.And(noSentinel)).Max(t1.And(noSentinel)).Max(t2.And(noSentinel)).Max(t3.And(noSentinel))
 				mn = mn.Min(t0).Min(t1).Min(t2).Min(t3)
@@ -189,28 +190,27 @@ func cdefFilterBlock8SIMD(ctx *cdefSIMDCtx) {
 			s1 := cdefLoadU16P(unsafe.Add(src, -sec0))
 			s2 := cdefLoadU16P(unsafe.Add(src, sec1))
 			s3 := cdefLoadU16P(unsafe.Add(src, -sec1))
+			// Each half of the secondary taps folds into sum, max and min before the
+			// next half loads, so only four taps are live at once.
+			sum = sum.Add(cdefConstrain(s0, x, secStr, secSh).Add(cdefConstrain(s1, x, secStr, secSh)).
+				Add(cdefConstrain(s2, x, secStr, secSh)).Add(cdefConstrain(s3, x, secStr, secSh)).Mul(secTap0))
+			if clip {
+				mx = mx.Max(s0.And(noSentinel)).Max(s1.And(noSentinel)).Max(s2.And(noSentinel)).Max(s3.And(noSentinel))
+				mn = mn.Min(s0).Min(s1).Min(s2).Min(s3)
+			}
 			s4 := cdefLoadU16P(unsafe.Add(src, sec2))
 			s5 := cdefLoadU16P(unsafe.Add(src, -sec2))
 			s6 := cdefLoadU16P(unsafe.Add(src, sec3))
 			s7 := cdefLoadU16P(unsafe.Add(src, -sec3))
-			c0 := cdefConstrain(s0, x, secStr, secSh)
-			c1 := cdefConstrain(s1, x, secStr, secSh)
-			c2 := cdefConstrain(s2, x, secStr, secSh)
-			c3 := cdefConstrain(s3, x, secStr, secSh)
-			c4 := cdefConstrain(s4, x, secStr, secSh)
-			c5 := cdefConstrain(s5, x, secStr, secSh)
-			c6 := cdefConstrain(s6, x, secStr, secSh)
-			c7 := cdefConstrain(s7, x, secStr, secSh)
-			sum = sum.Add(c0.Add(c1).Add(c2).Add(c3).Mul(secTap0)).Add(c4.Add(c5).Add(c6).Add(c7).Mul(secTap1))
+			sum = sum.Add(cdefConstrain(s4, x, secStr, secSh).Add(cdefConstrain(s5, x, secStr, secSh)).
+				Add(cdefConstrain(s6, x, secStr, secSh)).Add(cdefConstrain(s7, x, secStr, secSh)).Mul(secTap1))
 			if clip {
-				mx = mx.Max(s0.And(noSentinel)).Max(s1.And(noSentinel)).Max(s2.And(noSentinel)).Max(s3.And(noSentinel))
 				mx = mx.Max(s4.And(noSentinel)).Max(s5.And(noSentinel)).Max(s6.And(noSentinel)).Max(s7.And(noSentinel))
-				mn = mn.Min(s0).Min(s1).Min(s2).Min(s3)
 				mn = mn.Min(s4).Min(s5).Min(s6).Min(s7)
 			}
 		}
 		// y = x + ((8 + sum - (sum<0)) >> 4)
-		y := x.Add(sum.Add(sum.ShiftAllRight(15)).Add(eight).ShiftAllRight(4))
+		y := x.Add(cdefSarI16(sum.Add(cdefSarI16(sum, sar15)).Add(eight), sar4))
 		if clip {
 			y = y.Max(mn).Min(mx)
 		}
@@ -240,6 +240,8 @@ func cdefFilterBlock4SIMD(ctx *cdefSIMDCtx) {
 	secTap1 := archsimd.BroadcastInt16x8(int16(ctx.secTap1))
 	eight := archsimd.BroadcastInt16x8(8)
 	noSentinel := archsimd.BroadcastInt16x8(int16(^VeryLarge))
+	sar15 := cdefShiftCountOf(15)
+	sar4 := cdefShiftCountOf(4)
 	priOn, secOn, u8 := ctx.enablePrimary, ctx.enableSecondary, ctx.u8
 	clip := priOn && secOn
 	pri0, pri1 := ctx.pri0*2, ctx.pri1*2
@@ -257,11 +259,8 @@ func cdefFilterBlock4SIMD(ctx *cdefSIMDCtx) {
 			t1 := cdefLoadPairU16P(unsafe.Add(src, -pri0), unsafe.Add(src2, -pri0))
 			t2 := cdefLoadPairU16P(unsafe.Add(src, pri1), unsafe.Add(src2, pri1))
 			t3 := cdefLoadPairU16P(unsafe.Add(src, -pri1), unsafe.Add(src2, -pri1))
-			c0 := cdefConstrain(t0, x, priStr, priSh)
-			c1 := cdefConstrain(t1, x, priStr, priSh)
-			c2 := cdefConstrain(t2, x, priStr, priSh)
-			c3 := cdefConstrain(t3, x, priStr, priSh)
-			sum = c0.Add(c1).Mul(priTap0).Add(c2.Add(c3).Mul(priTap1))
+			sum = cdefConstrain(t0, x, priStr, priSh).Add(cdefConstrain(t1, x, priStr, priSh)).Mul(priTap0).
+				Add(cdefConstrain(t2, x, priStr, priSh).Add(cdefConstrain(t3, x, priStr, priSh)).Mul(priTap1))
 			if clip {
 				mx = mx.Max(t0.And(noSentinel)).Max(t1.And(noSentinel)).Max(t2.And(noSentinel)).Max(t3.And(noSentinel))
 				mn = mn.Min(t0).Min(t1).Min(t2).Min(t3)
@@ -272,27 +271,26 @@ func cdefFilterBlock4SIMD(ctx *cdefSIMDCtx) {
 			s1 := cdefLoadPairU16P(unsafe.Add(src, -sec0), unsafe.Add(src2, -sec0))
 			s2 := cdefLoadPairU16P(unsafe.Add(src, sec1), unsafe.Add(src2, sec1))
 			s3 := cdefLoadPairU16P(unsafe.Add(src, -sec1), unsafe.Add(src2, -sec1))
+			// Each half of the secondary taps folds into sum, max and min before the
+			// next half loads, so only four taps are live at once.
+			sum = sum.Add(cdefConstrain(s0, x, secStr, secSh).Add(cdefConstrain(s1, x, secStr, secSh)).
+				Add(cdefConstrain(s2, x, secStr, secSh)).Add(cdefConstrain(s3, x, secStr, secSh)).Mul(secTap0))
+			if clip {
+				mx = mx.Max(s0.And(noSentinel)).Max(s1.And(noSentinel)).Max(s2.And(noSentinel)).Max(s3.And(noSentinel))
+				mn = mn.Min(s0).Min(s1).Min(s2).Min(s3)
+			}
 			s4 := cdefLoadPairU16P(unsafe.Add(src, sec2), unsafe.Add(src2, sec2))
 			s5 := cdefLoadPairU16P(unsafe.Add(src, -sec2), unsafe.Add(src2, -sec2))
 			s6 := cdefLoadPairU16P(unsafe.Add(src, sec3), unsafe.Add(src2, sec3))
 			s7 := cdefLoadPairU16P(unsafe.Add(src, -sec3), unsafe.Add(src2, -sec3))
-			c0 := cdefConstrain(s0, x, secStr, secSh)
-			c1 := cdefConstrain(s1, x, secStr, secSh)
-			c2 := cdefConstrain(s2, x, secStr, secSh)
-			c3 := cdefConstrain(s3, x, secStr, secSh)
-			c4 := cdefConstrain(s4, x, secStr, secSh)
-			c5 := cdefConstrain(s5, x, secStr, secSh)
-			c6 := cdefConstrain(s6, x, secStr, secSh)
-			c7 := cdefConstrain(s7, x, secStr, secSh)
-			sum = sum.Add(c0.Add(c1).Add(c2).Add(c3).Mul(secTap0)).Add(c4.Add(c5).Add(c6).Add(c7).Mul(secTap1))
+			sum = sum.Add(cdefConstrain(s4, x, secStr, secSh).Add(cdefConstrain(s5, x, secStr, secSh)).
+				Add(cdefConstrain(s6, x, secStr, secSh)).Add(cdefConstrain(s7, x, secStr, secSh)).Mul(secTap1))
 			if clip {
-				mx = mx.Max(s0.And(noSentinel)).Max(s1.And(noSentinel)).Max(s2.And(noSentinel)).Max(s3.And(noSentinel))
 				mx = mx.Max(s4.And(noSentinel)).Max(s5.And(noSentinel)).Max(s6.And(noSentinel)).Max(s7.And(noSentinel))
-				mn = mn.Min(s0).Min(s1).Min(s2).Min(s3)
 				mn = mn.Min(s4).Min(s5).Min(s6).Min(s7)
 			}
 		}
-		y := x.Add(sum.Add(sum.ShiftAllRight(15)).Add(eight).ShiftAllRight(4))
+		y := x.Add(cdefSarI16(sum.Add(cdefSarI16(sum, sar15)).Add(eight), sar4))
 		if clip {
 			y = y.Max(mn).Min(mx)
 		}

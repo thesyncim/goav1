@@ -57,23 +57,19 @@ func cdefDirLoadRowPtr(p unsafe.Pointer) archsimd.Int16x8 {
 	return archsimd.LoadInt16x8Array((*[8]int16)(p))
 }
 
-// vext is the raw VEXT on the int16 view: x.ConcatShiftBytesRight(y, s) returns
-// bytes [s..s+15] of concat(y, x) — i.e. the receiver x is the HIGH operand and
-// y is the LOW operand. s must be a compile-time constant for a single-
-// instruction VEXT.
-func vext(hi, lo archsimd.Int16x8, shiftBytes uint64) archsimd.Int16x8 {
-	hb := hi.ToBits().ReshapeToUint8s()
-	lb := lo.ToBits().ReshapeToUint8s()
-	return hb.ConcatShiftBytesRight(lb, shiftBytes).ReshapeToUint16s().BitsToInt16()
-}
-
 // placeLo returns the low half (indices 0..7) of row r placed at lane offset n
 // (0..7): out[k] = r[k-n] for k>=n, else 0.
+//
+// placeLo and placeHi are one VEXT on the int16 view: x.ConcatShiftBytesRight(y,
+// s) returns bytes [s..s+15] of concat(y, x), so the receiver x is the HIGH
+// operand and y the LOW one; s must be a compile-time constant. The VEXT is
+// written out here rather than through a shared helper because a nested
+// inlined call leaves an inline-mark NOP at every use.
 func placeLo(r, zero archsimd.Int16x8, n uint64) archsimd.Int16x8 {
 	if n == 0 {
 		return r
 	}
-	return vext(r, zero, 16-2*n)
+	return r.ToBits().ReshapeToUint8s().ConcatShiftBytesRight(zero.ToBits().ReshapeToUint8s(), 16-2*n).ReshapeToUint16s().BitsToInt16()
 }
 
 // placeHi returns the high half (indices 8..14, in lanes 0..6) of row r placed at
@@ -82,7 +78,7 @@ func placeHi(r, zero archsimd.Int16x8, n uint64) archsimd.Int16x8 {
 	if n == 0 {
 		return zero
 	}
-	return vext(zero, r, 16-2*n)
+	return zero.ToBits().ReshapeToUint8s().ConcatShiftBytesRight(r.ToBits().ReshapeToUint8s(), 16-2*n).ReshapeToUint16s().BitsToInt16()
 }
 
 // revRowLo returns the low half (idx 0..7) of the full 8-lane reverse of row r
