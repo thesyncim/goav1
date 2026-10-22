@@ -557,6 +557,7 @@ internal/av1/tile/coeff.go:*:*: make([]entropy.CoeffScanContext, maxEOB) escapes
 internal/av1/tile/coeff.go:*:*: make([]entropy.CoeffScanContext, maxEOB) escapes to heap in init.N:
 internal/av1/tile/coeff.go:*:*: make([]uint8, maxEOB) escapes to heap
 internal/av1/tile/coeff.go:*:*: make([]uint8, maxEOB) escapes to heap in init.N:
+internal/av1/tile/read_coef_blocks.go:*:*: append(a[:cap(a)], make([]int32, 1024 + cap(a) / 2)...) escapes to heap in growCoefArena:
 internal/av1/tile/refmvs.go:*:*: make([]TemporalMotionEntry, need) escapes to heap
 internal/av1/tile/refmvs.go:*:*: make([]TemporalMotionEntry, need) escapes to heap in (*refmvsTile).bindFrame:
 internal/av1/tile/refmvs.go:*:*: make([]TemporalMotionEntry, need) escapes to heap in PreallocBlockLoopRefmvsScratch:

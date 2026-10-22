@@ -26,7 +26,7 @@ func TestHotStructSizes(t *testing.T) {
 		// Keep request pointers grouped before scalar fields to leave the private
 		// fused-dequant target within one additional pointer-sized slot.
 		{name: "TXBDecodeRequest", size: unsafe.Sizeof(TXBDecodeRequest{}), max: 64},
-		{name: "CoeffDequantTarget", size: unsafe.Sizeof(CoeffDequantTarget{}), max: 80},
+		{name: "CoeffDequantTarget", size: unsafe.Sizeof(CoeffDequantTarget{}), max: 88},
 		{name: "BlockDeltaContext", size: unsafe.Sizeof(BlockDeltaContext{}), max: 8},
 		{name: "coeffGeometry", size: unsafe.Sizeof(coeffGeometry{}), max: 12},
 		{name: "coeffPos", size: unsafe.Sizeof(coeffPos{}), max: 6},

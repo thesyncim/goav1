@@ -22,6 +22,7 @@ type frameWorkReconView struct {
 	events   []frameWorkReconEvent
 	visits   []tile.BlockLoopVisit
 	blocks   []tile.BlockCoeffBlock
+	cf       []frameWorkReconCF
 }
 
 // frameWorkReconSpanBuilder is the parse-side cursor that partitions the flat
@@ -255,6 +256,7 @@ func (c *frameWorkTileResidualLoopController) publishReconRows(rows int) error {
 		events:   c.scratch.reconEvents,
 		visits:   c.scratch.reconVisits,
 		blocks:   c.scratch.reconBlocks,
+		cf:       c.scratch.reconCF,
 	})
 	return nil
 }

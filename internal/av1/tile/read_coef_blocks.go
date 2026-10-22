@@ -260,15 +260,23 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 		if err != nil {
 			return ErrInvalidDecodeState
 		}
-		target, txScale, dqMax := prepareTrackedCoeffDequant(b.dequant, plane, geo)
-		if target == nil || len(target.Dst) < 1024 {
+		target, txScale, dqMax := prepareCoeffDequantFactors(b.dequant, plane, geo)
+		var cf *[1024]int32
+		if target != nil {
+			if target.Arena != nil {
+				cf = target.arenaSlot()
+			} else if len(target.Dst) >= 1024 {
+				cf = (*[1024]int32)(target.Dst)
+			}
+		}
+		if cf == nil {
 			if result, err = b.readQuantizedTXB(ctxReq, size, coeffPlane, class, txbCtx, geo); err != nil {
 				return err
 			}
 		} else {
 			factors := &target.Factors[plane]
 			c := s.Reader.Cursor()
-			r := decodeCoefTokens(&c, b.cdfs, size, geo, coeffPlane, txtp, class, txbCtx.DCSignContext, (*[1024]int32)(target.Dst), &b.scratch.Coeff.CoefLevels, coefDequant{
+			r := decodeCoefTokens(&c, b.cdfs, size, geo, coeffPlane, txtp, class, txbCtx.DCSignContext, cf, &b.scratch.Coeff.CoefLevels, coefDequant{
 				dc:    uint32(factors[0]),
 				ac:    uint32(factors[1]),
 				shift: txScale,
@@ -279,6 +287,9 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 			target.TxScale = txScale
 			target.Ready = true
 			result = TXBDecodeResult{EOB: uint16(r.eob + 1), CulLevel: r.culLevel}
+			if target.Arena != nil {
+				target.commitArenaSlot(int(geo.maxEOB))
+			}
 		}
 		stats.NonZero++
 		stats.EOBTotal += uint32(result.EOB)
@@ -383,4 +394,34 @@ func (b *coefBlock) readQuantizedTXB(ctxReq CoeffContextRequest, size TransformS
 		return b.s.readCoefficientsTXBTracked2DWithGeo(b.cdfs, req, coeffs, scan, levels, geo)
 	}
 	return b.s.readCoefficientsTXBWithGeo(b.cdfs, req, coeffs, scan, levels, geo)
+}
+
+// arenaSlot returns the next TXB slot of the frame-thread cf arena, dav1d's
+// ts->frame_thread[p].cf. The arena grows only while warming up; slots handed
+// out earlier keep their backing array, so published slices stay valid.
+func (t *CoeffDequantTarget) arenaSlot() *[1024]int32 {
+	a := *t.Arena
+	off := len(a)
+	if cap(a)-off < 1024 {
+		a = growCoefArena(a)
+		*t.Arena = a
+	}
+	return (*[1024]int32)(a[off : off+1024])
+}
+
+// commitArenaSlot keeps the scan area of the slot just decoded and points Dst
+// at it, as dav1d advances ts->frame_thread[p].cf past each TXB.
+func (t *CoeffDequantTarget) commitArenaSlot(area int) {
+	a := *t.Arena
+	off := len(a)
+	*t.Arena = a[:off+area]
+	t.Dst = a[off : off+area : off+area]
+}
+
+// growCoefArena extends the arena's capacity by at least one TXB slot while
+// keeping its length. It runs only while the arena warms up.
+//
+//go:noinline
+func growCoefArena(a []int32) []int32 {
+	return append(a[:cap(a)], make([]int32, 1024+cap(a)/2)...)[:len(a)]
 }
