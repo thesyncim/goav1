@@ -773,8 +773,7 @@ type lossyEncodeState struct {
 	// pframe_depth_removal.go): 0 disables it (standalone tile paths), the
 	// video encoder sets the preset-12 ladder level (is_base ? 9 : 14 at
 	// 1080p) the same way mds0Level is plumbed. depthRemovalIsRef mirrors
-	// me_ctx->is_ref (true when this frame will be referenced) and gates the
-	// sweep's check_00_center arbitration.
+	// me_ctx->is_ref (true when this frame will be referenced).
 	depthRemovalLevel uint8
 	depthRemovalIsRef bool
 
