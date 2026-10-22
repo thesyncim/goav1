@@ -241,6 +241,7 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 	dctRdD := int64(0)
 	if !skip {
 		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
+		st.txbZero = [3]bool{false, true, true}
 		st.svtDistShift = lightPath
 		st.setRDOQArm(0)
 		lumaZero := true
@@ -268,6 +269,7 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 		} else {
 			lumaZero = st.prepareInterTXBDecide(src.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
 		}
+		st.txbZero[0] = lumaZero
 		if hasChroma {
 			// zero_y_coeff_exit: an all-zero luma block skips the chroma TX
 			// unless the chroma complexity detector flags a plane
@@ -312,6 +314,7 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 				}
 				st.pfN4 = false
 				skip = lumaZero && uZero && vZero
+				st.txbZero = [3]bool{lumaZero, uZero, vZero}
 			} else {
 				skip = lumaZero
 			}

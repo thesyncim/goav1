@@ -3,6 +3,7 @@ package encoder
 import (
 	"fmt"
 	"sync"
+	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -672,6 +673,9 @@ type lossyEncodeState struct {
 	// pfN4 arms the N4_SHAPE partial-frequency forward transform for the
 	// following inter TXB (svt_aom_full_loop_chroma_light_pd1).
 	pfN4 bool
+	// txbZero records which of the block's luma, Cb and Cr TXBs quantized to
+	// all-zero levels (svtInterCoeffCost then skips their end-of-block scan).
+	txbZero [3]bool
 	// svtDistShift scales the skip decision's TXB distortions like SVT's
 	// light-PD1 full loop (svtTXDist).
 	svtDistShift bool
@@ -1486,14 +1490,7 @@ func (st *lossyEncodeState) prepareIntraTXB(srcPlane []byte, stride int, px, py,
 	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
 		return geo, false, err
 	}
-	allZero := true
-	for _, v := range qcoeff[:cn] {
-		if v != 0 {
-			allZero = false
-			break
-		}
-	}
-	return geo, allZero, nil
+	return geo, levelsAllZero(qcoeff[:cn]), nil
 }
 
 // emitIntraTXB is the write/reconstruct half of encodeTXBPredRect: the
@@ -2005,4 +2002,18 @@ func (st *lossyEncodeState) trialChromaCost(src SourceFrame420, recon *SourceFra
 // selectIntraMode8 is selectIntraModeN at the 8x8 fallback size.
 func selectIntraMode8(srcPlane, reconPlane []byte, stride, px, py int, haveTop, haveLeft bool, pred []byte) tile.IntraMode {
 	return selectIntraModeN(srcPlane, reconPlane, stride, px, py, 8, haveTop, haveLeft, pred)
+}
+
+// levelsAllZero reports whether every level is zero, four at a time (every
+// coded area is a multiple of 16 levels).
+func levelsAllZero(q []int16) bool {
+	w := unsafe.Slice((*uint64)(unsafe.Pointer(unsafe.SliceData(q))), len(q)/4)
+	var acc uint64
+	for _, v := range w {
+		acc |= v
+	}
+	for _, v := range q[len(w)*4:] {
+		acc |= uint64(uint16(v))
+	}
+	return acc == 0
 }
