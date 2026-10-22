@@ -268,3 +268,15 @@ func quantizeScalarB(coeff int32, p *quantBParams, txScale uint8) int16 {
 // architectures without a kernel leave it nil. Implementations must be
 // bit-exact with the scalar rule.
 var quantizeBBlockImpl func(qcoeff []int16, coeff []int32, n int, q Quantizer, txScale uint8) bool
+
+// ZeroBinFP returns the fp zero-bin thresholds QuantizeBlockScaledFP applies
+// at txScale: a DC (respectively AC) coefficient whose magnitude is below dc
+// (ac) quantizes to zero (|c| << (1 + txScale) < dequant). Both return 0 for
+// an invalid quantizer.
+func ZeroBinFP(q Quantizer, txScale uint8) (dc, ac int32) {
+	if q.DC <= 0 || q.AC <= 0 || txScale > 2 {
+		return 0, 0
+	}
+	s := int32(1 + txScale)
+	return (q.DC + 1<<s - 1) >> s, (q.AC + 1<<s - 1) >> s
+}

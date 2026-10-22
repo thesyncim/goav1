@@ -542,8 +542,19 @@ type lossyEncodeState struct {
 	levels32Zeroed               [1296]uint8
 	trialCDFs                    tile.CoeffCDFs
 	trialReady                   bool
-	trial8x8CDFs                 coeffTrial8x8Snapshot
-	trialIntraSnap               coeffTrial8x8Snapshot
+	// RDOQ state (rdoq.go): the coefficient rate tables of the trial CDFs,
+	// the qindex they were built for, the dequantized-coefficient scratch,
+	// and 1 + the plane type of the inter TXB being prepared (0 when RDOQ
+	// is not armed for it).
+	rdoq           rdoqCosts
+	rdoqReady      bool
+	rdoqQIndex     uint8
+	rdoqDQ         [1024]int32
+	rdoqArm        int8
+	rdoqBlock      bool
+	rdoqIScanN     [4][1024]int16
+	trial8x8CDFs   coeffTrial8x8Snapshot
+	trialIntraSnap coeffTrial8x8Snapshot
 	// trialBlockLocal keeps the throwaway trial contexts at their frame-start
 	// (armed default) state across blocks: every trial-priced decision reads
 	// the same frozen tables, the shape SVT/libaom use for realtime mode

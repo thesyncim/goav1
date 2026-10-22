@@ -193,6 +193,7 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 	// sample per pixel, no realtime quantizer step keeps a coefficient
 	// (skip is an encoder choice the decoder honors either way).
 	skip = fullSAD*4 <= bw*bh
+	st.rdoqBlock = false
 	useRealtimeTXPlan := videoColorIs420(st.color)
 	lpd1UseShortcuts := false
 	if useRealtimeTXPlan {
@@ -207,7 +208,12 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 			lpd1UseShortcuts = st.lpd1TxDetect(variance, bw, bh)
 		}
 		txLevel := realtimeTXSizeLevelBasedOnQstep(src.Width, src.Height, st.effortLevel)
-		txPlan, err = realtimeInterTXPlanForBlock(block.Size, st.qIndex, st.yQuant.AC, txLevel, sse, variance)
+		st.rdoqBlock = st.armRDOQ()
+		if leaf, ok := svtDepth0TXLeaf(block.Size); st.rdoqBlock && ok {
+			txPlan, err = realtimeInterTXPlanForLeafSize(block.Size, leaf)
+		} else {
+			txPlan, err = realtimeInterTXPlanForBlock(block.Size, st.qIndex, st.yQuant.AC, txLevel, sse, variance)
+		}
 		if err != nil {
 			return false, false, txPlan, transform.TypeDCTDCT, err
 		}
@@ -215,6 +221,7 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 	dctRdD := int64(0)
 	if !skip {
 		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
+		st.setRDOQArm(0)
 		lumaZero := true
 		if txPlan.Variable() {
 			leafArea := txPlan.leafSize * txPlan.leafSize
@@ -247,6 +254,7 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 				}
 				performChroma = comp != lpd1ComponentLuma
 			}
+			st.setRDOQArm(1)
 			if performChroma {
 				uZero, vZero := true, true
 				if comp == lpd1ComponentChroma || comp == lpd1ComponentChromaCb {
@@ -266,6 +274,7 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 		} else {
 			skip = lumaZero
 		}
+		st.rdoqArm = 0
 		dctRdD = st.rdDcode
 		if !skip {
 			// Rate-priced skip (RDCOST shapes): code when distortion saved

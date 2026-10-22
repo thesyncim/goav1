@@ -2695,3 +2695,22 @@ func coeffAbsClamp127(v int16) uint8 {
 	}
 	return uint8(n)
 }
+
+// CoeffPaddedIndex is libaom/SVT get_padded_idx in this package's coefficient
+// layout: the index of coefficient coeffIndex in the padded level map that
+// CoeffInitLevels fills. size and coeffIndex must be valid.
+func CoeffPaddedIndex(size TransformSize, coeffIndex int) int {
+	return int(coeffPosTable[size][coeffIndex].padded)
+}
+
+// CoeffLowerLevelsContextTrusted is CoeffLowerLevelsContext for a valid size,
+// class and coefficient index and a levels map CoeffInitLevels filled.
+func CoeffLowerLevelsContextTrusted(levels []uint8, size TransformSize, class transform.Class, coeffIndex int) int {
+	return int(coeffLowerLevelsCtxFast(levels, &coeffGeometryTable[size], coeffPosTable[size], class, coeffIndex))
+}
+
+// CoeffBRContextTrusted is CoeffBRContext under the same contract as
+// CoeffLowerLevelsContextTrusted.
+func CoeffBRContextTrusted(levels []uint8, size TransformSize, class transform.Class, coeffIndex int) int {
+	return int(coeffBRContextFast(levels, &coeffGeometryTable[size], coeffPosTable[size], class, coeffIndex))
+}
