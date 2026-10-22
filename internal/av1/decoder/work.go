@@ -257,8 +257,12 @@ type FrameWorkState struct {
 	// current/retained frame holds; 0 means free. An entry is only ever
 	// written while it is a fresh frame-held acquisition (refs==1), so slot
 	// readers never observe mutation.
-	tileResidualCDFPool           [parser.RefFrames + 2]threading.FrameWorkTileResidualCDFStorage
-	tileResidualCDFPoolRefs       [parser.RefFrames + 2]uint8
+	tileResidualCDFPool [parser.RefFrames + 2]threading.FrameWorkTileResidualCDFStorage
+	// tileResidualCDFPoolExtra holds the entries in-flight frames keep under
+	// frame threading (EnableFrameThreadCDFPool); nil otherwise, so the
+	// serial decoders keep the RefFrames+2 footprint.
+	tileResidualCDFPoolExtra      *[frameWorkCDFPoolEntries - (parser.RefFrames + 2)]threading.FrameWorkTileResidualCDFStorage
+	tileResidualCDFPoolRefs       [frameWorkCDFPoolEntries]uint8
 	tileResidualSlotCDF           [parser.RefFrames]int8
 	tileResidualFrameContextValid [parser.RefFrames]bool
 	// sharedFrameContexts, when non-nil, redirects entropy (CDF) frame-context
@@ -305,8 +309,8 @@ type FrameWorkState struct {
 	// high-level decoder instead holds immutable completed grids by handle.
 	// Eight distinct slot targets plus one writable current frame require at
 	// most nine buffers, the same backing count as the generic copy path.
-	mvFrameBacking               [parser.RefFrames + 1][]tile.ReferenceMVEntry
-	mvGridRefs                   [parser.RefFrames + 1]uint8
+	mvFrameBacking               [frameWorkMVGrids][]tile.ReferenceMVEntry
+	mvGridRefs                   [frameWorkMVGrids]uint8
 	mvSlotGrid                   [parser.RefFrames]uint8 // one-based; zero has no grid
 	currentMVGrid                uint8
 	ownedTemporalMotion          bool
@@ -393,8 +397,9 @@ func (s *FrameWorkState) Reset() {
 	scaledRefPolicySet := s.scaledRefPolicySet
 	scaledRefPolicyEnabled := s.scaledRefPolicyEnabled
 	ownedTemporalMotion := s.ownedTemporalMotion
+	cdfPoolExtra := s.tileResidualCDFPoolExtra
 	temporalBack := s.temporalMVsBack[:0]
-	var mvBack [parser.RefFrames + 1][]tile.ReferenceMVEntry
+	var mvBack [frameWorkMVGrids][]tile.ReferenceMVEntry
 	for i := range s.mvFrameBacking {
 		mvBack[i] = s.mvFrameBacking[i][:0]
 	}
@@ -403,6 +408,7 @@ func (s *FrameWorkState) Reset() {
 		scaledRefPolicyEnabled: scaledRefPolicyEnabled,
 		ownedTemporalMotion:    ownedTemporalMotion,
 	}
+	s.tileResidualCDFPoolExtra = cdfPoolExtra
 	s.temporalMVsBack = temporalBack
 	s.mvFrameBacking = mvBack
 }
@@ -463,7 +469,11 @@ func (s *FrameWorkState) SetScaledReferencePredictionEnabled(enabled bool) {
 // hold (see the field comment); a miss therefore reports invalid state rather
 // than allocating.
 func (s *FrameWorkState) acquireTileResidualCDFEntry() (int8, error) {
-	for i := range s.tileResidualCDFPoolRefs {
+	n := len(s.tileResidualCDFPool)
+	if s.tileResidualCDFPoolExtra != nil {
+		n = len(s.tileResidualCDFPoolRefs)
+	}
+	for i := range s.tileResidualCDFPoolRefs[:n] {
 		if s.tileResidualCDFPoolRefs[i] == 0 {
 			s.tileResidualCDFPoolRefs[i] = 1
 			return int8(i), nil
@@ -491,8 +501,8 @@ func (s *FrameWorkState) tileResidualCDFBindings() (initial, retained *threading
 	if s == nil || !s.tileResidualCurrentCDFsValid {
 		return nil, nil, nil
 	}
-	return &s.tileResidualCDFPool[s.tileResidualCurrentCDF],
-		&s.tileResidualCDFPool[s.tileResidualRetainedCDF],
+	return s.cdfEntry(s.tileResidualCurrentCDF),
+		s.cdfEntry(s.tileResidualRetainedCDF),
 		&s.tileResidualRetainedCDFsValid
 }
 
@@ -807,7 +817,7 @@ func (s *FrameWorkState) acquireInitialTileResidualCDFs(event *Event) (int8, err
 						if err != nil {
 							return -1, err
 						}
-						s.tileResidualCDFPool[idx] = ctx
+						*s.cdfEntry(idx) = ctx
 						return idx, nil
 					}
 				}
@@ -827,7 +837,7 @@ func (s *FrameWorkState) acquireInitialTileResidualCDFs(event *Event) (int8, err
 	if err != nil {
 		return -1, err
 	}
-	if err := s.tileResidualCDFPool[idx].InitDefault(event.Quantization.BaseQIdx); err != nil {
+	if err := s.cdfEntry(idx).InitDefault(event.Quantization.BaseQIdx); err != nil {
 		s.releaseTileResidualCDFEntry(idx)
 		return -1, err
 	}
@@ -1020,7 +1030,7 @@ func (s *FrameWorkState) finishTileResidualCDFs(event *Event, publishedGlobalSur
 		if publishedGlobalSurface < 0 {
 			publishedGlobalSurface = s.sharedFrameContextGlobalSurface(s.Surface)
 		}
-		s.sharedFrameContexts.store(publishedGlobalSurface, s.tileResidualCDFPool[chosen])
+		s.sharedFrameContexts.store(publishedGlobalSurface, *s.cdfEntry(chosen))
 		return
 	}
 	// Every refreshed slot takes one more reference to the chosen pool entry;

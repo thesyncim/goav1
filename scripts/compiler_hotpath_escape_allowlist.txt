@@ -1,3 +1,5 @@
+internal/av1/decoder/frame_thread.go:*:*: new([16]threading.FrameWorkTileResidualCDFStorage) escapes to heap
+internal/av1/decoder/frame_thread.go:*:*: new([16]threading.FrameWorkTileResidualCDFStorage) escapes to heap in EnableFrameThreadCDFPool:
 internal/av1/decoder/postfilter_cdef.go:*:*: func literal escapes to heap
 internal/av1/decoder/postfilter_cdef.go:*:*: func literal escapes to heap in (*FrameWorkPostFilterContext).applyCDEFPostFilterPooledBands:
 internal/av1/decoder/postfilter_cdef.go:*:*: moved to heap: blocks

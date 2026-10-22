@@ -178,7 +178,7 @@ func fillMVPoolFrame(f *tile.ReferenceMVFrame, n int) {
 
 func checkMVPoolRefs(t *testing.T, s *FrameWorkState) {
 	t.Helper()
-	var want [parser.RefFrames + 1]uint8
+	var want [frameWorkMVGrids]uint8
 	for _, handle := range s.mvSlotGrid {
 		if handle != 0 {
 			want[handle-1]++
