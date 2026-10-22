@@ -131,7 +131,8 @@ func NewWebRTCStreamConfig(config Config) (*WebRTCStream, error) {
 	}
 	var stream WebRTCStream
 	stream.config = normalized
-	stream.rcMinQ, stream.rcMaxQ = 20, 200
+	// SVT-AV1 CBR q range (min_qp_allowed 4, max_qp_allowed 63).
+	stream.rcMinQ, stream.rcMaxQ = 16, 255
 	if webRTCStreamHighBitDepthColor(normalized) {
 		for i := uint8(0); i < normalized.SpatialLayerCount; i++ {
 			enc, err := newWebRTCStreamLayerColor16Encoder(normalized, i, fps, stream.rcMinQ, stream.rcMaxQ)

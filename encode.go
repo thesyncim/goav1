@@ -324,16 +324,18 @@ type VideoEncoderConfig struct {
 
 	// TargetBitrate, when positive, enables CBR rate control at this many
 	// bits per second; Framerate must then also be positive. MinQIndex and
-	// MaxQIndex bound the controller (defaults 20 and 200).
+	// MaxQIndex bound the controller (defaults 16 and 255, SVT-AV1's CBR
+	// min_qp_allowed 4 and max_qp_allowed 63).
 	TargetBitrate int
 	Framerate     int
 	MinQIndex     uint8
 	MaxQIndex     uint8
 
-	// TemporalLayers selects the layering mode: 0 or 1 for a flat stream,
-	// 2 for L1T2 with droppable odd frames, 3 for L1T3 (T0/T2/T1/T2 groups
-	// with a droppable top layer and a middle layer the trailing T2
-	// references).
+	// TemporalLayers selects the layering mode. Zero follows SVT-AV1's
+	// realtime default (preset 12, --rtc, low delay): three temporal layers
+	// in T0/T2/T1/T2 groups, one reference per frame, a droppable top layer
+	// and a middle layer the trailing T2 references. 1 selects a flat
+	// stream, 2 L1T2 with droppable odd frames, 3 the same L1T3 groups.
 	TemporalLayers int
 
 	// TileColumns overrides the tile-column count used for parallel inter
@@ -354,7 +356,8 @@ type VideoEncoderConfig struct {
 	Speed int8
 
 	// GoldenInterval is the number of base-layer frames between golden
-	// anchor refreshes; zero keeps the default (16) and a negative value
+	// anchor refreshes. Zero keeps the default, off: SVT-AV1 preset 12 rtc
+	// codes one reference per frame (mrp_level 0). A negative value also
 	// disables golden references.
 	GoldenInterval int
 
@@ -466,10 +469,10 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 			MaxQIndex:           cfg.MaxQIndex,
 		}
 		if rc.MinQIndex == 0 {
-			rc.MinQIndex = 20
+			rc.MinQIndex = 16
 		}
 		if rc.MaxQIndex == 0 {
-			rc.MaxQIndex = 200
+			rc.MaxQIndex = 255
 		}
 		enc, err = encoder.NewVideoEncoderCBR(cfg.Width, cfg.Height, rc)
 	} else {
@@ -481,10 +484,14 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch cfg.TemporalLayers {
-	case 0, 1:
+	layers := cfg.TemporalLayers
+	if layers == 0 {
+		layers = defaultRealtimeTemporalLayers
+	}
+	switch layers {
+	case 1:
 	default:
-		if err := enc.SetTemporalLayers(cfg.TemporalLayers); err != nil {
+		if err := enc.SetTemporalLayers(layers); err != nil {
 			_ = enc.Close()
 			return nil, err
 		}
@@ -990,14 +997,14 @@ func NewRTCEncoder(cfg VideoEncoderConfig) (*RTCEncoder, error) {
 		MaxQIndex:           cfg.MaxQIndex,
 	}
 	if rc.MinQIndex == 0 {
-		rc.MinQIndex = 20
+		rc.MinQIndex = 16
 	}
 	if rc.MaxQIndex == 0 {
-		rc.MaxQIndex = 200
+		rc.MaxQIndex = 255
 	}
 	layers := cfg.TemporalLayers
 	if layers == 0 {
-		layers = 1
+		layers = defaultRealtimeTemporalLayers
 	}
 	stream, err := encoder.NewWebRTCStreamLayers(cfg.Width, cfg.Height, rc, layers)
 	if err != nil {
@@ -2745,3 +2752,8 @@ func rtcEncoderConfigIsNativeI444(cfg EncoderConfig) bool {
 		!cfg.ColorConfig.SubsamplingX &&
 		!cfg.ColorConfig.SubsamplingY
 }
+
+// defaultRealtimeTemporalLayers is SVT-AV1's realtime prediction structure
+// (--rtc 1 --pred-struct 1, hierarchical_levels AUTO -> 2 for low-delay
+// CBR): three temporal layers.
+const defaultRealtimeTemporalLayers = 3

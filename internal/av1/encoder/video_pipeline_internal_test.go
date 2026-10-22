@@ -13,9 +13,9 @@ import (
 func TestPipelineOverlapFires(t *testing.T) {
 	const w, h = 192, 128
 	newEnc := func(golden int, sceneCut bool) *VideoEncoder {
-		enc, err := NewVideoEncoderCBR(w, h, RateControlConfig{
-			TargetBitsPerSecond: 800_000, FramesPerSecond: 30, MinQIndex: 20, MaxQIndex: 200,
-		})
+		// Fixed q: SVT's shared CBR rate control needs each frame's
+		// feedback before the next q, so CBR streams code serially.
+		enc, err := NewVideoEncoder(w, h, 120)
 		if err != nil {
 			t.Fatal(err)
 		}

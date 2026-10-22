@@ -97,10 +97,7 @@ internal/av1/encoder/cyclic_refresh.go:*:*: make([]uint8, sbCnt) escapes to heap
 internal/av1/encoder/hme.go:*:*: func literal escapes to heap
 internal/av1/encoder/hme.go:*:*: func literal escapes to heap in (*hmeState).startWorkers:
 internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap
-internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap in (*hmeState).keepPrev:
-internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap in (*hmeState).prime:
-internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap in (*hmeState).run:
-internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap in (*hmeState).runSerial:
+internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap in (*hmeState).storeRef:
 internal/av1/encoder/hme.go:*:*: make([]realtimeSBMultiSizeME, n) escapes to heap
 internal/av1/encoder/hme.go:*:*: make([]realtimeSBMultiSizeME, n) escapes to heap in (*hmeState).prepare:
 internal/av1/encoder/hme.go:*:*: make([]uint32, n) escapes to heap
@@ -323,8 +320,8 @@ internal/av1/encoder/subpel_svt.go:*:*: new(subpelProbeCache) escapes to heap in
 internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap
 internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in (*svtPlane).copyFrom:
 internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in (*svtPlane).size:
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in (*svtPyramid).adoptCurFrom:
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in (*svtPyramid).primeFrom:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in (*svtPyramid).copySlotFrom:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in (*svtPyramid).storeRef:
 internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in buildPyramid:
 internal/av1/encoder/video.go:*:*: func literal escapes to heap
 internal/av1/encoder/video.go:*:*: func literal escapes to heap in (*VideoEncoder).startFilterWorker:

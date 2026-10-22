@@ -84,11 +84,16 @@ func (q *svtPlane) copyFrom(o *svtPlane) {
 	copy(q.pix, o.pix[:len(q.pix)])
 }
 
-// svtPyramid holds the current and previous source pyramids.
+// svtPyramid holds the current source pyramid, the pyramids of the
+// reference slots' sources, and the active reference (prevHalf / prevSix,
+// views of the selected slot).
 type svtPyramid struct {
 	curHalf, prevHalf svtPlane
 	curSix, prevSix   svtPlane
 	haveCur, havePrev bool
+	slotHalf          [hmeRefSlots]svtPlane
+	slotSix           [hmeRefSlots]svtPlane
+	slotOK            [hmeRefSlots]bool
 }
 
 // svtDownsample2D is svt_aom_downsample_2d_c with decim_step 2.
@@ -114,31 +119,32 @@ func buildPyramid(half, six *svtPlane, src SourceFrame420) {
 	six.pad()
 }
 
-// build makes src the current pyramid level; with prime it becomes the
-// previous one instead (the keyframe that the next inter frame references).
-func (p *svtPyramid) build(src SourceFrame420, prime bool) {
+// build makes src the current pyramid.
+func (p *svtPyramid) build(src SourceFrame420) {
 	if src.Width/4 < 16 || src.Height/4 < 16 {
 		p.haveCur, p.havePrev = false, false
+		p.slotOK = [hmeRefSlots]bool{}
 		return
-	}
-	if p.curHalf.w != src.Width/2 || p.curHalf.h != src.Height/2 {
-		p.haveCur = false
-	}
-	if prime {
-		buildPyramid(&p.prevHalf, &p.prevSix, src)
-		p.havePrev, p.haveCur = true, false
-		return
-	}
-	if p.haveCur {
-		p.curHalf, p.prevHalf = p.prevHalf, p.curHalf
-		p.curSix, p.prevSix = p.prevSix, p.curSix
-		p.havePrev = true
 	}
 	buildPyramid(&p.curHalf, &p.curSix, src)
 	p.haveCur = true
-	if p.prevHalf.w != p.curHalf.w || p.prevHalf.h != p.curHalf.h {
-		p.havePrev = false
+}
+
+// storeRef keeps the current pyramid as slot s's reference pyramid.
+func (p *svtPyramid) storeRef(s int) {
+	if !p.haveCur {
+		p.slotOK[s] = false
+		return
 	}
+	p.slotHalf[s].copyFrom(&p.curHalf)
+	p.slotSix[s].copyFrom(&p.curSix)
+	p.slotOK[s] = true
+}
+
+// selectRef makes slot s the active reference pyramid.
+func (p *svtPyramid) selectRef(s int) {
+	p.prevHalf, p.prevSix = p.slotHalf[s], p.slotSix[s]
+	p.havePrev = p.slotOK[s] && p.prevHalf.w == p.curHalf.w && p.prevHalf.h == p.curHalf.h
 }
 
 // ready reports whether both pyramids exist for this frame.
@@ -230,30 +236,13 @@ func (p *svtPyramid) center(px, py int) (int, int, uint32) {
 	return l1X[best], l1Y[best], l1SAD[best]
 }
 
-// primeFrom makes q's most recent pyramid (its current one, or right after a
-// keyframe prime its previous one) p's previous one: the pipelined leaf's
-// reference, as the serial chain would hold it.
-func (p *svtPyramid) primeFrom(q *svtPyramid) {
-	switch {
-	case q.haveCur:
-		p.prevHalf.copyFrom(&q.curHalf)
-		p.prevSix.copyFrom(&q.curSix)
-	case q.havePrev:
-		p.prevHalf.copyFrom(&q.prevHalf)
-		p.prevSix.copyFrom(&q.prevSix)
-	default:
-		p.haveCur, p.havePrev = false, false
+// copySlotFrom copies q's reference slot s into p's (the pipelined leaf's
+// reference, as the serial chain holds it).
+func (p *svtPyramid) copySlotFrom(q *svtPyramid, s int) {
+	p.slotOK[s] = q.slotOK[s]
+	if !q.slotOK[s] {
 		return
 	}
-	p.havePrev, p.haveCur = true, false
-}
-
-// adoptCurFrom makes q's current pyramid p's current one.
-func (p *svtPyramid) adoptCurFrom(q *svtPyramid) {
-	if !q.haveCur {
-		return
-	}
-	p.curHalf.copyFrom(&q.curHalf)
-	p.curSix.copyFrom(&q.curSix)
-	p.haveCur = true
+	p.slotHalf[s].copyFrom(&q.slotHalf[s])
+	p.slotSix[s].copyFrom(&q.slotSix[s])
 }

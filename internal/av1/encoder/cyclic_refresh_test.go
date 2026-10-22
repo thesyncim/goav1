@@ -5,10 +5,17 @@ import (
 	"testing"
 )
 
+func testCRRateControl(bestQ, worstQ uint8) *svtRateControl {
+	var rc svtRateControl
+	rc.init(1_000_000, 30, bestQ, worstQ, 1280, 720)
+	return &rc
+}
+
 func TestCyclicComputeDeltaQ(t *testing.T) {
+	rc := testCRRateControl(1, 255)
 	// A higher rate target lowers q; the floor is -60% of q.
 	for _, q := range []int{40, 100, 180, 250} {
-		d := cyclicComputeDeltaQ(q, 1.75, 1, 255)
+		d := cyclicComputeDeltaQ(rc, q, 1.75, false)
 		if d >= 0 {
 			t.Fatalf("q=%d rate ratio 1.75 delta %d, want negative", q, d)
 		}
@@ -16,17 +23,20 @@ func TestCyclicComputeDeltaQ(t *testing.T) {
 			t.Fatalf("q=%d delta %d below the -60%% floor", q, d)
 		}
 	}
-	if d := cyclicComputeDeltaQ(120, 1.0, 1, 255); d != 0 {
+	if d := cyclicComputeDeltaQ(rc, 120, 1.0, false); d != 0 {
 		t.Fatalf("unit rate ratio delta %d, want 0", d)
 	}
 }
 
 func TestCyclicRefreshWindowAndGates(t *testing.T) {
 	var cr cyclicRefresh
-	cr.reset(200)
+	rc := testCRRateControl(20, 200)
+	rc.avgFrameQIndex[svtFrameInter] = 150
+	percent := 20 + rc.percentRefreshAdjustment
 	const w, h = 1280, 720 // 20x12 superblocks
-	grid := cr.plan(150, 20, 200, w, h, nil, 10, 80)
-	if grid == nil {
+	f := svtCRFrame{flat: true, hierLevels: 2, avgFrameLowMotion: 80}
+	grid, stats := cr.plan(rc, f, 150, w, h, nil)
+	if grid == nil || !stats.apply {
 		t.Fatal("cyclic refresh did not apply")
 	}
 	boosted := 0
@@ -34,22 +44,28 @@ func TestCyclicRefreshWindowAndGates(t *testing.T) {
 		switch {
 		case q < 150:
 			boosted++
-			if i >= 240*crPercentRefresh/100 {
+			if i >= 240*percent/100 {
 				t.Fatalf("superblock %d boosted outside the first window", i)
 			}
 		case q != 150:
 			t.Fatalf("superblock %d q=%d, want base 150", i, q)
 		}
 	}
-	if want := 240 * crPercentRefresh / 100; boosted != want {
-		t.Fatalf("boosted %d superblocks, want %d", boosted, want)
+	if want := 240 * percent / 100; boosted != want || stats.seg1 != want {
+		t.Fatalf("boosted %d superblocks (seg1 %d), want %d", boosted, stats.seg1, want)
 	}
-	if cr.sbEnd != 240*crPercentRefresh/100 {
+	if cr.sbEnd != 240*percent/100 {
 		t.Fatalf("window end %d", cr.sbEnd)
 	}
 	// avg_frame_low_motion under 50 turns it off.
-	if g := cr.plan(150, 20, 200, w, h, nil, 10, 30); g != nil {
+	f.avgFrameLowMotion = 30
+	if g, _ := cr.plan(rc, f, 150, w, h, nil); g != nil {
 		t.Fatal("cyclic refresh applied on high-motion content")
+	}
+	// Non-base layers of a layered structure do not refresh.
+	f = svtCRFrame{hierLevels: 2, temporalLayer: 1, avgFrameLowMotion: 80}
+	if g, _ := cr.plan(rc, f, 150, w, h, nil); g != nil {
+		t.Fatal("cyclic refresh applied on a non-base layer")
 	}
 }
 

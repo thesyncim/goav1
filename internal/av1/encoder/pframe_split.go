@@ -403,8 +403,7 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	mds0PredRetained := false
 	if !refs.Compound {
 		mds0Picked := false
-		mds0Gate := st.mds0Level != 2 || fullSAD <= bw*bh*4
-		if st.mds0Level != 0 && mds0Gate && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height &&
+		if st.mds0Level != 0 && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height &&
 			st.realtimeContentStateForBlock(lumaPX, lumaPY).sourceSADNonRD != realtimeSourceSADZero {
 			if cand, ok, retained := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {
 				modeResult.Mode = cand.mode

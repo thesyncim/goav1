@@ -1290,6 +1290,9 @@ func TestWebRTCStreamSetConfigControlsAllPixelEncoders(t *testing.T) {
 		qIndex                 uint8
 		temporalLayers         int
 		rcTemporalPerFrameBits [WebRTCMaxTemporalLayers]int
+		// sharedRC marks SVT-AV1's one rate control for every temporal
+		// layer (the 8-bit encoder): no per-layer budgets.
+		sharedRC bool
 	}
 	type pixelCase struct {
 		name     string
@@ -1318,13 +1321,13 @@ func TestWebRTCStreamSetConfigControlsAllPixelEncoders(t *testing.T) {
 					return controlSnapshot{}
 				}
 				return controlSnapshot{
-					rcEnabled:              enc.rcEnabled,
-					rcTargetBits:           enc.rcTargetBits,
-					rcFramesPerSec:         enc.rcFramesPerSec,
-					rcPerFrameBits:         enc.rcPerFrameBits,
-					qIndex:                 enc.qIndex,
-					temporalLayers:         enc.temporalLayers,
-					rcTemporalPerFrameBits: enc.rcTemporalPerFrameBits,
+					rcEnabled:      enc.rcEnabled,
+					rcTargetBits:   enc.rcTargetBits,
+					rcFramesPerSec: enc.rcFramesPerSec,
+					rcPerFrameBits: enc.rcPerFrameBits,
+					qIndex:         enc.qIndex,
+					temporalLayers: enc.temporalLayers,
+					sharedRC:       true,
 				}
 			},
 		},
@@ -1448,7 +1451,7 @@ func TestWebRTCStreamSetConfigControlsAllPixelEncoders(t *testing.T) {
 			t.Fatalf("%s CBR snapshot=%+v target=%d fps=%d perFrame=%d temporal=%d",
 				tc.name, snap, targetBits, fps, wantPerFrame, cfg.TemporalLayerCount)
 		}
-		for temporalID := uint8(0); temporalID < cfg.TemporalLayerCount; temporalID++ {
+		for temporalID := uint8(0); temporalID < cfg.TemporalLayerCount && !snap.sharedRC; temporalID++ {
 			want := rateControlTemporalLayerPerFrameBits(targetBits, fps, int(cfg.TemporalLayerCount), temporalID, wantPerFrame)
 			if got := snap.rcTemporalPerFrameBits[temporalID]; got != want {
 				t.Fatalf("%s T%d per-frame bits=%d want %d snapshot=%+v", tc.name, temporalID, got, want, snap)
@@ -1549,7 +1552,7 @@ func TestWebRTCStreamSetConfigControlsAllPixelEncoders(t *testing.T) {
 	}
 }
 
-func TestWebRTCStreamSetConfigCBRPreservesRateControlState(t *testing.T) {
+func TestWebRTCStreamSetConfigCBRRestartsSVTRateControl(t *testing.T) {
 	const w, h = 640, 360
 	cfg := Config{
 		Resolution:        Resolution{Width: w, Height: h},
@@ -1573,18 +1576,10 @@ func TestWebRTCStreamSetConfigCBRPreservesRateControlState(t *testing.T) {
 	if enc == nil {
 		t.Fatal("missing video encoder")
 	}
-	enc.qIndex = 92
-	enc.rcBuffer = -1234
-	enc.rcRecentBits = [2]int{111, 222}
-	enc.rcTemporalQ = [WebRTCMaxTemporalLayers]uint8{92, 96, 104}
-	enc.rcTemporalBuffer = [WebRTCMaxTemporalLayers]int{1400, -900, 300}
-	enc.rcTemporalRecentBits = [WebRTCMaxTemporalLayers][2]int{{11, 12}, {21, 22}, {31, 32}}
+	// SVT-AV1 restarts its rate control on a rate change event
+	// (seq_param_changed): the buffer returns to the starting level.
+	enc.svtRC.bufferLevel = -1234
 	beforeState := stream.state
-	beforeQ := enc.rcTemporalQ
-	beforeBuffer := enc.rcBuffer
-	beforeRecent := enc.rcRecentBits
-	beforeTemporalBuffer := enc.rcTemporalBuffer
-	beforeTemporalRecent := enc.rcTemporalRecentBits
 
 	change := stream.Config()
 	change.MaxFramerate = Rational{Num: 60, Den: 1}
@@ -1597,10 +1592,8 @@ func TestWebRTCStreamSetConfigCBRPreservesRateControlState(t *testing.T) {
 	if stream.state != beforeState {
 		t.Fatalf("CBR soft update reset stream state: before=%+v after=%+v", beforeState, stream.state)
 	}
-	if enc.rcTemporalQ != beforeQ || enc.rcBuffer != beforeBuffer || enc.rcRecentBits != beforeRecent ||
-		enc.rcTemporalBuffer != beforeTemporalBuffer || enc.rcTemporalRecentBits != beforeTemporalRecent {
-		t.Fatalf("CBR soft update reset controller: q=%v buffer=%d recent=%v temporalBuffer=%v temporalRecent=%v",
-			enc.rcTemporalQ, enc.rcBuffer, enc.rcRecentBits, enc.rcTemporalBuffer, enc.rcTemporalRecentBits)
+	if enc.svtRC.bufferLevel != enc.svtRC.startingBufferLevel {
+		t.Fatalf("CBR update kept the buffer: %d (starting %d)", enc.svtRC.bufferLevel, enc.svtRC.startingBufferLevel)
 	}
 	wantPerFrame, err := rateControlPerFrameBits(RateControlConfig{
 		TargetBitsPerSecond: int(change.TargetBitrateKbps) * 1000,
@@ -1613,12 +1606,6 @@ func TestWebRTCStreamSetConfigCBRPreservesRateControlState(t *testing.T) {
 	}
 	if enc.rcPerFrameBits != wantPerFrame {
 		t.Fatalf("rcPerFrameBits=%d want %d", enc.rcPerFrameBits, wantPerFrame)
-	}
-	for temporalID := 0; temporalID < int(change.TemporalLayerCount); temporalID++ {
-		wantLayerBits := rateControlTemporalLayerPerFrameBits(int(change.TargetBitrateKbps)*1000, 60, int(change.TemporalLayerCount), uint8(temporalID), wantPerFrame)
-		if got := enc.rcTemporalPerFrameBits[temporalID]; got != wantLayerBits {
-			t.Fatalf("temporal layer %d per-frame bits=%d want %d", temporalID, got, wantLayerBits)
-		}
 	}
 	picture, err := stream.EncodePicture(testWebRTCStreamFrame(w, h), false)
 	if err != nil {
