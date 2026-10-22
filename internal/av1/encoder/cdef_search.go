@@ -472,14 +472,19 @@ func (s *cdefSearcher) loadCDEFInput(plane []byte, stride, planeW, planeH, x0, y
 			}
 			continue
 		}
-		pr := plane[y*stride:]
-		for i := range row {
-			x := x0 - hb + i
-			if x < 0 || x >= planeW {
-				row[i] = cdef.VeryLarge
-			} else {
-				row[i] = uint16(pr[x])
-			}
+		// Columns [lo, hi) of the row lie inside the frame.
+		lo := max(0, hb-x0)
+		hi := min(len(row), planeW-x0+hb)
+		for i := 0; i < lo; i++ {
+			row[i] = cdef.VeryLarge
+		}
+		for i := hi; i < len(row); i++ {
+			row[i] = cdef.VeryLarge
+		}
+		pr := plane[y*stride+x0-hb+lo : y*stride+x0-hb+hi]
+		dr := row[lo:hi]
+		for i := range dr {
+			dr[i] = uint16(pr[i])
 		}
 	}
 }
@@ -561,7 +566,7 @@ func (s *cdefSearcher) search(src, recon *SourceFrame420, m *threading.FrameWork
 					// svt_cdef_filter_fb's cdef_find_dir on the first
 					// luma trial with a nonzero strength; the grids then
 					// serve every luma and chroma trial of the block.
-					s.copyFB(reconPlane, strides[pli], fstride, w, h)
+					s.copyFB(reconPlane, strides[pli], fstride, w, h, 1)
 					_ = cdef.FilterFrameBlocksU8Trusted(s.tmp[:], fstride, nil, 0, dlist, &s.dir, &s.vari, cdef.FrameFilterParams{
 						XDec: 0, YDec: 0, Plane: cdef.PlaneY, Damping: damping,
 					})
@@ -580,14 +585,20 @@ func (s *cdefSearcher) search(src, recon *SourceFrame420, m *threading.FrameWork
 					if sec == 3 {
 						sec = 4
 					}
-					s.copyFB(reconPlane, strides[pli], fstride, w, h)
-					if pri != 0 || sec != 0 {
-						_ = cdef.FilterFrameBlocksU8TrustedNoPrimaryDirection(s.tmp[:], fstride, s.in[:], cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, dlist, &s.dir, &s.vari, cdef.FrameFilterParams{
+					var curr uint64
+					if pri == 0 && sec == 0 {
+						// The (0,0) trial is the unfiltered reconstruction.
+						curr = cdefDist8(srcPlane, srcStrides[pli], reconPlane, strides[pli], dlist, bLog2, bLog2, ss) * uint64(ss)
+					} else {
+						// svt_cdef_filter_fb with the subsampling factor: only
+						// the measured rows are copied and filtered.
+						s.copyFB(reconPlane, strides[pli], fstride, w, h, ss)
+						_ = cdef.FilterBlocksU8SubsampledTrusted(s.tmp[:], fstride, s.in[:], cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, dlist, &s.dir, &s.vari, cdef.FrameFilterParams{
 							XDec: uint8(dec), YDec: uint8(dec), Plane: cdef.Plane(pli),
 							Level: pri, SecondaryStrength: sec, Damping: damping,
-						})
+						}, ss)
+						curr = cdefDist8(srcPlane, srcStrides[pli], s.tmp[:], fstride, dlist, bLog2, bLog2, ss) * uint64(ss)
 					}
-					curr := computeCDEFDist8(srcPlane, srcStrides[pli], s.tmp[:], fstride, dlist, bLog2, bLog2, ss) * uint64(ss)
 					switch pli {
 					case 0:
 						s.mse[0][fb][gi] = curr
@@ -603,9 +614,10 @@ func (s *cdefSearcher) search(src, recon *SourceFrame420, m *threading.FrameWork
 	return s.finish(g, ctrls, qIndex, lambda, fsY[:total])
 }
 
-// copyFB copies the w x h filter-block reconstruction into the trial scratch.
-func (s *cdefSearcher) copyFB(recon []byte, stride, fstride, w, h int) {
-	for r := 0; r < h; r++ {
+// copyFB copies every step-th row of the w x h filter-block reconstruction
+// into the trial scratch.
+func (s *cdefSearcher) copyFB(recon []byte, stride, fstride, w, h, step int) {
+	for r := 0; r < h; r += step {
 		copy(s.tmp[r*fstride:r*fstride+w], recon[r*stride:r*stride+w])
 	}
 }
