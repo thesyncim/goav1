@@ -793,6 +793,15 @@ func (ctx *FrameWorkPostFilterContext) applySupportedPostFiltersInPlace(req Fram
 			return result, err
 		}
 	}
+	if remaining.Has(FrameWorkPostFilterLoopFilter) && banding.LoopFilterMIRows <= 0 {
+		ctx.fixLoopFilterMaskTileBoundaries(req.LoopFilter.Map)
+		if ctx.sbrowPostFilterEligible(req, banding, remaining) {
+			if err := ctx.applySbrowPostFilters(req, &result); err != nil {
+				return result, err
+			}
+			remaining = frameWorkRemainingPostFilters(ctx)
+		}
+	}
 	if remaining.Has(FrameWorkPostFilterLoopFilter) {
 		var loopFilterResult FrameWorkLoopFilterPostFilterApplyResult
 		var err error
