@@ -1202,8 +1202,12 @@ func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cd
 		// so this can run on the detached filter worker without racing SetConfig.
 		applyLF = e.lf.applyParallelMasks
 	}
-	if err := applyLF(out, lf); err != nil {
-		return fmt.Errorf("loop filter apply: %w", err)
+	// lfLevel 0 (SVT-AV1 preset 12 rtc: dlf_level 0) leaves the deblocking
+	// pass out; the loop-filter records still feed CDEF.
+	if lfLevel > 0 {
+		if err := applyLF(out, lf); err != nil {
+			return fmt.Errorf("loop filter apply: %w", err)
+		}
 	}
 	if err := applyCDEF(out, cdef, &e.lf.filtMap); err != nil {
 		return fmt.Errorf("cdef apply: %w", err)
@@ -1344,9 +1348,10 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		if err := e.lf.reset(); err != nil {
 			return nil, fmt.Errorf("loop filter reset: %w", err)
 		}
-		header.LoopFilter.LevelY = [2]uint8{lfLevel, lfLevel}
-		header.LoopFilter.LevelU = lfLevel
-		header.LoopFilter.LevelV = lfLevel
+		dlf := svtRTCDeblockLevel(lfLevel)
+		header.LoopFilter.LevelY = [2]uint8{dlf, dlf}
+		header.LoopFilter.LevelU = dlf
+		header.LoopFilter.LevelV = dlf
 		// The q-derived CDEF strengths ride the same gate: the loop-filter
 		// records double as the index map and per-block skip source.
 		header.CDEF = cdefHeaderParams(effQ, false)
@@ -1600,7 +1605,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		// planes or the applier state joins first.
 		e.startFilterWorker()
 		e.filterParams.out = out
-		e.filterParams.lfLevel = lfLevel
+		e.filterParams.lfLevel = svtRTCDeblockLevel(lfLevel)
 		e.filterParams.cdef = filterCDEF
 		// The dav1d-style deblocking bitmask apply is byte-identical to the
 		// edge-list sweep for BOTH single- and multi-tile frames: BuildFromMap
@@ -1618,7 +1623,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		return nil, err
 	}
 	if lfLevel > 0 && e.singleThread {
-		if err := e.applyInLoopFilters(out, lfLevel, filterCDEF, true, false); err != nil {
+		if err := e.applyInLoopFilters(out, svtRTCDeblockLevel(lfLevel), filterCDEF, true, false); err != nil {
 			return nil, err
 		}
 	}

@@ -323,8 +323,10 @@ func TestVideoEncoderCloseReleasesPersistentWorkers(t *testing.T) {
 	if err := enc.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	if !enc.hme.started || !enc.lf.started || !enc.cdefApp.started {
-		t.Fatalf("expected persistent workers to start: hme=%v lf=%v cdef=%v", enc.hme.started, enc.lf.started, enc.cdefApp.started)
+	// No deblocking at SVT preset 12 rtc: the loop-filter workers stay
+	// parked, CDEF runs.
+	if !enc.hme.started || !enc.cdefApp.started {
+		t.Fatalf("expected persistent workers to start: hme=%v cdef=%v", enc.hme.started, enc.cdefApp.started)
 	}
 	if err := enc.Close(); err != nil {
 		t.Fatal(err)

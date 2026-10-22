@@ -134,8 +134,9 @@ func TestVideoEncoderMinEffortSkipsSubpelMotion(t *testing.T) {
 		t.Fatalf("min effort changed camera content MV signaling: prefix=%+v", prefix)
 	}
 	defaultLF, _ := parseFirstInterFrameFilters(t, defaultP, seq, w, h)
-	if defaultLF.LevelY == [2]uint8{} {
-		t.Fatalf("default effort loop filter levels=%+v want enabled", defaultLF.LevelY)
+	// SVT-AV1 preset 12 rtc codes no deblocking (get_dlf_level_rtc).
+	if defaultLF.LevelY != [2]uint8{} {
+		t.Fatalf("default effort loop filter levels=%+v want disabled", defaultLF.LevelY)
 	}
 	minLF, minCDEF := parseFirstInterFrameFilters(t, minP, seq, w, h)
 	if minLF.LevelY != [2]uint8{} || minLF.LevelU != 0 || minLF.LevelV != 0 {
