@@ -673,6 +673,10 @@ type lossyEncodeState struct {
 	// pfN4 arms the N4_SHAPE partial-frequency forward transform for the
 	// following inter TXB (svt_aom_full_loop_chroma_light_pd1).
 	pfN4 bool
+	// intraLumaDCT marks an intra luma TXB whose after-skip hook is
+	// afterSkipIntra (DCT_DCT under st.intraTxTypeReq), so writeIntraTXB may
+	// code its tx_type through the specialized writers.
+	intraLumaDCT bool
 	// txbZero records which of the block's luma, Cb and Cr TXBs quantized to
 	// all-zero levels (svtInterCoeffCost then skips their end-of-block scan).
 	txbZero [3]bool
@@ -1503,11 +1507,101 @@ func (st *lossyEncodeState) prepareIntraTXB(srcPlane []byte, stride int, px, py,
 func (st *lossyEncodeState) emitIntraTXB(reconPlane, pred []byte, stride int, px, py, w, h int, q quantize.Quantizer,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error,
 	qcoeff []int16, geo txBlockGeometry) error {
-	res, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip)
+	res, err := st.writeIntraTXB(w, h, qcoeff, ctxReq, coeffCtx, scan, afterSkip)
 	if err != nil {
 		return err
 	}
 	return st.reconInterTXBResult(reconPlane, pred, w, stride, px, py, w, h, q, qcoeff, geo, scan, transform.TypeDCTDCT, res)
+}
+
+// writeIntraTXB codes one intra DCT_DCT TXB through the size-specialized
+// trusted-context coefficient writers the inter path uses (the per-TXB shape
+// of SVT's av1_write_coeffs_txb_1d), falling back to the generic writer for
+// the other shapes. Luma carries its intra tx_type symbol (afterSkip set).
+func (st *lossyEncodeState) writeIntraTXB(w, h int, qcoeff []int16, ctxReq tile.CoeffContextRequest,
+	coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error) (tile.TXBDecodeResult, error) {
+	var res tile.TXBDecodeResult
+	blockDims, ok := ctxReq.PlaneBlock.Dimensions()
+	if !ok {
+		return res, tile.ErrInvalidDecodeState
+	}
+	written := false
+	if ctxReq.Plane == 0 && afterSkip != nil && st.intraLumaDCT && w == h && (w == 8 || w == 16 || w == 32) {
+		if txCDF, txSymbol, ok := st.intraTXCDFAndSymbol(st.intraTxTypeReq); ok {
+			written = true
+			switch w {
+			case 8:
+				c := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 2, H4: 2}, blockDims)
+				res = tile.WriteCoefficientsTXB8x8Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), c.TXBSkipContext, c.DCSignContext, txCDF, txSymbol)
+			case 16:
+				c := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 4, H4: 4}, blockDims)
+				res = tile.WriteCoefficientsTXB16x16Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), c.TXBSkipContext, c.DCSignContext, txCDF, txSymbol)
+			default:
+				c := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 8, H4: 8}, blockDims)
+				res = tile.WriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevels(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), st.levels32Zeroed[:], c.TXBSkipContext, c.DCSignContext, txCDF, txSymbol)
+			}
+		}
+	} else if ctxReq.Plane != 0 && afterSkip == nil && w == h && (w == 4 || w == 8 || w == 16 || w == 32) {
+		written = true
+		switch w {
+		case 4:
+			c := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 1, H4: 1}, blockDims)
+			res = tile.WriteCoefficientsTXB4x4UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[16]int16)(qcoeff), c.TXBSkipContext, c.DCSignContext)
+		case 8:
+			c := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 2, H4: 2}, blockDims)
+			res = tile.WriteCoefficientsTXB8x8UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), c.TXBSkipContext, c.DCSignContext)
+		case 16:
+			c := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 4, H4: 4}, blockDims)
+			res = tile.WriteCoefficientsTXB16x16UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), c.TXBSkipContext, c.DCSignContext)
+		default:
+			c := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 8, H4: 8}, blockDims)
+			res = tile.WriteCoefficientsTXB32x32UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), c.TXBSkipContext, c.DCSignContext)
+		}
+	}
+	if !written {
+		return tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip)
+	}
+	if err := coeffCtx.MarkTXB(ctxReq, res); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+// intraTXCDFAndSymbol is WriteIntraTransformType's symbol selection for a
+// DCT_DCT intra TXB: the CDF and symbol to code, or a nil CDF when the set
+// signals nothing. ok=false leaves the caller on the generic writer.
+func (st *lossyEncodeState) intraTXCDFAndSymbol(req tile.IntraTransformTypeRequest) (*entropy.CDF, int, bool) {
+	if req.SkipTransform || req.Lossless || (req.QIndexKnown && req.QIndex == 0) {
+		return nil, 0, true
+	}
+	set, err := tile.ExtTXSetTypeFor(req.Size, false, req.ReducedTXSet)
+	if err != nil {
+		return nil, 0, false
+	}
+	symbols, err := tile.ExtTXTypeCount(set)
+	if err != nil {
+		return nil, 0, false
+	}
+	if symbols <= 1 {
+		return nil, 0, true
+	}
+	index, err := tile.ExtTXSetIndex(req.Size, false, req.ReducedTXSet)
+	if err != nil {
+		return nil, 0, false
+	}
+	square, err := tile.TransformSizeSquare(req.Size)
+	if err != nil {
+		return nil, 0, false
+	}
+	cdf, err := st.txCDFs.IntraCDF(index, square, req.Mode, symbols)
+	if err != nil {
+		return nil, 0, false
+	}
+	symbol, err := tile.ExtTXSymbolForType(set, transform.TypeDCTDCT)
+	if err != nil {
+		return nil, 0, false
+	}
+	return cdf, symbol, true
 }
 
 // dcPredictN is the decoder's DC predictor for one n x n block at pixel
