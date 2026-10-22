@@ -94,17 +94,17 @@ func mc8PutV6FromI32W4(im unsafe.Pointer, h int, ph *mc8Phase, dst unsafe.Pointe
 	c4 := archsimd.LoadInt32x4Array(&ph.v[4])
 	c5 := archsimd.LoadInt32x4Array(&ph.v[5])
 	rnd := archsimd.BroadcastInt32x4(1 << 15)
-	x0 := mc8L32(im)
-	x1 := mc8L32(unsafe.Add(im, 16))
-	x2 := mc8L32(unsafe.Add(im, 32))
-	x3 := mc8L32(unsafe.Add(im, 48))
-	x4 := mc8L32(unsafe.Add(im, 64))
+	x0 := archsimd.LoadInt32x4Array((*[4]int32)(im))
+	x1 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(im, 16)))
+	x2 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(im, 32)))
+	x3 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(im, 48)))
+	x4 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(im, 64)))
 	q := unsafe.Add(im, 80)
 	d := dst
 	r := 0
 	for ; r+2 <= h; r += 2 {
-		x5 := mc8L32(q)
-		x6 := mc8L32(unsafe.Add(q, 16))
+		x5 := archsimd.LoadInt32x4Array((*[4]int32)(q))
+		x6 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 16)))
 		q = unsafe.Add(q, 32)
 		a, b := mc8V6I32W4(x0, x1, x2, x3, x4, x5, x6, c0, c1, c2, c3, c4, c5, rnd)
 		v := a.ToBits().ReshapeToUint16s().ConcatOdd(b.ToBits().ReshapeToUint16s()).BitsToInt16()
@@ -115,7 +115,7 @@ func mc8PutV6FromI32W4(im unsafe.Pointer, h int, ph *mc8Phase, dst unsafe.Pointe
 		x0, x1, x2, x3, x4 = x2, x3, x4, x5, x6
 	}
 	if r < h {
-		x5 := mc8L32(q)
+		x5 := archsimd.LoadInt32x4Array((*[4]int32)(q))
 		a, _ := mc8V6I32W4(x0, x1, x2, x3, x4, x5, x5, c0, c1, c2, c3, c4, c5, rnd)
 		v := a.ToBits().ReshapeToUint16s().ConcatOdd(a.ToBits().ReshapeToUint16s()).BitsToInt16()
 		*(*uint32)(d) = uint32(v.SaturateToUint8().ReshapeToUint64s().GetElem(0))
@@ -134,17 +134,17 @@ func mc8PrepV6FromI32W4(im unsafe.Pointer, h int, ph *mc8Phase, out unsafe.Point
 	c4 := archsimd.LoadInt32x4Array(&ph.p[4])
 	c5 := archsimd.LoadInt32x4Array(&ph.p[5])
 	rnd := archsimd.BroadcastInt32x4((64 + 6144<<7) << 9)
-	x0 := mc8L32(im)
-	x1 := mc8L32(unsafe.Add(im, 16))
-	x2 := mc8L32(unsafe.Add(im, 32))
-	x3 := mc8L32(unsafe.Add(im, 48))
-	x4 := mc8L32(unsafe.Add(im, 64))
+	x0 := archsimd.LoadInt32x4Array((*[4]int32)(im))
+	x1 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(im, 16)))
+	x2 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(im, 32)))
+	x3 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(im, 48)))
+	x4 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(im, 64)))
 	q := unsafe.Add(im, 80)
 	o := out
 	r := 0
 	for ; r+2 <= h; r += 2 {
-		x5 := mc8L32(q)
-		x6 := mc8L32(unsafe.Add(q, 16))
+		x5 := archsimd.LoadInt32x4Array((*[4]int32)(q))
+		x6 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 16)))
 		q = unsafe.Add(q, 32)
 		a, b := mc8V6I32W4(x0, x1, x2, x3, x4, x5, x6, c0, c1, c2, c3, c4, c5, rnd)
 		a.ToBits().ReshapeToUint16s().ConcatOdd(b.ToBits().ReshapeToUint16s()).StoreArray((*[8]uint16)(o))
@@ -152,7 +152,7 @@ func mc8PrepV6FromI32W4(im unsafe.Pointer, h int, ph *mc8Phase, out unsafe.Point
 		x0, x1, x2, x3, x4 = x2, x3, x4, x5, x6
 	}
 	if r < h {
-		x5 := mc8L32(q)
+		x5 := archsimd.LoadInt32x4Array((*[4]int32)(q))
 		a, _ := mc8V6I32W4(x0, x1, x2, x3, x4, x5, x5, c0, c1, c2, c3, c4, c5, rnd)
 		v := a.ToBits().ReshapeToUint16s().ConcatOdd(a.ToBits().ReshapeToUint16s())
 		*(*uint64)(o) = v.ReshapeToUint64s().GetElem(0)
@@ -274,17 +274,17 @@ func mc8PutV6W4(src unsafe.Pointer, srcStride, h int, ph *mc8Phase, dst unsafe.P
 	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
 	rnd := archsimd.BroadcastInt16x8(32)
 	sh := archsimd.BroadcastInt16x8(-6)
-	r0 := mc8LoadRow(src)
-	r1 := mc8LoadRow(unsafe.Add(src, srcStride))
-	r2 := mc8LoadRow(unsafe.Add(src, 2*srcStride))
-	r3 := mc8LoadRow(unsafe.Add(src, 3*srcStride))
-	r4 := mc8LoadRow(unsafe.Add(src, 4*srcStride))
+	r0 := archsimd.LoadUint8x16Array((*[16]uint8)(src)).ExtendLo8ToUint16().BitsToInt16()
+	r1 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(src, srcStride))).ExtendLo8ToUint16().BitsToInt16()
+	r2 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(src, 2*srcStride))).ExtendLo8ToUint16().BitsToInt16()
+	r3 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(src, 3*srcStride))).ExtendLo8ToUint16().BitsToInt16()
+	r4 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(src, 4*srcStride))).ExtendLo8ToUint16().BitsToInt16()
 	s := unsafe.Add(src, 5*srcStride)
 	d := dst
 	r := 0
 	for ; r+2 <= h; r += 2 {
-		r5 := mc8LoadRow(s)
-		r6 := mc8LoadRow(unsafe.Add(s, srcStride))
+		r5 := archsimd.LoadUint8x16Array((*[16]uint8)(s)).ExtendLo8ToUint16().BitsToInt16()
+		r6 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(s, srcStride))).ExtendLo8ToUint16().BitsToInt16()
 		a, b := mc8V6W4Sums(r0, r1, r2, r3, r4, r5, r6, c0, c1, c2, c3, c4, c5, rnd)
 		*(*uint32)(d) = uint32(a.Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0))
 		*(*uint32)(unsafe.Add(d, dstStride)) = uint32(b.Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0))
@@ -293,7 +293,7 @@ func mc8PutV6W4(src unsafe.Pointer, srcStride, h int, ph *mc8Phase, dst unsafe.P
 		d = unsafe.Add(d, 2*dstStride)
 	}
 	if r < h {
-		r5 := mc8LoadRow(s)
+		r5 := archsimd.LoadUint8x16Array((*[16]uint8)(s)).ExtendLo8ToUint16().BitsToInt16()
 		a, _ := mc8V6W4Sums(r0, r1, r2, r3, r4, r5, r5, c0, c1, c2, c3, c4, c5, rnd)
 		*(*uint32)(d) = uint32(a.Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0))
 	}
@@ -312,17 +312,17 @@ func mc8PrepV6W4(src unsafe.Pointer, srcStride, h int, ph *mc8Phase, out unsafe.
 	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
 	rnd := archsimd.BroadcastInt16x8(2 + 6144<<2)
 	sh := archsimd.BroadcastInt16x8(-2)
-	r0 := mc8LoadRow(src)
-	r1 := mc8LoadRow(unsafe.Add(src, srcStride))
-	r2 := mc8LoadRow(unsafe.Add(src, 2*srcStride))
-	r3 := mc8LoadRow(unsafe.Add(src, 3*srcStride))
-	r4 := mc8LoadRow(unsafe.Add(src, 4*srcStride))
+	r0 := archsimd.LoadUint8x16Array((*[16]uint8)(src)).ExtendLo8ToUint16().BitsToInt16()
+	r1 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(src, srcStride))).ExtendLo8ToUint16().BitsToInt16()
+	r2 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(src, 2*srcStride))).ExtendLo8ToUint16().BitsToInt16()
+	r3 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(src, 3*srcStride))).ExtendLo8ToUint16().BitsToInt16()
+	r4 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(src, 4*srcStride))).ExtendLo8ToUint16().BitsToInt16()
 	s := unsafe.Add(src, 5*srcStride)
 	o := out
 	r := 0
 	for ; r+2 <= h; r += 2 {
-		r5 := mc8LoadRow(s)
-		r6 := mc8LoadRow(unsafe.Add(s, srcStride))
+		r5 := archsimd.LoadUint8x16Array((*[16]uint8)(s)).ExtendLo8ToUint16().BitsToInt16()
+		r6 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(s, srcStride))).ExtendLo8ToUint16().BitsToInt16()
 		a, b := mc8V6W4Sums(r0, r1, r2, r3, r4, r5, r6, c0, c1, c2, c3, c4, c5, rnd)
 		a.ToBits().Shift(sh).ReshapeToUint64s().InterleaveLo(b.ToBits().Shift(sh).ReshapeToUint64s()).ReshapeToUint16s().StoreArray((*[8]uint16)(o))
 		r0, r1, r2, r3, r4 = r2, r3, r4, r5, r6
@@ -330,7 +330,7 @@ func mc8PrepV6W4(src unsafe.Pointer, srcStride, h int, ph *mc8Phase, out unsafe.
 		o = unsafe.Add(o, 16)
 	}
 	if r < h {
-		r5 := mc8LoadRow(s)
+		r5 := archsimd.LoadUint8x16Array((*[16]uint8)(s)).ExtendLo8ToUint16().BitsToInt16()
 		a, _ := mc8V6W4Sums(r0, r1, r2, r3, r4, r5, r5, c0, c1, c2, c3, c4, c5, rnd)
 		*(*uint64)(o) = a.ToBits().Shift(sh).ReshapeToUint64s().GetElem(0)
 	}
