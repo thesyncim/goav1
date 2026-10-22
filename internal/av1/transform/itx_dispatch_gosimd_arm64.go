@@ -34,6 +34,11 @@ func init() {
 	inverseDCT32Low8Col4Impl = inverseDCT32Low8Col4SIMDAdapter
 	inverseDCT32Row2Impl = inverseDCT32Row2SIMDAdapter
 	inverseDCT32Row4Impl = inverseDCT32Row4SIMDAdapter
+	inverseDCT32Low16Col4Impl = inverseDCT32Low16Col4SIMDAdapter
+	inverseDCT32Row4LowImpl = inverseDCT32Row4LowSIMDAdapter
+	inverseDCT32Row2LowImpl = inverseDCT32Row2LowSIMDAdapter
+	inverseDCT16Row2LowImpl = inverseDCT16Row2LowSIMDAdapter
+	inverseDCT16LowCol4Impl = inverseDCT16LowCol4SIMDAdapter
 }
 
 // simdColEnvelope reports whether the [min, max] stage clamp lies inside the
@@ -180,4 +185,61 @@ func inverseDCT32Row4SIMDAdapter(r0, r1, r2, r3 []int32, min, max int32) {
 		return
 	}
 	inverseDCT32Row4SIMD(r0[:dct32Size], r1[:dct32Size], r2[:dct32Size], r3[:dct32Size], min, max)
+}
+
+func inverseDCT32Low16Col4SIMDAdapter(buf []int32, rowStride int, min, max int32) {
+	if rowStride < 4 || len(buf) < (dct32Size-1)*rowStride+4 || !simdColEnvelope(min, max) || min > 0 || max < 0 {
+		inverseDCT32Col4SIMDAdapter(buf, rowStride, min, max)
+		return
+	}
+	inverseDCT32Col4Low16SIMD(buf, rowStride, min, max)
+}
+
+func inverseDCT32Row4LowSIMDAdapter(r0, r1, r2, r3 []int32, lowN int, min, max int32) {
+	if len(r0) < dct32Size || len(r1) < dct32Size || len(r2) < dct32Size || len(r3) < dct32Size ||
+		!simdColEnvelope(min, max) || min > 0 || max < 0 {
+		inverseDCT32Row4PureGo(r0, r1, r2, r3, min, max)
+		return
+	}
+	if lowN <= 8 {
+		inverseDCT32Row4Low8SIMD(r0[:dct32Size], r1[:dct32Size], r2[:dct32Size], r3[:dct32Size], min, max)
+		return
+	}
+	inverseDCT32Row4Low16SIMD(r0[:dct32Size], r1[:dct32Size], r2[:dct32Size], r3[:dct32Size], min, max)
+}
+
+func inverseDCT32Row2LowSIMDAdapter(r0, r1 []int32, lowN int, min, max int32) {
+	if len(r0) < dct32Size || len(r1) < dct32Size || !simdColEnvelope(min, max) || min > 0 || max < 0 {
+		inverseDCT32Row2PureGo(r0, r1, min, max)
+		return
+	}
+	if lowN <= 8 {
+		inverseDCT32Row2Low8SIMD(r0[:dct32Size], r1[:dct32Size], min, max)
+		return
+	}
+	inverseDCT32Row2Low16SIMD(r0[:dct32Size], r1[:dct32Size], min, max)
+}
+
+func inverseDCT16Row2LowSIMDAdapter(r0, r1 []int32, lowN int, min, max int32) {
+	if len(r0) < dct16Size || len(r1) < dct16Size || !simdColEnvelope(min, max) || min > 0 || max < 0 {
+		inverseDCT16Row2SIMDAdapter(r0, r1, min, max)
+		return
+	}
+	if lowN <= 4 {
+		inverseDCT16Row2Low4SIMD(r0[:dct16Size], r1[:dct16Size], min, max)
+		return
+	}
+	inverseDCT16Row2Low8SIMD(r0[:dct16Size], r1[:dct16Size], min, max)
+}
+
+func inverseDCT16LowCol4SIMDAdapter(buf []int32, rowStride int, lowN int, min, max int32) {
+	if rowStride < 4 || len(buf) < (dct16Size-1)*rowStride+4 || !simdColEnvelope(min, max) || min > 0 || max < 0 {
+		inverseDCT16Col4SIMDAdapter(buf, rowStride, min, max)
+		return
+	}
+	if lowN <= 4 {
+		inverseDCT16Col4Low4SIMD(buf, rowStride, min, max)
+		return
+	}
+	inverseDCT16Col4Low8SIMD(buf, rowStride, min, max)
 }

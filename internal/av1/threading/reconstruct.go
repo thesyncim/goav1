@@ -261,7 +261,7 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometryAndNonZero(geom fr
 // Geometry and the output window are resolved exactly as for the quantized
 // path; only the already-dequantized scratch bypasses quantizer/matrix lookup
 // and coefficient dequantization.
-func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometryDequantized(geom frameWorkBlockCoeffGeometry, block *tile.BlockCoeffBlock, activeRows int, dcOnly bool, dequant []int32, int32Scratch []int32, residualScratch []int16) error {
+func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometryDequantized(geom frameWorkBlockCoeffGeometry, block *tile.BlockCoeffBlock, activeRows int, activeCols int, dcOnly bool, dequant []int32, int32Scratch []int32, residualScratch []int16) error {
 	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
 		return nil
 	}
@@ -284,7 +284,7 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometryDequantized(geom f
 		EOB:       int16(block.Result.EOB),
 	}
 	if err := reconstruct.ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst, dstStride, bytesPerSample, b.Sequence.ColorConfig.BitDepth,
-		visibleWidth, visibleHeight, geom.scanSize, activeRows, dcOnly, dequant, int32Scratch, residualScratch, cfg); err != nil {
+		visibleWidth, visibleHeight, geom.scanSize, activeRows, activeCols, dcOnly, dequant, int32Scratch, residualScratch, cfg); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil

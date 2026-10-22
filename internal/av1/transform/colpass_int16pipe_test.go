@@ -69,7 +69,7 @@ func TestInverseBlockBitDepth8BenchmarkFixturesSelectExpectedColumnPath(t *testi
 				}
 				usedInt16, err := inverseSeparableBlockClampedRowsToScratch(
 					coeff, side, scratch, size, TypeDCTDCT,
-					rowMin, rowMax, colMin, colMax, 0, col16, false,
+					rowMin, rowMax, colMin, colMax, 0, 0, col16, false,
 				)
 				if err != nil {
 					t.Fatal(err)
@@ -117,7 +117,7 @@ func TestInverseBlockBitDepthFullRangeMatchesScalarColumnPath(t *testing.T) {
 		rowMin, rowMax, colMin, colMax, _ := stageRangeBounds(8)
 		usedSIMD, err := inverseSeparableBlockClampedRowsToScratch(
 			coeff, 8, make([]int32, 8*8), size, TypeVDCT,
-			rowMin, rowMax, colMin, colMax, 0, make([]int16, 8*8), false,
+			rowMin, rowMax, colMin, colMax, 0, 0, make([]int16, 8*8), false,
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -137,7 +137,7 @@ func TestInverseBlockBitDepthFullRangeMatchesScalarColumnPath(t *testing.T) {
 		rowMin, rowMax, colMin, colMax, _ := stageRangeBounds(8)
 		usedSIMD, err := inverseSeparableBlockClampedRowsToScratch(
 			coeff16, 16, make([]int32, 16*16), size16, TypeVDCT,
-			rowMin, rowMax, colMin, colMax, 0, make([]int16, 16*16), false,
+			rowMin, rowMax, colMin, colMax, 0, 0, make([]int16, 16*16), false,
 		)
 		if err != nil {
 			t.Fatal(err)

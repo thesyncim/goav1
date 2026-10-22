@@ -1710,6 +1710,7 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 	// because its visitor failed. Do not let it leak into this block.
 	c.dequantTarget.Ready = false
 	c.dequantTarget.ActiveRows = 0
+	c.dequantTarget.ActiveCols = 0
 	c.dequantTarget.TxScale = 0
 	if visit == nil {
 		return tile.BlockCoeffRequest{}, ErrInvalidBatch
@@ -1868,12 +1869,14 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLo
 func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock) error {
 	dequantReady := c.dequantTarget.Ready
 	activeRows := c.dequantTarget.ActiveRows
+	activeCols := c.dequantTarget.ActiveCols
 	// The tile target only becomes ready for EOB-1 DCT_DCT when its DC-only
 	// constant-add shortcut is valid. The transform type in this callback is
 	// the selected per-TXB type, so ADST EOB-1 remains on the full clear path.
 	dcOnly := block != nil && block.Transform == transform.TypeDCTDCT && block.Result.EOB == 1
 	c.dequantTarget.Ready = false
 	c.dequantTarget.ActiveRows = 0
+	c.dequantTarget.ActiveCols = 0
 	if visit == nil || block == nil {
 		return ErrInvalidBatch
 	}
@@ -1882,13 +1885,13 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.Blo
 		if recon == nil {
 			recon = c.fusedReconState()
 		}
-		if err := recon.reconstructTXBWithDequantized(visit, block, c.dequantTarget.Dst, activeRows, dcOnly); err != nil {
+		if err := recon.reconstructTXBWithDequantized(visit, block, c.dequantTarget.Dst, activeRows, activeCols, dcOnly); err != nil {
 			return err
 		}
 	} else if c.deferReconstruction {
 		var cf frameWorkReconCF
 		if dequantReady {
-			cf = frameWorkReconCF{cf: c.dequantTarget.Dst, activeRows: int32(activeRows), dcOnly: dcOnly}
+			cf = frameWorkReconCF{cf: c.dequantTarget.Dst, activeRows: int32(activeRows), activeCols: int32(activeCols), dcOnly: dcOnly}
 		}
 		if err := c.bufferReconTXB(visit, block, cf, c.state.CurrentBaseQIdx); err != nil {
 			return err
@@ -1984,7 +1987,7 @@ func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconE
 			}
 			if idx < len(cfs) && cfs[idx].cf != nil {
 				cf := &cfs[idx]
-				if err := s.reconstructTXBWithDequantized(visit, &blocks[idx], cf.cf, int(cf.activeRows), cf.dcOnly); err != nil {
+				if err := s.reconstructTXBWithDequantized(visit, &blocks[idx], cf.cf, int(cf.activeRows), int(cf.activeCols), cf.dcOnly); err != nil {
 					return err
 				}
 				continue
@@ -2252,7 +2255,7 @@ func (s *frameWorkReconState) reconstructTXBWithNonZero(visit *tile.BlockLoopVis
 // tracked-2D route. It deliberately keeps the existing quantized path intact;
 // the predictor/CfL ordering is mirrored here and the narrow reconstruction
 // tail consumes the dequantized scratch before the next TXB reuses it.
-func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, cf []int32, activeRows int, dcOnly bool) error {
+func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, cf []int32, activeRows int, activeCols int, dcOnly bool) error {
 	if s.predict == nil && s.predictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra && !visit.Prefix.SkipTransform {
 		if block.Plane != 0 && frameWorkVisitUsesCFLPtr(visit) {
 			if err := s.predictDeferredCFLChroma(); err != nil {
@@ -2294,7 +2297,7 @@ func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoo
 	if err != nil {
 		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 	}
-	if err := s.batch.reconstructBlockCoeffCoreWithGeometryDequantized(geom, block, activeRows, dcOnly, cf, s.int32Scratch, s.residualScratch); err != nil {
+	if err := s.batch.reconstructBlockCoeffCoreWithGeometryDequantized(geom, block, activeRows, activeCols, dcOnly, cf, s.int32Scratch, s.residualScratch); err != nil {
 		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
 	}
 	s.stats.Residuals++
@@ -2412,5 +2415,6 @@ func frameWorkAccumulateResidualStats(stats *FrameWorkTileResidualStats, coeff t
 type frameWorkReconCF struct {
 	cf         []int32
 	activeRows int32
+	activeCols int32
 	dcOnly     bool
 }

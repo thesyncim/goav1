@@ -40,6 +40,8 @@ type CoeffDequantTarget struct {
 	Coef           *CoefBuffer
 	Factors        [3][2]int32 // [Y/U/V][DC/AC]
 	ActiveRows     int
+	// ActiveCols bounds the nonzero coefficient columns (0 = unknown).
+	ActiveCols int
 	Provider       CoeffDequantProvider
 	BitDepth       uint8
 	Ready          bool

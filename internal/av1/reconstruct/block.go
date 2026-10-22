@@ -105,7 +105,7 @@ func ReconstructPlaneBlockVisibleTrustedAtWithGeometryScanAndNonZero(dst []byte,
 // uses this for non-lossless, no-qmatrix blocks; dcOnly must match an EOB-1
 // DCT_DCT block. Those contracts are intentionally not rechecked here.
 func ReconstructPlaneBlockVisibleTrustedAtWithDequantized(dst []byte, dstStride int, bytesPerSample int, bitDepth uint8, visibleWidth int, visibleHeight int, scanSize transform.Size, activeRows int, dcOnly bool, int32Scratch []int32, residualScratch []int16, cfg Block) error {
-	return ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst, dstStride, bytesPerSample, bitDepth, visibleWidth, visibleHeight, scanSize, activeRows, dcOnly, int32Scratch, int32Scratch, residualScratch, cfg)
+	return ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst, dstStride, bytesPerSample, bitDepth, visibleWidth, visibleHeight, scanSize, activeRows, 0, dcOnly, int32Scratch, int32Scratch, residualScratch, cfg)
 }
 
 // ReconstructPlaneBlockVisibleTrustedAtFromDequantized is
@@ -113,7 +113,7 @@ func ReconstructPlaneBlockVisibleTrustedAtWithDequantized(dst []byte, dstStride 
 // coefficients in their own slice (dav1d's frame-thread cf arena). dequant
 // may alias the start of int32Scratch; the transform scratch begins after
 // the coded block.
-func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride int, bytesPerSample int, bitDepth uint8, visibleWidth int, visibleHeight int, scanSize transform.Size, activeRows int, dcOnly bool, dequantSrc []int32, int32Scratch []int32, residualScratch []int16, cfg Block) error {
+func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride int, bytesPerSample int, bitDepth uint8, visibleWidth int, visibleHeight int, scanSize transform.Size, activeRows int, activeCols int, dcOnly bool, dequantSrc []int32, int32Scratch []int32, residualScratch []int16, cfg Block) error {
 	width := int(cfg.Size.Width)
 	height := int(cfg.Size.Height)
 	scanWidth := int(scanSize.Width)
@@ -143,7 +143,7 @@ func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride 
 		dsp.AddResidualPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, residual, width)
 		return nil
 	}
-	if err := transform.InverseBlockBitDepthRaw(transformScratch, dequant, scanHeight, cfg.Size, cfg.Transform, bitDepth, activeRows); err != nil {
+	if err := transform.InverseBlockBitDepthRawBounded(transformScratch, dequant, scanHeight, cfg.Size, cfg.Transform, bitDepth, activeRows, activeCols); err != nil {
 		return ErrInvalidBlock
 	}
 	max := uint16((1 << bitDepth) - 1)
