@@ -167,90 +167,124 @@ func (p *svtPyramid) ready() bool { return p != nil && p.haveCur && p.havePrev }
 // svtHMESearch is svt_sad_loop_kernel over a w x h area at origin
 // (ox, oy) relative to the block at (bx, by): the SUB_SAD bw x bh block
 // (bh/2 rows at doubled stride, SAD doubled), y outer, x inner, strict '<'.
-// Like SVT's search_area_width % 8 == 0 NEON/AVX2 kernels it scores eight
-// positions per step (svtSAD16xhx8 per 16 columns) and keeps the first
-// minimum (update_best_sad_u32). Positions whose block would leave the
-// padded plane are not scored (SVT corrects its search area to the padding).
+// Like SVT's NEON/AVX2 kernels it scores eight positions per step
+// (svtSAD16xhx8 per 16 columns) when the width is a multiple of 8, else
+// four and then one at a time (the _small kernels), keeping the first
+// minimum (update_best_sad_u32). The caller corrects the area to the padded
+// plane (svtHMECorrectArea), so every position is scorable.
 func svtHMESearch(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (bestSAD uint32, bestX, bestY int) {
 	bestSAD = ^uint32(0)
-	stride, b := cur.stride, cur.border
+	stride := cur.stride
 	rows := bh / 2
 	s2 := 2 * stride
 	s := cur.pix[cur.org+by*stride+bx:]
 	for y := 0; y < h; y++ {
-		ry := by + oy + y
-		if ry < -b || ry+bh > cur.h+b {
+		base := ref.org + (by+oy+y)*stride + bx + ox
+		x := 0
+		if bw%16 != 0 {
+			// A partial superblock's block narrower than the 16-column
+			// kernels (svt_sad_loop_kernel's any-width path).
+			for ; x < w; x++ {
+				if sad := svtSADRectSub(s, s2, ref.pix[base+x:], bw, rows); sad < bestSAD {
+					bestSAD, bestX, bestY = sad, ox+x, oy+y
+				}
+			}
 			continue
 		}
-		for x := 0; x < w; {
-			rx := bx + ox + x
-			if rx < -b || rx+bw > cur.w+b {
-				x++
-				continue
-			}
-			base := ref.org + ry*stride + rx
-			if x+8 <= w && rx+7+bw <= cur.w+b {
+		if w%8 == 0 {
+			for ; x < w; x += 8 {
 				var t [8]uint32
 				for c := 0; c < bw; c += 16 {
-					svtSAD16xhx8(&t, s[c:], s2, ref.pix[base+c:], s2, rows)
+					svtSAD16xhx8(&t, s[c:], s2, ref.pix[base+x+c:], s2, rows)
 				}
 				for k, v := range t {
 					if sad := v << 1; sad < bestSAD {
 						bestSAD, bestX, bestY = sad, ox+x+k, oy+y
 					}
 				}
-				x += 8
-				continue
 			}
-			// Four positions per kernel call when all four are scorable.
-			if x+4 <= w && rx+3+bw <= cur.w+b {
-				var t0, t1, t2, t3 int
-				for c := 0; c < bw; c += 16 {
-					a0, a1, a2, a3 := sad16xNx4(s[c:], s2, ref.pix[base+c:], s2, rows)
-					t0, t1, t2, t3 = t0+a0, t1+a1, t2+a2, t3+a3
-				}
-				for k, t := range [4]int{t0, t1, t2, t3} {
-					if sad := uint32(t) << 1; sad < bestSAD {
-						bestSAD, bestX, bestY = sad, ox+x+k, oy+y
-					}
-				}
-				x += 4
-				continue
+			continue
+		}
+		for ; x+4 <= w; x += 4 {
+			var t0, t1, t2, t3 int
+			for c := 0; c < bw; c += 16 {
+				a0, a1, a2, a3 := sad16xNx4(s[c:], s2, ref.pix[base+x+c:], s2, rows)
+				t0, t1, t2, t3 = t0+a0, t1+a1, t2+a2, t3+a3
 			}
-			sad := uint32(sadRectDualBlock(s, s2, ref.pix[base:], s2, bw, rows)) << 1
+			for k, t := range [4]int{t0, t1, t2, t3} {
+				if sad := uint32(t) << 1; sad < bestSAD {
+					bestSAD, bestX, bestY = sad, ox+x+k, oy+y
+				}
+			}
+		}
+		for ; x < w; x++ {
+			sad := svtSADRectSub(s, s2, ref.pix[base+x:], bw, rows)
 			if sad < bestSAD {
 				bestSAD, bestX, bestY = sad, ox+x, oy+y
 			}
-			x++
 		}
 	}
 	return bestSAD, bestX, bestY
 }
 
-// center returns the HME search center (full-pel) of the SB at (px, py) and
-// its level-1 SAD.
-func (p *svtPyramid) center(px, py int) (int, int, uint32) {
+// svtHMECorrectArea is hme_level_0 / hme_level_1's search-area correction,
+// statement for statement: the w x h area at origin (ox, oy) of the block
+// at (orgX, orgY) is kept on the padded picture (pad = border - 1) of
+// width picW and height picH. The left/top width shrink reads the
+// already-corrected origin (so it never fires), the right/bottom shrink
+// keeps at least one position, and a width of 8 or more is rounded down to
+// a multiple of 8.
+func svtHMECorrectArea(orgX, orgY, ox, oy, w, h, picW, picH, pad int) (int, int, int, int) {
+	if orgX+ox < -pad {
+		ox = -pad - orgX
+	}
+	if orgX+ox < -pad {
+		w -= -pad - (orgX + ox)
+	}
+	if orgX+ox > picW-1 {
+		ox -= (orgX + ox) - (picW - 1)
+	}
+	if orgX+ox+w > picW {
+		w = max(1, w-((orgX+ox+w)-picW))
+	}
+	if w >= 8 {
+		w &^= 7
+	}
+	if orgY+oy < -pad {
+		oy = -pad - orgY
+	}
+	if orgY+oy < -pad {
+		h -= -pad - (orgY + oy)
+	}
+	if orgY+oy > picH-1 {
+		oy -= (orgY + oy) - (picH - 1)
+	}
+	if orgY+oy+h > picH {
+		h = max(1, h-((orgY+oy+h)-picH))
+	}
+	return ox, oy, w, h
+}
+
+// center returns the HME search center (full-pel) of the sbW x sbH
+// superblock at (px, py) (b64_width x b64_height, 8-aligned) and its
+// level-1 SAD. Level 0 searches the (sbW>>2) x (sbH>>2) block, level 1 the
+// (sbW>>1) x (sbH>>1) one.
+func (p *svtPyramid) center(px, py, sbW, sbH int) (int, int, uint32) {
 	var l1SAD [4]uint32
 	var l1X, l1Y [4]int
+	six, half := &p.curSix, &p.curHalf
 	for r := 0; r < 4; r++ {
 		srW, srH := r&1, r>>1
 		// hme_level_0: sa_origin = -(sa * num_hme_sa) / 2 + sa * sr.
 		ox := -(svtHMEL0RegionW*2)>>1 + svtHMEL0RegionW*srW
 		oy := -(svtHMEL0RegionH*2)>>1 + svtHMEL0RegionH*srH
-		sad0, x0, y0 := svtHMESearch(&p.curSix, &p.prevSix, px>>2, py>>2, 16, 16, ox, oy, svtHMEL0RegionW, svtHMEL0RegionH)
-		if sad0 == ^uint32(0) {
-			l1SAD[r] = sad0
-			continue
-		}
+		ox, oy, w, h := svtHMECorrectArea(px>>2, py>>2, ox, oy, svtHMEL0RegionW, svtHMEL0RegionH, six.w, six.h, six.border-1)
+		_, x0, y0 := svtHMESearch(six, &p.prevSix, px>>2, py>>2, sbW>>2, sbH>>2, ox, oy, w, h)
 		// hme_level_1 around the level-0 vector (x4 to full-pel, >>1 to the
 		// quarter picture).
 		cx, cy := (x0*4)>>1, (y0*4)>>1
-		sad1, x1, y1 := svtHMESearch(&p.curHalf, &p.prevHalf, px>>1, py>>1, 32, 32,
-			cx-(svtHMEL1W>>1), cy-(svtHMEL1H>>1), svtHMEL1W, svtHMEL1H)
-		if sad1 == ^uint32(0) {
-			l1SAD[r], l1X[r], l1Y[r] = ^uint32(0)-1, cx*2, cy*2
-			continue
-		}
+		ox, oy, w, h = svtHMECorrectArea(px>>1, py>>1, cx-(svtHMEL1W>>1), cy-(svtHMEL1H>>1), svtHMEL1W, svtHMEL1H, half.w, half.h, half.border-1)
+		sad1, x1, y1 := svtHMESearch(half, &p.prevHalf, px>>1, py>>1, sbW>>1, sbH>>1, ox, oy, w, h)
 		l1SAD[r], l1X[r], l1Y[r] = sad1, x1*2, y1*2
 	}
 	best := 0
@@ -258,9 +292,6 @@ func (p *svtPyramid) center(px, py int) (int, int, uint32) {
 		if l1SAD[r] < l1SAD[best] {
 			best = r
 		}
-	}
-	if l1SAD[best] == ^uint32(0) {
-		return 0, 0, 0
 	}
 	return l1X[best], l1Y[best], l1SAD[best]
 }
@@ -294,4 +325,25 @@ func svtSAD16xhx8Scalar(src []byte, srcStride int, ref []byte, refStride, rows i
 		}
 	}
 	return out
+}
+
+// svtSADRectSub is the doubled SAD of the bw-wide, rows-tall block at
+// doubled stride s2 (svt_nxm_sad_kernel at the SUB_SAD stride).
+func svtSADRectSub(src []byte, s2 int, ref []byte, bw, rows int) uint32 {
+	if (bw == 16 && rows == 8) || (bw == 32 && rows == 16) {
+		return uint32(sadRectDualBlock(src, s2, ref, s2, bw, rows)) << 1
+	}
+	var sum uint32
+	for r := 0; r < rows; r++ {
+		a := src[r*s2 : r*s2+bw]
+		b := ref[r*s2 : r*s2+bw]
+		for i := range a {
+			d := int(a[i]) - int(b[i])
+			if d < 0 {
+				d = -d
+			}
+			sum += uint32(d)
+		}
+	}
+	return sum << 1
 }

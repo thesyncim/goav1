@@ -168,7 +168,7 @@ func (h *hmeState) motionEstimateSB(me *realtimeSBMultiSizeME, width, height, px
 	xc, yc := 0, 0
 	var l1 uint32
 	if zz >= realtimeSweepEarlyExitTH>>2 && h.svt.ready() {
-		xc, yc, l1 = h.svt.center(px, py)
+		xc, yc, l1 = h.svt.center(px, py, min(64, ((width+7)&^7)-px), min(64, ((height+7)&^7)-py))
 	}
 	// integer_search_b64 at preset 12 rtc: the 8x3 area (me_sa sa_min,
 	// width rounded up to 8, height at least 3), 1x1 below
